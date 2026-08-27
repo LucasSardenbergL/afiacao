@@ -16,5 +16,12 @@ PEGA      | timeout_milliseconds implicito (default 5s) | s/timeout_milliseconds
 PEGA      | --caro forasteira aceita em silencio       | s/!edges\.includes\(c\)/false/
 PEGA      | edge sem sensor degrada em vez de lancar   | s/if \(problemas\.length > 0\)/if (false)/
 PEGA      | eco probe:true dispensado no CONFIRMADO    | s/AND l\.corpo ->> 'probe' = 'true'/AND true/
+# Os 4 abaixo guardam o `fonte` — o campo que prova deploy VERBATIM (#2018). Sem eles a suíte
+# aceitava um veredito que julga só o `versao`, e o bundle que sobe index.ts+versao.ts SEM o
+# _shared/sonda-fingerprints.ts saía como 'DEPLOY CONFIRMADO': falso POSITIVO, a classe pior.
+PEGA      | ramo DEPLOY PARCIAL neutralizado (nao dispara) | s/COALESCE\(l\.corpo ->> 'fonte', 'nao-mapeada'\) = 'nao-mapeada'/false/
+PEGA      | CONFIRMADO dispensa o fonte (falso POSITIVO)   | s/AND l\.corpo ->> 'fonte' = l\.fonte_esperada/AND true/
+PEGA      | fingerprint hardcoded em vez de lido do mapa   | s/lit\(e\.fonte\)/lit('0'.repeat(64))/
+PEGA      | edge fora do mapa degrada em vez de lancar     | s/if \(!\(edge in mapa\)\)/if (false)/
 SOBREVIVE | timeout 20s -> 30s (valor nao e pinado)    | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
 SOBREVIVE | ORDER BY por posicao (cosmetico)           | s/ORDER BY l\.edge;/ORDER BY 1;/

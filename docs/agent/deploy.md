@@ -170,15 +170,26 @@ entre uma e outra. O padrão é disparar todas com `net.http_post` sobre um `VAL
 `jsonb_each_text('<colado>'::jsonb)`. Medido 2026-08-24 sondando a oitava leva (#1937).
 
 **Não digite esse SQL: gere-o.** `bun run sonda:sql <edge>… [--caro=<edge>,…]` lê o `VERSAO` de cada
-`supabase/functions/<edge>/versao.ts` e emite os quatro blocos prontos (disparo + leitura das
-baratas; disparo travado + leitura das caras). A lista `esperado(edge, versao_esperada)` transcrita
-na unha é o buraco que ele fecha: **marcador digitado errado produz veredito FALSO** — "BUNDLE
-VELHO" numa edge que está no ar (e o desfecho é redeployar edge de money-path à toa), ou o inverso.
-Edge sem `versao.ts` derruba a geração inteira (nada de SQL parcial em silêncio), e `--caro` que não
-casa um nome da leva também — o typo deixaria a edge cara no bloco SEM trava. Testes:
-`scripts/sonda-versao-sql.test.ts` (a falsificação sabota o `versao.ts` e exige que o marcador velho
-suma do SQL) + `scripts/mutcheck.d/sonda-versao-sql.mut`, que no CI prova que a suíte **pega** a
-trava trocada por `WHERE`, o `LEFT JOIN` virado `JOIN` e o marcador hardcoded.
+`supabase/functions/<edge>/versao.ts` **e o fingerprint de `_shared/sonda-fingerprints.ts`**, e emite
+os quatro blocos prontos (disparo + leitura das baratas; disparo travado + leitura das caras). A
+lista `esperado(edge, versao_esperada, fonte_esperada)` transcrita na unha é o buraco que ele fecha:
+**marcador digitado errado produz veredito FALSO** — "BUNDLE VELHO" numa edge que está no ar (e o
+desfecho é redeployar edge de money-path à toa), ou o inverso. Edge sem `versao.ts` **ou fora do
+mapa de fingerprints** derruba a geração inteira (nada de SQL parcial em silêncio), e `--caro` que
+não casa um nome da leva também — o typo deixaria a edge cara no bloco SEM trava.
+
+⚠️ **O veredito julga o `fonte`, não só o `versao` — e o ramo `DEPLOY PARCIAL` vem ANTES do de
+confirmação.** O `versao` sai do `versao.ts` da PRÓPRIA edge: um deploy que suba `index.ts` +
+`versao.ts` e deixe `_shared/sonda-fingerprints.ts` para trás (o risco do Passo 3 da skill
+`lovable-deploy-verify` — prompt que nomeia poucos arquivos) responde `versao` **certo** e
+`fonte: "nao-mapeada"`. Julgando só pelo `versao`, isso saía como **'DEPLOY CONFIRMADO'**: falso
+POSITIVO num money-path, a classe estritamente pior, porque **encerra** a verificação. Confirmação
+exige os dois campos batendo; `fonte` ausente é ramo próprio, e a dúvida cai sempre no lado que
+manda olhar de novo. Testes: `scripts/sonda-versao-sql.test.ts` (as falsificações GÊMEAS sabotam o
+`versao.ts` e a entrada do mapa, e exigem que o valor velho suma do SQL) +
+`scripts/mutcheck.d/sonda-versao-sql.mut`, que no CI prova que a suíte **pega** a trava trocada por
+`WHERE`, o `LEFT JOIN` virado `JOIN`, o marcador/fingerprint hardcoded, o ramo `DEPLOY PARCIAL`
+neutralizado e o `AND fonte = fonte_esperada` dispensado do `DEPLOY CONFIRMADO`.
 
 - ⚠️ **A trava do bloco perigoso tem de ser `CASE`, NÃO `WHERE`.** Quando parte da leva só pode ser sondada
   DEPOIS do deploy confirmado (bundle pré-sensor ignora o `probe` e dispara o run), a tentação é
