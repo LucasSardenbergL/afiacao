@@ -13,7 +13,11 @@
 # ║   (D) GRANT INSERT,UPDATE,DELETE           → NAO_APLICADA (não DRIFT), exit 1   ║
 # ║   (E) GRANT MAINTAIN (PG17)                → DRIFT_PROD, exit 1                 ║
 # ║   (F) GRANT SELECT a anon                  → acusa anon (permitido [])          ║
-# ║   (G) revoga tudo                          → volta ao limpo, exit 0  ← dente    ║
+# ║   (G) GRANT REFERENCES a anon              → DRIFT_PROD nomeando REFERENCES     ║
+# ║   (H) GRANT TRIGGER a authenticated        → DRIFT_PROD nomeando TRIGGER        ║
+# ║   (I) revoga tudo                          → volta ao limpo, exit 0  ← dente    ║
+# ║   (J) saída com 1 privilégio ENGOLIDO      → exit 2, NÃO exit 0      ← dente    ║
+# ║   (K) saída sem a linha VER|               → exit 2 (sem denominador)           ║
 # ║                                                                                ║
 # ║  A allowlist entra por AUTHZ_GRANTS_TEST_JSON — o contrato real do repo não é   ║
 # ║  tocado, e o teste não quebra quando product_costs/omie_products mudarem.       ║
@@ -37,6 +41,8 @@ TMPD="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-audit-grants.XXXXXX")"
 DATA="$TMPD/data"
 OUT="$TMPD/audit-saida.txt"
 WRAP="$TMPD/psql-ro-fake"
+WRAP_PERDA="$TMPD/psql-ro-fake-perda"
+WRAP_SEM_VER="$TMPD/psql-ro-fake-sem-ver"
 export LC_ALL="${LC_ALL:-C}" LANG="${LANG:-C}"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
@@ -65,6 +71,21 @@ exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@"
 WRAPEOF
 chmod +x "$WRAP"
 
+# Wrappers DESONESTOS: o mesmo psql, com a saída MUTILADA de duas formas plausíveis (psql truncado,
+# psqlrc filtrando, pipe quebrado). Existem para provar que o audit REPROVA em vez de ler medição
+# incompleta como "nada divergente" — o falso-verde perfeito. `sed` (e não `grep -v`) porque grep
+# que não casa nada sai 1 e o erro viria do execFileSync, dando o exit certo pelo motivo errado.
+cat > "$WRAP_PERDA" <<WRAPEOF
+#!/usr/bin/env bash
+exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/|MAINTAIN|/d'
+WRAPEOF
+chmod +x "$WRAP_PERDA"
+cat > "$WRAP_SEM_VER" <<WRAPEOF
+#!/usr/bin/env bash
+exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/^VER|/d'
+WRAPEOF
+chmod +x "$WRAP_SEM_VER"
+
 # Roles do Supabase + a tabela no estado FECHADO do contrato.
 P <<'SQL'
 DO $$ BEGIN
@@ -83,9 +104,10 @@ TEST_JSON='{"public.zz_fechada_test":{"fechadaPor":"20260101000000_x.sql","permi
 
 # `|| ec=$?` é obrigatório: sob `set -e`, um audit que sai 1 (o caso que QUEREMOS) mataria o
 # harness antes da asserção, e o teste passaria a nunca reprovar.
+WRAP_ATUAL="$WRAP"   # trocado nos cenários J/K para um wrapper de saída MUTILADA
 run_audit() {
   local ec=0
-  PSQL_RO="$WRAP" AUTHZ_GRANTS_TEST_JSON="$TEST_JSON" \
+  PSQL_RO="$WRAP_ATUAL" AUTHZ_GRANTS_TEST_JSON="$TEST_JSON" \
     bun "$REPO_ROOT/db/audit-grants-tabelas-fechadas.ts" > "$OUT" 2>&1 || ec=$?
   echo "$ec"
 }
@@ -93,14 +115,19 @@ run_audit() {
 PASS=0
 FAIL=0
 # esperar <rótulo> <exit esperado> <código que DEVE aparecer|-> <código que NÃO pode aparecer|->
+#         [<trecho DELIMITADO que DEVE aparecer|->]
 # O 4º argumento é o que separa "acusou" de "acusou a coisa certa": casar só a presença deixaria
 # NAO_APLICADA e DRIFT_PROD indistinguíveis, e o operador aplicaria a correção errada.
+# O 5º é a mesma exigência um nível abaixo: o código DRIFT_PROD sozinho não distingue QUAL
+# privilégio vazou, então um cenário de REFERENCES ficaria verde com o audit acusando TRIGGER —
+# ou acusando qualquer sobra por outro motivo. Ele casa a marca do RAMO, não "acusou algo".
 esperar() {
-  local rotulo="$1" ec_esperado="$2" deve="$3" nao_deve="$4" ec erro=""
+  local rotulo="$1" ec_esperado="$2" deve="$3" nao_deve="$4" trecho="${5:--}" ec erro=""
   ec="$(run_audit)"
   [ "$ec" = "$ec_esperado" ] || erro="exit $ec (esperava $ec_esperado)"
   if [ "$deve" != "-" ] && ! command grep -q "$deve" "$OUT"; then erro="$erro | ausente: $deve"; fi
   if [ "$nao_deve" != "-" ] && command grep -q "$nao_deve" "$OUT"; then erro="$erro | presente indevido: $nao_deve"; fi
+  if [ "$trecho" != "-" ] && ! command grep -q "$trecho" "$OUT"; then erro="$erro | ausente: $trecho"; fi
   if [ -z "$erro" ]; then
     PASS=$((PASS + 1)); echo "  ✅ $rotulo"
   else
@@ -129,9 +156,36 @@ P -c "GRANT SELECT ON TABLE public.zz_fechada_test TO anon;"
 esperar "F: SELECT a anon (permitido vazio) → DRIFT_PROD (exit 1)" 1 DRIFT_PROD NAO_APLICADA
 
 P -c "REVOKE SELECT ON TABLE public.zz_fechada_test FROM anon;"
-esperar "G: tudo revogado → volta ao limpo (exit 0)" 0 - DRIFT_PROD
+# G e H são os privilégios que o contrato sempre aceitou DECLARAR e o audit nunca mediu (até
+# 2026-08-27): GRANT à mão no SQL Editor não é migration, então o gate estático também não os vê.
+# O 5º argumento casa o nome do privilégio no texto — sem ele os dois cenários passariam com o
+# audit acusando qualquer OUTRA sobra, e a extensão pareceria provada sem estar.
+P -c "GRANT REFERENCES ON TABLE public.zz_fechada_test TO anon;"
+esperar "G: REFERENCES a anon → DRIFT_PROD nomeando REFERENCES (exit 1)" 1 DRIFT_PROD NAO_APLICADA \
+  "anon tem REFERENCES"
+
+P -c "REVOKE REFERENCES ON TABLE public.zz_fechada_test FROM anon;"
+P -c "GRANT TRIGGER ON TABLE public.zz_fechada_test TO authenticated;"
+esperar "H: TRIGGER a authenticated → DRIFT_PROD nomeando TRIGGER (exit 1)" 1 DRIFT_PROD NAO_APLICADA \
+  "authenticated tem TRIGGER"
+
+P -c "REVOKE TRIGGER ON TABLE public.zz_fechada_test FROM authenticated;"
+esperar "I: tudo revogado → volta ao limpo (exit 0)" 0 - DRIFT_PROD
+
+# J/K medem a GUARDA DE CARDINALIDADE, não o contrato: o banco está limpo nos dois, e o que muda é
+# a saída do psql. J engole as linhas de UM privilégio — 1 tabela × 2 roles × 8 privilégios = 16
+# linhas ROW| viram 14. Era exatamente o buraco do piso literal `5` (mínimo 10): 14 ≥ 10 saía
+# `exit 0` e "✅ prod bate com o contrato" sobre uma medição incompleta. Com a conta EXATA sai 2.
+WRAP_ATUAL="$WRAP_PERDA"
+esperar "J: 1 privilégio engolido da saída → exit 2, não 0" 2 - DRIFT_PROD "medição inconsistente"
+
+# K tira o denominador: sem VER| o audit não sabe se a query mediu 7 privilégios ou 8, e conferir
+# cardinalidade contra um número desconhecido é teatro. Ausência de dado sai 2, não 0.
+WRAP_ATUAL="$WRAP_SEM_VER"
+esperar "K: saída sem a linha VER| → exit 2 (sem denominador)" 2 - DRIFT_PROD "VER|"
+WRAP_ATUAL="$WRAP"
 
 echo "──────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail  (locale LC_ALL=$LC_ALL)"
 [ "$FAIL" = 0 ] || { echo "❌ VERMELHO"; exit 1; }
-echo "✅ audit de prod com DENTE: acusa reabertura, distingue NAO_APLICADA de DRIFT_PROD, mede MAINTAIN e anon, e reage à correção"
+echo "✅ audit de prod com DENTE: acusa reabertura, distingue NAO_APLICADA de DRIFT_PROD, mede os 8 privilégios (REFERENCES/TRIGGER/MAINTAIN inclusive) e anon, reage à correção e REPROVA medição incompleta"

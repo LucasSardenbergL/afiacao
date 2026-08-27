@@ -52,17 +52,56 @@ function carregarAllowlist(): Record<string, TabelaFechada> {
 }
 
 /**
+ * Os 8 privilégios de TABELA que o contrato aceita declarar (`Priv`, em
+ * scripts/authz-tabelas-fechadas.ts) — TODOS medidos, e a exaustividade é obrigação de TIPO:
+ * `Record<Priv, …>` faz o `scripts:typecheck` reprovar se o contrato ganhar um 9º privilégio que
+ * este auditor não mediria.
+ *
+ * Por que isso é guarda e não decoração: `REFERENCES` e `TRIGGER` ficaram DECLARÁVEIS no
+ * `permitido` e nunca medidos até 2026-08-27 (medidos à MÃO uma única vez, em 2026-08-13). Nessa
+ * janela um `GRANT REFERENCES`/`GRANT TRIGGER` colado no SQL Editor passava por baixo das DUAS
+ * guardas — o gate estático lê migrations, e GRANT à mão não é migration nenhuma. Pior que a
+ * lacuna: declarar `permitido: { anon: ['REFERENCES'] }` fazia o contrato AFIRMAR uma cobertura
+ * inexistente, o modo de falha que o cabeçalho de scripts/authz-manifest.ts chama de "contrato
+ * falso é pior que lacuna".
+ *
+ * O valor é o `server_version_num` MÍNIMO em que `has_table_privilege` sabe responder aquele
+ * privilégio. MAINTAIN nasceu no Postgres 17 e ERRA (não devolve false — ERRA) em versão anterior;
+ * REFERENCES e TRIGGER existem desde sempre, por isso entram com 0, sem ramo de versão.
+ */
+const PRIV_DESDE: Record<Priv, number> = {
+  SELECT: 0,
+  INSERT: 0,
+  UPDATE: 0,
+  DELETE: 0,
+  TRUNCATE: 0,
+  REFERENCES: 0,
+  TRIGGER: 0,
+  MAINTAIN: 170000,
+};
+
+/** Privilégios que ESTA versão de servidor sabe responder. É a MESMA função que gera os ramos da
+ *  query e que dimensiona a conferência de cardinalidade — de propósito: enquanto foram duas
+ *  listas independentes (a query media 6 no PG17, o piso contava 5), perder um privilégio inteiro
+ *  da saída caía DENTRO da folga e passava batido. Uma lista só não pode divergir de si mesma. */
+function privsDaVersao(versao: number): Priv[] {
+  return (Object.keys(PRIV_DESDE) as Priv[]).filter((p) => versao >= PRIV_DESDE[p]);
+}
+
+/**
  * Uma query para toda a medição: produto cartesiano tabela × role × privilégio, cada linha
- * marcada com o prefixo `ROW|` para sobreviver ao eco de `SET` do psqlrc do psql-ro.
+ * marcada com o prefixo `ROW|` para sobreviver ao eco de `SET` do psqlrc do psql-ro. Antes delas
+ * vem UMA linha `VER|<server_version_num>` — não é enfeite: é ela que diz ao parser QUANTOS
+ * privilégios esta query mediu, e sem esse número a conferência de cardinalidade não existe.
  *
  * A tabela entra QUALIFICADA (`schema.name`, direto da chave da allowlist) — `has_table_privilege`
  * resolve o nome qualificado sozinho. Nada de assumir `public`: uma entrada futura em outro schema
  * mediria a tabela errada e o audit ficaria verde por comparar o objeto errado.
  *
- * MAINTAIN só existe no Postgres 17+; `has_table_privilege(...,'MAINTAIN')` ERRA em versão
- * anterior. Prod é 17.6 (medido 2026-08-13) e o `m` de `arwdDxtm` é justamente ele, então vale
- * medir — mas sob CASE de `server_version_num`, para o audit não quebrar se algum dia apontar
- * para um banco mais velho.
+ * Um ramo de CASE por LIMIAR de versão, do mais novo para o mais velho, GERADO de `PRIV_DESDE`: o
+ * primeiro que a versão do servidor alcança vence. Prod é 17.6 (medido 2026-08-27) e o `m` de
+ * `arwdDxtm` é justamente o MAINTAIN, então vale medir — o ramo existe para o audit não quebrar
+ * se algum dia apontar para um banco mais velho.
  *
  * O veredito sai como SIM/NAO de um CASE, não como o boolean cru: `'x'||has_table_privilege(...)`
  * imprime `true`/`false`, e um parser que espere `t`/`f` (o formato de COLUNA boolean) descarta
@@ -72,13 +111,19 @@ function carregarAllowlist(): Record<string, TabelaFechada> {
  */
 function montarQuery(chaves: string[]): string {
   const lista = (xs: readonly string[]) => xs.map((x) => `'${x.replace(/'/g, "''")}'`).join(',');
-  const privBase = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'];
-  return `SELECT 'ROW|'||t||'|'||r||'|'||p||'|'||(CASE WHEN has_table_privilege(r,t,p) THEN 'SIM' ELSE 'NAO' END)
+  const ramos = [...new Set(Object.values(PRIV_DESDE))]
+    .sort((a, b) => b - a)
+    .map(
+      (v) => `WHEN current_setting('server_version_num')::int >= ${v}
+                                 THEN ARRAY[${lista(privsDaVersao(v))}]`,
+    )
+    .join('\n                            ');
+  return `SELECT 'VER|'||current_setting('server_version_num')
+          UNION ALL
+          SELECT 'ROW|'||t||'|'||r||'|'||p||'|'||(CASE WHEN has_table_privilege(r,t,p) THEN 'SIM' ELSE 'NAO' END)
           FROM unnest(ARRAY[${lista(chaves)}]::text[]) t,
                unnest(ARRAY[${lista(ROLES)}]::text[]) r,
-               unnest((CASE WHEN current_setting('server_version_num')::int >= 170000
-                            THEN ARRAY[${lista([...privBase, 'MAINTAIN'])}]
-                            ELSE ARRAY[${lista(privBase)}] END)::text[]) p;`;
+               unnest((CASE ${ramos} END)::text[]) p;`;
 }
 
 function medir(al: Record<string, TabelaFechada>): MedicaoProd {
@@ -93,23 +138,44 @@ function medir(al: Record<string, TabelaFechada>): MedicaoProd {
   }
   const med: MedicaoProd = {};
   let lidas = 0;
+  let versao: number | null = null;
   for (const linha of saida.split('\n')) {
+    if (linha.startsWith('VER|')) {
+      versao = Number.parseInt(linha.slice(4), 10);
+      continue;
+    }
     if (!linha.startsWith('ROW|')) continue; // descarta o eco de SET e linhas em branco
     lidas++;
     const [, tabela, role, priv, tem] = linha.split('|');
     if (tem !== 'SIM') continue; // só o privilégio PRESENTE entra no mapa
     ((med[tabela] ??= {})[role as (typeof ROLES)[number]] ??= []).push(priv as Priv);
   }
-  // A query devolve tabelas × roles × privilégios linhas SEMPRE — inclusive quando a resposta é
-  // "não tem nenhum". Vir menos que o piso significa que a medição quebrou (parser, psqlrc,
-  // saída truncada), e medição quebrada lida como "nada divergente" é o falso-verde perfeito:
-  // um audit silencioso é indistinguível de um audit que aprovou. Ausência de dado sai 2.
-  const piso = chaves.length * ROLES.length * 5;
-  if (lidas < piso) {
+  // Sem a VER| não há denominador: não se sabe se a query mediu 7 privilégios ou 8, e a conferência
+  // abaixo deixa de existir. Ausência de dado não é aprovação — sai 2, como todo erro de execução.
+  if (versao === null || !Number.isFinite(versao)) {
     erroFatal(
-      `medição inconsistente: ${lidas} linha(s) ROW| lidas, mínimo esperado ${piso} ` +
-        `(${chaves.length} tabela(s) × ${ROLES.length} role(s) × 5 privilégios). ` +
-        `A saída do psql mudou de forma — NÃO trate como "tudo fechado".`,
+      'medição inconsistente: a linha VER| (server_version_num) não veio na saída do psql. ' +
+        'Sem ela não se sabe QUANTOS privilégios a query mediu, e a conferência de cardinalidade ' +
+        'deixa de existir. NÃO trate como "tudo fechado".',
+    );
+  }
+  // A query devolve tabelas × roles × privilégios linhas SEMPRE — inclusive quando a resposta é
+  // "não tem nenhum". Divergir da conta significa que a medição quebrou (parser, psqlrc, saída
+  // truncada), e medição quebrada lida como "nada divergente" é o falso-verde perfeito: um audit
+  // silencioso é indistinguível de um audit que aprovou. Ausência de dado sai 2.
+  //
+  // A conta é EXATA (`!==`) e não um piso (`<`), e a troca tem dente: o piso era o literal `5`, que
+  // não acompanhou a query — no PG17 ela já devolvia 6 privilégios, então perder TODAS as linhas de
+  // um privilégio deixava `lidas` em cima do piso e o audit seguia verde sobre medição incompleta.
+  // Piso comparado a literal escrito à mão envelhece sozinho a cada privilégio novo; a conta exata
+  // sai da MESMA lista que a query usou, e ainda pega duplicação de linha, que piso nenhum pega.
+  const nPrivs = privsDaVersao(versao).length;
+  const esperado = chaves.length * ROLES.length * nPrivs;
+  if (lidas !== esperado) {
+    erroFatal(
+      `medição inconsistente: ${lidas} linha(s) ROW| lidas, esperado EXATAMENTE ${esperado} ` +
+        `(${chaves.length} tabela(s) × ${ROLES.length} role(s) × ${nPrivs} privilégio(s) no ` +
+        `server_version_num ${versao}). A saída do psql mudou de forma — NÃO trate como "tudo fechado".`,
     );
   }
   return med;
