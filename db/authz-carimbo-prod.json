@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
-  "medidoEm": "2026-08-27T22:22:35.845Z",
-  "sourceHead": "f17832314fcd3d488414fcd12ccd062b2ff86a56",
+  "schemaVersion": 2,
+  "medidoEm": "2026-08-27T23:02:34.526Z",
+  "sourceHead": "a13051ec6665540a690072a3fd619ed4629122e4",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -14,8 +14,8 @@
       "exit": 0,
       "resumo": "✅ o EXECUTE de prod bate com o contrato nas 43 função(ões) da allowlist.",
       "denominador": "🔎 authz:funcoes:prod — 43 definição(ões) lida(s) para 43 chave(s) da allowlist.",
-      "contratoFingerprint": "a53fc101e98295206c9f67a6ae56e8e9087b46d098077359b1fcb90a189c836c",
-      "auditorFingerprint": "aa77829a21039155a403dd0222e28c77a2024a69bf36b6b77e6c6a2ce3c12b83",
+      "contratoFingerprint": "760e7a22bda323ff845831d4665dc8e3ad440eabd60dbffb433de78644409172",
+      "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
       "achados": []
     },
     "grants": {
@@ -23,8 +23,8 @@
       "exit": 0,
       "resumo": "✅ audit-grants — 3 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
-      "contratoFingerprint": "a30df79275ec861caa72d352a05739b1887871d14f26151102abce883ba54c64",
-      "auditorFingerprint": "c8bfa51c1f3b96b4466c8ca1cff352a2ad75d055db82c0b08f053ef32e4a42af",
+      "contratoFingerprint": "cee49cfd1b9dfcf0bf046f21dc14626f61c305829eca9e7242889f8d037c6529",
+      "auditorFingerprint": "c3f5fb7f9d9470133e862672765f314e8e146508ced179cfbc9e8822e2d6bc02",
       "achados": []
     },
     "audit": {
@@ -32,8 +32,8 @@
       "exit": 0,
       "resumo": "✅ gate do manifest vale no corpo VIVO das 19 funções, e as 3 reescritas baselinadas batem no md5 de prod.",
       "denominador": "🔎 authz:audit:prod — 19 definição(ões) lida(s) para 19 chave(s) do manifest.",
-      "contratoFingerprint": "63af77f2ac72dea36a6df3c6ad669605429481b35573593c1aac1d65ba7c5446",
-      "auditorFingerprint": "fdf594ce0842f3608c60b1c831556b76de4956b41e03f7c52262e45d68d3d3bf",
+      "contratoFingerprint": "20a1123dff0c63b3ee2b93bcc1a4ca6fe62bdabd0d7f37032c942289c8c8e387",
+      "auditorFingerprint": "0866cf4f10a49635c4ed8590c7ed4861b254c4b75cc4e58ca1cdb15b038993c1",
       "achados": []
     },
     "claudeRo": {
@@ -41,8 +41,17 @@
       "exit": 0,
       "resumo": "✅ 25 asserções batem. O endurecimento continua de pé.",
       "denominador": null,
-      "contratoFingerprint": "6ca53b9c00f11c40eebb4d8baed8da29c0e9e576267f724a7ecdd22f62093c4c",
-      "auditorFingerprint": "8cdb88649e4d4132d719b6e27370b61bfeb85da6ca43ca941123060448a4e158",
+      "contratoFingerprint": "fba1c503ed8f6d3413deff12596a6c84ce30986ac11fa6b8d53af7b3f0c17273",
+      "auditorFingerprint": "24e1576e4a7397bb21e7419fa19980d4a48b3f7e5cff1d0b95f2d74c96b7a6ae",
+      "achados": []
+    },
+    "rls": {
+      "script": "authz:rls:prod",
+      "exit": 0,
+      "resumo": "✅ audit-rls — 335 tabela(s) em public com RLS ligada (0 desligada); 7 tabela(s) curada(s), 19 policy(ies) e 6 funcao(oes)-predicado batem com o contrato.",
+      "denominador": null,
+      "contratoFingerprint": "8287b9e98344ea1024f2413aba0759bd2081539c0fc3ca8ac5245f86324744d6",
+      "auditorFingerprint": "7ea0b169c722634cce1f3594cb2e5f058ff28bef7c1657e707b848343576e8aa",
       "achados": []
     }
   }
