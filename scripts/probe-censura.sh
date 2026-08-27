@@ -102,6 +102,26 @@ jq -r '.results[][0] // empty' "$tmp/posthog.json" 2>/dev/null | LC_ALL=C sort -
   head -c 400 "$tmp/posthog.json" >&2; echo >&2; exit 71; }
 N_VISTOS="$(command grep -c . "$tmp/vistos.txt" || true)"
 
+# ⚠️ DENOMINADOR INDEPENDENTE do probe. Sem isto, "zero eventos `telemetria.probe`"
+# era lido como "o canal está morto" — e na PRIMEIRA leitura real (2026-08-27) isso
+# produziu um 🔴 CANAL MUDO falso, com o PostHog tendo recebido 7 eventos naquele
+# mesmo dia. O canal pode estar vivo para todo o resto e não ter o probe porque os
+# clientes ainda executam um build ANTERIOR a ele (`registerType: 'prompt'` mantém
+# o cliente no build velho até ele clicar "Atualizar"). São diagnósticos opostos:
+# um é falha de canal, o outro é adoção de build — e confundi-los foi o defeito.
+"$POSTHOG" "
+SELECT count() AS eventos, count(DISTINCT distinct_id) AS clientes,
+       arrayStringConcat(groupUniqArray(coalesce(properties.build_id,'(sem)')), ',') AS builds
+FROM events WHERE timestamp > now() - INTERVAL $JANELA_DIAS DAY
+" > "$tmp/canal.json" 2>"$tmp/canal.err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "❌ não consegui medir o canal (posthog-query rc=$rc) — sem denominador não há veredito." >&2
+  head -c 400 "$tmp/canal.err" >&2; echo >&2; exit 71
+fi
+CANAL_EVENTOS="$(jq -r '.results[0][0] // 0' "$tmp/canal.json" 2>/dev/null || echo 0)"
+CANAL_BUILDS="$(jq -r '.results[0][2] // "-"' "$tmp/canal.json" 2>/dev/null || echo -)"
+
 # ---------- cruzamento ----------
 # LC_ALL=C nos DOIS lados: `comm` compara byte a byte e exige a mesma ordem que
 # `sort` produziu. Locale diferente entre eles cruza errado e ainda avisa em stderr.
@@ -109,9 +129,16 @@ cut -d'|' -f1 "$tmp/tabela.txt" | LC_ALL=C sort -u > "$tmp/gravados.txt"
 LC_ALL=C comm -23 "$tmp/gravados.txt" "$tmp/vistos.txt" > "$tmp/orfaos.txt"
 N_ORFAOS="$(command grep -c . "$tmp/orfaos.txt" || true)"
 
+# "Um só não conclui nada" (§6) vale para TODO veredito, não só o por aparelho.
+AVISO_AMOSTRA=""
+if [ "$N_TABELA" -lt 2 ]; then
+  AVISO_AMOSTRA="⚠️  AMOSTRA=$N_TABELA — abaixo do mínimo de 2 para qualquer conclusão. Leia como indício."
+fi
+
 echo "═══ Reconciliação do probe de censura ═══"
 echo "janela=${JANELA_DIAS}d  carência=${CARENCIA_MIN}min"
 echo "gravados (lado imune): $N_TABELA   ·   vistos no PostHog: $N_VISTOS   ·   ÓRFÃOS: $N_ORFAOS"
+[ -n "$AVISO_AMOSTRA" ] && echo "$AVISO_AMOSTRA"
 echo
 
 if [ "$N_ORFAOS" -eq 0 ]; then
@@ -119,10 +146,20 @@ if [ "$N_ORFAOS" -eq 0 ]; then
   exit 0
 fi
 
-if [ "$N_VISTOS" -eq 0 ]; then
-  echo "🔴 CANAL INTEIRO MUDO — $N_TABELA probes gravados, ZERO eventos no PostHog."
-  echo "   Este NÃO é o diagnóstico de bloqueador por aparelho: nenhum aparelho entregou."
+if [ "$N_VISTOS" -eq 0 ] && [ "$CANAL_EVENTOS" -eq 0 ]; then
+  echo "🔴 CANAL INTEIRO MUDO — $N_TABELA probes gravados e ZERO eventos de QUALQUER tipo no PostHog."
+  echo "   Este NÃO é o diagnóstico de bloqueador por aparelho: nenhum aparelho entregou nada."
   echo "   Investigue config/key/ingest ANTES de concluir censura (o #1967 é essa lição)."
+  exit 0
+fi
+
+if [ "$N_VISTOS" -eq 0 ]; then
+  echo "🟡 PROBE ausente do canal, mas o CANAL ESTÁ VIVO — $CANAL_EVENTOS eventos de outros tipos na janela."
+  echo "   Builds vistos no PostHog: $CANAL_BUILDS"
+  echo "   A explicação mais provável NÃO é censura: é ADOÇÃO DE BUILD. Com registerType 'prompt'"
+  echo "   o cliente fica no build ANTERIOR até clicar \"Atualizar\" — e build sem o probe não emite"
+  echo "   \`telemetria.probe\` nem grava linha. Confira se os builds acima já contêm o probe"
+  echo "   (§6: a adoção se lê por build_id) ANTES de suspeitar do canal."
   exit 0
 fi
 
