@@ -24,9 +24,12 @@
  *
  * ⚠️ LIMITE DE ESCOPO — o carimbo NÃO atesta "a autorização de prod". Atesta FATIAS CURADAS
  * dela, com pontos cegos medidos (não deduzidos), listados em `docs/agent/database.md` §1:
- *   · o audit de grants mede 6 privilégios (SELECT/INSERT/UPDATE/DELETE/TRUNCATE + MAINTAIN no
- *     PG17) dos 8 que o tipo `Priv` declara — `REFERENCES` e `TRIGGER` são declaráveis no contrato
- *     e NUNCA medidos em prod;
+ *   · o audit de grants passou a medir os 8 privilégios que o tipo `Priv` declara (#2062,
+ *     2026-08-27) — `REFERENCES`/`TRIGGER` deixaram de ser declaráveis-e-nunca-medidos, e no PG17
+ *     o `MAINTAIN` entra pelo ramo de versão. ⚠️ Este bullet ficou 1 commit AFIRMANDO a lacuna
+ *     depois de ela ser fechada: o #2062 corrigiu o auditor e não voltou aqui. Limite declarado
+ *     também envelhece — e um que descreve um buraco JÁ fechado engana na direção oposta, fazendo
+ *     alguém "consertar" o que já está certo;
  *   · ACL por COLUNA fica fora (`has_table_privilege` é table-level) — e é justamente o vetor que
  *     importa em `sales_orders` (`GRANT SELECT (omie_payload)`);
  *   · RLS vivo passou a ser reconciliado em 2026-08-27 pelo `authz:rls:prod` (a chave `rls`, ver
@@ -205,8 +208,14 @@ function sha256(s: string): string {
   return createHash('sha256').update(s, 'utf8').digest('hex');
 }
 
-/** O DADO que cada audit compara contra prod. */
-function dadoDoContrato(chave: ChaveAudit): unknown {
+/** O DADO que cada audit compara contra prod.
+ *
+ *  Exportada para ser TESTÁVEL, e a razão é uma falsificação que passou verde: o teste do eixo de
+ *  RLS montava `{tabelas, predicados, plataforma}` no próprio arquivo de teste e canonicalizava —
+ *  o que prova que `canonicalizar` funciona, e NADA sobre esta função. Remover um eixo daqui não
+ *  produzia vermelho nenhum. Assert que reconstrói a entrada em vez de exercer o caminho real é a
+ *  forma mais discreta de teatro. */
+export function dadoDoContrato(chave: ChaveAudit): unknown {
   switch (chave) {
     case 'funcoes':
       return AUTHZ_FUNCOES_FECHADAS;
