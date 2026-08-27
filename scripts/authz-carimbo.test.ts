@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { AUTHZ_MANIFEST } from './authz-manifest';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
+import { AUTHZ_RLS_ESPERADO, AUTHZ_RLS_PREDICADOS, PREDICADOS_PLATAFORMA } from './authz-rls-esperado';
 
 import {
   AVISO_DIAS,
@@ -17,6 +18,8 @@ import {
   canonicalizar,
   fingerprintContrato,
   fingerprintAuditor,
+  dadoDoContrato,
+  envDeTesteSetadas,
   idFinding,
   type Carimbo,
   type ChaveAudit,
@@ -121,7 +124,7 @@ describe('fingerprint — sensibilidade (falsificação)', () => {
     }
   });
 
-  it('difere entre os 3 audits (não há colisão de escopo)', () => {
+  it('difere entre TODOS os audits (não há colisão de escopo)', () => {
     const cts = new Set(CHAVES.map(fingerprintContrato));
     const aus = new Set(CHAVES.map(fingerprintAuditor));
     expect(cts.size).toBe(CHAVES.length);
@@ -252,7 +255,7 @@ describe('avaliarCarimbo — os eixos e suas severidades', () => {
 // teste que envelhece sozinho quebraria a suíte inteira no 15º dia por algo que não é regressão.
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 describe('db/authz-carimbo-prod.json — o artefato commitado', () => {
-  it('existe, parseia e tem os 3 audits com a forma esperada', () => {
+  it('existe, parseia e tem TODOS os audits de AUDITS com a forma esperada', () => {
     expect(existsSync(CARIMBO_PATH)).toBe(true);
     const c = JSON.parse(readFileSync(CARIMBO_PATH, 'utf8')) as Carimbo;
     expect(c.schemaVersion).toBe(SCHEMA_VERSION);
@@ -449,5 +452,80 @@ describe('escolherResumo — o veredito é a ÚLTIMA linha ✅, não a primeira'
 
   it('saída vazia devolve string vazia, não explode', () => {
     expect(escolherResumo([])).toBe('');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// A 5ª chave (`rls`, 2026-08-27) e a guarda de env de teste que ela obrigou a generalizar.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+describe('chave `rls` — a quarta guarda enumerada', () => {
+  it('está em AUDITS, com o script e os DOIS arquivos de auditor', () => {
+    expect(AUDITS.rls).toBeDefined();
+    expect(AUDITS.rls.script).toBe('authz:rls:prod');
+    expect(AUDITS.rls.auditorFiles).toEqual(['db/audit-rls-prod.ts', 'scripts/lib/authz-rls.ts']);
+    // o contrato dela é um MÓDULO do repo, não a baseline embutida no auditor
+    expect(AUDITS.rls.contratoEmArquivo).toBeUndefined();
+  });
+
+  it('o contrato que o carimbo USA carrega os TRÊS eixos, por identidade', () => {
+    // Exerce `dadoDoContrato`, não uma reconstrução do objeto: a primeira versão deste teste
+    // montava `{tabelas, predicados, plataforma}` aqui e canonicalizava — remover um eixo da
+    // função real seguia VERDE (pego na falsificação). Identidade de referência é o que faz
+    // "esqueci de incluir o eixo" virar vermelho.
+    const d = dadoDoContrato('rls') as Record<string, unknown>;
+    expect(d.tabelas).toBe(AUTHZ_RLS_ESPERADO);
+    expect(d.predicados).toBe(AUTHZ_RLS_PREDICADOS);
+    expect(d.plataforma).toBe(PREDICADOS_PLATAFORMA);
+    expect(Object.keys(d).sort()).toEqual(['plataforma', 'predicados', 'tabelas']);
+  });
+
+  it('o canônico do contrato REAL representa o Set — o eixo mais permissivo dos três', () => {
+    // Mover uma função para dentro de PREDICADOS_PLATAFORMA dispensa o congelamento do corpo dela;
+    // é o eixo cuja mudança AFROUXA. `JSON.stringify(new Set(['a']))` é `'{}'` — se o canônico não
+    // o representasse, esse afrouxamento não moveria o fingerprint. Cegueira no pior lugar.
+    const canon = canonicalizar(dadoDoContrato('rls'));
+    expect(canon).toContain('Set(');
+    expect(canon).toContain('auth.uid');
+    expect(canon).toContain('public.has_role');
+    expect(canon).toContain('public.sales_orders');
+  });
+
+  it.each([
+    ['policy a mais', (c: Record<string, unknown>) => ({ ...c, zz: { forceRls: false, policies: {}, motivo: 'x' } })],
+    ['plataforma ampliada', null],
+  ])('a mutação "%s" move o canônico do contrato de rls', (rot, mut) => {
+    const base = canonicalizar(dadoDoContrato('rls'));
+    const depois =
+      mut === null
+        ? canonicalizar({
+            tabelas: AUTHZ_RLS_ESPERADO, predicados: AUTHZ_RLS_PREDICADOS,
+            plataforma: new Set([...PREDICADOS_PLATAFORMA, 'public.has_role']),
+          })
+        : canonicalizar({
+            tabelas: mut(AUTHZ_RLS_ESPERADO as unknown as Record<string, unknown>),
+            predicados: AUTHZ_RLS_PREDICADOS, plataforma: PREDICADOS_PLATAFORMA,
+          });
+    expect(depois, rot).not.toBe(base);
+  });
+});
+
+describe('envDeTesteSetadas — a guarda que a lista literal já tinha deixado passar', () => {
+  it('pega QUALQUER AUTHZ_*_TEST_JSON, não só as duas que existiam quando a regra nasceu', () => {
+    expect(envDeTesteSetadas({ AUTHZ_GRANTS_TEST_JSON: '{}' })).toEqual(['AUTHZ_GRANTS_TEST_JSON']);
+    expect(envDeTesteSetadas({ AUTHZ_RLS_TEST_JSON: '{}' })).toEqual(['AUTHZ_RLS_TEST_JSON']);
+    // o audit que ainda não existe — é o caso que a lista literal erraria
+    expect(envDeTesteSetadas({ AUTHZ_QUALQUER_COISA_TEST_JSON: '{}' })).toEqual(['AUTHZ_QUALQUER_COISA_TEST_JSON']);
+  });
+
+  it('TODO audit de AUDITS teria sua env de teste canônica recusada', () => {
+    for (const k of CHAVES) {
+      const nome = `AUTHZ_${k.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}_TEST_JSON`;
+      expect(envDeTesteSetadas({ [nome]: '{}' }), nome).toEqual([nome]);
+    }
+  });
+
+  it('ignora env vazia e env que não é de contrato (falso-positivo custa, mas não silencia)', () => {
+    expect(envDeTesteSetadas({ AUTHZ_RLS_TEST_JSON: '' })).toEqual([]);
+    expect(envDeTesteSetadas({ PSQL_RO: '/x', AUTHZ_TEST: '1', TEST_JSON: '1' })).toEqual([]);
   });
 });

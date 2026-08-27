@@ -1,8 +1,8 @@
 /**
- * authz-carimbo.ts — núcleo PURO do carimbo de evidência dos 3 audits de produção.
+ * authz-carimbo.ts — núcleo PURO do carimbo de evidência dos audits de produção.
  * ============================================================================================
  *
- * O PROBLEMA que este módulo existe para fechar. Os três audits de prod (`authz:funcoes:prod`,
+ * O PROBLEMA que este módulo existe para fechar. Os audits de prod (`authz:funcoes:prod`,
  * `authz:grants:prod`, `authz:audit:prod`) são a ÚNICA guarda que enxerga dois vetores que o gate
  * estático do CI não alcança por construção: (1) `GRANT`/`REVOKE` colado à mão no SQL Editor do
  * Lovable, que não passa por migration nenhuma; (2) migration que mergeou na main e nunca foi
@@ -22,17 +22,28 @@
  * defesa contra fabricação é econômica, não criptográfica: rodar o comando é 1 linha, forjar o
  * JSON exige manter DOIS fingerprints coerentes à mão. O modelo de ameaça é ERRO, não fraude.
  *
- * ⚠️ LIMITE DE ESCOPO — o carimbo NÃO atesta "a autorização de prod". Atesta três FATIAS CURADAS
+ * ⚠️ LIMITE DE ESCOPO — o carimbo NÃO atesta "a autorização de prod". Atesta FATIAS CURADAS
  * dela, com pontos cegos medidos (não deduzidos), listados em `docs/agent/database.md` §1:
- *   · o audit de grants mede 6 privilégios (SELECT/INSERT/UPDATE/DELETE/TRUNCATE + MAINTAIN no
- *     PG17) dos 8 que o tipo `Priv` declara — `REFERENCES` e `TRIGGER` são declaráveis no contrato
- *     e NUNCA medidos em prod;
+ *   · o audit de grants passou a medir os 8 privilégios que o tipo `Priv` declara (#2062,
+ *     2026-08-27) — `REFERENCES`/`TRIGGER` deixaram de ser declaráveis-e-nunca-medidos, e no PG17
+ *     o `MAINTAIN` entra pelo ramo de versão. ⚠️ Este bullet ficou 1 commit AFIRMANDO a lacuna
+ *     depois de ela ser fechada: o #2062 corrigiu o auditor e não voltou aqui. Limite declarado
+ *     também envelhece — e um que descreve um buraco JÁ fechado engana na direção oposta, fazendo
+ *     alguém "consertar" o que já está certo;
  *   · ACL por COLUNA fica fora (`has_table_privilege` é table-level) — e é justamente o vetor que
  *     importa em `sales_orders` (`GRANT SELECT (omie_payload)`);
- *   · RLS vivo (`relrowsecurity`, policies, `qual`/`with_check`) não é reconciliado por nenhum dos
- *     três — um `ALTER TABLE … DISABLE ROW LEVEL SECURITY` à mão sai verde.
+ *   · RLS vivo passou a ser reconciliado em 2026-08-27 pelo `authz:rls:prod` (a chave `rls`, ver
+ *     AUDITS) — mas com escopo declarado, não total: o INTERRUPTOR (`relrowsecurity`) é universal,
+ *     enquanto o CONTEÚDO das policies e o corpo dos predicados cobrem 7 tabelas curadas de 335.
+ *     As outras ~328 seguem com o conteúdo das policies **não** reconciliado, e o que a guarda não
+ *     alcança em eixo nenhum (bypass por `service_role`/SECDEF/view `invoker=off`, ACL por coluna,
+ *     o 2º nível do grafo de predicados) está no cabeçalho de `scripts/lib/authz-rls.ts`.
  * Dizer isso vale mais do que um carimbo que finge cobrir tudo: contrato falso é pior que lacuna,
  * porque o CI passa a AFIRMAR cobertura que não existe (a regra é do cabeçalho do AUTHZ_MANIFEST).
+ *
+ * ⚠️ Este bullet é a prova de que o formato funciona — e do seu limite. A lacuna de RLS ficou
+ * escrita aqui, correta e visível, e ainda assim `relrowsecurity` passou sem leitor até alguém
+ * escrever o comando. Declarar o não-medido impede o verde de mentir; não fecha o buraco.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -42,14 +53,21 @@ import { AUTHZ_FUNCOES_FECHADAS } from '../authz-funcoes-fechadas';
 import { AUTHZ_TABELAS_FECHADAS } from '../authz-tabelas-fechadas';
 import { AUTHZ_MANIFEST } from '../authz-manifest';
 import { AUTHZ_REESCRITAS_CONHECIDAS } from '../authz-reescritas-conhecidas';
+import { AUTHZ_RLS_ESPERADO, AUTHZ_RLS_PREDICADOS, PREDICADOS_PLATAFORMA } from '../authz-rls-esperado';
 
 /** Raiz do repo, a partir de `scripts/lib/` — o gate roda do CI e do laptop, e `process.cwd()`
  *  difere entre os dois. */
 export const RAIZ = join(import.meta.dirname, '..', '..');
 export const CARIMBO_PATH = join(RAIZ, 'db', 'authz-carimbo-prod.json');
 
-/** Versão do FORMATO do carimbo. Bump ⇒ carimbo antigo é ilegível ⇒ fail-closed (re-medir). */
-export const SCHEMA_VERSION = 1;
+/** Versão do FORMATO do carimbo. Bump ⇒ carimbo antigo é ilegível ⇒ fail-closed (re-medir).
+ *
+ *  v2 (2026-08-27): entrou a 5ª chave, `rls`. O bump é OBRIGATÓRIO e não cosmético — um carimbo v1
+ *  não tem o campo `audits.rls`, e sem ele o gate leria a ausência do audit de RLS como "não há
+ *  nada a dizer sobre RLS" em vez de "isto nunca foi medido". Ausência de dado não é aprovação: o
+ *  carimbo antigo passa a ser rejeitado, e a renovação (`bun run authz:carimbo:gravar`) é o que
+ *  devolve o verde — com o eixo novo medido junto. */
+export const SCHEMA_VERSION = 2;
 
 /**
  * Os dois limiares de idade, e por que são DOIS.
@@ -64,9 +82,9 @@ export const SCHEMA_VERSION = 1;
 export const AVISO_DIAS = 7;
 export const VENCIDO_DIAS = 14;
 
-export type ChaveAudit = 'funcoes' | 'grants' | 'audit' | 'claudeRo';
+export type ChaveAudit = 'funcoes' | 'grants' | 'audit' | 'claudeRo' | 'rls';
 
-/** Os 3 audits, com o script npm que os roda e os arquivos que compõem cada FINGERPRINT.
+/** Os audits de prod, com o script npm que os roda e os arquivos que compõem cada FINGERPRINT.
  *
  *  `contrato` = o que o audit COMPARA (o que o repo declara). `auditor` = o INSTRUMENTO que faz a
  *  comparação. São eixos distintos e o bug de `REFERENCES`/`TRIGGER` é a prova de por quê: com
@@ -104,6 +122,18 @@ export const AUDITS: Record<
     script: 'authz:claude-ro:prod',
     auditorFiles: ['db/audit-claude-ro-hardening.ts'],
     contratoEmArquivo: true,
+  },
+  // A QUARTA guarda (2026-08-27), e a que fecha um ponto cego que o cabeçalho DESTE arquivo já
+  // nomeava: "RLS vivo (`relrowsecurity`, policies, `qual`/`with_check`) não é reconciliado por
+  // nenhum dos três — um `ALTER TABLE … DISABLE ROW LEVEL SECURITY` à mão sai verde". Entrar aqui
+  // é o que lhe dá cadência; sem isso ela seria mais um comando que "alguém rodou um dia".
+  //
+  // O `contrato` dela tem TRÊS partes porque o audit compara três coisas independentes, e o
+  // fingerprint precisa cobrir as três: mexer só nos predicados (sem tocar policy nenhuma) muda o
+  // que prod tem de satisfazer tanto quanto mexer numa policy.
+  rls: {
+    script: 'authz:rls:prod',
+    auditorFiles: ['db/audit-rls-prod.ts', 'scripts/lib/authz-rls.ts'],
   },
 };
 
@@ -178,8 +208,14 @@ function sha256(s: string): string {
   return createHash('sha256').update(s, 'utf8').digest('hex');
 }
 
-/** O DADO que cada audit compara contra prod. */
-function dadoDoContrato(chave: ChaveAudit): unknown {
+/** O DADO que cada audit compara contra prod.
+ *
+ *  Exportada para ser TESTÁVEL, e a razão é uma falsificação que passou verde: o teste do eixo de
+ *  RLS montava `{tabelas, predicados, plataforma}` no próprio arquivo de teste e canonicalizava —
+ *  o que prova que `canonicalizar` funciona, e NADA sobre esta função. Remover um eixo daqui não
+ *  produzia vermelho nenhum. Assert que reconstrói a entrada em vez de exercer o caminho real é a
+ *  forma mais discreta de teatro. */
+export function dadoDoContrato(chave: ChaveAudit): unknown {
   switch (chave) {
     case 'funcoes':
       return AUTHZ_FUNCOES_FECHADAS;
@@ -191,6 +227,18 @@ function dadoDoContrato(chave: ChaveAudit): unknown {
     case 'claudeRo':
       // Sem módulo de contrato: a baseline mora no próprio auditor (ver `contratoEmArquivo`).
       return null;
+    case 'rls':
+      // As TRÊS: o conjunto de policies curadas, o md5 dos predicados que elas chamam, e quais
+      // funções são da PLATAFORMA (o único eixo cuja mudança NÃO é achado — mover uma função para
+      // dentro desse Set é afrouxar o contrato, e tem de mover o fingerprint junto).
+      // `PREDICADOS_PLATAFORMA` é um Set: entra aqui já sabendo que `canonicalizar` o representa
+      // com tag de tipo — um `JSON.stringify` ingênuo o serializaria como `{}` e o fingerprint
+      // nasceria cego exatamente no eixo mais permissivo dos três.
+      return {
+        tabelas: AUTHZ_RLS_ESPERADO,
+        predicados: AUTHZ_RLS_PREDICADOS,
+        plataforma: PREDICADOS_PLATAFORMA,
+      };
   }
 }
 
@@ -210,6 +258,24 @@ export function fingerprintContrato(chave: ChaveAudit): string {
 export function fingerprintAuditor(chave: ChaveAudit): string {
   const partes = AUDITS[chave].auditorFiles.map((rel) => `${rel}\n${readFileSync(join(RAIZ, rel), 'utf8')}`);
   return sha256(`v${SCHEMA_VERSION}|${chave}|${partes.join('\n---\n')}`);
+}
+
+/**
+ * As env vars que trocam o CONTRATO de um audit por uma allowlist sintética (o harness PG17 usa
+ * `AUTHZ_GRANTS_TEST_JSON`, `AUTHZ_RLS_TEST_JSON`, …). O runner do carimbo tem de RECUSAR todas —
+ * carimbar com uma delas setada produz evidência sobre um contrato que não é o do repo.
+ *
+ * 🔴 Por que por PREFIXO e não por lista literal: a lista literal é um apodrecimento com data
+ * marcada. Ela nasceu com dois nomes; o audit de RLS chegou depois com um terceiro, que a lista
+ * não conhecia — e o runner teria carimbado um contrato de teste como se fosse produção, em
+ * silêncio. Casar o PADRÃO faz o audit futuro nascer coberto, que é a direção certa para uma
+ * guarda: falso-positivo (uma env `AUTHZ_*_TEST_JSON` que não seja de contrato) custa uma
+ * mensagem de erro; falso-negativo custa um carimbo mentiroso.
+ */
+export function envDeTesteSetadas(env: Record<string, string | undefined>): string[] {
+  return Object.keys(env)
+    .filter((k) => /^AUTHZ_[A-Z0-9_]*_TEST_JSON$/.test(k) && env[k])
+    .sort();
 }
 
 export interface Achado {

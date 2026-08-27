@@ -383,7 +383,7 @@ jobs:
         run: bun run authz:check
 
       # Irmão do gate acima no MESMO domínio, e a divisão entre eles é o ponto: `authz:check` lê o
-      # REPO (migrations) e nunca vê produção; os 3 audits de prod leem o BANCO e são os únicos que
+      # REPO (migrations) e nunca vê produção; os audits de prod leem o BANCO e são os únicos que
       # pegam `GRANT`/`REVOKE` colado à mão no SQL Editor e migration que mergeou e nunca foi
       # aplicada. Só que eles NÃO rodam aqui — o runner não tem `psql-ro`, e não deve ter: a
       # credencial é local (`~/.config/afiacao/psql-ro`, role `claude_ro`). Sem cadência, a garantia
