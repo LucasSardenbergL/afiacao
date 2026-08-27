@@ -21,6 +21,7 @@ DATA="$(mktemp -d /tmp/pgtest-netrevoke.XXXXXX)/data"
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
+# shellcheck disable=SC2329  # invocada pelo `trap EXIT`, que o shellcheck nao enxerga
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
