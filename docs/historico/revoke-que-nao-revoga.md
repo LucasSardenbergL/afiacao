@@ -467,7 +467,7 @@ a browser headless).
 
 **ENVIADO em 2026-08-26 03:06 UTC** — thread Gmail `1a03c0904655abf1`, confirmado com evidência positiva
 (label `SENT`, `toRecipients = support@lovable.dev`, assunto e corpo conferidos), não pelo retorno da
-chamada. **Aguardando resposta.**
+chamada. **RESPONDIDO em 2026-08-26 15:07 UTC — e a resposta é NÃO.** Ver a seção final.
 
 ### As 7 funções que SOBRAM com `EXECUTE` p/ PUBLIC — auditadas (2026-08-26)
 
@@ -645,13 +645,16 @@ tem de deixar a asserção vermelha.
 
 ## Rascunho da resposta ao suporte — PRONTO, NÃO ENVIADO (2026-08-27)
 
-O bloco corrigido acima ainda **não** chegou ao suporte: a sessão que o produziu não tinha Gmail
-autenticado, e responder ao ticket é ação externa que depende do founder. Enquanto isso, o SQL que
-está na mão do suporte é o **antigo** — o que tira o INSERT do worker do pg_net.
+> ⚠️ **ESTA SEÇÃO NASCEU ERRADA E FICA À VISTA.** Ela foi escrita em 2026-08-27 afirmando que o
+> suporte "ainda não respondeu" e que a janela seguia aberta. **O suporte já havia respondido em
+> 2026-08-26 15:07 UTC, recusando.** O e-mail abaixo, portanto, **não deve ser enviado** — ele pede a
+> execução de um bloco que a plataforma acabou de dizer que não executa. O texto fica registrado
+> porque o BLOCO continua correto e será necessário se o projeto migrar para Supabase próprio.
+
+O bloco corrigido acima nunca chegou ao suporte.
 
 Medido no fecho da sessão (`bun run authz:claude-ro:prod`, `exit 0`): **"ACL do schema net: 16
-entradas, idênticas ao baseline"** ⇒ o suporte ainda não executou nada, e a janela para corrigir
-continua aberta. Quando ele executar, esse mesmo vigia fica **vermelho por desenho** (ele acusa
+entradas, idênticas ao baseline"** ⇒ o suporte não executou nada — e agora sabemos que **nunca vai**. Quando ele executar, esse mesmo vigia fica **vermelho por desenho** (ele acusa
 mudança nos dois sentidos) — o baseline em `db/audit-claude-ro-hardening.ts` precisa ser atualizado
 no mesmo momento, senão o vigia vira ruído e para de ser lido.
 
@@ -780,3 +783,55 @@ Lucas
 ```
 
 </details>
+
+
+## O suporte RECUSOU — e o furo do `net` é PERMANENTE no Lovable Cloud (2026-08-26 15:07 UTC)
+
+**Resposta do suporte (Albert, humano — não o agente de IA que respondeu 3 min após o envio):**
+
+> "this is not something we can do. Lovable Cloud is a fully managed backend: the database is
+> provisioned and operated by us, and **neither the project owner nor our support team holds the
+> owner-level or superuser access those statements require**. […] Privileged role and schema
+> operations on managed extension schemas such as **net, cron and vault are not a user-facing
+> capability**, and we do not have a mechanism for running statements at that privilege level on a
+> customer's behalf. So the transactional REVOKE/GRANT block cannot be applied on your project, and
+> we also cannot supply the before/after verification output you asked for."
+
+A alternativa que ele oferece é **migrar para um projeto Supabase próprio** conectado ao Lovable, onde
+o founder é dono no dashboard e aplica os grants ele mesmo.
+
+### O que isso muda
+
+1. **Não há janela, e não havia.** A resposta chegou **30 horas antes** da sessão de 2026-08-27 que
+   rodou o `/codex` sobre o bloco. Essa sessão trabalhou a tarde inteira sobre a premissa
+   "o suporte ainda não respondeu", herdada do chip e deste doc, **sem nunca abrir a thread** — não
+   havia Gmail autenticado na sessão até o fim dela. A premissa era falsificável o tempo todo por
+   quem tivesse a caixa aberta.
+2. **O trabalho técnico NÃO foi perdido.** Os três defeitos (D4/D5/D6) são reais, e o bloco corrigido
+   é o que se aplica **se** o projeto migrar. A prova em `db/test-returning-exige-select.sh` vale
+   independentemente de quem executa o SQL.
+3. **O que muda é a POSTURA de segurança.** Isto deixa de ser "vamos fechar o `net`" e passa a ser
+   **"não dá para fechar o `net` aqui"**. Enquanto o projeto viver no Lovable Cloud:
+   - qualquer papel do banco faz **egress HTTP arbitrário** de dentro do Postgres;
+   - qualquer papel **lê `net.http_request_queue`**, onde trafega o header `x-cron-secret` em texto
+     plano, e **`net._http_response`**, que retém 6h de respostas com corpo.
+   ⇒ O `x-cron-secret` **não é um segredo** neste ambiente: ele é legível por qualquer role, incluindo
+   os de leitura. Toda defesa que dependa dele como prova de identidade está apoiada em nada. A
+   mitigação que sobra não é ACL — é **não confiar nesse header sozinho** nas edges.
+
+### A decisão que fica para o founder (não é técnica)
+
+Migrar para Supabase próprio fecha o `net` e devolve o controle de ACL — ao custo de assumir a
+operação do banco (backups, upgrades, PITR) que hoje é do Lovable. Não migrar mantém a operação
+terceirizada e aceita, **em definitivo**, os dois itens acima. Não há terceira via: a plataforma foi
+explícita de que não existe caminho suportado para ACL em schema de extensão gerenciada.
+
+### A lição, que é a mesma do Achado 3 outra vez
+
+O Achado 3 saiu invertido porque uma enumeração incompleta foi lida como completa. Aqui, um **estado
+externo** ("aguardando resposta") foi carregado de sessão em sessão como fato, quando era uma
+**leitura com prazo de validade** — e a sessão seguinte o repetiu sem reconferir, inclusive escrevendo
+"a janela continua aberta" num commit. **Estado que mora fora do repo (ticket, e-mail, fila de
+suporte) não é fato: é medição, e envelhece.** Antes de trabalhar em cima de um, releia a fonte — e se
+a sessão não tem como reler, o registro tem de dizer *"não verificado nesta sessão"*, nunca repetir a
+afirmação antiga como se fosse presente.
