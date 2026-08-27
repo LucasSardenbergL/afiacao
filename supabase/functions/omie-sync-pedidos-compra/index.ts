@@ -11,6 +11,7 @@ import {
   deveRodarCompleto,
   type ModoSyncPedidos,
 } from "../_shared/janela-pedidos-compra.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -988,32 +989,32 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   } catch { return false; }
 }
 
+// `versao` em TODA resposta (sucesso e erro), não só na da sonda — é a metade da prova que
+// dispensa invocação. O `omie-cron-diario` faz `JSON.parse` do corpo deste step e o devolve
+// inteiro em `resultados.pedidos.body`, então o marcador viaja para `net._http_response` no tick de
+// 2h do jobid 52 e o deploy se prova sem ninguém chamar nada e sem pagar efeito.
+function jsonRes(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   if (!(await authorizeCronOrStaff(req))) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonRes({ error: "Unauthorized" }, 401);
   }
 
-  const t0 = Date.now();
-
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return new Response(
-      JSON.stringify({ ok: false, error: "SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausentes" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  }
-
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false },
-  });
-
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient,
+  // da varredura no Omie e de qualquer escrita. O parse do corpo SUBIU para cá de propósito: no
+  // desenho anterior ele vinha depois do `createClient`, e a sonda ali já teria custo. Daqui pra
+  // frente a edge reescreve o espelho de pedidos, avança o heartbeat de `sync_state` e publica o
+  // run. req.json() é one-shot: o corpo lido aqui é reaproveitado no fluxo real abaixo.
+  // Ver versao.ts / _shared/sonda-versao.ts.
   let body: RequestBody = {};
   if (req.method === "POST") {
     try {
@@ -1022,6 +1023,25 @@ Deno.serve(async (req) => {
       body = {};
     }
   }
+
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+  // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no fluxo real por omissão.
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
+  const t0 = Date.now();
+
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return jsonRes({ ok: false, error: "SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausentes" }, 500);
+  }
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false },
+  });
 
   const empresaParam = (body.empresa ?? "ALL").toUpperCase() as "OBEN" | "COLACOR" | "ALL";
   const dias = typeof body.dias === "number" && body.dias > 0 ? body.dias : 30;
@@ -1125,17 +1145,14 @@ Deno.serve(async (req) => {
   ): Promise<Response> => {
     try {
       const { summary, falhaTotalGeral } = await work;
-      return new Response(
-        JSON.stringify({ ok: !falhaTotalGeral, duracao_ms: Date.now() - t0, sayerlack: SAYERLACK, summary }),
-        { status: falhaTotalGeral ? 502 : 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      return jsonRes(
+        { ok: !falhaTotalGeral, duracao_ms: Date.now() - t0, sayerlack: SAYERLACK, summary },
+        falhaTotalGeral ? 502 : 200,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[sync-pedidos] erro fatal:", msg);
-      return new Response(
-        JSON.stringify({ ok: false, error: msg, duracao_ms: Date.now() - t0 }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return jsonRes({ ok: false, error: msg, duracao_ms: Date.now() - t0 }, 500);
     }
   };
 
