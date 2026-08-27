@@ -141,6 +141,8 @@ não só o `index.ts` (#2018).
 #        + "✓ CONTROLE_POSITIVO_OK — <entry> ainda devolve bytes e o mesmo grep acha '<agulha>'"
 #        + LIB_SEM_A_SENTINELA | SENTINELA_TAMBEM_NA_LIB | LIB_NAO_CONSULTADA (sonda do 2º emissor,
 #          pré-rede: AVISA e nunca muda o exit — node_modules é preditor, não prova)
+#        + SENTINELA_DELIMITADA (sonda da REPRESENTAÇÃO, pré-rede: o ALVO tem aspas nas PONTAS, que
+#          o bundler reescreve — AVISA, nunca muda o exit; volta no ramo exit 1)
 # exit 0 = no ar E o controle negativo passou · 1 = ausente E o controle POSITIVO provou que a
 #          sonda enxergava (Publish pendente / alvo não-literal)
 #      2 = a MECÂNICA da sonda não é confiável: enumeração quebrada, SONDA_NAO_DISCRIMINA (ramo
@@ -237,6 +239,33 @@ nosso* `input[type="checkbox"]` — a sentinela que esta própria seção recome
 (`readme.md`, `preflight.css` do tailwind, css de demo). Aviso que dispara contra a resposta certa é
 aviso desarmado no primeiro dia. Com o filtro: **~2 s**, e o mesmo alvo cai para 1 (`jsdom`). Detalhe
 e medições: [`docs/historico/sentinela-segundo-emissor.md`](../../../docs/historico/sentinela-segundo-emissor.md).
+
+**A 3ª exclusividade: a sentinela é REPRESENTÁVEL no bundle? (`SENTINELA_DELIMITADA`, 2026-08-27).**
+O `--pai` mede a **FONTE** (`git grep` em `src/`); a varredura mede o **BUNDLE MINIFICADO**. Para
+quase toda sentinela as duas formas coincidem — menos quando a sentinela é o literal **com** seus
+delimitadores: a fonte escreve `'oculta'` (aspas simples, prettier) e o esbuild emite `"oculta"`.
+Medido no chunk `StaffDashboard` servido: `'oculta'` = **0** ocorrências, `"oculta"` = **1**. As duas
+formas são **mutuamente exclusivas**, então nenhuma sentinela delimitada passa o guard **e** casa:
+
+| sentinela | `--pai` | varredura | veredito |
+|---|---|---|---|
+| `'oculta'` | **PASSA** (0 no pai, 2 no novo) | 0 chunks | **exit 1 FALSO** — pede Publish já feito |
+| `"oculta"` | **RECUSA** (0 no novo) | nem varre | exit 3 |
+
+O primeiro é o caro, e saiu com **os três guards verdes**: `✓ sentinela exclusiva` + `✓
+LIB_SEM_A_SENTINELA` + `✓ CONTROLE_POSITIVO_OK` → `❌ ALVO ausente nos 334 chunks: Publish pendente`.
+O controle positivo **não** cobre isto por construção — ele prova que a rede e o `grep` funcionam,
+não que a sentinela seja **representável**; são perguntas diferentes, e esta é a 3ª ortogonal
+(`--pai`: "é nova DENTRO do git?" · sonda de lib: "existe emissor FORA do git?" · esta: "a forma que
+eu procuro é a forma que o bundle emite?").
+
+> **A distinção que decide:** aspas como **DELIMITADOR** o bundler reescreve; aspas como **CONTEÚDO**
+> ele preserva. Só as **PONTAS** disparam — `input[type="checkbox"]` e `[role="button"]`, os "valores
+> nossos" que esta seção recomenda, seguem silenciosos. Um aviso que disparasse na resposta certa
+> estaria desarmado no primeiro dia (mesma lição da sonda de lib).
+
+**AVISA e nunca recusa**, como a sonda de lib: existe sentinela legítima cujo conteúdo traz as aspas
+nas bordas. E no ramo `exit 1` a marca volta, dizendo o que descartar **antes** de pedir Publish.
 
 **O guard não prova que a sonda sabe dizer "não" — isso é o CONTROLE NEGATIVO, e ele virou
 embutido (2026-08-24).** Um `exit 0` sozinho não distingue "está no ar" de "o script dá verde pra
@@ -533,4 +562,13 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   existia para provar o deploy. A lista sai do `git show --name-status` do merge (`A` = novo), não da
   memória. Exercitado no #2009 (`carteira-rebuild`): 3 arquivos de código, e o `fonte` da sonda
   pós-deploy batendo o `sonda:fingerprint` provou que o `_shared/` subiu junto (#2018).
+- [x] **3ª sonda — `SENTINELA_DELIMITADA` (2026-08-27):** o `--pai` mede a FONTE e a varredura mede o
+  BUNDLE MINIFICADO, e para o literal COM delimitadores as duas formas são **mutuamente exclusivas**
+  (medido no chunk servido: `'oculta'`=0, `"oculta"`=1) — `'oculta'` passa o guard e dá **exit 1
+  FALSO** ("Publish pendente" sobre fix JÁ no ar), `"oculta"` é recusada antes de varrer. Saiu com os
+  **três** guards verdes; o CONTROLE_POSITIVO não cobre por construção (prova que a rede/grep
+  funcionam, não que a sentinela seja REPRESENTÁVEL). Só as PONTAS disparam, então
+  `input[type="checkbox"]` — a sentinela que o Passo 4 recomenda — segue silenciosa. AVISA e nunca
+  recusa, como a sonda de lib. Rede: 3 casos bidirecionais + sabotagem `falsify_marca` (o fixture
+  nunca modelou isto — bundle fake não é minificado, sentinela idêntica nos dois universos).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

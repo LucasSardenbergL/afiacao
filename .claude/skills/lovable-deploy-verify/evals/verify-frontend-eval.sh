@@ -459,6 +459,17 @@ sed '/^if \[ ! -d "\$_nm" \]; then$/,/^else$/ s/^  printf /  : /' "$SCRIPT_ABS" 
 falsify_marca "estado 'não consultei' silenciado -> worktree sem node_modules lê como limpa" \
               "$SAB_L" "$FIX/neutro" "LIB_OPTION_MARKER" "LIB_NAO_CONSULTADA" "CONTROLE_NEGATIVO_OK"
 
+# Sabotagem M: mata a comparação das PONTAS do detector de delimitador (vira `false`) -> a sentinela
+# delimitada volta a passar calada, e a ausência que ela causa se lê como "Publish pendente". É o
+# falso NEGATIVO medido em prod 2026-08-27 no #2037: os três guards verdes e o veredito errado.
+# O 6º arg exige que o script sabotado tenha CHEGADO ao veredito — sem ele, um SAB_M com erro de
+# sintaxe faria a marca sumir por nada ter rodado, e a sabotagem passaria pelo motivo errado.
+SAB_M="$FIX/sab_delimitador_morto.sh"
+# shellcheck disable=SC2016
+sed 's#\[ "\$_prim" = "\$_ult" \]#false#' "$SCRIPT_ABS" > "$SAB_M"
+falsify_marca "detector de delimitador morto -> sentinela delimitada passa calada e vira 'Publish pendente'" \
+              "$SAB_M" "$FIX/neutro" "'SENTINELA_DEEP_XYZ'" "SENTINELA_DELIMITADA" "ALVO ausente nos"
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then echo "--falsify: $PASS/$((PASS+FAIL)) divergiram (harness tem dente)"; exit 0
 else echo "--falsify: $FAIL sabotagem(ns) NÃO pega(s) — harness cego"; exit 1; fi
