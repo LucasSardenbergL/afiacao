@@ -23,6 +23,8 @@
     "authz:funcoes:prod": "bun db/audit-grants-funcoes-fechadas.ts",
     "authz:audit:prod": "bun db/audit-authz-reescritas-prod.ts",
     "authz:claude-ro:prod": "bun db/audit-claude-ro-hardening.ts",
+    "authz:carimbo": "bun scripts/authz-carimbo-gate.ts",
+    "authz:carimbo:gravar": "bun db/authz-carimbo-gravar.ts",
     "bunpin:check": "bun scripts/bun-pin-gate-check.ts",
     "docs:citacoes": "bun scripts/docs-citacoes-gate-check.ts",
     "docs:indice": "bun scripts/docs-indice-gate-check.ts",

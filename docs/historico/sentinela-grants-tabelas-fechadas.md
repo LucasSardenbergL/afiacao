@@ -214,7 +214,16 @@ uma a uma não só porque o contrato exige medição, mas porque **cada entrada 
 próprio gate** — e o custo de errar é o pior possível: o único jeito de calar um falso positivo é
 tirar a tabela da vigilância, isto é, o gate pune quem o usa.
 
-### Achado 2 — `anon` tem INSERT+DELETE em `sales_orders` (aberto, alarme de pé)
+### Achado 2 — `anon` tem INSERT+DELETE em `sales_orders` (FECHADO 2026-08-27)
+
+> ✅ **FECHADO em 2026-08-27** (paste do founder no SQL Editor, PR #2044). Evidência POSITIVA por
+> `psql-ro`: o `relacl` de `public.sales_orders` deixou de conter `anon=ad/postgres` — a entrada do
+> `anon` sumiu inteira, e `has_table_privilege` devolve `NAO` para as 7 formas medidas
+> (SELECT/INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER). O `authenticated=ad` continua, que é
+> desenho (split BFLA por verbo). `bun run authz:grants:prod` passou de exit **1** para exit **0**:
+> *"3 tabela(s) conferida(s); prod bate com o contrato"*. Era discriminável porque o REVOKE não é
+> no-op — ao contrário do caso de §9.7 do `sentinela-authz-controle-nao-mencao.md`, onde o apply é
+> inobservável por ACL.
 
 `bun run authz:grants:prod` sai **1** com `DRIFT_PROD`: `anon` tem `INSERT,DELETE` fora do permitido.
 A divergência é real. A causa **não** é a que o código nomeia: nenhum grant foi aplicado à mão. É
