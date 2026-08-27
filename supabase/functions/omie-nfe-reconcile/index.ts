@@ -28,6 +28,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 function jsonRes(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -363,6 +364,32 @@ Deno.serve(async (req) => {
     if (!__auth.ok) return __auth.response;
   }
 
+  // ── SONDA DE VERSÃO ({"probe":true}) — a ÚNICA prova de QUAL bundle está no ar ────────────────
+  // O `versao: "v3.3-paginacao-janelas"` que este handler devolve mais abaixo NÃO serve para isso:
+  // é string hardcoded, marcador de FATIA, e ficou parada enquanto fatias reais entravam (o #2025
+  // não a tocou). Ver `versao.ts` — a armadilha inteira está documentada lá.
+  //
+  // Aqui, ANTES do `createClient` e de qualquer IO: o gate acima (`authorizeCronOrStaff`) já aceita
+  // o `x-cron-secret` do SQL Editor, então a sonda não precisa de gate próprio — e responder antes
+  // do client mantém o caminho da sonda IO-free, que é o que a torna barata o bastante para ser
+  // chamada só para diagnosticar.
+  //
+  // O corpo é lido AQUI e REAPROVEITADO pelo fluxo real abaixo (padrão da `monthly-report`):
+  // `req.json()` consome o stream uma única vez, e reler devolveria "body already consumed" — o que
+  // quebraria o cron, não a sonda. O `catch(() => null)` preserva o comportamento de hoje: o cron
+  // manda `{}`, mas corpo ausente/ilegível é chamada LEGÍTIMA e segue com os defaults.
+  const corpoBruto = await req.json().catch(() => null) as Record<string, unknown> | null;
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return jsonRes(respostaSonda(VERSAO));
+  }
+  // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no fluxo real por omissão — aqui o
+  // fluxo real BAIXA conferência de NF e queima a trava anti-redundância do Omie, e o EFEITO no
+  // texto do 400 diz isso a quem sondou errando a grafia.
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -370,15 +397,14 @@ Deno.serve(async (req) => {
 
   let limite = LIMITE_DEFAULT;
   let diagnosticoListagem = false;
-  try {
-    const body = (await req.json()) as Record<string, unknown> | null;
-    const l = Number(body?.limite);
+  {
+    const l = Number(corpoBruto?.limite);
     if (Number.isFinite(l)) limite = Math.min(LIMITE_MAX, Math.max(1, Math.trunc(l)));
     // Modo diagnóstico read-only: devolve registros CRUS da listagem (sem cruzar nem
     // reconciliar) — pra mapear os campos reais que o Omie retorna na LISTAGEM
     // (23 NFs avaliadas × zero cRecebido=S contradiz o ConsultarRecebimento de 04/jun).
-    diagnosticoListagem = body?.diagnostico_listagem === true;
-  } catch { /* body vazio (cron) — usa default */ }
+    diagnosticoListagem = corpoBruto?.diagnostico_listagem === true;
+  }
 
   try {
     // Mais antigas primeiro: são as que seguram o alerta ">24h" do painel — e a janela
