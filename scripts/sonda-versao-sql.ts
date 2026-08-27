@@ -10,14 +10,26 @@
  * transcrita dos `versao.ts` na unha. Um marcador digitado errado produz VEREDITO FALSO — "BUNDLE
  * VELHO" numa edge que está no ar (e o desfecho é redeployar edge de money-path à toa), ou a falsa
  * impressão de deploy confirmado. A fonte da verdade já está no repo; o script a lê.
+ *
+ * POR QUE O VEREDITO JULGA O `fonte`, E NÃO SÓ O `versao`: o `versao` sai do `versao.ts` da PRÓPRIA
+ * edge, então um deploy que suba `index.ts` + `versao.ts` e deixe `_shared/sonda-fingerprints.ts`
+ * para trás (o risco que a skill `lovable-deploy-verify` Passo 3 documenta — prompt que nomeia
+ * poucos arquivos) responde `versao` CERTO e `fonte: "nao-mapeada"` (o `?? "nao-mapeada"` de
+ * `criarRespostaSonda`). Julgar só pelo `versao` lê isso como DEPLOY CONFIRMADO: falso POSITIVO
+ * num money-path, a classe estritamente pior, porque ENCERRA a verificação. É o `fonte` bater que
+ * prova deploy VERBATIM — ele hasheia o fecho transitivo dos imports locais, não a disciplina de
+ * quem bumpou o marcador (#1998; validado ponta-a-ponta em prod no #2018).
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** Uma edge da leva, com o marcador lido do `versao.ts` dela. */
+import { ARQ_MAPA, lerMapaCommitado } from './sonda-fingerprint';
+
+/** Uma edge da leva, com o marcador do `versao.ts` dela e o fingerprint da FONTE dela. */
 export interface EdgeSondada {
   edge: string;
   versao: string;
+  fonte: string;
 }
 
 /** Caminho do `versao.ts` de uma edge, a partir da raiz do repo. */
@@ -42,23 +54,37 @@ export function extrairVersao(fonte: string): string | null {
  *
  * Acusa TODAS as edges problemáticas de uma vez: quem pediu 10 edges quer saber quais 3 faltam,
  * não descobrir uma por execução.
+ *
+ * O fingerprint sai do mapa COMMITADO (`_shared/sonda-fingerprints.ts`, o mesmo que a edge serve no
+ * campo `fonte`), pelo leitor que já é dono desse parse. Edge instrumentada fora do mapa derruba a
+ * geração inteira pelo mesmo motivo que o marcador ilegível: fingerprint ADIVINHADO — ou omitido do
+ * veredito — é veredito FALSO, e aqui o falso seria POSITIVO.
  */
 export function resolverLeva(raiz: string, edges: string[]): EdgeSondada[] {
+  const mapa = lerMapaCommitado(raiz);
   const semSensor: string[] = [];
   const semMarcador: string[] = [];
+  const semFingerprint: string[] = [];
   const resolvidas: EdgeSondada[] = [];
 
   for (const edge of edges) {
-    let fonte: string;
+    let textoVersao: string;
     try {
-      fonte = readFileSync(caminhoVersao(raiz, edge), 'utf8');
+      textoVersao = readFileSync(caminhoVersao(raiz, edge), 'utf8');
     } catch {
       semSensor.push(edge);
       continue;
     }
-    const versao = extrairVersao(fonte);
-    if (versao === null) semMarcador.push(edge);
-    else resolvidas.push({ edge, versao });
+    const versao = extrairVersao(textoVersao);
+    if (versao === null) {
+      semMarcador.push(edge);
+      continue;
+    }
+    if (!(edge in mapa)) {
+      semFingerprint.push(edge);
+      continue;
+    }
+    resolvidas.push({ edge, versao, fonte: mapa[edge] });
   }
 
   const problemas: string[] = [];
@@ -72,11 +98,15 @@ export function resolverLeva(raiz: string, edges: string[]): EdgeSondada[] {
       `versao.ts sem \`export const VERSAO = "..."\` legível: ${semMarcador.join(', ')}`,
     );
   }
+  if (semFingerprint.length > 0) {
+    problemas.push(`sem entrada no mapa ${ARQ_MAPA}: ${semFingerprint.join(', ')}`);
+  }
   if (problemas.length > 0) {
     throw new Error(
       `Edge não sondável — ${problemas.join(' | ')}. ` +
         'Edge sem sensor não tem como provar versão: instrumente-a (ver _shared/sonda-versao.ts) ' +
-        'antes de sondar. Nenhum SQL foi emitido.',
+        'antes de sondar. Edge fora do mapa não tem como provar deploy VERBATIM: rode ' +
+        '`bun run sonda:fingerprint -- --write` e commite o mapa. Nenhum SQL foi emitido.',
     );
   }
   return resolvidas;
@@ -115,9 +145,9 @@ function valuesAlvos(leva: EdgeSondada[]): string {
   return leva.map((e) => `  (${lit(e.edge)})`).join(',\n');
 }
 
-/** Lista `('nome', 'marcador'),` para o `VALUES` da lista canônica do bloco de leitura. */
+/** Lista `('nome', 'marcador', 'fingerprint'),` para o `VALUES` da lista canônica da leitura. */
 function valuesEsperado(leva: EdgeSondada[]): string {
-  return leva.map((e) => `  (${lit(e.edge)}, ${lit(e.versao)})`).join(',\n');
+  return leva.map((e) => `  (${lit(e.edge)}, ${lit(e.versao)}, ${lit(e.fonte)})`).join(',\n');
 }
 
 /** A chamada `net.http_post`, idêntica nos dois blocos de disparo. */
@@ -174,17 +204,22 @@ function blocoDisparo(
  * do bloco errado devolve ZERO linhas — e zero linhas lê-se como "nada a reportar", não como erro.
  * Mesmo motivo do `LEFT JOIN` contra `net._http_response`: sem ele, "a resposta ainda não chegou"
  * e "veredito negativo" ficam indistinguíveis.
+ *
+ * O ramo DEPLOY PARCIAL vem ANTES do de confirmação de propósito: `versao` certo com `fonte`
+ * ausente é a assinatura do bundle que subiu `index.ts` + `versao.ts` sem o mapa de fingerprints, e
+ * ler isso como CONFIRMADO seria o falso POSITIVO que encerra a verificação. Confirmação exige os
+ * DOIS campos; a dúvida cai sempre no lado que manda olhar de novo.
  */
 function blocoLeitura(leva: EdgeSondada[]): string {
   return (
-    `WITH esperado(edge, versao_esperada) AS (VALUES\n${valuesEsperado(leva)}\n),\n` +
+    `WITH esperado(edge, versao_esperada, fonte_esperada) AS (VALUES\n${valuesEsperado(leva)}\n),\n` +
     `ids AS (\n` +
     `  -- ⬅️ COLE AQUI, no lugar do {}, a célula única devolvida pelo passo de disparo.\n` +
     `  SELECT chave AS edge, valor::bigint AS request_id\n` +
     `  FROM jsonb_each_text('{}'::jsonb) AS t(chave, valor)\n` +
     `),\n` +
     `lidas AS (\n` +
-    `  SELECT e.edge, e.versao_esperada, i.request_id, r.status_code,\n` +
+    `  SELECT e.edge, e.versao_esperada, e.fonte_esperada, i.request_id, r.status_code,\n` +
     `         COALESCE(r.content::jsonb -> 'data', r.content::jsonb) AS corpo\n` +
     `  FROM esperado e\n` +
     `  LEFT JOIN ids i ON i.edge = e.edge\n` +
@@ -196,6 +231,7 @@ function blocoLeitura(leva: EdgeSondada[]): string {
     `       l.corpo ->> 'edge'   AS edge_respondida,\n` +
     `       l.corpo ->> 'versao' AS versao_respondida,\n` +
     `       l.versao_esperada,\n` +
+    `       l.corpo ->> 'fonte'  AS fonte_respondida,\n` +
     `       CASE\n` +
     `         WHEN l.request_id IS NULL\n` +
     `           THEN 'SEM ID — esta edge não saiu no JSON colado (bloco errado, ou trava fechada)'\n` +
@@ -205,13 +241,17 @@ function blocoLeitura(leva: EdgeSondada[]): string {
     `           THEN 'BUNDLE VELHO — recusou o request (HTTP ' || l.status_code || '), NADA executou'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL\n` +
     `           THEN 'PRE-SENSOR — HTTP 200 sem versao: ignorou o probe e RODOU O FLUXO REAL'\n` +
+    `         WHEN COALESCE(l.corpo ->> 'fonte', 'nao-mapeada') = 'nao-mapeada'\n` +
+    `           THEN 'DEPLOY PARCIAL — subiu index.ts+versao.ts, mas _shared/sonda-fingerprints.ts NAO'\n` +
     `         WHEN l.corpo ->> 'versao' = l.versao_esperada\n` +
+    `              AND l.corpo ->> 'fonte' = l.fonte_esperada\n` +
     `              AND l.corpo ->> 'probe' = 'true'\n` +
     `              AND l.corpo ->> 'edge' = l.edge\n` +
     `           THEN 'DEPLOY CONFIRMADO'\n` +
     `         ELSE 'BUNDLE VELHO — respondeu versao=' || COALESCE(l.corpo ->> 'versao', '?') ||\n` +
+    `              ', fonte=' || COALESCE(l.corpo ->> 'fonte', '?') ||\n` +
     `              ', edge=' || COALESCE(l.corpo ->> 'edge', '?') ||\n` +
-    `              ' (esperado ' || l.versao_esperada || ')'\n` +
+    `              ' (esperado ' || l.versao_esperada || ' / ' || l.fonte_esperada || ')'\n` +
     `       END AS veredito\n` +
     `FROM lidas l\n` +
     `ORDER BY l.edge;\n`
