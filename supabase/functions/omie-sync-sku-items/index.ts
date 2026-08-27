@@ -24,6 +24,7 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 interface OmieItemCabec {
   nIdProduto?: number | string;
@@ -640,13 +641,41 @@ async function recomputarLeadtimeDerivado(
   }
 }
 
+// `versao` em TODA resposta (sucesso e erro), não só na da sonda — é a metade da prova que
+// dispensa invocação. O `omie-cron-diario` faz `JSON.parse` do corpo deste step e o devolve
+// inteiro em `resultados.sku_items.body`, então o marcador viaja para `net._http_response` no tick
+// de 2h do jobid 52 e o deploy se prova sem ninguém chamar nada e sem pagar efeito.
+function jsonRes(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
   if (!(await authorizeCronOrStaff(req))) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return jsonRes({ error: "Unauthorized" }, 401);
   }
+
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient e
+  // de qualquer escrita. O parse do corpo SUBIU para cá de propósito: no desenho anterior ele vinha
+  // dentro do try, depois do `createClient`, e a sonda ali já teria custo. Daqui pra frente a edge
+  // roda o recompute derivado da ETAPA 0 e abre linha em `fin_sync_log`, que o cálculo de frescor
+  // lê sem filtrar `action` — sondar de graça exige responder antes.
+  // req.json() é one-shot: o corpo lido aqui é reaproveitado no fluxo real abaixo.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  const body: RequestBody = await req.json().catch(() => ({}));
+
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+  // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no fluxo real por omissão.
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const startedAt = Date.now();
   // Relógio ÚNICO do run: requests e backoffs do callOmie se medem contra ESTE instante, o mesmo
   // que o TIMEOUT_GUARD_MS do laço usa. Teto por request isolado não bastaria — 3 tentativas de
@@ -664,7 +693,8 @@ Deno.serve(async (req) => {
     (svcKey && req.headers.get("Authorization") === `Bearer ${svcKey}`)) ? "cron" : "manual";
 
   try {
-    const body: RequestBody = await req.json().catch(() => ({}));
+    // Corpo já consumido no bloco da sonda acima (req.json() é one-shot) — uma segunda leitura
+    // devolveria vazio e `empresa`/`dias` do chamador seriam descartados em SILÊNCIO.
     const empresa: Empresa = (body.empresa ?? "OBEN") as Empresa;
     const dias = Math.max(1, Math.min(365, body.dias ?? 30));
     const fornecedorFiltro = body.fornecedor_codigo_omie ?? null;
@@ -1052,27 +1082,18 @@ Deno.serve(async (req) => {
       Date.now() - startedAt,
     );
 
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        duracao_ms: Date.now() - startedAt,
-        summary: [summary],
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return jsonRes({
+      ok: true,
+      duracao_ms: Date.now() - startedAt,
+      summary: [summary],
+    });
   } catch (e) {
     console.error("[sync-sku-items] erro fatal:", e);
     await completeSync(supabase, logId, {}, e instanceof Error ? e.message : String(e), Date.now() - startedAt);
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-        duracao_ms: Date.now() - startedAt,
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    );
+    return jsonRes({
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      duracao_ms: Date.now() - startedAt,
+    }, 500);
   }
 });

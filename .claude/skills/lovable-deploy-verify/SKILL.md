@@ -430,6 +430,24 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
       (`MAX_PAGINAS_PRODUTOS` 10 → 500), mas o cron 42 passa `"max_pages": 50` **explícito no body**, e o
       bundle velho faria as mesmas 43 páginas. Regra: **antes de ler um `last_page` como evidência de teto,
       leia o BODY do cron** — parâmetro explícito no chamador mascara o default do código.
+    - ✅ **A variante DELIBERADA: plante o discriminador em vez de torcer por um (2026-08-27).** O N3
+      PASSIVO acima depende de as duas versões terem forma DIFERENTE — sorte, não desenho: uma fatia que
+      só muda comportamento (a coleira de relógio do #2031, por exemplo) devolve o mesmo conjunto de
+      chaves e a via inteira some. A edge fecha isso de vez anexando `versao: VERSAO` a **TODA** resposta,
+      não só à da sonda — um helper `jsonRes` com `{ ...body, versao: VERSAO }` (padrão dos **5 steps** do
+      `omie-cron-diario`). Aí o marcador é discriminador PLANTADO: viaja no corpo que o cron já grava, e o
+      `sonda:bump` obriga a movê-lo a cada fatia, o que o `versao` hardcoded da `omie-nfe-reconcile` (o
+      "disfarce" de `deploy.md`) não tem. Nos steps do cron diário o corpo do filho chega aninhado —
+      o orquestrador devolve cada um em `resultados.<key>.body`:
+      ```bash
+      # ⌨️ seu terminal — troque os dois timestamps pela JANELA do run (nunca id chutado)
+      ~/.config/afiacao/psql-ro -c "SELECT r.id, r.created, k, (r.content::jsonb)->'resultados'->k->>'modo' AS modo, (r.content::jsonb)->'resultados'->k->'body'->>'versao' AS versao FROM net._http_response r, jsonb_object_keys((r.content::jsonb)->'resultados') k WHERE r.created BETWEEN '<inicio>' AND '<fim>' AND r.status_code = 200 AND r.content IS NOT NULL AND left(ltrim(r.content),1) = '{' AND (r.content::jsonb) ? 'resultados' ORDER BY r.id, k;"
+      ```
+      🔴 **Leia o `modo` ANTES do `versao`** — é a mesma armadilha da linha de timeout, uma casa acima: em
+      `modo:"background"` o orquestrador abortou o cliente em 25s (`STEP_TIMEOUT_MS`), o corpo **não foi
+      coletado**, e `versao` sai vazio. Vazio ali é **linha inutilizável**, não "marcador velho" — julgar
+      por ele reprova deploy CORRETO e manda redeployar edge money-path à toa (quase aconteceu em
+      2026-08-27). Detalhe: `docs/historico/verificabilidade-do-conjunto-orquestrado.md`.
 
 ### Passo 4b — QA visual pós-Publish (Claude-in-Chrome na sessão logada do founder)
 

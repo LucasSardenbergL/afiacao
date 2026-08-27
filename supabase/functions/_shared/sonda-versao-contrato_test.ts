@@ -46,6 +46,10 @@ import * as monthlyReport from "../monthly-report/versao.ts";
 import * as carteiraRebuild from "../carteira-rebuild/versao.ts";
 import * as vendasSync from "../omie-vendas-sync/versao.ts";
 import * as nfeReconcile from "../omie-nfe-reconcile/versao.ts";
+import * as syncCtes from "../omie-sync-ctes-recebidos/versao.ts";
+import * as syncPedidosCompra from "../omie-sync-pedidos-compra/versao.ts";
+import * as syncSkuItems from "../omie-sync-sku-items/versao.ts";
+import * as syncVendasItems from "../omie-sync-vendas-items/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -160,6 +164,24 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // e a varredura roda), o que a põe ao lado da `carteira-rebuild`, não da `omie-analytics-sync`.
   // Ver `omie-nfe-reconcile/versao.ts` e `docs/historico/canaria-papel-duplo.md`.
   { nome: "omie-nfe-reconcile", mod: nfeReconcile },
+  // Décima leva (2026-08-27): os 4 steps do `omie-cron-diario` que sobravam sem sensor. O critério
+  // aqui não é o efeito (os cinco escrevem money-path) — é que o deploy deles era literalmente
+  // INVERIFICÁVEL: sem `versao.ts`, sem `{"probe":true}`, e com um corpo de resposta byte-idêntico
+  // antes e depois de uma fatia. Medido no #2031 (coleira de RELÓGIO no `omieCall` dos 5 steps):
+  // só o 5º — `omie-sync-nfes-recebidas`, que já tinha sensor — se provou em prod; os outros
+  // quatro ficaram como INFERÊNCIA, e o sintoma que a coleira corrige (request pendurado) é
+  // indistinguível de "o Omie estava lento" quando não se sabe qual bundle está no ar.
+  //
+  // Elas trazem a metade que dispensa invocação, copiada do `jsonRes` da `omie-sync-nfes-recebidas`:
+  // `versao` em TODA resposta, não só na da sonda. O `omie-cron-diario` faz `JSON.parse` do corpo
+  // de cada step e o devolve inteiro em `resultados.<key>.body`, então o tick de 2h do jobid 52 já
+  // grava o marcador em `net._http_response` — N3 PASSIVO, sem invocar nada, sem cron secret e sem
+  // pagar efeito. Importa porque sondar um bundle PRÉ-sensor nestas quatro DISPARA o fluxo real:
+  // nenhuma roteia por `action`, então o corpo desconhecido cai nos defaults e a varredura roda.
+  { nome: "omie-sync-pedidos-compra", mod: syncPedidosCompra },
+  { nome: "omie-sync-ctes-recebidos", mod: syncCtes },
+  { nome: "omie-sync-sku-items", mod: syncSkuItems },
+  { nome: "omie-sync-vendas-items", mod: syncVendasItems },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -185,6 +207,16 @@ const ESCRITA_NOSSO_BANCO = [
   // Nona leva (2026-08-26): marca `nfe_recebimentos` como `efetivado` e grava o ledger
   // `nfe_efetivacao_tentativas` — baixa de conferência que tira a NF do painel de pendências.
   "omie-nfe-reconcile",
+  // Décima leva (2026-08-27), os 4 steps restantes do cron diário. `omie-sync-pedidos-compra`
+  // reescreve o espelho de on-order em `purchase_orders_tracking`, avança o heartbeat de
+  // `sync_state` e publica o run; `omie-sync-ctes-recebidos` grava o vínculo CT-e↔NF-e que o
+  // matcher nunca refaz; `omie-sync-sku-items` escreve o leadtime e abre linha em `fin_sync_log`,
+  // que o cálculo de frescor lê sem filtrar `action`; `omie-sync-vendas-items` reescreve
+  // `venda_items_history`, a série de demanda que vira ponto de compra.
+  "omie-sync-pedidos-compra",
+  "omie-sync-ctes-recebidos",
+  "omie-sync-sku-items",
+  "omie-sync-vendas-items",
 ];
 
 /**
@@ -1041,6 +1073,127 @@ Deno.test("nenhuma edge que serve o paginate.ts fica SEM prova de deploy", () =>
         `instale a sonda (\`_shared/sonda-versao.ts\`) e registre em EDGES, ou declare a canária ` +
         `VERSIONADA em VERIFICAVEL_POR_CANARIA. Sem marcador o deploy é inverificável, e o #1889 ` +
         `é no-op por desenho: não há canária de comportamento que discrimine.`,
+    );
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Décima leva (2026-08-27) — os 5 steps do `omie-cron-diario`. Os gates de FORMA acima já varrem
+// as 4 novas; o que sobra aqui é o que ELAS trazem de próprio: o eco PASSIVO de `versao` em toda
+// resposta (a metade da prova que dispensa invocação) e o parse de corpo que teve de subir.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Os 5 steps do `omie-cron-diario`, na ordem em que ele os chama, com a `key` sob a qual cada um
+ * aparece em `resultados.<key>.body` da resposta do orquestrador.
+ *
+ * A `key` está aqui — e não só o nome da edge — porque é ela que o SQL de verificação usa. Uma
+ * chave errada devolve `versao` NULL, que é byte a byte a assinatura de "bundle pré-sensor": o
+ * falso NEGATIVO que manda redeployar edge money-path à toa.
+ */
+const STEPS_CRON_DIARIO: Array<{ edge: string; key: string }> = [
+  { edge: "omie-sync-pedidos-compra", key: "pedidos" },
+  { edge: "omie-sync-nfes-recebidas", key: "nfes" },
+  { edge: "omie-sync-ctes-recebidos", key: "ctes" },
+  { edge: "omie-sync-sku-items", key: "sku_items" },
+  { edge: "omie-sync-vendas-items", key: "vendas" },
+];
+
+/** O helper de resposta anexa o marcador a TODO corpo, e não só ao da sonda? */
+function ecoaVersaoEmTodaResposta(codigo: string): boolean {
+  // O helper é `function jsonRes(...) { return new Response(JSON.stringify({ ...body, versao: VERSAO }), …) }`.
+  // Medir o SPREAD junto com o campo é o que separa "anexa a todo corpo" de "monta um corpo com
+  // versao dentro" — a segunda forma serviria só a resposta que o autor lembrou de tocar.
+  return /\.\.\.\s*\w+\s*,\s*versao:\s*VERSAO/.test(codigo);
+}
+
+Deno.test("os 5 steps do cron diário ECOAM `versao` em toda resposta, não só na da sonda", () => {
+  // O ponto principal da décima leva, e a metade que dispensa invocação. O `omie-cron-diario` faz
+  // `JSON.parse` do corpo de cada step e o devolve inteiro em `resultados.<key>.body`, então o
+  // marcador viaja para `net._http_response` no tick de 2h do jobid 52 — prova de deploy sem
+  // chamar nada, sem cron secret e sem pagar o efeito caro. Sem este eco sobra só a sonda, e
+  // sondar um bundle PRÉ-sensor nestas edges DISPARA o fluxo real (nenhuma roteia por `action`):
+  // a única prova barata só serviria DEPOIS do deploy que ela existe para verificar.
+  for (const { edge } of STEPS_CRON_DIARIO) {
+    const codigo = codigoDaEdge(edge);
+    if (!ecoaVersaoEmTodaResposta(codigo)) {
+      throw new Error(
+        `${edge}: nenhuma resposta anexa \`versao: VERSAO\` ao corpo — o marcador não viaja no ` +
+          `body que o omie-cron-diario grava em net._http_response, e o deploy volta a só se ` +
+          `provar sondando (o que aqui dispara a varredura inteira)`,
+      );
+    }
+    // E o eco tem de alcançar o fluxo REAL: um handler que ainda monte respostas com
+    // `new Response(JSON.stringify(` por fora do helper deixa justamente a resposta do run — a
+    // que o cron coleta — sem marcador, enquanto o gate acima fica verde pelo helper.
+    const h = trechoDoHandler(edge);
+    if (/new Response\(\s*JSON\.stringify\(/.test(h)) {
+      throw new Error(
+        `${edge}: o handler ainda monta resposta JSON por fora do helper — essa resposta sai SEM ` +
+          `\`versao\`, e é a que o omie-cron-diario coleta`,
+      );
+    }
+  }
+});
+
+Deno.test("CALIBRAÇÃO: o gate do eco reprova o marcador que só a sonda carrega", () => {
+  // Sem isto o gate acima só provaria que os arquivos existem. As formas abaixo são montadas como
+  // TEXTO — não dá para sabotar as edges reais de dentro do teste.
+  const reprovadas: Array<[string, string]> = [
+    [
+      "só a sonda carrega o marcador (a forma PRÉ-fatia das 4)",
+      'if (d.tipo === "sonda") return new Response(JSON.stringify(respostaSonda(VERSAO)), { status: 200 });\n' +
+        "  return new Response(JSON.stringify({ ok: true, summary }), { status: 200 });",
+    ],
+    [
+      "corpo montado à mão com versao dentro — serve só a resposta que o autor lembrou",
+      "return new Response(JSON.stringify({ ok: true, versao: VERSAO }), { status: 200 });",
+    ],
+  ];
+  for (const [rotulo, forma] of reprovadas) {
+    if (ecoaVersaoEmTodaResposta(forma)) {
+      throw new Error(`o gate aprovaria a forma que existe para barrar (${rotulo})`);
+    }
+  }
+  const aprovada = "return new Response(JSON.stringify({ ...body, versao: VERSAO }), { status });";
+  if (!ecoaVersaoEmTodaResposta(aprovada)) {
+    throw new Error("o gate reprovaria o helper legítimo — edge correta ficaria vermelha");
+  }
+});
+
+Deno.test("décima leva: o corpo do Request é lido UMA vez só", () => {
+  // Mesmo motivo do gate homônimo da oitava leva: a sonda obrigou o parse a SUBIR para antes do
+  // client, e toda leitura que existia depois teve de passar a reusar a variável. Um `req.json()`
+  // a mais reintroduz o bug em SILÊNCIO — nestas quatro ele faria `empresa`/`dias`/`trigger` do
+  // corpo serem ignorados, e o step mudaria de escopo (ou de modo incremental×completo) sem erro
+  // nenhum. É a classe "ausente ≠ zero" na leitura de parâmetro.
+  for (const { edge } of STEPS_CRON_DIARIO) {
+    const ocorrencias = trechoDoHandler(edge).match(/req\.json\(\)/g) ?? [];
+    if (ocorrencias.length !== 1) {
+      throw new Error(
+        `${edge}: o handler lê req.json() ${ocorrencias.length}× — o corpo só se lê UMA vez, ` +
+          `a segunda leitura devolve vazio e o parâmetro é descartado em silêncio`,
+      );
+    }
+  }
+});
+
+Deno.test("o orquestrador chama exatamente estes 5 steps, com estas chaves", () => {
+  // O mapa acima é o que a receita de verificação usa para ler `resultados.<key>.body.versao`. Se
+  // o `omie-cron-diario` ganhar um 6º step, ou renomear uma `key`, este gate falha nomeando a
+  // divergência — em vez de a receita devolver NULL, que se lê como "bundle pré-sensor".
+  const cron = removerComentarios(
+    Deno.readTextFileSync("supabase/functions/omie-cron-diario/index.ts"),
+  );
+  const declarados = [...cron.matchAll(/key:\s*"([a-z_]+)",\s*name:\s*"([a-z0-9-]+)"/g)]
+    .map((m) => ({ key: m[1], edge: m[2] }));
+  const esperado = JSON.stringify(STEPS_CRON_DIARIO.map((s) => [s.key, s.edge]));
+  const achado = JSON.stringify(declarados.map((s) => [s.key, s.edge]));
+  if (esperado !== achado) {
+    throw new Error(
+      `os steps do omie-cron-diario divergem do mapa deste arquivo:\n  esperado ${esperado}\n  ` +
+        `achado   ${achado}\n— a receita de verificação lê resultados.<key>.body.versao, e chave ` +
+        `errada devolve NULL, que é a assinatura de "bundle pré-sensor"`,
     );
   }
 });
