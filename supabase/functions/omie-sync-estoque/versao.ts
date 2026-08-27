@@ -20,7 +20,16 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+/**
+ * BUMP (coleira de relógio, sequela do #2018/#2025/#2031): os dois wrappers (`callOmie` e
+ * `callOmiePedidos`) passaram a levar `AbortSignal.timeout` com deadline compartilhado do run,
+ * derivado do teto de 90s dos crons 31/124. O caso que mais pesa aqui é o sono de 60s no 429 —
+ * dois terços do orçamento inteiro num único rate-limit.
+ *
+ * Sem bump, a sonda responderia a MESMA string tendo esta fatia subido ou não; e como esta edge
+ * NÃO escreve em `fin_sync_log`, a sonda é a única prova de qual bundle está no ar.
+ */
+export const VERSAO = "v1.1-deadline-relogio";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
