@@ -370,10 +370,20 @@ contrato: `product_costs` e `omie_products` com `authenticated=r` e `anon` fora 
 `sales_orders` com `authenticated=ad` e `anon` fora — ou seja, o fecho de `product_costs` foi
 aplicado e o `anon=ad` do Achado 2 está revogado.
 
-### Acoplamento com o carimbo (PR #2044)
+### O carimbo reprovou, como devia
 
-`db/audit-grants-tabelas-fechadas.ts` é um dos `auditorFiles` do carimbo, então esta mudança altera
-o `auditorFingerprint` e invalida `db/authz-carimbo-prod.json` — **é o desenho funcionando**. O
-#2044 estava aberto e em conflito quando esta entrega saiu, então o carimbo ainda não existia na
-main para ser regravado: quem rebasear o #2044 sobre esta mudança precisa rodar
-`bun run authz:carimbo:gravar` (exige `psql-ro`) antes de o gate `authz:carimbo` passar.
+`db/audit-grants-tabelas-fechadas.ts` é um dos `auditorFiles` do carimbo (PR #2044, mergeado
+enquanto esta entrega estava em voo), então mudar o auditor muda o `auditorFingerprint` e invalida
+`db/authz-carimbo-prod.json`. Rebaseado sobre a main com o carimbo, o gate acusou:
+
+```
+❌ [CARIMBO_AUDITOR_MUDOU] `grants`: o AUDITOR mudou desde a medição — o instrumento não é mais
+   o que produziu esta evidência. Rode `bun run authz:carimbo:gravar`.
+```
+
+**Isso é o desenho funcionando, não defeito**: evidência de prod colhida por um instrumento que já
+não existe não é evidência daquele instrumento. Regravado com `bun run authz:carimbo:gravar` (exige
+`psql-ro`; o runner recusa `PSQL_RO` alternativo e allowlist de teste, e pina o `system_identifier`
+do cluster). O diff do carimbo tem 3 linhas: `medidoEm`, `sourceHead` e o `auditorFingerprint` de
+`grants` — o `contratoFingerprint` fica intacto, porque esta entrega mexeu no INSTRUMENTO e não no
+contrato, e `achados: []` continua vazio.
