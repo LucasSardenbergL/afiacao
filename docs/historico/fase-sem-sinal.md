@@ -2026,3 +2026,82 @@ O sentinela que provou isso foi escrito, rodado e **falsificado** (sabotar o tim
 de qualquer linha de correção — e depois descartado, porque com o timer fora ele perdeu o objeto.
 Em teste com relógio mockado, `Date.now()` e os timers têm de andar **juntos**
 (`vi.advanceTimersByTimeAsync`); senão o verde é do cenário, não do código.
+
+## O Publish que a premissa dava como pendente já tinha acontecido (2026-08-27)
+
+A verificação do **#2048** (`feat(analytics): o probe de attempt_id torna a censura MEDÍVEL`,
+`d7070b6f6`, 6 arquivos de `src/`) começou de uma premissa herdada: "merge ≠ produção, e **não há
+evidência** de que esse Publish tenha acontecido". A frase está certa como descrição do risco e
+errada como veredito — **"não há evidência de que aconteceu" é ausência de dado, não evidência de
+que não aconteceu.** Os bytes disseram o contrário: já estava no ar.
+
+### O que os bytes disseram
+
+Sentinela `afiacao_telemetria_device_id` (a chave de `localStorage` do probe), com a exclusividade
+provada no git ANTES de tocar a rede — `--pai 927f4d7b3` é o commit imediatamente anterior ao PR:
+
+```
+✓ sentinela exclusiva: 0 ocorrências em 927f4d7b3 · 1 arquivo(s) em d7070b6f6 (pathspec src/)
+✓ LIB_SEM_A_SENTINELA — 0 arquivo(s) de código JS em node_modules/ emitem o ALVO
+entry: /assets/index-BM_UJQwt.js
+chunks (closure ∪ precache): 334   [closure=334 · precache=326]
+✅ ALVO em /assets/index-BM_UJQwt.js
+✓ CONTROLE_NEGATIVO_OK — /assets/index-BM_UJQwt.js não casa controle_negativo_0d79aec8…   (exit 0)
+```
+
+Repetido com uma segunda sentinela independente do mesmo commit (`telemetria_desligada`, também
+`pai=0`, outro trecho do arquivo): mesmo `exit 0`, mesmo entry, mesmo controle. Os três modos de
+falso positivo do Passo 4 ficaram cobertos por evidência POSITIVA, cada um pelo seu guard —
+sentinela não-exclusiva (`--pai`), 2º emissor na lib (`LIB_SEM_A_SENTINELA`), sonda que dá verde
+pra tudo (controle negativo embutido).
+
+### E a prova comportamental estava dentro do próprio PR que se verificava
+
+O probe grava em `public.telemetria_probes`. Se o código está EXECUTANDO, a tabela diz:
+
+```
+build_id       | linhas | primeira                      | ultima
+index-DYfaoXUf |      8 | 2026-08-27 00:24:16.929067+00 | 2026-08-27 21:45:18.719213+00
+```
+
+Código que só existe a partir de `d7070b6f6` escreveu 8 linhas reais em produção. **A entrega
+verificava a si mesma:** o sensor que o PR instala é, por construção, a canária do deploy do PR —
+o corolário barato de "superfície de uso nasce COM o sensor", que é a tese deste arquivo. Vale
+registrar como padrão reutilizável: **PR que instala sensor não precisa de sentinela de
+comportamento — ele já é uma.** Os bytes continuam necessários (provam o que o SERVIDOR entrega),
+mas deixam de ser a única prova.
+
+### O custo de ter acreditado na premissa
+
+Seria entregar ao founder um `🖱️ Publish` **já feito**. É o irmão exato do falso negativo do id de
+exemplo (Lei de Ferro #5 da `lovable-deploy-verify`): não quebra ruidoso, produz trabalho manual
+inútil e — pior — ensina que o ritual dos bytes é formalidade, porque "o resultado já se sabia".
+O CLAUDE.md proíbe o lado espelhado ("nunca diga que está no ar sem prova"); este caso registra que
+**o outro lado também é uma afirmação, não um default**: dizer "falta Publish" exige a mesma prova
+que dizer "está no ar", e a assimetria de tratamento entre as duas é o buraco.
+
+### O brinde: o sensor de adoção deu seu primeiro sinal, e ele é DIVERGENTE
+
+O servidor entrega `index-BM_UJQwt`. As 8 linhas foram gravadas por `index-DYfaoXUf`. Os dois
+carregam o probe — logo **pelo menos dois Publish** levaram o #2048, e o browser que emitiu estava
+executando o mais velho. É exatamente o que `src/lib/build-id.ts` foi escrito para medir, agora
+medido de propósito e não por acidente de screenshot: **disponibilidade ✓, adoção ✗** — o SW roda
+com `registerType:'prompt'` sem `skipWaiting`, por desenho.
+
+⚠️ **O limite da leitura, e ele importa:** a tabela registra o build que EXECUTOU, nunca *quando* o
+servidor passou a entregar outro. Daqui não se lê há quanto tempo o gap existe — se
+`index-BM_UJQwt` tivesse saído minutos antes da consulta, não haveria não-adoção nenhuma a
+reportar. O par (`verify-frontend.sh`, `build_id`) dá as duas PONTAS do gap e **nenhuma data do
+lado do servidor**. Concluir "ninguém adotou" desse único par seria fabricar a duração — o mesmo
+erro de forma do `Number(null)===0`, no eixo do tempo.
+
+### E o número do PR chegou errado — de novo o instrumento, agora na identificação
+
+A tarefa nomeava o commit como "PR **#2035**". O trailer de `d7070b6f6` diz **#2048**, e o #2035 é
+um PR **ABERTO**, de outro trabalho (`analytics_outbox`). Verificar pelo número teria consultado o
+objeto errado; a verificação sobreviveu porque foi ancorada no **SHA** — `--pai`/`--novo` recebem
+sha, não número. **Número de PR que chega de fora da árvore é reivindicação, não fato:** o único
+vínculo commit↔PR que o repo garante é o trailer, e ele se lê com
+`git log -1 --format=%s <sha> | grep -o '(#[0-9]*)'`. Confira ANTES de escrever o número num doc —
+um registro histórico com o PR errado aponta o leitor futuro para a discussão errada, e o erro é
+silencioso porque o número existe.
