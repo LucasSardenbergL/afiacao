@@ -111,8 +111,10 @@ function cmdNome(c: string): string {
   return CMD_NOME[c] ?? c;
 }
 
-/** `null` vira um literal distinguível: `SEM_QUAL` ≠ `''` ≠ um md5. A lição do §4 sobre assert que
- *  ancora em vazio — estados mutuamente distinguíveis, nunca a string vazia. */
+/** `null` vira um literal distinguível: `AUSENTE` ≠ `''` ≠ um md5. A lição do §4 sobre assert que
+ *  ancora em vazio — estados mutuamente distinguíveis, nunca a string vazia. Uma policy de INSERT
+ *  sem `USING` e uma medição que quebrou têm de LER diferente na mensagem, senão o operador não
+ *  distingue "é a forma correta" de "não consegui medir". */
 function md5Txt(v: string | null): string {
   return v ?? 'AUSENTE';
 }

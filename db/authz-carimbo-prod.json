@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-08-27T23:02:34.526Z",
-  "sourceHead": "a13051ec6665540a690072a3fd619ed4629122e4",
+  "medidoEm": "2026-08-27T23:09:38.893Z",
+  "sourceHead": "d7fa927ff575ccb13a0d2974d2c4e75fa48df54c",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -51,7 +51,7 @@
       "resumo": "✅ audit-rls — 335 tabela(s) em public com RLS ligada (0 desligada); 7 tabela(s) curada(s), 19 policy(ies) e 6 funcao(oes)-predicado batem com o contrato.",
       "denominador": null,
       "contratoFingerprint": "8287b9e98344ea1024f2413aba0759bd2081539c0fc3ca8ac5245f86324744d6",
-      "auditorFingerprint": "7ea0b169c722634cce1f3594cb2e5f058ff28bef7c1657e707b848343576e8aa",
+      "auditorFingerprint": "451994e2e848a3cd54c2da9944907b3e3110a0e3ba9686765cf9e222a9d9165a",
       "achados": []
     }
   }
