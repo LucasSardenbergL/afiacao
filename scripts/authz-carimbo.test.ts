@@ -18,6 +18,7 @@ import {
   canonicalizar,
   fingerprintContrato,
   fingerprintAuditor,
+  dadoDoContrato,
   envDeTesteSetadas,
   idFinding,
   type Carimbo,
@@ -466,15 +467,23 @@ describe('chave `rls` — a quarta guarda enumerada', () => {
     expect(AUDITS.rls.contratoEmArquivo).toBeUndefined();
   });
 
-  it('o fingerprint de contrato cobre os TRÊS eixos — inclusive o Set de plataforma', () => {
-    // O Set é o eixo mais permissivo (mover uma função para dentro dele afrouxa o contrato) e é
-    // exatamente o tipo que `JSON.stringify` colapsaria para `{}`. Se o canônico não o
-    // representar, mover uma função para lá não moveria o fingerprint — cegueira no pior lugar.
-    const canon = canonicalizar({
-      tabelas: AUTHZ_RLS_ESPERADO,
-      predicados: AUTHZ_RLS_PREDICADOS,
-      plataforma: PREDICADOS_PLATAFORMA,
-    });
+  it('o contrato que o carimbo USA carrega os TRÊS eixos, por identidade', () => {
+    // Exerce `dadoDoContrato`, não uma reconstrução do objeto: a primeira versão deste teste
+    // montava `{tabelas, predicados, plataforma}` aqui e canonicalizava — remover um eixo da
+    // função real seguia VERDE (pego na falsificação). Identidade de referência é o que faz
+    // "esqueci de incluir o eixo" virar vermelho.
+    const d = dadoDoContrato('rls') as Record<string, unknown>;
+    expect(d.tabelas).toBe(AUTHZ_RLS_ESPERADO);
+    expect(d.predicados).toBe(AUTHZ_RLS_PREDICADOS);
+    expect(d.plataforma).toBe(PREDICADOS_PLATAFORMA);
+    expect(Object.keys(d).sort()).toEqual(['plataforma', 'predicados', 'tabelas']);
+  });
+
+  it('o canônico do contrato REAL representa o Set — o eixo mais permissivo dos três', () => {
+    // Mover uma função para dentro de PREDICADOS_PLATAFORMA dispensa o congelamento do corpo dela;
+    // é o eixo cuja mudança AFROUXA. `JSON.stringify(new Set(['a']))` é `'{}'` — se o canônico não
+    // o representasse, esse afrouxamento não moveria o fingerprint. Cegueira no pior lugar.
+    const canon = canonicalizar(dadoDoContrato('rls'));
     expect(canon).toContain('Set(');
     expect(canon).toContain('auth.uid');
     expect(canon).toContain('public.has_role');
@@ -485,9 +494,7 @@ describe('chave `rls` — a quarta guarda enumerada', () => {
     ['policy a mais', (c: Record<string, unknown>) => ({ ...c, zz: { forceRls: false, policies: {}, motivo: 'x' } })],
     ['plataforma ampliada', null],
   ])('a mutação "%s" move o canônico do contrato de rls', (rot, mut) => {
-    const base = canonicalizar({
-      tabelas: AUTHZ_RLS_ESPERADO, predicados: AUTHZ_RLS_PREDICADOS, plataforma: PREDICADOS_PLATAFORMA,
-    });
+    const base = canonicalizar(dadoDoContrato('rls'));
     const depois =
       mut === null
         ? canonicalizar({
