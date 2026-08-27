@@ -469,6 +469,32 @@ a browser headless).
 (label `SENT`, `toRecipients = support@lovable.dev`, assunto e corpo conferidos), não pelo retorno da
 chamada. **Aguardando resposta.**
 
+### As 7 funções que SOBRAM com `EXECUTE` p/ PUBLIC — auditadas (2026-08-26)
+
+O bloco fecha 5 funções (`http_post/get/delete`, `wake`, `worker_restart`) e deixa **7** de pé, porque
+`http_post` chama duas delas como INVOKER e revogá-las quebraria os crons. Isso levanta a pergunta óbvia:
+**as 7 dão alguma primitiva ao atacante depois do bloco?** Medido, não presumido — `_await_response`,
+`_encode_url_with_params_array`, `_http_collect_response`, `_urlencode_string`, `check_worker_is_up`,
+`http_collect_response`, `wait_until_running`:
+
+| eixo | resultado |
+|---|---|
+| `prosecdef` (SECURITY DEFINER) | **`false` nas 7** |
+| insere em `http_request_queue` | `false` nas 7 |
+| chama `wake()` / `net.http_*` | `false` nas 7 |
+| apaga de `_http_response` | `false` nas 7 |
+
+⇒ **Não há deputy confuso em `net`.** O `secdef=false` é o eixo que decide: mesmo que uma delas tocasse a
+fila, tocaria **com o privilégio do chamador** — que o bloco revoga. As 7 restantes leem `_http_response`
+ou são puras (encode/urlencode/status do worker). Fechar `EXECUTE` nelas custaria os 52 crons e não
+compraria nada.
+
+⚠️ **REVISÃO INDEPENDENTE PENDENTE** (`money-path.md`, Caminho B). O ritual `/codex` sobre este bloco
+falhou por **cota esgotada** (`codex-async.sh` exit 75) e a auditoria acima é **minha**, do mesmo autor do
+bloco. Ela é medição reproduzível, não opinião — mas o que ela NÃO ataca é a **suposição de completude**,
+que é justamente a que o autor não enxerga: foi exatamente assim que o Achado 3 saiu invertido, e foi o
+`/codex` que virou a mesa. Enquanto o suporte não executar, a janela para a 2ª opinião continua aberta.
+
 O pedido carrega as 4 perguntas que o registro deixou em aberto, uma delas a que mais importa a longo
 prazo: **como impedir que um upgrade do pg_net restaure as ACLs públicas.** Enquanto não houver resposta,
 qualquer fecho aqui é **regressível** — o sentinela é reconferir `proacl`/`relacl` após todo bump da
