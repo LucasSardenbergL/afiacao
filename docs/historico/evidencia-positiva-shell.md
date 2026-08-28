@@ -1,4 +1,4 @@
-# Evidência POSITIVA — e as nove armadilhas de shell que fabricam VEREDITO
+# Evidência POSITIVA — e as dez armadilhas de shell que fabricam VEREDITO
 
 > **A regra que sobrou no CLAUDE.md:** validação só conta com **evidência positiva** — rode o
 > comando autoritativo, confirme que **terminou**, capture `exit 0`. Este doc guarda o *porquê*
@@ -27,7 +27,7 @@ rodar** (glob não expandido, arquivo inexistente, flag inválida) devolve zero 
 na tela, a uma busca que rodou e não achou nada. Só o **exit code** e o **formato da saída**
 distinguem os dois.
 
-## As nove armadilhas
+## As dez armadilhas
 
 ### 1. `cmd | tail` ENGOLE o exit code
 O pipeline devolve o status do **último** componente. `bun run test | tail -5` é sempre verde.
@@ -305,13 +305,74 @@ comando" mediu um caso defendido pela exigência de `echo`. A regra final: **a f
 falsificação precisa passar em todas as outras regras, para que só a sabotada decida o resultado.**
 Caso contrário o verde vem por motivo alheio — e verde por motivo alheio é indistinguível de prova.
 
-## O padrão por trás das nove
+
+### 10. `git show "$ref:path"` no zsh — o `:` vira MODIFIER e o path SOME
+
+O idioma canônico para ler um arquivo numa revisão é `git show <ref>:<path>`. Entre aspas dobradas e
+com a ref numa variável — que é como todo laço a escreve — o zsh **não** vê `ref` seguido de `:path`:
+ele vê o parâmetro `$ref` seguido de um **modifier de history-expansion** (`:s` substitute, `:a`
+absolute path, `:h`, `:t`, `:r`…). O path é consumido como argumento do modifier e **desaparece**:
+
+```bash
+ref=origin/main
+printf '[%s]\n' "$ref:supabase/functions/x.ts"    # -> [origin/main]                    <- path SUMIU
+printf '[%s]\n' "${ref}:supabase/functions/x.ts"  # -> [origin/main:supabase/...]       <- correto
+```
+
+Sobra `git show origin/main` — que é um comando **válido**: imprime o **commit inteiro em diff**, com
+**exit 0**. Nada falha, nada avisa.
+
+**Por que é da família que fabrica veredito, e não um simples typo:** o diff contém as linhas
+procuradas, prefixadas por `+`. Então um `grep -c` devolve um número **plausível e não-zero**
+justamente no commit que **introduziu** a string, e zero em todos os outros — que é *exatamente* o
+formato de uma descoberta. Medido em 2026-08-28, ao conferir se o campo `versao` hardcoded da
+`omie-nfe-reconcile` discriminava a fatia (`grep -cF 'v3.3-paginacao-janelas'`):
+
+| ref | git recebeu | linhas | `v3.3` | controle `omie-nfe-reconcile` |
+|---|---|---|---|---|
+| `origin/main` | `git show origin/main` (diff) | 391 | **0** | **0** ← impossível |
+| `dfa6e99e1` | idem | 283 | **10** | 17 |
+| `dfa6e99e1^` | idem | 1146 | **0** | 0 |
+| `7e076f1f7^` | idem | 153 | **0** | 0 |
+
+A leitura natural — "o `v3.3` só existe em `dfa6e99e1`, logo o campo **discrimina** aquela fatia" — é
+a conclusão errada, e ela decidiria se um deploy de edge money-path seria pedido ao founder. Com
+`${ref}:$P` a mesma medição devolve `v3.3` presente em **todas** as revisões (3, 3, 2, 2): o campo
+**não** discrimina nada, que é o oposto.
+
+**O que pegou foi o CONTROLE POSITIVO, e só ele:** `grep -cF 'omie-nfe-reconcile'` no arquivo
+`omie-nfe-reconcile/index.ts` voltou **0**. Um arquivo não pode não conter o próprio nome — o zero
+impossível denuncia que a leitura não é do arquivo. Sem esse controle, os quatro zeros restantes
+passariam por medição.
+
+**O gatilho é a PRIMEIRA LETRA do path**, e o repo é feito dos dois piores casos:
+
+| path | 1ª letra | comportamento |
+|---|---|---|
+| `supabase/functions/…` | `s` (substitute) | **SILENCIOSO** — vira `origin/main` |
+| `src/lib/…` | `s` (delimitador sem par) | ruidoso: `bad substitution` |
+| `a/b/c` | `a` (absolute) | **SILENCIOSO e pior** — vira `/Users/…/worktree/origin/main/b/c` |
+| `docs/…`, `package.json` | `d`, `p` | intacto (não são modifiers) |
+
+`src/` e `supabase/` são os dois diretórios mais tocados deste repo, e caem em ramos **diferentes**:
+um falha alto, o outro mente. Quem tropeça no `src/`, corrige aquele caso e segue, deixa o
+`supabase/` mentindo — é a §6 (BSD×GNU) com o agravante de que aqui os dois ramos convivem no
+**mesmo** shell, na **mesma** sessão.
+
+**Contramedida:** `git show "${ref}:$path"` — chaves **sempre**, mesmo quando "está funcionando"
+(pode estar funcionando porque a inicial calhou de ser inócua). E, como nas outras nove, uma
+afirmação conhecida junto: um `grep` de controle cuja resposta você já sabe, para que a leitura
+prove que leu o que diz ter lido.
+## O padrão por trás das dez
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
 assim não ser o que o consumidor lê; e a nona volta ao verde por construção pelo pior
 caminho — é a CONTRAMEDIDA de outra que trai ao mudar de shell, lendo ausência de dado como
-sucesso: o sinal que você lê não é o sinal que você acha que está lendo. A contramedida é sempre a mesma — **exigir uma afirmação POSITIVA e com formato
+sucesso: o sinal que você lê não é o sinal que você acha que está lendo. E a décima fecha o ciclo
+pelo lado do INSUMO: as nove anteriores leem mal um resultado real, enquanto ela entrega ao `grep`
+um insumo que nunca foi o pedido — o comando roda, devolve 0, e mede outra coisa. Verde e vermelho
+por construção precisam do mesmo antídoto: uma leitura cuja resposta já se conhece. A contramedida é sempre a mesma — **exigir uma afirmação POSITIVA e com formato
 conhecido** (exit code capturado colado, saída não-vazia, marcador de conclusão, formato conferido),
 em vez de ler qualquer coisa na ausência dela.
 
