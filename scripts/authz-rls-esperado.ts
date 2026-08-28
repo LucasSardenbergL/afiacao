@@ -32,7 +32,8 @@
  *     é a única ou a principal barreira entre um `authenticated` qualquer e (i) dinheiro,
  *     (ii) custo/preço, ou (iii) a raiz da autorização.**
  *
- * Como o critério é aplicado (2ª rodada, 2026-08-27 — 7 → 17 tabelas, 19 → 38 policies). O
+ * Como o critério é aplicado (2ª rodada, 2026-08-27 — 7 → 17 tabelas, 19 → 38 policies;
+ * 3ª rodada, 2026-08-28 — 17 → 20 tabelas, 38 → 50 policies, 5 → 8 predicados). O
  * critério acima tem três membros e eles NÃO se aplicam do mesmo jeito, porque a alavanca é
  * diferente:
  *
@@ -77,7 +78,7 @@
  *     as 14 de `cap_compras_ler`** — aprovação, log e config. Os gates delas (`cap_credito_escrever`,
  *     `cap_compras_ler`) são, medido, `has_role(master)` puro: a raiz é `user_roles`, já curada.
  *
- * E as 311 tabelas restantes com policy (328 medidas com ≥1 policy, 17 curadas) seguem cobertas
+ * E as 308 tabelas restantes com policy (328 medidas com ≥1 policy, 20 curadas) seguem cobertas
  * pelo eixo universal (ninguém desliga a RLS delas em silêncio), com o CONTEÚDO não reconciliado
  * — lacuna declarada, não cobertura implícita.
  *
@@ -138,8 +139,8 @@ export interface TabelaRls {
 }
 
 /**
- * Estado medido em prod (psql-ro, 2026-08-27; PG 17.6). 17 tabelas · 38 policies
- * (1ª rodada: 7 · 19 — as 10 tabelas da 2ª rodada estão marcadas pelos separadores abaixo).
+ * Estado medido em prod (psql-ro, 2026-08-27 + 2026-08-28; PG 17.6). 20 tabelas · 50 policies
+ * (1ª rodada: 7 · 19; 2ª: +10 · +19; 3ª: +3 · +12 — cada rodada marcada pelos separadores abaixo).
  *
  * ⚠️ Os md5 se REPETEM entre tabelas quando o predicado é literalmente o mesmo texto — p.ex.
  * `8ddd30b6…` é `has_role(auth.uid(), 'master'::app_role)` em `profiles` E em `user_roles`. O md5
@@ -713,6 +714,159 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
       },
     },
   },
+  // ── 3ª rodada: as tabelas escolhidas pelo PREDICADO que ARRASTAM (medida em prod
+  //    2026-08-28). As três abaixo guardam pouco; o que elas trazem para o eixo 3 é que
+  //    importa — `cap_compras_ler`, `cap_preco_escrever` e `cap_credito_escrever`, três
+  //    capabilities que audit nenhum congelava. Ver o bloco AUTHZ_RLS_PREDICADOS. ──────────
+  'public.venda_excecao_credito': {
+    forceRls: false,
+    motivo:
+      'A EXCEÇÃO de crédito: a linha que libera venda para cliente com título vencido. O valor não ' +
+      'está na tabela — está no que ela AUTORIZA, que é faturar contra risco já materializado. Entra ' +
+      'porque a escrita é gateada por `private.cap_credito_escrever`, uma capability que hoje não ' +
+      'está congelada por audit nenhum (0 linhas na tabela; o risco é latente, e o predicado é o que ' +
+      'importa). É o vetor exato do PR #2064: reescrever a capability deixa o texto da policy ' +
+      'idêntico e abre a concessão.',
+    policies: {
+      venda_excecao_insert_gestor: {
+        cmd: 'a',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: null,
+        withCheckMd5: 'ff1af097db9f598b8d168be213dcba8b',
+        motivo:
+          '`private.cap_credito_escrever(auth.uid())` — INSERT puro, sem `USING` (nada a filtrar na ' +
+          'entrada). Traz `cap_credito_escrever` para AUTHZ_RLS_PREDICADOS.',
+      },
+      venda_excecao_select_staff: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: '2ebe0c0b117eb89cd6b89791bbc868c1',
+        withCheckMd5: null,
+        motivo:
+          '`EXISTS (SELECT 1 FROM user_roles …)` INLINE — não chama `has_role`, repete a subquery à ' +
+          'mão. Por isso esta policy não contribui predicado nenhum ao eixo 3: o md5 do `qual` é ' +
+          'tudo o que existe para vigiar aqui.',
+      },
+      venda_excecao_service_all: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: '28f2f9950c5ed7f660b39524ab6b864d',
+        withCheckMd5: null,
+        motivo:
+          '`(SELECT auth.role()) = service_role` — FOR ALL das engines. md5 DIFERENTE do `ea849457…` ' +
+          'das outras service-policies porque esta traz o wrap InitPlan `(SELECT auth.role())`: ' +
+          'mesma semântica, texto outro (§4). Sem `WITH CHECK`: simétrico por construção.',
+      },
+    },
+  },
+
+  // ── custo / preço (confidencialidade comercial) ────────────────────────────────────────────
+  'public.cliente_tier_preco': {
+    forceRls: false,
+    motivo:
+      'O TIER de preço do cliente — a linha que decide o desconto que ele paga. Vazia hoje (0 linhas, ' +
+      'contadas), e entra pelo mesmo motivo que `venda_excecao_credito`: a escrita é gateada por ' +
+      '`private.cap_preco_escrever`, capability que audit nenhum congelava. Uma tabela de CONCESSÃO ' +
+      'vazia não é uma tabela sem risco: é uma tabela cujo primeiro INSERT indevido é o dano.',
+    policies: {
+      cliente_tier_preco_delete_master: {
+        cmd: 'd',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'e133054e309de597df65e71951235297',
+        withCheckMd5: null,
+        motivo:
+          '`has_role((SELECT auth.uid()), master)` — md5 distinto do `8ddd30b6…` das outras policies ' +
+          'master-only porque esta tem o wrap InitPlan. Mesma semântica, texto outro: o md5 é da ' +
+          'EXPRESSÃO, e é por isso que ele é conservador por desenho.',
+      },
+      cliente_tier_preco_insert_gestor: {
+        cmd: 'a',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: null,
+        withCheckMd5: '94c32fa0338037174a4632338242c3e4',
+        motivo: '`private.cap_preco_escrever(auth.uid())` — INSERT puro, sem `USING`.',
+      },
+      cliente_tier_preco_select_staff: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: '41fa909ea11898d386285db45a4908e9',
+        withCheckMd5: null,
+        motivo: '`has_role(employee) OR has_role(master)` — broad-staff de leitura.',
+      },
+      cliente_tier_preco_service_all: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'ea849457c1a771a3ea5e4fe3c0210590',
+        withCheckMd5: null,
+        motivo: '`auth.role() = service_role` — FOR ALL das engines, sem `WITH CHECK`: simétrico.',
+      },
+      cliente_tier_preco_update_gestor: {
+        cmd: 'w',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: '94c32fa0338037174a4632338242c3e4',
+        withCheckMd5: '94c32fa0338037174a4632338242c3e4',
+        motivo:
+          '`cap_preco_escrever` nos DOIS lados — a linha alterada tem de satisfazer o gate antes e ' +
+          'depois, o que impede mover um cliente para um tier melhor sem a capability.',
+      },
+    },
+  },
+
+  'public.pedido_compra_item': {
+    forceRls: false,
+    motivo:
+      'O item do pedido de COMPRA: 2.404 linhas com `preco_unitario`/`valor_linha`/`desconto_percentual` ' +
+      '— o custo na origem, antes de virar CMC (docs/agent/reposicao.md). Entra sobretudo pelo eixo 3: ' +
+      'é a porta por onde `private.cap_compras_ler` — que gateia 18 policies em 14 tabelas, mais do ' +
+      'que qualquer predicado hoje congelado exceto `has_role` — passa a ser vigiado. ⚠️ Medido e ' +
+      'digno de nota: a capability chamada `_ler` gateia também INSERT, UPDATE e DELETE aqui; o nome ' +
+      'diz leitura e o efeito é escrita. Está registrado, não corrigido — mudar isso é decisão de ' +
+      'produto, e o contrato mede o que É.',
+    policies: {
+      staff_pedido_compra_item_delete: {
+        cmd: 'd',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: '53c61578bc6811739a0638a2df23462f',
+        withCheckMd5: null,
+        motivo: '`private.cap_compras_ler(auth.uid())` no `USING` — o lado que o DELETE consulta.',
+      },
+      staff_pedido_compra_item_insert: {
+        cmd: 'a',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: null,
+        withCheckMd5: '53c61578bc6811739a0638a2df23462f',
+        motivo: '`cap_compras_ler` no `WITH CHECK` — INSERT puro. Mesmo md5: é a mesma expressão.',
+      },
+      staff_pedido_compra_item_select: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: '53c61578bc6811739a0638a2df23462f',
+        withCheckMd5: null,
+        motivo: '`cap_compras_ler` — a leitura do custo de compra.',
+      },
+      staff_pedido_compra_item_update: {
+        cmd: 'w',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: '53c61578bc6811739a0638a2df23462f',
+        withCheckMd5: '53c61578bc6811739a0638a2df23462f',
+        motivo: '`cap_compras_ler` nos dois lados — simétrico, então não há brecha de DELETE-por-UPDATE.',
+      },
+    },
+  },
+
+  // ── cadastro-base + aprovação ──────────────────────────────────────────────────────────────
 };
 
 export interface PredicadoEsperado {
@@ -736,13 +890,55 @@ export interface PredicadoEsperado {
  * `cap_custo_ler` chamada dentro de um `COALESCE`, e o §4 tem o registro de duas varreduras
  * textuais que produziram falso-positivo integral).
  *
- * Medido em prod 2026-08-27: as 38 policies referenciam 7 funções — estas 5 mais `auth.uid` e
- * `auth.role`, que ficam em `PREDICADOS_PLATAFORMA`. A 2ª rodada acrescentou UMA função só
- * (`private.is_super_admin`): 10 tabelas novas e só um predicado novo é o sinal de que a
- * autorização deste banco converge para poucos gates — o que torna o eixo 3 barato e o md5 do
- * corpo deles caro.
+ * Medido em prod (2026-08-27 + 2026-08-28): as 50 policies referenciam 10 funções — estas 8
+ * mais `auth.uid` e `auth.role`, que ficam em `PREDICADOS_PLATAFORMA`.
+ *
+ * ⚠️ A 2ª rodada leu o próprio resultado como convergência: 10 tabelas novas trazendo UMA função
+ * só (`is_super_admin`) sugeria que a autorização deste banco converge para poucos gates. A 3ª
+ * rodada mediu o contrário — 3 tabelas trouxeram 3 funções (`cap_compras_ler`,
+ * `cap_preco_escrever`, `cap_credito_escrever`) — e a razão é de MÉTODO, não do banco: a 2ª
+ * rodada escolheu tabelas por parentesco com as já curadas (o resto do `fin_*`, o resto do que
+ * `cap_custo_ler` gateia), e tabela irmã compartilha o gate da irmã por construção. A amostra
+ * confirmava a hipótese porque fora selecionada por ela. O grafo real tem 14 funções gateando
+ * policy em `public`; 8 estão congeladas aqui. ⇒ **Convergência medida sobre uma amostra
+ * escolhida por semelhança não é convergência — é o método se ouvindo falar.**
+ *
+ * ⚠️ `cap_compras_ler`, `cap_credito_escrever` e `cap_preco_escrever` têm o MESMO `srcMd5`
+ * (`5faf2a21…`): três capabilities distintas cujo corpo hoje é o mesmo `has_role(master)`. Não é
+ * duplicação a limpar — é o estado a congelar, e o dia em que uma divergir é o sinal que se quer.
  */
 export const AUTHZ_RLS_PREDICADOS: Record<string, PredicadoEsperado> = {
+  'private.cap_compras_ler': {
+    secdef: true,
+    cfg: 'search_path=public',
+    srcMd5: '5faf2a21a46209aaf0ffa75041af6b4b',
+    motivo:
+      '`COALESCE(_uid IS NOT NULL AND has_role(master), false)` — master-only. O predicado de MAIOR ' +
+      'alcance que este contrato passa a congelar depois de `has_role`: 18 policies em 14 tabelas ' +
+      '(medido por pg_depend), das quais o contrato cura UMA (`pedido_compra_item`). Congelar o corpo ' +
+      'cobre as 14 no eixo 3 mesmo sem curar o conteúdo das outras 13 — é o melhor retorno por entrada ' +
+      'do arquivo inteiro. ⚠️ Corpo IDÊNTICO ao de `cap_preco_escrever`/`cap_credito_escrever`, logo o ' +
+      'mesmo md5 nas três: são capabilities distintas com a mesma regra hoje, e o dia em que uma ' +
+      'divergir é exatamente o que se quer ver.',
+  },
+  'private.cap_credito_escrever': {
+    secdef: true,
+    cfg: 'search_path=public',
+    srcMd5: '5faf2a21a46209aaf0ffa75041af6b4b',
+    motivo:
+      'master-only, mesmo corpo (e mesmo md5) de `cap_compras_ler`. Gateia 1 policy: o INSERT de ' +
+      '`venda_excecao_credito`, que libera faturamento contra título vencido. Alcance pequeno, dano ' +
+      'grande — e era invisível aos quatro audits antes desta entrada.',
+  },
+  'private.cap_preco_escrever': {
+    secdef: true,
+    cfg: 'search_path=public',
+    srcMd5: '5faf2a21a46209aaf0ffa75041af6b4b',
+    motivo:
+      'master-only, mesmo corpo dos dois acima. Gateia o INSERT e o UPDATE de `cliente_tier_preco`, ' +
+      'isto é, o desconto que cada cliente paga. Reescrevê-la para `true` deixa as duas policies ' +
+      'byte-a-byte idênticas e entrega a tabela de preços a qualquer autenticado.',
+  },
   'public.has_role': {
     secdef: true,
     cfg: 'search_path=public',
