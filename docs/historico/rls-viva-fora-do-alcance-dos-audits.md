@@ -386,3 +386,56 @@ como achado grave. Refeito com ref nomeada estável (`origin/pr2068`): **conflit
 que era a realidade. ⇒ **`FETCH_HEAD` é volátil e não pertence a você**: para comparar contra um
 branch alheio, materialize uma ref nomeada (`git fetch origin <branch>:refs/remotes/origin/<apelido>`)
 antes de qualquer operação que leve mais de um comando.
+
+### 7.1 A declaração de lacuna apodreceu em UM dia — e virou dado
+
+O §7 acima entregou as lacunas como **prosa no cabeçalho do contrato**, com a razão de cada
+recusa escrita. Doze horas depois, a **3ª rodada** (`b76a5838e`, sessão paralela) curou
+`venda_excecao_credito`, `cliente_tier_preco` e `pedido_compra_item` — três tabelas que aquele
+parágrafo declarava, por nome, como lacuna. O cabeçalho seguiu afirmando o contrário.
+
+**Verde em todos os gates.** E não por descuido do desenho: os audits reconciliam o **contrato
+contra prod**, e ninguém reconcilia a **declaração contra o contrato**. É a mesma classe de
+"contrato falso é pior que lacuna", só que na direção espelhada — a que finge **não** cobrir. Essa
+direção é mais difícil de notar, porque nada quebra e a única vítima é a próxima sessão, que lê a
+razão errada e refaz a recusa.
+
+E a razão que a 3ª rodada derrubou é o achado que valia o exercício. Eu recusei
+`venda_excecao_credito` e `cliente_tier_preco` argumentando:
+
+> "Os gates delas são, medido, `has_role(master)` puro: a raiz é `user_roles`, já curada."
+
+Medição correta, conclusão errada. O argumento vale para o eixo da **raiz** e é **cego ao eixo 3**:
+congelar `user_roles` não congela o **corpo** de `private.cap_credito_escrever` — reescrevê-lo para
+`SELECT true` não move o md5 de policy nenhuma, que é exatamente o ponto cego que o eixo 3 existe
+para fechar (§3). Curar a tabela **arrasta** o predicado para o congelamento; era esse o valor, e
+ele não estava na tabela, estava na aresta.
+
+> **Lição de domínio:** *"a raiz já está coberta" não é razão para recusar* — raiz e predicado são
+> eixos diferentes. A pergunta certa é se o **gate daquela tabela** já é congelado por alguém.
+
+### O resíduo: `LACUNAS_DECLARADAS`
+
+A declaração saiu da prosa e virou `Record<string, string>` no próprio contrato, com quatro gates:
+
+1. **nenhuma chave de `LACUNAS_DECLARADAS` é chave de `AUTHZ_RLS_ESPERADO`** — o defeito exato,
+   pego por um teste de três linhas;
+2. chave qualificada (`schema.tabela`) e razão com substância (>80 chars);
+3. **sentinela do próprio gate:** a lista não pode ser esvaziada — sem o piso, `for` sobre lista
+   vazia deixaria os dois primeiros passando por **vacuidade**, e o contrato voltaria a não
+   declarar nada;
+4. o eixo entrou no `dadoDoContrato('rls')`, então **mudar a declaração move o
+   `contratoFingerprint`** — provado mudando UM motivo e medindo o hash antes/depois
+   (`6dd89233…` → `015e3e4a…` → volta). Sem isso o eixo seria decorativo: tirar uma tabela da lista
+   sem curá-la faria o contrato parar de dizer "isto não é coberto", e o carimbo atestaria uma
+   cobertura que ninguém mediu.
+
+Falsificação: F5 **recria o bug histórico** (declarar `venda_excecao_credito` como lacuna com ela
+curada) → vermelho com a mensagem certa; F6 esvazia a lista → a sentinela grita; F7 remove o eixo
+do carimbo → o teste de identidade dos QUATRO eixos reprova; F8 é o teste de fingerprint acima.
+
+> **Classe (a terceira irmã, depois do `recusarEnvDeTeste` e do gate de `motivo`):** *prosa que
+> descreve dado apodrece quando o dado muda, e nada no ponto de extensão avisa.* Nas três vezes a
+> guarda estava **correta no dia em que foi escrita**; quem a tornou falsa foi o crescimento
+> normal do sistema. Quando a afirmação pode ser expressa como **dado ao lado do dado que ela
+> descreve**, é essa forma que sobrevive.
