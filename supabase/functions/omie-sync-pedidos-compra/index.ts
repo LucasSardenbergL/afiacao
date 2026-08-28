@@ -11,7 +11,7 @@ import {
   deveRodarCompleto,
   type ModoSyncPedidos,
 } from "../_shared/janela-pedidos-compra.ts";
-import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -994,7 +994,7 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
 // inteiro em `resultados.pedidos.body`, então o marcador viaja para `net._http_response` no tick de
 // 2h do jobid 52 e o deploy se prova sem ninguém chamar nada e sem pagar efeito.
 function jsonRes(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO, edge: EDGE, fonte: FONTE }), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });

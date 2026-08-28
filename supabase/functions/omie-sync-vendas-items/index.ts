@@ -9,7 +9,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
-import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
 // ─── Type definitions ───
 
@@ -298,7 +298,7 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
 // inteiro em `resultados.vendas.body`, então o marcador viaja para `net._http_response` no tick de
 // 2h do jobid 52 e o deploy se prova sem ninguém chamar nada, sem cron secret e sem pagar efeito.
 function jsonRes(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO, edge: EDGE, fonte: FONTE }), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
