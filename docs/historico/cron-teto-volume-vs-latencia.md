@@ -493,25 +493,15 @@ RESPONDE com `VERSAO` bootou; um bundle a que faltasse qualquer arquivo dessa ca
 bootaria**. O modo de falha do #2020 (prompt que nomeia só o `index.ts`) está descartado por
 construção — e é a razão de o eco provar mais do que aparenta.
 
-### A régua do eco se lê na JANELA, não no tick — `background` é sorteio, não propriedade
+### Por que `pedidos` levou 3 ticks para aparecer — e por que isso NÃO é sonda ativa
 
-O #2070 mediu o tick 61756 mais os 4 da janela, viu `nfes` background 4/4 e `pedidos` 3/4, e
-concluiu: *"para o step que estoura, a prova continua sendo a sonda ativa"*. **A medição de
-2026-08-28 refuta a conclusão** — nos ticks 06:15/08:15/10:15Z os DOIS steps que o #2070 dava como
-inalcançáveis responderam sozinhos, ambos no tick das 10:15Z, sem sonda nenhuma.
+O `pedidos` só ecoou no tick das 10:15Z; nos dois anteriores veio `background`. A régua que
+prescrevia sonda ativa para "o step que estoura" foi **refutada pela medição** e corrigida em
+[`verificabilidade-do-conjunto-orquestrado.md`](verificabilidade-do-conjunto-orquestrado.md) e na
+skill `lovable-deploy-verify` (PR #2073, sessão paralela, mesma janela de ticks): `background` é
+**variância de latência do tick**, não propriedade do step, então a cobertura do eco **converge**
+e a leitura certa acumula a janela inteira do TTL antes de invocar qualquer coisa.
 
-`background` não é propriedade do step: é **variância de latência do Omie** contra o
-`STEP_TIMEOUT_MS` de 25s. Logo a cobertura do eco **converge com o número de ticks**, e a leitura
-certa acumula a JANELA inteira — `respondido` em QUALQUER tick basta, porque o marcador não
-envelhece dentro dela. O cron roda a cada 2h e o `pg_net.ttl` guarda 6h: **toda leitura nasce com
-~3 tentativas de graça**, e julgar pelo tick mais recente joga duas fora.
-
-O que isso troca em custo: o caminho caro que o #2070 prescrevia — sonda ativa no 🟣 SQL Editor,
-bloco colado pelo founder, e justamente no step onde sondar um bundle pré-sensor dispara a
-varredura de ~185s — vira **esperar o próximo tick e reler**. Custo zero, sem founder no caminho.
-Só recorra à sonda ativa se o step vier `background` em **toda** a janela de 6h; aí sim a via
-passiva se esgotou.
-
-⚠️ A assimetria continua valendo: `respondido` + marcador **prova**; `background` é
-**INCONCLUSIVO**, nunca "bundle velho". O que mudou é o que se faz com o inconclusivo — **reler**,
-não sondar.
+Aqui fica só a consequência para **esta** pendência: ela se fechou sem sonda ativa, sem bloco no
+🟣 SQL Editor e sem o founder — o passo 1 do plano acima ("esperar a janela útil") era suficiente
+sozinho, e os passos 2-4 (sonda ativa, prompt de deploy) nunca precisaram ser executados.
