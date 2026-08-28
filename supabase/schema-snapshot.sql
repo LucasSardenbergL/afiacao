@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict QtOdGn7zeAkRw8EWA4bU1xECHIoo4InhVuDzbKGXDwLRsiArEVp8XhnMgdPeKBe
+\restrict tsosDzLbWGhsTBLEXzCmP2eN2y0oL6uqEIjXYVxejvbK5DwKogiacdRnjod7ngv
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10 (Homebrew)
@@ -316,12 +316,29 @@ CREATE FUNCTION private.atp_disponivel(p_pool text, p_sku bigint, p_excluir_chec
     FROM base b CROSS JOIN seg s
   ),
   res AS (
+    -- FASE 3 — a ÚNICA mudança desta migration no cálculo.
+    -- Reserva de PV FIRME (o pedido vinculado já tem omie_pedido_id) desconta
+    -- enquanto estiver 'ativa', SEM olhar expira_em: o Omie só baixa o saldo no
+    -- faturamento (p90 medido de 324h) e o TTL de 30min mataria a reserva antes,
+    -- devolvendo a mesma unidade ao ATP. Quem a tira de 'ativa' é o desfecho —
+    -- cancelamento confirmado (job) ou resolução humana auditada.
+    -- O discriminante é omie_pedido_id, NÃO sales_order_id: o vínculo nasce ANTES
+    -- da chamada ao Omie (fase 2), então reserva pré-PV (ou de PV que falhou em
+    -- definitivo) segue no TTL — ali o relógio é a resposta certa, porque não há
+    -- fato futuro que a resolva.
     SELECT COALESCE(sum(r.quantidade), 0) AS reservado
     FROM public.estoque_reservas r
     WHERE r.pool = p_pool
       AND r.omie_codigo_produto = p_sku
       AND r.status = 'ativa'
-      AND r.expira_em > now()
+      AND (
+        r.expira_em > now()
+        OR EXISTS (
+          SELECT 1 FROM public.sales_orders so
+          WHERE so.id = r.sales_order_id
+            AND so.omie_pedido_id IS NOT NULL
+        )
+      )
       AND (p_excluir_checkout IS NULL OR r.checkout_id <> p_excluir_checkout)
   )
   SELECT
@@ -338,6 +355,142 @@ CREATE FUNCTION private.atp_disponivel(p_pool text, p_sku bigint, p_excluir_chec
   FROM calc c
   CROSS JOIN res r
   CROSS JOIN seg s;
+$$;
+
+
+--
+-- Name: atp_pedido_canonico(uuid); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.atp_pedido_canonico(p_sales_order_id uuid) RETURNS TABLE(canonico_id uuid, status text, omie_pedido_id bigint, account text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT c.id, c.status, c.omie_pedido_id, c.account
+  FROM public.sales_orders push
+  JOIN public.sales_orders c
+    ON c.account = push.account
+   AND c.omie_pedido_id = push.omie_pedido_id
+   AND c.hash_payload IS NOT NULL
+  WHERE push.id = p_sales_order_id
+    AND push.omie_pedido_id IS NOT NULL
+  LIMIT 1;
+$$;
+
+
+--
+-- Name: atp_reconciliar_job(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.atp_reconciliar_job() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_liberadas integer := 0;
+  v_observadas integer := 0;
+  v_rearmadas integer := 0;
+  v_aguardando integer;
+  v_presas integer;
+BEGIN
+  -- ── (a) LIBERAÇÃO por cancelamento CONFIRMADO no Omie (etapa 80 → 'cancelado'
+  --        na linha canônica). Aqui o Omie não baixou nada, então o estoque volta
+  --        a estar livre de verdade — não há fato futuro a esperar.
+  --        deleted_at NÃO entra: é gravado pelo front ANTES da confirmação remota.
+  WITH alvo AS (
+    SELECT r.id, r.checkout_id, r.sales_order_id, k.account
+    FROM public.estoque_reservas r
+    CROSS JOIN LATERAL private.atp_pedido_canonico(r.sales_order_id) k
+    WHERE r.status = 'ativa'
+      AND r.sales_order_id IS NOT NULL
+      AND k.status = 'cancelado'
+  ),
+  upd AS (
+    UPDATE public.estoque_reservas r
+       SET status = 'liberada',
+           motivo = 'reconciliacao: cancelamento confirmado no Omie',
+           atualizado_em = now()
+      FROM alvo a
+     WHERE r.id = a.id
+    RETURNING a.sales_order_id AS so_id, a.checkout_id AS ck, a.account AS acc
+  ),
+  trilha AS (
+    INSERT INTO public.atp_decisoes
+      (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement, actor_user_id)
+    SELECT DISTINCT u.so_id, u.ck, 'oben', COALESCE(u.acc, 'oben'),
+           'liberado_por_cancelamento', 'reconciliacao', true, NULL::uuid
+    FROM upd u
+    RETURNING 1
+  )
+  SELECT count(*) INTO v_liberadas FROM upd;
+
+  -- ── (b) OBSERVAÇÃO do faturamento. Só CARIMBA — não consome. O carimbo não
+  --        afirma que o estoque baixou (ver item B do cabeçalho); ele é o gatilho
+  --        da revisão humana. clock_timestamp(), não now(): o carimbo é um
+  --        instante de parede, e now() é o do BEGIN.
+  WITH alvo AS (
+    SELECT r.id, r.checkout_id, r.sales_order_id, k.account
+    FROM public.estoque_reservas r
+    CROSS JOIN LATERAL private.atp_pedido_canonico(r.sales_order_id) k
+    WHERE r.status = 'ativa'
+      AND r.sales_order_id IS NOT NULL
+      AND r.faturamento_observado_em IS NULL
+      AND k.status = 'faturado'
+  ),
+  upd AS (
+    UPDATE public.estoque_reservas r
+       SET faturamento_observado_em = clock_timestamp(),
+           atualizado_em = now()
+      FROM alvo a
+     WHERE r.id = a.id
+    RETURNING a.sales_order_id AS so_id, a.checkout_id AS ck, a.account AS acc
+  ),
+  trilha AS (
+    INSERT INTO public.atp_decisoes
+      (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement, actor_user_id)
+    SELECT DISTINCT u.so_id, u.ck, 'oben', COALESCE(u.acc, 'oben'),
+           'faturamento_observado', 'reconciliacao', true, NULL::uuid
+    FROM upd u
+    RETURNING 1
+  )
+  SELECT count(*) INTO v_observadas FROM upd;
+
+  -- ── (c) REARMA o carimbo quando o status canônico REGREDIU. statusEhOmie
+  --        aceita trocar 'faturado' por outra etapa conhecida; sem isto, um
+  --        faturamento futuro reaproveitaria uma observação velha.
+  UPDATE public.estoque_reservas r
+     SET faturamento_observado_em = NULL,
+         atualizado_em = now()
+   WHERE r.status = 'ativa'
+     AND r.faturamento_observado_em IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM private.atp_pedido_canonico(r.sales_order_id) k
+       WHERE k.status = 'faturado'
+     );
+  GET DIAGNOSTICS v_rearmadas = ROW_COUNT;
+
+  -- ── Observabilidade. Sem escape por relógio, "reserva parada" é o modo de
+  --     falha que substitui o oversell — e é um número que alguém precisa olhar
+  --     (sync de pedidos parado trava TODAS em silêncio).
+  SELECT count(*) INTO v_aguardando
+  FROM public.estoque_reservas r
+  WHERE r.status = 'ativa' AND r.faturamento_observado_em IS NOT NULL;
+
+  SELECT count(*) INTO v_presas
+  FROM public.estoque_reservas r
+  WHERE r.status = 'ativa'
+    AND r.sales_order_id IS NOT NULL
+    AND r.created_at <= now() - interval '7 days';
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'liberadas_por_cancelamento', v_liberadas,
+    'faturamentos_observados', v_observadas,
+    'carimbos_rearmados', v_rearmadas,
+    'aguardando_resolucao', v_aguardando,
+    'ativas_ha_mais_de_7d', v_presas
+  );
+END;
 $$;
 
 
@@ -608,6 +761,28 @@ $$;
 
 
 --
+-- Name: custo_canonico(numeric, numeric); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.custo_canonico(p_cost_final numeric, p_cost_price numeric) RETURNS numeric
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT CASE
+    WHEN private.regua_num_finito(p_cost_final) AND p_cost_final > 0 THEN p_cost_final
+    WHEN private.regua_num_finito(p_cost_price) AND p_cost_price  > 0 THEN p_cost_price
+    ELSE NULL
+  END;
+$$;
+
+
+--
+-- Name: FUNCTION custo_canonico(p_cost_final numeric, p_cost_price numeric); Type: COMMENT; Schema: private; Owner: -
+--
+
+COMMENT ON FUNCTION private.custo_canonico(p_cost_final numeric, p_cost_price numeric) IS 'Custo canonico p/ money-path. Espelho SQL de src/lib/custo/custoCanonico.ts (cost_final -> cost_price, finito e > 0, senao NULL). Paridade provada em db/test-authz-custo-fu4f-fase3-ranking.sh.';
+
+
+--
 -- Name: expirar_reservas_vencidas_job(); Type: FUNCTION; Schema: private; Owner: -
 --
 
@@ -618,17 +793,177 @@ CREATE FUNCTION private.expirar_reservas_vencidas_job() RETURNS jsonb
 DECLARE
   v_n integer;
 BEGIN
-  UPDATE public.estoque_reservas
+  UPDATE public.estoque_reservas r
      SET status = 'expirada',
          motivo = 'expirada por TTL',
          atualizado_em = now()
-   WHERE status = 'ativa'
-     AND expira_em <= now();
+   WHERE r.status = 'ativa'
+     AND r.expira_em <= now()
+     -- FASE 3: reserva de PV firme não morre pelo relógio (mesmo predicado do M1).
+     AND NOT EXISTS (
+       SELECT 1 FROM public.sales_orders so
+       WHERE so.id = r.sales_order_id
+         AND so.omie_pedido_id IS NOT NULL
+     );
   GET DIAGNOSTICS v_n = ROW_COUNT;
 
   RETURN jsonb_build_object('ok', true, 'expiradas', v_n);
 END;
 $$;
+
+
+--
+-- Name: farmer_expirar_pendentes_do_dono_anterior(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.farmer_expirar_pendentes_do_dono_anterior() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_dono_novo uuid;
+  v_motivo    text;
+  v_reco      integer;
+  v_bundle    integer;
+BEGIN
+  -- No DELETE não há dono novo. O NULL aqui não é "não sei": combinado com o
+  -- `IS DISTINCT FROM` abaixo ele significa "nenhum farmer é o dono atual deste cliente",
+  -- e TODA pendente dele passa a estar fora de escopo — que é o estado real de um cliente
+  -- cujo score sumiu (o que `cleanup_orphan_score_on_carteira_delete()` faz quando ele sai
+  -- de todas as carteiras).
+  IF TG_OP = 'DELETE' THEN
+    v_dono_novo := NULL;
+    v_motivo    := 'perda_de_dono';
+  ELSE
+    v_dono_novo := NEW.farmer_id;
+    v_motivo    := 'troca_de_dono';
+  END IF;
+
+  -- `IS DISTINCT FROM`, não `<>` — mesma escolha do FG009, pelo mesmo motivo, com um caso
+  -- a mais: no DELETE `v_dono_novo` é NULL, e `farmer_id <> NULL` é NULL, que o WHERE
+  -- descarta. Com `<>` o ramo do DELETE não expiraria NADA e o teste do caminho feliz
+  -- seguiria verde — falha silenciosa perfeita. (O harness falsifica exatamente isto.)
+  --
+  -- O predicado é "tudo que não é do dono NOVO", não "o que era do dono antigo": assim é
+  -- AUTO-SANEANTE — uma órfã deixada por uma troca anterior (A→B→C) morre na próxima
+  -- troca, em vez de sobreviver porque naquele instante o dono antigo era outro.
+  --
+  -- Só 'pendente' é tocado: 'ofertado'/'aceito'/'rejeitado' (e 'aceito_total'/
+  -- 'aceito_parcial' no bundle) são DESFECHO — histórico imutável. E é UPDATE, nunca DELETE.
+  UPDATE public.farmer_recommendations
+     SET status         = 'expirado',
+         expired_at     = clock_timestamp(),
+         expired_reason = v_motivo,
+         updated_at     = clock_timestamp()
+   WHERE customer_user_id = OLD.customer_user_id
+     AND status = 'pendente'
+     AND farmer_id IS DISTINCT FROM v_dono_novo;
+  GET DIAGNOSTICS v_reco = ROW_COUNT;
+
+  UPDATE public.farmer_bundle_recommendations
+     SET status         = 'expirado',
+         expired_at     = clock_timestamp(),
+         expired_reason = v_motivo,
+         updated_at     = clock_timestamp()
+   WHERE customer_user_id = OLD.customer_user_id
+     AND status = 'pendente'
+     AND farmer_id IS DISTINCT FROM v_dono_novo;
+  GET DIAGNOSTICS v_bundle = ROW_COUNT;
+
+  -- `expired_by_run` fica NULL de propósito: não houve run. Inventar um uuid-sentinela para
+  -- "parecer rastreado" fabricaria um run que não existe — a mesma classe do
+  -- `Number(null)===0`. Quem responde "por que expirou" é `expired_reason`, acima.
+  IF v_reco > 0 OR v_bundle > 0 THEN
+    RAISE LOG '[farmer_expirar_pendentes_do_dono_anterior] cliente=% motivo=% dono_novo=% expiradas: reco=% bundle=%',
+      OLD.customer_user_id, v_motivo, coalesce(v_dono_novo::text, 'nenhum'), v_reco, v_bundle;
+  END IF;
+
+  RETURN NULL;  -- AFTER trigger: retorno ignorado.
+END;
+$$;
+
+
+--
+-- Name: fbrec_sem_margem(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.fbrec_sem_margem() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  NEW.m_bundle := NULL;
+  -- idem `lie_bundle`: m_bundle ≈ lie_bundle / ((p_bundle/100) × complexity_factor).
+  -- `affinity_bundle` fica intacto — é adimensional e é o que ordena a oferta.
+  NEW.lie_bundle := NULL;
+  IF jsonb_typeof(NEW.bundle_products) = 'array' THEN
+    NEW.bundle_products := (
+      SELECT COALESCE(jsonb_agg(
+               CASE WHEN jsonb_typeof(elem) = 'object' THEN elem - 'cost' - 'margin' ELSE elem END
+               ORDER BY ord), '[]'::jsonb)
+      FROM jsonb_array_elements(NEW.bundle_products) WITH ORDINALITY AS t(elem, ord)
+    );
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+
+--
+-- Name: FUNCTION fbrec_sem_margem(); Type: COMMENT; Schema: private; Owner: -
+--
+
+COMMENT ON FUNCTION private.fbrec_sem_margem() IS 'FU4-F fase 3: impede que margem/custo por SKU (m_bundle, cost/margin no jsonb) e o lucro incremental em R$ (lie_bundle) voltem a farmer_bundle_recommendations por um writer antigo. NAO toca affinity_bundle, que e o ranking. Nulifica em vez de rejeitar para nao quebrar tela.';
+
+
+--
+-- Name: frec_desfecho_imutavel(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.frec_desfecho_imutavel() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  IF OLD.status IN ('aceito', 'rejeitado')
+     AND (
+          NEW.status           IS DISTINCT FROM OLD.status
+       OR NEW.accepted_at      IS DISTINCT FROM OLD.accepted_at
+       OR NEW.rejected_at      IS DISTINCT FROM OLD.rejected_at
+       OR NEW.rejection_reason IS DISTINCT FROM OLD.rejection_reason
+     )
+  THEN
+    RAISE EXCEPTION
+      'Desfecho já registrado (%) é histórico imutável — reescrevê-lo apagaria a medição',
+      OLD.status USING ERRCODE = 'FD007';
+  END IF;
+  RETURN NEW;
+END $$;
+
+
+--
+-- Name: frec_sem_margem(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.frec_sem_margem() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  NEW.m_ij := NULL;
+  -- `lie` é DINHEIRO: inverte para margem unitária junto com p_ij + complexity_factor.
+  -- A afinidade que ordena a lista vive em `affinity_score`, que o trigger NÃO toca.
+  NEW.lie := NULL;
+  RETURN NEW;
+END
+$$;
+
+
+--
+-- Name: FUNCTION frec_sem_margem(); Type: COMMENT; Schema: private; Owner: -
+--
+
+COMMENT ON FUNCTION private.frec_sem_margem() IS 'FU4-F fase 3: impede que a margem absoluta (m_ij) e o lucro incremental em R$ (lie) voltem a farmer_recommendations por um writer antigo em aba nao recarregada. Os dois invertem para margem unitaria. NAO toca affinity_score, que e o ranking. Nulifica em vez de rejeitar para nao quebrar tela.';
 
 
 --
@@ -1571,6 +1906,195 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
       'Cheque o cron afiacao_customer_metrics_refresh_6h + net._http_response; rode SELECT public.refresh_customer_metrics() como service_role no SQL Editor'::text,
       'warning'
     FROM private.customer_metrics_mv cm
+    UNION ALL
+    -- [VIGIA identidade da carteira 2026-08-24 · P1-c/Fatia2 · PUSH · money-path] QUARENTENA DE IDENTIDADE.
+    -- O #1943 fechou o P1-c do §11 (spec 2026-07-11-omie-identidade-snapshot-atomico-design): quando um
+    -- codigo Omie muda de dono, o writer document-first do omie-analytics-sync NAO aplica a transferencia
+    -- (documento prova PAREAMENTO, nao AUTORIZA transferencia — parecer Codex) e marca o incumbente com
+    -- identity_state='conflict'. A Fatia 2 ja marcava 'ambiguous' do mesmo jeito. Ate 2026-08-24 o unico
+    -- anuncio desses dois eventos era um console.warn NA EDGE — e ninguem le log de edge: sem esta sonda o
+    -- primeiro conflito real passa mudo e a fase 2 (aprovacao humana da transferencia) nunca e acionada.
+    --
+    -- PREDICADO = o do CONSUMIDOR, nao uma lista. O carteira-rebuild quarantina por NEGACAO
+    -- (identity_state !== 'verified', carteira-rebuild:177 / rebuild-helpers.ts:221, que documenta o porque:
+    -- testar `=== 'ambiguous'` falharia ABERTO no dia em que outro estado aparecer). Uma sonda que listasse
+    -- IN ('conflict','ambiguous') ficaria CEGA exatamente nesse dia — o espelho do mesmo bug. Por isso
+    -- IS DISTINCT FROM: mede o MESMO conjunto que o consumidor ja trata como eligible=false / zero comissao.
+    -- `IS DISTINCT FROM` e nao `<>` porque `<>` e NULL-blind (a coluna e NOT NULL DEFAULT 'verified' hoje,
+    -- mas isso e invariante que um ALTER futuro derruba; o consumidor TS tipa `string | null`).
+    --
+    -- BINARIO, nao faixa (a decisao que o founder pediu para eu justificar): a mecanica SUPORTA faixa —
+    -- severity aqui e CASE, nao literal (vide custos_proxy_conf_alta: info/warning), e a gravidade do
+    -- watchdog v2 e rank(severity)*10+rank(status), entao warning->critical re-emitiria. Mas a populacao
+    -- medida em 2026-08-24 e 7301/7301 'verified', ZERO nao-verified desde sempre: nao existe baseline
+    -- medida para ancorar uma fronteira, e inventa-la e exatamente o pecado que a 20260815153218 foi
+    -- escrita para expiar ("MECA o dado antes de propor o CHECK"). E o limiar honesto e mesmo >=1: toda
+    -- linha nao-verified e, pelo predicado do proprio consumidor, um membro com comissao ZERADA — nao ha
+    -- contagem a partir da qual isso vira aceitavel. A quebra por estado vai na MENSAGEM, entao a faixa
+    -- futura nasce de dado medido em vez de palpite.
+    --
+    -- FINGERPRINT: o watchdog v2 (20260814222000) confirma md5(source|status|severity|message) em 2
+    -- avaliacoes antes de mandar e-mail => mensagem volatil nunca emite. Por isso a mensagem VERMELHA
+    -- carrega so n + quebra-por-estado (mudam SO quando a quarentena muda, que e quando se quer episodio
+    -- novo) e o total do ledger fica so na mensagem VERDE, onde volatilidade e inocua.
+    --
+    -- Barato: 1 index-only scan em idx_cml_identity_state (ja em prod). severity warning (nao critical)
+    -- porque a quarentena e FAIL-CLOSED — zera comissao, nao fabrica numero; o lado seguro ja aconteceu e
+    -- o que falta e adjudicacao humana em dias, nao resposta em minutos. Casa a familia carteira
+    -- (carteira_scores, carteira_rebuild = warning). NASCE VERDE.
+    SELECT 'carteira_identidade_quarentena'::text, 'carteira'::text,
+      CASE WHEN q.n = 0 THEN 'ok' ELSE 'stale' END,
+      NULL::bigint, NULL::bigint,
+      'count_carteira_membership_ledger identity_state IS DISTINCT FROM verified (mesma NEGACAO que o carteira-rebuild quarantina)'::text,
+      CASE WHEN q.n = 0
+           THEN 'Identidade da carteira: nenhum membro em quarentena (' || q.total::text || ' membro(s), todos verified)'
+           ELSE 'Identidade da carteira EM QUARENTENA: ' || q.n::text || ' membro(s) nao-verified (' || q.detalhe || ') — o carteira-rebuild os marca eligible=false e ZERA a comissao ate revisao humana' END,
+      NULL,
+      CASE WHEN q.n > 0 THEN 'O writer document-first do omie-analytics-sync viu um codigo Omie mudar de dono (P1-c) ou uma identidade ambigua (Fatia 2) e NAO aplicou a transferencia — documento prova pareamento, nao AUTORIZA transferencia. O incumbente ficou marcado e segue quarantinado (eligible=false, zero comissao) enquanto nenhum humano decidir o dono. Estado nao-verified inesperado (ex.: inactive, hoje sem writer) tambem cai aqui de proposito: o consumidor ja o trata como quarentena.' ELSE NULL END,
+      'Liste por: SELECT user_id, identity_state, source, updated_at FROM public.carteira_membership_ledger WHERE identity_state IS DISTINCT FROM ''verified'' ORDER BY updated_at DESC. Decida o dono de cada codigo Omie (fase 2 do §11 do spec 2026-07-11-omie-identidade-snapshot-atomico-design) e aplique a transferencia aprovada. Se a ambiguidade/conflito sumir na fonte, o proximo omie-analytics-sync (run oben) devolve a linha a verified sozinho — a sonda fecha sem intervencao no banco.'::text,
+      CASE WHEN q.n = 0 THEN 'info' ELSE 'warning' END
+    FROM (
+      SELECT
+        (count(*) FILTER (WHERE l.identity_state IS DISTINCT FROM 'verified'))::bigint AS n,
+        count(*)::bigint AS total,
+        COALESCE((
+          SELECT string_agg(x.st || '=' || x.c::text, ', ' ORDER BY x.st)
+          FROM (
+            SELECT COALESCE(l2.identity_state, '(null)') AS st, count(*) AS c
+            FROM public.carteira_membership_ledger l2
+            WHERE l2.identity_state IS DISTINCT FROM 'verified'
+            GROUP BY 1
+          ) x
+        ), 'nenhum') AS detalhe
+      FROM public.carteira_membership_ledger l
+    ) q
+    UNION ALL
+    -- [VIGIA sync_state 2026-08-25 · PUSH] O sync customers/servicos falhou TODO DIA por 37 dias
+    -- (2026-07-19 → 2026-08-24) com `sync_state.status='error'` e `error_message` preenchido, e
+    -- ninguem viu: NENHUM check lia sync_state fora do par pedidos_compra/oben. O erro nunca esteve
+    -- escondido — faltou alguem CONSULTAR ("quando medir e QUERY, nao recado").
+    --
+    -- DOIS EIXOS, porque um so nao cobre:
+    --   (1) AUTO-DECLARADO — varre a tabela INTEIRA, sem lista. `status='error'`, `running` orfao
+    --       (>6h sem heartbeat em updated_at) e `partial` sao o proprio sync dizendo que falhou:
+    --       nao dependem de cadencia, logo nao geram falso-positivo em sync DORMENTE (dormente fica
+    --       em 'complete'). E o unico eixo que cobre sync que AINDA NAO EXISTE — entidade nova nasce
+    --       vigiada, sem editar esta funcao.
+    --   (2) ESTAGNACAO — lista EXPLICITA de pares com SLA proprio. Necessaria porque um handler que
+    --       morre ANTES de gravar o status deixa `status` intacto: o eixo (1) fica cego e so o
+    --       `last_sync_at` que nao avanca denuncia. Exige cadencia conhecida ⇒ so entra par com cron
+    --       dedicado. Fora da lista (products/colacor, products/servicos, backfill_cadastro,
+    --       mapa_consolidacao, orders/vendas, pedidos_compra/colacor) sao dormentes ou orquestrados
+    --       por outra via — vigia-los por idade seria falso-positivo garantido.
+    --
+    -- 1 LINHA SEMPRE (agregada): o watchdog trata source duplicado como "compute quebrado"
+    -- (count(*) <> count(DISTINCT source) ⇒ laco NAO executado). Por isso agrega, nunca 1 linha/sync.
+    -- MESSAGE SEM IDADE VARIAVEL: o fingerprint do watchdog e source|status|severity|message — hora
+    -- corrida ali re-emailaria a cada rodada (*/30). Usa DATA do ultimo sucesso, que fica CONGELADA
+    -- enquanto o sync estiver parado, e so muda quando o conjunto de problemas muda (= aviso novo).
+    -- severity FIXO 'critical' (money-path: carteira/reposicao/custos leem estes espelhos), pelo
+    -- mesmo motivo do pedidos_compra_sync — severidade variavel no mesmo source nao re-emailaria.
+    SELECT 'sync_state_saude'::text, 'omie_sync'::text,
+      CASE WHEN p.n_broken > 0 THEN 'broken'
+           WHEN p.n_stale  > 0 THEN 'stale'
+           ELSE 'ok' END,
+      p.pior_idade_s, (30*3600)::bigint,
+      'sync_state: status auto-declarado (tabela INTEIRA) + estagnacao de last_sync_at (lista com SLA)'::text,
+      CASE WHEN p.n_broken = 0 AND p.n_stale = 0
+           THEN 'Syncs Omie: todos os marcadores saudaveis'
+           WHEN p.n_broken > 0
+           THEN 'Sync Omie PARADO: ' || p.resumo
+           ELSE 'Sync Omie degradado: ' || p.resumo END,
+      p.erro,
+      CASE WHEN p.n_broken = 0 AND p.n_stale = 0 THEN NULL
+           ELSE 'O marcador em public.sync_state denuncia o sync: status=error (a edge gravou a falha), '
+                || 'running orfao (a edge morreu no meio e o lease ficou preso), partial (coleta truncada) '
+                || 'ou last_sync_at que parou de avancar (o handler morreu ANTES de gravar status, ou o '
+                || 'cron parou de acionar). O espelho fica STALE e alimenta carteira/reposicao/custos com '
+                || 'retrato velho, silenciosamente.' END,
+      'Rode: SELECT entity_type, account, status, last_sync_at, updated_at, error_message FROM public.sync_state ORDER BY updated_at DESC; '
+        || 'depois cheque os logs da edge (omie-analytics-sync / omie-sync-estoque) e o net._http_response do cron da entidade. '
+        || 'Para religar, re-invoque o sync da entidade pelo chat do Lovable.'::text,
+      'critical'::text
+    FROM (
+      SELECT
+        count(*) FILTER (WHERE d.grau = 'broken')::int AS n_broken,
+        count(*) FILTER (WHERE d.grau = 'stale')::int  AS n_stale,
+        max(EXTRACT(EPOCH FROM now() - d.last_sync_at))::bigint AS pior_idade_s,
+        string_agg(d.entity_type || '/' || d.account || ' (' || d.motivo || ')', ', '
+                   ORDER BY d.entity_type, d.account) AS resumo,
+        max(d.error_message) AS erro
+      FROM (
+        SELECT DISTINCT ON (u.entity_type, u.account)
+               u.entity_type, u.account, u.grau, u.motivo, u.error_message, u.last_sync_at, u.eixo
+        FROM (
+          -- EIXO 1 — auto-declarado, tabela INTEIRA (cobre entidade que ainda nao existe)
+          SELECT ss.entity_type, ss.account,
+                 CASE WHEN ss.status = 'error' THEN 'broken'
+                      WHEN ss.status = 'running'
+                           AND now() - COALESCE(ss.updated_at, ss.created_at) > interval '6 hours' THEN 'broken'
+                      WHEN ss.status = 'partial' THEN 'stale'
+                      ELSE 'ok' END AS grau,
+                 CASE WHEN ss.status = 'error' THEN 'falhou'
+                      WHEN ss.status = 'running' THEN 'preso em running desde '
+                           || COALESCE(to_char(COALESCE(ss.updated_at, ss.created_at) AT TIME ZONE 'America/Sao_Paulo','DD/MM'),'?')
+                      ELSE 'coleta parcial' END AS motivo,
+                 ss.error_message, ss.last_sync_at, 1 AS eixo
+          FROM public.sync_state ss
+          UNION ALL
+          -- EIXO 2 — estagnacao de last_sync_at, so na lista com cadencia conhecida.
+          -- SLA = 1 ciclo do cron + folga. Cron em UTC (cron.timezone vazio): '0 5' = 02:00 BRT.
+          SELECT req.et, req.acc,
+                 CASE WHEN ss.entity_type IS NULL THEN 'broken'
+                      WHEN ss.last_sync_at IS NULL THEN 'broken'
+                      WHEN now() - ss.last_sync_at > make_interval(hours => req.sla_h) THEN 'broken'
+                      ELSE 'ok' END AS grau,
+                 CASE WHEN ss.entity_type IS NULL THEN 'marcador AUSENTE (nunca rodou)'
+                      WHEN ss.last_sync_at IS NULL THEN 'nunca sincronizou'
+                      ELSE 'sem sucesso desde '
+                           || to_char(ss.last_sync_at AT TIME ZONE 'America/Sao_Paulo','DD/MM') END AS motivo,
+                 ss.error_message, ss.last_sync_at, 2 AS eixo
+          FROM (VALUES
+            -- entity_type      account            SLA(h)   cron
+            ('customers'::text, 'vendas'::text,         30), -- sync-customers-vendas-daily        0 5 * * *
+            ('customers',       'colacor_vendas',       30), -- sync-customers-colacor-vendas-daily 20 5 * * *
+            ('customers',       'servicos',             30), -- sync-customers-servicos-daily      40 5 * * *
+            -- [2026-08-25] ('products','vendas') SAIU: o writer foi aposentado (o `sync_all` nao
+            -- chama mais `syncProducts` — era redundante com omie-sync-metadados E truncado em 10
+            -- de 37 paginas) e o marcador foi apagado no fim desta migration. Mante-lo aqui daria
+            -- 'broken' ETERNO por "marcador AUSENTE (nunca rodou)".
+            --
+            -- ENTRAM no lugar os marcadores do escritor REAL do espelho `omie_products`.
+            -- Nao e troca cosmetica: e a UNICA vigilancia possivel sobre `omie-sync-metadados`.
+            --   (a) o EIXO 1 e estruturalmente CEGO a ela — ela grava `status` HARD-CODED
+            --       'complete' e nunca 'error'/'partial'/'running'; se o run morre, o status fica
+            --       intacto do ultimo sucesso. So `last_sync_at` que nao avanca denuncia. E este
+            --       eixo existe exatamente para esse caso.
+            --   (b) o check `vendas_cadastros` NAO cobre o buraco: ele le
+            --       `max(updated_at)` de `omie_products` SEM filtro de conta, entao colacor
+            --       mascara oben inteiro — MAX generico e o anti-padrao que nao ve truncagem.
+            -- Sem estas duas linhas, aposentar o writer truncado ABRIRIA um ponto cego em vez
+            -- de fechar um alerta.
+            ('products_metadados','oben',               30), -- omie-sync-metadados-daily          30 8 * * *
+            ('products_metadados','colacor',            30), -- omie-sync-metadados-daily          30 8 * * *
+            ('products',        'colacor_vendas',       30), -- sync-colacor-vendas-products       15 6 * * *
+            ('inventory',       'vendas',                3), -- sync-inventory-vendas-30m          */30
+            ('inventory',       'colacor_vendas',        6), -- sync-inventory-colacor-vendas-1h   15 * * * *
+            ('inventory',       'servicos',              6)  -- sync-inventory-servicos-1h         25 * * * *
+          ) AS req(et, acc, sla_h)
+          LEFT JOIN public.sync_state ss
+                 ON ss.entity_type = req.et AND ss.account = req.acc
+        ) u
+        WHERE u.grau <> 'ok'
+        -- DESEMPATE DETERMINISTICO: o mesmo par pode acender nos DOIS eixos (customers/servicos
+        -- estava em 'error' E com last_sync_at parado). Sem o `u.eixo` no ORDER BY o DISTINCT ON
+        -- escolheria uma das duas linhas ARBITRARIAMENTE — a message viraria nao-deterministica e
+        -- o fingerprint do watchdog oscilaria entre duas formas, re-emailando sem fato novo.
+        -- Eixo 1 (o proprio sync declarando a falha) vence: diz MAIS que idade inferida.
+        ORDER BY u.entity_type, u.account,
+                 CASE u.grau WHEN 'broken' THEN 0 ELSE 1 END, u.eixo
+      ) d
+    ) p
   )
   -- P1: campos de "problema" (erro técnico, causa provável, remédio) só saem quando
   -- o check NÃO está ok. Check verde = nada a reportar.
@@ -1582,6 +2106,280 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
     c.severity
   FROM checks c;
 $_$;
+
+
+--
+-- Name: _data_health_episodio(text, text, text, text, text, text, text, jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._data_health_episodio(p_company text, p_tipo text, p_status text, p_sev_fin text, p_titulo text, p_msg text, p_msg_email text, p_ctx jsonb, p_fingerprint text) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+-- data_health reemissao v1 (mig 20260814222000) — MARCADOR do guard anti-rollback.
+-- Uma versão SUCESSORA que recrie esta máquina DEVE trocar o marcador (v2, v3…), para que
+-- re-aplicar a migration ANTIGA sobre ela ABORTE em vez de revertê-la em silêncio.
+DECLARE
+  v_sev_forn   text;
+  v_grav       int;
+  v_intervalo  interval;
+  v_row        public.fin_alertas%ROWTYPE;
+  v_fp_ant     text;
+  v_fp_email   text;
+  v_grav_email int;
+  v_ult_email  timestamptz;
+  v_ult_grav   int;
+  v_flap       boolean;
+  -- 2h = 4 ticks do cron */30. Abaixo disso é oscilação; acima, recorrência.
+  v_janela_flap interval := interval '2 hours';
+  -- Teto de e-mails por MATERIALIDADE (ver v_material). 4h ⇒ ≤6/dia no pior caso.
+  v_min_material interval := interval '4 hours';
+  v_prox       timestamptz;
+  v_ack        boolean;
+  v_snooze     boolean;
+  v_escalou    boolean;
+  v_nunca      boolean;
+  v_material   boolean;
+  v_lembrete   boolean;
+  v_deve       boolean;
+  v_motivo     text;
+  v_upd        int;
+BEGIN
+  -- Contrato fail-closed do vocabulário. NULL/typo ABORTA — nunca degrada para 'aviso'
+  -- (o CASE … ELSE do corpo antigo transformava severidade desconhecida em 'aviso' calado).
+  IF p_sev_fin IS NULL OR p_sev_fin NOT IN ('info','aviso','critico') THEN
+    RAISE EXCEPTION 'severidade de fin_alertas inválida: %', COALESCE(p_sev_fin,'<NULL>')
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_status IS NULL OR p_status NOT IN ('stale','broken','unknown') THEN
+    RAISE EXCEPTION 'status de episódio inválido: %', COALESCE(p_status,'<NULL>')
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- fornecedor_alerta tem CHECK próprio e vocabulário DIFERENTE de fin_alertas
+  -- (info/atencao/urgente vs info/aviso/critico) — derivar aqui elimina o modo de falha
+  -- "severidade inválida derruba o cron".
+  v_sev_forn := CASE p_sev_fin WHEN 'critico' THEN 'urgente'
+                               WHEN 'aviso'   THEN 'atencao'
+                               ELSE 'info' END;
+
+  -- GRAVIDADE = severidade × status. É o que pega stale→broken num check cuja severity é
+  -- literal 'warning' (reposicao_disparo): sem o eixo de status, a piora seria muda.
+  v_grav := (CASE p_sev_fin WHEN 'critico' THEN 3 WHEN 'aviso' THEN 2 ELSE 1 END) * 10
+          + (CASE p_status  WHEN 'broken'  THEN 3 WHEN 'stale' THEN 2 ELSE 1 END);
+
+  v_intervalo := CASE WHEN p_sev_fin = 'critico' THEN interval '24 hours'
+                                                 ELSE interval '72 hours' END;
+
+  -- ── 1) episódio NOVO ──────────────────────────────────────────────────────────────────────
+  -- ⚠️ ANTI-FLAP — a cadência de e-mail é por (company,tipo), NÃO por episódio. Sem isto o
+  -- desenho tem o furo ESPELHO do que corrige: um check que oscila ok↔degradado a cada tick
+  -- resolve e reabre o episódio 48×/dia, e "episódio novo ⇒ e-mail" vira tempestade. O mesmo
+  -- vale para o "dispensar" da UI, que tira a linha do índice parcial e faz o próximo tick
+  -- abrir episódio novo. Consultamos o último ENQUEUE deste tipo ATRAVESSANDO episódios
+  -- encerrados: a garantia passa a ser "no máximo 1 e-mail por cadência por tipo", com duas
+  -- saídas legítimas — nunca notificado, ou pior do que o que já foi notificado.
+  SELECT a.email_enfileirado_em, (a.contexto->>'_grav_email')::int
+    INTO v_ult_email, v_ult_grav
+    FROM public.fin_alertas a
+   WHERE a.company = p_company AND a.tipo = p_tipo AND a.email_enfileirado_em IS NOT NULL
+   ORDER BY a.email_enfileirado_em DESC
+   LIMIT 1;
+
+  -- ⚠️ O anti-flap NÃO pode calar RECORRÊNCIA LEGÍTIMA. O que distingue os dois casos é o
+  -- INTERVALO SAUDÁVEL: flapping fecha e reabre dentro de poucos ticks; um incidente que volta
+  -- depois de horas de saúde é notícia nova e merece e-mail na hora. Sem este recorte, um
+  -- pedido novo travando 2h depois de outro ser resolvido ficaria mudo até o lembrete de 72h —
+  -- exatamente o tipo de silêncio que esta migration existe para acabar.
+  SELECT (max(a.dismissed_at) > clock_timestamp() - v_janela_flap)
+    INTO v_flap
+    FROM public.fin_alertas a
+   WHERE a.company = p_company AND a.tipo = p_tipo AND a.dismissed_at IS NOT NULL;
+
+  v_deve := v_ult_email IS NULL                                    -- nunca avisou este tipo
+            OR (v_ult_grav IS NOT NULL AND v_grav > v_ult_grav)    -- voltou PIOR do que o avisado
+            OR NOT COALESCE(v_flap, false)                         -- reabertura NÃO é oscilação
+            OR clock_timestamp() >= v_ult_email + v_intervalo;     -- venceu a cadência
+
+  -- clock_timestamp() (não now()): now() é o instante do BEGIN e a transação pode ter esperado
+  -- lock/fila; um prazo relativo medido do BEGIN nasce vencido (money-path.md §2).
+  INSERT INTO public.fin_alertas (company, tipo, severidade, mensagem, contexto, email_enfileirado_em)
+  VALUES (p_company, p_tipo, p_sev_fin, p_msg,
+          COALESCE(p_ctx, '{}'::jsonb) || jsonb_build_object(
+            '_fp',            p_fingerprint,
+            '_fp_email',      CASE WHEN v_deve THEN p_fingerprint ELSE NULL END,
+            '_grav_email',    CASE WHEN v_deve THEN v_grav        ELSE v_ult_grav END,
+            '_sev_email',     CASE WHEN v_deve THEN p_sev_fin     ELSE NULL END,
+            -- Silenciado pelo anti-flap: o lembrete herda o prazo do último e-mail REAL, para
+            -- que o teto de silêncio siga sendo a cadência (24h/72h) e não o infinito.
+            '_prox_email_em', to_jsonb(CASE WHEN v_deve THEN clock_timestamp() + v_intervalo
+                                            ELSE v_ult_email + v_intervalo END),
+            '_n_emails',      CASE WHEN v_deve THEN 1 ELSE 0 END,
+            '_motivo_email',  CASE WHEN v_deve THEN 'episodio_novo' ELSE NULL END,
+            'avaliado_em',    to_jsonb(clock_timestamp())),
+          CASE WHEN v_deve THEN clock_timestamp() END)
+  ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+
+  IF FOUND THEN
+    IF v_deve THEN
+      INSERT INTO public.fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+      VALUES (p_company, 'outro', v_sev_forn, p_titulo, COALESCE(p_msg_email, p_msg), 'pendente_notificacao');
+      -- ⚠️ INSERT que "tem sucesso" com ZERO linhas (um BEFORE INSERT devolvendo NULL) deixaria
+      -- o claim carimbado SEM e-mail — a "escrita que falha calada" do money-path.md §11.
+      GET DIAGNOSTICS v_upd = ROW_COUNT;
+      IF v_upd <> 1 THEN
+        RAISE EXCEPTION 'outbox nao materializou a linha (% gravadas) para %', v_upd, p_tipo
+          USING ERRCODE = '25000';
+      END IF;
+    END IF;
+    RETURN v_deve;
+  END IF;
+
+  -- ── 2) episódio ABERTO ────────────────────────────────────────────────────────────────────
+  -- FOR UPDATE trava a linha ANTES de decidir: uma 2ª sessão bloqueia aqui e, ao destravar,
+  -- relê a linha JÁ carimbada (READ COMMITTED) ⇒ deve_notificar = false ⇒ 1 e-mail, não 2.
+  SELECT * INTO v_row
+    FROM public.fin_alertas
+   WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL
+   FOR UPDATE;
+
+  -- Dispensa CONCORRENTE entre o INSERT e o SELECT: sem alerta aberto por trás, não se
+  -- enfileira e-mail fantasma. ⚠️ LANÇA em vez de devolver `false` (achado Codex E2): o caller
+  -- usa PERFORM e não lê o retorno, então um `false` aqui deixaria a fonte DEGRADADA terminar a
+  -- rodada SEM episódio ativo e ainda assim carimbar `last_success_at`. Lançando, o isolamento
+  -- por check conta a falha e o marcador de sucesso não avança — fail-closed.
+  IF NOT FOUND THEN
+    -- P0002 (no_data_found) de propósito: é falha LOCAL do check, e a classe 40 seria relançada
+    -- como sistêmica pelo isolamento do watchdog, derrubando os outros 16 por uma corrida benigna.
+    RAISE EXCEPTION 'episodio de % sumiu entre o INSERT e o lock (dispensa concorrente)', p_tipo
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  -- ⚠️ RE-LEITURA DEPOIS DO LOCK. A consulta lá em cima rodou ANTES de travar a linha, então
+  -- numa corrida ela traz o valor PRÉ-concorrente: a sessão B veria v_ult_email NULL, concluiria
+  -- "nunca avisou" e enfileiraria um 2º e-mail. Sob READ COMMITTED, reler após o FOR UPDATE
+  -- devolve o que a sessão A commitou — é isto que faz o claim ser de fato atômico.
+  SELECT a.email_enfileirado_em, (a.contexto->>'_grav_email')::int
+    INTO v_ult_email, v_ult_grav
+    FROM public.fin_alertas a
+   WHERE a.company = p_company AND a.tipo = p_tipo AND a.email_enfileirado_em IS NOT NULL
+   ORDER BY a.email_enfileirado_em DESC
+   LIMIT 1;
+
+  v_fp_ant     := v_row.contexto->>'_fp';
+  v_fp_email   := v_row.contexto->>'_fp_email';
+  -- ⚠️ SEM COALESCE(...,0) de propósito: gravidade AUSENTE é desconhecida, não zero — o
+  -- `ausente ≠ zero` do money-path. Com o zero, toda linha HISTÓRICA (contexto sem as âncoras
+  -- novas, como os 3 alertas presos de prod) entraria como "escalada" e passaria por cima de
+  -- reconhecimento e soneca. Quem nunca notificou não escalou nada: quem trata esse caso é o
+  -- ramo `nunca_enfileirou`, que respeita ack/soneca.
+  v_grav_email := (v_row.contexto->>'_grav_email')::int;
+  v_prox       := CASE WHEN jsonb_typeof(v_row.contexto->'_prox_email_em') = 'string'
+                       THEN (v_row.contexto->>'_prox_email_em')::timestamptz END;
+
+  v_ack    := v_row.acknowledged_at IS NOT NULL;
+  v_snooze := v_row.dismissed_until IS NOT NULL AND v_row.dismissed_until > clock_timestamp();
+
+  -- ⚠️ REARME NA RECUPERAÇÃO (padrão do tint; a 1ª versão desta migration ESQUECEU de portá-lo e
+  -- o Codex pegou). A âncora é o PICO notificado, então sem rearme: broken(23) avisa → melhora
+  -- para stale(22) → humano reconhece → volta a broken(23) e `23 > 23` é FALSO ⇒ o ack bloqueia
+  -- materialidade e lembrete, e o retorno ao mesmo patamar fica MUDO PARA SEMPRE. Fazendo a
+  -- âncora DESCER junto com a melhora, o retorno volta a ser escalada — e escalada supera ack.
+  IF v_grav_email IS NOT NULL AND v_grav < v_grav_email THEN
+    v_grav_email := v_grav;
+  END IF;
+
+  v_escalou := v_grav_email IS NOT NULL AND v_grav > v_grav_email;
+
+  -- ⚠️ "nunca enfileirou" é por TIPO, não por EPISÓDIO (v_ult_email vem da consulta acima, que
+  -- atravessa episódios encerrados). Ancorar no episódio faria o anti-flap durar UMA rodada: o
+  -- episódio reaberto e silenciado teria email_enfileirado_em NULL e emitiria no tick seguinte,
+  -- devolvendo a tempestade pela porta dos fundos.
+  v_nunca   := v_ult_email IS NULL;
+
+  -- MATERIALIDADE com confirmação em DUAS avaliações: só conta violação nova cujo fingerprint
+  -- se REPETIU (p_fingerprint = _fp da avaliação anterior) e que difere do último NOTIFICADO.
+  -- É o que torna a máquina imune a um `message` volátil sem precisar auditar os 17 checks:
+  -- fingerprint que muda toda rodada nunca se confirma ⇒ nunca vira e-mail.
+  -- `v_fp_email IS NOT NULL` é o par do bullet acima: sem ele, o episódio silenciado pelo
+  -- anti-flap (que grava _fp_email NULL) veria "IS DISTINCT FROM NULL" = true e emitiria.
+  -- ⚠️ COOLDOWN (achado Codex): a confirmação em 2 avaliações mata `A,B,A,B`, mas NÃO mata
+  -- `A,A,B,B,A,A…` — cada par confirma e emite, ~24 e-mails/dia. A confirmação prova repetição
+  -- textual, não estabilidade temporal, então o teto tem de ser um RELÓGIO. 4h limita a ~6/dia
+  -- no pior caso patológico e ainda reporta violação nova MUITO antes do lembrete (24h/72h).
+  v_material := p_fingerprint IS NOT NULL
+                AND v_fp_ant IS NOT NULL
+                AND v_fp_email IS NOT NULL
+                AND p_fingerprint = v_fp_ant
+                AND p_fingerprint IS DISTINCT FROM v_fp_email
+                AND (v_ult_email IS NULL OR clock_timestamp() >= v_ult_email + v_min_material);
+
+  -- `v_prox IS NULL` = linha SEM as âncoras novas (histórica, ou escrita por versão anterior)
+  -- que JÁ tem carimbo de e-mail: sem este bootstrap ela cai em nunca=false, escalou=false,
+  -- material=false e lembrete=false — muda para sempre (achado Codex A1). Tratar como lembrete
+  -- DEVIDO dá exatamente um e-mail; depois dele as âncoras existem e a cadência assume.
+  v_lembrete := v_prox IS NULL OR clock_timestamp() >= v_prox;
+
+  -- Escalada SUPERA reconhecimento e soneca: quem reconheceu um 'aviso' não reconheceu o
+  -- 'critico' que veio depois.
+  v_deve := v_escalou
+            OR ((NOT v_ack) AND (NOT v_snooze) AND (v_nunca OR v_material OR v_lembrete));
+
+  v_motivo := CASE WHEN NOT v_deve   THEN NULL
+                   WHEN v_escalou    THEN 'escalada'
+                   WHEN v_nunca      THEN 'nunca_enfileirou'
+                   WHEN v_material   THEN 'nova_violacao'
+                   ELSE                   'lembrete' END;
+
+  -- UPDATE INCONDICIONAL do estado (padrão do tint): o banco reflete SEMPRE o ciclo atual —
+  -- uma MELHORA parcial que não atualizasse nada deixaria o alerta mostrando o pico para sempre.
+  -- O que a histerese governa é só o E-MAIL.
+  UPDATE public.fin_alertas SET
+      severidade           = p_sev_fin,
+      mensagem             = p_msg,
+      acknowledged_at      = CASE WHEN v_escalou THEN NULL ELSE acknowledged_at END,
+      acknowledged_by      = CASE WHEN v_escalou THEN NULL ELSE acknowledged_by END,
+      email_enfileirado_em = CASE WHEN v_deve THEN clock_timestamp() ELSE email_enfileirado_em END,
+      contexto = COALESCE(p_ctx, '{}'::jsonb) || jsonb_build_object(
+          '_fp',            p_fingerprint,
+          '_fp_ant',        v_fp_ant,
+          '_fp_email',      CASE WHEN v_deve THEN p_fingerprint ELSE v_fp_email END,
+          '_grav_email',    CASE WHEN v_deve THEN v_grav        ELSE v_grav_email END,
+          '_sev_email',     CASE WHEN v_deve THEN p_sev_fin     ELSE v_row.contexto->>'_sev_email' END,
+          -- COALESCE no ELSE: sem ele uma linha sem âncora que NÃO emitiu (ack/soneca) ficaria
+          -- com _prox_email_em NULL para sempre, e o bootstrap do lembrete nunca se resolveria.
+          '_prox_email_em', CASE WHEN v_deve THEN to_jsonb(clock_timestamp() + v_intervalo)
+                                 ELSE COALESCE(v_row.contexto->'_prox_email_em',
+                                               to_jsonb(clock_timestamp() + v_intervalo)) END,
+          '_n_emails',      COALESCE((v_row.contexto->>'_n_emails')::int, 0)
+                            + CASE WHEN v_deve THEN 1 ELSE 0 END,
+          '_motivo_email',  v_motivo,
+          'avaliado_em',    to_jsonb(clock_timestamp()))
+   WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL;
+
+  GET DIAGNOSTICS v_upd = ROW_COUNT;
+  IF v_upd = 0 THEN
+    RETURN false;
+  END IF;
+
+  IF v_deve THEN
+    -- MESMA transação do carimbo: se o outbox falhar, o claim cai junto — nunca
+    -- "email_enfileirado_em preenchido sem e-mail correspondente".
+    INSERT INTO public.fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+    VALUES (p_company, 'outro', v_sev_forn,
+            CASE WHEN v_escalou THEN 'AGRAVOU: ' || p_titulo ELSE p_titulo END,
+            COALESCE(p_msg_email, p_msg), 'pendente_notificacao');
+    GET DIAGNOSTICS v_upd = ROW_COUNT;
+    IF v_upd <> 1 THEN
+      RAISE EXCEPTION 'outbox nao materializou a linha (% gravadas) para %', v_upd, p_tipo
+        USING ERRCODE = '25000';
+    END IF;
+    RETURN true;
+  END IF;
+
+  RETURN false;
+END;
+$$;
 
 
 --
@@ -2028,6 +2826,249 @@ BEGIN
   ) INTO v_request_id;
 
   RETURN jsonb_build_object('pendentes', v_pendentes, 'request_id', v_request_id);
+END;
+$$;
+
+
+--
+-- Name: analytics_ledger_registrar(text, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.analytics_ledger_registrar(p_evento text, p_chave text, p_props jsonb DEFAULT '{}'::jsonb) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_uid  uuid := auth.uid();
+  v_dia  text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD');
+BEGIN
+  -- SECURITY DEFINER bypassa RLS ⇒ o gate vive AQUI, na fronteira.
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'analytics_ledger_registrar: exige usuario autenticado'
+      USING ERRCODE = '28000';
+  END IF;
+
+  -- Allowlist FECHADA: o ledger não é canal genérico de escrita no banco.
+  IF p_evento NOT IN ('carteira.mixgap_servido') THEN
+    RAISE EXCEPTION 'analytics_ledger_registrar: evento % fora da allowlist', p_evento
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF pg_column_size(coalesce(p_props, '{}'::jsonb)) > 2048 THEN
+    RAISE EXCEPTION 'analytics_ledger_registrar: props acima do teto'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Teto por titular/dia — guard contra flood por chave variada. Silencioso de
+  -- propósito: telemetria nunca quebra a tela de quem está trabalhando.
+  IF (
+    SELECT count(*) FROM public.analytics_outbox
+    WHERE user_id = v_uid AND ocorrido_em > now() - interval '1 day'
+  ) >= 500 THEN
+    RETURN;
+  END IF;
+
+  INSERT INTO public.analytics_outbox (evento, distinct_id, user_id, props, chave_dedup)
+  VALUES (
+    p_evento,
+    v_uid::text,                       -- casa com identify(userId) do front
+    v_uid,
+    coalesce(p_props, '{}'::jsonb),
+    -- left() protege o teto do CHECK e do índice B-tree; o dia fecha a janela
+    -- de dedup (mesmo estado revisto amanhã é sinal NOVO, não repetição).
+    'ledger:' || v_uid::text || ':' || p_evento || ':' || left(coalesce(p_chave, ''), 100) || ':' || v_dia
+  )
+  ON CONFLICT (chave_dedup) DO NOTHING;
+END;
+$$;
+
+
+--
+-- Name: analytics_outbox_aceitar(bigint[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.analytics_outbox_aceitar(p_ids bigint[]) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  UPDATE public.analytics_outbox
+     SET aceito_em   = now(),
+         ultimo_erro = NULL,
+         purgar_em   = now() + interval '7 days'
+   WHERE id = ANY(p_ids) AND aceito_em IS NULL;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END;
+$$;
+
+
+--
+-- Name: analytics_outbox_claim(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.analytics_outbox_claim(p_limite integer DEFAULT 200) RETURNS TABLE(id bigint, event_id uuid, evento text, distinct_id text, props jsonb, ocorrido_em timestamp with time zone, tentativas smallint)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+-- ⚠️ SEM esta diretiva a função COMPILA e quebra só EXECUTANDO, com
+-- "column reference tentativas is ambiguous" — pego pela prova PG17
+-- (db/test-analytics-outbox.sh) em 2026-08-25. Cada nome do `RETURNS TABLE`
+-- vira uma variável OUT que colide com a coluna homônima no SET/WHERE, e o
+-- plpgsql é late-bound: `CREATE OR REPLACE` não reclama, e o erro só apareceria
+-- no cron — onde `job_run_details = succeeded` (que prova o ENQUEUE) o esconde.
+-- Esta função não usa as OUT como variáveis em lugar nenhum, então resolver
+-- sempre a favor da COLUNA é o que se quer — e mantém os nomes de saída limpos
+-- para o PostgREST, que um prefixo `r_` estragaria.
+#variable_conflict use_column
+BEGIN
+  -- Orçamento esgotado vira quarentena com motivo — não fica em loop infinito
+  -- nem desaparece. `purgar_em` já garante que a quarentena também expira.
+  UPDATE public.analytics_outbox
+     SET quarentena_em = now(),
+         ultimo_erro   = coalesce(ultimo_erro, 'orcamento de tentativas esgotado')
+   WHERE aceito_em IS NULL AND quarentena_em IS NULL AND tentativas >= 8;
+
+  RETURN QUERY
+  UPDATE public.analytics_outbox o
+     SET tentativas = o.tentativas + 1,
+         -- backoff exponencial 3^n minutos, teto de 4h
+         proxima_tentativa_em =
+           now() + (interval '1 minute' * least(power(3, o.tentativas)::integer, 240))
+   WHERE o.id IN (
+     SELECT o2.id
+       FROM public.analytics_outbox o2
+      WHERE o2.aceito_em IS NULL
+        AND o2.quarentena_em IS NULL
+        AND o2.proxima_tentativa_em <= now()
+      ORDER BY o2.proxima_tentativa_em, o2.id
+      LIMIT greatest(1, least(p_limite, 500))
+      FOR UPDATE SKIP LOCKED
+   )
+  RETURNING o.id, o.event_id, o.evento, o.distinct_id, o.props, o.ocorrido_em, o.tentativas;
+END;
+$$;
+
+
+--
+-- Name: analytics_outbox_falhar(bigint[], text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.analytics_outbox_falhar(p_ids bigint[], p_erro text) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  UPDATE public.analytics_outbox
+     SET ultimo_erro = left(coalesce(p_erro, 'erro transitorio'), 500)
+   WHERE id = ANY(p_ids) AND aceito_em IS NULL AND quarentena_em IS NULL;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END;
+$$;
+
+
+--
+-- Name: analytics_outbox_pedido_compra(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.analytics_outbox_pedido_compra() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_evento text;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    v_evento := 'reposicao.sugestao_criada';
+  ELSIF NEW.aprovado_em IS NOT NULL AND OLD.aprovado_em IS NULL THEN
+    v_evento := 'reposicao.sugestao_aprovada';
+  -- ⚠️ `IS DISTINCT FROM` e não `UPDATE OF status`: o Postgres dispara
+  -- `UPDATE OF` mesmo quando o valor final não mudou.
+  ELSIF NEW.status = 'expirado_sem_aprovacao' AND OLD.status IS DISTINCT FROM NEW.status THEN
+    v_evento := 'reposicao.sugestao_expirada';
+  ELSIF NEW.status = 'cancelado_humano' AND OLD.status IS DISTINCT FROM NEW.status THEN
+    v_evento := 'reposicao.sugestao_cancelada';
+  ELSE
+    RETURN NULL;  -- AFTER trigger: o retorno é ignorado
+  END IF;
+
+  -- FAIL-OPEN deliberado: telemetria NUNCA reprova o money-path. Aprovar uma
+  -- compra não pode falhar porque a outbox está indisponível.
+  -- ⚠️ Isto deixa de ser outbox transacional ESTRITA, e a troca é declarada,
+  -- não escondida. O que impede virar a "sonda que degrada em silêncio" do
+  -- CLAUDE.md é a view do bloco 5: o silêncio é AUDITÁVEL contra a fonte, e a
+  -- ausência ganha denominador. Fail-open SEM reconciliação seria a armadilha.
+  BEGIN
+    INSERT INTO public.analytics_outbox (evento, distinct_id, user_id, props, chave_dedup, ocorrido_em)
+    VALUES (
+      v_evento,
+      'sistema:reposicao',
+      NULL,
+      jsonb_build_object(
+        'sugestao_id',        NEW.id,
+        'status',             NEW.status,
+        'condicao_origem',    NEW.condicao_origem,
+        'origem_evento_tipo', NEW.origem_evento_tipo,
+        -- booleano, não o e-mail: diz SE houve humano, sem dizer QUEM.
+        'aprovacao_humana',   (NEW.aprovado_por IS NOT NULL)
+      ),
+      -- ⚠️ a chave inclui o EVENTO, não só o id: um pedido passa por criada →
+      -- aprovada → (expirada|cancelada) e cada transição é uma linha. Chavear
+      -- só por id engoliria o funil inteiro depois do primeiro evento.
+      'pcs:' || NEW.id::text || ':' || v_evento,
+      now()
+    )
+    ON CONFLICT (chave_dedup) DO NOTHING;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING '[analytics_outbox] evento % do pedido % perdido (fail-open): % / %',
+      v_evento, NEW.id, SQLSTATE, SQLERRM;
+  END;
+
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: analytics_outbox_purgar(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.analytics_outbox_purgar() RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_removidas integer;
+BEGIN
+  DELETE FROM public.analytics_outbox WHERE purgar_em < now();
+  GET DIAGNOSTICS v_removidas = ROW_COUNT;
+  RETURN v_removidas;
+END;
+$$;
+
+
+--
+-- Name: analytics_outbox_quarentena(bigint[], text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.analytics_outbox_quarentena(p_ids bigint[], p_erro text) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  UPDATE public.analytics_outbox
+     SET quarentena_em = now(),
+         ultimo_erro   = left(coalesce(p_erro, 'erro permanente'), 500)
+   WHERE id = ANY(p_ids) AND aceito_em IS NULL AND quarentena_em IS NULL;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
 END;
 $$;
 
@@ -2849,6 +3890,134 @@ BEGIN
   -- Advisory (caller sem capability): registra o que TERIA bloqueado, não bloqueia.
   RETURN jsonb_build_object('ok', true, 'resultado', 'advisory_bloqueado', 'bloquearia', true,
                             'recusas', v_res->'recusas');
+END;
+$$;
+
+
+--
+-- Name: atp_reconciliar(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atp_reconciliar() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+BEGIN
+  IF NOT private.cap_estoque_reservar(v_uid) THEN
+    RAISE EXCEPTION 'Sem permissão para reconciliar reservas de estoque (staff apenas)'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN private.atp_reconciliar_job();
+END;
+$$;
+
+
+--
+-- Name: atp_reservas_pendentes(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atp_reservas_pendentes(p_dias integer DEFAULT 0) RETURNS TABLE(reserva_id uuid, sales_order_id uuid, omie_pedido_id bigint, omie_codigo_produto bigint, quantidade numeric, status_vinculado text, status_canonico text, faturamento_observado_em timestamp with time zone, ativa_ha_dias numeric)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NOT private.cap_estoque_reservar((SELECT auth.uid())) THEN
+    RAISE EXCEPTION 'Sem permissão para listar reservas de estoque (staff apenas)'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_dias IS NULL OR p_dias < 0 THEN
+    RAISE EXCEPTION 'p_dias deve ser >= 0' USING ERRCODE = '22023';
+  END IF;
+
+  RETURN QUERY
+  SELECT r.id, r.sales_order_id, so.omie_pedido_id, r.omie_codigo_produto, r.quantidade,
+         so.status, k.status, r.faturamento_observado_em,
+         round((EXTRACT(epoch FROM (now() - r.created_at)) / 86400)::numeric, 1)
+  FROM public.estoque_reservas r
+  LEFT JOIN public.sales_orders so ON so.id = r.sales_order_id
+  LEFT JOIN LATERAL private.atp_pedido_canonico(r.sales_order_id) k ON true
+  WHERE r.status = 'ativa'
+    AND r.sales_order_id IS NOT NULL
+    AND r.created_at <= now() - make_interval(days => p_dias)
+  ORDER BY r.faturamento_observado_em NULLS LAST, r.created_at;
+END;
+$$;
+
+
+--
+-- Name: atp_resolver_reserva(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atp_resolver_reserva(p_reserva_id uuid, p_desfecho text, p_motivo text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_r record;
+  v_status text;
+BEGIN
+  IF NOT private.cap_estoque_reservar(v_uid) THEN
+    RAISE EXCEPTION 'Sem permissão para resolver reserva de estoque (staff apenas)'
+      USING ERRCODE = '42501';
+  END IF;
+  -- Ator humano obrigatório: service_role passa o gate acima (engines/cron), mas
+  -- encerrar reserva é ato de PESSOA — é o que a trilha precisa poder nomear.
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'resolver reserva exige um ator humano (cron/sistema não resolve)'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_reserva_id IS NULL THEN
+    RAISE EXCEPTION 'p_reserva_id é obrigatório' USING ERRCODE = '22023';
+  END IF;
+  IF p_desfecho IS NULL OR p_desfecho NOT IN
+     ('consumo_confirmado_manual', 'cancelamento_confirmado_manual', 'liberacao_forcada') THEN
+    RAISE EXCEPTION 'p_desfecho inválido: % (use consumo_confirmado_manual, cancelamento_confirmado_manual ou liberacao_forcada)', p_desfecho
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_motivo IS NULL OR btrim(p_motivo) = '' THEN
+    RAISE EXCEPTION 'resolver reserva exige motivo textual' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT r.id, r.pool, r.checkout_id, r.sales_order_id, r.omie_codigo_produto, r.status
+    INTO v_r
+  FROM public.estoque_reservas r
+  WHERE r.id = p_reserva_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'reserva % não existe', p_reserva_id USING ERRCODE = '22023';
+  END IF;
+  IF v_r.status <> 'ativa' THEN
+    -- Recusa de NEGÓCIO (não é erro de contrato): a reserva já teve desfecho.
+    RETURN jsonb_build_object('ok', false, 'motivo', 'reserva_nao_ativa', 'status', v_r.status);
+  END IF;
+
+  -- Serializa contra reservar_estoque pelo MESMO namespace da fase 1. Só o lock do
+  -- SKU: a reconciliação nunca toma o do checkout, então não há ciclo com quem
+  -- toma checkout → SKUs (deadlock-free).
+  PERFORM pg_advisory_xact_lock(hashtextextended('atp:sku:' || v_r.pool || ':' || v_r.omie_codigo_produto::text, 0));
+
+  v_status := CASE p_desfecho WHEN 'consumo_confirmado_manual' THEN 'consumida' ELSE 'liberada' END;
+
+  UPDATE public.estoque_reservas
+     SET status = v_status,
+         motivo = p_desfecho || ': ' || btrim(p_motivo),
+         atualizado_em = now()
+   WHERE id = p_reserva_id
+     AND status = 'ativa';
+
+  INSERT INTO public.atp_decisoes
+    (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement,
+     motivo_backorder, actor_user_id)
+  VALUES
+    (v_r.sales_order_id, v_r.checkout_id, v_r.pool, 'oben', p_desfecho, 'resolucao_manual', true,
+     btrim(p_motivo), v_uid);
+
+  RETURN jsonb_build_object('ok', true, 'reserva_id', p_reserva_id,
+                            'desfecho', p_desfecho, 'status', v_status);
 END;
 $$;
 
@@ -4371,7 +5540,9 @@ DECLARE
   _eligible   boolean;
   _rec        public.farmer_tactical_plans;
   _new_id     uuid;
-  _dia_hoje   date;
+  -- Janela da fila. `constant` porque não é configurável em runtime: mudá-la sem mudar as
+  -- outras três pontas produz buraco ou duplicata (ver cabeçalho).
+  _janela_dias constant integer := 7;
 BEGIN
   IF NOT _is_service THEN
     IF _uid IS NULL THEN
@@ -4414,20 +5585,25 @@ BEGIN
   -- roda ANTES da chamada paga à IA: dois batches simultâneos passam os dois. Aqui já
   -- seguramos o lock de carteira_assignments deste cliente, então os concorrentes estão
   -- serializados e o perdedor enxerga a linha do vencedor (READ COMMITTED: este SELECT
-  -- usa um snapshot posterior à espera pelo lock). Chave IDÊNTICA à do índice único
-  -- ux_farmer_tactical_plans_dia_operacional — divergir faria a RPC autorizar o que o
-  -- índice depois recusaria com 23505 cru.
-  _dia_hoje := ((now() AT TIME ZONE 'UTC') - interval '3 hours')::date;
-
+  -- usa um snapshot posterior à espera pelo lock).
+  --
+  -- [fase 2] A chave passou do DIA para a JANELA: qualquer plano ABERTO do mesmo cliente,
+  -- dentro dos últimos _janela_dias, bloqueia. Ver o cabeçalho para a medição.
+  --
+  -- COALESCE(..., now()): `generated_at` e `created_at` são nullable (default now()), e
+  -- `coluna >= x` com NULL é NULL — numa TRAVA isso é fail-OPEN, e o plano de data
+  -- desconhecida deixaria de bloquear em silêncio. Com o COALESCE, data ausente conta como
+  -- agora, ou seja, dentro da janela: o caso indecidível RECUSA em vez de autorizar.
+  -- (Hoje 0 de 533 linhas têm qualquer uma das duas nula — o guard é para não depender disso.)
   IF EXISTS (
     SELECT 1 FROM public.farmer_tactical_plans p
      WHERE p.farmer_id = _owner
        AND p.customer_user_id = _customer_user_id
        AND p.status = 'gerado'
        AND COALESCE(p.plan_type, 'essencial') = COALESCE(_rec.plan_type, 'essencial')
-       AND (((p.created_at AT TIME ZONE 'UTC') - interval '3 hours')::date) = _dia_hoje
+       AND COALESCE(p.generated_at, p.created_at, now()) >= now() - make_interval(days => _janela_dias)
   ) THEN
-    RAISE EXCEPTION 'Já existe plano tático gerado hoje para este cliente (dia operacional BRT)'
+    RAISE EXCEPTION 'Já existe plano tático aberto na fila para este cliente (janela de % dias)', _janela_dias
       USING ERRCODE = '23505';
   END IF;
 
@@ -4459,7 +5635,9 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN
     -- Rede final: qualquer caminho que escape do EXISTS acima (writer futuro, corrida que o
     -- lock não cubra) fala a MESMA língua, e o caller a lê como skip em vez de erro de infra.
-    RAISE EXCEPTION 'Já existe plano tático gerado hoje para este cliente (dia operacional BRT)'
+    -- O índice único só cobre o DIA, então esta mensagem continua sendo a do caso "mesmo dia";
+    -- o predicado da edge (ehJaNaFilaDaRpc) casa as duas redações.
+    RAISE EXCEPTION 'Já existe plano tático aberto na fila para este cliente (janela de % dias)', _janela_dias
       USING ERRCODE = '23505';
   END;
 
@@ -4483,49 +5661,209 @@ CREATE FUNCTION public.data_health_watchdog() RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
+-- data_health reemissao v2 (mig 20260815153218) — MARCADOR do guard anti-rollback.
 DECLARE
-  r record;
-  v_sev_fin text;
-  v_sev_forn text;
+  -- ⚠️ estoque_reposicao: 18º check, adicionado DIRETO EM PROD (migration fora do repo, drift §5),
+  --    promovido ao push (watchdog+heartbeat) lá. PRESERVADO aqui pra não revertê-lo do e-mail.
+  -- ⚠️ tint_vinculo_omie fica FORA de propósito (dashboard-only, [VIGIA tint 2026-06-15]).
+  -- Esta ARRAY é a fonte única: filtra o compute E define o esperado do dead-man. Duas listas
+  -- separadas driftariam, e o dead-man passaria a medir a própria omissão como sucesso.
+  v_sources text[] := ARRAY[
+    'vendas_pedidos','estoque_inventario','estoque_reposicao','reposicao_sugestoes','carteira_scores',
+    'custos_produtos','vendas_cadastros',
+    'reposicao_disparo','reposicao_portal_pipeline','reposicao_portal_humano',
+    'reposicao_sayerlack_fabricado','omie_tipo_produto_oben','vendas_familia_ausente',
+    'tint_cobertura_bases',
+    'custos_proxy_conf_alta','custos_product_cost_revivido','pedidos_compra_sync',
+    'carteira_identidade_quarentena','sync_state_saude'];
+  v_deadman_h int := 3;   -- cron é */30 ⇒ 3h = 6 rodadas completas perdidas
+  r           record;
+  v_rows      jsonb;
+  v_n         int;
+  v_ndist     int;
+  v_esperado  int := array_length(v_sources, 1);
+  v_completa  boolean;
+  v_sev_fin   text;
+  v_fp        text;
+  v_msg_email text;
+  v_falhos    int := 0;
+  v_erros     text[] := '{}';
+  v_last_ok   timestamptz;
+  v_last_run  timestamptz;
+  v_cego      boolean;
+  v_msg_dm    text;
 BEGIN
-  FOR r IN
-    SELECT * FROM public._data_health_compute()
-    -- ⚠️ estoque_reposicao: 18º check, adicionado DIRETO EM PROD (migration fora do repo, drift §5),
-    --    promovido ao push (watchdog+heartbeat) lá. Descoberto no apply (total_checks=18 vs 17 do teste;
-    --    o heartbeat, não-tocado, ainda o tinha). PRESERVADO aqui pra não revertê-lo do e-mail.
-    WHERE source IN ('vendas_pedidos','estoque_inventario','estoque_reposicao','reposicao_sugestoes','carteira_scores',
-                     'custos_produtos','vendas_cadastros',
-                     'reposicao_disparo','reposicao_portal_pipeline','reposicao_portal_humano',
-                     'reposicao_sayerlack_fabricado','omie_tipo_produto_oben','vendas_familia_ausente',
-                     'tint_cobertura_bases',
-                     'custos_proxy_conf_alta','custos_product_cost_revivido','pedidos_compra_sync')  -- [VIGIA tint 2026-06-15] só o Check A faz push; tint_vinculo_omie é dashboard-only
-  LOOP
-    v_sev_fin  := CASE WHEN r.severity = 'critical' THEN 'critico' ELSE 'aviso' END;
-    v_sev_forn := CASE WHEN r.severity = 'critical' THEN 'urgente' ELSE 'atencao' END;
-    IF r.status <> 'ok' THEN
-      INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
-      VALUES ('oben', 'data_health_' || r.source, v_sev_fin, r.message,
-              jsonb_build_object('source', r.source, 'domain', r.domain, 'status', r.status,
-                                 'age_seconds', r.age_seconds, 'freshness_basis', r.freshness_basis))
-      ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
-      IF FOUND THEN
-        -- DELTA [2026-07-08]: família-ausente E tint_cobertura_bases anexam a lista dos produtos ao
-        -- corpo do e-mail (função dedicada _<check>_lista_email). COALESCE p/ não anexar se vier NULL
-        -- (defensivo; o branch só roda com o check degradado, mas a lista pode zerar por corrida).
-        INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
-        VALUES ('oben', 'outro', v_sev_forn, '[Saúde de dados] ' || r.source,
-                CASE WHEN r.source = 'vendas_familia_ausente'
-                     THEN r.message || COALESCE(E'\n\n' || public._vendas_familia_ausente_lista_email(50), '')
-                     WHEN r.source = 'tint_cobertura_bases'
-                     THEN r.message || COALESCE(E'\n\n' || public._tint_cobertura_bases_lista_email(50), '')
-                     ELSE r.message END,
-                'pendente_notificacao');
-      END IF;
-    ELSE
-      UPDATE fin_alertas SET dismissed_at = now()
-      WHERE company = 'oben' AND tipo = 'data_health_' || r.source AND dismissed_at IS NULL;
+  -- ── DEAD-MAN (avalia o estado da rodada ANTERIOR, antes de sobrescrevê-lo) ────────────────
+  SELECT last_success_at, last_run_at INTO v_last_ok, v_last_run
+    FROM public.data_health_watchdog_estado WHERE id;
+
+  -- ⚠️ O ramo `last_success_at IS NULL` é obrigatório (achado Codex A3): um vigia que NUNCA
+  -- completou uma rodada tem marcador nulo, e ancorar só no marcador o deixaria calado
+  -- exatamente no cenário pior — quebrado desde o primeiro dia.
+  v_cego := (v_last_ok IS NOT NULL AND v_last_ok < clock_timestamp() - make_interval(hours => v_deadman_h))
+         OR (v_last_ok IS NULL AND v_last_run IS NOT NULL
+             AND v_last_run < clock_timestamp() - make_interval(hours => v_deadman_h));
+
+  IF v_cego THEN
+    v_msg_dm := 'Vigia de saúde de dados sem rodada COMPLETA desde '
+             || COALESCE(to_char(v_last_ok AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI'), 'NUNCA')
+             || ' — os checks estão sendo avaliados parcialmente e um incidente pode passar mudo.';
+    -- Isolado: se o OUTBOX estiver fora, o meta-alerta não pode derrubar a avaliação dos 17
+    -- checks. O sinal que sobrevive a um outbox morto é o marcador envelhecendo, não o e-mail.
+    BEGIN
+      PERFORM public._data_health_episodio(
+        'oben', 'data_health_watchdog_degradado', 'broken', 'critico',
+        '[Saúde de dados] vigia degradado', v_msg_dm, NULL,
+        jsonb_build_object('last_success_at', v_last_ok, 'limite_horas', v_deadman_h),
+        -- fingerprint ancorado no MINUTO do último sucesso: estável enquanto o vigia seguir cego
+        -- (senão o próprio dead-man viraria a tempestade que ele existe para denunciar).
+        md5('deadman|' || COALESCE(to_char(v_last_ok, 'YYYY-MM-DD"T"HH24:MI'), 'nunca')));
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'data_health_watchdog: dead-man nao pode ser enfileirado: % %', SQLSTATE, SQLERRM;
+    END;
+  ELSIF v_last_ok IS NOT NULL THEN
+    UPDATE public.fin_alertas SET dismissed_at = now(), resolvido_em = now()
+     WHERE company = 'oben' AND tipo = 'data_health_watchdog_degradado' AND dismissed_at IS NULL;
+  END IF;
+
+  INSERT INTO public.data_health_watchdog_estado (id, last_run_at, atualizado_em)
+  VALUES (true, clock_timestamp(), clock_timestamp())
+  ON CONFLICT (id) DO UPDATE SET last_run_at = clock_timestamp(), atualizado_em = clock_timestamp();
+
+  -- Materializa UMA execução do compute (é caro; e duas execuções poderiam divergir entre a
+  -- checagem de duplicata e o laço).
+  -- ⚠️ ISOLADO, e o laço fica CONDICIONADO ao sucesso (achado Codex A3): o `BEGIN/EXCEPTION` do
+  -- dead-man é subtransação, NÃO transação autônoma — um erro global DEPOIS dele (compute
+  -- quebrado, fonte duplicada) abortava a transação inteira e desfazia o próprio alerta do
+  -- dead-man, repetindo isso a cada 30 min sem deixar rastro nenhum.
+  v_rows := NULL;
+  BEGIN
+    SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) INTO v_rows
+      FROM public._data_health_compute() t
+     WHERE t.source = ANY (v_sources);
+  EXCEPTION WHEN OTHERS THEN
+    IF left(SQLSTATE, 2) IN ('40','53','57','58','XX') THEN
+      RAISE;
     END IF;
+    v_falhos := v_falhos + 1;
+    v_erros  := v_erros || ('_data_health_compute: ' || SQLSTATE || ' ' || SQLERRM);
+  END;
+
+  IF v_rows IS NULL THEN
+    v_n := 0; v_ndist := 0;
+  ELSE
+    SELECT count(*), count(DISTINCT x.source) INTO v_n, v_ndist
+      FROM jsonb_to_recordset(v_rows) AS x(source text);
+
+    -- Fonte DUPLICADA: o compute está quebrado. NÃO se avalia nada (nenhum alerta ativo pode ser
+    -- resolvido com base em dado que não se pode julgar) — mas também NÃO se aborta a transação,
+    -- senão o registro de estado e o meta-alerta iriam junto. Vira rodada incompleta, alta.
+    IF v_n <> v_ndist THEN
+      v_falhos := v_falhos + 1;
+      v_erros  := v_erros || ('_data_health_compute: fonte duplicada (' || v_n || ' linhas, '
+                              || v_ndist || ' fontes distintas) — laço NAO executado');
+      v_rows   := NULL;
+    END IF;
+  END IF;
+
+  v_completa := (v_rows IS NOT NULL AND v_n = v_esperado);
+
+  FOR r IN
+    SELECT * FROM jsonb_to_recordset(COALESCE(v_rows, '[]'::jsonb)) AS x(
+      source text, "domain" text, status text, age_seconds bigint,
+      expected_max_age_seconds bigint, freshness_basis text, message text,
+      last_error text, probable_cause text, how_to_fix text, severity text)
+  LOOP
+    -- Isolamento por check: um erro em 1 não pode cegar os outros 16. O preço do isolamento é
+    -- o silêncio — pago pelo dead-man + alerta dedicado abaixo.
+    BEGIN
+      IF r.status IS NULL OR r.status NOT IN ('ok','stale','broken','unknown') THEN
+        RAISE EXCEPTION 'status desconhecido em %: %', r.source, COALESCE(r.status,'<NULL>')
+          USING ERRCODE = '22023';
+      END IF;
+      IF r.severity IS NULL OR r.severity NOT IN ('critical','warning','info') THEN
+        RAISE EXCEPTION 'severity desconhecida em %: %', r.source, COALESCE(r.severity,'<NULL>')
+          USING ERRCODE = '22023';
+      END IF;
+
+      IF r.status = 'ok' THEN
+        -- Resolução AUTOMÁTICA: só com 'ok' EXPLÍCITO. NULL/desconhecido nunca chega aqui.
+        UPDATE public.fin_alertas SET dismissed_at = now(), resolvido_em = now()
+         WHERE company = 'oben' AND tipo = 'data_health_' || r.source AND dismissed_at IS NULL;
+      ELSE
+        v_sev_fin := CASE r.severity WHEN 'critical' THEN 'critico'
+                                     WHEN 'warning'  THEN 'aviso'
+                                     ELSE 'info' END;
+
+        -- FINGERPRINT: source|status|severity|message. Sem idade, sem timestamp, sem basis.
+        v_fp := md5(r.source || '|' || r.status || '|' || r.severity || '|' || COALESCE(r.message, ''));
+
+        -- DELTA [2026-07-08]: família-ausente e tint_cobertura_bases anexam a lista dos produtos
+        -- ao corpo do e-mail. COALESCE p/ não anexar se vier NULL. A lista fica FORA do
+        -- fingerprint de propósito (é volátil e enorme; a materialidade já está na contagem).
+        v_msg_email := CASE
+          WHEN r.source = 'vendas_familia_ausente'
+            THEN r.message || COALESCE(E'\n\n' || public._vendas_familia_ausente_lista_email(50), '')
+          WHEN r.source = 'tint_cobertura_bases'
+            THEN r.message || COALESCE(E'\n\n' || public._tint_cobertura_bases_lista_email(50), '')
+          ELSE r.message END;
+
+        PERFORM public._data_health_episodio(
+          'oben', 'data_health_' || r.source, r.status, v_sev_fin,
+          '[Saúde de dados] ' || r.source, r.message, v_msg_email,
+          jsonb_build_object('source', r.source, 'domain', r.domain, 'status', r.status,
+                             'age_seconds', r.age_seconds, 'freshness_basis', r.freshness_basis),
+          v_fp);
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      -- ⚠️ `WHEN OTHERS` ENGOLE falha SISTÊMICA (achado Codex F): permissão negada, tabela/coluna
+      -- inexistente, deadlock, disco cheio, erro interno — nada disso é "problema daquele check",
+      -- e engolir 17× troca um erro alto por 17 silêncios. Isolamento vale para falha LOCAL;
+      -- classe 40 (rollback/serialização), 53 (recursos), 57 (intervenção), 58 (sistema) e XX
+      -- (interno) são relançadas e derrubam a rodada inteira, alto e visível.
+      IF left(SQLSTATE, 2) IN ('40','53','57','58','XX') THEN
+        RAISE;
+      END IF;
+      v_falhos := v_falhos + 1;
+      v_erros  := v_erros || (COALESCE(r.source,'<?>') || ': ' || SQLSTATE || ' ' || SQLERRM);
+    END;
   END LOOP;
+
+  -- ── Marcador de sucesso: só avança em rodada COMPLETA e SEM falha ─────────────────────────
+  UPDATE public.data_health_watchdog_estado SET
+      checks_avaliados = v_n,
+      checks_falhos    = v_falhos,
+      ultimo_erro      = CASE WHEN v_falhos = 0 AND v_completa THEN NULL
+                              ELSE left(array_to_string(v_erros, ' || '), 4000) END,
+      last_success_at  = CASE WHEN v_falhos = 0 AND v_completa THEN clock_timestamp()
+                              ELSE last_success_at END,
+      atualizado_em    = clock_timestamp()
+   WHERE id;
+
+  -- Falha BARULHENTA (não silenciosa): o isolamento por check só é aceitável com este alerta.
+  IF v_falhos > 0 OR NOT v_completa THEN
+    -- Isolado pelo mesmo motivo do dead-man: quando o próprio canal de e-mail é o que quebrou,
+    -- este INSERT também quebra — e derrubar a transação aqui APAGARIA o UPDATE de estado
+    -- acima, que é justamente a evidência durável de que a rodada foi ruim.
+    BEGIN
+      PERFORM public._data_health_episodio(
+        'oben', 'data_health_watchdog_erro', 'broken', 'critico',
+        '[Saúde de dados] vigia com check falhando',
+        'Rodada incompleta do vigia: ' || v_n || ' de ' || v_esperado || ' fonte(s) presente(s), '
+          || v_falhos || ' check(s) com erro. ' || COALESCE(left(array_to_string(v_erros, ' || '), 800), ''),
+        NULL,
+        jsonb_build_object('checks_avaliados', v_n, 'checks_esperados', v_esperado,
+                           'checks_falhos', v_falhos, 'erros', to_jsonb(v_erros)),
+        md5('vigia_erro|' || v_n::text || '|' || v_falhos::text || '|' || array_to_string(v_erros, '||')));
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'data_health_watchdog: alerta de erro nao pode ser enfileirado: % %', SQLSTATE, SQLERRM;
+    END;
+    RAISE WARNING 'data_health_watchdog: % check(s) falharam; % de % fontes presentes',
+      v_falhos, v_n, v_esperado;
+  ELSE
+    UPDATE public.fin_alertas SET dismissed_at = now(), resolvido_em = now()
+     WHERE company = 'oben' AND tipo = 'data_health_watchdog_erro' AND dismissed_at IS NULL;
+  END IF;
 END;
 $$;
 
@@ -5618,6 +6956,7 @@ CREATE FUNCTION public.farmer_association_rules_substituir(p_regras jsonb) RETUR
 DECLARE
   v_total     integer;
   v_invalidas integer;
+  v_sem_seg   integer;
   v_inseridas integer;
 BEGIN
   -- 1) GATE (a função bypassa RLS: a autorização é AQUI, na fronteira)
@@ -5643,7 +6982,8 @@ BEGIN
       (SELECT count(*) FROM public.farmer_association_rules) USING ERRCODE = 'TR001';
   END IF;
 
-  -- Teto defensivo (browser 50; edge max_association_rules default 500).
+  -- Teto defensivo. O `max_association_rules` da edge é POR SEGMENTO (default 500) e este teto
+  -- é do LOTE INTEIRO — com 2 contas o limite é justo; a edge falha antes, dizendo o número.
   IF v_total > 1000 THEN
     RAISE EXCEPTION 'lote de % regras excede o teto de 1000', v_total USING ERRCODE = 'TR003';
   END IF;
@@ -5663,7 +7003,8 @@ BEGIN
     confidence             numeric,
     lift                   numeric,
     rule_type              text,
-    sample_size            integer
+    sample_size            integer,
+    cluster_segment        text
   )
   WHERE r.antecedent_product_ids IS NULL OR cardinality(r.antecedent_product_ids) = 0
      OR r.consequent_product_ids IS NULL OR cardinality(r.consequent_product_ids) = 0
@@ -5675,6 +7016,53 @@ BEGIN
   IF v_invalidas > 0 THEN
     RAISE EXCEPTION '% de % regra(s) inválidas — nada foi apagado', v_invalidas, v_total
       USING ERRCODE = 'TR005';
+  END IF;
+
+  -- 5b) PROVENIÊNCIA (TR006). Separado do TR005 de propósito: "o número está fora da faixa" e
+  -- "o número não diz de que universo veio" são defeitos diferentes, e quem lê o erro precisa
+  -- saber qual dos dois aconteceu. `support` é razão sobre o universo DO SEGMENTO; sem o
+  -- segmento, o consumidor compara razões de denominadores que ele não conhece.
+  SELECT count(*) INTO v_sem_seg
+  FROM jsonb_to_recordset(p_regras) AS r(cluster_segment text)
+  WHERE r.cluster_segment IS NULL OR length(btrim(r.cluster_segment)) = 0;
+
+  IF v_sem_seg > 0 THEN
+    RAISE EXCEPTION
+      '% de % regra(s) sem cluster_segment — o support publicado não diria de que universo veio; nada foi apagado',
+      v_sem_seg, v_total USING ERRCODE = 'TR006';
+  END IF;
+
+  -- 5c) PERDA PARCIAL DE SEGMENTO (TR007). O buraco que o LOTE ÚNICO abre e que o TR001 NÃO
+  -- cobre: um lote com 12 regras de oben e ZERO de colacor não está vazio, passa em tudo, e
+  -- APAGA colacor. Nada erraria, nada alertaria, e o sintoma seria "as regras de uma conta
+  -- sumiram". Mesma família do TR001 ("lote vazio não é motivo para apagar o que vale"), um
+  -- nível abaixo: aqui o lote é parcial em vez de vazio.
+  -- A comparação é com o que JÁ ESTÁ PUBLICADO, porque é isso que a RPC consegue saber sozinha
+  -- — um array de regras não distingue "segmento processado, zero regras" de "segmento
+  -- esquecido por bug". A outra metade mora no produtor, que conhece os segmentos PROCESSADOS.
+  -- Na primeira execução a tabela só tem linhas de cluster_segment NULL, então não há segmento
+  -- vigente para perder e a checagem é inócua — por construção, não por sorte.
+  SELECT count(*) INTO v_sem_seg
+  FROM (
+    SELECT DISTINCT cluster_segment AS seg
+    FROM public.farmer_association_rules
+    WHERE cluster_segment IS NOT NULL
+    EXCEPT
+    SELECT DISTINCT btrim(r.cluster_segment)
+    FROM jsonb_to_recordset(p_regras) AS r(cluster_segment text)
+    WHERE r.cluster_segment IS NOT NULL
+  ) faltantes;
+
+  IF v_sem_seg > 0 THEN
+    RAISE EXCEPTION
+      'o lote perde % segmento(s) já publicado(s) (%) — publicá-lo apagaria as regras dessa(s) conta(s) sem que nada denuncie a perda; nada foi apagado',
+      v_sem_seg,
+      (SELECT string_agg(seg, ', ' ORDER BY seg) FROM (
+         SELECT DISTINCT cluster_segment AS seg FROM public.farmer_association_rules WHERE cluster_segment IS NOT NULL
+         EXCEPT
+         SELECT DISTINCT btrim(r2.cluster_segment) FROM jsonb_to_recordset(p_regras) AS r2(cluster_segment text) WHERE r2.cluster_segment IS NOT NULL
+       ) f)
+      USING ERRCODE = 'TR007';
   END IF;
 
   -- 6) A TROCA. Os dois statements na MESMA transação.
@@ -5690,11 +7078,11 @@ BEGIN
 
   INSERT INTO public.farmer_association_rules (
     antecedent_product_ids, consequent_product_ids,
-    support, confidence, lift, rule_type, sample_size
+    support, confidence, lift, rule_type, sample_size, cluster_segment
   )
   SELECT
     r.antecedent_product_ids, r.consequent_product_ids,
-    r.support, r.confidence, r.lift, r.rule_type, coalesce(r.sample_size, 0)
+    r.support, r.confidence, r.lift, r.rule_type, coalesce(r.sample_size, 0), btrim(r.cluster_segment)
   FROM jsonb_to_recordset(p_regras) AS r(
     antecedent_product_ids text[],
     consequent_product_ids text[],
@@ -5702,7 +7090,8 @@ BEGIN
     confidence             numeric,
     lift                   numeric,
     rule_type              text,
-    sample_size            integer
+    sample_size            integer,
+    cluster_segment        text
   );
 
   GET DIAGNOSTICS v_inseridas = ROW_COUNT;
@@ -5715,7 +7104,937 @@ $$;
 -- Name: FUNCTION farmer_association_rules_substituir(p_regras jsonb); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.farmer_association_rules_substituir(p_regras jsonb) IS 'Substitui ATOMICAMENTE o lote global de farmer_association_rules (DELETE+INSERT numa transação). Recusa lote vazio (TR001) e payload inválido (TR005) sem apagar nada; serializa concorrentes (TR004). Único caminho de escrita destrutiva: useBundleEngine e omie-analytics-sync.';
+COMMENT ON FUNCTION public.farmer_association_rules_substituir(p_regras jsonb) IS 'Troca ATÔMICA do lote de regras de associação (DELETE+INSERT numa transação). Lote ÚNICO com TODOS os segmentos: cada regra carrega cluster_segment e o sample_size do SEU universo. Recusa lote vazio (TR001), formato (TR002), teto de 1000 (TR003), concorrência (TR004), valor fora de faixa (TR005), regra sem proveniência (TR006) e lote que PERDE um segmento já publicado (TR007).';
+
+
+--
+-- Name: farmer_bundle_recomendacoes_substituir(uuid, uuid, uuid, jsonb, text, text, jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.farmer_bundle_recomendacoes_substituir(p_farmer_id uuid, p_run_id uuid, p_geracao_vista uuid, p_linhas jsonb, p_completude text DEFAULT NULL::text, p_motivo text DEFAULT NULL::text, p_insumos jsonb DEFAULT NULL::jsonb, p_head_visto uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_total         integer;
+  v_invalidas     integer;
+  v_fora_escopo       integer;
+  v_geracao_atual uuid;
+  v_expiradas     integer;
+  v_inseridas     integer;
+  v_head_atual    uuid;
+BEGIN
+  IF p_farmer_id IS NULL OR p_run_id IS NULL THEN
+    RAISE EXCEPTION 'p_farmer_id e p_run_id são obrigatórios' USING ERRCODE = 'FG001';
+  END IF;
+  IF (
+    coalesce(auth.role(), '') = 'service_role'
+    OR p_farmer_id = auth.uid()
+    OR coalesce(private.cap_carteira_escrever(auth.uid()), false)
+  ) IS NOT TRUE THEN
+    RAISE EXCEPTION 'Acesso negado: só o próprio farmer ou quem tem cap_carteira_escrever substitui recomendações'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF p_linhas IS NULL OR jsonb_typeof(p_linhas) <> 'array' THEN
+    RAISE EXCEPTION 'p_linhas deve ser um array jsonb (recebido: %)',
+      coalesce(jsonb_typeof(p_linhas), 'null') USING ERRCODE = 'FG002';
+  END IF;
+
+  v_total := jsonb_array_length(p_linhas);
+
+  IF v_total = 0 THEN
+    RAISE EXCEPTION 'lote vazio: os % bundle(s) pendentes deste farmer foram preservados',
+      (SELECT count(*) FROM public.farmer_bundle_recommendations
+        WHERE farmer_id = p_farmer_id AND status = 'pendente')
+      USING ERRCODE = 'FG003';
+  END IF;
+
+  IF v_total > 50000 THEN
+    RAISE EXCEPTION 'lote de % linhas excede o teto de 50000', v_total USING ERRCODE = 'FG004';
+  END IF;
+
+  IF NOT pg_try_advisory_xact_lock(
+        hashtext('farmer_bundle_recomendacoes_substituir'), hashtext(p_farmer_id::text)) THEN
+    RAISE EXCEPTION 'outro recálculo de bundles deste farmer está em andamento — nada foi alterado'
+      USING ERRCODE = 'FG005';
+  END IF;
+
+  SELECT run_id INTO v_geracao_atual
+  FROM public.farmer_bundle_recommendations
+  WHERE farmer_id = p_farmer_id AND status = 'pendente'
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1;
+
+  IF v_geracao_atual IS DISTINCT FROM p_geracao_vista THEN
+    RAISE EXCEPTION 'geração vigente de bundles mudou durante o cálculo (vista: %, atual: %) — nada foi alterado',
+      coalesce(p_geracao_vista::text, 'nenhuma'), coalesce(v_geracao_atual::text, 'nenhuma')
+      USING ERRCODE = 'FG006';
+  END IF;
+
+  SELECT count(*) INTO v_invalidas
+  FROM jsonb_to_recordset(p_linhas) AS r(
+    customer_user_id uuid,
+    bundle_products  jsonb,
+    affinity_bundle  numeric
+  )
+  WHERE r.customer_user_id IS NULL
+     OR r.bundle_products IS NULL
+     OR jsonb_typeof(r.bundle_products) <> 'array'
+     OR jsonb_array_length(r.bundle_products) = 0
+     OR r.affinity_bundle IS NULL
+     OR NOT (
+          r.affinity_bundle >= 0
+          AND r.affinity_bundle < 'Infinity'::numeric
+          AND r.affinity_bundle <> 'NaN'::numeric
+        );
+
+  IF v_invalidas > 0 THEN
+    RAISE EXCEPTION '% de % bundle(s) inválidos (cliente/produtos ausentes, ou afinidade nula/negativa/NaN/Infinita) — nada foi expirado',
+      v_invalidas, v_total USING ERRCODE = 'FG007';
+  END IF;
+  -- 6-bis) ESCOPO DE CARTEIRA — o cliente do lote precisa ser DESTE farmer.
+  --
+  -- `farmer_client_scores` tem UNIQUE (customer_user_id): o dono de um cliente é uma
+  -- FUNÇÃO, computável aqui dentro. Até esta versão a RPC aceitava qualquer cliente e
+  -- carimbava `p_farmer_id` por cima — foi por essa porta que o fallback do browser
+  -- ("carteira vazia ⇒ carregue TODOS os scores") gravou 2.676 linhas com `farmer_id` ≠
+  -- dono do cliente. Medido em prod (psql-ro, 21/08/2026): o lote de abril sob o farmer
+  -- 33f59dc7 cobria 166 clientes e só 25,9% eram dele, contra os 18,8% da base que ele
+  -- detém — a assinatura de quem sorteou da base inteira, não de quem leu a própria carteira.
+  --
+  -- O gate tinha que ser AQUI, não só no browser: o cliente não pode ser a autoridade
+  -- sobre o próprio escopo (#1840 — o browser reescrevia as regras do servidor por cima).
+  --
+  -- E o dano SOBREVIVE ao conserto do browser porque a etapa 7 expira
+  -- `WHERE farmer_id = p_farmer_id`: a linha do cliente C gravada sob A, quando o dono é B,
+  -- é INVISÍVEL ao recálculo de B — o dono real recalcula e ela segue pendente, dando ao
+  -- mesmo cliente duas gerações vivas ao mesmo tempo.
+  --
+  -- `IS DISTINCT FROM`, não `<>`: o cliente SEM linha de score precisa cair do MESMO lado.
+  -- `<>` com NULL devolve NULL, o `WHERE` descarta, e o cliente de dono desconhecido passaria
+  -- — exatamente o caso mais suspeito. Dono desconhecido é recusa, nunca "grave assim mesmo".
+  --
+  -- Isto é FAIL-CLOSED sob a RLS: a função é SECURITY INVOKER e `farmer_client_scores` só
+  -- se deixa ler por `cap_carteira_ler(uid) OR carteira_visivel_para(cliente, uid)`. Se a RLS
+  -- esconder do chamador a linha de um cliente alheio, o LEFT JOIN devolve NULL — e NULL é
+  -- recusado. A cegueira da RLS vira RECUSA, não passagem.
+  -- 6-ter) LOCK CAUSAL DO ESCOPO — a metade que a trigger de troca de dono NÃO cobre.
+  -- O guard do #1850 compara o lote com o dono LIDO aqui; a trigger nova
+  -- (private.farmer_expirar_pendentes_do_dono_anterior) expira o que já existia quando o
+  -- dono muda. Nenhum dos dois cobre a janela ENTRE eles:
+  --
+  --   T1 (esta RPC, farmer A)          T2 (reatribuição do cliente C para B)
+  --   ------------------------         -------------------------------------
+  --   FG009 lê score de C = A
+  --                                    UPDATE farmer_client_scores: C -> B
+  --                                    trigger expira as pendentes de C que existiam
+  --   INSERT da oferta C sob A         (a linha NOVA nasce depois da varredura)
+  --   COMMIT                           COMMIT
+  --
+  -- A oferta nova sobrevive fora de escopo. O advisory lock do passo 4 não ajuda: ele é
+  -- por FARMER, e quem reatribui não o toma. Travar as linhas de score do lote até o
+  -- COMMIT resolve nos dois sentidos — se a troca chega antes, ela espera e a trigger
+  -- alcança a linha nova; se chega depois, esta RPC já lê o dono novo e o FG009 recusa.
+  --
+  -- `FOR SHARE`, não `FOR KEY SHARE`: um UPDATE que não mexe em chave toma
+  -- `FOR NO KEY UPDATE`, que NÃO conflita com `FOR KEY SHARE` — o lock mais fraco
+  -- deixaria a corrida exatamente como estava, e o teste do caminho feliz seguiria verde.
+  -- `FOR SHARE` conflita, e é compartilhado: duas vendedoras com lotes disjuntos não se
+  -- esperam (só quem tenta REATRIBUIR espera).
+  --
+  -- O `ORDER BY` é best-effort contra deadlock (o PG não garante ordem de travamento sob
+  -- ORDER BY). A garantia real é a ordem de RECURSOS, que esta fatia mantém única em todo
+  -- o domínio: farmer_client_scores -> farmer_recommendations. A trigger segue a mesma
+  -- ordem (é disparada POR um UPDATE em scores e só então toca recomendações), então não
+  -- há ciclo a inverter.
+  --
+  -- Cliente do lote SEM linha de score não trava nada — não há linha. Não é buraco: o
+  -- FG009 logo abaixo recusa o lote inteiro nesse caso (dono desconhecido é recusa).
+  PERFORM 1
+    FROM public.farmer_client_scores s
+   WHERE s.customer_user_id IN (
+           SELECT DISTINCT c.customer_user_id
+             FROM jsonb_to_recordset(p_linhas) AS c(customer_user_id uuid)
+            WHERE c.customer_user_id IS NOT NULL
+         )
+   ORDER BY s.customer_user_id
+     FOR SHARE;
+
+  SELECT count(*) INTO v_fora_escopo
+  FROM jsonb_to_recordset(p_linhas) AS r(customer_user_id uuid)
+  LEFT JOIN public.farmer_client_scores s ON s.customer_user_id = r.customer_user_id
+  WHERE s.farmer_id IS DISTINCT FROM p_farmer_id;
+
+  IF v_fora_escopo > 0 THEN
+    RAISE EXCEPTION '% de % linha(s) são de cliente fora da carteira deste farmer — nada foi expirado',
+      v_fora_escopo, v_total USING ERRCODE = 'FG009';
+  END IF;
+
+  UPDATE public.farmer_bundle_recommendations
+     SET status         = 'expirado',
+         expired_at     = clock_timestamp(),
+         expired_by_run = p_run_id,
+         updated_at     = clock_timestamp()
+   WHERE farmer_id = p_farmer_id
+     AND status = 'pendente';
+  GET DIAGNOSTICS v_expiradas = ROW_COUNT;
+
+  INSERT INTO public.farmer_bundle_recommendations (
+    farmer_id, customer_user_id, bundle_products, support, confidence, lift,
+    p_bundle, m_bundle, lie_bundle, affinity_bundle, complexity_factor,
+    status, run_id
+  )
+  SELECT
+    p_farmer_id, r.customer_user_id, r.bundle_products,
+    r.support, r.confidence, r.lift, r.p_bundle,
+    -- m_bundle/lie_bundle: dinheiro, fora de cena desde o #1520 (ver RPC irmã).
+    NULL, NULL,
+    r.affinity_bundle, coalesce(r.complexity_factor, 1),
+    'pendente', p_run_id
+  FROM jsonb_to_recordset(p_linhas) AS r(
+    customer_user_id  uuid,
+    bundle_products   jsonb,
+    support           numeric,
+    confidence        numeric,
+    lift              numeric,
+    p_bundle          numeric,
+    affinity_bundle   numeric,
+    complexity_factor numeric
+  );
+  GET DIAGNOSTICS v_inseridas = ROW_COUNT;
+
+  -- O HEAD, na MESMA transação, com o head ORIGINAL do chamador (ver RPC irmã para o
+  -- racional da assimetria que isto fecha).
+  IF p_completude IS NULL THEN
+    SELECT run_id INTO v_head_atual
+    FROM public.farmer_geracao_vigente
+    WHERE motor = 'bundle' AND farmer_id = p_farmer_id;
+  ELSE
+    v_head_atual := p_head_visto;
+  END IF;
+
+  PERFORM public.farmer_geracao_registrar(
+    'bundle', p_farmer_id, p_run_id, 'linhas', v_inseridas,
+    p_completude, p_motivo, p_insumos, v_head_atual
+  );
+
+  RETURN jsonb_build_object(
+    'run_id',    p_run_id,
+    'expiradas', v_expiradas,
+    'inseridas', v_inseridas
+  );
+END;
+$$;
+
+
+--
+-- Name: farmer_escopo_invariante(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.farmer_escopo_invariante() RETURNS TABLE(tabela text, pendentes_total bigint, violacoes bigint, pendentes_dono_divergente bigint, pendentes_sem_dono bigint, pct_violacao numeric, expiradas_troca_de_dono bigint, expiradas_perda_de_dono bigint)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  -- `IS NOT TRUE`, não `NOT (...)`: numa sessão sem JWT (psql, pg_cron) `auth.uid()` é NULL
+  -- e a disjunção vira NULL — e `IF NOT NULL THEN` não dispara em PL/pgSQL. Mesmo cuidado
+  -- do passo 1 das RPCs, e pela mesma razão: o gate falharia ABERTO.
+  IF (
+    coalesce(auth.role(), '') = 'service_role'
+    OR coalesce(private.cap_carteira_ler(auth.uid()), false)
+  ) IS NOT TRUE THEN
+    RAISE EXCEPTION 'Acesso negado: farmer_escopo_invariante é diagnóstico de carteira'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  WITH r AS (
+    SELECT
+      count(*) FILTER (WHERE x.status = 'pendente')                                AS pend,
+      count(*) FILTER (WHERE x.status = 'pendente' AND s.customer_user_id IS NOT NULL
+                             AND x.farmer_id IS DISTINCT FROM s.farmer_id)         AS diverg,
+      count(*) FILTER (WHERE x.status = 'pendente' AND s.customer_user_id IS NULL) AS sem_dono,
+      count(*) FILTER (WHERE x.expired_reason = 'troca_de_dono')                   AS exp_troca,
+      count(*) FILTER (WHERE x.expired_reason = 'perda_de_dono')                   AS exp_perda
+    FROM public.farmer_recommendations x
+    LEFT JOIN public.farmer_client_scores s ON s.customer_user_id = x.customer_user_id
+  ), b AS (
+    SELECT
+      count(*) FILTER (WHERE x.status = 'pendente')                                AS pend,
+      count(*) FILTER (WHERE x.status = 'pendente' AND s.customer_user_id IS NOT NULL
+                             AND x.farmer_id IS DISTINCT FROM s.farmer_id)         AS diverg,
+      count(*) FILTER (WHERE x.status = 'pendente' AND s.customer_user_id IS NULL) AS sem_dono,
+      count(*) FILTER (WHERE x.expired_reason = 'troca_de_dono')                   AS exp_troca,
+      count(*) FILTER (WHERE x.expired_reason = 'perda_de_dono')                   AS exp_perda
+    FROM public.farmer_bundle_recommendations x
+    LEFT JOIN public.farmer_client_scores s ON s.customer_user_id = x.customer_user_id
+  )
+  SELECT 'farmer_recommendations'::text, r.pend, r.diverg + r.sem_dono, r.diverg, r.sem_dono,
+         CASE WHEN r.pend > 0 THEN round(100.0 * (r.diverg + r.sem_dono) / r.pend, 2) END,
+         r.exp_troca, r.exp_perda FROM r
+  UNION ALL
+  SELECT 'farmer_bundle_recommendations'::text, b.pend, b.diverg + b.sem_dono, b.diverg, b.sem_dono,
+         CASE WHEN b.pend > 0 THEN round(100.0 * (b.diverg + b.sem_dono) / b.pend, 2) END,
+         b.exp_troca, b.exp_perda FROM b;
+END;
+$$;
+
+
+--
+-- Name: farmer_geracao_registrar(text, uuid, uuid, text, integer, text, text, jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.farmer_geracao_registrar(p_motor text, p_farmer_id uuid, p_run_id uuid, p_resultado text, p_linhas_geradas integer, p_completude text DEFAULT NULL::text, p_motivo text DEFAULT NULL::text, p_insumos jsonb DEFAULT NULL::jsonb, p_head_visto uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_head_atual  uuid;
+  v_completude  text;
+  v_existia     boolean;
+  v_reais       integer;
+BEGIN
+  -- 1) Obrigatórios.
+  IF p_motor IS NULL OR p_farmer_id IS NULL OR p_run_id IS NULL THEN
+    RAISE EXCEPTION 'p_motor, p_farmer_id e p_run_id são obrigatórios' USING ERRCODE = 'FG101';
+  END IF;
+
+  -- 2) Gate de MENSAGEM (a RLS é quem autoriza). `IS NOT TRUE`, não `NOT (...)`:
+  -- numa sessão SEM JWT (pg_cron, psql) auth.uid() é NULL, a disjunção vira NULL e
+  -- `IF NOT NULL THEN` NÃO dispara em PL/pgSQL — a forma "óbvia" é um guard que não
+  -- nega, ele devolve nulo. Mesma lição do #1756.
+  IF (
+    coalesce(auth.role(), '') = 'service_role'
+    OR p_farmer_id = auth.uid()
+    OR coalesce(private.cap_carteira_escrever(auth.uid()), false)
+  ) IS NOT TRUE THEN
+    RAISE EXCEPTION 'Acesso negado: só o próprio farmer ou quem tem cap_carteira_escrever registra geração'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF p_motor NOT IN ('cross_sell', 'bundle') THEN
+    RAISE EXCEPTION 'p_motor inválido: % (esperado cross_sell ou bundle)', p_motor
+      USING ERRCODE = 'FG102';
+  END IF;
+
+  -- 3) Coerência resultado × contagem. Recusar aqui — e não deixar o CHECK da tabela
+  -- pegar — dá ao chamador uma SQLSTATE própria e a mensagem com os dois valores.
+  IF p_resultado IS NULL OR p_resultado NOT IN ('linhas', 'vazio') THEN
+    RAISE EXCEPTION 'p_resultado inválido: % (esperado linhas ou vazio)',
+      coalesce(p_resultado, 'null') USING ERRCODE = 'FG103';
+  END IF;
+  IF p_linhas_geradas IS NULL OR p_linhas_geradas < 0 THEN
+    RAISE EXCEPTION 'p_linhas_geradas deve ser >= 0 (recebido: %)',
+      coalesce(p_linhas_geradas::text, 'null') USING ERRCODE = 'FG103';
+  END IF;
+  IF (p_resultado = 'linhas') <> (p_linhas_geradas > 0) THEN
+    RAISE EXCEPTION 'resultado=% é incoerente com linhas_geradas=%', p_resultado, p_linhas_geradas
+      USING ERRCODE = 'FG103';
+  END IF;
+
+  -- 4) Completude: ausente vira `desconhecido`, NUNCA `completo` (§2: ausente ≠ completo).
+  v_completude := coalesce(p_completude, 'desconhecido');
+  IF v_completude NOT IN ('completo', 'degradado', 'desconhecido') THEN
+    RAISE EXCEPTION 'p_completude inválido: % (esperado completo, degradado ou desconhecido)', p_completude
+      USING ERRCODE = 'FG103';
+  END IF;
+  IF v_completude = 'degradado' AND (p_motivo IS NULL OR btrim(p_motivo) = '') THEN
+    RAISE EXCEPTION 'completude=degradado exige p_motivo — sem ele o rótulo não distingue "zero de verdade" de "zero por dado faltando"'
+      USING ERRCODE = 'FG104';
+  END IF;
+
+  IF p_insumos IS NOT NULL AND jsonb_typeof(p_insumos) <> 'object' THEN
+    RAISE EXCEPTION 'p_insumos deve ser objeto jsonb (recebido: %)', jsonb_typeof(p_insumos)
+      USING ERRCODE = 'FG103';
+  END IF;
+  -- Teto: o payload é diagnóstico, não carga. ~8 kB cobre uma dezena de insumos com folga.
+  IF p_insumos IS NOT NULL AND length(p_insumos::text) > 8000 THEN
+    RAISE EXCEPTION 'p_insumos excede 8000 chars (%) — é diagnóstico, não carga', length(p_insumos::text)
+      USING ERRCODE = 'FG103';
+  END IF;
+
+  -- 4b) `resultado='linhas'` é ANCORADO NA REALIDADE, não na palavra de quem chama.
+  -- Sem isto, o browser pode gravar um head afirmando "linhas" sem existir linha nenhuma —
+  -- e o head é MEDIÇÃO: medição forjável é medição corrompida, e é sobre ela que a fase 2
+  -- decidiria ligar a expiração. Funciona porque as RPCs de substituição INSEREM antes de
+  -- chamar esta função, na MESMA transação, então as linhas já estão visíveis aqui.
+  -- (O caminho 'vazio' não precisa do espelho: o run é novo, então "não há linha com este
+  -- run_id" é trivialmente verdade. Forjar 'vazio' só prejudica o próprio farmer, que é o
+  -- único que o gate deixa passar — e nesta fase nada é expirado por causa disso.)
+  -- ⚠️ CONTA no servidor, não confia no número do chamador. `EXISTS` sozinho aceitava
+  -- "1 linha real, 999 declaradas" (achado do challenge Codex xhigh) — e `linhas_geradas`
+  -- é o que a fase 2 leria para dimensionar. O parâmetro do chamador vira o que ele
+  -- sempre foi: uma alegação, conferida contra o fato.
+  IF p_resultado = 'linhas' THEN
+    IF p_motor = 'cross_sell' THEN
+      SELECT count(*) INTO v_reais FROM public.farmer_recommendations
+      WHERE farmer_id = p_farmer_id AND run_id = p_run_id AND status = 'pendente';
+    ELSE
+      SELECT count(*) INTO v_reais FROM public.farmer_bundle_recommendations
+      WHERE farmer_id = p_farmer_id AND run_id = p_run_id AND status = 'pendente';
+    END IF;
+
+    IF v_reais = 0 THEN
+      RAISE EXCEPTION 'resultado=linhas sem nenhuma linha gravada para o run % — o head não inventa geração', p_run_id
+        USING ERRCODE = 'FG107';
+    END IF;
+    IF v_reais <> p_linhas_geradas THEN
+      RAISE EXCEPTION 'resultado=linhas declarou % linha(s), mas há % gravada(s) para o run %',
+        p_linhas_geradas, v_reais, p_run_id USING ERRCODE = 'FG107';
+    END IF;
+  ELSE
+    -- `vazio` também é ancorado: declarar vazio com linhas pendentes daquele run seria
+    -- um head que contradiz a própria tabela. (O run é novo no caminho normal, então isto
+    -- é trivialmente verdade — o guard existe para o chamador que reusa um run_id.)
+    IF p_motor = 'cross_sell' THEN
+      SELECT count(*) INTO v_reais FROM public.farmer_recommendations
+      WHERE farmer_id = p_farmer_id AND run_id = p_run_id AND status = 'pendente';
+    ELSE
+      SELECT count(*) INTO v_reais FROM public.farmer_bundle_recommendations
+      WHERE farmer_id = p_farmer_id AND run_id = p_run_id AND status = 'pendente';
+    END IF;
+    IF v_reais > 0 THEN
+      RAISE EXCEPTION 'resultado=vazio, mas há % linha(s) pendente(s) gravada(s) para o run %',
+        v_reais, p_run_id USING ERRCODE = 'FG107';
+    END IF;
+  END IF;
+
+  -- 5) SERIALIZAÇÃO — o MESMO lock da RPC de substituição do motor correspondente.
+  -- Lock próprio serializaria este caminho só consigo mesmo, o que é o mesmo que não
+  -- serializar: um registro de "vazio" correria em paralelo com uma substituição com
+  -- linhas. Reentrante de propósito: quando a própria RPC de substituição chama esta
+  -- função, a transação JÁ detém o lock e o try devolve true.
+  -- ⚠️ A reentrância é APOSTA de desenho, então foi MEDIDA no PG17 antes de confiar nela
+  -- (3 `pg_try_advisory_xact_lock` com as mesmas chaves na mesma transação):
+  --   1ª/2ª/3ª => true, true, true
+  --   pg_locks WHERE locktype='advisory' => 1 (uma entrada, não três: o variante `xact`
+  --     NÃO faz refcount como o `pg_advisory_lock` de sessão, então não há unlock a dever)
+  --   após COMMIT => 0 (some sozinho, que é o motivo de ser `xact` e não de sessão)
+  IF NOT pg_try_advisory_xact_lock(
+        hashtext(CASE p_motor
+                   WHEN 'cross_sell' THEN 'farmer_recomendacoes_substituir'
+                   ELSE                    'farmer_bundle_recomendacoes_substituir'
+                 END),
+        hashtext(p_farmer_id::text)) THEN
+    RAISE EXCEPTION 'outro recálculo deste farmer está em andamento — o head não foi movido'
+      USING ERRCODE = 'FG105';
+  END IF;
+
+  -- 6) CAS do head. O advisory lock cobre só ESTA transação — não a janela longa entre
+  -- "o motor leu o head" e "o motor chamou esta função". Sem o CAS, um run VAZIO lento
+  -- sobrescreveria o head de um run COM LINHAS que terminou antes, e a medição
+  -- registraria `vazio` para um estado que é `linhas` (money-path §10: o degradado
+  -- terminar depois do saudável é o desfecho ESPERADO, não o azar). Não depende de
+  -- relógio nenhum — nem do browser, nem do servidor. NULL casa NULL: head ainda ausente.
+  SELECT run_id INTO v_head_atual
+  FROM public.farmer_geracao_vigente
+  WHERE motor = p_motor AND farmer_id = p_farmer_id;
+  v_existia := FOUND;
+
+  IF v_head_atual IS DISTINCT FROM p_head_visto THEN
+    RAISE EXCEPTION 'head de geração mudou durante o cálculo (visto: %, atual: %) — nada foi registrado',
+      coalesce(p_head_visto::text, 'nenhum'), coalesce(v_head_atual::text, 'nenhum')
+      USING ERRCODE = 'FG106';
+  END IF;
+
+  -- 7) O head AVANÇA — inclusive quando resultado='vazio'. É o ponto inteiro da entrega.
+  INSERT INTO public.farmer_geracao_vigente AS h (
+    motor, farmer_id, run_id, resultado, linhas_geradas, completude, motivo, insumos,
+    calculado_em, atualizado_em
+  )
+  VALUES (
+    p_motor, p_farmer_id, p_run_id, p_resultado, p_linhas_geradas, v_completude,
+    p_motivo, coalesce(p_insumos, '{}'::jsonb), clock_timestamp(), clock_timestamp()
+  )
+  ON CONFLICT (motor, farmer_id) DO UPDATE
+    SET run_id         = EXCLUDED.run_id,
+        resultado      = EXCLUDED.resultado,
+        linhas_geradas = EXCLUDED.linhas_geradas,
+        completude     = EXCLUDED.completude,
+        motivo         = EXCLUDED.motivo,
+        insumos        = EXCLUDED.insumos,
+        calculado_em   = EXCLUDED.calculado_em,
+        -- `clock_timestamp()`, não `now()`: now() é o instante do BEGIN, e entre o BEGIN
+        -- e esta escrita pode haver espera arbitrária (money-path §2).
+        atualizado_em  = clock_timestamp();
+
+  -- 8) O LOG, na MESMA transação — é ele que responde "com que FREQUÊNCIA", porque o head
+  -- acima acabou de sobrescrever o estado anterior. `DO NOTHING` no conflito: um retry do
+  -- mesmo run não pode virar duas execuções na contagem, senão a frequência mede retries.
+  INSERT INTO public.farmer_geracao_execucoes (
+    motor, farmer_id, run_id, resultado, linhas_geradas, completude, motivo, insumos, calculado_em
+  )
+  VALUES (
+    p_motor, p_farmer_id, p_run_id, p_resultado, p_linhas_geradas, v_completude,
+    p_motivo, coalesce(p_insumos, '{}'::jsonb), clock_timestamp()
+  )
+  ON CONFLICT (motor, farmer_id, run_id) DO NOTHING;
+
+  RETURN jsonb_build_object(
+    'motor',      p_motor,
+    'run_id',     p_run_id,
+    'resultado',  p_resultado,
+    'completude', v_completude,
+    'criado',     NOT v_existia
+  );
+END;
+$$;
+
+
+--
+-- Name: farmer_melhor_individual_por_cliente(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.farmer_melhor_individual_por_cliente(p_farmer_id uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  SELECT coalesce(jsonb_agg(to_jsonb(m) ORDER BY m.customer_user_id), '[]'::jsonb)
+  FROM (
+    SELECT DISTINCT ON (r.customer_user_id)
+      r.customer_user_id,
+      r.product_id,
+      r.affinity_score,
+      r.recommendation_type,
+      r.run_id
+    FROM public.farmer_recommendations r
+    WHERE r.farmer_id = p_farmer_id
+      AND r.status = 'pendente'
+      -- fail-closed do #1800: sem score nao ha "melhor", e ordenar por coluna toda-nula
+      -- elegeria um vencedor ARBITRARIO que a tela apresentaria como veredicto.
+      AND r.affinity_score IS NOT NULL
+    ORDER BY
+      r.customer_user_id,
+      r.affinity_score DESC NULLS LAST,
+      r.updated_at     DESC NULLS FIRST,
+      r.id             DESC
+  ) m
+$$;
+
+
+--
+-- Name: FUNCTION farmer_melhor_individual_por_cliente(p_farmer_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.farmer_melhor_individual_por_cliente(p_farmer_id uuid) IS 'Motor de bundles: o melhor produto individual pendente de CADA cliente do farmer, em UMA tupla jsonb. Substitui a versao RETURNS TABLE paginada (20260820124611, nunca aplicada): K requests sao K snapshots, e uma substituicao concorrente entre paginas fazia clientes da cauda virarem "nenhum" — um veredicto — sem o canario de run_id notar. Uma linha = um snapshot MVCC, e o cap de 1.000 do PostgREST some por construcao. Desempate LITERAL ao que o PostgREST emitia (affinity_score DESC NULLS LAST, updated_at DESC NULLS FIRST, id DESC). `[]` = li e nao ha; NULL nunca sai daqui, e o caller trata NULL como FALHA. SECURITY INVOKER: a policy frec_select_carteira segue sendo a unica fronteira, e p_farmer_id e filtro, nao autorizacao.';
+
+
+--
+-- Name: farmer_rec_exige_run_id(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.farmer_rec_exige_run_id() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  IF NEW.status = 'pendente' AND NEW.run_id IS NULL THEN
+    RAISE EXCEPTION 'recomendação pendente exige run_id: use as RPCs farmer_recomendacoes_substituir / farmer_bundle_recomendacoes_substituir (INSERT direto EMPILHA em vez de substituir a geração)'
+      USING ERRCODE = 'FG008';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: farmer_recomendacao_registrar_desfecho(uuid, uuid, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.farmer_recomendacao_registrar_desfecho(p_customer_user_id uuid, p_product_id uuid, p_recommendation_type text, p_desfecho text, p_motivo text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_id      uuid;
+  v_n       integer := 0;
+  v_rec     record;
+  v_farmer  uuid := auth.uid();
+  v_agora   timestamptz := clock_timestamp();
+BEGIN
+  -- ── Gate de identidade ────────────────────────────────────────────────────
+  -- Explícito, e ANTES da busca: sem isto uma sessão expirada (uid NULL) cairia
+  -- no "nenhuma oferta encontrada" e a vendedora leria "recarregue" quando o que
+  -- ela precisa é logar de novo. Erro certo > erro plausível.
+  IF v_farmer IS NULL THEN
+    RAISE EXCEPTION 'Sem sessão autenticada — desfecho não registrado'
+      USING ERRCODE = 'FD001';
+  END IF;
+
+  -- ── Vocabulário ───────────────────────────────────────────────────────────
+  -- Só os dois desfechos TERMINAIS. 'ofertado' existe no CHECK de `status` desde
+  -- fev/2026 e fica DELIBERADAMENTE de fora — ver a nota "por que não 'ofertado'"
+  -- no fim deste arquivo. Não é esquecimento: é a correção de uma falha que o
+  -- /codex xhigh encontrou neste desenho.
+  IF p_desfecho IS NULL OR p_desfecho NOT IN ('aceito', 'rejeitado') THEN
+    RAISE EXCEPTION 'Desfecho inválido: % (esperado aceito|rejeitado)', coalesce(p_desfecho, 'NULL')
+      USING ERRCODE = 'FD002';
+  END IF;
+
+  -- Motivo OBRIGATÓRIO na recusa, PROIBIDO no aceite. O gate/pesos do ranking se
+  -- calibram pelo PORQUÊ, não pelo placar: uma recusa sem motivo conta para a taxa
+  -- e não ensina nada. (O CHECK da tabela cobre o mesmo invariante contra UPDATE
+  -- direto; aqui a mensagem diz o que fazer.)
+  IF p_desfecho = 'rejeitado' AND (p_motivo IS NULL OR btrim(p_motivo) = '') THEN
+    RAISE EXCEPTION 'Recusa exige motivo — registre o porquê'
+      USING ERRCODE = 'FD003';
+  END IF;
+  IF p_desfecho <> 'rejeitado' AND p_motivo IS NOT NULL THEN
+    RAISE EXCEPTION 'Motivo só se aplica a recusa (recebido em "%")', p_desfecho
+      USING ERRCODE = 'FD003';
+  END IF;
+
+  -- ── Localizar a linha ─────────────────────────────────────────────────────
+  -- `farmer_id = v_farmer` é FIXO, nunca parâmetro. É isto que impede a lente
+  -- "Ver como" de registrar desfecho na carteira alheia: sob a lente o `auth.uid()`
+  -- continua sendo o master REAL, então a busca não acha a linha da vendedora e a
+  -- RPC recusa. Um `disabled` de UI sozinho seria contornável por POST direto.
+  -- (Não é a fronteira ÚNICA de segurança — a policy ainda deixa um gestor fazer
+  -- UPDATE direto —, mas é a fronteira deste escritor, e a trigger acima cobre o
+  -- resto do caminho.)
+  --
+  -- Busca por CHAVE DE NEGÓCIO e não por id porque o browser não TEM o id: o motor
+  -- calcula em memória e a `farmer_recomendacoes_substituir` insere sem devolver os
+  -- ids gerados.
+  --
+  -- ⚠️ Só `status = 'pendente'` é elegível, e isso é o que torna a chave de negócio
+  -- uma IDENTIDADE: a RPC de substituição expira TODAS as pendentes do farmer antes
+  -- de inserir a geração nova, na mesma transação — logo existe no máximo uma linha
+  -- pendente por chave (medido: 1.083 grupos, 0 duplicatas).
+  --
+  -- `FOR UPDATE` serializa contra um recompute concorrente. Em READ COMMITTED o
+  -- Postgres re-avalia o predicado depois do lock: se a substituição expirou esta
+  -- linha no meio do caminho, ela deixa de casar e a busca volta vazia. Fail-closed.
+  -- ⚠️ O cliente NÃO deve fazer retry automático nesse caso (achado /codex): depois
+  -- da substituição, o retry acertaria a recomendação NOVA e atribuiria o desfecho
+  -- a um cálculo que a vendedora nunca viu.
+  FOR v_rec IN
+    SELECT id
+      FROM public.farmer_recommendations
+     WHERE farmer_id           = v_farmer
+       AND customer_user_id    = p_customer_user_id
+       AND product_id          = p_product_id
+       AND recommendation_type = p_recommendation_type
+       AND status              = 'pendente'
+     FOR UPDATE
+  LOOP
+    v_n := v_n + 1;
+    v_id := v_rec.id;
+  END LOOP;
+
+  IF v_n = 0 THEN
+    RAISE EXCEPTION 'Nenhuma oferta ativa sua para este cliente/produto — recarregue as recomendações'
+      USING ERRCODE = 'FD004';
+  END IF;
+
+  -- AMBIGUIDADE → RECUSA, nunca escolha (precisão > recall). Um `ORDER BY ... LIMIT 1`
+  -- só tornaria DETERMINÍSTICA uma atribuição possivelmente errada, e o dado errado
+  -- é pior que dado nenhum: ele parece válido. Nada no schema garante unicidade da
+  -- chave (um índice único parcial garantiria, mas derrubaria o recompute inteiro no
+  -- dia em que o motor emitisse duas linhas iguais no mesmo lote). `current_product_id`
+  -- fora da chave é um caminho concreto para isso: dois up-sells para o mesmo produto
+  -- alvo com origens diferentes.
+  IF v_n > 1 THEN
+    RAISE EXCEPTION '% ofertas ativas iguais para este cliente/produto — desfecho não registrado, para não cair na errada', v_n
+      USING ERRCODE = 'FD006';
+  END IF;
+
+  UPDATE public.farmer_recommendations
+     SET status           = p_desfecho,
+         accepted_at      = CASE WHEN p_desfecho = 'aceito'    THEN v_agora ELSE accepted_at END,
+         rejected_at      = CASE WHEN p_desfecho = 'rejeitado' THEN v_agora ELSE rejected_at END,
+         rejection_reason = CASE WHEN p_desfecho = 'rejeitado' THEN btrim(p_motivo) ELSE rejection_reason END,
+         -- `actual_margin` e `time_spent_seconds` ficam INTOCADOS (NULL). Um toque
+         -- captura UM fato. Gravar 0 fabricaria "margem zero apurada" e "ligação
+         -- instantânea" — o `Number(null) === 0` do money-path, em SQL. E `offered_at`
+         -- também não é carimbado: ninguém registrou QUANDO a oferta foi feita, e
+         -- usar o instante do clique afirmaria oferta e desfecho simultâneos.
+         updated_at       = v_agora
+   WHERE id = v_id;
+
+  RETURN jsonb_build_object('id', v_id, 'status', p_desfecho);
+END $$;
+
+
+--
+-- Name: FUNCTION farmer_recomendacao_registrar_desfecho(p_customer_user_id uuid, p_product_id uuid, p_recommendation_type text, p_desfecho text, p_motivo text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.farmer_recomendacao_registrar_desfecho(p_customer_user_id uuid, p_product_id uuid, p_recommendation_type text, p_desfecho text, p_motivo text) IS 'Único escritor de desfecho de farmer_recommendations. farmer_id = auth.uid() FIXO (a lente "Ver como" não alcança carteira alheia). Erros: FD001 sem sessão · FD002 desfecho inválido · FD003 motivo · FD004 oferta não encontrada · FD006 chave ambígua.';
+
+
+--
+-- Name: farmer_recomendacoes_substituir(uuid, uuid, uuid, jsonb, text, text, jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.farmer_recomendacoes_substituir(p_farmer_id uuid, p_run_id uuid, p_geracao_vista uuid, p_linhas jsonb, p_completude text DEFAULT NULL::text, p_motivo text DEFAULT NULL::text, p_insumos jsonb DEFAULT NULL::jsonb, p_head_visto uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_total          integer;
+  v_invalidas      integer;
+  v_fora_escopo        integer;
+  v_geracao_atual  uuid;
+  v_expiradas      integer;
+  v_inseridas      integer;
+  v_head_atual     uuid;
+BEGIN
+  -- 1) Gate de MENSAGEM (a RLS é quem autoriza — ver cabeçalho).
+  IF p_farmer_id IS NULL OR p_run_id IS NULL THEN
+    RAISE EXCEPTION 'p_farmer_id e p_run_id são obrigatórios' USING ERRCODE = 'FG001';
+  END IF;
+  -- ⚠️ `IS NOT TRUE`, não `NOT (...)`. Numa sessão SEM JWT (pg_cron, psql) `auth.uid()`
+  -- devolve NULL, então `p_farmer_id = auth.uid()` é NULL e a disjunção inteira vira
+  -- NULL — e `IF NOT NULL THEN` NÃO dispara em PL/pgSQL. Medido em prod:
+  --   NOT (false OR NULL OR false)          => NULL   (o RAISE nunca acontece)
+  --   (false OR NULL OR false) IS NOT TRUE  => true   (barra, como se quer)
+  IF (
+    coalesce(auth.role(), '') = 'service_role'
+    OR p_farmer_id = auth.uid()
+    OR coalesce(private.cap_carteira_escrever(auth.uid()), false)
+  ) IS NOT TRUE THEN
+    RAISE EXCEPTION 'Acesso negado: só o próprio farmer ou quem tem cap_carteira_escrever substitui recomendações'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- 2) FORMATO.
+  IF p_linhas IS NULL OR jsonb_typeof(p_linhas) <> 'array' THEN
+    RAISE EXCEPTION 'p_linhas deve ser um array jsonb (recebido: %)',
+      coalesce(jsonb_typeof(p_linhas), 'null') USING ERRCODE = 'FG002';
+  END IF;
+
+  v_total := jsonb_array_length(p_linhas);
+
+  -- 3) LOTE VAZIO = RECUSA, não "expira tudo e deixa o farmer sem oferta".
+  -- Zero recomendação quase sempre é dado faltando a montante (catálogo, scores,
+  -- get_skus_margem_positiva), não "este farmer não tem o que oferecer" — mesmo
+  -- raciocínio que farmer_association_rules_substituir aplica ao lote vazio.
+  -- ⚠️ Isto SEGUE valendo depois do head: quem tem geração legitimamente vazia
+  -- chama `farmer_geracao_registrar` (que move o head e não toca em linha nenhuma),
+  -- e não esta função. Afrouxar aqui religaria a expiração — que está FORA do escopo
+  -- desta fase por decisão explícita.
+  IF v_total = 0 THEN
+    RAISE EXCEPTION 'lote vazio: as % recomendação(ões) pendentes deste farmer foram preservadas',
+      (SELECT count(*) FROM public.farmer_recommendations
+        WHERE farmer_id = p_farmer_id AND status = 'pendente')
+      USING ERRCODE = 'FG003';
+  END IF;
+
+  -- Teto defensivo: a maior geração medida em prod tem ~1.000 linhas
+  -- (3 cross + 2 up por cliente). 50k é ~50x isso — folga sem ficar ilimitado.
+  IF v_total > 50000 THEN
+    RAISE EXCEPTION 'lote de % linhas excede o teto de 50000', v_total USING ERRCODE = 'FG004';
+  END IF;
+
+  -- 4) SERIALIZAÇÃO por FARMER (não global: duas vendedoras recalculando ao mesmo
+  -- tempo mexem em escopos disjuntos e não têm por que esperar uma pela outra).
+  -- `xact` = o lock sai sozinho no commit/rollback.
+  IF NOT pg_try_advisory_xact_lock(
+        hashtext('farmer_recomendacoes_substituir'), hashtext(p_farmer_id::text)) THEN
+    RAISE EXCEPTION 'outro recálculo deste farmer está em andamento — nada foi alterado'
+      USING ERRCODE = 'FG005';
+  END IF;
+
+  -- 5) GUARD CAUSAL (compare-and-swap).
+  -- O advisory lock acima só cobre a TRANSAÇÃO da RPC — ele não cobre a janela
+  -- longa entre "o motor leu o snapshot" e "o motor chamou esta função". Sem este
+  -- guard, dois recálculos sobrepostos terminam com o MAIS LENTO vencendo, e o
+  -- mais lento é justamente o que leu o snapshot mais VELHO (money-path §10: o
+  -- degradado terminar depois do saudável é o desfecho esperado, não o azar).
+  -- NULL casa NULL: primeira execução, e as linhas legadas (run_id NULL).
+  SELECT run_id INTO v_geracao_atual
+  FROM public.farmer_recommendations
+  WHERE farmer_id = p_farmer_id AND status = 'pendente'
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1;
+
+  IF v_geracao_atual IS DISTINCT FROM p_geracao_vista THEN
+    RAISE EXCEPTION 'geração vigente mudou durante o cálculo (vista: %, atual: %) — nada foi alterado',
+      coalesce(p_geracao_vista::text, 'nenhuma'), coalesce(v_geracao_atual::text, 'nenhuma')
+      USING ERRCODE = 'FG006';
+  END IF;
+
+  -- 6) VALIDAÇÃO ANTES DE MEXER (nada é expirado se o lote tem lixo).
+  SELECT count(*) INTO v_invalidas
+  FROM jsonb_to_recordset(p_linhas) AS r(
+    customer_user_id        uuid,
+    recommendation_type     text,
+    product_id              uuid,
+    affinity_score          numeric
+  )
+  WHERE r.customer_user_id IS NULL
+     OR r.product_id IS NULL
+     OR r.recommendation_type IS NULL
+     OR r.recommendation_type NOT IN ('cross_sell', 'up_sell')
+     -- Finitude nos TRÊS lados. `>= 0` sozinho NÃO sanea: medido em prod,
+     -- `'NaN' >= 0` é TRUE e `'Infinity' >= 0` é TRUE (money-path §2).
+     OR r.affinity_score IS NULL
+     OR NOT (
+          r.affinity_score >= 0
+          AND r.affinity_score < 'Infinity'::numeric
+          AND r.affinity_score <> 'NaN'::numeric
+        );
+
+  IF v_invalidas > 0 THEN
+    RAISE EXCEPTION '% de % linha(s) inválidas (cliente/produto/tipo ausente, ou afinidade nula/negativa/NaN/Infinita) — nada foi expirado',
+      v_invalidas, v_total USING ERRCODE = 'FG007';
+  END IF;
+  -- 6-bis) ESCOPO DE CARTEIRA — o cliente do lote precisa ser DESTE farmer.
+  --
+  -- `farmer_client_scores` tem UNIQUE (customer_user_id): o dono de um cliente é uma
+  -- FUNÇÃO, computável aqui dentro. Até esta versão a RPC aceitava qualquer cliente e
+  -- carimbava `p_farmer_id` por cima — foi por essa porta que o fallback do browser
+  -- ("carteira vazia ⇒ carregue TODOS os scores") gravou 2.676 linhas com `farmer_id` ≠
+  -- dono do cliente. Medido em prod (psql-ro, 21/08/2026): o lote de abril sob o farmer
+  -- 33f59dc7 cobria 166 clientes e só 25,9% eram dele, contra os 18,8% da base que ele
+  -- detém — a assinatura de quem sorteou da base inteira, não de quem leu a própria carteira.
+  --
+  -- O gate tinha que ser AQUI, não só no browser: o cliente não pode ser a autoridade
+  -- sobre o próprio escopo (#1840 — o browser reescrevia as regras do servidor por cima).
+  --
+  -- E o dano SOBREVIVE ao conserto do browser porque a etapa 7 expira
+  -- `WHERE farmer_id = p_farmer_id`: a linha do cliente C gravada sob A, quando o dono é B,
+  -- é INVISÍVEL ao recálculo de B — o dono real recalcula e ela segue pendente, dando ao
+  -- mesmo cliente duas gerações vivas ao mesmo tempo.
+  --
+  -- `IS DISTINCT FROM`, não `<>`: o cliente SEM linha de score precisa cair do MESMO lado.
+  -- `<>` com NULL devolve NULL, o `WHERE` descarta, e o cliente de dono desconhecido passaria
+  -- — exatamente o caso mais suspeito. Dono desconhecido é recusa, nunca "grave assim mesmo".
+  --
+  -- Isto é FAIL-CLOSED sob a RLS: a função é SECURITY INVOKER e `farmer_client_scores` só
+  -- se deixa ler por `cap_carteira_ler(uid) OR carteira_visivel_para(cliente, uid)`. Se a RLS
+  -- esconder do chamador a linha de um cliente alheio, o LEFT JOIN devolve NULL — e NULL é
+  -- recusado. A cegueira da RLS vira RECUSA, não passagem.
+  -- 6-ter) LOCK CAUSAL DO ESCOPO — a metade que a trigger de troca de dono NÃO cobre.
+  -- O guard do #1850 compara o lote com o dono LIDO aqui; a trigger nova
+  -- (private.farmer_expirar_pendentes_do_dono_anterior) expira o que já existia quando o
+  -- dono muda. Nenhum dos dois cobre a janela ENTRE eles:
+  --
+  --   T1 (esta RPC, farmer A)          T2 (reatribuição do cliente C para B)
+  --   ------------------------         -------------------------------------
+  --   FG009 lê score de C = A
+  --                                    UPDATE farmer_client_scores: C -> B
+  --                                    trigger expira as pendentes de C que existiam
+  --   INSERT da oferta C sob A         (a linha NOVA nasce depois da varredura)
+  --   COMMIT                           COMMIT
+  --
+  -- A oferta nova sobrevive fora de escopo. O advisory lock do passo 4 não ajuda: ele é
+  -- por FARMER, e quem reatribui não o toma. Travar as linhas de score do lote até o
+  -- COMMIT resolve nos dois sentidos — se a troca chega antes, ela espera e a trigger
+  -- alcança a linha nova; se chega depois, esta RPC já lê o dono novo e o FG009 recusa.
+  --
+  -- `FOR SHARE`, não `FOR KEY SHARE`: um UPDATE que não mexe em chave toma
+  -- `FOR NO KEY UPDATE`, que NÃO conflita com `FOR KEY SHARE` — o lock mais fraco
+  -- deixaria a corrida exatamente como estava, e o teste do caminho feliz seguiria verde.
+  -- `FOR SHARE` conflita, e é compartilhado: duas vendedoras com lotes disjuntos não se
+  -- esperam (só quem tenta REATRIBUIR espera).
+  --
+  -- O `ORDER BY` é best-effort contra deadlock (o PG não garante ordem de travamento sob
+  -- ORDER BY). A garantia real é a ordem de RECURSOS, que esta fatia mantém única em todo
+  -- o domínio: farmer_client_scores -> farmer_recommendations. A trigger segue a mesma
+  -- ordem (é disparada POR um UPDATE em scores e só então toca recomendações), então não
+  -- há ciclo a inverter.
+  --
+  -- Cliente do lote SEM linha de score não trava nada — não há linha. Não é buraco: o
+  -- FG009 logo abaixo recusa o lote inteiro nesse caso (dono desconhecido é recusa).
+  PERFORM 1
+    FROM public.farmer_client_scores s
+   WHERE s.customer_user_id IN (
+           SELECT DISTINCT c.customer_user_id
+             FROM jsonb_to_recordset(p_linhas) AS c(customer_user_id uuid)
+            WHERE c.customer_user_id IS NOT NULL
+         )
+   ORDER BY s.customer_user_id
+     FOR SHARE;
+
+  SELECT count(*) INTO v_fora_escopo
+  FROM jsonb_to_recordset(p_linhas) AS r(customer_user_id uuid)
+  LEFT JOIN public.farmer_client_scores s ON s.customer_user_id = r.customer_user_id
+  WHERE s.farmer_id IS DISTINCT FROM p_farmer_id;
+
+  -- FG009, não FG008: o 008 JÁ É de outra defesa deste mesmo domínio — a trigger que barra
+  -- INSERT direto de pendente sem `run_id` (migration 20260814223445). Reusar o código
+  -- tornaria dois erros distintos indistinguíveis pela SQLSTATE, que é justamente o que um
+  -- chamador usa para decidir o que fazer. Verificado em prod: FG001–FG008 e FG101–FG107
+  -- ocupados; 009 livre.
+  IF v_fora_escopo > 0 THEN
+    RAISE EXCEPTION '% de % linha(s) são de cliente fora da carteira deste farmer — nada foi expirado',
+      v_fora_escopo, v_total USING ERRCODE = 'FG009';
+  END IF;
+
+  -- 7) A TROCA — os dois statements na MESMA transação.
+  -- Só 'pendente' é tocado: linha com desfecho ('ofertado'/'aceito'/'rejeitado')
+  -- é histórico e fica imutável. E é UPDATE, nunca DELETE.
+  UPDATE public.farmer_recommendations
+     SET status         = 'expirado',
+         expired_at     = clock_timestamp(),
+         expired_by_run = p_run_id,
+         updated_at     = clock_timestamp()
+   WHERE farmer_id = p_farmer_id
+     AND status = 'pendente';
+  GET DIAGNOSTICS v_expiradas = ROW_COUNT;
+
+  INSERT INTO public.farmer_recommendations (
+    farmer_id, customer_user_id, recommendation_type, product_id, current_product_id,
+    p_ij, m_ij, lie, affinity_score, complexity_factor, cluster_volume_estimate,
+    status, run_id
+  )
+  SELECT
+    p_farmer_id, r.customer_user_id, r.recommendation_type, r.product_id, r.current_product_id,
+    r.p_ij,
+    -- m_ij e lie são DINHEIRO e saíram de cena no #1520 (o custo não chega mais ao
+    -- browser). Fixados em NULL aqui, não copiados do payload: o cliente não tem
+    -- como fabricá-los de volta.
+    NULL, NULL,
+    r.affinity_score, coalesce(r.complexity_factor, 1), coalesce(r.cluster_volume_estimate, 1),
+    'pendente', p_run_id
+  FROM jsonb_to_recordset(p_linhas) AS r(
+    customer_user_id        uuid,
+    recommendation_type     text,
+    product_id              uuid,
+    current_product_id      uuid,
+    p_ij                    numeric,
+    affinity_score          numeric,
+    complexity_factor       numeric,
+    cluster_volume_estimate numeric
+  );
+  GET DIAGNOSTICS v_inseridas = ROW_COUNT;
+
+  -- 8) O HEAD, na MESMA transação — com o head que o CHAMADOR viu ANTES do cálculo.
+  --
+  -- ⚠️ A 1ª versão lia o head AQUI DENTRO e o passava adiante, o que satisfazia o CAS por
+  -- construção e abria a assimetria que o challenge Codex xhigh encontrou: um run VAZIO
+  -- que commita entre a leitura e a escrita de um run COM LINHAS não é visto pelo CAS da
+  -- etapa 5 (ele compara LINHAS, e o vazio não mexeu em linha nenhuma), então o run antigo
+  -- sobrescrevia um vazio mais novo. O sistema misturava duas ordens: frescor causal para
+  -- o vazio e ordem-de-commit para as linhas. Comparar o head ORIGINAL alinha as duas.
+  --
+  -- `p_completude IS NULL` é o marcador de chamador ANTERIOR ao sensor (assinatura de 4
+  -- args, bundle velho em cache): ele não tem head para declarar, então cai no head
+  -- corrente em vez de ser recusado por não saber de algo que não existia quando foi
+  -- escrito. Os dois sinais de "cliente antigo" são o mesmo, de propósito.
+  IF p_completude IS NULL THEN
+    SELECT run_id INTO v_head_atual
+    FROM public.farmer_geracao_vigente
+    WHERE motor = 'cross_sell' AND farmer_id = p_farmer_id;
+  ELSE
+    v_head_atual := p_head_visto;
+  END IF;
+
+  PERFORM public.farmer_geracao_registrar(
+    'cross_sell', p_farmer_id, p_run_id, 'linhas', v_inseridas,
+    p_completude, p_motivo, p_insumos, v_head_atual
+  );
+
+  RETURN jsonb_build_object(
+    'run_id',    p_run_id,
+    'expiradas', v_expiradas,
+    'inseridas', v_inseridas
+  );
+END;
+$$;
 
 
 --
@@ -6721,7 +9040,7 @@ BEGIN
                    'custos_produtos','vendas_cadastros','reposicao_disparo',
                    'reposicao_portal_pipeline','reposicao_portal_humano',
                    'reposicao_sayerlack_fabricado','omie_tipo_produto_oben',
-                   'vendas_familia_ausente','tint_cobertura_bases',
+                   'vendas_familia_ausente','tint_cobertura_bases','carteira_identidade_quarentena',
                    'custos_proxy_conf_alta','custos_product_cost_revivido','alert_channel','pedidos_compra_sync');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
 
   v_titulo := '[Watchdog'
@@ -8773,6 +11092,99 @@ $_$;
 
 
 --
+-- Name: get_carteira_margem_faixa(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_carteira_margem_faixa() RETURNS TABLE(customer_user_id uuid, faixa text, motivo text, g numeric, margem_pct numeric)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_uid      uuid;
+  v_pode_num boolean;
+  v_cap_todo boolean;
+  v_piso     numeric;
+  v_meta     numeric;
+BEGIN
+  -- Atribuição no CORPO, nunca no DECLARE: erro na inicialização de DECLARE não é capturável
+  -- pelo EXCEPTION do próprio bloco e derrubaria a função inteira.
+  v_uid := (SELECT auth.uid());
+
+  -- Fail-closed: sem identidade, zero linhas.
+  IF v_uid IS NULL THEN
+    RETURN;
+  END IF;
+
+  v_pode_num := COALESCE(private.cap_custo_ler(v_uid), false);
+  v_cap_todo := COALESCE(private.cap_carteira_ler(v_uid), false);
+
+  -- Limiares em CONFIG, não em código: mudar a faixa é UPDATE, não deploy.
+  SELECT COALESCE(max(c.value::numeric) FILTER (WHERE c.key = 'margem_faixa_piso_pct'), 30),
+         COALESCE(max(c.value::numeric) FILTER (WHERE c.key = 'margem_faixa_meta_pct'), 50)
+    INTO v_piso, v_meta
+    FROM public.farmer_algorithm_config c
+   WHERE c.key IN ('margem_faixa_piso_pct', 'margem_faixa_meta_pct');
+
+  RETURN QUERY
+  WITH base AS (
+    SELECT m.customer_user_id AS cid, m.margem_pct AS pct
+      FROM private.margem_cliente_agregada() m
+  ),
+  regua AS (
+    -- p10/p90 sobre a POPULAÇÃO INTEIRA (ver nota de escopo acima). `margem_pct` vem em pontos
+    -- percentuais (0–100); o hook trabalha em fração (0–1). Dividir por 100 mantém a régua
+    -- idêntica à dele: a normalização é invariante a escala, mas manter a mesma unidade evita
+    -- que uma futura mudança de limiar leia errado.
+    SELECT percentile_cont(0.10) WITHIN GROUP (ORDER BY b.pct / 100.0)::numeric AS p10,
+           percentile_cont(0.90) WITHIN GROUP (ORDER BY b.pct / 100.0)::numeric AS p90
+      FROM base b
+     WHERE b.pct IS NOT NULL
+  )
+  SELECT
+    b.cid,
+    CASE WHEN b.pct IS NULL   THEN 'neutro'
+         WHEN b.pct < 0       THEN 'vermelho'
+         WHEN b.pct < v_piso  THEN 'amarelo'
+         ELSE                      'verde'   END,
+    -- Gate de PROJEÇÃO do MOTIVO (fase 3c). `motivo` carregava as âncoras ABSOLUTAS do piso e da
+    -- meta; com elas, `g` — que é afim na margem — inverte para o número exato. Sem cap, o
+    -- vocabulário de motivo não sai. A FAIXA continua saindo: ela é o sinal que o produto quer
+    -- ("o número fecha, o sinal fica") e ancora só a fronteira do piso, que sozinha não fecha o
+    -- sistema de duas incógnitas.
+    -- ⚠️ NULL, não uma string genérica ('indisponivel'/'—'): rótulo constante é fato fabricado, e
+    -- o §5 do money-path já pagou por isso (`empresa_omie` com DEFAULT respondendo por 100%).
+    CASE WHEN v_pode_num THEN
+      CASE WHEN b.pct IS NULL   THEN 'sem_custo'
+           WHEN b.pct < 0       THEN 'abaixo_do_custo'
+           WHEN b.pct < v_piso  THEN 'abaixo_do_piso'
+           WHEN b.pct < v_meta  THEN 'abaixo_da_meta'
+           ELSE                      'saudavel' END
+    END,
+    -- `g` com a MESMA régua do hook: clamp((margem - p10) / max(p90 - p10, 0.01), 0, 1).
+    -- NULL quando a margem não é apurável — o calcularHealthScore renormaliza os pesos.
+    CASE WHEN b.pct IS NULL THEN NULL
+         ELSE greatest(0::numeric,
+                least(1::numeric,
+                  (b.pct / 100.0 - r.p10) / greatest(r.p90 - r.p10, 0.01::numeric)))
+    END,
+    -- Gate de PROJEÇÃO: esconde na SAÍDA, não no cálculo.
+    CASE WHEN v_pode_num THEN b.pct END
+  FROM base b CROSS JOIN regua r
+  -- Escopo espelhando fcs_select_carteira. O filtro vem DEPOIS da régua, de propósito.
+  WHERE v_cap_todo
+     OR COALESCE(private.carteira_visivel_para(b.cid, v_uid), false);
+END;
+$$;
+
+
+--
+-- Name: FUNCTION get_carteira_margem_faixa(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.get_carteira_margem_faixa() IS 'FU4-F fase 3: faixa de margem + componente g por cliente da carteira. O custo e lido no SERVIDOR (via private.margem_cliente_agregada) e nunca sai; margem_pct so e projetada sob private.cap_custo_ler. `g` usa a regua de percentis da POPULACAO. ATENCAO: a REGUA e a mesma que o hook usava, mas o UNIVERSO nao. O hook filtrava status por allowlist (confirmado/faturado/entregue, das quais duas tem ZERO linhas) e o helper filtra por denylist: 30.833 pedidos contra 20.597, medido em 2026-08-13. E o escopo por carteira tira o `g` de cliente fora dela, com renormalizacao dos pesos. Logo o health score MUDA - medido no PR #1721 sobre as 3 personas reais de prod: ate 59,5% dos clientes mudam de faixa, delta medio de 1,4 a 4,1 pontos e maximo 14,5 (o teto do peso de G). Mas a AGENDA NAO muda: nenhuma quota le o health score (risco ordena por churnRisk, expansao por expansionScore, follow-up por priorityScore) - so o rotulo healthClass exibido. Ate 2026-08-13 este comentario prometia equivalencia EXATA de score, o que era falso. Escopo espelha a RLS de farmer_client_scores. FASE 3c (2026-08-13): `motivo` passou a ser projetado sob private.cap_custo_ler, junto de margem_pct. Ele carregava as ANCORAS ABSOLUTAS (piso 30 / meta 50) e, como `g` e AFIM na margem (margem_pct = A + B*g), o maior `g` de cada motivo calibrava A e B e reconstruia a carteira inteira numa unica resposta - medido em prod: erro de 0,03 pp em 859 dos 1.075 clientes com margem. `faixa` e `g` CONTINUAM saindo sem cap: gatear `g` mudaria o health score de quem nao tem cap (renormalizacao dos pesos), que e produto, nao autorizacao - o custo foi medido (640 clientes, 91 de classe, agenda identica) e o founder optou por preservar o score. A defesa depende de p10 > 0: a fronteira vermelho (margem < 0) so nao e 2a ancora porque esta SATURADA; se p10 cair abaixo de zero ela volta sozinha.';
+
+
+--
 -- Name: get_carteira_saude(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9949,6 +12361,65 @@ END; $$;
 
 
 --
+-- Name: get_skus_margem_positiva(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_skus_margem_positiva() RETURNS TABLE(product_id uuid)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+BEGIN
+  IF v_uid IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- staff-only: quem nao e employee nem master nao tem por que saber o que e vendavel.
+  -- (customers sao 5.664 dos 5.669 usuarios — deixa-los fora e o grosso da superficie.)
+  --
+  -- RAISE, nao `RETURN` vazio: gate que devolve conjunto vazio em silencio e indistinguivel de
+  -- "nao ha dados" — nao entra em log, nao alerta ninguem, e o `authz:check` do CI o classifica
+  -- (com razao) como gate DECORATIVO, exigindo a forma de bloqueio. Note a assimetria
+  -- deliberada com o `v_uid IS NULL` acima: SEM identidade e o caso do service_role/anon
+  -- (chamador ligado no client errado) e sai vazio; COM identidade e sem papel e tentativa
+  -- indevida, e essa grita.
+  --
+  -- COALESCE explicito: se has_role algum dia devolver NULL, `NOT NULL` e NULL e o IF nao
+  -- dispara — o gate falharia ABERTO. Sugestao da rodada 2 do Codex.
+  -- A forma e `IF NOT ( … ) THEN RAISE` com o parentese IMEDIATAMENTE apos o NOT: e a unica que o
+  -- `authz:check` reconhece como bloqueio (`NOT COALESCE(...)` nao casa — o parser procura
+  -- `\bnot\s*\(`). Nao e capricho do linter: a forma canonica e o que torna o gate auditavel em
+  -- massa, e um gate que so o autor sabe ler nao e verificavel pelo CI.
+  IF NOT (
+       COALESCE(public.has_role(v_uid, 'employee'::public.app_role), false)
+       OR COALESCE(public.has_role(v_uid, 'master'::public.app_role), false)
+     ) THEN
+    RAISE EXCEPTION 'get_skus_margem_positiva: acesso restrito a staff'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  RETURN QUERY
+  SELECT p.id
+  FROM public.omie_products p
+  JOIN public.product_costs pc ON pc.product_id = p.id
+  WHERE p.ativo IS TRUE
+    AND private.regua_num_finito(p.valor_unitario)
+    AND p.valor_unitario > 0
+    AND private.custo_canonico(pc.cost_final, pc.cost_price) IS NOT NULL
+    AND p.valor_unitario > private.custo_canonico(pc.cost_final, pc.cost_price);
+END
+$$;
+
+
+--
+-- Name: FUNCTION get_skus_margem_positiva(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.get_skus_margem_positiva() IS 'FU4-F fase 3: devolve os SKUs vendaveis (margem canonica > 0) para os engines de recomendacao filtrarem candidatos SEM ler custo. SEM PARAMETRO de proposito — a versao anterior aceitava multiplicadores do caller e devolvia ordem, o que o Codex mostrou ser regua graduada (2 chamadas recuperavam o catalogo). Residuo declarado: 1 bit por SKU POR SNAPSHOT, acumulavel no tempo (max(precos negativos) <= C < min(precos positivos)). E o employee pode escrever omie_products.valor_unitario, que e o limiar — enquanto isso nao fechar, a barreira e de conveniencia, nao de confidencialidade.';
+
+
+--
 -- Name: get_tint_price(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11053,6 +13524,57 @@ $$;
 
 
 --
+-- Name: omie_products_codigos_multi_conta(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.omie_products_codigos_multi_conta() RETURNS TABLE(omie_codigo_produto text, contas bigint)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+  SELECT op.omie_codigo_produto, count(DISTINCT op.account) AS contas
+  FROM public.omie_products op
+  WHERE op.omie_codigo_produto IS NOT NULL
+  GROUP BY op.omie_codigo_produto
+  HAVING count(DISTINCT op.account) > 1
+  ORDER BY op.omie_codigo_produto
+$$;
+
+
+--
+-- Name: FUNCTION omie_products_codigos_multi_conta(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.omie_products_codigos_multi_conta() IS 'Sensor: códigos de produto que existem em MAIS DE UMA conta. Espera-se 0 — o fallback por código do MixGap (product_id nulo) não qualifica a conta, então um código repetido faria regra de associação de uma conta alcançar cliente da outra. SECURITY INVOKER: herda a RLS.';
+
+
+--
+-- Name: omie_customer_account_map; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_customer_account_map (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    account text NOT NULL,
+    omie_codigo_cliente bigint NOT NULL,
+    omie_codigo_vendedor bigint,
+    source text DEFAULT 'document'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_document_normalized text,
+    CONSTRAINT chk_ocam_account CHECK ((account = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT chk_ocam_source CHECK ((source = ANY (ARRAY['document'::text, 'code'::text, 'manual'::text, 'rpc'::text]))),
+    CONSTRAINT ocam_evidence_document_normalizado_chk CHECK (((evidence_document_normalized IS NULL) OR (evidence_document_normalized ~ '^[0-9]{11,}$'::text)))
+);
+
+
+--
+-- Name: COLUMN omie_customer_account_map.evidence_document_normalized; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.omie_customer_account_map.evidence_document_normalized IS 'PR-2/A2: documento normalizado (só dígitos) que PROVOU este vínculo no casamento document-first do omie-analytics-sync/syncCustomers. NULL = sem prova (linhas anteriores ao PR-2, ou fontes rpc/manual) → NÃO entra em client_to_user do omie_sync_identity_snapshot. Fail-closed por construção.';
+
+
+--
 -- Name: profiles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11105,12 +13627,26 @@ CREATE FUNCTION public.omie_sync_identity_snapshot(p_account text) RETURNS jsonb
              min((doc_valid.user_id)::text) AS user_id
             FROM doc_valid
            GROUP BY doc_valid.doc
+         ), client_prova AS (
+          SELECT (m.omie_codigo_cliente)::text AS codigo,
+             d.user_id
+            FROM (public.omie_customer_account_map m
+              JOIN doc_agg d ON (((d.doc = m.evidence_document_normalized) AND (d.n_users = 1) AND (d.user_id = (m.user_id)::text))))
+           WHERE ((m.account = omie_sync_identity_snapshot.p_account) AND (m.source = 'document'::text) AND (m.evidence_document_normalized IS NOT NULL) AND (m.updated_at >= (now() - '7 days'::interval)))
+         ), client_revogado AS (
+          SELECT (m.omie_codigo_cliente)::text AS codigo
+            FROM public.omie_customer_account_map m
+           WHERE ((m.account = omie_sync_identity_snapshot.p_account) AND (m.source = ANY (ARRAY['document'::text, 'rpc'::text])) AND (m.evidence_document_normalized IS NOT NULL) AND (m.updated_at >= (now() - '7 days'::interval)) AND (NOT (EXISTS ( SELECT 1
+                    FROM doc_agg d
+                   WHERE ((d.doc = m.evidence_document_normalized) AND (d.n_users = 1) AND (d.user_id = (m.user_id)::text))))))
          )
   SELECT jsonb_build_object('doc_to_user', COALESCE(( SELECT jsonb_object_agg(doc_agg.doc, doc_agg.user_id) AS jsonb_object_agg
             FROM doc_agg
            WHERE (doc_agg.n_users = 1)), '{}'::jsonb), 'ambiguous_docs', COALESCE(( SELECT jsonb_agg(doc_agg.doc ORDER BY doc_agg.doc) AS jsonb_agg
             FROM doc_agg
-           WHERE (doc_agg.n_users > 1)), '[]'::jsonb), 'client_to_user', '{}'::jsonb) AS jsonb_build_object;
+           WHERE (doc_agg.n_users > 1)), '[]'::jsonb), 'client_to_user', COALESCE(( SELECT jsonb_object_agg(client_prova.codigo, client_prova.user_id) AS jsonb_object_agg
+            FROM client_prova), '{}'::jsonb), 'revoked_client_codes', COALESCE(( SELECT jsonb_agg(client_revogado.codigo ORDER BY client_revogado.codigo) AS jsonb_agg
+            FROM client_revogado), '[]'::jsonb)) AS jsonb_build_object;
 END;
 
 
@@ -11118,7 +13654,7 @@ END;
 -- Name: FUNCTION omie_sync_identity_snapshot(p_account text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.omie_sync_identity_snapshot(p_account text) IS 'PR-1/A1: identidade doc→user num snapshot atômico (sql STABLE). Retorna {doc_to_user, ambiguous_docs, client_to_user}. doc ambíguo (2+ users) fica FORA de doc_to_user (fail-closed). client_to_user preenchido no PR-2. Só service_role executa.';
+COMMENT ON FUNCTION public.omie_sync_identity_snapshot(p_account text) IS 'PR-1/A1 + PR-2/A2: identidade num snapshot atômico (sql STABLE). {doc_to_user, ambiguous_docs, client_to_user, revoked_client_codes}. doc ambíguo (2+ users) fica FORA de doc_to_user. client_to_user = prova positiva codigo_omie→user por conta (source=document + evidência única e consistente + TTL 7d). revoked_client_codes = códigos cuja evidência EXISTE mas não sustenta mais o vínculo (qualquer source) — o leitor os REMOVE do cache e refaz pela API. Só service_role executa.';
 
 
 --
@@ -12325,6 +14861,65 @@ END $$;
 
 
 --
+-- Name: recommend_cluster_agregado(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.recommend_cluster_agregado(p_health_class text, p_teto_clientes integer DEFAULT 5000) RETURNS TABLE(denominador integer, observados integer, produtos jsonb, truncado boolean)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+WITH eleg AS (
+  -- Whitelist POSITIVA, espelho de CLUSTER_STATUS_COM_HISTORICO no edge. Não use
+  -- `<> 'sem_historico'`: a coluna é NULLABLE e negação em SQL é NULL-blind, então o NULL
+  -- sairia por efeito colateral invisível — e um status NOVO que signifique "sem venda"
+  -- entraria SOZINHO. Whitelist falha FECHADA.
+  SELECT s.customer_user_id
+  FROM public.farmer_client_scores s
+  WHERE s.health_class = p_health_class
+    AND s.sales_history_status IN ('ativo', 'stale')
+),
+pop AS (SELECT count(*)::int AS n FROM eleg),
+pares AS (
+  -- DEDUP `(cliente, produto)`: o numerador conta clientes DISTINTOS, então recompra do mesmo
+  -- SKU e pedido com muitos itens não podem pesar. Era exatamente o que gastava o teto de
+  -- 1.000 sem acrescentar nada ao numerador.
+  SELECT DISTINCT i.customer_user_id, i.product_id
+  FROM public.order_items i
+  JOIN public.sales_orders so ON so.id = i.sales_order_id
+  JOIN public.omie_products o ON o.id = i.product_id
+  WHERE i.customer_user_id IN (SELECT customer_user_id FROM eleg)
+    -- Espelho VERBATIM de get_customer_sales_summary (o universo que define o filtro acima).
+    AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')
+    AND so.deleted_at IS NULL
+    AND o.ativo
+    -- DISJUNTOR: acima do teto a função não faz o trabalho pesado e não devolve número.
+    AND (SELECT n FROM pop) <= p_teto_clientes
+),
+agg AS (
+  SELECT p.product_id, count(*)::int AS n
+  FROM pares p
+  GROUP BY p.product_id
+)
+SELECT
+  (SELECT n FROM pop)                                                    AS denominador,
+  -- Truncado ⇒ NULL, não 0. Zero aqui seria "medi e ninguém comprou"; NULL é "não medi" — a
+  -- distinção inteira desta entrega.
+  CASE WHEN (SELECT n FROM pop) > p_teto_clientes THEN NULL
+       ELSE (SELECT count(DISTINCT p.customer_user_id)::int FROM pares p) END AS observados,
+  CASE WHEN (SELECT n FROM pop) > p_teto_clientes THEN NULL
+       ELSE COALESCE((SELECT jsonb_object_agg(a.product_id, a.n) FROM agg a), '{}'::jsonb) END AS produtos,
+  (SELECT n FROM pop) > p_teto_clientes                                  AS truncado
+$$;
+
+
+--
+-- Name: FUNCTION recommend_cluster_agregado(p_health_class text, p_teto_clientes integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.recommend_cluster_agregado(p_health_class text, p_teto_clientes integer) IS 'sim_score do motor de recomendação, agregado no banco. Substitui o teto plano de 1.000 linhas de order_items que zerava clientes reais (5 em atencao, 2 em estavel — medido 2026-08-21). Histórico inteiro, universo de pedidos de get_customer_sales_summary, SKU ativo, dedup (cliente,produto). Denominador = população elegível. truncado=true ⇒ observados/produtos vêm NULL e o consumidor trata sim como INDISPONÍVEL.';
+
+
+--
 -- Name: recomputar_leadtime_derivado(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12555,16 +15150,19 @@ BEGIN
   -- do sync ('vendas'|'servicos'|'colacor_vendas') levanta 23514 em vez de gravar conta errada.
   -- Vendedor ausente NUNCA é fabricado como 0 — COALESCE preserva o vendedor já conhecido.
   INSERT INTO public.omie_customer_account_map (
-    user_id, account, omie_codigo_cliente, omie_codigo_vendedor, source, updated_at
+    user_id, account, omie_codigo_cliente, omie_codigo_vendedor, source, evidence_document_normalized, updated_at
   )
   VALUES (
-    p_user_id, p_account, p_omie_codigo_cliente, p_omie_codigo_vendedor, 'rpc', now()
+    p_user_id, p_account, p_omie_codigo_cliente, p_omie_codigo_vendedor, 'rpc', NULL, now()
   )
   ON CONFLICT (user_id, account) DO UPDATE SET
     omie_codigo_cliente  = EXCLUDED.omie_codigo_cliente,
     omie_codigo_vendedor = COALESCE(EXCLUDED.omie_codigo_vendedor, omie_customer_account_map.omie_codigo_vendedor),
     -- NÃO rebaixa um override humano: se a linha já é 'manual', permanece 'manual'.
     source               = CASE WHEN omie_customer_account_map.source = 'manual' THEN 'manual' ELSE 'rpc' END,
+    -- PR-2/A2: esta RPC não prova identidade por documento — não pode deixar a prova de outro writer
+    -- (possivelmente de OUTRO código) colada na linha que ela acabou de reescrever.
+    evidence_document_normalized = NULL,
     updated_at           = now();
 END
 $$;
@@ -13099,6 +15697,45 @@ END $_$;
 
 
 --
+-- Name: reposicao__po_inexistente_antes_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao__po_inexistente_antes_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  -- (a) NUNCA no futuro. Um carimbo adiantado suprimiria o pedido até `finalizado_em` alcançá-lo — em
+  -- 2099, para sempre. Clampa para o agora (direção fail-closed: menor ⇒ mais alerta) e DEIXA RASTRO,
+  -- em vez de abortar: derrubar este UPDATE perderia o `omie_pedido_compra_id` de um PO que já existe
+  -- no Omie, estrago muito maior que um carimbo torto.
+  IF NEW.omie_po_inexistente_antes_de > clock_timestamp() THEN
+    RAISE WARNING 'pedido % : omie_po_inexistente_antes_de no futuro (%) — clampado para o agora',
+      NEW.id, NEW.omie_po_inexistente_antes_de;
+    NEW.omie_po_inexistente_antes_de := clock_timestamp();
+  END IF;
+
+  -- (b) NUNCA regride. O limite conquistado é uma prova; escrita posterior só pode SOMAR a ela.
+  -- GREATEST ignora NULL, então um UPDATE que não carrega a coluna (ou a manda NULL) PRESERVA o valor
+  -- em vez de apagá-lo — o que importa porque o UPDATE da reconciliação, por desenho, não a carimba.
+  IF TG_OP = 'UPDATE' THEN
+    NEW.omie_po_inexistente_antes_de :=
+      GREATEST(OLD.omie_po_inexistente_antes_de, NEW.omie_po_inexistente_antes_de);
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION reposicao__po_inexistente_antes_guard(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.reposicao__po_inexistente_antes_guard() IS 'Invariante de pedido_compra_sugerido.omie_po_inexistente_antes_de: nunca no futuro (clamp + WARNING) e nunca decrescente (GREATEST, que preserva o valor quando o UPDATE manda NULL). Mora na TABELA e não no writer porque a próxima via de escrita não vai reler o writer de hoje (money-path.md §2).';
+
+
+--
 -- Name: reposicao__trim(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13420,11 +16057,19 @@ CREATE FUNCTION public.reposicao_cold_start_parametros(p_empresa text DEFAULT 'O
     AS $$
 DECLARE
   v_grad int := 0; v_cri int := 0;
+  v_mult numeric;
 BEGIN
   -- SEM gate auth.role(): o pg_cron roda como postgres SEM JWT (auth.role()=NULL) e o gate
   -- 'service_role' o bloquearia. Proteção via REVOKE/GRANT abaixo (anon/authenticated barrados).
 
+  -- Mesmo fusível de `atualizar_parametros_numericos_skus`, mesma chave de config —
+  -- para que afrouxar/apertar o limite continue sendo UM knob, não dois divergentes.
+  v_mult := COALESCE((SELECT value::numeric FROM public.company_config
+                      WHERE key = 'param_auto_fusivel_mult'), 3);
+
   -- ── (1) GRADUAR: cold-start que ganhou demanda OK → aplica o parâmetro REAL ──
+  -- FUSÍVEL: só gradua quando há ÂNCORA (`estoque_maximo > 0`) E o salto cabe em v_mult.
+  -- Sem âncora não há como avaliar magnitude ⇒ segura (precisão > recall no money-path).
   WITH grad AS (
     UPDATE public.sku_parametros sp SET
       estoque_minimo      = v.estoque_minimo_sugerido,
@@ -13439,12 +16084,34 @@ BEGIN
       AND sp.empresa = p_empresa AND sp.parametro_cold_start = true
       AND v.status_sugestao = 'OK'
       AND v.ponto_pedido_sugerido IS NOT NULL AND v.estoque_maximo_sugerido IS NOT NULL
+      AND sp.estoque_maximo IS NOT NULL AND sp.estoque_maximo > 0
+      AND round(v.estoque_maximo_sugerido) <= v_mult * round(sp.estoque_maximo)
     RETURNING sp.sku_codigo_omie, sp.sku_descricao
   )
   INSERT INTO public.reposicao_cold_start_log (run_id, empresa, sku_codigo_omie, sku_descricao, acao, detalhe)
   SELECT p_run_id, p_empresa, g.sku_codigo_omie::text, g.sku_descricao, 'graduado', 'ganhou demanda (status OK)'
   FROM grad g;
   GET DIAGNOSTICS v_grad = ROW_COUNT;
+
+  -- ── (1b) SEGURADO: elegível a graduar, mas o salto estoura o fusível (ou falta âncora) ──
+  -- Não escreve parâmetro. Registra COM os números, para revisão humana — e o SKU
+  -- permanece cold-start, aparecendo na fila do sensor A (v_reposicao_param_fila).
+  INSERT INTO public.reposicao_cold_start_log (run_id, empresa, sku_codigo_omie, sku_descricao, acao, detalhe)
+  SELECT p_run_id, p_empresa, sp.sku_codigo_omie::text, sp.sku_descricao, 'segurado',
+         CASE
+           WHEN sp.estoque_maximo IS NULL OR sp.estoque_maximo <= 0
+             THEN 'sem âncora de magnitude (estoque_maximo ausente ou <= 0) — revisão humana'
+           ELSE 'salto barrado pelo fusível: max ' || sp.estoque_maximo || ' -> '
+                || round(v.estoque_maximo_sugerido) || ' (> ' || v_mult || 'x) — revisão humana'
+         END
+  FROM public.sku_parametros sp
+  JOIN public.v_sku_parametros_sugeridos v
+    ON v.empresa = sp.empresa AND v.sku_codigo_omie = sp.sku_codigo_omie
+  WHERE sp.empresa = p_empresa AND sp.parametro_cold_start = true
+    AND v.status_sugestao = 'OK'
+    AND v.ponto_pedido_sugerido IS NOT NULL AND v.estoque_maximo_sugerido IS NOT NULL
+    AND (sp.estoque_maximo IS NULL OR sp.estoque_maximo <= 0
+         OR round(v.estoque_maximo_sugerido) > v_mult * round(sp.estoque_maximo));
 
   -- ── (2) CRIAR: comprável + de-para, sem linha, sem demanda OK → fallback conservador ──
   DROP TABLE IF EXISTS tmp_cold_cand;
@@ -13488,6 +16155,30 @@ BEGIN
 
   RETURN QUERY SELECT v_grad, v_cri;
 END $$;
+
+
+--
+-- Name: FUNCTION reposicao_cold_start_parametros(p_empresa text, p_limite integer, p_run_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.reposicao_cold_start_parametros(p_empresa text, p_limite integer, p_run_id uuid) IS 'Cold start de parâmetros de reposição. GRADUAR aplica o parâmetro real, agora sob o MESMO fusível de magnitude de atualizar_parametros_numericos_skus (param_auto_fusivel_mult): salto acima do limite, ou ausência de âncora, vira acao=''segurado'' para revisão humana — nunca escrita silenciosa.';
+
+
+--
+-- Name: reposicao_marco_pre_omie(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_marco_pre_omie() RETURNS timestamp with time zone
+    LANGUAGE sql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$ SELECT clock_timestamp() $$;
+
+
+--
+-- Name: FUNCTION reposicao_marco_pre_omie(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.reposicao_marco_pre_omie() IS 'Devolve clock_timestamp() do banco. Uso ÚNICO: a edge disparar-pedidos-aprovados lê este marco ANTES de chamar IncluirPedCompra e o persiste em pedido_compra_sugerido.omie_po_inexistente_antes_de se o Omie confirmar a criação — assim o limite causal e o finalizado_em do marcador saem do MESMO relógio. Não é relógio de uso geral: nada de prazo/TTL deve pendurar-se aqui.';
 
 
 --
@@ -13576,6 +16267,102 @@ BEGIN
   UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=now() WHERE id=r.id;
 END;
 $_$;
+
+
+--
+-- Name: reposicao_param_fila_sensor(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_param_fila_sensor(p_empresa text DEFAULT 'OBEN'::text) RETURNS TABLE(estagios integer, total integer, estagnado boolean)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_dias      int;
+  v_total     int := 0;
+  v_estagios  int := 0;
+  v_min_ant   int;
+  v_dias_serie int;
+  v_estagnado boolean := false;
+  v_msg       text;
+BEGIN
+  -- SEM gate auth.role(): roda por pg_cron como postgres (auth.role() = NULL), igual
+  -- às irmãs reposicao_cold_start_parametros / reposicao_param_limbo_watchdog.
+  -- A proteção é o REVOKE/GRANT no fim do arquivo (anon/authenticated barrados).
+
+  SELECT COALESCE((SELECT value::int FROM public.company_config
+                   WHERE key = 'reposicao_param_fila_estagnacao_dias'), 14)
+    INTO v_dias;
+
+  -- (a) snapshot da composição do dia
+  INSERT INTO public.reposicao_param_fila_log (empresa, medido_em, estagio, total, habilitados)
+  SELECT f.empresa, CURRENT_DATE, f.estagio, count(*)::int,
+         count(*) FILTER (WHERE f.habilitado)::int
+  FROM public.v_reposicao_param_fila f
+  WHERE f.empresa = p_empresa
+  GROUP BY f.empresa, f.estagio
+  ON CONFLICT (empresa, medido_em, estagio) DO UPDATE
+    SET total = EXCLUDED.total, habilitados = EXCLUDED.habilitados, criado_em = now();
+
+  -- Aliases OBRIGATÓRIOS: `total`/`estagios` são também colunas OUT do RETURNS TABLE, e
+  -- plpgsql resolve a ambiguidade com erro em RUNTIME (late-bound) — não no CREATE.
+  SELECT COALESCE(sum(l.total), 0)::int, count(*)::int
+    INTO v_total, v_estagios
+  FROM public.reposicao_param_fila_log l
+  WHERE l.empresa = p_empresa AND l.medido_em = CURRENT_DATE;
+
+  -- (b) ESTAGNAÇÃO: o nível não caiu em nenhum dia da janela.
+  -- FAIL-CLOSED de leitura: sem série suficiente NÃO alerta e NÃO dismissa — ausência
+  -- de dado não é "saudável" nem "estagnado". É exatamente o erro que este sensor
+  -- existe para não repetir (o ELSE do watchdog antigo dismissa por ausência de piora).
+  SELECT count(*)::int, min(limbo_count)::int
+    INTO v_dias_serie, v_min_ant
+  FROM public.reposicao_param_limbo_log
+  WHERE empresa = p_empresa
+    AND medido_em >= (CURRENT_DATE - v_dias)
+    AND medido_em <  CURRENT_DATE;
+
+  IF v_dias_serie >= v_dias THEN
+    -- estagnado = o menor valor observado na janela não é MENOR que o de hoje,
+    -- isto é: em N dias a fila não drenou nada.
+    SELECT (v_min_ant IS NOT NULL AND v_min_ant <= lc.limbo_count)
+      INTO v_estagnado
+    FROM public.reposicao_param_limbo_log lc
+    WHERE lc.empresa = p_empresa AND lc.medido_em = CURRENT_DATE;
+
+    v_estagnado := COALESCE(v_estagnado, false);
+  END IF;
+
+  IF v_estagnado THEN
+    v_msg := 'Fila de parâmetros de reposição PARADA: ' || v_total || ' SKUs sem ponto_pedido/estoque_maximo '
+          || 'e o nível não caiu em ' || v_dias || ' dias. Composição por estágio em '
+          || 'reposicao_param_fila_log / v_reposicao_param_fila. Sensor de nível — o watchdog de delta '
+          || '(reposicao_param_limbo_watchdog) fica VERDE nesta situação por desenho.';
+
+    INSERT INTO public.fin_alertas (company, tipo, severidade, mensagem, valor, threshold, contexto)
+    VALUES (lower(p_empresa), 'reposicao_param_fila_estagnada', 'aviso', v_msg, v_total, v_dias,
+            jsonb_build_object('total', v_total, 'estagios', v_estagios, 'janela_dias', v_dias))
+    ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+  ELSE
+    -- Só dismissa quando houve série suficiente para CONCLUIR que não está estagnado.
+    -- Sem série, o alerta anterior (se houver) permanece — ausência de dado não resolve alerta.
+    IF v_dias_serie >= v_dias THEN
+      UPDATE public.fin_alertas SET dismissed_at = now()
+      WHERE company = lower(p_empresa) AND tipo = 'reposicao_param_fila_estagnada'
+        AND dismissed_at IS NULL;
+    END IF;
+  END IF;
+
+  RETURN QUERY SELECT v_estagios, v_total, v_estagnado;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION reposicao_param_fila_sensor(p_empresa text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.reposicao_param_fila_sensor(p_empresa text) IS 'Sensor de NÍVEL/COMPOSIÇÃO/ESTAGNAÇÃO da fila de parâmetros. Complementa (não substitui) reposicao_param_limbo_watchdog, que é sensor de DERIVADA e fica verde com a fila congelada.';
 
 
 --
@@ -13837,7 +16624,7 @@ $$;
 -- Name: reposicao_pos_candidatos(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.reposicao_pos_candidatos(p_empresa text) RETURNS TABLE(pedido_id bigint, omie_codigo_pedido text, data_ciclo date, idade_dias integer, na_janela_7d boolean, valor_total numeric, itens_sem_valor integer, visto_status text, po_no_espelho boolean, fornecedor_nome text, canal_usado text, portal_protocolo text, status_envio_portal text, resposta_canal jsonb, tem_protocolo boolean, tem_status_portal boolean, tem_resposta_canal boolean, tem_canal boolean, algum_sinal_de_canal boolean, marcador_run_id uuid, marcador_seq bigint)
+CREATE FUNCTION public.reposicao_pos_candidatos(p_empresa text) RETURNS TABLE(pedido_id bigint, omie_codigo_pedido text, data_ciclo date, idade_dias integer, na_janela_7d boolean, valor_total numeric, itens_sem_valor integer, visto_status text, po_no_espelho boolean, fornecedor_nome text, canal_usado text, portal_protocolo text, status_envio_portal text, resposta_canal jsonb, tem_protocolo boolean, tem_status_portal boolean, tem_resposta_canal boolean, tem_canal boolean, algum_sinal_de_canal boolean, marcador_run_id uuid, marcador_seq bigint, marcador_finalizado_em timestamp with time zone, apurado_em timestamp with time zone)
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -13848,10 +16635,11 @@ BEGIN
   -- ⚠️ NUNCA gatear por auth.role()='service_role' — o pg_cron roda como postgres SEM JWT (auth.role()=NULL)
   -- e o gate mataria o cron em SILÊNCIO (reposicao.md: mordido 2x, migrations 20260627130000/20260627200000).
   IF (SELECT auth.uid()) IS NOT NULL
-     -- ⚠️ IS NOT TRUE, não NOT(...): pode_ver_carteira_completa() era TRI-STATE (o gate ANTERIOR; private.cap_compras_ler faz COALESCE e nunca devolve NULL, entao IS NOT TRUE fica como defesa em profundidade). Para um `employee` SEM linha
-     -- em commercial_roles ela retorna NULL, e `NOT NULL` = NULL — o IF não entrava e a SECURITY DEFINER
-     -- ENTREGAVA TUDO (protocolo, fornecedor, JSON cru). Bypass real (Codex v11), e viola o fail-closed do
-     -- CLAUDE.md ("query de role falha → role null, approval false"). IS NOT TRUE trata NULL como negado e
+     -- ⚠️ IS NOT TRUE, não NOT(...): pode_ver_carteira_completa() era TRI-STATE (o gate ANTERIOR;
+     -- private.cap_compras_ler faz COALESCE e nunca devolve NULL, entao IS NOT TRUE fica como defesa em
+     -- profundidade). Para um `employee` SEM linha em commercial_roles ela retornava NULL, e `NOT NULL` =
+     -- NULL — o IF não entrava e a SECURITY DEFINER ENTREGAVA TUDO (protocolo, fornecedor, JSON cru).
+     -- Bypass real (Codex v11), e viola o fail-closed do CLAUDE.md. IS NOT TRUE trata NULL como negado e
      -- preserva o uid NULL do cron, que é barrado antes pelo primeiro AND.
      AND (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE THEN
     RAISE EXCEPTION 'reposicao_pos_candidatos: acesso negado' USING ERRCODE = '42501';
@@ -13861,7 +16649,11 @@ BEGIN
   WITH marcador AS (
     -- "último completo válido" = maior fencing seq com volume_ok TRUE. Sem marcador → CROSS JOIN vazio →
     -- retorna VAZIO. Fail-closed: sem base de verdade não se classifica ninguém como ausente.
-    SELECT r.run_id, r.seq
+    -- `finalizado_em` entra aqui para o guard temporal do WHERE (ver abaixo).
+    -- ⚠️ SEM LIMITE DE FRESCOR, DE PROPÓSITO: filtrar marcador velho aqui trocaria a lista incompleta
+    -- por uma lista VAZIA — o mesmo silêncio, com menos informação. O frescor vira DADO EXPOSTO
+    -- (marcador_finalizado_em/apurado_em) e quem julga é o consumidor, que pode dizer "cego há Xh".
+    SELECT r.run_id, r.seq, r.finalizado_em
     FROM public.reposicao_pedidos_compra_run r
     WHERE r.empresa = v_empresa AND r.status = 'ok' AND r.volume_ok IS TRUE
     ORDER BY r.seq DESC
@@ -13881,6 +16673,11 @@ BEGIN
       m.run_id AS marcador_run_id,
       m.seq AS marcador_seq,
       ls.run_id AS visto_run_id,
+      -- O carimbo do marcador QUE PRODUZIU ESTA LINHA. Vem daqui, e não de uma segunda consulta, para
+      -- que a idade seja a da apuração que gerou a lista: entre duas leituras independentes um run
+      -- pode ser promovido, e o consumidor diria "fresco" sobre uma lista velha — falso-negativo de
+      -- frescor, exatamente o lado errado para errar num alerta de money-path.
+      m.finalizado_em AS marcador_finalizado_em,
       -- ⚠️ sum() IGNORA NULL: itens (100.00, NULL) davam 100.00, apresentando SUBTOTAL como total apurado —
       -- fabricação de número, o que o money-path.md proíbe ("ausente ≠ zero"). Agora o total só existe se
       -- TODOS os itens têm valor; senão NULL, e itens_sem_valor diz por quê (Codex v8).
@@ -13912,6 +16709,25 @@ BEGIN
       AND btrim(p.omie_pedido_compra_id) <> ''
       -- CANDIDATO = o PO não foi visto no marcador atual (carimbado por run ANTERIOR ou NUNCA carimbado).
       AND (ls.run_id IS NULL OR ls.run_id <> m.run_id)
+      -- ⚠️ GUARD TEMPORAL: um run que TERMINOU antes de o PO existir não testemunha NADA sobre ele.
+      -- O carimbo de `last_seen` só sai no run COMPLETO (1×/dia); todo PO criado depois dele ficava
+      -- "não visto" por até ~22h e virava alerta de conferência manual (prod 13/08: 4 de 4 candidatos,
+      -- média histórica de 11,0h por pedido). Sem este guard o detector acusa o próprio atraso.
+      --
+      -- Deliberadamente CONSERVADOR nos dois lados:
+      --   • `IS NULL` → segue candidato: sem data de registro não dá para provar impossibilidade, e a
+      --     comparação devolveria NULL, que o AND descartaria em SILÊNCIO (supressão acidental).
+      --   • `<=` (não `<`) mantém candidato o PO registrado DURANTE a coleta — ele pode legitimamente
+      --     não ter entrado na varredura. Suprime-se o impossível, nunca o duvidoso.
+      --
+      -- ⚠️ O CUSTO DESTE GUARD, agora VISÍVEL em vez de silencioso: se o marcador congelar, este mesmo
+      -- predicado esconde todo PO nascido depois dele — indefinidamente. Não dá para consertar aqui
+      -- (afrouxar reintroduz os 11,0h/pedido de alerta falso). Conserta-se EXPONDO a idade do marcador,
+      -- que é o que as colunas novas fazem.
+      -- ⚠️ 14/08/2026: este predicado passou a ler o limite CAUSAL. Os comentários ACIMA que citam
+      -- omie_registrado_em descrevem a versão ANTERIOR (#1718) e ficaram para contexto.
+      -- Migration 20260814022626 · prova db/test-po-inexistente-antes-de.sh
+      AND (p.omie_po_inexistente_antes_de IS NULL OR p.omie_po_inexistente_antes_de <= m.finalizado_em)
   )
   SELECT
     b.pedido_id,
@@ -13963,7 +16779,13 @@ BEGIN
       OR (b.resposta_canal IS NOT NULL AND jsonb_typeof(b.resposta_canal) <> 'null')
       OR public.reposicao__trim(b.canal_usado) <> '')     AS algum_sinal_de_canal,
     b.marcador_run_id,
-    b.marcador_seq
+    b.marcador_seq,
+    b.marcador_finalizado_em,
+    -- O "agora" do BANCO, para que a idade do marcador seja uma subtração entre dois pontos do MESMO
+    -- relógio. Ver o cabeçalho: ancorar um dos lados no relógio do cliente entrega o alerta ao skew da
+    -- máquina do usuário. `now()` é STABLE (o timestamp da transação) — legítimo aqui, e a RPC já o usa
+    -- acima em `idade_dias`.
+    now() AS apurado_em
   FROM base b
   ORDER BY (b.idade_dias BETWEEN 0 AND 7) DESC, b.valor_total DESC NULLS LAST, b.pedido_id;
 END;
@@ -13974,7 +16796,47 @@ $$;
 -- Name: FUNCTION reposicao_pos_candidatos(p_empresa text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.reposicao_pos_candidatos(p_empresa text) IS 'PR2 (NÃO-MUTANTE): pedidos disparado/aprovado cujo PO não apareceu no último run VÁLIDO. LISTA e EVIDENCIA — NÃO decide. Deliberadamente SEM rota automática: em prod 59/59 dos disparados acionaram portal do fornecedor (46 sayerlack + 13 b2b, 0 sem sinal), então "elegível a auto-cancelamento" é logicamente vazio; e canal/status/resposta são text/jsonb livres onde regex prova presença, nunca ausência. Todo candidato exige decisão humana; o PR3 deve provar por ID no Omie e tratar o compromisso com o fornecedor (provável: RECRIAR o PO, não cancelar). Sem marcador válido retorna VAZIO (fail-closed).';
+COMMENT ON FUNCTION public.reposicao_pos_candidatos(p_empresa text) IS 'PR2 (NÃO-MUTANTE): pedidos disparado/aprovado cujo PO não apareceu no último run VÁLIDO. LISTA e EVIDENCIA — NÃO decide. GUARD TEMPORAL CAUSAL (14/08/2026): suprime o pedido cujo omie_po_inexistente_antes_de é POSTERIOR ao finalizado_em do marcador — ou seja, o PO comprovadamente ainda não existia quando o run fechou, e o silêncio desse run não é evidência de ausência. O limite vem do relógio do BANCO, lido ANTES de IncluirPedCompra e persistido só sob confirmação. A versão anterior (13/08) comparava com omie_registrado_em, que é o relógio da EDGE lido DEPOIS da resposta e portanto POSTERIOR ao nascimento do PO — com ele a supressão não era dedutível e podia apagar alerta verdadeiro (caso 281/286, ~R$3.060 comprados em dobro). Suprime só o IMPOSSÍVEL: limite NULL e limite dentro da janela de coleta seguem candidatos (fail-closed). Deliberadamente SEM rota automática: em prod 59/59 dos disparados acionaram portal do fornecedor, então "elegível a auto-cancelamento" é logicamente vazio; e canal/status/resposta são text/jsonb livres onde regex prova presença, nunca ausência. Todo candidato exige decisão humana (provável: RECRIAR o PO, não cancelar). Sem marcador válido retorna VAZIO (fail-closed).';
+
+
+--
+-- Name: reposicao_pos_marcador(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_pos_marcador(p_empresa text) RETURNS TABLE(marcador_run_id uuid, marcador_seq bigint, marcador_finalizado_em timestamp with time zone, apurado_em timestamp with time zone)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_empresa public.empresa_reposicao := upper(btrim(p_empresa))::public.empresa_reposicao;
+BEGIN
+  -- Gate IDÊNTICO ao da RPC irmã, pela mesma razão (cron-or-staff NULL-aware; nunca auth.role()).
+  -- A mensagem carrega o nome DESTA função: o consumidor distingue o gate NOSSO de um 42501 de
+  -- GRANT quebrado pela sentinela, e uma sentinela compartilhada apagaria essa distinção.
+  IF (SELECT auth.uid()) IS NOT NULL
+     AND (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE THEN
+    RAISE EXCEPTION 'reposicao_pos_marcador: acesso negado' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT m.run_id, m.seq, m.finalizado_em, now()
+  FROM (SELECT 1) AS sempre
+  LEFT JOIN LATERAL (
+    SELECT r.run_id, r.seq, r.finalizado_em
+    FROM public.reposicao_pedidos_compra_run r
+    WHERE r.empresa = v_empresa AND r.status = 'ok' AND r.volume_ok IS TRUE
+    ORDER BY r.seq DESC
+    LIMIT 1
+  ) m ON TRUE;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION reposicao_pos_marcador(p_empresa text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.reposicao_pos_marcador(p_empresa text) IS 'Frescor do detector de PO excluído (14/08/2026). Devolve SEMPRE 1 linha com o marcador atual (maior seq com status=ok e volume_ok — a MESMA definição usada por reposicao_pos_candidatos), ou 1 linha de NULLs quando não há marcador válido. Existe porque coluna é por LINHA: com zero candidatos a RPC irmã devolve zero linhas e portanto carimbo nenhum, e é exatamente aí que "lista vazia" precisa poder significar "o detector está cego há Xh" em vez de "está tudo bem". apurado_em é o now() do BANCO para que a idade seja subtração no mesmo relógio (o do cliente tem skew). NÃO decide frescor: o limiar é do consumidor.';
 
 
 --
@@ -20756,6 +23618,162 @@ CREATE TABLE public.ai_decisions (
 
 
 --
+-- Name: analytics_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_outbox (
+    id bigint NOT NULL,
+    event_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    evento text NOT NULL,
+    distinct_id text NOT NULL,
+    user_id uuid,
+    props jsonb DEFAULT '{}'::jsonb NOT NULL,
+    chave_dedup text NOT NULL,
+    ocorrido_em timestamp with time zone DEFAULT now() NOT NULL,
+    aceito_em timestamp with time zone,
+    tentativas smallint DEFAULT 0 NOT NULL,
+    proxima_tentativa_em timestamp with time zone DEFAULT now() NOT NULL,
+    quarentena_em timestamp with time zone,
+    ultimo_erro text,
+    purgar_em timestamp with time zone DEFAULT (now() + '30 days'::interval) NOT NULL,
+    CONSTRAINT analytics_outbox_chave_teto CHECK ((length(chave_dedup) <= 200)),
+    CONSTRAINT analytics_outbox_erro_teto CHECK (((ultimo_erro IS NULL) OR (length(ultimo_erro) <= 500))),
+    CONSTRAINT analytics_outbox_evento_formato CHECK ((evento ~ '^[a-z0-9_]+\.[a-z0-9_]+$'::text)),
+    CONSTRAINT analytics_outbox_props_teto CHECK ((pg_column_size(props) <= 4096))
+);
+
+
+--
+-- Name: analytics_outbox_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.analytics_outbox_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: analytics_outbox_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.analytics_outbox_id_seq OWNED BY public.analytics_outbox.id;
+
+
+--
+-- Name: pedido_compra_sugerido; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pedido_compra_sugerido (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text,
+    grupo_codigo text,
+    data_ciclo date DEFAULT CURRENT_DATE NOT NULL,
+    horario_geracao timestamp with time zone DEFAULT now(),
+    horario_corte_planejado timestamp with time zone,
+    horario_disparo_real timestamp with time zone,
+    valor_total numeric DEFAULT 0 NOT NULL,
+    num_skus integer DEFAULT 0 NOT NULL,
+    valor_mes_ate_agora numeric,
+    pedido_anterior_valor numeric,
+    delta_vs_anterior_perc numeric,
+    status text DEFAULT 'pendente_aprovacao'::text NOT NULL,
+    mensagem_bloqueio text,
+    canal_usado text,
+    resposta_canal jsonb,
+    omie_pedido_compra_id text,
+    omie_pedido_compra_numero text,
+    omie_registrado_em timestamp with time zone,
+    aprovado_por text,
+    aprovado_em timestamp with time zone,
+    cancelado_por text,
+    cancelado_em timestamp with time zone,
+    justificativa_cancelamento text,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    condicao_pagamento_codigo text,
+    condicao_pagamento_descricao text,
+    num_parcelas integer,
+    dias_parcelas text,
+    condicao_origem text,
+    tipo_ciclo text DEFAULT 'normal'::text NOT NULL,
+    origem_evento_id bigint,
+    origem_evento_tipo text,
+    status_envio_portal text DEFAULT 'nao_aplicavel'::text,
+    enviado_portal_em timestamp with time zone,
+    portal_protocolo text,
+    portal_resposta jsonb,
+    portal_screenshot_url text,
+    portal_tentativas integer DEFAULT 0,
+    portal_proximo_retry_em timestamp with time zone,
+    portal_erro text,
+    portal_data_entrega date,
+    split_parent_id bigint,
+    split_lote integer,
+    split_total integer,
+    omie_po_inexistente_antes_de timestamp with time zone,
+    CONSTRAINT pedido_compra_sugerido_origem_evento_tipo_check CHECK ((origem_evento_tipo = ANY (ARRAY['campanha_promocao'::text, 'aumento_anunciado'::text, NULL::text]))),
+    CONSTRAINT pedido_compra_sugerido_status_envio_portal_check CHECK ((status_envio_portal = ANY (ARRAY['nao_aplicavel'::text, 'pendente_envio_portal'::text, 'enviando_portal'::text, 'enviado_portal'::text, 'falha_envio_portal'::text, 'sucesso_portal'::text, 'aceito_portal_sem_protocolo'::text, 'indeterminado_requer_conciliacao'::text, 'erro_retentavel'::text, 'erro_nao_retentavel'::text]))),
+    CONSTRAINT pedido_compra_sugerido_tipo_ciclo_check CHECK ((tipo_ciclo = ANY (ARRAY['normal'::text, 'oportunidade_promo'::text, 'oportunidade_aumento'::text])))
+);
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.condicao_origem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.condicao_origem IS 'sugerido_ultimo_pedido = inferido do último pedido do fornecedor; ajustado_humano = Lucas alterou na UI; default = sem histórico, default Omie';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.tipo_ciclo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.tipo_ciclo IS 'normal = reposição diária. oportunidade_* = ciclos especiais disparados pelo corte de promoção ou pela véspera de aumento.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.portal_data_entrega; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.portal_data_entrega IS 'Data de entrega confirmada pelo portal Sayerlack no momento do submit. Usada para calcular dDtPrevisao do pedido de compra no Omie (= portal_data_entrega + 2 dias corridos).';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.omie_po_inexistente_antes_de; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.omie_po_inexistente_antes_de IS 'Limite CAUSAL: o pedido de compra no Omie comprovadamente NÃO existia antes deste instante. Lido do relógio do BANCO (clock_timestamp() via reposicao_marco_pre_omie()) ANTES de IncluirPedCompra sair da edge, e persistido só se a chamada CONFIRMAR a criação — logo é sempre <= o instante real de nascimento do PO. NÃO confundir com omie_registrado_em, que é o relógio da EDGE lido DEPOIS da resposta (posterior ao nascimento, e por isso inválido como limite inferior). Consumido pelo guard temporal de reposicao_pos_candidatos(text): valor > finalizado_em do marcador ⇒ o run terminou antes de o PO existir ⇒ o silêncio dele não é evidência de ausência. NULL = sem limite conhecido ⇒ segue candidato (fail-closed). Monotônico e nunca no futuro (trigger trg_po_inexistente_antes_de_guard). 1 writer: a edge disparar-pedidos-aprovados, no caminho de INCLUSÃO. A RECONCILIAÇÃO (Omie recusa "já cadastrado" e ConsultarPedCompra confirma) NÃO carimba: ali o PO nasceu ANTES da chamada, então o marco da consulta não é limite inferior válido.';
+
+
+--
+-- Name: analytics_outbox_reconciliacao; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.analytics_outbox_reconciliacao WITH (security_invoker='on') AS
+ SELECT 'reposicao.sugestao_aprovada'::text AS evento,
+    'prova'::text AS confianca,
+    ( SELECT count(*) AS count
+           FROM public.pedido_compra_sugerido
+          WHERE (pedido_compra_sugerido.aprovado_em > (now() - '7 days'::interval))) AS na_fonte,
+    ( SELECT count(*) AS count
+           FROM public.analytics_outbox
+          WHERE ((analytics_outbox.evento = 'reposicao.sugestao_aprovada'::text) AND (analytics_outbox.ocorrido_em > (now() - '7 days'::interval)))) AS na_outbox
+UNION ALL
+ SELECT 'reposicao.sugestao_expirada'::text AS evento,
+    'indicativa'::text AS confianca,
+    ( SELECT count(*) AS count
+           FROM public.pedido_compra_sugerido
+          WHERE ((pedido_compra_sugerido.status = 'expirado_sem_aprovacao'::text) AND (pedido_compra_sugerido.atualizado_em > (now() - '7 days'::interval)))) AS na_fonte,
+    ( SELECT count(*) AS count
+           FROM public.analytics_outbox
+          WHERE ((analytics_outbox.evento = 'reposicao.sugestao_expirada'::text) AND (analytics_outbox.ocorrido_em > (now() - '7 days'::interval)))) AS na_outbox;
+
+
+--
 -- Name: atp_decisoes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20774,8 +23792,8 @@ CREATE TABLE public.atp_decisoes (
     motivo_backorder text,
     actor_user_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT atp_decisoes_contexto_check CHECK ((contexto = ANY (ARRAY['criacao'::text, 'edicao'::text]))),
-    CONSTRAINT atp_decisoes_decisao_check CHECK ((decisao = ANY (ARRAY['reservado'::text, 'bloqueado'::text, 'backorder_autorizado'::text, 'verificacao_indisponivel'::text]))),
+    CONSTRAINT atp_decisoes_contexto_check CHECK ((contexto = ANY (ARRAY['criacao'::text, 'edicao'::text, 'reconciliacao'::text, 'resolucao_manual'::text]))),
+    CONSTRAINT atp_decisoes_decisao_check CHECK ((decisao = ANY (ARRAY['reservado'::text, 'bloqueado'::text, 'backorder_autorizado'::text, 'verificacao_indisponivel'::text, 'liberado_por_cancelamento'::text, 'faturamento_observado'::text, 'consumo_confirmado_manual'::text, 'cancelamento_confirmado_manual'::text, 'liberacao_forcada'::text]))),
     CONSTRAINT atp_decisoes_pool_check CHECK ((pool = 'oben'::text))
 );
 
@@ -21390,6 +24408,29 @@ ALTER SEQUENCE public.dashboard_visits_id_seq OWNED BY public.dashboard_visits.i
 
 
 --
+-- Name: data_health_watchdog_estado; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_health_watchdog_estado (
+    id boolean DEFAULT true NOT NULL,
+    last_run_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    checks_avaliados integer,
+    checks_falhos integer,
+    ultimo_erro text,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT data_health_watchdog_estado_id_check CHECK (id)
+);
+
+
+--
+-- Name: TABLE data_health_watchdog_estado; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_health_watchdog_estado IS 'Dead-man do data_health_watchdog. last_success_at só avança em rodada COMPLETA (17/17 fontes presentes, 0 checks falhos) — envelhecer é o sinal de que o vigia está cego.';
+
+
+--
 -- Name: default_prices; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21778,10 +24819,18 @@ CREATE TABLE public.estoque_reservas (
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    faturamento_observado_em timestamp with time zone,
     CONSTRAINT estoque_reservas_pool_check CHECK ((pool = 'oben'::text)),
     CONSTRAINT estoque_reservas_qtd_check CHECK (((quantidade > (0)::numeric) AND (quantidade <= (1000000)::numeric))),
     CONSTRAINT estoque_reservas_status_check CHECK ((status = ANY (ARRAY['ativa'::text, 'liberada'::text, 'consumida'::text, 'expirada'::text])))
 );
+
+
+--
+-- Name: COLUMN estoque_reservas.faturamento_observado_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.estoque_reservas.faturamento_observado_em IS 'Instante em que a reconciliação viu a linha CANÔNICA do pedido em status=faturado. Não afirma que o Omie baixou o estoque (faturar item sem movimentação e faturamento parcial quebram essa inferência) — é o gatilho da revisão humana via public.atp_resolver_reserva. Limpo se o status canônico regredir.';
 
 
 --
@@ -21892,6 +24941,13 @@ CREATE TABLE public.farmer_algorithm_config (
 
 
 --
+-- Name: TABLE farmer_algorithm_config; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.farmer_algorithm_config IS 'Parametros do algoritmo do farmer (key/value numerico). Os pesos (hs_weight_*, ps_weight_*, health_w_*, priority_w_*) sao escrita livre de staff. As keys margem_faixa_* sao EXCECAO: a escrita delas exige private.cap_custo_ler, porque mover o limiar e chamar get_carteira_margem_faixa reconstroi a margem por busca binaria (oraculo de custo).';
+
+
+--
 -- Name: farmer_association_rules; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21907,6 +24963,7 @@ CREATE TABLE public.farmer_association_rules (
     sample_size integer DEFAULT 0,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT farmer_association_rules_cluster_segment_check CHECK (((cluster_segment IS NOT NULL) AND (length(btrim(cluster_segment)) > 0))),
     CONSTRAINT farmer_association_rules_rule_type_check CHECK ((rule_type = ANY (ARRAY['association'::text, 'sequential'::text])))
 );
 
@@ -21962,8 +25019,23 @@ CREATE TABLE public.farmer_bundle_recommendations (
     argument_technical text,
     customer_profile text DEFAULT 'misto'::text,
     argument_effectiveness numeric,
-    CONSTRAINT farmer_bundle_recommendations_status_check CHECK ((status = ANY (ARRAY['pendente'::text, 'ofertado'::text, 'aceito_total'::text, 'aceito_parcial'::text, 'rejeitado'::text])))
+    affinity_bundle numeric,
+    run_id uuid,
+    expired_at timestamp with time zone,
+    expired_by_run uuid,
+    expired_reason text,
+    CONSTRAINT farmer_bundle_recommendations_affinity_bundle_finita CHECK (((affinity_bundle IS NULL) OR ((affinity_bundle <> 'NaN'::numeric) AND (affinity_bundle < 'Infinity'::numeric) AND (affinity_bundle >= (0)::numeric)))),
+    CONSTRAINT farmer_bundle_recommendations_expirado_coerente CHECK (((status IS NOT NULL) AND ((status = 'expirado'::text) = (expired_at IS NOT NULL)))),
+    CONSTRAINT farmer_bundle_recommendations_expired_reason_check CHECK (((expired_reason IS NULL) OR ((status = 'expirado'::text) AND (expired_reason = ANY (ARRAY['troca_de_dono'::text, 'perda_de_dono'::text, 'saneamento_escopo'::text]))))),
+    CONSTRAINT farmer_bundle_recommendations_status_check CHECK ((status = ANY (ARRAY['pendente'::text, 'ofertado'::text, 'aceito_total'::text, 'aceito_parcial'::text, 'rejeitado'::text, 'expirado'::text])))
 );
+
+
+--
+-- Name: COLUMN farmer_bundle_recommendations.affinity_bundle; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_bundle_recommendations.affinity_bundle IS 'FU4-F fase 3: score de AFINIDADE do bundle (adimensional). NAO e dinheiro e NAO deriva de custo — substitui o uso de `lie_bundle` como chave de ranking. `lie_bundle` fica NULL porque tres consumidores leem o VALOR (useTacticalPlan copia para bundle_lie, PlanCard formata como BRL e divide por hora, generate-tactical-plan injeta no prompt do LLM). NULL = afinidade nao medida; quem ordena usa NULLS LAST.';
 
 
 --
@@ -22276,6 +25348,84 @@ CREATE TABLE public.farmer_experiments (
 
 
 --
+-- Name: farmer_geracao_execucoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_geracao_execucoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    motor text NOT NULL,
+    farmer_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    resultado text NOT NULL,
+    linhas_geradas integer NOT NULL,
+    completude text NOT NULL,
+    motivo text,
+    insumos jsonb DEFAULT '{}'::jsonb NOT NULL,
+    calculado_em timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT farmer_geracao_execucoes_coerente CHECK (((motor = ANY (ARRAY['cross_sell'::text, 'bundle'::text])) AND (resultado = ANY (ARRAY['linhas'::text, 'vazio'::text])) AND (completude = ANY (ARRAY['completo'::text, 'degradado'::text, 'desconhecido'::text])) AND (linhas_geradas >= 0) AND ((resultado = 'linhas'::text) = (linhas_geradas > 0)) AND ((completude <> 'degradado'::text) OR (motivo IS NOT NULL))))
+);
+
+
+--
+-- Name: TABLE farmer_geracao_execucoes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.farmer_geracao_execucoes IS 'HISTÓRICO append-only de execuções CONCLUÍDAS do motor farmer. É daqui que sai a resposta a "com que frequência o recálculo produz zero?" — o head (farmer_geracao_vigente) guarda só o último estado e apagaria o evento. Nunca receber UPDATE/DELETE: a série é o produto.';
+
+
+--
+-- Name: farmer_geracao_vigente; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_geracao_vigente (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    motor text NOT NULL,
+    farmer_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    resultado text NOT NULL,
+    linhas_geradas integer NOT NULL,
+    completude text NOT NULL,
+    motivo text,
+    insumos jsonb DEFAULT '{}'::jsonb NOT NULL,
+    calculado_em timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT farmer_geracao_vigente_completude_check CHECK ((completude = ANY (ARRAY['completo'::text, 'degradado'::text, 'desconhecido'::text]))),
+    CONSTRAINT farmer_geracao_vigente_linhas_coerente CHECK (((linhas_geradas >= 0) AND ((resultado = 'linhas'::text) = (linhas_geradas > 0)))),
+    CONSTRAINT farmer_geracao_vigente_motivo_coerente CHECK (((completude <> 'degradado'::text) OR (motivo IS NOT NULL))),
+    CONSTRAINT farmer_geracao_vigente_motor_check CHECK ((motor = ANY (ARRAY['cross_sell'::text, 'bundle'::text]))),
+    CONSTRAINT farmer_geracao_vigente_resultado_check CHECK ((resultado = ANY (ARRAY['linhas'::text, 'vazio'::text])))
+);
+
+
+--
+-- Name: TABLE farmer_geracao_vigente; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.farmer_geracao_vigente IS 'HEAD de geração por (motor, farmer): avança a cada execução CONCLUÍDA do motor, INCLUSIVE quando a geração é vazia. Sensor instalado em 2026-08-15 — nesta fase NÃO expira nada. Head ausente = não houve execução observada desde o sensor (não há backfill, de propósito). ⚠️ O head registra a ÚLTIMA EXECUÇÃO CONCLUÍDA, não o conteúdo de farmer_recommendations: com resultado=vazio as linhas pendentes anteriores CONTINUAM lá (é justamente o buraco que o sensor mede). Os dois só convergem quando a fase 2 ligar a expiração — e é por isso que, até lá, nenhum leitor de oferta pode usar o head como fonte.';
+
+
+--
+-- Name: COLUMN farmer_geracao_vigente.resultado; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_geracao_vigente.resultado IS 'linhas | vazio. `vazio` com completude=completo é o "zero de verdade" — o sinal que a fase 2 (ligar a expiração) exige para existir.';
+
+
+--
+-- Name: COLUMN farmer_geracao_vigente.completude; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_geracao_vigente.completude IS 'Completude do SNAPSHOT, não do resultado: `completo` = todos os insumos lidos com sucesso e nenhum insumo estruturalmente obrigatório veio vazio. `desconhecido` = quem chamou não declarou (cliente anterior ao sensor). É DECLARAÇÃO do motor — audite pela evidência em `insumos`, não pelo rótulo.';
+
+
+--
+-- Name: COLUMN farmer_geracao_vigente.insumos; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_geracao_vigente.insumos IS 'Evidência por trás do rótulo: por insumo, {ok, n}. Os SINAIS de decisão moram em colunas dedicadas (resultado/completude/linhas_geradas) e há 1 writer só (as RPCs desta migration) — por isso este jsonb não recai na regra "sinal money-path nunca em jsonb multi-writer". Serve para a fase 2 exigir contagens plausíveis em vez de confiar na string `completo` ("rótulo com DEFAULT constante não é fato").';
+
+
+--
 -- Name: farmer_governance_proposals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22393,9 +25543,55 @@ CREATE TABLE public.farmer_recommendations (
     status text DEFAULT 'pendente'::text,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
+    affinity_score numeric,
+    run_id uuid,
+    expired_at timestamp with time zone,
+    expired_by_run uuid,
+    rejection_reason text,
+    expired_reason text,
+    CONSTRAINT farmer_recommendations_affinity_score_finita CHECK (((affinity_score IS NULL) OR ((affinity_score <> 'NaN'::numeric) AND (affinity_score < 'Infinity'::numeric) AND (affinity_score >= (0)::numeric)))),
+    CONSTRAINT farmer_recommendations_desfecho_coerente CHECK (((status IS NOT NULL) AND ((status = 'aceito'::text) = (accepted_at IS NOT NULL)) AND ((status = 'rejeitado'::text) = (rejected_at IS NOT NULL)) AND ((offered_at IS NULL) OR (status = ANY (ARRAY['ofertado'::text, 'aceito'::text, 'rejeitado'::text]))) AND ((status <> 'ofertado'::text) OR (offered_at IS NOT NULL)))),
+    CONSTRAINT farmer_recommendations_expirado_coerente CHECK (((status IS NOT NULL) AND ((status = 'expirado'::text) = (expired_at IS NOT NULL)))),
+    CONSTRAINT farmer_recommendations_expired_reason_check CHECK (((expired_reason IS NULL) OR ((status = 'expirado'::text) AND (expired_reason = ANY (ARRAY['troca_de_dono'::text, 'perda_de_dono'::text, 'saneamento_escopo'::text]))))),
+    CONSTRAINT farmer_recommendations_motivo_coerente CHECK ((((status = 'rejeitado'::text) AND (rejection_reason IS NOT NULL) AND (rejection_reason = ANY (ARRAY['preco'::text, 'sem_necessidade'::text, 'ja_compra_concorrente'::text, 'sem_estoque'::text, 'prazo_entrega'::text, 'outro'::text]))) OR ((status IS NOT NULL) AND (status <> 'rejeitado'::text) AND (rejection_reason IS NULL)))),
     CONSTRAINT farmer_recommendations_recommendation_type_check CHECK ((recommendation_type = ANY (ARRAY['cross_sell'::text, 'up_sell'::text]))),
     CONSTRAINT farmer_recommendations_status_check CHECK ((status = ANY (ARRAY['pendente'::text, 'ofertado'::text, 'aceito'::text, 'rejeitado'::text, 'expirado'::text])))
 );
+
+
+--
+-- Name: COLUMN farmer_recommendations.affinity_score; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_recommendations.affinity_score IS 'FU4-F fase 3: score de AFINIDADE do cross/up-sell (adimensional, ~0,009). NAO e dinheiro e NAO deriva de custo — substitui o uso de `lie` como chave de ranking. `lie` (Lucro Incremental Esperado em R$) fica NULL: invertia para margem via lie / ((p_ij/100) * complexity_factor). NULL = afinidade nao medida (linha anterior a esta coluna); quem ordena usa NULLS LAST.';
+
+
+--
+-- Name: COLUMN farmer_recommendations.run_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_recommendations.run_id IS 'Execução do motor que produziu esta linha. NULL = geração legada (anterior a 2026-08-14). A geração VIGENTE de um farmer é o run_id das linhas status=pendente.';
+
+
+--
+-- Name: COLUMN farmer_recommendations.expired_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_recommendations.expired_at IS 'Quando a linha foi aposentada por um recálculo. Só preenchido junto de status=expirado (invariante em CHECK).';
+
+
+--
+-- Name: COLUMN farmer_recommendations.expired_by_run; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_recommendations.expired_by_run IS 'Qual execução aposentou esta linha — responde "quem matou" sem precisar inferir pela ordem de created_at.';
+
+
+--
+-- Name: COLUMN farmer_recommendations.rejection_reason; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_recommendations.rejection_reason IS 'Motivo da recusa, vocabulário fechado. Escrito SÓ por farmer_recomendacao_registrar_desfecho. NULL = não informado (≠ "sem motivo").';
 
 
 --
@@ -22535,6 +25731,9 @@ CREATE TABLE public.fin_alertas (
     dismissed_by uuid,
     dismissed_until timestamp with time zone,
     email_enfileirado_em timestamp with time zone,
+    acknowledged_at timestamp with time zone,
+    acknowledged_by uuid,
+    resolvido_em timestamp with time zone,
     CONSTRAINT fin_alertas_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
     CONSTRAINT fin_alertas_severidade_check CHECK ((severidade = ANY (ARRAY['info'::text, 'aviso'::text, 'critico'::text])))
 );
@@ -22552,6 +25751,20 @@ COMMENT ON TABLE public.fin_alertas IS 'Alertas avaliados pela engine. UNIQUE em
 --
 
 COMMENT ON COLUMN public.fin_alertas.email_enfileirado_em IS 'Quando o e-mail deste episódio de alerta foi enfileirado em fornecedor_alerta (gate "uma vez por episódio" + janela de graça do sync_stale). NULL = ainda não notificado. Recriado NULL a cada novo episódio (após dismiss + novo INSERT).';
+
+
+--
+-- Name: COLUMN fin_alertas.acknowledged_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_alertas.acknowledged_at IS 'Reconhecimento HUMANO: silencia lembrete e nova-violação, NÃO silencia escalada de gravidade. Zerado quando a gravidade sobe (a severidade nova exige reconhecimento novo).';
+
+
+--
+-- Name: COLUMN fin_alertas.resolvido_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_alertas.resolvido_em IS 'Resolução AUTOMÁTICA pela máquina, só com status=''ok'' explícito. dismissed_at sem resolvido_em = encerramento humano/administrativo.';
 
 
 --
@@ -24941,24 +28154,6 @@ CREATE TABLE public.omie_condicao_pagamento_catalogo (
 
 
 --
--- Name: omie_customer_account_map; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.omie_customer_account_map (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_id uuid NOT NULL,
-    account text NOT NULL,
-    omie_codigo_cliente bigint NOT NULL,
-    omie_codigo_vendedor bigint,
-    source text DEFAULT 'document'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_ocam_account CHECK ((account = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
-    CONSTRAINT chk_ocam_source CHECK ((source = ANY (ARRAY['document'::text, 'code'::text, 'manual'::text, 'rpc'::text])))
-);
-
-
---
 -- Name: omie_customer_account_map_fresco; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -25606,85 +28801,6 @@ CREATE SEQUENCE public.pedido_compra_item_id_seq
 --
 
 ALTER SEQUENCE public.pedido_compra_item_id_seq OWNED BY public.pedido_compra_item.id;
-
-
---
--- Name: pedido_compra_sugerido; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.pedido_compra_sugerido (
-    id bigint NOT NULL,
-    empresa text NOT NULL,
-    fornecedor_nome text,
-    grupo_codigo text,
-    data_ciclo date DEFAULT CURRENT_DATE NOT NULL,
-    horario_geracao timestamp with time zone DEFAULT now(),
-    horario_corte_planejado timestamp with time zone,
-    horario_disparo_real timestamp with time zone,
-    valor_total numeric DEFAULT 0 NOT NULL,
-    num_skus integer DEFAULT 0 NOT NULL,
-    valor_mes_ate_agora numeric,
-    pedido_anterior_valor numeric,
-    delta_vs_anterior_perc numeric,
-    status text DEFAULT 'pendente_aprovacao'::text NOT NULL,
-    mensagem_bloqueio text,
-    canal_usado text,
-    resposta_canal jsonb,
-    omie_pedido_compra_id text,
-    omie_pedido_compra_numero text,
-    omie_registrado_em timestamp with time zone,
-    aprovado_por text,
-    aprovado_em timestamp with time zone,
-    cancelado_por text,
-    cancelado_em timestamp with time zone,
-    justificativa_cancelamento text,
-    criado_em timestamp with time zone DEFAULT now(),
-    atualizado_em timestamp with time zone DEFAULT now(),
-    condicao_pagamento_codigo text,
-    condicao_pagamento_descricao text,
-    num_parcelas integer,
-    dias_parcelas text,
-    condicao_origem text,
-    tipo_ciclo text DEFAULT 'normal'::text NOT NULL,
-    origem_evento_id bigint,
-    origem_evento_tipo text,
-    status_envio_portal text DEFAULT 'nao_aplicavel'::text,
-    enviado_portal_em timestamp with time zone,
-    portal_protocolo text,
-    portal_resposta jsonb,
-    portal_screenshot_url text,
-    portal_tentativas integer DEFAULT 0,
-    portal_proximo_retry_em timestamp with time zone,
-    portal_erro text,
-    portal_data_entrega date,
-    split_parent_id bigint,
-    split_lote integer,
-    split_total integer,
-    CONSTRAINT pedido_compra_sugerido_origem_evento_tipo_check CHECK ((origem_evento_tipo = ANY (ARRAY['campanha_promocao'::text, 'aumento_anunciado'::text, NULL::text]))),
-    CONSTRAINT pedido_compra_sugerido_status_envio_portal_check CHECK ((status_envio_portal = ANY (ARRAY['nao_aplicavel'::text, 'pendente_envio_portal'::text, 'enviando_portal'::text, 'enviado_portal'::text, 'falha_envio_portal'::text, 'sucesso_portal'::text, 'aceito_portal_sem_protocolo'::text, 'indeterminado_requer_conciliacao'::text, 'erro_retentavel'::text, 'erro_nao_retentavel'::text]))),
-    CONSTRAINT pedido_compra_sugerido_tipo_ciclo_check CHECK ((tipo_ciclo = ANY (ARRAY['normal'::text, 'oportunidade_promo'::text, 'oportunidade_aumento'::text])))
-);
-
-
---
--- Name: COLUMN pedido_compra_sugerido.condicao_origem; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.pedido_compra_sugerido.condicao_origem IS 'sugerido_ultimo_pedido = inferido do último pedido do fornecedor; ajustado_humano = Lucas alterou na UI; default = sem histórico, default Omie';
-
-
---
--- Name: COLUMN pedido_compra_sugerido.tipo_ciclo; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.pedido_compra_sugerido.tipo_ciclo IS 'normal = reposição diária. oportunidade_* = ciclos especiais disparados pelo corte de promoção ou pela véspera de aumento.';
-
-
---
--- Name: COLUMN pedido_compra_sugerido.portal_data_entrega; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.pedido_compra_sugerido.portal_data_entrega IS 'Data de entrega confirmada pelo portal Sayerlack no momento do submit. Usada para calcular dDtPrevisao do pedido de compra no Omie (= portal_data_entrega + 2 dias corridos).';
 
 
 --
@@ -26514,7 +29630,7 @@ CREATE TABLE public.reposicao_cold_start_log (
     acao text NOT NULL,
     habilitado boolean,
     detalhe text,
-    CONSTRAINT reposicao_cold_start_log_acao_check CHECK ((acao = ANY (ARRAY['criado'::text, 'graduado'::text])))
+    CONSTRAINT reposicao_cold_start_log_acao_check CHECK ((acao = ANY (ARRAY['criado'::text, 'graduado'::text, 'segurado'::text])))
 );
 
 
@@ -26668,6 +29784,42 @@ CREATE TABLE public.reposicao_param_auto_run (
     criado_em timestamp with time zone DEFAULT now() NOT NULL,
     concluido_em timestamp with time zone,
     CONSTRAINT reposicao_param_auto_run_status_check CHECK ((status = ANY (ARRAY['rodando'::text, 'completo'::text, 'erro'::text])))
+);
+
+
+--
+-- Name: reposicao_param_fila_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_param_fila_log (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    medido_em date DEFAULT CURRENT_DATE NOT NULL,
+    estagio text NOT NULL,
+    total integer NOT NULL,
+    habilitados integer NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE reposicao_param_fila_log; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.reposicao_param_fila_log IS 'Snapshot diário da COMPOSIÇÃO da fila de parâmetros (nível por estágio). Complementa reposicao_param_limbo_log, que guarda só o total. Alimenta o alerta de ESTAGNAÇÃO.';
+
+
+--
+-- Name: reposicao_param_fila_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_param_fila_log ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.reposicao_param_fila_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -27751,6 +30903,34 @@ CREATE TABLE public.tarefas (
     CONSTRAINT tarefas_modo_coerencia_chk CHECK ((((modo = 'data'::text) AND (due_date IS NOT NULL) AND (interacao_tipo IS NULL)) OR ((modo = 'interacao'::text) AND (interacao_tipo IS NOT NULL) AND (due_date IS NULL)))),
     CONSTRAINT tarefas_status_check CHECK ((status = ANY (ARRAY['aberta'::text, 'concluida'::text, 'cancelada'::text])))
 );
+
+
+--
+-- Name: telemetria_probes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.telemetria_probes (
+    attempt_id text NOT NULL,
+    device_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    build_id text,
+    CONSTRAINT telemetria_probes_attempt_id_formato CHECK (((length(attempt_id) >= 10) AND (length(attempt_id) <= 128)))
+);
+
+
+--
+-- Name: TABLE telemetria_probes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.telemetria_probes IS 'Probe de censura de telemetria (#1984/#2016). Finalidade: distinguir "cliente bloqueou o PostHog" de "cliente não usou" — os dois produzem o mesmo zero. Retenção: 90 dias (diagnóstico, não histórico de uso). Sem retenção escrita, esta tabela vira coleta sem finalidade — que é o defeito que desligou o Session Replay.';
+
+
+--
+-- Name: COLUMN telemetria_probes.attempt_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.telemetria_probes.attempt_id IS 'Formato `<device_id>.<uuid>`. Embute o aparelho para que a propriedade do evento PostHog carregue o eixo de aparelho sozinha.';
 
 
 --
@@ -30123,6 +33303,34 @@ CREATE VIEW public.v_reposicao_depara_sayerlack_elegivel WITH (security_invoker=
 
 
 --
+-- Name: v_reposicao_param_fila; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_reposicao_param_fila WITH (security_invoker='on') AS
+ SELECT sp.empresa,
+    sp.sku_codigo_omie,
+    sp.sku_descricao,
+    sp.fornecedor_nome,
+    sp.habilitado_reposicao_automatica AS habilitado,
+    COALESCE(sp.tipo_reposicao, 'automatica'::text) AS tipo_reposicao,
+    sp.parametro_cold_start,
+    COALESCE(v.status_sugestao, 'FORA_JANELA_DEMANDA'::text) AS estagio,
+    v.num_ordens,
+    v.fonte_leadtime,
+    sp.ultima_atualizacao_calculo
+   FROM (public.sku_parametros sp
+     LEFT JOIN public.v_sku_parametros_sugeridos v ON (((v.empresa = sp.empresa) AND (v.sku_codigo_omie = sp.sku_codigo_omie))))
+  WHERE ((sp.ativo IS TRUE) AND ((sp.ponto_pedido IS NULL) OR (sp.estoque_maximo IS NULL)));
+
+
+--
+-- Name: VIEW v_reposicao_param_fila; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_reposicao_param_fila IS 'Fila de prontidão de parâmetros de reposição: 1 linha por SKU ativo sem ponto_pedido/estoque_maximo, classificada pelo ESTÁGIO em que parou. FORA_JANELA_DEMANDA = nem entra em v_sku_parametros_sugeridos (universo exige venda em 90d). Base do sensor de nível/composição (docs/historico/fila-de-prontidao-e-sensor-de-derivada.md).';
+
+
+--
 -- Name: v_reposicao_sku_sem_fornecedor; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -31232,6 +34440,13 @@ CREATE TABLE public.whatsapp_webhook_events (
 
 
 --
+-- Name: analytics_outbox id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_outbox ALTER COLUMN id SET DEFAULT nextval('public.analytics_outbox_id_seq'::regclass);
+
+
+--
 -- Name: categoria_aumento_familia_mapeamento id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -31543,6 +34758,22 @@ ALTER TABLE ONLY public.ai_decision_audit_log
 
 ALTER TABLE ONLY public.ai_decisions
     ADD CONSTRAINT ai_decisions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: analytics_outbox analytics_outbox_chave_dedup_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_outbox
+    ADD CONSTRAINT analytics_outbox_chave_dedup_key UNIQUE (chave_dedup);
+
+
+--
+-- Name: analytics_outbox analytics_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_outbox
+    ADD CONSTRAINT analytics_outbox_pkey PRIMARY KEY (id);
 
 
 --
@@ -31930,6 +35161,14 @@ ALTER TABLE ONLY public.dashboard_visits
 
 
 --
+-- Name: data_health_watchdog_estado data_health_watchdog_estado_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_health_watchdog_estado
+    ADD CONSTRAINT data_health_watchdog_estado_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: default_prices default_prices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32191,6 +35430,22 @@ ALTER TABLE ONLY public.farmer_experiment_clients
 
 ALTER TABLE ONLY public.farmer_experiments
     ADD CONSTRAINT farmer_experiments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_geracao_execucoes farmer_geracao_execucoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_geracao_execucoes
+    ADD CONSTRAINT farmer_geracao_execucoes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_geracao_vigente farmer_geracao_vigente_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_geracao_vigente
+    ADD CONSTRAINT farmer_geracao_vigente_pkey PRIMARY KEY (id);
 
 
 --
@@ -33826,6 +37081,14 @@ ALTER TABLE ONLY public.reposicao_param_auto_run
 
 
 --
+-- Name: reposicao_param_fila_log reposicao_param_fila_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_param_fila_log
+    ADD CONSTRAINT reposicao_param_fila_log_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: reposicao_param_limbo_log reposicao_param_limbo_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34239,6 +37502,14 @@ ALTER TABLE ONLY public.tarefa_templates
 
 ALTER TABLE ONLY public.tarefas
     ADD CONSTRAINT tarefas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: telemetria_probes telemetria_probes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.telemetria_probes
+    ADD CONSTRAINT telemetria_probes_pkey PRIMARY KEY (attempt_id);
 
 
 --
@@ -35107,6 +38378,27 @@ CREATE UNIQUE INDEX estoque_reservas_checkout_item_ativa_uq ON public.estoque_re
 
 
 --
+-- Name: farmer_geracao_execucoes_medicao_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX farmer_geracao_execucoes_medicao_idx ON public.farmer_geracao_execucoes USING btree (resultado, completude, calculado_em DESC);
+
+
+--
+-- Name: farmer_geracao_execucoes_run_uk; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX farmer_geracao_execucoes_run_uk ON public.farmer_geracao_execucoes USING btree (motor, farmer_id, run_id);
+
+
+--
+-- Name: farmer_geracao_vigente_motor_farmer_uk; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX farmer_geracao_vigente_motor_farmer_uk ON public.farmer_geracao_vigente USING btree (motor, farmer_id);
+
+
+--
 -- Name: fin_alertas_company_criado_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35307,6 +38599,27 @@ CREATE INDEX idx_alerta_pendente ON public.fornecedor_alerta USING btree (empres
 --
 
 CREATE INDEX idx_alerta_por_tipo ON public.fornecedor_alerta USING btree (empresa, tipo, criado_em DESC);
+
+
+--
+-- Name: idx_analytics_outbox_fila; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_analytics_outbox_fila ON public.analytics_outbox USING btree (proxima_tentativa_em, id) WHERE ((aceito_em IS NULL) AND (quarentena_em IS NULL));
+
+
+--
+-- Name: idx_analytics_outbox_purga; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_analytics_outbox_purga ON public.analytics_outbox USING btree (purgar_em);
+
+
+--
+-- Name: idx_analytics_outbox_titular; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_analytics_outbox_titular ON public.analytics_outbox USING btree (user_id) WHERE (user_id IS NOT NULL);
 
 
 --
@@ -35604,6 +38917,13 @@ CREATE INDEX idx_estoque_reservas_expira ON public.estoque_reservas USING btree 
 
 
 --
+-- Name: idx_estoque_reservas_pedido_ativa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_estoque_reservas_pedido_ativa ON public.estoque_reservas USING btree (sales_order_id) WHERE ((status = 'ativa'::text) AND (sales_order_id IS NOT NULL));
+
+
+--
 -- Name: idx_estoque_sync; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35664,6 +38984,20 @@ CREATE UNIQUE INDEX idx_farmer_category_conversion_category ON public.farmer_cat
 --
 
 CREATE INDEX idx_farmer_client_scores_calculated_at ON public.farmer_client_scores USING btree (calculated_at);
+
+
+--
+-- Name: idx_fbrec_cliente_pendente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fbrec_cliente_pendente ON public.farmer_bundle_recommendations USING btree (customer_user_id) WHERE (status = 'pendente'::text);
+
+
+--
+-- Name: idx_fbrec_farmer_status_pendente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fbrec_farmer_status_pendente ON public.farmer_bundle_recommendations USING btree (farmer_id, customer_user_id) WHERE (status = 'pendente'::text);
 
 
 --
@@ -35958,6 +39292,27 @@ CREATE INDEX idx_fornecedor_alerta_pendente ON public.fornecedor_alerta USING bt
 --
 
 CREATE INDEX idx_fornecedor_alerta_tipo ON public.fornecedor_alerta USING btree (tipo_alerta);
+
+
+--
+-- Name: idx_frec_cliente_pendente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_frec_cliente_pendente ON public.farmer_recommendations USING btree (customer_user_id) WHERE (status = 'pendente'::text);
+
+
+--
+-- Name: idx_frec_desfecho; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_frec_desfecho ON public.farmer_recommendations USING btree (farmer_id, status, updated_at DESC) WHERE (status = ANY (ARRAY['ofertado'::text, 'aceito'::text, 'rejeitado'::text]));
+
+
+--
+-- Name: idx_frec_farmer_status_pendente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_frec_farmer_status_pendente ON public.farmer_recommendations USING btree (farmer_id, customer_user_id) WHERE (status = 'pendente'::text);
 
 
 --
@@ -37109,6 +40464,20 @@ CREATE INDEX idx_tarefas_customer_aberta ON public.tarefas USING btree (customer
 
 
 --
+-- Name: idx_telemetria_probes_criado_em; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_telemetria_probes_criado_em ON public.telemetria_probes USING btree (criado_em DESC);
+
+
+--
+-- Name: idx_telemetria_probes_device_recente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_telemetria_probes_device_recente ON public.telemetria_probes USING btree (device_id, criado_em DESC);
+
+
+--
 -- Name: idx_teto_cobertura_log_emp_data; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -37662,6 +41031,13 @@ CREATE UNIQUE INDEX uq_prime_bonus_mes ON public.prime_beneficio_uso USING btree
 
 
 --
+-- Name: uq_reposicao_param_fila_log_dia; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_reposicao_param_fila_log_dia ON public.reposicao_param_fila_log USING btree (empresa, medido_em, estagio);
+
+
+--
 -- Name: uq_reposicao_param_limbo_log_dia; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -37792,6 +41168,13 @@ CREATE TRIGGER tr_sincronizar_ativo_omie AFTER UPDATE OF ativo ON public.omie_pr
 --
 
 CREATE TRIGGER trg_afiacao_os_enqueue AFTER UPDATE OF status ON public.orders FOR EACH ROW WHEN ((old.status IS DISTINCT FROM new.status)) EXECUTE FUNCTION public.afiacao_os_enqueue();
+
+
+--
+-- Name: pedido_compra_sugerido trg_analytics_outbox_pedido_compra; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_analytics_outbox_pedido_compra AFTER INSERT OR UPDATE ON public.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION public.analytics_outbox_pedido_compra();
 
 
 --
@@ -37970,10 +41353,38 @@ CREATE TRIGGER trg_farmer_client_scores_enqueue_visit_recalc AFTER UPDATE ON pub
 
 
 --
+-- Name: farmer_bundle_recommendations trg_fbrec_exige_run_id; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_fbrec_exige_run_id BEFORE INSERT ON public.farmer_bundle_recommendations FOR EACH ROW EXECUTE FUNCTION public.farmer_rec_exige_run_id();
+
+
+--
+-- Name: farmer_bundle_recommendations trg_fbrec_sem_margem; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_fbrec_sem_margem BEFORE INSERT OR UPDATE ON public.farmer_bundle_recommendations FOR EACH ROW EXECUTE FUNCTION private.fbrec_sem_margem();
+
+
+--
 -- Name: farmer_client_scores trg_fcs_block_flagged_insert; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_fcs_block_flagged_insert BEFORE INSERT ON public.farmer_client_scores FOR EACH ROW EXECUTE FUNCTION public.fcs_block_flagged_insert();
+
+
+--
+-- Name: farmer_client_scores trg_fcs_perda_dono_expira_pendentes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_fcs_perda_dono_expira_pendentes AFTER DELETE ON public.farmer_client_scores FOR EACH ROW EXECUTE FUNCTION private.farmer_expirar_pendentes_do_dono_anterior();
+
+
+--
+-- Name: farmer_client_scores trg_fcs_troca_dono_expira_pendentes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_fcs_troca_dono_expira_pendentes AFTER UPDATE OF farmer_id ON public.farmer_client_scores FOR EACH ROW WHEN ((old.farmer_id IS DISTINCT FROM new.farmer_id)) EXECUTE FUNCTION private.farmer_expirar_pendentes_do_dono_anterior();
 
 
 --
@@ -38009,6 +41420,27 @@ CREATE TRIGGER trg_fin_dividas_autor BEFORE INSERT OR UPDATE ON public.fin_divid
 --
 
 CREATE TRIGGER trg_fin_dre_custo_tipo_autor BEFORE INSERT OR UPDATE ON public.fin_dre_custo_tipo FOR EACH ROW EXECUTE FUNCTION public.fin_dre_custo_tipo_set_autor();
+
+
+--
+-- Name: farmer_recommendations trg_frec_desfecho_imutavel; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_frec_desfecho_imutavel BEFORE UPDATE ON public.farmer_recommendations FOR EACH ROW EXECUTE FUNCTION private.frec_desfecho_imutavel();
+
+
+--
+-- Name: farmer_recommendations trg_frec_exige_run_id; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_frec_exige_run_id BEFORE INSERT ON public.farmer_recommendations FOR EACH ROW EXECUTE FUNCTION public.farmer_rec_exige_run_id();
+
+
+--
+-- Name: farmer_recommendations trg_frec_sem_margem; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_frec_sem_margem BEFORE INSERT OR UPDATE ON public.farmer_recommendations FOR EACH ROW EXECUTE FUNCTION private.frec_sem_margem();
 
 
 --
@@ -38163,6 +41595,13 @@ CREATE TRIGGER trg_period_lock BEFORE INSERT OR DELETE OR UPDATE ON public.fin_m
 --
 
 CREATE TRIGGER trg_period_lock BEFORE INSERT OR DELETE OR UPDATE ON public.fin_orcamento FOR EACH ROW EXECUTE FUNCTION public.fin_period_lock_trigger();
+
+
+--
+-- Name: pedido_compra_sugerido trg_po_inexistente_antes_de_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_po_inexistente_antes_de_guard BEFORE INSERT OR UPDATE OF omie_po_inexistente_antes_de ON public.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION public.reposicao__po_inexistente_antes_guard();
 
 
 --
@@ -38606,6 +42045,14 @@ ALTER TABLE ONLY public.acoes_execucoes
 
 ALTER TABLE ONLY public.ai_decision_audit_log
     ADD CONSTRAINT ai_decision_audit_log_decision_id_fkey FOREIGN KEY (decision_id) REFERENCES public.ai_decisions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_outbox analytics_outbox_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_outbox
+    ADD CONSTRAINT analytics_outbox_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
 
 
 --
@@ -39809,6 +43256,14 @@ ALTER TABLE ONLY public.tarefa_satisfacao_candidatos
 
 
 --
+-- Name: telemetria_probes telemetria_probes_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.telemetria_probes
+    ADD CONSTRAINT telemetria_probes_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: tint_corantes tint_corantes_omie_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40884,13 +44339,6 @@ CREATE POLICY "Staff can manage all referrals" ON public.referrals USING ((publi
 
 
 --
--- Name: farmer_association_rules Staff can manage association rules; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage association rules" ON public.farmer_association_rules USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
 -- Name: farmer_audit_log Staff can manage audit log; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -41016,13 +44464,6 @@ CREATE POLICY "Staff can manage price history" ON public.order_price_history USI
 --
 
 CREATE POLICY "Staff can manage priority log" ON public.priority_score_log TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
--- Name: product_costs Staff can manage product costs; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage product costs" ON public.product_costs USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -41158,6 +44599,13 @@ CREATE POLICY "Staff can manage tool events" ON public.tool_events USING ((publi
 --
 
 CREATE POLICY "Staff can manage training modules" ON public.training_modules TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: farmer_association_rules Staff can read association rules; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can read association rules" ON public.farmer_association_rules FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -41334,13 +44782,6 @@ CREATE POLICY "Staff can view own commercial role" ON public.commercial_roles FO
 CREATE POLICY "Staff can view preferred items" ON public.customer_preferred_items FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
    FROM public.user_roles
   WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'master'::public.app_role, 'employee'::public.app_role]))))));
-
-
---
--- Name: product_costs Staff can view product costs; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can view product costs" ON public.product_costs FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -42111,6 +45552,28 @@ ALTER TABLE public.ai_decision_audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ai_decisions ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: analytics_outbox; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.analytics_outbox ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: analytics_outbox analytics_outbox_master_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY analytics_outbox_master_read ON public.analytics_outbox FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: analytics_outbox analytics_outbox_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY analytics_outbox_service_all ON public.analytics_outbox USING ((auth.role() = 'service_role'::text));
+
+
+--
 -- Name: atp_decisoes; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -42632,6 +46095,28 @@ CREATE POLICY dashboard_visits_user_read ON public.dashboard_visits FOR SELECT U
 
 
 --
+-- Name: data_health_watchdog_estado; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.data_health_watchdog_estado ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: data_health_watchdog_estado data_health_watchdog_estado_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY data_health_watchdog_estado_select_staff ON public.data_health_watchdog_estado FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = ( SELECT auth.uid() AS uid)) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: data_health_watchdog_estado data_health_watchdog_estado_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY data_health_watchdog_estado_service_all ON public.data_health_watchdog_estado USING ((( SELECT auth.role() AS role) = 'service_role'::text));
+
+
+--
 -- Name: default_prices; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -42829,6 +46314,18 @@ ALTER TABLE public.farmer_experiment_clients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.farmer_experiments ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: farmer_geracao_execucoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_geracao_execucoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_geracao_vigente; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_geracao_vigente ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: farmer_governance_proposals; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -42974,6 +46471,20 @@ CREATE POLICY fcs_select_carteira ON public.farmer_client_scores FOR SELECT USIN
 --
 
 CREATE POLICY fcs_update_own_or_gestor ON public.farmer_client_scores FOR UPDATE USING ((( SELECT private.cap_carteira_escrever(( SELECT auth.uid() AS uid)) AS cap_carteira_escrever) OR (farmer_id = ( SELECT auth.uid() AS uid)))) WITH CHECK ((( SELECT private.cap_carteira_escrever(( SELECT auth.uid() AS uid)) AS cap_carteira_escrever) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_geracao_execucoes fge_select_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fge_select_carteira ON public.farmer_geracao_execucoes FOR SELECT TO authenticated USING ((( SELECT private.cap_carteira_ler(( SELECT auth.uid() AS uid)) AS cap_carteira_ler) OR ( SELECT private.cap_carteira_escrever(( SELECT auth.uid() AS uid)) AS cap_carteira_escrever) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_geracao_vigente fgv_select_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fgv_select_carteira ON public.farmer_geracao_vigente FOR SELECT TO authenticated USING ((( SELECT private.cap_carteira_ler(( SELECT auth.uid() AS uid)) AS cap_carteira_ler) OR ( SELECT private.cap_carteira_escrever(( SELECT auth.uid() AS uid)) AS cap_carteira_escrever) OR (farmer_id = ( SELECT auth.uid() AS uid))));
 
 
 --
@@ -44383,6 +47894,27 @@ CREATE POLICY kbv_select_staff ON public.kb_product_spec_versions FOR SELECT USI
 
 
 --
+-- Name: farmer_algorithm_config limiar_faixa_margem_delete_exige_cap_custo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY limiar_faixa_margem_delete_exige_cap_custo ON public.farmer_algorithm_config AS RESTRICTIVE FOR DELETE USING (((NOT (key ~~ like_escape('margem!_faixa!_%'::text, '!'::text))) OR COALESCE(( SELECT private.cap_custo_ler(( SELECT auth.uid() AS uid)) AS cap_custo_ler), false)));
+
+
+--
+-- Name: farmer_algorithm_config limiar_faixa_margem_insert_exige_cap_custo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY limiar_faixa_margem_insert_exige_cap_custo ON public.farmer_algorithm_config AS RESTRICTIVE FOR INSERT WITH CHECK (((NOT (key ~~ like_escape('margem!_faixa!_%'::text, '!'::text))) OR COALESCE(( SELECT private.cap_custo_ler(( SELECT auth.uid() AS uid)) AS cap_custo_ler), false)));
+
+
+--
+-- Name: farmer_algorithm_config limiar_faixa_margem_update_exige_cap_custo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY limiar_faixa_margem_update_exige_cap_custo ON public.farmer_algorithm_config AS RESTRICTIVE FOR UPDATE USING (((NOT (key ~~ like_escape('margem!_faixa!_%'::text, '!'::text))) OR COALESCE(( SELECT private.cap_custo_ler(( SELECT auth.uid() AS uid)) AS cap_custo_ler), false))) WITH CHECK (((NOT (key ~~ like_escape('margem!_faixa!_%'::text, '!'::text))) OR COALESCE(( SELECT private.cap_custo_ler(( SELECT auth.uid() AS uid)) AS cap_custo_ler), false)));
+
+
+--
 -- Name: loyalty_points; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -45074,6 +48606,20 @@ ALTER TABLE public.priority_score_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_costs ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: product_costs product_costs_select_custo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY product_costs_select_custo ON public.product_costs FOR SELECT TO authenticated USING (( SELECT private.cap_custo_ler(( SELECT auth.uid() AS uid)) AS cap_custo_ler));
+
+
+--
+-- Name: POLICY product_costs_select_custo ON product_costs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON POLICY product_costs_select_custo ON public.product_costs IS 'FU4-F fase 3: leitura de custo exige private.cap_custo_ler (master + estrategico + super_admin). Substituiu "Staff can manage/view product costs" (master OR employee) — as duas, porque policies permissivas combinam com OR. Consumidores migraram para get_skus_margem_positiva / get_carteira_margem_faixa.';
+
+
+--
 -- Name: production_orders; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -45326,6 +48872,12 @@ ALTER TABLE public.reposicao_param_auto_log ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.reposicao_param_auto_run ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_param_fila_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_param_fila_log ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: reposicao_param_limbo_log; Type: ROW SECURITY; Schema: public; Owner: -
@@ -45857,6 +49409,13 @@ CREATE POLICY "staff can update sku_parametros" ON public.sku_parametros FOR UPD
   WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'employee'::public.app_role, 'master'::public.app_role])))))) WITH CHECK ((EXISTS ( SELECT 1
    FROM public.user_roles
   WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: reposicao_param_fila_log staff le fila log; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "staff le fila log" ON public.reposicao_param_fila_log FOR SELECT TO authenticated USING (( SELECT private.cap_compras_ler(( SELECT auth.uid() AS uid)) AS cap_compras_ler));
 
 
 --
@@ -46675,6 +50234,42 @@ CREATE POLICY tcand_update ON public.tarefa_satisfacao_candidatos FOR UPDATE TO 
 
 
 --
+-- Name: telemetria_probes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.telemetria_probes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: telemetria_probes telemetria_probes_master_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY telemetria_probes_master_read ON public.telemetria_probes FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: telemetria_probes telemetria_probes_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY telemetria_probes_service_all ON public.telemetria_probes USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: telemetria_probes telemetria_probes_user_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY telemetria_probes_user_insert ON public.telemetria_probes FOR INSERT WITH CHECK (((auth.uid() = user_id) AND (criado_em > (now() - '00:10:00'::interval)) AND (criado_em <= (now() + '00:01:00'::interval))));
+
+
+--
+-- Name: telemetria_probes telemetria_probes_user_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY telemetria_probes_user_read ON public.telemetria_probes FOR SELECT USING ((auth.uid() = user_id));
+
+
+--
 -- Name: reposicao_teto_cobertura_log teto_cobertura_log_ins; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -47281,5 +50876,5 @@ CREATE POLICY wts_staff_read ON public.whatsapp_template_sends FOR SELECT TO aut
 -- PostgreSQL database dump complete
 --
 
-\unrestrict QtOdGn7zeAkRw8EWA4bU1xECHIoo4InhVuDzbKGXDwLRsiArEVp8XhnMgdPeKBe
+\unrestrict tsosDzLbWGhsTBLEXzCmP2eN2y0oL6uqEIjXYVxejvbK5DwKogiacdRnjod7ngv
 

@@ -8,8 +8,10 @@
 # nesta máquina). O Silver+ pega a classe de bug "policy não filtra" sem docker.
 #
 # Executado com sucesso em 2026-05-24 (PostgreSQL 17, macOS/brew): replay limpo,
-# contagens batem 1:1 com produção (212 tabelas / 37 views / 4 matviews /
-# 86 funções / 76 triggers / 14 enums / 474 policies).
+# contagens batiam 1:1 com produção NAQUELA DATA (212 tabelas / 37 views / 4 matviews /
+# 86 funções / 76 triggers / 14 enums / 474 policies). ⚠️ Registro DATADO, não expectativa:
+# a prod cresce, e em 2026-08-28 eram 335 tabelas / 701 policies. Não use estes números
+# como referência viva — a comparação com prod é o passo 3 de db/refresh-snapshot.sh.
 #
 # Pré-requisitos: brew install postgresql@17 pgvector
 #
@@ -55,7 +57,15 @@ P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql"
 P --single-transaction -v ON_ERROR_STOP=1 -q -f "$RR"
 rm -f "$RR"
 
-echo "REPLAY OK. Contagens (esperado prod: tabelas=212 views=37 matviews=4 functions=86 triggers=76 enums=14 policies=474):"
+# ⚠️ Estas contagens são INFORMATIVAS — nada aqui as compara com nada. A versão anterior desta
+# linha imprimia "esperado prod: tabelas=212 ... policies=474", números MEDIDOS EM 2026-05-24 e
+# congelados no literal. Em 2026-08-28 a prod tinha 335 tabelas e 701 policies: a linha convidava
+# a uma comparação que ela mesma nunca fez, e cujo lado "esperado" estava 3 meses stale. Quem
+# lesse via "REPLAY OK" e números que não batiam — e aprenderia a ignorar a linha.
+# A paridade DE VERDADE (objeto-a-objeto contra o catálogo vivo, 0 faltando / 0 sobrando) é o
+# passo 3 de db/refresh-snapshot.sh, que roda sob psql-ro. Este script replica offline; ele não
+# tem prod para comparar, e fingir que tem foi o defeito.
+echo "REPLAY OK. Contagens do schema replicado (informativas — a paridade contra prod é o passo 3 de db/refresh-snapshot.sh):"
 P -tA <<'SQL'
 SELECT 'tabelas='  ||count(*) FROM information_schema.tables  WHERE table_schema='public' AND table_type='BASE TABLE'
 UNION ALL SELECT 'views='   ||count(*) FROM information_schema.views WHERE table_schema='public'

@@ -4,13 +4,27 @@
 
 | Campo | Valor |
 |---|---|
-| Gerado em | 2026-08-08 (**2ª geração do dia** — ver as duas notas de 08/08 abaixo) |
+| Gerado em | 2026-08-28 (anterior: 2026-08-08 — ver as notas por geração abaixo) |
 | Fonte | produção (Supabase Lovable, `fzvklzpomgnyikkfkzai`) — **gerado via `pg_dump` por `~/.config/afiacao/psql-ro`** (read-only, role `claude_ro`). Idêntico objeto-por-objeto ao dump do chat do Lovable (cross-validado no #1093); difere só no **preâmbulo** do `pg_dump`: token `\restrict`, versão 17.9→17.10, e `client_encoding` SQL_ASCII→UTF8 / `standard_conforming_strings` off→on (estilo da ferramenta, **não** conteúdo — corpo dos objetos idêntico; cada dump é internamente consistente; replay valida o restore). |
 | Versão do banco | PostgreSQL 17.6 |
 | pg_dump | 17.10 (Homebrew, via psql-ro) |
 | Flags | `--schema-only --schema=public --schema=private --no-owner --no-privileges` |
-| Linhas do arquivo | 47.285 (anterior: 47.249) |
-| Tamanho | ~1,8 MB |
+| Linhas do arquivo | 50.880 (anterior: 47.285) |
+| Tamanho | ~2,0 MB |
+
+> **Geração 2026-08-28 (por quê):** o snapshot era de **08/08** e **40 migrations** mergearam desde
+> então — três semanas de deriva num artefato de **DR**. Medido antes de re-gerar: `telemetria_probes`,
+> `analytics_outbox` e `reposicao_param_fila_log` existiam em prod e **não existiam no dump**; um restore
+> não as reproduziria. Gerado por `db/refresh-snapshot.sh` (as 3 provas passaram: integridade,
+> paridade objeto-a-objeto **0 faltando / 0 sobrando**, e replay em PG17 descartável com enforcement
+> de RLS OK).
+>
+> ⚠️ **Lição de método, registrada porque quase virou falso-positivo:** revisar o drift com
+> `git diff | grep '^-CREATE'` **não funciona** num dump regenerado. O `pg_dump` reescreve o arquivo
+> inteiro, então 6 `CREATE`s apareceram como removidos — inclusive duas tabelas que **existem em prod**
+> (`omie_customer_account_map`, `pedido_compra_sugerido`). As três estavam no arquivo novo, com `CREATE`
+> presente: os `-` tinham `+` pareados. Quem responde sobre drift é a **paridade objeto-a-objeto contra
+> o catálogo vivo** (passo 3 do `refresh-snapshot.sh`), não o diff textual.
 
 > **Geração 2026-08-08 · 2ª do dia (por quê):** o **CHECK de finitude money-path** (`20260807223000`, PR #1691) foi aplicado à mão no SQL Editor **~7h depois** do dump da manhã, que por isso já nasceu sem ele. O buraco de DR aqui é **de hardening**, e da espécie que não dá erro: um restore a partir do dump anterior traria `tint_formula_itens` **sem CHECK nenhum** em 3.425.812 linhas e reinstalaria `cmc_snapshot_cmc_check` na forma FRACA `CHECK ((cmc > (0)::numeric))` — que aceita `NaN` e `Infinity`, porque em `numeric` NaN é maior que todo número. Seria o §"migration committada é IMUTÁVEL" do `docs/agent/database.md` na sua forma pior: o gate volta atrás **sob o mesmo nome**, e nenhum teste de "a constraint existe" percebe. Estado após o apply, provado por catálogo (`convalidated = t` nas duas): `CHECK (qtd_ml > 0 AND qtd_ml <> 'NaN' AND qtd_ml < 'Infinity')` e o equivalente em `cmc`. Pré-voo antes do apply media **0 linhas violando** nas duas colunas (3.425.812 e 31.342), e o `VALIDATE CONSTRAINT` varreu a tabela grande em **2,24s**. Entra junto **`public.expirar_planos_taticos`** (migration `20260807210912`, PR #1693 — fila do Plano Tático), também aplicada à mão e ausente do dump da manhã: é o +1 em `CREATE FUNCTION public` (317 → 318). Diff: **+40/−4, nenhum objeto removido**. Provas do `db/refresh-snapshot.sh`: 5/5 — integridade (termina em `\unrestrict`), **paridade objeto-a-objeto contra o catálogo de prod com 0 faltando e 0 sobrando** (tables 329, views 79, funcs 317, policies 688), replay PG17 descartável e enforcement RLS OK. ⚠️ Nenhuma das duas migrations consta de `supabase_migrations.schema_migrations` (o último registrado segue sendo `20260807015000`) — é o estado **aplicado-sem-registro** do §2 do `database.md`, normal para nome custom, **não** dívida.
 
@@ -24,15 +38,15 @@
 
 | Objeto | Quantidade |
 |---|---:|
-| `CREATE TABLE` | 329 |
-| `CREATE VIEW` | 79 |
+| `CREATE TABLE` | 335 |
+| `CREATE VIEW` | 81 |
 | `CREATE MATERIALIZED VIEW` | 2 (public; +3 em `private` = 5 no arquivo) |
-| `CREATE FUNCTION` | 318 (public) **+ 18 em `private`** |
-| `CREATE TRIGGER` | 123 |
+| `CREATE FUNCTION` | 344 (public) **+ 25 em `private`** |
+| `CREATE TRIGGER` | 132 |
 | `CREATE TYPE` | 14 |
-| `CREATE POLICY` | 688 |
-| `ENABLE ROW LEVEL SECURITY` | 329 (= todas as tabelas) |
-| views com `security_invoker` LIGADO | 73 de 79 (54 `'on'` + 19 `'true'`) — ver ⚠️ abaixo |
+| `CREATE POLICY` | 701 |
+| `ENABLE ROW LEVEL SECURITY` | 335 (= todas as tabelas) |
+| views com `security_invoker` LIGADO | 75 de 81 (56 `'on'` + 19 `'true'`) — ver ⚠️ abaixo |
 
 > ⚠️ **Contar `security_invoker` no dump exige DOIS padrões, não um** (medido nesta geração; é o §"o `reloptions` preserva o LITERAL" do `docs/agent/database.md` na forma do `pg_dump`). O dump renderiza o valor **com aspas** (`security_invoker='on'` / `='true'` / `='false'`) **e sem aspas** (`security_invoker=off`, sempre acompanhado de `security_barrier='true'`). Um padrão que exija aspas mede **74 de 79** e some justamente com as 5 view-gates — o pior falso-negativo possível, porque são exatamente as views cuja autorização mora no `WHERE`. As **6 desligadas** são todas deliberadas, e o discriminante do §61 (`barrier=true` + `relacl` sem `anon` + gate no corpo) confere nas 6: `v_oportunidade_economica_hoje_badge_cached` (gate sobre MV `private`), `customer_metrics_mv` (fechada no #1380), as 3 `selfservice_*` (definer intencional — ligar o invoker QUEBRA o self-service) e **`inventory_position_operacional`**, que ainda não estava na lista do `database.md` §61 e foi conferida aqui: `barrier=true`, `relacl` = `authenticated=r` + `service_role=r` **sem `anon`**, gate no corpo. Nenhuma regressão.
 
