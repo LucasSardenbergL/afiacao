@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **493** custom migrations totais
-- **1704** objetos esperados (criados por estas migrations)
+- **494** custom migrations totais
+- **1711** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 513
-  - `rls_policy`: 449
-  - `index`: 248
+  - `rls_policy`: 453
+  - `index`: 250
   - `cron_job`: 168
-  - `table`: 158
+  - `table`: 159
   - `trigger`: 88
   - `view`: 76
   - `enum_value`: 4
@@ -4126,6 +4126,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.analytics-outbox-drain` | — |
+
+### `20260826002244_telemetria_probes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.telemetria_probes` | — |
+| `index` | `public.idx_telemetria_probes_device_recente` | `telemetria_probes` |
+| `index` | `public.idx_telemetria_probes_criado_em` | `telemetria_probes` |
+| `rls_policy` | `public.telemetria_probes_user_insert` | `telemetria_probes` |
+| `rls_policy` | `public.telemetria_probes_user_read` | `telemetria_probes` |
+| `rls_policy` | `public.telemetria_probes_master_read` | `telemetria_probes` |
+| `rls_policy` | `public.telemetria_probes_service_all` | `telemetria_probes` |
 
 ### `20260826020000_reposicao_param_fila_sensor.sql`
 
