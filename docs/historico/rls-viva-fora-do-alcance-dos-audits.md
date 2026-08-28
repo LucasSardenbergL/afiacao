@@ -636,3 +636,67 @@ funções do banco"); Z6 trava a armadilha do §4 com o nome numa string **e** n
 sem chamada. E a PARTE B ganhou o **B7**, que é o B5 um passo adiante: lá o corpo alterado era o
 da função que a policy CHAMA; aqui nem esse muda — policy, predicado direto e RLS idênticos, e o
 barrado passa a ver 2 linhas.
+
+## 10. A 4ª rodada (2026-08-28) — a carteira, e uma razão que era falsa quando foi escrita
+
+A §7.2 fechou a declaração dos grupos e deixou uma pendência nomeada: `cap_carteira_ler` (22
+tabelas) e `carteira_visivel_para` (8) eram os últimos gates de alcance grande com o **corpo não
+congelado** — nenhuma tabela curada os chamava, logo o eixo 3 não os alcançava.
+
+**A escolha, medida e não intuída.** A tese do §8 — *o valor de uma entrada é o que ela PUXA* —
+diz para procurar a tabela com mais arestas, não a mais importante. A medição achou **6** tabelas
+na interseção dos dois grupos, e todas as seis puxam **três** predicados de uma vez:
+`cap_carteira_ler` (22) · `cap_carteira_escrever` (15) · `carteira_visivel_para` (8). As seis são
+intercambiáveis nesse eixo — mesmas 4 policies, mesmos 3 predicados —, então o desempate teve de
+vir de outro lugar: `public.farmer_client_scores` foi a única com **número de margem**
+(`gross_margin_pct`, `avg_monthly_spend_180d`) **e** linha em prod (6.633). Uma entrada, quatro
+policies, três gates congelados.
+
+> **O que a rodada acrescenta ao §8:** a tese diz para maximizar arestas, e não diz como desempatar
+> quando o máximo empata. A resposta é **descer para o critério original** (i)/(ii)/(iii) como
+> desempate, não como porta de entrada. "Puxa mais" seleciona o conjunto; "guarda o número"
+> escolhe dentro dele.
+
+#### 🔴 O achado: uma razão declarada que já nascia falsa
+
+`LACUNAS_DECLARADAS['public.carteira_assignments']` justificava a recusa assim:
+
+> "O predicado dela não fica órfão: **já é congelado** por ser chamado pelas policies das tabelas
+> de carteira."
+
+Era **falso no dia em que foi escrito**. As policies das tabelas de carteira chamam
+`carteira_visivel_para`, sim — mas nenhuma dessas tabelas estava no contrato, e o eixo 3 só
+descobre predicado a partir de **policy curada**. O predicado não era congelado por ninguém.
+
+Isto é uma quarta instância da classe, e a mais desconfortável: as três anteriores (§7.1, §7.2)
+eram declarações **corretas que apodreceram**. Esta nunca foi correta. E nenhum gate a pegaria —
+os testes de §2 conferem que a lacuna tem razão **com substância** (>80 chars) e que ela não está
+curada; nenhum confere que a razão é **verdadeira**, porque "verdadeira" aqui é uma afirmação sobre
+o grafo de prod. A rodada a tornou verdadeira em vez de só corrigir o texto: curar
+`farmer_client_scores` arrasta exatamente o predicado que a razão dizia estar coberto.
+
+> **Lição:** *razão de recusa também é afirmação sobre prod, e envelhece igual — só que ela pode
+> nascer errada, não só ficar.* O gate barato existe e é o mesmo do resto: quando a razão diz
+> "já é congelado por X", isso é uma consulta (`AUTHZ_RLS_PREDICADOS`), não uma opinião.
+
+#### O que a rodada mediu e não mexeu
+
+`cap_carteira_ler` e `cap_carteira_escrever` têm o **mesmo `srcMd5`** (`836e8f46…`): hoje **quem
+lê a carteira também a escreve**. Não é bug a corrigir aqui — é o estado, e congelá-lo é o que faz
+o dia da divergência (ou o dia em que afrouxar a leitura arrastar a escrita junto) virar alarme. É
+o mesmo padrão do trio `cap_compras_ler`/`cap_preco_escrever`/`cap_credito_escrever` (`5faf2a21…`).
+
+As 4 policies são `roles = PUBLIC` (`polroles = {0}`), não `authenticated`: o gate é **inteiro** a
+expressão mais o GRANT de tabela.
+
+**Sessão paralela, e o que ela não mudou.** O §9 (fecho transitivo dos predicados) mergeou
+entre o §7.2 e esta rodada, no mesmo arquivo. Ele não alcança os gates de carteira e nem
+poderia: o fecho parte de **policy curada**, e nenhuma tabela de carteira estava no contrato —
+é a mesma razão pela qual a razão de recusa acima era falsa. A entrada foi conferida contra o
+auditor NOVO, que reporta `fecho transitivo, profundidade 1; 0 alcancada(s) so por outra
+funcao`: os três predicados entram como chamada DIRETA, não pelo fecho.
+
+**Efeito no eixo 4, sem editar uma linha dele:** as contagens declaradas (`tabelasNoGrafo`) não se
+movem — a tabela continua no grafo. O que muda é o número **derivado**, e ele mudou sozinho:
+`7 curada(s), 71 lacuna(s)` contra `6 / 72`. É a prova de que a decisão do §7.2 (declarar o total,
+derivar a lacuna) faz o que prometeu.

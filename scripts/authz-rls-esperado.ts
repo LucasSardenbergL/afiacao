@@ -33,7 +33,8 @@
  *     (ii) custo/preço, ou (iii) a raiz da autorização.**
  *
  * Como o critério é aplicado (2ª rodada, 2026-08-27 — 7 → 17 tabelas, 19 → 38 policies;
- * 3ª rodada, 2026-08-28 — 17 → 20 tabelas, 38 → 50 policies, 5 → 8 predicados). O
+ * 3ª rodada, 2026-08-28 — 17 → 20 tabelas, 38 → 50 policies, 5 → 8 predicados; 4ª rodada,
+ * 2026-08-28 — 20 → 21 tabelas, 50 → 54 policies, 8 → 11 predicados). O
  * critério acima tem três membros e eles NÃO se aplicam do mesmo jeito, porque a alavanca é
  * diferente:
  *
@@ -118,7 +119,7 @@ export interface TabelaRls {
 }
 
 /**
- * Estado medido em prod (psql-ro, 2026-08-27 + 2026-08-28; PG 17.6). 20 tabelas · 50 policies
+ * Estado medido em prod (psql-ro, 2026-08-27 + 2026-08-28; PG 17.6). 21 tabelas · 54 policies
  * (1ª rodada: 7 · 19; 2ª: +10 · +19; 3ª: +3 · +12 — cada rodada marcada pelos separadores abaixo).
  *
  * ⚠️ Os md5 se REPETEM entre tabelas quando o predicado é literalmente o mesmo texto — p.ex.
@@ -846,6 +847,65 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
   },
 
   // ── cadastro-base + aprovação ──────────────────────────────────────────────────────────────
+  // ── 4ª rodada (2026-08-28): a carteira, escolhida pelo que ARRASTA ──────────────────────────
+  'public.farmer_client_scores': {
+    forceRls: false,
+    motivo:
+      'Scoring por CLIENTE do farmer, 6.633 linhas. Entra pelo eixo do §8 — o valor de uma entrada ' +
+      'é o que ela PUXA —, e esta puxa TRÊS predicados de uma vez (`cap_carteira_ler` 22 tabelas, ' +
+      '`cap_carteira_escrever` 15, `carteira_visivel_para` 8, medidos): eram os últimos gates de ' +
+      'alcance grande com o corpo NÃO congelado. O reforço de (ii) é medido e secundário: a tabela ' +
+      'guarda `gross_margin_pct` e `avg_monthly_spend_180d` por cliente — margem, ainda que ' +
+      'agregada de `order_items`/`product_costs`, que já estão curadas. Escolhida entre as 6 ' +
+      'candidatas da interseção (todas com as MESMAS 4 policies e os mesmos 3 predicados) por ser ' +
+      'a única com número de margem E linha em prod.',
+    policies: {
+      fcs_select_carteira: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: '4ce46ee9bbc5966f54317f7e446a452e',
+        withCheckMd5: null,
+        motivo:
+          'A leitura, e o único caminho por LINHA do contrato: `cap_carteira_ler(uid)` OR ' +
+          '`carteira_visivel_para(customer_user_id, uid)` — capability global ou a carteira daquele ' +
+          'cliente. ⚠️ `roles` é PUBLIC (polroles={0}), não `authenticated`: o gate é INTEIRO a ' +
+          'expressão mais o GRANT de tabela.',
+      },
+      fcs_insert_own_or_gestor: {
+        cmd: 'a',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: null,
+        withCheckMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
+        motivo:
+          'INSERT puro: sem USING (o PG não consulta USING no INSERT), só WITH CHECK — ' +
+          '`cap_carteira_escrever(uid)` OR `farmer_id = uid` (escrever o PRÓPRIO score).',
+      },
+      fcs_update_own_or_gestor: {
+        cmd: 'w',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
+        withCheckMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
+        motivo:
+          'USING e WITH CHECK IDÊNTICOS (mesmo md5) — simétrico, então não há brecha de mover ' +
+          'linha para fora do próprio escopo. É FOR UPDATE e não FOR ALL, logo o check estrutural ' +
+          'de assimetria não se aplica.',
+      },
+      fcs_delete_own_or_gestor: {
+        cmd: 'd',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
+        withCheckMd5: null,
+        motivo:
+          'DELETE com o MESMO USING do UPDATE — e é o comando que só consulta o USING ' +
+          '(database.md §4). Split por comando em vez de FOR ALL é o que torna isso legível.',
+      },
+    },
+  },
+
 };
 
 /**
@@ -876,9 +936,12 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
 export const LACUNAS_DECLARADAS: Record<string, string> = {
   'public.carteira_assignments':
     'É raiz de verdade — `private.carteira_visivel_para` a lê —, mas raiz de INTELIGÊNCIA ' +
-    'COMERCIAL, não de dinheiro/custo. O predicado dela não fica órfão: já é congelado por ser ' +
-    'chamado pelas policies das tabelas de carteira. Gatilho de reentrada: no dia em que comissão ' +
-    'ou preço passarem a depender da carteira, ela vira membro (i)/(ii).',
+    'COMERCIAL, não de dinheiro/custo. ⚠️ A razão original dizia que "o predicado dela não fica ' +
+    'órfão: já é congelado pelas policies das tabelas de carteira" — e isso era FALSO quando foi ' +
+    'escrito: nenhuma tabela curada chamava `carteira_visivel_para`, logo ninguém congelava o ' +
+    'corpo dele. Virou verdade na 4ª rodada, que curou `farmer_client_scores` exatamente para ' +
+    'arrastá-lo. Gatilho de reentrada: no dia em que comissão ou preço passarem a depender da ' +
+    'carteira, ela vira membro (i)/(ii).',
   'public.carteira_coverage':
     'O SEGUNDO caminho de `carteira_visivel_para` (a cobertura temporária de carteira alheia). ' +
     'Mesma razão de `carteira_assignments`, e o mesmo gatilho. Nota medida: o INSERT dela permite ' +
@@ -989,11 +1052,12 @@ export const LACUNAS_POR_GRUPO: LacunaGrupo[] = [
     medidoEm: '2026-08-28',
     motivo:
       'Inteligência COMERCIAL (carteira, radar, farmer, visitas), não dinheiro/custo — o critério ' +
-      'deste contrato não a alcança, e a RAIZ do grupo (`public.commercial_roles`) está curada. ' +
-      'O gate comum não fica órfão no eixo 3 por outra via: `cap_carteira_ler` é chamada por ' +
-      'policy de 22 tabelas, nenhuma delas curada, então congelar o CORPO dela seria a única ' +
-      'cobertura — e é justamente o que a lacuna assume o custo de não ter. Gatilho de reentrada: ' +
-      'no dia em que comissão ou preço passarem a depender da carteira, o grupo vira membro (i)/(ii).',
+      'deste contrato não alcança o CONTEÚDO delas, e a RAIZ do grupo (`public.commercial_roles`) ' +
+      'está curada. O que a lacuna assume o custo de não ter é o eixo 2 (o conjunto de policies) ' +
+      'das 21 não-curadas; o eixo 3 dela está coberto desde a 4ª rodada, que curou ' +
+      '`farmer_client_scores` e ARRASTOU o corpo de `cap_carteira_ler` para o congelamento. ' +
+      'Gatilho de reentrada: no dia em que comissão ou preço passarem a depender da carteira, o ' +
+      'grupo vira membro (i)/(ii).',
   },
   {
     def: { tipo: 'predicado', predicado: 'private.carteira_visivel_para' },
@@ -1004,9 +1068,10 @@ export const LACUNAS_POR_GRUPO: LacunaGrupo[] = [
       'O segundo gate de carteira (o que resolve cobertura temporária de carteira alheia), com ' +
       'interseção medida de 6 tabelas com o grupo de `cap_carteira_ler` — os dois grupos se ' +
       'sobrepõem de propósito, porque a pergunta "este predicado ainda gateia o mesmo conjunto?" ' +
-      'é por predicado, não por tabela. Mesma razão e mesmo gatilho do grupo acima; as duas ' +
-      'tabelas exclusivas dele (`carteira_assignments`, `visitas_agendadas`) são de carteira, não ' +
-      'de dinheiro.',
+      'é por predicado, não por tabela. Mesma razão e mesmo gatilho do grupo acima, e o corpo dele ' +
+      'também foi arrastado para o eixo 3 pela 4ª rodada (`farmer_client_scores` chama os dois no ' +
+      'mesmo `USING`). As duas tabelas exclusivas dele (`carteira_assignments`, ' +
+      '`visitas_agendadas`) são de carteira, não de dinheiro.',
   },
   {
     def: { tipo: 'prefixo', prefixo: 'fin_' },
@@ -1056,7 +1121,7 @@ export interface PredicadoEsperado {
  * `cap_custo_ler` chamada dentro de um `COALESCE`, e o §4 tem o registro de duas varreduras
  * textuais que produziram falso-positivo integral).
  *
- * Medido em prod (2026-08-27 + 2026-08-28): as 50 policies referenciam 10 funções — estas 8
+ * Medido em prod (2026-08-27 + 2026-08-28): as 54 policies referenciam 13 funções — estas 11
  * mais `auth.uid` e `auth.role`, que ficam em `PREDICADOS_PLATAFORMA`.
  *
  * ⚠️ A 2ª rodada leu o próprio resultado como convergência: 10 tabelas novas trazendo UMA função
@@ -1066,7 +1131,7 @@ export interface PredicadoEsperado {
  * rodada escolheu tabelas por parentesco com as já curadas (o resto do `fin_*`, o resto do que
  * `cap_custo_ler` gateia), e tabela irmã compartilha o gate da irmã por construção. A amostra
  * confirmava a hipótese porque fora selecionada por ela. O grafo real tem 14 funções gateando
- * policy em `public`; 8 estão congeladas aqui. ⇒ **Convergência medida sobre uma amostra
+ * policy em `public`; 11 estão congeladas aqui. ⇒ **Convergência medida sobre uma amostra
  * escolhida por semelhança não é convergência — é o método se ouvindo falar.**
  *
  * ⚠️ `cap_compras_ler`, `cap_credito_escrever` e `cap_preco_escrever` têm o MESMO `srcMd5`
@@ -1074,6 +1139,39 @@ export interface PredicadoEsperado {
  * duplicação a limpar — é o estado a congelar, e o dia em que uma divergir é o sinal que se quer.
  */
 export const AUTHZ_RLS_PREDICADOS: Record<string, PredicadoEsperado> = {
+  'private.cap_carteira_ler': {
+    secdef: true,
+    cfg: 'search_path=public',
+    srcMd5: '836e8f46f863eefd75b3b46a49eba81a',
+    motivo:
+      '`master` OU (`employee` E `commercial_roles` em gerencial/estrategico/super_admin) — corpo ' +
+      'lido de prod. O predicado de carteira de MAIOR alcance: 22 tabelas (medido por pg_depend), ' +
+      'das quais o contrato cura UMA. Congelar o corpo cobre as 22 no eixo 3 sem curar o conteúdo ' +
+      'das outras 21 — o mesmo retorno que `cap_compras_ler` deu na 3ª rodada. ⚠️ Corpo IDÊNTICO ' +
+      'ao de `cap_carteira_escrever`: hoje LER e ESCREVER carteira são a mesma autorização.',
+  },
+  'private.cap_carteira_escrever': {
+    secdef: true,
+    cfg: 'search_path=public',
+    srcMd5: '836e8f46f863eefd75b3b46a49eba81a',
+    motivo:
+      'Gate de ESCRITA da carteira em 15 tabelas (medido). O `srcMd5` é o MESMO de ' +
+      '`cap_carteira_ler` — não é duplicação a limpar, é o estado a congelar: quem hoje LÊ a ' +
+      'carteira também a ESCREVE, e o dia em que os dois divergirem (ou em que afrouxar a leitura ' +
+      'arrastar a escrita junto) é exatamente o sinal que se quer ver. Perder o SECDEF aqui quebra ' +
+      'a autorização por BAIXO: a policy fica idêntica e passa a negar para todo mundo.',
+  },
+  'private.carteira_visivel_para': {
+    secdef: true,
+    cfg: 'search_path=public',
+    srcMd5: '76de7734fc459d344be3ea86265a0267',
+    motivo:
+      'O caminho por LINHA: `master` OU dono da carteira (`carteira_assignments.eligible`) OU ' +
+      'cobertura ativa dentro da janela (`carteira_coverage.active` e `valid_until` nulo ou ' +
+      'futuro). É o predicado que LÊ as duas tabelas declaradas como lacuna nominal — congelá-lo é ' +
+      'o que torna VERDADEIRA a razão que aquelas duas entradas dão para não serem curadas, e que ' +
+      'antes desta rodada era falsa: nenhuma tabela curada o chamava, logo ninguém o congelava.',
+  },
   'private.cap_compras_ler': {
     secdef: true,
     cfg: 'search_path=public',
