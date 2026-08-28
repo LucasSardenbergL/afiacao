@@ -11,6 +11,11 @@
  * operar este banco.
  *
  * Uso:   bun run authz:rls:prod ; echo $?   → 0 bate · 1 divergência · 2 não consegui medir
+ *
+ * O 4º eixo (2026-08-28) é o NEGATIVO dos outros três: mede se a declaração de lacuna em BLOCO
+ * (`LACUNAS_POR_GRUPO`) ainda descreve prod. Os eixos 1-3 reconciliam o contrato contra o banco;
+ * ninguém reconciliava a DECLARAÇÃO contra o banco, e uma migration que gateasse mais uma tabela
+ * por `cap_carteira_ler` deixava a contagem declarada falsa sem nada ficar vermelho (§7.2).
  * Dente: db/test-audit-rls-prod.sh (PG17 descartável — sabota cada regra, exige vermelho, exige o
  *        verde de volta, e prova o EFEITO da RLS sob SET ROLE authenticated + GUC do JWT)
  *
@@ -21,13 +26,15 @@ import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { compararRlsProd, type MedicaoRls, type MedPolicy } from '../scripts/lib/authz-rls';
+import { compararRlsProd, rotuloGrupo, type MedicaoRls, type MedPolicy } from '../scripts/lib/authz-rls';
 import {
   AUTHZ_RLS_ESPERADO,
   AUTHZ_RLS_PREDICADOS,
+  LACUNAS_POR_GRUPO,
   PREDICADOS_PLATAFORMA,
   type TabelaRls,
   type PredicadoEsperado,
+  type LacunaGrupo,
 } from '../scripts/authz-rls-esperado';
 
 const PSQL = process.env.PSQL_RO ?? join(homedir(), '.config', 'afiacao', 'psql-ro');
@@ -43,6 +50,10 @@ interface Contrato {
   contrato: Record<string, TabelaRls>;
   predicados: Record<string, PredicadoEsperado>;
   plataforma: ReadonlySet<string>;
+  grupos: LacunaGrupo[];
+  /** `true` quando o contrato veio de `AUTHZ_RLS_TEST_JSON`. Existe para que o piso de vacuidade
+   *  do eixo 4 valha só para o contrato REAL: o harness monta recortes deliberadamente pequenos. */
+  sintetico: boolean;
 }
 
 /** Contrato real, ou o sintético quando o harness PG17 injeta AUTHZ_RLS_TEST_JSON. */
@@ -53,6 +64,8 @@ function carregarContrato(): Contrato {
       contrato: AUTHZ_RLS_ESPERADO,
       predicados: AUTHZ_RLS_PREDICADOS,
       plataforma: PREDICADOS_PLATAFORMA,
+      grupos: LACUNAS_POR_GRUPO,
+      sintetico: false,
     };
   }
   console.log('⚠️  contrato de TESTE (AUTHZ_RLS_TEST_JSON) — não é o contrato real do repo.');
@@ -61,11 +74,14 @@ function carregarContrato(): Contrato {
       contrato: Record<string, TabelaRls>;
       predicados?: Record<string, PredicadoEsperado>;
       plataforma?: string[];
+      grupos?: LacunaGrupo[];
     };
     return {
       contrato: p.contrato,
       predicados: p.predicados ?? {},
       plataforma: new Set(p.plataforma ?? []),
+      grupos: p.grupos ?? [],
+      sintetico: true,
     };
   } catch (e) {
     erroFatal(`AUTHZ_RLS_TEST_JSON não é JSON válido: ${(e as Error).message}`);
@@ -73,7 +89,7 @@ function carregarContrato(): Contrato {
 }
 
 /**
- * Uma invocação do psql para as quatro medições. Cada uma sai em UMA linha, prefixada por
+ * Uma invocação do psql para as cinco medições. Cada uma sai em UMA linha, prefixada por
  * `JSON:<chave>|`, porque o `psqlrc` do psql-ro ecoa `SET` e qualquer parser precisa sobreviver a
  * linhas que não são dado.
  *
@@ -86,8 +102,45 @@ function carregarContrato(): Contrato {
  * `to_regclass` — nada de assumir `public`. O `LEFT JOIN` sobre `unnest` garante uma linha por
  * tabela DECLARADA mesmo quando ela não existe: ausência tem de virar dado, não silêncio.
  */
-function montarQuery(chaves: string[]): string {
-  const lista = chaves.map((x) => `'${x.replace(/'/g, "''")}'`).join(',');
+function sqlLit(x: string): string {
+  return `'${x.replace(/'/g, "''")}'`;
+}
+
+/** O `VALUES` do eixo 4, ou a lista vazia. Fail-closed na FORMA: um `tipo` que este montador não
+ *  conhece vira exceção, nunca um `CASE` que cai no `ELSE` e mede zero tabelas — medir zero se
+ *  apresentaria como "o grupo encolheu para 0", um diagnóstico plausível e errado. */
+function sqlGrupos(grupos: readonly LacunaGrupo[]): string {
+  if (grupos.length === 0) return `SELECT 'JSON:grupos|[]';`;
+  const linhas = grupos.map((g) => {
+    const rot = sqlLit(rotuloGrupo(g.def));
+    if (g.def.tipo === 'predicado') return `(${rot},'predicado',${sqlLit(g.def.predicado)})`;
+    if (g.def.tipo === 'prefixo') return `(${rot},'prefixo',${sqlLit(g.def.prefixo)})`;
+    throw new Error(`montarQuery: grupo com tipo desconhecido — ${JSON.stringify(g.def)}`);
+  });
+  // `starts_with` e NÃO `LIKE prefixo||'%'`: em LIKE o `_` é CORINGA de um caractere, então
+  // `fin_%` casaria `financeiro_x` e o grupo mediria a mais em silêncio. Medido: os dois devolvem
+  // 41 hoje por acaso (não há tabela `finX*`), o que é exatamente como esse bug sobreviveria.
+  return `
+SELECT 'JSON:grupos|'||coalesce(jsonb_agg(x ORDER BY x.grupo)::text,'[]') FROM (
+  SELECT g.rot AS grupo, coalesce(m.tabelas,'[]'::jsonb) AS tabelas
+    FROM (VALUES ${linhas.join(',')}) AS g(rot,tipo,arg)
+    LEFT JOIN LATERAL (
+      SELECT jsonb_agg(c.relname) AS tabelas
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+       WHERE n.nspname='public' AND c.relkind='r'
+         AND CASE WHEN g.tipo='prefixo' THEN starts_with(c.relname, g.arg)
+                  ELSE EXISTS (SELECT 1 FROM pg_policy pol
+                                 JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=pol.oid
+                                                 AND d.refclassid='pg_proc'::regclass
+                                 JOIN pg_proc p ON p.oid=d.refobjid
+                                 JOIN pg_namespace pn ON pn.oid=p.pronamespace
+                                WHERE pol.polrelid=c.oid AND pn.nspname||'.'||p.proname = g.arg)
+             END) m ON true) x;
+`;
+}
+
+function montarQuery(chaves: string[], grupos: readonly LacunaGrupo[]): string {
+  const lista = chaves.map(sqlLit).join(',');
   const tabs = `(SELECT ARRAY[${lista}]::text[])`;
   return `
 SELECT 'JSON:universal|'||jsonb_build_object(
@@ -125,7 +178,7 @@ SELECT 'JSON:predicados|'||coalesce(jsonb_agg(x)::text,'[]') FROM (
     JOIN pg_proc f ON f.oid = d.refobjid
     JOIN pg_namespace n ON n.oid = f.pronamespace
    ORDER BY 1) x;
-`;
+${sqlGrupos(grupos)}`;
 }
 
 /** Lê a linha `JSON:<chave>|…`. Chave ausente = medição quebrada = exit 2, jamais lista vazia. */
@@ -145,10 +198,10 @@ function extrair(saida: string, chave: string): unknown {
   }
 }
 
-function medir(chaves: string[]): MedicaoRls {
+function medir(chaves: string[], grupos: readonly LacunaGrupo[]): MedicaoRls {
   let saida: string;
   try {
-    saida = execFileSync(PSQL, ['-tA', '-c', montarQuery(chaves)], { encoding: 'utf8' });
+    saida = execFileSync(PSQL, ['-tA', '-c', montarQuery(chaves, grupos)], { encoding: 'utf8' });
   } catch (e) {
     // psql-ro ausente, sem rede, sintaxe rejeitada ou timeout caem todos aqui.
     erroFatal(`falha ao consultar o banco via psql-ro (${PSQL}): ${(e as Error).message}`);
@@ -158,6 +211,7 @@ function medir(chaves: string[]): MedicaoRls {
   const tabelas = extrair(saida, 'tabelas') as MedicaoRls['tabelas'];
   const policies = extrair(saida, 'policies') as MedPolicy[];
   const predicados = extrair(saida, 'predicados') as MedicaoRls['predicados'];
+  const gruposMed = extrair(saida, 'grupos') as MedicaoRls['grupos'];
 
   // Pisos de sanidade. Cada um existe porque o modo de falha que ele pega se apresenta como
   // sucesso: nenhuma tabela medida ⇒ nenhuma violação ⇒ ✅ sobre o vazio.
@@ -174,16 +228,33 @@ function medir(chaves: string[]): MedicaoRls {
         `a que não existe — vir menos significa que o parser ou a query quebrou.`,
     );
   }
-  return { universal, tabelas, policies, predicados };
+  if (gruposMed.length !== grupos.length) {
+    erroFatal(
+      `medição inconsistente: ${gruposMed.length} linha(s) de grupo para ${grupos.length} ` +
+        `declarado(s). O VALUES devolve uma linha por grupo DECLARADO sempre, inclusive para o ` +
+        `que não casa tabela nenhuma — vir menos significa que a query ou o parser quebrou.`,
+    );
+  }
+  return { universal, tabelas, policies, predicados, grupos: gruposMed };
 }
 
 function main(): void {
-  const { contrato, predicados, plataforma } = carregarContrato();
+  const { contrato, predicados, plataforma, grupos, sintetico } = carregarContrato();
   const chaves = Object.keys(contrato);
   if (chaves.length === 0) erroFatal('contrato de RLS vazio — não há o que reconciliar.');
+  // Piso de vacuidade do eixo 4, no contrato REAL: `for` sobre lista vazia não itera, então
+  // esvaziar `LACUNAS_POR_GRUPO` desligaria o eixo inteiro com ✅. (O gate estático de
+  // `scripts/authz-rls.test.ts` guarda o mesmo piso no CI, onde não há psql-ro; este aqui é o que
+  // vale na execução contra prod, que é onde o operador lê o verde.)
+  if (!sintetico && grupos.length === 0) {
+    erroFatal(
+      'LACUNAS_POR_GRUPO vazio — o eixo 4 não teria o que conferir e o ✅ afirmaria uma ' +
+        'declaração que não existe. Lista de grupos vazia é contrato quebrado, não "sem lacunas".',
+    );
+  }
 
-  const med = medir(chaves);
-  const findings = compararRlsProd(med, contrato, predicados, plataforma);
+  const med = medir(chaves, grupos);
+  const findings = compararRlsProd(med, contrato, predicados, plataforma, grupos);
   const erros = findings.filter((f) => f.level === 'error');
   const avisos = findings.filter((f) => f.level === 'warn');
 
@@ -199,10 +270,18 @@ function main(): void {
   }
   // O denominador vai na linha do veredito de propósito: "✅" sem denominador não distingue
   // "conferi 19 policies" de "conferi zero" (docs/historico/fase-sem-sinal.md).
+  // O eixo 4 entra no denominador com a UNIÃO distinta (os grupos se sobrepõem — `cap_carteira_ler`
+  // e `carteira_visivel_para` compartilham tabelas medidas), e com a subtração à vista: sem o
+  // "N curada(s)" o leitor não distingue "78 tabelas fora do contrato" de "78 conferidas e
+  // cobertas", que são afirmações opostas.
+  const uniao = new Set(med.grupos.flatMap((g) => g.tabelas));
+  const curadasNaUniao = [...uniao].filter((t) => `public.${t}` in contrato).length;
   console.log(
     `✅ audit-rls — ${med.universal.totalTabelas} tabela(s) em public com RLS ligada (0 desligada); ` +
       `${chaves.length} tabela(s) curada(s), ${med.policies.length} policy(ies) e ` +
-      `${med.predicados.length} funcao(oes)-predicado batem com o contrato.`,
+      `${med.predicados.length} funcao(oes)-predicado batem com o contrato; ` +
+      `${grupos.length} grupo(s) de lacuna conferido(s) — ${uniao.size} tabela(s) distinta(s) no ` +
+      `grafo, ${curadasNaUniao} curada(s), ${uniao.size - curadasNaUniao} lacuna(s).`,
   );
 }
 

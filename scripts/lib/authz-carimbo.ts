@@ -57,6 +57,7 @@ import {
   AUTHZ_RLS_ESPERADO,
   AUTHZ_RLS_PREDICADOS,
   LACUNAS_DECLARADAS,
+  LACUNAS_POR_GRUPO,
   PREDICADOS_PLATAFORMA,
 } from '../authz-rls-esperado';
 
@@ -243,11 +244,15 @@ export function dadoDoContrato(chave: ChaveAudit): unknown {
       // AFROUXA o que o verde afirma. Tirar uma tabela de lá sem curá-la faz o contrato parar de
       // dizer "isto não é coberto" — e o carimbo passaria a atestar uma cobertura que ninguém
       // mediu, na direção que é mais difícil de notar (a de fingir que não há buraco).
+      // `LACUNAS_POR_GRUPO` (5º, 2026-08-28) é o mesmo argumento um nível acima: baixar
+      // `tabelasNoGrafo` de 22 para 21 faz o audit parar de acusar uma tabela que ENTROU no grupo,
+      // sem curar nada — afrouxa o que o verde afirma, e é a mudança de uma linha só.
       return {
         tabelas: AUTHZ_RLS_ESPERADO,
         predicados: AUTHZ_RLS_PREDICADOS,
         plataforma: PREDICADOS_PLATAFORMA,
         lacunas: LACUNAS_DECLARADAS,
+        grupos: LACUNAS_POR_GRUPO,
       };
   }
 }
