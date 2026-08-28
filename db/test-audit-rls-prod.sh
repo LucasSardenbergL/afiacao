@@ -55,6 +55,22 @@ GATE_REFORMATADO="CREATE OR REPLACE FUNCTION public.zz_gate(_uid uuid) RETURNS b
     AND EXISTS (SELECT 1 FROM public.zz_papeis WHERE user_id = _uid AND papel = 'staff'),
   false) \$f\$;"
 
+
+# ── a CADEIA de 2 níveis: zz_gate2_a (chamada pela policy) → zz_gate2_b (só via a_) ──────────
+# É o recorte do que prod tem de verdade: `cap_*` delega a decisão a `has_role`. O ponto do eixo
+# transitivo é que reescrever o corpo de zz_gate2_b não move NEM o texto da policy NEM o corpo de
+# zz_gate2_a — antes deste fecho, a sabotagem saía verde nos quatro audits.
+G2B_SRC="SELECT EXISTS (SELECT 1 FROM public.zz_papeis WHERE user_id = _uid AND papel = 'staff')"
+G2B_DDL="CREATE OR REPLACE FUNCTION public.zz_gate2_b(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS \$f\$ ${G2B_SRC} \$f\$;"
+G2B_SABOTADO="CREATE OR REPLACE FUNCTION public.zz_gate2_b(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS \$f\$ SELECT true \$f\$;"
+# Chama uma 3ª função, criada DEPOIS de o contrato ser derivado: ela tem de ser DESCOBERTA.
+G2B_CHAMA_C="CREATE OR REPLACE FUNCTION public.zz_gate2_b(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS \$f\$ SELECT public.zz_gate2_c(_uid) \$f\$;"
+# MENCIONA zz_gate2_d numa string e numa COLUNA homônima, sem CHAMAR. É a armadilha medida do
+# database.md §4 em forma de cenário: em prod, `auth.jwt` saía da string 'request.jwt.claim.sub' e
+# `auth.role` saía da coluna `role`. Um tokenizer de identificador NU acusaria as duas.
+G2B_SO_MENCIONA="CREATE OR REPLACE FUNCTION public.zz_gate2_b(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS \$f\$ SELECT EXISTS (SELECT 1 FROM public.zz_papeis WHERE user_id = _uid AND papel = 'staff' AND zz_gate2_d IS NULL AND 'zz_gate2_d' <> '') \$f\$;"
+G2A_DDL="CREATE OR REPLACE FUNCTION public.zz_gate2_a(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS \$f\$ SELECT COALESCE(_uid IS NOT NULL AND public.zz_gate2_b(_uid), false) \$f\$;"
+
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 command -v bun >/dev/null || { echo "bun ausente no PATH"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -104,13 +120,26 @@ CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
 -- prod não tem (armadilha (b) das 3 de harness do database.md §4).
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 
-CREATE TABLE public.zz_papeis (user_id uuid PRIMARY KEY, papel text NOT NULL);
+-- A coluna homônima da função do cenário Z6 nasce aqui: o falso-positivo que ela trava só é
+-- possível se o NOME existir nos dois papéis ao mesmo tempo, como a coluna "role" de user_roles
+-- em prod. Sem crase: este heredoc NAO e quotado (interpola \$UID_STAFF), e crase aqui viraria
+-- substituicao de comando do bash antes de o psql ver a linha.
+CREATE TABLE public.zz_papeis (user_id uuid PRIMARY KEY, papel text NOT NULL, zz_gate2_d text);
 ALTER TABLE public.zz_papeis ENABLE ROW LEVEL SECURITY;
 INSERT INTO public.zz_papeis VALUES ('$UID_STAFF','staff');
 
 SQL
 P -c "$GATE_DDL"
+P -c "$G2B_DDL"
+P -c "$G2A_DDL"
 P <<SQL
+CREATE TABLE public.zz_carteira (id int PRIMARY KEY, dono uuid, limite numeric);
+ALTER TABLE public.zz_carteira ENABLE ROW LEVEL SECURITY;
+INSERT INTO public.zz_carteira VALUES (1,'$UID_STAFF',10),(2,'$UID_FORA',20);
+CREATE POLICY zz_sel_carteira ON public.zz_carteira FOR SELECT TO authenticated
+  USING ((SELECT public.zz_gate2_a((SELECT auth.uid()))));
+GRANT SELECT ON public.zz_carteira TO authenticated;
+
 CREATE TABLE public.zz_pedidos (id int PRIMARY KEY, dono uuid, valor numeric);
 ALTER TABLE public.zz_pedidos ENABLE ROW LEVEL SECURITY;
 INSERT INTO public.zz_pedidos VALUES (1,'$UID_STAFF',100),(2,'$UID_FORA',200);
@@ -153,20 +182,32 @@ SELECT jsonb_build_object(
                               'motivo', 'sintetica')) AS policies
                        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
                        JOIN pg_policy p ON p.polrelid=c.oid
-                      WHERE n.nspname='public' AND c.relname='zz_pedidos'
+                      WHERE n.nspname='public' AND c.relname IN ('zz_pedidos','zz_carteira')
                       GROUP BY 1,2) t),
   'predicados', (SELECT jsonb_object_agg(f.funcao, jsonb_build_object(
                           'secdef', f.secdef, 'cfg', f.cfg, 'srcMd5', f.src, 'motivo', 'sintetico'))
                  FROM (SELECT DISTINCT n2.nspname||'.'||pr.proname AS funcao, pr.prosecdef AS secdef,
                               coalesce(array_to_string(pr.proconfig,','),'') AS cfg,
                               md5(regexp_replace(btrim(pr.prosrc),'\s+',' ','g')) AS src
-                         FROM pg_policy p
-                         JOIN pg_class c ON c.oid=p.polrelid AND c.relname='zz_pedidos'
-                         JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=p.oid
-                                         AND d.refclassid='pg_proc'::regclass
-                         JOIN pg_proc pr ON pr.oid=d.refobjid
+                         FROM pg_proc pr
                          JOIN pg_namespace n2 ON n2.oid=pr.pronamespace
-                        WHERE n2.nspname <> 'auth') f),
+                        WHERE n2.nspname <> 'auth'
+                          -- 🔴 A derivação é por regra INDEPENDENTE do fecho que o audit calcula:
+                          -- pg_depend (1º nível) UNIÃO "toda função zz_gate*". Derivar com a MESMA
+                          -- query da descoberta faria os dois lados errarem juntos, e o cenário A
+                          -- ficaria verde por cegueira. Assim, se o fecho parar de achar
+                          -- zz_gate2_b, o contrato ainda a declara e o audit sai PREDICADO_SUMIU
+                          -- (vermelho); se o fecho achar demais, sai PREDICADO_NAO_DECLARADO
+                          -- (vermelho). Os dois sentidos caem no cenário A, que só é verde quando
+                          -- as duas regras coincidem.
+                          AND (pr.oid IN (SELECT d.refobjid
+                                            FROM pg_policy p
+                                            JOIN pg_class c ON c.oid=p.polrelid
+                                                           AND c.relname IN ('zz_pedidos','zz_carteira')
+                                            JOIN pg_depend d ON d.classid='pg_policy'::regclass
+                                                            AND d.objid=p.oid
+                                                            AND d.refclassid='pg_proc'::regclass)
+                               OR (n2.nspname='public' AND pr.proname ~ '^zz_gate'))) f),
   'plataforma', jsonb_build_array('auth.uid'),
   'grupos', ($1))::text;
 SQL
@@ -229,6 +270,10 @@ case "$TEST_JSON" in *'"grupos":'*'"tabelasMd5":'*) : ;;
   *) echo "❌ contrato de teste sem o eixo 4 (grupos/tabelasMd5): $TEST_JSON"; exit 1 ;; esac
 case "$TEST_JSON_CURADO" in *'"grupos":'*'"tabelasMd5":'*) : ;;
   *) echo "❌ variante CURADO sem o eixo 4: $TEST_JSON_CURADO"; exit 1 ;; esac
+# O 2º nível entra na guarda por nome: sem zz_gate2_b no contrato, os cenários Z testariam o
+# vazio e passariam. Ausência de dado não é aprovação — nem aqui, no andaime.
+case "$TEST_JSON" in *zz_gate2_b*) : ;;
+  *) echo "❌ contrato de teste sem o predicado de 2º NÍVEL (zz_gate2_b) — os cenários Z mediriam nada"; exit 1 ;; esac
 
 run_audit() {
   local ec=0
@@ -253,12 +298,12 @@ esperar() {
 
 # conta_como <rótulo> <sub do JWT> <esperado>  — exerce a RLS de verdade, como authenticated.
 conta_como() {
-  local rotulo="$1" sub="$2" esperado="$3" bruto got
+  local rotulo="$1" sub="$2" esperado="$3" tabela="${4:-zz_pedidos}" bruto got
   # O psql imprime a tag de CADA comando ("SET", "SET", depois o valor), então ler a saída inteira
   # como se fosse o número compara 'SET\nSET\n2' com '2' e reprova com a defesa funcionando. O
   # veredito sai com PREFIXO delimitado e é extraído por ele — o mesmo padrão do `ROW|` dos outros
   # audits, e a mesma razão: âncore no valor exato, nunca no que "sobrou" da saída.
-  bruto="$(PT -c "SET ROLE authenticated; SET \"request.jwt.claim.sub\" = '$sub'; SELECT 'CONTA|'||count(*) FROM public.zz_pedidos;")"
+  bruto="$(PT -c "SET ROLE authenticated; SET \"request.jwt.claim.sub\" = '$sub'; SELECT 'CONTA|'||count(*) FROM public.$tabela;")"
   got="$(printf '%s\n' "$bruto" | command sed -n 's/^CONTA|//p')"
   if [ "$got" = "$esperado" ]; then PASS=$((PASS+1)); echo "  ✅ $rotulo (viu $got linha(s))"
   else FAIL=$((FAIL+1)); echo "  ❌ $rotulo — viu '$got', esperava '$esperado' [bruto: $(printf '%s' "$bruto" | tr '\n' '/')]"; fi
@@ -316,6 +361,38 @@ P -c "$GATE_REFORMATADO"
 esperar "X  gate REFORMATADO (mesma semântica) → PREDICADO_ALTERADO: o md5 é textual, não semântico" 1 PREDICADO_ALTERADO -
 P -c "$GATE_DDL"
 esperar "Y  formatação original de volta → limpo  ← dente" 0 - PREDICADO_ALTERADO
+
+# ── o 2º NÍVEL do grafo: o cenário que saía VERDE antes do fecho transitivo ─────────────────
+# zz_gate2_a e a policy ficam byte-a-byte INTACTOS; só o corpo de zz_gate2_b muda. `pg_depend`
+# registra policy→função e não função→função, então antes deste eixo a sabotagem não movia o md5
+# de NADA que qualquer um dos quatro audits medisse — e o B6 mostra que o barrado passava a ler.
+P -c "$G2B_SABOTADO"
+esperar "Z1 corpo do gate de 2º NÍVEL p/ 'true' (policy e chamador INTACTOS) → PREDICADO_ALTERADO" 1 PREDICADO_ALTERADO POLICY_ALTERADA
+P -c "$G2B_DDL"
+esperar "Z2 gate de 2º nível restaurado → limpo  ← dente" 0 - PREDICADO_ALTERADO
+
+# 3º nível, e função criada DEPOIS de o contrato ser derivado: tem de ser DESCOBERTA, não
+# presumida. É este cenário que separa "o fecho funciona" de "a derivação e a descoberta erram
+# juntas" — zz_gate2_c não está no contrato de teste por construção.
+P -c "CREATE FUNCTION public.zz_gate2_c(_uid uuid) RETURNS boolean LANGUAGE sql STABLE AS \$f\$ SELECT true \$f\$;"
+P -c "$G2B_CHAMA_C"
+esperar "Z3 gate2_b passa a chamar uma 3ª função NOVA → PREDICADO_NAO_DECLARADO (fail-closed)" 1 PREDICADO_NAO_DECLARADO -
+P -c "$G2B_DDL"
+esperar "Z4 parou de chamá-la → limpo  ← dente" 0 - PREDICADO_NAO_DECLARADO
+
+# Controle INÓCUO do eixo: função que existe e NINGUÉM chama não pode entrar no fecho — senão o
+# eixo viraria "declare as 577 funções do banco", que é allowlist morta em uma semana.
+P -c "CREATE FUNCTION public.zz_gate2_d(_uid uuid) RETURNS boolean LANGUAGE sql STABLE AS \$f\$ SELECT false \$f\$;"
+esperar "Z5 controle inócuo: função nova que NINGUÉM chama fica FORA do fecho → segue limpo" 0 - PREDICADO_NAO_DECLARADO
+
+# A armadilha textual do database.md §4 travada como cenário: o nome aparece numa STRING e numa
+# COLUNA homônima, sem chamada. Medido em prod, é exatamente assim que o tokenizer de
+# identificador NU inventa 4 arestas em 15 (`auth.jwt` da string, `auth.role` da coluna). O corpo
+# MUDOU, então PREDICADO_ALTERADO é correto — o que não pode aparecer é o predicado inventado.
+P -c "$G2B_SO_MENCIONA"
+esperar "Z6 nome MENCIONADO (string + coluna homônima) e não CHAMADO → acusa o corpo, sem INVENTAR predicado" 1 PREDICADO_ALTERADO PREDICADO_NAO_DECLARADO
+P -c "$G2B_DDL"
+esperar "Z7 corpo original de volta → limpo  ← dente" 0 - PREDICADO_ALTERADO
 
 P -c "DROP POLICY zz_ins_staff ON public.zz_pedidos;
       CREATE POLICY zz_ins_staff ON public.zz_pedidos FOR ALL TO authenticated USING (true) WITH CHECK ((SELECT public.zz_gate((SELECT auth.uid()))));"
@@ -394,9 +471,21 @@ conta_como "B4 religada, o não-staff volta a ser barrado" "$UID_FORA" 0
 P -c "$GATE_SABOTADO"
 conta_como "B5 gate reescrito p/ 'true': RLS ligada, policy intacta, e o barrado LÊ TUDO" "$UID_FORA" 2
 
+# O 2º nível provado por FORA — um passo além do B5: lá o corpo alterado era o da função que a
+# policy CHAMA; aqui nem esse muda. A policy, o predicado direto (zz_gate2_a) e a RLS ficam
+# idênticos, e o barrado lê tudo mesmo assim.
+conta_como "B6 cadeia de 2 níveis íntegra: não-staff é BARRADO" "$UID_FORA" 0 zz_carteira
+P -c "$G2B_SABOTADO"
+conta_como "B7 só o gate de 2º NÍVEL reescrito: policy E chamador intactos, e o barrado LÊ TUDO" "$UID_FORA" 2 zz_carteira
+P -c "$G2B_DDL"
+conta_como "B8 gate de 2º nível restaurado: barrado volta a ser barrado  ← dente" "$UID_FORA" 0 zz_carteira
+
 echo "──────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail  (locale LC_ALL=$LC_ALL)"
 [ "$FAIL" = 0 ] || { echo "❌ VERMELHO"; exit 1; }
 echo "✅ audit-rls com DENTE: acusa DISABLE (curada e não-curada), policy nova/sumida/alterada,"
 echo "   corpo e search_path do predicado, FOR ALL assimétrico e tabela ausente; reage à correção"
 echo "   em cada eixo; ignora mudança inócua; e a PARTE B prova o EFEITO sob SET ROLE."
+echo "   FECHO TRANSITIVO: acusa o corpo de um predicado de 2º NÍVEL com policy e chamador"
+echo "   intactos (Z1/B7), DESCOBRE a função nova de 3º nível (Z3), mantém fora do fecho quem"
+echo "   ninguém chama (Z5) e não inventa predicado a partir de string/coluna homônima (Z6)."

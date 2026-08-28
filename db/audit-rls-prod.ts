@@ -101,6 +101,41 @@ function carregarContrato(): Contrato {
  * As tabelas entram QUALIFICADAS, direto das chaves do contrato, e são resolvidas por
  * `to_regclass` — nada de assumir `public`. O `LEFT JOIN` sobre `unnest` garante uma linha por
  * tabela DECLARADA mesmo quando ela não existe: ausência tem de virar dado, não silêncio.
+ *
+ * ═══ A 4ª medição é um FECHO TRANSITIVO, e a escolha da fonte foi MEDIDA ═══
+ *
+ * `pg_depend` registra policy→função e NÃO registra função→função (o catálogo só rastreia o
+ * corpo de uma função SQL quando ela é criada com o corpo-padrão `BEGIN ATOMIC`; corpo CITADO
+ * — `AS $$ … $$`, que é como toda migration deste banco escreve — é string opaca para ele). A
+ * descoberta do 2º nível em diante precisa de outra fonte, e as três candidatas foram medidas
+ * em prod (2026-08-28, via psql-ro) antes de escolher:
+ *
+ *   · **`pg_proc.prosqlbody`** (árvore de parse, PG14+) — seria a fonte honesta, e está VAZIA
+ *     neste banco: **1 função em 577** nos schemas nossos (`public`/`private`/`auth`/
+ *     `extensions`) tem `prosqlbody` não-nulo, e nenhuma das 10 funções-predicado tem. É
+ *     consequência do corpo citado acima, mais o fato de `public.fin_user_can_access` ser
+ *     plpgsql, a que `prosqlbody` nunca se aplica. Opção descartada por MEDIÇÃO, não por gosto.
+ *   · **`prosrc` + token NU** (qualquer identificador que case um `proname`) — recall máximo e
+ *     **4 falso-positivos em 15 arestas**, todos da armadilha do database.md §4: `auth.jwt` sai
+ *     da STRING `'request.jwt.claim.sub'` e `auth.role` sai da COLUNA `role` de
+ *     `WHERE … AND role = _role`. Ruído de 27% numa allowlist fail-closed é ruído que treina a
+ *     ignorar a allowlist.
+ *   · **`prosrc` + token `nome(` resolvido pelo CATÁLOGO** ← escolhida. **11 arestas, 0
+ *     falso-positivo** medido. O ponto que a separa de "regex sobre corpo de função", que é a
+ *     armadilha conhecida daqui: a regex **não decide nada** — ela só PROPÕE candidatos, e quem
+ *     resolve é `pg_proc`. E o casamento é por `proname` NU, sem schema: pega a chamada
+ *     qualificada e a não-qualificada, todas as sobrecargas, e a função que SOMBREIA uma
+ *     builtin (`public.now()`) — over-inclusivo por construção, que é a direção certa quando
+ *     falso-negativo é o modo de falha caro e falso-positivo custa uma mensagem de erro.
+ *
+ * Os buracos de recall que sobram, medidos e não deduzidos: SQL dinâmico (`EXECUTE`) em
+ * plpgsql, que nenhum método estático alcança — **0 funções** que gateiam policy o usam; a
+ * sintaxe de seleção de campo (`SELECT t.f FROM t`, equivalente a `f(t)`), que não aparece em
+ * corpo nenhum daqui; e nome de função fora de `[A-Za-z_][A-Za-z0-9_]*` — **0 em 635**. Os
+ * schemas de sistema ficam fora de `alvo` porque não são graváveis no Supabase (as duas únicas
+ * builtins alcançadas hoje, `current_setting` e `now`, são `lang=internal`: não têm corpo SQL
+ * que alguém possa reescrever no SQL Editor) — e o sombreamento delas, que É gravável, entra
+ * pelo casamento por nome nu.
  */
 function sqlLit(x: string): string {
   return `'${x.replace(/'/g, "''")}'`;
@@ -139,6 +174,12 @@ SELECT 'JSON:grupos|'||coalesce(jsonb_agg(x ORDER BY x.grupo)::text,'[]') FROM (
 `;
 }
 
+/** Teto de profundidade da recursão. Não é performance: é a garantia de terminação num grafo com
+ *  ciclo (`a` chama `b` chama `a`). Saturar o teto é medição possivelmente TRUNCADA — e truncar
+ *  em silêncio é exatamente o falso-negativo que este eixo existe para fechar —, então `medir()`
+ *  transforma saturação em exit 2. Medido em prod: o grafo real tem profundidade 2. */
+const TETO_NIVEL = 8;
+
 function montarQuery(chaves: string[], grupos: readonly LacunaGrupo[]): string {
   const lista = chaves.map(sqlLit).join(',');
   const tabs = `(SELECT ARRAY[${lista}]::text[])`;
@@ -167,15 +208,39 @@ SELECT 'JSON:policies|'||coalesce(jsonb_agg(x)::text,'[]') FROM (
     FROM unnest(${tabs}) t JOIN pg_policy p ON p.polrelid = to_regclass(t)
    ORDER BY t, p.polname) x;
 
-SELECT 'JSON:predicados|'||coalesce(jsonb_agg(x)::text,'[]') FROM (
-  SELECT DISTINCT n.nspname||'.'||f.proname AS funcao, f.prosecdef AS secdef,
-         coalesce(array_to_string(f.proconfig,','),'') AS cfg,
-         md5(regexp_replace(btrim(f.prosrc), '\\s+', ' ', 'g')) AS "srcMd5"
+WITH RECURSIVE alvo AS (
+  SELECT p.oid, p.proname
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+     AND p.proname ~ '^[A-Za-z_][A-Za-z0-9_]*$'
+), fecho AS (
+  SELECT f.oid, 1 AS nivel
     FROM unnest(${tabs}) t
     JOIN pg_policy p ON p.polrelid = to_regclass(t)
     JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=p.oid
                     AND d.refclassid='pg_proc'::regclass
     JOIN pg_proc f ON f.oid = d.refobjid
+  UNION
+  SELECT a.oid, fc.nivel + 1
+    FROM fecho fc
+    JOIN pg_proc src ON src.oid = fc.oid
+    JOIN alvo a ON a.oid <> src.oid
+               AND src.prosrc ~ ('\\m'||a.proname||'\\M[[:space:]]*\\(')
+   WHERE fc.nivel < ${TETO_NIVEL}
+), nos AS (SELECT oid, min(nivel) AS nivel FROM fecho GROUP BY oid)
+SELECT 'JSON:predicados|'||coalesce(jsonb_agg(x)::text,'[]') FROM (
+  SELECT n.nspname||'.'||f.proname AS funcao, f.prosecdef AS secdef,
+         coalesce(array_to_string(f.proconfig,','),'') AS cfg,
+         md5(regexp_replace(btrim(f.prosrc), '\\s+', ' ', 'g')) AS "srcMd5",
+         nos.nivel AS nivel,
+         coalesce((SELECT string_agg(nc.nspname||'.'||c.proname, ', '
+                                     ORDER BY nc.nspname||'.'||c.proname)
+                     FROM nos n2 JOIN pg_proc c ON c.oid = n2.oid
+                     JOIN pg_namespace nc ON nc.oid = c.pronamespace
+                    WHERE c.oid <> f.oid
+                      AND f.proname ~ '^[A-Za-z_][A-Za-z0-9_]*$'
+                      AND c.prosrc ~ ('\\m'||f.proname||'\\M[[:space:]]*\\(')), '') AS via
+    FROM nos JOIN pg_proc f ON f.oid = nos.oid
     JOIN pg_namespace n ON n.oid = f.pronamespace
    ORDER BY 1) x;
 ${sqlGrupos(grupos)}`;
@@ -235,6 +300,19 @@ function medir(chaves: string[], grupos: readonly LacunaGrupo[]): MedicaoRls {
         `que não casa tabela nenhuma — vir menos significa que a query ou o parser quebrou.`,
     );
   }
+  // Saturação do teto = fecho possivelmente INCOMPLETO. Uma função não descoberta não é
+  // congelada, e não-congelada é o buraco silencioso que este eixo fecha — então truncar tem de
+  // gritar, nunca sair 0 com uma lista curta. Aumentar `TETO_NIVEL` é a correção; o grafo medido
+  // em prod tem profundidade 2, então saturar 8 é sinal de ciclo ou de grafo que mudou de porte.
+  const saturados = predicados.filter((f) => f.nivel >= TETO_NIVEL).map((f) => f.funcao);
+  if (saturados.length > 0) {
+    erroFatal(
+      `fecho de predicados SATUROU o teto de ${TETO_NIVEL} níveis em ${saturados.length} ` +
+        `função(ões) (${saturados.join(', ')}). A lista pode estar TRUNCADA — função não ` +
+        `descoberta é função não congelada. Suba TETO_NIVEL e re-meça; se o teto sobe sem ` +
+        `estabilizar, o grafo tem ciclo e ele é o achado.`,
+    );
+  }
   return { universal, tabelas, policies, predicados, grupos: gruposMed };
 }
 
@@ -270,6 +348,11 @@ function main(): void {
   }
   // O denominador vai na linha do veredito de propósito: "✅" sem denominador não distingue
   // "conferi 19 policies" de "conferi zero" (docs/historico/fase-sem-sinal.md).
+  // A profundidade entra no veredito porque ela é o que separa "conferi o 1º nível" de "conferi
+  // o FECHO": um dia em que a medição voltasse rasa (profundidade 1 num grafo que tem 2) sairia
+  // verde e diria menos do que hoje — e o operador precisa ver isso na linha, não no código.
+  const prof = med.predicados.reduce((mx, f) => Math.max(mx, f.nivel), 0);
+  const n2 = med.predicados.filter((f) => f.nivel > 1).length;
   // O eixo 4 entra no denominador com a UNIÃO distinta (os grupos se sobrepõem — `cap_carteira_ler`
   // e `carteira_visivel_para` compartilham tabelas medidas), e com a subtração à vista: sem o
   // "N curada(s)" o leitor não distingue "78 tabelas fora do contrato" de "78 conferidas e
@@ -279,7 +362,8 @@ function main(): void {
   console.log(
     `✅ audit-rls — ${med.universal.totalTabelas} tabela(s) em public com RLS ligada (0 desligada); ` +
       `${chaves.length} tabela(s) curada(s), ${med.policies.length} policy(ies) e ` +
-      `${med.predicados.length} funcao(oes)-predicado batem com o contrato; ` +
+      `${med.predicados.length} funcao(oes)-predicado batem com o contrato ` +
+      `(fecho transitivo, profundidade ${prof}; ${n2} alcancada(s) so por outra funcao); ` +
       `${grupos.length} grupo(s) de lacuna conferido(s) — ${uniao.size} tabela(s) distinta(s) no ` +
       `grafo, ${curadasNaUniao} curada(s), ${uniao.size - curadasNaUniao} lacuna(s).`,
   );
