@@ -47,40 +47,13 @@
  *     derivado acrescenta pouco alarme e muito ruído. Tabela vazia por (i)/(ii) não entra — não há
  *     número para vazar hoje —, e o gatilho de reentrada é ter linha.
  *
- * ═══ LACUNAS DECLARADAS — o que foi MEDIDO e ficou de fora, com a razão ═══
+ * ═══ LACUNAS DECLARADAS ═══
  *
- * Contrato falso é pior que lacuna; lacuna anônima é quase tão ruim. Estas foram medidas nesta
- * rodada (psql-ro, 2026-08-27) e recusadas — não são "candidatas a entrar por garantia":
- *
- *   · **as 22 tabelas de `cap_carteira_ler` e as 8 de `carteira_visivel_para`** (score, recomendação,
- *     tarefa, rota, radar). São INTELIGÊNCIA COMERCIAL, não dinheiro nem custo. E a alavanca já foi
- *     tomada: a RAIZ de `cap_carteira_ler` é `public.commercial_roles`, que ENTROU — curar a raiz
- *     cobre as 22 de uma vez, curar as 22 folhas não cobriria a raiz.
- *   · **`carteira_assignments` / `carteira_coverage`** — são raiz de verdade (`carteira_visivel_para`
- *     lê as duas), mas raiz de inteligência comercial, não de dinheiro/custo. Gatilho de reentrada:
- *     no dia em que comissão ou preço passarem a depender da carteira, elas viram membro (i)/(ii).
- *   · **`customer_contacts`** — é dado PESSOAL (LGPD), não dinheiro/custo/raiz. O broad-staff dela é
- *     decisão MEDIDA de 2026-07-20 (database.md §4, com gatilho de reavaliação próprio); o critério
- *     deste contrato não a alcança, e forçá-la aqui seria usar a sentinela errada para o problema.
- *   · **36 tabelas `fin_*` restantes** (das 41 medidas, 5 curadas) — `fin_dre_snapshots`,
- *     `fin_orcamento`, `fin_forecast`, `fin_conciliacao`, `fin_fechamentos`, `fin_kpi_tributario`, `fin_eliminacoes_*`, os `*_log`,
- *     os `fin_sync_*`) — agregados, logs e controle DERIVADOS do que entrou. As três fontes
- *     (`fin_contas_receber`, `fin_contas_pagar`, `fin_movimentacoes`), a conta bancária
- *     (`fin_contas_correntes`) e as DUAS raízes (`user_roles`, `fin_permissoes`) estão curadas; o
- *     gate comum (`fin_user_can_access`) tem o md5 congelado. Cobrir as 36 seria ~+75 policies de
- *     um mesmo par de textos.
- *   · **`margin_audit_log`** (11.869 linhas de `margin_real`/`margin_gap`) — é log derivado; a raiz
- *     que o gateia (`commercial_roles`, lida DIRETO no `qual` dele) e as fontes de custo entraram.
- *   · **`orders` (0 linhas), `cliente_grupos` (0), `cliente_grupo_membros` (0),
- *     `cliente_tier_preco` (0)** — vazias em prod. `orders` é legado: o pedido vivo é `sales_orders`,
- *     já curado. Gatilho de reentrada, para as três últimas: a primeira linha.
- *   · **`venda_excecao_credito`, `regua_preco_log`, `recommendation_log`, `farmer_algorithm_config`,
- *     as 14 de `cap_compras_ler`** — aprovação, log e config. Os gates delas (`cap_credito_escrever`,
- *     `cap_compras_ler`) são, medido, `has_role(master)` puro: a raiz é `user_roles`, já curada.
- *
- * E as 308 tabelas restantes com policy (328 medidas com ≥1 policy, 20 curadas) seguem cobertas
- * pelo eixo universal (ninguém desliga a RLS delas em silêncio), com o CONTEÚDO não reconciliado
- * — lacuna declarada, não cobertura implícita.
+ * Contrato falso é pior que lacuna; lacuna anônima é quase tão ruim. O que foi medido e RECUSADO
+ * não vive nesta prosa — vive em `LACUNAS_DECLARADAS`, logo abaixo do contrato, como DADO com uma
+ * razão por tabela. A diferença não é estética: enquanto era prosa, uma rodada seguinte curou três
+ * das tabelas que este cabeçalho declarava como lacuna e o texto continuou afirmando o contrário,
+ * sem nada ficar vermelho (§7.1 do histórico). Agora um teste cruza as duas listas.
  *
  * ═══ A REPRESENTAÇÃO, E O QUE ELA NÃO PEGA ═══
  *
@@ -867,6 +840,73 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
   },
 
   // ── cadastro-base + aprovação ──────────────────────────────────────────────────────────────
+};
+
+/**
+ * O que foi MEDIDO e ficou de FORA do eixo curado, com a razão — uma entrada por tabela.
+ *
+ * Por que isto é DADO e não prosa. Nasceu como parágrafo no cabeçalho, e apodreceu em UM dia: a
+ * 3ª rodada (2026-08-28) curou `venda_excecao_credito`, `cliente_tier_preco` e
+ * `pedido_compra_item`, que o parágrafo declarava como lacuna — e o texto seguiu afirmando o
+ * contrário, verde em todos os gates. Nenhum audit pega isso: eles reconciliam o CONTRATO contra
+ * prod, não a prosa contra o contrato. Como lista, o cruzamento é um teste de três linhas
+ * (`scripts/authz-rls.test.ts`, §3).
+ *
+ * ⚠️ E a razão que a 3ª rodada derrubou merece ficar registrada, porque o erro nela é instrutivo:
+ * eu recusei `venda_excecao_credito` e `cliente_tier_preco` argumentando que "o gate delas é
+ * `has_role(master)` puro, e a raiz `user_roles` já está curada". O argumento vale para o eixo da
+ * RAIZ e é CEGO ao eixo 3: congelar `user_roles` não congela o CORPO de `cap_credito_escrever` —
+ * reescrevê-lo para `SELECT true` não move o md5 de policy nenhuma, que é exatamente o ponto cego
+ * que o eixo 3 existe para fechar. Curar a tabela ARRASTA o predicado para o congelamento. Lição
+ * que sobra: **"a raiz já está coberta" não é razão para recusar, porque raiz e predicado são
+ * eixos diferentes** — a pergunta certa é se o gate da tabela já é congelado por ALGUÉM.
+ *
+ * Grupos (não cabem como chave de tabela e seguem como prosa, deliberadamente): as **22** tabelas
+ * de `private.cap_carteira_ler` e as **8** de `private.carteira_visivel_para` — inteligência
+ * comercial, e a RAIZ delas (`public.commercial_roles`) está curada; as **36** `fin_*` restantes
+ * (de 41; 5 curadas) — agregados, logs e controle derivados, com as fontes e as duas raízes
+ * curadas e o gate comum (`fin_user_can_access`) congelado; e as outras **13** de
+ * `private.cap_compras_ler` (de 14 — `pedido_compra_item` entrou na 3ª rodada e já arrasta o
+ * predicado). Contagens medidas em prod 2026-08-28.
+ */
+export const LACUNAS_DECLARADAS: Record<string, string> = {
+  'public.carteira_assignments':
+    'É raiz de verdade — `private.carteira_visivel_para` a lê —, mas raiz de INTELIGÊNCIA ' +
+    'COMERCIAL, não de dinheiro/custo. O predicado dela não fica órfão: já é congelado por ser ' +
+    'chamado pelas policies das tabelas de carteira. Gatilho de reentrada: no dia em que comissão ' +
+    'ou preço passarem a depender da carteira, ela vira membro (i)/(ii).',
+  'public.carteira_coverage':
+    'O SEGUNDO caminho de `carteira_visivel_para` (a cobertura temporária de carteira alheia). ' +
+    'Mesma razão de `carteira_assignments`, e o mesmo gatilho. Nota medida: o INSERT dela permite ' +
+    '`covered_user_id = auth.uid()`, ou seja, delegar a PRÓPRIA carteira — não tomar a alheia.',
+  'public.customer_contacts':
+    'Dado PESSOAL (LGPD), não dinheiro/custo/raiz — o critério deste contrato não a alcança. O ' +
+    'broad-staff dela é decisão MEDIDA de 2026-07-20 (database.md §4) com gatilho de reavaliação ' +
+    'próprio; forçá-la aqui seria usar a sentinela errada para o problema, e o verde passaria a ' +
+    'afirmar algo que ninguém mediu.',
+  'public.margin_audit_log':
+    'Log DERIVADO: 11.869 linhas de `margin_real`/`margin_gap`. A raiz que o gateia ' +
+    '(`commercial_roles`, lida DIRETO no `qual` dele) e as fontes de custo (`product_costs`, ' +
+    '`cmc_*`, `inventory_position`) estão curadas — o número aqui é consequência delas.',
+  'public.regua_preco_log':
+    'Log de aplicação da régua de preço. Derivado de `markup_policy` e `product_costs`, ambas ' +
+    'curadas; o gate (`cap_custo_ler`) já é predicado congelado. Sem número na fonte.',
+  'public.recommendation_log':
+    'Log de recomendação emitida. Derivado, e o gate (`cap_custo_ler`) já é predicado congelado.',
+  'public.farmer_algorithm_config':
+    'CONFIG do motor de recomendação, não número de dinheiro/custo. O gate (`cap_custo_ler`) já é ' +
+    'predicado congelado, então a tabela não arrasta nada de novo para o eixo 3.',
+  'public.orders':
+    'LEGADO: 0 linhas em prod (medido). Tem `subtotal`/`total`, mas o pedido vivo é ' +
+    '`sales_orders`, já curado — curar uma tabela vazia é congelar a forma de algo que ninguém ' +
+    'usa. Gatilho de reentrada: a primeira linha.',
+  'public.cliente_grupos':
+    'Agrupamento de cadastros do mesmo cliente (o caso Colacor SC + Oben do database.md §5), 0 ' +
+    'linhas em prod. Metadado de consolidação, não dinheiro; o gate (`fin_user_can_access`) já é ' +
+    'predicado congelado. Gatilho de reentrada: a primeira linha.',
+  'public.cliente_grupo_membros':
+    'Os membros do agrupamento acima, 0 linhas em prod. Mesma razão e mesmo gatilho — e o mesmo ' +
+    'gate já congelado.',
 };
 
 export interface PredicadoEsperado {

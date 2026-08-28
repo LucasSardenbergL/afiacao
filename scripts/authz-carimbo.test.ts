@@ -4,7 +4,12 @@ import { join } from 'node:path';
 
 import { AUTHZ_MANIFEST } from './authz-manifest';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
-import { AUTHZ_RLS_ESPERADO, AUTHZ_RLS_PREDICADOS, PREDICADOS_PLATAFORMA } from './authz-rls-esperado';
+import {
+  AUTHZ_RLS_ESPERADO,
+  AUTHZ_RLS_PREDICADOS,
+  LACUNAS_DECLARADAS,
+  PREDICADOS_PLATAFORMA,
+} from './authz-rls-esperado';
 
 import {
   AVISO_DIAS,
@@ -467,19 +472,21 @@ describe('chave `rls` — a quarta guarda enumerada', () => {
     expect(AUDITS.rls.contratoEmArquivo).toBeUndefined();
   });
 
-  it('o contrato que o carimbo USA carrega os TRÊS eixos, por identidade', () => {
+  it('o contrato que o carimbo USA carrega os QUATRO eixos, por identidade', () => {
     // Exerce `dadoDoContrato`, não uma reconstrução do objeto: a primeira versão deste teste
     // montava `{tabelas, predicados, plataforma}` aqui e canonicalizava — remover um eixo da
     // função real seguia VERDE (pego na falsificação). Identidade de referência é o que faz
-    // "esqueci de incluir o eixo" virar vermelho.
+    // "esqueci de incluir o eixo" virar vermelho. O 4º (`lacunas`) entrou em 2026-08-28: é o que
+    // o contrato declara NÃO cobrir, e mudá-lo afrouxa o que o verde afirma.
     const d = dadoDoContrato('rls') as Record<string, unknown>;
     expect(d.tabelas).toBe(AUTHZ_RLS_ESPERADO);
     expect(d.predicados).toBe(AUTHZ_RLS_PREDICADOS);
     expect(d.plataforma).toBe(PREDICADOS_PLATAFORMA);
-    expect(Object.keys(d).sort()).toEqual(['plataforma', 'predicados', 'tabelas']);
+    expect(d.lacunas).toBe(LACUNAS_DECLARADAS);
+    expect(Object.keys(d).sort()).toEqual(['lacunas', 'plataforma', 'predicados', 'tabelas']);
   });
 
-  it('o canônico do contrato REAL representa o Set — o eixo mais permissivo dos três', () => {
+  it('o canônico do contrato REAL representa o Set — o eixo que se serializaria como {}', () => {
     // Mover uma função para dentro de PREDICADOS_PLATAFORMA dispensa o congelamento do corpo dela;
     // é o eixo cuja mudança AFROUXA. `JSON.stringify(new Set(['a']))` é `'{}'` — se o canônico não
     // o representasse, esse afrouxamento não moveria o fingerprint. Cegueira no pior lugar.

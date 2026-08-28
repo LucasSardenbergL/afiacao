@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest';
 import { compararRlsProd, type MedicaoRls, type MedPolicy } from './lib/authz-rls';
 import {
   AUTHZ_RLS_ESPERADO,
+  LACUNAS_DECLARADAS,
   AUTHZ_RLS_PREDICADOS,
   PREDICADOS_PLATAFORMA,
   type TabelaRls,
@@ -292,6 +293,38 @@ describe('§2 contrato do repo — invariantes conferíveis sem prod', () => {
     for (const [fn, pred] of Object.entries(AUTHZ_RLS_PREDICADOS)) {
       expect(pred.motivo.trim().length, `predicado ${fn}: motivo ausente ou raso`).toBeGreaterThan(80);
     }
+  });
+
+  // ── LACUNAS DECLARADAS × contrato ───────────────────────────────────────────────────────────
+  // O defeito que estes três testes existem para pegar aconteceu de verdade, e em UM dia: a lista
+  // de lacunas era prosa no cabeçalho, uma rodada seguinte curou 3 das tabelas que ela declarava
+  // como não-cobertas, e o texto seguiu afirmando o contrário — verde em TODOS os gates, porque
+  // os audits reconciliam o CONTRATO contra prod e ninguém reconcilia a declaração contra o
+  // contrato. Declaração que mente sobre a própria cobertura é a mesma classe de "contrato falso",
+  // só que na direção que finge NÃO cobrir.
+  it('nenhuma tabela declarada como lacuna está curada — a declaração não pode mentir', () => {
+    for (const chave of Object.keys(LACUNAS_DECLARADAS)) {
+      expect(
+        chave in AUTHZ_RLS_ESPERADO,
+        `${chave}: declarada como LACUNA e curada ao mesmo tempo — ao curar uma tabela, remova-a ` +
+          `de LACUNAS_DECLARADAS no MESMO PR`,
+      ).toBe(false);
+    }
+  });
+
+  it('toda lacuna vem QUALIFICADA e com razão de substância', () => {
+    const qual = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
+    for (const [chave, motivo] of Object.entries(LACUNAS_DECLARADAS)) {
+      expect(chave, 'chave de lacuna sem schema').toMatch(qual);
+      expect(motivo.trim().length, `${chave}: lacuna sem razão escrita`).toBeGreaterThan(80);
+    }
+  });
+
+  // Sentinela do próprio gate: sem piso, esvaziar LACUNAS_DECLARADAS deixaria os dois testes
+  // acima passando por VACUIDADE (`for` sobre lista vazia não itera) — e o contrato voltaria a
+  // não declarar nada, que é o estado que esta rodada existiu para corrigir.
+  it('a lista de lacunas não pode ser esvaziada em silêncio', () => {
+    expect(Object.keys(LACUNAS_DECLARADAS).length).toBeGreaterThanOrEqual(8);
   });
 
   it('nomes de tabela e de policy não contêm ":" — o idFinding do carimbo parte por ele', () => {
