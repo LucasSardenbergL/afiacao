@@ -32,10 +32,54 @@
  *     é a única ou a principal barreira entre um `authenticated` qualquer e (i) dinheiro,
  *     (ii) custo/preço, ou (iii) a raiz da autorização.**
  *
- * O que fica FORA por decisão consciente: as ~328 tabelas restantes com policy. Elas seguem
- * cobertas pelo eixo universal (ninguém desliga a RLS delas em silêncio), mas o CONTEÚDO das
- * policies delas não é reconciliado. Isso é lacuna declarada, não cobertura implícita — e a regra
- * do repo é que contrato falso é pior que lacuna.
+ * Como o critério é aplicado (2ª rodada, 2026-08-27 — 7 → 17 tabelas, 19 → 38 policies). O
+ * critério acima tem três membros e eles NÃO se aplicam do mesmo jeito, porque a alavanca é
+ * diferente:
+ *
+ *   · membro (iii), RAIZ — entra sempre, e a tabela estar VAZIA é irrelevante. O poder de uma raiz
+ *     é estrutural: uma única linha concede. `fin_permissoes` tem 0 linhas hoje e entra mesmo
+ *     assim, porque o que o contrato guarda ali é a FORMA (nenhuma policy de escrita para
+ *     `authenticated`) — o alarme é o dia em que a policy de escrita aparecer.
+ *   · membros (i)/(ii), DINHEIRO e CUSTO/PREÇO — entra a tabela que guarda o NÚMERO na fonte, com
+ *     linha em prod. Fica de fora o agregado, o log e o config cuja fonte já está congelada: se
+ *     `product_costs`/`cmc_*`/`order_items` estão no contrato e o gate deles também, o log
+ *     derivado acrescenta pouco alarme e muito ruído. Tabela vazia por (i)/(ii) não entra — não há
+ *     número para vazar hoje —, e o gatilho de reentrada é ter linha.
+ *
+ * ═══ LACUNAS DECLARADAS — o que foi MEDIDO e ficou de fora, com a razão ═══
+ *
+ * Contrato falso é pior que lacuna; lacuna anônima é quase tão ruim. Estas foram medidas nesta
+ * rodada (psql-ro, 2026-08-27) e recusadas — não são "candidatas a entrar por garantia":
+ *
+ *   · **as 22 tabelas de `cap_carteira_ler` e as 8 de `carteira_visivel_para`** (score, recomendação,
+ *     tarefa, rota, radar). São INTELIGÊNCIA COMERCIAL, não dinheiro nem custo. E a alavanca já foi
+ *     tomada: a RAIZ de `cap_carteira_ler` é `public.commercial_roles`, que ENTROU — curar a raiz
+ *     cobre as 22 de uma vez, curar as 22 folhas não cobriria a raiz.
+ *   · **`carteira_assignments` / `carteira_coverage`** — são raiz de verdade (`carteira_visivel_para`
+ *     lê as duas), mas raiz de inteligência comercial, não de dinheiro/custo. Gatilho de reentrada:
+ *     no dia em que comissão ou preço passarem a depender da carteira, elas viram membro (i)/(ii).
+ *   · **`customer_contacts`** — é dado PESSOAL (LGPD), não dinheiro/custo/raiz. O broad-staff dela é
+ *     decisão MEDIDA de 2026-07-20 (database.md §4, com gatilho de reavaliação próprio); o critério
+ *     deste contrato não a alcança, e forçá-la aqui seria usar a sentinela errada para o problema.
+ *   · **36 tabelas `fin_*` restantes** (das 41 medidas; 5 curadas) (`fin_dre_snapshots`, `fin_orcamento`, `fin_forecast`,
+ *     `fin_conciliacao`, `fin_fechamentos`, `fin_kpi_tributario`, `fin_eliminacoes_*`, os `*_log`,
+ *     os `fin_sync_*`) — agregados, logs e controle DERIVADOS do que entrou. As três fontes
+ *     (`fin_contas_receber`, `fin_contas_pagar`, `fin_movimentacoes`), a conta bancária
+ *     (`fin_contas_correntes`) e as DUAS raízes (`user_roles`, `fin_permissoes`) estão curadas; o
+ *     gate comum (`fin_user_can_access`) tem o md5 congelado. Cobrir as 36 seria ~+75 policies de
+ *     um mesmo par de textos.
+ *   · **`margin_audit_log`** (11.869 linhas de `margin_real`/`margin_gap`) — é log derivado; a raiz
+ *     que o gateia (`commercial_roles`, lida DIRETO no `qual` dele) e as fontes de custo entraram.
+ *   · **`orders` (0 linhas), `cliente_grupos` (0), `cliente_grupo_membros` (0),
+ *     `cliente_tier_preco` (0)** — vazias em prod. `orders` é legado: o pedido vivo é `sales_orders`,
+ *     já curado. Gatilho de reentrada, para as três últimas: a primeira linha.
+ *   · **`venda_excecao_credito`, `regua_preco_log`, `recommendation_log`, `farmer_algorithm_config`,
+ *     as 14 de `cap_compras_ler`** — aprovação, log e config. Os gates delas (`cap_credito_escrever`,
+ *     `cap_compras_ler`) são, medido, `has_role(master)` puro: a raiz é `user_roles`, já curada.
+ *
+ * E as 311 tabelas restantes com policy (328 medidas com ≥1 policy, 17 curadas) seguem cobertas pelo eixo universal (ninguém desliga a
+ * RLS delas em silêncio), com o CONTEÚDO não reconciliado — lacuna declarada, não cobertura
+ * implícita.
  *
  * ═══ A REPRESENTAÇÃO, E O QUE ELA NÃO PEGA ═══
  *
@@ -94,7 +138,8 @@ export interface TabelaRls {
 }
 
 /**
- * Estado medido em prod (psql-ro, 2026-08-27; PG 17.6). 7 tabelas · 19 policies.
+ * Estado medido em prod (psql-ro, 2026-08-27; PG 17.6). 17 tabelas · 38 policies
+ * (1ª rodada: 7 · 19 — as 10 tabelas da 2ª rodada estão marcadas pelos separadores abaixo).
  *
  * ⚠️ Os md5 se REPETEM entre tabelas quando o predicado é literalmente o mesmo texto — p.ex.
  * `8ddd30b6…` é `has_role(auth.uid(), 'master'::app_role)` em `profiles` E em `user_roles`. O md5
@@ -330,7 +375,11 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         roles: ['PUBLIC'],
         qualMd5: '19300d155780585259ede73ac370586c',
         withCheckMd5: null,
-        motivo: '`auth.uid() = user_id`.',
+        motivo:
+          '`auth.uid() = user_id` — o autoatendimento: cada um lê o próprio cadastro. Alargá-lo '  +
+          'para `true` não concede papel nenhum, mas entrega os 5.668 profiles (94% com e-mail, '  +
+          '95% com telefone) a qualquer autenticado. Mesmo md5 do `Staff can view own commercial '  +
+          'role`, que é o mesmo texto.',
       },
       'Employees can view all profiles': {
         cmd: 'r',
@@ -358,10 +407,316 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
       },
     },
   },
+  // ── raiz da autorização (2ª rodada de curadoria, medida em prod 2026-08-27) ─────────────────
+  'public.commercial_roles': {
+    forceRls: false,
+    motivo:
+      'A SEGUNDA raiz, e a que o próprio motivo de `private.cap_custo_ler` já apontava sem cobrir: ' +
+      '“quem entra lá vê custo … o que protege é quem tem INSERT nela”. Medido por `pg_depend` + ' +
+      'leitura do `prosrc`: três funções SECDEF fazem `EXISTS (SELECT 1 FROM public.commercial_roles …)` ' +
+      '— `cap_custo_ler` (gate de 8 policies de custo), `cap_carteira_ler` (gate de 22 tabelas de ' +
+      'inteligência comercial) e `is_super_admin` — e a policy de leitura de `margin_audit_log` lê a ' +
+      'tabela DIRETO. Como as três são SECDEF, elas bypassam a RLS desta tabela na LEITURA; o que ' +
+      'sobra de barreira é exatamente a ESCRITA, que é policy — e é isto que o contrato congela. ' +
+      'Uma linha `(self, estrategico)` inserida aqui concede custo; `(self, super_admin)` concede ' +
+      'custo + carteira + o direito de conceder de novo. 3 linhas em prod (bate com as “3 pessoas” ' +
+      'da decisão de 2026-07-20, database.md §4).',
+    policies: {
+      'Admins can manage commercial roles': {
+        cmd: '*',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        withCheckMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        motivo:
+          '`has_role(auth.uid(), master)` nos dois lados — mesmo texto (e mesmo md5) da policy que ' +
+          'guarda `user_roles`. É a porta pela qual o master concede papel comercial.',
+      },
+      'Staff can view own commercial role': {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: '19300d155780585259ede73ac370586c',
+        withCheckMd5: null,
+        motivo:
+          '`auth.uid() = user_id` — leitura do PRÓPRIO papel. É o único caminho de leitura que não ' +
+          'passa por master/super_admin; alargá-lo para `true` não concede nada, mas expõe quem vê ' +
+          'custo na operação inteira.',
+      },
+      'Super admins can manage commercial roles': {
+        cmd: '*',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'de2d5ca1583218fc96ddcdbcbfd8344b',
+        withCheckMd5: 'de2d5ca1583218fc96ddcdbcbfd8344b',
+        motivo:
+          '`private.is_super_admin(auth.uid())` nos dois lados — AUTO-REFERENTE por desenho: quem é ' +
+          '`super_admin` nesta tabela pode escrever nesta tabela, inclusive criar outro `super_admin`. ' +
+          'É delegação deliberada, e é por isso que o CONJUNTO EXATO importa: uma quarta policy aqui ' +
+          'é um caminho novo para a raiz, e o audit passa a acusá-la como `POLICY_NOVA`.',
+      },
+    },
+  },
+  'public.fin_permissoes': {
+    forceRls: false,
+    motivo:
+      'A raiz do MÓDULO FINANCEIRO. Medido: `public.fin_user_can_access` (o `qual` inteiro de 18 ' +
+      'policies do bloco `fin_*`) faz `SELECT * FROM fin_permissoes WHERE user_id = auth.uid()` — e ' +
+      'mais QUATRO policies de escrita leem colunas desta tabela DIRETO, sem passar por função ' +
+      'nenhuma: `fin_conc_write` (`pode_conciliar`), `fin_elim_write` ' +
+      '(`pode_eliminar_intercompany`), `fin_fech_write` (`pode_fechar_mes`/`pode_aprovar_fechamento`) ' +
+      'e `fin_orc_write` (`pode_editar_orcamento`). Uma linha aqui não vaza número: concede o direito ' +
+      'de FECHAR O MÊS e de editar orçamento. ⚠️ Dependência por TABELA não aparece no `pg_depend` ' +
+      'de policy→função — logo o eixo 3 não a descobre, e é o congelamento do CONJUNTO de policies ' +
+      'que a cobre. Hoje 0 linhas e NENHUMA policy de escrita para `authenticated` (fail-closed por ' +
+      'ausência); a tabela vazia é o estado seguro CORRENTE, não uma garantia — o valor da entrada é ' +
+      'acusar o dia em que a policy de escrita aparecer.',
+    policies: {
+      fin_perm_service: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'ea849457c1a771a3ea5e4fe3c0210590',
+        withCheckMd5: null,
+        motivo:
+          '`auth.role() = service_role` — o ÚNICO caminho de escrita que existe hoje. `WITH CHECK` ' +
+          'nulo num `FOR ALL`: o PG reusa o `USING`, simétrico por construção.',
+      },
+      fin_perm_user: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'cd59a7031f2d715dc539b969290f5332',
+        withCheckMd5: null,
+        motivo:
+          '`user_id = auth.uid() OR fin_user_can_access()` — leio a MINHA permissão, ou todas se já ' +
+          'sou staff. Sem policy IUD para `authenticated`: escrita fechada por AUSÊNCIA de policy.',
+      },
+    },
+  },
+  // ── dinheiro (o bloco `fin_*` que a 1ª rodada deixou em `fin_contas_receber`) ───────────────
+  'public.fin_contas_pagar': {
+    forceRls: false,
+    motivo:
+      'O GÊMEO a pagar do `fin_contas_receber` já curado — curar um lado do caixa e não o outro é ' +
+      'assimetria sem razão. 16.032 linhas com `valor_documento`/`valor_pago`/`saldo` e, junto, o ' +
+      '`cnpj_cpf` e o `nome_fornecedor`: vazar aqui é vazar a estrutura de custo de fornecimento ' +
+      'inteira, não só um total. `authenticated` tem SIUD completo (medido) — a RLS é a única ' +
+      'barreira.',
+    policies: {
+      fin_cp_select: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'c164ff4089eb3d87bd1ca44523f8a4e9',
+        withCheckMd5: null,
+        motivo:
+          '`fin_user_can_access(company)` — mesmo texto (e mesmo md5) do `fin_cr_select` do a ' +
+          'receber. Toda a autorização mora no PREDICADO; ler o texto da policy não diz quem passa.',
+      },
+      fin_cp_service: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'ea849457c1a771a3ea5e4fe3c0210590',
+        withCheckMd5: null,
+        motivo: '`auth.role() = service_role` — a escrita é exclusiva das edges de sync do Omie.',
+      },
+    },
+  },
+  'public.fin_movimentacoes': {
+    forceRls: false,
+    motivo:
+      'O RAZÃO do caixa realizado: 55.486 linhas de `valor`/`natureza`/`conciliado` por conta ' +
+      'corrente. É a tabela de onde o DRE e o fluxo saem — o a receber e o a pagar dizem o que foi ' +
+      'PROMETIDO, esta diz o que ANDOU. Entra pelo eixo (i) no sentido mais literal, e com o mesmo ' +
+      'grant SIUD aberto a `authenticated`.',
+    policies: {
+      fin_mov_select: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'c164ff4089eb3d87bd1ca44523f8a4e9',
+        withCheckMd5: null,
+        motivo: '`fin_user_can_access(company)` — recorte por empresa, idêntico ao do a receber.',
+      },
+      fin_mov_service: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'ea849457c1a771a3ea5e4fe3c0210590',
+        withCheckMd5: null,
+        motivo: '`auth.role() = service_role` — escrita só pelo sync.',
+      },
+    },
+  },
+  'public.fin_contas_correntes': {
+    forceRls: false,
+    motivo:
+      'As CONTAS BANCÁRIAS em si: `banco`, `agencia`, `numero_conta` e `saldo_atual`, 61 linhas. ' +
+      'Poucas linhas e o pior conteúdo do bloco — é o dado que identifica onde o dinheiro está, não ' +
+      'um agregado sobre ele. Pequena o bastante para ninguém notar que ficou de fora, e é ' +
+      'exatamente por isso que entra.',
+    policies: {
+      fin_cc_select: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'c164ff4089eb3d87bd1ca44523f8a4e9',
+        withCheckMd5: null,
+        motivo: '`fin_user_can_access(company)` — mesmo recorte por empresa do resto do bloco.',
+      },
+      fin_cc_service: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'ea849457c1a771a3ea5e4fe3c0210590',
+        withCheckMd5: null,
+        motivo: '`auth.role() = service_role` — escrita só pelo sync.',
+      },
+    },
+  },
+  'public.order_items': {
+    forceRls: false,
+    motivo:
+      'O DETALHE de linha do `sales_orders` já curado — e o achado desta rodada: curar o pai e ' +
+      'deixar o filho fora era um buraco com a asa VIRADA. Medido: `authenticated` NÃO tem SELECT em ' +
+      '`sales_orders` (privilégio `0101` — só INSERT/DELETE), mas TEM SELECT em `order_items` ' +
+      '(`1000`), que guarda `unit_price` e `discount` em 70.489 linhas. O preço praticado e o ' +
+      'desconto por cliente estão do lado ALCANÇÁVEL da fronteira, e ali a RLS é a única barreira; ' +
+      'no pai, quem barra é o grant (e o `authz:grants:prod` o vigia).',
+    policies: {
+      order_items_select_customer: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: '201fd043b6445e361f172fb493c8b45b',
+        withCheckMd5: null,
+        motivo:
+          '`(SELECT auth.uid()) = customer_user_id` — o cliente vê a própria linha. A coluna ' +
+          '`customer_user_id` é desnormalizada no filho justamente para a policy não precisar de ' +
+          'join no pai; renomeá-la move este md5, que é o falso-positivo conservador do desenho.',
+      },
+      order_items_select_staff: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'f2dd33660218e1da7dce99434b09d5b9',
+        withCheckMd5: null,
+        motivo:
+          '`master OR employee`, com o wrap de InitPlan nas duas chamadas. SEM policy IUD: a escrita ' +
+          'é fechada por AUSÊNCIA de grant (`authenticated` só tem SELECT) — o único caso do ' +
+          'contrato em que a leitura é curada aqui e a escrita mora no outro audit.',
+      },
+    },
+  },
+  // ── custo / preço — o resto do que `private.cap_custo_ler` gateia ──────────────────────────
+  'public.cmc_snapshot': {
+    forceRls: false,
+    motivo:
+      'O CMC (custo médio de compra) por SKU e data: 31.342 linhas. `product_costs` (3.695 linhas) ' +
+      'já é curada e tem uma coluna `cmc` — esta é a série que a alimenta, com quase 9× o volume. ' +
+      'Reposição/compras é “cmc-first” (docs/agent/reposicao.md), então este é o número que decide ' +
+      'compra. Grant medido: só SELECT para `authenticated` — e é a leitura que vaza custo.',
+    policies: {
+      cmc_snapshot_select_staff: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'eaca1331bdedc42dcab7ab61e8ff3814',
+        withCheckMd5: null,
+        motivo:
+          '`private.cap_custo_ler(auth.uid())` com wrap de InitPlan — MESMO md5 do ' +
+          '`product_costs_select_custo`. Uma policy só, sem escrita: service_role escreve.',
+      },
+    },
+  },
+  'public.cmc_ledger': {
+    forceRls: false,
+    motivo:
+      'O razão que PRODUZ o CMC: `cmc_anterior` → `cmc_novo` com `saldo`, 1.148 linhas. É a série ' +
+      'temporal do custo — vazar aqui não vaza só o custo de hoje, vaza a TRAJETÓRIA (quando subiu, ' +
+      'quanto, em que SKU), que é o que permite inferir preço de fornecedor e negociação.',
+    policies: {
+      cmc_ledger_select_gestor: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'eaca1331bdedc42dcab7ab61e8ff3814',
+        withCheckMd5: null,
+        motivo: '`private.cap_custo_ler(auth.uid())` — mesmo predicado e mesmo md5 do snapshot.',
+      },
+    },
+  },
+  'public.inventory_position': {
+    forceRls: false,
+    motivo:
+      'Posição de estoque VALORADA: `saldo` + `cmc` + `preco_medio` por SKU, 3.146 linhas. É o ' +
+      'mesmo número de custo do `product_costs` exposto por outra porta — e a porta tem um `FOR ALL` ' +
+      '(`Staff can manage inventory`), que é a forma que o check estrutural do audit vigia. ' +
+      'database.md §4 a cita como o caso em que a FU4-F fase 2 teve de separar sinal de número por ' +
+      'view; a tabela em si seguiu com SIUD aberto a `authenticated` (medido), então aqui a RLS é ' +
+      'de fato a única barreira.',
+    policies: {
+      'Staff can manage inventory': {
+        cmd: '*',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'eaca1331bdedc42dcab7ab61e8ff3814',
+        withCheckMd5: 'eaca1331bdedc42dcab7ab61e8ff3814',
+        motivo:
+          '`cap_custo_ler` nos DOIS lados — simétrico hoje. É a policy `FOR ALL` mais exposta do ' +
+          'contrato (SIUD completo do lado do grant): apertar só o `WITH CHECK` aqui deixaria o ' +
+          'DELETE aberto, que é precisamente o `FOR_ALL_ASSIMETRICO` do §4.',
+      },
+      staff_inventory_position_select: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'eaca1331bdedc42dcab7ab61e8ff3814',
+        withCheckMd5: null,
+        motivo:
+          'Leitura redundante com o `FOR ALL` acima (mesmo predicado, e permissivas somam por OR). ' +
+          'Está no contrato como MEDIÇÃO do estado real, não como recomendação: remover uma das duas ' +
+          'é limpeza legítima, e o audit vai pedir que o contrato acompanhe.',
+      },
+    },
+  },
+  'public.markup_policy': {
+    forceRls: false,
+    motivo:
+      'A REGRA que transforma custo em preço: `piso_markup`/`meta_markup` por escopo/família/SKU/tier. ' +
+      '8 linhas — e as 8 linhas que definem a margem mínima da operação. Entra pelo eixo (ii) na ' +
+      'ponta do PREÇO (o `omie_products` já curado é o preço de tabela; este é a regra que o forma), ' +
+      'e é a menor tabela do contrato: pequena, invisível e decisiva.',
+    policies: {
+      markup_policy_select_carteira: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: 'eaca1331bdedc42dcab7ab61e8ff3814',
+        withCheckMd5: null,
+        motivo:
+          '`private.cap_custo_ler(auth.uid())` — o nome diz “carteira” mas o predicado medido é o de ' +
+          'CUSTO (estrategico/super_admin), mais estreito que o de carteira. Nome de policy é ' +
+          'comentário; o md5 é o que vale.',
+      },
+      markup_policy_write_master: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        withCheckMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        motivo:
+          '`has_role(master)` nos dois lados, simétrico. Assimetria aqui deixaria quem só lê custo ' +
+          'APAGANDO o piso de margem — e piso apagado não é erro visível, é venda no prejuízo.',
+      },
+    },
+  },
 };
 
 export interface PredicadoEsperado {
-  /** `prosecdef`. Todas as 4 são SECDEF: é o que faz o predicado enxergar `user_roles`/
+  /** `prosecdef`. Todas as 5 são SECDEF: é o que faz o predicado enxergar `user_roles`/
    *  `commercial_roles` sem depender da RLS delas. Perder o SECDEF quebra a autorização por
    *  BAIXO — a policy continua idêntica e passa a devolver `false` para todo mundo. */
   secdef: boolean;
@@ -381,8 +736,11 @@ export interface PredicadoEsperado {
  * `cap_custo_ler` chamada dentro de um `COALESCE`, e o §4 tem o registro de duas varreduras
  * textuais que produziram falso-positivo integral).
  *
- * Medido em prod 2026-08-27: as 19 policies referenciam 6 funções — estas 4 mais `auth.uid` e
- * `auth.role`, que ficam em `PREDICADOS_PLATAFORMA`.
+ * Medido em prod 2026-08-27: as 38 policies referenciam 7 funções — estas 5 mais `auth.uid` e
+ * `auth.role`, que ficam em `PREDICADOS_PLATAFORMA`. A 2ª rodada acrescentou UMA função só
+ * (`private.is_super_admin`): 10 tabelas novas e só um predicado novo é o sinal de que a
+ * autorização deste banco converge para poucos gates — o que torna o eixo 3 barato e o md5 do
+ * corpo deles caro.
  */
 export const AUTHZ_RLS_PREDICADOS: Record<string, PredicadoEsperado> = {
   'public.has_role': {
@@ -394,6 +752,17 @@ export const AUTHZ_RLS_PREDICADOS: Record<string, PredicadoEsperado> = {
       '91 caracteres dos quais depende a autorização inteira do produto: é o predicado de 8 das 19 ' +
       'policies curadas, e o gate de 40+ RPCs. SECDEF de propósito — é o que permite responder ' +
       'sobre `user_roles` sem que o caller precise de RLS que o deixe ler a tabela.',
+  },
+  'private.is_super_admin': {
+    secdef: true,
+    cfg: 'search_path=public',
+    srcMd5: 'c4fdac766af935cee0512665d3954724',
+    motivo:
+      '`EXISTS (SELECT 1 FROM public.commercial_roles WHERE user_id = _user_id AND ' +
+      "commercial_role = 'super_admin')`. Entrou na 2ª rodada junto de `public.commercial_roles`, " +
+      'que é a tabela que ela lê — e é o predicado da policy AUTO-REFERENTE `Super admins can ' +
+      'manage commercial roles`. Não chama nenhuma outra função (medido), então não estende o ' +
+      'problema do 2º nível do grafo descrito no cabeçalho de `scripts/lib/authz-rls.ts`.',
   },
   'private.cap_pedido_escrever': {
     secdef: true,

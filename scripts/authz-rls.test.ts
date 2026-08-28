@@ -275,6 +275,25 @@ describe('§2 contrato do repo — invariantes conferíveis sem prod', () => {
     }
   });
 
+  // A allowlist só não vira depósito enquanto CADA entrada carregar a razão de ter passado no
+  // critério do cabeçalho. "Motivo vazio" é a forma que o apodrecimento toma: a tabela entra numa
+  // rodada de curadoria, ninguém escreve por quê, e a rodada seguinte não tem como reavaliá-la.
+  // O piso é grosseiro de propósito — não mede qualidade de texto, mede que alguém escreveu algo.
+  it('toda entrada declara um motivo com substância — allowlist sem razão vira depósito', () => {
+    for (const [chave, e] of entradas) {
+      expect(e.motivo.trim().length, `${chave}: motivo de TABELA ausente ou raso`).toBeGreaterThan(80);
+      for (const [nome, pol] of Object.entries(e.policies)) {
+        expect(
+          pol.motivo.trim().length,
+          `${chave} » ${nome}: motivo de POLICY ausente ou raso`,
+        ).toBeGreaterThan(40);
+      }
+    }
+    for (const [fn, pred] of Object.entries(AUTHZ_RLS_PREDICADOS)) {
+      expect(pred.motivo.trim().length, `predicado ${fn}: motivo ausente ou raso`).toBeGreaterThan(80);
+    }
+  });
+
   it('nomes de tabela e de policy não contêm ":" — o idFinding do carimbo parte por ele', () => {
     for (const [chave, e] of entradas) {
       expect(chave).not.toContain(':');
