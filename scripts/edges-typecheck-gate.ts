@@ -4,7 +4,8 @@
  * ============================================================================================
  *
  * O BURACO QUE ELE TAPA. Nenhum gate do repo type-checava `supabase/functions/`:
- *   - `bun run typecheck` (tsc) → `tsconfig.app.json` cobre só `src/` + testes;
+ *   - `bun run typecheck` (tsc) → cobre `src/` + testes e, desde 2026-08-27, `scripts/` + `db/`
+ *     (ele roda os dois tsc) — mas `supabase/functions/` não entra em config nenhum dos dois;
  *   - `bun run test` (vitest) → `include` é `src/**` + `scripts/**`;
  *   - `bun lint` (eslint)    → não type-checa, e não roda em Deno;
  *   - `bun run test:edges`   → `deno test` só type-checa o grafo que os TESTES alcançam, e por

@@ -26,6 +26,17 @@
   //
   // ⚠️ Rode SEMPRE com `-p tsconfig.scripts.json` explícito. `tsc` cru lê o `tsconfig.json` da
   // raiz, que tem `"files": []` + `"references"` → no-op silencioso (armadilha no CLAUDE.md).
+  //
+  // 📌 ATUALIZAÇÃO 2026-08-27 — a lista acima descreve o estado de 2026-08-13 e UMA linha dela
+  // envelheceu: `bun run typecheck` agora roda os DOIS tsc (`app.json && scripts.json`), então ele
+  // NÃO é mais cego a estes diretórios. `typecheck:app` é o atalho de quem só mexeu em `src/`.
+  // Por quê: o buraco tinha um segundo dano além de "erro escapa pro CI" — o comando canônico
+  // devolvia VERDE FALSO, e agente que edita `scripts/`, roda `bun run typecheck` e vê exit 0
+  // reporta isso como evidência de checagem. Ausência de dado virando aprovação. A lição estava
+  // escrita em três lugares (aqui, no ci.yml e no CLAUDE.md) e reincidiu assim mesmo, porque
+  // nenhum é lido no MOMENTO da decisão; pela meta-regra do /matar-classe, contramedida textual
+  // reincide e gate estrutural para. Os DOIS configs seguem separados — o motivo logo acima
+  // (browser lib vs bun/node) continua valendo; quem roda os dois é só o script npm.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2023"],
