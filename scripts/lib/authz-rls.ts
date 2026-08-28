@@ -14,8 +14,10 @@
  *   2. CONTEÚDO (allowlist curada) — o conjunto exato de policies das tabelas money-path, com
  *      `polcmd`, `polpermissive`, `polroles` e o md5 de `qual`/`with_check`.
  *   3. PREDICADO (derivado do eixo 2) — o md5 do `prosrc` das funções que as policies CHAMAM,
- *      descobertas por `pg_depend`. Existe porque o eixo 2 é CEGO a ele: reescrever
- *      `cap_pedido_escrever` para `SELECT true` deixa o texto do `qual` idêntico.
+ *      e das que ESSAS chamam, recursivamente (FECHO TRANSITIVO). Existe porque o eixo 2 é CEGO
+ *      a ele: reescrever `cap_pedido_escrever` para `SELECT true` deixa o texto do `qual`
+ *      idêntico. O 1º nível vem de `pg_depend`; do 2º em diante, da varredura de `prosrc`
+ *      resolvida pelo catálogo (`db/audit-rls-prod.ts` documenta as três fontes medidas).
  *   4. GRUPO DE LACUNA (o NEGATIVO dos outros três) — não mede autorização nenhuma: mede se a
  *      DECLARAÇÃO de não-cobertura ainda descreve o que existe. Conta em prod as tabelas de cada
  *      grupo de `LACUNAS_POR_GRUPO` e desconta as curadas. Existe porque os eixos 1-3 reconciliam
@@ -32,12 +34,16 @@
  *     SECDEF, no `authz:audit:prod` para as funções do manifest).
  *   · **ACL por COLUNA.** RLS filtra LINHA. O `GRANT SELECT (omie_payload)` de `sales_orders` é
  *     invisível daqui — é o `authz:grants:prod` que o cobre, e mesmo ele só em nível de tabela.
- *   · **O 2º nível do grafo de predicados.** `pg_depend` registra policy→função, mas NÃO registra
- *     função→função: o md5 de `cap_custo_ler` não se move quando o corpo de `has_role` muda. Hoje
- *     o fecho é completo por COINCIDÊNCIA do grafo medido (`cap_custo_ler` e `cap_pedido_escrever`
- *     só chamam `has_role`, que está declarada como predicado direto de outras policies) — não por
- *     construção. Uma função-predicado que passe a chamar uma 3ª função nova sai do alcance sem
- *     alarme. Se isso acontecer, a correção é declarar a 3ª como predicado, não afrouxar aqui.
+ *   · **O 2º nível do grafo de predicados — FECHADO em 2026-08-28, e o que sobrou dele.** Era o
+ *     limite nº 3: `pg_depend` registra policy→função e não função→função, e o fecho era completo
+ *     por COINCIDÊNCIA do grafo medido, não por construção. Agora o eixo 3 mede o fecho
+ *     transitivo, e função alcançada em qualquer nível é `PREDICADO_NAO_DECLARADO` se não estiver
+ *     na allowlist. O que a mudança NÃO alcança, medido em prod e não deduzido: **SQL dinâmico**
+ *     (`EXECUTE` em plpgsql), que nenhum método estático pega — 0 funções que gateiam policy o
+ *     usam; a sintaxe de seleção de campo (`SELECT t.f FROM t` ≡ `f(t)`), ausente de todo corpo
+ *     daqui; e função de schema de SISTEMA, fora do alcance de quem edita este banco (as duas
+ *     alcançadas hoje são `lang=internal`, sem corpo SQL reescrevível) — o SOMBREAMENTO delas,
+ *     esse sim gravável, é pego pelo casamento por nome nu. Ver `db/audit-rls-prod.ts`.
  *   · **O que o md5 QUER dizer.** Ele acusa que mudou, nunca se a mudança é boa. É alarme de
  *     drift para leitura humana — e um `pg_get_expr` remonta a expressão a partir da árvore de
  *     parse, então renomear uma coluna move o md5 sem mexer em autorização nenhuma (falso-positivo
@@ -109,8 +115,21 @@ export interface MedicaoRls {
   /** Eixo 2, parte tabela. `existe:false` quando o contrato declara uma tabela que sumiu. */
   tabelas: { tabela: string; existe: boolean; rls: boolean; force: boolean }[];
   policies: MedPolicy[];
-  /** Eixo 3. Descoberto por `pg_depend` a partir das policies das tabelas do contrato. */
-  predicados: { funcao: string; secdef: boolean; cfg: string; srcMd5: string }[];
+  /** Eixo 3. FECHO TRANSITIVO a partir das policies das tabelas do contrato: o 1º nível vem de
+   *  `pg_depend` (policy→função), e do 2º em diante da varredura de `prosrc` resolvida pelo
+   *  catálogo — `pg_depend` não registra função→função para corpo citado. Detalhe da escolha (e
+   *  as três fontes medidas antes dela) no cabeçalho de `db/audit-rls-prod.ts`. */
+  predicados: {
+    funcao: string;
+    secdef: boolean;
+    cfg: string;
+    srcMd5: string;
+    /** 1 = chamada DIRETA por uma policy curada; ≥2 = alcançada só através de outra função. */
+    nivel: number;
+    /** Quem a chama, dentro do fecho — `''` no nível 1. É o que faz a mensagem dizer POR ONDE a
+     *  função entrou: sem isso, "declare esta função" não diz ao operador o que mudou. */
+    via: string;
+  }[];
   /** Eixo 4. Uma entrada por grupo DECLARADO, com os `relname` (sem schema — todos de `public`)
    *  que o grupo tem em prod. É a LISTA e não a contagem de propósito: a mensagem do achado
    *  precisa nomear quem entrou e quem saiu, senão "22 → 23" manda o leitor refazer a query. */
@@ -158,6 +177,22 @@ function cmdNome(c: string): string {
  *  distingue "é a forma correta" de "não consegui medir". */
 function md5Txt(v: string | null): string {
   return v ?? 'AUSENTE';
+}
+
+/**
+ * Como a função entrou no fecho, em prosa — a diferença que o operador precisa para saber ONDE
+ * investigar. Nível 1 é "uma policy curada a chama"; nível ≥2 é "uma função já vigiada passou a
+ * chamá-la", e aí o `via` é a pista, não o nome da função achada.
+ *
+ * `via` vazio num nível ≥2 é estado DISTINGUÍVEL, não um vazio disfarçado de nada: significa que
+ * o fecho a alcançou mas o chamador não foi identificado (nome fora do padrão textual, ou o
+ * chamador saiu do grafo entre as duas leituras). A mensagem diz isso em vez de omitir — a mesma
+ * razão do `AUSENTE` de `md5Txt`.
+ */
+function ondeEntrou(f: MedicaoRls['predicados'][number]): string {
+  if (f.nivel <= 1) return 'referenciada DIRETAMENTE por uma policy curada';
+  const via = f.via ? `via ${f.via}` : 'chamador NÃO identificado — investigue o fecho à mão';
+  return `alcançada no ${f.nivel}º nível do fecho, ${via}`;
 }
 
 /**
@@ -328,22 +363,27 @@ export function compararRlsProd(
   // Policies medidas em tabela FORA do contrato não são achado — a medição do eixo 2 já pergunta
   // só pelas tabelas curadas, e a checagem estrutural de FOR ALL segue o mesmo escopo.
 
-  // ── EIXO 3 — os predicados ─────────────────────────────────────────────────────────────────
+  // ── EIXO 3 — os predicados (FECHO TRANSITIVO) ──────────────────────────────────────────────
   const vistosPred = new Set<string>();
   for (const f of med.predicados) {
     vistosPred.add(f.funcao);
     if (plataforma.has(f.funcao)) continue; // enumerada, corpo não congelado — ver o contrato
     const esp = predicados[f.funcao];
     if (!esp) {
+      // Nível 1 e nível ≥2 saem sob o MESMO código de propósito: a correção é a mesma (declarar a
+      // entrada), e a regra do repo é dar código próprio quando as correções DIVERGEM — foi o que
+      // separou POLICY_NOVA de POLICY_ALTERADA. O que muda entre os dois é a INVESTIGAÇÃO, e isso
+      // é o que `via` carrega: no nível 1 mudou o predicado de uma policy; no nível ≥2 o corpo de
+      // uma função já declarada passou a chamar esta, e o `PREDICADO_ALTERADO` dela vem junto.
       out.push({
         level: 'error',
         codigo: 'PREDICADO_NAO_DECLARADO',
         objeto: f.funcao,
         msg:
-          `${f.funcao}: função referenciada por uma policy curada e NÃO declarada em ` +
-          `AUTHZ_RLS_PREDICADOS (secdef=${f.secdef}, cfg=${f.cfg || '(sem SET)'}, ` +
-          `md5=${f.srcMd5}). É onde a autorização real pode morar sem que o md5 da policy mude — ` +
-          `declare a entrada com o md5 medido, ou explique por que ela não precisa ser congelada.`,
+          `${f.funcao}: função ${ondeEntrou(f)} e NÃO declarada em AUTHZ_RLS_PREDICADOS ` +
+          `(secdef=${f.secdef}, cfg=${f.cfg || '(sem SET)'}, md5=${f.srcMd5}). É onde a ` +
+          `autorização real pode morar sem que o md5 da policy mude — declare a entrada com o ` +
+          `md5 medido, ou explique por que ela não precisa ser congelada.`,
       });
       continue;
     }
@@ -357,9 +397,9 @@ export function compararRlsProd(
         codigo: 'PREDICADO_ALTERADO',
         objeto: f.funcao,
         msg:
-          `${f.funcao}: ${difs.join(' · ')}. O texto da policy que a chama NÃO muda quando isto ` +
-          `muda — é o ponto cego que este eixo existe para fechar. Leia o corpo vivo ` +
-          `(pg_get_functiondef) ANTES de renovar o md5.`,
+          `${f.funcao} (${ondeEntrou(f)}): ${difs.join(' · ')}. O texto da policy que a chama ` +
+          `NÃO muda quando isto muda — é o ponto cego que este eixo existe para fechar. Leia o ` +
+          `corpo vivo (pg_get_functiondef) ANTES de renovar o md5.`,
       });
     }
   }
@@ -370,9 +410,11 @@ export function compararRlsProd(
       codigo: 'PREDICADO_SUMIU',
       objeto: nome,
       msg:
-        `${nome}: declarada em AUTHZ_RLS_PREDICADOS e NENHUMA policy curada a referencia mais. Ou ` +
-        `a policy que a usava mudou de predicado (veja os achados de POLICY_*), ou a entrada ` +
-        `envelheceu. Entrada que não vigia nada é cobertura só no papel.`,
+        `${nome}: declarada em AUTHZ_RLS_PREDICADOS e o fecho das policies curadas não a alcança ` +
+        `mais. Ou a policy que a usava mudou de predicado (veja os achados de POLICY_*), ou a ` +
+        `função que a CHAMAVA parou de chamá-la (veja PREDICADO_ALTERADO no chamador — sair do ` +
+        `grafo é mudança de autorização tanto quanto entrar), ou a entrada envelheceu. Entrada ` +
+        `que não vigia nada é cobertura só no papel.`,
     });
   }
 

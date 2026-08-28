@@ -98,10 +98,13 @@ não silêncio.
    impede nada disso.
 2. **ACL por coluna** — RLS filtra LINHA. O `GRANT SELECT (omie_payload)` de `sales_orders` é
    invisível daqui; quem cobre é o `authz:grants:prod`, e mesmo ele só em nível de tabela.
-3. **O 2º nível do grafo de predicados** — `pg_depend` registra policy→função, mas **não** registra
-   função→função. O md5 de `cap_custo_ler` não se move quando o corpo de `has_role` muda. Hoje o
-   fecho é completo por **coincidência do grafo medido** (`cap_custo_ler` e `cap_pedido_escrever` só
-   chamam `has_role`, que já é predicado direto de outras policies), não por construção.
+3. ~~**O 2º nível do grafo de predicados**~~ — **FECHADO em 2026-08-28 (§9).** Era: `pg_depend`
+   registra policy→função e **não** função→função, e o fecho era completo por **coincidência do
+   grafo medido**, não por construção. O eixo 3 passou a medir o **fecho transitivo** (1º nível por
+   `pg_depend`; do 2º em diante por varredura de `prosrc` resolvida pelo catálogo, escolhida entre
+   três fontes MEDIDAS), e função alcançada em qualquer nível é `PREDICADO_NAO_DECLARADO` se não
+   estiver na allowlist. O que sobrou fora — SQL dinâmico, seleção de campo, schema de sistema —
+   está medido e listado no §9, junto do achado da falsificação nº 4.
 4. **O md5 é textual, não semântico** — travado como cenário X do harness: reformatar o corpo do
    gate sem mudar a semântica **move o md5**, porque a normalização colapsa espaços mas não os
    remove (`EXISTS (\n SELECT` → `EXISTS ( SELECT` ≠ `EXISTS (SELECT`). É falso-positivo
@@ -521,3 +524,115 @@ esvaziada → a sentinela de vacuidade grita nos **dois** lugares (o piso estát
 > que sobra de cada declaração é uma só: **qual é a outra ponta?** Se ela está no arquivo, o gate é
 > um teste; se está no banco, o gate é o audit. Escolher errado produz um gate que existe e não
 > mede — que é pior que não ter, porque parece cobertura.
+## 9. O limite nº 3 fechado por CONSTRUÇÃO (2026-08-28) — o fecho transitivo dos predicados
+
+O §3 declarava, no item 3 dos limites: *"o fecho é completo por **coincidência do grafo medido**,
+não por construção"*. Uma capability que passasse a chamar uma auxiliar nova sairia do alcance sem
+alarme — e o verde do audit passaria a afirmar mais do que mediu. Esta rodada fechou isso.
+
+### A escolha da fonte foi MEDIDA, e a opção "honesta" morreu na medição
+
+`pg_depend` não registra função→função: o catálogo só rastreia o corpo de uma função SQL quando
+ela é criada com o corpo-padrão `BEGIN ATOMIC`. Corpo **citado** (`AS $$ … $$`) — que é como toda
+migration deste banco escreve — é string opaca para ele. Logo a descoberta do 2º nível precisa de
+outra fonte, e as três candidatas foram medidas antes de escolher:
+
+| fonte | disponível? | arestas | falso-positivo |
+| --- | --- | --- | --- |
+| `pg_depend` função→função | **não existe** para corpo citado | 0 | — |
+| `pg_proc.prosqlbody` (árvore de parse, PG14+) | **1 função em 577** nossas; **nenhuma** das 10 predicado | 0 | — |
+| `prosrc` + token NU (identificador solto) | sim | 15 | **4** |
+| `prosrc` + token `nome(` resolvido pelo CATÁLOGO | sim | **11** | **0** |
+
+`prosqlbody` seria a opção honesta — árvore de parse em vez de texto — e está **vazia neste
+banco**. Não é preferência: é `AS $$ … $$` em toda migration, mais `public.fin_user_can_access`
+ser plpgsql, a que `prosqlbody` nunca se aplica. **Opção descartada por medição.**
+
+O token NU tem recall máximo e **4 falso-positivos em 15 arestas**, todos da armadilha do
+`database.md` §4, e vale registrar a proveniência exata porque ela é didática:
+
+- `auth.uid → auth.jwt` e `auth.role → auth.jwt`: a palavra `jwt` sai da **string literal**
+  `'request.jwt.claim.sub'`. Nunca houve chamada.
+- `has_role → auth.role` e `fin_user_can_access → auth.role`: a palavra `role` sai da **coluna**
+  `role`, em `WHERE user_id = _user_id AND role = _role`.
+
+27% de ruído numa allowlist fail-closed é ruído que treina a ignorar a allowlist — e o ruído aqui
+não é aleatório, é sistemático nos nomes mais centrais da autorização.
+
+### Por que a opção escolhida NÃO é "regex sobre corpo de função"
+
+É a distinção que separa esta varredura das duas que produziram falso-positivo integral: **a
+regex não decide nada**. Ela só PROPÕE candidatos, e quem resolve é `pg_proc` — se o token não
+for o nome de uma função que existe, não vira aresta. E o casamento é por `proname` **nu**, sem
+schema: pega a chamada qualificada e a não-qualificada (a lição do `SET SCHEMA` em
+`database.md:159`, onde a regex media os não-qualificados e cegava justamente a classe que
+quebrava), todas as sobrecargas, e a função que **sombreia** uma builtin. Over-inclusivo por
+construção — que é a direção certa quando falso-negativo é o modo de falha caro e falso-positivo
+custa uma mensagem de erro.
+
+### O que continua fora, medido e não deduzido
+
+1. **SQL dinâmico** (`EXECUTE` em plpgsql) — nenhum método estático o alcança. **0 funções** que
+   gateiam policy em `public` o usam.
+2. **Sintaxe de seleção de campo** (`SELECT t.f FROM t` ≡ `f(t)`, válida no PG) — ausente de todo
+   corpo daqui.
+3. **Nome de função fora de `[A-Za-z_][A-Za-z0-9_]*`** — **0 em 635**.
+4. **Schema de sistema** — fora do alcance de quem edita este banco; as duas builtins alcançadas
+   hoje (`current_setting`, `now`) são `lang=internal`, sem corpo SQL reescrevível. O
+   **sombreamento** delas, esse sim gravável, é pego pelo casamento por nome nu.
+5. **Saturação do teto de níveis** vira **exit 2**, não lista curta: truncar em silêncio é
+   exatamente o falso-negativo que este eixo existe para fechar.
+
+### Prod não mudou — e é isso que o denominador agora DIZ
+
+O fecho contra as 20 tabelas curadas devolve as **mesmas 10 funções já declaradas**, em 523 ms.
+A coincidência do §3 continua valendo hoje; a diferença é que ela virou **fato medido a cada
+execução** em vez de suposição num comentário: o veredito passou a sair com
+`fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao`. No dia em que uma
+capability delegar a uma auxiliar nova, essa linha muda **e** a auxiliar tem de ser declarada.
+
+### Falsificação (4 sabotagens no DETECTOR) — e a que saiu VERDE
+
+| # | sabotagem | resultado exigido |
+| --- | --- | --- |
+| 1 | termo recursivo REMOVIDO (volta ao 1º nível) | 22 vermelhos — Z1 sem `PREDICADO_ALTERADO`, Z3 sem `PREDICADO_NAO_DECLARADO`, e `PREDICADO_SUMIU` de `zz_gate2_b` derrubando todo cenário limpo |
+| 2 | tokenizer NU (sem exigir o parêntese) | 1 vermelho, e só ele: Z6, `presente indevido: [PREDICADO_NAO_DECLARADO]` |
+| 3 | `TETO_NIVEL = 1` (fecho trunca) | **exit 2**, não 1 — "SATUROU o teto"; 33 vermelhos |
+| 4 | achado transitivo rebaixado de `error` a `warn` | ⚠️ **saiu VERDE**: 41/41 e 40/40 |
+
+🔴 **A nº 4 é o achado da rodada.** Rebaixar `PREDICADO_NAO_DECLARADO` a aviso quando `nivel > 1`
+é exatamente o silêncio que a allowlist fail-closed proíbe — e passou por 41 cenários e 40 testes.
+A causa é o **par intrínseco do 2º nível**: para alcançar uma função nova, o corpo do chamador
+precisa mudar, então `PREDICADO_ALTERADO` sempre acompanha, e sozinho já produz o exit 1. O Z3
+casava a presença do código em qualquer lugar da saída, e o exit vindo de qualquer origem: as
+duas âncoras **sobreviviam à sabotagem**.
+
+A correção ancora no bit que a sabotagem move, nos dois oráculos: o vitest passou a exigir
+`level === 'error'`, e o harness passou a capturar **stdout e stderr separados**, com um 5º
+parâmetro em `esperar` para "este código tem de sair como ERRO". O stream é o diferenciador
+**ASCII-safe** (o audit manda `error`→stderr e `warn`→stdout, e é o mesmo bit do exit code);
+casar o emoji ❌/⚠️ seria casar byte não-ASCII, contra a lição #1483. Com o expect, a sabotagem 4
+produz 1 vermelho no harness e 2 no vitest.
+
+> **Classe:** *quando um achado sempre vem ACOMPANHADO de outro, a asserção que casa "o código
+> apareceu" e "o exit foi 1" pode estar medindo só o acompanhante.* Não é o caso genérico do
+> assert fraco — é o caso em que a co-ocorrência é **estrutural** (aqui: alcançar uma função nova
+> exige mudar o corpo de quem a chama) e portanto nunca falta. A âncora tem de ser a propriedade
+> que **só** o achado sob teste tem — aqui, o NÍVEL de severidade, não a presença nem o exit.
+
+### O andaime também é fail-closed: o contrato de teste é derivado por regra INDEPENDENTE
+
+O harness deriva o contrato sintético do banco limpo. Se derivasse com a **mesma** query do fecho,
+um bug na descoberta apareceria dos dois lados e o cenário-baseline ficaria verde por cegueira.
+A derivação usa outra regra — `pg_depend` (1º nível) **união** "toda função `zz_gate*`" —, então
+descobrir de menos vira `PREDICADO_SUMIU` e descobrir demais vira `PREDICADO_NAO_DECLARADO`: os
+dois sentidos caem no cenário A, que só é verde quando as duas regras coincidem. Foi exatamente
+esse mecanismo que produziu os 22 vermelhos da sabotagem nº 1.
+
+Harness: **31 → 41 cenários**. Z1 reescreve o corpo do gate de 2º nível com a policy **e** o
+chamador byte-a-byte intactos; Z3 exige que uma 3ª função criada DEPOIS do contrato seja
+DESCOBERTA; Z5 mantém fora do fecho quem ninguém chama (senão o eixo viraria "declare as 577
+funções do banco"); Z6 trava a armadilha do §4 com o nome numa string **e** numa coluna homônima,
+sem chamada. E a PARTE B ganhou o **B7**, que é o B5 um passo adiante: lá o corpo alterado era o
+da função que a policy CHAMA; aqui nem esse muda — policy, predicado direto e RLS idênticos, e o
+barrado passa a ver 2 linhas.

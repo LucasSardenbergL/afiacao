@@ -87,8 +87,8 @@ function medLimpa(): MedicaoRls {
       { tabela: 'public.zz_alvo', nome: 'zz_all', cmd: '*', permissiva: true, roles: 'authenticated', qualMd5: QUAL_B, wcMd5: QUAL_B },
     ],
     predicados: [
-      { funcao: 'public.zz_gate', secdef: true, cfg: 'search_path=public', srcMd5: SRC_FN },
-      { funcao: 'auth.uid', secdef: false, cfg: '', srcMd5: 'd'.repeat(32) },
+      { funcao: 'public.zz_gate', secdef: true, cfg: 'search_path=public', srcMd5: SRC_FN, nivel: 1, via: '' },
+      { funcao: 'auth.uid', secdef: false, cfg: '', srcMd5: 'd'.repeat(32), nivel: 1, via: '' },
     ],
     grupos: [{ grupo: 'public.zz_gate', tabelas: [...GRUPO_TABS] }],
   };
@@ -207,7 +207,7 @@ describe('§1 comparador — cada eixo sabotado produz o código certo', () => {
   // ── eixo 3: os predicados ────────────────────────────────────────────────────────────────
   it('função-predicado não declarada → PREDICADO_NAO_DECLARADO', () => {
     const fs = rodar((m) =>
-      m.predicados.push({ funcao: 'private.zz_novo', secdef: true, cfg: '', srcMd5: 'a'.repeat(32) }),
+      m.predicados.push({ funcao: 'private.zz_novo', secdef: true, cfg: '', srcMd5: 'a'.repeat(32), nivel: 1, via: '' }),
     );
     expect(codigos(fs)).toEqual(['PREDICADO_NAO_DECLARADO']);
   });
@@ -236,6 +236,62 @@ describe('§1 comparador — cada eixo sabotado produz o código certo', () => {
 
   it('função da PLATAFORMA não vira achado (corpo não congelado, por decisão)', () => {
     expect(rodar((m) => (m.predicados[1].srcMd5 = '7'.repeat(32)))).toEqual([]);
+  });
+
+  // ── eixo 3, 2º nível: o fecho transitivo ─────────────────────────────────────────────────
+  // Estes quatro travam o que a medição transitiva ACRESCENTA ao comparador. A descoberta em si
+  // é SQL e mora no harness PG17 (cenários Z*); aqui prova-se que o comparador não perde a
+  // informação de PROVENIÊNCIA — sem ela, "declare esta função" não diz o que mudou.
+  it('função alcançada só no 2º nível e não declarada → PREDICADO_NAO_DECLARADO (allowlist fail-closed nos dois sentidos)', () => {
+    const fs = rodar((m) =>
+      m.predicados.push({
+        funcao: 'private.zz_helper', secdef: true, cfg: '', srcMd5: 'b'.repeat(32),
+        nivel: 2, via: 'public.zz_gate',
+      }),
+    );
+    expect(codigos(fs)).toEqual(['PREDICADO_NAO_DECLARADO']);
+    // O `level` entra na asserção porque casar só o CÓDIGO deixa passar a sabotagem que
+    // interessa: rebaixar o achado transitivo a `warn` mantém o código na saída e some com o
+    // exit 1. Medido — a falsificação nº 4 saiu verde em 41 cenários e 40 testes até este
+    // expect existir. Fail-closed é o LEVEL, não o texto.
+    expect(fs[0].level).toBe('error');
+    expect(fs[0].msg).toContain('2º nível');
+    expect(fs[0].msg).toContain('via public.zz_gate');
+  });
+
+  it('predicado alterado no 2º nível → PREDICADO_ALTERADO diz POR ONDE ele entrou', () => {
+    const fs = rodar((m) => {
+      m.predicados[0].nivel = 2;
+      m.predicados[0].via = 'private.zz_pai';
+      m.predicados[0].srcMd5 = '3'.repeat(32);
+    });
+    expect(codigos(fs)).toEqual(['PREDICADO_ALTERADO']);
+    expect(fs[0].msg).toContain('via private.zz_pai');
+    expect(codigos(fs)).not.toContain('POLICY_ALTERADA'); // a policy segue byte-a-byte idêntica
+  });
+
+  it('`via` vazio no 2º nível LÊ diferente de nível 1 — estado distinguível, não vazio disfarçado', () => {
+    const fs = rodar((m) =>
+      m.predicados.push({
+        funcao: 'private.zz_orfa', secdef: true, cfg: '', srcMd5: 'c'.repeat(32), nivel: 3, via: '',
+      }),
+    );
+    expect(codigos(fs)).toEqual(['PREDICADO_NAO_DECLARADO']);
+    expect(fs[0].level).toBe('error');
+    expect(fs[0].msg).toContain('chamador NÃO identificado');
+    expect(fs[0].msg).not.toContain('DIRETAMENTE');
+  });
+
+  it('função da PLATAFORMA segue isenta quando alcançada TRANSITIVAMENTE', () => {
+    // Senão o fecho transformaria a isenção declarada em achado só por mudar o caminho de
+    // chegada — e a allowlist passaria a depender da topologia, não da decisão.
+    expect(
+      rodar((m) => {
+        m.predicados[1].nivel = 2;
+        m.predicados[1].via = 'public.zz_gate';
+        m.predicados[1].srcMd5 = '7'.repeat(32);
+      }),
+    ).toEqual([]);
   });
 
   // ── controles INÓCUOS: mudanças reais que NÃO podem disparar nada ────────────────────────
@@ -484,7 +540,7 @@ describe('§2 contrato do repo — invariantes conferíveis sem prod', () => {
         })),
       ),
       predicados: Object.entries(AUTHZ_RLS_PREDICADOS).map(([funcao, p]) => ({
-        funcao, secdef: p.secdef, cfg: p.cfg, srcMd5: p.srcMd5,
+        funcao, secdef: p.secdef, cfg: p.cfg, srcMd5: p.srcMd5, nivel: 1, via: '',
       })),
       // O eixo 4 entra VAZIO aqui de propósito, e a razão é o que o eixo é: a verdade dele mora em
       // PROD (quantas tabelas o grupo tem hoje), não no arquivo. Fabricar a medição a partir da
