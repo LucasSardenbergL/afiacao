@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 493
+-- Total de custom migrations: 494
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -533,6 +533,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260825124938', 'cron_metadados_timeout_240s', '20260825124938_cron_metadados_timeout_240s.sql'),
   ('20260825214545', 'analytics_outbox', '20260825214545_analytics_outbox.sql'),
   ('20260825225850', 'analytics_outbox_cron', '20260825225850_analytics_outbox_cron.sql'),
+  ('20260826002244', 'telemetria_probes', '20260826002244_telemetria_probes.sql'),
   ('20260826020000', 'reposicao_param_fila_sensor', '20260826020000_reposicao_param_fila_sensor.sql'),
   ('20260826021000', 'reposicao_cold_start_fusivel_graduacao', '20260826021000_reposicao_cold_start_fusivel_graduacao.sql')
 ),
@@ -2221,6 +2222,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_service_all', 'analytics_outbox'),
   ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_master_read', 'analytics_outbox'),
   ('analytics_outbox_cron', 'cron_job', 'cron', 'analytics-outbox-drain', ''),
+  ('telemetria_probes', 'table', 'public', 'telemetria_probes', ''),
+  ('telemetria_probes', 'index', 'public', 'idx_telemetria_probes_device_recente', 'telemetria_probes'),
+  ('telemetria_probes', 'index', 'public', 'idx_telemetria_probes_criado_em', 'telemetria_probes'),
+  ('telemetria_probes', 'rls_policy', 'public', 'telemetria_probes_user_insert', 'telemetria_probes'),
+  ('telemetria_probes', 'rls_policy', 'public', 'telemetria_probes_user_read', 'telemetria_probes'),
+  ('telemetria_probes', 'rls_policy', 'public', 'telemetria_probes_master_read', 'telemetria_probes'),
+  ('telemetria_probes', 'rls_policy', 'public', 'telemetria_probes_service_all', 'telemetria_probes'),
   ('reposicao_param_fila_sensor', 'function', 'public', 'reposicao_param_fila_sensor', ''),
   ('reposicao_param_fila_sensor', 'view', 'public', 'v_reposicao_param_fila', ''),
   ('reposicao_param_fila_sensor', 'table', 'public', 'reposicao_param_fila_log', ''),
@@ -3962,6 +3970,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_service_all', 'analytics_outbox'),
   ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_master_read', 'analytics_outbox'),
   ('analytics_outbox_cron', 'cron_job', 'cron', 'analytics-outbox-drain', ''),
+  ('telemetria_probes', 'table', 'public', 'telemetria_probes', ''),
+  ('telemetria_probes', 'index', 'public', 'idx_telemetria_probes_device_recente', 'telemetria_probes'),
+  ('telemetria_probes', 'index', 'public', 'idx_telemetria_probes_criado_em', 'telemetria_probes'),
+  ('telemetria_probes', 'rls_policy', 'public', 'telemetria_probes_user_insert', 'telemetria_probes'),
+  ('telemetria_probes', 'rls_policy', 'public', 'telemetria_probes_user_read', 'telemetria_probes'),
+  ('telemetria_probes', 'rls_policy', 'public', 'telemetria_probes_master_read', 'telemetria_probes'),
+  ('telemetria_probes', 'rls_policy', 'public', 'telemetria_probes_service_all', 'telemetria_probes'),
   ('reposicao_param_fila_sensor', 'function', 'public', 'reposicao_param_fila_sensor', ''),
   ('reposicao_param_fila_sensor', 'view', 'public', 'v_reposicao_param_fila', ''),
   ('reposicao_param_fila_sensor', 'table', 'public', 'reposicao_param_fila_log', ''),
