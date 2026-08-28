@@ -38,13 +38,40 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("omie-sync-sku-items");
 
 /**
+ * A identidade desta edge, para o ECO carregá-la junto do `versao`.
+ *
+ * Achado do `/codex` sobre o #2063: o eco anexava só `versao`, e as 4 edges da leva nasceram no
+ * MESMO marcador — logo o eco não dizia QUEM respondeu. A identidade vinha da CHAVE que o
+ * `omie-cron-diario` escolhe (`resultados.ctes`), ou seja, era confiada ao PAI: um pai com step
+ * trocado põe a string certa sob a chave errada, e o gate que fixa `key`↔edge protege a `main`, não
+ * o bundle do pai em PRODUÇÃO. É o mesmo furo que o campo `edge` de `criarRespostaSonda` já fechava
+ * na SONDA — o eco tinha replicado metade do desenho (`verificar-sonda-versao.md` §7: 10 sondas com
+ * corpos byte a byte idênticos e nenhum veredito por edge possível).
+ */
+export const EDGE = "omie-sync-sku-items";
+
+/**
  * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
  *
  * O marcador NOMEIA a fatia em vez de dizer `v1.0-sensor-inicial`: o que entra aqui não é só o
  * sensor, é o sensor MAIS o eco passivo de `versao` em toda resposta — a metade que faz o deploy
  * se provar pelo tick do cron, sem ninguém chamar nada.
  */
-export const VERSAO = "v1.0-eco-versao-passivo";
+export const VERSAO = "v1.1-eco-identidade-fonte";
+
+/**
+ * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.
+ *
+ * Fecha o último furo do caminho passivo: fatia que chegue INTEIRA por `_shared/` não move o
+ * `VERSAO` (o `sonda:bump` exclui `_shared/` por medição, ~12 bumps à mão por PR), então o eco
+ * responderia idêntico nos dois bundles. O `fonte` é derivado do fecho transitivo dos imports —
+ * `_shared/` incluso — e o CI o regrava, logo não depende de disciplina nenhuma.
+ *
+ * Sai de `respostaSonda` em vez de reimportar o mapa: UM lugar decide o que a edge serve como
+ * identidade, e o `?? "nao-mapeada"` de `criarRespostaSonda` (auto-denunciante) vale para os dois
+ * caminhos sem ser reescrito aqui.
+ */
+export const FONTE = respostaSonda(VERSAO).fonte;
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

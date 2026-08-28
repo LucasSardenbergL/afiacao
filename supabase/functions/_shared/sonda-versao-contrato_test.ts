@@ -1197,3 +1197,52 @@ Deno.test("o orquestrador chama exatamente estes 5 steps, com estas chaves", () 
     );
   }
 });
+
+Deno.test("o ECO identifica a edge e a FONTE — `versao` sozinho não diz QUEM nem de QUE fonte", () => {
+  // Dois furos do eco do #2063, fechados juntos (achados do `/codex`):
+  //
+  // 1. `edge` — as edges da leva nasceram no MESMO marcador, então o eco não dizia QUEM respondeu:
+  //    a identidade vinha da CHAVE que o `omie-cron-diario` escolhe, ou seja, era confiada ao PAI.
+  //    É o furo que o campo `edge` de `criarRespostaSonda` já fechava na sonda; o eco replicou
+  //    metade do desenho (`verificar-sonda-versao.md` §7).
+  // 2. `fonte` — fatia que chegue INTEIRA por `_shared/` não move o `VERSAO` (o `sonda:bump` exclui
+  //    `_shared/` por medição), e o eco responderia idêntico nos dois bundles. O `fonte` é derivado
+  //    do fecho transitivo e o CI o regrava, então não depende de disciplina.
+  for (const { edge } of STEPS_CRON_DIARIO) {
+    const codigo = codigoDaEdge(edge);
+    if (!/\.\.\.\s*\w+\s*,\s*versao:\s*VERSAO\s*,\s*edge:\s*EDGE\s*,\s*fonte:\s*FONTE/.test(codigo)) {
+      throw new Error(
+        `${edge}: o eco não carrega \`edge: EDGE, fonte: FONTE\` ao lado do \`versao\` — quem lê o ` +
+          `corpo depende da chave do orquestrador para saber quem respondeu, e não enxerga mudança ` +
+          `vinda de _shared/`,
+      );
+    }
+  }
+});
+
+Deno.test("o EDGE declarado é o nome do diretório da function", () => {
+  // Um `EDGE` errado é pior que nenhum: o eco passa a AFIRMAR identidade falsa, e o veredito aponta
+  // para a edge errada com toda a confiança.
+  for (const { edge } of STEPS_CRON_DIARIO) {
+    const fonte = Deno.readTextFileSync(`supabase/functions/${edge}/versao.ts`);
+    const m = /export const EDGE = "([^"]+)"/.exec(fonte);
+    if (!m) throw new Error(`${edge}: versao.ts não exporta EDGE`);
+    if (m[1] !== edge) {
+      throw new Error(`${edge}: EDGE declara "${m[1]}" — tem de ser o nome do diretório`);
+    }
+  }
+});
+
+Deno.test("o FONTE do eco sai da MESMA fábrica que a sonda serve", () => {
+  // Se o `FONTE` fosse uma cópia literal do hash, ele congelaria: o CI regrava o mapa, e um valor
+  // transcrito à mão passaria a mentir silenciosamente na primeira mudança de `_shared/` — que é
+  // exatamente o furo que este campo existe para fechar.
+  for (const { edge } of STEPS_CRON_DIARIO) {
+    const fonte = Deno.readTextFileSync(`supabase/functions/${edge}/versao.ts`);
+    if (!/export const FONTE = respostaSonda\(VERSAO\)\.fonte;/.test(removerComentarios(fonte))) {
+      throw new Error(
+        `${edge}: FONTE não é derivado de respostaSonda — um hash transcrito à mão congela e mente`,
+      );
+    }
+  }
+});

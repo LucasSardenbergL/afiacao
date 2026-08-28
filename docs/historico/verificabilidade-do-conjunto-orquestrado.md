@@ -289,3 +289,51 @@ Não é uma linha ruim que se ignora: é o resultado todo perdido. A falha é **
 não fabrica veredito — mas some com a leitura justamente quando se acumula ticks, que é a receita do
 adendo acima. `jsonb_typeof((content::jsonb)->'resultados') = 'object'` separa os dois emissores, e
 está embutido na query desta página e na da skill `lovable-deploy-verify`.
+
+
+## Adendo 2026-08-28 (3) — a atestação por `OPTIONS` foi IMPLEMENTADA e DESCARTADA
+
+Desenhada no `/codex`, implementada inteira, verde (vitest 747 arquivos, `test:edges` 944, 8
+falsificações vermelhas) — e **descartada antes do PR**. O registro existe para que ninguém a
+redesenhe do zero achando que é ideia nova, e para que ninguém a ressuscite sem o gatilho.
+
+### O desenho (funciona, e a propriedade central é real)
+
+As 5 filhas respondem o corpo da sonda no ramo `OPTIONS` quando vem credencial de SERVIÇO; o
+orquestrador colhe as 5 antes dos steps e serve em `atestacoes.<key>`. A propriedade que a torna
+possível: **toda edge trata `OPTIONS` ANTES do gate de auth e de todo IO**, e já tratava antes do
+sensor existir — então bundle pré-sensor devolve só CORS e **não executa nada**. É a única via
+medida em que perguntar a versão não pode disparar o efeito. O preflight do browser nunca cai nesse
+ramo (ele não repassa `Authorization`, só ANUNCIA headers em `Access-Control-Request-Headers`).
+
+Implementação preservada nos commits `41adc32eb` (classificador + testes) e `82eb70765` (ramo nas 5
+edges + coletor + gates).
+
+### Por que foi descartada
+
+1. **A premissa morreu** (adendo 2 acima): o eco alcança os 5 steps; `background` é sorteio de carga.
+2. **O `fonte` não precisava dela** — 1 linha por edge (`export const FONTE = respostaSonda(VERSAO).fonte`)
+   fecha o furo do `_shared/` no caminho passivo. Sobrou só latência como justificativa.
+3. **O coletor competia com o relógio que ele mede** — e este é o argumento que decide, achado pelo
+   `/codex` na 2ª rodada: `TOTAL_TIMEOUT_MS = 115_000`, e 5 atestações sequenciais de 5s consomem até
+   **25s (21,7%) do orçamento ANTES do trabalho real**. Ou seja: o sensor construído para explicar o
+   `background` aumentaria a chance de `background`. Auto-sabotagem — a classe "o detector interfere
+   no que mede", e eu não a tinha visto em código meu.
+4. **O coletor aceitava qualquer JSON como `atestou:true`** (não validava `probe`/`edge`/`versao`) —
+   defeito real, também apontado na 2ª rodada.
+
+### O gatilho para reconsiderar
+
+**Um atraso de detecção que provoque ciclo incorreto, reparo de dados ou resposta a incidente.**
+Enquanto a espera pelo eco só custar ansiedade de verificação, ela não paga risco permanente em 5
+money-paths. Latência medida para dimensionar o gatilho (amostra pequena, 6–7 ticks): `pedidos`
+respondeu 2/7, `nfes` 1/6 — espera esperada de ~7h e ~12h. Os outros três respondem em todo tick.
+
+### A lição de método, que é o resíduo mais caro desta sessão
+
+Levei ao Codex uma lacuna medida em **um** tick e recebi um desenho excelente para o problema que
+apresentei. O erro não foi do parecer nem do desenho: foi **pedir 2ª opinião sobre premissa que eu
+não tinha alargado**. `n=1` num sinal que depende de carga é anedota, e uma 2ª opinião sobre
+anedota devolve solução sólida para problema que talvez não exista — cara, porque solução sólida
+convence. A regra "releia a janela inteira do TTL antes de invocar a sonda" vale um passo antes:
+**antes de projetar o conserto, e antes de pedir revisão dele.**

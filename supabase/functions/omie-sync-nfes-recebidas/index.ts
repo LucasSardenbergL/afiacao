@@ -22,7 +22,7 @@
 //   { "empresa": "OBEN" | "COLACOR" | "ALL", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
-import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 import { classifyOmieResponse, computeBackoffMs } from "./retry.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 
@@ -842,7 +842,7 @@ async function completeSync(
 // subiu?" quase sempre é feita sobre um run que JÁ aconteceu — e o caso que mais importa é o do
 // run que morreu no meio da varredura.
 function jsonRes(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO, edge: EDGE, fonte: FONTE }), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
