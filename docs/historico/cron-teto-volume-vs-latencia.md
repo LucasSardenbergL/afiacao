@@ -418,3 +418,56 @@ roteiro; isto aqui existe porque **chip morre com a sessão**):
 
 **Confirme antes de pedir** — a sessão dona pode já ter pedido o deploy, e pedido redundante gasta
 o founder à toa.
+
+## Sequela imediata (2026-08-27, 18 min depois): mais 4 edges, e o método acima ficou INAPLICÁVEL
+
+A seção anterior fechou às **22:47Z** declarando 4 edges pendentes. O `e5a484e2c`
+(`feat(sonda): os 4 steps do cron-diário sem sensor`) mergeou às **23:05Z** — 18 minutos depois —
+trazendo **outras 4**, disjuntas das primeiras:
+
+| edge | arquivos da fatia |
+|---|---|
+| `omie-sync-ctes-recebidos` | `index.ts` (M) + `versao.ts` (**A — NOVO**) |
+| `omie-sync-pedidos-compra` | `index.ts` (M) + `versao.ts` (**A — NOVO**) |
+| `omie-sync-sku-items` | `index.ts` (M) + `versao.ts` (**A — NOVO**) |
+| `omie-sync-vendas-items` | `index.ts` (M) + `versao.ts` (**A — NOVO**) |
+
+mais o `_shared/sonda-fingerprints.ts` (M), que as quatro empacotam.
+
+**A lição de processo:** a varredura de terceiros de uma `/fecho` é um **instantâneo**, não um
+intervalo fechado — a `main` continua andando enquanto o ritual roda. Duas `/fecho` na mesma noite
+acham conjuntos **disjuntos**, e quem lê "4 edges de terceiros" sem o sha e o corte de hora conclui
+que aquilo era a história inteira. Registro de pendência de terceiro nomeia o **commit** e o
+**horário do corte**, nunca só a contagem.
+
+### Por que o `fonte` NÃO resolveu isto — e por que "ausente" aqui não é veredito
+
+Rodado o roteiro da seção anterior, as quatro voltaram **zero linhas** de `net._http_response`. Ler
+isso como "não deployadas" seria o `ausente ≠ zero` na forma mais barata de cometer. O que a
+consulta ao `cron` mostrou:
+
+- `omie-sync-ctes-recebidos`, `omie-sync-pedidos-compra`, `omie-sync-vendas-items` — **não têm cron
+  direto**. São *steps* de um orquestrador diário (é o que o título do commit diz), e o corpo que
+  `pg_net` retém é o da chamada ao ORQUESTRADOR, não o de cada step.
+- `omie-sync-sku-items` — tem cron (`afiacao_omie_oben_sku_items_history_daily`, `0 7 * * *`), que
+  rodou **07:00Z**, ou seja **~20 h** antes da leitura: fora da janela de `pg_net.ttl = 6 h`.
+  `runs_6h = 0`.
+
+**A pré-condição que faltava dita:** o N3 passivo pelo `fonte` só enxerga edge cuja invocação caiu
+**dentro das 6 h** do `pg_net`. Para uma edge diária isso cobre 25% do dia; para um *step* de
+orquestrador pode não haver linha separada nenhuma. Antes de ler ausência como pendência, consulte
+`cron.job`/`cron.job_run_details`: **sem run na janela, o método está INAPLICÁVEL** — que é
+diferente de "pendente", e muito diferente de "não subiu".
+
+### Como fechar (chip "Confirmar deploy das 4 edges do cron-diário (`e5a484e2c`)")
+
+1. Esperar a janela útil: o `0 7 * * *` do `omie-sync-sku-items` é a próxima oportunidade barata.
+   Depois dele, ler o `fonte` e comparar com `bun run sonda:fingerprint` da `main`.
+2. Steps sem cron direto: sondar ativamente pelo 🟣 SQL Editor (`deploy.md` §Canárias), lendo
+   **pelo `request_id`** — nunca `ORDER BY id DESC LIMIT 1`, que pega o tick de outro cron.
+3. ⚠️ **Só sonde DEPOIS do deploy:** bundle anterior à sonda ignora o `probe` e **executa o fluxo
+   real** (sync Omie de verdade).
+4. Desatualizada → prompt de deploy nomeando **todos** os arquivos da tabela acima, `versao.ts`
+   novo e `_shared/sonda-fingerprints.ts` incluídos. Prompt que nomeia só o `index.ts` sobe função
+   que **não boota** (#2020).
+5. **Confirme antes de pedir** — a sessão dona do `e5a484e2c` pode já ter pedido o deploy.
