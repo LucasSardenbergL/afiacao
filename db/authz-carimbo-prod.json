@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-08-28T11:35:55.198Z",
-  "sourceHead": "5346daf2b5c30eb5ef8cffc8f8407ae17917e365",
+  "medidoEm": "2026-08-28T22:40:24.796Z",
+  "sourceHead": "de28d20da7afbedb250effe450c01ceca79625c9",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -48,10 +48,10 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 335 tabela(s) em public com RLS ligada (0 desligada); 20 tabela(s) curada(s), 50 policy(ies) e 10 funcao(oes)-predicado batem com o contrato.",
+      "resumo": "✅ audit-rls — 335 tabela(s) em public com RLS ligada (0 desligada); 20 tabela(s) curada(s), 50 policy(ies) e 10 funcao(oes)-predicado batem com o contrato; 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 6 curada(s), 72 lacuna(s).",
       "denominador": null,
-      "contratoFingerprint": "6dd89233e2e5bbee827edb71e759caa6afb379ee2698436ce58e0f4001f75efb",
-      "auditorFingerprint": "451994e2e848a3cd54c2da9944907b3e3110a0e3ba9686765cf9e222a9d9165a",
+      "contratoFingerprint": "894ad8c1d514c162e4735320229b0501ef3dfc951d5233c155c461eed5c9f720",
+      "auditorFingerprint": "7545fa3b23e157e1f5f7755d7f9628dddfbc4429cb29d35429e923f6d908986e",
       "achados": []
     }
   }

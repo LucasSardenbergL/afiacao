@@ -119,13 +119,25 @@ CREATE POLICY zz_sel_staff ON public.zz_pedidos FOR SELECT TO authenticated
 CREATE POLICY zz_ins_staff ON public.zz_pedidos FOR INSERT TO authenticated
   WITH CHECK ((SELECT public.zz_gate((SELECT auth.uid()))));
 GRANT SELECT, INSERT ON public.zz_pedidos TO authenticated;
+
+-- zz_extra ≙ as 13 de cap_compras_ler que ficaram de FORA do contrato: gateada pelo mesmo
+-- predicado, e deliberadamente NÃO curada. Sem ela o grupo sintético teria zero lacunas e o
+-- estado limpo já nasceria acusando LACUNA_GRUPO_CURADO — o cenário mediria outra coisa.
+CREATE TABLE public.zz_extra (id int PRIMARY KEY);
+ALTER TABLE public.zz_extra ENABLE ROW LEVEL SECURITY;
+CREATE POLICY zz_sel_extra ON public.zz_extra FOR SELECT TO authenticated
+  USING ((SELECT public.zz_gate((SELECT auth.uid()))));
 SQL
 
 # ── contrato de teste, DERIVADO do estado limpo ────────────────────────────────────────────
 # Derivar (em vez de hardcodar md5) é o que mantém o harness honesto entre versões do PG: o
 # `pg_get_expr` re-renderiza a expressão, e um md5 fixo aqui viraria vermelho eterno no dia em que
 # o PG mudasse a impressão. O DENTE não vem do cenário A ser verde — vem de B..P exigirem vermelho.
-TEST_JSON="$(PT <<'SQL'
+# `$1` é a expressão SQL que produz o array `grupos` (eixo 4) — o resto do contrato é o mesmo
+# nas duas variantes, e duplicar esta query para trocar UMA chave seria plantar duas fontes que
+# divergem na primeira edição.
+derivar_json() {
+  PT <<SQL
 SELECT jsonb_build_object(
   'contrato', (SELECT jsonb_object_agg(t.tabela, jsonb_build_object(
                         'forceRls', t.force, 'motivo', 'sintetica do harness', 'policies', t.policies))
@@ -155,18 +167,74 @@ SELECT jsonb_build_object(
                          JOIN pg_proc pr ON pr.oid=d.refobjid
                          JOIN pg_namespace n2 ON n2.oid=pr.pronamespace
                         WHERE n2.nspname <> 'auth') f),
-  'plataforma', jsonb_build_array('auth.uid'))::text;
+  'plataforma', jsonb_build_array('auth.uid'),
+  'grupos', ($1))::text;
 SQL
-)"
+}
+
+# Um grupo do eixo 4, medido no estado limpo: `grupo_json <tipo> <arg>`.
+#
+# 🔴 `ORDER BY … COLLATE "C"` não é enfeite: o md5 que o audit compara é calculado em JS
+# (`md5Lista`, sort por code unit), e o `ORDER BY` do Postgres usa COLLATION — em ICU/pt_BR o `_`
+# é ignorado na comparação primária e `zz_p_a` × `zz_pa` trocam de lugar. Sem o COLLATE, este
+# harness casaria no locale C e reprovaria no pt_BR com o produto CORRETO: o falso-vermelho que a
+# lição #1483 manda procurar rodando nos DOIS.
+#
+# A chave do `def` tem o mesmo nome do tipo (`predicado`/`prefixo`), que é o que deixa o
+# `jsonb_build_object('tipo',$1,$1,$2)` servir aos dois sem ramo.
+grupo_json() {
+  local cond
+  case "$1" in
+    predicado) cond="EXISTS (SELECT 1 FROM pg_policy pol
+                               JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=pol.oid
+                                               AND d.refclassid='pg_proc'::regclass
+                               JOIN pg_proc pr ON pr.oid=d.refobjid
+                               JOIN pg_namespace pn ON pn.oid=pr.pronamespace
+                              WHERE pol.polrelid=c.oid AND pn.nspname||'.'||pr.proname='$2')" ;;
+    prefixo)   cond="starts_with(c.relname,'$2')" ;;
+    *) echo "grupo_json: tipo desconhecido '$1'" >&2; exit 1 ;;
+  esac
+  printf '%s' "SELECT jsonb_build_object(
+     'def', jsonb_build_object('tipo','$1','$1','$2'),
+     'tabelasNoGrafo', count(*),
+     'tabelasMd5', md5(string_agg(relname, ',' ORDER BY relname COLLATE \"C\")),
+     'medidoEm', '2026-08-28',
+     'motivo', 'grupo sintetico do harness ($1 $2)')
+   FROM (SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname='public' AND c.relkind='r' AND $cond) t"
+}
+# 1 ou 2 grupos. Declarar o MESMO grupo duas vezes só para preencher a assinatura faria o audit
+# acusar duas vezes o mesmo objeto — ruído que o cenário leria como "acusou", sem ser o desenho.
+arr() {
+  if [ "$#" -eq 1 ]; then printf 'SELECT jsonb_agg(g) FROM (SELECT (%s) AS g) z' "$1"
+  else printf 'SELECT jsonb_agg(g) FROM (SELECT (%s) AS g UNION ALL SELECT (%s)) z' "$1" "$2"; fi
+}
+
+# Grupo de PREDICADO: zz_gate gateia {zz_pedidos (curada), zz_extra (lacuna)}.
+# Grupo de PREFIXO: `zz_p` casa {zz_papeis (lacuna), zz_pedidos (curada)} — e NÃO casa zz_extra,
+# então os dois grupos medem conjuntos diferentes e uma sabotagem não move os dois de graça.
+TEST_JSON="$(derivar_json "$(arr "$(grupo_json predicado public.zz_gate)" "$(grupo_json prefixo zz_p)")")"
+# Variante do cenário GH: um grupo (`zz_pe`) cujo ÚNICO membro é a tabela curada. Não dá para
+# produzi-la mutando o banco — ela é uma DECLARAÇÃO que virou mentira sem prod se mexer, que é
+# exatamente o defeito de §7.1 um nível acima.
+TEST_JSON_CURADO="$(derivar_json "$(arr "$(grupo_json prefixo zz_pe)")")"
+
 [ -n "$TEST_JSON" ] || { echo "❌ contrato de teste veio VAZIO — o harness mediria nada"; exit 1; }
 case "$TEST_JSON" in *zz_sel_staff*zz_gate*|*zz_gate*zz_sel_staff*) : ;;
   *) echo "❌ contrato de teste sem a policy ou sem o predicado: $TEST_JSON"; exit 1 ;; esac
+# Sonda do eixo 4, fail-CLOSED: sem `grupos` no JSON o audit cai em `?? []` e o eixo inteiro fica
+# INERTE — os cenários G* passariam a exigir vermelho de uma guarda desligada e reprovariam, mas o
+# modo de falha mais discreto (derivar `grupos: null` e seguir verde) é este check que pega.
+case "$TEST_JSON" in *'"grupos":'*'"tabelasMd5":'*) : ;;
+  *) echo "❌ contrato de teste sem o eixo 4 (grupos/tabelasMd5): $TEST_JSON"; exit 1 ;; esac
+case "$TEST_JSON_CURADO" in *'"grupos":'*'"tabelasMd5":'*) : ;;
+  *) echo "❌ variante CURADO sem o eixo 4: $TEST_JSON_CURADO"; exit 1 ;; esac
 
 run_audit() {
   local ec=0
   # `|| ec=$?` é obrigatório: sob `set -e`, o exit 1 que QUEREMOS mataria o harness antes da
   # asserção, e o teste passaria a nunca reprovar.
-  PSQL_RO="$WRAP" AUTHZ_RLS_TEST_JSON="$TEST_JSON" \
+  PSQL_RO="$WRAP" AUTHZ_RLS_TEST_JSON="${JSON_ATUAL:-$TEST_JSON}" \
     bun "$REPO_ROOT/db/audit-rls-prod.ts" > "$OUT" 2>&1 || ec=$?
   echo "$ec"
 }
@@ -255,6 +323,42 @@ esperar "R  FOR ALL com WITH CHECK ≠ USING → FOR_ALL_ASSIMETRICO (a armadilh
 P -c "DROP POLICY zz_ins_staff ON public.zz_pedidos;
       CREATE POLICY zz_ins_staff ON public.zz_pedidos FOR INSERT TO authenticated WITH CHECK ((SELECT public.zz_gate((SELECT auth.uid()))));"
 esperar "S  split por comando de volta → limpo  ← dente" 0 - FOR_ALL_ASSIMETRICO
+
+# ── eixo 4: a DECLARAÇÃO de lacuna em bloco ainda descreve prod? ────────────────────────────
+# Nenhum destes cenários mexe em autorização: mexe no que a declaração AFIRMA. É o eixo que os
+# outros três não têm como cobrir, porque eles reconciliam o contrato contra o banco e a
+# declaração de não-cobertura ninguém reconciliava (§7.2 do histórico).
+esperar "GA estado conforme → nenhum achado de grupo (exit 0)" 0 - LACUNA_GRUPO_MUDOU
+
+P -c "CREATE TABLE public.zz_gateada (id int);
+      ALTER TABLE public.zz_gateada ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY p ON public.zz_gateada FOR SELECT TO authenticated
+        USING ((SELECT public.zz_gate((SELECT auth.uid()))));"
+esperar "GB migration gateia MAIS uma tabela pelo predicado do grupo → LACUNA_GRUPO_MUDOU" 1 LACUNA_GRUPO_MUDOU POLICY_NOVA
+P -c "DROP TABLE public.zz_gateada;"
+esperar "GC removida → a acusação SOME  ← dente" 0 - LACUNA_GRUPO_MUDOU
+
+P -c "CREATE TABLE public.zz_prefixada (id int); ALTER TABLE public.zz_prefixada ENABLE ROW LEVEL SECURITY;"
+esperar "GD tabela nova casa o PREFIXO do grupo (sem policy nenhuma) → LACUNA_GRUPO_MUDOU" 1 LACUNA_GRUPO_MUDOU RLS_DESLIGADA_FORA_DO_CONTRATO
+P -c "DROP TABLE public.zz_prefixada;"
+esperar "GE removida → limpo  ← dente" 0 - LACUNA_GRUPO_MUDOU
+
+# O buraco que a contagem sozinha deixa: uma sai, outra entra, e o total não se move. Aqui o
+# rename faz as duas coisas de uma vez — `zz_papeis` sai do grupo `zz_p` e `zz_papeis_novo` entra.
+P -c "ALTER TABLE public.zz_papeis RENAME TO zz_papeis_novo;"
+esperar "GF SUBSTITUIÇÃO: contagem IGUAL, conjunto outro → LACUNA_GRUPO_MUDOU pelo md5" 1 LACUNA_GRUPO_MUDOU -
+P -c "ALTER TABLE public.zz_papeis_novo RENAME TO zz_papeis;"
+esperar "GG nome de volta → limpo  ← dente (e o md5 é reproduzível)" 0 - LACUNA_GRUPO_MUDOU
+
+# O espelho de §7.1 um nível acima: a declaração passa a mentir na direção que finge NÃO cobrir.
+# A correção é OPOSTA à do MUDOU (apagar a entrada, não renovar o número), por isso o código é outro.
+# `JSON_ATUAL=… esperar …` (prefixo de env numa FUNÇÃO) seria dependente de shell: bash não-POSIX
+# e bash em modo POSIX discordam sobre a variável sobreviver à chamada, e o cenário GI leria o
+# JSON errado em metade dos ambientes. Set/unset explícito não tem essa ambiguidade.
+JSON_ATUAL="$TEST_JSON_CURADO"
+esperar "GH grupo com TODAS as tabelas curadas → LACUNA_GRUPO_CURADO, não MUDOU" 1 LACUNA_GRUPO_CURADO LACUNA_GRUPO_MUDOU
+unset JSON_ATUAL
+esperar "GI de volta ao contrato normal → limpo  ← controle: a acusação era da DECLARAÇÃO" 0 - LACUNA_GRUPO_CURADO
 
 # ── controles INÓCUOS: mudança real que NÃO pode acusar nada ────────────────────────────────
 P -c "ALTER TABLE public.zz_pedidos ADD COLUMN observacao text;"

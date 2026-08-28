@@ -439,3 +439,85 @@ do carimbo → o teste de identidade dos QUATRO eixos reprova; F8 é o teste de 
 > guarda estava **correta no dia em que foi escrita**; quem a tornou falsa foi o crescimento
 > normal do sistema. Quando a afirmação pode ser expressa como **dado ao lado do dado que ela
 > descreve**, é essa forma que sobrevive.
+
+### 7.2 A mesma classe um nível acima: a CONTAGEM do grupo também era prosa
+
+O §7.1 tirou da prosa a lista de tabelas recusadas. O que ficou para trás, no mesmo cabeçalho,
+foram as lacunas em **bloco** — os grupos que não cabem como chave de tabela:
+
+> "as **22** tabelas de `private.cap_carteira_ler` e as **8** de `private.carteira_visivel_para`;
+> as **36** `fin_*` restantes (de 41; 5 curadas); e as outras **13** de `private.cap_compras_ler`
+> (de 14)."
+
+Medido em prod hoje (2026-08-28, psql-ro): **22 · 8 · 41 · 14**. O parágrafo estava **certo**, como
+estava certo o da §7.1 no dia em que foi escrito. A diferença entre os dois é só o **gatilho de
+apodrecimento**, e o do grupo é mais barato de puxar: a lista de tabelas apodrece quando uma
+rodada **cura**; a contagem do grupo apodrece quando uma **migration** gateia mais uma tabela pela
+mesma capability — o evento mais banal deste repo, e o que menos passa por revisão de autorização.
+Nos dois casos o texto seguiria verde afirmando um número que ninguém mede.
+
+**Por que um teste estático não resolvia.** O §7.1 fechou-se com um cruzamento de três linhas
+(`LACUNAS_DECLARADAS` × `AUTHZ_RLS_ESPERADO`), porque as duas pontas viviam no arquivo. Aqui a
+outra ponta é **prod**: só o banco sabe quantas tabelas `cap_carteira_ler` gateia hoje. O gate tem
+de ser o **audit**, não o CI — e isso põe o eixo 4 no lugar certo, junto do 1-3, com o mesmo
+psql-ro e o mesmo exit code.
+
+#### O desenho, e as três decisões que ele obrigou
+
+`LACUNAS_POR_GRUPO` é uma lista de `{def, tabelasNoGrafo, tabelasMd5, medidoEm, motivo}`, e
+`db/audit-rls-prod.ts` reconta o grupo em prod a cada execução (`pg_depend` para grupo de
+predicado, `starts_with` para grupo de prefixo), desconta as curadas e compara.
+
+1. **Duas formas de definir grupo, não uma.** Três dos quatro grupos são "as tabelas que chamam tal
+   capability" — uma aresta do grafo de `pg_depend`. O quarto (`fin_*`) é de **nome**, e reduzi-lo
+   ao predicado teria sido a armadilha: o gate comum do domínio financeiro
+   (`public.fin_user_can_access`) alcança **18** tabelas medidas, não 41. Uma `fin_nova` gateada
+   por outra função continuaria sendo lacuna do grupo, e um grupo definido pelo predicado **não a
+   veria entrar** — a mesma cegueira, com um sensor por cima dela.
+
+2. **Declarar o TOTAL, derivar a lacuna.** A forma óbvia seria congelar "36 lacunas". Ela tem um
+   cego exato: uma migration acrescenta uma tabela ao grupo (22→23) e uma rodada cura outra (0→1)
+   no mesmo dia — a subtração devolve 22 e nada fica vermelho. O total só se move por prod, que é
+   a única ponta que este eixo não controla; o número de lacunas é **recalculado** do contrato ao
+   lado a cada execução, e por isso não pode apodrecer. É a subtração que dá o denominador da linha
+   do veredito: `78 tabela(s) distinta(s) no grafo, 6 curada(s), 72 lacuna(s)`.
+
+3. **`tabelasMd5` ao lado da contagem, pelo mesmo argumento.** Se "duas mudanças opostas se
+   cancelam" justifica declarar o total, ela justifica fechar a **substituição**: uma tabela sai do
+   grupo e outra entra no mesmo intervalo, e o total não se move. O md5 da lista ordenada custa uma
+   linha por grupo e fecha isso; o achado imprime a **lista viva**, então o md5 nunca é o fim da
+   leitura. O sort é feito em **JS** e não em SQL de propósito — o `ORDER BY` do Postgres usa
+   colação, e `_` ordena antes de letra em `C` e é ignorado em ICU/pt_BR: o mesmo conjunto daria
+   md5 diferente conforme o locale do servidor. As duas computações (JS e
+   `md5(string_agg(… ORDER BY … COLLATE "C"))`) foram conferidas uma contra a outra antes de o
+   número entrar no contrato.
+
+**Dois códigos, não um.** `LACUNA_GRUPO_MUDOU` pede re-medir e renovar o número;
+`LACUNA_GRUPO_CURADO` pede **apagar** a entrada, porque o grupo deixou de ser lacuna — é o espelho
+exato de §7.1 um nível acima (a declaração mentindo na direção que finge **não** cobrir). Elas são
+correções opostas, como `POLICY_NOVA` × `POLICY_ALTERADA`.
+
+> 🔴 **A inversão perigosa, e o guard que ela obrigou.** `lacunas === 0` é verdade tanto para
+> "todas curadas" quanto para "a medição voltou vazia". Diagnosticar a segunda como a primeira
+> convidaria a **apagar a declaração por causa de uma query quebrada** — o pior desfecho possível
+> num eixo cuja função é impedir que a declaração suma. Lista vazia cai no `MUDOU`, que lê como
+> "o grupo encolheu para 0" e manda investigar.
+
+#### Falsificação
+
+Catálogo (harness PG17, `db/test-audit-rls-prod.sh`, **40 ok / 0 fail** nos dois locales): `GB`
+migration gateia mais uma tabela pelo predicado → `LACUNA_GRUPO_MUDOU`; `GD` tabela nova casa o
+prefixo → idem; `GF` **rename dentro do grupo** (contagem igual, conjunto outro) → acusa pelo md5;
+`GH` grupo inteiramente curado → `LACUNA_GRUPO_CURADO` e **não** `MUDOU`; e o dente de cada um
+(`GC`/`GE`/`GG`/`GI`: a acusação some quando o estado volta).
+
+Contrato e carimbo: contagem alterada à mão → o audit real acusa contra prod; eixo removido do
+`dadoDoContrato('rls')` → o teste de identidade dos **cinco** eixos reprova; `LACUNAS_POR_GRUPO`
+esvaziada → a sentinela de vacuidade grita nos **dois** lugares (o piso estático do CI e o
+`erroFatal` do runner contra prod), porque `for` sobre lista vazia passa por vacuidade.
+
+> **A classe, agora com três instâncias e um padrão de crescimento:** *prosa que descreve dado
+> apodrece* (§7.1) — e quando a prosa descreve **prod**, o gate não pode ser estático. A pergunta
+> que sobra de cada declaração é uma só: **qual é a outra ponta?** Se ela está no arquivo, o gate é
+> um teste; se está no banco, o gate é o audit. Escolher errado produz um gate que existe e não
+> mede — que é pior que não ter, porque parece cobertura.

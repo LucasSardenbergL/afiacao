@@ -55,6 +55,12 @@
  * das tabelas que este cabeçalho declarava como lacuna e o texto continuou afirmando o contrário,
  * sem nada ficar vermelho (§7.1 do histórico). Agora um teste cruza as duas listas.
  *
+ * O que foi recusado em BLOCO (um domínio inteiro, tudo que uma capability gateia) vive em
+ * `LACUNAS_POR_GRUPO`, também como dado — e ali a garantia é de outra natureza, porque o que
+ * apodrece é a CONTAGEM: `db/audit-rls-prod.ts` reconta o grupo em prod a cada execução
+ * (`pg_depend` para os de predicado, nome para os de prefixo) e acusa `LACUNA_GRUPO_MUDOU`. Um
+ * teste estático não bastaria — só prod sabe quantas tabelas a última migration gateou.
+ *
  * ═══ A REPRESENTAÇÃO, E O QUE ELA NÃO PEGA ═══
  *
  * `qual`/`with_check` são EXPRESSÕES. Guardá-las como texto e comparar string é frágil, então o
@@ -861,13 +867,11 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
  * que sobra: **"a raiz já está coberta" não é razão para recusar, porque raiz e predicado são
  * eixos diferentes** — a pergunta certa é se o gate da tabela já é congelado por ALGUÉM.
  *
- * Grupos (não cabem como chave de tabela e seguem como prosa, deliberadamente): as **22** tabelas
- * de `private.cap_carteira_ler` e as **8** de `private.carteira_visivel_para` — inteligência
- * comercial, e a RAIZ delas (`public.commercial_roles`) está curada; as **36** `fin_*` restantes
- * (de 41; 5 curadas) — agregados, logs e controle derivados, com as fontes e as duas raízes
- * curadas e o gate comum (`fin_user_can_access`) congelado; e as outras **13** de
- * `private.cap_compras_ler` (de 14 — `pedido_compra_item` entrou na 3ª rodada e já arrasta o
- * predicado). Contagens medidas em prod 2026-08-28.
+ * O que NÃO cabe como chave de tabela — as lacunas em BLOCO — vive em `LACUNAS_POR_GRUPO`, logo
+ * abaixo, e pela mesma razão: enquanto era este parágrafo, as contagens dos grupos eram texto, e
+ * texto não fica vermelho quando uma migration acrescenta uma tabela ao grupo. Nenhum número de
+ * grupo é repetido aqui de propósito — número em prosa ao lado do mesmo número em dado é a
+ * armadilha de novo, só que com duas fontes para divergir.
  */
 export const LACUNAS_DECLARADAS: Record<string, string> = {
   'public.carteira_assignments':
@@ -908,6 +912,128 @@ export const LACUNAS_DECLARADAS: Record<string, string> = {
     'Os membros do agrupamento acima, 0 linhas em prod. Mesma razão e mesmo gatilho — e o mesmo ' +
     'gate já congelado.',
 };
+
+/**
+ * Como um GRUPO de lacuna é definido. Duas formas, e não uma, porque os grupos que o contrato
+ * declara não são o mesmo tipo de conjunto — e reduzir os dois à mesma forma perderia exatamente
+ * o que cada um vigia:
+ *
+ *   · `predicado` — "as tabelas cuja policy CHAMA `private.cap_carteira_ler`". O conjunto é uma
+ *     aresta do grafo de `pg_depend`, o mesmo que o eixo 3 usa. Cresce quando uma migration nova
+ *     gateia mais uma tabela por aquela capability.
+ *   · `prefixo` — "as tabelas `fin_*`". O conjunto é de NOME, e é o certo para esse grupo porque
+ *     a afirmação declarada é sobre o domínio financeiro inteiro, não sobre quem o gateia: uma
+ *     `fin_nova` gateada por OUTRA função continua sendo uma lacuna do grupo, e um grupo definido
+ *     só por `fin_user_can_access` (18 tabelas medidas, não 41) não a veria entrar.
+ */
+export type DefinicaoGrupo =
+  | { tipo: 'predicado'; predicado: string }
+  | { tipo: 'prefixo'; prefixo: string };
+
+export interface LacunaGrupo {
+  def: DefinicaoGrupo;
+  /**
+   * Quantas tabelas de `public` o grupo tem em prod — o TOTAL medido, **não** o número de lacunas.
+   *
+   * A distinção é o que dá dente ao eixo. O número de lacunas é DERIVADO pelo runner (total menos
+   * as que estão em `AUTHZ_RLS_ESPERADO`), então ele não pode apodrecer: é recalculado a cada
+   * execução a partir do contrato ao lado. Já congelar a lacuna em vez do total abriria um cego
+   * exato — uma migration acrescenta uma tabela ao grupo (22→23) e uma rodada cura outra (0→1) no
+   * mesmo dia, a subtração devolve 22 de novo e nada fica vermelho. O total só se move por PROD,
+   * que é a única coisa que este eixo não controla.
+   */
+  tabelasNoGrafo: number;
+  /**
+   * md5 da lista de tabelas do grupo, ordenada e junta por `,` — a MESMA receita de
+   * `scripts/lib/authz-rls.ts` (`md5Lista`), medida em prod e conferida contra
+   * `md5(string_agg(relname, ',' ORDER BY relname COLLATE "C"))` no psql. Duas computações
+   * independentes que batem, não uma copiada da outra.
+   *
+   * Por que ele existe ao lado da contagem, que já detecta crescimento: SUBSTITUIÇÃO. Uma tabela
+   * sai do grupo (a policy dela deixa de chamar a capability) e outra entra pela migration do
+   * mesmo dia — o total não se move e a contagem sozinha não vê. É a mesma classe de "duas
+   * mudanças opostas se cancelam" que fez `tabelasNoGrafo` guardar o TOTAL em vez do número de
+   * lacunas; fechá-la num eixo e deixá-la aberta no outro seria arbitrário. A contagem continua
+   * sendo o número que um humano REVISA no diff do PR; o md5 é a evidência de que o conjunto por
+   * trás dela é o mesmo. O achado imprime a lista viva, então o md5 nunca é o fim da leitura.
+   */
+  tabelasMd5: string;
+  /** `YYYY-MM-DD` da medição via psql-ro. Data é dado de proveniência, não decoração: quem renovar
+   *  o número precisa saber se está comparando com uma medição de ontem ou de três meses atrás. */
+  medidoEm: string;
+  motivo: string;
+}
+
+/**
+ * O que ficou de fora do eixo curado em BLOCO, por grupo — a irmã de `LACUNAS_DECLARADAS` para o
+ * que não cabe como chave de tabela.
+ *
+ * Por que isto também é DADO. Estas contagens nasceram como prosa no cabeçalho de
+ * `LACUNAS_DECLARADAS`, e a prosa estava CERTA no dia em que foi escrita — como estava a lista de
+ * tabelas que apodreceu em 12 horas (§7.1 do histórico). A diferença é só o gatilho: a lista de
+ * tabelas apodrece quando uma rodada CURA; a contagem de grupo apodrece quando uma **migration**
+ * acrescenta uma tabela gateada pela mesma capability, que é o evento mais comum deste repo e o
+ * que menos passa por revisão de autorização. Nos dois casos o texto seguiria verde afirmando um
+ * número que ninguém mede. Como dado, `db/audit-rls-prod.ts` conta o grupo em prod a cada
+ * execução e acusa `LACUNA_GRUPO_MUDOU`.
+ *
+ * ⚠️ O que este eixo NÃO é: um pedido para curar o grupo. Curar as 78 tabelas destes quatro grupos
+ * transformaria a allowlist no depósito que o critério do cabeçalho existe para evitar. O eixo
+ * afirma uma coisa só, e ela é falsificável: **o grupo continua sendo o que a declaração diz**.
+ */
+export const LACUNAS_POR_GRUPO: LacunaGrupo[] = [
+  {
+    def: { tipo: 'predicado', predicado: 'private.cap_carteira_ler' },
+    tabelasNoGrafo: 22,
+    tabelasMd5: '360014844c8f72cb0a362ad98a93722b',
+    medidoEm: '2026-08-28',
+    motivo:
+      'Inteligência COMERCIAL (carteira, radar, farmer, visitas), não dinheiro/custo — o critério ' +
+      'deste contrato não a alcança, e a RAIZ do grupo (`public.commercial_roles`) está curada. ' +
+      'O gate comum não fica órfão no eixo 3 por outra via: `cap_carteira_ler` é chamada por ' +
+      'policy de 22 tabelas, nenhuma delas curada, então congelar o CORPO dela seria a única ' +
+      'cobertura — e é justamente o que a lacuna assume o custo de não ter. Gatilho de reentrada: ' +
+      'no dia em que comissão ou preço passarem a depender da carteira, o grupo vira membro (i)/(ii).',
+  },
+  {
+    def: { tipo: 'predicado', predicado: 'private.carteira_visivel_para' },
+    tabelasNoGrafo: 8,
+    tabelasMd5: 'a0dac67e9b90efb4f2b349efb07ed93c',
+    medidoEm: '2026-08-28',
+    motivo:
+      'O segundo gate de carteira (o que resolve cobertura temporária de carteira alheia), com ' +
+      'interseção medida de 6 tabelas com o grupo de `cap_carteira_ler` — os dois grupos se ' +
+      'sobrepõem de propósito, porque a pergunta "este predicado ainda gateia o mesmo conjunto?" ' +
+      'é por predicado, não por tabela. Mesma razão e mesmo gatilho do grupo acima; as duas ' +
+      'tabelas exclusivas dele (`carteira_assignments`, `visitas_agendadas`) são de carteira, não ' +
+      'de dinheiro.',
+  },
+  {
+    def: { tipo: 'prefixo', prefixo: 'fin_' },
+    tabelasNoGrafo: 41,
+    tabelasMd5: '2c1c3e68bfad4855870195ef496792b6',
+    medidoEm: '2026-08-28',
+    motivo:
+      'O domínio financeiro inteiro por NOME, do qual 5 estão curadas (as fontes: contas a ' +
+      'receber/pagar, movimentações, contas correntes, e a raiz `fin_permissoes`). As demais são ' +
+      'agregado, log e controle DERIVADOS dessas fontes, e o gate comum ' +
+      '(`public.fin_user_can_access`) já é predicado congelado — o eixo 3 as cobre sem que o ' +
+      'conteúdo delas entre na allowlist. Definido por prefixo e não pelo predicado de propósito: ' +
+      'uma `fin_*` nova gateada por outra função é lacuna do mesmo jeito, e o grupo tem de vê-la.',
+  },
+  {
+    def: { tipo: 'predicado', predicado: 'private.cap_compras_ler' },
+    tabelasNoGrafo: 14,
+    tabelasMd5: 'daf8a7a22f7ea9958dcf76928758a59c',
+    medidoEm: '2026-08-28',
+    motivo:
+      'Reposição/compras: parâmetro, log e run do motor. UMA delas (`pedido_compra_item`) foi ' +
+      'curada na 3ª rodada porque ARRASTA o predicado para o eixo 3 — congelar o corpo de ' +
+      '`cap_compras_ler` cobre as outras 13 sem curar o conteúdo delas, que é o melhor retorno ' +
+      'por entrada do arquivo inteiro. As 13 restantes são derivadas do motor, não a fonte do ' +
+      'número; o custo/preço que elas consomem mora em `product_costs`/`cmc_*`, já curadas.',
+  },
+];
 
 export interface PredicadoEsperado {
   /** `prosecdef`. Todas as 5 são SECDEF: é o que faz o predicado enxergar `user_roles`/

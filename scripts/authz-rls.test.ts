@@ -16,14 +16,16 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { compararRlsProd, type MedicaoRls, type MedPolicy } from './lib/authz-rls';
+import { compararRlsProd, md5Lista, rotuloGrupo, type MedicaoRls, type MedPolicy } from './lib/authz-rls';
 import {
   AUTHZ_RLS_ESPERADO,
   LACUNAS_DECLARADAS,
+  LACUNAS_POR_GRUPO,
   AUTHZ_RLS_PREDICADOS,
   PREDICADOS_PLATAFORMA,
   type TabelaRls,
   type PredicadoEsperado,
+  type LacunaGrupo,
 } from './authz-rls-esperado';
 
 // ── cenário sintético: 1 tabela curada, 2 policies, 1 predicado ────────────────────────────────
@@ -62,6 +64,20 @@ const PREDICADOS: Record<string, PredicadoEsperado> = {
 
 const PLATAFORMA: ReadonlySet<string> = new Set(['auth.uid']);
 
+// Grupo sintético do eixo 4: `zz_gate` gateia DUAS tabelas, das quais só `zz_alvo` está curada —
+// uma curada e uma lacuna é o estado mínimo em que o eixo tem algo a afirmar. Com zero lacunas o
+// cenário limpo já nasceria acusando LACUNA_GRUPO_CURADO, e o teste mediria outra coisa.
+const GRUPO_TABS = ['zz_alvo', 'zz_outra'];
+const GRUPOS: LacunaGrupo[] = [
+  {
+    def: { tipo: 'predicado', predicado: 'public.zz_gate' },
+    tabelasNoGrafo: 2,
+    tabelasMd5: md5Lista(GRUPO_TABS),
+    medidoEm: '2026-08-28',
+    motivo: 'grupo sintético do teste',
+  },
+];
+
 function medLimpa(): MedicaoRls {
   return {
     universal: { totalTabelas: 10, tabelasSemRls: [] },
@@ -74,13 +90,14 @@ function medLimpa(): MedicaoRls {
       { funcao: 'public.zz_gate', secdef: true, cfg: 'search_path=public', srcMd5: SRC_FN },
       { funcao: 'auth.uid', secdef: false, cfg: '', srcMd5: 'd'.repeat(32) },
     ],
+    grupos: [{ grupo: 'public.zz_gate', tabelas: [...GRUPO_TABS] }],
   };
 }
 
 function rodar(mut: (m: MedicaoRls) => void = () => {}) {
   const m = medLimpa();
   mut(m);
-  return compararRlsProd(m, CONTRATO, PREDICADOS, PLATAFORMA);
+  return compararRlsProd(m, CONTRATO, PREDICADOS, PLATAFORMA, GRUPOS);
 }
 const codigos = (fs: ReturnType<typeof rodar>) => fs.map((f) => f.codigo);
 function pol(m: MedicaoRls, nome: string): MedPolicy {
@@ -174,7 +191,7 @@ describe('§1 comparador — cada eixo sabotado produz o código certo', () => {
     };
     const m = medLimpa();
     pol(m, 'zz_all').wcMd5 = null;
-    expect(compararRlsProd(m, contratoSemWc, PREDICADOS, PLATAFORMA)).toEqual([]);
+    expect(compararRlsProd(m, contratoSemWc, PREDICADOS, PLATAFORMA, GRUPOS)).toEqual([]);
   });
 
   it('forAllAssimetricoOk silencia o check estrutural — e SÓ ele', () => {
@@ -183,7 +200,7 @@ describe('§1 comparador — cada eixo sabotado produz o código certo', () => {
     };
     const m = medLimpa();
     pol(m, 'zz_all').wcMd5 = 'f'.repeat(32);
-    const fs = compararRlsProd(m, comEscape, PREDICADOS, PLATAFORMA);
+    const fs = compararRlsProd(m, comEscape, PREDICADOS, PLATAFORMA, GRUPOS);
     expect(fs.map((f) => f.codigo)).toEqual(['POLICY_ALTERADA']); // o drift do md5 continua acusado
   });
 
@@ -230,7 +247,7 @@ describe('§1 comparador — cada eixo sabotado produz o código certo', () => {
     const outraProsa: Record<string, TabelaRls> = {
       'public.zz_alvo': { ...CONTRATO['public.zz_alvo'], motivo: 'texto completamente diferente' },
     };
-    expect(compararRlsProd(medLimpa(), outraProsa, PREDICADOS, PLATAFORMA)).toEqual([]);
+    expect(compararRlsProd(medLimpa(), outraProsa, PREDICADOS, PLATAFORMA, GRUPOS)).toEqual([]);
   });
 
   it('controle inócuo — policy de tabela FORA do contrato não é reconciliada', () => {
@@ -241,6 +258,73 @@ describe('§1 comparador — cada eixo sabotado produz o código certo', () => {
       }),
     );
     expect(fs).toEqual([]); // o eixo 2 mede só o que foi curado — e diz isso na doc
+  });
+
+  // ── eixo 4 — a declaração de lacuna em BLOCO ────────────────────────────────────────────────
+  // Este eixo não afirma nada sobre autorização: afirma que a DECLARAÇÃO ainda descreve prod. Os
+  // três primeiros eixos reconciliam o contrato contra o banco; a declaração de não-cobertura
+  // ninguém reconciliava, e ela apodrece pelo evento mais banal do repo — uma migration que
+  // gateie mais uma tabela pela mesma capability.
+  it('grupo CRESCEU (a migration gateou mais uma) → LACUNA_GRUPO_MUDOU, com os dois números', () => {
+    const fs = rodar((m) => m.grupos[0].tabelas.push('zz_nova'));
+    expect(codigos(fs)).toEqual(['LACUNA_GRUPO_MUDOU']);
+    expect(fs[0].objeto).toBe('public.zz_gate');
+    expect(fs[0].msg).toContain('CRESCEU');
+    expect(fs[0].msg).toContain('3 tabela(s) em prod contra 2 declarada(s)');
+    expect(fs[0].msg).toContain('zz_nova'); // a lista viva vai na mensagem, não só a contagem
+  });
+
+  it('grupo ENCOLHEU (uma rodada curou, ou a policy trocou de gate) → LACUNA_GRUPO_MUDOU', () => {
+    const fs = rodar((m) => (m.grupos[0].tabelas = ['zz_outra']));
+    expect(codigos(fs)).toEqual(['LACUNA_GRUPO_MUDOU']);
+    expect(fs[0].msg).toContain('ENCOLHEU');
+  });
+
+  it('SUBSTITUIÇÃO — a contagem bate e o conjunto não → LACUNA_GRUPO_MUDOU pelo md5', () => {
+    // O buraco que a contagem sozinha deixa: uma tabela sai do grupo e outra entra no mesmo
+    // intervalo. É a mesma classe de "duas mudanças opostas se cancelam" que fez a declaração
+    // guardar o TOTAL em vez do número de lacunas.
+    const fs = rodar((m) => (m.grupos[0].tabelas = ['zz_alvo', 'zz_trocada']));
+    expect(codigos(fs)).toEqual(['LACUNA_GRUPO_MUDOU']);
+    expect(fs[0].msg).toContain('a CONTAGEM bate (2) e o CONJUNTO não');
+    expect(fs[0].msg).toContain('zz_trocada');
+  });
+
+  it('grupo INTEIRAMENTE curado → LACUNA_GRUPO_CURADO (apagar a entrada, não renovar o número)', () => {
+    // O espelho, no nível do grupo, do defeito de §7.1: a declaração passa a mentir na direção
+    // que finge NÃO cobrir. A correção é oposta à do MUDOU, por isso o código é outro.
+    const contratoCompleto: Record<string, TabelaRls> = {
+      ...CONTRATO,
+      'public.zz_outra': { forceRls: false, policies: {}, motivo: 'curada depois' },
+    };
+    const m = medLimpa();
+    // A tabela recém-curada também passa a ser MEDIDA pelo eixo 2 — sem esta linha o teste
+    // acusaria TABELA_AUSENTE junto e mediria duas coisas ao mesmo tempo.
+    m.tabelas.push({ tabela: 'public.zz_outra', existe: true, rls: true, force: false });
+    const fs = compararRlsProd(m, contratoCompleto, PREDICADOS, PLATAFORMA, GRUPOS);
+    expect(codigos(fs)).toEqual(['LACUNA_GRUPO_CURADO']);
+    expect(fs[0].msg).toContain('REMOVA a entrada');
+  });
+
+  it('medição VAZIA de um grupo não vira "curado" — o diagnóstico perigoso', () => {
+    // `lacunas === 0` é verdade tanto para "todas curadas" quanto para "a query não devolveu
+    // nada". Diagnosticar a segunda como a primeira convidaria a APAGAR a declaração por causa de
+    // uma medição quebrada. O guard manda a lista vazia para MUDOU, que é o honesto.
+    const fs = rodar((m) => (m.grupos[0].tabelas = []));
+    expect(codigos(fs)).toEqual(['LACUNA_GRUPO_MUDOU']);
+    expect(fs[0].msg).toContain('ENCOLHEU');
+  });
+
+  it('grupo declarado SEM linha de medição → achado, nunca silêncio', () => {
+    const fs = rodar((m) => (m.grupos = []));
+    expect(codigos(fs)).toEqual(['LACUNA_GRUPO_MUDOU']);
+    expect(fs[0].msg).toContain('SEM linha de medição');
+  });
+
+  it('controle inócuo — a ORDEM em que prod devolve as tabelas do grupo não é achado', () => {
+    // O md5 ordena em JS antes de hashear justamente para isto: `jsonb_agg` não promete ordem.
+    const fs = rodar((m) => (m.grupos[0].tabelas = [...GRUPO_TABS].reverse()));
+    expect(fs).toEqual([]);
   });
 });
 
@@ -327,6 +411,45 @@ describe('§2 contrato do repo — invariantes conferíveis sem prod', () => {
     expect(Object.keys(LACUNAS_DECLARADAS).length).toBeGreaterThanOrEqual(8);
   });
 
+  // ── LACUNAS_POR_GRUPO — o que só o ARQUIVO pode garantir ────────────────────────────────────
+  // A verdade das CONTAGENS mora em prod e é conferida por `bun run authz:rls:prod` (eixo 4);
+  // aqui ficam as invariantes de forma, que rodam no CI, onde não há psql-ro. Sem elas o eixo 4
+  // seria conferível mas não confiável: um `tabelasNoGrafo: 0` ou um rótulo duplicado fazem o
+  // runner comparar contra lixo sem nada reclamar.
+  it('a lista de GRUPOS não pode ser esvaziada em silêncio', () => {
+    // A mesma sentinela de vacuidade da lista de tabelas, e pela mesma razão: o eixo 4 é um `for`
+    // sobre esta lista, e `for` sobre lista vazia não itera — o audit sairia ✅ tendo conferido
+    // zero grupos, que é o estado que esta rodada existiu para corrigir.
+    expect(LACUNAS_POR_GRUPO.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('todo grupo tem contagem POSITIVA, md5 de 32 hex, data ISO e razão de substância', () => {
+    for (const g of LACUNAS_POR_GRUPO) {
+      const rot = rotuloGrupo(g.def);
+      // `0` seria vacuidade disfarçada de medição: casaria com um grupo que sumiu de prod e com
+      // uma query quebrada, e as duas leituras são opostas.
+      expect(g.tabelasNoGrafo, `${rot}: contagem não-positiva`).toBeGreaterThan(0);
+      expect(g.tabelasMd5, `${rot}: md5 malformado`).toMatch(/^[0-9a-f]{32}$/);
+      expect(g.medidoEm, `${rot}: data de medição fora do ISO`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(g.motivo.trim().length, `${rot}: razão ausente ou rasa`).toBeGreaterThan(80);
+    }
+  });
+
+  it('o rótulo de grupo é único e QUALIFICADO, e não contém ":"', () => {
+    const qual = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
+    const vistos = new Set<string>();
+    for (const g of LACUNAS_POR_GRUPO) {
+      const rot = rotuloGrupo(g.def);
+      // O rótulo é a CHAVE que o runner casa entre declaração e medição: dois grupos com o mesmo
+      // rótulo fariam um deles ser conferido duas vezes e o outro nunca, em silêncio.
+      expect(vistos.has(rot), `rótulo duplicado: ${rot}`).toBe(false);
+      vistos.add(rot);
+      expect(rot).not.toContain(':'); // o idFinding do carimbo parte por ':'
+      if (g.def.tipo === 'predicado') expect(g.def.predicado).toMatch(qual);
+      else expect(g.def.prefixo.length, `prefixo vazio casaria TODA tabela de public`).toBeGreaterThan(2);
+    }
+  });
+
   it('nomes de tabela e de policy não contêm ":" — o idFinding do carimbo parte por ele', () => {
     for (const [chave, e] of entradas) {
       expect(chave).not.toContain(':');
@@ -363,7 +486,13 @@ describe('§2 contrato do repo — invariantes conferíveis sem prod', () => {
       predicados: Object.entries(AUTHZ_RLS_PREDICADOS).map(([funcao, p]) => ({
         funcao, secdef: p.secdef, cfg: p.cfg, srcMd5: p.srcMd5,
       })),
+      // O eixo 4 entra VAZIO aqui de propósito, e a razão é o que o eixo é: a verdade dele mora em
+      // PROD (quantas tabelas o grupo tem hoje), não no arquivo. Fabricar a medição a partir da
+      // declaração — reconstruir a lista de tabelas de um md5 é impossível, e inventar uma lista
+      // que casasse seria escrever a resposta antes da pergunta — provaria só que a igualdade é
+      // reflexiva. Quem prova o eixo 4 são os testes de §1 (comparador) e o harness PG17.
+      grupos: [],
     };
-    expect(compararRlsProd(med, AUTHZ_RLS_ESPERADO, AUTHZ_RLS_PREDICADOS, PREDICADOS_PLATAFORMA)).toEqual([]);
+    expect(compararRlsProd(med, AUTHZ_RLS_ESPERADO, AUTHZ_RLS_PREDICADOS, PREDICADOS_PLATAFORMA, [])).toEqual([]);
   });
 });

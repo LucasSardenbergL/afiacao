@@ -8,6 +8,7 @@ import {
   AUTHZ_RLS_ESPERADO,
   AUTHZ_RLS_PREDICADOS,
   LACUNAS_DECLARADAS,
+  LACUNAS_POR_GRUPO,
   PREDICADOS_PLATAFORMA,
 } from './authz-rls-esperado';
 
@@ -472,18 +473,21 @@ describe('chave `rls` — a quarta guarda enumerada', () => {
     expect(AUDITS.rls.contratoEmArquivo).toBeUndefined();
   });
 
-  it('o contrato que o carimbo USA carrega os QUATRO eixos, por identidade', () => {
+  it('o contrato que o carimbo USA carrega os CINCO eixos, por identidade', () => {
     // Exerce `dadoDoContrato`, não uma reconstrução do objeto: a primeira versão deste teste
     // montava `{tabelas, predicados, plataforma}` aqui e canonicalizava — remover um eixo da
     // função real seguia VERDE (pego na falsificação). Identidade de referência é o que faz
     // "esqueci de incluir o eixo" virar vermelho. O 4º (`lacunas`) entrou em 2026-08-28: é o que
-    // o contrato declara NÃO cobrir, e mudá-lo afrouxa o que o verde afirma.
+    // o contrato declara NÃO cobrir, e mudá-lo afrouxa o que o verde afirma. O 5º (`grupos`), no
+    // mesmo dia, é a lacuna em BLOCO — e afrouxa por UMA LINHA: baixar `tabelasNoGrafo` faz o
+    // audit deixar de acusar a tabela que ENTROU no grupo.
     const d = dadoDoContrato('rls') as Record<string, unknown>;
     expect(d.tabelas).toBe(AUTHZ_RLS_ESPERADO);
     expect(d.predicados).toBe(AUTHZ_RLS_PREDICADOS);
     expect(d.plataforma).toBe(PREDICADOS_PLATAFORMA);
     expect(d.lacunas).toBe(LACUNAS_DECLARADAS);
-    expect(Object.keys(d).sort()).toEqual(['lacunas', 'plataforma', 'predicados', 'tabelas']);
+    expect(d.grupos).toBe(LACUNAS_POR_GRUPO);
+    expect(Object.keys(d).sort()).toEqual(['grupos', 'lacunas', 'plataforma', 'predicados', 'tabelas']);
   });
 
   it('o canônico do contrato REAL representa o Set — o eixo que se serializaria como {}', () => {
@@ -495,6 +499,20 @@ describe('chave `rls` — a quarta guarda enumerada', () => {
     expect(canon).toContain('auth.uid');
     expect(canon).toContain('public.has_role');
     expect(canon).toContain('public.sales_orders');
+  });
+
+  it('baixar UMA contagem de grupo move o canônico — o afrouxamento de uma linha', () => {
+    // A falsificação mais barata do eixo 5, e a que o carimbo tem de ver: `tabelasNoGrafo: 22 → 21`
+    // não some com tabela nenhuma do contrato, não mexe em policy nenhuma, e faz o audit parar de
+    // acusar a tabela que entrou no grupo. Se o fingerprint não se movesse, o carimbo seguiria
+    // atestando uma declaração que já não é a medida.
+    const base = canonicalizar(dadoDoContrato('rls'));
+    const afrouxado = canonicalizar({
+      tabelas: AUTHZ_RLS_ESPERADO, predicados: AUTHZ_RLS_PREDICADOS,
+      plataforma: PREDICADOS_PLATAFORMA, lacunas: LACUNAS_DECLARADAS,
+      grupos: LACUNAS_POR_GRUPO.map((g, i) => (i === 0 ? { ...g, tabelasNoGrafo: g.tabelasNoGrafo - 1 } : g)),
+    });
+    expect(afrouxado).not.toBe(base);
   });
 
   it.each([

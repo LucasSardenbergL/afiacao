@@ -6,7 +6,7 @@
  * `db/audit-rls-prod.ts`; quem compara é este módulo, e por isso ele é testável sem banco
  * (`scripts/authz-rls.test.ts`, que roda no CI) e falsificável sem prod.
  *
- * ═══ OS TRÊS EIXOS, E POR QUE SÃO TRÊS ═══
+ * ═══ OS QUATRO EIXOS, E POR QUE SÃO QUATRO ═══
  *
  *   1. INTERRUPTOR (universal, sem allowlist) — `relrowsecurity` de TODA tabela de `public`.
  *      É o eixo que pega o `ALTER TABLE … DISABLE ROW LEVEL SECURITY` colado à mão, que é o vetor
@@ -16,6 +16,12 @@
  *   3. PREDICADO (derivado do eixo 2) — o md5 do `prosrc` das funções que as policies CHAMAM,
  *      descobertas por `pg_depend`. Existe porque o eixo 2 é CEGO a ele: reescrever
  *      `cap_pedido_escrever` para `SELECT true` deixa o texto do `qual` idêntico.
+ *   4. GRUPO DE LACUNA (o NEGATIVO dos outros três) — não mede autorização nenhuma: mede se a
+ *      DECLARAÇÃO de não-cobertura ainda descreve o que existe. Conta em prod as tabelas de cada
+ *      grupo de `LACUNAS_POR_GRUPO` e desconta as curadas. Existe porque os eixos 1-3 reconciliam
+ *      o contrato contra prod e ninguém reconciliava a declaração contra prod: uma migration que
+ *      gateie mais uma tabela por `cap_carteira_ler` deixava a contagem declarada falsa em
+ *      silêncio (§7.2 do histórico), verde em todos os gates.
  *
  * ═══ O QUE ESTA GUARDA NÃO PEGA (limites declarados, medidos e não deduzidos) ═══
  *
@@ -44,7 +50,15 @@
  *     mora no PG17 descartável (`db/test-audit-rls-prod.sh`), que exerce as policies sob
  *     `SET ROLE authenticated` + `request.jwt.claim.sub`.
  */
-import type { TabelaRls, PredicadoEsperado, PolicyEsperada } from '../authz-rls-esperado';
+import { createHash } from 'node:crypto';
+
+import type {
+  TabelaRls,
+  PredicadoEsperado,
+  PolicyEsperada,
+  LacunaGrupo,
+  DefinicaoGrupo,
+} from '../authz-rls-esperado';
 
 // Sem `export`, como o `GrantCodigo` de authz-grants.ts: os testes e o harness casam o CÓDIGO
 // como string literal delimitada por colchetes, não o tipo.
@@ -62,7 +76,12 @@ type RlsCodigo =
   // eixo 3 — o predicado
   | 'PREDICADO_NAO_DECLARADO'
   | 'PREDICADO_ALTERADO'
-  | 'PREDICADO_SUMIU';
+  | 'PREDICADO_SUMIU'
+  // eixo 4 — a declaração de lacuna em bloco. Dois códigos e não um, pela mesma razão de
+  // POLICY_NOVA vs POLICY_ALTERADA: as correções são OPOSTAS. `MUDOU` pede re-medir e renovar o
+  // número; `CURADO` pede APAGAR a entrada, porque o grupo deixou de ser lacuna.
+  | 'LACUNA_GRUPO_MUDOU'
+  | 'LACUNA_GRUPO_CURADO';
 
 export interface RlsFinding {
   level: 'error' | 'warn';
@@ -92,6 +111,28 @@ export interface MedicaoRls {
   policies: MedPolicy[];
   /** Eixo 3. Descoberto por `pg_depend` a partir das policies das tabelas do contrato. */
   predicados: { funcao: string; secdef: boolean; cfg: string; srcMd5: string }[];
+  /** Eixo 4. Uma entrada por grupo DECLARADO, com os `relname` (sem schema — todos de `public`)
+   *  que o grupo tem em prod. É a LISTA e não a contagem de propósito: a mensagem do achado
+   *  precisa nomear quem entrou e quem saiu, senão "22 → 23" manda o leitor refazer a query. */
+  grupos: { grupo: string; tabelas: string[] }[];
+}
+
+/** Rótulo estável de um grupo — é o `objeto` do finding e o identificador que o runner casa entre
+ *  a declaração e a medição, então ele NÃO pode conter `:` (o `idFinding` do carimbo parte por
+ *  ele). Derivado da definição, nunca declarado ao lado dela: um campo `id` escrito à mão seria
+ *  mais uma prosa capaz de divergir do dado que descreve, que é a classe inteira que este eixo
+ *  existe para fechar. */
+export function rotuloGrupo(def: DefinicaoGrupo): string {
+  return def.tipo === 'predicado' ? def.predicado : `${def.prefixo}*`;
+}
+
+/** md5 do conjunto de tabelas de um grupo. Ordena em JS de propósito, e NÃO em SQL: o
+ *  `ORDER BY` do Postgres usa COLLATION, e `_` ordena antes de letra em `C` e é ignorado em
+ *  ICU/pt_BR — o mesmo conjunto produziria md5 diferente conforme o locale do servidor. O sort
+ *  default de JS é por code unit, que para `[a-z0-9_]` é estável em qualquer ambiente (a lição
+ *  #1483, de falsificar em UM locale só, aplicada ANTES de o bug existir). */
+export function md5Lista(tabelas: readonly string[]): string {
+  return createHash('md5').update([...tabelas].sort().join(','), 'utf8').digest('hex');
 }
 
 /** Roles do contrato (array) reduzidas à mesma forma que a medição produz: ordenadas, `+`. */
@@ -176,6 +217,7 @@ export function compararRlsProd(
   contrato: Record<string, TabelaRls>,
   predicados: Record<string, PredicadoEsperado>,
   plataforma: ReadonlySet<string>,
+  grupos: readonly LacunaGrupo[],
 ): RlsFinding[] {
   const out: RlsFinding[] = [];
   const noContrato = new Set(Object.keys(contrato));
@@ -332,6 +374,83 @@ export function compararRlsProd(
         `a policy que a usava mudou de predicado (veja os achados de POLICY_*), ou a entrada ` +
         `envelheceu. Entrada que não vigia nada é cobertura só no papel.`,
     });
+  }
+
+  // ── EIXO 4 — a declaração de lacuna em BLOCO ────────────────────────────────────────────────
+  // Este eixo não mede autorização: mede se a DECLARAÇÃO ainda descreve prod. As curadas são
+  // DESCONTADAS aqui (do contrato ao lado, a cada execução) em vez de declaradas — número
+  // derivado não apodrece, e é o que dá o denominador da linha do veredito.
+  const medPorGrupo = new Map(med.grupos.map((g) => [g.grupo, g.tabelas]));
+  for (const g of grupos) {
+    const rot = rotuloGrupo(g.def);
+    const medidas = medPorGrupo.get(rot);
+    if (medidas === undefined) {
+      // Grupo declarado sem linha de medição. O runner tem piso para isto, mas repetir aqui é o
+      // que mantém o módulo puro fail-closed sozinho: ausência de dado NUNCA vira "bate".
+      out.push({
+        level: 'error',
+        codigo: 'LACUNA_GRUPO_MUDOU',
+        objeto: rot,
+        msg:
+          `${rot}: grupo declarado em LACUNAS_POR_GRUPO e SEM linha de medição. Não é "zero ` +
+          `divergências" — é medição que não aconteceu para este grupo.`,
+      });
+      continue;
+    }
+    const curadas = medidas.filter((t) => `public.${t}` in contrato).sort();
+    const lacunas = medidas.length - curadas.length;
+    const lista = () => [...medidas].sort().join(', ');
+
+    // CURADO vem ANTES de MUDOU quando os dois valem: se o grupo inteiro foi curado, renovar a
+    // contagem é a correção errada — a entrada tem de sair. O guard `medidas.length > 0` é o que
+    // impede a inversão perigosa: uma medição que volta VAZIA também tem `lacunas === 0`, e
+    // diagnosticá-la como "grupo curado" convidaria a apagar a declaração por causa de uma query
+    // quebrada. Lista vazia cai no MUDOU abaixo, que é o diagnóstico honesto.
+    if (medidas.length > 0 && lacunas === 0) {
+      out.push({
+        level: 'error',
+        codigo: 'LACUNA_GRUPO_CURADO',
+        objeto: rot,
+        msg:
+          `${rot}: as ${medidas.length} tabela(s) do grupo estão TODAS em AUTHZ_RLS_ESPERADO — o ` +
+          `grupo deixou de ser lacuna e a declaração passou a mentir na direção que finge NÃO ` +
+          `cobrir. REMOVA a entrada de LACUNAS_POR_GRUPO (não renove a contagem). Tabelas: ` +
+          `${lista()}.`,
+      });
+      continue;
+    }
+    if (medidas.length !== g.tabelasNoGrafo) {
+      const dir = medidas.length > g.tabelasNoGrafo ? 'CRESCEU' : 'ENCOLHEU';
+      out.push({
+        level: 'error',
+        codigo: 'LACUNA_GRUPO_MUDOU',
+        objeto: rot,
+        msg:
+          `${rot}: o grupo ${dir} — ${medidas.length} tabela(s) em prod contra ` +
+          `${g.tabelasNoGrafo} declarada(s) (medido em ${g.medidoEm}). ` +
+          `${curadas.length} curada(s), ${lacunas} lacuna(s) hoje. A declaração de não-cobertura ` +
+          `virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. ` +
+          `Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de ` +
+          `renovar \`tabelasNoGrafo\` (e a data). Tabelas hoje: ${lista()}.`,
+      });
+      continue;
+    }
+    // Contagem bate. Falta a SUBSTITUIÇÃO: uma sai, outra entra, e o total não se move — a mesma
+    // classe de "duas mudanças opostas se cancelam" que fez a declaração guardar o TOTAL em vez
+    // do número de lacunas. O md5 da lista ordenada é o que fecha isso.
+    const md5Med = md5Lista(medidas);
+    if (md5Med !== g.tabelasMd5) {
+      out.push({
+        level: 'error',
+        codigo: 'LACUNA_GRUPO_MUDOU',
+        objeto: rot,
+        msg:
+          `${rot}: a CONTAGEM bate (${medidas.length}) e o CONJUNTO não — md5 ${md5Med} contra ` +
+          `${g.tabelasMd5} declarado (medido em ${g.medidoEm}). Houve substituição: uma tabela ` +
+          `saiu do grupo e outra entrou no mesmo intervalo, e só a contagem não veria. Tabelas ` +
+          `hoje: ${lista()}.`,
+      });
+    }
   }
 
   return out;
