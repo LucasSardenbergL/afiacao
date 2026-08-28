@@ -3,16 +3,22 @@
 # ║  PROVA O DENTE de db/audit-rls-prod.ts — a quarta guarda (RLS viva).                      ║
 # ║                                                                                           ║
 # ║  Sobe um PG17 descartável, monta um recorte sintético do desenho de prod (tabela de       ║
-# ║  papéis + gate SECDEF + tabela money-path com policy por comando) e roda o audit REAL —   ║
+# ║  papéis + gate SECDEF + tabela money-path com policy por comando + uma CADEIA de 2        ║
+# ║  níveis, zz_gate2_a → zz_gate2_b, que é o recorte do `cap_* → has_role` real) e roda o     ║
+# ║  audit REAL —                                                                             ║
 # ║  o mesmo binário que aponta para produção — com PSQL_RO redirecionado para este PG.       ║
 # ║  Nada de reimplementar a lógica em shell: sob teste está o executável inteiro (query,     ║
 # ║  parser da saída, comparador e exit code).                                                ║
 # ║                                                                                           ║
 # ║  PARTE A — o audit reage (catálogo). Cada sabotagem exige o CÓDIGO certo, não só          ║
 # ║  "acusou alguma coisa": POLICY_NOVA e POLICY_ALTERADA pedem correções opostas.            ║
+# ║  Os cenários Z cobrem o FECHO TRANSITIVO: reescrever o corpo do gate de 2º nível deixa    ║
+# ║  a policy E o chamador byte-a-byte intactos (Z1), e uma função criada DEPOIS do contrato  ║
+# ║  tem de ser DESCOBERTA (Z3) sem que string/coluna homônima inventem predicado (Z6).       ║
 # ║  PARTE B — o EFEITO (sob SET ROLE authenticated + GUC do JWT). Catálogo não prova         ║
 # ║  alcance (database.md §1); aqui a RLS é EXERCIDA, e o cenário do DISABLE mostra que o     ║
-# ║  vetor que a guarda vigia é real: o mesmo SELECT passa de 0 para 2 linhas.                ║
+# ║  vetor que a guarda vigia é real: o mesmo SELECT passa de 0 para 2 linhas — e o B7 faz o  ║
+# ║  mesmo mexendo SÓ no 2º nível.                                                            ║
 # ║                                                                                           ║
 # ║  O contrato de teste é DERIVADO do banco no estado limpo (jsonb_object_agg) e injetado    ║
 # ║  por AUTHZ_RLS_TEST_JSON — o contrato real do repo não é tocado, e o harness não quebra   ║
