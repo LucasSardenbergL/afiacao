@@ -92,7 +92,7 @@ export function classificarResposta(status: number): Desfecho {
 /** Teto de segurança do lote. O `/batch/` aceita bem mais, mas um corpo grande
  *  vira 413 — que é permanente e mataria o lote inteiro por tamanho. */
 export const TETO_EVENTOS_POR_LOTE = 200;
-export const TETO_BYTES_POR_LOTE = 1_000_000;
+const TETO_BYTES_POR_LOTE = 1_000_000;
 
 /**
  * Parte o lote em pedaços que cabem no teto de bytes. Sem isto, uma props
