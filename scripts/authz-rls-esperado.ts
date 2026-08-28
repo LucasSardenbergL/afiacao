@@ -61,8 +61,8 @@
  *   · **`customer_contacts`** — é dado PESSOAL (LGPD), não dinheiro/custo/raiz. O broad-staff dela é
  *     decisão MEDIDA de 2026-07-20 (database.md §4, com gatilho de reavaliação próprio); o critério
  *     deste contrato não a alcança, e forçá-la aqui seria usar a sentinela errada para o problema.
- *   · **36 tabelas `fin_*` restantes** (das 41 medidas; 5 curadas) (`fin_dre_snapshots`, `fin_orcamento`, `fin_forecast`,
- *     `fin_conciliacao`, `fin_fechamentos`, `fin_kpi_tributario`, `fin_eliminacoes_*`, os `*_log`,
+ *   · **36 tabelas `fin_*` restantes** (das 41 medidas, 5 curadas) — `fin_dre_snapshots`,
+ *     `fin_orcamento`, `fin_forecast`, `fin_conciliacao`, `fin_fechamentos`, `fin_kpi_tributario`, `fin_eliminacoes_*`, os `*_log`,
  *     os `fin_sync_*`) — agregados, logs e controle DERIVADOS do que entrou. As três fontes
  *     (`fin_contas_receber`, `fin_contas_pagar`, `fin_movimentacoes`), a conta bancária
  *     (`fin_contas_correntes`) e as DUAS raízes (`user_roles`, `fin_permissoes`) estão curadas; o
@@ -77,9 +77,9 @@
  *     as 14 de `cap_compras_ler`** — aprovação, log e config. Os gates delas (`cap_credito_escrever`,
  *     `cap_compras_ler`) são, medido, `has_role(master)` puro: a raiz é `user_roles`, já curada.
  *
- * E as 311 tabelas restantes com policy (328 medidas com ≥1 policy, 17 curadas) seguem cobertas pelo eixo universal (ninguém desliga a
- * RLS delas em silêncio), com o CONTEÚDO não reconciliado — lacuna declarada, não cobertura
- * implícita.
+ * E as 311 tabelas restantes com policy (328 medidas com ≥1 policy, 17 curadas) seguem cobertas
+ * pelo eixo universal (ninguém desliga a RLS delas em silêncio), com o CONTEÚDO não reconciliado
+ * — lacuna declarada, não cobertura implícita.
  *
  * ═══ A REPRESENTAÇÃO, E O QUE ELA NÃO PEGA ═══
  *
