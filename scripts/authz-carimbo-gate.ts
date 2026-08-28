@@ -18,6 +18,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 import {
+  AUDITS,
   AVISO_DIAS,
   CARIMBO_PATH,
   VENCIDO_DIAS,
@@ -51,7 +52,16 @@ try {
 }
 
 if (comoJson) {
-  console.log(JSON.stringify({ exigirFrescor, avisoDias: AVISO_DIAS, vencidoDias: VENCIDO_DIAS, vereditos }, null, 2));
+  // `audits` viaja no payload para o corpo da Issue NÃO escrever a contagem à mão. Ela já
+  // apodreceu uma vez: o texto dizia "três FATIAS" depois que o 4º e o 5º audit entraram —
+  // e a mensagem errada é justamente a que chega ao founder no momento do alarme.
+  console.log(
+    JSON.stringify(
+      { exigirFrescor, avisoDias: AVISO_DIAS, vencidoDias: VENCIDO_DIAS, audits: Object.keys(AUDITS), vereditos },
+      null,
+      2,
+    ),
+  );
 }
 
 const bloqueantes = vereditos.filter((v) => v.bloqueiaPR);
