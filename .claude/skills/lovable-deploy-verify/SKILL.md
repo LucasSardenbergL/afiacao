@@ -452,9 +452,21 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
       tick pós-deploy (id 61756) três steps trouxeram o marcador e **dois vieram `background`**
       (`nfes` 4/4 dos ticks, `pedidos` 3/4). O vazio do `background` é byte a byte o vazio do bundle
       pré-sensor: **só a coluna `modo` separa "não subiu" de "não deu tempo de coletar"** — projete
-      sempre as duas. Para o step que estoura, a prova continua sendo a sonda ativa, que é
-      justamente onde ela custa mais (bundle pré-sensor sondado dispara a varredura). Trate o eco
-      como cobertura PARCIAL e barata, não como substituto da sonda.
+      sempre as duas.
+      ✅ **Mas a régua se lê na JANELA, não no tick — corrigido 2026-08-28 com medição.** A frase
+      que estava aqui ("para o step que estoura, a prova continua sendo a sonda ativa") foi
+      REFUTADA: nos ticks 61860/61912/61997 (06:15, 08:15, 10:15Z) os dois steps dados como
+      inalcançáveis — `pedidos` e `nfes` — responderam sozinhos no tick das 10:15Z, sem sonda
+      nenhuma, fechando **5/5**. `background` não é propriedade do step, é **variância de latência**
+      contra o `STEP_TIMEOUT_MS` de 25s ⇒ a cobertura **converge com o número de ticks**. Como o
+      cron roda a cada 2h e o `pg_net.ttl` guarda 6h, **toda leitura nasce com ~3 tentativas de
+      graça**: acumule a janela (`respondido` em QUALQUER tick basta — o marcador não envelhece
+      dentro dela) em vez de julgar pelo tick mais recente. Só recorra à sonda ativa se o step vier
+      `background` na janela INTEIRA; aí a via passiva se esgotou. A assimetria não muda —
+      `respondido`+marcador **prova**, `background` é **INCONCLUSIVO** e nunca "bundle velho"; o que
+      mudou é o que se faz com o inconclusivo: **reler**, não sondar (e sondar é caro justamente
+      ali). Fecho e os 3 eixos da auditoria (identidade pela chave, exclusividade do marcador no
+      git, ar==`main`): `docs/historico/cron-teto-volume-vs-latencia.md`.
 
 ### Passo 4b — QA visual pós-Publish (Claude-in-Chrome na sessão logada do founder)
 
