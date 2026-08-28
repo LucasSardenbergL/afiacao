@@ -363,11 +363,14 @@ jobs:
       # O custo de blast-radius que um gate compartilhado costuma ter está INVERTIDO aqui: estes
       # evals não leem `src/`, `package.json`, `node_modules` (usam cwd neutro de propósito) nem a
       # rede, então PR de produto não consegue deixá-los vermelhos — só PR que toca a própria
-      # skill, que é exatamente quando devem barrar. Custo: NÃO estimado daqui de propósito — o
-      # mesmo comando mediu de 6s a 70s nesta M2 conforme a carga (~30 worktrees), e o `bun run`
-      # não é o culpado (bash direto deu 70s no mesmo instante em que o `bun run` deu 45s). O
-      # #1947 já ensinou que medição local não projeta runner: o número que vale é o do primeiro
-      # run no Actions. Se um dia apertar o timeout de 15min, o corte é a fixture, não a cobertura.
+      # skill, que é exatamente quando devem barrar. Custo REAL no runner, medido no primeiro run
+      # depois do #2041 (run 32983531687): 2s + 2s, contra `validate` em 570s — 0,7% do job.
+      # A medição LOCAL não previa isso e não devia mesmo (lição do #1947): nesta M2 o mesmo
+      # comando variou de 6s a 70s conforme a carga (~30 worktrees), e o `bun run` não era o
+      # culpado (bash direto deu 70s no instante em que o `bun run` deu 45s). O erro de projetar
+      # daqui é de UMA ORDEM DE GRANDEZA, e para o lado caro — quem estimar custo de CI pela M2
+      # vai recusar gate barato. Se um dia apertar o timeout de 15min do job, o corte certo é a
+      # fixture, não a cobertura.
       - name: Falsificação — sabota a skill e EXIGE vermelho em cada eval
         run: bun run evals:deploy-verify:falsificacao
 
@@ -378,6 +381,23 @@ jobs:
       # Manifest: scripts/authz-manifest.ts. Spec: docs/superpowers/specs/2026-07-09-authz-gate-regression-check-design.md
       - name: Authz gate check (RPCs SECDEF sensíveis)
         run: bun run authz:check
+
+      # Irmão do gate acima no MESMO domínio, e a divisão entre eles é o ponto: `authz:check` lê o
+      # REPO (migrations) e nunca vê produção; os audits de prod leem o BANCO e são os únicos que
+      # pegam `GRANT`/`REVOKE` colado à mão no SQL Editor e migration que mergeou e nunca foi
+      # aplicada. Só que eles NÃO rodam aqui — o runner não tem `psql-ro`, e não deve ter: a
+      # credencial é local (`~/.config/afiacao/psql-ro`, role `claude_ro`). Sem cadência, a garantia
+      # deles era "alguém rodou um dia" — a classe de docs/historico/fase-sem-sinal.md, e a lacuna
+      # que o próprio domínio já tinha nomeado ("roda on-demand. Entre duas execuções, a janela
+      # existe", sentinela-authz-controle-nao-mencao.md §9.6).
+      # A ponte é o CARIMBO: a medição fica onde está a credencial (o laptop), o sinal fica onde já
+      # há cadência (aqui). Este step cobra só os eixos que um PR CONSEGUE consertar — contrato ou
+      # auditor mudou sem re-medir, carimbo ausente/ilegível/no futuro. Idade e achado vivo em prod
+      # NÃO entram aqui: o conserto deles é paste do founder no SQL Editor, e travar a fila de ~30
+      # worktrees puniria justamente quem não pode consertar. Esses dois vivem no job
+      # `authz-sentinela` (main), com Issue própria. Estático: lê o JSON, sem rede.
+      - name: Authz carimbo de prod (evidência foi produzida para ESTE contrato?)
+        run: bun run authz:carimbo
 
       # Anti-regressão do pin do bun (follow-up do PR #1352). Prova que TODO `bun-version` é semver
       # ESTRITO x.y.z e que as ocorrências convergem — as 3 armadilhas do comentário lá em cima.
@@ -499,6 +519,103 @@ jobs:
             for (const issue of open.data) {
               await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: `✅ CI da \`main\` voltou a verde em \`${sha}\`. Fechando automaticamente.` });
               await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed' });
+            }
+
+  # ─── Sentinela da evidência de authz em produção (main, não-bloqueante) ──
+  # Os dois eixos que o step do `validate` deliberadamente NÃO cobra: idade do carimbo e achado
+  # vivo em prod. Roda só na main (schedule diário/push/dispatch), então nunca segura PR de
+  # ninguém.
+  #
+  # ⚠️ O JOB FICA VERDE QUANDO CONSEGUIU AVALIAR — inclusive com produção divergente. "O monitor
+  # funcionou" e "produção está limpa" são fatos DIFERENTES, e um job que os mistura vira um sinal
+  # que não se sabe ler. Quem carrega o vermelho de produção é a Issue `authz-prod`. O job só
+  # falha quando o gate não conseguiu avaliar (exit 2) — aí a evidência é que o observador quebrou.
+  #
+  # ⚠️ Canal PRÓPRIO, e não a Issue `ci-main-red` do job acima: o corpo daquela afirma "Provável
+  # reversão por commit direto do Lovable" — diagnóstico ERRADO para este sinal, que mandaria o
+  # founder para `deploy.md` procurar um incidente que não existe. Sensor que significa duas coisas
+  # é o precedente dos 4 vazios no mesmo pixel (docs/historico/fase-sem-sinal.md §2).
+  authz-sentinela:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      # `continue-on-error` é DE PROPÓSITO: exit 1 do gate significa "produção/idade tem algo a
+      # dizer", e isso é conteúdo para a Issue, não falha do monitor. exit 2 (o gate não conseguiu
+      # avaliar) é tratado como falha real no step seguinte.
+      - name: Avalia o carimbo (idade + achado vivo)
+        id: gate
+        continue-on-error: true
+        run: |
+          set +e
+          bun run authz:carimbo -- --exigir-frescor --json > /tmp/carimbo.json 2> /tmp/carimbo.err
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          cat /tmp/carimbo.err || true
+
+      - name: Gate não conseguiu avaliar (exit 2) é falha do MONITOR
+        if: steps.gate.outputs.rc == '2'
+        run: |
+          echo "::error::authz:carimbo saiu 2 — o gate não conseguiu avaliar o carimbo."
+          cat /tmp/carimbo.err || true
+          exit 1
+
+      - name: Sincroniza a Issue authz-prod
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const label = 'authz-prod';
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            let dados;
+            try { dados = JSON.parse(fs.readFileSync('/tmp/carimbo.json', 'utf8')); }
+            catch (e) { core.setFailed(`veredito ilegível: ${e.message}`); return; }
+            const vereditos = (dados.vereditos || []).filter(v => v.codigo !== 'CARIMBO_AVISO');
+            const avisos = (dados.vereditos || []).filter(v => v.codigo === 'CARIMBO_AVISO');
+            try {
+              await github.rest.issues.createLabel({ owner, repo, name: label, color: 'b60205',
+                description: 'Evidência de authz de produção: carimbo vencido ou achado vivo' });
+            } catch (e) { /* label já existe */ }
+            const abertas = await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: label, per_page: 100 });
+
+            if (vereditos.length === 0) {
+              // Fecha SÓ contra uma medição nova e limpa — nunca "porque o workflow passou".
+              for (const issue of abertas.data) {
+                await github.rest.issues.createComment({ owner, repo, issue_number: issue.number,
+                  body: `✅ Nova medição limpa e fresca. ${avisos.map(a => a.mensagem).join(' ')} Run: ${runUrl}` });
+                await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed' });
+              }
+              core.info('carimbo fresco e sem achado — nada a sinalizar.');
+              return;
+            }
+            const corpo = [
+              '🔴 **Evidência de autorização de produção precisa de ação.**',
+              '',
+              ...vereditos.map(v => `- \`[${v.codigo}]\` ${v.mensagem}`),
+              '',
+              '**Como limpar:**',
+              '- `CARIMBO_VELHO` → rode `bun run authz:carimbo:gravar` na máquina com `psql-ro` e commite `db/authz-carimbo-prod.json`.',
+              '- `CARIMBO_ACHADO` → o fix é DDL: prepare o bloco e cole no SQL Editor do Lovable, depois re-rode o runner.',
+              '',
+              `Run: ${runUrl}`,
+              '',
+              '⚠️ O carimbo atesta três FATIAS curadas da autorização, não a autorização inteira — pontos cegos declarados em `docs/agent/database.md` §1.',
+            ].join('\n');
+            if (abertas.data.length > 0) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: abertas.data[0].number, body: corpo });
+            } else {
+              await github.rest.issues.create({ owner, repo, title: '🔴 Evidência de authz de produção', body: corpo, labels: [label] });
             }
 
   # ─── Job NÃO-bloqueante (informativo, sinal próprio) ────────────────

@@ -175,6 +175,45 @@ else
       "   Isto NÃO é 'a sentinela está limpa' — é AUSÊNCIA DE DADO, e um 2º emissor segue possível."
   fi
 fi
+
+# ---- sonda do DELIMITADOR: a sentinela é representável no bundle? (roda ANTES da rede) ----
+# A 3ª pergunta ortogonal às duas de cima. O --pai mede a FONTE (`git grep` em src/); a varredura
+# mede o BUNDLE MINIFICADO. Para quase toda sentinela as duas representações coincidem — mas NÃO
+# quando a sentinela é o literal COM seus delimitadores: a fonte escreve 'oculta' (aspas simples,
+# padrão do prettier deste repo) e o esbuild emite "oculta". Medido em prod 2026-08-27, no chunk
+# StaffDashboard servido: 'oculta' = 0 ocorrências, "oculta" = 1. As duas formas são MUTUAMENTE
+# EXCLUSIVAS, então nenhuma sentinela delimitada passa o guard E casa no bundle:
+#   'oculta'  -> --pai PASSA (0 no pai, 2 no novo) e a varredura dá 0  => exit 1 FALSO
+#   "oculta"  -> --pai RECUSA (0 no novo)                              => exit 3, nem varre
+# O primeiro é o caro: "Publish pendente" sobre fix JÁ no ar, com os três guards verdes (medido —
+# ✓ sentinela exclusiva + ✓ LIB_SEM_A_SENTINELA + ✓ CONTROLE_POSITIVO_OK). O controle positivo não
+# cobre isto por construção: ele prova que a rede e o grep funcionam, não que a sentinela seja
+# REPRESENTÁVEL. Perguntas diferentes.
+#
+# Só as PONTAS disparam, e a distinção é a que decide: aspas como DELIMITADOR o bundler reescreve;
+# aspas como CONTEÚDO ele preserva — por isso input[type="checkbox"] e [role="button"], os "valores
+# nossos" que o Passo 4 recomenda, seguem limpos (aspas no meio, não nas bordas).
+#
+# AVISA, NUNCA RECUSA — mesma disciplina da sonda de lib: existe sentinela legítima delimitada (um
+# texto de UI que contenha as aspas no próprio conteúdo). Preditor, não prova. Nada aqui toca o exit.
+_prim=${ALVO%"${ALVO#?}"}   # primeiro caractere
+_ult=${ALVO#"${ALVO%?}"}    # último caractere
+DELIMITADA=0
+if [ "${#ALVO}" -ge 2 ] && [ "$_prim" = "$_ult" ]; then
+  case "$_prim" in
+    \'|\"|\`)
+      DELIMITADA=1
+      _alt="\"${ALVO#?}"; _alt="${_alt%?}\""
+      [ "$_prim" = '"' ] && { _alt="'${ALVO#?}"; _alt="${_alt%?}'"; }
+      printf '%s\n' \
+        "⚠️  SENTINELA_DELIMITADA — o ALVO começa e termina com $_prim, então ele é o LITERAL COM as aspas." \
+        "   O guard --pai mede a FONTE; a varredura mede o BUNDLE MINIFICADO, e o bundler NORMALIZA o" \
+        "   delimitador — logo uma ausência abaixo pode ser de REPRESENTAÇÃO, não de Publish. Se der" \
+        "   ausente, repita sem as aspas ou com a outra forma: $_alt" \
+        "   (aspas no MEIO são conteúdo e sobrevivem: input[type=\"checkbox\"] segue sentinela boa.)"
+      ;;
+  esac
+fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -305,4 +344,12 @@ echo "→ ❌ ALVO ausente nos $N chunks: Publish pendente, OU o ALVO não é li
 echo "   CONTROLE_NEGATIVO_NAO_SE_APLICA: ele audita o falso POSITIVO, e este ramo é o outro — aqui"
 echo "   o risco é o falso NEGATIVO (sonda cega lê idêntico a 'Publish pendente'), e quem o cobre é"
 echo "   o CONTROLE_POSITIVO acima."
+if [ "$DELIMITADA" = 1 ]; then
+  # Aqui a hipótese deixa de ser genérica: o guard --pai já provou que o ALVO existe na FONTE, e a
+  # varredura acabou de não achá-lo no BUNDLE. Delimitador normalizado explica exatamente esse par,
+  # e é BARATO de descartar — por isso ele vai antes de qualquer pedido de Publish.
+  echo "   ⚠️  E o ALVO é DELIMITADO (ver SENTINELA_DELIMITADA acima): esta ausência tem uma causa"
+  echo "   mais provável que 'Publish pendente' — o bundler reescreveu as aspas. DESCARTE ISSO PRIMEIRO,"
+  echo "   repetindo sem as aspas, ANTES de pedir um Publish que pode já ter acontecido."
+fi
 exit 1

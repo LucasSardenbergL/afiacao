@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 
 import { gerarSqlDaLeva, main, parsearArgs, resolverLeva } from './sonda-versao-sql';
 
@@ -12,14 +13,39 @@ afterEach(() => {
   for (const d of criadas.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-/** Repo de mentira com `supabase/config.toml` + um `versao.ts` por edge pedida. */
+/**
+ * Repo de mentira com `supabase/config.toml`, um `versao.ts` por edge pedida e o mapa de
+ * fingerprints cobrindo TODAS elas — o estado sadio, do qual cada teste sabota UMA coisa.
+ */
 function fixture(edges: Record<string, string>, ref = 'refdementira000000ab'): string {
   const raiz = mkdtempSync(join(tmpdir(), 'sonda-sql-'));
   criadas.push(raiz);
   mkdirSync(join(raiz, 'supabase', 'functions'), { recursive: true });
   writeFileSync(join(raiz, 'supabase', 'config.toml'), `project_id = "${ref}"\n`);
   for (const [edge, versao] of Object.entries(edges)) escreverVersao(raiz, edge, versao);
+  escreverMapaFingerprints(
+    raiz,
+    Object.fromEntries(Object.keys(edges).map((edge) => [edge, fp(edge)])),
+  );
   return raiz;
+}
+
+/** Fingerprint de mentira na FORMA que o mapa exige (64 hex), determinístico pela semente. */
+function fp(semente: string): string {
+  return createHash('sha256').update(semente).digest('hex');
+}
+
+/** O mapa do repo de mentira, na MESMA forma que `sonda:fingerprint --write` grava o de verdade. */
+function escreverMapaFingerprints(raiz: string, mapa: Record<string, string>): void {
+  const dir = join(raiz, 'supabase', 'functions', '_shared');
+  mkdirSync(dir, { recursive: true });
+  const linhas = Object.entries(mapa).map(
+    ([edge, fingerprint]) => `  ${JSON.stringify(edge)}: ${JSON.stringify(fingerprint)},`,
+  );
+  writeFileSync(
+    join(dir, 'sonda-fingerprints.ts'),
+    `export const FONTE_SHA256: Record<string, string> = {\n${linhas.join('\n')}\n};\n`,
+  );
 }
 
 function escreverVersao(raiz: string, edge: string, versao: string): void {
@@ -64,6 +90,33 @@ describe('edge sem sensor não é sondável — falha ALTO, nunca SQL parcial', 
     const raiz = fixture({ boa: 'v1.0-sensor-inicial' });
     expect(() => gerarSqlDaLeva({ raiz, edges: ['boa', 'orfa'] })).toThrow(/orfa/);
   });
+
+  it('edge com sensor mas FORA do mapa de fingerprints derruba a geração inteira', () => {
+    const raiz = fixture({ boa: 'v1.0-sensor-inicial', 'edge-fora-do-mapa': 'v1.0-sensor-inicial' });
+    // SABOTAGEM: o mapa perde UMA entrada. Emitir SQL sem o fingerprint dela seria julgar deploy
+    // por `versao` sozinho — o falso POSITIVO que este campo existe para impedir.
+    escreverMapaFingerprints(raiz, { boa: fp('boa') });
+    expect(() => gerarSqlDaLeva({ raiz, edges: ['boa', 'edge-fora-do-mapa'] })).toThrow(
+      /edge-fora-do-mapa/,
+    );
+  });
+
+  it('mapa de fingerprints AUSENTE não degrada para vazio — falha ALTO', () => {
+    const raiz = fixture({ boa: 'v1.0-sensor-inicial' });
+    rmSync(join(raiz, 'supabase', 'functions', '_shared', 'sonda-fingerprints.ts'));
+    expect(() => gerarSqlDaLeva({ raiz, edges: ['boa'] })).toThrow(/boa/);
+  });
+
+  it('main devolve 1 e NÃO escreve SQL quando a edge está fora do mapa', () => {
+    const raiz = fixture({ boa: 'v1.0-sensor-inicial' });
+    escreverMapaFingerprints(raiz, {});
+    const saida: string[] = [];
+    const erros: string[] = [];
+    const codigo = main(['boa'], { raiz, escrever: (t) => saida.push(t), erro: (t) => erros.push(t) });
+    expect(codigo).toBe(1);
+    expect(saida).toEqual([]);
+    expect(erros.join('')).toMatch(/sonda-fingerprints/);
+  });
 });
 
 describe('o marcador emitido SAI do versao.ts (falsificação por sabotagem)', () => {
@@ -85,8 +138,8 @@ describe('o marcador emitido SAI do versao.ts (falsificação por sabotagem)', (
   it('cada edge da leva leva o SEU marcador, não o da vizinha', () => {
     const raiz = fixture({ 'edge-a': 'v1.0-alfa', 'edge-b': 'v2.0-beta' });
     const sql = gerarSqlDaLeva({ raiz, edges: ['edge-a', 'edge-b'] });
-    expect(sql).toMatch(/\('edge-a',\s*'v1\.0-alfa'\)/);
-    expect(sql).toMatch(/\('edge-b',\s*'v2\.0-beta'\)/);
+    expect(sql).toMatch(/\('edge-a',\s*'v1\.0-alfa',/);
+    expect(sql).toMatch(/\('edge-b',\s*'v2\.0-beta',/);
   });
 
   it('contra o repo REAL: o marcador emitido é o do arquivo, para toda edge instrumentada', () => {
@@ -102,12 +155,42 @@ describe('o marcador emitido SAI do versao.ts (falsificação por sabotagem)', (
     expect(edges.length).toBeGreaterThan(10); // controle: a varredura achou o conjunto real
 
     const sql = gerarSqlDaLeva({ raiz: RAIZ_REPO, edges });
+    const mapaReal = readFileSync(join(dir, '_shared', 'sonda-fingerprints.ts'), 'utf8');
     for (const edge of edges) {
       const fonte = readFileSync(join(dir, edge, 'versao.ts'), 'utf8');
       const marcador = /export const VERSAO = "([^"]+)"/.exec(fonte)?.[1];
       expect(marcador, `${edge} sem VERSAO legível`).toBeTruthy();
-      expect(sql).toContain(`('${edge}', '${marcador}')`);
+      // Parse INDEPENDENTE do mapa (não o leitor sob teste): senão o mesmo bug passaria nos dois.
+      const fingerprint = new RegExp(`^  "${edge}": "([0-9a-f]{64})",$`, 'm').exec(mapaReal)?.[1];
+      expect(fingerprint, `${edge} fora de _shared/sonda-fingerprints.ts`).toBeTruthy();
+      expect(sql).toContain(`('${edge}', '${marcador}', '${fingerprint}')`);
     }
+  });
+});
+
+describe('o fingerprint emitido SAI do mapa commitado (falsificação por sabotagem)', () => {
+  it('sabotar a entrada do mapa muda o SQL — o fingerprint velho não sobrevive', () => {
+    const raiz = fixture({ alvo: 'v1.0-sensor-inicial' });
+
+    const antes = gerarSqlDaLeva({ raiz, edges: ['alvo'] });
+    expect(antes).toContain(fp('alvo'));
+
+    // SABOTAGEM: só a ENTRADA DO MAPA muda; o `versao.ts` e o script ficam intactos.
+    escreverMapaFingerprints(raiz, { alvo: fp('alvo-SABOTADO') });
+    const depois = gerarSqlDaLeva({ raiz, edges: ['alvo'] });
+
+    // Implementação que chuta, cacheia ou IGNORA o fingerprint fica VERMELHA aqui.
+    expect(depois).not.toContain(fp('alvo'));
+    expect(depois).toContain(fp('alvo-SABOTADO'));
+    // Controle: a sabotagem isolou o campo certo — o marcador não se moveu.
+    expect(depois).toContain('v1.0-sensor-inicial');
+  });
+
+  it('cada edge da leva leva o SEU fingerprint, não o da vizinha', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-alfa', 'edge-b': 'v2.0-beta' });
+    const sql = gerarSqlDaLeva({ raiz, edges: ['edge-a', 'edge-b'] });
+    expect(sql).toContain(`('edge-a', 'v1.0-alfa', '${fp('edge-a')}')`);
+    expect(sql).toContain(`('edge-b', 'v2.0-beta', '${fp('edge-b')}')`);
   });
 });
 
@@ -182,11 +265,45 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os 5 ramos', (
     expect(sql).toMatch(/COALESCE\(r\.content::jsonb -> 'data', r\.content::jsonb\)/);
   });
 
-  it('os 5 ramos de veredito estão nomeados', () => {
+  it('os 6 ramos de veredito estão nomeados', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    for (const ramo of ['SEM ID', 'AGUARDE', 'DEPLOY CONFIRMADO', 'BUNDLE VELHO', 'PRE-SENSOR']) {
+    for (const ramo of [
+      'SEM ID',
+      'AGUARDE',
+      'DEPLOY CONFIRMADO',
+      'DEPLOY PARCIAL',
+      'BUNDLE VELHO',
+      'PRE-SENSOR',
+    ]) {
       expect(sql, `ramo ausente: ${ramo}`).toContain(ramo);
     }
+  });
+
+  it('a lista canônica carrega o fingerprint, e a saída projeta o que a edge respondeu', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toContain('esperado(edge, versao_esperada, fonte_esperada)');
+    expect(sql).toMatch(/l\.corpo ->> 'fonte'\s+AS fonte_respondida/);
+  });
+
+  it('DEPLOY PARCIAL é ramo PRÓPRIO — e vem ANTES do de confirmação', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toMatch(/COALESCE\(l\.corpo ->> 'fonte', 'nao-mapeada'\) = 'nao-mapeada'/);
+    expect(sql).toContain('DEPLOY PARCIAL');
+    // A ORDEM é o que impede o falso POSITIVO: depois do CONFIRMADO, este ramo nunca alcançaria a
+    // edge cujo `versao` bate — que é exatamente a assinatura do bundle parcial.
+    expect(sql.indexOf('DEPLOY PARCIAL')).toBeLessThan(sql.indexOf("THEN 'DEPLOY CONFIRMADO'"));
+  });
+
+  it('DEPLOY CONFIRMADO exige o fonte BATENDO — `versao` sozinho não prova deploy verbatim', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toMatch(/corpo ->> 'fonte' = l\.fonte_esperada/);
+  });
+
+  it('o BUNDLE VELHO do ELSE cita os DOIS campos — respondido e esperado', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const senao = sql.slice(sql.indexOf("ELSE 'BUNDLE VELHO"));
+    expect(senao).toContain("', fonte=' || COALESCE(l.corpo ->> 'fonte', '?')");
+    expect(senao).toContain("l.versao_esperada || ' / ' || l.fonte_esperada");
   });
 
   it('rejeição (>=400) e execução (200 sem versao) NÃO caem no mesmo ramo', () => {
@@ -245,9 +362,9 @@ describe('subconjunto CARO — a trava é CASE, nunca WHERE', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['barata', 'cara'], caras: ['cara'] });
     const caro = blocoCaro(sql);
     expect(caro).toContain('-- PASSO 4');
-    expect(caro).toContain("('cara', 'v2.0-beta')");
+    expect(caro).toContain(`('cara', 'v2.0-beta', '${fp('cara')}')`);
     expect(caro).toMatch(/FROM esperado e\s*\n\s*LEFT JOIN ids i ON i\.edge = e\.edge/);
-    expect(caro).not.toContain("('barata', 'v1.0-alfa')");
+    expect(caro).not.toContain("('barata', 'v1.0-alfa'");
   });
 
   it('--caro de edge fora da leva falha ALTO — o typo mandaria a cara para o bloco barato', () => {
@@ -303,7 +420,7 @@ describe('CLI', () => {
     const erros: string[] = [];
     const codigo = main(['edge-a'], { raiz, escrever: (t) => saida.push(t), erro: (t) => erros.push(t) });
     expect(codigo).toBe(0);
-    expect(saida.join('')).toContain("('edge-a', 'v1.0-alfa')");
+    expect(saida.join('')).toContain(`('edge-a', 'v1.0-alfa', '${fp('edge-a')}')`);
     expect(erros).toEqual([]);
   });
 

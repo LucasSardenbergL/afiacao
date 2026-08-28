@@ -2463,7 +2463,11 @@ Deno.serve(async (req) => {
   // Lê um CLONE do corpo de propósito. `req.json()` é one-shot, e a alternativa — içar o parse para
   // cá e reaproveitá-lo no destructuring lá embaixo, como fez a `omie-analytics-sync` — obrigaria a
   // dar um tipo ao `...params`, que hoje é `any` por vir do `req.json()` e é lido em ~36 campos
-  // livres (`start_page`, `max_pages`, `dry_run`, …). Com o clone, o fluxo real fica byte-idêntico
+  // livres (`start_page`, `max_pages`, `dry_run`, …). Com o clone, o CÓDIGO POSTERIOR fica intacto
+  // — não o custo: o clone materializa um 2º objeto e o `tee` retém os bytes do ramo original, então
+  // memória e timing MUDAM (challenge Codex/#2026: sob corpo anormalmente grande o worker pode bater
+  // o teto de 256 MB e devolver 546). É falha-SEGURA — indisponibilidade daquele sync, nunca escrita
+  // errada no Omie — e foi o que fez a troca valer numa edge irreversível
   // e a sonda é puramente ADITIVA, que é a fronteira certa numa edge que escreve no Omie.
   //
   // Corpo ausente ou inválido: o parse do clone lança, tratamos como "não é sonda" e seguimos — o
@@ -3631,7 +3635,10 @@ Deno.serve(async (req) => {
           // O `contrato` acima nomeia a FATIA que a fixture verifica; o `versao` diz QUAL BUNDLE
           // respondeu. São papéis distintos e o `contrato` pode ficar parado de forma legítima —
           // por isso o discriminador de bundle viaja JUNTO, como na `generate-tactical-plan`:
-          // quem verifica a canária lê os dois sem uma segunda chamada. O `versao` é gateado pelo
+          // quem verifica a canária lê os dois sem uma segunda chamada — MAS só enquanto a fatia for
+          // edge-local: nem `contrato` nem `versao` bumpam por mudança em `_shared/`, e o `fonte`
+          // (que bumpa) NÃO viaja aqui ⇒ fatia que toca `_shared/` exige a rota `{"probe":true}`
+          // TAMBÉM (ver a ⚠️ dos marcadores em `docs/agent/deploy.md`). O `versao` é gateado pelo
           // `sonda:bump`, então não depende de alguém lembrar de bumpá-lo.
           versao: VERSAO,
           probe_no_ar: true, // a action respondeu → a derivação P0-B está no build deployado

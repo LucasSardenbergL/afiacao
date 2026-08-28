@@ -467,7 +467,38 @@ a browser headless).
 
 **ENVIADO em 2026-08-26 03:06 UTC** — thread Gmail `1a03c0904655abf1`, confirmado com evidência positiva
 (label `SENT`, `toRecipients = support@lovable.dev`, assunto e corpo conferidos), não pelo retorno da
-chamada. **Aguardando resposta.**
+chamada. **RESPONDIDO em 2026-08-26 15:07 UTC — e a resposta é NÃO.** Ver a seção final.
+
+### As 7 funções que SOBRAM com `EXECUTE` p/ PUBLIC — auditadas (2026-08-26)
+
+O bloco fecha 5 funções (`http_post/get/delete`, `wake`, `worker_restart`) e deixa **7** de pé, porque
+`http_post` chama duas delas como INVOKER e revogá-las quebraria os crons. Isso levanta a pergunta óbvia:
+**as 7 dão alguma primitiva ao atacante depois do bloco?** Medido, não presumido — `_await_response`,
+`_encode_url_with_params_array`, `_http_collect_response`, `_urlencode_string`, `check_worker_is_up`,
+`http_collect_response`, `wait_until_running`:
+
+| eixo | resultado |
+|---|---|
+| `prosecdef` (SECURITY DEFINER) | **`false` nas 7** |
+| insere em `http_request_queue` | `false` nas 7 |
+| chama `wake()` / `net.http_*` | `false` nas 7 |
+| apaga de `_http_response` | `false` nas 7 |
+
+⇒ **Não há deputy confuso em `net`.** O `secdef=false` é o eixo que decide: mesmo que uma delas tocasse a
+fila, tocaria **com o privilégio do chamador** — que o bloco revoga. As 7 restantes leem `_http_response`
+ou são puras (encode/urlencode/status do worker). Fechar `EXECUTE` nelas custaria os 52 crons e não
+compraria nada.
+
+✅ **REVISÃO INDEPENDENTE FEITA — 2026-08-27** (`gpt-5.6-sol`, xhigh, `CODEX_EXIT=0`). A tabela acima
+**se sustenta**: `secdef=false` nas 7, nenhuma enfileira nem acorda o worker. Mas a auditoria estava
+incompleta em dois eixos que ela não podia ver, e o veredito do bloco virou
+**`CORRECT BEFORE SUPPORT RUNS IT`** — ver a seção seguinte.
+
+Uma ressalva que o Codex acrescentou e que fica de pé: **`prosrc` de função `C` não prova ausência de efeito
+colateral** — ele só carrega o nome do símbolo. Das 7, três são C (`_urlencode_string`,
+`_encode_url_with_params_array`, `wait_until_running`); para elas a linha "não insere na fila" é *ausência
+de dado*, não medição. A conclusão sobrevive por outro caminho (o `secdef=false`, que é o eixo que decide),
+mas a **justificativa** por varredura de `prosrc` não vale para as três.
 
 O pedido carrega as 4 perguntas que o registro deixou em aberto, uma delas a que mais importa a longo
 prazo: **como impedir que um upgrade do pg_net restaure as ACLs públicas.** Enquanto não houver resposta,
@@ -480,3 +511,345 @@ asserção ao lado — ver a seção anterior.
 ticket é exatamente o mesmo *Success* que este arquivo inteiro existe para desqualificar — com o agravante
 de que quem aplica não é quem consegue verificar. Por isso a query foi ao ticket com o **antes** colado ao
 lado do **depois esperado**.
+
+
+## O 2º par de olhos mudou o bloco — 2026-08-27 (ritual `/codex`, `CODEX_EXIT=0`)
+
+**Veredito: `BLOCK VERDICT: CORRECT BEFORE SUPPORT RUNS IT`.** Três defeitos novos, todos da MESMA
+família dos três anteriores — *revoguei um privilégio e re-concedi outro* — e o mais grave é de
+**disponibilidade silenciosa**, não de segurança. Cada um provado executando, em
+`db/test-net-revoke-publico.sh` (PG17 descartável, com falsificação).
+
+### D4 — o worker do pg_net roda como `postgres`, e o bloco tira o INSERT dele
+
+`SELECT name, setting FROM pg_settings WHERE name LIKE 'pg_net.%'` em prod devolve
+**`pg_net.username=postgres`** (e `pg_net.ttl=6 hours`, `pg_net.batch_size=200`). O worker **não** é
+`supabase_admin`, e `postgres` **não** é superuser ⇒ ele sofre ACL como qualquer um. Hoje o INSERT dele em
+`net._http_response` vem **só de PUBLIC** (`relacl = {supabase_admin=arwdDxtm/…, =arwdDxtm/…}`, sem grant
+nominal para `postgres`).
+
+O bloco enviado faz `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON net._http_response FROM PUBLIC` e **não
+re-concede nada a ninguém nessa tabela**. Medido em PG17 com um papel não-dono/não-super:
+
+```
+[E: worker INSERT em _http_response]        barrou com SQLSTATE 42501
+[E: worker DELETE (reaping do TTL de 6h)]   barrou com SQLSTATE 42501
+```
+
+⇒ Os 52 crons **continuam disparando** (a fila é re-concedida), o HTTP **continua saindo** — e a resposta
+**não é gravada**, e o TTL de 6h **não limpa mais**. É pior que a queda: é queda do *sensor*. Cega a canária
+de deploy e a "verdade HTTP" que o `sync.md` manda ler em `net._http_response` — exatamente a tabela que
+este arquivo protegeu no Achado 5. O fecho de segurança teria apagado o instrumento que prova o fecho.
+
+### D5 — `REVOKE INSERT,UPDATE,DELETE,TRUNCATE` **não** fecha a tabela
+
+Um REVOKE por lista deixa de pé o que não está na lista. Medido:
+
+```
+relacl depois do bloco enviado:  =rxtm/…      (PUBLIC segue com SELECT, REFERENCES, TRIGGER, MAINTAIN)
+[C:SELECT]     REVOKE parcial DEIXOU SELECT com PUBLIC (t)
+[C:TRIGGER]    REVOKE parcial DEIXOU TRIGGER com PUBLIC (t)
+[C:REFERENCES] REVOKE parcial DEIXOU REFERENCES com PUBLIC (t)
+```
+
+E `SELECT` na fila **não é inócuo**: `net.http_request_queue` carrega os headers da requisição, e as chaves
+medidas em prod são `Content-Type, x-cron-secret` — os 52 crons montam esse header do Vault
+(`decrypted_secret` + `jsonb_build_object`, 52/52). ⇒ Depois do bloco, todo papel do projeto continuaria
+lendo **o segredo que autentica os 52 crons**, inclusive o `claude_ro`, que já perdeu `pg_read_all_data` e
+mesmo assim tem `queue_SELECT=true` — porque o alcance vem de PUBLIC, não do papel. É a tese deste arquivo
+inteiro, sobrevivendo ao próprio conserto.
+
+O `TRIGGER` é o vetor que o Codex levantou como o mais grave: com ele, um papel hostil anexa um
+`BEFORE INSERT` na fila e reescreve `NEW.url` quando o **cron** insere como `postgres` — SSRF sem precisar
+de `EXECUTE` em nada. **Rebaixei a severidade dele com medição:** `anon`, `authenticated`, `service_role` e
+`claude_ro` **não têm `CREATE` em schema nenhum** (só `postgres`, `dashboard_user`, `supabase_admin` e os
+`*_admin` têm), então não conseguem criar a função de trigger. É higiene de ACL / defesa em profundidade,
+não uma escalada alcançável hoje. Registro a discordância porque mandar ao suporte um "SSRF crítico" que
+não se sustenta queima o ticket.
+
+### D6 — sem transação e sem asserção de dono
+
+Todos os statements são transacionáveis, e nenhum é proibido dentro de `BEGIN`. Se o operador colar num
+runner que autocommita por statement, uma falha no meio deixa **os REVOKEs aplicados e os GRANTs não** —
+janela de outage com o revoke-primeiro. E `REVOKE` por não-dono é `WARNING`, não erro: o `BEGIN` **não**
+transforma o no-op do Achado 1 em falha. A asserção de `current_user` tem de estar dentro do batch.
+
+### O bloco corrigido
+
+```sql
+BEGIN;
+
+DO $$ BEGIN
+  IF current_user <> 'supabase_admin' THEN
+    RAISE EXCEPTION 'execute como supabase_admin; current_user=%', current_user;
+  END IF;
+END $$;
+
+-- 1) Funções
+REVOKE EXECUTE ON FUNCTION net.http_post(text,jsonb,jsonb,jsonb,integer)   FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.http_get(text,jsonb,jsonb,integer)          FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.http_delete(text,jsonb,jsonb,integer,jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.wake()                                      FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.worker_restart()                            FROM PUBLIC;
+
+-- 2) Tabelas e sequence: ALL, nunca lista parcial (D5)
+REVOKE ALL ON TABLE    net.http_request_queue         FROM PUBLIC;
+REVOKE ALL ON TABLE    net._http_response             FROM PUBLIC;
+REVOKE ALL ON SEQUENCE net.http_request_queue_id_seq  FROM PUBLIC;
+
+-- 3) Re-GRANT. SELECT na fila é OBRIGATÓRIO: http_post faz `INSERT … RETURNING id`,
+--    e RETURNING exige SELECT além de INSERT (provado: 42501 sem ele).
+GRANT EXECUTE ON FUNCTION net.http_post(text,jsonb,jsonb,jsonb,integer)   TO supabase_functions_admin, postgres;
+GRANT EXECUTE ON FUNCTION net.http_get(text,jsonb,jsonb,integer)          TO supabase_functions_admin, postgres;
+GRANT EXECUTE ON FUNCTION net.http_delete(text,jsonb,jsonb,integer,jsonb) TO supabase_functions_admin, postgres;
+GRANT EXECUTE ON FUNCTION net.wake()                                      TO supabase_functions_admin, postgres;
+GRANT INSERT, SELECT ON TABLE net.http_request_queue    TO supabase_functions_admin, postgres;
+GRANT USAGE ON SEQUENCE net.http_request_queue_id_seq   TO supabase_functions_admin, postgres;
+
+-- 4) O worker do pg_net (pg_net.username=postgres) grava a resposta e faz o reaping do TTL (D4)
+GRANT INSERT, SELECT, DELETE ON TABLE net._http_response TO postgres;
+
+-- 5) Resíduo ACEITO e declarado: a canária de deploy lê esta tabela (Achado 5)
+GRANT SELECT ON TABLE net._http_response TO PUBLIC;
+
+COMMIT;
+```
+
+**Duas mudanças de comportamento a decidir antes de enviar, não a esconder:**
+
+1. **`service_role` saiu do re-GRANT.** Não há consumidor medido: os 92 crons rodam como `postgres` (92/92)
+   e as 4 SECDEF rodam como `postgres` (o chamador não precisa de privilégio em `net`). E `service_role` é
+   alcançável por `SET ROLE` a partir do `authenticator` (`set_option=true`, medido) ⇒ mantê-lo no GRANT
+   deixaria o egress aberto para quem tiver a service_role key, esvaziando metade do propósito do bloco.
+   Contra: a varredura que diz "nenhum consumidor" é da mesma classe que o Codex mostrou ser incompleta por
+   construção. **Decisão do founder**, com reversão de uma linha.
+2. **`USAGE` sozinho basta para `nextval`** — o `SELECT, UPDATE` na sequence do bloco anterior era
+   sobra-concessão (permite `setval`). Idem `UPDATE, DELETE` na fila, que nenhuma das `http_*` usa.
+
+### O que o teste prova (`db/test-net-revoke-publico.sh`, `exit 0`)
+
+`INSERT … RETURNING` sem SELECT → **42501**, e `INSERT` puro sem RETURNING **passa** (a regra é do
+RETURNING, não do INSERT) · REVOKE parcial deixa `SELECT/TRIGGER/REFERENCES` · `REVOKE ALL` fecha as quatro
+· o papel do worker perde INSERT **e** DELETE em `_http_response`. Falsificação: devolver `SELECT` a PUBLIC
+tem de deixar a asserção vermelha.
+
+> ⚠️ **A lição de shell que este teste custou.** A 1ª rodada passou a falsificação e "confirmou" A e B —
+> tudo mentira: eu havia escrito `psql -d db "SQL"` **sem `-c`**. O argumento posicional do psql é o
+> *dbname*, não um comando ⇒ **no-op que retorna `exit 0`**, medido:
+> `psql -v ON_ERROR_STOP=1 -d d "SELECT 1/0;"` → `exit=0`; com `-c` → `exit=1`. Quatro passos do teste
+> nunca rodaram, e a falsificação "detectou" a sabotagem porque o valor **nunca tinha mudado**. Foi o dump
+> do `relacl` (`=rxtm`, com o `r` que eu acreditava ter revogado) que denunciou. Família
+> `evidencia-positiva-shell.md`: **`set -e` não pega no-op com exit 0** — a falsificação só vale se a
+> asserção tiver chegado a ficar verde por um motivo que você mediu.
+
+
+## Rascunho da resposta ao suporte — PRONTO, NÃO ENVIADO (2026-08-27)
+
+> ⚠️ **ESTA SEÇÃO NASCEU ERRADA E FICA À VISTA.** Ela foi escrita em 2026-08-27 afirmando que o
+> suporte "ainda não respondeu" e que a janela seguia aberta. **O suporte já havia respondido em
+> 2026-08-26 15:07 UTC, recusando.** O e-mail abaixo, portanto, **não deve ser enviado** — ele pede a
+> execução de um bloco que a plataforma acabou de dizer que não executa. O texto fica registrado
+> porque o BLOCO continua correto e será necessário se o projeto migrar para Supabase próprio.
+
+O bloco corrigido acima nunca chegou ao suporte.
+
+Medido no fecho da sessão (`bun run authz:claude-ro:prod`, `exit 0`): **"ACL do schema net: 16
+entradas, idênticas ao baseline"** ⇒ o suporte não executou nada — e agora sabemos que **nunca vai**. Quando ele executar, esse mesmo vigia fica **vermelho por desenho** (ele acusa
+mudança nos dois sentidos) — o baseline em `db/audit-claude-ro-hardening.ts` precisa ser atualizado
+no mesmo momento, senão o vigia vira ruído e para de ser lido.
+
+O texto abaixo responde a thread Gmail `1a03c0904655abf1` (`support@lovable.dev`). Ele é o e-mail
+inteiro, pronto para colar — inclusive a query de verificação com o resultado esperado, porque
+"aplicamos com sucesso" é exatamente o *Success* que este arquivo existe para desqualificar.
+
+<details>
+<summary>Texto completo do e-mail (inglês)</summary>
+
+```text
+Subject: Re: pg_net: PUBLIC holds EXECUTE on net.http_* — CORRECTED BLOCK, please use this one
+
+Hi,
+
+Before you run anything: an independent review of the block I sent found three defects in
+it. Please DISCARD the previous SQL and use the corrected block below. One of the defects
+would have broken response logging silently — crons would keep firing, HTTP would keep
+going out, and no response would ever be recorded.
+
+What changed and why (all measured against our project, 2026-08-27):
+
+1) THE WORKER LOSES ITS INSERT.
+   `SELECT name, setting FROM pg_settings WHERE name LIKE 'pg_net.%'` returns
+   pg_net.username = postgres (and pg_net.ttl = 6 hours). The pg_net background worker
+   therefore connects as `postgres`, which is NOT the owner of schema net and is NOT a
+   superuser on managed Supabase — so it is subject to table ACLs like any other role.
+   Its INSERT on net._http_response comes only from PUBLIC (relacl is
+   {supabase_admin=arwdDxtm/supabase_admin,=arwdDxtm/supabase_admin} — no nominal grant
+   to postgres). My previous block revoked INSERT/UPDATE/DELETE/TRUNCATE on that table
+   from PUBLIC and re-granted it to nobody. Result: requests still get sent, responses
+   never get written, and the 6h TTL reaping stops. The corrected block re-grants
+   INSERT/SELECT/DELETE on net._http_response to postgres.
+
+   If pg_net's worker on your platform actually connects as supabase_admin despite the
+   GUC, this grant is harmless — please keep it either way.
+
+2) A PARTIAL REVOKE DOES NOT CLOSE THE TABLE.
+   REVOKE INSERT, UPDATE, DELETE, TRUNCATE leaves SELECT, REFERENCES, TRIGGER and
+   MAINTAIN with PUBLIC (verified on PostgreSQL 17: relacl becomes "=rxtm/"). That
+   matters here because net.http_request_queue carries request headers, and ours contain
+   a shared secret used to authenticate our cron jobs against our edge functions. The
+   corrected block uses REVOKE ALL and then re-grants only what is needed.
+
+3) INSERT ... RETURNING NEEDS SELECT.
+   net.http_post ends with `insert into net.http_request_queue(...) returning id into
+   request_id`. RETURNING requires SELECT on the returned column in addition to INSERT.
+   Verified on PostgreSQL 17: without SELECT the call fails with SQLSTATE 42501, while a
+   plain INSERT without RETURNING succeeds. So the re-grant must include SELECT on the
+   queue, not just INSERT.
+
+CORRECTED BLOCK (run as supabase_admin, as one batch on one connection — not through a
+per-statement autocommit runner; the DO block asserts the executor because REVOKE by a
+non-owner is a WARNING, not an error, and would otherwise succeed while changing nothing):
+
+BEGIN;
+
+DO $$ BEGIN
+  IF current_user <> 'supabase_admin' THEN
+    RAISE EXCEPTION 'must execute as supabase_admin; current_user=%', current_user;
+  END IF;
+END $$;
+
+REVOKE EXECUTE ON FUNCTION net.http_post(text,jsonb,jsonb,jsonb,integer)   FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.http_get(text,jsonb,jsonb,integer)          FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.http_delete(text,jsonb,jsonb,integer,jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.wake()                                      FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.worker_restart()                            FROM PUBLIC;
+
+REVOKE ALL ON TABLE    net.http_request_queue        FROM PUBLIC;
+REVOKE ALL ON TABLE    net._http_response            FROM PUBLIC;
+REVOKE ALL ON SEQUENCE net.http_request_queue_id_seq FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION net.http_post(text,jsonb,jsonb,jsonb,integer)   TO supabase_functions_admin, postgres;
+GRANT EXECUTE ON FUNCTION net.http_get(text,jsonb,jsonb,integer)          TO supabase_functions_admin, postgres;
+GRANT EXECUTE ON FUNCTION net.http_delete(text,jsonb,jsonb,integer,jsonb) TO supabase_functions_admin, postgres;
+GRANT EXECUTE ON FUNCTION net.wake()                                      TO supabase_functions_admin, postgres;
+
+GRANT INSERT, SELECT ON TABLE net.http_request_queue  TO supabase_functions_admin, postgres;
+GRANT USAGE ON SEQUENCE net.http_request_queue_id_seq TO supabase_functions_admin, postgres;
+
+GRANT INSERT, SELECT, DELETE ON TABLE net._http_response TO postgres;
+GRANT SELECT ON TABLE net._http_response TO PUBLIC;
+
+COMMIT;
+
+Note on the last line: keeping SELECT on net._http_response for PUBLIC is deliberate on
+our side — a deploy health check of ours reads that table. We are accepting that residual
+knowingly. Everything else is closed.
+
+Note on service_role: we deliberately did NOT re-grant to anon, authenticated or
+service_role. All 92 of our cron jobs run as postgres, and our four SECURITY DEFINER
+functions are owned by postgres, so nothing we could measure needs those roles to hold
+privileges in schema net.
+
+VERIFICATION QUERY — please run this after the block and paste the output back. We cannot
+verify it ourselves (we have no supabase_admin), and "applied successfully" is exactly the
+signal that misled us before: a REVOKE by a non-owner also reports success.
+
+SELECT r AS role,
+       has_function_privilege(r,'net.http_post(text,jsonb,jsonb,jsonb,integer)','EXECUTE') AS http_post,
+       has_function_privilege(r,'net.wake()','EXECUTE')                  AS wake,
+       has_table_privilege(r,'net.http_request_queue','INSERT')          AS queue_ins,
+       has_table_privilege(r,'net.http_request_queue','SELECT')          AS queue_sel,
+       has_sequence_privilege(r,'net.http_request_queue_id_seq','USAGE') AS seq_usage,
+       has_table_privilege(r,'net._http_response','INSERT')              AS resp_ins,
+       has_table_privilege(r,'net._http_response','SELECT')              AS resp_sel
+FROM unnest(ARRAY['postgres','supabase_functions_admin','service_role',
+                  'authenticated','anon','claude_ro']) r;
+
+Expected after the block:
+  postgres                 -> t t t t t t t
+  supabase_functions_admin -> t t t t t f t
+  service_role             -> f f f f f f t
+  authenticated            -> f f f f f f t
+  anon                     -> f f f f f f t
+  claude_ro                -> f f f f f f t
+(the trailing t on resp_sel is the accepted residual above)
+
+Also still open from the previous message: how do we keep a pg_net extension upgrade from
+restoring the PUBLIC ACLs? We monitor proacl/relacl automatically after every bump, but
+that is detection, not prevention.
+
+Thanks,
+Lucas
+```
+
+</details>
+
+
+## O suporte RECUSOU — e o furo do `net` é PERMANENTE no Lovable Cloud (2026-08-26 15:07 UTC)
+
+**Resposta do suporte (Albert, humano — não o agente de IA que respondeu 3 min após o envio):**
+
+> "this is not something we can do. Lovable Cloud is a fully managed backend: the database is
+> provisioned and operated by us, and **neither the project owner nor our support team holds the
+> owner-level or superuser access those statements require**. […] Privileged role and schema
+> operations on managed extension schemas such as **net, cron and vault are not a user-facing
+> capability**, and we do not have a mechanism for running statements at that privilege level on a
+> customer's behalf. So the transactional REVOKE/GRANT block cannot be applied on your project, and
+> we also cannot supply the before/after verification output you asked for."
+
+A alternativa que ele oferece é **migrar para um projeto Supabase próprio** conectado ao Lovable, onde
+o founder é dono no dashboard e aplica os grants ele mesmo.
+
+### O que isso muda
+
+1. **Não há janela, e não havia.** A resposta chegou **30 horas antes** da sessão de 2026-08-27 que
+   rodou o `/codex` sobre o bloco. Essa sessão trabalhou a tarde inteira sobre a premissa
+   "o suporte ainda não respondeu", herdada do chip e deste doc, **sem nunca abrir a thread** — não
+   havia Gmail autenticado na sessão até o fim dela. A premissa era falsificável o tempo todo por
+   quem tivesse a caixa aberta.
+2. **O trabalho técnico NÃO foi perdido.** Os três defeitos (D4/D5/D6) são reais, e o bloco corrigido
+   é o que se aplica **se** o projeto migrar. A prova em `db/test-returning-exige-select.sh` vale
+   independentemente de quem executa o SQL.
+3. **O que muda é a POSTURA de segurança.** Isto deixa de ser "vamos fechar o `net`" e passa a ser
+   **"não dá para fechar o `net` aqui"**. Enquanto o projeto viver no Lovable Cloud:
+   - qualquer papel do banco faz **egress HTTP arbitrário** de dentro do Postgres;
+   - qualquer papel **lê `net.http_request_queue`**, onde trafega o header `x-cron-secret` em texto
+     plano, e **`net._http_response`**, que retém 6h de respostas com corpo.
+   ⇒ O `x-cron-secret` **não é um segredo** neste ambiente: ele é legível por qualquer role, incluindo
+   os de leitura. Toda defesa que dependa dele como prova de identidade está apoiada em nada. A
+   mitigação que sobra não é ACL — é **não confiar nesse header sozinho** nas edges.
+
+### A decisão — TOMADA em 2026-08-28: vamos migrar
+
+Migrar para Supabase próprio fecha o `net` e devolve o controle de ACL — ao custo de assumir a
+operação do banco (backups, upgrades, PITR) que hoje é do Lovable. Não migrar mantém a operação
+terceirizada e aceita, **em definitivo**, os dois itens acima. Não há terceira via: a plataforma foi
+explícita de que não existe caminho suportado para ACL em schema de extensão gerenciada.
+
+**O founder decidiu MIGRAR.** Resposta enviada ao suporte em **2026-08-28 02:14:30 UTC**
+(msg `1a04625b2bc632e1` na thread `1a03c0904655abf1`, confirmada com evidência positiva: label
+`SENT`, `toRecipients = support@lovable.dev`). O e-mail aceita a migração, pede os passos, e declara
+o escopo para que a resposta venha útil: **92 cron jobs** (52 chamando `net.http_*`, todos como
+`postgres`), as edge functions, os segredos do Vault e dados de produção em uso diário. As quatro
+perguntas feitas: caminho de migração para dados e schema (crons e Vault vêm junto ou se recriam?),
+downtime, como o lado Lovable é reapontado (hoje o deploy de edge é pelo chat), e o que **não**
+atravessa e precisa ser reconstruído.
+
+Foi re-perguntado também o item 4 do pedido original, que Albert não respondeu: se
+`EXECUTE TO PUBLIC` em `net.http_*` é o **default de todo projeto com pg_net ≥ 0.12** — porque, se
+for, transforma qualquer papel read-only num canal de egress por padrão, e isso é bug de default de
+plataforma, não deste projeto.
+
+⚠️ **Enquanto a migração não acontece, o furo continua aberto** — e é por isso que a mitigação nas
+edges (não confiar no `x-cron-secret` sozinho) **não** deve esperar pela migração: ela é a defesa do
+intervalo, que pode durar semanas.
+
+### A lição, que é a mesma do Achado 3 outra vez
+
+O Achado 3 saiu invertido porque uma enumeração incompleta foi lida como completa. Aqui, um **estado
+externo** ("aguardando resposta") foi carregado de sessão em sessão como fato, quando era uma
+**leitura com prazo de validade** — e a sessão seguinte o repetiu sem reconferir, inclusive escrevendo
+"a janela continua aberta" num commit. **Estado que mora fora do repo (ticket, e-mail, fila de
+suporte) não é fato: é medição, e envelhece.** Antes de trabalhar em cima de um, releia a fonte — e se
+a sessão não tem como reler, o registro tem de dizer *"não verificado nesta sessão"*, nunca repetir a
+afirmação antiga como se fosse presente.

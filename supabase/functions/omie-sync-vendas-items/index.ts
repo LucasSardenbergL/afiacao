@@ -9,6 +9,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // ─── Type definitions ───
 
@@ -292,12 +293,38 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   } catch { return false; }
 }
 
+// `versao` em TODA resposta (sucesso e erro), não só na da sonda — é a metade da prova que
+// dispensa invocação. O `omie-cron-diario` faz `JSON.parse` do corpo deste step e o devolve
+// inteiro em `resultados.vendas.body`, então o marcador viaja para `net._http_response` no tick de
+// 2h do jobid 52 e o deploy se prova sem ninguém chamar nada, sem cron secret e sem pagar efeito.
+function jsonRes(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
   if (!(await authorizeCronOrStaff(req))) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return jsonRes({ error: "Unauthorized" }, 401);
+  }
+
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient,
+  // da varredura no Omie e de qualquer escrita. O parse do corpo SUBIU para cá de propósito: no
+  // desenho anterior ele vinha depois do gate de credenciais, e a sonda ali já teria custo.
+  // Daqui pra frente a edge reescreve `venda_items_history`, a série de demanda por SKU.
+  // req.json() é one-shot: o corpo lido aqui é reaproveitado no fluxo real abaixo.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  const body = await req.json().catch(() => ({}));
+
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+  // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no fluxo real por omissão.
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
   }
 
   const startedAt = Date.now();
@@ -307,16 +334,14 @@ Deno.serve(async (req) => {
   const deadline = startedAt + TIMEOUT_GUARD_MS;
 
   try {
-    const body = await req.json().catch(() => ({}));
+    // Corpo já consumido no bloco da sonda acima (req.json() é one-shot) — uma segunda leitura
+    // devolveria vazio e `empresa`/`dias` do chamador seriam descartados em SILÊNCIO.
     const empresa = String(body.empresa ?? "OBEN").toUpperCase();
     const dias = Number.isFinite(body.dias) ? Number(body.dias) : 180;
 
     const creds = getOmieCreds(empresa);
     if (!creds || !creds.app_key || !creds.app_secret) {
-      return new Response(
-        JSON.stringify({ ok: false, error: `Credenciais Omie ausentes para ${empresa}` }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return jsonRes({ ok: false, error: `Credenciais Omie ausentes para ${empresa}` }, 400);
     }
 
     const supabase = createClient(
@@ -602,21 +627,15 @@ Deno.serve(async (req) => {
     // run —, mas o caller (omie-cron-diario) só via `ok:true` e não tinha COMO distinguir uma
     // janela coberta de uma janela pela metade. Sinal explícito > silêncio otimista.
     const completo = !interrompido_por_timeout && !interrompido_por_api_block;
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        completo,
-        duracao_ms: Date.now() - startedAt,
-        summary: [summary],
-      }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return jsonRes({
+      ok: true,
+      completo,
+      duracao_ms: Date.now() - startedAt,
+      summary: [summary],
+    }, 200);
   } catch (err) {
     console.error("Fatal error:", err);
     const msg = err instanceof Error ? err.message : String(err);
-    return new Response(
-      JSON.stringify({ ok: false, error: msg }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return jsonRes({ ok: false, error: msg }, 500);
   }
 });

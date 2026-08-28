@@ -20,7 +20,9 @@
 // ficar estável de forma legítima; o `VERSAO` prova QUAL BUNDLE está no ar e muda a cada fatia.
 // Aqui os dois viajam JUNTOS na resposta da canária (o `identidade_probe` passa a ecoar `versao`),
 // que é o desenho da `generate-tactical-plan`: quem verifica a canária lê o discriminador de
-// bundle no mesmo lugar, sem uma segunda chamada.
+// bundle no mesmo lugar, sem uma segunda chamada — ressalva medida no #2026: isso vale para fatia
+// EDGE-LOCAL. Mudança só em `_shared/` não bumpa `versao` nem `contrato` (e o `fonte`, que bumpa, não
+// viaja na canária) ⇒ aí a verificação exige as DUAS chamadas. Detalhe em `docs/agent/deploy.md`.
 //
 // ⚠️ Substituir o `contrato` pelo `versao` NÃO era opção: o gate money-path
 // (`src/__tests__/edge-money-path-invariants.test.ts`) exige a emissão literal do `contrato` E que

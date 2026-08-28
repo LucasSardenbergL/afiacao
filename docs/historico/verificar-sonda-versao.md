@@ -74,6 +74,15 @@ Não é uniforme, e isso importa para o veredito:
 `net._http_response` é purgado continuamente — medido em 2026-08-18: 180 linhas cobrindo 09:20→15:15
 UTC. Dá folga para ler depois da sonda, mas a resposta de um cron da madrugada **já não está lá**.
 
+**O número não é só observação — é GUC, e dá para ler (2026-08-26):** `pg_net.ttl = 6 hours`. A medida
+do dia bateu com a configuração: 208 linhas cobrindo 5h55. Vale conferir em vez de estimar pela janela
+observada, porque a janela observada encolhe sozinha quando o tráfego de cron cai.
+
+```bash
+~/.config/afiacao/psql-ro -Atc "SELECT name, setting FROM pg_settings WHERE name LIKE 'pg_net%';"
+# pg_net.batch_size=200 · pg_net.database_name=postgres · pg_net.ttl=6 hours · pg_net.username=postgres
+```
+
 Leitura (role `claude_ro`, não depende do founder copiar nada):
 
 ```bash
@@ -527,3 +536,234 @@ gate media a palavra e afirmava o alcance. O teste barato que pega isso não é 
 **montar a forma errada em N grafias e contar quantas o gate deixa passar** — 7 de 18 aqui, e
 nenhuma delas visível na leitura.
 
+
+## 12. N3 passivo pela FORMA do JSON — prova de versão em edge SEM canária (2026-08-26, #1992)
+
+A §1 registrou a via passiva que existe **quando a edge carimba `versao` em toda resposta**. A §12
+generaliza para o caso muito mais comum — **a edge não tem canária nenhuma** — e o preço da
+generalização é uma pré-condição a mais, descrita abaixo.
+
+Substrato: verificação do deploy de `omie-analytics-sync` (PR #1992, merge `c63820508`). Essa edge não
+está entre as instrumentadas do #1766/#1772, então o `versao` da §1 não existe ali. A escada da skill
+`lovable-deploy-verify` mandava, nesse caso, ir para o **N3 ativo** — "chamar com a assinatura da
+mudança (gated → founder logado / cron secret)" —, o que custa um bloco `net.http_post` no SQL Editor
+com o founder no teclado, ou o segredo.
+
+### O achado
+
+**O conjunto de chaves do corpo da resposta é assinatura estrutural do bundle.** Se as duas versões do
+código retornam objetos de **forma diferente** (uma chave presente vs ausente), ler a resposta que o
+cron **já produziu** prova a versão — sem invocar nada, sem founder, sem secret, e sem risco de pagar
+efeito caro (a §1 do #1766 existe justamente porque sondar bundle velho *executa o fluxo real*).
+
+O caso, byte a byte:
+
+| fonte | conteúdo |
+| --- | --- |
+| `git show c63820508^:supabase/functions/omie-analytics-sync/index.ts` | `const products = await syncProducts(supabaseAdmin, acct);` … `return { products, inventory, costs, assocRules };` |
+| `git show origin/main:…/index.ts` | `const inventory = await syncInventory(supabaseAdmin, acct);` … `return { inventory, costs, assocRules };` |
+| response do cron em `net._http_response` | `assocRules, costs, inventory` |
+
+`products` **ausente** ⇒ bundle novo. Conclusivo, e não estatístico.
+
+### Bônus: a forma resolve o empate que a `VERSAO` compartilhada não resolve
+
+A §7 mostrou que duas respostas de sonda de edges diferentes são idênticas byte a byte (13 edges com a
+mesma string `v1.0-sensor-inicial`, e `net._http_response` sem coluna de URL) — o que torna o veredito
+**por edge** impossível no lote. A forma do payload não tem esse problema: `inventory, costs,
+assocRules` é o retorno de **uma ação de uma edge**, e não cabe em nenhuma das outras. Onde a §7
+perde o emissor, a §12 o recupera — pelo conteúdo, não pelo metadado que o pg_net não guarda.
+
+### Pré-condição: a chave discriminante tem de ser INCONDICIONAL no bundle velho
+
+É o análogo da "condição de validade" da §1, e o único jeito de a via produzir falso positivo se for
+ignorada. No caso acima, o velho fazia `const products = await syncProducts(...)` e montava o objeto
+literal com a variável — **nem um resultado vazio suprimiria a chave**, logo a ausência só pode ser
+código novo. Se o velho fizesse `if (algo) resultado.products = …`, a ausência seria **ambígua**:
+bundle velho no ramo falso produz exatamente a mesma forma. Confira no código do commit pai
+(`git show <sha-do-merge>^:<arquivo>`) **antes** de ler a forma, não depois.
+
+### Achar o response: por JANELA DE TEMPO, nunca por id chutado
+
+Mesma armadilha da Lei de Ferro #5 da skill de deploy — **valor de exemplo plausível é pior que um
+placeholder ruidoso, porque falha CALADO**: em 2026-08-24 um `WHERE id = 58967` inventado leu o tick do
+watchdog e reprovou um deploy money-path correto. Como `net._http_response` não tem coluna de URL
+(§7), a linha se identifica pela **forma do corpo dentro da janela do cron**:
+
+```bash
+~/.config/afiacao/psql-ro -c "SELECT id, created, status_code, left(regexp_replace(content,'\s+',' ','g'),400) FROM net._http_response WHERE created BETWEEN '2026-08-26 14:00Z' AND '2026-08-26 14:08Z' ORDER BY created;"
+```
+
+Identificada a linha, lê-se a forma:
+
+```bash
+~/.config/afiacao/psql-ro -c "SELECT string_agg(k, ', ' ORDER BY k) AS chaves FROM net._http_response r, jsonb_object_keys((r.content::jsonb)->'data') k WHERE r.id = <ID lido acima>;"
+```
+
+### A armadilha que quase passou: a linha de TIMEOUT devolve exatamente o veredito do método
+
+Escrevi primeiro que o cast pelado "aborta a query inteira" e **fui testar** — não aborta, e o motivo
+importa. As duas formas ruins de `content` se comportam de maneira **oposta**:
+
+| corpo | o que a query verbatim faz | risco |
+| --- | --- | --- |
+| **não-nulo e não-JSON** (página HTML de erro) | `ERROR: invalid input syntax for type json` — **aborta**, exit 1 | ruidoso, seguro |
+| **`content IS NULL`** (timeout do `net.http_post`) | **exit 0, uma linha, valor vazio** | 🔴 **silencioso e fatal** |
+
+O segundo caso é o perigoso e foi **medido**: 1 de 208 linhas na janela de 2026-08-26 (`id = 60712`,
+`status_code` **NULL**, `error_msg` = `Timeout of 60000 ms reached…`). Rodando a query de forma sobre
+ela, `jsonb_object_keys(NULL)` produz **zero linhas**, o `string_agg` sobre zero linhas devolve **NULL**,
+e o psql imprime uma linha em branco com **exit 0** — indistinguível, a olho, de uma leitura legítima.
+
+E o veredito do método é justamente **"a chave sumiu"**. Ou seja: uma execução que **nem devolveu corpo**
+lê-se como "bundle novo". É o `ausente ≠ zero` do money-path na sua forma mais barata de cometer.
+
+**Regra: exija leitura POSITIVA.** A forma só vale se as **outras** chaves esperadas voltarem —
+`chaves` vazio/NULL não é "chave ausente", é **linha inutilizável**. Gate barato no predicado
+(`status_code = 200` já elimina o timeout, que vem com status NULL):
+
+```sql
+WHERE r.status_code = 200
+  AND r.content IS NOT NULL
+  AND left(ltrim(r.content),1) = '{'
+  AND (r.content::jsonb) ? 'data'
+  AND jsonb_typeof((r.content::jsonb)->'data') = 'object'
+```
+
+Medido na mesma janela: o predicado guardado e o pelado devolvem **30** linhas cada — ou seja, o guard
+**não custa recall aqui**; ele existe para o dia em que a linha ruim não for nula.
+
+### Limite: a retenção é a vida inteira desta via
+
+`pg_net.ttl = 6 hours` (§5). A via passiva **só existe dentro da janela** — ela não audita um run de
+dias atrás, e não há como recuperá-lo. Fora da janela, resta o N3 ativo. Corolário operacional: ao
+mergear uma edge com cron frequente, **verificar cedo é mais barato**, porque a prova de graça expira.
+
+### Dois sinais que PARECEM discriminar deploy e NÃO discriminam
+
+Os dois foram levantados neste mesmo ciclo, pareciam fortes, e reprovaram. Ficam registrados porque o
+próximo agente vai tropeçar exatamente neles.
+
+**(a) Duração da execução (`acoes_execucoes`) — variância maior que o efeito.** O run pós-mudança caiu
+para **24,0 s** contra a faixa recente de **49,5–62,6 s**, o que sugeria que `syncProducts` tinha saído
+do caminho. Mas **08-18 já havia feito 24,4 s COM `products` no caminho**. O sinal e o ruído têm a mesma
+amplitude: **corrobora, não prova**. É a classe do "indício fraco" — usar como veredito é fabricar
+conclusão a partir de uma amostra que a série histórica já contradiz.
+
+**(b) `last_page` alto em `sync_state` — o chamador mascara o default do código.** `products/colacor_vendas`
+apareceu com `last_page = 43`, e o teto default do bundle velho era **10**: parecia prova direta do teto
+novo (`MAX_PAGINAS_PRODUTOS = 500`). Não prova nada — o cron **42** (`sync-colacor-vendas-products`) passa
+`"max_pages": 50` **explícito no body**, então o bundle velho faria as mesmas 43 páginas.
+
+```bash
+~/.config/afiacao/psql-ro -Atc "SELECT jobid||' :: '||substring(regexp_replace(command,'\s+',' ','g') from 'body[^)]*') FROM cron.job WHERE jobid = 42;"
+# 42 :: body:='{"action": "sync_products", "account": "colacor_vendas", "max_pages": 50}'::jsonb,timeout_milliseconds:=150000
+```
+
+**A lição, generalizada:** antes de ler um valor observado como evidência de um **default do código**,
+leia o **body do chamador**. Parâmetro explícito no cron torna o default irrelevante — e o observado
+passa a ser evidência do *chamador*, não do bundle. Vale para qualquer teto, janela ou limite que o
+código define e o cron pode sobrescrever (`max_pages`, `window_days`, `timeout_milliseconds`).
+
+## 13. A §12 é cega para o diff que só ACRESCENTA um early-return — e quem provou foi a sonda de OUTRA sessão (2026-08-27, #2049)
+
+Substrato: verificar o deploy de `omie-nfe-reconcile` (PR #2049, merge `dfa6e99e1`, 08:12). A pergunta
+era a de sempre — "o bundle novo subiu?" — e o interesse era **não pedir deploy redundante**, porque
+com ~16 sessões vivas em worktrees paralelas outra sessão pode já ter feito. Três achados, e o mais
+barato é o terceiro.
+
+### 13.1 A segunda pré-condição da §12: a forma só discrimina se o diff MUDA a forma
+
+A §12 registrou uma pré-condição (a chave discriminante tem de ser atribuída **incondicionalmente** no
+bundle velho). Faltava outra, que só aparece quando o diff é de **instrumentação**: o diff precisa
+alterar a forma **do caminho que o cron exercita**.
+
+O #2049 não altera. Ele acrescenta o ramo da sonda, e esse ramo faz `return` **antes** do fluxo real —
+logo o corpo que o cron produz é byte a byte o mesmo nos dois bundles. **Sonda que retorna cedo é, por
+construção, invisível ao caminho que o cron percorre.** Generalizando: a §12 lê diffs que *modificam* o
+fluxo e é cega para diffs que *adicionam um ramo antes* dele. Como instrumentação de deploy tem
+exatamente essa forma, **a via passiva da §12 e a sonda são complementares, nunca substitutas** — e é
+erro esperar que a §12 verifique o PR que instala a sonda.
+
+Como se checa antes de tentar (o diff, não a memória):
+
+```bash
+git show --stat dfa6e99e1 -- supabase/functions/omie-nfe-reconcile/index.ts
+# o ramo do probe retorna antes do fluxo real ⇒ resposta do cron INALTERADA ⇒ §12 não discrimina
+```
+
+### 13.2 O disfarce do `versao` do fluxo real, confirmado em produção
+
+O `versao.ts` desta edge já advertia que o `versao: "v3.3-paginacao-janelas"` da resposta do fluxo real
+é string **hardcoded e anterior à sonda**. A janela de retenção confirmou de fato, sem ambiguidade:
+
+```
+6 runs do fluxo real | 2026-08-27 16:10 -> 21:10 UTC | com probe: 0 | com o marcador de fatia: 6
+```
+
+Seis respostas carregando um campo chamado `versao`, e **zero** delas dizendo qualquer coisa sobre qual
+bundle respondeu. Quem lesse esse campo concluiria "verificado" e teria verificado nada — é o mesmo
+julgamento que o #2052 tirou do SQL de sondagem ("o bundle sem o mapa de fingerprints saía DEPLOY
+CONFIRMADO"). **Um campo se chamar `versao` não o torna sensor de bundle.**
+
+### 13.3 O achado operacional: a sonda de OUTRA sessão fica retida 6 h, e é evidência de primeira classe
+
+O que provou o deploy não foi o cron — foi uma sonda ativa que **outra sessão** havia disparado 2
+minutos antes, e que o `pg_net` reteve:
+
+```
+61653 | 2026-08-27 21:48:06.209343 | 200 | {"ok":true,"probe":true,"versao":"v1.0-sensor-inicial",
+        "edge":"omie-nfe-reconcile","fonte":"844e96d1d018a01374951da346d5d3d267b12431ebab1f7b8f032d117414e3c0"}
+```
+
+Ela veio num lote de três (`omie-sync-nfes-recebidas`, `omie-vendas-sync`, `omie-nfe-reconcile`), no
+mesmo tick de coleta do worker do pg_net.
+
+**A regra que sai daqui, e que é barata a ponto de virar primeiro passo:** em repo multi-sessão, antes
+de pedir deploy — e antes de sondar, o que num bundle pré-sensor **paga o efeito caro** — varra
+`net._http_response` por `"probe"`. A sonda de qualquer sessão é evidência para todas as outras
+enquanto durar o TTL:
+
+```bash
+~/.config/afiacao/psql-ro -c "SELECT id, created AT TIME ZONE 'UTC' AS utc, status_code, left(content,200) FROM net._http_response WHERE content ILIKE '%\"probe\"%' ORDER BY created DESC LIMIT 10;"
+```
+
+O canal de coordenação entre worktrees paralelas não é só `git`/`gh pr list`: **é também o rastro que
+as sessões deixam em produção.** Ninguém estava lendo esse.
+
+⚠️ O que a leitura estabelece é um **limite superior**, não o instante: prova que o bundle novo já
+respondia às 21:48 UTC, não a hora em que o deploy rodou. Para "quando", o rastro do bot na `main` é o
+que existe — e ele prova que **um** deploy rodou, nunca qual versão (§6).
+
+### 13.4 O controle de exclusividade — o `--pai` do fingerprint
+
+Um `fonte` que bate com a `main` só prova **este** deploy se ele não pudesse ter vindo de um PR
+anterior. É a armadilha da sentinela não-exclusiva da `lovable-deploy-verify` (falso positivo, que
+*encerra* a verificação) transposta para o fingerprint. Os dois lados, no commit pai:
+
+```bash
+git show dfa6e99e1^:supabase/functions/_shared/sonda-fingerprints.ts | grep -c '844e96d1'          # 0
+git show dfa6e99e1^:supabase/functions/_shared/sonda-fingerprints.ts | grep -c 'omie-nfe-reconcile' # 0
+git show dfa6e99e1^:supabase/functions/omie-nfe-reconcile/versao.ts                                 # não existe
+```
+
+Zero nos dois, e a edge **nem era instrumentada** antes — o hash é estritamente novo do #2049. Do lado
+positivo, `bun run sonda:fingerprint` devolveu `✓ 35 edge(s) — mapa bate com a fonte`, que é o que
+impede ler um mapa *stale* como prova. Sem essa segunda metade, o zero no pai seria ausência de dado.
+
+### 13.5 Por que o `fonte`, e não o `versao`, fechou o veredito
+
+Os quatro sinais da resposta cobrem coisas diferentes, e só o último alcança o `_shared/`:
+
+| sinal | o que fecha |
+| --- | --- |
+| eco `probe:true` | bundle **novo** — o velho ignora o campo e roda a varredura (o efeito caro vem junto com o veredito) |
+| `edge` | a identidade, que resolve o empate do lote da §7 |
+| `versao` | o `VERSAO` do `versao.ts` **novo** ⇒ o arquivo de status `A` subiu (sem ele a função não bootaria) |
+| `fonte` | o fecho transitivo de imports locais idêntico byte a byte ⇒ **verbatim, com o `_shared/` junto** |
+
+É o complemento exato do #2054 ("o eco de `versao` na canária promete demais — `_shared/` só o `fonte`
+cobre, e ele não viaja ali"): lá a canária da `omie-vendas-sync` ecoa `versao` **sem** o `fonte`, e por
+isso não cobre `_shared/`; aqui a sonda ecoa o `fonte`, e é justamente ele que fecha o degrau. Ao
+projetar uma sonda nova, **o `fonte` não é enfeite ao lado do `versao` — é o único campo que responde
+"a fatia inteira subiu?"**.

@@ -66,14 +66,14 @@ Todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** (`.git
 
 ## Stack
 
-React 18 + TS 5.8 (**strict**) + Vite 5 + react-router 6 (lazy). Estado: `@tanstack/react-query` (`staleTime 60s`, sem refetch-on-focus, `retry 2`). UI: shadcn/ui sobre Radix; Tailwind 3 + tokens v3 em `src/index.css`. Tipografia Geist/Newsreader. Forms: react-hook-form + zod. Backend: **Supabase** (prod ref `fzvklzpomgnyikkfkzai`). Analytics PostHog (via `track()` de `@/lib/analytics`). PWA Workbox (offline-first picking/recebimento + fila de mutação). Toasts: **`sonner`** (único — `import { toast } from 'sonner'`). Cmd-K global ativo. Host: Lovable Cloud.
+React 18 + TS 5.8 (**strict**) + Vite 5 + react-router 6 (lazy). Estado: `@tanstack/react-query` (`staleTime 60s`, sem refetch-on-focus, `retry 2`). UI: shadcn/ui sobre Radix; Tailwind 3. Tipografia Geist/Newsreader. Forms: react-hook-form + zod. Backend: **Supabase** (prod ref `fzvklzpomgnyikkfkzai`). Analytics PostHog (via `track()` de `@/lib/analytics`). PWA Workbox (offline-first picking/recebimento + fila de mutação). Toasts: **`sonner`** (único — `import { toast } from 'sonner'`). Cmd-K global ativo. Host: Lovable Cloud.
 
 ### Scripts
 
 ```bash
 bun dev · bun build · bun lint
 bun run test        # vitest — CANÔNICO (é o que o CI roda); bun test (runner nativo) ≠ disto
-bun run typecheck   # tsc --noEmit -p tsconfig.app.json (strict). NÃO usar tsc cru (no-op: root tem files:[])
+bun run typecheck   # tsc -p tsconfig.app.json (strict) — só `src`; scripts/+db/ = `scripts:typecheck`. tsc cru = no-op (root files:[])
 heavy bun run test  # 'heavy' = semáforo de RAM (M2 8GB); prefixe test/build/typecheck/vitest
 ```
 

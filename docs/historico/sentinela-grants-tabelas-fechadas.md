@@ -214,7 +214,16 @@ uma a uma não só porque o contrato exige medição, mas porque **cada entrada 
 próprio gate** — e o custo de errar é o pior possível: o único jeito de calar um falso positivo é
 tirar a tabela da vigilância, isto é, o gate pune quem o usa.
 
-### Achado 2 — `anon` tem INSERT+DELETE em `sales_orders` (aberto, alarme de pé)
+### Achado 2 — `anon` tem INSERT+DELETE em `sales_orders` (FECHADO 2026-08-27)
+
+> ✅ **FECHADO em 2026-08-27** (paste do founder no SQL Editor, PR #2044). Evidência POSITIVA por
+> `psql-ro`: o `relacl` de `public.sales_orders` deixou de conter `anon=ad/postgres` — a entrada do
+> `anon` sumiu inteira, e `has_table_privilege` devolve `NAO` para as 7 formas medidas
+> (SELECT/INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER). O `authenticated=ad` continua, que é
+> desenho (split BFLA por verbo). `bun run authz:grants:prod` passou de exit **1** para exit **0**:
+> *"3 tabela(s) conferida(s); prod bate com o contrato"*. Era discriminável porque o REVOKE não é
+> no-op — ao contrário do caso de §9.7 do `sentinela-authz-controle-nao-mencao.md`, onde o apply é
+> inobservável por ACL.
 
 `bun run authz:grants:prod` sai **1** com `DRIFT_PROD`: `anon` tem `INSERT,DELETE` fora do permitido.
 A divergência é real. A causa **não** é a que o código nomeia: nenhum grant foi aplicado à mão. É
@@ -283,3 +292,98 @@ real. Entre os 10, um TS2307 que valeu a investigação: o #1201 deletou `src/li
 como "0 refs provadas" e quebrou `scripts/radar/carga.ts` — a ref era invisível ao knip (fora do
 `project`) **e** ao tsc (fora do `include`), e ficou verde por 5 semanas. Todos corrigidos; o gate
 entrou em zero, sem baseline.
+
+## 2026-08-27 — o audit media 6 dos 8 privilégios: `REFERENCES`/`TRIGGER` declaráveis e nunca medidos
+
+Achado do ritual `/codex` no PR #2044, verificado por leitura direta. `Priv`
+(`scripts/authz-tabelas-fechadas.ts`) aceita 8 privilégios de tabela no campo `permitido`; o audit
+de prod media 5 + `MAINTAIN` sob CASE de versão. `REFERENCES` e `TRIGGER` eram **declaráveis e
+invisíveis**.
+
+### Por que a lacuna não era inócua
+
+As duas camadas erravam pelo mesmo buraco, por caminhos diferentes: o gate estático lê **migrations**
+e um `GRANT REFERENCES` colado no SQL Editor não é migration nenhuma; o audit de prod lê o **banco**
+mas não olhava esses dois privilégios. Nenhum ente acusaria.
+
+Pior que a lacuna é o que ela fazia com o contrato: `permitido: { anon: ['REFERENCES'] }` era
+aceito, e a entrada passava a **AFIRMAR uma cobertura que não existia** — o modo de falha que o
+cabeçalho de `scripts/authz-manifest.ts` chama de "contrato falso é pior que lacuna". Os dois foram
+medidos à MÃO uma única vez (2026-08-13, `NAO` nas duas roles); o que faltava era a re-medição
+automática — e medição à mão não repetida é evidência com prazo de validade.
+
+### Duas listas independentes viraram uma, e a exaustividade virou tipo
+
+`PRIV_DESDE: Record<Priv, number>` mapeia privilégio → `server_version_num` mínimo em que
+`has_table_privilege` sabe respondê-lo (`MAINTAIN` = 170000, ele **erra** — não devolve `false` —
+em PG anterior; `REFERENCES`/`TRIGGER` existem desde sempre e entram com 0). A **mesma** função
+`privsDaVersao()` gera os ramos do `CASE` da query **e** dimensiona a conferência de cardinalidade.
+
+`Record<Priv, …>` é exaustivo por construção: um 9º privilégio no contrato reprova em
+`scripts:typecheck` em vez de reaparecer em silêncio. Foi assim que estes dois passaram — nada
+obrigava as duas listas a coincidirem.
+
+### O piso de cardinalidade estava calibrado abaixo da própria query
+
+O piso era o literal `5` enquanto a query já devolvia **6** no PG17 — a folga cabia um privilégio
+inteiro. Perder todas as linhas de `MAINTAIN` deixava `lidas` exatamente em cima do piso e o audit
+saía **0** com "✅ prod bate com o contrato" sobre uma medição incompleta.
+
+A troca não foi subir o número: **piso comparado a literal escrito à mão envelhece sozinho** a cada
+privilégio novo — é a mesma dívida, adiada. A query passou a emitir uma linha
+`VER|<server_version_num>` e o parser compara `!==` contra `tabelas × roles × privsDaVersao(versão)`.
+Conta exata pega perda parcial **e** duplicação de linha, que piso nenhum pega; e sem a `VER|` não
+há denominador — conferir cardinalidade contra número desconhecido é teatro, então falta de `VER|`
+sai **2**, não 0.
+
+### Falsificação (rodada contra o auditor anterior, não contra uma sabotagem inventada)
+
+Harness PG17 vai de 7 para 11 cenários. Restaurado o auditor pré-mudança, os 4 novos ficam
+**vermelhos** e os 7 antigos seguem verdes:
+
+| Cenário | Auditor anterior | Auditor novo |
+|---|---|---|
+| G `GRANT REFERENCES` a `anon` | exit 0, **sem** `DRIFT_PROD` | exit 1, `DRIFT_PROD` nomeando `REFERENCES` |
+| H `GRANT TRIGGER` a `authenticated` | exit 0, **sem** `DRIFT_PROD` | exit 1, `DRIFT_PROD` nomeando `TRIGGER` |
+| J saída com 1 privilégio engolido | **exit 0** ("prod bate com o contrato") | exit 2, `medição inconsistente` |
+| K saída sem a linha `VER|` | exit 0 | exit 2 |
+
+G e H casam o **nome do privilégio** no texto, não só o código `DRIFT_PROD`: o código sozinho não
+distingue QUAL privilégio vazou, e o cenário de `REFERENCES` ficaria verde com o audit acusando
+outra sobra qualquer. J e K medem a guarda de cardinalidade com o banco **limpo** — o que muda é a
+saída do psql, mutilada por wrappers desonestos (`sed`, não `grep -v`: grep que não casa nada sai 1
+e o erro viria do `execFileSync`, dando o exit certo pelo motivo errado).
+
+Verde nos dois locales (`LC_ALL=C` e `pt_BR.UTF-8`), 11/11.
+
+⚠️ Armadilha que a restauração destampou: a sabotagem foi `git checkout HEAD~1 -- <arquivo>`, que
+**escreve no índice**. `git checkout -- <arquivo>` restaura *do índice* e devolveu o arquivo
+sabotado — o harness seguiu 7/11 e teria virado "a mudança não funciona". Restaurar é
+`git checkout HEAD -- <arquivo>`, e quem pegou foi a conferência positiva (`grep -c PRIV_DESDE`),
+não a ausência de erro.
+
+### Estado de prod na entrega (`psql-ro`, 2026-08-27, PG 17.6)
+
+`REFERENCES` e `TRIGGER` = `NAO` nas 3 tabelas × 2 roles, confirmado por `relacl`. A extensão
+**fecha o buraco, não acusa dívida** — `bun run authz:grants:prod` sai 0. As 3 entradas batem com o
+contrato: `product_costs` e `omie_products` com `authenticated=r` e `anon` fora do `relacl`,
+`sales_orders` com `authenticated=ad` e `anon` fora — ou seja, o fecho de `product_costs` foi
+aplicado e o `anon=ad` do Achado 2 está revogado.
+
+### O carimbo reprovou, como devia
+
+`db/audit-grants-tabelas-fechadas.ts` é um dos `auditorFiles` do carimbo (PR #2044, mergeado
+enquanto esta entrega estava em voo), então mudar o auditor muda o `auditorFingerprint` e invalida
+`db/authz-carimbo-prod.json`. Rebaseado sobre a main com o carimbo, o gate acusou:
+
+```
+❌ [CARIMBO_AUDITOR_MUDOU] `grants`: o AUDITOR mudou desde a medição — o instrumento não é mais
+   o que produziu esta evidência. Rode `bun run authz:carimbo:gravar`.
+```
+
+**Isso é o desenho funcionando, não defeito**: evidência de prod colhida por um instrumento que já
+não existe não é evidência daquele instrumento. Regravado com `bun run authz:carimbo:gravar` (exige
+`psql-ro`; o runner recusa `PSQL_RO` alternativo e allowlist de teste, e pina o `system_identifier`
+do cluster). O diff do carimbo tem 3 linhas: `medidoEm`, `sourceHead` e o `auditorFingerprint` de
+`grants` — o `contratoFingerprint` fica intacto, porque esta entrega mexeu no INSTRUMENTO e não no
+contrato, e `achados: []` continua vazio.

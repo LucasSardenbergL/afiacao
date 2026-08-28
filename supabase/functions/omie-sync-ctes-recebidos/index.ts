@@ -28,6 +28,7 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 interface OmieCabec {
   nIdReceb?: number;
@@ -528,10 +529,37 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   } catch { return false; }
 }
 
+// `versao` em TODA resposta (sucesso e erro), não só na da sonda — é a metade da prova que
+// dispensa invocação. O `omie-cron-diario` faz `JSON.parse` do corpo deste step e o devolve
+// inteiro em `resultados.ctes.body`, então o marcador viaja para `net._http_response` no tick de
+// 2h do jobid 52 e o deploy se prova sem ninguém chamar nada, sem cron secret e sem pagar efeito.
+function jsonRes(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (!(await authorizeCronOrStaff(req))) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return jsonRes({ error: "Unauthorized" }, 401);
+  }
+
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient,
+  // da varredura no Omie e de qualquer escrita. O parse do corpo SUBIU para cá de propósito: no
+  // desenho anterior ele vinha depois do `createClient`, e a sonda ali já teria custo. Daqui pra
+  // frente a edge grava o vínculo CT-e↔NF-e em `purchase_orders_tracking`, que o matcher nunca
+  // refaz. req.json() é one-shot: o corpo lido aqui é reaproveitado no fluxo real abaixo.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let body: RequestBody = {};
+  try { body = await req.json(); } catch { /* default */ }
+
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+  // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no fluxo real por omissão.
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
   }
 
   const t0 = Date.now();
@@ -540,9 +568,6 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
-
-    let body: RequestBody = {};
-    try { body = await req.json(); } catch { /* default */ }
 
     const empresaParam = (body.empresa ?? "OBEN") as "OBEN" | "COLACOR" | "ALL";
     const dias = Number(body.dias ?? 30);
@@ -575,15 +600,12 @@ Deno.serve(async (req) => {
     // ok só quando alguma empresa completou a varredura — TODAS falhando fatal é run com
     // erro (500), não um resumo zerado com ok:true (o modo ALL preserva o parcial honesto).
     const todasFalharam = summaries.length > 0 && summaries.every((s) => s.erro_fatal);
-    return new Response(
-      JSON.stringify({ ok: !todasFalharam, duracao_ms: Date.now() - t0, summary: summaries }),
-      { status: todasFalharam ? 500 : 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    return jsonRes(
+      { ok: !todasFalharam, duracao_ms: Date.now() - t0, summary: summaries },
+      todasFalharam ? 500 : 200,
     );
   } catch (e) {
     console.error("[sync-ctes] erro fatal:", e);
-    return new Response(
-      JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return jsonRes({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
   }
 });
