@@ -143,6 +143,7 @@ FROM net._http_response r, jsonb_object_keys((r.content::jsonb)->'resultados') k
 WHERE r.created BETWEEN '<inicio>' AND '<fim>' AND r.status_code = 200
   AND r.content IS NOT NULL AND left(ltrim(r.content),1) = '{'
   AND (r.content::jsonb) ? 'resultados'
+  AND jsonb_typeof((r.content::jsonb)->'resultados') = 'object'
 ORDER BY r.id, k;
 ```
 
@@ -249,3 +250,42 @@ Em `supabase/functions/_shared/sonda-versao-contrato_test.ts`, além das 4 linha
   a receita de verificação usa em `resultados.<key>.body.versao`; chave errada devolve NULL, que é
   byte a byte a assinatura de "bundle pré-sensor". O gate falha nomeando a divergência quando o
   `omie-cron-diario` ganha um 6º step ou renomeia uma `key`.
+
+## Adendo 2026-08-28 — o `background` é do TICK, não do STEP (e a janela larga precisa de guard)
+
+A régua acima mediu **um** tick (id 61756, 02:15Z) e leu `pedidos` como um dos steps que o eco não
+alcança, concluindo que ali "a prova continua sendo a sonda ativa". Ao verificar o deploy do #2063
+no dia seguinte, quatro ticks contam outra história:
+
+| tick (UTC) | `modo` do `pedidos` | `versao` |
+|---|---|---|
+| 2026-08-28 02:15 | `background` | *(vazio)* |
+| 2026-08-28 06:15 | `background` | *(vazio)* |
+| 2026-08-28 08:15 | `background` | *(vazio)* |
+| **2026-08-28 10:15** | **`respondido`** | **`v1.0-eco-versao-passivo`** |
+
+Mesma edge, mesmo bundle, mesmo `STEP_TIMEOUT_MS`: o que varia é a carga do Omie naquele tick. Logo
+o `background` **não é propriedade do step** — é sorteio por execução, e três seguidos não são
+evidência de que o eco nunca alcança aquele step. Quem lê o primeiro `background` como "só a sonda
+ativa resolve" paga a sonda cara (que num bundle pré-sensor dispara o efeito real) para responder o
+que o tick seguinte responde de graça.
+
+**Regra:** diante de `background`, releia a **janela inteira do TTL** antes de invocar a sonda. A
+cobertura do eco não se mede num tick — ela CONVERGE ao longo deles.
+
+### O guard de tipo, que a janela estreita esconde
+
+Alargar a janela é o que ativa uma falha que o `BETWEEN` de 10 minutos vinha escondendo: o
+predicado `(content::jsonb) ? 'resultados'` também casa com **outro emissor**, que grava
+`{"success":true,"processados":0,"resultados":[]}` — `resultados` como **array** (1 linha, medida às
+09:00:03Z, contra 3 do orquestrador na mesma janela). O `jsonb_object_keys` sobre um array **aborta
+a query inteira**:
+
+```text
+ERROR:  cannot call jsonb_object_keys on an array
+```
+
+Não é uma linha ruim que se ignora: é o resultado todo perdido. A falha é **ruidosa** (exit 1), então
+não fabrica veredito — mas some com a leitura justamente quando se acumula ticks, que é a receita do
+adendo acima. `jsonb_typeof((content::jsonb)->'resultados') = 'object'` separa os dois emissores, e
+está embutido na query desta página e na da skill `lovable-deploy-verify`.
