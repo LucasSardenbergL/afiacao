@@ -146,3 +146,6 @@ verify_jwt = false
 
 [functions.sayerlack-captura-precos]
 verify_jwt = false
+
+[functions.analytics-outbox-drain]
+verify_jwt = false
