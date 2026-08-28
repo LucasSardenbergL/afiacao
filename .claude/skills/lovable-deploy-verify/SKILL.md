@@ -441,7 +441,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
       o orquestrador devolve cada um em `resultados.<key>.body`:
       ```bash
       # ⌨️ seu terminal — troque os dois timestamps pela JANELA do run (nunca id chutado)
-      ~/.config/afiacao/psql-ro -c "SELECT r.id, r.created, k, (r.content::jsonb)->'resultados'->k->>'modo' AS modo, (r.content::jsonb)->'resultados'->k->'body'->>'versao' AS versao FROM net._http_response r, jsonb_object_keys((r.content::jsonb)->'resultados') k WHERE r.created BETWEEN '<inicio>' AND '<fim>' AND r.status_code = 200 AND r.content IS NOT NULL AND left(ltrim(r.content),1) = '{' AND (r.content::jsonb) ? 'resultados' ORDER BY r.id, k;"
+      ~/.config/afiacao/psql-ro -c "SELECT r.id, r.created, k, (r.content::jsonb)->'resultados'->k->>'modo' AS modo, (r.content::jsonb)->'resultados'->k->'body'->>'versao' AS versao FROM net._http_response r, jsonb_object_keys((r.content::jsonb)->'resultados') k WHERE r.created BETWEEN '<inicio>' AND '<fim>' AND r.status_code = 200 AND r.content IS NOT NULL AND left(ltrim(r.content),1) = '{' AND (r.content::jsonb) ? 'resultados' AND jsonb_typeof((r.content::jsonb)->'resultados') = 'object' ORDER BY r.id, k;"
       ```
       🔴 **Leia o `modo` ANTES do `versao`** — é a mesma armadilha da linha de timeout, uma casa acima: em
       `modo:"background"` o orquestrador abortou o cliente em 25s (`STEP_TIMEOUT_MS`), o corpo **não foi
@@ -455,6 +455,21 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
       sempre as duas. Para o step que estoura, a prova continua sendo a sonda ativa, que é
       justamente onde ela custa mais (bundle pré-sensor sondado dispara a varredura). Trate o eco
       como cobertura PARCIAL e barata, não como substituto da sonda.
+
+      ✅ **Mas o `background` é do TICK, não do STEP — acumule ticks antes de pagar a sonda ativa
+      (medido 2026-08-28).** O `pedidos` veio `background` em três ticks seguidos (02:15, 06:15 e
+      08:15Z) e **`respondido` com o marcador às 10:15Z** — mesma edge, mesmo bundle: o que varia é
+      a carga do Omie naquele tick, não o step. Ler um `background` como "este step só se prova com
+      sonda ativa" paga a sonda cara para responder o que o tick seguinte responde de graça. Regra:
+      diante de `background`, **releia a janela inteira do TTL** antes de invocar — e só então
+      conclua que o eco não alcança aquele step.
+      ⚠️ **Ao alargar a janela, o guard de TIPO deixa de ser opcional.** Outro emissor grava
+      `{"success":true,"processados":0,"resultados":[]}` — chave `resultados` como **array** (medida
+      às 09:00Z) — e o `jsonb_object_keys` sobre ela **aborta a query inteira** (`ERROR: cannot call
+      jsonb_object_keys on an array`): não é uma linha ruim ignorada, é o resultado todo perdido. O
+      `? 'resultados'` não separa os dois casos; `jsonb_typeof(...) = 'object'` separa — já embutido
+      na query acima. Falha ruidosa (exit 1), então não fabrica veredito — mas com janela estreita
+      ela dorme, e é exatamente ao acumular ticks que ela acorda.
 
 ### Passo 4b — QA visual pós-Publish (Claude-in-Chrome na sessão logada do founder)
 
