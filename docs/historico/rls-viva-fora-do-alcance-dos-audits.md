@@ -321,3 +321,68 @@ rodada com `motivo` de 23 caracteres (`'`auth.uid() = user_id`.'`), que foi escr
 > na primeira pessoa com pressa.* A diferença entre "o critério está escrito no cabeçalho" e "o
 > critério reprova o PR" é a diferença entre uma lista curada e um depósito — e o cabeçalho já
 > estava correto no dia em que foi escrito.
+
+---
+
+## 8. A 3ª rodada (2026-08-28) — escolher a tabela pelo predicado que ela ARRASTA
+
+Duas sessões paralelas mediram a mesma pergunta no mesmo dia. A §7 é uma; esta é a outra, reduzida
+ao **diferencial** depois que o #2068 mergeou (worktrees.md §Colisão de CÓDIGO: descobrir a
+colisão com o PR pronto custa dois PRs). **17 → 20 tabelas, 38 → 50 policies, 5 → 8 predicados.**
+
+As duas convergiram sozinhas em 5 tabelas — `commercial_roles`, `fin_permissoes`,
+`fin_contas_pagar`, `order_items`, `markup_policy` — o que é validação cruzada barata e vale
+registrar. Divergiram no resto, e a divergência tem uma lição dentro.
+
+### A tese: numa allowlist com eixo derivado, o valor de uma entrada é o que ela PUXA
+
+O audit descobre os predicados **a partir das tabelas curadas** (`unnest(tabs)` → `pg_policy` →
+`pg_depend`). Logo cada tabela que entra **obriga a declarar seus predicados**, e o alcance de um
+predicado é muito maior que o da tabela que o trouxe. As 3 desta rodada guardam pouco — duas estão
+**vazias** — e trazem três capabilities que audit nenhum congelava:
+
+| tabela | linhas | traz | alcance do predicado |
+| --- | --- | --- | --- |
+| `pedido_compra_item` | 2.404 | `private.cap_compras_ler` | **18 policies / 14 tabelas** |
+| `cliente_tier_preco` | 0 | `private.cap_preco_escrever` | 2 / 1 |
+| `venda_excecao_credito` | 0 | `private.cap_credito_escrever` | 1 / 1 |
+
+Curar **uma** tabela de 2.404 linhas põe 14 tabelas sob vigilância de eixo 3. Provado por
+falsificação dirigida: remover `pedido_compra_item` do contrato faz `cap_compras_ler` virar
+`PREDICADO_SUMIU` — a tabela é o que mantém o predicado dentro do alcance.
+
+### 🔴 A correção que a rodada trouxe: convergência medida sobre amostra selecionada por semelhança
+
+A §7 concluiu, do próprio resultado, que "a autorização deste banco converge para poucos gates" —
+10 tabelas novas trazendo **uma** função só. Esta rodada mediu o inverso: **3 tabelas trouxeram 3
+funções**. A diferença não está no banco, está no **método de seleção**. A 2ª rodada escolheu por
+*parentesco* com o que já estava curado (o resto do `fin_*`, o resto do que `cap_custo_ler`
+gateia) — e tabela irmã compartilha o gate da irmã **por construção**. A amostra confirmava a
+hipótese porque tinha sido selecionada por ela.
+
+> **Classe:** *uma amostra escolhida por semelhança com o que já se conhece não pode testar a
+> hipótese de que tudo se parece.* O resultado é verdadeiro sobre a amostra e não se estende — e o
+> jeito de perceber é medir o UNIVERSO (aqui: as 14 funções que gateiam policy em `public`, das
+> quais 8 estão congeladas), não crescer a amostra pela borda dela mesma.
+
+### Três armadilhas de medição, todas do tipo "verde por dado que não foi consultado"
+
+1. **`n_live_tup` é ESTIMATIVA do autovacuum, e mentiu.** `pg_stat_user_tables` dava `0` para
+   `commercial_roles`; `count(*)` dá **3**. Decidir escopo por ela teria descartado uma raiz da
+   autorização. É "ausente ≠ zero" numa forma nova: a estimativa lida como contagem.
+2. **O nome mente; a FK não.** `public.orders` parecia o pedido de venda — está **vazia e órfã**.
+   Os 70.489 `unit_price` estão em `order_items`, cuja FK aponta para **`sales_orders`**, já
+   curada: era o *filho* da tabela curada que estava de fora.
+3. **Tabela de CONCESSÃO vazia não é tabela sem risco.** `fin_permissoes`, `cliente_tier_preco` e
+   `venda_excecao_credito` têm 0 linhas, e é o **primeiro INSERT indevido** que é o dano. Um corte
+   por volume teria descartado as três.
+
+### E uma armadilha de FERRAMENTA, que quase virou um achado falso
+
+O primeiro teste de merge contra o PR paralelo usou **`FETCH_HEAD`** — que um `git fetch` disparado
+por um *hook* entre dois comandos havia sobrescrito. O merge rodou contra o branch **errado**,
+saiu limpo, e a leitura natural ("sem conflito, e as entradas do outro somem") teria sido reportada
+como achado grave. Refeito com ref nomeada estável (`origin/pr2068`): **conflito nos 3 arquivos**,
+que era a realidade. ⇒ **`FETCH_HEAD` é volátil e não pertence a você**: para comparar contra um
+branch alheio, materialize uma ref nomeada (`git fetch origin <branch>:refs/remotes/origin/<apelido>`)
+antes de qualquer operação que leve mais de um comando.
