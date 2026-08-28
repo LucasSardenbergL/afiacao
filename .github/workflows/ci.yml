@@ -21,6 +21,10 @@
 # - scripts:typecheck (tsc -p tsconfig.scripts.json): blocking — `scripts/` e `db/`, que o
 #   passo acima NÃO cobre (`include: ["src"]`). Fechado em 2026-08-13; até então erro de tipo
 #   nos próprios scripts que implementam os gates do CI passava verde. Detalhe no step.
+#   ⚠️ NÃO troque o passo acima por `bun run typecheck`: desde 2026-08-27 esse script roda os DOIS
+#   tsc (para o comando LOCAL não devolver verde falso sobre `scripts/`), então a troca faria o CI
+#   type-checar `scripts/`+`db/` duas vezes. Aqui os dois passos chamam cada config direto, de
+#   propósito — passo separado dá nome próprio à falha.
 # - test (vitest run): blocking — regressão de comportamento documentado. ⚠️ Cobre só `src/**` +
 #   `scripts/**` (o `include` do vitest.config.ts) — NÃO as edge functions, que são Deno.
 # - test:edges (deno test --no-remote): blocking — os 119 testes das edge functions. Rodavam em

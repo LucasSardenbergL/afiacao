@@ -73,7 +73,7 @@ React 18 + TS 5.8 (**strict**) + Vite 5 + react-router 6 (lazy). Estado: `@tanst
 ```bash
 bun dev · bun build · bun lint
 bun run test        # vitest — CANÔNICO (é o que o CI roda); bun test (runner nativo) ≠ disto
-bun run typecheck   # tsc -p tsconfig.app.json (strict) — só `src`; scripts/+db/ = `scripts:typecheck`. tsc cru = no-op (root files:[])
+bun run typecheck   # 2 tsc: src (app.json) + scripts/&db/ (scripts.json). Só src = `typecheck:app`. tsc cru = no-op (root files:[])
 heavy bun run test  # 'heavy' = semáforo de RAM (M2 8GB); prefixe test/build/typecheck/vitest
 ```
 
