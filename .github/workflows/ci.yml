@@ -614,7 +614,7 @@ jobs:
               '',
               `Run: ${runUrl}`,
               '',
-              '⚠️ O carimbo atesta três FATIAS curadas da autorização, não a autorização inteira — pontos cegos declarados em `docs/agent/database.md` §1.',
+              `⚠️ O carimbo atesta ${(dados.audits || []).length} FATIAS curadas da autorização (${(dados.audits || []).join(', ')}), não a autorização inteira — pontos cegos declarados em \`docs/agent/database.md\` §1.`,
             ].join('\n');
             if (abertas.data.length > 0) {
               await github.rest.issues.createComment({ owner, repo, issue_number: abertas.data[0].number, body: corpo });

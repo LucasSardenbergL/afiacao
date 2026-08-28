@@ -46,7 +46,7 @@ achado que nenhum PR consegue consertar. Gate vermelho-na-chegada é gate que mo
 
 ## O desenho: a medição fica onde está a credencial, o sinal onde já há cadência
 
-`db/authz-carimbo-prod.json` é escrito **só** por `bun run authz:carimbo:gravar` (roda os 4 audits
+`db/authz-carimbo-prod.json` é escrito **só** por `bun run authz:carimbo:gravar` (roda os audits enumerados em `AUDITS`
 sob `psql-ro`) e lido por `bun run authz:carimbo` (roda no CI, sem banco).
 
 ### Duas severidades, divididas por uma pergunta

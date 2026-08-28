@@ -28,7 +28,7 @@ Há um usuário **read-only** no Postgres de produção (`claude_ro`) acessível
 - **A leitura de `net._http_response` (ritual de canária, `deploy.md`) sobrevive a qualquer `REVOKE` em `net`:** `pg_read_all_data` dá `SELECT` **e USAGE de schema implícito**, fora do ACL — provado em prod (leio `cron.job`, 90 linhas, sem `USAGE` no `nspacl` de `cron`) e na falsificação PG17 (após o dono revogar `ALL … FROM PUBLIC`, `SELECT` continuou `t` e `EXECUTE`/`INSERT` viraram `f`).
 - **Como foi montado:** o Lovable NÃO expõe a connection string, mas dá pra montar (ref + user `claude_ro.<ref>` + senha definida no `CREATE ROLE` + região do pooler **descoberta por brute-force**: `aws-1-eu-west-1`). A conexão direta `db.<ref>.supabase.co` NÃO existe (projetos novos só têm o pooler Supavisor).
 
-### Cadência dos 3 audits de prod — o CARIMBO (desde 2026-08-25)
+### Cadência dos audits de prod — o CARIMBO (desde 2026-08-25)
 
 Os audits `authz:funcoes:prod` / `authz:grants:prod` / `authz:audit:prod` / `authz:claude-ro:prod` são a **única** guarda que
 enxerga `GRANT` colado à mão no SQL Editor e migration mergeada-e-nunca-aplicada — e não rodavam
@@ -50,7 +50,7 @@ a credencial é local. A ponte é o carimbo `db/authz-carimbo-prod.json`.
   virasse, uma falha de rede renovaria a data e a idade recomeçaria do zero.
 - ⚠️ **`primeiraVez` de um achado nunca é resetada por re-execução** — senão renovar o carimbo lava
   a dívida e o achado fica "conhecido e fresco" para sempre.
-- 🚨 **O carimbo atesta QUATRO FATIAS CURADAS, não "a autorização de prod".** Pontos cegos **medidos**:
+- 🚨 **O carimbo atesta as FATIAS CURADAS enumeradas em `AUDITS` (`scripts/lib/authz-carimbo.ts`), não "a autorização de prod".** A contagem NÃO é escrita à mão em lugar nenhum — o corpo da Issue a deriva do payload do gate. Ela já apodreceu: o texto dizia "três" depois do 4º e do 5º audit entrarem, e a mensagem errada é a que chega ao founder no alarme. Pontos cegos **medidos**:
   o audit de grants mede 6 dos 8 privilégios do tipo `Priv` (**`REFERENCES` e `TRIGGER` são
   declaráveis e nunca medidos**); ACL por **coluna** fica fora (`has_table_privilege` é table-level
   — e é o vetor que importa em `sales_orders`); **RLS vivo** (`relrowsecurity`, policies,
