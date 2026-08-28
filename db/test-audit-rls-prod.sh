@@ -34,6 +34,7 @@ PORT="${PGPORT_TEST:-5471}"
 TMPD="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-audit-rls.XXXXXX")"
 DATA="$TMPD/data"
 OUT="$TMPD/audit-saida.txt"
+ERRO_OUT="$TMPD/audit-stderr.txt"
 WRAP="$TMPD/psql-ro-fake"
 export LC_ALL="${LC_ALL:-C}" LANG="${LANG:-C}"
 
@@ -279,19 +280,33 @@ run_audit() {
   local ec=0
   # `|| ec=$?` é obrigatório: sob `set -e`, o exit 1 que QUEREMOS mataria o harness antes da
   # asserção, e o teste passaria a nunca reprovar.
+  # stdout e stderr saem SEPARADOS e depois são unidos em $OUT. O stream é o único
+  # diferenciador ASCII-safe entre achado-ERRO e achado-AVISO: o audit manda `error` para stderr
+  # e `warn` para stdout, e é o mesmo bit que decide o exit. Casar o emoji ❌/⚠️ seria casar
+  # byte não-ASCII, que é o que a lição #1483 manda evitar.
   PSQL_RO="$WRAP" AUTHZ_RLS_TEST_JSON="${JSON_ATUAL:-$TEST_JSON}" \
-    bun "$REPO_ROOT/db/audit-rls-prod.ts" > "$OUT" 2>&1 || ec=$?
+    bun "$REPO_ROOT/db/audit-rls-prod.ts" > "$TMPD/o.txt" 2> "$ERRO_OUT" || ec=$?
+  cat "$TMPD/o.txt" "$ERRO_OUT" > "$OUT"
   echo "$ec"
 }
 
 PASS=0; FAIL=0
 # esperar <rótulo> <exit esperado> <código que DEVE aparecer|-> <código que NÃO pode aparecer|->
+#         [código que deve sair como ERRO, não aviso|-]
+#
+# O 5º parâmetro existe porque casar só a PRESENÇA do código não distingue erro de aviso: medido
+# — rebaixar o achado transitivo a `warn` deixava os 41 cenários VERDES, porque o código seguia
+# na saída e o exit 1 vinha de OUTRO achado (o par intrínseco: para alcançar uma função nova, o
+# corpo do chamador muda, e o PREDICADO_ALTERADO dele sozinho já dá exit 1). Asserção ancorada em
+# algo que sobrevive à sabotagem é teatro.
 esperar() {
-  local rotulo="$1" ec_esperado="$2" deve="$3" nao_deve="$4" ec erro=""
+  local rotulo="$1" ec_esperado="$2" deve="$3" nao_deve="$4" deve_erro="${5:--}" ec erro=""
   ec="$(run_audit)"
   [ "$ec" = "$ec_esperado" ] || erro="exit $ec (esperava $ec_esperado)"
   if [ "$deve" != "-" ] && ! command grep -q "\[$deve\]" "$OUT"; then erro="$erro | ausente: [$deve]"; fi
   if [ "$nao_deve" != "-" ] && command grep -q "\[$nao_deve\]" "$OUT"; then erro="$erro | presente indevido: [$nao_deve]"; fi
+  if [ "$deve_erro" != "-" ] && ! command grep -q "\[$deve_erro\]" "$ERRO_OUT"; then
+    erro="$erro | saiu mas NAO como erro (fora do stderr): [$deve_erro]"; fi
   if [ -z "$erro" ]; then PASS=$((PASS+1)); echo "  ✅ $rotulo"
   else FAIL=$((FAIL+1)); echo "  ❌ $rotulo — $erro"; sed 's/^/     /' "$OUT"; fi
 }
@@ -367,7 +382,7 @@ esperar "Y  formatação original de volta → limpo  ← dente" 0 - PREDICADO_A
 # registra policy→função e não função→função, então antes deste eixo a sabotagem não movia o md5
 # de NADA que qualquer um dos quatro audits medisse — e o B6 mostra que o barrado passava a ler.
 P -c "$G2B_SABOTADO"
-esperar "Z1 corpo do gate de 2º NÍVEL p/ 'true' (policy e chamador INTACTOS) → PREDICADO_ALTERADO" 1 PREDICADO_ALTERADO POLICY_ALTERADA
+esperar "Z1 corpo do gate de 2º NÍVEL p/ 'true' (policy e chamador INTACTOS) → PREDICADO_ALTERADO" 1 PREDICADO_ALTERADO POLICY_ALTERADA PREDICADO_ALTERADO
 P -c "$G2B_DDL"
 esperar "Z2 gate de 2º nível restaurado → limpo  ← dente" 0 - PREDICADO_ALTERADO
 
@@ -376,7 +391,7 @@ esperar "Z2 gate de 2º nível restaurado → limpo  ← dente" 0 - PREDICADO_AL
 # juntas" — zz_gate2_c não está no contrato de teste por construção.
 P -c "CREATE FUNCTION public.zz_gate2_c(_uid uuid) RETURNS boolean LANGUAGE sql STABLE AS \$f\$ SELECT true \$f\$;"
 P -c "$G2B_CHAMA_C"
-esperar "Z3 gate2_b passa a chamar uma 3ª função NOVA → PREDICADO_NAO_DECLARADO (fail-closed)" 1 PREDICADO_NAO_DECLARADO -
+esperar "Z3 gate2_b passa a chamar uma 3ª função NOVA → PREDICADO_NAO_DECLARADO como ERRO (fail-closed)" 1 PREDICADO_NAO_DECLARADO - PREDICADO_NAO_DECLARADO
 P -c "$G2B_DDL"
 esperar "Z4 parou de chamá-la → limpo  ← dente" 0 - PREDICADO_NAO_DECLARADO
 

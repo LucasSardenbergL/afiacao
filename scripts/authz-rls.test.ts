@@ -250,6 +250,11 @@ describe('§1 comparador — cada eixo sabotado produz o código certo', () => {
       }),
     );
     expect(codigos(fs)).toEqual(['PREDICADO_NAO_DECLARADO']);
+    // O `level` entra na asserção porque casar só o CÓDIGO deixa passar a sabotagem que
+    // interessa: rebaixar o achado transitivo a `warn` mantém o código na saída e some com o
+    // exit 1. Medido — a falsificação nº 4 saiu verde em 41 cenários e 40 testes até este
+    // expect existir. Fail-closed é o LEVEL, não o texto.
+    expect(fs[0].level).toBe('error');
     expect(fs[0].msg).toContain('2º nível');
     expect(fs[0].msg).toContain('via public.zz_gate');
   });
@@ -272,6 +277,7 @@ describe('§1 comparador — cada eixo sabotado produz o código certo', () => {
       }),
     );
     expect(codigos(fs)).toEqual(['PREDICADO_NAO_DECLARADO']);
+    expect(fs[0].level).toBe('error');
     expect(fs[0].msg).toContain('chamador NÃO identificado');
     expect(fs[0].msg).not.toContain('DIRETAMENTE');
   });
