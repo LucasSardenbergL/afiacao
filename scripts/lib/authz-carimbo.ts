@@ -53,7 +53,12 @@ import { AUTHZ_FUNCOES_FECHADAS } from '../authz-funcoes-fechadas';
 import { AUTHZ_TABELAS_FECHADAS } from '../authz-tabelas-fechadas';
 import { AUTHZ_MANIFEST } from '../authz-manifest';
 import { AUTHZ_REESCRITAS_CONHECIDAS } from '../authz-reescritas-conhecidas';
-import { AUTHZ_RLS_ESPERADO, AUTHZ_RLS_PREDICADOS, PREDICADOS_PLATAFORMA } from '../authz-rls-esperado';
+import {
+  AUTHZ_RLS_ESPERADO,
+  AUTHZ_RLS_PREDICADOS,
+  LACUNAS_DECLARADAS,
+  PREDICADOS_PLATAFORMA,
+} from '../authz-rls-esperado';
 
 /** Raiz do repo, a partir de `scripts/lib/` — o gate roda do CI e do laptop, e `process.cwd()`
  *  difere entre os dois. */
@@ -234,10 +239,15 @@ export function dadoDoContrato(chave: ChaveAudit): unknown {
       // `PREDICADOS_PLATAFORMA` é um Set: entra aqui já sabendo que `canonicalizar` o representa
       // com tag de tipo — um `JSON.stringify` ingênuo o serializaria como `{}` e o fingerprint
       // nasceria cego exatamente no eixo mais permissivo dos três.
+      // `LACUNAS_DECLARADAS` entra pelo mesmo motivo que `PREDICADOS_PLATAFORMA`: mudá-la
+      // AFROUXA o que o verde afirma. Tirar uma tabela de lá sem curá-la faz o contrato parar de
+      // dizer "isto não é coberto" — e o carimbo passaria a atestar uma cobertura que ninguém
+      // mediu, na direção que é mais difícil de notar (a de fingir que não há buraco).
       return {
         tabelas: AUTHZ_RLS_ESPERADO,
         predicados: AUTHZ_RLS_PREDICADOS,
         plataforma: PREDICADOS_PLATAFORMA,
+        lacunas: LACUNAS_DECLARADAS,
       };
   }
 }
