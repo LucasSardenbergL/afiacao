@@ -536,3 +536,31 @@ describe('envDeTesteSetadas — a guarda que a lista literal já tinha deixado p
     expect(envDeTesteSetadas({ PSQL_RO: '/x', AUTHZ_TEST: '1', TEST_JSON: '1' })).toEqual([]);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// Anti-apodrecimento da CONTAGEM. Esta linha já esteve errada em produção: dizia "três FATIAS"
+// depois que o 4º (claudeRo) e o 5º (rls) audits entraram no AUDITS — e é a mensagem que chega ao
+// founder no momento do alarme. O conserto não foi trocar o número; foi tirá-lo da mão.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+describe('a contagem de fatias NÃO pode voltar a ser escrita à mão', () => {
+  const ymlBruto = readFileSync(join(RAIZ, '.github', 'workflows', 'ci.yml'), 'utf8');
+
+  it('o corpo da Issue DERIVA a contagem do payload, não de um literal', () => {
+    const linha = ymlBruto.split('\n').find((l) => l.includes('FATIAS curadas'));
+    expect(linha, 'a linha das FATIAS sumiu do ci.yml').toBeDefined();
+    expect(linha).toContain('dados.audits');
+    // qualquer numeral ou número por extenso ANTES de "FATIAS" é reintrodução do bug
+    expect(linha).not.toMatch(/\b(um|dois|tr[êe]s|quatro|cinco|seis|\d+)\s+FATIAS/i);
+  });
+
+  it('o gate publica a lista de audits no JSON — sem ela o ci.yml não teria de onde derivar', () => {
+    const gate = readFileSync(join(RAIZ, 'scripts', 'authz-carimbo-gate.ts'), 'utf8');
+    expect(gate).toContain('audits: Object.keys(AUDITS)');
+  });
+
+  it('o doc aponta para a FONTE (AUDITS), em vez de repetir a contagem', () => {
+    const doc = readFileSync(join(RAIZ, 'docs', 'agent', 'database.md'), 'utf8');
+    expect(doc).toMatch(/FATIAS CURADAS enumeradas em `AUDITS`/);
+    expect(doc).not.toMatch(/atesta (TR[ÊE]S|QUATRO|CINCO) FATIAS/i);
+  });
+});
