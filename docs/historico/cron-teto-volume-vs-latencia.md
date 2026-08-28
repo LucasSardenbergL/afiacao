@@ -459,15 +459,49 @@ orquestrador pode não haver linha separada nenhuma. Antes de ler ausência como
 `cron.job`/`cron.job_run_details`: **sem run na janela, o método está INAPLICÁVEL** — que é
 diferente de "pendente", e muito diferente de "não subiu".
 
-### Como fechar (chip "Confirmar deploy das 4 edges do cron-diário (`e5a484e2c`)")
+### FECHADA em 2026-08-28: as quatro estão no ar, e o eco provou sozinho
 
-1. Esperar a janela útil: o `0 7 * * *` do `omie-sync-sku-items` é a próxima oportunidade barata.
-   Depois dele, ler o `fonte` e comparar com `bun run sonda:fingerprint` da `main`.
-2. Steps sem cron direto: sondar ativamente pelo 🟣 SQL Editor (`deploy.md` §Canárias), lendo
-   **pelo `request_id`** — nunca `ORDER BY id DESC LIMIT 1`, que pega o tick de outro cron.
-3. ⚠️ **Só sonde DEPOIS do deploy:** bundle anterior à sonda ignora o `probe` e **executa o fluxo
-   real** (sync Omie de verdade).
-4. Desatualizada → prompt de deploy nomeando **todos** os arquivos da tabela acima, `versao.ts`
-   novo e `_shared/sonda-fingerprints.ts` incluídos. Prompt que nomeia só o `index.ts` sobe função
-   que **não boota** (#2020).
-5. **Confirme antes de pedir** — a sessão dona do `e5a484e2c` pode já ter pedido o deploy.
+O deploy **já havia sido pedido** pela sessão dona do `e5a484e2c` — o passo 5 ("confirme antes de
+pedir") era o passo certo, e é o que evitou o pedido redundante. A prova saiu do **N3 PASSIVO**,
+sem sonda ativa, sem invocar nada e sem gastar o founder:
+
+| step (chave do orquestrador) | edge | `modo` | `versao` |
+|---|---|---|---|
+| `ctes` | `omie-sync-ctes-recebidos` | `respondido` 3/3 | `v1.0-eco-versao-passivo` |
+| `sku_items` | `omie-sync-sku-items` | `respondido` 3/3 | `v1.0-eco-versao-passivo` |
+| `vendas` | `omie-sync-vendas-items` | `respondido` 3/3 | `v1.0-eco-versao-passivo` |
+| `pedidos` | `omie-sync-pedidos-compra` | `respondido` **1/3** (tick 10:15Z) | `v1.0-eco-versao-passivo` |
+| `nfes` | `omie-sync-nfes-recebidas` | `respondido` **1/3** (tick 10:15Z) | `v1.1-deadline-relogio` |
+
+Ticks 61860 (06:15Z), 61912 (08:15Z), 61997 (10:15Z) — o 61756 do #2070 já havia expirado pelo
+`pg_net.ttl`, então a medição é **independente**, não releitura. Os três eixos da prova, auditados
+ANTES de declarar:
+
+1. **Identidade** — o eco não carrega `edge` (o furo #1 do Codex no #2070), logo a identidade é a
+   CHAVE que o pai escolhe. Conferida no orquestrador (`omie-cron-diario/index.ts:169-173`):
+   `pedidos`→`omie-sync-pedidos-compra`, `ctes`→`omie-sync-ctes-recebidos`,
+   `sku_items`→`omie-sync-sku-items`, `vendas`→`omie-sync-vendas-items`.
+2. **Exclusividade do marcador** — `v1.0-eco-versao-passivo` tem **0 ocorrências** em `e5a484e2c^`
+   e nasce no próprio `e5a484e2c`. É o análogo do guard `--pai` da `lovable-deploy-verify`: um eco
+   com esse marcador só pode vir do bundle pós-#2063.
+3. **Marcador do ar == marcador da `main`** — as quatro estão em `v1.0-eco-versao-passivo` na
+   `origin/main`, sem bump posterior pendente que o ar devesse estar servindo.
+
+**A fatia inteira subiu, não só o `index.ts`.** A cadeia de import é `index.ts` → `versao.ts` →
+`_shared/sonda-versao.ts` → `_shared/sonda-fingerprints.ts` (`FONTE_SHA256`). Uma função que
+RESPONDE com `VERSAO` bootou; um bundle a que faltasse qualquer arquivo dessa cadeia **não
+bootaria**. O modo de falha do #2020 (prompt que nomeia só o `index.ts`) está descartado por
+construção — e é a razão de o eco provar mais do que aparenta.
+
+### Por que `pedidos` levou 3 ticks para aparecer — e por que isso NÃO é sonda ativa
+
+O `pedidos` só ecoou no tick das 10:15Z; nos dois anteriores veio `background`. A régua que
+prescrevia sonda ativa para "o step que estoura" foi **refutada pela medição** e corrigida em
+[`verificabilidade-do-conjunto-orquestrado.md`](verificabilidade-do-conjunto-orquestrado.md) e na
+skill `lovable-deploy-verify` (PR #2073, sessão paralela, mesma janela de ticks): `background` é
+**variância de latência do tick**, não propriedade do step, então a cobertura do eco **converge**
+e a leitura certa acumula a janela inteira do TTL antes de invocar qualquer coisa.
+
+Aqui fica só a consequência para **esta** pendência: ela se fechou sem sonda ativa, sem bloco no
+🟣 SQL Editor e sem o founder — o passo 1 do plano acima ("esperar a janela útil") era suficiente
+sozinho, e os passos 2-4 (sonda ativa, prompt de deploy) nunca precisaram ser executados.
