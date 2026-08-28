@@ -22,7 +22,13 @@ import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { julgar, parsearObservacoes, type Relatorio } from './lib/pendencias-deploy';
+import {
+  julgar,
+  parsearObservacoes,
+  type Estado,
+  type Relatorio,
+  type Veredito,
+} from './lib/pendencias-deploy';
 import { lerMapaCommitado } from './sonda-fingerprint';
 
 const PSQL_RO = process.env.PSQL_RO ?? join(homedir(), '.config', 'afiacao', 'psql-ro');
@@ -55,8 +61,10 @@ function consultar(): string {
 }
 
 function imprimir(rel: Relatorio): void {
-  const ordem = ['DIVERGE', 'SEM_MAPA_NO_BUNDLE', 'FORA_DO_MAPA', 'NAO_OBSERVADA', 'CONFERE'];
-  const rotulo: Record<string, string> = {
+  // Tipados como `Estado` de propósito: um estado novo na lib sem rótulo aqui — ou um nome
+  // digitado errado — vira erro de compilação, não seção que some calada do relatório.
+  const ordem: Estado[] = ['DIVERGE', 'SEM_MAPA_NO_BUNDLE', 'FORA_DO_MAPA', 'NAO_OBSERVADA', 'CONFERE'];
+  const rotulo: Record<Estado, string> = {
     DIVERGE: '🔴 DEPLOY PENDENTE',
     SEM_MAPA_NO_BUNDLE: '🔴 BUNDLE SEM O MAPA (_shared ficou para trás)',
     FORA_DO_MAPA: '🟠 prod serve edge que a main não mapeia',
@@ -65,7 +73,7 @@ function imprimir(rel: Relatorio): void {
   };
 
   for (const estado of ordem) {
-    const grupo = rel.vereditos.filter((v) => v.estado === estado);
+    const grupo: Veredito[] = rel.vereditos.filter((v) => v.estado === estado);
     if (grupo.length === 0) continue;
     console.log(`\n${rotulo[estado]} — ${grupo.length}`);
     for (const v of grupo) {
