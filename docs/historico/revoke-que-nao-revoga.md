@@ -819,12 +819,30 @@ o founder é dono no dashboard e aplica os grants ele mesmo.
    os de leitura. Toda defesa que dependa dele como prova de identidade está apoiada em nada. A
    mitigação que sobra não é ACL — é **não confiar nesse header sozinho** nas edges.
 
-### A decisão que fica para o founder (não é técnica)
+### A decisão — TOMADA em 2026-08-28: vamos migrar
 
 Migrar para Supabase próprio fecha o `net` e devolve o controle de ACL — ao custo de assumir a
 operação do banco (backups, upgrades, PITR) que hoje é do Lovable. Não migrar mantém a operação
 terceirizada e aceita, **em definitivo**, os dois itens acima. Não há terceira via: a plataforma foi
 explícita de que não existe caminho suportado para ACL em schema de extensão gerenciada.
+
+**O founder decidiu MIGRAR.** Resposta enviada ao suporte em **2026-08-28 02:14:30 UTC**
+(msg `1a04625b2bc632e1` na thread `1a03c0904655abf1`, confirmada com evidência positiva: label
+`SENT`, `toRecipients = support@lovable.dev`). O e-mail aceita a migração, pede os passos, e declara
+o escopo para que a resposta venha útil: **92 cron jobs** (52 chamando `net.http_*`, todos como
+`postgres`), as edge functions, os segredos do Vault e dados de produção em uso diário. As quatro
+perguntas feitas: caminho de migração para dados e schema (crons e Vault vêm junto ou se recriam?),
+downtime, como o lado Lovable é reapontado (hoje o deploy de edge é pelo chat), e o que **não**
+atravessa e precisa ser reconstruído.
+
+Foi re-perguntado também o item 4 do pedido original, que Albert não respondeu: se
+`EXECUTE TO PUBLIC` em `net.http_*` é o **default de todo projeto com pg_net ≥ 0.12** — porque, se
+for, transforma qualquer papel read-only num canal de egress por padrão, e isso é bug de default de
+plataforma, não deste projeto.
+
+⚠️ **Enquanto a migração não acontece, o furo continua aberto** — e é por isso que a mitigação nas
+edges (não confiar no `x-cron-secret` sozinho) **não** deve esperar pela migração: ela é a defesa do
+intervalo, que pode durar semanas.
 
 ### A lição, que é a mesma do Achado 3 outra vez
 
