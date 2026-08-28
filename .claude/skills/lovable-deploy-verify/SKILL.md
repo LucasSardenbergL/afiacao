@@ -448,6 +448,13 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
       coletado**, e `versao` sai vazio. Vazio ali é **linha inutilizável**, não "marcador velho" — julgar
       por ele reprova deploy CORRETO e manda redeployar edge money-path à toa (quase aconteceu em
       2026-08-27). Detalhe: `docs/historico/verificabilidade-do-conjunto-orquestrado.md`.
+      🔴 **E o eco só alcança o step que CABE no `STEP_TIMEOUT_MS` — medido em prod 2026-08-28.** No
+      tick pós-deploy (id 61756) três steps trouxeram o marcador e **dois vieram `background`**
+      (`nfes` 4/4 dos ticks, `pedidos` 3/4). O vazio do `background` é byte a byte o vazio do bundle
+      pré-sensor: **só a coluna `modo` separa "não subiu" de "não deu tempo de coletar"** — projete
+      sempre as duas. Para o step que estoura, a prova continua sendo a sonda ativa, que é
+      justamente onde ela custa mais (bundle pré-sensor sondado dispara a varredura). Trate o eco
+      como cobertura PARCIAL e barata, não como substituto da sonda.
 
 ### Passo 4b — QA visual pós-Publish (Claude-in-Chrome na sessão logada do founder)
 
