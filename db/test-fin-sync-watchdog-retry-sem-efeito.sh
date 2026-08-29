@@ -329,7 +329,7 @@ reset2; retry oben contas_pagar 5
 aplica_mut "s@rk.attempted_at < now() - make_interval(mins => v_retry_dead_mins)@rk.attempted_at < now() + make_interval(mins => 60)@"
 run
 V=$(at sync_retry_sem_efeito oben)
-[ "$V" = "1" ] && ok "F2 grace furado → retry recente alerta (P3 tem dente)" || bad "F2 sabotei o grace e P3 não mudou (veio $V) → fraco"
+if [ "$V" = "1" ]; then ok "F2 grace furado → retry recente alerta (P3 tem dente)"; else bad "F2 sabotei o grace e P3 não mudou (veio $V) → fraco"; fi
 restaura
 
 # F3 — correlação temporal tem dente: com started_at>=epoch, log ANTIGO passa a mascarar
@@ -337,7 +337,7 @@ reset2; retry oben contas_pagar 20; logrow contas_pagar oben complete 40
 aplica_mut "s@AND l.started_at >= rk.attempted_at@AND l.started_at >= '1970-01-01'::timestamptz@"
 run
 V=$(at sync_retry_sem_efeito oben)
-[ "$V" = "0" ] && ok "F3 correlação temporal furada → log antigo mascara (P5 tem dente)" || bad "F3 sabotei a correlação e P5 não mudou (veio $V) → fraco"
+if [ "$V" = "0" ]; then ok "F3 correlação temporal furada → log antigo mascara (P5 tem dente)"; else bad "F3 sabotei a correlação e P5 não mudou (veio $V) → fraco"; fi
 restaura
 
 # F4 — NOT EXISTS(log) tem dente: com action que nunca casa, retry COM efeito vira alerta
@@ -345,7 +345,7 @@ reset2; retry oben contas_pagar 20; logrow contas_pagar oben running 19
 aplica_mut "s@l.action = 'sync_' || rk.resource@l.action = 'NUNCA_CASA_xyz'@"
 run
 V=$(at sync_retry_sem_efeito oben)
-[ "$V" = "1" ] && ok "F4 NOT EXISTS(log) furado → retry com efeito alerta (P2 tem dente)" || bad "F4 sabotei o NOT EXISTS e P2 não mudou (veio $V) → fraco"
+if [ "$V" = "1" ]; then ok "F4 NOT EXISTS(log) furado → retry com efeito alerta (P2 tem dente)"; else bad "F4 sabotei o NOT EXISTS e P2 não mudou (veio $V) → fraco"; fi
 restaura
 
 # sanidade pós-restore: a função real voltou (P2 volta a não alertar)

@@ -517,7 +517,7 @@ BEGIN
 END $$;
 SQL
 )
-echo "$SAB" | grep -q 'SAB_VAZOU' && echo "  OK D9 (falsificação) — gate furado vazou c_last 60 p/ a vendedora → D9 tem dente" || { echo "  D9 FALHOU (falsificação): $SAB"; exit 1; }
+if echo "$SAB" | grep -q 'SAB_VAZOU'; then echo "  OK D9 (falsificação) — gate furado vazou c_last 60 p/ a vendedora → D9 tem dente"; else echo "  D9 FALHOU (falsificação): $SAB"; exit 1; fi
 # Restaura o gate correto (corpo FIEL de prod — NÃO o master-only degenerado).
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)

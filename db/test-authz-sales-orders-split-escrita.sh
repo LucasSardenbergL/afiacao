@@ -279,10 +279,10 @@ for c in omie_pedido_id customer_user_id created_by; do
 done
 
 B4=$(as_role "$EMPL" authenticated "DELETE FROM public.order_items WHERE id='bbbbbbbb-0000-0000-0000-000000000001';")
-echo "$B4" | grep -q "permission denied" && ok "B4 employee NÃO apaga order_items (2ª barreira)" || bad "B4 employee apagou order_items"
+if echo "$B4" | grep -q "permission denied"; then ok "B4 employee NÃO apaga order_items (2ª barreira)"; else bad "B4 employee apagou order_items"; fi
 
 B5=$(as_role "$EMPL" authenticated "UPDATE public.sales_price_history SET unit_price=1 WHERE id='cccccccc-0000-0000-0000-000000000001';")
-echo "$B5" | grep -q "permission denied" && ok "B5 employee NÃO altera sales_price_history" || bad "B5 employee alterou sales_price_history"
+if echo "$B5" | grep -q "permission denied"; then ok "B5 employee NÃO altera sales_price_history"; else bad "B5 employee alterou sales_price_history"; fi
 
 B6=$(as_role "$CUST_A" authenticated "SELECT count(*) FROM public.sales_orders WHERE id='$SO_FAT';" | tail -1)
 eq "B6 customer A vê o PRÓPRIO pedido" "$B6" "1"
@@ -346,7 +346,7 @@ CREATE POLICY sales_orders_delete_staff ON public.sales_orders FOR DELETE TO aut
   USING ((SELECT private.cap_pedido_escrever((SELECT auth.uid()))));
 SQL
 F1=$(as_role "$EMPL" authenticated "DELETE FROM public.sales_orders WHERE id='$SO_FAT'; SELECT count(*) FROM public.sales_orders WHERE id='$SO_FAT';" | tail -1)
-[ "$F1" = "0" ] && ok "F1 sem o predicado o furo REABRE (B1 tem dente)" || bad "F1 sem o predicado o furo NÃO reabriu — B1 não mede o predicado"
+if [ "$F1" = "0" ]; then ok "F1 sem o predicado o furo REABRE (B1 tem dente)"; else bad "F1 sem o predicado o furo NÃO reabriu — B1 não mede o predicado"; fi
 P -q <<'SQL'
 DROP POLICY sales_orders_delete_staff ON public.sales_orders;
 CREATE POLICY sales_orders_delete_staff ON public.sales_orders FOR DELETE TO authenticated
@@ -366,7 +366,7 @@ CREATE POLICY sales_orders_forall_bug ON public.sales_orders FOR ALL TO authenti
   WITH CHECK ((SELECT private.cap_pedido_escrever((SELECT auth.uid()))));  -- "de ESCRITA"
 SQL
 F2=$(as_role "$CUST_B" authenticated "DELETE FROM public.sales_orders WHERE id='$SO_FAT'; SELECT count(*) FROM public.sales_orders WHERE id='$SO_FAT';" | tail -1)
-[ "$F2" = "0" ] && ok "F2 USING+WITH CHECK: quem só LÊ apaga (repro do #1434)" || bad "F2 não reproduziu o #1434 — a falsificação não morde"
+if [ "$F2" = "0" ]; then ok "F2 USING+WITH CHECK: quem só LÊ apaga (repro do #1434)"; else bad "F2 não reproduziu o #1434 — a falsificação não morde"; fi
 P -q <<'SQL'
 DROP POLICY sales_orders_forall_bug ON public.sales_orders;
 CREATE POLICY sales_orders_insert_staff ON public.sales_orders FOR INSERT TO authenticated
@@ -384,7 +384,7 @@ P -q -c "INSERT INTO public.sales_orders(id,customer_user_id,created_by,status,t
 # table-wide (= desfazer a allowlist) tem de reabrir o caminho PATCH→DELETE.
 P -q -c "GRANT UPDATE ON public.sales_orders TO authenticated;"
 F3=$(as_role "$EMPL" authenticated "UPDATE public.sales_orders SET omie_pedido_id=NULL, status='rascunho' WHERE id='$SO_FAT'; DELETE FROM public.sales_orders WHERE id='$SO_FAT'; SELECT count(*) FROM public.sales_orders WHERE id='$SO_FAT';" | tail -1)
-[ "$F3" = "0" ] && ok "F3 sem a allowlist o bypass PATCH→DELETE FUNCIONA (B3 tem dente)" || bad "F3 o bypass não reabriu — B3 não mede a allowlist"
+if [ "$F3" = "0" ]; then ok "F3 sem a allowlist o bypass PATCH→DELETE FUNCIONA (B3 tem dente)"; else bad "F3 o bypass não reabriu — B3 não mede a allowlist"; fi
 P -q <<'SQL'
 REVOKE UPDATE ON public.sales_orders FROM authenticated, anon;
 GRANT UPDATE (items,subtotal,total,notes,customer_document,customer_address,customer_phone,
@@ -395,7 +395,7 @@ P -q -c "INSERT INTO public.sales_orders(id,customer_user_id,created_by,status,t
 # F4 — a allowlist não pode ser LARGA demais: incluir omie_pedido_id reabre F3.
 P -q -c "GRANT UPDATE (omie_pedido_id) ON public.sales_orders TO authenticated;"
 F4=$(as_role "$EMPL" authenticated "UPDATE public.sales_orders SET omie_pedido_id=NULL WHERE id='$SO_FAT'; SELECT omie_pedido_id IS NULL FROM public.sales_orders WHERE id='$SO_FAT';" | tail -1)
-[ "$F4" = "t" ] && ok "F4 allowlist larga (com omie_pedido_id) reabre o furo" || bad "F4 não reabriu — o assert não mede a composição da allowlist"
+if [ "$F4" = "t" ]; then ok "F4 allowlist larga (com omie_pedido_id) reabre o furo"; else bad "F4 não reabriu — o assert não mede a composição da allowlist"; fi
 P -q -c "REVOKE UPDATE (omie_pedido_id) ON public.sales_orders FROM authenticated;"
 P -q -c "UPDATE public.sales_orders SET omie_pedido_id=987654 WHERE id='$SO_FAT';"
 
@@ -404,10 +404,10 @@ P -q -c "UPDATE public.sales_orders SET omie_pedido_id=987654 WHERE id='$SO_FAT'
 # a 2ª camada existe; sem (b) não se sabe se o assert mede alguma coisa.
 P -q -c "CREATE POLICY oi_bug ON public.order_items FOR ALL TO authenticated USING (true) WITH CHECK (true);"
 F5a=$(as_role "$EMPL" authenticated "DELETE FROM public.order_items WHERE id='bbbbbbbb-0000-0000-0000-000000000001';")
-echo "$F5a" | grep -q "permission denied" && ok "F5a só a policy de volta: o REVOKE ainda barra (2ª camada é REAL)" || bad "F5a a policy sozinha já reabriu — o REVOKE não está fazendo nada"
+if echo "$F5a" | grep -q "permission denied"; then ok "F5a só a policy de volta: o REVOKE ainda barra (2ª camada é REAL)"; else bad "F5a a policy sozinha já reabriu — o REVOKE não está fazendo nada"; fi
 P -q -c "GRANT ALL ON public.order_items TO authenticated;"
 F5b=$(as_role "$EMPL" authenticated "DELETE FROM public.order_items WHERE id='bbbbbbbb-0000-0000-0000-000000000001'; SELECT count(*) FROM public.order_items WHERE id='bbbbbbbb-0000-0000-0000-000000000001';" | tail -1)
-[ "$F5b" = "0" ] && ok "F5b policy + grant: o furo REABRE (B4 tem dente)" || bad "F5b tirando as 2 camadas o furo não reabriu — B4 não mede nada"
+if [ "$F5b" = "0" ]; then ok "F5b policy + grant: o furo REABRE (B4 tem dente)"; else bad "F5b tirando as 2 camadas o furo não reabriu — B4 não mede nada"; fi
 P -q <<'SQL'
 DROP POLICY oi_bug ON public.order_items;
 REVOKE ALL PRIVILEGES ON public.order_items FROM PUBLIC, anon, authenticated;
@@ -418,7 +418,7 @@ SQL
 # SELECT por COLUNA do PR0.0-bis. C1 tem de ficar vermelho.
 P -q -c "REVOKE ALL PRIVILEGES ON public.sales_orders FROM authenticated;"
 F6=$(Pq -c "SELECT count(*) FROM unnest(ARRAY['id','customer_user_id','total','status','items','account','deleted_at']) c WHERE has_column_privilege('authenticated','public.sales_orders',c,'SELECT');")
-[ "$F6" = "0" ] && ok "F6 REVOKE ALL destrói os column grants do PR0.0-bis (C1 tem dente)" || bad "F6 REVOKE ALL não destruiu os column grants — C1 não mede a preservação"
+if [ "$F6" = "0" ]; then ok "F6 REVOKE ALL destrói os column grants do PR0.0-bis (C1 tem dente)"; else bad "F6 REVOKE ALL não destruiu os column grants — C1 não mede a preservação"; fi
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

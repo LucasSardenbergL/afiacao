@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
+    "lint:shell": "bash scripts/shellcheck-gate.sh",
     "preview": "vite preview",
     "test": "vitest run",
     "test:edges": "deno test --no-remote --allow-read=supabase/functions supabase/functions/",

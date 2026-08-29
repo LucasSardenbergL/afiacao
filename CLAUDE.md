@@ -77,7 +77,7 @@ bun run typecheck   # 2 tsc: src (app.json) + scripts/&db/ (scripts.json). Só s
 heavy bun run test  # 'heavy' = semáforo de RAM (M2 8GB); prefixe test/build/typecheck/vitest
 ```
 
-Health stack (`/health`): typecheck · lint · test · `bunx knip` (deadcode) · `shellcheck scripts/*.sh .claude/hooks/*.sh`. Worktree novo: `bun install` antes.
+Health stack (`/health`): typecheck · lint · test · `bunx knip` (deadcode) · `bun run lint:shell` (shellcheck·`scripts/`·hooks·**`db/`**). Worktree novo: `bun install` antes.
 
 ## Design System (v3 — "fintech premium": Vercel/Mercury/Stripe Dashboard)
 

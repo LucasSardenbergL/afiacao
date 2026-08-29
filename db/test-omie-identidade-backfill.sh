@@ -159,7 +159,9 @@ BEGIN
   RETURN 'inserted';
 END; $$;
 SQL
-Vf=$(Pq -c "SELECT public.omie_cliente_upsert_mapping('$UA','oben',200,9);")
+# retorno DESCARTADO de proposito: o assert F1 abaixo mede o EFEITO na tabela (ROWf), nao o
+# valor devolvido — capturar em variavel so servia para nao poluir o log.
+Pq -c "SELECT public.omie_cliente_upsert_mapping('$UA','oben',200,9);" >/dev/null
 ROWf=$(Pq -c "SELECT omie_codigo_cliente FROM omie_clientes WHERE user_id='$UA' AND empresa_omie='oben';")
 eq "F1 sabotagem SOBRESCREVE (prova que N1 morde)" "$ROWf" "200"
 # restaura a versão real e confirma o invariante de novo
