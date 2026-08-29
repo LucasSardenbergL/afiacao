@@ -531,13 +531,18 @@ E o bloco final do `fetch` por:
   EdgeRuntime.waitUntil(registrar(rota.classe, resposta.status));
 ```
 
-- [ ] **Passo 2: rodar os três gates**
+- [ ] **Passo 2: rodar os CINCO gates**
 
 ```bash
-bun run test:edges && bun run edges:typecheck && heavy bun run test
+bun run test:edges && bun run edges:typecheck && heavy bun run test \
+  && bun run sonda:fingerprint && bun run sonda:bump <edge>
 ```
 
-Esperado: os três `exit 0`, com a linha de conclusão visível.
+Esperado: os cinco `exit 0`, com a linha de conclusão visível.
+
+⚠️ Os três primeiros provam que a edge FUNCIONA; os dois de sonda provam que a instrumentação ainda
+a DESCREVE, e não se substituem — no #2115 o `sonda:bump` passou e o `sonda:fingerprint` reprovou na
+MESMA rodada. Se a fonte mudou: `bun run sonda:fingerprint -- --write` **e** edite o `VERSAO`.
 
 - [ ] **Passo 3: commitar**
 
