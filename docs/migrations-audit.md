@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **496** custom migrations totais
-- **1712** objetos esperados (criados por estas migrations)
+- **497** custom migrations totais
+- **1713** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 514
+  - `function`: 515
   - `rls_policy`: 453
   - `index`: 250
   - `cron_job`: 168
@@ -4161,6 +4161,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260828210836_separar_cap_carteira_escrever.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_carteira_escrever` | — |
+
+### `20260828213000_cap_carteira_escrever_master_only.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
