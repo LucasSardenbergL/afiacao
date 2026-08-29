@@ -1,4 +1,4 @@
-# Deploy no Lovable — 3 camadas manuais (referência operacional)
+# Deploy no Lovable — 3 camadas manuais + o secret (referência operacional)
 
 > O que NÃO acontece sozinho no merge. Lição durável carregada sob demanda. Runbook passo-a-passo completo: `docs/runbooks/lovable-supabase.md`. Banco/migration: `docs/agent/database.md`. Verificação: skill `lovable-deploy-verify`.
 
@@ -29,16 +29,19 @@ O job `validate` do `.github/workflows/ci.yml` tem **muito mais que os 5 gates �
 1. **`manifesto.gate.test.ts`** (dentro do `bun run test`) — todo arquivo de `src/` precisa de **1 dono declarado** em `src/lib/modulos/manifesto.ts` (`codigo`/`testes` do módulo). Arquivo novo sem entrada sai como `[orfao]`. Sobreposição de globs entre módulos e glob que não casa nada também são erro. `NAO_CLASSIFICADOS` é dívida datada e está VAZIO — não seja o primeiro a sujá-lo.
 2. **`bunx knip`** — export sem consumidor. Núcleo de domínio novo, ainda sem UI, tende a bater aqui: os testes tornam as *funções* alcançáveis (o `vitest.config.ts` é entry no `knip.json`), mas **tipo/interface exportado que só o próprio arquivo usa fica órfão**. Correção certa é tirar o `export` do que é interno — reexportar quando a fase seguinte lhe der consumidor —, não engordar o `ignore` do `knip.json`.
 
-## Merge na `main` ≠ produção — 3 deploys MANUAIS e independentes
+## Merge na `main` ≠ produção — 3 deploys MANUAIS e independentes (+ a 4ª dependência)
 
 1. **Migration** → colar o SQL no **SQL Editor do Lovable** → Run → validar com query de contagem. O Lovable **NÃO** aplica migration de nome custom sozinho (falha SILENCIOSA: a feature compila e quebra em runtime). Detalhe + ritual + skill `lovable-db-operator`: `docs/agent/database.md`.
 2. **Frontend** → **Publish** manual no editor do Lovable. `steu.lovable.app` serve o **build velho** até o Publish (lição 2026-05-31: mergear e achar que foi pro ar é o erro recorrente).
 3. **Edge functions** → criadas/editadas pelo **chat do Lovable** (ele lê `supabase/functions/<nome>/index.ts` do repo e deploya **verbatim**), **NÃO** pela UI Cloud (que só mostra logs).
+4. **SECRET novo de edge** → **Edge Functions → Secrets**, e **antes** do deploy da edge. Não é camada de código — nenhuma das 3 acima o acusa — e falha do jeito mais caro: a edge fica **Active**, o cron fica **verde**, `cron.job_run_details` diz `succeeded`, e a função morre no 1º `Deno.env.get` devolvendo 500 sem fazer nada. Deployar antes do secret **arma** exatamente esse estado, e a verificação por sonda pode carimbar "no ar" uma edge que não faz nada. #2035 (`analytics-outbox-drain` ↔ `POSTHOG_INGEST_KEY`, lido por essa edge e por nenhuma outra) só não quebrou porque o secret já estava lá — **sorte, não processo**.
 
 **Achar UMA camada pendente é SINTOMA — audite as TRÊS do MESMO PR.** As camadas deployam separado, mas o PR que as tocou é um só: migration não-aplicada é evidência de **PR não-deployado**, não de migration esquecida. E o caminho de detecção enviesa — um `/fecho` que varre migrations acha migrations; frontend e edge nem entram no campo de visão. Ao detectar qualquer pendência, classifique o diff por camada antes de fechar o caso:
 
 ```bash
 git show --name-only --format="" <sha> | awk '/^supabase\/migrations/{m++} /^supabase\/functions/{e++} /^src\//{f++} END{print "mig="m+0" edge="e+0" front="f+0}'
+# as 4 de uma vez (secret inclusive), da RAIZ do repo — fonte única do Passo 1 da lovable-deploy-verify:
+git show --name-only --format="" <sha> | .claude/skills/lovable-deploy-verify/evals/classify.sh
 ```
 
 Mordido 2026-08-14 (#1520 `9f7e8962`, FU4-F fase 3): o `/fecho` pegou `…130000_fecha_product_costs.sql` mergeada e não aplicada, aplicou, verificou — caso encerrado. O mesmo PR trazia **5 migrations + frontend (já publicado) + 2 edges nunca confirmadas**, e edge velha ali é money-path concreto, porque o front novo é que mudou o contrato: `generate-bundle-argument` imprime `p.margin.toFixed(2)`/`bundle.lieBundle.toFixed(2)` num payload que o hook publicado **parou de mandar** (→ **TypeError**, argumento de venda não gera); `generate-tactical-plan` ordena as recomendações por `lie_bundle DESC`, hoje NULL em toda linha, e DESC implica NULLS FIRST → **topBundle arbitrário, plano tático sobre ranking fabricado**. ⚠️ O risco é assimétrico: com as duas metades faltando elas se cancelam, então **aplicar só a camada que apareceu pode ser o que ARMA a quebra** — é a armadilha do `carteira-rebuild` (abaixo) vista pelo lado do PR, não da edge.

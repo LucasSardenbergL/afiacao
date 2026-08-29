@@ -1,25 +1,235 @@
 [
-  { "name": "só-frontend (página lazy)", "files": ["src/pages/Sales.tsx"],
-    "expect": { "frontend": "SIM", "edge": "não", "migration": "não" } },
-
-  { "name": "só-edge", "files": ["supabase/functions/omie-sync/index.ts"],
-    "expect": { "frontend": "não", "edge": "SIM", "migration": "não" } },
-
-  { "name": "só-migration", "files": ["supabase/migrations/20260618120000_add_col.sql"],
-    "expect": { "frontend": "não", "edge": "não", "migration": "SIM" } },
-
-  { "name": "misto (3 camadas)", "files": ["src/App.tsx", "supabase/functions/x/index.ts", "supabase/migrations/y.sql"],
-    "expect": { "frontend": "SIM", "edge": "SIM", "migration": "SIM" } },
-
-  { "name": "só-doc (NÃO precisa deploy)", "files": ["docs/historico/x.md", "CLAUDE.md", ".claude/skills/y/SKILL.md"],
-    "expect": { "frontend": "não", "edge": "não", "migration": "não" } },
-
-  { "name": "build na raiz (regressão: vite.config muda o bundle)", "files": ["vite.config.ts"],
-    "expect": { "frontend": "SIM", "edge": "não", "migration": "não" } },
-
-  { "name": "dep nova (package.json muda o bundle)", "files": ["package.json", "bun.lockb"],
-    "expect": { "frontend": "SIM", "edge": "não", "migration": "não" } },
-
-  { "name": "frontend + edge", "files": ["src/hooks/useX.ts", "supabase/functions/y/index.ts"],
-    "expect": { "frontend": "SIM", "edge": "SIM", "migration": "não" } }
+  {
+    "name": "só-frontend (página lazy)",
+    "files": [
+      "src/pages/Sales.tsx"
+    ],
+    "expect": {
+      "frontend": "SIM",
+      "edge": "não",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "só-edge",
+    "files": [
+      "supabase/functions/omie-sync/index.ts"
+    ],
+    "expect": {
+      "frontend": "não",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "só-migration",
+    "files": [
+      "supabase/migrations/20260618120000_add_col.sql"
+    ],
+    "expect": {
+      "frontend": "não",
+      "edge": "não",
+      "migration": "SIM",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "misto (3 camadas)",
+    "files": [
+      "src/App.tsx",
+      "supabase/functions/x/index.ts",
+      "supabase/migrations/y.sql"
+    ],
+    "expect": {
+      "frontend": "SIM",
+      "edge": "SIM",
+      "migration": "SIM",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "só-doc (NÃO precisa deploy)",
+    "files": [
+      "docs/historico/x.md",
+      "CLAUDE.md",
+      ".claude/skills/y/SKILL.md"
+    ],
+    "expect": {
+      "frontend": "não",
+      "edge": "não",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "build na raiz (regressão: vite.config muda o bundle)",
+    "files": [
+      "vite.config.ts"
+    ],
+    "expect": {
+      "frontend": "SIM",
+      "edge": "não",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "dep nova (package.json muda o bundle)",
+    "files": [
+      "package.json",
+      "bun.lockb"
+    ],
+    "expect": {
+      "frontend": "SIM",
+      "edge": "não",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "frontend + edge",
+    "files": [
+      "src/hooks/useX.ts",
+      "supabase/functions/y/index.ts"
+    ],
+    "expect": {
+      "frontend": "SIM",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "#2035 — secret NOVO em edge nova (POSTHOG_INGEST_KEY)",
+    "files": [
+      "supabase/functions/analytics-outbox-drain/index.ts"
+    ],
+    "fixtures": {
+      "supabase/functions/analytics-outbox-drain/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\nconst key = Deno.env.get(\"POSTHOG_INGEST_KEY\");\nif (!key) return json({ erro: \"POSTHOG_INGEST_KEY nao configurado\" }, 500);\n",
+      "supabase/functions/omie-sync/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\n"
+    },
+    "expect": {
+      "frontend": "não",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "POSTHOG_INGEST_KEY"
+    }
+  },
+  {
+    "name": "secret que OUTRA edge já usa não é novo (senão o detector grita sempre)",
+    "files": [
+      "supabase/functions/nova/index.ts"
+    ],
+    "fixtures": {
+      "supabase/functions/nova/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\n",
+      "supabase/functions/omie-sync/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\n"
+    },
+    "expect": {
+      "frontend": "não",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "edge MODIFICADA ganha secret novo — não pode se comparar consigo mesma",
+    "files": [
+      "supabase/functions/existente/index.ts"
+    ],
+    "fixtures": {
+      "supabase/functions/existente/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\nconst t = Deno.env.get(\"BROWSERLESS_TOKEN\");\n",
+      "supabase/functions/omie-sync/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\n"
+    },
+    "expect": {
+      "frontend": "não",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "BROWSERLESS_TOKEN"
+    }
+  },
+  {
+    "name": "nome COMPUTADO ⇒ ?dinamico (ausência de literal não é ausência de secret)",
+    "files": [
+      "supabase/functions/omie-cliente/index.ts"
+    ],
+    "fixtures": {
+      "supabase/functions/omie-cliente/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\nconst k = Deno.env.get(`OMIE_${empresa}_APP_KEY`);\nconst s = Deno.env.get(conta.envSecret);\n",
+      "supabase/functions/omie-sync/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\n"
+    },
+    "expect": {
+      "frontend": "não",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "?dinamico"
+    }
+  },
+  {
+    "name": "secret novo + nome computado convivem na mesma saída",
+    "files": [
+      "supabase/functions/mista/index.ts"
+    ],
+    "fixtures": {
+      "supabase/functions/mista/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\nconst a = Deno.env.get(\"D360_API_KEY\");\nconst b = Deno.env.get(`OMIE_${e}_APP_KEY`);\n",
+      "supabase/functions/omie-sync/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\n"
+    },
+    "expect": {
+      "frontend": "não",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "D360_API_KEY,?dinamico"
+    }
+  },
+  {
+    "name": "_test.ts tocado não pede secret (não vai pro bundle)",
+    "files": [
+      "supabase/functions/nova/index_test.ts"
+    ],
+    "fixtures": {
+      "supabase/functions/nova/index_test.ts": "const fake = Deno.env.get(\"SECRET_DE_TESTE\");\n",
+      "supabase/functions/omie-sync/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\n"
+    },
+    "expect": {
+      "frontend": "não",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "secret citado só em _test.ts do universo NÃO vira conhecido",
+    "files": [
+      "supabase/functions/nova/index.ts"
+    ],
+    "fixtures": {
+      "supabase/functions/nova/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\nconst v = Deno.env.get(\"VAPID_PRIVATE_KEY\");\n",
+      "supabase/functions/outra/index_test.ts": "Deno.env.get(\"VAPID_PRIVATE_KEY\");\n",
+      "supabase/functions/omie-sync/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\n"
+    },
+    "expect": {
+      "frontend": "não",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "VAPID_PRIVATE_KEY"
+    }
+  },
+  {
+    "name": "duas edges novas com o MESMO secret novo ⇒ uma entrada só",
+    "files": [
+      "supabase/functions/a/index.ts",
+      "supabase/functions/b/index.ts"
+    ],
+    "fixtures": {
+      "supabase/functions/a/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\nconst x = Deno.env.get('DEEPGRAM_API_KEY');\n",
+      "supabase/functions/b/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\nconst y = Deno.env.get(\"DEEPGRAM_API_KEY\");\n",
+      "supabase/functions/omie-sync/index.ts": "const url = Deno.env.get(\"SUPABASE_URL\")!;\nconst cron = Deno.env.get(\"CRON_SECRET\");\n"
+    },
+    "expect": {
+      "frontend": "não",
+      "edge": "SIM",
+      "migration": "não",
+      "secrets": "DEEPGRAM_API_KEY"
+    }
+  }
 ]
