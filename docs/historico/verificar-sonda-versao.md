@@ -767,3 +767,81 @@ cobre, e ele não viaja ali"): lá a canária da `omie-vendas-sync` ecoa `versao
 isso não cobre `_shared/`; aqui a sonda ecoa o `fonte`, e é justamente ele que fecha o degrau. Ao
 projetar uma sonda nova, **o `fonte` não é enfeite ao lado do `versao` — é o único campo que responde
 "a fatia inteira subiu?"**.
+
+---
+
+## 14. Edge fora do mapa não REPROVA — ela some do denominador (2026-08-28)
+
+A `analytics-outbox-drain` (#2035, `d5d79cf11`) nasceu **no mesmo dia** em que este doc já tinha 13
+seções sobre sondar edge, e mesmo assim chegou sem `versao.ts` e fora de `_shared/sonda-fingerprints.ts`.
+O interessante não é a omissão — é que **nenhum dos três gates de sonda reclamou**, e por desenho:
+
+| gate | universo dele | o que ele fez com a edge ausente |
+|---|---|---|
+| `sonda:bump` | as edges **instrumentadas** que a fatia tocou | não a viu: sem `versao.ts` ela não é instrumentada |
+| `sonda:fingerprint` | as edges **instrumentadas** | idem — o mapa e a lista nascem do mesmo `versao.ts` |
+| `sonda:sql <edge>` | a leva que você **pediu** | recusou (exit 1, "Edge não sondável — sem sensor") |
+| `pendencias:deploy` | o **mapa commitado** (`lerMapaCommitado`) | tirou 39 do denominador — a 40ª não existia para ele |
+
+Os quatro estão certos. O buraco é de **classe**: quando o universo de um gate é uma lista derivada de
+um artefato **opt-in**, quem nunca entrou na lista não reprova — desaparece. `cobertura: 39/39` era
+`39/40`, e um denominador que se ajusta sozinho ao que já foi instrumentado **não pode** acusar o que
+falta. É o gêmeo exato do #2089 (`cobertura: 2/39` saindo com o mesmo exit 0 de `39/39`), um degrau
+acima: lá o numerador mentia, aqui o denominador.
+
+O piso que existia — o gate "nenhuma edge que serve o `paginate.ts` fica SEM prova de deploy" — não a
+alcança e **não é furo dele**: ele se declara piso e ancora no consumo de um helper específico, que
+esta edge não importa. Um piso ancorado em helper cobre quem usa o helper; o resto é grafo que ele não
+enxerga (a mesma lição de `enumerar-consumidores-de-helper.md`, §9ª leva).
+
+### O custo real: a verificação do deploy virou arqueologia
+
+Em 2026-08-28 provar que a edge estava no ar exigiu montar o caminho na hora — **N1** (`verify-edge.sh`:
+OPTIONS 200 + controle negativo em 404, que separa "existe" de "qualquer nome responde") somado ao **N3
+passivo** de `net._http_response`, onde o corpo trazia uma string literal exclusiva do `index.ts`.
+
+Funcionou **por acaso**: a edge estava respondendo 500 com uma mensagem distintiva. Isto é a §12 (N3
+passivo pela FORMA do JSON) com a pré-condição da §13.1 satisfeita por sorte e não por desenho — a
+forma só discrimina se o diff **mudar a forma**, e uma fatia futura interna a esta edge (trocar o teto
+do lote, mexer no backoff, mudar a partição) não mudaria campo nenhum. Da segunda vez não teria dado.
+
+### O que a instrumentação trouxe, e por que o ECO aqui é mais barato que nos 5 steps do #2063
+
+A edge entrou no padrão inteiro (`VERSAO`/`EFEITO`/`EDGE`/`FONTE`, `criarRespostaSonda`, sonda logo
+após o `authorizeCronOrStaff` e antes do `createClient`). O que ela acrescenta ao padrão é a via do
+**eco**: os 5 steps do cron diário dependem de o `omie-cron-diario` fazer `JSON.parse` do corpo deles e
+devolvê-lo em `resultados.<key>.body` — a identidade passa pelo **pai**, e a amostra é o tick de 2 h.
+Aqui o cron `analytics-outbox-drain` (`*/5`) faz `net.http_post` **direto na edge**, então o corpo que
+cai em `net._http_response` já é o dela, sem intermediário, com **~72 amostras** dentro da janela de
+~6 h do `pg_net.ttl`. É o N3 passivo mais barato do repo.
+
+Por isso os 5 gates de eco do contrato deixaram de varrer `STEPS_CRON_DIARIO` e passaram a varrer
+`ECOAM_VERSAO`: a propriedade exigida nunca foi "ser step do `omie-cron-diario`" — é **o corpo desta
+edge chegar a `net._http_response`**. Lista extraída, e não um segundo bloco de asserts para a edge
+nova: duas cópias do mesmo gate envelhecem separado, e a que não for mantida é a que deixa de valer.
+
+### O custo de sondar aqui é COMPARATIVO — e é o que a separa da `carteira-rebuild`
+
+Um `{"probe":true}` num bundle pré-sensor desta edge roda `drenar()`: claim de 200 linhas, envio ao
+PostHog, marcação do desfecho (e quarentena no 400/413). Parece caro até se notar que **o cron chama
+esse mesmo caminho, com os mesmos defaults, a cada 5 minutos**: sondar às cegas aqui **adianta um
+tick**, não cria efeito de classe nova. Ou seja, esta edge não entrou pelo critério do efeito — entrou
+pelo da sexta leva, o único que ainda vale sozinho: *barato de chamar* e *possível de verificar* são
+propriedades diferentes, e só o marcador dá a segunda.
+
+### Falsificação (as 5, cada uma nomeando a edge na mensagem)
+
+Gate verde numa edge recém-adicionada é indistinguível de gate que não a varre. As sabotagens, todas
+com vermelho e a edge citada no erro: eco sem `edge`/`fonte`; `EDGE` ≠ nome do diretório; sonda que
+**classifica e não responde** (`console.log` no lugar do `return` — o furo da §9); `FONTE` transcrito à
+mão em vez de derivado de `respostaSonda`; e a entrada removida do mapa (aí quem fica vermelho é o
+`sonda:fingerprint`, "instrumentada mas AUSENTE do mapa"). Script: commitar **antes**, porque o
+`restaurar()` é `git checkout --`.
+
+### Assinatura para varredura futura
+
+O que sobra como pergunta aberta é o denominador: **95 diretórios de edge, 40 instrumentadas**. Não é
+dívida — a maioria é leitura pura, para quem a sonda não resolve problema nenhum (o critério da 3ª
+leva). O que falta é o gate que force a **DECISÃO** no nascimento da edge: instrumentar, ou declarar
+por que não. Enquanto ele não existir, a régua barata é conferir, ao criar edge com cron próprio, se
+ela entra em `bun run pendencias:deploy` — edge que não aparece nem como pendência é edge fora do radar.
