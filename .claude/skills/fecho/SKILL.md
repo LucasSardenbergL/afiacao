@@ -149,8 +149,33 @@ git diff --name-only origin/main...HEAD -- supabase/functions/
 # ⚠️ E o que OUTRAS sessões mergearam na janela desta — MESMO argumento do passo 2, e ele vale
 # aqui palavra por palavra: edge de terceiro entra na main sem ninguém aqui saber, também NÃO
 # se auto-deploya (chat do Lovable, manual) e a falha é igualmente SILENCIOSA.
-git log origin/main --since="<hora de início da sessão>" --name-only --format="" -- supabase/functions/ | sort -u
+#
+# Este script enumera a janela INTEIRA (a desta sessão e a das outras) e já classifica quem
+# precisa de chip. Use-o em vez do `git log` cru — o cru é o gatilho velho, ver abaixo.
+bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início da sessão>"
+# exit 0 = nada pendente · 1 = abra chip para a lista · 2 = MECÂNICA não confiável (o script já
+# imprime tudo como pendente; trate assim) · 3 = uso inválido
 ```
+
+**O gatilho deste passo é "sem prova de estar no ar", não "tem commit na janela".** O `git log`
+cru era o gatilho antigo, e num repo com dezenas de worktrees ele é quase sempre verdadeiro: a
+MESMA edge virava chip em toda sessão que fechasse na mesma janela, e fila de chips iguais
+enterra o chip que importava. O script troca isso pela evidência que já existe de graça — o campo
+`fonte` que a sonda serve (SHA-256 do fecho transitivo dos imports) comparado com
+`sonda-fingerprints.ts` da main:
+
+| veredito | o que significa | chip? |
+|---|---|---|
+| `NO_AR` | `fonte` servido == main — o bundle no ar é este | **não** |
+| `DESATUALIZADA` | `fonte` servido ≠ main — bundle VELHO servindo | sim, e prioritário |
+| `SEM_PROVA` | fora do mapa de sondas, sem sonda na janela, ou mecânica quebrada | sim (fail-closed) |
+
+🔴 **A direção é uma só: presença PROVA, ausência NÃO reprova** (#2086/#2095). O script só sabe
+SUPRIMIR chip com evidência POSITIVA; ele é o lado que APAGA pendência, então na dúvida é chip.
+O mapa cobre ~40 das ~95 edges — as outras seguem virando chip como sempre, nada regride.
+Medido em 2026-08-28 numa janela real de 24h: 7 edges na janela, 3 provadas no ar, **4 chips em
+vez de 7**. E não é só corte: o `DESATUALIZADA` é sinal que o gatilho velho nunca teve — ele
+mostra bundle velho SERVINDO, que é a falha silenciosa que este passo existe para pegar.
 
 Se a sessão tocou edge: ela foi deployada via chat do Lovable? (Evidência: o founder confirmou
 na conversa, ou a canária/probe respondeu com o comportamento novo.) Pendente → inclua o prompt
@@ -165,8 +190,9 @@ alargou a consulta por conta própria — pela letra deste passo, ele teria olha
 `git log`, visto commit que não era dele, e seguido em frente.
 
 Destino de edge de terceiro **não é** "deployar por ela" nem "assumir que a outra sessão já
-pediu": é **chip** (a sessão dona pode ter fechado sem pedir o deploy), com o prompt mandando
-CONFIRMAR antes de pedir deploy redundante. E o prompt tem de nomear **todos** os arquivos,
+pediu": é **chip** (a sessão dona pode ter fechado sem pedir o deploy) — para as que o script
+marcar como pendentes, e só para elas —, com o prompt mandando CONFIRMAR antes de pedir deploy
+redundante. E o prompt tem de nomear **todos** os arquivos,
 `_shared` novo incluído — prompt que nomeia um só deixa a edge sem bootar (#2020).
 
 ### Passo 4 — Publish do frontend

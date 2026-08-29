@@ -84,7 +84,9 @@ if [ "$1" = "--desde" ]; then
 
   # (b) pastas tocadas no git log: pega edge FORA do mapa, cega para _shared/
   git -C "$RAIZ" log "$base..origin/main" --name-only --format="" -- supabase/functions/ 2>/dev/null \
-    | sed -n 's#^supabase/functions/\([a-z0-9_-][a-z0-9_-]*\)/.*#\1#p' >> "$tmp/alvos"
+    | sed -n 's#^supabase/functions/\([a-z0-9][a-z0-9_-]*\)/.*#\1#p' >> "$tmp/alvos"
+  # o `[a-z0-9]` inicial exclui `_shared/` de propósito: não é edge, não se deploya sozinha,
+  # e o efeito dela nas edges que a importam já entra pela via (a), o diff dos fingerprints.
 
   sort -u -o "$tmp/alvos" "$tmp/alvos" 2>/dev/null || true
 else
@@ -127,7 +129,10 @@ esac
 if [ "$mecanica_ok" = 1 ]; then
   if [ ! -x "$PSQL" ]; then
     mecanica_ok=0; motivo="psql-ro ausente ou sem permissão de execução ($PSQL)"
-  elif [ "$("$PSQL" -Atc 'SELECT 1' 2>/dev/null | tr -d '[:space:]')" != "1" ]; then
+  elif ! "$PSQL" -Atc 'SELECT 1' 2>/dev/null | command grep -Fxq -- '1'; then
+    # LINHA exatamente "1", não a saída inteira: o wrapper emite os `SET` da sessão read-only
+    # antes do resultado (`docs/historico/evidencia-positiva-shell.md` §11 — o PREÂMBULO do wrapper
+    # vira "dado"). Exigir a FORMA, não a presença: vazio, só `SET`, ou erro não passam daqui.
     mecanica_ok=0; motivo="psql-ro não respondeu 1 ao SELECT 1 (presente porém mudo/quebrado)"
   fi
 fi

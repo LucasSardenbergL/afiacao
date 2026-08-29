@@ -48,7 +48,11 @@ cat > "$tmp/psql-stub" <<'STUB'
 sql="${!#}"
 case "${STUB_MODO:-ok}" in
   mudo) exit 0 ;;                       # presente-porém-QUEBRADO: responde vazio ao SELECT 1
+  so-set) echo SET; echo SET; exit 0 ;; # abre a sessao e nao devolve resultado nenhum
 esac
+# o wrapper REAL emite os `SET` da sessao read-only ANTES do resultado (medido em prod 2026-08-28):
+# quem exigir a saida inteira == "1" reprova o wrapper BOM e o gate nasce sempre em fail-closed.
+echo SET; echo SET
 if [ "$sql" = "SELECT 1" ]; then echo 1; exit 0; fi
 printf '%s' "$sql" > "${STUB_SQL_ECO:-/dev/null}"
 [ "${STUB_MODO:-ok}" = "erro-query" ] && { echo "ERROR: relation net._http_response" >&2; exit 1; }
@@ -116,6 +120,13 @@ suite() {
   if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ] && ! tem 'NO_AR' "$out"
   then ok "psql presente-porem-MUDO -> fail-closed: SEM_PROVA, exit 2"
   else bad "psql mudo devia manter a pendencia com exit 2 (rc=$rc): ${out:0:90}"; fi
+
+  # 6b. o wrapper que responde `SET SET 1` e o BOM: exigir a saida inteira == "1" reprovaria ele e
+  #     o gate nasceria travado em exit 2 (medido contra o banco real antes de entregar).
+  run so-set "$tmp/psql-stub" edge-no-ar
+  if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ]
+  then ok "psql que so abre sessao (SET SET, sem resultado) -> fail-closed, exit 2"
+  else bad "psql sem resultado devia dar exit 2 (rc=$rc): ${out:0:90}"; fi
 
   # 7. a consulta estourou -> mecanica nao confiavel, tudo pendente
   run erro-query "$tmp/psql-stub" edge-no-ar
@@ -194,8 +205,11 @@ if [ "${1:-}" = "--falsificar" ]; then
   }
 
   # (a) a sonda positiva vira `command -v` de mentira: presente passa a valer por respondendo
-  sabota "aceitar psql mudo (sem exigir resposta positiva)" \
-    's%!= "1"%!= "IMPOSSIVEL"%'
+  sabota "presenca do wrapper basta (sem exigir resposta positiva)" \
+    "s%! \"\$PSQL\" -Atc 'SELECT 1' 2>/dev/null | command grep -Fxq -- '1'%false%"
+  # (a2) a sonda volta a exigir a saida INTEIRA == "1": reprova o wrapper bom (o defeito de prod)
+  sabota "sonda exigindo saida inteira == 1 (ignora os SET do wrapper)" \
+    "s%| command grep -Fxq -- '1'%| tr -d '[:space:]' | command grep -Fxq -- '1'%"
   # (b) o fail-closed some da classificacao: mecanica quebrada passaria a absolver
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "classificar como NO_AR mesmo com mecanica quebrada" \
