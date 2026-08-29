@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
-import { julgar, parsearObservacoes, SEM_MAPA } from './lib/pendencias-deploy';
+import {
+  cobreOPiso,
+  coberturaPct,
+  julgar,
+  lerPiso,
+  parsearObservacoes,
+  PISO_COBERTURA_PADRAO,
+  SEM_MAPA,
+} from './lib/pendencias-deploy';
 
 const MAPA = { 'edge-a': 'aaa111', 'edge-b': 'bbb222' };
+const obs2 = (edge: string, fonte: string) => ({
+  edge,
+  fonte,
+  criado: '2026-08-27 21:00:00+00',
+  versao: 'v1',
+});
 const obs = (edge: string, fonte: string, criado = '2026-08-27 21:00:00+00', versao = 'v1') => ({
   edge,
   fonte,
@@ -84,5 +98,52 @@ describe('julgar', () => {
     const r = julgar(MAPA, [obs('edge-a', 'aaa111'), obs('edge-b', 'bbb222'), obs('fantasma', 'xxx')]);
     expect(r.vereditos.find((v) => v.edge === 'fantasma')?.estado).toBe('FORA_DO_MAPA');
     expect(r.totalDivergentes).toBe(1);
+  });
+});
+
+describe('piso de cobertura', () => {
+  const rel = (obs: number, mapeadas: number) =>
+    julgar(
+      Object.fromEntries(Array.from({ length: mapeadas }, (_, i) => [`e${i}`, `f${i}`])),
+      Array.from({ length: obs }, (_, i) => obs2(`e${i}`, `f${i}`)),
+    );
+
+  it('cobertura é observadas/mapeadas em %', () => {
+    expect(coberturaPct(rel(2, 39))).toBeCloseTo(5.13, 1);
+    expect(coberturaPct(rel(39, 39))).toBe(100);
+  });
+
+  it('mapa vazio devolve 0, NÃO 100 por vacuidade', () => {
+    expect(coberturaPct(julgar({}, []))).toBe(0);
+  });
+
+  it('O CASO REAL: 2/39 não cobre o piso padrão — era isto que saía exit 0 calado', () => {
+    expect(cobreOPiso(rel(2, 39), PISO_COBERTURA_PADRAO)).toBe(false);
+  });
+
+  it('cobertura exatamente no piso PASSA (comparação é >=)', () => {
+    expect(cobreOPiso(rel(5, 10), 50)).toBe(true);
+  });
+
+  it('piso 0 desliga a regra — válvula para o comportamento antigo', () => {
+    expect(cobreOPiso(rel(1, 39), 0)).toBe(true);
+  });
+
+  it('lerPiso: ausente/vazio cai no padrão', () => {
+    expect(lerPiso(undefined)).toBe(PISO_COBERTURA_PADRAO);
+    expect(lerPiso('  ')).toBe(PISO_COBERTURA_PADRAO);
+  });
+
+  it('lerPiso: número válido vence o padrão', () => {
+    expect(lerPiso('90')).toBe(90);
+    expect(lerPiso('0')).toBe(0);
+  });
+
+  it('lerPiso: LANÇA no inválido em vez de cair no padrão calado', () => {
+    for (const mau of ['cinquenta', '-1', '101', 'NaN']) {
+      expect(() => lerPiso(mau), `deveria lançar em ${mau}`).toThrow(
+        /PENDENCIAS_COBERTURA_MINIMA inválido/,
+      );
+    }
   });
 });
