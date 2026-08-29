@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  apenasAncoradas,
   auditarCitacoes,
   CONGELADOS,
   contarCitacoesEm,
@@ -72,6 +73,50 @@ describe('parseCitacoes — o que conta como citação', () => {
   it('registra a linha do DOC, para a mensagem apontar onde consertar', () => {
     const [c] = parseCitacoes(DOC, 'linha1\nlinha2\n`src/a.ts:9`<!--cita: z-->').citacoes;
     expect(c.linhaDoDoc).toBe(3);
+  });
+});
+
+describe('parseCitacoes — âncora que quebrou de linha ainda é âncora', () => {
+  it('adota a âncora da linha SEGUINTE — a varredura é linha a linha e o `\\s*` nunca vê o `\\n`', () => {
+    const [c] = parseCitacoes(DOC, 'como diz `src/a.ts:12`\n<!--cita: const x--> — e segue o texto')
+      .citacoes;
+    expect(c).toMatchObject({ alvo: 'src/a.ts', linhas: ['12'], ancora: 'const x' });
+  });
+
+  it('a citação continua com a linha DELA, não a da âncora', () => {
+    const [c] = parseCitacoes(DOC, 'topo\nveja `src/a.ts:12`\n<!--cita: const x-->').citacoes;
+    expect(c.linhaDoDoc).toBe(2);
+  });
+
+  it('NÃO adota se sobrou texto depois da citação — a âncora abaixo não é dela', () => {
+    const [c] = parseCitacoes(DOC, 'veja `src/a.ts:12` e pare aqui\n<!--cita: const x-->').citacoes;
+    expect(c.ancora).toBeNull();
+  });
+
+  it('com DUAS citações na linha, só a última adota — senão a âncora vira de quem não é dona', () => {
+    const cs = parseCitacoes(DOC, '`src/a.ts:1` e `src/b.ts:2`\n<!--cita: const x-->').citacoes;
+    expect(cs.map((c) => c.ancora)).toEqual([null, 'const x']);
+  });
+
+  it('linha seguinte que não é âncora não vira âncora', () => {
+    const [c] = parseCitacoes(DOC, 'veja `src/a.ts:12`\nparágrafo comum').citacoes;
+    expect(c.ancora).toBeNull();
+  });
+
+  it('citação na ÚLTIMA linha do arquivo não estoura ao espiar a próxima', () => {
+    expect(() => parseCitacoes(DOC, 'veja `src/a.ts:12`')).not.toThrow();
+    expect(parseCitacoes(DOC, 'veja `src/a.ts:12`').citacoes[0].ancora).toBeNull();
+  });
+});
+
+describe('apenasAncoradas — a promessa que o autor escreveu à mão', () => {
+  it('fica só com quem tem âncora', () => {
+    const cs = [cita('src/a.ts', ['1'], 'x'), cita('src/b.ts', ['2'], null)];
+    expect(apenasAncoradas(cs).map((c) => c.alvo)).toEqual(['src/a.ts']);
+  });
+
+  it('âncora VAZIA continua sendo âncora — quem recusa é o auditor, não o filtro', () => {
+    expect(apenasAncoradas([cita('src/a.ts', ['1'], '')])).toHaveLength(1);
   });
 });
 
@@ -288,6 +333,18 @@ describe('parseCitacoes — o que foi PULADO também é relato', () => {
     const p = parseCitacoes(DOC, 'a\n```ts\n`src/a.ts:12`<!--cita: x-->');
     expect(p.citacoes).toHaveLength(0);
     expect(p.emCerca).toBe(1);
+  });
+});
+
+describe('escondidas — o que a cerca ABERTA engoliu, para o chamador decidir', () => {
+  it('devolve a citação engolida, e não só o número', () => {
+    const r = parseCitacoes(DOC, 'antes\n```\nveja `src/a.ts:9`<!--cita: z-->');
+    expect(r.escondidas.map((c) => c.alvo)).toEqual(['src/a.ts']);
+    expect(apenasAncoradas(r.escondidas)).toHaveLength(1);
+  });
+
+  it('cerca fechada não esconde nada', () => {
+    expect(parseCitacoes(DOC, '```\nveja `src/a.ts:9`\n```').escondidas).toEqual([]);
   });
 });
 

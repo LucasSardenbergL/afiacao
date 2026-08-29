@@ -34,12 +34,12 @@
  *
  * ## Gate de PRECISÃO — o que fica DE FORA, de propósito
  *
- * 1. **Docs congelados**: `docs/historico/`, `docs/superpowers/` e `docs/ux-audit/` NÃO são
- *    varridos. São artefatos DATADOS — um spec de maio que cita o `Index.tsx` de maio está
- *    correto ao descrever o mundo de maio, e exigir que ele acompanhe a `main` é churn sobre
+ * 1. **Docs congelados**: `docs/historico/`, `docs/superpowers/` e `docs/ux-audit/` não são
+ *    varridos POR INTEIRO. São artefatos DATADOS — um spec de maio que cita o `Index.tsx` de maio
+ *    está correto ao descrever o mundo de maio, e exigir que ele acompanhe a `main` é churn sobre
  *    história, além de falso-positivo permanente (medido: 553 das 580 citações do repo vivem
  *    nesses três, e 4 já estão fora de range hoje). Citação PARA dentro deles continua coberta —
- *    quem é varrido é o doc que CITA.
+ *    quem é varrido é o doc que CITA. O que ATRAVESSA o congelamento é a âncora (seção abaixo).
  * 2. **Caminho externo** (`node_modules`, lib de terceiro, outro projeto): allowlist explícita em
  *    `EXTERNOS`.
  * 3. **Bloco de código cercado** (```/~~~): ali a citação ILUSTRA o formato — cobrá-la obrigaria
@@ -56,6 +56,42 @@
  * vermelho, com os zeros explícitos. O caso que cobrou: o §10 de
  * `docs/historico/verificar-sonda-versao.md` ensina sobre gate cego e cita quatro PRs — de dentro
  * da zona não varrida, o que só se descobriu lendo o fonte deste gate por outro motivo.
+ *
+ * ## Âncora é PROMESSA — e vale onde ela estiver escrita
+ *
+ * O corte por diretório protege o doc DATADO de ser obrigado a acompanhar a `main`. Ele não
+ * protege quem, DENTRO do doc datado, escreveu uma âncora à mão: `<!--cita: ...-->` não se digita
+ * por acidente — é uma afirmação sobre o que está na linha HOJE. Até 2026-08-29 essa afirmação só
+ * era cobrada se calhasse de morar em pasta viva, e o buraco foi medido: ao escrever
+ * `docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md`, uma âncora sabotada
+ * (`<!--cita: SABOTAGEM_QUE_NAO_EXISTE_NA_LINHA-->`) passou com **exit 0 e sem mover o contador**;
+ * as âncoras daquele doc tiveram de ser conferidas à mão.
+ *
+ * Então: **toda citação ANCORADA é verificada, varrida a pasta ou não**. A citação SEM âncora em
+ * doc não varrido continua fora — é a dívida declarada, e segue contada no resumo.
+ *
+ * Estender o DIRETÓRIO inteiro foi medido e recusado no mesmo dia. Das 133 citações de
+ * `docs/historico/`, **zero** tinham âncora quebrada: a podridão semântica era nula. 109 não
+ * tinham âncora nenhuma, e os 22 achados restantes eram FORMA, não apodrecimento — 13 dos 14 "não
+ * existe" eram o caminho abreviado da edge (`sync-reprocess/index.ts` em vez de
+ * `supabase/functions/sync-reprocess/index.ts`), mais 5 basenames nus e 3 multi-linha. Ligar a
+ * pasta custaria 131 vermelhos e obrigaria a escrever âncora em documento datado — o churn sobre
+ * história que o congelamento existe para evitar — para pegar UM alvo de fato sumido
+ * (`src/hooks/useDirectTintImport.ts`). Baseline por contagem, a outra saída, é o
+ * registro-longe-do-fato que este arquivo recusa duas seções acima. Custo da regra por âncora,
+ * medido: 4 citações, todas já verdes. `docs/superpowers/` (453 citações, 0 ancoradas) e
+ * `docs/ux-audit/` (7, 0 ancoradas) seguem congelados pela mesma conta — a regra os cobre no dia
+ * em que alguém escrever uma âncora lá, sem precisar mexer neste arquivo.
+ *
+ * Âncora QUEBRADA DE LINHA conta como âncora. A varredura é linha a linha, então o `\s*` que o
+ * regex põe entre citação e âncora nunca via um `\n`: o autor escrevia a âncora e o gate lia
+ * `null`. Duas citações CORRETAS de `docs/historico/fase-sem-sinal.md` viviam nesse limbo. Em doc
+ * vivo isso vira o achado barulhento "não tem âncora"; em doc não varrido sumiria calado, que é o
+ * mesmo veneno. Em compensação, a âncora só é adotada pela ÚLTIMA citação da linha e só se nada
+ * mais sobrar depois dela — senão ela seria atribuída a uma citação que não é a dona.
+ *
+ * `CONGELADOS` continua sendo a saída NOMINAL, e agora vale contra a âncora também: doc listado
+ * ali declarou que as citações dele estão obsoletas de propósito, e nem a promessa é cobrada.
  *
  * Basename nu (`index.ts:397`) NÃO é exceção: **reprova**. O repo tem 99 `index.ts`, então resolver
  * no chute seria fábrica de falso-positivo — mas *pular* é pior, porque vira a saída de emergência
@@ -130,7 +166,7 @@ export interface Achado {
 export function parseCitacoes(
   doc: string,
   texto: string,
-): { citacoes: Citacao[]; achados: Achado[]; emCerca: number } {
+): { citacoes: Citacao[]; achados: Achado[]; emCerca: number; escondidas: Citacao[] } {
   const { texto: semCercas, cercaAberta } = removerCercas(texto);
   const brutas = citacoesEm(doc, texto);
   const citacoes = citacoesEm(doc, semCercas);
@@ -156,25 +192,49 @@ export function parseCitacoes(
   // então a citação que sobrevive ao strip é sempre um subconjunto da bruta — a diferença é
   // exatamente o pulo. Inclui o que a cerca ABERTA engoliu: aquilo também vira achado, mas pulado
   // é pulado, e some da medição do mesmo jeito.
-  return { citacoes, achados, emCerca: brutas.length - citacoes.length };
+  return { citacoes, achados, emCerca: brutas.length - citacoes.length, escondidas };
 }
+
+/** A âncora sozinha, abrindo a linha — a forma que sobra quando ela quebrou de linha. */
+const RE_ANCORA_SOLTA = /^\s*<!--\s*cita:\s*([^>]*?)\s*-->/;
 
 /** O regex sobre um texto JÁ limpo. `offsetLinha` recoloca a numeração do trecho no doc inteiro. */
 function citacoesEm(doc: string, texto: string, offsetLinha = 0): Citacao[] {
   const out: Citacao[] = [];
   const linhas = texto.split('\n');
   for (let i = 0; i < linhas.length; i++) {
-    for (const m of linhas[i].matchAll(RE_CITACAO)) {
+    const achadas = [...linhas[i].matchAll(RE_CITACAO)];
+    for (const m of achadas) {
+      let ancora = m[4] !== undefined ? m[4] : null;
+      // A âncora pode ter caído na linha SEGUINTE: a varredura é linha a linha, então o `\s*` que
+      // o regex põe entre citação e âncora nunca vê um `\n`. Só vale para a ÚLTIMA citação da
+      // linha e quando nada mais sobra depois dela — senão a âncora colada abaixo seria atribuída
+      // a uma citação que não é a dona dela.
+      const sobra = linhas[i].slice((m.index ?? 0) + m[0].length);
+      if (ancora === null && m === achadas[achadas.length - 1] && /^\s*$/.test(sobra)) {
+        const solta = RE_ANCORA_SOLTA.exec(linhas[i + 1] ?? '');
+        if (solta) ancora = solta[1];
+      }
       out.push({
         doc,
         linhaDoDoc: offsetLinha + i + 1,
         alvo: m[1],
         linhas: m[2].split(','),
-        ancora: m[4] !== undefined ? m[4] : null,
+        ancora,
       });
     }
   }
   return out;
+}
+
+/**
+ * Das citações de um doc, as que carregam âncora. `<!--cita: ...-->` não se digita por acidente: é
+ * uma afirmação que um humano escreveu à mão sobre o que está na linha HOJE. Promessa vale onde
+ * estiver escrita — inclusive em doc não varrido, onde a citação SEM âncora continua fora (essa é
+ * a dívida declarada, e ela segue contada no resumo).
+ */
+export function apenasAncoradas(citacoes: Citacao[]): Citacao[] {
+  return citacoes.filter((c) => c.ancora !== null);
 }
 
 /**
@@ -375,21 +435,29 @@ export interface ForaDoEscopo {
  * não se anuncia é indistinguível de cobertura completa; os zeros ficam explícitos justamente para
  * o "não pulei nada" ser uma afirmação, e não a ausência da cláusula.
  */
-export function formatarResumo(r: Resultado, fora: ForaDoEscopo): string {
+export function formatarResumo(r: Resultado, fora: ForaDoEscopo, ancoradasForaDeCasa = 0): string {
   const total = fora.emDocNaoVarrido + fora.emCerca;
   return (
-    `${r.verificadas} citação(ões) verificada(s) contra o conteúdo real · ${r.externas} externa(s)` +
+    `${r.verificadas} citação(ões) verificada(s) contra o conteúdo real` +
+    ` (${ancoradasForaDeCasa} ancorada(s) em doc não varrido) · ${r.externas} externa(s)` +
     ` · ${total} fora do escopo (${fora.emDocNaoVarrido} em doc não varrido, ${fora.emCerca} em cerca)`
   );
 }
 
 if (import.meta.main) {
   const raiz = process.cwd();
+  const ler = (d: string) => readFileSync(join(raiz, d), 'utf8');
   const docs = lerDocsVivos(raiz);
-  const parses = docs.map((d) => parseCitacoes(d, readFileSync(join(raiz, d), 'utf8')));
-  const citacoes = parses.flatMap((p) => p.citacoes);
+  const parses = docs.map((d) => parseCitacoes(d, ler(d)));
+
+  // Doc não varrido entra pela ÂNCORA, e só por ela. `CONGELADOS` é a saída nominal e vale aqui
+  // também: doc listado ali declarou que as citações dele estão obsoletas de propósito.
+  const fora = lerDocsForaDoEscopo(raiz);
+  const parsesFora = fora.filter((d) => !CONGELADOS.includes(d)).map((d) => parseCitacoes(d, ler(d)));
+  const ancoradas = apenasAncoradas(parsesFora.flatMap((p) => p.citacoes));
+
   const idx = indexarRepo(raiz);
-  const r = auditarCitacoes(citacoes, raiz, idx, (p) => {
+  const r = auditarCitacoes([...parses.flatMap((p) => p.citacoes), ...ancoradas], raiz, idx, (p) => {
     try {
       return readFileSync(p, 'utf8');
     } catch {
@@ -397,13 +465,23 @@ if (import.meta.main) {
     }
   });
 
-  const achados = [...parses.flatMap((p) => p.achados), ...r.achados];
-  const resumo = formatarResumo(r, {
-    emDocNaoVarrido: contarCitacoesEm(lerDocsForaDoEscopo(raiz), (d) =>
-      readFileSync(join(raiz, d), 'utf8'),
-    ),
-    emCerca: parses.reduce((soma, p) => soma + p.emCerca, 0),
-  });
+  // Cerca aberta em doc não varrido só vira achado quando engoliu uma citação ANCORADA — é o
+  // único caso em que ela esconde promessa cobrável; cobrar as outras seria reger o markdown de
+  // 564 documentos datados que este gate deliberadamente não varre.
+  const achados = [
+    ...parses.flatMap((p) => p.achados),
+    ...parsesFora.filter((p) => apenasAncoradas(p.escondidas).length > 0).flatMap((p) => p.achados),
+    ...r.achados,
+  ];
+  const resumo = formatarResumo(
+    r,
+    {
+      // As ancoradas saíram de "fora do escopo": agora respondem pelo conteúdo como as outras.
+      emDocNaoVarrido: contarCitacoesEm(fora, ler) - ancoradas.length,
+      emCerca: parses.reduce((soma, p) => soma + p.emCerca, 0),
+    },
+    ancoradas.length,
+  );
   if (achados.length === 0) {
     console.log(`docs-citacoes-gate: ✓ ${resumo}.`);
     process.exit(0);
