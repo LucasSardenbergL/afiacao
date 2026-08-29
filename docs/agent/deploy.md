@@ -357,6 +357,24 @@ plataforma; sem esse par, "achei o campo" não discrimina.
 §anterior): em 2026-08-28 02:15Z, no MESMO tick, três steps trouxeram o marcador e `pedidos` veio
 com `versao` vazio. O 401 resolveu na hora — e mede AGORA, não no último tick.
 
+⚠️ **PRÉ-CONDIÇÃO que a via exige: o gate tem de ser INLINE na edge.** Medido no fecho de
+2026-08-29, e o modo de falha é o falso negativo caro. Nas 4 edges do #2063 o
+`authorizeCronOrStaff` é inline e a recusa passa pelo `jsonRes`, então o 401 carrega o marcador.
+Quando o gate vem de `_shared/auth.ts`, **não passa**: a edge faz `if (!auth.ok) return
+auth.response;` e a `Response` já vem pronta de lá (`function unauthorized(message =
+"Unauthorized")`), **por fora** do helper. O 401 dessa edge nunca carrega marcador — nem no bundle
+NOVO. Ler a ausência como "bundle velho" ⇒ pedir deploy de edge money-path **já no ar**.
+
+O caso: `analytics-outbox-drain` (#2094) respondeu `{"error":"Unauthorized"}` **sem** o campo, e o
+`jsonRes` dela na main anexa `versao`/`edge`/`fonte` — leitura que gritaria "não deployou". O eco
+PASSIVO desmentiu na mesma janela: o cron de 5 min (jobid 181) grava `versao:"v1.0-sensor-inicial"`
++ `edge:"analytics-outbox-drain"` em `net._http_response`, 4 ticks seguidos, status 200. **No ar.**
+
+⇒ **Antes de usar a via, confirme onde nasce o 401** (`grep -n 'Unauthorized' index.ts` — achou nada
+e o import é `_shared/auth.ts`? a via não discrimina AQUI). E o inverso do socorro vale: onde o 401
+é cego, quem enxerga é o eco passivo. As duas vias se cobrem em direções opostas — nenhuma sozinha
+cobre o parque.
+
 ## Quando o Lovable reverte um fix — detectar e restaurar
 
 O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deployed"/"Deployou edge") e às vezes reverte um PR (~16% dos commits; ≥4-5 reversões money-path recentes). Prevenção é inviável (o bot precisa de escrita direta) → o jogo é **detectar + restaurar rápido** (MTTR), não governança perfeita. Spec: `docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md`.
