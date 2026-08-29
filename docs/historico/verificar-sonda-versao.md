@@ -735,6 +735,62 @@ as sessões deixam em produção.** Ninguém estava lendo esse.
 respondia às 21:48 UTC, não a hora em que o deploy rodou. Para "quando", o rastro do bot na `main` é o
 que existe — e ele prova que **um** deploy rodou, nunca qual versão (§6).
 
+### 13.3.1 O filtro `"probe"` só enxerga a sonda ATIVA — e o eco passivo é a via MAIOR (2026-08-29)
+
+A regra da §13.3 está certa; a query dela está **estreita**. O snippet acima filtra
+`content ILIKE '%"probe"%'`, que é o marcador da resposta de **sonda**. Só que desde o #2063/#2079 as
+edges instrumentadas anexam `versao`/`edge`/`fonte` a **TODA** resposta, não só à da sonda — e essas
+linhas **não contêm** o marcador. Varrer pelo marcador da sonda descarta justamente a via que não
+depende de ninguém disparar nada, que é a mais barata das duas.
+
+Medido no MESMO instante (2026-08-29 02:20Z), confirmando as 5 edges da janela 27-29/08: o filtro
+`"probe"` devolveu **4** edges; a varredura pela IDENTIDADE devolveu **8** — as mesmas 4 mais
+`omie-sync-ctes-recebidos`, `omie-sync-sku-items`, `omie-sync-vendas-items` e
+`analytics-outbox-drain`. Essas quatro eram **4 das 5** que se queria confirmar: com a query estreita
+a sessão concluiria "sem evidência" e pediria ao founder o deploy de edges money-path **já no ar** —
+o falso negativo caro do #2079 entrando por outra porta.
+
+Há ainda um segundo nível que nem a query estreita nem um `->>'edge'` de topo alcançam: nos **5 steps**
+do `omie-cron-diario` quem responde é o ORQUESTRADOR, e o corpo do filho chega aninhado em
+`resultados.<key>.body`. Uma leitura só da raiz é cega para os cinco. A varredura é a UNIÃO dos dois
+níveis, e rotula de onde veio cada linha:
+
+```bash
+# ⌨️ seu terminal — varredura por IDENTIDADE: cobre sonda ativa + eco de topo + eco aninhado
+~/.config/afiacao/psql-ro -c "
+WITH resp AS (
+  SELECT id, created, content::jsonb AS j, (content ILIKE '%\"probe\"%') AS via_sonda
+    FROM net._http_response
+   WHERE status_code = 200 AND content IS NOT NULL AND left(ltrim(content),1) = '{'
+), plano AS (
+  SELECT created, j->>'edge' AS edge, j->>'versao' AS versao, j->>'fonte' AS fonte,
+         CASE WHEN via_sonda THEN 'sonda' ELSE 'eco' END AS via
+    FROM resp WHERE j ? 'edge'
+  UNION ALL
+  SELECT r.created, r.j->'resultados'->k->'body'->>'edge', r.j->'resultados'->k->'body'->>'versao',
+         r.j->'resultados'->k->'body'->>'fonte', 'eco-step'
+    FROM resp r, jsonb_object_keys(r.j->'resultados') k
+   WHERE r.j ? 'resultados' AND jsonb_typeof(r.j->'resultados') = 'object'
+     AND r.j->'resultados'->k->'body' ? 'edge'
+)
+SELECT DISTINCT ON (edge) edge, versao, left(fonte,12) AS fonte12, via,
+       to_char(created,'MM-DD HH24:MI') AS utc
+  FROM plano WHERE edge IS NOT NULL
+ ORDER BY edge, created DESC;"
+```
+
+O `jsonb_typeof(...) = 'object'` não é enfeite: outro emissor grava `resultados` como **array**, e o
+`jsonb_object_keys` sobre ela **aborta a query inteira** — não é uma linha ruim ignorada, é o
+resultado todo perdido (a mesma armadilha já registrada na `lovable-deploy-verify`).
+
+Duas coisas que esta query **não** dispensa. A primeira é o **guard temporal** do #2079: `utc` tem de
+ser POSTERIOR ao merge que se verifica — tick anterior é história, não pendência, e lê-lo como
+"pendente" é o falso negativo que manda redeployar à toa. Para o veredito já com esse guard embutido,
+o caminho é `scripts/verify-edge-eco.sh` da `lovable-deploy-verify`, não esta leitura crua. A segunda
+é o `fonte`: `versao` sozinho prova o `index.ts`, e só o `fonte` alcança o `_shared/` (§13.5) —
+compare os **64** hex contra o mapa da `main`, programaticamente. Conferir hash de olho é como se
+fabrica veredito.
+
 ### 13.4 O controle de exclusividade — o `--pai` do fingerprint
 
 Um `fonte` que bate com a `main` só prova **este** deploy se ele não pudesse ter vindo de um PR
