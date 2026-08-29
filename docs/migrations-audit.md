@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **494** custom migrations totais
+- **495** custom migrations totais
 - **1711** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 513
@@ -4155,6 +4155,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.reposicao_cold_start_parametros` | — |
+
+### `20260828210014_ia_uso_limite_elevenlabs_transcribe.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

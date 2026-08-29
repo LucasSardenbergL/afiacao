@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -31,6 +32,7 @@ Deno.serve(async (req) => {
 
     const token = authHeader.replace('Bearer ', '');
     const { data, error: authError } = await supabaseAuth.auth.getClaims(token);
+    const claims = data?.claims as Record<string, unknown> | undefined ?? {};
     if (authError || !data?.claims) {
       console.error('Auth error:', authError);
       return new Response(
@@ -72,6 +74,37 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({ error: 'Formato de áudio não suportado' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // COTA — depois da validação (requisição malformada não queima cota do
+    // usuário) e antes da ElevenLabs. O gate acima só exige JWT VÁLIDO, e o
+    // cadastro em /auth é aberto: sem isto, qualquer conta recém-criada —
+    // inclusive customer com is_approved=false, barrado em toda a UI —
+    // esgota o orçamento da ORGANIZAÇÃO repetindo áudios de até 10MB.
+    // Mesmo par que identify-tool/copilot-analyze/analyze-services já usam.
+    const userId = typeof claims.sub === 'string' ? claims.sub : '';
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: 'Token inválido' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const supabaseCota = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const cota = await consumirCota(
+      supabaseCota,
+      userId,
+      'elevenlabs-transcribe',
+      'transcrições de áudio',
+    );
+    if (!cota.permitido) {
+      return new Response(
+        JSON.stringify({ error: cota.mensagem }),
+        {
+          status: cota.http,
+          headers: { ...corsHeaders, ...headersDeCota(cota), 'Content-Type': 'application/json' },
+        }
       );
     }
 
