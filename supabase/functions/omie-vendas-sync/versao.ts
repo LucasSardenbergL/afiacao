@@ -46,13 +46,17 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
 /**
  * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
  *
- * `v1.0-sensor-inicial` é HONESTO aqui: o sensor de VERSÃO nasce nesta fatia. A canária
- * pré-existente não muda isso — ela é sensor de COMPORTAMENTO, e a regra 1 de `deploy.md`
- * ("`v1.0-sensor-inicial` só é honesto quando o sensor NASCE ali") fala do marcador que está
- * nascendo, não de haver outro sensor na edge. Mesmo precedente da `omie-analytics-sync` e da
- * `carteira-rebuild`, que também tinham canária quando ganharam a sonda.
+ * `v1.0-sensor-inicial` foi HONESTO na fatia de 2026-08-25, em que o sensor de VERSÃO nasceu:
+ * a canária pré-existente não muda isso — ela é sensor de COMPORTAMENTO, e a regra 1 de
+ * `deploy.md` ("`v1.0-sensor-inicial` só é honesto quando o sensor NASCE ali") fala do marcador
+ * que está nascendo, não de haver outro sensor na edge. Mesmo precedente da `omie-analytics-sync`
+ * e da `carteira-rebuild`, que também tinham canária quando ganharam a sonda.
+ *
+ * `v1.1-guard-reenvio-criar-pedido` (2026-08-29): o `criar_pedido` passou a RECUSAR reenvio na
+ * fronteira (linha já com `omie_pedido_id`, ou nascida no sync). Fatia EDGE-LOCAL ⇒ a canária
+ * já ecoa este `versao`, e uma chamada basta para provar o bundle.
  */
-export const VERSAO = "v1.0-sensor-inicial";
+export const VERSAO = "v1.1-guard-reenvio-criar-pedido";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
