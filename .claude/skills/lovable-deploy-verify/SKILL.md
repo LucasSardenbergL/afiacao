@@ -4,13 +4,16 @@ description: >-
   Ritual de "está REALMENTE no ar?" para QUALQUER entrega neste repo (Afiação/Colacor),
   que roda em Lovable Cloud. Use SEMPRE que terminar de mergear um PR e precisar saber o que falta pra
   a mudança ir a produção, ou quando o usuário perguntar "já está no ar?", "deu pra ver no app?",
-  "publiquei?", "preciso dar Publish?", "tem que deployar a edge?". Vale mesmo quando o usuário não
+  "publiquei?", "preciso dar Publish?", "tem que deployar a edge?", "falta configurar algum secret?".
+  Vale mesmo quando o usuário não
   diz "deploy" e só assume que mergear basta ("terminei, era só isso?", "pode testar agora?"). Por quê:
   o Lovable NÃO auto-deploya NADA a partir de push no GitHub — mergear na main deixa o código na main,
   mas o app continua servindo o build anterior. TRÊS coisas são manuais e independentes: (1) FRONTEND
   (Publish no editor do Lovable), (2) EDGE FUNCTIONS (chat do Lovable, ler do repo, verbatim), (3)
-  MIGRATIONS (SQL Editor — coberto pela skill lovable-db-operator). A skill empacota: detectar quais
-  das 3 se aplicam ao diff, montar o checklist de pendências do founder, montar o prompt de deploy de
+  MIGRATIONS (SQL Editor — coberto pela skill lovable-db-operator). E uma QUARTA que não é camada de
+  código e mesmo assim trava tudo: (4) SECRET novo de edge (Edge Functions → Secrets) — sem ele a edge
+  sobe Active, o cron fica verde e a função morre no 1º Deno.env.get. A skill empacota: detectar quais
+  das 4 se aplicam ao diff, montar o checklist de pendências do founder, montar o prompt de deploy de
   edge, e VERIFICAR o deploy do frontend pelos bytes do bundle (hash do index + grep da string-alvo em
   TODOS os chunks). NÃO use para: a mudança de banco em si (use lovable-db-operator), escrever a feature,
   ou debugar erro de runtime no app (use /investigate).
@@ -48,16 +51,16 @@ As **três** coisas são deploy manual e **independente**, e NENHUMA acontece so
 ## A Lei de Ferro (guardrail inegociável)
 
 1. **Você nunca diz "está no ar" sem prova.** Mergear na main **não publica nada**. Frontend: os **bytes do bundle** confirmam (string-alvo nos chunks — Passo 4). Edge **não serve seu código**, logo não há prova por bytes — a prova é a **escada** existência (`verify-edge.sh`) → versão (Management API/painel) → comportamento (probe); `Active` sozinho prova existência, **não** que a versão nova subiu. Até lá: "mergeado na main; **falta Publish/deploy** pra ir ao ar".
-2. **As 3 camadas são independentes — sempre diga QUAIS se aplicam.** Um diff só-frontend não precisa de deploy de edge; um diff de edge precisa de deploy via chat *e* (se mexeu em UI) Publish. Liste só o que o diff realmente toca.
+2. **As camadas de deploy são independentes — sempre diga QUAIS se aplicam.** Um diff só-frontend não precisa de deploy de edge; um diff de edge precisa de deploy via chat *e* (se mexeu em UI) Publish — e, se a edge lê um `Deno.env.get` que nenhuma outra lê, o **secret** antes do deploy. Liste só o que o diff realmente toca.
 3. **Edge deploy SÓ DEPOIS do merge, e VERBATIM.** Deployar "da main" antes do merge faz o Lovable ler a main **velha** (já mordeu em #383/#252 — a action nova não existia no binário → `400 "Ação desconhecida"`). E o Lovable tende a "melhorar" o código — o prompt deve mandar **não modificar/reinterpretar**, ler de `supabase/functions/<nome>/index.ts` e deployar idêntico.
 4. **Verificar frontend varre TODOS os chunks, e enumerá-los é a UNIÃO de duas fontes.** Nenhuma sozinha é completa (validado em prod 2026-06-18 + Codex): (a) o **fechamento transitivo** do grafo lazy do Vite — o entry lista só o 1º nível via `__vite__mapDeps(["assets/x.js"])` (sem barra, aspas), e um lazy-dentro-de-página guarda o mapDeps no chunk DELE (entry=260, closure=274); (b) o **precache do Workbox** (`/sw.js`), que omite chunks grandes (globIgnores/maxFileSize — faltavam 6). Use a UNIÃO. Grep de literais `/assets/...` dá 0 (o bug original). Contagem 0/1 = enumeração quebrada — conserte antes de concluir.
-5. **Todo artefato pro founder tem o DESTINO rotulado na 1ª linha** — `🟣 SQL Editor` / `💬 chat do Lovable` / `🖱️ Publish (editor do Lovable)` / `⌨️ seu terminal` — e **zero placeholders** (`<VALOR>` não substituído já foi colado em produção) — e **valor de EXEMPLO plausível CONTA como placeholder, com falha PIOR, porque é CALADA**: o `<VALOR>` quebra ruidoso (404, erro de sintaxe), o número plausível devolve uma linha real de OUTRO emissor. Em 2026-08-24 um `WHERE id = 58967` inventado leu o tick do watchdog e reprovou um deploy money-path CORRETO. Campo que o founder substitui nasce sintaticamente **inválido** (`COLE_AQUI_O_REQUEST_ID`), nunca preenchido de exemplo → `deploy.md` §Canárias. JS/bash NUNCA vai pro SQL Editor (já foi colado lá 4×); o rótulo responde de antemão o "isso eu colo onde?".
+5. **Todo artefato pro founder tem o DESTINO rotulado na 1ª linha** — `🟣 SQL Editor` / `💬 chat do Lovable` / `🖱️ Publish (editor do Lovable)` / `🔑 Secrets (Lovable → Edge Functions → Secrets)` / `⌨️ seu terminal` — e **zero placeholders** (`<VALOR>` não substituído já foi colado em produção) — e **valor de EXEMPLO plausível CONTA como placeholder, com falha PIOR, porque é CALADA**: o `<VALOR>` quebra ruidoso (404, erro de sintaxe), o número plausível devolve uma linha real de OUTRO emissor. Em 2026-08-24 um `WHERE id = 58967` inventado leu o tick do watchdog e reprovou um deploy money-path CORRETO. Campo que o founder substitui nasce sintaticamente **inválido** (`COLE_AQUI_O_REQUEST_ID`), nunca preenchido de exemplo → `deploy.md` §Canárias. JS/bash NUNCA vai pro SQL Editor (já foi colado lá 4×); o rótulo responde de antemão o "isso eu colo onde?".
 
 ## O ritual — 5 passos
 
 Crie estes todos (TodoWrite) ao fechar uma entrega que pode precisar de deploy:
 
-1. **Classificar o diff** — quais das 3 camadas o PR toca (frontend / edge / migration)?
+1. **Classificar o diff** — o que o PR exige de manual (frontend / edge / migration / **secret**)?
 2. **Pendências do founder** — montar o checklist do que ele precisa fazer manualmente
 3. **Prompt de edge** (se houver edge) — montar o handoff "ler do repo, verbatim, não melhorar"
 4. **Verificar o deploy** — frontend pelos bytes; edge pela escada existência→versão→comportamento
@@ -67,24 +70,53 @@ Crie estes todos (TodoWrite) ao fechar uma entrega que pode precisar de deploy:
 
 ### Passo 1 — Classificar o diff
 
-Quais das 3 camadas o PR toca? A lógica canônica — ampliada para pegar **arquivos de build na raiz**
-(`vite.config`, `package.json`, …), não só `src/` — vive em [`evals/classify.sh`](evals/classify.sh) e é
-coberta por [`evals/run.sh`](evals/run.sh) (8 casos + mutation-check):
+O que o PR exige de manual? A lógica canônica — ampliada para pegar **arquivos de build na raiz**
+(`vite.config`, `package.json`, …), não só `src/`, e para acusar **secret novo de edge** — vive em
+[`evals/classify.sh`](evals/classify.sh) e é coberta por [`evals/run.sh`](evals/run.sh) (16 casos +
+mutation-check). **Rode da raiz do repo** (a 4ª linha lê o conteúdo das edges, não só os nomes):
 
 ```bash
 git diff --name-only origin/main...HEAD \
   | .claude/skills/lovable-deploy-verify/evals/classify.sh
-# -> frontend=SIM|não · edge=SIM|não · migration=SIM|não
+# -> frontend=SIM|não · edge=SIM|não · migration=SIM|não · secrets=não|NOME,…|?dinamico
 ```
 
-### Passo 2 — Checklist de pendências do founder (ORDEM TRAVADA: merge → SQL → edge → Publish)
+**A 4ª linha é a camada que as três não cobrem.** Um secret novo não é frontend, não é edge e não é
+migration — e mesmo assim é dependência manual do founder, com o pior modo de falha que existe aqui:
+edge **Active**, cron **verde**, `cron.job_run_details = succeeded`, e a função morrendo no 1º
+`Deno.env.get` com 500 sem fazer nada. Descoberto no #2035 — `analytics-outbox-drain` lê
+`POSTHOG_INGEST_KEY`, que nenhuma outra edge lê; naquele deploy o secret já estava configurado, o que
+foi **sorte**: nenhum dos 3 passos tinha como acusar antes de rodar.
+
+Como ler a saída:
+
+| `secrets=` | Significa | O que fazer |
+|---|---|---|
+| `não` | nenhuma edge tocada lê env que as outras já não leiam | nada |
+| `NOME1,NOME2` | **candidatos a secret novo** | linha 🔑 no Passo 2, **antes** do deploy da edge |
+| `?dinamico` | a edge lê env por nome **computado** (`` Deno.env.get(`OMIE_${empresa}_APP_KEY`) ``) | conferir **à mão** quais nomes aquilo resolve |
+
+⚠️ **`?dinamico` não é "não tem secret" — é "não sei".** O script resolve nome literal; nome montado em
+runtime ele não resolve, e tratar isso como silêncio seria ler ausência de dado como aprovação. E a
+lista é de **candidatos**: a verdade sobre o que existe é o painel de Secrets, não o repo — o script
+compara o diff com as *outras* edges do repo, então secret que só este PR usa aparece mesmo que já
+esteja configurado. Errar para mais custa uma linha de checklist; errar para menos custa uma edge morta.
+
+### Passo 2 — Checklist de pendências do founder (ORDEM TRAVADA: merge → SQL → secret → edge → Publish)
 
 **Nada de deploy antes do MERGE** (Lei de Ferro #3 — o Lovable lê da main). Entregar SÓ as linhas que se aplicam (do passo 1), NESTA ordem, cada uma com o destino rotulado:
 
 > ⚠️ **Pra ir ao ar, falta (manual no Lovable) — nesta ordem, APÓS o merge do PR:**
 > - [ ] 🟣 **SQL Editor**: migration Z *(se tocou `supabase/migrations/` — bloco da `lovable-db-operator`; banco ANTES do código que o consome)*
+> - [ ] 🔑 **Secrets (Lovable → Edge Functions → Secrets)**: confirmar que `NOME_DO_SECRET` existe *(se o passo 1 deu `secrets=` com nome ou `?dinamico`)*
 > - [ ] 💬 **chat do Lovable**: deploy das edges X, Y — verbatim da main *(se tocou `supabase/functions/`)*
 > - [ ] 🖱️ **Publish** do frontend no editor do Lovable *(se o passo 1 deu frontend=SIM; por último — o build novo nasce contra banco/edge já atualizados)*
+
+**O secret vem ANTES do deploy da edge, e a ordem não é estética.** Deployar primeiro sobe uma função
+que responde 500 no primeiro request — e como ela fica `Active` e o cron acusa `succeeded`, a verificação
+do Passo 4 pode carimbar "no ar" uma edge que não faz nada. Secret primeiro, edge depois, e o probe do
+Passo 4 vira prova de verdade. **Nunca escreva o VALOR do secret no chat nem no PR** (a transcrição
+persiste em disco): a linha pede ao founder para *conferir/criar* pelo nome, e o valor só existe no painel.
 
 ### Passo 3 — Prompt de deploy de edge (se aplicável)
 
