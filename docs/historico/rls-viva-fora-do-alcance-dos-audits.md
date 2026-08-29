@@ -85,7 +85,10 @@ autorizar qualquer autenticado. Medindo quem cobriria isso: **nenhuma** das 4 fu
 predicados de RLS. Ninguém as vigiava.
 
 Daí o **terceiro eixo**: md5 do `prosrc` das funções-predicado, com `prosecdef` e `proconfig`
-junto. Elas são **descobertas por `pg_depend`** (`classid='pg_policy'` → `refclassid='pg_proc'`),
+junto — sob a **mesma normalização** de cima: `md5(regexp_replace(btrim(prosrc), '\s+', ' ', 'g'))`
+(`db/audit-rls-prod.ts`). **Todo md5 de corpo citado neste arquivo é o normalizado**, e
+`md5(prosrc)` cru devolve OUTRO valor — o trio de `5faf2a21…` mede `86052d07…` cru (aferido
+2026-08-29). Elas são **descobertas por `pg_depend`** (`classid='pg_policy'` → `refclassid='pg_proc'`),
 não por regex sobre o texto da policy: o §4 do `database.md` guarda duas varreduras textuais que
 produziram falso-positivo integral, e uma função chamada dentro de um `COALESCE` não aparece onde
 um grep espera. Função descoberta que não esteja declarada é `PREDICADO_NAO_DECLARADO` — erro,
@@ -761,7 +764,8 @@ verificação pediu **cinco** medições, e o valor da rodada está em ter exigi
 | `EXECUTE` de `anon` | negado (PUBLIC segue revogado) | `false` ✅ |
 
 O md5 bater com o que fora **previsto antes** do apply é o que transforma "rodei" em evidência: se
-viesse outro valor, o certo seria parar, não carimbar.
+viesse outro valor, o certo seria parar, não carimbar. (Os dois md5 desta tabela são **normalizados**,
+§3 — conferir com `md5(prosrc)` cru dá `86052d07…`/`4a2f49ed…` e faz a tabela parecer falsa.)
 
 #### A armadilha de leitura que apareceu no meio
 
