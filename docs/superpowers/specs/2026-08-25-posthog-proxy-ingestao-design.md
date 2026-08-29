@@ -171,8 +171,10 @@ que vire descoberta cara depois.
   teatro. **Commitar antes de falsificar** — `restaurar()` costuma ser `git checkout --`.
 - Casos negativos que precisam de asserção própria: host vindo do cliente é ignorado · `Authorization`
   de entrada não aparece na requisição upstream · corpo > 1 MB devolve `413`.
-- Lembrar dos **3 gates de edge** que não se cobrem (`test:edges`, `edges:typecheck`, e o vitest que
-  lê a edge como TEXTO).
+- Lembrar dos **5 gates de edge** que não se cobrem: `test:edges`, `edges:typecheck`, o vitest que
+  lê a edge como TEXTO, e os DOIS de sonda — `sonda:bump` (o `VERSAO`, decisão manual) e
+  `sonda:fingerprint` (o hash da fonte, conserto mecânico). Os dois últimos não se substituem: no
+  #2115 o bump passou e o fingerprint reprovou na mesma rodada.
 
 ## 8. Deploy — três camadas manuais, nesta ordem
 
