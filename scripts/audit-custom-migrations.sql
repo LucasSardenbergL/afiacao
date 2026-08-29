@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 498
+-- Total de custom migrations: 499
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -539,7 +539,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260828210014', 'ia_uso_limite_elevenlabs_transcribe', '20260828210014_ia_uso_limite_elevenlabs_transcribe.sql'),
   ('20260828210836', 'separar_cap_carteira_escrever', '20260828210836_separar_cap_carteira_escrever.sql'),
   ('20260828213000', 'cap_carteira_escrever_master_only', '20260828213000_cap_carteira_escrever_master_only.sql'),
-  ('20260829012000', 'analytics_outbox_perda_visivel', '20260829012000_analytics_outbox_perda_visivel.sql')
+  ('20260829012000', 'analytics_outbox_perda_visivel', '20260829012000_analytics_outbox_perda_visivel.sql'),
+  ('20260829041500', 'analytics_outbox_trigger_sensor', '20260829041500_analytics_outbox_trigger_sensor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2248,7 +2249,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_outbox_perda_visivel', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('analytics_outbox_perda_visivel', 'table', 'public', 'analytics_outbox_perda', ''),
   ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_service_all', 'analytics_outbox_perda'),
-  ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_master_read', 'analytics_outbox_perda')
+  ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_master_read', 'analytics_outbox_perda'),
+  ('analytics_outbox_trigger_sensor', 'function', 'public', '_data_health_compute', ''),
+  ('analytics_outbox_trigger_sensor', 'function', 'public', 'data_health_watchdog', ''),
+  ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4005,7 +4009,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_outbox_perda_visivel', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('analytics_outbox_perda_visivel', 'table', 'public', 'analytics_outbox_perda', ''),
   ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_service_all', 'analytics_outbox_perda'),
-  ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_master_read', 'analytics_outbox_perda')
+  ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_master_read', 'analytics_outbox_perda'),
+  ('analytics_outbox_trigger_sensor', 'function', 'public', '_data_health_compute', ''),
+  ('analytics_outbox_trigger_sensor', 'function', 'public', 'data_health_watchdog', ''),
+  ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', '')
 )
 SELECT
   e.migration,
@@ -4033,7 +4040,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 96.
+-- Funções redefinidas com corpo extraível: 97.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4180,6 +4187,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_sync_heartbeat', 17, '20260623160000_data_health_custos_proveniencia.sql', 'e1525fa8a1efd297662fcb98fce0fe30'),
   ('public', 'fin_sync_heartbeat', 18, '20260626150000_data_health_check_pedidos_compra_sync.sql', 'a8deedd251af09125717ce725c2a3128'),
   ('public', 'fin_sync_heartbeat', 19, '20260824091755_data_health_carteira_identidade_quarentena.sql', '7b8fa80e0da2a00ab0555e4b07117491'),
+  ('public', 'fin_sync_heartbeat', 20, '20260829012000_analytics_outbox_perda_visivel.sql', '6fa73714252830c5aa3d8ee6cdf96220'),
+  ('public', 'fin_sync_heartbeat', 21, '20260829041500_analytics_outbox_trigger_sensor.sql', '4665b298aaa4c4cbc49c78c5ddfcc2ec'),
   ('public', '_carteira_mixgap_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '45590516afa887e06b1f6b6c7e9440b5'),
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
   ('public', 'pode_ver_carteira_completa', 1, '20260526020000_rls_score_carteira_hardening.sql', '97cb07844e04b8ad26c95e63df5e6fe6'),
@@ -4221,6 +4230,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 25, '20260824091755_data_health_carteira_identidade_quarentena.sql', '8138f150045d626f246b6a9f3bed862d'),
   ('public', '_data_health_compute', 26, '20260824225107_data_health_sync_state_saude.sql', '0f21c1fceab431515ed78d6bdc074f93'),
   ('public', '_data_health_compute', 27, '20260824234500_sync_state_products_vendas_aposenta_writer_truncado.sql', 'e353fa7646eb87b7b75623ea3541af76'),
+  ('public', '_data_health_compute', 28, '20260829012000_analytics_outbox_perda_visivel.sql', '7fe36075e42b0ca839e17581e1f09d91'),
+  ('public', '_data_health_compute', 29, '20260829041500_analytics_outbox_trigger_sensor.sql', '538f5373845b1920f1789126fb72953f'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -4240,6 +4251,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'data_health_watchdog', 17, '20260815153218_data_health_contrato_severity_idade.sql', '42daeabf72731dc85e70109a95039feb'),
   ('public', 'data_health_watchdog', 18, '20260824091755_data_health_carteira_identidade_quarentena.sql', 'e7159698c9b20443d7db1ea90febce9c'),
   ('public', 'data_health_watchdog', 19, '20260824225107_data_health_sync_state_saude.sql', '5ca754da606d257fc2a70c5295d1419e'),
+  ('public', 'data_health_watchdog', 20, '20260829012000_analytics_outbox_perda_visivel.sql', '6e32c4c211884e6fe340acd6b41bb411'),
+  ('public', 'data_health_watchdog', 21, '20260829041500_analytics_outbox_trigger_sensor.sql', '2113e2acea46c34631f5c177145617dc'),
   ('public', 'tarefas_matcher_tick', 1, '20260528133000_tarefas_bloco_d.sql', '1d22a8a6cebe7a7ac1329fc8f98fe20d'),
   ('public', 'tarefas_matcher_tick', 2, '20260528135000_tarefas_matcher_created_at_floor.sql', '99785df6ed7189c49aad580f09b24a1c'),
   ('public', 'tarefas_matcher_tick', 3, '20260615194500_fix_tarefas_matcher_enum.sql', '0bc8eb0402988ad408b80add2df00e56'),
@@ -4391,7 +4404,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'farmer_bundle_recomendacoes_substituir', 1, '20260814223445_farmer_recomendacoes_geracao_vigente.sql', '87b8ab8a7ca30c1dc64f6cd4c0c4cfaa'),
   ('public', 'farmer_bundle_recomendacoes_substituir', 2, '20260815181500_farmer_geracao_head_sensor.sql', '264eb147710156edf8b3e3f3e17e4fb0'),
   ('public', 'farmer_melhor_individual_por_cliente', 1, '20260820124611_farmer_melhor_individual_bulk.sql', '82340cc6187de27edf766fdb7fad7c77'),
-  ('public', 'farmer_melhor_individual_por_cliente', 2, '20260820133119_farmer_melhor_individual_atomico.sql', '988141c4ddcb0e43ff59b66491c5dc6a')
+  ('public', 'farmer_melhor_individual_por_cliente', 2, '20260820133119_farmer_melhor_individual_atomico.sql', '988141c4ddcb0e43ff59b66491c5dc6a'),
+  ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
+  ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2

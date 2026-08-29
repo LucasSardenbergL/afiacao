@@ -42,7 +42,7 @@ export const respostaSonda = criarRespostaSonda("analytics-outbox-drain");
 export const EDGE = "analytics-outbox-drain";
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+export const VERSAO = "v1.1-guard-dentro-do-registro";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.
