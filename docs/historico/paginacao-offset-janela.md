@@ -123,7 +123,7 @@ Isso vale para QUALQUER cap, sem `count:'exact'` e sem mexer nos 21 call-sites. 
 requisição a mais por leitura, a que volta vazia. O fim da tabela deixa de ser uma inferência a
 partir de um número que o servidor escolhe, e passa a ser um fato observado.
 
-## ⚠️ REVISÃO INDEPENDENTE PENDENTE
+## O Caminho B que cobriu o intervalo (a revisão independente RODOU depois — ver o fim deste doc)
 
 O ritual `/codex` desta entrega **não rodou**: a cota do ChatGPT Plus (janela rolante de 7
 dias) esgotou em 2026-08-21 — `codex-async.sh` saiu com `COTA_ESGOTADA` (exit 75) antes de
@@ -232,3 +232,59 @@ Gate: RED verificado antes do fix (`esperava lançar KEYSET_PAGINA_SOBREPOSTA, m
 vermelhos por **código errado**, provando que o teste casa a classificação e não "lançou algo")
 · tirar `KEYSET_PAGINA_SOBREPOSTA` da allowlist (`veio desconhecido`, provando que a entrada é
 carga e não enfeite).
+
+## A revisão independente RODOU (2026-08-29) — `DONE_WITH_CONCERNS`
+
+A cota voltou antes de 20/09. O ritual rodou com o prompt **gerado** por
+`scripts/codex-prompt-paginacao.sh` (não o guardado, que este doc já declarava defasado):
+`gpt-5.6-sol`, `reasoning=xhigh`, `exit 0`, 9.388 bytes. **O marcador de pendência sai — mas a
+revisão não voltou limpa, e o parecer pediu explicitamente para não fechar como "sem achados".**
+
+### O que ela derrubou DESTE doc
+
+- **Os pares PR↔SHA do prompt estavam errados**, e o parecer não conseguiu usá-los. Não era
+  erro de redação: `sha_de()` do gerador resolvia o número com `git log --grep "(#N)" -1`, e o
+  `--grep` varre a mensagem INTEIRA — um PR posterior que cita "(#N)" em prosa no CORPO roubava
+  o SHA. `(#1856)` resolvia para `4dd2a0271` (o citador) em vez de `4b592b506`; `(#1889)` para
+  `0ed5a9b31` em vez de `b559e8bdd`. **A ironia é a lição:** este gerador nasceu para o prompt
+  não envelhecer em silêncio, e errava em silêncio de outro jeito — entregando SHA plausível.
+  Consertado ancorando no ASSUNTO (a convenção de squash-merge fecha o assunto com `(#N)`), com
+  `scripts/test-codex-prompt-paginacao.sh` + `--falsificar`, ambos no CI.
+- **"21 call-sites" não reproduz.** O parecer contou 62 expressões `fetchAll` no HEAD; a
+  contagem literal em código de edge não-teste dá **119** de `fetchAll` mais 9 de
+  `fetchAllKeyset`. Seja qual for a definição que produziu 21, **este doc não a registra** — e
+  número sem receita de contagem é exatamente o que a doutrina do repo condena. Não repita o 21.
+- **`omie_products` não foi escolhido por DELETE** — o histórico local registra zero deletes; o
+  mecanismo era mutação do filtro `ativo`.
+
+### O que ela confirmou
+
+Nenhum **P0**. A sonda de versão (#1877/#1882) está limpa: `req.json()` uma vez → `corpoBruto`
+→ `classificarSonda` → auth → reuso; sem bypass de `action` por cron secret, sem vazamento de
+versão com `Bearer x`, sem efeito colateral antes dos gates.
+
+### Segue aberto (nomeado para não passar por consertado)
+
+- **Keyset não é snapshot, e offset desloca** — natureza da paginação sem transação, não
+  defeito introduzido por #1856/#1889. Mas a suíte de keyset **aceita** insert atrás do cursor:
+  ela exige "sem duplicata", não exige que o insert apareça. O teste não mede o que o nome sugere.
+- **P1 money-path novos, não tratados aqui:** `fin-valor-cockpit/index.ts:477` (`order_items`,
+  com INSERT e hard DELETE vivos em `sync-reprocess/index.ts:314`) e `:483` (`sales_orders`,
+  hard DELETE em `omie-vendas-sync/index.ts:3370`) — o cockpit **cruza as duas listas** em
+  `:486`, então migrar só uma não fecha nada. Mais dois: `_shared/mapas-paginados.ts:71`
+  (snapshot mensal persistente) e `omie-analytics-sync/index.ts:2227` (universo Apriori,
+  publicado globalmente). Correção de fato para o cockpit é **uma consulta só** (join +
+  agregação sob o mesmo snapshot), não dois keysets separados.
+- **`fetchAllKeyset` não tem orçamento** de páginas/linhas/deadline: escrita sustentada pode
+  mantê-lo vivo até o timeout externo.
+- **P2:** desde #1882 o JSON é parseado antes de qualquer auth — body inválido anônimo virou
+  400 (era 401) e body grande é materializado pré-auth. Não fabrica dado; amplia superfície.
+
+### O que a revisão NÃO prova
+
+`n_tup_ins/del/upd` acumulado não prova taxa nem sobreposição temporal (`stats_reset`
+desconhecido). **Igualdade de contagem não prova igualdade de identidade** — a simulação do
+parecer terminou 2.299 × 2.299 com a identidade trocada e uma linha viva de R$ 1.000.000
+omitida, sem exceção. Os guards só validam linhas DEVOLVIDAS: não detectam o que o `.gt()`
+suprimiu. E os testes usam doubles estáticos — não provam gateway, RLS, réplica nem snapshot
+entre requests.

@@ -141,7 +141,7 @@ O que esperar quando alguém usar a tela: `cluster_based` sumindo de `critico` (
 DOMINAR o mix contra `cross_sell`, é consequência esperada de destampar sinal real — e é o gatilho
 para a decisão de produto sobre os cortes, que segue aberta abaixo.
 
-## ⚠️ REVISÃO INDEPENDENTE PENDENTE — e o diagnóstico ANTERIOR estava errado
+## O diagnóstico ANTERIOR estava errado (a revisão independente rodou — ver o fim deste doc)
 
 **Correção do que este doc afirmava em 2026-08-22.** Estava escrito aqui que "a conta recusa
 **todos** os modelos com HTTP 400" e que o eixo era acesso de conta, não nome de modelo. **Falso**,
@@ -251,3 +251,61 @@ Medido aqui: `aprovaReal=SIM · pegaSabotagem1=SIM · pegaSabotagem2=SIM`, com o
   implementação;
 - o caminho de degradação sob `truncado` **nunca executa hoje** (779 « 5.000): é disjuntor, e sua
   primeira execução real será a primeira vez que alguém o vê funcionar.
+
+## A revisão independente RODOU (2026-08-29) — e achou um crash latente no alvo (c)
+
+`gpt-5.6-sol`, `reasoning=xhigh`, `exit 0`, 9.584 bytes. Os dois alvos que este doc nomeava
+como "sem nenhuma execução real" foram atacados. **O marcador de pendência sai.**
+
+⚠️ **Nota de transporte:** este doc registrava `gpt-5.6-sol` como MORTO (HTTP 400) e mandava
+usar `terra`/`luna`. Isso está **superado** — o cabeçalho de `scripts/codex-async.sh` registra a
+remedição de 23/08: o 400 vinha de `plan_type` congelado no token, e `codex login` devolveu o
+`sol` na hora. "Outro modelo responder NÃO inocenta o login." O default `sol` é deliberado.
+
+### Alvo (c) — defeito REAL, consertado
+
+`sim_score` volta `null` sob `truncado` de propósito, mas `useRecommendationEngine.ts`
+declarava `_admin.sim_score: number` e o card chamava `.toFixed(3)` direto: o breakdown de
+admin morreria com `TypeError: Cannot read properties of null (reading 'toFixed')` **na
+primeira vez que o disjuntor mordesse** — exatamente o risco que este doc nomeou. Consertado
+(tipo honesto + `fmt3()` rendendo `—`, nunca `0.000`), com teste vermelho pelo TypeError e
+falsificação que discrimina o ramo: reintroduzir o `.toFixed` cru deixa vermelhas as 2
+asserções do caminho null e a do caminho **medido segue verde**.
+
+### Alvo (c) — o que segue aberto
+
+- **A renormalização NÃO preserva escala comparável**, só a soma algébrica dos pesos. Como
+  `minMaxNorm` redefine min/max por execução, e penalidades + exploração (`epsilon`, até 0,3)
+  ficam fora dela, a justificativa escrita no código ("o `score_final` sairia numa escala
+  diferente… ele é gravado em `recommendation_log` e comparado entre execuções") **não se
+  sustenta**. O parecer exibiu dois vetores com transformações incompatíveis entre os regimes.
+  Isso não torna a renormalização pior que `sim=0`; torna a JUSTIFICATIVA errada.
+- **O regime truncado muda o TOP-N**, e a redistribuição de peso não compensa: os cortes em
+  `sim` CRU (0,10 / 0,15 / 0,20) simplesmente não disparam, então ninguém ganha `ctx += .3` nem
+  vira `cluster_based`. O parecer exibiu uma inversão completa de ordem (`S > A > R` → `R > A > S`).
+- **`cfg` não é validado.** `recommendation_config` é `numeric NOT NULL` sem `CHECK`, e a UI só
+  rejeita `NaN`. Com `T = wA+wP+wC`: `T=0` por cancelamento (`1 + (-1)`) torna falso o comentário
+  "todo peso em sim"; `0<T≪1` explode (`wA=1, wP=-0.999999, wS=0.2` → fator ≈ 200.001);
+  `wS=-T` zera tudo; `wS<-T` **inverte o sinal**; e `T<0` nem passa pelo guard.
+- **`meta.weights` do retorno vazio mente** (manda a config, não os pesos efetivos, e `mode`
+  fixo em `"profit"`). Inofensivo HOJE — não há consumidor local — mas é contrato falso.
+
+### Alvo (b) — histórico sem recorte temporal
+
+- **O disjuntor mede o eixo errado.** Ele conta CLIENTES (`n > 5.000`), mas o custo é o número
+  de linhas de `order_items` após o join. O próprio arquivo registra 749 linhas em `critico`
+  contra 16.738 em `estavel` para ~mesmo `n` — **22,3×** de diferença. Um cluster de 100
+  clientes concentrando o histórico usaria 2% do teto e processaria centenas de milhares de
+  linhas. Aumentar o teto não corrige; o eixo é que está errado.
+- **O short-circuit provavelmente funciona, mas o teste não prova.** `pop` tende a virar
+  `InitPlan` e o predicado pseudoconstante a virar `One-Time Filter` (filhos `never executed`),
+  mas quem protege é o `One-Time Filter`, não o `InitPlan`, e SQL não garante ordem textual de
+  `AND`. `db/test-recommend-cluster-agregado.sh:208` só verifica flag/NULL: **trocar a guarda
+  por `AND true` deixaria os asserts verdes** enquanto o trabalho pesado roda. Falta
+  `EXPLAIN (ANALYZE, BUFFERS)` asseverando `Actual Loops = 0` nos scans.
+- **Sem recorte temporal, `sim` é penetração LIFETIME, não propensão atual** — um par de 2020
+  pesa igual a uma compra deste mês, e o sinal só cresce, favorecendo SKU antigo. Menor
+  conserto proposto: predicado sobre `COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE
+  'America/Sao_Paulo')::date)` numa janela a calibrar. **Calibrar a janela é decisão de
+  produto** — não feito aqui. Se lifetime for intencional, a copy tem de dizer "já compraram",
+  não "compram".
