@@ -139,5 +139,13 @@ else
 fi
 
 echo ""
+echo "== (4) verify-edge-escrita — N3 passivo por escrita de aplicação =="
+if [ "$FALSIFY" = 1 ]; then
+  bash verify-edge-escrita-eval.sh --falsify || rc=1
+else
+  bash verify-edge-escrita-eval.sh || rc=1
+fi
+
+echo ""
 if [ "$rc" -eq 0 ]; then echo "✅ evals lovable-deploy-verify: OK"; else echo "❌ evals lovable-deploy-verify: FALHOU"; fi
 exit "$rc"

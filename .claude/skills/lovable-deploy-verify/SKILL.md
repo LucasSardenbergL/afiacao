@@ -570,7 +570,10 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
     `net._http_response`, e ela morre no `pg_net.ttl = 6 h`. Edge chamada por **usuário** (transcrição,
     upload, copiloto) nunca aparece lá — a escada caía direto no N3 ativo, que aqui custa o founder
     logado. Mas quando a fatia nova **ESCREVE em tabela de aplicação**, essa escrita é assinatura do
-    bundle do mesmo jeito: **não expira**, não depende de cron e não invoca nada. O #2086 pôs gate de
+    bundle do mesmo jeito: **dura 7 dias** (não as 6 h do `pg_net`), não depende de cron e não
+    invoca nada. ⚠️ A 1ª versão desta seção dizia "**não expira**", e era **falso**: o cron
+    `ia-uso-evento-purga` (`23 4 * * *`, `active=t` medido em prod) apaga
+    `criado_em < now() - interval '7 days'`. Janela maior que a do `pg_net`, e finita. O #2086 pôs gate de
     cota na `elevenlabs-transcribe`; o gate chama a RPC `ia_consumir_cota`, que faz `INSERT INTO
     public.ia_uso_evento (user_id, funcao)`. O bundle velho **nem importava** `_shared/ia-cota.ts` —
     logo é **incapaz** de emitir a linha. Quatro linhas entre 00:32:26Z e 00:33:27Z contra o merge às
@@ -587,30 +590,79 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        local. O que o `git grep` **não** fecha é a mão no 🟣 SQL Editor, então leia o **padrão**: as 4
        do mesmo `user_id` vieram espaçadas em **segundos a dezenas de segundos** (22/27/12 s — tempo
        de gravar áudio), e isso é uso de app; rajada de milissegundos ou `user_id` sem sessão é teste
-       manual. **Sem linha em `profiles` NÃO desqualifica**: aqui o `EXISTS` deu `f` e eram gravações
-       reais pelo microfone (cadastro em `/auth` é aberto; alias fiscal sem `profiles` é legítimo) —
-       quem fechou foi **perguntar ao founder**. Meça o vínculo com `EXISTS(...)`:
+       manual. **Sem linha em `profiles` NÃO desqualifica** — alias fiscal sem `profiles` é legítimo
+       (`database.md` §5) e o cadastro em `/auth` é aberto. Meça o vínculo com `EXISTS(...)`:
        `coalesce(p.name,'…')` em LEFT JOIN lê igual para "não existe linha" e "coluna NULL".
+       🔴 **Mas o `f` que o #2086/#2106 mediram NÃO era um desses casos — era a CHAVE ERRADA
+       (medido 2026-08-29).** `public.profiles` tem `id` **e** `user_id`, e a FK de `ia_uso_evento`
+       aponta para `auth.users(id)`, que casa com **`profiles.user_id`**. As duas leituras, lado a
+       lado, no mesmo `user_id` das 4 escritas:
+       ```
+        chave_id (a usada)  | chave_user_id |       nome
+       ---------------------+---------------+------------------
+        f                   | t             | Lucas Sardenberg     (role master, em user_roles)
+       ```
+       O usuário **tem** `profiles` — o `f` era artefato do join, não um vínculo ausente. A regra
+       acima continua valendo por si (aliases fiscais existem), mas **este caso não é exemplo dela**:
+       era um staff conhecido, e a pergunta ao founder respondeu o que a chave certa já respondia. É
+       a família `ausente ≠ zero` na dimensão **CHAVE**: um join que não casa devolve "não existe",
+       byte a byte igual a "existe e é nulo", e a explicação plausível fecha a investigação em cima
+       de uma medição defeituosa. **A role não vive em `profiles`** (é `public.user_roles`), e
+       `auth.users` é **inacessível** ao `claude_ro` (`permission denied for schema auth`) — logo a
+       identidade só se lê por `profiles`, e só pela chave certa. `scripts/verify-edge-escrita.sh`
+       já faz os dois joins.
     2. 🔴 **A direção é uma só: presença prova, ausência NÃO reprova.** Zero linhas pode ser "não
        deployou" **ou** "ninguém usou a feature", e edge de usuário não tem denominador que separe os
        dois. `ausente ≠ zero` de novo: sem chamada não houve medição, e "0 linhas" lê-se
        **INDETERMINADO**, nunca "deploy pendente". É a metade boa do guard temporal do #2079 — lá o
        risco era ler tick PRÉ-merge como pendência; aqui a evidência só pode existir **depois**, então
        o erro possível custa uma espera, não um redeploy à toa de edge money-path.
-    3. ✅ **O controle negativo vem de graça, e com dado real.** O mesmo `GROUP BY` sobre a tabela
-       devolve **zero** para as outras funções que têm limite configurado (`identify-tool`,
-       `copilot-analyze`, `analyze-services`): a query **sabe dizer "não"** sem sabotar nada — se ela
-       desse verde para tudo, elas sairiam na mesma leitura. Por isso o `GROUP BY` **sem** filtro de
-       função abaixo é de propósito: filtrar pela sua edge joga fora justamente o controle.
+    3. 🔴 **O controle negativo prescrito aqui NÃO MATERIALIZAVA — corrigido 2026-08-29.** A 1ª
+       versão mandava ler `GROUP BY funcao` sobre `ia_uso_evento` e afirmava que as vizinhas com
+       limite configurado "saem em zero na mesma leitura". **Não saem:** `GROUP BY` só produz
+       grupos que **têm** linhas. Rodado em prod, devolveu **uma** linha (a própria edge) e as três
+       vizinhas não apareceram — nem como zero. Quem seguisse a receita ao pé da letra registrava
+       "controle negativo passou" **sem ter observado nada** — e a própria seção se contradizia, já
+       que o comentário do bloco dizia `linha única`. Para o controle EXISTIR, o universo tem de vir
+       da tabela de **LIMITES** unida ao alvo (só os limites esconderia o alvo se a config dele fosse
+       removida). Isto e os guards abaixo são hoje do **script**, não da sua memória:
+
+       ```bash
+       .claude/skills/lovable-deploy-verify/scripts/verify-edge-escrita.sh \
+         --desde '<timestamp do merge, UTC>' --funcao '<slug da edge>'
+       # 0 = BUNDLE_NOVO_OBSERVADO_EM_T · 2 = INDETERMINADO · 3 = RECUSA
+       # 🔴 NENHUM exit significa "bundle velho": a via é unidirecional por construção.
+       ```
+
+       Ele materializa o controle (`CONTROLE_CRUZADO_OK`), **diz quando não pôde observá-lo**
+       (`CONTROLE_CRUZADO_NAO_OBSERVADO`, universo só com o alvo — nunca "passou"), e **recusa**
+       quando a query não discrimina (`CORRELACAO_SUSPEITA`: toda vizinha com o mesmo total é a
+       assinatura do filtro solto contando a tabela inteira). Rede: `evals/verify-edge-escrita-eval.sh`
+       — 17 casos + 4 sabotagens, no gate `evals/run.sh`.
+    3b. 🔴 **A presença prova PASSADO, não estado ATUAL (2ª opinião, Codex).** Uma linha pós-merge
+       prova que o bundle novo atendeu ≥1 chamada **naquele instante** — não que ele siga no ar: um
+       redeploy ou revert posterior deixa o rastro **intacto**. Por isso o exit 0 se chama
+       `BUNDLE_NOVO_OBSERVADO_EM_T` e a saída repete que não é "versão atual confirmada". Para
+       afirmar "está no ar AGORA" continua sendo preciso sonda viva ou marcador observado **depois
+       do último deploy possível**.
+    3c. ⚠️ **O join de proveniência é `profiles.user_id`, NUNCA `profiles.id`.** A tabela tem as
+       **duas** colunas e a FK de `ia_uso_evento` aponta para `auth.users(id)`, que casa com
+       `profiles.user_id`. Com `p.id` o join devolve "sem profile" para usuário legítimo — falso
+       sinal de "`user_id` inventado" bem no teste da condição (c), que foi onde mordeu. A **role**
+       (`master`/`employee`) vive em `public.user_roles`, não em `profiles`; e `auth.users` é
+       **inacessível** ao `claude_ro` (`permission denied for schema auth`), então a identidade só se
+       lê por `profiles`. O script já faz os dois joins certos.
     4. **Leia onde o INSERT mora no código ANTES de ler a linha.** Em `ia_consumir_cota` ele fica
        **depois** de todos os `RETURN` de bloqueio, então a linha prova chamada **PERMITIDA** — e de
        quebra que a migration do limite entrou **antes** do deploy (bloqueada teria voltado 503
        `sem_limite` sem gravar nada). INSERT incondicional provaria só a chamada: a diferença é o que
        você pode afirmar depois.
     ```bash
-    # ⌨️ seu terminal — o timestamp NASCE inválido de propósito (Lei de Ferro #5): troque pelo
-    # do SEU merge, em UTC. No #2086 deu `elevenlabs-transcribe | 4 | 4 | 00:33:27Z`, linha única.
-    ~/.config/afiacao/psql-ro -c "SELECT funcao, count(*) AS total, count(*) FILTER (WHERE criado_em > 'COLE_O_TIMESTAMP_DO_MERGE_UTC') AS pos_merge, max(criado_em) AS ultimo FROM public.ia_uso_evento GROUP BY funcao ORDER BY total DESC;"
+    # ⌨️ seu terminal — só se precisar ler à mão o que o script já lê. O timestamp NASCE inválido
+    # de propósito (Lei de Ferro #5): troque pelo do SEU merge, em UTC.
+    # ⚠️ O universo parte de `ia_uso_limite` UNIDO ao alvo — NÃO de um `GROUP BY` sobre
+    #    `ia_uso_evento`, que não materializa as vizinhas em zero e mata o controle negativo.
+    ~/.config/afiacao/psql-ro -c "WITH universo AS (SELECT funcao AS f FROM public.ia_uso_limite UNION SELECT 'COLE_O_SLUG_DA_EDGE') SELECT u.f, (SELECT count(*) FROM public.ia_uso_evento e WHERE e.funcao = u.f) AS total, (SELECT count(*) FROM public.ia_uso_evento e WHERE e.funcao = u.f AND e.criado_em > 'COLE_O_TIMESTAMP_DO_MERGE_UTC') AS pos_merge FROM universo u ORDER BY 2 DESC, 1;"
     ```
 
 ### Passo 4b — QA visual pós-Publish (Claude-in-Chrome na sessão logada do founder)
@@ -766,10 +818,30 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 - [x] **N3 PASSIVO por ESCRITA DE APLICAÇÃO (2026-08-29, #2086 `elevenlabs-transcribe`):** as duas vias
   passivas anteriores nascem do cron e morrem no `pg_net.ttl = 6 h` — edge chamada por **usuário** não
   passa por nenhuma delas, e a escada caía no N3 ativo (que custa o founder logado). Quando a fatia nova
-  escreve em tabela de aplicação, a escrita é assinatura do bundle **sem TTL**: o gate de cota insere em
+  escreve em tabela de aplicação, a escrita é assinatura do bundle com janela de **7 dias**: o gate de cota insere em
   `ia_uso_evento(user_id, funcao)` e o bundle velho, que nem importava `_shared/ia-cota.ts`, é **incapaz**
   de produzir a linha — 4 delas 15 min após o merge provaram o deploy sem PAT, sem canária, sem invocar
   nada. Vale só na direção **presença**: ausência é "ninguém usou", não "não subiu". Controle negativo de
   graça (as vizinhas com limite configurado saem em zero na mesma query), desde que o `GROUP BY` não seja
   filtrado pela edge. Detalhe no Passo 4.
+- [x] **A via da ESCRITA virou SCRIPT, e a receita em prosa tinha 4 furos (2026-08-29):** ela
+  nasceu no #2086 e apodreceu em 3 dias — verificando as 3 edges do chip de 01:50Z, todos apareceram.
+  **(1)** O controle negativo prescrito (`GROUP BY funcao` sobre `ia_uso_evento`) **não
+  materializava**: `GROUP BY` não produz grupo vazio, então as vizinhas nunca saíam "em zero" e o
+  operador registrava "controle passou" sem observar nada — a seção se contradizia sozinha, com
+  `linha única` escrito no próprio comentário. **(2)** O join de proveniência usava `profiles.id`
+  quando a chave é `profiles.user_id` (a tabela tem as duas), devolvendo "sem profile" para usuário
+  legítimo — falso sinal de "`user_id` inventado" bem na condição (c). **(3)** A 2ª opinião (Codex,
+  `gpt-5.6-sol` xhigh) achou o furo maior: a escrita prova **passado**, não estado atual — redeploy
+  ou revert posterior deixa o rastro intacto, então o exit 0 é `BUNDLE_NOVO_OBSERVADO_EM_T` e nunca
+  "versão atual". **(4)** E o "**não expira**" era literalmente falso: o cron `ia-uso-evento-purga`
+  (`23 4 * * *`, `active=t` em prod) apaga acima de **7 dias**. Virou
+  `scripts/verify-edge-escrita.sh` (universo = limites ∪ alvo; `CONTROLE_CRUZADO_OK` /
+  `_NAO_OBSERVADO` / `CORRELACAO_SUSPEITA`; fail-closed na via; **nenhum** exit significa "bundle
+  velho"), com `evals/verify-edge-escrita-eval.sh` — 17 casos + 4 sabotagens — no gate. A
+  falsificação pagou de novo: a sabotagem do ping saiu **inócua** contra a via totalmente muda
+  (o guard do universo vazio recusa sozinho), e só mordeu no cenário `psql_mudo_parcial` — via que
+  cala no ping mas ainda devolve linhas, onde sem o ping o script leria via quebrada como "ninguém
+  usou a feature". Mesma lição que o eval do `verify-edge-eco` já tinha registrado, redescoberta
+  medindo.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
