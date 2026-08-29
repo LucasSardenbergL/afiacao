@@ -2842,6 +2842,27 @@ function blocoAssoc(s: string): string {
 // Os asserts seguem os mesmos; mudou ONDE cada um olha.
 const ASSOC_LOADER = 'supabase/functions/_shared/itens-com-pedido.ts';
 
+// ⚠️ O loader tem DUAS leituras (cockpit e Apriori) e elas se PARECEM: as duas paginam por
+// keyset, as duas embedam `sales_orders!inner`, as duas têm `.gt("id", cursor)`. Medir o
+// ARQUIVO inteiro deixa uma satisfazer o assert da outra — furo pego na falsificação: apagar
+// o `.gt(cursor)` do Apriori mantinha o gate VERDE porque o trecho do cockpit casava. É o
+// §"o DETECTOR mente" na forma mais barata de acontecer. Cada assert mede o BLOCO da sua
+// função. (A exceção deliberada é `.range(`, medido no arquivo TODO: nenhuma das duas pode
+// paginar por offset, e ali um falso positivo do vizinho é o desfecho que se quer.)
+// Recorta a fatia APRIORI do loader: a constante com o `.select()` MAIS a função que a usa.
+// A constante precisa entrar — as colunas e o `!inner` moram nela, e um recorte que começasse
+// na função mediria um bloco sem a string que ele afirma (falso VERMELHO pego na
+// falsificação, logo depois do falso VERDE que motivou o recorte).
+function blocoApriori(fonte: string): string {
+  const i = fonte.indexOf('const COLUNAS_APRIORI');
+  if (i < 0) throw new Error('COLUNAS_APRIORI não encontrada no loader (âncora quebrada)');
+  const j = fonte.indexOf('export async function carregarItensApriori(', i);
+  if (j < 0) throw new Error('carregarItensApriori não vem depois de COLUNAS_APRIORI (âncora quebrada)');
+  const resto = fonte.slice(j);
+  const fim = resto.slice(1).search(/\nexport (async function|interface|const) /);
+  return fonte.slice(i, j) + (fim < 0 ? resto : resto.slice(0, fim + 1));
+}
+
 describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de 1.000)', () => {
   it('a leitura delega ao loader compartilhado — nunca uma chamada single-shot', () => {
     const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
@@ -2865,12 +2886,13 @@ describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de
   });
 
   it('pagina por KEYSET — offset desloca sob o hard DELETE de sync-reprocess', () => {
-    const loader = removerComentarios(read(ASSOC_LOADER));
+    const arquivo = removerComentarios(read(ASSOC_LOADER));
+    const loader = blocoApriori(arquivo);
 
     // `.range()` NÃO pode existir neste loader: é o offset que pula linha viva quando um
     // DELETE encolhe a tabela no meio da leitura (contagem fechando, identidade trocada).
     expect(
-      loader.includes('.range('),
+      arquivo.includes('.range('),
       'o loader voltou ao offset — é ELE que pula a linha viva sob DELETE concorrente',
     ).toBe(false);
     expect(
@@ -2895,7 +2917,7 @@ describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de
   });
 
   it('filtra o universo pela denylist da autoridade + deleted_at (paridade com useBundleEngine)', () => {
-    const loader = removerComentarios(read(ASSOC_LOADER));
+    const loader = blocoApriori(removerComentarios(read(ASSOC_LOADER)));
 
     // A denylist NÃO pode ser literal aqui: literal é como a 3ª cópia divergiu
     // (`mapas-paginados.ts` citava 3 dos 4 status). Tem de vir do espelho canônico.
