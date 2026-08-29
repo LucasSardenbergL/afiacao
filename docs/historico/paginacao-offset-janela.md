@@ -357,8 +357,44 @@ deslocava nada". O teste também mostra por que guard de contagem não serve —
 **exatamente** tantas linhas quanto a tabela tem ao fim, porque a linha pulada e a deletada se
 cancelam no total.
 
+### A revisão independente DESTA entrega rodou e voltou `bloquear` — o achado é real
+
+`codex-async.sh`, `gpt-5.6-sol`, `reasoning=xhigh`. Confirmou A (a semântica do `!inner` é a
+suposta: filtro em coluna do embed elimina a linha RAIZ), B (uuid usa `uuid_internal_cmp` nos
+dois lados — `ORDER BY` e `>` não podem discordar; collation não participa) e D (sem estouro
+demonstrável). E derrubou o enquadramento do limite, que estava confortável demais:
+
+**CESTA RASGADA — perda de PRECISÃO, não o recall recente que eu tinha declarado aceitável.**
+Itens irmãos do mesmo pedido têm uuids v4 **espalhados**, logo caem em páginas diferentes. Se
+o pai vira `cancelado` (ou é soft/hard-deletado — `sync-reprocess`, o soft-delete do app,
+`omie-vendas-sync` com cascade) depois da 1ª página, os irmãos já lidos **ficam** no acumulado
+e os posteriores são eliminados pelo filtro do embed. Sai **meio pedido**, sem exceção, com
+todos os ids estritamente crescentes — e os guards de `fetchAllKeyset` **não veem**, porque só
+olham as chaves DEVOLVIDAS; o que o filtro suprimiu é invisível para eles.
+
+Não existe instante em que essa cesta parcial seja verdadeira. Isso é diferente, em natureza,
+do insert atrás do cursor: aquele é linha que ainda não existia, este é um pedido que existe
+inteiro e chega pela metade — em regra de associação **publicada globalmente**.
+
+A suíte passava verde porque a fixture dava **um pedido por item**: ela não conseguia nem
+expressar o defeito (e o double registrava `.not()` sem aplicar, então filtro de embed não
+filtrava nada). As duas coisas foram corrigidas, e o cenário do Codex agora roda contra o
+código real: `itens-com-pedido_test.ts` reproduz **1 de 2 irmãos, sem exceção**.
+
+**Por que a entrega segue e não foi revertida:** ela é estritamente melhor que o offset que
+substitui — elimina o pulo de linha viva e o cruzamento de instantes entre duas paginações — e
+a cesta rasgada **já existia** sob offset, junto com os outros dois. Segurar a melhoria até o
+snapshot existir seria trocar um defeito por três. O que não pode acontecer é o limite passar
+por consertado: por isso ele tem teste com dente, e está listado abaixo como ABERTO.
+
 ### Segue aberto (não passou por consertado)
 
+- **CESTA RASGADA entre páginas** (acima). Correção: materializar o universo em snapshot
+  imutável dentro de uma transação/RPC e paginar a materialização, **ou** um version fence
+  global que ABORTE a leitura se um writer relevante atuar durante ela. Agregar por
+  `sales_order_id` evita a cesta partida mas **não** produz snapshot global — não confundir os
+  dois. Vale para os dois consumidores (Apriori e cockpit), e fica LATENTE em
+  `carregarPedidosDoMes` para quando um mês passar de 1.000 pedidos.
 - **`fetchAllKeyset` não tem orçamento** de páginas/linhas/deadline: escrita sustentada pode
   mantê-lo vivo até o timeout externo. Intocado por esta entrega.
 - **P2 do JSON pré-auth** (#1882): body inválido anônimo virou 400 e body grande é

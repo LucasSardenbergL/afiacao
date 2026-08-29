@@ -154,16 +154,29 @@ function fakeDb(
         predicados.push((l) => String(l[coluna] ?? "") < String(valor));
         return q;
       },
-      not(coluna: string, operador: string, _valor: unknown) {
-        // Registrado e NÃO aplicado: o filtro real é do PostgREST sobre coluna do embed. O
-        // que a suíte afirma aqui é que o call-site PEDE o filtro — o efeito dele é do
-        // servidor, e um double que fingisse aplicá-lo estaria provando o double.
+      not(coluna: string, operador: string, valor: unknown) {
         reg.filtros.push(`not:${coluna} ${operador}`);
+        // APLICA de verdade. A versão anterior só registrava, com a justificativa de que "o
+        // efeito é do servidor" — e isso tornava impossível escrever o teste que importa:
+        // sob `!inner`, um filtro em coluna do embed elimina a linha RAIZ, e é essa
+        // eliminação que rasga a cesta quando o pai muda de estado no meio da paginação.
+        // Double que não filtra não consegue nem expressar o defeito.
+        if (operador === "is") {
+          predicados.push((l) => valorNoCaminho(l, coluna) !== valor);
+          return q;
+        }
+        if (operador !== "in") throw new Error(`double: .not(_, ${operador}) não modelado`);
+        // O PostgREST aceita a lista do `in` com OU sem aspas por valor — `(a,b)` e
+        // `("a","b")` são equivalentes; a constante canônica emite a forma COM aspas.
+        const fora = new Set(
+          String(valor).replace(/^\(|\)$/g, "").split(",").map((x) => x.trim().replace(/^"|"$/g, "")),
+        );
+        predicados.push((l) => !fora.has(String(valorNoCaminho(l, coluna))));
         return q;
       },
       is(coluna: string, valor: unknown) {
         reg.filtros.push(`is:${coluna}`);
-        predicados.push((l) => (l[coluna] ?? null) === valor);
+        predicados.push((l) => (valorNoCaminho(l, coluna) ?? null) === valor);
         return q;
       },
       order(coluna: string, o?: { ascending?: boolean }) {
@@ -196,6 +209,20 @@ function fakeDb(
   } as unknown as BancoPostgrest;
 
   return { db, registros, tabelas };
+}
+
+/**
+ * Resolve `"sales_orders.status"` dentro da linha (o embed vem ANINHADO). Sem isto o double
+ * lia `l["sales_orders.status"]`, que é `undefined` em toda linha — e como o predicado do
+ * `.is()` compara com `?? null`, ele resolvia TRUE para todo mundo: o filtro do embed
+ * "passava" sem filtrar nada, em silêncio. Achado do challenge Codex xhigh: um double que
+ * modela menos que o serviço deixa o teste medir uma promessa que ele não cumpre.
+ */
+function valorNoCaminho(l: Linha, caminho: string): unknown {
+  return caminho.split(".").reduce<unknown>(
+    (acc, parte) => (acc == null ? undefined : (acc as Record<string, unknown>)[parte]),
+    l as unknown,
+  );
 }
 
 /** Nomes dos embeds marcados `!inner` no texto do `.select()` (`sales_orders!inner(...)`). */
@@ -468,6 +495,66 @@ Deno.test("apriori: DELETE concorrente NÃO pula linha viva", async () => {
   });
   const linhas = await carregarItensApriori(a.db);
   assert(linhas.some((l) => l.id === alvoId), `o universo Apriori pulou ${alvoId} sob DELETE concorrente`);
+});
+
+Deno.test("LIMITE CONHECIDO: a CESTA RASGA entre páginas quando o pai muda de estado", async () => {
+  // Achado do challenge Codex xhigh sobre ESTA entrega, e o mais importante dela: o keyset
+  // conserta a paginação, o embed conserta o casamento pai↔filho POR LINHA — e nenhum dos
+  // dois dá consistência do PEDIDO ao longo das páginas.
+  //
+  // O mecanismo: itens irmãos do mesmo pedido têm uuids ESPALHADOS (v4), então caem em
+  // páginas diferentes. Se o pai vira `cancelado` (ou é soft/hard-deletado) depois da 1ª
+  // página, os irmãos já lidos FICAM no acumulado e os posteriores são eliminados pelo
+  // filtro do embed. Sai uma cesta PARCIAL — metade de um pedido — sem exceção nenhuma, e
+  // com todos os ids estritamente crescentes, então nenhum guard de `fetchAllKeyset` acusa
+  // (eles só olham as chaves DEVOLVIDAS; o que o filtro suprimiu é invisível).
+  //
+  // Isto NÃO é o "recall recente" que o teste do insert aceita: não existe instante em que
+  // essa cesta parcial seja verdadeira. É perda de PRECISÃO, e vai para regra de associação
+  // PUBLICADA globalmente. Está registrado como pendência ABERTA em
+  // `docs/historico/paginacao-offset-janela.md` — a correção é snapshot (RPC transacional) ou
+  // um version fence que ABORTE se um writer relevante atuar durante a leitura; nenhum dos
+  // dois cabe nesta fatia, e fingir que o keyset resolveu seria o pior desfecho.
+  //
+  // Este teste existe para o limite NÃO passar por consertado: ele afirma o comportamento
+  // REAL. No dia em que a leitura ganhar snapshot, ele fica VERMELHO e obriga a revisão.
+  const IRMAO_A = 5;        // 1ª página
+  const IRMAO_B = 1500;     // 2ª página — o mesmo pedido, uuid distante
+  const u = universoApriori();
+  const pedidoRasgado = "so-COMPARTILHADO";
+  (u.order_items[IRMAO_A] as Linha).sales_order_id = pedidoRasgado;
+  (u.order_items[IRMAO_B] as Linha).sales_order_id = pedidoRasgado;
+
+  const { db, tabelas } = fakeDb(u, {
+    aoServirPagina: (tabela, pagina) => {
+      // O pai é CANCELADO depois da 1ª página — writer real: `sync-reprocess` reescreve
+      // status, o app soft-deleta, `omie-vendas-sync` hard-deleta com cascade.
+      if (tabela === "order_items" && pagina === 1) {
+        for (const l of tabelas.order_items) {
+          if ((l as Linha).sales_order_id === pedidoRasgado) {
+            (l as Linha).sales_orders = { status: "cancelado", deleted_at: null, account: "oben" };
+          }
+        }
+      }
+    },
+  });
+  const linhas = await carregarItensApriori(db);
+  const doPedido = linhas.filter((l) => l.sales_order_id === pedidoRasgado);
+
+  // O desfecho REAL, afirmado sem maquiagem: UM irmão entrou, o outro não. Cesta partida.
+  assertEquals(
+    doPedido.length,
+    1,
+    `esperava a cesta RASGADA (1 de 2 irmãos). Veio ${doPedido.length} — se veio 0 ou 2, o ` +
+      `comportamento mudou: ou a leitura ganhou snapshot, ou o cenário perdeu o dente`,
+  );
+  assertEquals(doPedido[0].id, id(IRMAO_A), "o irmão que sobrou não é o da 1ª página");
+  // E o mais grave: nada disso levanta erro. É o silêncio que a pendência tem de fechar.
+  assertEquals(
+    new Set(linhas.map((l) => l.id)).size,
+    linhas.length,
+    "houve duplicata — o keyset em si continua íntegro; o defeito é de SNAPSHOT, não de cursor",
+  );
 });
 
 Deno.test("apriori: página com erro LANÇA FalhaLeituraCritica", async () => {

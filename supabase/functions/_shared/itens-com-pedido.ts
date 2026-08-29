@@ -27,12 +27,29 @@
 //      substitui: medido em prod (psql-ro 2026-08-29), 16.548 itens no prefetch TTM + 31.114
 //      pedidos = 49 páginas viravam 17.
 //
-// O QUE ISTO **NÃO** DÁ, e está provado como limite em `itens-com-pedido_test.ts`: keyset não
-// é SNAPSHOT. Uma linha inserida atrás do cursor durante a leitura nunca é vista. É perda de
-// recall RECENTE (linha nascida durante a leitura, segundos, numa janela TTM de 365 dias) —
-// aceita de propósito, e diferente em natureza do dano do offset, que é linha ANTIGA e viva
-// PULADA, mudando um número já fechado. Precisão > recall (`docs/agent/money-path.md` §2).
-// Snapshot de verdade exigiria RPC transacional, como `omie_sync_identity_snapshot`.
+// O QUE ISTO **NÃO** DÁ. São DUAS coisas, e misturá-las é o erro a evitar — a primeira é
+// aceita, a segunda é uma pendência ABERTA (as duas provadas como limite em
+// `itens-com-pedido_test.ts`, com teste que fica VERMELHO se o comportamento mudar):
+//
+//   · RECALL RECENTE (aceito). Keyset não é snapshot: linha inserida ATRÁS do cursor durante
+//     a leitura nunca é vista. O que some é linha nascida durante a leitura — segundos, numa
+//     janela TTM de 365 dias. Diferente em natureza do dano do offset, que é linha ANTIGA e
+//     viva PULADA, mudando número já fechado.
+//
+//   · CESTA RASGADA (**aberto**, achado do challenge Codex xhigh sobre esta própria entrega).
+//     O embed casa pai e filho POR LINHA. Ele NÃO dá consistência do PEDIDO ao longo das
+//     páginas: itens irmãos têm uuids espalhados e caem em páginas diferentes, então se o pai
+//     vira `cancelado` (ou é soft/hard-deletado) no meio da leitura, os irmãos já lidos FICAM
+//     e os posteriores são eliminados pelo filtro do embed. Sai meio pedido, sem exceção, com
+//     todos os ids crescentes — os guards de `fetchAllKeyset` não veem, porque só olham as
+//     chaves DEVOLVIDAS e o que o filtro suprimiu é invisível. **Não** é o recall acima: não
+//     existe instante em que essa cesta seja verdadeira. É precisão (§2).
+//     Fechar isso exige snapshot real — RPC transacional, como `omie_sync_identity_snapshot` —
+//     ou um version fence que ABORTE se um writer relevante atuar durante a leitura. Nenhum
+//     dos dois cabe nesta fatia; está nomeado em `docs/historico/paginacao-offset-janela.md`.
+//
+// O que esta entrega faz é estritamente melhor que o offset que substitui (elimina o pulo de
+// linha viva e o cruzamento de instantes entre duas paginações) e **não** é o fim do assunto.
 //
 // Mora em `_shared` e não nos dois `index.ts` pelo motivo do `recommend-leituras.ts`: as duas
 // edges importam `npm:@supabase/supabase-js@2` e NUNCA rodam sob `--no-remote`, então
@@ -125,11 +142,13 @@ const COLUNAS_APRIORI = "id, sales_order_id, product_id, sales_orders!inner(stat
  * uma linha pulada não some de uma tela — vira uma regra que ninguém consegue explicar depois.
  *
  * `id` passou a entrar no `.select()`. O comentário que ele substitui dizia o contrário e tinha
- * razão pelo que media: são ~68,7 mil linhas (medido 2026-08-29), e o uuid a mais é ~2,5 MB de
- * payload puro numa edge que já segura o universo inteiro em memória. O que aquele raciocínio
- * não pesava é o outro lado da conta — sem a coluna projetada não há cursor, e sem cursor a
- * leitura pagina por offset debaixo do hard DELETE de `sync-reprocess`. 2,5 MB é o preço de o
- * universo não ter buracos.
+ * razão pelo que media: são ~68,7 mil linhas (medido 2026-08-29). O custo real é MAIOR que os
+ * "2,5 MB" de uma primeira conta que somava só os 36 caracteres do uuid: com a chave e a
+ * pontuação do JSON dá ~2,88 MiB de payload, e um ensaio Deno indicou ~9 MiB a mais de heap
+ * (medição do challenge Codex). Segue dentro do limite de 256 MB das Edge Functions.
+ * O que aquele raciocínio não pesava é o outro lado da conta — sem a coluna projetada não há
+ * cursor, e sem cursor a leitura pagina por offset debaixo do hard DELETE de `sync-reprocess`.
+ * ~9 MiB de heap é o preço de o universo não ter buracos.
  */
 export async function carregarItensApriori(db: BancoPostgrest): Promise<ItemComPedidoApriori[]> {
   return await fetchAllKeyset<ItemComPedidoApriori, string>(

@@ -505,12 +505,18 @@ Deno.serve(async (req: Request) => {
     // sem distinguir "fora da janela" de "não consegui ler o pai".
     // `order_date_kpi` é DATE → comparação de string 'YYYY-MM-DD' é cronológica (mesmo padrão de
     // carteira-positivacao-snapshot). Reúsa a régua UTC que o cockpit já aplica ao AR.
+    // Sensor do descarte por pai ausente. O `!inner` torna isto impossível pelo servidor, e é
+    // justamente por isso que ele é CONTADO em vez de ignorado: "não acontece" é a suposição
+    // que este repo manda medir, e um `return []` mudo transformaria a quebra da garantia em
+    // receita que simplesmente encolhe. Não é gate (derrubar o cockpit inteiro por causa de
+    // uma linha seria pior que o dano) — é o mesmo padrão de `custoLegadoFallback` abaixo.
+    let semPedidoPai = 0;
     const linhas = itensAll.flatMap((l) => {
       const so = l.sales_orders;
       // `!inner` garante o pai no servidor; o guard existe porque o TIPO é nullable (é assim
       // que o PostgREST descreve um to-one embedado) e fingir não-nulo aqui seria a mentira
       // que se paga em runtime.
-      if (so == null) return [];
+      if (so == null) { semPedidoPai++; return []; }
       const naJanela = pedidoContaNoFaturamento(so.status, so.deleted_at)
         && so.order_date_kpi != null && so.order_date_kpi >= ttm_inicio && so.order_date_kpi <= ttm_fim;
       if (!naJanela) return [];
@@ -519,6 +525,7 @@ Deno.serve(async (req: Request) => {
         : (l.omie_codigo_produto != null && so.account === COMPANY ? (obenSkuToProductId.get(String(l.omie_codigo_produto)) ?? null) : null);
       return pid != null ? [{ ...l, product_id: pid }] : [];
     });
+    if (semPedidoPai > 0) console.warn(`[ValorCockpit][${COMPANY}] ${semPedidoPai} item(ns) sem pedido pai no embed — o \`!inner\` deveria tornar isso impossível; a receita desses itens NÃO entrou no cockpit`);
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
