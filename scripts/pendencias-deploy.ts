@@ -23,7 +23,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  cobreOPiso,
+  coberturaPct,
   julgar,
+  lerPiso,
   parsearObservacoes,
   type Estado,
   type Relatorio,
@@ -97,6 +100,14 @@ function imprimir(rel: Relatorio): void {
 }
 
 export function main(): number {
+  let piso: number;
+  try {
+    piso = lerPiso(process.env.PENDENCIAS_COBERTURA_MINIMA);
+  } catch (e) {
+    console.error(`❌ MECÂNICA: ${(e as Error).message}`);
+    return 2;
+  }
+
   let mapa: Record<string, string>;
   try {
     mapa = lerMapaCommitado();
@@ -130,7 +141,21 @@ export function main(): number {
   }
 
   imprimir(rel);
-  return rel.totalDivergentes > 0 ? 1 : 0;
+
+  if (rel.totalDivergentes > 0) return 1;
+
+  // Nada divergiu ENTRE AS OBSERVADAS — que é uma frase muito mais fraca que "nada divergiu".
+  // Sem o piso, 2 de 39 edges saía com o mesmo exit 0 de 39 de 39, e o cron calava nos dois.
+  if (!cobreOPiso(rel, piso)) {
+    console.error(
+      `\n⚠️  COBERTURA ABAIXO DO PISO: ${coberturaPct(rel).toFixed(0)}% < ${piso}%.` +
+        ` Nada divergiu entre as ${rel.totalObservadas} observadas, mas as outras` +
+        ` ${rel.totalMapeadas - rel.totalObservadas} não foram vistas.`,
+    );
+    console.error('   Dispare a leva com `bun run sonda:sql <edge>…` e rode de novo.');
+    return 1;
+  }
+  return 0;
 }
 
 if (import.meta.main) process.exit(main());

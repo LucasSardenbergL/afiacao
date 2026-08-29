@@ -167,3 +167,54 @@ export function julgar(
     linhasIgnoradas,
   };
 }
+
+/**
+ * Piso de cobertura, em %, abaixo do qual o relatório NÃO pode sair como "limpo".
+ *
+ * POR QUE EXISTE: medido em 2026-08-29, logo depois de eu provar 4 edges na mão. A varredura
+ * saiu `✅ confere — 2 · cobertura: 2/39 · exit 0`. Num cron que só fala quando o exit é
+ * diferente de zero, isso é SILÊNCIO — e silêncio, aqui, se lê como "39 edges conferidas".
+ * O relatório imprimia a cobertura, mas ninguém lê relatório que não toca a campainha.
+ *
+ * POR QUE EXIT 1 (pendência) E NÃO 2 (mecânica): o 2 diz "não consegui medir" — psql fora,
+ * mapa vazio. Cobertura baixa é outra coisa: a medição FUNCIONOU e informou que a maioria das
+ * edges não tinha sonda na janela. Isso é pendência com AÇÃO ÓBVIA (`bun run sonda:sql`), e
+ * classificá-la como defeito de mecânica mandaria o operador caçar um problema que não existe.
+ */
+export const PISO_COBERTURA_PADRAO = 50;
+
+/** Cobertura em % (0–100). Mapa vazio devolve 0 — nunca 100 por vacuidade. */
+export function coberturaPct(rel: Relatorio): number {
+  if (rel.totalMapeadas === 0) return 0;
+  return (rel.totalObservadas / rel.totalMapeadas) * 100;
+}
+
+/**
+ * O piso foi atingido?
+ *
+ * Comparação `>=` de propósito: piso 50 com cobertura exatamente 50% PASSA. E piso 0 desliga
+ * a regra (qualquer cobertura serve), que é a válvula para quem quer o comportamento antigo
+ * sem editar código.
+ */
+export function cobreOPiso(rel: Relatorio, piso: number): boolean {
+  return coberturaPct(rel) >= piso;
+}
+
+/**
+ * Lê o piso do ambiente, ou LANÇA.
+ *
+ * Fail-CLOSED: valor não-numérico, negativo ou acima de 100 lança em vez de cair no padrão
+ * silenciosamente. Um `PENDENCIAS_COBERTURA_MINIMA=cinquenta` que virasse 50 por omissão
+ * ensinaria que a variável funciona quando ela está sendo ignorada — e o dia em que alguém
+ * escrevesse `=90` esperando rigor, receberia 50 sem aviso.
+ */
+export function lerPiso(bruto: string | undefined, padrao = PISO_COBERTURA_PADRAO): number {
+  if (bruto === undefined || bruto.trim() === '') return padrao;
+  const n = Number(bruto);
+  if (!Number.isFinite(n) || n < 0 || n > 100) {
+    throw new Error(
+      `PENDENCIAS_COBERTURA_MINIMA inválido: ${JSON.stringify(bruto)}. Use um número de 0 a 100.`,
+    );
+  }
+  return n;
+}
