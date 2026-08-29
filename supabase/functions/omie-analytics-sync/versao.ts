@@ -66,7 +66,7 @@ export const respostaSonda = criarRespostaSonda("omie-analytics-sync");
  * `last_page` com o total DECLARADO pelo Omie, então 43 > 10 não prova travessia), e a sonda
  * responde a MESMA string nos dois casos. O bump é o que devolve essa resposta.
  */
-export const VERSAO = "v1.2-produtos-teto-500-e-partial-honesto";
+export const VERSAO = "v1.3-apriori-keyset";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

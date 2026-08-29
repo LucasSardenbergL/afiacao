@@ -52,9 +52,6 @@ export async function carregarOwnerMap(db: BancoPostgrest): Promise<Map<string, 
 }
 
 export interface LinhaPedidoMes {
-  /** Chave do keyset. Não entra em nenhum cálculo do snapshot — está aqui porque o cursor
-   *  precisa dela projetada. */
-  id: string;
   customer_user_id: string;
   total: number | null;
   order_date_kpi: string;
@@ -82,9 +79,15 @@ export async function carregarPedidosDoMes(
   // é LATENTE, não ativo. A troca é preventiva e custa três linhas; o crescimento é orgânico
   // (~29 mil inserts acumulados em `sales_orders`) e o dia em que a primeira página encher
   // não vem com aviso.
-  return await fetchAllKeyset<LinhaPedidoMes, string>(
+  // `id` fica FORA de `LinhaPedidoMes`: ele é transporte (a chave do cursor), não dado do
+  // snapshot. Declará-lo no tipo público obrigaria todo consumidor a inventar um id nas
+  // fixtures — `carteira-positivacao-snapshot/montar-linhas_test.ts` reprovou por isso —, o
+  // que é pedir ao chamador que conheça a paginação de dentro. O tipo interno carrega a
+  // coluna; o contrato de saída segue o mesmo de antes.
+  type LinhaComCursor = LinhaPedidoMes & { id: string };
+  return await fetchAllKeyset<LinhaComCursor, string>(
     (cursor, limite) => {
-      let q = db.from<LinhaPedidoMes>("sales_orders")
+      let q = db.from<LinhaComCursor>("sales_orders")
         // `id` entra no `.select()` porque o CURSOR precisa dele — sob `.range()` a coluna do
         // `.order()` não precisava estar projetada, e a falta só apareceria em runtime.
         .select("id, customer_user_id, total, order_date_kpi")
