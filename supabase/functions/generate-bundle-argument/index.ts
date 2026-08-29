@@ -14,6 +14,7 @@ import {
 } from "./argumento-tools.ts";
 import { blocoCliente, type ContextoCliente, REGRA_DADO_AUSENTE } from "./argumento-helpers.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // Formato do corpo, só com o que o prompt realmente lê. Antes vinha do `any` implícito de
@@ -97,6 +98,28 @@ Deno.serve(async (req) => {
       customerProfile: string;
       mode?: string;
     };
+
+    // COTA — depois da validação do corpo (requisição malformada não queima cota) e antes de
+    // qualquer chamada à Anthropic; os dois `mode` abaixo passam por aqui.
+    //
+    // O gate de staff desta edge (`authorizeCronOrStaff`, acima) guarda SÓ o ramo da sonda: o
+    // caminho de DISPARO chegava à Anthropic com `getUser()` pelado, sem role e sem
+    // `is_approved`. Como `/auth` é cadastro público e sem convite, "JWT válido" inclui um
+    // customer não aprovado, barrado em TODA a UI — que ainda assim gastava o orçamento da
+    // organização em laço. Mesma classe do #2086 (`elevenlabs-transcribe`), mesmo par.
+    const userId = user.id;
+    if (typeof userId !== 'string' || !userId) {
+      return new Response(JSON.stringify({ error: 'Token inválido' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    const supabaseCota = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const cota = await consumirCota(supabaseCota, userId, 'generate-bundle-argument', 'argumentações de bundle');
+    if (!cota.permitido) {
+      return new Response(JSON.stringify({ error: cota.mensagem }), {
+        status: cota.http,
+        headers: { ...corsHeaders, ...headersDeCota(cota), 'Content-Type': 'application/json' },
+      });
+    }
 
     // ─── MODE: diagnostic_questions ─────────────────────────────
     if (mode === 'diagnostic_questions') {

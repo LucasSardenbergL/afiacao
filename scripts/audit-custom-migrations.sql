@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 499
+-- Total de custom migrations: 500
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -539,6 +539,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260828210014', 'ia_uso_limite_elevenlabs_transcribe', '20260828210014_ia_uso_limite_elevenlabs_transcribe.sql'),
   ('20260828210836', 'separar_cap_carteira_escrever', '20260828210836_separar_cap_carteira_escrever.sql'),
   ('20260828213000', 'cap_carteira_escrever_master_only', '20260828213000_cap_carteira_escrever_master_only.sql'),
+  ('20260828224542', 'ia_uso_limite_generate_bundle_argument', '20260828224542_ia_uso_limite_generate_bundle_argument.sql'),
   ('20260829012000', 'analytics_outbox_perda_visivel', '20260829012000_analytics_outbox_perda_visivel.sql'),
   ('20260829041500', 'analytics_outbox_trigger_sensor', '20260829041500_analytics_outbox_trigger_sensor.sql')
 ),
