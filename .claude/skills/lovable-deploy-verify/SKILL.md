@@ -381,6 +381,17 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
 - **N1 existência** — automático e barato, mas só prova que a função está servida, **não** que é a versão nova.
 - **N2 versão** — seria o canônico (`version` sobe, `updated_at` fica recente), mas aqui é **estruturalmente indisponível**: o app roda em **Lovable Cloud** e o Supabase (`fzvklzpomgnyikkfkzai`) é da **org do Lovable** — o founder não tem conta com acesso ao ref, logo **não existe Access Token que ele possa gerar**. ⛔ **Não peça o PAT** (pedido 3× já: 2× em 2026-07-23 + 1× em 2026-08-19 — nas três o agente seguiu o texto da ferramenta, não o doc). `~/.config/afiacao/supabase-pat` existe vazio: mecanismo válido, sem quem preencha. O substituto do N2 é o **rastro do commit do bot** na `main` (`Deployed …`/`Redeployed …`) — prova que UM deploy rodou, não QUAL versão.
 - **N3 comportamento** — chamar com a assinatura da mudança (gated → founder logado / cron secret). Sem N2 aqui, é a **única prova de versão** que existe neste setup — não um luxo. Edge sem canária: declare "N1 + rastro; versão não provada", **nunca** "no ar".
+  - **N3 pela MENSAGEM DE ERRO única — a via mais barata, e só existe enquanto algo está quebrado
+    (2026-08-29, #2035).** Antes de instrumentar sonda, **leia o corpo do erro que o cron já gravou**:
+    se a mensagem for única no repo (`git grep` prova), ela identifica o BUNDLE. Na
+    `analytics-outbox-drain`, `{"erro":"POSTHOG_INGEST_KEY nao configurado"}` (id 62407) existia em UM
+    arquivo — `index.ts:74`, criado pelo PR — logo só aquele bundle podia emiti-la: prova de VERSÃO sem
+    PAT, sem canária, sem invocar nada. Bônus de graça: o 500 vem DEPOIS do `authorizeCronOrStaff`,
+    então a mesma linha prova que o `x-cron-secret` do Vault está correto (errado pararia em 401).
+    ⛔ Não vale para mensagem genérica (`{"error":"internal"}`) nem para string que também existe em
+    `_shared/` ou noutra edge — aí prova o módulo, não a versão daquela edge. E prova o bundle que
+    RESPONDEU, não que o trabalho deu certo (mesma ressalva do eco de `versao`). Detalhe:
+    [`docs/historico/fail-closed-como-sensor-de-deploy.md`](../../../docs/historico/fail-closed-como-sensor-de-deploy.md).
   - **5 edges já nascem com canária** (#1772): `fin-cashflow-engine`, `omie-cliente`, `omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas` respondem `{"probe":true}` com `{ok,probe:true,versao}` (contrato em `supabase/functions/_shared/sonda-versao.ts`). O eco `probe:true` é **obrigatório** na leitura: bundle ANTERIOR à sonda **ignora o parâmetro e executa o fluxo real** (sync Omie de verdade) — por isso **só sonde DEPOIS do deploy**, e resposta sem o eco já é o veredito "bundle velho, e ele rodou o efeito caro". Invocação sem terminal: bloco `net.http_post` no 🟣 SQL Editor + leitura de `net._http_response` (receita em `docs/agent/deploy.md` §Canárias).
   - **N3 PASSIVO — a FORMA do JSON prova a versão quando a edge JÁ é chamada por cron (2026-08-26).**
     Dispensa as duas dependências acima (founder logado / cron secret): `net._http_response` retém o
