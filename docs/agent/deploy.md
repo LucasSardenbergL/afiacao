@@ -167,6 +167,15 @@ FROM r;
 
 ⚠️ **Número de EXEMPLO no `WHERE id =` erra CALADO — é PIOR que o placeholder.** Variante da anterior, mordida 2026-08-23/24 na MESMA verificação, e é a Lei de Ferro #5 (`zero placeholders`) pelo avesso: o `<VALOR>` não substituído falha **ruidoso** — `<nome-da-edge>` deixado na URL rendeu dois `404 {"code":"NOT_FOUND"}` do **gateway** (ids 58965/58966): 2 chamadas perdidas e **zero veredito falso**. Já a "correção" que trocou o marcador por um id PLAUSÍVEL (`WHERE id = 58967`) não falhou — devolveu uma linha REAL de outro emissor. O probe era o **58977** (`{"ok":true,"probe":true,"versao":"v1.0-prompt-invertido-cacheado","edge":"analyze-unified-order"}`, verde); o 58967 era o tick do watchdog de 01:20:00Z, e `{"modo":"watchdog","conciliacao":0,"duracao_ms":193}` projeta `edge NULL, status_code 200, versao NULL` — **byte a byte** a assinatura de bundle pré-sensor. Deploy CORRETO lido como ausente, mesmo desfecho da ⚠️ acima (redeployar edge money-path à toa), e **nada na saída denuncia** que se leu o alvo errado. Não é azar: medido nesta tabela em 2026-08-24, **198 respostas em 355 min — uma nova a cada ~1,8 min, e ZERO delas emitindo `edge`** ⇒ id vizinho é tick alheio por padrão. **Regra: em receita de verificação, o campo que o founder substitui NUNCA carrega valor de EXEMPLO** — deixe-o sintaticamente inválido de propósito (`COLE_AQUI_O_REQUEST_ID` devolve `ERROR: column "cole_aqui_o_request_id" does not exist`, que ecoa a própria instrução), ou leia pelo `edge` do corpo com o guard de zero-linhas acima. Vale para TODA receita, não só esta: `id`, timestamp, ref de projeto, nº de PR. ⚠️ **"Inválido" é a regra do bloco que só LÊ** — no bloco que DISPARA (lote, abaixo) o placeholder é VÁLIDO e a trava real vai no `CASE`: lá o inválido aborta o batch inteiro por rollback, o que protege por ACIDENTE e mata a leitura junto. O eixo não é a sintaxe, é o que o campo errado CUSTA: numa leitura, ler a linha de outro emissor; num disparo, executar o efeito.
 
+⚠️ **Edge NOVA nasce fora do radar, e nenhum gate de sonda reclama.** O universo de `sonda:bump` e
+`sonda:fingerprint` são as edges **instrumentadas**, e o denominador de `pendencias:deploy` sai do
+**mapa commitado** — quem nunca entrou na lista não reprova, some. A `analytics-outbox-drain` (#2035)
+passou assim e o deploy dela só se provou por arqueologia (N1 + uma string de erro que estava no corpo
+por acaso). Ao criar edge com cron próprio, a régua barata é conferir se ela **aparece** em
+`bun run pendencias:deploy`; e se ela é chamada por `net.http_post`, ecoe `versao`/`edge`/`fonte` em
+TODA resposta — o corpo já cai em `net._http_response`, e o N3 passivo sai de graça. →
+`docs/historico/verificar-sonda-versao.md` §14
+
 #### Sondar VÁRIAS edges numa tacada (leva inteira) — e as 3 armadilhas do SQL Editor
 
 Uma leva tem 5–10 edges, e repetir o par disparo/leitura por edge convida ao erro de trocar o `request_id`
