@@ -392,6 +392,20 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
     `_shared/` ou noutra edge — aí prova o módulo, não a versão daquela edge. E prova o bundle que
     RESPONDEU, não que o trabalho deu certo (mesma ressalva do eco de `versao`). Detalhe:
     [`docs/historico/fail-closed-como-sensor-de-deploy.md`](../../../docs/historico/fail-closed-como-sensor-de-deploy.md).
+    🔴 **A 4ª pré-condição, que as três acima não cobrem: a string tem de estar ausente do bundle
+    ANTERIOR da MESMA edge (2026-08-29, #2086).** O `+` no diff prova que a **linha** é nova — não
+    que a **string** seja. Na `elevenlabs-transcribe`, `{"error":"Token inválido"}` nasceu no guard
+    novo de `claims.sub` e parecia perfeita, mas a mesma edge **já a emitia** no gate de assinatura
+    do JWT: os dois bundles respondem 401 com o corpo idêntico, e "recebi `Token inválido` ⇒ bundle
+    novo" é **falso positivo** — o erro que ENCERRA a verificação (irmão da sentinela não-exclusiva
+    do Passo 4). Meça no pai, exigindo resposta POSITIVA — **zero** é a condição, qualquer outro
+    número mata a via:
+    ```bash
+    git show <sha-do-merge>^:supabase/functions/<edge>/index.ts | grep -c '<string>'
+    ```
+    E confira também o repo (`git grep`): a mesma `Token inválido` sai de **10** arquivos, então nem
+    a unicidade global se sustentava. Detalhe:
+    [`docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md`](../../../docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md).
   - **5 edges já nascem com canária** (#1772): `fin-cashflow-engine`, `omie-cliente`, `omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas` respondem `{"probe":true}` com `{ok,probe:true,versao}` (contrato em `supabase/functions/_shared/sonda-versao.ts`). O eco `probe:true` é **obrigatório** na leitura: bundle ANTERIOR à sonda **ignora o parâmetro e executa o fluxo real** (sync Omie de verdade) — por isso **só sonde DEPOIS do deploy**, e resposta sem o eco já é o veredito "bundle velho, e ele rodou o efeito caro". Invocação sem terminal: bloco `net.http_post` no 🟣 SQL Editor + leitura de `net._http_response` (receita em `docs/agent/deploy.md` §Canárias).
   - **N3 PASSIVO — a FORMA do JSON prova a versão quando a edge JÁ é chamada por cron (2026-08-26).**
     Dispensa as duas dependências acima (founder logado / cron secret): `net._http_response` retém o
