@@ -781,7 +781,10 @@ SELECT DISTINCT ON (edge) edge, versao, left(fonte,12) AS fonte12, via,
 
 O `jsonb_typeof(...) = 'object'` não é enfeite: outro emissor grava `resultados` como **array**, e o
 `jsonb_object_keys` sobre ela **aborta a query inteira** — não é uma linha ruim ignorada, é o
-resultado todo perdido (a mesma armadilha já registrada na `lovable-deploy-verify`).
+resultado todo perdido (medido em 2026-08-28 09:00Z, registrado na `lovable-deploy-verify`). ⚠️ Essa
+metade é **precaução ancorada em medição anterior, não falsificada aqui**: no TTL de 2026-08-29 02:40Z
+só havia `resultados` como `object`, então remover o guard *não* abortou. Ausência do array na janela
+não prova que o guard sobra — prova que ele **não foi exercitado**, e as duas leituras se parecem.
 
 Duas coisas que esta query **não** dispensa. A primeira é o **guard temporal** do #2079: `utc` tem de
 ser POSTERIOR ao merge que se verifica — tick anterior é história, não pendência, e lê-lo como
