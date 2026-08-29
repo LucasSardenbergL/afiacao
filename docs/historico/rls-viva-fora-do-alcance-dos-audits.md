@@ -746,3 +746,37 @@ Mas a preocupação tinha fundo, e verificá-la achou um buraco de verdade:
 ninguém aplicou": **existência fazendo as vezes de estado**. Fica registrado como pendência com o
 formato da correção já claro — para objeto recriado, o inventário precisa guardar o md5 do corpo
 ESPERADO, não só o nome.
+
+### 11.2 Aplicada — e a medição pós-apply que quase não aconteceu
+
+`20260828213000_cap_carteira_escrever_master_only.sql` foi colada no SQL Editor em 2026-08-29. A
+verificação pediu **cinco** medições, e o valor da rodada está em ter exigido as cinco:
+
+| o que | esperado | medido |
+|---|---|---|
+| `srcMd5` de `cap_carteira_escrever` | `5faf2a21…` (previsto ANTES do apply) | `5faf2a21…` ✅ |
+| `prosecdef` / `proconfig` | `true` / `search_path=public` | idem ✅ |
+| `srcMd5` de `cap_carteira_ler` | `836e8f46…` (intacta) | idem ✅ |
+| `EXECUTE` de `authenticated` | preservado | `true` ✅ |
+| `EXECUTE` de `anon` | negado (PUBLIC segue revogado) | `false` ✅ |
+
+O md5 bater com o que fora **previsto antes** do apply é o que transforma "rodei" em evidência: se
+viesse outro valor, o certo seria parar, não carimbar.
+
+#### A armadilha de leitura que apareceu no meio
+
+As duas últimas linhas **não voltaram** na primeira medição. A saída trouxe três resultados e um
+`ERROR: permission denied for schema private` no fim — e um `grep` pelas linhas que interessavam
+teria mostrado três ✅ e **nenhum sinal do que faltou**.
+
+A causa: `has_function_privilege('anon', 'private.cap_carteira_escrever(uuid)', 'EXECUTE')` resolve
+a função **pela assinatura em texto**, e isso exige `USAGE` no schema — que o `claude_ro` não tem.
+Ler `pg_proc` direto funciona (catálogo é legível); **resolver o nome, não**. A forma por **OID**
+(`has_function_privilege(rol, p.oid, 'EXECUTE')`, com `p` vindo de um join em `pg_proc`) não passa
+por resolução de nome e devolve o dado.
+
+> **Lição:** *a mesma função do Postgres tem sobrecargas com requisitos de permissão diferentes.*
+> Sob um papel read-only deliberadamente estreito, prefira sempre a forma por **OID** — e trate
+> linha que não voltou como **ausência de dado**, nunca como o valor que você esperava. Aqui o
+> `psql` sinalizou com um ERROR; num caso com `LEFT JOIN` ou agregação, o mesmo buraco sairia como
+> `NULL` silencioso.
