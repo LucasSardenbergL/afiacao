@@ -363,7 +363,65 @@ um falha alto, o outro mente. Quem tropeça no `src/`, corrige aquele caso e seg
 (pode estar funcionando porque a inicial calhou de ser inócua). E, como nas outras nove, uma
 afirmação conhecida junto: um `grep` de controle cuja resposta você já sabe, para que a leitura
 prove que leu o que diz ter lido.
-## O padrão por trás das dez
+### 11. O PREÂMBULO do wrapper vira "dado" — e `-n "$X"` o aceita
+
+O `~/.config/afiacao/psql-ro` emite duas linhas `SET` no **stdout** antes de qualquer resultado
+(ele ajusta a sessão antes de rodar a query). Com `-Atc`, um script que guarda a saída numa
+variável e pergunta só *"veio alguma coisa?"* recebe `SET\nSET` e responde **sim**:
+
+```bash
+LINHA=$("$PSQL" -Atc "SELECT ... LIMIT 1;")     # sem tick nenhum ainda -> LINHA="SET\nSET"
+if [ -n "$LINHA" ]; then                        # <- VERDADEIRO. E nao ha dado nenhum.
+  case "$LINHA" in
+    *"|SEM_VERSAO|"*) echo BUNDLE_VELHO; exit 1 ;;
+    *)                echo MARCADOR_PRESENTE; exit 0 ;;   # <- o default OTIMISTA fecha a armadilha
+  esac
+fi
+```
+
+Medido em 2026-08-29, verificando o deploy da `analytics-outbox-drain`: o script anunciou
+`VEREDITO=MARCADOR_PRESENTE` num instante em que `net._http_response` **não tinha uma única linha**
+posterior ao corte. Repassado, teria virado "deploy confirmado" sobre zero observações.
+
+São **dois** defeitos, e os dois são necessários: `-n` como teste de presença (o preâmbulo passa) e
+o `*)` do `case` no lado otimista (o não-reconhecido vira aprovação). A correção é exigir a FORMA,
+não a presença, e mandar todo o resto para o vermelho:
+
+```bash
+LINHA=$(printf '%s\n' "$BRUTO" | awk -F'|' 'NF==6 {print; exit}')   # SO a linha com 6 campos
+[ -n "$LINHA" ] || { echo "SEM DADO — nao concluo"; exit 2; }
+```
+
+Generaliza para qualquer wrapper que fale antes de responder (`SET`, banner, aviso de versão): a
+pergunta nunca é *"veio texto?"*, é *"veio texto com a FORMA que eu pedi?"*.
+
+### 12. No Postgres, `||` liga mais FORTE que `->>` — a query aborta e o vazio parece veredito
+
+```sql
+SELECT (content::jsonb)->>'versao' || '~' || (content::jsonb)->>'edge' FROM ...;
+-- ERROR:  operator does not exist: text ->> unknown
+```
+
+O parser agrupa `'versao' || '~' || (content::jsonb)` **primeiro** e só então tenta aplicar `->>`
+sobre o `text` resultante. Não é erro de digitação: a expressão está escrita como se lê, e o
+Postgres a lê de outro jeito. O conserto é parentizar cada extração —
+`((content::jsonb)->>'versao') || '~' || ((content::jsonb)->>'edge')`. (Dentro de `coalesce(...)`
+o problema não aparece, porque a função já isola o operando — foi por isso que o mesmo `->>`
+funcionou num script e quebrou no outro, na mesma sessão.)
+
+O que a torna da família deste doc é o que acontece **depois**. Na mesma verificação de
+2026-08-29, essa query estava dentro de um `$( ... 2>/dev/null )`: o `ERROR` foi para o ralo, a
+variável veio vazia, e a tabela de comparação imprimiu três `❌` — que se leem como *"os campos
+não batem"* quando o que houve foi *"não consultei"*. Falso NEGATIVO num money-path, e o desfecho
+seria redeployar uma edge que está correta.
+
+Duas regras saem daí, e a segunda é a que generaliza: **parentize a extração de JSON sempre que ela
+encostar em `||`**; e **nunca deixe `2>/dev/null` numa consulta cujo vazio vira veredito** — se o
+silêncio do erro e a resposta negativa produzem a mesma saída, o script não tem como distinguir os
+dois, e vai escolher o errado. (Irmã da #7: lá o wrapper devolve exit≠0 *sem rodar nada*; aqui o
+comando roda, falha, e a falha é apagada no caminho.)
+
+## O padrão por trás das doze
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -371,7 +429,10 @@ assim não ser o que o consumidor lê; e a nona volta ao verde por construção 
 caminho — é a CONTRAMEDIDA de outra que trai ao mudar de shell, lendo ausência de dado como
 sucesso: o sinal que você lê não é o sinal que você acha que está lendo. E a décima fecha o ciclo
 pelo lado do INSUMO: as nove anteriores leem mal um resultado real, enquanto ela entrega ao `grep`
-um insumo que nunca foi o pedido — o comando roda, devolve 0, e mede outra coisa. Verde e vermelho
+um insumo que nunca foi o pedido — o comando roda, devolve 0, e mede outra coisa. A décima primeira e a décima segunda fecham pelo lado do CANAL:
+uma lê o PREÂMBULO do wrapper como resposta, a outra apaga o ERRO da consulta com `2>/dev/null`
+— nas duas o script conclui sobre um dado que nunca chegou, e nas duas o caminho
+não-reconhecido estava desenhado para o lado otimista. Verde e vermelho
 por construção precisam do mesmo antídoto: uma leitura cuja resposta já se conhece. A contramedida é sempre a mesma — **exigir uma afirmação POSITIVA e com formato
 conhecido** (exit code capturado colado, saída não-vazia, marcador de conclusão, formato conferido),
 em vez de ler qualquer coisa na ausência dela.
