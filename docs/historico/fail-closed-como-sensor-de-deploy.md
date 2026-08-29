@@ -24,7 +24,8 @@ Neste projeto o N2 (Management API) é **estruturalmente indisponível** — o S
 Lovable, não existe PAT que o founder possa gerar. Sobra N1 (existência, via `OPTIONS`) e N3
 (comportamento). O `verify-edge.sh` deu N1 verde, o que **não** prova qual bundle está servido.
 
-A prova de versão veio de graça, do `net._http_response` gravado pelo cron:
+A prova de versão veio de graça, do `net._http_response` — gravado por uma invocação avulsa, **não**
+pelo cron do drain, que nesta hora ainda não existia (a migration 3 seguia pendente; ver §Fecho):
 
 ```
 id 62407 · 2026-08-28 23:35:00Z · status 500
@@ -143,6 +144,28 @@ sozinha em 02/09, quando a janela couber inteira na vida da outbox.
 mente para o lado alarmante (parece perda). Antes de investigar divergência, compare a idade do
 coletor com a janela da view.
 
+## Fecho — a migration 3 entrou em 2026-08-29, e só aí o ciclo virou autônomo
+
+Os 105 eventos drenaram **por invocação avulsa**, com a migration 3 ainda pendente. O cron nasceu
+depois, e a distinção não é cosmética: até ele existir, cada drenagem dependia de alguém mandar.
+
+| medição | evidência |
+|---|---|
+| às 00:50Z o cron do drain **não existia** | `cron.job` só tinha `analytics-outbox-purgar` (jobid 177) |
+| migration 3 aplicada ~01:10Z | `cron.job` ganha `analytics-outbox-drain` **jobid 180**, `*/5 * * * *`, ativo |
+| 1º tick autônomo | `min(start_time)` do jobid 180 = `2026-08-29 01:15:00.478Z` |
+| a verdade HTTP desse tick | `net._http_response` id 62471, **200**, `{"reivindicados":0,"aceitos":0,"transitorios":0,"quarentena":0}` |
+
+Os quatro campos são o `interface Resultado` da própria edge, e nenhuma outra os emite — a resposta
+se auto-identifica, então o veredito não depende do `succeeded` do `job_run_details` (que só prova o
+ENQUEUE). Os zeros são o resultado CERTO: a fila já estava vazia. O alarme seria `reivindicados: 0`
+**com** `na_fila > 0`.
+
+⚠️ **`min(start_time)` do jobid é o que separa "o cron rodou" de "alguém rodou".** Nenhuma resposta
+anterior a 01:15Z pode ter vindo do cron 180, porque ele não tinha executado nenhuma vez — e é por
+isso que a atribuição lá em cima foi corrigida. Atribuir a um agendador o efeito que veio de mão
+humana faz o ciclo parecer fechado enquanto ainda depende de alguém lembrar.
+
 ## Resíduo operacional
 
 1. **Ao verificar deploy de edge sem PAT, leia o corpo do erro antes de instrumentar qualquer sonda** —
@@ -153,6 +176,9 @@ coletor com a janela da view.
    o destino.
 4. **Tarefa herdada com "estado medido" tem validade.** Re-medir custou ~4 min e evitou um deploy
    redundante de edge money-path — os dois passos já tinham sido feitos por outra sessão.
+5. **Efeito observado não nomeia o gatilho.** Fila drenada prova que a edge funciona, não que algo a
+   chama sozinha. Antes de creditar um cron, exija `min(start_time)` do jobid dele anterior ao
+   efeito — senão "está no ar" e "roda sozinho" viram a mesma frase, e só o primeiro é verdade.
 
 ## Referências
 - Skill `lovable-deploy-verify` (Passo 4, "Edge — a escada": N1/N2/N3, N3 passivo pela forma do JSON)
