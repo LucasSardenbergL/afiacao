@@ -379,6 +379,33 @@ export type Database = {
         }
         Relationships: []
       }
+      analytics_outbox_perda: {
+        Row: {
+          dia: string
+          evento: string
+          mais_antigo: string
+          motivo: string
+          quantidade: number
+          registrado_em: string
+        }
+        Insert: {
+          dia: string
+          evento: string
+          mais_antigo: string
+          motivo: string
+          quantidade: number
+          registrado_em?: string
+        }
+        Update: {
+          dia?: string
+          evento?: string
+          mais_antigo?: string
+          motivo?: string
+          quantidade?: number
+          registrado_em?: string
+        }
+        Relationships: []
+      }
       atp_decisoes: {
         Row: {
           account: string
