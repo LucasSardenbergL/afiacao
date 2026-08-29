@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 497
+-- Total de custom migrations: 498
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -538,7 +538,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260826021000', 'reposicao_cold_start_fusivel_graduacao', '20260826021000_reposicao_cold_start_fusivel_graduacao.sql'),
   ('20260828210014', 'ia_uso_limite_elevenlabs_transcribe', '20260828210014_ia_uso_limite_elevenlabs_transcribe.sql'),
   ('20260828210836', 'separar_cap_carteira_escrever', '20260828210836_separar_cap_carteira_escrever.sql'),
-  ('20260828213000', 'cap_carteira_escrever_master_only', '20260828213000_cap_carteira_escrever_master_only.sql')
+  ('20260828213000', 'cap_carteira_escrever_master_only', '20260828213000_cap_carteira_escrever_master_only.sql'),
+  ('20260829012000', 'analytics_outbox_perda_visivel', '20260829012000_analytics_outbox_perda_visivel.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2240,7 +2241,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_param_fila_sensor', 'rls_policy', 'public', 'staff le fila log', 'reposicao_param_fila_log'),
   ('reposicao_cold_start_fusivel_graduacao', 'function', 'public', 'reposicao_cold_start_parametros', ''),
   ('separar_cap_carteira_escrever', 'function', 'private', 'cap_carteira_escrever', ''),
-  ('cap_carteira_escrever_master_only', 'function', 'private', 'cap_carteira_escrever', '')
+  ('cap_carteira_escrever_master_only', 'function', 'private', 'cap_carteira_escrever', ''),
+  ('analytics_outbox_perda_visivel', 'function', 'public', 'analytics_outbox_purgar', ''),
+  ('analytics_outbox_perda_visivel', 'function', 'public', '_data_health_compute', ''),
+  ('analytics_outbox_perda_visivel', 'function', 'public', 'data_health_watchdog', ''),
+  ('analytics_outbox_perda_visivel', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('analytics_outbox_perda_visivel', 'table', 'public', 'analytics_outbox_perda', ''),
+  ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_service_all', 'analytics_outbox_perda'),
+  ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_master_read', 'analytics_outbox_perda')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3990,7 +3998,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_param_fila_sensor', 'rls_policy', 'public', 'staff le fila log', 'reposicao_param_fila_log'),
   ('reposicao_cold_start_fusivel_graduacao', 'function', 'public', 'reposicao_cold_start_parametros', ''),
   ('separar_cap_carteira_escrever', 'function', 'private', 'cap_carteira_escrever', ''),
-  ('cap_carteira_escrever_master_only', 'function', 'private', 'cap_carteira_escrever', '')
+  ('cap_carteira_escrever_master_only', 'function', 'private', 'cap_carteira_escrever', ''),
+  ('analytics_outbox_perda_visivel', 'function', 'public', 'analytics_outbox_purgar', ''),
+  ('analytics_outbox_perda_visivel', 'function', 'public', '_data_health_compute', ''),
+  ('analytics_outbox_perda_visivel', 'function', 'public', 'data_health_watchdog', ''),
+  ('analytics_outbox_perda_visivel', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('analytics_outbox_perda_visivel', 'table', 'public', 'analytics_outbox_perda', ''),
+  ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_service_all', 'analytics_outbox_perda'),
+  ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_master_read', 'analytics_outbox_perda')
 )
 SELECT
   e.migration,
