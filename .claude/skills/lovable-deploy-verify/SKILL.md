@@ -422,6 +422,33 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        medido 2026-08-26: 208 linhas cobrindo 5h55). Run de ontem **não está lá** — fora da janela,
        volta-se ao N3 ativo. Confira o número com
        `~/.config/afiacao/psql-ro -Atc "SELECT name, setting FROM pg_settings WHERE name = 'pg_net.ttl';"`.
+    5. 🔴 **O GUARD TEMPORAL — o INVERSO do limite acima, e pior que ele (2026-08-28, #2079).** O
+       item 4 cobre "o run é velho demais e SUMIU": ausência honesta, que se percebe. O sentido
+       inverso não se percebe — **os ticks presentes são todos ANTERIORES ao merge**. Aí a query roda
+       com **exit 0** e devolve linhas perfeitamente legíveis, com o marcador VELHO, que se lê como
+       "deploy pendente". É falso NEGATIVO com cara de veredito confiante, e o preço é mandar o
+       founder redeployar edge money-path à toa. Medido verificando o #2079: às **23:41Z** o TTL
+       tinha os ticks de 18:15, 20:15 e **22:15** contra um merge às **22:32** — todos pré-merge,
+       todos ecoando `v1.0-eco-versao-passivo`, e nenhum deles dizendo coisa alguma sobre este
+       deploy. O tick seguinte (**00:15Z**) provou que as edges **já estavam no ar** desde antes.
+       É `ausente ≠ zero` na dimensão **TEMPO**: **anterior ≠ ausência de deploy** — irmão da regra
+       do `background` (lá a coluna `modo` separa "não subiu" de "não deu tempo de coletar"; aqui a
+       coluna `created` separa "não subiu" de "**ainda não foi medido**").
+       **Virou SCRIPT, não recado** — recado depende de alguém lembrar, que é exatamente como a
+       armadilha da sentinela não-exclusiva passou:
+       ```bash
+       .claude/skills/lovable-deploy-verify/scripts/verify-edge-eco.sh \
+         --desde '<timestamp do merge, UTC>' --esperado '<VERSAO da main>' [--steps 'ctes,nfes']
+       # 0 = NO AR · 1 = bundle VELHO provado (aí sim pendente) · 2 = INDETERMINADO · 3 = RECUSA
+       ```
+       Três coisas que ele guarda e a query crua não: **(a)** sem tick posterior ao corte ⇒ **exit 2**,
+       nunca 1; **(b)** o veredito sai do **tick MAIS RECENTE** — um tick gravado entre o merge e o
+       deploy ecoa o marcador velho com toda a razão, é história, e julgar por ele reprova deploy
+       correto; **(c)** **fail-CLOSED** na via de leitura, inclusive presente-porém-QUEBRADA (responde
+       vazio sem erro), caso em que "0 ticks" se leria como *indeterminado* em vez de *recusa* — e é
+       só nele que o ping tem dente, porque com a via totalmente morta o guard da contagem já recusa
+       sozinho (a 1ª sabotagem escrita saiu inócua por isso, e o eval registra o porquê).
+       Rede: `evals/verify-edge-eco-eval.sh` — 8 casos + 3 sabotagens, no gate `evals/run.sh`.
     - ⛔ **Dois sinais que PARECEM discriminar deploy e NÃO discriminam** — os dois foram testados neste
       mesmo ciclo e reprovados (narrativa em `docs/historico/verificar-sonda-versao.md` §12):
       **(a) duração da execução** (`acoes_execucoes`) — o run pós-mudança caiu para 24,0 s contra a faixa
@@ -611,4 +638,12 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   `input[type="checkbox"]` — a sentinela que o Passo 4 recomenda — segue silenciosa. AVISA e nunca
   recusa, como a sonda de lib. Rede: 3 casos bidirecionais + sabotagem `falsify_marca` (o fixture
   nunca modelou isto — bundle fake não é minificado, sentinela idêntica nos dois universos).
+- [x] **GUARD TEMPORAL do N3 passivo (2026-08-28, verificando o #2079):** a skill cobria o TTL só no
+  sentido "run velho SUMIU ⇒ N3 ativo"; o inverso — **TTL cheio, mas só de ticks PRÉ-merge** — devolvia
+  linhas legíveis com o marcador velho e se lia como "deploy pendente" (falso NEGATIVO, que **encerra**
+  a verificação com um pedido caro ao founder). Virou `scripts/verify-edge-eco.sh`: sem tick posterior
+  ao corte ⇒ **exit 2 INDETERMINADO**, nunca 1; veredito pelo **tick mais recente** (o intermediário
+  entre merge e deploy é história); fail-closed inclusive na via presente-porém-quebrada. Rede:
+  `evals/verify-edge-eco-eval.sh` (8 casos + 3 sabotagens) no gate. A falsificação pagou: a sabotagem
+  do ping saiu **inócua** e revelou que ele só tem dente contra a via MUDA, não contra a morta.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
