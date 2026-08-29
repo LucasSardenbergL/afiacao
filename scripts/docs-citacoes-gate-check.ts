@@ -453,7 +453,9 @@ if (import.meta.main) {
   // Doc não varrido entra pela ÂNCORA, e só por ela. `CONGELADOS` é a saída nominal e vale aqui
   // também: doc listado ali declarou que as citações dele estão obsoletas de propósito.
   const fora = lerDocsForaDoEscopo(raiz);
-  const parsesFora = fora.filter((d) => !CONGELADOS.includes(d)).map((d) => parseCitacoes(d, ler(d)));
+  const parsesFora = fora
+    .filter((d) => !CONGELADOS.includes(d))
+    .map((d) => parseCitacoes(d, ler(d)));
   const ancoradas = apenasAncoradas(parsesFora.flatMap((p) => p.citacoes));
 
   const idx = indexarRepo(raiz);
