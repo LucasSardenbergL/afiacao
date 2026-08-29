@@ -278,6 +278,30 @@ jobs:
       - name: Lint
         run: bun lint
 
+      # Shell lint. Existia como comando local (`/health`) e NUNCA como gate de CI — e o escopo
+      # local era `scripts/*.sh .claude/hooks/*.sh`, sem `db/*.sh`. Medido em 2026-08-28: o escopo
+      # antigo estava em exit 0, e os 267 `db/*.sh` que ficavam de fora tinham 83 avisos em 21
+      # arquivos. `db/test-*.sh` é onde moram as PROVAS EXECUTADAS do SQL de risco (ritual
+      # prove-sql-money-path) — o pior lugar do repo para não ter linter, porque harness com bug de
+      # shell não fica vermelho: ele passa e AFIRMA que a invariante vale.
+      # Três dos 83 eram DEFEITO, cada um provado com repro antes do conserto:
+      #   · SC2181 (`cmd; if [ $? -ne 0 ]`) sob `set -e` em função chamada nua: o `set -e` matava o
+      #     script no `cmd` e o bloco "falsificação INVÁLIDA" era inalcançável — o harness não sabia
+      #     distinguir "sabotagem não aplicou" de "gate sem dente".
+      #   · SC2006 (crase) dentro de heredoc INTERPOLADO: o shell executava o conteúdo da crase e o
+      #     psql recebia o comentário mutilado, com `command not found` entrando na var capturada.
+      #   · `grep -v '^$'` sob `pipefail` com lista vazia: matava o harness exatamente no caso que
+      #     ele existe para reportar. Nenhum dos três vira teste vermelho — só o linter os vê.
+      # Roda `bun run lint:shell`, o MESMO comando do health stack local, de propósito: gate de CI
+      # que diverge do comando local recria a lacuna que veio fechar (mesma regra do knip).
+      # Entra em ZERO, sem baseline: exceção é `# shellcheck disable=` no ponto de uso, com o porquê
+      # ao lado. O gate imprime a VERSÃO do shellcheck no log — releases mudam o conjunto de checks,
+      # e é isso que explicaria um "verde no laptop, vermelho aqui".
+      # Falsificação (sabota e exige vermelho) roda no passo `Hooks guard tests`:
+      # scripts/test-shellcheck-gate.sh.
+      - name: Shell lint gate (shellcheck — scripts/ + hooks/ + db/)
+        run: bun run lint:shell
+
       # Anti-inchaço do CLAUDE.md (carregado em toda sessão+subagente). Teto
       # apertado (20 KB / 2,6k palavras / linha ≤2000c) vs ~13 KB pós-refactor
       # da frente 1 (2026-06-15). Estourar = mover a lição pra docs/agent/ e o

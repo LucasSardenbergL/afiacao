@@ -162,8 +162,11 @@ P -q -f "$REPO_ROOT/supabase/migrations/$MIG_NOVA"
 echo "migration aplicada: $MIG_NOVA  (sobre a tabela JÁ POVOADA com segmento NULL)"
 
 V=$(Pq -c "SELECT count(*) FROM public.farmer_association_rules WHERE cluster_segment IS NULL;")
-[ "$V" = "2" ] && echo "  (NOT VALID confirmado: as 2 linhas legadas sobreviveram ao ALTER)" || {
-  echo "  ABORTA: a migration não aplicou sobre a tabela povoada"; exit 1; }
+if [ "$V" = "2" ]; then
+  echo "  (NOT VALID confirmado: as 2 linhas legadas sobreviveram ao ALTER)"
+else
+  echo "  ABORTA: a migration não aplicou sobre a tabela povoada"; exit 1
+fi
 
 # Lote com os DOIS segmentos, cada um com o sample_size do SEU universo (como a edge monta).
 LOTE_2SEG='[
@@ -297,7 +300,7 @@ espera_sqlstate "I4 defeito de FAIXA tem precedência sobre o de PROVENIÊNCIA" 
 
 # O gate, sob o role de verdade.
 G=$(P -tA <<SQL 2>&1 || true
--- `SET`, não `SET LOCAL`: autocommit. E `test.role` tem de sair do default 'service_role',
+-- \`SET\`, não \`SET LOCAL\`: autocommit. E \`test.role\` tem de sair do default 'service_role',
 -- senão o gate passaria pelo PRIMEIRO ramo e o assert provaria o oposto do que diz provar
 -- (§"o ASSERT DE AUTORIZAÇÃO mente quando a MESMA condição tem dois emissores").
 SET test.role = '';

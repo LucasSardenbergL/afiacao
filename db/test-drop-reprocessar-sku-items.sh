@@ -453,7 +453,7 @@ SOBREVIVEU="$(Pq -c "SELECT count(*) FROM sku_leadtime_history WHERE empresa='OB
 eq "C3 o DROP não toca o dado: histórico intacto (as 6 linhas semeadas seguem lá)" "$SOBREVIVEU" "6"
 
 # Chamar a função dropada tem de dar 42883 (undefined_function) — e não outro erro qualquer.
-P -q <<'SQL' 2>/dev/null && ok "C4 chamar a função dropada levanta 42883 undefined_function (SQLSTATE esperada, resto re-lançado)" || bad "C4 a SQLSTATE de função inexistente não veio como esperado"
+if P -q <<'SQL' 2>/dev/null; then ok "C4 chamar a função dropada levanta 42883 undefined_function (SQLSTATE esperada, resto re-lançado)"; else bad "C4 a SQLSTATE de função inexistente não veio como esperado"; fi
 DO $$
 BEGIN
   PERFORM public.reprocessar_sku_items_via_raw_data('OBEN');
@@ -465,7 +465,7 @@ END $$;
 SQL
 
 # Idempotência: o founder pode colar 2× no SQL Editor sem quebrar (o guard NOTICE e retorna).
-P -q -f "$MIG" && ok "C5 migration idempotente: re-aplicar cai no NOTICE do guard, não em erro" || bad "C5 re-aplicar a migration quebrou"
+if P -q -f "$MIG"; then ok "C5 migration idempotente: re-aplicar cai no NOTICE do guard, não em erro"; else bad "C5 re-aplicar a migration quebrou"; fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FASE E — O GUARD DE DRIFT (achado do Codex: `DROP ... IF EXISTS` cru esconderia

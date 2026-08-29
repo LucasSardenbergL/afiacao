@@ -53,18 +53,25 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], v
 # roda como service_role (o role REAL do edge) e pega a ULTIMA linha (psql ecoa "SET")
 RS()  { Pq -c "SET ROLE service_role; $1" | tail -1; }
 
-U1=00000000-0000-0000-0000-000000000001
-U2=00000000-0000-0000-0000-000000000002
-U3=00000000-0000-0000-0000-000000000003
-U4=00000000-0000-0000-0000-000000000004
-U5=00000000-0000-0000-0000-000000000005
-U6=00000000-0000-0000-0000-000000000006
-U8=00000000-0000-0000-0000-000000000008
-U9=00000000-0000-0000-0000-000000000009
-U10=00000000-0000-0000-0000-000000000010
-U11=00000000-0000-0000-0000-000000000011
-U12=00000000-0000-0000-0000-000000000012
-U13=00000000-0000-0000-0000-000000000013
+# Mapa de identidades do fixture. As 13 linhas sao UM comando so (continuacao com `\`) porque
+# 9 delas nunca sao lidas como `$Un`: os seeds das ZONAS 1-2 vivem em heredoc LITERAL (`<<'SQL'`),
+# onde `$U2` NAO interpolaria — o SQL repete o UUID por escrito e a variavel fica sendo a LEGENDA
+# do mapa. Medido em 2026-08-28: U1/U3/U4/U5 sao referenciados nos asserts; U2/U6/U8..U14 nao.
+# Manter a serie inteira e deliberado (ela e o indice do fixture, e some se podarmos os 'nao
+# usados'); agrupar cobre o bloco com UM disable em vez de 9 comentarios espalhados.
+# shellcheck disable=SC2034
+U1=00000000-0000-0000-0000-000000000001 \
+U2=00000000-0000-0000-0000-000000000002 \
+U3=00000000-0000-0000-0000-000000000003 \
+U4=00000000-0000-0000-0000-000000000004 \
+U5=00000000-0000-0000-0000-000000000005 \
+U6=00000000-0000-0000-0000-000000000006 \
+U8=00000000-0000-0000-0000-000000000008 \
+U9=00000000-0000-0000-0000-000000000009 \
+U10=00000000-0000-0000-0000-000000000010 \
+U11=00000000-0000-0000-0000-000000000011 \
+U12=00000000-0000-0000-0000-000000000012 \
+U13=00000000-0000-0000-0000-000000000013 \
 U14=00000000-0000-0000-0000-000000000014
 FN='public.omie_sync_identity_snapshot(text)'
 echo "=== setup pronto (PG17 :$PORT) ==="
@@ -366,12 +373,14 @@ falsifica "F1 consistencia da evidencia (N2)" "$Q105" "f" "t" \
 cp "$MIG2" "$MUT"
 sed '/AND d.user_id = m.user_id::text/d' "$MUT" > "$MUT.tmp" && mv "$MUT.tmp" "$MUT"
 sed 's|SELECT m.omie_codigo_cliente::text AS codigo, d.user_id|SELECT m.omie_codigo_cliente::text AS codigo, m.user_id::text AS user_id|' "$MUT" > "$MUT.tmp" && mv "$MUT.tmp" "$MUT"
-cmp -s "$MIG2" "$MUT" && bad "F1b SABOTAGEM NO-OP" || {
+if cmp -s "$MIG2" "$MUT"; then
+  bad "F1b SABOTAGEM NO-OP"
+else
   P -q -f "$MUT" >/dev/null
   eq "F1b sob o mutante o codigo 105 aponta pro dono OBSOLETO u5 (o bug A2 em carne e osso)" \
      "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'105';")" "$U5"
   P -q -f "$MIG2" >/dev/null
-}
+fi
 
 # F2 -- UNICIDADE: sem n_users=1, o doc ambiguo passa a "provar" pelo min(user_id) (last-write-wins
 # disfarcado de prova).

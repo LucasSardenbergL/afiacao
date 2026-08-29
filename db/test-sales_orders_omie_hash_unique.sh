@@ -62,7 +62,7 @@ echo "── asserts ──"
 
 # A1: índice criou (apesar das 488 dups não-omie pré-existentes) → predicado escopou certo
 IDX=$(Pq -c "SELECT count(*) FROM pg_indexes WHERE indexname='uniq_sales_orders_omie_hash';")
-[ "$IDX" = "1" ] && ok "A1 índice criado mesmo com dup não-omie pré-existente (predicado escopa)" || bad "A1 índice não criado (IDX=$IDX)"
+if [ "$IDX" = "1" ]; then ok "A1 índice criado mesmo com dup não-omie pré-existente (predicado escopa)"; else bad "A1 índice não criado (IDX=$IDX)"; fi
 
 # A2: dup de pedido omie_ é REJEITADA (23505) — a idempotência money-path
 R=$(P -tA 2>&1 <<'SQL'

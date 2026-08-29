@@ -358,9 +358,11 @@ else ok "F3 a migration RECUSA aplicar com policy de escrita sobrevivente (o blo
 # EXECUTE tem de VOLTAR a existir no fim (rollback). Se tiver commitado no meio, some.
 P -q -c "GRANT EXECUTE ON FUNCTION public.farmer_association_rules_substituir(jsonb) TO authenticated;"
 P -q -c "SELECT 1;" >/dev/null   # garante que o GRANT acima commitou antes do teste
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -1 -q -f "$MIG" >/dev/null 2>&1 \
-  && bad "F4 a migration PASSOU em transação única com a policy órfã — a verificação não morde" \
-  || ok "F4 a migration falha em transação única (como no SQL Editor)"
+if "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -1 -q -f "$MIG" >/dev/null 2>&1; then
+  bad "F4 a migration PASSOU em transação única com a policy órfã — a verificação não morde"
+else
+  ok "F4 a migration falha em transação única (como no SQL Editor)"
+fi
 V=$(Pq -c "SELECT has_function_privilege('authenticated','public.farmer_association_rules_substituir(jsonb)','EXECUTE')::text;")
 eq "F4b o REVOKE foi DESFEITO pelo rollback (apply é tudo-ou-nada)" "$V" "true"
 
