@@ -780,3 +780,51 @@ por resolução de nome e devolve o dado.
 > linha que não voltou como **ausência de dado**, nunca como o valor que você esperava. Aqui o
 > `psql` sinalizou com um ERROR; num caso com `LEFT JOIN` ou agregação, o mesmo buraco sairia como
 > `NULL` silencioso.
+
+### 11.3 O furo do §11.1, fechado — e as duas armadilhas que quase o fecharam errado
+
+O §11.1 registrou a pendência: `docs/migrations-audit.md` checa objeto por **existência**, e a
+função existia desde julho — logo o audit devolvia ✅ com ou sem o apply. Medido antes de corrigir:
+**231 dos 1307 objetos** do inventário (18%) são definidos por mais de uma migration. É latente,
+não um incidente: nenhuma migration está hoje por aplicar.
+
+**O desenho errado, e por que o número o derrubou.** A correção óbvia — comparar o md5 do corpo e
+reprovar quando difere — foi medida antes de ser escrita: **88 funções** divergiam do repo. Se
+isso virasse ❌, o audit ganharia 88 alarmes que em sua maioria **não** significam "falta colar
+SQL", e sim **deriva de prod** (edição direta no SQL Editor, que é o modo normal de operar este
+banco). Alarme falso em massa é como uma seção nova nasce desligada.
+
+Separar os estados é o que torna a seção útil. Medido em prod (2026-08-29), entre as funções
+recriadas com corpo extraível:
+
+| estado | nº | o que significa |
+|---|---|---|
+| corpo vivo == **última** migration | 68 | ✅ em dia |
+| corpo vivo == migration **anterior** | **0** | ❌ *a posterior não foi aplicada* — o defeito |
+| corpo vivo == **nenhuma** declarada | 24 | 🔴 deriva de prod — **não** é "falta colar" |
+
+O estado do meio é o único que manda agir, e é exatamente o que a checagem por existência dava
+como ✅.
+
+#### 🔴 Duas armadilhas, ambas pegas por medir DUAS vezes
+
+A classificação foi implementada em **SQL** (a seção emitida) e em **TypeScript** (um script de
+medição), com a exigência de que as duas batessem. **Não bateram**, duas vezes:
+
+1. **Migration UUID ignorada.** A primeira comparação usava a última migration **custom** que
+   define a função. Mas as de nome UUID — aplicadas sozinhas pelo builder do Lovable — também
+   redefinem objetos: medido, a última definição de `public.fin_user_can_access` está numa delas.
+   Comparar contra a versão custom antiga acusava DERIVA numa função perfeitamente em dia.
+2. **Comentário strippado do corpo.** O extrator roda sobre o SQL com comentários **removidos**;
+   `pg_proc.prosrc` os **guarda**. O md5 do texto strippado nunca bate com o banco para qualquer
+   função com `--` no corpo. Efeito medido: **52 DERIVA com o texto strippado × 24 com o cru** —
+   28 alarmes falsos.
+
+> **Lição:** *duas implementações que PRECISAM bater são o oráculo mais barato que existe para um
+> hash.* Nenhuma das duas armadilhas apareceria numa implementação só: cada uma produzia um
+> resultado plausível, autoconsistente e errado. A mesma técnica pegou a armadilha do `btrim`
+> (§11.2) — três defeitos, um método.
+>
+> E a lição de escopo: *a correção certa de um falso ✅ raramente é um ❌.* Aqui era **três**
+> estados, porque "não aplicada" e "deriva" pedem ações opostas e a checagem ingênua as
+> confundia.

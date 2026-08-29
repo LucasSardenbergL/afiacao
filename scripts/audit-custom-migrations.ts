@@ -67,6 +67,31 @@ function isCustom(filename: string): boolean {
   return !UUID_PATTERN.test(filename);
 }
 
+/**
+ * Histórico ORDENADO do corpo de cada função, por `schema.nome`, ao longo de TODAS as migrations.
+ *
+ * 🔴 "Todas" inclui as de nome UUID, que o inventário exclui de propósito (elas são aplicadas
+ * sozinhas pelo builder do Lovable e não precisam de apply manual). Aqui elas são obrigatórias:
+ * medido em 2026-08-29, a ÚLTIMA definição de `public.fin_user_can_access` está numa migration
+ * UUID — ignorá-las faria a Seção 3 comparar prod contra uma versão antiga e acusar 🔴 DERIVA
+ * numa função perfeitamente em dia. Falso-positivo em massa é como uma seção nova nasce
+ * desligada.
+ *
+ * A ordem é a lexical do nome do arquivo, que é a ordem de apply (timestamp na frente).
+ */
+function historicoDeCorpos(): Map<string, { migration: string; md5: string }[]> {
+  const hist = new Map<string, { migration: string; md5: string }[]>();
+  for (const filename of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort()) {
+    for (const o of extractObjects(readFileSync(join(MIGRATIONS_DIR, filename), 'utf8'))) {
+      if (o.kind !== 'function' || !o.bodyMd5) continue;
+      const chave = `${o.schema}.${o.name}`;
+      if (!hist.has(chave)) hist.set(chave, []);
+      hist.get(chave)!.push({ migration: filename, md5: o.bodyMd5 });
+    }
+  }
+  return hist;
+}
+
 function loadMigrations(): MigrationAudit[] {
   const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql') && isCustom(f)).sort();
   return files.map((filename) => {
@@ -218,12 +243,104 @@ function emitSql(audits: MigrationAudit[]): string {
     lines.push("ORDER BY status DESC, e.migration, e.kind, e.object_name;");
   }
   lines.push('');
+  emitSecaoCorpos(lines);
+  lines.push('');
   lines.push('-- ========================================================================');
   lines.push('-- FIM');
   lines.push('-- ========================================================================');
   lines.push('');
 
   return lines.join('\n');
+}
+
+/**
+ * Seção 3 — o ponto cego que existência NÃO cobre: objeto RECRIADO.
+ *
+ * As Seções 1 e 2 perguntam "o objeto existe?". Para um objeto criado por UMA migration isso
+ * responde "foi aplicada?". Para um `CREATE OR REPLACE` de objeto que JÁ existia, não responde
+ * nada: a função existe desde a primeira migration, e o audit devolve ✅ com ou sem o apply da
+ * segunda. Medido em 2026-08-29: **231 dos 1307 objetos** do inventário (18%) são definidos por
+ * mais de uma migration — e o defeito foi encontrado justamente ao mergear um
+ * `CREATE OR REPLACE` de `private.cap_carteira_escrever`, que a Seção 2 aprovou sem o apply.
+ *
+ * O que decide é o CORPO. Três estados, e a distinção entre eles é a razão da seção existir:
+ *
+ *   ✅ o corpo vivo é o da ÚLTIMA migration que o define — em dia.
+ *   ❌ o corpo vivo é o de uma migration ANTERIOR — a posterior NÃO foi aplicada. É o único
+ *      estado que significa "falta colar SQL", e é o que a Seção 2 dava como ✅.
+ *   🔴 o corpo vivo não bate com NENHUMA migration — DERIVA: alguém editou direto no SQL Editor,
+ *      que é o modo normal de operar este banco. NÃO é "não aplicada", e tratar como ❌ seria
+ *      fabricar 24 alarmes (medido) que mandariam colar SQL que já está aplicado.
+ *
+ * Só entram funções definidas por ≥2 migrations E com corpo extraível nas duas pontas. Corpo
+ * não-extraível degrada para fora da seção — ausência de dado nunca vira ✅ aqui, ela vira
+ * silêncio explícito no cabeçalho.
+ */
+function emitSecaoCorpos(lines: string[]): void {
+  const hist = historicoDeCorpos();
+  const recriadas = [...hist.entries()].filter(([, v]) => v.length > 1);
+
+  lines.push('-- =====================================================');
+  lines.push('-- SEÇÃO 3: objetos RECRIADOS — existência não decide, o CORPO decide');
+  lines.push('-- =====================================================');
+  lines.push('-- Para função redefinida por mais de uma migration, "o objeto existe" é ✅ mesmo');
+  lines.push('-- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:');
+  lines.push('--   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA');
+  lines.push('-- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.');
+  lines.push(`-- Funções redefinidas com corpo extraível: ${recriadas.length}.`);
+  lines.push('');
+
+  if (recriadas.length === 0) {
+    lines.push('-- Nenhuma função redefinida com corpo extraível — nada a reconciliar aqui.');
+    return;
+  }
+
+  const vals: string[] = [];
+  for (const [chave, versoes] of recriadas) {
+    const [schema, nome] = chave.split('.');
+    versoes.forEach((v, i) => {
+      vals.push(`  (${sqlString(schema)}, ${sqlString(nome)}, ${i + 1}, ${sqlString(v.migration)}, ${sqlString(v.md5)})`);
+    });
+  }
+  lines.push('WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES');
+  vals.forEach((v, i) => lines.push(v + (i === vals.length - 1 ? '' : ',')));
+  lines.push('),');
+  lines.push('ultima AS (');
+  lines.push('  SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2');
+  lines.push('),');
+  // Overload: mesmo nome com assinaturas diferentes vira VÁRIAS linhas aqui de propósito — o
+  // regex do inventário não distingue overload no corpo, então "bate com alguma" é o critério
+  // conservador (acusar overload como deriva seria falso-positivo).
+  lines.push('vivo AS (');
+  lines.push('  SELECT n.nspname AS schema_name, p.proname AS object_name,');
+  lines.push("         md5(regexp_replace(btrim(p.prosrc), '\\s+', ' ', 'g')) AS body_md5");
+  lines.push('    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace');
+  lines.push("   WHERE p.prokind = 'f'");
+  lines.push(')');
+  lines.push('SELECT');
+  lines.push("  u.schema_name || '.' || u.object_name AS object,");
+  lines.push('  (SELECT ce.migration FROM corpo_esperado ce');
+  lines.push('    WHERE ce.schema_name = u.schema_name AND ce.object_name = u.object_name');
+  lines.push('      AND ce.ordem = u.ordem) AS ultima_migration,');
+  lines.push('  CASE');
+  lines.push('    WHEN NOT EXISTS (SELECT 1 FROM vivo v');
+  lines.push('                      WHERE v.schema_name = u.schema_name AND v.object_name = u.object_name)');
+  lines.push("      THEN '❌ AUSENTE em prod'");
+  lines.push('    WHEN EXISTS (SELECT 1 FROM vivo v JOIN corpo_esperado ce');
+  lines.push('                   ON ce.schema_name = v.schema_name AND ce.object_name = v.object_name');
+  lines.push('                  AND ce.body_md5 = v.body_md5 AND ce.ordem = u.ordem');
+  lines.push('                 WHERE v.schema_name = u.schema_name AND v.object_name = u.object_name)');
+  lines.push("      THEN '✅ em dia'");
+  lines.push('    WHEN EXISTS (SELECT 1 FROM vivo v JOIN corpo_esperado ce');
+  lines.push('                   ON ce.schema_name = v.schema_name AND ce.object_name = v.object_name');
+  lines.push('                  AND ce.body_md5 = v.body_md5');
+  lines.push('                 WHERE v.schema_name = u.schema_name AND v.object_name = u.object_name)');
+  lines.push("      THEN '❌ NAO APLICADA — o corpo vivo e de uma migration ANTERIOR'");
+  lines.push("    ELSE '🔴 DERIVA — corpo em prod nao bate com nenhuma migration (edicao manual)'");
+  lines.push('  END AS status');
+  lines.push('FROM ultima u');
+  lines.push('ORDER BY status, object;');
+  return;
 }
 
 function sqlString(s: string): string {
