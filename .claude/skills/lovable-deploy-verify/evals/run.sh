@@ -2,9 +2,11 @@
 # run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os DOIS evals:
 #   (1) classify        — classificação de diff do Passo 1 (classify.sh vs classify-eval.json)
 #   (2) verify-frontend — enumeração + exit codes do Passo 4 (harness local determinístico)
+#   (3) verify-edge-eco  — guard TEMPORAL do N3 passivo (só ticks pré-merge ⇒ indeterminado)
 # Exit 0 = tudo passou. Exit 1 = alguma divergência.
 # Falsificação (prova que os evals têm dente): --falsify sabota AMBOS e exige vermelho
-#   (classify inverte os esperados; verify-frontend sabota a enumeração). Exit 0 só se pegou tudo.
+#   (classify inverte os esperados; verify-frontend sabota a enumeração; verify-edge-eco arranca
+#   o guard temporal, o fail-closed do ping e o filtro do tick mais recente). Exit 0 só se pegou tudo.
 set -uo pipefail
 cd "$(dirname "$0")" || exit 2
 
@@ -46,6 +48,14 @@ if [ "$FALSIFY" = 1 ]; then
   bash verify-frontend-eval.sh --falsify || rc=1
 else
   bash verify-frontend-eval.sh || rc=1
+fi
+
+echo ""
+echo "== (3) verify-edge-eco — guard temporal do N3 passivo =="
+if [ "$FALSIFY" = 1 ]; then
+  bash verify-edge-eco-eval.sh --falsify || rc=1
+else
+  bash verify-edge-eco-eval.sh || rc=1
 fi
 
 echo ""
