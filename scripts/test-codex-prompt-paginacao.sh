@@ -47,6 +47,8 @@ esac
 if [ "$falsificar" = 1 ]; then
   # SABOTAGEM: reintroduz o defeito exato. O teste TEM de ficar vermelho — se ficar verde,
   # ele não estava medindo nada.
+  # shellcheck disable=SC2016  # o $1 NÃO pode expandir aqui: a string é o corpo da
+  # função, expandido só no `eval` abaixo (é a sabotagem, tem de ser literal).
   defn='sha_de() { git log origin/main --format=%h --grep "(#$1)" -1 -- 2>/dev/null || true; }'
   echo "-- modo falsificação: sha_de sabotado para a versão --grep/-1 --"
 fi
