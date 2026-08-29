@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **497** custom migrations totais
-- **1713** objetos esperados (criados por estas migrations)
+- **498** custom migrations totais
+- **1720** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 515
-  - `rls_policy`: 453
+  - `function`: 519
+  - `rls_policy`: 455
   - `index`: 250
   - `cron_job`: 168
-  - `table`: 159
+  - `table`: 160
   - `trigger`: 88
   - `view`: 76
   - `enum_value`: 4
@@ -4171,6 +4171,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `private.cap_carteira_escrever` | — |
+
+### `20260829012000_analytics_outbox_perda_visivel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_outbox_purgar` | — |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+| `table` | `public.analytics_outbox_perda` | — |
+| `rls_policy` | `public.analytics_outbox_perda_service_all` | `analytics_outbox_perda` |
+| `rls_policy` | `public.analytics_outbox_perda_master_read` | `analytics_outbox_perda` |
 
 ## Próximos passos por status
 
