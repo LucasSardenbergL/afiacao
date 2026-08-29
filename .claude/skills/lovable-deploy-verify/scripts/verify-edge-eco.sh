@@ -47,6 +47,28 @@ done
 [ -n "$DESDE" ]    || recusa "falta --desde '<timestamp do merge, UTC>' — sem corte temporal este script não tem como guardar nada"
 [ -n "$ESPERADO" ] || recusa "falta --esperado '<marcador VERSAO da main>'"
 
+# ── O marcador esperado é POR EDGE, nunca "o do lote" ───────────────────────────────────────────
+# Edges de uma mesma leva partem de marcadores DIFERENTES: no #2079 quatro foram a
+# v1.1-eco-identidade-fonte e a `nfes` a v1.2 (ela vinha de v1.1-deadline-relogio). Um `--esperado`
+# único aplicado a vários steps classificaria a `nfes` como bundle VELHO — o falso negativo que
+# este script existe para impedir, cometido pelo próprio script. Ver o adendo "o marcador esperado
+# é POR EDGE, não 'o bump do lote'" em docs/historico/verificabilidade-do-conjunto-orquestrado.md.
+# Forma canônica: --esperado 'ctes=v1.1-eco-identidade-fonte,nfes=v1.2-eco-identidade-fonte'
+# (a chave casa o STEP do orquestrador ou a EDGE ecoada). Valor único só é aceito para UM step.
+esperado_de() { # $1=step  $2=edge ecoada
+  local par k v
+  case "$ESPERADO" in
+    *=*)
+      local IFS=','
+      for par in $ESPERADO; do
+        k="${par%%=*}"; v="${par#*=}"
+        if [ "$k" = "$1" ] || [ "$k" = "$2" ]; then printf '%s' "$v"; return 0; fi
+      done
+      return 1 ;;
+    *) printf '%s' "$ESPERADO"; return 0 ;;
+  esac
+}
+
 # ── fail-CLOSED na via de leitura ───────────────────────────────────────────────────────────────
 # `command -v` não basta: presente-porém-quebrado esvazia o guard igual. Exigimos resposta POSITIVA.
 PING=$("$PSQL_RO" -At -c "SELECT 'PONG_ECO'; -- SONDA_PING" 2>/dev/null | command grep -c '^PONG_ECO$' || true)
@@ -77,6 +99,14 @@ LINHAS=$("$PSQL_RO" -At -F '|' -c "SELECT r.id, k, coalesce((r.content::jsonb)->
 # id do tick mais recente que traz ao menos um step respondido com marcador
 ID_VEREDITO=$(printf '%s\n' "$LINHAS" | awk -F'|' '$3=="respondido" && $4!="-" && $4!="" {print $1; exit}')
 
+# 1ª passada: quantos steps ÚTEIS o tick do veredito traz — decide se o marcador único é legítimo
+N_UTEIS_PRE=$(printf '%s\n' "$LINHAS" | awk -F'|' -v id="${ID_VEREDITO:-}" \
+  '$1==id && $3=="respondido" && $4!="-" && $4!="" {n++} END {print n+0}')
+case "$ESPERADO" in
+  *=*) : ;;
+  *) [ "$N_UTEIS_PRE" -le 1 ] || recusa "--esperado veio como marcador ÚNICO, mas o tick traz $N_UTEIS_PRE steps úteis. Edges de uma mesma leva partem de marcadores DIFERENTES (no #2079 a nfes foi a v1.2 e as outras a v1.1): um valor único aqui classificaria a divergente como bundle VELHO — o falso negativo que este script existe para impedir. Use o mapa: --esperado 'ctes=v1.1-...,nfes=v1.2-...' (chave = step ou edge), ou restrinja com --steps." ;;
+esac
+
 UTEIS=0; NOVOS=0; VELHOS=0; MUDOS=0
 while IFS='|' read -r tid step modo versao edge; do
   [ -z "${step:-}" ] && continue
@@ -84,10 +114,11 @@ while IFS='|' read -r tid step modo versao edge; do
   [ -n "${ID_VEREDITO:-}" ] && [ "$tid" != "$ID_VEREDITO" ] && continue
   if [ "$modo" = "respondido" ] && [ "$versao" != "-" ] && [ -n "$versao" ]; then
     UTEIS=$((UTEIS+1))
-    if [ "$versao" = "$ESPERADO" ]; then
+    ESP_STEP=$(esperado_de "$step" "$edge") || recusa "o step '$step' (edge '$edge') veio no tick mas não tem marcador em --esperado. Comparar contra nada fabrica veredito: nomeie-o no mapa ou exclua-o com --steps."
+    if [ "$versao" = "$ESP_STEP" ]; then
       NOVOS=$((NOVOS+1)); printf '  ✅ %-16s %s  (edge ecoada: %s)\n' "$step" "$versao" "$edge"
     else
-      VELHOS=$((VELHOS+1)); printf '  ❌ %-16s %s  ← marcador VELHO (esperado %s)\n' "$step" "$versao" "$ESPERADO"
+      VELHOS=$((VELHOS+1)); printf '  ❌ %-16s %s  ← marcador VELHO (esperado %s)\n' "$step" "$versao" "$ESP_STEP"
     fi
   else
     MUDOS=$((MUDOS+1)); printf '  ⏳ %-16s modo=%s — corpo NÃO coletado: linha inutilizável, não é "não subiu"\n' "$step" "$modo"
@@ -108,5 +139,5 @@ if [ "$VELHOS" -gt 0 ]; then
   printf '❌ BUNDLE VELHO provado em %s step(s) respondido(s) — deploy REALMENTE pendente.\n' "$VELHOS"
   exit 1
 fi
-printf '✅ NO AR — %s step(s) respondido(s) ecoando o marcador esperado (%s).\n' "$NOVOS" "$ESPERADO"
+printf '✅ NO AR — %s step(s) respondido(s) ecoando o marcador esperado de CADA edge.\n' "$NOVOS"
 exit 0

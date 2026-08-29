@@ -31,7 +31,13 @@ if [[ "$q" == *SONDA_COUNT_ANT* ]]; then echo "3"; exit 0; fi
 if [[ "$q" == *SONDA_COUNT* ]]; then
   case "$CENARIO" in
     sem_tick_posterior|psql_mudo) echo "0" ;;
+    leva_mista) echo "1" ;;
     count_lixo)         echo "isto-nao-e-numero" ;;
+    leva_mista)
+      # o caso REAL do #2079: nfes foi a v1.2 e as outras a v1.1. Marcador único aqui reprovaria
+      # a nfes como "bundle velho" — o falso negativo que o script existe para impedir.
+      echo "62431|ctes|respondido|v1.1-eco-identidade-fonte|omie-sync-ctes-recebidos"
+      echo "62431|nfes|respondido|v1.2-eco-identidade-fonte|omie-sync-nfes-recebidas" ;;
     tick_intermediario) echo "2" ;;
     *)                  echo "1" ;;
   esac
@@ -48,6 +54,11 @@ if [[ "$q" == *SONDA_ROWS* ]]; then
     todos_background)
       echo "62431|nfes|background|-|-"
       echo "62431|pedidos|background|-|-" ;;
+    leva_mista)
+      # o caso REAL do #2079: nfes foi a v1.2 e as outras a v1.1. Marcador único aqui reprovaria
+      # a nfes como "bundle velho" — o falso negativo que o script existe para impedir.
+      echo "62431|ctes|respondido|v1.1-eco-identidade-fonte|omie-sync-ctes-recebidos"
+      echo "62431|nfes|respondido|v1.2-eco-identidade-fonte|omie-sync-nfes-recebidas" ;;
     tick_intermediario)
       # ORDER BY id DESC: o mais RECENTE (62431, novo) vem primeiro; o intermediário (62400,
       # velho) é história — foi gravado entre o merge e o deploy e não pode virar veredito.
@@ -61,10 +72,10 @@ FAKE
 chmod +x "$TMP/psql-fake"
 
 rc=0
-caso() { # nome cenario exit_esperado descricao
-  local nome="$1" cen="$2" esp="$3" desc="$4" got
+caso() { # nome cenario exit_esperado descricao [marcador]
+  local nome="$1" cen="$2" esp="$3" desc="$4" marc="${5:-v1.1-eco-identidade-fonte}" got
   CENARIO="$cen" PSQL_RO="$TMP/psql-fake" bash "$SCRIPT" --desde '2026-08-28 22:32:00+00' \
-    --esperado 'v1.1-eco-identidade-fonte' >"$TMP/out" 2>&1; got=$?
+    --esperado "$marc" >"$TMP/out" 2>&1; got=$?
   if [ "$got" -eq "$esp" ]; then printf '  [ok ] %-22s exit %s — %s\n' "$nome" "$got" "$desc"
   else printf '  [XX ] %-22s exit %s (esperado %s) — %s\n' "$nome" "$got" "$esp" "$desc"; rc=1; fi
 }
@@ -72,12 +83,20 @@ caso() { # nome cenario exit_esperado descricao
 echo "== verify-edge-eco — guard temporal =="
 caso sem_tick_posterior  sem_tick_posterior  2 "TTL só com ticks PRÉ-merge ⇒ INDETERMINADO, nunca 'pendente'"
 caso no_ar               no_ar               0 "marcador esperado num step respondido"
-caso bundle_velho        bundle_velho        1 "marcador VELHO respondido ⇒ deploy realmente pendente"
+caso bundle_velho        bundle_velho        1 "marcador VELHO respondido ⇒ deploy realmente pendente" \
+  'ctes=v1.1-eco-identidade-fonte,vendas=v1.1-eco-identidade-fonte'
 caso todos_background    todos_background    2 "houve tick, mas nenhum corpo coletado ⇒ INDETERMINADO"
 caso tick_intermediario  tick_intermediario  0 "tick velho intermediário é história; veredito é o mais recente"
 caso psql_morto          psql_morto          3 "via de leitura morta ⇒ RECUSA fail-closed, nunca veredito"
 caso count_lixo          count_lixo          3 "contagem não-numérica ⇒ RECUSA (vazio se leria como 'nenhum tick')"
 caso psql_mudo           psql_mudo           3 "via presente-porém-QUEBRADA (responde vazio) ⇒ RECUSA, não 'indeterminado'"
+caso leva_mista_lote     leva_mista          3 "marcador ÚNICO com 2 steps úteis ⇒ RECUSA ('o bump do lote' reprova)"
+caso leva_mista_mapa     leva_mista          0 "mapa por edge: nfes=v1.2 e ctes=v1.1 batem" \
+  'ctes=v1.1-eco-identidade-fonte,nfes=v1.2-eco-identidade-fonte'
+caso leva_mista_incompl  leva_mista          3 "mapa sem a nfes ⇒ RECUSA (comparar contra nada fabrica veredito)" \
+  'ctes=v1.1-eco-identidade-fonte'
+caso leva_mista_por_edge leva_mista          0 "chave do mapa pode ser a EDGE ecoada, não só o step" \
+  'omie-sync-ctes-recebidos=v1.1-eco-identidade-fonte,omie-sync-nfes-recebidas=v1.2-eco-identidade-fonte'
 
 # ── falsificação: sabota o guard EM CÓPIA e exige vermelho ──────────────────────────────────────
 if [ "${1:-}" = "--falsify" ]; then
@@ -122,6 +141,19 @@ if [ "${1:-}" = "--falsify" ]; then
       --desde '2026-08-28 22:32:00+00' --esperado 'v1.1-eco-identidade-fonte' >/dev/null 2>&1; sabrc=$?
     if [ "$sabrc" -ne 0 ]; then echo "  [ok ] veredito por tick qualquer -> o caso VIRA vermelho"; fals=$((fals+1))
     else echo "  [XX ] tick intermediário ignorado mesmo sem o filtro — caso não discrimina"; rc=1; fi
+  fi
+
+  # (4) recusa do "marcador do lote" arrancada: a leva mista voltaria a reprovar a nfes
+  total=$((total+1))
+  # shellcheck disable=SC2016  # literal do script-alvo, não deve expandir aqui
+  sed 's/^  \*) \[ "$N_UTEIS_PRE" -le 1 \].*/  *) : ;;/' "$SCRIPT" > "$TMP/sab4.sh"
+  if ! command grep -qE '^\s+\*\) : ;;$' "$TMP/sab4.sh"; then
+    echo "  [XX ] sabotagem 4 não aplicou"; rc=1
+  else
+    CENARIO=leva_mista PSQL_RO="$TMP/psql-fake" bash "$TMP/sab4.sh" \
+      --desde '2026-08-28 22:32:00+00' --esperado 'v1.1-eco-identidade-fonte' >/dev/null 2>&1; sabrc=$?
+    if [ "$sabrc" -ne 3 ]; then echo "  [ok ] recusa do marcador-de-lote arrancada -> a leva mista VIRA vermelha (exit $sabrc)"; fals=$((fals+1))
+    else echo "  [XX ] lote sabotado e ainda recusou — sabotagem inócua"; rc=1; fi
   fi
 
   echo "  falsificações que pegaram: $fals/$total"

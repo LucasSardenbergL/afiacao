@@ -438,9 +438,19 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        armadilha da sentinela não-exclusiva passou:
        ```bash
        .claude/skills/lovable-deploy-verify/scripts/verify-edge-eco.sh \
-         --desde '<timestamp do merge, UTC>' --esperado '<VERSAO da main>' [--steps 'ctes,nfes']
+         --desde '<timestamp do merge, UTC>' \
+         --esperado 'ctes=v1.1-eco-identidade-fonte,nfes=v1.2-eco-identidade-fonte' [--steps 'ctes,nfes']
        # 0 = NO AR · 1 = bundle VELHO provado (aí sim pendente) · 2 = INDETERMINADO · 3 = RECUSA
        ```
+       ⚠️ **O marcador é POR EDGE, e o script RECUSA o "marcador do lote".** Edges de uma mesma leva
+       partem de pontos diferentes: no #2079 quatro foram a `v1.1-eco-identidade-fonte` e a **`nfes`
+       a `v1.2`** (ela vinha de `v1.1-deadline-relogio`). Um `--esperado` único aplicado a vários
+       steps classificaria a divergente como bundle VELHO — o falso negativo que este script existe
+       para impedir, cometido pelo próprio script. Por isso valor único só passa com **1** step útil;
+       com mais, é **exit 3** pedindo o mapa (chave = step do orquestrador **ou** edge ecoada), e um
+       step útil sem marcador no mapa também recusa, porque comparar contra nada fabrica veredito.
+       Casado com o adendo "o marcador esperado é POR EDGE, não 'o bump do lote'" de
+       [`verificabilidade-do-conjunto-orquestrado.md`](../../../docs/historico/verificabilidade-do-conjunto-orquestrado.md).
        Três coisas que ele guarda e a query crua não: **(a)** sem tick posterior ao corte ⇒ **exit 2**,
        nunca 1; **(b)** o veredito sai do **tick MAIS RECENTE** — um tick gravado entre o merge e o
        deploy ecoa o marcador velho com toda a razão, é história, e julgar por ele reprova deploy
@@ -448,7 +458,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        vazio sem erro), caso em que "0 ticks" se leria como *indeterminado* em vez de *recusa* — e é
        só nele que o ping tem dente, porque com a via totalmente morta o guard da contagem já recusa
        sozinho (a 1ª sabotagem escrita saiu inócua por isso, e o eval registra o porquê).
-       Rede: `evals/verify-edge-eco-eval.sh` — 8 casos + 3 sabotagens, no gate `evals/run.sh`.
+       Rede: `evals/verify-edge-eco-eval.sh` — 12 casos + 4 sabotagens, no gate `evals/run.sh`.
     - ⛔ **Dois sinais que PARECEM discriminar deploy e NÃO discriminam** — os dois foram testados neste
       mesmo ciclo e reprovados (narrativa em `docs/historico/verificar-sonda-versao.md` §12):
       **(a) duração da execução** (`acoes_execucoes`) — o run pós-mudança caiu para 24,0 s contra a faixa
@@ -644,6 +654,8 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   a verificação com um pedido caro ao founder). Virou `scripts/verify-edge-eco.sh`: sem tick posterior
   ao corte ⇒ **exit 2 INDETERMINADO**, nunca 1; veredito pelo **tick mais recente** (o intermediário
   entre merge e deploy é história); fail-closed inclusive na via presente-porém-quebrada. Rede:
-  `evals/verify-edge-eco-eval.sh` (8 casos + 3 sabotagens) no gate. A falsificação pagou: a sabotagem
-  do ping saiu **inócua** e revelou que ele só tem dente contra a via MUDA, não contra a morta.
+  `evals/verify-edge-eco-eval.sh` (12 casos + 4 sabotagens) no gate. A falsificação pagou DUAS vezes:
+  a sabotagem do ping saiu **inócua** e revelou que ele só tem dente contra a via MUDA (não contra a
+  morta, onde a contagem já recusa); e o `--esperado` único — que o script aceitava — reprovaria a
+  `nfes` (v1.2) como bundle velho num lote v1.1, então **valor único agora recusa** com >1 step útil.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
