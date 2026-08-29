@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **499** custom migrations totais
+- **500** custom migrations totais
 - **1723** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 522
@@ -4171,6 +4171,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `private.cap_carteira_escrever` | — |
+
+### `20260828224542_ia_uso_limite_generate_bundle_argument.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260829012000_analytics_outbox_perda_visivel.sql`
 

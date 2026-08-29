@@ -742,3 +742,35 @@ precedente (`pr-collision-guard`), mas exige guardar **estado** (hash/timestamp 
 peça que nenhum hook do repo tem hoje. Construir o estado antes de saber se o aviso basta é a
 armadilha da *fase N+1 sem sinal da fase N*: entrega-se o aviso, mede-se se a classe reincide, e só
 então se paga o estado.
+
+---
+
+## O QUARTO gate de edge: `sonda:bump` (medido 2026-08-28, PR #2101)
+
+Este doc — e a linha do CLAUDE.md que aponta para ele — dizia **três** gates de edge no CI:
+`test:edges`, `edges:typecheck` e o vitest que lê a edge como TEXTO. São **quatro**. O quarto é
+`bun run sonda:bump` (`scripts/sonda-versao-bump-gate.ts`), e ele reprovou o #2101 depois das
+outras três terem passado verdes localmente:
+
+```
+✗ generate-bundle-argument: o corpo mudou (…/index.ts) e o marcador continua
+  `v1.0-prompt-sem-margem` — o mesmo da base.
+```
+
+**A regra:** mudou o CORPO de uma edge que tem `versao.ts` ⇒ bumpe o `VERSAO` (formato
+`vN.N-slug`, nomeando a FATIA da entrega), no mesmo PR.
+
+**Por que ele não é burocracia, e é justamente o gate que dói perder:** o Lovable não dá outra
+prova de qual bundle está no ar. Uma edge chamada pelo BROWSER não deixa rastro em
+`net._http_response` nem linha em `cron.job_run_details` — a sonda `{"probe":true}` é o único
+sensor. Sem o bump, ela responde a MESMA string tendo a fatia subido ou não: o sensor continua
+verde e passa a afirmar deploy que não aconteceu. É a família "ausência de sinal lida como
+aprovação", e o gate existe para impedir que o sensor minta.
+
+**Consequência para quem valida antes de entregar:** a lista "tocou `supabase/functions/` ⇒ rode
+`test:edges`, `edges:typecheck`, `lint` e o vitest completo" é **incompleta**. São cinco, e
+`sonda:bump` é o único que roda em ~1s — não há motivo para descobri-lo pelo vermelho do CI.
+
+**Efeito colateral que também é obrigação:** o marcador aparece por extenso na tabela de sondas de
+`docs/agent/deploy.md`. Bumpar `versao.ts` e deixar o doc citando a string velha manda o founder
+esperar a resposta errada — é o mesmo defeito de número obsoleto em gate. Atualize os dois.

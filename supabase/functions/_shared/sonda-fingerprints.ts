@@ -26,7 +26,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "fin-cashflow-engine": "d28b84dd46e39d582a0bf4d5b2d6298cf729c97d00a220762cfa1ec853c3c5d9",
   "fin-funding": "0bd5ac7ca9b4f97422b5117f1c07ff5bd91b9c791395f331fdb8b4fc499afeb5",
   "fin-valor-cockpit": "aaf36c80dd0f48da239ab61a3ff4f68484bc680ca4ef26f1a305f4fb71c837ee",
-  "generate-bundle-argument": "67ed07a97c2bac1dc129a5110f5706be5f5508d53d76e7d6cd1717c3b461c80f",
+  "generate-bundle-argument": "4368540ba93070dcb327af584a7ca20294b398aff27adb167928e0fb43256703",
   "generate-tactical-plan": "5a538e47802433f15a6f9e03ec1d05265592e346326be0c509a54cb1de895c6f",
   "gerar-pedidos-diario": "445e8028fe4f6fa01dcdd65774e0a51121905fe1fd1c0596047c34a04aa36411",
   "monthly-report": "696cbc63b3a72fccca4574c3d04cc30832068aed97e60796255dd531a6b53066",
