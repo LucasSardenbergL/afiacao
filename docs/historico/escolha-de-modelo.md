@@ -396,3 +396,14 @@ mesmo achado do #1654 com o sinal invertido.
 >
 > Corolário do "ausente ≠ zero": aqui o zero era **real**, e um zero real num eixo que a
 > intervenção não queria zerar é regressão — mesmo quando a métrica-alvo melhorou.
+
+## Quando a reversão passa a valer (simétrico do Achado 2)
+
+O revert é o mesmo tipo de mudança que o #1654: **versionada**. Logo herda a mesma latência —
+vale só onde o branch contém o commit (mergeado em 2026-08-29T03:55Z, `40272793`). No instante
+do merge, o diretório principal e as ~80 worktrees vivas ainda tinham `"model": "opus"`.
+
+Pela rotação medida em 08-06 (23% → 86,7% de cobertura por tráfego em 48h), a propagação se
+resolve sozinha em dias. **Mas a data efetiva do revert NÃO é a data do merge** — quem for
+medir o efeito desta reversão tem que recortar por quando a cobertura convergiu, não por
+`mergedAt`, sob pena de repetir exatamente o erro da verificação de 08-04.
