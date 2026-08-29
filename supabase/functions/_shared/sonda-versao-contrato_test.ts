@@ -50,6 +50,7 @@ import * as syncCtes from "../omie-sync-ctes-recebidos/versao.ts";
 import * as syncPedidosCompra from "../omie-sync-pedidos-compra/versao.ts";
 import * as syncSkuItems from "../omie-sync-sku-items/versao.ts";
 import * as syncVendasItems from "../omie-sync-vendas-items/versao.ts";
+import * as outboxDrain from "../analytics-outbox-drain/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -182,6 +183,16 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "omie-sync-ctes-recebidos", mod: syncCtes },
   { nome: "omie-sync-sku-items", mod: syncSkuItems },
   { nome: "omie-sync-vendas-items", mod: syncVendasItems },
+  // Décima primeira leva (2026-08-28): a edge que nasceu DEPOIS do padrão e ficou fora dele. A
+  // `analytics-outbox-drain` (#2035) não tinha `versao.ts` nem entrada no mapa de fingerprints, e o
+  // efeito disso não é reprovar em lugar nenhum — é DESAPARECER: `sonda:sql` recusa por falta de
+  // sensor, e `pendencias:deploy` tira o denominador do mapa commitado, então ela não entrava nem
+  // como pendência. O critério que a traz é o da `carteira-rebuild` invertido: aqui sondar o bundle
+  // pré-sensor é BARATO (o cron `*/5` chama o mesmo caminho com os mesmos defaults, então sondar
+  // adianta um tick), e mesmo assim o deploy era inverificável — em 2026-08-28 ele só se provou por
+  // N1 + uma string literal de erro que estava no corpo por ACASO. Barato de chamar e possível de
+  // verificar seguem sendo propriedades diferentes (sexta leva); só o marcador dá a segunda.
+  { nome: "analytics-outbox-drain", mod: outboxDrain },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -263,6 +274,12 @@ const FORMA_NORMALIZADA = [
   // grafado caindo no fluxo real é o rebuild completo (lease + ~6909 upserts). Fica FORA de
   // GATE_PROPRIO: o gate dela é `authorizeCronOrStaff`, que já aceita o `x-cron-secret`.
   "carteira-rebuild",
+  // Décima primeira leva: entra na varredura estrutural mesmo sendo a de MENOR custo por disparo
+  // acidental. A FORMA não tem a ver com o preço (o bloco de abertura já dizia isso) — o que se
+  // exige é fail-closed, IO-free e nunca sem auth, e uma edge que nasce hoje nasce nessa forma ou
+  // não nasce. Fica FORA de GATE_PROPRIO: o gate dela é `authorizeCronOrStaff`, que já aceita o
+  // `x-cron-secret` com que o SQL Editor sonda.
+  "analytics-outbox-drain",
 ];
 
 /**
@@ -1099,6 +1116,25 @@ const STEPS_CRON_DIARIO: Array<{ edge: string; key: string }> = [
   { edge: "omie-sync-vendas-items", key: "vendas" },
 ];
 
+/**
+ * TODA edge cuja resposta carrega o marcador, e não só a da sonda — o conjunto que os gates de ECO
+ * abaixo varrem.
+ *
+ * Os 5 steps do cron diário o estrearam, mas a propriedade que os gates exigem não é "ser step do
+ * `omie-cron-diario`": é o corpo desta edge chegar a `net._http_response`, onde se lê PASSIVAMENTE.
+ * A `analytics-outbox-drain` (#2035, instrumentada em 2026-08-28) cumpre isso por uma via mais
+ * curta e mais frequente que a dos steps — o cron dela faz `net.http_post` DIRETO nela a cada 5
+ * minutos, sem orquestrador no meio, então nem a identidade depende da `key` que um pai escolheu.
+ *
+ * Extrair a lista, em vez de dar um gate próprio à edge nova, é o que impede o eco de virar duas
+ * verdades: um segundo bloco de asserts envelheceria separado, e a metade sem teste é a que deixa
+ * de valer.
+ */
+const ECOAM_VERSAO: string[] = [
+  ...STEPS_CRON_DIARIO.map((s) => s.edge),
+  "analytics-outbox-drain",
+];
+
 /** O helper de resposta anexa o marcador a TODO corpo, e não só ao da sonda? */
 function ecoaVersaoEmTodaResposta(codigo: string): boolean {
   // O helper é `function jsonRes(...) { return new Response(JSON.stringify({ ...body, versao: VERSAO }), …) }`.
@@ -1107,14 +1143,19 @@ function ecoaVersaoEmTodaResposta(codigo: string): boolean {
   return /\.\.\.\s*\w+\s*,\s*versao:\s*VERSAO/.test(codigo);
 }
 
-Deno.test("os 5 steps do cron diário ECOAM `versao` em toda resposta, não só na da sonda", () => {
+Deno.test("as edges do ECO carregam `versao` em toda resposta, não só na da sonda", () => {
   // O ponto principal da décima leva, e a metade que dispensa invocação. O `omie-cron-diario` faz
   // `JSON.parse` do corpo de cada step e o devolve inteiro em `resultados.<key>.body`, então o
   // marcador viaja para `net._http_response` no tick de 2h do jobid 52 — prova de deploy sem
   // chamar nada, sem cron secret e sem pagar o efeito caro. Sem este eco sobra só a sonda, e
   // sondar um bundle PRÉ-sensor nestas edges DISPARA o fluxo real (nenhuma roteia por `action`):
   // a única prova barata só serviria DEPOIS do deploy que ela existe para verificar.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  //
+  // A `analytics-outbox-drain` entrou depois (2026-08-28) por uma via mais curta: o cron dela bate
+  // DIRETO na edge a cada 5 minutos, sem orquestrador, então o corpo daqui já É o que fica em
+  // `net._http_response`. Nela o argumento do custo não vale (sondar adianta um tick do `*/5`) — o
+  // que vale é o outro: sem eco, uma fatia interna à edge não deixa discriminador nenhum.
+  for (const edge of ECOAM_VERSAO) {
     const codigo = codigoDaEdge(edge);
     if (!ecoaVersaoEmTodaResposta(codigo)) {
       throw new Error(
@@ -1161,13 +1202,18 @@ Deno.test("CALIBRAÇÃO: o gate do eco reprova o marcador que só a sonda carreg
   }
 });
 
-Deno.test("décima leva: o corpo do Request é lido UMA vez só", () => {
+Deno.test("edges do ECO: o corpo do Request é lido UMA vez só", () => {
   // Mesmo motivo do gate homônimo da oitava leva: a sonda obrigou o parse a SUBIR para antes do
   // client, e toda leitura que existia depois teve de passar a reusar a variável. Um `req.json()`
-  // a mais reintroduz o bug em SILÊNCIO — nestas quatro ele faria `empresa`/`dias`/`trigger` do
-  // corpo serem ignorados, e o step mudaria de escopo (ou de modo incremental×completo) sem erro
-  // nenhum. É a classe "ausente ≠ zero" na leitura de parâmetro.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  // a mais reintroduz o bug em SILÊNCIO — nos steps do cron diário ele faria `empresa`/`dias`/
+  // `trigger` do corpo serem ignorados, e o step mudaria de escopo (ou de modo
+  // incremental×completo) sem erro nenhum. É a classe "ausente ≠ zero" na leitura de parâmetro.
+  //
+  // Na `analytics-outbox-drain` o gate é PREVENTIVO e não corretivo: ela não lia o corpo antes da
+  // sonda, então a única leitura é a que a sonda trouxe. É justamente aí que a segunda leitura
+  // entra sem ninguém notar — o primeiro parâmetro que essa edge vier a aceitar (um `p_limite` do
+  // SQL Editor, digamos) nasceria lido de um corpo já consumido, ou seja, vazio.
+  for (const edge of ECOAM_VERSAO) {
     const ocorrencias = trechoDoHandler(edge).match(/req\.json\(\)/g) ?? [];
     if (ocorrencias.length !== 1) {
       throw new Error(
@@ -1208,7 +1254,7 @@ Deno.test("o ECO identifica a edge e a FONTE — `versao` sozinho não diz QUEM 
   // 2. `fonte` — fatia que chegue INTEIRA por `_shared/` não move o `VERSAO` (o `sonda:bump` exclui
   //    `_shared/` por medição), e o eco responderia idêntico nos dois bundles. O `fonte` é derivado
   //    do fecho transitivo e o CI o regrava, então não depende de disciplina.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  for (const edge of ECOAM_VERSAO) {
     const codigo = codigoDaEdge(edge);
     if (!/\.\.\.\s*\w+\s*,\s*versao:\s*VERSAO\s*,\s*edge:\s*EDGE\s*,\s*fonte:\s*FONTE/.test(codigo)) {
       throw new Error(
@@ -1223,7 +1269,7 @@ Deno.test("o ECO identifica a edge e a FONTE — `versao` sozinho não diz QUEM 
 Deno.test("o EDGE declarado é o nome do diretório da function", () => {
   // Um `EDGE` errado é pior que nenhum: o eco passa a AFIRMAR identidade falsa, e o veredito aponta
   // para a edge errada com toda a confiança.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  for (const edge of ECOAM_VERSAO) {
     const fonte = Deno.readTextFileSync(`supabase/functions/${edge}/versao.ts`);
     const m = /export const EDGE = "([^"]+)"/.exec(fonte);
     if (!m) throw new Error(`${edge}: versao.ts não exporta EDGE`);
@@ -1237,7 +1283,7 @@ Deno.test("o FONTE do eco sai da MESMA fábrica que a sonda serve", () => {
   // Se o `FONTE` fosse uma cópia literal do hash, ele congelaria: o CI regrava o mapa, e um valor
   // transcrito à mão passaria a mentir silenciosamente na primeira mudança de `_shared/` — que é
   // exatamente o furo que este campo existe para fechar.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  for (const edge of ECOAM_VERSAO) {
     const fonte = Deno.readTextFileSync(`supabase/functions/${edge}/versao.ts`);
     if (!/export const FONTE = respostaSonda\(VERSAO\)\.fonte;/.test(removerComentarios(fonte))) {
       throw new Error(

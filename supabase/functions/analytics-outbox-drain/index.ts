@@ -26,6 +26,15 @@ import {
   resumirErro,
   TETO_EVENTOS_POR_LOTE,
 } from "./payload.ts";
+import {
+  classificarSonda,
+  EDGE,
+  EFEITO,
+  erroSondaAmbigua,
+  FONTE,
+  respostaSonda,
+  VERSAO,
+} from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -52,17 +61,35 @@ interface DbRpc {
   ): Promise<{ data: unknown; error: { message: string } | null }>;
 }
 
+// TODA resposta carrega `versao`/`edge`/`fonte` — não só a da sonda. É a metade da prova de deploy
+// que dispensa invocação: o cron `analytics-outbox-drain` faz `net.http_post` DIRETO nesta edge a
+// cada 5 minutos, então o corpo daqui cai em `net._http_response` e o marcador se lê PASSIVAMENTE,
+// sem chamar nada, sem cron secret e sem pagar efeito. Ver versao.ts.
+function jsonRes(corpo: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...corpo, versao: VERSAO, edge: EDGE, fonte: FONTE }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
-  const json = (corpo: unknown, status = 200) =>
-    new Response(JSON.stringify(corpo), {
-      status,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient, do
+  // claim e de qualquer POST ao PostHog. Esta edge NÃO lia o corpo do request; o parse nasce aqui
+  // já no lugar certo, e o `catch` mantém o caminho do cron (corpo `{}` → fluxo real) intacto.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  const body = await req.json().catch(() => ({}));
+
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+  // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no fluxo real por omissão.
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ erro: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
 
   // ⚠️ Chave ausente é falha de CONFIGURAÇÃO e sai com status de erro. Degradar
   // em silêncio aqui produziria exatamente a leitura envenenada que este
@@ -71,7 +98,7 @@ Deno.serve(async (req) => {
   const ingestKey = Deno.env.get("POSTHOG_INGEST_KEY");
   if (!ingestKey) {
     console.error("[analytics-outbox-drain] POSTHOG_INGEST_KEY ausente — nada foi drenado");
-    return json({ erro: "POSTHOG_INGEST_KEY nao configurado" }, 500);
+    return jsonRes({ erro: "POSTHOG_INGEST_KEY nao configurado" }, 500);
   }
 
   const db = createClient(
@@ -87,12 +114,12 @@ Deno.serve(async (req) => {
       () => drenar(db as unknown as DbRpc, ingestKey),
       (r) => ({ ...r }),
     );
-    return json(resultado);
+    return jsonRes({ ...resultado });
   } catch (e) {
     // mensagemDeErro evita o "[object Object]" que esconde a causa no painel.
     const msg = mensagemDeErro(e) ?? "(sem mensagem)";
     console.error("[analytics-outbox-drain] falhou:", msg);
-    return json({ erro: msg }, 500);
+    return jsonRes({ erro: msg }, 500);
   }
 });
 
