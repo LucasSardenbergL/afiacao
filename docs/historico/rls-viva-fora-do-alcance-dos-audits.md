@@ -838,3 +838,32 @@ medição), com a exigência de que as duas batessem. **Não bateram**, duas vez
 > E a lição de escopo: *a correção certa de um falso ✅ raramente é um ❌.* Aqui era **três**
 > estados, porque "não aplicada" e "deriva" pedem ações opostas e a checagem ingênua as
 > confundia.
+
+### 11.4 Pendências abertas no fecho de 2026-08-29 (cópia durável dos chips)
+
+Três pendências saíram desta série com chip criado. **Chip é destino perecível** — mora dentro da
+sessão que o criou, e não há fila global. Se a sessão for arquivada antes do clique, não há
+caminho conhecido de volta. Por isso o conteúdo essencial fica aqui.
+
+**1. Confirmar o deploy das 8 edges mergeadas entre 28 e 29/08.** Cinco sessões paralelas
+mergearam mudanças em `supabase/functions/` na mesma janela; neste repo merge **não** deploya edge
+(chat do Lovable, manual), e a sessão dona pode ter fechado sem pedir. Arquivos: `_shared/`
+(`sonda-fingerprints.ts`, `sonda-versao-contrato_test.ts`), `analytics-outbox-drain`,
+`elevenlabs-transcribe`, `generate-bundle-argument`, e os quatro `omie-sync-*`
+(`ctes-recebidos`, `nfes-recebidas`, `pedidos-compra`, `sku-items`, `vendas-items`). O pedido de
+deploy tem de nomear **todos**, `_shared` incluído — prompt que nomeia um só deixa a edge sem
+bootar (#2020). ⚠️ Duas são de SEGURANÇA (gate de IA paga): se não estiverem no ar, o gate está no
+repo e não em produção. Confirmar antes via `versao.ts`/sonda, para não pedir deploy redundante.
+
+**2. Triar as 27 funções em `🔴 DERIVA`.** A Seção 3 do #2105 passou a enxergá-las: corpo vivo que
+não bate com **nenhuma** migration do repo — edição direta no SQL Editor que o repo nunca soube.
+Zero em `NAO APLICADA` (bom). O produto é uma lista classificada (o vivo é mais novo ou mais
+velho? divergência semântica ou formatação? é money-path?), não "consertar as 27" — a maioria deve
+ser deriva benigna. Se alguma for money-path com divergência semântica, **isso** é o achado.
+
+**3. Decidir o vocabulário morto de `commercial_role`.** 8 valores no enum, **3 linhas** na tabela
+(`farmer`×2, `master`×1), e as capabilities de carteira testando três valores que ninguém tem — o
+CLAUDE.md ainda descreve um terceiro vocabulário ("gestor/vendedor"). A evidência barata para
+decidir entre migração abandonada, provisionamento sob demanda e divergência de fonte está no
+§11.1, na ordem que a 2ª opinião propôs. ⚠️ Não repetir a afirmação errada corrigida no §11.1: os
+`farmer` **têm** acesso à carteira, linha a linha, por `carteira_visivel_para`.
