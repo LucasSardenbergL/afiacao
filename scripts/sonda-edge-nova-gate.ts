@@ -156,6 +156,14 @@ export interface Achado {
 export const DISPENSAS: Record<string, Dispensa> = {};
 
 /**
+ * ⚠️ LIMITE das duas detecções abaixo: elas leem o corpo da PASTA da edge, não o fecho transitivo
+ * de `_shared/`. Escrita que chega por helper compartilhado não é vista — quem enxerga esse
+ * fan-out é o `sonda:fingerprint`, e ele só age sobre edge JÁ instrumentada. Declarado em vez de
+ * silenciado: o gate promete falsificar a dispensa, e prometer mais do que mede é a mesma classe
+ * de falha que ele existe para tapar.
+ */
+
+/**
  * A cadeia PostgREST de escrita: `.from(...)` seguido de um método de mutação, sem atravessar
  * fim de statement (`[^;{}]`). A âncora no `.from(` e o corte no `;`/`{`/`}` são o que separa
  * `sb.from('t').insert(x)` de `cache.delete(chave)` — precisão > recall, porque gate que grita
@@ -332,6 +340,23 @@ export function montarEstadoNovas(
   return novas;
 }
 
+/**
+ * Une o que o diff viu com o que ele NÃO PODE ver.
+ *
+ * `git diff` não lista untracked, e edge nova nasce untracked — a pasta existe no disco e não
+ * está no índice. Medido na falsificação (2026-08-28): com a pasta criada e não adicionada, o
+ * gate imprimia "✓ toda edge nascida nesta fatia tem a decisão TOMADA", isto é, verde por
+ * CEGUEIRA no exato instante em que o autor roda o gate para saber se decidiu. O CI não veria
+ * (lá tudo já está commitado), o que torna esse falso-verde só LOCAL — e local é onde a decisão
+ * acontece.
+ *
+ * Comparando duas REVS (`--head <rev>`) não há árvore de trabalho a considerar, e untracked do
+ * disco não pertence a nenhuma das duas: entra só quando o head é a árvore.
+ */
+export function unirTocados(doDiff: string[], untracked: string[], headRev: string | null): string[] {
+  return headRev === null ? [...new Set([...doDiff, ...untracked])] : doDiff;
+}
+
 /** Coleta as edges que nasceram nesta fatia. */
 export function coletarNovas(base: string, headRev: string | null): EstadoEdgeNova[] {
   const args = ['diff', '--name-only', base];
@@ -344,7 +369,21 @@ export function coletarNovas(base: string, headRev: string | null): EstadoEdgeNo
         'mesmo que estar em ordem.',
     );
   }
-  const tocados = saida.split('\n').filter((l) => l !== '');
+
+  let untracked: string[] = [];
+  if (headRev === null) {
+    const outros = ['ls-files', '--others', '--exclude-standard', '--', RAIZ_EDGES];
+    const r = git(outros);
+    if (!r.ok) {
+      throw new Error(
+        `\`git ${outros.join(' ')}\` falhou. Edge nova nasce UNTRACKED — sem esta lista o gate ` +
+          'ficaria cego exatamente na fatia que ele existe para ver.',
+      );
+    }
+    untracked = r.saida.split('\n').filter((l) => l !== '');
+  }
+
+  const tocados = unirTocados(saida.split('\n').filter((l) => l !== ''), untracked, headRev);
   return montarEstadoNovas(tocados, base, headRev, (rev, caminho) =>
     rev === null ? lerNoHead(null, caminho) : lerNaRev(rev, caminho),
   );

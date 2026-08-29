@@ -11,6 +11,7 @@ import {
   formatarAchado,
   main,
   montarEstadoNovas,
+  unirTocados,
   type EstadoEdgeNova,
   type Dispensa,
 } from './sonda-edge-nova-gate';
@@ -364,5 +365,24 @@ describe('o vocabulário separa o que o gate VERIFICA do que ele só registra', 
       { x: { motivo: 'sem-deploy-proprio', porque: 'utilitário importado por outra edge, não é bundle servido' } },
     );
     expect(a).toEqual([]);
+  });
+});
+
+describe('unirTocados — edge NOVA nasce UNTRACKED, e `git diff` não a enxerga', () => {
+  // Achado da falsificação (2026-08-28): com a pasta criada e não adicionada, `git diff HEAD`
+  // devolve vazio e o gate imprimia "✓ toda edge nascida nesta fatia tem a decisão TOMADA".
+  // Verde por CEGUEIRA no exato momento em que a decisão está sendo tomada — que é quando o
+  // autor roda o gate. No CI não aparece (lá tudo está commitado), então só a falsificação
+  // manual pegaria.
+  it('inclui os untracked quando o HEAD é a ÁRVORE DE TRABALHO', () => {
+    expect(unirTocados(['a/index.ts'], ['b/index.ts'], null)).toEqual(['a/index.ts', 'b/index.ts']);
+  });
+
+  it('IGNORA untracked quando se compara duas REVS — lá árvore de trabalho não existe', () => {
+    expect(unirTocados(['a/index.ts'], ['b/index.ts'], 'abc123')).toEqual(['a/index.ts']);
+  });
+
+  it('deduplica: arquivo pode aparecer nas duas listas', () => {
+    expect(unirTocados(['a/index.ts'], ['a/index.ts'], null)).toEqual(['a/index.ts']);
   });
 });
