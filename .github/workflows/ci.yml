@@ -250,6 +250,20 @@ jobs:
       - name: Sonda de versão — fingerprint da fonte bate com o mapa servido
         run: bun run sonda:fingerprint
 
+      # O terceiro buraco, e o mais silencioso: os dois gates acima têm o MESMO universo — as
+      # edges JÁ instrumentadas. Quando o universo é lista derivada de artefato opt-in, quem nunca
+      # entrou não reprova: SOME. Medido (2026-08-28): a `analytics-outbox-drain` nasceu no #2035
+      # sem `versao.ts` e fora do mapa, nenhum gate reclamou, e `cobertura: 39/39` era 39/40 — o
+      # 40º não estava reprovado, estava ausente do denominador. Este gate cobra a DECISÃO no dia
+      # em que a pasta nasce: `versao.ts` + mapa, OU o nome em `DISPENSAS` com justificativa
+      # assinada. As 55 não-instrumentadas não são dívida (leitura pura é exceção declarada desde
+      # a 3ª leva) — o que ele proíbe é a omissão, não a dispensa.
+      # `pull_request`-only pelo mesmo motivo do `sonda:bump`: no push/schedule da main a
+      # merge-base é o próprio HEAD, e diff vazio se leria como "nenhuma edge nasceu".
+      - name: Sonda de versão — edge NOVA declara se é instrumentada ou dispensada
+        if: github.event_name == 'pull_request'
+        run: bun run sonda:nova
+
       # O outro MARCADOR. As canárias versionam por `contrato`, com a mesma classe de falha:
       # congelado, a canária responde a mesma string tendo o deploy acontecido ou não, e um deploy
       # integralmente velho compara `expected` velho com código velho e mente `ok:true`. A auditoria

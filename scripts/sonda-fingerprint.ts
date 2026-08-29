@@ -189,13 +189,21 @@ export function renderizarMapa(mapa: Record<string, string>): string {
   return `${CABECALHO}\n${linhas.join('\n')}\n};\n`;
 }
 
-export function lerMapaCommitado(raiz = process.cwd()): Record<string, string> {
-  const abs = resolve(raiz, ARQ_MAPA);
-  if (!existsSync(abs)) return {};
-  const fonte = readFileSync(abs, 'utf8');
+/**
+ * Extrai o mapa de uma FONTE já lida — separado do `lerMapaCommitado` porque o
+ * `sonda-edge-nova-gate.ts` precisa do mapa numa REV do git, não na árvore de trabalho. Duplicar
+ * a regex lá criaria duas noções de "o que está no mapa" que podem divergir em silêncio.
+ */
+export function parsearMapa(fonte: string): Record<string, string> {
   const mapa: Record<string, string> = {};
   for (const m of fonte.matchAll(/^\s*"([^"]+)":\s*"([0-9a-f]{64})",$/gm)) mapa[m[1]] = m[2];
   return mapa;
+}
+
+export function lerMapaCommitado(raiz = process.cwd()): Record<string, string> {
+  const abs = resolve(raiz, ARQ_MAPA);
+  if (!existsSync(abs)) return {};
+  return parsearMapa(readFileSync(abs, 'utf8'));
 }
 
 export function main(argv: string[]): number {
