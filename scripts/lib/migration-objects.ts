@@ -51,8 +51,10 @@ function trimEspacos(s: string): string {
   return s.replace(/^ +| +$/g, '');
 }
 
-/** md5 do corpo com a receita do banco: btrim(espaços) → colapsa whitespace → md5. */
-export function md5CorpoFuncao(corpo: string): string {
+/** md5 do corpo com a receita do banco: btrim(espaços) → colapsa whitespace → md5. Interna: o
+ *  consumidor é `corposCrusPorNome` logo abaixo — exportá-la sem consumidor externo reprova no
+ *  gate de dead-code (`knip`), que só roda no CI. */
+function md5CorpoFuncao(corpo: string): string {
   return createHash('md5').update(trimEspacos(corpo).replace(/\s+/g, ' '), 'utf8').digest('hex');
 }
 
