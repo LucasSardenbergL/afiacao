@@ -296,3 +296,103 @@ git worktree list --porcelain | awk '/^worktree /{print $2}' \
 >
 > E cuidado com a correção que atropela o caso legítimo: 75% do uso "caro" aqui se pagava.
 > Uma regra que mirasse "Fable é caro" teria destruído mais valor do que economizou.
+
+---
+
+# Veredito pós-entrega — 2026-08-29
+
+**❌ A asserção foi REFUTADA. O `"model": "opus"` foi REVERTIDO** (linha apagada de
+`.claude/settings.json`), conforme a regra de decisão pré-registrada acima.
+
+> Nota de data: o doc marcava o veredito para ≥ 2026-09-03. Esta medição rodou em 08-29 —
+> 25 dias após o merge, 20 deles com dados. Antecipar não mudou o desfecho: o sinal decisivo
+> é uma série de **11 dias consecutivos com ZERO**, que 5 dias a mais não reverteriam.
+
+## O medido
+
+Instrumento: **uma** coleta global (`--dias 0`), 129.050 linhas → **60.364 requests** após
+dedupe; os dois lados são recortes por data do REQUEST **do mesmo TSV** (`--pular-coleta`),
+o que elimina qualquer diferença de instrumento entre pré e pós.
+
+| | janela real | requests | Fable %reqs | Fable %custo |
+|---|---|---|---|---|
+| **pré** (`--ate 2026-08-03`) | 05-20 .. 07-31 (24 dias c/ dados) | 10.347 | **8,1%** (837) | **20,9%** (US$ 484) |
+| **pós** (`--desde 2026-08-04`) | 08-04 .. 08-29 (20 dias c/ dados) | 41.988 | **1,9%** (783) | **5,4%** (US$ 354) |
+
+O custo caiu. Mas o `%reqs` caiu para **1,9%** — muito abaixo do piso de ~13% que a asserção
+exigia. Pela regra pré-registrada isso é o ramo de **regressão**, não de sucesso.
+
+### A cobertura estava OK — o número não é média de tratados com não-tratados
+
+Ponderada por tráfego (48.465 linhas no recorte pós):
+
+| bucket | requests | |
+|---|---|---|
+| worktree viva **com** a linha | 16.726 | 34,5% |
+| worktree já **reciclada** (cobertura não verificável) | 31.739 | 65,5% |
+| worktree viva **sem** a linha | **0** | **0,0%** |
+
+As 27 worktrees "AUSENTE" geraram **zero** requests — terceira confirmação de que a contagem
+crua de worktrees é a métrica errada e o parque rotaciona sozinho. Entre as worktrees
+identificáveis, a cobertura é 100%.
+
+## O mecanismo: não foi queda de share, foi EXTINÇÃO
+
+O share por dia mostra que a leitura agregada esconde o essencial:
+
+| dia | Fable %reqs |
+|---|---|
+| 08-04 · 08-06 · 08-07 · 08-08 | 23,1% · 4,7% · 13,8% · 2,9% |
+| **08-13 até 08-24 (11 dias, ~30k requests)** | **0,00% — todos os dias** |
+| 08-25 · 08-28 | 0,73% · 1,06% |
+
+E o corte por `isSidechain` (deduplicado por `requestId`) fecha a conta:
+
+| período | Fable em sessão PRINCIPAL | Fable em SUBAGENTE |
+|---|---|---|
+| pré (≤ 08-03) | **837** | 0 |
+| transição (08-04..08-08) | **729** | 0 |
+| pós (≥ 08-09) | **0** | 54 |
+
+**O founder não abriu Fable uma única vez em 21 dias e ~35.000 requests.** O que sobrou é
+exclusivamente o agente delegando varredura a subagente Fable — canal que a regra do CLAUDE.md
+de 08-24 criou e que **não existia antes**.
+
+Não é indisponibilidade: Fable 5 segue no roster, usado até 2026-08-28.
+
+## Por que isso é regressão e não vitória
+
+Os 34% de custo do #1654 nunca foram "desperdício": a auditoria original mediu **~75% de uso
+legítimo** (money-path, auditoria ampla, long-horizon). A intervenção mirava os ~25% da cauda.
+O que ela produziu foi **zero** — matou os 25% e os 75% junto. Um piso de ~13% em `%reqs` foi
+escrito na asserção exatamente para detectar isso, e ele foi furado por quase 7x.
+
+O risco estava previsto e a mitigação falhou: *"o modelo aparece na UI ao abrir, e a troca é
+barata e reversível"*. Medido — **zero trocas em 21 dias**. Um default vence a UI, que é o
+mesmo achado do #1654 com o sinal invertido.
+
+## Confusores que registro por honestidade (não mudam a ação)
+
+1. **Opus 5 chegou em 2026-07-27**, uma semana antes do merge; `opus-4-8` (39,6% dos requests
+   do pré) desapareceu em 08-04. Parte do "não preciso mais de Fable" pode ser capacidade
+   nova, não sequestro. Não separo os dois com log de token.
+2. **O baseline de 34%/18% do #1654 não é reconstruível** e não é diretamente comparável: ele
+   citava 149.859 requests em 48 dias, mas o histórico **inteiro** em disco hoje dedupa para
+   60.364 — aqueles números eram **pré-dedupe** (o dedupe entrou em 08-06). Por isso a
+   comparação acima usa pré vs pós **medidos com o mesmo instrumento**, não o número do doc.
+3. **Reverter não é neutro:** devolve o default que produziu os 91% de inércia. A aposta é que
+   a regra de delegação a subagente (08-24) agora cobre o caso legítimo por um caminho melhor
+   — Fable onde se paga, sem sequestrar a sessão inteira. Isso é hipótese, com denominador de
+   apenas 54 requests em 5 dias: **é sinal, não prova.** A próxima medição tem que olhar
+   `PRINCIPAL` vs `SUBAGENTE`, não o agregado.
+
+## Lição transferível
+
+> **Uma correção de default precisa de piso, não só de teto — e o piso precisa ser medido no
+> eixo do comportamento, não no share.** O `%custo` caiu como planejado e, lido sozinho,
+> parecia sucesso. O que denunciou a regressão foi o `%reqs` contra um piso pré-registrado, e
+> o que explicou foi um corte que o relatório não tinha: **sessão principal vs subagente**.
+> Agregado que soma os dois mede uso de modelo; a decisão dependia de quem escolheu.
+>
+> Corolário do "ausente ≠ zero": aqui o zero era **real**, e um zero real num eixo que a
+> intervenção não queria zerar é regressão — mesmo quando a métrica-alvo melhorou.

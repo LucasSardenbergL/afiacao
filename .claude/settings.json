@@ -1,5 +1,4 @@
 {
-  "model": "opus",
   "disableClaudeAiConnectors": true,
   "skillListingMaxDescChars": 220,
   "skillListingBudgetFraction": 0.004,
