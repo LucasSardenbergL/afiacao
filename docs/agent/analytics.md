@@ -926,6 +926,44 @@ transacional *estrita*. O que impede virar a "sonda que degrada em silêncio" é
 linha**: `aprovada` é prova (`aprovado_em` é imutável), `expirada` é indicativa (usa `atualizado_em`,
 que qualquer UPDATE reescreve).
 
+⚠️ **Mas a reconciliação por CONTAGEM em janela FIXA é falso-positiva por construção enquanto a
+tabela auditada for mais NOVA que a janela.** Medido em 2026-08-29, a view devolvia
+`reposicao.sugestao_aprovada | prova | na_fonte=8 | na_outbox=4` — que lê exatamente como o rodapé
+da `20260825225850_analytics_outbox_cron.sql` mandou ler: *"`na_fonte > na_outbox` na linha de
+confiança 'prova' = trigger falhando"*. **Não falhou.** A 1ª linha da outbox é
+`2026-08-26 16:16:15+00`; das 8 aprovações na janela de 7 dias, **4 são anteriores a esse instante**
+(impossível estarem lá) e 4 são posteriores — e a outbox tem exatamente essas 4. A query que separa
+as duas coisas, e que é o primeiro passo antes de abrir bug:
+
+```sql
+select count(*) filter (where aprovado_em < (select min(ocorrido_em) from public.analytics_outbox)) as antes_da_outbox,
+       count(*) filter (where aprovado_em >= (select min(ocorrido_em) from public.analytics_outbox)) as depois
+  from pedido_compra_sugerido where aprovado_em > now() - interval '7 days';   -- devolveu 4|4
+```
+
+O alarme se dissolve sozinho a partir de **2026-09-02** (26/08 + 7 dias). A linha `expirada` (26×11)
+tem a mesma causa, empilhada sobre o limite 'indicativa' que ela já declara.
+
+⚠️ **E o piso "óbvio" para consertar isso — `greatest(now() - interval '7 days', (select
+min(ocorrido_em) from analytics_outbox))` no lado da fonte — NÃO é correção: ele ANDA.**
+`min(ocorrido_em)` não é a data de NASCIMENTO da tabela, é a borda da **retenção**. A
+`analytics-outbox-purgar` está ativa em `20 4 * * *` (1ª purga marcada para 2026-09-05 00:40) e
+empurra o mínimo para frente; quando o piso ultrapassa a janela, o lado da fonte encolhe até
+coincidir com o da outbox e a view fica **verde por construção** — troca falso alarme por
+fail-open, que é pior, porque falso alarme pelo menos se vê. Foi por isso que o check
+`analytics_outbox_trigger` (`20260829041500`) nasceu **sem piso de data**, reconciliando **linha a
+linha** pela chave de dedup (`'pcs:' || id || ':' || evento`) numa janela de **48h** — estritamente
+menor que a retenção de 7 dias, então nada que entrou na janela pode ter sido purgado. A view
+continua como está: **ferramenta de operador, não sensor** (o sensor é o check).
+
+**A classe, que é o que merece ficar:** auditoria de reconciliação — outbox, espelho, view de
+conferência — com janela fixa **sempre** acusa perda inexistente durante a primeira ⟨janela⟩ de
+vida da tabela auditada. Antes de ler `na_fonte > na_outbox` como defeito, **compare a idade da
+tabela com a janela da view**. E ao corrigir: piso derivado de `min()` da própria tabela auditada só
+é honesto se ela **não** tiver purga; havendo retenção, as duas saídas honestas são piso
+**constante** (a data de nascimento, escrita à mão) ou **janela menor que a retenção + comparação
+linha a linha**. Nunca `min()`.
+
 ⚠️ **Os dois caminhos NÃO têm a mesma justificativa, e confundi-los repetiria o erro que matou o
 proxy.** A §DECISÃO acima mediu que a população do app são **3 pessoas internas** (customers
 aprovados = 0), e foi isso que derrubou o proxy: *antes de pagar por uma saída que recupera uma
