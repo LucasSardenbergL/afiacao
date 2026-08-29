@@ -153,6 +153,7 @@ git diff --name-only origin/main...HEAD -- supabase/functions/
 # Este script enumera a janela INTEIRA (a desta sessão e a das outras) e já classifica quem
 # precisa de chip. Use-o em vez do `git log` cru — o cru é o gatilho velho, ver abaixo.
 bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início da sessão>"
+# aceita DATA ou REVISÃO — se você anotou o SHA de origin/main ao abrir a sessão, prefira o SHA
 # exit 0 = nada pendente · 1 = abra chip para a lista · 2 = MECÂNICA não confiável (o script já
 # imprime tudo como pendente; trate assim) · 3 = uso inválido
 ```

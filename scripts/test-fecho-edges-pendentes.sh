@@ -158,6 +158,55 @@ suite() {
   then ok "sem argumentos -> exit 3"
   else bad "sem argumentos devia dar exit 3 (rc=$rc)"; fi
 
+  # 13. modo --desde: a UNIAO das duas vias, num repo git de verdade. O que se prova aqui e a
+  #     ENUMERACAO (quem entra na lista), nao a classificacao — e o furo caro e o `_shared/`:
+  #     nenhuma das duas vias enxerga as edges afetadas por ele sem o mapa de fingerprints.
+  # um repo POR PASSADA: o 2o caso deste bloco mutila o repo (remove o mapa), e reusar o mesmo
+  # diretorio no 2o locale faria o 1o caso rodar contra um repo ja quebrado — vermelho falso.
+  local repo="$tmp/repo-${LC_ALL:-x}"
+  if [ ! -d "$repo" ]; then
+    mkdir -p "$repo/supabase/functions/_shared" "$repo/supabase/functions/edge-do-shared"
+    git -C "$repo" init -q -b main 2>/dev/null
+    git -C "$repo" config user.email t@t; git -C "$repo" config user.name t
+    printf 'x\n' > "$repo/supabase/functions/_shared/lib.ts"
+    printf 'import "../_shared/lib.ts"\n' > "$repo/supabase/functions/edge-do-shared/index.ts"
+    cat > "$repo/supabase/functions/_shared/sonda-fingerprints.ts" <<MAPA0
+export const FONTE_SHA256: Record<string, string> = {
+  "edge-do-shared": "$SHA_VELHO",
+};
+MAPA0
+    git -C "$repo" add -A >/dev/null; git -C "$repo" commit -qm base
+    base_sha="$(git -C "$repo" rev-parse HEAD)"
+    # 2o commit: mexe SO em _shared/ e o CI regenera o mapa -> o fingerprint da edge muda
+    printf 'y\n' > "$repo/supabase/functions/_shared/lib.ts"
+    cat > "$repo/supabase/functions/_shared/sonda-fingerprints.ts" <<MAPA1
+export const FONTE_SHA256: Record<string, string> = {
+  "edge-do-shared": "$SHA_NOVO",
+};
+MAPA1
+    git -C "$repo" add -A >/dev/null; git -C "$repo" commit -qm shared
+    git -C "$repo" update-ref refs/remotes/origin/main HEAD
+    printf '%s' "$base_sha" > "$tmp/base_sha"
+  fi
+
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+         FECHO_MAPA_FONTE="" bash "$ALVO" --desde "$(cat "$tmp/base_sha")" 2>&1)"; rc=$?
+  # a edge afetada SO por _shared/ tem de aparecer: a via (b) nao a ve, a via (a) sim
+  if tem 'edge-do-shared' "$out" && ! tem '_shared ' "$out"
+  then ok "--desde: _shared/ puxa a edge afetada e _shared NAO entra como edge"
+  else bad "--desde devia listar edge-do-shared e nunca _shared (rc=$rc): ${out:0:120}"; fi
+
+  # mapa ilegivel + _shared/ tocado = nao sei quais edges foram afetadas -> exit 2, nunca "nada"
+  git -C "$repo" rm -q --cached supabase/functions/_shared/sonda-fingerprints.ts >/dev/null 2>&1
+  rm -f "$repo/supabase/functions/_shared/sonda-fingerprints.ts"
+  git -C "$repo" commit -qm "sem mapa" >/dev/null 2>&1
+  git -C "$repo" update-ref refs/remotes/origin/main HEAD
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+         bash "$ALVO" --desde "$(cat "$tmp/base_sha")" 2>&1)"; rc=$?
+  if [ "$rc" -eq 2 ] && ! tem 'nenhuma edge na janela' "$out"
+  then ok "--desde: _shared/ sem mapa legivel -> exit 2, nunca 'nenhuma edge'"
+  else bad "_shared sem mapa devia dar exit 2 e nao absolver (rc=$rc): ${out:0:120}"; fi
+
   # 12. guardrail de FORMA do SQL: o stub nao executa SQL, entao o que da para provar aqui e que a
   #     consulta pede a resposta MAIS RECENTE por edge. Sem isso, um deploy no meio da janela deixa
   #     o bundle velho no resultado e ele seria lido como prova (o caso do omie-vendas-sync).
@@ -210,6 +259,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   # (a2) a sonda volta a exigir a saida INTEIRA == "1": reprova o wrapper bom (o defeito de prod)
   sabota "sonda exigindo saida inteira == 1 (ignora os SET do wrapper)" \
     "s%| command grep -Fxq -- '1'%| tr -d '[:space:]' | command grep -Fxq -- '1'%"
+  # (a3) o fail-closed do `_shared/` sem mapa vira aviso: enumeracao voltaria a absolver por ausencia
+  sabota "_shared sem mapa deixando de ser exit 2" \
+    's%      exit 2$%      :%'
   # (b) o fail-closed some da classificacao: mecanica quebrada passaria a absolver
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "classificar como NO_AR mesmo com mecanica quebrada" \

@@ -25,7 +25,7 @@
 #
 # Uso:
 #   edges-pendentes.sh <slug> [<slug> ...]      # classifica os slugs dados
-#   edges-pendentes.sh --desde "<git-since>"    # deriva os slugs da janela (UNIÃO de 2 fontes)
+#   edges-pendentes.sh --desde "<data-ou-SHA>"  # deriva os slugs da janela (UNIÃO de 2 fontes)
 #
 # `--desde` enumera pela UNIÃO, porque cada fonte sozinha tem furo (mesmo princípio do Passo 4 da
 # lovable-deploy-verify): (a) o DIFF do mapa de fingerprints entre o início da janela e a main —
@@ -62,10 +62,13 @@ if [ "$1" = "--desde" ]; then
   desde="${2:-}"
   [ -n "$desde" ] || { echo "uso: edges-pendentes.sh --desde \"<git-since>\""; exit 3; }
 
-  base="$(git -C "$RAIZ" rev-list -1 --before="$desde" origin/main 2>/dev/null)"
+  # aceita DATA ("3 hours ago", "2026-08-28 14:00") ou REVISÃO (o SHA do início da sessão, que é
+  # o dado mais preciso que o /fecho tem à mão). Revisão primeiro: um SHA nunca é data válida.
+  base="$(git -C "$RAIZ" rev-parse --verify --quiet "${desde}^{commit}" 2>/dev/null)"
+  [ -n "$base" ] || base="$(git -C "$RAIZ" rev-list -1 --before="$desde" origin/main 2>/dev/null)"
   if [ -z "$base" ]; then
     echo "⚠️ edges-pendentes: não achei o commit-base de origin/main antes de \"$desde\""
-    echo "   (git fetch feito? a data é parseável pelo git?) — MECÂNICA NÃO CONFIÁVEL, exit 2"
+    echo "   (git fetch feito? a data é parseável pelo git, ou o SHA existe?) — exit 2"
     exit 2
   fi
 
@@ -84,9 +87,27 @@ if [ "$1" = "--desde" ]; then
 
   # (b) pastas tocadas no git log: pega edge FORA do mapa, cega para _shared/
   git -C "$RAIZ" log "$base..origin/main" --name-only --format="" -- supabase/functions/ 2>/dev/null \
-    | sed -n 's#^supabase/functions/\([a-z0-9][a-z0-9_-]*\)/.*#\1#p' >> "$tmp/alvos"
+    | sort -u > "$tmp/paths"
+  sed -n 's#^supabase/functions/\([a-z0-9][a-z0-9_-]*\)/.*#\1#p' "$tmp/paths" >> "$tmp/alvos"
   # o `[a-z0-9]` inicial exclui `_shared/` de propósito: não é edge, não se deploya sozinha,
   # e o efeito dela nas edges que a importam já entra pela via (a), o diff dos fingerprints.
+
+  # 🔴 O furo que a UNIÃO ainda deixaria: `_shared/` tocado é a ÚNICA classe cujas edges afetadas
+  # NENHUMA das duas vias enxerga sem o mapa — a (b) não conhece o grafo de imports e a (a) precisa
+  # do arquivo. Sem essa trava, mudança só em `_shared/` sairia como "nenhuma edge na janela": chip
+  # suprimido por AUSÊNCIA DE DADO, que é o modo de falha caro de um script que APAGA pendência.
+  if command grep -q '^supabase/functions/_shared/' "$tmp/paths" 2>/dev/null; then
+    if [ ! -s "$tmp/mapa_agora" ] || [ ! -s "$tmp/mapa_base" ]; then
+      echo "⚠️ edges-pendentes: \`_shared/\` mudou na janela e o mapa de fingerprints não pôde ser"
+      echo "   lido nas duas pontas — não sei QUAIS edges isso afetou. MECÂNICA NÃO CONFIÁVEL, exit 2."
+      exit 2
+    fi
+    if [ ! -s "$tmp/alvos" ]; then
+      echo "⚠️ \`_shared/\` mudou na janela e NENHUM fingerprint mudou. Ou a mudança não entra em"
+      echo "   bundle nenhum, ou o mapa não foi regenerado no merge (\`bun run sonda:fingerprint\`)."
+      echo "   Confira antes de concluir que não há deploy pendente."
+    fi
+  fi
 
   sort -u -o "$tmp/alvos" "$tmp/alvos" 2>/dev/null || true
 else
