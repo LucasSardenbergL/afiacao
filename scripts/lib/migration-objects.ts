@@ -17,6 +17,7 @@
  * grants, nem SQL dinâmico; a assinatura é a lista de args normalizada (renomear param muda a
  * chave). O preflight degrada para "não detectado", nunca fabrica colisão.
  */
+import { createHash } from 'node:crypto';
 
 import { removerComentariosSql } from './sql-comentarios';
 
@@ -30,6 +31,56 @@ export interface ExtractedObject {
   parent?: string;
   /** function: assinatura normalizada (lista de args) — distingue overloads. */
   signature?: string;
+  /**
+   * function: md5 do CORPO (o texto entre os delimitadores dollar-quoted), normalizado com a
+   * MESMA receita do resto do repo — `md5(regexp_replace(btrim(prosrc), '\s+', ' ', 'g'))`.
+   *
+   * 🔴 `btrim(x)` do Postgres, com UM argumento, remove apenas ESPAÇOS — **não** `\n`. O corpo de
+   * `AS $f$\n  SELECT …` começa com quebra de linha, que SOBREVIVE ao btrim e vira um espaço à
+   * esquerda no `regexp_replace`. Um `.trim()` de JS removeria e produziria md5 diferente do que o
+   * banco calcula (medido; ver §11.2 do histórico de RLS). Por isso `trimEspacos`, não `trim`.
+   *
+   * Ausente quando o corpo não pôde ser extraído (função sem dollar-quote, `LANGUAGE c`, …) — e
+   * ausência aqui NUNCA vira "confere": o audit degrada para INDECIDÍVEL, não para ✅.
+   */
+  bodyMd5?: string;
+}
+
+/** `btrim(x)` do Postgres com UM argumento: só ESPAÇOS, nunca `\n`/`\t`. Ver `bodyMd5`. */
+function trimEspacos(s: string): string {
+  return s.replace(/^ +| +$/g, '');
+}
+
+/** md5 do corpo com a receita do banco: btrim(espaços) → colapsa whitespace → md5. Interna: o
+ *  consumidor é `corposCrusPorNome` logo abaixo — exportá-la sem consumidor externo reprova no
+ *  gate de dead-code (`knip`), que só roda no CI. */
+function md5CorpoFuncao(corpo: string): string {
+  return createHash('md5').update(trimEspacos(corpo).replace(/\s+/g, ' '), 'utf8').digest('hex');
+}
+
+/**
+ * md5 do corpo de cada função, lido do SQL **CRU** e indexado por `schema.nome`.
+ *
+ * 🔴 CRU, e não o texto sem comentários que o resto do extrator usa. `pg_proc.prosrc` **guarda os
+ * comentários do corpo**; calcular o md5 sobre a versão comentário-strippada produz um hash que
+ * NUNCA bate com o banco para qualquer função que tenha um `--` dentro. Medido em 2026-08-29: com
+ * o texto strippado a Seção 3 classificou 52 funções como DERIVA e 36 em dia; com o texto cru, 24
+ * e 69. Ou seja, 28 alarmes FALSOS — e alarme falso em massa é como uma seção nova nasce
+ * desligada. O bug só apareceu porque a mesma classificação foi feita duas vezes, em SQL e em TS,
+ * e as duas TINHAM de bater.
+ *
+ * Casa o primeiro `AS $tag$ … $tag$` depois de cada declaração e exige a MESMA tag no fecho — um
+ * `$$` interno com tag diferente não fecha o bloco por engano. Overload no MESMO arquivo (mesmo
+ * nome, assinaturas diferentes) colapsa no último: o consumidor compara "bate com alguma versão",
+ * então o conservador é não distinguir.
+ */
+function corposCrusPorNome(sqlCru: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const re = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(\w+)\.)?(\w+)\s*\([\s\S]*?\bAS\s+(\$[A-Za-z_]*\$)([\s\S]*?)\3/gi;
+  for (const m of sqlCru.matchAll(re)) {
+    out.set(`${(m[1] ?? 'public').toLowerCase()}.${m[2].toLowerCase()}`, md5CorpoFuncao(m[4]));
+  }
+  return out;
 }
 
 /** split por vírgula no nível 0 de parênteses (preserva numeric(10,2) etc.) */
@@ -96,13 +147,22 @@ export function normalizeSignature(argsRaw: string): string {
  */
 export function extractObjects(sql: string): ExtractedObject[] {
   const stripped = removerComentariosSql(sql);
+  // Corpos vêm do CRU (ver `corposCrusPorNome`); nomes/assinaturas, do strippado.
+  const corpos = corposCrusPorNome(sql);
   const objects: ExtractedObject[] = [];
 
   // CREATE [OR REPLACE] FUNCTION [schema.]name(args) — captura args via parênteses balanceados
   const fnRe = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(\w+)\.)?(\w+)\s*\(/gi;
   for (const m of stripped.matchAll(fnRe)) {
     const args = balancedParens(stripped, m.index! + m[0].length - 1);
-    objects.push({ kind: 'function', schema: m[1] || 'public', name: m[2], signature: normalizeSignature(args) });
+    const md5Corpo = corpos.get(`${(m[1] || 'public').toLowerCase()}.${m[2].toLowerCase()}`);
+    objects.push({
+      kind: 'function',
+      schema: m[1] || 'public',
+      name: m[2],
+      signature: normalizeSignature(args),
+      ...(md5Corpo === undefined ? {} : { bodyMd5: md5Corpo }),
+    });
   }
 
   // CREATE [OR REPLACE] [MATERIALIZED] VIEW [IF NOT EXISTS] [schema.]name
