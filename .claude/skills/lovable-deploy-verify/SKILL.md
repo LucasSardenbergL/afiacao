@@ -584,9 +584,13 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        slug em `origin/main` acha **um** caller (o `index.ts` da própria edge). Sem isso prova-se o
        módulo `_shared/` compartilhado, não a versão daquela edge — mesma ressalva da mensagem única.
        **(c) nenhum 2º emissor** — o frontend chama a **EDGE**, não a RPC, e o harness roda em PG17
-       local. O que o `git grep` **não** fecha é a mão no 🟣 SQL Editor, então leia o **padrão**: 4
-       chamadas em 61 s do mesmo usuário real (staff, com `profiles`) é uso de app; rajada de
-       milissegundos ou `user_id` inventado é teste manual.
+       local. O que o `git grep` **não** fecha é a mão no 🟣 SQL Editor, então leia o **padrão**: as 4
+       do mesmo `user_id` vieram espaçadas em **segundos a dezenas de segundos** (22/27/12 s — tempo
+       de gravar áudio), e isso é uso de app; rajada de milissegundos ou `user_id` sem sessão é teste
+       manual. **Sem linha em `profiles` NÃO desqualifica**: aqui o `EXISTS` deu `f` e eram gravações
+       reais pelo microfone (cadastro em `/auth` é aberto; alias fiscal sem `profiles` é legítimo) —
+       quem fechou foi **perguntar ao founder**. Meça o vínculo com `EXISTS(...)`:
+       `coalesce(p.name,'…')` em LEFT JOIN lê igual para "não existe linha" e "coluna NULL".
     2. 🔴 **A direção é uma só: presença prova, ausência NÃO reprova.** Zero linhas pode ser "não
        deployou" **ou** "ninguém usou a feature", e edge de usuário não tem denominador que separe os
        dois. `ausente ≠ zero` de novo: sem chamada não houve medição, e "0 linhas" lê-se
