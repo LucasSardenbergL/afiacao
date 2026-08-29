@@ -337,3 +337,32 @@ não tinha alargado**. `n=1` num sinal que depende de carga é anedota, e uma 2�
 anedota devolve solução sólida para problema que talvez não exista — cara, porque solução sólida
 convence. A regra "releia a janela inteira do TTL antes de invocar a sonda" vale um passo antes:
 **antes de projetar o conserto, e antes de pedir revisão dele.**
+
+## Adendo 2026-08-29 — o marcador esperado é POR EDGE, não "o bump do lote"
+
+Verificando o deploy do `069540905` (#2079, 5 edges), o enunciado que chegou pronto era: *"esperado no
+ar depois do deploy: `VERSAO = "v1.1-eco-identidade-fonte"`"* — para as cinco. É falso para uma, e a
+falsidade é do tipo que **reprova deploy correto**:
+
+| edge | `VERSAO` no pai | `VERSAO` no commit |
+|---|---|---|
+| `omie-sync-ctes-recebidos` · `-pedidos-compra` · `-sku-items` · `-vendas-items` | `v1.0-eco-versao-passivo` | `v1.1-eco-identidade-fonte` |
+| `omie-sync-nfes-recebidas` | **`v1.1-deadline-relogio`** | **`v1.2-eco-identidade-fonte`** |
+
+O `nfes` vinha de outra fatia (#2031, a coleira de relógio), então a mesma entrega o levou de `v1.1`
+para `v1.2`. A versão é um contador **por arquivo**, e uma fatia que atravessa N edges herda N pontos
+de partida diferentes: falar em "o marcador do lote" é a suposição de que todos partiram do mesmo
+lugar. Consequência medida: procurar `v1.1-eco-identidade-fonte` no `nfes` **nunca** casa — o valor
+não existiu nesse arquivo em commit nenhum — e a leitura correta ("não achei o esperado") vira o
+veredito errado *"não subiu"*, com pedido de redeploy de edge money-path à toa.
+
+É a armadilha do **id de exemplo plausível** (Lei de Ferro #5 da `lovable-deploy-verify`) numa casa
+acima: não é o id que se inventa, é o **valor esperado**. E falha calada pelo mesmo motivo — um
+marcador plausível casa com a gramática de todos os outros, então nada no resultado denuncia que a
+pergunta estava errada.
+
+**Regra:** derive o esperado do arquivo, uma edge por vez, antes de ler o ar —
+`git show <sha>:supabase/functions/<edge>/versao.ts | grep 'VERSAO ='` — e prove a exclusividade de
+cada valor no pai (`git grep -c '<valor>' <sha>^ -- supabase/functions/` = 0), que é o análogo do
+guard `--pai`. Aqui os dois valores passaram: `v1.1-eco-identidade-fonte` e `v1.2-eco-identidade-fonte`
+têm 0 ocorrência em `069540905^`.
