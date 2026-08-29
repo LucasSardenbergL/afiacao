@@ -44,8 +44,8 @@
  * além disso — policiar a prosa seria teatro; o valor está em a decisão aparecer ASSINADA no diff.
  *
  * O buraco que essa verificação quase teve está registrado porque quase passou: `.rpc()` também
- * escreve, e o texto não diz qual RPC lê e qual grava. Medido nas 56 pastas sem `versao.ts`
- * (2026-08-28): 31 escrevem por PostgREST, 12 chamam `.rpc()`, 20 não fazem nem um nem outro.
+ * escreve, e o texto não diz qual RPC lê e qual grava. Medido nas 56 pastas sem `versao.ts` de
+ * 2026-08-28 (55 depois do #2094): 31 escrevem por PostgREST, 12 chamam `.rpc()`, 20 nenhum.
  * Se `leitura-pura` cobrisse as duas famílias, 12 edges ganhariam verde AUTO-VERIFICADO sobre
  * escrita invisível — e a `analytics-outbox-drain`, o caso que motivou este gate, é uma delas
  * (ela grava por `analytics_outbox_aceitar`). Daí `leitura-via-rpc` ser motivo separado, com o
@@ -92,7 +92,8 @@ import {
  * o que outro marcador prova), que texto nenhum decide — nesses o gate registra a assinatura e
  * declara o limite, em vez de fingir que cobre.
  *
- * MEDIDO nas 56 pastas sem `versao.ts` de 2026-08-28: 31 escrevem por PostgREST, 12 chamam
+ * MEDIDO nas 56 pastas que estavam sem `versao.ts` em 2026-08-28, antes de o #2094 instrumentar
+ * a `analytics-outbox-drain` (55 depois dele): 31 escrevem por PostgREST, 12 chamam
  * `.rpc()`, 20 não fazem nem um nem outro. É por isso que `leitura-pura` e `leitura-via-rpc` são
  * motivos SEPARADOS: juntá-los daria um verde auto-verificado a 12 edges cuja escrita o gate não
  * consegue ver — e foi exatamente essa a forma do caso que motivou o gate (a

@@ -58,7 +58,8 @@ Dois furos, ambos descobertos por rodar o gate contra o repo real, nenhum deles 
 1. **`.rpc()` também escreve, e o texto não diz qual RPC lê.** O detector original só via a cadeia
    PostgREST (`.from().insert()`). O teste de controle positivo — que exige que a
    `analytics-outbox-drain` REPROVE como `leitura-pura` — ficou vermelho: ela grava por
-   `analytics_outbox_aceitar`, um RPC. Medido nas 56 pastas sem `versao.ts`: **31** escrevem por
+   `analytics_outbox_aceitar`, um RPC. Medido nas 56 pastas que estavam sem `versao.ts` em
+   2026-08-28, antes de o #2094 instrumentar essa edge (55 depois dele): **31** escrevem por
    PostgREST, **12** chamam `.rpc()`, **20** não fazem nem um nem outro. Um único motivo
    `leitura-pura` daria verde AUTO-VERIFICADO a 12 edges cuja escrita o gate não enxerga — e no
    formato exato do caso que motivou o gate. Daí `leitura-via-rpc` ser motivo separado, com o
