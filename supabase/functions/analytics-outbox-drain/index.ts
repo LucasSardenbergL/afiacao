@@ -96,10 +96,6 @@ Deno.serve(async (req) => {
   // trabalho existe para acabar: fila crescendo, cron verde, série vazia — e
   // ninguém consegue distinguir "não houve fenômeno" de "o cano nunca abriu".
   const ingestKey = Deno.env.get("POSTHOG_INGEST_KEY");
-  if (!ingestKey) {
-    console.error("[analytics-outbox-drain] POSTHOG_INGEST_KEY ausente — nada foi drenado");
-    return jsonRes({ erro: "POSTHOG_INGEST_KEY nao configurado" }, 500);
-  }
 
   const db = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -111,7 +107,29 @@ Deno.serve(async (req) => {
       db as unknown as DbRegistro,
       "analytics_outbox.drenar",
       auth.via === "cron" ? { via: "cron" } : { via: "staff", userId: auth.userId },
-      () => drenar(db as unknown as DbRpc, ingestKey),
+      // ⚠️ O guard da chave mora DENTRO do callback registrado — e essa posição é
+      // a lição, não um detalhe de estilo. Ele já foi um `return` ANTES do
+      // `comRegistro`, e por isso o apagão de 2026-08-26 (32h, 13× HTTP 500)
+      // deixou ZERO linhas de falha em `acoes_execucoes`: o registro nunca chegou
+      // a ser aberto. Três superfícies diziam "saudável ou ausente" ao mesmo
+      // tempo — `cron.job_run_details` = succeeded (só prova o ENQUEUE), o
+      // registro de execução vazio, e as colunas da fila impecáveis (tentativas=0,
+      // porque a máquina de retry fica rio abaixo do claim, que nunca rodou).
+      // Lançando aqui dentro, `comRegistro` fecha o registro com status='erro' e
+      // re-lança — o `catch` externo devolve a MESMA resposta HTTP de antes.
+      //
+      // ⚠️ A string do erro é IDÊNTICA de propósito. O #2091 a documentou como
+      // prova de VERSÃO da edge sem PAT: `git grep` mostra que ela existe em UM
+      // arquivo só, então um 500 com este corpo em `net._http_response` identifica
+      // o bundle. Reescrevê-la ("faltou a chave", "chave ausente") não quebraria
+      // teste nenhum e apagaria em silêncio uma via de verificação de deploy.
+      () => {
+        if (!ingestKey) {
+          console.error("[analytics-outbox-drain] POSTHOG_INGEST_KEY ausente — nada foi drenado");
+          throw new Error("POSTHOG_INGEST_KEY nao configurado");
+        }
+        return drenar(db as unknown as DbRpc, ingestKey);
+      },
       (r) => ({ ...r }),
     );
     return jsonRes({ ...resultado });
