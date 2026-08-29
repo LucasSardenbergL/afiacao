@@ -519,6 +519,50 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
       na query acima. Falha ruidosa (exit 1), então não fabrica veredito — mas com janela estreita
       ela dorme, e é exatamente ao acumular ticks que ela acorda.
 
+  - **N3 PASSIVO por ESCRITA DE APLICAÇÃO — a edge que o USUÁRIO chama também deixa rastro
+    (2026-08-29, #2086).** As duas vias passivas acima nascem do **cron**: é ele que produz a linha em
+    `net._http_response`, e ela morre no `pg_net.ttl = 6 h`. Edge chamada por **usuário** (transcrição,
+    upload, copiloto) nunca aparece lá — a escada caía direto no N3 ativo, que aqui custa o founder
+    logado. Mas quando a fatia nova **ESCREVE em tabela de aplicação**, essa escrita é assinatura do
+    bundle do mesmo jeito: **não expira**, não depende de cron e não invoca nada. O #2086 pôs gate de
+    cota na `elevenlabs-transcribe`; o gate chama a RPC `ia_consumir_cota`, que faz `INSERT INTO
+    public.ia_uso_evento (user_id, funcao)`. O bundle velho **nem importava** `_shared/ia-cota.ts` —
+    logo é **incapaz** de emitir a linha. Quatro linhas entre 00:32:26Z e 00:33:27Z contra o merge às
+    **00:17:10Z** provaram o deploy sem PAT, sem canária e sem sondar nada.
+    1. **As três condições — sem elas a presença não separa versão:**
+       **(a) a escrita é EXCLUSIVA do bundle novo** (irmão do `--pai`): o velho tem de ser *incapaz*,
+       não apenas improvável — prove no diff que a linha que escreve **nasceu** no PR (o `import` do
+       módulo saiu como `+`). Se ele já escrevia na mesma tabela com o mesmo discriminador, presença
+       não diz nada.
+       **(b) o discriminador nomeia a EDGE** — aqui a coluna `funcao` carrega o slug, e `git grep` do
+       slug em `origin/main` acha **um** caller (o `index.ts` da própria edge). Sem isso prova-se o
+       módulo `_shared/` compartilhado, não a versão daquela edge — mesma ressalva da mensagem única.
+       **(c) nenhum 2º emissor** — o frontend chama a **EDGE**, não a RPC, e o harness roda em PG17
+       local. O que o `git grep` **não** fecha é a mão no 🟣 SQL Editor, então leia o **padrão**: 4
+       chamadas em 61 s do mesmo usuário real (staff, com `profiles`) é uso de app; rajada de
+       milissegundos ou `user_id` inventado é teste manual.
+    2. 🔴 **A direção é uma só: presença prova, ausência NÃO reprova.** Zero linhas pode ser "não
+       deployou" **ou** "ninguém usou a feature", e edge de usuário não tem denominador que separe os
+       dois. `ausente ≠ zero` de novo: sem chamada não houve medição, e "0 linhas" lê-se
+       **INDETERMINADO**, nunca "deploy pendente". É a metade boa do guard temporal do #2079 — lá o
+       risco era ler tick PRÉ-merge como pendência; aqui a evidência só pode existir **depois**, então
+       o erro possível custa uma espera, não um redeploy à toa de edge money-path.
+    3. ✅ **O controle negativo vem de graça, e com dado real.** O mesmo `GROUP BY` sobre a tabela
+       devolve **zero** para as outras funções que têm limite configurado (`identify-tool`,
+       `copilot-analyze`, `analyze-services`): a query **sabe dizer "não"** sem sabotar nada — se ela
+       desse verde para tudo, elas sairiam na mesma leitura. Por isso o `GROUP BY` **sem** filtro de
+       função abaixo é de propósito: filtrar pela sua edge joga fora justamente o controle.
+    4. **Leia onde o INSERT mora no código ANTES de ler a linha.** Em `ia_consumir_cota` ele fica
+       **depois** de todos os `RETURN` de bloqueio, então a linha prova chamada **PERMITIDA** — e de
+       quebra que a migration do limite entrou **antes** do deploy (bloqueada teria voltado 503
+       `sem_limite` sem gravar nada). INSERT incondicional provaria só a chamada: a diferença é o que
+       você pode afirmar depois.
+    ```bash
+    # ⌨️ seu terminal — o timestamp NASCE inválido de propósito (Lei de Ferro #5): troque pelo
+    # do SEU merge, em UTC. No #2086 deu `elevenlabs-transcribe | 4 | 4 | 00:33:27Z`, linha única.
+    ~/.config/afiacao/psql-ro -c "SELECT funcao, count(*) AS total, count(*) FILTER (WHERE criado_em > 'COLE_O_TIMESTAMP_DO_MERGE_UTC') AS pos_merge, max(criado_em) AS ultimo FROM public.ia_uso_evento GROUP BY funcao ORDER BY total DESC;"
+    ```
+
 ### Passo 4b — QA visual pós-Publish (Claude-in-Chrome na sessão logada do founder)
 
 Os bytes (Passo 4) provam que o **código subiu** — não que a tela **renderiza/comporta** certo. Refactor
@@ -669,4 +713,13 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   a sabotagem do ping saiu **inócua** e revelou que ele só tem dente contra a via MUDA (não contra a
   morta, onde a contagem já recusa); e o `--esperado` único — que o script aceitava — reprovaria a
   `nfes` (v1.2) como bundle velho num lote v1.1, então **valor único agora recusa** com >1 step útil.
+- [x] **N3 PASSIVO por ESCRITA DE APLICAÇÃO (2026-08-29, #2086 `elevenlabs-transcribe`):** as duas vias
+  passivas anteriores nascem do cron e morrem no `pg_net.ttl = 6 h` — edge chamada por **usuário** não
+  passa por nenhuma delas, e a escada caía no N3 ativo (que custa o founder logado). Quando a fatia nova
+  escreve em tabela de aplicação, a escrita é assinatura do bundle **sem TTL**: o gate de cota insere em
+  `ia_uso_evento(user_id, funcao)` e o bundle velho, que nem importava `_shared/ia-cota.ts`, é **incapaz**
+  de produzir a linha — 4 delas 15 min após o merge provaram o deploy sem PAT, sem canária, sem invocar
+  nada. Vale só na direção **presença**: ausência é "ninguém usou", não "não subiu". Controle negativo de
+  graça (as vizinhas com limite configurado saem em zero na mesma query), desde que o `GROUP BY` não seja
+  filtrado pela edge. Detalhe no Passo 4.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
