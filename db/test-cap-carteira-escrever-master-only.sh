@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5473}"     # mude se rodar em paralelo com outro harness (40 worktrees)
-SLUG="separar-cap-carteira-escrever"
+SLUG="cap-carteira-escrever-master-only"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithreaded during startup")
 
@@ -150,7 +150,7 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — APLICAR A MIGRATION REAL (Lei #1: o .sql commitado, não um stub)
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/supabase/migrations/20260828210836_separar_cap_carteira_escrever.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260828213000_cap_carteira_escrever_master_only.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
@@ -205,10 +205,13 @@ eq "A1 estrategico LÊ"                "$(ler  $UE)" "true"
 eq "A2 estrategico NÃO ESCREVE  ← a separação" "$(escr $UE)" "false"
 
 # ── quem não pode perder nada ──
-eq "A3 gerencial lê"     "$(ler  $UM)" "true"
-eq "A4 gerencial escreve" "$(escr $UM)" "true"
-eq "A5 super_admin lê"     "$(ler  $US)" "true"
-eq "A6 super_admin escreve" "$(escr $US)" "true"
+# master-only: os papéis COMERCIAIS leem e NÃO escrevem. Não é regressão de acesso — nenhum
+# usuário em prod tem estes papéis (medido: commercial_roles = farmer×2 + master×1), então o
+# acesso EFETIVO não muda. O que muda é o que a função DIZ quando o papel existir.
+eq "A3 gerencial lê"          "$(ler  $UM)" "true"
+eq "A4 gerencial NÃO escreve" "$(escr $UM)" "false"
+eq "A5 super_admin lê"          "$(ler  $US)" "true"
+eq "A6 super_admin NÃO escreve" "$(escr $US)" "false"
 eq "A7 master lê"     "$(ler  $UM2)" "true"
 eq "A8 master escreve" "$(escr $UM2)" "true"
 
@@ -232,6 +235,10 @@ ESCMD5=$(Pq -c "SELECT md5(regexp_replace(btrim(prosrc),'\s+',' ','g')) FROM pg_
                 WHERE n.nspname='private' AND p.proname='cap_carteira_escrever';")
 if [ "$ESCMD5" != "836e8f46f863eefd75b3b46a49eba81a" ]; then ok "A15 escrever DIVERGIU da leitura (era o mesmo md5)"
 else bad "A15 escrever ainda tem o md5 da leitura — a migration não separou nada"; fi
+# O corpo novo é BYTE-A-BYTE o do trio `cap_compras_ler`/`cap_preco_escrever`/`cap_credito_escrever`
+# (md5 5faf2a21…, documentado no contrato). Texto equivalente-porém-diferente criaria um QUARTO
+# md5 para a mesma regra — ruído no eixo 3. Este assert é o que garante a cópia fiel.
+eq "A15b escrever colapsou no md5 do trio master-only" "$ESCMD5" "5faf2a21a46209aaf0ffa75041af6b4b"
 
 # ── metadados que a policy depende: perdê-los quebra a autorização por BAIXO ──
 META=$(Pq -c "SELECT p.prosecdef::text||'|'||coalesce(array_to_string(p.proconfig,','),'') FROM pg_proc p
@@ -262,7 +269,10 @@ eq "A18 anon NÃO executa (PUBLIC segue revogado)" \
 echo "── falsificação (sabota → exige VERMELHO → restaura) ──"
 falsificou() { if [ "$1" = "$2" ]; then bad "F$3 sabotagem NÃO foi pega — o assert é teatro"; else ok "F$3 $4"; fi; }
 
-# F1 — devolve `estrategico` à lista: o assert A2 (a separação) TEM de mudar de valor.
+# F1 — devolve o corpo ANTIGO (o ramo inteiro do commercial_role, idêntico ao da leitura): os
+# asserts da assimetria TÊM de mudar de valor. Sabota-se o estado de ORIGEM, não um estado
+# inventado — é a única sabotagem que reproduz a regressão real (alguém recolar a versão velha no
+# SQL Editor, que é como este banco é operado).
 P -q -c "CREATE OR REPLACE FUNCTION private.cap_carteira_escrever(_uid uuid)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS \$f\$
   SELECT COALESCE(_uid IS NOT NULL AND (public.has_role(_uid,'master'::public.app_role)
@@ -270,7 +280,8 @@ P -q -c "CREATE OR REPLACE FUNCTION private.cap_carteira_escrever(_uid uuid)
       SELECT 1 FROM public.commercial_roles cr WHERE cr.user_id=_uid
         AND cr.commercial_role IN ('gerencial','estrategico','super_admin')))), false);
 \$f\$;"
-falsificou "$(escr $UE)" "false" 1 "reincluir 'estrategico' faz o estrategico ESCREVER de novo"
+falsificou "$(escr $UE)" "false" 1 "corpo antigo de volta faz o estrategico ESCREVER de novo"
+falsificou "$(escr $UM)" "false" "1b" "corpo antigo de volta faz o gerencial ESCREVER de novo"
 P -q -f "$MIG" >/dev/null   # restaura a versão verdadeira
 
 # F2 — o jeito ERRADO de aplicar: DROP + CREATE. O corpo fica igual (A2 segue verde!), e o que
@@ -283,7 +294,7 @@ P -q -c "DROP FUNCTION private.cap_carteira_escrever(uuid);
       SELECT 1 FROM public.commercial_roles cr WHERE cr.user_id=_uid
         AND cr.commercial_role IN ('gerencial','super_admin')))), false);
 \$f\$;"
-eq "F2a controle: o COMPORTAMENTO não muda com DROP+CREATE" "$(escr $UE)" "false"
+eq "F2a controle: o COMPORTAMENTO (para estrategico) não muda com DROP+CREATE" "$(escr $UE)" "false"
 falsificou "$(Pq -c "SELECT has_function_privilege('anon','private.cap_carteira_escrever(uuid)','EXECUTE')::text;")" \
            "false" 2 "DROP+CREATE reseta o ACL e ABRE a função para anon/PUBLIC"
 # restaura o estado verdadeiro: ACL de prod + corpo da migration

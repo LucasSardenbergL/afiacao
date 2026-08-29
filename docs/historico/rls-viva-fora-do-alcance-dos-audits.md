@@ -700,3 +700,49 @@ funcao`: os três predicados entram como chamada DIRETA, não pelo fecho.
 movem — a tabela continua no grafo. O que muda é o número **derivado**, e ele mudou sozinho:
 `7 curada(s), 71 lacuna(s)` contra `6 / 72`. É a prova de que a decisão do §7.2 (declarar o total,
 derivar a lacuna) faz o que prometeu.
+
+### 11.1 A 2ª opinião derrubou a escolha — e o motivo é reutilizável
+
+A separação do §11 removia **apenas** `estrategico` da capability de escrita. O ritual `/codex`
+(xhigh, conduzido sem o founder copiar/colar) derrubou isso com um argumento que se sustenta:
+
+> "Você provou a mecânica, não a regra de negócio. Remover somente `estrategico`, deixando
+> `gerencial` e `super_admin`, parece taxonomia inferida pelo nome, não política confirmada. O
+> teste vermelho ao reinseri-lo apenas congela essa suposição."
+
+Está certo, e o remédio dele é melhor: **`master`-only** reproduz o acesso **efetivo medido** (nenhum
+usuário possui os três papéis) e falha **fechado** para todo papel ainda não decidido. Se as duas
+opções são invenção, ganha a que **preserva comportamento por construção**.
+
+> **Lição:** *um teste que fica vermelho quando você desfaz a sua escolha prova que a escolha está
+> implementada, não que ela está certa.* Falsificação mede o **dente do assert**, nunca a
+> **correção da regra** — para essa, o oráculo é outro (revisão independente, ou o dado que
+> mostraria a política real).
+
+O custo foi pago com os olhos abertos e está no cabeçalho da migration:
+`20260718190000_authz_capability_matrix_e2.sql` **registrou** a intenção de que os três papéis
+tivessem carteira. `master`-only **descarta uma decisão registrada** — não apenas evita inventar
+uma. A troca: em autorização, o dia em que existir um `gerencial` de verdade é um dia melhor para
+decidir do que hoje, e nesse dia a negação é visível.
+
+O corpo novo foi copiado **byte-a-byte** de `private.cap_compras_ler`, e o harness trava isso
+(`A15b`): o md5 tem de colapsar em `5faf2a21…`, o trio que o contrato já documenta. Texto
+equivalente-porém-diferente criaria um **quarto md5 para a mesma regra** — ruído puro no eixo 3.
+
+#### Onde a 2ª opinião errou, por falta de contexto do repo — e o furo que apareceu ao verificar
+
+O Codex propôs, para a janela entre merge e apply, um contrato com `accepted = {antigo, novo}`.
+Não cabe: o contrato deste repo significa **"estado medido em prod"**, e mover o md5 antes do apply
+deixaria o gate do carimbo vermelho em **todo PR do repo**, não só no da mudança.
+
+Mas a preocupação tinha fundo, e verificá-la achou um buraco de verdade:
+
+> `docs/migrations-audit.md` registra esta migration como o objeto `function
+> private.cap_carteira_escrever` e a checa por **EXISTÊNCIA**. A função existe desde julho. Logo o
+> audit devolve ✅ **com ou sem o apply** — falso verde para **todo `CREATE OR REPLACE` de objeto
+> já existente**.
+
+É a mesma classe do arquivo inteiro, no mecanismo que existe justamente para pegar "mergeou e
+ninguém aplicou": **existência fazendo as vezes de estado**. Fica registrado como pendência com o
+formato da correção já claro — para objeto recriado, o inventário precisa guardar o md5 do corpo
+ESPERADO, não só o nome.

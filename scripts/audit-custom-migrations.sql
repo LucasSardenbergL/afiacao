@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 496
+-- Total de custom migrations: 497
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -537,7 +537,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260826020000', 'reposicao_param_fila_sensor', '20260826020000_reposicao_param_fila_sensor.sql'),
   ('20260826021000', 'reposicao_cold_start_fusivel_graduacao', '20260826021000_reposicao_cold_start_fusivel_graduacao.sql'),
   ('20260828210014', 'ia_uso_limite_elevenlabs_transcribe', '20260828210014_ia_uso_limite_elevenlabs_transcribe.sql'),
-  ('20260828210836', 'separar_cap_carteira_escrever', '20260828210836_separar_cap_carteira_escrever.sql')
+  ('20260828210836', 'separar_cap_carteira_escrever', '20260828210836_separar_cap_carteira_escrever.sql'),
+  ('20260828213000', 'cap_carteira_escrever_master_only', '20260828213000_cap_carteira_escrever_master_only.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2238,7 +2239,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_param_fila_sensor', 'cron_job', 'cron', 'reposicao-param-fila-sensor', ''),
   ('reposicao_param_fila_sensor', 'rls_policy', 'public', 'staff le fila log', 'reposicao_param_fila_log'),
   ('reposicao_cold_start_fusivel_graduacao', 'function', 'public', 'reposicao_cold_start_parametros', ''),
-  ('separar_cap_carteira_escrever', 'function', 'private', 'cap_carteira_escrever', '')
+  ('separar_cap_carteira_escrever', 'function', 'private', 'cap_carteira_escrever', ''),
+  ('cap_carteira_escrever_master_only', 'function', 'private', 'cap_carteira_escrever', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3987,7 +3989,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_param_fila_sensor', 'cron_job', 'cron', 'reposicao-param-fila-sensor', ''),
   ('reposicao_param_fila_sensor', 'rls_policy', 'public', 'staff le fila log', 'reposicao_param_fila_log'),
   ('reposicao_cold_start_fusivel_graduacao', 'function', 'public', 'reposicao_cold_start_parametros', ''),
-  ('separar_cap_carteira_escrever', 'function', 'private', 'cap_carteira_escrever', '')
+  ('separar_cap_carteira_escrever', 'function', 'private', 'cap_carteira_escrever', ''),
+  ('cap_carteira_escrever_master_only', 'function', 'private', 'cap_carteira_escrever', '')
 )
 SELECT
   e.migration,
