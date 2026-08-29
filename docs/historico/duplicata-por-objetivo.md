@@ -171,6 +171,20 @@ Suíte: 31 → 33 asserções. `bun run test:hooks` verde; contrato roda no job 
 
 ## 4ª ocorrência: entrega por DESENHO DIFERENTE — quando o grep do ARTEFATO devolve 0 e mesmo assim é duplicata (2026-08-22, PR #928)
 
+> ⚠️ **ERRATA (2026-08-29, revisão independente):** esta seção ensina a lição errada. O objetivo
+> do #928 **não** foi entregue "sob outro desenho" — `uniq_sales_orders_omie_pedido_id`, nas
+> MESMAS colunas `(account, omie_pedido_id)`, existe desde 18/06 e está em produção. O detector
+> não era **cego**, era **estreito**: grepou o NOME do índice do #928. Grepar as COLUNAS acha na
+> hora —
+> ```bash
+> git grep -ln "account, omie_pedido_id" origin/main -- supabase/migrations/
+> # → …/20260618190000_b_cleanup_dups_oben.sql
+> ```
+> **A regra que sobrevive:** o grep do artefato busca o nome que VOCÊ escolheu; quem entregou
+> antes escolheu outro. Grepe a **assinatura** (colunas, tabela, constraint), não o identificador.
+> A ponte semântica descrita abaixo é real, mas não era necessária — e apostar nela escondeu o
+> índice direto por uma sessão inteira.
+
 As 3 ocorrências acima têm o mesmo formato: o símbolo que a sessão ia criar **já estava literalmente
 na `origin/main`**, então "procure o ARTEFATO" resolve. O PR #928 é o caso que **derrota a regra que
 fecha esta página** — e por isso vale mais do que os outros três juntos.
@@ -279,13 +293,54 @@ Zero. Somado a `pg_get_indexdef` da PROD (o predicado do índice é o esperado) 
 `(account, hash_payload)` **é** a unicidade `(account, omie_pedido_id)` entre linhas pull — para
 todas as linhas existentes, não por argumento.
 
-⚠️ **REVISÃO INDEPENDENTE PENDENTE** — a 2ª opinião do Codex (ritual money-path) não rodou: cota da
-janela de 7d esgotada (`codex-async.sh` exit 75 → Caminho B). O que está acima é validação adversária
-própria. O ponto mais frágil, se alguém quiser atacar: tudo aqui descreve o estado **atual** das
-linhas; um caminho de escrita FUTURO que insira linha pull fora da RPC atômica escaparia da forma
-canônica — mitigado hoje pelo `RAISE` da linha 56, que é o guard estrutural, mas é código, não
-constraint. Um `CHECK` de canonicidade do hash seria o hardening residual honesto — não foi feito
-aqui (nenhuma instância, e é escopo novo).
+> ### ⚠️ ERRATA (2026-08-29) — a revisão independente rodou e derrubou a premissa desta seção
+>
+> A 2ª opinião do Codex (`gpt-5.6-sol`, `xhigh`, `exit 0`) atacou a equivalência e achou o que
+> esta página inteira não tinha visto: **o índice DIRETO já existe, e está aplicado em produção.**
+>
+> ```
+> $ ~/.config/afiacao/psql-ro -c "\\d+ sales_orders"   (2026-08-29)
+> uniq_sales_orders_omie_hash       (account, hash_payload)   WHERE hash_payload ~~ 'omie\\_%'
+> uniq_sales_orders_omie_pedido_id  (account, omie_pedido_id) WHERE hash_payload IS NOT NULL
+>                                                               AND omie_pedido_id IS NOT NULL
+> ```
+>
+> `uniq_sales_orders_omie_pedido_id` está em
+> [`20260618190000_b_cleanup_dups_oben.sql`](../../supabase/migrations/20260618190000_b_cleanup_dups_oben.sql)
+> desde **18/06** — dois meses antes de o #928 ser fechado. **A ponte semântica nunca foi
+> load-bearing:** o objetivo do #928 foi entregue nas MESMAS COLUNAS que ele pedia, não "sob
+> outro desenho". A 4ª ocorrência acima continua sendo uma duplicata real, mas a lição que ela
+> registra está errada — ver a errata na própria seção.
+>
+> **A medição desta seção é NULL-blind e o parecer estava certo no método:** com
+> `omie_pedido_id` NULL, `hash <> ('omie_'||account||'_'||NULL)` é `NULL`, e a linha não entra
+> no `count`. Empiricamente o buraco está VAZIO — refiz na prod separando os casos:
+>
+> | `pull_total` | `pull_pid_null` | `pull_nao_canonico` | `nao_pull_com_hash` | total |
+> |---:|---:|---:|---:|---:|
+> | 31.086 | **0** | **0** | 0 | 31.114 |
+>
+> O resultado se sustenta; o método não. Quem repetir isto use `IS DISTINCT FROM` e conte o
+> `pid IS NULL` **em separado** — não dentro do mesmo predicado.
+>
+> **O risco que esta seção dava como FUTURO já tem caminho de escrita HOJE.** A action
+> `criar_pedido` não tem guard de "já enviado":
+> `atp_gate_pedido` reconhece o estado (`omie_pedido_id IS NOT NULL` →
+> `{ok:true, resultado:'ja_enviado'}`,
+> [`…atp_gate_pedido_fase2.sql:137`](../../supabase/migrations/20260807015000_atp_gate_pedido_fase2.sql:137))
+> mas `classificarRetornoAtpGate` mapeia **todo** `ok===true` para `acao:'seguir'`
+> ([`_shared/atp-gate.ts:45`](../../supabase/functions/_shared/atp-gate.ts:45)) — é gate de
+> RESERVA, não de idempotência. O `soRow` da action nem seleciona os campos
+> ([`omie-vendas-sync/index.ts:2750`](../../supabase/functions/omie-vendas-sync/index.ts:2750)),
+> e o write-back grava `omie_pedido_id` **sem tocar `hash_payload`**
+> ([`:2151`](../../supabase/functions/omie-vendas-sync/index.ts:2151)). Numa linha pull o hash
+> passaria a mentir, e o sync do pedido original bateria `23505` no índice de hash e viraria
+> **no-op — um pedido real sumindo em silêncio**. Nenhum chamador aponta para linha pull hoje;
+> o que segura é ausência de chamador, não guard. **Não consertado aqui: é money-path e mudança
+> de comportamento em edge quente — decisão do founder.**
+>
+> O `RAISE` da linha 56 exige PRESENÇA, não FORMA: `pid='42'` e `pid='0042'` geram hashes
+> distintos e ambos viram `bigint 42`. Quem barra é o índice direto, não o de hash.
 
 ## 5ª ocorrência: o objetivo foi **RECUSADO**, e um "não" não deixa artefato (2026-08-25)
 
