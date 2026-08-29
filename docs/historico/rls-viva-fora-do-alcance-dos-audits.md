@@ -814,7 +814,13 @@ medição), com a exigência de que as duas batessem. **Não bateram**, duas vez
 1. **Migration UUID ignorada.** A primeira comparação usava a última migration **custom** que
    define a função. Mas as de nome UUID — aplicadas sozinhas pelo builder do Lovable — também
    redefinem objetos: medido, a última definição de `public.fin_user_can_access` está numa delas.
-   Comparar contra a versão custom antiga acusava DERIVA numa função perfeitamente em dia.
+   ⚠️ *Correção do que eu havia escrito aqui:* afirmei que ignorá-las **acusaria DERIVA numa
+   função em dia**. Medi, e é falso — na seção final, restrita a objetos recriados, **nenhuma
+   função muda de classificação**. O dano real é **cobertura**: com as UUID a seção vigia 98
+   funções, sem elas 87, e as 11 que saem simplesmente deixam de ser checadas. Silêncio, não
+   alarme falso — o modo de falha mais discreto, e o mesmo que o §11.1 documenta. A afirmação
+   errada sobreviveu a um commit porque a falsificação que eu montei para ela media a coisa
+   errada (contagem de DERIVA, que **cai** ao excluir UUID porque a cobertura encolhe).
 2. **Comentário strippado do corpo.** O extrator roda sobre o SQL com comentários **removidos**;
    `pg_proc.prosrc` os **guarda**. O md5 do texto strippado nunca bate com o banco para qualquer
    função com `--` no corpo. Efeito medido: **52 DERIVA com o texto strippado × 24 com o cru** —

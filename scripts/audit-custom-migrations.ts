@@ -71,11 +71,12 @@ function isCustom(filename: string): boolean {
  * Histórico ORDENADO do corpo de cada função, por `schema.nome`, ao longo de TODAS as migrations.
  *
  * 🔴 "Todas" inclui as de nome UUID, que o inventário exclui de propósito (elas são aplicadas
- * sozinhas pelo builder do Lovable e não precisam de apply manual). Aqui elas são obrigatórias:
- * medido em 2026-08-29, a ÚLTIMA definição de `public.fin_user_can_access` está numa migration
- * UUID — ignorá-las faria a Seção 3 comparar prod contra uma versão antiga e acusar 🔴 DERIVA
- * numa função perfeitamente em dia. Falso-positivo em massa é como uma seção nova nasce
- * desligada.
+ * sozinhas pelo builder do Lovable e não precisam de apply manual). Aqui elas são obrigatórias, e
+ * o efeito medido é COBERTURA, não falso-positivo: com as UUID, a Seção 3 vigia 98 funções; sem
+ * elas, 87 — **11 saem da checagem**, entre as quais `public.fin_user_can_access`, cuja última
+ * definição está justamente numa migration UUID. Nenhuma função MUDA de classificação (medido:
+ * zero mudanças de status), então ignorá-las não fabrica alarme — cria silêncio, que é o modo de
+ * falha mais discreto e o que este arquivo inteiro combate.
  *
  * A ordem é a lexical do nome do arquivo, que é a ordem de apply (timestamp na frente).
  */
