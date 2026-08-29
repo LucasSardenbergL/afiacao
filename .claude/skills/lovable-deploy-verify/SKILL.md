@@ -590,10 +590,27 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        local. O que o `git grep` **não** fecha é a mão no 🟣 SQL Editor, então leia o **padrão**: as 4
        do mesmo `user_id` vieram espaçadas em **segundos a dezenas de segundos** (22/27/12 s — tempo
        de gravar áudio), e isso é uso de app; rajada de milissegundos ou `user_id` sem sessão é teste
-       manual. **Sem linha em `profiles` NÃO desqualifica**: aqui o `EXISTS` deu `f` e eram gravações
-       reais pelo microfone (cadastro em `/auth` é aberto; alias fiscal sem `profiles` é legítimo) —
-       quem fechou foi **perguntar ao founder**. Meça o vínculo com `EXISTS(...)`:
+       manual. **Sem linha em `profiles` NÃO desqualifica** — alias fiscal sem `profiles` é legítimo
+       (`database.md` §5) e o cadastro em `/auth` é aberto. Meça o vínculo com `EXISTS(...)`:
        `coalesce(p.name,'…')` em LEFT JOIN lê igual para "não existe linha" e "coluna NULL".
+       🔴 **Mas o `f` que o #2086/#2106 mediram NÃO era um desses casos — era a CHAVE ERRADA
+       (medido 2026-08-29).** `public.profiles` tem `id` **e** `user_id`, e a FK de `ia_uso_evento`
+       aponta para `auth.users(id)`, que casa com **`profiles.user_id`**. As duas leituras, lado a
+       lado, no mesmo `user_id` das 4 escritas:
+       ```
+        chave_id (a usada)  | chave_user_id |       nome
+       ---------------------+---------------+------------------
+        f                   | t             | Lucas Sardenberg     (role master, em user_roles)
+       ```
+       O usuário **tem** `profiles` — o `f` era artefato do join, não um vínculo ausente. A regra
+       acima continua valendo por si (aliases fiscais existem), mas **este caso não é exemplo dela**:
+       era um staff conhecido, e a pergunta ao founder respondeu o que a chave certa já respondia. É
+       a família `ausente ≠ zero` na dimensão **CHAVE**: um join que não casa devolve "não existe",
+       byte a byte igual a "existe e é nulo", e a explicação plausível fecha a investigação em cima
+       de uma medição defeituosa. **A role não vive em `profiles`** (é `public.user_roles`), e
+       `auth.users` é **inacessível** ao `claude_ro` (`permission denied for schema auth`) — logo a
+       identidade só se lê por `profiles`, e só pela chave certa. `scripts/verify-edge-escrita.sh`
+       já faz os dois joins.
     2. 🔴 **A direção é uma só: presença prova, ausência NÃO reprova.** Zero linhas pode ser "não
        deployou" **ou** "ninguém usou a feature", e edge de usuário não tem denominador que separe os
        dois. `ausente ≠ zero` de novo: sem chamada não houve medição, e "0 linhas" lê-se
