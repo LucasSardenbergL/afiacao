@@ -8,6 +8,12 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // pedidos/custos/estoque/CR parciais viram margem e EVP inflados no cockpit, sem sinal
 // nenhum na tela. O canônico lança nos dois casos (money-path §6/§9).
 import { fetchAll } from "../_shared/paginate.ts";
+import type { BancoPostgrest } from "../_shared/paginate.ts";
+// A leitura de `order_items` NÃO mora mais aqui: esta edge importa
+// `npm:@supabase/supabase-js@2` e nunca roda sob `--no-remote`, então nada dela era
+// executável em teste. Extraída para `_shared/itens-com-pedido.ts`, que roda contra um
+// double em `itens-com-pedido_test.ts` (padrão de `recommend-leituras.ts`).
+import { carregarItensCockpit } from "../_shared/itens-com-pedido.ts";
 // Gate da SONDA, não da edge: o `authorizeGestorOuMaster` abaixo exige `Authorization: Bearer` +
 // role comercial e nunca leu `x-cron-secret` — que é como o founder invoca do SQL Editor. A sonda
 // vem antes dele e traz o seu próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
@@ -471,35 +477,47 @@ Deno.serve(async (req: Request) => {
     // resolve o custo da recuperada (mesmo product_id da linkada → combo cliente×SKU nunca mistura custo).
     const obenSkuToProductId = new Map(prods.map((p) => [String(p.omie_codigo_produto), p.id]));
 
-    // Linhas candidatas: busca por created_at (prefiltro com folga, ttm_prefetch); a janela REAL é por
-    // order_date_kpi do pedido pai (Bug C), aplicada via pedidosNaJanela abaixo.
-    type Item = { customer_user_id: string; product_id: string | null; omie_codigo_produto: number | null; quantity: number; unit_price: number; discount: number | null; sales_order_id: string };
-    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at, sales_order_id").gte("created_at", ttm_prefetch).order("id", { ascending: true }).range(f, t), "order_items");
-    // Faturabilidade + JANELA: carrega TODOS os pedidos (id,status,deleted_at,order_date_kpi) — ~7k linhas,
-    // barato. pedidosNaJanela = faturável (exclui cancelado/rascunho/soft-deletado, régua v_caca) E
-    // order_date_kpi ∈ [ttm_inicio, ttm_fim] (Bug C: janela pela DATA DO PEDIDO, não pela carga). SEM filtro
-    // de account na faturabilidade (vale p/ qualquer conta); o recorte Oben vem por product_id/SKU abaixo.
-    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null; order_date_kpi: string | null; account: string | null; origem: string | null; checkout_id: string | null };
-    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at, order_date_kpi, account, origem, checkout_id").order("id", { ascending: true }).range(f, t), "sales_orders");
-    // order_date_kpi é DATE → comparação de string 'YYYY-MM-DD' é cronológica (mesmo padrão de
-    // carteira-positivacao-snapshot). Reúsa a régua UTC que o cockpit já aplica ao AR (ttm_inicio/ttm_fim).
-    const pedidosNaJanela = new Set(
-      salesOrdersAll
-        .filter((so) => pedidoContaNoFaturamento(so.status, so.deleted_at)
-          && so.order_date_kpi != null && so.order_date_kpi >= ttm_inicio && so.order_date_kpi <= ttm_fim)
-        .map((so) => so.id),
-    );
-    // Guard de conta p/ a recuperação por SKU (Bug D): só recupera linha cujo pedido-pai é account='oben'
-    // — o SKU resolve a produto Oben E o pedido é da Oben. Blinda contra colisão futura de SKU entre contas
-    // (Codex P2; hoje 120/120 recuperadas são oben, provado psql-ro). Linha LINKADA não usa isto (product_id já é Oben).
-    const pedidosOben = new Set(salesOrdersAll.filter((so) => so.account === COMPANY).map((so) => so.id));
-    // Oben por product_id OU (FK ausente → SKU resolve a produto Oben, Bug D). Normaliza ao product_id efetivo
-    // (recuperada ganha o id Oben → custo resolve). Pedido fora da janela/não-faturável é descartado aqui.
-    const linhas = itemsAll.flatMap((l) => {
+    // ── UMA leitura, não duas ────────────────────────────────────────────────────────────
+    // Antes: `order_items` por OFFSET (`.range`) e `sales_orders` por OFFSET, cruzadas em
+    // memória por `sales_order_id`. Dois defeitos empilhados, e a correção de um não é a do
+    // outro (detalhe e medição em `_shared/itens-com-pedido.ts`):
+    //   · o `.range()` PULA linha viva quando um hard DELETE roda no meio — e os dois
+    //     escritores estão vivos (`sync-reprocess` em `order_items`, cron `15 */2 * * *`
+    //     inclusive em horário comercial; `omie-vendas-sync` em `sales_orders`). A contagem
+    //     FECHA e a identidade não: medido 2.299 × 2.299 com uma linha viva de R$ 1.000.000
+    //     omitida, sem exceção. Nenhum guard de total pega isso;
+    //   · duas paginações independentes cruzam instantes incompatíveis — migrar as duas para
+    //     keyset conserta cada lado e NÃO conserta o cruzamento.
+    // Agora: `order_items` por KEYSET com o pedido pai EMBEDADO (`sales_orders!inner`), no
+    // mesmo request. Sai mais barato do que substitui: 16.548 itens + 31.114 pedidos = 49
+    // páginas viravam 17 (psql-ro 2026-08-29).
+    //
+    // A busca segue por `created_at` (data de CARGA, com 90d de folga); a janela REAL é por
+    // `order_date_kpi` do pai (Bug C), aplicada logo abaixo — agora sobre o pai que veio NA
+    // LINHA, e não sobre um Set montado de uma segunda leitura.
+    const itensAll = await carregarItensCockpit(db as unknown as BancoPostgrest, ttm_prefetch);
+
+    // Oben por product_id OU (FK ausente → SKU resolve a produto Oben, Bug D). Normaliza ao
+    // product_id efetivo (recuperada ganha o id Oben → custo resolve). Faturabilidade (régua
+    // v_caca: exclui cancelado/rascunho/soft-deletado), JANELA por `order_date_kpi` e guard de
+    // conta da recuperação por SKU saem TODOS do pai embedado — os três eram `Set`s montados a
+    // partir de `salesOrdersAll`, e o item que não achasse seu pai era descartado em silêncio,
+    // sem distinguir "fora da janela" de "não consegui ler o pai".
+    // `order_date_kpi` é DATE → comparação de string 'YYYY-MM-DD' é cronológica (mesmo padrão de
+    // carteira-positivacao-snapshot). Reúsa a régua UTC que o cockpit já aplica ao AR.
+    const linhas = itensAll.flatMap((l) => {
+      const so = l.sales_orders;
+      // `!inner` garante o pai no servidor; o guard existe porque o TIPO é nullable (é assim
+      // que o PostgREST descreve um to-one embedado) e fingir não-nulo aqui seria a mentira
+      // que se paga em runtime.
+      if (so == null) return [];
+      const naJanela = pedidoContaNoFaturamento(so.status, so.deleted_at)
+        && so.order_date_kpi != null && so.order_date_kpi >= ttm_inicio && so.order_date_kpi <= ttm_fim;
+      if (!naJanela) return [];
       const pid = l.product_id != null
         ? (obenProductIds.has(l.product_id) ? l.product_id : null)
-        : (l.omie_codigo_produto != null && pedidosOben.has(l.sales_order_id) ? (obenSkuToProductId.get(String(l.omie_codigo_produto)) ?? null) : null);
-      return pid != null && pedidosNaJanela.has(l.sales_order_id) ? [{ ...l, product_id: pid }] : [];
+        : (l.omie_codigo_produto != null && so.account === COMPANY ? (obenSkuToProductId.get(String(l.omie_codigo_produto)) ?? null) : null);
+      return pid != null ? [{ ...l, product_id: pid }] : [];
     });
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 
@@ -583,7 +601,17 @@ Deno.serve(async (req: Request) => {
 
     // Canal do pedido (PR1 Cabreúva-Colacor): MESMA base de linhas do cockpit (janela por
     // order_date_kpi + faturável + recorte Oben) agregada pelo canal de origem do pedido pai.
-    const canalPorPedido = new Map<string, CanalPedido>(salesOrdersAll.map((so) => [so.id, classificarCanalPedido({ origem: so.origem ?? null, checkout_id: so.checkout_id ?? null })]));
+    // O canal sai do MESMO pai embedado que já decidiu janela e faturabilidade — antes vinha
+    // de `salesOrdersAll`, a segunda paginação. A diferença não é de estilo: `agregarPorCanal`
+    // faz `canalPorPedido.get(...) ?? 'outro'`, então um pedido perdido pela outra leitura não
+    // virava erro, virava receita carimbada no canal `outro`. Montado sobre `linhas` (já
+    // filtradas), o mapa cobre por construção todo pedido que o rollup vai consultar.
+    const canalPorPedido = new Map<string, CanalPedido>();
+    for (const l of linhas) {
+      const so = l.sales_orders;
+      if (so == null || canalPorPedido.has(l.sales_order_id)) continue;
+      canalPorPedido.set(l.sales_order_id, classificarCanalPedido({ origem: so.origem ?? null, checkout_id: so.checkout_id ?? null }));
+    }
     const itensCanal: ItemCanalInput[] = linhas.map((l) => ({
       sales_order_id: l.sales_order_id,
       cliente: userToOmie.get(l.customer_user_id) ?? `app:${l.customer_user_id}`,

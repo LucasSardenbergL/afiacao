@@ -29,6 +29,12 @@ type Registro = {
   order: string | null;
   filtros: string[];
   ranges: Array<[number, number]>;
+  // Guardado separado do nome da coluna: `.order("id",{ascending:false})` mantém a ordem
+  // ESTÁVEL (um gate textual passaria) e mesmo assim inverte QUAIS linhas a página traz.
+  ascending: boolean | null;
+  // `.limit()` é o irmão do `.range()`: quem pagina por KEYSET pede tamanho de página, não
+  // posição. O double precisa modelar os DOIS porque este módulo agora usa os dois.
+  limit: number | null;
 };
 
 type Linha = Record<string, unknown>;
@@ -43,7 +49,7 @@ function fakeDb(
   // Um registro por `from()` — ou seja, um por PÁGINA, que é o que permite afirmar que
   // TODA página (não só a primeira) foi pedida com `.order()` estável.
   function query(tabela: string): QueryPostgrest<Linha> {
-    const reg: Registro = { tabela, colunas: "", order: null, filtros: [], ranges: [] };
+    const reg: Registro = { tabela, colunas: "", order: null, filtros: [], ranges: [], ascending: null, limit: null };
     registros.push(reg);
     // Os predicados filtram DE VERDADE: um double que registra o filtro sem aplicá-lo
     // mediria mais linhas do que a query devolveria, e o teste ficaria falso-verde.
@@ -108,18 +114,22 @@ function fakeDb(
         predicados.push((l) => !fora.has(String(l[coluna])));
         return q;
       },
-      order(coluna: string, _opts?: { ascending?: boolean }) {
+      order(coluna: string, opts?: { ascending?: boolean }) {
         reg.order = coluna;
+        reg.ascending = opts?.ascending ?? true;
         return q;
       },
       range(de: number, ate: number) {
         reg.ranges.push([de, ate]);
         return q;
       },
-      limit(_n: number): QueryPostgrest<Linha> {
-        // Este double modela só paginação por `.range()`. Se um loader passar a usar
-        // `.limit()`, é para o teste ficar VERMELHO na hora — não para ser ignorado.
-        throw new Error("double: .limit() não é modelado aqui");
+      limit(n: number) {
+        // Passou a ser MODELADO quando `carregarPedidosDoMes` migrou para keyset: lá o
+        // tamanho da página vem de `.limit()`, não de `.range()`. Continua valendo a regra
+        // que a versão anterior deste método defendia — double que aceita sem modelar mente
+        // por omissão —, e é por isso que ele agora RECORTA de verdade lá embaixo.
+        reg.limit = n;
+        return q;
       },
       maybeSingle(): PromiseLike<{ data: Linha | null; error: { message: string } | null }> {
         throw new Error("double: .maybeSingle() não é modelado aqui");
@@ -135,11 +145,29 @@ function fakeDb(
           ? { data: null, error: { message: opts.erro ?? "boom" } }
           : {
             data: (() => {
-              const [de, ate] = reg.ranges[reg.ranges.length - 1] ?? [0, 999];
               const linhas = (porTabela[tabela] ?? []).filter((l) =>
                 predicados.every((p) => p(l))
               );
-              return linhas.slice(de, ate + 1);
+              // Ordena DE VERDADE. Antes o `.order()` era só REGISTRADO, e o teste que diz
+              // "ordena por id" media a ordem do array da fixture — não a da query. Sob
+              // keyset isso deixaria de ser detalhe: `fetchAllKeyset` LANÇA em página fora
+              // de ordem ascendente, então um double que não ordena reprovaria código
+              // íntegro. Comparação `<`/`>` de String pura e não `localeCompare`: o
+              // collation do ICU (pt_BR dobra acento) classifica diferente do servidor, e o
+              // teste passaria a medir o Deno.
+              const ordenadas = reg.order
+                ? [...linhas].sort((a, b) => {
+                  const col = reg.order as string;
+                  const x = String(a[col] ?? ""), y = String(b[col] ?? "");
+                  return (x < y ? -1 : x > y ? 1 : 0) * (reg.ascending === false ? -1 : 1);
+                })
+                : linhas;
+              const alcance = reg.ranges[reg.ranges.length - 1];
+              // Sem `.range()` vale o `.limit()`, e na ausência dos dois o CAP de 1.000 do
+              // PostgREST — que é o que o serviço real faz, em silêncio.
+              return alcance
+                ? ordenadas.slice(alcance[0], alcance[1] + 1)
+                : ordenadas.slice(0, Math.min(reg.limit ?? 1000, 1000));
             })(),
             error: null,
           };
@@ -268,9 +296,12 @@ Deno.test("carteira: página com ERRO lança — snapshot parcial não é snapsh
 
 // ── carregarPedidosDoMes ────────────────────────────────────────────────────
 
+// `id` com padding: sob keyset a ordem é LEXICOGRÁFICA (a coluna real é uuid), e `s10`
+// vem antes de `s2` — a fixture antiga produzia uma sequência não-monotônica que
+// `fetchAllKeyset` corretamente rejeitaria. O padding faz a fixture parecer com o dado.
 function pedidos(n: number, status = "faturado", data = "2026-06-15") {
   return Array.from({ length: n }, (_, i) => ({
-    id: `s${i}`,
+    id: `s${String(i).padStart(6, "0")}`,
     customer_user_id: `c${i}`,
     total: 100 + i,
     order_date_kpi: data,
@@ -341,6 +372,52 @@ Deno.test("pedidos do mês: atravessa o cap de 1000", async () => {
   const { db } = fakeDb({ sales_orders: pedidos(2300) });
   const linhas = await carregarPedidosDoMes(db, "2026-06-01", "2026-07-01");
   assertEquals(linhas.length, 2300);
+});
+
+Deno.test("pedidos do mês: pagina por KEYSET — offset desloca sob o hard DELETE de sales_orders", async () => {
+  // Por que ESTE caller e não os outros deste módulo: `sales_orders` tem hard DELETE vivo
+  // (`omie-vendas-sync/index.ts`), e sob `.range()` um DELETE antes do cursor faz a página
+  // seguinte começar uma linha adiante — pedido VIVO pulado, contagem fechando. Aqui o
+  // resultado não é exibido, é GRAVADO congelado: vira `had_order_in_month:false` num mês
+  // que ninguém recalcula.
+  //
+  // Este teste afirma a FORMA da query (o comportamento sob escrita concorrente está provado
+  // executando em `paginate-keyset_test.ts` e `itens-com-pedido_test.ts`, contra doubles que
+  // mutam entre páginas). São coisas diferentes e as duas fazem falta: o helper pode estar
+  // correto e o call-site pedir keyset sobre ordem arbitrária.
+  const { db, registros } = fakeDb({ sales_orders: pedidos(2300) });
+  const linhas = await carregarPedidosDoMes(db, "2026-06-01", "2026-07-01");
+  assertEquals(linhas.length, 2300);
+
+  const paginas = registros.filter((r) => r.tabela === "sales_orders");
+  assertEquals(paginas.length >= 3, true, `esperava ≥3 páginas, veio ${paginas.length}`);
+  for (const [i, p] of paginas.entries()) {
+    // A coluna do cursor tem de estar PROJETADA: sob `.range()` não precisava, e o
+    // typecheck não vê a falta (o `.select()` é string e a interface PROMETE o campo).
+    assertEquals(
+      p.colunas.startsWith("id, "),
+      true,
+      `página ${i + 1}: \`id\` fora do .select() → ${p.colunas}`,
+    );
+    assertEquals(p.order, "id", `página ${i + 1}: .order() não é por id`);
+    assertEquals(p.ascending, true, `página ${i + 1}: keyset exige .order() ASCENDENTE`);
+    assertEquals(p.ranges.length, 0, `página ${i + 1}: voltou o .range() — offset desloca`);
+    assertEquals(p.limit, 1000, `página ${i + 1}: keyset sem tamanho de página`);
+    // Página 1 não tem cursor; da 2ª em diante o `.gt` é o que impede a releitura.
+    assertEquals(
+      p.filtros.some((f) => f.startsWith("gt:id=")),
+      i > 0,
+      `página ${i + 1}: .gt('id') ${i > 0 ? "ausente" : "presente sem cursor"}`,
+    );
+    // O recorte do mês vale em TODA página: perder o filtro no meio troca o universo do
+    // snapshot sem trocar a contagem de linhas lidas.
+    assertEquals(
+      p.filtros.includes("gte:order_date_kpi=2026-06-01"),
+      true,
+      `página ${i + 1}: perdeu o início da janela`,
+    );
+    assertEquals(p.filtros.includes("is:deleted_at=null"), true, `página ${i + 1}: perdeu o deleted_at`);
+  }
 });
 
 // ── carregarExcluidosDaCarteira ─────────────────────────────────────────────
