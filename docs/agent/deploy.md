@@ -328,6 +328,35 @@ ao vivo**, sem credencial e sem ninguém avisar. A consequência prática, poré
 descreve o `v1.3` e não uma constante do sistema — levante a SUA assinatura com
 `git show <commit>:<arquivo>` a cada uso, nunca copie a tabela.
 
+**A PROMOÇÃO: com marcador EXPLÍCITO no corpo do erro, os três descartes caem (2026-08-28, #2063).**
+A tabela acima infere a versão de uma string **acidental** — daí exigir os três descartes e
+envelhecer a cada fatia. O #2063 fez o oposto por desenho: o helper `jsonRes` anexa `versao: VERSAO`
+a **TODA** resposta das suas 4 edges, o 401 do gate inclusive. A leitura vira direta, sem credencial:
+
+```console
+$ curl -s -X POST -d '{"probe":true}' .../functions/v1/omie-sync-pedidos-compra
+{"error":"Unauthorized","versao":"v1.0-eco-versao-passivo"}          # HTTP 401
+```
+
+O descarte (3) — "a versão velha não podia emitir isto" — se responde sozinho: o campo **nomeia** a
+versão em vez de deixá-la inferir, e não existia no bundle anterior (`versao.ts` é arquivo NOVO na
+fatia). O (1), do gateway, continua valendo e é barato: confira `verify_jwt = false` no
+`config.toml` ANTES, senão o 401 é do gateway e o corpo não é seu.
+
+**Custo ZERO de efeito — é o que a torna preferível à sonda `{"probe":true}` aqui.** O gate recusa
+antes de qualquer I/O (`if (!authHeader?.startsWith("Bearer ")) return false;`), então não há
+varredura no Omie nem escrita. Sondar um bundle PRÉ-sensor faria o oposto: sem roteamento por
+`action`, o corpo cai nos defaults e roda o sync inteiro (o aviso que cada `versao.ts` dos 4 traz).
+
+**Controle negativo de graça:** edge irmã SEM `versao.ts` (`omie-cron-diario`,
+`omie-sonda-recebimento`) responde `{"error":"Unauthorized"}` **sem** o campo — mesma linha de gate,
+mesma forma de corpo, mesmo 401. É o que prova que o marcador vem do nosso código, não da
+plataforma; sem esse par, "achei o campo" não discrimina.
+
+⚠️ **É o SOCORRO do eco passivo quando a linha do cron é INUTILIZÁVEL** (o `modo:"background"` da
+§anterior): em 2026-08-28 02:15Z, no MESMO tick, três steps trouxeram o marcador e `pedidos` veio
+com `versao` vazio. O 401 resolveu na hora — e mede AGORA, não no último tick.
+
 ## Quando o Lovable reverte um fix — detectar e restaurar
 
 O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deployed"/"Deployou edge") e às vezes reverte um PR (~16% dos commits; ≥4-5 reversões money-path recentes). Prevenção é inviável (o bot precisa de escrita direta) → o jogo é **detectar + restaurar rápido** (MTTR), não governança perfeita. Spec: `docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md`.
