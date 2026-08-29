@@ -26,7 +26,10 @@ export interface RecommendationItem {
     cost_source: string;
     cost_confidence: number;
     assoc_score: number;
-    sim_score: number;
+    // `null` quando o disjuntor do cluster mordeu (`truncado`): a edge degrada para
+    // INDISPONÍVEL em vez de fabricar 0 — ver recommend/index.ts:272. Declarar `number`
+    // aqui era MENTIRA de contrato, e o breakdown quebrava com `.toFixed` de null.
+    sim_score: number | null;
     ctx_score: number;
     penalties: number;
     familia: string | null;
