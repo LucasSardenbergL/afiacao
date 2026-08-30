@@ -288,3 +288,117 @@ parecer terminou 2.299 × 2.299 com a identidade trocada e uma linha viva de R$ 
 omitida, sem exceção. Os guards só validam linhas DEVOLVIDAS: não detectam o que o `.gt()`
 suprimiu. E os testes usam doubles estáticos — não provam gateway, RLS, réplica nem snapshot
 entre requests.
+
+## Os 4 P1 da revisão: fechados (2026-08-29) — e o que a medição derrubou no caminho
+
+Entrega irmã da revisão acima, no mesmo dia. Fechou os quatro alvos que a seção "Segue
+aberto" nomeou, e **não** do jeito que ela supunha em dois pontos.
+
+### O cockpit não precisava de dois keysets — precisava de uma leitura só
+
+`fin-valor-cockpit` lia `order_items` (offset) e `sales_orders` (offset) e cruzava em memória
+por `sales_order_id`. São **dois defeitos empilhados**, e é a distinção que decide o conserto:
+
+| defeito | o que causa | conserto |
+|---|---|---|
+| deslocamento | DELETE antes do offset ⇒ linha VIVA pulada, contagem fechando | keyset |
+| cruzamento | duas paginações ⇒ pai e filho de instantes incompatíveis | **pai embedado** |
+
+Keyset nos dois lados conserta o primeiro e **não** conserta o segundo: cada leitura fica
+consistente consigo, nenhuma fica consistente com a outra. A correção é `order_items` com
+`sales_orders!inner(...)` — o pai chega na MESMA linha, no MESMO request.
+
+**E sai mais barata do que o que substitui**, o que inverte a intuição de "join é caro":
+medido em prod (psql-ro 2026-08-29) 16.548 itens no prefetch TTM + 31.114 pedidos = **49
+páginas viravam 17**. A segunda leitura lia a tabela INTEIRA de pedidos para consultar uma
+fração dela.
+
+Efeito colateral que não era o alvo e vale mais que uma otimização: os três `Set` montados de
+`salesOrdersAll` (janela, faturabilidade, conta) e o `canalPorPedido` viravam **descarte
+silencioso** quando o pai não era encontrado — `agregarPorCanal` faz `.get(id) ?? 'outro'`, ou
+seja, receita carimbada num canal errado em vez de erro. Com o `!inner` o pai é garantido pelo
+servidor. Hoje isso é vazio na prática (FK viva, **0 órfãos e 0 nulos** em `sales_order_id`,
+medido), então a mudança é de GARANTIA, não de resultado — e é assim que ela deve ser lida.
+
+### O P1 do snapshot mensal era LATENTE, não ativo
+
+`_shared/mapas-paginados.ts:carregarPedidosDoMes` foi listado junto dos outros três. A medição
+diz outra coisa: o mês mais cheio de `sales_orders` tem **629 pedidos** — cabe numa página de
+1.000, então a leitura **não pagina hoje** e o deslocamento nunca aconteceu. Migrou mesmo
+assim (custa três linhas, o dano seria num snapshot CONGELADO que ninguém recalcula, e o dia
+em que a primeira página encher não vem com aviso), mas **registrar a prioridade real importa**:
+tratar os quatro como equivalentes é o que faz a próxima leitura desta lista superestimar o
+risco de um e subestimar o do cockpit, que pagina 17 vezes por execução.
+
+### O `id` do Apriori: o comentário antigo estava certo no que media
+
+`omie-analytics-sync` documentava que `id` **não** entrava no `.select()` porque são ~68,7 mil
+linhas e o uuid seria ~2,5 MB de payload puro. A conta está certa. O que faltava nela é que
+**sem a coluna projetada não existe cursor** — e sem cursor a leitura pagina por offset debaixo
+do hard DELETE de `sync-reprocess`. 2,5 MB é o preço de o universo publicado globalmente não
+ter buracos. Este é o formato de erro a procurar em decisão de payload: a conta de custo
+correta, sobre a alternativa errada.
+
+### O teste que a revisão disse não existir agora existe
+
+A crítica era precisa: `paginate-keyset_test.ts` exige "sem duplicata" e **não** exige que o
+insert apareça — o nome prometia mais que o código dava. `itens-com-pedido_test.ts` fecha isso
+afirmando o comportamento **REAL**, não o desejado: insert atrás do cursor **não aparece**, e o
+teste fica VERMELHO se alguém trocar por uma leitura que dê snapshot, obrigando a decisão a ser
+revista em vez de herdada.
+
+A decisão registrada: **basta**. O que some é linha NASCIDA durante a leitura (segundos), numa
+janela TTM de 365 dias — perda de recall recente. O que o keyset elimina é o outro dano, o
+grave: linha ANTIGA e viva PULADA, mudando número já fechado. Precisão > recall.
+
+E o cenário do DELETE roda **contra as duas paginações no mesmo teste**, exigindo que a por
+offset FALHE: sem essa metade, um verde do keyset não distinguiria "resistiu" de "o cenário não
+deslocava nada". O teste também mostra por que guard de contagem não serve — o offset devolveu
+**exatamente** tantas linhas quanto a tabela tem ao fim, porque a linha pulada e a deletada se
+cancelam no total.
+
+### A revisão independente DESTA entrega rodou e voltou `bloquear` — o achado é real
+
+`codex-async.sh`, `gpt-5.6-sol`, `reasoning=xhigh`. Confirmou A (a semântica do `!inner` é a
+suposta: filtro em coluna do embed elimina a linha RAIZ), B (uuid usa `uuid_internal_cmp` nos
+dois lados — `ORDER BY` e `>` não podem discordar; collation não participa) e D (sem estouro
+demonstrável). E derrubou o enquadramento do limite, que estava confortável demais:
+
+**CESTA RASGADA — perda de PRECISÃO, não o recall recente que eu tinha declarado aceitável.**
+Itens irmãos do mesmo pedido têm uuids v4 **espalhados**, logo caem em páginas diferentes. Se
+o pai vira `cancelado` (ou é soft/hard-deletado — `sync-reprocess`, o soft-delete do app,
+`omie-vendas-sync` com cascade) depois da 1ª página, os irmãos já lidos **ficam** no acumulado
+e os posteriores são eliminados pelo filtro do embed. Sai **meio pedido**, sem exceção, com
+todos os ids estritamente crescentes — e os guards de `fetchAllKeyset` **não veem**, porque só
+olham as chaves DEVOLVIDAS; o que o filtro suprimiu é invisível para eles.
+
+Não existe instante em que essa cesta parcial seja verdadeira. Isso é diferente, em natureza,
+do insert atrás do cursor: aquele é linha que ainda não existia, este é um pedido que existe
+inteiro e chega pela metade — em regra de associação **publicada globalmente**.
+
+A suíte passava verde porque a fixture dava **um pedido por item**: ela não conseguia nem
+expressar o defeito (e o double registrava `.not()` sem aplicar, então filtro de embed não
+filtrava nada). As duas coisas foram corrigidas, e o cenário do Codex agora roda contra o
+código real: `itens-com-pedido_test.ts` reproduz **1 de 2 irmãos, sem exceção**.
+
+**Por que a entrega segue e não foi revertida:** ela é estritamente melhor que o offset que
+substitui — elimina o pulo de linha viva e o cruzamento de instantes entre duas paginações — e
+a cesta rasgada **já existia** sob offset, junto com os outros dois. Segurar a melhoria até o
+snapshot existir seria trocar um defeito por três. O que não pode acontecer é o limite passar
+por consertado: por isso ele tem teste com dente, e está listado abaixo como ABERTO.
+
+### Segue aberto (não passou por consertado)
+
+- **CESTA RASGADA entre páginas** (acima). Correção: materializar o universo em snapshot
+  imutável dentro de uma transação/RPC e paginar a materialização, **ou** um version fence
+  global que ABORTE a leitura se um writer relevante atuar durante ela. Agregar por
+  `sales_order_id` evita a cesta partida mas **não** produz snapshot global — não confundir os
+  dois. Vale para os dois consumidores (Apriori e cockpit), e fica LATENTE em
+  `carregarPedidosDoMes` para quando um mês passar de 1.000 pedidos.
+- **`fetchAllKeyset` não tem orçamento** de páginas/linhas/deadline: escrita sustentada pode
+  mantê-lo vivo até o timeout externo. Intocado por esta entrega.
+- **P2 do JSON pré-auth** (#1882): body inválido anônimo virou 400 e body grande é
+  materializado antes da auth. Intocado.
+- **Os doubles não são o PostgREST.** A suíte prova a TRADUÇÃO (cursor, ordem, filtros por
+  página, erro que lança) e o COMPORTAMENTO sob mutação simulada. Não prova gateway, RLS,
+  réplica, nem que `!inner` sobre `sales_orders` mantém o plano sob volume em prod.

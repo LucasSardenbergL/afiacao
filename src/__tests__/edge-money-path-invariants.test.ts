@@ -2832,14 +2832,45 @@ function blocoAssoc(s: string): string {
   return fim < 0 ? resto : resto.slice(0, fim);
 }
 
+// A QUERY MUDOU DE ARQUIVO (keyset + pedido pai embedado). Ela saiu do `index.ts` para
+// `_shared/itens-com-pedido.ts` pelo motivo do `recommend-leituras.ts`: a edge importa
+// `npm:@supabase/supabase-js@2` e nunca roda sob `--no-remote`, então nada dela era
+// EXECUTÁVEL. Agora existe prova de comportamento (`itens-com-pedido_test.ts`, que roda o
+// DELETE concorrente contra as duas paginações) — e estes gates textuais continuam
+// necessários pelo que a prova de comportamento não cobre: o double não é o PostgREST, então
+// quem garante que a query PEDE `!inner`, a denylist canônica e o `deleted_at` é a forma.
+// Os asserts seguem os mesmos; mudou ONDE cada um olha.
+const ASSOC_LOADER = 'supabase/functions/_shared/itens-com-pedido.ts';
+
+// ⚠️ O loader tem DUAS leituras (cockpit e Apriori) e elas se PARECEM: as duas paginam por
+// keyset, as duas embedam `sales_orders!inner`, as duas têm `.gt("id", cursor)`. Medir o
+// ARQUIVO inteiro deixa uma satisfazer o assert da outra — furo pego na falsificação: apagar
+// o `.gt(cursor)` do Apriori mantinha o gate VERDE porque o trecho do cockpit casava. É o
+// §"o DETECTOR mente" na forma mais barata de acontecer. Cada assert mede o BLOCO da sua
+// função. (A exceção deliberada é `.range(`, medido no arquivo TODO: nenhuma das duas pode
+// paginar por offset, e ali um falso positivo do vizinho é o desfecho que se quer.)
+// Recorta a fatia APRIORI do loader: a constante com o `.select()` MAIS a função que a usa.
+// A constante precisa entrar — as colunas e o `!inner` moram nela, e um recorte que começasse
+// na função mediria um bloco sem a string que ele afirma (falso VERMELHO pego na
+// falsificação, logo depois do falso VERDE que motivou o recorte).
+function blocoApriori(fonte: string): string {
+  const i = fonte.indexOf('const COLUNAS_APRIORI');
+  if (i < 0) throw new Error('COLUNAS_APRIORI não encontrada no loader (âncora quebrada)');
+  const j = fonte.indexOf('export async function carregarItensApriori(', i);
+  if (j < 0) throw new Error('carregarItensApriori não vem depois de COLUNAS_APRIORI (âncora quebrada)');
+  const resto = fonte.slice(j);
+  const fim = resto.slice(1).search(/\nexport (async function|interface|const) /);
+  return fonte.slice(i, j) + (fim < 0 ? resto : resto.slice(0, fim + 1));
+}
+
 describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de 1.000)', () => {
-  it('a leitura delega a fetchAll — nunca uma chamada single-shot', () => {
+  it('a leitura delega ao loader compartilhado — nunca uma chamada single-shot', () => {
     const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
 
     expect(bloco, 'âncora quebrada: bloco vazio').not.toBe('');
     expect(
-      /const items = await fetchAll</.test(bloco),
-      'a leitura de order_items parou de delegar a fetchAll — o cap de 1.000 volta em silêncio',
+      /const items = await carregarItensApriori\(/.test(bloco),
+      'a leitura de order_items parou de delegar ao loader — o cap de 1.000 volta em silêncio',
     ).toBe(true);
     // O defeito original tinha ESTA forma. Assert negativo sobre a fonte SEM comentários:
     // a prosa acima cita o código proibido de propósito (§"O ALVO mente").
@@ -2847,20 +2878,46 @@ describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de
       /const\s*\{\s*data:\s*items\s*\}\s*=\s*await/.test(bloco),
       'voltou a desestruturar só `data` — o error da leitura vira "0 regras, preservadas"',
     ).toBe(false);
+    // Paginar à mão AQUI é a reintrodução por fora do loader — o padrão que custou ~20 PRs.
+    expect(
+      bloco.includes('.range('),
+      'voltou a paginar por offset dentro da edge — o loader existe justamente para isso não voltar',
+    ).toBe(false);
   });
 
-  it('pagina com ORDEM ESTÁVEL — sem .order() o .range() pula/duplica entre páginas', () => {
-    const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
+  it('pagina por KEYSET — offset desloca sob o hard DELETE de sync-reprocess', () => {
+    const arquivo = removerComentarios(read(ASSOC_LOADER));
+    const loader = blocoApriori(arquivo);
 
-    expect(count(bloco, '.range(from, to)'), 'esperava exatamente 1 .range() no bloco').toBe(1);
+    // `.range()` NÃO pode existir neste loader: é o offset que pula linha viva quando um
+    // DELETE encolhe a tabela no meio da leitura (contagem fechando, identidade trocada).
     expect(
-      /\.order\("id",\s*\{\s*ascending:\s*true\s*\}\)/.test(bloco),
-      'sumiu o .order("id") — a chave é a PK de order_items, e é ELA que estabiliza a paginação',
+      arquivo.includes('.range('),
+      'o loader voltou ao offset — é ELE que pula a linha viva sob DELETE concorrente',
+    ).toBe(false);
+    expect(
+      /fetchAllKeyset</.test(loader),
+      'a leitura parou de delegar a fetchAllKeyset',
+    ).toBe(true);
+    // As três metades do keyset andam juntas: sem `.order()` ascendente na MESMA coluna do
+    // cursor, `.gt()` é keyset sobre ordem arbitrária — e o `id` precisa estar PROJETADO,
+    // porque o `.select()` é string e o typecheck não vê a falta.
+    expect(
+      /\.order\("id",\s*\{\s*ascending:\s*true\s*\}\)/.test(loader),
+      'sumiu o .order("id") ascendente — a chave é a PK de order_items, e é ELA que estabiliza',
+    ).toBe(true);
+    expect(
+      /\.gt\("id",\s*cursor\)/.test(loader),
+      'sumiu o filtro do cursor — sem ele a página seguinte recomeça do começo',
+    ).toBe(true);
+    expect(
+      /"id, sales_order_id, product_id/.test(loader),
+      '`id` saiu do .select() do Apriori — sem a coluna projetada não existe cursor',
     ).toBe(true);
   });
 
   it('filtra o universo pela denylist da autoridade + deleted_at (paridade com useBundleEngine)', () => {
-    const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
+    const loader = blocoApriori(removerComentarios(read(ASSOC_LOADER)));
 
     // A denylist NÃO pode ser literal aqui: literal é como a 3ª cópia divergiu
     // (`mapas-paginados.ts` citava 3 dos 4 status). Tem de vir do espelho canônico.
@@ -2870,29 +2927,29 @@ describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de
     // mantém o assert VERDE. É o §9 — "gate de forma não protege a ESCOLHA"; quando o que
     // defende é a CHAMADA, pine a chamada. Aqui: a constante DENTRO do `.not` do status.
     expect(
-      /\.not\(\s*"sales_orders\.status"\s*,\s*"in"\s*,\s*STATUS_NAO_VENDA_POSTGREST\s*\)/.test(bloco),
+      /\.not\(\s*"sales_orders\.status"\s*,\s*"in"\s*,\s*STATUS_NAO_VENDA_POSTGREST\s*\)/.test(loader),
       'o filtro de status saiu, ou a denylist deixou de vir do espelho canônico',
     ).toBe(true);
     expect(
-      bloco.includes('sales_orders!inner('),
+      loader.includes('sales_orders!inner('),
       'sumiu o !inner — sem o join o filtro de status do PAI não é aplicado a nada',
     ).toBe(true);
     expect(
-      /\.is\("sales_orders\.deleted_at",\s*null\)/.test(bloco),
+      /\.is\("sales_orders\.deleted_at",\s*null\)/.test(loader),
       'sumiu o deleted_at IS NULL — é a METADE do contrato do universo, anda junto com a denylist',
     ).toBe(true);
   });
 
-  it('o edge IMPORTA o espelho da denylist (não redeclara uma cópia local)', () => {
-    const fonte = removerComentarios(read(ANALYTICS));
+  it('o loader IMPORTA o espelho da denylist (não redeclara uma cópia local)', () => {
+    const loader = removerComentarios(read(ASSOC_LOADER));
 
     expect(
-      /import\s*\{[^}]*STATUS_NAO_VENDA_POSTGREST[^}]*\}\s*from\s*"\.\.\/_shared\/universo-pedidos\.ts"/.test(fonte),
+      /import\s*\{[^}]*STATUS_NAO_VENDA_POSTGREST[^}]*\}\s*from\s*"\.\/universo-pedidos\.ts"/.test(loader),
       'a constante deixou de vir de _shared/universo-pedidos.ts',
     ).toBe(true);
     expect(
-      /const\s+STATUS_NAO_VENDA/.test(fonte),
-      'o edge redeclarou a denylist localmente — vira a 4ª cópia, que é o defeito que este PR fechou',
+      /const\s+STATUS_NAO_VENDA/.test(loader),
+      'o loader redeclarou a denylist localmente — vira a 4ª cópia, que é o defeito que este PR fechou',
     ).toBe(false);
   });
 });

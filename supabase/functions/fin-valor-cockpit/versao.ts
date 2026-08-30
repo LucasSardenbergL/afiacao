@@ -30,7 +30,7 @@ export const respostaSonda = criarRespostaSonda("fin-valor-cockpit");
 // cockpit inteiro, devolvendo o payload do fluxo real — sem `probe:true`. O veredito é binário
 // mesmo com as cinco edges desta leva nascendo na mesma string (o campo `edge` da resposta desfaz
 // o empate entre elas; ver `criarRespostaSonda`).
-export const VERSAO = "v1.0-sensor-inicial";
+export const VERSAO = "v1.1-keyset-pedido-embedado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
