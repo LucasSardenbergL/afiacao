@@ -43,6 +43,21 @@ Duas derivas em ~1h30, em eixos diferentes — **fatia de código** e **ferramen
 artefato**. É por isso que "sincronizar antes de medir" não basta: também é preciso **sincronizar
 antes de ENTREGAR**, porque entre a medição e a entrega existe o tempo em que você escreve.
 
+### 2.1 A terceira ocorrência é uma PREVISÃO, e ela testa a regra
+
+Ainda na mesma sessão, o hook de colisão multi-sessão acusou o **PR #2134** (DRAFT, atualizado
+17:58Z), que toca `supabase/functions/sync-reprocess/{index.ts,versao.ts}` — **uma das 7** — e
+`_shared/sonda-fingerprints.ts`, que está no closure de **todas**. Enquanto ele for draft o pedido
+entregue continua válido; no minuto em que sair de draft e mergear, o `fonte` esperado das **7**
+muda e o `sync-reprocess` ganha arquivo próprio na fatia. A regra deixa de ser retrospectiva e vira
+**operacional**: quando existe PR em voo sobre o mesmo closure, o pedido de deploy tem prazo de
+validade, e isso precisa ir dito **junto com o pedido** — não descoberto depois pelo founder.
+
+⚠️ **Método, de brinde:** `gh pr diff <n> -- <path>` devolveu **vazio** para um arquivo que o PR
+realmente toca — o pathspec não filtra como no `git diff`, e o vazio se lê como "não colide". A
+fonte correta é `gh pr view <n> --json files`. Mais um caso de ausência-de-dado com cara de
+resposta, na dimensão **FERRAMENTA**.
+
 ## 3. O que a verificação por PR nomeado NÃO detecta
 
 O ponto fino: as três edges sem arquivo próprio na fatia — `scoring-recalc-batch`,
