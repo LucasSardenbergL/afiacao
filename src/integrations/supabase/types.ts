@@ -18825,6 +18825,14 @@ export type Database = {
         Returns: Json
       }
       apply_score_updates: { Args: { p_updates: Json }; Returns: number }
+      apriori_universo_snapshot: {
+        Args: {
+          p_status_nao_venda: string[]
+          p_teto_bytes?: number
+          p_teto_linhas?: number
+        }
+        Returns: Json
+      }
       aprovar_pedido_sugerido: {
         Args: { p_pedido_id: number; p_usuario: string }
         Returns: Json
@@ -18993,6 +19001,14 @@ export type Database = {
       }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
+      cockpit_itens_snapshot: {
+        Args: {
+          p_created_at_de: string
+          p_teto_bytes?: number
+          p_teto_linhas?: number
+        }
+        Returns: Json
+      }
       concluir_com_comprovacao: {
         Args: { p_leitura?: number; p_tarefa_id: string; p_url?: string }
         Returns: undefined
