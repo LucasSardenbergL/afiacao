@@ -66,7 +66,13 @@ import { STATUS_NAO_VENDA_POSTGREST } from "./universo-pedidos.ts";
  * `created_at`, que é data de CARGA), `account` = recorte de empresa, `origem`/`checkout_id`
  * = canal do rollup.
  */
-export interface PedidoPaiCockpit {
+// NÃO exportada de propósito: ninguém fora daqui a nomeia, e `export` sem consumidor reprova
+// no gate de dead code (`bunx knip`, passo do CI que roda DEPOIS do typecheck e dos testes —
+// então uma suíte inteiramente verde não diz nada sobre ele; foi assim que este arquivo
+// reprovou). Ela segue visível onde importa: `ItemComPedidoCockpit`, que é exportado, a
+// referencia. Reexportar só quando alguém de fato importar. (Mesma convenção de
+// `recommend-leituras.ts`.)
+interface PedidoPaiCockpit {
   status: string | null;
   deleted_at: string | null;
   order_date_kpi: string | null;
