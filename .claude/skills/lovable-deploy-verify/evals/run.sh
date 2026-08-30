@@ -3,6 +3,8 @@
 #   (1) classify        — classificação de diff do Passo 1 (classify.sh vs classify-eval.json)
 #   (2) verify-frontend — enumeração + exit codes do Passo 4 (harness local determinístico)
 #   (3) verify-edge-eco  — guard TEMPORAL do N3 passivo (só ticks pré-merge ⇒ indeterminado)
+#   (4) verify-edge-escrita — N3 passivo por escrita de aplicação
+#   (5) sonda-veredito-401  — guard de CREDENCIAL do SQL de sondagem (401 é ambíguo; EXECUTA o SQL)
 # Exit 0 = tudo passou. Exit 1 = alguma divergência.
 # Falsificação (prova que os evals têm dente): --falsify sabota AMBOS e exige vermelho
 #   (classify sabota o gabarito UMA CHAVE POR VEZ e depois muta o classify.sh real; verify-frontend
@@ -144,6 +146,20 @@ if [ "$FALSIFY" = 1 ]; then
   bash verify-edge-escrita-eval.sh --falsify || rc=1
 else
   bash verify-edge-escrita-eval.sh || rc=1
+fi
+
+echo ""
+# (5) O ÚNICO eval que EXECUTA SQL: o veredito do Passo 2 da sonda de versão decide por semântica
+# de NULL e ordem de WHEN, que casamento de string não observa. Sobe um Postgres efêmero (initdb
+# local, zero rede — mesmo padrão dos db/test-*.sh) e lê a coluna `veredito` do banco.
+# Exit 2 do eval = via de prova não observável; propaga como FALHA de propósito: sem Postgres o
+# gate não passa em silêncio (ausência de dado nunca vira aprovação — é a regra que este próprio
+# eval guarda no SQL).
+echo "== (5) sonda-veredito-401 — 401 ambíguo: bundle velho × CRON_SECRET =="
+if [ "$FALSIFY" = 1 ]; then
+  bash sonda-veredito-401-eval.sh --falsify || rc=1
+else
+  bash sonda-veredito-401-eval.sh || rc=1
 fi
 
 echo ""
