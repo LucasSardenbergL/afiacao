@@ -3,12 +3,11 @@ import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import {
   omieEtapaToStatus,
   etapaConhecida,
-  statusEhOmie,
   subtotalPedidoComDesconto,
   construirItemsJson,
-  diffOrderItens,
-  type ItemDesejado,
-  type ItemLocal,
+  STATUS_GERIDO_OMIE,
+  type ItemReconciliar,
+  type PedidoReconciliar,
 } from "../_shared/omie-pedido.ts";
 import {
   avaliarPagina,
@@ -234,6 +233,10 @@ async function reprocessOrders(
       }
       if (veredicto === "fim") break;
 
+      // ── Monta o payload DECLARATIVO de cada pedido. Nenhuma escrita acontece aqui: a página
+      //    inteira vai numa chamada à RPC `reconciliar_pedidos_omie`, que reconcilia CADA pedido
+      //    numa transação própria (subtransação por pedido). ──
+      const pedidosRpc: PedidoReconciliar[] = [];
       for (const pedido of pedidos) {
         const cab = pedido.cabecalho || {};
         const codigoPedido = cab.codigo_pedido;
@@ -242,124 +245,81 @@ async function reprocessOrders(
         const hashPayload = `omie_${account}_${codigoPedido}`;
 
         // [A4] guard de leitura vazia/malformada: sem item VÁLIDO (codigo_produto) NÃO reconcilia
-        //      (mirror do G7 da RPC) — evita zerar total/apagar itens de um pedido real por um
-        //      ListarPedidos degenerado.
+        //      — evita zerar total/apagar itens de um pedido real por um ListarPedidos degenerado.
+        //      A RPC repete o guard (é ela quem tem de ser fail-closed, não quem a chama); aqui o
+        //      filtro só evita mandar payload que já se sabe inútil.
         const itensValidos = itens.filter((it) => it.produto?.codigo_produto != null);
         if (itensValidos.length === 0) continue;
 
-        // Identidade IMUTÁVEL: acha o pai pelo hash_payload determinístico (único pelo índice
-        // parcial uniq_sales_orders_omie_hash). NUNCA por omie_numero_pedido — pegaria a linha
-        // errada (push/de-namespaced). Se não existe, quem INSERE é o omie-vendas-sync; o
-        // reprocess só RECONCILIA o que já existe (a RPC não reconcilia pedido alterado — Fase 2).
-        const { data: order } = await db
-          .from("sales_orders")
-          .select("id, status, total, customer_user_id")
-          .eq("account", account)
-          .eq("hash_payload", hashPayload)
-          .maybeSingle();
-        if (!order) continue;
+        const itensRpc: ItemReconciliar[] = itensValidos.map((it) => {
+          const prod = it.produto!;
+          const cod = Number(prod.codigo_produto);
+          return {
+            omie_codigo_produto: cod,
+            quantity: prod.quantidade || 1,
+            unit_price: prod.valor_unitario || 0,
+            discount: prod.desconto || 0,
+            product_id: productMap.get(cod) ?? null,
+            // hash de IDENTIDADE do item, nunca de conteúdo (causa-raiz #B no nível item)
+            hash_payload: `${hashPayload}_${cod}`,
+          };
+        });
 
-        // [A1] total/itemsJson pelo canon compartilhado (|| igual ao sync). [A4] status só
-        //      reconcilia com etapa CONHECIDA e status local gerido pelo Omie — não rebaixa p/
-        //      'importado' em leitura malformada nem clobbera status app-avançado (confirmado/entregue).
-        const novoSubtotal = subtotalPedidoComDesconto(itens);
-        const itemsJson = construirItemsJson(itens);
-        const statusReconcilia = etapaConhecida(cab.etapa) && statusEhOmie(order.status);
-        const novoStatus = statusReconcilia ? omieEtapaToStatus(cab.etapa) : (order.status as string);
-        const statusMudou = order.status !== novoStatus;
-        const totalMudou = Math.abs(Number(order.total ?? 0) - novoSubtotal) > 0.01;
+        pedidosRpc.push({
+          account,
+          // Identidade IMUTÁVEL: a RPC acha o pai por (account, hash_payload) — NUNCA por
+          // omie_numero_pedido, que pegaria a linha errada (causa-raiz #B). Ela também NUNCA
+          // reescreve o hash_payload do pai.
+          hash_payload: hashPayload,
+          omie_pedido_id: codigoPedido,
+          // [A4] só reconcilia status com etapa CONHECIDA. `null` = "não sei", e a RPC mantém o
+          // status atual. Quem decide se o status LOCAL ainda é gerido pelo Omie é a RPC, dentro
+          // da transação: decidir isso aqui exigiria ler o status antes de escrever, e é
+          // exatamente esse intervalo entre ler e escrever que esta entrega existe para fechar.
+          status_omie: etapaConhecida(cab.etapa) ? omieEtapaToStatus(cab.etapa) : null,
+          // [A1] total/itemsJson pelo canon compartilhado (mesma fórmula do sync).
+          total: subtotalPedidoComDesconto(itens),
+          items: construirItemsJson(itens),
+          itens: itensRpc,
+        });
+      }
 
-        // ── Itens PRIMEIRO (sem transação: se um write de item falhar, NÃO gravo o cabeçalho com
-        //    total/itemsJson que não batem — o próximo ciclo reconcilia, idempotente). [A7] SKU
-        //    repetido no pedido é ambíguo (a identidade é por codigo) → pula o reconcile de itens
-        //    (não arrisca deletar linha legítima); o cabeçalho ainda reconcilia (total/itemsJson
-        //    somam TODAS as linhas, igual ao sync). NUNCA toca hash_payload do pai (causa-raiz #B);
-        //    o hash de identidade do ITEM `omie_<acc>_<pid>_<codigo>` é gravado no insert/update. ──
-        const codigosValidos = itensValidos.map((it) => Number(it.produto!.codigo_produto));
-        const temSkuRepetido = codigosValidos.length !== new Set(codigosValidos).size;
-        let itemErro = false;
-        let itensMudaram = false;
-
-        if (temSkuRepetido) {
-          skuRepetido++;
-          console.warn(`[Reprocess][${account}] pedido ${codigoPedido} com SKU repetido — itens não reconciliados`);
-        } else {
-          const { data: locaisRaw } = await db
-            .from("order_items")
-            .select("id, omie_codigo_produto, quantity, unit_price, discount, product_id")
-            .eq("sales_order_id", order.id);
-          const locais: ItemLocal[] = (locaisRaw || []).map((r) => ({
-            id: r.id as string,
-            omie_codigo_produto: Number(r.omie_codigo_produto),
-            quantity: Number(r.quantity ?? 0),
-            unit_price: Number(r.unit_price ?? 0),
-            discount: Number(r.discount ?? 0),
-            product_id: (r.product_id as string | null) ?? null,
-          }));
-
-          const desejados: ItemDesejado[] = itensValidos.map((it) => {
-            const prod = it.produto!;
-            const cod = Number(prod.codigo_produto);
-            return {
-              omie_codigo_produto: cod,
-              quantity: prod.quantidade || 1,
-              unit_price: prod.valor_unitario || 0,
-              discount: prod.desconto || 0,
-              product_id: productMap.get(cod) ?? null,
-              hash_payload: `${hashPayload}_${cod}`,
-            };
-          });
-          const diff = diffOrderItens(locais, desejados);
-
-          for (const ins of diff.inserir) {
-            const { error } = await db.from("order_items").insert({
-              sales_order_id: order.id,
-              customer_user_id: order.customer_user_id,
-              product_id: ins.product_id,
-              omie_codigo_produto: ins.omie_codigo_produto,
-              quantity: ins.quantity,
-              unit_price: ins.unit_price,
-              discount: ins.discount,
-              hash_payload: ins.hash_payload,
-            });
-            if (error) { itemErro = true; console.error(`[Reprocess][${account}] insert item ${ins.omie_codigo_produto} ped ${codigoPedido}: ${error.message}`); }
-            else { corrections++; itensMudaram = true; }
-          }
-          for (const upd of diff.atualizar) {
-            const { error } = await db.from("order_items").update({
-              quantity: upd.quantity,
-              unit_price: upd.unit_price,
-              discount: upd.discount,
-              product_id: upd.product_id,
-              hash_payload: upd.hash_payload,
-            }).eq("id", upd.id);
-            if (error) { itemErro = true; console.error(`[Reprocess][${account}] update item ${upd.id} ped ${codigoPedido}: ${error.message}`); }
-            else { corrections++; itensMudaram = true; }
-          }
-          if (diff.deletar.length > 0) {
-            const { error } = await db.from("order_items").delete().in("id", diff.deletar);
-            if (error) { itemErro = true; console.error(`[Reprocess][${account}] delete itens ped ${codigoPedido}: ${error.message}`); }
-            else { corrections += diff.deletar.length; itensMudaram = true; }
-          }
+      // ── Escrita ATÔMICA por pedido via RPC. Substitui as N+M+2 escritas PostgREST soltas
+      //    (insert por item, update por item, delete dos removidos, update do cabeçalho), entre as
+      //    quais existia um instante REAL e COMMITADO com itens da revisão velha convivendo com os
+      //    da nova — visível para `omie-analytics-sync` (regra de associação publicada) e
+      //    `fin-valor-cockpit` (margem/EVP). Ver migration 20260830190000 +
+      //    db/test-reconciliar-pedidos-omie.sh (T1 prova; F1 mostra o writer antigo rasgando). ──
+      if (pedidosRpc.length > 0) {
+        const { data: rpcRes, error: rpcErr } = await db.rpc("reconciliar_pedidos_omie", {
+          p_pedidos: pedidosRpc,
+          p_status_gerido_omie: STATUS_GERIDO_OMIE,
+        });
+        if (rpcErr) {
+          // Money-path: a RPC é o ÚNICO caminho de escrita agora. Se ela falha (migration não
+          // aplicada, grant, lista de status divergente da canônica), LANÇAR — senão a run fica
+          // verde sem reconciliar nada e o log marca 'complete' mascarando perda total. Mesma
+          // decisão que o `criar_pedidos_com_itens` do omie-vendas-sync tomou (achado /codex).
+          throw new Error(`[Reprocess][${account}] RPC reconciliar_pedidos_omie falhou pág ${pagina}: ${rpcErr.message}`);
         }
-
-        // ── Cabeçalho DEPOIS: status/total/itemsJson do Omie ATUAL. Só grava se algo mudou e os
-        //    itens não falharam (consistência sem transação). sales_price_history fica a cargo do
-        //    sync (writer único, write-once por pedido) — reprocess não grava preço. ──
-        if (!itemErro && (statusMudou || totalMudou || itensMudaram)) {
-          const { error } = await db.from("sales_orders").update({
-            status: novoStatus,
-            total: novoSubtotal,
-            subtotal: novoSubtotal,
-            items: itemsJson,
-            updated_at: new Date().toISOString(),
-          }).eq("id", order.id);
-          if (error) { itemErro = true; console.error(`[Reprocess][${account}] update pedido ${codigoPedido}: ${error.message}`); }
-          else if (statusMudou || totalMudou) divergences++;
+        const r = (rpcRes ?? {}) as {
+          upserts?: number; divergences?: number; corrections?: number;
+          sku_repetido?: number; sem_item?: number; sem_pai?: number;
+          falhas?: Array<Record<string, unknown>>;
+        };
+        upserts += r.upserts || 0;
+        divergences += r.divergences || 0;
+        corrections += r.corrections || 0;
+        skuRepetido += r.sku_repetido || 0;
+        const fails = r.falhas || [];
+        falhas += fails.length;
+        if (fails.length > 0) {
+          console.error(`[Reprocess][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
         }
-
-        if (itemErro) falhas++;
-        else if (statusMudou || totalMudou || itensMudaram) upserts++;
+        if (r.sku_repetido) {
+          console.warn(`[Reprocess][${account}] ${r.sku_repetido} pedido(s) com SKU repetido — itens não reconciliados (ambíguo)`);
+        }
+        console.log(`[Reprocess][${account}] RPC pág ${pagina}: upserts=${r.upserts || 0} corrections=${r.corrections || 0} divergences=${r.divergences || 0} sem_pai=${r.sem_pai || 0} sem_item=${r.sem_item || 0}`);
       }
 
       console.log(`[Reprocess][${account}] Orders page ${pagina}/${totalPaginas}`);
@@ -372,13 +332,16 @@ async function reprocessOrders(
       corrections_applied: corrections,
       duration_ms: Date.now() - startTime,
       metadata: { pages: totalPaginas, window_days: windowDays, falhas, sku_repetido: skuRepetido },
-      // Reconcile parcial (erro de escrita) ou SKU repetido (order_items não reconciliado, pode
-      // divergir do cabeçalho) NÃO derruba a run (idempotente: próximo ciclo reconcilia), mas NÃO
-      // mente 'complete' limpo — surfaça em error_message p/ o watchdog/health (achado Codex).
+      // Pedido que falhou na RPC ou SKU repetido (itens não reconciliados por ambiguidade) NÃO
+      // derruba a run (idempotente: próximo ciclo reconcilia), mas NÃO mente 'complete' limpo —
+      // surfaça em error_message p/ o watchdog/health (achado Codex).
+      // ⚠️ "reconcile PARCIAL" saiu do vocabulário aqui de propósito: com a RPC, o pedido que
+      // falha é desfeito INTEIRO pela subtransação. O que sobra é um pedido na revisão ANTIGA
+      // completa — não um meio-pedido. A frase antiga descrevia o writer que esta entrega matou.
       ...((falhas > 0 || skuRepetido > 0)
         ? {
           error_message: [
-            falhas > 0 ? `${falhas} pedido(s) com erro de escrita (reconcile parcial)` : null,
+            falhas > 0 ? `${falhas} pedido(s) falharam na RPC (revertidos inteiros, seguem na revisão anterior)` : null,
             skuRepetido > 0 ? `${skuRepetido} pedido(s) com SKU repetido (order_items pode divergir do cabeçalho)` : null,
           ].filter(Boolean).join("; "),
         }

@@ -22,6 +22,14 @@
 // inválido é PRESERVADO e relançado no ponto antigo, para que a resposta continue sendo o 500 do
 // catch geral — mudar isso trocaria a mensagem de erro de quem manda corpo quebrado.
 
+// ⚠️ v1.1 — o EFEITO abaixo mudou de FORMA, não só de texto. Antes, a reconciliação de um pedido
+// eram N+M+2 escritas PostgREST soltas, e um run interrompido no meio deixava o pedido com itens
+// da revisão velha convivendo com os da nova (e o `order_items` apagado não voltava pela mesma
+// chamada). Agora ela é UMA transação por pedido (RPC `reconciliar_pedidos_omie`, migration
+// 20260830190000): a falha reverte o pedido INTEIRO, que fica na revisão anterior completa.
+// ⚠️ Esta edge depende de uma migration MANUAL. Bundle novo + migration não aplicada = a RPC não
+// existe e a reconciliação de pedidos LANÇA (por desenho — ver `if (rpcErr)` no index).
+
 export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
 import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 
@@ -29,11 +37,11 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("sync-reprocess");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+export const VERSAO = "v1.1-reconcile-pedido-atomico";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
-  "esta edge reprocessa pedidos, produtos e estoque do Omie: DELETA e reinsere order_items, " +
-  "atualiza sales_orders e faz upsert em product_costs — a tabela de custo que a margem e o motor " +
-  "de recomendação leem; um run não pedido reescreve custo e item de pedido usando a janela de " +
-  "dias que a config resolver sozinha, e o order_items apagado não volta pela mesma chamada";
+  "esta edge reprocessa pedidos, produtos e estoque do Omie: reconcilia order_items e sales_orders " +
+  "(agora numa transação por pedido, via RPC reconciliar_pedidos_omie) e faz upsert em " +
+  "product_costs — a tabela de custo que a margem e o motor de recomendação leem; um run não " +
+  "pedido reescreve custo e item de pedido usando a janela de dias que a config resolver sozinha";

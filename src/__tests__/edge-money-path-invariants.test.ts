@@ -3520,3 +3520,59 @@ describe('guardrail money-path: P1-c transferência de código (writer NÃO tran
     ).toBe(mirrorBlockNamed(helper, 'omie transferencia-codigo'));
   });
 });
+
+describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista de status tem paridade TS↔SQL', () => {
+  const REPROCESS = 'supabase/functions/sync-reprocess/index.ts';
+  const CANON = 'supabase/functions/_shared/omie-pedido.ts';
+  const MIGRATION = 'supabase/migrations/20260830190000_reconciliar_pedidos_omie.sql';
+  const src = removerComentarios(read(REPROCESS));
+
+  it('o reconcile de pedido NÃO volta a escrever order_items por PostgREST', () => {
+    // O defeito que esta entrega fechou: N inserts + M updates + 1 delete + 1 update de cabeçalho,
+    // cada um a sua transação, deixando um instante REAL e commitado com itens da revisão velha
+    // convivendo com os da nova. Um `.from("order_items").insert/update/delete` de volta aqui
+    // reabre a janela SEM erro nenhum — por isso o assert é sobre a AUSÊNCIA da forma, sobre a
+    // fonte já sem comentários (a prosa acima cita as três operações de propósito).
+    for (const op of ['insert', 'update', 'delete']) {
+      expect(
+        src,
+        `sync-reprocess voltou a escrever order_items por PostgREST (.${op}) — a reconciliação tem de passar pela RPC atômica`,
+      ).not.toContain(`from("order_items").${op}`);
+    }
+    expect(src).not.toContain('.from("order_items")');
+  });
+
+  it('e chama a RPC atômica com as duas chaves do contrato', () => {
+    expect(src).toContain('db.rpc("reconciliar_pedidos_omie"');
+    expect(src).toContain('p_pedidos: pedidosRpc');
+    expect(src).toContain('p_status_gerido_omie: STATUS_GERIDO_OMIE');
+  });
+
+  it('erro da RPC LANÇA — run verde sem reconciliar nada mascararia perda total', () => {
+    const i = src.indexOf('reconciliar_pedidos_omie');
+    expect(i, 'chamada da RPC não encontrada').toBeGreaterThan(-1);
+    const bloco = src.slice(i, i + 1200);
+    expect(bloco).toContain('if (rpcErr)');
+    expect(bloco).toContain('throw new Error(');
+  });
+
+  it('a lista de status enviada à RPC é a MESMA que a migration exige (paridade por CONJUNTO)', () => {
+    // A RPC compara `p_status_gerido_omie` por conjunto com a sua cópia canônica e LANÇA se
+    // divergir — fail-closed, mas só em runtime. Este assert pega no CI. Sem ele, mudar a lista
+    // num lado deixaria a reconciliação parada em produção até alguém ler o error_message.
+    const ts = read(CANON).match(/export const STATUS_GERIDO_OMIE[^=]*=\s*\[([\s\S]*?)\]/);
+    expect(ts, 'STATUS_GERIDO_OMIE não encontrada no canon TS').not.toBeNull();
+    const sql = read(MIGRATION).match(/c_status_omie\s+constant\s+text\[\]\s*:=\s*ARRAY\[([^\]]*)\]/);
+    expect(sql, 'c_status_omie não encontrada na migration').not.toBeNull();
+
+    const extrair = (bruto: string) =>
+      [...bruto.matchAll(/['"]([a-z_]+)['"]/g)].map((m) => m[1]).sort();
+    const doTs = extrair(ts![1]);
+    const doSql = extrair(sql![1]);
+
+    // Guard anti-teatro: uma regex que não casasse nada deixaria dois arrays VAZIOS iguais, e o
+    // assert passaria sem ter comparado coisa alguma.
+    expect(doTs.length, 'a extração do TS não achou nenhum status — regex quebrada').toBe(5);
+    expect(doSql).toEqual(doTs);
+  });
+});

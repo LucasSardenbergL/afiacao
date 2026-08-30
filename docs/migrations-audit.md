@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **502** custom migrations totais
-- **1725** objetos esperados (criados por estas migrations)
+- **503** custom migrations totais
+- **1726** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 524
+  - `function`: 525
   - `rls_policy`: 455
   - `index`: 250
   - `cron_job`: 168
@@ -4206,6 +4206,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.apriori_universo_snapshot` | — |
 | `function` | `public.cockpit_itens_snapshot` | — |
+
+### `20260830190000_reconciliar_pedidos_omie.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reconciliar_pedidos_omie` | — |
 
 ## Próximos passos por status
 
