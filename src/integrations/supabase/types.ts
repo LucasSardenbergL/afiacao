@@ -12464,6 +12464,7 @@ export type Database = {
           omie_numero_pedido: string | null
           omie_payload: Json | null
           omie_pedido_id: number | null
+          omie_reconciliado_em: string | null
           omie_response: Json | null
           order_date_kpi: string | null
           origem: string | null
@@ -12495,6 +12496,7 @@ export type Database = {
           omie_numero_pedido?: string | null
           omie_payload?: Json | null
           omie_pedido_id?: number | null
+          omie_reconciliado_em?: string | null
           omie_response?: Json | null
           order_date_kpi?: string | null
           origem?: string | null
@@ -12526,6 +12528,7 @@ export type Database = {
           omie_numero_pedido?: string | null
           omie_payload?: Json | null
           omie_pedido_id?: number | null
+          omie_reconciliado_em?: string | null
           omie_response?: Json | null
           order_date_kpi?: string | null
           origem?: string | null
@@ -19990,6 +19993,14 @@ export type Database = {
           etapa: string
           valor: number
         }[]
+      }
+      reconciliar_pedidos_omie: {
+        Args: {
+          p_lido_em: string
+          p_pedidos: Json
+          p_status_gerido_omie: string[]
+        }
+        Returns: Json
       }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_oportunidade_badge: { Args: never; Returns: undefined }
