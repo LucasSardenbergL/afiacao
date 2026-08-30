@@ -30,8 +30,11 @@ export interface LinhaPedidoParaEnvio {
   hash_payload?: string | null;
 }
 
-/** Ramos de recusa. São a MARCA testável de cada decisão (a prosa do detalhe é humana). */
-export type MotivoRecusaEnvio = "linha_ausente" | "ja_enviado" | "linha_do_sync";
+/** Ramos de recusa. São a MARCA testável de cada decisão (a prosa do detalhe é humana).
+ *  NÃO exportado de propósito: ninguém importa o tipo (o teste casa a STRING do ramo, que é o
+ *  ponto — assert por literal sobrevive a renomear o tipo), e export sem consumidor reprova no
+ *  gate de dead code (`bunx knip`). Segue público via `VereditoEnvioPedido.motivo`. */
+type MotivoRecusaEnvio = "linha_ausente" | "ja_enviado" | "linha_do_sync";
 
 export interface VereditoEnvioPedido {
   permitido: boolean;
