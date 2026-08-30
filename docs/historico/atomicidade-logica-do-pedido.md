@@ -151,13 +151,12 @@ Registradas porque **custam minutos e teriam virado "conserto" inerte ou defeito
   **pula** pedido existente com itens (`skipped_complete`). Se houvesse um terceiro writer solto, a
   atomicidade desta RPC seria local e a janela continuaria aberta por outra porta.
 
-## ⛔ A revisão independente BLOQUEOU esta entrega (2026-08-30)
+## A revisão independente BLOQUEOU esta entrega — e os 4 P1 foram consertados (2026-08-30)
 
 O ritual `/codex` rodou (`gpt-5.6-sol`, xhigh, exit 0) e o veredito foi **BLOQUEAR**, com 4 P1.
 Parecer completo em [`../pareceres/2026-08-30-codex-atomicidade-pedido.md`](../pareceres/2026-08-30-codex-atomicidade-pedido.md).
-**Os achados NÃO estão consertados** — o que está abaixo descreve o desenho, não um desfecho.
-
-O que ele derrubou, em ordem de gravidade:
+Os quatro foram **consertados**, cada um com a sua falsificação: 87 asserts, exit 0, 9
+falsificações vermelhas. O que ele derrubou, em ordem de gravidade:
 
 1. **SKU repetido no estado ATUAL não é detectado** — o guard só olha o conjunto desejado. Medido
    por mim em prod: **1.179 pares repetidos, 1.049 pedidos Omie vivos**. As duas linhas do mesmo
@@ -179,6 +178,26 @@ Mais dois de menor porte: o antídoto temporal do `T1` tem furo (ver o parecer) 
 AB/BA** possível entre lotes com ordem de pedidos divergente — o `T3` testa só duas sessões no
 MESMO pedido, onde não há ciclo.
 
+### As duas lições que os consertos deixam
+
+**1. Um guard de ambiguidade tem dois lados, e o lado esquecido costuma ser o do BANCO.** O guard
+olhava a entrada (o payload do Omie) e não o estado (o que já está gravado) — e o caso real era o
+segundo: 1.049 pedidos vivos, nenhum deles vindo de um payload duplicado. A generalização: quando
+uma chave não é identidade, **os dois lados da comparação podem violá-la**, e checar só o lado que
+chega deixa passar o lado que ficou. O sintoma diagnóstico é o guard citar só um dos operandos.
+
+**2. Serializar acesso não é ordenar versões.** `FOR UPDATE` garante que duas escritas não se
+entrelaçam; não garante que a última a chegar é a mais nova. São propriedades diferentes, e é fácil
+ler a primeira como se fosse a segunda porque as duas se descrevem como "resolver concorrência".
+Quando as escritas carregam informação de fora do banco, **a ordem de chegada não é a ordem de
+frescor** — e sem um carimbo do frescor, a escrita velha vence sem que nada acuse.
+
+**Corolário sobre recomendação de revisor:** o parecer propôs o CAS por `dAlt/hAlt` do Omie. Não
+consegui **provar** que o `ListarPedidos` devolve esses campos, e um `dAlt` sempre `NULL`
+degradaria o CAS para "aceita tudo" sem erro nenhum. Segui o eixo do achado com um discriminante
+que consigo garantir — o instante da leitura pela edge —, e registrei a diferença. **Aceitar a
+recomendação certa pelo mecanismo não verificado teria produzido um guard decorativo.**
+
 **A lição de método:** o Codex confirmou o desenho (item 1: "(a) sobre (b) está correta para este
 escopo"; item 2: "as CTEs estão corretas"; itens 8 e 9: tolerância e `search_path` corretos) e
 derrubou a EXECUÇÃO. O auto-challenge (Caminho B) tinha achado um defeito real — mas nenhum destes
@@ -196,3 +215,11 @@ quatro. **Auto-prova cobre o intervalo; não substitui a revisão independente.*
 - **A prova é de PG17 local, não do Data API.** O harness prova a transação no banco. Ele não prova
   o gateway da Supabase, nem RLS de produção, nem um payload de 100 pedidos atravessando o
   PostgREST real como argumento `jsonb`.
+- **IDENTIDADE DE LINHA (`det.ide.codigo_item`) — a correção ESTRUTURAL do P1-1.** Enquanto ela não
+  existir, os **1.049 pedidos com SKU duplicado não reconciliam**: ficam congelados na revisão
+  anterior completa, e a run diz isso em `error_message`. É degradação honesta, não conserto. O
+  campo existe no Omie e já é lido pelo `omie-vendas-sync`; falta persisti-lo em `order_items` e
+  fazer backfill das ~70 mil linhas vivas — entrega própria, com o seu próprio risco.
+- **O CAS usa o instante da LEITURA pela edge, não a revisão da ORIGEM.** Se algum dia se provar
+  que o `ListarPedidos` devolve `infoCadastro.dAlt/hAlt`, esse é o discriminante mais forte e o
+  carimbo atual vira fallback. Hoje não está provado, e por isso não está no código.

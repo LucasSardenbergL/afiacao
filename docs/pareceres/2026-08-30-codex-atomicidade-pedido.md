@@ -1,10 +1,40 @@
 <!-- Parecer do ritual /codex sobre o PR #2134 (atomicidade lógica do pedido).
      Transporte: scripts/codex-async.sh -m gpt-5.6-sol -r xhigh, exit 0, 10.196 bytes, HEAD ffa740ac4.
-     VEREDITO: BLOQUEAR. Os achados NÃO estão consertados neste commit — ver a nota abaixo. -->
+     VEREDITO ORIGINAL: BLOQUEAR. Os 4 P1 foram consertados depois — ver a tabela abaixo. -->
 
-# Parecer independente — BLOQUEIA a entrega (2026-08-30)
+# Parecer independente — BLOQUEOU a entrega, e os 4 P1 foram consertados (2026-08-30)
 
-**Estado: os 4 achados P1 seguem ABERTOS.** Este arquivo é a evidência, não o desfecho.
+**Estado: os 4 achados P1 foram CONSERTADOS** (mais os dois de menor porte: deadlock AB/BA e o
+furo do antídoto temporal do `T1`). Prova em `db/test-reconciliar-pedidos-omie.sh` — **87 asserts,
+exit 0, 9 falsificações vermelhas**, uma por conserto.
+
+| achado | conserto | falsificação que prova o dente |
+|---|---|---|
+| P1-1 SKU duplicado nos dois lados | duplicidade no ATUAL **e** no desejado ⇒ pedido inteiro pulado, cabeçalho incluído | `F4` — com o guard antigo sobram 2 linhas do mesmo código e o cabeçalho descreve 2 itens: **valor dobrado** |
+| P1-2 `FOR UPDATE` não vê versão | compare-and-set por `p_lido_em` (+ coluna `sales_orders.omie_reconciliado_em`) | `F7` — sem o CAS, a leitura de 2 h atrás **sobrescreve** a nova |
+| P1-3 cabeçalho não declarativo | `items`/`subtotal` entram na leitura sob o lock **e** na decisão | `F8` — sem isso o drift é **no-op permanente** (subtotal segue 1.00) |
+| P1-4 `WHEN OTHERS` catch-all | allowlist `data_exception`/`integrity_constraint_violation`; o resto **relança** | `F9` — com o catch-all a falha sistêmica vira "um pedido ruim" e a chamada **retorna verde** |
+| deadlock AB/BA | lote ordenado por `(account, hash_payload)` | — (ordem determinística; não há ciclo a exercitar) |
+| furo do antídoto do `T1` | `TA0`/`TA1` cercam a leitura, exige `TB0 < TA0 < TA1 < TB1`, e A sincroniza pela emissão de `TB0` em vez de `sleep` | — (é o próprio antídoto) |
+
+**Uma recomendação do parecer NÃO foi seguida como escrita, e o motivo importa:** ele propôs o CAS
+por `infoCadastro.dAlt/hAlt` do Omie, que seria a revisão de ORIGEM e portanto o discriminante mais
+forte. **Não consegui provar que o `ListarPedidos` os devolve** — não aparecem em nenhum ponto do
+repo (só `dInc`) e os 156 payloads de pedido em `omie_webhook_events` têm zero ocorrência de `dAlt`.
+Pendurar um guard money-path num campo não verificado seria fabricar garantia, e um `dAlt` sempre
+`NULL` degradaria o CAS para "aceita tudo" **sem erro nenhum**. O carimbo usado é o instante em que
+a EDGE buscou a página — não é a revisão da origem, e isto está dito na migration —, mas é
+exatamente o eixo do defeito relatado e é gerado por quem leu.
+
+**Segue como pendência ESTRUTURAL, nomeada:** persistir `det.ide.codigo_item` como identidade de
+linha. Enquanto ela não existir, os 1.049 pedidos duplicados **não reconciliam** — ficam congelados
+na revisão anterior completa, e o `error_message` da run diz isso. É degradação honesta, não
+conserto. O campo existe no Omie e já é usado no `omie-vendas-sync`; falta persistir e fazer
+backfill das ~70 mil linhas vivas, que é entrega própria.
+
+---
+
+
 
 ## Verificação minha, contra a PROD, do achado que decide
 

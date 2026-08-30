@@ -152,6 +152,9 @@ seed
 
 DENY="ARRAY['cancelado','rascunho','pendente','orcamento']"
 GERIDO="ARRAY['importado','separacao','enviado','faturado','cancelado']"
+# Carimbo de leitura do compare-and-set. `clock_timestamp()` e não `now()`: dentro de um mesmo
+# statement `now()` é constante, e o teste precisa que leituras sucessivas AVANCEM.
+LIDO="clock_timestamp()"
 
 # A REVISÃO NOVA: P1 REMOVIDO, P2 ATUALIZADO (qty 3→9), P3 INSERIDO. del=1, upd=1, ins=1.
 NOVA='[{"account":"oben","hash_payload":"omie_oben_777","omie_pedido_id":777,"status_omie":"faturado","total":330.00,
@@ -170,7 +173,7 @@ NOVA_COMPLETA="b1,c1"
 echo "── asserts: contrato da reconciliação ──"
 eq "A0 revisão ANTIGA completa no seed" "$(Pq -c "$CESTA")" "$ANTIGA_COMPLETA"
 
-R=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO)::text;")
+R=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO)::text;")
 eq "A1 corrections = 1 delete + 1 update + 1 insert" \
    "$(printf '%s' "$R" | "$PGBIN/psql" -q -t -A -p "$PORT" -h /tmp -U postgres -d prove -c "SELECT ('$R'::jsonb)->>'corrections';")" "3"
 eq "A2 upserts = 1 pedido tocado"     "$(Pq -c "SELECT ('$R'::jsonb)->>'upserts';")"     "1"
@@ -192,7 +195,7 @@ eq "A12 o pedido de CONTROLE não foi tocado" \
    "$(Pq -c "SELECT count(*)||'/'||max(status) FROM public.sales_orders WHERE id='$PB' AND updated_at IS NULL;")" "1/faturado"
 
 echo "── asserts: idempotência e no-op ──"
-R2=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO)::text;")
+R2=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO)::text;")
 eq "A13 2ª chamada com o MESMO payload: zero correções (converge)" "$(Pq -c "SELECT ('$R2'::jsonb)->>'corrections';")" "0"
 eq "A14 2ª chamada: zero upserts (conteúdo igual ⇒ no-op, sem burst de reescrita inerte)" \
    "$(Pq -c "SELECT ('$R2'::jsonb)->>'upserts';")" "0"
@@ -201,19 +204,19 @@ eq "A15 a cesta seguiu a revisão NOVA COMPLETA" "$(Pq -c "$CESTA")" "$NOVA_COMP
 # Espelho do teste Deno de `diffOrderItens` ("diferença de 2e-14 não é divergência"): a tolerância
 # de 1e-6 tem de existir nos DOIS lados, senão o SQL reescreveria linha por ruído de ponto flutuante.
 RUIDO=$(printf '%s' "$NOVA" | sed 's/"quantity":9,/"quantity":9.00000000000002,/')
-R3=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$RUIDO'::jsonb, $GERIDO)::text;")
+R3=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$RUIDO'::jsonb, $GERIDO, $LIDO)::text;")
 eq "A16 diferença de 2e-14 NÃO é divergência (tolerância 1e-6, espelho do TS)" \
    "$(Pq -c "SELECT ('$R3'::jsonb)->>'corrections';")" "0"
 
 echo "── asserts: status só reconcilia quando o dono é o Omie ──"
 P -q -c "UPDATE public.sales_orders SET status='entregue' WHERE id='$PA';"
-R4=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO)::text;")
+R4=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO)::text;")
 eq "A17 status app-avançado ('entregue') NÃO é clobberado pela reconciliação" \
    "$(Pq -c "SELECT status FROM public.sales_orders WHERE id='$PA';")" "entregue"
 eq "A18 e o pedido não conta como upsert por isso" "$(Pq -c "SELECT ('$R4'::jsonb)->>'upserts';")" "0"
 P -q -c "UPDATE public.sales_orders SET status='separacao' WHERE id='$PA';"
 NULLSTAT=$(printf '%s' "$NOVA" | sed 's/"status_omie":"faturado"/"status_omie":null/')
-P -q -c "SELECT public.reconciliar_pedidos_omie('$NULLSTAT'::jsonb, $GERIDO);" >/dev/null
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NULLSTAT'::jsonb, $GERIDO, $LIDO);" >/dev/null
 eq "A19 etapa DESCONHECIDA (status_omie null) mantém o status atual" \
    "$(Pq -c "SELECT status FROM public.sales_orders WHERE id='$PA';")" "separacao"
 
@@ -223,27 +226,27 @@ neg() { # neg "<descrição>" "<chamada SQL>" "<sqlstate esperada>"
   if P -q -c "DO \$t\$ BEGIN PERFORM $2; RAISE EXCEPTION 'SENTINELA_SEM_DENTE: aceitou entrada inválida' USING ERRCODE='P0001'; EXCEPTION WHEN sqlstate '$3' THEN NULL; WHEN OTHERS THEN RAISE; END \$t\$;" >/dev/null 2>&1
   then ok "$1 (rejeitado com $3)"; else bad "$1 — NÃO lançou $3"; fi
 }
-neg "B1 p_pedidos NULL"                    "public.reconciliar_pedidos_omie(NULL, $GERIDO)"          "22023"
-neg "B2 p_pedidos não-array"               "public.reconciliar_pedidos_omie('{}'::jsonb, $GERIDO)"   "22023"
-neg "B3 lista de status NULL"              "public.reconciliar_pedidos_omie('[]'::jsonb, NULL)"      "22023"
-neg "B4 lista de status VAZIA"             "public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY[]::text[])" "22023"
+neg "B1 p_pedidos NULL"                    "public.reconciliar_pedidos_omie(NULL, $GERIDO, $LIDO)"          "22023"
+neg "B2 p_pedidos não-array"               "public.reconciliar_pedidos_omie('{}'::jsonb, $GERIDO, $LIDO)"   "22023"
+neg "B3 lista de status NULL"              "public.reconciliar_pedidos_omie('[]'::jsonb, NULL, $LIDO)" "22023"
+neg "B4 lista de status VAZIA"             "public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY[]::text[], $LIDO)" "22023"
 # B5 é o buraco da classe do #2132: uma lista sintaticamente válida que ACRESCENTA um status
 # app-avançado faria a reconciliação rebaixar pedido que o time já avançou à mão — sem erro nenhum.
 neg "B5 lista com 'entregue' A MAIS (clobberaria status app-avançado)" \
-    "public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado','entregue'])" "22023"
+    "public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado','entregue'], $LIDO)" "22023"
 neg "B6 lista SEM 'importado' (congelaria pedido legítimo)" \
-    "public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['separacao','enviado','faturado','cancelado'])" "22023"
+    "public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['separacao','enviado','faturado','cancelado'], $LIDO)" "22023"
 neg "B7 lote acima do teto de 500 (não trunca em silêncio)" \
-    "public.reconciliar_pedidos_omie((SELECT jsonb_agg('{\"account\":\"x\",\"hash_payload\":\"y\"}'::jsonb) FROM generate_series(1,501)), $GERIDO)" "54000"
+    "public.reconciliar_pedidos_omie((SELECT jsonb_agg('{\"account\":\"x\",\"hash_payload\":\"y\"}'::jsonb) FROM generate_series(1,501)), $GERIDO, $LIDO)" "54000"
 # B8 é o contrapeso de B5/B6: a validação é por CONJUNTO, não por sequência — senão vira armadilha
 # que quebra a reconciliação quando alguém só reordena a lista no TS.
 eq "B8 lista canônica fora de ordem e com repetição é ACEITA (conjunto, não sequência)" \
-   "$(Pq -c "SELECT public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['cancelado','faturado','importado','cancelado','enviado','separacao'])->>'upserts';")" "0"
+   "$(Pq -c "SELECT public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['cancelado','faturado','importado','cancelado','enviado','separacao'], $LIDO)->>'upserts';")" "0"
 
 echo "── asserts: ausente ≠ zero, e o pedido fica INTACTO ──"
 ANTES="$(Pq -c "SELECT total||'|'||status||'|'||(SELECT count(*) FROM public.order_items WHERE sales_order_id='$PA') FROM public.sales_orders WHERE id='$PA';")"
 SEM_TOTAL=$(printf '%s' "$NOVA" | sed 's/"total":330.00,//')
-RT=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SEM_TOTAL'::jsonb, $GERIDO)::text;")
+RT=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SEM_TOTAL'::jsonb, $GERIDO, $LIDO)::text;")
 eq "C1 'total' ausente: falha REGISTRADA (não engolida como sucesso)" \
    "$(Pq -c "SELECT jsonb_array_length(('$RT'::jsonb)->'falhas');")" "1"
 eq "C1b e a falha carrega a SQLSTATE, não só uma mensagem" \
@@ -251,37 +254,59 @@ eq "C1b e a falha carrega a SQLSTATE, não só uma mensagem" \
 eq "C1c 'total' ausente NÃO virou zero — o pedido está INTACTO (ausente ≠ zero)" \
    "$(Pq -c "SELECT total||'|'||status||'|'||(SELECT count(*) FROM public.order_items WHERE sales_order_id='$PA') FROM public.sales_orders WHERE id='$PA';")" "$ANTES"
 SEM_ITEMS=$(printf '%s' "$NOVA" | sed 's/"items":\[{"omie_codigo_produto":2},{"omie_codigo_produto":3}\],//')
-RI=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SEM_ITEMS'::jsonb, $GERIDO)::text;")
+RI=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SEM_ITEMS'::jsonb, $GERIDO, $LIDO)::text;")
 eq "C2 'items' ausente: falha registrada e retrato do pedido NÃO apagado" \
    "$(Pq -c "SELECT jsonb_array_length(('$RI'::jsonb)->'falhas')||'|'||(SELECT jsonb_array_length(items) FROM public.sales_orders WHERE id='$PA');")" "1|2"
 STAT_LIXO=$(printf '%s' "$NOVA" | sed 's/"status_omie":"faturado"/"status_omie":"aprovadissimo"/')
-RS=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$STAT_LIXO'::jsonb, $GERIDO)::text;")
+RS=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$STAT_LIXO'::jsonb, $GERIDO, $LIDO)::text;")
 eq "C3 status_omie desconhecido: falha registrada, status intacto" \
    "$(Pq -c "SELECT jsonb_array_length(('$RS'::jsonb)->'falhas')||'|'||(SELECT status FROM public.sales_orders WHERE id='$PA');")" "1|separacao"
 
 echo "── asserts: guards de pedido (A4/A7 do writer) ──"
 SEM_ITEM='[{"account":"oben","hash_payload":"omie_oben_777","omie_pedido_id":777,"status_omie":"faturado","total":330.00,"items":[{"omie_codigo_produto":2}],"itens":[]}]'
-RV=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SEM_ITEM'::jsonb, $GERIDO)::text;")
+RV=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SEM_ITEM'::jsonb, $GERIDO, $LIDO)::text;")
 eq "C4 ListarPedidos degenerado (zero item válido): pedido NÃO reconciliado — nem itens nem cabeçalho" \
    "$(Pq -c "SELECT (('$RV'::jsonb)->>'sem_item')||'|'||(('$RV'::jsonb)->>'upserts')||'|'||(SELECT count(*) FROM public.order_items WHERE sales_order_id='$PA');")" "1|0|2"
 SEM_PAI=$(printf '%s' "$NOVA" | sed 's/omie_oben_777"/omie_oben_999"/')
-RP=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SEM_PAI'::jsonb, $GERIDO)::text;")
+RP=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SEM_PAI'::jsonb, $GERIDO, $LIDO)::text;")
 eq "C5 pedido sem pai local: skip (quem INSERE é o omie-vendas-sync)" \
    "$(Pq -c "SELECT (('$RP'::jsonb)->>'sem_pai')||'|'||(('$RP'::jsonb)->>'corrections');")" "1|0"
-# SKU repetido: a identidade do item dentro do pedido é o código; com repetição não dá para dizer
-# qual linha local casa com qual → não reconcilia ITENS (não apaga linha legítima), mas o cabeçalho sim.
+# ── P1-1: SKU repetido é AMBÍGUO nos DOIS lados, e o pedido inteiro fica INTACTO.
+# ⚠️ O assert que estava aqui exigia "itens antigos + cabeçalho NOVO" — e isso é exatamente a
+# revisão MISTA que esta função existe para eliminar. O teste protegia o defeito; o challenge
+# Codex pegou. Agora o pedido ambíguo não é tocado em NADA: fica na revisão anterior COMPLETA.
 SKU_REP='[{"account":"oben","hash_payload":"omie_oben_777","omie_pedido_id":777,"status_omie":"faturado","total":999.00,
  "items":[{"omie_codigo_produto":2}],
  "itens":[{"omie_codigo_produto":2,"quantity":1,"unit_price":1,"discount":0,"product_id":"7d000000-0000-0000-0000-0000000000b1","hash_payload":"h"},
           {"omie_codigo_produto":2,"quantity":7,"unit_price":7,"discount":0,"product_id":"7d000000-0000-0000-0000-0000000000b1","hash_payload":"h"}]}]'
-RK=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SKU_REP'::jsonb, $GERIDO)::text;")
-eq "C6 SKU repetido: itens NÃO reconciliados (nenhuma linha apagada), cabeçalho SIM" \
-   "$(Pq -c "SELECT (('$RK'::jsonb)->>'sku_repetido')||'|'||(('$RK'::jsonb)->>'corrections')||'|'||(SELECT count(*) FROM public.order_items WHERE sales_order_id='$PA')||'|'||(SELECT total FROM public.sales_orders WHERE id='$PA');")" "1|0|2|999.00"
+seed
+CAB_ANTES="$(Pq -c "SELECT status||'|'||total||'|'||jsonb_array_length(items) FROM public.sales_orders WHERE id='$PA';")"
+RK=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SKU_REP'::jsonb, $GERIDO, $LIDO)::text;")
+eq "C6 SKU repetido no PAYLOAD: pedido inteiro pulado (ambiguo=1, zero correção)" \
+   "$(Pq -c "SELECT (('$RK'::jsonb)->>'ambiguo')||'|'||(('$RK'::jsonb)->>'sku_repetido')||'|'||(('$RK'::jsonb)->>'corrections')||'|'||(('$RK'::jsonb)->>'upserts');")" "1|1|0|0"
+eq "C6b e o CABEÇALHO fica INTACTO — nada de 'filhos velhos + cabeçalho novo'" \
+   "$(Pq -c "SELECT status||'|'||total||'|'||jsonb_array_length(items) FROM public.sales_orders WHERE id='$PA';")" "$CAB_ANTES"
+eq "C6c a cesta segue a revisão ANTIGA COMPLETA" "$(Pq -c "$CESTA")" "$ANTIGA_COMPLETA"
+
+# ── P1-1, o lado que o guard antigo NÃO via, e que é o caso REAL de prod: a duplicidade já está
+#    no BANCO (1.179 pares em 1.049 pedidos Omie vivos, medido em 2026-08-30). O payload é limpo.
+#    Antes, as duas linhas do mesmo código caíam no UPDATE, recebiam o MESMO conteúdo, nenhuma era
+#    deletada — e o cabeçalho passava a descrever UMA linha havendo DUAS. Valor DOBRADO no Apriori.
+echo "── C6d/e: duplicidade no ESTADO ATUAL (o caso de prod) ──"
+seed
+P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id)
+         VALUES ('$U','$P2',2,3,20,0,'omie_oben_777_2_dup','$PA');"   # 2ª linha do MESMO código
+DUP_ANTES="$(Pq -c "SELECT count(*)||'|'||(SELECT status||'|'||total FROM public.sales_orders WHERE id='$PA') FROM public.order_items WHERE sales_order_id='$PA';")"
+RD=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO)::text;")
+eq "C6d duplicidade no BANCO com payload limpo: pedido pulado (ambiguo=1, sku_repetido=0)" \
+   "$(Pq -c "SELECT (('$RD'::jsonb)->>'ambiguo')||'|'||(('$RD'::jsonb)->>'sku_repetido')||'|'||(('$RD'::jsonb)->>'corrections')||'|'||(('$RD'::jsonb)->>'upserts');")" "1|0|0|0"
+eq "C6e nada foi tocado — nem itens nem cabeçalho (o valor NÃO foi dobrado)" \
+   "$(Pq -c "SELECT count(*)||'|'||(SELECT status||'|'||total FROM public.sales_orders WHERE id='$PA') FROM public.order_items WHERE sales_order_id='$PA';")" "$DUP_ANTES"
 
 echo "── asserts: um pedido ruim no lote não derruba os outros (subtransação) ──"
 seed
 LOTE="[{\"account\":\"oben\",\"hash_payload\":\"omie_oben_777\",\"omie_pedido_id\":777},$(printf '%s' "$NOVA" | sed 's/^\[//; s/\]$//')]"
-RL=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$LOTE'::jsonb, $GERIDO)::text;")
+RL=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$LOTE'::jsonb, $GERIDO, $LIDO)::text;")
 eq "C7 lote com 1 pedido inválido + 1 válido: falha isolada, o válido reconciliou" \
    "$(Pq -c "SELECT jsonb_array_length(('$RL'::jsonb)->'falhas')||'|'||(('$RL'::jsonb)->>'upserts');")" "1|1"
 eq "C8 e a cesta do válido é a revisão NOVA COMPLETA" "$(Pq -c "$CESTA")" "$NOVA_COMPLETA"
@@ -293,12 +318,94 @@ P -q <<'SQL'
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.order_items, public.sales_orders TO anon, authenticated, service_role;
 SQL
 for R in anon authenticated; do
-  if P -q -c "SET ROLE $R; DO \$t\$ BEGIN PERFORM public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado']); RAISE EXCEPTION 'SENTINELA_SEM_DENTE: executou' USING ERRCODE='P0001'; EXCEPTION WHEN sqlstate '42501' THEN NULL; WHEN OTHERS THEN RAISE; END \$t\$;" >/dev/null 2>&1
+  if P -q -c "SET ROLE $R; DO \$t\$ BEGIN PERFORM public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado'], now()); RAISE EXCEPTION 'SENTINELA_SEM_DENTE: executou' USING ERRCODE='P0001'; EXCEPTION WHEN sqlstate '42501' THEN NULL; WHEN OTHERS THEN RAISE; END \$t\$;" >/dev/null 2>&1
   then ok "C9 $R NÃO executa a RPC (42501, com SELECT nas tabelas concedido)"
   else bad "C9 $R — não foi barrado por permission denied"; fi
 done
 eq "C10 service_role executa" \
-   "$(P -tA -q -c "SET ROLE service_role; SELECT public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO)->>'upserts';")" "0"
+   "$(P -tA -q -c "SET ROLE service_role; SELECT public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO, $LIDO)->>'upserts';")" "0"
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# T5 — P1-2: COMPARE-AND-SET. Leitura VELHA não sobrescreve revisão nova.
+# ══════════════════════════════════════════════════════════════════════════════════
+# O `FOR UPDATE` serializa CHEGADA, não VERSÃO: um run que buscou o pedido às 14:00 pode chegar ao
+# banco depois de um que buscou às 16:00. O lock não vê diferença — para ele as duas escritas são
+# igualmente legítimas. Sem o CAS, a revisão velha vence e o banco fica ATOMICAMENTE ERRADO.
+echo "── T5: compare-and-set por instante de leitura ──"
+seed
+VELHO="(now() - interval '2 hours')"
+NOVO_TS="now()"
+OUTRA_REV=$(printf '%s' "$NOVA" | sed 's/"omie_codigo_produto":3,/"omie_codigo_produto":4,/; s|0000000000c1|0000000000d1|; s/"total":330.00/"total":444.00/')
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $NOVO_TS);" >/dev/null
+eq "T5a a leitura NOVA publicou a revisão dela" "$(Pq -c "$CESTA")" "$NOVA_COMPLETA"
+RS5=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$OUTRA_REV'::jsonb, $GERIDO, $VELHO)::text;")
+eq "T5b a leitura VELHA que chega DEPOIS é recusada (stale=1, zero correção)" \
+   "$(Pq -c "SELECT (('$RS5'::jsonb)->>'stale')||'|'||(('$RS5'::jsonb)->>'corrections')||'|'||(('$RS5'::jsonb)->>'upserts');")" "1|0|0"
+eq "T5c e a revisão publicada continua a NOVA — o velho não sobrescreveu" "$(Pq -c "$CESTA")" "$NOVA_COMPLETA"
+# Contrapeso: o CAS não pode virar uma trava que impede a reconciliação legítima seguinte.
+P -q -c "SELECT public.reconciliar_pedidos_omie('$OUTRA_REV'::jsonb, $GERIDO, (now() + interval '1 second'));" >/dev/null
+eq "T5d uma leitura MAIS NOVA passa normalmente (o CAS não congela o pedido)" "$(Pq -c "$CESTA")" "b1,d1"
+eq "T5e o carimbo ficou gravado no pedido" \
+   "$(Pq -c "SELECT (omie_reconciliado_em IS NOT NULL)::text FROM public.sales_orders WHERE id='$PA';")" "true"
+neg "T5f p_lido_em ausente é fail-closed (assumir 'agora' desligaria o CAS em silêncio)" \
+    "public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO, NULL)" "22023"
+neg "T5g p_lido_em no FUTURO é recusado (relógio torto envenenaria todos os runs seguintes)" \
+    "public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO, now() + interval '1 hour')" "22023"
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# T6 — P1-3: o cabeçalho é comparado por INTEIRO, não só por status/total
+# ══════════════════════════════════════════════════════════════════════════════════
+echo "── T6: drift isolado de items/subtotal ──"
+seed
+# Drift SÓ no retrato (`items`) e no `subtotal`: status e total batem com o payload. Antes isto era
+# NO-OP PERMANENTE — o pedido nunca se corrigia, porque a decisão só olhava status e total.
+P -q -c "UPDATE public.sales_orders SET status='faturado', total=330.00, subtotal=1.00,
+         items='[{\"omie_codigo_produto\":99,\"lixo\":true}]'::jsonb WHERE id='$PA';"
+P -q -c "DELETE FROM public.order_items WHERE sales_order_id='$PA';"
+P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id) VALUES
+         ('$U','$P2',2,9,20,0,'omie_oben_777_2','$PA'), ('$U','$P3',3,5,30,0,'omie_oben_777_3','$PA');"
+R6=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO)::text;")
+eq "T6a itens já corretos (corrections=0) mas o CABEÇALHO ainda é reparado" \
+   "$(Pq -c "SELECT (('$R6'::jsonb)->>'corrections')||'|'||(('$R6'::jsonb)->>'upserts');")" "0|1"
+eq "T6b subtotal torto corrigido e retrato reconstruído" \
+   "$(Pq -c "SELECT subtotal||'|'||jsonb_array_length(items)||'|'||(items->0->>'omie_codigo_produto') FROM public.sales_orders WHERE id='$PA';")" "330.00|2|2"
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# T7 — P1-4: allowlist. Falha SISTÊMICA sobe; falha de DADO é registrada.
+# ══════════════════════════════════════════════════════════════════════════════════
+echo "── T7: allowlist do EXCEPTION ──"
+seed
+# Falha de DADO (22023: total ausente) → registrada em falhas[], a chamada RETORNA.
+R7=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$SEM_TOTAL'::jsonb, $GERIDO, $LIDO)::text;")
+eq "T7a falha de DADO (22023) segue capturada e registrada" \
+   "$(Pq -c "SELECT jsonb_array_length(('$R7'::jsonb)->'falhas');")" "1"
+# Falha SISTÊMICA (42501: permissão) → tem de SUBIR, não virar "um pedido ruim". Antes, o
+# `WHEN OTHERS` a capturava e a run saía `complete` com 100 de 100 pedidos falhando.
+P -q -c "REVOKE UPDATE ON public.sales_orders FROM postgres;" >/dev/null 2>&1 || true
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.order_items_herdar_created_at_omie() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO '' AS $f$
+BEGIN
+  RAISE EXCEPTION 'trigger quebrado (falha SISTÊMICA, não dado sujo)' USING ERRCODE = '42P01';
+END $f$;
+SQL
+if P -q -c "DO \$t\$ BEGIN PERFORM public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO); RAISE EXCEPTION 'SENTINELA_SEM_DENTE: engoliu falha sistêmica' USING ERRCODE='P0001'; EXCEPTION WHEN sqlstate '42P01' THEN NULL; WHEN OTHERS THEN RAISE; END \$t\$;" >/dev/null 2>&1
+then ok "T7b falha SISTÊMICA (42P01) SOBE — não vira 'um pedido ruim' com run verde"
+else bad "T7b a falha sistêmica NÃO subiu — a allowlist não está discriminando"; fi
+# restaura o trigger REAL
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.order_items_herdar_created_at_omie() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO '' AS $f$
+DECLARE v_pai_created_at timestamptz; v_pai_hash text;
+BEGIN
+  SELECT created_at, hash_payload INTO v_pai_created_at, v_pai_hash
+    FROM public.sales_orders WHERE id = NEW.sales_order_id;
+  IF v_pai_hash LIKE 'omie\_%' AND v_pai_created_at IS NOT NULL THEN
+    NEW.created_at := v_pai_created_at;
+  END IF;
+  RETURN NEW;
+END $f$;
+SQL
 
 # ══════════════════════════════════════════════════════════════════════════════════
 # T1 — O TESTE INDISPENSÁVEL: revisão ANTIGA completa OU NOVA completa, nunca mistura
@@ -312,7 +419,7 @@ BLOQ_OUT="$(mktemp "/tmp/bloq-${SLUG}.XXXXXX")"
 LEIT_OUT="$(mktemp "/tmp/leit-${SLUG}.XXXXXX")"
 ( P -tA >"$BLOQ_OUT" 2>&1 <<SQL
 BEGIN;
-SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO);
+SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO);
 SELECT 'TB0=' || clock_timestamp()::text;
 SELECT pg_sleep(2);
 COMMIT;
@@ -320,23 +427,36 @@ SELECT 'TB1=' || clock_timestamp()::text;
 SQL
 ) &
 BPID=$!
-P -tA >"$LEIT_OUT" 2>&1 <<SQL
-SELECT pg_sleep(0.8);
+# ⚠️ Antídoto CONSERTADO (achado do challenge sobre o meu próprio antídoto). Antes só havia `TA`,
+# registrado DEPOIS da leitura: se a RPC de B demorasse mais que a espera de A, a leitura
+# aconteceria ANTES de B escrever — a cesta antiga viria pelo motivo ERRADO — e `TB0 < TA < TB1`
+# ainda passaria. Agora a leitura é CERCADA por TA0/TA1 e a janela exigida é
+# `TB0 < TA0 < TA1 < TB1`: a leitura INTEIRA tem de caber dentro da transação aberta de B.
+# E a sincronia não é mais por tempo: A espera o arquivo de B anunciar TB0.
+( until grep -q '^TB0=' "$BLOQ_OUT" 2>/dev/null; do sleep 0.05; done
+  P -tA >"$LEIT_OUT" 2>&1 <<SQL
+SELECT 'TA0=' || clock_timestamp()::text;
 SELECT 'CESTA=' || ($CESTA);
-SELECT 'TA=' || clock_timestamp()::text;
+SELECT 'TA1=' || clock_timestamp()::text;
 SQL
+) &
+LPID=$!
+wait "$LPID"
 wait "$BPID"
 TB0=$(sed -n 's/^TB0=//p' "$BLOQ_OUT"); TB1=$(sed -n 's/^TB1=//p' "$BLOQ_OUT")
-TA=$(sed -n 's/^TA=//p' "$LEIT_OUT");   CESTA_T1=$(sed -n 's/^CESTA=//p' "$LEIT_OUT")
-if [ -z "$TB0" ] || [ -z "$TB1" ] || [ -z "$TA" ] || [ -z "$CESTA_T1" ]; then
-  bad "T1 corrida não produziu os marcos (TB0=[$TB0] TA=[$TA] TB1=[$TB1] CESTA=[$CESTA_T1])"
+TA0=$(sed -n 's/^TA0=//p' "$LEIT_OUT");  TA1=$(sed -n 's/^TA1=//p' "$LEIT_OUT")
+CESTA_T1=$(sed -n 's/^CESTA=//p' "$LEIT_OUT")
+if [ -z "$TB0" ] || [ -z "$TB1" ] || [ -z "$TA0" ] || [ -z "$TA1" ] || [ -z "$CESTA_T1" ]; then
+  bad "T1 corrida não produziu os marcos (TB0=[$TB0] TA0=[$TA0] TA1=[$TA1] TB1=[$TB1] CESTA=[$CESTA_T1])"
 else
-  SOBREP=$(Pq -c "SELECT CASE WHEN '$TB0'::timestamptz < '$TA'::timestamptz AND '$TA'::timestamptz < '$TB1'::timestamptz THEN 'SIM' ELSE 'NAO' END;")
+  SOBREP=$(Pq -c "SELECT CASE WHEN '$TB0'::timestamptz < '$TA0'::timestamptz
+                              AND '$TA0'::timestamptz < '$TA1'::timestamptz
+                              AND '$TA1'::timestamptz < '$TB1'::timestamptz THEN 'SIM' ELSE 'NAO' END;")
   echo "     [CESTA=$CESTA_T1 SOBREP=$SOBREP]"
   if [ "$SOBREP" = "SIM" ]; then
-    ok "T1 cenário TEM dente: a leitura caiu DENTRO da reconciliação não-commitada"
+    ok "T1 cenário TEM dente: a leitura INTEIRA (TA0→TA1) coube DENTRO da reconciliação não-commitada"
   else
-    bad "T1 cenário SEM dente: a leitura não caiu na janela de B (TB0=$TB0 TA=$TA TB1=$TB1)"
+    bad "T1 cenário SEM dente: a leitura INTEIRA não coube na janela de B (TB0=$TB0 TA0=$TA0 TA1=$TA1 TB1=$TB1)"
   fi
   case "$CESTA_T1" in
     "$ANTIGA_COMPLETA"|"$NOVA_COMPLETA") ok "T1 revisão COMPLETA sob reconciliação concorrente (veio [$CESTA_T1])" ;;
@@ -364,7 +484,7 @@ P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codi
          VALUES ('$U','7d000000-0000-0000-0000-0000000000e1',5,1,1,0,'intruso','$PA');"
 eq "T2a o intruso está no banco antes da reconciliação" \
    "$(Pq -c "$CESTA")" "a1,b1,e1"
-P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO);" >/dev/null
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO);" >/dev/null
 eq "T2b depois da RPC o pós-estado é EXATAMENTE o desejado (o intruso não sobrevive)" \
    "$(Pq -c "$CESTA")" "$NOVA_COMPLETA"
 
@@ -379,9 +499,9 @@ echo "── T3: dois lotes concorrentes no mesmo pedido ──"
 seed
 OUTRA=$(printf '%s' "$NOVA" | sed 's/"omie_codigo_produto":3,/"omie_codigo_produto":4,/; s|0000000000c1|0000000000d1|; s/"total":330.00/"total":444.00/')
 T3_A="$(mktemp "/tmp/t3a-${SLUG}.XXXXXX")"; T3_B="$(mktemp "/tmp/t3b-${SLUG}.XXXXXX")"
-( P -tA >"$T3_A" 2>&1 -c "BEGIN; SELECT pg_sleep(0.3); SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO); COMMIT;" ) &
+( P -tA >"$T3_A" 2>&1 -c "BEGIN; SELECT pg_sleep(0.3); SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO); COMMIT;" ) &
 A3PID=$!
-( P -tA >"$T3_B" 2>&1 -c "BEGIN; SELECT public.reconciliar_pedidos_omie('$OUTRA'::jsonb, $GERIDO); SELECT pg_sleep(0.6); COMMIT;" ) &
+( P -tA >"$T3_B" 2>&1 -c "BEGIN; SELECT public.reconciliar_pedidos_omie('$OUTRA'::jsonb, $GERIDO, $LIDO); SELECT pg_sleep(0.6); COMMIT;" ) &
 B3PID=$!
 wait "$A3PID"; wait "$B3PID"
 CESTA_T3="$(Pq -c "$CESTA")"
@@ -441,7 +561,7 @@ LOTE100="$(Pq -c "SELECT jsonb_agg(jsonb_build_object(
       FROM generate_series(2, 7) i)))
   FROM public.sales_orders so WHERE so.origem = 'lote100';" | tr -d '\n')"
 T4="$(Pq -c "SELECT 'DUR=' || round(extract(epoch from (clock_timestamp() - t0)) * 1000)::text || 'ms CORR=' || (r->>'corrections') || ' UPS=' || (r->>'upserts')
-             FROM (SELECT clock_timestamp() t0, public.reconciliar_pedidos_omie('$LOTE100'::jsonb, $GERIDO) r) x;")"
+             FROM (SELECT clock_timestamp() t0, public.reconciliar_pedidos_omie('$LOTE100'::jsonb, $GERIDO, $LIDO) r) x;")"
 echo "     [$T4]"
 # Cada pedido: 1 delete (o item 1 sai), 5 updates (2..6 mudam de qty) e 1 insert (o 7) = 7 × 100.
 eq "T4a o lote de 100 reconciliou tudo" "${T4#*CORR=}" "700 UPS=100"
@@ -464,7 +584,7 @@ P -q -f "$SAB5"
 seed
 P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id)
          VALUES ('$U','7d000000-0000-0000-0000-0000000000e1',5,1,1,0,'intruso','$PA');"
-P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO);" >/dev/null
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO);" >/dev/null
 CESTA_F6="$(Pq -c "$CESTA")"
 if [ "$CESTA_F6" = "$NOVA_COMPLETA" ]; then
   bad "F6 SEM DENTE: sem a CTE de delete o pós-estado seguiu correto [$CESTA_F6] — T2b não prova nada"
@@ -483,7 +603,7 @@ sed -e 's/^     OR (SELECT array_agg(DISTINCT x ORDER BY x) FROM unnest(p_status
 eq "F2 sabotagem aplicada (guard vira 'não-vazia', o fraco que o desenho recusou)" \
    "$(grep -c 'cardinality(p_status_gerido_omie) = 0' "$SAB1")" "1"
 P -q -f "$SAB1"
-if P -q -c "DO \$t\$ BEGIN PERFORM public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado','entregue']); RAISE EXCEPTION 'SENTINELA_SEM_DENTE' USING ERRCODE='P0001'; EXCEPTION WHEN sqlstate '22023' THEN NULL; WHEN OTHERS THEN RAISE; END \$t\$;" >/dev/null 2>&1
+if P -q -c "DO \$t\$ BEGIN PERFORM public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado','entregue'], now()); RAISE EXCEPTION 'SENTINELA_SEM_DENTE' USING ERRCODE='P0001'; EXCEPTION WHEN sqlstate '22023' THEN NULL; WHEN OTHERS THEN RAISE; END \$t\$;" >/dev/null 2>&1
 then bad "F2 SEM DENTE: B5 seguiu barrando mesmo com o guard sabotado"
 else ok "F2 B5 fica VERMELHO com o guard fraco — a igualdade de conjunto é o que morde"; fi
 # F2b — defesa em PROFUNDIDADE: com o guard já sabotado, uma lista contendo 'entregue' passa pela
@@ -491,7 +611,7 @@ else ok "F2 B5 fica VERMELHO com o guard fraco — a igualdade de conjunto é o 
 # não o parâmetro. Se este assert falhar, as duas defesas eram na verdade UMA.
 seed
 P -q -c "UPDATE public.sales_orders SET status='entregue' WHERE id='$PA';"
-P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado','entregue']);" >/dev/null
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado','entregue'], now());" >/dev/null
 eq "F2b mesmo com o guard caído, a lista de fora NÃO clobbera status app-avançado (autoridade é a constante)" \
    "$(Pq -c "SELECT status FROM public.sales_orders WHERE id='$PA';")" "entregue"
 P -q -f "$MIG"   # restaura a versão verdadeira
@@ -506,37 +626,130 @@ eq "F3 sabotagem aplicada (o total ausente volta a virar zero)" \
    "$(grep -c "coalesce((v_pedido->>'total')::numeric, 0)" "$SAB2")" "1"
 P -q -f "$SAB2"
 seed
-P -q -c "SELECT public.reconciliar_pedidos_omie('$SEM_TOTAL'::jsonb, $GERIDO);" >/dev/null
+P -q -c "SELECT public.reconciliar_pedidos_omie('$SEM_TOTAL'::jsonb, $GERIDO, $LIDO);" >/dev/null
 TOT_SAB="$(Pq -c "SELECT total FROM public.sales_orders WHERE id='$PA';")"
 if [ "$TOT_SAB" = "0" ]; then ok "F3 C1c fica VERMELHO: sem o guard o pedido é ZERADO (total=$TOT_SAB) — o assert morde"
 else bad "F3 SEM DENTE: total ficou [$TOT_SAB], a sabotagem não produziu a fabricação de zero"; fi
 P -q -f "$MIG"
 
-echo "── F4: sabota o guard de SKU repetido — exija VERMELHO em C6 ──"
+echo "── F4: sabota o guard de duplicidade — exija VERMELHO em C6d (o caso de PROD) ──"
+# A sabotagem é o guard ANTIGO, que olhava só o conjunto desejado: é o defeito exato que o
+# challenge Codex achou e que atinge 1.049 pedidos Omie vivos hoje.
 SAB3="$(mktemp "/tmp/sab3-${SLUG}.XXXXXX.sql")"
-sed "s/^      IF v_n_distintos <> v_n_validos THEN$/      IF false THEN/" "$MIG" > "$SAB3"
-eq "F4 sabotagem aplicada (o guard de ambiguidade some)" "$(grep -c '^      IF false THEN$' "$SAB3")" "1"
+sed "s/^      IF v_n_distintos <> v_n_validos OR v_atual_dup > 0 THEN$/      IF v_n_distintos <> v_n_validos THEN/" "$MIG" > "$SAB3"
+eq "F4 sabotagem aplicada (o guard volta a olhar só o payload)" \
+   "$(grep -c '^      IF v_n_distintos <> v_n_validos THEN$' "$SAB3")" "1"
 P -q -f "$SAB3"
 seed
-P -q -c "SELECT public.reconciliar_pedidos_omie('$SKU_REP'::jsonb, $GERIDO);" >/dev/null
-N_SAB="$(Pq -c "SELECT count(*) FROM public.order_items WHERE sales_order_id='$PA';")"
-if [ "$N_SAB" = "2" ]; then bad "F4 SEM DENTE: sem o guard os itens seguiram intactos ($N_SAB) — C6 não prova nada"
-else ok "F4 C6 fica VERMELHO: sem o guard a reconciliação ambígua APAGA linha legítima (sobrou $N_SAB de 2)"; fi
+P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id)
+         VALUES ('$U','$P2',2,3,20,0,'omie_oben_777_2_dup','$PA');"
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO);" >/dev/null
+# Com o guard antigo: as DUAS linhas do código 2 recebem o mesmo conteúdo, nenhuma é deletada, e o
+# cabeçalho é gravado como se houvesse uma. É o valor DOBRADO chegando ao Apriori.
+DUP_N="$(Pq -c "SELECT count(*) FROM public.order_items WHERE sales_order_id='$PA' AND omie_codigo_produto=2;")"
+CAB_N="$(Pq -c "SELECT jsonb_array_length(items) FROM public.sales_orders WHERE id='$PA';")"
+if [ "$DUP_N" = "2" ] && [ "$CAB_N" = "2" ]; then
+  ok "F4 C6d/C6e ficam VERMELHOS: sem o guard sobram $DUP_N linhas do código 2 e o cabeçalho descreve $CAB_N itens — valor DOBRADO no Apriori"
+else
+  bad "F4 SEM DENTE: com o guard antigo vieram linhas=$DUP_N cabeçalho=$CAB_N — a sabotagem não reproduz o defeito de prod"
+fi
 P -q -f "$MIG"
+
+echo "── F7: remove o COMPARE-AND-SET — exija VERMELHO em T5b/T5c ──"
+SAB6="$(mktemp "/tmp/sab6-${SLUG}.XXXXXX.sql")"
+sed "s/^      IF v_lido_atual IS NOT NULL AND p_lido_em < v_lido_atual THEN$/      IF false THEN/" "$MIG" > "$SAB6"
+eq "F7 sabotagem aplicada (o CAS some; sobra só o FOR UPDATE)" "$(grep -c '^      IF false THEN$' "$SAB6")" "1"
+P -q -f "$SAB6"
+seed
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, now());" >/dev/null
+P -q -c "SELECT public.reconciliar_pedidos_omie('$OUTRA_REV'::jsonb, $GERIDO, (now() - interval '2 hours'));" >/dev/null
+CESTA_F7="$(Pq -c "$CESTA")"
+if [ "$CESTA_F7" = "$NOVA_COMPLETA" ]; then
+  bad "F7 SEM DENTE: sem o CAS a revisão nova sobreviveu [$CESTA_F7] — T5 não prova nada"
+else
+  ok "F7 T5b/T5c ficam VERMELHOS: sem o CAS a leitura de 2h ATRÁS sobrescreve a nova [$CESTA_F7] — o FOR UPDATE sozinho não vê versão"
+fi
+P -q -f "$MIG"
+rm -f "$SAB6"
+
+echo "── F8: cabeçalho volta a olhar só status/total — exija VERMELHO em T6 ──"
+SAB7="$(mktemp "/tmp/sab7-${SLUG}.XXXXXX.sql")"
+sed -e "s/^                  OR v_items_atual IS DISTINCT FROM v_items_json$/                  OR false/" \
+    -e "s/^                  OR abs(coalesce(v_subtotal_atual, 0) - v_total_novo) > 0.01$/                  OR false/" \
+    -e "s/^                  OR v_lido_atual IS DISTINCT FROM p_lido_em;$/                  OR false;/" "$MIG" > "$SAB7"
+eq "F8 sabotagem aplicada (items/subtotal/carimbo saem da decisão)" "$(grep -c '^                  OR false' "$SAB7")" "3"
+P -q -f "$SAB7"
+seed
+P -q -c "UPDATE public.sales_orders SET status='faturado', total=330.00, subtotal=1.00,
+         items='[{\"omie_codigo_produto\":99,\"lixo\":true}]'::jsonb WHERE id='$PA';"
+P -q -c "DELETE FROM public.order_items WHERE sales_order_id='$PA';"
+P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id) VALUES
+         ('$U','$P2',2,9,20,0,'omie_oben_777_2','$PA'), ('$U','$P3',3,5,30,0,'omie_oben_777_3','$PA');"
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO);" >/dev/null
+SUB_F8="$(Pq -c "SELECT subtotal FROM public.sales_orders WHERE id='$PA';")"
+if [ "$SUB_F8" = "1.00" ]; then
+  ok "F8 T6 fica VERMELHO: sem comparar items/subtotal o drift é NO-OP PERMANENTE (subtotal seguiu $SUB_F8)"
+else
+  bad "F8 SEM DENTE: o subtotal foi corrigido para $SUB_F8 mesmo sem o guard — T6 não prova nada"
+fi
+P -q -f "$MIG"
+rm -f "$SAB7"
+
+echo "── F9: allowlist volta a ser WHEN OTHERS — exija VERMELHO em T7b ──"
+SAB8="$(mktemp "/tmp/sab8-${SLUG}.XXXXXX.sql")"
+python3 - "$MIG" "$SAB8" <<'PYEOF'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+t = open(src, encoding='utf-8').read()
+alvo = """    EXCEPTION
+      WHEN data_exception              -- 22xxx: cast inválido, jsonb malformado, o nosso 22023
+        OR integrity_constraint_violation  -- 23xxx: FK de product_id, NOT NULL, unique
+      THEN"""
+assert alvo in t, "bloco da allowlist não encontrado"
+open(dst, 'w', encoding='utf-8').write(t.replace(alvo, "    EXCEPTION WHEN OTHERS THEN"))
+PYEOF
+eq "F9 sabotagem aplicada (volta o catch-all)" "$(grep -c '^    EXCEPTION WHEN OTHERS THEN$' "$SAB8")" "1"
+P -q -f "$SAB8"
+seed
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.order_items_herdar_created_at_omie() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO '' AS $f$
+BEGIN
+  RAISE EXCEPTION 'trigger quebrado' USING ERRCODE = '42P01';
+END $f$;
+SQL
+if P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO);" >/dev/null 2>&1
+then ok "F9 T7b fica VERMELHO: com o catch-all a falha SISTÊMICA vira 'um pedido ruim' e a chamada RETORNA verde"
+else bad "F9 SEM DENTE: a falha sistêmica subiu mesmo com o catch-all — T7b não prova nada"; fi
+P -q -f "$MIG"
+rm -f "$SAB8"
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.order_items_herdar_created_at_omie() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO '' AS $f$
+DECLARE v_pai_created_at timestamptz; v_pai_hash text;
+BEGIN
+  SELECT created_at, hash_payload INTO v_pai_created_at, v_pai_hash
+    FROM public.sales_orders WHERE id = NEW.sales_order_id;
+  IF v_pai_hash LIKE 'omie\_%' AND v_pai_created_at IS NOT NULL THEN
+    NEW.created_at := v_pai_created_at;
+  END IF;
+  RETURN NEW;
+END $f$;
+SQL
 
 echo "── F5: remove o REVOKE — exija VERMELHO em C9 ──"
 SAB4="$(mktemp "/tmp/sab4-${SLUG}.XXXXXX.sql")"
 grep -v '^REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie' "$MIG" > "$SAB4"
 eq "F5 sabotagem aplicada (o REVOKE sai do arquivo)" "$(grep -c '^REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie' "$SAB4")" "0"
-P -q -c "DROP FUNCTION public.reconciliar_pedidos_omie(jsonb, text[]);" >/dev/null   # DROP reseta o ACL
+P -q -c "DROP FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamptz);" >/dev/null   # DROP reseta o ACL
 P -q -f "$SAB4"
-if P -q -c "SET ROLE anon; SELECT public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO);" >/dev/null 2>&1
+if P -q -c "SET ROLE anon; SELECT public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO, $LIDO);" >/dev/null 2>&1
 then ok "F5 C9 fica VERMELHO: sem o REVOKE nomeando as roles, anon EXECUTA a RPC de escrita"
 else bad "F5 SEM DENTE: anon seguiu barrado sem o REVOKE — C9 passa pelo motivo errado"; fi
-P -q -c "DROP FUNCTION public.reconciliar_pedidos_omie(jsonb, text[]);" >/dev/null
+P -q -c "DROP FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamptz);" >/dev/null
 P -q -f "$MIG"
 eq "F5b restaurado: anon volta a ser barrado" \
-   "$(P -q -c "SET ROLE anon; SELECT public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO);" >/dev/null 2>&1 && echo executou || echo barrado)" "barrado"
+   "$(P -q -c "SET ROLE anon; SELECT public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO, $LIDO);" >/dev/null 2>&1 && echo executou || echo barrado)" "barrado"
 
 echo
 echo "═══ RESULTADO: $PASS pass · $FAIL fail ═══"

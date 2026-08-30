@@ -27,6 +27,13 @@
 // da revisão velha convivendo com os da nova (e o `order_items` apagado não voltava pela mesma
 // chamada). Agora ela é UMA transação por pedido (RPC `reconciliar_pedidos_omie`, migration
 // 20260830190000): a falha reverte o pedido INTEIRO, que fica na revisão anterior completa.
+// ⚠️ v1.2 — o challenge Codex ao PR #2134 derrubou 4 P1 da v1.1, e dois mudam o COMPORTAMENTO
+// observável: (1) pedido com `omie_codigo_produto` duplicado — no payload OU já no banco (1.049
+// pedidos vivos medidos em prod) — deixa de ser reconciliado por completo e fica congelado na
+// revisão anterior, surfaçando em `error_message`; (2) a reconciliação passa a ser compare-and-set
+// pelo instante da leitura, então uma página buscada mais cedo NÃO sobrescreve o que uma busca
+// mais recente publicou. Bundle novo + migration velha (2 argumentos) = a RPC não resolve e a
+// reconciliação LANÇA.
 // ⚠️ Esta edge depende de uma migration MANUAL. Bundle novo + migration não aplicada = a RPC não
 // existe e a reconciliação de pedidos LANÇA (por desenho — ver `if (rpcErr)` no index).
 
@@ -37,7 +44,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("sync-reprocess");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-reconcile-pedido-atomico";
+export const VERSAO = "v1.2-reconcile-cas-e-ambiguidade";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

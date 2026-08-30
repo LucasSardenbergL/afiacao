@@ -63,9 +63,44 @@
 -- persiste em lotes de 500 em transações separadas. Atomizar o pedido não torna aquele snapshot
 -- consistente — segue aberto, e está registrado em docs/historico/paginacao-offset-janela.md.
 
+-- ── P1-2 (challenge): a coluna que torna o CAS possível ──────────────────────────────────────
+-- `FOR UPDATE` serializa CHEGADA, não VERSÃO. Sem carimbo de frescor, um run que buscou o pedido
+-- às 14:00 pode chegar ao banco DEPOIS de um run que buscou às 16:00 — e sobrescrever a revisão
+-- nova com a velha, atomicamente. O lock não vê isso: para ele as duas escritas são igualmente
+-- legítimas, só chegaram em certa ordem.
+--
+-- ⚠️ POR QUE NÃO `infoCadastro.dAlt/hAlt` DO OMIE, que seria a revisão de ORIGEM e portanto o
+-- discriminante mais forte: **não consegui PROVAR que o `ListarPedidos` os devolve.** Eles não
+-- aparecem em nenhum ponto do repo (só `dInc`), e os 156 payloads de pedido em
+-- `omie_webhook_events` têm ZERO ocorrência de `dAlt`. Pendurar um guard money-path num campo
+-- cuja existência eu não verifiquei seria fabricar garantia — e um `dAlt` sempre NULL degradaria
+-- o CAS para "aceita tudo" SEM ERRO NENHUM, que é a falha aberta que este repo persegue.
+--
+-- O carimbo abaixo é o instante em que a EDGE buscou a página no Omie. Ele não é a revisão da
+-- origem, e isto está dito: é a ordem de LEITURA. Mas é exatamente o eixo do defeito relatado
+-- ("run A buscou R1, run B buscou R2 e publicou, A chega atrasada e sobrescreve"), e tem a
+-- propriedade que importa — é gerado por quem leu, não inferido por quem escreve.
+ALTER TABLE public.sales_orders
+  ADD COLUMN IF NOT EXISTS omie_reconciliado_em timestamptz;
+
+COMMENT ON COLUMN public.sales_orders.omie_reconciliado_em IS
+  'Instante em que a edge BUSCOU no Omie a revisão que gerou a última reconciliação deste pedido. '
+  'Escrito por UM writer só (reconciliar_pedidos_omie) e usado como compare-and-set: uma leitura '
+  'mais VELHA que esta não sobrescreve. NULL = nunca reconciliado por este caminho (aceita a 1ª).';
+
+-- A assinatura ganhou `p_lido_em` no conserto do challenge. `CREATE OR REPLACE` com aridade nova
+-- criaria uma SOBRECARGA e deixaria a versão de 2 argumentos viva — e o PostgREST poderia resolver
+-- para ela, reconciliando sem compare-and-set nenhum. Derrubar a antiga é o que impede isso.
+-- (Conferido em prod 2026-08-30: nenhuma das duas existe ainda, então isto é defesa, não reparo.)
+DROP FUNCTION IF EXISTS public.reconciliar_pedidos_omie(jsonb, text[]);
+
 CREATE OR REPLACE FUNCTION public.reconciliar_pedidos_omie(
   p_pedidos jsonb,
-  p_status_gerido_omie text[]
+  p_status_gerido_omie text[],
+  -- Instante da BUSCA no Omie da página que gerou este payload (um por run, gerado pela edge).
+  -- Fail-closed: sem ele não há como distinguir leitura fresca de leitura velha, e o lock sozinho
+  -- deixaria a velha vencer.
+  p_lido_em timestamptz
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -97,7 +132,13 @@ DECLARE
 
   v_n_validos     integer;
   v_n_distintos   integer;
-  v_recon_itens   boolean;
+  v_atual_dup     integer;
+  v_items_atual   jsonb;
+  v_subtotal_atual numeric;
+  v_lido_atual    timestamptz;
+  v_cab_mudou     boolean;
+  v_stale         integer := 0;
+  v_ambiguo       integer := 0;
   v_del int; v_upd int; v_ins int;
   v_itens_mudaram boolean;
   v_status_mudou  boolean;
@@ -131,20 +172,40 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- Ausente ≠ "agora". Assumir `now()` faria toda chamada parecer a mais fresca de todas e
+  -- desligaria o CAS em silêncio — a leitura velha voltaria a vencer.
+  IF p_lido_em IS NULL THEN
+    RAISE EXCEPTION 'reconciliar_pedidos_omie: p_lido_em ausente — sem o instante da leitura não há como barrar escrita de revisão VELHA'
+      USING ERRCODE = '22023';
+  END IF;
+  -- Leitura no futuro é relógio torto do chamador, e um carimbo torto envenena o CAS de todos os
+  -- runs seguintes (nenhum deles conseguiria mais escrever). Tolerância de 1 min para skew.
+  IF p_lido_em > now() + interval '1 minute' THEN
+    RAISE EXCEPTION 'reconciliar_pedidos_omie: p_lido_em no futuro (% > %) — relógio do chamador envenenaria o compare-and-set', p_lido_em, now()
+      USING ERRCODE = '22023';
+  END IF;
+
   IF jsonb_array_length(p_pedidos) > c_max_pedidos THEN
     RAISE EXCEPTION 'reconciliar_pedidos_omie: lote de % pedidos excede o teto de % — divida a chamada (truncar em silêncio seria pior)',
       jsonb_array_length(p_pedidos), c_max_pedidos
       USING ERRCODE = '54000';
   END IF;
 
-  FOR v_pedido IN SELECT * FROM jsonb_array_elements(p_pedidos)
+  -- ⚠️ ORDEM DETERMINÍSTICA (achado do challenge). Uma chamada é UMA transação: os locks dos
+  -- pedidos já processados ficam presos até o fim dela. Dois lotes contendo os mesmos pedidos em
+  -- ordens diferentes — inclusive cruzando com `criar_pedidos_com_itens` — formam ciclo AB/BA e
+  -- deadlockam. Ordenar por (account, hash_payload) faz toda chamada pegar os locks na MESMA
+  -- ordem, o que torna o ciclo impossível em vez de improvável.
+  FOR v_pedido IN
+    SELECT e FROM jsonb_array_elements(p_pedidos) e
+     ORDER BY e->>'account', e->>'hash_payload'
   LOOP
     -- ── subtransação por pedido (G9 da irmã): um pedido ruim não derruba os outros, e o que ele
     --    tiver escrito até o erro é DESFEITO — que é justamente a atomicidade lógica pedida aqui.
     --    Substitui o "grava itens primeiro, cabeçalho só se nenhum item falhou" que o TS fazia à
     --    mão, e que nunca cobriu a falha ENTRE dois writes de item. ──
     BEGIN
-      v_order_id := NULL; v_recon_itens := true;
+      v_order_id := NULL;
       v_del := 0; v_upd := 0; v_ins := 0;
 
       v_account     := v_pedido->>'account';
@@ -187,8 +248,10 @@ BEGIN
       -- uniq_sales_orders_omie_hash), NUNCA por omie_numero_pedido — pegaria a linha errada
       -- (causa-raiz #B). `FOR UPDATE` serializa contra `criar_pedidos_com_itens`, que trava o
       -- mesmo pai. Sem pai não há o que reconciliar: quem INSERE é o omie-vendas-sync.
-      SELECT id, customer_user_id, status, total
-        INTO v_order_id, v_customer, v_status_atual, v_total_atual
+      -- P1-3: `items`/`subtotal`/`omie_reconciliado_em` entram na leitura porque entram na DECISÃO.
+      SELECT id, customer_user_id, status, total, items, subtotal, omie_reconciliado_em
+        INTO v_order_id, v_customer, v_status_atual, v_total_atual,
+             v_items_atual, v_subtotal_atual, v_lido_atual
         FROM public.sales_orders
        WHERE account = v_account AND hash_payload = v_hash
        FOR UPDATE;
@@ -197,18 +260,44 @@ BEGIN
         CONTINUE;
       END IF;
 
-      -- [A7] SKU repetido no pedido é AMBÍGUO: a identidade do item dentro do pedido é o
-      -- `omie_codigo_produto`, e com repetição não dá para dizer qual linha local casa com qual.
-      -- Pula o reconcile de ITENS (não arrisca deletar linha legítima); o cabeçalho ainda
-      -- reconcilia, porque total/items somam TODAS as linhas, igual ao sync.
-      -- ⚠️ Quem detecta é a FUNÇÃO, não o chamador. Um parâmetro `p_reconciliar_itens` deixaria a
-      -- decisão com quem pode esquecer de tomá-la, e o custo do esquecimento é apagar item real.
-      IF v_n_distintos <> v_n_validos THEN
-        v_recon_itens  := false;
-        v_sku_repetido := v_sku_repetido + 1;
+      -- ── P1-2: COMPARE-AND-SET. Uma leitura mais VELHA que a que produziu o estado atual não
+      --    escreve. Sem isto, o `FOR UPDATE` garante que as escritas não se entrelaçam, mas não
+      --    que a ÚLTIMA a chegar é a mais NOVA — e o banco fica atomicamente errado. `>=` e não
+      --    `>`: duas páginas do MESMO run trazem o mesmo carimbo e a segunda não pode ser barrada,
+      --    então o empate só é rejeitado quando nada mudaria de qualquer forma — por isso o
+      --    empate PASSA e só o estritamente ANTERIOR é recusado.
+      IF v_lido_atual IS NOT NULL AND p_lido_em < v_lido_atual THEN
+        v_stale := v_stale + 1;
+        CONTINUE;
       END IF;
 
-      IF v_recon_itens THEN
+      -- ── P1-1 (achado do challenge, MEDIDO em prod: 1.179 pares repetidos em 1.049 pedidos
+      --    Omie vivos): `omie_codigo_produto` NÃO é identidade de linha, e a duplicidade tem DOIS
+      --    lados. O guard antigo olhava só o conjunto desejado, e com isso:
+      --      · duplicata no estado ATUAL caía toda no `UPDATE` (`d.cod = a.cod`), as duas linhas
+      --        recebiam o MESMO conteúdo, nenhuma era deletada — e o cabeçalho passava a
+      --        descrever UMA linha enquanto existiam duas. Apriori e cockpit DOBRAM o valor.
+      --      · duplicata no DESEJADO pulava os itens mas reconciliava o cabeçalho — "filhos
+      --        velhos + cabeçalho novo", que é a revisão MISTA que esta função existe para
+      --        eliminar. O antigo assert C6 exigia esse comportamento: o teste protegia o defeito.
+      --    Enquanto não houver identidade de linha persistida (`det.ide.codigo_item` — correção
+      --    ESTRUTURAL, escopo próprio, exige backfill das ~70 mil linhas vivas), o desfecho certo
+      --    é NÃO TOCAR NO PEDIDO: nem itens, nem cabeçalho. Precisão > recall — um pedido que
+      --    fica na revisão anterior COMPLETA é honesto; um pedido com valor dobrado, não.
+      SELECT count(*) INTO v_atual_dup FROM (
+        SELECT 1 FROM public.order_items
+         WHERE sales_order_id = v_order_id AND omie_codigo_produto IS NOT NULL
+         GROUP BY omie_codigo_produto HAVING count(*) > 1
+      ) d;
+      IF v_n_distintos <> v_n_validos OR v_atual_dup > 0 THEN
+        v_ambiguo := v_ambiguo + 1;
+        IF v_n_distintos <> v_n_validos THEN
+          v_sku_repetido := v_sku_repetido + 1;
+        END IF;
+        CONTINUE;
+      END IF;
+
+      BEGIN
         -- ── A reconciliação INTEIRA numa única statement. As três CTEs de escrita enxergam o
         --    MESMO snapshot inicial, que é exatamente o que se quer: os três conjuntos são
         --    disjuntos por construção (remover / atualizar / inserir), então nenhuma precisa ver
@@ -268,7 +357,7 @@ BEGIN
         )
         SELECT (SELECT count(*) FROM del), (SELECT count(*) FROM upd), (SELECT count(*) FROM ins)
           INTO v_del, v_upd, v_ins;
-      END IF;
+      END;
 
       v_itens_mudaram := (v_del + v_upd + v_ins) > 0;
       v_corrections   := v_corrections + v_del + v_upd + v_ins;
@@ -285,22 +374,51 @@ BEGIN
                              THEN v_status_omie ELSE v_status_atual END;
       v_status_mudou := v_status_atual IS DISTINCT FROM v_status_novo;
       v_total_mudou  := abs(coalesce(v_total_atual, 0) - v_total_novo) > 0.01;
+      -- ── P1-3 (achado do challenge): a decisão de gravar ignorava `items` e `subtotal` atuais.
+      --    Efeitos concretos disso: uma mudança só de descrição/cor no retrato virava NO-OP
+      --    PERMANENTE; um estado legado "filhos novos, cabeçalho antigo" nunca era reparado se
+      --    total e status coincidissem; e um `subtotal` torto sozinho jamais se corrigia. Uma
+      --    reconciliação declarativa que não compara o que grava não é declarativa. ──
+      v_cab_mudou := v_status_mudou
+                  OR v_total_mudou
+                  OR v_items_atual IS DISTINCT FROM v_items_json
+                  OR abs(coalesce(v_subtotal_atual, 0) - v_total_novo) > 0.01
+                  -- o próprio carimbo do CAS precisa avançar, senão uma leitura nova que não muda
+                  -- nada deixaria o pedido preso no carimbo antigo e reabriria a janela de stale
+                  OR v_lido_atual IS DISTINCT FROM p_lido_em;
 
-      IF v_status_mudou OR v_total_mudou OR v_itens_mudaram THEN
+      IF v_cab_mudou OR v_itens_mudaram THEN
         UPDATE public.sales_orders
            SET status     = v_status_novo,
                total      = v_total_novo,
                subtotal   = v_total_novo,
                items      = v_items_json,
+               omie_reconciliado_em = p_lido_em,
                updated_at = now()
          WHERE id = v_order_id;
-        v_upserts := v_upserts + 1;
+        -- `upserts` conta trabalho REAL. Avançar só o carimbo (leitura nova, conteúdo idêntico)
+        -- não é uma reconciliação — contá-la inflaria a métrica que o log publica.
+        IF v_status_mudou OR v_total_mudou OR v_itens_mudaram
+           OR v_items_atual IS DISTINCT FROM v_items_json
+           OR abs(coalesce(v_subtotal_atual, 0) - v_total_novo) > 0.01 THEN
+          v_upserts := v_upserts + 1;
+        END IF;
         IF v_status_mudou OR v_total_mudou THEN
           v_divergences := v_divergences + 1;
         END IF;
       END IF;
 
-    EXCEPTION WHEN OTHERS THEN
+    -- ── P1-4 (achado do challenge): ALLOWLIST, não catch-all. O `WHEN OTHERS` capturava
+    --    deadlock (40P01), serialization failure (40001), permissão, relação/coluna ausente e
+    --    trigger quebrado como se fossem "um pedido ruim" — e como a função retornava
+    --    normalmente, `rpcErr` ficava nulo na edge e a run saía `complete` mesmo com 100 de 100
+    --    pedidos falhando. Uma migration não aplicada em metade do schema pareceria um dia de
+    --    dados sujos. Aqui ficam só as classes de DADO, que são de fato por-pedido; qualquer
+    --    outra sobe e derruba a chamada inteira, que é o desfecho honesto para falha sistêmica.
+    EXCEPTION
+      WHEN data_exception              -- 22xxx: cast inválido, jsonb malformado, o nosso 22023
+        OR integrity_constraint_violation  -- 23xxx: FK de product_id, NOT NULL, unique
+      THEN
       -- G8: a falha do pedido é REGISTRADA com SQLSTATE e mensagem, nunca engolida como sucesso
       -- invisível. Tudo que este pedido escreveu foi desfeito pela subtransação.
       v_falhas := v_falhas || jsonb_build_object(
@@ -315,6 +433,8 @@ BEGIN
     'divergences',  v_divergences,
     'corrections',  v_corrections,
     'sku_repetido', v_sku_repetido,
+    'ambiguo',      v_ambiguo,     -- pedidos NÃO tocados por duplicidade de SKU (atual ou desejado)
+    'stale',        v_stale,       -- pedidos NÃO tocados por leitura mais velha que a publicada
     'sem_item',     v_sem_item,
     'sem_pai',      v_sem_pai,
     'falhas',       v_falhas);
@@ -323,12 +443,14 @@ $function$;
 
 -- Grants: só service_role executa; revogar anon/authenticated POR NOME (REVOKE FROM PUBLIC não
 -- tira grant explícito). `DROP`+`CREATE` resetaria o ACL — por isso `CREATE OR REPLACE`.
-REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie(jsonb, text[]) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.reconciliar_pedidos_omie(jsonb, text[]) TO service_role;
+REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamptz) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamptz) TO service_role;
 
-COMMENT ON FUNCTION public.reconciliar_pedidos_omie(jsonb, text[]) IS
+COMMENT ON FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamptz) IS
   'Fase 2 de criar_pedidos_com_itens: reconcilia pedido Omie ALTERADO (itens + cabeçalho) numa ÚNICA transação por pedido, '
   'fechando a janela em que o pedido ficava meio-reconciliado e visível aos consumidores money-path. '
   'Diff DECLARATIVO computado dentro da transação sob FOR UPDATE do pai (sem TOCTOU, idempotente). '
-  'Fail-closed: lista de status por igualdade de conjunto, total/items ausentes LANÇAM, lote com teto não-contornável. '
-  'Retorna {upserts,divergences,corrections,sku_repetido,sem_item,sem_pai,falhas[]}.';
+  'Fail-closed: lista de status por igualdade de conjunto, total/items/p_lido_em ausentes LANÇAM, lote com teto não-contornável. '
+  'Compare-and-set por p_lido_em (leitura VELHA não sobrescreve revisão nova). Duplicidade de omie_codigo_produto — no estado ATUAL ou no desejado — PULA o pedido inteiro (SKU não é identidade de linha). '
+  'Lote ordenado por (account,hash_payload) contra deadlock AB/BA. EXCEPTION por ALLOWLIST (22xxx/23xxx); classe sistêmica RELANÇA. '
+  'Retorna {upserts,divergences,corrections,sku_repetido,ambiguo,stale,sem_item,sem_pai,falhas[]}.';

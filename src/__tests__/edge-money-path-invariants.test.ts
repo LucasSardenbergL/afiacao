@@ -3542,10 +3542,29 @@ describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista 
     expect(src).not.toContain('.from("order_items")');
   });
 
-  it('e chama a RPC atômica com as duas chaves do contrato', () => {
+  it('e chama a RPC atômica com as TRÊS chaves do contrato', () => {
     expect(src).toContain('db.rpc("reconciliar_pedidos_omie"');
     expect(src).toContain('p_pedidos: pedidosRpc');
     expect(src).toContain('p_status_gerido_omie: STATUS_GERIDO_OMIE');
+    // `p_lido_em` é o compare-and-set: sem ele a RPC LANÇA (fail-closed), mas o CI pega antes.
+    expect(src).toContain('p_lido_em: lidoEm');
+  });
+
+  it('o carimbo de leitura é por PÁGINA, não por run', () => {
+    // Uma run longa com o carimbo tirado uma vez só faria a última página parecer tão fresca
+    // quanto a primeira, e o compare-and-set perderia resolução exatamente onde ele importa.
+    const iPag = src.indexOf('const pedidosRpc: PedidoReconciliar[] = []');
+    const iLido = src.indexOf('const lidoEm = new Date().toISOString()');
+    expect(iLido, 'lidoEm não encontrado').toBeGreaterThan(-1);
+    // ambos dentro do laço de páginas: lidoEm imediatamente antes do acumulador da página
+    expect(iLido).toBeLessThan(iPag);
+    expect(iPag - iLido, 'lidoEm ficou longe do laço da página — saiu para o escopo da run?').toBeLessThan(400);
+  });
+
+  it('página inteira falhando LANÇA — falha sistêmica não sai como run verde', () => {
+    expect(src).toContain('fails.length === pedidosRpc.length');
+    const i = src.indexOf('fails.length === pedidosRpc.length');
+    expect(src.slice(i, i + 400)).toContain('throw new Error(');
   });
 
   it('erro da RPC LANÇA — run verde sem reconciliar nada mascararia perda total', () => {

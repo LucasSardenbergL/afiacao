@@ -201,7 +201,9 @@ async function reprocessOrders(
   let divergences = 0;
   let corrections = 0;
   let falhas = 0;      // pedidos com erro de escrita (não engole — surfaça no log)
-  let skuRepetido = 0; // pedidos com SKU repetido (reconcile de itens pulado por ambiguidade)
+  let skuRepetido = 0; // SKU repetido no payload do Omie
+  let ambiguos = 0;    // pedidos NÃO tocados por duplicidade (payload OU banco) — sem identidade de linha
+  let stale = 0;       // pedidos pulados pelo compare-and-set (leitura mais velha que a publicada)
 
   try {
     // Preload codigo_produto -> product_id (1x por run; evita N+1 por item, igual ao repararOrfaos).
@@ -236,6 +238,11 @@ async function reprocessOrders(
       // ── Monta o payload DECLARATIVO de cada pedido. Nenhuma escrita acontece aqui: a página
       //    inteira vai numa chamada à RPC `reconciliar_pedidos_omie`, que reconcilia CADA pedido
       //    numa transação própria (subtransação por pedido). ──
+      // Carimbo de frescor desta página: o instante em que o Omie RESPONDEU. Vai à RPC, que o usa
+      // como compare-and-set — uma leitura mais velha que a já publicada não sobrescreve. É por
+      // página e não por run: uma run longa não pode fazer a última página parecer tão fresca
+      // quanto a primeira.
+      const lidoEm = new Date().toISOString();
       const pedidosRpc: PedidoReconciliar[] = [];
       for (const pedido of pedidos) {
         const cab = pedido.cabecalho || {};
@@ -294,6 +301,7 @@ async function reprocessOrders(
         const { data: rpcRes, error: rpcErr } = await db.rpc("reconciliar_pedidos_omie", {
           p_pedidos: pedidosRpc,
           p_status_gerido_omie: STATUS_GERIDO_OMIE,
+          p_lido_em: lidoEm,
         });
         if (rpcErr) {
           // Money-path: a RPC é o ÚNICO caminho de escrita agora. Se ela falha (migration não
@@ -304,7 +312,8 @@ async function reprocessOrders(
         }
         const r = (rpcRes ?? {}) as {
           upserts?: number; divergences?: number; corrections?: number;
-          sku_repetido?: number; sem_item?: number; sem_pai?: number;
+          sku_repetido?: number; ambiguo?: number; stale?: number;
+          sem_item?: number; sem_pai?: number;
           falhas?: Array<Record<string, unknown>>;
         };
         upserts += r.upserts || 0;
@@ -316,8 +325,19 @@ async function reprocessOrders(
         if (fails.length > 0) {
           console.error(`[Reprocess][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
         }
-        if (r.sku_repetido) {
-          console.warn(`[Reprocess][${account}] ${r.sku_repetido} pedido(s) com SKU repetido — itens não reconciliados (ambíguo)`);
+        ambiguos += r.ambiguo || 0;
+        stale += r.stale || 0;
+        if (r.ambiguo) {
+          console.warn(`[Reprocess][${account}] ${r.ambiguo} pedido(s) NÃO reconciliados por SKU duplicado (${r.sku_repetido || 0} no payload do Omie, o resto já duplicado no banco) — seguem na revisão anterior COMPLETA`);
+        }
+        if (r.stale) {
+          console.warn(`[Reprocess][${account}] ${r.stale} pedido(s) pulados por leitura mais VELHA que a já publicada (compare-and-set)`);
+        }
+        // [P1-4] Se a página INTEIRA falhou, isto não é "alguns pedidos ruins" — é sinal de que
+        // algo sistêmico passou pela allowlist da RPC. Lançar, em vez de somar e seguir para a
+        // página seguinte acumulando o mesmo erro 100 vezes.
+        if (fails.length > 0 && fails.length === pedidosRpc.length) {
+          throw new Error(`[Reprocess][${account}] TODOS os ${fails.length} pedidos da pág ${pagina} falharam na RPC — falha sistêmica, não dado sujo: ${JSON.stringify(fails[0])}`);
         }
         console.log(`[Reprocess][${account}] RPC pág ${pagina}: upserts=${r.upserts || 0} corrections=${r.corrections || 0} divergences=${r.divergences || 0} sem_pai=${r.sem_pai || 0} sem_item=${r.sem_item || 0}`);
       }
@@ -331,18 +351,22 @@ async function reprocessOrders(
       divergences_found: divergences,
       corrections_applied: corrections,
       duration_ms: Date.now() - startTime,
-      metadata: { pages: totalPaginas, window_days: windowDays, falhas, sku_repetido: skuRepetido },
+      metadata: { pages: totalPaginas, window_days: windowDays, falhas, sku_repetido: skuRepetido, ambiguos, stale },
       // Pedido que falhou na RPC ou SKU repetido (itens não reconciliados por ambiguidade) NÃO
       // derruba a run (idempotente: próximo ciclo reconcilia), mas NÃO mente 'complete' limpo —
       // surfaça em error_message p/ o watchdog/health (achado Codex).
       // ⚠️ "reconcile PARCIAL" saiu do vocabulário aqui de propósito: com a RPC, o pedido que
       // falha é desfeito INTEIRO pela subtransação. O que sobra é um pedido na revisão ANTIGA
       // completa — não um meio-pedido. A frase antiga descrevia o writer que esta entrega matou.
-      ...((falhas > 0 || skuRepetido > 0)
+      ...((falhas > 0 || ambiguos > 0)
         ? {
           error_message: [
             falhas > 0 ? `${falhas} pedido(s) falharam na RPC (revertidos inteiros, seguem na revisão anterior)` : null,
-            skuRepetido > 0 ? `${skuRepetido} pedido(s) com SKU repetido (order_items pode divergir do cabeçalho)` : null,
+            // ⚠️ A frase mudou junto com o comportamento. O pedido ambíguo agora NÃO é tocado —
+            // nem itens nem cabeçalho — então ele NÃO diverge: fica na revisão anterior completa.
+            // O que ele acumula é ATRASO, e é isso que precisa aparecer, porque um pedido que
+            // nunca reconcilia é invisível de outro jeito.
+            ambiguos > 0 ? `${ambiguos} pedido(s) NÃO reconciliados por SKU duplicado sem identidade de linha (${skuRepetido} vindos do Omie) — congelados na revisão anterior` : null,
           ].filter(Boolean).join("; "),
         }
         : {}),
