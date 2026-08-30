@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 502
+-- Total de custom migrations: 503
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -543,7 +543,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260829012000', 'analytics_outbox_perda_visivel', '20260829012000_analytics_outbox_perda_visivel.sql'),
   ('20260829041500', 'analytics_outbox_trigger_sensor', '20260829041500_analytics_outbox_trigger_sensor.sql'),
   ('20260829081556', 'sales_orders_hash_omie_canonico', '20260829081556_sales_orders_hash_omie_canonico.sql'),
-  ('20260830123820', 'snapshot_atomico_universo_itens', '20260830123820_snapshot_atomico_universo_itens.sql')
+  ('20260830123820', 'snapshot_atomico_universo_itens', '20260830123820_snapshot_atomico_universo_itens.sql'),
+  ('20260830190000', 'reconciliar_pedidos_omie', '20260830190000_reconciliar_pedidos_omie.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2257,7 +2258,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'data_health_watchdog', ''),
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
-  ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', '')
+  ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', ''),
+  ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4019,7 +4021,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'data_health_watchdog', ''),
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
-  ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', '')
+  ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', ''),
+  ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', '')
 )
 SELECT
   e.migration,

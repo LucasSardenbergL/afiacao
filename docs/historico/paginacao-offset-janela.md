@@ -490,6 +490,14 @@ propósito — agrupar mudaria `agruparCestasPorSegmento`, e esta entrega é de 
 
 ### Segue aberto (não passou por consertado)
 
+- ~~**ATOMICIDADE LÓGICA DO PEDIDO**~~ — **FECHADA em 2026-08-30** pela RPC de escrita
+  `reconciliar_pedidos_omie` (migration `20260830190000`), que é a **Fase 2** que
+  `criar_pedidos_com_itens` (#929) declarou em junho. O teste que a pendência exigia existe e
+  passa: `db/test-reconciliar-pedidos-omie.sh` T1 (leitura durante reconciliação não-commitada,
+  com sobreposição temporal exigida) e F1 (o writer de HOJE no mesmo cenário RASGA). Lição,
+  medição e o que segue aberto em [`atomicidade-logica-do-pedido.md`](atomicidade-logica-do-pedido.md).
+  O texto original da pendência fica abaixo, porque a distinção que ele faz é o valor dele:
+
 - **ATOMICIDADE LÓGICA DO PEDIDO — a pendência que a cesta rasgada escondia.** A garantia entregue é
   de LEITURA: tudo que volta pertence a um instante do banco. Isso **não** é uma revisão
   logicamente completa do pedido, porque **o writer não é atômico**: `sync-reprocess` reparte a

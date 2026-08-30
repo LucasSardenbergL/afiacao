@@ -2,10 +2,9 @@
 import {
   omieEtapaToStatus,
   etapaConhecida,
-  statusEhOmie,
   subtotalPedidoComDesconto,
   construirItemsJson,
-  diffOrderItens,
+  STATUS_GERIDO_OMIE,
 } from "./omie-pedido.ts";
 
 function eq(a: unknown, b: unknown, msg: string) {
@@ -35,9 +34,22 @@ Deno.test("etapaConhecida: só 20/50/60/70/80 (reprocess não rebaixa status em 
   for (const e of ["10", "", undefined, "99", "x"]) eq(etapaConhecida(e), false, `desconhecida ${e}`);
 });
 
-Deno.test("statusEhOmie: gerido pelo Omie vs app-avançado (reprocess não clobbera confirmado/entregue)", () => {
-  for (const s of ["importado", "separacao", "enviado", "faturado", "cancelado"]) eq(statusEhOmie(s), true, `omie ${s}`);
-  for (const s of ["confirmado", "entregue", "rascunho", "pendente", "", undefined]) eq(statusEhOmie(s), false, `app ${s}`);
+Deno.test("STATUS_GERIDO_OMIE: exatamente os status cujo dono é o Omie", () => {
+  eq([...STATUS_GERIDO_OMIE].sort(), ["cancelado", "enviado", "faturado", "importado", "separacao"], "conjunto canônico");
+  // O que este assert protege: a lista viaja como argumento para `reconciliar_pedidos_omie`, que
+  // a compara por CONJUNTO com a sua cópia e LANÇA se divergir. Um status app-avançado entrando
+  // aqui faria a reconciliação rebaixar pedido que o time já avançou à mão.
+  for (const s of ["confirmado", "entregue", "rascunho", "pendente"]) {
+    eq(STATUS_GERIDO_OMIE.includes(s), false, `app-avançado ${s} NÃO é gerido pelo Omie`);
+  }
+});
+
+Deno.test("todo status que omieEtapaToStatus produz está na lista enviada à RPC", () => {
+  // Se um mapa de etapa novo emitisse um status fora da lista, a RPC o rejeitaria em runtime
+  // (fail-closed) — este assert pega antes, no CI.
+  for (const etapa of ["10", "20", "50", "60", "70", "80", "", "99"]) {
+    eq(STATUS_GERIDO_OMIE.includes(omieEtapaToStatus(etapa)), true, `etapa ${etapa}`);
+  }
 });
 
 Deno.test("subtotal soma com desconto percentual, || (qty 0→1, igual ao sync) e arredonda", () => {
@@ -61,29 +73,8 @@ Deno.test("construirItemsJson casa o snapshot do sync (chaves + cor de tinta da 
   eq("tint_nome_cor" in construirItemsJson([{ produto: { codigo_produto: 1, descricao: "X", quantidade: 1, valor_unitario: 1 } }])[0], false, "sem obs → sem tint");
 });
 
-Deno.test("diff: insere novo, atualiza divergente (e grava hash de identidade), deleta removido, no-op igual", () => {
-  const locais = [
-    { id: "A", omie_codigo_produto: 1, quantity: 2, unit_price: 10, discount: 0, product_id: "p1" }, // igual → no-op
-    { id: "B", omie_codigo_produto: 2, quantity: 1, unit_price: 5, discount: 0, product_id: null }, // qty diverge → update
-    { id: "C", omie_codigo_produto: 3, quantity: 1, unit_price: 9, discount: 0, product_id: "p3" }, // removido → delete
-  ];
-  const desejados = [
-    { omie_codigo_produto: 1, quantity: 2, unit_price: 10, discount: 0, product_id: "p1", hash_payload: "omie_oben_77_1" },
-    { omie_codigo_produto: 2, quantity: 4, unit_price: 5, discount: 0, product_id: null, hash_payload: "omie_oben_77_2" },
-    { omie_codigo_produto: 9, quantity: 1, unit_price: 7, discount: 0, product_id: "p9", hash_payload: "omie_oben_77_9" }, // novo → insert
-  ];
-  const d = diffOrderItens(locais, desejados);
-  eq(d.inserir.map((i) => i.omie_codigo_produto), [9], "inserir");
-  eq(d.atualizar.map((u) => u.id), ["B"], "atualizar ids");
-  eq(d.atualizar[0].quantity, 4, "atualizar qty nova");
-  eq(d.atualizar[0].hash_payload, "omie_oben_77_2", "update grava hash de IDENTIDADE (repara legado)");
-  eq(d.deletar, ["C"], "deletar");
-});
-
-Deno.test("diff: tolerância numérica (float repr) não vira atualização espúria", () => {
-  const locais = [{ id: "A", omie_codigo_produto: 1, quantity: 1, unit_price: 152.85, discount: 0, product_id: "p1" }];
-  const desejados = [
-    { omie_codigo_produto: 1, quantity: 1, unit_price: 152.85000000000002, discount: 0, product_id: "p1", hash_payload: "h_1" },
-  ];
-  eq(diffOrderItens(locais, desejados).atualizar, [], "diferença de 2e-14 não é divergência");
-});
+// ⚠️ Os testes de `diffOrderItens` saíram daqui junto com a função. O diff de itens não é mais
+// computado no TS: ele vive dentro de `reconciliar_pedidos_omie` (migration 20260830190000),
+// porque um diff computado fora da transação de escrita pode aplicar uma revisão "nova + um
+// estranho". A regra — inclusive a tolerância de 1e-6 que este arquivo protegia contra reescrita
+// espúria — é provada em `db/test-reconciliar-pedidos-omie.sh` (asserts A1, A9, A13, A16).
