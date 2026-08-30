@@ -486,7 +486,16 @@ P -q -f "$SAB1"
 if P -q -c "DO \$t\$ BEGIN PERFORM public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado','entregue']); RAISE EXCEPTION 'SENTINELA_SEM_DENTE' USING ERRCODE='P0001'; EXCEPTION WHEN sqlstate '22023' THEN NULL; WHEN OTHERS THEN RAISE; END \$t\$;" >/dev/null 2>&1
 then bad "F2 SEM DENTE: B5 seguiu barrando mesmo com o guard sabotado"
 else ok "F2 B5 fica VERMELHO com o guard fraco — a igualdade de conjunto é o que morde"; fi
+# F2b — defesa em PROFUNDIDADE: com o guard já sabotado, uma lista contendo 'entregue' passa pela
+# validação. O efeito ainda tem de ser inócuo, porque quem manda no CASE é a constante interna e
+# não o parâmetro. Se este assert falhar, as duas defesas eram na verdade UMA.
+seed
+P -q -c "UPDATE public.sales_orders SET status='entregue' WHERE id='$PA';"
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado','entregue']);" >/dev/null
+eq "F2b mesmo com o guard caído, a lista de fora NÃO clobbera status app-avançado (autoridade é a constante)" \
+   "$(Pq -c "SELECT status FROM public.sales_orders WHERE id='$PA';")" "entregue"
 P -q -f "$MIG"   # restaura a versão verdadeira
+seed
 
 echo "── F3: sabota 'ausente ≠ zero' do total — exija VERMELHO em C1c ──"
 SAB2="$(mktemp "/tmp/sab2-${SLUG}.XXXXXX.sql")"

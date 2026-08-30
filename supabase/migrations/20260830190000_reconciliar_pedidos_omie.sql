@@ -276,7 +276,12 @@ BEGIN
       -- [A4] status só reconcilia com etapa CONHECIDA (status_omie não-nulo) e status local ainda
       -- gerido pelo Omie — nunca rebaixa para 'importado' por leitura malformada nem clobbera
       -- status app-avançado. NUNCA toca hash_payload do pai (causa-raiz #B).
-      v_status_novo  := CASE WHEN v_status_omie IS NOT NULL AND v_status_atual = ANY (p_status_gerido_omie)
+      -- ⚠️ A autoridade aqui é `c_status_omie`, a constante — NÃO o parâmetro. O parâmetro é um
+      -- CHECKSUM: ele existe para o TS DECLARAR o que acha que é a lista, e o banco conferir. Se
+      -- ele fosse a autoridade, remover o guard de igualdade lá em cima bastaria para uma lista
+      -- vinda de fora clobberar status app-avançado. Assim, o guard e o efeito são defesas
+      -- INDEPENDENTES: derrubar uma não abre a outra (provado em F2b do harness).
+      v_status_novo  := CASE WHEN v_status_omie IS NOT NULL AND v_status_atual = ANY (c_status_omie)
                              THEN v_status_omie ELSE v_status_atual END;
       v_status_mudou := v_status_atual IS DISTINCT FROM v_status_novo;
       v_total_mudou  := abs(coalesce(v_total_atual, 0) - v_total_novo) > 0.01;
