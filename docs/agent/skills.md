@@ -44,6 +44,18 @@
 - ⚠️ **Colisão de nome:** `/review` (gstack, **canônico**) vs `review` (oficial code-review) — invocar via gstack.
 - **Memória entre sessões:** **`claude-mem`** (plugin global ATIVO — **funcionando desde 2026-07-07**; 0 → 214 observações na 1ª hora). Conserto em 2 camadas: (1) o generator não achava o binário `claude` do app desktop — fix: shim `~/.claude-mem/claude-shim.sh` + `CLAUDE_CODE_PATH` em `~/.claude-mem/settings.json`; (2) o CLI headless não herda o login do app — resolvido com `/login` no CLI (se `Not logged in` voltar: terminal → `~/.claude-mem/claude-shim.sh` → `/login`). Limitação conhecida: memória fragmentada por worktree (cada um é um `project` distinto). Auto-memory nativo segue **desligado de propósito** (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` no settings global) — não ligar os dois (duplicaria).
 
+## Editar uma skill: nenhum gate confere as citações dela
+
+`.claude/skills/` está **fora do `docs:citacoes`** — `ALVOS_VIVOS` é `CLAUDE.md` + `docs/agent`,
+`docs/visual-direction` e `docs/runbooks` (`scripts/docs-citacoes-gate-check.ts:113`<!--cita: ALVOS_VIVOS-->),
+e a skill não entra por nenhum dos dois lados: nem como doc varrido, nem pela âncora `<!--cita:-->` que
+resgata a citação do doc congelado. Medido em 2026-08-30 sabotando uma citação de
+`.claude/skills/lovable-deploy-verify/SKILL.md`: o gate passou com **exit 0 e sem mover o contador** —
+28 citações / 7 ancoradas antes e depois. ⇒ **Ao citar `arquivo:linha` numa skill, confira à mão**; verde
+ali é ausência de dado, não aprovação. Mesma família de `docs/historico/gates-textuais-cegos.md`, por
+ESCOPO DE VARREDURA em vez de stripper — e o custo é maior do que parece, porque a skill é justamente
+onde o próximo agente vai buscar o comando pronto para copiar.
+
 ## Skills stack-specific
 
 Instaladas via `git clone` dos repos oficiais em `~/.claude/skills/` (sem auto-update — re-clonar pra atualizar): Supabase oficial · Vercel Eng (react/composition/web-design) · TanStack Query · Sentry (`sentry-react-sdk` só via router `sentry-sdk-setup`) · Trail of Bits (semgrep/codeql/sarif/supply-chain) · RBAC.
