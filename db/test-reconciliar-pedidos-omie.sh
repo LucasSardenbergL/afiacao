@@ -350,6 +350,54 @@ eq "T1c depois do COMMIT o leitor vê a revisão NOVA COMPLETA" "$(Pq -c "$CESTA
 # ZONA 5 — FALSIFICAÇÃO (Lei #3). Uma sabotagem por bloco: sabotagem que contamina o
 # assert vizinho não prova o vizinho (lição do harness do #2132).
 # ══════════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════════
+# T2 — O DIFF É DECLARATIVO: um item que NASCE durante a janela não sobrevive
+# ══════════════════════════════════════════════════════════════════════════════════
+# Este é o assert que separa esta entrega da alternativa barata (o TS mandar o diff pronto).
+# Um diff computado FORA da transação não conhece o item que nasceu depois do SELECT: ele não
+# estaria nem em `inserir` nem em `deletar`, e SOBREVIVERIA — revisão "nova + um estranho",
+# aplicada atomicamente e errada. Aqui o intruso é inserido ANTES da RPC rodar, e a RPC tem de
+# removê-lo, porque ela reconcilia contra o conjunto DESEJADO, não contra um diff de terceiros.
+echo "── T2: item intruso commitado antes da RPC — o desejado é o pós-estado, sempre ──"
+seed
+P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id)
+         VALUES ('$U','7d000000-0000-0000-0000-0000000000e1',5,1,1,0,'intruso','$PA');"
+eq "T2a o intruso está no banco antes da reconciliação" \
+   "$(Pq -c "$CESTA")" "a1,b1,e1"
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO);" >/dev/null
+eq "T2b depois da RPC o pós-estado é EXATAMENTE o desejado (o intruso não sobrevive)" \
+   "$(Pq -c "$CESTA")" "$NOVA_COMPLETA"
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# T3 — DOIS LOTES CONCORRENTES no MESMO pedido: o FOR UPDATE serializa
+# ══════════════════════════════════════════════════════════════════════════════════
+# Duas sessões reconciliam o mesmo pedido para revisões DIFERENTES ao mesmo tempo. Sem o
+# `FOR UPDATE` do pai, as duas leriam o mesmo estado e a segunda poderia aplicar um diff calculado
+# sobre um estado que a primeira já mudou. Com ele, uma espera a outra e o pós-estado é UMA das
+# duas revisões, inteira — nunca a soma.
+echo "── T3: dois lotes concorrentes no mesmo pedido ──"
+seed
+OUTRA=$(printf '%s' "$NOVA" | sed 's/"omie_codigo_produto":3,/"omie_codigo_produto":4,/; s|0000000000c1|0000000000d1|; s/"total":330.00/"total":444.00/')
+T3_A="$(mktemp "/tmp/t3a-${SLUG}.XXXXXX")"; T3_B="$(mktemp "/tmp/t3b-${SLUG}.XXXXXX")"
+( P -tA >"$T3_A" 2>&1 -c "BEGIN; SELECT pg_sleep(0.3); SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO); COMMIT;" ) &
+A3PID=$!
+( P -tA >"$T3_B" 2>&1 -c "BEGIN; SELECT public.reconciliar_pedidos_omie('$OUTRA'::jsonb, $GERIDO); SELECT pg_sleep(0.6); COMMIT;" ) &
+B3PID=$!
+wait "$A3PID"; wait "$B3PID"
+CESTA_T3="$(Pq -c "$CESTA")"
+echo "     [CESTA=$CESTA_T3]"
+case "$CESTA_T3" in
+  "b1,c1"|"b1,d1") ok "T3 pós-estado é UMA revisão inteira sob dois lotes concorrentes (veio [$CESTA_T3])" ;;
+  *) bad "T3 as duas reconciliações se misturaram: veio [$CESTA_T3], esperado [b1,c1] ou [b1,d1]" ;;
+esac
+eq "T3b nenhuma das duas sessões falhou (o FOR UPDATE fez esperar, não abortar)" \
+   "$(grep -c 'ERROR' "$T3_A" "$T3_B" | awk -F: '{s+=$2} END {print s}')" "0"
+# ⚠️ Antídoto de falso-verde: "uma revisão inteira" é o resultado esperado TAMBÉM quando uma das
+# sessões não rodou. O cenário só tem dente se as DUAS executaram a RPC e as DUAS corrigiram.
+eq "T3c cenário TEM dente: as DUAS sessões executaram a RPC e escreveram" \
+   "$(grep -ch '"corrections": [1-9]' "$T3_A" "$T3_B" | awk '{s+=$1} END {print s}')" "2"
+rm -f "$T3_A" "$T3_B"
+
 echo "── F1: o writer de HOJE (statements soltas) no MESMO cenário — exija VERMELHO ──"
 # Não é uma sabotagem da RPC: é a reprodução fiel do que `sync-reprocess` fazia ANTES desta
 # entrega — insert do item novo numa transação, delete do velho e cabeçalho depois. É o cenário
@@ -365,6 +413,27 @@ case "$CESTA_F1" in
   *) ok "F1 o writer de HOJE RASGA: veio [$CESTA_F1], que não é nem a antiga nem a nova (é a mistura que a RPC elimina)" ;;
 esac
 eq "F1b e a mistura é exatamente 'velho + novo convivendo'" "$CESTA_F1" "a1,b1,c1"
+
+echo "── F6: sabota a CTE de DELETE — exija VERMELHO em T2b ──"
+# Sem a remoção, o pós-estado vira "desejado + o que já estava lá": exatamente a revisão
+# "nova mais um estranho" que o diff computado FORA da transação produziria.
+SAB5="$(mktemp "/tmp/sab5-${SLUG}.XXXXXX.sql")"
+sed "s/^             AND NOT EXISTS (SELECT 1 FROM desejado d WHERE d.cod = a.cod)$/             AND false/" "$MIG" > "$SAB5"
+eq "F6 sabotagem aplicada (a CTE de delete não casa mais ninguém)" \
+   "$(grep -c '^             AND false$' "$SAB5")" "1"
+P -q -f "$SAB5"
+seed
+P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id)
+         VALUES ('$U','7d000000-0000-0000-0000-0000000000e1',5,1,1,0,'intruso','$PA');"
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO);" >/dev/null
+CESTA_F6="$(Pq -c "$CESTA")"
+if [ "$CESTA_F6" = "$NOVA_COMPLETA" ]; then
+  bad "F6 SEM DENTE: sem a CTE de delete o pós-estado seguiu correto [$CESTA_F6] — T2b não prova nada"
+else
+  ok "F6 T2b fica VERMELHO: sem a remoção o pós-estado vira 'nova + estranhos' [$CESTA_F6]"
+fi
+P -q -f "$MIG"
+rm -f "$SAB5"
 
 echo "── F2: sabota a igualdade de CONJUNTO da lista de status — exija VERMELHO em B5 ──"
 SAB1="$(mktemp "/tmp/sab1-${SLUG}.XXXXXX.sql")"
