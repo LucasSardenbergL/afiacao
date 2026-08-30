@@ -182,9 +182,48 @@ TODA resposta — o corpo já cai em `net._http_response`, e o N3 passivo sai de
 #### Sondar VÁRIAS edges numa tacada (leva inteira) — e as 3 armadilhas do SQL Editor
 
 Uma leva tem 5–10 edges, e repetir o par disparo/leitura por edge convida ao erro de trocar o `request_id`
-entre uma e outra. O padrão é disparar todas com `net.http_post` sobre um `VALUES` de nomes, agregar com
-`jsonb_object_agg(edge, request_id)::text` numa **célula única** para copiar, e no passo 2 reidratar com
-`jsonb_each_text('<colado>'::jsonb)`. Medido 2026-08-24 sondando a oitava leva (#1937).
+entre uma e outra. O padrão é disparar todas com `net.http_post` sobre um `VALUES` de nomes e agregar com
+`jsonb_object_agg(edge, request_id)::text` numa **célula única**. Medido 2026-08-24 sondando a oitava leva (#1937).
+
+⚠️ **A leitura NÃO pede mais o `request_id` colado — ela acha a linha pelo ECO do slug.** A resposta da
+sonda carrega o próprio nome no corpo (`criarRespostaSonda` devolve `{ok, probe, versao, edge, fonte}`),
+então o passo de leitura procura, dentro de uma janela curta, a resposta que diz ser daquela edge. A
+colagem à mão era um passo que simplesmente **não acontece**: em 2026-08-30, verificando
+`generate-bundle-argument`, o disparo tinha funcionado (4 respostas HTTP 200 em `net._http_response`) e o
+veredito saiu `SEM ID — esta edge não saiu no JSON colado (bloco errado, ou trava fechada)`. Honesto, e
+ainda assim um round-trip inteiro com o founder por um deploy que já estava no ar. O `jsonb_each_text('{}')`
+sobrevive **opcional**, e só para o que o eco não alcança (ver os dois guards abaixo).
+
+⚠️ **O casamento exige `probe = 'true'`, não só o slug — senão ele lê a linha do CRON.** Medido em prod
+2026-08-30: a `analytics-outbox-drain` gravou **72** respostas em 6h com `{"edge":…,"versao":…}` e **sem**
+`probe` (é o cron dela, de 5 em 5 minutos), contra 5 respostas de sonda. Casando só pelo slug, o `LIMIT 1`
+escolhe a linha do cron, cujo `probe` é nulo, e o veredito cai no `ELSE`: **"BUNDLE VELHO" citando a versão
+CERTA** — falso NEGATIVO fabricado a partir da linha de outra execução, e o desfecho é redeployar à toa.
+Provado com as duas consultas lado a lado: `só-slug` devolveu a resposta 64047 (`probe` ausente),
+`slug+probe` devolveu zero. E o `ORDER BY` precisa do desempate por `id`: em prod as respostas 64031 e
+64032 têm `created` **idêntico ao microssegundo**, então `ORDER BY created DESC` sozinho deixa a escolha
+para o plano, não para o dado.
+
+⚠️ **Janela curta é obrigatória, e ausência de linha é `INDETERMINADO` — nunca "bundle velho".** Sem a
+janela, uma sondagem ANTIGA da mesma edge (o `pg_net.ttl` guarda 6h) seria lida como veredito de AGORA —
+o guard do #2079. Padrão 20 min, teto 120 (`--janela=<min>`); querer a janela inteira do TTL é querer a
+irmã PASSIVA, `bun run pendencias:deploy`, que já trata "não observada" como ausência de dado. E o que o
+eco **não** alcança: bundle PRÉ-SENSOR (HTTP 200 rodando o fluxo real) e recusa HTTP (>=400) respondem
+**sem** eco do slug, então caem em `INDETERMINADO` junto com "não disparou" e "ainda não chegou". O ramo
+nomeia as três causas em vez de escolher uma — contar as respostas sem eco na janela **não** as separa,
+porque a janela é cheia de cron alheio. Quem separa é o `request_id` do disparo, e é só para isso que a
+colagem continua existindo.
+
+**A divisão de trabalho que sai daí — o founder dispara, o agente lê.** Só o disparo precisa dele: lê
+`vault.decrypted_secrets` e faz INSERT via `net.http_post`, e o wrapper read-only recusa os dois
+(`permission denied for schema vault`, `cannot execute INSERT in a read-only transaction` — provado
+2026-08-30). A leitura é `SELECT` em `net._http_response`, que o `psql-ro` serve. Os recortes são flags,
+e a numeração dos passos é **absoluta** nos dois lados, para founder e agente nomearem a mesma coisa:
+
+```bash
+bun run sonda:sql --so-disparo <edge>…                        # cole ISTO no SQL Editor do Lovable
+bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro   # e leia o veredito você mesmo
+```
 
 **Não digite esse SQL: gere-o.** `bun run sonda:sql <edge>… [--caro=<edge>,…]` lê o `VERSAO` de cada
 `supabase/functions/<edge>/versao.ts` **e o fingerprint de `_shared/sonda-fingerprints.ts`**, e emite
@@ -206,7 +245,9 @@ manda olhar de novo. Testes: `scripts/sonda-versao-sql.test.ts` (as falsificaç�
 `versao.ts` e a entrada do mapa, e exigem que o valor velho suma do SQL) +
 `scripts/mutcheck.d/sonda-versao-sql.mut`, que no CI prova que a suíte **pega** a trava trocada por
 `WHERE`, o `LEFT JOIN` virado `JOIN`, o marcador/fingerprint hardcoded, o ramo `DEPLOY PARCIAL`
-neutralizado e o `AND fonte = fonte_esperada` dispensado do `DEPLOY CONFIRMADO`.
+neutralizado, o `AND fonte = fonte_esperada` dispensado do `DEPLOY CONFIRMADO` — e, desde a leitura sem
+colagem, o casamento sem `probe:true`, a janela alargada, o teto da janela removido, o `LIMIT 1` sem
+desempate e o `INDETERMINADO` trocado por veredito negativo.
 
 ⚠️ **HTTP 401 é o ÚNICO 4xx ambíguo — tem ramo próprio, e o veredito determinado exige um controle
 de CREDENCIAL cruzado na mesma consulta.** Um 404 diz "não há edge servida nessa URL"; um 401 tem

@@ -59,6 +59,12 @@ e esta edge escreve no Omie sem desfazer.
 Gerado por `bun run sonda:sql omie-vendas-sync`, que desde o **#2052** exige o `fonte` no julgamento e
 tem ramo próprio de `DEPLOY PARCIAL`.
 
+> ⚠️ **SQL desta época — SUPERSEDIDO.** O PASSO 2 abaixo exige colar o `request_id` à mão, e o
+> ramo `SEM ID` é o veredito que a colagem faltante produz. Desde 2026-08-30 a leitura acha a
+> linha pelo ECO do slug (`--so-leitura`, sem colar nada) e ausência de linha é `INDETERMINADO`.
+> Registro mantido como está — para GERAR o SQL de hoje, use `bun run sonda:sql`, nunca copie
+> daqui. A receita vigente é `docs/agent/deploy.md` §"Sondar VÁRIAS edges numa tacada".
+
 ```sql
 -- PASSO 1 — dispara as 1 edge(s) baratas da leva.
 WITH alvos(edge) AS (VALUES

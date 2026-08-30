@@ -29,11 +29,32 @@ PEGA      | edge fora do mapa degrada em vez de lancar     | s/if \(!\(edge in m
 # dimensao CREDENCIAL. A SEMANTICA (o CASE devolvendo mesmo o veredito) e provada EXECUTANDO, em
 # .claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh; aqui mede-se o dente da
 # suite textual, que e o que roda no gate de mutacao.
+# ⚠️ Os dois mutantes de INDETERMINADO ancoram no texto PRÓPRIO de cada ramo (401 ambíguo x
+# ausência de linha na janela). `perl -pe s///` casa uma vez POR LINHA: um padrão que sirva
+# aos dois muta as DUAS e cai no guard de substituição única do mutcheck como INVÁLIDA — que
+# é ausência de medição, não medição. Ramo novo com esse prefixo: ancore no texto dele.
 PEGA      | 4xx generico perde a cobertura (404 cai no ELSE)       | s/l\.status_code >= 400/l.status_code = 401/
-PEGA      | fallback do 401 deixa de ser INDETERMINADO (fail-open)    | s/THEN 'INDETERMINADO/THEN 'BUNDLE VELHO (pre-sonda)/
+PEGA      | fallback do 401 deixa de ser INDETERMINADO (fail-open)    | s/THEN 'INDETERMINADO — 401 nao separa/THEN 'BUNDLE VELHO (pre-sonda) — 401 nao separa/
 PEGA      | controle nao exclui a propria leva (a sonda se avaliza)   | s/AND NOT EXISTS \(SELECT 1 FROM ids i2 WHERE i2\.request_id = r\.id\)/AND true/
 PEGA      | piso do controle zerado (1 resposta 2xx ja 'prova')       | s/PISO_CONTROLE_CREDENCIAL = 10/PISO_CONTROLE_CREDENCIAL = 0/
 PEGA      | 401 alheio deixa de desqualificar o controle              | s/AND c\.recusas_recentes = 0/AND true/
 PEGA      | controle nao chega na projecao (CROSS JOIN removido)      | s/ CROSS JOIN controle_credencial c//
+# Os 7 abaixo guardam a LEITURA SEM COLAGEM (#2127). Ela troca o `request_id` colado a mao pelo ECO
+# do slug que a propria resposta carrega — e cada guard aqui e a diferenca entre achar a linha CERTA
+# e achar UMA linha. Sem eles a suite aceitava um SQL que le a resposta de OUTRA execucao.
+PEGA      | casamento por slug neutralizado (pega qualquer linha) | s/WHERE rr\.corpo ->> 'edge' = e\.edge/WHERE true/
+PEGA      | casamento dispensa probe:true (pega linha de CRON)    | s/AND rr\.corpo ->> 'probe' = 'true'/AND true/
+PEGA      | janela larga: sondagem de ontem vira veredito de hoje | s/interval '\$\{janelaMin\} minutes'/interval '30 days'/
+PEGA      | teto da janela removido (guard do #2079 desligado)    | s/ \|\| janelaMin > JANELA_MAX_MIN//
+PEGA      | LIMIT 1 sem desempate (created EMPATA em prod)        | s/ORDER BY rr\.created DESC, rr\.id DESC/ORDER BY rr.created DESC/
+PEGA      | LATERAL vira INNER: edge sem eco SOME da saida        | s/LEFT JOIN LATERAL \(/JOIN LATERAL (/
+PEGA      | ausencia de linha vira veredito NEGATIVO              | s/THEN 'INDETERMINADO — nenhuma resposta/THEN 'BUNDLE VELHO — nenhuma resposta/
+# Cast desprotegido: um corpo nao-JSON alheio na janela aborta a consulta INTEIRA — e a leitura
+# morre no lugar de julgar, que e falha por MECANICA lida como ausencia de resposta.
+PEGA      | cast para jsonb sem o filtro textual antes            | s/AND left\(ltrim\(r\.content\), 1\) = '\{'//
+# O recorte e a divisao de trabalho: o disparo precisa do founder (vault+INSERT), a leitura roda no
+# psql-ro. Recorte que vaza um lado no outro devolve a leitura para a mao do founder.
+PEGA      | --so-disparo passa a emitir a leitura junto           | s/const querLeitura = !opts\.soDisparo;/const querLeitura = true;/
+PEGA      | --so-leitura passa a emitir o disparo junto           | s/const querDisparo = !opts\.soLeitura;/const querDisparo = true;/
 SOBREVIVE | timeout 20s -> 30s (valor nao e pinado)    | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
 SOBREVIVE | ORDER BY por posicao (cosmetico)           | s/ORDER BY l\.edge;/ORDER BY 1;/
