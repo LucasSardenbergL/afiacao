@@ -399,12 +399,78 @@ describe('guardrail money-path: criar_pedido não confia no espelho legado omie_
   });
 
   it('deriva do PEDIDO LOCAL (customer_user_id + customer_document), não confia no payload', () => {
-    // checkout_id entrou no select na fase 2 do ATP (o gate ATP ancora a reserva
-    // nele); o pin segue EXATO na forma nova — perder qualquer campo fica vermelho.
+    // checkout_id entrou no select na fase 2 do ATP (o gate ATP ancora a reserva nele);
+    // omie_pedido_id + hash_payload entraram no guard de reenvio (Codex 2026-08-29) — sem
+    // eles o guard classifica linha ENVIADA como virgem e volta a duplicar no Omie.
+    // O pin segue EXATO na forma nova — perder qualquer campo fica vermelho.
     expect(
       src,
       'o edge deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
-    ).toMatch(/select\("account, customer_user_id, customer_document, created_by, checkout_id"\)/);
+    ).toMatch(
+      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload"\)/,
+    );
+  });
+});
+
+// ── Guard de REENVIO da fronteira criar_pedido (achado Codex 2026-08-29, /codex do #2117) ──
+// A decisão é PURA e testada em Deno (_shared/reenvio-pedido_test.ts). Este bloco vigia o
+// WIRING no edge — que o Lovable pode reverter e commitar na main como "Changes".
+describe('guardrail money-path: criar_pedido recusa reenvio ANTES do IncluirPedido', () => {
+  const src = read(VENDAS);
+  const criar = blocoCriarPedido(src);
+  // Assert NEGATIVO sobre a fonte → limpar comentário primeiro (a prosa do guard cita
+  // criarPedidoVenda/IncluirPedido de propósito, ao explicar a ordem).
+  const criarLimpo = removerComentarios(criar);
+
+  it('sentinela: extraiu o bloco REAL do case criar_pedido (e o stripper não o esvaziou)', () => {
+    expect(criar).toContain('criarPedidoVenda(');
+    expect(criarLimpo).toContain('criarPedidoVenda(');
+    expect(criarLimpo.length, 'stripper comeu o miolo do bloco').toBeGreaterThan(500);
+  });
+
+  it('o edge USA a decisão pura (import + chamada), não uma cópia inline', () => {
+    expect(src, 'sumiu o import de reenvio-pedido.ts').toMatch(
+      /import \{[^}]*classificarEnvioPedido[^}]*\} from "\.\.\/_shared\/reenvio-pedido\.ts"/,
+    );
+    expect(criarLimpo, 'REGRESSÃO: o case criar_pedido parou de chamar o guard de reenvio')
+      .toMatch(/classificarEnvioPedido\(\s*soRow\s*\)/);
+  });
+
+  it('lê os campos que o guard precisa (sem eles, linha ENVIADA parece virgem)', () => {
+    expect(criarLimpo, 'omie_pedido_id saiu do select — o guard ficaria cego').toContain('omie_pedido_id');
+    expect(criarLimpo, 'hash_payload saiu do select — linha pull ficaria indistinguível').toContain('hash_payload');
+  });
+
+  it('a recusa é um throw (fail-closed), não um blocked que caller antigo lê como sucesso', () => {
+    expect(criarLimpo).toMatch(/if \(!vereditoEnvio\.permitido\) \{[\s\S]{0,400}?throw new Error\(/);
+    expect(
+      criarLimpo,
+      'a recusa de reenvio virou blocked — caller antigo trata blocked desconhecido como sucesso',
+    ).not.toMatch(/blocked:\s*["'](ja_enviado|reenvio)["']/);
+  });
+
+  it('ORDEM: o guard roda ANTES de criarPedidoVenda (um CHECK no banco seria tarde demais)', () => {
+    const iGuard = criarLimpo.indexOf('classificarEnvioPedido(');
+    const iEnvio = criarLimpo.indexOf('criarPedidoVenda(');
+    expect(iGuard, 'guard de reenvio não encontrado no bloco').toBeGreaterThan(-1);
+    expect(iEnvio, 'criarPedidoVenda não encontrado no bloco').toBeGreaterThan(-1);
+    expect(iGuard, 'o guard passou a rodar DEPOIS do IncluirPedido — o pedido já existiria no Omie')
+      .toBeLessThan(iEnvio);
+  });
+
+  it('o guard NÃO está atrás do if (account === "oben") do gate ATP (vale para toda conta)', () => {
+    const iGuard = criarLimpo.indexOf('classificarEnvioPedido(');
+    const iOben = criarLimpo.indexOf('account === "oben"');
+    expect(iOben, 'gate ATP oben-only não encontrado — bloco mudou de forma').toBeGreaterThan(-1);
+    expect(iGuard, 'o guard caiu dentro do ramo oben — pedido colacor voltaria a duplicar')
+      .toBeLessThan(iOben);
+  });
+
+  it('a decisão pura NÃO foi duplicada dentro do edge (fonte única)', () => {
+    expect(
+      removerComentarios(src),
+      'o edge redefiniu classificarEnvioPedido — cópia divergiria do módulo testado em Deno',
+    ).not.toMatch(/function classificarEnvioPedido/);
   });
 });
 

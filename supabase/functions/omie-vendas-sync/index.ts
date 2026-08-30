@@ -4,6 +4,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
+import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
@@ -2745,11 +2746,24 @@ Deno.serve(async (req) => {
         await assertOmieItemsAtivos(supabaseAdmin, items, account);
         // Anti-downgrade de conta (veredito Codex): account desconhecido normaliza
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
-        const { data: soRow } = await supabaseAdmin
+        const { data: soRow, error: soErr } = await supabaseAdmin
           .from("sales_orders")
-          .select("account, customer_user_id, customer_document, created_by, checkout_id")
+          .select("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload")
           .eq("id", sales_order_id)
           .maybeSingle();
+        // Guard de REENVIO (achado Codex 2026-08-29) — ANTES do IncluirPedido, porque um CHECK
+        // no banco seria TARDIO: falharia depois de o pedido já existir no Omie. Vale para TODA
+        // conta (o gate ATP abaixo é só 'oben', e seu 'ja_enviado' significa "não re-reservar",
+        // não "pode reenviar"). Decisão pura+testada em _shared/reenvio-pedido.ts.
+        const vereditoEnvio = classificarEnvioPedido(soRow);
+        if (!vereditoEnvio.permitido) {
+          // throw (não `{success:false, blocked}`): os 3 chamadores já tratam erro como falha,
+          // e caller antigo lê `blocked` DESCONHECIDO como sucesso (mordido no submitOrder).
+          throw new Error(
+            `Envio recusado [${vereditoEnvio.motivo}] para o pedido ${sales_order_id}: ${vereditoEnvio.detalhe}` +
+              (soErr ? ` (leitura do pedido local falhou: ${soErr.message})` : ""),
+          );
+        }
         if (soRow?.account && soRow.account !== account) {
           throw new Error(
             `Conta do payload (${account}) diverge do pedido local (${soRow.account}) — pedido não enviado`,

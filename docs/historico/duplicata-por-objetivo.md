@@ -336,8 +336,44 @@ todas as linhas existentes, não por argumento.
 > ([`:2151`](../../supabase/functions/omie-vendas-sync/index.ts:2151)). Numa linha pull o hash
 > passaria a mentir, e o sync do pedido original bateria `23505` no índice de hash e viraria
 > **no-op — um pedido real sumindo em silêncio**. Nenhum chamador aponta para linha pull hoje;
-> o que segura é ausência de chamador, não guard. **Não consertado aqui: é money-path e mudança
-> de comportamento em edge quente — decisão do founder.**
+> o que segura é ausência de chamador, não guard.
+>
+> **✅ FECHADO em 2026-08-29** (guard na fronteira + CHECK de canonicidade). O que a
+> implementação acrescentou ao parecer, e que vale como lição própria:
+>
+> 1. **A chave de dedup do Omie é `PV_<sales_order_id>` — determinística por linha LOCAL**
+>    ([`omie-vendas-sync/index.ts:2001`](../../supabase/functions/omie-vendas-sync/index.ts:2001)).
+>    É isto que separa os dois casos: retry de linha *push* bate duplicata no Omie e reconcilia
+>    via `ConsultarPedido` (inofensivo); linha *pull* **nunca usou essa chave**, então o Omie não
+>    tem como deduplicar e **cria pedido novo**. Sem esse elo, "falta um guard" parece severidade
+>    uniforme — não é.
+> 2. **Não existe retry legítimo com pid preenchido.** O write-back é o ÚNICO escritor do pid
+>    neste caminho e é um `UPDATE` único: falhou ⇒ pid NULL ⇒ o retry passa e reconcilia. O
+>    `"retry idempotente"` do comentário do gate ATP é escopo de **RESERVA** ("não re-reservar",
+>    não renovar TTL) — ler aquele comentário como permissão de reenvio teria travado o conserto.
+> 3. **O invariante já ERA o desenho, na camada errada.** 2 dos 3 chamadores o implementavam por
+>    conta própria (`pedido-programado-enviar:250`; `submitOrder` via `alreadySent`); o
+>    `SalesQuotes` não — dependia só do filtro `status='orcamento'`, e nenhuma das 31.086 linhas
+>    pull tem esse status. **Guard replicado no chamador é guard ausente na fronteira**: procure a
+>    réplica antes de concluir "isto nunca foi pensado".
+>
+> Entregue: decisão PURA em [`_shared/reenvio-pedido.ts`](../../supabase/functions/_shared/reenvio-pedido.ts)
+> (recusa por UNIÃO — `omie_pedido_id IS NOT NULL` **ou** `hash_payload LIKE 'omie\_%'`), chamada
+> ANTES do `criarPedidoVenda` e FORA do ramo `account === "oben"` (o gate ATP é oben-only, então
+> pedido colacor jamais passava por ele); `throw`, não `{success:false, blocked}` — caller antigo
+> lê `blocked` DESCONHECIDO como sucesso. Bônus fail-closed: o `.maybeSingle()` ignorava o
+> `error`, então linha ausente/ilegível seguia para o `IncluirPedido` e só quebrava no write-back,
+> **depois** de o pedido existir no Omie.
+>
+> **O CHECK proposto no parecer entrou, mas como SEGUNDA linha e com isso dito em voz alta**
+> ([`20260829081556_sales_orders_hash_omie_canonico.sql`](../../supabase/migrations/20260829081556_sales_orders_hash_omie_canonico.sql)):
+> um CHECK só reprova a escrita LOCAL, e quando ele disparasse o pedido duplicado **já existiria
+> no Omie**. Ele impede a corrupção se consolidar, não a duplicata acontecer. Duas medições que a
+> escrita do CHECK exigiu e o parecer não trazia: `account` é **NOT NULL** (se fosse nullable, a
+> concatenação viraria NULL e **CHECK que avalia NULL PASSA** — fresta fail-open silenciosa); e o
+> `LIKE` precisa ficar **ancorado**, porque desancorá-lo (`'%omie\_%'`) nem aplica sobre o acervo:
+> a linha legítima `checkout_omie_oben_1` já o viola. Prova em
+> [`db/test-hash-omie-canonico.sh`](../../db/test-hash-omie-canonico.sh) (23 asserts, 4 sabotagens).
 >
 > O `RAISE` da linha 56 exige PRESENÇA, não FORMA: `pid='42'` e `pid='0042'` geram hashes
 > distintos e ambos viram `bigint 42`. Quem barra é o índice direto, não o de hash.
