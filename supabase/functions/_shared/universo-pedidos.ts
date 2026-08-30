@@ -26,13 +26,20 @@
 // espelhar como ela trata o nulo. Medido em prod (2026-08-20): 0 linhas com `status` nulo,
 // então hoje o ponto é teórico.
 
-// SEM `export`, ao contrário da autoridade em `src/` — lá o array É consumido direto
-// (`cobertura-conta-oferta.ts`, testes); aqui ele só alimenta o derivado abaixo, e exportá-lo
-// reprova o gate de dead-code (`bunx knip`, dentro do `validate`). O guard de paridade compara
-// a LISTA PARSEADA, não o texto, então a assimetria do `export` não o quebra — que é
-// exatamente a folga pela qual valeu a pena trocar MIRROR textual por comparação de valores.
-/** Status que NÃO são venda. Verbatim do corpo em prod de `private.margem_cliente_agregada()`. */
-const STATUS_NAO_VENDA: readonly string[] = [
+// COM `export`, como a autoridade em `src/`. Este comentário já disse o contrário, e estava certo
+// pelo que media: enquanto o array só alimentava o derivado abaixo, exportá-lo reprovava o gate de
+// dead-code (`bunx knip`, dentro do `validate`). O guard de paridade compara a LISTA PARSEADA, não
+// o texto, então a simetria (ou a assimetria) do `export` nunca o quebrou — que é exatamente a
+// folga pela qual valeu a pena trocar MIRROR textual por comparação de valores.
+/**
+ * Status que NÃO são venda. Verbatim do corpo em prod de `private.margem_cliente_agregada()`.
+ *
+ * Passou a ser EXPORTADA quando `itens-com-pedido.ts` deixou de filtrar pelo PostgREST e passou a
+ * mandar a lista como parâmetro da RPC-snapshot — que a valida contra a sua própria cópia canônica
+ * e REJEITA divergência. O comentário anterior dizia que exportá-la reprovaria o `bunx knip`, e
+ * tinha razão pelo que media: naquele momento não havia consumidor do ARRAY, só do derivado abaixo.
+ */
+export const STATUS_NAO_VENDA: readonly string[] = [
   'cancelado',
   'rascunho',
   'pendente',

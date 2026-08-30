@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **501** custom migrations totais
-- **1723** objetos esperados (criados por estas migrations)
+- **502** custom migrations totais
+- **1725** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 522
+  - `function`: 524
   - `rls_policy`: 455
   - `index`: 250
   - `cron_job`: 168
@@ -4199,6 +4199,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260829081556_sales_orders_hash_omie_canonico.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260830123820_snapshot_atomico_universo_itens.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apriori_universo_snapshot` | — |
+| `function` | `public.cockpit_itens_snapshot` | — |
 
 ## Próximos passos por status
 
