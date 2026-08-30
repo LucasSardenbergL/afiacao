@@ -151,6 +151,39 @@ Registradas porque **custam minutos e teriam virado "conserto" inerte ou defeito
   **pula** pedido existente com itens (`skipped_complete`). Se houvesse um terceiro writer solto, a
   atomicidade desta RPC seria local e a janela continuaria aberta por outra porta.
 
+## ⛔ A revisão independente BLOQUEOU esta entrega (2026-08-30)
+
+O ritual `/codex` rodou (`gpt-5.6-sol`, xhigh, exit 0) e o veredito foi **BLOQUEAR**, com 4 P1.
+Parecer completo em [`../pareceres/2026-08-30-codex-atomicidade-pedido.md`](../pareceres/2026-08-30-codex-atomicidade-pedido.md).
+**Os achados NÃO estão consertados** — o que está abaixo descreve o desenho, não um desfecho.
+
+O que ele derrubou, em ordem de gravidade:
+
+1. **SKU repetido no estado ATUAL não é detectado** — o guard só olha o conjunto desejado. Medido
+   por mim em prod: **1.179 pares repetidos, 1.049 pedidos Omie vivos**. As duas linhas do mesmo
+   código caem no `UPDATE`, recebem o mesmo conteúdo, nenhuma é deletada, e o cabeçalho é
+   atualizado como se fosse uma linha — **valor duplicado** no Apriori e no cockpit. Pior: o
+   assert `C6` do harness **codificava esse comportamento**, exigindo "filhos antigos + cabeçalho
+   novo" — a revisão MISTA que esta entrega existe para eliminar. O teste protegia o defeito.
+2. **`FOR UPDATE` serializa CHEGADA, não VERSÃO.** O payload não carrega revisão do Omie
+   (`infoCadastro.dAlt/hAlt`), então um run que buscou R1 pode chegar depois de um que publicou R2
+   e **sobrescrever R2 com R1** — atomicamente errado. E o `T3` aceita qualquer uma das revisões,
+   portanto **não prova monotonicidade**. Existe um caminho **(c)** que nem (a) nem (b) enxergavam:
+   (a) + compare-and-set por revisão de origem + identidade de linha (`det.ide.codigo_item`).
+3. **O cabeçalho não é reconciliado declarativamente** — a decisão de atualizar ignora `items` e
+   `subtotal` atuais, então drift só neles nunca é reparado.
+4. **`WHEN OTHERS` mascara classes sistêmicas** (deadlock `40P01`, `40001`, permissão, schema) como
+   "um pedido ruim", e a run sai `complete`.
+
+Mais dois de menor porte: o antídoto temporal do `T1` tem furo (ver o parecer) e há **deadlock
+AB/BA** possível entre lotes com ordem de pedidos divergente — o `T3` testa só duas sessões no
+MESMO pedido, onde não há ciclo.
+
+**A lição de método:** o Codex confirmou o desenho (item 1: "(a) sobre (b) está correta para este
+escopo"; item 2: "as CTEs estão corretas"; itens 8 e 9: tolerância e `search_path` corretos) e
+derrubou a EXECUÇÃO. O auto-challenge (Caminho B) tinha achado um defeito real — mas nenhum destes
+quatro. **Auto-prova cobre o intervalo; não substitui a revisão independente.**
+
 ## Segue aberto (não passou por consertado)
 
 - **O snapshot mensal `carteira-positivacao-snapshot` lê QUATRO fontes em instantes distintos**
