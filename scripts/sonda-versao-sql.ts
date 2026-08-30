@@ -198,6 +198,18 @@ function blocoDisparo(
 }
 
 /**
+ * Piso de respostas 2xx recentes (fora da leva) para o controle de credencial VALER.
+ *
+ * Não é `> 0` por um motivo de denominador: o controle é populacional — ele conclui "o CRON_SECRET
+ * está sendo aceito" a partir de tráfego que passou. Com 1 ou 2 respostas a ausência de 401 não
+ * distingue "secret bom" de "quase ninguém bateu na porta", e o veredito determinado sairia de uma
+ * amostra que não informa. Os ~52 crons que mandam `x-cron-secret` produzem centenas de respostas
+ * por janela de 6h (medido em 2026-08-30: 208 linhas, todas 200); abaixo de 10 o fundo está
+ * anormalmente quieto e a resposta honesta é INDETERMINADO.
+ */
+const PISO_CONTROLE_CREDENCIAL = 10;
+
+/**
  * Bloco de LEITURA e veredito.
  *
  * Parte da lista CANÔNICA (`FROM esperado LEFT JOIN ids`) e não dos ids: invertido, colar o JSON
@@ -209,6 +221,29 @@ function blocoDisparo(
  * ausente é a assinatura do bundle que subiu `index.ts` + `versao.ts` sem o mapa de fingerprints, e
  * ler isso como CONFIRMADO seria o falso POSITIVO que encerra a verificação. Confirmação exige os
  * DOIS campos; a dúvida cai sempre no lado que manda olhar de novo.
+ *
+ * POR QUE O 401 TEM RAMO PRÓPRIO: ele é AMBÍGUO por construção, e os outros 4xx não são. Um 404 diz
+ * "não há edge servida nessa URL"; um 401 pode ser (a) bundle PRÉ-SONDA que ignorou o
+ * `{"probe":true}`, caiu no gate JWT e recusou, ou (b) `CRON_SECRET` ausente/errado no vault, com
+ * `authorizeCronOrStaff` recusando o header. Nos DOIS casos `versao` vem NULL e o status é 401 — o
+ * dado não separa. Ler (b) como (a) manda redeployar uma edge que já está no ar: `ausente ≠ zero`
+ * na dimensão CREDENCIAL, irmão do guard temporal do #2079, onde tick pré-merge lido como pendência
+ * produzia o mesmo falso negativo confiante.
+ *
+ * Então o veredito determinado só sai quando o CONTROLE é observado na MESMA consulta (o CTE
+ * `controle_credencial`): tráfego de fundo recente que PASSOU (≥ piso de 2xx) e NENHUMA recusa 401
+ * fora desta leva provam que o secret do vault está sendo aceito AGORA — logo o 401 é da edge, não
+ * da credencial. Sem essa prova o veredito é INDETERMINADO, nunca "bundle velho": fail-CLOSED,
+ * igual ao `CONTROLE_CRUZADO_NAO_OBSERVADO` do `verify-edge-escrita.sh`. Antes disso a desambiguação
+ * dependia de o operador lembrar de rodar duas consultas à mão (feito assim em 2026-08-30, no
+ * #2101) — e recado que depende de alguém lembrar é exatamente como a armadilha da sentinela
+ * não-exclusiva passou.
+ *
+ * O QUE O CONTROLE NÃO PROVA: ele é populacional — conclui "o secret está sendo aceito" de
+ * tráfego que passou. Não fecha a janela em que o `CRON_SECRET` foi trocado há poucos minutos e
+ * NENHUM cron rodou desde a troca: ali os 2xx da janela foram feitos com o secret antigo e o
+ * controle avaliza indevidamente. O ramo ESTREITA muito o erro (antes ele era incondicional),
+ * não o elimina — e o SQL gerado diz isso ao operador, em vez de deixar a ressalva só no doc.
  */
 function blocoLeitura(leva: EdgeSondada[]): string {
   return (
@@ -217,6 +252,27 @@ function blocoLeitura(leva: EdgeSondada[]): string {
     `  -- ⬅️ COLE AQUI, no lugar do {}, a célula única devolvida pelo passo de disparo.\n` +
     `  SELECT chave AS edge, valor::bigint AS request_id\n` +
     `  FROM jsonb_each_text('{}'::jsonb) AS t(chave, valor)\n` +
+    `),\n` +
+    `controle_credencial AS (\n` +
+    `  -- Controle de CREDENCIAL: o 401 acima é ambíguo (bundle velho × CRON_SECRET inválido) e só\n` +
+    `  -- vira veredito determinado se ESTE bloco provar que o secret do vault está sendo ACEITO\n` +
+    `  -- agora. Lê a MESMA tabela do LEFT JOIN de cima de propósito: não acrescenta superfície de\n` +
+    `  -- permissão nova (se desse 'permission denied' o bloco inteiro já teria falhado), e um\n` +
+    `  -- controle que exige privilégio a mais viraria INDETERMINADO por acidente de ACL.\n` +
+    `  SELECT count(*) FILTER (WHERE r.status_code BETWEEN 200 AND 299) AS ok_recentes,\n` +
+    `         count(*) FILTER (WHERE r.status_code = 401)               AS recusas_recentes\n` +
+    `  FROM net._http_response r\n` +
+    `  WHERE r.created > now() - interval '6 hours'\n` +
+    `    -- A própria leva não pode se avalizar: sem isto, o 401 que estamos julgando entra na\n` +
+    `    -- contagem de recusas e o controle se auto-envenena (nenhum 401 seria explicável nunca).\n` +
+    `    -- NOT EXISTS, não NOT IN: a trava fechada do bloco caro devolve request_id NULL, e\n` +
+    `    -- \`NOT IN\` com NULL é NULL-blind — zeraria o controle inteiro em silêncio.\n` +
+    `    AND NOT EXISTS (SELECT 1 FROM ids i2 WHERE i2.request_id = r.id)\n` +
+    `    -- ⚠️ O que este controle NAO fecha: CRON_SECRET trocado ha poucos minutos E nenhum\n` +
+    `    --    cron rodado desde a troca — o trafego 2xx da janela usou o secret ANTIGO e\n` +
+    `    --    avalizaria indevidamente. Na proxima execucao dos crons isso vira 401 e o\n` +
+    `    --    controle se desqualifica sozinho. Se voce ACABOU de mexer no vault, trate o\n` +
+    `    --    veredito determinado abaixo como INDETERMINADO.\n` +
     `),\n` +
     `lidas AS (\n` +
     `  SELECT e.edge, e.versao_esperada, e.fonte_esperada, i.request_id, r.status_code,\n` +
@@ -237,6 +293,16 @@ function blocoLeitura(leva: EdgeSondada[]): string {
     `           THEN 'SEM ID — esta edge não saiu no JSON colado (bloco errado, ou trava fechada)'\n` +
     `         WHEN l.status_code IS NULL\n` +
     `           THEN 'AGUARDE — a resposta HTTP ainda não chegou (leva ~10s); rode este passo de novo'\n` +
+    `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code = 401\n` +
+    `              AND c.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL} AND c.recusas_recentes = 0\n` +
+    `           THEN 'BUNDLE VELHO (pre-sonda) — 401, e o CRON_SECRET esta PROVADO bom agora (' ||\n` +
+    `                c.ok_recentes || ' resposta(s) 2xx e ZERO 401 fora desta leva em 6h), ' ||\n` +
+    `                'logo a recusa e da EDGE: nada executou'\n` +
+    `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code = 401\n` +
+    `           THEN 'INDETERMINADO — 401 nao separa bundle velho de CRON_SECRET invalido, e o ' ||\n` +
+    `                'controle de credencial NAO foi observado (2xx fora da leva em 6h: ' ||\n` +
+    `                c.ok_recentes || ', recusas 401: ' || c.recusas_recentes || '). Confira o ' ||\n` +
+    `                'CRON_SECRET no vault ANTES de redeployar — nao ha prova de bundle velho aqui'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code >= 400\n` +
     `           THEN 'BUNDLE VELHO — recusou o request (HTTP ' || l.status_code || '), NADA executou'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL\n` +
@@ -253,7 +319,7 @@ function blocoLeitura(leva: EdgeSondada[]): string {
     `              ', edge=' || COALESCE(l.corpo ->> 'edge', '?') ||\n` +
     `              ' (esperado ' || l.versao_esperada || ' / ' || l.fonte_esperada || ')'\n` +
     `       END AS veredito\n` +
-    `FROM lidas l\n` +
+    `FROM lidas l CROSS JOIN controle_credencial c\n` +
     `ORDER BY l.edge;\n`
   );
 }

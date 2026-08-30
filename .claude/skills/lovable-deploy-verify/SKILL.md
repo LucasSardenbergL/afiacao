@@ -458,6 +458,21 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
     a unicidade global se sustentava. Detalhe:
     [`docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md`](../../../docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md).
   - **5 edges já nascem com canária** (#1772): `fin-cashflow-engine`, `omie-cliente`, `omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas` respondem `{"probe":true}` com `{ok,probe:true,versao}` (contrato em `supabase/functions/_shared/sonda-versao.ts`). O eco `probe:true` é **obrigatório** na leitura: bundle ANTERIOR à sonda **ignora o parâmetro e executa o fluxo real** (sync Omie de verdade) — por isso **só sonde DEPOIS do deploy**, e resposta sem o eco já é o veredito "bundle velho, e ele rodou o efeito caro". Invocação sem terminal: bloco `net.http_post` no 🟣 SQL Editor + leitura de `net._http_response` (receita em `docs/agent/deploy.md` §Canárias).
+    🔴 **HTTP 401 na sonda NÃO é veredito — é ambiguidade, e o bloco agora a fecha sozinho
+    (2026-08-30).** Um 401 tem DUAS causas que o dado não separa: (a) bundle **pré-sonda**, que
+    ignorou o `{"probe":true}`, caiu no gate JWT e recusou; ou (b) **`CRON_SECRET` ausente/errado no
+    vault**, com `authorizeCronOrStaff` recusando o header. Nos dois o corpo vem sem `versao` e o
+    status é 401 — e ler (b) como (a) manda redeployar edge que **já está no ar** (`ausente ≠ zero`
+    na dimensão CREDENCIAL, irmão do guard temporal do #2079). O SQL gerado por `bun run sonda:sql`
+    passou a cruzar um **controle de credencial na MESMA consulta** (CTE `controle_credencial`:
+    ≥10 respostas 2xx e ZERO 401 recentes **fora da leva**, em `net._http_response`) e só então
+    emite veredito determinado; sem essa prova responde **INDETERMINADO**, nunca "bundle velho" —
+    fail-CLOSED, igual ao `CONTROLE_CRUZADO_NAO_OBSERVADO` do `verify-edge-escrita.sh`. Isto nasceu
+    de o desempate ter sido feito **à mão, fora da ferramenta**, ao verificar o deploy de
+    `generate-bundle-argument` (#2101): recado que depende de o operador lembrar é exatamente como
+    a armadilha da sentinela não-exclusiva passou. Guardado por `evals/sonda-veredito-401-eval.sh`,
+    o único eval que **EXECUTA** o SQL (Postgres efêmero) — casar string não observa ordem de `WHEN`
+    nem `NULL > 0`, que é onde este ramo erra.
   - ✅ **A exceção que torna a sonda ativa segura ANTES do deploy — e é a única ordem em que ela
     EVITA um deploy, em vez de só confirmá-lo (2026-08-30).** O "só sonde DEPOIS do deploy" acima
     vale enquanto o bundle em prod puder ser ANTERIOR à sonda — aí o probe vira efeito caro. Quando a

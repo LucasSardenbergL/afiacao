@@ -208,6 +208,35 @@ manda olhar de novo. Testes: `scripts/sonda-versao-sql.test.ts` (as falsificaç�
 `WHERE`, o `LEFT JOIN` virado `JOIN`, o marcador/fingerprint hardcoded, o ramo `DEPLOY PARCIAL`
 neutralizado e o `AND fonte = fonte_esperada` dispensado do `DEPLOY CONFIRMADO`.
 
+⚠️ **HTTP 401 é o ÚNICO 4xx ambíguo — tem ramo próprio, e o veredito determinado exige um controle
+de CREDENCIAL cruzado na mesma consulta.** Um 404 diz "não há edge servida nessa URL"; um 401 tem
+DUAS causas que o dado **não separa**: (a) bundle **pré-sonda** que ignorou o `{"probe":true}`, caiu
+no gate JWT e recusou, ou (b) **`CRON_SECRET` ausente/errado no vault**, com `authorizeCronOrStaff`
+recusando o header. Nos dois casos `versao` vem NULL e o status é 401. O ramo antigo (`versao IS NULL
+AND status_code >= 400 → 'BUNDLE VELHO … NADA executou'`) lia os dois como (a): **falso negativo
+confiante**, cujo desfecho é redeployar edge que já está no ar — `ausente ≠ zero` na dimensão
+CREDENCIAL, irmão exato do guard temporal do #2079 (`verify-edge-eco.sh`), onde tick pré-merge lido
+como pendência produzia o mesmo erro. Agora o bloco carrega o CTE `controle_credencial`: conta, em
+`net._http_response` e **excluindo a própria leva** (`NOT EXISTS`, porque `NOT IN` seria NULL-blind
+com a trava fechada), as respostas recentes de 6h — **≥10 2xx e ZERO 401** provam que o secret do
+vault está sendo aceito AGORA, e só então o 401 vira `'BUNDLE VELHO (pre-sonda)'`. Sem essa prova o
+veredito é **`INDETERMINADO`**, nunca "bundle velho": fail-CLOSED, como o
+`CONTROLE_CRUZADO_NAO_OBSERVADO` do `verify-edge-escrita.sh`. O piso não é `> 0` por **denominador**:
+com 1–2 respostas, "nenhum 401" não distingue secret bom de ninguém-bateu-na-porta. Nasceu de o
+desempate ter sido feito **à mão, fora da ferramenta**, ao verificar `generate-bundle-argument`
+(#2101) — ferramenta que depende de o operador lembrar é a armadilha da sentinela não-exclusiva.
+Provado **EXECUTANDO** em `.claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh`
+(Postgres efêmero, 8 cenários + 6 sabotagens): casar string ficaria verde justamente quando a ordem
+dos `WHEN` está errada, e `NULL > 0` não é falso — é NULL.
+
+⚠️ **O que esse controle NÃO fecha — e está escrito no próprio SQL:** ele é **populacional**, conclui
+"o secret está sendo aceito" a partir de tráfego que passou. Se o `CRON_SECRET` foi trocado **há
+poucos minutos** e **nenhum cron rodou desde a troca**, os 2xx da janela foram feitos com o secret
+ANTIGO e o controle avaliza indevidamente. O ramo **estreita** muito o erro (antes ele era
+incondicional), não o elimina; na próxima execução dos crons a recusa vira 401 e o controle se
+desqualifica sozinho. Regra prática: **se você acabou de mexer no vault, leia o veredito determinado
+como INDETERMINADO.**
+
 - ⚠️ **A trava do bloco perigoso tem de ser `CASE`, NÃO `WHERE`.** Quando parte da leva só pode ser sondada
   DEPOIS do deploy confirmado (bundle pré-sensor ignora o `probe` e dispara o run), a tentação é
   `... FROM alvos, guard WHERE guard.confirmei = 'sim'`. **Isso não protege**: o Postgres avalia a projeção

@@ -231,7 +231,7 @@ describe('PASSO 1 — dispara a leva numa tacada', () => {
   });
 });
 
-describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os 5 ramos', () => {
+describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () => {
   const raiz = () => fixture({ 'edge-a': 'v1.0-alfa' });
 
   it('parte de `esperado` e LEFT JOIN nos ids — zero linhas não pode virar "nada a reportar"', () => {
@@ -265,7 +265,7 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os 5 ramos', (
     expect(sql).toMatch(/COALESCE\(r\.content::jsonb -> 'data', r\.content::jsonb\)/);
   });
 
-  it('os 6 ramos de veredito estão nomeados', () => {
+  it('os 8 ramos de veredito estão nomeados', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
     for (const ramo of [
       'SEM ID',
@@ -274,6 +274,8 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os 5 ramos', (
       'DEPLOY PARCIAL',
       'BUNDLE VELHO',
       'PRE-SENSOR',
+      'BUNDLE VELHO (pre-sonda)',
+      'INDETERMINADO',
     ]) {
       expect(sql, `ramo ausente: ${ramo}`).toContain(ramo);
     }
@@ -311,6 +313,49 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os 5 ramos', (
     // O 400 recusou: nada executou → BUNDLE VELHO. Só o 200 sem versao rodou o fluxo real.
     expect(sql).toMatch(/status_code >= 400\s*\n?\s*THEN 'BUNDLE VELHO/);
     expect(sql).toMatch(/THEN 'PRE-SENSOR[^']*RODOU O FLUXO REAL/);
+  });
+
+  // ── 401: o único 4xx AMBÍGUO ────────────────────────────────────────────────────────────────
+  // Estes 5 guardam a ESTRUTURA (ordem dos WHEN, presença do controle). Quem prova a SEMÂNTICA —
+  // que o CASE devolve mesmo o veredito certo, incluindo `NULL > 0` não sendo falso — é
+  // `.claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh`, que EXECUTA este SQL
+  // num Postgres efêmero. Casar string aqui não bastaria: a asserção textual fica verde
+  // exatamente quando a ordem dos ramos está errada.
+  it('401 tem ramo PRÓPRIO e vem ANTES do 4xx genérico — o ambíguo não herda o confiante', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toMatch(/l\.status_code = 401/);
+    // Um WHEN só alcança o que o anterior não pegou: depois do `>= 400` o ramo do 401 seria
+    // inalcançável e o 401 voltaria a sair como 'BUNDLE VELHO' determinado.
+    expect(sql.indexOf('l.status_code = 401')).toBeLessThan(sql.indexOf('l.status_code >= 400'));
+  });
+
+  it('o fallback do 401 é INDETERMINADO — fail-CLOSED, nunca "bundle velho"', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const iIndeterminado = sql.indexOf("THEN 'INDETERMINADO");
+    expect(iIndeterminado).toBeGreaterThan(-1);
+    expect(iIndeterminado).toBeLessThan(sql.indexOf('l.status_code >= 400'));
+  });
+
+  it('o controle de credencial é cruzado na MESMA consulta — não é recado ao operador', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toContain('controle_credencial AS (');
+    expect(sql).toMatch(/FROM lidas l CROSS JOIN controle_credencial c/);
+    expect(sql).toMatch(/count\(\*\) FILTER \(WHERE r\.status_code BETWEEN 200 AND 299\)/);
+    expect(sql).toMatch(/count\(\*\) FILTER \(WHERE r\.status_code = 401\)/);
+    expect(sql).toMatch(/r\.created > now\(\) - interval '6 hours'/);
+  });
+
+  it('o controle não conta a PRÓPRIA leva, e exclui por NOT EXISTS (NOT IN seria NULL-blind)', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toMatch(/AND NOT EXISTS \(SELECT 1 FROM ids i2 WHERE i2\.request_id = r\.id\)/);
+    // A trava fechada do bloco caro devolve request_id NULL; `NOT IN` com NULL zeraria o
+    // controle inteiro em silêncio, e todo 401 viraria INDETERMINADO por acidente.
+    expect(sql).not.toMatch(/r\.id NOT IN \(/);
+  });
+
+  it('o veredito determinado do 401 exige PISO de 2xx E zero recusas — amostra rasa não prova', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toMatch(/c\.ok_recentes >= 10 AND c\.recusas_recentes = 0/);
   });
 
   it('DEPLOY CONFIRMADO exige o eco probe:true E a edge que respondeu, não só a versao', () => {

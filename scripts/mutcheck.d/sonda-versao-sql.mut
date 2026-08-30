@@ -23,5 +23,17 @@ PEGA      | ramo DEPLOY PARCIAL neutralizado (nao dispara) | s/COALESCE\(l\.corp
 PEGA      | CONFIRMADO dispensa o fonte (falso POSITIVO)   | s/AND l\.corpo ->> 'fonte' = l\.fonte_esperada/AND true/
 PEGA      | fingerprint hardcoded em vez de lido do mapa   | s/lit\(e\.fonte\)/lit('0'.repeat(64))/
 PEGA      | edge fora do mapa degrada em vez de lancar     | s/if \(!\(edge in mapa\)\)/if (false)/
+# Os 6 abaixo guardam o ramo do 401 — o UNICO 4xx ambiguo (bundle pre-sonda que caiu no gate JWT
+# x CRON_SECRET invalido no vault). Sem eles a suite aceitava o veredito confiante 'BUNDLE VELHO'
+# para os dois casos, e o desfecho era redeployar edge que ja estava no ar: `ausente != zero` na
+# dimensao CREDENCIAL. A SEMANTICA (o CASE devolvendo mesmo o veredito) e provada EXECUTANDO, em
+# .claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh; aqui mede-se o dente da
+# suite textual, que e o que roda no gate de mutacao.
+PEGA      | 4xx generico perde a cobertura (404 cai no ELSE)       | s/l\.status_code >= 400/l.status_code = 401/
+PEGA      | fallback do 401 deixa de ser INDETERMINADO (fail-open)    | s/THEN 'INDETERMINADO/THEN 'BUNDLE VELHO (pre-sonda)/
+PEGA      | controle nao exclui a propria leva (a sonda se avaliza)   | s/AND NOT EXISTS \(SELECT 1 FROM ids i2 WHERE i2\.request_id = r\.id\)/AND true/
+PEGA      | piso do controle zerado (1 resposta 2xx ja 'prova')       | s/PISO_CONTROLE_CREDENCIAL = 10/PISO_CONTROLE_CREDENCIAL = 0/
+PEGA      | 401 alheio deixa de desqualificar o controle              | s/AND c\.recusas_recentes = 0/AND true/
+PEGA      | controle nao chega na projecao (CROSS JOIN removido)      | s/ CROSS JOIN controle_credencial c//
 SOBREVIVE | timeout 20s -> 30s (valor nao e pinado)    | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
 SOBREVIVE | ORDER BY por posicao (cosmetico)           | s/ORDER BY l\.edge;/ORDER BY 1;/
