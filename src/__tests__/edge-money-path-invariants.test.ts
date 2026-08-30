@@ -2901,35 +2901,33 @@ function blocoAssoc(s: string): string {
 // A QUERY MUDOU DE ARQUIVO (keyset + pedido pai embedado). Ela saiu do `index.ts` para
 // `_shared/itens-com-pedido.ts` pelo motivo do `recommend-leituras.ts`: a edge importa
 // `npm:@supabase/supabase-js@2` e nunca roda sob `--no-remote`, então nada dela era
-// EXECUTÁVEL. Agora existe prova de comportamento (`itens-com-pedido_test.ts`, que roda o
-// DELETE concorrente contra as duas paginações) — e estes gates textuais continuam
-// necessários pelo que a prova de comportamento não cobre: o double não é o PostgREST, então
-// quem garante que a query PEDE `!inner`, a denylist canônica e o `deleted_at` é a forma.
-// Os asserts seguem os mesmos; mudou ONDE cada um olha.
+// EXECUTÁVEL. Hoje existem DUAS provas de comportamento, e elas cobrem metades diferentes:
+// `itens-com-pedido_test.ts` (Deno) prova o lado do CLIENTE — uma única ida ao banco, o parâmetro
+// certo, fail-closed no envelope —, e `db/test-snapshot-universo-itens.sh` (PG17) prova o lado do
+// BANCO, com escrita concorrente real e falsificação. Estes gates textuais continuam necessários
+// pelo que nenhuma das duas cobre: o double não é o PostgREST e o PG17 não vê o TypeScript, então
+// quem garante que o loader não VOLTOU a paginar — e que a denylist que ele manda vem do espelho
+// canônico — é a forma.
 const ASSOC_LOADER = 'supabase/functions/_shared/itens-com-pedido.ts';
 
-// ⚠️ O loader tem DUAS leituras (cockpit e Apriori) e elas se PARECEM: as duas paginam por
-// keyset, as duas embedam `sales_orders!inner`, as duas têm `.gt("id", cursor)`. Medir o
-// ARQUIVO inteiro deixa uma satisfazer o assert da outra — furo pego na falsificação: apagar
-// o `.gt(cursor)` do Apriori mantinha o gate VERDE porque o trecho do cockpit casava. É o
-// §"o DETECTOR mente" na forma mais barata de acontecer. Cada assert mede o BLOCO da sua
-// função. (A exceção deliberada é `.range(`, medido no arquivo TODO: nenhuma das duas pode
-// paginar por offset, e ali um falso positivo do vizinho é o desfecho que se quer.)
-// Recorta a fatia APRIORI do loader: a constante com o `.select()` MAIS a função que a usa.
-// A constante precisa entrar — as colunas e o `!inner` moram nela, e um recorte que começasse
-// na função mediria um bloco sem a string que ele afirma (falso VERMELHO pego na
-// falsificação, logo depois do falso VERDE que motivou o recorte).
+// Recorta a fatia APRIORI do loader. Antes a âncora era `const COLUNAS_APRIORI` (a string do
+// `.select()`); com a paginação removida, a única âncora que resta é a própria função.
+//
+// ⚠️ O recorte continua sendo por BLOCO e não pelo arquivo, pelo mesmo furo pego na falsificação
+// da entrega anterior: o loader tem DUAS leituras que se PARECEM (as duas chamam uma RPC-snapshot,
+// as duas validam o mesmo envelope), então medir o arquivo inteiro deixa uma satisfazer o assert
+// da outra. É o §"o DETECTOR mente" na forma mais barata de acontecer. (As exceções deliberadas
+// são os asserts de AUSÊNCIA — `.range(`, `.from(`, `fetchAll` —, medidos no arquivo TODO: nenhuma
+// das duas leituras pode paginar, e ali um falso positivo do vizinho é o desfecho que se quer.)
 function blocoApriori(fonte: string): string {
-  const i = fonte.indexOf('const COLUNAS_APRIORI');
-  if (i < 0) throw new Error('COLUNAS_APRIORI não encontrada no loader (âncora quebrada)');
-  const j = fonte.indexOf('export async function carregarItensApriori(', i);
-  if (j < 0) throw new Error('carregarItensApriori não vem depois de COLUNAS_APRIORI (âncora quebrada)');
-  const resto = fonte.slice(j);
+  const i = fonte.indexOf('export async function carregarItensApriori(');
+  if (i < 0) throw new Error('carregarItensApriori não encontrada no loader (âncora quebrada)');
+  const resto = fonte.slice(i);
   const fim = resto.slice(1).search(/\nexport (async function|interface|const) /);
-  return fonte.slice(i, j) + (fim < 0 ? resto : resto.slice(0, fim + 1));
+  return fim < 0 ? resto : resto.slice(0, fim + 1);
 }
 
-describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de 1.000)', () => {
+describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas, num único instante', () => {
   it('a leitura delega ao loader compartilhado — nunca uma chamada single-shot', () => {
     const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
 
@@ -2951,58 +2949,62 @@ describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de
     ).toBe(false);
   });
 
-  it('pagina por KEYSET — offset desloca sob o hard DELETE de sync-reprocess', () => {
+  it('NÃO pagina: a leitura é uma RPC-snapshot, e é a ausência de páginas que fecha a cesta rasgada', () => {
     const arquivo = removerComentarios(read(ASSOC_LOADER));
     const loader = blocoApriori(arquivo);
 
-    // `.range()` NÃO pode existir neste loader: é o offset que pula linha viva quando um
-    // DELETE encolhe a tabela no meio da leitura (contagem fechando, identidade trocada).
+    // Os três são asserts de AUSÊNCIA sobre o arquivo TODO, e cada um tapa uma porta distinta de
+    // volta ao defeito. A cesta rasgava porque a leitura atravessava VÁRIAS transações: irmãos do
+    // mesmo pedido caem em páginas diferentes, e o pai que muda de estado no meio elimina uns e
+    // deixa outros. Qualquer forma de multi-ida reabre isso — não só `.range()`.
     expect(
       arquivo.includes('.range('),
-      'o loader voltou ao offset — é ELE que pula a linha viva sob DELETE concorrente',
+      'o loader voltou ao offset — multi-ida, e a cesta volta a rasgar entre as idas',
     ).toBe(false);
     expect(
-      /fetchAllKeyset</.test(loader),
-      'a leitura parou de delegar a fetchAllKeyset',
-    ).toBe(true);
-    // As três metades do keyset andam juntas: sem `.order()` ascendente na MESMA coluna do
-    // cursor, `.gt()` é keyset sobre ordem arbitrária — e o `id` precisa estar PROJETADO,
-    // porque o `.select()` é string e o typecheck não vê a falta.
+      /fetchAll(Keyset)?</.test(arquivo),
+      'o loader voltou a paginar — keyset conserta o deslocamento, mas NÃO a consistência do pedido',
+    ).toBe(false);
     expect(
-      /\.order\("id",\s*\{\s*ascending:\s*true\s*\}\)/.test(loader),
-      'sumiu o .order("id") ascendente — a chave é a PK de order_items, e é ELA que estabiliza',
-    ).toBe(true);
+      /\bdb\.from\(/.test(arquivo),
+      'o loader voltou a ler tabela direto — a leitura tem de passar pela RPC-snapshot',
+    ).toBe(false);
+    // E o assert POSITIVO correspondente: pinar só a ausência deixaria passar um loader que não
+    // lê nada. É o §9 — "quando o que defende é a CHAMADA, pine a chamada".
     expect(
-      /\.gt\("id",\s*cursor\)/.test(loader),
-      'sumiu o filtro do cursor — sem ele a página seguinte recomeça do começo',
-    ).toBe(true);
-    expect(
-      /"id, sales_order_id, product_id/.test(loader),
-      '`id` saiu do .select() do Apriori — sem a coluna projetada não existe cursor',
+      /lerSnapshot\(\s*db,\s*"apriori_universo_snapshot"/.test(loader),
+      'a leitura do Apriori parou de chamar a RPC-snapshot',
     ).toBe(true);
   });
 
-  it('filtra o universo pela denylist da autoridade + deleted_at (paridade com useBundleEngine)', () => {
+  it('o envelope da RPC é CONFERIDO — `total` do banco contra o array que chegou', () => {
+    const arquivo = removerComentarios(read(ASSOC_LOADER));
+
+    // Sem paginação não há mais o guard de página curta, e o cap de 1.000 do PostgREST vale
+    // também para `.rpc()`. O que substitui aquela defesa é a conferência do envelope: o banco
+    // diz quantos itens produziu, e o cliente compara com o que chegou. Um loader que ignore
+    // `total` volta a poder seguir com um pedaço achando que é o todo.
+    expect(
+      /total !== envelope\.itens\.length/.test(arquivo),
+      'sumiu a conferência de `total` contra o array — a truncagem no transporte volta a ser silenciosa',
+    ).toBe(true);
+    expect(
+      /SNAPSHOT_TRUNCADO/.test(arquivo),
+      'a truncagem perdeu o código próprio — vira "falhou", que manda o operador caçar a coisa errada',
+    ).toBe(true);
+  });
+
+  it('manda a denylist da autoridade para a RPC (nunca uma literal local)', () => {
     const loader = blocoApriori(removerComentarios(read(ASSOC_LOADER)));
 
-    // A denylist NÃO pode ser literal aqui: literal é como a 3ª cópia divergiu
-    // (`mapas-paginados.ts` citava 3 dos 4 status). Tem de vir do espelho canônico.
-    //
-    // ⚠️ Pinar só o NOME da constante era guard frouxo (achado do challenge Codex xhigh):
-    // daria para apagar o `.not(…)` inteiro e deixar a constante num uso decorativo que
-    // mantém o assert VERDE. É o §9 — "gate de forma não protege a ESCOLHA"; quando o que
-    // defende é a CHAMADA, pine a chamada. Aqui: a constante DENTRO do `.not` do status.
+    // ⚠️ Pinar só o NOME da constante é guard frouxo (achado do challenge Codex xhigh): daria para
+    // deixá-la num uso decorativo e mandar outra coisa para o banco. Quando o que defende é a
+    // CHAMADA, pine a chamada — aqui, a constante DENTRO do argumento nomeado da RPC. O filtro em
+    // si mudou de lugar: ele agora é aplicado no SQL da função, que ainda por cima REJEITA uma
+    // denylist divergente da canônica dela.
     expect(
-      /\.not\(\s*"sales_orders\.status"\s*,\s*"in"\s*,\s*STATUS_NAO_VENDA_POSTGREST\s*\)/.test(loader),
-      'o filtro de status saiu, ou a denylist deixou de vir do espelho canônico',
-    ).toBe(true);
-    expect(
-      loader.includes('sales_orders!inner('),
-      'sumiu o !inner — sem o join o filtro de status do PAI não é aplicado a nada',
-    ).toBe(true);
-    expect(
-      /\.is\("sales_orders\.deleted_at",\s*null\)/.test(loader),
-      'sumiu o deleted_at IS NULL — é a METADE do contrato do universo, anda junto com a denylist',
+      /p_status_nao_venda:\s*STATUS_NAO_VENDA\b/.test(loader),
+      'a denylist deixou de ir para a RPC vinda do espelho canônico',
     ).toBe(true);
   });
 
@@ -3010,7 +3012,7 @@ describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de
     const loader = removerComentarios(read(ASSOC_LOADER));
 
     expect(
-      /import\s*\{[^}]*STATUS_NAO_VENDA_POSTGREST[^}]*\}\s*from\s*"\.\/universo-pedidos\.ts"/.test(loader),
+      /import\s*\{[^}]*STATUS_NAO_VENDA[^}]*\}\s*from\s*"\.\/universo-pedidos\.ts"/.test(loader),
       'a constante deixou de vir de _shared/universo-pedidos.ts',
     ).toBe(true);
     expect(

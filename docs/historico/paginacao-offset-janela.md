@@ -389,12 +389,7 @@ por consertado: por isso ele tem teste com dente, e está listado abaixo como AB
 
 ### Segue aberto (não passou por consertado)
 
-- **CESTA RASGADA entre páginas** (acima). Correção: materializar o universo em snapshot
-  imutável dentro de uma transação/RPC e paginar a materialização, **ou** um version fence
-  global que ABORTE a leitura se um writer relevante atuar durante ela. Agregar por
-  `sales_order_id` evita a cesta partida mas **não** produz snapshot global — não confundir os
-  dois. Vale para os dois consumidores (Apriori e cockpit), e fica LATENTE em
-  `carregarPedidosDoMes` para quando um mês passar de 1.000 pedidos.
+- ~~**CESTA RASGADA entre páginas**~~ — **FECHADA em 2026-08-30**, ver a seção abaixo.
 - **`fetchAllKeyset` não tem orçamento** de páginas/linhas/deadline: escrita sustentada pode
   mantê-lo vivo até o timeout externo. Intocado por esta entrega.
 - **P2 do JSON pré-auth** (#1882): body inválido anônimo virou 400 e body grande é
@@ -402,3 +397,119 @@ por consertado: por isso ele tem teste com dente, e está listado abaixo como AB
 - **Os doubles não são o PostgREST.** A suíte prova a TRADUÇÃO (cursor, ordem, filtros por
   página, erro que lança) e o COMPORTAMENTO sob mutação simulada. Não prova gateway, RLS,
   réplica, nem que `!inner` sobre `sales_orders` mantém o plano sob volume em prod.
+
+## A CESTA RASGADA fechada (2026-08-30) — e a pendência MAIOR que ela escondia
+
+**O conserto.** A paginação DESAPARECEU dos dois consumidores. Cada leitura passou a ser uma
+chamada a uma RPC (`apriori_universo_snapshot`, `cockpit_itens_snapshot`) que devolve o universo
+inteiro construído por **uma única query SQL** — e uma statement enxerga **um** snapshot MVCC. Pai
+e filhos, e todos os pedidos entre si, vêm do mesmo instante por CONSTRUÇÃO. Fecha junto o recall
+recente (não há mais cursor para uma linha nascer atrás dele) e a falta de orçamento de páginas do
+`fetchAllKeyset`, os dois nomeados acima.
+
+**Dos três caminhos que o parecer nomeou, o escolhido foi (a) — mas numa variante que ele não
+nomeou: sem materializar tabela e sem paginar a materialização.** Paginar uma materialização
+exigiria tabela real + `snapshot_id` + GC, isto é, ESCRITA a cada leitura, para reconquistar uma
+consistência que a query única já dá. O (b) (version fence) foi rejeitado por ser garantia
+CONDICIONAL — detecta e aborta, com o furo A→B→A e dependência de `created_at` como proxy de
+visibilidade — a um custo maior de código e prova. O (c) sozinho segue sendo o que o parecer disse
+que era.
+
+### A regra que sai daqui: consistência não pode depender de QUALIFICADOR
+
+Uma função `STABLE` de fato executa suas sub-queries no snapshot da query chamadora, e teria
+bastado. **Não foi usada assim de propósito.** Pendurar a garantia no `STABLE` a deixaria à mercê
+de um `CREATE OR REPLACE` futuro que o omita — o qualificador volta ao default `VOLATILE` e a
+consistência cai **sem erro nenhum**. É exatamente a armadilha do `WITH (security_invoker=on)` que
+o CLAUDE.md já registra, por outra porta. Por isso: **exatamente uma query toca as tabelas**, e
+tudo o mais (contagem, medição, tetos) opera sobre o `jsonb` já materializado.
+
+Isso não é teoria: `db/test-snapshot-universo-itens.sh` aplica a migration REAL com uma única troca
+— `STABLE` → `VOLATILE` — e exige que o resultado siga correto sob escrita concorrente. Passou
+(`N=2 DUR=3.99 SOBREP=SIM`).
+
+### A prova (PG17, 35 asserts, falsificação — `db/test-snapshot-universo-itens.sh`)
+
+O caso central é uma corrida REAL, não uma simulação: um writer cancela o pai **enquanto** a RPC
+executa, e o teste **exige a sobreposição temporal** (`T0 < TW < T1`) — se o commit não cair dentro
+da janela de execução, ele FALHA por "cenário sem dente" em vez de passar de graça. Resultados:
+
+| assert | desfecho |
+|---|---|
+| D1 — a leitura PAGINADA, com writer entre as páginas | **rasga**: 1 de 2 irmãos (o cenário tem dente) |
+| D2b — a RPC, com writer commitando DURANTE a execução | **inteira**: `N=2 DUR=4.07 SOBREP=SIM` |
+| E1 — a mesma RPC marcada `VOLATILE` | **inteira**: a garantia é da query única |
+| F3 — a RPC sabotada em DUAS queries + `pg_sleep` | **rasga**: `N=1` (a alternativa recusada, medida) |
+
+Três lições de harness, todas de falsos-verdes pegos aqui:
+- **`anon` barrado pelo motivo errado.** Sem `GRANT SELECT` nas tabelas stub, `anon` era barrado por
+  não enxergar `order_items` — o assert dizia "o REVOKE funciona" sem nunca ter exercitado o REVOKE.
+- **Sabotagem que contamina o assert vizinho não prova o vizinho.** Juntar as duas falsificações num
+  `sed` só fazia a inversão do comparador (F1) rejeitar a denylist canônica que F2 usa; o assert
+  acusou "o teto seguiu barrando", diagnóstico que aponta para o lugar errado. Uma sabotagem por
+  arquivo.
+- **`mktemp` com sufixo é BSD×GNU.** `mktemp /tmp/x.XXXXXX.sql` cria o nome LITERAL no macOS e a 2ª
+  execução morre com "File exists". Os X vão no FIM.
+
+### O erro de medição que o challenge pegou — e que teria ido para o PR
+
+A primeira versão desta entrega afirmava **2,8 MB** para o universo do Apriori. Estava errado: o
+número veio de `jsonb_agg(product_id)` agrupado **por pedido**, e a RPC devolve **um objeto por
+item**, repetindo `sales_order_id` e as chaves JSON. O real, medido com a forma EXATA que a função
+devolve, é **10.501.344 bytes — 3,7x maior**. A lição não é "medir": é que **medir uma forma
+PARECIDA não é medir**, e o número errado já estava escrito no comentário da migration com cara de
+evidência. Números finais (psql-ro, 2026-08-30):
+
+| | itens | bytes | tempo |
+|---|---|---|---|
+| Apriori | 68.692 | 10.501.344 (10,5 MB) | 752 ms server-side |
+| cockpit TTM | 14.628 | 6.345.896 (6,3 MB) | — |
+
+Contra 256 MB de heap da Edge e um `statement_timeout` de no máximo 60 s: folga de ~25x em memória
+e ~80x em tempo. (A forma de CESTAS agrupadas sairia em 5.629.734 bytes, −46%; ficou de fora de
+propósito — agrupar mudaria `agruparCestasPorSegmento`, e esta entrega é de TRANSPORTE.)
+
+### O que mais o challenge derrubou
+
+- **Teto contornável não é teto.** `p_teto_bytes` era um parâmetro que o chamador podia AFROUXAR.
+  Agora os dois tetos passam por `least(...)` contra um máximo interno (500k linhas / 32 MiB).
+- **Denylist "não-vazia e sem NULL" não bastava.** Uma lista que OMITA `cancelado` passaria nessas
+  checagens e produziria um universo com pedido cancelado dentro — regra de associação publicada
+  sobre o que não é venda, **sem erro nenhum**. A função agora exige **igualdade de CONJUNTO** com a
+  sua cópia canônica. Isso promove a paridade TS↔SQL de guard de teste a **invariante executável em
+  produção**. (E tem contrapeso: B9 prova que reordenar a lista no TS não quebra a leitura.)
+- **O fusível de cardinalidade precisa agir ANTES do `jsonb_agg`.** Resolvido sem abrir mão da query
+  única: `LIMIT n+1` na subquery. O `+1` é o que separa "couberam exatamente n" de "havia mais" —
+  sem ele, `n` linhas seriam indistinguíveis de truncagem.
+- **O guard de "2ª página" em `carregarPedidosDoMes` foi ABANDONADO.** A ideia era LANÇAR se a
+  leitura precisasse de uma segunda página. É bomba-relógio disfarçada de fusível: com 1.000 linhas
+  não dá para distinguir "existem exatamente 1.000" de truncamento, ele derrubaria o teste que
+  espera 2.300 pedidos (`mapas-paginados_test.ts`), e — o que decide — o snapshot mensal lê QUATRO
+  fontes em momentos distintos, então "uma página é atômica" seria verdade para uma delas e falso
+  para o snapshot publicado.
+
+### Segue aberto (não passou por consertado)
+
+- **ATOMICIDADE LÓGICA DO PEDIDO — a pendência que a cesta rasgada escondia.** A garantia entregue é
+  de LEITURA: tudo que volta pertence a um instante do banco. Isso **não** é uma revisão
+  logicamente completa do pedido, porque **o writer não é atômico**: `sync-reprocess` reparte a
+  reconciliação em VÁRIAS transações (itens numa, remoção dos velhos noutra, cabeçalho depois).
+  Existe portanto um instante REAL e commitado em que o pedido está meio-reconciliado — e o
+  snapshot vai lê-lo corretamente, **porque ele existiu**. A distinção é o coração do assunto: a
+  cesta rasgada era um estado que **nunca** existiu (artefato da paginação); este EXISTIU.
+  Correção: atomizar a ESCRITA — RPC de escrita por pedido, ou `order_revision` imutável com troca
+  de ponteiro `published_revision` no fim. **O teste que ela exige** (e que nenhum teste atual
+  cobre): duas sessões, a B commitando só PARTE dos itens novos e pausando antes de remover os
+  velhos e atualizar o cabeçalho; a A chama a RPC; exigir revisão antiga completa **ou** nova
+  completa, nunca mistura. A entrega atual FALHA nesse teste, e isso está dito.
+- **O snapshot mensal (`carteira-positivacao-snapshot`) lê QUATRO fontes em instantes distintos**
+  (assignments, pedidos, contatos, visitas) e persiste em lotes de 500 em transações separadas,
+  continuando após erro. `carregarPedidosDoMes` seguir consistente consigo não torna o snapshot
+  publicado consistente. Intocado por esta entrega.
+- **O tamanho máximo de RESPOSTA do gateway da Supabase não é documentado publicamente.** Os tetos
+  são conservadores por causa disso, e o payload é medido, não estimado — mas "não documentado" não
+  é "sem limite".
+- **Os doubles não são o PostgREST.** A suíte Deno prova o lado do cliente; o PG17 prova o lado do
+  banco. Nenhum dos dois prova o gateway, RLS em produção, nem o comportamento de um `jsonb` de
+  10,5 MB atravessando o Data API real.
+- **P2 do JSON pré-auth** (#1882). Intocado.

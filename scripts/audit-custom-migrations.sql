@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 501
+-- Total de custom migrations: 502
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -542,7 +542,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260828224542', 'ia_uso_limite_generate_bundle_argument', '20260828224542_ia_uso_limite_generate_bundle_argument.sql'),
   ('20260829012000', 'analytics_outbox_perda_visivel', '20260829012000_analytics_outbox_perda_visivel.sql'),
   ('20260829041500', 'analytics_outbox_trigger_sensor', '20260829041500_analytics_outbox_trigger_sensor.sql'),
-  ('20260829081556', 'sales_orders_hash_omie_canonico', '20260829081556_sales_orders_hash_omie_canonico.sql')
+  ('20260829081556', 'sales_orders_hash_omie_canonico', '20260829081556_sales_orders_hash_omie_canonico.sql'),
+  ('20260830123820', 'snapshot_atomico_universo_itens', '20260830123820_snapshot_atomico_universo_itens.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2254,7 +2255,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_master_read', 'analytics_outbox_perda'),
   ('analytics_outbox_trigger_sensor', 'function', 'public', '_data_health_compute', ''),
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'data_health_watchdog', ''),
-  ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
+  ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4014,7 +4017,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_outbox_perda_visivel', 'rls_policy', 'public', 'analytics_outbox_perda_master_read', 'analytics_outbox_perda'),
   ('analytics_outbox_trigger_sensor', 'function', 'public', '_data_health_compute', ''),
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'data_health_watchdog', ''),
-  ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
+  ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', '')
 )
 SELECT
   e.migration,
