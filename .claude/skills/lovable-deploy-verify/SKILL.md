@@ -154,12 +154,17 @@ estavam certos para a pergunta errada. Feche o closure, sempre:
 # imports locais de 1º nível — repita em cada arquivo alcançado até não achar mais
 grep -oE 'from "\.\.?/[^"]+"' supabase/functions/<edge>/index.ts | sort -u
 # algum deles é import NOVO nesta edge? (resposta POSITIVA no diff, nunca de memória)
-git show <sha-do-merge> -- supabase/functions/<edge>/index.ts | grep -E '^\+.*from "\.\.'
+# UM ponto só no padrão: `\.\.` perderia `from "./helper.ts"` — e 41 dos 96 diretórios de edge
+# importam assim, o mesmo ponto cego que este bloco existe para fechar (medido 2026-08-30)
+git show <sha-do-merge> -- supabase/functions/<edge>/index.ts | grep -E '^\+.*from "\.'
 ```
 
 ⚠️ E some ao closure o **mapa** `_shared/sonda-fingerprints.ts`: a `fecharGrafo()` do gerador o exclui
-de propósito (senão o hash se auto-referenciaria), então ele **nunca** aparece no closure — e ainda
-assim precisa ir no deploy, porque é ele que alimenta o campo `fonte`. **Fatia = closure ∪ {mapa}.**
+de propósito (senão o hash se auto-referenciaria) — e ainda assim precisa ir no deploy, porque é ele
+que alimenta o campo `fonte`. **Fatia = closure ∪ {mapa}.** ⚠️ Isso vale para quem derive a lista da
+`fecharGrafo()` ou do campo `fonte`; o `grep` acima, seguido até o fim, **alcança** o mapa por
+`versao.ts` → `_shared/sonda-versao.ts` → `./sonda-fingerprints.ts`. Achar o mapa ali é o esperado, não
+sinal de que você errou o procedimento (medido 2026-08-30, auditando este bloco).
 
 🔴 **E o closure sobre QUAL intervalo? O `<sha>` do PR nomeado é a pergunta ERRADA — a fatia tem
 eixo TEMPO (2026-08-30, #2123).** O `--name-status <sha>` responde *"o que aquele commit tocou"*; o
