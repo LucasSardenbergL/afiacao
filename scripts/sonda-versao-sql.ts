@@ -19,6 +19,19 @@
  * num money-path, a classe estritamente pior, porque ENCERRA a verificação. É o `fonte` bater que
  * prova deploy VERBATIM — ele hasheia o fecho transitivo dos imports locais, não a disciplina de
  * quem bumpou o marcador (#1998; validado ponta-a-ponta em prod no #2018).
+ *
+ * POR QUE A LEITURA NÃO PEDE MAIS O `request_id`: o SQL tinha dois blocos e um `jsonb_each_text('{}')`
+ * onde o operador colava, na mão, o JSON devolvido pelo disparo. A colagem que não acontece produz um
+ * veredito que se LÊ como problema de deploy — em 2026-08-30, verificando `generate-bundle-argument`,
+ * o disparo tinha funcionado (4 respostas HTTP 200) e a leitura devolveu "SEM ID — esta edge não saiu
+ * no JSON colado". Honesto, e ainda assim um round-trip inteiro com o founder por um deploy que já
+ * estava no ar. A resposta da sonda carrega o slug no próprio corpo, então a leitura acha a linha
+ * sozinha; o detalhe (e os dois guards que isso exige) está em `blocoLeitura`.
+ *
+ * A DIVISÃO DE TRABALHO que sai daí: só o DISPARO precisa do founder — ele lê `vault.decrypted_secrets`
+ * e faz INSERT via `net.http_post`, e o wrapper read-only recusa os dois. A leitura é SELECT em
+ * `net._http_response`, que o `psql-ro` serve, então o agente lê o veredito sem intermediário.
+ * `--so-disparo` e `--so-leitura` recortam exatamente nessa fronteira.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -133,6 +146,39 @@ export interface OpcoesLeva {
    * ERP, pedido no portal do fornecedor). O disparo delas sai em bloco separado, com trava.
    */
   caras?: string[];
+  /** Janela do guard temporal da leitura, em minutos. Ver `JANELA_PADRAO_MIN`. */
+  janelaMin?: number;
+  /** Emite SÓ os blocos de disparo — o recorte que o founder cola no SQL Editor. */
+  soDisparo?: boolean;
+  /** Emite SÓ os blocos de leitura — o recorte que o agente roda no `psql-ro`. */
+  soLeitura?: boolean;
+}
+
+/**
+ * Janela do guard temporal, e por que ela tem TETO.
+ *
+ * O piso e o teto são o guard do #2079 em forma executável: a leitura casa a resposta pelo ECO do
+ * slug, então uma sondagem ANTIGA da mesma edge — o `pg_net.ttl` guarda 6h — seria lida como
+ * veredito de agora se a janela fosse larga. Janela maior que o teto não é "mais tolerante", é o
+ * guard desligado; quem quer olhar a janela inteira do TTL já tem a ferramenta certa, que é a irmã
+ * PASSIVA (`bun run pendencias:deploy`), e ela sabe que "não observada" ≠ "confere".
+ */
+const JANELA_PADRAO_MIN = 20;
+const JANELA_MAX_MIN = 120;
+
+/** Valida a janela ou LANÇA — nunca degrada para o padrão, que é o guard escolhendo sozinho. */
+function validarJanela(janelaMin: number | undefined): number {
+  if (janelaMin === undefined) return JANELA_PADRAO_MIN;
+  if (!Number.isInteger(janelaMin) || janelaMin < 1 || janelaMin > JANELA_MAX_MIN) {
+    throw new Error(
+      `--janela precisa ser um inteiro de 1 a ${JANELA_MAX_MIN} minutos (recebi ${janelaMin}). ` +
+        'A janela CURTA é o guard que impede uma sondagem antiga de virar veredito de agora ' +
+        '(#2079); afrouxá-la sem teto é desligá-lo. Para varrer a janela inteira do pg_net.ttl ' +
+        'use `bun run pendencias:deploy`, que trata "não observada" como ausência de dado. ' +
+        'Nenhum SQL foi emitido.',
+    );
+  }
+  return janelaMin;
 }
 
 /** Literal SQL entre aspas simples, com escape. */
@@ -166,9 +212,14 @@ function httpPost(ref: string, indent: string): string {
 }
 
 /**
- * Bloco de DISPARO. O id e o nome da edge saem agregados na MESMA execução
- * (`jsonb_object_agg`): é o que impede o `request_id` de viajar sozinho e ser copiado para a linha
- * da edge errada.
+ * Bloco de DISPARO — o único que precisa do founder: lê `vault.decrypted_secrets` e faz INSERT via
+ * `net.http_post`, e o wrapper read-only recusa os dois (`permission denied for schema vault` e
+ * `cannot execute INSERT in a read-only transaction`, provado 2026-08-30).
+ *
+ * O id e o nome da edge saem agregados na MESMA execução (`jsonb_object_agg`): é o que impede o
+ * `request_id` de viajar sozinho e ser copiado para a linha da edge errada. Desde que a leitura
+ * casa pelo ECO do slug, esse JSON deixou de ser INSUMO e virou ESCAPE: só quem cai em
+ * INDETERMINADO por (c) — PRE-SENSOR ou recusa HTTP, que não ecoam — precisa dele.
  */
 function blocoDisparo(
   ref: string,
@@ -192,7 +243,7 @@ function blocoDisparo(
     `  SELECT a.edge,\n` +
     projecao +
     `)\n` +
-    `SELECT jsonb_object_agg(edge, request_id)::text AS cole_no_passo_${passoLeitura}\n` +
+    `SELECT jsonb_object_agg(edge, request_id)::text AS ids_opcionais_passo_${passoLeitura}\n` +
     `FROM disparos;\n`
   );
 }
@@ -210,13 +261,39 @@ function blocoDisparo(
 const PISO_CONTROLE_CREDENCIAL = 10;
 
 /**
- * Bloco de LEITURA e veredito.
+ * Bloco de LEITURA e veredito. NÃO exige colar `request_id` nenhum.
  *
- * Parte da lista CANÔNICA (`FROM esperado LEFT JOIN ids`) e não dos ids: invertido, colar o JSON
- * do bloco errado devolve ZERO linhas — e zero linhas lê-se como "nada a reportar", não como erro.
- * Mesmo motivo do `LEFT JOIN` contra `net._http_response`: sem ele, "a resposta ainda não chegou"
- * e "veredito negativo" ficam indistinguíveis.
+ * COMO ELE ACHA A LINHA SOZINHO: a resposta da sonda ecoa o próprio slug —
+ * `criarRespostaSonda` (`_shared/sonda-versao.ts`) devolve `{ok, probe, versao, edge, fonte}`. Então
+ * a leitura procura, na janela, a resposta que diz ser desta edge. O `request_id` viajava de um
+ * passo para o outro NA MÃO do operador, e a colagem que não acontece produz veredito que se LÊ
+ * como problema de deploy: em 2026-08-30, verificando `generate-bundle-argument`, o disparo tinha
+ * funcionado (4 respostas HTTP 200) e o veredito saiu "SEM ID — esta edge não saiu no JSON colado
+ * (bloco errado, ou trava fechada)". Honesto, mas custou um round-trip inteiro com o founder por um
+ * deploy que já estava no ar.
  *
+ * O CASAMENTO EXIGE `probe = 'true'`, NÃO SÓ O SLUG. Medido em prod no mesmo dia: a
+ * `analytics-outbox-drain` gravou 72 respostas em 6h com `{"edge":…,"versao":…}` e SEM `probe` — é o
+ * cron dela, de 5 em 5 minutos — contra 5 respostas de sonda. Casando só pelo slug, o `LIMIT 1`
+ * escolhe a linha do CRON, cujo `probe` é nulo, e o veredito cai no ELSE: "BUNDLE VELHO" citando a
+ * versão CERTA. Falso NEGATIVO gerado pela linha de OUTRA execução — e o desfecho é redeployar edge
+ * à toa. O `probe:true` é o que separa "resposta a uma SONDA" de "resposta a um run real".
+ *
+ * A JANELA É OBRIGATÓRIA (guard do #2079): sem ela, uma resposta de sondagem ANTIGA — a mesma edge
+ * respondeu ontem, e o `pg_net.ttl` guarda 6h — seria lida como veredito de AGORA. E o desempate por
+ * `id` não é enfeite: em prod as respostas 64031 e 64032 têm `created` idêntico ao microssegundo,
+ * então `ORDER BY created DESC` sozinho deixa a escolha para o plano, não para o dado.
+ *
+ * O QUE O ECO NÃO ALCANÇA, e por isso o `ids` sobrevive como OPCIONAL: bundle PRÉ-SENSOR (HTTP 200
+ * rodando o fluxo real) e recusa HTTP (>=400) respondem SEM eco do slug — são invisíveis para esta
+ * busca, e caem em INDETERMINADO. Contar as respostas sem eco na janela NÃO os identifica: a janela
+ * é cheia de cron alheio (72 linhas de uma edge só, acima). Quem separa é o `request_id` do disparo,
+ * e é só para isso que a colagem continua existindo.
+ *
+ * Ausência de linha ⇒ INDETERMINADO explícito, NUNCA "bundle velho": é ausência de dado, e o ramo
+ * nomeia as três causas que ele não distingue em vez de escolher uma. Mesmo motivo do
+ * `LEFT JOIN LATERAL … ON true` e de partir da lista CANÔNICA: a consulta devolve SEMPRE uma linha
+ * por edge esperada, porque zero linhas se lê como "nada a reportar", não como "não achei".
  * O ramo DEPLOY PARCIAL vem ANTES do de confirmação de propósito: `versao` certo com `fonte`
  * ausente é a assinatura do bundle que subiu `index.ts` + `versao.ts` sem o mapa de fingerprints, e
  * ler isso como CONFIRMADO seria o falso POSITIVO que encerra a verificação. Confirmação exige os
@@ -244,12 +321,34 @@ const PISO_CONTROLE_CREDENCIAL = 10;
  * NENHUM cron rodou desde a troca: ali os 2xx da janela foram feitos com o secret antigo e o
  * controle avaliza indevidamente. O ramo ESTREITA muito o erro (antes ele era incondicional),
  * não o elimina — e o SQL gerado diz isso ao operador, em vez de deixar a ressalva só no doc.
+ *
+ * ⚠️ A EXCLUSÃO DA PRÓPRIA LEVA DEPENDE DO `ids`, QUE AGORA NASCE VAZIO. O controle exclui as
+ * respostas desta leva por `NOT EXISTS (… ids …)`; sem a colagem, `ids` não tem linha nenhuma e o
+ * 401 que estamos julgando ENTRA em `recusas_recentes` — o controle se auto-desqualifica e o
+ * veredito é INDETERMINADO. Isso é fail-CLOSED (a direção segura: nunca produz "bundle velho"
+ * confiante), mas torna o veredito DETERMINADO do 401 inalcançável pelo caminho sem colagem. Não
+ * dá para consertar excluindo a janela da sonda do controle: as recusas 401 recentes dos crons —
+ * justamente a prova de secret quebrado AGORA — sairiam junto, e o erro viraria fail-OPEN. Então a
+ * colagem é o que UPGRADE um 401 ambíguo a veredito determinado, exatamente como é a saída da
+ * causa (c). É por isso que ela sobrevive: deixou de ser INSUMO e virou ESCAPE, nos dois casos.
  */
-function blocoLeitura(leva: EdgeSondada[]): string {
+function blocoLeitura(leva: EdgeSondada[], janelaMin: number): string {
   return (
     `WITH esperado(edge, versao_esperada, fonte_esperada) AS (VALUES\n${valuesEsperado(leva)}\n),\n` +
+    `recentes AS (\n` +
+    `  -- A JANELA. O filtro textual roda ANTES do cast de propósito: um corpo não-JSON no meio da\n` +
+    `  -- janela abortaria a consulta inteira (mesma defesa da irmã passiva, pendencias-deploy.ts).\n` +
+    `  SELECT r.id, r.created, r.status_code,\n` +
+    `         COALESCE(r.content::jsonb -> 'data', r.content::jsonb) AS corpo\n` +
+    `  FROM net._http_response r\n` +
+    `  WHERE r.created > now() - interval '${janelaMin} minutes'\n` +
+    `    AND r.status_code IS NOT NULL\n` +
+    `    AND r.content IS NOT NULL\n` +
+    `    AND left(ltrim(r.content), 1) = '{'\n` +
+    `),\n` +
     `ids AS (\n` +
-    `  -- ⬅️ COLE AQUI, no lugar do {}, a célula única devolvida pelo passo de disparo.\n` +
+    `  -- OPCIONAL — deixe o {} como está. O eco do slug acha a linha sozinho; colar aqui o JSON do\n` +
+    `  -- disparo só serve para separar a causa (c) do INDETERMINADO (PRE-SENSOR / recusa HTTP).\n` +
     `  SELECT chave AS edge, valor::bigint AS request_id\n` +
     `  FROM jsonb_each_text('{}'::jsonb) AS t(chave, valor)\n` +
     `),\n` +
@@ -267,6 +366,10 @@ function blocoLeitura(leva: EdgeSondada[]): string {
     `    -- contagem de recusas e o controle se auto-envenena (nenhum 401 seria explicável nunca).\n` +
     `    -- NOT EXISTS, não NOT IN: a trava fechada do bloco caro devolve request_id NULL, e\n` +
     `    -- \`NOT IN\` com NULL é NULL-blind — zeraria o controle inteiro em silêncio.\n` +
+    `    -- ⚠️ Com o \`ids\` VAZIO (o padrão desde que a leitura acha pelo eco), esta exclusão não\n` +
+    `    --    exclui nada: um 401 desta leva conta como recusa e o controle se auto-desqualifica.\n` +
+    `    --    É fail-CLOSED — vira INDETERMINADO, nunca veredito confiante. Para DETERMINAR um\n` +
+    `    --    401, cole o JSON do disparo no \`ids\` acima.\n` +
     `    AND NOT EXISTS (SELECT 1 FROM ids i2 WHERE i2.request_id = r.id)\n` +
     `    -- ⚠️ O que este controle NAO fecha: CRON_SECRET trocado ha poucos minutos E nenhum\n` +
     `    --    cron rodado desde a troca — o trafego 2xx da janela usou o secret ANTIGO e\n` +
@@ -275,11 +378,24 @@ function blocoLeitura(leva: EdgeSondada[]): string {
     `    --    veredito determinado abaixo como INDETERMINADO.\n` +
     `),\n` +
     `lidas AS (\n` +
-    `  SELECT e.edge, e.versao_esperada, e.fonte_esperada, i.request_id, r.status_code,\n` +
-    `         COALESCE(r.content::jsonb -> 'data', r.content::jsonb) AS corpo\n` +
+    `  SELECT e.edge, e.versao_esperada, e.fonte_esperada,\n` +
+    `         COALESCE(s.id, i.request_id) AS request_id,\n` +
+    `         COALESCE(s.status_code, x.status_code) AS status_code,\n` +
+    `         COALESCE(s.corpo,\n` +
+    `                  CASE WHEN x.content IS NOT NULL AND left(ltrim(x.content), 1) = '{'\n` +
+    `                       THEN COALESCE(x.content::jsonb -> 'data', x.content::jsonb)\n` +
+    `                  END) AS corpo\n` +
     `  FROM esperado e\n` +
+    `  LEFT JOIN LATERAL (\n` +
+    `    SELECT rr.id, rr.status_code, rr.corpo\n` +
+    `    FROM recentes rr\n` +
+    `    WHERE rr.corpo ->> 'edge' = e.edge\n` +
+    `      AND rr.corpo ->> 'probe' = 'true'\n` +
+    `    ORDER BY rr.created DESC, rr.id DESC\n` +
+    `    LIMIT 1\n` +
+    `  ) s ON true\n` +
     `  LEFT JOIN ids i ON i.edge = e.edge\n` +
-    `  LEFT JOIN net._http_response r ON r.id = i.request_id\n` +
+    `  LEFT JOIN net._http_response x ON x.id = i.request_id\n` +
     `)\n` +
     `SELECT l.edge,\n` +
     `       l.request_id,\n` +
@@ -290,9 +406,13 @@ function blocoLeitura(leva: EdgeSondada[]): string {
     `       l.corpo ->> 'fonte'  AS fonte_respondida,\n` +
     `       CASE\n` +
     `         WHEN l.request_id IS NULL\n` +
-    `           THEN 'SEM ID — esta edge não saiu no JSON colado (bloco errado, ou trava fechada)'\n` +
+    `           THEN 'INDETERMINADO — nenhuma resposta de sonda desta edge na janela de ` +
+    `${janelaMin} min. Isto é ausência de dado, não veredito negativo: pode ser (a) o disparo não ` +
+    `ter rodado, (b) a resposta ainda a caminho (leva ~10s) — rode este passo de novo, ou (c) ` +
+    `bundle PRE-SENSOR / recusa HTTP, que responde SEM eco do slug e é invisível aqui; para ` +
+    `separar (c), cole o request_id do disparo no ids acima'\n` +
     `         WHEN l.status_code IS NULL\n` +
-    `           THEN 'AGUARDE — a resposta HTTP ainda não chegou (leva ~10s); rode este passo de novo'\n` +
+    `           THEN 'AGUARDE — o request_id colado ainda não tem resposta HTTP (leva ~10s); rode este passo de novo'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code = 401\n` +
     `              AND c.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL} AND c.recusas_recentes = 0\n` +
     `           THEN 'BUNDLE VELHO (pre-sonda) — 401, e o CRON_SECRET esta PROVADO bom agora (' ||\n` +
@@ -302,7 +422,9 @@ function blocoLeitura(leva: EdgeSondada[]): string {
     `           THEN 'INDETERMINADO — 401 nao separa bundle velho de CRON_SECRET invalido, e o ' ||\n` +
     `                'controle de credencial NAO foi observado (2xx fora da leva em 6h: ' ||\n` +
     `                c.ok_recentes || ', recusas 401: ' || c.recusas_recentes || '). Confira o ' ||\n` +
-    `                'CRON_SECRET no vault ANTES de redeployar — nao ha prova de bundle velho aqui'\n` +
+    `                'CRON_SECRET no vault ANTES de redeployar — nao ha prova de bundle velho aqui. ' ||\n` +
+    `                'Se o ids acima estiver vazio, o 401 DESTA leva conta como recusa e desqualifica ' ||\n` +
+    `                'o controle: cole o JSON do disparo no ids para DETERMINAR este veredito'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code >= 400\n` +
     `           THEN 'BUNDLE VELHO — recusou o request (HTTP ' || l.status_code || '), NADA executou'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL\n` +
@@ -343,40 +465,75 @@ function separar(edges: string[], caras: string[]): { baratas: string[]; caras: 
   return { baratas: edges.filter((e) => !caras.includes(e)), caras: edges.filter((e) => caras.includes(e)) };
 }
 
-/** Gera o SQL de sondagem da leva (dois passos por bloco: dispara, depois lê e julga). */
+/**
+ * Gera o SQL de sondagem da leva.
+ *
+ * A DIVISÃO DE TRABALHO que os recortes servem: o disparo precisa de ESCRITA (vault + INSERT do
+ * `net.http_post`) e por isso passa pelo founder no SQL Editor; a leitura é SELECT em
+ * `net._http_response` e roda no wrapper read-only, ou seja, o agente lê o veredito sozinho. Sem os
+ * recortes, entregar "o SQL" ao founder entrega os quatro blocos e devolve a leitura para a mão
+ * dele — que é justamente o round-trip que o eco do slug eliminou.
+ */
 export function gerarSqlDaLeva(opts: OpcoesLeva): string {
+  if (opts.soDisparo && opts.soLeitura) {
+    throw new Error(
+      'use --so-disparo OU --so-leitura, não os dois: pedir os dois recortes é pedir o SQL ' +
+        'inteiro, que é o padrão (sem flag nenhuma). Nenhum SQL foi emitido.',
+    );
+  }
+  const janelaMin = validarJanela(opts.janelaMin);
   const grupos = separar(opts.edges, opts.caras ?? []);
   // Resolve a leva INTEIRA antes de emitir qualquer coisa: uma edge sem sensor derruba o SQL todo.
   resolverLeva(opts.raiz, opts.edges);
   const ref = lerProjectRef(opts.raiz);
   const partes: string[] = [];
+  // Os recortes escolhem QUAIS blocos saem; o número de cada um continua cravado no próprio bloco,
+  // e não na posição dentro do que foi emitido. É o que faz "PASSO 2" nomear a MESMA coisa dos dois
+  // lados da conversa — o founder só vê o 1 e o 3, o agente só vê o 2 e o 4.
+  const querDisparo = !opts.soLeitura;
+  const querLeitura = !opts.soDisparo;
 
   if (grupos.baratas.length > 0) {
     const leva = resolverLeva(opts.raiz, grupos.baratas);
-    partes.push(
-      `-- PASSO 1 — dispara as ${leva.length} edge(s) baratas da leva.\n` +
-        blocoDisparo(ref, leva, 2),
-      `-- PASSO 2 — lê e julga. Cole o JSON do PASSO 1 no lugar do {}, NA MESMA ABA.\n` +
-        blocoLeitura(leva),
-    );
+    if (querDisparo) {
+      partes.push(
+        `-- PASSO 1 — dispara as ${leva.length} edge(s) baratas da leva. É o bloco do FOUNDER: lê o\n` +
+          `--          vault e faz INSERT, e o wrapper read-only recusa os dois.\n` +
+          blocoDisparo(ref, leva, 2),
+      );
+    }
+    if (querLeitura) {
+      partes.push(
+        `-- PASSO 2 — lê e julga. NÃO precisa colar nada: a resposta da sonda ecoa o próprio slug,\n` +
+          `--          e o bloco a encontra na janela de ${janelaMin} min. É SELECT puro — roda no\n` +
+          `--          read-only: bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro\n` +
+          blocoLeitura(leva, janelaMin),
+      );
+    }
   }
 
   if (grupos.caras.length > 0) {
     const leva = resolverLeva(opts.raiz, grupos.caras);
-    partes.push(
-      `-- PASSO 3 — dispara as ${leva.length} edge(s) CARAS, com trava.\n` +
-        `-- ⚠️ Bundle PRÉ-sensor IGNORA o probe e RODA O FLUXO REAL destas. Só abra a trava depois\n` +
-        `--    de o deploy estar confirmado por outro caminho.\n` +
-        `-- ⚠️ A trava é CASE e NÃO um filtro: o Postgres avalia a projeção mesmo descartando todas\n` +
-        `--    as linhas, então travar por filtro deixa o http_post sair igual (falsificado —\n` +
-        `--    docs/agent/deploy.md §"Sondar VÁRIAS edges numa tacada"). E NÃO valide um filtro numa\n` +
-        `--    consulta simples para se convencer: lá ele filtra antes e PARECE proteger; é nesta\n` +
-        `--    forma, agregada, que ele falha. Trava fechada devolve {"edge": null}, que o passo\n` +
-        `--    seguinte lê como SEM ID.\n` +
-        blocoDisparo(ref, leva, 4, true),
-      `-- PASSO 4 — lê e julga as CARAS. Cole o JSON do PASSO 3 no lugar do {}.\n` +
-        blocoLeitura(leva),
-    );
+    if (querDisparo) {
+      partes.push(
+        `-- PASSO 3 — dispara as ${leva.length} edge(s) CARAS, com trava.\n` +
+          `-- ⚠️ Bundle PRÉ-sensor IGNORA o probe e RODA O FLUXO REAL destas. Só abra a trava depois\n` +
+          `--    de o deploy estar confirmado por outro caminho.\n` +
+          `-- ⚠️ A trava é CASE e NÃO um filtro: o Postgres avalia a projeção mesmo descartando todas\n` +
+          `--    as linhas, então travar por filtro deixa o http_post sair igual (falsificado —\n` +
+          `--    docs/agent/deploy.md §"Sondar VÁRIAS edges numa tacada"). E NÃO valide um filtro numa\n` +
+          `--    consulta simples para se convencer: lá ele filtra antes e PARECE proteger; é nesta\n` +
+          `--    forma, agregada, que ele falha. Trava fechada devolve {"edge": null} e NADA sai —\n` +
+          `--    o passo seguinte não acha eco na janela e responde INDETERMINADO.\n` +
+          blocoDisparo(ref, leva, 4, true),
+      );
+    }
+    if (querLeitura) {
+      partes.push(
+        `-- PASSO 4 — lê e julga as CARAS, pelo mesmo eco. Também é SELECT puro.\n` +
+          blocoLeitura(leva, janelaMin),
+      );
+    }
   }
 
   return partes.join('\n');
@@ -386,13 +543,21 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
 export interface ArgsCli {
   edges: string[];
   caras: string[];
+  janelaMin?: number;
+  soDisparo?: boolean;
+  soLeitura?: boolean;
 }
 
 const USO =
   'uso: bun run sonda:sql <edge> [<edge> ...] [--caro=<edge>[,<edge>]]\n' +
-  '  <edge>   nome do diretório em supabase/functions/ (precisa ter versao.ts)\n' +
-  '  --caro   marca um SUBCONJUNTO da leva cujo bundle pré-sensor dispara o fluxo real;\n' +
-  '           essas saem em bloco separado, com trava por CASE.';
+  '                        [--janela=<min>] [--so-disparo | --so-leitura]\n' +
+  '  <edge>        nome do diretório em supabase/functions/ (precisa ter versao.ts)\n' +
+  '  --caro        marca um SUBCONJUNTO da leva cujo bundle pré-sensor dispara o fluxo real;\n' +
+  '                essas saem em bloco separado, com trava por CASE.\n' +
+  `  --janela      janela do guard temporal da leitura, em minutos (padrão ${JANELA_PADRAO_MIN}, ` +
+  `teto ${JANELA_MAX_MIN}).\n` +
+  '  --so-disparo  emite só os blocos que precisam do FOUNDER (vault + INSERT).\n' +
+  '  --so-leitura  emite só os blocos de leitura, que rodam no psql-ro — o agente lê sozinho.';
 
 /**
  * Forma de nome de edge: é o diretório em `supabase/functions/`, e as 94 existentes cabem todas
@@ -405,6 +570,9 @@ const FORMA_EDGE = /^[a-z0-9][a-z0-9-]*$/;
 export function parsearArgs(argv: string[]): ArgsCli {
   const edges: string[] = [];
   const caras: string[] = [];
+  let janelaMin: number | undefined;
+  let soDisparo: boolean | undefined;
+  let soLeitura: boolean | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -412,6 +580,24 @@ export function parsearArgs(argv: string[]): ArgsCli {
       const bruto = arg === '--caro' ? argv[++i] : arg.slice('--caro='.length);
       if (!bruto) throw new Error(`--caro sem valor.\n${USO}`);
       caras.push(...bruto.split(',').filter((s) => s.length > 0));
+      continue;
+    }
+    if (arg === '--janela' || arg.startsWith('--janela=')) {
+      const bruto = arg === '--janela' ? argv[++i] : arg.slice('--janela='.length);
+      const n = Number(bruto);
+      // `Number('')` é 0 e `Number(undefined)` é NaN: os dois caem aqui, e nenhum vira o padrão.
+      if (!bruto || !Number.isInteger(n)) {
+        throw new Error(`--janela precisa ser um inteiro de minutos (recebi ${bruto ?? '<nada>'}).\n${USO}`);
+      }
+      janelaMin = n;
+      continue;
+    }
+    if (arg === '--so-disparo') {
+      soDisparo = true;
+      continue;
+    }
+    if (arg === '--so-leitura') {
+      soLeitura = true;
       continue;
     }
     if (arg.startsWith('-')) throw new Error(`flag desconhecida: ${arg}\n${USO}`);
@@ -435,7 +621,7 @@ export function parsearArgs(argv: string[]): ArgsCli {
     );
   }
 
-  return { edges, caras };
+  return { edges, caras, janelaMin, soDisparo, soLeitura };
 }
 
 /** Saídas da CLI, injetáveis para o teste ver o que foi escrito. */
@@ -449,8 +635,8 @@ export interface DependenciasCli {
 export function main(argv: string[], deps: DependenciasCli): number {
   let sql: string;
   try {
-    const { edges, caras } = parsearArgs(argv);
-    sql = gerarSqlDaLeva({ raiz: deps.raiz, edges, caras });
+    const { edges, caras, janelaMin, soDisparo, soLeitura } = parsearArgs(argv);
+    sql = gerarSqlDaLeva({ raiz: deps.raiz, edges, caras, janelaMin, soDisparo, soLeitura });
   } catch (e) {
     deps.erro(`❌ ${(e as Error).message}`);
     return 1;

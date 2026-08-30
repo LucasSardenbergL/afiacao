@@ -58,6 +58,30 @@ function escreverVersao(raiz: string, edge: string, versao: string): void {
   );
 }
 
+/** A mensagem do erro lançado por `fn` — vazio se não lançou. Para casar a RAZÃO, não só "lançou". */
+function msgDoErro(fn: () => unknown): string {
+  try {
+    fn();
+    return '';
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+/**
+ * O texto de UM ramo do CASE do veredito: do `THEN '<nome>` até o próximo WHEN/END.
+ *
+ * Ramo isolado, e não `sql.toContain(...)`: o que importa é o que aquele ramo diz — asserção
+ * contra o SQL inteiro passa lendo a palavra na VIZINHA e não pega ramo que trocou de mensagem.
+ */
+function ramoDe(sql: string, nome: string): string {
+  const i = sql.indexOf(`THEN '${nome}`);
+  expect(i, `ramo ausente: ${nome}`).toBeGreaterThan(-1);
+  const resto = sql.slice(i);
+  const fim = resto.search(/\n\s*(WHEN|END AS veredito)/);
+  return fim === -1 ? resto : resto.slice(0, fim);
+}
+
 describe('edge sem sensor não é sondável — falha ALTO, nunca SQL parcial', () => {
   it('lança nomeando a edge cujo versao.ts não existe', () => {
     const raiz = fixture({ 'edge-com-sensor': 'v1.0-sensor-inicial' });
@@ -234,23 +258,29 @@ describe('PASSO 1 — dispara a leva numa tacada', () => {
 describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () => {
   const raiz = () => fixture({ 'edge-a': 'v1.0-alfa' });
 
-  it('parte de `esperado` e LEFT JOIN nos ids — zero linhas não pode virar "nada a reportar"', () => {
+  it('parte de `esperado` — zero linhas não pode virar "nada a reportar"', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    expect(sql).toMatch(/FROM esperado e\s*\n\s*LEFT JOIN ids i ON i\.edge = e\.edge/);
+    // Todo caminho até a resposta pendura na lista canônica: invertido (partir das respostas), a
+    // edge que não respondeu SOME da saída, e sumir lê-se como "nada a reportar".
+    expect(sql).toMatch(/FROM esperado e\n/);
+    expect(sql).toMatch(/LEFT JOIN ids i ON i\.edge = e\.edge/);
     expect(sql).not.toMatch(/FROM ids\b[\s\S]*JOIN esperado/);
+    expect(sql).not.toMatch(/FROM recentes\b[\s\S]*JOIN esperado/);
   });
 
   it('LEFT JOIN em net._http_response — "não chegou" ≠ "veredito negativo"', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    expect(sql).toMatch(/LEFT JOIN net\._http_response r ON r\.id = i\.request_id/);
+    expect(sql).toMatch(/LEFT JOIN net\._http_response x ON x\.id = i\.request_id/);
     expect(sql).not.toMatch(/(?<!LEFT )JOIN net\._http_response/);
   });
 
-  it('lê pelo request_id — nunca `ORDER BY id DESC LIMIT 1` nem id de EXEMPLO', () => {
+  it('o ranking é POR EDGE e dentro da janela — nunca "a última resposta que chegou"', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    // Controle POSITIVO: sem ele as duas negativas abaixo passariam medindo um SQL vazio.
-    expect(sql).toMatch(/ON r\.id = i\.request_id/);
-    expect(sql).not.toMatch(/ORDER BY id DESC/i);
+    // Controle POSITIVO: sem ele as negativas abaixo passariam medindo um SQL vazio.
+    expect(sql).toMatch(/ON x\.id = i\.request_id/);
+    // O `ORDER BY … LIMIT 1` que existe é o do LATERAL, correlacionado por `e.edge` e restrito à
+    // janela. Um ranking global — sem slug, sem probe, sem janela — daria a resposta de OUTRA edge.
+    expect(sql).not.toMatch(/ORDER BY (rr\.)?id DESC\s*\n?\s*LIMIT/i);
     expect(sql).not.toMatch(/WHERE\s+r?\.?id\s*=\s*\d+/i);
   });
 
@@ -268,7 +298,7 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
   it('os 8 ramos de veredito estão nomeados', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
     for (const ramo of [
-      'SEM ID',
+      'INDETERMINADO',
       'AGUARDE',
       'DEPLOY CONFIRMADO',
       'DEPLOY PARCIAL',
@@ -360,8 +390,208 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
 
   it('DEPLOY CONFIRMADO exige o eco probe:true E a edge que respondeu, não só a versao', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    expect(sql).toMatch(/corpo ->> 'probe' = 'true'/);
-    expect(sql).toMatch(/corpo ->> 'edge' = l\.edge/);
+    // O alias `l.` NÃO é decoração: desde que o LATERAL também casa `probe = 'true'`, a asserção
+    // pelo substring solto passava a ser satisfeita pela ocorrência do LATERAL — e o mutante que
+    // dispensa o probe do ramo CONFIRMADO SOBREVIVIA (pego pelo mutcheck, 2026-08-30).
+    expect(sql).toMatch(/l\.corpo ->> 'probe' = 'true'/);
+    expect(sql).toMatch(/l\.corpo ->> 'edge' = l\.edge/);
+  });
+});
+
+describe('PASSO 2 — acha a linha pelo ECO do slug, sem colar request_id nenhum', () => {
+  const raiz = () => fixture({ 'edge-a': 'v1.0-alfa', 'edge-b': 'v2.0-beta' });
+  const leitura = (sql: string) => sql.slice(sql.indexOf('-- PASSO 2'));
+  /** O corpo do `LEFT JOIN LATERAL (…) s ON true` — onde a linha da edge é ESCOLHIDA. */
+  const lateral = (sql: string) => {
+    const t = leitura(sql);
+    const i = t.indexOf('LEFT JOIN LATERAL (');
+    expect(i, 'o PASSO 2 não tem LEFT JOIN LATERAL').toBeGreaterThan(-1);
+    return t.slice(i, t.indexOf(') s ON true', i));
+  };
+
+  it('casa a resposta pelo ECO do slug — o request_id deixa de ser obrigatório', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(lateral(sql)).toMatch(/corpo ->> 'edge' = e\.edge/);
+  });
+
+  it('o casamento EXIGE probe:true — a resposta de CRON ecoa slug e versao SEM probe', () => {
+    // Medido em prod 2026-08-30 (psql-ro): `analytics-outbox-drain` gravou 72 respostas em 6h com
+    // {"edge":…,"versao":…} e SEM `probe` — é o cron dela, de 5 em 5 min — contra 5 da sonda de
+    // `generate-bundle-argument`. Casando só pelo slug, o `LIMIT 1` pega a linha do CRON e o
+    // veredito sai 'BUNDLE VELHO' citando a versão CERTA: falso NEGATIVO, redeploy à toa.
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(lateral(sql)).toMatch(/corpo ->> 'probe' = 'true'/);
+  });
+
+  it('a janela é CURTA e explícita — sondagem VELHA não vira veredito de agora (#2079)', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(leitura(sql)).toMatch(/created > now\(\) - interval '\d+ minutes'/);
+  });
+
+  it('a ordem do LIMIT 1 é TOTAL — `created` EMPATA entre respostas da mesma leva', () => {
+    // Prod 2026-08-30: as respostas 64031 e 64032 têm `created` idêntico ao microssegundo. Sem o
+    // desempate por id, qual linha o LIMIT 1 devolve é escolha do plano, não do dado.
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(lateral(sql)).toMatch(/ORDER BY rr\.created DESC, rr\.id DESC\s*\n\s*LIMIT 1/);
+  });
+
+  it('o LATERAL é CORRELACIONADO por edge — não um "última resposta da janela" global', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a', 'edge-b'] });
+    const l = lateral(sql);
+    expect(l).toMatch(/= e\.edge/);
+    // Um único LIMIT 1, e ele mora DENTRO do lateral: fora dele cortaria a leva a uma edge.
+    expect(leitura(sql).match(/LIMIT 1/g)).toHaveLength(1);
+  });
+
+  it('`LEFT JOIN LATERAL … ON true` — SEMPRE uma linha por edge esperada, nunca zero', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    // Zero linhas seria silêncio AMBÍGUO: lê-se como "nada a reportar", não como "não achei".
+    expect(leitura(sql)).toContain(') s ON true');
+    expect(leitura(sql)).not.toMatch(/(?<!LEFT )JOIN LATERAL/);
+  });
+
+  it('o cast para jsonb é GUARDADO — corpo não-JSON na janela abortaria a query INTEIRA', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const rec = leitura(sql);
+    expect(rec).toMatch(/left\(ltrim\(r\.content\), 1\) = '\{'/);
+    // O filtro textual vem ANTES do cast — é o que a irmã passiva (pendencias-deploy) já faz.
+    expect(rec.indexOf("left(ltrim(r.content), 1) = '{'")).toBeGreaterThan(rec.indexOf('FROM net._http_response r'));
+  });
+
+  it('(a) janela SEM linha da edge ⇒ INDETERMINADO — NUNCA "bundle velho"', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const ramo = ramoDe(leitura(sql), 'INDETERMINADO');
+    expect(ramo).toContain('INDETERMINADO');
+    expect(ramo).not.toContain('BUNDLE VELHO');
+    expect(ramo).not.toContain('DEPLOY CONFIRMADO');
+  });
+
+  it('(a) INDETERMINADO nomeia as 3 causas que ele NÃO distingue, e como sair delas', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const ramo = ramoDe(leitura(sql), 'INDETERMINADO');
+    expect(ramo, 'causa (a): o disparo não rodou').toMatch(/disparo/i);
+    expect(ramo, 'causa (b): a resposta ainda não chegou').toMatch(/de novo/i);
+    // Causa (c): bundle PRÉ-SENSOR e recusa HTTP respondem SEM eco — são INVISÍVEIS para a busca
+    // por slug, e por isso não podem ser lidos como "não saiu nada".
+    expect(ramo, 'causa (c): PRE-SENSOR/recusa não ecoam').toMatch(/PRE-SENSOR/);
+    expect(ramo, 'a saída da causa (c) é o request_id do PASSO 1').toMatch(/request_id/);
+  });
+
+  it('(b) fonte DIVERGENTE ⇒ BUNDLE VELHO — o eco bateu, o fingerprint não', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const senao = leitura(sql).slice(leitura(sql).indexOf("ELSE 'BUNDLE VELHO"));
+    expect(senao).toContain("', fonte=' || COALESCE(l.corpo ->> 'fonte', '?')");
+    expect(senao).toContain("l.versao_esperada || ' / ' || l.fonte_esperada");
+  });
+
+  it('(c) fonte `nao-mapeada` ⇒ DEPLOY PARCIAL, e ANTES do ramo de confirmação', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const t = leitura(sql);
+    expect(t).toMatch(/COALESCE\(l\.corpo ->> 'fonte', 'nao-mapeada'\) = 'nao-mapeada'/);
+    expect(t.indexOf('DEPLOY PARCIAL')).toBeLessThan(t.indexOf("THEN 'DEPLOY CONFIRMADO'"));
+  });
+
+  it('o 401 sem colagem AUTO-DESQUALIFICA o controle — e a mensagem diz a saída', () => {
+    // Interação entre a leitura sem colagem e o controle de credencial do #2131: o controle exclui
+    // a própria leva por `NOT EXISTS (… ids …)`, e o `ids` agora nasce VAZIO. O 401 sob julgamento
+    // entra em `recusas_recentes` e o controle se auto-desqualifica — fail-CLOSED, vira
+    // INDETERMINADO. Quem lê precisa saber que a colagem é o que DETERMINA o veredito.
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const ramo = ramoDe(leitura(sql), 'INDETERMINADO — 401');
+    expect(ramo).toMatch(/ids/);
+    expect(ramo).toMatch(/DETERMINAR/);
+    expect(ramo).not.toContain('BUNDLE VELHO');
+  });
+
+  it('a colagem do request_id sobrevive como OPCIONAL — e o placeholder segue VÁLIDO', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    // Ela deixa de ser exigida, mas não some: é a única saída da causa (c) do INDETERMINADO,
+    // porque PRE-SENSOR e recusa HTTP não ecoam o slug e o eco jamais os encontra.
+    expect(leitura(sql)).toContain("jsonb_each_text('{}'::jsonb)");
+    expect(leitura(sql)).toMatch(/opcional/i);
+  });
+});
+
+describe('--janela — o guard temporal é configurável, mas fail-CLOSED', () => {
+  const raiz = () => fixture({ 'edge-a': 'v1.0-alfa' });
+
+  it('sem a flag, a janela padrão é curta', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toContain("interval '20 minutes'");
+  });
+
+  it('--janela=45 muda o interval emitido', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], janelaMin: 45 });
+    expect(sql).toContain("interval '45 minutes'");
+    expect(sql).not.toContain("interval '20 minutes'");
+  });
+
+  it('janela larga demais falha ALTO — é o guard do #2079 que ela apagaria', () => {
+    expect(() => gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], janelaMin: 600 })).toThrow(
+      /janela/i,
+    );
+  });
+
+  it('janela zero/negativa falha ALTO — nunca degrada para o padrão', () => {
+    for (const min of [0, -5]) {
+      expect(() => gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], janelaMin: min })).toThrow(
+        /janela/i,
+      );
+    }
+  });
+
+  it('--janela não-numérica falha ALTO — não vira nome de edge nem interval torto', () => {
+    // A asserção casa a mensagem do VALOR, não `/janela/i` solto: antes da flag existir, o parser
+    // já lançava "flag desconhecida: --janela=6h", que casaria e faria o teste passar VAZIO.
+    expect(msgDoErro(() => parsearArgs(['edge-a', '--janela=6h']))).toMatch(/--janela.*inteiro/i);
+    expect(msgDoErro(() => parsearArgs(['edge-a', '--janela']))).toMatch(/--janela.*inteiro/i);
+  });
+
+  it('--janela=45 chega em janelaMin pelo parser', () => {
+    expect(parsearArgs(['edge-a', '--janela=45']).janelaMin).toBe(45);
+    expect(parsearArgs(['edge-a']).janelaMin).toBeUndefined();
+  });
+});
+
+describe('divisão de trabalho — o founder dispara, o agente lê', () => {
+  const raiz = () => fixture({ 'edge-a': 'v1.0-alfa', cara: 'v2.0-beta' });
+
+  it('--so-disparo entrega ao founder SÓ o que precisa de escrita (vault + INSERT)', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], soDisparo: true });
+    expect(sql).toContain('-- PASSO 1');
+    expect(sql).toContain('net.http_post(');
+    expect(sql).not.toContain('-- PASSO 2');
+    expect(sql).not.toContain('net._http_response');
+  });
+
+  it('--so-leitura entrega ao AGENTE só o que roda no psql-ro — nada de vault nem http_post', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], soLeitura: true });
+    expect(sql).toContain('-- PASSO 2');
+    expect(sql).toContain('net._http_response');
+    // `vault.decrypted_secrets` dá `permission denied for schema vault` no claude_ro, e o
+    // `net.http_post` dá `cannot execute INSERT in a read-only transaction` (provado 2026-08-30).
+    expect(sql).not.toContain('vault.decrypted_secrets');
+    expect(sql).not.toContain('net.http_post(');
+  });
+
+  it('a numeração dos passos é ABSOLUTA — --so-leitura não renumera o PASSO 2 para 1', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a', 'cara'], caras: ['cara'], soLeitura: true });
+    expect(sql).toContain('-- PASSO 2');
+    expect(sql).toContain('-- PASSO 4');
+    expect(sql).not.toContain('-- PASSO 1');
+    expect(sql).not.toContain('-- PASSO 3');
+  });
+
+  it('as duas flags juntas falham ALTO — pedir os dois recortes é pedir o SQL inteiro', () => {
+    expect(() =>
+      gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], soDisparo: true, soLeitura: true }),
+    ).toThrow(/--so-disparo|--so-leitura/);
+  });
+
+  it('o parser aceita as duas flags', () => {
+    expect(parsearArgs(['edge-a', '--so-disparo']).soDisparo).toBe(true);
+    expect(parsearArgs(['edge-a', '--so-leitura']).soLeitura).toBe(true);
+    expect(parsearArgs(['edge-a']).soDisparo).toBeUndefined();
   });
 });
 
@@ -408,7 +638,8 @@ describe('subconjunto CARO — a trava é CASE, nunca WHERE', () => {
     const caro = blocoCaro(sql);
     expect(caro).toContain('-- PASSO 4');
     expect(caro).toContain(`('cara', 'v2.0-beta', '${fp('cara')}')`);
-    expect(caro).toMatch(/FROM esperado e\s*\n\s*LEFT JOIN ids i ON i\.edge = e\.edge/);
+    expect(caro).toMatch(/FROM esperado e\n/);
+    expect(caro).toMatch(/LEFT JOIN ids i ON i\.edge = e\.edge/);
     expect(caro).not.toContain("('barata', 'v1.0-alfa'");
   });
 
