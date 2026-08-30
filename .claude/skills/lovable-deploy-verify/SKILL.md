@@ -142,6 +142,25 @@ git show --name-status --format='' <sha-do-merge> -- supabase/functions/ | grep 
 # A = arquivo NOVO (é o que o prompt de 1 arquivo esquece) · M = modificado
 ```
 
+🔴 **O `--name-status` é ESTRUTURALMENTE CEGO ao import NOVO de arquivo PRÉ-EXISTENTE — a fatia de
+deploy é o CLOSURE DE IMPORTS, não o diff (2026-08-30, #2101).** O comando acima lista o que o commit
+TOCOU; o bundle carrega o que o `index.ts` ALCANÇA. Arquivo que já existia e passou a ser importado não
+sai em nenhum dos dois lados (`A` nem `M`) — e é exatamente o que impede a função de bootar. No #2101 a
+`generate-bundle-argument` ganhou `+import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts"`
+com o `ia-cota.ts` **inalterado desde 2026-07-31**: o `--name-status` devolvia três arquivos, e os três
+estavam certos para a pergunta errada. Feche o closure, sempre:
+
+```bash
+# imports locais de 1º nível — repita em cada arquivo alcançado até não achar mais
+grep -oE 'from "\.\.?/[^"]+"' supabase/functions/<edge>/index.ts | sort -u
+# algum deles é import NOVO nesta edge? (resposta POSITIVA no diff, nunca de memória)
+git show <sha-do-merge> -- supabase/functions/<edge>/index.ts | grep -E '^\+.*from "\.\.'
+```
+
+⚠️ E some ao closure o **mapa** `_shared/sonda-fingerprints.ts`: a `fecharGrafo()` do gerador o exclui
+de propósito (senão o hash se auto-referenciaria), então ele **nunca** aparece no closure — e ainda
+assim precisa ir no deploy, porque é ele que alimenta o campo `fonte`. **Fatia = closure ∪ {mapa}.**
+
 E nomeie cada um, marcando o novo (teste e doc ficam de fora — não vão pro bundle):
 
 > Edit the edge function `<nome>` and update it from the `main` branch using the current contents of
