@@ -161,6 +161,30 @@ git show <sha-do-merge> -- supabase/functions/<edge>/index.ts | grep -E '^\+.*fr
 de propósito (senão o hash se auto-referenciaria), então ele **nunca** aparece no closure — e ainda
 assim precisa ir no deploy, porque é ele que alimenta o campo `fonte`. **Fatia = closure ∪ {mapa}.**
 
+🔴 **E o closure sobre QUAL intervalo? O `<sha>` do PR nomeado é a pergunta ERRADA — a fatia tem
+eixo TEMPO (2026-08-30, #2123).** O `--name-status <sha>` responde *"o que aquele commit tocou"*; o
+Lovable deploya a **`main`**. As duas divergem assim que qualquer outro PR toca o mesmo closure
+depois — e com o auto-merge fechando PR em minutos, isso é o caso comum, não o raro. Verificando as
+7 edges do #2123 (`1cab89d49`, 04:04Z), **dois** PRs posteriores tinham tocado o mesmo closure, o
+último (#2132) **32 min** antes da medição: o pedido montado pela lista do #2123 subiria a main com
+três `_shared/` faltando, e a função não bootaria — o modo de falha do #2020, alcançado por outro
+caminho. Meça o **intervalo até `origin/main`**, e feche o closure sobre ele:
+
+```bash
+git fetch origin   # ANTES de medir — e OUTRA VEZ antes de ENTREGAR (ver o ⚠️ abaixo)
+git diff --name-status <sha-do-PR>^ origin/main -- supabase/functions/ | grep -v '_test\.ts$'
+```
+
+⚠️ **Sincronizar antes de MEDIR não basta — sincronize antes de ENTREGAR.** Na mesma sessão a main
+andou **duas vezes em ~1h30**: a segunda não tocou `supabase/functions/` (o pedido seguiu válido)
+mas tocou `scripts/sonda-versao-sql.ts`, deixando o bloco de sonda **já entregue ao founder** com o
+gerador anterior. Entre a medição e a entrega existe o tempo em que você escreve.
+
+⚠️ **E o `from` tem aspas SIMPLES neste repo.** Um regex de closure que só case `from "…"` devolve
+lista **vazia** para as edges que usam `'…'` — 3 das 7 aqui. Vazio de regex cego é byte a byte o
+vazio de "não importa nada": case `from ['\"]`, e trate contagem 0/1 como **enumeração quebrada**,
+nunca como resposta.
+
 E nomeie cada um, marcando o novo (teste e doc ficam de fora — não vão pro bundle):
 
 > Edit the edge function `<nome>` and update it from the `main` branch using the current contents of
