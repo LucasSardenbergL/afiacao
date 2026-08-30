@@ -414,6 +414,45 @@ case "$CESTA_F1" in
 esac
 eq "F1b e a mistura é exatamente 'velho + novo convivendo'" "$CESTA_F1" "a1,b1,c1"
 
+# ══════════════════════════════════════════════════════════════════════════════════
+# T4 — CUSTO DO LOTE REAL (100 pedidos = a página do ListarPedidos)
+# ══════════════════════════════════════════════════════════════════════════════════
+# O `FOR UPDATE` do pai NÃO é liberado pela subtransação por pedido: locks de linha só caem no
+# fim da transação EXTERNA, ou seja, da chamada inteira. Com a página de 100 do ListarPedidos, a
+# RPC segura 100 locks até retornar. Medido em vez de suposto — se a duração fosse alta, o teto do
+# lote (500) seria o número errado.
+echo "── T4: lote de 100 pedidos (a página real) — duração e locks ──"
+P -q <<SQL
+DELETE FROM public.sales_orders WHERE origem = 'lote100';
+INSERT INTO public.sales_orders (id, customer_user_id, status, items, subtotal, total, account, hash_payload, omie_pedido_id, origem, order_date_kpi, created_at)
+SELECT gen_random_uuid(), '$U', 'separacao', '[]'::jsonb, 10, 10, 'oben', 'omie_oben_L' || g, 900000 + g, 'lote100', '2026-08-01', '2026-08-01T12:00:00Z'
+FROM generate_series(1, 100) g;
+INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id)
+SELECT '$U', gen_random_uuid(), i, 1, 10, 0, so.hash_payload || '_' || i, so.id
+FROM public.sales_orders so, generate_series(1, 5) i WHERE so.origem = 'lote100';
+SQL
+LOTE100="$(Pq -c "SELECT jsonb_agg(jsonb_build_object(
+    'account','oben','hash_payload', so.hash_payload, 'omie_pedido_id', so.omie_pedido_id,
+    'status_omie','faturado','total', 60.00,
+    'items', jsonb_build_array(jsonb_build_object('omie_codigo_produto',1)),
+    'itens', (SELECT jsonb_agg(jsonb_build_object(
+        'omie_codigo_produto', i, 'quantity', 2, 'unit_price', 10, 'discount', 0,
+        'product_id', gen_random_uuid(), 'hash_payload', so.hash_payload || '_' || i))
+      FROM generate_series(2, 7) i)))
+  FROM public.sales_orders so WHERE so.origem = 'lote100';" | tr -d '\n')"
+T4="$(Pq -c "SELECT 'DUR=' || round(extract(epoch from (clock_timestamp() - t0)) * 1000)::text || 'ms CORR=' || (r->>'corrections') || ' UPS=' || (r->>'upserts')
+             FROM (SELECT clock_timestamp() t0, public.reconciliar_pedidos_omie('$LOTE100'::jsonb, $GERIDO) r) x;")"
+echo "     [$T4]"
+# Cada pedido: 1 delete (o item 1 sai), 5 updates (2..6 mudam de qty) e 1 insert (o 7) = 7 × 100.
+eq "T4a o lote de 100 reconciliou tudo" "${T4#*CORR=}" "700 UPS=100"
+DUR_MS="$(printf '%s' "$T4" | sed -n 's/^DUR=\([0-9]*\)ms.*/\1/p')"
+if [ -n "$DUR_MS" ] && [ "$DUR_MS" -lt 5000 ]; then
+  ok "T4b a página inteira cabe numa transação curta (${DUR_MS}ms < 5s) — 100 locks de linha por esse tempo"
+else
+  bad "T4b lote de 100 levou ${DUR_MS}ms — os 100 locks de pai ficam segurados tempo demais; reveja o teto do lote"
+fi
+P -q -c "DELETE FROM public.sales_orders WHERE origem = 'lote100';"
+
 echo "── F6: sabota a CTE de DELETE — exija VERMELHO em T2b ──"
 # Sem a remoção, o pós-estado vira "desejado + o que já estava lá": exatamente a revisão
 # "nova mais um estranho" que o diff computado FORA da transação produziria.
