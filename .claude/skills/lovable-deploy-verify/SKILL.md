@@ -439,6 +439,29 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
     a unicidade global se sustentava. Detalhe:
     [`docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md`](../../../docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md).
   - **5 edges já nascem com canária** (#1772): `fin-cashflow-engine`, `omie-cliente`, `omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas` respondem `{"probe":true}` com `{ok,probe:true,versao}` (contrato em `supabase/functions/_shared/sonda-versao.ts`). O eco `probe:true` é **obrigatório** na leitura: bundle ANTERIOR à sonda **ignora o parâmetro e executa o fluxo real** (sync Omie de verdade) — por isso **só sonde DEPOIS do deploy**, e resposta sem o eco já é o veredito "bundle velho, e ele rodou o efeito caro". Invocação sem terminal: bloco `net.http_post` no 🟣 SQL Editor + leitura de `net._http_response` (receita em `docs/agent/deploy.md` §Canárias).
+  - ✅ **A exceção que torna a sonda ativa segura ANTES do deploy — e é a única ordem em que ela
+    EVITA um deploy, em vez de só confirmá-lo (2026-08-30).** O "só sonde DEPOIS do deploy" acima
+    vale enquanto o bundle em prod puder ser ANTERIOR à sonda — aí o probe vira efeito caro. Quando a
+    versão que se TEME estar no ar já tinha sonda (v1.0 → v1.1), esse risco não existe, e sondar
+    antes responde "o deploy é redundante?" de graça. Prove no PAI, nunca de memória — resposta
+    POSITIVA, com marcador diferente do da main:
+    `git show <sha-do-merge>^:supabase/functions/<edge>/versao.ts | grep VERSAO`. Foi assim que
+    `generate-bundle-argument` (`v1.0-prompt-sem-margem`) e `omie-sync-pedidos-compra`
+    (`v1.0-eco-versao-passivo`) se provaram JÁ no ar, cancelando o pedido de deploy das duas. **N
+    edges num único statement**, com o `request_id` pareado ao NOME — mata a anotação à mão que a Lei
+    de Ferro #5 pune:
+    ```sql
+    SELECT e.nome, net.http_post(
+      url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/' || e.nome,
+      headers := jsonb_build_object('Content-Type','application/json',
+        'x-cron-secret',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
+      body := jsonb_build_object('probe', true),
+      timeout_milliseconds := 20000) AS request_id
+    FROM (VALUES ('COLE_A_EDGE_1'),('COLE_A_EDGE_2')) e(nome);
+    ```
+    Depois leia pelos ids devolvidos (`WHERE id IN (…)`, nunca `ORDER BY id DESC`), exigindo os
+    **três**: `versao` da main, `fonte` idêntico ao `sonda-fingerprints.ts` (é ele que prova que o
+    `_shared/` subiu junto, não só o `index.ts`) e o eco `probe:true`.
   - **N3 PASSIVO — a FORMA do JSON prova a versão quando a edge JÁ é chamada por cron (2026-08-26).**
     Dispensa as duas dependências acima (founder logado / cron secret): `net._http_response` retém o
     **corpo** da resposta que o cron já produziu. Se as duas versões do código retornam objetos com
@@ -564,6 +587,20 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
       `? 'resultados'` não separa os dois casos; `jsonb_typeof(...) = 'object'` separa — já embutido
       na query acima. Falha ruidosa (exit 1), então não fabrica veredito — mas com janela estreita
       ela dorme, e é exatamente ao acumular ticks que ela acorda.
+
+      🔴 **"Reli o TTL inteiro" NÃO é critério de parada — a regra acima foi SATISFEITA antes de eu
+      errar (2026-08-30).** Verificando este MESMO #2079, reli os três ticks do TTL (22:15 · 00:15 ·
+      02:15Z), vieram todos `background`, e conclui que o eco não alcançava o `pedidos` — montando
+      pedido de deploy. Ele estava no ar o tempo todo: os ticks **63804 (10:15Z)** e **63887
+      (12:15Z)** ecoaram `v1.1-eco-identidade-fonte`, e o **63967 (14:15Z)** voltou a `background`. A
+      intermitência do step é MAIOR que a janela — o TTL de 6 h cabe ~3 ticks de 2 h, então "tudo
+      `background` no TTL" é a leitura ESPERADA de um step que responde de vez em quando, não
+      evidência de que a via não o alcança. Reler o TTL descarta o tick PRÉ-merge (é para isso que
+      serve); não descarta a via. **O critério de parada é a DECISÃO, não a janela:** enquanto
+      esperar não bloqueia nada, `background` no TTL inteiro é INDETERMINADO e o próximo passo é o
+      próximo tick — de graça. Casado com o #2124
+      ([`verificabilidade-do-conjunto-orquestrado.md`](../../../docs/historico/verificabilidade-do-conjunto-orquestrado.md)),
+      que mediu a mesma falácia duas vezes: `exit 3` de watcher é o fim da JANELA dele, não da via.
 
   - **N3 PASSIVO por ESCRITA DE APLICAÇÃO — a edge que o USUÁRIO chama também deixa rastro
     (2026-08-29, #2086).** As duas vias passivas acima nascem do **cron**: é ele que produz a linha em
