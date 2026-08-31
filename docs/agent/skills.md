@@ -47,7 +47,7 @@
 ## Editar uma skill: nenhum gate confere as citações dela
 
 `.claude/skills/` está **fora do `docs:citacoes`** — `ALVOS_VIVOS` é `CLAUDE.md` + `docs/agent`,
-`docs/visual-direction` e `docs/runbooks` (`scripts/docs-citacoes-gate-check.ts:113`<!--cita: ALVOS_VIVOS-->),
+`docs/visual-direction` e `docs/runbooks` (`scripts/docs-citacoes-gate-check.ts:130`<!--cita: ALVOS_VIVOS-->),
 e a skill não entra por nenhum dos dois lados: nem como doc varrido, nem pela âncora `<!--cita:-->` que
 resgata a citação do doc congelado. Medido em 2026-08-30 sabotando uma citação de
 `.claude/skills/lovable-deploy-verify/SKILL.md`: o gate passou com **exit 0 e sem mover o contador** —

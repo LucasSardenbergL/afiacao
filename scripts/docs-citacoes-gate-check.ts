@@ -109,8 +109,25 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { removerCercas } from './lib/markdown-codigo';
 
-/** Docs VIVOS — os que precisam estar certos hoje. Congelados ficam fora (ver cabeçalho). */
-export const ALVOS_VIVOS = ['CLAUDE.md', 'docs/agent', 'docs/visual-direction', 'docs/runbooks'];
+/**
+ * Docs VIVOS — os que precisam estar certos hoje. Congelados ficam fora (ver cabeçalho).
+ *
+ * `.claude/skills` entrou em 2026-08-31, e é o alvo com a MELHOR razão custo/benefício da lista:
+ * ligar custou **zero** vermelho. A dívida que ele fecha foi medida no #2130 — citação em skill não
+ * era conferida por gate NENHUM, nem como doc varrido nem pela âncora que resgata o doc congelado —
+ * e a primeira varredura já cobrou o preço disso: a ÚNICA citação `arquivo:linha` que as 35 skills
+ * tinham apontava para linha VAZIA (`index.ts:74`, corrigida para :129 no #2137).
+ *
+ * Por que a régua do cabeçalho (que recusou `docs/historico/`) aprova esta pasta: lá o custo eram
+ * 131 vermelhos de FORMA para pegar 1 alvo sumido, sobre documento DATADO que não deve acompanhar a
+ * `main`. Skill é o oposto nos dois eixos — é instrução VIVA, que descreve o repo de hoje, e o que
+ * se copia dela é comando pronto. Citação podre ali não envelhece: ela mente na hora do uso.
+ *
+ * ⚠️ O que este gate NÃO cobre numa skill continua descoberto: ele lê `arquivo:linha`, não executa
+ * as cercas ```bash. Os dois defeitos do #2136 (um regex cego a `./` e uma afirmação de
+ * comportamento) passariam por aqui verdes.
+ */
+export const ALVOS_VIVOS = ['CLAUDE.md', 'docs/agent', 'docs/visual-direction', 'docs/runbooks', '.claude/skills'];
 
 /**
  * Artefatos DATADOS que moram dentro de pasta viva. Nominal e com motivo — a pasta é o default,
