@@ -35,8 +35,8 @@ recusa.
 não se digita por acidente: é afirmação escrita à mão sobre o que está na linha HOJE. O corte por
 diretório protege o doc datado de ser *obrigado* a acompanhar a `main`; ele nunca teve razão para
 proteger quem se ofereceu. Regra nova: **toda citação ANCORADA é verificada, varrida a pasta ou
-não** — `scripts/docs-citacoes-gate-check.ts:236`<!--cita: export function apenasAncoradas-->,
-aplicada em `scripts/docs-citacoes-gate-check.ts:459`<!--cita: const ancoradas = apenasAncoradas-->.
+não** — `scripts/docs-citacoes-gate-check.ts:253`<!--cita: export function apenasAncoradas-->,
+aplicada em `scripts/docs-citacoes-gate-check.ts:476`<!--cita: const ancoradas = apenasAncoradas-->.
 Citação sem âncora em doc não varrido continua fora, e continua contada.
 
 Custo medido de ligar: **4 citações, todas já verdes. Zero conserto.** `docs/superpowers/` (453
@@ -50,7 +50,7 @@ Duas citações de `docs/historico/fase-sem-sinal.md` tinham âncora **correta**
 citação e âncora nunca via um `\n`. Em doc vivo isso vira o achado barulhento "não tem âncora"; em
 doc não varrido sumiria calado — e teria sumido calado **também sob a regra nova**, porque o filtro
 é `ancora !== null`. Consertar era pré-condição, não escopo extra:
-`scripts/docs-citacoes-gate-check.ts:199`<!--cita: const RE_ANCORA_SOLTA-->. A âncora só é adotada
+`scripts/docs-citacoes-gate-check.ts:216`<!--cita: const RE_ANCORA_SOLTA-->. A âncora só é adotada
 pela ÚLTIMA citação da linha e só se nada mais sobrar depois dela, senão seria atribuída a quem não
 é dona.
 
