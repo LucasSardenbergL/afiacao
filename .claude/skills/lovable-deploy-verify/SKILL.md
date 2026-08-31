@@ -465,7 +465,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
     (2026-08-29, #2035).** Antes de instrumentar sonda, **leia o corpo do erro que o cron já gravou**:
     se a mensagem for única no repo (`git grep` prova), ela identifica o BUNDLE. Na
     `analytics-outbox-drain`, `{"erro":"POSTHOG_INGEST_KEY nao configurado"}` (id 62407) existia em UM
-    arquivo — `index.ts:74`, criado pelo PR — logo só aquele bundle podia emiti-la: prova de VERSÃO sem
+    arquivo — `supabase/functions/analytics-outbox-drain/index.ts:129`<!--cita: POSTHOG_INGEST_KEY nao configurado-->, criado pelo PR — logo só aquele bundle podia emiti-la: prova de VERSÃO sem
     PAT, sem canária, sem invocar nada. Bônus de graça: o 500 vem DEPOIS do `authorizeCronOrStaff`,
     então a mesma linha prova que o `x-cron-secret` do Vault está correto (errado pararia em 401).
     ⛔ Não vale para mensagem genérica (`{"error":"internal"}`) nem para string que também existe em
