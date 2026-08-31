@@ -137,6 +137,29 @@ CREATE POLICY "<nome_tabela>_service_all"
 
 Para **adicionar coluna**, **índice**, **função SQL**, **trigger**, **enum value**, **view**, **extensão** (`CREATE EXTENSION IF NOT EXISTS …`) ou **cron** (não tabela nova), o padrão idempotente de cada caso está em `references/sql-house-style.md`. Para a **query de validação** de cada tipo de objeto, em `references/validation-queries.md`.
 
+**Postcondição embutida (faça por padrão).** Termine a migration com um bloco `DO $post$` que
+relê o catálogo e dá `RAISE EXCEPTION` se o objeto não existir **ou existir em estado insuficiente**
+(constraint `NOT VALID`, índice `indisvalid=false`, view que perdeu `security_invoker`). Ele roda no
+mesmo Run de quem colou, então **uma migration que não pegou não termina em silêncio** — ela aborta
+na cara do founder, com o motivo escrito. Custa algumas linhas e é a defesa em profundidade da
+falha-mãe desta skill. Envolva a migration em `BEGIN; … COMMIT;` explícito: sem o wrapper a
+postcondição continua gritando, mas pode gritar sobre um estado meio-aplicado (medido em PG17).
+
+O predicado é **o mesmo** da query de validação do Passo 4, invertido (`IF NOT EXISTS (…) THEN RAISE
+EXCEPTION`). Template por tipo de objeto, critério de suficiência de cada um, as regras anti-teatro
+do assert por execução e os limites do padrão: **`references/postcondicao-embutida.md`**.
+
+```sql
+DO $post$
+BEGIN
+  IF NOT EXISTS (<o predicado de suficiência — não só de existência>) THEN
+    RAISE EXCEPTION 'A1 FALHOU: <o que está errado> — <a consequência real>';
+  END IF;
+  RAISE NOTICE '<resumo do estado provado>';
+END
+$post$;
+```
+
 **Backfill / seed de dados** (popular catálogo, preencher coluna nova em linhas antigas): mesmo ritual, com duas diferenças. (1) O SQL é `INSERT … ON CONFLICT DO NOTHING` ou `UPDATE … WHERE <coluna> IS NULL` — sempre idempotente e re-rodável, pra colar de novo sem duplicar/estragar. (2) A validação não é `EXISTS` (a linha pode já existir), e sim **contagem ou amostra**: `SELECT count(*) FROM … WHERE <condição do backfill>` deve bater com o esperado, ou um `SELECT … LIMIT 5` mostrando os dados certos. Isso prova que o backfill pegou. Backfill só entra nesta skill quando vira migration versionada (`.sql` commitado); `UPDATE` ad-hoc de uma vez não é tarefa desta skill.
 
 ### Passo 2.5 — Pré-voo de colisão multi-sessão (`wt:preflight`)
@@ -213,7 +236,7 @@ SELECT
 
 Para índice, função, trigger, RLS policy, enum value, constraint, view e cron job, use o catálogo de queries `pg_catalog`/`information_schema` em **`references/validation-queries.md`**. Se a migration cria vários objetos, valide os principais numa query só (o arquivo tem o padrão de validação múltipla).
 
-**Depois que o founder disser que rodou** (qualquer fraseado — "rodei", "feito", "colei"): **VOCÊ roda a query de validação via psql-ro** — não peça pra ele colar o resultado de volta (esse round-trip morreu com o psql-ro; a query no handoff fica como fallback pra ele conferir sozinho quando quiser). `✅` → aplicado, pode seguir. `❌` → não pegou; investigue (erro no Run? colou parcial? ordem errada?) e reentregue — **não** assuma que está ok. Só depois de `✅` você considera a mudança no banco como real.
+**Depois que o founder disser que rodou** (qualquer fraseado — "rodei", "feito", "colei"): **VOCÊ roda a query de validação via psql-ro** — não peça pra ele colar o resultado de volta (esse round-trip morreu com o psql-ro; a query no handoff fica como fallback pra ele conferir sozinho quando quiser). `✅` → aplicado, pode seguir. `❌` → não pegou; investigue (erro no Run? colou parcial? ordem errada?) e reentregue — **não** assuma que está ok. Só depois de `✅` você considera a mudança no banco como real. **A postcondição embutida do Passo 2 não substitui esta validação:** ela prova o estado ao fim da transação do apply, não que o founder colou o bloco inteiro nem que ninguém dropou o objeto depois. O `psql-ro` é a segunda testemunha — outra conexão, depois do commit, rodada por mim. A postcondição, por estar *dentro* do que se quer verificar, é a mais fácil de enganar.
 
 ### Passo 5 — Nota pro PR description
 
@@ -293,3 +316,4 @@ Nunca encerre dizendo que a mudança "está pronta" sem esse lembrete — porque
 
 - `references/sql-house-style.md` — padrões idempotentes por tipo de objeto (coluna, índice, função, trigger, enum, cron) + catálogo de policies RLS no estilo do repo.
 - `references/validation-queries.md` — query de validação `pg_catalog`/`information_schema` pronta pra cada tipo de objeto, + padrão de validação múltipla numa query só.
+- `references/postcondicao-embutida.md` — o bloco `DO $post$` que faz a própria migration abortar quando não pega: moldura transacional (medida), template por tipo de objeto, critério de "existe ≠ vale", assert por execução sem virar teatro, e o que ele NÃO prova.
