@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **515** custom migrations totais
-- **1746** objetos esperados (criados por estas migrations)
+- **517** custom migrations totais
+- **1751** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 539
+  - `function`: 544
   - `rls_policy`: 458
   - `index`: 251
   - `cron_job`: 169
@@ -4222,6 +4222,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.reconciliar_pedidos_omie` | — |
+
+### `20260830204209_captura_authz_gate_custo_rpcs_preco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+| `function` | `public.get_tint_prices` | — |
+| `function` | `public.get_preco_cockpit` | — |
+
+### `20260830204210_captura_authz_escopo_carteira_farmer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.farmer_recomendacoes_substituir` | — |
+| `function` | `public.farmer_bundle_recomendacoes_substituir` | — |
 
 ### `20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql`
 

@@ -123,7 +123,7 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — a migração REAL (Lei #1): o mesmo arquivo que o founder cola no SQL Editor.
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/db/farmer-escopo-carteira-fg009.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260830204210_captura_authz_escopo_carteira_farmer.sql"
 [ -f "$MIG" ] || { echo "migração ausente: $MIG"; exit 1; }
 P -q -f "$MIG"
 echo "═══ migração aplicada ═══"
@@ -216,7 +216,11 @@ P -q <<SQL
 ALTER TABLE public.farmer_client_scores ENABLE ROW LEVEL SECURITY;
 CREATE POLICY fcs_so_a_minha ON public.farmer_client_scores FOR SELECT
   USING (farmer_id = auth.uid());
-GRANT SELECT ON public.farmer_client_scores TO authenticated;
+-- 'FOR SHARE' (lock causal do lote, só existe no corpo VIVO) exige UPDATE/DELETE ALÉM de
+-- SELECT — só-SELECT derruba a RPC com 42501 em RUNTIME. Em prod a relacl desta tabela é
+-- 'authenticated=arwdDxtm' (medido via psql-ro 2026-08-30), então este GRANT é FIDELIDADE
+-- ao ambiente real, não afrouxamento. O assert PRIV1 abaixo prova que a dependência existe.
+GRANT SELECT, UPDATE ON public.farmer_client_scores TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.farmer_recommendations TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.farmer_bundle_recommendations TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.farmer_geracao_vigente TO authenticated;
@@ -233,6 +237,41 @@ EXCEPTION
   WHEN OTHERS THEN RAISE;
 END \$t\$;" 2>&1 | sed -n 's/^NOTICE:  \(.*\)$/\1/p;s/^ERROR:  \(.*\)$/ERRO: \1/p' | tail -1 || true)
 eq "R1 cliente invisível pela RLS → FG009 (fail-closed)" "$CEGO" "FG009"
+
+# ── PRIV1 — a dependência de PRIVILÉGIO que o FOR SHARE cria (só existe no corpo VIVO) ──
+# O guard de escopo trava as linhas do lote com SELECT ... FOR SHARE, e o Postgres exige
+# UPDATE/DELETE (não basta SELECT) para travar linha. A RPC é SECURITY INVOKER: quem trava é
+# o authenticated do farmer, não o owner. Logo um endurecimento futuro perfeitamente plausível
+# -- "authenticated não escreve em farmer_client_scores, revoga UPDATE" -- derruba a RPC em
+# RUNTIME, no CAMINHO FELIZ, com 42501. Este assert torna esse requisito invisível uma
+# invariante testada.
+# ⚠️ Tem de rodar com SET ROLE authenticated DE VERDADE: o helper chamar() só seta o GUC que
+# auth.uid()/auth.role() leem e permanece como superuser, para quem nenhum REVOKE morde --
+# sem o SET ROLE este assert passaria por cegueira, que é o teatro que a Lei #3 mata.
+# Sentinela: "permission denied", texto do POSTGRES, não nosso.
+priv_c1() { # roda o CAMINHO FELIZ (cliente da própria carteira) como authenticated de verdade
+  Pq -c "$COMO_A SET ROLE authenticated;
+  DO \$t\$ BEGIN
+    PERFORM public.farmer_recomendacoes_substituir('$A'::uuid, gen_random_uuid(), $(geracao_atual farmer_recommendations), '$(linha "$C1")'::jsonb, 'completa', NULL, NULL, NULL);
+    RAISE NOTICE 'SEM_ERRO';
+  EXCEPTION
+    WHEN SQLSTATE 'FG009' THEN RAISE NOTICE 'FG009';
+    WHEN OTHERS THEN RAISE;
+  END \$t\$;" 2>&1 | sed -n 's/^NOTICE:  \(.*\)$/\1/p;s/^ERROR:  \(.*\)$/ERRO: \1/p' | tail -1 || true
+}
+P -q <<SQL
+REVOKE UPDATE ON public.farmer_client_scores FROM authenticated;
+SQL
+PRIV="$(priv_c1)"
+case "$PRIV" in
+  *"permission denied"*) ok "PRIV1 sem UPDATE o FOR SHARE derruba a RPC no caminho feliz (=$PRIV)" ;;
+  SEM_ERRO)              bad "PRIV1 a RPC passou sem privilégio de lock — o FOR SHARE não está no corpo aplicado" ;;
+  *)                     bad "PRIV1 erro inesperado — esperado permission denied, veio [$PRIV]" ;;
+esac
+P -q <<SQL
+GRANT UPDATE ON public.farmer_client_scores TO authenticated;
+SQL
+eq "PRIV1b com o GRANT de volta, o caminho feliz volta" "$(priv_c1)" "SEM_ERRO"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): sabota o gate e EXIGE vermelho.
