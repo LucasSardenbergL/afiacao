@@ -56,6 +56,34 @@ ali é ausência de dado, não aprovação. Mesma família de `docs/historico/ga
 ESCOPO DE VARREDURA em vez de stripper — e o custo é maior do que parece, porque a skill é justamente
 onde o próximo agente vai buscar o comando pronto para copiar.
 
+### Gate de cercas ```bash — medido e RECUSADO como lint (2026-08-31)
+
+O `docs:citacoes` acima lê `arquivo:linha`; **não olha o que a cerca FAZ**. Foi por aí que um
+`grep -E '^\+.*from "\.\.'` cego a `from "./x.ts"` atravessou o #2127 e só caiu na auditoria à mão
+do #2136. A pergunta seguinte — "então instale um lint nas cercas" — foi MEDIDA nas 35 cercas das 9
+skills, e a resposta é não:
+
+| candidato | achados | defeitos reais |
+|---|---|---|
+| `bash -n` (sintaxe) | 1 | **0** |
+| `shellcheck -S warning` | 7 | **0** |
+
+Os 8 achados são **ruído do placeholder `<x>`**, que o bash lê como redirect (`<edge>`, `<saida.md>`):
+neutralizando `<x>`→`PH_x`, ambos vão a **zero**. Ou seja, ligar qualquer um dos dois reprovaria 7
+cercas sadias e pegaria defeito nenhum — e nenhum dos dois alcança erro **semântico**, que é a classe
+que de fato machuca, porque um regex furado é sintaticamente perfeito.
+
+⇒ **Não instale lint de shell sobre cerca de skill.** O que pegaria é a cerca EXECUTADA contra
+fixture: **22 das 35 são puras** (texto/`git`, sem rede nem banco — a do #2127 entre elas), então o
+denominador existe. Critério do "pura", para o número ser reproduzível: nenhuma POSIÇÃO DE COMANDO
+(início de linha ou depois de `|`/`;`/`&`) casa `psql|gh|curl|npx|supabase|bun|npm|deno|docker|ssh|
+nohup|~/.config` — o wrapper `~/.config/afiacao/psql-ro` conta como banco, e esquecê-lo devolve 27. Mas isso é mecanismo novo (anotação + fixture + runner), não configuração — e
+enquanto não existir, a cerca de skill se confere **à mão**, como as citações.
+
+⚠️ Ao contar cercas por natureza, filtre o COMANDO, não a substring: `supabase` casa o caminho
+`supabase/functions/` e classifica como "toca o banco" justamente a cerca de `git`/`grep` que é o
+caso mais testável. Mordido ao montar esta tabela — 12/23 virou 22/13 depois do conserto.
+
 ## Skills stack-specific
 
 Instaladas via `git clone` dos repos oficiais em `~/.claude/skills/` (sem auto-update — re-clonar pra atualizar): Supabase oficial · Vercel Eng (react/composition/web-design) · TanStack Query · Sentry (`sentry-react-sdk` só via router `sentry-sdk-setup`) · Trail of Bits (semgrep/codeql/sarif/supply-chain) · RBAC.
