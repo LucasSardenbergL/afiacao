@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **506** custom migrations totais
-- **1728** objetos esperados (criados por estas migrations)
+- **509** custom migrations totais
+- **1730** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 527
-  - `rls_policy`: 455
+  - `function`: 528
+  - `rls_policy`: 456
   - `index`: 250
   - `cron_job`: 168
   - `table`: 160
@@ -4200,6 +4200,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260830122701_margin_audit_log_master_pode_ler.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.Strategic+ can view margin audit` | `margin_audit_log` |
+
+### `20260830122702_remove_trigger_auto_super_admin.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260830123820_snapshot_atomico_universo_itens.sql`
 
 | Tipo | Objeto | Parent |
@@ -4228,6 +4238,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260904233000_sku_fornecedor_externo_fator_positivo.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260905090000_sayerlack_custo_portal_cas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_aplicar_custo_portal` | — |
 
 ## Próximos passos por status
 

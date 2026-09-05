@@ -307,6 +307,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'lock dos candidatos a envio — edge enviar-pedido-portal-sayerlack',
   },
+  'public.sayerlack_aplicar_custo_portal': {
+    fechadaPor: '20260905090000_sayerlack_custo_portal_cas.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'custo do portal em 1 transação (CAS omie IS NULL + itens tudo-ou-nada) — edge enviar-pedido-portal-sayerlack, service_role',
+  },
   'public.envio_portal_claim_ids': {
     fechadaPor: '20260604180000_envio_portal_claim_ids_lista_positiva.sql',
     permitido: PORTA_FECHADA,
