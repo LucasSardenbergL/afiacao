@@ -33,9 +33,26 @@
 # COBERTURA, dita em voz alta: o mapa cobre ~40 das ~95 edges. As outras ~55 saem SEM_PROVA e
 # viram chip como hoje — o gate não regride nada, só corta o redundante onde há prova.
 #
+# ⚠️ E o eco de `fonte` não era o único campo que faltava. O casamento resposta↔edge depende do
+# ECO DO SLUG (`content->>'edge'`), que só nasceu no #1789 — e há bundle no ar ANTERIOR a ele, que
+# responde `{ok,probe,versao}` e mais nada. Medido em prod 2026-09-05 (request_ids 69377-69381):
+# das 5 edges sondadas, só as 2 que ecoam `edge` saíram PRE_SONDA_FONTE; as outras 3 saíram
+# "nenhuma sonda em 6 hours" — pendência PROVADA virando ausência de dado, o MESMO erro do #2156
+# uma geração de campo atrás. Não enganou porque quem sondou tinha os `request_id` em mãos; o
+# caminho normal do /fecho não tem.
+#   O que NÃO dá para fazer: presumir a identidade. Sem o eco do slug a resposta não diz de qual
+#   edge é, e `net.http_request_queue` — a única tabela do pg_net que guarda a URL — é APAGADA
+#   quando a resposta chega (conferido em prod no mesmo dia: fila com os ids em voo, nenhum dos
+#   respondidos). Ausência de identidade não pode virar identidade presumida.
+#   O que dá, e é o conserto: (a) `--request-ids slug=<id>` traz o ÚNICO vínculo determinístico que
+#   existe, como o `ids` do `sonda:sql`; (b) sem ele, a saída para de dizer "nenhuma sonda" quando
+#   HÁ sonda anônima na janela — conta quantas são e manda determinar pelo request_id. Nos dois
+#   casos o desfecho segue chip; o que muda é o diagnóstico deixar de mentir.
+#
 # Uso:
 #   edges-pendentes.sh <slug> [<slug> ...]      # classifica os slugs dados
 #   edges-pendentes.sh --desde "<data-ou-SHA>"  # deriva os slugs da janela (UNIÃO de 2 fontes)
+#   ... [--request-ids "slug=<request_id>,…"]   # OPCIONAL: casa a resposta SEM eco de slug
 #
 # `--desde` enumera pela UNIÃO, porque cada fonte sozinha tem furo (mesmo princípio do Passo 4 da
 # lovable-deploy-verify): (a) o DIFF do mapa de fingerprints entre o início da janela e a main —
@@ -48,8 +65,10 @@
 #       3 = uso inválido
 #
 # Env: AFIACAO_PSQL (default ~/.config/afiacao/psql-ro) · FECHO_JANELA_TTL (default '6 hours',
-#      = pg_net.ttl) · FECHO_MAPA_FONTE (arquivo de mapa alternativo; default = o da origin/main).
-# Testes: scripts/test-fecho-edges-pendentes.sh (com --falsificar).
+#      = pg_net.ttl) · FECHO_MAPA_FONTE (arquivo de mapa alternativo; default = o da origin/main) ·
+#      FECHO_REQUEST_IDS (mesmo formato do `--request-ids`, que tem precedência).
+# Testes: scripts/test-fecho-edges-pendentes.sh (com --falsificar) — e o SQL roda de VERDADE em
+#         .claude/skills/lovable-deploy-verify/evals/edges-pendentes-sql-eval.sh.
 set -uo pipefail
 
 JANELA="${FECHO_JANELA_TTL:-6 hours}"
@@ -61,8 +80,22 @@ tmp="$(mktemp -d)" || { echo "edges-pendentes: mktemp falhou"; exit 2; }
 trap 'rm -rf "$tmp"' EXIT
 
 # --------------------------------------------------------------------- uso ---
+# `--request-ids` sai da linha de comando ANTES de tudo: o resto do script trata `$@` como lista de
+# slugs, e um flag esquecido ali viraria "slug" e depois "edge fora do mapa" — chip fantasma.
+REQ_IDS="${FECHO_REQUEST_IDS:-}"
+_args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --request-ids)   REQ_IDS="${2:-}"; shift; [ "$#" -gt 0 ] && shift ;;
+    --request-ids=*) REQ_IDS="${1#--request-ids=}"; shift ;;
+    *)               _args+=("$1"); shift ;;
+  esac
+done
+set -- ${_args[@]+"${_args[@]}"}
+
 [ "$#" -ge 1 ] || {
   echo "uso: edges-pendentes.sh <slug> [slug...]   |   edges-pendentes.sh --desde \"<git-since>\""
+  echo "     [--request-ids \"slug=<request_id>,…\"]  (opcional; casa resposta sem eco de slug)"
   exit 3
 }
 
@@ -148,6 +181,34 @@ if [ ! -s "$tmp/alvos" ]; then
   exit 0
 fi
 
+# ------------------------------------------------ vínculo explícito por request_id ---
+# O ÚNICO vínculo determinístico entre uma resposta sem eco de slug e a edge que a serviu. Vale
+# `<slug>=<request_id>` separado por vírgula, e NADA além disso: cada metade é interpolada no SQL,
+# e o slug só passa se for `[a-z0-9_-]` (nenhuma aspa cabe aí) e o id se for só dígito.
+#
+# Toda recusa aqui é exit 3 — RUÍDO DE USO, nunca veredito sobre deploy. Aceitar um par malformado
+# em silêncio é o modo de falha caro: o operador acha que colou, a edge segue sem vínculo, e a
+# saída diz "sem sonda" com a mesma cara de sempre. Slug FORA da leva também é recusado, pelo
+# mesmo motivo que o `--caro` do `sonda:sql` recusa forasteira: um "s" a menos no nome deixaria a
+# edge que interessa sem o vínculo que o operador acha que deu.
+vinculo_values=""
+if [ -n "$REQ_IDS" ]; then
+  IFS=',' read -r -a _pares <<< "$REQ_IDS"
+  for _par in ${_pares[@]+"${_pares[@]}"}; do
+    _slug="${_par%%=*}"; _id="${_par#*=}"
+    case "$_par" in *=*) ;; *) echo "edges-pendentes: --request-ids espera 'slug=id', recebi '$_par'"; exit 3 ;; esac
+    case "$_slug" in ""|*[!a-z0-9_-]*) echo "edges-pendentes: slug inválido em --request-ids: '$_slug'"; exit 3 ;; esac
+    case "$_id"   in ""|*[!0-9]*)      echo "edges-pendentes: request_id não numérico: '$_id'"; exit 3 ;; esac
+    if ! command grep -Fxq -- "$_slug" "$tmp/alvos"; then
+      echo "edges-pendentes: SLUG_FORA_DA_LEVA — --request-ids nomeia '$_slug', fora da leva medida."
+      echo "   Um nome que não casa deixaria a edge de verdade SEM o vínculo, e a saída diria"
+      echo "   'sem sonda' como se nada tivesse sido colado. Nada foi consultado — exit 3."
+      exit 3
+    fi
+    vinculo_values="${vinculo_values:+$vinculo_values, }('$_slug', $_id::bigint)"
+  done
+fi
+
 # --------------------------------------------------- mapa de fingerprints ---
 # Da origin/main de propósito: a pergunta é "o ar bate com o que ESTÁ MERGEADO?", não com o
 # worktree local (que pode ter fatia ainda não mergeada, e aí o "desatualizada" seria mentira).
@@ -202,12 +263,20 @@ if [ "$mecanica_ok" = 1 ]; then
   #
   # ⚠️ Nada aqui afrouxa o fail-closed: a 2ª classe exige eco POSITIVO de `probe` E de `versao`.
   # 401, resposta sem eco (pré-sensor) e ausência de linha continuam fora — INDETERMINADOS.
+  # A CTE `vinculo` carrega os pares `--request-ids`. Quando nao ha nenhum ela nasce VAZIA por
+  # `WHERE false` (e nao por ausencia da CTE) de proposito: a FORMA do SQL fica a mesma nos dois
+  # caminhos, entao o guardrail textual da suite mede sempre a consulta que roda de verdade.
+  vinculo_sql="SELECT NULL::text, NULL::bigint WHERE false"
+  [ -n "$vinculo_values" ] && vinculo_sql="VALUES $vinculo_values"
+
   sql="WITH bruto AS (
-         SELECT created, content FROM net._http_response
+         SELECT id, created, content FROM net._http_response
          WHERE status_code = 200 AND content IS NOT NULL
            AND left(ltrim(content), 1) = '{'
            AND created > now() - interval '$JANELA'
          OFFSET 0
+       ), vinculo(edge, request_id) AS (
+         $vinculo_sql
        ), sondas AS (
          SELECT created,
                 (content::jsonb) ->> 'edge'  AS edge,
@@ -224,14 +293,56 @@ if [ "$mecanica_ok" = 1 ]; then
          WHERE NOT ((content::jsonb) ? 'fonte')
            AND (content::jsonb) ->> 'probe'  = 'true'
            AND (content::jsonb) ->> 'versao' IS NOT NULL
+         UNION ALL
+         -- 3a classe: casada pelo request_id COLADO, o unico vinculo que alcanca o bundle anterior
+         -- ao #1789 (responde {ok,probe,versao} e nao diz de quem e). O eco de probe+versao segue
+         -- exigido: um id que aponte para resposta de CRON nao pode virar prova de sonda. E se a
+         -- linha ECOA um slug, ele tem de ser o do vinculo — colagem trocada seria a fabricacao de
+         -- identidade que este ramo existe para evitar, com o agravante de vir com cara de prova.
+         SELECT b.created, v.edge,
+                CASE WHEN (b.content::jsonb) ? 'fonte'
+                     THEN (b.content::jsonb) ->> 'fonte'
+                     ELSE 'sem-campo-fonte' END AS fonte
+         FROM bruto b JOIN vinculo v ON v.request_id = b.id
+         WHERE (b.content::jsonb) ->> 'probe'  = 'true'
+           AND (b.content::jsonb) ->> 'versao' IS NOT NULL
+           AND COALESCE((b.content::jsonb) ->> 'edge', v.edge) = v.edge
+       ), recentes AS (
+         SELECT DISTINCT ON (edge) edge, fonte
+         FROM sondas WHERE edge IS NOT NULL AND fonte IS NOT NULL
+         ORDER BY edge, created DESC
+       ), anonimas AS (
+         -- Resposta de SONDA que nao diz de quem e: 200 + probe + versao e SEM o campo edge, e sem
+         -- vinculo colado. Nao da para atribuir a ninguem — mas a CONTAGEM e o que separa
+         -- \"ninguem sondou\" de \"sondaram e o ar respondeu como bundle pre-#1789\". Sem ela, a
+         -- edge sem eco saia como ausencia de dado, que e o defeito medido em 2026-09-05.
+         SELECT count(*) AS n FROM bruto b
+         WHERE (b.content::jsonb) ->> 'probe'  = 'true'
+           AND (b.content::jsonb) ->> 'versao' IS NOT NULL
+           AND NOT ((b.content::jsonb) ? 'edge')
+           AND NOT EXISTS (SELECT 1 FROM vinculo v WHERE v.request_id = b.id)
        )
-       SELECT DISTINCT ON (edge) edge || ' ' || fonte
-       FROM sondas WHERE edge IS NOT NULL AND fonte IS NOT NULL
-       ORDER BY edge, created DESC;"
+       SELECT edge || ' ' || fonte FROM recentes
+       UNION ALL
+       SELECT '#anonimas ' || n FROM anonimas;"
   if ! "$PSQL" -Atc "$sql" > "$tmp/ar" 2>"$tmp/erro"; then
     mecanica_ok=0
     motivo="a consulta a net._http_response falhou: $(head -c 160 "$tmp/erro" | tr '\n' ' ')"
   fi
+fi
+
+# quantas respostas de sonda ANONIMAS (sem eco de slug, sem vinculo) ha na janela.
+n_anonimas=0
+if [ "$mecanica_ok" = 1 ]; then
+  n_anonimas="$(sed -n 's/^#anonimas //p' "$tmp/ar" | head -1)"
+  # A linha existe SEMPRE (`count(*)` devolve uma linha até em tabela vazia). Se ela nao veio, a
+  # consulta que rodou nao e a que este classificador le — DERIVA entre as duas pontas, a mesma
+  # classe de falha que a suite falsifica no sentinela `sem-campo-fonte`. Nao da para degradar
+  # para zero: zero e justamente a leitura que devolve a mensagem MENTIROSA de antes.
+  case "$n_anonimas" in
+    ""|*[!0-9]*) mecanica_ok=0
+                 motivo="${motivo:-a consulta nao devolveu a linha \`#anonimas\` (SQL e classificador em versoes diferentes)}" ;;
+  esac
 fi
 
 # ------------------------------------------------------------ veredito ---
@@ -260,6 +371,14 @@ while read -r slug; do
     printf '  SEM_PROVA      %-34s mecânica não confiável (ver acima)\n' "$slug"
   elif [ -z "$esperado" ]; then
     printf '  SEM_PROVA      %-34s fora do mapa de sondas — não há prova passiva possível\n' "$slug"
+  elif [ -z "$servido" ] && [ "$n_anonimas" -gt 0 ]; then
+    # Irmao do PRE_SONDA_FONTE, um degrau ATRAS: la o bundle responde `edge` e nao `fonte`; aqui
+    # nao responde nem `edge` (anterior ao #1789), entao a resposta EXISTE e nao diz de quem e.
+    # O veredito continua INDETERMINADO — identidade ausente nao vira identidade presumida —, mas
+    # dizer "nenhuma sonda" seria inventar a ausencia: sondaram, e o ar respondeu.
+    # shellcheck disable=SC2016  # as crases sao TEXTO: `edge` e o campo que falta na resposta
+    printf '  SEM_PROVA      %-34s SONDA_ANONIMA: nenhuma resposta ECOANDO este slug, mas %s resposta(s) de sonda sem eco de slug na janela (200 com `probe`+`versao` e SEM `edge` = bundle anterior ao #1789). Uma delas PODE ser desta edge; nenhuma é atribuível sem o disparo → INDETERMINADO. Para determinar: --request-ids %s=<request_id>\n' \
+      "$slug" "$n_anonimas" "$slug"
   elif [ -z "$servido" ]; then
     printf '  SEM_PROVA      %-34s nenhuma sonda em %s (ausência ≠ pendência: INDETERMINADO)\n' "$slug" "$JANELA"
   elif [ "$servido" = "sem-campo-fonte" ]; then

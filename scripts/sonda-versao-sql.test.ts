@@ -295,13 +295,14 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
     expect(sql).toMatch(/COALESCE\(r\.content::jsonb -> 'data', r\.content::jsonb\)/);
   });
 
-  it('os 8 ramos de veredito estão nomeados', () => {
+  it('os 9 ramos de veredito estão nomeados', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
     for (const ramo of [
       'INDETERMINADO',
       'AGUARDE',
       'DEPLOY CONFIRMADO',
       'DEPLOY PARCIAL',
+      'PRE_SONDA_FONTE',
       'BUNDLE VELHO',
       'PRE-SENSOR',
       'BUNDLE VELHO (pre-sonda)',
@@ -317,13 +318,22 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
     expect(sql).toMatch(/l\.corpo ->> 'fonte'\s+AS fonte_respondida/);
   });
 
-  it('DEPLOY PARCIAL é ramo PRÓPRIO — e vem ANTES do de confirmação', () => {
+  it('`fonte` AUSENTE e `fonte` = nao-mapeada são ramos SEPARADOS — e ambos antes da confirmação', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    expect(sql).toMatch(/COALESCE\(l\.corpo ->> 'fonte', 'nao-mapeada'\) = 'nao-mapeada'/);
+    // Campo AUSENTE ⇒ bundle anterior ao #1998 (deploy antigo INTEIRO). Campo PRESENTE valendo
+    // `nao-mapeada` ⇒ o bundle conhece o campo e o mapa que subiu não tem a edge: aí sim é parcial.
+    // O `COALESCE(fonte,'nao-mapeada')` que existia aqui fundia os dois e nomeava a causa ERRADA
+    // para o caso mais comum — medido em prod 2026-09-05 nas 5 edges dos request_ids 69377-69381.
+    expect(sql).toContain("WHEN NOT (l.corpo ? 'fonte')");
+    expect(sql).toContain('PRE_SONDA_FONTE');
+    expect(sql).toContain("WHEN l.corpo ->> 'fonte' = 'nao-mapeada'");
     expect(sql).toContain('DEPLOY PARCIAL');
-    // A ORDEM é o que impede o falso POSITIVO: depois do CONFIRMADO, este ramo nunca alcançaria a
-    // edge cujo `versao` bate — que é exatamente a assinatura do bundle parcial.
+    // e o COALESCE que os fundia não pode voltar
+    expect(sql).not.toMatch(/COALESCE\(l\.corpo ->> 'fonte', 'nao-mapeada'\) = 'nao-mapeada'/);
+    // A ORDEM é o que impede o falso POSITIVO: depois do CONFIRMADO, nenhum dos dois alcançaria a
+    // edge cujo `versao` bate — que é exatamente a assinatura dos dois bundles.
     expect(sql.indexOf('DEPLOY PARCIAL')).toBeLessThan(sql.indexOf("THEN 'DEPLOY CONFIRMADO'"));
+    expect(sql.indexOf('PRE_SONDA_FONTE')).toBeLessThan(sql.indexOf("THEN 'DEPLOY CONFIRMADO'"));
   });
 
   it('DEPLOY CONFIRMADO exige o fonte BATENDO — `versao` sozinho não prova deploy verbatim', () => {
@@ -487,8 +497,19 @@ describe('PASSO 2 — acha a linha pelo ECO do slug, sem colar request_id nenhum
   it('(c) fonte `nao-mapeada` ⇒ DEPLOY PARCIAL, e ANTES do ramo de confirmação', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
     const t = leitura(sql);
-    expect(t).toMatch(/COALESCE\(l\.corpo ->> 'fonte', 'nao-mapeada'\) = 'nao-mapeada'/);
+    expect(t).toContain("WHEN l.corpo ->> 'fonte' = 'nao-mapeada'");
     expect(t.indexOf('DEPLOY PARCIAL')).toBeLessThan(t.indexOf("THEN 'DEPLOY CONFIRMADO'"));
+  });
+
+  it('(c2) fonte AUSENTE ⇒ PRE_SONDA_FONTE, e o texto NÃO acusa deploy parcial', () => {
+    // O ramo tem de NOMEAR a causa certa, não só cair no lugar seguro: "DEPLOY PARCIAL" manda
+    // procurar um prompt de deploy que nomeou poucos arquivos, e nesse estado esse prompt não
+    // existiu — o bundle inteiro é anterior ao #1998.
+    const t = leitura(gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] }));
+    const ramo = t.slice(t.indexOf("WHEN NOT (l.corpo ? 'fonte')"), t.indexOf("WHEN l.corpo ->> 'fonte' = 'nao-mapeada'"));
+    expect(ramo).toContain('PRE_SONDA_FONTE');
+    expect(ramo).toContain('#1998');
+    expect(ramo).not.toContain('DEPLOY PARCIAL');
   });
 
   it('o 401 sem colagem AUTO-DESQUALIFICA o controle — e a mensagem diz a saída', () => {

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os SEIS evals:
+# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os SETE evals:
 #   (1) classify        — classificação de diff do Passo 1 (classify.sh vs classify-eval.json)
 #   (2) verify-frontend — enumeração + exit codes do Passo 4 (harness local determinístico)
 #   (3) verify-edge-eco  — guard TEMPORAL do N3 passivo (só ticks pré-merge ⇒ indeterminado)
 #   (4) verify-edge-escrita — N3 passivo por escrita de aplicação
 #   (5) sonda-veredito-401  — guard de CREDENCIAL do SQL de sondagem (401 é ambíguo; EXECUTA o SQL)
 #   (6) criterio-caro      — critério MEDIDO do `--caro` (efeito, não forma do handler)
+#   (7) edges-pendentes-sql — classificação do Passo 3 do /fecho (EXECUTA o SQL do gate passivo)
 # Exit 0 = tudo passou. Exit 1 = alguma divergência.
 # Falsificação (prova que os evals têm dente): --falsify sabota TODOS e exige vermelho
 #   (classify sabota o gabarito UMA CHAVE POR VEZ e depois muta o classify.sh real; verify-frontend
@@ -173,6 +174,21 @@ if [ "$FALSIFY" = 1 ]; then
   bash criterio-caro-eval.sh --falsify || rc=1
 else
   bash criterio-caro-eval.sh || rc=1
+fi
+
+echo ""
+# (7) O irmão PASSIVO do (5): o Passo 3 do /fecho decide quais edges da janela ainda precisam de
+# chip, e é ele quem APAGA pendência. O SQL dele ganhou CTE de vínculo, três classes em UNION ALL
+# e uma contagem que viaja na mesma resposta — nada disso é legível por grep, e uma CTE quebrada
+# derruba o script para exit 2, que vira chip para TODA a janela (o ruído que ele corta). Mora
+# aqui, e não na skill `fecho`, porque este é o único agregador de evals que o CI roda: eval fora
+# do CI é falsificação que só roda à mão. A suíte de FORMA segue em
+# `scripts/test-fecho-edges-pendentes.sh` (rodada por `bun run test:falsificacao`).
+echo "== (7) edges-pendentes-sql — classificação do Passo 3 do /fecho, EXECUTANDO o SQL =="
+if [ "$FALSIFY" = 1 ]; then
+  bash edges-pendentes-sql-eval.sh --falsify || rc=1
+else
+  bash edges-pendentes-sql-eval.sh || rc=1
 fi
 
 echo ""

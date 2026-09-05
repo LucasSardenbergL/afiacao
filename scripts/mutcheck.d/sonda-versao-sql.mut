@@ -19,7 +19,14 @@ PEGA      | eco probe:true dispensado no CONFIRMADO    | s/AND l\.corpo ->> 'pro
 # Os 4 abaixo guardam o `fonte` — o campo que prova deploy VERBATIM (#2018). Sem eles a suíte
 # aceitava um veredito que julga só o `versao`, e o bundle que sobe index.ts+versao.ts SEM o
 # _shared/sonda-fingerprints.ts saía como 'DEPLOY CONFIRMADO': falso POSITIVO, a classe pior.
-PEGA      | ramo DEPLOY PARCIAL neutralizado (nao dispara) | s/COALESCE\(l\.corpo ->> 'fonte', 'nao-mapeada'\) = 'nao-mapeada'/false/
+PEGA      | ramo DEPLOY PARCIAL neutralizado (nao dispara) | s/l\.corpo ->> 'fonte' = 'nao-mapeada'/false/
+# Os 3 abaixo separam as DUAS causas de "sem fingerprint no ar", que o `COALESCE(fonte,'nao-mapeada')`
+# fundia num ramo so: campo AUSENTE = bundle anterior ao #1998 (deploy antigo INTEIRO) x campo
+# PRESENTE valendo `nao-mapeada` = mapa que subiu sem esta edge (parcial de verdade). Medido em prod
+# 2026-09-05: 5 edges no 1o estado saindo com o texto do 2o. Desfecho igual, causa nomeada errada.
+PEGA      | ramo PRE_SONDA_FONTE neutralizado (nao dispara) | s/NOT \(l\.corpo \? 'fonte'\)/false/
+PEGA      | campo ausente volta a ser chamado de DEPLOY PARCIAL | s/THEN 'PRE_SONDA_FONTE/THEN 'DEPLOY PARCIAL (ausente)/
+PEGA      | o COALESCE que fundia as duas causas volta        | s/WHEN NOT \(l\.corpo \? 'fonte'\)/WHEN COALESCE(l.corpo ->> 'fonte', 'nao-mapeada') = 'nao-mapeada'/
 PEGA      | CONFIRMADO dispensa o fonte (falso POSITIVO)   | s/AND l\.corpo ->> 'fonte' = l\.fonte_esperada/AND true/
 PEGA      | fingerprint hardcoded em vez de lido do mapa   | s/lit\(e\.fonte\)/lit('0'.repeat(64))/
 PEGA      | edge fora do mapa degrada em vez de lancar     | s/if \(!\(edge in mapa\)\)/if (false)/
