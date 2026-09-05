@@ -106,6 +106,36 @@ vermelho — e a corrida C1: sessão A segura o row-lock gravando o nº do PO, a
 `motivo='erro_rpc'` e `sqlstate_rpc` nulo/`42883`, a **migration não foi colada** — bundle novo sem RPC é
 cegueira total, não parcial.
 
+## O deploy provou o sensor — e cobrou por isso (medido 2026-09-05, pedido #2459)
+
+O PR mergeou às 12:48 UTC. A **edge** subiu; a **migration não** (apply manual). Às 13:38 UTC saiu um
+envio real, e o sensor registrou exatamente o que o desenho previa:
+
+```
+motivo=erro_rpc · sqlstate_rpc=PGRST202 · atualizados=0 · planejados=1 · cego=true · fonte=json_total_unico
+```
+
+**`PGRST202` é a assinatura de "edge nova + RPC ausente"** (PostgREST não acha a função no schema cache).
+Se o sensor mostrar isso, o diagnóstico não é o portal nem o DOM — é **migration não colada**, e a leitura
+é imediata sem abrir log nenhum.
+
+**O que o fail-closed salvou e o que ele não alcança.** Salvou: `atualizados=0`, nada parcial, nada
+fabricado — a captura provou o custo (`fonte=json_total_unico`, `total_json=374,77`) e recusou-se a gravar
+metade. Não alcança: o pedido seguiu para o Omie com o preço **anterior** e o PO nasceu **R$ 13,06 (3,49%)
+acima** do que o fornecedor cobrou (banco `387,832503` × portal `374,77`). Ou seja: **a ordem do deploy é
+money-path, não higiene.** Edge sem RPC não corrompe o banco, mas deixa o PO nascer com o preço velho, que
+é o defeito que a entrega existe para fechar.
+
+⇒ **Regra: quando a fatia tem edge + RPC nova, a migration vai PRIMEIRO.** O aviso em prosa no corpo do PR
+não impediu — o Publish da edge é um clique independente e chega antes. Em fatia assim, a leitura honesta
+do estado intermediário é "pior que antes em um eixo" (antes o custo não era capturado e nada acusava;
+agora nada é capturado **e** o sensor grita), então o intervalo entre os dois applies tem de ser curto e
+vigiado, não presumido inócuo.
+
+⚠️ **O #2459 não se conserta sozinho depois do apply**: ele já tem `omie_pedido_compra_numero`, e o CAS
+recusa com **CP002 por desenho** (custo não muda depois do PO). Reprocessá-lo é decisão de produto, com
+correção do lado do Omie — não é rollback de código.
+
 ## Risco residual (chips)
 
 - ~~`jaTemOmie` é snapshot em memória; a invariante "custo só antes do PO Omie" pede CAS no banco~~ →
