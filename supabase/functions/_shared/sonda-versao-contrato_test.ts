@@ -57,6 +57,9 @@ import * as nfeRecebimentoSync from "../omie-nfe-recebimento-sync/versao.ts";
 import * as syncMetadados from "../omie-sync-metadados/versao.ts";
 import * as omieWebhook from "../omie-webhook/versao.ts";
 import * as aplicarParametros from "../omie-aplicar-parametros/versao.ts";
+import * as recurringOrders from "../process-recurring-orders/versao.ts";
+import * as programadoExtrair from "../pedido-programado-extrair/versao.ts";
+import * as cmcBackfill from "../cmc-snapshot-backfill/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -210,6 +213,10 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "omie-sync-metadados", mod: syncMetadados },
   { nome: "omie-webhook", mod: omieWebhook },
   { nome: "omie-aplicar-parametros", mod: aplicarParametros },
+  // 12ª leva, 2ª metade: o lado PEDIDO/COMPRA da mesma classe cega.
+  { nome: "process-recurring-orders", mod: recurringOrders },
+  { nome: "pedido-programado-extrair", mod: programadoExtrair },
+  { nome: "cmc-snapshot-backfill", mod: cmcBackfill },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -259,6 +266,14 @@ const ESCRITA_NOSSO_BANCO = [
   "omie-sync-metadados",
   "omie-webhook",
   "omie-aplicar-parametros",
+  // 12ª leva, 2ª metade — pedido/compra. `process-recurring-orders` insere `orders` de verdade e
+  // AVANÇA o `next_order_date` (o run legítimo seguinte pula a data consumida);
+  // `pedido-programado-extrair` paga token da Anthropic e faz delete+insert em
+  // `pedidos_programados_itens`; `cmc-snapshot-backfill` reescreve `cmc_snapshot`, a base de custo
+  // que o motor de reposição e o DRE consomem.
+  "process-recurring-orders",
+  "pedido-programado-extrair",
+  "cmc-snapshot-backfill",
 ];
 
 /**
