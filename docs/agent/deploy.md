@@ -235,6 +235,18 @@ desfecho é redeployar edge de money-path à toa), ou o inverso. Edge sem `versa
 mapa de fingerprints** derruba a geração inteira (nada de SQL parcial em silêncio), e `--caro` que
 não casa um nome da leva também — o typo deixaria a edge cara no bloco SEM trava.
 
+**QUEM entra no `--caro` é MEDIDO, não presumido — o critério é o EFEITO, não a FORMA do handler.**
+Regra curta: edge que **não escreve nem chama serviço externo** no fluxo real é BARATA, e o pior
+caso de sondá-la com bundle pré-sensor é computar e devolver. O proxy "a edge despacha por
+`body.action`?" está **REPROVADO** — marcou `fin-valor-cockpit`, que não escreve nada, como cara
+(`ausente ≠ zero` aplicado à forma do handler: o `default:` que recusa prova que AQUELE caminho é
+inócuo, a ausência de dispatch não prova o contrário). O `grep` de triagem, as duas armadilhas que
+invertem a leitura (`fetch(` de GET de auth não é efeito; `.delete(` casa com `Set.delete` do JS) e
+o eixo reversibilidade/alcance ficam na **escada de edge** da skill `lovable-deploy-verify` —
+**cópia única de propósito**, porque só lá o critério é EXECUTADO pelo gate, que extrai o grep da
+própria skill e o roda contra as edges-exemplo
+(`.claude/skills/lovable-deploy-verify/evals/criterio-caro-eval.sh`).
+
 ⚠️ **O veredito julga o `fonte`, não só o `versao` — e o ramo `DEPLOY PARCIAL` vem ANTES do de
 confirmação.** O `versao` sai do `versao.ts` da PRÓPRIA edge: um deploy que suba `index.ts` +
 `versao.ts` e deixe `_shared/sonda-fingerprints.ts` para trás (o risco do Passo 3 da skill
