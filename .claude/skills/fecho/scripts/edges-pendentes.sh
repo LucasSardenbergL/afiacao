@@ -236,6 +236,7 @@ fi
 
 # ------------------------------------------------------------ veredito ---
 : > "$tmp/chips"
+: > "$tmp/sem_sonda"
 echo "== edges da janela: precisa de chip? =="
 if [ "$mecanica_ok" = 0 ]; then
   echo "⚠️ MECÂNICA NÃO CONFIÁVEL — $motivo"
@@ -261,6 +262,7 @@ while read -r slug; do
   elif [ -z "$esperado" ]; then
     printf '  SEM_PROVA      %-34s fora do mapa de sondas — não há prova passiva possível\n' "$slug"
   elif [ -z "$servido" ]; then
+    printf '%s\n' "$slug" >> "$tmp/sem_sonda"
     printf '  SEM_PROVA      %-34s nenhuma sonda em %s (ausência ≠ pendência: INDETERMINADO)\n' "$slug" "$JANELA"
   elif [ "$servido" = "sem-campo-fonte" ]; then
     # Irmão do ramo abaixo, e MAIS FORTE que ele: `nao-mapeada` é o bundle novo servindo uma prova
@@ -287,5 +289,24 @@ fi
 echo "🎫 abra chip para: $(tr '\n' ' ' < "$tmp/chips")"
 echo "   (DESATUALIZADA / PRE_SONDA_FONTE = deploy pendente PROVADO · SEM_PROVA = indeterminado,"
 echo "    chip por fail-closed)"
+# ⚠️ "nenhuma sonda na janela" NÃO se resolve esperando, e dizer só "INDETERMINADO" convida o
+# leitor a esperar. Não há cron de sondagem: medido 2026-09-05, 24 das 54 edges do mapa não têm
+# cron NENHUM (webhook, ou invocada sob demanda pelo app) — para essas a prova passiva é
+# IMPOSSÍVEL, e `net._http_response` ainda expira no TTL do pg_net. Quem dá prova passiva é a edge
+# cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) e tem cron frequente.
+# O próprio autor deste script leu este ramo como "espere o próximo tick do cron" HORAS depois de
+# escrevê-lo, e a espera nunca terminaria: mensagem que engana quem a escreveu engana qualquer um.
+if [ -s "$tmp/sem_sonda" ]; then
+  n_ss="$(wc -l < "$tmp/sem_sonda" | tr -d "[:space:]")"
+  amostra="$(head -6 "$tmp/sem_sonda" | tr '\n' ' ')"
+  [ "$n_ss" -gt 6 ] && amostra="$amostra… (+$((n_ss - 6)))"
+  echo
+  echo "ℹ️  as $n_ss sem sonda NÃO se resolvem esperando — não há cron de sondagem, e boa parte"
+  echo "   destas edges não tem cron nenhum (webhook/sob demanda). DISPARE a sonda:"
+  echo "     bun run sonda:sql $amostra"
+  echo "   (o PASSO 1 gerado é escrita + vault: cola no SQL Editor do Lovable; o PASSO 2 julga e"
+  echo "    roda no read-only com --so-leitura)"
+fi
+
 [ "$mecanica_ok" = 1 ] && exit 1
 exit 2

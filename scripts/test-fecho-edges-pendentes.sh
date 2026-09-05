@@ -104,6 +104,16 @@ suite() {
   then ok "sem sonda na janela -> SEM_PROVA, exit 1"
   else bad "edge sem sonda devia dar SEM_PROVA/exit 1 (rc=$rc): ${out:0:90}"; fi
 
+  # 3b. ...e a saida tem de dizer O QUE FAZER. "nenhuma sonda na janela" NAO se resolve esperando:
+  #     medido 2026-09-05, 24 das 54 edges do mapa nao tem cron nenhum (webhook/sob demanda), e
+  #     `net._http_response` expira em 6h — para essas, prova passiva e IMPOSSIVEL e a espera nunca
+  #     termina. O proprio autor do script leu esse ramo como "espere o proximo tick do cron" horas
+  #     depois de escreve-lo; mensagem que engana quem a escreveu engana qualquer um.
+  run ok "$tmp/psql-stub" edge-muda
+  if tem 'sonda:sql' "$out"
+  then ok "ramo 'nenhuma sonda' aponta o remedio (bun run sonda:sql)"
+  else bad "ramo 'nenhuma sonda' sem remedio — o leitor conclui 'espere o cron', que nunca vem"; fi
+
   # 4. as ~55 edges fora do mapa continuam virando chip como hoje (sem regressao)
   run ok "$tmp/psql-stub" edge-fora-do-mapa
   if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 1 ]
@@ -336,6 +346,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "mapa_base ausente voltando a ser tratado como cegueira" \
     's%if \[ ! -s "$tmp/mapa_agora" \]; then%if [ ! -s "$tmp/mapa_agora" ] || [ ! -s "$tmp/mapa_base" ]; then%'
+  # (a5) o remedio some do rodape: o ramo "nenhuma sonda" volta a dizer so "INDETERMINADO", e o
+  #      leitor conclui "espere o cron" — que para 24 das 54 edges do mapa NUNCA vem (webhook/sob
+  #      demanda, sem cron nenhum). Foi o erro cometido ao vivo pelo autor do proprio script.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "registro do ramo 'nenhuma sonda' indo para o vazio (rodape sem remedio)" \
+    's#>> "$tmp/sem_sonda"#>> /dev/null#'
   # (b) o fail-closed some da classificacao: mecanica quebrada passaria a absolver
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "classificar como NO_AR mesmo com mecanica quebrada" \

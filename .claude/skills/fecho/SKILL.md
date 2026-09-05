@@ -201,6 +201,18 @@ ESTREITA o diff, e sem ele nenhum par casa e a via (a) emite o mapa INTEIRO como
 devolve **16 `NO_AR` provadas + 25 `SEM_PROVA`** no lugar de 41 pendências cegas. Degradar aqui é
 AMPLIAR a enumeração, nunca absolver: cada alvo segue classificado um a um por prova positiva.
 
+🕳️ **`SEM_PROVA` por "nenhuma sonda na janela" NÃO se resolve esperando — DISPARE.** Não existe
+cron de sondagem neste projeto (`cron.job` tem 93 jobs e **zero** com `probe`). Quem dá prova
+passiva é só a edge cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) e tem cron frequente —
+`analytics-outbox-drain` (5 em 5 min) é o caso típico. Medido 2026-09-05: **24 das 54 edges do
+mapa não têm cron NENHUM** (webhook, ou invocada sob demanda pelo app), e para essas a prova
+passiva é *impossível*; ainda por cima `net._http_response` expira no TTL do pg_net (6h), então a
+janela só encolhe. O remédio é `bun run sonda:sql <edge>…` — PASSO 1 (escrita + vault) o founder
+cola no SQL Editor do Lovable; PASSO 2 julga em SELECT puro (`--so-leitura`, roda no `psql-ro`).
+⚠️ Aprendido caro: o autor do próprio script leu este ramo como "espere o próximo tick do cron"
+**horas depois de escrevê-lo**, e a espera nunca terminaria. O script hoje imprime o remédio no
+rodapé, preso pelo caso 3b e pela sabotagem (a5).
+
 Se a sessão tocou edge: ela foi deployada via chat do Lovable? (Evidência: o founder confirmou
 na conversa, ou a canária/probe respondeu com o comportamento novo.) Pendente → inclua o prompt
 de deploy verbatim (skill `lovable-deploy-verify`, passo 3) na mensagem de fecho.
