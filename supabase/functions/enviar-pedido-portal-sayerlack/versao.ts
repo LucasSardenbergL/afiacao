@@ -29,7 +29,16 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * converter unidade (Omie em LITRO → portal em BALDE, fator 0,2), com `round6` antes do `ceil`
  * (poeira binária virava balde a mais) e fail-closed em fator inválido (antes ia "NaN" no input).
  */
-export const VERSAO = "v1.2-qtde-portal-fator-embalagem";
+/**
+ * v1.3 — 3 achados do challenge Codex (2026-09-05) sobre o v1.2, todos fail-closed ANTES do Browserless:
+ * (1) TOCTOU aprovação→envio: `pedido_compra_item.fator_embalagem_portal` (o fator com que o MOTOR
+ * arredondou, #2157) ≠ `fator_conversao` VIVO → `erro_nao_retentavel` (`fator_aprovado_divergente`);
+ * (2) chave de fornecedor EXATA (`fornecedor_nome` do pedido, igual ao motor) em vez de ILIKE, e >1 linha
+ * ativa por sku_omie recusa por `mapeamento_ambiguo` (antes: Map last-wins); (3) `fator_conversao < 1e9`
+ * espelhado do SQL (`FATOR_MAX`); (4) erro de banco ao ler o de-para é TRANSIENTE (`erro_buscar_mapeamentos`),
+ * não "sem mapeamento" definitivo. Helper espelhado em src/lib/reposicao/qtde-portal.ts (vitest).
+ */
+export const VERSAO = "v1.3-fator-aprovado-vs-vivo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
