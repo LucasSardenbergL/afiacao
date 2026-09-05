@@ -177,11 +177,16 @@ suite() {
   # diretorio no 2o locale faria o 1o caso rodar contra um repo ja quebrado — vermelho falso.
   local repo="$tmp/repo-${LC_ALL:-x}"
   if [ ! -d "$repo" ]; then
-    mkdir -p "$repo/supabase/functions/_shared" "$repo/supabase/functions/edge-do-shared"
+    mkdir -p "$repo/supabase/functions/_shared" "$repo/supabase/functions/edge-do-shared" \
+             "$repo/supabase/functions/edge-fora-do-mapa"
     git -C "$repo" init -q -b main 2>/dev/null
     git -C "$repo" config user.email t@t; git -C "$repo" config user.name t
     printf 'x\n' > "$repo/supabase/functions/_shared/lib.ts"
     printf 'import "../_shared/lib.ts"\n' > "$repo/supabase/functions/edge-do-shared/index.ts"
+    # a classe do buraco: importa `_shared/` e NAO tem versao.ts, logo NAO esta no mapa. A via (a)
+    # nao a conhece (so le o mapa) e a via (b) nao a ve (a pasta dela nao foi tocada). 41 edges
+    # reais nesta situacao, medidas em 2026-09-05 sobre origin/main.
+    printf 'import "../_shared/lib.ts"\n' > "$repo/supabase/functions/edge-fora-do-mapa/index.ts"
     cat > "$repo/supabase/functions/_shared/sonda-fingerprints.ts" <<MAPA0
 export const FONTE_SHA256: Record<string, string> = {
   "edge-do-shared": "$SHA_VELHO",
@@ -207,6 +212,13 @@ MAPA1
   if tem 'edge-do-shared' "$out" && ! tem '_shared ' "$out"
   then ok "--desde: _shared/ puxa a edge afetada e _shared NAO entra como edge"
   else bad "--desde devia listar edge-do-shared e nunca _shared (rc=$rc): ${out:0:120}"; fi
+
+  # 13b. a via (c): edge FORA do mapa afetada so por `_shared/`. Sem o grafo de imports ela nao
+  #      entra por via nenhuma — nao vira chip e a pendencia some por AUSENCIA DE DADO, que e o
+  #      modo de falha caro de um script que APAGA pendencia.
+  if tem 'edge-fora-do-mapa' "$out"
+  then ok "--desde: edge FORA do mapa afetada por _shared/ entra pelo grafo de imports"
+  else bad "edge-fora-do-mapa sumiu: _shared/ mudou, ela importa, e nenhuma via a enxergou"; fi
 
   # mapa ilegivel + _shared/ tocado = nao sei quais edges foram afetadas -> exit 2, nunca "nada"
   git -C "$repo" rm -q --cached supabase/functions/_shared/sonda-fingerprints.ts >/dev/null 2>&1
@@ -336,6 +348,17 @@ if [ "${1:-}" = "--falsificar" ]; then
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "mapa_base ausente voltando a ser tratado como cegueira" \
     's%if \[ ! -s "$tmp/mapa_agora" \]; then%if [ ! -s "$tmp/mapa_agora" ] || [ ! -s "$tmp/mapa_base" ]; then%'
+  # (a5) a via (c) para de contribuir alvos: a edge FORA do mapa afetada so por `_shared/` volta a
+  #      ser invisivel — exatamente a classe de 41 edges medida em 2026-09-05. Sem esta sabotagem o
+  #      caso 13b poderia estar verde por outro motivo (a via (b) pegando a pasta, p.ex.).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "via (c) sem contribuir alvos (grafo de imports mudo)" \
+    's%    cat "$tmp/afetadas" >> "$tmp/alvos"%    :%'
+  # (a6) a via (c) deixa de ser fail-closed: erro do auxiliar vira seguir-em-frente, e lista vazia
+  #      por ERRO volta a ser indistinguivel de lista vazia por merito
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "via (c) seguindo em frente quando o auxiliar falha" \
+    's%    if ! bun "$AFETADAS_TS"%    if false \&\& ! bun "$AFETADAS_TS"%'
   # (b) o fail-closed some da classificacao: mecanica quebrada passaria a absolver
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "classificar como NO_AR mesmo com mecanica quebrada" \
