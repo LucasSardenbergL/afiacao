@@ -12,6 +12,7 @@ import {
   derivarCustos,
   extrairAddJson,
   parseBRL,
+  parseDiasPrzEnt,
   resumirCaptura,
   toleranciaChecksum,
   type AddJsonPortal,
@@ -289,4 +290,11 @@ Deno.test("resumirCaptura: já tem PO Omie ⇒ captura não roda, não é cega (
   const r = resumo({ jaTemOmie: true });
   assertEquals(r.cego, false, "não cega");
   assertEquals(r.motivo, "ja_tem_omie", "motivo");
+});
+
+Deno.test("parseDiasPrzEnt: inteiro de dias do Prz Ent; vazio/lixo → null (alimenta o gate de grupo)", () => {
+  assertEquals(parseDiasPrzEnt("5"), 5, "5");
+  assertEquals(parseDiasPrzEnt(" 12 dias "), 12, "com texto");
+  assertEquals(parseDiasPrzEnt(""), null, "vazio");
+  assertEquals(parseDiasPrzEnt("n/a"), null, "lixo");
 });

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   parseBRL, parseDiasPrzEnt, casarLinhasComItens, validarGrupoLeadtime, derivarCustos,
-  consolidarLinhasPortal, extrairAddJson, resumirCaptura,
+  consolidarLinhasPortal, extrairAddJson, resumirCaptura, round2, toleranciaChecksum,
   type ItemPedido, type LinhaPortal, type LinhaDom, type AddJsonPortal, type ItemEsperado,
 } from '../sayerlack-scraping-pedido';
 
@@ -203,5 +203,13 @@ describe('consolidarLinhasPortal (contrato espelhado)', () => {
     const c = consolidarLinhasPortal([], null, esp);
     const r = resumirCaptura({ cons: c, match: null, pulados: [], planejados: 0, atualizados: 0, jaTemOmie: false, nDom: 0, nJson: 0, nItens: 2 });
     expect(r).toMatchObject({ cego: true, motivo: 'sem_json' });
+  });
+});
+
+describe('helpers numéricos espelhados', () => {
+  it('round2 arredonda a centavo (com EPSILON) e toleranciaChecksum deriva do arredondamento exibido', () => {
+    expect(round2(1.005)).toBe(1.01);
+    expect(round2(1605.6738)).toBe(1605.67);
+    expect(toleranciaChecksum([2, 2, 8])).toBeCloseTo(0.005 * 4 + 12 * 0.00005, 10);
   });
 });

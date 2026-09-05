@@ -23,9 +23,8 @@ export const FONTE_SHA256: Record<string, string> = {
   "conciliar-pedido-portal": "c5e8f0f688486a6dcedfdc459e675e8827db712668d26c14dd197ad8db49ee6d",
   "disparar-pedidos-aprovados": "1885293ff4d579fa780172689fef32cd079aa68eb02a4d3adcb2d96af83be487",
   "dispatch-notifications": "f29d8d0a57a4ccfe8f6fd76645d6c76ad13c891460b6913f24b43ae43cdca114",
-  "enviar-pedido-portal-sayerlack": "02291ceba6c3fe932fc780fe69bdef83186f5082b58fad1bda1b850e142a95cb",
+  "enviar-pedido-portal-sayerlack": "132fdb3bfe6147f6c62c24f8b41b7e2b971e491110c9aa2073fd04266be1d768",
   "enviar-push": "38302707026818b24e43f4936dea80f7648c68b2c1351385c7ddd5e396bdd9d5",
->>>>>>> c28b455e9 (fix(reposicao): captura de custo do portal Sayerlack era CEGA (97/97) — custo nasce do JSON do Efetivar + DOM com cadeia de prova, e cegueira vira sensor [money-path])
   "fin-cashflow-engine": "5327584f8d1bfc36b2f150428575bc459aafd16df4fae37223a20e89425a9a5d",
   "fin-funding": "740615f4f2e2d469bc2e4930dd742e01733ec4b828f16724d3be818a1d4ac32d",
   "fin-valor-cockpit": "045900ec186c02e6c69e910a8b8eb1903fd3a88b03b6410dde6ba5007ede970e",

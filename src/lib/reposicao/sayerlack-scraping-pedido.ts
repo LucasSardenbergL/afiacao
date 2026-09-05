@@ -29,7 +29,7 @@ export interface ItemPedido {
   item_id: number; sku_codigo_omie: string; sku_descricao: string | null;
   sku_portal: string | null; qtde_final: number; preco_atual: number;
 }
-export interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; }
+interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; }
 export interface ResultadoMatch { casados: Casado[]; naoCasados: ItemPedido[]; ambiguos: ItemPedido[]; }
 
 function normPortal(s: string | null): string { return (s ?? '').trim().toUpperCase(); }
@@ -126,8 +126,8 @@ export function extrairAddJson(parsed: unknown): AddJsonPortal | null {
   return { itens, value, ordernum };
 }
 
-export type FonteCaptura = 'json_total_unico' | 'dom_checksum' | 'nenhuma';
-export type MotivoCaptura =
+type FonteCaptura = 'json_total_unico' | 'dom_checksum' | 'nenhuma';
+type MotivoCaptura =
   | 'sem_json' | 'total_json_invalido' | 'sku_ambiguo' | 'json_diverge_do_pedido'
   | 'dom_incompleto' | 'qtd_diverge' | 'preco_un_diverge' | 'checksum_divergente';
 export interface Consolidacao {
