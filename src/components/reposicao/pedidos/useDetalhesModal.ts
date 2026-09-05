@@ -228,8 +228,9 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
       if (!condicaoSelecionada) {
         throw new Error('Selecione uma condição de pagamento antes de aprovar');
       }
-      // salvar ajustes primeiro se houver
-      if (Object.keys(edits).length > 0) {
+      // Salvar ajustes primeiro se houver — de QUANTIDADE ou de PREÇO. Só olhar `edits` descartava
+      // a edição só-de-preço no "Aprovar e disparar", e o disparo lia o preço velho do banco (M-03).
+      if (Object.keys(edits).length > 0 || Object.keys(precoEdits).length > 0) {
         await salvarMutation.mutateAsync();
       }
       // salvar condição se mudou ou se ainda não havia
