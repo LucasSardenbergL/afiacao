@@ -76,6 +76,22 @@ Sinal positivo esperado após o deploy: `fonte='json_total_unico'` nos pedidos d
 `portal_resposta->'scrape_debug'` (headers/idx/amostra) diz qual coluna faltou. **Bundle pré-deploy responde
 sem `captura_custo`** (ausência = versão velha, não "nenhuma captura").
 
+⚠️ **A leitura pela RAIZ do `portal_resposta` é CEGA — e mente "OK" (medido 2026-09-05 19:20Z).** O
+veredito vive em `portal_resposta->'captura_custo'->>'motivo'`; ler `portal_resposta->>'motivo'` (sem o
+salto) devolve **NULL em todo pedido**, inclusive nos cegos. Combinado com a heurística "`valor_total`
+preenchido ⇒ capturou", isso aprova exatamente os casos que a entrega existe para pegar:
+
+| id | `->>'motivo'` (raiz) | `valor_total` | casas | tem `captura_custo`? | veredito REAL |
+|---|---|---|---|---|---|
+| 2459 | NULL | 387,832503 | 6 | sim | **`erro_rpc`** (PGRST202, cego) |
+| 2443 | NULL | 1802,52 | **2** | **não** | nenhum — envio pré-deploy |
+
+O 2443 é o caso letal: passa também no desempate por casas decimais (2 casas ⇒ "veio do portal via
+`round2`"), e mesmo assim **nunca teve captura** — o `1802,52` é coincidência aritmética do valor estimado
+interno (CMC × qtde), não assinatura do fornecedor. **`scale(valor_total)` não discrimina origem.** O
+discriminante é a **presença da chave** `captura_custo` e o par `fonte`/`cego` dentro dela: ausente = versão
+velha; presente com `cego=true` = capturou e recusou-se a gravar; presente com `cego=false` = sinal positivo.
+
 ## Fecho do CAS (2ª fatia, 2026-09-05): a escrita virou UMA RPC transacional
 
 O challenge do Codex apontou dois buracos na escrita da 1ª fatia: (a) escrita **parcial** entre itens
@@ -140,6 +156,33 @@ resolve os R$ 13,06.** Não reprocessar, não "corrigir" o #2459: ele não é pe
 encerrado. O `cego=true` com `sqlstate_rpc=PGRST202` que ele carrega no `portal_resposta` é **registro
 histórico do intervalo de deploy**, não alarme vivo — quem varrer o sensor procurando cegueira filtra
 por `enviado_portal_em`, e não trata esta linha como trabalho a fazer.
+
+## Pós-apply: a RPC está em pé e AINDA NÃO FOI EXERCITADA (medido 2026-09-05 19:20Z)
+
+A migration foi colada entre 17:30:09Z e 17:34:01Z e a edge está no ar em `v1.5-custo-portal-rpc-cas`.
+**1h46 depois, ZERO envios ao portal.** O último continua sendo o #2459, de 13:38:14Z — dentro da janela de
+cegueira, e **caso encerrado** (decisão do founder, acima). Provado por duas vias independentes, porque um
+zero só vale com controle positivo:
+
+```
+max(enviado_portal_em) = 2026-09-05 13:38:14+00   -- ANTERIOR ao apply; não depende do filtro estar certo
+filtro enviado_portal_em > '2026-09-05 17:34:01+00' → 0 linhas   (censo: 512 pedidos, 132 já enviados)
+```
+
+⇒ **Isto é ausência de dado, não aprovação.** A RPC nunca recebeu chamada em produção; o
+`fonte='json_total_unico'` com `cego=false` que provaria a entrega **ainda não existe em lugar nenhum**.
+Não adianta esperar: **não há cron que dispare envio ao portal** — o gatilho é o founder enviando um
+pedido. O primeiro envio real é que vira o sinal, e a hora de olhar é logo depois dele.
+
+Duas coisas a saber antes desse primeiro envio:
+
+- **Multi-item ainda não está coberto** até o PR #2194 mergear **e** a edge ser publicada: o `dom_checksum`
+  multiplicava `Preço Venda` (que já é o **total da linha**) por `Qtd UN`, reprovando todo pedido de N itens
+  por `checksum_divergente`. Pedido de 1 item não passa por esse ramo (cai em `json_total_unico`), então um
+  primeiro envio unitário **não** exercita o caminho consertado.
+- **Sinal negativo também é sinal.** Se o primeiro envio vier `motivo='erro_rpc'` com `sqlstate_rpc` nulo ou
+  `42883`/`PGRST202`, não é o portal nem o DOM: é schema cache do PostgREST ou assinatura divergente — a
+  função em si já foi conferida byte-a-byte contra o repo (md5 `fdf607ecb4a5f184c98fba5793e484dc`).
 
 ## Risco residual (chips)
 
