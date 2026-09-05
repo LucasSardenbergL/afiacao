@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.scripts.json",
     "typecheck:app": "tsc --noEmit -p tsconfig.app.json",
     "scripts:typecheck": "tsc --noEmit -p tsconfig.scripts.json",
+    "edges:afetadas": "bun scripts/edges-afetadas.ts",
     "edges:typecheck": "bun scripts/edges-typecheck-gate.ts",
     "sonda:bump": "bun scripts/sonda-versao-bump-gate.ts",
     "sonda:fingerprint": "bun scripts/sonda-fingerprint.ts",

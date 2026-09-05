@@ -75,6 +75,10 @@ JANELA="${FECHO_JANELA_TTL:-6 hours}"
 PSQL="${AFIACAO_PSQL:-$HOME/.config/afiacao/psql-ro}"
 MAPA_REL="supabase/functions/_shared/sonda-fingerprints.ts"
 RAIZ="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../../.." 2>/dev/null && pwd)}"
+# Onde mora o BINÁRIO auxiliar. Deriva de `$0`, nunca de `$RAIZ`: a suíte aponta `$RAIZ` para um
+# repo git de fixture, e o `edges-afetadas.ts` tem de continuar vindo do repo que hospeda o script.
+BIN_RAIZ="$(cd "$(dirname "$0")/../../../.." 2>/dev/null && pwd)"
+AFETADAS_TS="$BIN_RAIZ/scripts/edges-afetadas.ts"
 
 tmp="$(mktemp -d)" || { echo "edges-pendentes: mktemp falhou"; exit 2; }
 trap 'rm -rf "$tmp"' EXIT
@@ -140,6 +144,32 @@ if [ "$1" = "--desde" ]; then
   # do arquivo. Sem essa trava, mudança só em `_shared/` sairia como "nenhuma edge na janela": chip
   # suprimido por AUSÊNCIA DE DADO, que é o modo de falha caro de um script que APAGA pendência.
   if command grep -q '^supabase/functions/_shared/' "$tmp/paths" 2>/dev/null; then
+    # (c) GRAFO DE IMPORTS: a única via que enxerga edge FORA do mapa afetada só por `_shared/`.
+    # A (a) só conhece quem está no mapa e a (b) só quem teve a própria pasta tocada; a interseção
+    # dos dois furos são 41 edges reais (medidas em 2026-09-05 sobre origin/main) — entre elas a
+    # `visit-score-recalc-client`, afetada de fato na janela 21/08→05/09 e que escapou inteira.
+    # Universo = toda pasta com `index.ts`, no mapa ou fora ⇒ fecha a CLASSE, não os 41 casos.
+    # São as MESMAS 41 que o bloco abaixo cita: lá elas explicam por que `mapa_base` ausente
+    # amplia em vez de cegar; aqui elas são o universo que nenhuma das duas vias enumerava.
+    #
+    # Fail-CLOSED e exigindo resposta POSITIVA: `command -v bun` não basta — bun presente-porém-
+    # quebrado esvaziaria o alvo do mesmo jeito (`docs/historico/sonda-ausente-em-script-que-apaga.md`).
+    # Aqui a resposta positiva é o EXIT 0 do próprio auxiliar, que já é fail-closed por edge.
+    if [ ! -f "$AFETADAS_TS" ] || ! command -v bun >/dev/null 2>&1; then
+      echo "⚠️ edges-pendentes: \`_shared/\` mudou na janela e não consigo rodar o grafo de imports"
+      echo "   ($AFETADAS_TS / bun) — não sei QUAIS edges fora do mapa isso afetou. exit 2."
+      exit 2
+    fi
+    if ! bun "$AFETADAS_TS" --repo "$RAIZ" --base "$base" --head origin/main \
+         > "$tmp/afetadas" 2> "$tmp/afetadas.err"; then
+      sed 's/^/   /' "$tmp/afetadas.err" >&2
+      echo "⚠️ edges-pendentes: o grafo de imports não pôde ser calculado — lista vazia por ERRO é"
+      echo "   indistinguível de lista vazia por mérito. MECÂNICA NÃO CONFIÁVEL, exit 2."
+      exit 2
+    fi
+    [ -s "$tmp/afetadas.err" ] && sed 's/^/   /' "$tmp/afetadas.err" >&2
+    cat "$tmp/afetadas" >> "$tmp/alvos"
+
     # ⚠️ As duas pontas do mapa NÃO têm o mesmo papel, e juntá-las num `||` só é o que travava o
     # Passo 3 em exit 2 na janela de MAIOR risco. Medido 2026-09-05, `--desde "2026-08-21 20:00"`:
     # 26 arquivos de `_shared/` tocados, 41 das 95 edges afetadas por transitividade — e veredito
@@ -165,8 +195,10 @@ if [ "$1" = "--desde" ]; then
       echo "   AMPLIADA (superconjunto seguro), não cega — cada alvo segue classificado abaixo."
     fi
     if [ ! -s "$tmp/alvos" ]; then
-      echo "⚠️ \`_shared/\` mudou na janela e NENHUM fingerprint mudou. Ou a mudança não entra em"
-      echo "   bundle nenhum, ou o mapa não foi regenerado no merge (\`bun run sonda:fingerprint\`)."
+      echo "⚠️ \`_shared/\` mudou na janela e NENHUMA edge saiu — nem pelo fingerprint (via a) nem"
+      echo "   pelo grafo de imports (via c), que enxerga TODA pasta com \`index.ts\`. Ou a mudança"
+      echo "   não entra em bundle nenhum (arquivo só de teste, órfão), ou o mapa não foi regenerado"
+      echo "   no merge (\`bun run sonda:fingerprint\`)."
       echo "   Confira antes de concluir que não há deploy pendente."
     fi
   fi
