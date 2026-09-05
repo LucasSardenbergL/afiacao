@@ -8,7 +8,15 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classificarPosLogin, decidirAlertaPortal, ehFalhaSistemicaDoPortal } from "../_shared/sayerlack-pos-login.ts";
-import { FatorConversaoInvalidoError, qtdeFisicaOmie, qtdePortal } from "./qtde-portal.ts";
+import {
+  FatorAprovadoDivergenteError,
+  FatorConversaoInvalidoError,
+  indexarMapeamentos,
+  MapeamentoAmbiguoError,
+  qtdeFisicaOmie,
+  qtdePortal,
+  verificarFatorAprovado,
+} from "./qtde-portal.ts";
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 
 const corsHeaders = {
@@ -1500,6 +1508,9 @@ interface ItemMapeado {
   unidade_portal: string | null;
   fator_conversao: number;
   mapeamento_ativo: boolean | null;
+  // fator com que o MOTOR arredondou qtde_final ao múltiplo da embalagem (#2157). NULL/undefined = não
+  // arredondou. Conferido contra o fator VIVO antes do envio (`verificarFatorAprovado`) — TOCTOU aprovação→envio.
+  fator_embalagem_portal?: number | string | null;
   // preço unitário atual do item (base da tolerância na captura de custo do portal)
   preco_atual?: number;
 }
@@ -1528,6 +1539,7 @@ interface PedidoItemDireto {
   sku_codigo_omie: string;
   sku_descricao: string;
   qtde_final: number | string;
+  fator_embalagem_portal: number | string | null;
 }
 
 interface SkuFornecedorExternoRow {
@@ -1666,6 +1678,63 @@ async function processarPedido(
     duracao_ms: 0,
   };
 
+  // Recusa ANTES de qualquer efeito externo (nenhum POST ao Browserless): não-retentável, motivo visível ao
+  // comprador em `portal_erro`, evidência com `requestSent: false`. escritaCritica: se o status não gravar,
+  // o pedido voltaria à fila e re-tentaria com o MESMO dado — a recusa tem de ser durável.
+  async function recusarPreBrowserless(motivo: string, e: Error, extra: Record<string, unknown> = {}): Promise<ProcessResult> {
+    result.status_final = "erro_nao_retentavel";
+    result.erro = e.message;
+    result.tentativas += 1;
+    await escritaCritica(
+      `pedido_compra_sugerido.update(erro_nao_retentavel:${motivo})`,
+      supabase.from("pedido_compra_sugerido").update({
+        status_envio_portal: result.status_final,
+        portal_tentativas: result.tentativas,
+        portal_erro: result.erro,
+        portal_proximo_retry_em: null,
+      }).eq("id", pedido.id),
+    );
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: result.status_final,
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "pre_browserless", motivo, ...extra, requestSent: false },
+      browserlessResponseMs: null,
+      erro: result.erro,
+    });
+    console.log(`[envio-portal] Pedido #${pedido.id}: recusado pré-Browserless (${motivo}) — ${e.message}`);
+    result.duracao_ms = Date.now() - t0;
+    return result;
+  }
+
+  // Falha TRANSIENTE pré-Browserless (banco indisponível ao ler itens/de-para): retentável em 15 min até
+  // MAX_TENTATIVAS, depois definitiva. Nenhum POST foi enviado.
+  async function falharTransientePreBrowserless(motivo: string, erro: string): Promise<ProcessResult> {
+    result.erro = erro;
+    result.tentativas += 1;
+    const esgotado = result.tentativas >= MAX_TENTATIVAS;
+    result.status_final = esgotado ? "erro_nao_retentavel" : "erro_retentavel";
+    await escritaCritica(
+      `pedido_compra_sugerido.update(${result.status_final}:${motivo})`,
+      supabase.from("pedido_compra_sugerido").update({
+        status_envio_portal: result.status_final,
+        portal_tentativas: result.tentativas,
+        portal_erro: result.erro,
+        portal_proximo_retry_em: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      }).eq("id", pedido.id),
+    );
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: result.status_final,
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "pre_browserless", motivo, requestSent: false },
+      browserlessResponseMs: null,
+      erro: result.erro,
+    });
+    result.duracao_ms = Date.now() - t0;
+    return result;
+  }
+
   // Idempotencia: pedido comprovadamente no portal nao e reprocessado.
   // Cobre o estado legado (enviado_portal) e o novo (sucesso_portal), ambos
   // exigem protocolo confirmado.
@@ -1703,7 +1772,8 @@ async function processarPedido(
         id,
         sku_codigo_omie,
         sku_descricao,
-        qtde_final
+        qtde_final,
+        fator_embalagem_portal
       `)
       .eq("pedido_id", pedido.id)
       .order("id", { ascending: true });
@@ -1742,20 +1812,32 @@ async function processarPedido(
       .from("sku_fornecedor_externo")
       .select("sku_omie, sku_portal, unidade_portal, fator_conversao, ativo")
       .eq("empresa", pedido.empresa)
-      .ilike("fornecedor_nome", "%SAYERLACK%")
+      // Chave EXATA do pedido — a mesma que o motor usa (sp.fornecedor_nome = sfe.fornecedor_nome, #2157).
+      // Era ILIKE '%SAYERLACK%': com um alias cadastrado, o Map podia escolher outro fator/SKU do que o motor.
+      .eq("fornecedor_nome", pedido.fornecedor_nome)
       .in("sku_omie", skus);
-    const maps = (mapsRaw ?? []) as unknown as SkuFornecedorExternoRow[];
+    if (mapsErr || !mapsRaw) {
+      // Falha de banco ao ler o de-para é TRANSIENTE — antes virava mapa vazio → "SKUs sem mapeamento ativo"
+      // definitivo e FALSO (challenge Codex 2026-09-05, P2). Mesmo contrato do "Erro ao buscar itens" acima.
+      return await falharTransientePreBrowserless("erro_buscar_mapeamentos", `Erro ao buscar mapeamentos: ${mapsErr?.message ?? "desconhecido"}`);
+    }
+    const maps = mapsRaw as unknown as SkuFornecedorExternoRow[];
     console.log("[DEBUG_FALLBACK_MAPS]", JSON.stringify({
       pedido_id: pedido.id,
       filtro_empresa: pedido.empresa,
-      filtro_fornecedor_pattern: '%SAYERLACK%',
+      filtro_fornecedor_nome: pedido.fornecedor_nome,
       filtro_skus: skus,
       maps_count: maps.length,
       maps_amostra: maps.slice(0, 3).map((m) => ({ sku_omie: m.sku_omie, sku_portal: m.sku_portal, ativo: m.ativo })),
       mapsErr: mapsErr ? { message: mapsErr.message, code: mapsErr.code } : null,
     }));
-    const mapByOmie = new Map<string, SkuFornecedorExternoRow>();
-    maps.forEach((m) => mapByOmie.set(m.sku_omie, m));
+    let mapByOmie: Map<string, SkuFornecedorExternoRow>;
+    try {
+      mapByOmie = indexarMapeamentos(maps);
+    } catch (e) {
+      if (!(e instanceof MapeamentoAmbiguoError)) throw e;
+      return await recusarPreBrowserless("mapeamento_ambiguo", e, { sku: e.sku, n: e.n });
+    }
     itensList = itensDirect.map((i) => {
       const m = mapByOmie.get(i.sku_codigo_omie);
       return {
@@ -1767,6 +1849,7 @@ async function processarPedido(
         unidade_portal: m?.unidade_portal ?? null,
         fator_conversao: Number(m?.fator_conversao ?? 1),
         mapeamento_ativo: m?.ativo ?? null,
+        fator_embalagem_portal: i.fator_embalagem_portal,
       };
     });
   }
@@ -1874,39 +1957,27 @@ async function processarPedido(
   // converte a unidade do Omie para a do portal via `fator_conversao` — ex.: litro → balde 0,2).
   // Fail-closed: fator inválido aborta o pedido INTEIRO antes de qualquer status/Browserless —
   // enviar parcial ou "NaN" no input do portal é irreversível (o fornecedor recebe de verdade).
+  // TOCTOU aprovação→envio (Codex 2026-09-05): o comprador aprovou `qtde_final` arredondada pelo motor com
+  // `fator_embalagem_portal`; se o fator VIVO mudou desde então (0,2 → 0,18), esta compra seria outra
+  // (44,44 L onde se aprovou 40) — recusar o pedido INTEIRO; o ciclo regrava e o comprador reaprova.
   let itemsPortal: Array<{ sku_portal: string; qtde: number; sku_descricao: string }>;
   try {
-    itemsPortal = itensList.map((i) => ({
-      sku_portal: i.sku_portal!,
-      qtde: qtdePortal(i.qtde_final, i.fator_conversao, i.sku_codigo_omie),
-      sku_descricao: i.sku_descricao,
-    }));
-  } catch (e) {
-    if (!(e instanceof FatorConversaoInvalidoError)) throw e;
-    result.status_final = "erro_nao_retentavel";
-    result.erro = e.message;
-    result.tentativas += 1;
-    // escritaCritica: se o status não gravar, o pedido voltaria à fila e re-tentaria com o mesmo fator.
-    await escritaCritica(
-      "pedido_compra_sugerido.update(erro_nao_retentavel:fator_conversao_invalido)",
-      supabase.from("pedido_compra_sugerido").update({
-        status_envio_portal: result.status_final,
-        portal_tentativas: result.tentativas,
-        portal_erro: result.erro,
-        portal_proximo_retry_em: null,
-      }).eq("id", pedido.id),
-    );
-    await gravarTentativa(supabase, pedido.id, {
-      iniciadoEm,
-      statusResultado: result.status_final,
-      elapsedMs: Date.now() - t0,
-      evidence: { phase: "pre_browserless", motivo: "fator_conversao_invalido", sku: e.sku, requestSent: false },
-      browserlessResponseMs: null,
-      erro: result.erro,
+    itemsPortal = itensList.map((i) => {
+      verificarFatorAprovado(i.fator_embalagem_portal, i.fator_conversao, i.sku_codigo_omie);
+      return {
+        sku_portal: i.sku_portal!,
+        qtde: qtdePortal(i.qtde_final, i.fator_conversao, i.sku_codigo_omie),
+        sku_descricao: i.sku_descricao,
+      };
     });
-    console.log(`[envio-portal] Pedido #${pedido.id}: falha fator_conversao inválido (${e.sku})`);
-    result.duracao_ms = Date.now() - t0;
-    return result;
+  } catch (e) {
+    if (e instanceof FatorAprovadoDivergenteError) {
+      return await recusarPreBrowserless("fator_aprovado_divergente", e, {
+        sku: e.sku, fator_aprovado: e.fatorAprovado, fator_vivo: e.fatorVivo,
+      });
+    }
+    if (!(e instanceof FatorConversaoInvalidoError)) throw e;
+    return await recusarPreBrowserless("fator_conversao_invalido", e, { sku: e.sku });
   }
 
   // 3b. NORMALIZAR `qtde_final` à compra FÍSICA (Codex P0, 2026-09-04). Com fator ≠ 1 o portal compra

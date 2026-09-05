@@ -73,3 +73,56 @@ Deno.test("qtdeFisicaOmie: portal e Omie enxergam a MESMA compra (Codex P0)", ()
   assertLancaFator(() => qtdeFisicaOmie(7.2, 0.2), "qtde_portal fracionária (nunca chega aqui)");
   assertLancaFator(() => qtdeFisicaOmie(0, 0.2), "qtde_portal 0");
 });
+
+// ── Challenge Codex 2026-09-05 (3 achados) — casos espelhados em src/lib/reposicao/__tests__/qtde-portal.test.ts ──
+import { FATOR_MAX, FatorAprovadoDivergenteError, indexarMapeamentos, MapeamentoAmbiguoError, verificarFatorAprovado } from "./qtde-portal.ts";
+
+function assertLanca<T extends Error>(fn: () => unknown, classe: new (...a: never[]) => T, msg: string): T {
+  try {
+    fn();
+  } catch (e) {
+    if (e instanceof classe) return e; // casa a MARCA do ramo, não "lançou algo"
+    throw new Error(`${msg}: lançou outra coisa (${String(e)})`);
+  }
+  throw new Error(`${msg}: não lançou`);
+}
+
+Deno.test("bound de finitude espelha o SQL: fator 1e9 é recusado (o CHECK fator_positivo recusa o mesmo)", () => {
+  assertEquals(FATOR_MAX, 1e9, "FATOR_MAX");
+  assertLancaFator(() => qtdePortal(36, 1e9), "qtdePortal 1e9");
+  assertLancaFator(() => qtdePortal(36, 1e12), "qtdePortal 1e12");
+  assertLancaFator(() => qtdeFisicaOmie(8, 1e9), "qtdeFisicaOmie 1e9");
+  assertEquals(qtdePortal(1, 1e9 - 1), 1e9 - 1, "logo abaixo do bound segue aceito");
+});
+
+Deno.test("verificarFatorAprovado: TOCTOU aprovação→envio (0,2 → 0,18) recusa; NULL = não arredondou", () => {
+  verificarFatorAprovado(null, 0.2, "X");
+  verificarFatorAprovado(undefined, 0.18, "X");
+  verificarFatorAprovado("0.20000000", 0.2, "X"); // numeric do PostgREST chega como string
+  verificarFatorAprovado("0.2777777777777778", 0.2777777777777778, "X"); // mesmo numeric → mesmo Number
+  assertLanca(() => verificarFatorAprovado(0.2, 0.2000000009, "X"), FatorAprovadoDivergenteError, "Δ 9e-10 = 201 vs 200 BB em 1.000 L");
+  const d = assertLanca(() => verificarFatorAprovado(0.2, 0.18, "TEH.3505.00BB"), FatorAprovadoDivergenteError, "0,2→0,18");
+  assertEquals(d.sku, "TEH.3505.00BB", "sku");
+  assertEquals(d.fatorAprovado, 0.2, "aprovado");
+  assertEquals(d.fatorVivo, 0.18, "vivo");
+  assertEquals(d.message.includes("0.18") && d.message.includes("0.2") && /reaprov/i.test(d.message), true, "motivo visível");
+  for (const ruim of [0, -0.2, Number.NaN, 1e9, "abc", ""]) {
+    assertLanca(() => verificarFatorAprovado(ruim, 0.2, "X"), FatorAprovadoDivergenteError, `aprovado inválido ${String(ruim)}`);
+  }
+});
+
+Deno.test("indexarMapeamentos: >1 ativa por sku_omie é ambiguidade (nunca last-wins); ativa vence inativa", () => {
+  type Row = { sku_omie: string; ativo: boolean | null; fator_conversao: number };
+  const ativa: Row = { sku_omie: "A", ativo: true, fator_conversao: 0.2 };
+  const inativa: Row = { sku_omie: "A", ativo: false, fator_conversao: 1 };
+  assertEquals(indexarMapeamentos([inativa, ativa]).get("A"), ativa, "ativa vence (inativa primeiro)");
+  assertEquals(indexarMapeamentos([ativa, inativa]).get("A"), ativa, "ativa vence (ativa primeiro)");
+  assertEquals(indexarMapeamentos([inativa]).get("A"), inativa, "só inativa fica (chamador recusa por 'sem mapeamento ativo')");
+  const amb = assertLanca(
+    () => indexarMapeamentos([ativa, { sku_omie: "A", ativo: true, fator_conversao: 1 }]),
+    MapeamentoAmbiguoError,
+    "2 ativas",
+  );
+  assertEquals(amb.sku, "A", "sku ambíguo");
+  assertEquals(amb.n, 2, "contagem");
+});

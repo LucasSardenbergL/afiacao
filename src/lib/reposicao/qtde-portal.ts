@@ -1,10 +1,12 @@
-// Conversão da quantidade do pedido (unidade do Omie) para a unidade que o portal Sayerlack aceita.
+// Conversão da quantidade do pedido (unidade do Omie) para a unidade que o portal Sayerlack aceita —
+// FONTE DA VERDADE do helper puro (vitest em ./__tests__/qtde-portal.test.ts).
 //
-// ESPELHO: o bloco MIRROR abaixo é cópia verbatim de `src/lib/reposicao/qtde-portal.ts` (fonte da verdade,
-// testada em vitest; Deno não importa de `src/`). Paridade textual vigiada por
-// `src/lib/reposicao/__tests__/qtde-portal-edge-invariants.test.ts`. Edite LÁ e copie para cá.
+// ESPELHO: a edge `supabase/functions/enviar-pedido-portal-sayerlack/qtde-portal.ts` carrega este bloco MIRROR
+// verbatim (Deno não importa de `src/`). Paridade textual + gate de forma da edge em
+// ./__tests__/qtde-portal-edge-invariants.test.ts (CI `validate`). Edite AQUI e copie para lá.
+// Só a edge usa este código no caminho vivo; a UI usa `fator_embalagem_portal` apenas como badge.
 
-// MIRROR-START qtde-portal — espelhado verbatim de src/lib/reposicao/qtde-portal.ts
+// MIRROR-START qtde-portal — FONTE da verdade; cópia verbatim na edge enviar-pedido-portal-sayerlack/qtde-portal.ts
 // `fator_conversao` (sku_fornecedor_externo) = unidades do PORTAL por unidade do OMIE.
 //   - fator 1  → mesma unidade (padrão; concentrados QT/GL já saem do motor em embalagens);
 //   - fator 0,2 → Omie em LITRO, portal em BALDE de 5 L (TINGIMIX TEH.3505.00BB: 36 L → 8 BB).
