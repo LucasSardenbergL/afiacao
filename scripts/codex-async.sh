@@ -32,11 +32,13 @@ set -u
 # model_reasoning_effort="max" --sandbox read-only "responda apenas: OK"`, 2026-09-05,
 # codex-cli 0.153.4, conta paga (plan_type=prolite): rc=0 (6s).
 # `astra` é a geração acima da família 5.6 ⇒ é o default, em `max` (ordem do founder
-# 2026-09-05: "GPT-6 Astra no nível max"; um degrau acima do `xhigh`). ⚠️ `max` NÃO é o teto:
-# o catálogo 0.153.4 lista `ultra` acima dele para o Astra, e a conta aceita (ping `-r ultra`
-# rc=0, 7s, 2026-09-05) — NÃO é default (custo de cota desconhecido): `-r ultra` explícito e
-# pontual. A cota (janela rolante) segue sendo o limitador: `-r xhigh`/`-r high` é o degrau
-# econômico EXPLÍCITO, nunca o default.
+# 2026-09-05: "GPT-6 Astra no nível max"; um degrau acima do `xhigh`). O catálogo 0.153.4 lista
+# ainda `ultra` (a conta aceita: ping rc=0, 7s) — mas `ultra` NÃO é degrau de raciocínio: o
+# catálogo o define como "Maximum reasoning with automatic task delegation" (= max + delegação
+# a subagentes; a API pública nem o lista). Medição 2026-09-05, mesmo prompt de 2,9 KB:
+# xhigh 56s/10,0k tokens · max 131s/14,2k · ultra 66s/5,2k (n=1). QUAL nível usar:
+# money-path.md §Segunda opinião → "Nível de reasoning" (piso por risco → natureza → cota;
+# `-r xhigh` só fora do money-path; `-r ultra` fora do ritual até piloto com ganho medido).
 #
 # Histórico da família 5.6 (default até 2026-09-05):
 # gpt-5.6-* exige codex-cli ≥ 0.143 (server rejeita CLI antigo com 400).
