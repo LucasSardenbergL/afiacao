@@ -65,3 +65,21 @@ PEGA      | --so-disparo passa a emitir a leitura junto           | s/const quer
 PEGA      | --so-leitura passa a emitir o disparo junto           | s/const querDisparo = !opts\.soLeitura;/const querDisparo = true;/
 SOBREVIVE | timeout 20s -> 30s (valor nao e pinado)    | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
 SOBREVIVE | ORDER BY por posicao (cosmetico)           | s/ORDER BY l\.edge;/ORDER BY 1;/
+# Os 8 abaixo guardam o GUARD DE SINCRONIA (worktree defasado). O gerador já lia a fonte da verdade
+# do repo em vez da memória do operador — mas "o repo" pode ser um checkout VELHO, e aí o
+# `esperado(...)` sai de um retrato que a main já superou. MEDIDO 2026-09-05: worktree dois merges
+# atrás emitiu `v1.5-custo-portal-rpc-cas` para uma edge que a main tinha em `v1.7`; a edge no ar
+# respondeu v1.7 e o veredito comparado seria "BUNDLE VELHO SERVINDO" numa edge recém-deployada.
+# Falso NEGATIVO de money-path (redeployar à toa). Só não saiu errado porque o guard temporal do
+# #2079 devolveu INDETERMINADO antes da comparação — acidente, não desenho.
+# ⚠️ O `r.status ?? 127` do `gitReal` (spawn morto por sinal/timeout ⇒ fail-CLOSED) NÃO tem mutação
+#    aqui: `git` fora de repo devolve 128, não `null`, e forjar um spawn morto viraria teste do
+#    Node. É limite CONHECIDO da medição, não cobertura silenciosa.
+PEGA      | guard de sincronia desligado no main                   | s/conferirSincronia\(deps\.raiz, edges, semRede === true, deps\.git\)/{ aviso: null }/
+PEGA      | divergencia vira warning que se le e ignora            | s/if \(ausentes\.length > 0 \|\| divergentes\.length > 0\) \{/if (false) {/
+PEGA      | comparacao de conteudo INVERTIDA (igual=divergente)    | s/r\.stdout !== readFileSync/r.stdout === readFileSync/
+PEGA      | bump nao-mergeado deixa de contar como divergencia     | s/ausentes\.push\(caminho\)/void caminho/
+PEGA      | fatia perde o mapa (so o versao.ts e conferido)        | s/, ARQ_MAPA\]/]/
+PEGA      | fetch some: compara contra retrato velho por padrao    | s/const f = git\(\['fetch', REMOTO, RAMO_DEPLOYADO\]\);/const f = { status: 0, stdout: '', stderr: '' };/
+PEGA      | fetch que falha degrada em vez de abortar              | s/if \(f\.status !== 0\) \{/if (false) {/
+PEGA      | --sem-rede passa a valer SEMPRE (guard vira opt-in)    | s/semRede === true/true/

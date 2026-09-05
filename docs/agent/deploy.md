@@ -245,6 +245,24 @@ desfecho é redeployar edge de money-path à toa), ou o inverso. Edge sem `versa
 mapa de fingerprints** derruba a geração inteira (nada de SQL parcial em silêncio), e `--caro` que
 não casa um nome da leva também — o typo deixaria a edge cara no bloco SEM trava.
 
+⚠️ **E "o repo" pode ser um checkout VELHO — o gerador confere isso ANTES de emitir SQL.** Ler a
+fonte da verdade do disco só é melhor que a memória do operador se o disco estiver na versão que a
+produção serve: o Lovable deploya a **`main`** (o mesmo eixo do #2123, que aqui o gerador não
+aplicava a si próprio). **Medido 2026-09-05:** worktree dois merges atrás emitiu
+`versao_esperada = v1.5-custo-portal-rpc-cas` para `enviar-pedido-portal-sayerlack`; a main já
+estava em `v1.7` (#2194/#2198) e a edge no ar respondeu `v1.7` ⇒ o veredito seria **"BUNDLE VELHO
+SERVINDO" numa edge recém-deployada** — falso NEGATIVO, e o desfecho é redeployar money-path à toa.
+Só não saiu errado porque o request tinha 37 min e o guard temporal do #2079 devolveu
+`INDETERMINADO` antes da comparação: **acidente, não desenho**. Hoje `sonda:sql` faz
+`git fetch origin main` e compara a fatia que vira o `esperado(...)` (o `versao.ts` de cada edge
+**pedida** + `_shared/sonda-fingerprints.ts`) contra `origin/main`; divergiu — ou não existe lá,
+que é bump ainda não mergeado — **aborta sem emitir SQL**, nomeando os arquivos e o
+`git fetch origin && git merge --ff-only origin/main`. O `fetch` é do script porque comparar contra
+a `origin/main` **em disco** é o mesmo defeito um nível acima (medido: fetch 0,9 s, `git show`
+0,03 s). Offline, `--sem-rede` pula **só o fetch** — a comparação continua, e o SQL sai com a idade
+do ref no topo. Detalhe e a decisão sobre "não consigo consultar":
+[sonda-le-worktree-defasado.md](../historico/sonda-le-worktree-defasado.md).
+
 **QUEM entra no `--caro` é MEDIDO, não presumido — o critério é o EFEITO, não a FORMA do handler.**
 Regra curta: edge que **não escreve nem chama serviço externo** no fluxo real é BARATA, e o pior
 caso de sondá-la com bundle pré-sensor é computar e devolver. O proxy "a edge despacha por
