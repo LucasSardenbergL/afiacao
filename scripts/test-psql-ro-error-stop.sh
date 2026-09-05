@@ -14,6 +14,10 @@
 # ║                                                                                 ║
 # ║  Uso:  bash scripts/test-psql-ro-error-stop.sh [--falsificar]  (0 = rede viva)  ║
 # ║  Sem `--falsificar` roda só (A). ⚠️ COMMITE antes: (B) restaura por git checkout.║
+# ║  ⚠️ NÃO rode (B) em paralelo com vitest NA MESMA worktree: ele MUTA a fonte em      ║
+# ║  disco, e um `vitest run` concorrente lê o arquivo sabotado e reprova sem motivo   ║
+# ║  — medido nesta própria sessão, e é exatamente o vermelho que ninguém consegue     ║
+# ║  reproduzir depois. No CI eles são passos SEQUENCIAIS do mesmo job.                ║
 # ╚═════════════════════════════════════════════════════════════════════════════════╝
 set -uo pipefail
 
