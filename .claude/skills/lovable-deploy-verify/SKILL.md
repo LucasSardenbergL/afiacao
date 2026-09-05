@@ -577,8 +577,21 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        compra varia em ordens de grandeza. `carteira-positivacao-snapshot` faz **UM upsert
        idempotente** por
        `supabase/functions/carteira-positivacao-snapshot/index.ts:104`<!--cita: onConflict: 'mes,customer_user_id'-->,
-       sem chamada externa, e o cron dela é **MENSAL** (`jobid` 80, `0 8 1 * *`) ⇒ disparar fora de
-       hora custa **uma linha parcial do mês corrente que o próximo tick reescreve**. Já
+       sem chamada externa, e o cron dela é **MENSAL** (`jobid` 80, `0 8 1 * *`).
+       🔴 **Disparar fora de hora NÃO custa "uma linha parcial do mês corrente" — a formulação
+       original errava nas DUAS pontas (medido em prod 2026-09-05).** A primeira ZERA o custo: o
+       probe **retorna antes de escrever**
+       (`supabase/functions/carteira-positivacao-snapshot/index.ts:42`<!--cita: respostaSonda(VERSAO)-->
+       contra o upsert da 104), então bundle **v1.0+** grava **nada** — o upsert só sai no ramo
+       PRÉ-sensor, que é precisamente o que a trava guarda. E mesmo nesse ramo o alvo default é o
+       **mês ANTERIOR**, fechado
+       (`supabase/functions/carteira-positivacao-snapshot/index.ts:62`<!--cita: nowBrt.getMonth() - 1-->),
+       não o corrente. A distinção não é cosmética: o consumidor é o UTI de contas
+       (`src/hooks/useUtiContas.ts:254`<!--cita: .from('carteira_positivacao_snapshot')-->), que lê
+       os 2 meses mais recentes com snapshot para decidir entrada — um parcial do mês CORRENTE teria
+       custo money-path; reescrever o anterior, fechado, não. Empírico: o probe (`request_id` 69358)
+       voltou `{"ok":true,"probe":true,"versao":"v1.1-pedidos-do-mes-keyset",…}` **sem** os campos
+       `mes`/`total`/`upserted` do fluxo real ⇒ zero escrita, e a edge provada NO AR de graça. Já
        `omie-sync-pedidos-compra` escreve em vários pontos, publica por RPC e **dispara sync real de
        pedidos de compra no Omie** (`fetch` com `method: "POST"`) — outra ordem de grandeza. As duas
        merecem o `--caro`; só a segunda justifica **adiar a sonda** até depois do deploy em vez de só
