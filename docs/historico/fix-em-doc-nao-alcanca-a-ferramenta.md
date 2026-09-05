@@ -7,6 +7,13 @@
 
 ## O desfecho, primeiro
 
+> **Fechado em 2026-09-04:** o predicado mudou. `scripts/pendencias-deploy.ts` passou a aceitar as
+> DUAS vias (sonda ativa **ou** eco passivo), com prova que EXECUTA o SQL num PG17 local e
+> falsifica (`db/test-pendencias-deploy-eco-passivo.sh`). Na mesma janela de 6h a cobertura foi de
+> 2 para 3 edges e a `analytics-outbox-drain` virou `✅ confere`. Medições e o que a via nova
+> admite de novo: `sonda-eco-passivo-sem-colagem.md` §10.
+
+
 Chip pedia verificar se duas edges mergeadas entre 2026-08-29T01:00Z e 05:00Z chegaram a ser
 deployadas. **As duas estavam no ar, verbatim.** Nenhum deploy foi pedido ao founder.
 
