@@ -559,3 +559,24 @@ BEGIN
   RETURN QUERY SELECT v_pedidos, v_skus, v_valor, v_bloqueados;
 END;
 $function$;
+
+DO $post$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'pedido_compra_item' AND column_name = 'fator_embalagem_portal'
+  ) THEN
+    RAISE EXCEPTION 'POST FALHOU: pedido_compra_item.fator_embalagem_portal ausente — o INSERT do motor quebraria (42703) no próximo ciclo';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'gerar_pedidos_sugeridos_ciclo'
+      AND pg_get_functiondef(p.oid) LIKE '%fator_embalagem_portal%'
+  ) THEN
+    RAISE EXCEPTION 'POST FALHOU: gerar_pedidos_sugeridos_ciclo sem o arredondamento por embalagem — a função viva não é esta';
+  END IF;
+  RAISE NOTICE 'OK: coluna fator_embalagem_portal + motor com múltiplo de embalagem do portal';
+END
+$post$;
+
+COMMIT;
