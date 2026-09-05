@@ -93,7 +93,7 @@ Tokens em `src/index.css` (paleta quase-neutra low-fatigue; `--status-*` dessatu
 
 ## Auth & roles
 
-`AppRole = 'employee' | 'customer' | 'master'`; `isStaff = isAdmin || isEmployee || isMaster` — tudo via **`useAuth()`** (não recriar; `useUserRole` foi consolidado nele). **Fail-closed:** query de role/approval falha → role `null`, approval `false`. Customers precisam de `is_approved`; staff é auto-aprovado. `commercial_roles` (gestor/vendedor) é paralelo ao role principal. Restrição sales-only por CPF: `useSalesOnlyRestriction`. As 5 personas operacionais (separador/conferente/comprador/vendedor externo/gestão) são **recortes de acesso**, não roles novos.
+`AppRole = 'employee' | 'customer' | 'master'`; `isStaff = isAdmin || isEmployee || isMaster` — tudo via **`useAuth()`** (não recriar). **Fail-closed:** query de role/approval falha → role `null`, approval `false`. Customers precisam de `is_approved`; staff é auto-aprovado. `commercial_roles` é paralelo — **2 vocabulários numa coluna** (authz: **0 linhas**), exclusivos por `UNIQUE(user_id)` → [vocabulario-de-papel-pela-metade.md](docs/historico/vocabulario-de-papel-pela-metade.md). Sales-only por CPF: `useSalesOnlyRestriction`. 5 personas operacionais = **recortes de acesso**, não roles.
 
 ## Convenções de código
 
