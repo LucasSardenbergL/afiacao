@@ -34,7 +34,6 @@
  * atestação por `OPTIONS`) tornaria a automação segura. Fica registrado como follow-up.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -49,11 +48,23 @@ import {
   type Relatorio,
   type Veredito,
 } from './lib/pendencias-deploy';
-import { ARQ_MAPA, calcularTodos, lerMapaCommitado, RAIZ_EDGES } from './sonda-fingerprint';
+import { ARQ_MAPA, parsearMapa, RAIZ_EDGES } from './sonda-fingerprint';
 import { git, lerNaRev } from './sonda-versao-bump-gate';
 import { extrairVersao } from './sonda-versao-sql';
 
 const PSQL_RO = process.env.PSQL_RO ?? join(homedir(), '.config', 'afiacao', 'psql-ro');
+
+/**
+ * A ref que define o ESPERADO. O Lovable deploya a MAIN — não a worktree de quem roda o script.
+ *
+ * Medido no primeiro veredito real (2026-09-05): a worktree estava 3 commits atrás, o `versao.ts`
+ * local dizia v1.6 e prod já servia a v1.7 da main — saiu um P1 FALSO de uma edge em dia. Minutos
+ * depois de um rebase, a main já tinha andado de novo (5 arquivos em `supabase/functions/`). Com
+ * ~30 sessões mergeando, "sincronize antes de medir" não é disciplina que se sustente: o
+ * instrumento lê a ref, não a árvore. É o eixo TEMPO/ÁRVORE de `fatia-de-deploy-envelhece.md`,
+ * fechado no lugar certo.
+ */
+export const REF_MAIN = 'origin/main';
 
 /** A migration que cria o ledger — citada no erro quando a tabela não existe em prod. */
 export const MIGRATION_LEDGER = '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql';
@@ -127,30 +138,33 @@ function semChatter(saida: string): string[] {
 }
 
 /**
- * O esperado por edge, lido do REPO: `fonte` do mapa commitado + `VERSAO` do `versao.ts`.
+ * O esperado por edge, lido da MAIN (`origin/main` recém-buscada): `fonte` do mapa commitado +
+ * `VERSAO` do `versao.ts` — os dois pela ref, nunca pela árvore de trabalho.
  *
- * LANÇA (⇒ exit 2) se o mapa não bate com a fonte recalculada, ou se algum `versao.ts` está
+ * Não recalcula o fingerprint aqui: quem garante que o mapa da main bate com a fonte da main é o
+ * gate `sonda:fingerprint` do CI, que todo commit da main já passou — recalcular exigiria ler o
+ * closure inteiro por `git show` (centenas de blobs) para provar o que o CI provou.
+ *
+ * LANÇA (⇒ exit 2) se o fetch falhar, se o mapa não existir na ref, ou se algum `versao.ts` está
  * ausente/ilegível: esperado indeterminável não é "sem divergência" (achado do Codex — validar o
- * universo antes de julgar). O CI já garante os dois; aqui pega worktree suja ou atrasada.
+ * universo antes de julgar).
  */
-export function lerEsperados(raiz = process.cwd()): Record<string, Esperado> {
-  const mapa = lerMapaCommitado(raiz);
-  const recalculado = calcularTodos(raiz);
-  const divergentes = Object.keys({ ...mapa, ...recalculado }).filter((e) => mapa[e] !== recalculado[e]);
-  if (divergentes.length > 0) {
+export function lerEsperados(): Record<string, Esperado> {
+  const fetch = git(['fetch', '--quiet', 'origin', 'main']);
+  if (!fetch.ok) {
     throw new Error(
-      `o mapa ${ARQ_MAPA} não bate com a fonte em ${divergentes.length} edge(s) (${divergentes
-        .slice(0, 5)
-        .join(', ')}${divergentes.length > 5 ? ', …' : ''}). Rode \`bun run sonda:fingerprint -- --write\` ` +
-        'ou sincronize a worktree — julgar contra um esperado errado fabricaria veredito.',
+      '`git fetch origin main` falhou — sem a main ATUAL não sei o que prod deveria servir (ref velha fabricaria veredito)',
     );
   }
+  const textoMapa = lerNaRev(REF_MAIN, ARQ_MAPA);
+  if (textoMapa === null) throw new Error(`${ARQ_MAPA} não existe em ${REF_MAIN}`);
+  const mapa = parsearMapa(textoMapa);
 
   const esperados: Record<string, Esperado> = {};
   const ilegiveis: string[] = [];
   for (const [edge, fonte] of Object.entries(mapa)) {
-    const arq = join(raiz, RAIZ_EDGES, edge, 'versao.ts');
-    const versao = existsSync(arq) ? extrairVersao(readFileSync(arq, 'utf8')) : null;
+    const texto = lerNaRev(REF_MAIN, `${RAIZ_EDGES}/${edge}/versao.ts`);
+    const versao = texto === null ? null : extrairVersao(texto);
     if (versao === null) {
       ilegiveis.push(edge);
       continue;
@@ -159,30 +173,11 @@ export function lerEsperados(raiz = process.cwd()): Record<string, Esperado> {
   }
   if (ilegiveis.length > 0) {
     throw new Error(
-      `\`export const VERSAO\` ilegível ou ausente em: ${ilegiveis.join(', ')}. Sem os dois ` +
-        'marcadores o par (versao, fonte) não se julga.',
+      `\`export const VERSAO\` ilegível ou ausente em ${REF_MAIN} para: ${ilegiveis.join(', ')}. ` +
+        'Sem os dois marcadores o par (versao, fonte) não se julga.',
     );
   }
   return esperados;
-}
-
-/**
- * A worktree está atrás da main em `supabase/functions/`?
- *
- * O Lovable deploya a MAIN; o esperado lido daqui é a worktree. Medido no primeiro veredito real
- * (2026-09-05): a worktree estava 3 commits atrás, o `versao.ts` local dizia v1.6 e prod já
- * servia a v1.7 da main — saiu um P1 FALSO ("deploy pendente") de uma edge em dia. É o eixo
- * TEMPO/ÁRVORE de `fatia-de-deploy-envelhece.md` mordendo o próprio instrumento. A régua é
- * três-pontos (`HEAD...origin/main`): só o que a main tem e esta árvore não; uma branch que
- * ACRESCENTA edge continua julgável, uma branch ATRASADA não. Devolve a lista de arquivos da
- * main ausentes aqui — vazia = sincronizada. Sem `origin/main` resolvível, LANÇA.
- */
-export function arquivosDeEdgeSoNaMain(): string[] {
-  const ref = git(['rev-parse', '--verify', 'origin/main^{commit}']);
-  if (!ref.ok) throw new Error('`origin/main` não resolve — sem a ref da main não sei se esta worktree está atrasada (git fetch origin)');
-  const r = git(['diff', '--name-only', 'HEAD...origin/main', '--', RAIZ_EDGES]);
-  if (!r.ok) throw new Error('`git diff HEAD...origin/main -- supabase/functions/` falhou');
-  return r.saida.split('\n').filter((l) => l !== '');
 }
 
 /**
@@ -200,7 +195,7 @@ export function contextoGit(): Contexto {
   const agulha = (edge: string, fonte: string) => `-S"${edge}": "${fonte}"`;
   return {
     parCoerente(edge, versao, fonte) {
-      const r = git(['log', '--format=%H', agulha(edge, fonte), '--', ARQ_MAPA]);
+      const r = git(['log', REF_MAIN, '--format=%H', agulha(edge, fonte), '--', ARQ_MAPA]);
       if (!r.ok) throw new Error(`git log -S falhou para ${edge} — sem git não há coerência a provar`);
       const commits = r.saida.split('\n').filter((c) => c !== '');
       if (commits.length === 0) return false;
@@ -209,7 +204,7 @@ export function contextoGit(): Contexto {
       return texto !== null && extrairVersao(texto) === versao;
     },
     diasPendente(edge, fonteEsperado) {
-      const r = git(['log', '-1', '--format=%ct', agulha(edge, fonteEsperado), '--', ARQ_MAPA]);
+      const r = git(['log', REF_MAIN, '-1', '--format=%ct', agulha(edge, fonteEsperado), '--', ARQ_MAPA]);
       if (!r.ok || r.saida === '') return null;
       const ct = Number(r.saida);
       if (!Number.isFinite(ct)) return null;
@@ -304,16 +299,6 @@ export function main(): number {
 
   let esperados: Record<string, Esperado>;
   try {
-    const atrasados = arquivosDeEdgeSoNaMain();
-    if (atrasados.length > 0) {
-      console.error(
-        `❌ MECÂNICA: a main tem ${atrasados.length} arquivo(s) em ${RAIZ_EDGES}/ que esta worktree NÃO tem` +
-          ` (${atrasados.slice(0, 3).join(', ')}${atrasados.length > 3 ? ', …' : ''}).\n` +
-          '   Prod é a MAIN: julgar contra uma árvore atrasada fabrica P1 de edge em dia (medido 2026-09-05).\n' +
-          '   Sincronize (`git fetch origin && git rebase origin/main`, ou `git pull --rebase`) e rode de novo.',
-      );
-      return 2;
-    }
     esperados = lerEsperados();
   } catch (e) {
     console.error(`❌ MECÂNICA: esperado indeterminável — ${(e as Error).message}`);

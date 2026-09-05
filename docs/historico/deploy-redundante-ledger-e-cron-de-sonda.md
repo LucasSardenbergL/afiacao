@@ -127,9 +127,13 @@ tem `BYPASSRLS` em prod (`pg_roles`, 2026-09-05), e o default ACL já lhe dá SE
   travado por `CASE`) e **1 P1 FALSO**: `enviar-pedido-portal-sayerlack` "prod v1.7 → main v1.6".
   Prod estava À FRENTE da worktree, que tinha ficado 3 commits atrás da main durante a sessão. É o
   eixo TEMPO/ÁRVORE de `fatia-de-deploy-envelhece.md` mordendo o próprio instrumento: julgar
-  contra árvore atrasada fabrica pendência de edge em dia. O CLI passou a recusar (exit 2) quando
-  `git diff HEAD...origin/main -- supabase/functions/` não é vazio — a régua três-pontos deixa
-  passar a branch que ACRESCENTA edge e barra a que está atrasada.
+  contra árvore atrasada fabrica pendência de edge em dia. A primeira correção foi uma trava
+  ("worktree atrasada → exit 2"); minutos depois do rebase a main já tinha andado de novo (5
+  arquivos em `supabase/functions/`), e ficou claro que com ~30 sessões mergeando "sincronize
+  antes de medir" não é disciplina que se sustente. **O CLI passou a ler o esperado direto de
+  `origin/main`** (fetch + `git show` do mapa e de cada `versao.ts`), independente da árvore de
+  quem roda; a coerência de `origin/main` (mapa = fonte) é garantida pelo gate `sonda:fingerprint`
+  do CI, que todo commit da main passou. O instrumento lê a ref, não a árvore.
 
 ## 5. O que fica para depois (nomeado, não esquecido)
 
