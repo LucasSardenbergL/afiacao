@@ -6,6 +6,7 @@ import { PedidoSugerido } from './types';
 import { formatBRL, ehGateMinimoFaturamento } from './shared';
 import { StatusComMotivo, SplitInfo, PortalBadge } from './badges';
 import { OverrideMinimoButton } from './OverrideMinimoButton';
+import { podeCancelarPeloHumano } from './rejeitar-pedido';
 
 export function PedidoRow({
   p,
@@ -28,7 +29,7 @@ export function PedidoRow({
   disparando: boolean;
 }) {
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
-  const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
+  const podeCancelar = podeCancelarPeloHumano(p.status);
   // Pedido preso ESPECIFICAMENTE pelo gate de mínimo de faturamento + caller pode overridar
   // → oferece "Disparar mesmo assim" NO LUGAR do "Re-disparar" (que só re-bateria no gate).
   const mostrarOverride = ehGateMinimoFaturamento(p) && !!onDispararIgnorandoMinimo;
