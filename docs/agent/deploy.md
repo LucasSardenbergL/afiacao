@@ -551,6 +551,29 @@ O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deploy
 
 ## Verificação de deploy
 
+### Edge: o veredito é o ledger, não a lista de arquivos do PR (2026-09-05)
+
+**Edge precisa de deploy ⇔ `(versao, fonte)` servido ≠ `(versao, fonte)` da main.** "O mapa mudou",
+"o closure mudou", "o PR X tocou a edge" NÃO são motivo — o mapa é excluído do hash de propósito, e o
+`fonte` já é o closure inteiro resumido. Quem responde é **`bun run pendencias:deploy`**, que lê o
+ledger `public.deploy_atestacoes` (alimentado pelo cron `deploy-atestacoes-colher` a partir de
+`net._http_response`, antes de o `pg_net.ttl` de 6h apagar) ∪ a janela viva, e julga a matriz do par:
+
+| estado | significa | ação |
+|---|---|---|
+| `DIVERGE_P1` | `fonte` ≠ e `versao` ≠ (bump declarado) | deploy **no PR** |
+| `DIVERGE_P2` | só o closure mudou (`_shared/`), par coerente com a main | leva agrupada; **escala em 7 d** |
+| `INCOERENTE` | par que nunca existiu na main (deploy parcial) | deploy dos arquivos que faltaram |
+| `SEM_MAPA_NO_BUNDLE` | `fonte: nao-mapeada` | subir o mapa |
+| `NUNCA_ATESTADA` / `SEM_FONTE_NO_ECO` | nunca vista / eco sem fonte | **a única sonda humana**: o comando sai no relatório |
+| exit 2 | mecânica (ledger ausente, coletor parado > 45 min, mapa ≠ fonte, linha fora do formato) | não é "tudo limpo" |
+
+A sonda humana é **uma por leva de deploy** (e a 1ª de edge nova): o founder cola o `sonda:sql` uma
+vez, a resposta entra no ledger em ≤ 15 min e vale até o `fonte` da main mudar. **Não há cron de sonda
+ativa por decisão** (Codex, 2026-09-05): um rollback para bundle pré-sensor faria o cron disparar o
+fluxo real. Detalhe, medição e o que ficou para depois:
+`docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`.
+
 - A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable. **N2 de edge (prova de versão) é automático quando `~/.config/afiacao/supabase-pat` existe** (Access Token do Supabase, `chmod 600`, padrão psql-ro): `verify-edge.sh` resolve env `SUPABASE_PAT` > arquivo e consulta a Management API; sem o arquivo, cada verificação de versão vira handoff manual na UI (custou 3 retomadas de sessão p/ confirmar 1 deploy). Teste: `scripts/test-verify-edge-pat.sh`. A varredura por bytes é **paralela** (`xargs -P`, halt-on-hit) — o bundle passou de 300 chunks e o modo 1-a-1 estourava o timeout.
   - ⚠️ **NÃO PEÇA O PAT AO FOUNDER: o projeto roda em Lovable Cloud e o Supabase é da org do LOVABLE** (confirmado pelo founder 2026-07-23, depois de eu pedir o token 2× na mesma sessão). Ele não tem conta no `supabase.com` com acesso ao ref `fzvklzpomgnyikkfkzai`, logo **não existe Access Token para ele gerar** e o N2 é estruturalmente indisponível — o arquivo `supabase-pat` continua válido como mecanismo, só que ninguém pode preenchê-lo neste setup. A escada real de prova de edge aqui é: **N1** (`verify-edge.sh`, OPTIONS → servida) **+ rastro do commit do bot** na `main` (`Deployed …`/`Redeployed …` — evidência de que o deploy rodou, não de qual versão) **+ canária comportamental** quando a edge tiver uma (a ÚNICA prova de versão disponível). Edge sem canária: declare "N1 + rastro; versão não provada" — nunca "no ar". Se a entrega for money-path e a prova importar, **crie a canária junto do fix** (padrão `identidade_probe`/`credito_gate_probe`), porque depois não haverá como provar.
 - ⚠️ **Grep de verificação anda PAREADO com um controle positivo, no MESMO comando — senão o vazio se lê como resposta (2026-07-20).** Verificação por bytes conclui por **ausência** ("a string não está lá"), e ausência é o resultado que qualquer erro de alvo produz: arquivo errado, download que não aconteceu, path inválido. Some ao grep da assinatura o grep de uma string que **comprovadamente existe** no alvo (ex.: `order_date_kpi` para o chunk do farmer); controle vazio = você mediu o lugar errado, e o resultado da assinatura **não vale nada** — não é "não encontrei", é "não procurei". Mordido 3× seguidas verificando o Publish de #1466/#1468/#1471: (a) grep no entry `index-*.js`, que **não contém** o código lazy-loaded — as ~119 páginas e vários hooks têm chunk próprio (`useFarmerScoring-*.js`, `useCrossSellEngine-*.js`), então o entry tem ~232KB de 5,6MB; (b) grep nos chunks `Farmer*.js` das páginas, quando o hook mora em chunk separado; (c) `xargs` abortando com `command line cannot be assembled, too long` → **0 arquivos baixados** e os dois greps seguintes lendo um diretório vazio, com cara de "não achei". Nas três o controle denunciou na hora. **Corolário:** valide a assinatura contra o código PRÉ-fix (`git show <sha>~1:<arquivo> | grep -c '<assinatura>'` tem de dar **0**, e `<sha>` dar ≥1) — sem isso você prova que uma string existe, não que a MUDANÇA entrou. **E prefira a skill à varredura ad-hoc:** ela já resolve paralelismo e lista de chunks; refazer com `curl` na mão é como se cai nos três buracos acima.
