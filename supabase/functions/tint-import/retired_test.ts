@@ -43,3 +43,12 @@ Deno.test("tint-import preserva o espelho parseDecimalBR (edge-parse-parity depe
     throw new Error("bloco MIRROR parseDecimalBR sumiu — edge-parse-parity.test.ts vai quebrar");
   }
 });
+
+Deno.test("tint-import carrega o marcador EDGE-APOSENTADA (o /fecho lê-o para classificar INERTE)", () => {
+  // O par 410 ⇔ marcador é o contrato: o 410 sem o marcador devolve a edge ao chip de deploy a
+  // cada PR do parser (o custo que o INERTE existe para cortar); o marcador sem o 410 é o caso
+  // que `_shared/edge-aposentada-marcador_test.ts` proíbe. Quem tirar o 410 tira o marcador junto.
+  if (!src.includes("// EDGE-APOSENTADA:")) {
+    throw new Error("marcador '// EDGE-APOSENTADA:' sumiu do tint-import — o /fecho voltaria a pedir deploy inerte");
+  }
+});

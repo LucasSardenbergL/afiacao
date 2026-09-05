@@ -68,6 +68,14 @@ export function parseDecimalBR(input: string): number | null {
 //
 // O espelho acima fica mesmo SEM uso local: `edge-parse-parity.test.ts` (vitest) lê ESTE
 // arquivo e exige a função verbatim + os marcadores MIRROR. Não remova por parecer órfão.
+//
+// EDGE-APOSENTADA: 410 TINT_IMPORT_RETIRED desde 2026-07-17 (#1401), 0 chamadores em prod.
+// Marcador DECLARADO que o /fecho (`edges-pendentes.sh`) lê na REF para classificar esta edge
+// como INERTE: o espelho MIRROR acima é tocado por todo PR do parser (#2184) e o deploy que isso
+// gera NÃO muda comportamento — bundle novo e velho respondem o mesmo 410 antes de qualquer
+// lógica. Contrato do marcador: (1) o handler é no-op (o gate `_shared/edge-aposentada-marcador_test.ts`
+// exige `status: 410` neste arquivo) e (2) a aposentadoria JÁ ESTÁ NO AR. Se o 410 sair daqui,
+// o marcador sai junto — `retired_test.ts` trava o par. docs/historico/edge-aposentada-inerte-no-fecho.md
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {

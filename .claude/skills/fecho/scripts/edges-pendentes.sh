@@ -33,6 +33,23 @@
 # COBERTURA, dita em voz alta: o mapa cobre ~40 das ~95 edges. As outras ~55 saem SEM_PROVA e
 # viram chip como hoje — o gate não regride nada, só corta o redundante onde há prova.
 #
+# 🪦 INERTE — a 2ª evidência positiva, e a única que NÃO vem do banco (2026-09-05, `tint-import`).
+# Edge APOSENTADA (o handler responde 410 logo após a auth e não executa nada) continua sendo
+# TOCADA por PR: a `tint-import` carrega o espelho VERBATIM de `parse-decimal-br.ts` que o
+# `edge-parse-parity.test.ts` exige, então toda mudança no parser (#2184) a coloca na janela — e
+# ela saía SEM_PROVA, chip para o founder, por um deploy que NÃO MUDA COMPORTAMENTO: bundle novo e
+# velho respondem o mesmo 410. Prova passiva é impossível (fora do mapa) e prova ativa seria
+# teatro (o 410 vem antes de qualquer lógica). O que existe é uma DECLARAÇÃO: o marcador
+# `// EDGE-APOSENTADA: <motivo>` no `index.ts` da REF (`origin/main`, nunca o working tree — o
+# closure lê a REF, lovable-deploy-verify §Passo 3). Marcador presente ⇒ INERTE, sem chip; ausente
+# ⇒ o ramo de sempre (SEM_PROVA). É um marcador DECLARADO de propósito, não inferência por
+# `status: 410` no texto: `omie-analytics-sync` tem uma FUNÇÃO aposentada e a edge viva — inferir
+# pelo texto classificaria errado. E o contrato do marcador é duplo: (1) o handler é no-op e (2) a
+# aposentadoria JÁ ESTÁ NO AR — só coloque o marcador depois de confirmar o 410 em prod, porque
+# o único deploy que importaria numa edge aposentada é o que INSTALA a aposentadoria, e este
+# script deixaria de pedi-lo. O gate `_shared/edge-aposentada-marcador_test.ts` trava a metade
+# (1): marcador sem `status: 410` no mesmo arquivo é vermelho no CI.
+#
 # ⚠️ E o eco de `fonte` não era o único campo que faltava. O casamento resposta↔edge depende do
 # ECO DO SLUG (`content->>'edge'`), que só nasceu no #1789 — e há bundle no ar ANTERIOR a ele, que
 # responde `{ok,probe,versao}` e mais nada. Medido em prod 2026-09-05 (request_ids 69377-69381):
@@ -65,8 +82,10 @@
 #       3 = uso inválido
 #
 # Env: AFIACAO_PSQL (default ~/.config/afiacao/psql-ro) · FECHO_JANELA_TTL (default '6 hours',
-#      = pg_net.ttl) · FECHO_MAPA_FONTE (arquivo de mapa alternativo; default = o da origin/main) ·
-#      FECHO_REQUEST_IDS (mesmo formato do `--request-ids`, que tem precedência).
+#      = pg_net.ttl) · FECHO_MAPA_FONTE (arquivo de mapa alternativo; default = o da REF) ·
+#      FECHO_REQUEST_IDS (mesmo formato do `--request-ids`, que tem precedência) ·
+#      FECHO_REF (a REF mergeada que o script lê; default `origin/main` — SÓ para teste/falsificação,
+#      apontar para branch local em uso real faria o "desatualizada" mentir).
 # Testes: scripts/test-fecho-edges-pendentes.sh (com --falsificar) — e o SQL roda de VERDADE em
 #         .claude/skills/lovable-deploy-verify/evals/edges-pendentes-sql-eval.sh.
 set -uo pipefail
@@ -74,6 +93,12 @@ set -uo pipefail
 JANELA="${FECHO_JANELA_TTL:-6 hours}"
 PSQL="${AFIACAO_PSQL:-$HOME/.config/afiacao/psql-ro}"
 MAPA_REL="supabase/functions/_shared/sonda-fingerprints.ts"
+# A REF mergeada. Tudo o que o script lê do git (mapa, log, grafo, marcador de aposentadoria) vem
+# DAQUI, nunca do working tree — a pergunta é sempre "o ar bate com o que ESTÁ MERGEADO?".
+REF="${FECHO_REF:-origin/main}"
+# Marcador DECLARADO de edge aposentada (ver cabeçalho §INERTE). Literal, caixa fixa, com os `//`
+# e o `:` — um comentário que apenas CITE a palavra não casa.
+MARCADOR_APOSENTADA='// EDGE-APOSENTADA:'
 RAIZ="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../../.." 2>/dev/null && pwd)}"
 # Onde mora o BINÁRIO auxiliar. Deriva de `$0`, nunca de `$RAIZ`: a suíte aponta `$RAIZ` para um
 # repo git de fixture, e o `edges-afetadas.ts` tem de continuar vindo do repo que hospeda o script.
@@ -112,9 +137,9 @@ if [ "$1" = "--desde" ]; then
   # aceita DATA ("3 hours ago", "2026-08-28 14:00") ou REVISÃO (o SHA do início da sessão, que é
   # o dado mais preciso que o /fecho tem à mão). Revisão primeiro: um SHA nunca é data válida.
   base="$(git -C "$RAIZ" rev-parse --verify --quiet "${desde}^{commit}" 2>/dev/null)"
-  [ -n "$base" ] || base="$(git -C "$RAIZ" rev-list -1 --before="$desde" origin/main 2>/dev/null)"
+  [ -n "$base" ] || base="$(git -C "$RAIZ" rev-list -1 --before="$desde" "$REF" 2>/dev/null)"
   if [ -z "$base" ]; then
-    echo "⚠️ edges-pendentes: não achei o commit-base de origin/main antes de \"$desde\""
+    echo "⚠️ edges-pendentes: não achei o commit-base de $REF antes de \"$desde\""
     echo "   (git fetch feito? a data é parseável pelo git, ou o SHA existe?) — exit 2"
     exit 2
   fi
@@ -122,7 +147,7 @@ if [ "$1" = "--desde" ]; then
   # (a) diff do mapa de fingerprints: pega mudança vinda de _shared/, cega para edge fora do mapa
   git -C "$RAIZ" show "$base:$MAPA_REL" 2>/dev/null \
     | sed -nE 's/.*"([a-z0-9_-]+)": *"([0-9a-f]{64})".*/\1 \2/p' > "$tmp/mapa_base" || true
-  git -C "$RAIZ" show "origin/main:$MAPA_REL" 2>/dev/null \
+  git -C "$RAIZ" show "$REF:$MAPA_REL" 2>/dev/null \
     | sed -nE 's/.*"([a-z0-9_-]+)": *"([0-9a-f]{64})".*/\1 \2/p' > "$tmp/mapa_agora" || true
   # slug cujo par (slug sha) existe no mapa de agora e NÃO existe igual no mapa base ⇒ fonte mudou
   # (inclui edge NOVA, que não tem linha no base).
@@ -133,7 +158,7 @@ if [ "$1" = "--desde" ]; then
   fi
 
   # (b) pastas tocadas no git log: pega edge FORA do mapa, cega para _shared/
-  git -C "$RAIZ" log "$base..origin/main" --name-only --format="" -- supabase/functions/ 2>/dev/null \
+  git -C "$RAIZ" log "$base..$REF" --name-only --format="" -- supabase/functions/ 2>/dev/null \
     | sort -u > "$tmp/paths"
   sed -n 's#^supabase/functions/\([a-z0-9][a-z0-9_-]*\)/.*#\1#p' "$tmp/paths" >> "$tmp/alvos"
   # o `[a-z0-9]` inicial exclui `_shared/` de propósito: não é edge, não se deploya sozinha,
@@ -160,7 +185,7 @@ if [ "$1" = "--desde" ]; then
       echo "   ($AFETADAS_TS / bun) — não sei QUAIS edges fora do mapa isso afetou. exit 2."
       exit 2
     fi
-    if ! bun "$AFETADAS_TS" --repo "$RAIZ" --base "$base" --head origin/main \
+    if ! bun "$AFETADAS_TS" --repo "$RAIZ" --base "$base" --head "$REF" \
          > "$tmp/afetadas" 2> "$tmp/afetadas.err"; then
       sed 's/^/   /' "$tmp/afetadas.err" >&2
       echo "⚠️ edges-pendentes: o grafo de imports não pôde ser calculado — lista vazia por ERRO é"
@@ -247,7 +272,7 @@ fi
 if [ -n "${FECHO_MAPA_FONTE:-}" ]; then
   cat "$FECHO_MAPA_FONTE" 2>/dev/null > "$tmp/mapa_bruto"
 else
-  git -C "$RAIZ" show "origin/main:$MAPA_REL" 2>/dev/null > "$tmp/mapa_bruto"
+  git -C "$RAIZ" show "$REF:$MAPA_REL" 2>/dev/null > "$tmp/mapa_bruto"
 fi
 sed -nE 's/.*"([a-z0-9_-]+)": *"([0-9a-f]{64})".*/\1 \2/p' "$tmp/mapa_bruto" \
   2>/dev/null > "$tmp/mapa" || true
@@ -256,7 +281,7 @@ mecanica_ok=1
 motivo=""
 if [ ! -s "$tmp/mapa" ]; then
   mecanica_ok=0
-  motivo="mapa de fingerprints ilegível ou vazio ($MAPA_REL na origin/main)"
+  motivo="mapa de fingerprints ilegível ou vazio ($MAPA_REL na $REF)"
 fi
 
 # ------------------------------------------------------- sonda do BANCO ---
@@ -388,6 +413,18 @@ fi
 
 while read -r slug; do
   [ -n "$slug" ] || continue
+
+  # INERTE vem ANTES da mecânica do banco de propósito: a prova é o marcador na REF, e o banco não
+  # tem nada a dizer sobre um handler que responde 410 antes de executar qualquer coisa. Lê a REF,
+  # não o working tree — o marcador numa fatia ainda não mergeada não vale (fail-closed: `git show`
+  # que falha, edge sem `index.ts` na REF ou marcador ausente caem no ramo de sempre).
+  if git -C "$RAIZ" show "$REF:supabase/functions/$slug/index.ts" 2>/dev/null \
+       | command grep -qF -- "$MARCADOR_APOSENTADA"; then
+    printf '  INERTE         %-34s aposentada na REF (%s) — deploy NÃO muda comportamento: bundle novo e velho respondem o mesmo 410. Não pedir ao founder.\n' \
+      "$slug" "$MARCADOR_APOSENTADA"
+    continue
+  fi
+
   esperado=""; servido=""
   if [ "$mecanica_ok" = 1 ]; then
     esperado="$(command grep -m1 -- "^$slug " "$tmp/mapa"  2>/dev/null | cut -d' ' -f2)"
@@ -434,12 +471,12 @@ done < "$tmp/alvos"
 n_chips="$(wc -l < "$tmp/chips" | tr -d "[:space:]")"
 echo
 if [ "$n_chips" -eq 0 ]; then
-  echo "✅ todas provadas no ar pelo \`fonte\` — nenhum chip de deploy por estas edges."
+  echo "✅ nenhum chip de deploy por estas edges: provadas no ar pelo \`fonte\` (NO_AR) ou INERTES."
   exit 0
 fi
 echo "🎫 abra chip para: $(tr '\n' ' ' < "$tmp/chips")"
 echo "   (DESATUALIZADA / PRE_SONDA_FONTE = deploy pendente PROVADO · SEM_PROVA = indeterminado,"
-echo "    chip por fail-closed)"
+echo "    chip por fail-closed · INERTE = aposentada, deploy sem efeito, NÃO entra no chip)"
 # ⚠️ "nenhuma sonda na janela" NÃO se resolve esperando, e dizer só "INDETERMINADO" convida o
 # leitor a esperar. NÃO HÁ cron de sondagem: `cron.job` tem 93 jobs e ZERO com `probe`. Quem dá
 # prova passiva é só a edge cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) E tem cron
