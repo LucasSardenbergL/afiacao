@@ -38,7 +38,14 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * espelhado do SQL (`FATOR_MAX`); (4) erro de banco ao ler o de-para é TRANSIENTE (`erro_buscar_mapeamentos`),
  * não "sem mapeamento" definitivo. Helper espelhado em src/lib/reposicao/qtde-portal.ts (vitest).
  */
-export const VERSAO = "v1.3-fator-aprovado-vs-vivo";
+/**
+ * v1.4 — captura de custo deixou de ser cega: 97/97 envios (jun→set/2026) vinham com `sku_portal=''` e
+ * `total_raw=''` (sku por igualdade de célula + "total" = última célula, a coluna de ações). Agora o custo
+ * nasce de `./captura-custo.ts`: JSON do Efetivar (`data.itens`/`data.value`) + DOM por header-matching,
+ * com cadeia de prova (conjunto local↔JSON↔DOM, Qtd UN == digitada, Preço UN == value, checksum absoluto)
+ * e sensor `[SENSOR_CAPTURA_CUSTO_CEGA]` + `portal_resposta.captura_custo` quando algum item fica sem custo.
+ */
+export const VERSAO = "v1.4-captura-custo-json-efetivar";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

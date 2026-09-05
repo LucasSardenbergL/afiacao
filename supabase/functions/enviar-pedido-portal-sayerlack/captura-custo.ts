@@ -1,9 +1,23 @@
-// Helpers puros do scraping do pedido Sayerlack (valida grupo via Prz Ent + captura custo).
-// ⚠️ ESPELHO VERBATIM: o bloco entre `>>> ESPELHO(captura-custo) INICIO` e `<<< ESPELHO(captura-custo) FIM`
-// é cópia byte a byte de supabase/functions/enviar-pedido-portal-sayerlack/captura-custo.ts (Deno não
-// importa de src/). O teste em __tests__/sayerlack-scraping-pedido.test.ts compara os dois blocos —
-// edite LÁ (Deno, dono da semântica) e copie pra cá. `validarGrupoLeadtime` é só daqui (o gate de grupo
-// roda no browser da edge; este espelho serve a src/lib/reposicao/embalagem-captura-helpers.ts).
+// Captura de custo do portal Sayerlack — funções PURAS (Deno scope; nada aqui roda no Browserless,
+// exceto `extrairAddJson`, interpolado no bundle do browser via `${extrairAddJson.toString()}` — por isso
+// ela é autocontida: sem referência a outra função do módulo, sem crase, sem `${`).
+//
+// ⚠️ ESPELHO: o bloco entre os marcadores `>>> ESPELHO(captura-custo)` é copiado VERBATIM em
+// src/lib/reposicao/sayerlack-scraping-pedido.ts (Deno não importa de src/). O vitest
+// src/lib/reposicao/__tests__/sayerlack-scraping-pedido.test.ts compara os dois blocos byte a byte.
+//
+// Semântica provada em prod (2026-09-05, pedido #2443 ↔ portal 2126906; docs/historico/sayerlack-captura-custo-cega.md):
+//   POST /order-creation/form/add → data.itens[{item, value}] + data.value.
+//   `value` do ITEM = Preço UN de TABELA por embalagem (antes do desconto por embalagem e da taxa −2%).
+//   `data.value`   = total LÍQUIDO do pedido (= Σ Preço Venda × Qtd UN da datatable).
+//
+// Cadeia de prova (Codex, challenge 2026-09-05 — precisão > recall, nada parcial):
+//   pedido local ↔ JSON ↔ DOM são o MESMO conjunto de SKUs (sem extra, ausência ou duplicata);
+//   Qtd UN lida no DOM == quantidade que a edge DIGITOU no portal (prova da quantidade aceita);
+//   Preço UN lido no DOM == `value` do JSON do mesmo SKU (prova de que a coluna é a que se pensa);
+//   1 item  ⇒ total_linha = data.value ('json_total_unico');
+//   N itens ⇒ Σ(Preço Venda × Qtd UN) == data.value com tolerância ABSOLUTA derivada do arredondamento
+//             exibido ('dom_checksum'). Qualquer elo faltando ⇒ total_linha = null em TODAS (ausente ≠ zero).
 
 // >>> ESPELHO(captura-custo) INICIO
 export function parseBRL(s: string): number | null {
@@ -268,37 +282,3 @@ export function resumirCaptura(p: {
   };
 }
 // <<< ESPELHO(captura-custo) FIM
-
-export interface ResultadoValidacao {
-  status: 'ok' | 'mismatch' | 'indisponivel';
-  mismatches: { sku_codigo_omie: string; prz_ent: number; lt_esperado: number }[];
-  pulados: string[];
-}
-
-export function validarGrupoLeadtime(res: ResultadoMatch, ltEsperado: number | null): ResultadoValidacao {
-  const mismatches: ResultadoValidacao['mismatches'] = [];
-  const pulados: string[] = [];
-  const pularTudo = () => {
-    for (const c of res.casados) pulados.push(c.item.sku_codigo_omie);
-    for (const i of res.naoCasados) pulados.push(i.sku_codigo_omie);
-    for (const i of res.ambiguos) pulados.push(i.sku_codigo_omie);
-  };
-  if (ltEsperado == null || !Number.isInteger(ltEsperado)) {
-    pularTudo();
-    return { status: 'indisponivel', mismatches, pulados };
-  }
-  let validados = 0;
-  for (const c of res.casados) {
-    if (c.prz_ent == null) { pulados.push(c.item.sku_codigo_omie); continue; }
-    validados++;
-    if (c.prz_ent !== ltEsperado) {
-      mismatches.push({ sku_codigo_omie: c.item.sku_codigo_omie, prz_ent: c.prz_ent, lt_esperado: ltEsperado });
-    }
-  }
-  for (const i of res.naoCasados) pulados.push(i.sku_codigo_omie);
-  for (const i of res.ambiguos) pulados.push(i.sku_codigo_omie);
-  if (mismatches.length > 0) return { status: 'mismatch', mismatches, pulados };
-  if (validados > 0) return { status: 'ok', mismatches, pulados };
-  return { status: 'indisponivel', mismatches, pulados };
-}
-
