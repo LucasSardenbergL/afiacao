@@ -554,6 +554,46 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
     Depois leia pelos ids devolvidos (`WHERE id IN (…)`, nunca `ORDER BY id DESC`), exigindo os
     **três**: `versao` da main, `fonte` idêntico ao `sonda-fingerprints.ts` (é ele que prova que o
     `_shared/` subiu junto, não só o `index.ts`) e o eco `probe:true`.
+  - 💰 **QUEM entra no `--caro` — o critério é o EFEITO, não a FORMA do handler (2026-09-05).** A
+    trava existe porque o bundle **PRÉ-sensor ignora o `{"probe":true}` e roda o fluxo real**;
+    `bun run sonda:sql <edges> --caro=<subconjunto>` separa as caras num bloco com trava por `CASE`,
+    mas por **default trata TODAS como baratas** — o subconjunto é decisão sua, e ela erra silenciosa
+    nos dois sentidos (de menos = pedido criado no Omie à toa; de mais = trava que o founder destrava
+    no braço sem precisar). Decida em duas metades, **MEDINDO cada uma**:
+    1. **A edge ESCREVE ou chama serviço externo no fluxo real?** Uma linha faz a triagem:
+       ```bash
+       grep -nE '\.(upsert|insert|update|delete)\(|\.rpc\(|fetch\(' supabase/functions/<edge>/index.ts
+       ```
+       **Zero efeito ⇒ BARATA**, qualquer que seja a forma do handler. Mas o grep é TRIAGEM, não
+       veredito — contagem 0 só vira resposta depois de **LER** os hits, porque dois deles mentem:
+       (a) `fetch(` de **GET de leitura** (`/auth/v1/user`, `?select=…`) é gate de auth, não efeito;
+       (b) **`.delete(` casa com `Set.delete` do JS**, que não toca banco nenhum. Foi assim que a
+       `fin-valor-cockpit` (738 linhas) se provou BARATA: zero `.upsert/.insert/.update/.rpc`, os
+       três `fetch` são GETs de `/auth/v1/user` + `user_roles` + `commercial_roles`, e o único
+       `.delete(` é
+       `supabase/functions/fin-valor-cockpit/index.ts:564`<!--cita: custoBaixaConfianca.delete(-->,
+       um `Set` de JS. Pior caso de sondá-la com bundle pré-sensor: **computar e devolver** — NULO.
+    2. **Se escreve: o efeito é REVERSÍVEL, e qual o ALCANCE?** "Cara" não é binário, e o que a trava
+       compra varia em ordens de grandeza. `carteira-positivacao-snapshot` faz **UM upsert
+       idempotente** por
+       `supabase/functions/carteira-positivacao-snapshot/index.ts:104`<!--cita: onConflict: 'mes,customer_user_id'-->,
+       sem chamada externa, e o cron dela é **MENSAL** (`jobid` 80, `0 8 1 * *`) ⇒ disparar fora de
+       hora custa **uma linha parcial do mês corrente que o próximo tick reescreve**. Já
+       `omie-sync-pedidos-compra` escreve em vários pontos, publica por RPC e **dispara sync real de
+       pedidos de compra no Omie** (`fetch` com `method: "POST"`) — outra ordem de grandeza. As duas
+       merecem o `--caro`; só a segunda justifica **adiar a sonda** até depois do deploy em vez de só
+       travar o bloco.
+    ⛔ **PROXY REPROVADO: "a edge despacha por `body.action`?" (medido e descartado 2026-09-05).** O
+    raciocínio era — se despacha e o `default:` recusa, `{"probe":true}` sem `action` é inócuo; se
+    não despacha, roda o fluxo único ⇒ cara. A metade POSITIVA continua valendo, e os três `default:`
+    que medi de fato recusam (`omie-analytics-sync` e `sync-reprocess` devolvem 400 "Ação
+    desconhecida", `omie-vendas-sync` faz `throw`). **É a AUSÊNCIA de dispatch que não prova o
+    contrário** — `ausente ≠ zero` aplicado à FORMA do handler: `fin-valor-cockpit` não tem `switch`
+    nenhum, e mesmo assim não escreve nada. O proxy a marcou cara; medir o efeito a devolveu barata.
+    Forma é preditor, efeito é prova. Guardado por `evals/criterio-caro-eval.sh`, que **EXECUTA** o
+    grep acima — extraído desta própria seção, fail-CLOSED se sumir — contra as três edges e exige a
+    classificação de volta: o `docs:citacoes` prova que a LINHA citada existe, só o eval prova que
+    ela ainda **diz aquilo**, e é o que impede o exemplo de apodrecer no repo vivo.
   - **N3 PASSIVO — a FORMA do JSON prova a versão quando a edge JÁ é chamada por cron (2026-08-26).**
     Dispensa as duas dependências acima (founder logado / cron secret): `net._http_response` retém o
     **corpo** da resposta que o cron já produziu. Se as duas versões do código retornam objetos com
