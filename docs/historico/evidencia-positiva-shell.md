@@ -1,4 +1,4 @@
-# Evidência POSITIVA — e as dez armadilhas de shell que fabricam VEREDITO
+# Evidência POSITIVA — e as armadilhas de shell que fabricam VEREDITO
 
 > **A regra que sobrou no CLAUDE.md:** validação só conta com **evidência positiva** — rode o
 > comando autoritativo, confirme que **terminou**, capture `exit 0`. Este doc guarda o *porquê*
@@ -27,7 +27,7 @@ rodar** (glob não expandido, arquivo inexistente, flag inválida) devolve zero 
 na tela, a uma busca que rodou e não achou nada. Só o **exit code** e o **formato da saída**
 distinguem os dois.
 
-## As dez armadilhas
+## As armadilhas
 
 ### 1. `cmd | tail` ENGOLE o exit code
 O pipeline devolve o status do **último** componente. `bun run test | tail -5` é sempre verde.
