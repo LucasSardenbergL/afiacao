@@ -112,10 +112,10 @@ Legenda: **I** impacto · **R** risco de deixar como está · **E** esforço (1 
 
 | # | ID | Fase | Item | Eixo | I | R | E | Score | Origem |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | M-01 | 0 | Conferência de NF-e: `handleFinalize` mostra "efetivada" quando a edge devolve 200 com `success:false` | recebimento · money-path | 4 | 4 | 1 | **40** | backlog 07-04 (aberto) |
-| 2 | M-02 | 0 | Rejeição em lote da reposição sem guard de status (`.in("id", ids)` sem `.eq('status')`) | reposição · money-path | 4 | 3 | 1 | **35** | backlog 07-04 (aberto) |
-| 3 | M-03 | 0 | Editor de quantidade grava `num_skus` em vez dos itens do pedido | reposição · money-path | 4 | 3 | 1 | **35** | backlog 07-04 (aberto) |
-| 4 | M-04 | 0 | `margin.ts` fabrica margem negativa: `unit_price \|\| 0` (assimétrico com o custo) | vendas · money-path | 4 | 3 | 1 | **35** | domínio A3 |
+| 1 | M-01 | 0 | Conferência de NF-e: `handleFinalize` mostra "efetivada" quando a edge devolve 200 com `success:false` | recebimento · money-path | 4 | 4 | 1 | **40** | ✅ #2201 · backlog 07-04 (aberto)|
+| 2 | M-02 | 0 | Rejeição em lote da reposição sem guard de status (`.in("id", ids)` sem `.eq('status')`) | reposição · money-path | 4 | 3 | 1 | **35** | ✅ #2204 · backlog 07-04 (aberto)|
+| 3 | M-03 | 0 | Editor de quantidade grava `num_skus` em vez dos itens do pedido | reposição · money-path | 4 | 3 | 1 | **35** | ✅ #2205 · backlog 07-04 (aberto)|
+| 4 | M-04 | 0 | `margin.ts` fabrica margem negativa: `unit_price \|\| 0` (assimétrico com o custo) | vendas · money-path | 4 | 3 | 1 | **35** | ✅ #2206 · domínio A3|
 | 5 | M-05 | 0 | `CockpitDrillDown` soma "Total" no cliente sobre `.limit(500)` e descarta `error` (zero fabricado) | reposição · money-path | 5 | 3 | 2 | **32** | frontend FE-02 · P2 desde 07-04 |
 | 6 | M-28 | 1 | Gate `casts-stale`: 79 dos 89 `.from/.rpc('x' as never)` apontam para nomes que `types.ts` JÁ tipa — o cast desliga a checagem de coluna (foi assim que #6 passou no typecheck) | tipos | 4 | 4 | 2 | **32** | domínio A1/A15 |
 | 7 | M-07 | 0 | "Faturado hoje" não filtra empresa (`companies` está na queryKey, não na query) | vendas · money-path | 3 | 3 | 1 | **30** | backlog 07-04 (aberto) |
@@ -179,16 +179,16 @@ Regras de execução: **1 item = 1 PR** (auto-merge no CI verde), com o ritual `
 
 ### Fase 0 — Correções P1 e quick wins (21 itens · score somado 550)
 
-- **M-01** (40) — Conferência de NF-e: `handleFinalize` mostra "efetivada" quando a edge devolve 200 com `success:false`
+- ✅ #2201 · **M-01** (40) — Conferência de NF-e: `handleFinalize` mostra "efetivada" quando a edge devolve 200 com `success:false`
   - Evidência: `RecebimentoConferencia.tsx:397-423` só lê `res.error`; `omie-nfe-recebimento:537,642` · Origem: backlog 07-04 (aberto)
   - Ação: Ler `success`/`modo` e degradar para erro visível; edge passa a responder ≠200 na falha. Teste de falsificação.
-- **M-02** (35) — Rejeição em lote da reposição sem guard de status (`.in("id", ids)` sem `.eq('status')`)
+- ✅ #2204 · **M-02** (35) — Rejeição em lote da reposição sem guard de status (`.in("id", ids)` sem `.eq('status')`)
   - Evidência: `useCicloHoje.ts:146-155` · Origem: backlog 07-04 (aberto)
   - Ação: Guard de status no UPDATE + teste; considerar RPC atômica.
-- **M-03** (35) — Editor de quantidade grava `num_skus` em vez dos itens do pedido
+- ✅ #2205 · **M-03** (35) — Editor de quantidade grava `num_skus` em vez dos itens do pedido
   - Evidência: `PedidoRow.tsx:64-69` · Origem: backlog 07-04 (aberto)
   - Ação: Gravar itens; teste do caminho.
-- **M-04** (35) — `margin.ts` fabrica margem negativa: `unit_price || 0` (assimétrico com o custo)
+- ✅ #2206 · **M-04** (35) — `margin.ts` fabrica margem negativa: `unit_price || 0` (assimétrico com o custo)
   - Evidência: `src/lib/.../margin.ts:214-215`; `omie-vendas-sync:1296,1355` grava 0 · Origem: domínio A3
   - Ação: `continue`/`null` em item sem preço + `null` na edge + falsificação (ritual `/codex`).
 - **M-05** (32) — `CockpitDrillDown` soma "Total" no cliente sobre `.limit(500)` e descarta `error` (zero fabricado)
