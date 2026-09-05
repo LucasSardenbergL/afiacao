@@ -9212,6 +9212,7 @@ export type Database = {
           estoque_atual: number | null
           estoque_fisico: number | null
           estoque_maximo: number | null
+          fator_embalagem_portal: number | null
           id: number
           modo_promocao: string | null
           pedido_id: number
@@ -9238,6 +9239,7 @@ export type Database = {
           estoque_atual?: number | null
           estoque_fisico?: number | null
           estoque_maximo?: number | null
+          fator_embalagem_portal?: number | null
           id?: number
           modo_promocao?: string | null
           pedido_id: number
@@ -9264,6 +9266,7 @@ export type Database = {
           estoque_atual?: number | null
           estoque_fisico?: number | null
           estoque_maximo?: number | null
+          fator_embalagem_portal?: number | null
           id?: number
           modo_promocao?: string | null
           pedido_id?: number
