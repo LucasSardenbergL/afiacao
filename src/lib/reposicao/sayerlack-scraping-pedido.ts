@@ -136,12 +136,16 @@ export interface Consolidacao {
   motivo: MotivoCaptura | null;
   /** Total líquido do pedido PROVADO (= data.value) — só quando fonte ≠ 'nenhuma'. */
   total_pedido: number | null;
-  checksum: { soma_dom: number | null; total_json: number | null; delta_abs: number | null; tolerancia_abs: number | null };
+  checksum: { soma_dom: number | null; total_json: number | null; delta_abs: number | null; delta_rel: number | null; tolerancia_abs: number | null };
 }
 
-/** Preço Venda exibido com 4 casas e total com 2: por linha ±qtd×0,00005, por linha e total ±0,005 de centavo. */
-export function toleranciaChecksum(qtds: number[]): number {
-  return 0.005 * (qtds.length + 1) + qtds.reduce((s, q) => s + q * 0.00005, 0);
+/**
+ * Preço Venda é exibido com 4 casas e `data.value` com 2: ±0,005 do total mais ±0,00005 por linha.
+ * Depende do NÚMERO DE LINHAS, não das quantidades — Preço Venda já é o total da linha, então a
+ * quantidade não entra outra vez na conta (era o erro corrigido em 2026-09-05).
+ */
+export function toleranciaChecksum(nLinhas: number): number {
+  return 0.005 + nLinhas * 0.00005;
 }
 /** Preço UN do DOM (4 casas) vs `value` do JSON (até 4 casas). */
 const TOL_PRECO_UN = 0.0001;
@@ -152,7 +156,7 @@ const TOL_PRECO_UN = 0.0001;
  * úteis ao diagnóstico), e NENHUM item recebe custo — nunca mistura custo novo com custo antigo no mesmo pedido.
  */
 export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | null, esperados: ItemEsperado[]): Consolidacao {
-  const semChecksum: Consolidacao['checksum'] = { soma_dom: null, total_json: json?.value ?? null, delta_abs: null, tolerancia_abs: null };
+  const semChecksum: Consolidacao['checksum'] = { soma_dom: null, total_json: json?.value ?? null, delta_abs: null, delta_rel: null, tolerancia_abs: null };
   const linhaSemCusto = (sku: string, prz: string): LinhaPortal => ({ sku_portal: sku, prz_ent_raw: prz, total_linha: null });
   const domPorSku = new Map<string, LinhaDom[]>();
   for (const d of dom) {
@@ -218,14 +222,16 @@ export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | nu
     };
   }
 
-  // (4) N itens ⇒ Σ(Preço Venda × Qtd UN) fecha com o total, tolerância ABSOLUTA derivada do arredondamento exibido.
+  // (4) N itens ⇒ Σ(Preço Venda) fecha com o total, tolerância ABSOLUTA derivada do arredondamento exibido.
+  // Preço Venda JÁ É o total da linha (Preço UN × Qtd UN × (1 − desconto)) — multiplicá-lo pela quantidade
+  // de novo inflava a soma e fazia todo pedido multi-item cair em 'checksum_divergente'.
   if (provadas.some((p) => p.precoVenda == null || !(p.precoVenda > 0))) return falha('dom_incompleto');
-  const totais = provadas.map((p) => (p.precoVenda as number) * p.qtd);
+  const totais = provadas.map((p) => p.precoVenda as number);
   if (totais.some((t) => !Number.isFinite(t))) return falha('dom_incompleto');
   const soma = totais.reduce((s, v) => s + v, 0);
-  const tolerancia = toleranciaChecksum(provadas.map((p) => p.qtd));
+  const tolerancia = toleranciaChecksum(provadas.length);
   const delta = Math.abs(soma - json.value);
-  const checksum = { soma_dom: soma, total_json: json.value, delta_abs: delta, tolerancia_abs: tolerancia };
+  const checksum = { soma_dom: soma, total_json: json.value, delta_abs: delta, delta_rel: delta / json.value, tolerancia_abs: tolerancia };
   if (delta > tolerancia) return falha('checksum_divergente', checksum);
   return {
     linhas: skusJson.map((s, i) => ({ sku_portal: s, prz_ent_raw: przDe(s), total_linha: totais[i] })),

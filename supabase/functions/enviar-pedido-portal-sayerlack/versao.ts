@@ -53,7 +53,17 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * `escrita_parcial`). A edge casa a MARCA (CP001..CP004 → motivo) e grava `sqlstate_rpc` no resumo.
  * ⚠️ Depende da migration aplicada: sem ela todo envio cai em `erro_rpc` (cego=true, motivo=erro_rpc).
  */
-export const VERSAO = "v1.5-custo-portal-rpc-cas";
+/**
+ * v1.6 — `dom_checksum` somava `Preço Venda × Qtd UN`, mas o DOM prova que **Preço Venda JÁ É o total da
+ * linha** (#2459 / portal 2126911: 142,2554 × 3 × (1 − 14,9488%) = 362,9698). A soma inflada estourava a
+ * tolerância em todo pedido multi-item, que caía em `checksum_divergente` — fail-closed, mas com a captura
+ * do DOM morta na prática (pedido de 1 item nunca passa por ali, então o defeito ficou invisível). A
+ * tolerância passa a depender do NÚMERO DE LINHAS, não das quantidades, e o resumo ganha `delta_rel`.
+ * ⚠️ ABERTO: no #2459 o portal cobrou `data.value` 374,77 contra Preço Venda 362,9698 — R$ 11,80 (3,2510%)
+ * de origem não identificada. Enquanto isso não for explicado, `dom_checksum` segue reprovando: o
+ * `delta_rel` no resumo existe para medir se a razão se repete nos próximos envios multi-item.
+ */
+export const VERSAO = "v1.6-preco-venda-e-total-da-linha";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
