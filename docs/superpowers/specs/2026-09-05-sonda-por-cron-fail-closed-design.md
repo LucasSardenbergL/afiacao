@@ -129,7 +129,7 @@ Gates do relé (§5): método e header por constante; teste que captura o `Reque
 3. executa `deno run --no-remote --import-map=<gerado> runner.ts` com `Deno.serve`/`Deno.env.get`/`globalThis.fetch` substituídos ANTES do `import()` e faz **três** chamadas ao handler capturado:
    (a) **o `OPTIONS` do relé** (`Request` construído por `montarRequestSonda(alvo, cred)` — a MESMA função que o relé usa) → exige `efeitos = 0`, `fetches = 0`, status 2xx e corpo sem `probe` (para closures sem o ramo) — um corpo com `probe:true` num closure anterior a `desde` é `FALHA` (algo respondeu a sonda sem ter o ramo);
    (b) **o preflight do browser** (`OPTIONS` com `Access-Control-Request-Headers: x-sonda-credencial`, sem o header) → efeitos 0 e resposta igual à de (a) sem credencial (o app não muda);
-   (c) **o controle positivo**: `POST` + `x-cron-secret` válido + `corpoControle` → exige `efeitos > 0` ou `fetches > 0` — o contador VÊ o fluxo real **daquele** bundle. Nos closures sem gate, `POST` sem credencial + `corpoControle` também produz efeito e é registrado como `classe: "sem-gate"` (documenta a classe que matou a v1).
+   (c) **o controle positivo**: `POST` + `corpoControle` com uma **escada de credenciais** — sem credencial (registra `classe: "sem-gate"` se produzir efeito: a classe que matou a v1), depois `x-cron-secret` válido, depois `Authorization: Bearer <SERVICE_ROLE>` (versões cujo gate só aceitava JWT/service role) — e exige que **alguma** delas produza `efeitos > 0` ou `fetches > 0`: o contador VÊ o fluxo real **daquele** bundle. Medido no spike: 6 closures antigos de `calculate-scores` só destravam pelo Bearer.
    Erro de import ou de execução em (a) = `INVERIFICAVEL`;
 4. veredito por edge: `APROVADA` só se **100 % dos closures** (desde `historicoDesde`, default = 1º commit da edge) são `PASSA` em (a) e (b) com controle (c) positivo. Um `INVERIFICAVEL`/`FALHA` = edge fora, relatório nomeando sha, closure e motivo. Controle inconclusivo só por declaração na entrada, com motivo.
 
@@ -208,6 +208,15 @@ Harness PG17 (`db/test-deploy-sonda-cron.sh`, padrão de `db/test-deploy-atestac
   | `monthly-report@ef08dddd2` (2026-02-21, sem gate) | 200, sem `probe`, **0 efeitos, 0 fetch** | 200, **0 efeitos** | 200 `{"success":true,…}`, **2 efeitos** (`client.from().select`) | idem, 2 efeitos |
   | `calculate-scores@45a80118b` (2026-03-02, sem gate) | 200, sem `probe`, **0 efeitos, 0 fetch** | 200, **0 efeitos** | 200, **11 efeitos** (`from/select/range/in…`) | idem, 11 efeitos |
 
+- **Backfill-spike das 3 edges-piloto — TODOS os closures históricos executados** (mesmo runner; 216 closures em **71 s**, ~0,33 s cada ⇒ as 54 edges ≈ 18 min):
+
+  | edge | closures | inerte ao `OPTIONS` + preflight (0 efeitos) | controle positivo | observações |
+  |---|---|---|---|---|
+  | `monthly-report` | 65 | **64/64 executados** | 64/64 | 1 `INVERIFICAVEL`: `https://esm.sh/resend@2.0.0` fora do catálogo de stubs (entra no catálogo); 1 closure sem gate (`ef08dddd2`) |
+  | `calculate-scores` | 79 | **79/79** | 73/79 | 6 closures com gate só por JWT: `x-cron-secret` dá 401 → o controle precisa do degrau `Bearer <SERVICE_ROLE>` (escada acima); 4 closures sem gate |
+  | `sync-reprocess` | 72 | **72/72** | 72/72 | — |
+
+  Nenhum closure das três produziu efeito ao `OPTIONS` — nem os sem gate. O que falta para "100 % `PASSA`" é catálogo (1 stub) e a escada do controle, não segurança.
   É a tese de v3 medida onde a v1 morria: o `OPTIONS` é inerte no bundle que **não autentica nada**, e o contador enxerga o fluxo real desse mesmo bundle (controle positivo sem credencial alguma — a classe "sem gate" fica registrada, não suposta).
 
 Gates de CI que a entrega acrescenta ou toca: `test:sonda-rollback` (novo, blocking), `sonda:cron-prova` (novo, blocking: G1–G4), `test:edges` (testes de `_shared/sonda-cron.ts` e do relé; gate de contrato aprende o ramo no bloco `OPTIONS`), vitest (gates de texto da migration, do relé e do CLI), `db/test-deploy-sonda-cron.sh` (local, PG17), `sonda:bump` + `sonda:fingerprint -- --write`, `manifesto` (sem arquivo novo em `src/`).
