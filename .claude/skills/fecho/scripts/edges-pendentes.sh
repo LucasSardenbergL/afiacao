@@ -379,6 +379,7 @@ fi
 
 # ------------------------------------------------------------ veredito ---
 : > "$tmp/chips"
+: > "$tmp/sem_sonda"
 echo "== edges da janela: precisa de chip? =="
 if [ "$mecanica_ok" = 0 ]; then
   echo "⚠️ MECÂNICA NÃO CONFIÁVEL — $motivo"
@@ -412,6 +413,7 @@ while read -r slug; do
     printf '  SEM_PROVA      %-34s SONDA_ANONIMA: nenhuma resposta ECOANDO este slug, mas %s resposta(s) de sonda sem eco de slug na janela (200 com `probe`+`versao` e SEM `edge` = bundle anterior ao #1789). Uma delas PODE ser desta edge; nenhuma é atribuível sem o disparo → INDETERMINADO. Para determinar: --request-ids %s=<request_id>\n' \
       "$slug" "$n_anonimas" "$slug"
   elif [ -z "$servido" ]; then
+    printf '%s\n' "$slug" >> "$tmp/sem_sonda"
     printf '  SEM_PROVA      %-34s nenhuma sonda em %s (ausência ≠ pendência: INDETERMINADO)\n' "$slug" "$JANELA"
   elif [ "$servido" = "sem-campo-fonte" ]; then
     # Irmão do ramo abaixo, e MAIS FORTE que ele: `nao-mapeada` é o bundle novo servindo uma prova
@@ -438,5 +440,26 @@ fi
 echo "🎫 abra chip para: $(tr '\n' ' ' < "$tmp/chips")"
 echo "   (DESATUALIZADA / PRE_SONDA_FONTE = deploy pendente PROVADO · SEM_PROVA = indeterminado,"
 echo "    chip por fail-closed)"
+# ⚠️ "nenhuma sonda na janela" NÃO se resolve esperando, e dizer só "INDETERMINADO" convida o
+# leitor a esperar. NÃO HÁ cron de sondagem: `cron.job` tem 93 jobs e ZERO com `probe`. Quem dá
+# prova passiva é só a edge cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) E tem cron
+# frequente — `analytics-outbox-drain` (5/5min) é o caso típico. Medido 2026-09-05: 24 das 54
+# edges do mapa não têm cron NENHUM (webhook, ou invocada sob demanda pelo app), e para essas a
+# prova passiva é IMPOSSÍVEL; `net._http_response` ainda expira no TTL do pg_net, então a janela
+# só encolhe. O autor deste script leu este ramo como "espere o próximo tick do cron" HORAS depois
+# de escrevê-lo, ao verificar dois deploys reais: a espera nunca terminaria, e o `SEM_PROVA`
+# persistente passaria por pendência real — chip eterno numa edge que já está no ar.
+if [ -s "$tmp/sem_sonda" ]; then
+  n_ss="$(wc -l < "$tmp/sem_sonda" | tr -d "[:space:]")"
+  amostra="$(head -6 "$tmp/sem_sonda" | tr '\n' ' ')"
+  [ "$n_ss" -gt 6 ] && amostra="$amostra… (+$((n_ss - 6)))"
+  echo
+  echo "ℹ️  as $n_ss sem sonda NÃO se resolvem esperando: não há cron de sondagem, e boa parte"
+  echo "   destas edges não tem cron nenhum (webhook/sob demanda) — prova passiva é impossível."
+  echo "   DISPARE:  bun run sonda:sql $amostra"
+  echo "   (PASSO 1 é escrita + vault → SQL Editor do Lovable; PASSO 2 julga em SELECT puro,"
+  echo "    --so-leitura, roda no psql-ro. Com o id em mãos: --request-ids <slug>=<id>)"
+fi
+
 [ "$mecanica_ok" = 1 ] && exit 1
 exit 2
