@@ -135,6 +135,11 @@ vigiado, não presumido inócuo.
 ⚠️ **O #2459 não se conserta sozinho depois do apply**: ele já tem `omie_pedido_compra_numero`, e o CAS
 recusa com **CP002 por desenho** (custo não muda depois do PO). Reprocessá-lo é decisão de produto, com
 correção do lado do Omie — não é rollback de código.
+**Decidido pelo founder em 2026-09-05: fica como está — a conferência da nota fiscal do fornecedor
+resolve os R$ 13,06.** Não reprocessar, não "corrigir" o #2459: ele não é pendência aberta, é caso
+encerrado. O `cego=true` com `sqlstate_rpc=PGRST202` que ele carrega no `portal_resposta` é **registro
+histórico do intervalo de deploy**, não alarme vivo — quem varrer o sensor procurando cegueira filtra
+por `enviado_portal_em`, e não trata esta linha como trabalho a fazer.
 
 ## Risco residual (chips)
 
