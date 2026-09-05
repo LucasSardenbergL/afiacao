@@ -81,6 +81,8 @@ x-sonda-credencial = lowercase-hex( HMAC-SHA256( key = CRON_SECRET, message = "s
 - **Edge**: `crypto.subtle` (`importKey('raw', …, {name:'HMAC', hash:'SHA-256'})` → `sign`) → hex minúsculo. Função pura `derivarCredencialSonda(cronSecret: string | undefined): Promise<string | null>` em `_shared/sonda-cron.ts` — `null` para env ausente/vazia (nunca `""`).
 - **Paridade provada nos dois lados** com o mesmo vetor fixo (RFC 4231 caso 2: chave `Jefe`, msg `what do ya want for nothing?` → `5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843`) e com o vetor da mensagem real sob uma chave de teste, literal idêntico nos dois harnesses. Divergência de encoding (bytea vs UTF-8, hex maiúsculo) reprova ANTES de prod.
 - Comparação por igualdade simples, como o `authorizeCron` (documentado; não é o eixo de risco deste mecanismo).
+- ⚠️ **Limite do pré-voo:** `claude_ro` (psql-ro) **não tem USAGE no schema `extensions`** (medido 2026-09-05: `permission denied for schema extensions`), então a expressão `extensions.hmac(...)` não pode ser pré-voada em prod pelo wrapper. A paridade é provada no **PG17 local com pgcrypto** (harness de F2) e, em prod, pela própria 1ª execução do dispatcher: credencial errada = 401 em toda edge nova = fail-closed e visível no CLI (silêncio total), nunca efeito. Quem executa o cron é `postgres`, que tem USAGE em `extensions` e lê o vault (é o que os 93 crons fazem).
+- Vetores fixados para os dois harnesses: RFC 4231 #2 = `5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843`; mensagem real `sonda-de-versao:v1` sob a chave de teste `Jefe` = `6156024433e6673930e512251123c73875aaf81bfe490d60b5e4dd0661033aa5` (Web Crypto/Deno 2.9.2, spike 2026-09-05).
 - Por que derivada e não segredo independente: zero provisionamento em 2 lugares (Supabase secrets + vault) e zero drift entre eles — drift = cron sempre 401 = fail-closed mas invisível. Por que HMAC e não o próprio `CRON_SECRET` num header novo: a credencial precisa ser **incapaz** de autorizar o fluxo real em qualquer bundle, presente ou futuro, por VALOR e não só por nome de header.
 
 ### 4.2 O ramo na edge — `atenderSondaCron`
@@ -180,6 +182,12 @@ Diretório **fora** de `supabase/functions/` (os gates enumeram `supabase/functi
 Harness PG17 (`db/test-deploy-sonda-cron.sh`, padrão de `db/test-deploy-atestacoes.sh`): stub de `net.http_post` que grava url/headers/body; stub de `vault.decrypted_secrets` com a chave de teste. Prova: N posts = alvos ativos; headers **exatamente** `{Content-Type, x-sonda-credencial}` (`NOT headers ? 'x-cron-secret'`, `NOT headers ? 'Authorization'`); credencial = o literal do vetor; edge inativa **não** postada; vault sem `CRON_SECRET` → exceção e **zero** posts; ACL/RLS por role; re-apply sem duplicar cron; postcondição. `--falsificar`: header renomeado para `x-cron-secret` → vermelho nomeando o header; sem `MATERIALIZED`/filtro → inativa postada → vermelho; sem `REVOKE` → vermelho.
 
 Gates de CI que a entrega acrescenta ou toca: `test:sonda-rollback` (novo, blocking), `sonda:cron-alvos` (novo, blocking), `test:edges` (testes de `_shared/sonda-cron.ts`; gate de contrato aprende a posição do ramo e a leitura condicional do corpo), vitest (gates de texto da migration + do CLI), `db/test-deploy-sonda-cron.sh` (local, PG17, evidência no PR), `sonda:bump` + `sonda:fingerprint -- --write` (bumps e mapa), `manifesto` (arquivos novos em `src/` — nenhum previsto).
+
+### 5.1 Premissas do harness verificadas por spike (2026-09-05, scratchpad, Deno 2.9.2)
+
+- Import map remapeia `npm:@supabase/supabase-js@2` para um stub local **sob `--no-remote`** (o bundle importa o especificador `npm:` literal e recebe o stub).
+- `Deno.serve`, `Deno.env.get` e `globalThis.fetch` aceitam reatribuição antes do `import()` dinâmico: o handler é capturado, a env é a de teste, o `fetch` conta e lança — sem `--allow-net` nem `--allow-env`.
+- Num bundle simulado com a forma `OPTIONS → gate por x-cron-secret → createClient → fetch`, o request do cron devolveu **401 com 0 efeitos**, e o controle positivo (`x-cron-secret` válido) registrou **2 efeitos + 1 fetch** — o contador enxerga o fluxo real.
 
 ## 6. Fatias de entrega
 
