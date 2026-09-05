@@ -121,9 +121,8 @@ describe('o corpo REAL do repo', () => {
   });
 
   it('o stripper shell não desabou em nenhum `.sh` (fração, bloco e sub-limpeza)', async () => {
-    const { comentariosSobreviventes, maiorBlocoDescartadoShell, medirPreservacaoShell } = await import(
-      '@/lib/gates/limpeza-shell'
-    );
+    const { comentariosSobreviventes, heredocsAbertos, maiorBlocoDescartadoShell, medirPreservacaoShell } =
+      await import('@/lib/gates/limpeza-shell');
     const sh = arquivos.filter((a) => /\.(sh|bash)$/.test(a.caminho));
     expect(sh.length).toBeGreaterThanOrEqual(300);
     for (const a of sh) {
@@ -131,6 +130,8 @@ describe('o corpo REAL do repo', () => {
       if (linhasOriginais >= 20) expect(`${a.caminho}:${fracao >= PISOS.preservacaoShell}`).toBe(`${a.caminho}:true`);
       expect(`${a.caminho}:${maiorBlocoDescartadoShell(a.fonte) <= PISOS.blocoDescartado}`).toBe(`${a.caminho}:true`);
       expect(`${a.caminho}:${comentariosSobreviventes(a.fonte)}`).toBe(`${a.caminho}:${PISOS.comentariosSobreviventes}`);
+      // Eixo medido POR FORA da máquina: nenhum `.sh` do repo termina com heredoc aberto.
+      expect(`${a.caminho}:${heredocsAbertos(a.fonte)}`).toBe(`${a.caminho}:${PISOS.heredocsAbertos}`);
     }
   });
 

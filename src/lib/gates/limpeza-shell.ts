@@ -47,6 +47,8 @@ interface Heredoc {
 type Contexto = 'sq' | 'ansi' | 'dq' | 'sub' | 'crase';
 
 interface Leitura {
+  /** Heredocs que a máquina abriu e NUNCA fechou até o fim do arquivo. Ver `heredocsAbertos`. */
+  abertosNoFim: number;
   /** 1 = contexto de comando/palavra · 0 = dentro de literal (`'…'`, `"…"`, `$'…'`). */
   mascara: Uint8Array;
   /** Intervalos `[ini, fim)` que são comentário `#` de shell. */
@@ -227,7 +229,12 @@ function lerContextoShell(fonte: string): Leitura {
   // Heredoc sem delimitador de fechamento (arquivo truncado) ainda é corpo até o fim.
   if (corpoDeHeredoc && iniHeredoc >= 0) heredocs.push([iniHeredoc, n]);
 
-  return { mascara, comentarios, heredocs };
+  return {
+    mascara,
+    comentarios,
+    heredocs,
+    abertosNoFim: (corpoDeHeredoc ? 1 : 0) + pendentes.length,
+  };
 }
 
 /** Remove os comentários `#` de uma fonte shell, preservando a contagem de linhas. */
@@ -357,4 +364,25 @@ export function fatiarPalavras(trecho: string): { cru: string; prefixoNu: string
   }
   fechar();
   return palavras;
+}
+
+/**
+ * Quantos heredocs esta máquina abriu e NUNCA fechou até o fim do arquivo.
+ *
+ * É o alarme INDEPENDENTE — e ele existe por uma falha que a matriz de sabotagem revelou:
+ * `comentariosSobreviventes` isenta o que está dentro de heredoc (ali `#` é dado), e pergunta
+ * isso à MESMA máquina. Então uma falha que faz a máquina *acreditar* estar num heredoc é
+ * invisível para ele: o sensor consulta a crença defeituosa e a usa como desculpa. Foi exatamente
+ * o que a sabotagem do `<<<` produziu — 45 comentários deixaram de ser limpos e o contador
+ * devolveu 0.
+ *
+ * A invariante que não depende dessa crença: **script shell bem-formado não termina com heredoc
+ * aberto**. Quando `<<<` é lido como `<<`, o delimitador vira o ARGUMENTO (`$REQ_IDS`), que nunca
+ * aparece como linha — e o heredoc fica aberto até o EOF. Medido nos 373 `.sh` do repo: 0.
+ *
+ * A lição maior: sensor que consulta o próprio sistema que vigia herda os defeitos dele. Todo
+ * alarme de stripper precisa de ao menos um eixo medido POR FORA da máquina.
+ */
+export function heredocsAbertos(fonte: string): number {
+  return lerContextoShell(fonte).abertosNoFim;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   comentariosSobreviventes,
+  heredocsAbertos,
   fatiarPalavras,
   maiorBlocoDescartadoShell,
   mascaraContexto,
@@ -74,6 +75,16 @@ describe('removerComentariosShell', () => {
     ].join('\n');
     expect(removerComentariosShell(fonte).split('\n')[1]).toBe('');
     expect(comentariosSobreviventes(fonte)).toBe(0);
+  });
+
+  // O sensor de sub-limpeza ISENTA o que está dentro de heredoc — e pergunta isso à MESMA
+  // máquina. Uma falha que faz a máquina ACHAR que está num heredoc é, portanto, invisível para
+  // ele. A matriz de sabotagem mediu: com o `<<<` quebrado, `edges-pendentes.sh` deixava 45
+  // comentários por limpar e `comentariosSobreviventes` devolvia 0. Daí o alarme independente.
+  it('heredoc aberto até o EOF é o alarme que NÃO depende da crença da máquina', () => {
+    expect(heredocsAbertos('IFS="," read -r -a p <<< "$LISTA"\n# c\nx=1\n')).toBe(0);
+    expect(heredocsAbertos('cat <<EOF\nlinha\nEOF\n')).toBe(0);
+    expect(heredocsAbertos('cat <<NUNCA_FECHA\nlinha\n')).toBe(1);
   });
 
   it('`comentariosSobreviventes` ignora `#!`, heredoc e comentário de linguagem embutida', () => {

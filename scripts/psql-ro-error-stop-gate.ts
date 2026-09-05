@@ -15,6 +15,7 @@ import { join, relative, resolve } from 'node:path';
 
 import {
   comentariosSobreviventes,
+  heredocsAbertos,
   maiorBlocoDescartadoShell,
   medirPreservacaoShell,
 } from '@/lib/gates/limpeza-shell';
@@ -59,6 +60,13 @@ export const PISOS = {
    * reais desta máquina (`<<<` lido como `<<`; `$(` dentro de `"…"`) apareceram só aqui.
    */
   comentariosSobreviventes: 0,
+  /**
+   * Heredoc aberto que nunca fecha até o EOF. Medido: **0** nos 373 `.sh`. É o único alarme que
+   * NÃO consulta a crença da máquina sobre heredoc — e é por isso que ele existe: o de
+   * sub-limpeza isenta o que está "dentro de heredoc" e portanto não vê a falha que faz a
+   * máquina achar que está num. A matriz de sabotagem provou essa cegueira antes de o gate subir.
+   */
+  heredocsAbertos: 0,
 } as const;
 
 export function enumerar(raizes: string[], base: string): string[] {
@@ -112,6 +120,10 @@ function main(): number {
     if (linhasOriginais >= 20 && fracao < PISOS.preservacaoShell) desabando.push(`${a.caminho} (fração ${fracao.toFixed(2)})`);
     const bloco = maiorBlocoDescartadoShell(a.fonte);
     if (bloco > PISOS.blocoDescartado) desabando.push(`${a.caminho} (bloco descartado ${bloco})`);
+    const abertos = heredocsAbertos(a.fonte);
+    if (abertos > PISOS.heredocsAbertos) {
+      desabando.push(`${a.caminho} (${abertos} heredoc(s) ABERTO(s) até o EOF — a máquina perdeu o fio)`);
+    }
     const sobrevivente = comentariosSobreviventes(a.fonte);
     if (sobrevivente > PISOS.comentariosSobreviventes) {
       desabando.push(`${a.caminho} (${sobrevivente} comentário(s) NÃO limpo(s) — stripper parou)`);
