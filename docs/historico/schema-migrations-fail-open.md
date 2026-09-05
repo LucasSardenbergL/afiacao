@@ -99,7 +99,11 @@ mão de novo. A migration é idempotente (`IF NOT EXISTS`), então re-colar é s
 | (2) re-gerar `supabase/schema-snapshot.sql` | ❌ **não feito** — `grep` sai **1** (ausente do snapshot) |
 | (3) `types.ts` | ✅ **N/A** — CHECK constraint não acrescenta coluna |
 
-O passo (2) é o que dói: **o snapshot de DR não tem a constraint.** Um restore a partir dele traz um
+O passo (2) é o que dói, e o buraco é **genérico, não pontual**: dos 5 objetos recentes provados
+vivos em prod (`analytics_outbox_perda`, `reconciliar_pedidos_omie`, `cockpit_itens_snapshot`,
+`apriori_universo_snapshot` e esta constraint), **os 5 estão ausentes** do snapshot — cujo último
+re-dump (28/08) já trazia "40 migrations de deriva" na própria mensagem de commit. **O snapshot de
+DR não tem a constraint**, e não a tem por deriva recorrente. Um restore a partir dele traz um
 `sales_orders` sem o guard — e, como o snapshot é a **única** reprodução de prod (§3: "as migrations
 não são uma cadeia restaurável"), não há caminho B que a recrie.
 
@@ -130,18 +134,48 @@ exatamente na classe de bug deste episódio.
 > está dizendo **nada**. É ausência de dado, não aprovação (mesma doutrina de evidência positiva de
 > `docs/historico/evidencia-positiva-shell.md`).
 
-**Correção especificada:** adicionar `kind: 'constraint'` ao extrator canônico
-`scripts/lib/migration-objects.ts` — onde a string `ADD CONSTRAINT` hoje aparece **0 vezes** — (regex de
-`ALTER TABLE … ADD CONSTRAINT <nome>`) e, na Seção 2, um ramo que resolva via
-`pg_constraint c JOIN pg_class t ON t.oid=c.conrelid` conferindo **`convalidated`**, não só
-existência — uma constraint `NOT VALID` existe e não prova nada sobre o acervo.
+**Correção especificada (revisada pelo ritual `/codex`, 2026-09-05 — a 1ª versão desta seção
+estava INCOMPLETA e teria produzido um conserto que não conserta):**
 
-## O teste que prova o objeto existe, mas ninguém roda
+1. **Extrair só `ALTER TABLE … ADD CONSTRAINT <nome explícito>`** (CHECK, FK, UNIQUE, PK, EXCLUDE).
+   Excluir CHECK inline de `CREATE TABLE`, constraint auto-nomeada, `NOT NULL` e DDL dinâmica —
+   ampliar na v1 é como se recria o episódio dos nove falso-vermelhos.
+2. **Identidade é `schema + tabela + nome`, nunca só `conname`.** Medido: **4 nomes de constraint
+   aparecem em mais de uma tabela** neste banco. Casar só por nome fabrica match — foi o furo da
+   primeira medição desta investigação (ela deu "52/52 existem" casando por `conname` solto).
+3. **Adicionar o kind NÃO BASTA.** A Seção 1 dá **precedência absoluta ao registro**
+   (`scripts/audit-custom-migrations.ts:191`): o `CASE` testa `schema_migrations` primeiro, então
+   uma constraint ausente continuaria `✅ registrado` na tabela principal mesmo com o kind ligado.
+   Para `constraint`, o catálogo tem de **preceder** o registro, com estados próprios:
+   `🔴 registrado, constraint ausente` · `⚠️ presente, NOT VALID` · `✅ presente e validada` ·
+   `🟡 presente sem registro`. Se inverter a precedência global reabrir falso-vermelho antigo,
+   inverta **só para `constraint`**, depois de rodar em shadow contra prod.
+4. **`convalidated = t` é necessário e INSUFICIENTE.** Um CHECK enfraquecido com o mesmo nome também
+   fica validado — é a família do §2 de `docs/agent/database.md` ("para objeto que a migration
+   MODIFICA, verifica-se o CORPO, não o nome"), e as sabotagens F1/F2 de
+   `db/test-hash-omie-canonico.sh` demonstram a forma. ⇒ compare também um **fingerprint de
+   `pg_get_constraintdef`**, ou rotule o resultado apenas como "presente+validada", **nunca**
+   "correta". Fingerprint atual desta constraint: `md5 = 1b6b77caec7fcd7a6c882ec80bd0a52f`.
+5. Presa por: teste com a migration real; duas tabelas com o mesmo `conname`; múltiplos `ADD` no
+   mesmo `ALTER`; negativos para inline/auto-nomeada/NOT NULL/comentário/SQL dinâmica; e um sensor
+   de corpus (toda ocorrência suportada é extraída ou consta de exceção explícita).
+
+**O buraco que sobra mesmo depois disso** (achado do Codex): se a constraint existir com o nome
+certo e a **definição errada**, o `DO $add$` da migration pula a criação por `IF NOT EXISTS`, a
+pós-condição encontra `convalidated=t` e **declara sucesso**. A pós-condição prova nome+validação,
+não semântica.
+
+## O teste não é órfão: a classe inteira roda fora do CI, por desenho
 
 `db/test-hash-omie-canonico.sh` (16 KB) existe e é executável. Um `grep -rn 'test-hash-omie-canonico'`
 em `.github/`, `package.json`, `db/` e `scripts/` sai com **exit 1**: **zero referências**. Não é
 chamado pelo CI nem por glob (`grep -rn 'db/test' .github/workflows/ package.json` também sai 1).
-É um script órfão, rodável só à mão.
+Mas isso **não** é um esquecimento pontual: existem **268** `db/test-*.sh` no repo e **nenhum**
+é referenciado no CI, porque o CI **não tem service de Postgres** (`grep` por `services:`/`postgres`/
+`initdb` em `.github/workflows/ci.yml` sai 1). O cabeçalho do próprio script diz que é o harness
+PG17 rodado à mão. ⇒ pendurar um script no CI não é one-liner: exige subir PostgreSQL 17 como
+service e tornar o bootstrap portátil (o harness fixa `/opt/homebrew` e exige `brew`; o runner é
+Ubuntu, então ligá-lo direto produz **vermelho de infraestrutura**, não sinal).
 
 ## Estado final do dado (2026-08-31 15:09 UTC)
 
