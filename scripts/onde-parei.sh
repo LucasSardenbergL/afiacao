@@ -19,8 +19,12 @@
 set -uo pipefail
 
 WT="${1:-$PWD}"
+INVOCADO_DE="$PWD"
 [ -d "$WT" ] || { echo "uso: $0 [caminho-do-worktree]" >&2; exit 64; }
 cd "$WT" || exit 64
+# sondando o PRÓPRIO worktree da sessão, ou outro? muda quem é "a atual".
+MESMO_WT=0
+[ "$(pwd -P)" = "$(cd "$INVOCADO_DE" 2>/dev/null && pwd -P)" ] && MESMO_WT=1
 
 ind() { printf '%s\n' "$1" | sed 's/^/     /'; }
 falha() { echo "❓ NÃO CONSEGUI CONSULTAR: $*" >&2; echo "   estado DESCONHECIDO — não é 'nada a retomar'." >&2; exit 6; }
@@ -78,21 +82,38 @@ else
   echo "   scratchpad: não existe"
 fi
 
-# 5. transcrições anteriores deste worktree (sinal de arqueologia)
+# 5. transcrições ANTERIORES deste worktree (sinal de arqueologia)
+#
+# A sessão ATUAL não é história e tem de sair da conta. Ela é identificada por
+# CLAUDE_CODE_SESSION_ID, que é o basename do .jsonl (conferido 2026-09-05 —
+# a var NÃO está na doc pública, daí a degradação abaixo). Contar tudo e
+# subtrair 1 "porque uma delas é a atual" era errado no uso DOCUMENTADO
+# `onde-parei.sh <outro-worktree>`: ali NENHUMA é a atual, o -1 come uma
+# sessão real e, com n=1 (worktree limpo, sem PR), zerava a conta e a sonda
+# saía 3 = "nada a retomar" por cima de uma transcrição inteira.
 PROJ_DIR="$HOME/.claude/projects/$SLUG"
+ATUAL="${CLAUDE_CODE_SESSION_ID:-}"
 if [ -d "$PROJ_DIR" ]; then
   n=0
   while IFS= read -r f; do
+    id=$(basename "$f" .jsonl)
+    # a sessão que está sondando agora não é trabalho a retomar
+    [ -n "$ATUAL" ] && [ "$id" = "$ATUAL" ] && continue
     # só conta sessão com ≥1 chamada de ferramenta — sessão que só abriu não é história
-    if grep -q '"tool_use"' "$f" 2>/dev/null; then
-      n=$((n+1))
-      [ "$n" -le 5 ] && echo "   transcrição: $(basename "$f" .jsonl) ($(wc -c <"$f" | tr -d ' ') bytes, $(stat -f '%Sm' -t '%d/%m %H:%M' "$f"))"
-    fi
+    grep -q '"tool_use"' "$f" 2>/dev/null || continue
+    n=$((n+1))
+    [ "$n" -le 5 ] && echo "   transcrição: $id ($(wc -c <"$f" | tr -d ' ') bytes, $(stat -f '%Sm' -t '%d/%m %H:%M' "$f"))"
   done < <(ls -t "$PROJ_DIR"/*.jsonl 2>/dev/null)
-  if [ "$n" -gt 1 ]; then
-    achou=1; echo "🔸 $n sessões com trabalho neste worktree — arqueologia possível (search_session_transcripts)"
+  # Sem a var não dá para identificar a atual. A heurística velha (descontar 1)
+  # só é defensável sondando o PRÓPRIO worktree; em outro, descontar inventa
+  # uma sessão atual que não existe ali — e o erro cai para o lado do fail-open.
+  if [ -z "$ATUAL" ] && [ "$MESMO_WT" = 1 ] && [ "$n" -gt 0 ]; then
+    n=$((n-1)); echo "   (CLAUDE_CODE_SESSION_ID ausente — descontei 1 por heurística)"
+  fi
+  if [ "$n" -gt 0 ]; then
+    achou=1; echo "🔸 $n sessão(ões) ANTERIOR(es) com trabalho neste worktree — arqueologia possível (search_session_transcripts)"
   else
-    echo "   sessões anteriores com trabalho: $((n>0 ? n-1 : 0)) (só a atual)"
+    echo "   sessões anteriores com trabalho: 0"
   fi
 else
   echo "   transcrições: nenhuma"
