@@ -11,6 +11,9 @@
 // produção importa através dessa fronteira.
 
 import { removerComentarios } from "./limpeza-fonte.ts";
+
+/** Raiz das edge functions, relativa à raiz do repo (o cwd em que `deno test` roda). */
+const RAIZ_FUNCTIONS = "supabase/functions";
 import * as disparar from "../disparar-pedidos-aprovados/versao.ts";
 import * as portalSayerlack from "../enviar-pedido-portal-sayerlack/versao.ts";
 import * as conciliar from "../conciliar-pedido-portal/versao.ts";
@@ -57,6 +60,14 @@ import * as nfeRecebimentoSync from "../omie-nfe-recebimento-sync/versao.ts";
 import * as syncMetadados from "../omie-sync-metadados/versao.ts";
 import * as omieWebhook from "../omie-webhook/versao.ts";
 import * as aplicarParametros from "../omie-aplicar-parametros/versao.ts";
+import * as recurringOrders from "../process-recurring-orders/versao.ts";
+import * as programadoExtrair from "../pedido-programado-extrair/versao.ts";
+import * as cmcBackfill from "../cmc-snapshot-backfill/versao.ts";
+import * as whatsappSend from "../whatsapp-send/versao.ts";
+import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
+import * as enviarPush from "../enviar-push/versao.ts";
+import * as nvoipCalls from "../nvoip-calls/versao.ts";
+import * as dispatchNotif from "../dispatch-notifications/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -210,6 +221,19 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "omie-sync-metadados", mod: syncMetadados },
   { nome: "omie-webhook", mod: omieWebhook },
   { nome: "omie-aplicar-parametros", mod: aplicarParametros },
+  // 12ª leva, 2ª metade: o lado PEDIDO/COMPRA da mesma classe cega.
+  { nome: "process-recurring-orders", mod: recurringOrders },
+  { nome: "pedido-programado-extrair", mod: programadoExtrair },
+  { nome: "cmc-snapshot-backfill", mod: cmcBackfill },
+  // 11ª leva (#2170) — as 5 de efeito FORA do nosso banco. Elas ganharam `versao.ts` e entraram no
+  // mapa de fingerprints, mas ficaram fora DESTE arquivo: instrumentadas e sem gate de FORMA
+  // nenhum, invisíveis porque o universo daqui é opt-in. É o caso que o gate de completude logo
+  // abaixo passou a reprovar; entram agora com a forma que já tinham.
+  { nome: "whatsapp-send", mod: whatsappSend },
+  { nome: "whatsapp-send-template", mod: whatsappTemplate },
+  { nome: "enviar-push", mod: enviarPush },
+  { nome: "nvoip-calls", mod: nvoipCalls },
+  { nome: "dispatch-notifications", mod: dispatchNotif },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -259,6 +283,24 @@ const ESCRITA_NOSSO_BANCO = [
   "omie-sync-metadados",
   "omie-webhook",
   "omie-aplicar-parametros",
+  // 12ª leva, 2ª metade — pedido/compra. `process-recurring-orders` insere `orders` de verdade e
+  // AVANÇA o `next_order_date` (o run legítimo seguinte pula a data consumida);
+  // `pedido-programado-extrair` paga token da Anthropic e faz delete+insert em
+  // `pedidos_programados_itens`; `cmc-snapshot-backfill` reescreve `cmc_snapshot`, a base de custo
+  // que o motor de reposição e o DRE consomem.
+  "process-recurring-orders",
+  "pedido-programado-extrair",
+  "cmc-snapshot-backfill",
+  // 11ª leva: entram na varredura estrutural pelo mesmo motivo da nona (`monthly-report`) — o preço
+  // de um `probe` mal grafado caindo no fluxo real. Aqui ele é irreversível FORA do nosso banco:
+  // mensagem de WhatsApp entregue (a de template ainda é TARIFADA), push no aparelho, LIGAÇÃO
+  // originada, e-mail pelo Gmail + evento no Calendar. Ficam FORA de GATE_PROPRIO: o gate das cinco
+  // é `authorizeCronOrStaff`/`authorizeCron`, que já aceita o `x-cron-secret` do SQL Editor.
+  "whatsapp-send",
+  "whatsapp-send-template",
+  "enviar-push",
+  "nvoip-calls",
+  "dispatch-notifications",
 ];
 
 /**
@@ -372,6 +414,69 @@ const GATE_PROPRIO = [
   "analyze-unified-order",
   "ai-ops-agent",
 ];
+
+/** As pastas que TÊM `versao.ts` — a verdade da árvore, não a lista declarada aqui. */
+function edgesComMarcadorNaArvore(): string[] {
+  const nomes: string[] = [];
+  for (const d of Deno.readDirSync(RAIZ_FUNCTIONS)) {
+    if (!d.isDirectory || d.name === "_shared") continue;
+    try {
+      Deno.statSync(`${RAIZ_FUNCTIONS}/${d.name}/versao.ts`);
+      nomes.push(d.name);
+    } catch {
+      // sem marcador: não é edge instrumentada, não é assunto deste arquivo
+    }
+  }
+  return nomes.sort();
+}
+
+Deno.test("EDGES cobre TODA pasta com versao.ts — universo opt-in perde membro em SILÊNCIO", () => {
+  // Este é o gate que faltava, e ele nasce de uma falha MEDIDA, não de zelo.
+  //
+  // Todo teste deste arquivo varre `EDGES` (ou uma sublista dela). `EDGES` é uma lista OPT-IN:
+  // quem instrumenta uma edge e esquece de acrescentar a linha aqui não REPROVA — SOME. É
+  // exatamente o modo de falha que fez nascer o `scripts/sonda-edge-nova-gate.ts` ("quando o
+  // universo de um gate é lista derivada de artefato opt-in, quem nunca entrou não reprova") e o
+  // que `docs/historico/uniao-de-vias-cegas-nao-e-cobertura.md` chama de pendência que some por
+  // AUSÊNCIA DE DADO.
+  //
+  // Aconteceu aqui, uma leva antes desta: as 5 da 11ª (#2170 — `whatsapp-send`,
+  // `whatsapp-send-template`, `enviar-push`, `nvoip-calls`, `dispatch-notifications`) ganharam
+  // `versao.ts` e entraram no mapa de fingerprints, mas NÃO neste arquivo. O `sonda:fingerprint`
+  // dizia 45/45 e este contrato dizia 40/40 — os dois verdes, sobre universos diferentes, e
+  // ninguém reprovando pelas 5 que ficaram sem gate de FORMA nenhum.
+  //
+  // Comparar contra a ÁRVORE (e não contra outra lista escrita à mão) é o ponto: `versao.ts` é o
+  // mesmo marcador que `edgesInstrumentadas()` do `scripts/sonda-fingerprint.ts` usa, então os
+  // dois gates passam a falar do MESMO conjunto — que era a divergência de origem.
+  const declaradas = new Set(EDGES.map((e) => e.nome));
+  const naArvore = edgesComMarcadorNaArvore();
+
+  if (naArvore.length === 0) {
+    throw new Error(
+      "nenhuma pasta com versao.ts encontrada — controle positivo vazio. O gate mediu o diretório " +
+        "errado (cwd deve ser a raiz do repo), e uma lista vazia por ERRO passa por lista vazia " +
+        "por mérito.",
+    );
+  }
+
+  const faltando = naArvore.filter((n) => !declaradas.has(n));
+  if (faltando.length > 0) {
+    throw new Error(
+      `edge(s) com versao.ts FORA de EDGES: ${faltando.join(", ")} — instrumentada e sem nenhum ` +
+        `gate de FORMA. Acrescente a linha em EDGES (e a lista estrutural que couber), ou remova ` +
+        `o versao.ts se a instrumentação não era para existir.`,
+    );
+  }
+
+  const sobrando = [...declaradas].filter((n) => !naArvore.includes(n)).sort();
+  if (sobrando.length > 0) {
+    throw new Error(
+      `EDGES declara edge sem versao.ts na árvore: ${sobrando.join(", ")} — a edge foi removida ou ` +
+        `renomeada e a linha ficou. Lista que aponta para o que não existe apodrece em silêncio.`,
+    );
+  }
+});
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
   for (const { nome, mod } of EDGES) {

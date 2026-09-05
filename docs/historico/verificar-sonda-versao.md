@@ -904,3 +904,49 @@ dívida — a maioria é leitura pura, para quem a sonda não resolve problema n
 leva). O que falta é o gate que force a **DECISÃO** no nascimento da edge: instrumentar, ou declarar
 por que não. Enquanto ele não existir, a régua barata é conferir, ao criar edge com cron próprio, se
 ela entra em `bun run pendencias:deploy` — edge que não aparece nem como pendência é edge fora do radar.
+
+## 15. O gate de CONTRATO tinha o mesmo furo da §14 — e ele já tinha mordido, uma leva antes (2026-09-05)
+
+A §14 fechou o denominador do **mapa de fingerprints**. O que ninguém refez foi a mesma pergunta
+sobre o outro artefato opt-in do assunto: a lista `EDGES` de
+`supabase/functions/_shared/sonda-versao-contrato_test.ts`.
+
+**Medido**, ao instrumentar a 12ª leva: **45 pastas com `versao.ts`, 40 declaradas em `EDGES`**.
+As 5 de fora eram exatamente a **11ª leva** (#2170 — `whatsapp-send`, `whatsapp-send-template`,
+`enviar-push`, `nvoip-calls`, `dispatch-notifications`), instrumentadas no dia anterior. Elas
+entraram no mapa de fingerprints e **não** neste arquivo.
+
+O que isso significa na prática: **todo** teste do contrato varre `EDGES` ou uma sublista dela — o
+formato do `VERSAO`, o `EFEITO` que nomeia o custo, "a sonda RESPONDE", "a sonda é IO-free", "não
+volta o `=== true` cru", "duas edges nunca produzem respostas idênticas". As 5 estavam
+instrumentadas e **sem gate de FORMA nenhum**. E os dois números eram verdes ao mesmo tempo:
+`sonda:fingerprint` dizia `45/45`, o contrato dizia `40 passed | 0 failed`. Nenhum dos dois estava
+errado — eles falavam de **universos diferentes**, e a diferença não tinha dono.
+
+É a §14 de novo, com outro artefato: *quando o universo de um gate é lista derivada de artefato
+OPT-IN, quem nunca entrou não reprova — some*. E é também a lição de
+`uniao-de-vias-cegas-nao-e-cobertura.md`: dois gates verdes não somam cobertura enquanto ninguém
+calcula a **interseção dos furos**.
+
+### O conserto
+
+Um teste de **completude** no próprio contrato, comparando `EDGES` contra a **ÁRVORE** — não contra
+outra lista escrita à mão:
+
+- `versao.ts` é o mesmo marcador que `edgesInstrumentadas()` do `scripts/sonda-fingerprint.ts` usa,
+  então os dois gates passam a falar do **mesmo conjunto** — que era a divergência de origem.
+- Ele reprova nos **dois sentidos**: pasta com `versao.ts` fora de `EDGES` (o caso medido), e
+  `EDGES` apontando para pasta que não tem mais `versao.ts` (lista que aponta para o que não existe
+  apodrece em silêncio).
+- E tem **guard de controle positivo vazio**: se a varredura não achar pasta nenhuma, o gate
+  REPROVA em vez de passar. Uma lista vazia por ERRO (cwd errado) é indistinguível de lista vazia
+  por mérito — a regra de `sonda-ausente-em-script-que-apaga.md`.
+
+Falsificado nas três direções, uma camada por vez: apontar `RAIZ_FUNCTIONS` para `_shared/` grita
+"controle positivo vazio"; declarar uma `edge-fantasma` grita "sem `versao.ts` na árvore"; e o
+controle positivo original — rodar o gate **antes** de acrescentar as 5 — nomeia as 5.
+
+As 5 entraram com a forma que **já tinham** (medido: `classificarSonda` antes do `createClient`,
+`respostaSonda` no handler, gate `authorizeCron*` que aceita `x-cron-secret`), então o conserto não
+pediu mudança de código de produção nenhuma — só parou de deixá-las invisíveis. O contrato foi de
+40 para **54** edges declaradas.
