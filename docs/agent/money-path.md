@@ -270,6 +270,33 @@ Numa trava, **coluna nullable é fail-OPEN**: `coluna >= x` com NULL é NULL, o 
 
 Sinal para revisão: **tabela de intenção que cresce sem a contagem de entidades DISTINTAS crescer** ⇒ o defeito está na chave de idempotência, não no volume. É uma query, e nenhuma tela mostra.
 
+## Teste de money-path que PISCA: o teto que você LÊ não é o que governa
+
+Teste que pisca em money-path treina todo mundo a ignorar vermelho — é o oposto da evidência
+positiva. Mas "é a máquina, sobe o timeout" é quase sempre o diagnóstico errado: **meça o trabalho
+real fora do runner ANTES de tocar em qualquer teto** (um `bun run` num script solto com
+`performance.now()`), e enumere as CAMADAS de teto, que não são uma:
+
+- `it(..., N)` no próprio teste — e ele **encurta** o teto global se for menor;
+- `testTimeout` do vitest (hoje 20000, subido no #271 pelo cold-start sob CPU saturada);
+- **`asyncUtilTimeout` do testing-library** — o que realmente governa `findBy*`/`waitFor`, e que
+  seguia no **default de 1000ms** até ser fixado em 5000 em `src/test/setup.ts`.
+
+⚠️ O estouro do `findBy*` **não se parece com timeout**: sai como `Unable to find role=...`, que lê
+como *elemento ausente*. Foi o que mascarou o flake do `SalesQuotes.accountGuard` (P0-B): medido,
+o caminho até a asserção levava **5.894ms** sob carga contra um budget de **1s**, enquanto o
+`it(..., 15000)` do arquivo aparentava 15s de folga que não existia.
+
+**Subir teto é legítimo só quando o budget é que estava errado** — e mantenha-o ABAIXO do teto de
+cima, senão você troca uma falha diagnosticável (com dump de DOM) por um timeout opaco do runner.
+Quando o errado é o CUSTO, o fix não é teto nenhum: o `manifesto.gate` gastava 29,2s contra teto de
+20s porque recompilava `new RegExp` por (arquivo × padrão) — memoizar resolveu (#1893).
+
+**Falsifique nos dois sentidos, senão o teto novo CEGOU o teste:** teto=1 tem de reproduzir o
+sintoma EXATO, e **sabotar a asserção tem de dar vermelho**. Detalhe e receita:
+`docs/historico/flaky-sob-carga-teto-e-custo.md`.
+
+
 ## Diagnóstico
 
 "Diagnosticado ≠ corrigido" — ver `diagnose-supabase-sync` (estados rígidos de saída; só declara RECUPERADO com novo ciclo + efeito no dado; a ação corretiva é entregue ao humano, nunca aplicada às cegas).
