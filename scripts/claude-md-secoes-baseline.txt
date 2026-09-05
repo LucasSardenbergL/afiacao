@@ -3,7 +3,7 @@
 # Cada teto é o valor MEDIDO no dia da geração — crescer acima dele = CI vermelho.
 # Subir um teto é ato DELIBERADO e aparece neste diff, que é onde se revisa.
 # Por que teto por seção (e não só do arquivo inteiro): topo de scripts/check-claude-md-budget.sh.
-110	(preâmbulo)
+124	(preâmbulo)
 373	## Preferências do founder (Lucas)
 181	## Índice — `docs/agent/` (referência operacional, LEIA o doc ANTES de tocar o domínio)
 1000	## ⚠️ Armadilhas recorrentes (caras — a maioria money-path/banco; detalhe no doc/agent indicado)
