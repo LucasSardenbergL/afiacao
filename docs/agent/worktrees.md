@@ -310,6 +310,7 @@ destruído o merge por causa desse diagnóstico errado.
 
 - **Worktree nasce pronto:** `bun run wt` roda `bun install` na criação; para worktree criado pelo app (`.claude/worktrees/*`), o hook `vigia-worktree.sh` (SessionStart) dispara `bun install` em background e avisa a sessão. ⚠️ **typecheck vermelho com `Cannot find module`/dep `@lovable/*` ausente = deps não instaladas, NÃO é CI vermelho** — o CI real se confere com `gh pr checks`. O mesmo hook alerta swap alto (>6GB) e >6 sessões Claude vivas — a alavanca real de RAM é FECHAR sessões (`wt:clean` num parque de sessões vivas libera 0MB).
 - **Ritual de fecho** (gatilho "posso excluir a sessão?"): skill **`/fecho`** — PRs mergeados de verdade (gh), migrations aplicadas (psql-ro), edges/Publish, chips, resumo padrão, `wt:status` + ofertas de limpeza.
+- **Vigia acusou `worker-service.cjs --daemon` (claude-mem) com CPU alta + prompts bloqueados por "claude-mem worker unreachable for N consecutive hooks":** é o worker VIVO-MAS-SURDO — o plugin NÃO se recupera sozinho (só distingue pid morto de vivo; `stop`/`restart` falam HTTP com um surdo) e o hook sai `exit 2` por desenho após 3 falhas, em TODAS as sessões. Olhar antes (`ps` + `/api/health` + `~/.claude-mem/state/hook-failures.json` ≥ 3), matar o grupo do pid à mão, `start` pelo CLI do plugin e provar com health 200 + hook `context` rc=0 + contador 0 — receita completa em `docs/historico/claude-mem-worker-vivo-mas-surdo.md`.
 
 ## `heavy` (semáforo de RAM)
 
