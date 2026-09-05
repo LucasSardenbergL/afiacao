@@ -169,7 +169,18 @@ enterra o chip que importava. O script troca isso pela evidência que já existe
 |---|---|---|
 | `NO_AR` | `fonte` servido == main — o bundle no ar é este | **não** |
 | `DESATUALIZADA` | `fonte` servido ≠ main — bundle VELHO servindo | sim, e prioritário |
+| `PRE_SONDA_FONTE` | respondeu a sonda (200 + eco de `probe`/`versao`) **sem** o campo `fonte` — bundle anterior ao #1998 | sim, e prioritário |
 | `SEM_PROVA` | fora do mapa de sondas, sem sonda na janela, ou mecânica quebrada | sim (fail-closed) |
+
+⚠️ **`PRE_SONDA_FONTE` é pendência PROVADA, não indeterminada — e nasceu de um falso
+INDETERMINADO.** `criarRespostaSonda` só passou a servir `fonte` no #1998 (~2026-08-25): um bundle
+ANTERIOR responde `{ok, probe, versao, edge}` — 200, com eco —, e a 1ª versão do script filtrava
+essas linhas por `? 'fonte'` ANTES de classificar, então elas sumiam e a edge caía em "nenhuma
+sonda na janela: INDETERMINADO". Medido em prod (2026-09-05): das 40 edges do mapa, **7** eram
+isso, e o script alegava não ter observado nada sobre as 7 — sendo que o 200 sem `fonte` PROVA que
+o ar é anterior ao #1998. Ausência FABRICADA não é fail-closed: é ruído com o mesmo desfecho do
+sinal, e enterra o chip que importa. Continuam INDETERMINADOS (`SEM_PROVA`): 401, resposta sem eco
+de `probe` (pré-sensor) e ausência real de linha.
 
 🔴 **A direção é uma só: presença PROVA, ausência NÃO reprova** (#2086/#2095). O script só sabe
 SUPRIMIR chip com evidência POSITIVA; ele é o lado que APAGA pendência, então na dúvida é chip.

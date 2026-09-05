@@ -15,6 +15,16 @@
 # o mais (sem linha na janela, edge fora do mapa, `nao-mapeada`, banco mudo) sai como pendência.
 # Ele é o lado que APAGA a pendência, então é fail-CLOSED por desenho: na dúvida, chip.
 #
+# ⚠️ Mas "na dúvida, chip" não autoriza INVENTAR a dúvida. A 1ª versão filtrava as respostas por
+# `content ? 'fonte'` ANTES de classificar, e um bundle anterior ao #1998 — que responde 200 com
+# `{ok,probe,versao,edge}` e SEM `fonte` — sumia do resultado e caía em "nenhuma sonda na janela:
+# INDETERMINADO". Medido em prod (2026-09-05, request_ids 69305-69314): 7 das 10 edges sondadas
+# responderam assim, e as 7 saíram como ausência de dado. Não é ausência: um 200 que ecoa `probe`
+# e não traz `fonte` PROVA que o bundle no ar é anterior ao #1998, e o veredito certo é pendência
+# PROVADA (ramo PRE_SONDA_FONTE). Ausência fabricada não é fail-closed — é ruído com o mesmo
+# desfecho do sinal, e some com o chip que importava (o mesmo custo que este script existe para
+# cortar). O que continua INDETERMINADO: 401, resposta sem eco de `probe` e ausência de linha.
+#
 # Por que a comparação é imune ao guard temporal do #2079: o `fonte` é função do CONTEÚDO, não do
 # relógio. Uma resposta gravada ANTES do merge carrega o fingerprint do bundle velho e não casa com
 # a main. Não há "tick pré-merge lido como prova" aqui — o que o `versao` não veria (mesma string
@@ -163,6 +173,16 @@ if [ "$mecanica_ok" = 1 ]; then
   # (bundle velho às 21:48, novo às 22:04) e "alguma resposta bateu" leria o velho como prova.
   # O `OFFSET 0` é barreira de otimização: sem ela o planner pode empurrar o `content::jsonb` para
   # antes do filtro de forma e estourar em linha que não é JSON.
+  #
+  # A CTE `sondas` é a UNIÃO de duas classes de resposta, e a 2ª existe porque filtrar por
+  # `? 'fonte'` sozinho DESCARTAVA prova. Um bundle anterior ao #1998 responde 200 com
+  # `{ok,probe,versao,edge}` — sem `fonte` —, sumia daqui, e a edge caía no ramo "nenhuma sonda na
+  # janela: INDETERMINADO". O `sem-campo-fonte` é sentinela, não valor servido: nenhum `fonte` real
+  # pode colidir com ele (o mapa só aceita `[0-9a-f]{64}`, e a única outra resposta possível é
+  # `nao-mapeada`), então ele nunca casa com `esperado` e nunca absolve ninguém.
+  #
+  # ⚠️ Nada aqui afrouxa o fail-closed: a 2ª classe exige eco POSITIVO de `probe` E de `versao`.
+  # 401, resposta sem eco (pré-sensor) e ausência de linha continuam fora — INDETERMINADOS.
   sql="WITH bruto AS (
          SELECT created, content FROM net._http_response
          WHERE status_code = 200 AND content IS NOT NULL
@@ -174,6 +194,17 @@ if [ "$mecanica_ok" = 1 ]; then
                 (content::jsonb) ->> 'edge'  AS edge,
                 (content::jsonb) ->> 'fonte' AS fonte
          FROM bruto WHERE (content::jsonb) ? 'fonte'
+         UNION ALL
+         -- bundle anterior ao #1998: responde a sonda e nao conhece o campo fonte (ver acima).
+         -- O eco de probe+versao e o que separa resposta de SONDA de qualquer outro JSON com um
+         -- campo edge; sem ele a linha nao entra, e a edge segue INDETERMINADA (fail-closed).
+         SELECT created,
+                (content::jsonb) ->> 'edge' AS edge,
+                'sem-campo-fonte'           AS fonte
+         FROM bruto
+         WHERE NOT ((content::jsonb) ? 'fonte')
+           AND (content::jsonb) ->> 'probe'  = 'true'
+           AND (content::jsonb) ->> 'versao' IS NOT NULL
        )
        SELECT DISTINCT ON (edge) edge || ' ' || fonte
        FROM sondas WHERE edge IS NOT NULL AND fonte IS NOT NULL
@@ -212,6 +243,13 @@ while read -r slug; do
     printf '  SEM_PROVA      %-34s fora do mapa de sondas — não há prova passiva possível\n' "$slug"
   elif [ -z "$servido" ]; then
     printf '  SEM_PROVA      %-34s nenhuma sonda em %s (ausência ≠ pendência: INDETERMINADO)\n' "$slug" "$JANELA"
+  elif [ "$servido" = "sem-campo-fonte" ]; then
+    # Irmão do ramo abaixo, e MAIS FORTE que ele: `nao-mapeada` é o bundle novo servindo uma prova
+    # cega; este é o bundle VELHO — anterior ao #1998, que ainda não conhecia o campo. A edge está
+    # no mapa da main (`esperado` não vazio ⇒ a main serve `fonte`), e o ar não serve ⇒ o ar não é
+    # a main. É pendência PROVADA, não indeterminada.
+    # shellcheck disable=SC2016  # as crases sao TEXTO: `fonte` e o campo ausente na resposta
+    printf '  PRE_SONDA_FONTE %-33s respondeu a sonda SEM o campo `fonte` — bundle anterior ao #1998, PRECISA DEPLOY\n' "$slug"
   elif [ "$servido" = "nao-mapeada" ]; then
     # shellcheck disable=SC2016  # as crases sao TEXTO: `nao-mapeada` e o valor servido
     printf '  SEM_PROVA      %-34s a sonda respondeu `nao-mapeada` — a prova nasceu cega\n' "$slug"
@@ -228,6 +266,7 @@ if [ "$n_chips" -eq 0 ]; then
   exit 0
 fi
 echo "🎫 abra chip para: $(tr '\n' ' ' < "$tmp/chips")"
-echo "   (DESATUALIZADA = deploy pendente PROVADO · SEM_PROVA = indeterminado, chip por fail-closed)"
+echo "   (DESATUALIZADA / PRE_SONDA_FONTE = deploy pendente PROVADO · SEM_PROVA = indeterminado,"
+echo "    chip por fail-closed)"
 [ "$mecanica_ok" = 1 ] && exit 1
 exit 2
