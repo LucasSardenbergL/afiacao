@@ -117,6 +117,17 @@ if [ "$RC" != 0 ] && ! printf '%s' "$SAIDA" | command grep -Fq 'LIMPO'; then
   ok "C3: query sem o marcador FIM| → recusa (rc=$RC), NÃO 'LIMPO'"
 else bad "C3: query trocada passou como limpa — rc=$RC: $SAIDA"; fi
 
+# C4 — o caso que ISOLA a camada (1). Em C2/C3 o marcador sozinho já recusa, então remover o
+# ON_ERROR_STOP não deixa nenhum deles vermelho: sem C4 a rede seria CEGA à camada que este
+# commit veio adicionar. Aqui o marcador sai ANTES do statement que falha — o guard textual
+# passa, e só o exit code do psql separa "rodou inteira" de "morreu no meio".
+{ echo "SELECT 'FIM|audit-anon-dml-bypass';"
+  echo "SELECT 'HIT|'||x FROM relacao_que_nao_existe_zzz;"; } > "$SAB/audit-anon-dml-bypass.sql"
+rodar_sh "$SAB/audit-anon-dml-bypass.sh"
+if [ "$RC" != 0 ] && ! printf '%s' "$SAIDA" | command grep -Fq 'LIMPO'; then
+  ok "C4: erro APÓS o marcador → recusa (rc=$RC) pelo ON_ERROR_STOP"
+else bad "C4: erro após o marcador passou como limpo — rc=$RC: $SAIDA"; fi
+
 echo "──────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
 [ "$FAIL" = 0 ] || { echo "❌ VERMELHO"; exit 1; }
