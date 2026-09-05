@@ -1,0 +1,25 @@
+# Poder de discriminação da suíte do FAN-OUT de `_shared/` (o sinal informativo do PR).
+# Não é gate — mas é o que o autor lê para decidir P1/P2, e um sinal que MENTE (SEM_BUMP e BUMP
+# trocados, teste contando como fonte, `--head` lendo a árvore em vez da rev) é pior que sinal
+# nenhum: ensina a decidir errado com confiança. A falsificação vive AQUI, e não só na sabotagem
+# à mão, porque falsificação que só roda à mão é ausência de dado
+# (docs/historico/falsificacao-fora-do-ci.md).
+# @src: scripts/sonda-fan-out.ts
+# @test: scripts/sonda-fan-out.test.ts
+# Rode: scripts/mutcheck.sh scripts/sonda-fan-out.ts scripts/sonda-fan-out.test.ts scripts/mutcheck.d/sonda-fan-out.mut
+PEGA      | SEM_BUMP e BUMP trocados (P1/P2 invertido)     | s/return versaoBase === versaoHead \? 'SEM_BUMP' : 'BUMP';/return versaoBase === versaoHead ? 'BUMP' : 'SEM_BUMP';/
+PEGA      | NOVA deixa de existir (nasce vira BUMP)        | s/if \(versaoBase === null\) return 'NOVA';/if (versaoBase === undefined) return 'NOVA';/
+PEGA      | ILEGIVEL deixa de vencer NOVA                  | s/if \(versaoHead === null\) return 'ILEGIVEL';/if (versaoHead === null && versaoBase !== null) return 'ILEGIVEL';/
+PEGA      | teste de _shared\/ passa a contar (ruido)      | s/return !ehTeste\(caminho\);/return true;/
+PEGA      | o mapa gerado passa a contar (ruido)           | s/if \(caminho === ARQ_MAPA\) return false;/if (caminho === ARQ_MAPA) return true;/
+PEGA      | fronteira de string, nao de segmento           | s/if \(!caminho\.startsWith\(PREFIXO_SHARED\)\) return false;/if (!caminho.startsWith(PREFIXO_SHARED.slice(0, -1))) return false;/
+PEGA      | atribuicao ignora o fecho (toda edge consome)  | s/const causas = e\.fecho\.filter\(\(f\) => mudou\.has\(f\)\)\.sort\(\);/const causas = [...mudou].sort();/
+PEGA      | fecho ilegivel vira silencio (sem aviso)       | s/avisos\.push\(/avisos.slice(/
+PEGA      | git que falha vira "nada mudou" (furo #1)      | s/return \{ ok: r\.status === 0, saida:/return { ok: true, saida:/
+PEGA      | removido deixa de ser lido do diff             | s/removido: status\.startsWith\('D'\)/removido: false/
+PEGA      | coleta sempre devolve zero edges               | s/if \(alterados\.length === 0\) return \{ alterados, edges: \[\] \};/if (alterados.length >= 0) return { alterados, edges: [] };/
+PEGA      | --head le a ARVORE em vez da rev (fecho)       | s/const raizHead = headRev \? materializar\(repo, headRev\) : repo;/const raizHead = repo;/
+PEGA      | --head le a ARVORE em vez da rev (VERSAO)      | s/const fonteHead = headRev \? lerNaRevEm\(repo, headRev, marcador\) : lerNaArvore\(repo, marcador\);/const fonteHead = lerNaArvore(repo, marcador);/
+PEGA      | --head cru, sem resolver (furo #2 do bump)     | s/if \(iHead >= 0\) \{/if (iHead >= 999) {/
+PEGA      | resumo mente a contagem de SEM_BUMP            | s/SEM_BUMP=\$\{conta\('SEM_BUMP'\)\}/SEM_BUMP=0/
+SOBREVIVE | largura do sha no rotulo da fatia (cosmetico)  | s/base\.slice\(0, 9\)/base.slice(0, 7)/

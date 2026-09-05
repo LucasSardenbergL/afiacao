@@ -19,6 +19,7 @@
     "psql:errorstop": "bun scripts/psql-ro-error-stop-gate.ts",
     "sonda:bump": "bun scripts/sonda-versao-bump-gate.ts",
     "sonda:fingerprint": "bun scripts/sonda-fingerprint.ts",
+    "sonda:fanout": "bun scripts/sonda-fan-out.ts",
     "sonda:nova": "bun scripts/sonda-edge-nova-gate.ts",
     "canaria:bump": "bun scripts/canaria-contrato-bump-gate.ts",
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
