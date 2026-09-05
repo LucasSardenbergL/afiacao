@@ -24,7 +24,12 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * discriminação perdida — reata só o sentido positivo, do próximo deploy em diante
  * (`docs/historico/sonda-marcador-congelado.md`).
  */
-export const VERSAO = "v1.1-pos-login-no-envio";
+/**
+ * v1.2 — quantidade do portal via `qtdePortal` (`./qtde-portal.ts`): `fator_conversao` passa a
+ * converter unidade (Omie em LITRO → portal em BALDE, fator 0,2), com `round6` antes do `ceil`
+ * (poeira binária virava balde a mais) e fail-closed em fator inválido (antes ia "NaN" no input).
+ */
+export const VERSAO = "v1.2-qtde-portal-fator-embalagem";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
