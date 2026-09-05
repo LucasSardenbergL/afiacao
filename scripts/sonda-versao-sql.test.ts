@@ -1,10 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 
 import {
+  conferirSincronia,
   fatiaDaVerdade,
   gerarSqlDaLeva,
   gitReal,
@@ -927,11 +929,23 @@ describe('não consigo consultar a origin/main: ausência de dado não é aprova
   });
 });
 
+/**
+ * `git` de verdade — o único ponto da suíte que sai do fake, e por isso o que mais precisa NÃO
+ * medir o ambiente.
+ *
+ * ⚠️ A primeira versão deste bloco afirmava `rev-parse --verify origin/main → status 0` "porque
+ * estamos num repo git". Isso é asserção sobre o CHECKOUT, não sobre o `gitReal`: o job
+ * `mutation-check` do CI usa `actions/checkout@v5` SEM `fetch-depth`, e um checkout raso não cria
+ * `refs/remotes/origin/main`. Verde na minha máquina, baseline VERMELHA no CI — e como o mutcheck
+ * aborta com a suíte já vermelha, o contrato inteiro deixou de ser medido (o `validate`, que usa
+ * `fetch-depth: 0`, passou; só o job raso reprovou). Medido num repo git legítimo sem `origin/main`:
+ * `rev-parse origin/main` → 1, `rev-parse --git-dir` → 0. Ancore no invariante.
+ */
 describe('gitReal: o executor de verdade responde o que o guard precisa julgar', () => {
-  it('num repo git, rev-parse da origin/main devolve status 0 e um sha', () => {
-    const r = gitReal(RAIZ_REPO)(['rev-parse', '--verify', '--quiet', 'origin/main']);
+  it('dentro de um repo git responde status 0 — invariante, checkout raso ou completo', () => {
+    const r = gitReal(RAIZ_REPO)(['rev-parse', '--git-dir']);
     expect(r.status).toBe(0);
-    expect(r.stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+    expect(r.stdout.trim()).not.toBe('');
   });
 
   it('fora de um repo git, status ≠ 0 — o guard cai no ramo fail-CLOSED, não no aprovado', () => {
@@ -939,5 +953,15 @@ describe('gitReal: o executor de verdade responde o que o guard precisa julgar',
     criadas.push(fora);
     const r = gitReal(fora)(['rev-parse', '--verify', '--quiet', 'origin/main']);
     expect(r.status).not.toBe(0);
+  });
+
+  it('com o git REAL, repo sem origin/main aborta o guard — a ponta ligada, sem medir ambiente', () => {
+    // Repo de verdade, criado aqui: existe `.git`, não existe `origin/main`. É exatamente o
+    // ambiente do checkout raso, e o guard tem de recusar nele.
+    const raiz = fixture({ 'edge-a': 'v1.0-alfa' });
+    execFileSync('git', ['init', '-q'], { cwd: raiz });
+    expect(() => conferirSincronia(raiz, ['edge-a'], true, gitReal(raiz))).toThrow(
+      /não existe neste repo/,
+    );
   });
 });

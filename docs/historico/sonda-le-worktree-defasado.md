@@ -141,3 +141,36 @@ Limite **conhecido** da medição, registrado no próprio `.mut`: o `r.status ??
 (spawn morto por sinal/timeout ⇒ fail-CLOSED) não tem mutação — `git` fora de repo devolve 128 e não
 `null`, e forjar um spawn morto viraria teste do Node, não do guard. É limite nomeado, não
 cobertura silenciosa.
+
+## Coda: o teste do guard media o AMBIENTE, e o CI pegou
+
+O bloco `gitReal` da suíte — o único que sai do `git` fabricado — nasceu afirmando:
+
+```ts
+const r = gitReal(RAIZ_REPO)(['rev-parse', '--verify', '--quiet', 'origin/main']);
+expect(r.status).toBe(0);            // "porque estamos num repo git"
+```
+
+Isso não é asserção sobre o `gitReal`: é asserção sobre o **CHECKOUT**. Verde aqui (worktree
+completo), **baseline VERMELHA no CI** — o job `mutation-check` usa `actions/checkout@v5` **sem
+`fetch-depth`**, e checkout raso não cria `refs/remotes/origin/main`. Medido depois, num repo git
+legítimo recém-`init`ado: `rev-parse origin/main` → **1**; `rev-parse --git-dir` → **0**.
+
+Três coisas que valem além deste arquivo:
+
+1. **A mesma classe do PR, aplicada ao teste.** O guard existe porque o gerador presumia que o
+   disco fosse a `main`; o teste presumia que o checkout tivesse a `main`. Duas presunções sobre o
+   ambiente, na mesma entrega, uma delas escrita *enquanto se conserta a outra*.
+2. **O dano foi maior que "um teste vermelho".** O mutcheck **aborta com a suíte já vermelha**
+   ("Resultados seriam lixo"), então o contrato inteiro de 43 mutações **deixou de ser medido** —
+   um teste ambiente-dependente não falha sozinho, ele **apaga a medição** dos outros.
+3. **Os dois jobs discordaram, e a discordância era o sinal.** O `validate` (`fetch-depth: 0`)
+   passou; só o job raso reprovou. "Falsificar em UM ambiente não prova a asserção" (CLAUDE.md,
+   #1483) não é só sobre locale: **`fetch-depth` é um eixo de ambiente**, e todo teste que toca
+   `git` precisa ancorar num invariante (`--git-dir`), não numa ref que o checkout pode não ter.
+
+O substituto prova a mesma ponta sem medir o ambiente: `gitReal` dentro de um repo responde `0` a
+`rev-parse --git-dir` (invariante), fora de repo responde `≠ 0`, e — o teste que realmente importa —
+`conferirSincronia` com o `git` **real**, num repo criado na hora com `git init` e portanto **sem
+`origin/main`**, **aborta**. Ou seja: o ambiente do checkout raso virou o CASO DE TESTE, em vez de
+ser a premissa silenciosa dele.
