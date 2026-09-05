@@ -22,6 +22,8 @@ interface ItensTableProps {
   podeEditar: boolean;
   totalAtual: number;
   onEditQty: (id: number, raw: string) => void;
+  // blur: commita a quantidade ao múltiplo da embalagem do fornecedor (o hook conhece o fator do item)
+  onBlurQty: (id: number) => void;
   podeEditarPreco: boolean;
   onEditPreco: (id: number, raw: string) => void;
   onRemover: (l: Linha) => void;
@@ -39,6 +41,7 @@ export function ItensTable({
   podeEditar,
   totalAtual,
   onEditQty,
+  onBlurQty,
   podeEditarPreco,
   onEditPreco,
   onRemover,
@@ -131,7 +134,7 @@ export function ItensTable({
                 {/* [EMBALAGEM PORTAL] o motor arredondou ao múltiplo da embalagem do fornecedor (litro → balde):
                     a causa do final > sugerida é a EMBALAGEM, não o mínimo forçado — sem isto o badge abaixo
                     atribuiria a causa errada. Nº de embalagens = qtde_final × fator (7,4 = alguém editou a
-                    quantidade depois; a edge normaliza de novo no envio). */}
+                    quantidade fora do múltiplo; a edge RECUSA o envio — o blur do input já sobe ao múltiplo). */}
                 {l.fator_embalagem_portal != null && Number(l.fator_embalagem_portal) > 0 && (
                   <Badge
                     variant="outline"
@@ -174,6 +177,7 @@ export function ItensTable({
                   className="h-8 w-24 ml-auto text-right tabular-nums"
                   value={l._qtd}
                   onChange={(e) => onEditQty(l.id, e.target.value)}
+                  onBlur={() => onBlurQty(l.id)}
                 />
               ) : (
                 <span className={cn(

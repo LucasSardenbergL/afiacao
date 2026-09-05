@@ -31,6 +31,7 @@ export function DetalhesModal({
     isLoading,
     edits,
     onEditQty,
+    onBlurQty,
     precoEdits,
     onEditPreco,
     obs,
@@ -155,6 +156,7 @@ export function DetalhesModal({
               podeEditar={podeEditar}
               totalAtual={totalAtual}
               onEditQty={onEditQty}
+              onBlurQty={onBlurQty}
               podeEditarPreco={podeEditarPreco}
               onEditPreco={onEditPreco}
               onRemover={(l) => setRemoverItem(l)}

@@ -4,7 +4,8 @@
 // ESPELHO: a edge `supabase/functions/enviar-pedido-portal-sayerlack/qtde-portal.ts` carrega este bloco MIRROR
 // verbatim (Deno não importa de `src/`). Paridade textual + gate de forma da edge em
 // ./__tests__/qtde-portal-edge-invariants.test.ts (CI `validate`). Edite AQUI e copie para lá.
-// Só a edge usa este código no caminho vivo; a UI usa `fator_embalagem_portal` apenas como badge.
+// A edge usa o bloco MIRROR no caminho vivo; a UI usa `quantidadeCompraCanonica` (fora do bloco) para gravar a
+// quantidade editada já no múltiplo que a edge aceita — e `fator_embalagem_portal` como badge.
 
 // MIRROR-START qtde-portal — FONTE da verdade; cópia verbatim na edge enviar-pedido-portal-sayerlack/qtde-portal.ts
 // `fator_conversao` (sku_fornecedor_externo) = unidades do PORTAL por unidade do OMIE.
@@ -69,23 +70,75 @@ export function qtdeFisicaOmie(qtdePortalInteira: number, fator: number, sku = "
 // Igualdade EXATA, sem epsilon (challenge Codex 2026-09-05, P1): aprovado e vivo vêm do MESMO `numeric` (o motor
 // copia fator_conversao na mesma transação) → mesmo `Number`, zero falso positivo. Já uma tolerância de 1e-9
 // deixava passar mudança REAL: 0,2 → 0,2000000009 com 1.000 L troca 200 por 201 embalagens.
+// NULL/undefined (Codex P0 no #2166): o motor grava NULL quando NÃO arredondou — fator 1 no de-para, sem de-para, item
+// pré-#2157 ou criado fora do motor (edição manual, promo, cold-start). Em TODOS esses casos o comprador viu e aprovou a
+// quantidade na unidade do Omie, 1:1 com o portal. Então NULL LÊ-SE "aprovado com fator 1": vivo 1 passa; vivo ≠ 1
+// (alguém cadastrou 0,2 entre a aprovação e o envio) recusa com a marca própria `fator_aprovado_ausente` — antes o
+// `return` cego aceitava, comprava 8 baldes e normalizava 36 → 40 L sem reaprovação. Isto NÃO é fabricar valor: é o
+// contrato do motor (NULL ⇔ fator ∉ portal_fator ⇔ nenhuma embalagem aplicada). O que fica em aberto — item criado sob
+// 0,2 e de-para editado para 1 antes do envio — só o snapshot do de-para NA APROVAÇÃO fecha (spec do selo, #2187).
+export type MotivoFatorAprovado = "fator_aprovado_divergente" | "fator_aprovado_ausente";
+
 export class FatorAprovadoDivergenteError extends Error {
+  readonly motivo: MotivoFatorAprovado;
   constructor(readonly fatorAprovado: unknown, readonly fatorVivo: number, readonly sku: string) {
+    const ausente = fatorAprovado === null || fatorAprovado === undefined;
     super(
-      `fator_conversao de ${sku} mudou entre a aprovação e o envio (aprovado ${String(fatorAprovado)}, vivo ${String(fatorVivo)}) ` +
-        `— o pedido NÃO foi enviado; aguarde o ciclo regravar as quantidades e reaprove`,
+      ausente
+        ? `${sku} foi aprovado SEM fator de embalagem (1:1) e o de-para vivo tem fator ${String(fatorVivo)} ` +
+          `— o pedido NÃO foi enviado; aguarde o ciclo regravar as quantidades em embalagens e reaprove`
+        : `fator_conversao de ${sku} mudou entre a aprovação e o envio (aprovado ${String(fatorAprovado)}, vivo ${String(fatorVivo)}) ` +
+          `— o pedido NÃO foi enviado; aguarde o ciclo regravar as quantidades e reaprove`,
     );
     this.name = "FatorAprovadoDivergenteError";
+    this.motivo = ausente ? "fator_aprovado_ausente" : "fator_aprovado_divergente";
   }
 }
 
 export function verificarFatorAprovado(fatorAprovado: number | string | null | undefined, fatorVivo: number, sku = "?"): void {
-  if (fatorAprovado === null || fatorAprovado === undefined) return; // motor não arredondou: nada a conferir
+  if (fatorAprovado === null || fatorAprovado === undefined) {
+    if (fatorVivo === 1) return; // aprovado 1:1 e o portal segue 1:1
+    throw new FatorAprovadoDivergenteError(fatorAprovado, fatorVivo, sku);
+  }
   // numeric do PostgREST chega como string; '' e lixo viram NaN e caem no fail-closed abaixo.
   const aprovado = typeof fatorAprovado === "string" && fatorAprovado.trim() === "" ? Number.NaN : Number(fatorAprovado);
   if (!fatorValido(aprovado) || aprovado !== fatorVivo) {
     throw new FatorAprovadoDivergenteError(fatorAprovado, fatorVivo, sku);
   }
+}
+
+// ── Enviado = aprovado: a quantidade aprovada TEM de ser a compra física (Codex P0 no #2166) ──
+// Com o fator conferido, `qtde_final` ainda pode estar FORA do múltiplo: editada à mão depois do motor (37 L com fator
+// 0,2), item criado fora do motor, fração legada. A edge normalizava (37 → 8 BB → 40 L) e enviava — uma compra que
+// ninguém aprovou. Agora: round-trip `qtdeFisicaOmie(qtdePortal(q)) ≠ q` → recusa o pedido INTEIRO pré-Browserless;
+// o comprador corrige a quantidade (a UI já grava no múltiplo) e reaprova. Devolve a qtde do portal para que o
+// chamador USE o produto do guard (money-path.md §"Helper espelhado"), não uma verificação solta.
+// Tolerância 1e-6 = a mesma escala do round6 (poeira binária de q×f), NÃO tolerância de negócio: 3,99996 (poeira
+// legada do Omie) diverge de 4 e recusa — `reposicao_persistir_qtde_inteira` já ceila no disparo, antes daqui.
+export class QtdeNaoMultiploEmbalagemError extends Error {
+  constructor(
+    readonly qtdeFinal: number,
+    readonly fator: number,
+    readonly qtdePortal: number,
+    readonly qtdeFisica: number,
+    readonly sku: string,
+  ) {
+    super(
+      `quantidade aprovada de ${sku} (${String(qtdeFinal)}) não é múltiplo da embalagem do fornecedor ` +
+        `(fator ${String(fator)}: ${String(qtdePortal)} embalagem(ns) = ${String(qtdeFisica)}) — o pedido NÃO foi enviado; ` +
+        `corrija a quantidade para o múltiplo e reaprove`,
+    );
+    this.name = "QtdeNaoMultiploEmbalagemError";
+  }
+}
+
+export function qtdePortalCanonica(qtdeFinal: number, fator: number, sku = "?"): number {
+  const portal = qtdePortal(qtdeFinal, fator, sku);
+  const fisica = qtdeFisicaOmie(portal, fator, sku);
+  if (Math.abs(fisica - Number(qtdeFinal)) > 1e-6) {
+    throw new QtdeNaoMultiploEmbalagemError(Number(qtdeFinal), fator, portal, fisica, sku);
+  }
+  return portal;
 }
 
 // ── Chave de fornecedor (Codex 2026-09-05, achado 2) ──
@@ -118,3 +171,16 @@ export function indexarMapeamentos<T extends { sku_omie: string; ativo: boolean 
   return idx;
 }
 // MIRROR-END qtde-portal
+
+// ── UI (fora do espelho: a edge não usa) ──
+// O que o comprador digita/grava tem de passar em `qtdePortalCanonica` no envio — senão a edge recusa e ele só descobre
+// depois de aprovar. Sem fator gravado pelo motor: ceil inteiro (o [QTDE-INTEIRA] de sempre). Com fator: sobe ao
+// próximo múltiplo da embalagem (37 L → 40 L com 0,2). 0/NaN/≤0 → 0 (campo limpo / linha zerada), como antes.
+export function quantidadeCompraCanonica(qtde: number | null | undefined, fator: number | string | null | undefined): number {
+  const v = Number(qtde ?? 0);
+  const inteira = Number.isFinite(v) ? Math.max(0, Math.ceil(v)) : 0;
+  if (inteira <= 0) return 0;
+  const f = fator === null || fator === undefined || (typeof fator === "string" && fator.trim() === "") ? Number.NaN : Number(fator);
+  if (!fatorValido(f) || f === 1) return inteira;
+  return qtdeFisicaOmie(qtdePortal(inteira, f), f);
+}
