@@ -824,3 +824,34 @@ sonda exigem instrumentação escrita ANTES do deploy; esta não. As duas armadi
 é **obrigatória e por CHAMADA** (impressões da mesma chamada não são independentes — mesmo
 catálogo, mesma página truncada), e o **confundidor** ("alguém fez backfill") tem de ser descartado
 por query própria, não por suposição.
+
+## O comprador aprovava 36 L e o fornecedor recebia 40 — o motor passa a antecipar o múltiplo da embalagem (2026-09-04)
+
+**Problema.** Três SKUs Sayerlack (TINGIMIX TEH.3505.00BB, TE.3510.02BB, TY.1480.00BB) são cadastrados
+em LITRO no Omie e comprados em BALDE de 5 L (`sku_fornecedor_externo.fator_conversao = 0,2`). O #2149
+fez a edge `enviar-pedido-portal-sayerlack` converter e **normalizar `qtde_final` à compra física na hora
+do envio** (36 L → 8 BB → 40 L) — certo para o money-path (custo capturado ÷ qtde e Omie enxergam a MESMA
+compra), mas o comprador aprovava 36 na tela e só descobria os 40 depois.
+
+**Fix (`20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql`).** `gerar_pedidos_sugeridos_ciclo`
+ganha a CTE `portal_fator` (de-para **ativo**, fator > 0, ≠ 1, < 1e9 — uma guarda só de finitude, porque
+`NaN > 0` é TRUE em `numeric`) chaveada por `(sku, fornecedor_nome = sp.fornecedor_nome)`, e a antiga
+`skus_necessitando` vira `skus_decididos`; a nova `skus_necessitando` reescreve `qtde_final` e
+`qtde_sem_teto` como `trim_scale(round(ceil(round(q×f,6))/f,6))` **só para SKU sem grupo de equivalência**
+(nos grupos QT↔GL `qtde_final` já é nº de embalagens — aplicar ali compraria N× a mais). `qtde_sugerida`
+fica em L como rastro; o fator vai na coluna nova `pedido_compra_item.fator_embalagem_portal` (dedicada, 1
+escritor) e a tela troca o badge "mínimo forçado" (que atribuía a causa errada ao 36→40) por
+"8 emb. do fornecedor". A edge continua normalizando no envio (edição humana / promo / cold-start).
+
+**Prova.** PG17 `db/test-qtde-multiplo-embalagem.sh`: 12 cenários (balde, múltiplo exato, galão 3,6 L,
+grupo, fator 1, mínimo forçado, teto de cobertura, de-para inativo, outro fornecedor, NaN, 1/3 em 16
+dígitos, Infinity) + o 40 aprovado contando como a-caminho no ciclo seguinte; 7 falsificações (arredondamento
+morto, sem guarda de grupo, sem `round6` interno → 39,6 L, sem guarda de ativo, sem guarda de fornecedor,
+sem guarda de finitude ×2 → `NaN` no item) — cada uma vermelha e restaurada.
+
+**Lições.** (1) `round6` **antes** do `ceil` não é só IEEE-754: em `numeric`, 36 × (1/3,6) =
+10,000000000000000000008 → `ceil` 11 = um galão a mais. (2) Duas guardas para o mesmo invariante (NaN e
+`< 1e9`) fazem a falsificação **mentir** — sabotar uma fica verde; ficou UMA, falsificável. (3) A
+falsificação saboteia a função **extraída da própria migration** (não um fixture paralelo): o corpo que
+vai a produção é o que fica vermelho. (4) O harness da primeira rodada reprovou por `duplicate key` em
+`company_config` — a migration-base já semeia as chaves; seed de config é `ON CONFLICT DO UPDATE`.

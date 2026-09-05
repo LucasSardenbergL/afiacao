@@ -1,66 +1,36 @@
--- Migration: embalagem econômica DENTRO do motor de pedidos (QT↔GL) + consolidação de estoque de grupo
--- ⚠️ APLICADA MANUALMENTE no SQL Editor do Lovable em 2026-06-26 (NÃO vai em supabase/migrations/ — CLAUDE.md §5;
---     é CREATE OR REPLACE de função existente). Este arquivo é a FONTE versionada + fixture da regressão db/test-embalagem-motor.sh.
--- Spec: docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
--- Money-path. Recria gerar_pedidos_sugeridos_ciclo (pré-flight pg_get_functiondef feito; base = prod 26/06).
+-- ============================================================
+-- Reposição — o MOTOR grava qtde_final já no MÚLTIPLO DA EMBALAGEM do portal (litro → balde)
+-- Money-path (compras). Recria gerar_pedidos_sugeridos_ciclo. Pré-flight: pg_get_functiondef da PROD
+-- em 2026-09-04 = byte-a-byte a migration 20260802120000 (base deste arquivo). ACL preservado por
+-- CREATE OR REPLACE (anon/authenticated/service_role EXECUTE, como em prod).
 --
--- DUAS mudanças cirúrgicas, tudo o mais PRESERVADO:
---   1) CONSOLIDA o estoque no nível do grupo de equivalência (Σ membros: GREATEST(inv,sea) físico + pendente + trânsito).
---      O gatilho passa a olhar o estoque do GRUPO → para de comprar quando há galão parado.
---   2) ESCOLHE a embalagem mais barata por unidade-base (galão), ESTRITO: só troca o quartinho pelo galão
---      quando AMBOS têm preço-app fresco (≤ N dias) + portal-map + catálogo OK, e o galão é estritamente mais barato/base.
---      Senão mantém o quartinho. Custo da linha do galão = preço-app (R$/embalagem), nunca 0.
+-- Problema: 3 SKUs Sayerlack (TINGIMIX TEH.3505.00BB / TE.3510.02BB / TY.1480.00BB) são cadastrados em
+-- LITRO no Omie e comprados em BALDE de 5 L (sku_fornecedor_externo.fator_conversao = 0,2). Desde o #2149
+-- a edge enviar-pedido-portal-sayerlack normaliza qtde_final à compra FÍSICA na hora do envio
+-- (36 L → 8 BB → 40 L). O comprador, porém, APROVAVA 36 L na tela e só depois via 40 L.
 --
--- Unidade (cravada em prod): qtde_final = nº de EMBALAGENS do SKU; preco_unitario = R$/embalagem; o disparo
--- consome ceil(qtde_final) direto (fator_conversao=1). Quartinho NÃO é tocado (mantém cmc cru).
--- ⚠️ Case: equivalencia/preço_capturado = lower(empresa); parametros/estoque/fornecedor_externo = empresa (upper).
+-- Fix: o motor antecipa o número. Para SKU com fator_conversao <> 1 ATIVO no de-para do MESMO fornecedor
+-- da linha (sp.fornecedor_nome = sfe.fornecedor_nome; precisão > recall) e SEM grupo de equivalência,
+--   qtde_final = trim_scale(round(GREATEST(1, ceil(round(qtde × fator, 6))) / fator, 6))   -- espelho de qtdeFisicaOmie(qtdePortal())
+-- e qtde_sem_teto recebe a MESMA conversão (mesma unidade; capada ⇔ qtde_final < qtde_sem_teto segue
+-- valendo). qtde_sugerida fica em L como rastro (36). O fator aplicado é gravado em
+-- pedido_compra_item.fator_embalagem_portal (NULL = não arredondou) — coluna DEDICADA com 1 escritor
+-- (o motor) p/ a tela atribuir a causa certa ("8 embalagens", não "mínimo forçado").
+-- ⚠️ NÃO aplica nos SKUs em grupo QT↔GL (sku_embalagem_equivalencia): neles qtde_final JÁ é nº de
+--   embalagens (concentrados WP*.3900QT/GL, fator_conversao=1). A normalização da edge continua como
+--   guard de fronteira (edição humana / promo / cold-start); aqui é só antecipação.
+-- round(…,6) antes do ceil: 36 L × (1/3,6) = 10,000000000000000000008 em numeric → ceil 11 = um galão a mais.
 --
--- Revisão pós-Codex (xhigh) — 6 correções vs. o 1º rascunho:
---   P0-a GREATEST(inventory_position.saldo, sku_estoque_atual): galão parado vive em fontes DIFERENTES por SKU.
---   P0-b em_transito do galão × fator_para_base (2 galões em voo = 8 unidades-base, não 2) → anti double-buy.
---   P1-c âncora NÃO pode ser membro fator>1 (galão) de um grupo → impede 2 linhas do mesmo GL.
---   P1-d anti-duplicidade de oportunidade cobre a âncora E o SKU escolhido (galão).
---   P1-e minimo_forcado_manual respeitado também na troca p/ galão (piso aplicado ANTES de dividir pelo fator).
---   P1-f filtros de catálogo (ativo/tipo 04/família/status omie) aplicados ao MEMBRO escolhido, não só à âncora.
--- Granularidade (P2 Codex, aceito): nº_galões = ceil(necessidade / fator) na escala "unidades-âncora" — NUNCA
---   compra menos que o legado QT (herda o descasamento litros↔embalagem pré-existente, fora de escopo).
---
--- ➕ 2026-06-27 — GATE de estoque-NÃO-CONFIRMADO (money-path; spec 2026-06-27-reposicao-gate-estoque-nao-confirmado).
---   Bug provado: cold-start semeia sku_estoque_atual de omie_products.estoque (82% zerado na OBEN), fonte_sync=
---   'cold_start_seed'. Se o motor roda na janela cold-start→ListarPosEstoque, lê o seed=0 e compra por cima de
---   estoque existente. FIX (Codex consult 019f0968 + ausente≠zero): estoque cuja ÚNICA fonte é cold_start_seed (sem
---   inventory_position) é DESCONHECIDO → o motor SUPRIME a sugestão (nível LINHA e GRUPO) + LOGA em
---   reposicao_estoque_nao_confirmado_log. Zero CONFIRMADO (ListarPosEstoque/0) segue comprando — auto-liberante.
---   ⚠️ Esta fixture é SÓ a função; a tabela de log + RLS vivem na migration formal (e nos harnesses de teste).
---   Migration: supabase/migrations/20260627180000_reposicao_gate_estoque_nao_confirmado.sql (corpo da função idêntico).
---
--- ➕ 2026-07-08 — MARCADOR DE RUN (reposicao_motor_run) — a fila da tela ancora no ÚLTIMO recálculo, NÃO no último
---   recálculo QUE TEVE supressão. Bug: run limpo não grava no log de suprimidos → a mensagem "N fora da compra"
---   grudava por até 24h após o sync já ter confirmado o estoque (Codex 2026-07-08 → Opção 2: fonte-de-verdade, não
---   render). A RPC carimba TODO run (limpo ou não) ao fim; a tela lê o último marker (some quando suprimidos_n=0).
---   Tabela reposicao_motor_run + RLS na migration *_reposicao_motor_run_marker.sql (mesmo padrão do log; corpo idêntico).
---
--- ➕ 2026-07-29 — TETO DE COBERTURA pós-compra (B/C) — spec 2026-07-29-reposicao-teto-cobertura-motor-spec.md.
---   Medido em prod: B/C com R$90k acima do alvo; ~R$25k/tri de compras criando cobertura >90d(B)/60d(C); dente de
---   serra 1↔2 nos CZ. CAP só-reduz no lote do ciclo NORMAL: qtde_final ≤ max(floor(teto·d − estoque_efetivo),
---   piso_de_serviço ceil(pp − estoque_efetivo)) — o cap corta o "encher até o máximo" ACIMA do ponto de pedido,
---   nunca a proteção (pp/ss intactos; a recalibração global de jun/2026 segue enterrada). Pós-Codex xhigh:
---   grupos de embalagem FICAM FORA do cap (estoque consolidado QT+GL ÷ demanda só da âncora = subcompra) · config
---   POR EMPRESA (reposicao_teto_cobertura_<empresa>_{ativa,dias_b,dias_c}; flag nasce false, parse regex-blindado
---   fail-off) · classe efetiva = classe_forcada→classe_abc · minimo_forcado_manual vence o teto · linha capada a
---   ZERO sai do pedido (filtro qtde_final>0 centralizado em skus_inseriveis p/ os DOIS INSERTs) e LOGA em
---   reposicao_teto_cobertura_log · rastro no item (qtde_sem_teto, teto_cobertura_aplicado — forward_buying pode
---   sobrescrever qtde_final DEPOIS: exceção documentada à invariante) · capados_n no marker do run.
---   Tabela do log + colunas novas + config na migration *_reposicao_teto_cobertura_motor.sql (corpo idêntico).
+-- Prova: db/test-qtde-multiplo-embalagem.sh (PG17 local, falsificação). Fixture: db/embalagem-motor-rpc.sql.
+-- ============================================================
 
--- ➕ 2026-09-04 — MÚLTIPLO DA EMBALAGEM DO PORTAL (litro → balde) — o motor grava qtde_final já na compra FÍSICA.
---   3 SKUs Sayerlack em LITRO no Omie comprados em BALDE de 5 L (sku_fornecedor_externo.fator_conversao=0,2). A edge
---   de envio já normalizava no envio (#2149: 36 L → 8 BB → 40 L); o comprador aprovava 36 e via 40 depois. Agora:
---   CTE portal_fator (ativo, >0, <>1, <1e9; join por fornecedor_nome = o da linha — precisão>recall) → só SKU SEM
---   grupo de equivalência → qtde_final e qtde_sem_teto = trim_scale(round(ceil(round(q×f,6))/f,6)) (espelho de
---   qtdeFisicaOmie(qtdePortal())). qtde_sugerida fica em L (rastro); fator gravado em pedido_compra_item.
---   fator_embalagem_portal (coluna nova; a tela troca "mínimo forçado" por "N embalagens"). Prova PG17
---   db/test-qtde-multiplo-embalagem.sh. Coluna + corpo na migration *_reposicao_qtde_multiplo_embalagem_portal.sql.
+BEGIN;
+
+ALTER TABLE public.pedido_compra_item
+  ADD COLUMN IF NOT EXISTS fator_embalagem_portal numeric;
+
+COMMENT ON COLUMN public.pedido_compra_item.fator_embalagem_portal IS
+  'Unidades do PORTAL por unidade do Omie (sku_fornecedor_externo.fator_conversao) aplicadas pelo motor ao arredondar qtde_final ao múltiplo da embalagem. NULL = sem arredondamento. 1 escritor: gerar_pedidos_sugeridos_ciclo.';
 
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
