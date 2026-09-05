@@ -1,0 +1,10 @@
+// CAMADA: stdin no Node é a opção `input:`, não um `<`.
+import { execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+const PSQL = join(homedir(), '.config', 'afiacao', 'psql-ro');
+
+export function consultar(sql: string): string {
+  return execFileSync(PSQL, ['-tA'], { encoding: 'utf8', input: sql });
+}

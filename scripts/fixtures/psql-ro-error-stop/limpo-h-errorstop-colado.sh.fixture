@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# CAMADA: leitura do valor. Formas equivalentes que o psql aceita — se o gate só casasse
+# `-v ON_ERROR_STOP=1` como string literal, todas estas viravam falso positivo.
+set -uo pipefail
+PSQL="$HOME/.config/afiacao/psql-ro"
+"$PSQL" -vON_ERROR_STOP=1 -tA -f a.sql
+"$PSQL" --set=ON_ERROR_STOP=on -tA -f b.sql
+"$PSQL" --variable ON_ERROR_STOP=true -tA -f c.sql

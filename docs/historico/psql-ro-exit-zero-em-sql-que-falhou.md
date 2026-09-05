@@ -57,3 +57,100 @@ code separa "rodou inteira" de "morreu no meio". Com C4, S1→❌C4 e S2→❌C3
 sabote **uma camada de cada vez** e exija que ao menos um caso fique vermelho *por causa dela*. Uma
 camada cuja sabotagem não produz vermelho ou é redundante, ou o teste não a alcança — e as duas
 respostas mudam o commit.
+
+---
+
+## O sentinela (2026-09-05, segunda metade): 13 de 14 estavam protegidos POR ACIDENTE DA FORMA
+
+O #2167 consertou o único consumidor doente. Não consertou a classe: os outros 13 passam porque
+usam `-c`, não porque alguma regra os obrigue — e nada impedia o próximo script de usar `-f`.
+
+`scripts/psql-ro-error-stop-gate.ts` + `scripts/lib/psql-ro-error-stop.ts` são a regra. Puramente
+textual (o CI não tem a credencial), varrem `db/`, `scripts/` e `.claude/`, e recusam qualquer
+invocação do wrapper que leia SQL de `-f`, de `<`, de heredoc/herestring ou de `input:` sem
+`-v ON_ERROR_STOP=1`. Rodam no CI por `bun run test` (vitest) e por `bun run test:falsificacao`.
+
+### Três decisões que mudam o que o gate consegue ver
+
+**1. O alvo é a VARIÁVEL, descoberta, não a string `psql-ro`.** Há 200+ menções a `psql-ro` no
+repo e quase todas são prosa. O que executa é uma variável — e ela não tem nome fixo (`$PSQL`,
+`$PSQL_RO`, `$PSQLRO`, `$AFIACAO_PSQL`, `$WRAP`, `$CONSULTA_PROD`…). Lista fixa de nomes fecharia a
+porta de hoje. Então o vínculo é **descoberto no arquivo**: RHS que carrega a marca do wrapper,
+alias por ponto-fixo (`W2="$W"`), e os nomes-semente do ambiente — que uma atribuição local
+**refuta** (`PSQL="$PGBIN/psql"` não é o wrapper, e é assim que os ~40 harnesses de PG17 local não
+viram ruído). Medido: **14 arquivos**, o mesmo censo que o histórico acima contou à mão.
+
+**2. Faltava a camada SHELL do stripper compartilhado.** `limpeza-fonte.ts` entende JS. Um `.sh`
+tem `#`, `'…'` sem escape nenhum, aspas que atravessam newline de propósito e heredoc, que suspende
+toda a gramática. `src/lib/gates/limpeza-shell.ts` é a camada que faltava — e é UMA máquina que
+produz a limpeza **e** a máscara de contexto, porque duas máquinas obrigadas a concordar divergem.
+
+**3. O sensor que faltava era o de SUB-limpeza.** Os alarmes existentes (`medirPreservacao`,
+`maiorBlocoDescartado`) vigiam o stripper que come demais. Esta máquina teve dois furos, e **nenhum
+dos dois foi visto por eles**, porque os dois faziam o stripper limpar de MENOS:
+
+| furo | efeito medido |
+|---|---|
+| `<<<` (herestring) lido como `<<` | delimitador vira `$REQ_IDS`, nunca fecha, e **o resto do arquivo inteiro** vira "corpo de heredoc" — 45 comentários sobreviveram em `edges-pendentes.sh` (e este é o furo que o sensor de sub-limpeza NÃO vê sozinho — ver a rede, abaixo) |
+| `$(…)` dentro de `"…"` não voltando a contexto de comando | o 1º `"` pareia com o `"` de `"$input"` e tudo desanda — 30 comentários em `heavy-guard.sh` |
+
+`comentariosSobreviventes()` é o alarme desse lado: comentário `#` que sobreviveu, **fora** de
+heredoc (onde `#` é dado) e **fora** de literal de outra linguagem (o awk embutido em `'…'` de
+`pipestatus-zsh-guard.sh` tem 37 comentários que devem mesmo sobreviver). Baseline medida nos 373
+`.sh` do repo: **0**. Sem ele, um gate que mede fonte suja passa a medir também os 200 lugares onde
+este repo DOCUMENTA o padrão proibido.
+
+**Corolário:** todo alarme de stripper tem DOIS lados. Ter só o de sobre-limpeza é ter meia sonda —
+e os furos reais desta máquina caíram, os dois, no lado que não existia.
+
+### A rede: 20 fixtures × 2 locales × 14 camadas sabotadas
+
+As fixtures são arquivos de verdade (`scripts/fixtures/psql-ro-error-stop/*.fixture` — extensão que
+o próprio gate ignora, para ele não se auto-acusar), com a expectativa no nome, e os MESMOS bytes
+alimentam o vitest e o harness de shell. Cada uma existe porque **isola uma camada**: sem
+`limpo-b-forma-c` um gate que recusasse tudo passaria em todos os negativos; sem
+`limpo-d-pgbin` a discriminação contra o psql local seria sorte; sem `viola-f-errorstop-desligado`
+um gate que só procura o NOME da flag ficaria verde com `ON_ERROR_STOP=off`.
+
+`scripts/test-psql-ro-error-stop.sh --falsificar` sabota **uma camada por vez** e exige vermelho por
+causa dela. Estado final: **21 fixtures × 2 locales × 14 camadas, todas vermelhas quando sabotadas.**
+
+### As duas camadas que ficaram VERDES na primeira rodada — e o que cada uma ensinou
+
+**1. `-c` não era observável onde estava sendo testada.** Sabotar a detecção de `-c` deixava
+`limpo-b-forma-c` verde. O motivo: naquela fixture não há `-f`, nem stdin, nem repasse opaco — não
+havia exigência para o `-c` dispensar, então perder a detecção não muda veredito nenhum. Uma
+camada só é observável **onde ela decide**. `limpo-j-c-vence-stdin-e-opaco` põe o `-c` contra um
+`< /dev/null` e contra um `"$@"`: aí sim, perdê-lo vira falso positivo. Generalizando: fixture que
+exercita a camada ≠ fixture em que a camada é o ÚNICO fator do veredito, e só a segunda prova.
+
+**2. A sabotagem inócua se disfarça de "camada redundante".** A primeira sabotagem do `<<<`
+desligava o ramo inteiro — e isso NÃO reproduz o furo: o `<<` seguinte cai no leitor de cabeçalho,
+não acha delimitador em `<`, e desiste. Nada quebra, tudo fica verde, e o relatório acusa a camada
+de redundante. Era um veredito **fabricado sobre uma camada que ninguém testou**. A sabotagem fiel
+consome só UM `<`, que é o furo original.
+
+**3. O achado mais caro: o sensor consultava a crença defeituosa que ele deveria vigiar.**
+Com a sabotagem fiel, `comentariosSobreviventes` continuou devolvendo **0** para o
+`edges-pendentes.sh` que tinha 45 comentários por limpar. Porque o sensor **isenta** o que está
+dentro de heredoc (ali `#` é dado) — e pergunta isso à MESMA máquina. Uma falha que faz a máquina
+*acreditar* estar num heredoc é, por construção, invisível para ele: o sensor consulta a crença
+quebrada e a usa como desculpa.
+
+A correção é uma invariante medida **por fora** da crença: *script shell bem-formado não termina com
+heredoc aberto*. Quando `<<<` vira `<<`, o delimitador passa a ser o argumento (`$REQ_IDS`), que
+nunca aparece como linha, e o heredoc fica aberto até o EOF. `heredocsAbertos()` mede isso;
+baseline nos 373 `.sh`: **0**. Com ele, a sabotagem do `<<<` fica vermelha.
+
+> **Regra geral que sai daqui:** sensor que consulta o próprio sistema que vigia herda os defeitos
+> dele. Todo alarme sobre uma máquina precisa de ao menos um eixo medido POR FORA dela — e a
+> maneira de descobrir que ele não tem é sabotar a máquina, não contar casos verdes.
+
+O critério do harness é "ficou vermelho em ALGUM lugar" (fixture **ou** o corpo real do repo), e não
+"a fixture X inverteu": critério estreito demais faz a camada parecer redundante quando o que falta
+é onde olhar — foi assim que o `<<<` escapou duas vezes antes de ser pego.
+
+### Retro-validação
+
+O gate rodado contra a versão PRÉ-#2167 de `db/audit-anon-dml-bypass.sh` (`git show <sha>^`) sai 1 e
+aponta a linha 34. O fiscal pega o bug que o originou — que é o mínimo que se pede de um.

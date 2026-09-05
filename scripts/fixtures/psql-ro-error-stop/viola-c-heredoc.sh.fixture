@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# CAMADA: detecção de stdin por HEREDOC. Nenhum `-f` aqui — só a forma.
+set -uo pipefail
+PSQL_RO="$HOME/.config/afiacao/psql-ro"
+"$PSQL_RO" -tA <<'SQL'
+SELECT 'FIM|sonda';
+SQL

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# CAMADA: `-c` é o que TORNA seguro o que seria exigência. Sem este fixture, sabotar a detecção
+# de `-c` não deixa nada vermelho — `limpo-b` (só `-c`, sem stdin nem repasse) continua verde
+# porque, sem stdin e sem `-f`, não havia exigência para o `-c` dispensar. A camada só é
+# OBSERVÁVEL onde ela decide: stdin presente, ou argumento opaco presente, e o `-c` vencendo.
+set -uo pipefail
+PSQL="$HOME/.config/afiacao/psql-ro"
+"$PSQL" -Atc "SELECT 1" < /dev/null
+Q() { "$PSQL" -At -F '|' -c "$@"; }
+Q "SELECT 2"

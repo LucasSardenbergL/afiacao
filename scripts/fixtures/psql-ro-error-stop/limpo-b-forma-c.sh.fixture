@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# CAMADA: classificação de forma. `-c` devolve rc≠0 por conta própria — é a forma que protege os
+# 13 consumidores de hoje. Um gate que exigisse ON_ERROR_STOP de TODA invocação reprova aqui, e
+# essa é a única maneira de descobrir que ele perdeu a distinção.
+set -uo pipefail
+PSQL_RO="$HOME/.config/afiacao/psql-ro"
+"$PSQL_RO" -Atc "SELECT 1"
+"$PSQL_RO" -At -F '|' -c "SELECT 2"
+"$PSQL_RO" --command="SELECT 3"

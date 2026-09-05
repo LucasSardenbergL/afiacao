@@ -16,6 +16,7 @@
     "scripts:typecheck": "tsc --noEmit -p tsconfig.scripts.json",
     "edges:afetadas": "bun scripts/edges-afetadas.ts",
     "edges:typecheck": "bun scripts/edges-typecheck-gate.ts",
+    "psql:errorstop": "bun scripts/psql-ro-error-stop-gate.ts",
     "sonda:bump": "bun scripts/sonda-versao-bump-gate.ts",
     "sonda:fingerprint": "bun scripts/sonda-fingerprint.ts",
     "sonda:nova": "bun scripts/sonda-edge-nova-gate.ts",
@@ -50,8 +51,8 @@
     "wt:preflight": "bun scripts/wt-preflight-migration.ts",
     "claude:size": "bash scripts/check-claude-md-budget.sh",
     "claude:instr": "bash scripts/instrucoes-relatorio.sh",
-    "test:hooks": "for t in heavy pr-collision pr-duplicata migration-collision branch-pos-squash destructive-bash pipestatus-zsh migration-immutability edge-guardrail; do bash scripts/test-$t-guard.sh || exit 1; done; for t in orfaos-custosos wt-status wt-orfas bash-contexto-nudge read-contexto-nudge stop-contexto-caro stop-moneypath-nudge wt-prune wt-clean wt-reap codex-async claude-md-budget hooks-sessionstart pipestatus-guard-sinal pr-watch onde-parei codex-prompt-paginacao preflight-migration tokens-report verify-edge-pat lovable-revert-scan posthog-query fecho-edges-pendentes; do bash scripts/test-$t.sh || exit 1; done",
-    "test:falsificacao": "for t in orfaos-custosos read-contexto-nudge fecho-edges-pendentes codex-prompt-paginacao; do bash scripts/test-$t.sh --falsificar || exit 1; done",
+    "test:hooks": "for t in heavy pr-collision pr-duplicata migration-collision branch-pos-squash destructive-bash pipestatus-zsh migration-immutability edge-guardrail; do bash scripts/test-$t-guard.sh || exit 1; done; for t in orfaos-custosos wt-status wt-orfas bash-contexto-nudge read-contexto-nudge stop-contexto-caro stop-moneypath-nudge wt-prune wt-clean wt-reap codex-async claude-md-budget hooks-sessionstart pipestatus-guard-sinal pr-watch onde-parei codex-prompt-paginacao preflight-migration tokens-report verify-edge-pat lovable-revert-scan posthog-query fecho-edges-pendentes psql-ro-error-stop; do bash scripts/test-$t.sh || exit 1; done",
+    "test:falsificacao": "for t in orfaos-custosos read-contexto-nudge fecho-edges-pendentes codex-prompt-paginacao psql-ro-error-stop; do bash scripts/test-$t.sh --falsificar || exit 1; done",
     "evals:deploy-verify": "bash .claude/skills/lovable-deploy-verify/evals/run.sh",
     "evals:deploy-verify:falsificacao": "bash .claude/skills/lovable-deploy-verify/evals/run.sh --falsify",
     "heavy:install": "bash scripts/heavy-install.sh"
