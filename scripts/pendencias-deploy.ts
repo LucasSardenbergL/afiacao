@@ -167,6 +167,25 @@ export function lerEsperados(raiz = process.cwd()): Record<string, Esperado> {
 }
 
 /**
+ * A worktree está atrás da main em `supabase/functions/`?
+ *
+ * O Lovable deploya a MAIN; o esperado lido daqui é a worktree. Medido no primeiro veredito real
+ * (2026-09-05): a worktree estava 3 commits atrás, o `versao.ts` local dizia v1.6 e prod já
+ * servia a v1.7 da main — saiu um P1 FALSO ("deploy pendente") de uma edge em dia. É o eixo
+ * TEMPO/ÁRVORE de `fatia-de-deploy-envelhece.md` mordendo o próprio instrumento. A régua é
+ * três-pontos (`HEAD...origin/main`): só o que a main tem e esta árvore não; uma branch que
+ * ACRESCENTA edge continua julgável, uma branch ATRASADA não. Devolve a lista de arquivos da
+ * main ausentes aqui — vazia = sincronizada. Sem `origin/main` resolvível, LANÇA.
+ */
+export function arquivosDeEdgeSoNaMain(): string[] {
+  const ref = git(['rev-parse', '--verify', 'origin/main^{commit}']);
+  if (!ref.ok) throw new Error('`origin/main` não resolve — sem a ref da main não sei se esta worktree está atrasada (git fetch origin)');
+  const r = git(['diff', '--name-only', 'HEAD...origin/main', '--', RAIZ_EDGES]);
+  if (!r.ok) throw new Error('`git diff HEAD...origin/main -- supabase/functions/` falhou');
+  return r.saida.split('\n').filter((l) => l !== '');
+}
+
+/**
  * O contexto que só o git responde.
  *
  * `parCoerente`: o commit mais ANTIGO em que a entrada `"edge": "fonte"` aparece no mapa é onde
@@ -285,6 +304,16 @@ export function main(): number {
 
   let esperados: Record<string, Esperado>;
   try {
+    const atrasados = arquivosDeEdgeSoNaMain();
+    if (atrasados.length > 0) {
+      console.error(
+        `❌ MECÂNICA: a main tem ${atrasados.length} arquivo(s) em ${RAIZ_EDGES}/ que esta worktree NÃO tem` +
+          ` (${atrasados.slice(0, 3).join(', ')}${atrasados.length > 3 ? ', …' : ''}).\n` +
+          '   Prod é a MAIN: julgar contra uma árvore atrasada fabrica P1 de edge em dia (medido 2026-09-05).\n' +
+          '   Sincronize (`git fetch origin && git rebase origin/main`, ou `git pull --rebase`) e rode de novo.',
+      );
+      return 2;
+    }
     esperados = lerEsperados();
   } catch (e) {
     console.error(`❌ MECÂNICA: esperado indeterminável — ${(e as Error).message}`);

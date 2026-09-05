@@ -459,13 +459,6 @@ export const ACL_ONLY_INTERNAL = new Set<string>([
   // Consumidor real medido: `public.get_skus_margem_positiva()` (SECDEF, owner postgres), que a
   // alcança como owner mesmo após o REVOKE. Fecho: 20260818120000_authz_private_execute_fecho.sql.
   'private.custo_canonico',
-  // Coletor do ledger de atestação de deploy (net._http_response → public.deploy_atestacoes).
-  // SECURITY INVOKER de propósito: quem roda é o cron `deploy-atestacoes-colher` como postgres,
-  // dono da tabela; anon/authenticated já morreriam no INSERT sem privilégio — o REVOKE é a 2ª
-  // tranca. Não toca eixo sensível (é instrumento de deploy, não de custo/preço/estoque). Se um dia
-  // virar SECDEF, a Parte B acusa e a entrada tem de ser reclassificada, não removida.
-  // Fecho: 20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql.
-  'public.deploy_atestacoes_colher',
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */

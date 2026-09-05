@@ -96,14 +96,4 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
       'uma policy anon futura o converte em escrita real. Fecha com REVOKE INSERT, DELETE ON ' +
       'public.sales_orders FROM anon; até lá o alarme fica de pé, por desenho.',
   },
-  'public.deploy_atestacoes': {
-    fechadaPor: '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql',
-    permitido: { anon: [], authenticated: ['SELECT'] },
-    motivo:
-      'ledger de atestação de deploy de edge (qual bundle (versao, fonte) prod respondeu, copiado de ' +
-      'net._http_response pelo cron deploy-atestacoes-colher). Só o cron (postgres, dono) escreve; ' +
-      'authenticated lê por policy de staff. Nasce fechada na própria migration — REVOKE por nome de ' +
-      'anon/authenticated + GRANT SELECT a authenticated. Um GRANT de escrita reaberto deixaria qualquer ' +
-      'usuário FABRICAR atestação de deploy, que é o veredito de `bun run pendencias:deploy`.',
-  },
 };

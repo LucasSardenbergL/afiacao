@@ -41,8 +41,13 @@ Três amplificadores, nenhum deles no deploy em si:
 
 - **`public.deploy_atestacoes`** (migration `20260905183314_…`): ledger append-only, 1 linha por
   resposta observada, PK `(request_id, observado_em)`, RLS + fechada por privilégio (anon nada,
-  authenticated SELECT por policy de staff; só o cron escreve). Registrada em
-  `AUTHZ_TABELAS_FECHADAS`; o coletor em `AUTHZ_FUNCOES_FECHADAS`.
+  authenticated SELECT por policy de staff; só o cron escreve). **Registro nos fechados
+  (`AUTHZ_TABELAS_FECHADAS`/`AUTHZ_FUNCOES_FECHADAS`) fica para DEPOIS do apply** — tentado neste
+  PR, o CI reprovou pelo carimbo de evidência de prod: o audit de grants crasha em tabela que ainda
+  não existe (`::regclass`) e o runner se recusa a gravar medição inválida, que é o comportamento
+  certo. Lição: entrada de "fechada" pressupõe objeto medível em prod; registrar ANTES do apply
+  deixa o CI vermelho até alguém colar a migration. Chip criado para o registro + para o audit
+  reportar `TABELA_NAO_APLICADA` em vez de crashar.
 - **`deploy_atestacoes_janela_viva()`**: a ÚNICA definição de "observação válida" sobre
   `net._http_response` — o coletor e o leitor usam a mesma (duas cópias do filtro já divergiram em
   silêncio uma vez, #2103). Exige a FORMA de cada campo (achado do Codex): `edge`/`versao` strings,
@@ -117,6 +122,14 @@ tem `BYPASSRLS` em prod (`pg_roles`, 2026-09-05), e o default ACL já lhe dá SE
   o fixture certo é o NÚMERO, que a regex aceita como texto. Sabote uma camada por vez.
 - `bun scripts/pendencias-deploy.ts` contra prod antes do apply: exit 2 dizendo qual migration
   falta — o ramo do 42P01 provado ponta a ponta.
+- **Primeiro veredito real, minutos após o apply** (92 linhas semeadas: 17 sondas, 75 ecos, 16
+  edges): 15 `CONFERE`, 38 `NUNCA_ATESTADA` (a leva de bootstrap, gerada com as 8 caras em bloco
+  travado por `CASE`) e **1 P1 FALSO**: `enviar-pedido-portal-sayerlack` "prod v1.7 → main v1.6".
+  Prod estava À FRENTE da worktree, que tinha ficado 3 commits atrás da main durante a sessão. É o
+  eixo TEMPO/ÁRVORE de `fatia-de-deploy-envelhece.md` mordendo o próprio instrumento: julgar
+  contra árvore atrasada fabrica pendência de edge em dia. O CLI passou a recusar (exit 2) quando
+  `git diff HEAD...origin/main -- supabase/functions/` não é vazio — a régua três-pontos deixa
+  passar a branch que ACRESCENTA edge e barra a que está atrasada.
 
 ## 5. O que fica para depois (nomeado, não esquecido)
 
