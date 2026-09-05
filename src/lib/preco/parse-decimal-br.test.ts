@@ -45,6 +45,17 @@ describe('parseDecimalBR', () => {
     expect(parseDecimalBR('1,23.456')).toBeNull();
   });
 
+  it('aceita milhar pt-BR só com pontos e rejeita agrupamento malformado (regra "vários pontos = milhar")', () => {
+    expect(parseDecimalBR('1.234.567')).toBe(1234567);
+    expect(parseDecimalBR('1.2.3')).toBeNull(); // grupos ≠ 3 dígitos
+    expect(parseDecimalBR('1234.567,89')).toBeNull(); // 1º grupo com 4 dígitos não é milhar
+  });
+
+  it('preserva o sinal negativo (documentado no regex de entrada)', () => {
+    expect(parseDecimalBR('-12,5')).toBe(-12.5);
+    expect(parseDecimalBR('-1.234,56')).toBe(-1234.56);
+  });
+
   it('NÃO rejeita decimal legítimo com 3 casas quando não parece milhar', () => {
     expect(parseDecimalBR('0,999')).toBe(0.999);
     expect(parseDecimalBR('0.999')).toBe(0.999); // inteiro "0" não é grupo de milhar válido
