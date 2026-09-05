@@ -33,6 +33,7 @@
  * `net._http_response`, que o `psql-ro` serve, então o agente lê o veredito sem intermediário.
  * `--so-disparo` e `--so-leitura` recortam exatamente nessa fronteira.
  */
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -136,6 +137,185 @@ export function lerProjectRef(raiz: string): string {
   const m = /^\s*project_id\s*=\s*"([^"]+)"/m.exec(toml);
   if (!m) throw new Error('supabase/config.toml sem `project_id` — não dá para montar a URL da sonda.');
   return m[1];
+}
+
+// ============================================================================================
+// GUARD DE SINCRONIA — o `esperado(...)` sai do DISCO, e o Lovable deploya a `origin/main`.
+// ============================================================================================
+//
+// O cabeçalho deste arquivo já argumenta que "marcador digitado errado produz VEREDITO FALSO", e
+// por isso lê o `versao.ts` e o mapa de fingerprints do repo em vez da memória do operador. O
+// buraco é que **"o repo" pode ser um checkout velho**: a mesma falha por outro caminho.
+//
+// MEDIDO EM 2026-09-05, numa verificação real: o worktree estava em `21e900155`, dois merges atrás
+// de `origin/main`. Sondando `enviar-pedido-portal-sayerlack`, o gerador emitiu
+// `versao_esperada = v1.5-custo-portal-rpc-cas`; a main já estava em `v1.7-enviado-igual-aprovado`
+// (#2194 e #2198 tinham mergeado). A edge no ar respondeu `v1.7` ⇒ o veredito comparado seria
+// `v1.7 ≠ v1.5` = "BUNDLE VELHO SERVINDO" numa edge recém-deployada. Falso NEGATIVO de money-path,
+// cujo desfecho é redeployar à toa e desconfiar de um deploy correto. Só não saiu errado por
+// ACIDENTE: o request tinha 37 min e a janela padrão é 20, então o guard temporal (#2079) devolveu
+// INDETERMINADO antes de a comparação acontecer.
+//
+// O eixo já estava nomeado em `docs/agent/deploy.md`: "o `<sha>` do PR nomeado é a pergunta ERRADA
+// — o Lovable deploya a main" (#2123). O gerador não aplicava esse eixo a SI PRÓPRIO.
+//
+// POR QUE O `git fetch` É DO SCRIPT, E NÃO UM RECADO NO DOC: comparar contra a `origin/main` que
+// está em disco é o MESMO defeito um nível acima — o remote-tracking ref também é um retrato, e um
+// worktree sincronizado com um `origin/main` de três dias atrás reproduz o falso negativo inteiro.
+// "Sincronize antes de MEDIR" (CLAUDE.md) só vale se a sincronização for parte da MEDIÇÃO. Medido
+// aqui em 2026-09-05: `git fetch origin main` custa 0,9 s e `git show origin/main:<arq>` custa
+// 0,03 s — barato demais para valer um recado que se lê e ignora. E o fetch com refspec ATUALIZA
+// `refs/remotes/origin/main` (medido rebaixando o ref à mão e vendo o fetch restaurá-lo), então o
+// `origin/main` que a comparação lê é o mesmo que o comando de correção usaria.
+
+/** O que o Lovable deploya. Não é o `<sha>` do PR nomeado: é a MAIN (#2123). */
+const REMOTO = 'origin';
+const RAMO_DEPLOYADO = 'main';
+const REF_DEPLOYADA = `${REMOTO}/${RAMO_DEPLOYADO}`;
+
+/** O comando que conserta o worktree defasado — o mesmo que a mensagem de aborto entrega. */
+const CORRECAO = `git fetch ${REMOTO} && git merge --ff-only ${REF_DEPLOYADA}`;
+
+/** Saída crua de um `git`, do jeito que o teste consegue fabricar. */
+export interface SaidaGit {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** Executa `git <args>` na raiz do repo. Injetável: toda a DECISÃO fica na função pura abaixo. */
+export type ExecutorGit = (args: string[]) => SaidaGit;
+
+/**
+ * `git` de verdade.
+ *
+ * `status` nulo (morto por sinal, `timeout`, binário ausente) vira 127 e NÃO 0: um spawn que não
+ * respondeu é ausência de dado, e ausência de dado aqui precisa cair no ramo fail-CLOSED junto com
+ * o erro explícito. Ler `status ?? 0` seria a aprovação fabricada que este guard existe para negar.
+ */
+export function gitReal(raiz: string): ExecutorGit {
+  return (args) => {
+    const r = spawnSync('git', args, { cwd: raiz, encoding: 'utf8', timeout: 30_000 });
+    if (r.error) return { status: 127, stdout: '', stderr: r.error.message };
+    return { status: r.status ?? 127, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  };
+}
+
+/**
+ * Os arquivos que ALIMENTAM o `esperado(edge, versao_esperada, fonte_esperada)` — nada além.
+ *
+ * A fatia é fechada de propósito: é exatamente o conjunto cujo retrato velho vira VEREDITO falso.
+ * `supabase/config.toml` fica de fora porque o `project_ref` não entra na comparação — ele decide
+ * PARA ONDE a sonda vai, e um ref velho falha ALTO (404 do gateway), não vira "bundle velho".
+ */
+export function fatiaDaVerdade(edges: string[]): string[] {
+  return [...edges.map((e) => `supabase/functions/${e}/versao.ts`), ARQ_MAPA];
+}
+
+/** O que o guard concluiu. `aviso` só existe no caminho `--sem-rede`, que degradou de propósito. */
+export interface ResultadoSincronia {
+  aviso: string | null;
+}
+
+/**
+ * Confere que a fatia da verdade no working tree é IDÊNTICA à de `origin/main`, ou LANÇA.
+ *
+ * Fail-CLOSED em cinco portas, e nenhuma delas degrada para warning: um aviso que se lê e ignora
+ * devolve exatamente o veredito falso de 2026-09-05, só que com uma linha de texto por cima.
+ *
+ *  1. `git` que não responde (binário ausente, timeout, não é repo) ⇒ aborta.
+ *  2. `fetch` que falha ⇒ aborta nomeando `--sem-rede`, a única escada explícita.
+ *  3. `origin/main` que não existe nem depois do fetch ⇒ aborta: não há com o que comparar, e
+ *     ausência de dado não é aprovação.
+ *  4. arquivo da fatia que não existe em `origin/main` ⇒ aborta: é bump que ainda NÃO mergeou, e a
+ *     edge no ar nunca vai responder um marcador que só existe neste branch.
+ *  5. conteúdo diferente ⇒ aborta nomeando as edges e o comando de correção.
+ *
+ * `--sem-rede` NÃO desliga o guard: pula só o `fetch`, e a comparação continua acontecendo contra o
+ * `origin/main` que está em disco. Divergência achada contra um ref velho é dado POSITIVO de
+ * defasagem e aborta igual; o que a flag admite é o inverso — bater contra um retrato velho não
+ * prova sincronia. Por isso o caminho degradado IMPRIME a idade do ref, no stderr e no topo do SQL:
+ * o SQL é o artefato que sobrevive (colado num chat, num PR), o stderr some.
+ *
+ * POR QUE `--sem-rede` EXISTE, em vez de travar: sem rede o veredito é inalcançável de qualquer
+ * jeito — o disparo é `net.http_post` contra o Supabase e a leitura é `psql-ro` contra a prod. O
+ * único uso real do gerador offline é preparar o texto para colar depois, e travar isso custaria
+ * mais que o defeito que o guard fecha. A flag é explícita justamente para não ser o padrão.
+ */
+export function conferirSincronia(
+  raiz: string,
+  edges: string[],
+  semRede: boolean,
+  git: ExecutorGit,
+): ResultadoSincronia {
+  if (!semRede) {
+    const f = git(['fetch', REMOTO, RAMO_DEPLOYADO]);
+    if (f.status !== 0) {
+      throw new Error(
+        `não consegui \`git fetch ${REMOTO} ${RAMO_DEPLOYADO}\` (status ${f.status}): ` +
+          `${primeiraLinha(f.stderr)}. O \`esperado(...)\` sai do DISCO e o Lovable deploya a ` +
+          `${REF_DEPLOYADA}: sem confirmar que o disco é a main, um veredito "BUNDLE VELHO" pode ` +
+          'ser só este worktree atrasado. Sem rede, repita com `--sem-rede` — a comparação ainda ' +
+          `acontece, contra a ${REF_DEPLOYADA} que está em disco, e o SQL sai dizendo isso. ` +
+          'Nenhum SQL foi emitido.',
+      );
+    }
+  }
+
+  const rev = git(['rev-parse', '--verify', '--quiet', REF_DEPLOYADA]);
+  if (rev.status !== 0 || rev.stdout.trim() === '') {
+    throw new Error(
+      `${REF_DEPLOYADA} não existe neste repo${semRede ? ' e --sem-rede proíbe buscá-la' : ''} — ` +
+        'não há contra o que conferir se o disco está sincronizado, e ausência de dado não é ' +
+        `aprovação. Rode \`git fetch ${REMOTO}\` num repo com o remote configurado. ` +
+        'Nenhum SQL foi emitido.',
+    );
+  }
+
+  const ausentes: string[] = [];
+  const divergentes: string[] = [];
+  for (const caminho of fatiaDaVerdade(edges)) {
+    const r = git(['show', `${REF_DEPLOYADA}:${caminho}`]);
+    if (r.status !== 0) {
+      ausentes.push(caminho);
+      continue;
+    }
+    if (r.stdout !== readFileSync(join(raiz, caminho), 'utf8')) divergentes.push(caminho);
+  }
+
+  if (ausentes.length > 0 || divergentes.length > 0) {
+    const problemas: string[] = [];
+    if (divergentes.length > 0) {
+      problemas.push(`difere de ${REF_DEPLOYADA}: ${divergentes.join(', ')}`);
+    }
+    if (ausentes.length > 0) {
+      problemas.push(`não existe em ${REF_DEPLOYADA}: ${ausentes.join(', ')}`);
+    }
+    throw new Error(
+      `working tree DESSINCRONIZADO da ${REF_DEPLOYADA} na fatia que vira o \`esperado(...)\` — ` +
+        `${problemas.join(' | ')}. O marcador e o fingerprint sairiam deste disco e o veredito ` +
+        `compararia com o que a ${REF_DEPLOYADA} deployou: divergência aqui produz "BUNDLE VELHO ` +
+        'SERVINDO" numa edge que está no ar (falso NEGATIVO — o desfecho é redeployar money-path ' +
+        `à toa). Sincronize e repita: \`${CORRECAO}\`. Se o bump é SEU e ainda não mergeou, não há ` +
+        'o que sondar: a edge no ar não serve um marcador que só existe neste branch. ' +
+        'Nenhum SQL foi emitido.',
+    );
+  }
+
+  if (!semRede) return { aviso: null };
+  const data = git(['log', '-1', '--format=%ci', REF_DEPLOYADA]);
+  const idade = data.status === 0 && data.stdout.trim() !== '' ? data.stdout.trim() : 'data desconhecida';
+  return {
+    aviso:
+      `⚠️ --sem-rede: NÃO busquei a ${REF_DEPLOYADA}; comparei contra a cópia em disco, de ${idade} ` +
+      `(${rev.stdout.trim().slice(0, 9)}). O veredito é sobre ESTE disco — se a main andou desde ` +
+      'então, "BUNDLE VELHO" pode ser este worktree atrasado, não a edge.',
+  };
+}
+
+/** Primeira linha não-vazia de um stderr, para a mensagem não virar um despejo de git. */
+function primeiraLinha(texto: string): string {
+  return texto.split('\n').find((l) => l.trim() !== '')?.trim() ?? '(sem stderr)';
 }
 
 export interface OpcoesLeva {
@@ -565,6 +745,7 @@ export interface ArgsCli {
   janelaMin?: number;
   soDisparo?: boolean;
   soLeitura?: boolean;
+  semRede?: boolean;
 }
 
 const USO =
@@ -576,7 +757,9 @@ const USO =
   `  --janela      janela do guard temporal da leitura, em minutos (padrão ${JANELA_PADRAO_MIN}, ` +
   `teto ${JANELA_MAX_MIN}).\n` +
   '  --so-disparo  emite só os blocos que precisam do FOUNDER (vault + INSERT).\n' +
-  '  --so-leitura  emite só os blocos de leitura, que rodam no psql-ro — o agente lê sozinho.';
+  '  --so-leitura  emite só os blocos de leitura, que rodam no psql-ro — o agente lê sozinho.\n' +
+  `  --sem-rede    não busca a ${REF_DEPLOYADA}; compara contra a cópia em disco e DIZ isso no SQL.\n` +
+  '                Escada explícita para máquina offline — não desliga o guard de sincronia.';
 
 /**
  * Forma de nome de edge: é o diretório em `supabase/functions/`, e as 94 existentes cabem todas
@@ -592,6 +775,7 @@ export function parsearArgs(argv: string[]): ArgsCli {
   let janelaMin: number | undefined;
   let soDisparo: boolean | undefined;
   let soLeitura: boolean | undefined;
+  let semRede: boolean | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -619,6 +803,10 @@ export function parsearArgs(argv: string[]): ArgsCli {
       soLeitura = true;
       continue;
     }
+    if (arg === '--sem-rede') {
+      semRede = true;
+      continue;
+    }
     if (arg.startsWith('-')) throw new Error(`flag desconhecida: ${arg}\n${USO}`);
     edges.push(arg);
   }
@@ -640,7 +828,7 @@ export function parsearArgs(argv: string[]): ArgsCli {
     );
   }
 
-  return { edges, caras, janelaMin, soDisparo, soLeitura };
+  return { edges, caras, janelaMin, soDisparo, soLeitura, semRede };
 }
 
 /** Saídas da CLI, injetáveis para o teste ver o que foi escrito. */
@@ -648,17 +836,34 @@ export interface DependenciasCli {
   raiz: string;
   escrever: (texto: string) => void;
   erro: (texto: string) => void;
+  /**
+   * O `git` que o guard de sincronia usa. OBRIGATÓRIO de propósito: opcional-com-default sumiria
+   * silenciosamente em quem esquecesse de passá-lo, e um guard que some é fail-OPEN. Assim o
+   * compilador cobra — quem chama `main` decide entre o `git` de verdade e um fabricado no teste.
+   */
+  git: ExecutorGit;
 }
 
 /** Ponto de entrada. Devolve o código de saída; NADA é escrito na saída quando falha. */
 export function main(argv: string[], deps: DependenciasCli): number {
   let sql: string;
+  let aviso: string | null;
   try {
-    const { edges, caras, janelaMin, soDisparo, soLeitura } = parsearArgs(argv);
+    const { edges, caras, janelaMin, soDisparo, soLeitura, semRede } = parsearArgs(argv);
+    // A leva é resolvida ANTES do guard de sincronia porque as duas falhas competem pelo mesmo
+    // texto e a da leva é mais específica: uma edge sem `versao.ts` deve ouvir "sem sensor", não
+    // "não existe em origin/main". Nada é escrito até as DUAS passarem — `gerarSqlDaLeva` só monta
+    // a string, e é este `escrever` lá embaixo que emite.
     sql = gerarSqlDaLeva({ raiz: deps.raiz, edges, caras, janelaMin, soDisparo, soLeitura });
+    ({ aviso } = conferirSincronia(deps.raiz, edges, semRede === true, deps.git));
   } catch (e) {
     deps.erro(`❌ ${(e as Error).message}`);
     return 1;
+  }
+  if (aviso !== null) {
+    deps.erro(aviso);
+    // Também no SQL: o stderr some, e o SQL é o artefato que sobrevive colado num chat ou num PR.
+    sql = `-- ${aviso.split('\n').join('\n-- ')}\n${sql}`;
   }
   deps.escrever(sql);
   return 0;
@@ -670,6 +875,7 @@ if (import.meta.main) {
       raiz: join(import.meta.dirname, '..'),
       escrever: (t) => process.stdout.write(t),
       erro: (t) => console.error(t),
+      git: gitReal(join(import.meta.dirname, '..')),
     }),
   );
 }

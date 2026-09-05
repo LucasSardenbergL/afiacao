@@ -4,7 +4,15 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 
-import { gerarSqlDaLeva, main, parsearArgs, resolverLeva } from './sonda-versao-sql';
+import {
+  fatiaDaVerdade,
+  gerarSqlDaLeva,
+  gitReal,
+  main,
+  parsearArgs,
+  resolverLeva,
+  type ExecutorGit,
+} from './sonda-versao-sql';
 
 const RAIZ_REPO = join(import.meta.dirname, '..');
 const criadas: string[] = [];
@@ -136,7 +144,12 @@ describe('edge sem sensor não é sondável — falha ALTO, nunca SQL parcial', 
     escreverMapaFingerprints(raiz, {});
     const saida: string[] = [];
     const erros: string[] = [];
-    const codigo = main(['boa'], { raiz, escrever: (t) => saida.push(t), erro: (t) => erros.push(t) });
+    const codigo = main(['boa'], {
+      raiz,
+      escrever: (t) => saida.push(t),
+      erro: (t) => erros.push(t),
+      git: gitProibido(),
+    });
     expect(codigo).toBe(1);
     expect(saida).toEqual([]);
     expect(erros.join('')).toMatch(/sonda-fingerprints/);
@@ -715,7 +728,12 @@ describe('CLI', () => {
     const raiz = fixture({ 'edge-a': 'v1.0-alfa' });
     const saida: string[] = [];
     const erros: string[] = [];
-    const codigo = main(['edge-a'], { raiz, escrever: (t) => saida.push(t), erro: (t) => erros.push(t) });
+    const codigo = main(['edge-a'], {
+      raiz,
+      escrever: (t) => saida.push(t),
+      erro: (t) => erros.push(t),
+      git: gitFalso({ main: espelho(raiz, ['edge-a']) }),
+    });
     expect(codigo).toBe(0);
     expect(saida.join('')).toContain(`('edge-a', 'v1.0-alfa', '${fp('edge-a')}')`);
     expect(erros).toEqual([]);
@@ -729,9 +747,197 @@ describe('CLI', () => {
       raiz,
       escrever: (t) => saida.push(t),
       erro: (t) => erros.push(t),
+      git: gitProibido(),
     });
     expect(codigo).toBe(1);
     expect(saida).toEqual([]);
     expect(erros.join('')).toMatch(/orfa/);
+  });
+});
+
+// ============================================================================================
+// GUARD DE SINCRONIA com a `origin/main` (o worktree defasado que vira veredito falso).
+// ============================================================================================
+
+/**
+ * `git` fabricado: `origin/main` é um SNAPSHOT declarado e o disco é o fixture.
+ *
+ * O `git` de verdade não entra na suíte de propósito — dependeria de rede, do estado do worktree e
+ * do que a main tem HOJE, ou seja, o teste passaria a medir o ambiente em vez do guard. O que a
+ * suíte precisa provar é a DECISÃO, e ela é a função pura que consome estas saídas.
+ */
+function gitFalso(opts: {
+  main?: Record<string, string> | null;
+  fetchFalha?: boolean;
+  chamadas?: string[][];
+}): ExecutorGit {
+  return (args) => {
+    opts.chamadas?.push(args);
+    if (args[0] === 'fetch') {
+      return opts.fetchFalha === true
+        ? { status: 128, stdout: '', stderr: 'fatal: unable to access ...: Could not resolve host' }
+        : { status: 0, stdout: '', stderr: '' };
+    }
+    if (opts.main == null) return { status: 1, stdout: '', stderr: '' };
+    if (args[0] === 'rev-parse') return { status: 0, stdout: 'abc123def4567890\n', stderr: '' };
+    if (args[0] === 'log') return { status: 0, stdout: '2026-09-01 10:00:00 +0000\n', stderr: '' };
+    if (args[0] === 'show') {
+      const caminho = args[1].slice('origin/main:'.length);
+      const conteudo = opts.main[caminho];
+      return conteudo === undefined
+        ? { status: 128, stdout: '', stderr: `fatal: path '${caminho}' does not exist in 'origin/main'` }
+        : { status: 0, stdout: conteudo, stderr: '' };
+    }
+    return { status: 127, stdout: '', stderr: `git falso não conhece ${args[0]}` };
+  };
+}
+
+/** O estado SADIO: `origin/main` byte-a-byte igual ao disco, do qual cada teste sabota UMA coisa. */
+function espelho(raiz: string, edges: string[]): Record<string, string> {
+  return Object.fromEntries(
+    fatiaDaVerdade(edges).map((c) => [c, readFileSync(join(raiz, c), 'utf8')]),
+  );
+}
+
+/** `git` que REPROVA se for chamado — prova que um ramo anterior abortou antes do guard. */
+function gitProibido(): ExecutorGit {
+  return (args) => {
+    throw new Error(`o guard de sincronia NÃO devia ter rodado: git ${args.join(' ')}`);
+  };
+}
+
+function rodar(raiz: string, argv: string[], git: ExecutorGit) {
+  const saida: string[] = [];
+  const erros: string[] = [];
+  const codigo = main(argv, { raiz, escrever: (t) => saida.push(t), erro: (t) => erros.push(t), git });
+  return { codigo, saida: saida.join(''), erros: erros.join('') };
+}
+
+describe('worktree defasado da origin/main não emite SQL (o falso negativo de 2026-09-05)', () => {
+  it('disco IGUAL à origin/main: emite o SQL, e o fetch aconteceu ANTES de comparar', () => {
+    const raiz = fixture({ 'edge-a': 'v1.7-enviado-igual-aprovado' });
+    const chamadas: string[][] = [];
+    const r = rodar(raiz, ['edge-a'], gitFalso({ main: espelho(raiz, ['edge-a']), chamadas }));
+    expect(r.codigo).toBe(0);
+    expect(r.saida).toContain("('edge-a', 'v1.7-enviado-igual-aprovado'");
+    expect(r.erros).toBe('');
+    // "Sincronize antes de MEDIR": a comparação contra um remote-tracking ref velho é o MESMO
+    // defeito um nível acima, então o fetch é parte da medição — não um recado no doc.
+    expect(chamadas[0]).toEqual(['fetch', 'origin', 'main']);
+    expect(chamadas.some((c) => c[0] === 'show')).toBe(true);
+  });
+
+  it('o CASO MEDIDO: versao.ts do disco atrás da main aborta nomeando a edge e a correção', () => {
+    const raiz = fixture({ 'enviar-pedido-portal-sayerlack': 'v1.5-custo-portal-rpc-cas' });
+    const main2026 = espelho(raiz, ['enviar-pedido-portal-sayerlack']);
+    const arq = 'supabase/functions/enviar-pedido-portal-sayerlack/versao.ts';
+    main2026[arq] = main2026[arq].replace('v1.5-custo-portal-rpc-cas', 'v1.7-enviado-igual-aprovado');
+    const r = rodar(raiz, ['enviar-pedido-portal-sayerlack'], gitFalso({ main: main2026 }));
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe(''); // nada de SQL parcial
+    expect(r.erros).toContain('enviar-pedido-portal-sayerlack/versao.ts');
+    expect(r.erros).toContain('git merge --ff-only origin/main');
+    expect(r.erros).toMatch(/Nenhum SQL foi emitido/);
+  });
+
+  it('mapa de fingerprints defasado aborta — é metade do `esperado(...)`, não um detalhe', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-alfa' });
+    const main = espelho(raiz, ['edge-a']);
+    const arq = 'supabase/functions/_shared/sonda-fingerprints.ts';
+    main[arq] = main[arq].replace(fp('edge-a'), fp('outra-coisa'));
+    const r = rodar(raiz, ['edge-a'], gitFalso({ main }));
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe('');
+    expect(r.erros).toContain('sonda-fingerprints.ts');
+  });
+
+  it('bump que ainda NÃO mergeou aborta: a edge no ar não serve marcador só deste branch', () => {
+    const raiz = fixture({ nova: 'v1.0-sensor-inicial' });
+    const main = espelho(raiz, ['nova']);
+    delete main['supabase/functions/nova/versao.ts'];
+    const r = rodar(raiz, ['nova'], gitFalso({ main }));
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe('');
+    expect(r.erros).toContain('não existe em origin/main');
+  });
+
+  it('só a fatia PEDIDA é conferida — edge fora da leva divergente não trava a leva', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-alfa', 'edge-b': 'v2.0-beta' });
+    const main = espelho(raiz, ['edge-a', 'edge-b']);
+    main['supabase/functions/edge-b/versao.ts'] = 'export const VERSAO = "v9.9-outra";\n';
+    const r = rodar(raiz, ['edge-a'], gitFalso({ main }));
+    expect(r.codigo).toBe(0);
+    expect(r.saida).toContain("('edge-a', 'v1.0-alfa'");
+  });
+
+  it('falha da leva vence o guard — e o guard nem roda (mensagem específica sobrevive)', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-alfa' });
+    const r = rodar(raiz, ['edge-a', 'orfa'], gitProibido());
+    expect(r.codigo).toBe(1);
+    expect(r.erros).toMatch(/orfa/);
+    expect(r.erros).toMatch(/sem sensor/);
+  });
+});
+
+describe('não consigo consultar a origin/main: ausência de dado não é aprovação', () => {
+  it('fetch que falha ABORTA e nomeia a escada explícita (--sem-rede), não emite SQL', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-alfa' });
+    const r = rodar(raiz, ['edge-a'], gitFalso({ main: espelho(raiz, ['edge-a']), fetchFalha: true }));
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe('');
+    expect(r.erros).toContain('--sem-rede');
+    expect(r.erros).toMatch(/Nenhum SQL foi emitido/);
+  });
+
+  it('origin/main que não existe aborta mesmo com --sem-rede — não há com o que comparar', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-alfa' });
+    const r = rodar(raiz, ['edge-a', '--sem-rede'], gitFalso({ main: null }));
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe('');
+    expect(r.erros).toMatch(/não existe neste repo/);
+  });
+
+  it('--sem-rede pula o FETCH mas NÃO a comparação: divergência contra o ref em disco aborta', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-alfa' });
+    const main = espelho(raiz, ['edge-a']);
+    main['supabase/functions/edge-a/versao.ts'] = 'export const VERSAO = "v2.0-ja-mergeada";\n';
+    const chamadas: string[][] = [];
+    const r = rodar(raiz, ['edge-a', '--sem-rede'], gitFalso({ main, chamadas }));
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe('');
+    expect(chamadas.some((c) => c[0] === 'fetch')).toBe(false);
+  });
+
+  it('--sem-rede que BATE emite o SQL, e o SQL CARREGA o aviso (o stderr some, ele não)', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-alfa' });
+    const chamadas: string[][] = [];
+    const r = rodar(raiz, ['edge-a', '--sem-rede'], gitFalso({ main: espelho(raiz, ['edge-a']), chamadas }));
+    expect(r.codigo).toBe(0);
+    expect(chamadas.some((c) => c[0] === 'fetch')).toBe(false);
+    expect(r.erros).toContain('--sem-rede');
+    expect(r.erros).toContain('2026-09-01');
+    // Primeira linha do SQL é comentário `--`: o bloco continua colável no SQL Editor e no psql-ro.
+    expect(r.saida.startsWith('-- ⚠️ --sem-rede')).toBe(true);
+    expect(r.saida).toContain("('edge-a', 'v1.0-alfa'");
+  });
+
+  it('--sem-rede é OPT-IN: sem a flag, o parse não a inventa', () => {
+    expect(parsearArgs(['edge-a']).semRede).toBeUndefined();
+    expect(parsearArgs(['edge-a', '--sem-rede']).semRede).toBe(true);
+  });
+});
+
+describe('gitReal: o executor de verdade responde o que o guard precisa julgar', () => {
+  it('num repo git, rev-parse da origin/main devolve status 0 e um sha', () => {
+    const r = gitReal(RAIZ_REPO)(['rev-parse', '--verify', '--quiet', 'origin/main']);
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('fora de um repo git, status ≠ 0 — o guard cai no ramo fail-CLOSED, não no aprovado', () => {
+    const fora = mkdtempSync(join(tmpdir(), 'sonda-sem-git-'));
+    criadas.push(fora);
+    const r = gitReal(fora)(['rev-parse', '--verify', '--quiet', 'origin/main']);
+    expect(r.status).not.toBe(0);
   });
 });
