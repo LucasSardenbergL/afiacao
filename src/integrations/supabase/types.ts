@@ -20283,6 +20283,10 @@ export type Database = {
         }[]
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
+      sayerlack_aplicar_custo_portal: {
+        Args: { p_itens: Json; p_pedido_id: number; p_valor_total: number }
+        Returns: number
+      }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
       seed_targets_faltantes: {
         Args: never
