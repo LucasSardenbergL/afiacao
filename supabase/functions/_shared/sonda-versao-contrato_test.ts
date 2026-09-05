@@ -51,6 +51,12 @@ import * as syncPedidosCompra from "../omie-sync-pedidos-compra/versao.ts";
 import * as syncSkuItems from "../omie-sync-sku-items/versao.ts";
 import * as syncVendasItems from "../omie-sync-vendas-items/versao.ts";
 import * as outboxDrain from "../analytics-outbox-drain/versao.ts";
+import * as omieSync from "../omie-sync/versao.ts";
+import * as malhaSync from "../omie-malha-sync/versao.ts";
+import * as nfeRecebimentoSync from "../omie-nfe-recebimento-sync/versao.ts";
+import * as syncMetadados from "../omie-sync-metadados/versao.ts";
+import * as omieWebhook from "../omie-webhook/versao.ts";
+import * as aplicarParametros from "../omie-aplicar-parametros/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -193,6 +199,17 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // N1 + uma string literal de erro que estava no corpo por ACASO. Barato de chamar e possível de
   // verificar seguem sendo propriedades diferentes (sexta leva); só o marcador dá a segunda.
   { nome: "analytics-outbox-drain", mod: outboxDrain },
+  // Décima segunda leva (2026-09-05): a continuação da 11ª sobre a CLASSE CEGA do Passo 3 do
+  // `/fecho` (#2170) — edge FORA do mapa de fingerprints E importando `_shared/`. A 11ª levou as 5
+  // de efeito fora do nosso banco; esta leva as que escrevem no money-path do NOSSO banco, pelo
+  // lado do sync Omie. A via (c) fechou a ENUMERAÇÃO; o `versao.ts` é o que dá SUPRESSÃO por
+  // evidência positiva servida.
+  { nome: "omie-sync", mod: omieSync },
+  { nome: "omie-malha-sync", mod: malhaSync },
+  { nome: "omie-nfe-recebimento-sync", mod: nfeRecebimentoSync },
+  { nome: "omie-sync-metadados", mod: syncMetadados },
+  { nome: "omie-webhook", mod: omieWebhook },
+  { nome: "omie-aplicar-parametros", mod: aplicarParametros },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -228,6 +245,20 @@ const ESCRITA_NOSSO_BANCO = [
   "omie-sync-ctes-recebidos",
   "omie-sync-sku-items",
   "omie-sync-vendas-items",
+  // Décima segunda leva (2026-09-05), o lado sync Omie da classe cega. `omie-sync` roteia por
+  // `action` e escreve dos dois lados (OS no ERP + `orders`/`omie_ordens_servico`/`loyalty_points`
+  // aqui); `omie-malha-sync` reescreve `pcp_malha_staging`, de onde sai a necessidade de compra;
+  // `omie-nfe-recebimento-sync` insere `nfe_recebimentos` e, em escrita SEPARADA,
+  // `nfe_recebimento_itens` — a retentativa PULA a NF que ficou só com cabeçalho;
+  // `omie-sync-metadados` reescreve `omie_products` e carimba o frescor em `sync_state`;
+  // `omie-webhook` grava `omie_webhook_events` e despacha o processamento em background;
+  // `omie-aplicar-parametros` ALTERA o cadastro do produto no Omie e baixa `fila_aplicacao_omie`.
+  "omie-sync",
+  "omie-malha-sync",
+  "omie-nfe-recebimento-sync",
+  "omie-sync-metadados",
+  "omie-webhook",
+  "omie-aplicar-parametros",
 ];
 
 /**
@@ -296,6 +327,13 @@ const FORMA_NORMALIZADA = [
  */
 const ANCORA_CLIENT: Record<string, string> = {
   "omie-sync-status-produtos": "makeClient(",
+  // A `omie-webhook` é o outro desvio, e por causa oposta: o client não nasce no handler NENHUM —
+  // é `const supabase = createClient(...)` no TOPO do módulo. `trechoDoHandler` corta a partir do
+  // `Deno.serve(`, então `createClient(` não aparece lá e o gate cairia no ramo "controle positivo
+  // vazio". A âncora honesta passa a ser a primeira função do handler que USA esse client
+  // (`registrarEvento`, o insert em `omie_webhook_events`): a propriedade que o gate protege é a
+  // sonda responder antes do IO, e para client de módulo o IO começa no primeiro uso.
+  "omie-webhook": "registrarEvento(",
 };
 
 /** Destas o gate NÃO aceita `x-cron-secret`, então a sonda precisa de gate PRÓPRIO. */
@@ -320,9 +358,13 @@ const ANCORA_CLIENT: Record<string, string> = {
 // `net.http_post` do SQL Editor manda `x-cron-secret` e nenhum Bearer, então uma sonda atrás desse
 // gate seria inalcançável exatamente para quem precisa dela — o furo medido em prod na `recommend`
 // (#1882). A contrapartida é que a sonda não pode responder sem auth nenhuma: daí o gate próprio.
+// `omie-webhook` é a gêmea estrutural da `omie-nfe-webhook`: o gate dela é o `x-webhook-secret`
+// compartilhado com o Omie, que o `net.http_post` do SQL Editor não emite. Sem gate próprio a
+// sonda ficaria inalcançável exatamente para quem precisa dela.
 const GATE_PROPRIO = [
   "omie-cliente",
   "omie-nfe-webhook",
+  "omie-webhook",
   "recommend",
   "fin-valor-cockpit",
   "fin-funding",

@@ -4,6 +4,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -113,11 +114,38 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+  // sem custo. O `authorizeCronOrStaff` acima aceita o `x-cron-secret` do SQL Editor ⇒ sem gate
+  // próprio. Daqui pra frente a edge reescreve `pcp_malha_staging`, a lista técnica de onde sai a
+  // necessidade de compra. Corpo lido UMA vez e reaproveitado abaixo (req.json() não se consome
+  // duas). Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // ⚠️ Colisão de nomes que NÃO é a mesma coisa: o `action: "probe"` desta edge (default logo
+  // abaixo) inspeciona a FORMA do payload do Omie; a sonda de versão decide pelo campo `probe` do
+  // corpo e responde qual BUNDLE está no ar. Um não substitui o outro.
+  const corpoBruto = await req.json().catch(() => ({} as Record<string, unknown>));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
-  const body = await req.json().catch(() => ({} as Record<string, unknown>));
+  // Já parseado acima (para a sonda). Normaliza não-objeto para {} — preserva o comportamento
+  // antigo do `.catch(() => ({}))` sem deixar um corpo `null`/array quebrar os acessos abaixo.
+  const body = (typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+    ? corpoBruto
+    : {}) as Record<string, unknown>;
   const action = (body.action as string) ?? "probe";
 
   let runId: number | null = null;
