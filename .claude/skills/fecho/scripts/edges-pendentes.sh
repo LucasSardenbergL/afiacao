@@ -107,10 +107,29 @@ if [ "$1" = "--desde" ]; then
   # do arquivo. Sem essa trava, mudança só em `_shared/` sairia como "nenhuma edge na janela": chip
   # suprimido por AUSÊNCIA DE DADO, que é o modo de falha caro de um script que APAGA pendência.
   if command grep -q '^supabase/functions/_shared/' "$tmp/paths" 2>/dev/null; then
-    if [ ! -s "$tmp/mapa_agora" ] || [ ! -s "$tmp/mapa_base" ]; then
-      echo "⚠️ edges-pendentes: \`_shared/\` mudou na janela e o mapa de fingerprints não pôde ser"
-      echo "   lido nas duas pontas — não sei QUAIS edges isso afetou. MECÂNICA NÃO CONFIÁVEL, exit 2."
+    # ⚠️ As duas pontas do mapa NÃO têm o mesmo papel, e juntá-las num `||` só é o que travava o
+    # Passo 3 em exit 2 na janela de MAIOR risco. Medido 2026-09-05, `--desde "2026-08-21 20:00"`:
+    # 26 arquivos de `_shared/` tocados, 41 das 95 edges afetadas por transitividade — e veredito
+    # nenhum, porque o commit-base é anterior ao #1998, que CRIOU o mapa. A ponta que faltava era
+    # a inútil para a decisão.
+    #   · `mapa_agora` (origin/main) é INDISPENSÁVEL: é a fonte do `esperado` de toda edge e a
+    #     única via que enxerga o efeito de `_shared/`. Sem ele não há o que enumerar nem com o
+    #     que comparar — cegueira de verdade, exit 2.
+    #   · `mapa_base` só ESTREITA: o diff existe para TIRAR da lista quem não mudou. Sem ele
+    #     nenhum par casa e a via (a) já emitiu o mapa INTEIRO como alvo — o superconjunto
+    #     SEGURO. Degradar aqui AMPLIA a lista, e cada alvo segue classificado um a um por prova
+    #     positiva. Desistir jogaria fora o NO_AR de quem TEM prova, e "trate as 95 como
+    #     pendentes" é ingerível: vira chip para tudo, e fila de chip igual enterra o chip que
+    #     importa — exatamente o custo que este script existe para cortar.
+    if [ ! -s "$tmp/mapa_agora" ]; then
+      echo "⚠️ edges-pendentes: \`_shared/\` mudou na janela e o mapa de fingerprints da MAIN não"
+      echo "   pôde ser lido — não sei QUAIS edges isso afetou. MECÂNICA NÃO CONFIÁVEL, exit 2."
       exit 2
+    fi
+    if [ ! -s "$tmp/mapa_base" ]; then
+      echo "ℹ️  mapa_base ausente — a janela começa antes de \`$MAPA_REL\` existir."
+      echo "   O diff não estreitou nada: a via (a) emitiu o mapa INTEIRO como alvo. Enumeração"
+      echo "   AMPLIADA (superconjunto seguro), não cega — cada alvo segue classificado abaixo."
     fi
     if [ ! -s "$tmp/alvos" ]; then
       echo "⚠️ \`_shared/\` mudou na janela e NENHUM fingerprint mudou. Ou a mudança não entra em"
