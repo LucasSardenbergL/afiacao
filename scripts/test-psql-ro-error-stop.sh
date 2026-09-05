@@ -213,9 +213,13 @@ rodar_sabotagem 'limpeza de comentário' "$ALVO_STRIPPER" \
   "if (c === '#' && ANTES_DE_COMENTARIO.has(anterior)) {" \
   "if (false && ANTES_DE_COMENTARIO.has(anterior)) {"
 
+# A sabotagem tem de reproduzir o furo REAL: consumir só UM `<` faz o segundo virar um `<<`
+# sozinho. Desligar o ramo inteiro NÃO reproduz — o `<<` cai no leitor de cabeçalho, que não acha
+# delimitador em `<` e desiste, e a sabotagem fica inócua. Sabotagem inócua vira "camada
+# redundante" no relatório, que é um veredito FABRICADO sobre uma camada que ninguém testou.
 rodar_sabotagem 'herestring <<< (não é heredoc)' "$ALVO_STRIPPER" \
-  "if (c === '<' && fonte[i + 1] === '<' && fonte[i + 2] === '<') {" \
-  "if (false && fonte[i + 2] === '<') {"
+  '        marcar(i + 3, 1);' \
+  '        marcar(i + 1, 1); i += 1; if (true) continue;'
 
 rodar_sabotagem 'pilha de contexto (substituicao dentro de aspas duplas)' "$ALVO_STRIPPER" \
   "if (c === '\$' && fonte[i + 1] === '(') {" \
