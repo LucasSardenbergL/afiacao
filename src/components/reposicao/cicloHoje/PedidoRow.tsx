@@ -14,6 +14,7 @@ import { formatBRL, logAudit } from "@/lib/reposicao";
 import { calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
 import type { ColKey, PedidoItem } from "@/types/reposicao";
 import { aprovarEDisparar } from "../pedidos/aprovar-disparar";
+import { podeCancelarPeloHumano, rejeitarPedidos } from "../pedidos/rejeitar-pedido";
 import { EMPRESA } from "../pedidos/shared";
 import { PrecoCell, ConfiancaBadge } from "./PedidoRowCells";
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -57,7 +58,6 @@ export function PedidoRow({
   const act = async (kind: "approve" | "reject") => {
     if (busy) return;
     setBusy(kind);
-    const nowIso = new Date().toISOString();
     const who = user?.email ?? user?.id ?? "cockpit";
     try {
       if (kind === "approve") {
@@ -90,24 +90,17 @@ export function PedidoRow({
         return;
       }
 
-      // Rejeição: UPDATE direto (não passa pela trilha de disparo).
-      const { error } = await supabase
-        .from("pedido_compra_sugerido")
-        .update({
-          cancelado_em: nowIso,
-          cancelado_por: who,
-          status: "cancelado" as const,
-          justificativa_cancelamento: "Rejeitado inline no Cockpit",
-        })
-        .eq("id", row.id);
-      if (error) throw error;
+      // Rejeição: RPC com guard de status (nunca UPDATE cru — cancelava pedido já disparado, M-02).
+      const r = await rejeitarPedidos([row], { usuario: who, justificativa: "Rejeitado inline no Cockpit", via: "individual" });
+      const motivo = r.falhas[0]?.motivo ?? r.pulados[0]?.motivo ?? null;
       await logAudit({
         userId: user?.id ?? null,
         action: "Rejeição inline",
-        result: "Sucesso",
+        result: motivo ? `Erro: ${motivo}` : "Sucesso",
         metadata: { id: row.id, qty },
       });
-      toast.success("Pedido rejeitado");
+      if (motivo) toast.error(`Não rejeitado: ${motivo}`);
+      else toast.success("Pedido rejeitado");
       onChanged();
     } catch (err) {
       const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
@@ -225,7 +218,7 @@ export function PedidoRow({
                   size="icon"
                   variant="ghost"
                   className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                  disabled={isRejected || busy !== null}
+                  disabled={isRejected || busy !== null || !podeCancelarPeloHumano(row.status)}
                   onClick={() => act("reject")}
                   title="Rejeitar"
                 >

@@ -17,7 +17,9 @@ export const statusMeta: Record<string, { label: string; variant: 'default' | 's
   disparado_simulado: { label: 'Disparo simulado', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
   falha_envio: { label: 'Falha no envio', variant: 'destructive' },
   cancelado: { label: 'Cancelado', variant: 'outline' },
-  cancelado_humano: { label: 'Cancelado (vazio)', variant: 'outline' },
+  // Vocabulário da RPC cancelar_pedido_sugerido: Cancelar da lista, remoção de todos os itens e,
+  // desde o M-02, a rejeição do Cockpit — humano, não "vazio" (rótulo antigo, Codex P2).
+  cancelado_humano: { label: 'Cancelado (humano)', variant: 'outline' },
   expirado_sem_aprovacao: { label: 'Expirado sem aprovação', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
   // PR5: pedido pai de um split — não tem mais itens próprios, foi dividido em filhos.
   split_em_filhos: { label: 'Dividido', variant: 'secondary', className: 'bg-status-purple-bg text-status-purple-foreground border-status-purple/30' },
