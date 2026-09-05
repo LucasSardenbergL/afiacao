@@ -250,6 +250,22 @@ jobs:
       - name: Sonda de versão — fingerprint da fonte bate com o mapa servido
         run: bun run sonda:fingerprint
 
+      # INFORMATIVO, não gate — e a diferença é o desenho, não preguiça. Os dois passos acima
+      # deixam o autor CEGO para a consequência da própria mudança: quem muda `_shared/x.ts` vê o
+      # `sonda:bump` verde (exclui `_shared/` de propósito) e o `--write` regenerar o mapa em
+      # silêncio, e nunca fica sabendo QUAIS edges tiveram o `fonte` alterado nem se alguma delas
+      # merecia bump. Medido em 11 dias (2026-09-05): 66 mudanças de `fonte`, 22 pedidos de deploy
+      # só por fan-out sem a edge mudar, 18 de um único PR (#2132). A decisão P1/P2
+      # (`scripts/lib/pendencias-deploy.ts`) era tomada DEPOIS, por outra sessão.
+      # Este passo imprime, uma linha por edge, quem virou SEM_BUMP (→ DIVERGE_P2, leva agrupada)
+      # e quem bumpou (P1) — para o autor decidir ALI. Nunca reprova: exit 0 com achados, 2 só por
+      # mecânica; `continue-on-error` porque aviso que grita 12× por PR treina a ignorar (a mesma
+      # medição que tirou `_shared/` do `sonda:bump`). `pull_request`-only: precisa da fatia.
+      - name: Sonda de versão — fan-out de _shared/ na fatia (informativo, nunca reprova)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: bun run sonda:fanout
+
       # O terceiro buraco, e o mais silencioso: os dois gates acima têm o MESMO universo — as
       # edges JÁ instrumentadas. Quando o universo é lista derivada de artefato opt-in, quem nunca
       # entrou não reprova: SOME. Medido (2026-08-28): a `analytics-outbox-drain` nasceu no #2035

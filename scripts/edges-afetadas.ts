@@ -79,7 +79,7 @@ export function arquivosAlterados(repo: string, base: string, head: string): str
 }
 
 /** Extrai `supabase/functions/` da REV para um diretório temporário. NUNCA lê a árvore de trabalho. */
-function materializar(repo: string, rev: string): string {
+export function materializar(repo: string, rev: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'edges-afetadas-'));
   try {
     const tar = execFileSync('git', ['-C', repo, 'archive', rev, RAIZ_EDGES], {

@@ -21,6 +21,11 @@
  * fan-out é de graça — e é CORRETO: os 12 bundles mudaram mesmo. É a diferença entre pedir
  * disciplina e derivar a identidade do conteúdo.
  *
+ * ⚠️ De graça para o CI — não para o founder: cada `fonte` que muda é um deploy a pedir (medido em
+ * 2026-09-05: 22 pedidos em 11 dias só por fan-out, 18 num único PR). Quem mostra isso ao AUTOR,
+ * no PR, é o irmão informativo `scripts/sonda-fan-out.ts` (`bun run sonda:fanout`) — uma linha por
+ * edge, BUMP/SEM_BUMP — para ele decidir ali se alguma merece `VERSAO` (P1) em vez de virar P2.
+ *
  * ⚠️ **Isto só vale porque o fingerprint é SERVIDO.** Um fingerprint que só existe no repo é
  * escrituração: com `VERSAO=X` em prod e o repo dizendo X↔F1 enquanto o HEAD está em F2, não dá
  * para saber se prod tem F1 (deploy antes da mudança de `_shared/`) ou F2 (deploy depois, sem bump).
@@ -239,7 +244,8 @@ export function main(argv: string[]): number {
     console.error(
       '\nConserto: `bun run sonda:fingerprint -- --write` e commite o mapa.\n' +
         'Se a mudança foi de COMPORTAMENTO, bumpe também o `VERSAO` da(s) edge(s) — o fingerprint\n' +
-        'diz QUE a fonte mudou, o `VERSAO` diz O QUE mudou, e a sonda serve os dois.',
+        'diz QUE a fonte mudou, o `VERSAO` diz O QUE mudou, e a sonda serve os dois.\n' +
+        'Quais edges mudaram por `_shared/` nesta fatia, e quais bumparam: `bun run sonda:fanout` (informativo).',
     );
     return 1;
   }
