@@ -86,7 +86,7 @@ export function casarLinhasComItens(linhas: LinhaPortal[], itens: ItemPedido[]):
 }
 
 export interface CustoUpdate { item_id: number; preco_unitario: number; valor_linha: number; }
-export function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
 
 export function derivarCustos(res: ResultadoMatch): { updates: CustoUpdate[]; pulados: { sku_codigo_omie: string; motivo: string }[] } {
   const updates: CustoUpdate[] = [];
