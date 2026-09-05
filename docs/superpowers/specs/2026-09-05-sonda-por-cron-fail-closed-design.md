@@ -201,6 +201,14 @@ Harness PG17 (`db/test-deploy-sonda-cron.sh`, padrão de `db/test-deploy-atestac
 - `Deno.serve`, `Deno.env.get` e `globalThis.fetch` aceitam reatribuição antes do `import()` dinâmico: o handler é capturado, a env é a de teste, o `fetch` conta e lança — sem `--allow-net`.
 - Bundle simulado `OPTIONS → gate → createClient → fetch`: o request sem credencial devolveu **401 com 0 efeitos** e o controle positivo registrou **2 efeitos + 1 fetch**.
 - Prod: `OPTIONS` chega à function e o **corpo** volta pelo gateway (HTTP 200, `ok`).
+- **Os contraexemplos do Codex, executados de verdade** (bundles materializados por `git archive`, import map gerado dos remotos do closure — `https://deno.land/std@0.190.0/http/server.ts`, `https://esm.sh/@supabase/supabase-js@2[.49.1]`, `npm:resend@2.0.0` — e o runner do §5 em forma de spike):
+
+  | bundle | (a) `OPTIONS` do relé | (b) preflight | (c) `POST {}` **sem credencial** | (d) `POST {}` + `x-cron-secret` |
+  |---|---|---|---|---|
+  | `monthly-report@ef08dddd2` (2026-02-21, sem gate) | 200, sem `probe`, **0 efeitos, 0 fetch** | 200, **0 efeitos** | 200 `{"success":true,…}`, **2 efeitos** (`client.from().select`) | idem, 2 efeitos |
+  | `calculate-scores@45a80118b` (2026-03-02, sem gate) | 200, sem `probe`, **0 efeitos, 0 fetch** | 200, **0 efeitos** | 200, **11 efeitos** (`from/select/range/in…`) | idem, 11 efeitos |
+
+  É a tese de v3 medida onde a v1 morria: o `OPTIONS` é inerte no bundle que **não autentica nada**, e o contador enxerga o fluxo real desse mesmo bundle (controle positivo sem credencial alguma — a classe "sem gate" fica registrada, não suposta).
 
 Gates de CI que a entrega acrescenta ou toca: `test:sonda-rollback` (novo, blocking), `sonda:cron-prova` (novo, blocking: G1–G4), `test:edges` (testes de `_shared/sonda-cron.ts` e do relé; gate de contrato aprende o ramo no bloco `OPTIONS`), vitest (gates de texto da migration, do relé e do CLI), `db/test-deploy-sonda-cron.sh` (local, PG17), `sonda:bump` + `sonda:fingerprint -- --write`, `manifesto` (sem arquivo novo em `src/`).
 
