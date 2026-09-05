@@ -134,12 +134,17 @@ describe('rejeitarPedidos — decide pelo status RELIDO do banco e passa pela RP
     expect(r.rejeitados).toEqual([9]);
   });
 
-  it('resposta que não afirma `status:"ok"` NÃO conta como rejeitado (ausência de sinal ≠ sucesso)', async () => {
-    statusNoBanco = { 9: 'pendente_aprovacao', 10: 'pendente_aprovacao' };
-    mockedRpc.mockResolvedValueOnce({ data: null, error: null } as never).mockResolvedValueOnce({ data: 'ok', error: null } as never);
-    const r = await rejeitarPedidos([{ id: 9, status: 'pendente_aprovacao' }, { id: 10, status: 'pendente_aprovacao' }], lote);
+  it('resposta que não afirma `status:"ok"` NÃO conta como rejeitado (ausência de sinal ≠ sucesso) — inclusive um OBJETO sem o ok', async () => {
+    statusNoBanco = { 9: 'pendente_aprovacao', 10: 'pendente_aprovacao', 11: 'pendente_aprovacao' };
+    mockedRpc
+      .mockResolvedValueOnce({ data: null, error: null } as never)
+      .mockResolvedValueOnce({ data: 'ok', error: null } as never)
+      // a falsificação pegou: sem este caso, `confirmouOk` sabotado para "qualquer objeto" ficava verde
+      .mockResolvedValueOnce({ data: { pedido_id: 11 }, error: null } as never);
+    const r = await rejeitarPedidos([9, 10, 11].map((id) => ({ id, status: 'pendente_aprovacao' })), lote);
     expect(r.rejeitados).toEqual([]);
-    expect(r.falhas.map((f) => f.id)).toEqual([9, 10]);
+    expect(r.falhas.map((f) => f.id)).toEqual([9, 10, 11]);
+    expect(r.falhas[2].motivo).toMatch(/sem status ok/);
   });
 });
 
