@@ -137,3 +137,55 @@ Esta é a variante em que a falsificação roda **concorrente** ao commit, e ela
   `git diff HEAD --stat` **vazio** — e reconfira `git status --porcelain` DEPOIS de cada suíte, para
   provar que nada mutou a árvore durante a corrida. Suíte verde sobre um working tree que diverge do
   commit é medição do artefato errado: a família "evidência positiva do objeto ERRADO".
+
+## 10. ⚠️ O ponto cego foi CORRIGIDO em doc e ficou de pé no código por 4 dias
+
+O #2103 nomeou este documento inteiro: "o filtro `probe` da §13.3 só via a sonda ATIVA — o eco
+passivo é a via maior, 4 → 8 edges". Foi um commit de **docs**. A query de
+`scripts/pendencias-deploy.ts` continuou exigindo `probe:true`.
+
+O custo veio em 2026-08-31 e de novo em 2026-09-04: a `analytics-outbox-drain` — cron de 5 em 5
+minutos, **72 respostas na janela**, `versao`/`edge`/`fonte` completos e `fonte` idêntico ao mapa
+commitado — saía classificada como `⚪ sem sonda na janela (ausência de dado)`. A cobertura caía
+abaixo do piso, o script devolvia exit 1, e nasceu um chip inteiro de verificação de deploy sobre
+uma edge que já estava provada no ar. O dado estava lá o tempo todo; quem estava cego era a query.
+
+A regra: **doc não filtra linha.** Quando o achado é sobre um PREDICADO — uma query, um gate, um
+`if` —, o resíduo durável é o predicado mudado com teste que falsifique; a nota é o acompanhamento,
+não a entrega. Um documento que descreve o próprio ponto cego e não o fecha deixa o instrumento
+exatamente tão cego quanto antes, e agora com a aparência de resolvido — que é pior, porque a
+próxima sessão lê o doc, reconhece o problema e segue em frente.
+
+Medido na correção (2026-09-04, mesma janela de 6h, `psql-ro`): a query antiga via **2** edges, a
+nova vê **3**; das 76 linhas com corpo de edge instrumentada, **72 eram eco passivo** e ~4 sonda
+ativa. E o teto estrutural é maior que o de uma janela: **6 das 40 edges do mapa** plantam
+`{...body, versao, edge, fonte}` em TODA resposta (`analytics-outbox-drain`, `omie-sync-sku-items`,
+`omie-sync-ctes-recebidos`, `omie-sync-nfes-recebidas`, `omie-sync-pedidos-compra`,
+`omie-sync-vendas-items`) e eram 100% invisíveis sem alguém lembrar de colar a sonda.
+
+### 10.1 ⚠️ A falsificação por `sed` no ARQUIVO acertou o COMENTÁRIO, e o guard aprovou
+
+Cometido nesta entrega. Para provar que o gate do vitest era carga, sabotei o SQL com
+
+```
+perl -0pi -e "s/NOT \(r\.c \? 'probe'\)/(r.c ->> 'probe') <> 'true'/" scripts/pendencias-deploy.ts
+```
+
+e o guard anti-falsificação-vazia (`git diff --quiet` → "o alvo mudou?") **passou**: o arquivo
+tinha mudado mesmo. Só que a primeira ocorrência daquele texto no arquivo não é o SQL — é o
+comentário que **cita o SQL** para explicar por que `<> 'true'` seria NULL-blind. O `perl` reescreveu
+a prosa e deixou a query intacta. A suíte ficou verde, e a leitura natural ("gate frouxo") estava
+errada: o gate nunca tinha sido testado.
+
+O que torna isto provável e não exótico é o estilo desta casa: os comentários **citam o código
+verbatim**, então todo padrão que casa a linha casa também o parágrafo que a descreve — e o
+parágrafo vem ANTES no arquivo.
+
+- **Sabote o ALVO EXTRAÍDO, não o arquivo que o contém.** É o que
+  `db/test-pendencias-deploy-eco-passivo.sh` faz: importa `SQL` do script para um `.sql` sem
+  comentário nenhum e sabota ali — imune por construção.
+- Quando a edição tiver de ser no arquivo, **ancore na região do código** (recorte entre
+  `export const SQL = \`` e `` `.trim(); ``) e **falhe se o padrão não casar DENTRO dela**.
+- **"O arquivo mudou" é guard fraco.** O guard forte é "**o alvo** mudou": `cmp` sobre o artefato
+  extraído, ou substituição ancorada que sai não-zero quando não casa. Família
+  `evidencia-positiva-shell.md`: sinal colhido do objeto errado.
