@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // Teto anti-runaway do total DECLARADO pelo Omie (o teto de LEITURA por rodada continua
 // maxPages=3, deliberado: cron horário com MAX_DETAIL_CALLS=1 — amostra retomável, não truncagem).
@@ -159,6 +160,22 @@ Deno.serve(async (req) => {
   {
     const __auth = await authorizeCronOrStaff(req);
     if (!__auth.ok) return __auth.response;
+  }
+
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+  // sem custo. O `authorizeCronOrStaff` acima aceita o `x-cron-secret` do SQL Editor ⇒ sem gate
+  // próprio. Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // ⚠️ Esta edge NÃO lia o corpo: no bundle pré-sensor, `{"probe":true}` caía direto no laço de
+  // sync de todas as credenciais. A leitura abaixo é ADITIVA (nenhum outro ponto do handler
+  // consome `req`), e o `.catch(() => ({}))` com o guard de método preserva o caminho do cron, que
+  // chama sem corpo. Daqui pra frente a edge insere `nfe_recebimentos` e, em escrita SEPARADA,
+  // `nfe_recebimento_itens` — e a retentativa PULA a NF que ficou só com cabeçalho.
+  const corpoBruto: unknown = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonResponse({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
   }
 
   const supabase = createClient(

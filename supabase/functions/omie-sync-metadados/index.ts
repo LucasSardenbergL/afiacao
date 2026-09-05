@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 const PAGE_SIZE = 100;
@@ -219,20 +220,43 @@ Deno.serve(async (req) => {
   const auth = authorizeCron(req);
   if (!auth.ok) return auth.response;
 
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+  // sem custo. O `authorizeCron` acima aceita exatamente o `x-cron-secret` do SQL Editor ⇒ sem gate
+  // próprio. O corpo teve de SUBIR para cá (req.json() não se consome duas vezes) e é reaproveitado
+  // abaixo. Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // ⚠️ Sondar o bundle PRÉ-sensor aqui é CARO: sem `accounts` no corpo o default é as DUAS contas,
+  // então `{"probe":true}` sincroniza o catálogo inteiro e ainda carimba `sync_state` — o run
+  // parcial vira "fresco" e apaga o sinal de que foi parcial.
+  let corpoBruto: { accounts?: OmieAccount[] } = {};
+  try {
+    corpoBruto = await req.json();
+  } catch (_e) {
+    // body opcional
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   try {
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    let body: { accounts?: OmieAccount[] } = {};
-    try {
-      body = await req.json();
-    } catch (_e) {
-      // body opcional
-    }
-    const accounts: OmieAccount[] = body.accounts && body.accounts.length > 0
-      ? body.accounts
+    // Já parseado acima (para a sonda) — o `catch` que engolia corpo inválido subiu junto.
+    const accounts: OmieAccount[] = corpoBruto.accounts && corpoBruto.accounts.length > 0
+      ? corpoBruto.accounts
       : ["vendas", "colacor_vendas"];
 
     const results = [];
