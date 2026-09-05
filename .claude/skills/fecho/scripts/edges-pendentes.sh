@@ -162,8 +162,10 @@ if [ "$1" = "--desde" ]; then
       echo "   AMPLIADA (superconjunto seguro), não cega — cada alvo segue classificado abaixo."
     fi
     if [ ! -s "$tmp/alvos" ]; then
-      echo "⚠️ \`_shared/\` mudou na janela e NENHUM fingerprint mudou. Ou a mudança não entra em"
-      echo "   bundle nenhum, ou o mapa não foi regenerado no merge (\`bun run sonda:fingerprint\`)."
+      echo "⚠️ \`_shared/\` mudou na janela e NENHUMA edge saiu — nem pelo fingerprint (via a) nem"
+      echo "   pelo grafo de imports (via c), que enxerga TODA pasta com \`index.ts\`. Ou a mudança"
+      echo "   não entra em bundle nenhum (arquivo só de teste, órfão), ou o mapa não foi regenerado"
+      echo "   no merge (\`bun run sonda:fingerprint\`)."
       echo "   Confira antes de concluir que não há deploy pendente."
     fi
   fi
