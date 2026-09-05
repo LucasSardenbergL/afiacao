@@ -96,6 +96,11 @@ export function useSkuMapeamento() {
     mutationFn: async (payload: typeof EMPTY_FORM & { id?: number }) => {
       const { id, ...rest } = payload;
       if (id) {
+        // fator_conversao = unidades do PORTAL por unidade do Omie; ≤0/NaN faria a edge abortar o pedido (fail-closed).
+        if (!(Number.isFinite(Number(form.fator_conversao)) && Number(form.fator_conversao) > 0)) {
+          toast.error('Fator de conversão tem de ser > 0 (ex.: 0,2 = Omie em litro, portal em balde de 5 L)');
+          return;
+        }
         const { error } = await supabase
           .from('sku_fornecedor_externo')
           .update({ ...rest, atualizado_em: new Date().toISOString() })

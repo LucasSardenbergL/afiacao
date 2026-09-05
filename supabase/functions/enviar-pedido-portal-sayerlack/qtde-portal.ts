@@ -29,3 +29,15 @@ export function qtdePortal(qtdeFinal: number, fator: number, sku = "?"): number 
   if (!Number.isFinite(q)) throw new FatorConversaoInvalidoError(`qtde_final=${String(qtdeFinal)}`, sku);
   return Math.max(1, Math.ceil(round6(q * fator)));
 }
+
+// Inverso: quantas unidades do OMIE a compra FÍSICA representa (8 BB × 5 L = 40 L). É o que `qtde_final`
+// tem de passar a valer ANTES de qualquer efeito externo (Codex P0, 2026-09-04): a captura de custo do
+// portal faz `total ÷ qtde_final` — com 36 L no item e 8 BB no portal, o preço/L sai inflado e o Omie
+// recebe 36 × preço falso. Portal e Omie têm de enxergar a MESMA compra: 40 L ↔ 8 BB.
+export function qtdeFisicaOmie(qtdePortalInteira: number, fator: number, sku = "?"): number {
+  if (!(Number.isFinite(fator) && fator > 0)) throw new FatorConversaoInvalidoError(fator, sku);
+  if (!(Number.isInteger(qtdePortalInteira) && qtdePortalInteira >= 1)) {
+    throw new FatorConversaoInvalidoError(`qtde_portal=${String(qtdePortalInteira)}`, sku);
+  }
+  return round6(qtdePortalInteira / fator);
+}

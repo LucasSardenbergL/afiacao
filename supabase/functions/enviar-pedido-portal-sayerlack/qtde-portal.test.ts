@@ -1,5 +1,5 @@
 // Testa a conversão PURA Omie→portal (qtdePortal). Rodar: deno test supabase/functions/enviar-pedido-portal-sayerlack/
-import { FatorConversaoInvalidoError, qtdePortal } from "./qtde-portal.ts";
+import { FatorConversaoInvalidoError, qtdeFisicaOmie, qtdePortal } from "./qtde-portal.ts";
 
 // Asserts LOCAIS de propósito (sem jsr:@std/assert): `deno test --no-remote` roda no `validate` do CI.
 function assertEquals(actual: unknown, expected: unknown, msg: string) {
@@ -53,4 +53,23 @@ Deno.test("fail-closed: fator inválido lança a marca do ramo (nunca 'NaN' no i
   assertLancaFator(() => qtdePortal(36, Number.NaN), "fator NaN");
   assertLancaFator(() => qtdePortal(36, Number.POSITIVE_INFINITY), "fator Infinity");
   assertLancaFator(() => qtdePortal(Number.NaN, 0.2), "qtde NaN");
+  // Ramo da RPC `envio_portal_itens_mapeados` (hoje inexistente em prod): se um dia devolver linha SEM fator,
+  // `undefined` cai aqui — abortar, nunca assumir 1 (Codex P1).
+  assertLancaFator(() => qtdePortal(36, undefined as unknown as number), "fator undefined (RPC futura sem coluna)");
+});
+
+Deno.test("qtdeFisicaOmie: portal e Omie enxergam a MESMA compra (Codex P0)", () => {
+  assertEquals(qtdeFisicaOmie(8, 0.2), 40, "8 BB = 40 L");
+  assertEquals(qtdeFisicaOmie(7, 0.2), 35, "7 BB = 35 L");
+  assertEquals(qtdeFisicaOmie(4, 1), 4, "fator 1 = identidade");
+  assertEquals(qtdeFisicaOmie(5, 1 / 0.81), 4.05, "5 quartinhos-base = 4,05 L (round6)");
+  assertEquals(qtdeFisicaOmie(3, 1 / 3.6), 10.8, "3 galões = 10,8 L (round6)");
+  // ida-e-volta: normalizar e reconverter não muda o nº de embalagens (36 L → 8 BB → 40 L → 8 BB)
+  for (const litros of [1, 36, 37, 40, 41, 99]) {
+    const bb = qtdePortal(litros, 0.2);
+    assertEquals(qtdePortal(qtdeFisicaOmie(bb, 0.2), 0.2), bb, `ida-e-volta ${litros} L`);
+  }
+  assertLancaFator(() => qtdeFisicaOmie(8, 0), "fator 0");
+  assertLancaFator(() => qtdeFisicaOmie(7.2, 0.2), "qtde_portal fracionária (nunca chega aqui)");
+  assertLancaFator(() => qtdeFisicaOmie(0, 0.2), "qtde_portal 0");
 });

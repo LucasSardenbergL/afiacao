@@ -8,7 +8,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classificarPosLogin, decidirAlertaPortal, ehFalhaSistemicaDoPortal } from "../_shared/sayerlack-pos-login.ts";
-import { FatorConversaoInvalidoError, qtdePortal } from "./qtde-portal.ts";
+import { FatorConversaoInvalidoError, qtdeFisicaOmie, qtdePortal } from "./qtde-portal.ts";
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 
 const corsHeaders = {
@@ -1907,6 +1907,41 @@ async function processarPedido(
     console.log(`[envio-portal] Pedido #${pedido.id}: falha fator_conversao inválido (${e.sku})`);
     result.duracao_ms = Date.now() - t0;
     return result;
+  }
+
+  // 3b. NORMALIZAR `qtde_final` à compra FÍSICA (Codex P0, 2026-09-04). Com fator ≠ 1 o portal compra
+  // ceil(q×f) embalagens — na unidade do Omie isso é qtde_portal ÷ fator (36 L → 8 BB → 40 L). Se o item
+  // ficasse em 36, a captura de custo lá embaixo (`total ÷ qtde_final`) inflaria o preço/L e o
+  // `disparar-pedidos-aprovados` registraria no Omie 36 × preço falso. Persistido AQUI, antes de qualquer
+  // efeito externo: é a fronteira que TODA via cruza (motor, edição humana, promo, cold-start).
+  // `qtde_sugerida` fica intacta como rastro do que o motor pediu.
+  {
+    const normalizados: Array<{ item_id: number; de: number; para: number; preco: number }> = [];
+    for (let k = 0; k < itensList.length; k++) {
+      const it = itensList[k];
+      const fisica = qtdeFisicaOmie(itemsPortal[k].qtde, it.fator_conversao, it.sku_codigo_omie);
+      if (Math.abs(fisica - it.qtde_final) <= 1e-6) continue;
+      normalizados.push({ item_id: it.item_id, de: it.qtde_final, para: fisica, preco: it.preco_atual ?? 0 });
+      it.qtde_final = fisica;
+    }
+    for (const n of normalizados) {
+      await escritaCritica(
+        `pedido_compra_item.update(qtde_final ${n.de}→${n.para} item=${n.item_id})`,
+        supabase.from("pedido_compra_item").update({
+          qtde_final: n.para,
+          // [PRECO-AUSENTE] sem preço, valor_linha segue NULL (nunca fabricar 0).
+          valor_linha: n.preco > 0 ? round2(n.para * n.preco) : null,
+        }).eq("id", n.item_id),
+      );
+    }
+    if (normalizados.length > 0) {
+      const novoTotal = round2(itensList.reduce((sum, i) => sum + i.qtde_final * (i.preco_atual ?? 0), 0));
+      await escritaCritica(
+        "pedido_compra_sugerido.update(valor_total pós-normalização de embalagem)",
+        supabase.from("pedido_compra_sugerido").update({ valor_total: novoTotal }).eq("id", pedido.id),
+      );
+      console.log(`[envio-portal] Pedido #${pedido.id}: qtde_final normalizada à embalagem em ${normalizados.length} item(ns)`, JSON.stringify(normalizados));
+    }
   }
 
   // 4. Marcar como enviando
