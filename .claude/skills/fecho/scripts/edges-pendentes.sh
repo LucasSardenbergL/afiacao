@@ -134,15 +134,58 @@ if [ "$1" = "--desde" ]; then
   desde="${2:-}"
   [ -n "$desde" ] || { echo "uso: edges-pendentes.sh --desde \"<git-since>\""; exit 3; }
 
-  # aceita DATA ("3 hours ago", "2026-08-28 14:00") ou REVISÃO (o SHA do início da sessão, que é
-  # o dado mais preciso que o /fecho tem à mão). Revisão primeiro: um SHA nunca é data válida.
+  # aceita DATA ("3 hours ago", "2026-08-28 14:00 UTC") ou REVISÃO (o SHA do início da sessão, que
+  # é o dado mais preciso que o /fecho tem à mão). Revisão primeiro: um SHA nunca é data válida.
   base="$(git -C "$RAIZ" rev-parse --verify --quiet "${desde}^{commit}" 2>/dev/null)"
-  [ -n "$base" ] || base="$(git -C "$RAIZ" rev-list -1 --before="$desde" "$REF" 2>/dev/null)"
+
+  # 🔴 GUARD DE FUSO — data absoluta SEM fuso é RECUSADA (2026-09-05). Aqui o `--desde` cai em
+  # `git rev-list --before=`, e o git lê data nua como hora **LOCAL**; os scripts irmãos
+  # (`verify-edge-eco.sh`, `verify-edge-escrita.sh`) mandam o MESMO flag para o **psql**, cuja
+  # sessão é UTC — e a doc dos dois prescreve literalmente `--desde '<timestamp do merge, UTC>'`.
+  # Quem copia um timestamp UTC (o caminho ESPERADO neste repo) acerta em dois scripts e erra
+  # neste, deslocado por um offset inteiro e sem nenhum sinal. Medido em GMT-3:
+  #   --desde "2026-09-05 17:34"        -> base a10ef2383  (= o próprio merge das 19:40Z, EXCLUÍDO)
+  #   --desde "2026-09-05 17:34 UTC"    -> base ea67a6f65  (janela correta, 2 edges)
+  #   --desde "2026-09-05 17:34 -0300"  -> base a10ef2383  (prova de que data nua == local)
+  # A 1ª devolveu `✅ nenhuma edge na janela` com exit 0 sobre uma janela que tinha DUAS edges.
+  # Num script que APAGA pendência isso não gera um chip a mais: gera ZERO chips, em verde — a
+  # mesma "ausência fabricada" do ramo PRE_SONDA_FONTE (#2156), entrando pela porta da JANELA em
+  # vez da porta do CAMPO. Por isso RECUSA, e não normalização silenciosa para UTC: normalizar
+  # acertaria a intenção usual e mentiria para quem realmente quis local, trocando um erro visível
+  # por um invisível. SHA e data RELATIVA não passam por aqui — não são ambíguos.
+  if [ -z "$base" ]; then
+    case "$desde" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*|[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]*)
+        case "$desde" in
+          *Z|*z|*UTC*|*utc*|*GMT*|*gmt*|*[+-][0-9][0-9]:[0-9][0-9]|*[+-][0-9][0-9][0-9][0-9]) ;;
+          *)
+            # marcador ASCII, caixa fixa: o arnês roda nos DOIS locales (#1483) e casar "AMBÍGUO"
+            # (com acento) seria casar a codificação, não o ramo.
+            echo "⛔ edges-pendentes: DESDE_SEM_FUSO — --desde \"$desde\" é ambíguo (data absoluta sem fuso)."
+            echo "   O git lê isso como hora LOCAL (offset $(date +%z)); a doc deste repo escreve"
+            echo "   timestamp em UTC. As duas leituras diferem por um offset inteiro e podem pular"
+            echo "   commits da janela — e este script APAGA pendência, então janela errada não"
+            echo "   gera chip a mais: suprime TODOS, em verde."
+            echo "   Diga o fuso:  --desde \"$desde UTC\"   (ou \"$desde $(date +%z)\" se quis local)"
+            exit 3
+            ;;
+        esac
+        ;;
+    esac
+    base="$(git -C "$RAIZ" rev-list -1 --before="$desde" "$REF" 2>/dev/null)"
+  fi
+
   if [ -z "$base" ]; then
     echo "⚠️ edges-pendentes: não achei o commit-base de $REF antes de \"$desde\""
     echo "   (git fetch feito? a data é parseável pelo git, ou o SHA existe?) — exit 2"
     exit 2
   fi
+
+  # A janela EFETIVAMENTE usada, sempre impressa. O guard acima só alcança a forma ambígua; SHA e
+  # data relativa continuam podendo resolver para um base surpreendente (worktree atrás, REF errada)
+  # — e hoje isso se decidia em silêncio, inclusive no ramo "nenhuma edge na janela", o único que
+  # suprime TUDO. Base impressa = janela auditável na hora em que o veredito é lido.
+  echo "janela: $REF desde $(git -C "$RAIZ" log -1 --format='%h (%cd)' --date=iso-strict "$base" 2>/dev/null) — --desde \"$desde\""
 
   # (a) diff do mapa de fingerprints: pega mudança vinda de _shared/, cega para edge fora do mapa
   git -C "$RAIZ" show "$base:$MAPA_REL" 2>/dev/null \

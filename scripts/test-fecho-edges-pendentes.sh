@@ -394,6 +394,54 @@ MAPA2
   then ok "--desde: janela anterior ao mapa, sem sonda -> SEM_PROVA (fail-closed intacto)"
   else bad "sem sonda devia cair para SEM_PROVA, nunca NO_AR (rc=$rc): ${out:0:140}"; fi
 
+  # 14c. GUARD DE FUSO: data absoluta SEM fuso e AMBIGUA e tem de RECUSAR (2026-09-05). O `--desde`
+  #      deste script vai para `git rev-list --before=`, que le data nua como hora LOCAL; os scripts
+  #      irmaos (verify-edge-eco / verify-edge-escrita) mandam o MESMO flag para o psql, cuja sessao
+  #      e UTC — e a doc dos dois prescreve "timestamp do merge, UTC". Quem copia um timestamp UTC
+  #      acerta em dois e erra neste. Medido em GMT-3: `--desde "2026-09-05 17:34"` resolveu para o
+  #      proprio merge das 19:40Z (excluindo-o) e devolveu `nenhuma edge na janela` com exit 0 sobre
+  #      uma janela de DUAS edges. Num script que APAGA pendencia, janela deslocada nao gera um chip
+  #      a mais: gera ZERO chips, em verde — a "ausencia fabricada" do PRE_SONDA_FONTE (#2156)
+  #      entrando pela porta da JANELA em vez da porta do CAMPO.
+  #      Marcador ASCII de caixa fixa de proposito: a suite roda nos DOIS locales (#1483), e casar
+  #      "AMBIGUO" com acento casaria a codificacao, nao o ramo.
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+         bash "$ALVO" --desde "2026-08-28 14:00" 2>&1)"; rc=$?
+  if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_FUSO' "$out" && ! tem 'nenhuma edge' "$out"
+  then ok "--desde: data sem fuso -> DESDE_SEM_FUSO, exit 3, nunca 'nenhuma edge'"
+  else bad "data sem fuso devia RECUSAR com exit 3 (rc=$rc): ${out:0:140}"; fi
+
+  # o PAR MINIMO e o que da valor ao caso acima: MESMA data, so o sufixo muda. Sem este lado, um
+  # guard que recusasse TUDO passaria no 14c sem guardar coisa nenhuma.
+  for _suf in "UTC" "Z" "-0300" "+00:00"; do
+    case "$_suf" in
+      Z) _d="2026-08-28T14:00:00Z" ;;
+      *) _d="2026-08-28 14:00 $_suf" ;;
+    esac
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -ne 3 ] && ! tem 'DESDE_SEM_FUSO' "$out"
+    then ok "--desde: fuso explicito ($_suf) passa pelo guard"
+    else bad "fuso explicito ($_suf) nao devia ser recusado (rc=$rc): ${out:0:140}"; fi
+  done
+
+  # ...e as formas NAO-absolutas (data relativa, SHA) nunca sao ambiguas: nao podem ser recusadas.
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+         bash "$ALVO" --desde "3 hours ago" 2>&1)"; rc=$?
+  if [ "$rc" -ne 3 ] && ! tem 'DESDE_SEM_FUSO' "$out"
+  then ok "--desde: data RELATIVA nao e ambigua -> passa pelo guard"
+  else bad "data relativa nao devia ser recusada (rc=$rc): ${out:0:140}"; fi
+
+  # 14d. a JANELA EFETIVAMENTE USADA sai impressa. O guard so alcanca a forma ambigua; SHA e data
+  #      relativa ainda podem resolver para um base surpreendente (worktree atras, REF errada), e
+  #      isso se decidia em SILENCIO — inclusive no ramo "nenhuma edge na janela", o unico que
+  #      suprime TUDO. Base impresso = janela auditavel na hora em que o veredito e lido.
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+         FECHO_MAPA_FONTE="" bash "$ALVO" --desde "$(cat "$tmp/base_sha")" 2>&1)"; rc=$?
+  if tem 'janela:' "$out" && tem "$(cut -c1-7 < "$tmp/base_sha")" "$out"
+  then ok "--desde: imprime a janela efetiva (REF + commit-base resolvido)"
+  else bad "janela efetiva devia sair impressa com o base resolvido (rc=$rc): ${out:0:140}"; fi
+
   # 12. guardrail de FORMA do SQL: o stub nao executa SQL, entao o que da para provar aqui e que a
   #     consulta pede a resposta MAIS RECENTE por edge. Sem isso, um deploy no meio da janela deixa
   #     o bundle velho no resultado e ele seria lido como prova (o caso do omie-vendas-sync).
@@ -623,6 +671,19 @@ if [ "${1:-}" = "--falsificar" ]; then
   # (d) a query perde o "mais recente por edge\"
   sabota "SQL sem DISTINCT ON (edge)" \
     's%SELECT DISTINCT ON (edge) edge%SELECT edge%'
+
+  # guard de fuso: as duas sabotagens sao SIMETRICAS de proposito, porque o guard erra dos DOIS
+  # lados e cada lado tem um caso diferente para pegar. Frouxo demais (aceita tudo) devolve o bug
+  # original — janela deslocada suprimindo chip em verde. Apertado demais (recusa tudo) quebraria o
+  # /fecho inteiro, e so o PAR MINIMO do 14c enxerga isso: sem ele, um guard que recusasse toda
+  # data passaria na suite alegando que "guarda".
+  sabota "fuso: sufixo aceitando QUALQUER coisa (guard frouxo, volta o bug)" \
+    '/\*gmt\*/s/.*/          *) ;;/'
+  sabota "fuso: sufixo nao casando NADA (guard apertado, recusa UTC legitimo)" \
+    '/\*gmt\*/s/.*/          __nunca_casa__) ;;/'
+  # e a janela impressa: sem ela o ramo que suprime TUDO volta a decidir em silencio.
+  sabota "janela efetiva deixando de ser impressa" \
+    '/echo "janela:/d'
 
   [ "$falhou" -eq 0 ] && { printf '\n== falsificacao: todas as sabotagens ficaram vermelhas ==\n'; exit 0; }
   printf '\n== falsificacao REPROVOU ==\n'; exit 1
