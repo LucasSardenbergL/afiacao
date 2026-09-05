@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { statusHttpEfetivacao } from "./resposta.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -534,7 +535,8 @@ Deno.serve(async (req) => {
       const falhaOp = async (operacao: string, erro: string) => {
         await persistir("falha_efetivacao", `${operacao}: ${erro}`);
         await registrarTentativa(supabase, { nfe_recebimento_id: nfeRecebimentoId, tentativa, operacao, sucesso: false, erro, omie_status: null });
-        return jsonRes({ success: false, modo: "falha_efetivacao", nfe_recebimento_id: nfeRecebimentoId, numero_nfe: nfe.numero_nfe, erro }, 200);
+        const body = { success: false, modo: "falha_efetivacao", nfe_recebimento_id: nfeRecebimentoId, numero_nfe: nfe.numero_nfe, erro };
+        return jsonRes(body, statusHttpEfetivacao(body));
       };
 
       // ── 1. Consultar ANTES (com a chave como filtro de identidade) ──
@@ -545,7 +547,8 @@ Deno.serve(async (req) => {
       // falha_efetivacao (falso vermelho visto em prod 2026-07-14: diagnóstico + Reconciliar
       // em 4s → REDUNDANT). Preserva o status; o lock libera no finally. (Codex P1)
       if (!cls1.sucesso && /redundante|REDUNDANT/i.test(cls1.erro ?? "")) {
-        return jsonRes({ success: false, modo: "throttle", nfe_recebimento_id: nfeRecebimentoId, numero_nfe: nfe.numero_nfe, erro: "Omie em trégua de consulta (~60s) — tente novamente em instantes" }, 200);
+        const body = { success: false, modo: "throttle", nfe_recebimento_id: nfeRecebimentoId, numero_nfe: nfe.numero_nfe, erro: "Omie em trégua de consulta (~60s) — tente novamente em instantes" };
+        return jsonRes(body, statusHttpEfetivacao(body));
       }
       if (!cls1.sucesso) return await falhaOp("consultar", cls1.erro ?? "erro na consulta");
       const estado = extrairEstadoConsulta(consulta1.data);
@@ -639,7 +642,8 @@ Deno.serve(async (req) => {
       const pararParcial = async () => {
         const status = decidirStatusEfetivacao(flags);
         await persistir(status, resumirErros(falhas));
-        return jsonRes({ success: false, modo: status, nfe_recebimento_id: nfeRecebimentoId, numero_nfe: nfe.numero_nfe, erro: resumirErros(falhas) }, 200);
+        const body = { success: false, modo: status, nfe_recebimento_id: nfeRecebimentoId, numero_nfe: nfe.numero_nfe, erro: resumirErros(falhas) };
+        return jsonRes(body, statusHttpEfetivacao(body));
       };
 
       if (!flags.alterarOk) {
@@ -680,13 +684,15 @@ Deno.serve(async (req) => {
         : resumirErros([...falhas, ...conf.divergencias.map((d) => ({ operacao: "reconsulta", erro: d }))]);
       await persistir(statusFinal, erroFinal);
       console.log(`[omie-nfe-recebimento] NF ${nfe.numero_nfe} → ${statusFinal}.`);
-      return jsonRes({
+      // Transporte carrega o veredito: só `efetivado` sai 200 (M-01). Corpo inalterado.
+      const body = {
         success: statusFinal === "efetivado",
         modo: statusFinal,
         nfe_recebimento_id: nfeRecebimentoId,
         numero_nfe: nfe.numero_nfe,
         divergencias: conf.confirmado ? [] : conf.divergencias,
-      }, 200);
+      };
+      return jsonRes(body, statusHttpEfetivacao(body));
     } finally {
       // libera o lock só se ainda é o MEU (compare-and-clear pelo timestamp gravado — Codex P1.7)
       await supabase.from("nfe_recebimentos")
