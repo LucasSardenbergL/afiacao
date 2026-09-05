@@ -76,6 +76,22 @@ Sinal positivo esperado após o deploy: `fonte='json_total_unico'` nos pedidos d
 `portal_resposta->'scrape_debug'` (headers/idx/amostra) diz qual coluna faltou. **Bundle pré-deploy responde
 sem `captura_custo`** (ausência = versão velha, não "nenhuma captura").
 
+⚠️ **A leitura pela RAIZ do `portal_resposta` é CEGA — e mente "OK" (medido 2026-09-05 19:20Z).** O
+veredito vive em `portal_resposta->'captura_custo'->>'motivo'`; ler `portal_resposta->>'motivo'` (sem o
+salto) devolve **NULL em todo pedido**, inclusive nos cegos. Combinado com a heurística "`valor_total`
+preenchido ⇒ capturou", isso aprova exatamente os casos que a entrega existe para pegar:
+
+| id | `->>'motivo'` (raiz) | `valor_total` | casas | tem `captura_custo`? | veredito REAL |
+|---|---|---|---|---|---|
+| 2459 | NULL | 387,832503 | 6 | sim | **`erro_rpc`** (PGRST202, cego) |
+| 2443 | NULL | 1802,52 | **2** | **não** | nenhum — envio pré-deploy |
+
+O 2443 é o caso letal: passa também no desempate por casas decimais (2 casas ⇒ "veio do portal via
+`round2`"), e mesmo assim **nunca teve captura** — o `1802,52` é coincidência aritmética do valor estimado
+interno (CMC × qtde), não assinatura do fornecedor. **`scale(valor_total)` não discrimina origem.** O
+discriminante é a **presença da chave** `captura_custo` e o par `fonte`/`cego` dentro dela: ausente = versão
+velha; presente com `cego=true` = capturou e recusou-se a gravar; presente com `cego=false` = sinal positivo.
+
 ## Fecho do CAS (2ª fatia, 2026-09-05): a escrita virou UMA RPC transacional
 
 O challenge do Codex apontou dois buracos na escrita da 1ª fatia: (a) escrita **parcial** entre itens
@@ -141,6 +157,33 @@ encerrado. O `cego=true` com `sqlstate_rpc=PGRST202` que ele carrega no `portal_
 histórico do intervalo de deploy**, não alarme vivo — quem varrer o sensor procurando cegueira filtra
 por `enviado_portal_em`, e não trata esta linha como trabalho a fazer.
 
+## Pós-apply: a RPC está em pé e AINDA NÃO FOI EXERCITADA (medido 2026-09-05 19:20Z)
+
+A migration foi colada entre 17:30:09Z e 17:34:01Z e a edge está no ar em `v1.5-custo-portal-rpc-cas`.
+**1h46 depois, ZERO envios ao portal.** O último continua sendo o #2459, de 13:38:14Z — dentro da janela de
+cegueira, e **caso encerrado** (decisão do founder, acima). Provado por duas vias independentes, porque um
+zero só vale com controle positivo:
+
+```
+max(enviado_portal_em) = 2026-09-05 13:38:14+00   -- ANTERIOR ao apply; não depende do filtro estar certo
+filtro enviado_portal_em > '2026-09-05 17:34:01+00' → 0 linhas   (censo: 512 pedidos, 132 já enviados)
+```
+
+⇒ **Isto é ausência de dado, não aprovação.** A RPC nunca recebeu chamada em produção; o
+`fonte='json_total_unico'` com `cego=false` que provaria a entrega **ainda não existe em lugar nenhum**.
+Não adianta esperar: **não há cron que dispare envio ao portal** — o gatilho é o founder enviando um
+pedido. O primeiro envio real é que vira o sinal, e a hora de olhar é logo depois dele.
+
+Duas coisas a saber antes desse primeiro envio:
+
+- **Multi-item ainda não está coberto** até o PR #2194 mergear **e** a edge ser publicada: o `dom_checksum`
+  multiplicava `Preço Venda` (que já é o **total da linha**) por `Qtd UN`, reprovando todo pedido de N itens
+  por `checksum_divergente`. Pedido de 1 item não passa por esse ramo (cai em `json_total_unico`), então um
+  primeiro envio unitário **não** exercita o caminho consertado.
+- **Sinal negativo também é sinal.** Se o primeiro envio vier `motivo='erro_rpc'` com `sqlstate_rpc` nulo ou
+  `42883`/`PGRST202`, não é o portal nem o DOM: é schema cache do PostgREST ou assinatura divergente — a
+  função em si já foi conferida byte-a-byte contra o repo (md5 `fdf607ecb4a5f184c98fba5793e484dc`).
+
 ## Risco residual (chips)
 
 - ~~`jaTemOmie` é snapshot em memória; a invariante "custo só antes do PO Omie" pede CAS no banco~~ →
@@ -149,6 +192,62 @@ por `enviado_portal_em`, e não trata esta linha como trabalho a fazer.
   e o banco fica com o novo. Nesta edge a captura roda ANTES de `registrarPedidoOmieAposPortal` (sequencial);
   a janela só existe com um disparo concorrente por outra via. Fecho seria o `disparar` reler o custo sob o
   mesmo lock — fatia própria.
+
+  **Prompt auto-contido da fatia** (estava só num chip da sessão de 2026-09-05; chip morre com a
+  sessão, então fica aqui — "pendência sem destino não existe" vale também quando o destino é
+  perecível):
+
+  > Contexto: a RPC `public.sayerlack_aplicar_custo_portal` (migration `20260905090000`, aplicada em
+  > prod) grava custo com CAS `omie_pedido_compra_numero IS NULL AND status_envio_portal =
+  > 'sucesso_portal'`. Risco residual: `supabase/functions/disparar-pedidos-aprovados/index.ts` lê
+  > `preco_unitario` (≈l.842) ANTES de criar o PO no Omie (`nValUnit`, ≈l.985) e grava
+  > `omie_pedido_compra_numero` DEPOIS (≈l.1073/1128). Se a RPC gravar nessa janela — só com disparo
+  > concorrente por outra via; nesta edge a captura é sequencial —, o PO nasce com o preço velho.
+  > Tarefa: enumerar TODAS as vias que criam PO Omie a partir de `pedido_compra_sugerido` (money-path
+  > §5), medir em prod (`psql-ro`) se a janela já se materializou, e fechar — o disparo relendo o
+  > custo sob o mesmo row-lock, ou reservando o número do PO antes de chamar o Omie para a RPC
+  > recusar. Prove com `prove-sql-money-path` (PG17, falsificação); migration pelo
+  > `lovable-db-operator` (apply manual). Rode os 5 gates de edge e arme `scripts/pr-watch.sh`.
+  > Leia antes: `CLAUDE.md`, `docs/agent/money-path.md`, `docs/agent/database.md` e este arquivo.
 - Preço do portal é **líquido pré-imposto**; o `preco_unitario` do Omie hoje mistura origens (WP06:
   R$ 172,20 no Omie vs R$ 129,32 líquido no portal). Decisão de produto do #627 mantida; o PO Omie
   passa a nascer com o preço que o fornecedor de fato cobrou.
+
+## Adendo (2026-09-05, noite): o DOM foi lido, e revelou DOIS achados
+
+O primeiro envio com o scrape novo (pedido **#2459**, portal **2126911**) leu a datatable inteira:
+
+```
+headers: Seq · Item · Referência · UN · Cap Emb · Qtd Fat · Qtd UN · Preço Fat · Preço UN ·
+         PreçoOriginal · Prz Ent · % Desconto · Preço Venda
+linha:   10 · "WFBT.6045GL - BASE PU ACAB 604" · L · 3,2400 · 9,7200 · 3 · 43,9060 · 142,2554 ·
+         142,2554 · 5 · 14,9488% · 362,9698
+```
+
+**Achado 1 — `Preço Venda` é o TOTAL DA LINHA, não o preço por embalagem.** A conta fecha exata:
+`142,2554 × 3 × (1 − 14,9488%) = 362,9698`. O `dom_checksum` somava `Preço Venda × Qtd UN`, inflando a
+soma e reprovando **todo** pedido multi-item por `checksum_divergente`. Fail-closed (nunca fabricou
+número), mas com a captura do DOM morta na prática — e invisível, porque pedido de 1 item não passa por
+esse ramo. Corrigido: a soma é `Σ Preço Venda`, e a tolerância passa a depender do **número de linhas**,
+não das quantidades.
+
+**Achado 2 — ABERTO: `data.value` ≠ Σ Preço Venda.** O portal cobrou **374,77** com a linha exibindo
+**362,9698**. Diferença de **R$ 11,80 (3,2510%)**, de natureza não identificada (IPI? encargo? desconto
+aplicado diferente do exibido?). É exatamente o P1-A do challenge do Codex ("`data.value` prova o total
+do pedido, não que ele seja exclusivamente mercadoria"), agora **medido**.
+
+> ⚠️ **Não confunda com os R$ 13,06 do #2190.** São contas diferentes, sobre bases diferentes:
+> os **R$ 13,06** comparam o preço STALE do banco com o que o portal cobrou (`387,832503 − 374,77`) e
+> foram **encerrados por decisão do founder** — a nota fiscal resolve, o pedido não se reprocessa.
+> Os **R$ 11,80** comparam duas leituras do MESMO envio (`374,77 − 362,9698`): o total que o portal
+> cobrou e o total que ele exibiu na linha. Esta segunda é estrutural, vale para todo pedido futuro, e
+> é o motivo de `dom_checksum` reprovar.
+
+Enquanto não for explicado, `dom_checksum` continua reprovando e o resumo carrega `soma_dom`,
+`total_json`, `delta_abs` e `delta_rel` para descobrir se a razão se repete. `json_total_unico`
+(pedido de 1 item) segue usando `data.value`, que é o que o portal cobra.
+
+**Achado 3 — a migration não subiu junto com a edge.** O bundle v1.5 chamava
+`sayerlack_aplicar_custo_portal` antes de a migration ser aplicada: todo envio caía em `erro_rpc`
+(`PGRST202`). Quem contou foi o sensor, no #2459: `fonte: json_total_unico` (o custo **foi** provado),
+`atualizados: 0`, `cego: true`. Primeiro sinal positivo da vida do sensor, e ele acertou o alvo.

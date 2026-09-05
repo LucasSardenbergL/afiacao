@@ -176,6 +176,17 @@ enterra o chip que importava. O script troca isso pela evidência que já existe
 | `PRE_SONDA_FONTE` | respondeu a sonda (200 + eco de `probe`/`versao`) **sem** o campo `fonte` — bundle anterior ao #1998 | sim, e prioritário |
 | `SEM_PROVA` + `SONDA_ANONIMA` | há resposta de sonda na janela **sem eco de slug** — existe e não é atribuível | sim (fail-closed), e o `--request-ids` determina |
 | `SEM_PROVA` | fora do mapa de sondas, sem sonda na janela, ou mecânica quebrada | sim (fail-closed) |
+| `INERTE` | edge **aposentada**: o `index.ts` na REF (`origin/main`) carrega `// EDGE-APOSENTADA:` — o handler responde 410 antes de qualquer lógica, bundle novo e velho se comportam igual | **não** — deploy não muda comportamento; não pedir ao founder |
+
+🪦 **`INERTE` é a única prova que vem do git, não do banco (2026-09-05, `tint-import`).** A edge
+foi aposentada em #1401 (410 `TINT_IMPORT_RETIRED` logo após a auth), mas continua TOCADA por PR
+porque carrega o espelho VERBATIM de `parse-decimal-br.ts` que o `edge-parse-parity.test.ts` exige —
+cada PR do parser (#2184) a punha na janela como `SEM_PROVA`, chip para o founder, por um deploy
+sem efeito. Prova passiva é impossível (fora do mapa) e prova ativa seria teatro. O que existe é o
+marcador DECLARADO, lido da REF e nunca do working tree; o gate `_shared/edge-aposentada-marcador_test.ts`
+exige `status: 410` no mesmo arquivo (marcador em edge viva = vermelho). Contrato de quem marca: a
+aposentadoria JÁ está no ar — o único deploy que importaria é o que a instala.
+Detalhe: `docs/historico/edge-aposentada-inerte-no-fecho.md`.
 
 ⚠️ **`PRE_SONDA_FONTE` é pendência PROVADA, não indeterminada — e nasceu de um falso
 INDETERMINADO.** `criarRespostaSonda` só passou a servir `fonte` no #1998 (~2026-08-25): um bundle

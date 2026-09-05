@@ -396,6 +396,64 @@ MAPA2
      && tem "'#anonimas ' || n" "$sqltxt"
   then ok "SQL conta como anonima so o que NAO ecoa slug nem tem vinculo"
   else bad "contagem de anonimas sem os dois filtros — o aviso apareceria sempre"; fi
+
+  # 15. INERTE: edge APOSENTADA (handler responde 410 antes de qualquer logica) tocada por PR — o
+  #     caso real e a `tint-import`, que carrega o espelho VERBATIM do parse-decimal-br e entra na
+  #     janela a cada PR do parser (#2184), saindo SEM_PROVA/chip por um deploy que NAO muda nada.
+  #     A prova e o marcador DECLARADO `// EDGE-APOSENTADA:` no index.ts da REF. Tres edges numa
+  #     fixture git, e a assercao que importa e a ARVORE lida (lovable-deploy-verify §Passo 3, "o
+  #     closure le a REF"): marcador so no working tree NAO vale; marcador na REF vale mesmo que o
+  #     working tree o tenha perdido.
+  local repo3="$tmp/repo3-${LC_ALL:-x}"
+  if [ ! -d "$repo3" ]; then
+    mkdir -p "$repo3/supabase/functions/_shared" "$repo3/supabase/functions/edge-aposentada" \
+             "$repo3/supabase/functions/edge-marcador-so-no-wt" "$repo3/supabase/functions/edge-marcador-so-na-ref"
+    git -C "$repo3" init -q -b main 2>/dev/null
+    git -C "$repo3" config user.email t@t; git -C "$repo3" config user.name t
+    printf '// EDGE-APOSENTADA: 410 desde sempre\nDeno.serve(() => new Response(null, { status: 410 }));\n' \
+      > "$repo3/supabase/functions/edge-aposentada/index.ts"
+    printf 'Deno.serve(() => new Response("viva"));\n' \
+      > "$repo3/supabase/functions/edge-marcador-so-no-wt/index.ts"
+    printf '// EDGE-APOSENTADA: 410 desde sempre\nDeno.serve(() => new Response(null, { status: 410 }));\n' \
+      > "$repo3/supabase/functions/edge-marcador-so-na-ref/index.ts"
+    cat > "$repo3/supabase/functions/_shared/sonda-fingerprints.ts" <<MAPA3
+export const FONTE_SHA256: Record<string, string> = {
+  "edge-do-shared": "$SHA_NOVO",
+};
+MAPA3
+    git -C "$repo3" add -A >/dev/null; git -C "$repo3" commit -qm base
+    git -C "$repo3" update-ref refs/remotes/origin/main HEAD
+    # working tree DIVERGE da REF nas duas edges de controle, sem commit:
+    printf '// EDGE-APOSENTADA: so aqui, nao mergeado\nDeno.serve(() => new Response("viva"));\n' \
+      > "$repo3/supabase/functions/edge-marcador-so-no-wt/index.ts"
+    printf 'Deno.serve(() => new Response("ressuscitada no wt"));\n' \
+      > "$repo3/supabase/functions/edge-marcador-so-na-ref/index.ts"
+  fi
+
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo3" FECHO_MAPA_FONTE="" \
+         bash "$ALVO" edge-aposentada 2>&1)"; rc=$?
+  if tem 'INERTE' "$out" && tem 'edge-aposentada' "$out" && tem 'founder' "$out" \
+     && [ "$rc" -eq 0 ] && ! tem 'abra chip' "$out"
+  then ok "marcador EDGE-APOSENTADA na REF -> INERTE, exit 0, sem chip, e diz para nao pedir ao founder"
+  else bad "edge aposentada devia dar INERTE/exit 0 sem chip (rc=$rc): ${out:0:120}"; fi
+
+  # 15b. o INERTE nao depende do banco: mecanica quebrada continua nao tendo nada a dizer sobre um
+  #      handler que responde 410 antes de executar — o veredito vem do git, nao da sonda.
+  out="$(STUB_MODO=mudo AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo3" FECHO_MAPA_FONTE="" \
+         bash "$ALVO" edge-aposentada 2>&1)"; rc=$?
+  if tem 'INERTE' "$out" && [ "$rc" -eq 0 ]
+  then ok "INERTE sobrevive a mecanica quebrada (a prova e o git, nao o banco)"
+  else bad "INERTE devia valer com banco mudo (rc=$rc): ${out:0:120}"; fi
+
+  # 15c. a ARVORE: marcador so no working tree NAO absolve; marcador so na REF absolve.
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo3" FECHO_MAPA_FONTE="" \
+         bash "$ALVO" edge-marcador-so-no-wt edge-marcador-so-na-ref 2>&1)"; rc=$?
+  linha_wt="$(printf '%s' "$out" | command grep -- 'edge-marcador-so-no-wt')"
+  linha_ref="$(printf '%s' "$out" | command grep -- 'edge-marcador-so-na-ref')"
+  if tem 'SEM_PROVA' "$linha_wt" && ! tem 'INERTE' "$linha_wt" \
+     && tem 'INERTE' "$linha_ref" && [ "$rc" -eq 1 ]
+  then ok "marcador so no working tree -> SEM_PROVA; so na REF -> INERTE (o closure le a REF)"
+  else bad "marcador devia ser lido da REF e nunca do working tree (rc=$rc): ${out:0:160}"; fi
 }
 
 # ---------------------------------------------------------------- falsificação ---
@@ -513,6 +571,17 @@ if [ "${1:-}" = "--falsificar" ]; then
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "par colado nao chegando ao SQL (CTE vinculo sempre vazia)" \
     's%\[ -n "$vinculo_values" \] && vinculo_sql="VALUES $vinculo_values"%:%'
+
+  # (i) o marcador de aposentadoria deixa de ser lido: a edge aposentada volta a SEM_PROVA/chip —
+  #     o deploy inerte volta a ser pedido ao founder a cada PR do parser (o custo do #2184)
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "marcador EDGE-APOSENTADA ignorado (edge aposentada volta a SEM_PROVA)" \
+    's%| command grep -qF -- "$MARCADOR_APOSENTADA"; then%| false; then%'
+  # (j) o marcador passa a ser lido do WORKING TREE em vez da REF: fatia nao mergeada absolveria e
+  #     marcador mergeado que o wt perdeu voltaria a chip — o furo de arvore do lovable-deploy-verify
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "marcador lido do working tree em vez da REF" \
+    's%git -C "$RAIZ" show "$REF:supabase/functions/$slug/index.ts" 2>/dev/null%cat "$RAIZ/supabase/functions/$slug/index.ts" 2>/dev/null%'
 
   # (d) a query perde o "mais recente por edge\"
   sabota "SQL sem DISTINCT ON (edge)" \
