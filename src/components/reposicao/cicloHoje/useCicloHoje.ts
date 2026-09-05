@@ -8,7 +8,7 @@ import { logAudit } from "@/lib/reposicao";
 import { calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
 import type { PedidoItem } from "@/types/reposicao";
 import { aprovarEDisparar } from "../pedidos/aprovar-disparar";
-import { rejeitarPedidos } from "../pedidos/rejeitar-pedido";
+import { rejeitarPedidos, resumirRejeicao } from "../pedidos/rejeitar-pedido";
 import { EMPRESA } from "../pedidos/shared";
 import { ALL, type CicloFilters } from "./types";
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -148,19 +148,19 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
     try {
       const porId = new Map(filteredItems.map((i) => [i.id, i]));
       const alvo = ids.map((id) => porId.get(id) ?? { id, status: null });
-      const r = await rejeitarPedidos(alvo, { usuario: who, justificativa: "Rejeitado em lote no Cockpit" });
-      const tudoOk = r.pulados.length === 0 && r.falhas.length === 0;
-      const resumo = `${r.rejeitados.length} rejeitado(s), ${r.pulados.length} pulado(s) (já disparado/terminal), ${r.falhas.length} com falha — reveja`;
+      const r = await rejeitarPedidos(alvo, { usuario: who, justificativa: "Rejeitado em lote no Cockpit", via: "lote" });
+      const { texto, nivel } = resumirRejeicao(r);
       await logAudit({
         userId: user?.id ?? null,
         action: "Rejeição em lote",
-        result: tudoOk ? "Sucesso" : `Parcial: ${resumo}`,
-        metadata: { ids, count: ids.length, rejeitados: r.rejeitados, pulados: r.pulados.map((p) => p.id), falhas: r.falhas },
+        result: nivel === "success" ? "Sucesso" : `${r.rejeitados.length === 0 ? "Nada rejeitado" : "Parcial"}: ${texto}`,
+        metadata: { ids, count: ids.length, rejeitados: r.rejeitados, pulados: r.pulados, falhas: r.falhas },
       });
-      if (tudoOk) toast.success(`${r.rejeitados.length} pedido(s) rejeitado(s)`);
-      else if (r.falhas.length > 0) toast.error(resumo);
-      else toast.warning(resumo);
-      setSelected(new Set());
+      if (nivel === "success") toast.success(`${r.rejeitados.length} pedido(s) rejeitado(s)`);
+      else if (nivel === "error") toast.error(`${texto} — reveja`);
+      else toast.warning(`${texto} — reveja`);
+      // Só o que foi rejeitado sai da seleção: pulados/falhas ficam marcados para o operador agir.
+      setSelected(new Set(ids.filter((id) => !r.rejeitados.includes(id))));
       invalidate();
     } catch (err) {
       const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';

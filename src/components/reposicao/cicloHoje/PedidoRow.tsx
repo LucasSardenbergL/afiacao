@@ -91,7 +91,7 @@ export function PedidoRow({
       }
 
       // Rejeição: RPC com guard de status (nunca UPDATE cru — cancelava pedido já disparado, M-02).
-      const r = await rejeitarPedidos([row], { usuario: who, justificativa: "Rejeitado inline no Cockpit" });
+      const r = await rejeitarPedidos([row], { usuario: who, justificativa: "Rejeitado inline no Cockpit", via: "individual" });
       const motivo = r.falhas[0]?.motivo ?? r.pulados[0]?.motivo ?? null;
       await logAudit({
         userId: user?.id ?? null,

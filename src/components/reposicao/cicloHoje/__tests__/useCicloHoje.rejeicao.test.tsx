@@ -23,6 +23,18 @@ import { useCicloHoje } from '../useCicloHoje';
 
 const mockedRpc = vi.mocked(supabase.rpc);
 const mockedFrom = vi.mocked(supabase.from);
+/** Status ATUAL no banco (o helper relê antes de decidir). */
+let statusNoBanco: Record<number, string> = {};
+let updates = 0;
+function builder() {
+  const b = {
+    select: () => b,
+    in: (_c: string, ids: number[]) => Promise.resolve({ data: ids.filter((id) => id in statusNoBanco).map((id) => ({ id, status: statusNoBanco[id] })), error: null }),
+    update: () => { updates += 1; return b; },
+    eq: () => b,
+  };
+  return b;
+}
 
 function item(id: number, status: string, extra: Partial<PedidoItem> = {}): PedidoItem {
   return {
@@ -46,7 +58,8 @@ function montar(filteredItems: PedidoItem[]) {
 
 beforeEach(() => {
   mockedRpc.mockReset();
-  mockedFrom.mockReset();
+  mockedFrom.mockReset().mockImplementation(builder as never);
+  statusNoBanco = {}; updates = 0;
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.warning).mockReset();
   vi.mocked(toast.error).mockReset();
@@ -54,7 +67,8 @@ beforeEach(() => {
 });
 
 describe('useCicloHoje.runBatch("reject") — guard de status na fronteira', () => {
-  it('"selecionar tudo" + rejeitar: só os canceláveis vão à RPC; o disparado é PULADO e o resumo diz isso (não "3 rejeitados")', async () => {
+  it('"selecionar tudo" + rejeitar: só o pendente vai à RPC; disparado e auto-aprovado são PULADOS (status RELIDO do banco) e o resumo diz isso', async () => {
+    statusNoBanco = { 1: 'pendente_aprovacao', 2: 'disparado', 3: 'aprovado_aguardando_disparo' };
     mockedRpc.mockResolvedValue({ data: { status: 'ok' }, error: null } as never);
     const itens = [
       item(1, 'pendente_aprovacao'),
@@ -67,37 +81,41 @@ describe('useCicloHoje.runBatch("reject") — guard de status na fronteira', () 
 
     await act(async () => { await result.current.runBatch('reject'); });
 
-    expect(mockedRpc.mock.calls.map((c) => (c[1] as { p_pedido_id: number }).p_pedido_id)).toEqual([1, 3]);
+    expect(mockedRpc.mock.calls.map((c) => (c[1] as { p_pedido_id: number }).p_pedido_id)).toEqual([1]);
     expect(mockedRpc).toHaveBeenCalledWith('cancelar_pedido_sugerido', expect.objectContaining({
       p_usuario: 'lucas@x.com', p_justificativa: expect.stringContaining('lote'),
     }));
-    // nunca UPDATE cru na tabela
-    expect(mockedFrom).not.toHaveBeenCalled();
-    // o resumo NÃO pode dizer sucesso pleno: 1 pulado
+    // nunca UPDATE cru na tabela (a leitura do status é permitida)
+    expect(updates).toBe(0);
+    // o resumo NÃO pode dizer sucesso pleno: 2 pulados, com o status de cada um
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalledTimes(1);
     const resumo = vi.mocked(toast.warning).mock.calls[0][0] as string;
-    expect(resumo).toMatch(/2 rejeitado/);
-    expect(resumo).toMatch(/1 pulado/);
-    // auditoria carrega a partição
+    expect(resumo).toMatch(/1 rejeitado/);
+    expect(resumo).toMatch(/2 pulado/);
+    expect(resumo).toMatch(/disparado/);
+    // auditoria carrega a partição COM os motivos
     expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'Rejeição em lote',
-      metadata: expect.objectContaining({ rejeitados: [1, 3], pulados: [2] }),
+      metadata: expect.objectContaining({ rejeitados: [1], pulados: [expect.objectContaining({ id: 2, status: 'disparado' }), expect.objectContaining({ id: 3 })] }),
     }));
-    // seleção limpa após o lote
-    expect(result.current.selected.size).toBe(0);
+    // só o rejeitado sai da seleção: os pulados ficam marcados para o operador agir
+    expect([...result.current.selected].sort()).toEqual([2, 3]);
   });
 
-  it('todos canceláveis e RPC ok → toast de sucesso com a contagem real', async () => {
+  it('todos canceláveis e RPC ok → toast de sucesso com a contagem real (e a seleção zera)', async () => {
+    statusNoBanco = { 1: 'pendente_aprovacao', 2: 'bloqueado_guardrail' };
     mockedRpc.mockResolvedValue({ data: { status: 'ok' }, error: null } as never);
     const { result } = montar([item(1, 'pendente_aprovacao'), item(2, 'bloqueado_guardrail')]);
     act(() => result.current.toggleAll());
     await act(async () => { await result.current.runBatch('reject'); });
     expect(toast.success).toHaveBeenCalledWith('2 pedido(s) rejeitado(s)');
     expect(toast.warning).not.toHaveBeenCalled();
+    expect(result.current.selected.size).toBe(0);
   });
 
   it('a RPC recusando um (guard do servidor) → toast de ERRO com "1 com falha" e auditoria com o motivo', async () => {
+    statusNoBanco = { 1: 'pendente_aprovacao', 2: 'pendente_aprovacao' };
     mockedRpc
       .mockResolvedValueOnce({ data: { error: 'pedido já foi disparado em 2026-09-05' }, error: null } as never)
       .mockResolvedValueOnce({ data: { status: 'ok' }, error: null } as never);
@@ -112,7 +130,8 @@ describe('useCicloHoje.runBatch("reject") — guard de status na fronteira', () 
     }));
   });
 
-  it('id selecionado que saiu da lista filtrada NÃO vai à RPC (status desconhecido = não rejeita)', async () => {
+  it('id selecionado que saiu da lista filtrada é decidido pelo status do BANCO, não pelo que o browser mostra', async () => {
+    statusNoBanco = { 1: 'pendente_aprovacao', 2: 'disparado' };
     mockedRpc.mockResolvedValue({ data: { status: 'ok' }, error: null } as never);
     const { result, rerender } = renderHook(
       ({ itens }: { itens: PedidoItem[] }) =>
