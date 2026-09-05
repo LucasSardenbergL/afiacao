@@ -196,6 +196,12 @@ function resolveProductId(
  * bruta infla silenciosamente (ausente ≠ zero, money-path). O cliente que só compra SKU
  * sem custo fica com receita/custo 0 → margem indefinida (não 100%).
  *
+ * Item sem PREÇO utilizável (ausente/0/lixo) é excluído pela MESMA régua e contado em `semPreco`,
+ * para o caller degradar a confiança. Antes (M-04) ele entrava com receita 0 e custo cheio — margem
+ * NEGATIVA fabricada, que rebaixava o health score do cliente. Espelho SQL: `get_customer_margin_summary`
+ * (`computavel` exige preço E custo — mas a RPC de ingestão ainda coalesce ausência para 0 numa coluna
+ * NOT NULL, e 0 é "computável"; fechar a ORIGEM é fatia própria: migration + writers + leitores).
+ *
  * `omieToProductId` mapeia omie_codigo_produto → UUID; sem ele, itens que só têm o código
  * Omie (a maioria absoluta em produção) são descartados.
  */
@@ -203,20 +209,26 @@ export function accumulateMarginFromItems(
   items: MarginItem[],
   costMap: Map<string, number>,
   omieToProductId?: Map<number, string>,
-): { revenue: number; cost: number } {
+): { revenue: number; cost: number; semPreco: number } {
   let revenue = 0;
   let cost = 0;
+  let semPreco = 0;
   for (const item of items) {
     const productId = resolveProductId(item, omieToProductId);
     if (!productId) continue;
     const c = costMap.get(productId);
     if (c == null) continue;
+    // Finitude POSITIVA, como o custo: ausente/0/negativo/NaN/lixo → item FORA (receita E custo).
+    const price = valorMedido(item.unit_price) ?? valorMedido(item.valor_unitario);
+    if (price === null || !(price > 0)) {
+      semPreco += 1;
+      continue;
+    }
     const qty = Number(item.quantity || item.quantidade || 1);
-    const price = Number(item.unit_price || item.valor_unitario || 0);
     revenue += price * qty;
     cost += c * qty;
   }
-  return { revenue, cost };
+  return { revenue, cost, semPreco };
 }
 
 /**
