@@ -99,4 +99,8 @@ export interface PedidoItem {
   primeira_compra: boolean | null;
   ajustado_humano: boolean | null;
   modo_promocao: string | null; // 'flat' | 'forward_buying' | null — distingue o ajuste promocional do mínimo forçado
+  // Unidades do PORTAL por unidade do Omie (sku_fornecedor_externo.fator_conversao) quando o MOTOR arredondou
+  // qtde_final ao múltiplo da embalagem (36 L → 40 L = 8 baldes). null/undefined = não arredondou. 1 escritor:
+  // gerar_pedidos_sugeridos_ciclo. Só visual (badge); a compra física é garantida pela edge no envio.
+  fator_embalagem_portal?: number | null;
 }

@@ -118,6 +118,23 @@ describe('ItensTable', () => {
   });
 });
 
+describe('ItensTable — múltiplo da embalagem do portal (litro → balde)', () => {
+  it('motor arredondou (fator 0,2): badge "8 emb. do fornecedor" e NÃO "mínimo forçado"', () => {
+    setup({ linhas: [linha({ qtde_sugerida: 36, qtde_final: 40, fator_embalagem_portal: 0.2, ajustado_humano: null, modo_promocao: null })] });
+    expect(screen.getByText('8 emb. do fornecedor')).toBeTruthy();
+    expect(screen.queryByText('mínimo forçado')).toBeNull();
+  });
+  it('sem fator (null): final > sugerida segue atribuído ao mínimo forçado (regressão)', () => {
+    setup({ linhas: [linha({ qtde_sugerida: 36, qtde_final: 40, fator_embalagem_portal: null, ajustado_humano: null, modo_promocao: null })] });
+    expect(screen.getByText('mínimo forçado')).toBeTruthy();
+    expect(screen.queryByText(/emb\. do fornecedor/)).toBeNull();
+  });
+  it('quantidade editada depois (37 L × 0,2): mostra 7.4 — não esconde que deixou de ser múltiplo', () => {
+    setup({ linhas: [linha({ qtde_sugerida: 36, qtde_final: 37, fator_embalagem_portal: 0.2, ajustado_humano: true })] });
+    expect(screen.getByText('7.4 emb. do fornecedor')).toBeTruthy();
+  });
+});
+
 describe('ItensTable — seleção em massa', () => {
   it('editável: 1 checkbox por linha + selecionar-todos no cabeçalho', () => {
     setup({ linhas: [linha({ id: 1 }), linha({ id: 2, sku_codigo_omie: '556' })] });

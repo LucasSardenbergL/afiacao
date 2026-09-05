@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 503
+-- Total de custom migrations: 504
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -544,7 +544,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260829041500', 'analytics_outbox_trigger_sensor', '20260829041500_analytics_outbox_trigger_sensor.sql'),
   ('20260829081556', 'sales_orders_hash_omie_canonico', '20260829081556_sales_orders_hash_omie_canonico.sql'),
   ('20260830123820', 'snapshot_atomico_universo_itens', '20260830123820_snapshot_atomico_universo_itens.sql'),
-  ('20260830190000', 'reconciliar_pedidos_omie', '20260830190000_reconciliar_pedidos_omie.sql')
+  ('20260830190000', 'reconciliar_pedidos_omie', '20260830190000_reconciliar_pedidos_omie.sql'),
+  ('20260904232555', 'reposicao_qtde_multiplo_embalagem_portal', '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2259,7 +2260,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', ''),
-  ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', '')
+  ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4022,7 +4024,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', ''),
-  ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', '')
+  ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
   e.migration,
@@ -4121,6 +4124,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'gerar_pedidos_sugeridos_ciclo', 24, '20260717010000_preco_medio_leadtime_efetivo.sql', 'e2db4ba09711371884c76afd2ef2258d'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 25, '20260730130000_reposicao_teto_cobertura_motor.sql', '996589f06e52a2df0b97dd2610ccd511'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 26, '20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql', '461d0cbdafcd2f7760db1ae10dbd7e0a'),
+  ('public', 'gerar_pedidos_sugeridos_ciclo', 27, '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql', '45b4e821f62a65c3d16d6945a9885a6d'),
   ('public', 'envio_portal_lock_candidatos', 1, '20260430005120_ac9adac9-3575-4449-9703-2f88ba333c3f.sql', 'bcdd860ddf768655ce2a5d72fe0e02a7'),
   ('public', 'envio_portal_lock_candidatos', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'fd19eefabbdaf5c42ec7d9b8e6a38e7e'),
   ('public', 'envio_portal_lock_candidatos', 3, '20260515010000_99661119-2843-4684-9dba-d21d55bf2ab9.sql', 'b116b7039ef4387546d2b86957b18c50'),
