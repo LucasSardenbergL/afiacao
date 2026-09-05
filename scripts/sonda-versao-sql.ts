@@ -294,10 +294,23 @@ const PISO_CONTROLE_CREDENCIAL = 10;
  * nomeia as três causas que ele não distingue em vez de escolher uma. Mesmo motivo do
  * `LEFT JOIN LATERAL … ON true` e de partir da lista CANÔNICA: a consulta devolve SEMPRE uma linha
  * por edge esperada, porque zero linhas se lê como "nada a reportar", não como "não achei".
- * O ramo DEPLOY PARCIAL vem ANTES do de confirmação de propósito: `versao` certo com `fonte`
- * ausente é a assinatura do bundle que subiu `index.ts` + `versao.ts` sem o mapa de fingerprints, e
- * ler isso como CONFIRMADO seria o falso POSITIVO que encerra a verificação. Confirmação exige os
- * DOIS campos; a dúvida cai sempre no lado que manda olhar de novo.
+ * OS DOIS RAMOS DO `fonte` QUE FALTA — e por que UM só mentia. Ambos vêm ANTES do de confirmação
+ * de propósito (ler qualquer um deles como CONFIRMADO seria o falso POSITIVO que encerra a
+ * verificação), mas a CAUSA é oposta e o `COALESCE(fonte,'nao-mapeada')` original os fundia:
+ *   · **campo AUSENTE do corpo** (`NOT (corpo ? 'fonte')`) ⇒ `PRE_SONDA_FONTE`: o bundle no ar é
+ *     anterior ao #1998, que CRIOU o campo. Não subiu nada pela metade — é um deploy antigo
+ *     INTEIRO. Medido em prod 2026-09-05 (request_ids 69377-69381): 5 edges responderam assim e as
+ *     5 saíram "DEPLOY PARCIAL — subiu index.ts+versao.ts, mas sonda-fingerprints.ts NAO". O
+ *     desfecho prático coincide (redeployar), mas quem lê vai investigar um prompt de deploy que
+ *     nomeou poucos arquivos — e esse prompt não existiu. Diagnóstico errado com desfecho certo
+ *     custa a próxima meia hora, e some com o caso em que a causa nomeada é a verdadeira.
+ *   · **campo PRESENTE valendo `nao-mapeada`** ⇒ `DEPLOY PARCIAL` de verdade: o bundle CONHECE o
+ *     campo (logo é ≥ #1998) e o `?? "nao-mapeada"` de `criarRespostaSonda` disparou porque o
+ *     `_shared/sonda-fingerprints.ts` que subiu não tem esta edge. Aí sim faltou arquivo.
+ * O vocabulário é o do irmão passivo (`.claude/skills/fecho/scripts/edges-pendentes.sh`), que
+ * nomeia o mesmo estado `PRE_SONDA_FONTE` — dois nomes para um estado é como o operador conclui
+ * que são dois problemas. Confirmação segue exigindo os DOIS campos; a dúvida cai sempre no lado
+ * que manda olhar de novo.
  *
  * POR QUE O 401 TEM RAMO PRÓPRIO: ele é AMBÍGUO por construção, e os outros 4xx não são. Um 404 diz
  * "não há edge servida nessa URL"; um 401 pode ser (a) bundle PRÉ-SONDA que ignorou o
@@ -429,7 +442,13 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number): string {
     `           THEN 'BUNDLE VELHO — recusou o request (HTTP ' || l.status_code || '), NADA executou'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL\n` +
     `           THEN 'PRE-SENSOR — HTTP 200 sem versao: ignorou o probe e RODOU O FLUXO REAL'\n` +
-    `         WHEN COALESCE(l.corpo ->> 'fonte', 'nao-mapeada') = 'nao-mapeada'\n` +
+    `         WHEN NOT (l.corpo ? 'fonte')\n` +
+    `           THEN 'PRE_SONDA_FONTE — respondeu a sonda (200 + probe) e o corpo NAO TEM o campo ' ||\n` +
+    `                'fonte: o bundle no ar e ANTERIOR ao #1998, que criou o campo. E deploy ANTIGO ' ||\n` +
+    `                'INTEIRO, nao parcial — nao procure prompt que nomeou poucos arquivos. ' ||\n` +
+    `                'Respondeu versao=' || COALESCE(l.corpo ->> 'versao', '?') ||\n` +
+    `                ' (esperado ' || l.versao_esperada || '). PRECISA DEPLOY'\n` +
+    `         WHEN l.corpo ->> 'fonte' = 'nao-mapeada'\n` +
     `           THEN 'DEPLOY PARCIAL — subiu index.ts+versao.ts, mas _shared/sonda-fingerprints.ts NAO'\n` +
     `         WHEN l.corpo ->> 'versao' = l.versao_esperada\n` +
     `              AND l.corpo ->> 'fonte' = l.fonte_esperada\n` +

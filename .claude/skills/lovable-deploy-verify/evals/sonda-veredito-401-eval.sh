@@ -179,6 +179,16 @@ SQL
       P -q -c "INSERT INTO net._http_response (id, status_code, content, created)
                VALUES ($ID_SONDA, 200, '{\"ok\":true}', now());"
       ;;
+    sem_campo_fonte)      # 200 + probe + versao e SEM o campo `fonte`: bundle anterior ao #1998
+      P -q -c "INSERT INTO net._http_response (id, status_code, content, created)
+               VALUES ($ID_SONDA, 200,
+                 '{\"edge\":\"edge-a\",\"versao\":\"v1.0-alfa\",\"probe\":true}', now());"
+      ;;
+    fonte_nao_mapeada)    # o campo EXISTE valendo o sentinela: o bundle conhece `fonte` (>= #1998)
+      P -q -c "INSERT INTO net._http_response (id, status_code, content, created)
+               VALUES ($ID_SONDA, 200,
+                 '{\"edge\":\"edge-a\",\"versao\":\"v1.0-alfa\",\"fonte\":\"nao-mapeada\",\"probe\":true}', now());"
+      ;;
     confirmado)           # eco completo: versao + fonte + probe + edge
       P -q -c "INSERT INTO net._http_response (id, status_code, content, created)
                VALUES ($ID_SONDA, 200,
@@ -246,6 +256,10 @@ executar_casos() {
     "404 NÃO é ambíguo: segue determinado, o 401 não contaminou os outros 4xx"
   caso pre_sensor               pre_sensor               "PRE-SENSOR" \
     "200 sem versao continua no ramo do fluxo real"
+  caso sem_campo_fonte          sem_campo_fonte          "PRE_SONDA_FONTE" \
+    "corpo SEM o campo fonte ⇒ bundle inteiro anterior ao #1998, NUNCA 'parcial'" "DEPLOY PARCIAL"
+  caso fonte_nao_mapeada        fonte_nao_mapeada        "DEPLOY PARCIAL" \
+    "campo PRESENTE valendo nao-mapeada ⇒ aí sim faltou o mapa no deploy" "PRE_SONDA_FONTE"
   caso confirmado               confirmado               "DEPLOY CONFIRMADO" \
     "eco completo segue confirmando — o ramo novo não roubou o caminho feliz"
   uma_linha_por_edge confirmado
@@ -254,7 +268,7 @@ executar_casos() {
 if [ "$FALSIFY" = 0 ]; then
   echo "== sonda-veredito-401 — 401 é ambíguo: bundle velho × CRON_SECRET inválido =="
   executar_casos
-  [ "$rc" -eq 0 ] && echo "  tudo bateu: 8 vereditos + cardinalidade" || echo "  ❌ divergência(s) acima"
+  [ "$rc" -eq 0 ] && echo "  tudo bateu: 10 vereditos + cardinalidade" || echo "  ❌ divergência(s) acima"
   exit "$rc"
 fi
 
@@ -295,6 +309,13 @@ sabotar "janela do controle esticada: 2xx de anteontem 'provam' o agora" \
         "now() - interval '6 hours'" "now() - interval '100 years'"
 sabotar "controle nao chega na projecao (CROSS JOIN removido)" \
         " CROSS JOIN controle_credencial c" ""
+# As duas abaixo guardam a SEPARACAO das causas de "sem fingerprint no ar". Ela e semantica de
+# ORDEM de WHEN + semantica de `?` sobre jsonb, e as duas so aparecem EXECUTANDO: um teste textual
+# ve as duas strings no arquivo e fica verde mesmo com o ramo inalcancavel.
+sabotar "campo ausente volta a ser lido como DEPLOY PARCIAL (o defeito de 2026-09-05)" \
+        "WHEN NOT (l.corpo ? 'fonte')" "WHEN false"
+sabotar "o COALESCE que fundia ausente com nao-mapeada volta" \
+        "WHEN NOT (l.corpo ? 'fonte')" "WHEN COALESCE(l.corpo ->> 'fonte', 'nao-mapeada') = 'nao-mapeada'"
 
 echo "--falsify: $cegas cegueira(s) (esperado: 0)"
 [ "$cegas" -eq 0 ] || exit 1

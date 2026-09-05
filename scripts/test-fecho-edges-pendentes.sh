@@ -51,6 +51,11 @@ sql="${!#}"
 case "${STUB_MODO:-ok}" in
   mudo) exit 0 ;;                       # presente-porém-QUEBRADO: responde vazio ao SELECT 1
   so-set) echo SET; echo SET; exit 0 ;; # abre a sessao e nao devolve resultado nenhum
+  # quebra SO a sonda `SELECT 1` e responde normal a consulta: isola a assercao da SONDA POSITIVA
+  # da trava de FORMA do resultado. Sem este modo as duas se cobrem — o wrapper mudo de verdade
+  # e mudo para tudo, entao a trava de forma pegaria o defeito e a sabotagem da sonda ficaria
+  # VERDE: cobertura redundante em prod, ausencia de medicao no teste.
+  mudo-sonda) [ "$sql" = "SELECT 1" ] && { echo SET; echo SET; exit 0; } ;;
 esac
 # o wrapper REAL emite os `SET` da sessao read-only ANTES do resultado (medido em prod 2026-08-28):
 # quem exigir a saida inteira == "1" reprova o wrapper BOM e o gate nasce sempre em fail-closed.
@@ -59,11 +64,15 @@ if [ "$sql" = "SELECT 1" ]; then echo 1; exit 0; fi
 printf '%s' "$sql" > "${STUB_SQL_ECO:-/dev/null}"
 [ "${STUB_MODO:-ok}" = "erro-query" ] && { echo "ERROR: relation net._http_response" >&2; exit 1; }
 cat "${STUB_PARES:-/dev/null}" 2>/dev/null
+# a contagem de sondas ANONIMAS (sem eco de slug) viaja na MESMA resposta; `sem-anonimas` simula a
+# DERIVA — SQL de uma versao lido por um classificador de outra.
+[ "${STUB_MODO:-ok}" = "sem-anonimas" ] || echo "#anonimas ${STUB_ANONIMAS:-0}"
 exit 0
 STUB
 chmod +x "$tmp/psql-stub"
 
 export FECHO_MAPA_FONTE="$tmp/mapa.ts" STUB_PARES="$tmp/pares.txt" STUB_SQL_ECO="$tmp/sql.txt"
+export STUB_ANONIMAS=0
 
 # roda o alvo: `run <modo-do-stub> <psql> <args...>` publica a saida em $out e o codigo em $rc.
 # NAO devolve a saida por stdout de proposito: `run ...` executaria a funcao num SUBSHELL
@@ -126,6 +135,63 @@ suite() {
   then ok "sonda sem o campo fonte -> PRE_SONDA_FONTE (bundle pre-#1998), exit 1"
   else bad "sonda sem fonte devia ter ramo proprio, nunca 'nenhuma sonda' (rc=$rc): ${out:0:110}"; fi
 
+  # 5c. O DEFEITO DE 2026-09-05, um degrau ATRAS do 5b: bundle anterior ao #1789 responde
+  #     `{ok,probe,versao}` e NAO ecoa `edge` — a resposta existe e nao diz de quem e. As 3 de
+  #     5 edges sondadas naquele dia (request_ids 69377, 69379, 69381) sairam como "nenhuma sonda
+  #     em 6 hours": ausencia FABRICADA, com a resposta gravada no banco. O veredito segue
+  #     INDETERMINADO (identidade ausente nao vira identidade presumida), mas o motivo tem de
+  #     dizer que sondaram — e apontar o unico vinculo que determina, o request_id.
+  export STUB_ANONIMAS=3
+  run ok "$tmp/psql-stub" edge-muda
+  if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 1 ] \
+     && tem 'SONDA_ANONIMA' "$out" && tem 'request-ids' "$out" \
+     && ! tem 'nenhuma sonda em' "$out" && ! tem 'NO_AR' "$out"
+  then ok "sonda ANONIMA na janela -> SEM_PROVA que NAO alega ausencia, e aponta --request-ids"
+  else bad "com sonda anonima na janela nao pode dizer 'nenhuma sonda' (rc=$rc): ${out:0:140}"; fi
+
+  # 5d. e o contrario tambem: ZERO anonimas continua sendo ausencia de verdade, dita como tal.
+  #     Sem este caso o ramo novo poderia virar mensagem UNICA e a distincao morreria.
+  export STUB_ANONIMAS=0
+  run ok "$tmp/psql-stub" edge-muda
+  if tem 'nenhuma sonda em' "$out" && [ "$rc" -eq 1 ] && ! tem 'SONDA_ANONIMA' "$out"
+  then ok "zero anonimas -> segue 'nenhuma sonda na janela' (a ausencia de verdade)"
+  else bad "sem anonimas a mensagem devia ser a de ausencia (rc=$rc): ${out:0:140}"; fi
+
+  # 5e. DERIVA entre as duas pontas: o SQL nao devolve a linha `#anonimas` e o classificador a le.
+  #     Degradar para zero devolveria justamente a mensagem MENTIROSA — entao e fail-closed.
+  run sem-anonimas "$tmp/psql-stub" edge-no-ar
+  if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ] && ! tem 'NO_AR' "$out"
+  then ok "SQL sem a linha #anonimas -> mecanica nao confiavel, exit 2 (nunca degrada para zero)"
+  else bad "linha #anonimas ausente devia dar exit 2 (rc=$rc): ${out:0:140}"; fi
+
+  # 5f. `--request-ids` e o ESCAPE, e toda recusa dele e exit 3 (uso), nunca veredito de deploy.
+  #     Par malformado aceito em silencio e o modo de falha caro: o operador acha que colou, a
+  #     edge segue sem vinculo, e a saida diz "sem sonda" com a mesma cara de sempre.
+  local caso_ruim ruins_ok=1
+  for caso_ruim in "edge-muda" "edge muda=1" "edge-muda=abc" "edge-muda=" "=1" "EDGE=1"; do
+    run ok "$tmp/psql-stub" edge-muda --request-ids "$caso_ruim"
+    [ "$rc" -eq 3 ] || { ruins_ok=0; bad "--request-ids '$caso_ruim' devia ser exit 3 (rc=$rc)"; }
+  done
+  [ "$ruins_ok" = 1 ] && ok "--request-ids malformado -> exit 3 nos 6 formatos ruins"
+
+  # 5g. slug que nao esta na leva: o typo deixaria a edge de verdade SEM o vinculo que o operador
+  #     acha que deu — mesma trava do `--caro` forasteiro do sonda:sql.
+  run ok "$tmp/psql-stub" edge-muda --request-ids "edge-mudaa=99"
+  if [ "$rc" -eq 3 ] && tem 'SLUG_FORA_DA_LEVA' "$out"
+  then ok "--request-ids com slug fora da leva -> exit 3 (typo nao passa calado)"
+  else bad "slug forasteiro devia dar exit 3 (rc=$rc): ${out:0:120}"; fi
+
+  # 5h. o par BOM entra no SQL como VALUES, e sem ele a CTE nasce vazia por WHERE false — a FORMA
+  #     do SQL e a mesma nos dois caminhos, senao o guardrail textual mede uma consulta que nao roda.
+  : > "$tmp/sql.txt"; run ok "$tmp/psql-stub" edge-muda --request-ids "edge-muda=777" > /dev/null
+  if tem "VALUES ('edge-muda', 777::bigint)" "$(cat "$tmp/sql.txt")"
+  then ok "--request-ids bom vira VALUES no SQL"
+  else bad "o par colado nao chegou ao SQL: $(head -c 120 "$tmp/sql.txt")"; fi
+  : > "$tmp/sql.txt"; run ok "$tmp/psql-stub" edge-muda > /dev/null
+  if tem 'SELECT NULL::text, NULL::bigint WHERE false' "$(cat "$tmp/sql.txt")"
+  then ok "sem --request-ids a CTE vinculo nasce vazia (mesma FORMA de SQL)"
+  else bad "sem colagem a CTE vinculo devia nascer vazia: $(head -c 120 "$tmp/sql.txt")"; fi
+
   # 6. O TESTE-SENTINELA: wrapper PRESENTE porem MUDO. A mesma edge que no caso 1 era NO_AR tem de
   #    voltar a ser pendencia — `command -v` acharia o arquivo e esvaziaria o guard.
   run mudo "$tmp/psql-stub" edge-no-ar
@@ -139,6 +205,13 @@ suite() {
   if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ]
   then ok "psql que so abre sessao (SET SET, sem resultado) -> fail-closed, exit 2"
   else bad "psql sem resultado devia dar exit 2 (rc=$rc): ${out:0:90}"; fi
+
+  # 6c. wrapper que responde a CONSULTA mas nao a sonda `SELECT 1`. A sonda POSITIVA e o guard,
+  #     e ele tem de reprovar sozinho — sem depender de o resultado tambem vir malformado.
+  run mudo-sonda "$tmp/psql-stub" edge-no-ar
+  if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ] && ! tem 'NO_AR' "$out"
+  then ok "psql que responde a consulta mas nao a sonda -> fail-closed, exit 2"
+  else bad "sonda sem resposta positiva devia dar exit 2 (rc=$rc): ${out:0:90}"; fi
 
   # 7. a consulta estourou -> mecanica nao confiavel, tudo pendente
   run erro-query "$tmp/psql-stub" edge-no-ar
@@ -281,6 +354,27 @@ MAPA2
      && tem "'sem-campo-fonte'" "$(cat "$tmp/sql.txt")"
   then ok "SQL admite a resposta sem \`fonte\`, exige o eco de probe e emite o mesmo sentinela"
   else bad "SQL sem o ramo 'sem fonte' + probe — 200 sondado voltaria a virar 'nenhuma sonda'"; fi
+
+  # 12c. guardrail de FORMA da 3a classe (casamento por request_id): ela e o unico vinculo que
+  #      alcanca o bundle pre-#1789, e as DUAS travas dela nao podem sumir — o eco de probe (senao
+  #      um id de resposta de CRON vira "prova de sonda") e a recusa de slug CONTRADITORIO (senao
+  #      uma colagem trocada FABRICA identidade, que e o pior erro possivel neste script).
+  : > "$tmp/sql.txt"; run ok "$tmp/psql-stub" edge-no-ar > /dev/null
+  sqltxt="$(cat "$tmp/sql.txt")"
+  if tem 'JOIN vinculo v ON v.request_id = b.id' "$sqltxt" \
+     && tem "COALESCE((b.content::jsonb) ->> 'edge', v.edge) = v.edge" "$sqltxt" \
+     && tem "(b.content::jsonb) ->> 'probe'  = 'true'" "$sqltxt"
+  then ok "SQL casa por request_id exigindo eco de probe e recusando slug contraditorio"
+  else bad "3a classe sem trava: id de cron ou colagem trocada viraria prova de sonda"; fi
+
+  # 12d. guardrail de FORMA da contagem de anonimas: sem `NOT (? 'edge')` ela contaria as respostas
+  #      que JA casam por eco, e "ha sonda anonima" apareceria em toda janela — aviso que cansa e
+  #      some. Sem `NOT EXISTS (vinculo)`, a linha ja atribuida seria contada duas vezes.
+  if tem "NOT ((b.content::jsonb) ? 'edge')" "$sqltxt" \
+     && tem 'NOT EXISTS (SELECT 1 FROM vinculo v WHERE v.request_id = b.id)' "$sqltxt" \
+     && tem "'#anonimas ' || n" "$sqltxt"
+  then ok "SQL conta como anonima so o que NAO ecoa slug nem tem vinculo"
+  else bad "contagem de anonimas sem os dois filtros — o aviso apareceria sempre"; fi
 }
 
 # ---------------------------------------------------------------- falsificação ---
@@ -361,7 +455,28 @@ if [ "${1:-}" = "--falsificar" ]; then
   #     compara — nenhuma das duas metades falha sozinha, e o ramo novo fica inalcancavel
   sabota "sentinela do SQL divergindo do que o classificador compara" \
     "s%'sem-campo-fonte'           AS fonte%'sem-campo-fonte-x'         AS fonte%"
-  # (d) a query perde o "mais recente por edge"
+  # ---- as 5 abaixo guardam o ramo da SONDA ANONIMA (2026-09-05). O bundle anterior ao #1789 responde
+  #      {ok,probe,versao} e NAO diz de quem e: a resposta existe e nao e atribuivel. O erro caro
+  #      nao e o veredito (segue INDETERMINADO nos dois desenhos) — e o MOTIVO: "nenhuma sonda na
+  #      janela" manda sondar de novo o que ja foi sondado, e some com o chip que importava.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "ramo da sonda anonima neutralizado (volta a alegar ausencia)" \
+    's%elif \[ -z "$servido" \] && \[ "$n_anonimas" -gt 0 \]; then%elif false; then%'
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "linha #anonimas ausente degradando para zero em vez de exit 2" \
+    's%""|\*\[!0-9\]\*) mecanica_ok=0%""|*[!0-9]*) n_anonimas=0; :%'
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "slug forasteiro em --request-ids passando calado" \
+    's%if ! command grep -Fxq -- "$_slug" "$tmp/alvos"; then%if false; then%'
+  # `--request-ids` deixando de ser extraido dos args vira "slug" e depois chip fantasma
+  sabota "--request-ids deixando de ser reconhecido como flag" \
+    's%    --request-ids)   REQ_IDS=%    --xxxxxxxxxxxx)  REQ_IDS=%'
+  # o par validado que nao chega ao SQL: o vinculo vira decorativo e o escape nao escapa
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "par colado nao chegando ao SQL (CTE vinculo sempre vazia)" \
+    's%\[ -n "$vinculo_values" \] && vinculo_sql="VALUES $vinculo_values"%:%'
+
+  # (d) a query perde o "mais recente por edge\"
   sabota "SQL sem DISTINCT ON (edge)" \
     's%SELECT DISTINCT ON (edge) edge%SELECT edge%'
 
