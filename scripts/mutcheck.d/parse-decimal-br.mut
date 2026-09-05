@@ -17,7 +17,8 @@ PEGA      | só ponto: milhar malformado aceito                | $arm = 1 if /re
 PEGA      | ambíguo "1.234": 3 casas → 4 casas                | s/frac\.length === 3 &&/frac.length === 4 \&\&/
 PEGA      | ambíguo: inteiro "0" também vira ambíguo          | s/\[1-9\]\\d\{0,2\}/\\d{1,3}/
 PEGA      | sinal negativo descartado                         | s/\(neg \? '-' : ''\)/(neg ? '' : '')/
-?         | finish aceita inteiro vazio (".5"/",5" → 0.5)     | s/\^\\d\+\(\\\.\\d\+\)\?\$/^\\d*(\\.\\d+)?\$/
+PEGA      | inteiro vazio rejeitado (\d*\. → \d+\.)            | s/\\d\*\\\.\\d\+/\\d+\\.\\d+/
+PEGA      | separador solto vira 0 (alternância → tudo opcional)| s/\(\\d\+\|\\d\*\\\.\\d\+\)/\\d*(\\.\\d+)?/
 SOBREVIVE | groups.length>1 → >=1 (inalcançável: grpSep sempre antes do decSep único) | s/groups\.length > 1 &&/groups.length >= 1 \&\&/
 SOBREVIVE | isFinite → n (inalcançável: só dígitos, finito)   | s/Number\.isFinite\(n\) \? n : null/n/
 SOBREVIVE | typeof guard removido (inalcançável pelo tipo TS) | s/typeof input !== 'string'/false/

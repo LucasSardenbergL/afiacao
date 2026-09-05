@@ -56,6 +56,14 @@ describe('parseDecimalBR', () => {
     expect(parseDecimalBR('-1.234,56')).toBe(-1234.56);
   });
 
+  it('aceita inteiro vazio com fração (",5" do teclado numérico = 0,5) sem fabricar zero no separador solto', () => {
+    expect(parseDecimalBR(',5')).toBe(0.5);
+    expect(parseDecimalBR('.5')).toBe(0.5);
+    expect(parseDecimalBR('-,5')).toBe(-0.5);
+    expect(parseDecimalBR(',')).toBeNull(); // Number('') seria 0 — money-path: null
+    expect(parseDecimalBR('.')).toBeNull();
+  });
+
   it('NÃO rejeita decimal legítimo com 3 casas quando não parece milhar', () => {
     expect(parseDecimalBR('0,999')).toBe(0.999);
     expect(parseDecimalBR('0.999')).toBe(0.999); // inteiro "0" não é grupo de milhar válido
