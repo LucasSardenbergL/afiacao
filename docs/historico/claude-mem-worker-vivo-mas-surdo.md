@@ -104,6 +104,40 @@ linha `Response received` sem "authenticate"/"Not logged in" e a volta de `STORI
 - **A vigia acertou, e a nota irmã previa o contrário.** `vigia-cego-ao-que-mata.md` trata
   o worker do claude-mem como o falso positivo a evitar (9:32 de CPU em 7 dias); com os
   dois eixos (`pcpu ≥ 50 %` E `cputime ≥ 300 s`) ele só aparece quando está de fato
-  girando — que foi o caso. O discriminador que falta na mensagem da vigia: quando o
-  órfão é `worker-service.cjs`, imprimir o contador de `hook-failures.json` e o resultado
-  do `/api/health` (chip aberto para isso).
+  girando — que foi o caso. O discriminador que faltava na mensagem da vigia está
+  instalado (2026-09-05, mesmo dia): quando o órfão acusado tem `worker-service.cjs` no
+  comando, a linha do `orfaos-custosos.sh --resumo` (e o relatório do `wt:status`) traz
+  `[claude-mem: health ok|SURDO (porta N …); contador=N …]` e, quando é surdo **e** o
+  contador ≥ 3, aponta esta receita.
+
+## O discriminador na vigia (instalado 2026-09-05)
+
+O que a linha passa a dizer, e as regras que a fazem honesta (`scripts/orfaos-custosos.sh`,
+provado por `scripts/test-orfaos-custosos.sh` — 66 asserções + 18 sabotagens nos 2 locales):
+
+- **Os dois eixos NÃO mudaram e não há allowlist por nome.** O worker são fica em 0–4 % e
+  continua invisível; o discriminador só ANOTA o órfão que os eixos já acusaram.
+- **Contador:** lido de `$CLAUDE_MEM_DATA_DIR/state/hook-failures.json` (default
+  `~/.claude-mem`, o MESMO nome de variável que o plugin honra). Arquivo ausente =
+  `sem contador`, **nunca** `contador=0`; chave ausente/não-inteira = `contador ilegivel`.
+  Parse com `sed`, não `jq`/`python3`: o PATH do hook é herdado do app e pode não ter
+  `/opt/homebrew/bin` — o `jq` viraria "não li" justo no SessionStart.
+- **Health:** `curl -s -m 2 --noproxy '*'` em `http://127.0.0.1:<porta de worker.pid>/api/health`.
+  Resposta POSITIVA é HTTP 200 → `health ok`. Curl que FUNCIONOU e o worker não respondeu
+  (rc 7 recusada · 28 timeout · 52 vazia · 55/56 reset — o incidente deu 55/56) → `health
+  SURDO`. Qualquer outro rc, curl ausente, `worker.pid` ausente ou sem porta → `nao sondei`
+  — **nunca** `ok`, e **nunca** `SURDO` (que também é afirmação).
+- **Receita:** só quando `SURDO` **e** contador ≥ 3 lido — as duas condições que o passo 1
+  da receita exige. Sem contador, sem receita.
+- **Orçamento:** o vigia impõe `timeout 3` ao script inteiro; o `curl -m 2` só roda quando
+  HÁ órfão do claude-mem e UMA vez (a porta é uma, mesmo com dois workers de versões
+  diferentes). Medido: 0,07 s sem órfão · 0,22 s com curl real contra porta fechada.
+- **O casamento é no comando COMPLETO, dentro do awk, antes do corte de 110 chars:** a
+  linha real tem 146 e `worker-service.cjs` fica depois do corte — casar no texto truncado
+  seria cego por desenho (sabotagem "casa DEPOIS do corte" fica vermelha).
+- **A suíte nunca toca o `~/.claude-mem` real:** `CLAUDE_MEM_DATA_DIR` aponta para
+  diretório temporário e o `curl` é stub no PATH (modos ok/surdo/quebrado, cada chamada
+  registrada — é o que prova "só roda com órfão" e "`-m` ≤ 2"). Um único caso usa o curl
+  REAL contra uma porta que o SO acabou de dar como livre: o stub ignora flags, e só o
+  binário prova que `-m/--noproxy/-w/-o` existem (flag inválida = "nao sondei" para sempre,
+  verde por cegueira).
