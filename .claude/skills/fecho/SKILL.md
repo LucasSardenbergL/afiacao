@@ -152,8 +152,15 @@ git diff --name-only origin/main...HEAD -- supabase/functions/
 #
 # Este script enumera a janela INTEIRA (a desta sessão e a das outras) e já classifica quem
 # precisa de chip. Use-o em vez do `git log` cru — o cru é o gatilho velho, ver abaixo.
-bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início da sessão>"
-# aceita DATA ou REVISÃO — se você anotou o SHA de origin/main ao abrir a sessão, prefira o SHA
+bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início da sessão> UTC"
+# aceita REVISÃO (SHA), DATA RELATIVA ("3 hours ago") ou DATA ABSOLUTA **com fuso explícito**.
+# ⚠️ Data absoluta SEM fuso é RECUSADA (exit 3, marca `DESDE_SEM_FUSO`). Aqui o `--desde` cai no
+#    `git rev-list --before=`, que lê data nua como hora LOCAL, enquanto TODO timestamp da doc
+#    deste repo é UTC — e os scripts irmãos (verify-edge-eco/escrita) mandam o mesmo flag para o
+#    psql, que é UTC. Copiar um timestamp UTC acerta lá e erra aqui, por um offset inteiro e em
+#    silêncio: medido 2026-09-05, `--desde "2026-09-05 17:34"` em GMT-3 pulou o merge das 19:40Z e
+#    devolveu `✅ nenhuma edge na janela` sobre uma janela de DUAS. Escreva "… 17:34 UTC".
+# Se você anotou o SHA de origin/main ao abrir a sessão, prefira o SHA: não tem fuso para errar.
 # exit 0 = nada pendente · 1 = abra chip para a lista · 2 = MECÂNICA não confiável (o script já
 # imprime tudo como pendente; trate assim) · 3 = uso inválido
 #
