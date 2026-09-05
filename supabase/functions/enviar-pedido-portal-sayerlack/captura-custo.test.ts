@@ -13,7 +13,7 @@ import {
   extrairAddJson,
   parseBRL,
   parseDiasPrzEnt,
-  resumirCaptura,
+  classificarErroRpcCusto, resumirCaptura,
   toleranciaChecksum,
   type AddJsonPortal,
   type ItemEsperado,
@@ -284,6 +284,58 @@ Deno.test("resumirCaptura: escrita parcial (planejados 3, atualizados 2) ⇒ ceg
   const r = resumo({ cons: c, match: m, pulados: [{ sku_codigo_omie: "Y", motivo: "erro_update" }], planejados: 3, atualizados: 2 });
   assertEquals(r.cego, true, "cega");
   assertEquals(r.motivo, "escrita_parcial", "motivo");
+});
+
+Deno.test("classificarErroRpcCusto: casa a MARCA (SQLSTATE CP001..CP004); desconhecido/ausente ⇒ erro_rpc, nunca motivo fabricado", () => {
+  assertEquals(classificarErroRpcCusto("CP001"), "payload_invalido", "CP001");
+  assertEquals(classificarErroRpcCusto("CP002"), "po_omie_existente", "CP002");
+  assertEquals(classificarErroRpcCusto("CP003"), "pedido_nao_elegivel", "CP003");
+  assertEquals(classificarErroRpcCusto("CP004"), "itens_divergentes", "CP004");
+  assertEquals(classificarErroRpcCusto("42501"), "erro_rpc", "permission denied não é motivo de negócio");
+  assertEquals(classificarErroRpcCusto("CP005"), "erro_rpc", "código futuro não vira motivo conhecido");
+  assertEquals(classificarErroRpcCusto("cp002"), "erro_rpc", "caixa fixa — não é ILIKE");
+  assertEquals(classificarErroRpcCusto(undefined), "erro_rpc", "undefined");
+  assertEquals(classificarErroRpcCusto(null), "erro_rpc", "null");
+  assertEquals(classificarErroRpcCusto(""), "erro_rpc", "vazio");
+});
+
+const matchTres = () => {
+  const c = consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443);
+  const m = casarLinhasComItens(c.linhas, [item(), item({ item_id: 2, sku_codigo_omie: "X", sku_portal: "WP53.3900QT" }), item({ item_id: 3, sku_codigo_omie: "Y", sku_portal: "TEH.3505.00BB" })]);
+  return { c, m };
+};
+
+Deno.test("resumirCaptura: RPC recusou por itens divergentes (CP004) ⇒ NADA gravado (atualizados 0), cega, motivo itens_divergentes, sqlstate no resumo", () => {
+  const { c, m } = matchTres();
+  const r = resumo({ cons: c, match: m, planejados: 3, atualizados: 0, erroRpc: { motivo: "itens_divergentes", sqlstate: "CP004" } });
+  assertEquals(r.cego, true, "cega");
+  assertEquals(r.motivo, "itens_divergentes", "motivo é a MARCA do ramo, não escrita_parcial");
+  assertEquals(r.sqlstate_rpc, "CP004", "sqlstate");
+  assertEquals(r.atualizados, 0, "tudo-ou-nada: 0, nunca 2 de 3");
+});
+
+Deno.test("resumirCaptura: RPC recusou por PO Omie já existente no BANCO (CP002) ⇒ idempotência provada, NÃO é cega, motivo ja_tem_omie", () => {
+  const { c, m } = matchTres();
+  const r = resumo({ cons: c, match: m, planejados: 3, atualizados: 0, jaTemOmie: false, erroRpc: { motivo: "po_omie_existente", sqlstate: "CP002" } });
+  assertEquals(r.cego, false, "não cega: o custo não pode mais mudar");
+  assertEquals(r.motivo, "ja_tem_omie", "motivo");
+  assertEquals(r.sqlstate_rpc, "CP002", "sqlstate");
+});
+
+Deno.test("resumirCaptura: erro transiente da RPC (erro_rpc, sem SQLSTATE) ⇒ cega com motivo erro_rpc (ausência de dado ≠ sucesso)", () => {
+  const { c, m } = matchTres();
+  const r = resumo({ cons: c, match: m, planejados: 3, atualizados: 0, erroRpc: { motivo: "erro_rpc", sqlstate: null } });
+  assertEquals(r.cego, true, "cega");
+  assertEquals(r.motivo, "erro_rpc", "motivo");
+  assertEquals(r.sqlstate_rpc, null, "sqlstate");
+});
+
+Deno.test("resumirCaptura: RPC gravou tudo (planejados 3, atualizados 3, sem erro) ⇒ não cega, motivo null, sqlstate null", () => {
+  const { c, m } = matchTres();
+  const r = resumo({ cons: c, match: m, planejados: 3, atualizados: 3 });
+  assertEquals(r.cego, false, "não cega");
+  assertEquals(r.motivo, null, "motivo");
+  assertEquals(r.sqlstate_rpc, null, "sqlstate");
 });
 
 Deno.test("resumirCaptura: já tem PO Omie ⇒ captura não roda, não é cega (idempotência, não silêncio)", () => {

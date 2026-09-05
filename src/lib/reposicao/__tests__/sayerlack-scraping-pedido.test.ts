@@ -55,7 +55,22 @@ describe('espelho Deno ↔ src (captura de custo)', () => {
     expect(edge).not.toContain('texts[texts.length - 1]');
     // Escrita só com o pedido inteiro provado, e o valor_total é o total PROVADO (data.value), não soma parcial.
     expect(edge).toMatch(/if \(pedidoInteiroProvado\) \{/);
-    expect(edge).toMatch(/valor_total: cons\.total_pedido/);
+    expect(edge).toMatch(/p_valor_total: cons\.total_pedido/);
+  });
+  it('call-site da edge: a escrita do custo é UMA RPC transacional (CAS no banco + tudo-ou-nada), não update item a item', () => {
+    const edge = ler(`${EDGE_DIR}/index.ts`);
+    // A RPC (migration 20260905090000_sayerlack_custo_portal_cas.sql) recebe o array de updates e o total provado.
+    expect(edge).toMatch(/supabase\.rpc\("sayerlack_aplicar_custo_portal", \{\s*p_pedido_id: pedido\.id,\s*p_itens: derivado\.updates,\s*p_valor_total: cons\.total_pedido,/);
+    // A recusa é classificada pela MARCA (SQLSTATE), e vai para o resumo/sensor como `erroRpc`.
+    expect(edge).toMatch(/classificarErroRpcCusto\(eRpc\.code\)/);
+    expect(edge).toMatch(/resumirCaptura\(\{[^}]*erroRpc/);
+    // O defeito que a RPC fecha: escrita item a item em `pedido_compra_item` (parcial entre itens) e o
+    // `valor_total` gravado à parte. Nenhum dos dois pode voltar à edge.
+    // (o update de qtde inteira em pedido_compra_item, fora da captura, é outro writer legítimo — o alvo é o de CUSTO.)
+    expect(edge).not.toMatch(/\.update\(\{ preco_unitario: u\.preco_unitario/);
+    expect(edge).not.toMatch(/\.update\(\{ valor_total: cons\.total_pedido \}\)/);
+    // O total provado entra na PROVA do pedido inteiro (sem total não há RPC — ela é tudo-ou-nada).
+    expect(edge).toMatch(/cons\.total_pedido != null && match\.naoCasados\.length === 0/);
   });
   it('bloco espelhado NÃO tem crase nem ${ dentro de extrairAddJson (vai pro Browserless por toString)', () => {
     const deno = ler(`${EDGE_DIR}/captura-custo.ts`);

@@ -235,8 +235,30 @@ export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | nu
 
 // ---- Sensor: captura com sucesso no portal e algum item SEM custo provado é sinal, não silêncio ----
 
+// ---------------------------------------------------------------- RPC de escrita (tudo-ou-nada)
+/**
+ * A escrita do custo é UMA RPC transacional (`sayerlack_aplicar_custo_portal`, migration
+ * 20260905090000): compare-and-set no banco (`omie_pedido_compra_numero IS NULL AND status_envio_portal =
+ * 'sucesso_portal'` no próprio UPDATE), todos os itens num UPDATE só com ROW_COUNT == n, valor_total provado.
+ * Ela RECUSA com SQLSTATE própria (classe CP) e faz ROLLBACK de tudo — a edge casa a MARCA do ramo, nunca
+ * "lançou algo". Código desconhecido/ausente é `erro_rpc` (transiente, cega), nunca um motivo fabricado.
+ */
+export type MotivoRpcCusto = 'payload_invalido' | 'po_omie_existente' | 'pedido_nao_elegivel' | 'itens_divergentes' | 'erro_rpc';
+export const SQLSTATE_CUSTO_PORTAL: Readonly<Record<string, Exclude<MotivoRpcCusto, 'erro_rpc'>>> = {
+  CP001: 'payload_invalido',
+  CP002: 'po_omie_existente',
+  CP003: 'pedido_nao_elegivel',
+  CP004: 'itens_divergentes',
+};
+export function classificarErroRpcCusto(code: string | null | undefined): MotivoRpcCusto {
+  if (typeof code !== 'string') return 'erro_rpc';
+  return SQLSTATE_CUSTO_PORTAL[code] ?? 'erro_rpc';
+}
+
 export interface ResumoCaptura {
-  fonte: FonteCaptura; motivo: MotivoCaptura | 'ja_tem_omie' | 'escrita_parcial' | null;
+  fonte: FonteCaptura; motivo: MotivoCaptura | 'ja_tem_omie' | 'escrita_parcial' | MotivoRpcCusto | null;
+  /** SQLSTATE devolvida pela RPC de escrita quando ela recusou (auditoria; null = não chamada ou ok). */
+  sqlstate_rpc: string | null;
   checksum: Consolidacao['checksum'];
   n_dom: number; n_json: number; n_itens: number;
   casados: number; nao_casados: number; ambiguos: number;
@@ -248,21 +270,30 @@ export interface ResumoCaptura {
 export function resumirCaptura(p: {
   cons: Consolidacao; match: ResultadoMatch | null; pulados: { sku_codigo_omie: string; motivo: string }[];
   planejados: number; atualizados: number; jaTemOmie: boolean; nDom: number; nJson: number; nItens: number;
+  /** Recusa da RPC de escrita (classificada por SQLSTATE) — null quando não foi chamada ou gravou tudo. */
+  erroRpc?: { motivo: MotivoRpcCusto; sqlstate: string | null } | null;
 }): ResumoCaptura {
   const casados = p.match?.casados.length ?? 0;
   const naoCasados = p.match?.naoCasados.length ?? 0;
   const ambiguos = p.match?.ambiguos.length ?? 0;
+  const erroRpc = p.erroRpc ?? null;
+  // CP002 = o PO Omie passou a existir entre a leitura em memória e a escrita: a RPC recusou e NADA foi
+  // gravado — é a mesma idempotência de `jaTemOmie`, só que provada no banco (não é cegueira).
+  const omieNoBanco = erroRpc?.motivo === 'po_omie_existente';
   const escritaParcial = p.atualizados !== p.planejados;
   const puladoRuim = p.pulados.some((x) => x.motivo !== 'sem_mudanca');
   // Cega = algum item do pedido ficou SEM custo provado/persistido: fonte não provou, não casou, ficou ambíguo,
-  // pulado por motivo ≠ 'sem_mudanca', casou menos itens do que o pedido tem, ou a escrita ficou parcial.
-  // Com PO Omie já existente a captura nem roda (idempotência, não silêncio).
-  const cego = !p.jaTemOmie && (
-    p.cons.fonte === 'nenhuma' || naoCasados > 0 || ambiguos > 0 || puladoRuim || escritaParcial || casados !== p.nItens
+  // pulado por motivo ≠ 'sem_mudanca', casou menos itens do que o pedido tem, a RPC recusou (≠ CP002) ou a
+  // escrita ficou parcial (com a RPC tudo-ou-nada `atualizados` ∈ {0, planejados}; o ramo fica como defesa).
+  // Com PO Omie já existente (memória OU banco) a captura não grava (idempotência, não silêncio).
+  const cego = !p.jaTemOmie && !omieNoBanco && (
+    p.cons.fonte === 'nenhuma' || naoCasados > 0 || ambiguos > 0 || puladoRuim || erroRpc != null || escritaParcial || casados !== p.nItens
   );
-  const motivo: ResumoCaptura['motivo'] = p.jaTemOmie ? 'ja_tem_omie' : (escritaParcial ? 'escrita_parcial' : p.cons.motivo);
+  const motivo: ResumoCaptura['motivo'] = p.jaTemOmie || omieNoBanco ? 'ja_tem_omie'
+    : erroRpc ? erroRpc.motivo
+    : (escritaParcial ? 'escrita_parcial' : p.cons.motivo);
   return {
-    fonte: p.cons.fonte, motivo, checksum: p.cons.checksum,
+    fonte: p.cons.fonte, motivo, sqlstate_rpc: erroRpc?.sqlstate ?? null, checksum: p.cons.checksum,
     n_dom: p.nDom, n_json: p.nJson, n_itens: p.nItens, casados, nao_casados: naoCasados, ambiguos,
     planejados: p.planejados, atualizados: p.atualizados, pulados: p.pulados, cego,
   };
