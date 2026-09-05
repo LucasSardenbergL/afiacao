@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   parseBRL, parseDiasPrzEnt, casarLinhasComItens, validarGrupoLeadtime, derivarCustos,
-  consolidarLinhasPortal, extrairAddJson, resumirCaptura, round2, toleranciaChecksum,
+  consolidarLinhasPortal, extrairAddJson, resumirCaptura, round2, toleranciaChecksum, classificarErroRpcCusto,
   type ItemPedido, type LinhaPortal, type LinhaDom, type AddJsonPortal, type ItemEsperado,
 } from '../sayerlack-scraping-pedido';
 
@@ -28,6 +28,19 @@ function bloco(fonte: string, nome: string): string {
   if (a === -1 || b === -1 || b < a) throw new Error(`${nome}: marcadores do espelho ausentes/invertidos`);
   return fonte.slice(a, b + FIM.length);
 }
+
+describe('classificarErroRpcCusto (espelho src): casa a MARCA da SQLSTATE, nunca "lançou algo"', () => {
+  it('CP001..CP004 viram o motivo do ramo; qualquer outro código, caixa diferente ou ausência vira erro_rpc', () => {
+    expect(classificarErroRpcCusto('CP001')).toBe('payload_invalido');
+    expect(classificarErroRpcCusto('CP002')).toBe('po_omie_existente');
+    expect(classificarErroRpcCusto('CP003')).toBe('pedido_nao_elegivel');
+    expect(classificarErroRpcCusto('CP004')).toBe('itens_divergentes');
+    expect(classificarErroRpcCusto('42501')).toBe('erro_rpc');
+    expect(classificarErroRpcCusto('cp002')).toBe('erro_rpc');
+    expect(classificarErroRpcCusto(undefined)).toBe('erro_rpc');
+    expect(classificarErroRpcCusto(null)).toBe('erro_rpc');
+  });
+});
 
 describe('espelho Deno ↔ src (captura de custo)', () => {
   it('sentinela: o bloco existe nos DOIS arquivos e tem corpo (não é comparação de vazio com vazio)', () => {

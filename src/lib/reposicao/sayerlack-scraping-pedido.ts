@@ -244,7 +244,7 @@ export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | nu
  * "lançou algo". Código desconhecido/ausente é `erro_rpc` (transiente, cega), nunca um motivo fabricado.
  */
 export type MotivoRpcCusto = 'payload_invalido' | 'po_omie_existente' | 'pedido_nao_elegivel' | 'itens_divergentes' | 'erro_rpc';
-export const SQLSTATE_CUSTO_PORTAL: Readonly<Record<string, Exclude<MotivoRpcCusto, 'erro_rpc'>>> = {
+const SQLSTATE_CUSTO_PORTAL: Readonly<Record<string, Exclude<MotivoRpcCusto, 'erro_rpc'>>> = {
   CP001: 'payload_invalido',
   CP002: 'po_omie_existente',
   CP003: 'pedido_nao_elegivel',
