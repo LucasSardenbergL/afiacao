@@ -18,6 +18,7 @@
 # ║   (I) revoga tudo                          → volta ao limpo, exit 0  ← dente    ║
 # ║   (J) saída com 1 privilégio ENGOLIDO      → exit 2, NÃO exit 0      ← dente    ║
 # ║   (K) saída sem a linha VER|               → exit 2 (sem denominador)           ║
+# ║   (L) tabela da allowlist INEXISTENTE      → TABELA_NAO_APLICADA, exit 1 (não 2)║
 # ║                                                                                ║
 # ║  A allowlist entra por AUTHZ_GRANTS_TEST_JSON — o contrato real do repo não é   ║
 # ║  tocado, e o teste não quebra quando product_costs/omie_products mudarem.       ║
@@ -184,6 +185,20 @@ esperar "J: 1 privilégio engolido da saída → exit 2, não 0" 2 - DRIFT_PROD 
 WRAP_ATUAL="$WRAP_SEM_VER"
 esperar "K: saída sem a linha VER| → exit 2 (sem denominador)" 2 - DRIFT_PROD "VER|"
 WRAP_ATUAL="$WRAP"
+
+# L mede a AUSÊNCIA DO OBJETO: a allowlist ganha uma tabela que NÃO existe neste banco. Até
+# 2026-09-05 isso era exit 2 — `relation "public.zz_nao_aplicada_test" does not exist` derrubava o
+# psql e o audit lia como falha de execução. Mas "migration mergeada e nunca colada no SQL Editor"
+# é a armadilha-mãe do projeto, e exit 2 não grava carimbo: a dívida ficava INVISÍVEL em vez de
+# datada. Ausência do objeto é ACHADO NOMEADO (exit 1 + código), nunca crash nem verde. A tabela
+# fechada do contrato segue no JSON de propósito: prova que a ausente não contamina a presente
+# (sem DRIFT_PROD). O 5º argumento casa a ÂNCORA na mensagem — acusar a coisa certa, com o arquivo
+# a colar, não "acusou algo". O código vai DELIMITADO (`\[…\]`): `NAO_APLICADA` é substring dele.
+TEST_JSON_BASE="$TEST_JSON"
+TEST_JSON='{"public.zz_fechada_test":{"fechadaPor":"20260101000000_x.sql","permitido":{"anon":[],"authenticated":["SELECT"]},"motivo":"tabela sintética do harness"},"public.zz_nao_aplicada_test":{"fechadaPor":"20260102000000_cria_e_fecha_zz.sql","permitido":{"anon":[],"authenticated":["SELECT"]},"motivo":"a migration que a cria nunca foi colada"}}'
+esperar "L: tabela da allowlist INEXISTENTE no banco → TABELA_NAO_APLICADA (exit 1, não 2)" 1 '\[TABELA_NAO_APLICADA\]' DRIFT_PROD \
+  "20260102000000_cria_e_fecha_zz.sql"
+TEST_JSON="$TEST_JSON_BASE"
 
 echo "──────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail  (locale LC_ALL=$LC_ALL)"
