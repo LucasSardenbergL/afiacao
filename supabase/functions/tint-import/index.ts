@@ -20,7 +20,9 @@ export function parseDecimalBR(input: string): number | null {
 
   const finish = (intPart: string, frac: string): number | null => {
     const norm = frac ? `${intPart}.${frac}` : intPart;
-    if (!/^\d+(\.\d+)?$/.test(norm)) return null;
+    // Inteiro vazio é legítimo SÓ com fração (",5"/".5" → 0,5); vazio total (","/".") → null,
+    // nunca 0 — `Number('') === 0` seria fabricação de zero.
+    if (!/^(\d+|\d*\.\d+)$/.test(norm)) return null;
     const n = Number((neg ? '-' : '') + norm);
     return Number.isFinite(n) ? n : null;
   };
