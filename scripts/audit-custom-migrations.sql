@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 506
+-- Total de custom migrations: 509
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -543,11 +543,14 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260829012000', 'analytics_outbox_perda_visivel', '20260829012000_analytics_outbox_perda_visivel.sql'),
   ('20260829041500', 'analytics_outbox_trigger_sensor', '20260829041500_analytics_outbox_trigger_sensor.sql'),
   ('20260829081556', 'sales_orders_hash_omie_canonico', '20260829081556_sales_orders_hash_omie_canonico.sql'),
+  ('20260830122701', 'margin_audit_log_master_pode_ler', '20260830122701_margin_audit_log_master_pode_ler.sql'),
+  ('20260830122702', 'remove_trigger_auto_super_admin', '20260830122702_remove_trigger_auto_super_admin.sql'),
   ('20260830123820', 'snapshot_atomico_universo_itens', '20260830123820_snapshot_atomico_universo_itens.sql'),
   ('20260830190000', 'reconciliar_pedidos_omie', '20260830190000_reconciliar_pedidos_omie.sql'),
   ('20260830214547', 'reposicao_aplicar_promocoes_captura_corpo_vivo', '20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql'),
   ('20260904232555', 'reposicao_qtde_multiplo_embalagem_portal', '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql'),
-  ('20260904233000', 'sku_fornecedor_externo_fator_positivo', '20260904233000_sku_fornecedor_externo_fator_positivo.sql')
+  ('20260904233000', 'sku_fornecedor_externo_fator_positivo', '20260904233000_sku_fornecedor_externo_fator_positivo.sql'),
+  ('20260905090000', 'sayerlack_custo_portal_cas', '20260905090000_sayerlack_custo_portal_cas.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2260,11 +2263,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_outbox_trigger_sensor', 'function', 'public', '_data_health_compute', ''),
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'data_health_watchdog', ''),
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('margin_audit_log_master_pode_ler', 'rls_policy', 'public', 'Strategic+ can view margin audit', 'margin_audit_log'),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('reposicao_aplicar_promocoes_captura_corpo_vivo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
-  ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4025,11 +4030,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_outbox_trigger_sensor', 'function', 'public', '_data_health_compute', ''),
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'data_health_watchdog', ''),
   ('analytics_outbox_trigger_sensor', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('margin_audit_log_master_pode_ler', 'rls_policy', 'public', 'Strategic+ can view margin audit', 'margin_audit_log'),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('reposicao_aplicar_promocoes_captura_corpo_vivo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
-  ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
 )
 SELECT
   e.migration,

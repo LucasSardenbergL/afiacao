@@ -62,6 +62,7 @@ import {
   mensagemHttpOmie,
 } from "../_shared/cmc-snapshot-retry.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
@@ -255,13 +256,26 @@ Deno.serve(async (req: Request) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+  // sem custo. O `authorizeCronOrStaff` acima aceita o `x-cron-secret` do SQL Editor ⇒ sem gate
+  // próprio. Corpo lido UMA vez e reaproveitado abaixo (req.json() não se consome duas). Daqui pra
+  // frente a edge varre o Omie serializado e reescreve `cmc_snapshot`, a base de custo do motor de
+  // reposição e do DRE. Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") {
+    return json({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   try {
     const db = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const body = await req.json().catch(() => ({}));
+    // Já parseado acima (para a sonda) — o `.catch(() => ({}))` subiu junto.
+    const body = corpoBruto;
     const modo = body.modo as string;
     const account = body.account as OmieAccount;
     const maxPaginas = Math.min(Math.max(Number(body.maxPaginas) || 200, 1), 500);

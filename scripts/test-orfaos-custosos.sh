@@ -62,6 +62,35 @@ esac
 STUB
 chmod +x "$tmp/ps"
 
+# ── stub do `curl` + isolamento do ~/.claude-mem ─────────────────────────────
+# O discriminador do claude-mem (2026-09-05, docs/historico/claude-mem-worker-
+# vivo-mas-surdo.md) sonda `http://127.0.0.1:<porta>/api/health` com curl e lê
+# dois arquivos do diretório de dados do plugin. A suíte NUNCA toca o
+# ~/.claude-mem real nem sobe servidor: o diretório vem de CLAUDE_MEM_DATA_DIR
+# (o MESMO nome que o worker-service.cjs 13.15.3 honra — grep no fonte, 13
+# ocorrências) e o curl é este stub, dirigido por CURL_MODO:
+#   ok       → imprime 200 (o -w '%{http_code}' do alvo)
+#   surdo    → imprime 000 e sai 56 (ECONNRESET, o que o incidente de 05/09 deu)
+#   quebrado → sai 2 (curl PRESENTE-porém-quebrado: `command -v` acha, mas não sonda)
+# Cada chamada é registrada em CURL_LOG — é assim que se prova que a sonda só
+# roda quando há órfão do claude-mem, roda UMA vez e leva `-m` ≤ 2 (o teto do
+# vigia é 3 s; um curl sem `-m` contra um worker surdo pendura o hook inteiro).
+cat > "$tmp/curl" <<'STUB'
+#!/bin/sh
+[ -z "${CURL_LOG:-}" ] || printf '%s\n' "$*" >> "$CURL_LOG"
+case "${CURL_MODO:-surdo}" in
+  ok)       printf '200' ;;
+  surdo)    printf '000'; exit 56 ;;
+  quebrado) exit 2 ;;
+  *)        echo "curl stub: CURL_MODO='$CURL_MODO' desconhecido" >&2; exit 99 ;;
+esac
+STUB
+chmod +x "$tmp/curl"
+# Padrão da suíte inteira: diretório do plugin VAZIO e curl stub em modo surdo.
+# Nenhuma asserção abaixo depende do ~/.claude-mem da máquina de quem roda.
+mkdir -p "$tmp/mem-vazio"
+export CLAUDE_MEM_DATA_DIR="$tmp/mem-vazio" CURL_MODO=surdo
+
 # ── fixture principal: 1 culpado + 5 inocentes que já foram observados ───────
 # Colunas na ordem do contrato: pid ppid time pcpu command
 cat > "$tmp/fix-real.txt" <<'FIX'
@@ -154,6 +183,25 @@ if [ "${1:-}" = "--falsificar" ]; then
   # no CI. So a assercao de estabilidade entre locales deixa isto vermelho.
   sabota "sem LC_ALL=C no ps"     "relato estavel entre C e pt_BR (#1483)" \
          's%LC_ALL=C ps -axo%ps -axo%'
+  # ── o discriminador do claude-mem (2026-09-05) ──
+  sabota "discriminador cego"          "orfao worker-service.cjs ganha a anotacao claude-mem" \
+         's%worker-service\\.cjs%NUNCACASA%'
+  sabota "casa DEPOIS do corte"        "worker-service.cjs fica alem dos 110 chars — casar no truncado e cego" \
+         's%tag = (cmd ~ /worker-service%tag = (substr(cmd, 1, 107) ~ /worker-service%'
+  sabota "SURDO vira ok"               "health sem resposta e SURDO, nao ok" \
+         's%health="SURDO"; health_txt="health SURDO%health="ok"; health_txt="health ok%'
+  sabota "contador ausente vira 0"     "hook-failures.json ausente e 'sem contador', nunca 0" \
+         's%contador_txt="sem contador (hook-failures.json ausente%contador="0"; contador_txt="contador=0 (ausente%'
+  sabota "curl ausente vira saudavel"  "sonda ausente degrada para 'nao sondei', nunca para ok" \
+         's%health_txt="nao sondei health (curl ausente no PATH)"%health="ok"; health_txt="health ok (curl ausente no PATH)"%'
+  sabota "curl quebrado vira SURDO"    "curl que nao sondou (rc 2) nao pode afirmar surdo" \
+         's%\*) health_txt="nao sondei health (curl saiu \$rc)" ;;%*) health="SURDO"; health_txt="health SURDO (curl saiu $rc)" ;;%'
+  sabota "receita sem contador"        "receita exige surdo E contador >= 3 provado" \
+         's%\[ -n "\$contador" \] \&\& \[ "\$contador" -ge 3 \]%true%'
+  sabota "curl sem teto de 2s"         "curl -m <= 2, senao worker surdo pendura o hook (teto 3s)" \
+         's%curl -s -m 2 --noproxy%curl -s -m 30 --noproxy%'
+  sabota "sonda roda sem orfao"        "sem orfao do claude-mem o curl NAO roda (2s do teto)" \
+         's#grep -q $'"'"'\\tclaude-mem\\t'"'"'; then#grep -q ""; then#'
 
   printf '\n'
   if [ "$falhou" -eq 0 ]; then echo "VERDE — toda sabotagem foi detectada, nos 2 locales"; exit 0; fi
@@ -259,6 +307,126 @@ if [ -n "$n_cr" ] && [ "$n_cr" = "$n_brr" ] && [ "$n_cr" = "$n_c" ]; then
   ok "ruido de ambiente no stderr nao contamina o relato"
 else
   falha "ruido no stderr mudou o relato: '$n_cr' vs '$n_brr' (limpo: '$n_c')"
+fi
+
+echo "── discriminador do claude-mem: VIVO ≠ SÃO (docs/historico/claude-mem-worker-vivo-mas-surdo.md) ──"
+# O incidente de 2026-09-05: o daemon do plugin (PPID=1) a 95% de CPU por 2 h,
+# porta em LISTEN mas /api/health sem resposta, e o hook do plugin bloqueando
+# TODO prompt de TODA sessão (exit 2) depois de 3 falhas consecutivas. O vigia
+# acusou o pid corretamente — pelos DOIS eixos, que NÃO mudam aqui — mas a
+# linha não dizia se era surdo nem apontava a receita. A linha de comando é a
+# REAL (146 chars): o `worker-service.cjs` fica DEPOIS do corte de 110 chars do
+# awk, então casar no comando truncado seria cego por desenho.
+cat > "$tmp/fix-mem.txt" <<'FIX'
+ 1465     1   123:00.00  95.0 /Users/lucassardenberg/.bun/bin/bun /Users/lucassardenberg/.claude/plugins/cache/thedotmack/claude-mem/13.15.3/scripts/worker-service.cjs --daemon
+FIX
+mem_dir() {  # mem_dir <nome> <consecutiveFailures|-> [porta] → cria o diretório de dados falso e ecoa o caminho
+  local d="$tmp/mem-$1"
+  mkdir -p "$d/state"
+  printf '{\n  "pid": 1465,\n  "port": %s,\n  "startedAt": "2026-08-28T22:00:00.000Z"\n}\n' "${3:-37701}" > "$d/worker.pid"
+  [ "$2" = "-" ] || printf '{"consecutiveFailures":%s,"lastFailureAt":1757078554000}\n' "$2" > "$d/state/hook-failures.json"
+  printf '%s' "$d"
+}
+resumo_mem() {  # resumo_mem <mem_dir> <CURL_MODO> [fixture] → --resumo com a sonda registrada em CURL_LOG
+  rm -f "$tmp/curl.log"
+  CLAUDE_MEM_DATA_DIR="$1" CURL_MODO="$2" CURL_LOG="$tmp/curl.log" \
+    PATH="$tmp:$PATH" PS_FIXTURE="${3:-$tmp/fix-mem.txt}" bash "$ALVO" --resumo 2>/dev/null
+}
+RECEITA="docs/historico/claude-mem-worker-vivo-mas-surdo.md"
+
+# positivo: surdo + contador 5 → SURDO, contador, porta sondada e a receita
+r_surdo="$(resumo_mem "$(mem_dir surdo 5)" surdo)"
+quero "surdo: o orfao continua acusado (os 2 eixos nao mudaram)" "$r_surdo" "pid 1465"
+quero "surdo: diz SURDO"                                          "$r_surdo" "SURDO"
+quero "surdo: traz o contador lido do hook-failures.json"        "$r_surdo" "contador=5"
+quero "surdo: aponta a receita (surdo E contador >= 3)"           "$r_surdo" "$RECEITA"
+quero "surdo: a porta veio do worker.pid, nao de constante"       "$(cat "$tmp/curl.log" 2>/dev/null)" "127.0.0.1:37701/api/health"
+if [ "$(grep -c . "$tmp/curl.log" 2>/dev/null)" = "1" ]; then ok "surdo: sondou UMA vez"
+else falha "surdo: esperava 1 chamada do curl, log: $(tr '\n' '|' < "$tmp/curl.log" 2>/dev/null)"; fi
+m_val="$(sed -n 's/.*-m \([0-9][0-9]*\).*/\1/p' "$tmp/curl.log" 2>/dev/null | awk 'NR==1')"
+if [ -n "$m_val" ] && [ "$m_val" -le 2 ]; then ok "surdo: curl com -m ${m_val} (cabe no teto de 3s do vigia)"
+else falha "surdo: curl sem -m <= 2 (achei '${m_val:-nada}') — worker surdo penduraria o hook"; fi
+if [ "$(printf '%s' "$r_surdo" | grep -c .)" -eq 1 ]; then ok "surdo: resumo continua em 1 linha"
+else falha "surdo: resumo com $(printf '%s' "$r_surdo" | grep -c .) linhas"; fi
+
+# negativo: health ok + contador 0 → acusado (queima CPU), mas SEM surdo nem receita
+r_ok="$(resumo_mem "$(mem_dir ok 0)" ok)"
+quero     "ok: o orfao continua acusado (queima CPU de verdade)" "$r_ok" "pid 1465"
+quero     "ok: diz health ok"                                    "$r_ok" "health ok"
+quero     "ok: contador 0 LIDO do arquivo (nao inventado)"       "$r_ok" "contador=0"
+nao_quero "ok: NAO diz SURDO"                                    "$r_ok" "SURDO"
+nao_quero "ok: NAO aponta a receita"                             "$r_ok" "$RECEITA"
+
+echo "── degradação: sonda que falta NÃO vira 'saudável' — e também não vira SURDO ──"
+# contador AUSENTE ≠ 0 (money-path.md): surdo continua surdo, mas sem contador
+# não se pode afirmar a condição da receita (>= 3) — então ela NÃO sai.
+r_semc="$(resumo_mem "$(mem_dir sem-contador -)" surdo)"
+quero     "sem contador: SURDO continua (a sonda de health rodou)"   "$r_semc" "SURDO"
+quero     "sem contador: diz 'sem contador'"                         "$r_semc" "sem contador"
+nao_quero "sem contador: NAO fabrica contador=0"                     "$r_semc" "contador=0"
+nao_quero "sem contador: NAO aponta a receita (condicao nao provada)" "$r_semc" "$RECEITA"
+
+# curl AUSENTE (PATH sem curl algum — nem o stub, nem /usr/bin/curl) e curl
+# PRESENTE-porém-quebrado (sai 2): nos dois, "nao sondei" — nem ok, nem SURDO.
+mkdir -p "$tmp/bin-sem-curl"
+ln -sf "$tmp/ps" "$tmp/bin-sem-curl/ps"
+for t in awk grep sed cat; do ln -sf "$(command -v "$t")" "$tmp/bin-sem-curl/$t"; done   # cat: o stub do ps usa
+r_semcurl="$(CLAUDE_MEM_DATA_DIR="$(mem_dir sem-curl 5)" PATH="$tmp/bin-sem-curl" PS_FIXTURE="$tmp/fix-mem.txt" "$BASH" "$ALVO" --resumo 2>/dev/null)"
+r_quebrado="$(resumo_mem "$(mem_dir quebrado 5)" quebrado)"
+for par in "curl ausente|$r_semcurl" "curl quebrado (rc 2)|$r_quebrado"; do
+  nome="${par%%|*}"; r="${par#*|}"
+  quero     "$nome: o orfao continua acusado"          "$r" "pid 1465"
+  quero     "$nome: diz 'nao sondei'"                  "$r" "nao sondei"
+  quero     "$nome: o contador ainda e lido (5)"       "$r" "contador=5"
+  nao_quero "$nome: NAO diz health ok"                 "$r" "health ok"
+  nao_quero "$nome: NAO diz SURDO (nao sondou)"        "$r" "SURDO"
+  nao_quero "$nome: NAO aponta a receita"              "$r" "$RECEITA"
+done
+
+# worker.pid ausente → sem porta → "nao sondei" (e o curl nem e chamado)
+d_sempid="$(mem_dir sem-pid 5)"; rm -f "$d_sempid/worker.pid"
+r_sempid="$(resumo_mem "$d_sempid" surdo)"
+quero     "sem worker.pid: diz 'nao sondei'"          "$r_sempid" "nao sondei"
+nao_quero "sem worker.pid: NAO diz SURDO"             "$r_sempid" "SURDO"
+if [ ! -s "$tmp/curl.log" ]; then ok "sem worker.pid: curl NAO foi chamado (sem porta, sem sonda)"
+else falha "sem worker.pid: curl chamado sem porta: $(tr '\n' '|' < "$tmp/curl.log")"; fi
+
+echo "── orçamento: a sonda só roda quando HÁ órfão do claude-mem, e UMA vez ──"
+# O vigia impõe 3s ao script inteiro; o curl -m 2 come 2 deles. Por isso ele
+# NÃO pode rodar na varredura comum (fix-real: só o zsh) e, com dois órfãos do
+# plugin (versões lado a lado), roda uma vez — a porta do worker.pid é uma só.
+r_zsh="$(resumo_mem "$(mem_dir zsh 5)" surdo "$tmp/fix-real.txt")"
+nao_quero "sem orfao do claude-mem: NAO anota claude-mem" "$r_zsh" "claude-mem:"
+if [ ! -s "$tmp/curl.log" ]; then ok "sem orfao do claude-mem: curl NAO foi chamado (2s poupados)"
+else falha "curl chamado sem orfao do claude-mem: $(tr '\n' '|' < "$tmp/curl.log")"; fi
+cat > "$tmp/fix-mem2.txt" <<'FIX'
+ 1465     1   123:00.00  95.0 /Users/lucassardenberg/.bun/bin/bun /Users/lucassardenberg/.claude/plugins/cache/thedotmack/claude-mem/13.15.3/scripts/worker-service.cjs --daemon
+ 1466     1   120:00.00  90.0 /Users/lucassardenberg/.bun/bin/bun /Users/lucassardenberg/.claude/plugins/cache/thedotmack/claude-mem/13.16.0/scripts/worker-service.cjs --daemon
+FIX
+r_dois="$(resumo_mem "$(mem_dir dois 5)" surdo "$tmp/fix-mem2.txt")"
+quero "dois orfaos do claude-mem: os dois acusados" "$r_dois" "pid 1466"
+if [ "$(grep -c . "$tmp/curl.log" 2>/dev/null)" = "1" ]; then ok "dois orfaos do claude-mem: sondou UMA vez (porta e uma so)"
+else falha "dois orfaos: esperava 1 chamada do curl, log: $(tr '\n' '|' < "$tmp/curl.log" 2>/dev/null)"; fi
+
+echo "── o relatório (wt-status) também carrega o discriminador ──"
+rel_mem="$(CLAUDE_MEM_DATA_DIR="$(mem_dir relatorio 5)" CURL_MODO=surdo PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" 2>/dev/null)"
+quero "relatorio: diz SURDO"        "$rel_mem" "SURDO"
+quero "relatorio: aponta a receita" "$rel_mem" "$RECEITA"
+
+echo "── curl REAL contra porta fechada: as flags existem, e 'recusada' é SURDO ──"
+# O stub ignora flags. Só o binário real prova que `-m/--noproxy/-w/-o` são
+# aceitas: uma flag inválida faria o curl real sair 2 → "nao sondei" PARA
+# SEMPRE, e a suíte stubada ficaria verde por cegueira. Porta: uma que o SO
+# acabou de dar como livre (bind em 0 e fecha) → conexão recusada = curl 7.
+if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  porta_livre="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
+  mkdir -p "$tmp/soh-ps"; ln -sf "$tmp/ps" "$tmp/soh-ps/ps"
+  r_real="$(CLAUDE_MEM_DATA_DIR="$(mem_dir real 5 "${porta_livre:-1}")" PATH="$tmp/soh-ps:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" --resumo 2>/dev/null)"
+  quero     "curl real, porta ${porta_livre:-1} fechada: SURDO (curl 7 = recusada)" "$r_real" "SURDO"
+  quero     "curl real: a receita sai (contador 5)"                                 "$r_real" "$RECEITA"
+  nao_quero "curl real: NAO caiu em 'nao sondei' (flag invalida?)"                 "$r_real" "nao sondei"
+else
+  echo "  (pulei: sem curl ou python3 no PATH — este caso NAO foi provado, e isso e falta de dado)"
 fi
 
 printf '\n'

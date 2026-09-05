@@ -111,6 +111,15 @@ suite() {
   run ok "$tmp/psql-stub" edge-muda
   if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 1 ]
   then ok "sem sonda na janela -> SEM_PROVA, exit 1"
+  if tem 'sonda:sql' "$out"
+  then ok "ramo 'nenhuma sonda' aponta o remedio (bun run sonda:sql)"
+  else bad "ramo 'nenhuma sonda' sem remedio — o leitor conclui 'espere o cron', que nunca vem"; fi
+  # 3b. ...e a saida tem de dizer O QUE FAZER. "nenhuma sonda na janela" NAO se resolve esperando:
+  #     nao ha cron de sondagem (93 jobs em cron.job, ZERO com probe) e, medido 2026-09-05, 24 das
+  #     54 edges do mapa nao tem cron NENHUM (webhook/sob demanda) — para essas a prova passiva e
+  #     IMPOSSIVEL, e net._http_response ainda expira no TTL. O autor do proprio script leu este
+  #     ramo como "espere o proximo tick do cron" HORAS depois de escreve-lo, ao verificar dois
+  #     deploys reais; a espera nunca terminaria. Mensagem que engana quem a escreveu engana todos.
   else bad "edge sem sonda devia dar SEM_PROVA/exit 1 (rc=$rc): ${out:0:90}"; fi
 
   # 4. as ~55 edges fora do mapa continuam virando chip como hoje (sem regressao)
@@ -442,6 +451,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "mapa_base ausente voltando a ser tratado como cegueira" \
     's%if \[ ! -s "$tmp/mapa_agora" \]; then%if [ ! -s "$tmp/mapa_agora" ] || [ ! -s "$tmp/mapa_base" ]; then%'
+  # (a6) o remedio some do rodape: o ramo "nenhuma sonda" volta a dizer so "INDETERMINADO" e o
+  #      leitor conclui "espere o cron" — que para 24 das 54 edges do mapa NUNCA vem (sem cron
+  #      nenhum: webhook/sob demanda). Foi o erro cometido ao vivo pelo autor do proprio script.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "registro do ramo 'nenhuma sonda' indo para o vazio (rodape sem remedio)" \
+    's#>> "$tmp/sem_sonda"#>> /dev/null#'
   # (a5) a via (c) para de contribuir alvos: a edge FORA do mapa afetada so por `_shared/` volta a
   #      ser invisivel — exatamente a classe de 41 edges medida em 2026-09-05. Sem esta sabotagem o
   #      caso 13b poderia estar verde por outro motivo (a via (b) pegando a pasta, p.ex.).

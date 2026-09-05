@@ -18,8 +18,8 @@ import {
   verificarFatorAprovado,
 } from "./qtde-portal.ts";
 import {
-  casarLinhasComItens, consolidarLinhasPortal, derivarCustos, extrairAddJson, resumirCaptura, round2,
-  type AddJsonPortal, type ItemPedido, type LinhaDom, type ResultadoMatch,
+  casarLinhasComItens, classificarErroRpcCusto, consolidarLinhasPortal, derivarCustos, extrairAddJson, resumirCaptura, round2,
+  type AddJsonPortal, type ItemPedido, type LinhaDom, type MotivoRpcCusto, type ResultadoMatch,
 } from "./captura-custo.ts";
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 
@@ -2221,6 +2221,9 @@ async function processarPedido(
     // Captura de custo do portal (best-effort; idempotente — só antes do PO Omie existir).
     // Fontes: portal_add_json (JSON do Efetivar) + itens_capturados (DOM). O custo de linha só nasce
     // PROVADO (1 item ⇒ total do pedido; N itens ⇒ DOM com checksum) — ver ./captura-custo.ts.
+    // ESCRITA: uma RPC transacional (`sayerlack_aplicar_custo_portal`) — o gate "só antes do PO Omie" é
+    // compare-and-set NO BANCO (não o snapshot `jaTemOmie`, que fica como atalho barato), e os itens são
+    // tudo-ou-nada (ROW_COUNT == n ⇒ senão SQLSTATE CP004 + ROLLBACK): nunca custo MISTO persistido.
     // SENSOR: envio com sucesso e ≥1 item sem custo provado = `cego` → warn estruturado + resumo em
     // portal_resposta.captura_custo (esta edge é o único writer de portal_resposta neste estado).
     // Medir: docs/agent/reposicao.md §Portal Sayerlack (query de captura cega).
@@ -2236,6 +2239,7 @@ async function processarPedido(
       let pulados: { sku_codigo_omie: string; motivo: string }[] = [];
       let planejados = 0;
       let atualizados = 0;
+      let erroRpc: { motivo: MotivoRpcCusto; sqlstate: string | null } | null = null;
       if (!jaTemOmie) {
         const itensParaCusto: ItemPedido[] = itensList.map((i) => ({
           item_id: i.item_id, sku_codigo_omie: i.sku_codigo_omie, sku_descricao: i.sku_descricao,
@@ -2246,31 +2250,37 @@ async function processarPedido(
         pulados = derivado.pulados;
         // Só escreve quando o pedido INTEIRO está provado (fonte ≠ nenhuma ⇒ conjunto local↔JSON↔DOM fechado e
         // todos casados): nunca mistura custo novo com custo antigo no mesmo PO (Codex P1).
-        const pedidoInteiroProvado = cons.fonte !== 'nenhuma' && match.naoCasados.length === 0 && match.ambiguos.length === 0
-          && match.casados.length === itensParaCusto.length && !pulados.some((p) => p.motivo !== 'sem_mudanca');
+        // `total_pedido != null` entra na prova: sem o total provado não há `valor_total` — e a RPC é
+        // tudo-ou-nada (itens + total na mesma transação), então não existe "itens sem total".
+        const pedidoInteiroProvado = cons.fonte !== 'nenhuma' && cons.total_pedido != null && match.naoCasados.length === 0
+          && match.ambiguos.length === 0 && match.casados.length === itensParaCusto.length && !pulados.some((p) => p.motivo !== 'sem_mudanca');
         if (pedidoInteiroProvado) {
           planejados = derivado.updates.length;
-          for (const u of derivado.updates) {
-            // `.select('id')` devolve a linha afetada: 0 linhas = escrita que não aconteceu (RLS/id), não sucesso.
-            const { data: afetadas, error: eItem } = await supabase.from("pedido_compra_item")
-              .update({ preco_unitario: u.preco_unitario, valor_linha: u.valor_linha }).eq("id", u.item_id).select("id");
-            if (eItem || !Array.isArray(afetadas) || afetadas.length !== 1) {
-              const sku = match.casados.find((c) => c.item.item_id === u.item_id)?.item.sku_codigo_omie ?? String(u.item_id);
-              pulados.push({ sku_codigo_omie: sku, motivo: 'erro_update' });
-              console.error(`[envio-portal] Pedido #${pedido.id}: update de custo falhou (item ${u.item_id}):`, eItem?.message ?? `linhas afetadas=${Array.isArray(afetadas) ? afetadas.length : 'n/a'}`);
-              continue;
+          // planejados === 0 = todos 'sem_mudanca' (custo já batia): nada a gravar, não é cegueira.
+          if (planejados > 0) {
+            // UMA transação: CAS (omie IS NULL + sucesso_portal) no próprio UPDATE + todos os itens + valor_total.
+            // Recusa = SQLSTATE CP00x + ROLLBACK; `data` = nº de itens gravados (== planejados, senão a RPC lançou).
+            const { data: gravados, error: eRpc } = await supabase.rpc("sayerlack_aplicar_custo_portal", {
+              p_pedido_id: pedido.id,
+              p_itens: derivado.updates,
+              p_valor_total: cons.total_pedido,
+            }) as unknown as { data: number | null; error: PostgrestErrorLike | null };
+            if (eRpc) {
+              // Casa a MARCA (SQLSTATE) — código desconhecido é `erro_rpc` (transiente), nunca motivo fabricado.
+              erroRpc = { motivo: classificarErroRpcCusto(eRpc.code), sqlstate: eRpc.code ?? null };
+              console.error(`[envio-portal] Pedido #${pedido.id}: RPC de custo recusou (${eRpc.code ?? 'sem código'} → ${erroRpc.motivo}):`, eRpc.message);
+            } else if (Number(gravados) !== planejados) {
+              // Contrato violado (não devia acontecer: a RPC lança quando ROW_COUNT ≠ n) — trate como não gravado.
+              erroRpc = { motivo: 'erro_rpc', sqlstate: null };
+              console.error(`[envio-portal] Pedido #${pedido.id}: RPC de custo devolveu ${String(gravados)} ≠ planejados ${planejados}`);
+            } else {
+              atualizados = planejados;
             }
-            atualizados++;
-          }
-          // valor_total = total líquido PROVADO do pedido (data.value) — só quando todo item planejado persistiu.
-          if (planejados > 0 && atualizados === planejados && cons.total_pedido != null) {
-            const { error: eTotal } = await supabase.from("pedido_compra_sugerido").update({ valor_total: cons.total_pedido }).eq("id", pedido.id);
-            if (eTotal) console.error(`[envio-portal] Pedido #${pedido.id}: update de valor_total falhou:`, eTotal.message);
           }
         }
       }
       const resumo = resumirCaptura({
-        cons, match, pulados, planejados, atualizados, jaTemOmie,
+        cons, match, pulados, planejados, atualizados, jaTemOmie, erroRpc,
         nDom: capturados.length, nJson: addJson?.itens.length ?? 0, nItens: itensList.length,
       });
       const linhaLog = JSON.stringify({ pedido_id: pedido.id, protocolo: envelope?.protocolo ?? null, ...resumo, scrape_debug: envelope?.scrape_debug ?? null });

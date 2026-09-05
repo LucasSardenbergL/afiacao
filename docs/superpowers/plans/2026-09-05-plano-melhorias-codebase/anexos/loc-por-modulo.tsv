@@ -1,0 +1,19 @@
+modulo	arq	LOC	testes	LOCtst	risco	rotas
+plataforma	222	44596	113	12103	offlineFirst,authSensitive	/auth /settings /docs /design-system /ai-ops /admin/ajuda
+reposicao	226	31970	134	12193	moneyPath	/admin/reposicao /admin/sku-mapeamento
+farmer-inteligencia	268	29780	148	17191		/farmer /meu-dia /coaching /intelligence /executive/dashboard /radar
+financeiro	137	23215	61	8544	moneyPath,authSensitive	/financeiro
+vendas	118	18778	91	14503	moneyPath	/sales /unified-order /pedidos-programados
+telefonia-whatsapp-rota	134	14198	70	6579	moneyPath,authSensitive	/telefonia /whatsapp /rota
+loja-afiacao	64	10837	19	1262		/ /orders /new-order /tools /loyalty /gamification /training /savings
+governanca	85	10700	29	1955		/governance /gestao
+admin-crm	49	6664	6	419		/admin
+tintometrico	34	5952	12	1569	moneyPath	/tintometrico
+knowledge-base	53	5331	15	1072		/admin/knowledge-base /admin/standard-processes
+estoque-recebimento	20	4562	6	983	moneyPath,offlineFirst	/admin/estoque /recebimento
+tarefas	22	3759	8	416		/tarefas
+prime	13	2404	1	329	moneyPath	/admin/prime
+caca	14	1600	11	2219	authSensitive	/caca
+producao	5	998	0	0		/producao
+projeto-verificado	3	159	3	154	moneyPath	
+SEM_DONO	0	0

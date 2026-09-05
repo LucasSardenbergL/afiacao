@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -9,6 +10,30 @@ Deno.serve(async (req) => {
   try {
     const auth = authorizeCron(req);
     if (!auth.ok) return auth.response;
+
+    // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do createClient, para seguir sendo o único
+    // caminho sem custo. O `authorizeCron` acima aceita exatamente o `x-cron-secret` do SQL Editor
+    // ⇒ sem gate próprio. Ver versao.ts / _shared/sonda-versao.ts.
+    //
+    // ⚠️ Esta edge NÃO lia o corpo: no bundle pré-sensor, `{"probe":true}` executava o tick
+    // INTEIRO. A leitura abaixo é ADITIVA (nenhum outro ponto do handler consome `req`) e o
+    // `.catch(() => ({}))` preserva o caminho do cron, que chama sem corpo. Daqui pra frente a
+    // edge CRIA pedido (`orders`) e AVANÇA o `next_order_date` — o run legítimo do dia seguinte
+    // pula a data já consumida, então o dano de um disparo acidental não é só o pedido a mais.
+    const corpoBruto: unknown = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
+    const decisaoSonda = classificarSonda(corpoBruto);
+    if (decisaoSonda.tipo === 'sonda') {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    if (decisaoSonda.tipo === 'ambiguo') {
+      return new Response(
+        JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;

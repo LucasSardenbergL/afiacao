@@ -45,7 +45,15 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * com cadeia de prova (conjunto local↔JSON↔DOM, Qtd UN == digitada, Preço UN == value, checksum absoluto)
  * e sensor `[SENSOR_CAPTURA_CUSTO_CEGA]` + `portal_resposta.captura_custo` quando algum item fica sem custo.
  */
-export const VERSAO = "v1.4-captura-custo-json-efetivar";
+/**
+ * v1.5 — a ESCRITA do custo virou uma RPC transacional (`sayerlack_aplicar_custo_portal`, migration
+ * 20260905090000): compare-and-set NO BANCO (`omie_pedido_compra_numero IS NULL AND status_envio_portal =
+ * 'sucesso_portal'` no próprio UPDATE — `jaTemOmie` em memória era snapshot, corria com o PO Omie) e itens
+ * tudo-ou-nada (ROW_COUNT == n ⇒ senão SQLSTATE CP004 + ROLLBACK; antes o custo MISTO ficava persistido como
+ * `escrita_parcial`). A edge casa a MARCA (CP001..CP004 → motivo) e grava `sqlstate_rpc` no resumo.
+ * ⚠️ Depende da migration aplicada: sem ela todo envio cai em `erro_rpc` (cego=true, motivo=erro_rpc).
+ */
+export const VERSAO = "v1.5-custo-portal-rpc-cas";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
