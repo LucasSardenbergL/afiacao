@@ -149,6 +149,23 @@ por `enviado_portal_em`, e não trata esta linha como trabalho a fazer.
   e o banco fica com o novo. Nesta edge a captura roda ANTES de `registrarPedidoOmieAposPortal` (sequencial);
   a janela só existe com um disparo concorrente por outra via. Fecho seria o `disparar` reler o custo sob o
   mesmo lock — fatia própria.
+
+  **Prompt auto-contido da fatia** (estava só num chip da sessão de 2026-09-05; chip morre com a
+  sessão, então fica aqui — "pendência sem destino não existe" vale também quando o destino é
+  perecível):
+
+  > Contexto: a RPC `public.sayerlack_aplicar_custo_portal` (migration `20260905090000`, aplicada em
+  > prod) grava custo com CAS `omie_pedido_compra_numero IS NULL AND status_envio_portal =
+  > 'sucesso_portal'`. Risco residual: `supabase/functions/disparar-pedidos-aprovados/index.ts` lê
+  > `preco_unitario` (≈l.842) ANTES de criar o PO no Omie (`nValUnit`, ≈l.985) e grava
+  > `omie_pedido_compra_numero` DEPOIS (≈l.1073/1128). Se a RPC gravar nessa janela — só com disparo
+  > concorrente por outra via; nesta edge a captura é sequencial —, o PO nasce com o preço velho.
+  > Tarefa: enumerar TODAS as vias que criam PO Omie a partir de `pedido_compra_sugerido` (money-path
+  > §5), medir em prod (`psql-ro`) se a janela já se materializou, e fechar — o disparo relendo o
+  > custo sob o mesmo row-lock, ou reservando o número do PO antes de chamar o Omie para a RPC
+  > recusar. Prove com `prove-sql-money-path` (PG17, falsificação); migration pelo
+  > `lovable-db-operator` (apply manual). Rode os 5 gates de edge e arme `scripts/pr-watch.sh`.
+  > Leia antes: `CLAUDE.md`, `docs/agent/money-path.md`, `docs/agent/database.md` e este arquivo.
 - Preço do portal é **líquido pré-imposto**; o `preco_unitario` do Omie hoje mistura origens (WP06:
   R$ 172,20 no Omie vs R$ 129,32 líquido no portal). Decisão de produto do #627 mantida; o PO Omie
   passa a nascer com o preço que o fornecedor de fato cobrou.
