@@ -13,9 +13,9 @@
 #    ver money-path.md). Fatos de schema vão NO PRÓPRIO prompt, via psql-ro.
 #
 # Uso:
-#   scripts/codex-async.sh [-m MODELO] [-r low|medium|high|xhigh] [-t SEGUNDOS] "PROMPT"
-#   echo "PROMPT" | scripts/codex-async.sh -r xhigh -
-# Defaults: -m gpt-5.6-sol · -r xhigh · -t 1200 (20min hard-stop)
+#   scripts/codex-async.sh [-m MODELO] [-r low|medium|high|xhigh|max|ultra] [-t SEGUNDOS] "PROMPT"
+#   echo "PROMPT" | scripts/codex-async.sh -r max -
+# Defaults: -m gpt-6-astra · -r max · -t 1200 (20min hard-stop)
 #
 # Garantias:
 #   - preflight (binário + auth) ANTES de gastar tempo/quota, com instrução clara;
@@ -27,13 +27,25 @@
 #   - sandbox read-only (consulta nunca escreve no repo).
 set -u
 
+# gpt-6-astra exige codex-cli ≥ 0.153.1 (lançado 2026-09-03; o cask `codex` do brew subiu
+# 0.144.1 → 0.153.4 em 2026-09-05). Ping `codex exec --model gpt-6-astra -c
+# model_reasoning_effort="max" --sandbox read-only "responda apenas: OK"`, 2026-09-05,
+# codex-cli 0.153.4, conta paga (plan_type=prolite): rc=0 (6s).
+# `astra` é a geração acima da família 5.6 ⇒ é o default, em `max` (ordem do founder
+# 2026-09-05: "GPT-6 Astra no nível max"; um degrau acima do `xhigh`). ⚠️ `max` NÃO é o teto:
+# o catálogo 0.153.4 lista `ultra` acima dele para o Astra, e a conta aceita (ping `-r ultra`
+# rc=0, 7s, 2026-09-05) — NÃO é default (custo de cota desconhecido): `-r ultra` explícito e
+# pontual. A cota (janela rolante) segue sendo o limitador: `-r xhigh`/`-r high` é o degrau
+# econômico EXPLÍCITO, nunca o default.
+#
+# Histórico da família 5.6 (default até 2026-09-05):
 # gpt-5.6-* exige codex-cli ≥ 0.143 (server rejeita CLI antigo com 400).
 # ⚠️ O default É MEDIÇÃO, não escolha. Ping `codex exec --model M -c
 # model_reasoning_effort="xhigh" --sandbox read-only "responda apenas: OK"`, 2026-08-23,
 # codex-cli 0.144.1, conta paga (plan_type=prolite):
 #   gpt-5.6-sol → rc=0 (97s)   gpt-5.6-terra → rc=0 (45s)   gpt-5.6-luna → rc=0 (87s)
 #   gpt-5.6 → 400   ·   gpt-5.3-codex → 400   ·   gpt-5.1-codex-max → 400
-# `sol` é o frontier da família 5.6 ⇒ é o default, em `xhigh` (decisão do founder: a 2ª
+# `sol` era o frontier da família 5.6 ⇒ foi o default, em `xhigh` (decisão do founder: a 2ª
 # opinião do money-path roda sempre no teto).
 #
 # 🔴 A LIÇÃO que custou 2 dias: em 22/08 estes MESMOS pings davam 400 para `sol`, e a
@@ -44,7 +56,7 @@ set -u
 # do tier de baixo — e foi justamente isso que fez a heurística "se ALGUM modelo passa, o
 # login está OK" dar o login por bom. Ela é falsa: um token pode estar VÁLIDO e mentir
 # sobre o plano. Trocar de modelo "resolve" o sintoma e esconde a causa.
-modelo="gpt-5.6-sol"; reasoning="xhigh"; timeout_s=1200
+modelo="gpt-6-astra"; reasoning="max"; timeout_s=1200
 while getopts "m:r:t:" opt; do
   case "$opt" in
     m) modelo="$OPTARG" ;;
@@ -186,7 +198,8 @@ for backoff in "${backoffs[@]}"; do
     echo "  ⚠️ Outro modelo responder NÃO inocenta o login: os tiers de baixo (terra/luna)" >&2
     echo "     seguem servidos com o plano rebaixado. Foi essa inferência que custou 2 dias." >&2
     echo "  2) Só depois troque o modelo com -m, ou ajuste 'model =' em \${CODEX_HOME:-~/.codex}/config.toml;" >&2
-    echo "     medidos OK em 2026-08-23 (conta paga): gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna." >&2
+    echo "     medidos OK (conta paga): gpt-6-astra (2026-09-05, exige codex-cli ≥ 0.153.1);" >&2
+    echo "     gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna (2026-08-23)." >&2
     echo "  (não é cota nem falha transitória: esperar e repetir não consertam nenhum dos dois.)" >&2
     exit 78
   fi
