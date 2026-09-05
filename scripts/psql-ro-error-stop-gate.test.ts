@@ -155,20 +155,32 @@ describe('o corpo REAL do repo', () => {
     expect(porArquivo[0].temErrorStop).toBe(true);
   });
 
-  it('o stripper shell não desabou em nenhum `.sh` (fração, bloco e sub-limpeza)', async () => {
-    const { comentariosSobreviventes, heredocsAbertos, maiorBlocoDescartadoShell, medirPreservacaoShell } =
-      await import('@/lib/gates/limpeza-shell');
+  /**
+   * `diagnosticarShell` em vez dos quatro alarmes soltos: uma varredura por arquivo em vez de
+   * seis. Não é microotimização — com os quatro soltos, 377 `.sh` levavam o caso para perto do
+   * timeout de 5s do vitest sob contenção de máquina, e teste que reprova por RELÓGIO ensina a
+   * ignorar vermelho. O timeout explícito abaixo é o cinto: se um dia estourar, é por volume
+   * real, não por a máquina estar ocupada.
+   */
+  it('o stripper shell não desabou em nenhum `.sh` (fração, bloco, sub-limpeza, heredoc aberto)', async () => {
+    const { diagnosticarShell } = await import('@/lib/gates/limpeza-shell');
     const sh = arquivos.filter((a) => /\.(sh|bash)$/.test(a.caminho));
     expect(sh.length).toBeGreaterThanOrEqual(300);
+    const culpados: string[] = [];
     for (const a of sh) {
-      const { fracao, linhasOriginais } = medirPreservacaoShell(a.fonte);
-      if (linhasOriginais >= 20) expect(`${a.caminho}:${fracao >= PISOS.preservacaoShell}`).toBe(`${a.caminho}:true`);
-      expect(`${a.caminho}:${maiorBlocoDescartadoShell(a.fonte) <= PISOS.blocoDescartado}`).toBe(`${a.caminho}:true`);
-      expect(`${a.caminho}:${comentariosSobreviventes(a.fonte)}`).toBe(`${a.caminho}:${PISOS.comentariosSobreviventes}`);
+      const d = diagnosticarShell(a.fonte);
+      if (d.linhasOriginais >= 20 && d.fracaoPreservada < PISOS.preservacaoShell) {
+        culpados.push(`${a.caminho}: fração ${d.fracaoPreservada.toFixed(2)}`);
+      }
+      if (d.maiorBlocoDescartado > PISOS.blocoDescartado) culpados.push(`${a.caminho}: bloco ${d.maiorBlocoDescartado}`);
+      if (d.comentariosSobreviventes !== PISOS.comentariosSobreviventes) {
+        culpados.push(`${a.caminho}: ${d.comentariosSobreviventes} comentário(s) não limpo(s)`);
+      }
       // Eixo medido POR FORA da máquina: nenhum `.sh` do repo termina com heredoc aberto.
-      expect(`${a.caminho}:${heredocsAbertos(a.fonte)}`).toBe(`${a.caminho}:${PISOS.heredocsAbertos}`);
+      if (d.heredocsAbertos !== PISOS.heredocsAbertos) culpados.push(`${a.caminho}: ${d.heredocsAbertos} heredoc(s) aberto(s)`);
     }
-  });
+    expect(culpados).toEqual([]);
+  }, 30_000);
 
   it('o gate mede o que documenta: as ~200 menções em prosa NÃO viram sítio', () => {
     const mencoes = arquivos.filter((a) => /psql-ro/.test(a.fonte)).length;

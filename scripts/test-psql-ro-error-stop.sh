@@ -33,8 +33,11 @@ TMPD="$(mktemp -d)"
 trap 'rm -rf "$TMPD"; git checkout -- "$ALVO_SCANNER" "$ALVO_STRIPPER" "$ALVO_CLI" 2>/dev/null' EXIT
 
 FALHAS=0
+# Forma CANÔNICA da casa (`[ "${1:-}" = "--falsificar" ]`) — não é estilo: é o que
+# `scripts/falsificacao-cobertura.test.ts` casa para saber que esta suíte TEM o modo. Guarda
+# equivalente porém escrita de outro jeito deixa o vigia achar que o modo não existe.
 FALSIFICAR=0
-for arg in "$@"; do [ "$arg" = --falsificar ] && FALSIFICAR=1; done
+if [ "${1:-}" = "--falsificar" ]; then FALSIFICAR=1; fi
 aviso() { printf '%s\n' "$*"; }
 
 # ── sondas fail-CLOSED: este script SABOTA e RESTAURA fonte; sem git ele destrói ──────────────

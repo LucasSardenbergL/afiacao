@@ -237,9 +237,7 @@ function lerContextoShell(fonte: string): Leitura {
   };
 }
 
-/** Remove os comentários `#` de uma fonte shell, preservando a contagem de linhas. */
-export function removerComentariosShell(fonte: string): string {
-  const { comentarios } = lerContextoShell(fonte);
+function aplicarRemocao(fonte: string, comentarios: [number, number][]): string {
   if (comentarios.length === 0) return fonte;
   const partes: string[] = [];
   let cursor = 0;
@@ -249,6 +247,12 @@ export function removerComentariosShell(fonte: string): string {
   }
   partes.push(fonte.slice(cursor));
   return partes.join('');
+}
+
+/** Remove os comentários `#` de uma fonte shell, preservando a contagem de linhas. */
+export function removerComentariosShell(fonte: string): string {
+  const { comentarios } = lerContextoShell(fonte);
+  return aplicarRemocao(fonte, comentarios);
 }
 
 /**
@@ -385,4 +389,58 @@ export function fatiarPalavras(trecho: string): { cru: string; prefixoNu: string
  */
 export function heredocsAbertos(fonte: string): number {
   return lerContextoShell(fonte).abertosNoFim;
+}
+
+/**
+ * Os QUATRO alarmes numa varredura só.
+ *
+ * Chamar os quatro separadamente custava ~6 passagens pela máquina por arquivo (cada um refaz
+ * `lerContextoShell`, e dois ainda refazem a limpeza). Sobre os 377 `.sh` do repo isso é caro o
+ * bastante para o dente ficar perto do timeout do vitest sob contenção — e teste que reprova por
+ * relógio, não por mérito, é ruído que ensina a ignorar vermelho. Aqui a máquina roda UMA vez e os
+ * quatro alarmes saem dela.
+ */
+export function diagnosticarShell(fonte: string): {
+  linhasOriginais: number;
+  fracaoPreservada: number;
+  maiorBlocoDescartado: number;
+  comentariosSobreviventes: number;
+  heredocsAbertos: number;
+} {
+  const { mascara, comentarios, heredocs, abertosNoFim } = lerContextoShell(fonte);
+  const limpo = aplicarRemocao(fonte, comentarios);
+  const antes = fonte.split('\n');
+  const depois = limpo.split('\n');
+
+  const linhasOriginais = antes.filter((l) => l.trim() !== '').length;
+  const linhasPreservadas = depois.filter((l) => l.trim() !== '').length;
+
+  let maior = 0;
+  let atual = 0;
+  for (let i = 0; i < antes.length; i++) {
+    if (antes[i].trim() === '') continue;
+    atual = (depois[i] ?? '').trim() === '' ? atual + 1 : 0;
+    if (atual > maior) maior = atual;
+  }
+
+  const removidos = new Set(comentarios.map(([ini]) => ini));
+  const emHeredoc = (idx: number) => heredocs.some(([a, b]) => idx >= a && idx < b);
+  let sobreviventes = 0;
+  let off = 0;
+  for (const linha of antes) {
+    const m = /^[ \t]*#/.exec(linha);
+    if (m && !linha.trimStart().startsWith('#!')) {
+      const idx = off + m[0].length - 1;
+      if (!removidos.has(idx) && !emHeredoc(idx) && mascara[idx] === 1) sobreviventes++;
+    }
+    off += linha.length + 1;
+  }
+
+  return {
+    linhasOriginais,
+    fracaoPreservada: linhasOriginais === 0 ? 1 : linhasPreservadas / linhasOriginais,
+    maiorBlocoDescartado: maior,
+    comentariosSobreviventes: sobreviventes,
+    heredocsAbertos: abertosNoFim,
+  };
 }

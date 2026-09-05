@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   comentariosSobreviventes,
+  diagnosticarShell,
   heredocsAbertos,
   fatiarPalavras,
   maiorBlocoDescartadoShell,
@@ -136,5 +137,34 @@ describe('alarmes do stripper', () => {
   it('mede o maior bloco CONTÍGUO descartado, ignorando linha vazia do original', () => {
     const fonte = ['# a', '# b', '', '# c', 'x=1', '# d', ''].join('\n');
     expect(maiorBlocoDescartadoShell(fonte)).toBe(3);
+  });
+});
+
+/**
+ * `diagnosticarShell` existe para não repetir a varredura quatro vezes — mas função combinada que
+ * substitui quatro é exatamente a forma que já divergiu neste arquivo (limpeza vs. máscara eram
+ * duas máquinas, e discordaram). Esta paridade é o que impede a repetição: se um dos cinco campos
+ * sair diferente do alarme que ele resume, o dente reprova em vez de o CLI medir outra coisa que
+ * o teste unitário.
+ */
+describe('paridade diagnosticarShell × os alarmes que ele resume', () => {
+  const corpos = [
+    'a=1\n# c\nb=2\n',
+    ['cat <<EOF', '# dado', 'EOF', '# comentário', ''].join('\n'),
+    ['IFS="," read -r -a p <<< "$L"', '# depois do herestring', 'x=1', ''].join('\n'),
+    [`cmd="$(printf '%s' "$i" | sed -n 's|a|b|p')"`, '# depois da substituição', 'y=2', ''].join('\n'),
+    'cat <<NUNCA_FECHA\nlinha\n',
+    ["awk '", '  # comentário do awk', "  {print}' arq", ''].join('\n'),
+    '',
+  ];
+
+  it.each(corpos.map((c, i) => [i, c]))('corpo %i', (_i, fonte) => {
+    const d = diagnosticarShell(fonte as string);
+    const m = medirPreservacaoShell(fonte as string);
+    expect(d.linhasOriginais).toBe(m.linhasOriginais);
+    expect(d.fracaoPreservada).toBe(m.fracao);
+    expect(d.maiorBlocoDescartado).toBe(maiorBlocoDescartadoShell(fonte as string));
+    expect(d.comentariosSobreviventes).toBe(comentariosSobreviventes(fonte as string));
+    expect(d.heredocsAbertos).toBe(heredocsAbertos(fonte as string));
   });
 });

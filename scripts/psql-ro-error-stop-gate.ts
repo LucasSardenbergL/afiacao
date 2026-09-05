@@ -13,12 +13,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
-import {
-  comentariosSobreviventes,
-  heredocsAbertos,
-  maiorBlocoDescartadoShell,
-  medirPreservacaoShell,
-} from '@/lib/gates/limpeza-shell';
+import { diagnosticarShell } from '@/lib/gates/limpeza-shell';
 import { analisar, type Sitio } from './lib/psql-ro-error-stop';
 
 /**
@@ -116,17 +111,18 @@ function main(): number {
   const desabando: string[] = [];
   for (const a of arquivos) {
     if (!/\.(sh|bash)$/.test(a.caminho)) continue;
-    const { fracao, linhasOriginais } = medirPreservacaoShell(a.fonte);
-    if (linhasOriginais >= 20 && fracao < PISOS.preservacaoShell) desabando.push(`${a.caminho} (fração ${fracao.toFixed(2)})`);
-    const bloco = maiorBlocoDescartadoShell(a.fonte);
-    if (bloco > PISOS.blocoDescartado) desabando.push(`${a.caminho} (bloco descartado ${bloco})`);
-    const abertos = heredocsAbertos(a.fonte);
-    if (abertos > PISOS.heredocsAbertos) {
-      desabando.push(`${a.caminho} (${abertos} heredoc(s) ABERTO(s) até o EOF — a máquina perdeu o fio)`);
+    const d = diagnosticarShell(a.fonte);
+    if (d.linhasOriginais >= 20 && d.fracaoPreservada < PISOS.preservacaoShell) {
+      desabando.push(`${a.caminho} (fração ${d.fracaoPreservada.toFixed(2)})`);
     }
-    const sobrevivente = comentariosSobreviventes(a.fonte);
-    if (sobrevivente > PISOS.comentariosSobreviventes) {
-      desabando.push(`${a.caminho} (${sobrevivente} comentário(s) NÃO limpo(s) — stripper parou)`);
+    if (d.maiorBlocoDescartado > PISOS.blocoDescartado) {
+      desabando.push(`${a.caminho} (bloco descartado ${d.maiorBlocoDescartado})`);
+    }
+    if (d.heredocsAbertos > PISOS.heredocsAbertos) {
+      desabando.push(`${a.caminho} (${d.heredocsAbertos} heredoc(s) ABERTO(s) até o EOF — a máquina perdeu o fio)`);
+    }
+    if (d.comentariosSobreviventes > PISOS.comentariosSobreviventes) {
+      desabando.push(`${a.caminho} (${d.comentariosSobreviventes} comentário(s) NÃO limpo(s) — stripper parou)`);
     }
   }
 
