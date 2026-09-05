@@ -235,6 +235,18 @@ desfecho é redeployar edge de money-path à toa), ou o inverso. Edge sem `versa
 mapa de fingerprints** derruba a geração inteira (nada de SQL parcial em silêncio), e `--caro` que
 não casa um nome da leva também — o typo deixaria a edge cara no bloco SEM trava.
 
+**QUEM entra no `--caro` é MEDIDO, não presumido — o critério é o EFEITO, não a FORMA do handler.**
+Regra curta: edge que **não escreve nem chama serviço externo** no fluxo real é BARATA, e o pior
+caso de sondá-la com bundle pré-sensor é computar e devolver. O proxy "a edge despacha por
+`body.action`?" está **REPROVADO** — marcou `fin-valor-cockpit`, que não escreve nada, como cara
+(`ausente ≠ zero` aplicado à forma do handler: o `default:` que recusa prova que AQUELE caminho é
+inócuo, a ausência de dispatch não prova o contrário). O `grep` de triagem, as duas armadilhas que
+invertem a leitura (`fetch(` de GET de auth não é efeito; `.delete(` casa com `Set.delete` do JS) e
+o eixo reversibilidade/alcance ficam na **escada de edge** da skill `lovable-deploy-verify` —
+**cópia única de propósito**, porque só lá o critério é EXECUTADO pelo gate, que extrai o grep da
+própria skill e o roda contra as edges-exemplo
+(`.claude/skills/lovable-deploy-verify/evals/criterio-caro-eval.sh`).
+
 ⚠️ **O veredito julga o `fonte`, não só o `versao` — e o ramo `DEPLOY PARCIAL` vem ANTES do de
 confirmação.** O `versao` sai do `versao.ts` da PRÓPRIA edge: um deploy que suba `index.ts` +
 `versao.ts` e deixe `_shared/sonda-fingerprints.ts` para trás (o risco do Passo 3 da skill
@@ -308,6 +320,58 @@ como INDETERMINADO.**
   sessão; expirada a linha, o `LEFT JOIN` devolve "aguarde" para sempre e a ambiguidade volta.
 
 Verde = `status_code 200` **E** `canary true` **E** `contrato` batendo com a tabela acima **E** `ok true` **E** `casos_vermelhos NULL` (os cinco, não só o `ok`). `400` com `"Ação desconhecida"` = **bundle velho**, a probe não subiu — e a lista `acoes_disponiveis` da resposta é a confirmação (não cita a action nova). ⚠️ Probe é **dry-run**: se um dia uma delas abrir linha em `fin_sync_log`, ela fabrica frescor — `_data_health_compute` e `fin_calcular_confiabilidade` leem essa tabela **sem filtrar `action`** (só o `fin_sync_heartbeat` filtra). No `omie-financeiro` isso é o `PROBE_ACTIONS` → `logId=""`, pinado no `edge-money-path-invariants`.
+
+#### O CUSTO da sonda, edge a edge — a triagem que decide `--caro` (2026-09-04)
+
+O `sonda:sql` aceita `--caro=<edge>,…` e o doc só registrava **uma** decisão ("das 7 daquela leva, só
+a `sync-reprocess` é barata"). Quem chega depois refaz a leitura de cabo a rabo, ou — pior — chuta
+pelo nome. Triadas as **25 edges mapeadas que não responderam** numa janela de `pg_net.ttl`, lendo o
+`index.ts` de cada uma: **5 baratas, 20 caras**.
+
+A pergunta da triagem é sempre a mesma: *se o bloco de sonda não existisse, o que este handler faria
+com um body `{"probe": true}`* — ou seja, sem `action` e sem os demais campos?
+
+**Baratas — o bundle velho recusa antes de qualquer efeito:**
+
+| edge | o que barra |
+|---|---|
+| `conciliar-pedido-portal` | 400 `pedido_id inválido` (`Number(undefined)` não é inteiro) |
+| `analyze-unified-order` | 401 do gate `Bearer` antigo; passando, 400 por falta de `text`/imagem antes da Anthropic |
+| `omie-nfe-recebimento` | 401 do gate staff (JWT) |
+| `omie-nfe-webhook` | 401 do gate `x-webhook-secret` |
+| `process-nfe` | 401 (`Bearer` + `getUser`); `nf_number` obrigatório barraria em seguida |
+
+⚠️ **Quatro das cinco recusam com 401 — que é o único 4xx ambíguo** (bundle pré-sonda *ou*
+`CRON_SECRET` errado). O bloco gerado já cruza o `controle_credencial` e responde `INDETERMINADO`;
+só a `conciliar-pedido-portal` devolve um 400 inequívoco. "Barata" aqui quer dizer **segura de
+disparar**, não **conclusiva**.
+
+✅ E as cinco **são sondáveis**: o gate que protege a sonda é `authorizeCronOrStaff`, que aceita
+`x-cron-secret`. Em `omie-nfe-recebimento` e `omie-nfe-webhook` isso é DELIBERADO — a sonda tem gate
+**próprio**, porque atrás do gate da edge (JWT staff / webhook-secret, que o Omie e o SQL Editor não
+emitem) ela seria inalcançável por quem precisa dela.
+
+**Caras (20) — não sonde:** `algorithm-a-audit`, `calculate-scores`, `carteira-positivacao-snapshot`,
+`carteira-rebuild`, `disparar-pedidos-aprovados`, `gerar-pedidos-diario`, `monthly-report`,
+`omie-nfe-reconcile`, `omie-sync-ctes-recebidos`, `omie-sync-nfes-recebidas`,
+`omie-sync-pedidos-compra`, `omie-sync-sku-items`, `omie-sync-status-produtos`,
+`omie-sync-vendas-items`, `pedido-programado-enviar`, `reposicao-depara-sayerlack-auto`,
+`sayerlack-captura-precos`, `scoring-recalc-batch`, `tactical-plans-batch`, `visit-score-recalc-batch`.
+
+🔴 **O padrão que faz uma edge ser cara quase nunca é `switch(action)` sem `default` — é o DEFAULT
+que transforma "sem parâmetro" em ação real.** `body.empresa ?? "OBEN"`, `?? "ALL"`, `dias = 30`,
+`resolverEmpresas(null) → ["OBEN"]`: o corpo `{"probe":true}` não tem nenhum campo, e é exatamente
+por isso que o caminho padrão dispara inteiro. Os dois piores: `monthly-report`, onde
+`send_email !== false` é **true** por omissão e `user_id` ausente significa **todos** (a sonda
+manda e-mail de verdade para a base); e `pedido-programado-enviar`, onde a falta de `envio_id` cai
+no ramo cron e processa **todos os envios agendados do dia**. Ao triar, procure `??`, `||` e default
+de destructuring ANTES de procurar o `default:` do switch.
+
+⚠️ **A triagem lê o `index.ts` ATUAL descontando o bloco de sonda — é uma APROXIMAÇÃO do bundle
+velho, não o bundle velho.** Para rigor, confirme o guard no pai
+(`git show <sha-da-sonda>^:supabase/functions/<edge>/index.ts`); foi feito só na `process-nfe`. O
+erro possível é conservador nas que dependem de gate (um 401 a mais), mas não é nulo: guard que
+NASCEU com a fatia da sonda faria uma "barata" ser cara no bundle que está no ar.
 
 ### Assinatura no PRÓPRIO log da edge — N3 retroativo, sem canária e sem sonda
 

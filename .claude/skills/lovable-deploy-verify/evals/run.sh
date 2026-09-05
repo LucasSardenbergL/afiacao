@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os DOIS evals:
+# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os SEIS evals:
 #   (1) classify        — classificação de diff do Passo 1 (classify.sh vs classify-eval.json)
 #   (2) verify-frontend — enumeração + exit codes do Passo 4 (harness local determinístico)
 #   (3) verify-edge-eco  — guard TEMPORAL do N3 passivo (só ticks pré-merge ⇒ indeterminado)
 #   (4) verify-edge-escrita — N3 passivo por escrita de aplicação
 #   (5) sonda-veredito-401  — guard de CREDENCIAL do SQL de sondagem (401 é ambíguo; EXECUTA o SQL)
+#   (6) criterio-caro      — critério MEDIDO do `--caro` (efeito, não forma do handler)
 # Exit 0 = tudo passou. Exit 1 = alguma divergência.
-# Falsificação (prova que os evals têm dente): --falsify sabota AMBOS e exige vermelho
+# Falsificação (prova que os evals têm dente): --falsify sabota TODOS e exige vermelho
 #   (classify sabota o gabarito UMA CHAVE POR VEZ e depois muta o classify.sh real; verify-frontend
 #   sabota a enumeração; verify-edge-eco arranca o guard temporal, o fail-closed do ping e o filtro
-#   do tick mais recente). Exit 0 só se pegou tudo.
+#   do tick mais recente; criterio-caro sabota SKILL.md e as três edges-exemplo, uma por vez).
+#   Exit 0 só se pegou tudo.
 set -uo pipefail
 cd "$(dirname "$0")" || exit 2
 
@@ -160,6 +162,17 @@ if [ "$FALSIFY" = 1 ]; then
   bash sonda-veredito-401-eval.sh --falsify || rc=1
 else
   bash sonda-veredito-401-eval.sh || rc=1
+fi
+
+echo ""
+# (6) Prosa que cita CÓDIGO VIVO apodrece calada: o `docs:citacoes` prova que a linha citada
+# existe, e mais nada. Este eval EXECUTA o grep do critério — extraído da própria SKILL.md,
+# fail-CLOSED se sumir — contra as três edges que ela classifica, e exige o veredito de volta.
+echo "== (6) criterio-caro — quem entra no --caro: efeito medido, não forma do handler =="
+if [ "$FALSIFY" = 1 ]; then
+  bash criterio-caro-eval.sh --falsify || rc=1
+else
+  bash criterio-caro-eval.sh || rc=1
 fi
 
 echo ""

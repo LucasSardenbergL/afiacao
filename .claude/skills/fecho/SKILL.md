@@ -189,6 +189,18 @@ Medido em 2026-08-28 numa janela real de 24h: 7 edges na janela, 3 provadas no a
 vez de 7**. E não é só corte: o `DESATUALIZADA` é sinal que o gatilho velho nunca teve — ele
 mostra bundle velho SERVINDO, que é a falha silenciosa que este passo existe para pegar.
 
+⚠️ **`_shared/` na janela: a ponta que FALTA decide se é cegueira ou só lista mais larga.** O guard
+das duas pontas do mapa nasceu com um `||` — faltando QUALQUER uma, exit 2 por atacado —, e isso
+travava o passo justamente na janela de MAIOR risco: quando `_shared/` muda é quando mais edge é
+afetada por transitividade. Medido 2026-09-05 (`--desde "2026-08-21 20:00"`): 26 arquivos de
+`_shared/` tocados, 41 das 95 edges afetadas, e **veredito nenhum** — porque o commit-base era
+anterior ao #1998, que CRIOU o mapa. As duas pontas não têm o mesmo papel: `mapa_agora` (main) é a
+fonte do `esperado` de toda edge, e sem ele a cegueira é real (exit 2 segue certo); `mapa_base` só
+ESTREITA o diff, e sem ele nenhum par casa e a via (a) emite o mapa INTEIRO como alvo — o
+**superconjunto seguro**, a lista larga e não a vazia. Corrigida a assimetria, a MESMA janela
+devolve **16 `NO_AR` provadas + 25 `SEM_PROVA`** no lugar de 41 pendências cegas. Degradar aqui é
+AMPLIAR a enumeração, nunca absolver: cada alvo segue classificado um a um por prova positiva.
+
 Se a sessão tocou edge: ela foi deployada via chat do Lovable? (Evidência: o founder confirmou
 na conversa, ou a canária/probe respondeu com o comportamento novo.) Pendente → inclua o prompt
 de deploy verbatim (skill `lovable-deploy-verify`, passo 3) na mensagem de fecho.

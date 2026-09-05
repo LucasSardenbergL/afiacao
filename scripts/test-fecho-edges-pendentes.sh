@@ -219,6 +219,50 @@ MAPA1
   then ok "--desde: _shared/ sem mapa legivel -> exit 2, nunca 'nenhuma edge'"
   else bad "_shared sem mapa devia dar exit 2 e nao absolver (rc=$rc): ${out:0:120}"; fi
 
+  # 14b. A JANELA ANTERIOR AO MAPA — o caso que travava o Passo 3 do /fecho em exit 2 (medido
+  #      2026-09-05 com `--desde "2026-08-21 20:00"`: o commit-base e anterior ao #1998, que criou
+  #      `sonda-fingerprints.ts`). As duas pontas do mapa NAO tem o mesmo papel: `mapa_agora` e
+  #      indispensavel (sem ele nao ha `esperado` para ninguem), mas `mapa_base` so ESTREITA a
+  #      enumeracao. Faltando ele o diff nao casa par nenhum e a via (a) emite o mapa INTEIRO como
+  #      alvo — superconjunto SEGURO. Desistir ai joga fora o sinal justamente na janela em que
+  #      MAIS edge foi afetada (41 das 95, na janela medida).
+  local repo2="$tmp/repo-nasce-${LC_ALL:-x}"
+  if [ ! -d "$repo2" ]; then
+    mkdir -p "$repo2/supabase/functions/_shared" "$repo2/supabase/functions/edge-do-shared"
+    git -C "$repo2" init -q -b main 2>/dev/null
+    git -C "$repo2" config user.email t@t; git -C "$repo2" config user.name t
+    printf 'x\n' > "$repo2/supabase/functions/_shared/lib.ts"
+    printf 'import "../_shared/lib.ts"\n' > "$repo2/supabase/functions/edge-do-shared/index.ts"
+    # commit-base SEM o mapa: e exatamente como a main estava antes do #1998
+    git -C "$repo2" add -A >/dev/null; git -C "$repo2" commit -qm "base sem mapa"
+    git -C "$repo2" rev-parse HEAD > "$tmp/base2_sha"
+    printf 'y\n' > "$repo2/supabase/functions/_shared/lib.ts"
+    cat > "$repo2/supabase/functions/_shared/sonda-fingerprints.ts" <<MAPA2
+export const FONTE_SHA256: Record<string, string> = {
+  "edge-do-shared": "$SHA_NOVO",
+};
+MAPA2
+    git -C "$repo2" add -A >/dev/null; git -C "$repo2" commit -qm "shared + mapa nasce"
+    git -C "$repo2" update-ref refs/remotes/origin/main HEAD
+  fi
+  printf 'edge-do-shared %s\n' "$SHA_NOVO" > "$tmp/pares-shared.txt"
+
+  # o SINAL tem de sobreviver: com a fonte servida batendo, a edge sai NO_AR e o chip some
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo2" \
+         STUB_PARES="$tmp/pares-shared.txt" FECHO_MAPA_FONTE="" \
+         bash "$ALVO" --desde "$(cat "$tmp/base2_sha")" 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ] && tem 'NO_AR' "$out" && tem 'mapa_base ausente' "$out"
+  then ok "--desde: janela anterior ao mapa -> enumera pelo mapa INTEIRO e preserva o NO_AR"
+  else bad "janela anterior ao mapa devia classificar, nao exit 2 (rc=$rc): ${out:0:140}"; fi
+
+  # e o fail-closed CONTINUA: sem fonte servida, a MESMA edge cai para SEM_PROVA, nunca NO_AR
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo2" \
+         STUB_PARES=/dev/null FECHO_MAPA_FONTE="" \
+         bash "$ALVO" --desde "$(cat "$tmp/base2_sha")" 2>&1)"; rc=$?
+  if [ "$rc" -eq 1 ] && tem 'SEM_PROVA' "$out" && ! tem 'NO_AR' "$out"
+  then ok "--desde: janela anterior ao mapa, sem sonda -> SEM_PROVA (fail-closed intacto)"
+  else bad "sem sonda devia cair para SEM_PROVA, nunca NO_AR (rc=$rc): ${out:0:140}"; fi
+
   # 12. guardrail de FORMA do SQL: o stub nao executa SQL, entao o que da para provar aqui e que a
   #     consulta pede a resposta MAIS RECENTE por edge. Sem isso, um deploy no meio da janela deixa
   #     o bundle velho no resultado e ele seria lido como prova (o caso do omie-vendas-sync).
@@ -285,6 +329,13 @@ if [ "${1:-}" = "--falsificar" ]; then
   # (a3) o fail-closed do `_shared/` sem mapa vira aviso: enumeracao voltaria a absolver por ausencia
   sabota "_shared sem mapa deixando de ser exit 2" \
     's%      exit 2$%      :%'
+  # (a4) a assimetria de papel entre as duas pontas do mapa some, e `mapa_base` volta a valer por
+  #      cegueira — o defeito medido em 2026-09-05: janela cujo base e anterior ao #1998 (que criou
+  #      o mapa) desistia por atacado, sem veredito nenhum, justo quando `_shared/` afetou 41 das
+  #      95 edges. Sem esta sabotagem o caso 14b passaria a ser decorativo.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "mapa_base ausente voltando a ser tratado como cegueira" \
+    's%if \[ ! -s "$tmp/mapa_agora" \]; then%if [ ! -s "$tmp/mapa_agora" ] || [ ! -s "$tmp/mapa_base" ]; then%'
   # (b) o fail-closed some da classificacao: mecanica quebrada passaria a absolver
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "classificar como NO_AR mesmo com mecanica quebrada" \
