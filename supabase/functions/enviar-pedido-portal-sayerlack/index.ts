@@ -8,6 +8,8 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classificarPosLogin, decidirAlertaPortal, ehFalhaSistemicaDoPortal } from "../_shared/sayerlack-pos-login.ts";
+import { FatorConversaoInvalidoError, qtdePortal } from "./qtde-portal.ts";
+import { escritaCritica } from "../_shared/escrita-critica.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1868,12 +1870,44 @@ async function processarPedido(
   }
 
   // 3. Calcular qtde portal
-  // Portal Sayerlack só aceita unidades inteiras: arredondar SEMPRE para cima.
-  const itemsPortal = itensList.map((i) => ({
-    sku_portal: i.sku_portal!,
-    qtde: Math.max(1, Math.ceil(i.qtde_final * i.fator_conversao)),
-    sku_descricao: i.sku_descricao,
-  }));
+  // Portal Sayerlack só aceita unidades inteiras: arredondar SEMPRE para cima (`qtdePortal`, que também
+  // converte a unidade do Omie para a do portal via `fator_conversao` — ex.: litro → balde 0,2).
+  // Fail-closed: fator inválido aborta o pedido INTEIRO antes de qualquer status/Browserless —
+  // enviar parcial ou "NaN" no input do portal é irreversível (o fornecedor recebe de verdade).
+  let itemsPortal: Array<{ sku_portal: string; qtde: number; sku_descricao: string }>;
+  try {
+    itemsPortal = itensList.map((i) => ({
+      sku_portal: i.sku_portal!,
+      qtde: qtdePortal(i.qtde_final, i.fator_conversao, i.sku_codigo_omie),
+      sku_descricao: i.sku_descricao,
+    }));
+  } catch (e) {
+    if (!(e instanceof FatorConversaoInvalidoError)) throw e;
+    result.status_final = "erro_nao_retentavel";
+    result.erro = e.message;
+    result.tentativas += 1;
+    // escritaCritica: se o status não gravar, o pedido voltaria à fila e re-tentaria com o mesmo fator.
+    await escritaCritica(
+      "pedido_compra_sugerido.update(erro_nao_retentavel:fator_conversao_invalido)",
+      supabase.from("pedido_compra_sugerido").update({
+        status_envio_portal: result.status_final,
+        portal_tentativas: result.tentativas,
+        portal_erro: result.erro,
+        portal_proximo_retry_em: null,
+      }).eq("id", pedido.id),
+    );
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: result.status_final,
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "pre_browserless", motivo: "fator_conversao_invalido", sku: e.sku, requestSent: false },
+      browserlessResponseMs: null,
+      erro: result.erro,
+    });
+    console.log(`[envio-portal] Pedido #${pedido.id}: falha fator_conversao inválido (${e.sku})`);
+    result.duracao_ms = Date.now() - t0;
+    return result;
+  }
 
   // 4. Marcar como enviando
   await supabase.from("pedido_compra_sugerido").update({
