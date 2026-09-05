@@ -28,7 +28,7 @@ import { fatiarPalavras, mascaraContexto, removerComentariosShell } from '@/lib/
 
 /** Nomes SEMENTE: usados sem `=` no arquivo, herdados do ambiente. Um `=` local que aponte para
  *  outra coisa REFUTA a semente naquele arquivo (é assim que `PSQL="$PGBIN/psql"` não vira alvo). */
-export const NOMES_SEMENTE = ['PSQL', 'PSQL_RO', 'PSQLRO', 'AFIACAO_PSQL'] as const;
+const NOMES_SEMENTE = ['PSQL', 'PSQL_RO', 'PSQLRO', 'AFIACAO_PSQL'] as const;
 
 /** Marca do wrapper num RHS. `psql-ro-fake` casa de propósito: o fake IMITA prod (sem
  *  ON_ERROR_STOP), então lê-lo por `-f` tem exatamente o mesmo defeito. */
@@ -78,7 +78,7 @@ function ligaErrorStop(valor: string): boolean {
   return !['off', '0', 'false', 'no'].includes(bruto);
 }
 
-export interface Classificacao {
+interface Classificacao {
   temC: boolean;
   temF: boolean;
   temErrorStop: boolean;
@@ -243,7 +243,7 @@ export function descobrirVinculosShell(limpo: string): Set<string> {
   return vinculados;
 }
 
-export function analisarShell(arquivo: string, fonte: string): Sitio[] {
+function analisarShell(arquivo: string, fonte: string): Sitio[] {
   const limpo = removerComentariosShell(fonte);
   const vinculados = descobrirVinculosShell(limpo);
   const contexto = mascaraContexto(limpo);
@@ -335,7 +335,7 @@ function literaisDe(trecho: string): { cru: string; prefixoNu: string }[] {
   return fora;
 }
 
-export function descobrirVinculosTs(limpo: string): Set<string> {
+function descobrirVinculosTs(limpo: string): Set<string> {
   const vinculados = new Set<string>();
   const re = new RegExp(`(?:const|let|var)\\s+(${NOME_VAR})\\s*(?::[^=]+)?=\\s*([^;\\n]*(?:\\n[^;\\n]*)??);`, 'g');
   for (const m of limpo.matchAll(re)) {
@@ -344,7 +344,7 @@ export function descobrirVinculosTs(limpo: string): Set<string> {
   return vinculados;
 }
 
-export function analisarTs(arquivo: string, fonte: string): Sitio[] {
+function analisarTs(arquivo: string, fonte: string): Sitio[] {
   const limpo = removerComentarios(fonte);
   const vinculados = descobrirVinculosTs(limpo);
   const sitios: Sitio[] = [];

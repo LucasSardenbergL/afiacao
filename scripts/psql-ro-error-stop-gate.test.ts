@@ -4,7 +4,12 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { analisar, descobrirVinculosShell } from './lib/psql-ro-error-stop';
+import {
+  analisar,
+  classificarArgumentos,
+  descobrirVinculosShell,
+  repassaArgumentosOpacos,
+} from './lib/psql-ro-error-stop';
 import { PISOS, RAIZES_PADRAO, enumerar } from './psql-ro-error-stop-gate';
 import { removerComentariosShell } from '@/lib/gates/limpeza-shell';
 
@@ -68,6 +73,36 @@ describe('discriminações que precisam ser POSITIVAS, não sorte', () => {
     const fonte = 'W="$HOME/.config/afiacao/psql-ro"\nW2="$W"\nW3="$W2"\n';
     const v = descobrirVinculosShell(fonte);
     expect([v.has('W'), v.has('W2'), v.has('W3')]).toEqual([true, true, true]);
+  });
+});
+
+describe('classificação de argumentos — a leitura das formas do psql', () => {
+  const p = (...palavras: string[]) => palavras.map((cru) => ({ cru, prefixoNu: cru }));
+
+  it('reconhece `-c` em cluster e na forma longa; `-F` maiúsculo NÃO é `-f`', () => {
+    expect(classificarArgumentos(p('-Atc', 'SELECT 1')).temC).toBe(true);
+    expect(classificarArgumentos(p('--command=SELECT 1')).temC).toBe(true);
+    expect(classificarArgumentos(p('-At', '-F', '|')).temC).toBe(false);
+    expect(classificarArgumentos(p('-At', '-F', '|')).temF).toBe(false);
+  });
+
+  it('lê ON_ERROR_STOP separado, colado e nas formas longas — e respeita o VALOR', () => {
+    expect(classificarArgumentos(p('-v', 'ON_ERROR_STOP=1')).temErrorStop).toBe(true);
+    expect(classificarArgumentos(p('-vON_ERROR_STOP=on')).temErrorStop).toBe(true);
+    expect(classificarArgumentos(p('--set=ON_ERROR_STOP=true')).temErrorStop).toBe(true);
+    expect(classificarArgumentos(p('--variable', 'ON_ERROR_STOP=1')).temErrorStop).toBe(true);
+    expect(classificarArgumentos(p('-v', 'ON_ERROR_STOP=off')).temErrorStop).toBe(false);
+    expect(classificarArgumentos(p('-v', 'ON_ERROR_STOP=0')).temErrorStop).toBe(false);
+    // Nome de variável do psql é case-sensitive: `on_error_stop` NÃO liga nada.
+    expect(classificarArgumentos(p('-v', 'on_error_stop=1')).temErrorStop).toBe(false);
+    // A forma colada vale só para `-v`: liberá-la para `f` faria `-vfoo=1` casar como `--file`.
+    expect(classificarArgumentos(p('-vfoo=1')).temF).toBe(false);
+  });
+
+  it('repasse opaco é `"$@"`, `$*` e expansão de array', () => {
+    expect(repassaArgumentosOpacos(p('"$@"'))).toBe(true);
+    expect(repassaArgumentosOpacos(p('"${ARGS[@]}"'))).toBe(true);
+    expect(repassaArgumentosOpacos(p('-tA', '-c', '"$1"'))).toBe(false);
   });
 });
 

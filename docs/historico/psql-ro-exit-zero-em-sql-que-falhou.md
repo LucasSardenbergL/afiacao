@@ -91,7 +91,7 @@ dos dois foi visto por eles**, porque os dois faziam o stripper limpar de MENOS:
 
 | furo | efeito medido |
 |---|---|
-| `<<<` (herestring) lido como `<<` | delimitador vira `$REQ_IDS`, nunca fecha, e **o resto do arquivo inteiro** vira "corpo de heredoc" — 45 comentários sobreviveram em `edges-pendentes.sh` |
+| `<<<` (herestring) lido como `<<` | delimitador vira `$REQ_IDS`, nunca fecha, e **o resto do arquivo inteiro** vira "corpo de heredoc" — 45 comentários sobreviveram em `edges-pendentes.sh` (e este é o furo que o sensor de sub-limpeza NÃO vê sozinho — ver a rede, abaixo) |
 | `$(…)` dentro de `"…"` não voltando a contexto de comando | o 1º `"` pareia com o `"` de `"$input"` e tudo desanda — 30 comentários em `heavy-guard.sh` |
 
 `comentariosSobreviventes()` é o alarme desse lado: comentário `#` que sobreviveu, **fora** de
@@ -113,11 +113,42 @@ alimentam o vitest e o harness de shell. Cada uma existe porque **isola uma cama
 um gate que só procura o NOME da flag ficaria verde com `ON_ERROR_STOP=off`.
 
 `scripts/test-psql-ro-error-stop.sh --falsificar` sabota **uma camada por vez** e exige vermelho por
-causa dela. A sabotagem que quase escapou foi a do `<<<`: quebrá-la deixa a fixture correspondente
-VERMELHA de qualquer jeito (o comentário-isca vira código e vira uma violação a mais) — o veredito
-por fixture não muda. Quem a pega é o corpo REAL do repo saindo `rc=2` pelo sensor de sub-limpeza.
-Daí o critério do harness ser "ficou vermelho em ALGUM lugar", e não "a fixture X inverteu": um
-critério estreito demais faz a camada parecer redundante quando o que falta é onde olhar.
+causa dela. Estado final: **21 fixtures × 2 locales × 14 camadas, todas vermelhas quando sabotadas.**
+
+### As duas camadas que ficaram VERDES na primeira rodada — e o que cada uma ensinou
+
+**1. `-c` não era observável onde estava sendo testada.** Sabotar a detecção de `-c` deixava
+`limpo-b-forma-c` verde. O motivo: naquela fixture não há `-f`, nem stdin, nem repasse opaco — não
+havia exigência para o `-c` dispensar, então perder a detecção não muda veredito nenhum. Uma
+camada só é observável **onde ela decide**. `limpo-j-c-vence-stdin-e-opaco` põe o `-c` contra um
+`< /dev/null` e contra um `"$@"`: aí sim, perdê-lo vira falso positivo. Generalizando: fixture que
+exercita a camada ≠ fixture em que a camada é o ÚNICO fator do veredito, e só a segunda prova.
+
+**2. A sabotagem inócua se disfarça de "camada redundante".** A primeira sabotagem do `<<<`
+desligava o ramo inteiro — e isso NÃO reproduz o furo: o `<<` seguinte cai no leitor de cabeçalho,
+não acha delimitador em `<`, e desiste. Nada quebra, tudo fica verde, e o relatório acusa a camada
+de redundante. Era um veredito **fabricado sobre uma camada que ninguém testou**. A sabotagem fiel
+consome só UM `<`, que é o furo original.
+
+**3. O achado mais caro: o sensor consultava a crença defeituosa que ele deveria vigiar.**
+Com a sabotagem fiel, `comentariosSobreviventes` continuou devolvendo **0** para o
+`edges-pendentes.sh` que tinha 45 comentários por limpar. Porque o sensor **isenta** o que está
+dentro de heredoc (ali `#` é dado) — e pergunta isso à MESMA máquina. Uma falha que faz a máquina
+*acreditar* estar num heredoc é, por construção, invisível para ele: o sensor consulta a crença
+quebrada e a usa como desculpa.
+
+A correção é uma invariante medida **por fora** da crença: *script shell bem-formado não termina com
+heredoc aberto*. Quando `<<<` vira `<<`, o delimitador passa a ser o argumento (`$REQ_IDS`), que
+nunca aparece como linha, e o heredoc fica aberto até o EOF. `heredocsAbertos()` mede isso;
+baseline nos 373 `.sh`: **0**. Com ele, a sabotagem do `<<<` fica vermelha.
+
+> **Regra geral que sai daqui:** sensor que consulta o próprio sistema que vigia herda os defeitos
+> dele. Todo alarme sobre uma máquina precisa de ao menos um eixo medido POR FORA dela — e a
+> maneira de descobrir que ele não tem é sabotar a máquina, não contar casos verdes.
+
+O critério do harness é "ficou vermelho em ALGUM lugar" (fixture **ou** o corpo real do repo), e não
+"a fixture X inverteu": critério estreito demais faz a camada parecer redundante quando o que falta
+é onde olhar — foi assim que o `<<<` escapou duas vezes antes de ser pego.
 
 ### Retro-validação
 
