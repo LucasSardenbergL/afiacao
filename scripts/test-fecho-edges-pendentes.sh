@@ -150,9 +150,14 @@ suite() {
   #     comando com valor INVALIDO de proposito (regra do deploy.md: campo que o operador
   #     substitui nunca carrega valor de EXEMPLO), e o sonda:sql aborta sem emitir SQL ate a
   #     triagem acontecer. Recado vira TRAVA — recado que depende de alguem lembrar nao vale.
-  if tem '--caro=trie-antes-veja-deploy-md' "$linha_cmd" && tem 'TRIE ANTES DE DISPARAR' "$out"
+  #     Invocacao PROPRIA, com 1 alvo: a trava nao pode depender do tamanho da leva. Reaproveitar
+  #     o `linha_cmd` do 3c acoplava as duas — medido ao falsificar: sabotar SO o truncamento
+  #     derrubou esta asercao junto, e caso que so falha junto com outro nao mede nada sozinho.
+  run ok "$tmp/psql-stub" edge-muda
+  linha_trava="$(printf '%s' "$out" | command grep 'sonda:sql' || true)"
+  if tem '--caro=trie-antes-veja-deploy-md' "$linha_trava" && tem 'TRIE ANTES DE DISPARAR' "$out"
   then ok "DISPARE carrega a trava --caro invalida + o aviso de fluxo REAL"
-  else bad "DISPARE saiu pronto-para-colar sem triagem: ${linha_cmd:0:150}"; fi
+  else bad "DISPARE saiu pronto-para-colar sem triagem: ${linha_trava:0:150}"; fi
 
   # 4. as ~55 edges fora do mapa continuam virando chip como hoje (sem regressao)
   run ok "$tmp/psql-stub" edge-fora-do-mapa
