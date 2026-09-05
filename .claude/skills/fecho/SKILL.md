@@ -156,6 +156,10 @@ bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início d
 # aceita DATA ou REVISÃO — se você anotou o SHA de origin/main ao abrir a sessão, prefira o SHA
 # exit 0 = nada pendente · 1 = abra chip para a lista · 2 = MECÂNICA não confiável (o script já
 # imprime tudo como pendente; trate assim) · 3 = uso inválido
+#
+# Se VOCÊ acabou de disparar sondas nesta sessão, cole os request_id: é o único vínculo que
+# alcança o bundle que responde sem dizer de quem é (ver `SONDA_ANONIMA` na tabela abaixo).
+# ... --request-ids "conciliar-pedido-portal=69377,process-nfe=69381"
 ```
 
 **O gatilho deste passo é "sem prova de estar no ar", não "tem commit na janela".** O `git log`
@@ -170,6 +174,7 @@ enterra o chip que importava. O script troca isso pela evidência que já existe
 | `NO_AR` | `fonte` servido == main — o bundle no ar é este | **não** |
 | `DESATUALIZADA` | `fonte` servido ≠ main — bundle VELHO servindo | sim, e prioritário |
 | `PRE_SONDA_FONTE` | respondeu a sonda (200 + eco de `probe`/`versao`) **sem** o campo `fonte` — bundle anterior ao #1998 | sim, e prioritário |
+| `SEM_PROVA` + `SONDA_ANONIMA` | há resposta de sonda na janela **sem eco de slug** — existe e não é atribuível | sim (fail-closed), e o `--request-ids` determina |
 | `SEM_PROVA` | fora do mapa de sondas, sem sonda na janela, ou mecânica quebrada | sim (fail-closed) |
 
 ⚠️ **`PRE_SONDA_FONTE` é pendência PROVADA, não indeterminada — e nasceu de um falso
@@ -181,6 +186,18 @@ isso, e o script alegava não ter observado nada sobre as 7 — sendo que o 200 
 o ar é anterior ao #1998. Ausência FABRICADA não é fail-closed: é ruído com o mesmo desfecho do
 sinal, e enterra o chip que importa. Continuam INDETERMINADOS (`SEM_PROVA`): 401, resposta sem eco
 de `probe` (pré-sensor) e ausência real de linha.
+
+⚠️ **E há um degrau ANTES desse: o bundle que nem ecoa o slug.** O casamento resposta↔edge usa
+`content->>'edge'`, que só nasceu no #1789 — bundle anterior responde `{ok,probe,versao}` e mais
+nada. Medido 2026-09-05 (request_ids 69377-69381): das 5 edges sondadas, as 2 que ecoam `edge`
+saíram `PRE_SONDA_FONTE` e as 3 restantes saíram "nenhuma sonda em 6 hours" — o **mesmo** erro do
+`PRE_SONDA_FONTE` uma geração de campo atrás, e desta vez com a resposta gravada no banco. Não dá
+para presumir de qual edge é a linha (`net.http_request_queue`, a única tabela do pg_net com a URL,
+é apagada quando a resposta chega — conferido no mesmo dia), então **a identidade ausente continua
+ausente**: o veredito é INDETERMINADO e o chip continua. O que mudou é a saída dizer `SONDA_ANONIMA`
+e contar quantas há, em vez de alegar que ninguém sondou — e apontar o `--request-ids`, que é o
+único vínculo determinístico. Com os 5 ids colados, as 5 edges daquele dia saíram `PRE_SONDA_FONTE`:
+pendência PROVADA que o diagnóstico anterior escondia.
 
 🔴 **A direção é uma só: presença PROVA, ausência NÃO reprova** (#2086/#2095). O script só sabe
 SUPRIMIR chip com evidência POSITIVA; ele é o lado que APAGA pendência, então na dúvida é chip.

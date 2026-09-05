@@ -51,6 +51,11 @@ sql="${!#}"
 case "${STUB_MODO:-ok}" in
   mudo) exit 0 ;;                       # presente-porém-QUEBRADO: responde vazio ao SELECT 1
   so-set) echo SET; echo SET; exit 0 ;; # abre a sessao e nao devolve resultado nenhum
+  # quebra SO a sonda `SELECT 1` e responde normal a consulta: isola a assercao da SONDA POSITIVA
+  # da trava de FORMA do resultado. Sem este modo as duas se cobrem — o wrapper mudo de verdade
+  # e mudo para tudo, entao a trava de forma pegaria o defeito e a sabotagem da sonda ficaria
+  # VERDE: cobertura redundante em prod, ausencia de medicao no teste.
+  mudo-sonda) [ "$sql" = "SELECT 1" ] && { echo SET; echo SET; exit 0; } ;;
 esac
 # o wrapper REAL emite os `SET` da sessao read-only ANTES do resultado (medido em prod 2026-08-28):
 # quem exigir a saida inteira == "1" reprova o wrapper BOM e o gate nasce sempre em fail-closed.
@@ -200,6 +205,13 @@ suite() {
   if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ]
   then ok "psql que so abre sessao (SET SET, sem resultado) -> fail-closed, exit 2"
   else bad "psql sem resultado devia dar exit 2 (rc=$rc): ${out:0:90}"; fi
+
+  # 6c. wrapper que responde a CONSULTA mas nao a sonda `SELECT 1`. A sonda POSITIVA e o guard,
+  #     e ele tem de reprovar sozinho — sem depender de o resultado tambem vir malformado.
+  run mudo-sonda "$tmp/psql-stub" edge-no-ar
+  if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ] && ! tem 'NO_AR' "$out"
+  then ok "psql que responde a consulta mas nao a sonda -> fail-closed, exit 2"
+  else bad "sonda sem resposta positiva devia dar exit 2 (rc=$rc): ${out:0:90}"; fi
 
   # 7. a consulta estourou -> mecanica nao confiavel, tudo pendente
   run erro-query "$tmp/psql-stub" edge-no-ar
@@ -443,7 +455,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   #     compara — nenhuma das duas metades falha sozinha, e o ramo novo fica inalcancavel
   sabota "sentinela do SQL divergindo do que o classificador compara" \
     "s%'sem-campo-fonte'           AS fonte%'sem-campo-fonte-x'         AS fonte%"
-  # ---- as 5 abaixo guardam o ramo da SONDA ANONIMA (#2162). O bundle anterior ao #1789 responde
+  # ---- as 5 abaixo guardam o ramo da SONDA ANONIMA (2026-09-05). O bundle anterior ao #1789 responde
   #      {ok,probe,versao} e NAO diz de quem e: a resposta existe e nao e atribuivel. O erro caro
   #      nao e o veredito (segue INDETERMINADO nos dois desenhos) — e o MOTIVO: "nenhuma sonda na
   #      janela" manda sondar de novo o que ja foi sondado, e some com o chip que importava.

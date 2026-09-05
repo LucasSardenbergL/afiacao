@@ -280,6 +280,7 @@ sabotar "a contagem de anonimas nunca acha nada (volta a 'nenhuma sonda')" \
 sabotar "a contagem conta TAMBEM o que ja casa por eco (aviso que aparece sempre)" \
         "AND NOT ((b.content::jsonb) ? 'edge')" \
         "AND true"
+# shellcheck disable=SC2016  # aspas simples: os padroes sao TEXTO LITERAL do alvo
 sabotar "o ramo da anonima some da classificacao" \
         'elif [ -z "$servido" ] && [ "$n_anonimas" -gt 0 ]; then' \
         'elif false; then'
@@ -295,9 +296,11 @@ sabotar "o DISTINCT ON perde a ordem por created (resposta velha absolve)" \
 sabotar "a janela some do SQL (sondagem de ontem vira veredito de hoje)" \
         "AND created > now() - interval '\$JANELA'" \
         "AND true"
+# shellcheck disable=SC2016  # aspas simples: os padroes sao TEXTO LITERAL do alvo
 sabotar "presenca vira prova: qualquer fonte servida absolve" \
         '[ "$servido" = "$esperado" ]' \
         '[ -n "$servido" ]'
+# shellcheck disable=SC2016  # aspas simples: os padroes sao TEXTO LITERAL do alvo
 sabotar "--request-ids com slug forasteiro passa calado (typo sem vinculo)" \
         'if ! command grep -Fxq -- "$_slug" "$tmp/alvos"; then' \
         'if false; then'

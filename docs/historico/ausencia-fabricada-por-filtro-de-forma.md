@@ -100,3 +100,81 @@ com `esperado` e **nunca absolve** ninguém.
 A deriva é a que merece o nome: SQL e shell são dois arquivos-em-um, e o valor que os liga é uma
 string literal repetida. Sem o par 5b+12b, trocar um dos lados deixa o ramo **inalcançável** e a
 suíte **verde**.
+
+---
+
+## Reincidência no MESMO script, um campo atrás (2026-09-05)
+
+O fix acima consertou o **filtro** (`? 'fonte'` descartando a linha antes de classificar). O
+**casamento** continuou dependendo do eco do slug — `content->>'edge'` —, e esse campo é ainda mais
+novo que o `fonte`: nasceu no **#1789**, enquanto o `fonte` nasceu no #1998. Existe bundle no ar
+anterior aos dois, que responde `{ok,probe,versao}` e **nada mais**.
+
+Medido no mesmo dia, request_ids 69377–69381, corpos lidos de `net._http_response`:
+
+| request_id | edge | corpo | veredito ANTES |
+| --- | --- | --- | --- |
+| 69377 | `conciliar-pedido-portal` | `{ok,probe,versao}` | `SEM_PROVA — nenhuma sonda em 6 hours` |
+| 69378 | `analyze-unified-order` | `{ok,probe,versao,edge}` | `PRE_SONDA_FONTE` ✅ |
+| 69379 | `omie-nfe-recebimento` | `{ok,probe,versao}` | `SEM_PROVA — nenhuma sonda em 6 hours` |
+| 69380 | `omie-nfe-webhook` | `{ok,probe,versao,edge}` | `PRE_SONDA_FONTE` ✅ |
+| 69381 | `process-nfe` | `{ok,probe,versao}` | `SEM_PROVA — nenhuma sonda em 6 hours` |
+
+Três de cinco pendências **provadas** (200 + `versao` batendo com a main) voltando a sair como
+ausência de dado — o defeito deste doc, um campo atrás. Só não enganou porque quem sondou tinha os
+`request_id` em mãos; o caminho normal do `/fecho` não tem.
+
+### O que NÃO dava para fazer
+
+Criar um ramo "200 com `probe` e `versao` mas sem `edge` ⇒ pendência" seria **presumir a
+identidade**: a resposta não diz de qual edge é, e a única tabela do pg_net que guarda a URL é
+`net.http_request_queue`, apagada quando a resposta chega (conferido em prod no mesmo dia — a fila
+só tinha os ids ainda em voo, nenhum dos respondidos). Ausência de identidade não pode virar
+identidade presumida; seria trocar um erro de leitura por um pior, com cara de prova.
+
+### O que o fix faz — em duas metades que não se substituem
+
+1. **`--request-ids slug=<id>`** traz o único vínculo determinístico que sobrevive, como o `ids` do
+   `sonda:sql`. A 3ª classe da CTE exige o eco de `probe` (um id que aponte para resposta de CRON
+   não vira prova de sonda) e **recusa linha que ecoe outro slug** — colagem trocada fabricaria
+   identidade. Par malformado ou slug fora da leva é `exit 3`, nunca veredito: o typo aceito em
+   silêncio deixaria a edge sem o vínculo que o operador acha que deu.
+2. **Sem colagem, a saída para de alegar ausência.** A consulta conta as respostas de sonda sem eco
+   de slug e a classificação diz `SONDA_ANONIMA: … N resposta(s) … nenhuma é atribuível → rode com
+   --request-ids`. O veredito continua INDETERMINADO e o chip continua — **o desfecho não mudou, o
+   diagnóstico parou de mentir**, que é a tese deste doc desde o começo.
+
+Com os 5 ids colados, as 5 edges saíram `PRE_SONDA_FONTE`.
+
+### O irmão no `sonda:sql`, mesma raiz
+
+Para as MESMAS 5 respostas, `scripts/sonda-versao-sql.ts` emitia `DEPLOY PARCIAL — subiu
+index.ts+versao.ts, mas _shared/sonda-fingerprints.ts NAO`. Um `COALESCE(fonte,'nao-mapeada')`
+fundia duas causas **opostas**: campo **ausente** (bundle inteiro anterior ao #1998) e campo
+**presente valendo `nao-mapeada`** (o bundle conhece o campo, o mapa que subiu não tem a edge). O
+desfecho prático coincide — redeployar —, mas quem lê vai investigar um prompt de deploy que nomeou
+poucos arquivos, e esse prompt não existiu. Agora são dois ramos, e o campo ausente usa o mesmo
+nome do irmão passivo (`PRE_SONDA_FONTE`): dois nomes para um estado é como o operador conclui que
+são dois problemas.
+
+### O que prende isso
+
+O SQL passou a ter CTE de vínculo, três classes em `UNION ALL`, `DISTINCT ON` e uma contagem que
+viaja na mesma resposta — nada disso é legível por `grep`, e uma CTE quebrada derruba o script para
+`exit 2`, que vira chip para **toda** a janela (o ruído que ele existe para cortar). Então a prova
+virou execução:
+
+- **eval novo** `.claude/skills/lovable-deploy-verify/evals/edges-pendentes-sql-eval.sh` — sobe
+  Postgres efêmero e roda o SQL de verdade: **13 cenários** (inclusive vínculo apontando para
+  resposta de cron, vínculo com slug contraditório, deploy no meio da janela, corpo não-JSON
+  alheio) e **11 sabotagens**, amarrado ao `evals/run.sh` que o CI roda — eval fora do CI é
+  falsificação que só roda à mão;
+- `sonda-veredito-401-eval.sh`: +2 cenários (`fonte` ausente × `nao-mapeada`) e +2 sabotagens,
+  também executando — ordem de `WHEN` e semântica de `?` sobre jsonb ficam verdes em teste textual;
+- `scripts/test-fecho-edges-pendentes.sh`: +9 casos e +5 sabotagens, verde nos 2 locales.
+
+Um achado do caminho: a trava nova de forma (`#anonimas` ausente ⇒ `exit 2`) passou a pegar
+**também** o wrapper `psql-ro` mudo, e com isso a sabotagem que media a **sonda positiva** do
+wrapper ficou VERDE. Cobertura redundante em prod, ausência de medição no teste — a asserção só
+voltou a ter dente com um modo de stub que quebra **só** o `SELECT 1`. Trava nova pode cegar
+falsificação velha: rodar `--falsificar` depois de mexer no alvo não é formalidade.
