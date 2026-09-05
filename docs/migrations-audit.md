@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **509** custom migrations totais
-- **1730** objetos esperados (criados por estas migrations)
+- **510** custom migrations totais
+- **1737** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 528
-  - `rls_policy`: 456
-  - `index`: 250
-  - `cron_job`: 168
-  - `table`: 160
+  - `function`: 530
+  - `rls_policy`: 458
+  - `index`: 251
+  - `cron_job`: 169
+  - `table`: 161
   - `trigger`: 88
   - `view`: 76
   - `enum_value`: 4
@@ -4244,6 +4244,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.sayerlack_aplicar_custo_portal` | — |
+
+### `20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.deploy_atestacoes_janela_viva` | — |
+| `function` | `public.deploy_atestacoes_colher` | — |
+| `table` | `public.deploy_atestacoes` | — |
+| `index` | `public.idx_deploy_atestacoes_edge_observado` | `deploy_atestacoes` |
+| `cron_job` | `cron.deploy-atestacoes-colher` | — |
+| `rls_policy` | `public.deploy_atestacoes_select_staff` | `deploy_atestacoes` |
+| `rls_policy` | `public.deploy_atestacoes_service_all` | `deploy_atestacoes` |
 
 ## Próximos passos por status
 

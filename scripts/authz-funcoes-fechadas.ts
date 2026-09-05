@@ -373,4 +373,13 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
       'irmã da acima em farmer_bundle_recommendations (nulifica m_bundle/lie_bundle e remove ' +
       'cost/margin do jsonb bundle_products). Mesma barreira de executor e mesma 2ª tranca (L10)',
   },
+  'public.deploy_atestacoes_colher': {
+    fechadaPor: '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql',
+    permitido: PORTA_FECHADA,
+    motivo:
+      'coletor do ledger de atestação de deploy (copia net._http_response → public.deploy_atestacoes). ' +
+      'Só o cron deploy-atestacoes-colher (postgres) executa. É SECURITY INVOKER, então anon/authenticated ' +
+      'já morreriam no INSERT sem privilégio — o REVOKE é a 2ª tranca, e o que a Parte E vigia é um ' +
+      'DROP+CREATE futuro devolvendo EXECUTE pelo default privilege.',
+  },
 };

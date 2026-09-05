@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 509
+-- Total de custom migrations: 510
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -550,7 +550,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260830214547', 'reposicao_aplicar_promocoes_captura_corpo_vivo', '20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql'),
   ('20260904232555', 'reposicao_qtde_multiplo_embalagem_portal', '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql'),
   ('20260904233000', 'sku_fornecedor_externo_fator_positivo', '20260904233000_sku_fornecedor_externo_fator_positivo.sql'),
-  ('20260905090000', 'sayerlack_custo_portal_cas', '20260905090000_sayerlack_custo_portal_cas.sql')
+  ('20260905090000', 'sayerlack_custo_portal_cas', '20260905090000_sayerlack_custo_portal_cas.sql'),
+  ('20260905183314', 'deploy_atestacoes_ledger_e_sonda_cron', '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2269,7 +2270,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('reposicao_aplicar_promocoes_captura_corpo_vivo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
+  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'function', 'public', 'deploy_atestacoes_janela_viva', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'function', 'public', 'deploy_atestacoes_colher', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'table', 'public', 'deploy_atestacoes', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'index', 'public', 'idx_deploy_atestacoes_edge_observado', 'deploy_atestacoes'),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'cron_job', 'cron', 'deploy-atestacoes-colher', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_select_staff', 'deploy_atestacoes'),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_service_all', 'deploy_atestacoes')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4036,7 +4044,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('reposicao_aplicar_promocoes_captura_corpo_vivo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
+  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'function', 'public', 'deploy_atestacoes_janela_viva', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'function', 'public', 'deploy_atestacoes_colher', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'table', 'public', 'deploy_atestacoes', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'index', 'public', 'idx_deploy_atestacoes_edge_observado', 'deploy_atestacoes'),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'cron_job', 'cron', 'deploy-atestacoes-colher', ''),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_select_staff', 'deploy_atestacoes'),
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_service_all', 'deploy_atestacoes')
 )
 SELECT
   e.migration,

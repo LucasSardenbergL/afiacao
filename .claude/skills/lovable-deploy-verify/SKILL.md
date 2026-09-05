@@ -110,6 +110,11 @@ esteja configurado. Errar para mais custa uma linha de checklist; errar para men
 > - [ ] 🟣 **SQL Editor**: migration Z *(se tocou `supabase/migrations/` — bloco da `lovable-db-operator`; banco ANTES do código que o consome)*
 > - [ ] 🔑 **Secrets (Lovable → Edge Functions → Secrets)**: confirmar que `NOME_DO_SECRET` existe *(se o passo 1 deu `secrets=` com nome ou `?dinamico`)*
 > - [ ] 💬 **chat do Lovable**: deploy das edges X, Y — verbatim da main *(se tocou `supabase/functions/`)*
+>       — **QUAIS edges: as que `bun run pendencias:deploy` lista como `DIVERGE_P1`/`INCOERENTE`/`SEM_MAPA_NO_BUNDLE`**
+>       (2026-09-05). Não derive a lista do diff: "o mapa mudou"/"closure mudou" NÃO é motivo — só
+>       `(versao, fonte)` servido ≠ main. `DIVERGE_P2` (só `_shared/`) entra na leva agrupada, escala em 7 d.
+>       Após o deploy, **uma** colagem do `sonda:sql` da leva atesta no ledger `deploy_atestacoes` — e vale até
+>       o `fonte` da main mudar; nunca peça sonda "para conferir de novo" (`docs/agent/deploy.md` §Edge: o veredito é o ledger)
 > - [ ] 🖱️ **Publish** do frontend no editor do Lovable *(se o passo 1 deu frontend=SIM; por último — o build novo nasce contra banco/edge já atualizados)*
 
 **O secret vem ANTES do deploy da edge, e a ordem não é estética.** Deployar primeiro sobe uma função
@@ -120,7 +125,9 @@ persiste em disco): a linha pede ao founder para *conferir/criar* pelo nome, e o
 
 ### Passo 3 — Prompt de deploy de edge (se aplicável)
 
-Montar pro founder colar no chat do Lovable (um por edge tocada):
+Montar pro founder colar no chat do Lovable (um por edge que o `pendencias:deploy` deu como pendente —
+este passo decide o **conteúdo** do prompt, o closure ∪ {mapa}; ele NÃO decide *se* a edge precisa de
+deploy, e o mapa ter mudado depois do PR não é motivo — ver Passo 2):
 
 > Edit the existing edge function `<nome>` and replace its code with the current contents of
 > `supabase/functions/<nome>/index.ts` from the `main` branch. Deploy it **verbatim** — do NOT modify,
@@ -1034,4 +1041,15 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   quais a função não boota. `ausente ≠ zero` na dimensão **ÁRVORE**, irmão do eixo TEMPO do #2123. Junto,
   o guard de contagem 0/1 estendido do regex para o **arnês**: um `declare -A` em bash 3.2 do macOS
   imprimiu `0 arquivos`, saída idêntica à de uma edge que não importa nada. Detalhe no Passo 3.
+- [x] **O veredito de deploy de edge tem MEMÓRIA (2026-09-05):** ledger `public.deploy_atestacoes` +
+  cron `deploy-atestacoes-colher` copiam `net._http_response` antes do `pg_net.ttl` (6h) apagar, e
+  `bun run pendencias:deploy` julga a matriz `(versao, fonte)` contra a main — P1 (bump declarado, deploy
+  no PR) · P2 (só `_shared/`, leva agrupada, escala em 7 d) · INCOERENTE (deploy parcial) ·
+  NUNCA_ATESTADA (a única sonda humana; pendência, não aviso). Antes: 47/54 edges "sem sonda na janela"
+  a cada sessão e o founder colando o SQL de sonda toda vez. **Cron de sonda ativa derrubado pelo Codex**
+  (rollback pré-sensor dispararia o fluxo real — `monthly-report` = e-mail para a base). Prova:
+  `db/test-deploy-atestacoes.sh` (24/24 + 4 sabotagens vermelhas). Detalhe em
+  `docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`.
+- [ ] **Experimento (founder):** um prompt do Lovable com N edges numa leva — mede se ele deploya todas
+  (conveniência: N colagens → 1). Não é prova de deploy; a prova continua sendo o ledger.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

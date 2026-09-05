@@ -53,6 +53,17 @@ muda e o `sync-reprocess` ganha arquivo próprio na fatia. A regra deixa de ser 
 **operacional**: quando existe PR em voo sobre o mesmo closure, o pedido de deploy tem prazo de
 validade, e isso precisa ir dito **junto com o pedido** — não descoberto depois pelo founder.
 
+> **Errata (2026-09-05).** A previsão acima errou no que mais importa: o #2134 mergeou como
+> `c94c3a9c2` e o `fonte` esperado mudou em **1** edge (`sync-reprocess`), não em 7. O mapa
+> `_shared/sonda-fingerprints.ts` está no closure de todas, mas é **excluído do hash de propósito**
+> (ponto-fixo — cabeçalho de `scripts/sonda-fingerprint.ts`), então "o mapa mudou" **nunca** muda o
+> `fonte` de uma edge cujo closure próprio não mudou. A regra operacional que fica: **edge precisa de
+> deploy ⇔ `(versao, fonte)` servido ≠ `(versao, fonte)` da main** — e quem responde isso é
+> `bun run pendencias:deploy` sobre o ledger `deploy_atestacoes`, não a lista de arquivos de um PR
+> ([deploy-redundante-ledger-e-cron-de-sonda.md](deploy-redundante-ledger-e-cron-de-sonda.md)).
+> A afirmação original fica registrada como foi escrita, porque a lição do doc (a fatia tem eixo
+> TEMPO para o **conteúdo** do pedido de deploy) continua válida — só não é motivo de redeploy.
+
 ⚠️ **Método, de brinde:** `gh pr diff <n> -- <path>` devolveu **vazio** para um arquivo que o PR
 realmente toca — o pathspec não filtra como no `git diff`, e o vazio se lê como "não colide". A
 fonte correta é `gh pr view <n> --json files`. Mais um caso de ausência-de-dado com cara de
