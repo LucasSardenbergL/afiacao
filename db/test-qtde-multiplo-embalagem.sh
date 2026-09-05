@@ -27,7 +27,7 @@ SAB_DIR="$(mktemp -d "/tmp/sab-${SLUG}.XXXXXX")"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")" "$SAB_DIR"; }
 trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
-"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
+"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null || { echo "pg_ctl NAO subiu na :$PORT (porta ocupada?) — abortando, nao testo contra outro Postgres"; exit 1; }
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -qtA "$@"; }
@@ -110,13 +110,14 @@ eq "migration e idempotente (2a colada nao quebra)" "$(P -q -f "$MIG" >/dev/null
 #   9303 galao 3,6 L (fator 1/3,6)         -> 36 L fica 36 (10 GL); SEM round6 antes do ceil daria 39,6
 #   9304 em grupo QT<->GL + de-para 0,2    -> NAO arredonda (qtde_final ja e embalagem)
 #   9305 fator 1                           -> NAO arredonda, coluna NULL
-#   9306 minimo_forcado_manual 37          -> 37 L vira 40 L
+#   9306 minimo_forcado_manual 41          -> 41 L vira 45 L (natural 36 daria 40: o minimo TEM de ser visivel)
 #   9307 teto de cobertura B/27d (cap 27)  -> 27 L vira 30 L; sem_teto 36 -> 40; capada + log em L-arredondado
 #   9308 de-para INATIVO com fator 0,2     -> NAO arredonda
 #   9309 de-para de OUTRO fornecedor 0,2   -> NAO arredonda (precisao > recall)
 #   9310 fator NaN                         -> NAO arredonda (guard de finitude)
 #   9311 fator 1/3 (16 digitos), max=9     -> 9 (paridade com o round6 externo do TS; sem ele 9,0000000000000009)
 #   9312 fator Infinity                    -> NAO arredonda (a MESMA guarda de finitude que barra NaN)
+#   9313 fator minusculo 0,0000004, q=1     -> 1 embalagem (2.500.000 L), NUNCA zero: sem GREATEST(1,.) a linha sumiria
 P -q <<'SQL'
 INSERT INTO omie_products (omie_codigo_produto, account, descricao, familia, ativo, tipo_produto)
 SELECT g, 'oben', 'S'||g, 'Tintas', true, '00' FROM generate_series(9301,9314) g;
@@ -127,14 +128,15 @@ INSERT INTO sku_parametros (empresa, sku_codigo_omie, sku_descricao, fornecedor_
                             minimo_forcado_manual, habilitado_reposicao_automatica, tipo_reposicao,
                             demanda_media_diaria, classe_abc, classe_forcada)
 SELECT 'OBEN', g, 'S'||g, 'Sayerlack', 19, 36, NULL, true, 'automatica', 1, 'A', NULL
-FROM generate_series(9301,9312) g;
+FROM generate_series(9301,9313) g;
 UPDATE sku_parametros SET estoque_maximo = 40 WHERE sku_codigo_omie = 9302;
-UPDATE sku_parametros SET minimo_forcado_manual = 37 WHERE sku_codigo_omie = 9306;
+UPDATE sku_parametros SET minimo_forcado_manual = 41 WHERE sku_codigo_omie = 9306;
 UPDATE sku_parametros SET classe_abc = 'B' WHERE sku_codigo_omie = 9307;
 UPDATE sku_parametros SET ponto_pedido = 5, estoque_maximo = 9 WHERE sku_codigo_omie = 9311;
+UPDATE sku_parametros SET ponto_pedido = 0, estoque_maximo = 1 WHERE sku_codigo_omie = 9313;
 
 INSERT INTO sku_estoque_atual (empresa, sku_codigo_omie, estoque_fisico, estoque_pendente_entrada, fonte_sync)
-SELECT 'OBEN', g::text, 0, 0, 'ListarPosEstoque' FROM generate_series(9301,9312) g;
+SELECT 'OBEN', g::text, 0, 0, 'ListarPosEstoque' FROM generate_series(9301,9313) g;
 
 -- preco medio historico (R$10/L) so p/ o 9301: prova valor_linha = 40 x 10
 INSERT INTO sku_leadtime_history VALUES ('OBEN','9301',10,100);
@@ -152,7 +154,8 @@ INSERT INTO sku_fornecedor_externo (empresa, fornecedor_nome, sku_omie, sku_port
  ('OBEN','Outro Fornecedor','9309','X09','BB',0.2,true),
  ('OBEN','Sayerlack','9310','X10','BB','NaN'::numeric,true),
  ('OBEN','Sayerlack','9311','X11','CX',0.3333333333333333,true),
- ('OBEN','Sayerlack','9312','X12','BB','Infinity'::numeric,true);
+ ('OBEN','Sayerlack','9312','X12','BB','Infinity'::numeric,true),
+ ('OBEN','Sayerlack','9313','X13','TQ',0.0000004,true);
 
 -- 9304 em grupo de equivalencia (QT fator 1 + GL fator 4), empresa LOWER como em prod
 INSERT INTO sku_embalagem_equivalencia (empresa, grupo_id, sku_codigo_omie, fator_para_base, ativo) VALUES
@@ -193,7 +196,7 @@ eq "S4 em grupo QT<->GL: NAO arredonda (ja e embalagem)"         "$(qf  OBEN $D 
 eq "S4 em grupo: coluna NULL"                                    "$(fe  OBEN $D 9304)" "NULO"
 eq "S5 fator 1: NAO arredonda"                                   "$(qf  OBEN $D 9305)" "36"
 eq "S5 fator 1: coluna NULL"                                     "$(fe  OBEN $D 9305)" "NULO"
-eq "S6 minimo forcado 37 L -> 40 L"                              "$(qf  OBEN $D 9306)" "40"
+eq "S6 minimo forcado 41 L -> 45 L (nao 40 do natural)"         "$(qf  OBEN $D 9306)" "45"
 eq "S7 teto B/27d: cap 27 L -> 30 L (6 BB)"                      "$(qf  OBEN $D 9307)" "30"
 eq "S7 teto: sem_teto 36 L -> 40 L"                              "$(qst OBEN $D 9307)" "40"
 eq "S7 teto: segue marcada como capada (30 < 40)"                "$(teto OBEN $D 9307)" "true"
@@ -203,13 +206,17 @@ eq "S9 de-para de OUTRO fornecedor: NAO arredonda"               "$(qf  OBEN $D 
 eq "S10 fator NaN: NAO arredonda (guard de finitude)"            "$(qf  OBEN $D 9310)" "36"
 eq "S11 fator 1/3 em 16 digitos: 9 fica 9 (round6 externo)"      "$(qf  OBEN $D 9311)" "9"
 eq "S12 fator Infinity: NAO arredonda (guard de finitude)"       "$(qf  OBEN $D 9312)" "36"
-eq "R1 12 SKUs no pedido (nenhum sumiu por causa da conversao)"  "$(Pq -c "SELECT count(*) FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id=pci.pedido_id WHERE pcs.data_ciclo='$D' AND pcs.status='pendente_aprovacao'")" "12"
+eq "S13 fator minusculo: 1 embalagem, nunca zero (linha nao some)" "$(qf  OBEN $D 9313)" "2500000"
+eq "R1 13 SKUs no pedido (nenhum sumiu por causa da conversao)"  "$(Pq -c "SELECT count(*) FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id=pci.pedido_id WHERE pcs.data_ciclo='$D' AND pcs.status='pendente_aprovacao'")" "13"
 eq "R1 cabecalho valor_total soma as linhas na compra FISICA"     "$(Pq -c "SELECT (valor_total = (SELECT SUM(valor_linha) FROM pedido_compra_item pci WHERE pci.pedido_id = pcs.id))::text FROM pedido_compra_sugerido pcs WHERE data_ciclo='$D' AND status='pendente_aprovacao'")" "true"
 
 echo "=== R2: o 40 aprovado conta como estoque a caminho no ciclo seguinte (anti compra dupla) ==="
 P -q -c "UPDATE pedido_compra_sugerido SET status='aprovado_aguardando_disparo', status_envio_portal='nao_aplicavel' WHERE data_ciclo='$D';"
+# pp sobe p/ 38: 40 a caminho > 38 suprime; se o motor ainda gravasse 36, 36 <= 38 re-sugeriria (discrimina 36 de 40)
+P -q -c "UPDATE sku_parametros SET ponto_pedido = 38 WHERE sku_codigo_omie = 9301;"
 run_ciclo OBEN 2026-09-06 >/dev/null
-eq "R2 S1: 40 L a caminho > pp 19 -> nao re-sugere"              "$(qf OBEN 2026-09-06 9301)" "AUSENTE"
+eq "R2 S1: 40 L a caminho > pp 38 -> nao re-sugere (36 re-sugeriria)" "$(qf OBEN 2026-09-06 9301)" "AUSENTE"
+P -q -c "UPDATE sku_parametros SET ponto_pedido = 19 WHERE sku_codigo_omie = 9301;"
 
 echo "=== FALSIFICACOES (baseline verde acima; cada sabotagem exige vermelho ESPECIFICO e restaura) ==="
 falsifica() {  # $1=nome  $2=sed-expr  $3=descricao  $4=query  $5=valor_sabotado_esperado
@@ -238,7 +245,7 @@ falsifica "F2-sem-guarda-grupo" \
 
 # F3: remove o round6 ANTES do ceil -> 36 x (1/3,6) = 10,000...008 -> ceil 11 -> 39,6 L (um galao a mais).
 falsifica "F3-sem-round6-interno" \
-  "s/THEN trim_scale(round(ceil(round(sd.qtde_final \* sd.fator_embalagem, 6)) \/ sd.fator_embalagem, 6))/THEN trim_scale(round(ceil(sd.qtde_final * sd.fator_embalagem) \/ sd.fator_embalagem, 6))/" \
+  "s/THEN trim_scale(round(GREATEST(1, ceil(round(sd.qtde_final \* sd.fator_embalagem, 6))) \/ sd.fator_embalagem, 6))/THEN trim_scale(round(GREATEST(1, ceil(sd.qtde_final * sd.fator_embalagem)) \/ sd.fator_embalagem, 6))/" \
   "sem round6 a poeira numerica compra um galao a mais" \
   "qf OBEN 2026-09-07 9303" "39.6"
 
@@ -265,6 +272,12 @@ falsifica "F6b-sem-guarda-finitude-inf" \
   "s/^      AND fator_conversao < 1e9   -- UMA guarda de finitude.*\$/      AND true/" \
   "fator Infinity viraria quantidade NaN no pedido" \
   "qf OBEN 2026-09-07 9312" "NaN"
+
+# F7: derruba o piso GREATEST(1, .) -> fator minusculo zera a linha e ela SOME do pedido (subcompra silenciosa).
+falsifica "F7-sem-piso-1-embalagem" \
+  "s/THEN trim_scale(round(GREATEST(1, ceil(round(sd.qtde_final \* sd.fator_embalagem, 6))) \/ sd.fator_embalagem, 6))/THEN trim_scale(round(ceil(round(sd.qtde_final * sd.fator_embalagem, 6)) \/ sd.fator_embalagem, 6))/" \
+  "sem o piso a necessidade some do pedido" \
+  "qf OBEN 2026-09-07 9313" "AUSENTE"
 
 echo ""
 echo "=== RESULTADO: PASS=$PASS FAIL=$FAIL ==="

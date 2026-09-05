@@ -455,7 +455,11 @@ BEGIN
   -- SKU em LITRO no Omie comprado em BALDE (fator 0,2): 36 L → ceil(7,2) = 8 BB → 40 L. É o número que a
   -- edge enviar-pedido-portal-sayerlack gravaria de qualquer forma no envio (qtdeFisicaOmie(qtdePortal()));
   -- antecipar faz o comprador aprovar o que será comprado. Fórmula espelho do helper qtde-portal.ts:
-  --   trim_scale(round(ceil(round(q × fator, 6)) / fator, 6))   -- trim_scale: grava 40, não 40.000000
+  --   trim_scale(round(GREATEST(1, ceil(round(q × fator, 6))) / fator, 6))   -- trim_scale: grava 40, não 40.000000
+  -- GREATEST(1, …) = o max(1, …) de qtdePortal: necessidade > 0 nunca vira ZERO embalagens (fator minúsculo faria
+  -- round(q×f,6)=0 → ceil 0 → a linha sumiria do pedido em silêncio — Codex P1-5). Domínio: 1/fator tem de ser
+  -- inteiro em unidades Omie (0,2 → 5 L); com 1/3,6 o resultado 3,6 L seria integerizado depois e a edge leria
+  -- 4 L como 2 galões (7,2 L) — só cadastre fator cujo inverso é inteiro.
   -- round6 ANTES do ceil: 36 × (1/3,6) em numeric = 10,000000000000000000008 → ceil 11 = um galão a mais,
   -- sem desfazer. round6 DEPOIS: 3 ÷ 0,3333333333333333 = 9,0000000000000009 → 9 (paridade com o TS).
   -- qtde_sem_teto recebe a MESMA conversão: capada ⇔ qtde_final < qtde_sem_teto compara na MESMA unidade
@@ -467,10 +471,10 @@ BEGIN
            sd.ponto_pedido, sd.estoque_maximo, sd.estoque_fisico, sd.estoque_a_caminho, sd.estoque_efetivo,
            sd.qtde_sugerida,
            CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_final > 0
-                THEN trim_scale(round(ceil(round(sd.qtde_final * sd.fator_embalagem, 6)) / sd.fator_embalagem, 6))
+                THEN trim_scale(round(GREATEST(1, ceil(round(sd.qtde_final * sd.fator_embalagem, 6))) / sd.fator_embalagem, 6))
                 ELSE sd.qtde_final END AS qtde_final,
            CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_sem_teto > 0
-                THEN trim_scale(round(ceil(round(sd.qtde_sem_teto * sd.fator_embalagem, 6)) / sd.fator_embalagem, 6))
+                THEN trim_scale(round(GREATEST(1, ceil(round(sd.qtde_sem_teto * sd.fator_embalagem, 6))) / sd.fator_embalagem, 6))
                 ELSE sd.qtde_sem_teto END AS qtde_sem_teto,
            sd.cap_teto_ancora, sd.teto_dias_linha, sd.demanda_diaria_linha, sd.classe_abc_efetiva,
            sd.preco_unitario, sd.primeira_compra, sd.horario_corte_pedido, sd.valor_maximo_mensal, sd.delta_max_perc,
