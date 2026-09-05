@@ -3,6 +3,7 @@
 // Sequencial: NUNCA processa alertas em paralelo.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from '../_shared/auth.ts';
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from './versao.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -240,6 +241,25 @@ Deno.serve(async (req) => {
   // Para path manual (staff JWT), exigir role=admin explicitamente.
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // ⚠️ SONDA DE VERSÃO — antes do gate de admin e de todo IO: ela não dispara nada, e é pelo
+  // `x-cron-secret` que o founder a alcança sem abrir o app. Daqui pra frente a edge manda e-mail
+  // pelo Gmail e cria evento no Calendar. Ver versao.ts / _shared/sonda-versao.ts.
+  // O corpo não é lido por mais ninguém nesta edge, então não há o que reaproveitar.
+  const decisaoSonda = classificarSonda(req.method === 'POST' ? await req.json().catch(() => ({})) : {});
+  if (decisaoSonda.tipo === 'sonda') {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (decisaoSonda.tipo === 'ambiguo') {
+    return new Response(
+      JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
   if (auth.via === 'staff') {
     const adminCheck = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
     const { data: roles } = await adminCheck

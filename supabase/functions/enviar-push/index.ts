@@ -9,6 +9,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import webpush from "npm:web-push@3.6.7";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -106,13 +107,24 @@ Deno.serve(async (req) => {
   const auth = authorizeCron(req);
   if (!auth.ok) return auth.response;
 
+  // ⚠️ SONDA DE VERSÃO — vem ANTES do gate seguinte de propósito: ela não dispara nada, e é pelo
+  // `x-cron-secret` que o founder a alcança sem abrir o app (o gate de auth decide por comparação
+  // de env pura ⇒ IO-free). Daqui pra frente a edge envia push aos aparelhos inscritos.
+  // Corpo lido UMA vez — `req.json()` não se consome duas. Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto: unknown = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") {
+    return json({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   if (!VAPID_PRIVATE_KEY) {
     console.error("[enviar-push] VAPID_PRIVATE_KEY ausente — secret não configurado");
     return json({ error: "VAPID_PRIVATE_KEY não configurada" }, 500);
   }
 
-  const body = await req.json().catch(() => ({}));
-  const validacao = validarEnvioPush(body);
+  // Já parseado acima (para a sonda); `validarEnvioPush` recebe `unknown` e normaliza sozinho.
+  const validacao = validarEnvioPush(corpoBruto);
   if (!validacao.ok) return json({ error: validacao.erro }, 400);
   const dados = validacao.dados;
 

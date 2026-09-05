@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,6 +22,27 @@ Deno.serve(async (req) => {
   if (!__auth.ok) return __auth.response;
 
   try {
+    // ⚠️ SONDA DE VERSÃO — DENTRO do try de propósito (o catch externo continua cobrindo o parse)
+    // e antes do `createClient`/`getUser`: daqui pra frente a edge LIGA de verdade pela Nvoip.
+    // Vem antes do gate de `Authorization` porque é pelo `x-cron-secret` que o founder a alcança
+    // sem estar logado — `authorizeCronOrStaff` acima já decidiu, por comparação de env pura.
+    // Corpo lido UMA vez; o `.catch(() => ({}))` troca o throw de JSON inválido pelo ramo
+    // "Ação desconhecida" do fim deste try — mesmo 4xx, sem tocar Nvoip nem banco.
+    const corpoBruto: unknown = await req.json().catch(() => ({}));
+    const decisaoSonda = classificarSonda(corpoBruto);
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (decisaoSonda.tipo === "ambiguo") {
+      return new Response(
+        JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     // Auth check
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -71,7 +93,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json();
+    // Já parseado acima (para a sonda). Normaliza não-objeto para {} — o `req.json()` daqui não
+    // pode ser relido, e um corpo não-objeto cairia no mesmo "Ação desconhecida" de antes.
+    const body = (typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+      ? corpoBruto
+      : {}) as Record<string, string | undefined>;
     const { action } = body;
 
     // ─── Get or refresh OAuth token ───
