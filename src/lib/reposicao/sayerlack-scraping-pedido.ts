@@ -302,18 +302,3 @@ export function validarGrupoLeadtime(res: ResultadoMatch, ltEsperado: number | n
   return { status: 'indisponivel', mismatches, pulados };
 }
 
-export interface CustoUpdate { item_id: number; preco_unitario: number; valor_linha: number; }
-function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
-
-export function derivarCustos(res: ResultadoMatch): { updates: CustoUpdate[]; pulados: { sku_codigo_omie: string; motivo: string }[] } {
-  const updates: CustoUpdate[] = [];
-  const pulados: { sku_codigo_omie: string; motivo: string }[] = [];
-  for (const c of res.casados) {
-    const total = c.total_linha; const qtde = c.item.qtde_final;
-    if (total == null || !(total > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'total_invalido' }); continue; }
-    if (!(qtde > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'qtde_invalida' }); continue; }
-    if (round2(total) === round2(qtde * c.item.preco_atual)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'sem_mudanca' }); continue; }
-    updates.push({ item_id: c.item.item_id, preco_unitario: total / qtde, valor_linha: total }); // precisão cheia
-  }
-  return { updates, pulados };
-}
