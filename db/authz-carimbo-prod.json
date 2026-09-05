@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-05T12:22:12.144Z",
-  "sourceHead": "90d65299a0edabfbb07d7662f4fc397671718e1b",
+  "medidoEm": "2026-09-05T17:42:39.686Z",
+  "sourceHead": "e4951ec5b59d04951f15ced758d7adf580f62b9b",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,19 +11,12 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 1,
-      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 43 definição(ões) lida(s) para 44 chave(s) da allowlist.",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 44 função(ões) da allowlist.",
+      "denominador": "🔎 authz:funcoes:prod — 44 definição(ões) lida(s) para 44 chave(s) da allowlist.",
       "contratoFingerprint": "04c6fe6a1994d8042a4a22d9c7833e6c67c01da66a8819493dc2d586f660e7bf",
       "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
-      "achados": [
-        {
-          "id": "ef43258a5a7946e8",
-          "linha": "❌ public.sayerlack_aplicar_custo_portal — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_aplicar_custo_portal está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-09-05",
-          "ultimaVez": "2026-09-05"
-        }
-      ]
+      "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
