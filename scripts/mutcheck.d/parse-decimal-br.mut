@@ -1,0 +1,23 @@
+# @src: src/lib/preco/parse-decimal-br.ts
+# @test: src/lib/preco/parse-decimal-br.test.ts
+# Invariantes money-path do parser de preço digitado (pt-BR/en): NUNCA fabricar número a
+# partir de entrada ambígua/malformada (precisão > recall). `parseFloat("12,5")` = 12 era o
+# bug de origem (12,50 → 1250 no pedido). Cada PEGA abaixo é um jeito de fabricar preço errado.
+# Rode: scripts/mutcheck.sh src/lib/preco/parse-decimal-br.ts src/lib/preco/parse-decimal-br.test.ts scripts/mutcheck.d/parse-decimal-br.mut
+# Nota: o ternário `validGrouping(parts) ? finish(...) : null` aparece 2× (ramo só-vírgula e
+# só-ponto) — cada mutação ARMA num trecho único do ramo e aplica só na 1ª ocorrência seguinte
+# (`$done` recebe o RESULTADO do s///, nunca contador por efeito colateral — ver references/mutation-check.md).
+PEGA      | milhar: grupo ≠3 díg aceito (===3 → <=3)         | s/g\.length === 3/g.length <= 3/
+PEGA      | milhar: 1º grupo com 4 díg aceito (<=3 → <=4)     | s/groups\[0\]\.length <= 3/groups[0].length <= 4/
+PEGA      | ambos seps: !==2 decimais vira !==3               | s/parts\.length !== 2\) return null/parts.length !== 3) return null/
+PEGA      | só vírgula: várias viram decimal (===2 → >=2)     | s/if \(parts\.length === 2\) return finish/if (parts.length >= 2) return finish/
+PEGA      | só vírgula: milhar malformado aceito              | $arm = 1 if /body\.split\(','\)/; if ($arm && !$done) { $done = s/return validGrouping\(parts\) \? finish\(parts\.join\(''\), ''\) : null;/return finish(parts.join(''), '');/ }
+PEGA      | só ponto: várias viram decimal (===2 → >=2)       | s/if \(parts\.length === 2\) \{/if (parts.length >= 2) {/
+PEGA      | só ponto: milhar malformado aceito                | $arm = 1 if /return finish\(intP, frac\)/; if ($arm && !$done) { $done = s/return validGrouping\(parts\) \? finish\(parts\.join\(''\), ''\) : null;/return finish(parts.join(''), '');/ }
+PEGA      | ambíguo "1.234": 3 casas → 4 casas                | s/frac\.length === 3 &&/frac.length === 4 \&\&/
+PEGA      | ambíguo: inteiro "0" também vira ambíguo          | s/\[1-9\]\\d\{0,2\}/\\d{1,3}/
+PEGA      | sinal negativo descartado                         | s/\(neg \? '-' : ''\)/(neg ? '' : '')/
+?         | finish aceita inteiro vazio (".5"/",5" → 0.5)     | s/\^\\d\+\(\\\.\\d\+\)\?\$/^\\d*(\\.\\d+)?\$/
+SOBREVIVE | groups.length>1 → >=1 (inalcançável: grpSep sempre antes do decSep único) | s/groups\.length > 1 &&/groups.length >= 1 \&\&/
+SOBREVIVE | isFinite → n (inalcançável: só dígitos, finito)   | s/Number\.isFinite\(n\) \? n : null/n/
+SOBREVIVE | typeof guard removido (inalcançável pelo tipo TS) | s/typeof input !== 'string'/false/
