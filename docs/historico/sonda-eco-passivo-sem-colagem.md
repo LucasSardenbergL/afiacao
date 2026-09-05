@@ -137,3 +137,73 @@ Esta é a variante em que a falsificação roda **concorrente** ao commit, e ela
   `git diff HEAD --stat` **vazio** — e reconfira `git status --porcelain` DEPOIS de cada suíte, para
   provar que nada mutou a árvore durante a corrida. Suíte verde sobre um working tree que diverge do
   commit é medição do artefato errado: a família "evidência positiva do objeto ERRADO".
+
+## 10. O predicado, enfim, mudou — e o que a correção mediu
+
+O diagnóstico desta cegueira está em [`fix-em-doc-nao-alcanca-a-ferramenta.md`](fix-em-doc-nao-alcanca-a-ferramenta.md)
+(#2148): o #2103 nomeou o ponto cego e corrigiu o **doc**, a query de `scripts/pendencias-deploy.ts`
+seguiu exigindo `probe:true`, e o intervalo custou um chip inteiro de verificação sobre edges já no
+ar. Esta seção registra só o **desfecho** — o predicado mudado — e o que ele mediu.
+
+A query passou a aceitar as DUAS vias: `probe:true` **ou** (`edge`+`versao` presentes, `probe`
+ausente). Três detalhes que o teste prende:
+
+- **`NOT (c ? 'probe')`, não `(c ->> 'probe') <> 'true'`.** O `<>` é NULL-blind — chave ausente
+  devolve NULL, que não é TRUE, e a linha sumiria de novo. Seria o mesmo bug com cara de conserto.
+- **O guard textual antes do cast ficou mais ESTRITO, não menos.** Sem o `LIKE '%"probe"%'`, o que
+  chega ao `content::jsonb` passou de ~1 para ~76 linhas por janela; entraram o `LIKE '%"versao"%'`
+  e o `IS JSON OBJECT` (PG16+; prod é 17.6), que pega o corpo TRUNCADO que começa com `{` e que o
+  `left(ltrim(content),1)='{'` sozinho mandava direto para o cast — onde ele abortaria a varredura
+  inteira, e uma varredura que morre por causa de uma linha alheia não serve de cron.
+- **O veredito continua julgando o `fonte`, não o `versao`.** O `coalesce(…, 'sem-campo')` faz eco
+  sem fingerprint cair em DIVERGE em vez de sumir: `versao` certo com `fonte` errado é exatamente o
+  deploy incompleto da ARMADILHA 2.
+
+Medido em prod na correção (2026-09-04, mesma janela de 6h, `psql-ro`): a query antiga via **2**
+edges, a nova vê **3** — e a diferença é a `analytics-outbox-drain`, que passou de
+`⚪ sem sonda na janela` a `✅ confere`. Das 76 linhas com corpo de edge instrumentada, **72 eram
+eco passivo** e ~4 sonda ativa: em LINHAS o eco é 95% do sinal. O teto estrutural é maior que o de
+uma janela — **6 das 40 edges do mapa** plantam `{...body, versao, edge, fonte}` em TODA resposta
+(`analytics-outbox-drain`, `omie-sync-sku-items`, `omie-sync-ctes-recebidos`,
+`omie-sync-nfes-recebidas`, `omie-sync-pedidos-compra`, `omie-sync-vendas-items`) e eram 100%
+invisíveis sem alguém lembrar de colar a sonda; dessas, 2 têm cron `net.http_post` próprio, então
+caem na janela sozinhas.
+
+⚠️ **O que a via nova admite de novo:** o filtro deixou de ter a assinatura forte `probe:true` e
+passou a confiar em "tem `edge` e `versao`". Um corpo de terceiro com as duas chaves entraria como
+`🟠 FORA_DO_MAPA` — que é exit 1 com o nome na tela, ou seja, alto e diagnosticável, não silencioso.
+Na janela medida não havia nenhum. É o lado certo para errar num instrumento de deploy.
+
+A prova é `db/test-pendencias-deploy-eco-passivo.sh`: sobe um PG17 local, semeia 9 fixtures em
+`net._http_response` e roda **o SQL importado do script**, não uma cópia — cópia vira segunda
+verdade, e a que não tem teste é a que decide errado. `--falsificar` reintroduz o bug original,
+troca por `<> 'true'`, remove o `IS JSON OBJECT` e remove o `coalesce`, e exige vermelho nos dois
+locales. Como `db/test-*.sh` precisa de Postgres local e não roda no CI, o gate textual do vitest
+acompanha — ele não prova filtro (ninguém prova filtro lendo string), só torna a regressão ruidosa.
+
+### 10.1 ⚠️ A falsificação por `sed` no ARQUIVO acertou o COMENTÁRIO, e o guard aprovou
+
+Cometido nesta entrega. Para provar que o gate do vitest era carga, sabotei o SQL com
+
+```
+perl -0pi -e "s/NOT \(r\.c \? 'probe'\)/(r.c ->> 'probe') <> 'true'/" scripts/pendencias-deploy.ts
+```
+
+e o guard anti-falsificação-vazia (`git diff --quiet` → "o alvo mudou?") **passou**: o arquivo
+tinha mudado mesmo. Só que a primeira ocorrência daquele texto no arquivo não é o SQL — é o
+comentário que **cita o SQL** para explicar por que `<> 'true'` seria NULL-blind. O `perl` reescreveu
+a prosa e deixou a query intacta. A suíte ficou verde, e a leitura natural ("gate frouxo") estava
+errada: o gate nunca tinha sido testado.
+
+O que torna isto provável e não exótico é o estilo desta casa: os comentários **citam o código
+verbatim**, então todo padrão que casa a linha casa também o parágrafo que a descreve — e o
+parágrafo vem ANTES no arquivo.
+
+- **Sabote o ALVO EXTRAÍDO, não o arquivo que o contém.** É o que
+  `db/test-pendencias-deploy-eco-passivo.sh` faz: importa `SQL` do script para um `.sql` sem
+  comentário nenhum e sabota ali — imune por construção.
+- Quando a edição tiver de ser no arquivo, **ancore na região do código** e **falhe se o padrão não
+  casar DENTRO dela**.
+- **"O arquivo mudou" é guard fraco.** O guard forte é "**o alvo** mudou": `cmp` sobre o artefato
+  extraído, ou substituição ancorada que sai não-zero quando não casa. Família
+  `evidencia-positiva-shell.md`: sinal colhido do objeto errado.

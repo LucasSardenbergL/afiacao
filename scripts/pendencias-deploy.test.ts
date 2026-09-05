@@ -9,6 +9,7 @@ import {
   PISO_COBERTURA_PADRAO,
   SEM_MAPA,
 } from './lib/pendencias-deploy';
+import { SQL } from './pendencias-deploy';
 
 const MAPA = { 'edge-a': 'aaa111', 'edge-b': 'bbb222' };
 const obs2 = (edge: string, fonte: string) => ({
@@ -145,5 +146,64 @@ describe('piso de cobertura', () => {
         /PENDENCIAS_COBERTURA_MINIMA inválido/,
       );
     }
+  });
+});
+
+/**
+ * O SQL como TEXTO — o único gate desta correção que roda no CI.
+ *
+ * A prova de verdade é `db/test-pendencias-deploy-eco-passivo.sh`, que EXECUTA a query num PG17
+ * com fixtures e falsifica. Mas `db/test-*.sh` precisa de Postgres local e não roda no CI, então
+ * sozinha ela não impede alguém de reintroduzir o filtro `probe:true` num refactor. Estas
+ * asserções são o cão de guarda barato: leem a query como texto e casam a MARCA de cada ramo.
+ * Não substituem a execução — ninguém prova filtro lendo string —, só tornam a regressão ruidosa.
+ */
+describe('SQL da varredura — as duas vias', () => {
+  const semEspacos = SQL.replace(/\s+/g, ' ');
+
+  it('aceita o ECO PASSIVO: `probe` AUSENTE com edge+versao ainda conta', () => {
+    expect(semEspacos).toContain("NOT (r.c ? 'probe')");
+  });
+
+  it('não regrediu a SONDA ATIVA', () => {
+    expect(semEspacos).toContain("(r.c ->> 'probe') = 'true'");
+  });
+
+  it('NÃO exige mais `probe` no filtro textual — era ele que cegava o eco passivo', () => {
+    expect(semEspacos).not.toContain('LIKE \'%"probe"%\'');
+  });
+
+  it('a chave ausente NÃO é testada por `<> true` (NULL-blind reintroduziria o bug)', () => {
+    expect(semEspacos).not.toContain("(r.c ->> 'probe') <> 'true'");
+  });
+
+  it('o guard textual antes do cast continua, e mais estrito', () => {
+    expect(semEspacos).toContain("left(ltrim(content), 1) = '{'");
+    expect(semEspacos).toContain('content IS JSON OBJECT');
+    expect(semEspacos).toContain('LIKE \'%"edge"%\'');
+    expect(semEspacos).toContain('LIKE \'%"versao"%\'');
+  });
+
+  it('o veredito segue julgando o FONTE: sem o coalesce, eco sem fingerprint sumiria', () => {
+    expect(semEspacos).toContain("coalesce(r.c ->> 'fonte', 'sem-campo')");
+  });
+});
+
+describe('julgar — o eco passivo chega inteiro na lib', () => {
+  it('O CASO REAL: analytics-outbox-drain respondeu sem `probe` e é CONFERE, não NAO_OBSERVADA', () => {
+    // `fonte` batendo com o mapa: era isto que prod devolvia 72x/janela enquanto o relatório
+    // dizia "⚪ sem sonda na janela (ausência de dado)".
+    const rel = julgar({ 'analytics-outbox-drain': 'b03bbf88' }, [
+      obs('analytics-outbox-drain', 'b03bbf88', '2026-09-04 10:05:00+00', 'v1.1-guard'),
+    ]);
+    expect(rel.vereditos[0].estado).toBe('CONFERE');
+    expect(rel.totalObservadas).toBe(1);
+  });
+
+  it('eco SEM fonte vira `sem-campo` → DIVERGE, e ainda assim CONTA como observada', () => {
+    const rel = julgar({ 'edge-a': 'aaa111' }, [obs('edge-a', 'sem-campo')]);
+    expect(rel.vereditos[0].estado).toBe('DIVERGE');
+    expect(rel.totalObservadas).toBe(1);
+    expect(rel.totalDivergentes).toBe(1);
   });
 });
