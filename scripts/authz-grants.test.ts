@@ -10,8 +10,14 @@ import {
 describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
   // Lista EXAUSTIVA de propósito: a allowlist é curada, então crescer é decisão, não acidente.
   // Adicionar tabela aqui sem medir prod é o modo de falha que o §5.2 do design descreve.
-  it('tem as três tabelas money-path fechadas por privilégio', () => {
+  it('tem as três tabelas money-path fechadas por privilégio + o ledger de atestação de deploy', () => {
+    // `deploy_atestacoes` (2026-09-05): não é money-path — é o instrumento que DECIDE deploy de
+    // edge (`bun run pendencias:deploy`). Nasce fechada na própria migration (REVOKE por nome de
+    // anon/authenticated + GRANT SELECT a authenticated), medido em prod antes do apply: tabela
+    // inexistente, default ACL daria arwdDxtm a anon/authenticated. Escrita aberta = qualquer
+    // usuário fabricando atestação de deploy.
     expect(Object.keys(AUTHZ_TABELAS_FECHADAS).sort()).toEqual([
+      'public.deploy_atestacoes',
       'public.omie_products',
       'public.product_costs',
       'public.sales_orders',
