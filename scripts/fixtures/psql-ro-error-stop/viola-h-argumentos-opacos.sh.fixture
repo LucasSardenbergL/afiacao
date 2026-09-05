@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# CAMADA: repasse OPACO. O gate não vê de onde vem o SQL — e "não vi" tratado como "não precisa"
+# é o zero virando veredito. Função-wrapper tem de fixar `-c` ou trazer ON_ERROR_STOP de saída.
+set -uo pipefail
+PSQL="$HOME/.config/afiacao/psql-ro"
+Q() { "$PSQL" -tA "$@"; }
+Q -f consulta.sql

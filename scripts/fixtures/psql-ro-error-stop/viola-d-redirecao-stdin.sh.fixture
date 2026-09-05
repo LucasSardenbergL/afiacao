@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# CAMADA: detecção de stdin por REDIRECIONAMENTO `<`.
+set -uo pipefail
+AFIACAO_PSQL="$HOME/.config/afiacao/psql-ro"
+"$AFIACAO_PSQL" -tA < consulta.sql

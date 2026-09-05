@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# CAMADA: `<<<` NÃO abre corpo de heredoc. Com o bug original, o `read … <<<` fazia todo o resto
+# do arquivo virar "corpo de heredoc": o comentário abaixo deixava de ser limpo e a invocação
+# real deixava de ser vista. Este fixture é a regressão daquele furo.
+set -uo pipefail
+PSQL="$HOME/.config/afiacao/psql-ro"
+IFS=',' read -r -a _pares <<< "$LISTA"
+# "$PSQL" -f decoy.sql   <- comentário: NÃO conta
+"$PSQL" -tA -f consulta.sql

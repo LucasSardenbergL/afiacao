@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# CAMADA: REFUTAÇÃO da semente. `PSQL` é um dos nomes semente (herdado do ambiente quando o
+# arquivo não o define), mas aqui o arquivo DIZ que ele é outro binário. Semente que ignora a
+# atribuição local vira falso positivo — e falso positivo em fiscal custa a confiança nele.
+set -uo pipefail
+PGBIN="/opt/homebrew/opt/postgresql@17/bin"
+PSQL="$PGBIN/psql"
+"$PSQL" -v ON_ERROR_STOP=0 -f prova.sql

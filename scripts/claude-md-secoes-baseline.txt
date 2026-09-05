@@ -6,7 +6,7 @@
 124	(preâmbulo)
 373	## Preferências do founder (Lucas)
 181	## Índice — `docs/agent/` (referência operacional, LEIA o doc ANTES de tocar o domínio)
-1042	## ⚠️ Armadilhas recorrentes (caras — a maioria money-path/banco; detalhe no doc/agent indicado)
+1080	## ⚠️ Armadilhas recorrentes (caras — a maioria money-path/banco; detalhe no doc/agent indicado)
 84	## Merge (auto)
 157	## Stack
 148	## Design System (v3 — "fintech premium": Vercel/Mercury/Stripe Dashboard)

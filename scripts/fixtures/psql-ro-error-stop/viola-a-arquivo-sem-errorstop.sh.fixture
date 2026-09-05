@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# CAMADA: classificação de forma (-f). É o caso do #2167, verbatim.
+set -uo pipefail
+PSQL="${PSQL_RO:-$HOME/.config/afiacao/psql-ro}"
+RAW="$("$PSQL" -tA -f "$SQL_FILE")" || exit 2
+echo "$RAW"
