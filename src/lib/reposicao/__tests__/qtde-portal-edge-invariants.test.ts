@@ -78,7 +78,7 @@ describe('enviar-pedido-portal-sayerlack: a edge USA os guards antes de qualquer
   it('enviado = aprovado: a edge NÃO escreve em pedido_compra_item (a normalização de qtde_final saiu)', () => {
     // Antes do #2166 a edge gravava `qtde_final` normalizada (36 → 40) ANTES do Browserless — uma compra que ninguém
     // aprovou. Agora o round-trip recusa; se este assert ficar vermelho, alguém reintroduziu um escritor de item.
-    expect(limpo).not.toMatch(/from\("pedido_compra_item"\)\s*\.update\(/);
+    expect(limpo).not.toMatch(/from\("pedido_compra_item"\)\s*\.(update|upsert|insert|delete)\(/);
     expect(limpo).not.toContain('pós-normalização');
     expect(limpo).not.toMatch(/qtdeFisicaOmie\(/);
   });
