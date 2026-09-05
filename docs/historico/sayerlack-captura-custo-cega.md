@@ -212,3 +212,42 @@ Duas coisas a saber antes desse primeiro envio:
 - Preço do portal é **líquido pré-imposto**; o `preco_unitario` do Omie hoje mistura origens (WP06:
   R$ 172,20 no Omie vs R$ 129,32 líquido no portal). Decisão de produto do #627 mantida; o PO Omie
   passa a nascer com o preço que o fornecedor de fato cobrou.
+
+## Adendo (2026-09-05, noite): o DOM foi lido, e revelou DOIS achados
+
+O primeiro envio com o scrape novo (pedido **#2459**, portal **2126911**) leu a datatable inteira:
+
+```
+headers: Seq · Item · Referência · UN · Cap Emb · Qtd Fat · Qtd UN · Preço Fat · Preço UN ·
+         PreçoOriginal · Prz Ent · % Desconto · Preço Venda
+linha:   10 · "WFBT.6045GL - BASE PU ACAB 604" · L · 3,2400 · 9,7200 · 3 · 43,9060 · 142,2554 ·
+         142,2554 · 5 · 14,9488% · 362,9698
+```
+
+**Achado 1 — `Preço Venda` é o TOTAL DA LINHA, não o preço por embalagem.** A conta fecha exata:
+`142,2554 × 3 × (1 − 14,9488%) = 362,9698`. O `dom_checksum` somava `Preço Venda × Qtd UN`, inflando a
+soma e reprovando **todo** pedido multi-item por `checksum_divergente`. Fail-closed (nunca fabricou
+número), mas com a captura do DOM morta na prática — e invisível, porque pedido de 1 item não passa por
+esse ramo. Corrigido: a soma é `Σ Preço Venda`, e a tolerância passa a depender do **número de linhas**,
+não das quantidades.
+
+**Achado 2 — ABERTO: `data.value` ≠ Σ Preço Venda.** O portal cobrou **374,77** com a linha exibindo
+**362,9698**. Diferença de **R$ 11,80 (3,2510%)**, de natureza não identificada (IPI? encargo? desconto
+aplicado diferente do exibido?). É exatamente o P1-A do challenge do Codex ("`data.value` prova o total
+do pedido, não que ele seja exclusivamente mercadoria"), agora **medido**.
+
+> ⚠️ **Não confunda com os R$ 13,06 do #2190.** São contas diferentes, sobre bases diferentes:
+> os **R$ 13,06** comparam o preço STALE do banco com o que o portal cobrou (`387,832503 − 374,77`) e
+> foram **encerrados por decisão do founder** — a nota fiscal resolve, o pedido não se reprocessa.
+> Os **R$ 11,80** comparam duas leituras do MESMO envio (`374,77 − 362,9698`): o total que o portal
+> cobrou e o total que ele exibiu na linha. Esta segunda é estrutural, vale para todo pedido futuro, e
+> é o motivo de `dom_checksum` reprovar.
+
+Enquanto não for explicado, `dom_checksum` continua reprovando e o resumo carrega `soma_dom`,
+`total_json`, `delta_abs` e `delta_rel` para descobrir se a razão se repete. `json_total_unico`
+(pedido de 1 item) segue usando `data.value`, que é o que o portal cobra.
+
+**Achado 3 — a migration não subiu junto com a edge.** O bundle v1.5 chamava
+`sayerlack_aplicar_custo_portal` antes de a migration ser aplicada: todo envio caía em `erro_rpc`
+(`PGRST202`). Quem contou foi o sensor, no #2459: `fonte: json_total_unico` (o custo **foi** provado),
+`atualizados: 0`, `cego: true`. Primeiro sinal positivo da vida do sensor, e ele acertou o alvo.

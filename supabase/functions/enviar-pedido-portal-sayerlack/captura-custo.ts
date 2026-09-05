@@ -9,15 +9,23 @@
 // Semântica provada em prod (2026-09-05, pedido #2443 ↔ portal 2126906; docs/historico/sayerlack-captura-custo-cega.md):
 //   POST /order-creation/form/add → data.itens[{item, value}] + data.value.
 //   `value` do ITEM = Preço UN de TABELA por embalagem (antes do desconto por embalagem e da taxa −2%).
-//   `data.value`   = total LÍQUIDO do pedido (= Σ Preço Venda × Qtd UN da datatable).
+//   `data.value`   = total do pedido cobrado pelo portal.
+//   `Preço Venda` da datatable = TOTAL DA LINHA já multiplicado pela Qtd UN, NÃO preço por embalagem
+//     (medido no pedido #2459 / portal 2126911: 142,2554 × 3 × (1 − 14,9488%) = 362,9698 = Preço Venda).
 //
 // Cadeia de prova (Codex, challenge 2026-09-05 — precisão > recall, nada parcial):
 //   pedido local ↔ JSON ↔ DOM são o MESMO conjunto de SKUs (sem extra, ausência ou duplicata);
 //   Qtd UN lida no DOM == quantidade que a edge DIGITOU no portal (prova da quantidade aceita);
 //   Preço UN lido no DOM == `value` do JSON do mesmo SKU (prova de que a coluna é a que se pensa);
 //   1 item  ⇒ total_linha = data.value ('json_total_unico');
-//   N itens ⇒ Σ(Preço Venda × Qtd UN) == data.value com tolerância ABSOLUTA derivada do arredondamento
-//             exibido ('dom_checksum'). Qualquer elo faltando ⇒ total_linha = null em TODAS (ausente ≠ zero).
+//   N itens ⇒ Σ(Preço Venda) == data.value com tolerância ABSOLUTA derivada do arredondamento exibido
+//             ('dom_checksum'). Qualquer elo faltando ⇒ total_linha = null em TODAS (ausente ≠ zero).
+//
+// ⚠️ DIVERGÊNCIA ABERTA (medida 2026-09-05, #2459): o portal cobrou `data.value` 374,77 enquanto a linha
+//   exibia Preço Venda 362,9698 — R$ 11,80 a mais (3,2510%), de natureza NÃO identificada (IPI? encargo?
+//   desconto aplicado ≠ exibido?). Enquanto ela existir, `dom_checksum` NÃO fecha e a captura multi-item
+//   degrada para 'checksum_divergente' — fail-closed, de propósito. O resumo carrega `soma_dom`,
+//   `total_json`, `delta_abs` e `delta_rel` justamente para MEDIR o padrão nos próximos envios.
 
 // >>> ESPELHO(captura-custo) INICIO
 export function parseBRL(s: string): number | null {
@@ -150,12 +158,16 @@ export interface Consolidacao {
   motivo: MotivoCaptura | null;
   /** Total líquido do pedido PROVADO (= data.value) — só quando fonte ≠ 'nenhuma'. */
   total_pedido: number | null;
-  checksum: { soma_dom: number | null; total_json: number | null; delta_abs: number | null; tolerancia_abs: number | null };
+  checksum: { soma_dom: number | null; total_json: number | null; delta_abs: number | null; delta_rel: number | null; tolerancia_abs: number | null };
 }
 
-/** Preço Venda exibido com 4 casas e total com 2: por linha ±qtd×0,00005, por linha e total ±0,005 de centavo. */
-export function toleranciaChecksum(qtds: number[]): number {
-  return 0.005 * (qtds.length + 1) + qtds.reduce((s, q) => s + q * 0.00005, 0);
+/**
+ * Preço Venda é exibido com 4 casas e `data.value` com 2: ±0,005 do total mais ±0,00005 por linha.
+ * Depende do NÚMERO DE LINHAS, não das quantidades — Preço Venda já é o total da linha, então a
+ * quantidade não entra outra vez na conta (era o erro corrigido em 2026-09-05).
+ */
+export function toleranciaChecksum(nLinhas: number): number {
+  return 0.005 + nLinhas * 0.00005;
 }
 /** Preço UN do DOM (4 casas) vs `value` do JSON (até 4 casas). */
 const TOL_PRECO_UN = 0.0001;
@@ -166,7 +178,7 @@ const TOL_PRECO_UN = 0.0001;
  * úteis ao diagnóstico), e NENHUM item recebe custo — nunca mistura custo novo com custo antigo no mesmo pedido.
  */
 export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | null, esperados: ItemEsperado[]): Consolidacao {
-  const semChecksum: Consolidacao['checksum'] = { soma_dom: null, total_json: json?.value ?? null, delta_abs: null, tolerancia_abs: null };
+  const semChecksum: Consolidacao['checksum'] = { soma_dom: null, total_json: json?.value ?? null, delta_abs: null, delta_rel: null, tolerancia_abs: null };
   const linhaSemCusto = (sku: string, prz: string): LinhaPortal => ({ sku_portal: sku, prz_ent_raw: prz, total_linha: null });
   const domPorSku = new Map<string, LinhaDom[]>();
   for (const d of dom) {
@@ -232,14 +244,16 @@ export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | nu
     };
   }
 
-  // (4) N itens ⇒ Σ(Preço Venda × Qtd UN) fecha com o total, tolerância ABSOLUTA derivada do arredondamento exibido.
+  // (4) N itens ⇒ Σ(Preço Venda) fecha com o total, tolerância ABSOLUTA derivada do arredondamento exibido.
+  // Preço Venda JÁ É o total da linha (Preço UN × Qtd UN × (1 − desconto)) — multiplicá-lo pela quantidade
+  // de novo inflava a soma e fazia todo pedido multi-item cair em 'checksum_divergente'.
   if (provadas.some((p) => p.precoVenda == null || !(p.precoVenda > 0))) return falha('dom_incompleto');
-  const totais = provadas.map((p) => (p.precoVenda as number) * p.qtd);
+  const totais = provadas.map((p) => p.precoVenda as number);
   if (totais.some((t) => !Number.isFinite(t))) return falha('dom_incompleto');
   const soma = totais.reduce((s, v) => s + v, 0);
-  const tolerancia = toleranciaChecksum(provadas.map((p) => p.qtd));
+  const tolerancia = toleranciaChecksum(provadas.length);
   const delta = Math.abs(soma - json.value);
-  const checksum = { soma_dom: soma, total_json: json.value, delta_abs: delta, tolerancia_abs: tolerancia };
+  const checksum = { soma_dom: soma, total_json: json.value, delta_abs: delta, delta_rel: delta / json.value, tolerancia_abs: tolerancia };
   if (delta > tolerancia) return falha('checksum_divergente', checksum);
   return {
     linhas: skusJson.map((s, i) => ({ sku_portal: s, prz_ent_raw: przDe(s), total_linha: totais[i] })),

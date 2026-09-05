@@ -32,7 +32,7 @@ function assertPerto(actual: number | null | undefined, expected: number, msg: s
 }
 
 const dom = (o: Partial<LinhaDom> = {}): LinhaDom => ({
-  sku_portal: "WP06.3900QT", prz_ent_raw: "5", qtd_un_raw: "2", preco_venda_raw: "129,3180", preco_un_raw: "153,2030", ...o,
+  sku_portal: "WP06.3900QT", prz_ent_raw: "5", qtd_un_raw: "2", preco_venda_raw: "258,6360", preco_un_raw: "153,2030", ...o,
 });
 const item = (o: Partial<ItemPedido> = {}): ItemPedido => ({
   item_id: 1, sku_codigo_omie: "8689733285", sku_descricao: "d", sku_portal: "WP06.3900QT", qtde_final: 2, preco_atual: 172.200046, ...o,
@@ -53,9 +53,9 @@ const ESPERADOS_2443: ItemEsperado[] = [
   { sku_portal: "TEH.3505.00BB", qtde_portal: 8 },
 ];
 const DOM_2443: LinhaDom[] = [
-  dom({ sku_portal: "WP06.3900QT", qtd_un_raw: "2", preco_venda_raw: "129,3180", preco_un_raw: "153,2030" }),
-  dom({ sku_portal: "WP53.3900QT", qtd_un_raw: "2", preco_venda_raw: "222,8589", preco_un_raw: "264,0210" }),
-  dom({ sku_portal: "TEH.3505.00BB", qtd_un_raw: "8", preco_venda_raw: "112,6650", preco_un_raw: "124,9005" }), // 2×129,318 + 2×222,8589 + 8×112,665 = 1605,67
+  dom({ sku_portal: "WP06.3900QT", qtd_un_raw: "2", preco_venda_raw: "258,6360", preco_un_raw: "153,2030" }),   // 153,2030 × 2 × (1 − 15,6285%)
+  dom({ sku_portal: "WP53.3900QT", qtd_un_raw: "2", preco_venda_raw: "445,7178", preco_un_raw: "264,0210" }),
+  dom({ sku_portal: "TEH.3505.00BB", qtd_un_raw: "8", preco_venda_raw: "901,3200", preco_un_raw: "124,9005" }), // Σ = 258,636 + 445,7178 + 901,32 = 1605,6738 ≈ 1605,67
 ];
 const UNICO_JSON: AddJsonPortal = { itens: [{ item: "DFA.4080LT", value: 357.5466 }], value: 3238.63, ordernum: 1 };
 const UNICO_ESP: ItemEsperado[] = [{ sku_portal: "DFA.4080LT", qtde_portal: 10 }];
@@ -123,10 +123,11 @@ Deno.test("consolidar N itens: DOM completo, quantidades e Preço UN batendo, ch
   assertPerto(c.linhas[2].total_linha, 901.32, "TEH 8×112,665");
   assertEquals((c.checksum.delta_abs ?? 1) <= (c.checksum.tolerancia_abs ?? 0), true, "checksum fecha dentro da tolerância (portal arredonda o total a centavos: 1605,6738 → 1605,67)");
   assertPerto(c.total_pedido, 1605.67, "total provado");
+  assertPerto(c.checksum.delta_rel, Math.abs(1605.6738 - 1605.67) / 1605.67, "delta_rel exposto no resumo", 1e-9);
 });
 
 Deno.test("consolidar N itens (adversário Codex): ler 'Preço UN' no lugar de 'Preço Venda' ⇒ checksum_divergente", () => {
-  const domTabela = DOM_2443.map((l) => dom({ ...l, preco_venda_raw: l.preco_un_raw })); // 1833,65 ≠ 1605,67
+  const domTabela = DOM_2443.map((l) => dom({ ...l, preco_venda_raw: l.preco_un_raw })); // Σ Preço UN = 542,12 ≠ 1605,67
   const c = consolidarLinhasPortal(domTabela, JSON_2443, ESPERADOS_2443);
   assertEquals(c.fonte, "nenhuma", "fonte");
   assertEquals(c.motivo, "checksum_divergente", "marca do ramo");
@@ -146,7 +147,7 @@ Deno.test("consolidar N itens: coluna 'Preço UN' do DOM ≠ value do JSON ⇒ p
 
 Deno.test("consolidar N itens: amostra NÃO discriminante (desconto 0) ainda produz o custo CERTO — Preço Venda == Preço UN, soma fecha", () => {
   const json: AddJsonPortal = { itens: [{ item: "A", value: 10 }, { item: "B", value: 20 }], value: 50, ordernum: 1 };
-  const d = [dom({ sku_portal: "A", qtd_un_raw: "1", preco_venda_raw: "10,0000", preco_un_raw: "10,0000" }), dom({ sku_portal: "B", qtd_un_raw: "2", preco_venda_raw: "20,0000", preco_un_raw: "20,0000" })];
+  const d = [dom({ sku_portal: "A", qtd_un_raw: "1", preco_venda_raw: "10,0000", preco_un_raw: "10,0000" }), dom({ sku_portal: "B", qtd_un_raw: "2", preco_venda_raw: "40,0000", preco_un_raw: "20,0000" })];
   const c = consolidarLinhasPortal(d, json, [{ sku_portal: "A", qtde_portal: 1 }, { sku_portal: "B", qtde_portal: 2 }]);
   assertEquals(c.fonte, "dom_checksum", "fonte");
   assertPerto(c.linhas[1].total_linha, 40, "B = 2×20");
@@ -194,12 +195,43 @@ Deno.test("consolidar: total do pedido inválido no JSON ⇒ total_json_invalido
   assertEquals(consolidarLinhasPortal(UNICO_DOM_CEGO, { ...UNICO_JSON, value: 0 }, UNICO_ESP).motivo, "total_json_invalido", "zero");
 });
 
-Deno.test("toleranciaChecksum: derivada do arredondamento exibido (centavo por linha + total + 4ª casa × qtd)", () => {
-  assertPerto(toleranciaChecksum([2, 2, 8]), 0.005 * 4 + 12 * 0.00005, "3 linhas");
-  const json: AddJsonPortal = { itens: [{ item: "A", value: 10 }, { item: "B", value: 20 }], value: 50.02, ordernum: 1 }; // 0,02 acima: dentro (tol 0,015+…)? não: 0,02 > 0,01515
-  const d = [dom({ sku_portal: "A", qtd_un_raw: "1", preco_venda_raw: "10,0000", preco_un_raw: "10,0000" }), dom({ sku_portal: "B", qtd_un_raw: "2", preco_venda_raw: "20,0000", preco_un_raw: "20,0000" })];
-  assertEquals(consolidarLinhasPortal(d, json, [{ sku_portal: "A", qtde_portal: 1 }, { sku_portal: "B", qtde_portal: 2 }]).motivo, "checksum_divergente", "2 centavos fora em 3 arredondamentos reprova");
-  assertEquals(consolidarLinhasPortal(d, { ...json, value: 50.01 }, [{ sku_portal: "A", qtde_portal: 1 }, { sku_portal: "B", qtde_portal: 2 }]).fonte, "dom_checksum", "1 centavo passa");
+Deno.test("toleranciaChecksum: depende do NÚMERO DE LINHAS, não da quantidade (Preço Venda já é o total da linha)", () => {
+  assertPerto(toleranciaChecksum(3), 0.005 + 3 * 0.00005, "3 linhas");
+  assertPerto(toleranciaChecksum(1), 0.005 + 0.00005, "1 linha");
+});
+
+Deno.test("checksum: arredondamento do portal (1605,6738 → 1605,67) passa; 2 centavos fora reprovam", () => {
+  assertEquals(consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443).fonte, "dom_checksum", "delta 0,0038 dentro da tolerância");
+  assertEquals(consolidarLinhasPortal(DOM_2443, { ...JSON_2443, value: 1605.69 }, ESPERADOS_2443).motivo, "checksum_divergente", "2 centavos fora reprovam");
+});
+
+// REGRESSÃO do bug medido em prod (2026-09-05, #2459 / portal 2126911): o código somava
+// `Preço Venda × Qtd UN`, mas Preço Venda JÁ É o total da linha — 142,2554 × 3 × (1 − 14,9488%)
+// = 362,9698. Multiplicar de novo inflava a soma e todo pedido multi-item caía em
+// 'checksum_divergente', deixando a captura morta para quem tem mais de um item.
+Deno.test("regressão: a soma do DOM é Σ(Preço Venda) e NÃO Σ(Preço Venda × Qtd UN)", () => {
+  const c = consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443);
+  assertPerto(c.checksum.soma_dom, 258.636 + 445.7178 + 901.32, "soma direta das linhas");
+  const somaInflada = 258.636 * 2 + 445.7178 * 2 + 901.32 * 8;
+  assertEquals(Math.abs((c.checksum.soma_dom ?? 0) - somaInflada) > 1, true, "a soma inflada (o bug) é outra ordem de grandeza");
+  assertEquals(c.fonte, "dom_checksum", "com a soma certa o checksum fecha");
+});
+
+// Dado REAL do pedido #2459 (1 item, mas usado aqui como linha de DOM): o portal cobrou
+// data.value 374,77 enquanto a linha exibia Preço Venda 362,9698 — R$ 11,80 (3,2510%) de origem
+// não identificada. Enquanto não se souber o que é, o custo NÃO pode nascer do DOM.
+Deno.test("divergência aberta do #2459: DOM 362,9698 vs JSON 374,77 ⇒ checksum_divergente com delta medido", () => {
+  const d = [
+    dom({ sku_portal: "WFBT.6045GL", qtd_un_raw: "3", preco_venda_raw: "362,9698", preco_un_raw: "142,2554" }),
+    dom({ sku_portal: "OUTRO.GL", qtd_un_raw: "1", preco_venda_raw: "100,0000", preco_un_raw: "100,0000" }),
+  ];
+  const j: AddJsonPortal = { itens: [{ item: "WFBT.6045GL", value: 142.2554 }, { item: "OUTRO.GL", value: 100 }], value: 474.77, ordernum: 2126911 };
+  const esp: ItemEsperado[] = [{ sku_portal: "WFBT.6045GL", qtde_portal: 3 }, { sku_portal: "OUTRO.GL", qtde_portal: 1 }];
+  const c = consolidarLinhasPortal(d, j, esp);
+  assertEquals(c.motivo, "checksum_divergente", "fail-closed enquanto a divergência não for explicada");
+  assertEquals(c.linhas.every((l) => l.total_linha === null), true, "nenhum custo fabricado");
+  assertPerto(c.checksum.delta_abs, 11.8002, "delta absoluto medido", 1e-4);
+  assertPerto(c.checksum.delta_rel, 11.8002 / 474.77, "delta relativo vai no resumo para medir o padrão", 1e-6);
 });
 
 // ---------------------------------------------------------------- casar + derivar (fim a fim)
