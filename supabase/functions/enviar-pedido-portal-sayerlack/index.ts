@@ -17,6 +17,10 @@ import {
   qtdePortal,
   verificarFatorAprovado,
 } from "./qtde-portal.ts";
+import {
+  casarLinhasComItens, consolidarLinhasPortal, derivarCustos, extrairAddJson, resumirCaptura, round2,
+  type AddJsonPortal, type ItemPedido, type LinhaDom, type ResultadoMatch,
+} from "./captura-custo.ts";
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 
 const corsHeaders = {
@@ -55,6 +59,9 @@ export default async ({ page, context }) => {
   // fica no page.evaluate abaixo porque ele roda no contexto da página e não
   // enxerga este escopo.
   const classificarPosLogin = ${classificarPosLogin.toString()};
+  // Leitor do JSON do "Efetivar" (POST /order-creation/form/add → data.itens + data.value), interpolado
+  // do ./captura-custo.ts via .toString() — fonte única testada em deno test (money-path: custo).
+  const extrairAddJson = ${extrairAddJson.toString()};
   // Não usamos timeout interno menor que o Browserless: em 14/05, o pedido #116
   // clicou em "Efetivar Pedido" por volta de 53s e a Promise.race anterior
   // devolveu TIMEOUT_INTERNO aos 55s, encerrando o browser antes do portal concluir.
@@ -402,6 +409,10 @@ export default async ({ page, context }) => {
         // Totais capturados do #datatable_itens (custo). Propaga o que o runFlow
         // anexou em raw.data.itens_capturados pro Deno casar com os itens.
         itens_capturados: Array.isArray(data.itens_capturados) ? data.itens_capturados : [],
+        // JSON do Efetivar ({itens, value, ordernum}) e diagnóstico do scrape (headers/idx/amostra) —
+        // consumidos pela captura de custo no Deno. null/ausente = sem prova, nunca lista vazia.
+        portal_add_json: data.portal_add_json || null,
+        scrape_debug: data.scrape_debug || null,
         safeToRetry,
         needsReconciliation,
         evidence: {
@@ -1048,30 +1059,66 @@ export default async ({ page, context }) => {
     }, { timeout: budgetFor('validacao-pre-efetivar', 15_000), polling: 250 });
     trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0, remaining: remainingMs() });
 
-    // === Scrape #datatable_itens (custo + Prz Ent) — header/value matching, robusto a layout ===
+    // === Scrape #datatable_itens (Prz Ent + Qtd UN + Preço Venda) — header-matching + identidade por TOKEN ===
+    // Histórico: 97/97 envios (jun→set/2026) vinham com sku_portal='' e total_raw='' — o sku só era
+    // atribuído se UMA célula fosse IGUAL ao código (a célula não é texto puro) e o "total" era a ÚLTIMA
+    // célula (coluna de ações, vazia). A tabela NÃO tem coluna Total: colunas reais (spec 2026-07-14) são
+    // UN · Cap Emb · Qtd Fat · Qtd UN · Preço Fat · Preço UN · Prz Ent · % Desconto · Preço Venda (líquido/embalagem).
+    // O custo de linha nasce no Deno (captura-custo.ts) SÓ quando Σ(Preço Venda × Qtd UN) FECHA com o total
+    // do JSON do Efetivar — coluna errada aqui não vira custo. A amostra viaja no envelope pra diagnóstico.
     const skusConhecidos = items.map(function(it){ return (it.sku_portal || '').trim().toUpperCase(); }).filter(Boolean);
     const scrape = await page.evaluate(function(skus) {
       function norm(s){ return (s || '').trim().toUpperCase(); }
       var table = document.querySelector('#datatable_itens');
-      if (!table) return { ok: false, motivo: 'sem_tabela', headers: [], przIdx: -1, rows: [] };
-      var ths = Array.from(table.querySelectorAll('thead th')).map(function(th){ return (th.innerText || '').trim(); });
-      var przIdx = ths.findIndex(function(h){ return /prz|prazo/i.test(h); });
-      var rows = Array.from(table.querySelectorAll('tbody tr')).map(function(tr){
+      if (!table) return { ok: false, motivo: 'sem_tabela', headers: [], przIdx: -1, idx: {}, rows: [], amostra: [] };
+      function compacta(s, n){ return (s || '').replace(/\\s+/g, ' ').trim().substring(0, n); }
+      var ths = Array.from(table.querySelectorAll('thead th')).map(function(th){ return compacta(th.innerText, 40); });
+      // EXATAMENTE um header casando; 0 ou >1 ⇒ -1 (coluna ambígua não é coluna).
+      function idxDe(re){ var hits = []; ths.forEach(function(h, i){ if (re.test(h)) hits.push(i); }); return hits.length === 1 ? hits[0] : -1; }
+      var przIdx = idxDe(/prz|prazo/i);
+      var idx = {
+        qtd_un: idxDe(/qtd\\.?\\s*un\\b/i),
+        preco_venda: idxDe(/pre[çc]o\\s*venda/i),
+        preco_un: idxDe(/pre[çc]o\\s*un\\b/i),
+        desconto: idxDe(/desconto/i),
+      };
+      // Célula com input/select VISÍVEL usa .value (linha em edição renderiza inputs); senão innerText.
+      function cellVal(tds, i) {
+        if (i < 0 || i >= tds.length) return '';
+        var input = tds[i].querySelector('input:not([type=hidden]):not([type=password]), select');
+        if (input && typeof input.value === 'string' && input.value.trim() !== '') return input.value.trim();
+        return compacta(tds[i].innerText, 60);
+      }
+      // Placeholder do DataTables ("Nenhum dado disponível") é <tr> real — não é linha (pegadinha #2).
+      var trs = Array.from(table.querySelectorAll('tbody tr')).filter(function(tr){ return !tr.querySelector('td.dataTables_empty'); });
+      var amostra = [];
+      var rows = trs.map(function(tr, ri){
         var tds = Array.from(tr.querySelectorAll('td'));
-        var texts = tds.map(function(td){ return (td.innerText || '').trim(); });
-        // código: SÓ identifica se EXATAMENTE 1 célula bate (igualdade) um sku conhecido — evita
-        // atribuir o sku errado a uma linha por colisão de célula; 0 ou >1 → sku vazio = naoCasado (seguro).
-        var cellsSku = texts.filter(function(t){ return skus.indexOf(norm(t)) !== -1; });
+        var texto = (tr.innerText || '');
+        Array.from(tr.querySelectorAll('input:not([type=hidden]):not([type=password]), select')).forEach(function(el){
+          if (typeof el.value === 'string') texto += ' ' + el.value;
+          if (el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions.length) texto += ' ' + (el.selectedOptions[0].innerText || '');
+        });
+        // Identidade por TOKEN exato (tokenização [^A-Z0-9.], pontas sem ponto): "WP06.3900QT - DESC" casa,
+        // "WP06.3900QTX" não. Exatamente 1 sku conhecido ⇒ sku; 0 ou >1 ⇒ '' (naoCasado, seguro).
+        var tokens = norm(texto).split(/[^A-Z0-9.]+/).map(function(t){ return t.replace(/^\\.+|\\.+$/g, ''); });
+        var achados = skus.filter(function(s){ return tokens.indexOf(s) !== -1; });
+        // Diagnóstico estritamente limitado: 2 linhas × 20 células × 30 chars (nunca evidência pra liberar escrita).
+        if (ri < 2) amostra.push(tds.slice(0, 20).map(function(_td, ci){ return compacta(cellVal(tds, ci), 30); }));
         return {
-          sku_portal: cellsSku.length === 1 ? norm(cellsSku[0]) : '',
-          prz_ent_raw: (przIdx >= 0 && texts[przIdx] != null) ? texts[przIdx] : '',
-          total_raw: texts.length ? texts[texts.length - 1] : '',
+          sku_portal: achados.length === 1 ? achados[0] : '',
+          prz_ent_raw: cellVal(tds, przIdx),
+          qtd_un_raw: cellVal(tds, idx.qtd_un),
+          preco_venda_raw: cellVal(tds, idx.preco_venda),
+          preco_un_raw: cellVal(tds, idx.preco_un),
+          desconto_raw: cellVal(tds, idx.desconto),
         };
       });
-      return { ok: true, przIdx: przIdx, headers: ths, rows: rows };
+      return { ok: true, przIdx: przIdx, idx: idx, headers: ths.slice(0, 20), rows: rows, amostra: amostra };
     }, skusConhecidos);
-    console.log('[DEBUG_SCRAPE_ITENS]', JSON.stringify({ ok: scrape.ok, przIdx: scrape.przIdx, headers: scrape.headers, n: (scrape.rows || []).length, amostra: (scrape.rows || []).slice(0, 3) }));
-    trace.push({ step: 'scrape_datatable', n: (scrape.rows || []).length, przIdx: scrape.przIdx, t: Date.now() - t0 });
+    var scrapeDebug = { ok: scrape.ok, motivo: scrape.motivo || null, przIdx: scrape.przIdx, idx: scrape.idx || {}, headers: scrape.headers || [], amostra: scrape.amostra || [] };
+    console.log('[DEBUG_SCRAPE_ITENS]', JSON.stringify({ debug: scrapeDebug, n: (scrape.rows || []).length, rows: (scrape.rows || []).slice(0, 3) }));
+    trace.push({ step: 'scrape_datatable', n: (scrape.rows || []).length, przIdx: scrape.przIdx, idx: scrape.idx || {}, skus_identificados: (scrape.rows || []).filter(function(r){ return !!r.sku_portal; }).length, t: Date.now() - t0 });
     var linhasPortal = scrape.rows || [];
 
     // === Gate de grupo: Prz Ent (inteiro) === ltEsperado, EXATO. Fail-OPEN na incerteza (bug de seletor/sem config NÃO trava). ===
@@ -1239,6 +1286,8 @@ export default async ({ page, context }) => {
     // do JSON em formato ISO YYYY-MM-DD; ex.: "2026-05-22"). Usada pelo
     // disparar-pedidos-aprovados como base do dDtPrevisao do Omie (+ 2 dias).
     let portalDataEntrega = null;
+    // Custo: JSON do Efetivar (data.itens[{item,value}] + data.value). null = sem prova (nunca lista vazia).
+    let portalAddJson = null;
 
     if (firstSignal.kind === 'network' && firstSignal.response) {
       const r = await readResponseBodySafe(firstSignal.response);
@@ -1250,6 +1299,7 @@ export default async ({ page, context }) => {
       };
       if (r.parsed && r.parsed.success === false) bodySuccessFalse = true;
       if (r.parsed && !bodySuccessFalse) {
+        try { portalAddJson = extrairAddJson(r.parsed); } catch (e) { portalAddJson = null; }
         protocolo = tryExtractProtocoloFromObject(r.parsed);
         if (protocolo) protocoloSource = 'network_json';
         // PR4: data_entrega top-level (ISO YYYY-MM-DD). Validação estrita
@@ -1336,7 +1386,9 @@ export default async ({ page, context }) => {
           protocolo,
           protocoloSource,
           portal_data_entrega: portalDataEntrega,
-          itens_capturados: linhasPortal.map(function(l){ return { sku_portal: l.sku_portal, total_raw: l.total_raw, prz_ent_raw: l.prz_ent_raw }; }),
+          itens_capturados: linhasPortal,
+          portal_add_json: portalAddJson,
+          scrape_debug: scrapeDebug,
           firstSignal: { kind: firstSignal.kind },
           responseInfo,
           successText: protocolo ? ('Pedido ' + protocolo + ' criado com sucesso') : null,
@@ -1414,81 +1466,9 @@ export default async ({ page, context }) => {
 `;
 
 // ============================================================================
-// Captura de custo do portal (Deno scope — NÃO roda dentro do Browserless).
-// ESPELHO VERBATIM de src/lib/reposicao/sayerlack-scraping-pedido.ts — manter
-// em sincronia. (parseDiasPrzEnt é dependência de casarLinhasComItens; o gate
-// de grupo roda no browser, então validarGrupoLeadtime fica fora daqui.)
+// Captura de custo do portal: funções puras em ./captura-custo.ts (espelho verbatim em
+// src/lib/reposicao/sayerlack-scraping-pedido.ts, comparado byte a byte no vitest).
 // ============================================================================
-function parseBRL(s: string): number | null {
-  if (typeof s !== 'string') return null;
-  const limpo = s.replace(/[^\d,.-]/g, '').trim();
-  if (!limpo) return null;
-  const normal = limpo.replace(/\./g, '').replace(',', '.'); // pt-BR: ponto=milhar, vírgula=decimal
-  const n = Number(normal);
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseDiasPrzEnt(s: string): number | null {
-  if (typeof s !== 'string') return null;
-  const m = s.match(/-?\d+/);
-  if (!m) return null;
-  const n = Number(m[0]);
-  return Number.isInteger(n) ? n : null;
-}
-
-interface LinhaPortal { sku_portal: string; prz_ent_raw: string; total_raw: string; }
-interface ItemPedido {
-  item_id: number; sku_codigo_omie: string; sku_descricao: string | null;
-  sku_portal: string | null; qtde_final: number; preco_atual: number;
-}
-interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; }
-interface ResultadoMatch { casados: Casado[]; naoCasados: ItemPedido[]; ambiguos: ItemPedido[]; }
-
-function normPortal(s: string | null): string { return (s ?? '').trim().toUpperCase(); }
-
-function casarLinhasComItens(linhas: LinhaPortal[], itens: ItemPedido[]): ResultadoMatch {
-  const casados: Casado[] = [];
-  const naoCasados: ItemPedido[] = [];
-  const ambiguos: ItemPedido[] = [];
-
-  const itensPorSku = new Map<string, ItemPedido[]>();
-  for (const it of itens) {
-    const k = normPortal(it.sku_portal);
-    if (!k) { naoCasados.push(it); continue; }
-    const arr = itensPorSku.get(k) ?? [];
-    arr.push(it); itensPorSku.set(k, arr);
-  }
-  const linhasPorSku = new Map<string, LinhaPortal[]>();
-  for (const ln of linhas) {
-    const k = normPortal(ln.sku_portal);
-    if (!k) continue;
-    const arr = linhasPorSku.get(k) ?? [];
-    arr.push(ln); linhasPorSku.set(k, arr);
-  }
-  for (const [k, its] of itensPorSku) {
-    const lns = linhasPorSku.get(k) ?? [];
-    if (its.length > 1 || lns.length > 1) { ambiguos.push(...its); continue; }
-    if (lns.length === 0) { naoCasados.push(its[0]); continue; }
-    casados.push({ item: its[0], prz_ent: parseDiasPrzEnt(lns[0].prz_ent_raw), total_linha: parseBRL(lns[0].total_raw) });
-  }
-  return { casados, naoCasados, ambiguos };
-}
-
-interface CustoUpdate { item_id: number; preco_unitario: number; valor_linha: number; }
-function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
-
-function derivarCustos(res: ResultadoMatch): { updates: CustoUpdate[]; pulados: { sku_codigo_omie: string; motivo: string }[] } {
-  const updates: CustoUpdate[] = [];
-  const pulados: { sku_codigo_omie: string; motivo: string }[] = [];
-  for (const c of res.casados) {
-    const total = c.total_linha; const qtde = c.item.qtde_final;
-    if (total == null || !(total > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'total_invalido' }); continue; }
-    if (!(qtde > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'qtde_invalida' }); continue; }
-    if (round2(total) === round2(qtde * c.item.preco_atual)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'sem_mudanca' }); continue; }
-    updates.push({ item_id: c.item.item_id, preco_unitario: total / qtde, valor_linha: total }); // precisão cheia
-  }
-  return { updates, pulados };
-}
 
 interface PedidoCandidato {
   id: number;
@@ -2238,32 +2218,75 @@ async function processarPedido(
       protocolo: envelope.protocolo ?? null,
       enviadoPortalEm: true,
     });
-    // Captura de custo do portal: itens_capturados [{sku_portal, total_raw}]. Idempotente (só antes do Omie existir). Best-effort.
+    // Captura de custo do portal (best-effort; idempotente — só antes do PO Omie existir).
+    // Fontes: portal_add_json (JSON do Efetivar) + itens_capturados (DOM). O custo de linha só nasce
+    // PROVADO (1 item ⇒ total do pedido; N itens ⇒ DOM com checksum) — ver ./captura-custo.ts.
+    // SENSOR: envio com sucesso e ≥1 item sem custo provado = `cego` → warn estruturado + resumo em
+    // portal_resposta.captura_custo (esta edge é o único writer de portal_resposta neste estado).
+    // Medir: docs/agent/reposicao.md §Portal Sayerlack (query de captura cega).
     // (envelope === bResp.data já é o envelope achatado do buildEnvelope; itens_capturados é top-level, não envelope.data.)
     try {
-      const capturados = ((envelope?.itens_capturados ?? []) as Array<{ sku_portal: string; total_raw: string; prz_ent_raw?: string }>);
+      const capturados = (Array.isArray(envelope?.itens_capturados) ? envelope.itens_capturados : []) as LinhaDom[];
+      const addJson = (envelope?.portal_add_json ?? null) as AddJsonPortal | null;
       const jaTemOmie = !!(pedido as { omie_pedido_compra_numero?: string | null }).omie_pedido_compra_numero;
-      if (capturados.length > 0 && !jaTemOmie) {
+      // O que ESTA execução digitou no portal (sku + qtde em unidade do portal): prova de quantidade aceita.
+      const esperados = itemsPortal.map((i) => ({ sku_portal: i.sku_portal, qtde_portal: i.qtde }));
+      const cons = consolidarLinhasPortal(capturados, addJson, esperados);
+      let match: ResultadoMatch | null = null;
+      let pulados: { sku_codigo_omie: string; motivo: string }[] = [];
+      let planejados = 0;
+      let atualizados = 0;
+      if (!jaTemOmie) {
         const itensParaCusto: ItemPedido[] = itensList.map((i) => ({
           item_id: i.item_id, sku_codigo_omie: i.sku_codigo_omie, sku_descricao: i.sku_descricao,
           sku_portal: i.sku_portal, qtde_final: Number(i.qtde_final), preco_atual: Number((i as { preco_atual?: number }).preco_atual ?? 0),
         }));
-        const linhas: LinhaPortal[] = capturados.map((c) => ({ sku_portal: c.sku_portal, prz_ent_raw: c.prz_ent_raw ?? '', total_raw: c.total_raw }));
-        const match = casarLinhasComItens(linhas, itensParaCusto);
-        const { updates, pulados } = derivarCustos(match);
-        for (const u of updates) {
-          await supabase.from("pedido_compra_item").update({ preco_unitario: u.preco_unitario, valor_linha: u.valor_linha }).eq("id", u.item_id);
+        match = casarLinhasComItens(cons.linhas, itensParaCusto);
+        const derivado = derivarCustos(match);
+        pulados = derivado.pulados;
+        // Só escreve quando o pedido INTEIRO está provado (fonte ≠ nenhuma ⇒ conjunto local↔JSON↔DOM fechado e
+        // todos casados): nunca mistura custo novo com custo antigo no mesmo PO (Codex P1).
+        const pedidoInteiroProvado = cons.fonte !== 'nenhuma' && match.naoCasados.length === 0 && match.ambiguos.length === 0
+          && match.casados.length === itensParaCusto.length && !pulados.some((p) => p.motivo !== 'sem_mudanca');
+        if (pedidoInteiroProvado) {
+          planejados = derivado.updates.length;
+          for (const u of derivado.updates) {
+            // `.select('id')` devolve a linha afetada: 0 linhas = escrita que não aconteceu (RLS/id), não sucesso.
+            const { data: afetadas, error: eItem } = await supabase.from("pedido_compra_item")
+              .update({ preco_unitario: u.preco_unitario, valor_linha: u.valor_linha }).eq("id", u.item_id).select("id");
+            if (eItem || !Array.isArray(afetadas) || afetadas.length !== 1) {
+              const sku = match.casados.find((c) => c.item.item_id === u.item_id)?.item.sku_codigo_omie ?? String(u.item_id);
+              pulados.push({ sku_codigo_omie: sku, motivo: 'erro_update' });
+              console.error(`[envio-portal] Pedido #${pedido.id}: update de custo falhou (item ${u.item_id}):`, eItem?.message ?? `linhas afetadas=${Array.isArray(afetadas) ? afetadas.length : 'n/a'}`);
+              continue;
+            }
+            atualizados++;
+          }
+          // valor_total = total líquido PROVADO do pedido (data.value) — só quando todo item planejado persistiu.
+          if (planejados > 0 && atualizados === planejados && cons.total_pedido != null) {
+            const { error: eTotal } = await supabase.from("pedido_compra_sugerido").update({ valor_total: cons.total_pedido }).eq("id", pedido.id);
+            if (eTotal) console.error(`[envio-portal] Pedido #${pedido.id}: update de valor_total falhou:`, eTotal.message);
+          }
         }
-        if (updates.length > 0) {
-          // valor_total = Σ TODOS os itens (casados pelo total capturado; não-casados/ambíguos pelo valor atual)
-          // — não subconta itens que o scrape não casou (Codex P1).
-          const totalCasados = match.casados.reduce((s, c) => s + (c.total_linha ?? (c.item.qtde_final * c.item.preco_atual)), 0);
-          const totalOutros = [...match.naoCasados, ...match.ambiguos].reduce((s, it) => s + (it.qtde_final * it.preco_atual), 0);
-          const novoTotal = totalCasados + totalOutros;
-          await supabase.from("pedido_compra_sugerido").update({ valor_total: novoTotal }).eq("id", pedido.id);
-        }
-        console.log(`[envio-portal] Pedido #${pedido.id}: custo capturado — ${updates.length} atualizados, ${pulados.length} pulados`);
       }
+      const resumo = resumirCaptura({
+        cons, match, pulados, planejados, atualizados, jaTemOmie,
+        nDom: capturados.length, nJson: addJson?.itens.length ?? 0, nItens: itensList.length,
+      });
+      const linhaLog = JSON.stringify({ pedido_id: pedido.id, protocolo: envelope?.protocolo ?? null, ...resumo, scrape_debug: envelope?.scrape_debug ?? null });
+      if (resumo.cego) console.warn('[SENSOR_CAPTURA_CUSTO_CEGA]', linhaLog);
+      else console.log('[envio-portal] captura_custo', linhaLog);
+      // Auditoria NÃO autoritativa (ninguém decide custo/PO por ela). CAS por estado: só escreve se o pedido
+      // ainda está no sucesso_portal que ESTA execução acabou de gravar (watchdog/outra execução não é atropelada).
+      const traceAnterior = Array.isArray(envelope?.trace) ? envelope.trace : [];
+      const { error: eResumo } = await supabase.from("pedido_compra_sugerido").update({
+        portal_resposta: {
+          ...envelope,
+          captura_custo: resumo,
+          trace: [...traceAnterior, { step: 'captura_custo', fonte: resumo.fonte, motivo: resumo.motivo, atualizados: resumo.atualizados, cego: resumo.cego }],
+        },
+      }).eq("id", pedido.id).eq("status_envio_portal", "sucesso_portal");
+      if (eResumo) console.error(`[envio-portal] Pedido #${pedido.id}: persistir captura_custo falhou:`, eResumo.message);
     } catch (e) {
       console.error(`[envio-portal] Pedido #${pedido.id}: falha best-effort na captura de custo:`, e instanceof Error ? e.message : String(e));
     }

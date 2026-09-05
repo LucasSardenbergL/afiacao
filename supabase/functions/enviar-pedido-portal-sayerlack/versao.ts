@@ -30,6 +30,7 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * (poeira binária virava balde a mais) e fail-closed em fator inválido (antes ia "NaN" no input).
  */
 /**
+<<<<<<< HEAD
  * v1.3 — 3 achados do challenge Codex (2026-09-05) sobre o v1.2, todos fail-closed ANTES do Browserless:
  * (1) TOCTOU aprovação→envio: `pedido_compra_item.fator_embalagem_portal` (o fator com que o MOTOR
  * arredondou, #2157) ≠ `fator_conversao` VIVO → `erro_nao_retentavel` (`fator_aprovado_divergente`);
@@ -39,6 +40,15 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * não "sem mapeamento" definitivo. Helper espelhado em src/lib/reposicao/qtde-portal.ts (vitest).
  */
 export const VERSAO = "v1.3-fator-aprovado-vs-vivo";
+=======
+ * v1.3 — captura de custo deixou de ser cega: 97/97 envios (jun→set/2026) vinham com `sku_portal=''` e
+ * `total_raw=''` (sku por igualdade de célula + "total" = última célula, a coluna de ações). Agora o custo
+ * nasce de `./captura-custo.ts`: JSON do Efetivar (`data.itens`/`data.value`) + DOM por header-matching,
+ * com cadeia de prova (conjunto local↔JSON↔DOM, Qtd UN == digitada, Preço UN == value, checksum absoluto)
+ * e sensor `[SENSOR_CAPTURA_CUSTO_CEGA]` + `portal_resposta.captura_custo` quando algum item fica sem custo.
+ */
+export const VERSAO = "v1.3-captura-custo-json-efetivar";
+>>>>>>> a2f032db5 (fix(reposicao): captura de custo do portal Sayerlack era CEGA (97/97) — custo nasce do JSON do Efetivar + DOM com cadeia de prova, e cegueira vira sensor [money-path])
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
