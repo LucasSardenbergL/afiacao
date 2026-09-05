@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PedidoRow } from "../PedidoRow";
 import type { ColKey, PedidoItem } from "@/types/reposicao";
 
@@ -21,9 +20,7 @@ function renderRow(opts: { reviewMode?: boolean; cols?: Partial<Record<ColKey, b
     cancelado_em: null,
     pedido_anterior_valor: null,
   } as unknown as PedidoItem;
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}>
     <table>
       <tbody>
         <PedidoRow
@@ -36,8 +33,7 @@ function renderRow(opts: { reviewMode?: boolean; cols?: Partial<Record<ColKey, b
           onChanged={() => {}}
         />
       </tbody>
-    </table>
-    </QueryClientProvider>,
+    </table>,
   );
 }
 

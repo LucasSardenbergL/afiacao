@@ -160,11 +160,17 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
         const item = (itens ?? []).find((i) => i.id === itemId);
         if (!item) continue; // item saiu do cache — não grava (evita zerar preço). Codex [P1].
         const update = montarUpdateItem(item, edits[itemId], precoEdits[itemId]);
-        const { error } = await supabase
-          .from('pedido_compra_item')
-          .update(update)
-          .eq('id', itemId);
+        // Compare-and-set (Codex P1): `montarUpdateItem` recompõe a linha INTEIRA (qtde_final inclusive),
+        // então uma edição só-de-preço reescreveria a quantidade que ESTE modal carregou por cima de uma
+        // redução feita em outra aba. Só grava se o item ainda tem a quantidade vista; 0 linhas = mudou.
+        const base = supabase.from('pedido_compra_item').update(update).eq('id', itemId);
+        const cas = item.qtde_final === null ? base.is('qtde_final', null) : base.eq('qtde_final', item.qtde_final);
+        const { data: gravados, error } = await cas.select('id');
         if (error) throw error;
+        if (!gravados || gravados.length === 0) {
+          queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido.id] });
+          throw new Error(`Item ${item.sku_codigo_omie ?? itemId} foi alterado por outra pessoa — recarregue e confira.`);
+        }
       }
       // Header null-safe: _valor já trata custo desconhecido (preco_unitario null/0)
       // como 0, então valor_total = SUM(COALESCE(valor_linha,0)) — consistente com o

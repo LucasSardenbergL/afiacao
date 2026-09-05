@@ -18,27 +18,30 @@ import { supabase } from '@/integrations/supabase/client';
 import { aprovarEDisparar } from '../aprovar-disparar';
 import { useDetalhesModal } from '../useDetalhesModal';
 
-interface Op { table: string; op: 'select' | 'update'; payload?: unknown; filtros: [string, unknown][] }
+interface Op { table: string; op: 'select' | 'update' | 'disparo'; payload?: unknown; filtros: [string, unknown][]; selectApos?: boolean }
 let ops: Op[] = [];
-const tabelas: Record<string, unknown[]> = {
+let updateRetornaVazio = false;
+const ITEM_BASE = { id: 501, pedido_id: 1, sku_codigo_omie: '123', sku_descricao: 'Tinta X', qtde_final: 10, qtde_sugerida: 10, valor_linha: null as number | null };
+let itemFixture: Record<string, unknown> = { ...ITEM_BASE, preco_unitario: null };
+const tabelas = (): Record<string, unknown[]> => ({
   omie_condicao_pagamento_catalogo: [{ codigo: '001', descricao: 'À vista', num_parcelas: 1, dias_parcelas: '0' }],
-  pedido_compra_item: [{
-    id: 501, pedido_id: 1, sku_codigo_omie: '123', sku_descricao: 'Tinta X', qtde_final: 10, qtde_sugerida: 10,
-    preco_unitario: 20, valor_linha: 200,
-  }],
-};
+  pedido_compra_item: [itemFixture],
+});
 
 function builder(table: string) {
   const op: Op = { table, op: 'select', filtros: [] };
   const b = {
-    select: () => b,
+    select: () => { if (op.op === 'update') op.selectApos = true; return b; },
     update: (payload: unknown) => { op.op = 'update'; op.payload = payload; return b; },
     eq: (c: string, v: unknown) => { op.filtros.push([c, v]); return b; },
+    is: (c: string, v: unknown) => { op.filtros.push([`is:${c}`, v]); return b; },
     in: () => b,
     order: () => b,
     then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
       ops.push(op);
-      const out = op.op === 'select' ? { data: tabelas[table] ?? [], error: null } : { data: null, error: null };
+      const out = op.op === 'select'
+        ? { data: tabelas()[table] ?? [], error: null }
+        : { data: op.selectApos ? (updateRetornaVazio ? [] : [{ id: 501 }]) : null, error: null };
       return Promise.resolve(out).then(res, rej);
     },
   };
@@ -47,7 +50,7 @@ function builder(table: string) {
 
 const pedido = {
   id: 1, empresa: 'OBEN', fornecedor_nome: 'ACME', grupo_codigo: null, data_ciclo: '2026-09-05',
-  horario_geracao: null, horario_corte_planejado: null, horario_disparo_real: null, valor_total: 200, num_skus: 1,
+  horario_geracao: null, horario_corte_planejado: null, horario_disparo_real: null, valor_total: 0, num_skus: 1,
   pedido_anterior_valor: null, delta_vs_anterior_perc: null, status: 'pendente_aprovacao', mensagem_bloqueio: null,
   omie_pedido_compra_numero: null, aprovado_em: null, aprovado_por: null, condicao_pagamento_codigo: '001',
   condicao_pagamento_descricao: 'À vista', num_parcelas: 1, dias_parcelas: '0', condicao_origem: null,
@@ -70,28 +73,37 @@ async function montarPronto() {
 }
 
 beforeEach(() => {
-  ops = [];
+  ops = []; updateRetornaVazio = false; itemFixture = { ...ITEM_BASE, preco_unitario: null };
   vi.mocked(supabase.from).mockReset().mockImplementation(builder as never);
-  vi.mocked(aprovarEDisparar).mockReset().mockResolvedValue({ ok: true, tipo: 'success', mensagem: 'ok' });
+  vi.mocked(aprovarEDisparar).mockReset().mockImplementation(async () => {
+    ops.push({ table: 'edge', op: 'disparo', filtros: [] }); // mesmo log: ordem testável
+    return { ok: true, tipo: 'success', mensagem: 'ok' };
+  });
 });
 
 describe('useDetalhesModal.aprovarMutation — "Aprovar e disparar" não descarta edição SÓ de preço (M-03)', () => {
-  it('edição só de preço (20→25) é gravada no item e o cabeçalho recalculado ANTES de disparar', async () => {
+  it('primeira compra (preço nulo): digitar 25 e aprovar grava o preço no item (com compare-and-set na quantidade) e recalcula o cabeçalho ANTES de disparar', async () => {
     const { result } = await montarPronto();
+    expect(result.current.podeEditarPreco).toBe(true); // o fluxo real: preço nulo é o único editável
     act(() => result.current.onEditPreco(501, '25'));
     await act(async () => { await result.current.aprovarMutation.mutateAsync(); });
 
-    const up = updatesDe('pedido_compra_item');
-    expect(up, 'a edição só-de-preço foi descartada (era o bug: só salvava se `edits` de quantidade não fosse vazio)').toHaveLength(1);
-    expect(up[0].payload).toEqual(expect.objectContaining({ preco_unitario: 25, valor_linha: 250, qtde_final: 10 }));
-    expect(up[0].filtros).toContainEqual(['id', 501]);
-    expect(updatesDe('pedido_compra_sugerido')[0]?.payload).toEqual(expect.objectContaining({ valor_total: 250 }));
+    const iItem = ops.findIndex((o) => o.table === 'pedido_compra_item' && o.op === 'update');
+    const iCab = ops.findIndex((o) => o.table === 'pedido_compra_sugerido' && o.op === 'update');
+    const iDisparo = ops.findIndex((o) => o.op === 'disparo');
+    expect(iItem, 'a edição só-de-preço foi descartada (era o bug)').toBeGreaterThan(-1);
+    expect(iItem).toBeLessThan(iDisparo);
+    expect(iCab).toBeLessThan(iDisparo);
+    expect(ops[iItem].payload).toEqual(expect.objectContaining({ preco_unitario: 25, valor_linha: 250, qtde_final: 10 }));
+    expect(ops[iItem].filtros).toContainEqual(['id', 501]);
+    expect(ops[iItem].filtros, 'sem compare-and-set, o preço-só reescreve a quantidade velha').toContainEqual(['qtde_final', 10]);
+    expect(ops[iItem].selectApos).toBe(true);
+    expect(ops[iCab].payload).toEqual(expect.objectContaining({ valor_total: 250 }));
     expect(aprovarEDisparar).toHaveBeenCalledWith(expect.objectContaining({ pedidoId: 1 }));
-    // ordem: gravou o item ANTES de disparar (o disparo lê preco_unitario do banco)
-    expect(ops.findIndex((o) => o.table === 'pedido_compra_item' && o.op === 'update')).toBeGreaterThan(-1);
   });
 
-  it('edição só de quantidade continua salvando (regressão)', async () => {
+  it('edição só de quantidade (preço já conhecido) continua salvando (regressão)', async () => {
+    itemFixture = { ...ITEM_BASE, preco_unitario: 20, valor_linha: 200 };
     const { result } = await montarPronto();
     act(() => result.current.onEditQty(501, '12'));
     await act(async () => { await result.current.aprovarMutation.mutateAsync(); });
@@ -112,5 +124,14 @@ describe('useDetalhesModal.aprovarMutation — "Aprovar e disparar" não descart
     await expect(act(async () => { await result.current.aprovarMutation.mutateAsync(); })).rejects.toThrow(/Custo inválido/);
     expect(aprovarEDisparar).not.toHaveBeenCalled();
     expect(updatesDe('pedido_compra_item')).toEqual([]);
+  });
+
+  it('compare-and-set não casa (outra aba mudou a quantidade): a aprovação falha com erro visível e NADA dispara', async () => {
+    updateRetornaVazio = true;
+    const { result } = await montarPronto();
+    act(() => result.current.onEditPreco(501, '25'));
+    await expect(act(async () => { await result.current.aprovarMutation.mutateAsync(); })).rejects.toThrow(/outra pessoa/);
+    expect(aprovarEDisparar).not.toHaveBeenCalled();
+    expect(updatesDe('pedido_compra_sugerido')).toEqual([]);
   });
 });

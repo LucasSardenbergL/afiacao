@@ -1,7 +1,11 @@
 // Linha de pedido do ciclo (estado local de quantidade + aprovação/rejeição inline).
 // Extraída verbatim de src/components/reposicao/CicloHojePanel.tsx (god-component split).
+//
+// M-03: o editor de quantidade edita o ITEM (`pedido_compra_item.qtde_final`, o que o disparo compra),
+// nunca `num_skus` (CONTAGEM de SKUs). Cardinalidade pelos itens (prop `itens`, carregados pelo painel
+// numa query só), aprovação FAIL-CLOSED enquanto os itens não chegam, checagem do status do cabeçalho e
+// compare-and-set na gravação (Codex xhigh, 5 P1).
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AlertTriangle, Check, Loader2, Pencil, X, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -13,21 +17,27 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { supabase } from "@/integrations/supabase/client";
 import { formatBRL, logAudit } from "@/lib/reposicao";
 import { calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
+import { quantidadeCompraInteira } from "@/lib/reposicao/compras-otimizador-helpers";
+import { quantidadeCompraCanonica } from "@/lib/reposicao/qtde-portal";
 import type { ColKey, PedidoItem } from "@/types/reposicao";
 import { aprovarEDisparar } from "../pedidos/aprovar-disparar";
-import { EMPRESA } from "../pedidos/shared";
 import { montarUpdateItem } from "../pedidos/preco-edit";
 import { podeCancelarPeloHumano, rejeitarPedidos } from "../pedidos/rejeitar-pedido";
-import { quantidadeCompraInteira } from "@/lib/reposicao/compras-otimizador-helpers";
+import { EMPRESA } from "../pedidos/shared";
 import { PrecoCell, ConfiancaBadge } from "./PedidoRowCells";
+import type { ItemDoPedido } from "./types";
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
-/** O único item de um pedido de 1 SKU — o que o editor inline edita de verdade. */
-interface ItemUnico {
-  id: number;
-  qtde_final: number | null;
-  qtde_sugerida: number | null;
-  preco_unitario: number | null;
+/** Status do cabeçalho em que a aprovação inline ainda pode gravar o item (mesma régua do modal). */
+const STATUS_APROVAVEIS: ReadonlySet<string> = new Set(["pendente_aprovacao", "bloqueado_guardrail"]);
+
+type Cardinalidade = "carregando" | "erro" | "vazio" | "unico" | "varios";
+
+function cardinalidadeDe(itens: ItemDoPedido[] | null | undefined): Cardinalidade {
+  if (itens === undefined) return "carregando";
+  if (itens === null) return "erro";
+  if (itens.length === 0) return "vazio";
+  return itens.length === 1 ? "unico" : "varios";
 }
 
 export function PedidoRow({
@@ -38,6 +48,7 @@ export function PedidoRow({
   cols,
   user,
   onChanged,
+  itens,
 }: {
   row: PedidoItem;
   reviewMode: boolean;
@@ -46,6 +57,8 @@ export function PedidoRow({
   cols: Record<ColKey, boolean>;
   user: { id?: string; email?: string | null } | null;
   onChanged: () => void;
+  /** Itens do pedido (do painel): `undefined` = carregando · `null` = falhou · `[]` = sem itens. */
+  itens?: ItemDoPedido[] | null;
 }) {
   const [busy, setBusy] = useState<null | "approve" | "reject">(null);
   const [editingAuto, setEditingAuto] = useState(false);
@@ -54,33 +67,19 @@ export function PedidoRow({
 
   const isApproved = !!row.aprovado_em;
   const isRejected = !!row.cancelado_em;
+  const terminal = isApproved || isRejected;
 
-  // Editor inline SÓ para pedido de 1 SKU. `num_skus` é CONTAGEM de SKUs, não quantidade: o editor
-  // antigo inicializava com ele e gravava `num_skus` — e o disparo lê `pedido_compra_item.qtde_final`,
-  // então a compra saía com a quantidade ORIGINAL (maior que a aprovada) e o cabeçalho mentia (M-03).
-  // Multi-SKU: ajuste por item no detalhe do pedido.
-  const itemUnico = row.num_skus === 1;
-  const { data: item } = useQuery({
-    queryKey: ["pedido-item-unico", row.id],
-    enabled: itemUnico && cols.qtdAprovada && !isApproved && !isRejected,
-    staleTime: 30_000,
-    queryFn: async (): Promise<ItemUnico> => {
-      const { data, error } = await supabase
-        .from("pedido_compra_item")
-        .select("id, qtde_final, qtde_sugerida, preco_unitario")
-        .eq("pedido_id", row.id);
-      if (error) throw error;
-      const [it] = (data ?? []) as ItemUnico[];
-      if (!it) throw new Error("pedido sem item"); // ausente ≠ zero: sem item, sem editor
-      return it;
-    },
-  });
-  // Quantidade ORIGINAL do item (inteira, como o disparo grava) — null enquanto não carregou/falhou.
+  // Cardinalidade pelos ITENS, nunca por `num_skus` (a coluna que o bug antigo corrompia).
+  const cardinalidade = cardinalidadeDe(itens);
+  const item = cardinalidade === "unico" ? (itens as ItemDoPedido[])[0] : null;
+  // Quantidade ORIGINAL do item (inteira, como o disparo grava) — null enquanto não há item.
   const qtdOriginal = item ? quantidadeCompraInteira(Number(item.qtde_final ?? item.qtde_sugerida ?? 0)) : null;
   const [qtd, setQtd] = useState<number | null>(null);
   useEffect(() => {
     setQtd(qtdOriginal);
   }, [qtdOriginal]);
+  // Fail-closed: sem os itens carregados (ou pedido sem item) o operador não vê o que vai comprar → não aprova.
+  const itensDesconhecidos = !terminal && cardinalidade !== "unico" && cardinalidade !== "varios";
 
   const rowBg = isApproved
     ? "bg-status-success-bg/40 hover:bg-status-success-bg"
@@ -95,23 +94,47 @@ export function PedidoRow({
     const who = user?.email ?? user?.id ?? "cockpit";
     try {
       if (kind === "approve") {
+        if (itensDesconhecidos) {
+          toast.error("Itens do pedido não carregados — recarregue antes de aprovar.");
+          return;
+        }
         // A edição inline (pedido de 1 SKU) vai ANTES do disparo e grava o ITEM (qtde_final/valor_linha)
         // + o cabeçalho (valor_total) — nunca `num_skus`. O disparo lê `qtde_final` do item.
-        if (itemUnico && item && qtd !== null && qtd !== qtdOriginal) {
+        if (item && qtd !== null && qtd !== qtdOriginal) {
           if (!(qtd > 0)) {
             toast.error("Quantidade inválida — informe um valor maior que zero.");
             return;
           }
+          // 1. O cabeçalho ainda aceita aprovação? Outra aba pode ter aprovado/disparado este pedido.
+          const { data: cab, error: cabErr } = await supabase
+            .from("pedido_compra_sugerido")
+            .select("status")
+            .eq("id", row.id)
+            .maybeSingle();
+          if (cabErr) throw cabErr;
+          if (!cab || !STATUS_APROVAVEIS.has(cab.status ?? "")) {
+            toast.error(`Pedido não está mais aprovável (status ${cab?.status ?? "desconhecido"}) — recarregue.`);
+            onChanged();
+            return;
+          }
+          // 2. Compare-and-set: só grava se o item ainda tem a quantidade que o operador VIU.
           const update = montarUpdateItem(item, qtd, undefined);
-          const { error: itemErr } = await supabase.from("pedido_compra_item").update(update).eq("id", item.id);
+          const base = supabase.from("pedido_compra_item").update(update).eq("id", item.id);
+          const cas = item.qtde_final === null ? base.is("qtde_final", null) : base.eq("qtde_final", item.qtde_final);
+          const { data: gravados, error: itemErr } = await cas.select("id");
           if (itemErr) throw itemErr;
+          if (!gravados || gravados.length === 0) {
+            toast.error("A quantidade do item mudou desde que você abriu a tela — recarregue e confira.");
+            onChanged();
+            return;
+          }
           // valor_linha null = custo desconhecido → não fabricar valor_total (ausente ≠ zero)
           if (update.valor_linha !== null) {
-            const { error: cabErr } = await supabase
+            const { error: cabUpErr } = await supabase
               .from("pedido_compra_sugerido")
-              .update({ valor_total: update.valor_linha, atualizado_em: new Date().toISOString() })
+              .update({ valor_total: update.valor_linha, atualizado_em: nowIso })
               .eq("id", row.id);
-            if (cabErr) throw cabErr;
+            if (cabUpErr) throw cabUpErr;
           }
         }
         // Trilha canônica: APROVAR = DISPARAR NA HORA (não mais só UPDATE + esperar o cron).
@@ -160,6 +183,26 @@ export function PedidoRow({
     }
   };
 
+  // Rótulo do que NÃO é editável inline: vários SKUs (ajuste no detalhe) ou estado desconhecido.
+  const rotuloSemEditor = () => {
+    if (terminal) return `${row.num_skus ?? 0} SKUs`;
+    if (cardinalidade === "varios") {
+      return (
+        <span
+          className="text-xs text-muted-foreground tabular-nums"
+          title="Pedido com vários SKUs — ajuste as quantidades no detalhe do pedido"
+        >
+          {(itens as ItemDoPedido[]).length} SKUs
+        </span>
+      );
+    }
+    return (
+      <span className="text-xs text-muted-foreground" title="Itens do pedido não carregados — recarregue">
+        {cardinalidade === "carregando" ? "…" : cardinalidade === "vazio" ? "sem itens" : "itens?"}
+      </span>
+    );
+  };
+
   return (
     <TableRow data-state={selected ? "selected" : undefined} className={rowBg}>
       {reviewMode && (
@@ -206,9 +249,9 @@ export function PedidoRow({
                   <Zap className="h-3 w-3" /> Auto
                 </Badge>
                 <span className="w-10 text-right tabular-nums font-medium">
-                  {itemUnico ? (qtd ?? "—") : `${row.num_skus ?? 0} SKUs`}
+                  {cardinalidade === "unico" && !terminal ? (qtd ?? "—") : rotuloSemEditor()}
                 </span>
-                {itemUnico && (
+                {cardinalidade === "unico" && !terminal && (
                   <Button
                     size="icon"
                     variant="outline"
@@ -239,32 +282,31 @@ export function PedidoRow({
                     </Tooltip>
                   </TooltipProvider>
                 )}
-                {itemUnico ? (
+                {cardinalidade === "unico" && !terminal ? (
                   <Input
                     type="number"
                     min={1}
                     value={qtd ?? ""}
-                    disabled={isApproved || isRejected || busy !== null || item == null}
-                    onChange={(e) => setQtd(Number(e.target.value) || 0)}
+                    disabled={busy !== null}
+                    // [QTDE-INTEIRA] o campo mostra o que vai ser gravado: inteiro (ceil) a cada tecla…
+                    onChange={(e) => setQtd(quantidadeCompraInteira(Number(e.target.value)))}
+                    // …e, no blur, o múltiplo da embalagem (37 L → 40 L com fator 0,2), como o modal (#2198);
+                    // `montarUpdateItem` repete a regra na gravação (fronteira).
+                    onBlur={() => setQtd((q) => (q === null ? q : quantidadeCompraCanonica(q, item?.fator_embalagem_portal)))}
                     onFocus={(e) => e.currentTarget.select()}
                     className="h-8 w-20 text-right"
                     aria-label="Quantidade do item"
                   />
                 ) : (
-                  <span
-                    className="text-xs text-muted-foreground tabular-nums"
-                    title="Pedido com vários SKUs — ajuste as quantidades no detalhe do pedido"
-                  >
-                    {row.num_skus ?? 0} SKUs
-                  </span>
+                  rotuloSemEditor()
                 )}
                 <Button
                   size="icon"
                   variant="ghost"
                   className="h-8 w-8 text-status-success hover:text-status-success hover:bg-status-success-bg"
-                  disabled={isApproved || busy !== null}
+                  disabled={isApproved || busy !== null || itensDesconhecidos}
                   onClick={() => act("approve")}
-                  title="Aprovar"
+                  title={itensDesconhecidos ? "Itens do pedido não carregados — recarregue" : "Aprovar"}
                 >
                   {busy === "approve" ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

@@ -11,3 +11,13 @@ export interface CicloFilters {
   fornecedor: string;
   status: string;
 }
+
+/**
+ * Item de `pedido_compra_item` que o editor inline do ciclo enxerga (M-03). Derivado do tipo canônico
+ * do item da lista de pedidos; `fator_embalagem_portal` entra porque a edge do portal RECUSA quantidade
+ * fora do múltiplo da embalagem (#2198).
+ */
+export type ItemDoPedido = Pick<
+  import("../pedidos/types").PedidoItem,
+  "id" | "qtde_final" | "qtde_sugerida" | "preco_unitario" | "fator_embalagem_portal"
+>;
