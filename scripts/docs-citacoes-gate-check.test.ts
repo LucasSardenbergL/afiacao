@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  ALVOS_VIVOS,
   apenasAncoradas,
   auditarCitacoes,
   CONGELADOS,
@@ -417,5 +418,35 @@ describe('fora do escopo — o gate diz o que NÃO olhou', () => {
       emCerca: 0,
     });
     expect(s).toContain('0 fora do escopo');
+  });
+});
+
+describe('ALVOS_VIVOS × docs/agent/skills.md — a lista transcrita à mão drifa do código', () => {
+  // `.claude/skills` entrou em `ALVOS_VIVOS` em 2026-08-31 e o parágrafo do `skills.md` seguiu
+  // afirmando que a pasta estava FORA do gate. Quem lesse antes de escrever uma skill concluía que
+  // podia citar `arquivo:linha` sem a âncora `<!--cita:-->` — e descobria no CI, não na escrita; ou,
+  // pior, deixava de citar linha por achar que ninguém conferiria. O defeito é a transcrição à mão:
+  // ela envelhece calada. Este guard faz o doc falhar JUNTO com a mudança que o invalidou.
+  //
+  // A 1ª versão deste teste era TEATRO e a falsificação pegou: pedir que cada alvo aparecesse na
+  // SEÇÃO ficava VERDE com a lista sabotada — porque `.claude/skills` aparece na frase que abre o
+  // parágrafo. Teria passado no doc ERRADO também, que dizia a pasta FORA citando-a pelo nome. O
+  // que se mede é a ENUMERAÇÃO, delimitada por marcador co-locado, e por IGUALDADE DE CONJUNTO —
+  // `toContain` é cego a entrada sobrando.
+  const INICIO = '<!--alvos-vivos:inicio-->';
+  const FIM = '<!--alvos-vivos:fim-->';
+
+  const listaDoDoc = () => {
+    const md = readFileSync(join(process.cwd(), 'docs/agent/skills.md'), 'utf8');
+    const i = md.indexOf(INICIO);
+    const f = md.indexOf(FIM);
+    // Fail-CLOSED: sonda que não acha o alvo é ausência de dado, não aprovação.
+    expect(i, `marcador ${INICIO} sumiu de docs/agent/skills.md`).toBeGreaterThanOrEqual(0);
+    expect(f, `marcador ${FIM} sumiu de docs/agent/skills.md`).toBeGreaterThan(i);
+    return [...md.slice(i + INICIO.length, f).matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  };
+
+  it('a enumeração do doc é exatamente `ALVOS_VIVOS`', () => {
+    expect([...listaDoDoc()].sort()).toEqual([...ALVOS_VIVOS].sort());
   });
 });
