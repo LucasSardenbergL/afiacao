@@ -33,6 +33,7 @@
     "docs:indice": "bun scripts/docs-indice-gate-check.ts",
     "docs:links": "bun scripts/docs-links-gate-check.ts",
     "sonda:sql": "bun scripts/sonda-versao-sql.ts",
+    "preflight:rpcs": "bun scripts/edge-rpcs.ts",
     "pendencias": "bash scripts/pendencias.sh",
     "pendencias:deploy": "bun scripts/pendencias-deploy.ts",
     "mutcheck": "bash scripts/mutcheck-all.sh",
