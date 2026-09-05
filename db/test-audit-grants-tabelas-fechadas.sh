@@ -18,6 +18,8 @@
 # ║   (I) revoga tudo                          → volta ao limpo, exit 0  ← dente    ║
 # ║   (J) saída com 1 privilégio ENGOLIDO      → exit 2, NÃO exit 0      ← dente    ║
 # ║   (K) saída sem a linha VER|               → exit 2 (sem denominador)           ║
+# ║   (L) tabela da allowlist INEXISTENTE      → TABELA_NAO_APLICADA, exit 1 (não 2)║
+# ║   (M) tabela meio-AUSENTE meio-medida     → exit 2 (medição inconsistente)      ║
 # ║                                                                                ║
 # ║  A allowlist entra por AUTHZ_GRANTS_TEST_JSON — o contrato real do repo não é   ║
 # ║  tocado, e o teste não quebra quando product_costs/omie_products mudarem.       ║
@@ -43,6 +45,7 @@ OUT="$TMPD/audit-saida.txt"
 WRAP="$TMPD/psql-ro-fake"
 WRAP_PERDA="$TMPD/psql-ro-fake-perda"
 WRAP_SEM_VER="$TMPD/psql-ro-fake-sem-ver"
+WRAP_MEIO="$TMPD/psql-ro-fake-meio"
 export LC_ALL="${LC_ALL:-C}" LANG="${LANG:-C}"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
@@ -85,6 +88,13 @@ cat > "$WRAP_SEM_VER" <<WRAPEOF
 exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/^VER|/d'
 WRAPEOF
 chmod +x "$WRAP_SEM_VER"
+# Reescreve UMA linha AUSENTE da tabela inexistente como NAO (cenário M): a tabela fica "meio
+# ausente, meio medida" — a forma de saída que a guarda de consistência do audit tem de recusar.
+cat > "$WRAP_MEIO" <<WRAPEOF
+#!/usr/bin/env bash
+exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/zz_nao_aplicada_test|anon|SELECT|AUSENTE/s/AUSENTE\$/NAO/'
+WRAPEOF
+chmod +x "$WRAP_MEIO"
 
 # Roles do Supabase + a tabela no estado FECHADO do contrato.
 P <<'SQL'
@@ -185,7 +195,31 @@ WRAP_ATUAL="$WRAP_SEM_VER"
 esperar "K: saída sem a linha VER| → exit 2 (sem denominador)" 2 - DRIFT_PROD "VER|"
 WRAP_ATUAL="$WRAP"
 
+# L mede a AUSÊNCIA DO OBJETO: a allowlist ganha uma tabela que NÃO existe neste banco. Até
+# 2026-09-05 isso era exit 2 — `relation "public.zz_nao_aplicada_test" does not exist` derrubava o
+# psql e o audit lia como falha de execução. Mas "migration mergeada e nunca colada no SQL Editor"
+# é a armadilha-mãe do projeto, e exit 2 não grava carimbo: a dívida ficava INVISÍVEL em vez de
+# datada. Ausência do objeto é ACHADO NOMEADO (exit 1 + código), nunca crash nem verde. A tabela
+# fechada do contrato segue no JSON de propósito: prova que a ausente não contamina a presente
+# (sem DRIFT_PROD). O 5º argumento casa a ÂNCORA na mensagem — acusar a coisa certa, com o arquivo
+# a colar, não "acusou algo". O código vai DELIMITADO (`\[…\]`): `NAO_APLICADA` é substring dele.
+TEST_JSON_BASE="$TEST_JSON"
+TEST_JSON='{"public.zz_fechada_test":{"fechadaPor":"20260101000000_x.sql","permitido":{"anon":[],"authenticated":["SELECT"]},"motivo":"tabela sintética do harness"},"public.zz_nao_aplicada_test":{"fechadaPor":"20260102000000_cria_e_fecha_zz.sql","permitido":{"anon":[],"authenticated":["SELECT"]},"motivo":"a migration que a cria nunca foi colada"}}'
+esperar "L: tabela da allowlist INEXISTENTE no banco → TABELA_NAO_APLICADA (exit 1, não 2)" 1 '\[TABELA_NAO_APLICADA\]' DRIFT_PROD \
+  "20260102000000_cria_e_fecha_zz.sql"
+
+# M mede a GUARDA DE CONSISTÊNCIA da ausência: o nome ou resolve ou não resolve, então TODAS as
+# linhas da tabela ausente (2 roles × 8 privilégios) vêm AUSENTE. O wrapper reescreve UMA delas como
+# NAO — saída mudando de forma no meio da query (psql truncado, sed alheio, coluna perdida). Sem a
+# guarda o audit acusaria TABELA_NAO_APLICADA em cima de medição quebrada (exit 1 pelo motivo
+# errado); com ela, medição inconsistente sai 2 e o código NÃO aparece.
+WRAP_ATUAL="$WRAP_MEIO"
+esperar "M: tabela meio-AUSENTE meio-medida → exit 2 (medição inconsistente), sem o código" 2 \
+  "medição inconsistente" '\[TABELA_NAO_APLICADA\]'
+WRAP_ATUAL="$WRAP"
+TEST_JSON="$TEST_JSON_BASE"
+
 echo "──────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail  (locale LC_ALL=$LC_ALL)"
 [ "$FAIL" = 0 ] || { echo "❌ VERMELHO"; exit 1; }
-echo "✅ audit de prod com DENTE: acusa reabertura, distingue NAO_APLICADA de DRIFT_PROD, mede os 8 privilégios (REFERENCES/TRIGGER/MAINTAIN inclusive) e anon, reage à correção e REPROVA medição incompleta"
+echo "✅ audit de prod com DENTE: acusa reabertura, distingue NAO_APLICADA de DRIFT_PROD, mede os 8 privilégios (REFERENCES/TRIGGER/MAINTAIN inclusive) e anon, reage à correção e REPROVA medição incompleta; tabela AUSENTE vira TABELA_NAO_APLICADA (exit 1), não crash — e meio-AUSENTE sai 2"

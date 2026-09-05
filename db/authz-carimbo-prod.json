@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-05T17:42:39.686Z",
-  "sourceHead": "e4951ec5b59d04951f15ced758d7adf580f62b9b",
+  "medidoEm": "2026-09-05T23:11:51.045Z",
+  "sourceHead": "a79324d4374b64ac05fb2426c330bd272d46fa4f",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,19 +12,19 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 44 função(ões) da allowlist.",
-      "denominador": "🔎 authz:funcoes:prod — 44 definição(ões) lida(s) para 44 chave(s) da allowlist.",
-      "contratoFingerprint": "04c6fe6a1994d8042a4a22d9c7833e6c67c01da66a8819493dc2d586f660e7bf",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 45 função(ões) da allowlist.",
+      "denominador": "🔎 authz:funcoes:prod — 45 definição(ões) lida(s) para 45 chave(s) da allowlist.",
+      "contratoFingerprint": "b8d5327b8df2c9f679ae34e2130e0fb9c28e0958c3d49bce7daa59e47ef51c0f",
       "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
       "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
       "exit": 0,
-      "resumo": "✅ audit-grants — 3 tabela(s) conferida(s); prod bate com o contrato.",
+      "resumo": "✅ audit-grants — 4 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
-      "contratoFingerprint": "cee49cfd1b9dfcf0bf046f21dc14626f61c305829eca9e7242889f8d037c6529",
-      "auditorFingerprint": "c3f5fb7f9d9470133e862672765f314e8e146508ced179cfbc9e8822e2d6bc02",
+      "contratoFingerprint": "e015c7b09546978db7aa13a6975d776615220aa57993bf56ac5c8f662a9ad721",
+      "auditorFingerprint": "2447dc6da98d86ee801d160670a34461f204480c768926ec4be32bf0cfc9cb7c",
       "achados": []
     },
     "audit": {
@@ -48,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 336 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
+      "resumo": "✅ audit-rls — 337 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
       "denominador": null,
       "contratoFingerprint": "983189279bc797985d2ff78f0ee10434d7c6ab7e582d223ff02d0bddd84841b0",
       "auditorFingerprint": "f24bdcecdcf841257b1c817fbeecddf0b47b91ae42c8784d68e110b86a126986",

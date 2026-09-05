@@ -39,7 +39,8 @@ type GrantCodigo =
   | 'GRANT_NAO_PARSEAVEL'
   // exclusivos do audit de prod (compararGrantsProd):
   | 'NAO_APLICADA'
-  | 'DRIFT_PROD';
+  | 'DRIFT_PROD'
+  | 'TABELA_NAO_APLICADA';
 
 export interface GrantFinding {
   level: 'error' | 'warn';
@@ -275,11 +276,23 @@ export function auditGrantsTabelas(
 }
 
 /**
- * Estado MEDIDO em prod: tabela (`schema.name`) → role → privilégios PRESENTES.
- * Só entra o que a role TEM — ausência de chave é ausência de privilégio, não lacuna de dado
- * (quem mede é db/audit-grants-tabelas-fechadas.ts, que só empurra o `has_table_privilege` = true).
+ * Sentinela de "a tabela NÃO EXISTE no banco" (`to_regclass` = NULL) — distinta de "existe e
+ * nenhuma role tem privilégio", que é chave AUSENTE do mapa (o estado mais fechado). É `null` de
+ * propósito, e não `{}`: um `medido[chave] ?? {}` a engoliria como "sem privilégio" e a tabela
+ * inexistente viraria verde por cegueira. Quem consome tem de checá-la ANTES de qualquer default.
  */
-export type MedicaoProd = Record<string, Partial<Record<(typeof ROLES_VIGIADAS)[number], Priv[]>>>;
+export const TABELA_AUSENTE = null;
+
+/**
+ * Estado MEDIDO em prod: tabela (`schema.name`) → role → privilégios PRESENTES, ou a sentinela
+ * `TABELA_AUSENTE` quando o objeto não existe. Só entra o que a role TEM — ausência de chave é
+ * ausência de privilégio, não lacuna de dado (quem mede é db/audit-grants-tabelas-fechadas.ts, que
+ * só empurra o `has_table_privilege` = true, e marca AUSENTE o que `to_regclass` não resolve).
+ */
+export type MedicaoProd = Record<
+  string,
+  Partial<Record<(typeof ROLES_VIGIADAS)[number], Priv[]>> | typeof TABELA_AUSENTE
+>;
 
 /**
  * Audit de prod: compara o privilégio medido no BANCO com o contrato da allowlist.
@@ -290,6 +303,12 @@ export type MedicaoProd = Record<string, Partial<Record<(typeof ROLES_VIGIADAS)[
  *     foi colada no SQL Editor" (ou foi revertida): merge na main ≠ produção. Corrige-se APLICANDO.
  *   · DRIFT_PROD — sobra parcial (ex.: só INSERT). Ninguém escreve isso por default: é GRANT
  *     aplicado à mão em prod, depois do fecho. Corrige-se REVOGANDO e investigando quem fez.
+ *   · TABELA_NAO_APLICADA — a tabela NÃO EXISTE no banco (sentinela TABELA_AUSENTE da medição).
+ *     A armadilha-mãe no grau máximo: a migration que CRIA a tabela mergeou e nunca foi colada
+ *     (ou o objeto foi dropado/renomeado e a allowlist envelheceu). Até 2026-09-05 isto era exit 2
+ *     — `has_table_privilege` derrubava o psql e o audit lia como falha de execução — e exit 2
+ *     não grava carimbo: a dívida ficava INVISÍVEL em vez de datada. Ausência do objeto é achado
+ *     nomeado, nunca crash nem verde. Vence o FECHO_PENDENTE: sem objeto não há o que comparar.
  *
  * `fechadaPor === null` não compara nada: o contrato ainda não afirma que a tabela deveria estar
  * fechada, então divergência não é divergência. Sai warn — e o texto diz explicitamente que prod
@@ -301,6 +320,25 @@ export function compararGrantsProd(
 ): GrantFinding[] {
   const out: GrantFinding[] = [];
   for (const [chave, entry] of Object.entries(allowlist)) {
+    const medTab = medido[chave];
+    // ANTES de qualquer default: a sentinela é `null`, e um `?? {}` aqui a leria como "sem
+    // privilégio" — o estado mais fechado — e a tabela inexistente sairia verde.
+    if (medTab === TABELA_AUSENTE) {
+      out.push({
+        level: 'error',
+        codigo: 'TABELA_NAO_APLICADA',
+        tabela: chave,
+        file: '(prod)',
+        msg:
+          `${chave} NÃO existe no banco (to_regclass = NULL) — ` +
+          (entry.fechadaPor
+            ? `a migration ${entry.fechadaPor} está no repo mas NÃO foi aplicada no SQL Editor (merge ≠ produção)`
+            : 'e fechadaPor=null: nem a âncora está no repo — a allowlist declara uma tabela que prod não tem') +
+          '; ou a tabela foi dropada/renomeada e a allowlist ficou obsoleta. Corrige-se APLICANDO a ' +
+          'migration (ou removendo a entrada, se a tabela morreu) — nunca calando o código.',
+      });
+      continue;
+    }
     if (entry.fechadaPor === null) {
       out.push({
         level: 'warn',
@@ -311,10 +349,10 @@ export function compararGrantsProd(
       });
       continue;
     }
-    const medTab = medido[chave] ?? {};
+    const privs = medTab ?? {};
     for (const role of ROLES_VIGIADAS) {
       const permit = entry.permitido[role] ?? [];
-      const tem = medTab[role] ?? [];
+      const tem = privs[role] ?? [];
       const extra = tem.filter((p) => !permit.includes(p));
       if (extra.length === 0) continue;
       const pareceDefault = (['INSERT', 'UPDATE', 'DELETE'] as Priv[]).every((p) => extra.includes(p));

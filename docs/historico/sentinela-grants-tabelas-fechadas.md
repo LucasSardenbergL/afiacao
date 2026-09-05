@@ -90,6 +90,7 @@ duplicada num `.sql` que envelheceria em silêncio.
 | `NAO_APLICADA` | a role ainda tem o **DML completo** (`INSERT+UPDATE+DELETE`, o default do Supabase) e a âncora está no repo | **aplicar** a migration no SQL Editor |
 | `DRIFT_PROD` | sobra **parcial** — ninguém escreve isso por default | **revogar** e descobrir quem concedeu |
 | `FECHO_PENDENTE` | `fechadaPor: null` | nada a comparar; o texto diz que prod **não** foi comparada |
+| `TABELA_NAO_APLICADA` | a **tabela não existe** no banco (`to_regclass` = NULL): a migration que a CRIA mergeou e nunca foi colada, ou o objeto morreu e a allowlist envelheceu (2026-09-05, seção ao fim) | **aplicar** a migration (ou remover a entrada, se a tabela morreu); nunca calar o código |
 
 Exit `0` limpo · `1` divergência · `2` **erro de execução** — audit que não conseguiu medir não pode
 sair 0.
@@ -387,3 +388,57 @@ não existe não é evidência daquele instrumento. Regravado com `bun run authz
 do cluster). O diff do carimbo tem 3 linhas: `medidoEm`, `sourceHead` e o `auditorFingerprint` de
 `grants` — o `contratoFingerprint` fica intacto, porque esta entrega mexeu no INSTRUMENTO e não no
 contrato, e `achados: []` continua vazio.
+
+## 2026-09-05 — tabela da allowlist que NÃO existe em prod: era crash (exit 2), vira achado `TABELA_NAO_APLICADA`
+
+**O que aconteceu.** O #2199 criou `public.deploy_atestacoes` (ledger de atestação de deploy) e a
+registrou em `AUTHZ_TABELAS_FECHADAS` no MESMO PR da migration. O CI ficou vermelho em
+`CARIMBO_CONTRATO_MUDOU` — correto, o contrato mudou — mas o remédio (`bun run authz:carimbo:gravar`)
+era impossível: a tabela ainda não existia em prod, `has_table_privilege` erra com
+`relation "public.deploy_atestacoes" does not exist`, o psql sai 1 e o audit inteiro morria em
+**exit 2**. E exit 2 **não grava carimbo** (invariante do runner: falha de rede não pode renovar a
+data). Resultado: PR vermelho sem remédio por PR — e, pior, a classe "migration mergeada e nunca
+colada", a armadilha-mãe do projeto, no seu grau MÁXIMO (nem a tabela existe) era INVISÍVEL para o
+carimbo: crash não é achado, não tem `primeiraVez`, não abre Issue.
+
+**O que mudou.** Ausência do objeto virou ACHADO NOMEADO, nunca crash nem verde:
+
+- `db/audit-grants-tabelas-fechadas.ts`: a query resolve `to_regclass(t)` ANTES do
+  `has_table_privilege`, que passa a receber o OID (forma estrita — NULL entra, NULL sai — e por
+  isso não erra nem se avaliada fora da ordem do `CASE`). Tabela sem OID sai `AUSENTE` em TODAS as
+  linhas dela (2 roles × 8 privilégios no PG17); o parser vira isso na sentinela `TABELA_AUSENTE`,
+  e tabela meio-AUSENTE meio-medida é "saída mudando de forma no meio da query" — **exit 2**, como J/K.
+- `scripts/lib/authz-grants.ts`: `TABELA_AUSENTE = null`, DISTINTA de "chave ausente" (que segue
+  sendo o estado mais fechado). `compararGrantsProd` a checa ANTES de qualquer default: o
+  `medido[chave] ?? {}` de antes a engoliria como "sem privilégio" e a tabela inexistente sairia
+  **verde por cegueira** — é a regressão F2 abaixo. Emite `TABELA_NAO_APLICADA` (error, exit 1)
+  nomeando a migration a colar; vence o `FECHO_PENDENTE` (sem objeto não há o que deixar de comparar).
+- O registro de `deploy_atestacoes` (+ `deploy_atestacoes_colher` em `AUTHZ_FUNCOES_FECHADAS` e
+  `ACL_ONLY_INTERNAL`) entrou DEPOIS do apply, medido por psql-ro após o founder colar a migration
+  (tabela: só `authenticated=SELECT`; função: INVOKER, anon/auth sem EXECUTE) — e o carimbo foi
+  regravado no mesmo PR.
+
+**Prova** (TDD: os testes foram vistos VERMELHOS antes da implementação — unit 8/9/10 recebiam
+`[]`/`['FECHO_PENDENTE']`; o cenário L reproduzia o `relation does not exist` com exit 2):
+
+| Camada | Verde | Sabotagem (commit feito ANTES; `restaurar()` = `git checkout --`) | Resultado |
+|---|---|---|---|
+| harness L (tabela inexistente) | exit 1 + `[TABELA_NAO_APLICADA]` + âncora na mensagem | **F1** query volta ao `has_table_privilege(r,t,p)` cru | 🔴 "exit 2 (esperava 1)" — o crash volta |
+| unit 8/9/10 + harness L | 29/29 · 13/13 | **F2** `const medTab = medido[chave] ?? {}` (engole a sentinela) | 🔴 3 unit vermelhos **e** L "exit 0 (esperava 1)" — verde-por-cegueira pego |
+| harness M (meio-AUSENTE) | exit 2 + "medição inconsistente", sem o código | **F3** guarda desligada (`&& false`) | 🔴 "exit 1 (esperava 2)", código presente indevido |
+
+Harness verde sob `LC_ALL=C` **e** `pt_BR.UTF-8` (portas 5467/5468). O código é casado DELIMITADO
+(`\[TABELA_NAO_APLICADA\]`) porque `NAO_APLICADA` é substring dele — o `nao_deve=NAO_APLICADA` dos
+cenários B–H não colide só porque neles a tabela existe. Uma camada por vez: F1 derruba só L, F3
+derruba só M, F2 derruba unit e L — nenhuma ficou verde sob sabotagem, logo nenhuma é redundante.
+
+**Regra de processo que fica** (também em `docs/agent/database.md`): **tabela nova entra na
+allowlist DEPOIS do apply em prod**, no commit que também regrava o carimbo. Junto com a migration,
+o CI fica vermelho sem remédio por PR. Depois desta entrega isso deixa de ser crash e vira achado
+datado — mas carimbo deve NASCER limpo, não com dívida conhecida.
+
+**Limite declarado.** `TABELA_NAO_APLICADA` e `NAO_APLICADA` (fecho não aplicado) são graus da mesma
+classe e a ação corretiva é a mesma (colar a migration); o código separado existe porque o
+DIAGNÓSTICO difere — no primeiro a query nem pôde medir privilégio, e o audit não deve fingir que
+mediu. O irmão de funções já tinha `FUNCAO_AUSENTE_EM_PROD` (a query dele lê `pg_proc` e não erra
+no objeto ausente); aqui o prefixo `TABELA_` distingue o novo código do `NAO_APLICADA` de privilégio.
