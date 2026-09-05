@@ -486,14 +486,35 @@ echo "    chip por fail-closed · INERTE = aposentada, deploy sem efeito, NÃO e
 # só encolhe. O autor deste script leu este ramo como "espere o próximo tick do cron" HORAS depois
 # de escrevê-lo, ao verificar dois deploys reais: a espera nunca terminaria, e o `SEM_PROVA`
 # persistente passaria por pendência real — chip eterno numa edge que já está no ar.
+# ⚠️ E "DISPARE" NÃO É INCONDICIONAL: o bundle PRÉ-sensor não conhece o campo `probe`, então a
+# sonda não é lida como sonda — ela entra como REQUISIÇÃO NORMAL e o handler executa o fluxo
+# REAL. É a mesma assimetria da triagem de script destrutivo: a sonda é barata na edge que recusa
+# cedo (400/401 antes de todo IO) e CARA na que cai no caminho default (`?? "OBEN"`, `dias = 30`)
+# ou que sequer LÊ o corpo. Medido 2026-09-05, 12ª leva: das 9 instrumentadas, 3 eram caras —
+# `process-recurring-orders` (não lê o corpo: CRIA `orders` e AVANÇA o `next_order_date`, então o
+# run legítimo do dia seguinte PULA a data que a sonda consumiu), `omie-nfe-recebimento-sync` e
+# `omie-sync-metadados`. Emitir um comando pronto para colar com as 9 juntas convida exatamente
+# esse disparo. O `--caro` do `sonda:sql` é a trava (bloco separado com `confirmei_o_deploy`), e
+# ele é fail-CLOSED: nome que não casa com a leva ABORTA sem emitir SQL. Por isso a flag sai já
+# no comando, com valor SINTATICAMENTE INVÁLIDO — a regra do `deploy.md` de nunca deixar valor de
+# EXEMPLO no campo que o operador substitui: o erro ecoa a própria instrução em vez de disparar.
 if [ -s "$tmp/sem_sonda" ]; then
   n_ss="$(wc -l < "$tmp/sem_sonda" | tr -d "[:space:]")"
-  amostra="$(head -6 "$tmp/sem_sonda" | tr '\n' ' ')"
-  [ "$n_ss" -gt 6 ] && amostra="$amostra… (+$((n_ss - 6)))"
+  # A lista vai INTEIRA no comando. Truncar em 6 com `… (+N)` colocava o literal `…` e `(+3)`
+  # DENTRO do `bun run sonda:sql`, então o comando só era colável até 6 edges — acima disso quem
+  # colasse passaria `…` como nome de edge, e quem não colasse reconstruiria a lista à mão
+  # (feito em 2026-09-05, com 9). O resumo pode truncar; o COMANDO, não.
+  todas="$(tr '\n' ' ' < "$tmp/sem_sonda")"
   echo
   echo "ℹ️  as $n_ss sem sonda NÃO se resolvem esperando: não há cron de sondagem, e boa parte"
   echo "   destas edges não tem cron nenhum (webhook/sob demanda) — prova passiva é impossível."
-  echo "   DISPARE:  bun run sonda:sql $amostra"
+  echo
+  echo "   ⚠️ TRIE ANTES DE DISPARAR — bundle PRÉ-sensor ignora o \`probe\` e EXECUTA O FLUXO REAL."
+  echo "      A triagem barato/caro de cada leva mora em docs/agent/deploy.md; edge CARA não se"
+  echo "      sonda às cegas: nela a ordem é DEPLOY ANTES, sonda depois (só para CONFIRMAR)."
+  echo "   DISPARE:  bun run sonda:sql ${todas}--caro=trie-antes-veja-deploy-md"
+  echo "      (o \`--caro\` acima está inválido DE PROPÓSITO: o sonda:sql aborta sem emitir SQL até"
+  echo "       você trocar pelas caras da leva — ou remover a flag se TODAS forem baratas.)"
   echo "   (PASSO 1 é escrita + vault → SQL Editor do Lovable; PASSO 2 julga em SELECT puro,"
   echo "    --so-leitura, roda no psql-ro. Com o id em mãos: --request-ids <slug>=<id>)"
 fi

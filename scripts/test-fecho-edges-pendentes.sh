@@ -33,6 +33,13 @@ export const FONTE_SHA256: Record<string, string> = {
   "edge-muda": "$SHA_NOVO",
   "edge-cega": "$SHA_NOVO",
   "edge-pre-fonte": "$SHA_NOVO",
+  "edge-lote-1": "$SHA_NOVO",
+  "edge-lote-2": "$SHA_NOVO",
+  "edge-lote-3": "$SHA_NOVO",
+  "edge-lote-4": "$SHA_NOVO",
+  "edge-lote-5": "$SHA_NOVO",
+  "edge-lote-6": "$SHA_NOVO",
+  "edge-lote-7": "$SHA_NOVO",
 };
 MAPA
 
@@ -121,6 +128,36 @@ suite() {
   #     ramo como "espere o proximo tick do cron" HORAS depois de escreve-lo, ao verificar dois
   #     deploys reais; a espera nunca terminaria. Mensagem que engana quem a escreveu engana todos.
   else bad "edge sem sonda devia dar SEM_PROVA/exit 1 (rc=$rc): ${out:0:90}"; fi
+
+  # 3c. o comando sugerido tem de ser COLAVEL. A versao anterior truncava a lista em 6 e colava
+  #     `… (+N)` DENTRO do `bun run sonda:sql`: acima de 6 edges o comando saia quebrado, e quem
+  #     nao colasse reconstruia a lista na mao (feito em 2026-09-05, com 9 edges). Resumo pode
+  #     truncar; COMANDO nao. 7 alvos de proposito — 6 e o antigo limite, entao 7 e o 1o que falha.
+  run ok "$tmp/psql-stub" edge-lote-1 edge-lote-2 edge-lote-3 edge-lote-4 edge-lote-5 edge-lote-6 edge-lote-7
+  linha_cmd="$(printf '%s' "$out" | command grep 'sonda:sql' || true)"
+  faltou=""
+  for n in 1 2 3 4 5 6 7; do
+    tem "edge-lote-$n" "$linha_cmd" || faltou="$faltou edge-lote-$n"
+  done
+  if [ -z "$faltou" ] && ! tem '(+' "$linha_cmd"
+  then ok "DISPARE emite a lista INTEIRA (7/7), sem truncar o comando"
+  else bad "comando truncado — faltou:$faltou · linha: ${linha_cmd:0:150}"; fi
+
+  # 3d. ...e nao pode ser pronto-para-colar CEGO. Bundle PRE-sensor nao conhece `probe`: a sonda
+  #     entra como requisicao NORMAL e o handler roda o FLUXO REAL. Medido 2026-09-05 na 12a leva,
+  #     3 das 9 eram caras — `process-recurring-orders` CRIA `orders` e AVANCA `next_order_date`,
+  #     entao o run legitimo do dia seguinte PULA a data que a sonda consumiu. O `--caro` sai no
+  #     comando com valor INVALIDO de proposito (regra do deploy.md: campo que o operador
+  #     substitui nunca carrega valor de EXEMPLO), e o sonda:sql aborta sem emitir SQL ate a
+  #     triagem acontecer. Recado vira TRAVA — recado que depende de alguem lembrar nao vale.
+  #     Invocacao PROPRIA, com 1 alvo: a trava nao pode depender do tamanho da leva. Reaproveitar
+  #     o `linha_cmd` do 3c acoplava as duas — medido ao falsificar: sabotar SO o truncamento
+  #     derrubou esta asercao junto, e caso que so falha junto com outro nao mede nada sozinho.
+  run ok "$tmp/psql-stub" edge-muda
+  linha_trava="$(printf '%s' "$out" | command grep 'sonda:sql' || true)"
+  if tem '--caro=trie-antes-veja-deploy-md' "$linha_trava" && tem 'TRIE ANTES DE DISPARAR' "$out"
+  then ok "DISPARE carrega a trava --caro invalida + o aviso de fluxo REAL"
+  else bad "DISPARE saiu pronto-para-colar sem triagem: ${linha_trava:0:150}"; fi
 
   # 4. as ~55 edges fora do mapa continuam virando chip como hoje (sem regressao)
   run ok "$tmp/psql-stub" edge-fora-do-mapa
