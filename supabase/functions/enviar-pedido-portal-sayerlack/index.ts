@@ -13,12 +13,12 @@ import {
   FatorConversaoInvalidoError,
   indexarMapeamentos,
   MapeamentoAmbiguoError,
-  qtdeFisicaOmie,
-  qtdePortal,
+  QtdeNaoMultiploEmbalagemError,
+  qtdePortalCanonica,
   verificarFatorAprovado,
 } from "./qtde-portal.ts";
 import {
-  casarLinhasComItens, classificarErroRpcCusto, consolidarLinhasPortal, derivarCustos, extrairAddJson, resumirCaptura, round2,
+  casarLinhasComItens, classificarErroRpcCusto, consolidarLinhasPortal, derivarCustos, extrairAddJson, resumirCaptura,
   type AddJsonPortal, type ItemPedido, type LinhaDom, type MotivoRpcCusto, type ResultadoMatch,
 } from "./captura-custo.ts";
 import { escritaCritica } from "../_shared/escrita-critica.ts";
@@ -1932,67 +1932,40 @@ async function processarPedido(
     }
   }
 
-  // 3. Calcular qtde portal
-  // Portal Sayerlack só aceita unidades inteiras: arredondar SEMPRE para cima (`qtdePortal`, que também
-  // converte a unidade do Omie para a do portal via `fator_conversao` — ex.: litro → balde 0,2).
-  // Fail-closed: fator inválido aborta o pedido INTEIRO antes de qualquer status/Browserless —
-  // enviar parcial ou "NaN" no input do portal é irreversível (o fornecedor recebe de verdade).
+  // 3. Calcular qtde portal — ENVIADO = APROVADO (nada aqui transforma a compra; só confere e recusa)
+  // Portal Sayerlack só aceita unidades inteiras: `qtdePortal` converte a unidade do Omie para a do portal via
+  // `fator_conversao` (ex.: litro → balde 0,2) com ceil. Fail-closed: fator inválido aborta o pedido INTEIRO antes
+  // de qualquer status/Browserless — enviar parcial ou "NaN" no input do portal é irreversível.
   // TOCTOU aprovação→envio (Codex 2026-09-05): o comprador aprovou `qtde_final` arredondada pelo motor com
-  // `fator_embalagem_portal`; se o fator VIVO mudou desde então (0,2 → 0,18), esta compra seria outra
-  // (44,44 L onde se aprovou 40) — recusar o pedido INTEIRO; o ciclo regrava e o comprador reaprova.
+  // `fator_embalagem_portal`; se o fator VIVO mudou desde então (0,2 → 0,18) — ou o item foi aprovado SEM fator
+  // (NULL = 1:1) e alguém cadastrou 0,2 depois — esta compra seria outra: recusar o pedido INTEIRO.
+  // Quantidade fora do múltiplo (Codex P0 no #2166): 37 L editado à mão com fator 0,2 virava 8 BB = 40 L gravados
+  // e enviados sem reaprovação. `qtdePortalCanonica` faz o round-trip (qtdeFisicaOmie(qtdePortal(q)) = q) e recusa;
+  // a normalização que ANTES escrevia `qtde_final` aqui SAIU — a edge não é mais escritora de item. O ciclo regrava
+  // e/ou o comprador corrige (a UI já grava no múltiplo) e reaprova.
   let itemsPortal: Array<{ sku_portal: string; qtde: number; sku_descricao: string }>;
   try {
     itemsPortal = itensList.map((i) => {
       verificarFatorAprovado(i.fator_embalagem_portal, i.fator_conversao, i.sku_codigo_omie);
       return {
         sku_portal: i.sku_portal!,
-        qtde: qtdePortal(i.qtde_final, i.fator_conversao, i.sku_codigo_omie),
+        qtde: qtdePortalCanonica(i.qtde_final, i.fator_conversao, i.sku_codigo_omie),
         sku_descricao: i.sku_descricao,
       };
     });
   } catch (e) {
     if (e instanceof FatorAprovadoDivergenteError) {
-      return await recusarPreBrowserless("fator_aprovado_divergente", e, {
+      return await recusarPreBrowserless(e.motivo, e, {
         sku: e.sku, fator_aprovado: e.fatorAprovado, fator_vivo: e.fatorVivo,
+      });
+    }
+    if (e instanceof QtdeNaoMultiploEmbalagemError) {
+      return await recusarPreBrowserless("qtde_nao_multiplo_embalagem", e, {
+        sku: e.sku, qtde_final: e.qtdeFinal, fator: e.fator, qtde_portal: e.qtdePortal, qtde_fisica: e.qtdeFisica,
       });
     }
     if (!(e instanceof FatorConversaoInvalidoError)) throw e;
     return await recusarPreBrowserless("fator_conversao_invalido", e, { sku: e.sku });
-  }
-
-  // 3b. NORMALIZAR `qtde_final` à compra FÍSICA (Codex P0, 2026-09-04). Com fator ≠ 1 o portal compra
-  // ceil(q×f) embalagens — na unidade do Omie isso é qtde_portal ÷ fator (36 L → 8 BB → 40 L). Se o item
-  // ficasse em 36, a captura de custo lá embaixo (`total ÷ qtde_final`) inflaria o preço/L e o
-  // `disparar-pedidos-aprovados` registraria no Omie 36 × preço falso. Persistido AQUI, antes de qualquer
-  // efeito externo: é a fronteira que TODA via cruza (motor, edição humana, promo, cold-start).
-  // `qtde_sugerida` fica intacta como rastro do que o motor pediu.
-  {
-    const normalizados: Array<{ item_id: number; de: number; para: number; preco: number }> = [];
-    for (let k = 0; k < itensList.length; k++) {
-      const it = itensList[k];
-      const fisica = qtdeFisicaOmie(itemsPortal[k].qtde, it.fator_conversao, it.sku_codigo_omie);
-      if (Math.abs(fisica - it.qtde_final) <= 1e-6) continue;
-      normalizados.push({ item_id: it.item_id, de: it.qtde_final, para: fisica, preco: it.preco_atual ?? 0 });
-      it.qtde_final = fisica;
-    }
-    for (const n of normalizados) {
-      await escritaCritica(
-        `pedido_compra_item.update(qtde_final ${n.de}→${n.para} item=${n.item_id})`,
-        supabase.from("pedido_compra_item").update({
-          qtde_final: n.para,
-          // [PRECO-AUSENTE] sem preço, valor_linha segue NULL (nunca fabricar 0).
-          valor_linha: n.preco > 0 ? round2(n.para * n.preco) : null,
-        }).eq("id", n.item_id),
-      );
-    }
-    if (normalizados.length > 0) {
-      const novoTotal = round2(itensList.reduce((sum, i) => sum + i.qtde_final * (i.preco_atual ?? 0), 0));
-      await escritaCritica(
-        "pedido_compra_sugerido.update(valor_total pós-normalização de embalagem)",
-        supabase.from("pedido_compra_sugerido").update({ valor_total: novoTotal }).eq("id", pedido.id),
-      );
-      console.log(`[envio-portal] Pedido #${pedido.id}: qtde_final normalizada à embalagem em ${normalizados.length} item(ns)`, JSON.stringify(normalizados));
-    }
   }
 
   // 4. Marcar como enviando

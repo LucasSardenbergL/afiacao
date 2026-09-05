@@ -32,7 +32,7 @@ describe('qtde-portal: PARIDADE src × edge', () => {
     const edge = mirrorBlock(ler(`${EDGE_DIR}/qtde-portal.ts`), 'qtde-portal');
     expect(edge).toBe(src);
     // o bloco cobre TUDO que a edge importa do helper — um símbolo fora do bloco escapa da paridade
-    for (const sym of ['FATOR_MAX', 'qtdePortal', 'qtdeFisicaOmie', 'verificarFatorAprovado', 'indexarMapeamentos']) {
+    for (const sym of ['FATOR_MAX', 'qtdePortal', 'qtdeFisicaOmie', 'qtdePortalCanonica', 'verificarFatorAprovado', 'indexarMapeamentos']) {
       expect(edge, `${sym} fora do bloco espelhado`).toContain(sym);
     }
   });
@@ -42,12 +42,14 @@ describe('enviar-pedido-portal-sayerlack: a edge USA os guards antes de qualquer
   const src = ler(`${EDGE_DIR}/index.ts`);
   const limpo = removerComentarios(src);
 
-  it('importa os 3 guards do helper espelhado', () => {
+  it('importa os guards do helper espelhado — e NÃO importa qtdeFisicaOmie (a edge não normaliza mais)', () => {
     const imp = src.match(/import \{([^}]*)\} from "\.\/qtde-portal\.ts";/);
     expect(imp, 'import do helper sumiu').not.toBeNull();
-    for (const sym of ['qtdePortal', 'qtdeFisicaOmie', 'verificarFatorAprovado', 'indexarMapeamentos', 'FatorAprovadoDivergenteError', 'MapeamentoAmbiguoError']) {
+    for (const sym of ['qtdePortalCanonica', 'verificarFatorAprovado', 'indexarMapeamentos', 'FatorAprovadoDivergenteError', 'QtdeNaoMultiploEmbalagemError', 'MapeamentoAmbiguoError']) {
       expect(imp![1], `${sym} não importado`).toContain(sym);
     }
+    // Quem importa o inverso é quem quer ESCREVER a compra física no item — e isso saiu (enviado = aprovado).
+    expect(imp![1]).not.toMatch(/\bqtdeFisicaOmie\b/);
   });
 
   it('TOCTOU: confere fator_embalagem_portal × fator VIVO no map que monta itemsPortal (antes do Browserless)', () => {
@@ -62,10 +64,23 @@ describe('enviar-pedido-portal-sayerlack: a edge USA os guards antes de qualquer
     const bloco = limpo.match(/itemsPortal = itensList\.map\(\(i\) => \{([\s\S]*?)\}\);/);
     expect(bloco, 'map de itemsPortal não encontrado').not.toBeNull();
     expect(bloco![1]).toMatch(/verificarFatorAprovado\(i\.fator_embalagem_portal,\s*i\.fator_conversao,\s*i\.sku_codigo_omie\)/);
-    expect(bloco![1]).toMatch(/qtde:\s*qtdePortal\(i\.qtde_final,\s*i\.fator_conversao,\s*i\.sku_codigo_omie\)/);
-    // A recusa é NÃO-retentável e nomeia o ramo (o comprador precisa VER por que não foi).
+    // `qtde` é o PRODUTO do round-trip (qtdePortalCanonica) — não o `qtdePortal` cru, que aceitaria 37 L → 8 BB.
+    expect(bloco![1]).toMatch(/qtde:\s*qtdePortalCanonica\(i\.qtde_final,\s*i\.fator_conversao,\s*i\.sku_codigo_omie\)/);
+    expect(bloco![1]).not.toMatch(/qtde:\s*qtdePortal\(/);
+    // A recusa é NÃO-retentável e nomeia o ramo (o comprador precisa VER por que não foi). O motivo do fator vem
+    // do ERRO (ausente × divergente), não de uma string fixa que colapsaria os dois.
     expect(limpo).toContain('e instanceof FatorAprovadoDivergenteError');
-    expect(limpo).toContain('"fator_aprovado_divergente"');
+    expect(limpo).toMatch(/recusarPreBrowserless\(e\.motivo,/);
+    expect(limpo).toContain('e instanceof QtdeNaoMultiploEmbalagemError');
+    expect(limpo).toContain('"qtde_nao_multiplo_embalagem"');
+  });
+
+  it('enviado = aprovado: a edge NÃO escreve em pedido_compra_item (a normalização de qtde_final saiu)', () => {
+    // Antes do #2166 a edge gravava `qtde_final` normalizada (36 → 40) ANTES do Browserless — uma compra que ninguém
+    // aprovou. Agora o round-trip recusa; se este assert ficar vermelho, alguém reintroduziu um escritor de item.
+    expect(limpo).not.toMatch(/from\("pedido_compra_item"\)\s*\.update\(/);
+    expect(limpo).not.toContain('pós-normalização');
+    expect(limpo).not.toMatch(/qtdeFisicaOmie\(/);
   });
 
   it('chave de fornecedor: sku_fornecedor_externo filtra por igualdade EXATA com o pedido, nunca ILIKE', () => {

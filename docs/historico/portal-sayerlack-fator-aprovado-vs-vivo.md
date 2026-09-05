@@ -51,3 +51,32 @@ aplicada ANTES; senão todo pedido Sayerlack cai em `Erro ao buscar itens` (rete
 irreversível, a 1ª tem de PERSISTIR o valor que usou e a 2ª tem de CONFERIR — não basta cada uma estar certa
 com o dado do seu instante. E chave de junção diferente entre motor e edge (`=` vs `ILIKE`) é a mesma
 classe do §"corte por ranking" do CLAUDE.md: eixo diferente da decisão que a tela serviu.
+
+## 2ª fatia (2026-09-05, edge v1.7-enviado-igual-aprovado) — os 2 P0 de desenho
+
+**O que ficou aberto acima virou código, sem migration.** Medição que decidiu a forma (psql-ro, 30 dias, OBEN ×
+Sayerlack): **272 itens em 94 pedidos, TODOS com `fator_embalagem_portal` NULL** — o motor só persiste fator ≠ 1 e os
+3 SKUs em balde não entraram em ciclo desde o #2157. Logo "NULL = fail-closed" (a proposta original) travaria 100% da
+fila; e "motor persiste fator 1 para todo item" pedia migration custom + backfill dos pendentes + um 2º escritor da
+coluna na UI (item manual/promo/cold-start). A forma escolhida:
+
+1. **NULL lê-se "aprovado 1:1".** É o contrato do motor (NULL ⇔ fator ∉ `portal_fator` ⇔ nenhuma embalagem aplicada),
+   e vale igual para item pré-#2157 e criado fora do motor: o comprador viu a quantidade na unidade do Omie. Então
+   `verificarFatorAprovado(null, vivo)`: vivo 1 passa; vivo ≠ 1 recusa por **`fator_aprovado_ausente`** (marca própria —
+   o sensor conta por motivo). Fecha o cenário do Codex (1 → 0,2 cadastrado depois da aprovação). **Não é fabricar
+   valor**: é ler a ausência pelo contrato de quem escreve. Residual honesto: item NULL criado sob 0,2 com o de-para
+   editado para 1 antes do envio passa como 1:1 — só o snapshot do de-para NA aprovação (spec do selo, #2187) fecha.
+2. **`qtdePortalCanonica(q, f)`** = `qtdePortal` + round-trip `qtdeFisicaOmie(p) = q` (tolerância 1e-6 = escala do
+   round6, não tolerância de negócio); divergiu → **`qtde_nao_multiplo_embalagem`**, pedido inteiro recusado
+   pré-Browserless. Devolve a qtde do portal para a edge USAR o produto do guard. 37 L com 0,2 → recusa (antes: 40 L
+   gravados e enviados); 0 → recusa (antes: `max(1, 0)` mandava 1 embalagem de um item aprovado em zero); fração com
+   fator 1 → recusa (`reposicao_persistir_qtde_inteira` ceila antes no disparo, então não aparece em prod).
+3. **A normalização SAIU.** Depois dos dois guards ela era código morto por construção (`fisica === q` sempre) — e era o
+   único `pedido_compra_item.update` da edge. O gate de forma agora exige a AUSÊNCIA (`not.toMatch(/from\("pedido_compra_item"\)\s*\.update\(/)`)
+   e a ausência do import de `qtdeFisicaOmie` no `index.ts`. Alinha com o §3.6 do spec do selo.
+4. **UI grava no múltiplo** (`quantidadeCompraCanonica`, fora do bloco MIRROR): `montarUpdateItem` (fronteira) e o
+   `onBlur` do input (feedback — no blur, não no change: arredondar a cada tecla impede digitar "37"). Sem fator: ceil
+   inteiro de sempre.
+
+**Falsificação** (uma camada por vez, cada uma vermelha antes de restaurar): ver o PR. **Deploy:** só a edge (sem
+migration, sem Publish obrigatório — a UI é conveniência; a edge recusa com ou sem ela).

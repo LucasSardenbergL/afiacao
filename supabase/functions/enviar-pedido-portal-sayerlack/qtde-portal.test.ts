@@ -75,7 +75,7 @@ Deno.test("qtdeFisicaOmie: portal e Omie enxergam a MESMA compra (Codex P0)", ()
 });
 
 // ── Challenge Codex 2026-09-05 (3 achados) — casos espelhados em src/lib/reposicao/__tests__/qtde-portal.test.ts ──
-import { FATOR_MAX, FatorAprovadoDivergenteError, indexarMapeamentos, MapeamentoAmbiguoError, verificarFatorAprovado } from "./qtde-portal.ts";
+import { FATOR_MAX, FatorAprovadoDivergenteError, indexarMapeamentos, MapeamentoAmbiguoError, QtdeNaoMultiploEmbalagemError, qtdePortalCanonica, verificarFatorAprovado } from "./qtde-portal.ts";
 
 function assertLanca<T extends Error>(fn: () => unknown, classe: new (...a: never[]) => T, msg: string): T {
   try {
@@ -95,9 +95,14 @@ Deno.test("bound de finitude espelha o SQL: fator 1e9 é recusado (o CHECK fator
   assertEquals(qtdePortal(1, 1e9 - 1), 1e9 - 1, "logo abaixo do bound segue aceito");
 });
 
-Deno.test("verificarFatorAprovado: TOCTOU aprovação→envio (0,2 → 0,18) recusa; NULL = não arredondou", () => {
-  verificarFatorAprovado(null, 0.2, "X");
-  verificarFatorAprovado(undefined, 0.18, "X");
+Deno.test("verificarFatorAprovado: TOCTOU aprovação→envio (0,2 → 0,18) recusa; NULL = aprovado 1:1", () => {
+  verificarFatorAprovado(null, 1, "X");
+  verificarFatorAprovado(undefined, 1, "X");
+  // Codex P0 (#2166): NULL aprovado + vivo 0,2 = o comprador aprovou 36 L sem embalagem; recusar, não normalizar.
+  const a = assertLanca(() => verificarFatorAprovado(null, 0.2, "TEH.3505.00BB"), FatorAprovadoDivergenteError, "NULL→0,2");
+  assertEquals(a.motivo, "fator_aprovado_ausente", "marca do ramo AUSENTE");
+  assertEquals(a.fatorAprovado, null, "aprovado null");
+  assertLanca(() => verificarFatorAprovado(undefined, 0.18, "X"), FatorAprovadoDivergenteError, "undefined→0,18");
   verificarFatorAprovado("0.20000000", 0.2, "X"); // numeric do PostgREST chega como string
   verificarFatorAprovado("0.2777777777777778", 0.2777777777777778, "X"); // mesmo numeric → mesmo Number
   assertLanca(() => verificarFatorAprovado(0.2, 0.2000000009, "X"), FatorAprovadoDivergenteError, "Δ 9e-10 = 201 vs 200 BB em 1.000 L");
@@ -105,6 +110,7 @@ Deno.test("verificarFatorAprovado: TOCTOU aprovação→envio (0,2 → 0,18) rec
   assertEquals(d.sku, "TEH.3505.00BB", "sku");
   assertEquals(d.fatorAprovado, 0.2, "aprovado");
   assertEquals(d.fatorVivo, 0.18, "vivo");
+  assertEquals(d.motivo, "fator_aprovado_divergente", "marca do ramo DIVERGENTE");
   assertEquals(d.message.includes("0.18") && d.message.includes("0.2") && /reaprov/i.test(d.message), true, "motivo visível");
   for (const ruim of [0, -0.2, Number.NaN, 1e9, "abc", ""]) {
     assertLanca(() => verificarFatorAprovado(ruim, 0.2, "X"), FatorAprovadoDivergenteError, `aprovado inválido ${String(ruim)}`);
@@ -125,4 +131,21 @@ Deno.test("indexarMapeamentos: >1 ativa por sku_omie é ambiguidade (nunca last-
   );
   assertEquals(amb.sku, "A", "sku ambíguo");
   assertEquals(amb.n, 2, "contagem");
+});
+
+Deno.test("qtdePortalCanonica: enviado = aprovado — qtde fora do múltiplo recusa (Codex P0 #2166: 37 L com 0,2)", () => {
+  assertEquals(qtdePortalCanonica(40, 0.2, "X"), 8, "40 L = 8 BB");
+  assertEquals(qtdePortalCanonica(37, 1, "X"), 37, "fator 1 inteiro");
+  assertEquals(qtdePortalCanonica(10.8, 1 / 3.6, "X"), 3, "round6 segue trabalhando");
+  const d = assertLanca(() => qtdePortalCanonica(37, 0.2, "TEH.3505.00BB"), QtdeNaoMultiploEmbalagemError, "37 L");
+  assertEquals(d.sku, "TEH.3505.00BB", "sku");
+  assertEquals(d.qtdeFinal, 37, "qtde aprovada");
+  assertEquals(d.qtdePortal, 8, "qtde portal");
+  assertEquals(d.qtdeFisica, 40, "qtde física");
+  assertEquals(d.message.includes("37") && d.message.includes("40") && /reaprov/i.test(d.message), true, "motivo visível");
+  for (const [q, f] of [[36, 0.2], [0, 0.2], [0, 1], [36.5, 1], [3.99996, 1], [41, 0.2], [-5, 1]] as const) {
+    assertLanca(() => qtdePortalCanonica(q, f, "X"), QtdeNaoMultiploEmbalagemError, `${q} × ${f}`);
+  }
+  assertLancaFator(() => qtdePortalCanonica(40, 0, "X"), "fator 0 continua sendo a marca do FATOR");
+  assertLancaFator(() => qtdePortalCanonica(Number.NaN, 0.2, "X"), "qtde NaN idem");
 });

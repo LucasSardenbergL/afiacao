@@ -10,6 +10,7 @@ import { PedidoSugerido, PedidoItem, CondicaoPagamento } from './types';
 import { aprovarEDisparar } from './aprovar-disparar';
 import { montarUpdateItem, podeEditarPrecoPedido, precoEditValido } from './preco-edit';
 import { quantidadeCompraInteira } from '@/lib/reposicao/compras-otimizador-helpers';
+import { quantidadeCompraCanonica } from '@/lib/reposicao/qtde-portal';
 import {
   codigosInativosOmie,
   type OmieProductAtivoRow,
@@ -407,6 +408,19 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     setEdits((prev) => ({ ...prev, [id]: quantidadeCompraInteira(Number(raw)) }));
   };
 
+  // [EMBALAGEM PORTAL] ao SAIR do campo, sobe a quantidade ao múltiplo da embalagem com que o motor arredondou
+  // (37 L → 40 L com fator 0,2). No blur, não no change: arredondar a cada tecla impede digitar "37" (o "3" viraria 5).
+  // `montarUpdateItem` repete a regra na gravação — aqui é feedback; lá é a fronteira.
+  const onBlurQty = (id: number) => {
+    setEdits((prev) => {
+      const atual = prev[id];
+      if (atual === undefined) return prev;
+      const fator = (itens ?? []).find((i) => i.id === id)?.fator_embalagem_portal;
+      const canonica = quantidadeCompraCanonica(atual, fator);
+      return canonica === atual ? prev : { ...prev, [id]: canonica };
+    });
+  };
+
   const onEditPreco = (id: number, raw: string) => {
     setPrecoEdits((prev) => {
       if (raw.trim() === '') {
@@ -433,6 +447,7 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     isLoading,
     edits,
     onEditQty,
+    onBlurQty,
     precoEdits,
     onEditPreco,
     obs,
