@@ -12,6 +12,7 @@ import { TabFallback } from "./TabFallback";
 import { type CicloFilters } from "./cicloHoje/types";
 import { useCicloHoje } from "./cicloHoje/useCicloHoje";
 import { PedidoRow } from "./cicloHoje/PedidoRow";
+import { useItensDosPedidos } from "./cicloHoje/useItensDosPedidos";
 import { FiltersToolbar } from "./cicloHoje/FiltersToolbar";
 import { AutoApproveDialog } from "./cicloHoje/AutoApproveDialog";
 import { BatchActionsBar } from "./cicloHoje/BatchActionsBar";
@@ -61,6 +62,12 @@ export function CicloHojePanel({
     runAutoApprove,
     clearFilters,
   } = useCicloHoje({ user, reviewMode, filteredItems, setFilters });
+
+  // Itens dos pedidos PENDENTES numa query só (M-03): cardinalidade real (1 SKU × vários) e a quantidade
+  // que o editor inline edita — nunca `num_skus`. `undefined` = carregando · `null` = falhou.
+  const idsPendentes = filteredItems.filter((i) => !i.aprovado_em && !i.cancelado_em).map((i) => i.id);
+  const { data: itensPorPedido, isError: itensErro } = useItensDosPedidos(idsPendentes);
+  const itensDe = (id: number) => (itensErro ? null : itensPorPedido === undefined ? undefined : itensPorPedido.get(id) ?? []);
 
   return (
     <div className="space-y-4">
@@ -120,6 +127,7 @@ export function CicloHojePanel({
                     cols={cols}
                     user={user}
                     onChanged={invalidate}
+                    itens={itensDe(r.id)}
                   />
                 ))}
               </TableBody>
