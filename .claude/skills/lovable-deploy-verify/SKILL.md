@@ -185,6 +185,35 @@ andou **duas vezes em ~1h30**: a segunda não tocou `supabase/functions/` (o ped
 mas tocou `scripts/sonda-versao-sql.ts`, deixando o bloco de sonda **já entregue ao founder** com o
 gerador anterior. Entre a medição e a entrega existe o tempo em que você escreve.
 
+🔴 **E o `git fetch` não basta: o closure tem de LER A REF, não o working tree (2026-09-04).** As
+duas regras acima mandam sincronizar antes de medir e antes de entregar — e as duas foram
+**obedecidas** na sessão em que isto mordeu. O furo é outro: `fetch` atualiza `origin/main`, mas
+`grep` e `os.path.isfile` continuam lendo os **bytes do working tree**, que é onde o `HEAD` da
+worktree estiver. Uma worktree **um commit atrás** devolve um closure que se parece com um closure —
+mesma forma, mesmo formato, menos arquivos — e nada na saída denuncia. Medido verificando a
+`enviar-pedido-portal-sayerlack`: contra o working tree, **5** arquivos; contra `origin/main`,
+**7**. Os dois que sumiram eram exatamente os que o pedido não pode perder — `qtde-portal.ts`
+(arquivo NOVO) e `escrita-critica.ts` (o import novo de arquivo pré-existente, o furo do #2101) —,
+e a função não bootaria sem nenhum dos dois. É `ausente ≠ zero` na dimensão **ÁRVORE**: irmão do
+eixo TEMPO acima, com o mesmo desfecho (deploy que não boota) por um caminho que o `git fetch` não
+fecha. Leia da ref, sempre — e a ref é a MESMA que o Lovable deploya:
+
+```bash
+git show origin/main:supabase/functions/<edge>/index.ts | grep -oE "from ['\"]\.\.?/[^'\"]+['\"]"
+# repita em cada arquivo alcançado, sempre com `git show origin/main:<path>` — nunca `cat <path>`
+```
+
+⚠️ E o guard de contagem 0/1 vale para o **arnês**, não só para o regex. Na mesma sessão a primeira
+tentativa de closure usou `declare -A` num script bash — que no **bash 3.2 do macOS não existe** — e
+imprimiu `0 arquivos`. Ali a falha foi ruidosa (`declare: -A: invalid option` no stderr), mas a
+saída útil era **byte a byte** a de uma edge que não importa nada: o zero só não virou veredito
+porque a contagem foi conferida. Trate `0` e `1` como **enumeração quebrada** venha de onde vier —
+regex cego, interpretador sem a feature, ou árvore errada.
+
+Fecho positivo do caso: com os 7 arquivos nomeados, a sonda pós-deploy respondeu
+`v1.2-qtde-portal-fator-embalagem` **e** `fonte 0996dd3c…` idêntico ao `sonda-fingerprints.ts` da
+main — que é a prova de que os quatro `_shared/` subiram junto, e não só o `index.ts`.
+
 ⚠️ **E o `from` tem aspas SIMPLES neste repo.** Um regex de closure que só case `from "…"` devolve
 lista **vazia** para as edges que usam `'…'` — 3 das 7 aqui. Vazio de regex cego é byte a byte o
 vazio de "não importa nada": case `from ['\"]`, e trate contagem 0/1 como **enumeração quebrada**,
@@ -944,4 +973,12 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   cala no ping mas ainda devolve linhas, onde sem o ping o script leria via quebrada como "ninguém
   usou a feature". Mesma lição que o eval do `verify-edge-eco` já tinha registrado, redescoberta
   medindo.
+- [x] **O closure lê a REF, não o working tree (2026-09-04, `enviar-pedido-portal-sayerlack`):** as
+  regras de sincronizar antes de medir/entregar estavam sendo **obedecidas**, e ainda assim o closure
+  saiu curto — `git fetch` move `origin/main`, mas `grep`/`cat` leem os bytes do working tree, e a
+  worktree estava 1 commit atrás. **5 arquivos contra os 7 reais**, faltando justamente o `qtde-portal.ts`
+  (novo) e o `escrita-critica.ts` (import novo de arquivo pré-existente, o furo do #2101) — os dois sem os
+  quais a função não boota. `ausente ≠ zero` na dimensão **ÁRVORE**, irmão do eixo TEMPO do #2123. Junto,
+  o guard de contagem 0/1 estendido do regex para o **arnês**: um `declare -A` em bash 3.2 do macOS
+  imprimiu `0 arquivos`, saída idêntica à de uma edge que não importa nada. Detalhe no Passo 3.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

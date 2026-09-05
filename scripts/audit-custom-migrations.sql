@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 504
+-- Total de custom migrations: 506
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -545,7 +545,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260829081556', 'sales_orders_hash_omie_canonico', '20260829081556_sales_orders_hash_omie_canonico.sql'),
   ('20260830123820', 'snapshot_atomico_universo_itens', '20260830123820_snapshot_atomico_universo_itens.sql'),
   ('20260830190000', 'reconciliar_pedidos_omie', '20260830190000_reconciliar_pedidos_omie.sql'),
-  ('20260904232555', 'reposicao_qtde_multiplo_embalagem_portal', '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql')
+  ('20260830214547', 'reposicao_aplicar_promocoes_captura_corpo_vivo', '20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql'),
+  ('20260904232555', 'reposicao_qtde_multiplo_embalagem_portal', '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql'),
+  ('20260904233000', 'sku_fornecedor_externo_fator_positivo', '20260904233000_sku_fornecedor_externo_fator_positivo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2261,6 +2263,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('reposicao_aplicar_promocoes_captura_corpo_vivo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 ),
 obj_status AS (
@@ -4025,6 +4028,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('snapshot_atomico_universo_itens', 'function', 'public', 'apriori_universo_snapshot', ''),
   ('snapshot_atomico_universo_itens', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('reposicao_aplicar_promocoes_captura_corpo_vivo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
@@ -4124,7 +4128,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'gerar_pedidos_sugeridos_ciclo', 24, '20260717010000_preco_medio_leadtime_efetivo.sql', 'e2db4ba09711371884c76afd2ef2258d'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 25, '20260730130000_reposicao_teto_cobertura_motor.sql', '996589f06e52a2df0b97dd2610ccd511'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 26, '20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql', '461d0cbdafcd2f7760db1ae10dbd7e0a'),
-  ('public', 'gerar_pedidos_sugeridos_ciclo', 27, '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql', '45b4e821f62a65c3d16d6945a9885a6d'),
+  ('public', 'gerar_pedidos_sugeridos_ciclo', 27, '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql', 'f7eaa40bfca2b43443e676908f66aa57'),
   ('public', 'envio_portal_lock_candidatos', 1, '20260430005120_ac9adac9-3575-4449-9703-2f88ba333c3f.sql', 'bcdd860ddf768655ce2a5d72fe0e02a7'),
   ('public', 'envio_portal_lock_candidatos', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'fd19eefabbdaf5c42ec7d9b8e6a38e7e'),
   ('public', 'envio_portal_lock_candidatos', 3, '20260515010000_99661119-2843-4684-9dba-d21d55bf2ab9.sql', 'b116b7039ef4387546d2b86957b18c50'),
@@ -4293,6 +4297,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'aplicar_promocoes_no_ciclo', 1, '20260606170000_reposicao_fix_aplicar_promocoes.sql', 'f98e5476739539e4762ababbcea73125'),
   ('public', 'aplicar_promocoes_no_ciclo', 2, '20260606180000_reposicao_aplicar_promocoes_hardening.sql', 'c0ac59ea6b0d5efb186bb9c7e1669097'),
   ('public', 'aplicar_promocoes_no_ciclo', 3, '20260606200000_reposicao_promo_forward_buying_min.sql', 'f31bcba5fecc035004a42a7e4c4a102d'),
+  ('public', 'aplicar_promocoes_no_ciclo', 4, '20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql', 'b48783701e1a5987cffc04da2965d719'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 1, '20260609150000_reposicao_alerta_pedido_minimo.sql', '149d7d577c0ca6dc0faff56269f31bb1'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 2, '20260610150000_reposicao_auto_aprovacao_piloto.sql', 'cf138b87a62881c13c5ce6154a4af3f6'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 3, '20260611120000_reposicao_fixes_codex_711.sql', '69d6c5fcfac5db26eaee12e912ab676c'),

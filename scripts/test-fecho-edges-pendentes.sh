@@ -32,6 +32,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "edge-velha": "$SHA_NOVO",
   "edge-muda": "$SHA_NOVO",
   "edge-cega": "$SHA_NOVO",
+  "edge-pre-fonte": "$SHA_NOVO",
 };
 MAPA
 
@@ -40,6 +41,7 @@ cat > "$tmp/pares.txt" <<PARES
 edge-no-ar $SHA_NOVO
 edge-velha $SHA_VELHO
 edge-cega nao-mapeada
+edge-pre-fonte sem-campo-fonte
 PARES
 
 # stub do psql-ro. MODO controla a avaria: ok | mudo | erro-query
@@ -113,6 +115,16 @@ suite() {
   if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 1 ]
   then ok "sonda nao-mapeada -> SEM_PROVA, exit 1"
   else bad "nao-mapeada devia dar SEM_PROVA/exit 1 (rc=$rc): ${out:0:90}"; fi
+
+  # 5b. respondeu a sonda (200 + eco de probe/versao) mas SEM o campo `fonte`: bundle ANTERIOR ao
+  #     #1998, que ainda nao conhecia o campo. Isso e prova POSITIVA de que o ar e velho — o oposto
+  #     de "nao observei nada" — e ate 2026-09-05 saia como "nenhuma sonda na janela" (7 das 10
+  #     edges sondadas em prod naquele dia). Ramo PROPRIO, e nunca alegando ausencia de sonda.
+  run ok "$tmp/psql-stub" edge-pre-fonte
+  if tem 'PRE_SONDA_FONTE' "$out" && [ "$rc" -eq 1 ] \
+     && ! tem 'nenhuma sonda' "$out" && ! tem 'NO_AR' "$out"
+  then ok "sonda sem o campo fonte -> PRE_SONDA_FONTE (bundle pre-#1998), exit 1"
+  else bad "sonda sem fonte devia ter ramo proprio, nunca 'nenhuma sonda' (rc=$rc): ${out:0:110}"; fi
 
   # 6. O TESTE-SENTINELA: wrapper PRESENTE porem MUDO. A mesma edge que no caso 1 era NO_AR tem de
   #    voltar a ser pendencia — `command -v` acharia o arquivo e esvaziaria o guard.
@@ -214,6 +226,17 @@ MAPA1
   if tem 'DISTINCT ON (edge)' "$(cat "$tmp/sql.txt")" && tem 'created DESC' "$(cat "$tmp/sql.txt")"
   then ok "SQL pede a resposta mais recente por edge (DISTINCT ON + created DESC)"
   else bad "SQL sem DISTINCT ON (edge)/created DESC — deploy no meio da janela viraria prova falsa"; fi
+
+  # 12b. guardrail de FORMA do ramo pre-#1998: a consulta tem de ADMITIR a resposta sem `fonte`
+  #      (com `? 'fonte'` cru ela some antes de ser classificada, e a edge cai em "nenhuma sonda"),
+  #      e ao admiti-la tem de exigir o eco POSITIVO de sonda — sem o `probe`, QUALQUER 200 com um
+  #      campo `edge` entraria como se fosse resposta de sonda, e isso afrouxaria o fail-closed.
+  : > "$tmp/sql.txt"; run ok "$tmp/psql-stub" edge-no-ar > /dev/null
+  if tem "NOT ((content::jsonb) ? 'fonte')" "$(cat "$tmp/sql.txt")" \
+     && tem "->> 'probe'" "$(cat "$tmp/sql.txt")" \
+     && tem "'sem-campo-fonte'" "$(cat "$tmp/sql.txt")"
+  then ok "SQL admite a resposta sem \`fonte\`, exige o eco de probe e emite o mesmo sentinela"
+  else bad "SQL sem o ramo 'sem fonte' + probe — 200 sondado voltaria a virar 'nenhuma sonda'"; fi
 }
 
 # ---------------------------------------------------------------- falsificação ---
@@ -270,6 +293,23 @@ if [ "${1:-}" = "--falsificar" ]; then
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "aceitar qualquer fonte servida como prova" \
     's%\[ "$servido" = "$esperado" \]%[ -n "$servido" ]%'
+  # (e) o ramo pre-#1998 some da classificacao: a mesma resposta 200 sem `fonte` que ele nomeia
+  #     voltaria a cair no ramo generico, e a prova positiva de bundle velho perderia o nome
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "ramo PRE_SONDA_FONTE neutralizado na classificacao" \
+    's%\[ "$servido" = "sem-campo-fonte" \]%false%'
+  # (f) o SQL volta a filtrar por `? 'fonte'` cru: a resposta sem o campo e DESCARTADA antes de
+  #     ser classificada, e a edge sondada reaparece como "nenhuma sonda na janela" (o defeito)
+  sabota "SQL voltando a descartar a resposta sem o campo fonte" \
+    "s%WHERE NOT ((content::jsonb) ? 'fonte')%WHERE ((content::jsonb) ? 'fonte')%"
+  # (g) a 2a classe deixa de exigir eco POSITIVO de sonda: qualquer 200 com um campo `edge` viraria
+  #     "resposta de sonda", e o fail-closed que este ramo NAO pode afrouxar cairia junto
+  sabota "2a classe sem exigir o eco de probe" \
+    "s%           AND (content::jsonb) ->> 'probe'  = 'true'%%"
+  # (h) DERIVA entre as duas pontas: o SQL passa a emitir um sentinela que o classificador nao
+  #     compara — nenhuma das duas metades falha sozinha, e o ramo novo fica inalcancavel
+  sabota "sentinela do SQL divergindo do que o classificador compara" \
+    "s%'sem-campo-fonte'           AS fonte%'sem-campo-fonte-x'         AS fonte%"
   # (d) a query perde o "mais recente por edge"
   sabota "SQL sem DISTINCT ON (edge)" \
     's%SELECT DISTINCT ON (edge) edge%SELECT edge%'

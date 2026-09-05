@@ -109,6 +109,10 @@ volume — fração não é defeito por si só.
 
 1. Migration de **captura** do corpo vivo das 5 de authz — é o único jeito de o repo parar de ser
    uma bomba de regressão. Money-path: pede `prove-sql-money-path`.
-2. Decidir o destino de `20260606200000_reposicao_promo_forward_buying_min.sql`: **não aplicar**;
-   reescrever partindo do vivo.
+2. ~~Decidir o destino de `20260606200000_reposicao_promo_forward_buying_min.sql`~~ — **RESOLVIDA
+   em 2026-08-30**: APOSENTADA, não aplicar. A captura `20260830214547` devolve a precedência ao
+   corpo hardened e aborta se a das 20h tiver sido colada. Três das quatro afirmações desta triagem
+   foram corrigidas na re-medição (o vivo NÃO evoluiu além das 18h; o risco do `::bigint` não
+   reproduz; o `ceil` é redundante nos dois insumos) —
+   [captura-de-corpo-vivo-como-aposentar-migration.md](captura-de-corpo-vivo-como-aposentar-migration.md).
 3. Corrigir a Seção 3: eixo sem-comentários, schema `private`, e consultar `OBSOLETE`.

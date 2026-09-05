@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **504** custom migrations totais
-- **1727** objetos esperados (criados por estas migrations)
+- **506** custom migrations totais
+- **1728** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 526
+  - `function`: 527
   - `rls_policy`: 455
   - `index`: 250
   - `cron_job`: 168
@@ -4213,11 +4213,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.reconciliar_pedidos_omie` | — |
 
+### `20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_promocoes_no_ciclo` | — |
+
 ### `20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260904233000_sku_fornecedor_externo_fator_positivo.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
