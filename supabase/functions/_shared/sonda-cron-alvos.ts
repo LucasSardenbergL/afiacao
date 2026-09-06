@@ -8,7 +8,7 @@
 // Esta lista é a fonte única: o relé a importa (default-deny em runtime), o banco a espelha
 // (`public.deploy_sonda_alvos`, F2) e `bun run pendencias:deploy` exige `banco ⊆ repo`.
 
-export type ControlePositivo = {
+type ControlePositivo = {
   metodo: "POST";
   /**
    * Headers do controle. `$NOME` é resolvido pelo runner contra a env de teste (`$CRON_SECRET`,

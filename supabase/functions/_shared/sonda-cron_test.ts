@@ -10,7 +10,10 @@ import {
   classificarRespostaAlvo,
   derivarCredencial,
   HEADER_SONDA,
+  MENSAGEM_SONDA_PREFIXO,
   METODO_SONDA,
+  TAMANHO_MAX_CORPO_ATESTACAO,
+  TAMANHO_MIN_CHAVE_BYTES,
   montarRequestSonda,
   verificarCredencial,
 } from "./sonda-cron.ts";
@@ -58,6 +61,16 @@ Deno.test("verificarCredencial: aceita a própria edge; recusa outra edge, hex i
   assertEquals(await verificarCredencial(CHAVE, "monthly-report", null), false, "ausente");
   assertEquals(await verificarCredencial(undefined, "monthly-report", cred), false, "chave ausente");
   assertEquals(await verificarCredencial("", "monthly-report", cred), false, "chave vazia");
+});
+
+Deno.test("as constantes do CONTRATO são as que a spec fixou — a migration (F2) e o relé citam estes valores", () => {
+  // Um destes literais mudando sozinho quebra o mecanismo em silêncio: a credencial derivada no
+  // relé deixaria de bater com a verificada na alvo, e o cron ficaria eternamente em silêncio.
+  assertEquals(HEADER_SONDA, "x-sonda-credencial");
+  assertEquals(METODO_SONDA, "OPTIONS");
+  assertEquals(MENSAGEM_SONDA_PREFIXO, "sonda-de-versao:v1:");
+  assertEquals(TAMANHO_MIN_CHAVE_BYTES, 32, "piso de FORMA da chave (256 bits)");
+  assertEquals(TAMANHO_MAX_CORPO_ATESTACAO, 4096);
 });
 
 Deno.test("chaveUtilizavel: ausente/vazia/curta → false (checagem de FORMA; a entropia vem do procedimento)", () => {
@@ -163,7 +176,8 @@ Deno.test("classificarRespostaAlvo: contrato COMPLETO atesta; qualquer coisa mai
     "identidade-divergente",
   );
   assertEquals(classificarRespostaAlvo("monthly-report", 200, "application/json", "[1]").classe, "contrato-invalido", "array");
-  assertEquals(classificarRespostaAlvo("monthly-report", 200, "application/json", "{".padEnd(5000, " ")).classe, "contrato-invalido", "> 4 KB");
+  const acimaDoTeto = "{".padEnd(TAMANHO_MAX_CORPO_ATESTACAO + 1, " ");
+  assertEquals(classificarRespostaAlvo("monthly-report", 200, "application/json", acimaDoTeto).classe, "contrato-invalido", "acima do teto de corpo");
   for (const s of [301, 302, 303, 307, 308]) {
     assertEquals(classificarRespostaAlvo("monthly-report", s, null, "").classe, "redirect", `status ${s}`);
   }
