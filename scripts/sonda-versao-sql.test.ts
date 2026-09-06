@@ -927,11 +927,51 @@ describe('não consigo consultar a origin/main: ausência de dado não é aprova
   });
 });
 
+/**
+ * Repo git DESCARTÁVEL com um commit e, opcionalmente, a ref `refs/remotes/origin/main`.
+ *
+ * Existe porque o teste abaixo mede o EXECUTOR, não o checkout de quem roda a suíte — e a versão
+ * anterior media o checkout sem querer. Ver o comentário do `describe`.
+ */
+function repoDescartavel(comOriginMain: boolean): string {
+  const dir = mkdtempSync(join(tmpdir(), 'sonda-git-real-'));
+  criadas.push(dir);
+  const g = gitReal(dir);
+  g(['init', '--quiet']);
+  g(['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--quiet', '--allow-empty', '-m', 'base']);
+  if (comOriginMain) {
+    const sha = g(['rev-parse', 'HEAD']).stdout.trim();
+    g(['update-ref', 'refs/remotes/origin/main', sha]);
+  }
+  return dir;
+}
+
+/**
+ * O executor de verdade, medido em repo CONTROLADO — nunca no repo de quem roda a suíte.
+ *
+ * 🔴 A versão anterior fazia `gitReal(RAIZ_REPO)(['rev-parse', … 'origin/main'])` e exigia status 0.
+ * Isso não media o executor: media se o CHECKOUT de quem roda a suíte criou `refs/remotes/origin/main`
+ * — e o job `mutation-check` do `ci.yml` usa `actions/checkout` SEM `fetch-depth: 0`, então em PR essa
+ * ref não existe (o `validate`, que a tem, passava). Efeito medido em 2026-09-06: baseline VERMELHO no
+ * contrato `sonda-versao-sql.mut`, e como o baseline aborta o arquivo inteiro, as **43 mutações** dele
+ * paravam de ser medidas — cobertura perdida em silêncio, com o gate gritando o tempo todo (falhou nos
+ * 4 PRs abertos naquela hora e passou na main, que é checkout de branch). Gate que grita sempre é gate
+ * que ninguém lê.
+ *
+ * A régua nova mede a MESMA coisa que importa ao guard — "existindo a ref, devolve 0 e um sha; não
+ * existindo, devolve ≠ 0" — sem herdar o estado do runner. E o caso SEM a ref virou asserção própria:
+ * ele é o ramo fail-CLOSED do guard, e antes ninguém o exercitava com git de verdade.
+ */
 describe('gitReal: o executor de verdade responde o que o guard precisa julgar', () => {
-  it('num repo git, rev-parse da origin/main devolve status 0 e um sha', () => {
-    const r = gitReal(RAIZ_REPO)(['rev-parse', '--verify', '--quiet', 'origin/main']);
+  it('com a ref presente, rev-parse da origin/main devolve status 0 e um sha', () => {
+    const r = gitReal(repoDescartavel(true))(['rev-parse', '--verify', '--quiet', 'origin/main']);
     expect(r.status).toBe(0);
     expect(r.stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('em repo git SEM a ref, status ≠ 0 — é o estado do checkout raso, e o guard tem de fechar', () => {
+    const r = gitReal(repoDescartavel(false))(['rev-parse', '--verify', '--quiet', 'origin/main']);
+    expect(r.status).not.toBe(0);
   });
 
   it('fora de um repo git, status ≠ 0 — o guard cai no ramo fail-CLOSED, não no aprovado', () => {
