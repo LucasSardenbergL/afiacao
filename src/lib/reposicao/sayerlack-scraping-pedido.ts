@@ -76,7 +76,12 @@ export function derivarCustos(res: ResultadoMatch): { updates: CustoUpdate[]; pu
     if (!Number.isFinite(qtde) || !(qtde > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'qtde_invalida' }); continue; }
     const unit = total / qtde;
     if (!Number.isFinite(unit) || !(unit > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'custo_invalido' }); continue; }
-    if (round2(total) === round2(qtde * c.item.preco_atual)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'sem_mudanca' }); continue; }
+    // Pular por `round2(...) === round2(...)` comparava a CENTAVOS o que o checksum valida em precisão
+    // CHEIA: dois itens pulados podiam carregar ~meio centavo cada, o conjunto PERSISTIDO divergia do
+    // DOM acima da tolerância, e o checksum passava assim mesmo — ele valida o DOM, não o que fica
+    // gravado (Codex 2026-09-06). Só é 'sem_mudanca' o que é igual de verdade; 1e-9 absorve o ruído
+    // binário de `qtde * preco`, quatro ordens de grandeza abaixo do centavo que interessa.
+    if (Math.abs(total - qtde * c.item.preco_atual) < 1e-9) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'sem_mudanca' }); continue; }
     updates.push({ item_id: c.item.item_id, preco_unitario: unit, valor_linha: total }); // precisão cheia
   }
   return { updates, pulados };
