@@ -345,7 +345,11 @@ function gravarManifesto(m: Manifesto, raiz: string): void {
 }
 
 function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) => void) {
-  const alvo = SONDA_CRON_ALVOS.find((a) => a.edge === edge) as (typeof SONDA_CRON_ALVOS)[number];
+  // Default-deny também aqui: só se prova o que o cron vai sondar (o `executar` relê a entrada
+  // para pegar os controles; esta checagem é a que dá mensagem legível se alguém chamar direto).
+  if (!SONDA_CRON_ALVOS.some((a) => a.edge === edge)) {
+    throw new Mecanica(`${edge}: fora da allowlist — provar edge que o cron não sonda não significa nada`);
+  }
   const closures = enumerarClosures(edge, raiz);
   const ruins: string[] = [];
   let passa = 0;
