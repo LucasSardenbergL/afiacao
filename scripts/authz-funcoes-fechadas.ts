@@ -97,6 +97,13 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
   // `authenticated` em reposicao_selar_pedido permite selar direto e depois flipar o status,
   // contornando a autorização por ESTADO da M2. Quando for revogado, estas duas saem de
   // PORTA_GATE e passam a PORTA_FECHADA (e a entrada correspondente migra para ACKNOWLEDGED).
+  //
+  // ⚠️ ATÉ O APPLY MANUAL DA 20260906170000, `bun run authz:funcoes:prod` reporta as duas como
+  // [FUNCAO_AUSENTE_EM_PROD] e o carimbo carrega o achado como ⚠️ (não ❌). Isso é CORRETO e não
+  // é drift: elas não existem no banco porque a migration não foi colada — merge ≠ produção
+  // (database.md §2). Não silencie o achado tirando a entrada: sem ela o `authz:check` estático
+  // reprova a migration por SECDEF sensível não classificada, que é o gate que ela existe para
+  // satisfazer. O achado some sozinho no primeiro carimbo depois do apply.
   'public.reposicao_selar_pedido': {
     fechadaPor: '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql',
     permitido: PORTA_GATE,
