@@ -153,33 +153,51 @@ iguais, a viagem é inverificável e o bump vira pré-requisito, não consequên
 #1889 as três falhavam nisso, uma delas por canária NÃO-VERSIONADA (a ⚠️ #2 acima).
 → `docs/historico/deploy-no-op-por-desenho.md`
 
-**Como o founder invoca uma probe sem terminal** (ele não tem acesso de shell ao backend): cole no **SQL Editor do Lovable** — o segredo sai do vault, nunca do chat — e leia a resposta em `net._http_response`. Mesmo mecanismo do cron, com `timeout_milliseconds` EXPLÍCITO (default 5s mata silencioso). Trocando `action`/`url`, serve para as outras probes:
+**Como o founder invoca uma probe sem terminal** (ele não tem acesso de shell ao backend): cole no **SQL Editor do Lovable** — o segredo sai do vault, nunca do chat. Trocando `url`/`action`, serve para as outras probes.
+
+⚠️ **São DOIS blocos, e com o que está instalado fundi-los é IMPOSSÍVEL — a limitação é estrutural, não ergonômica.** O `net.http_post` só **enfileira** (`INSERT INTO net.http_request_queue … RETURNING id`); quem despacha é um **worker de fundo, em outra conexão**, que enxerga apenas linha **COMMITADA**. E o SQL Editor roda o que você cola como **UMA transação** (provado neste repo: um erro de sintaxe faz rollback do batch inteiro). Logo, dentro do mesmo bloco a requisição **ainda não saiu**, e nenhum truque contorna: `DO … PERFORM pg_sleep(20)` dorme ANTES do envio e lê zero linhas; temp table no mesmo batch idem (e num batch novo ela já morreu com a sessão); `\gset` é sintaxe do **cliente psql**, que não existe num editor web. Confirmado ao vivo 2026-08-24 — batch abortado ⇒ `http_request_queue` vazia e zero sondas disparadas. O que resolveria de fato é extensão: `http` (pgsql-http, síncrono, resposta na MESMA query) ou `dblink` (commit autônomo) — as duas **disponíveis e NÃO instaladas** neste banco, e instalar é mudança de banco em prod money-path, fora do escopo de uma receita de verificação.
+
+**O que muda então: o `request_id` nunca passa pela mão do founder.** O passo 1 dispara **e escreve o passo 2 já pronto, com o id embutido**, numa célula única — copia-se a célula, não se lê nem se redigita número nenhum. Foi exatamente esse pulo humano que fabricou veredito em 2026-08-24 → [`sonda-request-id-a-mao.md`](../historico/sonda-request-id-a-mao.md).
 
 ```sql
-SELECT net.http_post(
-  url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-financeiro',
-  headers := jsonb_build_object('Content-Type','application/json',
-    'x-cron-secret',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
-  body := jsonb_build_object('action','paginacao_probe'),
-  timeout_milliseconds := 20000) AS request_id;
--- ANOTE o request_id devolvido acima e TROQUE o marcador abaixo por ele. ~5s depois, na MESMA aba:
--- ⚠️ COALESCE: a `omie-analytics-sync` responde `{success,data:{...}}` (envelope de action), as
--- demais respondem no TOPO. Sem descer no `data`, a leitura devolve NULL nela — e NULL lido como
--- "não tem canária" é ausência de dado virando veredito. O `corpo` abaixo serve as duas formas.
-WITH r AS (
-  SELECT status_code,
-         COALESCE(content::jsonb->'data', content::jsonb) AS corpo
-  FROM net._http_response WHERE id = COLE_AQUI_O_REQUEST_ID  -- NÃO `ORDER BY id DESC LIMIT 1`, NÃO um nº de exemplo
+-- PASSO 1 — dispara a sonda E ESCREVE O PASSO 2. Copie inteira a célula devolvida.
+--   Para outra probe, troque em 3 lugares: edge_esperada, a url e o corpo (action/canary).
+WITH disparo AS (
+  SELECT 'omie-financeiro'::text AS edge_esperada,
+         net.http_post(
+           url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-financeiro',
+           headers := jsonb_build_object('Content-Type','application/json',
+             'x-cron-secret',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
+           body := jsonb_build_object('action','paginacao_probe'),
+           timeout_milliseconds := 20000) AS request_id  -- EXPLÍCITO: o default de 5s mata silencioso
 )
-SELECT status_code, corpo->'canary' AS canary, corpo->>'contrato' AS contrato, corpo->'ok' AS ok,
+SELECT format($f$
+-- PASSO 2 — espere ~5s e rode ISTO. O id já veio embutido: não há campo a preencher.
+WITH alvo AS (SELECT %1$s::bigint AS id, %2$L::text AS edge_esperada),
+     r AS (SELECT a.id, a.edge_esperada, h.status_code,
+                  -- COALESCE: a `omie-analytics-sync` responde {success,data:{…}}; as demais no TOPO.
+                  COALESCE(content::jsonb->'data', content::jsonb) AS corpo
+           FROM alvo a LEFT JOIN net._http_response h ON h.id = a.id)  -- LEFT: devolve 1 linha SEMPRE
+SELECT id AS request_id, edge_esperada, status_code,
+       corpo->>'edge' AS edge, corpo->>'versao' AS versao, corpo->>'contrato' AS contrato,
+       corpo->'probe' AS probe, corpo->'canary' AS canary, corpo->'ok' AS ok,
        (SELECT jsonb_agg(c->'caso') FROM jsonb_array_elements(corpo->'casos') c
-        WHERE (c->>'ok')::bool IS NOT TRUE) AS casos_vermelhos
+         WHERE (c->>'ok')::bool IS NOT TRUE) AS casos_vermelhos,
+       CASE WHEN corpo IS NULL                  THEN 'AGUARDE - sem resposta ainda (ou expirada: retencao ~6h)'
+            WHEN corpo->>'edge' = edge_esperada THEN 'SONDA - leia versao/contrato ao lado'
+            WHEN corpo->>'edge' IS NOT NULL     THEN 'ID TROCADO A MAO - respondeu OUTRA edge'
+            WHEN status_code >= 400             THEN 'BUNDLE VELHO recusou na borda - nada executou'
+            ELSE 'BUNDLE PRE-SENSOR - ignorou o probe e RODOU o fluxo real' END AS leitura
 FROM r;
+$f$, request_id, edge_esperada) AS passo_2_copie_esta_celula
+FROM disparo;
 ```
 
-⚠️ **`ORDER BY id DESC LIMIT 1` fabrica veredito NEGATIVO — leia pelo `request_id`.** Este banco recebe resposta de cron o tempo todo (só o watchdog responde a cada ~5 min, e há timestamps com DUAS respostas no mesmo microssegundo), então "a última linha" quase nunca é a sua: entre disparar e ler, um tick alheio entra na frente. Mordido ao vivo em 2026-08-23, com a receita desta seção: a sonda da `recommend` respondeu `{"ok":true,"probe":true,"versao":"v1.5-…","edge":"recommend"}` no id 58859, o `SELECT` pegou o 58858 (`{"modo":"watchdog",…}`, 41s antes) e devolveu `edge NULL, versao NULL, status_code 200` — que é **exatamente a assinatura de "bundle pré-sensor ignorou o probe e rodou o fluxo real"** (armadilha 1 abaixo). Um deploy correto lido como deploy ausente, e o desfecho seguinte é redeployar uma edge money-path à toa. O `id` de `net._http_response` **é** o `request_id` devolvido pelo `net.http_post` — filtrar por ele é determinístico e não custa nada. Sem o número em mãos, o desempate possível é `WHERE content::jsonb->>'edge' = '<nome-da-edge>'` (o campo nasceu para isso), mas ele **degrada para zero linhas** justamente no caso que mais importa — bundle velho não emite `edge` —, e zero linhas é indistinguível de "a resposta ainda não chegou": aí confirme com `SELECT max(id) FROM net._http_response` antes de concluir.
+**Por que `edge`/`versao`/`contrato` estão na projeção — e por que o `CASE` só é honesto com o id vindo do banco.** Resposta de cron **não emite `edge`**: medido nesta tabela em 2026-08-24, **159 respostas em 355 min (uma a cada ~2,2 min) e ZERO com o campo**. Na receita antiga, `edge NULL` significava DUAS coisas — "bundle pré-sensor" **ou** "li a linha de outro emissor" — e a segunda, que era a que acontecia, não tinha como se denunciar. Carregando o id por dentro do banco, a linha lida **é** a do meu request por construção: `edge NULL` volta a significar uma coisa só, e o ramo `ID TROCADO A MAO` só dispara se alguém editar o número à mão. A proteção aqui é **estrutural** (o humano saiu do caminho do id), não um check na saída — nenhuma coluna consegue acusar "você leu a linha errada" quando a linha errada é um cron mudo.
 
-⚠️ **Número de EXEMPLO no `WHERE id =` erra CALADO — é PIOR que o placeholder.** Variante da anterior, mordida 2026-08-23/24 na MESMA verificação, e é a Lei de Ferro #5 (`zero placeholders`) pelo avesso: o `<VALOR>` não substituído falha **ruidoso** — `<nome-da-edge>` deixado na URL rendeu dois `404 {"code":"NOT_FOUND"}` do **gateway** (ids 58965/58966): 2 chamadas perdidas e **zero veredito falso**. Já a "correção" que trocou o marcador por um id PLAUSÍVEL (`WHERE id = 58967`) não falhou — devolveu uma linha REAL de outro emissor. O probe era o **58977** (`{"ok":true,"probe":true,"versao":"v1.0-prompt-invertido-cacheado","edge":"analyze-unified-order"}`, verde); o 58967 era o tick do watchdog de 01:20:00Z, e `{"modo":"watchdog","conciliacao":0,"duracao_ms":193}` projeta `edge NULL, status_code 200, versao NULL` — **byte a byte** a assinatura de bundle pré-sensor. Deploy CORRETO lido como ausente, mesmo desfecho da ⚠️ acima (redeployar edge money-path à toa), e **nada na saída denuncia** que se leu o alvo errado. Não é azar: medido nesta tabela em 2026-08-24, **198 respostas em 355 min — uma nova a cada ~1,8 min, e ZERO delas emitindo `edge`** ⇒ id vizinho é tick alheio por padrão. **Regra: em receita de verificação, o campo que o founder substitui NUNCA carrega valor de EXEMPLO** — deixe-o sintaticamente inválido de propósito (`COLE_AQUI_O_REQUEST_ID` devolve `ERROR: column "cole_aqui_o_request_id" does not exist`, que ecoa a própria instrução), ou leia pelo `edge` do corpo com o guard de zero-linhas acima. Vale para TODA receita, não só esta: `id`, timestamp, ref de projeto, nº de PR. ⚠️ **"Inválido" é a regra do bloco que só LÊ** — no bloco que DISPARA (lote, abaixo) o placeholder é VÁLIDO e a trava real vai no `CASE`: lá o inválido aborta o batch inteiro por rollback, o que protege por ACIDENTE e mata a leitura junto. O eixo não é a sintaxe, é o que o campo errado CUSTA: numa leitura, ler a linha de outro emissor; num disparo, executar o efeito.
+⚠️ **Por que o bloco acima carrega o id por dentro: `ORDER BY id DESC LIMIT 1` fabrica veredito NEGATIVO.** As três ⚠️ desta subseção são o histórico da receita de DOIS passos com o número copiado à mão — hoje o passo 2 nasce com o id embutido e nenhuma delas é alcançável pelo caminho principal. Continuam valendo para o **fallback manual** (célula perdida, sonda disparada por outra via) e para qualquer receita nova. Este banco recebe resposta de cron o tempo todo (só o watchdog responde a cada ~5 min, e há timestamps com DUAS respostas no mesmo microssegundo), então "a última linha" quase nunca é a sua: entre disparar e ler, um tick alheio entra na frente. Mordido ao vivo em 2026-08-23, com a receita desta seção: a sonda da `recommend` respondeu `{"ok":true,"probe":true,"versao":"v1.5-…","edge":"recommend"}` no id 58859, o `SELECT` pegou o 58858 (`{"modo":"watchdog",…}`, 41s antes) e devolveu `edge NULL, versao NULL, status_code 200` — que é **exatamente a assinatura de "bundle pré-sensor ignorou o probe e rodou o fluxo real"** (armadilha 1 abaixo). Um deploy correto lido como deploy ausente, e o desfecho seguinte é redeployar uma edge money-path à toa. O `id` de `net._http_response` **é** o `request_id` devolvido pelo `net.http_post` — filtrar por ele é determinístico e não custa nada. Sem o número em mãos, o desempate possível é `WHERE content::jsonb->>'edge' = '<nome-da-edge>'` (o campo nasceu para isso), mas ele **degrada para zero linhas** justamente no caso que mais importa — bundle velho não emite `edge` —, e zero linhas é indistinguível de "a resposta ainda não chegou": aí confirme com `SELECT max(id) FROM net._http_response` antes de concluir.
+
+⚠️ **Número de EXEMPLO no `WHERE id =` erra CALADO — é PIOR que o placeholder.** Variante da anterior, mordida 2026-08-23/24 na MESMA verificação, e é a Lei de Ferro #5 (`zero placeholders`) pelo avesso: o `<VALOR>` não substituído falha **ruidoso** — `<nome-da-edge>` deixado na URL rendeu dois `404 {"code":"NOT_FOUND"}` do **gateway** (ids 58965/58966): 2 chamadas perdidas e **zero veredito falso**. Já a "correção" que trocou o marcador por um id PLAUSÍVEL (`WHERE id = 58967`) não falhou — devolveu uma linha REAL de outro emissor. O probe era o **58977** (`{"ok":true,"probe":true,"versao":"v1.0-prompt-invertido-cacheado","edge":"analyze-unified-order"}`, verde); o 58967 era o tick do watchdog de 01:20:00Z, e `{"modo":"watchdog","conciliacao":0,"duracao_ms":193}` projeta `edge NULL, status_code 200, versao NULL` — **byte a byte** a assinatura de bundle pré-sensor. Deploy CORRETO lido como ausente, mesmo desfecho da ⚠️ acima (redeployar edge money-path à toa), e **nada na saída denuncia** que se leu o alvo errado. Não é azar: medido nesta tabela em 2026-08-24, **198 respostas em 355 min — uma nova a cada ~1,8 min, e ZERO delas emitindo `edge`** ⇒ id vizinho é tick alheio por padrão. **Regra: em receita de verificação, o campo que o founder substitui NUNCA carrega valor de EXEMPLO** — deixe-o sintaticamente inválido de propósito (`COLE_AQUI_O_REQUEST_ID` devolve `ERROR: column "cole_aqui_o_request_id" does not exist`, que ecoa a própria instrução), ou leia pelo `edge` do corpo com o guard de zero-linhas acima. Vale para TODA receita, não só esta: `id`, timestamp, ref de projeto, nº de PR. ⚠️ **E a lição mais forte veio depois (2026-08-24): campo que o founder preenche à mão é campo que se deve ELIMINAR, não deixar inválido.** Placeholder inválido protege contra o esquecimento, nunca contra a substituição ERRADA — o número plausível continua entrando. Quando o valor pode ser carregado pelo próprio banco (aqui, o `format()` que escreve o passo 2), carregue: some-se a classe inteira em vez de sinalizá-la. → [`sonda-request-id-a-mao.md`](../historico/sonda-request-id-a-mao.md) ⚠️ **"Inválido" é a regra do bloco que só LÊ** — no bloco que DISPARA (lote, abaixo) o placeholder é VÁLIDO e a trava real vai no `CASE`: lá o inválido aborta o batch inteiro por rollback, o que protege por ACIDENTE e mata a leitura junto. O eixo não é a sintaxe, é o que o campo errado CUSTA: numa leitura, ler a linha de outro emissor; num disparo, executar o efeito.
 
 ⚠️ **Edge NOVA nasce fora do radar, e nenhum gate de sonda reclama.** O universo de `sonda:bump` e
 `sonda:fingerprint` são as edges **instrumentadas**, e o denominador de `pendencias:deploy` sai do
@@ -318,6 +336,13 @@ ANTIGO e o controle avaliza indevidamente. O ramo **estreita** muito o erro (ant
 incondicional), não o elimina; na próxima execução dos crons a recusa vira 401 e o controle se
 desqualifica sozinho. Regra prática: **se você acabou de mexer no vault, leia o veredito determinado
 como INDETERMINADO.**
+
+- ⚠️ **O JSON colado aqui é o análogo do `request_id` do bloco de cima — e continua passando pela mão.** A
+  diferença é que o dano já está contido: com `FROM esperado LEFT JOIN ids` (bullet abaixo), colar o blob errado
+  faz **toda** edge esperada aparecer sem id, o que se lê como erro em vez de virar veredito. Ainda assim, o
+  `format()` do bloco de cima **se aplica igual** e é estritamente melhor: o passo 1 pode escrever o passo 2 com o
+  mapa `edge→id` já embutido, e aí não há blob a transportar. Enquanto não for migrado, o `LEFT JOIN` é
+  obrigatório, não opcional — é ele que segura a classe aqui.
 
 - ⚠️ **A trava do bloco perigoso tem de ser `CASE`, NÃO `WHERE`.** Quando parte da leva só pode ser sondada
   DEPOIS do deploy confirmado (bundle pré-sensor ignora o `probe` e dispara o run), a tentação é
