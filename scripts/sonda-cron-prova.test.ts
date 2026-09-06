@@ -25,7 +25,7 @@ describe('gateG1 — o ramo dentro do bloco OPTIONS, antes do CORS', () => {
     expect(gateG1('monthly-report', OPTIONS_OK)).toBeNull();
   });
   it('reprova ramo ausente, NOMEANDO a edge', () => {
-    const sem = OPTIONS_OK.replace(/    const sonda[^\n]*\n    if \(sonda\) return sonda;\n/, '');
+    const sem = OPTIONS_OK.replace(/ {4}const sonda[^\n]*\n {4}if \(sonda\) return sonda;\n/, '');
     expect(gateG1('monthly-report', sem)).toMatch(/monthly-report.*atenderSondaOptions/);
   });
   it('reprova ramo DEPOIS do return de CORS (código morto)', () => {

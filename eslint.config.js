@@ -11,7 +11,10 @@ export default tseslint.config(
   // supabase/functions/mcp/** é o BUNDLE auto-gerado pelo @lovable.dev/mcp-js (banner "do not edit";
   // o Vite plugin regenera do fonte src/lib/mcp). O bundler emite `var` (no-var) e re-minifica a cada
   // build — lintar o artefato é ruído. A FONTE (src/lib/mcp/**) continua lintada normalmente.
-  { ignores: ["dist", ".claude/**", ".claire/**", "supabase/functions/mcp/**"] },
+  // `supabase/harness-sonda-rollback/sinteticos/**` são FIXTURES que imitam bundles históricos de
+  // edge (com `as any` e afins, como o código de 2026-02 realmente era). Lintá-los mede a coisa
+  // errada: o que importa neles é o COMPORTAMENTO que o runner executa, não o estilo.
+  { ignores: ["dist", ".claude/**", ".claire/**", "supabase/functions/mcp/**", "supabase/harness-sonda-rollback/sinteticos/**"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

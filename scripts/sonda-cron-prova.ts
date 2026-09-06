@@ -76,7 +76,7 @@ export function pontoFixoDeArquivos(
   historico: (arquivos: string[]) => string[],
   fechoEm: (sha: string) => string[],
 ): { arquivos: string[]; shas: string[] } {
-  let arquivos = new Set(inicial);
+  const arquivos = new Set(inicial);
   let shas = new Set<string>();
   for (let i = 0; i < 20; i++) {
     const novos = historico([...arquivos]);
@@ -268,8 +268,6 @@ export function gateG1(edge: string, codigo: string): string | null {
  */
 export function gateG3(codigoCru: string): string | null {
   const codigo = removerComentarios(codigoCru);
-  const descartadas = codigoCru.split('\n').length - codigo.split('\n').filter((l, i) => codigoCru.split('\n')[i] !== undefined).length;
-  void descartadas;
   const n = (codigo.match(/\bfetch\(/g) ?? []).length;
   if (n !== 1) return `relé: ${n} chamada(s) a fetch( no código (sem comentários) — tem de ser exatamente 1`;
   // O argumento do fetch tem de ser a VARIÁVEL que nasceu em `montarRequestSonda` e passou pela
