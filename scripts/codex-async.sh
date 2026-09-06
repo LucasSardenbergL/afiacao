@@ -24,7 +24,8 @@
 #   - cota esgotada NÃO é transitório → falha na hora instruindo o Caminho B;
 #   - modelo recusado pela conta (400) → exit 78, instruindo CONFIG (≠ cota, ≠ retry);
 #   - mktemp XXXXXX (sem colisão de tmp entre execuções paralelas);
-#   - sandbox read-only (consulta nunca escreve no repo).
+#   - sandbox read-only (consulta nunca escreve no repo);
+#   - CUSTO no cabeçalho (segundos da tentativa vencedora + tokens), pro registro no PR.
 set -u
 
 # gpt-6-astra exige codex-cli ≥ 0.153.1 (lançado 2026-09-03; o cask `codex` do brew subiu
@@ -101,6 +102,61 @@ plano_do_token() {
     | head -1 | grep . || printf 'desconhecido'
 }
 
+# --- sensor de custo: segundos + tokens ---------------------------------------
+# Desde 2026-09-05 cada consult registra no PR nível + segundos + tokens (money-path.md
+# §Segunda opinião → "Nível de reasoning"); é o sensor de que o piloto do `ultra` depende.
+#
+# ⚠️ POR QUE NÃO `codex exec --json`, que seria o caminho óbvio (medido 2026-09-05, codex-cli
+# 0.153.4, conta paga, este worktree — duas execuções reais por modo, sucesso e 400):
+#   1. `--json` REROTEIA O DIAGNÓSTICO. Sem ele, o stderr traz o log inteiro (eco do prompt,
+#      warnings, linhas `ERROR:`) e o stdout traz só a última mensagem. Com `--json`, o stderr
+#      encolhe para uma linha ("Reading additional input from stdin...", 39 bytes medidos) e o
+#      erro migra para o stdout como eventos `{"type":"error"...}` / `turn.failed`. TODA a
+#      classificação abaixo lê o stderr — cota→75, modelo→78, permanente, transitório —, com as
+#      lições que custaram 2 dias. Trocar a fonte por causa de um SENSOR poria o guard em risco.
+#   2. `--json` MUDA O EIXO DO NÚMERO. O `turn.completed.usage` reporta `input_tokens` (19.985
+#      medidos, com 12.160 de cache) enquanto o rodapé textual da mesma classe de execução diz
+#      7.823 — o rodapé cobra o NÃO-cacheado. As medições já registradas (xhigh 10,0k · max
+#      14,2k · ultra 5,2k, em CLAUDE.md e money-path.md) vieram do rodapé: publicar `input_tokens`
+#      trocaria a régua no meio do piloto, que é comparação de consumo entre níveis.
+# ⇒ lê-se o rodapé textual. Se um dia ele sumir, o cabeçalho degrada para `tokens ?` — é sensor,
+#   não guard: ausente ≠ zero, e fabricar 0 registraria um consult que "não custou nada".
+
+# stderr sem as linhas que vieram do ECO do prompt (awk O(n+m); ver a nota longa da
+# classificação, mais abaixo, sobre por que NÃO se usa `grep -Fvxf` nem filtro por prefixo).
+sem_eco_do_prompt() {
+  awk 'NR==FNR{p[$0];next} !($0 in p)' <(printf '%s\n' "$prompt") "$1" 2>/dev/null
+}
+
+# rodapé de custo do codex: as DUAS últimas linhas do stderr são `tokens used` e o número
+# ("7.823" — separador de milhar; imprime-se LITERAL, sem reformatar, pra não inventar locale).
+# Recebe o ARQUIVO de stderr; imprime o número ou NADA (ausente — quem chama imprime "?").
+#
+# O prompt não pode decidir o número — mesma lição da classificação de erro logo abaixo, e o
+# ritual cola parecer anterior (com rodapé!) dentro do prompt o tempo todo. Duas camadas
+# INDEPENDENTES, cada uma com seu caso na suíte:
+#   (a) POSIÇÃO: lê as duas últimas linhas não-vazias, não a última ocorrência do marcador.
+#       Buscar o marcador acharia a citação colada no prompt sempre que o codex não emitisse
+#       rodapé nenhum.
+#   (b) CAUDA DO ECO: o stderr reimprime o prompt inteiro sob "user"; se o stderr TERMINA
+#       exatamente nas duas últimas linhas do prompt, o que se está lendo é o eco, não o
+#       rodapé → devolve vazio. É o único jeito de o eco chegar ao fim do arquivo.
+# Por que (b) e não "remover toda linha igual a alguma do prompt", como faz a classificação:
+# lá o alvo é o BLOCO inteiro do eco; aqui isso apagaria também o marcador REAL sempre que o
+# prompt citasse "tokens used" no meio — perder o sensor no consult meta (o que discute este
+# wrapper) é justamente o caso em que ele interessa. Medido: com a remoção total, o caso
+# "prompt cita rodapé antigo + codex responde com rodapé" degradava para "?" sem precisar.
+tokens_do_rodape() {
+  awk '
+    NR==FNR { if (NF) { pp = pu; pu = $0 }; next }   # cauda do PROMPT (2 últimas não-vazias)
+    NF      { ep = eu; eu = $0 }                     # cauda do STDERR
+    END {
+      if (eu == pu && ep == pp) exit                 # o fim do stderr É o fim do eco → ambíguo
+      if (ep ~ /^[[:space:]]*tokens used[[:space:]]*$/ &&
+          eu ~ /^[[:space:]]*[0-9][0-9.,]*[[:space:]]*$/) { gsub(/[[:space:]]/, "", eu); print eu }
+    }' <(printf '%s\n' "$prompt") "$1"
+}
+
 out="$(mktemp -t codex-async.XXXXXX)" || exit 70
 err="$(mktemp -t codex-async-err.XXXXXX)" || exit 70
 trap 'rm -f "$err"' EXIT
@@ -113,6 +169,9 @@ for backoff in "${backoffs[@]}"; do
   tentativa=$((tentativa+1))
   [ "$backoff" -gt 0 ] && { echo "retry em ${backoff}s (tentativa $tentativa)…" >&2; sleep "$backoff"; }
 
+  # relógio DESTA tentativa (o backoff acima fica de fora de propósito: o que o PR registra
+  # é quanto o Codex levou para responder, não quanto o wrapper esperou entre tentativas)
+  t_ini=$(date +%s)
   # hard-stop próprio: codex às vezes trava com processo vivo (money-path.md)
   codex exec --model "$modelo" -c model_reasoning_effort="$reasoning" \
     --sandbox read-only "$prompt" >"$out" 2>"$err" &
@@ -123,11 +182,14 @@ for backoff in "${backoffs[@]}"; do
   ( sleep "$timeout_s" && kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   watchdog=$!
   wait "$pid"; rc=$?
+  segundos=$(( $(date +%s) - t_ini ))
   kill "$watchdog" 2>/dev/null
   wait "$watchdog" 2>/dev/null
 
   if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
-    echo "=== PARECER CODEX (modelo $modelo · reasoning $reasoning · tentativa $tentativa) ==="
+    tokens="$(tokens_do_rodape "$err")"
+    if [ -n "$tokens" ]; then custo="$tokens tokens"; else custo="tokens ?"; fi
+    echo "=== PARECER CODEX (modelo $modelo · reasoning $reasoning · tentativa $tentativa · ${segundos}s · $custo) ==="
     cat "$out"
     echo
     echo "(cópia em $out)"
@@ -157,7 +219,7 @@ for backoff in "${backoffs[@]}"; do
   # ritual — o BSD grep do macOS leva 29s POR TENTATIVA (O(n·m)), ~2min nas 3. O GNU grep
   # do CI e o ugrep resolvem na hora, então a lentidão seria invisível no CI e só doeria na
   # máquina do founder. awk é O(n+m): <1s com 50.000 linhas. (medido 2026-08-22)
-  diag="$(awk 'NR==FNR{p[$0];next} !($0 in p)' <(printf '%s\n' "$prompt") "$err" 2>/dev/null)"
+  diag="$(sem_eco_do_prompt "$err")"
   classifica() { printf '%s\n' "$diag" | grep -qiE "$1"; }
 
   # cota esgotada = NÃO-transitório → Caminho B na hora (money-path.md)
