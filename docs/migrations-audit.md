@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **514** custom migrations totais
+- **515** custom migrations totais
 - **1753** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 539
@@ -4292,6 +4292,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.deploy-sonda-cron` | — |
 | `rls_policy` | `public.deploy_sonda_alvos_select_staff` | `deploy_sonda_alvos` |
 | `rls_policy` | `public.deploy_sonda_disparos_select_staff` | `deploy_sonda_disparos` |
+
+### `20260906154202_cancelar_pedido_revoke_anon.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
