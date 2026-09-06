@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 522
+-- Total de custom migrations: 523
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -563,7 +563,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260906164002', 'captura_authz_escopo_carteira_farmer', '20260906164002_captura_authz_escopo_carteira_farmer.sql'),
   ('20260906165706', 'aprovar_pedido_revoke_anon', '20260906165706_aprovar_pedido_revoke_anon.sql'),
   ('20260906172718', 'cancelamento_pos_disparo_gate_canonico', '20260906172718_cancelamento_pos_disparo_gate_canonico.sql'),
-  ('20260906180303', 'deploy_sonda_resultados', '20260906180303_deploy_sonda_resultados.sql')
+  ('20260906180303', 'deploy_sonda_resultados', '20260906180303_deploy_sonda_resultados.sql'),
+  ('20260906193522', 'valor_total_portal_provado', '20260906193522_valor_total_portal_provado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2325,7 +2326,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_edge', 'deploy_sonda_resultados'),
   ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_tick', 'deploy_sonda_resultados'),
   ('deploy_sonda_resultados', 'cron_job', 'cron', 'deploy-sonda-resultados-colher', ''),
-  ('deploy_sonda_resultados', 'rls_policy', 'public', 'deploy_sonda_resultados_select_staff', 'deploy_sonda_resultados')
+  ('deploy_sonda_resultados', 'rls_policy', 'public', 'deploy_sonda_resultados_select_staff', 'deploy_sonda_resultados'),
+  ('valor_total_portal_provado', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4135,7 +4137,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_edge', 'deploy_sonda_resultados'),
   ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_tick', 'deploy_sonda_resultados'),
   ('deploy_sonda_resultados', 'cron_job', 'cron', 'deploy-sonda-resultados-colher', ''),
-  ('deploy_sonda_resultados', 'rls_policy', 'public', 'deploy_sonda_resultados_select_staff', 'deploy_sonda_resultados')
+  ('deploy_sonda_resultados', 'rls_policy', 'public', 'deploy_sonda_resultados_select_staff', 'deploy_sonda_resultados'),
+  ('valor_total_portal_provado', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
 )
 SELECT
   e.migration,
@@ -4163,7 +4166,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 103.
+-- Funções redefinidas com corpo extraível: 104.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4549,6 +4552,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'reconciliar_pedidos_omie', 1, '20260830190000_reconciliar_pedidos_omie.sql', '80a1000a7a543c8e3dfc756f4ab4df97'),
   ('public', 'reconciliar_pedidos_omie', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'cad0126b11adcbc4946da1c4566b26f5'),
+  ('public', 'sayerlack_aplicar_custo_portal', 1, '20260905090000_sayerlack_custo_portal_cas.sql', 'ad876e8c210428971511537d07f019e6'),
+  ('public', 'sayerlack_aplicar_custo_portal', 2, '20260906193522_valor_total_portal_provado.sql', 'b7ddc0e52eb4e7e23b9febf0ff8e5a98'),
   ('public', 'corrigir_cancelamento_pos_disparo', 1, '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql', '846b7fd56ccda97c8a53e529a5ff182c'),
   ('public', 'corrigir_cancelamento_pos_disparo', 2, '20260906172718_cancelamento_pos_disparo_gate_canonico.sql', '4ca937b4befd086a05b610e4619db24c')
 ),

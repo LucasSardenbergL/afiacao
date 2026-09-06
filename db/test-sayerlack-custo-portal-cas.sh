@@ -244,7 +244,9 @@ eq "C1 custo NÃO trocou depois de o PO existir" "$(estado 100)" "101:10/100,102
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): uma defesa por vez → exija VERMELHO → restaura com a migration REAL
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── falsificação ──"
-SAB="$(mktemp /tmp/sab-custo-cas.XXXXXX.sql)"
+# mktemp SEM sufixo após os X: o BSD (macOS) só substitui os X no FIM do template — com
+# `.XXXXXX.sql` ele cria o nome LITERAL e a 2ª execução na mesma máquina morre em "File exists".
+SAB="$(mktemp)"
 # sabota(<padrão sed>) — gera a migration FURADA a partir da real; aborta se o padrão não casou (no-op = teatro).
 sabota() {
   sed -e "$1" "$MIG" > "$SAB"
@@ -260,7 +262,7 @@ if [ "$R" = "RPC_OK_1" ]; then ok "F1 sem CAS de omie, o custo troca com PO exis
 restaura
 
 # F2 — sem a contagem ROW_COUNT == n: N4 tem de virar escrita PARCIAL persistida.
-sabota 's/IF v_afetadas <> v_n THEN/IF false THEN/'
+sabota 's/IF v_atualizados <> v_n THEN/IF false THEN/'
 R=$(rpc "100, '[{\"item_id\":101,\"preco_unitario\":12.5,\"valor_linha\":125},{\"item_id\":401,\"preco_unitario\":5,\"valor_linha\":50}]'::jsonb, 175")
 if [ "$R" = "RPC_OK_1" ] && [ "$(estado 100)" = "101:12.5/125,102:20/200,103:30/300|625" ]; then ok "F2 sem a contagem, custo MISTO persiste (N4 tem dente)"; else bad "F2 sabotei a contagem e N4 não mudou ($R / $(estado 100))"; fi
 restaura
