@@ -32,8 +32,13 @@ vi.mock('@/integrations/supabase/client', () => ({
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: FARMER }, isStaff: true, loading: false }),
 }));
+/** Lente MUTÁVEL — o sujeito troca sem a rota remontar, que é o cenário do defeito herdado. */
+let lente: { isImpersonating: boolean; effectiveUserId: string } = {
+  isImpersonating: false,
+  effectiveUserId: FARMER,
+};
 vi.mock('@/contexts/ImpersonationContext', () => ({
-  useImpersonation: () => ({ isImpersonating: false, effectiveUserId: FARMER }),
+  useImpersonation: () => lente,
 }));
 vi.mock('@/hooks/useMarkMixGapFeedback', () => ({
   useMarkMixGapFeedback: () => ({ mutate: vi.fn() }),
@@ -79,6 +84,7 @@ const COM_GAP = {
 };
 
 beforeEach(() => {
+  lente = { isImpersonating: false, effectiveUserId: FARMER };
   track.mockClear();
 });
 
@@ -447,5 +453,44 @@ describe('MixGapCard — o alfabeto do evento não muda por refactor', () => {
       .toBeGreaterThanOrEqual(3);
     expect(vistos.map((e) => e.desatualizado)).toEqual([null, 'erro', 'sem_rede']);
     vistos.forEach(conferirAlfabeto);
+  });
+});
+
+describe('MixGapCard — a dedup e o payload precisam conhecer o SUJEITO', () => {
+  // O mesmo defeito que a revisão retroativa do #1896 mediu no sensor IRMÃO
+  // (`carteira.positivacao_vista`), e que nasceu aqui no #1859: `trackedChave` é um ref que
+  // sobrevive à troca de `effectiveUserId`, porque `ImpersonationProvider` é Context e a rota NÃO
+  // remonta. A queryKey muda (`['my-mixgap', effectiveUserId]`) e o ref não — alvo diferente com o
+  // mesmo estado não emite. E sem `sob_lente` no payload o denominador de adoção conta staff
+  // impersonando como se fosse vendedor real. Consertar num sensor e não no outro é como a
+  // divergência começa: os dois alimentam a MESMA leitura de adoção da carteira.
+  const ALVO = 'vendedor-alvo';
+
+  it('sem lente, o payload marca sob_lente:false', async () => {
+    resposta = { data: COM_GAP, error: null };
+
+    renderCard();
+
+    await waitFor(() => expect(eventoVisto()).toBeTruthy());
+    expect(eventoVisto()!.sob_lente).toBe(false);
+  });
+
+  it('troca de alvo na lente "Ver como": emite DE NOVO, mesmo com o estado igual', async () => {
+    resposta = { data: COM_GAP, error: null };
+
+    const { rerender, qc } = renderCard();
+    await waitFor(() => expect(eventosVistos()).toHaveLength(1));
+
+    lente = { isImpersonating: true, effectiveUserId: ALVO };
+    rerender(
+      <QueryClientProvider client={qc}>
+        <MixGapCard />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(eventosVistos()).toHaveLength(2));
+    const segundo = eventosVistos()[1];
+    expect(segundo.estado, 'o estado é o MESMO — é o sujeito que mudou').toBe('com_gap');
+    expect(segundo.sob_lente, 'o 2º evento é do ALVO, sob a lente, e o payload tem de dizer').toBe(true);
   });
 });

@@ -24,7 +24,7 @@ export function HunterDashboard() {
   const qPositivacao = useMyPositivacao();
   const { data: positivacao } = qPositivacao;
   const estadoPositivacao = estadoDeLeitura(qPositivacao);
-  useSinalPositivacao(true);
+  useSinalPositivacao();
 
   return (
     <div className="container mx-auto p-4 space-y-4 max-w-5xl">

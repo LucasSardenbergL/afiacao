@@ -2105,3 +2105,67 @@ vínculo commit↔PR que o repo garante é o trailer, e ele se lê com
 `git log -1 --format=%s <sha> | grep -o '(#[0-9]*)'`. Confira ANTES de escrever o número num doc —
 um registro histórico com o PR errado aponta o leitor futuro para a discussão errada, e o erro é
 silencioso porque o número existe.
+## A correção dos 3 rótulos do #1896 (2026-08-23): rótulo com DEFAULT constante não é fato
+
+Os três achados que sobreviveram à verificação da revisão retroativa foram corrigidos juntos porque
+são a MESMA classe em três eixos: **um valor constante ocupando o lugar de um fato que ainda não foi
+lido**. `is_hunter:false` sem ter lido o papel, `sujeito ausente` na dedup, e `número velho sem
+marca de frescor` são todos a versão em rótulo do `Number(null)===0` do §2 do money-path.
+
+### A1 — o rótulo saiu do PARÂMETRO e foi para dentro do sensor
+
+O host fazia `useSinalPositivacao(commercialRole === 'hunter')`. Corrigir o host deixaria a fábrica
+de pé: **os dashboards passavam literal** (`useSinalPositivacao(true|false)`) e o gate
+`if (isLoading)` do `CommercialDashboard` **não cobre o offline** — com `networkMode:'online'` a
+query pausada tem `isLoading === false` (v5: `isPending && isFetching`) e `data ?? null` devolve
+`null`, então um hunter sem rede caía no `FarmerDashboardV2` e emitia `is_hunter:false` por outro
+caminho. Tirar o parâmetro da assinatura fecha os três hosts de uma vez: **não é disciplina, é
+estrutura** — não existe mais argumento a fabricar.
+
+⚠️ **O discriminante não é `isLoading`.** Foi a primeira correção óbvia e teria sido INERTE
+exatamente no caso medido. Quem responde "o papel é conhecido?" é o `estado` do `estadoDeLeitura`
+(mapeamento exaustivo de status × fetchStatus), e só `'pronta'` autoriza tratar `data` como fato.
+Por isso `useMyCommercialRole` passou a expor `estado` ao lado de `isLoading`.
+
+**Por que SEGURAR o evento em `carregando`, em vez de emitir `null` e corrigir depois:** emitir e
+corrigir custaria DOIS eventos por visita (denominador inflado, e ninguém depois sabe que as duas
+linhas são a mesma visita); emitir e não corrigir mantém a mentira. Segurando, `is_hunter:null`
+passa a significar uma coisa só e verdadeira: **a leitura do papel não chegou a desfecho**
+(offline/erro/desabilitada). O custo é o usuário que sai da tela dentro da janela de latência do
+papel — uma linha a MENOS, nunca uma linha ERRADA (precisão > recall).
+
+### A2 — o sujeito entra na CHAVE, o booleano entra no PAYLOAD
+
+`trackedEstado` sobrevivia à troca de `effectiveUserId` porque `ImpersonationProvider` é Context e a
+rota não remonta. A chave de dedup passou a ser `sujeito|estado:motivo`. O **id do alvo fica só na
+chave** (que é um ref local e nunca sai do browser); o que vai ao PostHog é `sob_lente: boolean` —
+para não contar staff como vendedor basta o booleano, e mandar uid de terceiro seria dado pessoal a
+mais sem uma pergunta a mais respondida.
+
+O mesmo defeito estava VIVO no irmão (`MixGapCard`, `useMyMixGap` também chaveia por
+`effectiveUserId`) e foi corrigido junto — dois sensores que alimentam a mesma leitura de adoção
+não podem divergir na disciplina de dedup.
+
+### A3 — `estado` descreve o DADO, `desatualizado` descreve o FRESCOR
+
+Com número no cache o estado é `'pronta'` mesmo que o refetch tenha falhado, e o número REAL vai
+junto (é o que o vendedor está olhando); o que muda é `desatualizado: 'erro'|'sem_rede'`. Sem número
+em mãos, `'erro'`/`'sem-rede'` e tudo `null`. A dedup precisa do motivo na chave, senão engole a
+transição "número fresco" → "número velho", que é o sinal de leitura falhando em campo.
+
+A tradução `'sem-rede'`→`'sem_rede'` saiu do `MixGapCard` para `src/lib/leitura/serie.ts`: um
+literal duplicado não diverge no dia em que é copiado, diverge no dia em que só um dos dois é
+tocado — que é literalmente o que aconteceu entre o #1892 e o #1896, com 1 dia de intervalo.
+
+**NÃO alinhado de propósito:** o `estado` deste evento continua `'sem-rede'` enquanto o do irmão é
+`'aguardando_rede'`. São eventos DIFERENTES com histórico próprio no PostHog; renomear partiria a
+série em duas que ninguém soma depois. O que precisava ser comum — a disciplina de dedup e o
+alfabeto do campo NOVO — está comum.
+
+### O harness: mock síncrono apaga a dimensão
+
+O teste de host não tinha COMO ver A1 nem A2 (`useMyCommercialRole` mockado síncrono com o valor
+final; `useImpersonation` fixo). O guard novo roda os hooks de VERDADE e dubla só a borda: o papel
+resolve por promessa controlada pelo teste, e a lente é um objeto MUTÁVEL entre renders. A helper
+`eventos()` devolve TODAS as chamadas do slug, não a última — contar é parte da asserção, senão um
+segundo escritor do mesmo slug inflaria o denominador com a suíte verde.

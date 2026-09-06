@@ -112,7 +112,10 @@ vi.mock('@/hooks/useFarmerScoring', () => ({
   useFarmerScoring: () => ({ agenda: [], clientScores: {}, loading: false }),
 }));
 vi.mock('@/hooks/useMyCommercialRole', () => ({
-  useMyCommercialRole: () => ({ data: null, isLoading: false }),
+  // `estado:'pronta'` = a leitura do papel ACONTECEU e respondeu "sem papel". Sem ele o sensor
+  // trataria o mock como papel desconhecido (`is_hunter:null`) e este harness voltaria a apagar a
+  // dimensão — que é o corolário medido na revisão retroativa do #1896.
+  useMyCommercialRole: () => ({ data: null, isLoading: false, estado: 'pronta' }),
 }));
 vi.mock('@/hooks/useMarkMixGapFeedback', () => ({
   useMarkMixGapFeedback: () => ({ mutate: vi.fn() }),

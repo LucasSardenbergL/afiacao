@@ -14,7 +14,8 @@ import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { buildPorQue } from '@/lib/mixgap/format';
 import { track } from '@/lib/analytics';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
-import { estadoDeLeitura, desatualizado, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
+import { estadoDeLeitura } from '@/lib/leitura/estado-de-leitura';
+import { motivoNaSerie, type MotivoDesatualizado } from '@/lib/leitura/serie';
 
 /**
  * O card colapsava TRÊS estados numa tela em branco só, e o evento só saía num deles.
@@ -71,19 +72,15 @@ import { estadoDeLeitura, desatualizado, type EstadoSemLeitura } from '@/lib/lei
  * literalmente o defeito que este card já teve duas vezes. O que fica LOCAL é o que é local de
  * verdade: `data === null` ("não é staff" — resposta da RPC, não estado de leitura) e a tradução do
  * motivo para a chave que a série do PostHog já usa.
+ *
+ * ── #1934 (revisão retroativa do #1896): a tradução do motivo (`'sem-rede'`→`'sem_rede'`) era um
+ * literal local AQUI, e o sensor irmão (`carteira.positivacao_vista`) nasceu 1 dia depois sem
+ * herdá-la — resultado medido: este card sabia separar "número fresco" de "número velho" e o irmão
+ * mandava número velho como fresco. Um literal duplicado não diverge no dia em que é copiado,
+ * diverge no dia em que só um dos dois é tocado. Agora os dois saem de `@/lib/leitura/serie`.
  */
 type EstadoMixGap = 'com_gap' | 'zero' | 'erro' | 'aguardando_rede';
 
-/**
- * O helper fala a língua da camada pura (`'sem-rede'`); a SÉRIE do PostHog já tem `sem_rede`
- * gravado desde o #1892. Renomear a chave partiria o histórico do evento em duas séries que
- * ninguém soma depois — então a tradução mora AQUI, na fronteira da telemetria, e não no helper.
- * O `satisfies` é o que a torna exaustiva: se `EstadoSemLeitura` ganhar um terceiro membro, isto
- * PARA DE COMPILAR em vez de mandar `undefined` para o PostHog.
- */
-const MOTIVO_NA_SERIE = { 'sem-rede': 'sem_rede', erro: 'erro' } as const satisfies Record<EstadoSemLeitura, string>;
-/** Por que o número na tela pode estar velho. `null` = acabou de ser lido com sucesso. */
-type MotivoDesatualizado = (typeof MOTIVO_NA_SERIE)[EstadoSemLeitura];
 
 function AvisoDesatualizado({ motivo }: { motivo: MotivoDesatualizado }) {
   const Icone = motivo === 'sem_rede' ? WifiOff : AlertTriangle;
@@ -101,7 +98,7 @@ function AvisoDesatualizado({ motivo }: { motivo: MotivoDesatualizado }) {
 export function MixGapCard() {
   const { data, status, fetchStatus } = useMyMixGap();
   const { mutate: markFeedback } = useMarkMixGapFeedback();
-  const { isImpersonating } = useImpersonation();
+  const { isImpersonating, effectiveUserId } = useImpersonation();
 
   // `status`+`fetchStatus` é a fatia INTEIRA que decide se a leitura aconteceu — a mesma que o
   // <AvisoLeituraFalhou>, o DataHealthBanner e o AlertasStack consomem. Derivar isto na mão aqui
@@ -119,8 +116,7 @@ export function MixGapCard() {
 
   // A precedência (`sem-rede` ganha de `erro`) e a razão de ela só decidir algo COM dado no cache
   // moram no helper, junto do teste que a falsifica — não replicadas aqui.
-  const motivo = desatualizado({ status, fetchStatus }, temDado);
-  const desatualizacao: MotivoDesatualizado | null = motivo === null ? null : MOTIVO_NA_SERIE[motivo];
+  const desatualizacao: MotivoDesatualizado | null = motivoNaSerie({ status, fetchStatus }, temDado);
 
   const estado: EstadoMixGap | null =
     semAcesso || leitura === 'desabilitada' || leitura === 'carregando'
@@ -135,18 +131,25 @@ export function MixGapCard() {
 
   const trackedChave = useRef<string | null>(null);
   useEffect(() => {
-    // Um evento por estado RESOLVIDO — e a chave inclui o MOTIVO de desatualização, senão a dedup
-    // engoliria a transição "carteira fresca" → "agindo sobre número velho", que é precisamente o
-    // sinal de leitura falhando em campo. A guarda por chave (e não por booleano) deixa passar
+    // Um evento por (SUJEITO × estado × motivo de desatualização). O MOTIVO está na chave senão a
+    // dedup engoliria a transição "carteira fresca" → "agindo sobre número velho", que é
+    // precisamente o sinal de leitura falhando em campo. O SUJEITO entrou na revisão retroativa do
+    // #1896: este ref sobrevive à troca de `effectiveUserId` (o `ImpersonationProvider` é Context e
+    // a rota NÃO remonta), então alvo diferente com o mesmo estado não emitia nada — a adoção do
+    // ALVO sumia da série e a sessão do staff ficava contada como vendedor real. O id do alvo fica
+    // só na CHAVE (ref local, nunca sai do browser); ao PostHog vai `sob_lente`, que é o que a
+    // pergunta "isto é vendedor de verdade?" precisa — uid de terceiro seria dado pessoal a mais
+    // sem uma pergunta a mais respondida. A guarda por chave (e não por booleano) deixa passar
     // erro → zero → com_gap na mesma montagem, que separa falha transitória de carteira vazia.
     if (!estado) return;
-    const chave = `${estado}:${desatualizacao ?? 'fresco'}`;
+    const chave = `${effectiveUserId ?? 'sem-sujeito'}|${estado}:${desatualizacao ?? 'fresco'}`;
     if (trackedChave.current === chave) return;
     trackedChave.current = chave;
     const carga = {
       estado,
       total_com_gap: data != null ? data.totalComGap : null,
       desatualizado: desatualizacao,
+      sob_lente: isImpersonating,
     };
     track('carteira.mixgap_visto', carga);
     // Segundo canal, server-side e NÃO censurável por bloqueador de rastreador.
@@ -155,8 +158,11 @@ export function MixGapCard() {
     // gravava em `dashboard_visits` — o zero era do CANAL. O `track()` acima
     // continua, para não perder a série antiga; quem DECIDE a fase 2 é este.
     // Fail-open lá dentro: nunca lança, nunca quebra o card.
+    // ⚠️ A `chave` é a idempotência do ledger, e é a MESMA que deduplica o `track()`. Por isso o
+    // sujeito entrou nela: sem ele, ver o card do ALVO na lente colidia com a linha do vendedor
+    // real e o segundo canal ficava tão cego quanto o primeiro.
     void registrarNoLedger('carteira.mixgap_servido', chave, carga);
-  }, [estado, desatualizacao, data]);
+  }, [estado, desatualizacao, data, effectiveUserId, isImpersonating]);
 
   if (semAcesso || leitura === 'desabilitada') return null;
 
