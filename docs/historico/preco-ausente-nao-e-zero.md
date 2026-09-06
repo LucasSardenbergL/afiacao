@@ -113,6 +113,47 @@ Cinco sabotagens confirmam o dente, com destaque para duas:
 | helper volta a `>= 0` | margem 76,00 | **52,00** (a fabricação, medida) |
 | diff volta a NULL-blind | 1 correção | **0** (o zero informado nunca entraria) |
 
+## O que o challenge do Codex acrescentou
+
+O ritual `/codex` (gpt-6-astra, reasoning max) rodou sobre os dois primeiros commits e achou
+**quatro P1** que eu não tinha achado. Os quatro são da mesma família, e a família é a lição:
+
+> **Tornar uma coluna nullable não é uma mudança local.** A régua nova estava certa; o `null` que
+> ela produz é que encontrava consumidores que ninguém tinha olhado. Depois de um `DROP NOT NULL`,
+> a pergunta obrigatória não é "meu código trata null?", é **"quem mais lê esta coluna?"** — e a
+> resposta se obtém do catálogo (`pg_get_functiondef ~ 'coluna'`), não da memória.
+
+O que a varredura do catálogo pega, e o que ela não pega:
+
+| Onde o NULL entra | Sintoma | Como se acha |
+|---|---|---|
+| `a * b` numa soma | receita 0 com custo cheio | grep por aritmética na função |
+| denominador de média | valor **diluído**, não ausente | ler a expressão inteira, não a coluna |
+| `ORDER BY … DESC` | NULL vai para o **topo** | saber o default do Postgres |
+| consumidor TS da RPC | `Number(null)` = 0 | seguir a RPC até quem a chama |
+
+Os dois primeiros são invisíveis a um grep por `unit_price`: aparecem só quando se lê a expressão
+completa. O terceiro não aparece nem lendo a expressão — depende de saber que `DESC` é `NULLS FIRST`.
+
+**A média diluída foi o achado mais fino.** Em `get_defasagem_cliente`, o último preço praticado é
+`sum(unit_price * quantity) / sum(quantity)`. O numerador ignora a linha sem preço, porque `sum`
+pula NULL; o denominador **conserva a quantidade dela**. Duas linhas do mesmo SKU e dia, quantidade
+1 cada, preços 100 e NULL, davam **50**. Não é um valor ausente nem um zero: é um preço plausível,
+que ninguém praticou, e que segue para markup e classificação de defasagem. Um valor errado que
+parece certo é pior que um nulo, porque nada o sinaliza.
+
+Também vale registrar o que **eu errei ao corrigir**: troquei `item.valor_total ||` por um teste de
+nulidade em `itemTotal` e, com isso, `{valor_total: 0, quantidade: 2, unitario: 50}` passou a
+devolver 0 em vez de 100. O `||` tratava 0 como "ainda não calculado" — que é exatamente o estado
+de um rascunho. **Havia um teste fixando esse caso, e ele estava na suíte que eu não tinha rodado
+ainda.** A lição não é sobre `||`: é que uma mudança de "falsy" para "nullish" muda o comportamento
+de TODOS os valores falsy, e o 0 quase sempre é um deles.
+
+Um P2 do Codex foi **fechado por medição, não por argumento**: ele apontou que a mescla lê só
+`valor_unitario` e disse explicitamente não ter podido confirmar o shape em produção. Consultei:
+dos 70.927 itens do items-jsonb, **70.927 têm `valor_unitario` e zero têm `unit_price`**. O shape é
+único. Um "não confirmei" do revisor é um convite a medir, não um item a descartar.
+
 ## O estado em produção
 
 Medição por `psql-ro` em 2026-09-05: **70.852 itens** em `order_items`, **zero** com preço 0,
