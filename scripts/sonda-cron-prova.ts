@@ -109,6 +109,10 @@ function fechoNoSha(sha: string, edge: string, raiz: string): string[] {
     if (vistos.has(p)) continue;
     const r = spawnSync('git', ['show', `${sha}:${p}`], { cwd: raiz, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
     if (r.status !== 0) continue; // não existia neste sha: não faz parte deste fecho
+    // O mapa de fingerprints fica FORA do fecho, como no gerador oficial (`fecharGrafo`): ele é
+    // DERIVADO do fecho, então incluí-lo faria todo PR que regenera o mapa criar um closure novo
+    // de toda edge — ruído que não corresponde a mudança de comportamento nenhuma.
+    if (p === 'supabase/functions/_shared/sonda-fingerprints.ts') continue;
     vistos.add(p);
     for (const esp of extrairImportsLocais(r.stdout)) {
       fila.push(resolve('/', p, '..', esp).slice(1));
