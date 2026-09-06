@@ -89,3 +89,11 @@ PEGA      | --sem-rede passa a valer SEMPRE (guard vira opt-in)    | s/semRede =
 # valendo o sha DAQUELE repo, ignorar a raiz pedida fica vermelho — e fica nos dois ambientes (com
 # `origin/main` presente volta outro sha; sem ela, o checkout de PR, o `rev-parse` sai 1).
 PEGA      | gitReal ignora a raiz pedida (cwd do processo)        | s/cwd: raiz,/cwd: process.cwd(),/
+# O ramo do MEIO do `gitReal`, irmã da linha acima. Os dois extremos que o describe cobria não
+# exercitam o status 1: repo COM a ref devolve 0, fora de repo devolve 128 — e 1 é justamente o que
+# o git responde quando o repo é VÁLIDO e só a `origin/main` falta, o estado do checkout raso que
+# derrubou o `mutation-check`. MEDIDO 2026-09-06: contra a suíte de então (90 testes) esta mutação
+# SOBREVIVIA, ou seja, o executor podia traduzir "ref ausente" em APROVADO e ninguém ficava vermelho
+# — fail-OPEN na dimensão exata do #2227. O caso `em repo git SEM a ref` a mata; esta linha é o que
+# impede a prova de viver só na transcrição de quem mediu (docs/historico/falsificacao-fora-do-ci.md).
+PEGA      | ref ausente (1) traduzida em APROVADO (fail-OPEN)     | s/return \{ status: r\.status \?\? 127,/return { status: (r.status === 1 ? 0 : (r.status ?? 127)),/
