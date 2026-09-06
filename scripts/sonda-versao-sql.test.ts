@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 import {
   fatiaDaVerdade,
@@ -927,9 +928,40 @@ describe('não consigo consultar a origin/main: ausência de dado não é aprova
   });
 });
 
+/**
+ * Repo git de verdade COM `refs/remotes/origin/main` — o chão que o `gitReal` precisa ter sob os
+ * pés para devolver o ramo POSITIVO.
+ *
+ * Construído aqui, e não herdado do checkout da sessão, porque essa ref é propriedade do CLONE e
+ * não do código sob teste. MEDIDO no job `mutation-check` (run 34006830215): `actions/checkout@v5`
+ * sem `fetch-depth: 0` roda `git init` + `fetch --depth=1 origin <sha>:refs/remotes/pull/N/merge`
+ * e NÃO cria `origin/main` — `rev-parse --verify --quiet origin/main` sai 1 ali e 0 no worktree do
+ * dev. Herdar a ref fazia esta asserção medir o AMBIENTE em vez do executor: verde no worktree e
+ * no job `validate` (que pede `fetch-depth: 0` por causa do merge-base do `sonda:bump`), vermelho
+ * em qualquer clone raso — e o baseline do mutcheck, que roda no job raso, ficava VERMELHO sem
+ * mutação nenhuma, abortando o contrato inteiro (= ausência de medição, não medição).
+ *
+ * `spawnSync` cru de propósito: montar o fixture com o próprio `gitReal` faria o teste do executor
+ * depender do executor.
+ */
+function repoComOriginMain(): string {
+  const repo = mkdtempSync(join(tmpdir(), 'sonda-git-'));
+  criadas.push(repo);
+  const git = (...args: string[]) => {
+    const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`fixture: git ${args.join(' ')} falhou: ${r.stderr}`);
+  };
+  git('init', '-q');
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  git('add', 'base.txt');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'base');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  return repo;
+}
+
 describe('gitReal: o executor de verdade responde o que o guard precisa julgar', () => {
   it('num repo git, rev-parse da origin/main devolve status 0 e um sha', () => {
-    const r = gitReal(RAIZ_REPO)(['rev-parse', '--verify', '--quiet', 'origin/main']);
+    const r = gitReal(repoComOriginMain())(['rev-parse', '--verify', '--quiet', 'origin/main']);
     expect(r.status).toBe(0);
     expect(r.stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
   });
