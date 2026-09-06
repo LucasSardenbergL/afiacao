@@ -201,6 +201,17 @@ houver `--ids`.
 - CLI completo contra prod: exit 1 com a classe impressa (7 respostas, 2 versões) e a ressalva na
   lista de sonda. Os 4 caminhos de `--ids` inválido: exit **2**, sem veredito fabricado.
 
+### E a correspondência posicional era mesmo só hipótese
+
+O relato da leva dizia que os 6 ids "casam posição a posição" com a lista `alvos` do PASSO 1. Duas
+medições independentes mostram que isso não se sustenta como dado: (a) a resposta do **70262** disse
+`v1.1-marco-causal`, e não a `v1.0-sensor-inicial` que o relato atribuía a todas; (b) horas depois,
+outra sessão fechou por prova que a **`omie-nfe-recebimento` JÁ está no ar** (#2217) — uma edge no ar
+com o bundle atual responde **com** `edge`, então ela dificilmente é uma das 7 sem identidade.
+
+É por isso que a atribuição é por `request_id` e falha fechada, e por que a classe existe mesmo sem
+ela: **a ordem da lista que você mandou sondar não é a ordem das respostas que voltaram.**
+
 ## 5. O que fica para depois (nomeado, não esquecido)
 
 - **Sonda automática segura**: atestação por `OPTIONS` autenticado (bundle pré-sensor devolve só

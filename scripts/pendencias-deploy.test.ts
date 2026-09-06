@@ -8,6 +8,7 @@ import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 import {
   atribuirSondasSemIdentidade,
   DATA_ECO_COM_IDENTIDADE,
+  decidirExit,
   edgesParaSondar,
   ESCALAR_P2_APOS_DIAS,
   julgar,
@@ -725,5 +726,32 @@ describe('o ledger não recebe edge fictícia — o CLI é read-only por constru
   it('nenhuma escrita no ledger, e nenhuma edge fictícia no CÓDIGO', () => {
     expect(codigo).not.toContain('INSERT INTO');
     expect(codigo).not.toContain('desconhecida');
+  });
+});
+
+/**
+ * O EXIT: a válvula do bootstrap tolera AUSÊNCIA de dado, não prova positiva.
+ *
+ * `PENDENCIAS_TOLERAR_NUNCA_ATESTADA=1` existe para a primeira leva, quando nada foi sondado ainda —
+ * ela desconta `NUNCA_ATESTADA`, que é ausência de dado. Resposta `probe:true` sem `edge` é o
+ * oposto: prova POSITIVA de que um bundle pré-2026-08-28 está no ar. Descontá-la junto devolveria
+ * exit 0 com deploy pendente medido na tela.
+ */
+describe('decidirExit', () => {
+  it('nada pendente e nenhuma resposta sem identidade → 0', () => {
+    expect(decidirExit({ totalPendentes: 0, nuncaAtestadas: 0, tolerarNunca: false, semIdentidade: 0 })).toBe(0);
+  });
+
+  it('pendência → 1', () => {
+    expect(decidirExit({ totalPendentes: 3, nuncaAtestadas: 0, tolerarNunca: false, semIdentidade: 0 })).toBe(1);
+  });
+
+  it('a válvula desconta as NUNCA_ATESTADA — é para isso que ela existe', () => {
+    expect(decidirExit({ totalPendentes: 2, nuncaAtestadas: 2, tolerarNunca: true, semIdentidade: 0 })).toBe(0);
+    expect(decidirExit({ totalPendentes: 2, nuncaAtestadas: 2, tolerarNunca: false, semIdentidade: 0 })).toBe(1);
+  });
+
+  it('mas NÃO desconta a resposta sem identidade: exit 1 com a válvula LIGADA', () => {
+    expect(decidirExit({ totalPendentes: 2, nuncaAtestadas: 2, tolerarNunca: true, semIdentidade: 6 })).toBe(1);
   });
 });

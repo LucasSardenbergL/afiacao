@@ -63,6 +63,7 @@ import { join } from 'node:path';
 import {
   atribuirSondasSemIdentidade,
   DATA_ECO_COM_IDENTIDADE,
+  decidirExit,
   edgesParaSondar,
   julgar,
   lerTolerancia,
@@ -535,9 +536,12 @@ export function main(argv: string[] = []): number {
   if (tolerarNunca && nunca > 0) {
     console.log(`\n⚠️  PENDENCIAS_TOLERAR_NUNCA_ATESTADA=1: ${nunca} nunca atestada(s) NÃO contam como pendência nesta execução.`);
   }
-  // A válvula do bootstrap tolera AUSÊNCIA de dado. Resposta sem identidade é o oposto: prova
-  // POSITIVA de que um bundle pré-2026-08-28 está no ar. Ela sai exit 1 mesmo com a válvula ligada.
-  return pendentes > 0 || naoAtribuidas.length > 0 ? 1 : 0;
+  return decidirExit({
+    totalPendentes: rel.totalPendentes,
+    nuncaAtestadas: nunca,
+    tolerarNunca,
+    semIdentidade: naoAtribuidas.length,
+  });
 }
 
 if (import.meta.main) process.exit(main(process.argv.slice(2)));

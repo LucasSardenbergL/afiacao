@@ -329,6 +329,26 @@ export function julgar(
   };
 }
 
+/**
+ * O exit do CLI: 0 só quando nada pende.
+ *
+ * `tolerarNunca` é a válvula do bootstrap — ela desconta `NUNCA_ATESTADA`, que é AUSÊNCIA de dado.
+ * Resposta `probe:true` sem `edge` é o oposto: prova POSITIVA de bundle pré-2026-08-28 no ar.
+ * Descontá-la junto devolveria exit 0 com o deploy pendente impresso na tela — e um cron que sai 0
+ * ensina o operador a ler silêncio como aprovação, que é o hábito que esta varredura desfaz.
+ */
+export function decidirExit(entrada: {
+  totalPendentes: number;
+  nuncaAtestadas: number;
+  tolerarNunca: boolean;
+  semIdentidade: number;
+}): number {
+  const pendentes = entrada.tolerarNunca
+    ? entrada.totalPendentes - entrada.nuncaAtestadas
+    : entrada.totalPendentes;
+  return pendentes > 0 || entrada.semIdentidade > 0 ? 1 : 0;
+}
+
 /** As edges que precisam de SONDA humana: nunca atestadas, ou cujo eco não traz `fonte`. */
 export function edgesParaSondar(rel: Relatorio): string[] {
   return rel.vereditos
