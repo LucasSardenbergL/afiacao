@@ -1,4 +1,4 @@
-# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v8)
+# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v9)
 
 > Money-path de compras. Origem: decisão **§8.4 do PR #2187** (spec
 > `2026-09-05-selo-aprovacao-pedido-sayerlack-design.md`, branch `claude/frosty-goodall-f12941`), que
@@ -32,8 +32,11 @@
 >   funcionou. Mas **não aprovar**: o próprio ROLLOUT fabricava procedência válida para preço
 >   adulterado, e a fronteira pré-aprovação continuava aberta (§9.9).
 >
-> 🔴 **A v8 ainda NÃO foi desafiada.** E ela carrega **uma decisão do founder em aberto (§9.9.2)** que
-> toca o #2187.
+> ✅ **Decisão do founder (§9.9.2): `preco_unitario` entra no token `p_itens_vistos` do #2187.**
+> É o que fecha a fronteira pré-aprovação sem constranger o motor. ⚠️ **Cria dependência cruzada com o
+> #2187** — ver §2.1.
+>
+> 🔴 **A v9 ainda NÃO foi desafiada.** Rodada 5 é pré-condição da implementação.
 
 ## 1. A invariante — e por que NÃO é igualdade
 
@@ -75,6 +78,26 @@ Consome, sem reimplementar: a RPC `aprovar_pedido_sugerido` de 3 args, o trigger
 `current_user IN ('postgres','service_role')`), `reposicao_selo_itens`, `aprovacao_selo` e
 `reposicao_pedido_e_portal`. Acrescenta um ramo ao trigger existente — **não cria um segundo trigger
 na mesma tabela**. Se o #2187 for reprovado ou remodelado, este spec é reescrito, não adaptado.
+
+### 2.1 🔴 Requisito que este spec IMPÕE ao #2187 (leitura obrigatória para quem mexe lá)
+
+**`preco_unitario` tem de entrar no token `p_itens_vistos`** da RPC `aprovar_pedido_sugerido` de 3 args
+(§3.4.3 do spec do #2187), ao lado de `id`, `sku_codigo_omie`, `qtde_final` e `fator_embalagem_portal`.
+Comparação com `trim_scale` + `IS DISTINCT FROM`, como os demais campos numéricos.
+
+**Por quê:** medido em prod (2026-09-06), `gerar_pedidos_sugeridos_ciclo`,
+`gerar_pedidos_oportunidade_ciclo`, `aplicar_promocoes_no_ciclo` e `remover_itens_pedido_sugerido` são
+**todas `SECURITY INVOKER` e executáveis por `authenticated`** — logo, com um humano rodando o ciclo
+pela tela, `current_user` é `authenticated`, o mesmo de um UPDATE cru. O trigger deste spec **não
+consegue** separar os dois na fase pré-aprovação (§9.9.2). Quem separa é o token: ele já compara "o que
+você viu" contra "o que está lá" no instante da aprovação, e um campo a mais faz a aprovação recusar o
+caso realista — **a aba velha que grava preço por cima entre a leitura e a aprovação**.
+
+**Não contradiz a §8.4 do #2187:** lá a decisão foi manter preço fora do **selo**. O token é outra
+coisa — anti-TOCTOU de leitura, não procedência. O selo continua sem preço.
+
+**Se o #2187 recusar este requisito**, o risco pré-aprovação volta a ficar aberto e este spec tem de
+registrá-lo como risco aceito, com o caso da aba velha nomeado.
 
 ## 3. O que existe hoje (medido em prod via psql-ro, 2026-09-06)
 
@@ -650,7 +673,7 @@ detectaria uma escrita que altera *somente o preço*. Não impedir um admin de a
 as duas propriedades iguais. A forma por linha realmente perde essa detecção; o que a compensa é o
 corte atômico + o trigger sempre ativo, não uma nota de rodapé.
 
-#### 9.9.2 [P1] A fronteira PRÉ-aprovação — 🧭 decisão em aberto
+#### 9.9.2 [P1] A fronteira PRÉ-aprovação — ✅ decidido: preço entra no token do #2187
 
 Com o mecanismo inteiro ativo: `pendente_aprovacao, preço=10 → master faz UPDATE cru para 100 → o
 trigger permite e carimba `primeira_compra` → aprovação ocorre → a conferência aceita 100`. A RPC
@@ -666,16 +689,15 @@ velha grava 100** com o pedido ainda pendente.
 legítima, que muda preço positivo. **O par `(estado × current_user)` não separa isto.** É limitação da
 forma, não descuido.
 
-**Minha recomendação, aplicada provisoriamente e reversível:** não constranger o motor. Fechar pelo
-lado da APROVAÇÃO — **incluir `preco_unitario` no token `p_itens_vistos` do #2187** (§3.4.3 de lá).
+**✅ Decidido pelo founder (2026-09-06):** não constranger o motor. Fechar pelo lado da APROVAÇÃO —
+**incluir `preco_unitario` no token `p_itens_vistos` do #2187** (§3.4.3 de lá).
 O token já existe e já compara "o que você viu" contra "o que está lá"; acrescentar um campo faz a
 aprovação recusar exatamente o caso da aba velha, que é o realista. Isso **não contradiz a §8.4 do
 #2187**: lá a decisão foi manter preço fora do **selo**; o token é outra coisa — é anti-TOCTOU de
 leitura, não procedência.
 
-⚠️ **Mas toca o #2187**, que está em reconstrução — por isso é decisão do founder, não minha. Se ele
-preferir não tocar, a alternativa é aceitar o risco pré-aprovação como coberto pelo próprio ato de
-aprovar (o aprovador vê os números que aprova) e registrar isso como risco aceito.
+⚠️ **Toca o #2187**, que está em reconstrução ⇒ o requisito está isolado na **§2.1** para que a sessão
+irmã o encontre sem ler este spec inteiro. Descartada a alternativa de aceitar como risco.
 
 #### 9.9.3 [P2] A recuperação prometida não era executável
 
