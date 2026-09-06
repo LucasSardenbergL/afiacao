@@ -224,6 +224,32 @@ schema e função. A reprodução do helper sobre os dados reais dá 1.227 clien
 computáveis, **0 sem preço** e 27.225 sem custo: o gargalo da cobertura de margem é, e continua
 sendo, **custo** — não preço.
 
+## A camada que NÃO consegui provar, e por quê
+
+Migration e edges foram provadas: validação de catálogo, ACL comparado ao pré-apply, sonda de
+execução, e o ledger `deploy_atestacoes` atestando as 3 edges por sonda. O **Publish** ficou de fora,
+e a razão é de método, não de preguiça.
+
+`verify-frontend.sh` prova o Publish **pelos bytes**: procura no bundle servido uma string literal
+**exclusiva do commit**. Esta fatia não tem nenhuma. Ela é **comportamental** — troca `|| 0` por uma
+função e passa a exibir `—` — e os únicos literais novos do diff vivem em **testes e comentários**,
+que a minificação descarta. Verificar por **comportamento** também não discrimina: com 0 itens sem
+preço em produção, a tela renderiza igual antes e depois.
+
+Forçar uma sentinela ruim daria verde para um Publish que talvez não tivesse acontecido, e o próprio
+script avisa que **falso positivo ENCERRA a verificação** enquanto falso negativo ao menos a
+prolonga. Então o registro honesto é: o founder publicou, e eu não tenho confirmação independente.
+
+> **Uma fatia comportamental é INVERIFICÁVEL pelos bytes a menos que plante a própria sentinela — e
+> a hora de plantar é ao ESCREVER, não ao verificar.** Ao mexer em `src/` sem introduzir texto novo,
+> considere deixar um literal exclusivo no caminho que muda (uma constante de versão do módulo, uma
+> chave de telemetria, um `data-*` no elemento afetado). Custa uma linha e transforma "publiquei" em
+> "está no ar". Descobrir a falta dela **depois** do Publish é tarde: o alvo teria que existir no
+> commit que já subiu.
+
+O caso mais fácil de esquecer é justamente este: a fatia que **corrige** algo costuma remover
+código, não adicionar texto — e quanto mais cirúrgica, menos verificável ela é pelos bytes.
+
 ## Pendências assumidas
 
 - **`omie-vendas-sync:3161`** (trava de crédito na edição) faz `Number(oi?.produto?.valor_unitario) || 0`
