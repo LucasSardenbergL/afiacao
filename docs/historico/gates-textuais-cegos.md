@@ -382,6 +382,26 @@ caso ruim escolher um alvo (`o maior`, `o primeiro`, `o mais recente`), **derive
 propriedade que o teste precisa** — aqui, "tem um vão longo sem terminador" — e não de um proxy que
 correlacionava com ela no dia da calibração.
 
+### A mesma classe mordeu o MEU harness em 13 dias (2026-09-06)
+
+Não é hipótese sobre o futuro: `db/test-data-health-carteira-identidade.sh`, escrito junto com a
+Variante 4, apodreceu antes de a nota ser registrada. Ele ancorava três asserts em
+`BASE_CHECKS+1`, onde `BASE_CHECKS` vem do `schema-snapshot.sql`:
+
+| | |
+| --- | --- |
+| premissa implícita | *esta migration é a ÚLTIMA a recriar `_data_health_compute`* |
+| verdade em 2026-08-24 | snapshot 25 + 1 = 26 ✔ |
+| verdade em 2026-09-06 | snapshot **29** (4 checks de outras sessões) × migration **26** ⇒ **vermelho** |
+
+O que ele mede seguia perfeito — a sonda estava aplicada em prod, no `v_sources` e verde. Vermelho
+era a **aritmética relativa**: o corpo do compute vive DENTRO da migration, então o total pós-apply é
+FIXO (26), enquanto o snapshot AVANÇA. Corrigido para constante absoluta `CHECKS_POS_MIG=26`.
+
+⚠️ E o gate que pegaria isso não existe: o CI é vitest, e `db/*.sh` **não é executado por ninguém**
+(o #2093 os coloca no shellcheck, que é análise estática — não roda os asserts). Um harness de prova
+que só roda quando alguém lembra de rodar é a mesma decoração que a falsificação existe pra matar.
+
 ### Assinatura para varredura futura
 
 ```bash
