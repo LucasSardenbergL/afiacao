@@ -340,3 +340,45 @@ números em `docs/historico/fila-de-prontidao-e-sensor-de-derivada.md`.
   achados que eu não tinha visto (a graduação escreve por fora do fusível; usar o denominador de *habilitados*)
   e errou o dimensionamento de um terceiro (a rota de primeira compra cobre **5**, não os 81). Verifique cada
   alegação verificável antes de replanejar em cima dela.
+
+## Guard fora da escrita não é guard (TOCTOU em plpgsql)
+
+`SELECT … INTO` → `IF … THEN recusa` → `UPDATE … WHERE id` **não** protege nada sob concorrência:
+decide sobre um retrato que nenhum lock cobre, e o `UPDATE` por PK grava mesmo depois de a linha
+ter virado outra coisa. Custou um pedido de compra REAL no Omie carimbado `cancelado_humano`
+(`cancelar_pedido_sugerido`, [P1] Codex do #2204).
+
+- **O predicado tem de morar na instrução que GRAVA:** `UPDATE … WHERE id = … AND <guard>
+  RETURNING id`. Em READ COMMITTED o Postgres espera o lock do concorrente e **re-avalia o
+  predicado contra a versão nova** (EvalPlanQual), pulando a linha se ela não se qualifica mais.
+  Padrão já existente no repo: `iniciar_envio_portal_pre_claim`.
+- **Releitura depois de 0 linhas serve só para a MENSAGEM** — se ela voltar a decidir, o TOCTOU
+  volta junto.
+- **Teste sequencial não distingue "tem guard" de "o guard é atômico".** O corpo velho passa no
+  sequencial e perde a corrida. Exija: duas conexões, **baseline vermelho** com o corpo antigo
+  REAL (sem ele, verde pode ser "a corrida não aconteceu") e um controle inócuo (concorrência em
+  OUTRA linha não pode bloquear).
+- **`sleep` NÃO é barreira — a ordem tem de ser OBSERVADA.** Com `sleep`, um escalonamento
+  invertido deixa o assert verde sem que a corrida tenha acontecido: o bloqueador commita antes
+  de a vítima começar e até o código VELHO produz o resultado esperado. Barreira de verdade:
+  (1) o bloqueador faz o `UPDATE` dentro de um `DO` e **exige `FOUND`** (senão a corrida "roda"
+  sobre zero linhas); (2) toma um **advisory lock** logo depois, sinal visível de outra sessão de
+  que já travou — e a vítima só é lançada quando esse sinal aparece; (3) o orquestrador **polla
+  `pg_blocking_pids`** até VER a vítima bloqueada, e só então libera. O resultado carrega o
+  testemunho do bloqueio, e um caso extra falsifica a barreira (sem colisão ela tem de dizer
+  "não"). **Rodar nos dois locales pegou isto** — não como teste de tradução, mas como **segunda
+  amostra de escalonamento**: verde 6× em `C`, vermelho na 1ª em `pt_BR.UTF-8`.
+- **Sonda "id que não existe" por `min(id) - 1` é falsa.** Um `INSERT` com id menor ainda não
+  commitado torna o id "ausente" numa linha REAL entre a sonda e a escrita — sequence crescente
+  não ordena commits. Use `NULL`: `id = NULL` nunca casa uma PK.
+- **Assert de `42501` em função `SECURITY INVOKER` mede o privilégio ERRADO** se o papel também
+  não tiver acesso à TABELA — o mesmo `42501` viria de dentro. Conceda as camadas internas no
+  fixture, negue só a entrada, e falsifique concedendo `EXECUTE`.
+- **Lock não atravessa round-trip.** `SELECT … FOR UPDATE` numa edge é inexequível quando a
+  leitura e a escrita são chamadas PostgREST separadas com HTTP externo no meio — cada uma é sua
+  própria transação. Ali o instrumento é **claim atômico** antes da chamada, não lock.
+- **Conditional final UPDATE ingênuo é PIOR que nada** quando o efeito externo já aconteceu:
+  0 linhas ⇒ o PO existe no fornecedor e o banco nunca grava o identificador ⇒ órfão invisível.
+  O fato externo grava-se incondicionalmente; só a **transição de status** é condicional.
+
+→ `docs/historico/guard-fora-da-escrita-nao-e-guard.md`

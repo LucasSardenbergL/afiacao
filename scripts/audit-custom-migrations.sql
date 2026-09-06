@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 510
+-- Total de custom migrations: 511
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -551,7 +551,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260904232555', 'reposicao_qtde_multiplo_embalagem_portal', '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql'),
   ('20260904233000', 'sku_fornecedor_externo_fator_positivo', '20260904233000_sku_fornecedor_externo_fator_positivo.sql'),
   ('20260905090000', 'sayerlack_custo_portal_cas', '20260905090000_sayerlack_custo_portal_cas.sql'),
-  ('20260905183314', 'deploy_atestacoes_ledger_e_sonda_cron', '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql')
+  ('20260905183314', 'deploy_atestacoes_ledger_e_sonda_cron', '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql'),
+  ('20260905224959', 'cancelar_pedido_guard_atomico', '20260905224959_cancelar_pedido_guard_atomico.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2277,7 +2278,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('deploy_atestacoes_ledger_e_sonda_cron', 'index', 'public', 'idx_deploy_atestacoes_edge_observado', 'deploy_atestacoes'),
   ('deploy_atestacoes_ledger_e_sonda_cron', 'cron_job', 'cron', 'deploy-atestacoes-colher', ''),
   ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_select_staff', 'deploy_atestacoes'),
-  ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_service_all', 'deploy_atestacoes')
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_service_all', 'deploy_atestacoes'),
+  ('cancelar_pedido_guard_atomico', 'function', 'public', 'cancelar_pedido_sugerido', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4051,7 +4053,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('deploy_atestacoes_ledger_e_sonda_cron', 'index', 'public', 'idx_deploy_atestacoes_edge_observado', 'deploy_atestacoes'),
   ('deploy_atestacoes_ledger_e_sonda_cron', 'cron_job', 'cron', 'deploy-atestacoes-colher', ''),
   ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_select_staff', 'deploy_atestacoes'),
-  ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_service_all', 'deploy_atestacoes')
+  ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_service_all', 'deploy_atestacoes'),
+  ('cancelar_pedido_guard_atomico', 'function', 'public', 'cancelar_pedido_sugerido', '')
 )
 SELECT
   e.migration,
@@ -4079,7 +4082,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 97.
+-- Funções redefinidas com corpo extraível: 98.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4300,6 +4303,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tarefas_escalonamento_tick', 2, '20260601000000_tarefas_escalonamento_titulo_mensagem.sql', '43abd7dd4a5fba6775f9b09649057e6f'),
   ('public', 'promover_candidato_primeira_compra', 1, '20260530210000_reposicao_candidatos_primeira_compra.sql', 'd2dffca872be4dc53ce53bd84154c045'),
   ('public', 'promover_candidato_primeira_compra', 2, '20260531120000_reposicao_candidatos_inclui_habilitados.sql', '2a5a44c647627305429ac85bbe6d1668'),
+  ('public', 'cancelar_pedido_sugerido', 1, '20260530210001_cancelar_pedido_limpa_portal.sql', '69bd05c6afec428b9ae86e385c453d70'),
+  ('public', 'cancelar_pedido_sugerido', 2, '20260905224959_cancelar_pedido_guard_atomico.sql', 'b6965a9c835c34400bb866edc5b33a83'),
   ('public', 'atualizar_parametros_numericos_skus', 1, '20260531140000_reposicao_atualizar_params_nao_zera.sql', 'fa55aaf26173a06e3bade9616f3aa8a4'),
   ('public', 'atualizar_parametros_numericos_skus', 2, '20260605130000_param_auto_core.sql', '74540a6ed9b7e5a0437f9ecfac7ee0f6'),
   ('public', 'atualizar_parametros_numericos_skus', 3, '20260605150000_param_auto_fusivel_calibracao.sql', 'fd7c292b873875e30ddfaf5fda1f2a80'),
