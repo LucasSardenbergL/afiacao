@@ -135,6 +135,83 @@ tem `BYPASSRLS` em prod (`pg_roles`, 2026-09-05), e o default ACL já lhe dá SE
   quem roda; a coerência de `origin/main` (mapa = fonte) é garantida pelo gate `sonda:fingerprint`
   do CI, que todo commit da main passou. O instrumento lê a ref, não a árvore.
 
+## 6. A resposta que prova bundle velho e não diz de QUEM (2026-09-05, mesmo dia)
+
+O bootstrap do ledger produziu o caso na hora seguinte ao apply. O founder colou 30 sondas: **24
+responderam `{ok,probe,versao,edge,fonte}`** e viraram `CONFERE`; **6 responderam a forma ANTERIOR a
+2026-08-28** — `{"ok":true,"probe":true,"versao":"v1.0-sensor-inicial"}`, sem `edge` e sem `fonte`.
+
+`deploy_atestacoes_janela_viva()` exige `edge` string. É o predicado que impede corpo de terceiro de
+virar veredito (§2) — e é exatamente o que torna essas 6 **invisíveis**: não entram no ledger, não
+entram na janela, e o relatório as classificava como `⚪ NUNCA atestada — precisa da 1ª sonda`. O
+founder sondaria de novo e receberia **a mesma resposta**. Um laço em que a prova mais forte de
+deploy pendente se disfarça de ausência de dado.
+
+**A leitura certa: eco sem `edge` não é silêncio, é FORMA.** O commit `069540905` (#2079, 28/08) pôs
+`edge`+`fonte` no eco, em `_shared/sonda-versao.ts` — que está no closure de TODA edge instrumentada.
+Logo, quem responde sem os dois campos serve bundle pré-28/08, e o `fonte` servido diverge do da main
+**com certeza**, sem precisar ser observado. É `DEPLOY PENDENTE` por closure: P2, ou P1 se o `VERSAO`
+da main já for outro.
+
+### O que entrou
+
+- **2ª leitura** (`SQL_SEM_IDENTIDADE`, no CLI): sobre `net._http_response` direto — 200 + `probe`
+  booleano true + `NOT (c ? 'edge')` —, com os mesmos guards da janela viva (`LIKE` textual e cast
+  dentro de `CASE`). Não escreve nada; roda no mesmo `psql-ro`. Produz a classe
+  **`SONDA_SEM_IDENTIDADE`**: contagem, `versao` respondido, `request_id`s e a contra-instrução
+  **"NÃO RE-SONDE"**. E a lista `→ sonda` ganhou a ressalva, para as duas instruções não se
+  contradizerem na mesma tela.
+- **Atribuição OPCIONAL por `request_id`** (`--ids='<json do PASSO 1>'`): casa id→edge e reclassifica
+  em P1/P2 pelo `versao` contra `origin/main`. Fail-closed em JSON inválido, não-objeto, `{}`, valor
+  que não é inteiro positivo, **id repetido** e **edge fora do mapa** — atribuição errada põe o nome
+  de uma edge num veredito que pertence a outra.
+- **Nunca por posição.** É a §7 de [`verificar-sonda-versao.md`](verificar-sonda-versao.md) na veia:
+  `v1.0-sensor-inicial` é a `VERSAO` de 13 edges da main, duas respostas de edges diferentes são
+  idênticas byte a byte, e nem URL, nem fila, nem headers, nem `created` desempatam. O `request_id`
+  do PASSO 1 é a única identidade forte. Sem `--ids`, o relatório dá a contagem — **jamais a edge**.
+- **A atribuída sai da fila de sonda** e vira veredito; a não atribuída **continua pendência**
+  (exit 1) mesmo com `PENDENCIAS_TOLERAR_NUNCA_ATESTADA=1`: a válvula tolera ausência de dado, e
+  isto é prova positiva.
+
+### Por que elas NÃO entram no ledger com `edge = 'desconhecida'` (perguntado, e a resposta é não)
+
+1. O `DISTINCT ON (edge)` do CLI passaria a ver uma edge chamada `desconhecida`, que a main não
+   mapeia ⇒ `🟠 FORA_DO_MAPA` urgente: uma edge **inventada** no relatório de deploy. O slug casa o
+   regex `^[a-z0-9-]{1,80}$` da janela viva e o `NOT NULL` do ledger — **nada no banco a barraria**.
+   A defesa tem de ser não escrever.
+2. O ledger é **eterno** e a janela do pg_net dura 6h: a chance de atribuir a resposta morre com a
+   janela, e ficaria para sempre uma linha que ninguém consegue reinterpretar. Ruído permanente.
+3. `pendencias:deploy` lê pelo `psql-ro`. Gravar exigiria o founder colar SQL — custo humano por um
+   dado que não conclui nada.
+
+A prova não se perde: ela vira **classe** no relatório, e veredito **por edge** quando (e só quando)
+houver `--ids`.
+
+### Evidência
+
+- `bun run test` — 75 casos no arquivo (18 novos): parse da 2ª leitura, os 6 fail-closed do `--ids`,
+  atribuição por id (e a recusa de atribuir sem ele), P1×P2, escalada, marcas do SQL como texto, e o
+  gate de que o CÓDIGO do CLI (sem comentários, pelo stripper compartilhado) não tem `INSERT INTO`
+  nem `desconhecida`.
+- **Prod, 2026-09-05 ~01:40Z** (`psql-ro`, SQL importado do CLI, não copiado): a 2ª leitura devolveu
+  **7** linhas — os 6 ids de 23:35Z (70261, 70262, 70267, 70271, 70281, 70282) e um sétimo às 23:38Z
+  (70287). E **corrigiu o relato**: a resposta do 70262 disse `v1.1-marco-causal`, não
+  `v1.0-sensor-inicial` — ou seja, a atribuição a mudaria de P1 para P2. Medir a leva inteira valeu
+  mais que herdar a suposição.
+- CLI completo contra prod: exit 1 com a classe impressa (7 respostas, 2 versões) e a ressalva na
+  lista de sonda. Os 4 caminhos de `--ids` inválido: exit **2**, sem veredito fabricado.
+
+### E a correspondência posicional era mesmo só hipótese
+
+O relato da leva dizia que os 6 ids "casam posição a posição" com a lista `alvos` do PASSO 1. Duas
+medições independentes mostram que isso não se sustenta como dado: (a) a resposta do **70262** disse
+`v1.1-marco-causal`, e não a `v1.0-sensor-inicial` que o relato atribuía a todas; (b) horas depois,
+outra sessão fechou por prova que a **`omie-nfe-recebimento` JÁ está no ar** (#2217) — uma edge no ar
+com o bundle atual responde **com** `edge`, então ela dificilmente é uma das 7 sem identidade.
+
+É por isso que a atribuição é por `request_id` e falha fechada, e por que a classe existe mesmo sem
+ela: **a ordem da lista que você mandou sondar não é a ordem das respostas que voltaram.**
+
 ## 5. O que fica para depois (nomeado, não esquecido)
 
 - **Sonda automática segura**: atestação por `OPTIONS` autenticado (bundle pré-sensor devolve só
