@@ -163,6 +163,25 @@ edge) para quem já tem o relé, oferecendo o one-liner `deploy_sonda_disparar(A
 `--permitir-efeito-legado` libera. Um aviso impresso não bastaria: quem cola o bloco às 2 da manhã
 não lê o stderr.
 
+## 7.2 O primeiro tick em PRODUÇÃO (2026-09-06, 22:37 UTC) — fail-closed, medido
+
+O cron rodou pela primeira vez com a F2 aplicada e a `SONDA_HMAC_KEY` **ainda não provisionada**.
+O que aconteceu é o desenho inteiro sendo exercido de verdade:
+
+| o que | resultado |
+|---|---|
+| disparos do tick | 3 (um por edge ativa), com `request_id` 71237–71239 |
+| resposta do relé | `500 {"ok":false,"classe":"sem-chave","env":"SONDA_HMAC_KEY"}` nas três |
+| requisições emitidas às edges-alvo | **nenhuma** — o relé recusa antes do `fetch` |
+| linhas no ledger / na janela viva | **0** — corpo de erro não tem `edge`/`versao` no topo, então não é atestação |
+| veredito do CLI | 3 avisos de "1 de 1 tick sem resposta", exit 0 — a regra dos 2 ticks não deixa um tick só acusar |
+
+Quatro propriedades provadas de uma vez, e nenhuma delas por leitura de código: **sem a chave nada
+sai**; **o erro não vira atestação**; **a via única do ledger se manteve**; e **o CLI não confunde
+um tick com um sinal**. A ordem de instalação que o handoff pedia (chave → deploy → migration) foi
+invertida na prática, e o custo disso foi exatamente zero — que é o que "fail-closed" deveria
+significar e quase nunca significa.
+
 ## 8. O que falta (fatias seguintes)
 
 - **F4 (ondas)**: as demais edges, uma onda por vez, cada uma com `sonda:cron-prova` 100 % `PASSA`.
