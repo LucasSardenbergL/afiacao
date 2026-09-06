@@ -137,8 +137,12 @@ era mais lenta que a completa.
 |---|---|---|
 | CPU de uma passada da suíte (2 locales) | 16,7 s | 22,7 s |
 | sabotagens | 24 | 33 |
-| projeção do passo `Falsificação` no runner | 125 s (medido) | ~230 s |
-| projeção do job `validate` (teto 15 min) | 671 s (medido) | ~780 s |
+| passo `Falsificação` no runner | 125 s | **177 s** (medido no #2234) |
+| job `validate` (teto 15 min) | 671 s | **710 s** (medido no #2234) |
+
+A projeção feita da M2 dizia ~230 s e ~780 s; o runner entregou **177 s** e **710 s**. O erro é o
+de sempre ao projetar runner a partir da máquina local — e é o motivo de a linha acima citar o
+número MEDIDO, não o estimado. A margem contra o teto ficou em **190 s**, não nos ~120 s temidos.
 
 Duas otimizações entraram por causa disso, e nenhuma reduz cobertura: o `jq` passou de **duas**
 invocações para **uma** (a marca sai na 1ª linha, os vereditos nas seguintes), e a leitura dos
@@ -146,8 +150,9 @@ vereditos ficou **estrita** — `.vereditos[]` sem o `?`, para que `{"formato": 
 "nao-e-lista"}` falhe em vez de virar "zero vereditos", que sairia como o estado LEGÍTIMO "sem
 veredito para esta edge" e esconderia o payload corrompido.
 
-A margem contra o teto de 15 min encolheu de ~230 s para ~120 s. É folga real, mas quem acrescentar
-sabotagem a este arnês daqui em diante deve medir o passo, não presumir.
+A margem contra o teto de 15 min encolheu de ~230 s para **190 s**. É folga real, mas quem
+acrescentar sabotagem a este arnês daqui em diante deve **medir** o passo no runner
+(`gh api repos/{owner}/{repo}/actions/runs/<id>/jobs`), não presumir a partir do relógio local.
 
 ## 6. Limites nomeados
 
