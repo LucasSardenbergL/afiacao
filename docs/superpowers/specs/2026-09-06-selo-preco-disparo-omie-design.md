@@ -1,4 +1,4 @@
-# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v5)
+# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v6)
 
 > Money-path de compras. Origem: decisão **§8.4 do PR #2187** (spec
 > `2026-09-05-selo-aprovacao-pedido-sayerlack-design.md`, branch `claude/frosty-goodall-f12941`), que
@@ -18,9 +18,13 @@
 >   fechados, mas **a minha correção do P0 introduziu duas regressões** — escalada de privilégio na
 >   porta humana e quebra da aprovação (§9.7).
 >
-> **Esta v5 acata tudo e ainda NÃO foi desafiada.** Rodada 3 é pré-condição da implementação.
-> As duas rodadas acharam furo na **fronteira de autorização**, nunca na criptografia do selo — é onde
-> o risco deste desenho mora (§9.7).
+> - **Rodada 3** sobre a v5 (`max · tentativa 1 · 422s · 164.718 tokens`): a correção de capability
+>   fechou; **mas o "primeiro selo apenas" quebrou a aprovação legítima e o split lava preço** (§9.8).
+>
+> 🛑 **A v6 NÃO remenda os achados da rodada 3 — de propósito.** Três rodadas, três correções minhas na
+> MESMA fronteira, três buracos novos. Isso deixou de ser série de descuidos e virou sinal de que a
+> **FORMA** está errada. §11 apresenta a conclusão estrutural e a alternativa, e é **decisão do
+> founder** — a forma atual foi escolhida por ele na abertura desta fatia.
 
 ## 1. A invariante — e por que NÃO é igualdade
 
@@ -656,6 +660,42 @@ satisfeitas por **uma chamada cuja resposta é ignorada**. Acatado em §7: teste
 exigindo **zero chamadas ao Omie** em erro/`ok=false`/vazio/formato inválido, **nos dois modos**, mais
 falsificação que remove a DECISÃO de recusar.
 
+### 9.8 Terceira rodada (v5) — **não aprovar**: o conserto do P0 quebrou a aprovação, e o split lava
+
+`gpt-6-astra · max · tentativa 1 · 422s · 164.718 tokens`. O que **fechou**: a capability nas duas
+portas humanas (`cap_compras_ler(auth.uid())` + rejeição de UID nulo reproduz a RLS dos itens). O Codex
+acrescentou que **não** se deve trocar por `cap_compras_escrever` — ela nasceu para outra superfície
+(telemetria do motor) — e que portal e split precisam preservar o caminho de máquina com
+`service_role`.
+
+O que **não** fechou — três achados, nenhum remendado nesta v6 (ver §11):
+
+- **[P1] O "primeiro selo apenas" impede aprovação legítima. Regressão da v5.**
+  `pendente_aprovacao + custo ausente → RPC de 1ª compra (que sela) → aprovar → a entrada nova recusa`,
+  porque ela exige `preco_selo IS NULL` e a 1ª compra já selou. O **backfill** de estados não-terminais
+  produz o mesmo bloqueio para pendentes. E a 1ª compra é comum: **152 itens em 72 pedidos/120d**
+  (§3). *"Apenas remover o `IS NULL` reabre a porta anterior"* — é o pêndulo entre o P0 e esta
+  regressão que motiva o §11.
+- **[P1, 9/10] O split lava preço criando o PRIMEIRO selo dos filhos.** Pai aprovado com preço 100 e
+  selo de 10 (origem concreta: escrita crua entre M1 e M2, depois do backfill). O §4.4 manda selar os
+  filhos mas **não** exige conferir o selo do pai antes de mover os itens; o split roda na edge antes
+  de processar (`index.ts:1688`). Os filhos nascem com preço 100 e um **primeiro selo válido de 100**,
+  origem `aprovacao`. A entrada pública nova nem é chamada.
+  ⚠️ **Isto refuta a tese central da v5** — *"lavar exige re-selar um pedido já selado"*. Não exige:
+  **troca-se o pedido que recebe o selo.**
+- **[P2] O GUC do `SP007` não autentica quem o definiu.** O ramo exige só igualdade com `NEW.id`; no
+  modelo SQL, `set_config('reposicao.selando_preco', id)` + `UPDATE preco_selo = NULL` o satisfaz.
+  Não é explorável por HTTP hoje (o wrapper público de `set_config` restringe a `fin.%`), por isso P2 —
+  mas a garantia de "um escritor só" precisa de contexto de execução no `SP007`, e a falsificação tem
+  de **tentar zerar o selo**. (Eu havia movido o ramo de ITEM para estado+`current_user` na v4 e deixei
+  o de PEDIDO no GUC — incoerência minha.)
+- Sobre a prova: o cenário (g) segue incompatível com a integração prescrita e precisa cobrir também os
+  selos pré-aprovação; e o (f) de capability está só na 1ª compra — tem de ser replicado na entrada
+  pública de aprovação.
+
+Ressalva do parecer: revisão de desenho contra o código disponível; as migrations novas não foram
+executadas e o `psql-ro` dele falhou por DNS (as medições são minhas, §3).
+
 ### 9.6 O que o Codex NÃO transformou em achado
 
 - **Hash:** sem colisão estrutural. JSON preserva fronteiras, `ORDER BY id` estabiliza, `trim_scale`
@@ -711,3 +751,51 @@ correção minha mexeu exatamente aí e criou a regressão seguinte.
 - **Auditoria de `pedido_compra_item`** (não há `atualizado_em` nem tabela de histórico). O log do selo
   cobre o que importa para esta invariante; auditoria geral da tabela é outra decisão.
 - **`conciliar-pedido-portal`** — o #2187 já mexe nela; esta fatia não acrescenta nada lá.
+
+## 11. A conclusão estrutural — e a decisão que ela força
+
+Três rodadas de challenge. Em cada uma, a correção que eu fiz na fronteira de autorização abriu um
+buraco novo **na mesma fronteira**:
+
+| Rodada | O que eu consertei | O que a correção abriu |
+|---|---|---|
+| 1 → v3 | selador chamável por `authenticated` com origem livre | porta humana SECDEF com gate mais frouxo que a RLS **e** aprovação INVOKER sem acesso ao selador |
+| 2 → v5 | capability exata + entrada de "primeiro selo apenas" | "primeiro selo" **bloqueia aprovação legítima**; e o split lava trocando o pedido que recebe o selo |
+| 3 → ? | (não remendado) | — |
+
+Isso deixou de ser série de descuidos. O que se repete é a **forma**: o selo é um ato **separável** da
+escrita, e a autoridade para selar vem sempre de um proxy fraco — o papel do chamador, um GUC, a
+ausência de selo anterior, ou qual pedido está sendo selado. Todo proxy fraco tem um caminho que o
+satisfaz sem a intenção que ele representa. Remendar o proxy da vez apenas move o furo.
+
+### 11.1 A alternativa: procedência POR LINHA, carimbada na escrita
+
+Em vez de um hash por pedido que alguém precisa **autorizar a gravar**, gravar a procedência **na
+própria linha do item, no mesmo statement que escreve o preço**:
+`pedido_compra_item.preco_origem` + `preco_gravado_em`, e o trigger **carimba ele mesmo** a partir do
+contexto de execução (`current_user` + estado do pai), recusando escrita de contexto não autorizado.
+
+O disparo deixa de recomputar hash: confere que **toda linha** tem `preco_origem` no conjunto
+permitido para o estado do pedido.
+
+Por que isto fecha os cinco achados **por construção**, não por remendo:
+
+- **R1/P0 (forjar re-selando):** não há selo para regravar — o carimbo é escrito pelo trigger, nunca
+  pelo chamador.
+- **R2/P1 (aprovação INVOKER):** não há selador para chamar. A aprovação não muda.
+- **R3/P1 (primeiro selo):** o conceito não existe; 1ª compra e aprovação não disputam nada.
+- **R3/P1 (split lava):** o carimbo **viaja com a linha**. O filho herda a procedência do item, não
+  ganha uma nova por ser um pedido novo.
+- **R3/P2 (GUC):** não há GUC.
+
+Custo honesto: uma coluna a mais por item; o sensor do §4.6 passa a ler por linha (fica **melhor** —
+hoje o delta é por pedido); e a §5.1 deixa de comparar hash, o que **enfraquece** a detecção de
+"conjunto de itens mudou" — que, no entanto, já é coberta pelo trigger do #2187 e pela cardinalidade
+um-para-um do payload.
+
+### 11.2 🧭 Decisão do founder
+
+A forma "selo próprio + re-selo por porta" foi **escolha sua** na abertura desta fatia, com a
+alternativa de então sendo "trigger sem hash". A informação nova é que essa forma custou três rodadas
+sem convergir. Recomendo **trocar para 11.1** e reescrever o spec sobre ela, aproveitando tudo o que
+foi medido (§3), o escopo (§9.2) e a prova comportamental da edge (§7) — que não dependem da forma.
