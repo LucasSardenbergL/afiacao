@@ -1,5 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,6 +14,40 @@ const ALLOWED_AUDIO_TYPES = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
+  }
+
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do gate `Bearer ` e do createClient. Quem sonda
+  // precisa do `x-cron-secret`/staff do `authorizeCronOrStaff`: o gate PRÓPRIO existe porque
+  // atrás do JWT de usuário desta edge a sonda seria inalcançável para o cron. Daqui pra frente
+  // a edge queima cota de IA e manda áudio para a ElevenLabs. Ver versao.ts.
+  //
+  // ⚠️ O fluxo real lê o corpo como MULTIPART (`req.formData()`), e `req.json()` sobre multipart
+  // lança — por isso o corpo só é lido aqui quando o `content-type` é JSON. O multipart do app
+  // não é tocado neste bloco e segue intacto para o fluxo real; o corpo continua sendo lido uma
+  // única vez em cada caminho.
+  const tipoConteudo = req.headers.get('content-type') ?? '';
+  let corpoBruto: unknown = {};
+  if (tipoConteudo.includes('application/json')) {
+    try {
+      corpoBruto = await req.json();
+    } catch {
+      corpoBruto = {};
+    }
+  }
+
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== 'disparo') {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === 'sonda') {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
   }
 
   try {
