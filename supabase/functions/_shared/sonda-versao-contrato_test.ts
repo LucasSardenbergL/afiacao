@@ -68,6 +68,7 @@ import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
 import * as enviarPush from "../enviar-push/versao.ts";
 import * as nvoipCalls from "../nvoip-calls/versao.ts";
 import * as dispatchNotif from "../dispatch-notifications/versao.ts";
+import * as sondaRelay from "../sonda-relay/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -234,6 +235,7 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "enviar-push", mod: enviarPush },
   { nome: "nvoip-calls", mod: nvoipCalls },
   { nome: "dispatch-notifications", mod: dispatchNotif },
+  { nome: "sonda-relay", mod: sondaRelay },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
