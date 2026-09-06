@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **514** custom migrations totais
-- **1745** objetos esperados (criados por estas migrations)
+- **515** custom migrations totais
+- **1746** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 538
+  - `function`: 539
   - `rls_policy`: 458
   - `index`: 251
   - `cron_job`: 169
@@ -4279,6 +4279,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.remover_itens_pedido_sugerido` | — |
+
+### `20260906151715_aprovar_pedido_guard_atomico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aprovar_pedido_sugerido` | — |
 
 ### `20260906154202_cancelar_pedido_revoke_anon.sql`
 

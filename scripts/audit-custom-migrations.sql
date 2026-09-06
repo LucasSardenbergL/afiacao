@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 514
+-- Total de custom migrations: 515
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -555,6 +555,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260905224959', 'cancelar_pedido_guard_atomico', '20260905224959_cancelar_pedido_guard_atomico.sql'),
   ('20260905225613', 'preco_ausente_nao_e_zero', '20260905225613_preco_ausente_nao_e_zero.sql'),
   ('20260906105549', 'remover_itens_pedido_guard', '20260906105549_remover_itens_pedido_guard.sql'),
+  ('20260906151715', 'aprovar_pedido_guard_atomico', '20260906151715_aprovar_pedido_guard_atomico.sql'),
   ('20260906154202', 'cancelar_pedido_revoke_anon', '20260906154202_cancelar_pedido_revoke_anon.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2289,7 +2290,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_customer_margin_summary', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', ''),
-  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', '')
+  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', ''),
+  ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4071,7 +4073,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_customer_margin_summary', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', ''),
-  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', '')
+  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', ''),
+  ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', '')
 )
 SELECT
   e.migration,
