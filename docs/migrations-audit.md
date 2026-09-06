@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **515** custom migrations totais
-- **1746** objetos esperados (criados por estas migrations)
+- **516** custom migrations totais
+- **1754** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 539
-  - `rls_policy`: 458
-  - `index`: 251
-  - `cron_job`: 169
-  - `table`: 161
+  - `function`: 540
+  - `rls_policy`: 460
+  - `index`: 253
+  - `cron_job`: 170
+  - `table`: 163
   - `trigger`: 88
   - `view`: 76
   - `enum_value`: 4
@@ -4279,6 +4279,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.remover_itens_pedido_sugerido` | — |
+
+### `20260906151204_deploy_sonda_cron_fail_closed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.deploy_sonda_disparar` | — |
+| `table` | `public.deploy_sonda_alvos` | — |
+| `table` | `public.deploy_sonda_disparos` | — |
+| `index` | `public.idx_deploy_sonda_disparos_tick` | `deploy_sonda_disparos` |
+| `index` | `public.idx_deploy_sonda_disparos_edge_quando` | `deploy_sonda_disparos` |
+| `cron_job` | `cron.deploy-sonda-cron` | — |
+| `rls_policy` | `public.deploy_sonda_alvos_select_staff` | `deploy_sonda_alvos` |
+| `rls_policy` | `public.deploy_sonda_disparos_select_staff` | `deploy_sonda_disparos` |
 
 ### `20260906151715_aprovar_pedido_guard_atomico.sql`
 
