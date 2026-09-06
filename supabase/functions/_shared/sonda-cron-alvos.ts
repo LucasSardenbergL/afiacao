@@ -60,7 +60,7 @@ const SEM_CREDENCIAL: ControlePositivo = {
 export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   {
     edge: "sonda-relay",
-    desde: null,
+    desde: "2c55a71edca3",
     controles: [{
       metodo: "POST",
       headers: { ...JSON_HEADERS, "x-cron-secret": "$CRON_SECRET" },
@@ -68,11 +68,11 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
       nota: "o POST operacional do cron: o efeito visível é o fetch OPTIONS de saída (replay do relé)",
     }],
   },
-  { edge: "monthly-report", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
-  { edge: "calculate-scores", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  { edge: "monthly-report", desde: "2c55a71edca3", controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  { edge: "calculate-scores", desde: "2c55a71edca3", controles: [SEM_CREDENCIAL, CRON, BEARER] },
   {
     edge: "sync-reprocess",
-    desde: null,
+    desde: "2c55a71edca3",
     controles: [
       { ...SEM_CREDENCIAL, corpo: '{"action":"reprocess_orders","account":"oben"}', nota: "época SEM gate + roteamento por action: corpo vazio cai no 400 do default sem tocar banco" },
       { ...CRON, corpo: '{"action":"reprocess_orders","account":"oben"}', nota: "roteia por action: corpo vazio cai em 400 sem IO; reprocess_orders lê e reconcilia pedidos" },
