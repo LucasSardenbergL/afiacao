@@ -8543,7 +8543,7 @@ export type Database = {
           product_id: string | null
           quantity: number
           sales_order_id: string
-          unit_price: number
+          unit_price: number | null
         }
         Insert: {
           created_at?: string | null
@@ -8555,7 +8555,7 @@ export type Database = {
           product_id?: string | null
           quantity?: number
           sales_order_id: string
-          unit_price?: number
+          unit_price?: number | null
         }
         Update: {
           created_at?: string | null
@@ -8567,7 +8567,7 @@ export type Database = {
           product_id?: string | null
           quantity?: number
           sales_order_id?: string
-          unit_price?: number
+          unit_price?: number | null
         }
         Relationships: [
           {
@@ -19632,6 +19632,8 @@ export type Database = {
           gross_margin_pct: number
           itens_com_custo: number
           itens_sem_custo: number
+          itens_sem_custo_conhecido: number
+          itens_sem_preco: number
           receita_com_custo: number
         }[]
       }
@@ -20166,18 +20168,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      remover_itens_pedido_sugerido: {
+        Args: { p_item_ids: number[]; p_pedido_id: number; p_usuario: string }
+        Returns: Json
+      }
       reposicao__po_id: { Args: { p: string }; Returns: number }
       reposicao__trim: { Args: { p: string }; Returns: string }
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
       reposicao_alocar_run_seq: { Args: never; Returns: number }
-      remover_itens_pedido_sugerido: {
-        Args: {
-          p_item_ids: number[]
-          p_pedido_id: number
-          p_usuario: string
-        }
-        Returns: Json
-      }
       reposicao_aplicar_depara_sayerlack_auto: {
         Args: {
           p_candidatos: Json
