@@ -382,3 +382,33 @@ ter virado outra coisa. Custou um pedido de compra REAL no Omie carimbado `cance
   O fato externo grava-se incondicionalmente; só a **transição de status** é condicional.
 
 → `docs/historico/guard-fora-da-escrita-nao-e-guard.md`
+
+## Guard DENTRO da RPC protege a porta; o que fecha a CLASSE é trigger
+
+Defesa que mora numa RPC só vale para quem passa por ela. PostgREST cru, SQL na mão e a próxima
+RPC que **reimplemente** a operação escapam — e reimplementar é o modo comum de falha (#2231).
+Quando o invariante é da TABELA, o lugar dele é um **trigger** (precedente da casa:
+`pp_bloqueia_cancel_com_claim`).
+
+- **Recusar sem oferecer porta não elimina a operação — empurra-a para fora da fronteira.** O caso
+  legítimo continua acontecendo, agora sem evidência nem trilha. Guard novo em operação que a
+  operação REALMENTE precisa fazer nasce com a porta junto, ou vira SQL na mão.
+- **O portão do trigger é GUC de sessão, nunca "coluna de intenção":** o mesmo `UPDATE` cru
+  carimbaria a coluna na mesma instrução. GUC fecha porque o PostgREST **não expõe `set_config`**
+  (é de `pg_catalog`; o cliente só alcança `public`). E o GUC carrega o **id da linha**, não um
+  booleano — senão a autorização de um registro vaza para o próximo da transação.
+- **O trigger BEFORE recebe em `OLD` a versão RE-AVALIADA** — então ele fecha o TOCTOU até para
+  quem grava `WHERE id` sem predicado, que é o que a RPC só consegue com o predicado no `WHERE`.
+  Afirmação sobre o motor: **meça** com baseline vermelho, não deduza.
+- **Antes de armar o trigger, meça quem mais escreve** (funções `prosrc`, edges) e transforme cada
+  transição legítima em assert — inclusive **"linha já no estado final aceita `UPDATE` posterior"**,
+  senão o guard congela silenciosamente as linhas históricas.
+- **Cubra o vocabulário por PREFIXO, não por lista**, quando não há CHECK na coluna: status novo
+  nasce coberto em vez de escapar até alguém lembrar de editar a lista.
+- **Sonda de execução que faz `UPDATE` em linha REAL tem de se auto-reverter** (SQLSTATE próprio
+  para forçar rollback do subtransaction nos DOIS ramos) — depender do `BEGIN/COMMIT` do arquivo
+  é apostar em como o bloco foi colado.
+- **`mktemp /tmp/x.XXXXXX.sql` cria o nome LITERAL no macOS** (X só valem no fim): o harness passa
+  UMA vez e depois morre com `File exists`. Teste que só passa uma vez não é regressão.
+
+→ `docs/historico/cancelamento-pos-disparo-porta-com-evidencia.md`
