@@ -510,18 +510,27 @@ $function$;
 REVOKE ALL ON FUNCTION public.aprovar_pedido_sugerido(bigint, text, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.aprovar_pedido_sugerido(bigint, text, jsonb) TO authenticated, service_role;
 
--- BEGIN ATOMIC (não string): o corpo é PARSEADO na criação e o Postgres registra em pg_depend
--- uma dependência REAL do wrapper para a de 3 args. É isso que a postcondição confere — assert
--- estrutural, não textual. O assert textual anterior procurava 'p_itens_vistos' no corpo e
--- REPROVOU a própria migration: o wrapper passa os argumentos por POSIÇÃO, esse nome não
--- aparece em lugar nenhum. Texto prova presença, nunca controle.
+-- O wrapper de 2 args ganha o MESMO gate de capacidade. Três razões, nesta ordem:
+--  1. defesa em profundidade real — é esta a assinatura que a UI velha chama;
+--  2. o `authz:check` colapsa overloads por NOME e mede a ÚLTIMA definição do arquivo; sem o
+--     gate aqui, o gate do de 3 args fica invisível para ele (limite do detector, não do desenho);
+--  3. continua INVOKER — a postcondição da 20260906151715 (outra sessão) exige `prosecdef=false`
+--     nesta assinatura, e a RLS de `pedido_compra_sugerido` segue valendo para ela.
+-- ⚠️ Deixou de ser `BEGIN ATOMIC`, então NÃO há mais dependência em `pg_depend` para conferir.
+-- A postcondição passou a PROVAR POR EXECUÇÃO (chama o wrapper e exige a resposta que só o de
+-- 3 args produz) — mais forte que texto e que dependência: prova CONTROLE, não presença.
 CREATE OR REPLACE FUNCTION public.aprovar_pedido_sugerido(p_pedido_id bigint, p_usuario text)
 RETURNS jsonb
-LANGUAGE sql
+LANGUAGE plpgsql
 SET search_path TO 'public', 'pg_temp'
-BEGIN ATOMIC
-  SELECT public.aprovar_pedido_sugerido(p_pedido_id, p_usuario, NULL::jsonb);
+AS $function$
+BEGIN
+  IF auth.uid() IS NOT NULL AND NOT private.cap_compras_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'Acesso negado: requer capacidade de compras' USING ERRCODE = '42501';
+  END IF;
+  RETURN public.aprovar_pedido_sugerido(p_pedido_id, p_usuario, NULL::jsonb);
 END;
+$function$;
 
 -- `anon` tinha EXECUTE explícito (e PUBLIC também) na de 2 args: aprovar pedido
 -- de compra nunca é ação de anônimo. REVOKE FROM PUBLIC não tira grant NOMEADO.
@@ -875,23 +884,18 @@ BEGIN
   END IF;
 
   -- Suficiência, não existência: as 5 funções recriadas têm de estar na forma NOVA.
-  -- Assert ESTRUTURAL: pg_depend prova que o de 2 args CHAMA o de 3 args (só existe porque o
-  -- corpo é BEGIN ATOMIC). Um LIKE no corpo provaria presença de texto, não a chamada.
-  IF NOT EXISTS (
-    SELECT 1
-      FROM pg_depend d
-      JOIN pg_proc w ON w.oid = d.objid
-      JOIN pg_proc t ON t.oid = d.refobjid
-      JOIN pg_namespace nw ON nw.oid = w.pronamespace
-      JOIN pg_namespace nt ON nt.oid = t.pronamespace
-     WHERE d.classid = 'pg_proc'::regclass AND d.refclassid = 'pg_proc'::regclass
-       AND nw.nspname = 'public' AND w.proname = 'aprovar_pedido_sugerido'
-       AND pg_get_function_identity_arguments(w.oid) = 'p_pedido_id bigint, p_usuario text'
-       AND nt.nspname = 'public' AND t.proname = 'aprovar_pedido_sugerido'
-       AND pg_get_function_identity_arguments(t.oid) = 'p_pedido_id bigint, p_usuario text, p_itens_vistos jsonb'
-  ) THEN
-    RAISE EXCEPTION 'M1 FALHOU: o aprovar_pedido_sugerido de 2 args nao depende do de 3 args — a UI velha aprovaria SEM selar';
-  END IF;
+  -- Assert POR EXECUÇÃO: chama o wrapper de 2 args num id inexistente e exige a resposta que
+  -- SÓ o corpo do de 3 args produz. `CREATE` de plpgsql é late-bound — passa com o corpo
+  -- quebrado e só falha em runtime; e um LIKE no corpo provaria presença de texto, nunca que a
+  -- chamada acontece. Efeito colateral: nenhum (id negativo não existe).
+  DECLARE v_resp jsonb;
+  BEGIN
+    v_resp := public.aprovar_pedido_sugerido(-1::bigint, 'postcondicao-m1');
+    IF v_resp->>'error' IS DISTINCT FROM 'pedido não encontrado' THEN
+      RAISE EXCEPTION 'M1 FALHOU: o wrapper de 2 args não delega ao de 3 args (resposta inesperada: %)', v_resp;
+    END IF;
+  END;
+
   IF (SELECT prosecdef FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
        WHERE n.nspname='public' AND p.proname='aprovar_pedido_sugerido'
          AND pg_get_function_identity_arguments(p.oid)='p_pedido_id bigint, p_usuario text') THEN

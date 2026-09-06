@@ -191,6 +191,20 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
   // O limite desta entrada, declarado: ela prova que a CHAMADA governa um ramo alcançável que
   // levanta exceção. NÃO prova que a exceção acontece para quem deve — isso é asserção
   // EXECUTADA, em db/test-pos-candidatos-guard-temporal.sh (D1/D4 + falsificações N1/N2/N3).
+  // 2026-09-06 — a RPC de aprovação virou SECURITY DEFINER no MESMO PR que fechou o P0-2 do
+  // challenge Codex, e por isso passou a exigir classificação. A troca não é cosmética: com as
+  // primitivas do selo fora do alcance de `authenticated`, alguém tem de poder executá-las, e a
+  // escolha foi concentrar isso na ÚNICA porta — a RPC — em vez de espalhar GRANTs.
+  // DEFINER bypassa a RLS de `pedido_compra_sugerido`, então o gate no corpo (`cap_compras_ler`)
+  // não é decoração: é o que substitui a policy.
+  // ⚠️ Vale só para o overload de 3 args. O de 2 args continua INVOKER de propósito — a
+  // postcondição da 20260906151715 (outra sessão) exige `prosecdef=false` nele, e é a assinatura
+  // que a UI velha chama. Os dois convivem porque o de 2 args é wrapper BEGIN ATOMIC do de 3.
+  'public.aprovar_pedido_sugerido': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'aprova pedido de compra e sela os itens (money-path); DEFINER desde a M1 do selo, gate private.cap_compras_ler',
+  },
   // 2026-09-06 — as duas primitivas do SELO DE APROVAÇÃO do pedido Sayerlack
   // (migration 20260906170000, spec docs/superpowers/specs/2026-09-05-selo-aprovacao-…).
   // SECDEF por DESENHO, não por conveniência: como INVOKER, um aprovador sem SELECT em
