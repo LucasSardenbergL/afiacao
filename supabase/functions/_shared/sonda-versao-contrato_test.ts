@@ -69,6 +69,7 @@ import * as enviarPush from "../enviar-push/versao.ts";
 import * as nvoipCalls from "../nvoip-calls/versao.ts";
 import * as dispatchNotif from "../dispatch-notifications/versao.ts";
 import * as sondaRelay from "../sonda-relay/versao.ts";
+import { SONDA_CRON_ALVOS } from "./sonda-cron-alvos.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -1438,6 +1439,47 @@ Deno.test("o FONTE do eco sai da MESMA fábrica que a sonda serve", () => {
       throw new Error(
         `${edge}: FONTE não é derivado de respostaSonda — um hash transcrito à mão congela e mente`,
       );
+    }
+  }
+});
+
+/**
+ * ── Sonda de deploy POR CRON: o ramo vive DENTRO do bloco `OPTIONS` ────────────────────────────
+ *
+ * Spec `docs/superpowers/specs/2026-09-05-sonda-por-cron-fail-closed-design.md` §4.2. O bloco
+ * `OPTIONS` é o único lugar em que uma edge pode responder "qual bundle sou eu" sem risco: é a
+ * primeira instrução do handler em todo template Supabase, antes do gate de auth e de qualquer IO,
+ * e já era assim antes de o sensor existir — por isso bundle velho responde só o CORS.
+ *
+ * Fora do bloco, o ramo deixa de ser estrutural. Depois do `return` do CORS, vira código morto e o
+ * cron fica em silêncio para sempre (o pior estado: PARECE instrumentado). Este gate fecha os dois.
+ */
+Deno.test("sonda por cron: o ramo atenderSondaOptions vive DENTRO do bloco OPTIONS, antes do CORS, e o CORS não mudou", () => {
+  for (const { edge } of SONDA_CRON_ALVOS) {
+    const h = trechoDoHandler(edge);
+    const bloco = h.match(/if \(req\.method === ['"]OPTIONS['"]\) \{([\s\S]*?)\n\s*\}/);
+    if (!bloco) throw new Error(`${edge}: bloco OPTIONS não encontrado no handler`);
+    const corpo = bloco[1];
+    const posRamo = corpo.indexOf("atenderSondaOptions(");
+    const posCors = corpo.indexOf("return new Response(null, { headers: corsHeaders })");
+    if (posRamo < 0) {
+      throw new Error(`${edge}: o bloco OPTIONS não chama atenderSondaOptions — o cron nunca atesta esta edge`);
+    }
+    if (posCors < 0) {
+      throw new Error(`${edge}: a resposta de CORS do bloco OPTIONS mudou de forma — o preflight do browser tem de continuar idêntico`);
+    }
+    if (posRamo > posCors) {
+      throw new Error(`${edge}: atenderSondaOptions está DEPOIS do return de CORS — código morto, o cron ficaria em silêncio`);
+    }
+    if (!/if \(sonda\) return sonda;/.test(corpo)) {
+      throw new Error(`${edge}: o resultado de atenderSondaOptions não é devolvido`);
+    }
+    const returns = (corpo.match(/return /g) ?? []).length;
+    if (returns !== 2) {
+      throw new Error(`${edge}: o bloco OPTIONS tem ${returns} returns — têm de ser exatamente 2 (sonda e CORS)`);
+    }
+    if (/req\.json\(|req\.text\(|createClient\(|fetch\(/.test(corpo)) {
+      throw new Error(`${edge}: IO dentro do bloco OPTIONS — o ramo tem de continuar sem custo`);
     }
   }
 });

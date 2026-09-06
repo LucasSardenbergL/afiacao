@@ -44,7 +44,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("sync-reprocess");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.2-reconcile-cas-e-ambiguidade";
+export const VERSAO = "v1.3-sonda-options";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
