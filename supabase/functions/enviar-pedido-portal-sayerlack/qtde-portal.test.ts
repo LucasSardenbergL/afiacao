@@ -53,8 +53,10 @@ Deno.test("fail-closed: fator inválido lança a marca do ramo (nunca 'NaN' no i
   assertLancaFator(() => qtdePortal(36, Number.NaN), "fator NaN");
   assertLancaFator(() => qtdePortal(36, Number.POSITIVE_INFINITY), "fator Infinity");
   assertLancaFator(() => qtdePortal(Number.NaN, 0.2), "qtde NaN");
-  // Ramo da RPC `envio_portal_itens_mapeados` (hoje inexistente em prod): se um dia devolver linha SEM fator,
-  // `undefined` cai aqui — abortar, nunca assumir 1 (Codex P1).
+  // Origem do de-para SEM o fator: `undefined` cai aqui — abortar, nunca assumir 1 (Codex P1).
+  // O ramo que motivou o caso era a RPC `envio_portal_itens_mapeados`, cuja CHAMADA foi removida da edge
+  // (nunca existiu em prod). O caso fica: ele prova o contrato do helper PURO, que vale para qualquer
+  // origem — incluindo a query direta de hoje, se um dia perder a coluna.
   assertLancaFator(() => qtdePortal(36, undefined as unknown as number), "fator undefined (RPC futura sem coluna)");
 });
 
