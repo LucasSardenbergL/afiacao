@@ -9,7 +9,7 @@
 # DOCUMENTAVA o padrão que ele detectava. Menção != execução — e este hook nasce numa sessão que
 # escreve `until ! pgrep …` em doc, em mensagem de commit e no corpo do PR.
 #
-# Inclui FALSIFICAÇÃO das quatro regras de precisão, cada uma com CONTROLE VERDE na MESMA invocação:
+# Inclui FALSIFICAÇÃO das sete regras de precisão, cada uma com CONTROLE VERDE na MESMA invocação:
 # antes de sabotar, a fixture é exercitada contra o hook ÍNTEGRO e tem de estar SILENCIOSA. Sem
 # esse controle, uma fixture sempre-vermelha aprovaria qualquer sabotagem
 # (docs/historico/falsificacao-sem-linha-de-base.md).
@@ -81,8 +81,6 @@ rodada() {
     "$(entrada "$(printf 'while pgrep -f "bun run test" > /dev/null; do\n  sleep 20\ndone\necho fim\n')")"
   checa "P8 continuacao de linha partindo o laco" "$P" \
     "$(entrada "$(printf 'until ! pgrep -f alvo; \\\n  do sleep 9; done\n')")"
-  checa "P9 dentro de aspas DUPLAS: bash -c EXECUTA" "$P" \
-    "$(entrada 'bash -c "while pgrep -f alvo >/dev/null; do sleep 5; done"')"
   checa "P10 corpo com mais coisas alem do sleep" "$P" \
     "$(entrada 'while pgrep -f alvo >/dev/null; do sleep 5; echo esperando; done')"
   checa "P11 laco aninhado: o done de dentro nao fecha o de fora" "$P" \
@@ -119,6 +117,51 @@ rodada() {
     "$(entrada 'while pgrep -f alvo; do sleep 5; done' 'Read')"
   checa "N15 silenciador declarado no inicio" "VAZIO" \
     "$(entrada 'SONDA_PROCESSO_INTENCIONAL=1 while pgrep -f Docker; do sleep 1; done')"
+
+  # ── REGRESSAO: achados da revisao adversaria do Codex (2026-09-06) ─────────────────────────
+  # FALSOS NEGATIVOS que a v1 liberava — todos reproduzidos e corrigidos.
+  checa "X1 caminho absoluto no pgrep" "$P" \
+    "$(entrada 'until ! /usr/bin/pgrep -f "mutcheck.sh" >/dev/null; do sleep 20; done')"
+  checa "X2 caminho absoluto no sleep" "$P" \
+    "$(entrada 'until ! pgrep -f "mutcheck.sh" >/dev/null; do /bin/sleep 20; done')"
+  checa "X3 barra anti-alias (\\pgrep)" "$P" \
+    "$(entrada 'while \pgrep -f "mutcheck.sh" >/dev/null; do sleep 20; done')"
+  checa "X4 herestring <<< nao abre heredoc" "$P" \
+    "$(entrada "$(printf 'cat <<<EOF\nwhile pgrep -f m.sh >/dev/null; do sleep 20; done\n')")"
+  checa "X5 shift aritmetico (( 1 << 2 )) nao abre heredoc" "$P" \
+    "$(entrada "$(printf '(( x = 1 << 2 ))\nwhile pgrep -f m.sh >/dev/null; do sleep 20; done\n')")"
+  checa "X6 delimitador com hifen fecha (<<DOC-FIM)" "$P" \
+    "$(entrada "$(printf 'cat <<DOC-FIM\ntexto\nDOC-FIM\nwhile pgrep -f m.sh >/dev/null; do sleep 20; done\n')")"
+  # FALSOS POSITIVOS que a v1 marcava — o repo documenta as proprias armadilhas, e ESTE PR
+  # escreve o padrao literal em doc, commit e descricao.
+  checa "X7 commit -m em aspas DUPLAS" "VAZIO" \
+    "$(entrada 'git commit --allow-empty -m "docs: until ! pgrep -f X; do sleep 20; done"')"
+  checa "X8 echo de documentacao" "VAZIO" \
+    "$(entrada 'echo "until ! pgrep -f X; do sleep 20; done"')"
+  checa "X9 grep -nF no proprio catalogo" "VAZIO" \
+    "$(entrada 'command grep -nF "until ! pgrep -f X; do sleep 20; done" docs/historico/evidencia-positiva-shell.md')"
+  checa "X10 heredoc quoted dentro de \$( )" "VAZIO" \
+    "$(entrada "$(printf 'git commit -m "\$(cat <<%sEOF%s\ndocs: until ! pgrep -f X; do sleep 20; done\nEOF\n)"\n' "'" "'")")"
+  checa "X11 pgrep -P \$\$ e IDENTIDADE (filhos do MEU shell)" "VAZIO" \
+    "$(entrada 'sleep 1 & while pgrep -P "$$" >/dev/null; do sleep 0.1; done')"
+  checa "X12 ps -p \$pid | grep e IDENTIDADE" "VAZIO" \
+    "$(entrada 'sleep 1 & pid=$!; while ps -p "$pid" -o pid= | grep -q "[0-9]"; do sleep 0.1; done')"
+  checa "X13 sem HOME o hook nao morre (fail-open)" "$P" \
+    "$(entrada 'while pgrep -f alvo; do sleep 5; done')"
+
+  # LIMITES ASSUMIDOS do parecer, travados por teste: se um dia forem cobertos, estes ficam
+  # VERMELHOS e a decisao volta a mesa. Todos sao patologicos ou indirecao — cobri-los custaria
+  # a precisao que protege o FP documental.
+  checa "L1 pgrep entre aspas simples (FN)" "VAZIO" \
+    "$(entrada "while 'pgrep' -f alvo >/dev/null; do sleep 20; done")"
+  checa "L2 sonda dentro de funcao (FN)" "VAZIO" \
+    "$(entrada "$(printf 'ativo() { pgrep -f m.sh >/dev/null; }\nwhile ativo; do sleep 20; done\n')")"
+  checa "L3 laco zsh sem do — while c; { … } (FN)" "VAZIO" \
+    "$(entrada 'while pgrep -f m.sh >/dev/null; { sleep 20; }')"
+  checa "L4 bash -c com aspas duplas (FN — aspas duplas sao MENCAO)" "VAZIO" \
+    "$(entrada 'bash -c "while pgrep -f alvo >/dev/null; do sleep 5; done"')"
+  checa "L5 sleep como ARGUMENTO literal (FP)" "$P" \
+    "$(entrada 'while pgrep -f m.sh >/dev/null; do printf "%s" sleep; break; done')"
 
   # LIMITE ASSUMIDO, travado por teste: heredoc alimentando um SHELL e executado, mas o corpo e
   # descartado como dado. Cobrir exigiria distinguir `bash <<EOF` de `cat <<EOF`, e o FP de punir
@@ -202,7 +245,7 @@ falsifica() { # <titulo> <perl-de-sabotagem> <fixture...>
   falhas=$((falhas + 1)); return 1
 }
 
-echo "-- falsificacao das 4 regras de precisao --"
+echo "-- falsificacao das 7 regras de precisao --"
 
 # F1 — `sleep` no CORPO e o que separa ESPERA de outra coisa. Fixtures: laco com pgrep na condicao
 # e sleep FORA do corpo (contem "sleep" para atravessar o portao barato — sem isso a sabotagem do
@@ -216,11 +259,11 @@ falsifica "F1 exigencia de sleep no CORPO" 's/if \(!temSleep\) continue/if (0) c
 falsifica "F2 sonda restrita a CONDICAO do laco" \
   's/temPgrep = 0; temPs = 0/temPgrep = (linhaf ~ \/pgrep\/); temPs = 0/' \
   'while read -r l; do sleep 1; done < lista.txt; pgrep -f vitest' \
-  'for f in a b; do sleep 1; done; pgrep -f alvo; while true; do break; done'
+  'pgrep -f alvo > /tmp/pids.txt; while read -r p; do sleep 1; done < /tmp/pids.txt'
 
 # F3 — o scanner de aspas simples: MENCAO != execucao. E a regra que impede o precedente de
 # 2026-06-24 (guard barrando o commit que DOCUMENTA o padrao) de se repetir.
-falsifica "F3 scanner de aspas simples (mencao)" 's/\{ st = 1; i\+\+; continue \}/{ st = 0; i++; continue }/' \
+falsifica "F3 scanner de aspas simples (mencao)" 's/if \(st == 1\)/if (st == 91)/' \
   "git commit -m 'docs: until ! pgrep -f X; do sleep 20; done mede a maquina'" \
   "echo 'while pgrep -f alvo; do sleep 5; done'"
 
@@ -232,14 +275,27 @@ falsifica "F4 descarte do corpo de heredoc" 's/if \(t == hd\) \{ inhd = 0; hd = 
 # F5 — `ps` so conta ACOMPANHADO de grep: `while ps -p "$pid"` e o idioma CERTO e nao pode ser
 # punido. A sabotagem derruba a exigencia do grep.
 falsifica "F5 ps exige grep junto" 's/if \(temPs && temGrep\)/if (temPs || temGrep)/' \
-  'while ps -p "$pid" >/dev/null; do sleep 1; done' \
-  'while ps -o pid= -p "$pid"; do sleep 2; done'
+  'while ps aux > /tmp/snap.txt; do sleep 1; done' \
+  'while command grep -q "^RC=" /tmp/ps-run.log; do sleep 5; done'
+
+# F6 — `-P`/`-p` recebem um PID: isso e IDENTIDADE REAL, nao padrao de texto. Sem esta regra o
+# hook puniria `while pgrep -P "$$"` e `while ps -p "$pid" | grep`, que estao CERTOS.
+falsifica "F6 -P/-p sao identidade, nao padrao" 's/if \(porPid\) continue/if (0) continue/' \
+  'sleep 1 & while pgrep -P "$$" >/dev/null; do sleep 0.1; done' \
+  'sleep 1 & pid=$!; while ps -p "$pid" -o pid= | grep -q "[0-9]"; do sleep 0.1; done'
+
+# F7 — aspas DUPLAS sao MENCAO. E a regra que protege o falso positivo mais provavel deste repo:
+# a mensagem de commit e o `echo` que DOCUMENTAM a armadilha (precedente de 2026-06-24).
+falsifica "F7 aspas duplas sao mencao" 's/if \(st == 2\)/if (st == 92)/' \
+  'git commit --allow-empty -m "docs: until ! pgrep -f X; do sleep 20; done"' \
+  'echo "until ! pgrep -f X; do sleep 20; done"' 
 
 restaura; rm -f "$BKP"; trap 'rm -f "$LOGTESTE"' EXIT
 
 # A restauracao tem de ser VERIFICADA: a suite reescreve o hook 5 vezes, e sair com um hook
 # sabotado em disco seria pior que qualquer falha de teste.
-if command grep -q 'if (!temSleep) continue' "$HOOK" && command grep -q 'if (temPs && temGrep)' "$HOOK"; then
+if command grep -q 'if (!temSleep) continue' "$HOOK" && command grep -q 'if (temPs && temGrep)' "$HOOK" \
+   && command grep -q 'if (porPid) continue' "$HOOK" && command grep -qF 'st = 2; vis = vis " "' "$HOOK"; then
   echo "  ok   hook restaurado integro"
 else
   echo "  FALHA hook NAO foi restaurado — ha sabotagem em disco"; falhas=$((falhas + 1))

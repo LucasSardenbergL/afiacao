@@ -38,19 +38,40 @@
 # ── POR QUE AVISA E NUNCA BLOQUEIA ────────────────────────────────────────────────────────────
 # Precedente direto: `pipestatus-zsh-guard.sh` nasceu BLOQUEANTE e foi rebaixado a AVISO por uma
 # revisao adversaria que provou falso negativo E falso positivo — "um detector de padrao de shell
-# nao herda a semantica do shell" (§9). Aqui existe um falso positivo LEGITIMO e permanente:
-# esperar por um processo que e de fato unico na maquina (um daemon, um app de GUI). Esse caso
-# nunca vai desaparecer, entao este hook nao tem — e nao tera — precisao para `deny`. Como AVISO a
-# economia se inverte: o falso positivo custa UMA LINHA de contexto, o falso negativo custou uma
-# sessao presa por 6h26 e um veredito fabricado.
+# nao herda a semantica do shell" (§9 do mesmo catalogo). Aqui existe um falso positivo LEGITIMO e
+# PERMANENTE: esperar por um processo que e de fato unico na maquina (um daemon, um app de GUI).
+# Esse caso nunca vai desaparecer, entao este hook nao tem — e nao tera — precisao para `deny`.
+# Como AVISO a economia se inverte: o falso positivo custa UMA LINHA de contexto, o falso negativo
+# custou uma sessao presa por 6h26 e um veredito fabricado.
 #
-# ── O QUE ELE NAO PEGA (limites assumidos, travados por teste) ────────────────────────────────
-# - espera por texto SEM laco de shell (`watch`, `timeout`, um sleep unico seguido de pgrep);
-# - `ps` sem `grep` na condicao — de proposito: `while ps -p "$pid"` espera pelo MEU pid, e e o
-#   idioma CERTO, igual a `while kill -0 "$pid"`;
-# - reinterpretacao posterior: `eval`, `ssh host "…"`, `xargs`, `bash <<EOF` (heredoc alimentando
-#   um shell). O corpo de heredoc e descartado por ser DADO — e quase sempre e;
-# - laco montado em runtime a partir de variavel.
+# ── ASPAS DUPLAS SAO MENCAO (decisao revista) ─────────────────────────────────────────────────
+# A 1a versao tratava `"…"` como executavel, pelo argumento de que `bash -c "while pgrep …"` roda
+# de verdade. A revisao adversaria (Codex, 2026-09-06, enquadramento de COBERTURA) mostrou o custo:
+# `git commit -m "docs: until ! pgrep -f X; do sleep 20; done"`, `echo "…"`, `grep -nF "…" doc.md`
+# e `printf "%s\n" "…" > doc.md` disparavam TODOS — e sao exatamente o que se faz num repo que
+# documenta as proprias armadilhas. E o precedente de 2026-06-24 (um guard do repo bloqueou o
+# commit que DOCUMENTAVA o padrao que ele detectava) se repetindo, agora como ruido.
+# Entao aspas duplas passam a ser MENCAO, com UMA excecao: `"$(…)"` volta a ser visivel, porque
+# substituicao de comando EXECUTA — e `until [ -z "$(pgrep -f X)" ]` e idiomatico demais para
+# escapar. O preco e `bash -c "…"` virar falso negativo, o que e coerente: reinterpretacao
+# posterior (`eval`, `ssh host "…"`, `xargs`) ja estava na lista de limites.
+#
+# ── O QUE ELE NAO PEGA (limites assumidos, cada um travado por teste) ─────────────────────────
+# Da revisao adversaria, os que ficaram de fora DE PROPOSITO — cobri-los custaria a precisao que
+# protege o falso positivo documental, ou exigiria analise de fluxo:
+#   - `bash -c "while pgrep …"` e o resto da familia de reinterpretacao posterior (acima);
+#   - a sonda dentro de uma funcao: `ativo() { pgrep -f X; }; while ativo; do sleep 20; done`;
+#   - a forma curta do zsh, sem `do`: `while pgrep -f X; { sleep 20; }`;
+#   - o nome do comando entre aspas (`while 'pgrep' -f X`), que o scanner le como mencao;
+#   - `do`/`done`/`sleep` como ARGUMENTO literal, que desalinha o parser (nos dois sentidos);
+#   - `$(…)` DENTRO de heredoc nao-quoted, que executa mesmo com o corpo descartado;
+#   - laco montado em runtime a partir de variavel, e espera sem laco de shell (`watch`, `timeout`).
+# E o que a revisao pegou e FOI corrigido, para nao regredir: caminho absoluto (`/usr/bin/pgrep`,
+# `/bin/sleep`), a barra anti-alias (`\pgrep`), a herestring `<<<` e o shift `1 << 2` abrindo
+# heredoc ficticio, o delimitador com hifen (`<<DOC-FIM` lido como `DOC`, que nunca fechava),
+# `pgrep -P "$$"`/`ps -p "$pid"` (identidade REAL, nao padrao de texto) e o `set -u` derrubando o
+# hook quando `HOME` nao existe. Todos viraram teste na suite.
+#
 # No sentido oposto, ainda avisa a toa quando o sujeito e genuinamente unico na maquina. E aviso:
 # custa uma linha. E prevencao de acidente de boa-fe, nao sandbox contra adversario.
 #
@@ -64,6 +85,10 @@ entrada="$(cat)"
 # nao tem nada a ver com o assunto. `sleep` e condicao NECESSARIA do gatilho e e raro no caminho
 # quente, entao ele filtra primeiro; so depois o segundo portao. Glob em bash puro custa ~0ms.
 # Limite assumido: continuacao de linha DENTRO da palavra `sleep` escapa (patologico).
+# ATENCAO ao falsificar a suite: este portao e uma REGRA, nao so performance — ele decide
+# sozinho o resultado de qualquer fixture que nao tenha `sleep` E (`pgrep` ou `ps`). Fixture de
+# falsificacao precisa ATRAVESSA-LO para alcancar a regra sabotada, senao o verde vem de graca
+# (docs/historico/guard-de-sonda-de-processo.md §3 — foi o acidente da F5).
 case "$entrada" in
   *[Ss][Ll][Ee][Ee][Pp]*) ;;
   *) exit 0 ;;
@@ -105,8 +130,8 @@ cmd="${cmd//\\$'\n'/}"
 # nasce numa sessao que escreve o padrao literal em doc, commit e PR.
 saida="$(printf '%s' "$cmd" | awk '
   function separador(c) { return (c == "" || c == " " || c == "\t" || c == ";" || c == "&" || c == "|" || c == "(" ) }
-  function eflag_f(t) { return (t ~ /^-[A-Za-z]*f/ || t == "--full") }
-  BEGIN { st = 0; inhd = 0; hd = ""; hdash = 0; vis = "" }
+  function base(t) { sub(/^.*\//, "", t); return t }          # /usr/bin/pgrep -> pgrep
+  BEGIN { st = 0; inhd = 0; hd = ""; hdash = 0; retdq = 0; pardep = 0; vis = "" }
   {
     linha = $0
     if (inhd) {                                    # dentro de heredoc: so procura o fechamento
@@ -117,38 +142,56 @@ saida="$(printf '%s' "$cmd" | awk '
     pend = 0; n = length(linha); i = 1; ant = ""
     while (i <= n) {
       c = substr(linha, i, 1)
-      if (st == 0) {                               # fora de aspas
-        if (c == "#" && separador(ant)) break      # comentario: ignora ate o fim da linha
-        if (c == "\\") { ant = ""; i += 2; continue }
-        if (c == "\x27") { st = 1; i++; continue }
-        if (c == "\"")   { st = 2; i++; continue }
-        if (c == "$" && substr(linha, i+1, 1) == "\x27") { st = 3; i += 2; continue }
-        if (c == "<" && substr(linha, i+1, 1) == "<" && substr(linha, i+2, 1) != "<") {
-          j = i + 2; hyf = 0
-          if (substr(linha, j, 1) == "-") { hyf = 1; j++ }
-          while (substr(linha, j, 1) == " " || substr(linha, j, 1) == "\t") j++
-          q = substr(linha, j, 1)
-          if (q == "\x27" || q == "\"" || q == "\\") j++
-          d = ""
+      if (st == 2) {                               # aspas DUPLAS: MENCAO, descarta…
+        if (c == "\\") { i += 2; continue }
+        if (c == "$" && substr(linha, i+1, 1) == "(") {   # …EXCETO $( ), que EXECUTA
+          st = 0; retdq = 1; pardep = 1; vis = vis " "; i += 2; continue
+        }
+        if (c == "\"") { st = 0; vis = vis " "; i++; continue }
+        i++; continue
+      }
+      if (st == 1) { if (c == "\x27") { st = 0; vis = vis " " } i++; continue }   # aspas simples
+      if (st == 3) { if (c == "\\") { i += 2; continue }                          # $\x27…\x27
+                     if (c == "\x27") { st = 0; vis = vis " " } i++; continue }
+      # ── st == 0: fora de aspas ──────────────────────────────────────────────────────────
+      if (c == "#" && separador(ant)) break        # comentario: ignora ate o fim da linha
+      if (c == "\\") { ch = substr(linha, i+1, 1); vis = vis ch; ant = ch; i += 2; continue }
+      if (c == "\x27") { st = 1; vis = vis " "; i++; continue }
+      if (c == "\"")   { st = 2; vis = vis " "; i++; continue }
+      if (c == "$" && substr(linha, i+1, 1) == "\x27") { st = 3; vis = vis " "; i += 2; continue }
+      if (retdq && c == "(") { pardep++; vis = vis c; ant = c; i++; continue }
+      if (retdq && c == ")") {
+        pardep--
+        if (pardep <= 0) { st = 2; retdq = 0; vis = vis " "; i++; continue }
+        vis = vis c; ant = c; i++; continue
+      }
+      if (c == "<" && substr(linha, i+1, 1) == "<") {
+        if (substr(linha, i+2, 1) == "<") { vis = vis " "; ant = "<"; i += 3; continue }  # herestring
+        j = i + 2; hyf = 0
+        if (substr(linha, j, 1) == "-") { hyf = 1; j++ }
+        while (substr(linha, j, 1) == " " || substr(linha, j, 1) == "\t") j++
+        q = substr(linha, j, 1); hq = 0
+        if (q == "\x27" || q == "\"" || q == "\\") { hq = 1; j++ }
+        d = ""
+        # O 1o caractere tem de ser de IDENTIFICADOR (ou o delimitador vir quoted): sem isto o
+        # deslocamento aritmetico `(( x = 1 << 2 ))` abria um heredoc de delimitador "2" e engolia
+        # o resto do comando. Os seguintes aceitam `-` e `.`: `<<DOC-FIM` lido como "DOC" nunca
+        # encontrava o proprio fechamento — e o descarte vazava para o comando de baixo.
+        if (hq || substr(linha, j, 1) ~ /[A-Za-z_]/) {
           while (j <= n) {
             ch = substr(linha, j, 1)
-            if (ch ~ /[A-Za-z0-9_]/) { d = d ch; j++ } else break
+            if (ch ~ /[A-Za-z0-9_.-]/) { d = d ch; j++ } else break
           }
           ch = substr(linha, j, 1)
           if (ch == "\x27" || ch == "\"") j++
-          # NAO sobrescreve um heredoc ja pendente: fica com o PRIMEIRO da linha (o 2o e limite
-          # assumido, herdado do hook de origem).
+          # NAO sobrescreve um heredoc ja pendente: fica com o PRIMEIRO da linha (limite assumido,
+          # herdado do hook de origem).
           if (d != "" && !pend) { hd = d; hdash = hyf; pend = 1 }
           ant = ">"; i = j; continue
         }
-        vis = vis c; ant = c; i++; continue
+        vis = vis " "; ant = "<"; i += 2; continue
       }
-      if (st == 1) { if (c == "\x27") st = 0; i++; continue }          # aspas simples: MENCAO
-      if (st == 3) { if (c == "\\") { i += 2; continue }               # $\x27…\x27: MENCAO
-                     if (c == "\x27") st = 0; i++; continue }
-      if (c == "\\") { i += 2; continue }                              # aspas duplas
-      if (c == "\"") { st = 0; i++; continue }
-      vis = vis c; i++            # aspas duplas: `bash -c "while pgrep …"` EXECUTA mesmo
+      vis = vis c; ant = c; i++
     }
     if (pend) inhd = 1
     vis = vis "\n"
@@ -163,14 +206,19 @@ saida="$(printf '%s' "$cmd" | awk '
     for (a = 1; a <= nt; a++) {
       if (tok[a] != "while" && tok[a] != "until") continue
       # (1) CONDICAO: do `while`/`until` ate o `do` que o fecha.
-      temPgrep = 0; temPs = 0; temGrep = 0; temF = 0
+      temPgrep = 0; temPs = 0; temGrep = 0; temF = 0; porPid = 0
       for (b = a + 1; b <= nt && tok[b] != "do"; b++) {
-        if (tok[b] == "pgrep") { temPgrep = 1; continue }
-        if (tok[b] == "ps")    { temPs = 1; continue }
-        if (tok[b] == "grep" || tok[b] == "egrep" || tok[b] == "fgrep") { temGrep = 1; continue }
-        if (temPgrep && eflag_f(tok[b])) temF = 1
+        w = base(tok[b])
+        if (w == "pgrep") { temPgrep = 1; continue }
+        if (w == "ps")    { temPs = 1; continue }
+        if (w == "grep" || w == "egrep" || w == "fgrep" || w == "rg") { temGrep = 1; continue }
+        # `-P` (pgrep) e `-p` (ps) recebem um PID: isso e IDENTIDADE REAL, nao padrao de texto —
+        # `while pgrep -P "$$"` espera os filhos do MEU shell e esta certo, igual a `ps -p "$pid"`.
+        if (tok[b] ~ /^-[A-Za-z]*[Pp]$/ || tok[b] ~ /^--(parent|pid)$/) { porPid = 1; continue }
+        if (temPgrep && (tok[b] ~ /^-[A-Za-z]*f/ || tok[b] == "--full")) temF = 1
       }
-      if (b > nt) continue                       # laco sem `do`: nao e laco
+      if (b > nt) continue                       # laco sem `do`: nao e laco que este hook entende
+      if (porPid) continue
       # `ps` SEM `grep` fica de fora de proposito: `while ps -p "$pid"` espera pelo MEU pid e e o
       # idioma CERTO — mesma familia de `while kill -0 "$pid"`.
       ramo = ""
@@ -183,7 +231,7 @@ saida="$(printf '%s' "$cmd" | awk '
       for (k = b + 1; k <= nt; k++) {
         if (tok[k] == "do") prof++
         else if (tok[k] == "done") { prof--; if (prof == 0) { fim = k; break } }
-        else if (tok[k] == "sleep") temSleep = 1
+        else if (base(tok[k]) == "sleep") temSleep = 1
       }
       if (!temSleep) continue
       # Trecho para o sensor: os tokens do laco, ja sem aspas e sem `$` (a tokenizacao os comeu).
@@ -203,6 +251,7 @@ resto="${saida#*$'\t'}"
 flag="${resto%%$'\t'*}"
 trecho="${resto#*$'\t'}"
 
+# shellcheck disable=SC2016  # o texto do aviso e LITERAL: $! e $? sao parte da licao, nao expansao
 idioma='O IDIOMA CERTO — espere pelo SEU processo, ou por um marcador que ele mesmo escreveu:
 
   bash scripts/trabalho.sh > .saida.txt 2>&1 & pid=$!   # o PID e MEU, nao um padrao de texto
@@ -241,7 +290,7 @@ fi
 TETO_LINHA=511   # 511 + o "\n" = 512 = PIPE_BUF do macOS, o mais estrito das plataformas em jogo
 registrar_sinal() {
   local log dir linha wt corte janela ts d seguro
-  log="${SONDA_PROCESSO_GUARD_LOG:-$HOME/.claude/afiacao-sonda-processo-guard.jsonl}"
+  log="${SONDA_PROCESSO_GUARD_LOG:-${HOME:-}/.claude/afiacao-sonda-processo-guard.jsonl}"
   dir="${log%/*}"
   [ -d "$dir" ] || (umask 077; mkdir -p "$dir") 2>/dev/null || return 0
   # Nasce 0600: o arquivo guarda FRAGMENTO DE COMANDO.
