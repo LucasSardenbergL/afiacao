@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **518** custom migrations totais
-- **1759** objetos esperados (criados por estas migrations)
+- **519** custom migrations totais
+- **1766** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 545
-  - `rls_policy`: 460
-  - `index`: 253
+  - `function`: 547
+  - `rls_policy`: 461
+  - `index`: 254
   - `cron_job`: 170
-  - `table`: 163
-  - `trigger`: 88
-  - `view`: 76
+  - `table`: 164
+  - `trigger`: 89
+  - `view`: 77
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4298,6 +4298,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.aprovar_pedido_sugerido` | — |
+
+### `20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao__valida_cancelamento_pos_disparo` | — |
+| `function` | `public.corrigir_cancelamento_pos_disparo` | — |
+| `view` | `public.vw_cancelamento_pos_disparo_sem_evidencia` | — |
+| `table` | `public.reposicao_cancelamento_pos_disparo_audit` | — |
+| `index` | `public.idx_reposicao_cancel_pos_disparo_audit_pedido` | `reposicao_cancelamento_pos_disparo_audit` |
+| `trigger` | `public.trg_valida_cancelamento_pos_disparo` | `pedido_compra_sugerido` |
+| `rls_policy` | `public.reposicao_cancel_pos_disparo_audit_select_staff` | `reposicao_cancelamento_pos_disparo_audit` |
 
 ### `20260906154202_cancelar_pedido_revoke_anon.sql`
 

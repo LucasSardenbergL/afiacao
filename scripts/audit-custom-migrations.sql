@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 518
+-- Total de custom migrations: 519
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -557,6 +557,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260906105549', 'remover_itens_pedido_guard', '20260906105549_remover_itens_pedido_guard.sql'),
   ('20260906151204', 'deploy_sonda_cron_fail_closed', '20260906151204_deploy_sonda_cron_fail_closed.sql'),
   ('20260906151715', 'aprovar_pedido_guard_atomico', '20260906151715_aprovar_pedido_guard_atomico.sql'),
+  ('20260906152235', 'cancelamento_pos_disparo_trigger_e_rpc', '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql'),
   ('20260906154202', 'cancelar_pedido_revoke_anon', '20260906154202_cancelar_pedido_revoke_anon.sql'),
   ('20260906164001', 'captura_authz_gate_custo_rpcs_preco', '20260906164001_captura_authz_gate_custo_rpcs_preco.sql'),
   ('20260906164002', 'captura_authz_escopo_carteira_farmer', '20260906164002_captura_authz_escopo_carteira_farmer.sql')
@@ -2303,6 +2304,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
   ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'view', 'public', 'vw_cancelamento_pos_disparo_sem_evidencia', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'table', 'public', 'reposicao_cancelamento_pos_disparo_audit', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'index', 'public', 'idx_reposicao_cancel_pos_disparo_audit_pedido', 'reposicao_cancelamento_pos_disparo_audit'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'trigger', 'public', 'trg_valida_cancelamento_pos_disparo', 'pedido_compra_sugerido'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'rls_policy', 'public', 'reposicao_cancel_pos_disparo_audit_select_staff', 'reposicao_cancelamento_pos_disparo_audit'),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_price', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_prices', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_preco_cockpit', ''),
@@ -4099,6 +4107,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
   ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'view', 'public', 'vw_cancelamento_pos_disparo_sem_evidencia', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'table', 'public', 'reposicao_cancelamento_pos_disparo_audit', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'index', 'public', 'idx_reposicao_cancel_pos_disparo_audit_pedido', 'reposicao_cancelamento_pos_disparo_audit'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'trigger', 'public', 'trg_valida_cancelamento_pos_disparo', 'pedido_compra_sugerido'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'rls_policy', 'public', 'reposicao_cancel_pos_disparo_audit_select_staff', 'reposicao_cancelamento_pos_disparo_audit'),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_price', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_prices', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_preco_cockpit', ''),
