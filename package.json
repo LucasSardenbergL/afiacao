@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:sonda-rollback": "deno test --no-remote --allow-read --allow-write --allow-run=deno,git,tar supabase/harness-sonda-rollback/",
     "test:edges": "deno test --no-remote --allow-read=supabase/functions supabase/functions/",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.scripts.json",
     "typecheck:app": "tsc --noEmit -p tsconfig.app.json",

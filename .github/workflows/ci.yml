@@ -188,6 +188,15 @@ jobs:
       - name: Tests (edge functions — Deno, offline)
         run: bun run test:edges
 
+      # TESTE DECISIVO da sonda por cron (spec 2026-09-05-sonda-por-cron-fail-closed-design.md §5):
+      # materializa bundles históricos REAIS por `git archive` — inclusive os que NÃO autenticavam
+      # nada (monthly-report@ef08dddd2 manda e-mail para qualquer POST; calculate-scores@45a80118b
+      # faz 11 escritas) — e exige que o OPTIONS que o relé emite produza ZERO efeito, com controle
+      # positivo provando que o contador enxerga o fluxo real daquele mesmo bundle. Precisa de
+      # `fetch-depth: 0` (já é), `git` e `tar`. Continua offline: `--no-remote`.
+      - name: Sonda por cron — rollback para bundle velho fica em ZERO efeito (Deno, offline)
+        run: bun run test:sonda-rollback
+
       # Type-check das EDGE FUNCTIONS — blocking. Buraco que ficou aberto mesmo depois do
       # `test:edges` acima: `deno test` só type-checa o grafo que os TESTES alcançam, e por desenho
       # os testes cobrem lógica PURA extraída (justamente para caber no `--no-remote`), então
