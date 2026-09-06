@@ -25,6 +25,29 @@
  * a prova de ontem valia zero hoje. O ledger é alimentado por cron (`deploy-atestacoes-colher`,
  * 15/15 min); a sonda humana passa a ser UMA por deploy (e a 1ª de edge nova), nunca por sessão.
  *
+ * A 2ª LEITURA (`SQL_SEM_IDENTIDADE`, 2026-09-05): `deploy_atestacoes_janela_viva()` exige `edge`
+ * string — é o que impede corpo alheio de virar veredito, e é o que torna a sonda de bundle
+ * pré-28/08 INVISÍVEL: ela responde `{"ok":true,"probe":true,"versao":"…"}` e mais nada. Medido no
+ * bootstrap do ledger: das 30 sondas do founder, 6 vieram assim, ficaram fora do ledger e saíram no
+ * relatório como `NUNCA_ATESTADA — precisa da 1ª sonda`. O founder sondava de novo e recebia a
+ * mesma resposta. Então o CLI faz uma segunda consulta, barata, sobre a MESMA janela: 200 +
+ * `probe` booleano true + SEM a chave `edge`. O produto dela é a classe `SONDA_SEM_IDENTIDADE`.
+ *
+ * ATRIBUIR É OPCIONAL, E SÓ POR `request_id` (`--ids`). `v1.0-sensor-inicial` é a `VERSAO` de 13
+ * edges da main; duas respostas de edges diferentes são idênticas byte a byte, e nem a URL, nem a
+ * fila, nem os headers, nem o `created` desempatam (§7 de `verificar-sonda-versao.md`). A única
+ * identidade forte é o id que o PASSO 1 do `sonda:sql` devolve. Sem `--ids`, o relatório dá a
+ * CONTAGEM, as versões e os ids — nunca a edge. Casar por posição seria fabricar.
+ *
+ * POR QUE ELAS NÃO ENTRAM NO LEDGER COM `edge = 'desconhecida'` (pedido explicitamente, e a
+ * resposta é não): (a) o `DISTINCT ON (edge)` passaria a ver uma edge chamada `desconhecida`, que a
+ * main não mapeia ⇒ 🟠 FORA_DO_MAPA urgente — uma edge INVENTADA no relatório de deploy, e o slug
+ * casa o regex da janela viva, então nada no banco a barraria; (b) o ledger é ETERNO e a janela do
+ * pg_net dura 6h: a chance de atribuir morre com a janela, e a linha ficaria para sempre
+ * impossível de reinterpretar; (c) este CLI lê pelo `psql-ro` — gravar exigiria o founder colar
+ * SQL, custo humano por um dado que não conclui nada. A prova não se perde: ela vira CLASSE no
+ * relatório (exit 1), e veredito por edge quando houver `--ids`.
+ *
  * POR QUE NÃO HÁ CRON DE SONDA ATIVA: o desenho inicial tinha um (6/6h, allowlist das edges que
  * já responderam `probe:true`). O Codex derrubou: rollback pelo Lovable, restauração de projeto
  * ou recriação manual devolvem um bundle PRÉ-sensor, que ignora `probe` e roda o fluxo real — a
@@ -38,13 +61,19 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  atribuirSondasSemIdentidade,
+  DATA_ECO_COM_IDENTIDADE,
   edgesParaSondar,
   julgar,
   lerTolerancia,
+  parsearIds,
   parsearObservacoes,
+  parsearSondasSemIdentidade,
+  resumirSemIdentidade,
   type Contexto,
   type Esperado,
   type Estado,
+  type Observacao,
   type Relatorio,
   type Veredito,
 } from './lib/pendencias-deploy';
@@ -122,6 +151,98 @@ FROM cron.job j
 LEFT JOIN cron.job_run_details d ON d.jobid = j.jobid AND d.status = 'succeeded'
 WHERE j.jobname = '${CRON_COLETOR}';
 `.trim();
+
+/**
+ * A 2ª leitura: sondas que responderam e NÃO disseram quem são.
+ *
+ * Sobre `net._http_response` direto, porque a janela viva as exclui por construção (exige `edge`).
+ * Afrouxar a janela seria deixar entrar no LEDGER — que é eterno — linha sem edge; esta consulta
+ * não escreve nada e roda no mesmo wrapper read-only.
+ *
+ * Os guards são os mesmos da janela viva, pela mesma razão: `LIKE` textual e `left(ltrim(...))`
+ * ANTES do cast, com o cast dentro de um `CASE` (ordem de avaliação é da linguagem, não do plano) —
+ * sem isso, um corpo truncado que começa com `{` aborta a varredura inteira.
+ *
+ * `NOT (r.c ? 'edge')` e não `(r.c ->> 'edge') IS NULL`: a ausência se testa pela CHAVE. E
+ * `probe` tem de ser o BOOLEANO true — sem essa assinatura, qualquer corpo de terceiro sem `edge`
+ * entraria na classe.
+ *
+ * LIMITE conhecido: `probe:true` sem `versao` string fica de fora. Não é forma que este repo já
+ * emitiu (`respostaSonda` sempre recebeu a `VERSAO`), e sem `versao` não há o que comparar com a
+ * main — a linha entraria só para inflar um contador.
+ */
+export const SQL_SEM_IDENTIDADE = `
+SELECT r.id,
+       r.c ->> 'versao',
+       to_char(r.created AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI"Z"'),
+       round((extract(epoch FROM (now() - r.created)) / 3600.0)::numeric, 2)
+FROM (
+  SELECT id, created,
+         CASE WHEN content IS JSON OBJECT THEN content::jsonb END AS c
+  FROM net._http_response
+  WHERE status_code = 200
+    AND id IS NOT NULL
+    AND created IS NOT NULL
+    AND content IS NOT NULL
+    AND left(ltrim(content), 1) = '{'
+    AND content LIKE '%"probe"%'
+    AND content LIKE '%"versao"%'
+) r
+WHERE r.c IS NOT NULL
+  AND (r.c -> 'probe') = to_jsonb(true)
+  AND NOT (r.c ? 'edge')
+  AND jsonb_typeof(r.c -> 'versao') = 'string'
+  AND length(r.c ->> 'versao') BETWEEN 1 AND 120
+ORDER BY r.created DESC, r.id DESC;
+`.trim();
+
+/**
+ * Lê o `--ids` do argv, ou LANÇA (⇒ exit 2). A flag é opcional; o que não é opcional é ela ser
+ * inequívoca — argumento digitado errado que caísse em "sem atribuição" devolveria o relatório
+ * ANTIGO com cara de novo, e o founder concluiria que a atribuição não funciona.
+ */
+export function lerArgIds(argv: string[]): string | null {
+  const USO = 'Uso: bun run pendencias:deploy [--ids=\'{"<edge>": <request_id>, …}\']';
+  let ids: string | null = null;
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    let valor: string | undefined;
+
+    if (arg === '--ids') {
+      valor = argv[i + 1];
+      i += 1;
+    } else if (arg.startsWith('--ids=')) {
+      valor = arg.slice('--ids='.length);
+    } else {
+      throw new Error(`argumento desconhecido: ${arg}. ${USO}`);
+    }
+
+    if (valor === undefined || valor.trim() === '') {
+      throw new Error(`--ids veio sem valor. Cole o JSON do PASSO 1 do \`sonda:sql\`. ${USO}`);
+    }
+    if (ids !== null) {
+      throw new Error('--ids repetido: dois JSONs são duas levas, e escolher um deles é escolher por ordem.');
+    }
+    ids = valor;
+  }
+
+  return ids;
+}
+
+/** A seção da classe. Sem resposta sem identidade não há seção — silêncio aqui é o certo. */
+export function formatarSemIdentidade(resumo: ReturnType<typeof resumirSemIdentidade>): string[] {
+  if (resumo.total === 0) return [];
+  return [
+    `\n🔴 SONDA_SEM_IDENTIDADE — ${resumo.total} resposta(s) \`probe:true\` SEM \`edge\` no corpo`,
+    `   versao respondida: ${resumo.porVersao.map((v) => `${v.versao} × ${v.n}`).join(' · ')}`,
+    `   request_id: ${resumo.requestIds.join(', ')}`,
+    `   Bundle anterior a ${DATA_ECO_COM_IDENTIDADE}, quando o eco passou a trazer edge+fonte (069540905).`,
+    '   Isto é DEPLOY PENDENTE por closure, não ausência de dado: NÃO RE-SONDE — a resposta seria a mesma.',
+    '   Para virar veredito POR EDGE, cole o JSON do PASSO 1:',
+    `     bun run sonda:sql --so-disparo <edge>…   →   bun run pendencias:deploy --ids='<json do passo 1>'`,
+  ];
+}
 
 function psql(sql: string): string {
   return execFileSync(PSQL_RO, ['-A', '-F', '|', '-t', '-c', sql], {
@@ -220,7 +341,7 @@ function idade(v: Veredito): string {
   return `há ${Math.round(v.idadeHoras / 24)} d`;
 }
 
-function imprimir(rel: Relatorio): void {
+function imprimir(rel: Relatorio, linhasSemIdentidade: string[]): void {
   // Tipados como `Estado` de propósito: um estado novo na lib sem rótulo aqui — ou um nome
   // digitado errado — vira erro de compilação, não seção que some calada do relatório.
   const ordem: Estado[] = [
@@ -270,12 +391,22 @@ function imprimir(rel: Relatorio): void {
     }
   }
 
+  for (const linha of linhasSemIdentidade) console.log(linha);
+
   const sondar = edgesParaSondar(rel);
   if (sondar.length > 0) {
     console.log(
       `\n   → sonda (founder cola no SQL Editor): bun run sonda:sql ${sondar.join(' ')}` +
         '\n     A resposta entra no ledger em até 15 min (cron deploy-atestacoes-colher) e vale até o fonte da main mudar.',
     );
+    // Sem `--ids` não dá para saber QUAIS destas já responderam — mas dá para não deixar as duas
+    // instruções se contradizerem na mesma tela. A ressalva é o que impede a re-sonda inútil.
+    if (linhasSemIdentidade.length > 0) {
+      console.log(
+        '     ⚠️  Há resposta(s) SEM IDENTIDADE na janela (acima): parte desta lista pode já ter respondido.',
+      );
+      console.log('        Se você acabou de sondar, ATRIBUA com --ids em vez de sondar de novo.');
+    }
   }
 
   console.log(
@@ -288,10 +419,12 @@ function imprimir(rel: Relatorio): void {
   }
 }
 
-export function main(): number {
+export function main(argv: string[] = []): number {
   let tolerarNunca: boolean;
+  let idsBruto: string | null;
   try {
     tolerarNunca = lerTolerancia(process.env.PENDENCIAS_TOLERAR_NUNCA_ATESTADA);
+    idsBruto = lerArgIds(argv);
   } catch (e) {
     console.error(`❌ MECÂNICA: ${(e as Error).message}`);
     return 2;
@@ -309,11 +442,24 @@ export function main(): number {
     return 2;
   }
 
+  // O `--ids` se valida contra o mapa da MAIN, então só aqui: edge fora do mapa é fail-closed.
+  let idParaEdge = new Map<number, string>();
+  if (idsBruto !== null) {
+    try {
+      idParaEdge = parsearIds(idsBruto, esperados);
+    } catch (e) {
+      console.error(`❌ MECÂNICA: ${(e as Error).message}`);
+      return 2;
+    }
+  }
+
   let saudeBruta: string;
   let saida: string;
+  let saidaSemIdentidade: string;
   try {
     saudeBruta = psql(SQL_SAUDE_COLETOR);
     saida = psql(SQL);
+    saidaSemIdentidade = psql(SQL_SEM_IDENTIDADE);
   } catch (e) {
     const err = e as Error & { stderr?: string | Buffer };
     const stderr = String(err.stderr ?? '');
@@ -348,22 +494,33 @@ export function main(): number {
   }
 
   const { observacoes, linhasIgnoradas } = parsearObservacoes(saida);
-  if (linhasIgnoradas > 0) {
+  const { sondas, linhasIgnoradas: ignoradasSemIdentidade } = parsearSondasSemIdentidade(saidaSemIdentidade);
+  const ignoradas = linhasIgnoradas + ignoradasSemIdentidade;
+  if (ignoradas > 0) {
     console.error(
-      `❌ MECÂNICA: ${linhasIgnoradas} linha(s) da saída do psql não casaram o formato — a linha descartada pode ser a divergência.`,
+      `❌ MECÂNICA: ${ignoradas} linha(s) da saída do psql não casaram o formato — a linha descartada pode ser a divergência.`,
     );
     return 2;
   }
 
+  // A atribuída vira observação de primeira classe (id é identidade mais forte que o eco do slug);
+  // a não atribuída continua sendo SINAL, sem virar veredito por edge.
+  const { observacoes: atribuidas, naoAtribuidas } = atribuirSondasSemIdentidade(sondas, idParaEdge);
+  const todas: Observacao[] = [...observacoes, ...atribuidas];
+  const linhasSemIdentidade = formatarSemIdentidade(resumirSemIdentidade(naoAtribuidas));
+
   let rel: Relatorio;
   try {
-    rel = julgar(esperados, observacoes, contextoGit(), linhasIgnoradas);
+    rel = julgar(esperados, todas, contextoGit(), ignoradas);
   } catch (e) {
     console.error(`❌ MECÂNICA: ${(e as Error).message}`);
     return 2;
   }
 
   if (rel.totalObservadas === 0) {
+    // A classe sai ANTES do erro: sem ela, "dispare a 1ª leva" mandaria sondar de novo justamente
+    // quem já respondeu — o laço que esta correção existe para cortar.
+    for (const linha of linhasSemIdentidade) console.error(linha);
     console.error(
       `❌ MECÂNICA: ZERO das ${rel.totalMapeadas} edges mapeadas tem atestação (ledger vazio E janela vazia).`,
     );
@@ -371,14 +528,16 @@ export function main(): number {
     return 2;
   }
 
-  imprimir(rel);
+  imprimir(rel, linhasSemIdentidade);
 
   const nunca = rel.vereditos.filter((v) => v.estado === 'NUNCA_ATESTADA').length;
   const pendentes = tolerarNunca ? rel.totalPendentes - nunca : rel.totalPendentes;
   if (tolerarNunca && nunca > 0) {
     console.log(`\n⚠️  PENDENCIAS_TOLERAR_NUNCA_ATESTADA=1: ${nunca} nunca atestada(s) NÃO contam como pendência nesta execução.`);
   }
-  return pendentes > 0 ? 1 : 0;
+  // A válvula do bootstrap tolera AUSÊNCIA de dado. Resposta sem identidade é o oposto: prova
+  // POSITIVA de que um bundle pré-2026-08-28 está no ar. Ela sai exit 1 mesmo com a válvula ligada.
+  return pendentes > 0 || naoAtribuidas.length > 0 ? 1 : 0;
 }
 
-if (import.meta.main) process.exit(main());
+if (import.meta.main) process.exit(main(process.argv.slice(2)));

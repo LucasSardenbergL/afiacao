@@ -135,6 +135,20 @@ export const SEM_MAPA = 'nao-mapeada';
 /** O que o coletor grava quando o eco não traz `fonte` — ausente ≠ zero, então tem nome. */
 export const SEM_FONTE = 'sem-campo';
 
+/**
+ * O `fonte` de uma sonda que respondeu SEM dizer quem é — atribuída depois, pelo `request_id`.
+ *
+ * Não é `fonte` observado: é a marca de que o bundle NÃO emite `edge`/`fonte`, e portanto é anterior
+ * ao commit 069540905 (2026-08-28, #2079), que pôs os dois campos no eco. Como
+ * `_shared/sonda-versao.ts` está no closure de toda edge instrumentada, o `fonte` servido por esse
+ * bundle diverge do da main com CERTEZA — a divergência é DEDUZIDA do formato da resposta, não
+ * medida. Por isso o ramo dela em `julgar` não consulta `parCoerente`: não há par a casar.
+ */
+export const SEM_IDENTIDADE = 'sem-eco-de-identidade';
+
+/** A data em que `edge`+`fonte` entraram no eco (commit 069540905, #2079) — citada no relatório. */
+export const DATA_ECO_COM_IDENTIDADE = '2026-08-28';
+
 /** P2 mais velha que isto vira urgente: a leva agrupada tem prazo. */
 export const ESCALAR_P2_APOS_DIAS = 7;
 
@@ -238,6 +252,15 @@ export function julgar(
       estado = 'SEM_MAPA_NO_BUNDLE';
     } else if (obs.fonte === SEM_FONTE) {
       estado = 'SEM_FONTE_NO_ECO';
+    } else if (obs.fonte === SEM_IDENTIDADE) {
+      // Sonda ANTIGA atribuída por request_id (armadilha 6). O bundle não emite `edge`, logo é
+      // anterior a 2026-08-28 e o closure JÁ divergiu — nunca CONFERE, nunca "sonde-a". Só o
+      // `versao` decide a fila: bumpado = P1 (mudança declarada), igual = P2 (fan-out de
+      // `_shared/`). `parCoerente` não entra: sem `fonte` observado não existe par para casar, e
+      // consultá-lo devolveria `false` (o sentinela nunca esteve no mapa) ⇒ INCOERENTE fabricado.
+      estado = obs.versao === esp.versao ? 'DIVERGE_P2' : 'DIVERGE_P1';
+      diasPendente = contexto.diasPendente(edge, esp.fonte);
+      escalada = estado === 'DIVERGE_P2' && diasPendente !== null && diasPendente > ESCALAR_P2_APOS_DIAS;
     } else if (obs.fonte === esp.fonte) {
       estado = obs.versao === esp.versao ? 'CONFERE' : 'INCOERENTE';
     } else if (obs.versao !== esp.versao) {
@@ -329,4 +352,191 @@ export function lerTolerancia(bruto: string | undefined): boolean {
   throw new Error(
     `PENDENCIAS_TOLERAR_NUNCA_ATESTADA inválido: ${JSON.stringify(bruto)}. Use 1 ou 0.`,
   );
+}
+
+/**
+ * ARMADILHA 6 — a resposta que prova bundle velho e não diz de QUEM.
+ * ============================================================================================
+ *
+ * Medido no bootstrap do ledger (2026-09-05 23:35Z): das 30 sondas coladas pelo founder, 24
+ * responderam `{ok,probe,versao,edge,fonte}` e viraram CONFERE; 6 responderam a forma ANTERIOR a
+ * 2026-08-28 — `{"ok":true,"probe":true,"versao":"v1.0-sensor-inicial"}` —, sem `edge` e sem
+ * `fonte`. `deploy_atestacoes_janela_viva()` exige `edge` string, então essas 6 nem entram no
+ * ledger: o relatório as classificava como `NUNCA_ATESTADA` e mandava "precisa da 1ª sonda". O
+ * founder sondava de novo e recebia a MESMA resposta — um laço em que a prova mais forte de deploy
+ * pendente se disfarçava de ausência de dado.
+ *
+ * A leitura certa: eco sem `edge` não é silêncio, é FORMA. O `_shared/sonda-versao.ts` que passou a
+ * emitir `edge`+`fonte` (069540905) está no closure de toda edge instrumentada ⇒ quem responde sem
+ * eles serve bundle pré-28/08 ⇒ o `fonte` diverge do da main sem precisar ser observado.
+ *
+ * O QUE ISSO **NÃO** AUTORIZA: dizer QUAL edge respondeu. É a §7 de `verificar-sonda-versao.md` na
+ * veia — `v1.0-sensor-inicial` é a `VERSAO` de 13 edges da main, e duas respostas de edges
+ * diferentes são idênticas byte a byte; `net._http_response` não tem URL, a fila é esvaziada ao
+ * processar, os headers são só Cloudflare e o `created` é o ciclo do worker do pg_net. A ÚNICA
+ * identidade forte é o `request_id` que o PASSO 1 do `sonda:sql` devolve — por isso a atribuição é
+ * opcional, explícita e por id. Casar por ORDEM (a i-ésima resposta = a i-ésima edge da lista)
+ * seria fabricar: as respostas chegam fora de ordem e nem toda edge da leva responde.
+ */
+
+/** Uma resposta `probe:true` da janela que não diz de quem é. `versao` é tudo que ela carrega. */
+export interface SondaSemIdentidade {
+  requestId: number;
+  versao: string;
+  criado: string;
+  idadeHoras: number;
+}
+
+const CAMPOS_SEM_IDENTIDADE = 4;
+
+/**
+ * Faz o parse da 2ª leitura: `request_id|versao|criado|idade_horas`.
+ *
+ * Mesma disciplina de `parsearObservacoes`: linha fora do formato é CONTADA (o CLI a trata como
+ * mecânica, exit 2). O `request_id` tem de ser inteiro positivo — é `net._http_response.id`, e um
+ * id fracionário ou negativo significa que a saída não é a que este parse acha que é.
+ */
+export function parsearSondasSemIdentidade(saida: string): {
+  sondas: SondaSemIdentidade[];
+  linhasIgnoradas: number;
+} {
+  const sondas: SondaSemIdentidade[] = [];
+  let linhasIgnoradas = 0;
+
+  for (const bruta of saida.split('\n')) {
+    const linha = bruta.trim();
+    if (linha === '' || CHATTER.has(linha)) continue;
+
+    const campos = linha.split('|').map((c) => c.trim());
+    if (campos.length !== CAMPOS_SEM_IDENTIDADE || campos.some((c) => c === '')) {
+      linhasIgnoradas += 1;
+      continue;
+    }
+
+    const [idBruto, versao, criado, idadeBruta] = campos;
+    const requestId = Number(idBruto);
+    const idadeHoras = Number(idadeBruta);
+    if (
+      !Number.isInteger(requestId) ||
+      requestId <= 0 ||
+      !Number.isFinite(idadeHoras) ||
+      idadeHoras < 0
+    ) {
+      linhasIgnoradas += 1;
+      continue;
+    }
+    sondas.push({ requestId, versao, criado, idadeHoras });
+  }
+
+  return { sondas, linhasIgnoradas };
+}
+
+/**
+ * Lê o `--ids` — o JSON `{"edge": request_id, …}` que o PASSO 1 do `sonda:sql` devolve — ou LANÇA.
+ *
+ * FAIL-CLOSED em tudo, porque atribuição errada é pior que atribuição nenhuma: ela põe o nome de
+ * uma edge num veredito de deploy que pertence a outra.
+ *
+ *   · id repetido em duas edges — um `request_id` teve UMA resposta; o mapa está errado, e escolher
+ *     uma das duas seria a mesma fabricação que casar por ordem.
+ *   · edge fora do mapa da main — sem `esperado` não há `versao` para comparar, e engolir a entrada
+ *     descartaria em silêncio a resposta que ela identificava.
+ *   · objeto vazio — `--ids={}` é colagem que não atribui nada. Aceitar em silêncio devolveria o
+ *     mesmo relatório de quem não passou a flag, ensinando que a flag "não funcionou".
+ */
+export function parsearIds(bruto: string, esperados: Record<string, Esperado>): Map<number, string> {
+  let cru: unknown;
+  try {
+    cru = JSON.parse(bruto);
+  } catch (e) {
+    throw new Error(
+      `--ids não é JSON: ${(e as Error).message}. Cole o valor de \`ids_opcionais_passo_1\` do \`bun run sonda:sql\`.`,
+    );
+  }
+  if (cru === null || typeof cru !== 'object' || Array.isArray(cru)) {
+    throw new Error('--ids precisa ser um objeto JSON {"edge": request_id, …}, como o PASSO 1 devolve.');
+  }
+
+  const entradas = Object.entries(cru as Record<string, unknown>);
+  if (entradas.length === 0) {
+    throw new Error('--ids veio VAZIO ({}). Sem par edge→request_id não há o que atribuir; omita a flag.');
+  }
+
+  const porId = new Map<number, string>();
+  const foraDoMapa: string[] = [];
+  for (const [edge, valor] of entradas) {
+    if (!(edge in esperados)) {
+      foraDoMapa.push(edge);
+      continue;
+    }
+    if (typeof valor !== 'number' || !Number.isInteger(valor) || valor <= 0) {
+      throw new Error(
+        `--ids: request_id inválido para "${edge}": ${JSON.stringify(valor)}. Esperado inteiro positivo (net._http_response.id).`,
+      );
+    }
+    const jaTem = porId.get(valor);
+    if (jaTem !== undefined) {
+      throw new Error(
+        `--ids: request_id ${valor} aparece em "${jaTem}" E em "${edge}" — um request_id teve UMA resposta. Recole o JSON do PASSO 1.`,
+      );
+    }
+    porId.set(valor, edge);
+  }
+  if (foraDoMapa.length > 0) {
+    throw new Error(
+      `--ids: edge(s) que a main não mapeia: ${foraDoMapa.sort().join(', ')}. ` +
+        'Sem esperado não há veredito — confira o mapa (`bun run sonda:fingerprint`) ou o JSON colado.',
+    );
+  }
+  return porId;
+}
+
+/**
+ * Casa cada resposta sem identidade com a edge do `--ids`, POR request_id.
+ *
+ * O que não casa volta em `naoAtribuidas` — e continua contando como sinal (há bundle velho no ar),
+ * só não vira veredito por edge. Nunca por posição: `[70261, 70262]` não é "a 1ª e a 2ª da lista".
+ */
+export function atribuirSondasSemIdentidade(
+  sondas: SondaSemIdentidade[],
+  idParaEdge: Map<number, string>,
+): { observacoes: Observacao[]; naoAtribuidas: SondaSemIdentidade[] } {
+  const observacoes: Observacao[] = [];
+  const naoAtribuidas: SondaSemIdentidade[] = [];
+
+  for (const s of sondas) {
+    const edge = idParaEdge.get(s.requestId);
+    if (edge === undefined) {
+      naoAtribuidas.push(s);
+      continue;
+    }
+    observacoes.push({
+      edge,
+      versao: s.versao,
+      fonte: SEM_IDENTIDADE,
+      via: 'sonda',
+      criado: s.criado,
+      idadeHoras: s.idadeHoras,
+    });
+  }
+
+  return { observacoes, naoAtribuidas };
+}
+
+/** O que dá para dizer SEM `--ids`: quantas, que `versao` responderam e quais request_ids. */
+export function resumirSemIdentidade(naoAtribuidas: SondaSemIdentidade[]): {
+  total: number;
+  porVersao: { versao: string; n: number }[];
+  requestIds: number[];
+} {
+  const contagem = new Map<string, number>();
+  for (const s of naoAtribuidas) contagem.set(s.versao, (contagem.get(s.versao) ?? 0) + 1);
+  return {
+    total: naoAtribuidas.length,
+    // Mais frequente primeiro; empate pelo nome, para a saída não depender da ordem de chegada.
+    porVersao: [...contagem.entries()]
+      .map(([versao, n]) => ({ versao, n }))
+      .sort((a, b) => b.n - a.n || a.versao.localeCompare(b.versao)),
+    requestIds: naoAtribuidas.map((s) => s.requestId).sort((a, b) => a - b),
+  };
 }
