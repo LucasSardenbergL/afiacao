@@ -1786,6 +1786,48 @@ export type Database = {
         }
         Relationships: []
       }
+      deploy_sonda_alvos: {
+        Row: {
+          ativo: boolean
+          edge: string
+          habilitado_em: string
+          motivo: string
+        }
+        Insert: {
+          ativo?: boolean
+          edge: string
+          habilitado_em?: string
+          motivo: string
+        }
+        Update: {
+          ativo?: boolean
+          edge?: string
+          habilitado_em?: string
+          motivo?: string
+        }
+        Relationships: []
+      }
+      deploy_sonda_disparos: {
+        Row: {
+          edge: string
+          enfileirado_em: string
+          request_id: number
+          tick_id: string
+        }
+        Insert: {
+          edge: string
+          enfileirado_em?: string
+          request_id: number
+          tick_id: string
+        }
+        Update: {
+          edge?: string
+          enfileirado_em?: string
+          request_id?: number
+          tick_id?: string
+        }
+        Relationships: []
+      }
       des_checkin_qualitativo: {
         Row: {
           ano: number
@@ -19237,6 +19279,14 @@ export type Database = {
           request_id: number
           versao: string
           via: string
+        }[]
+      }
+      deploy_sonda_disparar: {
+        Args: { p_alvos?: string[] }
+        Returns: {
+          edge: string
+          request_id: number
+          tick_id: string
         }[]
       }
       des_data_faturamento_prevista: {
