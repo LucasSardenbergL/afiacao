@@ -214,6 +214,15 @@ ela: **a ordem da lista que você mandou sondar não é a ordem das respostas qu
 
 ## 5. O que fica para depois (nomeado, não esquecido)
 
+- **O sinal sem `--ids` dura 6h, não é durável.** A resposta sem identidade não entra no ledger (não
+  tem edge), então quando a janela do pg_net expira as mesmas edges voltam a `NUNCA_ATESTADA` e o
+  relatório volta a pedir a 1ª sonda — o founder sonda, recebe a mesma resposta antiga, e a classe
+  reaparece por mais 6h. O laço não é infinito, mas **recomeça**. Quem o corta de vez é o `--ids`:
+  a atribuída vira observação com edge real e entra na fila P1/P2 como qualquer outra. Fechar de
+  vez pede **gravar a atribuída no ledger**, que é escrita — o CLI é read-only, então exigiria o
+  founder colar SQL, ou um caminho de escrita próprio. Entrega própria, com o teste óbvio: atribuir,
+  gravar, deixar a janela expirar e exigir que o veredito por edge SOBREVIVA.
+
 - **Sonda automática segura**: atestação por `OPTIONS` autenticado (bundle pré-sensor devolve só
   CORS) ou credencial exclusiva de probe, com o teste de rollback. Entrega própria.
 - **Fan-out no CI como sinal**: o `sonda:fingerprint` imprimir, no PR, quais consumidores tiveram o
