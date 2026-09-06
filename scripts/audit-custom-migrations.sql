@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 520
+-- Total de custom migrations: 521
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -561,6 +561,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260906154202', 'cancelar_pedido_revoke_anon', '20260906154202_cancelar_pedido_revoke_anon.sql'),
   ('20260906164001', 'captura_authz_gate_custo_rpcs_preco', '20260906164001_captura_authz_gate_custo_rpcs_preco.sql'),
   ('20260906164002', 'captura_authz_escopo_carteira_farmer', '20260906164002_captura_authz_escopo_carteira_farmer.sql'),
+  ('20260906165706', 'aprovar_pedido_revoke_anon', '20260906165706_aprovar_pedido_revoke_anon.sql'),
   ('20260906172718', 'cancelamento_pos_disparo_gate_canonico', '20260906172718_cancelamento_pos_disparo_gate_canonico.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES

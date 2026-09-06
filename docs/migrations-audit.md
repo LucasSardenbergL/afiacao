@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **520** custom migrations totais
+- **521** custom migrations totais
 - **1767** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 548
@@ -4329,6 +4329,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.farmer_recomendacoes_substituir` | — |
 | `function` | `public.farmer_bundle_recomendacoes_substituir` | — |
+
+### `20260906165706_aprovar_pedido_revoke_anon.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260906172718_cancelamento_pos_disparo_gate_canonico.sql`
 
