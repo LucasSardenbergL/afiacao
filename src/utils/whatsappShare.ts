@@ -1,7 +1,10 @@
+import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
+
 interface OrderItem {
   description: string;
   quantity: number;
-  unitPrice: number;
+  /** `null` = preco NAO SABIDO (o Omie nao informou). Vai "-" na mensagem, nunca R$ 0,00. */
+  unitPrice: number | null;
   tintCorId?: string;
   tintNomeCor?: string;
 }
@@ -27,10 +30,10 @@ export function shareOrderViaWhatsApp({
     .map(
       (item) => {
         const tintInfo = item.tintCorId ? ` (Cor: ${item.tintCorId} — ${item.tintNomeCor})` : '';
-        return `• ${item.quantity}x ${item.description}${tintInfo} - ${(item.quantity * item.unitPrice).toLocaleString(
-          'pt-BR',
-          { style: 'currency', currency: 'BRL' }
-        )}`;
+        // `quantity * unitPrice` com unitPrice null da 0 em JavaScript — a linha sairia como
+        // "R$ 0,00" numa mensagem que vai PARA O CLIENTE, afirmando preco que ninguem apurou.
+        const totalLinha = totalLinhaOuAusente(item.quantity, item.unitPrice);
+        return `• ${item.quantity}x ${item.description}${tintInfo} - ${formatPrecoOuAusente(totalLinha)}`;
       }
     )
     .join('\n');

@@ -3,8 +3,11 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { useMunicaoLigacao } from '@/hooks/useMunicaoLigacao';
 import { useHistoricoCompras } from '@/hooks/useHistoricoCompras';
 import { MunicaoResumo } from './MunicaoResumo';
+import { formatPrecoOuAusente } from '@/lib/format';
 
-const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// `n.toLocaleString` LANCA em null. `ultimoPreco` passou a admitir null (nenhuma compra do
+// SKU tinha preco conhecido) — a ficha mostra "—", que e o que o vendedor precisa ver.
+const brl = formatPrecoOuAusente;
 const dataBr = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 
 interface Props {

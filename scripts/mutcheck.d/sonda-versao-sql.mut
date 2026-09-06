@@ -83,3 +83,9 @@ PEGA      | fatia perde o mapa (so o versao.ts e conferido)        | s/, ARQ_MAP
 PEGA      | fetch some: compara contra retrato velho por padrao    | s/const f = git\(\['fetch', REMOTO, RAMO_DEPLOYADO\]\);/const f = { status: 0, stdout: '', stderr: '' };/
 PEGA      | fetch que falha degrada em vez de abortar              | s/if \(f\.status !== 0\) \{/if (false) {/
 PEGA      | --sem-rede passa a valer SEMPRE (guard vira opt-in)    | s/semRede === true/true/
+# O `cwd` do `gitReal`. O #2227 tirou a ref `origin/main` herdada do checkout (a causa do
+# `mutation-check` vermelho em todo PR — docs/historico/teste-que-afirma-o-checkout.md) e pôs um
+# repo fixture no lugar. Esta linha é o que transforma esse conserto em COBERTURA: com a asserção
+# valendo o sha DAQUELE repo, ignorar a raiz pedida fica vermelho — e fica nos dois ambientes (com
+# `origin/main` presente volta outro sha; sem ela, o checkout de PR, o `rev-parse` sai 1).
+PEGA      | gitReal ignora a raiz pedida (cwd do processo)        | s/cwd: raiz,/cwd: process.cwd(),/

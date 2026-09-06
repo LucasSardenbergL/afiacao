@@ -9,6 +9,7 @@ import { logger } from '@/lib/logger';
 import { PedidoSugerido, PedidoItem, CondicaoPagamento } from './types';
 import { aprovarEDisparar } from './aprovar-disparar';
 import { montarUpdateItem, podeEditarPrecoPedido, precoEditValido } from './preco-edit';
+import { removerItensDoPedido, type ResultadoRemocao } from './remover-itens-pedido';
 import { quantidadeCompraInteira } from '@/lib/reposicao/compras-otimizador-helpers';
 import { quantidadeCompraCanonica } from '@/lib/reposicao/qtde-portal';
 import {
@@ -132,7 +133,14 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     return (itens ?? []).map((it) => {
       // [QTDE-INTEIRA] default exibido sempre inteiro: ceila a poeira decimal do estoque do Omie
       // em linhas legadas (ex.: qtde_final 3,99996 → 4). edits[] já vem inteiro do onEditQty.
-      const qtd = edits[it.id] ?? quantidadeCompraInteira(it.qtde_final ?? it.qtde_sugerida);
+      // [EMBALAGEM PORTAL] e, com fator do motor, o default exibido já é o MÚLTIPLO da embalagem —
+      // a MESMA função que `montarUpdateItem` usa para gravar (challenge Codex do #2198, P0). Antes
+      // daqui a tela usava só o ceil: um item de 37 L com fator 0,2 aparecia como 37 L / R$ 925 e era
+      // gravado 40 L / R$ 1.000 numa edição SÓ de preço — e "Aprovar e disparar" salva ANTES de
+      // disparar, então o fornecedor recebia 40 L que ninguém viu. Enviado = aprovado começa na tela.
+      // `edits[it.id]` fica CRU de propósito: o input é `value={l._qtd}`, canonizar durante a digitação
+      // brigaria com quem digita — quem sobe o valor editado ao múltiplo é o `onBlurQty`.
+      const qtd = edits[it.id] ?? quantidadeCompraCanonica(it.qtde_final ?? it.qtde_sugerida, it.fator_embalagem_portal);
       const preco = precoEdits[it.id] ?? Number(it.preco_unitario ?? 0);
       return { ...it, _qtd: qtd, _preco: preco, _valor: qtd * preco };
     });
@@ -268,57 +276,33 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     },
   });
 
-  // Recalcula valor total e status do pedido após remoção de item
-  const recalcularPedido = async () => {
-    if (!pedido) return;
-    const { data: restantes, error } = await supabase
-      .from('pedido_compra_item')
-      .select('id, qtde_final, qtde_sugerida, preco_unitario')
-      .eq('pedido_id', pedido.id);
-    if (error) throw error;
+  // Remoção de item(ns) pela FRONTEIRA: uma RPC faz DELETE + recálculo + cancelamento-se-vazio
+  // numa transação, com o guard de status no SERVIDOR (`FOR NO KEY UPDATE` + allowlist).
+  //
+  // ⚠️ Não volte a fazer isto por PostgREST cru. O que existia aqui era `DELETE` seguido de
+  // `UPDATE … .eq('id', pedido.id)` gravando `status='cancelado_humano'` SEM nenhum predicado de
+  // status: o único freio era o `podeEditar` abaixo, decidido no cliente sobre um `pedido.status`
+  // que pode estar minutos velho. Um pedido aprovado e disparado com o modal aberto virava
+  // "cancelado" sobre uma compra real no Omie — o [P1] do #2204 nesta via. Ver
+  // `remover-itens-pedido.ts` e a migration 20260906105549.
+  const removerItens = async (itemIds: readonly number[]): Promise<ResultadoRemocao> => {
+    if (!pedido) throw new Error('nenhum pedido aberto');
+    return await removerItensDoPedido(pedido.id, itemIds, user?.email ?? 'sistema');
+  };
 
-    const itensRest = restantes ?? [];
-    const novoTotal = itensRest.reduce((acc, it) => {
-      const q = Number(it.qtde_final ?? it.qtde_sugerida ?? 0);
-      const p = Number(it.preco_unitario ?? 0);
-      return acc + q * p;
-    }, 0);
-
-    const updates: Record<string, unknown> = {
-      valor_total: novoTotal,
-      num_skus: itensRest.length,
-      atualizado_em: new Date().toISOString(),
-    };
-    if (itensRest.length === 0) {
-      updates.status = 'cancelado_humano';
-      updates.cancelado_por = user?.email ?? 'sistema';
-      updates.cancelado_em = new Date().toISOString();
-      updates.justificativa_cancelamento = 'Todos os itens foram removidos manualmente';
-      // Higiene de estado: cancelar limpa o sub-fluxo do portal (espelha cancelar_pedido_sugerido)
-      // — senão um cancelado fica com status_envio_portal sujo e o check reposicao_portal_pipeline o conta.
-      updates.status_envio_portal = 'nao_aplicavel';
-      updates.portal_proximo_retry_em = null;
-    }
-    const { error: errPed } = await supabase
-      .from('pedido_compra_sugerido')
-      .update(updates)
-      .eq('id', pedido.id);
-    if (errPed) throw errPed;
-    return { vazio: itensRest.length === 0 };
+  // Invalidações + fechamento do modal são idênticos nas três vias de remoção.
+  const aposRemocao = (res: ResultadoRemocao) => {
+    queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
+    queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    if (res.cancelado) onOpenChange(false);
   };
 
   const removerItemMutation = useMutation({
-    mutationFn: async (itemId: number) => {
-      const { error } = await supabase.from('pedido_compra_item').delete().eq('id', itemId);
-      if (error) throw error;
-      return await recalcularPedido();
-    },
+    mutationFn: async (itemId: number) => await removerItens([itemId]),
     onSuccess: (res) => {
-      toast.success(res?.vazio ? 'Item removido. Pedido cancelado (sem itens restantes).' : 'Item removido');
-      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      toast.success(res.cancelado ? 'Item removido. Pedido cancelado (sem itens restantes).' : 'Item removido');
       setRemoverItem(null);
-      if (res?.vazio) onOpenChange(false);
+      aposRemocao(res);
     },
     onError: (e: Error) => {
       toast.error(`Erro ao remover item: ${e.message}`);
@@ -354,23 +338,26 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
   const removerLoteMutation = useMutation({
     mutationFn: async () => {
       const ids = linhasSelecionadas.map((l) => l.id);
-      if (ids.length === 0) return { vazio: false, removidos: 0 };
-      const { error } = await supabase.from('pedido_compra_item').delete().in('id', ids);
-      if (error) throw error;
-      const res = await recalcularPedido();
-      return { vazio: res?.vazio ?? false, removidos: ids.length };
+      // A UI só habilita este botão com seleção não-vazia, então chegar aqui vazio é bug do
+      // chamador — e LANÇAR mantém o desfecho visível. Devolver `null` e sair calado no
+      // `onSuccess` seria o padrão "leitura vira return null" que o gate
+      // erro-colapsado-em-vazio fiscaliza: o operador clicaria e nada aconteceria, sem sinal.
+      if (ids.length === 0) throw new Error('nenhum item selecionado');
+      // O lote inteiro vai numa chamada: a RPC apaga os ids e recalcula sob o MESMO lock, então
+      // não há janela entre remoções parciais (era possível com N deletes + N recálculos).
+      return await removerItens(ids);
     },
     onSuccess: (res) => {
+      // `res.removidos` vem do BANCO (quantos o DELETE realmente pegou), não do tamanho da
+      // seleção: um id já removido por outra sessão não pode ser contado como removido aqui.
       toast.success(
-        res.vazio
+        res.cancelado
           ? `${res.removidos} itens removidos. Pedido cancelado (sem itens restantes).`
           : `${res.removidos} ${res.removidos === 1 ? 'item removido' : 'itens removidos'}`,
       );
-      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
       setSelecionados(new Set());
       setConfirmarRemocaoLote(false);
-      if (res.vazio) onOpenChange(false);
+      aposRemocao(res);
     },
     onError: (e: Error) => {
       toast.error(`Erro ao remover itens: ${e.message}`);
@@ -379,7 +366,13 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
 
   const descontinuarMutation = useMutation({
     mutationFn: async (item: PedidoItem) => {
-      // 1. descontinua o SKU
+      // ⚠️ ORDEM INVERTIDA de propósito (era: descontinua → remove). A remoção é a etapa que o
+      // servidor pode RECUSAR (pedido já disparado); descontinuar primeiro deixaria o SKU marcado
+      // `descontinuado` — mudando a reposição de todos os ciclos futuros — por uma ação combinada
+      // que falhou. Removendo primeiro, uma recusa aborta a mutation inteira sem efeito colateral.
+      // 1. remove a linha PELA FRONTEIRA (é aqui que o guard de status é aplicado)
+      const res = await removerItens([item.id]);
+      // 2. só então descontinua o SKU
       const { error: errSku } = await supabase
         .from('sku_parametros')
         .update({
@@ -389,21 +382,16 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
         .eq('empresa', pedido!.empresa)
         .eq('sku_codigo_omie', Number(item.sku_codigo_omie));
       if (errSku) throw errSku;
-      // 2. remove a linha
-      const { error: errDel } = await supabase.from('pedido_compra_item').delete().eq('id', item.id);
-      if (errDel) throw errDel;
-      return await recalcularPedido();
+      return res;
     },
     onSuccess: (res) => {
       toast.success(
-        res?.vazio
+        res.cancelado
           ? 'SKU descontinuado e item removido. Pedido cancelado (sem itens restantes).'
           : 'SKU descontinuado. Não será mais incluído em ciclos futuros.'
       );
-      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
       setDescontinuarItem(null);
-      if (res?.vazio) onOpenChange(false);
+      aposRemocao(res);
     },
     onError: (e: Error) => {
       toast.error(`Erro ao descontinuar SKU: ${e.message}`);

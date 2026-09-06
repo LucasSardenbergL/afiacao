@@ -73,3 +73,69 @@ export function formatMargemPct(v: number | null | undefined): string {
   const rounded = Math.round(v);
   return Math.abs(v - rounded) < 0.05 ? `${rounded}%` : `${v.toFixed(1)}%`;
 }
+
+/**
+ * Preço em BRL, ou "—" quando NÃO SABIDO. Irmã monetária de `formatMargemPct`.
+ *
+ * Existe porque o preço do item de pedido passou a poder ser `null`: o Omie nem sempre informa
+ * `valor_unitario`, e até 2026-09-05 os writers do sync gravavam `|| 0` — "não sei" e "de graça"
+ * viravam o mesmo R$ 0,00 na tela. Fechada a origem (`order_items.unit_price` nullable + a régua
+ * na RPC de ingestão), o `null` chega até aqui, e é ele que a tela precisa saber mostrar.
+ *
+ * ⚠️ `0` NÃO é ausência: um zero gravado é fato ("o Omie informou zero" — bonificação/brinde) e
+ * sai formatado como R$ 0,00. Só o desconhecido vira "—". Um `|| 0` no caller desfaz exatamente
+ * a distinção que a fatia inteira existiu para criar.
+ *
+ * Não-finito (NaN/Infinity) também vira "—": é lixo, não número.
+ */
+export function formatPrecoOuAusente(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+/**
+ * Total de uma linha (quantidade × preço), ou `null` quando o preço é NÃO SABIDO.
+ *
+ * `qtd * null` é `0` em JavaScript — a multiplicação silenciosamente inventa "linha de R$ 0,00".
+ * Esta função é o guard: sem preço, não há total, e o caller mostra "—".
+ */
+export function totalLinhaOuAusente(
+  quantidade: number | null | undefined,
+  precoUnitario: number | null | undefined,
+): number | null {
+  if (precoUnitario === null || precoUnitario === undefined || !Number.isFinite(precoUnitario)) return null;
+  const q = Number(quantidade ?? 1);
+  if (!Number.isFinite(q)) return null;
+  return q * precoUnitario;
+}
+
+/**
+ * Preço utilizável, ou `null` quando NÃO SABIDO. Régua de FINITUDE NÃO-NEGATIVA.
+ *
+ *   ausente / null / '' / lixo / objeto / boolean → null
+ *   negativo / NaN / Infinity                     → null  (corrupção, não dado)
+ *   0                                             → 0     (zero INFORMADO é fato)
+ *   número ou string numérica                     → o número
+ *
+ * Mora na PLATAFORMA de propósito. A mesma régua existe em `valorMedido`
+ * (`@/lib/scoring/margin`, módulo farmer-inteligencia) e em `precoUnitarioOmie`
+ * (`_shared/omie-pedido.ts`, Deno), mas importar a versão do farmer a partir de vendas é
+ * vazamento de fronteira — e registrar isso na baseline seria pagar dívida em vez de
+ * resolvê-la. Difere de `valorMedido` num ponto que importa: aquele aceita qualquer finito,
+ * inclusive NEGATIVO, e preço negativo não é desconto, é corrupção.
+ *
+ * Quem precisa de preço ESTRITAMENTE positivo (último preço praticado, base de margem)
+ * acrescenta `> 0` no próprio call site — a decisão de excluir o zero é do consumidor, não
+ * desta função, que só diz o que é número.
+ *
+ * Fail-closed contra os falsy que `Number` converte para 0: `Number('')`, `Number('  ')`,
+ * `Number(false)` e `Number([])` são todos 0, e um deles virando "preço zero apurado" seria
+ * a fabricação que este módulo existe para impedir.
+ */
+export function precoUtilizavel(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  if (typeof raw === 'string' && raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}

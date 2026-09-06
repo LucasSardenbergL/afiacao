@@ -23,8 +23,9 @@ export interface OrderItem {
   nome?: string;
   quantidade?: number;
   unidade?: string;
-  valor_unitario?: number;
-  valor_total?: number;
+  /** `null` = preco NAO SABIDO (o Omie nao informou). No cupom sai "-", nunca R$ 0,00. */
+  valor_unitario?: number | null;
+  valor_total?: number | null;
   tint_cor_id?: string;
   tint_nome_cor?: string;
   [k: string]: unknown;
