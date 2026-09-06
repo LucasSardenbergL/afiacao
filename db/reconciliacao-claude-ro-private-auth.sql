@@ -1,6 +1,20 @@
 -- ============================================================
 -- claude_ro — reconciliação pós-fecho (2026-09-06)
 --
+-- ✅ APLICADO EM PROD em 2026-09-06 20:45 BRT (fzvklzpomgnyikkfkzai).
+--    Re-medido pelo próprio claude_ro via ~/.config/afiacao/psql-ro:
+--      · USAGE private = t · vault = f · auth = f · pg_read_all_data = f
+--      · private.customer_metrics_mv → 5.665 linhas LIDAS (evidência positiva;
+--        mv_oportunidade_badge devolve 0 porque está populada e vazia hoje,
+--        relispopulated=t, 40 kB — não é falta de privilégio)
+--      · a ponte nasceu com reloptions `security_invoker=on`, projetando
+--        7 colunas; `token`/`parent` continuam SEM ACL próprio em
+--        auth.refresh_tokens (a 2ª barreira está de pé)
+--      · vault.decrypted_secrets → 42501 · auth.refresh_tokens → 42501
+--        · token na ponte → 42703 (coluna ausente)
+--    Não re-aplicar: o guard de entrada aborta se pg_read_all_data voltar,
+--    mas o CREATE OR REPLACE VIEW é idempotente e passaria em silêncio.
+--
 -- CONTEXTO: o fecho do `pg_read_all_data` foi aplicado em 2026-08-25
 -- (docs/historico/revoke-que-nao-revoga.md). Ele atingiu o objetivo — o
 -- vault e o schema `auth` ficaram fora do alcance do claude_ro — mas
