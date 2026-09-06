@@ -302,7 +302,23 @@ P2-14 (asserção do de-para corrigida; cenários de 2 sessões, split, cancelam
 do guard, promo, ordens parciais de deploy).
 Em desacordo, registrado: P2-13 (preço fora do selo) — decisão §8.4.
 
-## 10. Correções nascidas da implementação da M1 (2026-09-06)
+## 10. Decisões do §8 já respondidas na main (2026-09-06) — reduz o escopo desta fatia
+
+O commit `0ca29b04e` (mergeado na main) entrega a saída de tela para pedido recusado em definitivo
+(`podeCancelarPorRecusaDefinitiva` em `shared.ts` + `PortalDrawer`) e **registra a política decidida
+pelo founder**: *cancelar + o ciclo regrava* — **não** reabrir para `pendente_aprovacao` e **não**
+liberar edição de item de pedido aprovado. Isso responde, no repo:
+
+- **§8.3 (sem reabertura)** — confirmado. O guard de banco do §3.3.3 continua sendo o diferencial
+  desta fatia: a tela agora oferece a saída certa, mas quem impede a reabertura é o servidor.
+- **A premissa do §3.2 (item de pedido aprovado não muda)** — confirmada como política, não só como
+  proposta minha.
+
+**Diferencial que resta para o item C**, depois desse merge: o bloqueio no BACKEND do reenvio de
+pedido com `portal_recusa_motivo` (§3.3.5) e os claims positivos. A parte de UI está entregue —
+não reimplementar.
+
+## 11. Correções nascidas da implementação da M1 (2026-09-06)
 
 - **§3.3 deixou de autorizar por GUC.** `set_config` dentro de função com cláusula `SET` é revertido
   no retorno (nest level + `AtEOXact_GUC`): o sinal nunca chegaria ao trigger e a M2 recusaria toda
