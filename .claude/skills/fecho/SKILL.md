@@ -164,6 +164,12 @@ bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início d
 # exit 0 = nada pendente · 1 = abra chip para a lista · 2 = MECÂNICA não confiável (o script já
 # imprime tudo como pendente; trate assim) · 3 = uso inválido
 #
+# Ele consulta o LEDGER durável por dentro (`bun run pendencias:deploy --json`) para a edge que não
+# respondeu na janela viva de 6h — então precisa de `bun` e `jq` no PATH, e faz um `git fetch origin
+# main`. Faltando qualquer um, a saída diz `LEDGER_NAO_CONSULTADO` e a edge segue pendente
+# (fail-closed) — nunca "limpo". Não rode `pendencias:deploy` à mão só para conferir: é o mesmo
+# veredito, e a sonda humana é UMA por leva de deploy.
+#
 # Se VOCÊ acabou de disparar sondas nesta sessão, cole os request_id: é o único vínculo que
 # alcança o bundle que responde sem dizer de quem é (ver `SONDA_ANONIMA` na tabela abaixo).
 # ... --request-ids "conciliar-pedido-portal=69377,process-nfe=69381"
@@ -178,12 +184,35 @@ enterra o chip que importava. O script troca isso pela evidência que já existe
 
 | veredito | o que significa | chip? |
 |---|---|---|
-| `NO_AR` | `fonte` servido == main — o bundle no ar é este | **não** |
+| `NO_AR` | `fonte` servido == main, **na janela viva** — o bundle no ar é este | **não** |
+| `LEDGER_CONFERE` | sem sonda na janela, mas o **ledger** `deploy_atestacoes` atesta `CONFERE` **e** o `fonte` atestado bate com o mapa da REF | **não** — prova DURÁVEL, além das 6 h |
+| `LEDGER_DIVERGE` | o ledger julgou `DIVERGE_P1/P2`, `INCOERENTE` ou `SEM_MAPA_NO_BUNDLE` | sim, PROVADO — e **não** sondar antes do deploy |
+| `LEDGER_DISCORDA` | o ledger diz `CONFERE`, mas com `fonte` ≠ o do mapa da REF | sim — as duas leituras não batem |
+| `LEDGER_NAO_CONSULTADO` | o `pendencias:deploy` não respondeu (exit 2/anômalo, stdout vazio, sem a marca de formato, JSON ilegível, bun/jq ausente) | sim (fail-closed) |
 | `DESATUALIZADA` | `fonte` servido ≠ main — bundle VELHO servindo | sim, e prioritário |
 | `PRE_SONDA_FONTE` | respondeu a sonda (200 + eco de `probe`/`versao`) **sem** o campo `fonte` — bundle anterior ao #1998 | sim, e prioritário |
 | `SEM_PROVA` + `SONDA_ANONIMA` | há resposta de sonda na janela **sem eco de slug** — existe e não é atribuível | sim (fail-closed), e o `--request-ids` determina |
 | `SEM_PROVA` | fora do mapa de sondas, sem sonda na janela, ou mecânica quebrada | sim (fail-closed) |
 | `INERTE` | edge **aposentada**: o `index.ts` na REF (`origin/main`) carrega `// EDGE-APOSENTADA:` — o handler responde 410 antes de qualquer lógica, bundle novo e velho se comportam igual | **não** — deploy não muda comportamento; não pedir ao founder |
+
+🧾 **O ledger `deploy_atestacoes` é consultado ANTES de qualquer `SEM_PROVA` (2026-09-06).** A
+janela viva de `net._http_response` morre no `pg_net.ttl` (6 h), e até ontem o Passo 3 só olhava
+para ela: edge deployada e **atestada** há mais de 6 h saía `SEM_PROVA` → chip → sessão nova que
+rodava `bun run pendencias:deploy` e descobria que já estava `✅ confere`. Cada chip falso custa uma
+sessão, e o remédio impresso (`sonda:sql`) convidava a re-sondar — que em edge cara com bundle
+pré-sensor **executa o fluxo real**. O ledger existe desde o #2199 para isso; o script não o lia.
+Agora lê, pelo `bun run pendencias:deploy --json`, e três coisas importam:
+
+- **onde entra:** só na edge **do mapa** e **sem resposta na janela viva**. Quem respondeu na janela
+  é julgado por ela — é a evidência mais fresca, e um `CONFERE` histórico **não** apaga um
+  `DESATUALIZADA` de agora.
+- **DUPLA CHAVE para absolver:** o rótulo `CONFERE` do CLI **e** o `fonte` atestado igual ao do mapa
+  da REF que o próprio script leu. Ler só o rótulo herdaria qualquer defeito do CLI
+  ([gates-textuais-cegos.md](../../../docs/historico/gates-textuais-cegos.md): ≥1 eixo POR FORA).
+- **fail-CLOSED com resposta POSITIVA:** 7 avarias testadas (exit 0 mudo, saída não-JSON, contrato
+  de outra versão, vereditos ilegíveis, exit 2, exit 3, exit 127) viram `LEDGER_NAO_CONSULTADO` e a
+  edge segue pendente. E a mecânica do banco tem **precedência**: `psql-ro` reprovado ⇒ o ledger nem
+  é consultado. Detalhe: [fecho-nao-lia-o-ledger.md](../../../docs/historico/fecho-nao-lia-o-ledger.md).
 
 🪦 **`INERTE` é a única prova que vem do git, não do banco (2026-09-05, `tint-import`).** A edge
 foi aposentada em #1401 (410 `TINT_IMPORT_RETIRED` logo após a auth), mas continua TOCADA por PR

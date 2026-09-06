@@ -66,6 +66,32 @@
 #   HÁ sonda anônima na janela — conta quantas são e manda determinar pelo request_id. Nos dois
 #   casos o desfecho segue chip; o que muda é o diagnóstico deixar de mentir.
 #
+# 🧾 O LEDGER — a prova que durava 6 h passou a durar até a main mudar (2026-09-06). A janela viva
+# de `net._http_response` morre no `pg_net.ttl` (6 h): edge mergeada na janela do fecho, deployada
+# e ATESTADA há mais de 6 h saía SEM_PROVA → chip → sessão nova que rodava `pendencias:deploy` e
+# descobria que já estava ✅. Cada chip falso custa uma sessão; e com fan-out (um chip por sessão
+# que fecha na mesma janela) sondas duplicadas viram risco real em edge cara com bundle pré-sensor
+# — uma execução do fluxo real por colagem. O ledger `public.deploy_atestacoes` (#2199) existe
+# exatamente para guardar a prova além da janela, e este script não o lia (`grep -c
+# deploy_atestacoes` devolvia 0). Agora lê — pelo `bun run pendencias:deploy --json`, que já julga
+# a matriz `(versao, fonte)` contra a main; NÃO se duplica essa lógica em SQL aqui.
+#   · Onde entra: SÓ na edge do mapa que NÃO respondeu na janela viva — a que hoje sairia
+#     SEM_PROVA ("nenhuma sonda" / SONDA_ANONIMA). Quem respondeu na janela é julgado pela janela
+#     (evidência mais fresca; o ledger ∪ janela do CLI não pode ser mais novo que ela). Edge fora
+#     do mapa não tem o que o ledger dizer.
+#   · O que absolve: só `CONFERE`, e com DUPLA CHAVE — o `fonte` observado que o CLI devolve tem
+#     de ser IGUAL ao `esperado` que ESTE script leu do mapa da REF. Sensor que só lê o rótulo do
+#     CLI herda qualquer defeito dele (`docs/historico/gates-textuais-cegos.md`: ≥1 eixo por fora);
+#     a 2ª chave é o eixo de fora. CONFERE com fonte ≠ REF = `LEDGER_DISCORDA` → chip.
+#   · `DIVERGE_P1/P2`, `INCOERENTE`, `SEM_MAPA_NO_BUNDLE` = `LEDGER_DIVERGE` → chip PROVADO, e
+#     FORA da lista do DISPARE: deploy antes, sonda depois — sondar edge cara com bundle pré-sensor
+#     executa o fluxo real. `NUNCA_ATESTADA` / `SEM_FONTE_NO_ECO` / sem veredito → SEM_PROVA como
+#     hoje, com o diagnóstico na linha (a 1ª sonda é humana e continua no DISPARE).
+#   · Fail-CLOSED exigindo resposta POSITIVA (`docs/historico/sonda-ausente-em-script-que-apaga.md`):
+#     exit 2 do CLI, exit fora de {0,1}, stdout vazio, JSON sem a marca `LEDGER_FORMATO`,
+#     vereditos ilegíveis, bun/jq ausente — tudo é `LEDGER_NAO_CONSULTADO`, e a edge segue
+#     pendente como antes de o ledger existir. Nunca "limpo".
+#
 # Uso:
 #   edges-pendentes.sh <slug> [<slug> ...]      # classifica os slugs dados
 #   edges-pendentes.sh --desde "<data-ou-SHA>"  # deriva os slugs da janela (UNIÃO de 2 fontes)
@@ -85,9 +111,12 @@
 #      = pg_net.ttl) · FECHO_MAPA_FONTE (arquivo de mapa alternativo; default = o da REF) ·
 #      FECHO_REQUEST_IDS (mesmo formato do `--request-ids`, que tem precedência) ·
 #      FECHO_REF (a REF mergeada que o script lê; default `origin/main` — SÓ para teste/falsificação,
-#      apontar para branch local em uso real faria o "desatualizada" mentir).
+#      apontar para branch local em uso real faria o "desatualizada" mentir) ·
+#      FECHO_LEDGER_BIN (executável que substitui `bun scripts/pendencias-deploy.ts` — SÓ para
+#      teste: o harness aponta para um stub que devolve o JSON do contrato; em uso real, o CLI).
 # Testes: scripts/test-fecho-edges-pendentes.sh (com --falsificar) — e o SQL roda de VERDADE em
-#         .claude/skills/lovable-deploy-verify/evals/edges-pendentes-sql-eval.sh.
+#         .claude/skills/lovable-deploy-verify/evals/edges-pendentes-sql-eval.sh (o ledger entra lá
+#         como INDISPONÍVEL de propósito: aquele eval mede o SQL da janela viva).
 set -uo pipefail
 
 JANELA="${FECHO_JANELA_TTL:-6 hours}"
@@ -104,6 +133,11 @@ RAIZ="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../../.." 2>/dev/null && pw
 # repo git de fixture, e o `edges-afetadas.ts` tem de continuar vindo do repo que hospeda o script.
 BIN_RAIZ="$(cd "$(dirname "$0")/../../../.." 2>/dev/null && pwd)"
 AFETADAS_TS="$BIN_RAIZ/scripts/edges-afetadas.ts"
+# O CLI que julga o LEDGER (`bun run pendencias:deploy`) e a MARCA de formato que a saída `--json`
+# dele tem de trazer (`FORMATO_JSON` no .ts — a paridade das duas pontas é testada como texto nos
+# dois harnesses). Sem a marca, exit 0/1 é "presente-porém-quebrado", não resposta.
+LEDGER_TS="$BIN_RAIZ/scripts/pendencias-deploy.ts"
+LEDGER_FORMATO='pendencias-deploy/1'
 
 tmp="$(mktemp -d)" || { echo "edges-pendentes: mktemp falhou"; exit 2; }
 trap 'rm -rf "$tmp"' EXIT
@@ -445,6 +479,87 @@ if [ "$mecanica_ok" = 1 ]; then
   esac
 fi
 
+# ------------------------------------------------------- LEDGER durável ---
+# Ver o cabeçalho §LEDGER. Em uma frase: a janela viva evapora em 6 h, o ledger `deploy_atestacoes`
+# (#2199) guarda a prova até o `fonte` da main mudar, e quem o julga é `pendencias-deploy.ts` — a
+# matriz `(versao, fonte)` NÃO é reimplementada aqui; o script chama o CLI com `--json` e lê os
+# vereditos. Consulta SÓ quando há a quem perguntar: edge do mapa SEM resposta na janela viva.
+#
+# O ÚNICO ponto que invoca o CLI: stub (teste, `FECHO_LEDGER_BIN`) ou o bun real — MESMOS flags,
+# MESMO env. `PSQL_RO="$PSQL"`: o wrapper que este script já provou responder ao `SELECT 1`, não um
+# 2º caminho até o banco. `cd` na raiz do repo que hospeda o CLI: ele lê a ref via git no cwd (e
+# faz `git fetch origin main` — se a main andar entre a leitura do mapa acima e a dele, as chaves
+# não batem e o desfecho é chip; rode de novo). `bun` ausente sai daqui como exit 127, que cai no
+# `*)` abaixo: presença não se testa, resposta POSITIVA sim.
+invocar_ledger() {
+  if [ -n "${FECHO_LEDGER_BIN:-}" ]; then set -- "$FECHO_LEDGER_BIN"; else set -- bun "$LEDGER_TS"; fi
+  (cd "$BIN_RAIZ" && PSQL_RO="$PSQL" "$@" --json)
+}
+# Diagnóstico do ledger nos ramos INDETERMINADOS (nunca absolve): o chip nasce dizendo o que o
+# ledger sabia — NUNCA_ATESTADA pede a 1ª sonda humana; eco sem fonte pede sonda; "sem veredito" =
+# a edge não está no mapa da main que o CLI leu.
+nota_ledger() {
+  if [ "$ledger_ok" != 1 ]; then printf ' · ledger nao consultado (fail-closed)'; return 0; fi
+  case "$l_estado" in
+    "")               printf ' · ledger: sem veredito para esta edge' ;;
+    NUNCA_ATESTADA)   printf ' · ledger: NUNCA_ATESTADA (nunca vista em prod — a 1a sonda e humana)' ;;
+    SEM_FONTE_NO_ECO) printf ' · ledger: SEM_FONTE_NO_ECO (eco sem fonte nao prova o closure — sonde-a)' ;;
+    *)                printf ' · ledger: %s' "$l_estado" ;;
+  esac
+}
+dica_anonimas() {
+  [ "${n_anonimas:-0}" -gt 0 ] || return 0
+  printf ' (há %s sonda(s) anônima(s) na janela — se sondou ESTA edge, --request-ids %s=<request_id>)' "$n_anonimas" "$slug"
+}
+# Os estados do CLI que PROVAM pendência: o par servido ≠ o par da main, ou bundle sem o mapa.
+ledger_diverge() {
+  case "$1" in DIVERGE_P1|DIVERGE_P2|INCOERENTE|SEM_MAPA_NO_BUNDLE) return 0 ;; esac
+  return 1
+}
+
+ledger_ok=0; ledger_motivo=""
+: > "$tmp/ledger"; : > "$tmp/ledger_candidatos"
+# O gate é UM só, o mesmo do banco: mecânica reprovada = ledger nem é consultado (mesmo wrapper,
+# mesma desconfiança), e toda edge já está saindo SEM_PROVA com exit 2.
+if [ "$mecanica_ok" = 1 ]; then  # ledger: mesmo gate do banco
+  while read -r slug; do
+    [ -n "$slug" ] || continue
+    command grep -q -- "^$slug " "$tmp/mapa" 2>/dev/null || continue   # fora do mapa: nada a perguntar
+    command grep -q -- "^$slug " "$tmp/ar"   2>/dev/null && continue   # a janela viva respondeu: ela decide
+    printf '%s\n' "$slug"
+  done < "$tmp/alvos" > "$tmp/ledger_candidatos"
+fi
+if [ -s "$tmp/ledger_candidatos" ]; then
+  invocar_ledger > "$tmp/ledger.json" 2> "$tmp/ledger.err"; ledger_rc=$?
+  case "$ledger_rc" in
+    0|1)
+      # exit 0/1 diz "o CLI julgou" — mas só a MARCA prova que o que veio é o JSON deste contrato
+      # (stdout vazio, relatório humano, JSON de outra versão e jq ausente caem todos aqui).
+      # UMA passada de jq: a MARCA sai na 1a linha e os vereditos nas seguintes. Duas invocações
+      # custavam dois forks por execução, e o arnês multiplica isso por 66 (33 sabotagens × 2
+      # locales) — medido em CPU, não em relógio de parede, que na M2 carregada varia 3×.
+      # `.vereditos[]` vai SEM o `?` de propósito: com ele, um `"vereditos":"nao-e-lista"` (marca
+      # certa, corpo quebrado) viraria zero vereditos e cada edge sairia como "sem veredito" — que
+      # é um estado LEGÍTIMO (edge fora do mapa do CLI) e esconderia o payload corrompido. Sem o
+      # `?`, o jq falha, o exit denuncia, e a leva inteira cai em não-consultado. `jq` ausente,
+      # JSON inválido e stdout vazio caem no mesmo fail-closed: a marca é exigida POSITIVAMENTE.
+      if ! jq -r '"MARCA:" + (.formato // "-"), (.vereditos[] | [.edge, .estado, (.observado // "-"), (.versao // "-"), (.versaoEsperada // "-"), ((.idadeHoras // "-") | tostring), (.via // "-")] | @tsv)' \
+           "$tmp/ledger.json" > "$tmp/ledger_bruto" 2>/dev/null; then
+        ledger_motivo="JSON do pendencias:deploy ilegível (jq ausente, saída não-JSON ou vereditos fora do contrato)"
+      else
+        marca_lida="$(sed -n '1s/^MARCA://p' "$tmp/ledger_bruto")"
+        if [ "$marca_lida" != "$LEDGER_FORMATO" ]; then
+          ledger_motivo="resposta sem a marca '$LEDGER_FORMATO' (stdout vazio ou contrato de outra versão) — presente porém quebrado"
+        else
+          sed '1d' "$tmp/ledger_bruto" > "$tmp/ledger"
+          ledger_ok=1
+        fi
+      fi ;;
+    2) ledger_motivo="pendencias:deploy exit 2 (mecânica dele): $(head -c 200 "$tmp/ledger.err" | tr '\n' ' ')" ;;
+    *) ledger_motivo="pendencias:deploy exit $ledger_rc: $(head -c 200 "$tmp/ledger.err" | tr '\n' ' ')" ;;
+  esac
+fi
+
 # ------------------------------------------------------------ veredito ---
 : > "$tmp/chips"
 : > "$tmp/sem_sonda"
@@ -452,6 +567,11 @@ echo "== edges da janela: precisa de chip? =="
 if [ "$mecanica_ok" = 0 ]; then
   echo "⚠️ MECÂNICA NÃO CONFIÁVEL — $motivo"
   echo "   Fail-closed: sem evidência POSITIVA, toda edge da janela segue pendente."
+fi
+if [ -s "$tmp/ledger_candidatos" ] && [ "$ledger_ok" = 0 ]; then
+  echo "⚠️ LEDGER_NAO_CONSULTADO — $ledger_motivo"
+  echo "   A prova DURÁVEL (deploy_atestacoes) não entrou: edge sem resposta na janela viva segue"
+  echo "   pendente, como antes de o ledger existir (fail-closed). Isto não é 'limpo'."
 fi
 
 while read -r slug; do
@@ -474,8 +594,27 @@ while read -r slug; do
     servido="$( command grep -m1 -- "^$slug " "$tmp/ar"    2>/dev/null | cut -d' ' -f2)"
   fi
 
+  # O veredito do LEDGER para esta edge — lido SÓ quando a janela viva calou (`servido` vazio) e a
+  # edge está no mapa. Quem respondeu na janela é julgado pela janela: é a evidência mais fresca, e
+  # o CLI (ledger ∪ janela) não pode ter nada mais novo. Casamento EXATO na 1ª coluna, não prefixo.
+  l_estado=""; l_obs=""; l_versao=""; l_vesp=""; l_idade=""; l_via=""
+  if [ "$ledger_ok" = 1 ] && [ -n "$esperado" ] && [ -z "$servido" ]; then
+    IFS=$'\t' read -r _ l_estado l_obs l_versao l_vesp l_idade l_via \
+      <<< "$(awk -F'\t' -v s="$slug" '$1 == s { print; exit }' "$tmp/ledger")"
+  fi
+
   if [ "$mecanica_ok" = 1 ] && [ -n "$esperado" ] && [ "$servido" = "$esperado" ]; then
     printf '  NO_AR          %-34s fonte %s… bate com a main\n' "$slug" "${servido:0:8}"
+    continue
+  fi
+
+  # NO_AR pelo LEDGER — DUPLA CHAVE: o CLI diz CONFERE **e** o `fonte` que ele observou é o mesmo
+  # que ESTE script leu do mapa da REF. O rótulo sozinho herdaria qualquer defeito do CLI; a 2ª
+  # chave é o eixo de fora. A idade sai impressa: a prova é durável, não eterna (rollback é o
+  # limite conhecido do ledger — deploy.md §"Edge: o veredito é o ledger").
+  if [ "$l_estado" = "CONFERE" ] && [ "$l_obs" = "$esperado" ]; then
+    printf '  LEDGER_CONFERE %-34s ledger: fonte %s… bate com a main (visto há %s h via %s) — prova DURÁVEL, além da janela de %s\n' \
+      "$slug" "${l_obs:0:8}" "$l_idade" "$l_via" "$JANELA"
     continue
   fi
 
@@ -484,17 +623,29 @@ while read -r slug; do
     printf '  SEM_PROVA      %-34s mecânica não confiável (ver acima)\n' "$slug"
   elif [ -z "$esperado" ]; then
     printf '  SEM_PROVA      %-34s fora do mapa de sondas — não há prova passiva possível\n' "$slug"
+  elif [ "$l_estado" = "CONFERE" ]; then
+    # CONFERE que NÃO casou a 2ª chave: o `fonte` do CLI não é o do mapa da REF. Main que andou
+    # entre as duas leituras, REF ≠ origin/main (teste), ou CLI mentindo — em todos, a prova não
+    # é sobre o bundle que a main espera AGORA. Desconsiderada, fail-closed.
+    printf '  SEM_PROVA      %-34s LEDGER_DISCORDA: o ledger diz CONFERE com fonte %s…, mas a REF espera %s… — as duas leituras não batem (main andou entre elas, REF ≠ origin/main, ou o CLI mente): prova desconsiderada\n' \
+      "$slug" "${l_obs:0:8}" "${esperado:0:8}"
+  elif ledger_diverge "$l_estado"; then
+    # Pendência PROVADA pela última observação atestada — irmã da DESATUALIZADA, um TTL atrás.
+    # NÃO entra no `sem_sonda`: sondar antes do deploy não confirma nada, e em edge cara com
+    # bundle pré-sensor EXECUTA o fluxo real. Deploy antes, sonda depois (só para confirmar).
+    printf '  LEDGER_DIVERGE %-34s ledger: %s — prod (%s, %s…) ≠ main (%s, %s…), visto há %s h via %s — deploy pendente PROVADO; NÃO sondar antes do deploy%s\n' \
+      "$slug" "$l_estado" "$l_versao" "${l_obs:0:8}" "$l_vesp" "${esperado:0:8}" "$l_idade" "$l_via" "$(dica_anonimas)"
   elif [ -z "$servido" ] && [ "$n_anonimas" -gt 0 ]; then
     # Irmao do PRE_SONDA_FONTE, um degrau ATRAS: la o bundle responde `edge` e nao `fonte`; aqui
     # nao responde nem `edge` (anterior ao #1789), entao a resposta EXISTE e nao diz de quem e.
     # O veredito continua INDETERMINADO — identidade ausente nao vira identidade presumida —, mas
     # dizer "nenhuma sonda" seria inventar a ausencia: sondaram, e o ar respondeu.
     # shellcheck disable=SC2016  # as crases sao TEXTO: `edge` e o campo que falta na resposta
-    printf '  SEM_PROVA      %-34s SONDA_ANONIMA: nenhuma resposta ECOANDO este slug, mas %s resposta(s) de sonda sem eco de slug na janela (200 com `probe`+`versao` e SEM `edge` = bundle anterior ao #1789). Uma delas PODE ser desta edge; nenhuma é atribuível sem o disparo → INDETERMINADO. Para determinar: --request-ids %s=<request_id>\n' \
-      "$slug" "$n_anonimas" "$slug"
+    printf '  SEM_PROVA      %-34s SONDA_ANONIMA: nenhuma resposta ECOANDO este slug, mas %s resposta(s) de sonda sem eco de slug na janela (200 com `probe`+`versao` e SEM `edge` = bundle anterior ao #1789). Uma delas PODE ser desta edge; nenhuma é atribuível sem o disparo → INDETERMINADO. Para determinar: --request-ids %s=<request_id>%s\n' \
+      "$slug" "$n_anonimas" "$slug" "$(nota_ledger)"
   elif [ -z "$servido" ]; then
     printf '%s\n' "$slug" >> "$tmp/sem_sonda"
-    printf '  SEM_PROVA      %-34s nenhuma sonda em %s (ausência ≠ pendência: INDETERMINADO)\n' "$slug" "$JANELA"
+    printf '  SEM_PROVA      %-34s nenhuma sonda em %s (ausência ≠ pendência: INDETERMINADO)%s\n' "$slug" "$JANELA" "$(nota_ledger)"
   elif [ "$servido" = "sem-campo-fonte" ]; then
     # Irmão do ramo abaixo, e MAIS FORTE que ele: `nao-mapeada` é o bundle novo servindo uma prova
     # cega; este é o bundle VELHO — anterior ao #1998, que ainda não conhecia o campo. A edge está
@@ -514,12 +665,23 @@ done < "$tmp/alvos"
 n_chips="$(wc -l < "$tmp/chips" | tr -d "[:space:]")"
 echo
 if [ "$n_chips" -eq 0 ]; then
-  echo "✅ nenhum chip de deploy por estas edges: provadas no ar pelo \`fonte\` (NO_AR) ou INERTES."
+  # ⚠️ A LEGENDA NÃO REPETE OS MARCADORES — e isso é asserção, não estilo. A suíte julga o
+  # veredito procurando a MARCA na saída (`tem 'NO_AR'`, `tem 'LEDGER_DIVERGE'`); marca que
+  # aparece TAMBÉM no rodapé casa em toda execução e o caso fica verde com a classificação
+  # errada. Medido 2026-09-06: uma legenda com os tokens deixou 12 casos novos passando pelo
+  # rodapé, e as asserções antigas de `DESATUALIZADA`/`PRE_SONDA_FONTE` já viviam disso. É o
+  # irmão textual da sentinela NÃO-EXCLUSIVA do `verify-frontend.sh` (deploy.md): a string está
+  # lá, e por isso não prova nada. Descreva em palavras — os marcadores estão nas linhas acima
+  # e na tabela do SKILL.md.
+  echo "✅ nenhum chip de deploy por estas edges: todas provadas no ar (pelo fingerprint servido na janela viva, ou pela atestação durável do ledger) ou aposentadas."
   exit 0
 fi
 echo "🎫 abra chip para: $(tr '\n' ' ' < "$tmp/chips")"
-echo "   (DESATUALIZADA / PRE_SONDA_FONTE = deploy pendente PROVADO · SEM_PROVA = indeterminado,"
-echo "    chip por fail-closed · INERTE = aposentada, deploy sem efeito, NÃO entra no chip)"
+# A legenda descreve SEM repetir os marcadores (ver o bloco acima: token no rodapé casa sempre e
+# esvazia a asserção da suíte que o procura).
+echo "   (linha a linha acima: bundle velho servindo, sonda sem o campo de fonte e divergência do"
+echo "    ledger são pendência PROVADA · sem prova = indeterminado, chip por fail-closed · edge"
+echo "    aposentada e edge atestada pelo ledger não entram no chip)"
 # ⚠️ "nenhuma sonda na janela" NÃO se resolve esperando, e dizer só "INDETERMINADO" convida o
 # leitor a esperar. NÃO HÁ cron de sondagem: `cron.job` tem 93 jobs e ZERO com `probe`. Quem dá
 # prova passiva é só a edge cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) E tem cron
