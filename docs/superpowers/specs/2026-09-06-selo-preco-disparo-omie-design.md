@@ -47,6 +47,12 @@ o Codex reprovou a M1 dele, e a sessão irmã a refez "sobre a main (guard atôm
 §4.5 se enxertam. **Re-conferir §4.5 contra a versão final do guard antes de implementar**; se o
 guard atômico não tiver mais o ponto de enxerto que este spec assume, §4.5 é reescrita, não adaptada.
 
+⚠️ **A classe de SQLSTATE `SA` é do #2187 e está se movendo.** Conferido contra a M1 real em
+2026-09-06: `SA001` e `SA003`–`SA008` já estão ocupados, e o `SA008` de lá é *'Pedido % mudou de
+estado durante a aprovação'* — a v3 deste spec colidia com ele. Por isso os ramos daqui usam a classe
+**`SP`**, mesmo vivendo dentro das funções do #2187. **Ao implementar, re-conferir os códigos livres:
+esta lista envelhece a cada commit de lá.**
+
 Consome, sem reimplementar: a RPC `aprovar_pedido_sugerido` de 3 args, o trigger de
 `pedido_compra_item`, o GUC de bypass (`reposicao.selo_bypass`, honrado só com
 `current_user IN ('postgres','service_role')`), `reposicao_selo_itens`, `aprovacao_selo` e
@@ -489,10 +495,13 @@ PR.
 3. **RPC dedicada para a 1ª compra + UI migra** — o gate sai do cliente, e a regra "só preenche
    ausente" passa a ser servidor.
 4. **Em fila atrás do #2187.** Não standalone (§2).
-5. ~~**Quantidade entra no escopo**~~ 🧭 **REABERTA pelo challenge — §9.2.** Entrou porque parecia
-   "quase de graça"; o Codex mostrou que a recusa de quantidade **não tem recuperação** (cancelar é
-   negado em `sucesso_portal`). Minha recomendação agora é **tirar a quantidade desta fatia** e
-   transformá-la em chip bloqueado no desenho de recuperação de ordem externa.
+5. ~~**Quantidade entra no escopo**~~ → **REVERTIDA na v4 (§9.2).** Entrou porque parecia "quase de
+   graça"; o Codex mostrou que a recusa de quantidade **não tem recuperação** (cancelar é negado em
+   `sucesso_portal`). Sai a conferência de **selo** de quantidade — vira chip bloqueado no desenho de
+   recuperação de ordem externa (§10); fica a de **transporte**, que não tem o beco.
+   ⚠️ Aplicado por recomendação minha, na ausência de decisão contrária: a decisão original foi do
+   founder, e a reversão é trivial (repor os dois motivos de `aprovacao_selo` na tabela do §5.1) —
+   mas então o §9.2 exige desenhar a recuperação de ordem externa junto.
 
 ## 9. Revisão independente — challenge Codex (2026-09-06): **não aprovar**
 
