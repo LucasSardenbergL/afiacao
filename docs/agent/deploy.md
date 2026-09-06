@@ -582,6 +582,31 @@ e o import é `_shared/auth.ts`? a via não discrimina AQUI). E o inverso do soc
 é cego, quem enxerga é o eco passivo. As duas vias se cobrem em direções opostas — nenhuma sozinha
 cobre o parque.
 
+### Coluna NOVA como testemunha — o caso BINÁRIO do caminho anterior
+
+Quinto caminho, e um **caso especial do "Assinatura no PRÓPRIO log"** acima — vale destacar porque a
+prova muda de natureza. Lá a testemunha é uma coluna PREEXISTENTE cujo *valor* o defeito enviesava
+(`cost_source='UNKNOWN'`), e o veredito é estatístico: precisa argumentar que aquela distribuição não
+vem do código novo. Aqui a testemunha é uma **coluna que o PR ESTREOU** — e aí o argumento some, porque
+o código velho não podia escrever nela **por inexistência**: a ausência prévia é garantida por **DDL**,
+não inferida de amostra. Um único valor não-nulo já prova, e o `updated_at` do write diz **qual run**
+o gravou.
+
+**Caso que a fundou (`omie-analytics-sync`, #1888/A2, provado 2026-08-23):** as duas edges do PR não
+têm canária versionada, a Management API é indisponível e sondar às cegas dispara o sync real — os
+três degraus fechados. A coluna `omie_customer_account_map.evidence_document_normalized`, criada pela
+migration do próprio PR, foi de **0/16.118 para 10.822/16.118** em um dia, cada bloco com `updated_at`
+em cima do horário do cron da sua conta.
+
+**4 condições — todas obrigatórias:** (1) coluna NOVA; (2) migration **sem backfill** (senão prova o
+SQL, não a edge); (3) **writer exclusivo** — cheque `pg_trigger` **e** `pg_get_functiondef`, não só o
+TS; (4) um writer que roda **sozinho** (cron), senão "0" fica ambíguo entre bundle velho e
+ninguém-acionou. Falsifique sempre com *"que OUTRO caminho poderia ter preenchido isto?"*. Bônus: uma
+coluna que só o caminho saudável escreve vira **sensor de saúde** do writer — onde ela está NULL,
+aquele writer não passou. Caso completo:
+[`docs/historico/canaria-natural-de-schema.md`](../historico/canaria-natural-de-schema.md).
+
+
 ## Quando o Lovable reverte um fix — detectar e restaurar
 
 O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI — e a mensagem é **variável e majoritariamente genérica** ("Lovable update"/"Work in progress" dominam; o explícito varia: "Changes", "Deployed snapshot edge func", "Deployou … verbatim", este em pt-BR **cego a um `grep -i deployed`**), então grep de mensagem **só confirma, nunca nega** um deploy — e às vezes reverte um PR (~16% dos commits; ≥4-5 reversões money-path recentes). Prevenção é inviável (o bot precisa de escrita direta) → o jogo é **detectar + restaurar rápido** (MTTR), não governança perfeita. Spec: `docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md`.
