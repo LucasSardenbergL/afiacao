@@ -86,13 +86,25 @@ describe('origem — a fatia FECHOU (o vigia do M-04 virou o invariante que ele 
     expect(fonte(rel)).toMatch(/precoUnitarioOmie\s*\(/);
   });
 
-  it('nenhum writer fabrica preço de ITEM DE PEDIDO com `prod.valor_unitario || 0`', () => {
-    // Específico de propósito: `prod.` é o item do `det` do Omie. O catálogo de PRODUTO
-    // (omie_products.valor_unitario) tem o mesmo `|| 0` e NÃO é esta fatia — um regex solto em
-    // `valor_unitario || 0` casaria com ele e daria verde sem medir nada desta correção.
-    for (const rel of WRITERS_DE_ITEM_DE_PEDIDO) {
-      expect(fonte(rel)).not.toMatch(/prod\.valor_unitario\s*\|\|\s*0/);
-    }
+  it('o único `prod.valor_unitario || 0` que sobrou é o do CATÁLOGO, não o do item de pedido', () => {
+    // Ratchet, não ausência. O regex `prod.valor_unitario || 0` casa com DOIS writers
+    // diferentes que vivem no mesmo arquivo: o item do `det` de um PEDIDO (esta fatia) e o
+    // cadastro de PRODUTO em omie_products (outro campo, outro consumidor, pendência assumida
+    // em docs/historico/preco-ausente-nao-e-zero.md). Um `not.toMatch` cru daria VERMELHO
+    // eternamente por causa do catálogo; um regex frouxo daria VERDE medindo o catálogo em vez
+    // da correção. Então: contamos, travamos em 1, e provamos QUAL é o que sobrou.
+    const ocorrencias = WRITERS_DE_ITEM_DE_PEDIDO.flatMap((rel) =>
+      [...fonte(rel).matchAll(/prod\.valor_unitario\s*\|\|\s*0/g)].map(() => rel),
+    );
+    expect(ocorrencias).toEqual(['supabase/functions/omie-vendas-sync/index.ts']);
+
+    // E que ela está mesmo no bloco de catálogo: o objeto vizinho carrega campos que só o
+    // cadastro de produto tem. Sem esta parte, o ratchet contaria certo e mediria errado.
+    const src = fonte('supabase/functions/omie-vendas-sync/index.ts');
+    const i = src.search(/prod\.valor_unitario\s*\|\|\s*0/);
+    const vizinhanca = src.slice(Math.max(0, i - 500), i + 500);
+    expect(vizinhanca).toMatch(/quantidade_estoque/);
+    expect(vizinhanca).not.toMatch(/hash_payload|sales_order_id/);
   });
 
   it('a RPC de ingestão parou de fazer coalesce(unit_price, 0) e a coluna aceita NULL', () => {

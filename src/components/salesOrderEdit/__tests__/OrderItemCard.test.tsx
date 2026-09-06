@@ -21,7 +21,10 @@ describe('OrderItemCard', () => {
     render(<OrderItemCard item={item()} index={0} isBlocked={false} onUpdate={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByText('Verniz incolor')).toBeTruthy();
     expect(screen.getByText('Cód: C1')).toBeTruthy();
-    expect(screen.getByText('R$ 50.00')).toBeTruthy();
+    // O total da linha passou a usar `formatPrecoOuAusente` (Intl pt-BR) em vez de
+    // `R$ ${v.toFixed(2)}`, que produzia "R$ 50.00" com PONTO decimal. O matcher é por
+    // função porque o Intl usa espaço NÃO-QUEBRÁVEL depois de "R$", invisível na string.
+    expect(screen.getByText((txt) => txt.replace(/\s/g, ' ') === 'R$ 50,00')).toBeTruthy();
   });
 
   it('mostra a cor tintométrica quando presente', () => {

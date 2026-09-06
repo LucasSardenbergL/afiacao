@@ -108,3 +108,34 @@ export function totalLinhaOuAusente(
   if (!Number.isFinite(q)) return null;
   return q * precoUnitario;
 }
+
+/**
+ * Preço utilizável, ou `null` quando NÃO SABIDO. Régua de FINITUDE NÃO-NEGATIVA.
+ *
+ *   ausente / null / '' / lixo / objeto / boolean → null
+ *   negativo / NaN / Infinity                     → null  (corrupção, não dado)
+ *   0                                             → 0     (zero INFORMADO é fato)
+ *   número ou string numérica                     → o número
+ *
+ * Mora na PLATAFORMA de propósito. A mesma régua existe em `valorMedido`
+ * (`@/lib/scoring/margin`, módulo farmer-inteligencia) e em `precoUnitarioOmie`
+ * (`_shared/omie-pedido.ts`, Deno), mas importar a versão do farmer a partir de vendas é
+ * vazamento de fronteira — e registrar isso na baseline seria pagar dívida em vez de
+ * resolvê-la. Difere de `valorMedido` num ponto que importa: aquele aceita qualquer finito,
+ * inclusive NEGATIVO, e preço negativo não é desconto, é corrupção.
+ *
+ * Quem precisa de preço ESTRITAMENTE positivo (último preço praticado, base de margem)
+ * acrescenta `> 0` no próprio call site — a decisão de excluir o zero é do consumidor, não
+ * desta função, que só diz o que é número.
+ *
+ * Fail-closed contra os falsy que `Number` converte para 0: `Number('')`, `Number('  ')`,
+ * `Number(false)` e `Number([])` são todos 0, e um deles virando "preço zero apurado" seria
+ * a fabricação que este módulo existe para impedir.
+ */
+export function precoUtilizavel(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  if (typeof raw === 'string' && raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}

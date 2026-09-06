@@ -13,8 +13,7 @@ import {
   type SalesOrder,
   type SalesOrderRow,
 } from './types';
-import { totalLinhaOuAusente } from '@/lib/format';
-import { valorMedido } from '@/lib/scoring/margin';
+import { totalLinhaOuAusente, precoUtilizavel } from '@/lib/format';
 
 // Normaliza pra busca: minúsculas + sem diacríticos ("afiacao" acha "Afiação").
 const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -80,8 +79,8 @@ export function mapAfiacaoDetail(row: AfiacaoOrderRow): SalesOrder {
       // Serviço de AFIAÇÃO (tabela `orders`), não pedido Omie — mas o mesmo `|| 0` e a mesma
       // tela. O item alimenta `SalesOrderItem`, que passou a admitir `null`, e o DetailSheet
       // já sabe mostrar "—". Preço 0 aqui costuma ser "a orçar", que é ausência, não brinde.
-      valor_unitario: valorMedido(i.unitPrice),
-      valor_total: totalLinhaOuAusente(i.quantity ?? 1, valorMedido(i.unitPrice)),
+      valor_unitario: precoUtilizavel(i.unitPrice),
+      valor_total: totalLinhaOuAusente(i.quantity ?? 1, precoUtilizavel(i.unitPrice)),
     })),
     subtotal: row.subtotal || row.total || 0,
     total: row.total || 0,

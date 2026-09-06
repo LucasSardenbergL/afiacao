@@ -12,7 +12,6 @@ import {
 import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
 import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
-import { valorMedido } from '@/lib/scoring/margin';
 import {
   campoDeLinha,
   compararCandidatosUpSell,
@@ -25,6 +24,7 @@ import {
 } from '@/lib/farmer/upsell-ordem';
 import { acumularContaDeCompra, medirCoberturaContaDaOferta, ofertaNaContaDoCliente } from '@/lib/farmer/cobertura-conta-oferta';
 import { toast } from 'sonner';
+import { precoUtilizavel } from '@/lib/format';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -657,7 +657,7 @@ export const useCrossSellEngine = () => {
           // — e o `price <= 0` lá embaixo então descartava o SKU do up-sell. Ou seja: uma
           // ausência de dado apagava uma oferta legítima. Sem preço utilizável, mantém o que
           // já se sabia (ausente ≠ zero).
-          const precoItem = valorMedido(item.unit_price) ?? valorMedido(item.valor_unitario);
+          const precoItem = precoUtilizavel(item.unit_price) ?? precoUtilizavel(item.valor_unitario);
           if (precoItem !== null && precoItem > 0) existing.price = precoItem;
           cp.set(productId, existing);
         }

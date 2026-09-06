@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { derivarHistorico, type Historico, type HistoricoItemInput, type HistoricoPedidoInput } from '@/lib/call/historico';
-import { valorMedido } from '@/lib/scoring/margin';
+import { precoUtilizavel } from '@/lib/format';
 
 /** Status que NÃO representam venda concluída (espelha useMunicaoLigacao). */
 const STATUS_INVALIDOS = new Set(['rascunho', 'orcamento', 'cancelado', 'cancelado_humano']);
@@ -67,7 +67,7 @@ export function useHistoricoCompras(customerUserId: string | null): { historico:
         // `?? 0` fazia uma compra recente SEM preco sobrescrever o ultimo preco conhecido
         // do SKU com R$ 0,00 na ficha de pre-contato — o vendedor entrava na conversa com um
         // preco que ninguem praticou. `null` = nao sabido; quem consome escolhe o que mostrar.
-        precoUnit: valorMedido(r.unit_price),
+        precoUnit: precoUtilizavel(r.unit_price),
         dataPedido: dataDoPedido.get(r.sales_order_id) ?? '',
       }));
 
