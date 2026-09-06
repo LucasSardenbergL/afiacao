@@ -54,7 +54,7 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // baseline por arquivo aceitaria um 2º sítio no mesmo arquivo em silêncio. A lista só
 // ENCOLHE, e encolhe registrada — diminuir também reprova, pedindo a atualização.
 //
-// DÍVIDA (2026-08-22): estes 44 sítios são a classe medida, não sítios aprovados. A fatia
+// DÍVIDA (2026-08-23): estes 39 sítios são a classe medida, não sítios aprovados. A fatia
 // de maior dano saiu nesta leva (banner de saúde de dados, alertas de fluxo de caixa,
 // painel de saúde da carteira) porque neles a ausência AFIRMA segurança e o dano estava
 // medido em prod. O resto sai por domínio, e a ordem é por dano — não por facilidade.
@@ -65,20 +65,41 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // devolve os ids E o estado da leitura. O gatilho não era dano em prod — `carteira_coverage`
 // tem 0 linhas (psql-ro, 2026-08-22) — e sim o PRIMEIRO cadastro de cobertura, a partir do
 // qual a carteira coberta sumiria calada de sugestões, scores, plano tático e copilot.
+//
+// QUITADA em 2026-08-23 — a fatia dos CARDS DE DASHBOARD (5 sítios, 5 arquivos): Radar,
+// placar MTD do closer, breakdown de visitas, resumo 360 do cliente e badge de tier.
+// A ordem saiu do denominador medido em prod (psql-ro), não da severidade herdada do
+// briefing — que apontava o ClosersMtdHero como o pior por ser "a linha do defeito
+// original" e errou o alvo, exatamente como o ranking herdado do CoveragePanel errara em
+// 2026-08-22:
+//   · RadarKpis            → `radar_empresas` com 526.176 empresas, 523.180 `a_contatar`,
+//                            lote 2026-05 `complete`. ÚNICO com dano VIVO: apagava, sem
+//                            rastro, o resumo de meio milhão de prospects — com a lista
+//                            ainda na tela, o que faz o painel parecer só "sem números".
+//   · TierClienteBadge     → `cliente_tier_preco` 0 linhas. Dano hoje zero, mas a forma é
+//                            a mais cara: AFIRMAVA "Definir tier" e deixava sobrescrever,
+//                            por upsert, o tier que não conseguiu ler (preço de partida).
+//   · ClosersMtdHero, MinhasVisitasResultadoCard → `route_visits` 0 linhas.
+//   · CustomerProfile360Summary                  → `farmer_calls` 0 linhas.
+// Os quatro de denominador zero seguem o critério do `useMyActiveCoverage`: o gatilho é o
+// PRIMEIRO registro, e o custo de corrigir agora é uma fração do de descobrir depois.
+//
+// Achado que sobrevive à leva: em `RadarKpis` a ausência de ACESSO chegava como EXCEÇÃO,
+// não como NULL — a RPC `radar_kpis` faz `RAISE 'forbidden'` para quem não é gestor/master
+// e a rota `/radar` só exige `RequireStaff`. Corrigir a classe sem ver isso teria trocado
+// um silêncio por um alarme FABRICADO para todo staff não-gestor. O gate de acesso foi
+// para o `enabled` do hook, onde a negativa vira `desabilitada` — estado que `naoConsegui`
+// exclui de propósito — em vez de virar aviso.
 const BASELINE = new Map<string, number>([
   ["src/components/adminPrime/PrimePlanosTab.tsx", 1],
-  ["src/components/customer/CustomerProfile360Summary.tsx", 1],
   ["src/components/customerDashboard/RecomendacoesCliente.tsx", 1],
-  ["src/components/dashboard/ClosersMtdHero.tsx", 1],
   ["src/components/dashboard/FollowupsSugeridosCard.tsx", 1],
   ["src/components/dashboard/GestorExcecoes.tsx", 1],
-  ["src/components/dashboard/MinhasVisitasResultadoCard.tsx", 1],
   ["src/components/farmer/ChamadasPendentesNudge.tsx", 1],
   ["src/components/farmer/copilot/OfertaCruaCard.tsx", 1],
   ["src/components/financeiro/cashflow/EventosOnboarding.tsx", 1],
   ["src/components/knowledge-base/RendimentoCalculator.tsx", 1],
   ["src/components/knowledge-base/VersionHistory.tsx", 1],
-  ["src/components/radar/RadarKpis.tsx", 1],
   ["src/components/reposicao/aplicacao/useAplicacaoFila.ts", 2],
   ["src/components/reposicao/cadeiaLogistica/useCadeiaLogistica.ts", 1],
   ["src/components/reposicao/pedidos/useDetalhesModal.ts", 1],
@@ -87,7 +108,6 @@ const BASELINE = new Map<string, number>([
   ["src/components/tarefas/MinhasTarefasCard.tsx", 1],
   ["src/components/tarefas/RecorrentesHojeCard.tsx", 1],
   ["src/components/tintColorSelect/useTintColorSelect.ts", 1],
-  ["src/components/unified-order/TierClienteBadge.tsx", 1],
   ["src/components/whatsapp/SlaCardMeuDia.tsx", 1],
   ["src/hooks/useUnifiedOrder.ts", 2],
   ["src/pages/AdminReposicaoAlertas.tsx", 1],

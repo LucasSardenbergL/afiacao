@@ -2105,3 +2105,60 @@ vínculo commit↔PR que o repo garante é o trailer, e ele se lê com
 `git log -1 --format=%s <sha> | grep -o '(#[0-9]*)'`. Confira ANTES de escrever o número num doc —
 um registro histórico com o PR errado aponta o leitor futuro para a discussão errada, e o erro é
 silencioso porque o número existe.
+
+## Os cards de dashboard: o briefing errou o alvo de novo, e o "sem acesso" veio como EXCEÇÃO (2026-08-23)
+
+Fatia seguinte da classe varrida no #1886 — os 5 sítios de auto-ocultação em cards de
+dashboard, todos na baseline, nenhum com dono. Duas coisas sobreviveram à leva.
+
+**1. A severidade herdada errou o alvo — pela segunda vez, e agora vinda do próprio
+briefing que ensinava a não herdá-la.** O chip listava `ClosersMtdHero` em primeiro, com um
+argumento forte: aquela linha (`if (isLoading || !k || k.totalVisitas === 0) return null`)
+é *literalmente* o defeito original da classe. Os denominadores (psql-ro, 2026-08-23)
+inverteram a ordem:
+
+| card | fonte | denominador | dano hoje |
+|---|---|---|---|
+| **RadarKpis** | `radar_empresas` | **526.176 empresas, 523.180 `a_contatar`**, lote 2026-05 `complete` | **VIVO** |
+| ClosersMtdHero | `route_visits` | **0 linhas** | zero |
+| MinhasVisitasResultadoCard | `route_visits` | **0 linhas** | zero |
+| CustomerProfile360Summary | `farmer_calls` | **0 linhas** | zero |
+| TierClienteBadge | `cliente_tier_preco` | **0 linhas** | zero (mas money-path) |
+
+O `RadarKpis` era o único com dano vivo, e o pior tipo de dano: como a LISTA de empresas
+continua na tela quando só o placar falha, o painel não parece quebrado — parece um Radar
+que não tem números. Reforço da regra: *severidade herdada é hipótese até ter denominador,
+inclusive quando quem a herda é o autor da regra.*
+
+**Nota de método:** medir "0 linhas" com uma role read-only exige antes provar que o zero
+não é a própria RLS — o mesmo colapso "não consegui" → "não há", uma camada abaixo.
+`claude_ro` tem `rolbypassrls = t` (conferido antes de ler os denominadores), então o zero
+é dado. Sem essa checagem, a medição que corrige a classe teria cometido a classe.
+
+**2. A ausência de ACESSO nem sempre chega como NULL — no Radar ela chega como EXCEÇÃO.**
+O #1886 registrou o caso `get_carteira_saude`, que faz `RETURN NULL` para quem não tem
+role: ausência de acesso reconhecível *depois* da leitura, tratada com "não renderiza e não
+emite". A RPC `radar_kpis` faz `RAISE EXCEPTION 'forbidden: gestor/master only'` — e como a
+rota `/radar` só exige `RequireStaff`, todo staff não-gestor ABRE a página e recebe um erro
+**por desenho**. Aplicar a correção da classe sem ver isso teria trocado um silêncio por um
+alarme FABRICADO, exibido a quem nunca poderia ver o número: precisão > recall, do lado
+errado.
+
+A saída não foi detectar a string `forbidden` no erro (frágil e tardia), e sim mover o gate
+para o `enabled` do hook, espelhando a condição do servidor (`isMaster ||
+isGestorComercial` ≡ `pode_ver_carteira_completa`). Aí a negativa de acesso vira
+`desabilitada` — o estado que `naoConsegui()` exclui *de propósito*, "a pergunta que não foi
+feita". O helper já tinha o nome certo para isso; faltava alguém chegar com o caso.
+
+> **Regra:** antes de transformar uma leitura falha em aviso, pergunte se aquela falha é
+> ESPERADA para parte de quem abre a tela. Se for, o conserto é não fazer a pergunta
+> (`enabled`), não é avisar mais bonito. Gate de acesso que só existe no servidor produz,
+> na UI corrigida, um alarme para quem não tem acesso.
+
+**3. O tier foi o caso onde a auto-ocultação era o menor dos males.** `TierClienteBadge` não
+só sumia para quem não edita: para quem edita, AFIRMAVA "Definir tier" e abria o dialog com
+os selects vazios — de onde um Salvar sobrescreveria por `upsert` o tier vigente que o
+componente não conseguiu ler, num campo que orienta preço de partida. Correção fail-CLOSED:
+sem leitura não se edita. Vale a generalização — *num componente que também ESCREVE, "erro
+colapsado em vazio" deixa de ser um defeito de exibição e vira um caminho de escrita sobre
+informação ausente.*
