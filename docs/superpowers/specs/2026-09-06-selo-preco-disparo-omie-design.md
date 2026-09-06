@@ -1,4 +1,4 @@
-# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v1)
+# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v2)
 
 > Money-path de compras. Origem: decisão **§8.4 do PR #2187** (spec
 > `2026-09-05-selo-aprovacao-pedido-sayerlack-design.md`, branch `claude/frosty-goodall-f12941`), que
@@ -9,6 +9,15 @@
 > `docs/historico/portal-sayerlack-fator-aprovado-vs-vivo.md`.
 > **Status: desenho aprovado pelo founder em conversa (2026-09-06); implementação EM FILA atrás do
 > #2187, que ainda é DRAFT e do qual esta fatia consome infraestrutura (§2).**
+>
+> 🔴 **REVISÃO INDEPENDENTE PENDENTE.** O challenge do Codex sobre este spec foi disparado em
+> 2026-09-06 e **não rodou**: `scripts/codex-async.sh` saiu com **exit 75 — cota esgotada** (plano
+> declarado `prolite`, que BATE com o ping registrado no cabeçalho do próprio script em 2026-09-05 ⇒
+> limite real, não token velho). Custo do consult: `gpt-6-astra · max · tentativa 1 · —s · tokens ?`
+> (ausente, não zero — o codex não emitiu rodapé). Acionado o **Caminho B** (`money-path.md` §230):
+> validação adversária própria, registrada em §9. **Auto-revisão NÃO substitui revisão
+> independente** — ela cobre o intervalo. **Rodar o Codex retroativamente quando a janela resetar,
+> ANTES de implementar.**
 
 ## 1. A invariante — e por que NÃO é igualdade
 
@@ -291,6 +300,16 @@ portal é terminal ("cancele e aguarde o ciclo"); divergência de preço é **re
 corrige por uma porta autorizada, que re-sela e limpa o motivo, e o reprocesso segue. Sem isso o guard
 brickaria o pedido.
 
+**Mas os dois motivos de selo não têm o mesmo desfecho, e a mensagem tem de dizer qual é qual:**
+
+| motivo | recuperação |
+|---|---|
+| `preco_selo_ausente` / `preco_selo_divergente` / `payload_divergente` (preço) | porta autorizada re-sela e limpa o motivo → reprocessa |
+| `aprovacao_selo_ausente` / `aprovacao_selo_divergente` / `payload_divergente` (qtde) | **não há porta** — o `aprovacao_selo` é imutável por construção no #2187, e assim deve ser. Só sai por **cancelar + o ciclo regravar** |
+
+Sem essa distinção na mensagem o operador reprocessa em círculo achando que é transitório (achado
+B1 do §9).
+
 Para Sayerlack a recusa acontece **depois** de o portal já ter recebido o pedido: o fornecedor tem a
 ordem e o Omie não tem o PO. É estado operacional real, e é o **correto** — PO faltando é recuperável
 por conciliação; PO com preço errado é dinheiro saindo errado.
@@ -346,18 +365,28 @@ PR.
   afrouxar o `<= 0` da 1ª compra → o teste de "não troca preço bom" fica vermelho; remover o
   `SET LOCAL reposicao.selo_bypass='on'` de `sayerlack_aplicar_custo_portal` → a captura legítima toma
   `SA008` (prova que o bypass do §4.4 é necessário, não decorativo).
-- **vitest, gate de forma da edge:** assert **positivo** "o `IncluirPedCompra` é precedido por
-  `reposicao_conferir_disparo_omie`" e assert **negativo** "a conferência não está dentro de um ramo
-  `modo === 'producao'`" — é o segundo que trava o furo do `dry_run`. O gate lê a edge como TEXTO e
-  limpa comentário com o stripper COMPARTILHADO (`removerComentarios` de `@/lib/gates/limpeza-fonte`),
-  nunca regex local.
+- **Gate de forma da edge — REUSA o harness que já existe.**
+  `supabase/functions/_shared/marco-pre-omie_test.ts` já faz exatamente esta forma para o
+  `lerMarcoPreOmie`: assere que a leitura vem **antes** do `IncluirPedCompra`, que existe
+  **exatamente 1** call site, e traz a falsificação embutida (monta a fonte `invertido` e exige
+  vermelho). O novo gate é o **irmão** dele para `reposicao_conferir_disparo_omie`, no mesmo arquivo
+  ou ao lado, com a mesma mecânica — não inventar harness novo.
+  É o assert "exatamente 1 call site" que sustenta a alegação de que a asserção é **inescapável**:
+  sem ele, um segundo `IncluirPedCompra` futuro passaria por fora e nada ficaria vermelho.
+  Acrescenta o assert **negativo** "a conferência não está dentro de um ramo `modo === 'producao'`",
+  **com falsificação própria** (envolver a chamada em `if (modo === 'producao')` e exigir vermelho) —
+  é ele que trava o furo do `dry_run`, e sem falsificar ele é decorativo.
+  O gate lê a edge como TEXTO e limpa comentário com o stripper COMPARTILHADO (`removerComentarios` de
+  `@/lib/gates/limpeza-fonte`), nunca regex local — a edge tem `IncluirPedCompra` em 6 comentários e
+  1 chamada; um stripper local mediria os comentários.
 - **Deno `test:edges`** (`--no-remote`, sem afrouxar o flag), **`edges:typecheck`**, **`sonda:bump`**
   (`VERSAO`) + **`sonda:fingerprint -- --write`** em `disparar-pedidos-aprovados`. Os 5 gates de edge
   não se cobrem.
 - **Manifesto de módulos:** arquivo novo em `src/` ganha dono em `src/lib/modulos/manifesto.ts`.
 - **`bun run psql:errorstop`**, **`shellcheck`** no harness novo.
 - **Codex challenge** (`scripts/codex-async.sh`, background) sobre este spec **antes** de implementar,
-  e sobre o PR depois.
+  e sobre o PR depois. 🔴 **Tentado em 2026-09-06 e barrado por cota (exit 75)** — ver o bloco de
+  status no topo e o Caminho B em §9. É pré-condição da implementação, não do merge deste spec.
 
 ## 8. Decisões do founder (2026-09-06, nesta ordem)
 
@@ -371,7 +400,47 @@ PR.
 4. **Em fila atrás do #2187.** Não standalone (§2).
 5. **Quantidade entra no escopo** (§5.1 item 2): a conferência do disparo cobre os dois selos.
 
-## 9. Fora de escopo (dito, não esquecido)
+## 9. Caminho B — auto-challenge adversário (2026-09-06)
+
+Substitui NADA; cobre o intervalo até o Codex rodar. Os achados abaixo são meus, contra meu próprio
+desenho, e **já estão incorporados no corpo do spec**.
+
+### B1 [P1] Divergência de QUANTIDADE não tem porta de recuperação — e o operador entraria em loop
+
+`preco_selo_divergente` é recuperável: o operador corrige por porta autorizada, que re-sela e limpa o
+motivo (§5.3). **`aprovacao_selo_divergente` não é.** O `aprovacao_selo` é imutável por construção no
+#2187 — não existe, nem deve existir, porta que o re-sele. Um pedido que caia nesse motivo fica em
+`falha_envio` e **nenhuma** ação da tela o destrava; o reprocesso o traz de volta ao mesmo ponto.
+
+Incorporado: §5.3 passa a distinguir os dois desfechos, e a mensagem de recusa tem de dizer qual é
+qual — senão o operador reprocessa em círculo achando que é transitório.
+
+### B2 [P2] `persistir_qtde_inteira` sobrescreve o `valor_total` PROVADO do portal
+
+`sayerlack_aplicar_custo_portal` grava `valor_total` = total provado do Efetivar. Na invocação
+seguinte do disparo, `reposicao_persistir_qtde_inteira` recomputa
+`valor_total = sum(valor_linha)` — descartando o número provado em favor de um derivado. Se o total do
+portal incluir qualquer coisa que não seja `Σ preço×qtde` (frete, arredondamento do fornecedor), o
+provado é perdido em silêncio.
+
+**Fora do escopo desta fatia** (é bug pré-existente, não regressão do selo, e não afeta o `nValUnit`
+que vai ao Omie). Registrado aqui para virar chip. Reforça a §4.1: `valor_linha` e `valor_total` já
+são território de um escritor que os trata como derivados.
+
+### B3 — o que investiguei e NÃO virou achado (medido, não presumido)
+
+- **Outro caminho até o Omie?** Não. `grep -rn IncluirPedCompra supabase/functions/` dá **um** call
+  site executável (`disparar-pedidos-aprovados/index.ts:1057`); o resto é comentário e teste.
+- **Reconciliação cria PO sem passar pela asserção?** Não. Ela **adota** um PO que o Omie diz já
+  existir, via `ConsultarPedCompra` — o PO nasceu de uma invocação anterior que passou pela asserção.
+- **`aplicar_promocoes_no_ciclo` é porta de preço não coberta?** Não. Filtra
+  `status = 'pendente_aprovacao'` (e `IN ('pendente_aprovacao','bloqueado_guardrail')` na reavaliação)
+  — é pré-aprovação.
+- **Duplo envio ao portal na recusa?** Não. Na 1ª invocação o portal devolve `queued` e
+  `processarPedido` retorna **antes** de montar o payload; a asserção só roda na invocação que cria o
+  PO, quando o protocolo já existe.
+
+## 10. Fora de escopo (dito, não esquecido)
 
 - **Teto de valor aprovado** ("o portal cobrou mais do que aprovamos"). É a fatia seguinte, e §4.6 diz
   exatamente qual número a destrava.
