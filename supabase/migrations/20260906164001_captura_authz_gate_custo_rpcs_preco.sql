@@ -56,6 +56,44 @@
 -- ║  ⚠️ MIGRATION MANUAL — Lovable não auto-aplica nome custom. SQL Editor → Run.║
 -- ╚══════════════════════════════════════════════════════════════════════════════╝
 
+-- ── Guard de VALIDADE DA EVIDÊNCIA — fail-closed ─────────────────────────────
+-- Evidência de banco tem prazo (database.md §2). Estes corpos foram lidos da PROD em
+-- 2026-08-30 e reconferidos em 2026-09-06; o founder cola isto depois, e "a última a
+-- recriar VENCE". Se alguém tiver colado uma versão MAIS NOVA no intervalo, aplicar
+-- esta migration a sobrescreveria com a de setembro — reintroduzindo, em silêncio,
+-- exatamente a deriva que ela existe para consertar.
+-- Por isso: se o corpo vivo não for o que capturei, ABORTA e não recria nada.
+-- É idempotente: re-colar depois de aplicada encontra o MESMO md5 (a captura é fiel),
+-- então passa. Padrão herdado de 20260830214547 (pendência 2 da mesma triagem).
+DO $validade$
+DECLARE
+  r record;
+  v_md5 text;
+BEGIN
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('public.get_tint_price(uuid)',     '88d019125c82d38b3ef404f90f5d8f49'),
+      ('public.get_tint_prices(uuid[])',  '3493bbd6f41da68a7e05256df459d682'),
+      ('public.get_preco_cockpit(jsonb)', '2f1af0f994b304660303bcc6ec987d36')
+    ) AS t(assinatura, md5_capturado)
+  LOOP
+    -- to_regprocedure (não `::regprocedure`): devolve NULL quando a função não existe,
+    -- em vez de lançar. Função ausente = criação nova, não sobrescrita — nada a proteger,
+    -- e é o caso do PG17 descartável dos harnesses, que aplica a migration num banco limpo.
+    IF to_regprocedure(r.assinatura) IS NULL THEN
+      CONTINUE;
+    END IF;
+    SELECT md5(pg_get_functiondef(to_regprocedure(r.assinatura))) INTO v_md5;
+    IF v_md5 IS DISTINCT FROM r.md5_capturado THEN
+      RAISE EXCEPTION
+        'ABORTADO: o corpo vivo de % não é o que esta migration capturou (vivo=%, capturado=%). Alguém recriou a função depois de 2026-09-06. NÃO aplique às cegas: releia o corpo vivo com pg_get_functiondef e refaça a captura, senão isto REVERTE o que está em produção.',
+        r.assinatura, v_md5, r.md5_capturado
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END LOOP;
+END
+$validade$;
+
 -- ── Guard de dependências — FAIL-CLOSED ──────────────────────────────────────
 -- plpgsql/sql são late-bound: sem `private.cap_custo_ler` o CREATE PASSA e a função
 -- só quebra em RUNTIME, no meio do money-path — e como get_tint_* é SECURITY DEFINER

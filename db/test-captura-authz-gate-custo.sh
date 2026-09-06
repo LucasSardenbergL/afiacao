@@ -264,9 +264,33 @@ eq "S3 reaplicar a migration recarimba as 3 funções" \
 # asserts do eixo seguissem verdes, a migration não capturaria hardening nenhum.
 # A sentinela é o VALOR 200/100 (dado do seed), não texto que o código emita.
 # ══════════════════════════════════════════════════════════════════════════════
+# O guard de VALIDADE (DO $validade$) aborta quando o corpo vivo não é o capturado — que é
+# exatamente o estado que a sabotagem cria de propósito. Ele é uma defesa DIFERENTE do gate, e
+# tem o assert V1 abaixo só para ele. Nas sabotagens, portanto, ele sai: senão o harness estaria
+# testando o guard quando quer testar o gate, e a falsificação nunca chegaria a rodar.
+# shellcheck disable=SC2016  # o literal `$validade$` é o dollar-quote do SQL: expandir seria o bug
+sem_guard() { sed '/^DO \$validade\$/,/^\$validade\$;/d' "$1"; }
+
+echo "─── V1: o guard de validade morde quando o corpo vivo divergiu ───"
+# Cenário real que isto protege: o founder cola esta migration DIAS depois; se alguém tiver
+# recriado a função no intervalo, aplicar às cegas reverteria produção para a versão capturada.
+DIVERG="$(mktemp /tmp/diverg.XXXXXX)"
+sem_guard "$MIG" | sed "s/private\.cap_custo_ler(auth\.uid())/(auth.uid() IS NOT NULL)/g" > "$DIVERG"
+P -q -f "$DIVERG"   # deixa o corpo vivo DIFERENTE do capturado
+# `|| true`: aqui a FALHA do psql é o resultado esperado, e com `set -e`+`pipefail` ela
+# mataria o harness antes de a mensagem ser lida. A evidência é o texto ABORTADO, não o exit.
+V1="$(P -f "$MIG" 2>&1 | sed -n 's/.*ERROR:  \(ABORTADO[^(]*\).*/\1/p' | tail -1 || true)"
+case "$V1" in
+  ABORTADO*) ok "V1 aplicar sobre corpo divergente ABORTA (=$(echo "$V1" | cut -c1-52)…)" ;;
+  *)         bad "V1 o guard de validade NÃO mordeu — a migration reescreveria produção às cegas [$V1]" ;;
+esac
+P -q -f <(sem_guard "$MIG")   # volta ao corpo capturado
+eq "V1b restaurado: o gate verdadeiro volta" "$(gate "$U_EMPCOM" "($SSING ->> 'custoBase') IS NULL")" "t"
+rm -f "$DIVERG"
+
 echo "─── falsificação: reescrever o gate na versão do REPO ───"
 SAB="$(mktemp /tmp/sabota-gate-custo.XXXXXX)"
-sed -e "s/private\.cap_custo_ler(auth\.uid())/(auth.uid() IS NOT NULL AND (public.has_role(auth.uid(),'employee'::app_role) OR public.has_role(auth.uid(),'master'::app_role)))/g" "$MIG" > "$SAB"
+sem_guard "$MIG" | sed -e "s/private\.cap_custo_ler(auth\.uid())/(auth.uid() IS NOT NULL AND (public.has_role(auth.uid(),'employee'::app_role) OR public.has_role(auth.uid(),'master'::app_role)))/g" > "$SAB"
 N_SAB=$(command grep -c "has_role(auth.uid(),'employee'::app_role) OR" "$SAB" || true)
 if [ "$N_SAB" -lt 3 ]; then
   bad "falsificação NÃO aplicou a sabotagem nas 3 funções (casou $N_SAB) — os asserts abaixo seriam teatro"
@@ -281,7 +305,7 @@ else
   fi
   # sabotagem 2: o predicado do cockpit que INCLUI gerencial
   SAB2="$(mktemp /tmp/sabota-cockpit.XXXXXX)"
-  sed -e "s/v_pode_num := private\.cap_custo_ler(auth\.uid());/v_pode_num := public.pode_ver_carteira_completa(auth.uid());/" "$MIG" > "$SAB2"
+  sem_guard "$MIG" | sed -e "s/v_pode_num := private\.cap_custo_ler(auth\.uid());/v_pode_num := public.pode_ver_carteira_completa(auth.uid());/" > "$SAB2"
   if ! command grep -q "v_pode_num := public.pode_ver_carteira_completa" "$SAB2"; then
     bad "falsificação 2 não casou o predicado do cockpit"
   else
@@ -294,8 +318,9 @@ else
     fi
   fi
   rm -f "$SAB2"
-  # restaura a versão verdadeira e reconfirma (o harness não pode terminar com o corpo furado)
-  P -q -f "$MIG"
+  # restaura a versão verdadeira e reconfirma (o harness não pode terminar com o corpo furado).
+  # Sem o guard: o corpo vivo está sabotado agora, e o guard — corretamente — recusaria reescrevê-lo.
+  P -q -f <(sem_guard "$MIG")
   eq "restaurado: employee comum volta a NÃO ver custo" "$(gate "$U_EMPCOM" "($SSING ->> 'custoBase') IS NULL")" "t"
   eq "restaurado: gerencial volta a NÃO ver cmc"        "$(cock "$U_GEREN" cmc)" "NULO"
 fi

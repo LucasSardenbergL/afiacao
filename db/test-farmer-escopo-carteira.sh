@@ -276,6 +276,27 @@ eq "PRIV1b com o GRANT de volta, o caminho feliz volta" "$(priv_c1)" "SEM_ERRO"
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): sabota o gate e EXIGE vermelho.
 # ══════════════════════════════════════════════════════════════════════════════
+# O guard de VALIDADE (DO $validade$) recusa reescrever um corpo que não é o capturado — que é
+# de propósito o estado que a sabotagem cria. É defesa DIFERENTE do gate de escopo, com assert
+# próprio (V1); nas sabotagens ele sai, senão o harness testaria o guard querendo testar o gate.
+# shellcheck disable=SC2016  # o literal `$validade$` é o dollar-quote do SQL: expandir seria o bug
+sem_guard() { sed '/^DO \$validade\$/,/^\$validade\$;/d' "$1"; }
+
+echo "─── V1: o guard de validade morde quando o corpo vivo divergiu ───"
+# Cenário: o founder cola isto dias depois. Se alguém recriou a função no intervalo, aplicar às
+# cegas reverteria produção para a versão capturada — em silêncio, que é a classe toda.
+DIVERG="$(mktemp /tmp/diverg-farmer.XXXXXX)"
+sem_guard "$MIG" | sed "s/USING ERRCODE = 'FG009'/USING ERRCODE = 'FG010'/" > "$DIVERG"
+P -q -f "$DIVERG"
+V1="$(P -f "$MIG" 2>&1 | sed -n 's/.*ERROR:  \(ABORTADO[^(]*\).*/\1/p' | tail -1 || true)"
+case "$V1" in
+  ABORTADO*) ok "V1 aplicar sobre corpo divergente ABORTA (=$(echo "$V1" | cut -c1-52)…)" ;;
+  *)         bad "V1 o guard de validade NÃO mordeu — a migration reescreveria produção às cegas [$V1]" ;;
+esac
+P -q -f <(sem_guard "$MIG")
+eq "V1b restaurado: o gate de escopo volta a morder" "$(chamar farmer_recomendacoes_substituir "$(linha "$C3")" "$(geracao_atual farmer_recommendations)")" "FG009"
+rm -f "$DIVERG"
+
 echo "─── falsificação ───"
 P -q <<SQL
 ALTER TABLE public.farmer_client_scores DISABLE ROW LEVEL SECURITY;
@@ -283,7 +304,7 @@ SQL
 # Sabotagem cirúrgica: só o predicado do gate. `WHERE false` zera a contagem, então
 # `v_fora_escopo` é sempre 0 e o RAISE nunca dispara — o gate vira decoração.
 SABOTADO="$(mktemp /tmp/sabota-escopo.XXXXXX)"
-sed 's/WHERE s\.farmer_id IS DISTINCT FROM p_farmer_id;/WHERE false;/' "$MIG" > "$SABOTADO"
+sem_guard "$MIG" | sed 's/WHERE s\.farmer_id IS DISTINCT FROM p_farmer_id;/WHERE false;/' > "$SABOTADO"
 if ! command grep -q "WHERE false;" "$SABOTADO"; then
   bad "falsificação NÃO aplicou a sabotagem (padrão não casou) — asserts abaixo seriam teatro"
 else
@@ -298,7 +319,8 @@ else
     ok "falsificação: gate zerado ⇒ o lote alheio PASSA (cross=[$V1] bundle=[$V2]) — os asserts têm dente"
   fi
   # Restaura a versão verdadeira e reconfirma, para o harness não terminar com o corpo furado.
-  P -q -f "$MIG"
+  # Sem o guard: o corpo vivo está sabotado, e o guard — corretamente — recusaria reescrevê-lo.
+  P -q -f <(sem_guard "$MIG")
   eq "restaurado: o gate volta a morder" "$(chamar farmer_recomendacoes_substituir "$(linha "$C3")" "$(geracao_atual farmer_recommendations)")" "FG009"
 fi
 rm -f "$SABOTADO"
