@@ -4304,7 +4304,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'promover_candidato_primeira_compra', 1, '20260530210000_reposicao_candidatos_primeira_compra.sql', 'd2dffca872be4dc53ce53bd84154c045'),
   ('public', 'promover_candidato_primeira_compra', 2, '20260531120000_reposicao_candidatos_inclui_habilitados.sql', '2a5a44c647627305429ac85bbe6d1668'),
   ('public', 'cancelar_pedido_sugerido', 1, '20260530210001_cancelar_pedido_limpa_portal.sql', '69bd05c6afec428b9ae86e385c453d70'),
-  ('public', 'cancelar_pedido_sugerido', 2, '20260905224959_cancelar_pedido_guard_atomico.sql', 'cc8009b11d56b6ec4448b25f3ddabdef'),
+  ('public', 'cancelar_pedido_sugerido', 2, '20260905224959_cancelar_pedido_guard_atomico.sql', 'b6965a9c835c34400bb866edc5b33a83'),
   ('public', 'atualizar_parametros_numericos_skus', 1, '20260531140000_reposicao_atualizar_params_nao_zera.sql', 'fa55aaf26173a06e3bade9616f3aa8a4'),
   ('public', 'atualizar_parametros_numericos_skus', 2, '20260605130000_param_auto_core.sql', '74540a6ed9b7e5a0437f9ecfac7ee0f6'),
   ('public', 'atualizar_parametros_numericos_skus', 3, '20260605150000_param_auto_fusivel_calibracao.sql', 'fd7c292b873875e30ddfaf5fda1f2a80'),
