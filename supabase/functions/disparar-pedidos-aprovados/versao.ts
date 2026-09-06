@@ -20,13 +20,20 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * Marcador de versão servido pela edge. **Atualize a cada mudança relevante de comportamento** —
  * é ele que distingue um bundle novo de um velho em produção.
  *
+ * `v1.2-claim-disparo` = fecho do Cenário B do TOCTOU: a edge REIVINDICA a linha
+ * (`reposicao_claim_disparo`, migration 20260906190615) imediatamente antes de `IncluirPedCompra`,
+ * e a pendência criada aí veta o cancelamento até o desfecho registrado. Junto: o `{error}` da
+ * gravação final deixou de ser ignorado (`disparado_sem_registro` quando o PO existe e o banco não
+ * gravou), a escrita de `falha_envio` ganhou allowlist de status e NÃO limpa a pendência, e o
+ * resumo/`sync_reprocess_log` passaram a contar sucesso por allowlist.
+ *
  * `v1.1-marco-causal` = o guard temporal lê `omie_po_inexistente_antes_de` (marco causal do relógio
  * do BANCO, lido ANTES do IncluirPedCompra) em vez de `omie_registrado_em`. Ver #1739 / 654f8576.
  *
  * ⚠️ O sensor só prova versões a partir de si mesmo: um bundle que tenha o marco causal mas seja
  * ANTERIOR ao #1747 não responde `versao` nenhuma. Ausência do campo = bundle pré-sensor.
  */
-export const VERSAO = "v1.1-marco-causal";
+export const VERSAO = "v1.2-claim-disparo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";

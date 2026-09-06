@@ -447,6 +447,7 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.envio_portal_claim_ids', // claim por lista positiva de ids — edges `disparar-pedidos-aprovados` e `enviar-pedido-portal-sayerlack`
   'public.iniciar_envio_portal_pre_claim', // pré-claim antes do disparo — edge `disparar-pedidos-aprovados`
   'public.reposicao_persistir_qtde_inteira', // arredonda/persiste qtde inteira do pedido — edge `disparar-pedidos-aprovados`
+  'public.reposicao_claim_disparo', // claim antes do IncluirPedCompra (Cenário B do TOCTOU) — edge `disparar-pedidos-aprovados`, service_role
   // Esta é a única que não é nem RPC nem chamada por edge: `RETURNS trigger`, disparada por
   // `trg_set_status_envio_portal` em `pedido_compra_sugerido` (medido em pg_trigger). Função de
   // trigger não tem rota PostgREST — o fecho por privilégio é a segunda tranca, não a primeira.

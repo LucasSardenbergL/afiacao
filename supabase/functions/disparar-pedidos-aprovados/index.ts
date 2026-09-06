@@ -283,6 +283,34 @@ interface ProcessResult {
   override_minimo_por?: string | null;
 }
 
+/**
+ * Os desfechos em que a compra foi ao Omie e ficou REGISTRADA no banco. Allowlist, não denylist:
+ * o resumo por e-mail e o `sync_reprocess_log` contavam como sucesso "tudo que não é falha_envio",
+ * então qualquer `status_final` novo (como `nao_disparado`) entraria calado na coluna de sucesso e
+ * inflaria "pedidos disparados". Achado do parecer Codex sobre esta fatia.
+ */
+const STATUS_FINAL_SUCESSO = new Set(["disparado", "disparado_simulado"]);
+
+/**
+ * Os desfechos que o operador precisa VER como problema no resumo. `nao_disparado` = o claim
+ * recusou (um cancelamento venceu antes) — nada foi ao Omie. `disparado_sem_registro` = o oposto,
+ * e o mais caro: o PO existe no Omie e o banco não o gravou; a pendência de disparo fica aberta na
+ * linha justamente para que ele seja achável.
+ */
+const STATUS_FINAL_PROBLEMA = new Set([
+  "falha_envio",
+  "nao_disparado",
+  "disparado_sem_registro",
+]);
+
+/**
+ * Os dois status que a edge seleciona — e, por isso, os únicos que ela pode reescrever. Toda
+ * escrita de `status` desta edge que NÃO seja o desfecho de um disparo reivindicado carrega esta
+ * allowlist no `.in("status", …)`, para não gravar por cima de um cancelamento que venceu antes
+ * de a linha ser reivindicada.
+ */
+const STATUS_DISPARAVEIS = ["aprovado_aguardando_disparo", "falha_envio"];
+
 // ── [GATE-MIN-FATURAMENTO] espelho VERBATIM de src/lib/reposicao/disparo-gate-helpers.ts ──
 // (Deno não importa de src/ — mudou lá, mudou aqui.) R$3.000 é o mínimo de faturamento da
 // Sayerlack: pedido abaixo não fatura (fica parado no fornecedor). Régua = company_config
@@ -805,11 +833,124 @@ async function lerMarcoPreOmie(
   }
 }
 
+/**
+ * Reivindica o disparo do pedido IMEDIATAMENTE ANTES de `IncluirPedCompra` (RPC
+ * `reposicao_claim_disparo`, migration 20260906190615). É o lado da edge do fecho do Cenário B.
+ *
+ * O QUE ELA IMPEDE. A edge seleciona a linha e só volta a tocá-la depois da chamada HTTP ao Omie —
+ * round-trips PostgREST separados, cada um a sua própria transação, com segundos de janela no meio.
+ * Nessa janela um cancelamento pode commitar. O claim reverifica o status DENTRO do `UPDATE` que
+ * grava: se o cancelamento venceu, ele pega ZERO linhas e nós NÃO chamamos o Omie. E, uma vez
+ * reivindicada, a linha recusa cancelamento até o desfecho registrado.
+ *
+ * ⚠️ FAIL-CLOSED. Erro na RPC (rede, RLS, coluna ausente porque a migration ainda não foi colada)
+ * NÃO libera o disparo: sem conseguir reivindicar, não compramos. Ausente ≠ autorizado. Consequência
+ * operacional declarada: a migration tem de ser aplicada ANTES do deploy desta edge, senão nenhum
+ * pedido dispara — o que é ruidoso e reversível, ao contrário de comprar sem proteção.
+ *
+ * ⚠️ NÃO é um mutex de execução, é uma PENDÊNCIA da linha: o claim é idempotente (dois runs podem
+ * reivindicar a mesma linha; o carimbo preserva o PRIMEIRO) e nenhuma falha o limpa. Só o desfecho
+ * registrado limpa, na mesma instrução que grava o status. Ver o cabeçalho da migration.
+ */
+async function reivindicarDisparo(
+  db: SupabaseClient,
+  pedidoId: number,
+  origem: string,
+): Promise<{ claimed: boolean; motivo: string; desde: string | null }> {
+  const { data, error } = await db.rpc("reposicao_claim_disparo", {
+    p_pedido_id: pedidoId,
+    p_origem: origem,
+  });
+  if (error) {
+    // `mensagemDeErro`, não `String(error)`: o `error` do supabase-js é objeto PLANO e String()
+    // nele rende "[object Object]" — o motivo morreria no log (money-path.md §12).
+    return {
+      claimed: false,
+      motivo: `claim indisponível (${mensagemDeErro(error) ?? "sem mensagem"}) — disparo não autorizado`,
+      desde: null,
+    };
+  }
+  const r = (data ?? null) as
+    | { claimed?: boolean; motivo?: string; desde?: string | null }
+    | null;
+  if (!r || typeof r.claimed !== "boolean") {
+    return {
+      claimed: false,
+      motivo: `claim com resposta inesperada (${JSON.stringify(data)?.slice(0, 200) ?? "sem corpo"}) — disparo não autorizado`,
+      desde: null,
+    };
+  }
+  return {
+    claimed: r.claimed,
+    motivo: r.motivo ?? (r.claimed ? "reivindicado" : "claim negado sem motivo"),
+    desde: r.desde ?? null,
+  };
+}
+
+/**
+ * Grava o desfecho de um disparo que JÁ criou (ou já tinha) o pedido de compra no Omie.
+ *
+ * Três coisas que este helper existe para não deixar acontecer, todas medidas nesta edge:
+ *
+ * 1. **A escrita era `await db.from(…).update(…)` com o `{error}` IGNORADO.** O supabase-js não
+ *    lança em erro de banco — resolve com `error` preenchido. A edge devolvia `status_final:
+ *    "disparado"` mesmo quando a gravação falhava, e o banco ficava sem `omie_pedido_compra_id`
+ *    para um PO que existe: órfão invisível.
+ * 2. **Zero linhas não é erro SQL.** Um `UPDATE` que não casa a linha volta `error: null`. Por isso
+ *    pedimos `.select("id")` e exigimos a linha PERSISTIDA — não a ausência de erro.
+ * 3. **Falhar aqui não pode virar `falha_envio`.** Lançar cairia no `catch` de `processarPedido`,
+ *    que gravaria `falha_envio` por cima de uma compra que existe. Este helper NUNCA lança: ele
+ *    releva a dúvida relendo a linha e devolve o veredito para o chamador decidir.
+ *
+ * O `WHERE` é só `id` (incondicional), e isso é desenho: os identificadores do Omie são fato
+ * consumado e têm de entrar mesmo que algo tenha mudado. O claim é limpo aqui — e SÓ aqui — porque
+ * é este o ponto em que a compra passa a estar registrada e o próprio `status` já veta cancelamento.
+ */
+async function persistirDesfechoDoOmie(
+  db: SupabaseClient,
+  pedidoId: number,
+  campos: Record<string, unknown>,
+  omieId: string,
+): Promise<{ persistido: boolean; detalhe: string }> {
+  const patch = { ...campos, disparo_claim_em: null, disparo_claim_por: null };
+  try {
+    const { data, error } = await db
+      .from("pedido_compra_sugerido")
+      .update(patch)
+      .eq("id", pedidoId)
+      .select("id");
+    if (!error && (data?.length ?? 0) > 0) return { persistido: true, detalhe: "ok" };
+
+    const motivo = error
+      ? `erro ${mensagemDeErro(error) ?? "sem mensagem"}`
+      : "0 linhas atualizadas";
+    // A resposta pode ter se perdido DEPOIS do commit. Relê antes de afirmar qualquer coisa.
+    const { data: relido } = await db
+      .from("pedido_compra_sugerido")
+      .select("omie_pedido_compra_id, status, disparo_claim_em")
+      .eq("id", pedidoId)
+      .maybeSingle();
+    if (relido?.omie_pedido_compra_id === omieId && relido?.disparo_claim_em === null) {
+      return { persistido: true, detalhe: `${motivo}, mas a releitura confirma a gravação` };
+    }
+    return {
+      persistido: false,
+      detalhe: `${motivo}; releitura: status=${relido?.status ?? "?"} omie_id=${relido?.omie_pedido_compra_id ?? "<null>"}`,
+    };
+  } catch (e) {
+    return {
+      persistido: false,
+      detalhe: `exceção na persistência (${mensagemDeErro(e) ?? "sem mensagem"})`,
+    };
+  }
+}
+
 async function processarPedido(
   db: SupabaseClient,
   pedido: PedidoRow,
   modo: "dry_run" | "producao",
   creds: { app_key: string; app_secret: string },
+  origemRun: string,
 ): Promise<ProcessResult> {
   const result: ProcessResult = {
     pedido_id: pedido.id,
@@ -1047,6 +1188,28 @@ async function processarPedido(
 
     const param = { cabecalho_incluir, produtos_incluir };
 
+    // e.0 REIVINDICA o disparo (Cenário B). Daqui para frente a linha recusa cancelamento até o
+    // desfecho registrado. Se o claim falhar, NADA vai ao Omie — é o único ponto do fluxo em que
+    // ainda dá para desistir de graça, porque a chamada abaixo cria compra REAL (inclusive em
+    // dry_run, que só troca cObs/cObsInt e grava `disparado_simulado`).
+    const claim = await reivindicarDisparo(db, pedido.id, origemRun);
+    if (!claim.claimed) {
+      console.warn(
+        `[disparar-pedidos] Pedido ${pedido.id}: NÃO disparado — ${claim.motivo}. Nenhuma chamada ao Omie foi feita.`,
+      );
+      result.status_final = "nao_disparado";
+      result.erro = claim.motivo;
+      return result;
+    }
+    if (claim.desde && Date.now() - Date.parse(claim.desde) > 60_000) {
+      // Pendência retomada: a marca é de uma tentativa anterior que não chegou ao desfecho. Pode
+      // existir PO no Omie sem registro local — seguimos (o `cCodIntPed` estável faz o Omie recusar
+      // duplicata e caímos na reconciliação), mas o log tem de dizer que este não é o 1º claim.
+      console.warn(
+        `[disparar-pedidos] Pedido ${pedido.id}: RETOMANDO pendência de disparo aberta em ${claim.desde} — a tentativa anterior não chegou ao desfecho.`,
+      );
+    }
+
     // e. Chama Omie (método correto conforme doc: IncluirPedCompra)
     // ⚠️ O marco vem ANTES da chamada e do relógio do BANCO — é o que torna a supressão do card
     // dedutível ("o PO não existia antes deste instante"). Ler depois, ou do relógio da edge, é o
@@ -1066,9 +1229,10 @@ async function processarPedido(
 
     // f. Update pedido
     const novoStatus = modo === "dry_run" ? "disparado_simulado" : "disparado";
-    await db
-      .from("pedido_compra_sugerido")
-      .update({
+    const desfecho = await persistirDesfechoDoOmie(
+      db,
+      pedido.id,
+      {
         omie_pedido_compra_id: omieId,
         omie_pedido_compra_numero: omieNumero,
         omie_registrado_em: new Date().toISOString(),
@@ -1089,12 +1253,26 @@ async function processarPedido(
         },
         status: novoStatus,
         atualizado_em: new Date().toISOString(),
-      })
-      .eq("id", pedido.id);
+      },
+      omieId,
+    );
 
-    result.status_final = novoStatus;
+    // Os identificadores vão para o resultado MESMO se a gravação falhar: o PO existe no Omie e
+    // essa é a única cópia que sobra dele (o `sync_reprocess_log` do fim do run é append-only).
     result.omie_id = omieId;
     result.omie_numero = omieNumero;
+    if (!desfecho.persistido) {
+      // NÃO afirmamos "disparado": a compra existe no Omie e o banco não a registrou. Também não
+      // lançamos — o `catch` gravaria `falha_envio` por cima de uma compra real. A pendência de
+      // disparo (`disparo_claim_em`) FICA, que é o que torna esta linha achável depois.
+      console.error(
+        `[disparar-pedidos] Pedido ${pedido.id}: PO ${omieId} criado no Omie mas NÃO registrado no banco (${desfecho.detalhe}) — pendência de disparo mantida para conciliação.`,
+      );
+      result.status_final = "disparado_sem_registro";
+      result.erro = `PO ${omieId} existe no Omie e não foi gravado: ${desfecho.detalhe}`;
+      return result;
+    }
+    result.status_final = novoStatus;
     return result;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -1121,9 +1299,10 @@ async function processarPedido(
       // marcar disparado; cair em falha_envio re-tentável. Nunca marca um disparo
       // falho como sucesso.
       if (existente) {
-        await db
-          .from("pedido_compra_sugerido")
-          .update({
+        const desfechoRec = await persistirDesfechoDoOmie(
+          db,
+          pedido.id,
+          {
             omie_pedido_compra_id: existente.id,
             omie_pedido_compra_numero: existente.numero,
             omie_registrado_em: new Date().toISOString(),
@@ -1141,15 +1320,24 @@ async function processarPedido(
               ts: new Date().toISOString(),
             },
             atualizado_em: new Date().toISOString(),
-          })
-          .eq("id", pedido.id);
+          },
+          existente.id,
+        );
+        result.omie_id = existente.id;
+        result.omie_numero = existente.numero;
+        result.reconciliado = true;
+        if (!desfechoRec.persistido) {
+          console.error(
+            `[disparar-pedidos] Pedido ${pedido.id}: PO ${existente.id} confirmado no Omie mas NÃO registrado no banco (${desfechoRec.detalhe}) — pendência de disparo mantida para conciliação.`,
+          );
+          result.status_final = "disparado_sem_registro";
+          result.erro = `PO ${existente.id} existe no Omie e não foi gravado: ${desfechoRec.detalhe}`;
+          return result;
+        }
         console.warn(
           `[disparar-pedidos] Pedido ${pedido.id}: confirmado no Omie (cCodIntPed) → reconciliado como disparado (id=${existente.id})`,
         );
         result.status_final = "disparado";
-        result.omie_id = existente.id;
-        result.omie_numero = existente.numero;
-        result.reconciliado = true;
         return result;
       }
       console.warn(
@@ -1157,14 +1345,36 @@ async function processarPedido(
       );
     }
     console.error(`[disparar-pedidos] Falha pedido ${pedido.id}:`, msg);
-    await db
+    // ⚠️ DUAS coisas que este UPDATE deliberadamente NÃO faz, e as duas vêm de contraexemplos do
+    // parecer Codex desta fatia:
+    //
+    // 1. Ele NÃO limpa `disparo_claim_em`. Falha nunca encerra a pendência. Se a chamada ao Omie
+    //    falhou de modo ambíguo (timeout, resposta perdida, duplicata não confirmada), a compra
+    //    pode existir — liberar aqui deixaria o cancelamento ser aceito sobre um PO real. E com
+    //    dois runs concorrentes, o `catch` de um limparia a marca do OUTRO, que ainda pode comprar.
+    //    Quem limpa é só o desfecho REGISTRADO (`persistirDesfechoDoOmie`).
+    // 2. Ele NÃO grava incondicionalmente: a allowlist `.in("status", STATUS_DISPARAVEIS)` impede
+    //    `cancelado_humano → falha_envio` quando o cancelamento venceu ANTES do claim (a falha, aí,
+    //    é a de uma tentativa que nem chegou a reivindicar a linha).
+    const { data: linhasFalha, error: falhaErr } = await db
       .from("pedido_compra_sugerido")
       .update({
         status: "falha_envio",
         resposta_canal: { ...overrideTag, erro: msg, modo, ts: new Date().toISOString() },
         atualizado_em: new Date().toISOString(),
       })
-      .eq("id", pedido.id);
+      .eq("id", pedido.id)
+      .in("status", STATUS_DISPARAVEIS)
+      .select("id");
+    if (falhaErr) {
+      console.error(
+        `[disparar-pedidos] Pedido ${pedido.id}: não consegui gravar falha_envio (${mensagemDeErro(falhaErr) ?? "sem mensagem"})`,
+      );
+    } else if ((linhasFalha?.length ?? 0) === 0) {
+      console.warn(
+        `[disparar-pedidos] Pedido ${pedido.id}: falha_envio NÃO gravada — a linha saiu da allowlist de disparo (cancelada/disparada em paralelo). O estado dela foi preservado.`,
+      );
+    }
     result.status_final = "falha_envio";
     result.erro = msg;
     return result;
@@ -1286,8 +1496,14 @@ function buildResumoEmail(
   resultados: ProcessResult[],
   expirados: number,
 ): { subject: string; html: string } {
-  const sucesso = resultados.filter((r) => r.status_final !== "falha_envio");
-  const falhas = resultados.filter((r) => r.status_final === "falha_envio");
+  // Allowlist, não `!== "falha_envio"`: com a denylist antiga, `nao_disparado` e
+  // `disparado_sem_registro` entravam na contagem de "pedidos disparados" e no valor total do
+  // assunto do e-mail — o operador leria compra concluída onde não houve (achado Codex).
+  const sucesso = resultados.filter((r) => STATUS_FINAL_SUCESSO.has(r.status_final));
+  // `aguardando_portal_sayerlack` fica FORA das duas contagens de propósito: não é compra
+  // registrada nem problema — é um estado intermediário legítimo, e contá-lo como falha assustaria
+  // o operador todo dia.
+  const falhas = resultados.filter((r) => STATUS_FINAL_PROBLEMA.has(r.status_final));
   const valorTotal = sucesso.reduce((s, r) => s + (r.valor || 0), 0);
   const ehDry = modo === "dry_run";
 
@@ -1301,7 +1517,7 @@ function buildResumoEmail(
       const omieLink = r.omie_id
         ? `<a href="https://app.omie.com.br/" target="_blank" style="color:#3b82f6;">${r.omie_numero ?? r.omie_id}</a>`
         : "—";
-      const statusColor = r.status_final === "falha_envio"
+      const statusColor = STATUS_FINAL_PROBLEMA.has(r.status_final)
         ? "#ef4444"
         : ehDry
         ? "#8b5cf6"
@@ -1663,15 +1879,24 @@ Deno.serve(async (req: Request) => {
         }
         console.warn(`[disparar-pedidos] GATE mínimo de faturamento barrou #${p.id} (${p.fornecedor_nome}, R$ ${p.valor_total}): ${gate.motivo}`);
         if (modo === "producao") {
-          const { error: gateErr } = await db
+          // `.in("status", …)`: sem a allowlist este UPDATE gravava incondicionalmente e podia
+          // levar `cancelado_humano → falha_envio` (achado Codex) — reabrindo a linha para um
+          // claim posterior e apagando o cancelamento da tela. O gate roda ANTES do claim, então
+          // a corrida com o cancelamento é real aqui.
+          const { data: gateLinhas, error: gateErr } = await db
             .from("pedido_compra_sugerido")
             .update({
               status: "falha_envio",
               resposta_canal: { erro: gate.motivo, modo, ts: new Date().toISOString(), gate: "minimo_faturamento" },
               atualizado_em: new Date().toISOString(),
             })
-            .eq("id", p.id);
+            .eq("id", p.id)
+            .in("status", STATUS_DISPARAVEIS)
+            .select("id");
           if (gateErr) console.error(`[disparar-pedidos] gate update erro #${p.id}: ${gateErr.message}`);
+          else if ((gateLinhas?.length ?? 0) === 0) {
+            console.warn(`[disparar-pedidos] gate #${p.id}: falha_envio NÃO gravada — a linha saiu da allowlist de disparo (cancelada em paralelo).`);
+          }
         }
         barradosGate.push({
           pedido_id: p.id,
@@ -1719,9 +1944,13 @@ Deno.serve(async (req: Request) => {
 
     // 4. Processar cada aprovado
     const creds = getOmieCreds(empresa);
+    // Identidade deste run, gravada em `disparo_claim_por` quando a linha é reivindicada. É
+    // diagnóstico (nenhuma decisão a lê): responde "qual execução abriu esta pendência" quando um
+    // claim aparecer preso. `windowStart` já é o instante de início do run.
+    const origemRun = `${modo}@${windowStart}`;
     const resultados: ProcessResult[] = [...barradosGate];
     for (const p of aprovados) {
-      const r = await processarPedido(db, p, modo, creds);
+      const r = await processarPedido(db, p, modo, creds, origemRun);
 
       // PR8 (revisado em PR10): serializa apenas FILHOS de split. Pedidos
       // únicos Sayerlack não precisam esperar — disparam async e seguimos.
@@ -1820,9 +2049,13 @@ Deno.serve(async (req: Request) => {
 
     const falhas = resultados.filter((r) => r.status_final === "falha_envio").length;
     const aguardandoPortal = resultados.filter((r) => r.status_final === "aguardando_portal_sayerlack").length;
-    const disparadosOk = resultados.filter((r) =>
-      r.status_final === "disparado" || r.status_final === "disparado_simulado"
-    ).length;
+    const disparadosOk = resultados.filter((r) => STATUS_FINAL_SUCESSO.has(r.status_final)).length;
+    // Desfechos que NÃO são falha de envio e também NÃO são compra registrada. Contados à parte
+    // porque `upserts_count` os somava como sucesso (achado Codex): `nao_disparado` (o claim
+    // recusou — cancelamento venceu) e `disparado_sem_registro` (o PO existe no Omie e o banco
+    // não gravou — o mais caro dos três, e o que precisa de conciliação).
+    const naoDisparados = resultados.filter((r) => r.status_final === "nao_disparado").length;
+    const semRegistro = resultados.filter((r) => r.status_final === "disparado_sem_registro").length;
     const duration = Date.now() - startedAt;
 
     const { error: logErr } = await db.from("sync_reprocess_log").insert({
@@ -1831,9 +2064,12 @@ Deno.serve(async (req: Request) => {
       reprocess_type: "disparo_diario",
       window_start: windowStart,
       window_end: new Date().toISOString(),
-      status: falhas > 0 ? "partial" : "ok",
-      upserts_count: resultados.length - falhas,
-      divergences_found: falhas,
+      // `disparado_sem_registro` é o desfecho mais caro que esta edge produz (PO real no Omie sem
+      // registro local) — ele NÃO pode sair num run marcado "ok". `nao_disparado` também conta como
+      // divergência: o pedido estava no lote e não foi disparado.
+      status: (falhas + naoDisparados + semRegistro) > 0 ? "partial" : "ok",
+      upserts_count: disparadosOk + aguardandoPortal,
+      divergences_found: falhas + naoDisparados + semRegistro,
       duration_ms: duration,
       metadata: {
         data_ciclo: dataCiclo,
@@ -1841,6 +2077,8 @@ Deno.serve(async (req: Request) => {
         aprovados: aprovados.length,
         expirados,
         falhas,
+        nao_disparados: naoDisparados,
+        disparados_sem_registro: semRegistro,
         email_status: emailStatus,
         email_detail: emailDetail,
         resultados,
