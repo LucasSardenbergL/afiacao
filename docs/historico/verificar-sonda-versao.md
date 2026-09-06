@@ -950,3 +950,55 @@ As 5 entraram com a forma que **já tinham** (medido: `classificarSonda` antes d
 `respostaSonda` no handler, gate `authorizeCron*` que aceita `x-cron-secret`), então o conserto não
 pediu mudança de código de produção nenhuma — só parou de deixá-las invisíveis. O contrato foi de
 40 para **54** edges declaradas.
+
+## 16. O ciclo do `recommend`: bump ANTES do deploy, e a evidência que expira em 6h (2026-08-24)
+
+Registrado retroativamente em 2026-09-06 — e o atraso é metade da lição (ver o fim da seção).
+
+Primeiro ciclo em que o **bump do marcador precedeu o deploy de propósito**, e por isso a sonda teve
+o que discriminar. A sequência: #1898 instrumentou a edge (`v1.5-denominador-observados`), #1901
+consertou o `_shared/paginate.ts` — a 1ª linha da página não era comparada ao cursor, então
+sobreposição pontual virava **duplicata silenciosa** no keyset —, e #1915 bumpou para
+`v1.6-keyset-cursor-na-primeira-linha`, **27 min depois** do fix. Nenhum dos três foi seguido de
+deploy: a `main` ficou uma versão à frente e o bug seguiu ativo no bundle servido.
+
+| | `versao` respondida | quando |
+|---|---|---|
+| sonda 58859 (antes) | `v1.5-denominador-observados` | 2026-08-23 20:50:41Z |
+| sonda 58962 (depois) | `v1.6-keyset-cursor-na-primeira-linha` | 2026-08-24 01:13:07Z |
+
+Payload cru da 58962, colado na hora:
+`{"ok":true,"probe":true,"versao":"v1.6-keyset-cursor-na-primeira-linha","edge":"recommend"}`.
+
+**O pré-flight que torna a viagem verificável** é comparar `main` × prod ANTES de pedir o deploy
+(`deploy-no-op-por-desenho.md`): marcadores iguais ⇒ a sonda responde a mesma string tendo o deploy
+acontecido ou não. Aqui eram diferentes — a viagem valia.
+
+**A sonda ANTERIOR já diz se a próxima é segura.** Nesta edge o fluxo real grava `recommendation_log`,
+que é o **sensor de desfecho** do motor: sondar um bundle pré-sensor inventaria uma recomendação que
+ninguém fez e enviesaria a própria medição de acerto. Não era preciso deduzir o risco — a 58859 já
+ecoava `probe:true`, o que prova que o sensor estava no ar. Generalizando: **resposta anterior com eco
+⇒ a próxima sonda é barata; resposta anterior sem eco ⇒ ela já pagou o efeito, e isso por si só é o
+veredito.**
+
+**Leitura por `request_id`, nunca por `order by id desc limit 1`.** Foi assim que o #1915 quase
+provocou um redeploy à toa: o `desc limit 1` pegou o tick do watchdog — `edge` NULL, `versao` NULL,
+status 200 —, que é **byte a byte** a assinatura de "bundle velho rodou o fluxo real". Casar por chave
+exclusiva do corpo é a mesma regra do §2 (cron × resposta por horário).
+
+**Guard anti-reversão pós-deploy** (o Lovable já reverteu fix mergeado — #1077→#1080), as duas
+camadas: *source* — `rows.length === 0` seguia com 2 ocorrências em `_shared/paginate.ts`, `VERSAO`
+seguia `v1.6`, e nenhum commit `Changes` do bot; *comportamento* — a sonda acima.
+
+### A evidência de deploy tem prazo de validade — o registro é que não
+
+`net._http_response` retém ~6h. Quando esta seção foi escrita, 13 dias depois, a query
+`where content::jsonb->>'edge'='recommend'` devolvia **0 linhas**: os ids 58859/58962 não são mais
+reconferíveis por ninguém. O que sobrevive é o que foi **colado** no registro — payload cru, id,
+timestamp — e não o ponteiro para a linha. Vale para toda prova que mora numa tabela com retenção:
+**"está na 58962" envelhece para "confie em mim" em seis horas.**
+
+O que continuava conferível em 2026-09-06, e confere: a `main` ainda declara
+`v1.6-keyset-cursor-na-primeira-linha` e **nenhum commit tocou** `recommend/` ou `_shared/paginate.ts`
+desde `392132e71` — ou seja, o par main×prod provado em 24/08 seguia válido, por ausência de mudança e
+não por nova medição.
