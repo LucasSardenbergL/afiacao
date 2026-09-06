@@ -358,6 +358,22 @@ ter virado outra coisa. Custou um pedido de compra REAL no Omie carimbado `cance
   sequencial e perde a corrida. Exija: duas conexões, **baseline vermelho** com o corpo antigo
   REAL (sem ele, verde pode ser "a corrida não aconteceu") e um controle inócuo (concorrência em
   OUTRA linha não pode bloquear).
+- **`sleep` NÃO é barreira — a ordem tem de ser OBSERVADA.** Com `sleep`, um escalonamento
+  invertido deixa o assert verde sem que a corrida tenha acontecido: o bloqueador commita antes
+  de a vítima começar e até o código VELHO produz o resultado esperado. Barreira de verdade:
+  (1) o bloqueador faz o `UPDATE` dentro de um `DO` e **exige `FOUND`** (senão a corrida "roda"
+  sobre zero linhas); (2) toma um **advisory lock** logo depois, sinal visível de outra sessão de
+  que já travou — e a vítima só é lançada quando esse sinal aparece; (3) o orquestrador **polla
+  `pg_blocking_pids`** até VER a vítima bloqueada, e só então libera. O resultado carrega o
+  testemunho do bloqueio, e um caso extra falsifica a barreira (sem colisão ela tem de dizer
+  "não"). **Rodar nos dois locales pegou isto** — não como teste de tradução, mas como **segunda
+  amostra de escalonamento**: verde 6× em `C`, vermelho na 1ª em `pt_BR.UTF-8`.
+- **Sonda "id que não existe" por `min(id) - 1` é falsa.** Um `INSERT` com id menor ainda não
+  commitado torna o id "ausente" numa linha REAL entre a sonda e a escrita — sequence crescente
+  não ordena commits. Use `NULL`: `id = NULL` nunca casa uma PK.
+- **Assert de `42501` em função `SECURITY INVOKER` mede o privilégio ERRADO** se o papel também
+  não tiver acesso à TABELA — o mesmo `42501` viria de dentro. Conceda as camadas internas no
+  fixture, negue só a entrada, e falsifique concedendo `EXECUTE`.
 - **Lock não atravessa round-trip.** `SELECT … FOR UPDATE` numa edge é inexequível quando a
   leitura e a escrita são chamadas PostgREST separadas com HTTP externo no meio — cada uma é sua
   própria transação. Ali o instrumento é **claim atômico** antes da chamada, não lock.

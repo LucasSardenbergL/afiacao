@@ -24,11 +24,22 @@
 --
 -- O QUE ESTA MIGRATION **NÃO** FECHA (dito aqui para não ser lido como fechado):
 --   O cenário B do mesmo parecer — a RPC cancela PRIMEIRO e o disparador, que já selecionou a
---   linha, cria o PO e grava 'disparado' por cima. Depois desta migration o estado final desse
---   caso é `status='disparado'` com os carimbos de cancelamento preenchidos: VERDADEIRO (o PO
---   existe) e DETECTÁVEL (`status='disparado' AND cancelado_em IS NOT NULL`), não corrompido —
---   mas o operador viu uma confirmação de rejeição que não valeu. Fechar B é claim atômico no
---   disparador (edge) e é outra fatia, com deploy manual próprio. Ver o doc do objetivo.
+--   linha, cria o PO no Omie e grava por cima. O operador vê "rejeitado" e a compra acontece.
+--   ⚠️ NÃO afirme que o estado final de B fica `status='disparado'` com os carimbos de
+--   cancelamento, "verdadeiro e detectável". Rascunhei isso e o Codex (gpt-6-astra · max)
+--   derrubou com dois contra-exemplos, ambos preexistentes e ambos fora do alcance de qualquer
+--   consulta do tipo `status='disparado' AND cancelado_em IS NOT NULL`:
+--     1. a edge IGNORA o `{error}` do seu UPDATE final e retorna `status_final='disparado'` mesmo
+--        se a gravação falhar ⇒ o banco fica `cancelado_humano` SEM `omie_pedido_compra_id`,
+--        com PO real no Omie e o fornecedor possivelmente já notificado;
+--     2. se a resposta do Omie se perder, o catch grava `falha_envio` POR CIMA do cancelamento.
+--   Ou seja: B é P1 aberto, e não há hoje sinal confiável que o encontre depois do fato.
+--   Fechar B é claim atômico no disparador — outra fatia, com deploy manual de edge. E o claim
+--   NÃO precisa de um status novo em voo (era a minha suposição; o Codex apontou o furo): uma
+--   COLUNA de claim dedicada na própria linha arbitra com raio muito menor sobre rótulos, KPIs e
+--   filtros — o disparador reivindica condicionalmente, o cancelamento exige ausência de claim, e
+--   só quem ganhou chama o Omie. Resultado externo ambíguo mantém a pendência para conciliação;
+--   liberar o claim por timeout recria o problema. Ver o doc do objetivo.
 --
 -- PRESERVADO de propósito: assinatura, SECURITY INVOKER (`prosecdef=false`), o `SET search_path`,
 -- o ACL (por isso `CREATE OR REPLACE` e NUNCA `DROP`+`CREATE`, que RESETARIA o ACL — database.md
@@ -81,8 +92,12 @@ BEGIN
 
   IF v_status IN ('disparado', 'concluido_recebido') THEN
     -- COALESCE porque `'texto' || NULL` colapsa a STRING INTEIRA para NULL: sem ele, um
-    -- pedido disparado sem `horario_disparo_real` devolvia {"error": null}, que o front lê
-    -- como "sem erro" e a recusa desaparecia da tela.
+    -- pedido disparado sem `horario_disparo_real` devolvia {"error": null}.
+    -- ⚠️ Medido (correção do Codex a um rascunho meu): a recusa NÃO sumia da tela — em
+    -- `rejeitar-pedido.ts` o `{error:null}` cai no ramo `!confirmouOk(data)` e vira falha
+    -- genérica, e o `CancelarModal` passa pela mesma fronteira. O que se ganha aqui é a
+    -- mensagem VERDADEIRA em vez de "resposta inesperada da RPC (sem status ok)", que não
+    -- diz ao operador que a compra já foi disparada.
     RETURN jsonb_build_object(
       'error', 'pedido já foi disparado em ' || COALESCE(v_disparo::text, '(horário não registrado)')
     );
@@ -91,8 +106,10 @@ BEGIN
   -- A linha existe e não está num status bloqueado, mas o UPDATE não a pegou ⇒ ela mudou entre
   -- as duas instruções. Não afirmamos "já foi disparado" (seria fabricar o motivo): dizemos o
   -- que sabemos.
+  -- Mesmo COALESCE da mensagem acima, pelo mesmo motivo: se o NOT NULL de `status` algum dia
+  -- cair, `'texto' || NULL` colapsaria TAMBÉM esta recusa para {"error": null} (achado Codex).
   RETURN jsonb_build_object(
-    'error', 'pedido não pôde ser cancelado (status atual: ' || v_status || ')'
+    'error', 'pedido não pôde ser cancelado (status atual: ' || COALESCE(v_status, '(desconhecido)') || ')'
   );
 END;
 $$;
@@ -102,7 +119,6 @@ DO $post$
 DECLARE
   v_oid        oid;
   v_src        text;
-  v_id_ausente bigint;
   v_resp       jsonb;
 BEGIN
   SELECT p.oid INTO v_oid
@@ -137,15 +153,23 @@ BEGIN
   END IF;
 
   -- EXECUÇÃO: plpgsql é LATE-BOUND — `CREATE OR REPLACE` aceita corpo inválido e só quebra em
-  -- runtime. Roda a função de verdade num id que não existe POR CONSTRUÇÃO (abaixo do mínimo),
-  -- o que planeja o UPDATE e o SELECT sem tocar UMA linha real.
-  SELECT COALESCE(min(id), 0) - 1 INTO v_id_ausente FROM public.pedido_compra_sugerido;
-  v_resp := public.cancelar_pedido_sugerido(v_id_ausente, 'postcondicao_migration', 'assert de execução — nenhum pedido tocado');
+  -- runtime. Roda a função de verdade com `NULL::bigint`: `id = NULL` é NULL, nunca casa uma PK,
+  -- e isso independe de qualquer transação concorrente. Assim o UPDATE e o SELECT são planejados
+  -- e executados sem tocar UMA linha real.
+  -- ⚠️ NÃO use `min(id) - 1` aqui (achado Codex, gpt-6-astra · max): se um INSERT com id MENOR
+  -- ainda não commitou, a sonda escolhe um id que a outra transação está prestes a materializar —
+  -- "ausente por construção" vira uma linha REAL entre a sonda e o UPDATE. Sequence crescente
+  -- não ordena commits.
+  -- O UPDATE ainda toma `RowExclusiveLock` na TABELA (não em linha) até o fim desta transação:
+  -- convive com DML concorrente, conflita só com manutenção/DDL. E medido em prod hoje: os 3
+  -- triggers de `pedido_compra_sugerido` são todos `FOR EACH ROW`, então zero linhas = zero
+  -- trigger. Se um dia entrar um `FOR EACH STATEMENT` que escreve, este assert precisa mudar.
+  v_resp := public.cancelar_pedido_sugerido(NULL::bigint, 'postcondicao_migration', 'assert de execução — nenhum pedido tocado');
   IF v_resp->>'error' IS DISTINCT FROM 'pedido não encontrado' THEN
     RAISE EXCEPTION 'POST FALHOU [EXEC-LATE-BOUND]: a RPC nao executou o caminho de pedido ausente (devolveu %) -- corpo late-bound quebrado', v_resp;
   END IF;
 
-  RAISE NOTICE 'cancelar_pedido_sugerido: INVOKER, search_path preso, authenticated executa, guard DENTRO do UPDATE, e a função EXECUTOU (id ausente %)', v_id_ausente;
+  RAISE NOTICE 'cancelar_pedido_sugerido: INVOKER, search_path preso, authenticated executa, guard DENTRO do UPDATE, e a função EXECUTOU (sonda id=NULL, nenhuma linha tocada)';
 END
 $post$;
 

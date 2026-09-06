@@ -164,7 +164,10 @@ P -q <<'SQL'
 REVOKE EXECUTE ON FUNCTION public.cancelar_pedido_sugerido(bigint,text,text) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.cancelar_pedido_sugerido(bigint,text,text) TO authenticated;
 GRANT USAGE ON SCHEMA public TO authenticated, anon;
-GRANT SELECT, UPDATE ON public.pedido_compra_sugerido TO authenticated;
+-- ⚠️ anon recebe os privilegios de TABELA de proposito (achado Codex): a funcao e INVOKER, entao
+-- sem eles um anon COM EXECUTE falharia com o MESMO 42501 vindo da tabela, e A2 ficaria verde
+-- medindo a coisa errada. Com a tabela liberada, o unico privilegio que falta e o EXECUTE.
+GRANT SELECT, UPDATE ON public.pedido_compra_sugerido TO authenticated, anon;
 SQL
 A1=$(Pq <<'SQL'
 SET ROLE authenticated;
@@ -186,73 +189,160 @@ EXCEPTION
 END
 $t$;
 SQL
-then ok "A2 anon sem EXECUTE recebe 42501 (e so 42501)"
+then ok "A2 anon sem EXECUTE recebe 42501 (com privilegio de TABELA concedido: o 42501 e do EXECUTE)"
 else bad "A2 anon: nao veio 42501 -- ou passou, ou veio outro erro"; fi
 
+# A2b: falsifica A2 -- concede o EXECUTE e exige que a chamada PASSE. Se continuasse negada, o
+# 42501 de A2 nao vinha do EXECUTE e A2 nao mediria nada.
+P -q -c "GRANT EXECUTE ON FUNCTION public.cancelar_pedido_sugerido(bigint,text,text) TO anon;" >/dev/null
+A2B=$(Pq <<'SQL' | tail -1
+SET ROLE anon;
+SELECT public.cancelar_pedido_sugerido(3, 'anon', 'com EXECUTE concedido')->>'status';
+SQL
+)
+eq "A2b com EXECUTE concedido o mesmo anon PASSA -- A2 media o EXECUTE" "$A2B" "ok"
+P -q -c "REVOKE EXECUTE ON FUNCTION public.cancelar_pedido_sugerido(bigint,text,text) FROM anon;" >/dev/null
+
 # ══════════════════════════════════════════════════════════════════════════════
-# ZONA 4b — A CORRIDA (o centro desta migration)
-# Sessao A = o disparador: trava a linha, "chama o Omie" (pg_sleep) e commita
-# 'disparado'. Sessao B = a RPC de cancelamento, que chega no meio.
+# ZONA 4b — A CORRIDA (o centro desta migration), com BARREIRA OBSERVAVEL
+#
+# ⚠️ `sleep 0.8` NAO e barreira (achado Codex gpt-6-astra max): se o disparador commitar antes
+# de a RPC comecar, ate o corpo VELHO produz a recusa esperada -- R2 fica verde sem nunca ter
+# exercitado o EvalPlanQual. Aqui a ordem e OBSERVADA, nao esperada:
+#   1. A abre transacao, trava a linha e fica esperando um sinal na tabela `barreira`;
+#   2. B (a RPC) e lancada e vai bloquear no lock de A;
+#   3. o orquestrador POLLA `pg_blocking_pids` ate VER B bloqueada -- e so entao libera A;
+#   4. se o bloqueio nao for observado, o assert falha dizendo que nao mediu EPQ.
 # ══════════════════════════════════════════════════════════════════════════════
-corrida() {   # $1 = id do pedido; ecoa "<retorno da RPC>|<status final da linha>"
-  local id="$1"
+P -q -c "CREATE TABLE IF NOT EXISTS public.barreira (nome text PRIMARY KEY);" >/dev/null
+
+lancar_bloqueador() {   # $1 = id que A trava e leva a 'disparado'
+  # O UPDATE vive DENTRO de um DO para poder exigir `FOUND`: se ele nao pegar a linha, a
+  # transacao aborta e `wait` reprova -- em vez de a corrida "acontecer" sobre zero linhas e o
+  # assert medir nada. O advisory lock e adquirido DEPOIS do UPDATE: e o sinal, observavel de
+  # outra sessao, de que A ja travou a linha e so entao B pode ser lancada.
   P -q >/dev/null <<SQL &
 BEGIN;
-UPDATE public.pedido_compra_sugerido
-   SET status = 'disparado',
-       omie_pedido_compra_id = 'PO-REAL-NO-OMIE',
-       horario_disparo_real = timestamptz '2026-09-05 12:00:00+00'
- WHERE id = $id AND status = 'aprovado_aguardando_disparo';
-SELECT pg_sleep(3);
+DO \$u\$
+BEGIN
+  UPDATE public.pedido_compra_sugerido
+     SET status = 'disparado',
+         omie_pedido_compra_id = 'PO-REAL-NO-OMIE',
+         horario_disparo_real = timestamptz '2026-09-05 12:00:00+00'
+   WHERE id = $1 AND status = 'aprovado_aguardando_disparo';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'BLOQUEADOR: o UPDATE do disparador nao pegou a linha % -- a corrida nao mediria nada', $1;
+  END IF;
+  PERFORM pg_advisory_xact_lock(918273645);
+END
+\$u\$;
+DO \$w\$
+BEGIN
+  FOR i IN 1..2000 LOOP
+    PERFORM pg_sleep(0.05);
+    IF EXISTS (SELECT 1 FROM public.barreira WHERE nome = 'liberar') THEN RETURN; END IF;
+  END LOOP;
+  RAISE EXCEPTION 'BARREIRA: o orquestrador nunca liberou o bloqueador';
+END
+\$w\$;
 COMMIT;
 SQL
-  local bg=$!
-  sleep 0.8
-  local r; r=$(Pq -c "SELECT public.cancelar_pedido_sugerido($id, 'lucas', 'cancelei durante o disparo')::text;" | tail -1)
-  wait "$bg" || { echo "INFRA-FALHOU|INFRA-FALHOU"; return; }
-  echo "$r|$(campo "$id" status)"
+  BLOQ_PID=$!
 }
 
-echo "-- grupo R: corrida real (2 conexoes) --"
+# Ecoa "sim" quando A ja segura o advisory lock (⇒ o UPDATE dele ja pegou a linha).
+# ⚠️ Sem esta espera o harness FICA FLAKY e mente: se B rodar antes de A, o UPDATE de A nao
+# casa `status='aprovado_aguardando_disparo'`, ninguem bloqueia e o assert mede outra coisa.
+# Foi assim que o run em pt_BR.UTF-8 reprovou enquanto o run em C passava (licao #1483: um
+# ambiente so nao prova a asrercao).
+esperar_A_travar() {
+  local n
+  for _ in $(seq 1 300); do
+    n=$(Pq -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted AND pid <> pg_backend_pid();" | tail -1)
+    if [ "${n:-0}" -ge 1 ]; then echo "sim"; return; fi
+    sleep 0.05
+  done
+  echo "nao"
+}
 
-# R1 BASELINE DO BUG: instala o corpo VELHO REAL (a migration 20260530210001, commitada)
-# e roda a MESMA corrida. Tem de REPRODUZIR o bug -- senao a corrida nao esta acontecendo
-# e todo o R2 abaixo seria verde por acidente.
+# Ecoa "sim" se chegou a OBSERVAR alguem bloqueado dentro da chamada da RPC; "nao" no timeout.
+esperar_bloqueio() {   # $1 = tentativas de 50ms (default 300 = 15s)
+  local n
+  for _ in $(seq 1 "${1:-300}"); do
+    n=$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND cardinality(pg_blocking_pids(pid)) > 0 AND query ILIKE '%cancelar_pedido_sugerido%';" | tail -1)
+    if [ "${n:-0}" -ge 1 ]; then echo "sim"; return; fi
+    sleep 0.05
+  done
+  echo "nao"
+}
+
+liberar_A() { P -q -c "INSERT INTO public.barreira VALUES ('liberar') ON CONFLICT DO NOTHING;" >/dev/null; }
+
+corrida() {   # $1 = id; ecoa "<retorno da RPC>|<status final>|<bloqueio observado>"
+  local id="$1" out bpid visto
+  out="$(mktemp /tmp/corrida-b.XXXXXX)"
+  P -q -c "DELETE FROM public.barreira;" >/dev/null
+  lancar_bloqueador "$id"
+  if [ "$(esperar_A_travar)" != "sim" ]; then
+    liberar_A; wait "$BLOQ_PID" || true; rm -f "$out"
+    echo "A-NAO-TRAVOU|A-NAO-TRAVOU|A-NAO-TRAVOU"; return
+  fi
+  Pq -c "SELECT public.cancelar_pedido_sugerido($id, 'lucas', 'cancelei durante o disparo')::text;" > "$out" 2>&1 &
+  bpid=$!
+  visto="$(esperar_bloqueio)"
+  liberar_A
+  wait "$bpid" || true
+  if ! wait "$BLOQ_PID"; then rm -f "$out"; echo "BLOQUEADOR-FALHOU|BLOQUEADOR-FALHOU|BLOQUEADOR-FALHOU"; return; fi
+  echo "$(tail -1 "$out")|$(campo "$id" status)|$visto"
+  rm -f "$out"
+}
+
+echo "-- grupo R: corrida real (2 conexoes, barreira observada) --"
+
+# R1 BASELINE DO BUG: corpo VELHO REAL (migration 20260530210001, commitada). Tem de REPRODUZIR
+# o bug -- senao a corrida nao esta acontecendo e o R2 abaixo seria verde por acidente.
 P -q -f "$MIG_VELHA"
 semear
 R1="$(corrida 2)"
-eq "R1 BASELINE: com o corpo VELHO o cancelamento VENCE a compra real (bug reproduzido)" \
-   "$R1" '{"status": "ok", "pedido_id": 2}|cancelado_humano'
-eq "R1b BASELINE: e o PO real ficou orfao sob um status cancelado" \
+eq "R1 BASELINE: corpo VELHO -- o cancelamento VENCE a compra real (bug reproduzido, bloqueio observado)" \
+   "$R1" '{"status": "ok", "pedido_id": 2}|cancelado_humano|sim'
+eq "R1b BASELINE: o PO real ficou orfao sob um status cancelado" \
    "$(campo 2 omie_pedido_compra_id)" "PO-REAL-NO-OMIE"
 
-# R2 COM O FIX: mesma corrida, corpo novo. O UPDATE condicional espera o lock, RE-AVALIA o
-# predicado contra a linha ja commitada como 'disparado' (EvalPlanQual) e PULA a linha.
+# R2 COM O FIX: mesma corrida. O UPDATE condicional espera o lock, RE-AVALIA o predicado contra a
+# linha ja commitada como 'disparado' (EvalPlanQual) e PULA a linha.
 P -q -f "$MIG"
 semear
 R2="$(corrida 2)"
-eq "R2 FIX: a RPC RECUSA o cancelamento e o status permanece disparado" \
-   "$R2" '{"error": "pedido já foi disparado em 2026-09-05 12:00:00+00"}|disparado'
+eq "R2 FIX: a RPC RECUSA e o status permanece disparado (bloqueio observado)" \
+   "$R2" '{"error": "pedido já foi disparado em 2026-09-05 12:00:00+00"}|disparado|sim'
 eq "R2b FIX: nenhum carimbo de cancelamento na compra real" "$(campo 2 cancelado_em)" "<null>"
 eq "R2c FIX: a higiene do portal NAO foi aplicada sobre a compra real" \
    "$(campo 2 status_envio_portal)" "pendente_envio_portal"
+eq "R2d FIX: a TESTEMUNHA do PO real continua na linha" \
+   "$(campo 2 omie_pedido_compra_id)" "PO-REAL-NO-OMIE"
 
-# R3 CONTROLE INOCUO: a mesma coreografia de 2 conexoes, mas a sessao A trava OUTRA linha.
-# O cancelamento tem de PASSAR. Sem este controle, um R2 verde poderia significar apenas
-# "esta RPC recusa tudo sob concorrencia".
+# R3 CONTROLE INOCUO: A trava OUTRA linha. O cancelamento tem de terminar SEM esperar A -- e a
+# testemunha disso e que, no instante em que B termina, A AINDA nao foi liberado. Sem este
+# controle, um R2 verde poderia significar so "esta RPC recusa tudo sob concorrencia".
+# `statement_timeout` de 2s: se B bloquear, ela morre com 57014 em vez de pendurar o harness.
 semear
-P -q >/dev/null <<'SQL' &
-BEGIN;
-UPDATE public.pedido_compra_sugerido SET status='disparado' WHERE id = 7;
-SELECT pg_sleep(3);
-COMMIT;
+P -q -c "DELETE FROM public.barreira;" >/dev/null
+lancar_bloqueador 7
+eq "R3-pre A travou a OUTRA linha antes de B comecar" "$(esperar_A_travar)" "sim"
+OUT3="$(mktemp /tmp/corrida-r3.XXXXXX)"
+Pq >"$OUT3" 2>&1 <<'SQL' || true
+SET statement_timeout = '2s';
+SELECT public.cancelar_pedido_sugerido(2, 'lucas', 'linha diferente')::text;
 SQL
-BG3=$!
-sleep 0.8
-R3=$(Pq -c "SELECT public.cancelar_pedido_sugerido(2, 'lucas', 'linha diferente')::text;" | tail -1)
-wait "$BG3" || bad "R3-infra: a conexao de fundo falhou"
+R3="$(tail -1 "$OUT3")"
+A_SEGURANDO=$(Pq -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM public.barreira WHERE nome='liberar') THEN 'ja_liberado' ELSE 'ainda_segurando' END;" | tail -1)
+liberar_A
+wait "$BLOQ_PID" || bad "R3-infra: o bloqueador falhou"
 eq "R3 CONTROLE: disparo de OUTRA linha nao bloqueia este cancelamento" \
    "$R3" '{"status": "ok", "pedido_id": 2}'
+eq "R3b TESTEMUNHA: B terminou enquanto A ainda segurava o lock" "$A_SEGURANDO" "ainda_segurando"
+rm -f "$OUT3"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÕES (uma camada por vez; a que ficar VERDE e redundante)
@@ -290,11 +380,16 @@ eq "F2a corpo velho AINDA recusa no caso sequencial (o guard existe)" \
    "$F2_SEQ" '{"error": "pedido já foi disparado em 2026-09-01 10:00:00+00"}'
 semear
 F2_RACE="$(corrida 2)"
-if [ "$F2_RACE" = '{"status": "ok", "pedido_id": 2}|cancelado_humano' ]; then
-  ok "F2b corpo velho PERDE a corrida -- R2 mede ATOMICIDADE, nao a existencia do guard"
+# A testemunha `|sim` (bloqueio OBSERVADO) e o `PO-REAL-NO-OMIE` sao o que impede este assert de
+# passar por ordenamento sequencial acidental: sem elas, "cancelamento terminou antes de o
+# disparador comecar" produziria o mesmo JSON (achado Codex).
+if [ "$F2_RACE" = '{"status": "ok", "pedido_id": 2}|cancelado_humano|sim' ]; then
+  ok "F2b corpo velho PERDE a corrida sob bloqueio observado -- R2 mede ATOMICIDADE, nao a existencia do guard"
 else
   bad "F2b corpo velho sobreviveu a corrida (veio [$F2_RACE]) -- R2 e teatro"
 fi
+eq "F2c e o PO real estava mesmo na linha quando o cancelamento venceu" \
+   "$(campo 2 omie_pedido_compra_id)" "PO-REAL-NO-OMIE"
 
 # F3: tira o COALESCE do horario. N4 tem de ficar vermelho (a recusa vira {"error": null}).
 P -q -f "$MIG"
@@ -345,15 +440,18 @@ else
 fi
 
 # F5: o eixo ACL da postcondicao -- e o seu PONTO CEGO, MEDIDO em vez de deduzido.
+# Nota: em PROD o ACL e MAIS FROUXO do que o testado aqui -- `proacl` tem `=X/postgres`,
+# ou seja PUBLIC TEM EXECUTE, alem dos grants nominais a anon/authenticated/service_role.
+# O F5a abaixo aperta de proposito para isolar o eixo; nao o leia como 'o ACL de prod'.
 P -q -f "$MIG"
 P -q <<'SQL'
 REVOKE EXECUTE ON FUNCTION public.cancelar_pedido_sugerido(bigint,text,text) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.cancelar_pedido_sugerido(bigint,text,text) TO authenticated;
 SQL
 if P -q -f "$POSTBLOCO" >/dev/null 2>&1; then
-  ok "F5a com o ACL nominal de prod (PUBLIC revogado, authenticated nominal) a postcondicao passa"
+  ok "F5a com ACL sintetico MAIS restrito que o de prod (PUBLIC revogado, so authenticated nominal) a postcondicao passa"
 else
-  bad "F5a a postcondicao reprova o ACL que prod tem hoje -- falso-positivo"
+  bad "F5a a postcondicao reprova um ACL que ainda concede EXECUTE a authenticated -- falso-positivo"
 fi
 
 # F5b: perda EFETIVA de EXECUTE -> a postcondicao TEM de abortar, pelo sentinela certo.
@@ -384,6 +482,37 @@ if P -q -f "$POSTBLOCO" >/dev/null 2>&1; then
 else
   bad "F5c2 a postcondicao viu o DROP+CREATE -- otimo, mas o comentario do .sql esta desatualizado"
 fi
+
+# V: a QUERY DE VALIDACAO que vai no handoff do SQL Editor, nos DOIS sentidos. E o unico
+# instrumento que o founder tem para saber se o apply pegou -- se ela nao souber dizer
+# "nao aplicada", ela nao valida nada.
+VALIDA="$REPO_ROOT/db/valida-cancelar-pedido-guard-atomico.sql"
+P -q -f "$MIG"
+eq "V1 validacao diz OK sobre o corpo NOVO" \
+   "$(Pq -f "$VALIDA" | tail -1)" \
+   "OK - guard atomico no ar, INVOKER, search_path preso, authenticated executa"
+P -q -f "$MIG_VELHA"
+eq "V2 validacao ACUSA o corpo VELHO (nao e sempre-verde)" \
+   "$(Pq -f "$VALIDA" | tail -1)" \
+   "NAO APLICADA - o guard de status NAO esta no WHERE do UPDATE (TOCTOU do #2204 segue aberto)"
+
+# F6: a propria BARREIRA, falsificada. Se `esperar_bloqueio` nao soubesse dizer "nao", o sufixo
+# `|sim` de R1/R2/F2b seria decorativo -- casaria sempre e nao provaria bloqueio nenhum.
+P -q -f "$MIG"
+semear
+P -q -c "DELETE FROM public.barreira;" >/dev/null
+lancar_bloqueador 7                    # A trava a linha 7
+eq "F6-pre A travou a linha 7 antes de B comecar" "$(esperar_A_travar)" "sim"
+OUT6="$(mktemp /tmp/corrida-f6.XXXXXX)"
+Pq -c "SELECT public.cancelar_pedido_sugerido(2, 'lucas', 'sem colisao')::text;" > "$OUT6" 2>&1 &
+B6=$!
+VISTO6="$(esperar_bloqueio 20)"        # ~1s: B cancela OUTRA linha, nao ha bloqueio a observar
+wait "$B6" || true
+liberar_A
+wait "$BLOQ_PID" || bad "F6-infra: o bloqueador falhou"
+eq "F6 a barreira sabe dizer 'nao' quando nao ha bloqueio -- o sufixo |sim nao e decorativo" \
+   "$VISTO6" "nao"
+rm -f "$OUT6"
 
 # restaura o estado verdadeiro e re-prova o caminho feliz (o teste nao termina sabotado)
 P -q -f "$MIG"
