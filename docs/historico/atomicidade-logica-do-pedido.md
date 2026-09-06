@@ -215,11 +215,17 @@ quatro. **Auto-prova cobre o intervalo; não substitui a revisão independente.*
 - **A prova é de PG17 local, não do Data API.** O harness prova a transação no banco. Ele não prova
   o gateway da Supabase, nem RLS de produção, nem um payload de 100 pedidos atravessando o
   PostgREST real como argumento `jsonb`.
-- **IDENTIDADE DE LINHA (`det.ide.codigo_item`) — a correção ESTRUTURAL do P1-1.** Enquanto ela não
-  existir, os **1.049 pedidos com SKU duplicado não reconciliam**: ficam congelados na revisão
-  anterior completa, e a run diz isso em `error_message`. É degradação honesta, não conserto. O
-  campo existe no Omie e já é lido pelo `omie-vendas-sync`; falta persisti-lo em `order_items` e
-  fazer backfill das ~70 mil linhas vivas — entrega própria, com o seu próprio risco.
+- ~~**IDENTIDADE DE LINHA (`det.ide.codigo_item`) — a correção ESTRUTURAL do P1-1.**~~ **FECHADO
+  em 2026-08-30** pela migration `20260906180000` (coluna `order_items.omie_codigo_item` +
+  casamento em dois níveis na RPC). Registro: [`identidade-de-linha-do-item.md`](identidade-de-linha-do-item.md).
+  **Três premissas desta pendência não sobreviveram à medição**, e vale registrar quais:
+  (1) o backfill das ~70 mil linhas **não foi necessário** — zero FKs apontam para `order_items`,
+  e a identidade só é usada no instante em que o payload a fornece, então a reconciliação a adota
+  sozinha; (2) "os 1.049 ficam congelados" está certo na letra e engana na escala — **1.035 deles
+  estão fora de qualquer janela do reprocess desde 2020**, e o guard congela ~14 por vez;
+  (3) "o campo já é lido pelo `omie-vendas-sync`" é verdade, mas ele lê do **`ConsultarPedido`**, e
+  o reprocess usa **`ListarPedidos`** — que o campo chegue por lá **segue não medido**, e é por
+  isso que o desenho é inerte-até-alimentado e a coluna é o próprio sensor.
 - **O CAS usa o instante da LEITURA pela edge, não a revisão da ORIGEM.** Se algum dia se provar
   que o `ListarPedidos` devolve `infoCadastro.dAlt/hAlt`, esse é o discriminante mais forte e o
   carimbo atual vira fallback. Hoje não está provado, e por isso não está no código.
