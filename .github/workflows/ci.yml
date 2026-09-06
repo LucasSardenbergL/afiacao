@@ -197,6 +197,14 @@ jobs:
       - name: Sonda por cron — rollback para bundle velho fica em ZERO efeito (Deno, offline)
         run: bun run test:sonda-rollback
 
+      # PROVA da allowlist da sonda por cron: cobertura do manifesto (todo closure histórico de cada
+      # edge da allowlist, na identidade de harness E de `desde` atuais) + G1 (ramo dentro do bloco
+      # OPTIONS) + G3 (o relé só emite OPTIONS, medindo a VARIÁVEL que passou pela barreira) + G4
+      # (o espelho no banco ⊆ allowlist) + o sentinela do stripper. Re-executa o que mudou; exit 2
+      # é MECÂNICA (git raso, deno ausente), que nunca é "tudo limpo".
+      - name: Sonda por cron — prova por execução de cada closure histórico (G1/G3/G4)
+        run: bun run sonda:cron-prova -- --gate
+
       # Type-check das EDGE FUNCTIONS — blocking. Buraco que ficou aberto mesmo depois do
       # `test:edges` acima: `deno test` só type-checa o grafo que os TESTES alcançam, e por desenho
       # os testes cobrem lógica PURA extraída (justamente para caber no `--no-remote`), então

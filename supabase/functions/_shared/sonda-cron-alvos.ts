@@ -64,7 +64,9 @@ const SEM_CREDENCIAL: ControlePositivo = {
 export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   {
     edge: "sonda-relay",
-    desde: "2c55a71edca3",
+    // O relé NASCEU com o ramo, num commit anterior ao das pilotos: usar o `desde` delas faria os
+    // closures do próprio relé caírem em "respondeu probe antes do desde" = FALHA.
+    desde: "de281e7b5783",
     controles: [{
       metodo: "POST",
       headers: { ...JSON_HEADERS, "x-cron-secret": "$CRON_SECRET" },
