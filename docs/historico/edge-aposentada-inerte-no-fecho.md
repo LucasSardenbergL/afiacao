@@ -48,10 +48,38 @@ O que sobra é uma **declaração**: um fato sobre o handler que o git conhece e
   posto em `omie-analytics-sync` reprovou). E o conjunto marcado é lista FECHADA (`["tint-import"]`) —
   aposentar edge é decisão, aparece no diff. `tint-import/retired_test.ts` trava o par no outro sentido:
   410 sem marcador também reprova.
-- **(2) a aposentadoria JÁ ESTÁ NO AR.** O script não tem como verificar. Se o bundle no ar fosse
-  anterior a #1401 (writer fail-open vivo), o deploy que INERTE suprime seria justamente o que instala
-  o 410. Para a `tint-import` a evidência é indireta: `tint_importacoes` não tem linha não-`sync_agent`
-  desde 2026-04-17 (medido em prod 2026-09-05) — consistente com o 410 no ar, mas ausência de sinal.
+- **(2) a aposentadoria JÁ ESTÁ NO AR — PROVADA em prod (2026-09-06).** O script continua sem poder
+  verificar: a prova é externa a ele, e foi obtida sondando. **Evidência:** `request_id` **71099**
+  (`net._http_response`, `created 2026-09-06 18:46:41Z`) — `status_code` **410**, corpo
+  `{"error":"tint-import foi aposentado","code":"TINT_IMPORT_RETIRED","detail":"…removido no #1314."}`.
+  O `code` **discrimina o bundle**: `TINT_IMPORT_RETIRED` tem **0** ocorrências no pai do #1401
+  (`git show b0092d884^:supabase/functions/tint-import/index.ts | grep -c TINT_IMPORT_RETIRED`) e na
+  `origin/main` só sai deste `index.ts` (o `retired_test.ts` não vai ao bundle) — logo nenhum bundle
+  pré-#1401 podia emiti-lo, e o INERTE não está suprimindo o deploy que instala o 410. De brinde, o
+  `detail` voltou **byte a byte** igual ao da `origin/main`, o que é sinal de deploy verbatim daquele
+  `return` (não do arquivo inteiro — só o ramo que respondeu).
+  A evidência indireta anterior (`tint_importacoes` sem linha não-`sync_agent` desde 2026-04-17,
+  re-medida em 2026-09-06) segue **consistente** com isso, e segue sendo ausência de sinal: quem
+  fecha o contrato é o 410 acima.
+  **A sonda foi barata nos DOIS bundles, e é isso que a torna segura — medido antes de disparar.** O
+  "só sonde DEPOIS do deploy" da `lovable-deploy-verify` protege do bundle PRÉ-sensor que ignora o
+  `{"probe":true}` e roda o fluxo real; aqui o fluxo real do bundle pré-#1401 **também** é inócuo para
+  este corpo: sem `multipart/form-data` e sem `action`, ele cai em `handleChunkMode`, que devolve
+  **400** por `tipo`/`rows`/`chunk_index` ausentes **antes** de qualquer `upsert`
+  (`git show b0092d884^:…/index.ts`, linhas 492-503). Os dois bundles discriminam (410 vs 400) e
+  nenhum escreve — a ordem que a skill trava por default não se aplica, e sondar ANTES respondeu de
+  graça a pergunta que o marcador deixava aberta. É o mesmo raciocínio do `--caro` da
+  `lovable-deploy-verify`: **quem decide é o EFEITO medido, não a forma do handler.**
+  ⚠️ O veredito nasceu com os quatro ramos fechados no SQL, e nenhum outro se lê como aprovação: 401 é
+  `INDETERMINADO_CREDENCIAL_RECUSADA` (`ausente ≠ zero` na dimensão CREDENCIAL), `status_code IS NULL`
+  é `INUTILIZAVEL_TIMEOUT_SEM_CORPO`, 400 seria `BUNDLE_PRE_1401_WRITER_VIVO`. Ler qualquer um deles
+  como "410 no ar" seria o falso positivo que ENCERRA a verificação.
+  🔴 **O que esta prova NÃO diz: ela é de PASSADO, não de estado atual** (a ressalva do
+  `BUNDLE_NOVO_OBSERVADO_EM_T` da `lovable-deploy-verify`). O 410 estava no ar às 18:46:41Z de
+  2026-09-06; um deploy posterior que ressuscite o writer deixaria esta linha intacta. A `tint-import`
+  não tem sonda de versão (nem `versao.ts`, nem entrada no mapa — `bun run sonda:sql tint-import`
+  recusa com exit 1), então **reprovar o INERTE no futuro exige repetir esta sondagem**, não reler
+  este parágrafo. O custo é uma linha de SQL, e ele acabou de ser medido.
   **Regra:** só coloque o marcador depois de confirmar o 410 em prod; é responsabilidade de quem marca.
 
 ## A classe, não o caso
