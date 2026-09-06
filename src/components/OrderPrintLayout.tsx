@@ -1,6 +1,7 @@
 import { format, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { escapeHtml } from '@/lib/escape-html';
+import { formatPrecoOuAusente } from '@/lib/format';
 
 export interface PrintOrderData {
   companyName: string;
@@ -22,8 +23,9 @@ export interface PrintOrderData {
     descricao: string;
     quantidade: number;
     unidade: string;
-    valorUnitario: number;
-    valorTotal: number;
+    /** `null` = preco NAO SABIDO. Sai "-" no cupom, nunca R$ 0,00 (ausente != zero). */
+    valorUnitario: number | null;
+    valorTotal: number | null;
     tintCorId?: string;
     tintNomeCor?: string;
   }>;
@@ -85,7 +87,9 @@ function buildObsText(data: PrintOrderData): string {
   return parts.join('\n\n');
 }
 
-const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// Ausente != zero tambem no CUPOM: item cujo preco o Omie nao informou sai "-", nao R$ 0,00.
+// Um zero INFORMADO (bonificacao/brinde) segue saindo como R$ 0,00 — a distincao e o ponto.
+const fmt = formatPrecoOuAusente;
 
 export function openPrintOrder(data: PrintOrderData) {
   const obs = buildObsText(data);

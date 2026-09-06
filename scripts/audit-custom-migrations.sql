@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 511
+-- Total de custom migrations: 512
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -552,7 +552,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260904233000', 'sku_fornecedor_externo_fator_positivo', '20260904233000_sku_fornecedor_externo_fator_positivo.sql'),
   ('20260905090000', 'sayerlack_custo_portal_cas', '20260905090000_sayerlack_custo_portal_cas.sql'),
   ('20260905183314', 'deploy_atestacoes_ledger_e_sonda_cron', '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql'),
-  ('20260905224959', 'cancelar_pedido_guard_atomico', '20260905224959_cancelar_pedido_guard_atomico.sql')
+  ('20260905224959', 'cancelar_pedido_guard_atomico', '20260905224959_cancelar_pedido_guard_atomico.sql'),
+  ('20260905225613', 'preco_ausente_nao_e_zero', '20260905225613_preco_ausente_nao_e_zero.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2279,7 +2280,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('deploy_atestacoes_ledger_e_sonda_cron', 'cron_job', 'cron', 'deploy-atestacoes-colher', ''),
   ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_select_staff', 'deploy_atestacoes'),
   ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_service_all', 'deploy_atestacoes'),
-  ('cancelar_pedido_guard_atomico', 'function', 'public', 'cancelar_pedido_sugerido', '')
+  ('cancelar_pedido_guard_atomico', 'function', 'public', 'cancelar_pedido_sugerido', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'criar_pedidos_com_itens', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'get_customer_margin_summary', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4054,7 +4061,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('deploy_atestacoes_ledger_e_sonda_cron', 'cron_job', 'cron', 'deploy-atestacoes-colher', ''),
   ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_select_staff', 'deploy_atestacoes'),
   ('deploy_atestacoes_ledger_e_sonda_cron', 'rls_policy', 'public', 'deploy_atestacoes_service_all', 'deploy_atestacoes'),
-  ('cancelar_pedido_guard_atomico', 'function', 'public', 'cancelar_pedido_sugerido', '')
+  ('cancelar_pedido_guard_atomico', 'function', 'public', 'cancelar_pedido_sugerido', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'criar_pedidos_com_itens', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'get_customer_margin_summary', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', '')
 )
 SELECT
   e.migration,
@@ -4082,7 +4095,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 98.
+-- Funções redefinidas com corpo extraível: 102.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4348,6 +4361,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tint_recalc_preco_oficial', 2, '20260611190000_tint_sync_codex_fixes.sql', '56bc93e4f11502bd192897c179119d57'),
   ('public', 'tint_apply_keys_snapshot', 1, '20260609150000_tint_sync_promote.sql', '7bbea243540e862db132566f5c552499'),
   ('public', 'tint_apply_keys_snapshot', 2, '20260611190000_tint_sync_codex_fixes.sql', '368d2f3da7dd73d8741acadf440341eb'),
+  ('public', 'melhoria_clientes_por_produto', 1, '20260610130000_melhorias_canal.sql', 'e5602e92c3623e426e2461f782ee712e'),
+  ('public', 'melhoria_clientes_por_produto', 2, '20260905225613_preco_ausente_nao_e_zero.sql', '128cc895c0826dfb03e79223f5c93c8e'),
   ('public', 'reposicao_pedido_auto_aprovavel', 1, '20260610150000_reposicao_auto_aprovacao_piloto.sql', 'a169166d1b33f40a5c7a82e1ad45e297'),
   ('public', 'reposicao_pedido_auto_aprovavel', 2, '20260615210000_reposicao_auto_aprovacao_v2.sql', 'af98b16e4efefa646d6a206be52c725b'),
   ('public', 'reposicao_pedido_auto_aprovavel', 3, '20260629140000_reposicao_preco_ausente_null.sql', '3a26656e94c9bbd8db410c2a33c1a704'),
@@ -4379,6 +4394,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_regua_preco_customer360', 2, '20260723150000_authz_custo_fu4f_fase2_regua.sql', '17a6d9cf6af6e9e3117d103b9ed9d242'),
   ('public', 'enqueue_score_recalc_from_sinais', 1, '20260616140941_fatia2_sinais_ligacao.sql', 'dfc85730eaa1d60a5272a400074541db'),
   ('public', 'enqueue_score_recalc_from_sinais', 2, '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql', '178166dc2c3e943e78ab5f7b3ceeebdb'),
+  ('public', 'criar_pedidos_com_itens', 1, '20260617160000_criar_pedidos_com_itens.sql', 'd94bc895f6edcbad2fe3dad29f0b774f'),
+  ('public', 'criar_pedidos_com_itens', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'd009751130dde7ae614b56948d926338'),
   ('public', 'get_customer_sales_summary', 1, '20260618180000_get_customer_sales_summary.sql', 'e2f5bdc39c54b5f79938cb566bdca957'),
   ('public', 'get_customer_sales_summary', 2, '20260618190000_get_customer_sales_summary_blocklist.sql', '5682e854b19bfaed77d781743107107e'),
   ('public', 'get_customer_sales_summary', 3, '20260623150000_get_customer_sales_summary_tz_fallback.sql', '4754a171fadbd0bca17757e8245547ee'),
@@ -4406,6 +4423,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reposicao_cold_start_parametros', 1, '20260626210000_reposicao_cold_start_parametros.sql', 'd5f00b40b7ac6c5a06bf8306a9e1ad67'),
   ('public', 'reposicao_cold_start_parametros', 2, '20260627130000_reposicao_cold_start_fix_gate_cron.sql', '7452b0fd4a5354e176b29464e5ed0208'),
   ('public', 'reposicao_cold_start_parametros', 3, '20260826021000_reposicao_cold_start_fusivel_graduacao.sql', '4e60a2f241446e15287ccec01947f537'),
+  ('public', 'get_defasagem_cliente', 1, '20260627180100_get_defasagem_cliente.sql', '1a06e51e5eae154d94216eee56471734'),
+  ('public', 'get_defasagem_cliente', 2, '20260905225613_preco_ausente_nao_e_zero.sql', '7856c3052596d66a6f5ac8eb0a06c1c0'),
   ('public', 'venda_gate_credito', 1, '20260702233000_trava_credito_fase2.sql', '72e6d3ff4dd4a438d5ca84cb9d214ec8'),
   ('public', 'venda_gate_credito', 2, '20260703140000_trava_credito_gate_excecao_por_par.sql', '1fb9610a4c6f70fb2a67d5d01396c767'),
   ('public', 'medir_abaixo_piso_tier', 1, '20260704120000_preco_por_tier.sql', '0e2c798dc7098adb3c67cb923087cefa'),
@@ -4424,6 +4443,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tint_gate_revalida', 2, '20260726160000_tint_canonica_piso_legado.sql', '67947c3b37e874638ebe013d90bdfcb4'),
   ('public', 'get_customer_margin_summary', 1, '20260723150000_farmer_margem_server_side.sql', '4bec72709f6cbaeea10e3ac63c2063b9'),
   ('public', 'get_customer_margin_summary', 2, '20260726160000_margem_reconciliacao_universo_unico.sql', '58a93d6a130e01b0ba38ab1644909dcc'),
+  ('public', 'get_customer_margin_summary', 3, '20260905225613_preco_ausente_nao_e_zero.sql', '33c8cea833be4410fed2e07a07330860'),
   ('private', 'frec_sem_margem', 1, '20260725125000_authz_custo_fu4f_fase3_scrub_recomendacoes.sql', '3266a13a06bfe93770a9f7608d429075'),
   ('private', 'frec_sem_margem', 2, '20260725126000_authz_custo_fu4f_fase3_trigger_nulifica_lie.sql', 'c32626e7a14d80729a8cbbb45f88be2b'),
   ('private', 'fbrec_sem_margem', 1, '20260725125000_authz_custo_fu4f_fase3_scrub_recomendacoes.sql', 'a514423f91c5164a15d118f89e0fe965'),
@@ -4432,6 +4452,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'vendas_sync_semear_janela', 2, '20260726140000_vendas_sync_semear_janela_v2.sql', '504ffc039e88ee5c33e36cecab1fcd64'),
   ('private', 'margem_cliente_agregada', 1, '20260726150000_margem_cliente_helper_compartilhado.sql', 'a4f8e8f9189a9902d8375a1836f75d15'),
   ('private', 'margem_cliente_agregada', 2, '20260726160000_margem_reconciliacao_universo_unico.sql', '56549da47ed4091706a5fdfc2df82037'),
+  ('private', 'margem_cliente_agregada', 3, '20260905225613_preco_ausente_nao_e_zero.sql', '4f4f7d8b17ed930e006231a287e9d85a'),
   ('public', 'get_carteira_margem_faixa', 1, '20260726170000_fu4f_fase3_carteira_margem_faixa.sql', '075209b91d13be52c58220f6ddc88521'),
   ('public', 'get_carteira_margem_faixa', 2, '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql', '169677feb2e686d3e73ec31426c608b6'),
   ('public', 'farmer_association_rules_substituir', 1, '20260729120000_farmer_association_rules_substituicao_atomica.sql', '248a95f8d50d51f14599d4f9ac5158db'),
@@ -4452,7 +4473,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'farmer_melhor_individual_por_cliente', 1, '20260820124611_farmer_melhor_individual_bulk.sql', '82340cc6187de27edf766fdb7fad7c77'),
   ('public', 'farmer_melhor_individual_por_cliente', 2, '20260820133119_farmer_melhor_individual_atomico.sql', '988141c4ddcb0e43ff59b66491c5dc6a'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
-  ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3')
+  ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
+  ('public', 'reconciliar_pedidos_omie', 1, '20260830190000_reconciliar_pedidos_omie.sql', '80a1000a7a543c8e3dfc756f4ab4df97'),
+  ('public', 'reconciliar_pedidos_omie', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'cad0126b11adcbc4946da1c4566b26f5')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2

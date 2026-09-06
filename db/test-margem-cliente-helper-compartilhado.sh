@@ -87,6 +87,15 @@ CREATE TABLE public.order_items (
   omie_codigo_produto bigint,
   product_id uuid,               -- NULO em 2,67% dos itens da prod — é o ponto do H1
   quantity numeric,
+  -- ⚠️ DIVERGE DE PROD DE PROPÓSITO, e isso já custou um falso-verde: aqui a coluna é
+  -- NULLABLE, mas em prod ela foi `NOT NULL DEFAULT 0` até 2026-09-05. O I5 abaixo prova
+  -- o ramo `preco_unit IS NOT NULL` inserindo NULL — um valor que a prod NÃO PODIA ter.
+  -- O caminho que a prod realmente percorria era preço 0, e `preco_unit >= 0` o aceitava
+  -- como computável: margem fabricada, com este teste verde ao lado.
+  -- A origem foi fechada em 20260905225613_preco_ausente_nao_e_zero.sql (coluna nullable,
+  -- régua `> 0`), e quem prova o mundo de prod é db/test-preco-ausente-nao-e-zero.sh —
+  -- ele monta a tabela COMO prod e deixa a migration alterá-la. Este harness segue válido
+  -- para o que ele mede (o helper isolado); só não leia o I5 como retrato da produção.
   unit_price numeric);
 CREATE TABLE public.cliente_classificacao (
   user_id uuid PRIMARY KEY,

@@ -2,7 +2,8 @@ export interface HistoricoItemInput {
   codigo: number;
   nome: string;
   quantidade: number;
-  precoUnit: number;
+  /** `null` = preco NAO SABIDO (o Omie nao informou). Nunca 0 fabricado. */
+  precoUnit: number | null;
   dataPedido: string; // ISO — data de negócio do pedido (order_date_kpi)
 }
 export interface HistoricoPedidoInput {
@@ -19,7 +20,8 @@ interface TopProduto {
   codigo: number;
   nome: string;
   vezes: number;
-  ultimoPreco: number;
+  /** Ultimo preco CONHECIDO do SKU. `null` = nenhuma compra dele tinha preco. */
+  ultimoPreco: number | null;
   ultimaData: string;
 }
 interface PedidoResumo {
@@ -58,7 +60,11 @@ export function derivarHistorico({ itens, pedidos, agora }: HistoricoInput): His
       atual.vezes += 1;
       if (new Date(it.dataPedido).getTime() > new Date(atual.ultimaData).getTime()) {
         atual.ultimaData = it.dataPedido;
-        atual.ultimoPreco = it.precoUnit;
+        // A DATA avanca sempre (a compra existiu), mas o PRECO so e sobrescrito por um preco
+        // que se conhece. Antes, uma compra recente sem preco apagava o ultimo preco praticado
+        // e a ficha de pre-contato mostrava R$ 0,00 — o vendedor entrava na ligacao com um
+        // numero que ninguem praticou. "Nao sei agora" nao apaga "sabia antes".
+        if (it.precoUnit !== null) atual.ultimoPreco = it.precoUnit;
         atual.nome = it.nome;
       }
     }

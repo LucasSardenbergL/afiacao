@@ -33,8 +33,10 @@ export const decodeHtml = (s: string): string =>
 interface SalesOrderItem {
   descricao: string;
   quantidade: number;
-  valor_unitario: number;
-  valor_total: number;
+  /** `null` = preco NAO SABIDO (o Omie nao informou valor_unitario). Nunca R$ 0,00. */
+  valor_unitario: number | null;
+  /** `null` = nao ha total: sem preco unitario, `qtd * null` seria 0 fabricado. */
+  valor_total: number | null;
   codigo?: string;
   unidade?: string;
   tint_cor_id?: string;

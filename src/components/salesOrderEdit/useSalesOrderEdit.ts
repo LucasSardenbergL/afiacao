@@ -18,6 +18,7 @@ import {
   type OmieProduct,
 } from './types';
 import { invalidPricedOrderItemIndices, invalidOrderPriceMessage } from './priceGuard';
+import { totalLinhaOuAusente } from '@/lib/format';
 import {
   lerRespostaFormas,
   condicoesDoClienteIndisponiveis,
@@ -186,7 +187,9 @@ export function useSalesOrderEdit() {
         delete updated.tint_discount_pct;
         delete updated.tint_preco_sem_desconto;
       }
-      updated.valor_total = updated.quantidade * updated.valor_unitario;
+      // `qtd * null` e 0 em JavaScript: a linha exibiria "R$ 0,00" para um item cujo preco
+      // ninguem apurou. Sem preco nao ha total — o campo mostra "-" e o guard barra o salvar.
+      updated.valor_total = totalLinhaOuAusente(updated.quantidade, updated.valor_unitario);
       return updated;
     }));
   };
@@ -290,7 +293,10 @@ export function useSalesOrderEdit() {
     ).slice(0, 20);
   }, [productSearch, catalogProducts]);
 
-  const subtotal = items.reduce((s, i) => s + i.valor_total, 0);
+  // `s + null` e 0 em JavaScript — o item sem preco somaria silenciosamente nada e o
+  // subtotal ficaria MENOR que a verdade sem sinal nenhum. Aqui a linha sem total fica
+  // explicitamente de fora; quem barra o salvar e o guard de preco, logo abaixo.
+  const subtotal = items.reduce((s, i) => s + (i.valor_total ?? 0), 0);
   // Índices dos itens com preço inválido (≤ 0 / NaN) — MESMA fonte para o bloqueio no
   // save e para o destaque na UI (aria-invalid + botão travado).
   const invalidPriceItemIndices = useMemo(() => invalidPricedOrderItemIndices(items), [items]);

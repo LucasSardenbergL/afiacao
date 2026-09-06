@@ -6,6 +6,7 @@ import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
+import { mesclarPrecoPreservado, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
@@ -137,7 +138,9 @@ interface OrderItemPayload {
   omie_codigo_produto?: number;
   descricao?: string;
   quantidade: number;
-  valor_unitario: number;
+  /** `null` = preço NÃO SABIDO (o Omie não informou, ou informou lixo). Os leitores do
+   *  items-jsonb devem mostrar "—", nunca R$ 0,00 — ausente ≠ zero. */
+  valor_unitario: number | null;
   desconto?: number;
   tint_cor_id?: string;
   tint_nome_cor?: string;
@@ -1293,9 +1296,12 @@ async function syncPedidos(
       for (const det of detalhes) {
         const prod = det.produto || {};
         const qty = prod.quantidade || 1;
-        const price = prod.valor_unitario || 0;
+        // `null` = o Omie NÃO informou preço (ausente ≠ zero). O item fica FORA do subtotal —
+        // o número não muda por isso (somar qty·0 e omitir dão a mesma soma), mas a
+        // incompletude passa a ser legível: `valor_unitario: null` no items-jsonb.
+        const price = precoUnitarioOmie(prod.valor_unitario);
         const desc = prod.desconto || 0;
-        subtotal += qty * price * (1 - desc / 100);
+        if (price !== null) subtotal += qty * price * (1 - desc / 100);
         // Cor da tinta: preferimos obs_item (onde a cor sempre vai); o
         // dados_adicionais_item pode conter ordem de compra (parseCorObs filtra
         // por "Cor:", então não confunde). Sem cor → item comum.
@@ -1347,20 +1353,25 @@ async function syncPedidos(
         const prod = det.produto || {};
         if (!prod.codigo_produto) continue;
         const productId = productMap.get(prod.codigo_produto) || null;
+        // `null` = o Omie não informou; a RPC grava NULL em order_items.unit_price. O `|| 0`
+        // daqui era a origem da margem negativa fabricada: receita 0 com custo cheio.
+        const precoItem = precoUnitarioOmie(prod.valor_unitario);
         itensRpc.push({
           customer_user_id: customerUserId,
           product_id: productId,
           omie_codigo_produto: prod.codigo_produto,
           quantity: prod.quantidade || 1,
-          unit_price: prod.valor_unitario || 0,
+          unit_price: precoItem,
           discount: prod.desconto || 0,
           hash_payload: `${hashPayload}_${prod.codigo_produto}`,
         });
-        if (productId && (prod.valor_unitario || 0) > 0) {
+        // O histórico de preço praticado já era fail-closed (só grava > 0) — mantido, agora
+        // pela MESMA régua. Ele exige POSITIVO porque "preço praticado zero" não é preço.
+        if (productId && precoItem !== null && precoItem > 0) {
           precosRpc.push({
             customer_user_id: customerUserId,
             product_id: productId,
-            unit_price: prod.valor_unitario,
+            unit_price: precoItem,
           });
         }
       }
@@ -1482,8 +1493,11 @@ async function repararOrfaosItens(
       for (const d of det) {
         const prod = d.produto || {};
         if (!prod.codigo_produto) continue;
-        const qty = prod.quantidade || 1, price = prod.valor_unitario || 0, desc = prod.desconto || 0;
-        subtotal += qty * price * (1 - desc / 100);
+        // `null` = o Omie não informou preço (ausente ≠ zero) — mesma régua do sync acima.
+        // Item sem preço fica FORA do subtotal em vez de somar 0; a soma é a mesma, mas o
+        // item vai para a RPC com unit_price NULL em vez de um R$ 0,00 fabricado.
+        const qty = prod.quantidade || 1, price = precoUnitarioOmie(prod.valor_unitario), desc = prod.desconto || 0;
+        if (price !== null) subtotal += qty * price * (1 - desc / 100);
         const productId = productMap.get(prod.codigo_produto) || null;
         itensRpc.push({
           customer_user_id: pai.customer_user_id, product_id: productId,
@@ -1491,7 +1505,7 @@ async function repararOrfaosItens(
           quantity: qty, unit_price: price, discount: desc,
           hash_payload: `${pai.hash_payload}_${prod.codigo_produto}`,
         });
-        if (productId && price > 0) precosRpc.push({ customer_user_id: pai.customer_user_id, product_id: productId, unit_price: price });
+        if (productId && price !== null && price > 0) precosRpc.push({ customer_user_id: pai.customer_user_id, product_id: productId, unit_price: price });
       }
       if (itensRpc.length === 0) { semDados++; continue; } // Omie tb não tem item válido (limite L2)
 
@@ -2626,7 +2640,7 @@ Deno.serve(async (req) => {
                 omie_codigo_produto: prod.codigo_produto,
                 descricao: prod.descricao || '',
                 quantidade: prod.quantidade || 1,
-                valor_unitario: prod.valor_unitario || 0,
+                valor_unitario: precoUnitarioOmie(prod.valor_unitario),
                 desconto: prod.desconto || 0,
                 ...(cor ? { tint_nome_cor: cor.tint_nome_cor } : {}),
               };
@@ -2642,7 +2656,15 @@ Deno.serve(async (req) => {
               for (const bfRow of bfRows || []) {
                 const jaTemCor = JSON.stringify(bfRow.items ?? []).includes('tint_nome_cor');
                 if (!jaTemCor) {
-                  const { error: bfUpErr } = await supabaseAdmin.from('sales_orders').update({ items: bfItems }).eq('id', bfRow.id);
+                  // ⚠️ Este UPDATE SUBSTITUI o items-jsonb inteiro por uma reconstrução da
+                  // leitura ATUAL do Omie. O escopo do backfill é acrescentar `tint_nome_cor`,
+                  // mas ele carrega junto todo o resto — inclusive o preço. Se o Omie tiver
+                  // parado de informar `valor_unitario` (ou informar lixo) em algum item, o
+                  // preço BOM que já estava gravado seria APAGADO por uma leitura pior.
+                  // Por isso o preço é MESCLADO, não sobrescrito: o valor gravado vence
+                  // sempre que for utilizável; o do Omie só entra onde não havia nada.
+                  const itemsMesclados = mesclarPrecoPreservado(bfItems, bfRow.items);
+                  const { error: bfUpErr } = await supabaseAdmin.from('sales_orders').update({ items: itemsMesclados }).eq('id', bfRow.id);
                   if (!bfUpErr) bfPedidosAtualizados++;
                 }
               }

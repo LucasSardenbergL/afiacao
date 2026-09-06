@@ -24,6 +24,7 @@ import {
 } from '@/lib/farmer/upsell-ordem';
 import { acumularContaDeCompra, medirCoberturaContaDaOferta, ofertaNaContaDoCliente } from '@/lib/farmer/cobertura-conta-oferta';
 import { toast } from 'sonner';
+import { precoUtilizavel } from '@/lib/format';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -650,7 +651,14 @@ export const useCrossSellEngine = () => {
 
           const existing = cp.get(productId) || { qty: 0, price: 0 };
           existing.qty += Number(item.quantity || item.quantidade || 1);
-          existing.price = Number(item.unit_price || item.valor_unitario || 0);
+          // "último item vence", mas SÓ quando o último sabe o preço. Era
+          // `Number(unit_price || valor_unitario || 0)`: um item cujo preço o Omie não
+          // informou virava 0 e SOBRESCREVIA o preço bom de um pedido anterior do mesmo SKU
+          // — e o `price <= 0` lá embaixo então descartava o SKU do up-sell. Ou seja: uma
+          // ausência de dado apagava uma oferta legítima. Sem preço utilizável, mantém o que
+          // já se sabia (ausente ≠ zero).
+          const precoItem = precoUtilizavel(item.unit_price) ?? precoUtilizavel(item.valor_unitario);
+          if (precoItem !== null && precoItem > 0) existing.price = precoItem;
           cp.set(productId, existing);
         }
       }

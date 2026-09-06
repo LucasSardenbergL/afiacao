@@ -20,15 +20,19 @@ import { ptBR } from 'date-fns/locale';
 import { findInvalidPricedOmieItems, invalidOmieItemPriceMessage } from '@/services/orderSubmission/priceGuard';
 import { cn } from '@/lib/utils';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { formatPrecoOuAusente } from '@/lib/format';
 
-const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// `fmt` era `(v: number) => v.toLocaleString(...)` — sem guard. Com `valor_unitario` podendo
+// ser null (o Omie nem sempre informa preço), isso lançava TypeError no RENDER da lista, e o
+// ErrorBoundary global levava a página de orçamentos inteira junto. Ausente agora vira "—".
 
 type SalesOrder = Tables<'sales_orders'>;
 
 interface QuoteItem {
   omie_codigo_produto?: string;
   quantidade: number;
-  valor_unitario: number;
+  /** `null` = preço NÃO SABIDO (o Omie não informou). Nunca exibir como R$ 0,00. */
+  valor_unitario: number | null;
   descricao: string;
   tint_cor_id?: string;
   tint_nome_cor?: string;
@@ -255,12 +259,12 @@ const SalesQuotes = () => {
                       <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
                         {items.slice(0, 3).map((item: QuoteItem, idx: number) => (
                           <div key={idx} className="truncate">
-                            {item.quantidade}x {item.descricao} – {fmt(item.valor_unitario)}
+                            {item.quantidade}x {item.descricao} – {formatPrecoOuAusente(item.valor_unitario)}
                           </div>
                         ))}
                         {items.length > 3 && <div className="text-muted-foreground/60">+{items.length - 3} mais...</div>}
                       </div>
-                      <p className="text-sm font-semibold mt-2">{fmt(q.total)}</p>
+                      <p className="text-sm font-semibold mt-2">{formatPrecoOuAusente(q.total)}</p>
                       {invalidQuoteId === q.id && (
                         <p className="mt-2 text-xs text-status-error flex items-center gap-1">
                           <AlertCircle className="w-3 h-3 shrink-0" />
