@@ -54,6 +54,18 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
   // primeira cláusula que BLOQUEIA, ela nunca era avaliada, e no único cenário em que importaria (se
   // has_role sumisse) cairia em `weak` e falharia igual. Contrato enxuto > contrato que descreve o
   // que não existe. Nenhum buraco foi aberto nem fechado aqui: o gate efetivo é o mesmo de antes.
+  // 2026-09-06 — a porta ÚNICA do cancelamento pós-disparo (migration 20260906152235). É
+  // SECURITY DEFINER por DESENHO, e não por descuido: ela grava a trilha
+  // `reposicao_cancelamento_pos_disparo_audit`, que é inforjável justamente porque
+  // `authenticated` NÃO tem INSERT nela (RLS sem policy de escrita + REVOKE nominal). Uma versão
+  // INVOKER não conseguiria auditar, e sem trilha a correção não deve acontecer.
+  // O gate de entrada é o mesmo dos vizinhos — staff decide cancelamento —, e o COALESCE em volta
+  // dele é o que impede o fail-OPEN de `NOT NULL` ser NULL.
+  'public.corrigir_cancelamento_pos_disparo': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'porta única do cancelamento de compra JÁ DISPARADA (o PO existe no Omie) — exige evidência e grava trilha; DEFINER porque a trilha é inforjável por authenticated',
+  },
   'public.get_preco_cockpit': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },

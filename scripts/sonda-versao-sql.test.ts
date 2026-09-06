@@ -955,7 +955,25 @@ function repoGitCru(prefixo: string): { repo: string; git: (...args: string[]) =
   git('init', '-q');
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   git('add', 'base.txt');
-  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'base');
+  // Config GLOBAL do hospedeiro não decide o veredito do fixture — é a mesma classe que o #2227
+  // tirou daqui (teste afirmando fato do ambiente). `commit.gpgsign=false`: numa máquina com
+  // assinatura global ligada o commit pediria passphrase / não acharia a chave e a suíte INTEIRA
+  // ficaria vermelha por config. `--no-verify`: hook de pre-commit/commit-msg (inclusive via
+  // `core.hooksPath` ou `init.templateDir` globais) não roda no commit do fixture.
+  // Mora aqui, no helper COMPARTILHADO do #2243, e não em cada chamador: blinda de uma vez os
+  // dois fixtures — o COM a `origin/main` e o SEM ela.
+  git(
+    '-c',
+    'user.email=t@t',
+    '-c',
+    'user.name=t',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '--no-verify',
+    '-qm',
+    'base',
+  );
   return { repo, git };
 }
 

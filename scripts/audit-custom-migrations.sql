@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 520
+-- Total de custom migrations: 522
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -557,11 +557,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260906105549', 'remover_itens_pedido_guard', '20260906105549_remover_itens_pedido_guard.sql'),
   ('20260906151204', 'deploy_sonda_cron_fail_closed', '20260906151204_deploy_sonda_cron_fail_closed.sql'),
   ('20260906151715', 'aprovar_pedido_guard_atomico', '20260906151715_aprovar_pedido_guard_atomico.sql'),
+  ('20260906152235', 'cancelamento_pos_disparo_trigger_e_rpc', '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql'),
   ('20260906154202', 'cancelar_pedido_revoke_anon', '20260906154202_cancelar_pedido_revoke_anon.sql'),
   ('20260906164001', 'captura_authz_gate_custo_rpcs_preco', '20260906164001_captura_authz_gate_custo_rpcs_preco.sql'),
   ('20260906164002', 'captura_authz_escopo_carteira_farmer', '20260906164002_captura_authz_escopo_carteira_farmer.sql'),
   ('20260906165706', 'aprovar_pedido_revoke_anon', '20260906165706_aprovar_pedido_revoke_anon.sql'),
-  ('20260906170000', 'reposicao_selo_aprovacao_m1_expandir', '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql')
+  ('20260906170000', 'reposicao_selo_aprovacao_m1_expandir', '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql'),
+  ('20260906172718', 'cancelamento_pos_disparo_gate_canonico', '20260906172718_cancelamento_pos_disparo_gate_canonico.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2305,6 +2307,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
   ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'view', 'public', 'vw_cancelamento_pos_disparo_sem_evidencia', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'table', 'public', 'reposicao_cancelamento_pos_disparo_audit', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'index', 'public', 'idx_reposicao_cancel_pos_disparo_audit_pedido', 'reposicao_cancelamento_pos_disparo_audit'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'trigger', 'public', 'trg_valida_cancelamento_pos_disparo', 'pedido_compra_sugerido'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'rls_policy', 'public', 'reposicao_cancel_pos_disparo_audit_select_staff', 'reposicao_cancelamento_pos_disparo_audit'),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_price', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_prices', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_preco_cockpit', ''),
@@ -2320,7 +2329,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'iniciar_envio_portal_pre_claim', ''),
   ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'envio_portal_claim_ids', ''),
   ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'envio_portal_lock_candidatos', ''),
-  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'pedido_compra_split', '')
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'pedido_compra_split', ''),
+  ('cancelamento_pos_disparo_gate_canonico', 'function', 'public', 'corrigir_cancelamento_pos_disparo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4112,6 +4122,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
   ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'view', 'public', 'vw_cancelamento_pos_disparo_sem_evidencia', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'table', 'public', 'reposicao_cancelamento_pos_disparo_audit', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'index', 'public', 'idx_reposicao_cancel_pos_disparo_audit_pedido', 'reposicao_cancelamento_pos_disparo_audit'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'trigger', 'public', 'trg_valida_cancelamento_pos_disparo', 'pedido_compra_sugerido'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'rls_policy', 'public', 'reposicao_cancel_pos_disparo_audit_select_staff', 'reposicao_cancelamento_pos_disparo_audit'),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_price', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_prices', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_preco_cockpit', ''),
@@ -4127,7 +4144,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'iniciar_envio_portal_pre_claim', ''),
   ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'envio_portal_claim_ids', ''),
   ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'envio_portal_lock_candidatos', ''),
-  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'pedido_compra_split', '')
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'pedido_compra_split', ''),
+  ('cancelamento_pos_disparo_gate_canonico', 'function', 'public', 'corrigir_cancelamento_pos_disparo', '')
 )
 SELECT
   e.migration,
@@ -4155,7 +4173,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 104.
+-- Funções redefinidas com corpo extraível: 105.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4548,7 +4566,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reconciliar_pedidos_omie', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'cad0126b11adcbc4946da1c4566b26f5'),
   ('public', 'aprovar_pedido_sugerido', 1, '20260906151715_aprovar_pedido_guard_atomico.sql', 'f9ffc3b7db7801d9c19589ca8c0ec6f9'),
   ('public', 'aprovar_pedido_sugerido', 2, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', '643fdbfbba6693bf2d43813829a706a4'),
-  ('public', 'aprovar_pedido_sugerido', 3, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', '643fdbfbba6693bf2d43813829a706a4')
+  ('public', 'aprovar_pedido_sugerido', 3, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', '643fdbfbba6693bf2d43813829a706a4'),
+  ('public', 'corrigir_cancelamento_pos_disparo', 1, '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql', '846b7fd56ccda97c8a53e529a5ff182c'),
+  ('public', 'corrigir_cancelamento_pos_disparo', 2, '20260906172718_cancelamento_pos_disparo_gate_canonico.sql', '4ca937b4befd086a05b610e4619db24c')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2

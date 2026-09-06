@@ -90,3 +90,42 @@ o checkout.
   olho pelo vermelho. Ou conserta ou sai.
 - Vizinho de classe: [teste-que-afirma-o-defeito.md](teste-que-afirma-o-defeito.md) (a suíte verde
   que afirmava o bug) — aqui a suíte vermelha afirmava o clone.
+
+## Adendo (2026-09-06): o fixture ainda herdava a config GLOBAL do hospedeiro
+
+O #2227 tirou do teste a dependência da **ref** do checkout, mas o fixture que entrou no lugar
+deixava a **config global** decidir seu desfecho: `git commit` obedece `commit.gpgsign` e roda os
+hooks de `core.hooksPath`/`init.templateDir` do usuário. Numa máquina com assinatura global ligada,
+o commit do fixture pede passphrase e a suíte INTEIRA (91 testes) fica vermelha por **config**, não
+por comportamento. Mesma classe um nível abaixo: a ref é propriedade do CLONE, a config é da MÁQUINA.
+
+Blindagem: `-c commit.gpgsign=false` + `--no-verify` no commit do fixture. Mora no helper
+COMPARTILHADO `repoGitCru()` (extraído pelo #2243), não em cada chamador — então cobre de uma
+vez os dois fixtures, o COM a `origin/main` e o SEM ela.
+
+**Medido na M2 do founder em 2026-09-06:** `commit.gpgsign`, `core.hooksPath`, `init.templateDir` e
+`tag.gpgsign` globais todos VAZIOS — risco não-materializado. Ficou fora do #2232 de propósito:
+conserto especulativo não entra no mesmo diff que o diferencial medido.
+
+### Como se provou que as duas flags não são decoração
+
+O `mutcheck` mede o **fonte** (`sonda-versao-sql.ts`); flag de fixture vive no **teste**, então o
+contrato não lhe dá dente nenhum — e num hospedeiro limpo as duas são no-op, logo "91/91 verde" é
+**ausência de dado**, não aprovação. A prova exigiu **forjar o hospedeiro** (`GIT_CONFIG_GLOBAL`
+apontando para um `.gitconfig` hostil) e sabotar **uma camada por vez**, com o controle verde na
+MESMA invocação do laço:
+
+| cenário | esperado | medido |
+|---|---|---|
+| variante sabotada / hospedeiro limpo | verde (a sabotagem sozinha não quebra) | verde |
+| fiel / `gpgsign=true` + `gpg.program` inexistente | verde | verde |
+| fiel / `core.hooksPath` com `pre-commit` que reprova | verde | verde |
+| **sem `-c commit.gpgsign=false`** / hostil-gpg | **vermelho** | vermelho: `cannot exec '/nao/existe/este/gpg'` |
+| **sem `--no-verify`** / hostil-hooks | **vermelho** | vermelho: `HOOK-GLOBAL-REPROVOU` |
+
+Cada vermelho casa a **marca própria** da sua camada (não "lançou algo"), e a mensagem de erro
+mostra a OUTRA flag ainda presente no comando — o que prova que o isolamento foi limpo e que
+nenhuma das duas é redundante. Sabotar as duas juntas teria medido UMA coisa, não duas.
+
+**Eco:** contrato de mutação sobre o fonte é cego para o ARNÊS. Blindagem de fixture só se prova
+forjando o ambiente que ela promete neutralizar — senão o verde vem de a hostilidade não existir.
