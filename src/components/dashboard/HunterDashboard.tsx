@@ -4,6 +4,8 @@ import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNud
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
 import { useSinalPositivacao } from '@/hooks/useSinalPositivacao';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
 
 /**
@@ -19,7 +21,9 @@ import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
  * Ver docs/superpowers/specs/2026-06-13-kpis-hunter-meu-dia-design.md.
  */
 export function HunterDashboard() {
-  const { data: positivacao } = useMyPositivacao();
+  const qPositivacao = useMyPositivacao();
+  const { data: positivacao } = qPositivacao;
+  const estadoPositivacao = estadoDeLeitura(qPositivacao);
   useSinalPositivacao(true);
 
   return (
@@ -34,7 +38,14 @@ export function HunterDashboard() {
       {/* Receita/novos vêm de sales_orders, hoje parcial (backfill pendente) → aviso honesto */}
       <DadosVendaParciaisBanner />
 
-      {/* Placar de aquisição — o norte do hunter (proxy honesto, não-OTE ainda) */}
+      {/* Placar de aquisição — o norte do hunter (proxy honesto, não-OTE ainda).
+          O aviso vem ANTES e FORA do `&&`: sem ele o placar sumia calado no erro/offline, e a
+          ausência numa tela de "norte" AFIRMA que está tudo bem. `oque` fala do PLACAR, e não da
+          "positivação da carteira": é o vocabulário desta tela — nomear o widget errado no aviso
+          é o mesmo silêncio, com mais uma frase. */}
+      {naoConsegui(estadoPositivacao) && (
+        <AvisoLeituraFalhou oque="o seu placar de aquisição" estado={estadoPositivacao} />
+      )}
       {positivacao && <PositivacaoHero kpis={positivacao} isHunter={true} />}
 
       <MinhasTarefasCard />
