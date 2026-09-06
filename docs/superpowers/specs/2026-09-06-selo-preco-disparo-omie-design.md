@@ -1,4 +1,4 @@
-# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v2)
+# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v3)
 
 > Money-path de compras. Origem: decisão **§8.4 do PR #2187** (spec
 > `2026-09-05-selo-aprovacao-pedido-sayerlack-design.md`, branch `claude/frosty-goodall-f12941`), que
@@ -10,14 +10,13 @@
 > **Status: desenho aprovado pelo founder em conversa (2026-09-06); implementação EM FILA atrás do
 > #2187, que ainda é DRAFT e do qual esta fatia consome infraestrutura (§2).**
 >
-> 🔴 **REVISÃO INDEPENDENTE PENDENTE.** O challenge do Codex sobre este spec foi disparado em
-> 2026-09-06 e **não rodou**: `scripts/codex-async.sh` saiu com **exit 75 — cota esgotada** (plano
-> declarado `prolite`, que BATE com o ping registrado no cabeçalho do próprio script em 2026-09-05 ⇒
-> limite real, não token velho). Custo do consult: `gpt-6-astra · max · tentativa 1 · —s · tokens ?`
-> (ausente, não zero — o codex não emitiu rodapé). Acionado o **Caminho B** (`money-path.md` §230):
-> validação adversária própria, registrada em §9. **Auto-revisão NÃO substitui revisão
-> independente** — ela cobre o intervalo. **Rodar o Codex retroativamente quando a janela resetar,
-> ANTES de implementar.**
+> 🔴 **CHALLENGE CODEX: "não aprovar"** (2026-09-06). A 1ª tentativa foi barrada por cota (exit 75);
+> a janela resetou e a 2ª rodou. Custo: `gpt-6-astra · max · tentativa 2 · 908s · 165.313 tokens`.
+> Dois P1 bloqueantes — e o primeiro eu classifico como **P0**, porque derrota o mecanismo por dentro.
+> Achados, verificação e o que mudou nesta v3: **§9**. O Caminho B (auto-challenge) que cobria o
+> intervalo virou §9.3 — ele tinha achado B1/B2, mas **subdimensionou os dois**.
+>
+> Esta v3 acata os cinco achados. **Uma decisão do founder segue aberta (§9.2): escopo da quantidade.**
 
 ## 1. A invariante — e por que NÃO é igualdade
 
@@ -130,15 +129,25 @@ Classes de SQLSTATE, cada uma do dono da função: `SA00x` = #2187 (selo do port
 
 ### 4.3 `reposicao_selar_preco(p_pedido_id bigint, p_origem text)` — o ÚNICO escritor do selo
 
-**`SECURITY DEFINER`**, `search_path` fixo. Definer e não invoker por uma razão concreta: o log é
-fechado a `authenticated` (§4.2), então uma função invoker chamada pela aprovação humana não
-conseguiria inserir nele. Definer + EXECUTE gateado é o que mantém "um escritor só" com a tabela
-trancada para escrita direta.
+**`private.reposicao_selar_preco`** — `SECURITY DEFINER`, `search_path` fixo, **no schema `private`,
+que o PostgREST não expõe**. `REVOKE EXECUTE` de `PUBLIC`, `anon`, `authenticated` **e**
+`service_role`, por nome. Só o OWNER a executa — ou seja, só as funções-porta (SECDEF, mesmo owner)
+do §4.4.
 
-Gate de papel na entrada, espelhando `sayerlack_aplicar_custo_portal`:
-`auth.uid() IS NOT NULL AND NOT staff` → `42501` (com `service_role` o uid é NULL e passa). O fecho
-REAL é o privilégio: `REVOKE EXECUTE` de `anon` **por nome**; `authenticated` mantém EXECUTE (a
-aprovação humana precisa), `service_role` também.
+⚠️ **Isto é a correção do P0 do §9.1, e é o coração da v3.** Na v2 ela era chamável por
+`authenticated` com `p_origem` livre, o que permitia:
+`falha_envio → UPDATE preço 10→100 → reposicao_selar_preco(id,'portal_captura') → reprocessar` —
+hash correspondente a 100, recusa limpa, origem falsa, **os dois selos e a comparação do payload
+passando**. O selo era forjável pela própria porta que deveria protegê-lo.
+
+Por isso, duas mudanças acopladas — nenhuma das duas basta sozinha:
+
+1. **`p_origem` deixa de ser parâmetro do chamador.** Cada porta passa uma constante que ela própria
+   possui. Como só as portas chamam, a origem não é forjável.
+2. **Selar e escrever deixam de ser atos separáveis.** Não existe "selar o que já está lá": toda
+   porta escreve e sela na MESMA função, na MESMA transação. É o que fecha a variante do Codex
+   "`UPDATE preço 10→NULL` e chamar a RPC de 1ª compra com 100" — sem escrita crua não há NULL
+   fabricado (§4.5).
 
 Espelha o idioma do `reposicao_selo_itens` do #2187, sobre vetor **disjunto** do dele:
 
@@ -182,7 +191,10 @@ Fica no runbook `docs/runbooks/lovable-supabase.md`, não no código.
 
 #### 4.4.1 `reposicao_definir_custo_primeira_compra`
 
-`SECURITY INVOKER` (a escrita vai sob a RLS do operador, `cap_compras_ler`), `search_path` fixo.
+**`SECURITY DEFINER`**, `search_path` fixo, e **põe `SET LOCAL reposicao.selo_bypass='on'` ela
+mesma** — porque depois da v3 `authenticated` não escreve preço em NENHUM status pós-aprovação
+(§4.5), nem em `falha_envio`. Definer com gate de papel na entrada (`auth.uid() IS NOT NULL AND NOT
+staff` → `42501`) substitui a RLS que o invoker daria.
 `p_itens = [{item_id, preco_unitario}]`.
 
 1. Pedido `FOR UPDATE`; status ∈ `('pendente_aprovacao','bloqueado_guardrail','falha_envio')`, senão
@@ -206,9 +218,15 @@ precisou corrigir preço válido em `falha_envio`; se precisar, é SQL Editor + 
 
 **Em `pedido_compra_item`** — o trigger `BEFORE INSERT/UPDATE/DELETE` do #2187 hoje deixa preço passar
 de propósito (§3.2 de lá). Ganha um segundo ramo: pai **fora** de
-`('pendente_aprovacao','bloqueado_guardrail','falha_envio')` e o UPDATE toca `preco_unitario` →
-`SA008`, **salvo** sob o bypass `reposicao.selo_bypass` já previsto (GUC **e**
+`('pendente_aprovacao','bloqueado_guardrail')` e o UPDATE toca `preco_unitario` → `SA008`, **salvo**
+sob o bypass `reposicao.selo_bypass` já previsto (GUC **e**
 `current_user IN ('postgres','service_role')` — nunca para `authenticated`).
+
+⚠️ **`falha_envio` SAIU da lista permissiva** (era o buraco do §9.1). A lista agora é só
+pré-aprovação: depois da aprovação, `authenticated` **não escreve `preco_unitario` em estado nenhum**.
+Quem escreve em `falha_envio` é a RPC de 1ª compra, que é SECDEF e põe o bypass ela mesma (§4.4.1).
+Efeito colateral desejado: a aba velha do §9.4 tem a escrita **recusada no banco** em vez de aceita
+sem selo — o preço continua ≤ 0 e a RPC nova ainda funciona, sem virar intervenção SQL.
 
 O GUC `reposicao.selando_preco` **não** aparece aqui, e isso é desenho: `reposicao_selar_preco` escreve
 só em `pedido_compra_sugerido`, nunca em `pedido_compra_item`. Uma exceção para ele no trigger de item
@@ -268,6 +286,14 @@ do próprio `produtos_incluir`, **não de uma releitura** — e compara em SQL c
 | `aprovacao_selo_divergente` | `reposicao_selo_itens(p_pedido_id)` ≠ `aprovacao_selo` |
 | `payload_divergente` | conjunto de `item_id` ≠ itens do pedido, ou `n_val_unit IS DISTINCT FROM preco_unitario`, ou `n_qtde IS DISTINCT FROM qtde_final` |
 
+**Correspondência um-para-um, não igualdade de conjuntos** (§9.5): `p_itens` tem de ser array válido,
+com `item_id` **únicos**, e a **cardinalidade** tem de bater com a contagem de itens do pedido —
+`count(*) = count(DISTINCT item_id) = (SELECT count(*) FROM pedido_compra_item WHERE pedido_id = ...)`.
+Sem isso, um payload que repete `{id:7, preço:10, qtde:2}` duas vezes mantém o mesmo CONJUNTO de ids,
+satisfaz toda comparação individual, e passaria com **quantidade total dobrada**. Não há produtor
+dessas duplicatas hoje (o `.map` parte das linhas do banco) — é defeito do CONTRATO da proteção de
+transporte, e é o contrato que tem de fechar.
+
 `divergencias` traz o recorte por item, para o log e para o operador.
 
 Três coisas numa chamada:
@@ -313,10 +339,27 @@ brickaria o pedido.
 | motivo | recuperação |
 |---|---|
 | `preco_selo_ausente` / `preco_selo_divergente` / `payload_divergente` (preço) | porta autorizada re-sela e limpa o motivo → reprocessa |
-| `aprovacao_selo_ausente` / `aprovacao_selo_divergente` / `payload_divergente` (qtde) | **não há porta** — o `aprovacao_selo` é imutável por construção no #2187, e assim deve ser. Só sai por **cancelar + o ciclo regravar** |
+| `aprovacao_selo_ausente` / `aprovacao_selo_divergente` / `payload_divergente` (qtde) | 🚧 **NÃO HÁ RECUPERAÇÃO** — ver o beco abaixo |
 
-Sem essa distinção na mensagem o operador reprocessa em círculo achando que é transitório (achado
-B1 do §9).
+⚠️ **O beco da quantidade (§9.2).** A v2 dizia "cancelar + o ciclo regrava". **Isso está bloqueado**:
+`cancelar_pedido_sugerido` (na própria M1 do #2187) recusa quando
+`status_envio_portal IN ('enviando_portal','enviado_portal','sucesso_portal','aceito_portal_sem_protocolo','indeterminado_requer_conciliacao')`
+— e `sucesso_portal` é exatamente o estado onde a recusa aconteceria. Resultado: **fornecedor
+recebeu, Omie não recebeu, reprocessar repete a recusa, cancelar é negado.** A conciliação também não
+reconstrói o selo.
+
+E afrouxar o cancelamento local **seria pior**: ele não cancela a ordem no fornecedor, e um ciclo novo
+geraria uma segunda compra com outro identificador — compra em dobro, que é o dano que este spec
+existe para evitar. Uma recuperação de verdade precisa tratar a **ordem externa** (cancelamento
+confirmado no fornecedor antes de gerar substituto). Preservar a imutabilidade do `aprovacao_selo` é
+compatível com isso; **mudar só a mensagem não é.**
+
+Por isso o escopo da quantidade voltou a ser decisão do founder — §9.2.
+
+A recuperação do lado do PREÇO também ficou mais estreita na v3, e é honesto dizer: como
+`authenticated` não escreve preço pós-aprovação (§4.5), a RPC de 1ª compra só resolve o caso "preço
+ausente". Preço válido adulterado só se corrige pelo **SQL Editor** (`postgres`, com o re-selo
+explícito). É recuperável pelo founder, não pelo operador.
 
 Para Sayerlack a recusa acontece **depois** de o portal já ter recebido o pedido: o fornecedor tem a
 ordem e o Omie não tem o PO. É estado operacional real, e é o **correto** — PO faltando é recuperável
@@ -339,9 +382,18 @@ por conciliação; PO com preço errado é dinheiro saindo errado.
 2. **Publish (UI migra para a RPC) + deploy da edge** `disparar-pedidos-aprovados` com a conferência já
    fail-closed. Com M1 aplicada, a edge nova encontra as colunas e a RPC. Com a edge velha ainda no ar
    e M1 aplicada: nada quebra (M1 não recusa nada).
-3. **M2 — ativar.** Ramo `SA008` no trigger do #2187. Pré-condição **medida por query**: zero pedidos
-   em `enviando_portal` e a sonda da edge respondendo a versão nova. M2 é a última — aplicá-la com a
-   edge velha no ar poria um pedido em `falha_envio` sem motivo legível.
+3. **M2 — ativar.** Ramos `SA008` (item) **e `SA009`** (pedido) nos triggers do #2187 — a v2 agendava
+   só o `SA008` (§9.4). Pré-condição **medida por query**: zero pedidos em `enviando_portal` e a sonda
+   da edge respondendo a versão nova.
+
+   ⚠️ **A ordem mudou na v3, e "Publish" não é o marco.** Publish não fecha aba velha — o SW só troca
+   de build quando o cliente clica (CLAUDE.md, 4ª camada). Uma aba antiga em `falha_envio` preencheria
+   o custo por PostgREST cru, **sem selar**, e a edge nova recusaria; pior, atualizar a UI depois não
+   salvaria — o preço já seria positivo e a RPC nova responderia `SP005` (§9.4). Por isso o ramo
+   `SA008` **precisa estar ativo junto com o deploy da edge, não depois dele**: com ele, a escrita da
+   aba velha é **recusada no banco** (o preço fica ≤ 0 e a RPC nova ainda resolve) em vez de aceita e
+   silenciosamente sem selo. Fail-closed contra cliente velho é o ponto — "zero `enviando_portal` +
+   sonda nova" não diz nada sobre abas antigas.
 4. **Sensor da fase seguinte:** §4.6.
 
 Deploy da edge decidido por `bun run pendencias:deploy` (ledger `deploy_atestacoes`), não pelo diff do
@@ -352,6 +404,12 @@ PR.
 - **PG17 `db/test-reposicao-preco-selo.sh`** (padrão dos harnesses; `-v ON_ERROR_STOP=1` + marcador
   positivo de fim; asserts negativos casam a **SQLSTATE exata** e re-lançam o resto; cenários humanos
   sob `SET ROLE authenticated` + GUC do JWT). Cobre:
+  🔴 **o teste decisivo do §9.1 — `adulterar → tentar legitimar → conferir disparo`:** como
+  `authenticated`, (a) UPDATE de preço em `falha_envio` → `SA008`; (b) UPDATE de preço → NULL em
+  qualquer status pós-aprovação → `SA008` (fecha a ausência fabricada); (c) chamada direta a
+  `private.reposicao_selar_preco` → erro de privilégio; (d) adulterar item A + preencher item B pela
+  RPC → a RPC recusa (A não estava ≤ 0) e **nada** é selado; (e) em todos, o disparo seguinte recusa.
+  Negar INSERT direto no log NÃO é este teste ·
   aprovação sela · captura do portal re-sela e loga o delta · 1ª compra preenche e re-sela · 1ª compra
   **recusa** item com preço > 0 (`SP005`) · payload com NaN/Infinity/≤0 → `SP004` · status fora da
   lista → `SP003` · origem inválida → `SP001` · UPDATE de `preco_unitario` pós-aprovação por
@@ -370,23 +428,33 @@ PR.
   remover o ramo `SA008` → o teste do `authenticated` fica vermelho; neutralizar a comparação de
   `n_val_unit` → o teste de transporte fica vermelho; tirar o re-selo de
   `sayerlack_aplicar_custo_portal` → a conferência acusa divergência num caminho **legítimo**;
+  devolver `p_origem` ao chamador (ou reconceder EXECUTE a `authenticated` no selador) → o cenário
+  (c) do teste decisivo fica vermelho; repor `falha_envio` na lista permissiva → (a) fica vermelho;
   afrouxar o `<= 0` da 1ª compra → o teste de "não troca preço bom" fica vermelho; remover o
   `SET LOCAL reposicao.selo_bypass='on'` de `sayerlack_aplicar_custo_portal` → a captura legítima toma
   `SA008` (prova que o bypass do §4.4 é necessário, não decorativo).
-- **Gate de forma da edge — REUSA o harness que já existe.**
-  `supabase/functions/_shared/marco-pre-omie_test.ts` já faz exatamente esta forma para o
-  `lerMarcoPreOmie`: assere que a leitura vem **antes** do `IncluirPedCompra`, que existe
-  **exatamente 1** call site, e traz a falsificação embutida (monta a fonte `invertido` e exige
-  vermelho). O novo gate é o **irmão** dele para `reposicao_conferir_disparo_omie`, no mesmo arquivo
-  ou ao lado, com a mesma mecânica — não inventar harness novo.
-  É o assert "exatamente 1 call site" que sustenta a alegação de que a asserção é **inescapável**:
-  sem ele, um segundo `IncluirPedCompra` futuro passaria por fora e nada ficaria vermelho.
-  Acrescenta o assert **negativo** "a conferência não está dentro de um ramo `modo === 'producao'`",
-  **com falsificação própria** (envolver a chamada em `if (modo === 'producao')` e exigir vermelho) —
-  é ele que trava o furo do `dry_run`, e sem falsificar ele é decorativo.
-  O gate lê a edge como TEXTO e limpa comentário com o stripper COMPARTILHADO (`removerComentarios` de
-  `@/lib/gates/limpeza-fonte`), nunca regex local — a edge tem `IncluirPedCompra` em 6 comentários e
-  1 chamada; um stripper local mediria os comentários.
+- **Gate da edge — a v2 afirmava um FATO FALSO aqui, corrigido (§9.5).** Eu escrevi que
+  `_shared/marco-pre-omie_test.ts` já assere "exatamente 1 call site de `IncluirPedCompra`". **Não
+  assere.** O `G3` conta `atribuicoesDaColuna` — atribuições de `omie_po_inexistente_antes_de` —, e o
+  Codex executou os 7 testes com um segundo call site inserido: **7/7 verde nos dois casos**. Eu
+  afirmei sobre um arquivo que só tinha visto por `grep`. O harness é bom **modelo de estilo** (o `G2`
+  tem falsificação embutida), não uma garantia pronta.
+
+  Então o gate **é novo**, e forma sozinha não basta: presença + ordem + ausência de
+  `if (modo === 'producao')` são satisfeitas por uma chamada **cuja resposta é ignorada**. O que prova
+  a asserção é COMPORTAMENTO:
+
+  - **zero chamadas ao Omie** quando a RPC (a) erra, (b) devolve `ok=false`, (c) devolve vazio,
+    (d) devolve formato inválido — **nos DOIS modos** (`producao` e `dry_run`), 8 casos;
+  - assert de **contagem** de call sites de `IncluirPedCompra` (que não existia) — é ele, e só ele,
+    que sustenta "inescapável";
+  - **falsificação removendo a DECISÃO de recusar** (manter a chamada, ignorar o resultado): tem de
+    ficar vermelho. Sem essa falsificação o gate é decorativo — é exatamente o defeito que o Codex
+    demonstrou executando.
+
+  Onde o gate lê a edge como TEXTO, limpa comentário com o stripper COMPARTILHADO
+  (`removerComentarios` de `@/lib/gates/limpeza-fonte`), nunca regex local — a edge tem
+  `IncluirPedCompra` em 6 comentários e 1 chamada; um stripper local mediria os comentários.
 - **Deno `test:edges`** (`--no-remote`, sem afrouxar o flag), **`edges:typecheck`**, **`sonda:bump`**
   (`VERSAO`) + **`sonda:fingerprint -- --write`** em `disparar-pedidos-aprovados`. Os 5 gates de edge
   não se cobrem.
@@ -406,53 +474,136 @@ PR.
 3. **RPC dedicada para a 1ª compra + UI migra** — o gate sai do cliente, e a regra "só preenche
    ausente" passa a ser servidor.
 4. **Em fila atrás do #2187.** Não standalone (§2).
-5. **Quantidade entra no escopo** (§5.1 item 2): a conferência do disparo cobre os dois selos.
+5. ~~**Quantidade entra no escopo**~~ 🧭 **REABERTA pelo challenge — §9.2.** Entrou porque parecia
+   "quase de graça"; o Codex mostrou que a recusa de quantidade **não tem recuperação** (cancelar é
+   negado em `sucesso_portal`). Minha recomendação agora é **tirar a quantidade desta fatia** e
+   transformá-la em chip bloqueado no desenho de recuperação de ordem externa.
 
-## 9. Caminho B — auto-challenge adversário (2026-09-06)
+## 9. Revisão independente — challenge Codex (2026-09-06): **não aprovar**
 
-Substitui NADA; cobre o intervalo até o Codex rodar. Os achados abaixo são meus, contra meu próprio
-desenho, e **já estão incorporados no corpo do spec**.
+`gpt-6-astra · reasoning max · tentativa 2 · 908s · 165.313 tokens`. A 1ª tentativa saiu com exit 75
+(cota); a janela resetou e a 2ª rodou. **Toda alegação factual do parecer foi conferida contra o
+código antes de entrar aqui** — parecer de agente não vira spec sem verificação. As cinco estão
+acatadas no corpo.
 
-### B1 [P1] Divergência de QUANTIDADE não tem porta de recuperação — e o operador entraria em loop
+### 9.1 [P0 — eu subo de P1] O re-selo legitimava uma alteração proibida
 
-`preco_selo_divergente` é recuperável: o operador corrige por porta autorizada, que re-sela e limpa o
-motivo (§5.3). **`aprovacao_selo_divergente` não é.** O `aprovacao_selo` é imutável por construção no
-#2187 — não existe, nem deve existir, porta que o re-sele. Um pedido que caia nesse motivo fica em
-`falha_envio` e **nenhuma** ação da tela o destrava; o reprocesso o traz de volta ao mesmo ponto.
+Como staff `authenticated`:
+`falha_envio → UPDATE preço 10→100 → reposicao_selar_preco(id,'portal_captura') → reprocessar`.
+O UPDATE passava pela lista permissiva; o selador aceitava chamador e origem sem exigir o CAS da
+captura; gravava o hash de 100, limpava a recusa e registrava origem falsa. A quantidade ficava
+intacta ⇒ **os dois selos e a comparação do payload passavam**.
 
-Incorporado: §5.3 passa a distinguir os dois desfechos, e a mensagem de recusa tem de dizer qual é
-qual — senão o operador reprocessa em círculo achando que é transitório.
+Classifico como **P0, não P1**: o mecanismo não era contornado por fora, era **derrotado pela própria
+porta que deveria protegê-lo**. Um guard que o atacante pode re-selar não é guard.
 
-### B2 [P2] `persistir_qtde_inteira` sobrescreve o `valor_total` PROVADO do portal
+E o Codex antecipou a correção incompleta: revogar só a chamada direta não bastaria — sobraria
+`UPDATE preço → NULL` + RPC de 1ª compra com o valor novo, porque o `<= 0` validaria a **ausência
+fabricada**; e adulterar o item A enquanto se preenche legitimamente o item B faria o re-selo do
+pedido inteiro incorporar A.
 
-`sayerlack_aplicar_custo_portal` grava `valor_total` = total provado do Efetivar. Na invocação
-seguinte do disparo, `reposicao_persistir_qtde_inteira` recomputa
-`valor_total = sum(valor_linha)` — descartando o número provado em favor de um derivado. Se o total do
-portal incluir qualquer coisa que não seja `Σ preço×qtde` (frete, arredondamento do fornecedor), o
-provado é perdido em silêncio.
+**Acatado** em §4.3 (selador vai para `private`, sem EXECUTE para ninguém além do owner; `p_origem`
+deixa de ser do chamador), §4.4.1 (RPC de 1ª compra vira SECDEF e põe o bypass ela mesma) e §4.5
+(`falha_envio` **sai** da lista permissiva — pós-aprovação `authenticated` não escreve preço em estado
+nenhum). As três são acopladas; nenhuma resolve sozinha.
 
-**Fora do escopo desta fatia** (é bug pré-existente, não regressão do selo, e não afeta o `nValUnit`
-que vai ao Omie). Registrado aqui para virar chip. Reforça a §4.1: `valor_linha` e `valor_total` já
-são território de um escritor que os trata como derivados.
+**Teste decisivo** (§7): *adulterar → tentar legitimar → conferir disparo*. Negar INSERT direto no log
+não prova nada.
 
-### B3 — o que investiguei e NÃO virou achado (medido, não presumido)
+### 9.2 [P1] O beco da quantidade — e a decisão que volta para o founder
 
-- **Outro caminho até o Omie?** Não. `grep -rn IncluirPedCompra supabase/functions/` dá **um** call
-  site executável (`disparar-pedidos-aprovados/index.ts:1057`); o resto é comentário e teste.
-- **Reconciliação cria PO sem passar pela asserção?** Não. Ela **adota** um PO que o Omie diz já
-  existir, via `ConsultarPedCompra` — o PO nasceu de uma invocação anterior que passou pela asserção.
-- **`aplicar_promocoes_no_ciclo` é porta de preço não coberta?** Não. Filtra
-  `status = 'pendente_aprovacao'` (e `IN ('pendente_aprovacao','bloqueado_guardrail')` na reavaliação)
-  — é pré-aprovação.
-- **Duplo envio ao portal na recusa?** Não. Na 1ª invocação o portal devolve `queued` e
-  `processarPedido` retorna **antes** de montar o payload; a asserção só roda na invocação que cria o
-  PO, quando o protocolo já existe.
+**Verificado no código:** `cancelar_pedido_sugerido`, na própria M1 do #2187, recusa quando
+`status_envio_portal IN ('enviando_portal','enviado_portal','sucesso_portal','aceito_portal_sem_protocolo','indeterminado_requer_conciliacao')`.
+A recuperação que a v2 prescrevia ("cancelar + o ciclo regrava") está **bloqueada exatamente no
+estado onde seria necessária**.
+
+Meu B1 (§9.3) tinha achado o problema e prescrito a cura errada: **band-aid**. Mudar a mensagem não é
+recuperação.
+
+🧭 **DECISÃO ABERTA.** A quantidade entrou nesta fatia porque parecia "quase de graça" — cinco linhas
+de SQL numa RPC que já ia existir. **Não é de graça**: uma recusa sem recuperação transforma
+"fornecedor recebeu e Omie não" num estado sem saída. Três caminhos:
+
+1. **Tirar a quantidade desta fatia** (recomendo). A prevenção do #2187 (selo imutável + trigger) já
+   cobre quantidade; o que falta é só a conferência de fronteira, e ela vira chip bloqueado no desenho
+   de recuperação de ordem externa. A fatia volta a ser só preço, que **tem** recuperação.
+2. **Manter, e desenhar a recuperação de ordem externa junto** — cancelamento confirmado no fornecedor
+   antes de gerar substituto. É outra fatia inteira dentro desta.
+3. **Manter como alerta não-bloqueante** — descartado por mim: guard que não recusa, em money-path,
+   é teatro.
+
+### 9.3 O Caminho B (auto-challenge) — e o que ele subdimensionou
+
+Enquanto a cota estava esgotada, auto-desafiei o desenho. Achei **B1** (quantidade sem recuperação) e
+**B2** (`valor_total` provado sobrescrito). **Subdimensionei os dois**, e o registro importa mais que
+o acerto:
+
+- **B1** eu prescrevi "distinguir na mensagem" — band-aid, porque não conferi se o cancelamento era
+  possível (§9.2).
+- **B2** eu chamei de "desvio de relatório, não dinheiro". **Errado, e verificado:** o gate de valor
+  mínimo lê `pedido.valor_total` (`disparar-pedidos-aprovados/index.ts:358`) **antes** de
+  `processarPedido` recomputar. Total adulterado **flipa um gate de dinheiro**. Continua fora de
+  escopo — mas pelo motivo CERTO (separação de efeitos: não afeta `nValUnit`/`nQtde`, e não exige
+  `valor_linha` no hash), não pelo motivo errado que eu tinha dado. Vira chip com essa nota.
+- **B3** (meus descartes) o Codex confirmou: um call site atual, promoção pré-aprovação, sem reenvio
+  com protocolo. Mas registrou o que eu não tinha visto: **descarte correto não é recuperação** — nada
+  disso destrava o §9.2.
+
+Isto é a evidência de que **auto-revisão não substitui revisão independente**: ela encontrou os dois
+sintomas certos e errou o tamanho dos dois.
+
+### 9.4 [P2] O rollout deixava a aba velha de fora, e agendava só metade dos ramos
+
+Publish não fecha aba antiga (o SW só troca de build quando o cliente clica). Sequência furada:
+pedido selado com custo ausente → `falha_envio` → **aba velha preenche o custo corretamente** por
+PostgREST cru (`useDetalhesModal.ts:170`, verificado) → nenhum re-selo → edge nova recusa. E atualizar
+a UI depois **não salvava**: preço já positivo ⇒ a RPC nova responde `SP005`, e a recuperação normal
+vira intervenção SQL.
+
+E a §6 agendava só o `SA008`; o `SA009` não estava em etapa nenhuma.
+
+**Acatado** em §6: o `SA008` passa a entrar **junto com o deploy da edge**, não depois — assim a
+escrita da aba velha é recusada no banco, o preço fica ≤ 0 e a RPC nova ainda resolve. `SA009`
+agendado explicitamente.
+
+### 9.5 [P2] Contrato do payload e uma alegação FALSA minha sobre a prova
+
+**Multiplicidade.** A §5.1 comparava conjuntos de `item_id`. Um payload que repete
+`{id:7, preço:10, qtde:2}` mantém o mesmo conjunto e satisfaz toda comparação individual — passaria com
+**quantidade total dobrada**. Não há produtor hoje (o `.map` parte das linhas do banco), mas é defeito
+do **contrato**, e contrato se fecha no contrato. Acatado em §5.1: array válido, ids únicos,
+cardinalidade igual, correspondência um-para-um.
+
+**A alegação falsa.** A v2 dizia que `_shared/marco-pre-omie_test.ts` já asserta "exatamente 1 call
+site de `IncluirPedCompra`", e eu usei isso para sustentar que a asserção seria "inescapável".
+**Verificado: é falso.** O `G3` conta `atribuicoesDaColuna` — atribuições de
+`omie_po_inexistente_antes_de`. O Codex executou os 7 testes com um segundo call site inserido:
+**7/7 verde nos dois casos**. Eu afirmei sobre um arquivo que só tinha lido por `grep` — a armadilha
+de sempre: recorte não é leitura.
+
+E mesmo com a contagem acrescentada, presença + ordem + ausência de `if (modo === 'producao')` são
+satisfeitas por **uma chamada cuja resposta é ignorada**. Acatado em §7: testes comportamentais
+exigindo **zero chamadas ao Omie** em erro/`ok=false`/vazio/formato inválido, **nos dois modos**, mais
+falsificação que remove a DECISÃO de recusar.
+
+### 9.6 O que o Codex NÃO transformou em achado
+
+- **Hash:** sem colisão estrutural. JSON preserva fronteiras, `ORDER BY id` estabiliza, `trim_scale`
+  normaliza escala, NULL ≠ zero, inserção/remoção mudam o vetor. *"O furo principal está em quem pode
+  autenticar esse vetor"* — que é o §9.1.
+- Ressalva do próprio parecer: a análise das RPCs novas é **de desenho** (elas não existem), e a
+  consulta SQL read-only dele falhou por DNS — ele manteve as medições do prompt como fatos. As
+  medições são minhas, via `psql-ro`, e estão na §3.
 
 ## 10. Fora de escopo (dito, não esquecido)
 
 - **Teto de valor aprovado** ("o portal cobrou mais do que aprovamos"). É a fatia seguinte, e §4.6 diz
   exatamente qual número a destrava.
-- **`valor_linha`** — §4.1 explica por que fica fora e qual desvio isso aceita.
+- **`valor_linha` e `valor_total`** — §4.1 explica por que ficam fora do hash (separação de efeitos:
+  não alcançam `nValUnit`/`nQtde`). ⚠️ **Mas o desvio NÃO é "só relatório"**, como a v2 dizia: o gate
+  de valor mínimo lê `pedido.valor_total` (`index.ts:358`) antes da recomputação, então total
+  adulterado flipa um gate de dinheiro (§9.3). Vira chip próprio, com essa nota — e o chip **não**
+  precisa de `valor_linha` no hash.
 - **Auditoria de `pedido_compra_item`** (não há `atualizado_em` nem tabela de histórico). O log do selo
   cobre o que importa para esta invariante; auditoria geral da tabela é outra decisão.
 - **`conciliar-pedido-portal`** — o #2187 já mexe nela; esta fatia não acrescenta nada lá.
