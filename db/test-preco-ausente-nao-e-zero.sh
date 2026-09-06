@@ -104,6 +104,25 @@ CREATE UNIQUE INDEX uniq_sales_orders_omie_hash
   ON public.sales_orders (account, hash_payload) WHERE hash_payload LIKE 'omie\_%';
 ALTER TABLE public.sales_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+
+-- Pré-requisitos de `melhoria_clientes_por_produto` (o ranking do bloco G da migration).
+-- Stubs mínimos: o que se prova é a ORDENAÇÃO, não o gate de carteira — por isso os dois
+-- predicados de visibilidade devolvem TRUE e saem do caminho.
+ALTER TABLE public.omie_products ADD COLUMN descricao text;
+ALTER TABLE public.omie_products ADD COLUMN codigo text;
+ALTER TABLE public.omie_products ADD COLUMN ativo boolean DEFAULT true;
+CREATE TABLE public.profiles (user_id uuid PRIMARY KEY, name text, razao_social text);
+DO $e$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname='app_role') THEN
+    CREATE TYPE public.app_role AS ENUM ('employee','customer','master');
+  END IF;
+END $e$;
+CREATE FUNCTION public.has_role(p_uid uuid, p_role public.app_role) RETURNS boolean
+  LANGUAGE sql STABLE AS $f$ SELECT p_role = 'employee'::public.app_role $f$;
+CREATE FUNCTION public.pode_ver_carteira_completa(p_uid uuid) RETURNS boolean
+  LANGUAGE sql STABLE AS $f$ SELECT true $f$;
+CREATE FUNCTION public.carteira_visivel_para(p_cliente uuid, p_uid uuid) RETURNS boolean
+  LANGUAGE sql STABLE AS $f$ SELECT true $f$;
 SQL
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -275,6 +294,45 @@ PED_ZERO='[{"account":"oben","hash_payload":"omie_oben_777","omie_pedido_id":777
 eq "I6 NULL vs 0 informado = DIFERENTE -> reescreve (o coalesce dizia 'iguais')" "$(rec "$PED_ZERO")" "1"
 eq "I7 e a coluna guardou o 0 informado, distinto do NULL anterior" "$(Pq -c "SELECT coalesce(unit_price::text,'NULL') FROM public.order_items WHERE hash_payload='omie_oben_777_1001';")" "0"
 
+echo "-- J. o ranking NAO fica de cabeca para baixo (o P1 que a nullable introduz) --"
+# `sum(quantity * unit_price)` devolve NULL para o cliente sem NENHUM item precificado, e
+# `ORDER BY … DESC` em Postgres e NULLS **FIRST** por padrao. Sem `NULLS LAST`, o cliente de
+# quem NAO SE SABE a receita encabeca o top-50 de melhoria — "nao sei" apresentado como "o maior".
+eq "J0 o default do Postgres em DESC e NULLS FIRST (o mecanismo do bug, medido)" \
+   "$(Pq -c "SELECT string_agg(coalesce(v::text,'NULL'), ',' ORDER BY v DESC) FROM (VALUES (1),(NULL),(5)) t(v);")" \
+   "NULL,5,1"
+# Clientes NOVOS e exclusivos deste bloco: reusar c1/c2 (que ja tem itens dos testes acima)
+# faria o ranking medir receita de outro caso — e, pior, deixaria o teste SEM nenhum cliente
+# de soma NULL, que e exatamente o que ele existe para posicionar.
+r1="e1000000-0000-0000-0000-0000000000a1"   # receita CONHECIDA (500)
+r2="e2000000-0000-0000-0000-0000000000a2"   # receita CONHECIDA menor (250)
+r3="e3000000-0000-0000-0000-0000000000a3"   # NENHUM item precificado -> sum() = NULL
+P -q <<SQL
+UPDATE public.omie_products SET descricao='TINTA ACRILICA PREMIUM', codigo='TAP-1', ativo=true WHERE id='$p1';
+UPDATE public.omie_products SET descricao='TINTA ACRILICA COMUM',   codigo='TAC-2', ativo=true WHERE id='$p2';
+INSERT INTO auth.users(id) VALUES ('$r1'),('$r2'),('$r3') ON CONFLICT DO NOTHING;
+INSERT INTO public.profiles(user_id, name) VALUES
+  ('$r1','Ranking COM receita alta'), ('$r2','Ranking COM receita baixa'), ('$r3','Ranking SEM preco');
+INSERT INTO public.sales_orders(id, customer_user_id, created_by, status, account, hash_payload, total, order_date_kpi)
+  VALUES ('50000000-0000-0000-0000-0000000000a1','$r1','$sys','faturado','oben','rank_a1', 500, current_date),
+         ('50000000-0000-0000-0000-0000000000a2','$r2','$sys','faturado','oben','rank_a2', 250, current_date),
+         ('50000000-0000-0000-0000-0000000000a3','$r3','$sys','faturado','oben','rank_a3',   0, current_date);
+INSERT INTO public.order_items(sales_order_id, customer_user_id, omie_codigo_produto, product_id, quantity, unit_price, hash_payload) VALUES
+  ('50000000-0000-0000-0000-0000000000a1','$r1',1002,'$p2',1,  500, 'rank_i1'),
+  ('50000000-0000-0000-0000-0000000000a2','$r2',1002,'$p2',1,  250, 'rank_i2'),
+  ('50000000-0000-0000-0000-0000000000a3','$r3',1002,'$p2',9, NULL, 'rank_i3'),
+  ('50000000-0000-0000-0000-0000000000a3','$r3',1002,'$p2',9, NULL, 'rank_i4');
+SQL
+# `| tail -1` porque o `SET` imprime a linha "SET" antes do resultado (idioma do template
+# desta skill). Seguro aqui: captura um VALOR para o `eq` comparar, nao um exit code.
+primeiro() { Pq -c "SET test.uid='$sys'; SELECT (public.melhoria_clientes_por_produto('TINTA')->'clientes'->0->>'cliente');" | tail -1; }
+eq "J1 o topo do ranking e quem TEM receita conhecida, nao o NULL" "$(primeiro)" "Ranking COM receita alta"
+# Busca pelo NOME, nao por posicao fixa: o indice do cliente muda junto com a ordenacao, e um
+# assert por indice passaria a medir outra linha exatamente quando a ordem quebrasse.
+valor_de() { Pq -c "SET test.uid='$sys'; SELECT coalesce((SELECT c->>'valor_12m' FROM jsonb_array_elements(public.melhoria_clientes_por_produto('TINTA')->'clientes') c WHERE c->>'cliente' = '$1'),'NULL');" | tail -1; }
+eq "J2 o cliente sem preco aparece com valor_12m NULL (nao 0 fabricado)" "$(valor_de 'Ranking SEM preco')" "NULL"
+eq "J3 e quem tem receita segue com o numero certo"  "$(valor_de 'Ranking COM receita alta')" "500.00"
+
 # ══════════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): sabota, exige VERMELHO, restaura
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -379,6 +437,23 @@ falso "I6 (diff volta a NULL-blind)" "$(rec "$PED_ZERO")" "1"
 P -q -f "$MIG"   # restaura
 P -q -c "UPDATE public.order_items SET unit_price = NULL WHERE hash_payload='omie_oben_777_1001';"
 eq "H0c restauracao: o diff NULL-safe voltou (I6 de novo)" "$(rec "$PED_ZERO")" "1"
+
+# H5 — tira o NULLS LAST do ranking. J1 tem de inverter: o cliente SEM receita conhecida
+# encabeça o top-50. É o P1 que esta migration introduziria se o bloco G não existisse.
+P -q <<'SQL'
+DO $sab$
+DECLARE v text;
+BEGIN
+  SELECT pg_get_functiondef(p.oid) INTO v FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='public' AND p.proname='melhoria_clientes_por_produto' AND p.prokind='f';
+  v := replace(v, 'order by valor_12m desc nulls last limit 50', 'order by valor_12m desc limit 50');
+  v := replace(v, 'order by t.valor_12m desc nulls last)', 'order by t.valor_12m desc)');
+  EXECUTE v;
+END $sab$;
+SQL
+falso "J1 (ranking volta a NULLS FIRST)" "$(primeiro)" "Ranking COM receita alta"
+P -q -f "$MIG"   # restaura
+eq "H0d restauracao: o ranking voltou ao certo (J1 de novo)" "$(primeiro)" "Ranking COM receita alta"
 
 echo "════════════════════════════════════════"
 echo "PASS=$PASS  FAIL=$FAIL"

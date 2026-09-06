@@ -30,6 +30,11 @@
 --   D. margem_cliente_agregada: `preco_unit >= 0` → `> 0` (0 deixa de ser
 --      computável) + cobertura que DISTINGUE sem-preço de sem-custo.
 --   E. get_customer_margin_summary: projeta as duas contagens novas.
+--   F. melhoria_clientes_por_produto: `ORDER BY … DESC` vira `DESC NULLS LAST`.
+--      Obrigatório pelo mesmo motivo de C: a soma de receita passa a devolver NULL para o
+--      cliente sem item precificado, e DESC em Postgres é NULLS FIRST — o desconhecido
+--      encabeçaria o ranking de quem visitar. Não é a função que estava errada; é esta
+--      migration que introduz o NULL, então a correção vem junto.
 --
 -- ausente ≠ zero — docs/agent/money-path.md
 -- ============================================================================
@@ -751,7 +756,85 @@ COMMENT ON FUNCTION public.get_customer_margin_summary() IS
   'si. ausente<>zero: cliente sem item computavel devolve NULL, nunca 0. SECURITY DEFINER + EXECUTE '
   'so para service_role.';
 
--- ── F. postcondição: a migration ABORTA se não pegou ────────────────────────
+
+-- ── F. ranking que a nullable poria de cabeca para baixo ────────────────────
+-- `melhoria_clientes_por_produto` ordena por `sum(quantity * unit_price) DESC LIMIT 50`.
+-- Essa soma passa a devolver NULL para o cliente sem NENHUM item precificado, e DESC em
+-- Postgres e NULLS FIRST por padrao — o desconhecido subiria ao TOPO do ranking. Nao e a
+-- funcao que estava errada: e esta migration que introduz o NULL, entao a correcao vem junto.
+-- CREATE OR REPLACE (nao DROP): preserva o ACL, que inclui `authenticated` de proposito
+-- (a tela e do vendedor; o gate e `carteira_visivel_para` no corpo, nao o privilegio).
+CREATE OR REPLACE FUNCTION public.melhoria_clientes_por_produto(p_termo text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'private'
+AS $function$
+declare
+  v_uid uuid := auth.uid();
+  v_full boolean;
+  v_result jsonb;
+begin
+  if v_uid is null or not (has_role(v_uid,'employee'::app_role) or has_role(v_uid,'master'::app_role)) then
+    raise exception 'Apenas staff pode consultar';
+  end if;
+  if length(trim(coalesce(p_termo,''))) < 3 then
+    raise exception 'Termo de busca muito curto (mínimo 3 caracteres)';
+  end if;
+  v_full := pode_ver_carteira_completa(v_uid);
+
+  with prods as (
+    select id, descricao, codigo, account
+    from omie_products
+    where coalesce(ativo, true) = true
+      and (descricao ilike '%' || trim(p_termo) || '%' or codigo ilike '%' || trim(p_termo) || '%')
+    order by descricao
+    limit 5
+  ),
+  compras as (
+    select oi.customer_user_id,
+           count(distinct oi.sales_order_id) as n_pedidos,
+           max(coalesce(so.order_date_kpi, so.created_at::date)) as ultima_compra,
+           sum(oi.quantity * oi.unit_price) as valor_12m
+    from order_items oi
+    join sales_orders so on so.id = oi.sales_order_id
+    join prods p on p.id = oi.product_id
+    where so.status not in ('cancelado','rascunho','pendente')
+      and so.deleted_at is null
+      and coalesce(so.order_date_kpi, so.created_at::date) >= current_date - interval '12 months'
+    group by oi.customer_user_id
+  ),
+  visiveis as (
+    select c.* from compras c
+    where v_full or carteira_visivel_para(c.customer_user_id, v_uid)
+  ),
+  top50 as (
+    -- NULLS LAST e OBRIGATORIO desde que order_items.unit_price virou nullable
+    -- (20260905225613): `sum(quantity * unit_price)` devolve NULL quando NENHUM item do
+    -- cliente tem preco conhecido, e o default do Postgres em DESC e NULLS **FIRST** —
+    -- medido: `ORDER BY v DESC` sobre (1,NULL,5) devolve NULL,5,1. Sem isto, o cliente
+    -- de quem NAO SE SABE a receita encabecaria o top-50 de melhoria, invertendo a
+    -- ordem que a tela usa para decidir quem visitar. "Nao sei" nao e "o maior".
+    select * from visiveis order by valor_12m desc nulls last limit 50
+  )
+  select jsonb_build_object(
+    'produtos_casados', (select coalesce(jsonb_agg(jsonb_build_object(
+        'descricao', descricao, 'codigo', codigo, 'account', account)), '[]'::jsonb) from prods),
+    'clientes', (select coalesce(jsonb_agg(jsonb_build_object(
+        'cliente', coalesce(pr.razao_social, pr.name),
+        'n_pedidos', t.n_pedidos,
+        'ultima_compra', t.ultima_compra,
+        'valor_12m', round(t.valor_12m::numeric, 2)
+      ) order by t.valor_12m desc nulls last), '[]'::jsonb)
+      from top50 t join profiles pr on pr.user_id = t.customer_user_id),
+    'total_clientes_visiveis', (select count(*) from visiveis),
+    'escopo', case when v_full then 'todos' else 'minha_carteira' end
+  ) into v_result;
+
+  return v_result;
+end $function$;
+
+-- ── Z. postcondição: a migration ABORTA se não pegou ────────────────────────
 -- Roda no MESMO Run de quem colou, dentro da transação: uma migration meio-aplicada não
 -- termina em silêncio. Verifica SUFICIÊNCIA (o estado que importa), não só existência.
 DO $post$
@@ -825,11 +908,22 @@ BEGIN
     RAISE EXCEPTION 'FALHOU F2: service_role NAO executa a margem — a edge calculate-scores para de medir';
   END IF;
 
-  -- G) SECURITY DEFINER preservado nas duas (sem ele o SET search_path nao protege nada)
+  -- H) SECURITY DEFINER preservado nas duas (sem ele o SET search_path nao protege nada)
   IF NOT (SELECT bool_and(p.prosecdef) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
            WHERE (n.nspname='private' AND p.proname='margem_cliente_agregada')
               OR (n.nspname='public'  AND p.proname='get_customer_margin_summary')) THEN
-    RAISE EXCEPTION 'FALHOU G: alguma das funcoes de margem perdeu o SECURITY DEFINER';
+    RAISE EXCEPTION 'FALHOU H: alguma das funcoes de margem perdeu o SECURITY DEFINER';
+  END IF;
+
+  -- I) o ranking nao pode ter ficado NULLS FIRST
+  SELECT pg_get_functiondef(p.oid) INTO v_corpo FROM pg_proc p
+    JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='public' AND p.proname='melhoria_clientes_por_produto' AND p.prokind='f';
+  IF v_corpo IS NULL THEN
+    RAISE EXCEPTION 'FALHOU I1: melhoria_clientes_por_produto nao existe — o bloco F nao rodou';
+  END IF;
+  IF v_corpo NOT LIKE '%valor_12m desc nulls last limit 50%' THEN
+    RAISE EXCEPTION 'FALHOU I2: o top-50 segue NULLS FIRST — cliente sem receita conhecida encabeca o ranking';
   END IF;
 
   RAISE NOTICE 'OK: unit_price nullable sem default; regua > 0 nas 2 RPCs e no helper; 8 colunas nas 2 funcoes de margem; anon/authenticated FORA, service_role DENTRO; SECURITY DEFINER preservado.';

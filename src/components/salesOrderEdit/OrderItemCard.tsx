@@ -59,14 +59,14 @@ export function OrderItemCard({ item, index, isBlocked, isPriceInvalid = false, 
         </div>
         <div>
           <label className="text-xs text-muted-foreground">Valor Unit.</label>
+          {/* `value={null}` faria o React trocar o input para NAO-CONTROLADO no meio da edicao;
+              '' e o vazio honesto de "preco nao informado" — e o guard ja barra salvar assim. */}
           <Input
             type="text"
             inputMode="decimal"
             pattern="[0-9]*\.?[0-9]*"
             step="0.01"
             min={0}
-            {/* `value={null}` faz o React reclamar de input nao-controlado; '' e o vazio
-                honesto para "preco nao informado" — e o guard ja barra salvar assim. */}
             value={item.valor_unitario ?? ''}
             onFocus={(e) => e.target.select()}
             onChange={(e) => onUpdate(index, 'valor_unitario', Number(e.target.value) || 0)}
