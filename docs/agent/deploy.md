@@ -587,9 +587,14 @@ ledger `public.deploy_atestacoes` (alimentado pelo cron `deploy-atestacoes-colhe
 | exit 2 | mecânica (ledger ausente, coletor parado > 45 min, mapa ≠ fonte, linha fora do formato) | não é "tudo limpo" |
 
 A sonda humana é **uma por leva de deploy** (e a 1ª de edge nova): o founder cola o `sonda:sql` uma
-vez, a resposta entra no ledger em ≤ 15 min e vale até o `fonte` da main mudar. **Não há cron de sonda
-ativa por decisão** (Codex, 2026-09-05): um rollback para bundle pré-sensor faria o cron disparar o
-fluxo real. Detalhe, medição e o que ficou para depois:
+vez, a resposta entra no ledger em ≤ 15 min e vale até o `fonte` da main mudar. **A sonda por cron existe desde 2026-09-06 e é fail-closed por CONSTRUÇÃO**: o cron não fala com a
+edge — fala com a edge-relé `sonda-relay`, que emite um `OPTIONS` com credencial dedicada
+(`x-sonda-credencial`, HMAC de `SONDA_HMAC_KEY`). Bundle velho responde o CORS de sempre e **não
+executa nada** — provado EXECUTANDO cada closure histórico das edges da allowlist
+(`bun run sonda:cron-prova`), inclusive os que não autenticavam nada. Uma edge só entra na
+allowlist com 100 % dos closures `PASSA`. Credencial em header de POST **não** resolveria: bundle
+sem gate executa o fluxo real para qualquer POST (medido). Detalhe:
+`docs/historico/sonda-por-cron-fail-closed.md`. Detalhe, medição e o que ficou para depois:
 `docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`.
 
 - A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable. **N2 de edge (prova de versão) é automático quando `~/.config/afiacao/supabase-pat` existe** (Access Token do Supabase, `chmod 600`, padrão psql-ro): `verify-edge.sh` resolve env `SUPABASE_PAT` > arquivo e consulta a Management API; sem o arquivo, cada verificação de versão vira handoff manual na UI (custou 3 retomadas de sessão p/ confirmar 1 deploy). Teste: `scripts/test-verify-edge-pat.sh`. A varredura por bytes é **paralela** (`xargs -P`, halt-on-hit) — o bundle passou de 300 chunks e o modo 1-a-1 estourava o timeout.
