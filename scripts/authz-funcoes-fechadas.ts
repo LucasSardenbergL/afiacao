@@ -89,6 +89,24 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
   // gateada ao anônimo, e aí o gate no corpo é a ÚNICA tranca (auth.uid() NULL ⇒ has_role false
   // ⇒ hoje bloqueia, mas passa a depender de o gate ser fail-closed no uid NULL — e o próprio
   // manifesto documenta que `pedido_compra_split` NÃO é, por compatibilidade com cron).
+  // 2026-09-06 — as 2 primitivas do SELO DE APROVAÇÃO do pedido Sayerlack (M1, #2187).
+  // `authenticated` alcança DE PROPÓSITO: quem aprova é o comprador logado, e o gate no corpo é
+  // `private.cap_compras_ler`. O que esta Parte E protege aqui é o `anon` — a migration nasce
+  // com `REVOKE ALL … FROM PUBLIC` seguido de GRANT nomeado a authenticated/service_role.
+  // ⚠️ Dívida declarada (P0-2 do challenge Codex, mesma nota do AUTHZ_MANIFEST): o grant a
+  // `authenticated` em reposicao_selar_pedido permite selar direto e depois flipar o status,
+  // contornando a autorização por ESTADO da M2. Quando for revogado, estas duas saem de
+  // PORTA_GATE e passam a PORTA_FECHADA (e a entrada correspondente migra para ACKNOWLEDGED).
+  'public.reposicao_selar_pedido': {
+    fechadaPor: '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql',
+    permitido: PORTA_GATE,
+    motivo: 'sela a aprovação do pedido (snapshot do de-para no item); gate private.cap_compras_ler',
+  },
+  'public.reposicao_conferir_envio': {
+    fechadaPor: '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql',
+    permitido: PORTA_GATE,
+    motivo: 'confere selo e de-para vivo antes do Browserless; gate private.cap_compras_ler',
+  },
   'public.fin_estimar_estoque_omie': {
     fechadaPor: '20260528150000_fin_estoque_omie_feed.sql',
     permitido: PORTA_GATE,
