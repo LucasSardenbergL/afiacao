@@ -1,4 +1,4 @@
-# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v9)
+# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v10)
 
 > Money-path de compras. Origem: decisão **§8.4 do PR #2187** (spec
 > `2026-09-05-selo-aprovacao-pedido-sayerlack-design.md`, branch `claude/frosty-goodall-f12941`), que
@@ -36,7 +36,13 @@
 > É o que fecha a fronteira pré-aprovação sem constranger o motor. ⚠️ **Cria dependência cruzada com o
 > #2187** — ver §2.1.
 >
-> 🔴 **A v9 ainda NÃO foi desafiada.** Rodada 5 é pré-condição da implementação.
+> - **Rodada 5** sobre a v9 (`max · tentativa 1 · 507s · 123.447 tokens`): **corte atômico do §6
+>   confirmado como suficiente**. Mas o token do §2.1 tinha um P1 (a releitura no clique incorpora o
+>   preço adulterado ao próprio token) e o reparo do §5.4 um P2 (produz capturas fictícias no sensor).
+>   Acatados — §9.10.
+>
+> 🔴 **A v10 ainda NÃO foi desafiada.** Rodada 6 é pré-condição da implementação, e não roda nesta
+> sessão (contexto). É a primeira tarefa de quem retomar.
 
 ## 1. A invariante — e por que NÃO é igualdade
 
@@ -92,6 +98,17 @@ pela tela, `current_user` é `authenticated`, o mesmo de um UPDATE cru. O trigge
 consegue** separar os dois na fase pré-aprovação (§9.9.2). Quem separa é o token: ele já compara "o que
 você viu" contra "o que está lá" no instante da aprovação, e um campo a mais faz a aprovação recusar o
 caso realista — **a aba velha que grava preço por cima entre a leitura e a aprovação**.
+
+🔴 **E o token tem de vir do snapshot APRESENTADO, não de uma releitura no clique** (§9.10). O spec do
+#2187 manda `PedidoRow`/lote buscarem os itens *imediatamente antes de aprovar* — o que permite
+`tela mostra 10 → outra aba grava 100 → o clique busca 100 → o token contém 100 → aprovação aceita`.
+Os locks protegem **comparação→aprovação**, mas a alteração aconteceu **antes da busca**. O token
+comprova **correspondência com o snapshot**, não procedência nem visualização humana — e isso precisa
+constar expressamente lá.
+Requisito: o token vem do snapshot que foi exibido e confirmado (inline **e** em lote —
+`useCicloHoje.ts:92` aprova os IDs selecionados sem revisão intermediária); releitura divergente
+**interrompe** a aprovação e exige nova revisão. Testar a sequência completa: só testar
+`token=10 × banco=100` **não cobre o furo**.
 
 **Não contradiz a §8.4 do #2187:** lá a decisão foi manter preço fora do **selo**. O token é outra
 coisa — anti-TOCTOU de leitura, não procedência. O selo continua sem preço.
@@ -363,8 +380,19 @@ UPDATE pedido_compra_item SET preco_unitario = :preco_correto  WHERE id = :id;  
 COMMIT;
 ```
 
-O teste é **recusa → reparo → disparo válido**, com o preço final idêntico ao inicial. Sem isso, a
-"recuperação" do §5.3 é promessa não executável.
+🔴 **O reparo tem de ser IDENTIFICÁVEL, senão polui o sensor** (§9.10). Com `owner=postgres`,
+`sucesso_portal` e PO ausente, os dois UPDATEs caem em **`portal_captura`** — que precede `manual_sql`
+na tabela do §4.3 —, e `10→11→10` deixa no log **+10% e −9,09%** como se o portal tivesse mexido no
+custo. Meu comentário "carimba `manual_sql`" **contradizia a minha própria tabela de precedência**.
+
+Correção: `SET LOCAL reposicao.reparo_carimbo = 'on'`, honrado **só** com `current_user = postgres`,
+força a origem `manual_sql`; e o sensor do §4.6 **exclui `manual_sql` da amostra de captura**.
+⚠️ Este GUC é de **ROTULAGEM, nunca de autorização** — é a distinção que o torna aceitável depois de a
+rodada 3 ter derrubado o GUC como mecanismo de autoridade: o pior caso aqui é alguém rotular errado a
+própria escrita no sensor, não obter permissão que não tinha.
+
+O teste é **recusa → reparo → disparo válido**, com o preço final idêntico ao inicial **e** verificando
+origem gravada e efeito no sensor. Sem isso, a "recuperação" do §5.3 é promessa não executável.
 
 ⚠️ Recuperação de preço é **do founder, não do operador**: como `authenticated` não escreve preço
 pós-aprovação, a RPC de 1ª compra só resolve "preço ausente". Preço válido a corrigir é SQL Editor.
@@ -715,6 +743,25 @@ passo 2 do §4.3 restaura os NULLs. A "recuperação" do §5.3 era promessa sem 
   modos.
 - Falta ainda testar UPDATE direto de preço positivo nos dois estados pré-aprovação, inclusive a aba
   antiga após outro preenchimento — depende da decisão §9.9.2.
+
+### 9.10 Quinta rodada (v9) — o corte atômico passou; o token e o reparo, não
+
+`gpt-6-astra · max · tentativa 1 · 507s · 123.447 tokens`. **Confirmado suficiente:** o corte atômico
+do §6 — *"`SHARE ROW EXCLUSIVE` conflita com o `ROW EXCLUSIVE` dos escritores e permanece até o término
+da transação; escritores anteriores terminam antes do corte, os seguintes encontram o ramo ativo"*.
+
+- **[P1] A releitura no clique incorpora o preço adulterado ao PRÓPRIO token.** O #2187 manda buscar os
+  itens imediatamente antes de aprovar ⇒ `tela mostra 10 → outra aba grava 100 → o clique busca 100 →
+  token = 100 → aprovação aceita`. Os locks protegem comparação→aprovação; a alteração é **anterior à
+  busca**. Acatado no §2.1: o token vem do snapshot **apresentado e confirmado**, releitura divergente
+  interrompe. *"Apenas testar `token=10 × banco=100` não cobre o furo."*
+- **[P2] O reparo produz capturas fictícias no sensor.** Acatado no §5.4 (GUC de rotulagem +
+  `manual_sql` fora da amostra).
+- **Risco aceito, a constar expressamente:** *"master deliberado continua passando: pode gravar 100
+  antes da aprovação e apresentar token de 100. Aceitar isso é defensável se quem pode aprovar integra
+  a fronteira de confiança."* — e quem aprova é `master`, a mesma capability de `cap_compras_ler`. **O
+  token comprova correspondência com o snapshot, não procedência nem visualização humana.** Isso não
+  justifica a releitura silenciosa do P1 acima.
 
 ### 9.6 O que o Codex NÃO transformou em achado
 
