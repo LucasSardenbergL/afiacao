@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 517
+-- Total de custom migrations: 518
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -555,6 +555,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260905224959', 'cancelar_pedido_guard_atomico', '20260905224959_cancelar_pedido_guard_atomico.sql'),
   ('20260905225613', 'preco_ausente_nao_e_zero', '20260905225613_preco_ausente_nao_e_zero.sql'),
   ('20260906105549', 'remover_itens_pedido_guard', '20260906105549_remover_itens_pedido_guard.sql'),
+  ('20260906151204', 'deploy_sonda_cron_fail_closed', '20260906151204_deploy_sonda_cron_fail_closed.sql'),
   ('20260906151715', 'aprovar_pedido_guard_atomico', '20260906151715_aprovar_pedido_guard_atomico.sql'),
   ('20260906154202', 'cancelar_pedido_revoke_anon', '20260906154202_cancelar_pedido_revoke_anon.sql'),
   ('20260906164001', 'captura_authz_gate_custo_rpcs_preco', '20260906164001_captura_authz_gate_custo_rpcs_preco.sql'),
@@ -2293,6 +2294,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', ''),
   ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', ''),
+  ('deploy_sonda_cron_fail_closed', 'function', 'public', 'deploy_sonda_disparar', ''),
+  ('deploy_sonda_cron_fail_closed', 'table', 'public', 'deploy_sonda_alvos', ''),
+  ('deploy_sonda_cron_fail_closed', 'table', 'public', 'deploy_sonda_disparos', ''),
+  ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_tick', 'deploy_sonda_disparos'),
+  ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_edge_quando', 'deploy_sonda_disparos'),
+  ('deploy_sonda_cron_fail_closed', 'cron_job', 'cron', 'deploy-sonda-cron', ''),
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
   ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_price', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_prices', ''),
@@ -4081,6 +4090,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', ''),
   ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', ''),
+  ('deploy_sonda_cron_fail_closed', 'function', 'public', 'deploy_sonda_disparar', ''),
+  ('deploy_sonda_cron_fail_closed', 'table', 'public', 'deploy_sonda_alvos', ''),
+  ('deploy_sonda_cron_fail_closed', 'table', 'public', 'deploy_sonda_disparos', ''),
+  ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_tick', 'deploy_sonda_disparos'),
+  ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_edge_quando', 'deploy_sonda_disparos'),
+  ('deploy_sonda_cron_fail_closed', 'cron_job', 'cron', 'deploy-sonda-cron', ''),
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
   ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_price', ''),
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_prices', ''),
