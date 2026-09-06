@@ -564,6 +564,20 @@ GRANT EXECUTE ON FUNCTION public.farmer_recomendacoes_substituir(uuid, uuid, uui
 REVOKE ALL ON FUNCTION public.farmer_bundle_recomendacoes_substituir(uuid, uuid, uuid, jsonb, text, text, jsonb, uuid)    FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.farmer_bundle_recomendacoes_substituir(uuid, uuid, uuid, jsonb, text, text, jsonb, uuid) TO authenticated, service_role;
 
+-- ── SENSOR DE APPLY — a única coisa aqui que NÃO é no-op, de propósito ───────
+-- Problema real: como esta migration recria as funções com o corpo que JÁ roda,
+-- NENHUMA query sobre o corpo distingue "aplicada" de "esqueci de colar" — ela é
+-- verde nos dois casos. Isso é precisamente a falha silenciosa que o ritual de
+-- migration manual existe para evitar (ausência de sinal não é aprovação).
+-- COMMENT ON FUNCTION resolve: não entra em pg_get_functiondef (o md5 do corpo
+-- segue idêntico — provado por assert no harness, não assumido), não muda
+-- comportamento, é idempotente, e só passa a existir DEPOIS do Run. Vira o
+-- carimbo que a validação lê para saber que o SQL rodou de verdade.
+COMMENT ON FUNCTION public.farmer_recomendacoes_substituir(uuid, uuid, uuid, jsonb, text, text, jsonb, uuid) IS
+  'Guard de escopo de carteira: FOR SHARE em farmer_client_scores + FG009 quando farmer_id IS DISTINCT FROM p_farmer_id. Exige UPDATE em farmer_client_scores para authenticated (SECURITY INVOKER). Corpo capturado do VIVO em prod pela migration 20260830204210 — captura-deriva-authz 2026-08-30.';
+COMMENT ON FUNCTION public.farmer_bundle_recomendacoes_substituir(uuid, uuid, uuid, jsonb, text, text, jsonb, uuid) IS
+  'Idem farmer_recomendacoes_substituir, no bundle. Corpo capturado do VIVO em prod pela migration 20260830204210 — captura-deriva-authz 2026-08-30.';
+
 -- ── Validação pós-apply (read-only) — cole DEPOIS do Run ─────────────────────
 --   SELECT p.proname,
 --          md5(pg_get_functiondef(p.oid)) AS md5_atual,

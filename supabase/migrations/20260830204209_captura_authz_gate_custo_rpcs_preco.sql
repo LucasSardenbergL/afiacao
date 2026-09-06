@@ -290,6 +290,22 @@ GRANT EXECUTE ON FUNCTION public.get_tint_prices(uuid[])  TO authenticated, serv
 REVOKE ALL ON FUNCTION public.get_preco_cockpit(jsonb)    FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_preco_cockpit(jsonb) TO authenticated, service_role;
 
+-- ── SENSOR DE APPLY — a única coisa aqui que NÃO é no-op, de propósito ───────
+-- Problema real: como esta migration recria as funções com o corpo que JÁ roda,
+-- NENHUMA query sobre o corpo distingue "aplicada" de "esqueci de colar" — ela é
+-- verde nos dois casos. Isso é precisamente a falha silenciosa que o ritual de
+-- migration manual existe para evitar (ausência de sinal não é aprovação).
+-- COMMENT ON FUNCTION resolve: não entra em pg_get_functiondef (o md5 do corpo
+-- segue idêntico — provado por assert no harness, não assumido), não muda
+-- comportamento, é idempotente, e só passa a existir DEPOIS do Run. Vira o
+-- carimbo que a validação lê para saber que o SQL rodou de verdade.
+COMMENT ON FUNCTION public.get_tint_price(uuid) IS
+  'Gate de custo = private.cap_custo_ler (master ou employee estrategico/super_admin). Corpo capturado do VIVO em prod pela migration 20260830204209 — captura-deriva-authz 2026-08-30. Ver docs/historico/deriva-de-corpo-prod-a-frente-do-repo.md.';
+COMMENT ON FUNCTION public.get_tint_prices(uuid[]) IS
+  'Gate de custo = private.cap_custo_ler, dentro do CTE staff AS MATERIALIZED. Corpo capturado do VIVO em prod pela migration 20260830204209 — captura-deriva-authz 2026-08-30.';
+COMMENT ON FUNCTION public.get_preco_cockpit(jsonb) IS
+  'DOIS gates: execucao (employee OR master -> 42501) e projecao numerica (private.cap_custo_ler). Corpo capturado do VIVO em prod pela migration 20260830204209 — captura-deriva-authz 2026-08-30.';
+
 -- ── Validação pós-apply (read-only) — cole DEPOIS do Run ─────────────────────
 -- Captura fiel ⇒ o md5 do functiondef NÃO pode mudar. Os esperados foram medidos na
 -- PROD em 2026-08-30, ANTES desta migration existir.

@@ -239,6 +239,26 @@ eq "C7 gerencial ainda vê a faixa (decisão sem o número)" "$(cock "$U_GEREN" 
 eq "C8 customer é BARRADO na execução do cockpit (42501)" "$(cock_sqlstate "$U_CLI")" "42501"
 eq "C9 estrategico NÃO é barrado (o gate de execução deixa staff entrar)" "$(cock_sqlstate "$U_ESTRAT")" "SEM_ERRO"
 
+echo "─── sensor de apply: COMMENT carimba sem tocar o corpo ───"
+# A migration usa COMMENT ON FUNCTION como ÚNICO efeito observável (ela recria o corpo que já
+# roda, então nada mais distingue "aplicada" de "não colada"). Isso só vale se o COMMENT de fato
+# NÃO entrar no pg_get_functiondef — senão o md5 mudaria e a validação de fidelidade acusaria
+# falso positivo. Provado aqui, não assumido.
+MD5_ANTES="$(Pq -c "SELECT md5(pg_get_functiondef('public.get_tint_price(uuid)'::regprocedure));")"
+P -q <<'SQL'
+COMMENT ON FUNCTION public.get_tint_price(uuid) IS 'texto qualquer só para mexer no comentário';
+SQL
+MD5_DEPOIS="$(Pq -c "SELECT md5(pg_get_functiondef('public.get_tint_price(uuid)'::regprocedure));")"
+eq "S1 COMMENT não altera o md5 do functiondef (o sensor não polui a prova de fidelidade)" "$MD5_ANTES" "$MD5_DEPOIS"
+eq "S2 o COMMENT trocado é de fato observável (o sensor sensoria)" \
+   "$(Pq -c "SELECT obj_description('public.get_tint_price(uuid)'::regprocedure) = 'texto qualquer só para mexer no comentário';")" "t"
+# restaura o carimbo da migration e confirma que ele voltou
+P -q -f "$MIG"
+eq "S3 reaplicar a migration recarimba as 3 funções" \
+   "$(Pq -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname='public' AND p.proname IN ('get_tint_price','get_tint_prices','get_preco_cockpit')
+               AND obj_description(p.oid) LIKE '%captura-deriva-authz 2026-08-30%';")" "3"
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3). Sabotar aqui = restaurar o predicado do REPO. Se os
 # asserts do eixo seguissem verdes, a migration não capturaria hardening nenhum.
