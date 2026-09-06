@@ -553,8 +553,21 @@ if [ "${1:-}" = "--falsificar" ]; then
   [ -n "$utf8" ] || { printf '  \033[31mFALHA\033[0m nenhum locale UTF-8 — metade da cobertura fingindo ser inteira\n'; exit 1; }
 
   ALVO_REAL="$ALVO"
+
+  # ARVORE-ESPELHO -- a copia sabotada NAO pode morar em "$tmp" raso. O `edges-pendentes.sh` deriva
+  # o BINARIO auxiliar (`scripts/edges-afetadas.ts`) de `$0` e nao de `$RAIZ`, de proposito (o
+  # `$RAIZ` ja aponta para o repo-fixture; ver o comentario dele). Uma copia em "$tmp" faz esse
+  # caminho apontar para fora do repo, o `[ ! -f "$AFETADAS_TS" ]` fecha fail-closed com exit 2, e
+  # a suite fica VERMELHA sem sabotagem nenhuma -- com isso TODA sabotagem "era detectada" de graca
+  # e este bloco inteiro anunciava "todas as sabotagens ficaram vermelhas" sem ter medido nada.
+  # Nao era visivel pelo `test:hooks`: la a suite roda sobre o alvo REAL, no lugar certo.
+  # Medido pelo CONTROLE logo abaixo, que existe exatamente para isto.
+  espelho="$tmp/espelho"
+  mkdir -p "$espelho/.claude/skills/fecho/scripts"
+  ln -s "$RAIZ/scripts" "$espelho/scripts"
+  DIR_COPIA="$espelho/.claude/skills/fecho/scripts"
   sabota() { # <descricao> <expressao-sed>
-    local desc="$1" expr="$2" copia="$tmp/sabotado.sh" erro
+    local desc="$1" expr="$2" copia="$DIR_COPIA/sabotado.sh" erro
     erro="$(sed "$expr" "$ALVO_REAL" 2>&1 >"$copia")"
     if [ -n "$erro" ]; then
       printf '  \033[31mFALHA\033[0m "%s": sed invalido (%s) — falsificacao vazia\n' "$desc" "${erro:0:50}"; falhou=1; return
@@ -579,6 +592,36 @@ if [ "${1:-}" = "--falsificar" ]; then
   }
 
   # (a) a sonda positiva vira `command -v` de mentira: presente passa a valer por respondendo
+  # -- CONTROLE: a suite tem de estar VERDE antes de qualquer sed --------------------
+  # "Ficou vermelho" so e informacao se existir um verde do qual sair. Sem esta trava, um arnes
+  # incondicionalmente vermelho (fixture podre, stub quebrado, assercao nova mal escrita) APROVA
+  # com louvor: toda sabotagem produz o vermelho exigido e o gate anuncia "toda sabotagem foi
+  # detectada" -- falsificacao sem linha de base, que prova que o teste REAGE, nao que ele estava
+  # certo antes de reagir. Mesma familia de `ausente != zero`.
+  #
+  # O controle roda a MESMA invocacao do laco de sabotagem (copia em $tmp, LC_ALL forcado, a mesma
+  # variavel de override) e so troca a sabotagem por NADA. Por isso ele NAO e redundante com o
+  # `bun run test:hooks` do step anterior do CI: la a suite roda no locale AMBIENTE e sobre o alvo
+  # REAL. Se for justamente essa invocacao (copia + LC_ALL) que esta vermelha por motivo alheio,
+  # o `test:hooks` fica verde e todo este bloco vira teatro.
+  # Abortamos ANTES do primeiro sed: com a base vermelha nenhum veredito de (B) e legivel.
+  controle="$DIR_COPIA/controle.sh"
+  cp "$ALVO_REAL" "$controle"; chmod +x "$controle"
+  for loc in C "$utf8"; do
+    # shellcheck disable=SC2030,SC2031
+    if ( export LC_ALL="$loc"; ALVO="$controle"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
+      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE\n' "$loc"
+    else
+      printf '  \033[31mFALHA\033[0m [%s] controle SEM sabotagem ja esta VERMELHO — sem linha de base, falsificar nao prova nada\n' "$loc"
+      falhou=1
+    fi
+  done
+  if [ "$falhou" -ne 0 ]; then
+    printf '\033[31m== falsificacao ABORTADA: sem verde de partida ==\033[0m\n'
+    printf '   Conserte a suite primeiro; sabotar sobre vermelho produz veredito fabricado.\n'
+    exit 1
+  fi
+
   sabota "presenca do wrapper basta (sem exigir resposta positiva)" \
     "s%! \"\$PSQL\" -Atc 'SELECT 1' 2>/dev/null | command grep -Fxq -- '1'%false%"
   # (a2) a sonda volta a exigir a saida INTEIRA == "1": reprova o wrapper bom (o defeito de prod)

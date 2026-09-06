@@ -163,6 +163,17 @@ rodar_sabotagem() {
   fi
 }
 
+# (A) ja E o CONTROLE explicito deste arnes -- e o unico dos 5 do `test:falsificacao` que nascera
+# com linha de base. O que faltava era ABORTAR: com FALHAS>0 em (A) a rede ja esta vermelha sem
+# sabotagem, e cada "✅ sabotada -> VERMELHO" de (B) vira veredito FABRICADO sobre uma camada que
+# ninguem mediu. "Ficou vermelho" so e informacao se existir um verde do qual sair.
+if [ "$FALSIFICAR" -eq 1 ] && [ "$FALHAS" -ne 0 ]; then
+  aviso ""
+  aviso "❌ (A) NAO fechou: $FALHAS problema(s) na rede base. Abortando ANTES de (B) —"
+  aviso "   sabotar sobre vermelho nao prova camada nenhuma."
+  exit 1
+fi
+
 if [ "$FALSIFICAR" -eq 0 ]; then
   aviso ""
   if [ "$FALHAS" -eq 0 ]; then
