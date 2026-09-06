@@ -203,6 +203,7 @@ Harness PG17 (`db/test-deploy-sonda-cron.sh`, padrão de `db/test-deploy-atestac
 - `Deno.serve`, `Deno.env.get` e `globalThis.fetch` aceitam reatribuição antes do `import()` dinâmico: o handler é capturado, a env é a de teste, o `fetch` conta e lança — sem `--allow-net`.
 - Bundle simulado `OPTIONS → gate → createClient → fetch`: o request sem credencial devolveu **401 com 0 efeitos** e o controle positivo registrou **2 efeitos + 1 fetch**.
 - Prod: `OPTIONS` chega à function e o **corpo** volta pelo gateway (HTTP 200, `ok`).
+- **Redirect (P1 da rodada 2), medido no Deno 2.9.2:** servidor local respondendo `303 Location: /functions/v1/monthly-report` a um `OPTIONS`; com `redirect` padrão o `fetch` **seguiu como `GET /functions/v1/monthly-report`** (o fluxo real do bundle velho); com `redirect: "manual"` voltou `303` (`type: basic`, `Location` legível) **sem** segunda requisição. `crypto.subtle.verify` aceita a mensagem da própria edge e recusa a de outra.
 - **Os contraexemplos do Codex, executados de verdade** (bundles materializados por `git archive`, import map gerado dos remotos do closure — `https://deno.land/std@0.190.0/http/server.ts`, `https://esm.sh/@supabase/supabase-js@2[.49.1]`, `npm:resend@2.0.0` — e o runner do §5 em forma de spike):
 
   | bundle | (a) `OPTIONS` do relé | (b) preflight | (c) `POST {}` **sem credencial** | (d) `POST {}` + `x-cron-secret` |
