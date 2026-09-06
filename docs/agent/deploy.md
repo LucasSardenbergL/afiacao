@@ -365,7 +365,7 @@ com um body `{"probe": true}`* — ou seja, sem `action` e sem os demais campos?
 |---|---|
 | `conciliar-pedido-portal` | 400 `pedido_id inválido` (`Number(undefined)` não é inteiro) |
 | `analyze-unified-order` | 401 do gate `Bearer` antigo; passando, 400 por falta de `text`/imagem antes da Anthropic |
-| `omie-nfe-recebimento` | 401 do gate staff (JWT) |
+| `omie-nfe-recebimento` | 401 do gate staff (JWT) — **rigor feito no pai da sonda** (2026-09-06, `a086cc60a^`): `Authorization` sem `Bearer ` → 401 nas linhas 342-344, ANTES do `req.json()` da linha 378 — o bundle pré-sonda nem lê o corpo |
 | `omie-nfe-webhook` | 401 do gate `x-webhook-secret` |
 | `process-nfe` | 401 (`Bearer` + `getUser`); `nf_number` obrigatório barraria em seguida |
 
@@ -600,6 +600,7 @@ fluxo real. Detalhe, medição e o que ficou para depois:
 - **Fix que é uma AUSÊNCIA não se prova por bytes.** Remover um `|| 0`, um fallback ou um default não deixa assinatura: no bundle minificado o nome da variável sumiu, e `x.get(a)||0` legítimo (contador, onde 0 é a resposta certa) é indistinguível do que você tirou. Ou você grepa o **par positivo** que entrou junto (no #1471, o `.order("product_id"` da paginação, que só existe pós-fix), ou aceita que a prova é **comportamental** — e vai para a tela.
 - **QA visual pós-Publish** (renderização/comportamento na tela, refactor visual sem texto novo): os bytes não bastam e o `/browse` headless **não monta** a SPA. O padrão é **Claude-in-Chrome na sessão logada do founder** (ele abre o app 1×; o agente confere as telas) — detalhado no Passo 4b da skill `lovable-deploy-verify`.
 - O acesso **read-only** ao banco (`psql-ro`, ver `docs/agent/database.md`) confirma migration aplicada sem depender do founder.
+- ⚠️ **A pendência escrita no corpo do PR ("falta deploy/Publish") é RECADO, não medição — MEÇA imediatamente antes de PEDIR (2026-09-06, chip do #2201).** Entre o PR e o chip, founder ou outra sessão já podem ter agido: o ledger foi de ⚪ NUNCA atestada a ✅ confere em **4 min** (sondas 70349/70352, `v1.1` + `fonte` da main), e o Publish já estava no ar (`verify-frontend.sh` exit 0). Edge: re-rode `bun run pendencias:deploy` (ou `bun run sonda:sql --so-leitura <edge> | psql-ro`) na hora de ENTREGAR, não só ao começar. Front: rode `verify-frontend.sh --pai <pai-do-PR> '<sentinela>'` ANTES de listar "Publish pendente" — exit 0 cancela a linha; só exit 1 com `CONTROLE_POSITIVO_OK` a mantém. Dois atores sondaram a mesma edge em 2,5 min: inócuo com sensor no ar, **uma execução real por colagem** numa edge cara pré-sensor → `docs/historico/pendencia-do-pr-nao-e-medicao.md`.
 
 ## Atualização do PWA — modelo `prompt` (offline-first; #1169)
 
