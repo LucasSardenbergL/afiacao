@@ -421,7 +421,54 @@ silêncio do erro e a resposta negativa produzem a mesma saída, o script não t
 dois, e vai escolher o errado. (Irmã da #7: lá o wrapper devolve exit≠0 *sem rodar nada*; aqui o
 comando roda, falha, e a falha é apagada no caminho.)
 
-## O padrão por trás das doze
+### 13. `pgrep -f` como sonda de "meu trabalho acabou" — o padrão identifica um COMANDO, não uma EXECUÇÃO
+
+```bash
+until ! pgrep -f 'mutcheck.sh scripts/sonda-versao-sql' > /dev/null; do sleep 20; done
+echo "mutcheck local terminou"; grep -E 'sumário|baseline' .mut1.txt | tail -3
+```
+
+O `pgrep -f` casa a **linha de comando**, e a tabela de processos é da MÁQUINA, não da worktree.
+Medido em 2026-09-06, com ~27 sessões vivas: o padrão acima casou **cinco** PIDs e **nenhum** era um
+`mutcheck.sh` em execução — eram shells de outras worktrees, incluindo o **próprio watcher**, cuja
+linha de comando contém justamente o texto que ele procura. O único `mutcheck` real da máquina era o
+da worktree `vibrant-dubinsky-8c6471` (PID 20507), de outra sessão.
+
+Os dois desfechos possíveis são o MESMO defeito de identidade:
+
+| quem casa | o watcher | consequência |
+|---|---|---|
+| só o mutcheck ALHEIO | declara fim quando o trabalho do VIZINHO acaba | lê `.mut1.txt` vazio, velho ou de outra rodada |
+| outro watcher — ou ele mesmo | **nunca** sai do `until` | PID 19432 preso `06:26:10`, sem nenhum mutcheck vivo na máquina |
+
+E o segundo passo fecha a armadilha: `grep` num arquivo que ninguém escreveu devolve **zero linhas**,
+e zero linha lê-se como "sem problema" — é o `ausente ≠ zero` do money-path aplicado à espera.
+Veredito ("terminou, **e o resultado é este**") derivado de dado que nunca foi consultado.
+
+**Por que esta máquina é terreno fértil:** ~30 worktrees rodando os MESMOS comandos
+(`bunx vitest run <arquivo>`, `mutcheck.sh <mesmo alvo>`). O padrão que identifica um *comando* não
+identifica uma *execução* — e quanto mais parecidas as sessões, pior. Controle negativo na mesma
+sessão: uma string montada em runtime, que nenhuma cmdline carrega, devolve `rc=1` e zero linhas — o
+`pgrep` não está quebrado, a **pergunta** é que está errada. (Reproduzir o auto-casamento num
+`zsh -c` isolado deu `rc=1`: a mecânica exata ficou por medir; o que está medido é o campo.)
+
+⇒ Espere pelo **seu** processo, ou por um marcador que ele mesmo escreveu:
+```bash
+bash scripts/mutcheck.sh alvo > .mut1.txt 2>&1 & pid=$!   # o PID é MEU, não um padrão de texto
+wait "$pid"; rc=$?                                        # (de outro shell: while kill -0 "$pid")
+{ bash scripts/mutcheck.sh alvo; echo "RC=$?"; } >> .mut1.txt 2>&1   # marcador POSITIVO de fim…
+command grep -q '^RC=' .mut1.txt                                     # …e espere por ELE (§7)
+```
+
+**A regra em uma linha: ausência de processo alheio não é presença do meu resultado.**
+
+Mesma classe de [teste-que-afirma-o-checkout.md](teste-que-afirma-o-checkout.md) — e, por acaso,
+sobre o mesmo alvo — uma camada acima: lá a asserção media o **CHECKOUT** do CI em vez do código;
+aqui a sonda mede a **tabela de processos** da máquina em vez do trabalho da própria worktree. O
+eixo comum: a asserção pegou carona num estado GLOBAL compartilhado, e fica verde ou vermelha por
+motivo alheio ao objeto.
+
+## O padrão por trás das treze
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -432,7 +479,10 @@ pelo lado do INSUMO: as nove anteriores leem mal um resultado real, enquanto ela
 um insumo que nunca foi o pedido — o comando roda, devolve 0, e mede outra coisa. A décima primeira e a décima segunda fecham pelo lado do CANAL:
 uma lê o PREÂMBULO do wrapper como resposta, a outra apaga o ERRO da consulta com `2>/dev/null`
 — nas duas o script conclui sobre um dado que nunca chegou, e nas duas o caminho
-não-reconhecido estava desenhado para o lado otimista. Verde e vermelho
+não-reconhecido estava desenhado para o lado otimista. E a décima terceira fecha pelo lado do
+SUJEITO: ela não lê mal um resultado nem um canal — mede o OBJETO errado, um estado global (a
+tabela de processos da máquina) que qualquer worktree vizinha move, e por isso termina, ou deixa
+de terminar, por motivo alheio ao trabalho que dizia vigiar. Verde e vermelho
 por construção precisam do mesmo antídoto: uma leitura cuja resposta já se conhece. A contramedida é sempre a mesma — **exigir uma afirmação POSITIVA e com formato
 conhecido** (exit code capturado colado, saída não-vazia, marcador de conclusão, formato conferido),
 em vez de ler qualquer coisa na ausência dela.
