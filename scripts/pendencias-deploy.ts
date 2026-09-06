@@ -532,7 +532,6 @@ export function main(argv: string[] = []): number {
   imprimir(rel, linhasSemIdentidade);
 
   const nunca = rel.vereditos.filter((v) => v.estado === 'NUNCA_ATESTADA').length;
-  const pendentes = tolerarNunca ? rel.totalPendentes - nunca : rel.totalPendentes;
   if (tolerarNunca && nunca > 0) {
     console.log(`\n⚠️  PENDENCIAS_TOLERAR_NUNCA_ATESTADA=1: ${nunca} nunca atestada(s) NÃO contam como pendência nesta execução.`);
   }
