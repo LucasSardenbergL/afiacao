@@ -102,10 +102,18 @@ nota: troca `atualizado_em` por uma coluna inexistente — o `CREATE OR REPLACE`
   no Omie e grava por cima de um cancelamento. Fechar exige claim atômico **no disparador**
   (coluna de claim dedicada), com deploy manual de edge. Ver
   `docs/historico/guard-fora-da-escrita-nao-e-guard.md`.
-- **ACL:** `aprovar_pedido_sugerido` e `cancelar_pedido_sugerido` ainda têm `anon=X/postgres` no
-  ACL da PROD (a 2ª via já revogou o dela). Como as duas são SECURITY INVOKER e a tabela tem RLS
-  ligada, anon é barrado na tabela — é defesa em profundidade faltando, **não** buraco aberto.
-  Não mexido aqui de propósito: mudar ACL é decisão separada, fora do escopo de um fix de TOCTOU.
+- **ACL: ENDEREÇADO** — era "`aprovar_pedido_sugerido` e `cancelar_pedido_sugerido` ainda têm
+  `anon=X/postgres` no ACL da PROD". A irmã foi revogada pelo **#2241** (`20260906154202`, aplicada
+  em 2026-09-06) e esta, pelo **#2249** (`20260906165706`). Segue valendo o enquadramento: as duas
+  são SECURITY INVOKER e a tabela tem RLS ligada, então anon já era barrado na tabela — era defesa
+  em profundidade faltando, **não** buraco aberto. Continua correto não ter mexido nisso aqui:
+  mudar ACL é decisão separada, fora do escopo de um fix de TOCTOU.
+- ⚠️ **A migration DESTE PR (`20260906151715`) não estava aplicada na PROD** em 2026-09-06 —
+  medido no pré-voo do #2249 por duas testemunhas: o corpo vivo ainda era o TOCTOU original (sem
+  `AND status NOT IN` no `WHERE` do UPDATE) e o timestamp estava ausente de
+  `supabase_migrations.schema_migrations`, com as três irmãs presentes. **Merge ≠ produção**: o PR
+  fechou, o CI passou, e o guard não está no ar. Precisa ir ao SQL Editor.
+  Ver [postcondicao-copiada-herda-pressuposto.md](postcondicao-copiada-herda-pressuposto.md).
 - **Varredura:** o mesmo regex (`UPDATE … pedido_compra_sugerido` + `INTO`) lista na PROD 9
   funções; 3 são estas vias e `iniciar_envio_portal_pre_claim` já usa claim condicional em uma
   instrução. ~~Sobram 5 **candidatas não triadas**~~ — **TRIADAS em 2026-09-06: as cinco estão limpas**, com
