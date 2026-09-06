@@ -331,13 +331,16 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
   const removerLoteMutation = useMutation({
     mutationFn: async () => {
       const ids = linhasSelecionadas.map((l) => l.id);
-      if (ids.length === 0) return null;
+      // A UI só habilita este botão com seleção não-vazia, então chegar aqui vazio é bug do
+      // chamador — e LANÇAR mantém o desfecho visível. Devolver `null` e sair calado no
+      // `onSuccess` seria o padrão "leitura vira return null" que o gate
+      // erro-colapsado-em-vazio fiscaliza: o operador clicaria e nada aconteceria, sem sinal.
+      if (ids.length === 0) throw new Error('nenhum item selecionado');
       // O lote inteiro vai numa chamada: a RPC apaga os ids e recalcula sob o MESMO lock, então
       // não há janela entre remoções parciais (era possível com N deletes + N recálculos).
       return await removerItens(ids);
     },
     onSuccess: (res) => {
-      if (!res) return;
       // `res.removidos` vem do BANCO (quantos o DELETE realmente pegou), não do tamanho da
       // seleção: um id já removido por outra sessão não pode ser contado como removido aqui.
       toast.success(
