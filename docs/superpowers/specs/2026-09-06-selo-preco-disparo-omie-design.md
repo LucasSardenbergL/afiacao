@@ -40,6 +40,14 @@ A invariante executável é **procedência**, não igualdade:
 
 ## 2. Dependência do #2187 (esta fatia NÃO é standalone)
 
+⚠️ **O #2187 está EM RECONSTRUÇÃO** (conferido em 2026-09-06, imediatamente antes de abrir este PR):
+o Codex reprovou a M1 dele, e a sessão irmã a refez "sobre a main (guard atômico)", ainda marcada
+`NÃO PRONTA`. Os cinco símbolos de que esta fatia depende sobrevivem à reconstrução
+(`aprovacao_selo`, `reposicao.selo_bypass`, `reposicao_selar_pedido`, `reposicao_selo_itens`,
+`p_itens_vistos`), mas **a FORMA do guard mudou** — e é dentro dele que os ramos `SA008`/`SA009` do
+§4.5 se enxertam. **Re-conferir §4.5 contra a versão final do guard antes de implementar**; se o
+guard atômico não tiver mais o ponto de enxerto que este spec assume, §4.5 é reescrita, não adaptada.
+
 Consome, sem reimplementar: a RPC `aprovar_pedido_sugerido` de 3 args, o trigger de
 `pedido_compra_item`, o GUC de bypass (`reposicao.selo_bypass`, honrado só com
 `current_user IN ('postgres','service_role')`), `reposicao_selo_itens`, `aprovacao_selo` e
