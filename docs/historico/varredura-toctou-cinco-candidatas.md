@@ -108,8 +108,29 @@ SELECT * INTO p FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UP
 ```
 
 Um `FOR UPDATE` numa função **read-only**, que da leitura do tick é invisível, e que na leitura do
-próprio callee **parece redundante** — ele não escreve nada. Não é redundante: é ele que segura a
-decisão de valor válida até o `COMMIT` do tick.
+próprio callee **parece redundante** — ele não escreve nada. Não é redundante: ele trava o pai
+**antes** (linha 18) de a soma dos itens ser lida (linha 73), então todo escritor que passa pelo pai
+fica serializado e o tick relê itens frescos.
+
+**Até onde esse lock alcança — dito com precisão, porque a diferença importa.** Ele trava o *pai*,
+não a tabela `pedido_compra_item`. Contra quem toma o lock do pai antes de escrever — o caminho da
+RPC `remover_itens_pedido`, que usa `FOR NO KEY UPDATE` — a serialização é **completa**, e é isso que
+R1/R2/F1 medem. Mas existem, medidos no app, **dois escritores diretos de item que não passam pelo
+pai**: `useDetalhesModal.ts:174` e `PedidoRow.tsx:122`, ambos `UPDATE pedido_compra_item … .eq('id',…)`
+com CAS **por item** (protege contra outro humano, não contra o tick). Contra esses dois, o lock do
+pai não serializa: sobra a janela entre a leitura da soma e o `UPDATE` do tick.
+
+Essa janela residual é **estreita por construção, e não foi reproduzida em corrida** — a distinção é
+deliberada, não é o mesmo que dizer que não existe. Entre a soma (linha 73) e o `UPDATE` do tick, o
+pai **já está travado pelo próprio tick**: ninguém mais pode tomar aquele lock, logo **não há ponto de
+bloqueio para alargar a janela**, e ela vale microssegundos de CPU. É exatamente o contrário do R1,
+onde tirar o `FOR UPDATE` faz o `UPDATE` do tick **esperar no lock** e a janela virar segundos —
+tempo de sobra para a corrupção acontecer de forma confiável, como o baseline mostra.
+
+Ou seja: o lock do callee não *elimina* o eixo valor, ele o **colapsa** de "segundos, reproduzível"
+para "microssegundos, sem ponto de bloqueio". Quem quiser fechá-lo de vez precisa levar o predicado
+de valor para dentro do `WHERE` que grava (algo como `AND (SELECT SUM(…) FROM pedido_compra_item …)
+>= v_threshold`), e isso é decisão de produto — fatia própria, não este fix.
 
 ## O achado que a triagem produziu (e não era o defeito procurado)
 
@@ -163,6 +184,10 @@ item → recalcula `valor_total`); **B** é o tick.
 - **O cenário B da 1ª via continua P1 aberto** (o disparador cria o PO no Omie e grava por cima de
   um cancelamento). Lock serializa o banco, não o ERP — ver
   [guard-fora-da-escrita-nao-e-guard.md](guard-fora-da-escrita-nao-e-guard.md).
+- **A janela residual do eixo valor contra escritor DIRETO de item** (os dois writers acima) fica
+  aberta, colapsada a microssegundos pelo lock do callee mas não fechada. Não reproduzida: sem ponto
+  de bloqueio, não há como alargá-la sem inventar um lock que não existe em produção — e um harness
+  que inventa a janela mede o harness, não o sistema.
 - **Quatro das cinco foram absolvidas por LEITURA**, não por corrida. É defensável porque a proteção
   delas está visível no próprio corpo e um leitor a confere; a do tick não estava, e foi a que virou
   prova. Se uma delas mudar de forma, a absolvição precisa ser refeita.
