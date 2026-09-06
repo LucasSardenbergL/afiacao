@@ -311,3 +311,84 @@ done
 
 Medido em 2026-08-22 devolve **1** — o gate de índice, classificado acima. Qualquer match novo é
 um gate de markdown nascendo sem ter tomado a decisão de camada.
+
+## Variante 4 — o stripper estava certo; quem estava cego era a FALSIFICAÇÃO dele (2026-08-24)
+
+As três variantes acima são o gate medindo texto que não entendeu. Esta é outra sub-classe, e ela
+morde justamente quem seguiu a disciplina: **o teste que prova que o alarme dispara pode ter
+premissa acidental** — e aí ele reprova (ou aprova) por motivo que não tem nada a ver com o gate.
+
+`scripts/sql-comentarios.test.ts` fecha com o assert certo — "alarme que nunca se viu disparar é
+decoração" — envenenando uma migration real com um `/*` que nunca fecha e exigindo bloco descartado
+acima do teto de 300 linhas. A escolha do alvo era:
+
+```ts
+const maior = [...migrations].sort((a, b) => b.sql.length - a.sql.length)[0];
+const corte = Math.floor(linhas.length / 4);   // envenena no quarto inicial
+```
+
+A calibração de 2026-08-20 mediu 676–762 linhas descartadas nos 3 maiores arquivos — folga de 2,3×.
+O que ela não mediu é que essa folga **não é propriedade do gate, é propriedade do corpus daquele
+dia**: um `/*` só engole até o **próximo `*/`**, e neste repo `*/` aparece dentro de comentário `--`
+como **expressão de cron** — `*/30`, `*/15`, `*/5` — que toda migration de Sentinela carrega.
+
+Em 2026-08-24 a `20260824091755_data_health_carteira_identidade_quarentena.sql` (sonda de identidade
+da carteira, #1956) virou a maior do corpus com 71.204 bytes, 798 acima da segunda. Ela recria o
+`_data_health_compute` a partir do corpo da PROD, que documenta os crons nos comentários. Medido:
+
+| | |
+| --- | --- |
+| corte do teste (1/4 de 961 linhas) | linha 240 |
+| próximo `*/` | linha 405 — `-- ... watchdog */30; heartbeat às 08:00 ...` |
+| bloco descartado | **165** linhas · teto 300 ⇒ **vermelho** |
+| maior vão SEM `*/` no arquivo | 301 linhas (405→705) — passaria por **1 linha** |
+
+Reprovou sem defeito nenhum: nem na migration, nem no walker, nem no stripper. O CI ficou vermelho
+apontando para o lugar errado, e as duas saídas tentadoras eram ambas trapaça — encolher a migration
+até deixar de ser a maior, ou baixar o teto (que enfraquece o gate de verdade).
+
+**A correção é trocar a premissa acidental por uma medida.** O alvo passa a ser o **maior vão
+contíguo sem `*/` de todo o corpus**, e o veneno entra no início dele:
+
+| | medido em 2026-08-24, 485 migrations |
+| --- | --- |
+| migrations que admitem vão > 300 | **53** |
+| migrations que admitem vão > 600 | **18** |
+| vão do alvo escolhido | **1095** linhas (`20260726120000_tint_promote_error_details_completo.sql`) |
+| folga sobre o teto | **3,6×** — a mesma da calibração original, sem depender de qual arquivo é o maior |
+
+Falsificação (o teste corrigido tem de continuar tendo dente):
+
+| sabotagem | resultado |
+| --- | --- |
+| `maiorBlocoDescartadoSql` retorna `0` | **vermelho** — `expected 0 to be greater than 300` |
+| restaurar o walker | 14/14 verdes |
+
+⚠️ Sabotei primeiro o `maiorBlocoDescartado` de `src/lib/gates/limpeza-fonte.ts` e o teste **seguiu
+verde** — o teste importa o homônimo `maiorBlocoDescartadoSql` de `scripts/lib/sql-comentarios.ts`.
+Sabotar a função de nome parecido e ler o verde como "assert fraco" teria invertido a conclusão.
+**Falsificação também precisa provar que atingiu o alvo**: se a sabotagem não muda nada, a primeira
+hipótese é que você sabotou outra coisa, não que o assert é frouxo.
+
+### A regra que generaliza
+
+Sentinela de gate textual tem **duas** premissas, e só a primeira costuma ser medida:
+
+1. *o gate reprova dado ruim* — calibrada com números (é o que as variantes 1-3 tratam);
+2. *o dado com que eu construo o "ruim" continua sendo ruim* — quase sempre implícita.
+
+A (2) é a que apodrece, porque depende do corpus e o corpus muda sem avisar. Quando a construção do
+caso ruim escolher um alvo (`o maior`, `o primeiro`, `o mais recente`), **derive o alvo da
+propriedade que o teste precisa** — aqui, "tem um vão longo sem terminador" — e não de um proxy que
+correlacionava com ela no dia da calibração.
+
+### Assinatura para varredura futura
+
+```bash
+grep -n "sort((a, b) => b\..*\.length - a\..*\.length)\[0\]" scripts/*.test.ts
+```
+
+Devolve **0** em 2026-08-24 e ainda **0** na re-medição de 2026-09-06 (data em que esta nota foi
+registrada, ~290 PRs depois — o corpus cresceu, a assinatura seguiu limpa). Qualquer match novo é um
+sentinela escolhendo alvo por tamanho — proxy, não propriedade: confira se o caso ruim que ele
+constrói ainda é ruim.
