@@ -99,6 +99,15 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'folga de margem vs piso de markup; gate private.cap_custo_ler',
   },
+  // 2026-09-06 — a porta única do cancelamento pós-disparo. `authenticated` PRECISA executar (é
+  // dela que a correção legítima sai); `anon` foi revogado nominalmente na própria migration que
+  // a cria, junto com PUBLIC. O fecho por privilégio e o gate no corpo são complementares aqui:
+  // sem o gate, qualquer authenticated (inclusive customer) corrigiria cancelamento de compra.
+  'public.corrigir_cancelamento_pos_disparo': {
+    fechadaPor: '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql',
+    permitido: PORTA_GATE,
+    motivo: 'correção de cancelamento de compra JÁ DISPARADA — staff no browser; gate has_role(employee|master) + evidência obrigatória',
+  },
   'public.get_preco_cockpit': {
     fechadaPor: '20260615150000_cockpit_preco_fixes.sql',
     permitido: PORTA_GATE,

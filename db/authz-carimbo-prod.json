@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-05T23:11:51.045Z",
-  "sourceHead": "a79324d4374b64ac05fb2426c330bd272d46fa4f",
+  "medidoEm": "2026-09-06T22:22:46.508Z",
+  "sourceHead": "f9ac7ee3ef9e8c7ff40989c9d2d95f7c14bb2f18",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 45 função(ões) da allowlist.",
-      "denominador": "🔎 authz:funcoes:prod — 45 definição(ões) lida(s) para 45 chave(s) da allowlist.",
-      "contratoFingerprint": "b8d5327b8df2c9f679ae34e2130e0fb9c28e0958c3d49bce7daa59e47ef51c0f",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 46 função(ões) da allowlist.",
+      "denominador": "🔎 authz:funcoes:prod — 46 definição(ões) lida(s) para 46 chave(s) da allowlist.",
+      "contratoFingerprint": "1cc154f20aca91356bf189c935cab8111d1d4f22251c537b13432e11d394c853",
       "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
       "achados": []
     },
@@ -29,12 +29,19 @@
     },
     "audit": {
       "script": "authz:audit:prod",
-      "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 19 funções, e as 3 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 19 definição(ões) lida(s) para 19 chave(s) do manifest.",
-      "contratoFingerprint": "20a1123dff0c63b3ee2b93bcc1a4ca6fe62bdabd0d7f37032c942289c8c8e387",
+      "exit": 1,
+      "resumo": "authz:audit:prod — 1 divergência(s).",
+      "denominador": "🔎 authz:audit:prod — 20 definição(ões) lida(s) para 20 chave(s) do manifest.",
+      "contratoFingerprint": "6f98741634c912bce06bc1b9ef8996ad754cfa01b2bc049380afbcc2434ff6a3",
       "auditorFingerprint": "0866cf4f10a49635c4ed8590c7ed4861b254c4b75cc4e58ca1cdb15b038993c1",
-      "achados": []
+      "achados": [
+        {
+          "id": "257297e1a0831e90",
+          "linha": "❌ MD5_DIVERGIU: public.get_defasagem_cliente (20260718190000_authz_capability_matrix_e2.sql): esperado 037ede84a229d5798214511433afb65d, prod tem 7856c3052596d66a6f5ac8eb0a06c1c0",
+          "primeiraVez": "2026-09-06",
+          "ultimaVez": "2026-09-06"
+        }
+      ]
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
@@ -48,7 +55,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 337 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
+      "resumo": "✅ audit-rls — 340 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
       "denominador": null,
       "contratoFingerprint": "983189279bc797985d2ff78f0ee10434d7c6ab7e582d223ff02d0bddd84841b0",
       "auditorFingerprint": "f24bdcecdcf841257b1c817fbeecddf0b47b91ae42c8784d68e110b86a126986",

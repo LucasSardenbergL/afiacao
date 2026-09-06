@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **517** custom migrations totais
-- **1760** objetos esperados (criados por estas migrations)
+- **522** custom migrations totais
+- **1773** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 541
-  - `rls_policy`: 461
-  - `index`: 255
+  - `function`: 549
+  - `rls_policy`: 462
+  - `index`: 256
   - `cron_job`: 171
-  - `table`: 164
-  - `trigger`: 88
-  - `view`: 76
+  - `table`: 165
+  - `trigger`: 89
+  - `view`: 77
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4299,9 +4299,46 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.aprovar_pedido_sugerido` | — |
 
+### `20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao__valida_cancelamento_pos_disparo` | — |
+| `function` | `public.corrigir_cancelamento_pos_disparo` | — |
+| `view` | `public.vw_cancelamento_pos_disparo_sem_evidencia` | — |
+| `table` | `public.reposicao_cancelamento_pos_disparo_audit` | — |
+| `index` | `public.idx_reposicao_cancel_pos_disparo_audit_pedido` | `reposicao_cancelamento_pos_disparo_audit` |
+| `trigger` | `public.trg_valida_cancelamento_pos_disparo` | `pedido_compra_sugerido` |
+| `rls_policy` | `public.reposicao_cancel_pos_disparo_audit_select_staff` | `reposicao_cancelamento_pos_disparo_audit` |
+
 ### `20260906154202_cancelar_pedido_revoke_anon.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260906164001_captura_authz_gate_custo_rpcs_preco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+| `function` | `public.get_tint_prices` | — |
+| `function` | `public.get_preco_cockpit` | — |
+
+### `20260906164002_captura_authz_escopo_carteira_farmer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.farmer_recomendacoes_substituir` | — |
+| `function` | `public.farmer_bundle_recomendacoes_substituir` | — |
+
+### `20260906165706_aprovar_pedido_revoke_anon.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260906172718_cancelamento_pos_disparo_gate_canonico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.corrigir_cancelamento_pos_disparo` | — |
 
 ### `20260906180303_deploy_sonda_resultados.sql`
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 517
+-- Total de custom migrations: 522
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -557,7 +557,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260906105549', 'remover_itens_pedido_guard', '20260906105549_remover_itens_pedido_guard.sql'),
   ('20260906151204', 'deploy_sonda_cron_fail_closed', '20260906151204_deploy_sonda_cron_fail_closed.sql'),
   ('20260906151715', 'aprovar_pedido_guard_atomico', '20260906151715_aprovar_pedido_guard_atomico.sql'),
+  ('20260906152235', 'cancelamento_pos_disparo_trigger_e_rpc', '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql'),
   ('20260906154202', 'cancelar_pedido_revoke_anon', '20260906154202_cancelar_pedido_revoke_anon.sql'),
+  ('20260906164001', 'captura_authz_gate_custo_rpcs_preco', '20260906164001_captura_authz_gate_custo_rpcs_preco.sql'),
+  ('20260906164002', 'captura_authz_escopo_carteira_farmer', '20260906164002_captura_authz_escopo_carteira_farmer.sql'),
+  ('20260906165706', 'aprovar_pedido_revoke_anon', '20260906165706_aprovar_pedido_revoke_anon.sql'),
+  ('20260906172718', 'cancelamento_pos_disparo_gate_canonico', '20260906172718_cancelamento_pos_disparo_gate_canonico.sql'),
   ('20260906180303', 'deploy_sonda_resultados', '20260906180303_deploy_sonda_resultados.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2302,6 +2307,19 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
   ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'view', 'public', 'vw_cancelamento_pos_disparo_sem_evidencia', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'table', 'public', 'reposicao_cancelamento_pos_disparo_audit', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'index', 'public', 'idx_reposicao_cancel_pos_disparo_audit_pedido', 'reposicao_cancelamento_pos_disparo_audit'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'trigger', 'public', 'trg_valida_cancelamento_pos_disparo', 'pedido_compra_sugerido'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'rls_policy', 'public', 'reposicao_cancel_pos_disparo_audit_select_staff', 'reposicao_cancelamento_pos_disparo_audit'),
+  ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_price', ''),
+  ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_prices', ''),
+  ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_preco_cockpit', ''),
+  ('captura_authz_escopo_carteira_farmer', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
+  ('captura_authz_escopo_carteira_farmer', 'function', 'public', 'farmer_bundle_recomendacoes_substituir', ''),
+  ('cancelamento_pos_disparo_gate_canonico', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
   ('deploy_sonda_resultados', 'function', 'public', 'deploy_sonda_resultados_colher', ''),
   ('deploy_sonda_resultados', 'table', 'public', 'deploy_sonda_resultados', ''),
   ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_edge', 'deploy_sonda_resultados'),
@@ -4099,6 +4117,19 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
   ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'view', 'public', 'vw_cancelamento_pos_disparo_sem_evidencia', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'table', 'public', 'reposicao_cancelamento_pos_disparo_audit', ''),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'index', 'public', 'idx_reposicao_cancel_pos_disparo_audit_pedido', 'reposicao_cancelamento_pos_disparo_audit'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'trigger', 'public', 'trg_valida_cancelamento_pos_disparo', 'pedido_compra_sugerido'),
+  ('cancelamento_pos_disparo_trigger_e_rpc', 'rls_policy', 'public', 'reposicao_cancel_pos_disparo_audit_select_staff', 'reposicao_cancelamento_pos_disparo_audit'),
+  ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_price', ''),
+  ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_tint_prices', ''),
+  ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_preco_cockpit', ''),
+  ('captura_authz_escopo_carteira_farmer', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
+  ('captura_authz_escopo_carteira_farmer', 'function', 'public', 'farmer_bundle_recomendacoes_substituir', ''),
+  ('cancelamento_pos_disparo_gate_canonico', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
   ('deploy_sonda_resultados', 'function', 'public', 'deploy_sonda_resultados_colher', ''),
   ('deploy_sonda_resultados', 'table', 'public', 'deploy_sonda_resultados', ''),
   ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_edge', 'deploy_sonda_resultados'),
@@ -4132,7 +4163,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 102.
+-- Funções redefinidas com corpo extraível: 103.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4296,6 +4327,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_tint_price', 2, '20260615200000_tint_get_price_base.sql', 'cb4282e796372e64186ce228fe7ac153'),
   ('public', 'get_tint_price', 3, '20260616120000_tint_price_gate_ativo.sql', 'b4944edf365db0ec678382eb034e87df'),
   ('public', 'get_tint_price', 4, '20260708234100_tint_gate_custo_staff.sql', '9f33d552f28927e99563555fde588b0c'),
+  ('public', 'get_tint_price', 5, '20260906164001_captura_authz_gate_custo_rpcs_preco.sql', 'b50725f7f65edd78efc1a8f985b8e89d'),
   ('public', '_data_health_compute', 1, '20260527210000_data_health_compute_internal.sql', '445d0eb57d375efff137b2f39adc03bd'),
   ('public', '_data_health_compute', 2, '20260527240000_data_health_alert_channel.sql', 'a9cc7f2baba62cff141aa88b6f04b662'),
   ('public', '_data_health_compute', 3, '20260527250000_data_health_checks_high.sql', 'd87ebe011cdbfec6687f4ae320914913'),
@@ -4422,9 +4454,11 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_preco_cockpit', 1, '20260614190000_get_preco_cockpit.sql', '172ab2d64aeb93d1eb5265f06cde9cf7'),
   ('public', 'get_preco_cockpit', 2, '20260615150000_cockpit_preco_fixes.sql', 'b37c8a3a999f6c06a224ad10b09cc1d6'),
   ('public', 'get_preco_cockpit', 3, '20260704120000_preco_por_tier.sql', '752a0369ab95bec81ce28218c25f9be6'),
+  ('public', 'get_preco_cockpit', 4, '20260906164001_captura_authz_gate_custo_rpcs_preco.sql', '4f3fb7df939e467f82d36a065e2f0957'),
   ('public', 'get_tint_prices', 1, '20260615210000_tint_get_prices_batch.sql', '307b2a2a86059704dc972f9ace33e3e8'),
   ('public', 'get_tint_prices', 2, '20260616120000_tint_price_gate_ativo.sql', '3f69bc4495955e6d6b4b1d1efa83ca76'),
   ('public', 'get_tint_prices', 3, '20260708234100_tint_gate_custo_staff.sql', '9b4ee8f085b602ee159c6d250cac81be'),
+  ('public', 'get_tint_prices', 4, '20260906164001_captura_authz_gate_custo_rpcs_preco.sql', '00341ad64e34cc42c0b8a2b75b91703b'),
   ('public', 'get_regua_preco', 1, '20260616120000_regua_preco.sql', 'f618d27140e81536da49804768dc408b'),
   ('public', 'get_regua_preco', 2, '20260723150000_authz_custo_fu4f_fase2_regua.sql', 'd5c7e56d8a41a0bb08f0b1cfe8d3c081'),
   ('public', 'get_regua_preco_customer360', 1, '20260616120001_regua_preco_customer360.sql', '0f31a54ccf34b366d0dba606dc3b6c19'),
@@ -4505,14 +4539,18 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'expirar_reservas_vencidas_job', 2, '20260808012000_atp_reconciliacao_fase3.sql', 'c747ad0db21e0dff944d205b1d106815'),
   ('public', 'farmer_recomendacoes_substituir', 1, '20260814223445_farmer_recomendacoes_geracao_vigente.sql', '39e59cbfb7071472c9eaa0baaf733282'),
   ('public', 'farmer_recomendacoes_substituir', 2, '20260815181500_farmer_geracao_head_sensor.sql', '55e4fc0765dd5cd10ff3e8ee60c4ce45'),
+  ('public', 'farmer_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', 'db77f24d70a09cc45b69e46c7a7b7532'),
   ('public', 'farmer_bundle_recomendacoes_substituir', 1, '20260814223445_farmer_recomendacoes_geracao_vigente.sql', '87b8ab8a7ca30c1dc64f6cd4c0c4cfaa'),
   ('public', 'farmer_bundle_recomendacoes_substituir', 2, '20260815181500_farmer_geracao_head_sensor.sql', '264eb147710156edf8b3e3f3e17e4fb0'),
+  ('public', 'farmer_bundle_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', '3b68a4bda4fc43e049d07a37659ee55c'),
   ('public', 'farmer_melhor_individual_por_cliente', 1, '20260820124611_farmer_melhor_individual_bulk.sql', '82340cc6187de27edf766fdb7fad7c77'),
   ('public', 'farmer_melhor_individual_por_cliente', 2, '20260820133119_farmer_melhor_individual_atomico.sql', '988141c4ddcb0e43ff59b66491c5dc6a'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'reconciliar_pedidos_omie', 1, '20260830190000_reconciliar_pedidos_omie.sql', '80a1000a7a543c8e3dfc756f4ab4df97'),
-  ('public', 'reconciliar_pedidos_omie', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'cad0126b11adcbc4946da1c4566b26f5')
+  ('public', 'reconciliar_pedidos_omie', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'cad0126b11adcbc4946da1c4566b26f5'),
+  ('public', 'corrigir_cancelamento_pos_disparo', 1, '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql', '846b7fd56ccda97c8a53e529a5ff182c'),
+  ('public', 'corrigir_cancelamento_pos_disparo', 2, '20260906172718_cancelamento_pos_disparo_gate_canonico.sql', '4ca937b4befd086a05b610e4619db24c')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2

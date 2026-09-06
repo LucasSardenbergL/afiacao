@@ -13,10 +13,14 @@ export function CancelarModal({
   pedido,
   open,
   onOpenChange,
+  onCancelado,
 }: {
   pedido: PedidoSugerido | null;
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  /** Chamado SÓ no cancelamento efetivo (não no fechar/desistir) — quem abriu o modal de uma
+   *  superfície que mostra o pedido pode se fechar junto. Opcional: os chamadores antigos seguem iguais. */
+  onCancelado?: () => void;
 }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -44,6 +48,7 @@ export function CancelarModal({
       toast.success('Pedido cancelado');
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
       onOpenChange(false);
+      onCancelado?.();
     },
     onError: (e: Error) => {
       toast.error(`Erro ao cancelar: ${e.message}`);
