@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 509
+-- Total de custom migrations: 510
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -550,7 +550,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260830214547', 'reposicao_aplicar_promocoes_captura_corpo_vivo', '20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql'),
   ('20260904232555', 'reposicao_qtde_multiplo_embalagem_portal', '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql'),
   ('20260904233000', 'sku_fornecedor_externo_fator_positivo', '20260904233000_sku_fornecedor_externo_fator_positivo.sql'),
-  ('20260905090000', 'sayerlack_custo_portal_cas', '20260905090000_sayerlack_custo_portal_cas.sql')
+  ('20260905090000', 'sayerlack_custo_portal_cas', '20260905090000_sayerlack_custo_portal_cas.sql'),
+  ('20260905150000', 'reposicao_selo_aprovacao_m1_expandir', '20260905150000_reposicao_selo_aprovacao_m1_expandir.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2269,7 +2270,18 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('reposicao_aplicar_promocoes_captura_corpo_vivo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
+  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'reposicao_pedido_e_portal', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'reposicao_selo_itens', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'reposicao_selar_pedido', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'reposicao_conferir_envio', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'cancelar_pedido_sugerido', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'iniciar_envio_portal_pre_claim', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'envio_portal_claim_ids', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'envio_portal_lock_candidatos', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'pedido_compra_split', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4036,7 +4048,18 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reconciliar_pedidos_omie', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('reposicao_aplicar_promocoes_captura_corpo_vivo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_qtde_multiplo_embalagem_portal', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
+  ('sayerlack_custo_portal_cas', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'reposicao_pedido_e_portal', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'reposicao_selo_itens', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'reposicao_selar_pedido', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'reposicao_conferir_envio', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'aprovar_pedido_sugerido', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'cancelar_pedido_sugerido', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'iniciar_envio_portal_pre_claim', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'envio_portal_claim_ids', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'envio_portal_lock_candidatos', ''),
+  ('reposicao_selo_aprovacao_m1_expandir', 'function', 'public', 'pedido_compra_split', '')
 )
 SELECT
   e.migration,
@@ -4064,7 +4087,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 97.
+-- Funções redefinidas com corpo extraível: 100.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4141,6 +4164,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'envio_portal_lock_candidatos', 3, '20260515010000_99661119-2843-4684-9dba-d21d55bf2ab9.sql', 'b116b7039ef4387546d2b86957b18c50'),
   ('public', 'envio_portal_lock_candidatos', 4, '20260515161910_41c8e98a-7603-4e67-9984-d8dc711a3b08.sql', '3428d7ca46fb0627f504c269fb5c7f64'),
   ('public', 'envio_portal_lock_candidatos', 5, '20260530230000_fix_portal_lock_retry_blindspot.sql', 'b05d7c90250b4936929b7a9e64642b16'),
+  ('public', 'envio_portal_lock_candidatos', 6, '20260905150000_reposicao_selo_aprovacao_m1_expandir.sql', 'd92602d60bde5d47779b4bc893b4e731'),
   ('public', 'refresh_sku_ranking_negociacao', 1, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'c3e690e07de8e1424c43e65d86d209b2'),
   ('public', 'refresh_sku_ranking_negociacao', 2, '20260524203000_rpc_staff_guard_permite_cron_backend.sql', 'c8c7d51e7a602d760dafa182b809eb8b'),
   ('public', 'refresh_sku_ranking_negociacao', 3, '20260527160000_matview_ranking_negociacao_private.sql', '6dbe4a2ad197d6be76de763d8077e201'),
@@ -4154,6 +4178,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'pedido_compra_split', 2, '20260515161910_41c8e98a-7603-4e67-9984-d8dc711a3b08.sql', '285ba1a8bd6eb532b88210a3211dbce8'),
   ('public', 'pedido_compra_split', 3, '20260515170100_89108e1b-8b24-4b95-b50f-ab5cb80a48be.sql', 'f0b7b9298762cca403f666224a806c41'),
   ('public', 'pedido_compra_split', 4, '20260515213420_868822bb-e38c-4fcf-8879-c64e48bd7630.sql', '9ccb9dd57a58fc68e3763613dadb940b'),
+  ('public', 'pedido_compra_split', 5, '20260905150000_reposicao_selo_aprovacao_m1_expandir.sql', '181b70b635634e95e2250dc086a328b7'),
   ('public', 'kb_documents_set_updated_at', 1, '20260517170000_kb_foundation.sql', 'a27bb088c067b7b77a9f0707b0048e40'),
   ('public', 'kb_documents_set_updated_at', 2, '20260517180000_kb_specs_and_competitors.sql', 'a27bb088c067b7b77a9f0707b0048e40'),
   ('public', 'fin_audit_trigger', 1, '20260518000100_fin_audit_trigger.sql', 'd462dba439b6bdb7fb3b04cc59c05369'),
@@ -4285,6 +4310,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tarefas_escalonamento_tick', 2, '20260601000000_tarefas_escalonamento_titulo_mensagem.sql', '43abd7dd4a5fba6775f9b09649057e6f'),
   ('public', 'promover_candidato_primeira_compra', 1, '20260530210000_reposicao_candidatos_primeira_compra.sql', 'd2dffca872be4dc53ce53bd84154c045'),
   ('public', 'promover_candidato_primeira_compra', 2, '20260531120000_reposicao_candidatos_inclui_habilitados.sql', '2a5a44c647627305429ac85bbe6d1668'),
+  ('public', 'cancelar_pedido_sugerido', 1, '20260530210001_cancelar_pedido_limpa_portal.sql', '69bd05c6afec428b9ae86e385c453d70'),
+  ('public', 'cancelar_pedido_sugerido', 2, '20260905150000_reposicao_selo_aprovacao_m1_expandir.sql', '5fda46494332d307c1bafb366756dbbc'),
   ('public', 'atualizar_parametros_numericos_skus', 1, '20260531140000_reposicao_atualizar_params_nao_zera.sql', 'fa55aaf26173a06e3bade9616f3aa8a4'),
   ('public', 'atualizar_parametros_numericos_skus', 2, '20260605130000_param_auto_core.sql', '74540a6ed9b7e5a0437f9ecfac7ee0f6'),
   ('public', 'atualizar_parametros_numericos_skus', 3, '20260605150000_param_auto_fusivel_calibracao.sql', 'fd7c292b873875e30ddfaf5fda1f2a80'),
@@ -4297,6 +4324,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tarefas_materializar_recorrentes', 2, '20260605130000_tarefas_leitura_na_instancia.sql', 'e1762fd5b59fd5203b22871be8ef1364'),
   ('public', 'envio_portal_claim_ids', 1, '20260604150000_envio_portal_claim_ids.sql', 'a4eb797178f7d5edba455c1dc68fca0b'),
   ('public', 'envio_portal_claim_ids', 2, '20260604180000_envio_portal_claim_ids_lista_positiva.sql', '43d2c6f6944c71866c15159c9b8ce6b2'),
+  ('public', 'envio_portal_claim_ids', 3, '20260905150000_reposicao_selo_aprovacao_m1_expandir.sql', 'c1e53954aaaab7e6c39112b16be6e4c8'),
+  ('public', 'iniciar_envio_portal_pre_claim', 1, '20260605140000_iniciar_envio_portal_pre_claim.sql', '5d0cd338f8f5de150180892ffe4c28fe'),
+  ('public', 'iniciar_envio_portal_pre_claim', 2, '20260905150000_reposicao_selo_aprovacao_m1_expandir.sql', '5fe78a63f62b42882ba4847586d289dd'),
   ('public', 'reposicao_param_auto_resumo_tick', 1, '20260605140000_param_auto_wrapper_revert_cron.sql', '0046fdda082d4afc1098417576a57f15'),
   ('public', 'reposicao_param_auto_resumo_tick', 2, '20260619120000_param_auto_resumo_descricao.sql', 'c463e7a8d461c0489bede982f39cad86'),
   ('public', 'reposicao_param_auto_resumo_tick', 3, '20260711193000_param_auto_resumo_altas_reducoes_segurado.sql', '662e947efa18b1bd09adebe74ccea066'),
@@ -4432,7 +4462,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'farmer_melhor_individual_por_cliente', 1, '20260820124611_farmer_melhor_individual_bulk.sql', '82340cc6187de27edf766fdb7fad7c77'),
   ('public', 'farmer_melhor_individual_por_cliente', 2, '20260820133119_farmer_melhor_individual_atomico.sql', '988141c4ddcb0e43ff59b66491c5dc6a'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
-  ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3')
+  ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
+  ('public', 'aprovar_pedido_sugerido', 1, '20260905150000_reposicao_selo_aprovacao_m1_expandir.sql', '4c0624ff0a1aad14633e7ab74d854c9a'),
+  ('public', 'aprovar_pedido_sugerido', 2, '20260905150000_reposicao_selo_aprovacao_m1_expandir.sql', '4c0624ff0a1aad14633e7ab74d854c9a')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2

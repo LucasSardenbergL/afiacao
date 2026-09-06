@@ -57,8 +57,11 @@ pela conciliação.
 
 ### 3.1 `reposicao_selar_pedido(p_pedido_id)` — o ÚNICO escritor do selo
 
-Função SQL (`SECURITY INVOKER`, `search_path` fixo), chamada pela RPC de aprovação e pelo split. Em
-ordem, tudo numa transação que já segura o pedido `FOR UPDATE` e os itens `FOR UPDATE`:
+Função SQL **`SECURITY DEFINER`** (`search_path` fixo, gate explícito `private.cap_compras_ler`),
+chamada pela RPC de aprovação e pelo split. DEFINER é o fix do P0-1 do Codex: como INVOKER, um
+aprovador sem SELECT em `sku_fornecedor_externo` veria 0 linhas e o pedido seria recusado por `SA006`
+pela razão ERRADA. Em ordem, tudo numa transação que já segura o pedido `FOR UPDATE` e os itens
+`FOR UPDATE`:
 
 1. ≥1 item, senão `RAISE SQLSTATE 'SA005'`.
 2. Toda `qtde_final` **canônica**: não NULL, finita, > 0, inteira; e, se `fator_embalagem_portal`
@@ -72,8 +75,8 @@ ordem, tudo numa transação que já segura o pedido `FOR UPDATE` e os itens `FO
    `SA003` ("de-para ambíguo").
 4. Se `fator_embalagem_portal IS NOT NULL` e `IS DISTINCT FROM` fator vivo → `SA004` ("o motor
    arredondou com outro fator; cancele e aguarde o ciclo").
-5. `aprovacao_selo := reposicao_selo_itens(p_pedido_id)`, `aprovacao_selo_em := now()`, sob
-   `SET LOCAL reposicao.selando = <pedido_id>` (o GUC que o guard §3.3 exige).
+5. `aprovacao_selo := reposicao_selo_itens(p_pedido_id)`, `aprovacao_selo_em := now()`. **Sem GUC** —
+   o guard do §3.3 autoriza por estado (o selo tem de bater com os itens), não por sinal de sessão.
 
 `reposicao_selo_itens(bigint) RETURNS text` (STABLE, `search_path` fixo):
 `encode(sha256(convert_to(jsonb_agg(jsonb_build_array(id, pedido_id, sku_codigo_omie,
@@ -92,7 +95,9 @@ INSERT e DELETE → `SA001`; UPDATE → `SA001` se mudar coluna SELADA (`pedido_
 `fator_portal_aprovado`). Preço (`preco_unitario`, `valor_linha`) passa — ver §8.4.
 **Independente de papel** (vale para `service_role`): a invariante é "item de pedido selado não muda".
 Escape: `SET LOCAL reposicao.selo_bypass = 'on'` **só é honrado se `current_user IN ('postgres',
-'service_role')`** (SQL Editor do founder e o split via edge) — nunca para `authenticated`.
+'service_role')`** (SQL Editor do founder e o split via edge) — nunca para `authenticated`. Este GUC
+funciona (ao contrário do §3.3) porque o trigger dispara **dentro** do próprio `UPDATE` do split, no
+mesmo nest level em que o GUC foi posto — ele nunca precisa atravessar um retorno de função.
 
 Escritores auditados: motor (INSERT em pedido novo `pendente`) passa; snapshot do §3.1 roda com o pai
 ainda `pendente` → passa; custo do portal (só preço) passa; `reposicao_persistir_qtde_inteira` no
@@ -101,11 +106,19 @@ aprovou fração); normalização da edge sai (§3.6); split passa sob bypass (�
 
 ### 3.3 Guards em `pedido_compra_sugerido` — trigger BEFORE UPDATE
 
-1. **Transição para `aprovado_aguardando_disparo`** exige `reposicao.selando = NEW.id` (GUC posto só por
-   `reposicao_selar_pedido`) e `NEW.aprovacao_selo IS NOT NULL`, senão `SA007` ("aprovação só pela
-   RPC"). Fecha `runAutoApprove` e qualquer flip direto futuro.
-2. **`aprovacao_selo`/`aprovacao_selo_em` imutáveis** fora dessa transição e do re-selo do split (GUC
-   `reposicao.selando` idem).
+1. **Transição para `aprovado_aguardando_disparo`** exige `NEW.aprovacao_selo IS NOT NULL` **e**
+   `NEW.aprovacao_selo = reposicao_selo_itens(NEW.id)`, senão `SA007` ("aprovação só pela RPC").
+   Autorização por **ESTADO**, não por GUC — e por isso mais forte: não basta ter passado pelo selo,
+   o selo tem de bater com os itens NAQUELE instante. Fecha `runAutoApprove` e qualquer flip direto.
+   ⚠️ **GUC não serve aqui, e o motivo é uma armadilha do Postgres:** toda função destas tem cláusula
+   `SET search_path`, o que faz o servidor abrir um *nest level* de GUC e **reverter em
+   `AtEOXact_GUC` tudo que foi setado lá dentro** quando a função retorna — inclusive
+   `set_config(..., is_local => true)`. Um `reposicao.selando` posto por `reposicao_selar_pedido`
+   morreria antes de o chamador fazer o flip, e a M2 recusaria TODA aprovação por `SA007`. O sintoma
+   só apareceria no apply da M2, porque a M1 não tem trigger.
+2. **`aprovacao_selo`/`aprovacao_selo_em` só mudam enquanto o status ainda é
+   `pendente_aprovacao|bloqueado_guardrail`** — depois do flip são imutáveis. Também por estado, sem
+   GUC. O re-selo do filho no split cabe naturalmente (o filho nasce `pendente_aprovacao`).
 3. **Sem reabertura:** `aprovado_aguardando_disparo` só sai para `cancelado_humano`, `disparado`,
    `split_em_filhos`, `falha_envio`, `concluido_recebido` (lista positiva). Nunca volta a
    `pendente_aprovacao`.
@@ -288,3 +301,18 @@ P2-11 (hash em `jsonb_agg` + `convert_to` + hex); P2-12 (comparação de `numeri
 P2-14 (asserção do de-para corrigida; cenários de 2 sessões, split, cancelamento, conciliação, saltos
 do guard, promo, ordens parciais de deploy).
 Em desacordo, registrado: P2-13 (preço fora do selo) — decisão §8.4.
+
+## 10. Correções nascidas da implementação da M1 (2026-09-06)
+
+- **§3.3 deixou de autorizar por GUC.** `set_config` dentro de função com cláusula `SET` é revertido
+  no retorno (nest level + `AtEOXact_GUC`): o sinal nunca chegaria ao trigger e a M2 recusaria toda
+  aprovação. Trocado por autorização por ESTADO (selo presente E conferido), que é mais forte.
+- **`reposicao_conferir_envio` usava `CROSS JOIN LATERAL`** para achar o de-para vivo — o item cuja
+  linha foi DESATIVADA depois da aprovação simplesmente sumia do resultado e a conferência respondia
+  "de-para ok": falha ABERTA no exato caso que ela existe para pegar. Virou `LEFT JOIN LATERAL` com
+  `COALESCE(n,0) <> 1`, e a falsificação F9 reintroduz o `CROSS` para exigir vermelho.
+- **Três desvios do spec na M1**, todos porque a letra quebraria produção — o token de revisão é
+  opcional na M1 (senão a UI velha para de aprovar entre o apply e o Publish); os claims não mudam de
+  assinatura (evita `DROP`+`CREATE` e o reset de ACL de 2 funções); o split tolera pai legado sem
+  selo (senão todo pedido Sayerlack > 20 itens para no dia do apply). Detalhe no cabeçalho da
+  migration.

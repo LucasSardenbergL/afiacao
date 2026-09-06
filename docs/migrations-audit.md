@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **509** custom migrations totais
-- **1730** objetos esperados (criados por estas migrations)
+- **510** custom migrations totais
+- **1741** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 528
+  - `function`: 539
   - `rls_policy`: 456
   - `index`: 250
   - `cron_job`: 168
@@ -4244,6 +4244,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.sayerlack_aplicar_custo_portal` | — |
+
+### `20260905150000_reposicao_selo_aprovacao_m1_expandir.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_pedido_e_portal` | — |
+| `function` | `public.reposicao_selo_itens` | — |
+| `function` | `public.reposicao_selar_pedido` | — |
+| `function` | `public.reposicao_conferir_envio` | — |
+| `function` | `public.aprovar_pedido_sugerido` | — |
+| `function` | `public.aprovar_pedido_sugerido` | — |
+| `function` | `public.cancelar_pedido_sugerido` | — |
+| `function` | `public.iniciar_envio_portal_pre_claim` | — |
+| `function` | `public.envio_portal_claim_ids` | — |
+| `function` | `public.envio_portal_lock_candidatos` | — |
+| `function` | `public.pedido_compra_split` | — |
 
 ## Próximos passos por status
 
