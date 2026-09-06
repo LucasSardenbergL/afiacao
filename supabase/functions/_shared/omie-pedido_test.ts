@@ -151,8 +151,21 @@ Deno.test("mesclarPrecoPreservado: o preço GRAVADO vence; a leitura nova nunca 
      "gravado LIXO não é preservado (seria promover corrupção a verdade)");
   eq(mesclarPrecoPreservado(novos, [{ omie_codigo_produto: "1", valor_unitario: 42 }])[0].valor_unitario, 42,
      "casa por código mesmo com tipos diferentes (o jsonb devolve number, o Omie manda string)");
+  // AMBIGUIDADE: com o código repetido não há como saber qual preço pertence a qual linha.
+  // Aplicar o primeiro aos dois espalha um preço para uma linha que talvez nunca o teve —
+  // precisão > recall: fica `null`. [P1 do challenge Codex]
   eq(mesclarPrecoPreservado(novos, [
        { omie_codigo_produto: 1, valor_unitario: 5 },
        { omie_codigo_produto: 1, valor_unitario: 6 },
-     ])[0].valor_unitario, 5, "código repetido: vence a PRIMEIRA (mesma regra dos leitores)");
+     ])[0].valor_unitario, null, "código repetido nos GRAVADOS: não adivinha");
+  eq(mesclarPrecoPreservado(
+       [{ omie_codigo_produto: 7, valor_unitario: null }, { omie_codigo_produto: 7, valor_unitario: null }],
+       [{ omie_codigo_produto: 7, valor_unitario: 30 }],
+     ).map((x) => x.valor_unitario), [null, null],
+     "código repetido nos NOVOS: um preço gravado não vira dois");
+  // E o caso normal segue funcionando (a ambiguidade não pode ter matado a mescla).
+  eq(mesclarPrecoPreservado(
+       [{ omie_codigo_produto: 3, valor_unitario: null }],
+       [{ omie_codigo_produto: 3, valor_unitario: 30 }],
+     )[0].valor_unitario, 30, "código único: preserva normalmente");
 });

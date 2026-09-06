@@ -157,12 +157,19 @@ export function construirItemsJson(det: DetInput[]): ItemJson[] {
  * `valor_unitario` desde o sync original, o preço bom seria APAGADO por uma leitura pior — uma
  * perda silenciosa, num campo que o backfill nem pretendia tocar.
  *
- * Regra: o preço GRAVADO vence sempre que for utilizável (finito e ≥ 0). O da leitura nova só
- * entra onde não havia nada — nunca para rebaixar. Item novo sem correspondente passa direto.
+ * Regra: a leitura NOVA vence quando sabe o preço. Só onde ela não sabe é que o preço gravado
+ * é reaproveitado, e apenas se for utilizável — um gravado LIXO não é promovido a verdade.
  *
- * Não é dedupe: se o jsonb gravado repetir um código, vence a PRIMEIRA ocorrência (a mesma que
- * qualquer leitor "último item vence" já enxergava). Reconciliar preço de verdade é trabalho da
- * RPC `reconciliar_pedidos_omie`, que roda sob transação e sabe o que é revisão do pedido.
+ * ⚠️ CÓDIGO REPETIDO NÃO É MESCLADO, e essa é a decisão que importa. Com dois itens do mesmo
+ * `omie_codigo_produto` não há como saber qual preço pertence a qual linha; aplicar o primeiro
+ * aos dois espalharia um preço para uma linha que talvez nunca o teve. Precisão > recall: na
+ * ambiguidade o campo fica `null` ("não sei") em vez de receber um palpite. A repetição é rara
+ * mas não hipotética — a RPC de reconciliação também recusa SKU duplicado, então não há quem
+ * conserte depois. [P1 do challenge Codex]
+ *
+ * Casa por código com `String(...)` porque o jsonb devolve number e o Omie às vezes manda
+ * string. Lê apenas `valor_unitario`: medido em prod (psql-ro, 2026-09-05), os 70.927 itens do
+ * items-jsonb têm `valor_unitario` e ZERO têm `unit_price` — o shape é único.
  */
 export function mesclarPrecoPreservado<T extends { omie_codigo_produto?: number | string; valor_unitario: number | null }>(
   novos: T[],
@@ -170,21 +177,34 @@ export function mesclarPrecoPreservado<T extends { omie_codigo_produto?: number 
 ): T[] {
   if (!Array.isArray(gravados)) return novos;
   const porCodigo = new Map<string, number>();
+  const ambiguos = new Set<string>();
   for (const g of gravados) {
     if (g === null || typeof g !== "object") continue;
     const linha = g as Record<string, unknown>;
     const cod = linha.omie_codigo_produto;
     if (cod === null || cod === undefined) continue;
     const chave = String(cod);
-    if (porCodigo.has(chave)) continue; // primeira ocorrência vence
+    if (porCodigo.has(chave) || ambiguos.has(chave)) { ambiguos.add(chave); porCodigo.delete(chave); continue; }
     const preco = precoUnitarioOmie(linha.valor_unitario);
     if (preco !== null) porCodigo.set(chave, preco);
+  }
+  // Repetição do lado NOVO também é ambígua: um preço gravado único não diz a qual das duas
+  // linhas novas ele pertence, e copiá-lo para as duas inventaria receita.
+  const vistos = new Set<string>();
+  for (const n of novos) {
+    const cod = n.omie_codigo_produto;
+    if (cod === null || cod === undefined) continue;
+    const chave = String(cod);
+    if (vistos.has(chave)) ambiguos.add(chave);
+    vistos.add(chave);
   }
   if (porCodigo.size === 0) return novos;
   return novos.map((n) => {
     if (n.valor_unitario !== null) return n; // a leitura nova já sabe o preço
     if (n.omie_codigo_produto === null || n.omie_codigo_produto === undefined) return n;
-    const gravado = porCodigo.get(String(n.omie_codigo_produto));
+    const chave = String(n.omie_codigo_produto);
+    if (ambiguos.has(chave)) return n;      // código repetido: não adivinha
+    const gravado = porCodigo.get(chave);
     return gravado === undefined ? n : { ...n, valor_unitario: gravado };
   });
 }

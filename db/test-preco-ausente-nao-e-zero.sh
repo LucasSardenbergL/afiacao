@@ -123,6 +123,17 @@ CREATE FUNCTION public.pode_ver_carteira_completa(p_uid uuid) RETURNS boolean
   LANGUAGE sql STABLE AS $f$ SELECT true $f$;
 CREATE FUNCTION public.carteira_visivel_para(p_cliente uuid, p_uid uuid) RETURNS boolean
   LANGUAGE sql STABLE AS $f$ SELECT true $f$;
+
+-- Pré-requisitos de `get_defasagem_cliente` (o ranking do bloco G). Igual acima: o que se
+-- prova e a MEDIA PONDERADA, entao o gate de custo devolve TRUE e sai do caminho, e as duas
+-- tabelas de custo ficam VAZIAS (c_now/c_last nulos nao impedem o p_last de ser calculado).
+ALTER TABLE public.sales_orders ADD COLUMN omie_payload jsonb;
+CREATE TABLE public.inventory_position (
+  omie_codigo_produto bigint, account text, cmc numeric, synced_at timestamptz);
+CREATE TABLE public.cmc_snapshot (
+  omie_codigo_produto bigint, account text, cmc numeric, data_posicao date, synced_at timestamptz);
+CREATE FUNCTION private.cap_custo_ler(p_uid uuid) RETURNS boolean
+  LANGUAGE sql STABLE AS $f$ SELECT true $f$;
 SQL
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -333,6 +344,23 @@ valor_de() { Pq -c "SET test.uid='$sys'; SELECT coalesce((SELECT c->>'valor_12m'
 eq "J2 o cliente sem preco aparece com valor_12m NULL (nao 0 fabricado)" "$(valor_de 'Ranking SEM preco')" "NULL"
 eq "J3 e quem tem receita segue com o numero certo"  "$(valor_de 'Ranking COM receita alta')" "500.00"
 
+echo "-- K. a media ponderada do ultimo preco nao e DILUIDA pela linha sem preco --"
+# `sum(unit_price*quantity) / sum(quantity)`: o numerador ignora NULL (sum pula), mas o
+# denominador CONSERVA a quantidade da linha sem preco. Duas linhas do mesmo SKU/dia, qtd 1
+# cada, precos 100 e NULL, davam 100/2 = 50 — um preco que ninguem praticou, que segue para
+# `p_req`, markup e a classificacao de defasagem que a tela mostra ao vendedor.
+d1="d1000000-0000-0000-0000-0000000000d1"
+P -q <<SQL
+INSERT INTO auth.users(id) VALUES ('$d1') ON CONFLICT DO NOTHING;
+INSERT INTO public.sales_orders(id, customer_user_id, created_by, status, account, hash_payload, omie_pedido_id, total, order_date_kpi)
+  VALUES ('50000000-0000-0000-0000-0000000000d1','$d1','$sys','faturado','oben','defas_d1', 4242, 100, current_date - 30);
+INSERT INTO public.order_items(sales_order_id, customer_user_id, omie_codigo_produto, product_id, quantity, unit_price, hash_payload) VALUES
+  ('50000000-0000-0000-0000-0000000000d1','$d1',1001,'$p1',1,  100, 'defas_i1'),
+  ('50000000-0000-0000-0000-0000000000d1','$d1',1001,'$p1',1, NULL, 'defas_i2');
+SQL
+plast() { Pq -c "SET test.uid='$sys'; SELECT coalesce((public.get_defasagem_cliente('[{\"empresa\":\"oben\",\"codigo\":1001,\"preco\":120}]'::jsonb,'$d1')->0->>'p_last'),'NULL');" | tail -1; }
+eq "K1 p_last = 100 (o preco REAL), nao 50 (a media diluida pelo item sem preco)" "$(plast)" "100.0000000000000000"
+
 # ══════════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): sabota, exige VERMELHO, restaura
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -454,6 +482,27 @@ SQL
 falso "J1 (ranking volta a NULLS FIRST)" "$(primeiro)" "Ranking COM receita alta"
 P -q -f "$MIG"   # restaura
 eq "H0d restauracao: o ranking voltou ao certo (J1 de novo)" "$(primeiro)" "Ranking COM receita alta"
+
+# H6 — tira o FILTER do DENOMINADOR (só dele: é a metade que dilui). K1 tem de cair para 50,
+# que é o preço fabricado — a média de 100 com uma linha cuja quantidade conta e cujo preço não.
+P -q <<'SQL'
+DO $sab$
+DECLARE v text;
+BEGIN
+  SELECT pg_get_functiondef(p.oid) INTO v FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='public' AND p.proname='get_defasagem_cliente' AND p.prokind='f';
+  v := replace(v,
+    '/ sum(quantity) FILTER (WHERE unit_price > 0)',
+    '/ sum(quantity)');
+  v := replace(v,
+    'CASE WHEN sum(quantity) FILTER (WHERE unit_price > 0) > 0',
+    'CASE WHEN sum(quantity) > 0');
+  EXECUTE v;
+END $sab$;
+SQL
+falso "K1 (denominador volta a contar a linha sem preco)" "$(plast)" "100.0000000000000000"
+P -q -f "$MIG"   # restaura
+eq "H0e restauracao: a media voltou ao preco real (K1 de novo)" "$(plast)" "100.0000000000000000"
 
 echo "════════════════════════════════════════"
 echo "PASS=$PASS  FAIL=$FAIL"

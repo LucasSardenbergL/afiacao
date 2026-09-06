@@ -293,7 +293,10 @@ export function useSalesOrderEdit() {
     ).slice(0, 20);
   }, [productSearch, catalogProducts]);
 
-  const subtotal = items.reduce((s, i) => s + i.valor_total, 0);
+  // `s + null` e 0 em JavaScript — o item sem preco somaria silenciosamente nada e o
+  // subtotal ficaria MENOR que a verdade sem sinal nenhum. Aqui a linha sem total fica
+  // explicitamente de fora; quem barra o salvar e o guard de preco, logo abaixo.
+  const subtotal = items.reduce((s, i) => s + (i.valor_total ?? 0), 0);
   // Índices dos itens com preço inválido (≤ 0 / NaN) — MESMA fonte para o bloqueio no
   // save e para o destaque na UI (aria-invalid + botão travado).
   const invalidPriceItemIndices = useMemo(() => invalidPricedOrderItemIndices(items), [items]);

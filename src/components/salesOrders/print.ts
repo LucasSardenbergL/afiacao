@@ -19,9 +19,11 @@ export function itemTotal(item: {
   quantidade?: number | null;
   valor_unitario?: number | null;
 }): number | null {
-  if (item.valor_total !== null && item.valor_total !== undefined && Number.isFinite(item.valor_total)) {
-    return item.valor_total;
-  }
+  // `if (item.valor_total)` e nao `!== null`: o `||` original tratava 0 como "AINDA NAO
+  // CALCULADO" e caia no fallback — e um rascunho chega com valor_total 0 e preco unitario
+  // preenchido. Trocar isso por um teste de nulidade devolvia 0 para o rascunho e apagava
+  // o total da tela e do cupom (pego pelo challenge do Codex; ha teste que fixa o caso).
+  if (item.valor_total) return item.valor_total;
   return totalLinhaOuAusente(item.quantidade, item.valor_unitario);
 }
 

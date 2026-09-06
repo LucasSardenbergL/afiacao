@@ -14,7 +14,10 @@ import type { ProductCartItem } from '@/hooks/unifiedOrder/types';
  * null/0 ("a orçar") é legítimo.
  */
 export function isInvalidProductPrice(price: number | null | undefined): boolean {
-  return !(Number.isFinite(price) && price > 0);
+  // `price != null` antes do resto porque `Number.isFinite` NAO estreita o tipo em TS
+  // (nao e type guard) — sem isto, `price > 0` e erro TS18049 com a assinatura nullable.
+  // A semantica e a mesma de antes: 0, negativo, NaN, +-Infinity, null e undefined saem.
+  return !(price != null && Number.isFinite(price) && price > 0);
 }
 
 /** Itens de produto com preço inválido, preservando a ordem original. */

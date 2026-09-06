@@ -198,9 +198,13 @@ function resolveProductId(
  *
  * Item sem PREÇO utilizável (ausente/0/lixo) é excluído pela MESMA régua e contado em `semPreco`,
  * para o caller degradar a confiança. Antes (M-04) ele entrava com receita 0 e custo cheio — margem
- * NEGATIVA fabricada, que rebaixava o health score do cliente. Espelho SQL: `get_customer_margin_summary`
- * (`computavel` exige preço E custo — mas a RPC de ingestão ainda coalesce ausência para 0 numa coluna
- * NOT NULL, e 0 é "computável"; fechar a ORIGEM é fatia própria: migration + writers + leitores).
+ * NEGATIVA fabricada, que rebaixava o health score do cliente.
+ *
+ * A ORIGEM foi fechada em 2026-09-05 (migration 20260905225613): `order_items.unit_price` aceita
+ * NULL, a RPC de ingestão distingue "não informou" de "informou 0", e o espelho SQL
+ * `private.margem_cliente_agregada()` exige `preco_unit > 0` — antes era `>= 0`, e como a coluna
+ * era NOT NULL o ramo `IS NOT NULL` dele nunca executava em produção. Enquanto essa origem
+ * esteve aberta, este guard era a ÚNICA defesa real; agora ele é a segunda, e as duas concordam.
  *
  * `omieToProductId` mapeia omie_codigo_produto → UUID; sem ele, itens que só têm o código
  * Omie (a maioria absoluta em produção) são descartados.
