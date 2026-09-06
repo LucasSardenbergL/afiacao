@@ -1,4 +1,4 @@
-# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v4)
+# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v5)
 
 > Money-path de compras. Origem: decisão **§8.4 do PR #2187** (spec
 > `2026-09-05-selo-aprovacao-pedido-sayerlack-design.md`, branch `claude/frosty-goodall-f12941`), que
@@ -10,13 +10,17 @@
 > **Status: desenho aprovado pelo founder em conversa (2026-09-06); implementação EM FILA atrás do
 > #2187, que ainda é DRAFT e do qual esta fatia consome infraestrutura (§2).**
 >
-> 🔴 **CHALLENGE CODEX: "não aprovar"** (2026-09-06). A 1ª tentativa foi barrada por cota (exit 75);
-> a janela resetou e a 2ª rodou. Custo: `gpt-6-astra · max · tentativa 2 · 908s · 165.313 tokens`.
-> Dois P1 bloqueantes — e o primeiro eu classifico como **P0**, porque derrota o mecanismo por dentro.
-> Achados, verificação e o que mudou nesta v3: **§9**. O Caminho B (auto-challenge) que cobria o
-> intervalo virou §9.3 — ele tinha achado B1/B2, mas **subdimensionou os dois**.
+> 🔴 **DUAS RODADAS DE CHALLENGE CODEX, as duas "não aprovar".** Toda alegação factual foi conferida
+> por mim contra o código antes de entrar no spec.
+> - **Rodada 1** sobre a v2 (`max · tentativa 2 · 908s · 165.313 tokens`; a 1ª tentativa caiu por cota
+>   e a janela resetou): 5 achados, um deles **P0** — o selo era forjável pela própria porta (§9.1).
+> - **Rodada 2** sobre a v4 (`max · tentativa 1 · 401s · 156.347 tokens`): os ataques antigos estavam
+>   fechados, mas **a minha correção do P0 introduziu duas regressões** — escalada de privilégio na
+>   porta humana e quebra da aprovação (§9.7).
 >
-> Esta v3 acata os cinco achados. **Uma decisão do founder segue aberta (§9.2): escopo da quantidade.**
+> **Esta v5 acata tudo e ainda NÃO foi desafiada.** Rodada 3 é pré-condição da implementação.
+> As duas rodadas acharam furo na **fronteira de autorização**, nunca na criptografia do selo — é onde
+> o risco deste desenho mora (§9.7).
 
 ## 1. A invariante — e por que NÃO é igualdade
 
@@ -150,6 +154,22 @@ Por isso, duas mudanças acopladas — nenhuma das duas basta sozinha:
 
 1. **`p_origem` deixa de ser parâmetro do chamador.** Cada porta passa uma constante que ela própria
    possui. Como só as portas chamam, a origem não é forjável.
+
+   ⚠️ **v5 — a aprovação NÃO é SECDEF, e a v4 quebrava por isso.** Conferido na M1 do #2187
+   (l.376): `aprovar_pedido_sugerido` é `SECURITY INVOKER` **por desenho** (as escritas de item vão sob
+   a RLS do aprovador). Logo ela chamaria o selador privado ainda como `authenticated` →
+   *permission denied*, e **a aprovação quebraria inteira**. Privilégio de SECDEF não permanece no
+   chamador depois do retorno.
+
+   Solução: uma entrada SECDEF **estreita**, `public.reposicao_selar_preco_na_aprovacao(p_pedido_id)`,
+   com EXECUTE para `authenticated` — e que **não pode lavar nada**, porque:
+   - exige `preco_selo IS NULL` ⇒ **só o PRIMEIRO selo**; re-selar é impossível por ela. Lavar exige
+     re-selar um pedido JÁ selado, e é exatamente isso que ela recusa;
+   - exige `aprovacao_selo IS NOT NULL` e o pedido já em `aprovado_aguardando_disparo` ⇒ ela só age no
+     instante em que o preço ainda é, por definição, o legítimo da fase pré-aprovação;
+   - **preserva a capability da RLS** (abaixo) — não amplia quem pode.
+
+   Não reconceder EXECUTE no selador genérico: era isso que abria o P0.
 2. **Selar e escrever deixam de ser atos separáveis.** Não existe "selar o que já está lá": toda
    porta escreve e sela na MESMA função, na MESMA transação. É o que fecha a variante do Codex
    "`UPDATE preço 10→NULL` e chamar a RPC de 1ª compra com 100" — sem escrita crua não há NULL
@@ -197,10 +217,24 @@ Fica no runbook `docs/runbooks/lovable-supabase.md`, não no código.
 
 #### 4.4.1 `reposicao_definir_custo_primeira_compra`
 
-**`SECURITY DEFINER`**, `search_path` fixo, e **põe `SET LOCAL reposicao.selo_bypass='on'` ela
-mesma** — porque depois da v3 `authenticated` não escreve preço em NENHUM status pós-aprovação
-(§4.5), nem em `falha_envio`. Definer com gate de papel na entrada (`auth.uid() IS NOT NULL AND NOT
-staff` → `42501`) substitui a RLS que o invoker daria.
+**`SECURITY DEFINER`**, `search_path` fixo — porque depois da v3 `authenticated` não escreve preço em
+NENHUM status pós-aprovação (§4.5), nem em `falha_envio`.
+
+🔴 **v5 — o gate NÃO é "staff". Isso era escalada de privilégio que EU introduzi** (§9.7). A v4
+copiou o gate do `sayerlack_aplicar_custo_portal` (`employee OR master`). Mas a RLS que o SECDEF
+substitui é `cap_compras_ler`, e **conferido em prod ela é
+`has_role(_uid,'master')` — SÓ MASTER**. Com o gate frouxo, um `employee` ganharia por esta porta uma
+escrita que a RLS reservava a `master`: pedido em `falha_envio` com custo ausente → preço arbitrário
+positivo → o owner grava **e sela** → reprocessamento manda ao Omie. Sem forjar nada.
+
+**Regra da v5, e vale para TODA porta humana SECDEF deste spec** (inclusive a
+`reposicao_selar_preco_na_aprovacao` do §4.3): o gate é **exatamente a capability que a RLS exigia** —
+`private.cap_compras_ler(auth.uid())`, senão `42501`. E **`auth.uid() IS NULL` NÃO passa**: ausência de
+identidade não é autorização (a expressão `auth.uid() IS NOT NULL AND NOT staff` do
+`sayerlack_aplicar_custo_portal` deixa NULL passar **de propósito**, porque lá quem chama é a edge com
+`service_role` — copiá-la para uma porta humana inverte o sentido). `REVOKE EXECUTE` de `PUBLIC` e
+`anon` por nome.
+
 `p_itens = [{item_id, preco_unitario}]`.
 
 1. Pedido `FOR UPDATE`; status ∈ `('pendente_aprovacao','bloqueado_guardrail','falha_envio')`, senão
@@ -244,8 +278,9 @@ O GUC `reposicao.selando_preco` **não** aparece aqui, e isso é desenho: `repos
 só em `pedido_compra_sugerido`, nunca em `pedido_compra_item`. Uma exceção para ele no trigger de item
 seria porta aberta sem dono.
 
-`falha_envio` fica na lista permissiva porque a RPC de 1ª compra é quem escreve lá — e ela sela.
 `reposicao_persistir_qtde_inteira` não toca `preco_unitario`, então não interage com este ramo.
+*(A v4 deixou aqui uma frase morta dizendo que `falha_envio` seguia permissivo — contradizia a própria
+mudança logo acima. Removida na v5, §9.7.)*
 
 **Em `pedido_compra_sugerido`** — o trigger `BEFORE UPDATE` do #2187 (§3.3 de lá) ganha um ramo:
 `preco_selo` / `preco_selo_em` / `preco_selo_origem` só mudam quando
@@ -423,11 +458,21 @@ PR.
 - **PG17 `db/test-reposicao-preco-selo.sh`** (padrão dos harnesses; `-v ON_ERROR_STOP=1` + marcador
   positivo de fim; asserts negativos casam a **SQLSTATE exata** e re-lançam o resto; cenários humanos
   sob `SET ROLE authenticated` + GUC do JWT). Cobre:
-  🔴 **o teste decisivo do §9.1 — `adulterar → tentar legitimar → conferir disparo`:** como
-  `authenticated`, (a) UPDATE de preço em `falha_envio` → `SP006`; (b) UPDATE de preço → NULL em
-  qualquer status pós-aprovação → `SP006` (fecha a ausência fabricada); (c) chamada direta a
-  `private.reposicao_selar_preco` → erro de privilégio; (d) adulterar item A + preencher item B pela
-  RPC → a RPC recusa (A não estava ≤ 0) e **nada** é selado; (e) em todos, o disparo seguinte recusa.
+  🔴 **o teste decisivo do §9.1 — `adulterar → tentar legitimar → conferir disparo`.** Cada cenário
+  tem DUAS asserções, e a v4 errava a segunda (§9.7): o ataque é **recusado** *e* **o estado fica
+  intacto**, portanto **o disparo legítimo seguinte PASSA**. "Em todos o disparo recusa" estava errado
+  — se o `UPDATE 10→100` foi barrado, banco e selo seguem em 10, e recusar o disparo de 10 seria
+  quebrar o fluxo real, não protegê-lo. O disparo só recusa onde a adulteração **conseguiu** passar —
+  e o teste existe para provar que nenhuma consegue.
+  Como `authenticated`: (a) UPDATE de preço em `falha_envio` → `SP006`, preço segue 10, disparo passa;
+  (b) UPDATE de preço → NULL pós-aprovação → `SP006` (fecha a ausência fabricada), disparo passa;
+  (c) chamada direta a `private.reposicao_selar_preco` → erro de privilégio; (d) chamada a
+  `reposicao_selar_preco_na_aprovacao` num pedido **já selado** → recusa (só primeiro selo);
+  (e) variante A/B: a adulteração de A é barrada em (a); a RPC de 1ª compra recebe **só B** (que está
+  ≤ 0) e **deve SUCEDER** — recusar B por causa de A, que nem está no payload, mudaria o ataque
+  testado; (f) 🔴 **capability**: `employee` na RPC de 1ª compra → `42501`; **`master` → autorizado**;
+  `auth.uid() IS NULL` → `42501`. (g) 🔴 **a aprovação real roda como `authenticated`, com as duas
+  migrations integradas, e SELA** — é o cenário que a v4 quebrava (§9.7).
   Negar INSERT direto no log NÃO é este teste ·
   aprovação sela · captura do portal re-sela e loga o delta · 1ª compra preenche e re-sela · 1ª compra
   **recusa** item com preço > 0 (`SP005`) · payload com NaN/Infinity/≤0 → `SP004` · status fora da
@@ -450,10 +495,11 @@ PR.
   `n_val_unit` → o teste de transporte fica vermelho; tirar o re-selo de
   `sayerlack_aplicar_custo_portal` → a conferência acusa divergência num caminho **legítimo**;
   devolver `p_origem` ao chamador (ou reconceder EXECUTE a `authenticated` no selador) → o cenário
-  (c) do teste decisivo fica vermelho; repor `falha_envio` na lista permissiva → (a) fica vermelho;
-  afrouxar o `<= 0` da 1ª compra → o teste de "não troca preço bom" fica vermelho; remover o
-  `SET LOCAL reposicao.selo_bypass='on'` de `sayerlack_aplicar_custo_portal` → a captura legítima toma
-  `SP006` (prova que o bypass do §4.4 é necessário, não decorativo).
+  (c) fica vermelho; repor `falha_envio` na lista permissiva → (a) fica vermelho; **trocar
+  `cap_compras_ler` por `employee OR master` na RPC de 1ª compra → (f) fica vermelho** (é a
+  falsificação da escalada que eu mesmo introduzi na v4); tirar o `preco_selo IS NULL` da entrada de
+  aprovação → (d) fica vermelho; afrouxar o `<= 0` da 1ª compra → o teste de "não troca preço bom"
+  fica vermelho.
 - **Gate da edge — a v2 afirmava um FATO FALSO aqui, corrigido (§9.5).** Eu escrevi que
   `_shared/marco-pre-omie_test.ts` já assere "exatamente 1 call site de `IncluirPedCompra`". **Não
   assere.** O `G3` conta `atribuicoesDaColuna` — atribuições de `omie_po_inexistente_antes_de` —, e o
@@ -618,6 +664,36 @@ falsificação que remove a DECISÃO de recusar.
 - Ressalva do próprio parecer: a análise das RPCs novas é **de desenho** (elas não existem), e a
   consulta SQL read-only dele falhou por DNS — ele manteve as medições do prompt como fatos. As
   medições são minhas, via `psql-ro`, e estão na §3.
+
+### 9.7 Segunda rodada do challenge (v4) — **não aprovar**, e os dois P1 são MEUS
+
+`gpt-6-astra · max · tentativa 1 · 401s · 156.347 tokens`. O Codex confirmou que os ataques de escrita
+crua foram fechados **na regra pretendida** — e achou que **a própria correção do P0 introduziu duas
+regressões**. As duas verificadas por mim antes de entrar aqui.
+
+- **[P1] Escalada de privilégio na porta humana.** Verificado em prod: `private.cap_compras_ler` é
+  `has_role(_uid,'master')` — **só master**. Meu gate da v4 copiou o do
+  `sayerlack_aplicar_custo_portal` (`employee OR master`), e com SECDEF isso daria a `employee` uma
+  escrita que a RLS reservava a `master`: `falha_envio` com custo ausente → preço arbitrário positivo →
+  o owner grava e sela → reprocessamento manda ao Omie. **Sem forjar nada.** Trocar RLS por SECDEF sem
+  reproduzir a capability **exata** é escalada silenciosa — a lição está agora como regra no §4.4.1, e
+  vale para toda porta humana deste spec.
+- **[P1] A premissa "as portas são SECDEF" é falsa para a aprovação.** Verificado na M1 do #2187
+  (l.376): `aprovar_pedido_sugerido` é `SECURITY INVOKER` **por desenho**. Privilégio de SECDEF não
+  permanece no chamador, então a aprovação chamaria o selador privado ainda como `authenticated` e
+  tomaria *permission denied*: **a v4 quebrava a aprovação inteira**. Corrigido no §4.3 com uma entrada
+  SECDEF estreita de **primeiro selo apenas** — que não pode lavar nada, porque lavar exige re-selar um
+  pedido já selado, e é isso que ela recusa.
+- **[P2] O meu teste decisivo exigia resultado impossível.** Eu escrevia "em todos, o disparo seguinte
+  recusa". Errado: se o ataque foi barrado, o estado ficou intacto e **o disparo legítimo tem de
+  passar**. Também: na variante A/B a RPC recebe só B e **deve suceder**; e a falsificação ainda citava
+  um GUC que a v4 tinha removido. Um spec com teste contraditório produz implementação que passa no
+  teste errado. Corrigido no §7.
+
+**Padrão que se repete e vale registrar:** as duas rodadas acharam furos na *fronteira de
+autorização*, não na criptografia do selo. Hash, ordenação, escala e NULL passaram limpos nas duas. O
+risco deste desenho nunca esteve em "o hash colide" — está em **quem pode autenticar o vetor**, e cada
+correção minha mexeu exatamente aí e criou a regressão seguinte.
 
 ## 10. Fora de escopo (dito, não esquecido)
 
