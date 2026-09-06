@@ -78,8 +78,43 @@ exit 0
 STUB
 chmod +x "$tmp/psql-stub"
 
+# stub do `pendencias-deploy.ts --json` (o LEDGER durável). LEDGER_MODO controla a resposta —
+# inclusive as QUEBRADAS, que são metade do que este arquivo mede: o alvo é o lado que APAGA
+# pendência, e ausência de erro não é resposta.
+cat > "$tmp/ledger-stub" <<'LSTUB'
+#!/usr/bin/env bash
+# o alvo tem de pedir `--json`: sem a flag, o CLI real imprimiria o relatório HUMANO, e ler texto
+# como se fosse dado é o defeito que a marca de formato existe para impedir.
+case " $* " in *" --json "*) ;; *) echo "stub: chamado SEM --json" >&2; exit 64 ;; esac
+j() { printf '{"formato":"%s","ref":"origin/main","tolerarNunca":false,"totalMapeadas":1,"totalObservadas":1,"totalPendentes":0,"totalUrgentes":0,"foraDoMapaHistoricas":[],"vereditos":[%s]}\n' "${1}" "${2}"; }
+v() { printf '{"edge":"%s","estado":"%s","esperado":"%s","observado":"%s","versaoEsperada":"v1","versao":"%s","via":"sonda","criado":"2026-09-06 10:00Z","idadeHoras":%s,"diasPendente":null,"escalada":false}' "$1" "$2" "$3" "$4" "$5" "$6"; }
+case "${LEDGER_MODO:-confere}" in
+  confere)        j 'pendencias-deploy/1' "$(v edge-muda CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 31.5)"; exit 0 ;;
+  fonte-errada)   j 'pendencias-deploy/1' "$(v edge-muda CONFERE "$SHA_NOVO" "$SHA_VELHO" v1 31.5)"; exit 0 ;;
+  nunca)          j 'pendencias-deploy/1' "$(v edge-muda NUNCA_ATESTADA "$SHA_NOVO" null null null)"; exit 1 ;;
+  diverge)        j 'pendencias-deploy/1' "$(v edge-muda DIVERGE_P1 "$SHA_NOVO" "$SHA_VELHO" v0.9 40)"; exit 1 ;;
+  sem-fonte-eco)  j 'pendencias-deploy/1' "$(v edge-muda SEM_FONTE_NO_ECO "$SHA_NOVO" sem-campo v1 2)"; exit 1 ;;
+  # todas as edges do fixture CONFEREM — para provar que quem responde na janela viva é julgado
+  # por ela, e que edge FORA do mapa não é absolvida por rótulo nenhum.
+  confere-tudo)   j 'pendencias-deploy/1' "$(v edge-velha CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 30),$(v edge-no-ar CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 30),$(v edge-pre-fonte CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 30),$(v edge-fora-do-mapa CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 30)"; exit 0 ;;
+  mudo)           exit 0 ;;                                        # exit 0 e stdout VAZIO
+  lixo)           echo "relatorio humano: ✅ confere — 46"; exit 0 ;;  # saída que não é JSON
+  sem-marca)      j 'outro-contrato/9' "$(v edge-muda CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 31.5)"; exit 0 ;;
+  vereditos-ruins) printf '{"formato":"pendencias-deploy/1","vereditos":"nao-e-lista"}\n'; exit 0 ;;
+  exit2)          echo "MECANICA: ledger public.deploy_atestacoes NAO existe" >&2; exit 2 ;;
+  exit3)          echo "USO: argumento desconhecido" >&2; exit 3 ;;
+  ausente)        exit 127 ;;                                      # bun/arquivo que não roda
+esac
+LSTUB
+chmod +x "$tmp/ledger-stub"
+
 export FECHO_MAPA_FONTE="$tmp/mapa.ts" STUB_PARES="$tmp/pares.txt" STUB_SQL_ECO="$tmp/sql.txt"
 export STUB_ANONIMAS=0
+export SHA_NOVO SHA_VELHO
+# Por padrão o ledger está INDISPONÍVEL nesta suíte: os casos anteriores ao ledger (2026-09-05)
+# medem o comportamento SEM ele, e o fail-closed tem de mantê-los idênticos — a prova de que o
+# ledger só ACRESCENTA absolvição, nunca muda o resto.
+export FECHO_LEDGER_BIN="$tmp/ledger-stub" LEDGER_MODO=ausente
 
 # roda o alvo: `run <modo-do-stub> <psql> <args...>` publica a saida em $out e o codigo em $rc.
 # NAO devolve a saida por stdout de proposito: `run ...` executaria a funcao num SUBSHELL
@@ -539,6 +574,87 @@ MAPA3
      && tem 'INERTE' "$linha_ref" && [ "$rc" -eq 1 ]
   then ok "marcador so no working tree -> SEM_PROVA; so na REF -> INERTE (o closure le a REF)"
   else bad "marcador devia ser lido da REF e nunca do working tree (rc=$rc): ${out:0:160}"; fi
+
+  # ---------------------------------------------------------------- LEDGER ---
+  # 16. O LEDGER durável (`deploy_atestacoes`, #2199), lido pelo `pendencias:deploy --json`.
+  #     O DEFEITO medido em 2026-09-06: a janela viva morre no `pg_net.ttl` (6 h), então edge
+  #     deployada e ATESTADA há mais de 6 h saía SEM_PROVA -> chip -> sessao nova que rodava
+  #     `pendencias:deploy` e descobria que ja estava ✅. Cada chip falso custa uma sessao, e com
+  #     fan-out (um chip por sessao que fecha na janela) as sondas duplicadas viram risco REAL:
+  #     bundle pre-sensor ignora `probe` e executa o fluxo real, uma vez por colagem.
+  #     `edge-muda` e a edge do fixture que NAO tem linha na janela viva — exatamente a que caia
+  #     em "nenhuma sonda em 6 hours".
+  LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  if tem 'LEDGER_CONFERE' "$out" && [ "$rc" -eq 0 ] && ! tem 'abra chip' "$out" \
+     && ! tem 'SEM_PROVA' "$out"
+  then ok "ledger CONFERE com fonte == REF -> LEDGER_CONFERE, exit 0, SEM chip (prova alem da janela)"
+  else bad "ledger conferindo devia suprimir o chip (rc=$rc): ${out:0:160}"; fi
+
+  # 16b. A SABOTAGEM DO ENUNCIADO, virada teste: o ledger diz CONFERE para uma edge cujo `fonte`
+  #      NAO e o do mapa da REF. Ler so o ROTULO do CLI herdaria qualquer defeito dele
+  #      (gates-textuais-cegos.md: >=1 eixo POR FORA); a 2a chave e esse eixo. Sem ela, um CLI
+  #      julgando contra outra ref — ou mentindo — apagaria chip legitimo em verde.
+  LEDGER_MODO=fonte-errada run ok "$tmp/psql-stub" edge-muda
+  if tem 'LEDGER_DISCORDA' "$out" && tem 'SEM_PROVA' "$out" && [ "$rc" -eq 1 ] \
+     && ! tem 'LEDGER_CONFERE' "$out"
+  then ok "ledger CONFERE com fonte != REF -> LEDGER_DISCORDA + chip (a 2a chave e o eixo de fora)"
+  else bad "CONFERE com fonte divergente NAO pode absolver (rc=$rc): ${out:0:200}"; fi
+
+  # 16c. NUNCA_ATESTADA continua chip — o ledger nao inventa prova, so guarda a que houve. E o
+  #      diagnostico entra na linha: o chip nasce dizendo o que o ledger sabia.
+  LEDGER_MODO=nunca run ok "$tmp/psql-stub" edge-muda
+  if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 1 ] && tem 'NUNCA_ATESTADA' "$out" \
+     && tem 'sonda:sql' "$out" && ! tem 'LEDGER_CONFERE' "$out"
+  then ok "ledger NUNCA_ATESTADA -> segue SEM_PROVA/chip, com o diagnostico e o remedio (1a sonda)"
+  else bad "NUNCA_ATESTADA devia continuar virando chip (rc=$rc): ${out:0:200}"; fi
+
+  # 16d. O FAIL-CLOSED, um modo de avaria por vez. Exigir resposta POSITIVA e nao "ausencia de
+  #      erro": `exit 0` com stdout vazio e o caso classico do presente-porem-quebrado, e a marca
+  #      de formato e o que separa "o CLI respondeu" de "algo saiu no stdout".
+  local modo ruins_ledger_ok=1
+  for modo in mudo lixo sem-marca vereditos-ruins exit2 exit3 ausente; do
+    LEDGER_MODO="$modo" run ok "$tmp/psql-stub" edge-muda
+    if ! { tem 'SEM_PROVA' "$out" && [ "$rc" -eq 1 ] && tem 'LEDGER_NAO_CONSULTADO' "$out" \
+           && ! tem 'LEDGER_CONFERE' "$out"; }; then
+      ruins_ledger_ok=0; bad "ledger '$modo' devia ser LEDGER_NAO_CONSULTADO + chip (rc=$rc): ${out:0:160}"
+    fi
+  done
+  [ "$ruins_ledger_ok" = 1 ] && ok "ledger quebrado (7 avarias: mudo/lixo/sem-marca/vereditos/exit2/exit3/ausente) -> fail-closed, chip"
+
+  # 16e. DIVERGE do ledger e pendencia PROVADA — e NAO entra no DISPARE. Sondar antes do deploy
+  #      nao confirma nada e, em edge cara com bundle pre-sensor, EXECUTA o fluxo real: a ordem e
+  #      deploy antes, sonda depois (a mesma assimetria do `--caro`).
+  LEDGER_MODO=diverge run ok "$tmp/psql-stub" edge-muda
+  linha_cmd="$(printf '%s' "$out" | command grep 'sonda:sql' || true)"
+  if tem 'LEDGER_DIVERGE' "$out" && [ "$rc" -eq 1 ] && tem 'abra chip' "$out" \
+     && ! tem 'edge-muda' "$linha_cmd"
+  then ok "ledger DIVERGE -> pendencia PROVADA, chip, e FORA da lista do DISPARE"
+  else bad "DIVERGE devia ser chip provado e nunca convidar a sondar (rc=$rc): ${out:0:200}"; fi
+
+  # 16f. A JANELA VIVA VENCE: ela e a evidencia mais FRESCA, e o ledger do CLI e `ledger ∪ janela`
+  #      — nao pode ter nada mais novo. Sem esta trava, um CONFERE historico apagaria o
+  #      DESATUALIZADA de um bundle velho servindo AGORA, que e a falha silenciosa que este script
+  #      existe para pegar (o caso `omie-vendas-sync`).
+  LEDGER_MODO=confere-tudo run ok "$tmp/psql-stub" edge-velha
+  if tem 'DESATUALIZADA' "$out" && [ "$rc" -eq 1 ] && ! tem 'LEDGER_CONFERE' "$out"
+  then ok "janela viva VENCE o ledger: bundle velho servindo segue DESATUALIZADA"
+  else bad "ledger nao pode apagar o DESATUALIZADA da janela viva (rc=$rc): ${out:0:200}"; fi
+
+  # 16g. ...e o mesmo vale para a resposta que PROVA bundle velho sem `fonte` (pre-#1998) e para a
+  #      edge FORA do mapa, que nao tem `esperado` com que casar a 2a chave.
+  LEDGER_MODO=confere-tudo run ok "$tmp/psql-stub" edge-pre-fonte edge-fora-do-mapa
+  if tem 'PRE_SONDA_FONTE' "$out" && tem 'SEM_PROVA' "$out" && [ "$rc" -eq 1 ] \
+     && ! tem 'LEDGER_CONFERE' "$out"
+  then ok "ledger nao absolve PRE_SONDA_FONTE nem edge fora do mapa (sem esperado, sem 2a chave)"
+  else bad "ledger absolveu quem nao podia (rc=$rc): ${out:0:200}"; fi
+
+  # 16h. PRECEDENCIA: mecanica quebrada nao consulta o ledger. O wrapper mudo e o mesmo caminho ate
+  #      o banco que o CLI usaria — confiar no ledger com o psql reprovado seria contornar o
+  #      proprio fail-closed por uma porta lateral.
+  LEDGER_MODO=confere run mudo "$tmp/psql-stub" edge-muda
+  if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ] && ! tem 'LEDGER_CONFERE' "$out"
+  then ok "psql mudo -> ledger NEM e consultado (fail-closed do banco tem precedencia)"
+  else bad "com mecanica quebrada o ledger nao pode absolver (rc=$rc): ${out:0:200}"; fi
 }
 
 # ---------------------------------------------------------------- falsificação ---
@@ -714,6 +830,55 @@ if [ "${1:-}" = "--falsificar" ]; then
   # (d) a query perde o "mais recente por edge\"
   sabota "SQL sem DISTINCT ON (edge)" \
     's%SELECT DISTINCT ON (edge) edge%SELECT edge%'
+
+  # ---- LEDGER (2026-09-06). Uma camada por vez: cada sabotagem tira UMA trava, e a que ficar
+  #      verde é redundante ou inalcançada. O alvo continua sendo o lado que APAGA pendência, e
+  #      agora ele apaga com prova de OUTRO programa — então as travas que importam são as que
+  #      impedem esse programa de virar autoridade cega.
+  # (l1) a DUPLA CHAVE some: basta o rótulo `CONFERE` do CLI para absolver, sem casar o `fonte`
+  #      com o mapa da REF. Um CLI julgando contra outra ref — ou mentindo — apagaria chip real.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "ledger absolvendo pelo ROTULO, sem casar o fonte com a REF" \
+    's%if \[ "$l_estado" = "CONFERE" \] && \[ "$l_obs" = "$esperado" \]; then%if [ "$l_estado" = "CONFERE" ]; then%'
+  # (l2) a MARCA de formato deixa de ser exigida: stdout vazio, relatório humano e JSON de outro
+  #      contrato passariam por resposta. É o `command -v` do ledger — presença valendo por prova.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "marca de formato do ledger deixando de ser exigida" \
+    's%      if \[ "$marca_lida" != "$LEDGER_FORMATO" \]; then%      if false; then%'
+  # (l3) exit fora de {0,1} vira resposta: exit 2 (mecânica do CLI) e 127 (bun ausente) entrariam
+  #      como se o ledger tivesse julgado.
+  sabota "exit anomalo do ledger tratado como resposta" \
+    's%    0|1)%    0|1|2|127)%'
+  # (l4) a PRECEDÊNCIA some: com o psql reprovado, o ledger seria consultado assim mesmo — o
+  #      fail-closed do banco contornado por uma porta lateral (o CLI usa o MESMO wrapper).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "ledger consultado mesmo com a mecanica do banco reprovada" \
+    's%if \[ "$mecanica_ok" = 1 \]; then  # ledger: mesmo gate do banco%if true; then%'
+  # (l5) a JANELA VIVA deixa de vencer: uma atestação histórica apagaria o `DESATUALIZADA` de um
+  #      bundle velho servindo AGORA — a falha silenciosa que este script existe para pegar.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "ledger passando por cima da janela viva (mais fresca)" \
+    's%    command grep -q -- "\^$slug " "$tmp/ar"   2>/dev/null && continue%    :%'
+  # (l6) o ledger passa a opinar sobre edge FORA do mapa, onde não há `esperado` com que casar a
+  #      2ª chave — absolvição sem régua.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "ledger opinando sobre edge fora do mapa (sem esperado)" \
+    's%  if \[ "$ledger_ok" = 1 \] && \[ -n "$esperado" \] && \[ -z "$servido" \]; then%  if [ "$ledger_ok" = 1 ]; then%'
+  # (l7) a divergência do ledger perde o nome e cai no ramo genérico: além de sumir a marca, a
+  #      edge volta para a lista do DISPARE — convidando a sondar bundle pré-sensor, que EXECUTA
+  #      o fluxo real (deploy antes, sonda depois).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "divergencia do ledger caindo no ramo generico (e voltando ao DISPARE)" \
+    's%  case "$1" in DIVERGE_P1|DIVERGE_P2|INCOERENTE|SEM_MAPA_NO_BUNDLE) return 0 ;; esac%  case "$1" in __nunca_casa__) return 0 ;; esac%'
+  # (l8) o `--json` some da invocação: o CLI real imprimiria o relatório HUMANO e o shell leria
+  #      texto como dado. O stub recusa (exit 64) — que é o comportamento certo do consumidor.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "invocacao do ledger sem --json (texto humano lido como dado)" \
+    's%  (cd "$BIN_RAIZ" && PSQL_RO="$PSQL" "$@" --json)%  (cd "$BIN_RAIZ" \&\& PSQL_RO="$PSQL" "$@")%'
+  # (l9) o DIAGNÓSTICO some da linha indeterminada: o chip volta a nascer sem dizer o que o ledger
+  #      sabia, e "nenhuma sonda" deixa de distinguir NUNCA_ATESTADA de ledger mudo.
+  sabota "diagnostico do ledger sumindo da linha SEM_PROVA" \
+    's%    NUNCA_ATESTADA)   printf%    NUNCA_ATESTADA)   : printf%'
 
   # guard de fuso: as duas sabotagens sao SIMETRICAS de proposito, porque o guard erra dos DOIS
   # lados e cada lado tem um caso diferente para pegar. Frouxo demais (aceita tudo) devolve o bug

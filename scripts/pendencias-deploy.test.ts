@@ -29,8 +29,11 @@ import {
 import {
   CRON_COLETOR,
   formatarSemIdentidade,
+  FORMATO_JSON,
   lerArgIds,
+  lerArgJson,
   MIGRATION_LEDGER,
+  serializarRelatorio,
   SQL,
   SQL_SAUDE_COLETOR,
   SQL_SEM_IDENTIDADE,
@@ -753,5 +756,69 @@ describe('decidirExit', () => {
 
   it('mas NÃO desconta a resposta sem identidade: exit 1 com a válvula LIGADA', () => {
     expect(decidirExit({ totalPendentes: 2, nuncaAtestadas: 2, tolerarNunca: true, semIdentidade: 6 })).toBe(1);
+  });
+});
+
+/**
+ * `--json` — o contrato que o Passo 3 do /fecho lê (`.claude/skills/fecho/scripts/edges-pendentes.sh`).
+ *
+ * O shell só absolve uma edge SEM resposta na janela viva se o ledger disser CONFERE **e** o
+ * `fonte` observado bater com o mapa da REF que ele mesmo leu; e só lê veredito depois de casar a
+ * MARCA de formato. Estas asserções são as duas pontas do contrato vistas daqui: a serialização
+ * carrega a marca e os campos, e a flag desconhecida nunca cai calada no relatório humano.
+ */
+describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
+  it('lerArgJson só LÊ a flag — e convive com o `--ids` do #2221 na mesma linha de comando', () => {
+    expect(lerArgJson([])).toBe(false);
+    expect(lerArgJson(['--json'])).toBe(true);
+    expect(lerArgJson(['--ids', '{}', '--json'])).toBe(true);
+  });
+
+  it('quem RECUSA o desconhecido é o `lerArgIds` — um validador só, e `--json` não pode cair nele', () => {
+    // `--json` tem de ser CONHECIDO pelo validador: se caísse em "argumento desconhecido", a flag
+    // nova nasceria recusada pelo próprio CLI e o Passo 3 leria isso como ledger indisponível.
+    expect(() => lerArgIds(['--json'])).not.toThrow();
+    expect(() => lerArgIds(['--jsn'])).toThrow(/argumento desconhecido/);
+    // e a recusa vira exit 2 (mecânica) no CLI, que para o consumidor já é "não consultado" —
+    // fail-closed, nunca "limpo".
+  });
+
+  it('serializarRelatorio: JSON parseável, com a MARCA de formato, os totais e os vereditos INTEIROS', () => {
+    const rel = julgar(ESPERADOS, [obs('edge-a', 'aaa111')], ctx());
+    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false }));
+    expect(j.formato).toBe(FORMATO_JSON);
+    expect(j.ref).toBe('origin/main');
+    expect(j.tolerarNunca).toBe(false);
+    expect(j.totalMapeadas).toBe(2);
+    expect(j.totalObservadas).toBe(1);
+    expect(j.totalPendentes).toBe(1);
+    const a = j.vereditos.find((v: { edge: string }) => v.edge === 'edge-a');
+    expect(a).toMatchObject({
+      estado: 'CONFERE',
+      esperado: 'aaa111',
+      observado: 'aaa111',
+      versaoEsperada: 'v1.0-a',
+      versao: 'v1.0-a',
+      via: 'sonda',
+      idadeHoras: 1,
+    });
+  });
+
+  it('NUNCA_ATESTADA sai com observado/versao/via/idade NULL — ausente ≠ zero, o shell lê "-" e não absolve', () => {
+    const rel = julgar(ESPERADOS, [obs('edge-a', 'aaa111')], ctx());
+    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false }));
+    const b = j.vereditos.find((v: { edge: string }) => v.edge === 'edge-b');
+    expect(b).toMatchObject({ estado: 'NUNCA_ATESTADA', esperado: 'bbb222', observado: null, versao: null, via: null, idadeHoras: null });
+  });
+
+  it('a marca de formato do shell é a MESMA deste CLI, e o shell a exige ANTES de ler veredito', () => {
+    const sh = readFileSync(
+      join(__dirname, '..', '.claude', 'skills', 'fecho', 'scripts', 'edges-pendentes.sh'),
+      'utf8',
+    );
+    expect(sh).toContain(`LEDGER_FORMATO='${FORMATO_JSON}'`);
+    expect(sh).toContain('!= "$LEDGER_FORMATO"');
+    // e só CONFERE com a 2ª chave (fonte observado == esperado da REF) absolve
+    expect(sh).toContain('[ "$l_estado" = "CONFERE" ] && [ "$l_obs" = "$esperado" ]');
   });
 });
