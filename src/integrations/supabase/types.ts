@@ -9330,6 +9330,13 @@ export type Database = {
             referencedColumns: ["pedido_id"]
           },
           {
+            foreignKeyName: "pedido_compra_item_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "pedido_compra_item_promocao_item_id_fkey"
             columns: ["promocao_item_id"]
             isOneToOne: false
@@ -9374,6 +9381,10 @@ export type Database = {
           canal_usado: string | null
           cancelado_em: string | null
           cancelado_por: string | null
+          cancelamento_pos_disparo_em: string | null
+          cancelamento_pos_disparo_evidencia: string | null
+          cancelamento_pos_disparo_motivo: string | null
+          cancelamento_pos_disparo_por: string | null
           condicao_origem: string | null
           condicao_pagamento_codigo: string | null
           condicao_pagamento_descricao: string | null
@@ -9424,6 +9435,10 @@ export type Database = {
           canal_usado?: string | null
           cancelado_em?: string | null
           cancelado_por?: string | null
+          cancelamento_pos_disparo_em?: string | null
+          cancelamento_pos_disparo_evidencia?: string | null
+          cancelamento_pos_disparo_motivo?: string | null
+          cancelamento_pos_disparo_por?: string | null
           condicao_origem?: string | null
           condicao_pagamento_codigo?: string | null
           condicao_pagamento_descricao?: string | null
@@ -9474,6 +9489,10 @@ export type Database = {
           canal_usado?: string | null
           cancelado_em?: string | null
           cancelado_por?: string | null
+          cancelamento_pos_disparo_em?: string | null
+          cancelamento_pos_disparo_evidencia?: string | null
+          cancelamento_pos_disparo_motivo?: string | null
+          cancelamento_pos_disparo_por?: string | null
           condicao_origem?: string | null
           condicao_pagamento_codigo?: string | null
           condicao_pagamento_descricao?: string | null
@@ -9532,6 +9551,13 @@ export type Database = {
             referencedRelation: "v_des_pedidos_em_transito"
             referencedColumns: ["pedido_id"]
           },
+          {
+            foreignKeyName: "pedido_compra_sugerido_split_parent_id_fkey"
+            columns: ["split_parent_id"]
+            isOneToOne: false
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
+          },
         ]
       }
       pedidos_portal_tentativas: {
@@ -9582,6 +9608,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_des_pedidos_em_transito"
             referencedColumns: ["pedido_id"]
+          },
+          {
+            foreignKeyName: "pedidos_portal_tentativas_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -11572,6 +11605,51 @@ export type Database = {
           regua?: number
           valor_anterior?: number | null
           valor_total?: number
+        }
+        Relationships: []
+      }
+      reposicao_cancelamento_pos_disparo_audit: {
+        Row: {
+          evidencia: string
+          executado_em: string
+          executado_por: string
+          executado_por_uid: string | null
+          id: number
+          justificativa: string | null
+          motivo: string
+          omie_pedido_compra_id: string | null
+          pedido_id: number
+          status_anterior: string
+          status_novo: string
+          valor_total: number | null
+        }
+        Insert: {
+          evidencia: string
+          executado_em?: string
+          executado_por: string
+          executado_por_uid?: string | null
+          id?: number
+          justificativa?: string | null
+          motivo: string
+          omie_pedido_compra_id?: string | null
+          pedido_id: number
+          status_anterior: string
+          status_novo: string
+          valor_total?: number | null
+        }
+        Update: {
+          evidencia?: string
+          executado_em?: string
+          executado_por?: string
+          executado_por_uid?: string | null
+          id?: number
+          justificativa?: string | null
+          motivo?: string
+          omie_pedido_compra_id?: string | null
+          pedido_id?: number
+          status_anterior?: string
+          status_novo?: string
+          valor_total?: number | null
         }
         Relationships: []
       }
@@ -18647,6 +18725,45 @@ export type Database = {
         }
         Relationships: []
       }
+      vw_cancelamento_pos_disparo_sem_evidencia: {
+        Row: {
+          cancelado_em: string | null
+          cancelado_por: string | null
+          empresa: string | null
+          fornecedor_nome: string | null
+          horario_disparo_real: string | null
+          id: number | null
+          justificativa_cancelamento: string | null
+          omie_pedido_compra_id: string | null
+          status: string | null
+          valor_total: number | null
+        }
+        Insert: {
+          cancelado_em?: string | null
+          cancelado_por?: string | null
+          empresa?: string | null
+          fornecedor_nome?: string | null
+          horario_disparo_real?: string | null
+          id?: number | null
+          justificativa_cancelamento?: string | null
+          omie_pedido_compra_id?: string | null
+          status?: string | null
+          valor_total?: number | null
+        }
+        Update: {
+          cancelado_em?: string | null
+          cancelado_por?: string | null
+          empresa?: string | null
+          fornecedor_nome?: string | null
+          horario_disparo_real?: string | null
+          id?: number | null
+          justificativa_cancelamento?: string | null
+          omie_pedido_compra_id?: string | null
+          status?: string | null
+          valor_total?: number | null
+        }
+        Relationships: []
+      }
       vw_pcp_bom_validacao: {
         Row: {
           componente_codigo: number | null
@@ -19085,6 +19202,16 @@ export type Database = {
           p_volume_unidade: string
         }
         Returns: number
+      }
+      corrigir_cancelamento_pos_disparo: {
+        Args: {
+          p_evidencia: string
+          p_justificativa?: string
+          p_motivo: string
+          p_pedido_id: number
+          p_usuario: string
+        }
+        Returns: Json
       }
       criar_pedidos_com_itens: { Args: { p_pedidos: Json }; Returns: Json }
       criar_plano_tatico: {
