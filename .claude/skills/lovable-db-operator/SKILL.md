@@ -155,7 +155,7 @@ BEGIN
   IF NOT EXISTS (<o predicado de suficiência — não só de existência>) THEN
     RAISE EXCEPTION 'A1 FALHOU: <o que está errado> — <a consequência real>';
   END IF;
-  RAISE NOTICE '<resumo do estado provado>';
+  RAISE NOTICE '<resumo do estado provado>';  -- decoracao: o SQL Editor NAO mostra NOTICE
 END
 $post$;
 ```
