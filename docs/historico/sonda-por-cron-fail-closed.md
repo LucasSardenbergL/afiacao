@@ -49,7 +49,7 @@ do alvo que não checava** — e a história de um repo com deploy manual está 
 - **Allowlist positiva** (`_shared/sonda-cron-alvos.ts`), default-deny no relé e no banco (F2).
 - **A prova** (`bun run sonda:cron-prova`): enumera os closures históricos por **ponto fixo**,
   materializa cada um com `git archive`, executa com stubs que contam todo efeito e classifica.
-  **141 closures aprovados** nesta fatia: relé 5, `monthly-report` 62, `calculate-scores` 75.
+  **84 closures aprovados** nesta fatia: relé 5, `monthly-report` 33, `calculate-scores` 46.
 - **O teste sempre-on** (`bun run test:sonda-rollback`) fixa os 5 bundles de referência e o relé.
 
 ## 4. Por que a prova é por EXECUÇÃO
@@ -83,7 +83,15 @@ zero e estaria mentindo.
    (antes dele, responder a sonda é `FALHA`; a partir dele, **não** responder é), e o `desde` não
    estava na chave. Entrou. Pela mesma razão, entradas órfãs passaram a ser **podadas**: manifesto
    que só cresce vira arquivo em que ninguém distingue prova viva de resíduo.
-6. **Gate textual que mede a STRING mede a documentação junto.** O G3 reprovava o relé por conter
+6. **O fecho não inclui o que é DERIVADO dele.** O mapa de fingerprints entrava no fecho, e como
+   ele é regerado por qualquer PR de edge, cada regeneração criava um closure novo de toda a
+   allowlist: 145 "closures distintos" dos quais 61 diferiam só pelo mapa. Excluí-lo (como o
+   gerador oficial já fazia) deixou 84 closures que diferem de COMPORTAMENTO.
+7. **Sha do próprio branch não sobrevive ao merge.** O veredito de (a) dependia de "este closure
+   veio depois do commit X", com X gravado na allowlist — e o rebase reescreve X, o squash do
+   auto-merge o descarta. Logo após o merge, todo closure novo (os que atestam) viraria `FALHA`. A
+   pergunta certa é sobre o closure, não sobre a linha do tempo: **ele contém o ramo?**
+8. **Gate textual que mede a STRING mede a documentação junto.** O G3 reprovava o relé por conter
    `x-cron-secret` — que está no CORS de **entrada**, legítimo (é o header que o cron manda PARA
    ele). Agora ele mede a **variável**: o `fetch` tem de receber o request que nasceu em
    `montarRequestSonda` e passou pela `barreiraSaida`. E usa o stripper **compartilhado**, com
@@ -94,7 +102,8 @@ zero e estaria mentindo.
 - `bun run test:sonda-rollback` — 4 testes: bundles velhos reais inertes com controle positivo
   (2, 4, 4, 11 e 1 efeitos nos controles), bundle atual atestando, relé emitindo 1 `OPTIONS`,
   paridade dos vetores HMAC.
-- `bun run sonda:cron-prova -- --backfill --tudo` — **141/141 closures PASSA**.
+- `bun run sonda:cron-prova -- --backfill --tudo` — **84/84 closures PASSA** (relé 5,
+  `monthly-report` 33, `calculate-scores` 46).
 - `bun run sonda:cron-prova -- --falsificar` — **9/9 sintéticos** com o veredito esperado (6 formas
   perigosas do `OPTIONS` reprovadas: IO top-level, IO antes da comparação de método, helper com IO
   no ramo, fallthrough, assíncrono antes do return, header aceito sem verificação; 3 inofensivas

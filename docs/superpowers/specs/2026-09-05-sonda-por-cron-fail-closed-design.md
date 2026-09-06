@@ -1,6 +1,6 @@
 # Sonda de deploy por cron, fail-closed no bundle velho — `OPTIONS` via relé, credencial que só atesta, prova por EXECUÇÃO de cada closure histórico
 
-> 2026-09-05 · spec **v5 — aprovada** (brainstorm → challenge Codex rodadas 1–3; rodada 3: `ROLLBACK-TEST: PASSA`, `[P1] Nenhum`) · money-path · depende de #2199 (ledger `deploy_atestacoes`, **já aplicado em prod** em 2026-09-05; o PR segue aberto).
+> 2026-09-05 · spec **v5 — aprovada e IMPLEMENTADA (F1)** (brainstorm → challenge Codex rodadas 1–3; rodada 3: `ROLLBACK-TEST: PASSA`, `[P1] Nenhum`) · money-path · depende de #2199 (ledger `deploy_atestacoes`, **já aplicado em prod** em 2026-09-05; o PR segue aberto).
 > Pedido: *"desenhar um mecanismo de atestação que o bundle PRÉ-sensor REJEITE antes de qualquer efeito; allowlist positiva e versionada; o cron escreve no ledger existente via `net._http_response` → `deploy_atestacoes_colher`; teste decisivo de rollback; nada implementado antes do challenge do Codex passar."*
 > Histórico da spec: v1 propôs credencial num header de POST (bundle velho → 401 no gate). O Codex (rodada 1, `gpt-5.6-sol`/xhigh) derrubou: **existem closures históricos SEM gate nenhum** (`monthly-report@ef08dddd2` manda e-mail sem autenticar; `calculate-scores@45a80118b` faz upserts) — um header não protege bundle sem auth. v2 trocou a prova textual por execução. v3 trocou o transporte para o único que o bundle velho interrompe **estruturalmente**. A rodada 2 confirmou o transporte nos contraexemplos e derrubou o RIGOR da prova (exceção `historicoDesde`, redirect no relé, controle por época de auth, enumeração, cache, falsificações do `OPTIONS`); v4 fechou cada item. A rodada 3 deu **PASSA** sem P1; v5 incorpora os P2/P3 dela (§9).
 
@@ -367,6 +367,22 @@ Perguntas para a rodada 3 (money-path, `gpt-5.6-sol`/xhigh) — o escopo é estr
 - **P2**: o limite nomeado em §7 (ii-b) — dependência remota não reproduzível historicamente; prova sobre o código local + stubs que contam toda chamada; famílias com IO na inicialização não entram no catálogo — é um limite **aceitável e honesto** para um mecanismo de deploy, ou invalida a prova? Se invalida, diga o que seria suficiente sem exigir artefato que não existe.
 - **P3**: o residual de ambiente (§7 vi, um ambiente só, atestação falsa apenas no banco alheio) é aceitável?
 - **P4**: alguma ordem de fatia (F1→F4) ou detalhe do relé/ramo que ainda permita efeito real em prod **antes** de a prova completa existir (ex.: F2 no ar com a allowlist das 3 enquanto F4 ainda não rodou)?
+
+## 9.1 Implementação da F1 (2026-09-06) — o que a execução mudou no desenho
+
+Quatro correções que só apareceram escrevendo o código, todas registradas em
+`docs/historico/sonda-por-cron-fail-closed.md` §5:
+
+1. **`desde` saiu da decisão.** O veredito perguntava "este closure veio depois do sha X?"; X é do
+   próprio branch e não sobrevive ao rebase nem ao squash. Agora pergunta **se o closure contém o
+   ramo** — propriedade do artefato, não da linha do tempo. O campo fica documental.
+2. **O mapa de fingerprints saiu do fecho** (é derivado dele): 145 closures viraram 84 reais.
+3. **O G3 mede a variável, não a string:** o relé cita `x-cron-secret` no CORS de entrada, que é
+   legítimo. O gate exige que o `fetch` receba o request que nasceu em `montarRequestSonda` e
+   passou pela `barreiraSaida`; e usa o stripper compartilhado, com sentinela de sub-limpeza.
+4. **`sync-reprocess` saiu da F1 por colisão** com o PR #2224 (mesmo `versao.ts`), não por risco.
+
+Números finais da F1: **84/84 closures PASSA**, 9/9 sintéticos, 11 falsificações vermelhas.
 
 ## 10. Referências
 
