@@ -60,7 +60,10 @@ O que não varia nas 9 migrations:
 4. **A mensagem diz a CONSEQUÊNCIA, não só o fato.** `'A3 FALHOU: authenticated ainda tem TRUNCATE
    (nao passa por RLS — apagaria os 7.966 SKUs)'` — quem lê entende o risco sem abrir o arquivo.
 5. **Checa existência E suficiência.** Nunca só `EXISTS`.
-6. **`RAISE NOTICE` de sucesso** no fim, resumindo o estado provado.
+6. **`RAISE NOTICE` de sucesso** no fim, resumindo o estado provado. ⚠️ **O founder NÃO vê esse
+   NOTICE** — o SQL Editor do Lovable não exibe NOTICE (`docs/agent/database.md` §1). O que ele lê
+   é o **Success** da AUSÊNCIA de EXCEPTION, e é isso que carrega o veredito. O NOTICE serve a quem
+   lê o `.sql`; **nenhuma informação pode existir só ali**.
 
 ```sql
 DO $post$
@@ -234,6 +237,12 @@ UPDATE public.<tabela> SET <coluna> = NULL WHERE id = v_id;  -- não inventa dad
 
 Assert que muta **restaura o estado** no fim (a migration não fabrica dado), e trata a tabela vazia
 com `RAISE NOTICE '… PULADO: tabela vazia'` em vez de falhar.
+
+⚠️ **Mas `PULADO` é informação que decide** — assert que não rodou ≠ assert que passou — **e ninguém
+a vê**: sem NOTICE na tela, o Run sai como Success indistinguível de "tudo provado". Aqui não dá para
+reportar por `RAISE EXCEPTION` (é a mesma transação do DDL — abortaria a migration). ⇒ Quando o pulo
+importar, o assert pulado vira linha da **query de validação read-only pós-apply** (item 3 do checklist
+de migration), que é onde o relatório pode aparecer sem custar o apply.
 
 ---
 

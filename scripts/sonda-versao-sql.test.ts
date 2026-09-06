@@ -929,8 +929,8 @@ describe('não consigo consultar a origin/main: ausência de dado não é aprova
 });
 
 /**
- * Repo git de verdade COM `refs/remotes/origin/main` — o chão que o `gitReal` precisa ter sob os
- * pés para devolver o ramo POSITIVO.
+ * Repo git de verdade, base dos fixtures do describe abaixo — cada um decide se a
+ * `refs/remotes/origin/main` existe nele.
  *
  * Construído aqui, e não herdado do checkout da sessão, porque essa ref é propriedade do CLONE e
  * não do código sob teste. MEDIDO no job `mutation-check` (run 34006830215): `actions/checkout@v5`
@@ -944,8 +944,8 @@ describe('não consigo consultar a origin/main: ausência de dado não é aprova
  * `spawnSync` cru de propósito: montar o fixture com o próprio `gitReal` faria o teste do executor
  * depender do executor.
  */
-function repoComOriginMain(): { repo: string; sha: string } {
-  const repo = mkdtempSync(join(tmpdir(), 'sonda-git-'));
+function repoGitCru(prefixo: string): { repo: string; git: (...args: string[]) => string } {
+  const repo = mkdtempSync(join(tmpdir(), prefixo));
   criadas.push(repo);
   const git = (...args: string[]): string => {
     const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
@@ -956,9 +956,26 @@ function repoComOriginMain(): { repo: string; sha: string } {
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   git('add', 'base.txt');
   git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'base');
+  return { repo, git };
+}
+
+/** COM a ref: o chão que o `gitReal` precisa ter sob os pés para devolver o ramo POSITIVO. */
+function repoComOriginMain(): { repo: string; sha: string } {
+  const { repo, git } = repoGitCru('sonda-git-');
   git('update-ref', 'refs/remotes/origin/main', 'HEAD');
   // O sha SAI do fixture porque a asserção lá embaixo compara contra ELE — ver o porquê no teste.
   return { repo, sha: git('rev-parse', 'HEAD') };
+}
+
+/**
+ * O MESMO repo, sem o `update-ref` — ou seja, git válido com a `origin/main` AUSENTE. É o estado
+ * literal do runner que quebrou o `mutation-check`: `actions/checkout@v5` sem `fetch-depth: 0` faz
+ * `git init` + `fetch --depth=1 <sha>:refs/remotes/pull/N/merge`, então o repo EXISTE e a ref não.
+ * Fica entre os dois casos que o describe já tinha, e é o único dos três que o `gitFalso` simula
+ * (ramo `opts.main == null`, que devolve status 1).
+ */
+function repoSemOriginMain(): string {
+  return repoGitCru('sonda-git-raso-').repo;
 }
 
 describe('gitReal: o executor de verdade responde o que o guard precisa julgar', () => {
@@ -974,6 +991,20 @@ describe('gitReal: o executor de verdade responde o que o guard precisa julgar',
     // QUALQUER ambiente a volta da ref herdada do checkout — que hoje só ficaria vermelha no job
     // `mutation-check`, silenciosa no local e no `validate`.
     expect(r.stdout.trim()).toBe(sha);
+  });
+
+  it('em repo git SEM a ref, status ≠ 0 — é o estado do checkout raso, e o guard tem de fechar', () => {
+    const r = gitReal(repoSemOriginMain())(['rev-parse', '--verify', '--quiet', 'origin/main']);
+    // O que o `conferirSincronia` lê: `rev.status !== 0` manda no ramo que ABORTA sem emitir SQL.
+    // MEDIDO: sem este caso, um `gitReal` que traduzisse 1 (ref ausente) em 0 passava pelos outros
+    // dois — o de cima devolve 0 de verdade, o de baixo devolve 128 — e o fail-OPEN saía verde.
+    expect(r.status).not.toBe(0);
+    // E a MARCA do ramo, não só "≠ 0": `--verify --quiet` sai 1 e CALADO quando só a ref falta,
+    // contra 128 + "fatal: not a git repository" do caso abaixo. É esse 1 que o `gitFalso` afirma
+    // no ramo `opts.main == null`; sem esta linha o dublê estaria citando o git de memória.
+    expect(r.status).toBe(1);
+    // O guard também recusa por `rev.stdout.trim() === ''`: aqui não há sha nenhum para inventar.
+    expect(r.stdout.trim()).toBe('');
   });
 
   it('fora de um repo git, status ≠ 0 — o guard cai no ramo fail-CLOSED, não no aprovado', () => {

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 515
+-- Total de custom migrations: 516
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -556,6 +556,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260905225613', 'preco_ausente_nao_e_zero', '20260905225613_preco_ausente_nao_e_zero.sql'),
   ('20260906105549', 'remover_itens_pedido_guard', '20260906105549_remover_itens_pedido_guard.sql'),
   ('20260906151204', 'deploy_sonda_cron_fail_closed', '20260906151204_deploy_sonda_cron_fail_closed.sql'),
+  ('20260906151715', 'aprovar_pedido_guard_atomico', '20260906151715_aprovar_pedido_guard_atomico.sql'),
   ('20260906154202', 'cancelar_pedido_revoke_anon', '20260906154202_cancelar_pedido_revoke_anon.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2298,7 +2299,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_edge_quando', 'deploy_sonda_disparos'),
   ('deploy_sonda_cron_fail_closed', 'cron_job', 'cron', 'deploy-sonda-cron', ''),
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
-  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos')
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
+  ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4088,7 +4090,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_edge_quando', 'deploy_sonda_disparos'),
   ('deploy_sonda_cron_fail_closed', 'cron_job', 'cron', 'deploy-sonda-cron', ''),
   ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
-  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos')
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos'),
+  ('aprovar_pedido_guard_atomico', 'function', 'public', 'aprovar_pedido_sugerido', '')
 )
 SELECT
   e.migration,
