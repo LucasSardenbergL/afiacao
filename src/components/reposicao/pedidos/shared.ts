@@ -1,5 +1,6 @@
 import { format } from 'date-fns';
 import type { StatusEnvioPortal } from './types';
+import { podeCancelarPeloHumano } from './rejeitar-pedido';
 
 export function getEstoqueZoneClass(estoque: number, minimo: number, pp: number): string {
   if (estoque < minimo) return 'text-status-error font-semibold';
@@ -187,6 +188,34 @@ export function decidirAcaoPortal(status: StatusEnvioPortal | null | undefined):
     return { kind: 'reenviar' };
   }
   return { kind: 'nenhuma' };
+}
+
+// A recusa DEFINITIVA do portal não escreve o `status` do pedido: `recusarPreBrowserless` (e a
+// classificação pós-Browserless) grava só `status_envio_portal='erro_nao_retentavel'`, e o pedido segue
+// `aprovado_aguardando_disparo`. Até 2026-09-06 a ÚNICA ação oferecida aqui era "Forçar reenvio", que
+// repete a MESMA recusa — o comprador ficava sem saída pela tela (achado P1 do challenge Codex
+// retroativo do #2198; em prod o pedido #2388 ficou 3 dias travado assim, por `Grupo errado`).
+//
+// Política decidida pelo founder (2026-09-06): **cancelar + o ciclo regrava**. NÃO reabrir para
+// `pendente_aprovacao` (é a reabertura que a §3.3.3 do #2187 propõe proibir no banco) e NÃO liberar
+// edição de item de pedido aprovado (achado P0-A do mesmo PR). A saída vale para TODO motivo de recusa,
+// inclusive os que editar quantidade não consertaria — `reposicao.md` já mandava cancelar no grupo
+// errado ("não existe ação de recompor/dividir pedido").
+//
+// Precisão > recall: o cancelamento só é OFERECIDO onde é a saída certa. Oferecer onde ela não resolve
+// é pior que não oferecer nada — vira a segunda saída falsa em cima da primeira.
+//  - Só `erro_nao_retentavel`: `erro_retentavel` o motor `sayerlack-retry-orfaos` drena sozinho, e os
+//    conciliáveis (`aceito_portal_sem_protocolo`/`indeterminado_requer_conciliacao`) podem ter PO no
+//    fornecedor — ali a ordem é conciliar ANTES, e cancelar criaria compra órfã.
+//  - Só com o `status` na allowlist HUMANA: em `disparado` existe PO real no Omie.
+// Isto decide apenas o que a TELA oferece. O guard que vale é o do servidor: `rejeitarPedidos` relê o
+// status do banco e a RPC `cancelar_pedido_sugerido` tem a allowlist própria (lição do #2204 — gate de
+// cliente sobre `status` velho não é guard).
+export function podeCancelarPorRecusaDefinitiva(p: {
+  status: string | null | undefined;
+  status_envio_portal: StatusEnvioPortal | null | undefined;
+}): boolean {
+  return p.status_envio_portal === 'erro_nao_retentavel' && podeCancelarPeloHumano(p.status);
 }
 
 /* ─── "Precisa de atenção" — fila cross-ciclo (Fase 3 · 3c) ─── */

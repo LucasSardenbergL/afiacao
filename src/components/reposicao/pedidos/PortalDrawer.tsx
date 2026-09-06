@@ -29,9 +29,10 @@ import {
 import { toast } from 'sonner';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { AlertTriangle, CheckCircle2, Loader2, RotateCw } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, Loader2, RotateCw } from 'lucide-react';
 import { PedidoSugerido, StatusEnvioPortal } from './types';
-import { portalStatusMeta, decidirAcaoPortal } from './shared';
+import { portalStatusMeta, decidirAcaoPortal, podeCancelarPorRecusaDefinitiva } from './shared';
+import { CancelarModal } from './CancelarModal';
 
 const PROTOCOLO_RE = /^\d{3,12}$/;
 
@@ -47,6 +48,7 @@ export function PortalDrawer({
   const queryClient = useQueryClient();
   const { isAdmin } = useAuth();
   const [confirmReenvio, setConfirmReenvio] = useState(false);
+  const [cancelarOpen, setCancelarOpen] = useState(false);
   const [conciliarOpen, setConciliarOpen] = useState(false);
   const [conciliarProtocolo, setConciliarProtocolo] = useState('');
 
@@ -124,6 +126,13 @@ export function PortalDrawer({
   if (!pedido) return null;
   const status = (pedido.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal;
   const acao = decidirAcaoPortal(status);
+  // Saída do pedido recusado em DEFINITIVO: cancelar + o ciclo regrava (ver `podeCancelarPorRecusaDefinitiva`).
+  // Sem gate de admin de propósito — quem fica sem caminho é o COMPRADOR, e "Forçar reenvio" (o único botão
+  // que existia aqui) repete a mesma recusa. Convive com o reenvio: nos motivos de CADASTRO
+  // (`mapeamento_ambiguo`, `fator_conversao_invalido`) corrigir o de-para conserta o pedido pendente e
+  // reenviar funciona — o pedido não congela o `sku_portal`. Não há coluna com o motivo da recusa
+  // (o #2187 propõe `portal_recusa_motivo`), então a tela oferece as DUAS saídas em vez de adivinhar qual serve.
+  const podeCancelar = podeCancelarPorRecusaDefinitiva(pedido);
   const protocoloValido = PROTOCOLO_RE.test(conciliarProtocolo.trim());
   const tentativas = pedido.portal_tentativas ?? 0;
   const tentativasColor =
@@ -244,6 +253,16 @@ export function PortalDrawer({
             </Button>
           )}
 
+          {podeCancelar && (
+            <Button
+              variant="outline"
+              onClick={() => setCancelarOpen(true)}
+            >
+              <Ban className="w-4 h-4 mr-1" />
+              Cancelar pedido (o ciclo regrava)
+            </Button>
+          )}
+
           {/* Erro genuíno sem PO criado → reenvio é seguro (somente admin). */}
           {acao.kind === 'reenviar' && isAdmin && (
             <Button
@@ -256,6 +275,13 @@ export function PortalDrawer({
             </Button>
           )}
         </SheetFooter>
+
+        <CancelarModal
+          pedido={pedido}
+          open={cancelarOpen}
+          onOpenChange={setCancelarOpen}
+          onCancelado={() => onOpenChange(false)}
+        />
 
         {/* Dialog de conciliação inline */}
         <Dialog
