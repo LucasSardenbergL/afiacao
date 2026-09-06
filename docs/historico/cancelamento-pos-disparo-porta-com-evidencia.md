@@ -155,6 +155,14 @@ camada; **V** a query de validação nos dois sentidos.
    provam exatamente isso com a tabela truncada: verde com o trigger, **vermelho sem ele**, e
    `count(*)=0` depois de cada um.
 
+### E o orçamento de ~400 chars do SQL Editor (medido no #2250, também em voo)
+
+A regra irmã que entrou junto: o SQL Editor **trunca a mensagem de erro em ~400 caracteres**. Aqui
+ela não morde, e isso está **medido, não suposto**: as 22 mensagens de `RAISE EXCEPTION` desta
+migration têm no máximo **210 caracteres** — cada uma dispara sozinha, não há relatório agregado —
+e todas abrem com o rótulo ASCII (`[CANCEL-POS-DISPARO-…]`, `POST FALHOU [...]`), que é a parte que
+decide. Como o que trunca é o **fim**, mesmo um corte deixaria o veredito legível.
+
 ## O que esta entrega NÃO fecha
 
 1. **O efeito externo no Omie continua fora de alcance.** O trigger serializa o banco, não o ERP.
