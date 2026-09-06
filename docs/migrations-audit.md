@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **516** custom migrations totais
-- **1754** objetos esperados (criados por estas migrations)
+- **517** custom migrations totais
+- **1760** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 540
-  - `rls_policy`: 460
-  - `index`: 253
-  - `cron_job`: 170
-  - `table`: 163
+  - `function`: 541
+  - `rls_policy`: 461
+  - `index`: 255
+  - `cron_job`: 171
+  - `table`: 164
   - `trigger`: 88
   - `view`: 76
   - `enum_value`: 4
@@ -4302,6 +4302,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260906154202_cancelar_pedido_revoke_anon.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260906180303_deploy_sonda_resultados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.deploy_sonda_resultados_colher` | — |
+| `table` | `public.deploy_sonda_resultados` | — |
+| `index` | `public.idx_deploy_sonda_resultados_edge` | `deploy_sonda_resultados` |
+| `index` | `public.idx_deploy_sonda_resultados_tick` | `deploy_sonda_resultados` |
+| `cron_job` | `cron.deploy-sonda-resultados-colher` | — |
+| `rls_policy` | `public.deploy_sonda_resultados_select_staff` | `deploy_sonda_resultados` |
 
 ## Próximos passos por status
 
