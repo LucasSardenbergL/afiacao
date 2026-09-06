@@ -218,8 +218,61 @@ ela: **a ordem da lista que você mandou sondar não é a ordem das respostas qu
   CORS) ou credencial exclusiva de probe, com o teste de rollback. Entrega própria.
 - **Fan-out no CI como sinal**: o `sonda:fingerprint` imprimir, no PR, quais consumidores tiveram o
   `fonte` alterado por `_shared/` e quais bumparam — para o autor decidir P1 ali, não depois.
-- **Experimento do founder**: um prompt do Lovable com N edges (mede conveniência, não prova de
-  deploy — o ledger continua sendo a prova).
+- ~~**Experimento do founder**: um prompt do Lovable com N edges~~ → **FEITO em 2026-09-06, §6.**
 - Limites conhecidos: `fonte` é identidade autorrelatada da FONTE, não hash do bundle; o corpo diz
   qual edge respondeu (o gate de contrato cobre "edge que se identifica errado"); pg_net é UNLOGGED —
   coletor parado por > 6h ou restart perde a janela, e o CLI trata isso como mecânica.
+
+## 6. O prompt de N edges — medido (2026-09-06), e o que ele NÃO prova
+
+O item "um prompt do Lovable com N edges" estava aberto no §5 e na skill. Fechado com medição, não
+com opinião — e a leva foi escolhida para que o teste tivesse **valor além do experimento**: as 8
+edges CARAS eram exatamente as que sobraram sem prova do bootstrap (a trava do bloco perigoso ficou
+fechada, como devia), então deployá-las da main converte `NUNCA_ATESTADA` em atestação e ainda fecha
+a cobertura. Experimento que não deixa trabalho feito é experimento caro.
+
+**O artefato:** UM prompt no chat do Lovable com as 8 numeradas — `calculate-scores`,
+`carteira-positivacao-snapshot`, `fin-cashflow-engine`, `monthly-report`, `omie-sync-status-produtos`,
+`scoring-recalc-batch`, `tactical-plans-batch`, `visit-score-recalc-batch` —, cada uma com o **seu**
+closure ∪ {mapa} lido de `origin/main` (10 a 13 arquivos por edge, **70** no total), cabeçalho pedindo
+as oito e proibindo pular, fecho pedindo `Active` item a item.
+
+**O desfecho, lido no banco por `request_id` (nunca pelo último id da tabela):**
+
+| edge | request_id | `versao` respondido | `fonte` (12) | bate a main? |
+|---|---|---|---|---|
+| `calculate-scores` | 70879 | v1.0-sensor-inicial | 9d7a3da6c615 | sim |
+| `carteira-positivacao-snapshot` | 70880 | v1.1-pedidos-do-mes-keyset | be7d1152c411 | sim |
+| `fin-cashflow-engine` | 70881 | v1.1-paginacao-eof-vazio | 5327584f8d1b | sim |
+| `monthly-report` | 70882 | v1.0-sensor-inicial | 29e973d17ece | sim |
+| `omie-sync-status-produtos` | 70883 | v1.0-sensor-inicial | 9ad6546de095 | sim |
+| `scoring-recalc-batch` | 70884 | v1.0-sensor-inicial | 3899eef2be43 | sim |
+| `tactical-plans-batch` | 70885 | v1.0-sensor-inicial | 6d882834d7ce | sim |
+| `visit-score-recalc-batch` | 70886 | v1.0-sensor-inicial | fc6e87d83a3d | sim |
+
+`bun run pendencias:deploy` foi de **46/54** para **54/54, exit 0** — e repetido contra a main que
+andou no meio-tempo, continuou 54/54.
+
+**O que isto autoriza:** trocar "um prompt por edge" por **um prompt por LEVA** no Passo 3 da skill.
+O ganho é direto (8 colagens → 1), e o modo de falha temido não apareceu: **zero deploy parcial**,
+nenhuma `SEM_MAPA_NO_BUNDLE` nem `INCOERENTE` — que é como se manifestaria o prompt em lote que
+subisse o `index.ts` de uma edge e esquecesse o `_shared/` dela (o furo do #2020, visto do outro lado).
+
+**O que NÃO prova, e o teste era fraco nessa dimensão por construção.** As 8 estavam
+`NUNCA_ATESTADA`: o estado ANTES era **desconhecido**. Logo "o Lovable deployou as 8" e "deployou
+algumas, e as outras já estavam idênticas à main" produzem eco IDÊNTICO — a mesma classe de
+ambiguidade que o `fonte` existe para resolver, aqui aplicada ao *evento* em vez do *estado*. Três
+das 8 (`calculate-scores`, `monthly-report`, `tactical-plans-batch`) têm `fonte` que entrou na main
+em 30/08, então algumas plausivelmente já estavam no ar. Reconhecer isso é o ponto: um teste cujo
+lado positivo é indistinguível do no-op não vira "confirmado" por ter dado verde.
+
+**Como fechar a outra metade, quando aparecer a leva certa:** repetir o prompt único numa leva com
+**≥1 edge em `DIVERGE_P1` MEDIDA antes** (fonte servido ≠ main, com o par lido do ledger). Aí o antes
+é conhecido, e a transição de `DIVERGE_P1` para `CONFERE` prova o deploy pelo *evento*, não só pelo
+estado. Até lá a recomendação vale por **conveniência com risco medido** — não por prova de
+atomicidade, e a skill diz isso em voz alta.
+
+**Método, de brinde:** o relato do chat ("deployei as oito") não entrou como evidência em lugar
+nenhum — é ele que a `verificar-sonda-versao.md` chama de relato, e o repo inteiro é construído sobre
+"relato de veredito não é veredito". O que ele serve é para *estreitar a pergunta*: se o Lovable
+disser que pulou alguma, tire-a do bloco de sonda antes de rodar. A prova continua sendo o `fonte`.
