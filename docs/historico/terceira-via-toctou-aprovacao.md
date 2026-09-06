@@ -108,7 +108,10 @@ nota: troca `atualizado_em` por uma coluna inexistente — o `CREATE OR REPLACE`
   Não mexido aqui de propósito: mudar ACL é decisão separada, fora do escopo de um fix de TOCTOU.
 - **Varredura:** o mesmo regex (`UPDATE … pedido_compra_sugerido` + `INTO`) lista na PROD 9
   funções; 3 são estas vias e `iniciar_envio_portal_pre_claim` já usa claim condicional em uma
-  instrução. Sobram 5 **candidatas não triadas** — `aplicar_promocoes_no_ciclo`,
-  `gerar_pedidos_sugeridos_ciclo`, `pedido_compra_split`,
-  `reposicao_alerta_pedido_minimo_tick`, `sayerlack_aplicar_custo_portal`. Candidatas, não
-  achados: o regex só diz que há um UPDATE e algum `INTO`, não que a decisão está fora da escrita.
+  instrução. ~~Sobram 5 **candidatas não triadas**~~ — **TRIADAS em 2026-09-06: as cinco estão limpas**, com
+  evidência por função em [varredura-toctou-cinco-candidatas.md](varredura-toctou-cinco-candidatas.md).
+  Candidatas nunca foram achados: o regex só diz que há um UPDATE e algum `INTO`, não que a decisão
+  está fora da escrita — e nas cinco ela não estava. A triagem rendeu um achado LATERAL: a
+  absolvição de `reposicao_alerta_pedido_minimo_tick` no eixo **valor** depende de um `FOR UPDATE`
+  que vive **no callee** `reposicao_pedido_auto_aprovavel`, invisível de quem lê o tick e aparentemente
+  redundante lá (a função é read-only). Virou regressão executável: `db/test-tick-auto-aprovacao-corrida.sh`.
