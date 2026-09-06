@@ -50,14 +50,57 @@ interface DetInput {
   inf_adic?: { dados_adicionais_item?: string };
 }
 
+/**
+ * Preço unitário do item Omie, ou `null` quando NÃO SABIDO. Régua de FINITUDE NÃO-NEGATIVA,
+ * espelho exato do `CASE WHEN … >= 0 AND … < 'Infinity'` da RPC `criar_pedidos_com_itens`
+ * (migration 20260905225613): a ingestão preserva o fato, não o julga.
+ *
+ *   ausente / null / ''       → null   ("o Omie não informou")
+ *   0                         → 0      ("o Omie informou zero": bonificação/brinde é dado)
+ *   negativo / NaN / Infinity  → null   (lixo, não dado)
+ *
+ * O `|| 0` que estava aqui mapeava "não informou" e "informou 0" no MESMO byte, e o 0 seguia
+ * para `order_items.unit_price` (NOT NULL DEFAULT 0 até 2026-09-05), onde entrava na margem do
+ * cliente com receita 0 e custo cheio — margem negativa fabricada.
+ *
+ * ⚠️ NÃO é o `valorMedido` de `_shared/score-ponderado.ts`: aquele aceita qualquer finito,
+ * inclusive negativo. Preço negativo do Omie é corrupção, não desconto.
+ */
+export function precoUnitarioOmie(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "number" && typeof raw !== "string") return null;
+  if (typeof raw === "string" && raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** Itens cujo preço é NÃO SABIDO — o denominador da confiança no subtotal (ver abaixo). */
+export function contarItensSemPreco(det: DetInput[]): number {
+  let n = 0;
+  for (const d of det) if (precoUnitarioOmie((d.produto || {}).valor_unitario) === null) n += 1;
+  return n;
+}
+
 /** subtotal = Σ qty·preço·(1 − desconto%/100), arredondado a 2 casas. `desconto` é PERCENTUAL.
- *  MESMA semântica do omie-vendas-sync (L1170-1173): `|| ` (qty 0 → 1, igual ao sync) — NÃO `??`. */
+ *  MESMA semântica do omie-vendas-sync (L1170-1173): `|| ` (qty 0 → 1, igual ao sync) — NÃO `??`.
+ *
+ *  ⚠️ ITEM SEM PREÇO NÃO ENTRA — e o número não muda por isso (somar `qty·0` e omitir o item dão
+ *  a mesma soma). O que muda é que a incompletude deixa de ser invisível: use
+ *  `contarItensSemPreco()` junto, ou leia `valor_unitario === null` no items-jsonb.
+ *
+ *  DECISÃO (2026-09-05), documentada porque a alternativa foi considerada e recusada: o subtotal
+ *  NÃO degrada para `null` quando falta preço. `sales_orders.subtotal`/`total` são NOT NULL em
+ *  prod, `reconciliar_pedidos_omie` rejeita total nulo, e os KPIs de faturamento somam a coluna —
+ *  anular o total de um pedido por causa de UM item trocaria um total encolhido por um buraco no
+ *  faturamento, que é pior. O sinal honesto de "este total está incompleto" fica DERIVÁVEL do
+ *  items-jsonb (algum item com `valor_unitario: null`), sem coluna nova e sem fabricar número. */
 export function subtotalPedidoComDesconto(det: DetInput[]): number {
   let subtotal = 0;
   for (const d of det) {
     const prod = d.produto || {};
     const qty = prod.quantidade || 1;
-    const price = prod.valor_unitario || 0;
+    const price = precoUnitarioOmie(prod.valor_unitario);
+    if (price === null) continue;
     const desc = prod.desconto || 0;
     subtotal += qty * price * (1 - desc / 100);
   }
@@ -79,7 +122,8 @@ interface ItemJson {
   omie_codigo_produto: number | string | undefined;
   descricao: string;
   quantidade: number;
-  valor_unitario: number;
+  /** `null` = preço NÃO SABIDO. Os leitores do items-jsonb devem mostrar "—", nunca R$ 0,00. */
+  valor_unitario: number | null;
   desconto: number;
   tint_nome_cor?: string;
 }
@@ -97,12 +141,52 @@ export function construirItemsJson(det: DetInput[]): ItemJson[] {
       omie_codigo_produto: prod.codigo_produto,
       descricao: prod.descricao || "",
       quantidade: prod.quantidade || 1,
-      valor_unitario: prod.valor_unitario || 0,
+      valor_unitario: precoUnitarioOmie(prod.valor_unitario),
       desconto: prod.desconto || 0,
       ...(cor ? { tint_nome_cor: cor.tint_nome_cor } : {}),
     });
   }
   return out;
+}
+
+/**
+ * Mescla o preço GRAVADO por cima de uma reconstrução do items-jsonb, casando por
+ * `omie_codigo_produto`. Serve a um caso específico e real: um backfill cujo escopo é
+ * acrescentar UM campo (a cor da tinta) reconstrói o array inteiro a partir da leitura atual
+ * do Omie e, ao gravar, leva junto o preço daquela leitura. Se o Omie tiver parado de informar
+ * `valor_unitario` desde o sync original, o preço bom seria APAGADO por uma leitura pior — uma
+ * perda silenciosa, num campo que o backfill nem pretendia tocar.
+ *
+ * Regra: o preço GRAVADO vence sempre que for utilizável (finito e ≥ 0). O da leitura nova só
+ * entra onde não havia nada — nunca para rebaixar. Item novo sem correspondente passa direto.
+ *
+ * Não é dedupe: se o jsonb gravado repetir um código, vence a PRIMEIRA ocorrência (a mesma que
+ * qualquer leitor "último item vence" já enxergava). Reconciliar preço de verdade é trabalho da
+ * RPC `reconciliar_pedidos_omie`, que roda sob transação e sabe o que é revisão do pedido.
+ */
+export function mesclarPrecoPreservado<T extends { omie_codigo_produto?: number | string; valor_unitario: number | null }>(
+  novos: T[],
+  gravados: unknown,
+): T[] {
+  if (!Array.isArray(gravados)) return novos;
+  const porCodigo = new Map<string, number>();
+  for (const g of gravados) {
+    if (g === null || typeof g !== "object") continue;
+    const linha = g as Record<string, unknown>;
+    const cod = linha.omie_codigo_produto;
+    if (cod === null || cod === undefined) continue;
+    const chave = String(cod);
+    if (porCodigo.has(chave)) continue; // primeira ocorrência vence
+    const preco = precoUnitarioOmie(linha.valor_unitario);
+    if (preco !== null) porCodigo.set(chave, preco);
+  }
+  if (porCodigo.size === 0) return novos;
+  return novos.map((n) => {
+    if (n.valor_unitario !== null) return n; // a leitura nova já sabe o preço
+    if (n.omie_codigo_produto === null || n.omie_codigo_produto === undefined) return n;
+    const gravado = porCodigo.get(String(n.omie_codigo_produto));
+    return gravado === undefined ? n : { ...n, valor_unitario: gravado };
+  });
 }
 
 // ── Contrato do payload da RPC `reconciliar_pedidos_omie` (migration 20260830190000) ──────────
@@ -122,7 +206,9 @@ export function construirItemsJson(det: DetInput[]): ItemJson[] {
 export interface ItemReconciliar {
   omie_codigo_produto: number;
   quantity: number;
-  unit_price: number;
+  /** `null` = o Omie não informou preço. A RPC grava NULL (ausente ≠ zero) e o diff dela é
+   *  NULL-safe desde 20260905225613 — NULL vs NULL não reescreve, NULL vs número reescreve. */
+  unit_price: number | null;
   discount: number;
   product_id: string | null;
   hash_payload: string;

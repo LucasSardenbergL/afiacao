@@ -18,6 +18,7 @@ import {
   type OmieProduct,
 } from './types';
 import { invalidPricedOrderItemIndices, invalidOrderPriceMessage } from './priceGuard';
+import { totalLinhaOuAusente } from '@/lib/format';
 import {
   lerRespostaFormas,
   condicoesDoClienteIndisponiveis,
@@ -186,7 +187,9 @@ export function useSalesOrderEdit() {
         delete updated.tint_discount_pct;
         delete updated.tint_preco_sem_desconto;
       }
-      updated.valor_total = updated.quantidade * updated.valor_unitario;
+      // `qtd * null` e 0 em JavaScript: a linha exibiria "R$ 0,00" para um item cujo preco
+      // ninguem apurou. Sem preco nao ha total — o campo mostra "-" e o guard barra o salvar.
+      updated.valor_total = totalLinhaOuAusente(updated.quantidade, updated.valor_unitario);
       return updated;
     }));
   };

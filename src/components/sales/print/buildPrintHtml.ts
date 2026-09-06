@@ -5,6 +5,7 @@ import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import { escapeHtml } from '@/lib/escape-html';
 import { type PrintOrderData } from '@/components/OrderPrintLayout';
 import type { CompanyFilter, SalesOrderRow } from './types';
+import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
 
 export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, logoUrls?: Record<string, string | null>): PrintOrderData {
   const isOben = company === 'oben';
@@ -57,8 +58,10 @@ export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, log
       descricao: it.descricao || it.nome || '',
       quantidade: it.quantidade || 1,
       unidade: it.unidade || 'UN',
-      valorUnitario: it.valor_unitario || 0,
-      valorTotal: it.valor_total || 0,
+      // O `|| 0` daqui imprimia R$ 0,00 no cupom do CLIENTE para item cujo preco o Omie
+      // nao informou. `null` atravessa ate o formatador, que escreve "-".
+      valorUnitario: it.valor_unitario ?? null,
+      valorTotal: it.valor_total ?? totalLinhaOuAusente(it.quantidade, it.valor_unitario),
       tintCorId: it.tint_cor_id,
       tintNomeCor: it.tint_nome_cor,
     })),
@@ -73,7 +76,9 @@ export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, log
 
 // Build HTML for a single order page (without <html>/<body> wrappers)
 export function buildSingleOrderHtml(data: PrintOrderData): string {
-  const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  // `fmt` recebia `number` e nunca via null porque o mapper acima fabricava 0. Agora ele e o
+  // formatador honesto: ausente vira "-" (o zero informado segue saindo como R$ 0,00).
+  const fmt = formatPrecoOuAusente;
 
   // Build installment dates
   const parseParcelaDays = (codeOrDesc?: string): number[] => {

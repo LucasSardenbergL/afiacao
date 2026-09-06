@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 import { accumulateMarginFromItems } from '../margin';
 
 const costMap = new Map([['A', 10]]);
@@ -61,14 +62,53 @@ describe('accumulateMarginFromItems — item SEM preço não fabrica margem nega
   });
 });
 
-describe('origem — o que este PR NÃO fecha (medido e documentado, não escondido)', () => {
-  // Em prod (psql-ro, 2026-09-05): 70.927 itens em sales_orders.items, 0 sem valor_unitario, 0 com 0.
-  // A ausência que chegaria aqui como 0 nasce em 3 writers (omie-vendas-sync, sync-reprocess e o canon
-  // _shared/omie-pedido.ts) e a RPC criar_pedidos_com_itens ainda faz coalesce(…,0) numa coluna NOT NULL;
-  // os leitores do jsonb (impressão, WhatsApp, orçamento) tratam número, não null. Fechar isso é uma
-  // fatia própria (migration + writers + leitores), não um `|| 0` a menos — Codex xhigh, 6 P1.
-  it('o sentinela `valor_unitario || 0` ainda existe na edge de sync (vigia: se sumir, a fatia de origem entrou e este bloco sai)', () => {
-    const src = readFileSync('supabase/functions/omie-vendas-sync/index.ts', 'utf8');
-    expect(src).toMatch(/valor_unitario\s*\|\|\s*0/);
+describe('origem — a fatia FECHOU (o vigia do M-04 virou o invariante que ele vigiava)', () => {
+  // Este bloco era um VIGIA: ele afirmava que `valor_unitario || 0` AINDA existia na edge, para
+  // que sumir fosse um evento visível. A fatia de origem entrou (migration 20260905225613 +
+  // writers + leitores), então o vigia sai e no lugar fica o invariante ao contrário.
+  //
+  // ⚠️ Por que ler o FONTE e não chamar a função: `bun run test` (vitest, Node) não importa
+  // módulo Deno. Este é o mesmo compromisso dos outros gates textuais do repo — e por isso passa
+  // pelo stripper COMPARTILHADO: sem ele, um `precoUnitarioOmie` escrito só num COMENTÁRIO
+  // deixaria o teste verde por cegueira, que é a falha exata que este arquivo existe para evitar.
+  //
+  // O gêmeo executável destes asserts é db/test-preco-ausente-nao-e-zero.sh (PG17, 45 asserts,
+  // com falsificação). Aqui é a camada de TEXTO; lá é a de comportamento.
+  const fonte = (rel: string) => removerComentarios(readFileSync(rel, 'utf8'));
+
+  const WRITERS_DE_ITEM_DE_PEDIDO = [
+    'supabase/functions/omie-vendas-sync/index.ts',
+    'supabase/functions/sync-reprocess/index.ts',
+    'supabase/functions/_shared/omie-pedido.ts',
+  ];
+
+  it.each(WRITERS_DE_ITEM_DE_PEDIDO)('%s usa a régua precoUnitarioOmie (código, não comentário)', (rel) => {
+    expect(fonte(rel)).toMatch(/precoUnitarioOmie\s*\(/);
+  });
+
+  it('nenhum writer fabrica preço de ITEM DE PEDIDO com `prod.valor_unitario || 0`', () => {
+    // Específico de propósito: `prod.` é o item do `det` do Omie. O catálogo de PRODUTO
+    // (omie_products.valor_unitario) tem o mesmo `|| 0` e NÃO é esta fatia — um regex solto em
+    // `valor_unitario || 0` casaria com ele e daria verde sem medir nada desta correção.
+    for (const rel of WRITERS_DE_ITEM_DE_PEDIDO) {
+      expect(fonte(rel)).not.toMatch(/prod\.valor_unitario\s*\|\|\s*0/);
+    }
+  });
+
+  it('a RPC de ingestão parou de fazer coalesce(unit_price, 0) e a coluna aceita NULL', () => {
+    const mig = readFileSync('supabase/migrations/20260905225613_preco_ausente_nao_e_zero.sql', 'utf8');
+    expect(mig).toMatch(/ALTER COLUMN unit_price DROP NOT NULL/);
+    expect(mig).toMatch(/ALTER COLUMN unit_price DROP DEFAULT/);
+    // a régua nova, e a ausência da velha, no corpo que a migration instala
+    expect(mig).toMatch(/\(it->>'unit_price'\)::numeric >= 0/);
+    expect(mig).not.toMatch(/coalesce\(\(it->>'unit_price'\)::numeric, 0\),/);
+  });
+
+  it('o backfill de cor MESCLA o preço em vez de sobrescrever o gravado', () => {
+    // O bloco reconstrói sales_orders.items inteiro a partir da leitura ATUAL do Omie. Sem a
+    // mescla, uma leitura sem `valor_unitario` APAGARIA um preço bom já gravado.
+    const src = fonte('supabase/functions/omie-vendas-sync/index.ts');
+    expect(src).toMatch(/mesclarPrecoPreservado\s*\(/);
+    expect(src).not.toMatch(/update\(\{\s*items:\s*bfItems\s*\}\)/);
   });
 });

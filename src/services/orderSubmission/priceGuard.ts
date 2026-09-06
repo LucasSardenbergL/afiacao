@@ -13,7 +13,7 @@ import type { ProductCartItem } from '@/hooks/unifiedOrder/types';
  * Infinity, que jamais pode ir ao Omie). Serviço de afiação NÃO passa por aqui: preço
  * null/0 ("a orçar") é legítimo.
  */
-export function isInvalidProductPrice(price: number): boolean {
+export function isInvalidProductPrice(price: number | null | undefined): boolean {
   return !(Number.isFinite(price) && price > 0);
 }
 
@@ -34,7 +34,7 @@ export function invalidPriceMessage(items: ProductCartItem[]): string {
  * omie-vendas-sync): preço em `valor_unitario` (não `unit_price`) e nome em `descricao`
  * (não `product.descricao`). É o shape que sai do carrinho e que vira pedido no Omie. */
 export interface PricedOmieItemLike {
-  valor_unitario: number;
+  valor_unitario: number | null;
   descricao?: string;
   omie_codigo_produto?: string | number;
 }
@@ -48,7 +48,7 @@ export interface PricedOmieItemLike {
  * a UI da edição destaca/trava a linha pela posição.
  */
 export function invalidPricedValorUnitarioIndices(
-  items: ReadonlyArray<{ valor_unitario: number }>,
+  items: ReadonlyArray<{ valor_unitario: number | null }>,
 ): number[] {
   const indices: number[] = [];
   items.forEach((item, i) => {
@@ -65,7 +65,7 @@ export function invalidPricedValorUnitarioIndices(
  * `filter` direto (retém o item capturado na própria iteração) — paridade exata, não re-lê
  * `items[i]` depois.
  */
-export function findInvalidPricedOmieItems<T extends { valor_unitario: number }>(items: T[]): T[] {
+export function findInvalidPricedOmieItems<T extends { valor_unitario: number | null }>(items: T[]): T[] {
   return items.filter(item => isInvalidProductPrice(item.valor_unitario));
 }
 

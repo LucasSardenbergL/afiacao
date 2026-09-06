@@ -73,3 +73,38 @@ export function formatMargemPct(v: number | null | undefined): string {
   const rounded = Math.round(v);
   return Math.abs(v - rounded) < 0.05 ? `${rounded}%` : `${v.toFixed(1)}%`;
 }
+
+/**
+ * Preço em BRL, ou "—" quando NÃO SABIDO. Irmã monetária de `formatMargemPct`.
+ *
+ * Existe porque o preço do item de pedido passou a poder ser `null`: o Omie nem sempre informa
+ * `valor_unitario`, e até 2026-09-05 os writers do sync gravavam `|| 0` — "não sei" e "de graça"
+ * viravam o mesmo R$ 0,00 na tela. Fechada a origem (`order_items.unit_price` nullable + a régua
+ * na RPC de ingestão), o `null` chega até aqui, e é ele que a tela precisa saber mostrar.
+ *
+ * ⚠️ `0` NÃO é ausência: um zero gravado é fato ("o Omie informou zero" — bonificação/brinde) e
+ * sai formatado como R$ 0,00. Só o desconhecido vira "—". Um `|| 0` no caller desfaz exatamente
+ * a distinção que a fatia inteira existiu para criar.
+ *
+ * Não-finito (NaN/Infinity) também vira "—": é lixo, não número.
+ */
+export function formatPrecoOuAusente(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+/**
+ * Total de uma linha (quantidade × preço), ou `null` quando o preço é NÃO SABIDO.
+ *
+ * `qtd * null` é `0` em JavaScript — a multiplicação silenciosamente inventa "linha de R$ 0,00".
+ * Esta função é o guard: sem preço, não há total, e o caller mostra "—".
+ */
+export function totalLinhaOuAusente(
+  quantidade: number | null | undefined,
+  precoUnitario: number | null | undefined,
+): number | null {
+  if (precoUnitario === null || precoUnitario === undefined || !Number.isFinite(precoUnitario)) return null;
+  const q = Number(quantidade ?? 1);
+  if (!Number.isFinite(q)) return null;
+  return q * precoUnitario;
+}
