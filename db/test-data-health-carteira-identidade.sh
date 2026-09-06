@@ -87,10 +87,11 @@ BEGIN
 END $$;
 SQL
 
-# O snapshot está DEFASADO em relação ao watchdog v2 (20260814222000): faltam nele a tabela
-# data_health_watchdog_estado e a função _data_health_episodio. Sem elas o A12 (que EXECUTA o
-# watchdog — o teste late-bound que importa) morre com 42P01. Forma medida na PROD 2026-08-24.
-P -q -f "$REPO_ROOT/db/prereq-watchdog-v2-20260824.sql"
+# ⚠️ Aqui morava um prereq (db/prereq-watchdog-v2-20260824.sql) porque o schema-snapshot não
+# trazia data_health_watchdog_estado nem _data_health_episodio, e o A12 — que EXECUTA o watchdog,
+# o teste late-bound que importa — morria com 42P01. O snapshot foi regenerado e passou a trazer
+# os dois; medido em 2026-09-06, o harness fica verde (29/0) SEM o remendo, que foi então retirado.
+# Se o A12 voltar a dar 42P01, a causa é o snapshot ter regredido — conserte lá, não aqui.
 
 # ⚠️ NUNCA volte a ancorar os asserts em BASE_CHECKS+1. O corpo do compute vive DENTRO desta
 # migration (recriado a partir da PROD de 2026-08-24), então o total pós-apply é FIXO: 25 ramos
