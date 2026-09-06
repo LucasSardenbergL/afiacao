@@ -1,0 +1,41 @@
+# Invariantes da sonda de "retome" (scripts/onde-parei.sh).
+# @src: scripts/onde-parei.sh
+# @test: scripts/test-onde-parei.sh
+# @test_cmd: bash
+# @compile_cmd: bash -n
+#
+# O contrato da sonda é o de TODA sonda destrutivamente confiável (§Armadilhas do
+# CLAUDE.md): 3 ("consultei e não há nada") ≠ 6 ("não consegui consultar"), e o erro
+# nunca pode cair para o lado de dizer "nada" com trabalho em disco. Cada PEGA abaixo
+# é um jeito concreto de a sonda voltar a mentir para quem digitou "Retome".
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$n` vira vazio e `$(` vira o GID
+# real do processo. Escreva `\$n`. Sem isso a mutação ainda fica ✓ PEGA — mas por
+# `[ "" -gt 0 ]` (erro de bash), não pela regressão do rótulo: poder inflado com
+# contrato mentindo sobre o que mediu. `$((...))` cru chega a quebrar o `bash -n`
+# e sai como INVÁLIDO. Foi o que aconteceu na 1ª rodada deste arquivo.
+
+# CONTROLE+ : se a sessão atual voltar a contar como história, todo worktree tem
+# "trabalho a retomar" e o exit 3 morre — o teste TEM de pegar.
+PEGA | controle+: a sessão atual volta a contar          | s{^\s+\[ -n "\$ATUAL" \] && \[ "\$id" = "\$ATUAL" \] && continue}{    :}
+
+# O bug de origem (#2182): descontar 1 "porque uma delas é a atual", mesmo sondando
+# OUTRO worktree, onde nenhuma é. Com n=1 zera a conta → exit 3 sobre transcrição real.
+PEGA | volta o -1 incondicional (bug de origem)          | s{^  if \[ -z "\$ATUAL" \] && \[ "\$MESMO_WT" = 1 \] && \[ "\$n" -gt 0 \]; then}{  if [ "\$n" -gt 0 ]; then}
+
+# A degradação sem a var só é defensável no PRÓPRIO worktree. Solta, ela reintroduz
+# exatamente o fail-open acima quando CLAUDE_CODE_SESSION_ID não estiver no ambiente.
+PEGA | degradação deixa de exigir MESMO_WT               | s{&& \[ "\$MESMO_WT" = 1 \] && \[ "\$n" -gt 0 \]}{&& [ "\$n" -gt 0 ]}
+
+# ...e some-la por inteiro faz a sonda super-sinalizar sem a var (exit 0 eterno).
+PEGA | degradação nunca aplica                           | s{^    n=\$\(\(n-1\)\); echo "   \(CLAUDE_CODE_SESSION_ID}{    : ; echo "   (CLAUDE_CODE_SESSION_ID}
+
+# O gatilho de arqueologia. `-gt 1` era o gate velho: engolia a sessão anterior única.
+PEGA | gatilho volta a exigir >1 sessão                  | s{^  if \[ "\$n" -gt 0 \]; then}{  if [ "\$n" -gt 1 ]; then}
+
+# Sessão que só abriu não é história: sem o filtro, qualquer .jsonl vira "trabalho".
+PEGA | .jsonl sem tool_use passa a contar                | s{^    grep -q '"tool_use"' "\$f" 2>/dev/null \|\| continue}{    :}
+
+# 3 ≠ 6: `gh` que responde ERRO é estado DESCONHECIDO. Degradar aqui é a armadilha
+# da sonda ausente — a consulta falha e o founder ouve "não há nada a retomar".
+PEGA | falha do gh degrada para "sem PR" em vez de 6     | s{^  \|\| falha "gh pr list falhou: \$PRS"}{  || PRS=""}

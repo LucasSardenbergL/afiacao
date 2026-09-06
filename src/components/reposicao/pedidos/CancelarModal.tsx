@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { rejeitarPedidos } from './rejeitar-pedido';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -29,12 +29,16 @@ export function CancelarModal({
   const cancelarMutation = useMutation({
     mutationFn: async () => {
       if (!pedido) return;
-      const { error } = await supabase.rpc('cancelar_pedido_sugerido', {
-        p_pedido_id: pedido.id,
-        p_usuario: user?.email ?? 'sistema',
-        p_justificativa: justificativa.trim(),
+      // Mesma fronteira do Cockpit (M-02). A RPC devolve `{error}` no jsonb SEM erro de transporte
+      // quando recusa (ex.: já disparado) — ler só `error` do PostgREST mostrava "Pedido cancelado"
+      // sobre uma compra que seguiu (Codex P1).
+      const r = await rejeitarPedidos([pedido], {
+        usuario: user?.email ?? 'sistema',
+        justificativa: justificativa.trim(),
+        via: 'individual',
       });
-      if (error) throw error;
+      const motivo = r.falhas[0]?.motivo ?? r.pulados[0]?.motivo;
+      if (motivo) throw new Error(motivo);
     },
     onSuccess: () => {
       toast.success('Pedido cancelado');

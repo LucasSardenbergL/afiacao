@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# CAMADA: limpeza de comentário. As duas linhas abaixo DOCUMENTAM o padrão proibido — é assim que
+# ele aparece em ~200 lugares deste repo. Gate que mede fonte suja grita em prosa e vira ruído.
+set -uo pipefail
+PSQL="$HOME/.config/afiacao/psql-ro"
+# ERRADO:  "$PSQL" -tA -f consulta.sql
+#   CERTO: "$PSQL" -v ON_ERROR_STOP=1 -tA -f consulta.sql
+"$PSQL" -Atc "SELECT 1"

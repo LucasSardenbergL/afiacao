@@ -1756,6 +1756,36 @@ export type Database = {
           },
         ]
       }
+      deploy_atestacoes: {
+        Row: {
+          edge: string
+          fonte: string
+          observado_em: string
+          registrado_em: string
+          request_id: number
+          versao: string
+          via: string
+        }
+        Insert: {
+          edge: string
+          fonte: string
+          observado_em: string
+          registrado_em?: string
+          request_id: number
+          versao: string
+          via: string
+        }
+        Update: {
+          edge?: string
+          fonte?: string
+          observado_em?: string
+          registrado_em?: string
+          request_id?: number
+          versao?: string
+          via?: string
+        }
+        Relationships: []
+      }
       des_checkin_qualitativo: {
         Row: {
           ano: number
@@ -8513,7 +8543,7 @@ export type Database = {
           product_id: string | null
           quantity: number
           sales_order_id: string
-          unit_price: number
+          unit_price: number | null
         }
         Insert: {
           created_at?: string | null
@@ -8525,7 +8555,7 @@ export type Database = {
           product_id?: string | null
           quantity?: number
           sales_order_id: string
-          unit_price?: number
+          unit_price?: number | null
         }
         Update: {
           created_at?: string | null
@@ -8537,7 +8567,7 @@ export type Database = {
           product_id?: string | null
           quantity?: number
           sales_order_id?: string
-          unit_price?: number
+          unit_price?: number | null
         }
         Relationships: [
           {
@@ -19070,6 +19100,18 @@ export type Database = {
         Args: { p_endpoint: string }
         Returns: undefined
       }
+      deploy_atestacoes_colher: { Args: never; Returns: number }
+      deploy_atestacoes_janela_viva: {
+        Args: never
+        Returns: {
+          edge: string
+          fonte: string
+          observado_em: string
+          request_id: number
+          versao: string
+          via: string
+        }[]
+      }
       des_data_faturamento_prevista: {
         Args: {
           p_data_emissao: string
@@ -19590,6 +19632,8 @@ export type Database = {
           gross_margin_pct: number
           itens_com_custo: number
           itens_sem_custo: number
+          itens_sem_custo_conhecido: number
+          itens_sem_preco: number
           receita_com_custo: number
         }[]
       }
@@ -20124,6 +20168,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      remover_itens_pedido_sugerido: {
+        Args: { p_item_ids: number[]; p_pedido_id: number; p_usuario: string }
+        Returns: Json
+      }
       reposicao__po_id: { Args: { p: string }; Returns: number }
       reposicao__trim: { Args: { p: string }; Returns: string }
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
@@ -20283,6 +20331,10 @@ export type Database = {
         }[]
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
+      sayerlack_aplicar_custo_portal: {
+        Args: { p_itens: Json; p_pedido_id: number; p_valor_total: number }
+        Returns: number
+      }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
       seed_targets_faltantes: {
         Args: never

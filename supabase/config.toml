@@ -149,3 +149,6 @@ verify_jwt = false
 
 [functions.analytics-outbox-drain]
 verify_jwt = false
+
+[functions.sonda-relay]
+verify_jwt = false

@@ -34,6 +34,7 @@ function setup(overrides: Partial<React.ComponentProps<typeof ItensTable>> = {})
     podeEditar: true,
     totalAtual: 30,
     onEditQty: vi.fn(),
+    onBlurQty: vi.fn(),
     podeEditarPreco: false,
     onEditPreco: vi.fn(),
     onRemover: vi.fn(),
@@ -62,6 +63,9 @@ describe('ItensTable', () => {
     const input = screen.getByRole('spinbutton') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '7' } });
     expect(props.onEditQty).toHaveBeenCalledWith(1, '7');
+    // sair do campo commita a quantidade ao múltiplo da embalagem (37 → 40 com fator 0,2) — o hook decide, a tabela avisa
+    fireEvent.blur(input);
+    expect(props.onBlurQty).toHaveBeenCalledWith(1);
 
     const buttons = screen.getAllByRole('button');
     fireEvent.click(buttons[0]); // remover

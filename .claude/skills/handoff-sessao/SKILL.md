@@ -97,3 +97,18 @@ Regras do chip (as do CLAUDE.md valem):
 
 Depois de entregar o briefing: rode o **/fecho** da sessão atual (PRs/migrations/chips/wt:status)
 — o split não dispensa o ritual de fechamento.
+
+## Lado RECEPTOR — chegou "retome" SEM briefing
+
+Antes de reconstruir de memória ou re-perguntar ao Lucas, rode **uma** sonda determinística:
+
+```bash
+scripts/onde-parei.sh            # [caminho-do-worktree] opcional
+```
+
+Ela lista commits à frente da main, mudanças não commitadas, PRs da branch, scratchpad (sem o
+ruído `tasks/`) e transcrições anteriores com trabalho. **Exit 0** = há trabalho (itens 🔸);
+**exit 3** = consultei tudo e NÃO há nada a retomar (worktree recém-criado — siga o protocolo do
+ocioso); **exit 6** = NÃO consegui consultar (sem `gh`, fetch falhou) — estado desconhecido, nunca
+traduza como "nada". Por quê (2026-09-05): um "retome" numa sessão virgem custou 3 chamadas e um
+Python ad-hoc só pra provar o vazio.

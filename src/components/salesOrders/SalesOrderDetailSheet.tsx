@@ -10,6 +10,7 @@ import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
 import { statusDoPedido, type SalesOrder } from './types';
 import { itemTotal } from './print';
+import { formatPrecoOuAusente } from '@/lib/format';
 
 interface SalesOrderDetailSheetProps {
   // O painel abre antes do detalhe chegar (busca por id sob demanda) — `open`
@@ -26,7 +27,9 @@ interface SalesOrderDetailSheetProps {
   onRepeat?: () => void;
 }
 
-const fmt = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// Era `(v || 0).toLocaleString(...)`: o `|| 0` engolia o preco ausente e exibia R$ 0,00,
+// afirmando "de graca" onde o Omie apenas nao informou. Ausente agora aparece como "-".
+const fmt = formatPrecoOuAusente;
 
 // Pedido cancelado/entregue/faturado não é editável (mesma regra do card).
 const canEditStatus = (status: string) => !['cancelado', 'entregue', 'faturado'].includes(status);

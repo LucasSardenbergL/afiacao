@@ -5,6 +5,7 @@ import {
   etapaConhecida,
   subtotalPedidoComDesconto,
   construirItemsJson,
+  precoUnitarioOmie,
   STATUS_GERIDO_OMIE,
   type ItemReconciliar,
   type PedidoReconciliar,
@@ -264,7 +265,11 @@ async function reprocessOrders(
           return {
             omie_codigo_produto: cod,
             quantity: prod.quantidade || 1,
-            unit_price: prod.valor_unitario || 0,
+            // `null` = o Omie NÃO informou preço. O `|| 0` daqui gravava R$ 0,00 em
+            // order_items.unit_price e o item entrava na margem do cliente com receita 0 e
+            // custo cheio (margem negativa fabricada). A RPC recebe o null e o grava como
+            // NULL — ausente <> zero. Um 0 que o Omie DE FATO informe segue passando como 0.
+            unit_price: precoUnitarioOmie(prod.valor_unitario),
             discount: prod.desconto || 0,
             product_id: productMap.get(cod) ?? null,
             // hash de IDENTIDADE do item, nunca de conteúdo (causa-raiz #B no nível item)

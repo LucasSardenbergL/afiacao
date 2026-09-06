@@ -34,7 +34,8 @@ export function CiclosAnteriores({ data, onChange }: { data: string; onChange: (
         g.pedidos += 1;
         g.valor += Number(r.valor_total ?? 0);
         if (r.status === 'disparado') g.disparados += 1;
-        if (r.status === 'cancelado') g.cancelados += 1;
+        // 'cancelado_humano' é o vocabulário da RPC (Cancelar da lista e, desde o M-02, o Cockpit).
+        if (r.status === 'cancelado' || r.status === 'cancelado_humano') g.cancelados += 1;
       }
       return Array.from(grupos.entries()).map(([dia, g]) => ({
         dia,

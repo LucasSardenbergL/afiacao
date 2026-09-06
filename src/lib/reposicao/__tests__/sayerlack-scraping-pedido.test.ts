@@ -208,12 +208,13 @@ describe('derivarCustos', () => {
 // Cobertura fina de consolidar/extrair/resumir vive no deno test (captura-custo.test.ts). Aqui só o
 // contrato que a src consome: 1 caso feliz de cada fonte e o defeito de prod (DOM cego) sem custo.
 describe('consolidarLinhasPortal (contrato espelhado)', () => {
-  const dom = (o: Partial<LinhaDom> = {}): LinhaDom => ({ sku_portal: 'A', prz_ent_raw: '5', qtd_un_raw: '2', preco_venda_raw: '10,0000', preco_un_raw: '12,0000', ...o });
+  const dom = (o: Partial<LinhaDom> = {}): LinhaDom => ({ sku_portal: 'A', prz_ent_raw: '5', qtd_un_raw: '2', preco_venda_raw: '20,0000', preco_un_raw: '12,0000', ...o });
   const json: AddJsonPortal = { itens: [{ item: 'A', value: 12 }, { item: 'B', value: 30 }], value: 80, ordernum: 1 };
   const esp: ItemEsperado[] = [{ sku_portal: 'A', qtde_portal: 2 }, { sku_portal: 'B', qtde_portal: 3 }];
   it('N itens com DOM provado ⇒ dom_checksum', () => {
-    const c = consolidarLinhasPortal([dom(), dom({ sku_portal: 'B', qtd_un_raw: '3', preco_venda_raw: '20,0000', preco_un_raw: '30,0000' })], json, esp);
+    const c = consolidarLinhasPortal([dom(), dom({ sku_portal: 'B', qtd_un_raw: '3', preco_venda_raw: '60,0000', preco_un_raw: '30,0000' })], json, esp);
     expect(c.fonte).toBe('dom_checksum');
+    // Preço Venda JÁ É o total da linha (não multiplica por Qtd UN de novo) — bug corrigido em 2026-09-05.
     expect(c.linhas.map((l) => l.total_linha)).toEqual([20, 60]);
   });
   it('1 item ⇒ json_total_unico com o total do pedido', () => {
@@ -238,6 +239,6 @@ describe('helpers numéricos espelhados', () => {
   it('round2 arredonda a centavo (com EPSILON) e toleranciaChecksum deriva do arredondamento exibido', () => {
     expect(round2(1.005)).toBe(1.01);
     expect(round2(1605.6738)).toBe(1605.67);
-    expect(toleranciaChecksum([2, 2, 8])).toBeCloseTo(0.005 * 4 + 12 * 0.00005, 10);
+    expect(toleranciaChecksum(3)).toBeCloseTo(0.005 + 3 * 0.00005, 10);
   });
 });

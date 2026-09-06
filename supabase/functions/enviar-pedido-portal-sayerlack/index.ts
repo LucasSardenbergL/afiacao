@@ -13,12 +13,12 @@ import {
   FatorConversaoInvalidoError,
   indexarMapeamentos,
   MapeamentoAmbiguoError,
-  qtdeFisicaOmie,
-  qtdePortal,
+  QtdeNaoMultiploEmbalagemError,
+  qtdePortalCanonica,
   verificarFatorAprovado,
 } from "./qtde-portal.ts";
 import {
-  casarLinhasComItens, classificarErroRpcCusto, consolidarLinhasPortal, derivarCustos, extrairAddJson, resumirCaptura, round2,
+  casarLinhasComItens, classificarErroRpcCusto, consolidarLinhasPortal, derivarCustos, extrairAddJson, resumirCaptura,
   type AddJsonPortal, type ItemPedido, type LinhaDom, type MotivoRpcCusto, type ResultadoMatch,
 } from "./captura-custo.ts";
 import { escritaCritica } from "../_shared/escrita-critica.ts";
@@ -489,14 +489,6 @@ export default async ({ page, context }) => {
 
   const runFlow = async () => {
    try {
-    console.log('[DEBUG_CREDS]', JSON.stringify({
-      user_present: typeof user === 'string' && user.length > 0,
-      user_length: user?.length ?? 0,
-      pass_present: typeof pass === 'string' && pass.length > 0,
-      pass_length: pass?.length ?? 0,
-      portalUrl,
-      clienteCodigo,
-    }));
 
     await applyStealth();
     trace.push({ step: 'login_start', t: Date.now() - t0 });
@@ -561,16 +553,6 @@ export default async ({ page, context }) => {
           bodyPreview: body.substring(0, 1500),
         };
       });
-      console.log('[DEBUG_LOGIN_CHECK]', JSON.stringify({
-        via: loginCheck.via,
-        url: loginCheck.url,
-        alertText: loginErrorInfo.alertText,
-        bodyContains_naoEPossivel: loginErrorInfo.bodyPreview.includes('Não é possível'),
-        bodyContains_credenciaisInvalidas:
-          loginErrorInfo.bodyPreview.toLowerCase().includes('credenciais') ||
-          loginErrorInfo.bodyPreview.toLowerCase().includes('inválida'),
-        bodyPreview_first_500: loginErrorInfo.bodyPreview.substring(0, 500),
-      }));
       return {
         data: {
           success: false,
@@ -674,9 +656,6 @@ export default async ({ page, context }) => {
     trace.push({ step: 'navegacao_via_menu_start', urlAtual: page.url(), t: Date.now() - t0 });
 
     const urlAposLogin = page.url();
-    if (!urlAposLogin.endsWith('/home') && !urlAposLogin.includes('/home')) {
-      console.log('[DEBUG_NAV] URL inesperada após login:', urlAposLogin);
-    }
 
     // Sidebar já foi expandida e confirmada na checagem pós-login acima (uma etapa só:
     // expandir → esperar o sinal → classificar). O segundo par expandir+esperar que morava
@@ -693,7 +672,6 @@ export default async ({ page, context }) => {
       }
       return { clicked: false, found_links: links.length, all_texts: links.map((l) => (l.innerText || '').trim().substring(0, 30)).slice(0, 10) };
     });
-    console.log('[DEBUG_CLICK_VENDAS]', JSON.stringify(expandiu_vendas));
     trace.push({ step: 'clicked_vendas', expandiu_vendas, t: Date.now() - t0 });
     await page.waitForFunction(function() {
       const links = Array.from(document.querySelectorAll('a'));
@@ -726,7 +704,6 @@ export default async ({ page, context }) => {
         links_com_order_creation: allLinks.filter((l) => (l.getAttribute('href') || '').includes('order-creation')).map((l) => ({ href: l.getAttribute('href'), text: (l.innerText || '').trim().substring(0, 50) })),
       };
     });
-    console.log('[DEBUG_CLICK_PEDIDOS]', JSON.stringify(clicou_pedidos));
     trace.push({ step: 'clicked_pedidos', clicou_pedidos, t: Date.now() - t0 });
 
     if (!clicou_pedidos.clicked) {
@@ -755,7 +732,6 @@ export default async ({ page, context }) => {
     await sleep(2000); // dá tempo do DOM da página de pedidos estabilizar
 
     const urlAposClick = page.url();
-    console.log('[DEBUG_AFTER_CLICK_PEDIDOS]', JSON.stringify({ url: urlAposClick, chegou_em_order_creation: urlAposClick.endsWith('/order-creation') }));
     trace.push({ step: 'after_click_pedidos', url: urlAposClick, t: Date.now() - t0 });
 
     await page.waitForSelector('#btnNovoPedido', { timeout: budgetFor('btn-novo-pedido', 25_000) });
@@ -863,7 +839,6 @@ export default async ({ page, context }) => {
           debug_btns_visible: debug_btns_visible
         };
       }, i);
-      console.log('[DEBUG_INCLUIR_ITEM_CLICK]', JSON.stringify({ iteration: i, ...addItemClicado }));
       trace.push({ step: 'incluir_item_clicked_iter_' + i, addItemClicado, t: Date.now() - t0 });
       if (!addItemClicado.clicked) {
         const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
@@ -902,7 +877,6 @@ export default async ({ page, context }) => {
           has_select2_it_codigo_container_exact: !!document.querySelector('#select2-it_codigo-container'),
         };
       });
-      console.log('[DEBUG_DOM_APOS_INCLUIR_2]', JSON.stringify({ iteration: i, ...debugDomAposIncluir }));
       trace.push({ step: 'dom_apos_incluir_iter_' + i, debugDomAposIncluir, t: Date.now() - t0 });
       // AGORA o waitForSelector original, mas com fallback inteligente
       let select2ContainerSel = '#select2-it_codigo-container';
@@ -910,7 +884,6 @@ export default async ({ page, context }) => {
         const visibleContainer = debugDomAposIncluir.select2_containers_it_codigo.find(function(c) { return c.visible; });
         if (visibleContainer) {
           select2ContainerSel = '#' + visibleContainer.id;
-          console.log('[DEBUG_SELECT2_FALLBACK]', 'Usando ID alternativo: ' + select2ContainerSel);
           trace.push({ step: 'select2_fallback_iter_' + i, sel: select2ContainerSel, t: Date.now() - t0 });
         }
       }
@@ -924,7 +897,6 @@ export default async ({ page, context }) => {
           btn_primary_texts: allBtns.map((b) => (b.innerText || '').trim().substring(0, 30)),
         };
       });
-      console.log('[DEBUG_POS_INCLUIR_ITEM]', JSON.stringify({ iteration: i, ...debugPosIncluir }));
       await page.click(select2ContainerSel);
       await sleep(300);
       await page.waitForSelector('.select2-search__field', { timeout: budgetFor('item-' + i + '-select2-search', 5_000) });
@@ -982,7 +954,6 @@ export default async ({ page, context }) => {
         };
       });
       trace.push({ step: 'debug_btn_gravar_iter_' + i, t: Date.now() - t0, debugGravarItem: debugGravarItem });
-      console.log('[DEBUG_BTN_GRAVAR]', JSON.stringify({ iteration: i, ...debugGravarItem }));
 
       // PR12: o portal Sayerlack às vezes ignora o click do #btnGravarItem
       // silenciosamente — o POST /save-tab-preco-session não dispara e a row
@@ -1010,7 +981,6 @@ export default async ({ page, context }) => {
 
       if (!saveResult.ok) {
         // Retry: portal ignorou o click. Tenta de novo.
-        console.warn('[DEBUG_ITEM_SAVE_RETRY]', JSON.stringify({ iteration: i, sku: item.sku_portal }));
         trace.push({ step: 'item_' + i + '_save_retry', t: Date.now() - t0 });
         saveConfirm = armarSaveWait('item-' + i + '-save-retry');
         await page.click('#btnGravarItem');
@@ -1117,7 +1087,6 @@ export default async ({ page, context }) => {
       return { ok: true, przIdx: przIdx, idx: idx, headers: ths.slice(0, 20), rows: rows, amostra: amostra };
     }, skusConhecidos);
     var scrapeDebug = { ok: scrape.ok, motivo: scrape.motivo || null, przIdx: scrape.przIdx, idx: scrape.idx || {}, headers: scrape.headers || [], amostra: scrape.amostra || [] };
-    console.log('[DEBUG_SCRAPE_ITENS]', JSON.stringify({ debug: scrapeDebug, n: (scrape.rows || []).length, rows: (scrape.rows || []).slice(0, 3) }));
     trace.push({ step: 'scrape_datatable', n: (scrape.rows || []).length, przIdx: scrape.przIdx, idx: scrape.idx || {}, skus_identificados: (scrape.rows || []).filter(function(r){ return !!r.sku_portal; }).length, t: Date.now() - t0 });
     var linhasPortal = scrape.rows || [];
 
@@ -1216,7 +1185,6 @@ export default async ({ page, context }) => {
       };
     });
     trace.push({ step: 'pre_click_efetivar_diag', t: Date.now() - t0, diag: preClickDiag });
-    console.log('[DEBUG_PRE_CLICK_EFETIVAR]', JSON.stringify(preClickDiag));
 
     // === PR3: wait composto pós-submit ===
     // Arma os 4 sinais ANTES do click — qualquer um que cumpra ganha. Ignora
@@ -1254,7 +1222,6 @@ export default async ({ page, context }) => {
       };
     });
     trace.push({ step: 'snapshot_pos_efetivar_imediato', t: Date.now() - t0, snapshot: snapImediato });
-    console.log('[DEBUG_POS_EFETIVAR_IMEDIATO]', JSON.stringify(snapImediato));
 
     // Aguarda o primeiro sinal positivo. Se nenhum cumprir no budget, lança
     // AggregateError (Promise.any) — capturado e classificado abaixo.
@@ -1265,7 +1232,6 @@ export default async ({ page, context }) => {
       firstSignal = { kind: 'none', error: (err && err.message) || String(err) };
     }
     trace.push({ step: 'first_signal', kind: firstSignal.kind, t: Date.now() - t0, remaining: remainingMs() });
-    console.log('[DEBUG_FIRST_SIGNAL]', JSON.stringify({ kind: firstSignal.kind, error: firstSignal.error || null }));
 
     // Microjanela: 250ms a mais pro recorder receber o body da response caso o
     // sinal vencedor tenha sido banner/modal/url (que chegam antes do network
@@ -1344,9 +1310,6 @@ export default async ({ page, context }) => {
       bodySuccessFalse,
       t: Date.now() - t0
     });
-    console.log('[DEBUG_SUBMIT_CLASSIFIED]', JSON.stringify({
-      firstSignalKind: firstSignal.kind, protocolo, protocoloSource, portalDataEntrega, responseInfo, bodySuccessFalse
-    }));
 
     const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false, encoding: 'base64' }).catch(() => null);
 
@@ -1561,12 +1524,6 @@ async function uploadScreenshot(
       const commaIdx = cleaned.indexOf(",");
       if (commaIdx !== -1) cleaned = cleaned.substring(commaIdx + 1);
     }
-    console.log("[DEBUG_SCREENSHOT_PREFIX]", JSON.stringify({
-      pedido_id: pedidoId,
-      has_data_prefix: base64?.startsWith("data:") ?? false,
-      base64_length: cleaned?.length ?? 0,
-      base64_first_20: cleaned?.substring(0, 20) ?? null,
-    }));
     const bytes = Uint8Array.from(atob(cleaned), (c) => c.charCodeAt(0));
     const path = `pedido_${pedidoId}_${Date.now()}${suffix}.png`;
     const { error: upErr } = await supabase.storage
@@ -1730,111 +1687,85 @@ async function processarPedido(
     return result;
   }
 
-  // 1. Buscar itens com mapeamento
-  console.log("[DEBUG_RPC] tentando RPC envio_portal_itens_mapeados, pedido_id=", pedido.id);
-  const { data: itens, error: itensErr } = await supabase.rpc("envio_portal_itens_mapeados", {
-    p_pedido_id: pedido.id,
-  }).select("*") as unknown as { data: ItemMapeado[] | null; error: PostgrestErrorLike | null };
-
-  let itensList: ItemMapeado[] | null = itens;
-  console.log("[DEBUG_RPC_RESULT]", JSON.stringify({
-    pedido_id: pedido.id,
-    itensErr: itensErr ? { message: itensErr.message, code: itensErr.code, details: itensErr.details } : null,
-    itensList_isNull: itensList === null,
-    itensList_isArray: Array.isArray(itensList),
-    itensList_length: Array.isArray(itensList) ? itensList.length : 'N/A',
-  }));
-  // Fallback: query direta caso RPC nao exista
-  if (itensErr || !itensList) {
-    const { data: itensDirectRaw, error: e2 } = await supabase
-      .from("pedido_compra_item")
-      .select(`
-        id,
-        sku_codigo_omie,
-        sku_descricao,
-        qtde_final,
-        fator_embalagem_portal
-      `)
-      .eq("pedido_id", pedido.id)
-      .order("id", { ascending: true });
-    const itensDirect = (itensDirectRaw ?? []) as unknown as PedidoItemDireto[];
-    if (e2 || !itensDirectRaw) {
-      // Erro de banco ao buscar itens — transiente, nenhum POST foi enviado.
-      result.erro = `Erro ao buscar itens: ${e2?.message ?? "desconhecido"}`;
-      result.tentativas += 1;
-      const esgotado = result.tentativas >= MAX_TENTATIVAS;
-      result.status_final = esgotado ? "erro_nao_retentavel" : "erro_retentavel";
-      await supabase.from("pedido_compra_sugerido").update({
-        status_envio_portal: result.status_final,
-        portal_tentativas: result.tentativas,
-        portal_erro: result.erro,
-        portal_proximo_retry_em: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      }).eq("id", pedido.id);
-      await gravarTentativa(supabase, pedido.id, {
-        iniciadoEm,
-        statusResultado: result.status_final,
-        elapsedMs: Date.now() - t0,
-        evidence: { phase: "pre_browserless", motivo: "erro_buscar_itens", requestSent: false },
-        browserlessResponseMs: null,
-        erro: result.erro,
-      });
-      result.duracao_ms = Date.now() - t0;
-      return result;
-    }
-    const skus = itensDirect.map((i) => i.sku_codigo_omie);
-    console.log("[DEBUG_FALLBACK_ITENS]", JSON.stringify({
-      pedido_id: pedido.id,
-      pedido_empresa: pedido.empresa,
-      itensDirect_count: itensDirect?.length ?? 0,
-      skus_extraidos: skus,
-    }));
-    const { data: mapsRaw, error: mapsErr } = await supabase
-      .from("sku_fornecedor_externo")
-      .select("sku_omie, sku_portal, unidade_portal, fator_conversao, ativo")
-      .eq("empresa", pedido.empresa)
-      // Chave EXATA do pedido — a mesma que o motor usa (sp.fornecedor_nome = sfe.fornecedor_nome, #2157).
-      // Era ILIKE '%SAYERLACK%': com um alias cadastrado, o Map podia escolher outro fator/SKU do que o motor.
-      .eq("fornecedor_nome", pedido.fornecedor_nome)
-      .in("sku_omie", skus);
-    if (mapsErr || !mapsRaw) {
-      // Falha de banco ao ler o de-para é TRANSIENTE — antes virava mapa vazio → "SKUs sem mapeamento ativo"
-      // definitivo e FALSO (challenge Codex 2026-09-05, P2). Mesmo contrato do "Erro ao buscar itens" acima.
-      return await falharTransientePreBrowserless("erro_buscar_mapeamentos", `Erro ao buscar mapeamentos: ${mapsErr?.message ?? "desconhecido"}`);
-    }
-    const maps = mapsRaw as unknown as SkuFornecedorExternoRow[];
-    console.log("[DEBUG_FALLBACK_MAPS]", JSON.stringify({
-      pedido_id: pedido.id,
-      filtro_empresa: pedido.empresa,
-      filtro_fornecedor_nome: pedido.fornecedor_nome,
-      filtro_skus: skus,
-      maps_count: maps.length,
-      maps_amostra: maps.slice(0, 3).map((m) => ({ sku_omie: m.sku_omie, sku_portal: m.sku_portal, ativo: m.ativo })),
-      mapsErr: mapsErr ? { message: mapsErr.message, code: mapsErr.code } : null,
-    }));
-    let mapByOmie: Map<string, SkuFornecedorExternoRow>;
-    try {
-      mapByOmie = indexarMapeamentos(maps);
-    } catch (e) {
-      if (!(e instanceof MapeamentoAmbiguoError)) throw e;
-      return await recusarPreBrowserless("mapeamento_ambiguo", e, { sku: e.sku, n: e.n });
-    }
-    itensList = itensDirect.map((i) => {
-      const m = mapByOmie.get(i.sku_codigo_omie);
-      return {
-        item_id: i.id,
-        sku_codigo_omie: i.sku_codigo_omie,
-        sku_descricao: i.sku_descricao,
-        qtde_final: Number(i.qtde_final),
-        sku_portal: m?.sku_portal ?? null,
-        unidade_portal: m?.unidade_portal ?? null,
-        fator_conversao: Number(m?.fator_conversao ?? 1),
-        mapeamento_ativo: m?.ativo ?? null,
-        fator_embalagem_portal: i.fator_embalagem_portal,
-      };
+  // 1. Buscar itens + de-para do fornecedor — caminho ÚNICO.
+  // Aqui havia uma tentativa de RPC `envio_portal_itens_mapeados` com esta query como fallback. A RPC
+  // nunca existiu em nenhum schema de prod (medido 2× em 2026-09-05): o fallback SEMPRE foi o caminho
+  // vivo, e a chamada só gastava um roundtrip PostgREST e um erro de log por envio.
+  // A RPC não foi escrita de propósito — sem contrato definido, um de-para divergente do que o MOTOR
+  // usou manda o pedido errado ao fornecedor (precisão>recall, docs/agent/reposicao.md §portal Sayerlack).
+  const { data: itensDirectRaw, error: itensErr } = await supabase
+    .from("pedido_compra_item")
+    .select(`
+      id,
+      sku_codigo_omie,
+      sku_descricao,
+      qtde_final,
+      fator_embalagem_portal
+    `)
+    .eq("pedido_id", pedido.id)
+    .order("id", { ascending: true });
+  const itensDirect = (itensDirectRaw ?? []) as unknown as PedidoItemDireto[];
+  if (itensErr || !itensDirectRaw) {
+    // Erro de banco ao buscar itens — transiente, nenhum POST foi enviado.
+    result.erro = `Erro ao buscar itens: ${itensErr?.message ?? "desconhecido"}`;
+    result.tentativas += 1;
+    const esgotado = result.tentativas >= MAX_TENTATIVAS;
+    result.status_final = esgotado ? "erro_nao_retentavel" : "erro_retentavel";
+    await supabase.from("pedido_compra_sugerido").update({
+      status_envio_portal: result.status_final,
+      portal_tentativas: result.tentativas,
+      portal_erro: result.erro,
+      portal_proximo_retry_em: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    }).eq("id", pedido.id);
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: result.status_final,
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "pre_browserless", motivo: "erro_buscar_itens", requestSent: false },
+      browserlessResponseMs: null,
+      erro: result.erro,
     });
+    result.duracao_ms = Date.now() - t0;
+    return result;
   }
+  const skus = itensDirect.map((i) => i.sku_codigo_omie);
+  const { data: mapsRaw, error: mapsErr } = await supabase
+    .from("sku_fornecedor_externo")
+    .select("sku_omie, sku_portal, unidade_portal, fator_conversao, ativo")
+    .eq("empresa", pedido.empresa)
+    // Chave EXATA do pedido — a mesma que o motor usa (sp.fornecedor_nome = sfe.fornecedor_nome, #2157).
+    // Era ILIKE '%SAYERLACK%': com um alias cadastrado, o Map podia escolher outro fator/SKU do que o motor.
+    .eq("fornecedor_nome", pedido.fornecedor_nome)
+    .in("sku_omie", skus);
+  if (mapsErr || !mapsRaw) {
+    // Falha de banco ao ler o de-para é TRANSIENTE — antes virava mapa vazio → "SKUs sem mapeamento ativo"
+    // definitivo e FALSO (challenge Codex 2026-09-05, P2). Mesmo contrato do "Erro ao buscar itens" acima.
+    return await falharTransientePreBrowserless("erro_buscar_mapeamentos", `Erro ao buscar mapeamentos: ${mapsErr?.message ?? "desconhecido"}`);
+  }
+  const maps = mapsRaw as unknown as SkuFornecedorExternoRow[];
+  let mapByOmie: Map<string, SkuFornecedorExternoRow>;
+  try {
+    mapByOmie = indexarMapeamentos(maps);
+  } catch (e) {
+    if (!(e instanceof MapeamentoAmbiguoError)) throw e;
+    return await recusarPreBrowserless("mapeamento_ambiguo", e, { sku: e.sku, n: e.n });
+  }
+  const itensList: ItemMapeado[] = itensDirect.map((i) => {
+    const m = mapByOmie.get(i.sku_codigo_omie);
+    return {
+      item_id: i.id,
+      sku_codigo_omie: i.sku_codigo_omie,
+      sku_descricao: i.sku_descricao,
+      qtde_final: Number(i.qtde_final),
+      sku_portal: m?.sku_portal ?? null,
+      unidade_portal: m?.unidade_portal ?? null,
+      fator_conversao: Number(m?.fator_conversao ?? 1),
+      mapeamento_ativo: m?.ativo ?? null,
+      fator_embalagem_portal: i.fator_embalagem_portal,
+    };
+  });
 
-  if (!itensList || itensList.length === 0) {
+  if (itensList.length === 0) {
     // Erro logico — retentar nao resolve.
     result.status_final = "erro_nao_retentavel";
     result.erro = "Pedido sem itens";
@@ -1856,16 +1787,6 @@ async function processarPedido(
     result.duracao_ms = Date.now() - t0;
     return result;
   }
-
-  console.log("[DEBUG_PRE_VALIDATION]", JSON.stringify({
-    pedido_id: pedido.id,
-    itensList_final: itensList.map((i) => ({
-      sku_codigo_omie: i.sku_codigo_omie,
-      sku_portal: i.sku_portal,
-      mapeamento_ativo: i.mapeamento_ativo,
-      qtde_final: i.qtde_final,
-    })),
-  }));
 
   // 2. Validar SKUs
 
@@ -1932,67 +1853,40 @@ async function processarPedido(
     }
   }
 
-  // 3. Calcular qtde portal
-  // Portal Sayerlack só aceita unidades inteiras: arredondar SEMPRE para cima (`qtdePortal`, que também
-  // converte a unidade do Omie para a do portal via `fator_conversao` — ex.: litro → balde 0,2).
-  // Fail-closed: fator inválido aborta o pedido INTEIRO antes de qualquer status/Browserless —
-  // enviar parcial ou "NaN" no input do portal é irreversível (o fornecedor recebe de verdade).
+  // 3. Calcular qtde portal — ENVIADO = APROVADO (nada aqui transforma a compra; só confere e recusa)
+  // Portal Sayerlack só aceita unidades inteiras: `qtdePortal` converte a unidade do Omie para a do portal via
+  // `fator_conversao` (ex.: litro → balde 0,2) com ceil. Fail-closed: fator inválido aborta o pedido INTEIRO antes
+  // de qualquer status/Browserless — enviar parcial ou "NaN" no input do portal é irreversível.
   // TOCTOU aprovação→envio (Codex 2026-09-05): o comprador aprovou `qtde_final` arredondada pelo motor com
-  // `fator_embalagem_portal`; se o fator VIVO mudou desde então (0,2 → 0,18), esta compra seria outra
-  // (44,44 L onde se aprovou 40) — recusar o pedido INTEIRO; o ciclo regrava e o comprador reaprova.
+  // `fator_embalagem_portal`; se o fator VIVO mudou desde então (0,2 → 0,18) — ou o item foi aprovado SEM fator
+  // (NULL = 1:1) e alguém cadastrou 0,2 depois — esta compra seria outra: recusar o pedido INTEIRO.
+  // Quantidade fora do múltiplo (Codex P0 no #2166): 37 L editado à mão com fator 0,2 virava 8 BB = 40 L gravados
+  // e enviados sem reaprovação. `qtdePortalCanonica` faz o round-trip (qtdeFisicaOmie(qtdePortal(q)) = q) e recusa;
+  // a normalização que ANTES escrevia `qtde_final` aqui SAIU — a edge não é mais escritora de item. O ciclo regrava
+  // e/ou o comprador corrige (a UI já grava no múltiplo) e reaprova.
   let itemsPortal: Array<{ sku_portal: string; qtde: number; sku_descricao: string }>;
   try {
     itemsPortal = itensList.map((i) => {
       verificarFatorAprovado(i.fator_embalagem_portal, i.fator_conversao, i.sku_codigo_omie);
       return {
         sku_portal: i.sku_portal!,
-        qtde: qtdePortal(i.qtde_final, i.fator_conversao, i.sku_codigo_omie),
+        qtde: qtdePortalCanonica(i.qtde_final, i.fator_conversao, i.sku_codigo_omie),
         sku_descricao: i.sku_descricao,
       };
     });
   } catch (e) {
     if (e instanceof FatorAprovadoDivergenteError) {
-      return await recusarPreBrowserless("fator_aprovado_divergente", e, {
+      return await recusarPreBrowserless(e.motivo, e, {
         sku: e.sku, fator_aprovado: e.fatorAprovado, fator_vivo: e.fatorVivo,
+      });
+    }
+    if (e instanceof QtdeNaoMultiploEmbalagemError) {
+      return await recusarPreBrowserless("qtde_nao_multiplo_embalagem", e, {
+        sku: e.sku, qtde_final: e.qtdeFinal, fator: e.fator, qtde_portal: e.qtdePortal, qtde_fisica: e.qtdeFisica,
       });
     }
     if (!(e instanceof FatorConversaoInvalidoError)) throw e;
     return await recusarPreBrowserless("fator_conversao_invalido", e, { sku: e.sku });
-  }
-
-  // 3b. NORMALIZAR `qtde_final` à compra FÍSICA (Codex P0, 2026-09-04). Com fator ≠ 1 o portal compra
-  // ceil(q×f) embalagens — na unidade do Omie isso é qtde_portal ÷ fator (36 L → 8 BB → 40 L). Se o item
-  // ficasse em 36, a captura de custo lá embaixo (`total ÷ qtde_final`) inflaria o preço/L e o
-  // `disparar-pedidos-aprovados` registraria no Omie 36 × preço falso. Persistido AQUI, antes de qualquer
-  // efeito externo: é a fronteira que TODA via cruza (motor, edição humana, promo, cold-start).
-  // `qtde_sugerida` fica intacta como rastro do que o motor pediu.
-  {
-    const normalizados: Array<{ item_id: number; de: number; para: number; preco: number }> = [];
-    for (let k = 0; k < itensList.length; k++) {
-      const it = itensList[k];
-      const fisica = qtdeFisicaOmie(itemsPortal[k].qtde, it.fator_conversao, it.sku_codigo_omie);
-      if (Math.abs(fisica - it.qtde_final) <= 1e-6) continue;
-      normalizados.push({ item_id: it.item_id, de: it.qtde_final, para: fisica, preco: it.preco_atual ?? 0 });
-      it.qtde_final = fisica;
-    }
-    for (const n of normalizados) {
-      await escritaCritica(
-        `pedido_compra_item.update(qtde_final ${n.de}→${n.para} item=${n.item_id})`,
-        supabase.from("pedido_compra_item").update({
-          qtde_final: n.para,
-          // [PRECO-AUSENTE] sem preço, valor_linha segue NULL (nunca fabricar 0).
-          valor_linha: n.preco > 0 ? round2(n.para * n.preco) : null,
-        }).eq("id", n.item_id),
-      );
-    }
-    if (normalizados.length > 0) {
-      const novoTotal = round2(itensList.reduce((sum, i) => sum + i.qtde_final * (i.preco_atual ?? 0), 0));
-      await escritaCritica(
-        "pedido_compra_sugerido.update(valor_total pós-normalização de embalagem)",
-        supabase.from("pedido_compra_sugerido").update({ valor_total: novoTotal }).eq("id", pedido.id),
-      );
-      console.log(`[envio-portal] Pedido #${pedido.id}: qtde_final normalizada à embalagem em ${normalizados.length} item(ns)`, JSON.stringify(normalizados));
-    }
   }
 
   // 4. Marcar como enviando

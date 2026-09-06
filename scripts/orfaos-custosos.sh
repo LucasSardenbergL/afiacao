@@ -53,6 +53,28 @@
 #   bash scripts/orfaos-custosos.sh --resumo   # 1 linha p/ hook, ou NADA
 #
 # Env: ORFAOS_PCPU_MIN (50) · ORFAOS_CPUTIME_MIN_S (300)
+#      CLAUDE_MEM_DATA_DIR (~/.claude-mem — o MESMO nome que o plugin honra)
+#
+# ── Discriminador do claude-mem: VIVO ≠ SÃO ──────────────────────────────────
+# Em 2026-09-05 o daemon do plugin (`worker-service.cjs --daemon`, PPID=1) foi
+# acusado CORRETAMENTE pelos dois eixos — 95% de CPU por 2h — e a linha dizia só
+# "pid X queimando CPU". Faltava o discriminador: o worker estava VIVO-MAS-SURDO
+# (porta em LISTEN, `/api/health` sem resposta) e o hook do plugin bloqueava TODO
+# prompt de TODA sessão com exit 2 após 3 falhas consecutivas (contador global em
+# ~/.claude-mem/state/hook-failures.json); o plugin NÃO se recupera sozinho. A
+# receita verificada vive em docs/historico/claude-mem-worker-vivo-mas-surdo.md.
+#
+# O critério dos dois eixos NÃO muda e NÃO há allowlist por nome (allowlist é
+# dívida; o eixo certo já exclui o worker SÃO, que fica em 0-4%). O discriminador
+# só ANOTA o órfão já acusado: (a) o contador — arquivo AUSENTE é "sem contador",
+# nunca 0 (ausente ≠ zero, docs/agent/money-path.md); (b) o `/api/health` na porta
+# lida de `worker.pid`, com `curl -m 2`, que só roda quando HÁ órfão do claude-mem
+# e UMA vez só (a porta é uma) — o vigia impõe teto de 3s ao script inteiro;
+# (c) surdo E contador ≥ 3 → aponta a receita. Sonda ausente ou quebrada (curl,
+# arquivo, porta) degrada para "nao sondei" — nunca para "health ok", e nunca
+# para SURDO, que também é afirmação (docs/historico/sonda-ausente-em-script-
+# que-apaga.md). O casamento com `worker-service.cjs` é feito no awk ANTES do
+# corte de 110 chars: a linha real tem 146 e o nome do script fica depois do corte.
 #
 # Exit: 0 = varreu (achando ou não) · 3 = NÃO consegui varrer (ausente ≠ zero)
 set -u
@@ -76,7 +98,8 @@ if ! bruto="$(LC_ALL=C ps -axo pid=,ppid=,time=,pcpu=,command= 2>/dev/null)"; th
   exit 3
 fi
 
-# Uma linha por culpado: "<pid>\t<pcpu>\t<segundos>\t<comando truncado>"
+# Uma linha por culpado: "<pid>\t<pcpu>\t<segundos>\t<etiqueta>\t<comando truncado>"
+# etiqueta: "claude-mem" (worker-service.cjs no comando COMPLETO) ou "-".
 achados="$(printf '%s\n' "$bruto" | awk \
   -v pcpu_min="$pcpu_min" -v t_min="$cputime_min" '
   # [DD-]HH:MM:SS[.ff] e MM:SS[.ff] — o macOS usa MM:SS (e passa de 59: "1015:22"),
@@ -99,8 +122,9 @@ achados="$(printf '%s\n' "$bruto" | awk \
     if (($4 + 0) < (pcpu_min + 0)) next
     s = segs($3)
     if (s < (t_min + 0)) next
+    tag = (cmd ~ /worker-service\.cjs/) ? "claude-mem" : "-"
     if (length(cmd) > 110) cmd = substr(cmd, 1, 107) "..."
-    printf "%s\t%s\t%d\t%s\n", $1, $4, s, cmd
+    printf "%s\t%s\t%d\t%s\t%s\n", $1, $4, s, tag, cmd
   }')"
 
 humano() {  # segundos → "16h55m" / "7m03s"
@@ -112,15 +136,79 @@ humano() {  # segundos → "16h55m" / "7m03s"
 
 n="$(printf '%s' "$achados" | grep -c . || true)"
 
+# ── discriminador do claude-mem (ver cabeçalho) ──────────────────────────────
+mem_dir="${CLAUDE_MEM_DATA_DIR:-${HOME:-}/.claude-mem}"
+
+json_num() {  # json_num <arquivo> <chave> → o inteiro da chave, ou VAZIO (ausente / não-inteiro)
+  # sed, não jq/python3: o PATH do hook é herdado do app (vigia-worktree.sh explica)
+  # e /opt/homebrew/bin pode não estar nele — jq viraria "nao li" justo no
+  # SessionStart. Os dois arquivos são JSON raso escrito pelo plugin. Valor entre
+  # aspas ou chave ausente NÃO casa → vazio, e vazio é FALTA DE DADO, não 0.
+  sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | awk 'NR == 1'
+}
+
+mem_disc=""
+if printf '%s\n' "$achados" | grep -q $'\tclaude-mem\t'; then
+  # (a) contador de falhas consecutivas de hook — AUSENTE ≠ 0
+  contador=""
+  f="$mem_dir/state/hook-failures.json"
+  if [ ! -f "$f" ]; then
+    contador_txt="sem contador (hook-failures.json ausente em $mem_dir/state)"
+  else
+    contador="$(json_num "$f" consecutiveFailures)"
+    if [ -n "$contador" ]; then contador_txt="contador=$contador falha(s) consecutiva(s) de hook"
+    else contador_txt="contador ilegivel (hook-failures.json sem consecutiveFailures inteiro)"; fi
+  fi
+
+  # (b) /api/health na porta do worker.pid — resposta POSITIVA é HTTP 200
+  health=""
+  pidf="$mem_dir/worker.pid"
+  porta=""
+  [ ! -f "$pidf" ] || porta="$(json_num "$pidf" port)"
+  if [ ! -f "$pidf" ]; then
+    health_txt="nao sondei health (worker.pid ausente em $mem_dir)"
+  elif [ -z "$porta" ]; then
+    health_txt="nao sondei health (worker.pid sem porta inteira)"
+  elif ! command -v curl >/dev/null 2>&1; then
+    health_txt="nao sondei health (curl ausente no PATH)"
+  else
+    # -m 2 = teto TOTAL (conexão inclusa): é o que mantém o script sob os 3s do
+    # vigia com um worker surdo. --noproxy: sonda local nunca passa por proxy.
+    code="$(curl -s -m 2 --noproxy '*' -o /dev/null -w '%{http_code}' "http://127.0.0.1:${porta}/api/health" 2>/dev/null)"
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ "$code" = "200" ]; then
+      health="ok"; health_txt="health ok (porta $porta respondeu 200)"
+    elif [ "$rc" -eq 0 ]; then
+      health_txt="health respondeu HTTP ${code:-?} na porta $porta (nao e 200)"
+    else
+      case "$rc" in
+        # 7 recusada · 28 timeout dos 2s · 52 resposta vazia · 55/56 send/recv
+        # falhou (ECONNRESET — o que o incidente de 05/09 deu): o curl FUNCIONOU
+        # e o worker NÃO respondeu. Qualquer outro código é o curl que não sondou.
+        7|28|52|55|56) health="SURDO"; health_txt="health SURDO (porta $porta sem resposta em 2s, curl $rc)" ;;
+        *) health_txt="nao sondei health (curl saiu $rc)" ;;
+      esac
+    fi
+  fi
+
+  mem_disc="claude-mem: ${health_txt}; ${contador_txt}"
+  # (c) a receita só quando as DUAS condições dela valem — surdo E contador >= 3
+  if [ "$health" = "SURDO" ] && [ -n "$contador" ] && [ "$contador" -ge 3 ]; then
+    mem_disc="${mem_disc} -> VIVO-MAS-SURDO: o plugin NAO se recupera sozinho e bloqueia todo prompt de toda sessao; receita em docs/historico/claude-mem-worker-vivo-mas-surdo.md"
+  fi
+fi
+
 if [ "$resumo" -eq 1 ]; then
   [ "$n" -gt 0 ] || exit 0   # silêncio: hook que fala à toa vira ruído e some
   linha="${n} processo(s) ORFAO(s) (PPID=1, nenhuma sessao e dona) queimando CPU:"
   i=0
-  while IFS=$'\t' read -r pid pcpu segs cmd; do
+  while IFS=$'\t' read -r pid pcpu segs tag cmd; do
     [ -n "${pid:-}" ] || continue
     i=$((i + 1))
     [ "$i" -le 3 ] || continue
-    linha="${linha} pid ${pid} (${pcpu}%, $(humano "$segs") de CPU) ${cmd:0:60};"
+    entrada="pid ${pid} (${pcpu}%, $(humano "$segs") de CPU) ${cmd:0:60}"
+    [ "$tag" != "claude-mem" ] || entrada="${entrada} [${mem_disc}]"
+    linha="${linha} ${entrada};"
   done <<EOF
 $achados
 EOF
@@ -134,9 +222,10 @@ if [ "$n" -eq 0 ]; then
   varridos="$(printf '%s\n' "$bruto" | awk '$2 == 1' | grep -c . || true)"
   echo "  (nenhum orfao caro entre ${varridos} orfao(s) varrido(s) — teto: ${pcpu_min}% de CPU E ${cputime_min}s acumulados)"
 else
-  while IFS=$'\t' read -r pid pcpu segs cmd; do
+  while IFS=$'\t' read -r pid pcpu segs tag cmd; do
     [ -n "${pid:-}" ] || continue
     printf '  ⚠️  pid %-7s %5s%%  %-8s de CPU  %s\n' "$pid" "$pcpu" "$(humano "$segs")" "$cmd"
+    [ "$tag" != "claude-mem" ] || printf '      ↳ %s\n' "$mem_disc"
   done <<EOF
 $achados
 EOF

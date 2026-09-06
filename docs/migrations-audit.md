@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **510** custom migrations totais
-- **1741** objetos esperados (criados por estas migrations)
+- **516** custom migrations totais
+- **1754** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 539
-  - `rls_policy`: 456
-  - `index`: 250
-  - `cron_job`: 168
-  - `table`: 160
+  - `function`: 540
+  - `rls_policy`: 460
+  - `index`: 253
+  - `cron_job`: 170
+  - `table`: 163
   - `trigger`: 88
   - `view`: 76
   - `enum_value`: 4
@@ -4245,21 +4245,63 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.sayerlack_aplicar_custo_portal` | — |
 
-### `20260905150000_reposicao_selo_aprovacao_m1_expandir.sql`
+### `20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `function` | `public.reposicao_pedido_e_portal` | — |
-| `function` | `public.reposicao_selo_itens` | — |
-| `function` | `public.reposicao_selar_pedido` | — |
-| `function` | `public.reposicao_conferir_envio` | — |
-| `function` | `public.aprovar_pedido_sugerido` | — |
-| `function` | `public.aprovar_pedido_sugerido` | — |
+| `function` | `public.deploy_atestacoes_janela_viva` | — |
+| `function` | `public.deploy_atestacoes_colher` | — |
+| `table` | `public.deploy_atestacoes` | — |
+| `index` | `public.idx_deploy_atestacoes_edge_observado` | `deploy_atestacoes` |
+| `cron_job` | `cron.deploy-atestacoes-colher` | — |
+| `rls_policy` | `public.deploy_atestacoes_select_staff` | `deploy_atestacoes` |
+| `rls_policy` | `public.deploy_atestacoes_service_all` | `deploy_atestacoes` |
+
+### `20260905224959_cancelar_pedido_guard_atomico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
 | `function` | `public.cancelar_pedido_sugerido` | — |
-| `function` | `public.iniciar_envio_portal_pre_claim` | — |
-| `function` | `public.envio_portal_claim_ids` | — |
-| `function` | `public.envio_portal_lock_candidatos` | — |
-| `function` | `public.pedido_compra_split` | — |
+
+### `20260905225613_preco_ausente_nao_e_zero.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_pedidos_com_itens` | — |
+| `function` | `public.reconciliar_pedidos_omie` | — |
+| `function` | `private.margem_cliente_agregada` | — |
+| `function` | `public.get_customer_margin_summary` | — |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.get_defasagem_cliente` | — |
+
+### `20260906105549_remover_itens_pedido_guard.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.remover_itens_pedido_sugerido` | — |
+
+### `20260906151204_deploy_sonda_cron_fail_closed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.deploy_sonda_disparar` | — |
+| `table` | `public.deploy_sonda_alvos` | — |
+| `table` | `public.deploy_sonda_disparos` | — |
+| `index` | `public.idx_deploy_sonda_disparos_tick` | `deploy_sonda_disparos` |
+| `index` | `public.idx_deploy_sonda_disparos_edge_quando` | `deploy_sonda_disparos` |
+| `cron_job` | `cron.deploy-sonda-cron` | — |
+| `rls_policy` | `public.deploy_sonda_alvos_select_staff` | `deploy_sonda_alvos` |
+| `rls_policy` | `public.deploy_sonda_disparos_select_staff` | `deploy_sonda_disparos` |
+
+### `20260906151715_aprovar_pedido_guard_atomico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aprovar_pedido_sugerido` | — |
+
+### `20260906154202_cancelar_pedido_revoke_anon.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

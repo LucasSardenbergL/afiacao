@@ -1,0 +1,15 @@
+// O par positivo de `viola-j`/`viola-k`: na forma `-c` o psql já devolve rc≠0, e `execFileSync`
+// lança. É o que os 6 audits de `db/audit-*.ts` fazem hoje.
+import { execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+const PSQL = process.env.PSQL_RO ?? join(homedir(), '.config', 'afiacao', 'psql-ro');
+
+export function consultar(sql: string): string {
+  return execFileSync(PSQL, ['-tA', '-c', sql], { encoding: 'utf8' });
+}
+
+export function consultarArquivo(arquivo: string): string {
+  return execFileSync(PSQL, ['-v', 'ON_ERROR_STOP=1', '-tA', '-f', arquivo], { encoding: 'utf8' });
+}

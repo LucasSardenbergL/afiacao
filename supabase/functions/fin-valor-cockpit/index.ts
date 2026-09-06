@@ -18,6 +18,7 @@ import { carregarItensCockpit } from "../_shared/itens-com-pedido.ts";
 // role comercial e nunca leu `x-cron-secret` — que é como o founder invoca do SQL Editor. A sonda
 // vem antes dele e traz o seu próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { valorMedido } from "../_shared/score-ponderado.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -511,6 +512,7 @@ Deno.serve(async (req: Request) => {
     // receita que simplesmente encolhe. Não é gate (derrubar o cockpit inteiro por causa de
     // uma linha seria pior que o dano) — é o mesmo padrão de `custoLegadoFallback` abaixo.
     let semPedidoPai = 0;
+    let semPrecoUtilizavel = 0;
     const linhas = itensAll.flatMap((l) => {
       const so = l.sales_orders;
       // `!inner` garante o pai no servidor; o guard existe porque o TIPO é nullable (é assim
@@ -523,8 +525,21 @@ Deno.serve(async (req: Request) => {
       const pid = l.product_id != null
         ? (obenProductIds.has(l.product_id) ? l.product_id : null)
         : (l.omie_codigo_produto != null && so.account === COMPANY ? (obenSkuToProductId.get(String(l.omie_codigo_produto)) ?? null) : null);
-      return pid != null ? [{ ...l, product_id: pid }] : [];
+      if (pid == null) return [];
+      // Item sem preço UTILIZÁVEL sai do cockpit inteiro — receita, quantidade e custo juntos.
+      // `order_items.unit_price` virou nullable em 2026-09-05, e `null * quantity` é 0 em
+      // JavaScript: a linha entraria com receita 0 e o custo cheio do SKU, que é exatamente a
+      // margem negativa fabricada que aquela fatia existiu para matar. Excluir só a receita
+      // seria pior — sobraria custo sem a venda correspondente. Mesma régua de
+      // `accumulateMarginFromItems` e de `private.margem_cliente_agregada()` (preço > 0).
+      // [P1 do challenge Codex: preço null, qtd 2, custo 60 → receita 0, margem −120]
+      const preco = valorMedido(l.unit_price);
+      if (preco === null || !(preco > 0)) { semPrecoUtilizavel++; return []; }
+      return [{ ...l, product_id: pid, unit_price: preco }];
     });
+    if (semPrecoUtilizavel > 0) {
+      console.warn(`[ValorCockpit][${COMPANY}] ${semPrecoUtilizavel} item(ns) fora do cockpit por preço não informado — receita e margem são PARCIAIS nesta janela.`);
+    }
     if (semPedidoPai > 0) console.warn(`[ValorCockpit][${COMPANY}] ${semPedidoPai} item(ns) sem pedido pai no embed — o \`!inner\` deveria tornar isso impossível; a receita desses itens NÃO entrou no cockpit`);
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 

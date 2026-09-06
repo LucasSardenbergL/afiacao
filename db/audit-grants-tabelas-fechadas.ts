@@ -9,8 +9,9 @@
  *     produção, mas é CEGO a `GRANT` colado à mão no SQL Editor;
  *   · este audit lê o BANCO — vê a verdade, inclusive o drift manual e a migration que mergeou
  *     e nunca foi aplicada (NAO_APLICADA: merge na main ≠ produção, a armadilha-mãe do projeto,
- *     docs/agent/database.md §2) — mas não bloqueia PR nenhum: roda on-demand, não no CI
- *     (o CI não tem psql-ro).
+ *     docs/agent/database.md §2; no grau máximo, TABELA_NAO_APLICADA: nem a TABELA existe, porque
+ *     a migration que a cria nunca foi colada) — mas não bloqueia PR nenhum: roda on-demand, não
+ *     no CI (o CI não tem psql-ro).
  *
  * Uso:   bun run authz:grants:prod ; echo $?     → 0 ok/pendente · 1 divergência · 2 erro
  * Dente: db/test-audit-grants-tabelas-fechadas.sh (PG17 local; injeta PSQL_RO + allowlist de teste)
@@ -22,7 +23,7 @@
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { compararGrantsProd, type MedicaoProd } from '../scripts/lib/authz-grants';
+import { compararGrantsProd, TABELA_AUSENTE, type MedicaoProd } from '../scripts/lib/authz-grants';
 import {
   AUTHZ_TABELAS_FECHADAS,
   type TabelaFechada,
@@ -108,6 +109,15 @@ function privsDaVersao(versao: number): Priv[] {
  * 100% das linhas — medição vazia, nenhuma divergência, "✅ prod bate com o contrato". Foi
  * exatamente esse falso-verde que o harness PG17 pegou. O formato do dado é responsabilidade
  * desta query, não do default de impressão do psql (que psqlrc/\pset podem mudar por baixo).
+ *
+ * Tabela INEXISTENTE sai `AUSENTE`, não erro: `has_table_privilege(role, 'schema.nome', priv)` cru
+ * ERRA com `relation does not exist`, o psql sai 1 e o audit inteiro morria em exit 2 — para o
+ * carimbo, "não consegui medir", que NÃO grava. Mas a tabela que a allowlist declara e prod não tem
+ * é a armadilha-mãe no grau máximo (migration mergeada, nunca colada) e tem de virar ACHADO
+ * (TABELA_NAO_APLICADA, exit 1, datado no carimbo). Por isso o `to_regclass(t)` na frente: NULL
+ * quando o nome não resolve — e o `has_table_privilege` só corre no ramo seguinte do CASE, pela
+ * forma de OID (estrita: NULL entra, NULL sai), que não erra nem se avaliada fora de ordem.
+ * Provado em db/test-audit-grants-tabelas-fechadas.sh (L): era exit 2, vira exit 1 com o código.
  */
 function montarQuery(chaves: string[]): string {
   const lista = (xs: readonly string[]) => xs.map((x) => `'${x.replace(/'/g, "''")}'`).join(',');
@@ -120,7 +130,9 @@ function montarQuery(chaves: string[]): string {
     .join('\n                            ');
   return `SELECT 'VER|'||current_setting('server_version_num')
           UNION ALL
-          SELECT 'ROW|'||t||'|'||r||'|'||p||'|'||(CASE WHEN has_table_privilege(r,t,p) THEN 'SIM' ELSE 'NAO' END)
+          SELECT 'ROW|'||t||'|'||r||'|'||p||'|'||(CASE WHEN to_regclass(t) IS NULL THEN 'AUSENTE'
+                                                     WHEN has_table_privilege(r,to_regclass(t),p) THEN 'SIM'
+                                                     ELSE 'NAO' END)
           FROM unnest(ARRAY[${lista(chaves)}]::text[]) t,
                unnest(ARRAY[${lista(ROLES)}]::text[]) r,
                unnest((CASE ${ramos} END)::text[]) p;`;
@@ -133,10 +145,12 @@ function medir(al: Record<string, TabelaFechada>): MedicaoProd {
   try {
     saida = execFileSync(PSQL, ['-tA', '-c', montarQuery(chaves)], { encoding: 'utf8' });
   } catch (e) {
-    // Tabela inexistente, role inexistente, psql-ro ausente ou sem rede caem todos aqui.
+    // Role inexistente, psql-ro ausente ou sem rede caem aqui. Tabela inexistente NÃO cai mais:
+    // a query a marca AUSENTE e ela vira achado (TABELA_NAO_APLICADA) — ver montarQuery.
     erroFatal(`falha ao consultar o banco via psql-ro (${PSQL}): ${(e as Error).message}`);
   }
   const med: MedicaoProd = {};
+  const ausentes = new Map<string, number>(); // tabela → nº de linhas AUSENTE
   let lidas = 0;
   let versao: number | null = null;
   for (const linha of saida.split('\n')) {
@@ -147,6 +161,10 @@ function medir(al: Record<string, TabelaFechada>): MedicaoProd {
     if (!linha.startsWith('ROW|')) continue; // descarta o eco de SET e linhas em branco
     lidas++;
     const [, tabela, role, priv, tem] = linha.split('|');
+    if (tem === 'AUSENTE') {
+      ausentes.set(tabela, (ausentes.get(tabela) ?? 0) + 1);
+      continue;
+    }
     if (tem !== 'SIM') continue; // só o privilégio PRESENTE entra no mapa
     ((med[tabela] ??= {})[role as (typeof ROLES)[number]] ??= []).push(priv as Priv);
   }
@@ -177,6 +195,20 @@ function medir(al: Record<string, TabelaFechada>): MedicaoProd {
         `(${chaves.length} tabela(s) × ${ROLES.length} role(s) × ${nPrivs} privilégio(s) no ` +
         `server_version_num ${versao}). A saída do psql mudou de forma — NÃO trate como "tudo fechado".`,
     );
+  }
+  // Tabela AUSENTE: TODAS as suas linhas (roles × privilégios) têm de vir AUSENTE — o nome ou
+  // resolve ou não resolve, não há meio-termo. Meio-AUSENTE meio-medida é a saída mudando de forma
+  // no meio da query: medição quebrada, exit 2, nunca "tudo fechado". Só depois a sentinela entra
+  // no mapa, onde compararGrantsProd a lê como TABELA_NAO_APLICADA.
+  for (const [t, n] of ausentes) {
+    if (n !== ROLES.length * nPrivs || med[t] !== undefined) {
+      erroFatal(
+        `medição inconsistente: ${t} veio AUSENTE em ${n} linha(s), esperado ${ROLES.length * nPrivs}` +
+          `${med[t] !== undefined ? ', e com privilégio medido ao mesmo tempo' : ''} — a saída do psql ` +
+          'mudou de forma. NÃO trate como "tudo fechado".',
+      );
+    }
+    med[t] = TABELA_AUSENTE;
   }
   return med;
 }

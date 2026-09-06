@@ -110,6 +110,11 @@ esteja configurado. Errar para mais custa uma linha de checklist; errar para men
 > - [ ] 🟣 **SQL Editor**: migration Z *(se tocou `supabase/migrations/` — bloco da `lovable-db-operator`; banco ANTES do código que o consome)*
 > - [ ] 🔑 **Secrets (Lovable → Edge Functions → Secrets)**: confirmar que `NOME_DO_SECRET` existe *(se o passo 1 deu `secrets=` com nome ou `?dinamico`)*
 > - [ ] 💬 **chat do Lovable**: deploy das edges X, Y — verbatim da main *(se tocou `supabase/functions/`)*
+>       — **QUAIS edges: as que `bun run pendencias:deploy` lista como `DIVERGE_P1`/`INCOERENTE`/`SEM_MAPA_NO_BUNDLE`**
+>       (2026-09-05). Não derive a lista do diff: "o mapa mudou"/"closure mudou" NÃO é motivo — só
+>       `(versao, fonte)` servido ≠ main. `DIVERGE_P2` (só `_shared/`) entra na leva agrupada, escala em 7 d.
+>       Após o deploy, **uma** colagem do `sonda:sql` da leva atesta no ledger `deploy_atestacoes` — e vale até
+>       o `fonte` da main mudar; nunca peça sonda "para conferir de novo" (`docs/agent/deploy.md` §Edge: o veredito é o ledger)
 > - [ ] 🖱️ **Publish** do frontend no editor do Lovable *(se o passo 1 deu frontend=SIM; por último — o build novo nasce contra banco/edge já atualizados)*
 
 **O secret vem ANTES do deploy da edge, e a ordem não é estética.** Deployar primeiro sobe uma função
@@ -120,7 +125,14 @@ persiste em disco): a linha pede ao founder para *conferir/criar* pelo nome, e o
 
 ### Passo 3 — Prompt de deploy de edge (se aplicável)
 
-Montar pro founder colar no chat do Lovable (um por edge tocada):
+Montar pro founder colar no chat do Lovable, para as edges que o `pendencias:deploy` deu como pendentes
+— este passo decide o **conteúdo** do prompt, o closure ∪ {mapa}; ele NÃO decide *se* a edge precisa de
+deploy, e o mapa ter mudado depois do PR não é motivo (ver Passo 2).
+
+**UMA colagem por LEVA, não por edge (medido 2026-09-06).** Com 2+ edges pendentes, monte um prompt
+único numerando-as, cada uma com a SUA lista de arquivos — a forma exata está no fim deste passo, e a
+medição (8 edges, 70 arquivos, 54/54 depois) no §Estado. O prompt de 1 edge abaixo continua sendo a
+unidade de construção, e é o que você usa quando a leva tem uma só:
 
 > Edit the existing edge function `<nome>` and replace its code with the current contents of
 > `supabase/functions/<nome>/index.ts` from the `main` branch. Deploy it **verbatim** — do NOT modify,
@@ -233,6 +245,31 @@ Exercitado no #2009 (`carteira-rebuild`, 3 arquivos de código, 1 deles novo): a
 `probe:true · versao:v1.0-sensor-inicial · edge:carteira-rebuild · fonte:8d2589d0…`, e o `fonte` bateu
 com o `bun run sonda:fingerprint` da main — que é justamente a prova de que o `_shared/` subiu junto, e
 não só o `index.ts` (#2018).
+
+#### A LEVA num prompt só (2 ou mais edges) — a forma medida
+
+Mesmo conteúdo por edge, uma colagem só. O cabeçalho pede o total e proíbe pular; cada edge vira uma
+**seção numerada** com o closure ∪ {mapa} DELA; o fecho pede a confirmação item a item, que é o que
+dá ao founder o relato para comparar com a sonda. Medido em 2026-09-06 com **8 edges / 70 arquivos**:
+as 8 responderam `versao` + `fonte` da main e o `pendencias:deploy` fechou 54/54 (§Estado):
+
+> Edit the following **eight** existing edge functions and update **each** of them from the `main`
+> branch using the current contents of the files listed under it. Deploy all of them **verbatim** —
+> do NOT modify, reinterpret, "improve", or reformat any code. Deploy every function listed; do not
+> skip any.
+>
+> **1. `<nome-1>`**
+> - `supabase/functions/<nome-1>/index.ts`
+> - … (o closure ∪ {mapa} desta edge, um arquivo por linha)
+>
+> **2. `<nome-2>`**
+> - …
+>
+> After deploying, list the eight function names and confirm that **each one** shows **Active**.
+
+⚠️ **O relato do chat não substitui a sonda — ele diz o que perguntar a ela.** Se o Lovable disser que
+pulou alguma, tire-a do bloco de sonda antes de rodar; se disser que deployou todas, a sonda é quem
+confirma. Uma leva = um prompt = **um** bloco de `bun run sonda:sql <edges…>`.
 
 ### Passo 4 — Verificar o frontend pelos bytes (após Publish)
 
@@ -571,7 +608,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        `fin-valor-cockpit` (738 linhas) se provou BARATA: zero `.upsert/.insert/.update/.rpc`, os
        três `fetch` são GETs de `/auth/v1/user` + `user_roles` + `commercial_roles`, e o único
        `.delete(` é
-       `supabase/functions/fin-valor-cockpit/index.ts:564`<!--cita: custoBaixaConfianca.delete(-->,
+       `supabase/functions/fin-valor-cockpit/index.ts:579`<!--cita: custoBaixaConfianca.delete(-->,
        um `Set` de JS. Pior caso de sondá-la com bundle pré-sensor: **computar e devolver** — NULO.
     2. **Se escreve: o efeito é REVERSÍVEL, e qual o ALCANCE?** "Cara" não é binário, e o que a trava
        compra varia em ordens de grandeza. `carteira-positivacao-snapshot` faz **UM upsert
@@ -1034,4 +1071,32 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   quais a função não boota. `ausente ≠ zero` na dimensão **ÁRVORE**, irmão do eixo TEMPO do #2123. Junto,
   o guard de contagem 0/1 estendido do regex para o **arnês**: um `declare -A` em bash 3.2 do macOS
   imprimiu `0 arquivos`, saída idêntica à de uma edge que não importa nada. Detalhe no Passo 3.
+- [x] **O veredito de deploy de edge tem MEMÓRIA (2026-09-05):** ledger `public.deploy_atestacoes` +
+  cron `deploy-atestacoes-colher` copiam `net._http_response` antes do `pg_net.ttl` (6h) apagar, e
+  `bun run pendencias:deploy` julga a matriz `(versao, fonte)` contra a main — P1 (bump declarado, deploy
+  no PR) · P2 (só `_shared/`, leva agrupada, escala em 7 d) · INCOERENTE (deploy parcial) ·
+  NUNCA_ATESTADA (a única sonda humana; pendência, não aviso). Antes: 47/54 edges "sem sonda na janela"
+  a cada sessão e o founder colando o SQL de sonda toda vez. **Cron de sonda ativa derrubado pelo Codex**
+  (rollback pré-sensor dispararia o fluxo real — `monthly-report` = e-mail para a base). Prova:
+  `db/test-deploy-atestacoes.sh` (24/24 + 4 sabotagens vermelhas). Detalhe em
+  `docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`.
+- [x] **UM prompt por LEVA, não por edge (2026-09-06, medido em prod com 8 edges):** o Passo 3 dizia
+  "um por edge tocada" e isso custava N colagens no chat do Lovable. Medido numa leva real — as 8 caras
+  (`calculate-scores`, `carteira-positivacao-snapshot`, `fin-cashflow-engine`, `monthly-report`,
+  `omie-sync-status-produtos`, `scoring-recalc-batch`, `tactical-plans-batch`,
+  `visit-score-recalc-batch`), **70 arquivos** de closure, um único prompt numerando as 8 com a lista
+  de arquivos de cada uma: as 8 responderam a sonda com `versao` **e** `fonte` batendo a main
+  (request_id 70879–70886, lidos um a um), e o `pendencias:deploy` foi de 46/54 para **54/54, exit 0**.
+  **Zero deploy parcial** — nenhuma `SEM_MAPA_NO_BUNDLE` nem `INCOERENTE`, que é o modo de falha
+  temido (o prompt que nomeia poucos arquivos e a função não boota).
+  ⚠️ **O que a medição NÃO prova, e por que o teste era fraco nessa dimensão:** as 8 estavam
+  `NUNCA_ATESTADA` — estado ANTES **desconhecido** —, então "o Lovable deployou as 8" e "deployou
+  algumas e as outras já estavam idênticas à main" produzem o MESMO eco. O que ficou provado é o par
+  que importa para a decisão: o prompt em lote **não** deixa edge pela metade, e depois dele as 8
+  servem o bundle da main. Para fechar a outra metade, repita numa leva com ≥1 edge em `DIVERGE_P1`
+  MEDIDA antes (aí o antes é conhecido e a transição prova o deploy) — enquanto isso não acontecer,
+  a recomendação vale por conveniência com risco medido, não por prova de atomicidade.
+  **Forma do prompt que funcionou** (Passo 3): cabeçalho pedindo as N funções + "Deploy every function
+  listed; do not skip any", uma seção **numerada** por edge com o closure ∪ {mapa} dela, e o fecho
+  "list the N function names and confirm that **each one** shows Active".
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

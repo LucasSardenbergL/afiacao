@@ -8,6 +8,7 @@ import { logAudit } from "@/lib/reposicao";
 import { calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
 import type { PedidoItem } from "@/types/reposicao";
 import { aprovarEDisparar } from "../pedidos/aprovar-disparar";
+import { rejeitarPedidos, resumirRejeicao } from "../pedidos/rejeitar-pedido";
 import { EMPRESA } from "../pedidos/shared";
 import { ALL, type CicloFilters } from "./types";
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -92,7 +93,6 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
     if (selected.size === 0 || busy) return;
     setBusy(true);
     const ids = Array.from(selected);
-    const nowIso = new Date().toISOString();
     const who = user?.email ?? user?.id ?? "cockpit";
 
     if (kind === "approve") {
@@ -142,27 +142,25 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
       return;
     }
 
-    // Rejeição em lote: UPDATE direto (não passa pela trilha de disparo).
+    // Rejeição em lote: RPC por pedido (guard de status no servidor + higiene do portal), NUNCA
+    // UPDATE cru `.in("id", ids)` — esse caminho cancelava pedido já disparado (M-02). Só quem
+    // está na lista filtrada tem status conhecido; id selecionado que saiu do filtro não vai.
     try {
-      const { error } = await supabase
-        .from("pedido_compra_sugerido")
-        .update({
-          cancelado_em: nowIso,
-          cancelado_por: who,
-          status: "cancelado" as const,
-          justificativa_cancelamento: "Rejeitado em lote no Cockpit",
-        })
-        .in("id", ids);
-      if (error) throw error;
-
+      const porId = new Map(filteredItems.map((i) => [i.id, i]));
+      const alvo = ids.map((id) => porId.get(id) ?? { id, status: null });
+      const r = await rejeitarPedidos(alvo, { usuario: who, justificativa: "Rejeitado em lote no Cockpit", via: "lote" });
+      const { texto, nivel } = resumirRejeicao(r);
       await logAudit({
         userId: user?.id ?? null,
         action: "Rejeição em lote",
-        result: "Sucesso",
-        metadata: { ids, count: ids.length },
+        result: nivel === "success" ? "Sucesso" : `${r.rejeitados.length === 0 ? "Nada rejeitado" : "Parcial"}: ${texto}`,
+        metadata: { ids, count: ids.length, rejeitados: r.rejeitados, pulados: r.pulados, falhas: r.falhas },
       });
-      toast.success(`${ids.length} pedido(s) rejeitado(s)`);
-      setSelected(new Set());
+      if (nivel === "success") toast.success(`${r.rejeitados.length} pedido(s) rejeitado(s)`);
+      else if (nivel === "error") toast.error(`${texto} — reveja`);
+      else toast.warning(`${texto} — reveja`);
+      // Só o que foi rejeitado sai da seleção: pulados/falhas ficam marcados para o operador agir.
+      setSelected(new Set(ids.filter((id) => !r.rejeitados.includes(id))));
       invalidate();
     } catch (err) {
       const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';

@@ -50,6 +50,8 @@ Mordido 2026-08-14 (#1520 `9f7e8962`, FU4-F fase 3): o `/fecho` pegou `…130000
 
 - **Deploy SÓ depois do merge** — o chat lê a `main`; deployar antes pega o código velho.
 - **Deployar uma edge sobe o ARQUIVO INTEIRO da `main`, não só o seu diff** → o pré-flight é das dependências de banco de TODO o arquivo, inclusive código de PRs de TERCEIROS mergeados desde o último deploy dela. É a irmã da armadilha da migration silenciosa, vista do outro lado: não foi a migration que faltou aplicar — foi o **deploy do código que a exigia** que chegou depois e revelou a falta. Mordido 2026-07-17 (Fatia 2 do épico-drop): deployei `carteira-rebuild` verbatim (a MINHA mudança tinha as deps checadas: `identity_state` existia no schema) — mas o arquivo da main carregava junto o lease do #1333 (`claim_carteira_rebuild`/`finalizar_carteira_rebuild`), mergeado dias antes, cuja migration NUNCA fora aplicada. As duas metades faltando (edge do #1333 nunca deployada + migration nunca aplicada) se cancelavam; meu deploy correto trouxe só a metade-código → **rebuild 500 em produção por ~40min** (`claim: Could not find the function ... in the schema cache`), carteira congelada no snapshot do dia anterior (modo-falha seguro: o `claim` é o 1º passo, morre ANTES de escrever). **Pré-flight barato (roda em segundos, teria pego):** antes de dar o prompt de deploy de uma edge, cruze as RPCs que ela chama com o que existe em prod —
+- ⚠️ **Fatia com edge NOVA + RPC nova: a migration vai PRIMEIRO — e `PGRST202` é a assinatura de que não foi** (medido 2026-09-05, #2176/pedido #2459). O Publish da edge é um clique independente e chega antes do apply manual; o aviso em prosa no corpo do PR **não** impediu. No intervalo, a edge chama uma função que o PostgREST não acha no schema cache e devolve **`PGRST202`** — se um sensor mostra esse código, o diagnóstico não é a lógica nem o dado externo, é **migration não colada**, sem abrir log. O fail-closed protege o BANCO (nada parcial, nada fabricado) e **não** protege o efeito externo: no #2459 o pedido seguiu ao fornecedor e o PO Omie nasceu 3,49% acima do que o portal cobrou. ⇒ o estado intermediário é **money-path**, não higiene: aplique a migration antes, e vigie o intervalo em vez de presumi-lo inócuo.
+- ⚠️ **"Tocou `src/` ⇒ falta Publish" é FALSO — a camada de deploy se decide por ALCANCE, não por diretório** (medido 2026-09-05, no próprio #2176). O PR tocou `src/lib/reposicao/sayerlack-scraping-pedido.ts` e um handoff leu isso como Publish pendente; o arquivo é **espelho verbatim** da edge (Deno não importa de `src/`), existe para o vitest, e seu **único** importador é o próprio teste — sem barrel, sem import dinâmico ⇒ nenhum entry point o alcança e ele **nunca entra em bundle servido ao browser**. Hoje são **2** assim, ambos com 0 importadores de runtime: `sayerlack-scraping-pedido.ts` e `sayerlack-classificacao.ts`. ⇒ antes de pedir Publish por causa de um caminho em `src/`, meça quem importa (`grep -rE "from ['\"].*<base>['\"]" src` descontando testes); pedir o Publish que não era necessário gasta a única alavanca manual que o founder tem e ensina a ignorar o pedido seguinte.
   ```bash
   bun run preflight:rpcs <edge> [<edge>...]
   ```
@@ -243,6 +245,24 @@ desfecho é redeployar edge de money-path à toa), ou o inverso. Edge sem `versa
 mapa de fingerprints** derruba a geração inteira (nada de SQL parcial em silêncio), e `--caro` que
 não casa um nome da leva também — o typo deixaria a edge cara no bloco SEM trava.
 
+⚠️ **E "o repo" pode ser um checkout VELHO — o gerador confere isso ANTES de emitir SQL.** Ler a
+fonte da verdade do disco só é melhor que a memória do operador se o disco estiver na versão que a
+produção serve: o Lovable deploya a **`main`** (o mesmo eixo do #2123, que aqui o gerador não
+aplicava a si próprio). **Medido 2026-09-05:** worktree dois merges atrás emitiu
+`versao_esperada = v1.5-custo-portal-rpc-cas` para `enviar-pedido-portal-sayerlack`; a main já
+estava em `v1.7` (#2194/#2198) e a edge no ar respondeu `v1.7` ⇒ o veredito seria **"BUNDLE VELHO
+SERVINDO" numa edge recém-deployada** — falso NEGATIVO, e o desfecho é redeployar money-path à toa.
+Só não saiu errado porque o request tinha 37 min e o guard temporal do #2079 devolveu
+`INDETERMINADO` antes da comparação: **acidente, não desenho**. Hoje `sonda:sql` faz
+`git fetch origin main` e compara a fatia que vira o `esperado(...)` (o `versao.ts` de cada edge
+**pedida** + `_shared/sonda-fingerprints.ts`) contra `origin/main`; divergiu — ou não existe lá,
+que é bump ainda não mergeado — **aborta sem emitir SQL**, nomeando os arquivos e o
+`git fetch origin && git merge --ff-only origin/main`. O `fetch` é do script porque comparar contra
+a `origin/main` **em disco** é o mesmo defeito um nível acima (medido: fetch 0,9 s, `git show`
+0,03 s). Offline, `--sem-rede` pula **só o fetch** — a comparação continua, e o SQL sai com a idade
+do ref no topo. Detalhe e a decisão sobre "não consigo consultar":
+[sonda-le-worktree-defasado.md](../historico/sonda-le-worktree-defasado.md).
+
 **QUEM entra no `--caro` é MEDIDO, não presumido — o critério é o EFEITO, não a FORMA do handler.**
 Regra curta: edge que **não escreve nem chama serviço externo** no fluxo real é BARATA, e o pior
 caso de sondá-la com bundle pré-sensor é computar e devolver. O proxy "a edge despacha por
@@ -345,7 +365,7 @@ com um body `{"probe": true}`* — ou seja, sem `action` e sem os demais campos?
 |---|---|
 | `conciliar-pedido-portal` | 400 `pedido_id inválido` (`Number(undefined)` não é inteiro) |
 | `analyze-unified-order` | 401 do gate `Bearer` antigo; passando, 400 por falta de `text`/imagem antes da Anthropic |
-| `omie-nfe-recebimento` | 401 do gate staff (JWT) |
+| `omie-nfe-recebimento` | 401 do gate staff (JWT) — **rigor feito no pai da sonda** (2026-09-06, `a086cc60a^`): `Authorization` sem `Bearer ` → 401 nas linhas 342-344, ANTES do `req.json()` da linha 378 — o bundle pré-sonda nem lê o corpo |
 | `omie-nfe-webhook` | 401 do gate `x-webhook-secret` |
 | `process-nfe` | 401 (`Bearer` + `getUser`); `nf_number` obrigatório barraria em seguida |
 
@@ -549,6 +569,34 @@ O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deploy
 
 ## Verificação de deploy
 
+### Edge: o veredito é o ledger, não a lista de arquivos do PR (2026-09-05)
+
+**Edge precisa de deploy ⇔ `(versao, fonte)` servido ≠ `(versao, fonte)` da main.** "O mapa mudou",
+"o closure mudou", "o PR X tocou a edge" NÃO são motivo — o mapa é excluído do hash de propósito, e o
+`fonte` já é o closure inteiro resumido. Quem responde é **`bun run pendencias:deploy`**, que lê o
+ledger `public.deploy_atestacoes` (alimentado pelo cron `deploy-atestacoes-colher` a partir de
+`net._http_response`, antes de o `pg_net.ttl` de 6h apagar) ∪ a janela viva, e julga a matriz do par:
+
+| estado | significa | ação |
+|---|---|---|
+| `DIVERGE_P1` | `fonte` ≠ e `versao` ≠ (bump declarado) | deploy **no PR** |
+| `DIVERGE_P2` | só o closure mudou (`_shared/`), par coerente com a main | leva agrupada; **escala em 7 d** |
+| `INCOERENTE` | par que nunca existiu na main (deploy parcial) | deploy dos arquivos que faltaram |
+| `SEM_MAPA_NO_BUNDLE` | `fonte: nao-mapeada` | subir o mapa |
+| `NUNCA_ATESTADA` / `SEM_FONTE_NO_ECO` | nunca vista / eco sem fonte | **a única sonda humana**: o comando sai no relatório |
+| exit 2 | mecânica (ledger ausente, coletor parado > 45 min, mapa ≠ fonte, linha fora do formato) | não é "tudo limpo" |
+
+A sonda humana é **uma por leva de deploy** (e a 1ª de edge nova): o founder cola o `sonda:sql` uma
+vez, a resposta entra no ledger em ≤ 15 min e vale até o `fonte` da main mudar. **A sonda por cron existe desde 2026-09-06 e é fail-closed por CONSTRUÇÃO**: o cron não fala com a
+edge — fala com a edge-relé `sonda-relay`, que emite um `OPTIONS` com credencial dedicada
+(`x-sonda-credencial`, HMAC de `SONDA_HMAC_KEY`). Bundle velho responde o CORS de sempre e **não
+executa nada** — provado EXECUTANDO cada closure histórico das edges da allowlist
+(`bun run sonda:cron-prova`), inclusive os que não autenticavam nada. Uma edge só entra na
+allowlist com 100 % dos closures `PASSA`. Credencial em header de POST **não** resolveria: bundle
+sem gate executa o fluxo real para qualquer POST (medido). Detalhe:
+`docs/historico/sonda-por-cron-fail-closed.md`. Detalhe, medição e o que ficou para depois:
+`docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`.
+
 - A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable. **N2 de edge (prova de versão) é automático quando `~/.config/afiacao/supabase-pat` existe** (Access Token do Supabase, `chmod 600`, padrão psql-ro): `verify-edge.sh` resolve env `SUPABASE_PAT` > arquivo e consulta a Management API; sem o arquivo, cada verificação de versão vira handoff manual na UI (custou 3 retomadas de sessão p/ confirmar 1 deploy). Teste: `scripts/test-verify-edge-pat.sh`. A varredura por bytes é **paralela** (`xargs -P`, halt-on-hit) — o bundle passou de 300 chunks e o modo 1-a-1 estourava o timeout.
   - ⚠️ **NÃO PEÇA O PAT AO FOUNDER: o projeto roda em Lovable Cloud e o Supabase é da org do LOVABLE** (confirmado pelo founder 2026-07-23, depois de eu pedir o token 2× na mesma sessão). Ele não tem conta no `supabase.com` com acesso ao ref `fzvklzpomgnyikkfkzai`, logo **não existe Access Token para ele gerar** e o N2 é estruturalmente indisponível — o arquivo `supabase-pat` continua válido como mecanismo, só que ninguém pode preenchê-lo neste setup. A escada real de prova de edge aqui é: **N1** (`verify-edge.sh`, OPTIONS → servida) **+ rastro do commit do bot** na `main` (`Deployed …`/`Redeployed …` — evidência de que o deploy rodou, não de qual versão) **+ canária comportamental** quando a edge tiver uma (a ÚNICA prova de versão disponível). Edge sem canária: declare "N1 + rastro; versão não provada" — nunca "no ar". Se a entrega for money-path e a prova importar, **crie a canária junto do fix** (padrão `identidade_probe`/`credito_gate_probe`), porque depois não haverá como provar.
 - ⚠️ **Grep de verificação anda PAREADO com um controle positivo, no MESMO comando — senão o vazio se lê como resposta (2026-07-20).** Verificação por bytes conclui por **ausência** ("a string não está lá"), e ausência é o resultado que qualquer erro de alvo produz: arquivo errado, download que não aconteceu, path inválido. Some ao grep da assinatura o grep de uma string que **comprovadamente existe** no alvo (ex.: `order_date_kpi` para o chunk do farmer); controle vazio = você mediu o lugar errado, e o resultado da assinatura **não vale nada** — não é "não encontrei", é "não procurei". Mordido 3× seguidas verificando o Publish de #1466/#1468/#1471: (a) grep no entry `index-*.js`, que **não contém** o código lazy-loaded — as ~119 páginas e vários hooks têm chunk próprio (`useFarmerScoring-*.js`, `useCrossSellEngine-*.js`), então o entry tem ~232KB de 5,6MB; (b) grep nos chunks `Farmer*.js` das páginas, quando o hook mora em chunk separado; (c) `xargs` abortando com `command line cannot be assembled, too long` → **0 arquivos baixados** e os dois greps seguintes lendo um diretório vazio, com cara de "não achei". Nas três o controle denunciou na hora. **Corolário:** valide a assinatura contra o código PRÉ-fix (`git show <sha>~1:<arquivo> | grep -c '<assinatura>'` tem de dar **0**, e `<sha>` dar ≥1) — sem isso você prova que uma string existe, não que a MUDANÇA entrou. **E prefira a skill à varredura ad-hoc:** ela já resolve paralelismo e lista de chunks; refazer com `curl` na mão é como se cai nos três buracos acima.
@@ -557,6 +605,7 @@ O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deploy
 - **Fix que é uma AUSÊNCIA não se prova por bytes.** Remover um `|| 0`, um fallback ou um default não deixa assinatura: no bundle minificado o nome da variável sumiu, e `x.get(a)||0` legítimo (contador, onde 0 é a resposta certa) é indistinguível do que você tirou. Ou você grepa o **par positivo** que entrou junto (no #1471, o `.order("product_id"` da paginação, que só existe pós-fix), ou aceita que a prova é **comportamental** — e vai para a tela.
 - **QA visual pós-Publish** (renderização/comportamento na tela, refactor visual sem texto novo): os bytes não bastam e o `/browse` headless **não monta** a SPA. O padrão é **Claude-in-Chrome na sessão logada do founder** (ele abre o app 1×; o agente confere as telas) — detalhado no Passo 4b da skill `lovable-deploy-verify`.
 - O acesso **read-only** ao banco (`psql-ro`, ver `docs/agent/database.md`) confirma migration aplicada sem depender do founder.
+- ⚠️ **A pendência escrita no corpo do PR ("falta deploy/Publish") é RECADO, não medição — MEÇA imediatamente antes de PEDIR (2026-09-06, chip do #2201).** Entre o PR e o chip, founder ou outra sessão já podem ter agido: o ledger foi de ⚪ NUNCA atestada a ✅ confere em **4 min** (sondas 70349/70352, `v1.1` + `fonte` da main), e o Publish já estava no ar (`verify-frontend.sh` exit 0). Edge: re-rode `bun run pendencias:deploy` (ou `bun run sonda:sql --so-leitura <edge> | psql-ro`) na hora de ENTREGAR, não só ao começar. Front: rode `verify-frontend.sh --pai <pai-do-PR> '<sentinela>'` ANTES de listar "Publish pendente" — exit 0 cancela a linha; só exit 1 com `CONTROLE_POSITIVO_OK` a mantém. Dois atores sondaram a mesma edge em 2,5 min: inócuo com sensor no ar, **uma execução real por colagem** numa edge cara pré-sensor → `docs/historico/pendencia-do-pr-nao-e-medicao.md`.
 
 ## Atualização do PWA — modelo `prompt` (offline-first; #1169)
 

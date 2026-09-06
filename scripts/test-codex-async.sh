@@ -3,7 +3,8 @@
 #
 # Contrato testado: 0=parecer entregue · 64=uso errado · 69=binário ausente ·
 # 75=cota esgotada (SEM retry) · 77=sem auth · retry só em transitório ·
-# watchdog mata execução travada.
+# watchdog mata execução travada · cabeçalho traz o CUSTO (segundos da tentativa
+# vencedora + tokens do rodapé, "tokens ?" quando ausente — nunca 0).
 #
 # Uso: bash scripts/test-codex-async.sh   (exit 0 = tudo verde)
 set -u
@@ -37,10 +38,28 @@ echo x >> "$CODEX_STUB_COUNT"
 for a in "$@"; do prompt="$a"; done
 { echo "OpenAI Codex v0.144.1"; echo "--------"; echo "model: stub"
   echo "sandbox: read-only"; echo "--------"; echo "user"; printf '%s\n' "$prompt"
-  echo "warning: Model metadata for \`stub\` not found. Defaulting to fallback metadata."
+  # no modo ok_eco_no_fim o eco é a ÚLTIMA coisa do stderr (nem warning, nem rodapé) — é a
+  # única forma de o eco do prompt alcançar o fim do arquivo, onde mora o rodapé real.
+  [ "$CODEX_STUB_MODE" = "ok_eco_no_fim" ] || \
+    echo "warning: Model metadata for \`stub\` not found. Defaulting to fallback metadata."
 } >&2
+# rodapé de custo do codex real (medido 2026-09-05, codex-cli 0.153.4): as DUAS últimas
+# linhas do stderr são o marcador `tokens used` e o número com separador de milhar.
+rodape() { printf 'tokens used\n%s\n' "$1" >&2; }
 case "$CODEX_STUB_MODE" in
-  ok)        echo "parecer: aprovado com ressalvas"; exit 0 ;;
+  ok)        echo "parecer: aprovado com ressalvas"; rodape "14.243"; exit 0 ;;
+  # codex que NÃO emitiu o rodapé (versão antiga/futura, saída truncada): ausente ≠ zero.
+  ok_sem_tokens) echo "parecer sem rodape"; exit 0 ;;
+  ok_eco_no_fim) echo "parecer com eco no fim do stderr"; exit 0 ;;
+  # rodapé presente mas com valor NÃO numérico: vale o mesmo que ausente, nunca 0.
+  ok_tokens_sujo) echo "parecer com rodape sujo"; rodape "N/A"; exit 0 ;;
+  # demora medível: prova que os segundos do cabeçalho MEDEM, não são constante impressa.
+  ok_lento)  sleep 2; echo "parecer lento"; rodape "1.111"; exit 0 ;;
+  # 1ª tentativa LENTA e falha; 2ª responde na hora. Os segundos têm de ser os da tentativa
+  # que produziu o parecer — somar as tentativas daria ≥4s.
+  ratelimit_lento) n=$(wc -l < "$CODEX_STUB_COUNT" | tr -d ' ')
+             if [ "$n" -ge 2 ]; then echo "parecer pós-retry lento"; rodape "2.222"; exit 0
+             else sleep 4; echo "429 rate limit exceeded" >&2; exit 1; fi ;;
   # mensagem REAL medida 2026-08-22 (vem prefixada com ERROR:, ao contrario do que o stub
   # anterior supunha) — o texto e literal do servidor.
   quota)     echo "ERROR: You've hit your usage limit. To continue using Codex and get access to GPT-5.3-Codex, start a free trial of Plus today (https://chatgpt.com/explore/plus), or try again at Sep 20th, 2026 10:37 PM." >&2; exit 1 ;;
@@ -272,6 +291,91 @@ else echo "  FAIL  ${gasto}s para um prompt de 5k linhas — remoção do eco vi
 case "$saida" in
   *"linha de codigo 512"*) echo "  FAIL  vazou o prompt grande na saída"; fail=1 ;;
   *) echo "  ok    …e sem vazar o prompt na saída" ;;
+esac
+
+echo "── custo no cabeçalho (sensor do nível de reasoning) ──"
+# Desde 2026-09-05 cada consult registra no PR nível + segundos + tokens (money-path.md
+# §Segunda opinião → "Nível de reasoning"); é o sensor de que o piloto do `ultra` depende.
+# O cabeçalho é a ÚNICA saída que o ritual copia, então o custo tem de estar nele.
+cabecalho() { printf '%s\n' "$1" | grep -m1 '^=== PARECER CODEX'; }
+segundos_do_cabecalho() { cabecalho "$1" | sed -n 's/.*· \([0-9][0-9]*\)s ·.*/\1/p'; }
+
+out="$(run ok "pergunta qualquer" 2>/dev/null)"
+case "$(cabecalho "$out")" in
+  *"· 14.243 tokens)"*) echo "  ok    cabeçalho traz os tokens do rodapé" ;;
+  *) echo "  FAIL  sem tokens no cabeçalho: $(cabecalho "$out")"; fail=1 ;;
+esac
+if [ -n "$(segundos_do_cabecalho "$out")" ]; then echo "  ok    cabeçalho traz os segundos"
+else echo "  FAIL  sem segundos no cabeçalho: $(cabecalho "$out")"; fail=1; fi
+
+# ausente ≠ zero (CLAUDE.md): sem rodapé o cabeçalho diz "?" — fabricar 0 registraria no PR
+# um consult que não custou nada, e o piloto do `ultra` compara justamente consumo.
+out="$(run ok_sem_tokens "x" 2>/dev/null)"
+case "$(cabecalho "$out")" in
+  *"tokens ?"*) echo "  ok    rodapé ausente → 'tokens ?'" ;;
+  *) echo "  FAIL  rodapé ausente não virou '?': $(cabecalho "$out")"; fail=1 ;;
+esac
+case "$(cabecalho "$out")" in
+  *"0 tokens"*) echo "  FAIL  fabricou 0 tokens onde o dado está AUSENTE"; fail=1 ;;
+  *) echo "  ok    …e não fabricou 0" ;;
+esac
+if [ -n "$(segundos_do_cabecalho "$out")" ]; then echo "  ok    …e os segundos continuam (sensores independentes)"
+else echo "  FAIL  perdeu os segundos junto com os tokens"; fail=1; fi
+
+out="$(run ok_tokens_sujo "x" 2>/dev/null)"
+case "$(cabecalho "$out")" in
+  *"tokens ?"*) echo "  ok    rodapé não-numérico → '?' (não copia lixo pro PR)" ;;
+  *) echo "  FAIL  aceitou rodapé não-numérico: $(cabecalho "$out")"; fail=1 ;;
+esac
+
+# o PROMPT não pode decidir o número — mesma lição da classificação de erro. O ritual /codex
+# cola saída de codex dentro do prompt o tempo todo (inclusive discutindo ESTE wrapper), e o
+# stderr reimprime o prompt inteiro sob "user".
+prompt_com_rodape="analise este consult anterior:
+tokens used
+999.999
+por que custou tanto?"
+out="$(run ok "$prompt_com_rodape" 2>/dev/null)"
+case "$(cabecalho "$out")" in
+  *999.999*) echo "  FAIL  leu os tokens do ECO DO PROMPT, não do rodapé"; fail=1 ;;
+  *"· 14.243 tokens)"*) echo "  ok    prompt com rodapé falso → vale o rodapé REAL" ;;
+  *) echo "  FAIL  cabeçalho inesperado: $(cabecalho "$out")"; fail=1 ;;
+esac
+# o caso duro: o codex NÃO emite rodapé e o prompt tem um. Só a remoção do eco salva —
+# ancorar no fim do stderr, sozinho, leria o número do prompt.
+out="$(run ok_sem_tokens "$prompt_com_rodape" 2>/dev/null)"
+case "$(cabecalho "$out")" in
+  *999.999*) echo "  FAIL  sem rodapé real, fabricou o número do prompt"; fail=1 ;;
+  *"tokens ?"*) echo "  ok    sem rodapé real + prompt venenoso → '?'" ;;
+  *) echo "  FAIL  cabeçalho inesperado: $(cabecalho "$out")"; fail=1 ;;
+esac
+
+# o caso extremo da camada de cauda: o prompt TERMINA no rodapé falso e o codex não emite
+# rodapé nem warning depois — o eco é literalmente as duas últimas linhas do stderr. Ler pela
+# posição, sozinho, publicaria 999.999 no PR como se o consult tivesse custado isso.
+prompt_terminando_em_rodape="quanto custou o consult de ontem? o rodape dizia:
+tokens used
+999.999"
+out="$(run ok_eco_no_fim "$prompt_terminando_em_rodape" 2>/dev/null)"
+case "$(cabecalho "$out")" in
+  *999.999*) echo "  FAIL  o ECO no fim do stderr virou o custo do consult"; fail=1 ;;
+  *"tokens ?"*) echo "  ok    eco no fim do stderr → '?' (não confunde eco com rodapé)" ;;
+  *) echo "  FAIL  cabeçalho inesperado: $(cabecalho "$out")"; fail=1 ;;
+esac
+
+# os segundos MEDEM (constante impressa passaria em tudo acima)
+out="$(run ok_lento "x" 2>/dev/null)"; s_lento="$(segundos_do_cabecalho "$out")"
+if [ -n "$s_lento" ] && [ "$s_lento" -ge 2 ]; then echo "  ok    execução de 2s → ${s_lento}s no cabeçalho (mede, não imprime constante)"
+else echo "  FAIL  segundos='${s_lento:-vazio}' para execução de 2s"; fail=1; fi
+
+# …e são os da TENTATIVA VENCEDORA, não a soma das tentativas (1ª dorme 4s e falha)
+out="$(run ratelimit_lento "x" 2>/dev/null)"; s_retry="$(segundos_do_cabecalho "$out")"
+if [ "$(invocacoes)" -ne 2 ]; then echo "  FAIL  invocações=$(invocacoes), esperava 2 (o caso não exercitou o retry)"; fail=1; fi
+if [ -n "$s_retry" ] && [ "$s_retry" -lt 4 ]; then echo "  ok    retry: ${s_retry}s = tentativa vencedora (não somou os 4s da 1ª)"
+else echo "  FAIL  segundos='${s_retry:-vazio}' — somou as tentativas em vez de medir a vencedora"; fail=1; fi
+case "$(cabecalho "$out")" in
+  *"· 2.222 tokens)"*) echo "  ok    …e os tokens são os da tentativa vencedora" ;;
+  *) echo "  FAIL  tokens não são os da tentativa vencedora: $(cabecalho "$out")"; fail=1 ;;
 esac
 
 echo "── watchdog (execução travada) ──"

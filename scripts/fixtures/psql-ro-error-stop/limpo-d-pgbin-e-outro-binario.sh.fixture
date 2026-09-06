@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# CAMADA: discriminação de BINÁRIO. O psql local de PG17 dos harnesses é outro executável, já
+# passa ON_ERROR_STOP quando quer, e nenhum vínculo dele aponta para o wrapper. Confundir os dois
+# encheria de vermelho os ~40 `db/test-*.sh` — e um gate ruidoso é desligado, não obedecido.
+set -uo pipefail
+PGBIN="/opt/homebrew/opt/postgresql@17/bin"
+"$PGBIN/psql" -p 5433 -U postgres -d prove -f prova.sql
+"$PGBIN/psql" -p 5433 -U postgres -d prove < prova.sql

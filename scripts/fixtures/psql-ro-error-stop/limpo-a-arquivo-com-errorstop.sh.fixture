@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# O par positivo de `viola-a`: mesma forma, com a camada (1) no lugar. Sem ele, um gate que
+# recusasse TUDO passaria em todos os negativos e seria inútil.
+set -uo pipefail
+PSQL="${PSQL_RO:-$HOME/.config/afiacao/psql-ro}"
+RAW="$("$PSQL" -v ON_ERROR_STOP=1 -tA -f "$SQL_FILE")" || exit 2
+case "$RAW" in *"FIM|sonda"*) ;; *) exit 2 ;; esac

@@ -106,6 +106,35 @@ if [ "${1:-}" = "--falsificar" ]; then
     done
   }
 
+  # -- CONTROLE: a suite tem de estar VERDE antes de qualquer sed --------------------
+  # "Ficou vermelho" so e informacao se existir um verde do qual sair. Sem esta trava, um arnes
+  # incondicionalmente vermelho (fixture podre, stub quebrado, assercao nova mal escrita) APROVA
+  # com louvor: toda sabotagem produz o vermelho exigido e o gate anuncia "toda sabotagem foi
+  # detectada" -- falsificacao sem linha de base, que prova que o teste REAGE, nao que ele estava
+  # certo antes de reagir. Mesma familia de `ausente != zero`.
+  #
+  # O controle roda a MESMA invocacao do laco de sabotagem (copia em $tmp, LC_ALL forcado, a mesma
+  # variavel de override) e so troca a sabotagem por NADA. Por isso ele NAO e redundante com o
+  # `bun run test:hooks` do step anterior do CI: la a suite roda no locale AMBIENTE e sobre o alvo
+  # REAL. Se for justamente essa invocacao (copia + LC_ALL) que esta vermelha por motivo alheio,
+  # o `test:hooks` fica verde e todo este bloco vira teatro.
+  # Abortamos ANTES do primeiro sed: com a base vermelha nenhum veredito de (B) e legivel.
+  controle="$tmp/controle.sh"
+  cp "$HOOK" "$controle"
+  for loc in C "$utf8"; do
+    if LC_ALL="$loc" HOOK_SOB_TESTE="$controle" bash "$0" >/dev/null 2>&1; then
+      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE\n' "$loc"
+    else
+      printf '  \033[31mFALHA\033[0m [%s] controle SEM sabotagem ja esta VERMELHO — sem linha de base, falsificar nao prova nada\n' "$loc"
+      falhou=1
+    fi
+  done
+  if [ "$falhou" -ne 0 ]; then
+    printf '\033[31m== falsificacao ABORTADA: sem verde de partida ==\033[0m\n'
+    printf '   Conserte a suite primeiro; sabotar sobre vermelho produz veredito fabricado.\n'
+    exit 1
+  fi
+
   sabota "sempre silencia"      "avisar quando a leitura e cara" \
          's%^jq -n --arg m%exit 0 # SABOTADO%'
   sabota "sem corte de 10k"     "silenciar leitura barata" \

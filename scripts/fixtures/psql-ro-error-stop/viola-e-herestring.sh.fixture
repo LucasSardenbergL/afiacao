@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# CAMADA: `<<<` é stdin também — e é o token que já cegou este stripper uma vez.
+set -uo pipefail
+PSQLRO="$HOME/.config/afiacao/psql-ro"
+"$PSQLRO" -tA <<< "$SQL"

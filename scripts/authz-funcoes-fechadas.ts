@@ -373,4 +373,20 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
       'irmã da acima em farmer_bundle_recommendations (nulifica m_bundle/lie_bundle e remove ' +
       'cost/margin do jsonb bundle_products). Mesma barreira de executor e mesma 2ª tranca (L10)',
   },
+
+  // ═══════════ ACL_ONLY_INTERNAL — fechada por ACL, SECURITY INVOKER de propósito ═══════════
+  // Classificada em `ACL_ONLY_INTERNAL` (scripts/authz-manifest.ts), não em ACK: não toca eixo
+  // sensível e a Parte B só examina SECDEF. Registrada DEPOIS do apply em prod (ver a nota da irmã
+  // `public.deploy_atestacoes` em scripts/authz-tabelas-fechadas.ts — mesma lição do #2199).
+  'public.deploy_atestacoes_colher': {
+    fechadaPor: '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql',
+    permitido: PORTA_FECHADA,
+    motivo:
+      'coletor do ledger de atestação de deploy (copia net._http_response → public.deploy_atestacoes). ' +
+      'Só o cron deploy-atestacoes-colher (postgres) executa. SECURITY INVOKER de propósito: anon/' +
+      'authenticated já morreriam no INSERT sem privilégio — o REVOKE (PUBLIC, anon e authenticated por ' +
+      'NOME) é a 2ª tranca, e o que a Parte E vigia é um DROP+CREATE futuro devolvendo EXECUTE pelo ' +
+      'default privilege de `public` (anon=X, authenticated=X). Medido por psql-ro 2026-09-05 22:41 UTC, ' +
+      'após o apply: prosecdef=false, proacl={postgres,service_role,sandbox_exec_*}, anon=NAO, auth=NAO.',
+  },
 };

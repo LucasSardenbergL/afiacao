@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dialog';
 import type { Tables } from '@/integrations/supabase/types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { interpretarRespostaEfetivacao } from '@/lib/recebimento/efetivacao-resposta';
 
 type NfeStatus = 'pendente' | 'em_conferencia' | 'divergencia' | 'conferido' | 'efetivado' | 'falha_efetivacao' | 'efetivacao_parcial';
 
@@ -167,22 +168,13 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
         body: { nfe_recebimento_id: nfeId },
         headers: { Authorization: `Bearer ${session?.access_token}` },
       });
-      if (res.error) throw res.error;
-      // Falha honesta vem HTTP 200 com success:false — inspecionar o `modo`, não só res.error.
-      const data = (res.data ?? {}) as { success?: boolean; modo?: string; erro?: string };
-      switch (data.modo) {
-        case 'efetivado':
-          toast.success('NF-e efetivada no Omie!');
-          break;
-        case 'reconciliado':
-          toast.success('NF-e reconciliada — já estava recebida no Omie.');
-          break;
-        case 'efetivacao_parcial':
-          toast.warning('Efetivação parcial: ' + (data.erro || 'verifique no Omie'));
-          break;
-        default:
-          toast.error('Não efetivada: ' + (data.erro || 'falha na efetivação'));
-      }
+      // Veredito pelo CORPO (`success`/`modo`). A edge responde 502/429 na falha desde o M-01,
+      // e o helper lê o corpo do ≠2xx (`error.context`) — `res.error` sozinho perderia o `erro`.
+      const veredito = await interpretarRespostaEfetivacao(res);
+      if (veredito.tipo === 'falha') toast.error('Não efetivada: ' + veredito.mensagem);
+      else if (veredito.tipo === 'parcial') toast.warning('Efetivação parcial: ' + veredito.mensagem);
+      else if (veredito.modo === 'reconciliado') toast.success('NF-e reconciliada — já estava recebida no Omie.');
+      else toast.success('NF-e efetivada no Omie!');
       queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
       queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
     } catch (err) {

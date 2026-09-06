@@ -188,6 +188,23 @@ jobs:
       - name: Tests (edge functions — Deno, offline)
         run: bun run test:edges
 
+      # TESTE DECISIVO da sonda por cron (spec 2026-09-05-sonda-por-cron-fail-closed-design.md §5):
+      # materializa bundles históricos REAIS por `git archive` — inclusive os que NÃO autenticavam
+      # nada (monthly-report@ef08dddd2 manda e-mail para qualquer POST; calculate-scores@45a80118b
+      # faz 11 escritas) — e exige que o OPTIONS que o relé emite produza ZERO efeito, com controle
+      # positivo provando que o contador enxerga o fluxo real daquele mesmo bundle. Precisa de
+      # `fetch-depth: 0` (já é), `git` e `tar`. Continua offline: `--no-remote`.
+      - name: Sonda por cron — rollback para bundle velho fica em ZERO efeito (Deno, offline)
+        run: bun run test:sonda-rollback
+
+      # PROVA da allowlist da sonda por cron: cobertura do manifesto (todo closure histórico de cada
+      # edge da allowlist, na identidade de harness E de `desde` atuais) + G1 (ramo dentro do bloco
+      # OPTIONS) + G3 (o relé só emite OPTIONS, medindo a VARIÁVEL que passou pela barreira) + G4
+      # (o espelho no banco ⊆ allowlist) + o sentinela do stripper. Re-executa o que mudou; exit 2
+      # é MECÂNICA (git raso, deno ausente), que nunca é "tudo limpo".
+      - name: Sonda por cron — prova por execução de cada closure histórico (G1/G3/G4)
+        run: bun run sonda:cron-prova -- --gate
+
       # Type-check das EDGE FUNCTIONS — blocking. Buraco que ficou aberto mesmo depois do
       # `test:edges` acima: `deno test` só type-checa o grafo que os TESTES alcançam, e por desenho
       # os testes cobrem lógica PURA extraída (justamente para caber no `--no-remote`), então
@@ -249,6 +266,22 @@ jobs:
       # descobre desvio ANTIGO, não só o da fatia.
       - name: Sonda de versão — fingerprint da fonte bate com o mapa servido
         run: bun run sonda:fingerprint
+
+      # INFORMATIVO, não gate — e a diferença é o desenho, não preguiça. Os dois passos acima
+      # deixam o autor CEGO para a consequência da própria mudança: quem muda `_shared/x.ts` vê o
+      # `sonda:bump` verde (exclui `_shared/` de propósito) e o `--write` regenerar o mapa em
+      # silêncio, e nunca fica sabendo QUAIS edges tiveram o `fonte` alterado nem se alguma delas
+      # merecia bump. Medido em 11 dias (2026-09-05): 66 mudanças de `fonte`, 22 pedidos de deploy
+      # só por fan-out sem a edge mudar, 18 de um único PR (#2132). A decisão P1/P2
+      # (`scripts/lib/pendencias-deploy.ts`) era tomada DEPOIS, por outra sessão.
+      # Este passo imprime, uma linha por edge, quem virou SEM_BUMP (→ DIVERGE_P2, leva agrupada)
+      # e quem bumpou (P1) — para o autor decidir ALI. Nunca reprova: exit 0 com achados, 2 só por
+      # mecânica; `continue-on-error` porque aviso que grita 12× por PR treina a ignorar (a mesma
+      # medição que tirou `_shared/` do `sonda:bump`). `pull_request`-only: precisa da fatia.
+      - name: Sonda de versão — fan-out de _shared/ na fatia (informativo, nunca reprova)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: bun run sonda:fanout
 
       # O terceiro buraco, e o mais silencioso: os dois gates acima têm o MESMO universo — as
       # edges JÁ instrumentadas. Quando o universo é lista derivada de artefato opt-in, quem nunca

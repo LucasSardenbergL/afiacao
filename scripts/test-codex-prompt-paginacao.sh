@@ -44,14 +44,12 @@ case "$defn" in
      echo "       (símbolo renomeado? conserte o extrator, não contorne)"; exit 65 ;;
 esac
 
-if [ "$falsificar" = 1 ]; then
-  # SABOTAGEM: reintroduz o defeito exato. O teste TEM de ficar vermelho — se ficar verde,
-  # ele não estava medindo nada.
-  # shellcheck disable=SC2016  # o $1 NÃO pode expandir aqui: a string é o corpo da
-  # função, expandido só no `eval` abaixo (é a sabotagem, tem de ser literal).
-  defn='sha_de() { git log origin/main --format=%h --grep "(#$1)" -1 -- 2>/dev/null || true; }'
-  echo "-- modo falsificação: sha_de sabotado para a versão --grep/-1 --"
-fi
+# SABOTAGEM: reintroduz o defeito exato. Com ela o teste TEM de ficar vermelho — se ficar verde,
+# ele não estava medindo nada. Note que ela NÃO sobrescreve mais `$defn`: o modo --falsificar roda
+# as asserções duas vezes, primeiro com a definição real (o CONTROLE) e só depois com esta.
+# shellcheck disable=SC2016  # o $1 NÃO pode expandir aqui: a string é o corpo da
+# função, expandido só no `eval` (é a sabotagem, tem de ser literal).
+defn_sabotado='sha_de() { git log origin/main --format=%h --grep "(#$1)" -1 -- 2>/dev/null || true; }'
 
 # ── Fixture: repositório com a MESMA forma que enganou o gerador na main.
 tmp="$(mktemp -d)"
@@ -84,52 +82,73 @@ git commit -q -m "feat(sonda): a monthly-report escapava do grep (#1946)" \
   -m "Mesma família do (#1889), que trocou o critério de parada."
 git update-ref refs/remotes/origin/main HEAD
 
-eval "$defn"
+# ── As asserções, como FUNÇÃO — o modo --falsificar precisa rodá-las DUAS vezes: com a definição
+#    REAL (o CONTROLE) e depois com a sabotada. Sem o controle este arnês aprovaria com louvor
+#    mesmo incondicionalmente vermelho (fixture podre, `git` que não roda no runner, extrator que
+#    devolve lixo): com a suíte já vermelha, a sabotagem "produz" o vermelho exigido sem ter
+#    causado nada. "Ficou vermelho" só é informação se existir um verde do qual sair — mesma
+#    família de `ausente ≠ zero`. O `test:hooks` do step anterior do CI não cobre isto: ele roda
+#    este arnês SEM `--falsificar`, e um `--falsificar` executado sozinho (é como o founder o roda
+#    localmente) não tinha linha de base nenhuma.
+rodar_assercoes() {
+  falhas=0
+  eval "$1"
 
-echo "== resolvedor PR→SHA =="
-
-got="$(sha_de 1856)"
-if [ "$got" = "$sha_real_1856" ]; then
-  ok "#1856 → o PR real ($sha_real_1856), não o citador ($sha_citador)"
-else
-  fail "#1856 → esperado '$sha_real_1856' (assunto fecha com o marcador), veio '$got'"
-fi
-
-got="$(sha_de 1889)"
-if [ "$got" = "$sha_real_1889" ]; then
-  ok "#1889 → o PR real ($sha_real_1889), não o citador posterior"
-else
-  fail "#1889 → esperado '$sha_real_1889', veio '$got'"
-fi
-
-# Um número que ninguém entregou não pode devolver o SHA de quem só o citou.
-got="$(sha_de 9999)"
-if [ -z "$got" ]; then
-  ok "PR inexistente → vazio (não inventa SHA)"
-else
-  fail "PR inexistente → esperado vazio, veio '$got'"
-fi
-
-# Prefixo não pode casar: (#185) é outro PR que não (#1856).
-got="$(sha_de 185)"
-if [ -z "$got" ]; then
-  ok "#185 não casa com (#1856)/(#1858) — marcador é o número INTEIRO"
-else
-  fail "#185 casou indevidamente com '$got'"
-fi
-
-echo
-if [ "$falhas" -eq 0 ]; then
-  if [ "$falsificar" = 1 ]; then
-    echo "FALSIFICAÇÃO FALHOU: o defeito foi reintroduzido e o teste passou — teste cego."
-    exit 1
+  got="$(sha_de 1856)"
+  if [ "$got" = "$sha_real_1856" ]; then
+    ok "#1856 → o PR real ($sha_real_1856), não o citador ($sha_citador)"
+  else
+    fail "#1856 → esperado '$sha_real_1856' (assunto fecha com o marcador), veio '$got'"
   fi
+
+  got="$(sha_de 1889)"
+  if [ "$got" = "$sha_real_1889" ]; then
+    ok "#1889 → o PR real ($sha_real_1889), não o citador posterior"
+  else
+    fail "#1889 → esperado '$sha_real_1889', veio '$got'"
+  fi
+
+  # Um número que ninguém entregou não pode devolver o SHA de quem só o citou.
+  got="$(sha_de 9999)"
+  if [ -z "$got" ]; then
+    ok "PR inexistente → vazio (não inventa SHA)"
+  else
+    fail "PR inexistente → esperado vazio, veio '$got'"
+  fi
+
+  # Prefixo não pode casar: (#185) é outro PR que não (#1856).
+  got="$(sha_de 185)"
+  if [ -z "$got" ]; then
+    ok "#185 não casa com (#1856)/(#1858) — marcador é o número INTEIRO"
+  else
+    fail "#185 casou indevidamente com '$got'"
+  fi
+}
+
+echo "== CONTROLE: resolvedor PR→SHA com a definição REAL =="
+rodar_assercoes "$defn"
+if [ "$falhas" -ne 0 ]; then
+  echo
+  echo "VERMELHO: $falhas falha(s) com a definição REAL."
+  if [ "$falsificar" = 1 ]; then
+    echo "  falsificação ABORTADA: sem verde de partida, sabotar não prova nada."
+  fi
+  exit 1
+fi
+
+if [ "$falsificar" = 0 ]; then
+  echo
   echo "verde: $0"
   exit 0
 fi
-if [ "$falsificar" = 1 ]; then
-  echo "falsificação OK: $falhas asserção(ões) ficaram vermelhas com o defeito reintroduzido."
-  exit 0
+
+echo
+echo "== SABOTAGEM: sha_de na versão --grep/-1 (o defeito original) =="
+rodar_assercoes "$defn_sabotado"
+echo
+if [ "$falhas" -eq 0 ]; then
+  echo "FALSIFICAÇÃO FALHOU: o defeito foi reintroduzido e o teste passou — teste cego."
+  exit 1
 fi
-echo "VERMELHO: $falhas falha(s)."
-exit 1
+echo "falsificação OK: $falhas asserção(ões) ficaram vermelhas com o defeito reintroduzido."
+exit 0
