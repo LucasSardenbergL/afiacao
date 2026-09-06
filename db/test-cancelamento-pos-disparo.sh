@@ -100,9 +100,14 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 MIG="$REPO_ROOT/supabase/migrations/20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql"
 MIG_GUARD="$REPO_ROOT/supabase/migrations/20260905224959_cancelar_pedido_guard_atomico.sql"
+# A do gate canonico e SEPARADA porque a $MIG ja foi aplicada em prod (ver o cabecalho dela).
+# Aplicada aqui em seguida: o corpo que os asserts medem tem de ser o corpo FINAL, o que vai
+# rodar -- aplicar so a primeira testaria uma versao que ja nao e a do repo.
+MIG_GATE="$REPO_ROOT/supabase/migrations/20260906172718_cancelamento_pos_disparo_gate_canonico.sql"
 P -q -f "$MIG_GUARD"
 P -q -f "$MIG"
-echo "migrations aplicadas: $(basename "$MIG_GUARD") + $(basename "$MIG")"
+P -q -f "$MIG_GATE"
+echo "migrations aplicadas: $(basename "$MIG_GUARD") + $(basename "$MIG") + $(basename "$MIG_GATE")"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED + helpers
@@ -525,7 +530,7 @@ R=$(corrigir 1 'cancelado_junto_ao_fornecedor' 'protocolo 2097501')
 eq "F5b RPC sem GATE: o customer passa a corrigir (controle: A1 verde acima)" \
    "$(echo "$R" | grep -c 'CANCEL-POS-DISPARO-FORBIDDEN' || true)" "0"
 ator "$UID_STAFF" authenticated
-P -q -f "$MIG" >/dev/null   # restaura a RPC REAL (a migration inteira, idempotente)
+P -q -f "$MIG" >/dev/null; P -q -f "$MIG_GATE" >/dev/null   # restaura a RPC REAL (as duas, idempotentes)
 semear
 
 # F6 — falsifica a PRÓPRIA BARREIRA: com A travando OUTRA linha, o observador tem de dizer "nao".
@@ -565,6 +570,45 @@ eq "F8d ... e mesmo no ramo em que o trigger NAO barra, nada persiste" \
    "$(Pq -c "SELECT count(*) FROM public.pedido_compra_sugerido;")" "0"
 semear
 
+# F9 — o gate de papel e fail-CLOSED quando `has_role` devolve NULL. Este assert existe porque a
+# FORMA do gate mudou (20260906172718) para satisfazer o `authz:check`, e a troca tinha um buraco
+# possivel: `NOT (A OR B)` com um ramo NULL e nenhum TRUE e NULL, o IF nao dispara e o gate falha
+# ABERTO. O COALESCE mora DENTRO de cada parcela justamente por isso -- e so um teste com has_role
+# devolvendo NULL distingue as duas formas. Sem ele, a mudanca de forma passaria despercebida.
+semear
+ator "$UID_CLIENTE" authenticated
+P -q -c "CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS boolean LANGUAGE sql STABLE AS \$f\$ SELECT NULL::boolean \$f\$;" >/dev/null
+R=$(corrigir 1 'cancelado_junto_ao_fornecedor' 'protocolo 2097501')
+contem "F9a has_role devolvendo NULL: o gate BLOQUEIA (fail-closed, nao fail-open)" "$R" "[CANCEL-POS-DISPARO-FORBIDDEN]"
+eq     "F9b ... e a linha nao foi tocada" "$(campo 1 status)" "disparado"
+# F9c falsifica F9a: sem o COALESCE por dentro, `NOT (NULL OR NULL OR NULL)` e NULL e o gate VAZA.
+P -q >/dev/null <<'SQL'
+CREATE OR REPLACE FUNCTION public.corrigir_cancelamento_pos_disparo(
+  p_pedido_id bigint, p_usuario text, p_motivo text, p_evidencia text, p_justificativa text DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public','pg_temp' AS $$
+DECLARE v_uid uuid := auth.uid();
+BEGIN
+  IF NOT (
+       public.has_role(v_uid, 'employee'::public.app_role)
+       OR public.has_role(v_uid, 'master'::public.app_role)
+     ) THEN                                   -- SABOTADO: sem o COALESCE por dentro
+    RAISE EXCEPTION '[CANCEL-POS-DISPARO-FORBIDDEN] sabotagem F9c' USING ERRCODE = '42501';
+  END IF;
+  RETURN jsonb_build_object('status','ok','gate','VAZOU');
+END; $$;
+SQL
+R=$(corrigir 1 'cancelado_junto_ao_fornecedor' 'protocolo 2097501')
+contem "F9c FALSIFICA F9a: sem COALESCE por dentro, o NULL faz o gate VAZAR" "$R" "VAZOU"
+# ⚠️ NAO reaplicar `db/stubs-supabase.sql` aqui: ele redefine `auth.uid()` como `SELECT NULL::uuid`
+# e o ator do teste sumiria -- F9d ficaria vermelha por um motivo que nao e o que ela mede.
+# Restauracao CIRURGICA: so o `has_role` que a sabotagem trocou.
+P -q -c "CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public','pg_temp' AS \$f\$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id=_user_id AND role=_role) \$f\$;" >/dev/null
+P -q -f "$MIG" >/dev/null; P -q -f "$MIG_GATE" >/dev/null
+ator "$UID_STAFF" authenticated
+semear
+eq "F9d restaurado: o caminho feliz volta a funcionar" \
+   "$(corrigir 1 'cancelado_junto_ao_fornecedor' 'protocolo 2097501' | grep -c '"status": "ok"')" "1"
+
 echo "-- grupo V: a query de validacao do handoff, nos DOIS sentidos --"
 # Uma validacao que nunca soube dizer "nao aplicada" nao valida nada.
 VAL="$REPO_ROOT/db/valida-cancelamento-pos-disparo.sql"
@@ -576,7 +620,7 @@ contem "V2b ... e NOMEIA o eixo que falta"                 "$(Pq -f "$VAL" | tai
 por_trigger
 P -q -c "ALTER TABLE public.pedido_compra_sugerido DROP COLUMN cancelamento_pos_disparo_evidencia CASCADE;" >/dev/null
 contem "V3 faltando UMA coluna de evidencia, a query conta e reprova" "$(Pq -f "$VAL" | tail -1)" "3/4"
-P -q -f "$MIG" >/dev/null   # restaura tudo (a migration e idempotente)
+P -q -f "$MIG" >/dev/null; P -q -f "$MIG_GATE" >/dev/null   # restaura tudo (idempotentes)
 contem "V4 reaplicando a migration, volta a APLICADA (idempotencia provada)" "$(Pq -f "$VAL" | tail -1)" "[APLICADA]"
 
 # ══════════════════════════════════════════════════════════════════════════════

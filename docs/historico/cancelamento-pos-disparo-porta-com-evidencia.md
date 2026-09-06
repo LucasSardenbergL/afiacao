@@ -104,7 +104,7 @@ sexta entre. A view é, ao mesmo tempo, o inventário e o alarme se o guard for 
 
 ## A prova
 
-`db/test-cancelamento-pos-disparo.sh` — PG17 descartável, **82 asserts, exit 0**, três execuções em
+`db/test-cancelamento-pos-disparo.sh` — PG17 descartável, **86 asserts, exit 0**, três execuções em
 `pt_BR.UTF-8` e duas em `lc_messages=C` (o controle do eixo imprime `divisão por zero` num e
 `division by zero` no outro, então os ambientes são de fato diferentes).
 
@@ -162,6 +162,28 @@ ela não morde, e isso está **medido, não suposto**: as 22 mensagens de `RAISE
 migration têm no máximo **210 caracteres** — cada uma dispara sozinha, não há relatório agregado —
 e todas abrem com o rótulo ASCII (`[CANCEL-POS-DISPARO-…]`, `POST FALHOU [...]`), que é a parte que
 decide. Como o que trunca é o **fim**, mesmo um corte deixaria o veredito legível.
+
+### A FORMA do gate é parte do gate (achado do CI, migration 20260906172718)
+
+O gate de papel da RPC nasceu como `IF NOT COALESCE(has_role(…) OR …, false)` — semanticamente
+correto e fail-CLOSED. **O `authz:check` reprovou**, e com razão declarada: o matcher só reconhece
+bloqueio quando a negação é a **cabeça** da condição, e num `NOT COALESCE(gate(), false)` o `false`
+é argumento (`scripts/lib/authz-contract.ts` diz isso em comentário — o limite é deliberado).
+Gate que a fronteira do CI não enxerga é gate que ninguém defende na próxima edição.
+
+A troca teve um buraco real no caminho. `(A OR B) IS NOT TRUE` casaria o matcher, mas só quando o
+`IS NOT TRUE` está **colado** ao fecho da chamada — não é o caso de uma disjunção. E `NOT (A OR B)`
+casa o matcher e **falha ABERTO**: com um ramo `NULL` e nenhum `TRUE`, a expressão é `NULL`, o `IF`
+não dispara e qualquer `authenticated` corrigiria cancelamento. A forma que satisfaz as duas
+exigências é `NOT ( COALESCE(A,false) OR COALESCE(B,false) )` — o COALESCE **por dentro** de cada
+parcela.
+
+Isso não é raciocínio: **F9a–F9d medem**. Com `has_role` devolvendo `NULL`, o gate real bloqueia
+(`F9a`), a linha não é tocada (`F9b`), e a variante sem o COALESCE interno **vaza** (`F9c` — a RPC
+devolve `"gate": "VAZOU"`). Sem F9c, a mudança de forma teria passado despercebida.
+
+A migration é **separada** de propósito: a `20260906152235` já estava aplicada e validada em
+produção, e editar aquele arquivo faria o repo descrever algo diferente do que rodou.
 
 ## O que esta entrega NÃO fecha
 

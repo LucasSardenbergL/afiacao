@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **519** custom migrations totais
-- **1766** objetos esperados (criados por estas migrations)
+- **520** custom migrations totais
+- **1767** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 547
+  - `function`: 548
   - `rls_policy`: 461
   - `index`: 254
   - `cron_job`: 170
@@ -4329,6 +4329,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.farmer_recomendacoes_substituir` | — |
 | `function` | `public.farmer_bundle_recomendacoes_substituir` | — |
+
+### `20260906172718_cancelamento_pos_disparo_gate_canonico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.corrigir_cancelamento_pos_disparo` | — |
 
 ## Próximos passos por status
 
