@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **516** custom migrations totais
-- **1754** objetos esperados (criados por estas migrations)
+- **518** custom migrations totais
+- **1759** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 540
+  - `function`: 545
   - `rls_policy`: 460
   - `index`: 253
   - `cron_job`: 170
@@ -4302,6 +4302,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260906154202_cancelar_pedido_revoke_anon.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260906164001_captura_authz_gate_custo_rpcs_preco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+| `function` | `public.get_tint_prices` | — |
+| `function` | `public.get_preco_cockpit` | — |
+
+### `20260906164002_captura_authz_escopo_carteira_farmer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.farmer_recomendacoes_substituir` | — |
+| `function` | `public.farmer_bundle_recomendacoes_substituir` | — |
 
 ## Próximos passos por status
 
