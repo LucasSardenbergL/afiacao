@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 513
+-- Total de custom migrations: 514
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -554,7 +554,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260905183314', 'deploy_atestacoes_ledger_e_sonda_cron', '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql'),
   ('20260905224959', 'cancelar_pedido_guard_atomico', '20260905224959_cancelar_pedido_guard_atomico.sql'),
   ('20260905225613', 'preco_ausente_nao_e_zero', '20260905225613_preco_ausente_nao_e_zero.sql'),
-  ('20260906105549', 'remover_itens_pedido_guard', '20260906105549_remover_itens_pedido_guard.sql')
+  ('20260906105549', 'remover_itens_pedido_guard', '20260906105549_remover_itens_pedido_guard.sql'),
+  ('20260906151204', 'deploy_sonda_cron_fail_closed', '20260906151204_deploy_sonda_cron_fail_closed.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2288,7 +2289,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_customer_margin_summary', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', ''),
-  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', '')
+  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', ''),
+  ('deploy_sonda_cron_fail_closed', 'function', 'public', 'deploy_sonda_disparar', ''),
+  ('deploy_sonda_cron_fail_closed', 'table', 'public', 'deploy_sonda_alvos', ''),
+  ('deploy_sonda_cron_fail_closed', 'table', 'public', 'deploy_sonda_disparos', ''),
+  ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_tick', 'deploy_sonda_disparos'),
+  ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_edge_quando', 'deploy_sonda_disparos'),
+  ('deploy_sonda_cron_fail_closed', 'cron_job', 'cron', 'deploy-sonda-cron', ''),
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4070,7 +4079,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_customer_margin_summary', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', ''),
-  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', '')
+  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', ''),
+  ('deploy_sonda_cron_fail_closed', 'function', 'public', 'deploy_sonda_disparar', ''),
+  ('deploy_sonda_cron_fail_closed', 'table', 'public', 'deploy_sonda_alvos', ''),
+  ('deploy_sonda_cron_fail_closed', 'table', 'public', 'deploy_sonda_disparos', ''),
+  ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_tick', 'deploy_sonda_disparos'),
+  ('deploy_sonda_cron_fail_closed', 'index', 'public', 'idx_deploy_sonda_disparos_edge_quando', 'deploy_sonda_disparos'),
+  ('deploy_sonda_cron_fail_closed', 'cron_job', 'cron', 'deploy-sonda-cron', ''),
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_alvos_select_staff', 'deploy_sonda_alvos'),
+  ('deploy_sonda_cron_fail_closed', 'rls_policy', 'public', 'deploy_sonda_disparos_select_staff', 'deploy_sonda_disparos')
 )
 SELECT
   e.migration,
