@@ -1034,25 +1034,27 @@ describe('gitReal: o executor de verdade responde o que o guard precisa julgar',
   });
 });
 
+const RELE = ['monthly-report', 'calculate-scores', 'sonda-relay'];
+
 describe('guardEfeitoLegado — o último caminho de efeito deixa de ser o padrão', () => {
   it('RECUSA edge da allowlist e oferece o one-liner do relé', () => {
-    const r = guardEfeitoLegado(['monthly-report'], false);
+    const r = guardEfeitoLegado(['monthly-report'], false, RELE);
     expect(r).toMatch(/RECUSADO/);
     expect(r).toMatch(/deploy_sonda_disparar\(ARRAY\['monthly-report'\]\)/);
     expect(r).toMatch(/FLUXO REAL/);
   });
   it('edge FORA da allowlist continua liberada — ela não tem caminho seguro ainda', () => {
-    expect(guardEfeitoLegado(['omie-sync-estoque'], false)).toBeNull();
+    expect(guardEfeitoLegado(['omie-sync-estoque'], false, RELE)).toBeNull();
   });
   it('--permitir-efeito-legado libera, e é a única forma de liberar', () => {
-    expect(guardEfeitoLegado(['monthly-report'], true)).toBeNull();
+    expect(guardEfeitoLegado(['monthly-report'], true, RELE)).toBeNull();
   });
   it('leva MISTA recusa nomeando só as que têm caminho seguro', () => {
-    const r = guardEfeitoLegado(['monthly-report', 'omie-sync-estoque'], false);
+    const r = guardEfeitoLegado(['monthly-report', 'omie-sync-estoque'], false, RELE);
     expect(r).toMatch(/monthly-report/);
     expect(r).not.toMatch(/ARRAY\['monthly-report', 'omie-sync-estoque'\]/);
   });
-  it('leva vazia não recusa', () => expect(guardEfeitoLegado([], false)).toBeNull());
+  it('leva vazia não recusa', () => expect(guardEfeitoLegado([], false, RELE)).toBeNull());
 });
 
 describe('parsearArgs — a flag do efeito legado', () => {

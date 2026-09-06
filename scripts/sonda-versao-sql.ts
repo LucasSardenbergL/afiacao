@@ -36,7 +36,6 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { SONDA_CRON_ALVOS } from '../supabase/functions/_shared/sonda-cron-alvos';
 
 import { ARQ_MAPA, lerMapaCommitado } from './sonda-fingerprint';
 
@@ -845,6 +844,12 @@ export interface DependenciasCli {
   escrever: (texto: string) => void;
   erro: (texto: string) => void;
   /**
+   * Edges que já têm o caminho seguro da sonda (o ramo `OPTIONS` + entrada na allowlist do cron).
+   * Injetada, não importada: ver a nota em `guardEfeitoLegado`. Ausente = nenhuma, e o guard não
+   * recusa nada — o que é o comportamento certo para quem chama sem conhecer a allowlist.
+   */
+  edgesComRele?: readonly string[];
+  /**
    * O `git` que o guard de sincronia usa. OBRIGATÓRIO de propósito: opcional-com-default sumiria
    * silenciosamente em quem esquecesse de passá-lo, e um guard que some é fail-OPEN. Assim o
    * compilador cobra — quem chama `main` decide entre o `git` de verdade e um fabricado no teste.
@@ -862,10 +867,17 @@ export interface DependenciasCli {
  * Para as edges que já têm o ramo `OPTIONS` e entraram na allowlist, existe caminho SEGURO: o relé.
  * Então aqui o legado deixa de ser o padrão e passa a exigir `--permitir-efeito-legado` — um aviso
  * impresso não basta, porque quem cola o bloco às 2 da manhã não lê o stderr.
+ *
+ * A allowlist chega por PARÂMETRO, e não por import de topo, por um motivo concreto: o eval da
+ * skill `lovable-deploy-verify` COPIA este arquivo (mais o `sonda-fingerprint`) para um diretório
+ * temporário e importa `gerarSqlDaLeva` de lá. Um import de topo para `supabase/functions/` não
+ * resolve nesse contexto, e o módulo inteiro deixaria de carregar — foi assim que 7 cenários do
+ * eval passaram a devolver `SQL_VAZIO`. Quem executa como CLI resolve a lista no fim do arquivo.
  */
-export function guardEfeitoLegado(edges: string[], permitido: boolean): string | null {
+export function guardEfeitoLegado(edges: string[], permitido: boolean, edgesComRele: readonly string[]): string | null {
   if (permitido) return null;
-  const naAllowlist = edges.filter((e) => SONDA_CRON_ALVOS.some((a) => a.edge === e));
+  const comRele = new Set(edgesComRele);
+  const naAllowlist = edges.filter((e) => comRele.has(e));
   if (naAllowlist.length === 0) return null;
   const lista = naAllowlist.map((e) => `'${e}'`).join(', ');
   return (
@@ -884,7 +896,7 @@ export function main(argv: string[], deps: DependenciasCli): number {
   let aviso: string | null;
   try {
     const { edges, caras, janelaMin, soDisparo, soLeitura, semRede, permitirEfeitoLegado } = parsearArgs(argv);
-    const recusa = guardEfeitoLegado(edges, permitirEfeitoLegado === true);
+    const recusa = guardEfeitoLegado(edges, permitirEfeitoLegado === true, deps.edgesComRele ?? []);
     if (recusa !== null) {
       deps.erro(`❌ ${recusa}`);
       return 1;
@@ -909,12 +921,16 @@ export function main(argv: string[], deps: DependenciasCli): number {
 }
 
 if (import.meta.main) {
+  // Import DINÂMICO, e só aqui: quem apenas importa este módulo (o eval da skill, que o copia para
+  // um diretório temporário) não pode depender de `supabase/functions/` resolver.
+  const { SONDA_CRON_ALVOS } = await import('../supabase/functions/_shared/sonda-cron-alvos');
   process.exit(
     main(process.argv.slice(2), {
       raiz: join(import.meta.dirname, '..'),
       escrever: (t) => process.stdout.write(t),
       erro: (t) => console.error(t),
       git: gitReal(join(import.meta.dirname, '..')),
+      edgesComRele: SONDA_CRON_ALVOS.map((a) => a.edge),
     }),
   );
 }
