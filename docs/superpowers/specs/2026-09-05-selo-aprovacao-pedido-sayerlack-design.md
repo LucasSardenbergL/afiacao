@@ -110,12 +110,18 @@ aprovou fração); normalização da edge sai (§3.6); split passa sob bypass (�
    `NEW.aprovacao_selo = reposicao_selo_itens(NEW.id)`, senão `SA007` ("aprovação só pela RPC").
    Autorização por **ESTADO**, não por GUC — e por isso mais forte: não basta ter passado pelo selo,
    o selo tem de bater com os itens NAQUELE instante. Fecha `runAutoApprove` e qualquer flip direto.
-   ⚠️ **GUC não serve aqui, e o motivo é uma armadilha do Postgres:** toda função destas tem cláusula
-   `SET search_path`, o que faz o servidor abrir um *nest level* de GUC e **reverter em
-   `AtEOXact_GUC` tudo que foi setado lá dentro** quando a função retorna — inclusive
-   `set_config(..., is_local => true)`. Um `reposicao.selando` posto por `reposicao_selar_pedido`
-   morreria antes de o chamador fazer o flip, e a M2 recusaria TODA aprovação por `SA007`. O sintoma
-   só apareceria no apply da M2, porque a M1 não tem trigger.
+   ⚠️ **A regra exata do GUC (e ela não é "GUC não funciona"):** o padrão da casa para fechar
+   CLASSE é justamente trigger + GUC de sessão carregando o **id da linha** — registrado em
+   `money-path.md` §"Guard DENTRO da RPC protege a porta", e fechado porque o PostgREST não expõe
+   `set_config`. O que NÃO funciona é o GUC atravessar um **retorno de função**: toda função aqui
+   tem cláusula `SET search_path`, o servidor abre um *nest level* e `AtEOXact_GUC` reverte na saída
+   tudo que foi setado lá dentro, inclusive `set_config(…, is_local => true)`. Ou seja: **quem põe o
+   GUC tem de ser a própria função que executa a escrita guardada.** No desenho v1 o GUC era posto
+   por `reposicao_selar_pedido` e o flip acontecia no CHAMADOR — aí ele morre no caminho e a M2
+   recusaria TODA aprovação por `SA007`, sintoma que só apareceria no apply da M2.
+   Esta v2 usa autorização por ESTADO, que dispensa o sinal de sessão e é mais forte (não basta ter
+   passado pelo selo: o selo tem de bater com os itens). O GUC segue válido no §3.2, onde o trigger
+   dispara dentro do próprio `UPDATE` de quem o pôs.
 2. **`aprovacao_selo`/`aprovacao_selo_em` só mudam enquanto o status ainda é
    `pendente_aprovacao|bloqueado_guardrail`** — depois do flip são imutáveis. Também por estado, sem
    GUC. O re-selo do filho no split cabe naturalmente (o filho nasce `pendente_aprovacao`).
