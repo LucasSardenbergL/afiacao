@@ -132,7 +132,14 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     return (itens ?? []).map((it) => {
       // [QTDE-INTEIRA] default exibido sempre inteiro: ceila a poeira decimal do estoque do Omie
       // em linhas legadas (ex.: qtde_final 3,99996 → 4). edits[] já vem inteiro do onEditQty.
-      const qtd = edits[it.id] ?? quantidadeCompraInteira(it.qtde_final ?? it.qtde_sugerida);
+      // [EMBALAGEM PORTAL] e, com fator do motor, o default exibido já é o MÚLTIPLO da embalagem —
+      // a MESMA função que `montarUpdateItem` usa para gravar (challenge Codex do #2198, P0). Antes
+      // daqui a tela usava só o ceil: um item de 37 L com fator 0,2 aparecia como 37 L / R$ 925 e era
+      // gravado 40 L / R$ 1.000 numa edição SÓ de preço — e "Aprovar e disparar" salva ANTES de
+      // disparar, então o fornecedor recebia 40 L que ninguém viu. Enviado = aprovado começa na tela.
+      // `edits[it.id]` fica CRU de propósito: o input é `value={l._qtd}`, canonizar durante a digitação
+      // brigaria com quem digita — quem sobe o valor editado ao múltiplo é o `onBlurQty`.
+      const qtd = edits[it.id] ?? quantidadeCompraCanonica(it.qtde_final ?? it.qtde_sugerida, it.fator_embalagem_portal);
       const preco = precoEdits[it.id] ?? Number(it.preco_unitario ?? 0);
       return { ...it, _qtd: qtd, _preco: preco, _valor: qtd * preco };
     });
