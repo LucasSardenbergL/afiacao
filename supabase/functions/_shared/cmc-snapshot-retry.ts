@@ -62,7 +62,7 @@ export const MAX_TENTATIVAS_CMC_SNAPSHOT = 5;
 // concorrência do Omie ("Já existe uma requisição desse método sendo executada") — o motivo de todas
 // as chamadas destas edges serem serializadas. Trocar a política de ESPERA não é o objetivo desta
 // entrega: aqui só a CLASSIFICAÇÃO muda. O orçamento local é o do cron (600s), não os 150s de lá.
-const ATRASO_BASE_MS = 1000;
+const ATRASO_BASE_MS = 800;
 
 function atrasoRetentativaCmcMs(tentativa: number): number {
   return ATRASO_BASE_MS * 2 ** (Math.max(1, Math.floor(tentativa)) - 1);
