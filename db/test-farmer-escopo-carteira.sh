@@ -123,7 +123,7 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — a migração REAL (Lei #1): o mesmo arquivo que o founder cola no SQL Editor.
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/supabase/migrations/20260830204210_captura_authz_escopo_carteira_farmer.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260906164002_captura_authz_escopo_carteira_farmer.sql"
 [ -f "$MIG" ] || { echo "migração ausente: $MIG"; exit 1; }
 P -q -f "$MIG"
 echo "═══ migração aplicada ═══"

@@ -1,4 +1,4 @@
--- 20260830204209_captura_authz_gate_custo_rpcs_preco.sql
+-- 20260906164001_captura_authz_gate_custo_rpcs_preco.sql
 -- ╔══════════════════════════════════════════════════════════════════════════════╗
 -- ║  CAPTURA (não mudança) — o corpo VIVO em prod de get_tint_price,             ║
 -- ║  get_tint_prices e get_preco_cockpit, cujo gate de CUSTO o repo descreve na  ║
@@ -10,7 +10,7 @@
 -- ║  Origem: docs/historico/deriva-de-corpo-prod-a-frente-do-repo.md (pendência  ║
 -- ║  nº 1). Das 24 derivas triadas, 8 divergiam de fato e em TODAS o vivo era o  ║
 -- ║  mais novo — em 5 o que só existia vivo era authz. Estas são 3 das 5; as 2   ║
--- ║  de farmer vão na migration IRMÃ 20260830204210 (domínios e dependências     ║
+-- ║  de farmer vão na migration IRMÃ 20260906164002 (domínios e dependências     ║
 -- ║  disjuntos: separadas, cada uma aplica e se prova sozinha).                  ║
 -- ║                                                                              ║
 -- ║  ── O QUE O REPO DIZIA (e que esta migration para de dizer) ──────────────── ║
@@ -300,11 +300,11 @@ GRANT EXECUTE ON FUNCTION public.get_preco_cockpit(jsonb) TO authenticated, serv
 -- comportamento, é idempotente, e só passa a existir DEPOIS do Run. Vira o
 -- carimbo que a validação lê para saber que o SQL rodou de verdade.
 COMMENT ON FUNCTION public.get_tint_price(uuid) IS
-  'Gate de custo = private.cap_custo_ler (master ou employee estrategico/super_admin). Corpo capturado do VIVO em prod pela migration 20260830204209 — captura-deriva-authz 2026-08-30. Ver docs/historico/deriva-de-corpo-prod-a-frente-do-repo.md.';
+  'Gate de custo = private.cap_custo_ler (master ou employee estrategico/super_admin). Corpo capturado do VIVO em prod pela migration 20260906164001 — captura-deriva-authz 2026-08-30. Ver docs/historico/deriva-de-corpo-prod-a-frente-do-repo.md.';
 COMMENT ON FUNCTION public.get_tint_prices(uuid[]) IS
-  'Gate de custo = private.cap_custo_ler, dentro do CTE staff AS MATERIALIZED. Corpo capturado do VIVO em prod pela migration 20260830204209 — captura-deriva-authz 2026-08-30.';
+  'Gate de custo = private.cap_custo_ler, dentro do CTE staff AS MATERIALIZED. Corpo capturado do VIVO em prod pela migration 20260906164001 — captura-deriva-authz 2026-08-30.';
 COMMENT ON FUNCTION public.get_preco_cockpit(jsonb) IS
-  'DOIS gates: execucao (employee OR master -> 42501) e projecao numerica (private.cap_custo_ler). Corpo capturado do VIVO em prod pela migration 20260830204209 — captura-deriva-authz 2026-08-30.';
+  'DOIS gates: execucao (employee OR master -> 42501) e projecao numerica (private.cap_custo_ler). Corpo capturado do VIVO em prod pela migration 20260906164001 — captura-deriva-authz 2026-08-30.';
 
 -- ── Validação pós-apply (read-only) — cole DEPOIS do Run ─────────────────────
 -- Captura fiel ⇒ o md5 do functiondef NÃO pode mudar. Os esperados foram medidos na

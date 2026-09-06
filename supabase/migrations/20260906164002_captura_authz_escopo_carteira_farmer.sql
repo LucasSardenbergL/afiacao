@@ -1,4 +1,4 @@
--- 20260830204210_captura_authz_escopo_carteira_farmer.sql
+-- 20260906164002_captura_authz_escopo_carteira_farmer.sql
 -- ╔══════════════════════════════════════════════════════════════════════════════╗
 -- ║  CAPTURA (não mudança) — o corpo VIVO em prod de                             ║
 -- ║  farmer_recomendacoes_substituir e farmer_bundle_recomendacoes_substituir.    ║
@@ -6,7 +6,7 @@
 -- ║  recomendação para cliente de OUTRO farmer — e é o repo que não tem.         ║
 -- ║                                                                              ║
 -- ║  Origem: docs/historico/deriva-de-corpo-prod-a-frente-do-repo.md (pendência  ║
--- ║  nº 1). Irmã de 20260830204209 (as 3 RPCs de preço); separadas porque os     ║
+-- ║  nº 1). Irmã de 20260906164001 (as 3 RPCs de preço); separadas porque os     ║
 -- ║  domínios e as dependências são disjuntos — cada uma aplica e se prova só.   ║
 -- ║                                                                              ║
 -- ║  ── O QUE SÓ EXISTE VIVO (última def no repo: 20260815181500) ────────────── ║
@@ -574,9 +574,9 @@ GRANT EXECUTE ON FUNCTION public.farmer_bundle_recomendacoes_substituir(uuid, uu
 -- comportamento, é idempotente, e só passa a existir DEPOIS do Run. Vira o
 -- carimbo que a validação lê para saber que o SQL rodou de verdade.
 COMMENT ON FUNCTION public.farmer_recomendacoes_substituir(uuid, uuid, uuid, jsonb, text, text, jsonb, uuid) IS
-  'Guard de escopo de carteira: FOR SHARE em farmer_client_scores + FG009 quando farmer_id IS DISTINCT FROM p_farmer_id. Exige UPDATE em farmer_client_scores para authenticated (SECURITY INVOKER). Corpo capturado do VIVO em prod pela migration 20260830204210 — captura-deriva-authz 2026-08-30.';
+  'Guard de escopo de carteira: FOR SHARE em farmer_client_scores + FG009 quando farmer_id IS DISTINCT FROM p_farmer_id. Exige UPDATE em farmer_client_scores para authenticated (SECURITY INVOKER). Corpo capturado do VIVO em prod pela migration 20260906164002 — captura-deriva-authz 2026-08-30.';
 COMMENT ON FUNCTION public.farmer_bundle_recomendacoes_substituir(uuid, uuid, uuid, jsonb, text, text, jsonb, uuid) IS
-  'Idem farmer_recomendacoes_substituir, no bundle. Corpo capturado do VIVO em prod pela migration 20260830204210 — captura-deriva-authz 2026-08-30.';
+  'Idem farmer_recomendacoes_substituir, no bundle. Corpo capturado do VIVO em prod pela migration 20260906164002 — captura-deriva-authz 2026-08-30.';
 
 -- ── Validação pós-apply (read-only) — cole DEPOIS do Run ─────────────────────
 --   SELECT p.proname,

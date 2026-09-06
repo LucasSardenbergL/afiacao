@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════════╗
 # ║  HARNESS PG17 — CAPTURA DO GATE DE CUSTO (private.cap_custo_ler)                 ║
-# ║  Prova a migration 20260830204209: get_tint_price / get_tint_prices /            ║
+# ║  Prova a migration 20260906164001: get_tint_price / get_tint_prices /            ║
 # ║  get_preco_cockpit projetam custo APENAS para master ou employee com             ║
 # ║  commercial_role IN ('estrategico','super_admin').                               ║
 # ║                                                                                  ║
@@ -124,7 +124,7 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — a migration REAL (Lei #1): o mesmo arquivo que o founder cola no SQL Editor.
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/supabase/migrations/20260830204209_captura_authz_gate_custo_rpcs_preco.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260906164001_captura_authz_gate_custo_rpcs_preco.sql"
 [ -f "$MIG" ] || { echo "migration ausente: $MIG"; exit 1; }
 P -q -f "$MIG"
 echo "═══ migration aplicada: $(basename "$MIG") ═══"
