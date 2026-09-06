@@ -1,6 +1,6 @@
 # A postcondição copiada herda o pressuposto do molde
 
-**PR #2249** (`aprovar_pedido_sugerido` — REVOKE de `anon`/PUBLIC), replicando o #2241
+**PR #2254** (`aprovar_pedido_sugerido` — REVOKE de `anon`/PUBLIC), replicando o #2241
 (`cancelar_pedido_sugerido`). Medido na PROD em 2026-09-06 via `psql-ro`.
 
 ## A classe

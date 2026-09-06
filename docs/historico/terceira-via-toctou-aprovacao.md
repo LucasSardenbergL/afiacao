@@ -104,12 +104,12 @@ nota: troca `atualizado_em` por uma coluna inexistente — o `CREATE OR REPLACE`
   `docs/historico/guard-fora-da-escrita-nao-e-guard.md`.
 - **ACL: ENDEREÇADO** — era "`aprovar_pedido_sugerido` e `cancelar_pedido_sugerido` ainda têm
   `anon=X/postgres` no ACL da PROD". A irmã foi revogada pelo **#2241** (`20260906154202`, aplicada
-  em 2026-09-06) e esta, pelo **#2249** (`20260906165706`). Segue valendo o enquadramento: as duas
+  em 2026-09-06) e esta, pelo **#2254** (`20260906165706`). Segue valendo o enquadramento: as duas
   são SECURITY INVOKER e a tabela tem RLS ligada, então anon já era barrado na tabela — era defesa
   em profundidade faltando, **não** buraco aberto. Continua correto não ter mexido nisso aqui:
   mudar ACL é decisão separada, fora do escopo de um fix de TOCTOU.
 - ⚠️ **A migration DESTE PR (`20260906151715`) não estava aplicada na PROD** em 2026-09-06 —
-  medido no pré-voo do #2249 por duas testemunhas: o corpo vivo ainda era o TOCTOU original (sem
+  medido no pré-voo do #2254 por duas testemunhas: o corpo vivo ainda era o TOCTOU original (sem
   `AND status NOT IN` no `WHERE` do UPDATE) e o timestamp estava ausente de
   `supabase_migrations.schema_migrations`, com as três irmãs presentes. **Merge ≠ produção**: o PR
   fechou, o CI passou, e o guard não está no ar. Precisa ir ao SQL Editor.
