@@ -432,16 +432,26 @@ BEGIN
 
   -- (g) EXECUÇÃO do TRIGGER (plpgsql e LATE-BOUND: `CREATE` aceita corpo invalido e so quebra em
   -- runtime -- e um trigger inerte por erro de runtime derrubaria TODO update de status desta
-  -- tabela). Sonda numa linha REAL em `disparado`, dentro de um bloco com handler: o caminho
-  -- ESPERADO e a RECUSA, e a excecao REVERTE o UPDATE do subtransaction -- nenhuma linha e
-  -- tocada -- e no ramo em que ele NAO barra a sonda tambem se auto-reverte (ver o 22023 abaixo),
-  -- de modo que ela NUNCA deixa uma linha de producao carimbada, nem se este arquivo for colado
-  -- fora do `BEGIN; ... COMMIT;`.
-  SELECT id INTO v_id FROM public.pedido_compra_sugerido WHERE status='disparado' LIMIT 1;
-  IF v_id IS NULL THEN
-    RAISE NOTICE 'POST: sem linha em "disparado" para a sonda de execucao do trigger -- eixo (g) NAO exercitado nesta aplicacao';
-  ELSE
-    BEGIN
+  -- tabela). A sonda roda o caminho de verdade dentro de um bloco com handler: o desfecho ESPERADO
+  -- e a RECUSA, e a excecao REVERTE o subtransaction. Nenhuma linha REAL e tocada em ramo algum, e
+  -- no ramo em que o trigger NAO barra a sonda tambem se auto-reverte (ver o 22023 abaixo) -- de
+  -- modo que ela nunca deixa rastro, nem se este arquivo for colado fora do `BEGIN; ... COMMIT;`.
+  BEGIN
+    -- A linha da sonda e CRIADA aqui dentro, em vez de procurada entre as reais. Duas razoes:
+      -- (1) elimina o ramo "pulei o assert": um `RAISE NOTICE` de PULADO seria informacao que
+      --     DECIDE (assert que nao rodou != assert que passou) num canal que o founder NAO VE --
+      --     o SQL Editor do Lovable nao exibe NOTICE (database.md §1, medido em 2026-09-06), entao
+      --     o Run sairia "Success" indistinguivel de "tudo provado";
+      -- (2) o eixo passa a rodar em QUALQUER banco, inclusive um vazio ou um em que ninguem tenha
+      --     disparado pedido ainda.
+      -- Nada persiste: os dois ramos abaixo terminam em excecao, e o rollback do subtransaction
+      -- desfaz o INSERT junto com o UPDATE (os triggers AFTER da tabela tambem sao revertidos).
+      -- Unico efeito residual: a sequence de `id` avanca, porque sequence nao e transacional.
+      -- `empresa` e a UNICA coluna NOT NULL sem default nesta tabela (medido na PROD).
+      INSERT INTO public.pedido_compra_sugerido (empresa, status, omie_pedido_compra_id)
+      VALUES ('__sonda_postcondicao__', 'disparado', 'SONDA-NAO-EXISTE-NO-OMIE')
+      RETURNING id INTO v_id;
+
       UPDATE public.pedido_compra_sugerido SET status='cancelado_humano' WHERE id=v_id;
       -- Se chegou aqui, o trigger NAO barrou. Levanto uma excecao PROPRIA (SQLSTATE 22023, que o
       -- trigger nunca usa) so para forcar o ROLLBACK deste subtransaction: assim o UPDATE de
@@ -457,13 +467,12 @@ BEGIN
         ELSE
           RAISE;   -- qualquer outro P0001 nao e o meu: re-lanca (Lei #2 -- nada de WHEN OTHERS 'OK')
         END IF;
-    END;
-    IF NOT v_barrou THEN
-      RAISE EXCEPTION 'POST FALHOU [TRIGGER-INERTE]: o UPDATE cru levou o pedido % de "disparado" para "cancelado_humano" SEM ser barrado -- o guard e decorativo', v_id;
-    END IF;
+  END;
+  IF NOT v_barrou THEN
+    RAISE EXCEPTION 'POST FALHOU [TRIGGER-INERTE]: um UPDATE cru levou a linha de sonda de "disparado" para "cancelado_humano" SEM ser barrado -- o guard e decorativo';
   END IF;
 
-  RAISE NOTICE 'cancelamento pos-disparo: trigger ARMADO (BEFORE UPDATE ROW) e provado EXECUTANDO em linha real, RPC DEFINER com search_path preso e anon revogado, trilha com RLS sem policy de escrita, view do sensor com security_invoker.';
+  RAISE NOTICE 'cancelamento pos-disparo: trigger ARMADO (BEFORE UPDATE ROW) e provado EXECUTANDO (sonda criada e revertida na propria transacao), RPC DEFINER com search_path preso e anon revogado, trilha com RLS sem policy de escrita, view do sensor com security_invoker.';
 END
 $post$;
 

@@ -538,7 +538,7 @@ eq "F6 FALSIFICA a barreira: travando outra linha, nenhum bloqueio e observado" 
 
 # F7 — a POSTCONDIÇÃO da migration tem dente? Controle verde primeiro, na mesma invocação.
 semear
-eq "F7a CONTROLE: postcondicao VERDE com o objeto real e linha 'disparado' semeada" "$(rodar_post)" "VERDE"
+eq "F7a CONTROLE: postcondicao VERDE com o objeto real" "$(rodar_post)" "VERDE"
 tirar_trigger
 eq "F7b sem o trigger, a postcondicao fica VERMELHA"  "$(rodar_post)" "VERMELHO"
 por_trigger
@@ -549,6 +549,21 @@ P -q -c "ALTER VIEW public.vw_cancelamento_pos_disparo_sem_evidencia SET (securi
 eq "F7d view sem security_invoker (falha ABERTA de RLS) fica VERMELHA" "$(rodar_post)" "VERMELHO"
 P -q -c "ALTER VIEW public.vw_cancelamento_pos_disparo_sem_evidencia SET (security_invoker = on);" >/dev/null
 eq "F7e restaurado: postcondicao VERDE de novo" "$(rodar_post)" "VERDE"
+
+# F8 — a sonda (g) CRIA a propria linha, entao o eixo roda em QUALQUER banco. Sem estes asserts o
+# harness continuaria medindo o desenho ANTIGO (procurar uma linha 'disparado' pre-existente), que
+# tinha um ramo "PULEI o assert" reportado por RAISE NOTICE -- um canal que o SQL Editor do Lovable
+# NAO EXIBE (database.md §1). Assert que nao rodou != assert que passou, e o Run sairia "Success".
+P -q -c "TRUNCATE public.pedido_compra_sugerido RESTART IDENTITY;" >/dev/null
+eq "F8a com a tabela VAZIA a postcondicao ainda fica VERDE (o eixo (g) nao depende de dado)" "$(rodar_post)" "VERDE"
+eq "F8b ... e a sonda NAO deixa rastro (a linha inserida e revertida)" \
+   "$(Pq -c "SELECT count(*) FROM public.pedido_compra_sugerido;")" "0"
+tirar_trigger
+eq "F8c com a tabela VAZIA e sem trigger, ela fica VERMELHA (o eixo mede, nao so passa)" "$(rodar_post)" "VERMELHO"
+por_trigger
+eq "F8d ... e mesmo no ramo em que o trigger NAO barra, nada persiste" \
+   "$(Pq -c "SELECT count(*) FROM public.pedido_compra_sugerido;")" "0"
+semear
 
 echo "-- grupo V: a query de validacao do handoff, nos DOIS sentidos --"
 # Uma validacao que nunca soube dizer "nao aplicada" nao valida nada.

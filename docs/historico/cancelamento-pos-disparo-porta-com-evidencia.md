@@ -104,7 +104,7 @@ sexta entre. A view é, ao mesmo tempo, o inventário e o alarme se o guard for 
 
 ## A prova
 
-`db/test-cancelamento-pos-disparo.sh` — PG17 descartável, **78 asserts, exit 0**, três execuções em
+`db/test-cancelamento-pos-disparo.sh` — PG17 descartável, **82 asserts, exit 0**, três execuções em
 `pt_BR.UTF-8` e duas em `lc_messages=C` (o controle do eixo imprime `divisão por zero` num e
 `division by zero` no outro, então os ambientes são de fato diferentes).
 
@@ -129,7 +129,7 @@ trilha; **N** os negativos com SQLSTATE **e** sentinela do ramo; **A** o gate, c
 promovendo o mesmo uid a `employee` e exigindo que a chamada passe; **F** a falsificação camada a
 camada; **V** a query de validação nos dois sentidos.
 
-## Três coisas que a execução corrigiu
+## Quatro coisas que a execução corrigiu
 
 1. **`cut -d'|'` cortava dentro da mensagem de erro.** O helper devolve `SQLSTATE|SQLERRM`, então os
    campos do resultado da corrida saíam deslocados e três asserts mediam a coluna errada — inclusive
@@ -143,6 +143,17 @@ camada; **V** a query de validação nos dois sentidos.
    rollback do arquivo inteiro. Agora ela levanta um SQLSTATE próprio (`22023`) para forçar o
    rollback do **subtransaction** nos dois ramos: a sonda nunca deixa linha carimbada, nem se o
    bloco for colado fora da transação.
+
+4. **A sonda tinha um ramo "PULEI o assert" num canal mudo.** Ela procurava uma linha real em
+   `disparado`; não achando, emitia `RAISE NOTICE`. Mas **o SQL Editor do Lovable não exibe NOTICE**
+   (regra que entrou na main no #2248 enquanto esta fatia estava em voo), então o Run sairia
+   *Success* — indistinguível de "tudo provado" — com o eixo de execução **nunca exercitado**.
+   Assert que não rodou não é assert que passou. O conserto não foi reportar melhor o pulo: foi
+   **eliminá-lo**. A sonda agora **cria a própria linha** dentro do subtransaction que já era
+   revertido nos dois ramos, então o eixo roda em qualquer banco — inclusive um vazio — e não
+   deixa rastro (só a sequence de `id` avança, porque sequence não é transacional). **F8a-F8d**
+   provam exatamente isso com a tabela truncada: verde com o trigger, **vermelho sem ele**, e
+   `count(*)=0` depois de cada um.
 
 ## O que esta entrega NÃO fecha
 
