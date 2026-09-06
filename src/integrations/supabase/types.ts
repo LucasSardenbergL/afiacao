@@ -20170,6 +20170,14 @@ export type Database = {
       reposicao__trim: { Args: { p: string }; Returns: string }
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
       reposicao_alocar_run_seq: { Args: never; Returns: number }
+      remover_itens_pedido_sugerido: {
+        Args: {
+          p_item_ids: number[]
+          p_pedido_id: number
+          p_usuario: string
+        }
+        Returns: Json
+      }
       reposicao_aplicar_depara_sayerlack_auto: {
         Args: {
           p_candidatos: Json

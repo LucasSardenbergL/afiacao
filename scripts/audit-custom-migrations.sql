@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 512
+-- Total de custom migrations: 513
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -553,7 +553,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260905090000', 'sayerlack_custo_portal_cas', '20260905090000_sayerlack_custo_portal_cas.sql'),
   ('20260905183314', 'deploy_atestacoes_ledger_e_sonda_cron', '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql'),
   ('20260905224959', 'cancelar_pedido_guard_atomico', '20260905224959_cancelar_pedido_guard_atomico.sql'),
-  ('20260905225613', 'preco_ausente_nao_e_zero', '20260905225613_preco_ausente_nao_e_zero.sql')
+  ('20260905225613', 'preco_ausente_nao_e_zero', '20260905225613_preco_ausente_nao_e_zero.sql'),
+  ('20260906105549', 'remover_itens_pedido_guard', '20260906105549_remover_itens_pedido_guard.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2286,7 +2287,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('preco_ausente_nao_e_zero', 'function', 'private', 'margem_cliente_agregada', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_customer_margin_summary', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
-  ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', '')
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', ''),
+  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4067,7 +4069,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('preco_ausente_nao_e_zero', 'function', 'private', 'margem_cliente_agregada', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'get_customer_margin_summary', ''),
   ('preco_ausente_nao_e_zero', 'function', 'public', 'melhoria_clientes_por_produto', ''),
-  ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', '')
+  ('preco_ausente_nao_e_zero', 'function', 'public', 'get_defasagem_cliente', ''),
+  ('remover_itens_pedido_guard', 'function', 'public', 'remover_itens_pedido_sugerido', '')
 )
 SELECT
   e.migration,

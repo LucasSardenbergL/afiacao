@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **512** custom migrations totais
-- **1744** objetos esperados (criados por estas migrations)
+- **513** custom migrations totais
+- **1745** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 537
+  - `function`: 538
   - `rls_policy`: 458
   - `index`: 251
   - `cron_job`: 169
@@ -4273,6 +4273,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.get_customer_margin_summary` | — |
 | `function` | `public.melhoria_clientes_por_produto` | — |
 | `function` | `public.get_defasagem_cliente` | — |
+
+### `20260906105549_remover_itens_pedido_guard.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.remover_itens_pedido_sugerido` | — |
 
 ## Próximos passos por status
 
