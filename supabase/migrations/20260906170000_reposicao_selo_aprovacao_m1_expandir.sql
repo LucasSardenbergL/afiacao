@@ -385,6 +385,7 @@ AS $function$
 DECLARE
   v_pedido RECORD;
   v_div    integer;
+  v_corte  timestamptz;
 BEGIN
   SELECT * INTO v_pedido FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
   IF NOT FOUND THEN
@@ -435,28 +436,45 @@ BEGIN
       RETURN jsonb_build_object('error', SQLERRM);
   END;
 
+  -- O predicado de status vive DENTRO da escrita (padrão do 20260906151715, que fechou o
+  -- TOCTOU desta RPC). Aqui ele é redundante com o FOR UPDATE acima — que é obrigatório, porque
+  -- o selo precisa do lock segurado ATRAVÉS de várias instruções — mas redundância barata no
+  -- money-path é defesa, e a falsificação F12 prova que este WHERE tem dente.
   UPDATE public.pedido_compra_sugerido
      SET status = 'aprovado_aguardando_disparo',
          aprovado_por = p_usuario,
          aprovado_em = NOW(),
          atualizado_em = NOW()
-   WHERE id = p_pedido_id;
+   WHERE id = p_pedido_id
+     AND status IN ('pendente_aprovacao', 'bloqueado_guardrail')
+  RETURNING horario_corte_planejado INTO v_corte;
+
+  IF NOT FOUND THEN
+    -- Impossível sob o FOR UPDATE (ninguém consegue mudar o status enquanto seguramos a linha).
+    -- RAISE, não RETURN: precisa DESFAZER o selo já gravado nesta transação.
+    RAISE EXCEPTION 'Pedido % mudou de estado durante a aprovação', p_pedido_id USING ERRCODE = 'SA008';
+  END IF;
 
   RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id,
-                            'sera_disparado_em', v_pedido.horario_corte_planejado);
+                            'sera_disparado_em', v_corte);
 END;
 $function$;
 
 REVOKE ALL ON FUNCTION public.aprovar_pedido_sugerido(bigint, text, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.aprovar_pedido_sugerido(bigint, text, jsonb) TO authenticated, service_role;
 
+-- BEGIN ATOMIC (não string): o corpo é PARSEADO na criação e o Postgres registra em pg_depend
+-- uma dependência REAL do wrapper para a de 3 args. É isso que a postcondição confere — assert
+-- estrutural, não textual. O assert textual anterior procurava 'p_itens_vistos' no corpo e
+-- REPROVOU a própria migration: o wrapper passa os argumentos por POSIÇÃO, esse nome não
+-- aparece em lugar nenhum. Texto prova presença, nunca controle.
 CREATE OR REPLACE FUNCTION public.aprovar_pedido_sugerido(p_pedido_id bigint, p_usuario text)
 RETURNS jsonb
 LANGUAGE sql
 SET search_path TO 'public', 'pg_temp'
-AS $function$
+BEGIN ATOMIC
   SELECT public.aprovar_pedido_sugerido(p_pedido_id, p_usuario, NULL::jsonb);
-$function$;
+END;
 
 -- `anon` tinha EXECUTE explícito (e PUBLIC também) na de 2 args: aprovar pedido
 -- de compra nunca é ação de anônimo. REVOKE FROM PUBLIC não tira grant NOMEADO.
@@ -465,10 +483,16 @@ REVOKE ALL ON FUNCTION public.aprovar_pedido_sugerido(bigint, text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.aprovar_pedido_sugerido(bigint, text) TO authenticated, service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 7. cancelar_pedido_sugerido — recusa cancelar com envio EM VOO (Codex P0-3).
---    Hoje o botão fica habilitado em aprovado_aguardando_disparo mesmo com
---    status_envio_portal='enviando_portal': a edge já tem o payload em memória,
---    faz o POST, e o pedido termina cancelado com o fornecedor tendo recebido.
+-- 7. cancelar_pedido_sugerido — o guard de envio EM VOO entra no MESMO WHERE.
+--    ⚠️ PARTE DA VERSÃO ATÔMICA VIVA EM PROD (20260905224959), não da antiga do repo: aquela
+--    migration tirou o SELECT-decide-UPDATE porque ele deixava um cancelamento gravar por cima
+--    de um disparo concorrente. Recriar a partir do corpo velho REVERTERIA essa correção em
+--    silêncio — a armadilha "a última a rodar vence" da database.md §2.
+--    O guard novo (Codex P0-3) é o envio em voo: hoje o botão fica habilitado em
+--    aprovado_aguardando_disparo mesmo com status_envio_portal='enviando_portal', e a edge já
+--    tem o payload em memória — o fornecedor recebe e aqui o pedido consta cancelado.
+--    Ele vive no MESMO UPDATE, pelo mesmo motivo que o de status: em READ COMMITTED o Postgres
+--    RE-AVALIA o WHERE contra a linha recém-commitada (EvalPlanQual). Num SELECT acima, não.
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.cancelar_pedido_sugerido(
   p_pedido_id bigint, p_usuario text, p_justificativa text
@@ -478,32 +502,57 @@ LANGUAGE plpgsql
 SET search_path TO 'public', 'pg_temp'
 AS $function$
 DECLARE
-  v_pedido RECORD;
+  v_id       bigint;
+  v_status   text;
+  v_portal   text;
+  v_disparo  timestamptz;
 BEGIN
-  SELECT * INTO v_pedido FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
+  -- ⚠️ Guard e escrita são UMA instrução. Não separe: é o predicado preso a este WHERE que faz
+  -- o Postgres re-avaliá-lo contra a versão nova da linha depois de esperar o lock.
+  UPDATE pedido_compra_sugerido
+  SET status = 'cancelado_humano',
+      cancelado_por = p_usuario,
+      cancelado_em = NOW(),
+      justificativa_cancelamento = p_justificativa,
+      status_envio_portal = 'nao_aplicavel',
+      portal_proximo_retry_em = NULL,
+      atualizado_em = NOW()
+  WHERE id = p_pedido_id
+    AND status NOT IN ('disparado', 'concluido_recebido')
+    AND COALESCE(status_envio_portal, 'nao_aplicavel') NOT IN (
+          'enviando_portal', 'enviado_portal', 'sucesso_portal',
+          'aceito_portal_sem_protocolo', 'indeterminado_requer_conciliacao')
+  RETURNING id INTO v_id;
+
+  IF v_id IS NOT NULL THEN
+    RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id);
+  END IF;
+
+  -- 0 linhas. A DECISÃO já foi tomada pelo predicado — esta leitura só MONTA A MENSAGEM.
+  SELECT status, status_envio_portal, horario_disparo_real
+    INTO v_status, v_portal, v_disparo
+    FROM pedido_compra_sugerido WHERE id = p_pedido_id;
+
   IF NOT FOUND THEN
     RETURN jsonb_build_object('error', 'pedido não encontrado');
   END IF;
-  IF v_pedido.status IN ('disparado', 'concluido_recebido') THEN
-    RETURN jsonb_build_object('error', 'pedido já foi disparado em ' || v_pedido.horario_disparo_real::text);
+
+  IF v_status IN ('disparado', 'concluido_recebido') THEN
+    RETURN jsonb_build_object('error', 'pedido já foi disparado em ' || COALESCE(v_disparo::text, '(sem carimbo)'));
   END IF;
-  IF COALESCE(v_pedido.status_envio_portal, 'nao_aplicavel') IN (
+
+  IF COALESCE(v_portal, 'nao_aplicavel') IN (
        'enviando_portal', 'enviado_portal', 'sucesso_portal',
        'aceito_portal_sem_protocolo', 'indeterminado_requer_conciliacao') THEN
     RETURN jsonb_build_object('error',
-      'envio ao portal em ' || v_pedido.status_envio_portal ||
+      'envio ao portal em ' || v_portal ||
       ' — cancelar agora deixaria o fornecedor com um pedido que aqui consta cancelado. Aguarde o desfecho ou concilie.');
   END IF;
-  UPDATE public.pedido_compra_sugerido
-     SET status = 'cancelado_humano',
-         cancelado_por = p_usuario,
-         cancelado_em = NOW(),
-         justificativa_cancelamento = p_justificativa,
-         status_envio_portal = 'nao_aplicavel',
-         portal_proximo_retry_em = NULL,
-         atualizado_em = NOW()
-   WHERE id = p_pedido_id;
-  RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id);
+
+  -- Estado cancelável AGORA mas o UPDATE não pegou ⇒ mudou entre as instruções. Não FABRICAR
+  -- motivo: dizer "já está em X" seria mentira quando X é cancelável.
+  RETURN jsonb_build_object('error',
+    'pedido mudou de estado durante o cancelamento (estado atual: ' || COALESCE(v_status, '(desconhecido)') || ') - tente de novo');
 END;
 $function$;
 
@@ -752,11 +801,27 @@ BEGIN
   END IF;
 
   -- Suficiência, não existência: as 5 funções recriadas têm de estar na forma NOVA.
-  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-                  WHERE n.nspname='public' AND p.proname='aprovar_pedido_sugerido'
-                    AND pg_get_function_identity_arguments(p.oid) = 'p_pedido_id bigint, p_usuario text'
-                    AND pg_get_functiondef(p.oid) LIKE '%p_itens_vistos%') THEN
-    RAISE EXCEPTION 'M1 FALHOU: o aprovar_pedido_sugerido de 2 args não é o wrapper — a aprovação da UI velha não selaria';
+  -- Assert ESTRUTURAL: pg_depend prova que o de 2 args CHAMA o de 3 args (só existe porque o
+  -- corpo é BEGIN ATOMIC). Um LIKE no corpo provaria presença de texto, não a chamada.
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_depend d
+      JOIN pg_proc w ON w.oid = d.objid
+      JOIN pg_proc t ON t.oid = d.refobjid
+      JOIN pg_namespace nw ON nw.oid = w.pronamespace
+      JOIN pg_namespace nt ON nt.oid = t.pronamespace
+     WHERE d.classid = 'pg_proc'::regclass AND d.refclassid = 'pg_proc'::regclass
+       AND nw.nspname = 'public' AND w.proname = 'aprovar_pedido_sugerido'
+       AND pg_get_function_identity_arguments(w.oid) = 'p_pedido_id bigint, p_usuario text'
+       AND nt.nspname = 'public' AND t.proname = 'aprovar_pedido_sugerido'
+       AND pg_get_function_identity_arguments(t.oid) = 'p_pedido_id bigint, p_usuario text, p_itens_vistos jsonb'
+  ) THEN
+    RAISE EXCEPTION 'M1 FALHOU: o aprovar_pedido_sugerido de 2 args nao depende do de 3 args — a UI velha aprovaria SEM selar';
+  END IF;
+  IF (SELECT prosecdef FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+       WHERE n.nspname='public' AND p.proname='aprovar_pedido_sugerido'
+         AND pg_get_function_identity_arguments(p.oid)='p_pedido_id bigint, p_usuario text') THEN
+    RAISE EXCEPTION 'M1 FALHOU [SECDEF]: o de 2 args virou SECURITY DEFINER — bypassaria a RLS (invariante do 20260906151715)';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
                   WHERE n.nspname='public' AND p.proname='cancelar_pedido_sugerido'

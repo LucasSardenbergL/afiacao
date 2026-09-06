@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — 20260905150000_reposicao_selo_aprovacao_m1_expandir.sql          ║
+# ║  PROVA PG17 — 20260906170000_reposicao_selo_aprovacao_m1_expandir.sql          ║
 # ║  Selo de aprovação (M1 "expandir"): reposicao_selar_pedido VALIDA e sela;      ║
 # ║  snapshot do de-para no item; hash estável em SQL; conferência pré-Browserless ║
 # ║  (o de-para muda SEM mudar o selo); token de revisão; cancelar recusa envio em  ║
 # ║  voo; claims recusam recusa durável; split sela os filhos.                      ║
 # ║  Rode: bash db/test-reposicao-selo-aprovacao.sh > /tmp/t.log 2>&1; echo $?      ║
+# ║  NAO reprova o TOCTOU de aprovar/cancelar: isso ja e provado com DUAS sessoes   ║
+# ║  por db/test-aprovar-pedido-guard.sh e db/test-cancelar-pedido-guard-atomico.sh ║
+# ║  (na main). Aqui o FOR UPDATE e ADITIVO — ele existe porque o selo precisa do    ║
+# ║  lock segurado ATRAVES de varias instrucoes, nao so no instante da escrita.      ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -14,6 +18,7 @@ PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5479}"
 SLUG="selo-aprovacao"
+SAB=""   # o trap de cleanup referencia $SAB; sob set -u ele explodiria antes da ZONA 4
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
 
@@ -92,7 +97,7 @@ INSERT INTO private.cap_compras(uid) VALUES ('11111111-1111-1111-1111-1111111111
 SQL
 
 # ══════════ ZONA 2 — aplicar a migration REAL ══════════
-MIG="$REPO_ROOT/supabase/migrations/20260905150000_reposicao_selo_aprovacao_m1_expandir.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260906170000_reposicao_selo_aprovacao_m1_expandir.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
@@ -202,6 +207,11 @@ P -q -c "SET test.uid='99999999-9999-9999-9999-999999999999'" >/dev/null
 R=$(P -c "SET test.uid='99999999-9999-9999-9999-999999999999'; SELECT public.reposicao_selar_pedido(100);" 2>&1 | grep -c "42501\|Acesso negado" || true)
 if [ "$R" -ge 1 ]; then ok "N15 uid sem cap_compras_ler -> 42501"; else bad "N15 gate de capacidade nao barrou"; fi
 
+seed
+P -q -c "UPDATE public.pedido_compra_sugerido SET status='cancelado_humano' WHERE id=100"
+R=$(aprova2args 100); case "$R" in *'"error"'*) ok "N16 pedido cancelado nao pode ser aprovado";; *) bad "N16 aprovou pedido cancelado: $R";; esac
+eq "N17 pedido cancelado nao foi selado" "$(selo 100)" "NULO"
+
 echo "--- CONFERENCIA PRE-BROWSERLESS ---"
 seed; aprova2args 100 >/dev/null
 S0=$(selo 100)
@@ -271,7 +281,7 @@ seed; R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde
 case "$R" in *'"status": "ok"'*) ok "F5 sem a comparacao do token, o token divergente PASSA (N11-N14 tem dente)";; *) bad "F5 sabotei o token e N11 nao mudou: $R";; esac
 restaura
 
-sabota "s/'aceito_portal_sem_protocolo', 'indeterminado_requer_conciliacao') THEN/'aceito_portal_sem_protocolo', 'indeterminado_requer_conciliacao') AND false THEN/"
+sabota "/AND COALESCE(status_envio_portal, 'nao_aplicavel') NOT IN ($/,+2d"
 seed; aprova2args 100 >/dev/null; P -q -c "UPDATE public.pedido_compra_sugerido SET status_envio_portal='enviando_portal' WHERE id=100"
 R=$(Pq -c "SELECT public.cancelar_pedido_sugerido(100,'x','y')")
 case "$R" in *'"status": "ok"'*) ok "F6 sem o guard de voo, cancelar EM VOO passa (K1 tem dente)";; *) bad "F6 sabotei o guard de voo e K1 nao mudou: $R";; esac
