@@ -118,7 +118,7 @@ describe('classificarVeredito', () => {
     v.b[3] = { ...v.b[3], corpoHash: 'outro' };
     expect(classificarVeredito(v, false)).toBe('FALHA');
   });
-  it('FALHA quando responde probe ANTES do desde, e quando NÃO responde a partir dele', () => {
+  it('FALHA quando um closure SEM o ramo responde probe, e quando um COM o ramo não responde', () => {
     expect(classificarVeredito({ ...base(), a: chamada({ probe: true }) }, false)).toBe('FALHA');
     expect(classificarVeredito(base(), true)).toBe('FALHA');
     expect(classificarVeredito({ ...base(), a: chamada({ probe: true }) }, true)).toBe('PASSA');
@@ -133,9 +133,9 @@ describe('classificarVeredito', () => {
 });
 
 describe('cache e enumeração', () => {
-  it('a chave muda com harness E com desde — os dois decidem o veredito', () => {
-    expect(chaveDoManifesto('c1', 'h1', 'd1')).not.toBe(chaveDoManifesto('c1', 'h2', 'd1'));
-    expect(chaveDoManifesto('c1', 'h1', 'd1')).not.toBe(chaveDoManifesto('c1', 'h1', 'd2'));
+  it('a chave muda com o harness — closure igual, instrumento diferente, veredito a refazer', () => {
+    expect(chaveDoManifesto('c1', 'h1')).not.toBe(chaveDoManifesto('c1', 'h2'));
+    expect(chaveDoManifesto('c1', 'h1')).toBe(chaveDoManifesto('c1', 'h1'));
   });
   it('o ponto fixo alcança dependência que só existia no passado, e os commits QUE SÓ ELA tem', () => {
     // O caso real: `_shared/velho.ts` não existe mais hoje, mas um `index.ts` antigo o importava.

@@ -26,7 +26,11 @@ export type ControlePositivo = {
 
 export type AlvoSondaCron = {
   edge: string;
-  /** sha do commit que introduziu o ramo `atenderSondaOptions`; null = ramo ainda fora da história. */
+  /**
+   * Sha do commit que introduziu o ramo — DOCUMENTAL, para quem lê. O veredito da prova NÃO usa
+   * este campo: ele pergunta se o closure contém o ramo (`closureTemRamo`), porque um sha do
+   * próprio branch não sobrevive ao rebase nem ao squash do auto-merge.
+   */
   desde: string | null;
   controles: readonly ControlePositivo[];
 };
@@ -64,8 +68,6 @@ const SEM_CREDENCIAL: ControlePositivo = {
 export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   {
     edge: "sonda-relay",
-    // O relé NASCEU com o ramo, num commit anterior ao das pilotos: usar o `desde` delas faria os
-    // closures do próprio relé caírem em "respondeu probe antes do desde" = FALHA.
     desde: "de281e7b5783",
     controles: [{
       metodo: "POST",

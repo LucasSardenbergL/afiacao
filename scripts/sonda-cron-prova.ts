@@ -153,16 +153,16 @@ export function identidadeDoHarness(raiz = process.cwd()): string {
 }
 
 /**
- * A chave contém TUDO que produziu o veredito: a identidade do closure, a do harness e o `desde`
- * da edge. O `desde` entrou depois de morder: mudá-lo inverte o veredito esperado de (a) — antes
- * dele, responder a sonda é FALHA; a partir dele, NÃO responder é FALHA — e o cache antigo
- * continuava valendo, guardando a memória de uma pergunta que mudou.
+ * A chave contém tudo que produz o veredito: a identidade do closure (conteúdo do fecho naquele
+ * sha) e a do harness (runner, stubs, request builder, versão do Deno). O que se espera de (a)
+ * é derivado do PRÓPRIO closure (`closureTemRamo`), então não entra na chave: closure diferente
+ * já é identidade diferente.
  */
-export function chaveDoManifesto(identidade: string, harness: string, desde: string | null): string {
-  return `${identidade}@${harness}@desde:${desde ?? 'nenhum'}`;
+export function chaveDoManifesto(identidade: string, harness: string): string {
+  return `${identidade}@${harness}`;
 }
 
-export function classificarVeredito(v: Veredito, posDesde: boolean): Classe {
+export function classificarVeredito(v: Veredito, closureTemORamo: boolean): Classe {
   if (v.efeitosNoImport > 0) return 'FALHA'; // IO no topo do módulo
   if (v.importErro !== null || !v.handler) return 'INVERIFICAVEL';
   const a = v.a;
@@ -171,15 +171,28 @@ export function classificarVeredito(v: Veredito, posDesde: boolean): Classe {
   if (!v.b.every((b) => b.efeitos === 0 && b.fetches === 0 && b.quiesceu && b.corpoHash === b0.corpoHash && b.status === b0.status)) {
     return 'FALHA';
   }
-  // Antes do `desde`, responder a sonda é impossível (o ramo não existia): se responder, algo
-  // muito errado. A partir do `desde`, NÃO responder é regressão silenciosa.
-  if (posDesde ? !a.probe : a.probe) return 'FALHA';
+  // Closure SEM o ramo que responde a sonda: impossível, algo muito errado. Closure COM o ramo que
+  // não responde: regressão silenciosa — o cron ficaria em silêncio achando que sondou.
+  if (closureTemORamo ? !a.probe : a.probe) return 'FALHA';
   if (v.c.classe === 'inconclusivo') return 'INVERIFICAVEL';
   return 'PASSA';
 }
 
-function ehAncestral(desde: string, sha: string, raiz: string): boolean {
-  return spawnSync('git', ['merge-base', '--is-ancestor', desde, sha], { cwd: raiz }).status === 0;
+/**
+ * O closure TEM o ramo? — e não "veio depois do commit X".
+ *
+ * A versão anterior perguntava `git merge-base --is-ancestor <desde> <sha>`, com `desde` gravado na
+ * allowlist. Isso amarra o veredito a um sha do PRÓPRIO branch: o rebase o reescreve e o squash do
+ * auto-merge o descarta, então logo após o merge o sha não existiria mais e todo closure novo — os
+ * que respondem a sonda — seria classificado como FALHA. A propriedade que decide é do closure, não
+ * da linha do tempo: se ele contém o ramo, tem de atestar; se não contém, atestar seria impossível.
+ */
+function closureTemRamo(sha: string, edge: string, raiz: string): boolean {
+  const r = spawnSync('git', ['show', `${sha}:supabase/functions/${edge}/index.ts`], {
+    cwd: raiz, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
+  });
+  if (r.status !== 0) throw new Mecanica(`${edge}@${sha}: index.ts ilegível ao decidir se o closure tem o ramo`);
+  return /atenderSondaOptions\(/.test(removerComentarios(r.stdout));
 }
 
 function executar(edge: string, sha: string | null, raiz: string, indexDireto?: string): Veredito {
@@ -339,12 +352,12 @@ function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) =
   m.vereditos[edge] ??= {};
   const visitadas = new Set<string>();
   for (const c of closures) {
-    const k = chaveDoManifesto(c.identidade, m.harness, alvo.desde);
+    const k = chaveDoManifesto(c.identidade, m.harness);
     visitadas.add(k);
     let e = m.vereditos[edge][k];
     if (!e) {
       const v = executar(edge, c.sha, raiz);
-      const cls = classificarVeredito(v, alvo.desde !== null && ehAncestral(alvo.desde, c.sha, raiz));
+      const cls = classificarVeredito(v, closureTemRamo(c.sha, edge, raiz));
       e = {
         sha: c.sha,
         veredito: cls,
