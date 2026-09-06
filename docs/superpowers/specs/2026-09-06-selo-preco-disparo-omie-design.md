@@ -1,4 +1,4 @@
-# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v7)
+# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v8)
 
 > Money-path de compras. Origem: decisão **§8.4 do PR #2187** (spec
 > `2026-09-05-selo-aprovacao-pedido-sayerlack-design.md`, branch `claude/frosty-goodall-f12941`), que
@@ -27,7 +27,13 @@
 > forjar, nem selador para chamar, nem "primeiro selo" para disputar, nem GUC, e o carimbo **viaja com
 > a linha** no split. A aprovação, a captura do portal e o split **deixam de ser tocados** por este spec.
 >
-> 🔴 **A v7 ainda NÃO foi desafiada.** Rodada 4 é pré-condição da implementação.
+> - **Rodada 4** sobre a v7 (`max · tentativa 1 · 425s · 161.439 tokens`): *"as regressões anteriores
+>   de aprovação, capability e GUC **não se reabrem** pela forma descrita"* — a troca de forma
+>   funcionou. Mas **não aprovar**: o próprio ROLLOUT fabricava procedência válida para preço
+>   adulterado, e a fronteira pré-aprovação continuava aberta (§9.9).
+>
+> 🔴 **A v8 ainda NÃO foi desafiada.** E ela carrega **uma decisão do founder em aberto (§9.9.2)** que
+> toca o #2187.
 
 ## 1. A invariante — e por que NÃO é igualdade
 
@@ -162,6 +168,10 @@ Ramo novo no trigger `BEFORE INSERT OR UPDATE ON pedido_compra_item` do #2187. P
    `status='falha_envio'` com `status_envio_portal='sucesso_portal'`. Ambiguidade resolve para a regra
    mais específica, e o risco residual é **de RÓTULO** (atribuição no sensor), nunca de autorização —
    os dois pares são autorizados de qualquer forma.
+
+🔴 **O trigger NÃO pode ser `SECURITY DEFINER`** — ele decide sobre a identidade do executor, e
+SECDEF trocaria justamente essa identidade, tornando a decisão circular. Verificar no catálogo
+(`prosecdef = false`) na postcondição da migration e nos testes (§9.9).
 
 **`authenticated` não escreve `preco_unitario` em nenhum estado pós-aprovação.** Quem escreve em
 `falha_envio` é a RPC de 1ª compra, que é SECDEF (§4.4). Autorização por **estado + `current_user`**,
@@ -307,12 +317,31 @@ próxima escrita autorizada de preço (o mesmo trigger que carimba).
 
 | motivo | recuperação |
 |---|---|
-| `preco_origem_ausente` / `preco_origem_invalida` | escrita por porta autorizada recarimba a linha → reprocessa. Se o preço já é válido e só falta carimbo, é SQL Editor (`manual_sql`) |
+| `preco_origem_ausente` / `preco_origem_invalida` | **procedimento de reparo do §5.4** — reescrever o mesmo preço NÃO recarimba |
 | `payload_divergente` (transporte) | bug de código da edge — corrigir, deployar, reprocessar. Nada a recarimbar |
 
 Para Sayerlack a recusa acontece **depois** de o portal já ter recebido o pedido: fornecedor tem a
 ordem, Omie não tem o PO. É estado operacional real, e é o **correto** — PO faltando é recuperável por
 conciliação; PO com preço errado é dinheiro saindo errado.
+
+### 5.4 Reparo de carimbo ausente — e por que o óbvio não funciona
+
+🔴 `UPDATE ... SET preco_unitario = 10` numa linha que **já** vale 10 **não entra no ramo de
+carimbar**: o gatilho é `NEW.preco_unitario IS DISTINCT FROM OLD.preco_unitario`, e não há distinção.
+Pior: o passo 2 do §4.3 então **restaura os NULLs antigos**. Passar `preco_origem` no UPDATE não ajuda
+— o trigger descarta input. A captura do portal escrevendo os mesmos 10 dá no mesmo (§9.9.3).
+
+Procedimento (SQL Editor, `postgres`, **uma transação**), a ser testado como parte da prova:
+
+```sql
+BEGIN;
+UPDATE pedido_compra_item SET preco_unitario = preco_unitario + 1 WHERE id = :id;  -- entra no ramo
+UPDATE pedido_compra_item SET preco_unitario = :preco_correto  WHERE id = :id;     -- carimba manual_sql
+COMMIT;
+```
+
+O teste é **recusa → reparo → disparo válido**, com o preço final idêntico ao inicial. Sem isso, a
+"recuperação" do §5.3 é promessa não executável.
 
 ⚠️ Recuperação de preço é **do founder, não do operador**: como `authenticated` não escreve preço
 pós-aprovação, a RPC de 1ª compra só resolve "preço ausente". Preço válido a corrigir é SQL Editor.
@@ -325,19 +354,29 @@ pós-aprovação, a RPC de 1ª compra só resolve "preço ausente". Preço váli
    'reload schema'`; regenerar `src/integrations/supabase/types.ts`. `DO $post$` relê o catálogo
    (existência, SECDEF onde previsto, `search_path` preso, `anon`/`authenticated` sem EXECUTE onde
    previsto, **e que `cap_compras_ler` é a capability usada na porta humana**).
-   **Backfill** de `preco_origem='backfill'` + `preco_gravado_em=now()` para itens de pedidos em estado
-   não-terminal. Carimba o que estiver lá: não há como saber se foi adulterado, e recusar toda a fila
-   em voo seria pior. `backfill` fica visível como origem própria. **Depois disso, `NULL` significa
+   🔴 **CORTE ATÔMICO: o backfill e a ativação do ramo são a MESMA transação** (§9.9.1). A v7 punha o
+   backfill na M1 e o ramo na leva seguinte, e **o próprio rollout fabricava procedência válida para
+   preço adulterado**: entre um e outro, um `master` fazia `UPDATE preco_unitario=100` sem tocar o
+   carimbo, e o carimbo de 10 ficava **colado ao preço 100** — a conferência depois passava (origem
+   presente, permitida, transporte batendo) e o Omie recebia 100. *"Mesma leva" não define ordem entre
+   operações manuais.*
+   Portanto, numa transação só: `LOCK TABLE pedido_compra_item IN SHARE ROW EXCLUSIVE MODE` →
+   backfill (`preco_origem='backfill'`, `preco_gravado_em=now()`) para itens de pedidos em estado
+   não-terminal → **criar o ramo do trigger** → commit. Sem janela para escrita concorrente.
+   O backfill carimba o que estiver lá — não há como saber se foi adulterado, e recusar toda a fila em
+   voo seria pior; `backfill` fica visível como origem própria. **Depois do commit, `NULL` significa
    "linha que ninguém carimbou" — e recusar é correto.**
    Nem `aprovar_pedido_sugerido`, nem `sayerlack_aplicar_custo_portal`, nem `pedido_compra_split` são
    recriadas — a v7 não as toca (§4.4). Isso encolhe a M1 e elimina o pré-voo `pg_get_functiondef`
    sobre três funções que outra sessão está reconstruindo.
-2. **Ramo do trigger + deploy da edge + Publish, na MESMA leva.** Publish não fecha aba antiga (o SW só
+2. **Deploy da edge + Publish — DEPOIS do commit da M1** (o ramo já está ativo; a edge nova depende
+   dele). Publish não fecha aba antiga (o SW só
    troca de build quando o cliente clica) — uma aba velha em `falha_envio` gravaria preço por PostgREST
    cru **sem carimbo**, e a edge nova recusaria; pior, atualizar a UI depois não salvaria, porque o
    preço já seria positivo e a RPC nova responderia `SP005` (§9.4). Com o ramo `SP006` ativo **junto**,
    a escrita da aba velha é **recusada no banco**: o preço fica ≤ 0 e a RPC nova ainda resolve.
-   Pré-condição medida por query: zero pedidos em `enviando_portal`.
+   ⚠️ Uma query de "zero pedidos em `enviando_portal`" **não fecha a janela de UPDATE dos itens** — foi
+   por isso que o corte virou transacional no passo 1, e não uma pré-condição medida (§9.9.1).
 3. **Sensor da fase seguinte:** §4.6.
 
 Deploy da edge decidido por `bun run pendencias:deploy` (ledger `deploy_atestacoes`), não pelo diff do
@@ -402,6 +441,9 @@ PR.
   a asserção é COMPORTAMENTO:
   - **zero chamadas ao Omie** quando a RPC (a) erra, (b) devolve `ok=false`, (c) devolve vazio,
     (d) devolve formato inválido — **nos DOIS modos** (`producao` e `dry_run`), 8 casos;
+  - 🔴 **e os CONTROLES POSITIVOS desses oito** (§9.9): RPC válida → **exatamente UMA** chamada ao
+    Omie, nos dois modos. Sem eles, *"uma edge que recusa tudo satisfaz os oito casos negativos"* — é a
+    mesma armadilha de sabotar sem linha de base verde, agora dentro do meu próprio gate;
   - assert de **contagem** de call sites de `IncluirPedCompra` (que não existia) — é ele, e só ele, que
     sustenta "inescapável";
   - **falsificação removendo a DECISÃO de recusar** (manter a chamada, ignorar o resultado): tem de
@@ -580,6 +622,77 @@ O que **não** fechou — três achados, nenhum remendado nesta v6 (ver §11):
 
 Ressalva do parecer: revisão de desenho contra o código disponível; as migrations novas não foram
 executadas e o `psql-ro` dele falhou por DNS (as medições são minhas, §3).
+
+### 9.9 Quarta rodada (v7) — a troca de forma FUNCIONOU, mas ainda **não aprovar**
+
+`gpt-6-astra · max · tentativa 1 · 425s · 161.439 tokens`. Palavras do parecer: *"as regressões
+anteriores de aprovação, capability e GUC **não se reabrem** pela forma descrita"*, e nenhum escape
+adicional por `ON CONFLICT`, UPDATE em massa, `COPY` ou `DELETE+INSERT` com o ramo ativo. A forma nova
+resistiu. O que não resistiu:
+
+#### 9.9.1 [P1] O próprio ROLLOUT fabricava procedência válida para preço adulterado
+
+```
+M1: item aprovado com preço=10, origem=backfill, instante=t0
+authenticated/master: UPDATE preco_unitario=100   ← ramo do trigger AINDA não existe
+ativação do ramo + edge nova
+conferência: origem presente, permitida, transporte bate → PASSA → nValUnit=100
+```
+
+A escrita **não precisa tocar o carimbo**: o carimbo de 10 fica colado ao preço 100. E *"mesma leva"
+não define ordem entre operações manuais*. Isso **reabre o efeito financeiro do achado da rodada 3
+sem precisar de split nem de selo novo**. Acatado no §6: backfill e criação do ramo na **mesma
+transação**, sob `LOCK TABLE`, e a edge só depois do commit.
+
+⚠️ E o Codex corrigiu a minha "honestidade" do §5.1: eu equiparei "não detecta escrita crua com trigger
+desabilitado" a "não resiste a administrador malicioso". **Não são equivalentes** — um hash protegido
+detectaria uma escrita que altera *somente o preço*. Não impedir um admin de adulterar tudo não torna
+as duas propriedades iguais. A forma por linha realmente perde essa detecção; o que a compensa é o
+corte atômico + o trigger sempre ativo, não uma nota de rodapé.
+
+#### 9.9.2 [P1] A fronteira PRÉ-aprovação — 🧭 decisão em aberto
+
+Com o mecanismo inteiro ativo: `pendente_aprovacao, preço=10 → master faz UPDATE cru para 100 → o
+trigger permite e carimba `primeira_compra` → aprovação ocorre → a conferência aceita 100`. A RPC
+responderia `SP005` para essa troca; o UPDATE direto obtém a **mesma procedência sem satisfazer o
+predicado**. Variante acidental, mais provável: duas abas com custo ausente, uma preenche 10, a **aba
+velha grava 100** com o pedido ainda pendente.
+
+🔴 **E o conserto óbvio não existe.** Medido em prod (2026-09-06): `gerar_pedidos_sugeridos_ciclo`,
+`gerar_pedidos_oportunidade_ciclo`, `aplicar_promocoes_no_ciclo` e `remover_itens_pedido_sugerido` são
+**todas INVOKER e todas executáveis por `authenticated`**. Quando um humano roda o ciclo pela tela,
+`current_user` **é** `authenticated` — indistinguível de um UPDATE cru dele. Então "recusar escrita de
+`authenticated`" quebraria o motor, e "exigir preço anterior ausente em todo UPDATE" barraria promoção
+legítima, que muda preço positivo. **O par `(estado × current_user)` não separa isto.** É limitação da
+forma, não descuido.
+
+**Minha recomendação, aplicada provisoriamente e reversível:** não constranger o motor. Fechar pelo
+lado da APROVAÇÃO — **incluir `preco_unitario` no token `p_itens_vistos` do #2187** (§3.4.3 de lá).
+O token já existe e já compara "o que você viu" contra "o que está lá"; acrescentar um campo faz a
+aprovação recusar exatamente o caso da aba velha, que é o realista. Isso **não contradiz a §8.4 do
+#2187**: lá a decisão foi manter preço fora do **selo**; o token é outra coisa — é anti-TOCTOU de
+leitura, não procedência.
+
+⚠️ **Mas toca o #2187**, que está em reconstrução — por isso é decisão do founder, não minha. Se ele
+preferir não tocar, a alternativa é aceitar o risco pré-aprovação como coberto pelo próprio ato de
+aprovar (o aprovador vê os números que aprova) e registrar isso como risco aceito.
+
+#### 9.9.3 [P2] A recuperação prometida não era executável
+
+`UPDATE SET preco_unitario = 10` numa linha que já vale 10 não entra no ramo (`IS DISTINCT FROM`), e o
+passo 2 do §4.3 restaura os NULLs. A "recuperação" do §5.3 era promessa sem procedimento. Acatado:
+§5.4 traz o reparo atômico e o teste **recusa → reparo → disparo válido** com preço final idêntico.
+
+#### 9.9.4 Duas notas de prova e de catálogo
+
+- **O trigger não pode ser `SECURITY DEFINER`**: ele decide sobre a identidade do executor, e SECDEF
+  trocaria essa identidade. Verificar `prosecdef = false` na postcondição. Acatado no §4.3.
+- 🔴 **Os oito casos negativos do gate da edge precisam de CONTROLES POSITIVOS** — *"uma edge que
+  recusa tudo também satisfaz aqueles oito casos"*. É a armadilha de sabotar sem linha de base verde,
+  dentro do meu próprio gate. Acatado no §7: RPC válida → **exatamente uma** chamada ao Omie, nos dois
+  modos.
+- Falta ainda testar UPDATE direto de preço positivo nos dois estados pré-aprovação, inclusive a aba
+  antiga após outro preenchimento — depende da decisão §9.9.2.
 
 ### 9.6 O que o Codex NÃO transformou em achado
 
