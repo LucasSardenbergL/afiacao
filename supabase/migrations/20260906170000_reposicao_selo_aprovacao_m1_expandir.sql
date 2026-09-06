@@ -58,6 +58,19 @@ COMMENT ON COLUMN public.pedido_compra_item.fator_portal_aprovado IS
   'Snapshot do fator_conversao do de-para na APROVAÇÃO. Diferente de fator_embalagem_portal, que é o fator com que o MOTOR arredondou (NULL = não arredondou).';
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- 1b. UNIQUE parcial na chave ATIVA do de-para (P1-5 do challenge Codex).
+--     Sem ele, contar e depois consumir são instruções separadas sem lock: um INSERT concorrente
+--     entre as duas faz a contagem ver 1 linha e o UPDATE escolher fonte arbitrária entre 2.
+--     O índice torna "exatamente uma ativa" invariante da TABELA, não conclusão de uma query.
+--     Pré-voo prod (psql-ro, 2026-09-06): ZERO duplicatas na chave ativa — o CREATE não quebra.
+--     ⚠️ Se algum dia quebrar, o motor e a edge JÁ dependem dessa unicidade (a edge recusa por
+--     `mapeamento_ambiguo`); a duplicata é o defeito, não o índice.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE UNIQUE INDEX IF NOT EXISTS ux_sku_fornecedor_externo_ativo
+  ON public.sku_fornecedor_externo (empresa, fornecedor_nome, sku_omie)
+  WHERE ativo;
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- 2. Predicado ÚNICO de "pedido de portal" (reusado pelo selo e pelos claims)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.reposicao_pedido_e_portal(p_empresa text, p_fornecedor_nome text)
@@ -107,8 +120,13 @@ BEGIN
 END;
 $function$;
 
+-- P0-2 (challenge Codex): primitiva INTERNA. `authenticated` NÃO alcança — quem a chama é a RPC
+-- de aprovação (SECURITY DEFINER, dona postgres) e a edge (service_role). Expor a primitiva
+-- permitiria selar fora da trilha e depois flipar o status por UPDATE direto, e o guard da M2
+-- (que autoriza por ESTADO) veria "selo bate com os itens" e aceitaria.
 REVOKE ALL ON FUNCTION public.reposicao_selo_itens(bigint) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.reposicao_selo_itens(bigint) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.reposicao_selo_itens(bigint) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reposicao_selo_itens(bigint) TO service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 4. reposicao_selar_pedido — o ÚNICO escritor do selo.
@@ -169,20 +187,6 @@ BEGIN
       v_bad.sku_codigo_omie, v_bad.qtde_final USING ERRCODE = 'SA005';
   END IF;
 
-  -- (2b) Múltiplo da embalagem, quando o motor arredondou. Espelho EXATO do
-  -- motor (20260904232555) e de qtdeFisicaOmie(qtdePortal(q)) da edge.
-  SELECT i.sku_codigo_omie, i.qtde_final INTO v_bad
-    FROM public.pedido_compra_item i
-   WHERE i.pedido_id = p_pedido_id
-     AND i.fator_embalagem_portal IS NOT NULL
-     AND trim_scale(round(GREATEST(1, ceil(round(i.qtde_final * i.fator_embalagem_portal, 6)))
-                          / i.fator_embalagem_portal, 6)) IS DISTINCT FROM trim_scale(i.qtde_final)
-   ORDER BY i.id LIMIT 1;
-  IF FOUND THEN
-    RAISE EXCEPTION 'Quantidade % do SKU % não é múltiplo da embalagem do portal — ajuste na tela antes de aprovar',
-      v_bad.qtde_final, v_bad.sku_codigo_omie USING ERRCODE = 'SA005';
-  END IF;
-
   IF v_portal THEN
     IF p_reusar_snapshot THEN
       -- Split: deriva do snapshot JÁ gravado pelo pai; NÃO relê o de-para vivo
@@ -198,29 +202,38 @@ BEGIN
       END IF;
     ELSE
       -- (3) Snapshot pela MESMA chave do motor e da edge (fornecedor EXATO).
-      SELECT i.sku_codigo_omie, d.n INTO v_bad
+      -- P1-5 (Codex): conta ATIVAS e UTILIZÁVEIS separadamente. Contar só as utilizáveis faria
+      -- "1 válida + 1 ativa com sku_portal vazio" passar na aprovação e falhar no envio, porque
+      -- `reposicao_conferir_envio` conta as ATIVAS. Os dois lados têm de contar a mesma coisa.
+      SELECT i.sku_codigo_omie, d.n_util AS n, d.n_ativas INTO v_bad
         FROM public.pedido_compra_item i
         CROSS JOIN LATERAL (
-          SELECT count(*) AS n FROM public.sku_fornecedor_externo s
+          SELECT count(*) FILTER (
+                   WHERE COALESCE(btrim(s.sku_portal), '') <> ''
+                     AND s.fator_conversao IS NOT NULL
+                     AND s.fator_conversao > 0
+                     AND s.fator_conversao < 1e9
+                 ) AS n_util,
+                 count(*) AS n_ativas
+            FROM public.sku_fornecedor_externo s
            WHERE s.empresa = v_ped.empresa
              AND s.fornecedor_nome = v_ped.fornecedor_nome
              AND s.sku_omie = i.sku_codigo_omie
              AND s.ativo
-             AND COALESCE(btrim(s.sku_portal), '') <> ''
-             AND s.fator_conversao IS NOT NULL
-             AND s.fator_conversao > 0
-             AND s.fator_conversao < 1e9
         ) d
-       WHERE i.pedido_id = p_pedido_id AND d.n <> 1
+       WHERE i.pedido_id = p_pedido_id AND (d.n_util <> 1 OR d.n_ativas <> 1)
        ORDER BY i.id LIMIT 1;
       IF FOUND THEN
+        IF v_bad.n_ativas > 1 THEN
+          RAISE EXCEPTION 'SKU % tem % linhas ativas no de-para de % — ambíguo, resolva antes de aprovar',
+            v_bad.sku_codigo_omie, v_bad.n_ativas, v_ped.fornecedor_nome USING ERRCODE = 'SA003';
+        END IF;
         IF v_bad.n = 0 THEN
           RAISE EXCEPTION 'SKU % não tem de-para ativo utilizável para % — cadastre antes de aprovar',
             v_bad.sku_codigo_omie, v_ped.fornecedor_nome USING ERRCODE = 'SA006';
-        ELSE
-          RAISE EXCEPTION 'SKU % tem % linhas ativas no de-para de % — ambíguo, resolva antes de aprovar',
-            v_bad.sku_codigo_omie, v_bad.n, v_ped.fornecedor_nome USING ERRCODE = 'SA003';
         END IF;
+        RAISE EXCEPTION 'SKU % tem de-para ativo inutilizável em % (código vazio ou fator fora do domínio)',
+          v_bad.sku_codigo_omie, v_ped.fornecedor_nome USING ERRCODE = 'SA006';
       END IF;
 
       UPDATE public.pedido_compra_item i
@@ -237,7 +250,12 @@ BEGIN
          AND s.fator_conversao > 0
          AND s.fator_conversao < 1e9;
 
-      -- (4) O fator com que o MOTOR arredondou tem de ser o que está vivo agora.
+      -- (4) O fator com que o MOTOR arredondou tem de ser o que está vivo agora. Este teste vem
+      -- ANTES do round-trip de propósito: com o de-para trocado (0,2 -> 0,18) a quantidade
+      -- aprovada deixa de ser múltiplo POR CONSEQUÊNCIA, e apontar SA005 mandaria o comprador
+      -- ajustar uma quantidade que não é o problema. A causa raiz é o de-para ter mudado.
+      -- (comentário original abaixo)
+      -- O fator com que o MOTOR arredondou tem de ser o que está vivo agora.
       SELECT i.sku_codigo_omie INTO v_bad
         FROM public.pedido_compra_item i
        WHERE i.pedido_id = p_pedido_id
@@ -248,6 +266,23 @@ BEGIN
         RAISE EXCEPTION 'O de-para do SKU % mudou depois que o motor gerou o pedido — cancele e aguarde o próximo ciclo',
           v_bad.sku_codigo_omie USING ERRCODE = 'SA004';
       END IF;
+      -- P1-2 (Codex): o round-trip da embalagem vale para TODO item de portal, com o fator do
+      -- SNAPSHOT — não só quando `fator_embalagem_portal` não é NULL. Medido em prod: 16 itens
+      -- têm fator do motor NULL e fator vivo <> 1; para eles a aprovação selaria 41 e a edge
+      -- VELHA gravaria 45 antes do Browserless, invalidando o próprio selo. A checagem anterior,
+      -- gateada por `fator_embalagem_portal IS NOT NULL`, era cega a exatamente esses.
+      SELECT i.sku_codigo_omie, i.qtde_final INTO v_bad
+        FROM public.pedido_compra_item i
+       WHERE i.pedido_id = p_pedido_id
+         AND i.fator_portal_aprovado IS NOT NULL
+         AND trim_scale(round(GREATEST(1, ceil(round(i.qtde_final * i.fator_portal_aprovado, 6)))
+                              / i.fator_portal_aprovado, 6)) IS DISTINCT FROM trim_scale(i.qtde_final)
+       ORDER BY i.id LIMIT 1;
+      IF FOUND THEN
+        RAISE EXCEPTION 'Quantidade % do SKU % não é múltiplo da embalagem do portal — ajuste na tela antes de aprovar',
+          v_bad.qtde_final, v_bad.sku_codigo_omie USING ERRCODE = 'SA005';
+      END IF;
+
     END IF;
   END IF;
 
@@ -273,8 +308,10 @@ BEGIN
 END;
 $function$;
 
+-- P0-2: idem. É esta a função cujo GRANT a `authenticated` fechava o buraco por fora da RPC.
 REVOKE ALL ON FUNCTION public.reposicao_selar_pedido(bigint, boolean) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.reposicao_selar_pedido(bigint, boolean) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.reposicao_selar_pedido(bigint, boolean) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reposicao_selar_pedido(bigint, boolean) TO service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 5. reposicao_conferir_envio — o que a edge chama ANTES do Browserless.
@@ -364,8 +401,10 @@ BEGIN
 END;
 $function$;
 
+-- Só a edge chama (service_role). A UI não confere selo — ela nem sabe que ele existe.
 REVOKE ALL ON FUNCTION public.reposicao_conferir_envio(bigint) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.reposicao_conferir_envio(bigint) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.reposicao_conferir_envio(bigint) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reposicao_conferir_envio(bigint) TO service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 6. aprovar_pedido_sugerido — 3 args (novo) + o de 2 args vira WRAPPER.
@@ -373,13 +412,18 @@ GRANT EXECUTE ON FUNCTION public.reposicao_conferir_envio(bigint) TO authenticat
 --    resolve as duas sem PGRST203 e o ACL do de 2 args é preservado (CREATE OR
 --    REPLACE). O de 3 args nasce com EXECUTE de PUBLIC — revogado abaixo.
 -- ─────────────────────────────────────────────────────────────────────────────
+-- SECURITY DEFINER com gate EXPLÍCITO (P0-2): a RPC passa a ser a ÚNICA porta para o selo, e
+-- por isso precisa executar as primitivas que `authenticated` já não alcança. DEFINER bypassa a
+-- RLS, então o gate no corpo substitui a policy — não é decoração.
+-- ⚠️ O WRAPPER de 2 args continua INVOKER de propósito: a postcondição da 20260906151715 (outra
+-- sessão) exige `prosecdef=false` nele, e é a assinatura que a UI velha chama.
 CREATE OR REPLACE FUNCTION public.aprovar_pedido_sugerido(
   p_pedido_id bigint,
   p_usuario text,
   p_itens_vistos jsonb
 )
 RETURNS jsonb
-LANGUAGE plpgsql
+LANGUAGE plpgsql SECURITY DEFINER
 SET search_path TO 'public', 'pg_temp'
 AS $function$
 DECLARE
@@ -387,6 +431,9 @@ DECLARE
   v_div    integer;
   v_corte  timestamptz;
 BEGIN
+  IF auth.uid() IS NOT NULL AND NOT private.cap_compras_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'Acesso negado: requer capacidade de compras' USING ERRCODE = '42501';
+  END IF;
   SELECT * INTO v_pedido FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('error', 'pedido não encontrado');
@@ -575,7 +622,7 @@ BEGIN
          portal_proximo_retry_em = now() + interval '15 minutes'
    WHERE id = p_pedido_id
      AND COALESCE(status_envio_portal, 'nao_aplicavel') <> 'enviando_portal'
-     AND status IN ('aprovado_aguardando_disparo', 'disparado')
+     AND status IN ('aprovado_aguardando_disparo', 'disparado', 'falha_envio')
      AND portal_recusa_motivo IS NULL
   RETURNING true INTO v_claimed;
   RETURN COALESCE(v_claimed, false);
@@ -596,10 +643,14 @@ BEGIN
   RETURN QUERY
   UPDATE public.pedido_compra_sugerido p
      SET status_envio_portal = 'enviando_portal',
-         portal_erro = NULL
+         portal_erro = NULL,
+         -- P1-4 (Codex): sem este carimbo o claim nasce VELHO num retry de 15 min e o watchdog
+         -- (stale = atualizado_em < now()-5min) o declara `indeterminado_requer_conciliacao`
+         -- enquanto o Browserless ainda está executando. A irmã lock_candidatos já carimbava.
+         atualizado_em = now()
    WHERE p.id = ANY(p_ids)
      AND public.reposicao_pedido_e_portal(p.empresa, p.fornecedor_nome)
-     AND p.status IN ('aprovado_aguardando_disparo', 'disparado')
+     AND p.status IN ('aprovado_aguardando_disparo', 'disparado', 'falha_envio')
      AND p.portal_recusa_motivo IS NULL
      AND p.status_envio_portal IN ('pendente_envio_portal', 'erro_retentavel')
   RETURNING p.id;
@@ -623,7 +674,7 @@ BEGIN
     SELECT p.id, p.status_envio_portal AS status_anterior
       FROM public.pedido_compra_sugerido p
      WHERE public.reposicao_pedido_e_portal(p.empresa, p.fornecedor_nome)
-       AND p.status IN ('aprovado_aguardando_disparo', 'disparado')
+       AND p.status IN ('aprovado_aguardando_disparo', 'disparado', 'falha_envio')
        AND p.portal_recusa_motivo IS NULL
        AND p.status_envio_portal IN ('pendente_envio_portal', 'erro_retentavel')
        AND COALESCE(p.portal_tentativas, 0) < 3
@@ -661,6 +712,7 @@ DECLARE
   v_status        text;
   v_split_parent  bigint;
   v_selo_pai      text;
+  v_portal_pai    text;
   v_itens_total   integer;
   v_total_chunks  integer;
   v_chunk_idx     integer;
@@ -675,7 +727,8 @@ BEGIN
     RAISE EXCEPTION 'chunk_size deve ser >= 1';
   END IF;
 
-  SELECT status, split_parent_id, aprovacao_selo INTO v_status, v_split_parent, v_selo_pai
+  SELECT status, split_parent_id, aprovacao_selo, COALESCE(status_envio_portal, 'nao_aplicavel')
+    INTO v_status, v_split_parent, v_selo_pai, v_portal_pai
     FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Pedido % não encontrado', p_pedido_id;
@@ -685,6 +738,27 @@ BEGIN
   END IF;
   IF v_split_parent IS NOT NULL THEN
     RAISE EXCEPTION 'Pedido % já é filho de um split (parent=%)', p_pedido_id, v_split_parent;
+  END IF;
+
+  -- P0-1 (challenge Codex): o lock do pai serializa as transações, mas sem LER o status do
+  -- PORTAL o predicado fica incompleto. Sequência que duplicava pedido no fornecedor:
+  --   claim marca `enviando_portal` (NÃO mexe no status principal) → a edge lê os itens em
+  --   memória → o split pega o lock DEPOIS, vê só `aprovado_aguardando_disparo`, move os itens e
+  --   cria filhos aprovados → a edge envia o PAI com o payload que tinha → os filhos também
+  --   ficam elegíveis ⇒ PO do pai + POs dos filhos.
+  -- Fail-closed: só divide quem NUNCA tocou o portal.
+  IF v_portal_pai <> 'nao_aplicavel' THEN
+    RAISE EXCEPTION 'Pedido % está em status_envio_portal=% — dividir agora pode duplicar o pedido no fornecedor',
+      p_pedido_id, v_portal_pai USING ERRCODE = 'SA009';
+  END IF;
+
+  -- P1-3 (challenge Codex): `v_selo_pai IS NOT NULL` provava que o pai FOI selado um dia, não que
+  -- ele continua íntegro. Como a M1 ainda não tem o trigger de trava, uma edição posterior pode
+  -- ter invalidado o pai — e o split abençoaria o estado alterado gerando selos VÁLIDOS para os
+  -- filhos. Reusar snapshot exige o selo do pai BATENDO agora.
+  IF v_selo_pai IS NOT NULL AND v_selo_pai IS DISTINCT FROM public.reposicao_selo_itens(p_pedido_id) THEN
+    RAISE EXCEPTION 'Pedido % foi alterado depois de aprovado (selo não confere) — cancele e aguarde o ciclo',
+      p_pedido_id USING ERRCODE = 'SA010';
   END IF;
 
   SELECT count(*) INTO v_itens_total FROM public.pedido_compra_item WHERE pedido_id = p_pedido_id;
@@ -838,6 +912,10 @@ BEGIN
                   WHERE n.nspname='public' AND p.proname='pedido_compra_split'
                     AND pg_get_functiondef(p.oid) LIKE '%reposicao_selar_pedido%') THEN
     RAISE EXCEPTION 'M1 FALHOU: pedido_compra_split não sela os filhos — todo pedido Sayerlack grande viraria selo_ausente';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+                  WHERE c.relname = 'ux_sku_fornecedor_externo_ativo' AND i.indisunique AND i.indisvalid) THEN
+    RAISE EXCEPTION 'M1 FALHOU: ux_sku_fornecedor_externo_ativo ausente ou inválido — a unicidade do de-para ativo voltaria a ser conclusão de query';
   END IF;
 
   RAISE NOTICE 'OK M1: 5 colunas + 4 funções do selo + RPC 3-args e wrapper + cancelar/claims/split seal-aware. Triggers de enforcement ficam para a M2.';
