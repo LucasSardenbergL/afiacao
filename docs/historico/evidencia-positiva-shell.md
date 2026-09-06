@@ -462,6 +462,11 @@ command grep -q '^RC=' .mut1.txt                                     # …e espe
 
 **A regra em uma linha: ausência de processo alheio não é presença do meu resultado.**
 
+⇒ **vigiado por `.claude/hooks/sonda-processo-guard.sh`** (AVISO, nunca bloqueio): dispara na
+CONJUNÇÃO laço `while`/`until` + sonda de processo por texto na CONDIÇÃO + `sleep` no CORPO —
+`pgrep` sozinho, como o do `vigia-worktree.sh`, fica calado. A decisão, o que a revisão adversária
+mudou e a lição sobre falsificação estão em [guard-de-sonda-de-processo.md](guard-de-sonda-de-processo.md).
+
 Mesma classe de [teste-que-afirma-o-checkout.md](teste-que-afirma-o-checkout.md) — e, por acaso,
 sobre o mesmo alvo — uma camada acima: lá a asserção media o **CHECKOUT** do CI em vez do código;
 aqui a sonda mede a **tabela de processos** da máquina em vez do trabalho da própria worktree. O
