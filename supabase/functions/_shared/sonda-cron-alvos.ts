@@ -57,6 +57,10 @@ const SEM_CREDENCIAL: ControlePositivo = {
   nota: "época SEM gate: o POST cru executa o fluxo real — é a classe que derrubou o desenho por header",
 };
 
+// ⚠️ `sync-reprocess` NÃO entra na F1 por COLISÃO, não por risco: o PR #2224 (money-path, preço
+// ausente do Omie) bumpa o mesmo `versao.ts` para `v1.3-preco-ausente-nao-e-zero` e mergeia antes.
+// Ela entra na F4 (ondas), depois daquele merge, com `desde` próprio. A classe que ela traria
+// ("roteia por action") não é risco DO OPTIONS: o roteamento acontece muito depois do bloco.
 export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   {
     edge: "sonda-relay",
@@ -70,15 +74,6 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   },
   { edge: "monthly-report", desde: "2c55a71edca3", controles: [SEM_CREDENCIAL, CRON, BEARER] },
   { edge: "calculate-scores", desde: "2c55a71edca3", controles: [SEM_CREDENCIAL, CRON, BEARER] },
-  {
-    edge: "sync-reprocess",
-    desde: "2c55a71edca3",
-    controles: [
-      { ...SEM_CREDENCIAL, corpo: '{"action":"reprocess_orders","account":"oben"}', nota: "época SEM gate + roteamento por action: corpo vazio cai no 400 do default sem tocar banco" },
-      { ...CRON, corpo: '{"action":"reprocess_orders","account":"oben"}', nota: "roteia por action: corpo vazio cai em 400 sem IO; reprocess_orders lê e reconcilia pedidos" },
-      { ...BEARER, corpo: '{"action":"reprocess_orders","account":"oben"}', nota: "mesma action na época em que o gate só aceitava Bearer" },
-    ],
-  },
 ];
 
 export function slugsDaAllowlist(): ReadonlySet<string> {
