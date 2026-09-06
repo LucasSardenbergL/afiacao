@@ -197,6 +197,12 @@ REVOKE ALL ON FUNCTION public.sayerlack_aplicar_custo_portal(bigint, jsonb, nume
 REVOKE EXECUTE ON FUNCTION public.sayerlack_aplicar_custo_portal(bigint, jsonb, numeric) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sayerlack_aplicar_custo_portal(bigint, jsonb, numeric) TO service_role;
 
+-- O #2459 falhou com PGRST202 — a função EXISTIA em pg_proc, o schema cache do PostgREST é que
+-- não a via. O reload costuma vir do event trigger do Supabase, mas depender disso é o que já
+-- custou um envio cego: emitir o NOTIFY explicitamente é barato, idempotente e é a diferença
+-- entre a captura gravar e continuar caindo em erro_rpc.
+NOTIFY pgrst, 'reload schema';
+
 -- Postcondição: colunas no ar, e a função é A NOVA (cita a coluna dedicada e o CP005) — não a
 -- versão anterior, que gravava o provado por cima do derivado. Sem este último assert, colar
 -- metade do bloco deixaria as colunas existindo e a função velha no ar, em silêncio.
