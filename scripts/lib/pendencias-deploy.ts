@@ -397,6 +397,14 @@ export function lerTolerancia(bruto: string | undefined): boolean {
  * identidade forte é o `request_id` que o PASSO 1 do `sonda:sql` devolve — por isso a atribuição é
  * opcional, explícita e por id. Casar por ORDEM (a i-ésima resposta = a i-ésima edge da lista)
  * seria fabricar: as respostas chegam fora de ordem e nem toda edge da leva responde.
+ *
+ * ⚠️ LIMITE (nomeado, não resolvido): sem `--ids`, o sinal dura só a JANELA de 6h do pg_net. Estas
+ * respostas não entram no ledger — não têm edge, e o §"por que não gravar com edge fictícia" do CLI
+ * explica por que inventar uma é pior. Passadas as 6h, as mesmas edges voltam a `NUNCA_ATESTADA` e
+ * o relatório volta a pedir a 1ª sonda; o founder sonda, recebe a mesma resposta antiga, e a classe
+ * reaparece por mais 6h. O laço não é infinito, mas RECOMEÇA. Quem o corta de vez é o `--ids`: a
+ * atribuída é observação com edge REAL, e a fila P1/P2 dela é durável como qualquer outra. Fechar
+ * o buraco por completo pede gravar a atribuída no ledger — escrita, que este CLI não faz.
  */
 
 /** Uma resposta `probe:true` da janela que não diz de quem é. `versao` é tudo que ela carrega. */
