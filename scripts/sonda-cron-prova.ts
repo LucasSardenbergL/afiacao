@@ -348,7 +348,7 @@ function gravarManifesto(m: Manifesto, raiz: string): void {
   writeFileSync(resolve(raiz, MANIFESTO), `${JSON.stringify(ord, null, 1)}\n`);
 }
 
-function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) => void) {
+function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) => void, reexecutarTudo = false) {
   // Default-deny também aqui: só se prova o que o cron vai sondar (o `executar` relê a entrada
   // para pegar os controles; esta checagem é a que dá mensagem legível se alguém chamar direto).
   if (!SONDA_CRON_ALVOS.some((a) => a.edge === edge)) {
@@ -362,8 +362,9 @@ function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) =
   for (const c of closures) {
     const k = chaveDoManifesto(c.identidade, m.harness);
     visitadas.add(k);
-    let e = m.vereditos[edge][k];
-    if (!e) {
+    const commitado = m.vereditos[edge][k];
+    let e = commitado;
+    if (!e || reexecutarTudo) {
       const v = executar(edge, c.sha, raiz);
       const cls = classificarVeredito(v, closureTemRamo(c.sha, edge, raiz));
       e = {
@@ -373,8 +374,15 @@ function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) =
         controle: v.c?.classe ?? 'inconclusivo',
         em: new Date().toISOString(),
       };
+      // ADULTERAÇÃO: o manifesto dizia uma coisa e a re-execução diz outra. Reprovar aqui é o que
+      // torna o arquivo commitado inútil como forma de calar o gate.
+      if (commitado && commitado.veredito !== cls) {
+        ruins.push(
+          `${edge}@${c.sha.slice(0, 9)}: MANIFESTO ADULTERADO — commitado diz ${commitado.veredito}, a re-execução diz ${cls}`,
+        );
+      }
       m.vereditos[edge][k] = e;
-      log(`  ${edge}@${c.sha.slice(0, 9)} ${cls}${e.motivo ? ` — ${e.motivo.slice(0, 110)}` : ''}`);
+      if (!commitado) log(`  ${edge}@${c.sha.slice(0, 9)} ${cls}${e.motivo ? ` — ${e.motivo.slice(0, 110)}` : ''}`);
     }
     if (e.veredito === 'PASSA') passa++;
     else ruins.push(`${edge}@${e.sha.slice(0, 9)}: ${e.veredito} — ${e.motivo.slice(0, 140)}`);
@@ -437,7 +445,7 @@ export function main(argv: string[], raiz = process.cwd()): number {
       }
       const g1 = gateG1(edge, readFileSync(resolve(raiz, `supabase/functions/${edge}/index.ts`), 'utf8'));
       if (g1) { log(`G1 ❌ ${g1}`); falhas++; }
-      const r = provarEdge(edge, m, raiz, log);
+      const r = provarEdge(edge, m, raiz, log, argv.includes('--gate'));
       log(`${edge}: ${r.passa}/${r.total} closures PASSA ${r.ruins.length ? '❌' : '✅'}${r.podadas ? ` (${r.podadas} entrada(s) órfã(s) podada(s))` : ''}`);
       for (const x of r.ruins) log(`   ${x}`);
       if (r.ruins.length > 0) falhas++;
@@ -456,13 +464,17 @@ export function main(argv: string[], raiz = process.cwd()): number {
     const g4 = gateG4(migs, SONDA_CRON_ALVOS.map((a) => a.edge));
     if (g4) { log(`G4 ❌ ${g4}`); falhas++; }
 
-    gravarManifesto(m, raiz);
     if (argv.includes('--gate')) {
-      const sujo = spawnSync('git', ['diff', '--quiet', '--', MANIFESTO], { cwd: raiz }).status !== 0;
-      if (sujo) {
-        log(`❌ o manifesto mudou durante o --gate: rode \`bun run sonda:cron-prova -- --backfill --tudo\` e commite ${MANIFESTO}`);
-        falhas++;
-      }
+      // No `--gate` o manifesto NÃO é regravado, e a checagem não é "o arquivo está idêntico".
+      // Motivo medido (2026-09-06): o GitHub testa um merge commit EFÊMERO que não existe quando o
+      // manifesto é gerado, então "idêntico" é impossível no CI e reprovaria todo PR. O que o gate
+      // exige é mais forte: ele RE-EXECUTA cada closure (ignorando o cache) e reprova (a) qualquer
+      // veredito ≠ PASSA e (b) qualquer divergência entre o commitado e a re-execução — que é a
+      // definição de manifesto adulterado.
+      const novos = spawnSync('git', ['diff', '--quiet', '--', MANIFESTO], { cwd: raiz }).status !== 0;
+      if (novos) log(`ℹ️  o manifesto local ficaria diferente (closures novos, ex.: o merge commit do PR) — não é reprovação`);
+    } else {
+      gravarManifesto(m, raiz);
     }
     return falhas === 0 ? 0 : 1;
   } catch (e) {
