@@ -192,6 +192,38 @@ Dois sinais funcionaram como projetado, e vale dizer quais:
   discordam sobre um teste PURO (que não lê ambiente nem rede), a primeira hipótese não é "flake":
   é **o working tree e o commit terem conteúdos diferentes**.
 
+## Desfecho: aplicado, validado e EXECUTADO (2026-09-06)
+
+O founder colou a migration no SQL Editor. A verificação foi em três camadas, e as três eram
+necessárias porque cada uma responde a uma pergunta diferente:
+
+| camada | pergunta | resultado |
+|---|---|---|
+| `db/valida-preco-ausente-nao-e-zero.sql` | os objetos existem no estado certo? | 10/10 ✅ (antes: 8 ❌) |
+| `pg_proc.proacl` comparado ao pré-apply | o `DROP FUNCTION` abriu alguma? | idêntico, função por função |
+| `db/sonda-exec-preco-ausente.sql` | elas **rodam**? | as 6, sem quebra |
+
+A terceira não é redundante, e é a que quase ficou de fora. As duas primeiras leem o **catálogo**:
+elas provam que o objeto existe e com que privilégio. **Existir não é funcionar** — SQL e plpgsql
+são late-bound, o `CREATE` aceita corpo que só quebra ao RODAR, e este repo já pagou isso 3x. Sem a
+sonda, a fatia teria sido declarada pronta com base em duas evidências que não tocam o corpo.
+
+> **A validação de catálogo e a de execução respondem perguntas diferentes.** Depois de um apply que
+> recria função, as duas são obrigatórias — e a de execução é a que o ritual esquece, porque a de
+> catálogo dá ✅ e parece suficiente.
+
+**Escrever a sonda quase produziu um veredito fabricado**, e isso vale mais que a sonda. O gate
+interno de staff e o `permission denied for function` do ACL compartilham a **SQLSTATE 42501**. A
+primeira versão classificava só pelo código e respondeu **GATE** — "o corpo rodou até o gate" — para
+uma função em que ela **nem tinha entrado**. Ausência de acesso lida como aprovação, dentro de uma
+ferramenta cujo trabalho é justamente separar os dois. Corrigida, ela distingue três estados, e o
+terceiro é o que faltava: **SEM ACESSO não é veredito**.
+
+Dados intactos após o apply: os mesmos 70.852 itens, zero nulos, zero zeros — a migration só mexe em
+schema e função. A reprodução do helper sobre os dados reais dá 1.227 clientes, 43.587 itens
+computáveis, **0 sem preço** e 27.225 sem custo: o gargalo da cobertura de margem é, e continua
+sendo, **custo** — não preço.
+
 ## Pendências assumidas
 
 - **`omie-vendas-sync:3161`** (trava de crédito na edição) faz `Number(oi?.produto?.valor_unitario) || 0`
