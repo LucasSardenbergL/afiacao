@@ -1756,6 +1756,36 @@ export type Database = {
           },
         ]
       }
+      deploy_atestacoes: {
+        Row: {
+          edge: string
+          fonte: string
+          observado_em: string
+          registrado_em: string
+          request_id: number
+          versao: string
+          via: string
+        }
+        Insert: {
+          edge: string
+          fonte: string
+          observado_em: string
+          registrado_em?: string
+          request_id: number
+          versao: string
+          via: string
+        }
+        Update: {
+          edge?: string
+          fonte?: string
+          observado_em?: string
+          registrado_em?: string
+          request_id?: number
+          versao?: string
+          via?: string
+        }
+        Relationships: []
+      }
       des_checkin_qualitativo: {
         Row: {
           ano: number
@@ -19069,6 +19099,18 @@ export type Database = {
       delete_push_subscription: {
         Args: { p_endpoint: string }
         Returns: undefined
+      }
+      deploy_atestacoes_colher: { Args: never; Returns: number }
+      deploy_atestacoes_janela_viva: {
+        Args: never
+        Returns: {
+          edge: string
+          fonte: string
+          observado_em: string
+          request_id: number
+          versao: string
+          via: string
+        }[]
       }
       des_data_faturamento_prevista: {
         Args: {
