@@ -164,6 +164,34 @@ conserta nenhuma linha existente, e nenhum health score muda de valor no dia do 
 fazer agora é que a defesa que já existia era inalcançável — e uma defesa inalcançável é pior que
 nenhuma, porque o teste verde ao lado dela desencoraja quem passaria por ali de olhar de novo.
 
+## A armadilha que peguei no fim: o mutcheck interrompido comita por você
+
+O `test:edges` passou local e reprovou no CI. A causa não era ambiente: o commit levava uma
+alteração que eu **não escrevi** — `ATRASO_BASE_MS` de 1000 para 800 em
+`_shared/cmc-snapshot-retry.ts`. É uma **mutação plantada pelo `bun run mutcheck`**, que eu rodei
+sob `timeout 600` para diagnosticar o job vermelho. O timeout matou o processo no meio de um
+contrato, **antes do cleanup que restaura o arquivo**, e o `git add -A` seguinte varreu o bug para
+dentro do commit.
+
+> **Uma ferramenta que ESCREVE no working tree para depois restaurar deixa lixo quando é
+> interrompida — e `git add -A` não distingue o que você escreveu do que ela plantou.** Antes de
+> commitar depois de rodar mutcheck (ou qualquer harness de falsificação que sabote o repo), rode
+> `git status` e olhe a LISTA, não só o seu recorte mental do que mudou. E nunca envolva essas
+> ferramentas em `timeout` sem prever a restauração.
+
+É a irmã da regra que o CLAUDE.md já tem ("COMMITE antes de falsificar — `restaurar()` costuma ser
+`git checkout --`"), pelo outro lado: ali o risco é a restauração **apagar** seu trabalho; aqui é a
+restauração **não acontecer** e o trabalho dela virar seu.
+
+Dois sinais funcionaram como projetado, e vale dizer quais:
+
+- **O teste de equivalência do backoff pegou a mutação.** É literalmente para isso que o mutcheck
+  existe — só que desta vez ele mediu um bug que estava commitado, não plantado.
+- **A divergência local-verde / CI-vermelho foi o que denunciou o commit sujo.** Local eu já tinha o
+  arquivo restaurado por uma re-execução; o CI leu o que estava commitado. Quando local e CI
+  discordam sobre um teste PURO (que não lê ambiente nem rede), a primeira hipótese não é "flake":
+  é **o working tree e o commit terem conteúdos diferentes**.
+
 ## Pendências assumidas
 
 - **`omie-vendas-sync:3161`** (trava de crédito na edição) faz `Number(oi?.produto?.valor_unitario) || 0`
