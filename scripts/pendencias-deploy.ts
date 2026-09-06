@@ -20,6 +20,13 @@
  *      Zero aqui NÃO é "tudo limpo" — um cron que devolvesse 0 ensinaria o operador a ler
  *      silêncio como aprovação, que é exatamente o hábito que a varredura existe para desfazer.
  *
+ * `--json` (2026-09-06): a MESMA varredura, serializada para outro programa ler — o Passo 3 do
+ * `/fecho` (`.claude/skills/fecho/scripts/edges-pendentes.sh`) consulta o ledger por aqui antes de
+ * classificar uma edge como SEM_PROVA, porque a janela viva de 6 h evaporava prova que o ledger
+ * guarda. O contrato é a marca `FORMATO_JSON`: exit 0/1 SEM ela é "presente-porém-quebrado" para o
+ * consumidor, que trata como não consultado (fail-closed). Os exit codes são os mesmos do modo
+ * humano — inclusive o 2 de flag desconhecida, que para o consumidor já significa não consultado.
+ *
  * POR QUE O LEDGER, E NÃO SÓ A JANELA (2026-09-05): `pg_net.ttl = 6h`. Antes, cada sessão via
  * 47/54 edges "sem sonda na janela" e o relatório mandava o founder colar o SQL de sonda DE NOVO —
  * a prova de ontem valia zero hoje. O ledger é alimentado por cron (`deploy-atestacoes-colher`,
@@ -104,6 +111,44 @@ export const CRON_COLETOR = 'deploy-atestacoes-colher';
 
 /** O coletor roda de 15 em 15 min; 3 passagens perdidas é cron parado, não atraso. */
 export const COLETOR_TOLERANCIA_MIN = 45;
+
+/**
+ * Marca de FORMA da saída `--json`. O consumidor (`edges-pendentes.sh`, Passo 3 do /fecho) exige
+ * esta string literal ANTES de ler qualquer veredito: exit 0/1 sem ela é "presente-porém-quebrado"
+ * (bun que imprimiu outra coisa, contrato que mudou) e cai no fail-closed dele — a resposta tem de
+ * ser POSITIVA, não só "não deu erro". Mudança incompatível no JSON = bump aqui, e o shell velho
+ * passa a RECUSAR em vez de ler errado. A paridade das duas pontas é testada como texto.
+ */
+export const FORMATO_JSON = 'pendencias-deploy/1';
+
+/**
+ * `--json` está presente no argv? Quem RECUSA argumento desconhecido continua sendo o `lerArgIds`
+ * (⇒ exit 2, "mecânica"): um validador só, e a recusa dele já é o que o consumidor trata como
+ * ledger não consultado. Esta função apenas LÊ a flag — por isso `lerArgIds` precisa conhecê-la.
+ */
+export function lerArgJson(argv: string[]): boolean {
+  return argv.includes('--json');
+}
+
+/**
+ * O relatório inteiro como JSON, com a marca de formato na frente. Os vereditos vão INTEIROS
+ * (`Veredito`, campo a campo): o consumidor decide o que ler, e `observado: null` na NUNCA_ATESTADA
+ * continua sendo null — ausente ≠ zero, então o shell recebe a ausência e não um `""` que pudesse
+ * casar com um esperado vazio.
+ */
+export function serializarRelatorio(rel: Relatorio, meta: { ref: string; tolerarNunca: boolean }): string {
+  return JSON.stringify({
+    formato: FORMATO_JSON,
+    ref: meta.ref,
+    tolerarNunca: meta.tolerarNunca,
+    totalMapeadas: rel.totalMapeadas,
+    totalObservadas: rel.totalObservadas,
+    totalPendentes: rel.totalPendentes,
+    totalUrgentes: rel.totalUrgentes,
+    foraDoMapaHistoricas: rel.foraDoMapaHistoricas,
+    vereditos: rel.vereditos,
+  });
+}
 
 /**
  * O que prod já disse sobre cada edge — a linha MAIS RECENTE por edge, de duas fontes:
@@ -203,7 +248,7 @@ ORDER BY r.created DESC, r.id DESC;
  * ANTIGO com cara de novo, e o founder concluiria que a atribuição não funciona.
  */
 export function lerArgIds(argv: string[]): string | null {
-  const USO = 'Uso: bun run pendencias:deploy [--ids=\'{"<edge>": <request_id>, …}\']';
+  const USO = 'Uso: bun run pendencias:deploy [--json] [--ids=\'{"<edge>": <request_id>, …}\']';
   let ids: string | null = null;
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -215,6 +260,10 @@ export function lerArgIds(argv: string[]): string | null {
       i += 1;
     } else if (arg.startsWith('--ids=')) {
       valor = arg.slice('--ids='.length);
+    } else if (arg === '--json') {
+      // conhecida aqui, LIDA em `lerArgJson`: um validador só para todo o argv, senão a flag nova
+      // cairia em "argumento desconhecido" e o `--json` nasceria recusado pelo próprio CLI.
+      continue;
     } else {
       throw new Error(`argumento desconhecido: ${arg}. ${USO}`);
     }
@@ -423,9 +472,11 @@ function imprimir(rel: Relatorio, linhasSemIdentidade: string[]): void {
 export function main(argv: string[] = []): number {
   let tolerarNunca: boolean;
   let idsBruto: string | null;
+  let json: boolean;
   try {
     tolerarNunca = lerTolerancia(process.env.PENDENCIAS_TOLERAR_NUNCA_ATESTADA);
     idsBruto = lerArgIds(argv);
+    json = lerArgJson(argv);
   } catch (e) {
     console.error(`❌ MECÂNICA: ${(e as Error).message}`);
     return 2;
@@ -529,11 +580,16 @@ export function main(argv: string[] = []): number {
     return 2;
   }
 
-  imprimir(rel, linhasSemIdentidade);
+  // No modo `--json` o stdout é SÓ o JSON: qualquer outra linha ali quebraria o parse do
+  // consumidor, que trataria como não consultado. Avisos vão para o stderr.
+  if (json) console.log(serializarRelatorio(rel, { ref: REF_MAIN, tolerarNunca }));
+  else imprimir(rel, linhasSemIdentidade);
 
   const nunca = rel.vereditos.filter((v) => v.estado === 'NUNCA_ATESTADA').length;
   if (tolerarNunca && nunca > 0) {
-    console.log(`\n⚠️  PENDENCIAS_TOLERAR_NUNCA_ATESTADA=1: ${nunca} nunca atestada(s) NÃO contam como pendência nesta execução.`);
+    const aviso = `\n⚠️  PENDENCIAS_TOLERAR_NUNCA_ATESTADA=1: ${nunca} nunca atestada(s) NÃO contam como pendência nesta execução.`;
+    if (json) console.error(aviso);
+    else console.log(aviso);
   }
   return decidirExit({
     totalPendentes: rel.totalPendentes,
