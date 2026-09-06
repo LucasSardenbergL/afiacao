@@ -12,12 +12,13 @@
 --    aprovação). O EXCEPTION ainda tem um bônus: aborta a transação, então nem por acidente
 --    esta sonda deixa rastro no banco.
 --
--- ⚠️ POR QUE DOIS BLOCOS — o orçamento de exibição está MEDIDO, não estimado (2026-09-06):
---    o SQL Editor mostrou 362 caracteres (5 linhas) e cortou o resto; a versão anterior, com
---    445 caracteres, perdeu as linhas 5 e 6. E numa 3ª medição, com `jsonb::text` inteiro,
---    ele cortou no MEIO de uma linha ⇒ o limite é de CARACTERES (entre 362 e 444), não de
---    linhas. Cada bloco daqui cabe em ~280 e reporta o próprio veredito agregado.
---    Regra ao acrescentar função: some os caracteres do relatório; passou de ~300, abra bloco.
+-- ⚠️ POR QUE DOIS BLOCOS — o orçamento de exibição é pequeno e NÃO é um número fixo
+--    (4 rodadas medidas em 2026-09-06): 445 chars perderam 2 linhas; a versão com
+--    `jsonb::text` cortou no MEIO de uma linha; um relatório de 362 apareceu inteiro; e
+--    logo depois o corte veio já aos 296 — MAIS CEDO que os 362. Não calibre pelo número.
+--    O desenho é que aguenta: cada bloco daqui cabe em ~240 chars / 5 linhas (medido
+--    INTEIRO no SQL Editor, marcador incluído), com o veredito agregado na FRENTE.
+--    Regra ao acrescentar função: passou de ~250 caracteres ou 5 linhas, abra outro bloco.
 --
 -- Como LER a resposta de cada bloco:
 --   • A 1ª linha traz o veredito agregado. Ela vem ANTES do detalhe de propósito: o que
