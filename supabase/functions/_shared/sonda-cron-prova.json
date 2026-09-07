@@ -325,6 +325,134 @@
     "em": "2026-09-06T15:34:55.200Z"
    }
   },
+  "carteira-positivacao-snapshot": {
+   "0e0d69761528d043b0129cdd60fb821ec6b2e5cb596b89f001fc406f6ca99617@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "1cab89d4927a518c3df701f3dfc6d93b48813d6a",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:22.384Z"
+   },
+   "25749a9d75cfbc1551b05c4108654c8cf3e2db6569fe86e1d1130315e35f9b2a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "5f5523df91f10e152a3eddf5379fe2025c22d880",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:24.338Z"
+   },
+   "4afba5f1ad3683ea91cf36ea03c09b9d9ba4dd022591a8aa75b1b7cfa9689bc5@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "b559e8bdd717275313ad2339a631af36c5298846",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:23.117Z"
+   },
+   "53e34358b66c4c953e4804e48dc41974783fbf170c6d4c3ec3ecfca09f954314@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "f6ac6055aa5b384cb3020e7ff28fcb93bad6de01",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:21.861Z"
+   },
+   "56aa10e5c6fe1bcc7b561596afcfc3f13392a365faf4a45e96d5a575d3a8e708@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "3c6957aeb41c9ef5d51c7b8fb05c28eb79927647",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:20.608Z"
+   },
+   "5c6e6bfb423e86de7ecfb69e7e4046fbcfd7d378ba814b37f3a03e7ea11a0fab@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "f11c737708669e116448e6f21ec3f410b844db07",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:23.612Z"
+   },
+   "5cd3b9242822523cd9e6c2c9276ebe3daf7849c1e1ae324defa3d8d9cddf4f4c@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "55dea3f712de1c3125e5ea0050c37bff5a64a887",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:22.612Z"
+   },
+   "626acb037b9fa3383529256db7fe5c3b6550a6d8df34fce7b8549dd3373d0472@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "006d762043b96694ce7b48b81852002f49a27cea",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:22.138Z"
+   },
+   "85956c5ee40f4f2e1772cbc47ac5778dd464db57f0efe7f17a2313048cbdd847@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "32945a553126637473ee1160f954347fcff9953b",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:24.568Z"
+   },
+   "a223dabb1b8726047e93ab97c87bb04ee2432db0d0072a1fe9fbeb6a0c82bc74@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "4b592b506e6c4826945306e71546d39ab74e476f",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:23.358Z"
+   },
+   "acb76f546df840db34c6b70dd42c1442aed5eef6d9933ebd29d80db02fba4d9f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "d0d8b4669c153ff901b27b95d9669440e08a4730",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:21.140Z"
+   },
+   "be7d1152c411dfac3eec32dedcbb63e146086e2245bfd2462fac6437f89c175d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "5362ec76199a7872b4d93e29ae96a8a7aecf3112",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:20.860Z"
+   },
+   "c41aea4cf192fd4c97f818fb2ad06dfb3077d891b05216bafedfaa032111ca4d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "4dd2a027173fdc13830ce3f2037fbae43591149e",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:21.626Z"
+   },
+   "c5098428f17d62833efc2e3e85f2752c509288a30a62b2f3f815fc8f3758ba70@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "bd59201106658cba27111e0f6a3972b5516ad0d4",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:22.878Z"
+   },
+   "c789e49ab0ab98ef7b11957296a451b95c2221d7f80d3912028fef1acf1ddcdc@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "5b8501144746d90cc7855fdc4acd548de8880f2b",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:24.103Z"
+   },
+   "ce8ed4e6b2f09b18371e72ddd1f981f2392194f8bc3f3efdb9df53592d13eb1b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "c4d6b062a3d2fbd6aca0b8ffba49c7cc59bd91a8",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:21.382Z"
+   },
+   "f19191a7b6886a31261e6eaa3b8a6b127f1633fe78a819af336c9e2f1028b6b8@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "e2520bc5b8a7dafec6ba5e3bb379ccc8c10c0bf5",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:20.376Z"
+   },
+   "f9747fba28b7cbab0cacf893c5e6ee32219b806ec691dec8a62cd29a413e6162@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "d8cf071522d3621da85e7ecafc3ca1153ef13644",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:23.854Z"
+   }
+  },
   "monthly-report": {
    "05c74ef9e401d9d6324d0cee37f13c4d211192cdfb72c9c04371883096ed9d8e@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
     "sha": "0ed5a9b318892650bf57adbdb4b1fb2710f9602f",
@@ -558,6 +686,357 @@
     "em": "2026-09-06T15:34:22.971Z"
    }
   },
+  "omie-nfe-webhook": {
+   "103d9184f56b85c89905c4c0005ff005df7ed224da37df9e7620199bab75ce17@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "ad43dd625978124dbe0277be68f1dee3eb8b9fd4",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-origin\":\"",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:09:05.757Z"
+   },
+   "57f566257ffe54b2a1fb24dd34f6d7f8b6ac0ab47de60f931f19d03312b0c0cb@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "fe8518a1c86c31c3c10a36b3306681e9a70b5eee",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:09:05.032Z"
+   },
+   "5e8a74fd12d83806379608ab39b6966b68d353b9c360cc985a6e74b892c212f9@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "b65750d5e7aee554b85a7618018881e5f6ad3f69",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type\",\"access-control-allow-origin\":\"*\",\"content-type\":",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:09:06.354Z"
+   },
+   "7b3dfe11a97392a4a82c50408c8f2f3f256f0d3a4427e77597f81e464a995c08@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "d8cf071522d3621da85e7ecafc3ca1153ef13644",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-origin\":\"",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:09:05.515Z"
+   },
+   "7e062a917c1c105eb4d08bd7fa6f37d8d9cfada736a5d6fff5830566656f5c64@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "85ba749f1b911ed56f62b89c35743b81a95d723f",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-origin\":\"",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:09:04.840Z"
+   },
+   "82343050eaeb60d8941d5cfda6a69122ef920995301751a7ae1d47464f78f66b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "e2520bc5b8a7dafec6ba5e3bb379ccc8c10c0bf5",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-origin\":\"",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:09:04.614Z"
+   },
+   "8e39a94005113775ab7ea49dd40946f340de234bd6576f36aad258c5af91fd7a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "77e46ab9937d92bdcda0de85e3c1bfcd1a93f3ef",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-origin\":\"",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:09:05.980Z"
+   },
+   "91b3439bb48ce5db7a2510b33b1f8961e0021a16c4a819dbe7198f167b615d52@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "e213ac11ec3a7b2b3e80b20643758512e5332f00",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:09:06.735Z"
+   },
+   "c2267dae835b18c9f4214a6c9621f530a384e150e345cbbcecb7b2eca0e5d319@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "20d37b021764fa67e1e879ba09aa108328980d18",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-origin\":\"",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:09:05.280Z"
+   },
+   "d38fdadb247000cc69174d70c3ce9a243bb6abbd650f128de6050633d7f23aa9@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "8d163ccc8275882e031d65eafe090f5ebe56669c",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:09:06.549Z"
+   },
+   "e097bb85aea7c30ef646e50d4cc792227006b683bdaac27f159d65008d90309b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "c10cc1854cadbd02bb72ea99617954f092a10067",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-origin\":\"",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:09:06.166Z"
+   },
+   "e1ba25794218d389168b25648dc9c7bc0c707bf45d96e9c025faa538cb3b8d58@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
+    "sha": "e45ef0c96b5e02fdc7b407680f9b6b69371588c0",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:09:06.928Z"
+   }
+  },
+  "omie-webhook": {
+   "06817f60df145075ed809a5a033810f094a9fc80b163f407f90870fdba86cdcc@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "3d7910ff09fe909aa34452ca347434bdb42efc4a",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type\",\"access-control-allow-methods\":\"POST, OPTIONS\",\"a",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:59.703Z"
+   },
+   "08cdf40788b99bc6096e17ac7166ded10896cbf37339743ecbe46d799805f266@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "20d37b021764fa67e1e879ba09aa108328980d18",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-methods\":",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:58.488Z"
+   },
+   "16203ec47e1bf669081456d616795a9f08a9c4455ae38e61f47fd3af33ec3a61@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "5ca03b02cb1320eb45424122a6f2db4cbf8f0f71",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-methods\":",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:58.209Z"
+   },
+   "3ae0f2f2a11ae63020c74773139a1201451807a79e6a7cdca9d2456731953199@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "e2520bc5b8a7dafec6ba5e3bb379ccc8c10c0bf5",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-methods\":",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:57.497Z"
+   },
+   "5aa2d3220343ee3cef2d8700cad3c275d4c2fa163b5b29238657fd961a299296@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "fe8518a1c86c31c3c10a36b3306681e9a70b5eee",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type\",\"access-control-allow-methods\":\"POST, OPTIONS\",\"a",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:57.947Z"
+   },
+   "77628dd0e76dfdb69697095fb34c1640bcf873235632048270f4510223aa5402@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "f11c737708669e116448e6f21ec3f410b844db07",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-methods\":",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:58.781Z"
+   },
+   "aaddb013532c8d55f46702d6f4e254396ce26c4a0da1e245c72215a7c532f9f1@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "2eb2375324dab9986393415223bfe6459053a304",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-methods\":",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:59.022Z"
+   },
+   "ae430e3743d01862686a6ca2475d8bae8bda045f1d38ba969332b2c35d969a2c@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "b65b3b7ac7c945a7df19e1a3ce6490c491e3a898",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-methods\":",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:59.503Z"
+   },
+   "da1f1020d0cc5a5102ba7479eb876cc9fcefe5a4f524ccc27ea2024a13b795e8@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "85ba749f1b911ed56f62b89c35743b81a95d723f",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-methods\":",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:57.703Z"
+   },
+   "fe339616466eac4b2a357138ec4f1476cca91854a773c2d9f139e5fa7b864c23@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@3c3e2b5c3df731b3": {
+    "sha": "6035d7ba0e5b05c039592cee6af12d9eecf3d2d2",
+    "veredito": "INVERIFICAVEL",
+    "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-webhook-secret\",\"access-control-allow-methods\":",
+    "controle": "inconclusivo",
+    "em": "2026-09-07T13:08:59.297Z"
+   }
+  },
+  "process-recurring-orders": {
+   "3b1a8c567c553a091023b2c6be971ea8baf0686a94806bf8e14e4e8c566d835f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "85ba749f1b911ed56f62b89c35743b81a95d723f",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:29.347Z"
+   },
+   "46a5e49862b22fe97f941ead24a39a0b7f2e1c8fb4461782caa202e37326bd7e@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "ae4067320d395921a925fb49cd9c33893a9f0921",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:29.555Z"
+   },
+   "49b9054df66065fe51901cd7f069a3507c8753affa6288141320d5f321ce332e@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "c10cc1854cadbd02bb72ea99617954f092a10067",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:30.347Z"
+   },
+   "4c234a2c67a49e7d0e54b5695e0f231b98ef9d7a724a3954a45581e9bade35b5@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "54e02fc492ccb664194bd4791b64c871f74e28e9",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "sem-gate",
+    "em": "2026-09-07T13:06:31.028Z"
+   },
+   "5227ef332a4a8d463f0c8906afe7354def105a38ea5af7f79e2ae5d8d6f6e54b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "e2520bc5b8a7dafec6ba5e3bb379ccc8c10c0bf5",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:29.166Z"
+   },
+   "544ffb82034b3c89ed1480ccc54ff44003e7c25c4c0f323cf0ddbe3f875eb369@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "fe8518a1c86c31c3c10a36b3306681e9a70b5eee",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:29.736Z"
+   },
+   "8f6f0b5d0df7ce81d36f754ce9039ab1bc74bdd5a45fe14a0a7593f950b48b46@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "27163fc2a36d18dc26a3dbe34f1fcaee39114d38",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:30.817Z"
+   },
+   "b00da6fd326edc5ad8bf7797ed4c9b5de00f7f54e02468ae906d61a79f815884@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "036f9709776347a3f19d4e357b05dc6b8275ac9b",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:30.531Z"
+   },
+   "b9e8af9ec31123a0f8f80100fb13bbef650cede8bc5632e59eb0b6fa088e051a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "20d37b021764fa67e1e879ba09aa108328980d18",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:29.962Z"
+   },
+   "dee8445e8545233e1c0daed8740e01e44def44a3af489254f294450e4fd0c720@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "f11c737708669e116448e6f21ec3f410b844db07",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:30.173Z"
+   }
+  },
+  "reposicao-depara-sayerlack-auto": {
+   "2e091f56de38f508795bcfd492a28b02ec1291877321f458964e3e6af8e103b6@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "d8cf071522d3621da85e7ecafc3ca1153ef13644",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:01.535Z"
+   },
+   "2ed8e16bf731ee216b3c378e62a0bd2123ce06c1f25123fe60b3edacbc767298@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "5362ec76199a7872b4d93e29ae96a8a7aecf3112",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:05:58.617Z"
+   },
+   "32bbed9397009bc926b1f71a7ede4047a7506e5730b21d952f87d502dfc0f652@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "4b592b506e6c4826945306e71546d39ab74e476f",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:00.426Z"
+   },
+   "3b5ae67105901a0fa349de8b7544fdbba7cc22fd1df3a0dff8d479d2a5b97d74@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "006d762043b96694ce7b48b81852002f49a27cea",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:05:59.965Z"
+   },
+   "60757b60c027909229185050783bf624297405dccab123fcebccd29f6b4907b1@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "3c6957aeb41c9ef5d51c7b8fb05c28eb79927647",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:05:58.369Z"
+   },
+   "89f95b2840ebf65f3e14892cd8594fe29b378fbe844a748f0c292126e999b8bf@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "4dd2a027173fdc13830ce3f2037fbae43591149e",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:05:59.485Z"
+   },
+   "8a1e7c2b6309d11609ff1c9bc030577e24929437c73189e446b850e2d3d2d237@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "d0d8b4669c153ff901b27b95d9669440e08a4730",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:05:58.862Z"
+   },
+   "8eb3f06b8e7c1ac63374cfb14427630b1e9f1119fe388c65296bfd4a849b0f3b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "b559e8bdd717275313ad2339a631af36c5298846",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:00.210Z"
+   },
+   "97f38a723bbf1b27a5c73e64d00609bddc9c4e8cdc3cb899c1fbecf1b27c40ce@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "7f1198cf0e583b088abcdf003572f845e750806d",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:02.262Z"
+   },
+   "a1f8c5be19469d1a980a1c9ed64a3ab74e3f8b67aefeaeebdcb9f3e3f1071739@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "f6ac6055aa5b384cb3020e7ff28fcb93bad6de01",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:05:59.755Z"
+   },
+   "a9ce0370911a184027b3f5092db7bfe1c27a12ecc2bc2dbd54d3413f341495e3@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "55dea3f712de1c3125e5ea0050c37bff5a64a887",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:00.643Z"
+   },
+   "c68fc25ce5cc6bf18ea9d55a2df1a07635e462158b396155163b471555a6680f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "bd59201106658cba27111e0f6a3972b5516ad0d4",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:00.856Z"
+   },
+   "c737bd1bac8dda29828fd109433db88f5e70f67fcc72e735058c6ac28305c1ae@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "f11c737708669e116448e6f21ec3f410b844db07",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:01.285Z"
+   },
+   "d2d9bb23c06228fc32150c17a3cad74696da200c71f3647ea337134a208fbe6f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "ad43dd625978124dbe0277be68f1dee3eb8b9fd4",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:01.773Z"
+   },
+   "e01a9428179128ac1dcf33d6a7b9767eea044adbfde0ea7df3d50a5c48d34f30@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "a086cc60a98b2c4ee7067ee93b6d4018bf6ae0ce",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:02.018Z"
+   },
+   "e94c6bbf41b510876ef6ebe4bd68a11f89ded0c23551aa1358dbbb1cf9b73f53@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "98c3e64bad29a8c04c51e8c6940262ec966a2d72",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:06:01.049Z"
+   },
+   "f36bb17e181df10ad75e9cb1a22e9faf8cc1f9e173e283df6377875624df36ff@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "c4d6b062a3d2fbd6aca0b8ffba49c7cc59bd91a8",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:05:59.183Z"
+   }
+  },
   "sonda-relay": {
    "3c3cdfb2456a75266f97576f09fa16e62001b145e8c4566dbf98d9787c2af41e@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
     "sha": "f9f9a936108746720688b250c7f52062e3b6ae34",
@@ -593,6 +1072,316 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-09-06T15:38:32.846Z"
+   }
+  },
+  "sync-reprocess": {
+   "0a65825a90c7ef37303c75850c6a9ee46199649987a041c61d1595bc56e80f4c@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "55dea3f712de1c3125e5ea0050c37bff5a64a887",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:26.022Z"
+   },
+   "0ac435058213fcde50a1bcef4e400b164576fa8dbd6838ead47fe7d8dfee491f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "f6ac6055aa5b384cb3020e7ff28fcb93bad6de01",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:24.757Z"
+   },
+   "223f03659155dab3a05a34ca2c6e587dea169558a56962ad32ae47261f1145af@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "4e5547355472af26b1fc6457013d260231f5be70",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:31.838Z"
+   },
+   "245b9b86c324bc4e20a438a2ba66cb9e5b0f60601e44b33d5bd992e80afb9d75@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "314b2bca5dbbcbe0439509db306b1113db2e3a7b",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:26.937Z"
+   },
+   "312ac07773a992394571442fbe3ec5d3f9ba8b5a7df7d1172c3fdf9c72dd2dcb@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "ad43dd625978124dbe0277be68f1dee3eb8b9fd4",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:30.604Z"
+   },
+   "4836b92bbc1743808ccb170c3b1c9b9de39e28c5119862703f61974faa3ee955@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "55a8d7c3e10466f4bfc36ae79c5e52974e8f1845",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:35.767Z"
+   },
+   "49c61cb13bb6a15b937319561d75ea4319928c61dba4fefbcae6247452211de5@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "d0d8b4669c153ff901b27b95d9669440e08a4730",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:23.837Z"
+   },
+   "4b59bf6cebcf1d7f541ba92218046006bc5d819d96d85ff42d80fe88d3e8d0bf@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "497870dfad4c5034340b94e956161045ba5c71b0",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:29.949Z"
+   },
+   "5e51b8f658ff3e8747205e448230f19bdee4f8f0e370d71b509f930fb2aad2f8@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "5362ec76199a7872b4d93e29ae96a8a7aecf3112",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:23.326Z"
+   },
+   "6156db65a96f852dc0dedbc2d4beb7c61281ad0d33c732108e58574a64594b98@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "3cb2b1c77c22fb04fd3dbee0cac801c7d455877b",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:35.548Z"
+   },
+   "641f7295c663f4f2d773f2becdb15b602e3f0b9ac1d1c7ddbab7080faf4123d3@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "7f1198cf0e583b088abcdf003572f845e750806d",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:31.297Z"
+   },
+   "642c49b687e5bd5a1f5ba9a8c259d7431253ba77ac90bb9d8237786429cb3dcb@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "006d762043b96694ce7b48b81852002f49a27cea",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:25.027Z"
+   },
+   "64ddb3bf56d99128a917d57200c86c30332cc63ce687b3d356a31c17b0d16382@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "4b592b506e6c4826945306e71546d39ab74e476f",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:29.391Z"
+   },
+   "65b4ec94df239b9130b09cbaa34a8058d64b3ac9592228725770e6c1567b20ce@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "d1420a5479b1a4d709177839aa2ae44d7cb84cbb",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:32.584Z"
+   },
+   "67eab2b2a17bed6993b4f9003c8301eab6bf9055b302aa9b17b31fc7c92de312@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "ad316360a3b217a757ca6e7bc824ca27b578eacc",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:31.007Z"
+   },
+   "6a531091ed39448cc10f9e028073d87bd01ef9139ae2dda3f8e1babbf5ae00f2@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "927a5adbb5a77313c720219a1ddf1d4b1fdb2f50",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:27.802Z"
+   },
+   "6b0228d0ba019ea0e2b4f44f0c0414f0df93c80eac40db70dba392770cb51df1@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "ef2ed1c69249a484cca708ca2c597f9814821ad0",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:35.269Z"
+   },
+   "6b8aa60ef55451c06c45f275ad82bc8b30ec78d09398b512a5d4b565fe56a6f1@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "1cab89d4927a518c3df701f3dfc6d93b48813d6a",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:25.740Z"
+   },
+   "7dc016d3039203809207b387f277d806b460c54d1c2d52c4eb2e3ff1384c0a00@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "0fe0bd3b846e8bc1a331832da432c615c2c02ded",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:25.323Z"
+   },
+   "7ec0dcc6f80ed8606976afc57d1c3fbd7b424a79f0d6afbafda686055913941b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "f11c737708669e116448e6f21ec3f410b844db07",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:30.267Z"
+   },
+   "84e1743d9286fc17a4d2a1bc1aa85a401016fa406cae7db7f29539779427c20d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "09050af035c0e3fca10e091a1333fb5876614529",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:27.226Z"
+   },
+   "8720d42a89dfe32a91f3e0141bbd70a1b2f0c8f1b0d7c70f75bd498bf0900107@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "46d76a8055ca61d3c0043afe0fe097f34d810537",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:34.818Z"
+   },
+   "88f35f0f1037c96cb0514f4da069041d32bda817d47c11086ba6c25f7c783874@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "b559e8bdd717275313ad2339a631af36c5298846",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:29.122Z"
+   },
+   "9049723a1936a751ca9cd8db2e845591cfad20c6039fe1841739984bfdfb6e01@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "2eb2375324dab9986393415223bfe6459053a304",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:31.587Z"
+   },
+   "92307b2ac21d5a989416497e43526a5e9d3049b5b1978fc5ade3c06d8906c193@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "db2a93050cd2b67755a3a61a5797f5e4a3b9de04",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:32.319Z"
+   },
+   "9b405591b5fab8c42800e2dc228d5d9cddddbece378e22820f7b380187643c77@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "c94c3a9c2f913bcc92e70a668e0eef2c888c09c6",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:28.623Z"
+   },
+   "9e16b24bb9d39dd61ddb5601a2709bc232b263f7c495a477723ccb4a8045bcb8@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "cfe50a559a41a5b66be7a4cbb551e4d141f7b621",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:26.687Z"
+   },
+   "a59dcca9bb830310a4b85cbb21569e6da9b2f6ddd52d3d48a103f52af954fdaf@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "e2520bc5b8a7dafec6ba5e3bb379ccc8c10c0bf5",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:21.351Z"
+   },
+   "b166810cc2ff03c6b500c51ad0d5d5432e45db19030d9ce324e9f191529d0b77@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "dc683164cf0211623b299f46d2b6652dd7613e46",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:28.263Z"
+   },
+   "ba71654279c43800580421b00f38cf9b32453f74213830d5f670a915fe014984@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "ac5951d27dcda894e892c589a0e0cbdae183f865",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:29.692Z"
+   },
+   "bd87013e1547c6215db39a8fdd79aed1d2e2f6d3106c02497f0e04aff2c3d988@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "85ba749f1b911ed56f62b89c35743b81a95d723f",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:21.686Z"
+   },
+   "c40eb6ae65684a046636a00cfc05d67ae623a0ac55f5c22ae6900a97c77f986d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "c4d6b062a3d2fbd6aca0b8ffba49c7cc59bd91a8",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:24.199Z"
+   },
+   "c78deaca59ddb3f1823d231d13e32bee60d1d0e6b3a7162af341680dee6b1ca2@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "4dd2a027173fdc13830ce3f2037fbae43591149e",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:24.501Z"
+   },
+   "d1c70a04a432e3ab08d5a324a4cc8afa7b17d902cfeb85d36ab9e669a2690201@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "bd59201106658cba27111e0f6a3972b5516ad0d4",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:26.422Z"
+   },
+   "d3b43e61291cd4bb1e8f570f2d820edb83bcbcf85fe3eb73fea01aa0b3c18daf@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "3c6957aeb41c9ef5d51c7b8fb05c28eb79927647",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:22.802Z"
+   },
+   "d576c99accdf9812e99b1324c6002445d5a7d24fc23cf20e7b8b829cf6781dcc@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "ae4067320d395921a925fb49cd9c33893a9f0921",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:21.967Z"
+   },
+   "d9ac98539ff1e9c005075cb5d1a187a6e081cd7c051852eda816cd61fe04158a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "1205b5b09d63afff29e02b4fbf81a299f36300bd",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:34.621Z"
+   },
+   "e441afde30719b1cfccb00c8dd21ef58c8d068d27680ca44c406143d660376c0@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "f0ebad7f61c3f6260983555ecd4d04df1fd7ab88",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:34.088Z"
+   },
+   "e5e100bef80186b10237b9e7ccd81f07e01390fae483e9c59eb2679660313acd@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "2ad994bc7fb78a14db30358cc4e67bab0f329146",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:34.368Z"
+   },
+   "e854a28fb84580f3e1e69a3b24990ccb9f24ced1b7e8c9fa4709677060c22dde@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "fe8518a1c86c31c3c10a36b3306681e9a70b5eee",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:22.380Z"
+   },
+   "ebc4f603c722e9d5041523f785c6324e570d5c386261774a3009335ffb161a63@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "ee5ebc93f0c6ba5cfc1ceedf268a7dd5282d9dde",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:32.073Z"
+   },
+   "f11c24d2036e039398afb019c6c3eadc56ef4b21f35232c4b74cbcb71a2a5b3a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "51c91beef1ea76b5175e2717bf7e9ae4b83299f3",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:28.833Z"
+   },
+   "f7518b9d2fe5ea96d75f0bf78224f34f0eb2af7b1c39363e9075f652ad9add04@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "8fbbdce6b55694494b697069931d6bfe3238856c",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:35.069Z"
+   },
+   "f7bb39b0db991c593f5616955e1fab7a1c41a8baaacda5cb62fd874cf644ed77@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@23844b086b505f98": {
+    "sha": "fa4bd6df54eeada7042102959548e671e097a188",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T13:03:32.976Z"
    }
   }
  }
