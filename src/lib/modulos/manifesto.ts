@@ -396,7 +396,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/Tint*.tsx",
       "src/hooks/useTint*.ts",
     ],
-    testes: [],
+    testes: ["src/pages/__tests__/TintDashboard.erro-honesto.test.tsx"],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
   {
@@ -523,6 +523,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/hooks/__tests__/useAuditTrail.test.tsx",
       "src/hooks/__tests__/useIniciativasIceberg.test.ts",
+      "src/pages/__tests__/GovernanceAudit.erro-honesto.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
