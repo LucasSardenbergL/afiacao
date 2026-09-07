@@ -72,6 +72,8 @@ rodar_asserts() { # bloco.sh
   # nunca roda, e a asserção acima é vácua nele. `PATH=` derruba os dois `command -v`; `printf` é
   # builtin e sobrevive. Vazio aqui compararia igual a vazio e leria como "arquivos iguais" —
   # falso-verde justamente no eixo que existe para acusar diferença.
+  # shellcheck disable=SC1007  # `PATH=` VAZIO é o ponto do caso: é ele que derruba os dois
+  # `command -v` e faz o ramo do fallback ser alcançado. Não é assignment esquecido.
   afirmar 'sha_de sem ferramenta' 'SEM-FERRAMENTA-DE-HASH' "$(PATH= sha_de "$GER/sonda-versao-sql.ts" 2>/dev/null)"
 
   # 5-7: o diagnóstico imprime os TRÊS eixos, nomeados. Um eixo mudo é o falso-verde perfeito:

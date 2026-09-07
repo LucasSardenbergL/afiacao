@@ -301,12 +301,12 @@ fi
 echo "  [ok ] controle: os $(command grep -c '^  \[ok \]' "$TMP/controle.out") cenarios passam com o gerador integro"
 
 # <<diagnostico-cegueira — extraido e testado por scripts/test-eval-diagnostico-cegueira.sh
-# Por que existe (2026-09-07): o step de falsificacao ficou VERMELHO num run e VERDE noutro no
-# MESMO sha (34116946335 x 34116947563). A unica pista era "alvo sumiu do gerador" — que nao diz
-# se o alvo sumiu, se o grep nao conseguiu procurar, nem ONDE a divergencia nasceu. As 2 cegueiras
-# casavam EXATAMENTE os literais que as sabotagens #1 e #2 destroem, mas o controle do mesmo run
-# ficou VERDE (a copia estava integra) — as duas evidencias nao fecham, e sem estes 3 eixos a
-# proxima ocorrencia se perde igual. Instrumentar > chutar conserto sem causa raiz.
+# O #2308 matou a CAUSA do NO-OP falso (sob `set -o pipefail`, o `grep -q` fechava o pipe, o
+# `printf` morria de SIGPIPE e o pipeline devolvia 141 com o grep tendo ACHADO). Com o pipeline
+# fora, um NO-OP volta a significar que o alvo sumiu DE VERDADE — e aí a pergunta que sobra é
+# ONDE ele sumiu: na captura (`$ORIG`), na cópia (`$GER`) ou na fonte (repo). Em 2026-09-07 essa
+# pergunta ficou 1 dia sem resposta porque a mensagem não trazia nenhum dos três eixos; medir os
+# três custa 4 linhas e só roda quando já houve cegueira.
 sha_de() { # arquivo -> sha256 | SEM-FERRAMENTA-DE-HASH (nunca vazio: vazio leria como "igual")
   if command -v sha256sum >/dev/null 2>&1; then command sha256sum "$1" | cut -d' ' -f1
   elif command -v shasum >/dev/null 2>&1; then command shasum -a 256 "$1" | cut -d' ' -f1
@@ -353,17 +353,22 @@ diagnostico_cegueira() { # alvo
 cegas=0
 sabotar() { # nome de para
   local nome="$1" de="$2" para="$3"
-  local rc_busca=0
-  printf '%s' "$ORIG" | command grep -qF "$de" || rc_busca=$?
-  if [ "$rc_busca" -ne 0 ]; then
-    if [ "$rc_busca" -eq 1 ]; then
-      printf '  [XX ] sabotagem NO-OP (alvo sumiu do gerador): %s\n' "$nome"
-    else
-      printf '  [XX ] sabotagem INDETERMINADA — o grep FALHOU (rc=%s), nao e "alvo sumiu": %s\n' "$rc_busca" "$nome"
-    fi
-    diagnostico_cegueira "$de"
-    cegas=$((cegas + 1)); return
-  fi
+  # Busca no PRÓPRIO shell: sem pipe, sem fork, sem locale. NÃO devolver `printf | command grep -qF`
+  # aqui — sob `set -o pipefail` o status do pipeline NÃO é o do grep: `grep -q` sai no PRIMEIRO
+  # match e fecha o pipe, o `printf` (que ainda tinha bytes a escrever) morre de SIGPIPE e o
+  # pipeline devolve 141 com o grep tendo ACHADO (`PIPESTATUS=141 0`). Este guard leria 141 como
+  # "não achei" e acusaria alvo ausente com o alvo PRESENTE — reprovando o CI à toa e ensinando a
+  # re-rodar, que apaga sinal. É corrida (só dispara se o `printf` não terminar antes), então
+  # aparece como flake: 2 das 11 sabotagens, 1 run em 6, run 34116946335 na main em 2026-09-07.
+  # `"$de"` entre aspas DENTRO do padrão casa LITERALMENTE: `?`/`*` do alvo não viram curinga.
+  # Guardado por `scripts/test-guard-noop-sabotagem.sh` (roda o guard sob um leitor com a semântica
+  # do GNU `grep -q`, que o BSD grep do macOS não tem). → docs/historico/evidencia-positiva-shell.md
+  case "$ORIG" in
+    *"$de"*) ;;
+    *) printf '  [XX ] sabotagem NO-OP (alvo sumiu do gerador): %s\n' "$nome"
+       diagnostico_cegueira "$de"
+       cegas=$((cegas + 1)); return ;;
+  esac
   printf '%s' "$ORIG" | python3 -c '
 import sys
 de, para = sys.argv[1], sys.argv[2]

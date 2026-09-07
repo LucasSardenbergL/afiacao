@@ -209,7 +209,10 @@ sabota_e_mede() {   # $1=rotulo  $2=busca  $3=troca  $4..=asserts esperados
   local esperado="$*"
   local sab="/tmp/_wd_sab_${rot}.sql"
 
-  python3 - "$MIG" "$sab" "$busca" "$troca" <<'PY'
+  # `if !` e nao `cmd; if [ $? -ne 0 ]`: com `set -euo pipefail` ativo e esta funcao chamada NUA
+  # (`sabota_e_mede "F1" \`), o python3 saindo !=0 abortava o script AQUI — o bloco de erro abaixo
+  # era INALCANCAVEL e o FALSIF_ERR nunca contava (medido 2026-08-28). `if !` suspende o `set -e`.
+  if ! python3 - "$MIG" "$sab" "$busca" "$troca" <<'PY'
 import sys
 src, dst, busca, troca = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 s = open(src).read()
@@ -218,7 +221,7 @@ if n != 1:
     sys.stderr.write("ANCORA NAO UNICA (%d ocorrencias)\n" % n); sys.exit(3)
 open(dst, "w").write(s.replace(busca, troca))
 PY
-  if [ $? -ne 0 ]; then
+  then
     echo "  FALSIF XX  $rot: a sabotagem NAO aplicou (ancora nao casou) — INVALIDA, nao leia como 'sem dente'"
     FALSIF_ERR=$((FALSIF_ERR+1)); return
   fi
@@ -235,8 +238,16 @@ PY
   if [ "${#FALHAS[@]}" -gt 0 ]; then
     for f in "${FALHAS[@]}"; do caidos="$caidos $(printf '%s' "$f" | awk '{print $1}')"; done
   fi
-  caidos="$(printf '%s' "$caidos" | tr ' ' '\n' | command grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
-  local esp="$(printf '%s' "$esperado" | tr ' ' '\n' | command grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  # `|| true` DELIBERADO nas duas normalizacoes: com lista VAZIA o `grep -v '^$'` nao casa nada e
+  # devolve 1, que o `pipefail` propaga para a atribuicao — e vazio e resultado LEGITIMO aqui ("a
+  # sabotagem nao derrubou assert nenhum"), justamente o caso que este bloco existe para REPORTAR.
+  # Medido em 2026-08-28: sem o `|| true` o `set -e` matava o harness ANTES do "FALSIF XX", sem
+  # imprimir nada — a falsificacao sem dente sumia em vez de acusar. `local` separado do assign
+  # porque `local x=$(...)` mascara o status do pipeline por acidente (SC2155); aqui a mascara e
+  # INTENCIONAL e explicita.
+  caidos="$(printf '%s' "$caidos" | tr ' ' '\n' | command grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')" || true
+  local esp
+  esp="$(printf '%s' "$esperado" | tr ' ' '\n' | command grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')" || true
 
   if [ "$caidos" = "$esp" ]; then
     echo "  FALSIF OK  $rot derrubou EXATAMENTE [$caidos]"
