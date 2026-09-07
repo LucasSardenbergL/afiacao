@@ -211,8 +211,14 @@ TODA resposta — o corpo já cai em `net._http_response`, e o N3 passivo sai de
 #### Sondar VÁRIAS edges numa tacada (leva inteira) — e as 3 armadilhas do SQL Editor
 
 Uma leva tem 5–10 edges, e repetir o par disparo/leitura por edge convida ao erro de trocar o `request_id`
-entre uma e outra. O padrão é disparar todas com `net.http_post` sobre um `VALUES` de nomes e agregar com
-`jsonb_object_agg(edge, request_id)::text` numa **célula única**. Medido 2026-08-24 sondando a oitava leva (#1937).
+entre uma e outra. O padrão é disparar todas com `net.http_post` sobre um `VALUES` de nomes e agregar o par com
+`jsonb_object_agg(edge, request_id)::text` — e, desde 2026-09-06, **esse agregado não é mais ENTREGUE**: ele é
+interpolado por `format()` no texto do passo seguinte, que sai pronto numa **célula única**. Copia-se a célula,
+não o número. É a mesma correção do bloco de UMA edge acima, pela mesma razão
+([sonda-request-id-a-mao.md](../historico/sonda-request-id-a-mao.md)), e os DOIS blocos continuam dois pela
+mesma imposição do `pg_net`: o `http_post` só ENFILEIRA e o worker de fundo só enxerga linha COMMITADA,
+enquanto o SQL Editor roda o batch inteiro como UMA transação. Medido 2026-08-24 sondando a oitava leva
+(#1937); `format()` provado contra prod em 2026-09-06 (#2278).
 
 ⚠️ **A leitura NÃO pede mais o `request_id` colado — ela acha a linha pelo ECO do slug.** A resposta da
 sonda carrega o próprio nome no corpo (`criarRespostaSonda` devolve `{ok, probe, versao, edge, fonte}`),
@@ -220,8 +226,11 @@ então o passo de leitura procura, dentro de uma janela curta, a resposta que di
 colagem à mão era um passo que simplesmente **não acontece**: em 2026-08-30, verificando
 `generate-bundle-argument`, o disparo tinha funcionado (4 respostas HTTP 200 em `net._http_response`) e o
 veredito saiu `SEM ID — esta edge não saiu no JSON colado (bloco errado, ou trava fechada)`. Honesto, e
-ainda assim um round-trip inteiro com o founder por um deploy que já estava no ar. O `jsonb_each_text('{}')`
-sobrevive **opcional**, e só para o que o eco não alcança (ver os dois guards abaixo).
+ainda assim um round-trip inteiro com o founder por um deploy que já estava no ar. O `jsonb_each_text('{}')` VAZIO
+sobrevive no bloco standalone do `--so-leitura` — o caminho do eco, que o agente roda sozinho. No passo que o
+disparo ESCREVE, ele já vem preenchido, e é por isso que esse passo é estritamente melhor: o que o eco não
+alcança (bundle PRE-SENSOR e recusa HTTP, que respondem sem eco do slug) tem id e sai DETERMINADO — em vez de
+cair no INDETERMINADO junto com "não disparou" (ver os dois guards abaixo).
 
 ⚠️ **O casamento exige `probe = 'true'`, não só o slug — senão ele lê a linha do CRON.** Medido em prod
 2026-08-30: a `analytics-outbox-drain` gravou **72** respostas em 6h com `{"edge":…,"versao":…}` e **sem**
@@ -337,12 +346,17 @@ incondicional), não o elimina; na próxima execução dos crons a recusa vira 4
 desqualifica sozinho. Regra prática: **se você acabou de mexer no vault, leia o veredito determinado
 como INDETERMINADO.**
 
-- ⚠️ **O JSON colado aqui é o análogo do `request_id` do bloco de cima — e continua passando pela mão.** A
-  diferença é que o dano já está contido: com `FROM esperado LEFT JOIN ids` (bullet abaixo), colar o blob errado
-  faz **toda** edge esperada aparecer sem id, o que se lê como erro em vez de virar veredito. Ainda assim, o
-  `format()` do bloco de cima **se aplica igual** e é estritamente melhor: o passo 1 pode escrever o passo 2 com o
-  mapa `edge→id` já embutido, e aí não há blob a transportar. Enquanto não for migrado, o `LEFT JOIN` é
-  obrigatório, não opcional — é ele que segura a classe aqui.
+- ⚠️ **O JSON colado aqui era o análogo do `request_id` do bloco de cima — MIGRADO em 2026-09-06 (#2278).** O
+  passo 1 (e o 3) agora terminam em `format($sonda$…$sonda$, m.ids)`: devolvem o passo 2 (e o 4) já escrito, com o
+  mapa `edge→id` dentro, e nenhum identificador passa pela mão. **Mas o `LEFT JOIN` da bullet abaixo continua
+  obrigatório, e por um motivo que a migração NÃO cobre:** a célula é copiada por uma pessoa, e uma célula de
+  OUTRA leva (ou de outra sessão) tem mapa VÁLIDO com os nomes errados. Falsificado contra prod em 2026-09-06
+  trocando o mapa por `{"edge-de-outra-leva": 71275}`: a leitura devolveu **as 2 edges esperadas** com
+  `INDETERMINADO`, não zero linhas. O que a migração fecha é o dígito redigitado; o que o `LEFT JOIN` fecha é o
+  blob inteiro trocado — classes diferentes, guards diferentes. ⚠️ E `format()` obriga a **escapar `%` como
+  `%%`** no corpo embutido (senão `%` vira diretiva) e a conferir o dollar-quoting: o gerador escapa o corpo
+  ANTES de inserir o `%1$L` (na ordem inversa o próprio placeholder viraria `%%1$L`) e ABORTA se o texto contiver
+  a tag `$sonda$`, que encerraria a string no meio e emitiria um passo truncado.
 
 - ⚠️ **A trava do bloco perigoso tem de ser `CASE`, NÃO `WHERE`.** Quando parte da leva só pode ser sondada
   DEPOIS do deploy confirmado (bundle pré-sensor ignora o `probe` e dispara o run), a tentação é
@@ -354,6 +368,14 @@ como INDETERMINADO.**
   é dependente de PLANO: na forma SIMPLES (projeção sem agregação) ele filtra antes e parece proteger —
   quem testar a trava assim lê "seguro" e leva para produção o bloco agregado, que é onde ela falha
   (4 formas medidas em `docs/historico/deploy-no-op-por-desenho.md`).
+- ⚠️ **Id que aponta para resposta que NÃO é sonda sai como "BUNDLE VELHO" com a versão CERTA.** Achado ao
+  falsificar a migração contra prod (2026-09-06): apontado para a resposta 71275 — o cron da
+  `analytics-outbox-drain`, que ecoa `edge`/`versao`/`fonte` e **não** ecoa `probe` —, o `CASE` caía no `ELSE` e
+  imprimia `BUNDLE VELHO — respondeu versao=v1.1-…` com versão e fonte IDÊNTICAS às esperadas. É o falso
+  NEGATIVO da armadilha do casamento só-por-slug, entrando pelo caminho dos `ids` (o `LATERAL` do eco já filtra
+  `probe = 'true'`; o `LEFT JOIN` pelo id não filtrava nada). O ramo `NAO E RESPOSTA DE SONDA` fecha isso, e vem
+  **antes** do `? 'fonte'`: um cron que ecoe `versao` sem `fonte` sairia como `PRE_SONDA_FONTE`, que nomeia
+  "bundle anterior ao #1998" — causa errada, mesma classe.
 - ⚠️ **A leitura tem de partir da lista canônica de edges, não dos ids.** Com `FROM ids JOIN esperado`, colar
   o JSON do bloco errado devolve **zero linhas** — e zero linhas lê-se como "nada a reportar", não como erro.
   Inverta (`FROM esperado LEFT JOIN ids`) e dê um ramo próprio ao id ausente: toda edge esperada aparece
@@ -364,7 +386,10 @@ como INDETERMINADO.**
   só envia após o COMMIT, nada é disparado (confirmado ao vivo em 2026-08-24: `http_request_queue` vazia e
   zero respostas de sonda, com a tabela viva e recebendo cron). Foi o erro que salvou a viagem — mas depender
   disso é depender de o founder colar o arquivo INTEIRO e de o Editor abortar no ponto certo. Use um
-  placeholder VÁLIDO (`'{}'::jsonb`, que cai no ramo "sem id") e ponha a trava real no `CASE` acima.
+  placeholder VÁLIDO (`'{}'::jsonb`, que cai no ramo "sem id") e ponha a trava real no `CASE` acima. Com o mapa
+  embutido o bloco que dispara não tem mais campo de ids nenhum: o **único** campo que o founder toca ali é a
+  trava `'nao'` → `'sim'`, e ela é válida por construção — o `'{}'` continua vivo no bloco standalone do
+  `--so-leitura`, que é onde o placeholder ainda existe.
 - **Distinga rejeição de execução no veredito.** `status_code >= 400` sem `versao` é bundle velho que
   **recusou** o request (401 do gate de JWT na `ai-ops-agent`, 400 do `default` na `sync-reprocess`) —
   nada executou. Só `200` sem `versao` é "ignorou o `probe` e RODOU o fluxo real". Um veredito que junta os
