@@ -76,6 +76,19 @@ idêntico ao esperado por um caminho que não era o testado, e o resultado se l�
 MCP que funcionou. É a mesma classe de "veredito da sessão errada" que
 `docs/historico/closure-de-hash-nao-e-lista-de-deploy.md` §2 registra — o número bate, a causa não.
 
+### E há uma leva aberta AGORA — a ordem importa
+
+Medido em 2026-09-07, já com este branch pronto: `pendencias:deploy` (que lê **`origin/main`**,
+`REF_MAIN`, não a working tree — por isso a cobaia ainda não aparece) reporta rc=1 com
+**`disparar-pedidos-aprovados` em `DIVERGE_P1`**, vinda do #2285 (money-path). Ou seja: existe uma
+colagem de deploy pendente antes mesmo de este PR mergear.
+
+Se este PR mergear primeiro, `pendencias:prompt -` monta **uma colagem com as duas** — e a cobaia
+vai a produção pelo canal manual junto com a outra, sem ninguém decidir isso. **A ordem correta é
+deployar a leva do #2285 ANTES de mergear este PR**, para que `copilot-analyze` fique sozinha na
+lista e a leva do piloto não tenha como se misturar. Custo zero: aquele deploy é necessário de
+qualquer jeito.
+
 Se o piloto for abortado, deploye normalmente **e escreva aqui que foi por esse caminho**; o que
 não pode acontecer é a divergência sumir sem ninguém saber quem a fechou.
 
