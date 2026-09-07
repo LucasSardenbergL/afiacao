@@ -7,8 +7,12 @@ vi.mock('@/hooks/useUnifiedOrder', () => ({
   fmt: (v: number) => `R$ ${v}`,
   getToolName: () => 'Ferramenta',
 }));
+// Forma COMPLETA do UseQueryResult: o carrinho lê `status`/`fetchStatus` para separar
+// "não há margem a sinalizar" de "não consegui ler o cockpit". Um mock só com `data`
+// cairia num ramo por acidente — aqui o estado declarado é 'desabilitada' (pending+idle),
+// que é o que este teste quer: cockpit indiferente ao guard de preço.
 vi.mock('@/hooks/usePrecoCockpit', () => ({
-  usePrecoCockpit: () => ({ data: undefined }),
+  usePrecoCockpit: () => ({ data: undefined, status: 'pending', fetchStatus: 'idle' }),
   chaveCockpit: (e: string, c: number, t: string | null) => `${e}|${c}|${t ?? ''}`,
 }));
 // Defasagem 2b (T8) puxa useAuth/useQuery — mock vazio isola este teste do guard de preço.
