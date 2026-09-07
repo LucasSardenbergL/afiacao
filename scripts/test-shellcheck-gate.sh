@@ -149,9 +149,28 @@ roda_gate "$raiz"; espera_vermelho "glob vazio (db/ sem .sh) falha em vez de fic
 # Sonda ausente: shellcheck fora do PATH. Um gate que "pula quando a ferramenta falta" é verde por
 # AUSÊNCIA DE DADO.
 raiz="$tmp/sem-bin"; monta_raiz "$raiz"
-# /usr/bin:/bin tem grep/sed/xargs/mktemp e NAO tem shellcheck (ele vive em /opt/homebrew/bin ou
-# /usr/local/bin). Zerar o PATH inteiro tiraria tambem o grep e o gate morreria por outro motivo.
-OUT="$(PATH="/usr/bin:/bin" bash "$raiz/scripts/shellcheck-gate.sh" 2>&1)"; RC=$?
+# Ausencia simulada por SIMBOLO, nao por diretorio. "/usr/bin nao tem shellcheck" e verdade no
+# macOS (homebrew) e FALSO no runner Ubuntu, onde o apt instala exatamente em /usr/bin: a
+# simulacao achava o binario, o gate ficava VERDE e o caso que existe para provar o fail-closed
+# aprovava a si mesmo. Aqui o PATH tem so o que o gate precisa — e nada mais.
+# Zerar o PATH inteiro nao serve: o gate morreria por falta de grep, um vermelho pelo motivo
+# ERRADO (por isso `espera_vermelho` casa a MARCA da mensagem, nao so o rc).
+bin_sem_shellcheck() { # destino
+  local d="$1" f alvo
+  mkdir -p "$d"
+  for f in bash env cat grep sed tr wc xargs cut sort awk find mktemp dirname basename rm ls; do
+    alvo=$(command -v "$f" 2>/dev/null) || continue
+    ln -sf "$alvo" "$d/$f"
+  done
+  # Asseracao POSITIVA: sandbox que ainda resolve shellcheck torna o caso teatro — e teatro que
+  # so aparece na maquina de quem tem o binario noutro diretorio. Medir > assumir.
+  if PATH="$d" command -v shellcheck >/dev/null 2>&1; then
+    echo "❌ sandbox de ausencia ainda resolve shellcheck — caso invalido" >&2
+    exit 2
+  fi
+}
+bin_sem_shellcheck "$tmp/bin-sem-shellcheck"
+OUT="$(PATH="$tmp/bin-sem-shellcheck" bash "$raiz/scripts/shellcheck-gate.sh" 2>&1)"; RC=$?
 espera_vermelho "shellcheck AUSENTE falha (fail-closed)" "não respondeu ao --version"
 
 # Sonda quebrada: binário PRESENTE que não responde. `command -v` acharia e deixaria passar — é
