@@ -31,10 +31,12 @@ vi.mock('@/hooks/useUnifiedOrder', () => ({
   fmt: (v: number) => `R$ ${v}`,
   getToolName: () => 'Ferramenta',
 }));
-// Vizinhos do carrinho que puxam useQuery/useAuth próprios — mock vazio isola ESTA leitura.
-vi.mock('@/hooks/useDefasagemCliente', () => ({
-  useDefasagemCliente: () => ({ defasagemByKey: new Map(), isLoading: false }),
-}));
+// `useDefasagemCliente` NÃO é mockado de propósito: ele só consome `supabase.rpc`, que já
+// está mockado aqui, e a fixture do cockpit não tem `status_defasagem` ⇒ nenhum badge de
+// defasagem nasce. Mockar por caminho custaria uma aresta vendas→farmer-inteligencia no gate
+// de fronteiras por ficção do teste, não por dependência real.
+// Os demais vizinhos são do próprio módulo `vendas` e puxam useQuery próprio — mock vazio
+// (equivalente à flag off) isola ESTA leitura.
 vi.mock('@/hooks/useCustoPrazoRegua', () => ({
   useCustoPrazoRegua: () => ({ prazoDias: null, custoCapitalAnual: null }),
 }));
