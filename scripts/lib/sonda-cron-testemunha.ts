@@ -42,7 +42,7 @@ export interface AtestacaoAtribuida {
  * Especular na frente de quem tem o dado é como um sensor perde credibilidade: o primeiro alarme
  * que manda investigar a coisa errada ensina a ignorar o próximo.
  */
-export interface MotivoDoRele {
+interface MotivoDoRele {
   requestId: number;
   classe: string;
 }
