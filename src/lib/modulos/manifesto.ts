@@ -410,7 +410,9 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/Tint*.tsx",
       "src/hooks/useTint*.ts",
     ],
-    testes: [],
+    testes: [
+      "src/pages/__tests__/TintDashboard.leitura-falhou.test.tsx",
+    ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
   {
@@ -545,6 +547,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useAuditTrail.test.tsx",
       "src/hooks/__tests__/useIniciativasIceberg.test.ts",
       "src/pages/__tests__/GrupoCliente360.estados.test.tsx",
+      "src/pages/__tests__/GovernanceAudit.margem-leitura-falhou.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
