@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 525
+-- Total de custom migrations: 526
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -566,7 +566,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260906172718', 'cancelamento_pos_disparo_gate_canonico', '20260906172718_cancelamento_pos_disparo_gate_canonico.sql'),
   ('20260906180000', 'order_items_identidade_linha', '20260906180000_order_items_identidade_linha.sql'),
   ('20260906180303', 'deploy_sonda_resultados', '20260906180303_deploy_sonda_resultados.sql'),
-  ('20260906193522', 'valor_total_portal_provado', '20260906193522_valor_total_portal_provado.sql')
+  ('20260906193522', 'valor_total_portal_provado', '20260906193522_valor_total_portal_provado.sql'),
+  ('20260907095841', 'disparado_simulado_e_estado_pos_disparo', '20260907095841_disparado_simulado_e_estado_pos_disparo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2342,7 +2343,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_tick', 'deploy_sonda_resultados'),
   ('deploy_sonda_resultados', 'cron_job', 'cron', 'deploy-sonda-resultados-colher', ''),
   ('deploy_sonda_resultados', 'rls_policy', 'public', 'deploy_sonda_resultados_select_staff', 'deploy_sonda_resultados'),
-  ('valor_total_portal_provado', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
+  ('valor_total_portal_provado', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
+  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
+  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
+  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4166,7 +4170,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_tick', 'deploy_sonda_resultados'),
   ('deploy_sonda_resultados', 'cron_job', 'cron', 'deploy-sonda-resultados-colher', ''),
   ('deploy_sonda_resultados', 'rls_policy', 'public', 'deploy_sonda_resultados_select_staff', 'deploy_sonda_resultados'),
-  ('valor_total_portal_provado', 'function', 'public', 'sayerlack_aplicar_custo_portal', '')
+  ('valor_total_portal_provado', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
+  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
+  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
+  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', '')
 )
 SELECT
   e.migration,
@@ -4194,7 +4201,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 106.
+-- Funções redefinidas com corpo extraível: 107.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4421,6 +4428,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'cancelar_pedido_sugerido', 1, '20260530210001_cancelar_pedido_limpa_portal.sql', '69bd05c6afec428b9ae86e385c453d70'),
   ('public', 'cancelar_pedido_sugerido', 2, '20260905224959_cancelar_pedido_guard_atomico.sql', 'b6965a9c835c34400bb866edc5b33a83'),
   ('public', 'cancelar_pedido_sugerido', 3, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', '643fdbfbba6693bf2d43813829a706a4'),
+  ('public', 'cancelar_pedido_sugerido', 4, '20260907095841_disparado_simulado_e_estado_pos_disparo.sql', '80edef4c1a1f49e5c3061da66250cd9e'),
   ('public', 'atualizar_parametros_numericos_skus', 1, '20260531140000_reposicao_atualizar_params_nao_zera.sql', 'fa55aaf26173a06e3bade9616f3aa8a4'),
   ('public', 'atualizar_parametros_numericos_skus', 2, '20260605130000_param_auto_core.sql', '74540a6ed9b7e5a0437f9ecfac7ee0f6'),
   ('public', 'atualizar_parametros_numericos_skus', 3, '20260605150000_param_auto_fusivel_calibracao.sql', 'fd7c292b873875e30ddfaf5fda1f2a80'),
@@ -4592,8 +4600,11 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'aprovar_pedido_sugerido', 1, '20260906151715_aprovar_pedido_guard_atomico.sql', 'f9ffc3b7db7801d9c19589ca8c0ec6f9'),
   ('public', 'aprovar_pedido_sugerido', 2, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', 'b313731a4cc51c5e0e4717be22e4c299'),
   ('public', 'aprovar_pedido_sugerido', 3, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', 'b313731a4cc51c5e0e4717be22e4c299'),
+  ('public', 'reposicao__valida_cancelamento_pos_disparo', 1, '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql', '1654fcd4cf2aad0b1ad227c455c442b4'),
+  ('public', 'reposicao__valida_cancelamento_pos_disparo', 2, '20260907095841_disparado_simulado_e_estado_pos_disparo.sql', 'b6dfae7598c304d32411e9313f2452cd'),
   ('public', 'corrigir_cancelamento_pos_disparo', 1, '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql', '846b7fd56ccda97c8a53e529a5ff182c'),
-  ('public', 'corrigir_cancelamento_pos_disparo', 2, '20260906172718_cancelamento_pos_disparo_gate_canonico.sql', '4ca937b4befd086a05b610e4619db24c')
+  ('public', 'corrigir_cancelamento_pos_disparo', 2, '20260906172718_cancelamento_pos_disparo_gate_canonico.sql', '4ca937b4befd086a05b610e4619db24c'),
+  ('public', 'corrigir_cancelamento_pos_disparo', 3, '20260907095841_disparado_simulado_e_estado_pos_disparo.sql', '6cee6f8e6d6bc57286597dd6de9150d7')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2
