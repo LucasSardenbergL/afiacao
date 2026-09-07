@@ -107,6 +107,41 @@ perdido é um terço da operação. As telas de cliente têm 5.664 *contas*, e c
 (`fin_ic_matches` = 0), `AdminReposicaoOportunidades:330` (0), `AdminEstoquePicking:371,580,659`
 (0), `WhatsappInbox:110` (0). Corrigir **antes da primeira linha**, porque depois some calado.
 
+## O que considero LEGÍTIMO, e por quê
+
+Sete padrões cobrem a maioria dos 93. Em nenhum deles a ausência afirma segurança:
+
+1. **Campo opcional de um registro já carregado.** `Profile` (telefone/e-mail/horários), `OrderDetail`
+   (previsão, desconto, pagamento), `AdminKnowledgeBaseDetail` (11 `KpiCell` de spec),
+   `RendimentoCalculator` (catalisador/diluente/pot life), `AdminStandardProcessDetail`,
+   `GrupoCliente360`. O `&&` testa **um campo do objeto**, não a leitura: `data` está presente e o
+   campo é nulo. A ausência afirma "não preenchido" — que é verdade.
+2. **Sítio protegido por guard superior.** `PedidoProgramadoDetalhe:274` — o `if (isPending || !data)`
+   da linha 52 torna o `&&` inalcançável com `data` undefined. Falso positivo do detector, que não
+   modela fluxo.
+3. **UI de interação local.** `MapearItemDialog` ("Nada encontrado" de uma busca digitada),
+   `ConsolidarDemandaDialog`, `SubstituicaoModal`, `ImpersonationBanner`, `GovernancePermissions:197‑199`.
+4. **Rodapé de truncamento.** `FollowupsSugeridosCard:95`, `GestorExcecoes:115`,
+   `AdminReposicaoPedidos:681`, `ClientesNaoVinculados:121` — some junto com a lista que qualifica.
+5. **Gráfico/decoração.** `Intelligence*Tab`, `Gamification`, `Training`, `TarefasTemplates`,
+   `MinhasVisitasResultadoCard`, `CustomerProfile360Summary`.
+6. **O `&&` que MOSTRA o aviso de falha.** `ClientesNaoVinculados:80` —
+   `{erro && <Card>A última atualização falhou…}`. É o padrão certo aparecendo na varredura.
+7. **Máquina de estados explícita já no lugar.** `TintPricing:315‑338` —
+   `view.status ∈ {carregando, com-preco, sem-preco}`, e "Sem preço" é **fail-closed por desenho**.
+
+## Sobre gatear a forma
+
+**A decisão de 2026-08-22 continua certa**: `jsx-&&` inteiro no gate faria a baseline crescer por
+motivo benigno em idioma legítimo, e baseline que cresce por motivo benigno ensina a atualizá-la no
+automático. **Nada aqui justifica reverter o filtro de `contarAutoOcultacao`.**
+
+O que a medição sugere é um recorte **menor e diferente**: o sub-tipo que MENTE — default no
+binding (`= []`) + condição `length === 0` + texto afirmativo — tem o mesmo dano da forma já
+gateada e são 16 sítios, não 93. Isso é um PR próprio, com baseline própria e falsificação; e o
+pré-requisito dele é o item 2 acima, porque num hook que engole o erro o gate estaria fiscalizando
+a camada errada.
+
 ## Fatia #1 FECHADA — `usePrecoCockpit` (2026-09-06)
 
 Os dois consumidores (`CartItemList`, `ProductItemForm` — e são **exatamente** dois) passaram a
@@ -156,38 +191,3 @@ itens em coluna `items` jsonb (confirmado pelo ESCRITOR, `submitOrder.ts:216`, n
 O limite de 200 nunca foi tocado em 31 mil pedidos. Registrar o zero é o que impede o próximo a
 inflar o argumento — mesma disciplina que separou `orders` (0 linhas) de `sales_orders` (508/30d)
 na medição original, só que agora contra um erro **meu**, plausível e verificável em duas queries.
-
-## O que considero LEGÍTIMO, e por quê
-
-Sete padrões cobrem a maioria dos 93. Em nenhum deles a ausência afirma segurança:
-
-1. **Campo opcional de um registro já carregado.** `Profile` (telefone/e-mail/horários), `OrderDetail`
-   (previsão, desconto, pagamento), `AdminKnowledgeBaseDetail` (11 `KpiCell` de spec),
-   `RendimentoCalculator` (catalisador/diluente/pot life), `AdminStandardProcessDetail`,
-   `GrupoCliente360`. O `&&` testa **um campo do objeto**, não a leitura: `data` está presente e o
-   campo é nulo. A ausência afirma "não preenchido" — que é verdade.
-2. **Sítio protegido por guard superior.** `PedidoProgramadoDetalhe:274` — o `if (isPending || !data)`
-   da linha 52 torna o `&&` inalcançável com `data` undefined. Falso positivo do detector, que não
-   modela fluxo.
-3. **UI de interação local.** `MapearItemDialog` ("Nada encontrado" de uma busca digitada),
-   `ConsolidarDemandaDialog`, `SubstituicaoModal`, `ImpersonationBanner`, `GovernancePermissions:197‑199`.
-4. **Rodapé de truncamento.** `FollowupsSugeridosCard:95`, `GestorExcecoes:115`,
-   `AdminReposicaoPedidos:681`, `ClientesNaoVinculados:121` — some junto com a lista que qualifica.
-5. **Gráfico/decoração.** `Intelligence*Tab`, `Gamification`, `Training`, `TarefasTemplates`,
-   `MinhasVisitasResultadoCard`, `CustomerProfile360Summary`.
-6. **O `&&` que MOSTRA o aviso de falha.** `ClientesNaoVinculados:80` —
-   `{erro && <Card>A última atualização falhou…}`. É o padrão certo aparecendo na varredura.
-7. **Máquina de estados explícita já no lugar.** `TintPricing:315‑338` —
-   `view.status ∈ {carregando, com-preco, sem-preco}`, e "Sem preço" é **fail-closed por desenho**.
-
-## Sobre gatear a forma
-
-**A decisão de 2026-08-22 continua certa**: `jsx-&&` inteiro no gate faria a baseline crescer por
-motivo benigno em idioma legítimo, e baseline que cresce por motivo benigno ensina a atualizá-la no
-automático. **Nada aqui justifica reverter o filtro de `contarAutoOcultacao`.**
-
-O que a medição sugere é um recorte **menor e diferente**: o sub-tipo que MENTE — default no
-binding (`= []`) + condição `length === 0` + texto afirmativo — tem o mesmo dano da forma já
-gateada e são 16 sítios, não 93. Isso é um PR próprio, com baseline própria e falsificação; e o
-pré-requisito dele é o item 2 acima, porque num hook que engole o erro o gate estaria fiscalizando
-a camada errada.
