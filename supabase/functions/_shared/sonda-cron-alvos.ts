@@ -78,15 +78,6 @@ function comCorpo(base: ControlePositivo, corpo: string, porque: string): Contro
   return { ...base, corpo, nota: `${base.nota} · ${porque}` };
 }
 
-/** Payload mínimo que leva o `omie-webhook` até o insert do evento recebido. */
-const PAYLOAD_OMIE_WEBHOOK =
-  '{"topic":"Financas.ContaPagar.Alterado","messageId":"sonda-controle-positivo",' +
-  '"appKey":"controle","author":"controle","event":{"id":1}}';
-
-/** Payload mínimo que leva o `omie-nfe-webhook` ao caminho de escrita (ele roteia por chave). */
-const PAYLOAD_NFE_WEBHOOK =
-  '{"chave_acesso":"00000000000000000000000000000000000000000000","nfe":{"chave_acesso":"00000000000000000000000000000000000000000000"}}';
-
 /** O corpo que faz a `sync-reprocess` escrever: reconcilia pedidos e dá upsert em product_costs. */
 const ACTION_REPROCESS = '{"action":"reprocess_all"}';
 
@@ -129,10 +120,13 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   { edge: "carteira-positivacao-snapshot", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   { edge: "process-recurring-orders", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   // FORA da onda 1, e o motivo é do CONTROLE, não do risco: `omie-webhook` e `omie-nfe-webhook`
-  // recusam `{}` e também os payloads plausíveis que montei (topic/messageId e chave_acesso) sem
-  // tocar em nada — os closures saíram INVERIFICAVEL, que é o veredito honesto para "não consegui
-  // fazer o contador subir". Zero efeito com controle inerte não é prova de nada: aprova qualquer
-  // coisa. Elas entram quando alguém determinar o payload que leva cada uma até o insert.
+  // recusam `{}` sem tocar em nada, e os closures saíram INVERIFICAVEL — o veredito honesto para
+  // "não consegui fazer o contador subir". Zero efeito com controle inerte não prova nada: aprova
+  // qualquer coisa. Já TENTADO e insuficiente (para a onda 2 não repetir):
+  //   omie-webhook     {"topic":"Financas.ContaPagar.Alterado","messageId":"…","appKey":"…",
+  //                     "author":"…","event":{"id":1}}
+  //   omie-nfe-webhook {"chave_acesso":"<44 zeros>","nfe":{"chave_acesso":"<44 zeros>"}}
+  // Elas entram quando alguém determinar o payload que leva cada uma até o insert.
 ];
 
 export function slugsDaAllowlist(): ReadonlySet<string> {
