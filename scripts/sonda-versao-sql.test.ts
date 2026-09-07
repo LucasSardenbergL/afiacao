@@ -517,6 +517,18 @@ describe('o PASSO 1 ESCREVE o passo 2 — o mapa edge→id não passa pela mão 
     expect(iNaoSonda).toBeLessThan(iPreFonte);
     expect(ramoDe(sql, 'NAO E RESPOSTA DE SONDA')).toMatch(/probe:true/);
   });
+
+  it('a CONDIÇÃO do ramo é NULL-safe e está colada nele — texto presente não é ramo alcançável', () => {
+    // Sem esta asserção o ramo passa a ser texto decorativo: trocar a condição por `false` (ou por
+    // um `<>`, que com `probe` AUSENTE vale NULL e nunca dispara) deixa a string no arquivo e a
+    // suíte VERDE — a cegueira que o próprio .mut descreve e que só EXECUTANDO se vê. Medido: as
+    // duas mutações SOBREVIVIAM antes daqui. `IS DISTINCT FROM` é o operador NULL-safe, e é
+    // exatamente o corpo SEM o campo `probe` (o cron) que o ramo precisa alcançar.
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toMatch(
+      /WHEN l\.corpo ->> 'probe' IS DISTINCT FROM 'true'\n\s*THEN 'NAO E RESPOSTA DE SONDA/,
+    );
+  });
 });
 
 describe('escaparParaFormat — as duas armadilhas do format() que o corpus não exercita', () => {
