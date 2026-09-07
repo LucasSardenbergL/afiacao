@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   chaveDoManifesto,
+  identidadeDosControles,
   classificarVeredito,
   gateG1,
   gateG3,
@@ -134,8 +135,19 @@ describe('classificarVeredito', () => {
 
 describe('cache e enumeração', () => {
   it('a chave muda com o harness — closure igual, instrumento diferente, veredito a refazer', () => {
-    expect(chaveDoManifesto('c1', 'h1')).not.toBe(chaveDoManifesto('c1', 'h2'));
-    expect(chaveDoManifesto('c1', 'h1')).toBe(chaveDoManifesto('c1', 'h1'));
+    expect(chaveDoManifesto('c1', 'h1', 'x1')).not.toBe(chaveDoManifesto('c1', 'h2', 'x1'));
+    expect(chaveDoManifesto('c1', 'h1', 'x1')).toBe(chaveDoManifesto('c1', 'h1', 'x1'));
+  });
+  it('a chave muda com os CONTROLES — trocar o controle por um inerte tem de reexecutar', () => {
+    // Regressão de 2026-09-07: sem isto, sabotar o corpo do controle de `sync-reprocess` deixava
+    // os 43 vereditos em cache e a falsificação saía VERDE. Controle inerte aprova qualquer coisa.
+    expect(chaveDoManifesto('c1', 'h1', 'x1')).not.toBe(chaveDoManifesto('c1', 'h1', 'x2'));
+  });
+  it('a identidade dos controles é ESTÁVEL por edge e DISTINTA entre edges com controles diferentes', () => {
+    expect(identidadeDosControles('sync-reprocess')).toBe(identidadeDosControles('sync-reprocess'));
+    expect(identidadeDosControles('sync-reprocess')).not.toBe(identidadeDosControles('sonda-relay'));
+    // Edge fora da allowlist não tem controle: identidade do vazio, nunca um throw silencioso.
+    expect(identidadeDosControles('nao-existe')).toBe(identidadeDosControles('outra-que-nao-existe'));
   });
   it('o ponto fixo alcança dependência que só existia no passado, e os commits QUE SÓ ELA tem', () => {
     // O caso real: `_shared/velho.ts` não existe mais hoje, mas um `index.ts` antigo o importava.

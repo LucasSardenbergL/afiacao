@@ -62,13 +62,30 @@ const SEM_CREDENCIAL: ControlePositivo = {
 };
 
 /**
- * Mesma época de auth, corpo diferente. Existe porque nem toda edge dispara efeito com `{}`:
- * `sync-reprocess` ROTEIA POR `action` e um corpo sem action conhecida cai no `default` 400 — o
- * controle ficaria inerte e "não dispara nada" é indistinguível de "não medi".
+ * Mesma época de auth, corpo diferente: aproxima o controle do fluxo REAL da edge.
+ *
+ * A razão original era outra e a medição a derrubou. Supus que `sync-reprocess`, que roteia por
+ * `action`, deixaria o controle INERTE com `{}` (cai no `default` 400). Falso: sabotando o corpo
+ * para `{}` — com o cache já invalidando por controle, 44 closures REEXECUTADOS — os 44 seguiram
+ * `PASSA`, logo o contador sobe mesmo assim. O `versao.ts` da edge explica: antes do roteador o
+ * bundle paga `createClient` e uma leitura de config, e leitura já é efeito contado.
+ *
+ * O helper fica porque um controle que só toca a config exerce MENOS do que um que escreve: ele
+ * prova que o contador não está cego, não que enxerga o fluxo profundo. Preferir o corpo real é
+ * rigor barato — não a diferença entre provar e não provar.
  */
 function comCorpo(base: ControlePositivo, corpo: string, porque: string): ControlePositivo {
   return { ...base, corpo, nota: `${base.nota} · ${porque}` };
 }
+
+/** Payload mínimo que leva o `omie-webhook` até o insert do evento recebido. */
+const PAYLOAD_OMIE_WEBHOOK =
+  '{"topic":"Financas.ContaPagar.Alterado","messageId":"sonda-controle-positivo",' +
+  '"appKey":"controle","author":"controle","event":{"id":1}}';
+
+/** Payload mínimo que leva o `omie-nfe-webhook` ao caminho de escrita (ele roteia por chave). */
+const PAYLOAD_NFE_WEBHOOK =
+  '{"chave_acesso":"00000000000000000000000000000000000000000000","nfe":{"chave_acesso":"00000000000000000000000000000000000000000000"}}';
 
 /** O corpo que faz a `sync-reprocess` escrever: reconcilia pedidos e dá upsert em product_costs. */
 const ACTION_REPROCESS = '{"action":"reprocess_all"}';
@@ -91,8 +108,9 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   { edge: "monthly-report", desde: "2c55a71edca3", controles: [SEM_CREDENCIAL, CRON, BEARER] },
   { edge: "calculate-scores", desde: "2c55a71edca3", controles: [SEM_CREDENCIAL, CRON, BEARER] },
   // F4 onda 1. Entrou agora porque o PR #2224 mergeou (2026-09-06) e liberou o `versao.ts`; a
-  // dívida era de COLISÃO, nunca de risco. Os três controles carregam `action` real: com `{}` esta
-  // edge devolve 400 e o contador jamais subiria — controle inerte aprova qualquer coisa.
+  // dívida era de COLISÃO, nunca de risco. Os controles carregam `action` real para exercer o
+  // fluxo profundo (reconcilia pedidos, upsert em product_costs) — ver `comCorpo` para o que a
+  // medição mostrou sobre o corpo vazio.
   {
     edge: "sync-reprocess",
     desde: null,
@@ -102,6 +120,19 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
       comCorpo(BEARER, ACTION_REPROCESS, "idem, para closures cuja época só aceitava JWT"),
     ],
   },
+  // F4 onda 1 — as cinco de efeito NÃO-externo e menor custo de prova (o levantamento de
+  // 2026-09-07 achou 42 edges com efeito externo, 13 com escrita e 1 só de leitura). Nenhuma
+  // manda e-mail, mensagem ou escreve em sistema de terceiro: se a prova falhasse em alguma, o
+  // pior caso continuaria dentro do nosso banco. `desde: null` porque o veredito pergunta ao
+  // artefato (`closureTemRamo`), não ao sha.
+  { edge: "reposicao-depara-sayerlack-auto", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  { edge: "carteira-positivacao-snapshot", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  { edge: "process-recurring-orders", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  // FORA da onda 1, e o motivo é do CONTROLE, não do risco: `omie-webhook` e `omie-nfe-webhook`
+  // recusam `{}` e também os payloads plausíveis que montei (topic/messageId e chave_acesso) sem
+  // tocar em nada — os closures saíram INVERIFICAVEL, que é o veredito honesto para "não consegui
+  // fazer o contador subir". Zero efeito com controle inerte não é prova de nada: aprova qualquer
+  // coisa. Elas entram quando alguém determinar o payload que leva cada uma até o insert.
 ];
 
 export function slugsDaAllowlist(): ReadonlySet<string> {

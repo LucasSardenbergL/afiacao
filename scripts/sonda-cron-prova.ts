@@ -158,12 +158,25 @@ export function identidadeDoHarness(raiz = process.cwd()): string {
 
 /**
  * A chave contém tudo que produz o veredito: a identidade do closure (conteúdo do fecho naquele
- * sha) e a do harness (runner, stubs, request builder, versão do Deno). O que se espera de (a)
- * é derivado do PRÓPRIO closure (`closureTemRamo`), então não entra na chave: closure diferente
- * já é identidade diferente.
+ * sha), a do harness (runner, stubs, request builder, versão do Deno) e a dos CONTROLES da edge.
+ * O que se espera de (a) é derivado do PRÓPRIO closure (`closureTemRamo`), então não entra na
+ * chave: closure diferente já é identidade diferente.
+ *
+ * ⚠️ Os controles entraram em 2026-09-07, depois de a falsificação sair VERDE. Eles decidem a
+ * parte (c) do protocolo — `PASSA` vs `INVERIFICAVEL` — e vinham de FORA do closure e de fora do
+ * harness (`sonda-cron-alvos.ts` não está em `identidadeDoHarness`). Consequência medida: trocar
+ * o controle de `sync-reprocess` por um corpo inerte NÃO reexecutou nada e os 43 vereditos
+ * antigos seguiram valendo. Era exatamente a cegueira que o comentário de `identidadeDoHarness`
+ * diz evitar — memória de uma prova que não existe mais — só que na outra metade do protocolo.
  */
-export function chaveDoManifesto(identidade: string, harness: string): string {
-  return `${identidade}@${harness}`;
+export function chaveDoManifesto(identidade: string, harness: string, controles: string): string {
+  return `${identidade}@${harness}@${controles}`;
+}
+
+/** Identidade dos controles de UMA edge: só a dela caduca quando ela muda. */
+export function identidadeDosControles(edge: string): string {
+  const alvo = SONDA_CRON_ALVOS.find((a) => a.edge === edge);
+  return createHash('sha256').update(JSON.stringify(alvo?.controles ?? [])).digest('hex').slice(0, 16);
 }
 
 export function classificarVeredito(v: Veredito, closureTemORamo: boolean): Classe {
@@ -268,9 +281,15 @@ export function gateG1(edge: string, codigo: string): string | null {
   if (!bloco) return `${edge}: bloco OPTIONS não encontrado`;
   const c = bloco[1];
   const pr = c.indexOf('atenderSondaOptions(');
-  const pc = c.indexOf('return new Response(null, { headers: corsHeaders })');
+  // O corpo do preflight NÃO é `null` em toda edge: `reposicao-depara-sayerlack-auto`,
+  // `carteira-positivacao-snapshot` e `omie-nfe-webhook` respondem `'ok'` desde sempre. Casar a
+  // forma literal `null` obrigaria a MUDAR o preflight dessas três para o gate passar — o oposto
+  // do que ele protege. Quem garante "não mudou" é a parte (b) do runner, que compara a resposta
+  // sem credencial byte a byte com o preflight do browser; aqui basta que o fallback exista.
+  const mc = /return new Response\((?:null|'[^']*'|"[^"]*"|`[^`]*`), \{ headers: corsHeaders \}\)/.exec(c);
+  const pc = mc ? mc.index : -1;
   if (pr < 0) return `${edge}: o bloco OPTIONS não chama atenderSondaOptions — o cron nunca atesta esta edge`;
-  if (pc < 0) return `${edge}: a resposta de CORS do bloco OPTIONS mudou de forma`;
+  if (pc < 0) return `${edge}: o bloco OPTIONS perdeu o return de CORS com corpo literal`;
   if (pr > pc) return `${edge}: atenderSondaOptions está DEPOIS do return de CORS — código morto`;
   if (/req\.json\(|req\.text\(|createClient\(|fetch\(/.test(removerComentarios(c))) {
     return `${edge}: IO dentro do bloco OPTIONS`;
@@ -354,13 +373,14 @@ function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) =
   if (!SONDA_CRON_ALVOS.some((a) => a.edge === edge)) {
     throw new Mecanica(`${edge}: fora da allowlist — provar edge que o cron não sonda não significa nada`);
   }
+  const idControles = identidadeDosControles(edge);
   const closures = enumerarClosures(edge, raiz);
   const ruins: string[] = [];
   let passa = 0;
   m.vereditos[edge] ??= {};
   const visitadas = new Set<string>();
   for (const c of closures) {
-    const k = chaveDoManifesto(c.identidade, m.harness);
+    const k = chaveDoManifesto(c.identidade, m.harness, idControles);
     visitadas.add(k);
     const commitado = m.vereditos[edge][k];
     let e = commitado;

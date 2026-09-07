@@ -23,10 +23,18 @@ import {
 } from '../_shared/mapas-paginados.ts';
 import type { BancoPostgrest } from '../_shared/paginate.ts';
 import { montarLinhasSnapshot } from './montar-linhas.ts';
+import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from './versao.ts';
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') {
+    // Sonda de deploy por cron (F4, onda 1). Só responde com a credencial HMAC válida; sem ela o
+    // preflight do browser recebe a mesma resposta de sempre, byte a byte. É o único ramo que um
+    // bundle velho já interrompia antes de tudo — por isso o cron pode perguntar sem poder disparar.
+    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
+    if (sonda) return sonda;
+    return new Response('ok', { headers: corsHeaders });
+  }
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
