@@ -748,6 +748,10 @@ jobs:
     # consumia 89% do teto de 10min, um runner lento de distância do mesmo falso-vermelho. 15min
     # devolve a folga sem esconder regressão.
     timeout-minutes: 15
+    # issues:write p/ o sensor abaixo abrir/fechar a Issue `mutcheck-cobertura`; contents:read p/ checkout.
+    permissions:
+      contents: read
+      issues: write
     # FORA do `schedule` de propósito. O run diário existe para provar que a main passa nos gates
     # BLOQUEANTES; este job é informativo, não-required, e pode ficar INVÁLIDO por refactor legítimo
     # (ver o comentário acima). Rodando diário ele falharia sem abrir Issue nenhuma — os dois steps
@@ -781,5 +785,80 @@ jobs:
         run: bun run mutcheck:selftest
 
       - name: mutcheck — contratos de cobertura money-path (.mut)
+        env:
+          MUTCHECK_RESUMO: /tmp/mutcheck-resumo.json
         run: bun run mutcheck
+
+      # ─── Sensor (2026-09-07) ────────────────────────────────────────────────
+      # Este job JÁ rodava na main a cada push — ele só não FALAVA. O vermelho do #2279 durou
+      # ~10h e chegou ao founder por alguém abrir um run, não por um alarme; job vermelho sem
+      # leitor treina a ignorar o sinal. Aqui ele ganha voz, SEM mudar quando roda (segue fora
+      # do `schedule`, pelo motivo no comentário do job) e SEM mudar o veredito: o objeto medido
+      # é o próprio commit, então job vermelho é semanticamente certo — o modelo é o `validate`,
+      # não o `authz-sentinela` (que fica verde porque mede um sistema EXTERNO).
+      #
+      # ⚠️ Canal PRÓPRIO, e não a Issue `ci-main-red`: o corpo daquela afirma "Provável reversão
+      # por commit direto do Lovable", diagnóstico ERRADO aqui — mandaria o founder para
+      # `deploy.md` procurar incidente que não existe (mesma razão do `authz-prod`).
+      #
+      # O corpo SEPARA as duas causas porque os remédios são OPOSTOS, e o log as fundia:
+      # INVÁLIDA = o `.mut` envelheceu com o fonte (corrigir o padrão; ruído esperado num repo
+      # multi-sessão) × DIVERGE = a suíte perdeu poder (regressão de cobertura, o sinal caro).
+      - name: Alerta de cobertura na main → GitHub Issue
+        if: failure() && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const sha = context.sha.slice(0, 8);
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const label = 'mutcheck-cobertura';
+            // Ausência de resumo é ausência de DADO, não "nada a relatar": o step pode ter morrido
+            // antes de escrevê-lo (bun ausente, timeout). O corpo diz isso em vez de afirmar zero.
+            let r = null;
+            try { r = JSON.parse(fs.readFileSync('/tmp/mutcheck-resumo.json', 'utf8')); } catch (e) { /* sem resumo */ }
+            const linhas = ['🧪 **O `mutation-check` falhou na `main`.**', '', `- Commit: \`${sha}\``, `- Run: ${runUrl}`, ''];
+            if (!r) {
+              linhas.push('⚠️ **Sem resumo estruturado** — o step não chegou a escrevê-lo (harness/ambiente, não cobertura). Leia o run.');
+            } else {
+              const ruins = r.contratos.filter(c => c.exit !== 0);
+              const inval = ruins.reduce((a, c) => a + c.invalidas, 0);
+              const diver = ruins.reduce((a, c) => a + c.divergencias, 0);
+              const abortou = ruins.filter(c => c.abortou);
+              linhas.push(`**${ruins.length}/${r.total} contrato(s) com problema** — ${diver} divergência(s), ${inval} inválida(s).`, '');
+              if (diver > 0) linhas.push('🔴 **DIVERGE = a suíte PERDEU PODER.** Regressão de cobertura: uma mutação que era pega passou a sobreviver. Remédio: devolver o dente ao teste — **não** afrouxar o `.mut`.');
+              if (inval > 0) linhas.push('🟡 **INVÁLIDA = o `.mut` envelheceu junto com o fonte** (padrão não casa mais, ou casa >1 linha). Remédio: corrigir o PADRÃO de mutação. É manutenção do contrato, não regressão.');
+              if (abortou.length > 0) linhas.push('⚫ **Baseline vermelho/harness quebrado** — o monitor não conseguiu medir. Nada se conclui sobre cobertura aqui.');
+              linhas.push('', '| contrato | exit | diverge | inválidas | sumário |', '| --- | --- | --- | --- | --- |');
+              for (const c of ruins) linhas.push(`| \`${c.mut}\` | ${c.exit} | ${c.divergencias} | ${c.invalidas} | ${c.sumario || '—'} |`);
+            }
+            linhas.push('', 'Contexto da ferramenta: `scripts/mutcheck.sh` · contratos em `scripts/mutcheck.d/*.mut`.');
+            const body = linhas.join('\n');
+            try {
+              await github.rest.issues.createLabel({ owner, repo, name: label, color: 'fbca04', description: 'mutcheck: contrato de cobertura com problema na main' });
+            } catch (e) { /* label já existe */ }
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: label, per_page: 1 });
+            if (open.data.length > 0) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.data[0].number, body });
+            } else {
+              await github.rest.issues.create({ owner, repo, title: '🧪 mutcheck: cobertura com problema na main', body, labels: [label] });
+            }
+
+      # Gêmeo do fecho da `ci-main-red`: sem isso a Issue fica órfã e o sinal perde valor —
+      # a próxima pessoa aprende que a Issue aberta não quer dizer nada. Idempotente (no-op sem
+      # Issue aberta). `success()` é false se qualquer step do job falhou.
+      - name: cobertura voltou ao contrato → fecha Issue mutcheck-cobertura
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const sha = context.sha.slice(0, 8);
+            const label = 'mutcheck-cobertura';
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: label, per_page: 100 });
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: `✅ Todos os contratos honrados em \`${sha}\`. Fechando automaticamente.` });
+              await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed' });
+            }
 
