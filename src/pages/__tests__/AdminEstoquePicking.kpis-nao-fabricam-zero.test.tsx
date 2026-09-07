@@ -78,6 +78,24 @@ async function valorDoCard(label: string) {
   return el.nextElementSibling?.textContent ?? '';
 }
 
+/**
+ * Espera a query ASSENTAR antes de ler o card — e esta espera é a asserção, não cerimônia.
+ *
+ * MEDIDO no laço de falsificação (2026-09-07): durante o loading o card já exibe o valor
+ * TRANSITÓRIO — `fefoCompliance?.pct == null` é true quando `data` ainda é `undefined`, então o
+ * FEFO mostra "—" antes de qualquer leitura acontecer. Um `waitFor(() => expect(valor).toBe('—'))`
+ * passava na PRIMEIRA tentativa, e o teste aprovava o spinner em vez da medição: sabotar
+ * `pct: null → 0` ficava VERDE. O espelho vale para os counts, que mostram "0" no loading
+ * (`undefined ?? 0`) — ali um teste de "ZERO real" passaria sem nunca ver o zero medido.
+ */
+async function assentar(
+  qc: QueryClient,
+  chave: readonly unknown[],
+  status: 'success' | 'error',
+) {
+  await waitFor(() => expect(qc.getQueryState([...chave])?.status).toBe(status));
+}
+
 beforeEach(() => { falharEm = null; dados = {}; });
 afterEach(() => { onlineManager.setOnline(true); vi.restoreAllMocks(); });
 
@@ -93,9 +111,11 @@ describe('KPIs — a leitura que falhou não vira o número "0"', () => {
 
   it('ERRO: "Tasks Abertas" e "Pedidos Aguardando" mostram "—", nunca "0"', async () => {
     falharEm = 'picking_tasks';
-    renderAba('picking');
+    const { qc } = renderAba('picking');
 
-    await waitFor(async () => expect(await valorDoCard('Tasks Abertas')).toBe('—'));
+    await assentar(qc, ['pk-tasks-abertas', 'OBEN'], 'error');
+    await assentar(qc, ['pk-pedidos-aguardando', 'OBEN'], 'error');
+    expect(await valorDoCard('Tasks Abertas')).toBe('—');
     expect(await valorDoCard('Pedidos Aguardando')).toBe('—');
   });
 
@@ -118,30 +138,38 @@ describe('KPIs — a leitura que falhou não vira o número "0"', () => {
 
   it('ERRO na view: "SKUs Críticos" mostra "—" — o "0" aqui seria "estoque sadio"', async () => {
     falharEm = 'inventory_position_operacional';
-    renderAba('picking');
+    const { qc } = renderAba('picking');
 
-    await waitFor(async () => expect(await valorDoCard('SKUs Críticos')).toBe('—'));
+    await assentar(qc, ['pk-skus-criticos', 'OBEN'], 'error');
+    expect(await valorDoCard('SKUs Críticos')).toBe('—');
     expect(await screen.findByTestId('aviso-picking-kpis')).toBeTruthy();
   });
 
   it('ERRO no FEFO: mostra "—", não "0.0%" pintado de vermelho', async () => {
     falharEm = 'picking_tasks';
-    renderAba('picking');
+    const { qc } = renderAba('picking');
 
-    await waitFor(async () => expect(await valorDoCard('FEFO Compliance')).toBe('—'));
+    await assentar(qc, ['pk-fefo-compliance', 'OBEN'], 'error');
+    expect(await valorDoCard('FEFO Compliance')).toBe('—');
   });
 
   it('SEM denominador: FEFO é "—" — nenhum item separado não é 0% de conformidade', async () => {
-    renderAba('picking');
+    const { qc } = renderAba('picking');
 
-    await waitFor(async () => expect(await valorDoCard('FEFO Compliance')).toBe('—'));
+    // Assentar em `success` é o que separa esta asserção do "—" do loading: aqui a leitura
+    // ACONTECEU e devolveu 0 tasks, e é a AUSÊNCIA de denominador que precisa virar "—".
+    await assentar(qc, ['pk-fefo-compliance', 'OBEN'], 'success');
+    expect(await valorDoCard('FEFO Compliance')).toBe('—');
     expect(screen.queryByTestId('aviso-picking-kpis')).toBeNull();
   });
 
   it('ZERO real: os counts mostram "0" mesmo, e sem aviso', async () => {
-    renderAba('picking');
+    const { qc } = renderAba('picking');
 
-    await waitFor(async () => expect(await valorDoCard('Tasks Abertas')).toBe('0'));
+    await assentar(qc, ['pk-tasks-abertas', 'OBEN'], 'success');
+    await assentar(qc, ['pk-pedidos-aguardando', 'OBEN'], 'success');
+    await assentar(qc, ['pk-skus-criticos', 'OBEN'], 'success');
+    expect(await valorDoCard('Tasks Abertas')).toBe('0');
     expect(await valorDoCard('Pedidos Aguardando')).toBe('0');
     expect(await valorDoCard('SKUs Críticos')).toBe('0');
     expect(screen.queryByTestId('aviso-picking-kpis')).toBeNull();
