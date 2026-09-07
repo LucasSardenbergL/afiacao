@@ -311,6 +311,31 @@ ORDER BY 1;
 `.trim();
 
 /** Minutos desde o último sucesso do cron de SONDA (não o do ledger). `nunca` = recém-aplicado. */
+/**
+ * A CLASSE que o relé declarou por `request_id`, enquanto a janela do pg_net a preserva.
+ *
+ * Sem isso o achado especula três hipóteses de rollback mesmo quando a causa está escrita no corpo
+ * (`sem-chave`, `timeout`, `cors-sem-sonda`). Guards de forma idênticos aos da janela viva: filtro
+ * textual ANTES do cast, e o cast dentro de um `CASE` — ordem de avaliação é da LINGUAGEM, não do
+ * plano, e um corpo truncado que comece com `{` abortaria a consulta inteira.
+ */
+export const SQL_SONDA_CRON_MOTIVOS = `
+SELECT r.id, r.c ->> 'classe'
+FROM (
+  SELECT d.request_id AS id,
+         CASE WHEN x.content IS JSON OBJECT THEN x.content::jsonb END AS c
+  FROM public.deploy_sonda_disparos d
+  JOIN net._http_response x ON x.id = d.request_id
+  WHERE d.enfileirado_em > now() - interval '48 hours'
+    AND x.content IS NOT NULL
+    AND left(ltrim(x.content), 1) = '{'
+    AND x.content LIKE '%"classe"%'
+) r
+WHERE r.c IS NOT NULL
+  AND jsonb_typeof(r.c -> 'classe') = 'string'
+ORDER BY r.id;
+`.trim();
+
 export const SQL_SAUDE_CRON_SONDA = `
 SELECT coalesce(
   round((extract(epoch FROM (now() - max(d.end_time))) / 60.0)::numeric, 1)::text,
@@ -632,6 +657,20 @@ export function secaoSondaCron(
     atestacoes.push({ requestId, edgeDoCorpo: edge });
   }
 
+  // A causa que o relé declarou, quando a janela ainda a preserva. Falha aqui NÃO é mecânica: o
+  // veredito não depende dela, só a qualidade da explicação — degradar para "não sei" é honesto,
+  // reprovar seria trocar um diagnóstico melhor por nenhum relatório.
+  const motivos: Array<{ requestId: number; classe: string }> = [];
+  try {
+    for (const linha of semChatter(ler(SQL_SONDA_CRON_MOTIVOS))) {
+      const [req, classe] = linha.split('|');
+      const requestId = Number(req);
+      if (classe && Number.isFinite(requestId)) motivos.push({ requestId, classe });
+    }
+  } catch {
+    // segue sem os motivos
+  }
+
   const r = julgarSondaCron({
     ativosNoBanco: ativos,
     allowlistDoRepo: doRepo,
@@ -639,6 +678,7 @@ export function secaoSondaCron(
     disparos,
     atestacoes,
     estadoPorEdge,
+    motivos,
   });
 
   const atestadas = new Set(atestacoes.map((a) => a.requestId));

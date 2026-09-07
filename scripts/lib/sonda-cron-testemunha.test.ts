@@ -73,6 +73,40 @@ describe('julgarSondaCron — o silêncio como sinal de rollback', () => {
     expect(r.avisos.join(' ')).toMatch(/1 de 1/);
   });
 
+  it('quando o relé declarou a CAUSA, ela substitui a especulação de rollback', () => {
+    const e = {
+      ...base(),
+      atestacoes: [],
+      motivos: [
+        { requestId: 200, classe: 'sem-chave' },
+        { requestId: 100, classe: 'sem-chave' },
+      ],
+    };
+    const d = julgarSondaCron(e).achados[0].detalhe;
+    expect(d).toMatch(/O relé respondeu: sem-chave/);
+    expect(d).toMatch(/provisione SONDA_HMAC_KEY/);
+    expect(d).not.toMatch(/Rollback, deploy parcial/);
+  });
+
+  it('sem motivo conhecido, mantém as três hipóteses — não inventa uma causa', () => {
+    const d = julgarSondaCron({ ...base(), atestacoes: [] }).achados[0].detalhe;
+    expect(d).toMatch(/Rollback, deploy parcial ou bundle recriado/);
+  });
+
+  it('classes distintas aparecem todas, sem repetir', () => {
+    const e = {
+      ...base(),
+      atestacoes: [],
+      motivos: [
+        { requestId: 200, classe: 'timeout' },
+        { requestId: 100, classe: 'timeout' },
+      ],
+    };
+    const d = julgarSondaCron(e).achados[0].detalhe;
+    expect(d).toMatch(/O relé respondeu: timeout\./);
+    expect(d).not.toMatch(/provisione SONDA_HMAC_KEY/);
+  });
+
   it('a resposta que se identifica como OUTRA edge é IDENTIDADE_INCOERENTE', () => {
     const e = {
       ...base(),
