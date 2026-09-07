@@ -34,6 +34,19 @@ export interface AtestacaoAtribuida {
   edgeDoCorpo: string;
 }
 
+/**
+ * O que o RELÉ respondeu para um disparo, quando isso ainda é legível.
+ *
+ * Sem isto o achado dizia "rollback, deploy parcial ou bundle recriado" — três hipóteses — mesmo
+ * quando o relé tinha escrito a causa exata no corpo (`sem-chave`, `timeout`, `cors-sem-sonda`).
+ * Especular na frente de quem tem o dado é como um sensor perde credibilidade: o primeiro alarme
+ * que manda investigar a coisa errada ensina a ignorar o próximo.
+ */
+export interface MotivoDoRele {
+  requestId: number;
+  classe: string;
+}
+
 export interface EntradaSondaCron {
   /** Edges ATIVAS na tabela do banco. */
   ativosNoBanco: string[];
@@ -45,6 +58,8 @@ export interface EntradaSondaCron {
   atestacoes: AtestacaoAtribuida[];
   /** O estado que a matriz do par já deu por edge. Só `CONFERE` torna o silêncio suspeito. */
   estadoPorEdge: Map<string, string>;
+  /** Classe que o relé declarou por `request_id`, quando ainda legível. Ausente = não sei. */
+  motivos?: MotivoDoRele[];
 }
 
 type ClasseSondaCron = 'SONDA_CRON_SILENCIOSA' | 'IDENTIDADE_INCOERENTE';
@@ -125,13 +140,21 @@ export function julgarSondaCron(e: EntradaSondaCron): ResultadoSondaCron {
       continue;
     }
 
+    // Quando o relé declarou a causa, ela SUBSTITUI a especulação. Uma causa conhecida e um
+    // diagnóstico genérico levam o leitor a lugares diferentes, e o genérico custa uma investigação
+    // inteira quando a resposta estava escrita no corpo.
+    const porRequestMotivo = new Map((e.motivos ?? []).map((m) => [m.requestId, m.classe]));
+    const classesVistas = [...new Set(mudos.map((d) => porRequestMotivo.get(d.requestId)).filter((c): c is string => !!c))];
+    const causa = classesVistas.length > 0
+      ? `O relé respondeu: ${classesVistas.join(', ')}${classesVistas.includes('sem-chave') ? ' — provisione SONDA_HMAC_KEY nos secrets das edges' : ''}.`
+      : 'Rollback, deploy parcial ou bundle recriado.';
     achados.push({
       edge,
       classe: 'SONDA_CRON_SILENCIOSA',
       detalhe:
         `os ${disparosDaEdge.length} últimos ticks dispararam e NENHUM foi atestado, mas o ledger diz CONFERE — ` +
-        `o bundle que deveria estar no ar tem o ramo e honraria a credencial. Rollback, deploy parcial ou bundle ` +
-        `recriado. Requests sem resposta: ${mudos.map((d) => d.requestId).join(', ')}`,
+        `o bundle que deveria estar no ar tem o ramo e honraria a credencial. ${causa} ` +
+        `Requests sem resposta: ${mudos.map((d) => d.requestId).join(', ')}`,
     });
   }
 
