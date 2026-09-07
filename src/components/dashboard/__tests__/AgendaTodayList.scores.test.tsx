@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 
 /**
  * Guard money-path — a agenda do dia não pode mandar "Recalcular" quando não leu os SCORES.
@@ -69,9 +70,13 @@ import { AgendaTodayList } from '../AgendaTodayList';
 
 function renderLista() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  // <Link> dos itens exige Router: o guard de cobertura nunca chega a renderizar item
+  // (todos os casos dele acabam em vazio/aviso), então só o caminho feliz daqui expõe isso.
   const utils = render(
     <QueryClientProvider client={qc}>
-      <AgendaTodayList />
+      <MemoryRouter>
+        <AgendaTodayList />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return { ...utils, qc };
