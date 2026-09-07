@@ -518,7 +518,59 @@ marcador POSITIVO do trabalho no log (`FALSIF_EXIT=`, `SUITE_EXIT=`, `Tests N pa
 exit do conjunto nem a notificação de background. E vale a recíproca: um log **sem** o marcador é
 ausência de dado, não aprovação — pare e re-enfileire.
 
-## O padrão por trás das treze
+### 16. `printf | grep -q` sob `pipefail` — o leitor ACHOU e mesmo assim o pipeline REPROVA
+
+```bash
+set -o pipefail
+if ! printf '%s' "$ORIG" | command grep -qF "$de"; then
+  echo "alvo sumiu do gerador"; return        # ← e o alvo ESTÁ lá
+fi
+```
+
+`grep -q` sai no **primeiro** match sem drenar o stdin — é o comportamento documentado do GNU grep,
+não um acidente. O `printf`, que ainda tinha bytes a escrever, morre de **SIGPIPE**; o `pipefail`
+promove o 141 dele a status do pipeline e o `if !` lê isso como "não achei":
+
+```
+$ printf '%s' "$BIG" | leitor-que-acha-e-sai; echo "$? / ${PIPESTATUS[*]}"
+141 / 141 0        # ← o leitor respondeu 0/ACHOU; o pipeline reprovou
+```
+
+É **corrida**, não erro determinístico: só dispara quando o escritor não termina antes de o leitor
+fechar. Por isso a assinatura é flake — e flake em gate de FALSIFICAÇÃO é caro, porque ensina a
+re-rodar o CI, e re-rodar apaga sinal.
+
+Medido em 2026-09-07 no eval `sonda-veredito-401` (run **34116946335**, main): **2 das 11**
+sabotagens acusaram "alvo sumiu" e as outras 9 passaram — com o texto **byte-idêntico**, no mesmo
+commit que passou em 34116947563. O que denunciou foi o **relógio**, não a mensagem:
+
+| | controle → sabotagem 1 | sabotagem 1 → 2 |
+|---|---|---|
+| run que passou | 783 ms (rodou os 12 cenários) | 799 ms |
+| run que falhou | **1,7 ms** (voltou no guard) | **1,7 ms** |
+
+O tamanho explica a raridade: `$ORIG` tinha 59.252 B contra os 64 KiB de buffer de pipe do Linux —
+90% da capacidade, margem de 6 KB. Quase sempre o `printf` despeja tudo antes de o `grep` fechar;
+sob escalonamento adverso (runner de 2 vCPUs, logo depois de um `bun` + Postgres), não.
+
+**Não tente reproduzir no macOS:** o BSD grep DRENA o stdin antes de sair, e a corrida não aparece
+nem em 400 tentativas. Falsificar só aqui não prova nada (é a lição do #1483 de novo). O guard
+[`scripts/test-guard-noop-sabotagem.sh`](../../scripts/test-guard-noop-sabotagem.sh) contorna isso
+com um shim que tem a semântica do GNU `grep -q`, tornando a condição determinística nos dois lados.
+
+A contramedida é não usar pipeline para decidir presença — busca no próprio shell, sem fork:
+
+```bash
+case "$ORIG" in
+  *"$de"*) ;;                                  # `"$de"` entre aspas casa LITERAL: ?/* não viram curinga
+  *) echo "alvo sumiu"; return ;;
+esac
+```
+
+O antídoto geral vale igual: o `if !` acima **não** distinguia "não achei" de "a busca não pôde ser
+feita" — três estados espremidos em dois, com o terceiro caindo no lado que acusa.
+
+## O padrão por trás das dezesseis
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -536,6 +588,11 @@ de terminar, por motivo alheio ao trabalho que dizia vigiar. Verde e vermelho
 por construção precisam do mesmo antídoto: uma leitura cuja resposta já se conhece. A contramedida é sempre a mesma — **exigir uma afirmação POSITIVA e com formato
 conhecido** (exit code capturado colado, saída não-vazia, marcador de conclusão, formato conferido),
 em vez de ler qualquer coisa na ausência dela.
+
+E a décima sexta fecha pelo lado do TRANSPORTE: o resultado está certo, o canal está certo e o
+sujeito está certo — o que trai é o **encanamento** entre eles, que promove o acidente do escritor a
+veredito do leitor. Ela também é a única das dezesseis que erra para os DOIS lados conforme o
+agendamento, e é por isso que aparece como flake em vez de defeito.
 
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.
