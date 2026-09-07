@@ -79,3 +79,24 @@ coisa por outras palavras: *silêncio não é sucesso*.
 - `ps` mostrando só `sleep N` como filho.
 - O arquivo que o laço observa **existe**, mas com conteúdo de outro assunto — o do erro.
 - Ao matar, o exit é 144 (SIGTERM na espera), nunca um veredito do trabalho real.
+
+## Variante: o positivo OBSOLETO (2026-09-07, #2342)
+
+O laço acima falha por **nunca desistir**. Há o espelho, e ele é pior de detectar: o laço
+**desiste cedo**, anunciando um desfecho que é de OUTRO run.
+
+Reusei o mesmo caminho de saída (`verif.exits`) entre duas invocações da verificação. A segunda
+ficou ~20min na fila do `heavy` sem escrever nada — e o `FIM` que a primeira havia deixado
+continuava lá. O monitor casou `grep -q '^FIM$'`, anunciou "terminou" e devolveu os números
+anteriores, idênticos, para um run que não tinha começado.
+
+O que desmentiu não foi o marcador, foi a EVIDÊNCIA: o log apontava `.not.toMatch(/-/)` numa
+linha cujo código eu já havia substituído. Aceitar o veredito teria feito eu caçar um bug já
+consertado — e relatar a mesma falha duas vezes como se fossem duas.
+
+**Regra:** o marcador de fim tem de ser **daquele** run, não do caminho. Ou apague a saída antes
+de armar o laço (e case sobre AUSÊNCIA real), ou carimbe um id de run no marcador e case o id.
+Um `FIM` sem identidade é história se passando por presente.
+
+**Sintoma:** o desfecho chega rápido demais para o trabalho que alega descrever, e os números
+batem **exatamente** com os da rodada anterior.
