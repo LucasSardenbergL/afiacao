@@ -87,34 +87,56 @@ on:
   # Issue abre/fecha só viria no primeiro cron.
   workflow_dispatch:
 
+# ┌─ FAN-OUT (2026-09-07) ─────────────────────────────────────────────────────────────────────────┐
+# O `validate` era UM job serial de ~40 steps, com `timeout-minutes: 15`. Medido em 2026-09-07 sobre
+# 134 runs (`gh run view --json jobs`, decompondo `steps[].startedAt/completedAt`):
+#
+#   08-27 mediana 550s · 08-31 574s · 09-05 702s · 09-06 813s · 09-07 839s (máx 917s)
+#
+# +52% em 11 dias, monotônico — e o teto não se mexeu. No dia 09-07, 34/69 runs passaram de 14min e
+# **5 estouraram os 15**. Run estourado sai `cancelled`, NÃO `failure`: some do radar de "CI vermelho"
+# e parece problema de runner.
+#
+# A causa NÃO é saturação de runner, embora houvesse 3-4 runs simultâneos na main: a correlação entre
+# duração e nº de runs concorrentes é **+0,11** (n=69) — ruído. Com 1 concorrente a mediana era 885s;
+# com ≥4, 840s. O job simplesmente CRESCEU. De +347s (533s→880s) entre 08-27 e 09-07:
+#
+#   Falsificação  46s → 201s  (+155s, 4,4×)   ← custo é LINEAR no nº de regras sabotadas
+#   Tests        304s → 383s  (+79s)
+#   6 steps NOVOS que não existiam        (+61s: sonda cron-prova 32s, lint:shell 25s, …)
+#
+# Ou seja: dois steps O(n) no tamanho do repo, contra um teto fixo. Subir o teto só adia o sorteio —
+# cada gate novo (e este repo adiciona gates toda semana) reaproxima a colisão. O caminho crítico é
+# que precisa encolher, e ele é serial por acidente, não por dependência: typecheck não depende de
+# vitest, que não depende de shellcheck.
+#
+# Fan-out em 4 jobs paralelos, cortados em FATIAS CONTÍGUAS da ordem original (o diff move zero
+# steps de lugar — só insere cabeçalho de job nos 4 pontos de corte, preservando cada comentário
+# onde estava). Caminho crítico passa a ser o maior job, `testes` (~395s), contra 886s serial: -55%.
+#
+# ⚠️ `validate` CONTINUA EXISTINDO, agora como agregador — é o ÚNICO required status check da branch
+# protection (`gh api repos/:owner/:repo/branches/main/protection` → contexts: ["validate"]) e o que
+# o auto-merge.yml espera. Renomeá-lo/removê-lo travaria TODO PR do repo para sempre. Ao adicionar um
+# job novo aqui, ele PRECISA entrar no `needs:` do agregador — senão fica fora do gate, verde por
+# ausência. Detalhe da medição: docs/historico/ci-validate-timeout-15min.md
+#
+# ⚠️ NÃO baixe os tetos abaixo sem REMEDIR — a regra é do #2338, que chegou primeiro pelo outro
+# lado do mesmo defeito e a generalizou em `docs/historico/timeout-de-job-e-ausencia-de-dado.md`:
+# timeout de job NÃO é veredito, é AUSÊNCIA DE DADO, e é a única falha do repo capaz de reprovar
+# código SADIO. Aquele PR mediu a VARIÂNCIA (o runner vem em duas populações, todo step escala
+# junto ~30%) e comprou folga subindo 15→25min; esta medição, por dias, mostrou a TENDÊNCIA
+# (+52% em 11 dias) — as duas são verdadeiras, e é a soma que explica o sintoma: a tendência
+# fechou a margem, a variância decidiu QUAL run morria. Subir o teto trata a segunda; o fan-out
+# trata a primeira, e por isso os 25min do #2338 saíram daqui: com o caminho crítico em ~395s,
+# cada job carrega teto próprio com folga MAIOR do que aquele número comprava no job serial.
+# └────────────────────────────────────────────────────────────────────────────────────────────────┘
 jobs:
-  validate:
+  # ─── Job 1/4 — typecheck (medido: ~53s) ─────────────────────────────────────
+  typecheck:
     runs-on: ubuntu-latest
-    # ⚠️ NÃO baixe este teto sem REMEDIR. Ele não é orçamento de tempo — é o ponto em que o CI
-    # para de dizer a verdade. Timeout de job produz `validate = fail` com ZERO teste reprovado:
-    # o sintoma é indistinguível de uma reprovação real, e quem lê o check acredita que quebrou
-    # algo. Isso é AUSÊNCIA DE DADO, não veredito — mesma classe da doutrina de evidência positiva
-    # (`docs/historico/evidencia-positiva-shell.md`), e a única falha do repo que reprova código SADIO.
-    # A medição e a regra generalizada: `docs/historico/timeout-de-job-e-ausencia-de-dado.md`.
-    #
-    # Medido em 2026-09-07 sobre 58 runs (`gh api .../runs/<id>/jobs`, duração por step): com o
-    # teto em 15min os verdes iam de 650s a 900s — o mais lento batendo EXATAMENTE no teto — e os
-    # 5 cancelados caíam em 901/901/904/904/917s. Nenhum cancelamento abaixo de 900s: não eram
-    # cancelamentos humanos nem de concorrência, era o relógio. 43% dos verdes (20/46) fechavam
-    # nos últimos 30s antes do corte, e ~10% dos runs que passariam morriam por sorte de runner
-    # (o #2285 foi um deles: `test:edges` 1037 passed / 0 failed, cancelado aos 915s).
-    #
-    # A causa é a MÁQUINA, não um step: o runner do Actions vem em duas populações e TODO step
-    # escala junto (`Tests` 273s↔391s, typecheck 37s↔52s, hooks 60s↔71s). Não há gordura a cortar
-    # — `Tests` (vitest, 43% do job) roda 8.134 testes e `Falsificação` (22%) é o método exigido
-    # pelo CLAUDE.md, com o controle verde na MESMA invocação. 25min = ~63% de folga sobre o pior
-    # observado, muito além da variância de runner. Regressão de tempo continua VISÍVEL no
-    # histórico do Actions; o teto só deixa de mentir sobre ela.
-    timeout-minutes: 25
-    # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue; contents:read p/ checkout.
+    timeout-minutes: 10
     permissions:
       contents: read
-      issues: write
 
     steps:
       # `fetch-depth: 0` é o que dá merge-base ao gate `sonda:bump` (lá embaixo): sem histórico o
@@ -135,7 +157,10 @@ jobs:
       # Lição de 2026-07-16: incidente "Degraded REST API Availability" do GitHub
       # (~35% das chamadas REST falhando) derrubou TODO PR do repo em ~6s no setup
       # do bun — inclusive PRs de 1 linha de markdown. Bump: conferir `bun --version`
-      # local e alinhar aqui (as duas ocorrências) + no job mutation-check.
+      # local e alinhar TODAS as ocorrências — hoje são 6 (os 4 jobs do fan-out
+      # `typecheck`/`testes`/`edges-e-build`/`gates-e-falsificacao` + `authz-sentinela`
+      # + `mutation-check`). `bun run bunpin:check` prova que todas são semver estrito,
+      # mas NÃO prova que estão na mesma versão — essa parte é olho.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -169,13 +194,63 @@ jobs:
       - name: Type check (scripts/ + db/)
         run: bun run scripts:typecheck
 
+  # ─── Job 2/4 — vitest (medido: 383s no pior caso; 60% do job serial antigo) ──
+  # Sozinho de propósito: é o caminho crítico do CI inteiro, então qualquer step que
+  # dividisse runner com ele só o empurraria para cima. É também o step que mais
+  # cresce — `bun run test` é O(nº de arquivos de teste).
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      # Preâmbulo comum aos 4 jobs de trabalho. O PORQUÊ de cada escolha (`fetch-depth: 0`
+      # para o merge-base do `sonda:bump`; `bun-version` semver ESTRITO) está comentado por
+      # extenso no job `typecheck` — não repetido aqui para não quadruplicar o texto.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
       - name: Tests
         run: bun run test
 
+  # ─── Job 3/4 — edges (Deno) + sondas de versão + build + lint (medido: ~150s) ─
+  # Agrupados por TOOLCHAIN: é a fatia que precisa do Deno instalado. Build e lint vêm
+  # junto por serem contíguos na ordem original e baratos (25s + 22s) — cabem à sombra
+  # do `testes` sem alongar o caminho crítico.
+  edges-e-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+
+    steps:
+      # Preâmbulo comum — porquê no job `typecheck`.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
       # Testes das EDGE FUNCTIONS (Deno) — blocking. Os 119 testes em
       # supabase/functions/**/*_test.ts existiam com script pronto (`test:edges`) e NADA no CI os
-      # rodava: o `bun run test` acima é vitest, cujo `include` (vitest.config.ts) é só `src/**` +
-      # `scripts/**`. Eram documentação executável, não guarda de regressão — um PR podia quebrá-los
+      # rodava: o `bun run test` do job `testes` é vitest, cujo `include` (vitest.config.ts) é só
+      # `src/**` + `scripts/**`. Eram documentação executável, não guarda de regressão — um PR podia quebrá-los
       # com o CI VERDE e, como todo PR não-draft auto-mergeia no verde, a regressão entrava sozinha.
       # Motivador concreto: os invariantes de CUSTO de _shared/relatorio-mensal_test.ts existem pra
       # impedir que o N+1 de ~5.285 consultas volte (PR #1432) — e hoje não impediriam nada.
@@ -198,8 +273,9 @@ jobs:
       # — a saída é extrair a lógica PURA e testar ela (o que os 11 arquivos já fazem), não afrouxar
       # o flag.
       #
-      # O pin do deno tem 2 ocorrências (esta e o job `mutation-check`, que roda contrato .mut de
-      # edge) — bump alinha as duas.
+      # O pin do deno tem 3 ocorrências (esta, o job `gates-e-falsificacao` — cujo
+      # `test:falsificacao` chama `sonda-cron-prova.ts`, que faz `spawnSync('deno')` — e o
+      # `mutation-check`, que roda contrato .mut de edge) — bump alinha as três.
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
@@ -344,6 +420,44 @@ jobs:
       # Bloqueia em errors (0 hoje); warnings não falham (eslint default).
       - name: Lint
         run: bun lint
+
+  # ─── Job 4/4 — gates textuais + falsificação (medido: ~332s) ────────────────
+  # O 2º maior bloco do CI, e o que MAIS cresceu (Falsificação: 46s→201s em 11 dias, 4,4×)
+  # — porque sabota UMA REGRA POR VEZ e exige vermelho em cada, então o custo é linear no
+  # nº de regras. Fica em job próprio para que esse crescimento não some com o do vitest.
+  #
+  # ⚠️ Este job precisa de DOIS toolchains além do bun, e nenhum deles é opcional:
+  #   · shellcheck 0.11.0 — `test:hooks` roda `test-shellcheck-gate.sh`, que exige resposta
+  #     POSITIVA de `shellcheck --version` e ABORTA sem ela (fail-closed de propósito:
+  #     docs/historico/sonda-ausente-em-script-que-apaga.md). É o 1º step abaixo.
+  #   · deno — `test:falsificacao` termina em `sonda-cron-prova.ts --falsificar`, que faz
+  #     `spawnSync('deno')` e lança `Mecanica('deno ausente')`. Sem o setup, o job reprova
+  #     com erro de mecânica, não de conteúdo.
+  gates-e-falsificacao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      # Preâmbulo comum — porquê no job `typecheck`.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      # Ver o ⚠️ do cabeçalho: `test:falsificacao` → `sonda-cron-prova.ts` → `spawnSync('deno')`.
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.9.2
 
       # Shell lint. Existia como comando local (`/health`) e NUNCA como gate de CI — e o escopo
       # local era `scripts/*.sh .claude/hooks/*.sh`, sem `db/*.sh`. Medido em 2026-08-28: o escopo
@@ -580,6 +694,61 @@ jobs:
       # embalagem-captura-helpers.ts). Registro: docs/historico/faxina-knip-2026-07-07.md
       - name: Dead code gate (knip — export/dep sem consumidor)
         run: bunx knip
+
+  # ─── Agregador — É ESTE o required status check ─────────────────────────────
+  # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
+  # success. Existe porque é o único context exigido pela branch protection da main e o que
+  # o auto-merge.yml espera — o fan-out não podia custar o nome dele.
+  #
+  # ⚠️ `if: always()` não é enfeite, é o que torna o gate fail-CLOSED. Sem ele, um job em
+  # `needs:` que falhe deixa este job **skipped** — e o GitHub trata required check skipped
+  # como SATISFEITO. O resultado seria auto-merge de PR vermelho: exatamente a falha ABERTA
+  # que o CI existe para impedir. Com `always()` o job SEMPRE roda e o veredito vem do step
+  # abaixo, que exige `success` POSITIVO de cada um (ausência de dado reprova).
+  #
+  # É também aqui que `cancelled` deixa de ser invisível: job estourado por `timeout-minutes`
+  # tem `result == 'cancelled'`, que NÃO é `success` e portanto reprova com nome próprio no log
+  # — antes, o run inteiro saía `cancelled` e sumia de qualquer leitura que só procura `failure`.
+  validate:
+    if: always()
+    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue.
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Todos os jobs passaram? (exige 'success' POSITIVO de cada um)
+        env:
+          RESULTADOS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          esperados=4
+          total=0; falhou=0
+          while IFS="$(printf '\t')" read -r job resultado; do
+            total=$((total + 1))
+            if [ "$resultado" = "success" ]; then
+              echo "  ✅ $job: success"
+            else
+              echo "  ❌ $job: ${resultado:-<vazio>}"
+              falhou=$((falhou + 1))
+            fi
+          done < <(printf '%s' "$RESULTADOS" | jq -r 'to_entries[] | "\(.key)\t\(.value.result)"')
+
+          # Guard do DENOMINADOR — sem ele, um `needs` mal escrito ou um jq que devolvesse nada
+          # deixaria total=0/falhou=0 e este gate aprovaria por AUSÊNCIA de dado, não por prova.
+          # Job novo no fan-out: some 1 aqui E no `needs:` acima (os dois, ou o CI avisa).
+          if [ "$total" -ne "$esperados" ]; then
+            echo "::error::li $total job(s), esperava $esperados — o agregador não pode afirmar nada."
+            exit 1
+          fi
+          if [ "$falhou" -ne 0 ]; then
+            echo "::error::$falhou de $total job(s) não terminaram em success (cancelled = estouro de timeout-minutes)."
+            exit 1
+          fi
+          echo "✅ os $total jobs do fan-out terminaram em success"
 
       # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
       # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/

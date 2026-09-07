@@ -323,12 +323,35 @@ sleep 60 && gh run list --branch main --workflow CI --limit 1 --json databaseId,
 ```
 
 - `success` → ✅ pode fechar.
-- `failure` → ❌ **investigue antes de fechar** — mas distinga REPROVAÇÃO de AUSÊNCIA DE
-  RUNNER: job `cancelled` sem nenhum step executado, com duração ≈ `timeout-minutes`, é fila
-  de runner, não defeito. Confirme pelo passe vizinho (outro run do repo verde na mesma
-  janela) antes de re-rodar; sem isso, rerun só apaga sinal.
+- `failure` → ❌ **investigue antes de fechar.**
+- `cancelled` → ⚠️ **NÃO é reprovação, e NÃO é aprovação — é ausência de veredito.** Não caia no
+  ramo `failure` procurando o defeito, nem trate como verde porque "não falhou". São duas causas
+  opostas e a distinção decide o que fazer (detalhe: `docs/historico/ci-validate-timeout-15min.md`).
 - Não deu tempo de esperar → entregue o link do run na mensagem de fecho como pendência com
   destino (o `schedule` diário das 09:17 UTC pega de qualquer forma, mas só no dia seguinte).
+
+**Como separar as duas causas de `cancelled` — pergunte ao run, não ao seu palpite.** O
+discriminante é POSITIVO: **quantos steps chegaram a executar**.
+
+```bash
+gh run view <id> --json jobs --jq '.jobs[] | select(.conclusion=="cancelled")
+  | "\(.name): \([.steps[]|select(.conclusion!=null)]|length)/\(.steps|length) steps · \(((.completedAt|fromdateiso8601)-(.startedAt|fromdateiso8601))/60|floor)min"'
+```
+
+- **~0 steps executados**, duração ≈ `timeout-minutes` → **fila de runner** (o job nunca começou).
+  Não é defeito. Confirme pelo passe vizinho (outro run do repo verde na mesma janela) antes de
+  re-rodar; sem isso, rerun só apaga sinal.
+- **Muitos steps executados**, duração ≈ `timeout-minutes` → **estouro do teto de tempo**. O
+  trabalho rodou e foi morto no meio. Rerun é sorteio, não conserta: ou o job cresceu e o teto
+  não acompanhou, ou um step regrediu. Meça antes de re-rodar — a decomposição por step é
+  `gh run view <id> --json jobs` lendo `steps[].startedAt/completedAt`, e a comparação útil é
+  contra um run de semanas atrás (`gh run list --created <data>`), não contra o run vizinho.
+
+⚠️ **A leitura que some.** Todo comando aqui filtra `conclusion`; quem procura só `failure` lê
+`cancelled` como "não vermelho" e o estouro de teto vira invisível — foi assim que o `validate`
+rodou dias a segundos do teto sem ninguém ver. Se você automatizar esta verificação, os ramos são
+**três** (`success` / `failure` / resto), e o `resto` reprova por não poder afirmar nada:
+`cancelled`, `skipped`, `timed_out`, `null` (ainda rodando) e o campo ausente caem todos ali.
 
 ### Passo 6 — Chips (spawn_task): criado ≠ CLICADO
 

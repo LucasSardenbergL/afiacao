@@ -46,7 +46,7 @@ a credencial é local. A ponte é o carimbo `db/authz-carimbo-prod.json`.
 - **Audit novo nasce SEM cadência.** Ao criar um audit de prod, acrescente-o a `AUDITS` em
   `scripts/lib/authz-carimbo.ts` — foi o que aconteceu com o `authz:claude-ro:prod`, que chegou 12
   commits depois do carimbo e teria ficado de fora.
-- **Ler:** `bun run authz:carimbo` (step do `validate`, bloqueante) e
+- **Ler:** `bun run authz:carimbo` (step do job `gates-e-falsificacao`, bloqueante) e
   `bun run authz:carimbo -- --exigir-frescor` (job `authz-sentinela`, só main, Issue `authz-prod`).
 - ⚠️ **A severidade se divide por "um PR consegue consertar isto?"** — contrato/auditor mudou sem
   re-medir e carimbo ausente **bloqueiam PR**; idade (>14d) e achado vivo em prod **não**, porque o
