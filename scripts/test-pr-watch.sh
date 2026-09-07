@@ -88,6 +88,13 @@ caso "conflito (DIRTY) → 3" 3 '{"state":"OPEN","mergeStateStatus":"DIRTY","sta
 caso "CI vermelho (conclusion FAILURE) → 4" 4 '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":"FAILURE"}],"title":"t","url":"u"}'
 caso "CI vermelho (state ERROR, sem conclusion) → 4" 4 '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"context":"ci","state":"error"}],"title":"t","url":"u"}'
 
+# `cancelled` NÃO casava a regex FAILURE|ERROR até 2026-09-07: o check nunca vira verde e nunca
+# vira vermelho, então o watcher ia até o deadline e saía 5 ("segue sem desfecho") — silêncio de
+# 45 min sobre um PR que já tinha desfecho. É o falso negativo do #1396 pelo outro lado.
+# Regressão viva: o job `validate` rodava a segundos do teto de 15min e 5 de 69 runs saíram assim.
+caso "check CANCELLED (estouro de timeout) → 4" 4 '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":"CANCELLED"}],"title":"t","url":"u"}'
+caso "check TIMED_OUT → 4" 4 '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":"TIMED_OUT"}],"title":"t","url":"u"}'
+
 echo "── consultei e o PR segue sem desfecho (→ 5) ──"
 caso "OPEN limpo até o deadline → 5" 5 '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":null}],"title":"t","url":"u"}'
 
