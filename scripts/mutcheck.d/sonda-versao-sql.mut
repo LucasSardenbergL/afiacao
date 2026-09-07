@@ -5,12 +5,26 @@
 # que só roda à mão é ausência de dado (docs/historico/falsificacao-fora-do-ci.md).
 # @src: scripts/sonda-versao-sql.ts
 # @test: scripts/sonda-versao-sql.test.ts
+# ⚠️ MANUTENÇÃO (2026-09-07): TRÊS mutações ficaram INVÁLIDAS quando `df08142d0` fez o passo 1
+# escrever o mapa `edge→id` — o literal `jsonb_each_text('{}'::jsonb)` saiu do código-fonte e
+# passou a ser montado em `exprIds`, e o ramo AGUARDE ganhou uma 2ª ocorrência (o texto do mapa
+# COLADO, hoje inalcançável pelo caminho padrão). A mutação do AGUARDE ancora no ramo EMBUTIDO,
+# que é o que entra no SQL gerado — e no prefixo `'AGUARDE —`, que é o que o teste procura:
+# mutar o resto da frase SOBREVIVE, e sobrevivente é o mesmo que não ter mutação.
+#
+# A regra que as três compartilham, e que vale para a PRÓXIMA: quando um texto de veredito sai do
+# SQL inline e vira um ternário `embutido ? … : …`, a mutação tem de ancorar no ramo que o caminho
+# PADRÃO gera (hoje o embutido) e no trecho que o TESTE observa. Ancorar no outro ramo, ou no meio
+# de uma frase que ninguém assere, troca "inválida" por "sobrevivente" — e a segunda é pior, porque
+# não acende luz nenhuma.
+# `.mut` que não casa não é teste fraco: é AUSÊNCIA de teste com cara de contrato cumprido, e o
+# exit 3 do mutcheck existe justamente para não deixar isso passar despercebido.
 # Rode: scripts/mutcheck.sh scripts/sonda-versao-sql.ts scripts/sonda-versao-sql.test.ts scripts/mutcheck.d/sonda-versao-sql.mut
 PEGA      | trava do bloco caro CASE -> WHERE (teatro) | s/CASE WHEN g\.confirmei/WHERE g.confirmei/
 PEGA      | leitura sai da lista canonica (LEFT->JOIN) | s/LEFT JOIN ids i/JOIN ids i/
 PEGA      | resposta ausente vira veredito (LEFT->JOIN)| s/LEFT JOIN net\._http_response/JOIN net._http_response/
-PEGA      | ramo AGUARDE some do veredito              | s/'AGUARDE —/'AGUARDOU —/
-PEGA      | placeholder do bloco que le fica invalido  | s/jsonb_each_text\('\{\}'::jsonb\)/jsonb_each_text('<COLE_AQUI>'::jsonb)/
+PEGA      | ramo AGUARDE some do veredito              | s/'AGUARDE — o request_id embutido/'AGUARDOU — o request_id embutido/
+PEGA      | placeholder do bloco que le fica invalido  | s/: `'\{\}'::jsonb`/: `'<COLE_AQUI>'::jsonb`/
 PEGA      | marcador hardcoded em vez de lido do arquivo | s/lit\(e\.versao\)/lit('v1.0-sensor-inicial')/
 PEGA      | timeout_milliseconds implicito (default 5s) | s/timeout_milliseconds := 20000/-- sem timeout/
 PEGA      | --caro forasteira aceita em silencio       | s/!edges\.includes\(c\)/false/
@@ -55,7 +69,7 @@ PEGA      | janela larga: sondagem de ontem vira veredito de hoje | s/interval '
 PEGA      | teto da janela removido (guard do #2079 desligado)    | s/ \|\| janelaMin > JANELA_MAX_MIN//
 PEGA      | LIMIT 1 sem desempate (created EMPATA em prod)        | s/ORDER BY rr\.created DESC, rr\.id DESC/ORDER BY rr.created DESC/
 PEGA      | LATERAL vira INNER: edge sem eco SOME da saida        | s/LEFT JOIN LATERAL \(/JOIN LATERAL (/
-PEGA      | ausencia de linha vira veredito NEGATIVO              | s/THEN 'INDETERMINADO — nenhuma resposta/THEN 'BUNDLE VELHO — nenhuma resposta/
+PEGA      | ausencia de linha vira veredito NEGATIVO              | s/'INDETERMINADO — esta edge não tem request_id/'BUNDLE VELHO — esta edge não tem request_id/
 # Cast desprotegido: um corpo nao-JSON alheio na janela aborta a consulta INTEIRA — e a leitura
 # morre no lugar de julgar, que e falha por MECANICA lida como ausencia de resposta.
 PEGA      | cast para jsonb sem o filtro textual antes            | s/AND left\(ltrim\(r\.content\), 1\) = '\{'//
