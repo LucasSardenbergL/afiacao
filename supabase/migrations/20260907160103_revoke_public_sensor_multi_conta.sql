@@ -1,0 +1,38 @@
+-- ============================================================================================
+-- omie_products_codigos_multi_conta — fecha PUBLIC (o REVOKE de `anon` sozinho era teatro)
+-- ============================================================================================
+-- Follow-up do apply da 20260821200000 (PR #1853), que criou este sensor e emitiu apenas
+--   REVOKE EXECUTE ON FUNCTION public.omie_products_codigos_multi_conta() FROM anon;
+-- sem o par `FROM PUBLIC`. Isso é NO-OP: `anon` é MEMBRO de PUBLIC, então enquanto o ACL tiver
+-- `=X/postgres` (a entrada de PUBLIC) o `anon` continua executando por herança. É a armadilha do
+-- CLAUDE.md ("REVOKE FROM PUBLIC não tira anon/authenticated") no ESPELHO: revogar do papel
+-- NOMEADO não tira o que vem via PUBLIC. Só os DOIS lados juntos fecham.
+--
+-- MEDIDO em prod (psql-ro, 2026-08-22), ACL vivo antes desta migration:
+--   =X/postgres , postgres=X/postgres , authenticated=X/postgres , service_role=X/postgres ,
+--   sandbox_exec_fzvklzpomgnyikkfkzai=X/postgres
+-- ⇒ has_function_privilege('anon', …, 'EXECUTE') = TRUE. O revoke da 20260821200000 não pegou.
+-- RECONFERIDO em 2026-09-07 (antes de entregar): o ACL está IDÊNTICO e `anon` ainda executa —
+-- ninguém corrigiu no intervalo, esta migration continua necessária.
+-- Contraste no MESMO arquivo: `farmer_association_rules_substituir(jsonb)` reemite os 3 REVOKE
+-- (authenticated, anon, PUBLIC) e o ACL dela ficou correto — a forma certa já estava ali ao lado.
+--
+-- NÃO HÁ BURACO ABERTO HOJE — isto é defense-in-depth, não remediação de vazamento. Medido:
+--   · o sensor é SECURITY INVOKER (prosecdef=false) ⇒ não bypassa RLS, roda como quem chama;
+--   · has_table_privilege('anon','public.omie_products','SELECT') = false;
+--   · RLS ativa em omie_products, única policy de SELECT (`omie_products_select_staff`) escopada
+--     a `authenticated`.
+-- Sem privilégio de TABELA o corpo falha para `anon` de qualquer jeito. Fechamos o EXECUTE porque
+-- a defesa não deve depender de uma segunda camada permanecer como está.
+--
+-- O QUE ESTA MIGRATION DELIBERADAMENTE NÃO FAZ: não mexe em `authenticated`. O sensor é lido pelo
+-- staff e a leitura dele é legítima; `service_role` (a edge `omie-analytics-sync`, único chamador
+-- — verificado: usa SUPABASE_SERVICE_ROLE_KEY nos dois call sites) também mantém o EXECUTE
+-- explícito. Depois desta migration o ACL esperado é:
+--   postgres=X , authenticated=X , service_role=X , sandbox_exec_… =X   (sem `=X` de PUBLIC)
+--
+-- Idempotente: REVOKE de privilégio ausente é no-op silencioso, pode recolar à vontade.
+-- ============================================================================================
+
+REVOKE EXECUTE ON FUNCTION public.omie_products_codigos_multi_conta() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.omie_products_codigos_multi_conta() FROM anon;
