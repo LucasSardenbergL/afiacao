@@ -127,13 +127,21 @@ describe('CarteiraSaudePanel — o painel de saúde não pode se apagar por não
 describe('CarteiraSaudePanel — o alfabeto do evento não muda por refactor', () => {
   const ESTADOS = ['pronta', 'erro', 'sem_rede'];
 
+  /**
+   * Kebab-case de VOCABULÁRIO — e não "qualquer hífen". A varredura larga (`/-/`) reprovava
+   * `mes: '2026-08-01'`: data ISO tem hífen e não é vocabulário nenhum. Falso-positivo em guard
+   * é caro — é o que treina todo mundo a afrouxar o guard. A âncora em LETRA é o que exclui a
+   * data; `sem-rede`, `sales-order` e `painel-carteira` seguem sendo pegos.
+   */
+  const KEBAB_VOCABULARIO = /^[a-z][a-z0-9]*(-[a-z0-9]+)+$/;
+
   function conferirAlfabeto(ev: Record<string, unknown>) {
     expect(ESTADOS, `estado fora do alfabeto congelado: ${String(ev.estado)}`).toContain(ev.estado);
     for (const [chave, v] of Object.entries(ev)) {
       if (typeof v === 'string') {
-        expect(v, `\`${chave}\` veio hifenizado (\`${v}\`) — é o vocabulário de ` +
+        expect(v, `\`${chave}\` veio em kebab-case (\`${v}\`) — é o vocabulário de ` +
           '`estadoDeLeitura` vazando para o PostHog: a tela continua certa e a série QUEBRA')
-          .not.toMatch(/-/);
+          .not.toMatch(KEBAB_VOCABULARIO);
       }
     }
   }

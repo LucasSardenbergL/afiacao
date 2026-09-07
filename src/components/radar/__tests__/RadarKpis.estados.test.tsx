@@ -140,14 +140,22 @@ describe('RadarKpis — erro NÃO pode virar "lote vazio"', () => {
 describe('o alfabeto do evento não muda por refactor', () => {
   const ESTADOS = ['pronta', 'erro', 'sem_rede'];
 
+  /**
+   * Kebab-case de VOCABULÁRIO — e não "qualquer hífen". A varredura larga (`/-/`) reprovava
+   * `mes: '2026-08-01'`: data ISO tem hífen e não é vocabulário nenhum. Falso-positivo em guard
+   * é caro — é o que treina todo mundo a afrouxar o guard. A âncora em LETRA é o que exclui a
+   * data; `sem-rede`, `sales-order` e `painel-carteira` seguem sendo pegos.
+   */
+  const KEBAB_VOCABULARIO = /^[a-z][a-z0-9]*(-[a-z0-9]+)+$/;
+
   function conferirAlfabeto(ev: Record<string, unknown>) {
     expect(ESTADOS, `estado fora do alfabeto congelado: ${String(ev.estado)}`).toContain(ev.estado);
     for (const [chave, valor] of Object.entries(ev)) {
       if (typeof valor === 'string') {
         expect(
           valor,
-          `valor hifenizado em '${chave}' — o vocabulário do helper vazou para a série`,
-        ).not.toMatch(/-/);
+          `valor em kebab-case em '${chave}' — o vocabulário do helper vazou para a série`,
+        ).not.toMatch(KEBAB_VOCABULARIO);
       }
     }
   }
