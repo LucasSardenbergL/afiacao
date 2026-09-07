@@ -28,8 +28,9 @@ import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, ACL_ONLY_INTERNAL, manifestKey 
 import { REESCRITAS_CONHECIDAS_INDEX, chaveReescrita } from './authz-reescritas-conhecidas';
 import { auditGrantsTabelas } from './lib/authz-grants';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
-import { auditGrantsFuncoes } from './lib/authz-funcoes';
+import { auditGrantsFuncoes, auditRevokeSemPublic } from './lib/authz-funcoes';
 import { AUTHZ_FUNCOES_FECHADAS } from './authz-funcoes-fechadas';
+import { REVOKE_SEM_PUBLIC_BASELINE } from './authz-revoke-public-baseline';
 
 export interface Finding {
   level: 'error' | 'warn';
@@ -265,9 +266,32 @@ function auditFuncoes(migrations: Migration[]): Finding[] {
   }));
 }
 
-/** O que o CI roda: Parte A + B (gate no corpo), C (grants de tabela) e E (EXECUTE de função). */
+/**
+ * Parte F — `REVOKE … FROM anon|authenticated` sem `REVOKE … FROM PUBLIC` na MESMA função.
+ *
+ * O ESPELHO da Parte E: lá o risco é aceitar `FROM PUBLIC` como fecho quando o grant é nominal;
+ * aqui é aceitar `FROM anon` como fecho quando PUBLIC ainda tem EXECUTE. As duas metades são
+ * necessárias e nenhuma das partes anteriores via esta. Universal de propósito — não consulta
+ * allowlist: a função que originou o achado (um sensor SECURITY INVOKER) não estaria em nenhuma.
+ * Detalhe e a medição de prod que dimensiona o passivo: scripts/lib/authz-funcoes.ts, §Parte F.
+ */
+function auditRevokePublic(migrations: Migration[]): Finding[] {
+  return auditRevokeSemPublic(migrations, REVOKE_SEM_PUBLIC_BASELINE).map((ff) => ({
+    level: ff.level,
+    file: ff.file,
+    fn: ff.funcao,
+    msg: `[${ff.codigo}] ${ff.msg}`,
+  }));
+}
+
+/** O que o CI roda: A + B (gate no corpo), C (grants de tabela), E (EXECUTE de função) e F (PUBLIC). */
 export function auditCompleto(migrations: Migration[]): Finding[] {
-  return [...auditAuthz(migrations), ...auditGrants(migrations), ...auditFuncoes(migrations)];
+  return [
+    ...auditAuthz(migrations),
+    ...auditGrants(migrations),
+    ...auditFuncoes(migrations),
+    ...auditRevokePublic(migrations),
+  ];
 }
 
 function loadMigrations(dir: string): Migration[] {
@@ -308,8 +332,14 @@ function main(): void {
   const ressalvaE = semAncora.length
     ? ` ⚠️ ${semAncora.length} função(ões) com fecho de EXECUTE fora do repo (fechadaPor=null): ${semAncora.join(', ')} — quem afirma o ACL delas é 'bun run authz:funcoes:prod'.`
     : '';
+  // Mesma regra para a Parte F: a baseline silencia pares HISTÓRICOS medidos fechados em prod
+  // (2026-08-22). Eles seguem sem `FROM PUBLIC` no texto — quem afirma que estão fechados é a
+  // medição, não o repo. Calar o número deixaria o verde parecer cobertura textual completa.
+  const ressalvaF = REVOKE_SEM_PUBLIC_BASELINE.size
+    ? ` ⚠️ ${REVOKE_SEM_PUBLIC_BASELINE.size} par(es) migration→função na baseline da Parte F (revoke nominal sem FROM PUBLIC, medidos fechados em prod — ver scripts/authz-revoke-public-baseline.ts).`
+    : '';
   console.log(
-    `✅ authz:check — contrato de gate ok${warns.length ? ` (${warns.length} aviso(s))` : ''}. Parte A (regressão) + Parte B (cobertura) + Parte C (grants de tabela fechada) + Parte D (reescrita da definição viva) + Parte E (EXECUTE de função fechada) verdes.${ressalva}${ressalvaE}`,
+    `✅ authz:check — contrato de gate ok${warns.length ? ` (${warns.length} aviso(s))` : ''}. Parte A (regressão) + Parte B (cobertura) + Parte C (grants de tabela fechada) + Parte D (reescrita da definição viva) + Parte E (EXECUTE de função fechada) + Parte F (REVOKE nominal fecha PUBLIC) verdes.${ressalva}${ressalvaE}${ressalvaF}`,
   );
 }
 

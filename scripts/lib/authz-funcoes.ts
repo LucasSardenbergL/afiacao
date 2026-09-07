@@ -41,6 +41,7 @@
  */
 import { stripNoise } from './authz-contract';
 import type { FuncaoFechada, RoleVigiada } from '../authz-funcoes-fechadas';
+import { chaveRevokeSemPublic } from '../authz-revoke-public-baseline';
 
 type FuncaoCodigo =
   | 'FUNCAO_REABERTURA'
@@ -51,6 +52,9 @@ type FuncaoCodigo =
   | 'FUNCAO_GRANT_NAO_PARSEAVEL'
   | 'FUNCAO_DROP_NAO_PARSEAVEL'
   | 'FUNCAO_DEFAULT_PRIVILEGE_ALTERADO'
+  // Parte F (universal, não presa à allowlist):
+  | 'FUNCAO_REVOKE_SEM_PUBLIC'
+  | 'FUNCAO_REVOKE_ALVO_NAO_PARSEAVEL'
   // exclusivos do audit de prod (compararExecuteProd):
   | 'FUNCAO_AUSENTE_EM_PROD'
   | 'FUNCAO_NAO_APLICADA'
@@ -455,6 +459,182 @@ export function compararExecuteProd(
       msg: pareceDefault
         ? `${chave}: ${med.aclNulo ? 'proacl NULL (EXECUTE implícito a PUBLIC)' : `anon e authenticated têm EXECUTE (${extra.join(',')} fora do permitido)`} — é o default privilege intacto: o fecho ${entry.fechadaPor} está no repo mas NÃO foi aplicado (ou a função foi recriada por DROP+CREATE em prod).`
         : `${chave}: ${extra.join(',')} tem EXECUTE fora do permitido — sobra parcial, que o default privilege não produz: grant aplicado à mão em prod (drift).`,
+    });
+  }
+  return out;
+}
+
+/* ==========================================================================================
+ * Parte F — o ESPELHO do ⚠️ do cabeçalho deste arquivo.
+ * ==========================================================================================
+ * O ⚠️ lá em cima diz: `REVOKE … FROM PUBLIC` NÃO fecha, porque o grant de `anon`/`authenticated`
+ * é EXPLÍCITO (veio do default privilege POR NOME). Verdade — e a recíproca também é verdade, o
+ * que ninguém no CI via: `REVOKE … FROM anon` NÃO fecha enquanto PUBLIC mantiver EXECUTE, porque
+ * `anon` é MEMBRO de PUBLIC.
+ *
+ * Que uma função nova em `public` nasce com os DOIS — `=X/postgres` (PUBLIC) e `anon=X`,
+ * `authenticated=X` — é MEDIDO, não deduzido do manual: em 2026-08-22 havia 209 funções de
+ * `public` com PUBLIC e as roles nomeadas simultaneamente no `proacl` (nenhuma delas jamais
+ * tocada por REVOKE). Fechar de verdade exige os DOIS lados; qualquer um sozinho é teatro.
+ * (Não afirmo aqui COMO o default de fábrica e o `pg_default_acl` do Supabase se combinam —
+ * o `pg_default_acl` de `public` lista só os nomes, sem PUBLIC, e o efeito observado tem ambos.
+ * A regra abaixo não depende de resolver isso: `anon ⊂ PUBLIC` basta.)
+ *
+ * RECONFERIDO em prod em 2026-09-07 (707 migrations no corpus): o sensor SEGUE aberto e SEGUE sendo
+ * a única função de `public` cujo EXECUTE para `anon` vem SÓ de PUBLIC — 1 em 213 com anon-exec.
+ * MEDIDO em prod (psql-ro, 2026-08-22): das 18 funções que algum dia receberam `REVOKE … FROM anon`
+ * no repo, 17 estão efetivamente fechadas e 1 — `public.omie_products_codigos_multi_conta`, criada
+ * pela 20260821200000 — ainda concede EXECUTE a `anon`, e SÓ via PUBLIC. Uma. É o tamanho real do
+ * passivo, e é o que torna esta parte barata: ela não conserta o passado, impede o próximo.
+ *
+ * POR QUE A REGRA NÃO TEM EXCEÇÃO LEGÍTIMA: se PUBLIC retém EXECUTE, `anon` executa de qualquer
+ * jeito. Logo "revogar de anon mantendo PUBLIC" nunca é intenção — é no-op ou é bug. Não é
+ * preferência de estilo, é incoerência, então o gate pode ser universal sem custo de falso
+ * positivo. Reemitir o `FROM PUBLIC` é idempotente e grátis.
+ *
+ * POR QUE POR FUNÇÃO, NUNCA POR ARQUIVO: a 20260821200000 emite os 3 REVOKE para
+ * `farmer_association_rules_substituir` e só o de `anon` para o sensor. Um gate que perguntasse
+ * "este arquivo tem algum FROM PUBLIC?" ficaria VERDE exatamente sobre o caso que o originou.
+ * (Aconteceu de verdade na apuração deste achado: o primeiro grep foi por arquivo e excluiu a
+ * própria migration culpada.)
+ *
+ * Universal de propósito — NÃO consulta `AUTHZ_FUNCOES_FECHADAS`. A allowlist da Parte E é curada
+ * pelo eixo custo/preço, e o sensor que originou o achado não está nela; amarrar a regra à
+ * allowlist a deixaria cega justamente onde ela nasceu.
+ */
+
+/** Alvos de `REVOKE … ON FUNCTION a(…), b(…) FROM <roles>`. `null` = não é dessa forma;
+ *  `[]` = é, mas o alvo não parseou (o chamador trata como fail-closed). */
+function alvosRevokeFuncao(stmt: string): { alvos: string[]; entendido: boolean } | null {
+  const m = new RegExp(`^REVOKE\\s+[\\s\\S]+?\\s+ON\\s+FUNCTION\\s+([\\s\\S]+)\\s+FROM\\s+[\\s\\S]+$`, 'i').exec(stmt);
+  if (!m) return null;
+  // Mesma leitura de lista do `alvosDrop`: separa por vírgula de TOPO e lê só a CABEÇA de cada
+  // elemento. Varrer `ident(` com regex casaria também o tipo parametrizado de um argumento
+  // (`public.f(numeric(10,2))` produziria o alvo fantasma `public.numeric`).
+  const cabeca = new RegExp(`^(?:(${IDENT})\\s*\\.\\s*)?(${IDENT})`, 'i');
+  const alvos: string[] = [];
+  let entendido = true;
+  for (const el of elementosDeTopo(m[1])) {
+    const t = el.trim().replace(/\s*\b(?:CASCADE|RESTRICT)\s*$/i, '').trim();
+    const g = t === '' ? null : cabeca.exec(t);
+    if (!g) {
+      entendido = false;
+      continue;
+    }
+    alvos.push(`${unq(g[1]) || 'public'}.${unq(g[2])}`);
+  }
+  return { alvos, entendido };
+}
+
+/**
+ * Parte F: toda função que recebe `REVOKE EXECUTE … FROM anon|authenticated` em algum ponto do
+ * corpus precisa receber `REVOKE … FROM PUBLIC` — na mesma migration, numa POSTERIOR (fix-forward),
+ * ou por um sweep `ON ALL FUNCTIONS IN SCHEMA <mesmo schema> FROM PUBLIC`.
+ *
+ * O julgamento é sobre o CORPUS ORDENADO, não sobre um arquivo isolado, por uma razão dura:
+ * migration aplicada NÃO se edita (o snapshot é a fonte de DR e o passado já rodou), então o único
+ * conserto legal para uma migration já mergeada é uma POSTERIOR. Um gate por arquivo obrigaria a
+ * baselinar todo conserto legítimo — e foi o que aconteceu na primeira versão desta parte, que
+ * acusava a `20260821200000` mesmo com a `20260822003041` fechando o débito no arquivo seguinte.
+ *
+ * A ordem importa nos dois sentidos: um `DROP FUNCTION` + `CREATE` POSTERIOR ao fecho RESETA o ACL
+ * e ANULA o `FROM PUBLIC` anterior (o mesmo vetor da Parte E). Já a recriação que traz o REVOKE na
+ * PRÓPRIA migration vale — a comparação é INCLUSIVA, ver o comentário na condição abaixo.
+ *
+ * @param baseline pares `arquivo→função` históricos, medidos fechados em prod. Ver
+ *   scripts/authz-revoke-public-baseline.ts — a baseline é justificada por MEDIÇÃO, não por silêncio.
+ */
+export function auditRevokeSemPublic(
+  migrations: { file: string; sql: string }[],
+  baseline: ReadonlySet<string>,
+): FuncaoFinding[] {
+  const out: FuncaoFinding[] = [];
+  const ordered = [...migrations].sort((a, b) => a.file.localeCompare(b.file));
+
+  // Estado por função ao longo do CORPUS ORDENADO (não por arquivo — ver o §Parte F acima).
+  type Est = { ultNominal: number; ultNominalFile: string; roles: Set<string>; ultPublic: number; ultRecriacao: number };
+  const est = new Map<string, Est>();
+  const sweepPublicPorSchema = new Map<string, number>(); // schema → índice do último sweep
+  const pega = (a: string): Est => {
+    let e = est.get(a);
+    if (!e) { e = { ultNominal: -1, ultNominalFile: '', roles: new Set(), ultPublic: -1, ultRecriacao: -1 }; est.set(a, e); }
+    return e;
+  };
+
+  for (let i = 0; i < ordered.length; i++) {
+    const mig = ordered[i];
+    const stmts = statements(mig.sql);
+    const naoParseavel: string[] = [];
+    const dropados = new Set<string>();
+    let dropNaoLido = false;
+
+    for (const st of stmts) {
+      // recriação: DROP+CREATE na mesma migration RESETA o ACL, matando o REVOKE de PUBLIC anterior.
+      if (/^DROP\s+(?:FUNCTION|ROUTINE)\b/i.test(st)) {
+        const d = alvosDrop(st);
+        for (const a of d.alvos) dropados.add(a);
+        // fail-closed: DROP que o parser não leu pode ter derrubado a função que o CREATE recria.
+        if (!d.entendido) dropNaoLido = true;
+      }
+      const criado = alvoCreate(st);
+      if (criado && (dropados.has(criado) || dropNaoLido)) pega(criado).ultRecriacao = i;
+
+      if (!/^REVOKE\b/i.test(st)) continue;
+      const r = parseAcl(st, 'REVOKE');
+      if (!r || !r.execute || !r.temAlvo) continue;
+      const temPublic = r.roles.includes('public');
+      const nominais = ROLES_VIGIADAS.filter((x) => r.roles.includes(x));
+      if (!temPublic && nominais.length === 0) continue;
+
+      if (r.allFunctionsEm) {
+        if (temPublic) sweepPublicPorSchema.set(r.allFunctionsEm, i);
+        continue;
+      }
+      const alv = alvosRevokeFuncao(st);
+      if (alv === null || alv.alvos.length === 0 || !alv.entendido) {
+        if (nominais.length > 0) naoParseavel.push(st.replace(/\s+/g, ' ').slice(0, 90));
+        if (alv === null || alv.alvos.length === 0) continue;
+      }
+      for (const a of alv.alvos) {
+        const e = pega(a);
+        if (temPublic) e.ultPublic = i;
+        if (nominais.length > 0) { e.ultNominal = i; e.ultNominalFile = mig.file; for (const n of nominais) e.roles.add(n); }
+      }
+    }
+
+    for (const st of naoParseavel) {
+      out.push({
+        level: 'error',
+        codigo: 'FUNCAO_REVOKE_ALVO_NAO_PARSEAVEL',
+        funcao: '(alvo não parseado)',
+        file: mig.file,
+        msg: `REVOKE de EXECUTE sobre role nomeada cujo ALVO não parseou — fail-closed, não dá p/ afirmar que PUBLIC foi fechado: \`${st}\``,
+      });
+    }
+  }
+
+  for (const [alvo, e] of [...est].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (e.ultNominal < 0) continue; // nunca revogou role nomeada: a regra não se aplica
+    const sweep = sweepPublicPorSchema.get(alvo.split('.')[0]) ?? -1;
+    const fechoPublic = Math.max(e.ultPublic, sweep);
+    // Vale se ALGUM fecho de PUBLIC existe e sobreviveu à última recriação (DROP+CREATE reseta ACL).
+    // A comparação é INCLUSIVA (`>=`) pelo mesmo motivo MEDIDO que a Parte E documenta: a forma
+    // real de recriação neste repo é `DROP`+`CREATE`+`REVOKE` na MESMA migration. Com `>` estrito
+    // o detector reprovaria justamente a forma correta — 13 falsos positivos medidos ao tentar.
+    if (fechoPublic >= 0 && fechoPublic >= e.ultRecriacao) continue;
+    if (baseline.has(chaveRevokeSemPublic(e.ultNominalFile, alvo))) continue;
+    const recriadaDepois = fechoPublic >= 0 && fechoPublic < e.ultRecriacao;
+    out.push({
+      level: 'error',
+      codigo: 'FUNCAO_REVOKE_SEM_PUBLIC',
+      funcao: alvo,
+      file: e.ultNominalFile,
+      msg:
+        `revoga EXECUTE de ${[...e.roles].sort().join('/')} sobre ${alvo} e ${recriadaDepois
+          ? 'o único REVOKE de PUBLIC do corpus foi ANULADO por um DROP+CREATE posterior (recriação reseta o ACL)'
+          : 'nenhuma migration do corpus revoga de PUBLIC'}. ` +
+        `Essas roles são MEMBRO de PUBLIC: enquanto PUBLIC tiver EXECUTE o revoke é teatro. ` +
+        `Acrescente \`REVOKE EXECUTE ON FUNCTION ${alvo}(…) FROM PUBLIC;\` — nesta migration, ou numa posterior se esta já foi aplicada.`,
     });
   }
   return out;
