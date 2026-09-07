@@ -107,6 +107,14 @@ existentes finalmente valerem.
 ⇒ **gate de frescura:** todo comando/gate citado no CLAUDE.md deve existir E ser invocado por CI ou
 hook. Teria pego 4 dos meus 6 erros e a linha 62 sozinho.
 
+**E o mapa erra nos DOIS sentidos.** O PR que trouxe este documento ficou VERMELHO no `validate`:
+existe um gate `docs:indice` (`scripts/docs-indice-gate-check.ts`) que exige linha própria em
+`docs/historico/README.md` para todo doc do diretório — e o CLAUDE.md **não o menciona em lugar
+nenhum**. Escrevi um texto sobre afirmações que envelhecem e fui reprovado por maquinaria que o
+manual nunca nomeou. Um gate que ninguém acha só reprova depois do fato; a mesma perda que um nome
+que não aponta mais para nada. ⇒ o gate de frescura precisa dos dois lados: **nome citado que não
+existe** e **gate que existe e não é citado**.
+
 ## 6. Fila (ordem deliberada)
 
 1. **Gate de frescura** dos comandos citados — barato, pega a linha 62 e a classe inteira
