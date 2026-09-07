@@ -303,9 +303,20 @@ echo "  [ok ] controle: os $(command grep -c '^  \[ok \]' "$TMP/controle.out") c
 cegas=0
 sabotar() { # nome de para
   local nome="$1" de="$2" para="$3"
-  if ! printf '%s' "$ORIG" | command grep -qF "$de"; then
-    printf '  [XX ] sabotagem NO-OP (alvo sumiu do gerador): %s\n' "$nome"; cegas=$((cegas + 1)); return
-  fi
+  # Busca no PRÓPRIO shell: sem pipe, sem fork, sem locale. NÃO devolver `printf | command grep -qF`
+  # aqui — sob `set -o pipefail` o status do pipeline NÃO é o do grep: `grep -q` sai no PRIMEIRO
+  # match e fecha o pipe, o `printf` (que ainda tinha bytes a escrever) morre de SIGPIPE e o
+  # pipeline devolve 141 com o grep tendo ACHADO (`PIPESTATUS=141 0`). Este guard leria 141 como
+  # "não achei" e acusaria alvo ausente com o alvo PRESENTE — reprovando o CI à toa e ensinando a
+  # re-rodar, que apaga sinal. É corrida (só dispara se o `printf` não terminar antes), então
+  # aparece como flake: 2 das 11 sabotagens, 1 run em 6, run 34116946335 na main em 2026-09-07.
+  # `"$de"` entre aspas DENTRO do padrão casa LITERALMENTE: `?`/`*` do alvo não viram curinga.
+  # Guardado por `scripts/test-guard-noop-sabotagem.sh` (roda o guard sob um leitor com a semântica
+  # do GNU `grep -q`, que o BSD grep do macOS não tem). → docs/historico/evidencia-positiva-shell.md
+  case "$ORIG" in
+    *"$de"*) ;;
+    *) printf '  [XX ] sabotagem NO-OP (alvo sumiu do gerador): %s\n' "$nome"; cegas=$((cegas + 1)); return ;;
+  esac
   printf '%s' "$ORIG" | python3 -c '
 import sys
 de, para = sys.argv[1], sys.argv[2]
