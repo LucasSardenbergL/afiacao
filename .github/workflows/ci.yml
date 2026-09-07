@@ -346,6 +346,25 @@ jobs:
       # e é isso que explicaria um "verde no laptop, vermelho aqui".
       # Falsificação (sabota e exige vermelho) roda no passo `Hooks guard tests`:
       # scripts/test-shellcheck-gate.sh.
+      # Versão PINADA. O comentário acima previu o "verde no laptop, vermelho aqui" — e foi
+      # exatamente o que aconteceu ao destravar este PR (2026-09-07): o runner trazia **0.9.0**,
+      # cujo SC2317 rende **86 falsos-positivos** em db/*.sh que a 0.11.0 já não emite, e o gate
+      # reprovava sem defeito nenhum no código. Gate cuja VERDADE depende da versão do runner não
+      # é gate, é sorteio — e o custo dele é a fila: cada falso-vermelho são ~13min + um
+      # round-trip. Pinar é o que faz `bun run lint:shell` local e o CI darem o MESMO veredito.
+      # A asserção final é POSITIVA de propósito: instalar sem conferir a versão instalada
+      # reintroduziria a mesma cegueira que este passo veio fechar.
+      - name: shellcheck pinado 0.11.0 (o runner traz 0.9.0)
+        run: |
+          set -euo pipefail
+          ver=v0.11.0
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/${ver}/shellcheck-${ver}.linux.x86_64.tar.xz" | tar -xJ
+          sudo install -m 0755 "shellcheck-${ver}/shellcheck" /usr/local/bin/shellcheck
+          rm -rf "shellcheck-${ver}"
+          instalada=$(shellcheck --version | awk '/^version:/{print $2}')
+          [ "$instalada" = "0.11.0" ] || { echo "::error::shellcheck instalado=$instalada, esperado 0.11.0"; exit 1; }
+          echo "shellcheck pinado e conferido: $instalada"
+
       - name: Shell lint gate (shellcheck — scripts/ + hooks/ + db/)
         run: bun run lint:shell
 
