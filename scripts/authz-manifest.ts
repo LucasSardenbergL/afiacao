@@ -474,6 +474,36 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'private.frec_sem_margem',
   'private.fbrec_sem_margem',
   //
+  // ─────────── 2026-09-06 — as 2 RPCs de preço do balcão (captura do #2251) ───────────
+  // MEDIDO em prod (psql-ro, 2026-09-06): as duas são SECURITY DEFINER, STABLE, e o ACL vivo é
+  // `postgres=X ; authenticated=X ; service_role=X ; sandbox_exec_*=X` — sem `anon`, sem PUBLIC.
+  // `authenticated` alcança de PROPÓSITO: são a MESMA exceção medida de `get_carteira_margem_faixa`
+  // no topo desta lista — fecham por PROJEÇÃO, não por privilégio. No corpo VIVO (capturado em
+  // 20260906164001_captura_authz_gate_custo_rpcs_preco.sql) o gate é
+  // `v_is_staff := private.cap_custo_ler(auth.uid())` usado só em
+  // `'custoBase', CASE WHEN v_is_staff THEN v_custo_base ELSE NULL END`: quem não passa recebe
+  // custo NULL, e NADA bloqueia a execução. Por isso NÃO cabem no AUTHZ_MANIFEST — declarar um
+  // `requiredGate` afirmaria um caminho de BLOQUEIO inexistente (o §LIMITE do cabeçalho: mascarar
+  // campo não é expressável em requiredGate), e contrato falso é pior que lacuna.
+  // ⚠️ REVOGAR `authenticated` QUEBRA A VENDA: o customer PRECISA executar para ver `precoFinal`
+  // no balcão — o que ele não vê é o CUSTO. Quem chegar aqui achando que "fechar" é tirar o
+  // EXECUTE está lendo o gate errado. Provado por asserção EXECUTADA em db/test-tint-get-price.sh,
+  // db/test-tint-get-prices.sh e db/test-tint-gate-custo-staff.sh.
+  // ⚠️ Por que a Parte B não as flagrou — o ponto cego LÉXICO já anotado 2× acima, numa 3ª forma:
+  // o corpo delas não cita nenhum token de SENSITIVE_* (fala `valor_unitario`, `volume_total_ml`,
+  // `custoBase`), então `touchesSensitive` volta VAZIO mesmo sendo SECDEF que lê custo. Registro
+  // MANUAL, como a `reposicao_pos_marcador`.
+  // O que esta entrada COMPRA: elas passam a existir na allowlist de EXECUTE
+  // (scripts/authz-funcoes-fechadas.ts), e um DROP+CREATE futuro sem REVOKE — que as devolveria ao
+  // `anon` pelo default privilege de `public` — vira ERRO da Parte E. Era o vetor banco→repo que
+  // a captura do #2251 deixou aberto: o corpo foi capturado, o ACL não estava vigiado.
+  // ⚠️ O que esta entrada CUSTA, e é preciso saber para não se enganar depois: este Set faz a
+  // Parte B PULAR. Se um dia o corpo delas passar a citar `cmc`/`product_costs`, a classificação
+  // preexistente suprime o alarme. O que segura a projeção nesse dia não é este catálogo — são as
+  // asserções executadas acima, e é lá que quem mexer no gate tem de provar.
+  'public.get_tint_price',
+  'public.get_tint_prices',
+  //
   // ⚠️ O fecho por privilégio é estado de PROD, e é a **Parte E** do `authz:check` que o vigia
   // desde 2026-08-15 (scripts/authz-funcoes-fechadas.ts + scripts/lib/authz-funcoes.ts; §9 de
   // docs/historico/sentinela-authz-controle-nao-mencao.md). Toda função desta lista e do
@@ -502,6 +532,14 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
  *
  * Ou seja: não é o teste "não inventa função" afrouxado para ficar verde — é ele partido em duas
  * afirmações mais fortes, cada uma com a checagem que a sustenta.
+ *
+ * ⚠️ AMPLIAÇÃO 2026-09-06 — o nome diz "INTERNOS", mas o que este Set discrimina é SECURITY
+ * INVOKER, e é isso que ele vigia. Entraram duas RPCs chamadas pelo BROWSER (as
+ * `farmer_*_recomendacoes_substituir`), que de interno não têm nada: `authenticated` as executa de
+ * propósito. Elas estão aqui porque o discriminante é exatamente o alarme que se quer armado —
+ * são INVOKER e TÊM de continuar sendo, já que ESCREVEM sob RLS. Ler "interno" como requisito de
+ * entrada faria perder o caso em que o Set é mais útil; o requisito é o INVOKER, e o `motivo` de
+ * cada linha diz quem chama.
  */
 export const ACL_ONLY_INTERNAL = new Set<string>([
   // Helper puro do custo canônico (cost_final → cost_price, finito e > 0, senão NULL). Não lê
@@ -517,6 +555,34 @@ export const ACL_ONLY_INTERNAL = new Set<string>([
   // virar SECDEF, a Parte B acusa e a entrada tem de ser reclassificada, não removida.
   // Fecho: 20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql (registrada após o apply).
   'public.deploy_atestacoes_colher',
+  // ─────── 2026-09-06 — as 2 RPCs de recomendação do farmer (captura do #2251) ───────
+  // ⚠️ Estas duas NÃO são helper interno: são RPCs do BROWSER, chamadas por `authenticated` em
+  // src/hooks/useCrossSellEngine.ts e src/hooks/useBundleEngine.ts. Entram pelo DISCRIMINANTE, que
+  // é o que este Set tem de próprio: MEDIDO em prod (psql-ro, 2026-09-06) `prosecdef = false`, e
+  // TÊM de continuar INVOKER — elas ESCREVEM em farmer_recommendations /
+  // farmer_bundle_recommendations, e uma versão SECDEF passaria por cima da RLS dessas tabelas
+  // levando junto o gate de escopo. Recriar SECDEF é ERRO da Parte B, com instrução de
+  // reclassificar: é precisamente o alarme que se quer.
+  // ⚠️ LIMITE MEDIDO desse alarme (contraprova 2026-09-06, apontada pelo Codex gpt-6-astra e
+  // confirmada aqui): a Parte B lê DEFINIÇÕES extraídas de `CREATE` — `ALTER FUNCTION … SECURITY
+  // DEFINER` não é lido por ninguém (`grep -c 'ALTER FUNCTION'` = 0 em authz-contract.ts e em
+  // authz-gate-check.ts). O discriminante pega a recriação, que é a forma que este repo usa; não
+  // pega o ALTER isolado. Prometer "tem de continuar INVOKER" sem essa ressalva seria contrato
+  // falso — e contrato falso é o erro que este arquivo inteiro existe para não cometer.
+  // Por que não `ACKNOWLEDGED_SENSITIVE`: seria o modo de falha que o cabeçalho acima documenta —
+  // INVOKER lá é inerte hoje e SUPRIME amanhã a regressão que o gate existe para pegar.
+  // Por que não `AUTHZ_MANIFEST`: ele cataloga SECDEF, e a Parte A mede o gate na definição.
+  // ACL vivo MEDIDO (2026-09-06): `postgres=X ; authenticated=X ; service_role=X ; sandbox_exec_*=X`
+  // — sem `anon`, sem PUBLIC. O fecho por ACL aqui é contra `anon`/PUBLIC, não contra
+  // `authenticated`; o REVOKE nominal está em
+  // 20260906164002_captura_authz_escopo_carteira_farmer.sql, a mesma que capturou o corpo vivo.
+  // O gate no corpo é de ESCOPO e BLOQUEIA de verdade (≠ das irmãs de preço, que só projetam):
+  //   `IF (p_farmer_id = auth.uid() OR coalesce(private.cap_carteira_escrever(auth.uid()), false))
+  //    IS NOT TRUE THEN RAISE EXCEPTION` — `IS NOT TRUE` e não `NOT (...)`: sem JWT `auth.uid()` é
+  //   NULL, a disjunção vira NULL, e `NOT (NULL)` deixaria passar. Provado em
+  //   db/test-farmer-escopo-carteira.sh.
+  'public.farmer_recomendacoes_substituir',
+  'public.farmer_bundle_recomendacoes_substituir',
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */

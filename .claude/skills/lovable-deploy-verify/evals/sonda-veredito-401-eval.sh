@@ -111,6 +111,10 @@ printf 'export const FONTE_SHA256: Record<string, string> = {\n  "edge-a": "%s",
 ID_SONDA=1000
 
 # gera_sql <dir_do_gerador> — emite o BLOCO DE LEITURA (PASSO 2) com o JSON de ids já colado.
+# ⚠️ O recorte espera o FIM do format() antes de procurar o cabeçalho: desde o #2273 o passo 1
+#    carrega um passo 2 DENTRO de `format($sonda$…$sonda$, m.ids)`, e um `/^-- PASSO 2 /{f=1} f`
+#    cru começaria nele — arrastando o `$sonda$, m.ids) …` para dentro do SQL e emitindo lixo. O
+#    embutido não roda aqui de qualquer forma: ele exige `net.http_post`, que este banco não tem.
 gera_sql() {
   local gdir="$1"
   cat > "$gdir/runner.ts" <<RUNNER
@@ -118,7 +122,7 @@ import { gerarSqlDaLeva } from './sonda-versao-sql';
 process.stdout.write(gerarSqlDaLeva({ raiz: process.argv[2], edges: ['edge-a'] }));
 RUNNER
   bun "$gdir/runner.ts" "$FIX" 2>"$TMP/gen.err" \
-    | awk '/^-- PASSO 2 /{f=1} f' \
+    | awk '/AS passo_2_copie_esta_celula/{visto=1} visto && /^-- PASSO 2 /{f=1} f' \
     | sed "s/jsonb_each_text('{}'::jsonb)/jsonb_each_text('{\"edge-a\": $ID_SONDA}'::jsonb)/"
 }
 
@@ -188,6 +192,11 @@ SQL
       P -q -c "INSERT INTO net._http_response (id, status_code, content, created)
                VALUES ($ID_SONDA, 200,
                  '{\"edge\":\"edge-a\",\"versao\":\"v1.0-alfa\",\"fonte\":\"nao-mapeada\",\"probe\":true}', now());"
+      ;;
+    cron_sem_probe)       # id aponta para a execução REAL da edge (cron): ecoa tudo MENOS `probe`
+      P -q -c "INSERT INTO net._http_response (id, status_code, content, created)
+               VALUES ($ID_SONDA, 200,
+                 '{\"edge\":\"edge-a\",\"versao\":\"v1.0-alfa\",\"fonte\":\"$FP_A\"}', now());"
       ;;
     confirmado)           # eco completo: versao + fonte + probe + edge
       P -q -c "INSERT INTO net._http_response (id, status_code, content, created)
@@ -260,6 +269,9 @@ executar_casos() {
     "corpo SEM o campo fonte ⇒ bundle inteiro anterior ao #1998, NUNCA 'parcial'" "DEPLOY PARCIAL"
   caso fonte_nao_mapeada        fonte_nao_mapeada        "DEPLOY PARCIAL" \
     "campo PRESENTE valendo nao-mapeada ⇒ aí sim faltou o mapa no deploy" "PRE_SONDA_FONTE"
+  caso cron_sem_probe           cron_sem_probe           "NAO E RESPOSTA DE SONDA" \
+    "id apontando para o CRON (versao certa, sem probe) NAO pode sair como bundle velho" \
+    "BUNDLE VELHO"
   caso confirmado               confirmado               "DEPLOY CONFIRMADO" \
     "eco completo segue confirmando — o ramo novo não roubou o caminho feliz"
   uma_linha_por_edge confirmado
@@ -268,13 +280,26 @@ executar_casos() {
 if [ "$FALSIFY" = 0 ]; then
   echo "== sonda-veredito-401 — 401 é ambíguo: bundle velho × CRON_SECRET inválido =="
   executar_casos
-  [ "$rc" -eq 0 ] && echo "  tudo bateu: 10 vereditos + cardinalidade" || echo "  ❌ divergência(s) acima"
+  [ "$rc" -eq 0 ] && echo "  tudo bateu: 11 vereditos + cardinalidade" || echo "  ❌ divergência(s) acima"
   exit "$rc"
 fi
 
 # ── falsificação: cada sabotagem precisa deixar ≥1 cenário VERMELHO ──────────────────────────────
 echo "== sonda-veredito-401 --falsify — sabota o gerador e exige vermelho =="
 ORIG=$(cat "$GER/sonda-versao-sql.ts")
+
+# CONTROLE VERDE na MESMA invocacao, ANTES do 1o sed. Sem ele, uma suite sempre-vermelha (Postgres
+# meio subido, fixture quebrada, sabotagem anterior nao restaurada) aprovaria TODAS as sabotagens de
+# uma vez: cada uma "pegaria" um vermelho que ja existia. A suite crua rodada noutra invocacao nao
+# serve — e outro processo e outro tmp. → docs/historico/falsificacao-sem-linha-de-base.md
+executar_casos > "$TMP/controle.out" 2>&1
+if [ "$rc" -ne 0 ]; then
+  echo "  [XX ] CONTROLE VERMELHO com o gerador INTEGRO — nenhuma sabotagem foi tentada:"
+  cat "$TMP/controle.out"
+  exit 1
+fi
+echo "  [ok ] controle: os $(command grep -c '^  \[ok \]' "$TMP/controle.out") cenarios passam com o gerador integro"
+
 cegas=0
 sabotar() { # nome de para
   local nome="$1" de="$2" para="$3"
@@ -316,6 +341,17 @@ sabotar "campo ausente volta a ser lido como DEPLOY PARCIAL (o defeito de 2026-0
         "WHEN NOT (l.corpo ? 'fonte')" "WHEN false"
 sabotar "o COALESCE que fundia ausente com nao-mapeada volta" \
         "WHEN NOT (l.corpo ? 'fonte')" "WHEN COALESCE(l.corpo ->> 'fonte', 'nao-mapeada') = 'nao-mapeada'"
+# O ramo do #2273: id que aponta para a execucao REAL (cron ecoa edge/versao/fonte e nao ecoa
+# probe). Sem ele a linha cai no ELSE e sai 'BUNDLE VELHO' com a versao CERTA — falso NEGATIVO, e o
+# desfecho e redeployar a toa. So aparece EXECUTANDO: a ORDEM dele (antes do `? 'fonte'`) e o que
+# separa "nao e sonda" de "bundle anterior ao #1998".
+sabotar "id de resposta que NAO e sonda volta a virar 'bundle velho' com a versao certa" \
+        "WHEN l.corpo ->> 'probe' IS DISTINCT FROM 'true'" "WHEN false"
+# `IS DISTINCT FROM` -> `<>` e a armadilha NULL-blind: com `probe` AUSENTE (que e exatamente o
+# caso do cron) a comparacao vale NULL, o ramo nao dispara e a linha volta ao ELSE. O ramo continua
+# no arquivo, legivel e inalcancavel — cegueira que so EXECUTANDO se ve.
+sabotar "negacao NULL-blind: o ramo do nao-sonda deixa de alcancar o corpo SEM o campo probe" \
+        "WHEN l.corpo ->> 'probe' IS DISTINCT FROM 'true'" "WHEN l.corpo ->> 'probe' <> 'true'"
 
 echo "--falsify: $cegas cegueira(s) (esperado: 0)"
 [ "$cegas" -eq 0 ] || exit 1

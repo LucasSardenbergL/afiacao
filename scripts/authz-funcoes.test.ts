@@ -82,6 +82,16 @@ describe('AUTHZ_FUNCOES_FECHADAS — sanidade do contrato', () => {
   // A fronteira do cabeçalho de authz-manifest.ts: MANIFEST = alcançável por authenticated (fecha
   // por gate); ACK = fecha por privilégio. `get_carteira_margem_faixa` é a exceção MEDIDA — ACK que
   // authenticated alcança, porque fecha por gate de escopo/projeção, não por privilégio.
+  //
+  // ⚠️ 2026-09-06 — a lista saiu de 1 para 3 nomes, e o que se perde e o que se ganha:
+  // `get_tint_price`/`get_tint_prices` entraram no MESMO perfil medido da carteira (SECDEF que
+  // `authenticated` alcança, fechando por PROJEÇÃO `cap_custo_ler` sem nenhum RAISE — psql-ro
+  // 2026-09-06). NÃO se trocou a lista literal por um invariante do tipo "declarou projeção, então
+  // vale": isso viraria autodeclaração, e cada nome novo deixaria de custar uma revisão. A lista
+  // continua literal DE PROPÓSITO — é o pedágio. Um 4º nome segue falhando aqui até que alguém o
+  // escreva, tendo medido. Quem o fizer: o que sustenta a projeção não é este catálogo, são as
+  // asserções EXECUTADAS (db/test-tint-get-price.sh, db/test-tint-get-prices.sh,
+  // db/test-tint-gate-custo-staff.sh, db/test-carteira-margem-faixa-motivo-gate.sh).
   it('MANIFEST ⇒ authenticated permitido; ACK ⇒ proibido, exceto a exceção medida', () => {
     for (const k of Object.keys(AUTHZ_MANIFEST)) {
       expect(AUTHZ_FUNCOES_FECHADAS[k].permitido.authenticated, k).toBe(true);
@@ -89,7 +99,11 @@ describe('AUTHZ_FUNCOES_FECHADAS — sanidade do contrato', () => {
     const ackComAuth = [...ACKNOWLEDGED_SENSITIVE].filter(
       (k) => AUTHZ_FUNCOES_FECHADAS[k].permitido.authenticated,
     );
-    expect(ackComAuth).toEqual(['public.get_carteira_margem_faixa']);
+    expect(ackComAuth.sort()).toEqual([
+      'public.get_carteira_margem_faixa',
+      'public.get_tint_price',
+      'public.get_tint_prices',
+    ]);
   });
 });
 

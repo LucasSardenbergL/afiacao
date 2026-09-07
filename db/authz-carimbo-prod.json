@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-07T01:04:57.574Z",
-  "sourceHead": "17ddabc373aadecf877b69306a6e0117846e2ec8",
+  "medidoEm": "2026-09-07T01:05:25.836Z",
+  "sourceHead": "fc2f73de9228689aeaafd4b0e4a21fc8898989be",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,25 +11,12 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 1,
-      "resumo": "authz:funcoes:prod — 2 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 47 definição(ões) lida(s) para 49 chave(s) da allowlist.",
-      "contratoFingerprint": "9b7a19a0668e1e66d34809bf01889389677e8ddaa5182bdddb398e300e0bceb4",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 50 função(ões) da allowlist.",
+      "denominador": "🔎 authz:funcoes:prod — 50 definição(ões) lida(s) para 50 chave(s) da allowlist.",
+      "contratoFingerprint": "4c2ddffc62a49d28fa24579c9a669957d7c6bfdb11df16713dbdb74157076d97",
       "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
-      "achados": [
-        {
-          "id": "87f43176e34ff5f2",
-          "linha": "❌ public.reposicao_selar_pedido — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_selar_pedido está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        },
-        {
-          "id": "6a1e618f655a78ad",
-          "linha": "❌ public.reposicao_conferir_envio — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_conferir_envio está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        }
-      ]
+      "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -43,29 +30,11 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 1,
-      "resumo": "authz:audit:prod — 4 divergência(s).",
-      "denominador": "🔎 authz:audit:prod — 21 definição(ões) lida(s) para 23 chave(s) do manifest.",
-      "contratoFingerprint": "ed2a339e3e6509a01d4572607d8fd0946ee8e757c6abe1445a8c4900c089708d",
+      "resumo": "authz:audit:prod — 1 divergência(s).",
+      "denominador": "🔎 authz:audit:prod — 20 definição(ões) lida(s) para 20 chave(s) do manifest.",
+      "contratoFingerprint": "6f98741634c912bce06bc1b9ef8996ad754cfa01b2bc049380afbcc2434ff6a3",
       "auditorFingerprint": "0866cf4f10a49635c4ed8590c7ed4861b254c4b75cc4e58ca1cdb15b038993c1",
       "achados": [
-        {
-          "id": "ad7de5d080a699e2",
-          "linha": "❌ AUSENTE_EM_PROD: public.reposicao_selar_pedido está no AUTHZ_MANIFEST e não existe no banco.",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        },
-        {
-          "id": "4cf734dfa25f0b1d",
-          "linha": "❌ AUSENTE_EM_PROD: public.reposicao_conferir_envio está no AUTHZ_MANIFEST e não existe no banco.",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        },
-        {
-          "id": "7947a84aeb8b9b09",
-          "linha": "❌ GATE_VIVO_FALHOU: aprovar_pedido_sugerido(bigint,text) — falta cap_compras_ler",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        },
         {
           "id": "257297e1a0831e90",
           "linha": "❌ MD5_DIVERGIU: public.get_defasagem_cliente (20260718190000_authz_capability_matrix_e2.sql): esperado 037ede84a229d5798214511433afb65d, prod tem 7856c3052596d66a6f5ac8eb0a06c1c0",

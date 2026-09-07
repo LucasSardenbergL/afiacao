@@ -43,7 +43,8 @@
  *     CORPO, e o browser precisa alcançá-las;
  *   · 20 das 21 de `ACKNOWLEDGED_SENSITIVE` **não** têm — fecham por PRIVILÉGIO. A 21ª,
  *     `get_carteira_margem_faixa`, tem `authenticated=X` de propósito (fecha por gate de ESCOPO e
- *     PROJEÇÃO, não por privilégio) e é a única exceção; ela está anotada abaixo.
+ *     PROJEÇÃO, não por privilégio) e era, na medição de 2026-08-15, a única exceção; ela está
+ *     anotada abaixo.
  *
  * REMEDIÇÃO 2026-08-18 (após entrarem as 3 de `private`): o conjunto tem **43** funções (19
  * manifest + 24 ACK), 43 de 43 presentes. Enquanto o fecho não for colado no SQL Editor, a
@@ -52,6 +53,24 @@
  * apply o esperado volta a ser `proacl` NULL = 0, `anon` = 0 e `authenticated` = 20 (as 19 do
  * manifest + `get_carteira_margem_faixa`); hoje são 23 porque `proacl` NULL concede a PUBLIC.
  * Este parágrafo é o que impede o bloco acima de virar afirmação falsa — releia-o junto.
+ *
+ * REMEDIÇÃO 2026-09-06 (fecho do vetor banco→repo deixado aberto pela captura do #2251): entraram
+ * **4** funções — `get_tint_price`, `get_tint_prices`, `farmer_recomendacoes_substituir` e
+ * `farmer_bundle_recomendacoes_substituir`. O conjunto vai a **50** chaves (20 manifest + 26 ACK +
+ * 4 ACL_ONLY_INTERNAL), `permitido.anon` segue **0** e `permitido.authenticated` sobe de 21 para
+ * **25** (as 20 do manifest + `get_carteira_margem_faixa` + as 4 novas). ACL vivo das 4 MEDIDO por
+ * psql-ro em 2026-09-06, idêntico entre elas e à 5ª da captura (`get_preco_cockpit`, que já estava
+ * aqui): `postgres=X ; authenticated=X ; service_role=X ; sandbox_exec_*=X` — sem `anon`, sem
+ * PUBLIC. As 4 são justamente as que o vetor documentado alcança: o #2251 trouxe o CORPO vivo
+ * delas para o repo, mas o ACL continuava sem vigia, e um `DROP FUNCTION`+`CREATE` as devolveria
+ * ao `anon` pelo default privilege de `public`.
+ *
+ * ⚠️ LIMITE do que a Parte E promete, MEDIDO em contraprova nesta mesma entrega (controle verde na
+ * mesma invocação: `GRANT … TO anon` acusa FUNCAO_REABERTURA): um `GRANT EXECUTE … TO PUBLIC`
+ * pós-âncora **não produz achado nenhum** — o motor casa nomes de role e `public` não está entre
+ * as proibidas, embora privilégio a PUBLIC alcance `anon` na semântica do Postgres. O fecho aqui
+ * cobre o vetor DROP+CREATE, que é a forma documentada neste repo; não cobre essa. Registrado para
+ * entrega própria — quem for corrigir mexe em scripts/lib/authz-funcoes.ts, não nesta lista.
  *
  * `fechadaPor` é a ÂNCORA: a última migration do repo que estabelece o ACL declarado aqui. A
  * vigilância é dela **para a frente, INCLUSIVE** — diferente da Parte C de tabela, que olha só o
@@ -62,7 +81,14 @@
  * Como adicionar uma função: (1) MEÇA o EXECUTE em prod (`has_function_privilege` para `anon` e
  * `authenticated` + o `proacl` cru — `bun run authz:funcoes:prod` faz isso); (2) declare
  * `permitido` a partir do MEDIDO, não do desejado; (3) aponte `fechadaPor` para a migration que
- * estabelece esse ACL, ou `null` enquanto o fecho não estiver no repo (o gate avisa: FECHO_PENDENTE).
+ * estabelece esse ACL, ou `null` enquanto o fecho não estiver no repo (o gate avisa: FECHO_PENDENTE);
+ * (4) CLASSIFIQUE-a num dos três catálogos de scripts/authz-manifest.ts — `AUTHZ_MANIFEST`,
+ * `ACKNOWLEDGED_SENSITIVE` ou `ACL_ONLY_INTERNAL`. Este passo não é opcional nem cosmético: o teste
+ * "não inventa função" reprova chave sem catálogo, e a escolha é DETERMINADA pela medição, não pelo
+ * gosto — SECDEF não cabe em `ACL_ONLY_INTERNAL` (o discriminante dele exige INVOKER), INVOKER não
+ * deve ir para `ACKNOWLEDGED_SENSITIVE` (lá é inerte hoje e suprime amanhã), e o `AUTHZ_MANIFEST`
+ * exige um `requiredGate` de BLOQUEIO — que função fechando só por PROJEÇÃO não tem, e declarar um
+ * fabricaria contrato falso.
  */
 
 /** Roles vigiadas — as duas que o PostgREST expõe ao browser. */
@@ -312,6 +338,38 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'margem por faixa na carteira — o vendedor no browser alcança; fecha por escopo+projeção',
   },
+  // ⚠️ 2026-09-06 — as DUAS abaixo são o mesmo perfil da de cima, e é por isso que estão coladas
+  // nela: SECDEF que `authenticated` alcança de propósito, fechando por PROJEÇÃO (`CASE WHEN
+  // private.cap_custo_ler(auth.uid()) THEN custo ELSE NULL`), sem nenhum RAISE. A `get_carteira_
+  // margem_faixa` deixou de ser exceção única — a fronteira é a mesma, a população é que cresceu.
+  //
+  // O QUE ELAS FECHAM, e o que NÃO fecham: o custo (`custoBase`/`custoCorantes`) sai NULL para
+  // quem não tem cap; `precoFinal` sai para todo `authenticated`, INCLUSIVE customer — é o preço
+  // do balcão. Revogar `authenticated` daqui não é "endurecer": é quebrar a venda. O que a Parte E
+  // protege é o `anon`, que o gate de projeção NÃO segura (sem `auth.uid()` o custo já sai NULL,
+  // mas o PREÇO continuaria saindo — para um anônimo, que não deveria ver tabela de preço alguma).
+  //
+  // Âncora: a captura do #2251, que trouxe para o repo o corpo VIVO das duas (o hardening de
+  // `cap_custo_ler` só existia em prod) e, na mesma migration, reemitiu `REVOKE ALL … FROM PUBLIC,
+  // anon` + `GRANT EXECUTE … TO authenticated, service_role`. É a forma que o cabeçalho descreve:
+  // a migration-âncora é ela mesma uma recriação, e a vigilância vale dela para a frente INCLUSIVE.
+  // ACL vivo MEDIDO por psql-ro em 2026-09-06, idêntico nas duas:
+  //   `postgres=X/postgres ; authenticated=X/postgres ; service_role=X/postgres ; sandbox_exec_*=X`
+  // — `anon` ausente, PUBLIC ausente. Foi o que autorizou `PORTA_GATE` aqui: medido, não desejado.
+  'public.get_tint_price': {
+    fechadaPor: '20260906164001_captura_authz_gate_custo_rpcs_preco.sql',
+    permitido: PORTA_GATE,
+    motivo:
+      'preço de fórmula tintométrica no balcão — todo authenticated (inclusive customer) precisa ' +
+      'do precoFinal; o custo é que sai NULL sem private.cap_custo_ler',
+  },
+  'public.get_tint_prices': {
+    fechadaPor: '20260906164001_captura_authz_gate_custo_rpcs_preco.sql',
+    permitido: PORTA_GATE,
+    motivo:
+      'versão em lote da irmã acima (uuid[]) — mesmo gate de projeção cap_custo_ler, mesma razão ' +
+      'para authenticated alcançar: é o preço da lista do balcão',
+  },
   // ⚠️ REVELADA pelo detector, e baselinada em vez de acomodada (§7 do histórico). Até
   // 20260818121919, a última migration a tocar o ACL desta era a 20260510235956 ("Fatia E3
   // Fase 1"), que revoga de `PUBLIC, anon` e **mantém `GRANT EXECUTE … TO authenticated`** — ou
@@ -433,5 +491,34 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
       'NOME) é a 2ª tranca, e o que a Parte E vigia é um DROP+CREATE futuro devolvendo EXECUTE pelo ' +
       'default privilege de `public` (anon=X, authenticated=X). Medido por psql-ro 2026-09-05 22:41 UTC, ' +
       'após o apply: prosecdef=false, proacl={postgres,service_role,sandbox_exec_*}, anon=NAO, auth=NAO.',
+  },
+
+  // ⚠️ 2026-09-06 — as duas RPCs do farmer, também de `ACL_ONLY_INTERNAL`, mas pelo motivo
+  // OPOSTO ao da vizinha acima: aquela é interna e `authenticated` não a alcança; estas são do
+  // BROWSER e ele as alcança de propósito. O que as põe no mesmo catálogo é só o DISCRIMINANTE —
+  // são SECURITY INVOKER (medido: prosecdef=false) e têm de continuar, porque ESCREVEM sob RLS.
+  // A distinção importa aqui e não lá: `permitido` é ACL, e o ACL delas é `PORTA_GATE`, não
+  // `PORTA_FECHADA`. Ler a categoria como se ditasse o ACL levaria a revogar `authenticated` e
+  // matar o recálculo de recomendações no browser.
+  // Gate no corpo (BLOQUEIO real, com RAISE — ≠ das RPCs de preço, que só projetam):
+  // `p_farmer_id = auth.uid() OR private.cap_carteira_escrever(auth.uid())`, na forma `IS NOT TRUE`
+  // que é fail-closed sob `auth.uid()` NULL. O que a Parte E acrescenta é a tranca de PRIVILÉGIO
+  // contra `anon`: o gate de escopo já o barraria hoje, mas um DROP+CREATE sem REVOKE devolveria a
+  // função ao anônimo e deixaria o gate no corpo como ÚNICA tranca de uma RPC de ESCRITA.
+  // ACL vivo MEDIDO por psql-ro em 2026-09-06, idêntico nas duas:
+  //   `postgres=X/postgres ; authenticated=X/postgres ; service_role=X/postgres ; sandbox_exec_*=X`
+  'public.farmer_recomendacoes_substituir': {
+    fechadaPor: '20260906164002_captura_authz_escopo_carteira_farmer.sql',
+    permitido: PORTA_GATE,
+    motivo:
+      'substitui as recomendações do farmer (RPC de ESCRITA chamada do browser por useCrossSellEngine) ' +
+      '— gate de escopo próprio-farmer OU private.cap_carteira_escrever, INVOKER sob RLS',
+  },
+  'public.farmer_bundle_recomendacoes_substituir': {
+    fechadaPor: '20260906164002_captura_authz_escopo_carteira_farmer.sql',
+    permitido: PORTA_GATE,
+    motivo:
+      'irmã da acima para os bundles (useBundleEngine) — mesmo gate de escopo, mesma assinatura de ' +
+      '8 args, mesma exigência de continuar INVOKER',
   },
 };
