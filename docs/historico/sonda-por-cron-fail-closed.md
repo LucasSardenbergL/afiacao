@@ -132,14 +132,58 @@ zero e estaria mentindo.
 - **Um ambiente só.** Se nascer um segundo, o `project_ref` esperado precisa virar vínculo mecânico
   antes do rollout — hoje o residual é uma atestação falsa **no banco alheio**, sem efeito em prod.
 
+## 7.1 F2 e F3 — o disparo e a leitura (2026-09-06)
+
+**F2 (banco, PR #2240, aplicada em prod e validada).** `deploy_sonda_alvos` espelha a allowlist do
+repo com kill switch por edge; `deploy_sonda_disparos` grava `(request_id, tick_id, edge)` na MESMA
+transação do `net.http_post`; `deploy_sonda_disparar()` posta na edge-relé e **nunca** na edge-alvo;
+o cron roda `37 */2` (minuto livre entre os 94 jobs). Provado executando: 33 asserts em PG17, 5
+falsificações vermelhas — entre elas a que troca a URL do relé pela da alvo, que é o cenário
+catastrófico.
+
+O achado que justificou o harness: **`ON CONFLICT (request_id)` é ambíguo** quando `request_id`
+também é coluna de saída (`RETURNS TABLE`). O `CREATE` passa, a postcondição passa, e a função
+quebra no PRIMEIRO tick — de madrugada. PL/pgSQL é late-bound; só a execução prova.
+
+**F3 (leitura).** O silêncio da sonda vira sinal, e as três formas de ele mentir ficam fechadas:
+
+1. **Atribuição por TEMPO** — a ligação é sempre pelo `request_id` do disparo. Uma resposta atrasada
+   do tick anterior, ou uma sonda humana, tem outro id e não conta.
+2. **Silêncio lido como aprovação** — cron parado, tabela ausente ou banco fora de sincronia com o
+   repo são MECÂNICA (exit 2), não "nada pendente". A exceção deliberada: enquanto a migration não
+   estiver aplicada, a seção sai como AVISO e o resto do relatório continua valendo — reprovar por
+   uma entrega em voo bloquearia todas as sessões.
+3. **Silêncio lido como incidente** — edge cujo ledger já diz DIVERGE não deveria mesmo atestar (o
+   ramo não está no ar). Só `CONFERE` torna o silêncio suspeito, e é isso que faz `SONDA_CRON_SILENCIOSA`
+   responder a pergunta que nenhum outro sinal responde: *o bundle que o ledger jura estar no ar
+   continua lá?*
+
+E o último caminho de efeito fechou: o `sonda:sql` **recusa** gerar o bloco legado (POST direto na
+edge) para quem já tem o relé, oferecendo o one-liner `deploy_sonda_disparar(ARRAY[…])`. Só
+`--permitir-efeito-legado` libera. Um aviso impresso não bastaria: quem cola o bloco às 2 da manhã
+não lê o stderr.
+
+## 7.2 O primeiro tick em PRODUÇÃO (2026-09-06, 22:37 UTC) — fail-closed, medido
+
+O cron rodou pela primeira vez com a F2 aplicada e a `SONDA_HMAC_KEY` **ainda não provisionada**.
+O que aconteceu é o desenho inteiro sendo exercido de verdade:
+
+| o que | resultado |
+|---|---|
+| disparos do tick | 3 (um por edge ativa), com `request_id` 71237–71239 |
+| resposta do relé | `500 {"ok":false,"classe":"sem-chave","env":"SONDA_HMAC_KEY"}` nas três |
+| requisições emitidas às edges-alvo | **nenhuma** — o relé recusa antes do `fetch` |
+| linhas no ledger / na janela viva | **0** — corpo de erro não tem `edge`/`versao` no topo, então não é atestação |
+| veredito do CLI | 3 avisos de "1 de 1 tick sem resposta", exit 0 — a regra dos 2 ticks não deixa um tick só acusar |
+
+Quatro propriedades provadas de uma vez, e nenhuma delas por leitura de código: **sem a chave nada
+sai**; **o erro não vira atestação**; **a via única do ledger se manteve**; e **o CLI não confunde
+um tick com um sinal**. A ordem de instalação que o handoff pedia (chave → deploy → migration) foi
+invertida na prática, e o custo disso foi exatamente zero — que é o que "fail-closed" deveria
+significar e quase nunca significa.
+
 ## 8. O que falta (fatias seguintes)
 
-- **F2 (banco)**: `deploy_sonda_alvos` (espelho), `deploy_sonda_disparos` (atribuição por
-  `request_id`, gravada na mesma transação do `net.http_post`), `deploy_sonda_disparar()` e o cron.
-- **F3 (CLI)**: `pendencias:deploy` passa a distinguir "atestou neste tick" de "silêncio" por
-  `request_id`, com `SONDA_CRON_SILENCIOSA` após 2 ticks; `deploy_sonda_resultados` guarda o motivo
-  além das 6 h; o `sonda:sql` humano passa a disparar o relé, e o bloco legado (que executa o fluxo
-  real em bundle velho) só sai com `--permitir-efeito-legado`.
 - **F4 (ondas)**: as demais edges, uma onda por vez, cada uma com `sonda:cron-prova` 100 % `PASSA`.
   `sync-reprocess` ficou fora desta fatia por **colisão** com o PR #2224, não por risco.
 

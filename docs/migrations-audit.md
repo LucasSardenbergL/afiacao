@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **521** custom migrations totais
-- **1767** objetos esperados (criados por estas migrations)
+- **522** custom migrations totais
+- **1773** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 548
-  - `rls_policy`: 461
-  - `index`: 254
-  - `cron_job`: 170
-  - `table`: 164
+  - `function`: 549
+  - `rls_policy`: 462
+  - `index`: 256
+  - `cron_job`: 171
+  - `table`: 165
   - `trigger`: 89
   - `view`: 77
   - `enum_value`: 4
@@ -4339,6 +4339,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.corrigir_cancelamento_pos_disparo` | — |
+
+### `20260906180303_deploy_sonda_resultados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.deploy_sonda_resultados_colher` | — |
+| `table` | `public.deploy_sonda_resultados` | — |
+| `index` | `public.idx_deploy_sonda_resultados_edge` | `deploy_sonda_resultados` |
+| `index` | `public.idx_deploy_sonda_resultados_tick` | `deploy_sonda_resultados` |
+| `cron_job` | `cron.deploy-sonda-resultados-colher` | — |
+| `rls_policy` | `public.deploy_sonda_resultados_select_staff` | `deploy_sonda_resultados` |
 
 ## Próximos passos por status
 

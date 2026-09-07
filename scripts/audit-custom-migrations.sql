@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 521
+-- Total de custom migrations: 522
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -562,7 +562,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260906164001', 'captura_authz_gate_custo_rpcs_preco', '20260906164001_captura_authz_gate_custo_rpcs_preco.sql'),
   ('20260906164002', 'captura_authz_escopo_carteira_farmer', '20260906164002_captura_authz_escopo_carteira_farmer.sql'),
   ('20260906165706', 'aprovar_pedido_revoke_anon', '20260906165706_aprovar_pedido_revoke_anon.sql'),
-  ('20260906172718', 'cancelamento_pos_disparo_gate_canonico', '20260906172718_cancelamento_pos_disparo_gate_canonico.sql')
+  ('20260906172718', 'cancelamento_pos_disparo_gate_canonico', '20260906172718_cancelamento_pos_disparo_gate_canonico.sql'),
+  ('20260906180303', 'deploy_sonda_resultados', '20260906180303_deploy_sonda_resultados.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2318,7 +2319,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_preco_cockpit', ''),
   ('captura_authz_escopo_carteira_farmer', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
   ('captura_authz_escopo_carteira_farmer', 'function', 'public', 'farmer_bundle_recomendacoes_substituir', ''),
-  ('cancelamento_pos_disparo_gate_canonico', 'function', 'public', 'corrigir_cancelamento_pos_disparo', '')
+  ('cancelamento_pos_disparo_gate_canonico', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('deploy_sonda_resultados', 'function', 'public', 'deploy_sonda_resultados_colher', ''),
+  ('deploy_sonda_resultados', 'table', 'public', 'deploy_sonda_resultados', ''),
+  ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_edge', 'deploy_sonda_resultados'),
+  ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_tick', 'deploy_sonda_resultados'),
+  ('deploy_sonda_resultados', 'cron_job', 'cron', 'deploy-sonda-resultados-colher', ''),
+  ('deploy_sonda_resultados', 'rls_policy', 'public', 'deploy_sonda_resultados_select_staff', 'deploy_sonda_resultados')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4122,7 +4129,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('captura_authz_gate_custo_rpcs_preco', 'function', 'public', 'get_preco_cockpit', ''),
   ('captura_authz_escopo_carteira_farmer', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
   ('captura_authz_escopo_carteira_farmer', 'function', 'public', 'farmer_bundle_recomendacoes_substituir', ''),
-  ('cancelamento_pos_disparo_gate_canonico', 'function', 'public', 'corrigir_cancelamento_pos_disparo', '')
+  ('cancelamento_pos_disparo_gate_canonico', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('deploy_sonda_resultados', 'function', 'public', 'deploy_sonda_resultados_colher', ''),
+  ('deploy_sonda_resultados', 'table', 'public', 'deploy_sonda_resultados', ''),
+  ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_edge', 'deploy_sonda_resultados'),
+  ('deploy_sonda_resultados', 'index', 'public', 'idx_deploy_sonda_resultados_tick', 'deploy_sonda_resultados'),
+  ('deploy_sonda_resultados', 'cron_job', 'cron', 'deploy-sonda-resultados-colher', ''),
+  ('deploy_sonda_resultados', 'rls_policy', 'public', 'deploy_sonda_resultados_select_staff', 'deploy_sonda_resultados')
 )
 SELECT
   e.migration,
