@@ -35,7 +35,7 @@ export function FarmerDashboardV2() {
   const qPositivacao = useMyPositivacao();
   const { data: positivacao } = qPositivacao;
   const estadoPositivacao = estadoDeLeitura(qPositivacao);
-  useSinalPositivacao(false);
+  useSinalPositivacao();
   const onToggleModoAntigo = (open: boolean) => {
     setModoAntigoAberto(open);
     // sinal do piloto: se ela abre o modo antigo todo dia, a fila não está servindo.

@@ -136,6 +136,23 @@ export function estadoDeRegistro(
 }
 
 /**
+ * O número está na tela E uma leitura nova está em voo — ele pode mudar em instantes.
+ *
+ * Irmão de `desatualizado()`, e a razão de existir é a mesma: `estadoDeLeitura` responde
+ * `'pronta'` para QUALQUER `status:'success'`, inclusive o cache que está sendo revalidado em
+ * background. Com `gcTime` de 15min (o default deste app), voltar a uma tela já visitada entrega
+ * um número de até 15 minutos atrás como se tivesse acabado de ser lido. Para a TELA isso é
+ * irrelevante (o número aparece e se corrige sozinho); para a SÉRIE é a diferença entre "o
+ * vendedor viu o número atual" e "o vendedor agiu sobre um número que ainda ia mudar".
+ *
+ * `false` sem dado em mãos: aí não há número para estar sendo revalidado — é carregamento, e
+ * `estadoDeLeitura` já o nomeia.
+ */
+export function revalidando(q: FatiaDeQuery, temDado: boolean): boolean {
+  return temDado && q.fetchStatus === 'fetching';
+}
+
+/**
  * A leitura falhou MAS há dado em mãos — mostre os DOIS, não escolha.
  *
  * Escolher entre a lista e o aviso é honesto para o sensor e regressão para o usuário:
