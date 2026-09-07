@@ -16,6 +16,10 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { CanariaPrecoCard } from '@/components/governanca/CanariaPrecoCard';
+import {
+  estadoDeLeitura, naoConsegui, desatualizado, type EstadoSemLeitura,
+} from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 /* ─── Helpers ─── */
 
@@ -135,7 +139,14 @@ export default function GovernanceAudit() {
     enabled: isAdmin || isSuperAdmin,
   });
 
-  const { data: marginLog } = useQuery({
+  // `console.error(error); return []` fazia a query terminar em `success` com `[]`: o `error` do
+  // react-query NUNCA populava e "não consegui ler" chegava à tela como "não há". LANÇAR é o que
+  // torna o estado de falha alcançável — sem isto, mexer só na UI seria um fix INERTE
+  // (docs/historico/a-forma-que-some-e-a-forma-que-mente.md, achado 2).
+  //
+  // A DESESTRUTURAÇÃO fica: `const q = useQuery(…)` + `q.data` some com o sítio do detector do gate
+  // `erro-colapsado-em-vazio` sem corrigir uma linha de silêncio (achado da fatia #2, mesma doc).
+  const { data: marginLog, status: statusMargem, fetchStatus: fetchMargem } = useQuery({
     queryKey: ['gov-audit-margin'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -143,11 +154,26 @@ export default function GovernanceAudit() {
         .select('*')
         .order('calculated_at', { ascending: false })
         .limit(50);
-      if (error) { console.error(error); return []; }
+      if (error) throw error;
       return data || [];
     },
     enabled: canViewStrategic || isAdmin,
   });
+  const fatiaMargem = { status: statusMargem, fetchStatus: fetchMargem };
+  // 12.913 linhas em `margin_audit_log` (psql-ro, 2026-09-07 — +1.044 em um dia, fonte VIVA).
+  // "Sem registros de auditoria" sobre ela é uma frase FALSA, e o `{marginLog?.length || 0}` do
+  // cabeçalho afirma "0 registros" com a mesma convicção. Sub-tipo que MENTE.
+  //
+  // `desabilitada` fica de fora de propósito: `enabled` é `canViewStrategic || isAdmin`, a MESMA
+  // condição que renderiza esta aba — dentro dela a pergunta sempre foi feita. Avisar num estado
+  // em que não se perguntou nada seria alarme fabricado (precisão > recall).
+  const estadoMargem = estadoDeLeitura(fatiaMargem);
+  // Sem NADA em mãos, o aviso é o único conteúdo possível da tabela.
+  const margemSemLeitura: EstadoSemLeitura | null =
+    naoConsegui(estadoMargem) && !marginLog ? estadoMargem : null;
+  // COM as 50 linhas no cache e um refetch que falhou, apagar a tabela trocaria um defeito por
+  // outro: os registros ficam, com o aviso de que a leitura está velha.
+  const margemVelha = desatualizado(fatiaMargem, Boolean(marginLog));
 
   // Unique authors from algo logs for filter
   const authorOptions = useMemo(() => {
@@ -411,10 +437,25 @@ export default function GovernanceAudit() {
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-semibold">Auditoria de Margem — Algoritmo A</CardTitle>
                   <CardDescription className="text-xs">
-                    Comparativo de margem real vs. potencial por cliente. {marginLog?.length || 0} registros.
+                    Comparativo de margem real vs. potencial por cliente.{' '}
+                    {marginLog ? `${marginLog.length} registros.` : 'Contagem não lida.'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
+                  {margemSemLeitura && (
+                    <AvisoLeituraFalhou
+                      oque="a auditoria de margem"
+                      estado={margemSemLeitura}
+                      testId="aviso-leitura-margem"
+                    />
+                  )}
+                  {margemVelha && (
+                    <AvisoLeituraFalhou
+                      oque="a leitura mais recente da auditoria de margem"
+                      estado={margemVelha}
+                      testId="aviso-leitura-margem"
+                    />
+                  )}
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
@@ -444,7 +485,10 @@ export default function GovernanceAudit() {
                             <td className="text-right py-2 text-muted-foreground">{formatDateShort(row.calculated_at)}</td>
                           </tr>
                         ))}
-                        {(!marginLog || marginLog.length === 0) && (
+                        {/* `!marginLog` casava erro, offline e carregando junto com o vazio real —
+                            os quatro viravam a MESMA tela. Só a query que RESPONDEU pode afirmar
+                            que não há registros; nos demais estados quem fala é o aviso acima. */}
+                        {marginLog?.length === 0 && (
                           <tr><td colSpan={6} className="text-center py-6 text-muted-foreground">Sem registros de auditoria</td></tr>
                         )}
                       </tbody>
