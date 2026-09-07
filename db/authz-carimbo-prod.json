@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-07T00:39:47.537Z",
-  "sourceHead": "6f450b941f117003f5779ff705dc0c0f42a6994f",
+  "medidoEm": "2026-09-07T01:05:25.836Z",
+  "sourceHead": "fc2f73de9228689aeaafd4b0e4a21fc8898989be",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 46 função(ões) da allowlist.",
-      "denominador": "🔎 authz:funcoes:prod — 46 definição(ões) lida(s) para 46 chave(s) da allowlist.",
-      "contratoFingerprint": "e7a07836b573c5bcb275928587c03dfa4b568d43135d8e79d23eb9834a8b51c8",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 50 função(ões) da allowlist.",
+      "denominador": "🔎 authz:funcoes:prod — 50 definição(ões) lida(s) para 50 chave(s) da allowlist.",
+      "contratoFingerprint": "4c2ddffc62a49d28fa24579c9a669957d7c6bfdb11df16713dbdb74157076d97",
       "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
       "achados": []
     },
