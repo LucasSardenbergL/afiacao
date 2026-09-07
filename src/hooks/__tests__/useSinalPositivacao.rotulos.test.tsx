@@ -50,11 +50,22 @@ const POSITIVACAO = {
 };
 
 let respostaPositivacao: Resposta = { data: POSITIVACAO, error: null };
+/** Quando ligado, a RPC de positivação fica PENDENTE até o teste resolver — é a única forma de
+ *  observar a janela `success` + `fetching` (cache velho na tela enquanto revalida). */
+let resolverPositivacao: (r: Resposta) => void = () => {};
+let positivacaoEmVoo = false;
+function positivacaoPendente() {
+  positivacaoEmVoo = true;
+  return new Promise<Resposta>((r) => {
+    resolverPositivacao = (v) => { positivacaoEmVoo = false; r(v); };
+  });
+}
 let respostaPerfilAlvo: Resposta = { data: { commercial_role: 'farmer' }, error: null };
 
 /** A leitura do papel comercial, controlada: resolve quando o TESTE mandar. */
 let resolverPapel: (r: Resposta) => void = () => {};
 let promessaPapel: Promise<Resposta> = Promise.resolve({ data: null, error: null });
+let promessaPositivacao: Promise<Resposta> = Promise.resolve({ data: null, error: null });
 function papelPendente() {
   promessaPapel = new Promise<Resposta>((r) => {
     resolverPapel = r;
@@ -71,6 +82,7 @@ vi.mock('@/integrations/supabase/client', () => ({
     },
     rpc: (fn: string) => {
       if (fn === 'get_user_access_profile_for') return Promise.resolve(respostaPerfilAlvo);
+      if (positivacaoEmVoo) return promessaPositivacao;
       return Promise.resolve(respostaPositivacao);
     },
   },
@@ -121,6 +133,7 @@ beforeEach(() => {
   respostaPerfilAlvo = { data: { commercial_role: 'farmer' }, error: null };
   lente = { realUserId: VENDEDOR, target: null, effectiveUserId: VENDEDOR, isImpersonating: false };
   papelPendente();
+  positivacaoEmVoo = false;
   track.mockClear();
 });
 
@@ -144,22 +157,59 @@ describe('defeito 1 — is_hunter não pode ser FABRICADO', () => {
     expect(payload.is_hunter, 'rótulo fabricado: offline afirmou "não é hunter" sem ter lido o papel').toBeNull();
   });
 
-  it('papel que resolve TARDE: UM evento só, e com o rótulo VERDADEIRO', async () => {
-    // A positivação chega primeiro; o papel demora. Emitir agora rotularia errado e a dedup
-    // impediria a correção; emitir duas vezes inflaria o denominador. O certo é segurar
-    // enquanto a leitura do papel é `carregando` — ausência transitória e auto-resolvida.
+  it('papel que resolve TARDE: emite JÁ com null e CORRIGE quando o papel chega', async () => {
+    // SEGURAR o evento até o papel resolver foi a 1ª tentativa, e o /codex a derrubou: a leitura do
+    // papel não tem garantia de TÉRMINO (captive portal/rede parcial deixa a promise pendente sem
+    // disparar retry, porque o navegador segue `online`), então segurar perde a linha de forma
+    // SISTEMÁTICA — e o sensor IRMÃO, que não espera papel nenhum, emite na mesma visita: os dois
+    // passariam a discordar sobre o vendedor ter visto a tela. Perder linha é o pior defeito
+    // possível num sensor que existe para dar DENOMINADOR.
+    // O certo é emitir com `null` (honesto: "ainda não sei") e pôr o rótulo na CHAVE, para que a
+    // correção nunca seja engolida. Duas linhas distinguíveis > uma linha ausente ou mentirosa.
     montar();
 
-    await waitFor(() => expect(qc.getQueryData(['my-positivacao', VENDEDOR])).toBeTruthy());
-    expect(eventos(), 'emitiu antes de saber o papel — o rótulo só pode ser chute').toHaveLength(0);
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+    expect(eventos()[0].is_hunter, 'rotulou sem ter lido o papel').toBeNull();
 
     await act(async () => {
       resolverPapel({ data: { commercial_role: 'hunter' }, error: null });
       await promessaPapel;
     });
 
+    await waitFor(() => expect(eventos()).toHaveLength(2));
+    expect(eventos()[1].is_hunter, 'o papel chegou como hunter e a série não soube').toBe(true);
+  });
+
+  it('a leitura do papel FALHA: o rótulo vai null — erro do PostgREST não é "não é hunter"', async () => {
+    // Achado do /codex SOBRE O PRÓPRIO FIX: `useMyCommercialRole` fazia
+    // `const { data } = await supabase…` e DESCARTAVA o `error` — assinatura literal da classe
+    // "silêncio afirmativo" documentada neste repo. Com timeout/RLS/500 a query resolve com
+    // SUCESSO e `null`, então o gate `estado === 'pronta'` tratava isso como FATO e A1 seguia vivo
+    // por outro caminho: todo hunter atingido por falha nessa consulta era rotulado não-hunter.
+    resolverPapel({ data: null, error: { message: 'canceling statement due to statement timeout' } });
+
+    montar();
+
     await waitFor(() => expect(eventos()).toHaveLength(1));
-    expect(eventos()[0].is_hunter, 'o papel chegou como hunter e o evento não soube').toBe(true);
+    expect(eventos()[0].is_hunter, 'erro de leitura do papel virou "não é hunter"').toBeNull();
+  });
+
+  it('papel que MUDA no meio da montagem: a série aprende o rótulo NOVO', async () => {
+    // O papel tem `staleTime` de 60s e o cache dura `gcTime` de 15min: remontar serve o papel
+    // VELHO como `status:'success'` (logo, "fato") enquanto revalida. Sem o rótulo na chave de
+    // dedup, o `is_hunter` antigo ficava gravado para sempre e a correção era descartada.
+    resolverPapel({ data: { commercial_role: 'hunter' }, error: null });
+
+    montar();
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+    expect(eventos()[0].is_hunter).toBe(true);
+
+    promessaPapel = Promise.resolve({ data: { commercial_role: 'farmer' }, error: null });
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ['my-commercial-role', VENDEDOR] });
+    });
+
+    await waitFor(() => expect(eventos().some((e) => e.is_hunter === false)).toBe(true));
   });
 
   it('papel resolvido como farmer: o rótulo false é FATO e sai false', async () => {
@@ -263,5 +313,83 @@ describe('defeito 3 — número velho não pode ir como fresco', () => {
     for (const campo of ['pct', 'positivados', 'total_eligible', 'a_positivar']) {
       expect(payload[campo], `\`${campo}\` foi fabricado em vez de ir null`).toBeNull();
     }
+  });
+});
+
+describe('achados do /codex — o que o 1º fix ainda deixava corromper a série', () => {
+  it('cache quente REVALIDANDO: o número corrigido chega à série, não é engolido pela dedup', async () => {
+    // `gcTime` de 15min (App.tsx): voltar a uma tela já visitada entrega o cache VELHO como
+    // `status:'success'` + `fetchStatus:'fetching'`. `estadoDeLeitura` chama isso de 'pronta' e
+    // `desatualizado()` não olha `fetching` — então o número velho saía com `desatualizado:null`
+    // (fresco!) e, quando a resposta nova chegava, a chave continuava a mesma e a correção morria.
+    // A asserção é sobre o DESFECHO (a série aprende o número novo), não sobre o mecanismo.
+    resolverPapel({ data: { commercial_role: 'farmer' }, error: null });
+
+    montar();
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+    expect(eventos()[0].positivados).toBe(22);
+
+    respostaPositivacao = { data: { ...POSITIVACAO, positivados: 30 }, error: null };
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ['my-positivacao', VENDEDOR] });
+    });
+
+    await waitFor(() => expect(eventos().some((e) => e.positivados === 30)).toBe(true));
+  });
+
+  it('cache velho AINDA EM REVALIDAÇÃO não se apresenta como leitura fresca', async () => {
+    // A outra metade do mesmo achado: enquanto a RPC nova está em voo, o número na tela é o do
+    // cache. Emitir isso com `desatualizado:null` é afirmar frescor que não se tem.
+    resolverPapel({ data: { commercial_role: 'farmer' }, error: null });
+
+    montar();
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+    expect(eventos()[0].revalidando, 'a 1ª leitura não estava revalidando nada').toBe(false);
+
+    promessaPositivacao = positivacaoPendente();
+    await act(async () => {
+      void qc.invalidateQueries({ queryKey: ['my-positivacao', VENDEDOR] });
+    });
+
+    await waitFor(() =>
+      expect(
+        eventos().some((e) => e.revalidando === true),
+        'o cache velho foi para a série sem dizer que estava sendo revalidado',
+      ).toBe(true),
+    );
+    resolverPositivacao({ data: POSITIVACAO, error: null });
+  });
+
+  it('A → B → A na lente: 2 linhas, não 3 — o ref de uma chave só inflava o denominador', async () => {
+    // O ref guardava só a ÚLTIMA chave, então voltar ao alvo A reemitia. Com um SET por montagem,
+    // cada asserção distinta sai uma vez e o ciclo não infla `count()`.
+    resolverPapel({ data: { commercial_role: 'farmer' }, error: null });
+    respostaPerfilAlvo = { data: { commercial_role: 'farmer' }, error: null };
+
+    const { rerender } = montar();
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+
+    lente = { realUserId: VENDEDOR, target: { id: ALVO }, effectiveUserId: ALVO, isImpersonating: true };
+    rerender();
+    await waitFor(() => expect(eventos()).toHaveLength(2));
+
+    lente = { realUserId: VENDEDOR, target: null, effectiveUserId: VENDEDOR, isImpersonating: false };
+    rerender();
+
+    // dá tempo de um 3º evento sair, se ele fosse sair
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(eventos(), 'o ciclo A→B→A inflou o denominador com uma exposição repetida').toHaveLength(2);
+  });
+
+  it('o payload leva o MÊS do dado — senão número velho de outro mês é indecidível', async () => {
+    // A `queryKey` não inclui o mês, e com cache de 15min (ou offline) um número de agosto pode
+    // chegar à série em setembro. Sem `mes` no payload, "viu a carteira do mês corrente" não é
+    // uma pergunta respondível — e é ela que decide se a tela fica.
+    resolverPapel({ data: { commercial_role: 'farmer' }, error: null });
+
+    montar();
+
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+    expect(eventos()[0].mes).toBe('2026-08-01');
   });
 });

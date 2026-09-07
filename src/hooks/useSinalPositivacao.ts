@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
 import { useMyCommercialRole } from '@/hooks/useMyCommercialRole';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { estadoDeLeitura } from '@/lib/leitura/estado-de-leitura';
+import { estadoDeLeitura, revalidando } from '@/lib/leitura/estado-de-leitura';
 import { motivoNaSerie } from '@/lib/leitura/serie';
 import { track } from '@/lib/analytics';
 
@@ -50,13 +50,17 @@ import { track } from '@/lib/analytics';
  *      `isPending && isFetching`), então gatear por ele seria INERTE justo no caso medido. Quem
  *      responde "o papel é conhecido?" é o `estado` do `estadoDeLeitura`, e só `'pronta'` conta.
  *      Fora dele o rótulo vai `null` — ausente ≠ zero também para booleano.
- *      Por que SEGURAR o evento enquanto o papel está `carregando`, em vez de emitir com `null`:
- *      `carregando` é ausência transitória e auto-resolvida (o helper diz isso), então emitir ali
- *      só produziria um `null` de ruído — ou, se a dedup deixasse passar a correção, DOIS eventos
- *      para uma visita só, inflando o denominador. Segurando, `is_hunter:null` passa a significar
- *      uma coisa só e verdadeira: "a leitura do papel NÃO chegou a desfecho" (offline, erro,
- *      desabilitada). O que se perde é o caso de o usuário sair da tela dentro da janela de
- *      latência do papel — uma linha a menos, nunca uma linha errada (precisão > recall).
+ *      ⚠️ SEGURAR o evento enquanto o papel carrega foi a 1ª tentativa e o /codex a derrubou: a
+ *      leitura do papel não tem garantia de TÉRMINO (rede parcial/captive portal deixa a promise
+ *      pendente sem disparar retry, porque o navegador segue `online`), então segurar perde a
+ *      linha de forma SISTEMÁTICA — e o sensor IRMÃO, que não espera papel nenhum, emite na mesma
+ *      visita: os dois passariam a discordar sobre o vendedor ter visto a tela. Num sensor que
+ *      existe para dar DENOMINADOR, perder linha é o pior defeito possível. Emite-se com `null`
+ *      (honesto: "ainda não sei") e o rótulo entra na CHAVE, então a correção nunca é engolida —
+ *      duas linhas distinguíveis valem mais que uma linha ausente ou mentirosa.
+ *      E o `null` também cobre a leitura do papel que FALHA: `useMyCommercialRole` descartava o
+ *      `error` do PostgREST, resolvia com sucesso e `null`, e este gate lia isso como fato. Era A1
+ *      vivo por outro caminho — corrigido lá, na fonte.
  *
  * A2 — a dedup não resetava na troca de SUJEITO (a lente "Ver como"), herdado do #1859.
  *      `ImpersonationProvider` é Context e a rota NÃO remonta, então o ref sobrevivia à mudança de
@@ -78,6 +82,10 @@ import { track } from '@/lib/analytics';
  *      velho. `'erro'`/`'sem-rede'` ficam para quando não há número nenhum, e aí sim tudo `null`.
  *      A dedup precisa do motivo na chave, senão engole a transição "número fresco" → "número
  *      velho", que é justamente o sinal de leitura falhando em campo.
+ *      ⚠️ E `desatualizado` não cobria a REVALIDAÇÃO: com `gcTime` de 15min, voltar a uma tela já
+ *      visitada entrega cache de até 15 minutos como `success` + `fetching`, que `estadoDeLeitura`
+ *      chama de 'pronta'. Daí `revalidando` no payload (e os NÚMEROS na chave, para que o valor
+ *      corrigido chegue à série em vez de morrer na dedup).
  *
  * NÃO alinhado de propósito: o `estado` deste evento continua `'sem-rede'` (hifenizado) enquanto o
  * do irmão é `'aguardando_rede'`. São eventos DIFERENTES, cada um com histórico próprio no
@@ -110,33 +118,53 @@ export function useSinalPositivacao(): EstadoSinal | null {
             : null;
 
   const desatualizacao = motivoNaSerie(query, temDado);
+  const emRevalidacao = revalidando(query, temDado);
 
   // Só `'pronta'` autoriza tratar o papel como fato; fora dela o rótulo é `null` (A1).
-  const papelEmVoo = papel.estado === 'carregando';
   const isHunter: boolean | null = papel.estado === 'pronta' ? papel.data === 'hunter' : null;
+  const mes = temDado ? data.mes : null;
+  const positivados = temDado ? data.positivados : null;
+  const totalEligible = temDado ? data.totalEligible : null;
 
-  const trackedChave = useRef<string | null>(null);
+  const emitidas = useRef<Set<string>>(new Set());
   useEffect(() => {
-    // Um evento por (SUJEITO × estado × motivo de desatualização). Sujeito porque o ref sobrevive
-    // à troca de alvo da lente (A2); motivo porque senão a dedup engole "número fresco" → "número
-    // velho" (A3). A guarda por chave — e não por booleano "já emitiu" — continua deixando passar
-    // sem-rede → pronta dentro da mesma montagem, que é o dado que separa uma falha transitória
-    // de uma carteira de fato parada.
-    if (!estado || papelEmVoo) return;
-    const chave = `${effectiveUserId ?? 'sem-sujeito'}|${estado}:${desatualizacao ?? 'fresco'}`;
-    if (trackedChave.current === chave) return;
-    trackedChave.current = chave;
+    // A CHAVE É TUDO O QUE O PAYLOAD AFIRMA COMO FATO — essa é a regra, e ela vem de três
+    // correções que o /codex derrubou uma a uma no fix anterior:
+    //   · sujeito, senão o ref sobrevive à troca de alvo da lente e a adoção do ALVO some (A2);
+    //   · motivo, senão a dedup engole "número fresco" → "número velho" (A3);
+    //   · `is_hunter`, senão o rótulo lido de um cache velho fica gravado PARA SEMPRE e a
+    //     correção que chega depois é descartada;
+    //   · os NÚMEROS, senão o cache que estava sendo revalidado sai e o valor corrigido nunca
+    //     chega à série (com `gcTime` de 15min isso é a rotina de quem volta a uma tela).
+    // Um SET por montagem (e não um slot único) é o que impede o ciclo A→B→A de reemitir A e
+    // inflar `count()`: cada asserção distinta sai UMA vez, e transições continuam passando
+    // porque a chave delas é outra.
+    if (!estado) return;
+    const chave = [
+      effectiveUserId ?? 'sem-sujeito',
+      estado,
+      desatualizacao ?? 'fresco',
+      emRevalidacao ? 'revalidando' : 'estavel',
+      isHunter === null ? 'papel-desconhecido' : String(isHunter),
+      mes ?? 'sem-mes',
+      `${positivados}/${totalEligible}`,
+    ].join('|');
+    if (emitidas.current.has(chave)) return;
+    emitidas.current.add(chave);
     track('carteira.positivacao_vista', {
       estado,
+      mes,
       pct: temDado ? data.pctPositivacao : null,
-      positivados: temDado ? data.positivados : null,
-      total_eligible: temDado ? data.totalEligible : null,
+      positivados,
+      total_eligible: totalEligible,
       a_positivar: temDado ? data.aPositivar.length : null,
       is_hunter: isHunter,
       sob_lente: isImpersonating,
       desatualizado: desatualizacao,
+      revalidando: emRevalidacao,
     });
-  }, [estado, data, temDado, desatualizacao, isHunter, papelEmVoo, effectiveUserId, isImpersonating]);
+  }, [estado, data, temDado, desatualizacao, emRevalidacao, isHunter, mes, positivados,
+      totalEligible, effectiveUserId, isImpersonating]);
 
   return estado;
 }

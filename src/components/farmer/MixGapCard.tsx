@@ -129,7 +129,7 @@ export function MixGapCard() {
             ? 'erro'
             : null;
 
-  const trackedChave = useRef<string | null>(null);
+  const emitidas = useRef<Set<string>>(new Set());
   useEffect(() => {
     // Um evento por (SUJEITO × estado × motivo de desatualização). O MOTIVO está na chave senão a
     // dedup engoliria a transição "carteira fresca" → "agindo sobre número velho", que é
@@ -142,9 +142,18 @@ export function MixGapCard() {
     // sem uma pergunta a mais respondida. A guarda por chave (e não por booleano) deixa passar
     // erro → zero → com_gap na mesma montagem, que separa falha transitória de carteira vazia.
     if (!estado) return;
-    const chave = `${effectiveUserId ?? 'sem-sujeito'}|${estado}:${desatualizacao ?? 'fresco'}`;
-    if (trackedChave.current === chave) return;
-    trackedChave.current = chave;
+    // SET e não slot único: com um slot só, o ciclo A→B→A reemite A e infla `count()` com uma
+    // exposição que não houve. E `total_com_gap` entra na chave para que o número CORRIGIDO por
+    // uma revalidação chegue à série em vez de morrer na dedup (irmão do mesmo achado no sensor
+    // de positivação — `gcTime` de 15min torna isso rotina, não borda).
+    const chave = [
+      effectiveUserId ?? 'sem-sujeito',
+      estado,
+      desatualizacao ?? 'fresco',
+      String(data != null ? data.totalComGap : null),
+    ].join('|');
+    if (emitidas.current.has(chave)) return;
+    emitidas.current.add(chave);
     const carga = {
       estado,
       total_com_gap: data != null ? data.totalComGap : null,
