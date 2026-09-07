@@ -25,6 +25,9 @@ interface Op { table: string; op: 'select' | 'update' | 'disparo'; payload?: unk
 let ops: Op[] = [];
 let cabecalhoStatus = 'pendente_aprovacao';
 let updateRetornaVazio = false; // simula o compare-and-set NÃO casando (0 linhas)
+// Simula a corrida do cabeçalho: o item casa, mas entre o passo 1 e o UPDATE do cabeçalho o pedido
+// saiu da faixa aprovável (outra aba aprovou/disparou) — o predicado `.in('status', …)` não casa.
+let cabecalhoUpdateVazio = false;
 
 function builder(table: string) {
   const op: Op = { table, op: 'select', filtros: [] };
@@ -32,6 +35,7 @@ function builder(table: string) {
     select: () => { if (op.op === 'update') op.selectApos = true; return b; },
     update: (payload: unknown) => { op.op = 'update'; op.payload = payload; return b; },
     eq: (c: string, v: unknown) => { op.filtros.push([c, v]); return b; },
+    in: (c: string, v: unknown) => { op.filtros.push([`in:${c}`, v]); return b; },
     is: (c: string, v: unknown) => { op.filtros.push([`is:${c}`, v]); return b; },
     maybeSingle: () => b,
     order: () => b,
@@ -39,7 +43,10 @@ function builder(table: string) {
       ops.push(op);
       let out: unknown;
       if (op.op === 'select') out = { data: table === 'pedido_compra_sugerido' ? { status: cabecalhoStatus } : [], error: null };
-      else out = { data: op.selectApos ? (updateRetornaVazio ? [] : [{ id: 501 }]) : null, error: null };
+      else {
+        const vazio = updateRetornaVazio || (cabecalhoUpdateVazio && table === 'pedido_compra_sugerido');
+        out = { data: op.selectApos ? (vazio ? [] : [{ id: 501 }]) : null, error: null };
+      }
       return Promise.resolve(out).then(res, rej);
     },
   };
@@ -76,7 +83,7 @@ const gravouNumSkus = () =>
   ops.some((o) => o.op === 'update' && !!o.payload && typeof o.payload === 'object' && 'num_skus' in (o.payload as object));
 
 beforeEach(() => {
-  ops = []; cabecalhoStatus = 'pendente_aprovacao'; updateRetornaVazio = false;
+  ops = []; cabecalhoStatus = 'pendente_aprovacao'; updateRetornaVazio = false; cabecalhoUpdateVazio = false;
   vi.mocked(supabase.from).mockReset().mockImplementation(builder as never);
   vi.mocked(aprovarEDisparar).mockReset().mockImplementation(async () => {
     ops.push({ table: 'edge', op: 'disparo', filtros: [] }); // entra no MESMO log: a ordem é testável
@@ -220,6 +227,34 @@ describe('PedidoRow (ciclo) — o editor de quantidade edita o ITEM do pedido, n
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/aprov/)));
     expect(updatesDe('pedido_compra_item')).toEqual([]);
     expect(aprovarEDisparar).not.toHaveBeenCalled();
+  });
+
+  // A corrida que o Codex achou (2026-09-06): o status do passo 1 é lido em OUTRA ida à rede. Entre
+  // ela e o UPDATE do cabeçalho cabem a aprovação de outra aba, o disparo, o portal e a gravação do
+  // custo PROVADO pelo fornecedor. Sem predicado, este UPDATE sobrescrevia o total provado com a
+  // soma local — sem precisar de fração nem de edição pós-portal.
+  it('o UPDATE do cabeçalho leva o predicado de status (é compare-and-set, não `.eq(id)` solto)', async () => {
+    montar(linha(), [ITEM]);
+    const input = await screen.findByDisplayValue('40');
+    fireEvent.change(input, { target: { value: '35' } });
+    fireEvent.click(botaoAprovar());
+    await waitFor(() => expect(aprovarEDisparar).toHaveBeenCalledTimes(1));
+    const upCab = updatesDe('pedido_compra_sugerido')[0];
+    expect(upCab.filtros).toContainEqual(['in:status', ['pendente_aprovacao', 'bloqueado_guardrail']]);
+    expect(upCab.selectApos).toBe(true); // sem `.select()` não há como saber que 0 linhas casaram
+  });
+
+  it('cabeçalho sai da faixa aprovável ENTRE o passo 1 e o UPDATE: erro visível e NADA é disparado', async () => {
+    cabecalhoUpdateVazio = true;
+    const { onChanged } = montar(linha(), [ITEM]);
+    const input = await screen.findByDisplayValue('40');
+    fireEvent.change(input, { target: { value: '35' } });
+    fireEvent.click(botaoAprovar());
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/faixa aprovável/)));
+    // O item JÁ mudou; seguir para o disparo mandaria ao fornecedor uma quantidade nova com um
+    // cabeçalho que ninguém conferiu. Falha ALTO.
+    expect(aprovarEDisparar).not.toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalled();
   });
 
   it('item com qtde_final NULL (só sugerida): o compare-and-set usa IS NULL, não eq null', async () => {
