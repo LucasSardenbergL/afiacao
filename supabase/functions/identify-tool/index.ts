@@ -8,6 +8,8 @@ import {
 } from "../_shared/anthropic.ts";
 import { montarBlocoImagem } from "../_shared/imagem.ts";
 import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { naoIdentificada, normalizarFerramenta, TOOL_FERRAMENTA } from "./ferramenta-tools.ts";
 
 const corsHeaders = {
@@ -25,6 +27,41 @@ const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do gate `Bearer ` e do createClient. O parse do
+  // corpo SOBE para cá, como na `analyze-unified-order`: mesmo trade-off (edge de IA que recebe
+  // imagem), já decidido lá. Quem sonda precisa do `x-cron-secret`/staff do
+  // `authorizeCronOrStaff` — o gate PRÓPRIO existe porque atrás do JWT de usuário desta edge a
+  // sonda seria inalcançável para o cron, que não emite um. Daqui pra frente a edge queima cota
+  // de IA e chama a Anthropic. Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // ⚠️ O corpo só se lê UMA vez. O erro de JSON inválido é GUARDADO e relançado no ponto antigo
+  // (abaixo), para que a resposta continue sendo o 500 do catch geral: engoli-lo faria um corpo
+  // quebrado virar `imageBase64: undefined` e cair no 400 de validação, mandando o chamador
+  // consertar a coisa errada.
+  let corpoBruto;
+  let erroParseCorpo: unknown = null;
+  try {
+    corpoBruto = await req.json();
+  } catch (e) {
+    corpoBruto = {};
+    erroParseCorpo = e;
+  }
+
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 
   try {
@@ -54,7 +91,9 @@ Deno.serve(async (req) => {
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
 
-    const { imageBase64, categories } = await req.json();
+    // Já parseado acima (para a sonda); o throw do corpo inválido é relançado no ponto antigo.
+    if (erroParseCorpo !== null) throw erroParseCorpo;
+    const { imageBase64, categories } = corpoBruto;
 
     // Input validation
     if (!imageBase64 || typeof imageBase64 !== "string") {

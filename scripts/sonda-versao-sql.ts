@@ -746,10 +746,12 @@ export interface ArgsCli {
   soDisparo?: boolean;
   soLeitura?: boolean;
   semRede?: boolean;
+  /** Libera o bloco LEGADO (POST direto na edge) para uma edge que já tem o caminho seguro. */
+  permitirEfeitoLegado?: boolean;
 }
 
 const USO =
-  'uso: bun run sonda:sql <edge> [<edge> ...] [--caro=<edge>[,<edge>]]\n' +
+  'uso: bun run sonda:sql <edge> [<edge> ...] [--caro=<edge>[,<edge>]] [--permitir-efeito-legado]\n' +
   '                        [--janela=<min>] [--so-disparo | --so-leitura]\n' +
   '  <edge>        nome do diretório em supabase/functions/ (precisa ter versao.ts)\n' +
   '  --caro        marca um SUBCONJUNTO da leva cujo bundle pré-sensor dispara o fluxo real;\n' +
@@ -776,6 +778,7 @@ export function parsearArgs(argv: string[]): ArgsCli {
   let soDisparo: boolean | undefined;
   let soLeitura: boolean | undefined;
   let semRede: boolean | undefined;
+  let permitirEfeitoLegado: boolean | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -793,6 +796,10 @@ export function parsearArgs(argv: string[]): ArgsCli {
         throw new Error(`--janela precisa ser um inteiro de minutos (recebi ${bruto ?? '<nada>'}).\n${USO}`);
       }
       janelaMin = n;
+      continue;
+    }
+    if (arg === '--permitir-efeito-legado') {
+      permitirEfeitoLegado = true;
       continue;
     }
     if (arg === '--so-disparo') {
@@ -828,7 +835,7 @@ export function parsearArgs(argv: string[]): ArgsCli {
     );
   }
 
-  return { edges, caras, janelaMin, soDisparo, soLeitura, semRede };
+  return { edges, caras, janelaMin, soDisparo, soLeitura, semRede, permitirEfeitoLegado };
 }
 
 /** Saídas da CLI, injetáveis para o teste ver o que foi escrito. */
@@ -836,6 +843,12 @@ export interface DependenciasCli {
   raiz: string;
   escrever: (texto: string) => void;
   erro: (texto: string) => void;
+  /**
+   * Edges que já têm o caminho seguro da sonda (o ramo `OPTIONS` + entrada na allowlist do cron).
+   * Injetada, não importada: ver a nota em `guardEfeitoLegado`. Ausente = nenhuma, e o guard não
+   * recusa nada — o que é o comportamento certo para quem chama sem conhecer a allowlist.
+   */
+  edgesComRele?: readonly string[];
   /**
    * O `git` que o guard de sincronia usa. OBRIGATÓRIO de propósito: opcional-com-default sumiria
    * silenciosamente em quem esquecesse de passá-lo, e um guard que some é fail-OPEN. Assim o
@@ -845,11 +858,49 @@ export interface DependenciasCli {
 }
 
 /** Ponto de entrada. Devolve o código de saída; NADA é escrito na saída quando falha. */
+/**
+ * O bloco LEGADO desta ferramenta faz `POST {"probe":true}` DIRETO na edge — e é o último caminho
+ * de efeito que sobrou no mecanismo: num bundle que não conhece o classificador, esse POST executa
+ * o fluxo real (medido: `monthly-report@ef08dddd2` chega ao Resend com 2 efeitos para um corpo
+ * vazio; `calculate-scores@45a80118b`, 11 escritas).
+ *
+ * Para as edges que já têm o ramo `OPTIONS` e entraram na allowlist, existe caminho SEGURO: o relé.
+ * Então aqui o legado deixa de ser o padrão e passa a exigir `--permitir-efeito-legado` — um aviso
+ * impresso não basta, porque quem cola o bloco às 2 da manhã não lê o stderr.
+ *
+ * A allowlist chega por PARÂMETRO, e não por import de topo, por um motivo concreto: o eval da
+ * skill `lovable-deploy-verify` COPIA este arquivo (mais o `sonda-fingerprint`) para um diretório
+ * temporário e importa `gerarSqlDaLeva` de lá. Um import de topo para `supabase/functions/` não
+ * resolve nesse contexto, e o módulo inteiro deixaria de carregar — foi assim que 7 cenários do
+ * eval passaram a devolver `SQL_VAZIO`. Quem executa como CLI resolve a lista no fim do arquivo.
+ */
+export function guardEfeitoLegado(edges: string[], permitido: boolean, edgesComRele: readonly string[]): string | null {
+  if (permitido) return null;
+  const comRele = new Set(edgesComRele);
+  const naAllowlist = edges.filter((e) => comRele.has(e));
+  if (naAllowlist.length === 0) return null;
+  const lista = naAllowlist.map((e) => `'${e}'`).join(', ');
+  return (
+    `RECUSADO: ${naAllowlist.join(', ')} já tem o caminho SEGURO da sonda (OPTIONS via relé).\n` +
+    `O bloco desta ferramenta faz POST direto na edge, e num bundle velho isso executa o FLUXO REAL.\n\n` +
+    `Use o relé — uma linha no SQL Editor, sem segredo no chat:\n` +
+    `  SELECT * FROM public.deploy_sonda_disparar(ARRAY[${lista}]);\n\n` +
+    `A resposta entra no ledger em ≤ 15 min; leia com \`bun run pendencias:deploy\`.\n` +
+    `Se você PRECISA mesmo do bloco legado (a edge não está deployada com o ramo, por exemplo),\n` +
+    `repita com --permitir-efeito-legado e confira o EFEITO declarado no versao.ts antes de colar.`
+  );
+}
+
 export function main(argv: string[], deps: DependenciasCli): number {
   let sql: string;
   let aviso: string | null;
   try {
-    const { edges, caras, janelaMin, soDisparo, soLeitura, semRede } = parsearArgs(argv);
+    const { edges, caras, janelaMin, soDisparo, soLeitura, semRede, permitirEfeitoLegado } = parsearArgs(argv);
+    const recusa = guardEfeitoLegado(edges, permitirEfeitoLegado === true, deps.edgesComRele ?? []);
+    if (recusa !== null) {
+      deps.erro(`❌ ${recusa}`);
+      return 1;
+    }
     // A leva é resolvida ANTES do guard de sincronia porque as duas falhas competem pelo mesmo
     // texto e a da leva é mais específica: uma edge sem `versao.ts` deve ouvir "sem sensor", não
     // "não existe em origin/main". Nada é escrito até as DUAS passarem — `gerarSqlDaLeva` só monta
@@ -870,12 +921,16 @@ export function main(argv: string[], deps: DependenciasCli): number {
 }
 
 if (import.meta.main) {
+  // Import DINÂMICO, e só aqui: quem apenas importa este módulo (o eval da skill, que o copia para
+  // um diretório temporário) não pode depender de `supabase/functions/` resolver.
+  const { SONDA_CRON_ALVOS } = await import('../supabase/functions/_shared/sonda-cron-alvos');
   process.exit(
     main(process.argv.slice(2), {
       raiz: join(import.meta.dirname, '..'),
       escrever: (t) => process.stdout.write(t),
       erro: (t) => console.error(t),
       git: gitReal(join(import.meta.dirname, '..')),
+      edgesComRele: SONDA_CRON_ALVOS.map((a) => a.edge),
     }),
   );
 }

@@ -82,3 +82,38 @@ barato é aposentar o antigo.
 - **`/private/tmp` morre.** Os corpos extraídos da prod sumiram no meio da sessão e uma verificação
   "passou" sem rodar, porque o recorte engoliu o erro. Evidência positiva é ver o **OK**, não a
   ausência de vermelho.
+
+## Adendo (2026-09-06): o que a revisão do Codex derrubou
+
+A 2ª opinião veio no fecho, depois de a cota voltar. Três achados sobreviveram à verificação, e o
+primeiro é um defeito no teste — a classe que este repo mais persegue.
+
+**1. A falsificação do harness farmer aceitava ERRO como sucesso.** O ramo era
+`if [ "$V1" = "FG009" ] ...; then bad; else ok`, e o `else` engolia qualquer coisa: uma sabotagem
+que QUEBRASSE a RPC (coluna inexistente, erro de sintaxe) devolvia `ERRO: …`, caía no verde e
+declarava "os asserts têm dente" **sem ter provado nada**. Erro não é passagem. Corrigido para
+exigir `SEM_ERRO` nos dois, com um terceiro ramo explícito para `FALSIFICAÇÃO INCONCLUSIVA`.
+Falsificado: com uma sabotagem deliberadamente quebrada, o harness agora **reprova** (exit 1) em
+vez de aprovar. Herdei o defeito ao repontar o harness, então era meu.
+
+**2. `FOR SHARE` exige UPDATE — `DELETE` sozinho NÃO basta.** Medido em PG17 (2026-09-06):
+só-SELECT nega; `SELECT+DELETE` **também nega**; `SELECT+UPDATE(uma coluna)` permite. O texto que
+eu tinha escrito ("UPDATE/DELETE") estava errado nos dois sentidos.
+
+**3. `has_table_privilege(…, 'UPDATE')` dá falso alarme sob grant por coluna.** No mesmo teste,
+com `GRANT UPDATE(b)` o `FOR SHARE` funciona, mas `has_table_privilege` devolve `f` e só
+`has_any_column_privilege` devolve `t`. A sonda da migration `20260906164002` usa a primeira: ela
+avisaria de um problema inexistente num banco que concedesse UPDATE por coluna. Fica registrado
+aqui em vez de editado lá — **migration aplicada é história, não se reescreve** —; a forma certa
+(`has_any_column_privilege`) vale para a próxima que tocar o assunto. O harness já usa o eixo real
+(revoga e exige que a RPC quebre), então a defesa viva não depende dessa função.
+
+**Não se materializou:** o `COMMENT ON FUNCTION` substitui integralmente o comentário anterior, e
+se alguma das 5 carregasse diretiva de extensão (`@graphql`) eu a teria destruído silenciosamente.
+Conferido: as 5 não tinham comentário nenhum antes (zero ocorrências no repo, e o texto vivo hoje é
+o meu). O risco era real e o dano foi zero — mas inspecionar antes de comentar é a regra que fica.
+
+O Codex também observou que o harness novo, como o antigo, fixa uma migration específica: os dois
+seguem verdes se uma TERCEIRA migration futura reabrir o gate. É verdade, e é o limite de qualquer
+teste ancorado a arquivo. Quem fecha esse vetor é o sentinela de EXECUTE — e 4 das 5 funções estão
+fora da allowlist dele (`scripts/authz-funcoes-fechadas.ts`; só `get_preco_cockpit` está lá).

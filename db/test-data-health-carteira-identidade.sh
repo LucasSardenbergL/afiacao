@@ -87,10 +87,21 @@ BEGIN
 END $$;
 SQL
 
-# O snapshot está DEFASADO em relação ao watchdog v2 (20260814222000): faltam nele a tabela
-# data_health_watchdog_estado e a função _data_health_episodio. Sem elas o A12 (que EXECUTA o
-# watchdog — o teste late-bound que importa) morre com 42P01. Forma medida na PROD 2026-08-24.
-P -q -f "$REPO_ROOT/db/prereq-watchdog-v2-20260824.sql"
+# ⚠️ Aqui morava um prereq (db/prereq-watchdog-v2-20260824.sql) porque o schema-snapshot não
+# trazia data_health_watchdog_estado nem _data_health_episodio, e o A12 — que EXECUTA o watchdog,
+# o teste late-bound que importa — morria com 42P01. O snapshot foi regenerado e passou a trazer
+# os dois; medido em 2026-09-06, o harness fica verde (29/0) SEM o remendo, que foi então retirado.
+# Se o A12 voltar a dar 42P01, a causa é o snapshot ter regredido — conserte lá, não aqui.
+
+# ⚠️ NUNCA volte a ancorar os asserts em BASE_CHECKS+1. O corpo do compute vive DENTRO desta
+# migration (recriado a partir da PROD de 2026-08-24), então o total pós-apply é FIXO: 25 ramos
+# herdados + 1 novo = 26. Já BASE_CHECKS vem do schema-snapshot, que AVANÇA toda vez que outra
+# sessão recria a função — em 2026-09-06 estava em 29. "snapshot+1" só valia enquanto esta fosse a
+# ÚLTIMA migration a recriar o compute, premissa que expirou em 13 dias e deixou o harness vermelho
+# sem nenhum defeito no que ele mede (a sonda seguia aplicada, no v_sources e verde em prod).
+# É a mesma classe da Variante 4 em docs/historico/gates-textuais-cegos.md: asserção ancorada num
+# proxy que só correlacionava com a propriedade no dia da calibração.
+CHECKS_POS_MIG=26
 
 BASE_CHECKS=$(Pq -c "SELECT count(*) FROM public._data_health_compute();" 2>/dev/null || echo "ERRO")
 echo "snapshot aplicado; checks ANTES da migration: $BASE_CHECKS"
@@ -185,7 +196,7 @@ eq "A8 metadados (contagem, sem idade)" "$META" "carteira|NULL|NULL"
 eq "A9 remedio aponta a fase 2" "$(Pq -c "SELECT how_to_fix LIKE '%fase 2%' FROM public._data_health_compute() WHERE source='carteira_identidade_quarentena';")" "t"
 
 # ── A10: não-regressão — ACRESCENTA um check, não substitui nenhum
-eq "A10 nao-regressao: +1 check" "$(Pq -c "SELECT count(*) FROM public._data_health_compute();")" "$((BASE_CHECKS+1))"
+eq "A10 nao-regressao: o corpo desta migration define 26 checks" "$(Pq -c "SELECT count(*) FROM public._data_health_compute();")" "$CHECKS_POS_MIG"
 eq "A10b vizinhos preservados" "$(Pq -c "SELECT count(*) FROM (
   SELECT 'carteira_scores' s UNION ALL SELECT 'carteira_rebuild' UNION ALL SELECT 'vendas_pedidos'
   UNION ALL SELECT 'custos_produtos' UNION ALL SELECT 'pedidos_compra_sync' UNION ALL SELECT 'alert_channel'
@@ -265,9 +276,9 @@ grep -q "carteira_identidade_quarentena'::text" "$SAB3" && { echo "!! F3 nao rem
 P -q -f "$SAB3"
 semear_ledger verified conflict verified verified
 ne "F3 sem o ramo, o conflito volta a passar MUDO" "$(st_ident)" "stale"
-ne "F3b contagem de checks cai" "$(Pq -c "SELECT count(*) FROM public._data_health_compute();")" "$((BASE_CHECKS+1))"
+ne "F3b contagem de checks cai" "$(Pq -c "SELECT count(*) FROM public._data_health_compute();")" "$CHECKS_POS_MIG"
 P -q -f "$MIG"   # restaura
-eq "F3r restaurado: contagem volta" "$(Pq -c "SELECT count(*) FROM public._data_health_compute();")" "$((BASE_CHECKS+1))"
+eq "F3r restaurado: contagem volta" "$(Pq -c "SELECT count(*) FROM public._data_health_compute();")" "$CHECKS_POS_MIG"
 rm -f "$SAB3"
 
 # ── F4: mantém o ramo mas TIRA o source do v_sources do watchdog — o check volta a ser

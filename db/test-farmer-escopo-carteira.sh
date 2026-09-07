@@ -216,7 +216,7 @@ P -q <<SQL
 ALTER TABLE public.farmer_client_scores ENABLE ROW LEVEL SECURITY;
 CREATE POLICY fcs_so_a_minha ON public.farmer_client_scores FOR SELECT
   USING (farmer_id = auth.uid());
--- 'FOR SHARE' (lock causal do lote, só existe no corpo VIVO) exige UPDATE/DELETE ALÉM de
+-- 'FOR SHARE' (lock causal do lote, só existe no corpo VIVO) exige UPDATE ALÉM de
 -- SELECT — só-SELECT derruba a RPC com 42501 em RUNTIME. Em prod a relacl desta tabela é
 -- 'authenticated=arwdDxtm' (medido via psql-ro 2026-08-30), então este GRANT é FIDELIDADE
 -- ao ambiente real, não afrouxamento. O assert PRIV1 abaixo prova que a dependência existe.
@@ -240,8 +240,10 @@ eq "R1 cliente invisível pela RLS → FG009 (fail-closed)" "$CEGO" "FG009"
 
 # ── PRIV1 — a dependência de PRIVILÉGIO que o FOR SHARE cria (só existe no corpo VIVO) ──
 # O guard de escopo trava as linhas do lote com SELECT ... FOR SHARE, e o Postgres exige
-# UPDATE/DELETE (não basta SELECT) para travar linha. A RPC é SECURITY INVOKER: quem trava é
-# o authenticated do farmer, não o owner. Logo um endurecimento futuro perfeitamente plausível
+# UPDATE (não basta SELECT; e DELETE sozinho TAMBÉM não basta — medido em PG17 2026-09-06)
+# para travar linha. Basta UPDATE de UMA coluna, e nesse caso has_table_privilege devolve f
+# enquanto has_any_column_privilege devolve t. A RPC é SECURITY INVOKER: quem trava é o
+# authenticated do farmer, não o owner. Logo um endurecimento futuro perfeitamente plausível
 # -- "authenticated não escreve em farmer_client_scores, revoga UPDATE" -- derruba a RPC em
 # RUNTIME, no CAMINHO FELIZ, com 42501. Este assert torna esse requisito invisível uma
 # invariante testada.
@@ -313,10 +315,17 @@ else
   # é NOSSO texto, não do Postgres, então nenhum casamento acidental pinta verde.
   V1="$(chamar farmer_recomendacoes_substituir "$(linha "$C3")" "$(geracao_atual farmer_recommendations)")"
   V2="$(chamar farmer_bundle_recomendacoes_substituir "$(bundle "$C3")" "$(geracao_atual farmer_bundle_recommendations)")"
-  if [ "$V1" = "FG009" ] || [ "$V2" = "FG009" ]; then
+  # ⚠️ Exigir SEM_ERRO nos DOIS, não "qualquer coisa que não seja FG009". A versão anterior
+  # testava `!= FG009` e caía no ramo verde também quando a RPC EXPLODIA — uma sabotagem que
+  # quebrasse a função (coluna inexistente, erro de sintaxe) era lida como "o gate deixou passar".
+  # Erro não é passagem: a falsificação só prova dente se o lote alheio for GRAVADO com sucesso.
+  # (achado do Codex no fecho de 2026-09-06)
+  if [ "$V1" = "SEM_ERRO" ] && [ "$V2" = "SEM_ERRO" ]; then
+    ok "falsificação: gate zerado ⇒ o lote alheio PASSA (cross=[$V1] bundle=[$V2]) — os asserts têm dente"
+  elif [ "$V1" = "FG009" ] || [ "$V2" = "FG009" ]; then
     bad "FALSIFICAÇÃO: com o gate zerado o lote alheio AINDA foi recusado — o assert não tem dente (cross=[$V1] bundle=[$V2])"
   else
-    ok "falsificação: gate zerado ⇒ o lote alheio PASSA (cross=[$V1] bundle=[$V2]) — os asserts têm dente"
+    bad "FALSIFICAÇÃO INCONCLUSIVA: a sabotagem quebrou a RPC em vez de abrir o gate — nada foi provado (cross=[$V1] bundle=[$V2])"
   fi
   # Restaura a versão verdadeira e reconfirma, para o harness não terminar com o corpo furado.
   # Sem o guard: o corpo vivo está sabotado, e o guard — corretamente — recusaria reescrevê-lo.
