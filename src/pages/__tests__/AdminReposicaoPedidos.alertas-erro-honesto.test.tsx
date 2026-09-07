@@ -131,7 +131,11 @@ describe('AdminReposicaoPedidos — o alerta de guardrail não pode sumir na fal
   it('leitura OK e ciclo limpo: silêncio — o único silêncio legítimo', async () => {
     pedidosDoCiclo = [pedido({ status: 'pendente_aprovacao' })];
     renderPagina();
-    await waitFor(() => expect(screen.queryByTestId('aviso-leitura-pedidos')).toBeNull());
+    // ESPERA um sinal POSITIVO de que a leitura chegou antes de afirmar o silêncio: sem
+    // isso a asserção passa em t=0, quando NENHUMA query resolveu — um teste que não sabe
+    // ficar vermelho.
+    expect(await screen.findByText(/Sayerlack/)).toBeTruthy();
+    expect(screen.queryByTestId('aviso-leitura-pedidos')).toBeNull();
     expect(screen.queryByText(ALERTA_GUARDRAIL)).toBeNull();
   });
 
