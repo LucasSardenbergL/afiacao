@@ -722,12 +722,28 @@ describe('--janela — o guard temporal é configurável, mas fail-CLOSED', () =
 describe('divisão de trabalho — o founder dispara, o agente lê', () => {
   const raiz = () => fixture({ 'edge-a': 'v1.0-alfa', cara: 'v2.0-beta' });
 
-  it('--so-disparo entrega ao founder SÓ o que precisa de escrita (vault + INSERT)', () => {
+  /** O SQL que fica FORA do `format($sonda$…$sonda$)` — ou seja, o que de fato EXECUTA ali. */
+  const foraDoFormat = (sql: string) =>
+    sql
+      .split('$sonda$')
+      .filter((_, i) => i % 2 === 0)
+      .join('\n');
+
+  it('--so-disparo entrega ao founder SÓ o que EXECUTA escrita — a leitura viaja como TEXTO', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], soDisparo: true });
     expect(sql).toContain('-- PASSO 1');
     expect(sql).toContain('net.http_post(');
-    expect(sql).not.toContain('-- PASSO 2');
-    expect(sql).not.toContain('net._http_response');
+    // Desde o #2278 o passo 2 vai junto, mas como ARGUMENTO de `format()`: dentro do dollar-quoting
+    // ele é texto, não consulta. O recorte do founder continua sendo só o que precisa dele — o que
+    // não pode aparecer é um bloco de leitura EXECUTÁVEL, fora das aspas.
+    const fora = foraDoFormat(sql);
+    expect(fora).not.toContain('-- PASSO 2');
+    expect(fora).not.toContain('net._http_response');
+    // Controle POSITIVO: sem ele as duas negativas acima passariam medindo um recorte vazio (se o
+    // split mudasse de tag, por exemplo) — a cegueira de `docs/historico/gates-textuais-cegos.md`.
+    expect(sql).toContain('AS passo_2_copie_esta_celula');
+    expect(sql).toContain('net._http_response');
+    expect(fora.length).toBeGreaterThan(200);
   });
 
   it('--so-leitura entrega ao AGENTE só o que roda no psql-ro — nada de vault nem http_post', () => {

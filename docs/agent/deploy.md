@@ -218,7 +218,7 @@ não o número. É a mesma correção do bloco de UMA edge acima, pela mesma raz
 ([sonda-request-id-a-mao.md](../historico/sonda-request-id-a-mao.md)), e os DOIS blocos continuam dois pela
 mesma imposição do `pg_net`: o `http_post` só ENFILEIRA e o worker de fundo só enxerga linha COMMITADA,
 enquanto o SQL Editor roda o batch inteiro como UMA transação. Medido 2026-08-24 sondando a oitava leva
-(#1937); `format()` provado contra prod em 2026-09-06 (#2273).
+(#1937); `format()` provado contra prod em 2026-09-06 (#2278).
 
 ⚠️ **A leitura NÃO pede mais o `request_id` colado — ela acha a linha pelo ECO do slug.** A resposta da
 sonda carrega o próprio nome no corpo (`criarRespostaSonda` devolve `{ok, probe, versao, edge, fonte}`),
@@ -346,7 +346,7 @@ incondicional), não o elimina; na próxima execução dos crons a recusa vira 4
 desqualifica sozinho. Regra prática: **se você acabou de mexer no vault, leia o veredito determinado
 como INDETERMINADO.**
 
-- ⚠️ **O JSON colado aqui era o análogo do `request_id` do bloco de cima — MIGRADO em 2026-09-06 (#2273).** O
+- ⚠️ **O JSON colado aqui era o análogo do `request_id` do bloco de cima — MIGRADO em 2026-09-06 (#2278).** O
   passo 1 (e o 3) agora terminam em `format($sonda$…$sonda$, m.ids)`: devolvem o passo 2 (e o 4) já escrito, com o
   mapa `edge→id` dentro, e nenhum identificador passa pela mão. **Mas o `LEFT JOIN` da bullet abaixo continua
   obrigatório, e por um motivo que a migração NÃO cobre:** a célula é copiada por uma pessoa, e uma célula de

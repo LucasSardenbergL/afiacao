@@ -93,7 +93,7 @@ inexistente devolve **uma** linha `AGUARDE` em vez de zero. Os dois corpos de cr
 id vindo do banco, caem em `BUNDLE PRE-SENSOR` — o veredito correto para *aquele request*; lidos com id
 trocado à mão, era o veredito de um request que ninguém fez.
 
-## O mesmo defeito no bloco do LOTE — migrado (2026-09-06, #2273)
+## O mesmo defeito no bloco do LOTE — migrado (2026-09-06, #2278)
 
 A seção irmã do `deploy.md` ("Sondar VÁRIAS edges numa tacada") tinha a variante coletiva: o passo de
 disparo terminava em `SELECT jsonb_object_agg(edge, request_id)::text AS ids_opcionais_passo_2`, e o de
