@@ -3,6 +3,7 @@ import { useRadarKpis } from '@/queries/useRadarKpis';
 import { Skeleton } from '@/components/ui/skeleton';
 import { estadoDeLeitura, naoConsegui, desatualizado, type EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { estadoNaSerie } from '@/lib/leitura/serie';
 import { track } from '@/lib/analytics';
 
 function Card({ label, valor, hint }: { label: string; valor: number | string; hint?: string }) {
@@ -48,7 +49,14 @@ export function RadarKpis() {
     if (estado === 'carregando' || estado === 'desabilitada') return;
     if (trackedEstado.current === estado) return;
     trackedEstado.current = estado;
-    track('radar.kpis_vistos', { estado, a_contatar: data?.a_contatar ?? null });
+    track('radar.kpis_vistos', {
+      // `estadoNaSerie(...)` e nao `estado` cru: o helper fala `'sem-rede'` (hifen) e a
+      // serie `radar.*` fala `sem_rede`. Trocar nao muda a tela nem movia o `tsc` antes
+      // do gate — muda o NOME sob o qual o evento sai, e o breakdown perde o historico.
+      // Serie medida em ZERO evento em 90d com o cano vivo — normalizar nao parte historico.
+      estado: estadoNaSerie(estado),
+      a_contatar: data?.a_contatar ?? null,
+    });
   }, [estado, data]);
 
   if (estado === 'carregando')

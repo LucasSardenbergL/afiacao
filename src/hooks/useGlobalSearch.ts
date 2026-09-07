@@ -25,6 +25,26 @@ export interface SearchResult {
   path: string;
 }
 
+/**
+ * O MESMO `kind`, dito na língua do PostHog.
+ *
+ * O tipo acima é kebab-case porque é o idioma natural de um union em TS; o payload de evento é
+ * snake_case por convenção (`has_subtitle`, `total_eligible`). Mandar `r.kind` cru para o
+ * `track()` não muda a tela e não movia o `tsc` — quebraria a continuidade da série, e é por isso
+ * que o gate de `@/lib/analytics` recusa literal hifenizado no payload.
+ *
+ * A tabela mora AQUI, junto do tipo que dona o vocabulário — mapa artesanal dentro de cada
+ * componente é como duas grafias do mesmo valor passam a coexistir (foi assim que `sem-rede` e
+ * `sem_rede` se separaram; ver `docs/agent/money-path.md`). `satisfies` faz a exaustividade:
+ * `kind` novo não compila até alguém dizer como ele se chama na série, em vez de mandar
+ * `undefined` para o PostHog.
+ */
+export const KIND_NA_SERIE = {
+  customer: 'customer',
+  formula: 'formula',
+  'sales-order': 'sales_order',
+} as const satisfies Record<SearchResult['kind'], string>;
+
 const RECENTS_KEY = 'global_search_recents_v1';
 const MAX_RECENTS = 10;
 

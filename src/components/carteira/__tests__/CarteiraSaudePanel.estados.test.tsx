@@ -106,3 +106,71 @@ describe('CarteiraSaudePanel — o painel de saúde não pode se apagar por não
     await waitFor(() => expect(erro.container.textContent).not.toBe(''));
   });
 });
+
+/**
+ * FRONTEIRA DE TELEMETRIA — o alfabeto do evento é CONGELADO aqui, e de propósito.
+ *
+ * Este painel adotou `estadoDeLeitura` e mandou o retorno CRU para dentro do `track()`:
+ * `track('carteira.saude_vista', { estado, nivel })`. O helper devolve `'sem-rede'` — com HÍFEN —
+ * e a série `carteira.*` fala `sem_rede`, que o `carteira.mixgap_visto` já emitia 27 MINUTOS
+ * antes desse commit. Nada disso é visível: a tela fica idêntica e o `tsc` ficava verde porque
+ * `track(event, properties?: Record<string, unknown>)` não tipava o payload. O que quebra é a
+ * SÉRIE — um breakdown por `estado = sem_rede` passou a enxergar 1 dos 3 eventos da carteira.
+ *
+ * E aqui não há volume que conserte: são 3 vendedores em `commercial_roles`. Série que reinicia
+ * não se recupera pela lei dos grandes números (`docs/historico/fase-sem-sinal.md`).
+ *
+ * A asserção é sobre o LITERAL e não sobre o comportamento — o comportamento sobreviveria à
+ * troca. A regra mecânica varre o payload INTEIRO e pega o vazamento de uma chave que ainda não
+ * existe: `toMatchObject`, usado pelos testes acima, ignora chave EXTRA.
+ */
+describe('CarteiraSaudePanel — o alfabeto do evento não muda por refactor', () => {
+  const ESTADOS = ['pronta', 'erro', 'sem_rede'];
+
+  /**
+   * Kebab-case de VOCABULÁRIO — e não "qualquer hífen". A varredura larga (`/-/`) reprovava
+   * `mes: '2026-08-01'`: data ISO tem hífen e não é vocabulário nenhum. Falso-positivo em guard
+   * é caro — é o que treina todo mundo a afrouxar o guard. A âncora em LETRA é o que exclui a
+   * data; `sem-rede`, `sales-order` e `painel-carteira` seguem sendo pegos.
+   */
+  const KEBAB_VOCABULARIO = /^[a-z][a-z0-9]*(-[a-z0-9]+)+$/;
+
+  function conferirAlfabeto(ev: Record<string, unknown>) {
+    expect(ESTADOS, `estado fora do alfabeto congelado: ${String(ev.estado)}`).toContain(ev.estado);
+    for (const [chave, v] of Object.entries(ev)) {
+      if (typeof v === 'string') {
+        expect(v, `\`${chave}\` veio em kebab-case (\`${v}\`) — é o vocabulário de ` +
+          '`estadoDeLeitura` vazando para o PostHog: a tela continua certa e a série QUEBRA')
+          .not.toMatch(KEBAB_VOCABULARIO);
+      }
+    }
+  }
+
+  it('OFFLINE: o evento diz `sem_rede`, nunca o `sem-rede` do helper', async () => {
+    onlineManager.setOnline(false);
+    resposta = { data: RESUMO, error: null };
+
+    renderPainel();
+
+    await waitFor(() => expect(evento()).toBeTruthy());
+    const ev = evento()!;
+    expect(ev.estado, 'o literal do helper escorreu para a série').toBe('sem_rede');
+    conferirAlfabeto(ev);
+  });
+
+  it('ERRO e leitura OK também saem sob o alfabeto da série', async () => {
+    resposta = { data: null, error: { message: 'timeout' } };
+    const { unmount } = renderPainel();
+    await waitFor(() => expect(evento()).toBeTruthy());
+    expect(evento()!.estado).toBe('erro');
+    conferirAlfabeto(evento()!);
+    unmount();
+
+    track.mockClear();
+    resposta = { data: RESUMO, error: null };
+    renderPainel();
+    await waitFor(() => expect(evento()).toBeTruthy());
+    expect(evento()!.estado).toBe('pronta');
+    conferirAlfabeto(evento()!);
+  });
+});

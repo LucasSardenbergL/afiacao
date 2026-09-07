@@ -126,3 +126,56 @@ describe('RadarKpis — erro NÃO pode virar "lote vazio"', () => {
     expect(erro.container.textContent).not.toBe(telaVazia);
   });
 });
+
+/**
+ * O alfabeto do evento não muda por refactor.
+ *
+ * `radar.kpis_vistos` sai com `estado` no vocabulário da SÉRIE (underscore) — não no do
+ * helper, que é hifenizado. Deixar o literal do helper passar não quebra a tela e, antes do
+ * gate de tipo em `track()`, não movia o `tsc`: quebrava a CONTINUIDADE da série, calada.
+ *
+ * A varredura é sobre o payload INTEIRO, e não `toMatchObject`: aquele ignora chave EXTRA,
+ * que é justamente por onde um vazamento NOVO entra sem ninguém ver.
+ */
+describe('o alfabeto do evento não muda por refactor', () => {
+  const ESTADOS = ['pronta', 'erro', 'sem_rede'];
+
+  /**
+   * Kebab-case de VOCABULÁRIO — e não "qualquer hífen". A varredura larga (`/-/`) reprovava
+   * `mes: '2026-08-01'`: data ISO tem hífen e não é vocabulário nenhum. Falso-positivo em guard
+   * é caro — é o que treina todo mundo a afrouxar o guard. A âncora em LETRA é o que exclui a
+   * data; `sem-rede`, `sales-order` e `painel-carteira` seguem sendo pegos.
+   */
+  const KEBAB_VOCABULARIO = /^[a-z][a-z0-9]*(-[a-z0-9]+)+$/;
+
+  function conferirAlfabeto(ev: Record<string, unknown>) {
+    expect(ESTADOS, `estado fora do alfabeto congelado: ${String(ev.estado)}`).toContain(ev.estado);
+    for (const [chave, valor] of Object.entries(ev)) {
+      if (typeof valor === 'string') {
+        expect(
+          valor,
+          `valor em kebab-case em '${chave}' — o vocabulário do helper vazou para a série`,
+        ).not.toMatch(KEBAB_VOCABULARIO);
+      }
+    }
+  }
+
+  it('offline emite `sem_rede` — nunca o `sem-rede` do helper', async () => {
+    onlineManager.setOnline(false);
+    resposta = { data: null, error: null };
+    renderKpis();
+    await waitFor(() => expect(track).toHaveBeenCalled());
+    const [nome, props] = track.mock.calls.at(-1) as [string, Record<string, unknown>];
+    expect(nome).toBe('radar.kpis_vistos');
+    expect(props.estado).toBe('sem_rede');
+    conferirAlfabeto(props);
+  });
+
+  it('no erro, o payload inteiro passa pela varredura', async () => {
+    resposta = { data: null, error: { message: 'boom' } };
+    renderKpis();
+    await waitFor(() => expect(track).toHaveBeenCalled());
+    const [, props] = track.mock.calls.at(-1) as [string, Record<string, unknown>];
+    conferirAlfabeto(props);
+  });
+});
