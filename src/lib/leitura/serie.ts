@@ -16,7 +16,10 @@
 // isto PARA DE COMPILAR em vez de mandar `undefined` para o PostHog.
 import { desatualizado, type EstadoSemLeitura, type FatiaDeQuery } from './estado-de-leitura';
 
-export const MOTIVO_NA_SERIE = {
+// Sem `export`: os dois sensores consomem `motivoNaSerie()`, não a tabela. Exportá-la seria
+// deadcode (o `knip` do CI reprova) — e pior, seria um segundo caminho para traduzir o motivo,
+// que é exatamente a duplicação que este módulo existe para eliminar.
+const MOTIVO_NA_SERIE = {
   'sem-rede': 'sem_rede',
   erro: 'erro',
 } as const satisfies Record<EstadoSemLeitura, string>;
