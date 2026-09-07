@@ -18,7 +18,7 @@
 |---|---|
 | existe rastro | 4 linhas em `ia_uso_evento` para a função |
 | é pós-merge | todas ~15 min depois do merge |
-| só o bundle novo emite | o único caller do slug é `supabase/functions/elevenlabs-transcribe/index.ts:98`<!--cita: 'elevenlabs-transcribe',-->, nascido no PR — o bundle velho nem importava `_shared/ia-cota.ts` |
+| só o bundle novo emite | o único caller do slug é `supabase/functions/elevenlabs-transcribe/index.ts:134`<!--cita: 'elevenlabs-transcribe',-->, nascido no PR — o bundle velho nem importava `_shared/ia-cota.ts` |
 | foi uso real | autor com role `master`, 4 chamadas em 61 s (12–27 s de intervalo): cadência de ditado, não de `SELECT` no editor |
 | não quebrou nada | o `INSERT` mora no ramo PERMITIDO ⇒ o seed de `ia_uso_limite` entrou antes do deploy; não houve o 503 `sem_limite` |
 
@@ -34,7 +34,7 @@ guard novo de `claims.sub`. Mas a **mesma edge já a emitia antes**, no gate de 
 | pergunta | resposta |
 |---|---|
 | a string é nova no **trecho** que o PR criou? | sim |
-| a string é nova na **edge**? | **não** — `supabase/functions/elevenlabs-transcribe/index.ts:39`<!--cita: error: 'Token inválido'--> já a emitia |
+| a string é nova na **edge**? | **não** — `supabase/functions/elevenlabs-transcribe/index.ts:75`<!--cita: error: 'Token inválido'--> já a emitia |
 | a string é única no **repo**? | **não** — 10 arquivos, incluindo 6 outras edges |
 
 Um 401 com essa mensagem seria emitido pelos **dois** bundles, com o mesmo corpo e o mesmo status. A
