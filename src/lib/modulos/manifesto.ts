@@ -583,6 +583,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/hooks/__tests__/useExtractSpecs.test.tsx",
       "src/hooks/__tests__/useKnowledgeBaseList.test.tsx",
+      "src/components/knowledge-base/__tests__/CompletudeSection.estados.test.tsx",
       "src/pages/__tests__/AdminKnowledgeBaseDetail.estados.test.tsx",
       "src/pages/__tests__/AdminStandardProcessDetail.estados.test.tsx",
     ],
