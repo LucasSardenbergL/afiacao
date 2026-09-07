@@ -155,14 +155,58 @@ fraco: um alerta perdido é um terço da operação.
    `ProvasParaAuditar` é o mais perigoso da lista quando encher, porque "Nenhuma prova aguardando
    auditoria" é uma afirmação de controle: a auditoria some no dia em que a leitura falhar.
 
-## Sobre gatear (não feito aqui, de propósito)
+## Gateado em 2026-09-06 (passo 4 do `matar-classe`)
 
-Esta forma é a **melhor candidata a gate das três**, e o motivo é aritmético: 93 sítios de `jsx-&&`
+Esta forma era a **melhor candidata a gate das três**, e o motivo é aritmético: 93 sítios de `jsx-&&`
 fariam a baseline crescer por motivo benigno em idioma legítimo — o argumento que manteve aquela
 forma fora do gate em 2026-08-22 e que a medição de 2026-09-06 confirmou. Aqui são **13**, e
 **13 de 13 são alcançáveis** (achado 2): não há a fatia inerte que tornaria a baseline ruído.
 
-O recorte correto não é "todo `return` com texto" — isso pegaria empty state legítimo guardado por
-outra coisa. É o que foi medido: **`return` com JsxText não-vazio, guardado por condição que toca o
-`data` de um hook cuja desestruturação NÃO liga `error`**. Fica como PR próprio, com baseline
-própria e falsificação, conforme o contrato desta tarefa.
+O recorte NÃO é "todo `return` com texto" — isso pegaria empty state legítimo guardado por outra
+coisa. É o que foi medido: **`return` com JsxText não-vazio, guardado por condição que toca o `data`
+de um hook cuja desestruturação NÃO liga `error`**. A forma foi promovida ao mesmo ponto fixo de
+taint de `src/lib/gates/erro-colapsado-em-vazio.ts` (`contarRetornoAfirmativo`), e o gate ganhou
+`BASELINE_AFIRMATIVO` **própria, por contagem** — por caminho, um 2º sítio no mesmo arquivo passaria
+calado.
+
+**Reprodução do número, sobre a mesma árvore:** 1.472 fontes · **13 sítios / 13 arquivos** ·
+auto-ocultação **inalterada em 44/34**. Os `(arquivo, linha)` são os 13 da tabela de denominadores.
+
+### A unidade das duas baselines é diferente — e isso é de propósito
+
+`contarAutoOcultacao` conta **bindings de hook** que colapsam; `contarRetornoAfirmativo` conta
+**linhas**. Não são somáveis. O caso que obriga a distinção apareceu nos dois lados:
+`Training.tsx:150` é UM ternário contado **2 vezes** pela 1ª (dois hooks o guardam, e a baseline
+diz 2), enquanto `ToolHistory:174` é UM `return` taintado por `useUserToolDetail` **e**
+`useToolEvents` e a 2ª o conta **1 vez**. Contar por hook infla; o gate deduplica por
+`(arquivo, linha)` e o walker continua devolvendo os dois hooks, porque quem investiga quer saber
+quais leituras tocam a guarda.
+
+### O eixo vizinho que quase virou falso achado
+
+Os dois eixos vizinhos foram re-medidos e seguem **zero** — mas o do ternário só deu zero depois de
+uma correção de **predicado**, não de código. A primeira passada acusou **1**
+(`Training.tsx:150`) e a leitura fácil seria "alguém introduziu um sítio novo". O arquivo está
+intocado desde 2026-07-07: o defeito era meu. Meu predicado aceitava *qualquer* ramo com texto, e
+ali o ramo do colapso é `null` — é `ternario-null`, **já gateado e já na baseline de cima**.
+Contá-lo seria contar o mesmo sítio duas vezes, em duas baselines.
+
+A regra que sobra: **eixo vizinho de uma forma já gateada precisa EXCLUIR a forma gateada**, senão
+a medição do vizinho é, em parte, um eco da baseline que já existe. É a irmã da armadilha de
+contagem do achado 5 — lá o nome plausível deu a tabela plausível, aqui o predicado plausível deu
+o achado plausível.
+
+### Falsificação (5 camadas, uma por vez, controle verde na MESMA invocação)
+
+O laço roda o **controle antes do 1º `sed`** e aborta se ele não estiver verde — sempre-vermelha
+aprova tudo. Cada camada restaura com `git checkout --` e o restauro é conferido **byte-exato**
+(`git diff --quiet`), não por "ficou verde de novo".
+
+| camada | sabotagem | o que provaria estar morto |
+|---|---|---|
+| L1 | 2º sítio no arquivo que **já** está na baseline (1→2) | é a única camada que a baseline por CAMINHO deixaria passar |
+| L2 | sítio em arquivo **fora** da baseline (0→1) | o ramo `reintroducoes` |
+| L3 | sítio **removido** (ligar `error` em `CompletudeSection`) | o ramo `quitados` — a baseline só encolhe registrada |
+| L4 | **detector cego** (predicado de texto sempre falso) | 13→0: um gate cego passaria verde para sempre |
+| L5 | **dedup quebrada** (contar por hook) | `ToolHistory` 1→2: a dedup é load-bearing em dado real, não só na fixture |
+
