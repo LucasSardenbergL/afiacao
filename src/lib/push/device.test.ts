@@ -1,3 +1,13 @@
+/**
+ * @vitest-environment jsdom
+ *
+ * Exceção ao particionamento por extensão (`projects` em vitest.config.ts): `.ts`, logo `node`
+ * por padrão, mas o caminho sob teste é de BROWSER. Não foi o grep que provou — foi o vermelho:
+ * o docblock entrou porque o teste falhou em `node`, que é a única prova que vale aqui.
+ *
+ * Monta `window.PushManager`/`Notification`/`navigator.serviceWorker` para simular o suporte a
+ * push. Escapou do grep por escrever `window` sem ponto (`defineGlobal(window, ...)`).
+ */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // device.ts (e o logger que ele importa) tocam o supabase client no topo do
