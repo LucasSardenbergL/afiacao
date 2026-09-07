@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-07T02:50:18.295Z",
-  "sourceHead": "2b7d1eccda04a53016a8db0a288822da9d0637a6",
+  "medidoEm": "2026-09-07T19:03:30.998Z",
+  "sourceHead": "c96091754d9b4d35136aa7585097b750be9a5e07",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,25 +11,12 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 1,
-      "resumo": "authz:funcoes:prod — 2 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 51 definição(ões) lida(s) para 53 chave(s) da allowlist.",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 53 função(ões) da allowlist.",
+      "denominador": "🔎 authz:funcoes:prod — 54 definição(ões) lida(s) para 53 chave(s) da allowlist.",
       "contratoFingerprint": "64b41961bc9dbef53a46ad25ee644825a52315e84d829a3ffa0e0db628eb227a",
       "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
-      "achados": [
-        {
-          "id": "87f43176e34ff5f2",
-          "linha": "❌ public.reposicao_selar_pedido — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_selar_pedido está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        },
-        {
-          "id": "6a1e618f655a78ad",
-          "linha": "❌ public.reposicao_conferir_envio — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_conferir_envio está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        }
-      ]
+      "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -43,29 +30,11 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 1,
-      "resumo": "authz:audit:prod — 4 divergência(s).",
-      "denominador": "🔎 authz:audit:prod — 21 definição(ões) lida(s) para 23 chave(s) do manifest.",
+      "resumo": "authz:audit:prod — 1 divergência(s).",
+      "denominador": "🔎 authz:audit:prod — 24 definição(ões) lida(s) para 23 chave(s) do manifest.",
       "contratoFingerprint": "ed2a339e3e6509a01d4572607d8fd0946ee8e757c6abe1445a8c4900c089708d",
       "auditorFingerprint": "0866cf4f10a49635c4ed8590c7ed4861b254c4b75cc4e58ca1cdb15b038993c1",
       "achados": [
-        {
-          "id": "ad7de5d080a699e2",
-          "linha": "❌ AUSENTE_EM_PROD: public.reposicao_selar_pedido está no AUTHZ_MANIFEST e não existe no banco.",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        },
-        {
-          "id": "4cf734dfa25f0b1d",
-          "linha": "❌ AUSENTE_EM_PROD: public.reposicao_conferir_envio está no AUTHZ_MANIFEST e não existe no banco.",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        },
-        {
-          "id": "7947a84aeb8b9b09",
-          "linha": "❌ GATE_VIVO_FALHOU: aprovar_pedido_sugerido(bigint,text) — falta cap_compras_ler",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        },
         {
           "id": "257297e1a0831e90",
           "linha": "❌ MD5_DIVERGIU: public.get_defasagem_cliente (20260718190000_authz_capability_matrix_e2.sql): esperado 037ede84a229d5798214511433afb65d, prod tem 7856c3052596d66a6f5ac8eb0a06c1c0",
@@ -86,7 +55,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 340 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
+      "resumo": "✅ audit-rls — 341 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
       "denominador": null,
       "contratoFingerprint": "983189279bc797985d2ff78f0ee10434d7c6ab7e582d223ff02d0bddd84841b0",
       "auditorFingerprint": "f24bdcecdcf841257b1c817fbeecddf0b47b91ae42c8784d68e110b86a126986",
