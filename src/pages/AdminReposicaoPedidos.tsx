@@ -21,6 +21,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, CloudDownload, Eye, Loader2, Zap } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { estadoDeLeitura, naoConsegui, desatualizado, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { toast } from 'sonner';
 import { useMutationComRegistro } from '@/components/execucoes/useMutationComRegistro';
 import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
@@ -119,7 +121,7 @@ export default function AdminReposicaoPedidos() {
     return () => clearInterval(t);
   }, []);
 
-  const { data: pedidos, isLoading } = useQuery({
+  const qPedidos = useQuery({
     queryKey: ['pedidos-ciclo', dataHoje],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -133,6 +135,7 @@ export default function AdminReposicaoPedidos() {
     },
     refetchInterval: 30_000,
   });
+  const { data: pedidos, isLoading } = qPedidos;
 
   // Fila CROSS-CICLO de "precisa de atenção": pedidos que exigem ação humana em
   // QUALQUER ciclo (a lista de hoje não pega travado de ciclo passado). Critério
@@ -541,10 +544,24 @@ export default function AdminReposicaoPedidos() {
 
   const bloqueados = (pedidos ?? []).filter((p) => p.status === 'bloqueado_guardrail');
 
+  // [erro-colapsado-em-vazio] O `?? []` acima é o que converte "não consegui ler" em
+  // `bloqueados = []` — e o alerta de guardrail SOME, calado, na tela em que se aperta
+  // "Disparar". A ausência do alerta é lida como "nada bloqueado" logo antes da compra;
+  // por isso a leitura que não aconteceu precisa FALAR aqui (docs/historico/
+  // a-forma-que-some-e-a-forma-que-mente.md, sítio #2 por dano medido).
+  const estadoPedidos = estadoDeLeitura(qPedidos);
+  // Sem NADA em mãos, o aviso é o único conteúdo possível.
+  const pedidosSemLeitura: EstadoSemLeitura | null =
+    naoConsegui(estadoPedidos) && !pedidos ? estadoPedidos : null;
+  // COM o ciclo no cache e um refetch que falhou (refetchInterval de 30s → é o caso
+  // comum), apagar os pedidos vivos trocaria um defeito por outro: a lista fica, com o
+  // aviso de que está velha.
+  const pedidosVelhos = desatualizado(qPedidos, Boolean(pedidos));
+
   // SKUs abaixo do ponto que NÃO geram pedido por falta de fornecedor cadastrado.
   // A RPC (20260604170000) passou a exigir fornecedor — esses ficavam como
   // cabeçalho-fantasma na fila; agora aparecem aqui, pra não sumirem em silêncio.
-  const { data: semFornecedor } = useQuery({
+  const qSemFornecedor = useQuery({
     queryKey: ['reposicao-sku-sem-fornecedor', EMPRESA],
     queryFn: async (): Promise<SkuSemFornecedor[]> => {
       const { data, error } = await supabase
@@ -558,6 +575,13 @@ export default function AdminReposicaoPedidos() {
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
+  const { data: semFornecedor } = qSemFornecedor;
+  // [erro-colapsado-em-vazio] Mesmo defeito, outra fonte: `semFornecedor` undefined apaga
+  // o alerta e a tela afirma que nada ficou de fora da compra por falta de fornecedor.
+  const estadoSemFornecedor = estadoDeLeitura(qSemFornecedor);
+  const semFornecedorSemLeitura: EstadoSemLeitura | null =
+    naoConsegui(estadoSemFornecedor) && !semFornecedor ? estadoSemFornecedor : null;
+  const semFornecedorVelho = desatualizado(qSemFornecedor, Boolean(semFornecedor));
 
   // [GATE estoque-não-confirmado] suprimidos do ÚLTIMO recálculo do motor (reflete os pedidos na tela) + contexto
   // 24h (crônico?). ultimoRunId vem do carimbo em reposicao_motor_run (o último recálculo REAL, limpo ou não) — não
@@ -649,6 +673,23 @@ export default function AdminReposicaoPedidos() {
         </div>
       </div>
 
+      {pedidosSemLeitura && (
+        <AvisoLeituraFalhou
+          oque="os pedidos deste ciclo — inclusive os bloqueados por guardrail"
+          estado={pedidosSemLeitura}
+          testId="aviso-leitura-pedidos"
+          className="mb-0"
+        />
+      )}
+      {pedidosVelhos && (
+        <AvisoLeituraFalhou
+          oque="a leitura mais recente dos pedidos deste ciclo"
+          estado={pedidosVelhos}
+          testId="aviso-leitura-pedidos"
+          className="mb-0"
+        />
+      )}
+
       {bloqueados.length > 0 && (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
@@ -657,6 +698,23 @@ export default function AdminReposicaoPedidos() {
             {bloqueados.length} pedido(s) bloqueado(s) por guardrail. Revise antes do disparo.
           </AlertDescription>
         </Alert>
+      )}
+
+      {semFornecedorSemLeitura && (
+        <AvisoLeituraFalhou
+          oque="os SKUs abaixo do ponto que ficam fora da compra por falta de fornecedor"
+          estado={semFornecedorSemLeitura}
+          testId="aviso-leitura-sem-fornecedor"
+          className="mb-0"
+        />
+      )}
+      {semFornecedorVelho && (
+        <AvisoLeituraFalhou
+          oque="a leitura mais recente dos SKUs sem fornecedor"
+          estado={semFornecedorVelho}
+          testId="aviso-leitura-sem-fornecedor"
+          className="mb-0"
+        />
       )}
 
       {semFornecedor && semFornecedor.length > 0 && (
