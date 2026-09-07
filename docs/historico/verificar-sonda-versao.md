@@ -735,6 +735,65 @@ as sessões deixam em produção.** Ninguém estava lendo esse.
 respondia às 21:48 UTC, não a hora em que o deploy rodou. Para "quando", o rastro do bot na `main` é o
 que existe — e ele prova que **um** deploy rodou, nunca qual versão (§6).
 
+### 13.3.1 O filtro `"probe"` só enxerga a sonda ATIVA — e o eco passivo é a via MAIOR (2026-08-29)
+
+A regra da §13.3 está certa; a query dela está **estreita**. O snippet acima filtra
+`content ILIKE '%"probe"%'`, que é o marcador da resposta de **sonda**. Só que desde o #2063/#2079 as
+edges instrumentadas anexam `versao`/`edge`/`fonte` a **TODA** resposta, não só à da sonda — e essas
+linhas **não contêm** o marcador. Varrer pelo marcador da sonda descarta justamente a via que não
+depende de ninguém disparar nada, que é a mais barata das duas.
+
+Medido no MESMO instante (2026-08-29 02:20Z), confirmando as 5 edges da janela 27-29/08: o filtro
+`"probe"` devolveu **4** edges; a varredura pela IDENTIDADE devolveu **8** — as mesmas 4 mais
+`omie-sync-ctes-recebidos`, `omie-sync-sku-items`, `omie-sync-vendas-items` e
+`analytics-outbox-drain`. Essas quatro eram **4 das 5** que se queria confirmar: com a query estreita
+a sessão concluiria "sem evidência" e pediria ao founder o deploy de edges money-path **já no ar** —
+o falso negativo caro do #2079 entrando por outra porta.
+
+Há ainda um segundo nível que nem a query estreita nem um `->>'edge'` de topo alcançam: nos **5 steps**
+do `omie-cron-diario` quem responde é o ORQUESTRADOR, e o corpo do filho chega aninhado em
+`resultados.<key>.body`. Uma leitura só da raiz é cega para os cinco. A varredura é a UNIÃO dos dois
+níveis, e rotula de onde veio cada linha:
+
+```bash
+# ⌨️ seu terminal — varredura por IDENTIDADE: cobre sonda ativa + eco de topo + eco aninhado
+~/.config/afiacao/psql-ro -c "
+WITH resp AS (
+  SELECT id, created, content::jsonb AS j, (content ILIKE '%\"probe\"%') AS via_sonda
+    FROM net._http_response
+   WHERE status_code = 200 AND content IS NOT NULL AND left(ltrim(content),1) = '{'
+), plano AS (
+  SELECT created, j->>'edge' AS edge, j->>'versao' AS versao, j->>'fonte' AS fonte,
+         CASE WHEN via_sonda THEN 'sonda' ELSE 'eco' END AS via
+    FROM resp WHERE j ? 'edge'
+  UNION ALL
+  SELECT r.created, r.j->'resultados'->k->'body'->>'edge', r.j->'resultados'->k->'body'->>'versao',
+         r.j->'resultados'->k->'body'->>'fonte', 'eco-step'
+    FROM resp r, jsonb_object_keys(r.j->'resultados') k
+   WHERE r.j ? 'resultados' AND jsonb_typeof(r.j->'resultados') = 'object'
+     AND r.j->'resultados'->k->'body' ? 'edge'
+)
+SELECT DISTINCT ON (edge) edge, versao, left(fonte,12) AS fonte12, via,
+       to_char(created,'MM-DD HH24:MI') AS utc
+  FROM plano WHERE edge IS NOT NULL
+ ORDER BY edge, created DESC;"
+```
+
+O `jsonb_typeof(...) = 'object'` não é enfeite: outro emissor grava `resultados` como **array**, e o
+`jsonb_object_keys` sobre ela **aborta a query inteira** — não é uma linha ruim ignorada, é o
+resultado todo perdido (medido em 2026-08-28 09:00Z, registrado na `lovable-deploy-verify`). ⚠️ Essa
+metade é **precaução ancorada em medição anterior, não falsificada aqui**: no TTL de 2026-08-29 02:40Z
+só havia `resultados` como `object`, então remover o guard *não* abortou. Ausência do array na janela
+não prova que o guard sobra — prova que ele **não foi exercitado**, e as duas leituras se parecem.
+
+Duas coisas que esta query **não** dispensa. A primeira é o **guard temporal** do #2079: `utc` tem de
+ser POSTERIOR ao merge que se verifica — tick anterior é história, não pendência, e lê-lo como
+"pendente" é o falso negativo que manda redeployar à toa. Para o veredito já com esse guard embutido,
+o caminho é `scripts/verify-edge-eco.sh` da `lovable-deploy-verify`, não esta leitura crua. A segunda
+é o `fonte`: `versao` sozinho prova o `index.ts`, e só o `fonte` alcança o `_shared/` (§13.5) —
+compare os **64** hex contra o mapa da `main`, programaticamente. Conferir hash de olho é como se
+fabrica veredito.
+
 ### 13.4 O controle de exclusividade — o `--pai` do fingerprint
 
 Um `fonte` que bate com a `main` só prova **este** deploy se ele não pudesse ter vindo de um PR
@@ -767,3 +826,179 @@ cobre, e ele não viaja ali"): lá a canária da `omie-vendas-sync` ecoa `versao
 isso não cobre `_shared/`; aqui a sonda ecoa o `fonte`, e é justamente ele que fecha o degrau. Ao
 projetar uma sonda nova, **o `fonte` não é enfeite ao lado do `versao` — é o único campo que responde
 "a fatia inteira subiu?"**.
+
+---
+
+## 14. Edge fora do mapa não REPROVA — ela some do denominador (2026-08-28)
+
+A `analytics-outbox-drain` (#2035, `d5d79cf11`) nasceu **no mesmo dia** em que este doc já tinha 13
+seções sobre sondar edge, e mesmo assim chegou sem `versao.ts` e fora de `_shared/sonda-fingerprints.ts`.
+O interessante não é a omissão — é que **nenhum dos três gates de sonda reclamou**, e por desenho:
+
+| gate | universo dele | o que ele fez com a edge ausente |
+|---|---|---|
+| `sonda:bump` | as edges **instrumentadas** que a fatia tocou | não a viu: sem `versao.ts` ela não é instrumentada |
+| `sonda:fingerprint` | as edges **instrumentadas** | idem — o mapa e a lista nascem do mesmo `versao.ts` |
+| `sonda:sql <edge>` | a leva que você **pediu** | recusou (exit 1, "Edge não sondável — sem sensor") |
+| `pendencias:deploy` | o **mapa commitado** (`lerMapaCommitado`) | tirou 39 do denominador — a 40ª não existia para ele |
+
+Os quatro estão certos. O buraco é de **classe**: quando o universo de um gate é uma lista derivada de
+um artefato **opt-in**, quem nunca entrou na lista não reprova — desaparece. `cobertura: 39/39` era
+`39/40`, e um denominador que se ajusta sozinho ao que já foi instrumentado **não pode** acusar o que
+falta. É o gêmeo exato do #2089 (`cobertura: 2/39` saindo com o mesmo exit 0 de `39/39`), um degrau
+acima: lá o numerador mentia, aqui o denominador.
+
+O piso que existia — o gate "nenhuma edge que serve o `paginate.ts` fica SEM prova de deploy" — não a
+alcança e **não é furo dele**: ele se declara piso e ancora no consumo de um helper específico, que
+esta edge não importa. Um piso ancorado em helper cobre quem usa o helper; o resto é grafo que ele não
+enxerga (a mesma lição de `enumerar-consumidores-de-helper.md`, §9ª leva).
+
+### O custo real: a verificação do deploy virou arqueologia
+
+Em 2026-08-28 provar que a edge estava no ar exigiu montar o caminho na hora — **N1** (`verify-edge.sh`:
+OPTIONS 200 + controle negativo em 404, que separa "existe" de "qualquer nome responde") somado ao **N3
+passivo** de `net._http_response`, onde o corpo trazia uma string literal exclusiva do `index.ts`.
+
+Funcionou **por acaso**: a edge estava respondendo 500 com uma mensagem distintiva. Isto é a §12 (N3
+passivo pela FORMA do JSON) com a pré-condição da §13.1 satisfeita por sorte e não por desenho — a
+forma só discrimina se o diff **mudar a forma**, e uma fatia futura interna a esta edge (trocar o teto
+do lote, mexer no backoff, mudar a partição) não mudaria campo nenhum. Da segunda vez não teria dado.
+
+### O que a instrumentação trouxe, e por que o ECO aqui é mais barato que nos 5 steps do #2063
+
+A edge entrou no padrão inteiro (`VERSAO`/`EFEITO`/`EDGE`/`FONTE`, `criarRespostaSonda`, sonda logo
+após o `authorizeCronOrStaff` e antes do `createClient`). O que ela acrescenta ao padrão é a via do
+**eco**: os 5 steps do cron diário dependem de o `omie-cron-diario` fazer `JSON.parse` do corpo deles e
+devolvê-lo em `resultados.<key>.body` — a identidade passa pelo **pai**, e a amostra é o tick de 2 h.
+Aqui o cron `analytics-outbox-drain` (`*/5`) faz `net.http_post` **direto na edge**, então o corpo que
+cai em `net._http_response` já é o dela, sem intermediário, com **~72 amostras** dentro da janela de
+~6 h do `pg_net.ttl`. É o N3 passivo mais barato do repo.
+
+Por isso os 5 gates de eco do contrato deixaram de varrer `STEPS_CRON_DIARIO` e passaram a varrer
+`ECOAM_VERSAO`: a propriedade exigida nunca foi "ser step do `omie-cron-diario`" — é **o corpo desta
+edge chegar a `net._http_response`**. Lista extraída, e não um segundo bloco de asserts para a edge
+nova: duas cópias do mesmo gate envelhecem separado, e a que não for mantida é a que deixa de valer.
+
+### O custo de sondar aqui é COMPARATIVO — e é o que a separa da `carteira-rebuild`
+
+Um `{"probe":true}` num bundle pré-sensor desta edge roda `drenar()`: claim de 200 linhas, envio ao
+PostHog, marcação do desfecho (e quarentena no 400/413). Parece caro até se notar que **o cron chama
+esse mesmo caminho, com os mesmos defaults, a cada 5 minutos**: sondar às cegas aqui **adianta um
+tick**, não cria efeito de classe nova. Ou seja, esta edge não entrou pelo critério do efeito — entrou
+pelo da sexta leva, o único que ainda vale sozinho: *barato de chamar* e *possível de verificar* são
+propriedades diferentes, e só o marcador dá a segunda.
+
+### Falsificação (as 5, cada uma nomeando a edge na mensagem)
+
+Gate verde numa edge recém-adicionada é indistinguível de gate que não a varre. As sabotagens, todas
+com vermelho e a edge citada no erro: eco sem `edge`/`fonte`; `EDGE` ≠ nome do diretório; sonda que
+**classifica e não responde** (`console.log` no lugar do `return` — o furo da §9); `FONTE` transcrito à
+mão em vez de derivado de `respostaSonda`; e a entrada removida do mapa (aí quem fica vermelho é o
+`sonda:fingerprint`, "instrumentada mas AUSENTE do mapa"). Script: commitar **antes**, porque o
+`restaurar()` é `git checkout --`.
+
+### Assinatura para varredura futura
+
+O que sobra como pergunta aberta é o denominador: **95 diretórios de edge, 40 instrumentadas**. Não é
+dívida — a maioria é leitura pura, para quem a sonda não resolve problema nenhum (o critério da 3ª
+leva). O que falta é o gate que force a **DECISÃO** no nascimento da edge: instrumentar, ou declarar
+por que não. Enquanto ele não existir, a régua barata é conferir, ao criar edge com cron próprio, se
+ela entra em `bun run pendencias:deploy` — edge que não aparece nem como pendência é edge fora do radar.
+
+## 15. O gate de CONTRATO tinha o mesmo furo da §14 — e ele já tinha mordido, uma leva antes (2026-09-05)
+
+A §14 fechou o denominador do **mapa de fingerprints**. O que ninguém refez foi a mesma pergunta
+sobre o outro artefato opt-in do assunto: a lista `EDGES` de
+`supabase/functions/_shared/sonda-versao-contrato_test.ts`.
+
+**Medido**, ao instrumentar a 12ª leva: **45 pastas com `versao.ts`, 40 declaradas em `EDGES`**.
+As 5 de fora eram exatamente a **11ª leva** (#2170 — `whatsapp-send`, `whatsapp-send-template`,
+`enviar-push`, `nvoip-calls`, `dispatch-notifications`), instrumentadas no dia anterior. Elas
+entraram no mapa de fingerprints e **não** neste arquivo.
+
+O que isso significa na prática: **todo** teste do contrato varre `EDGES` ou uma sublista dela — o
+formato do `VERSAO`, o `EFEITO` que nomeia o custo, "a sonda RESPONDE", "a sonda é IO-free", "não
+volta o `=== true` cru", "duas edges nunca produzem respostas idênticas". As 5 estavam
+instrumentadas e **sem gate de FORMA nenhum**. E os dois números eram verdes ao mesmo tempo:
+`sonda:fingerprint` dizia `45/45`, o contrato dizia `40 passed | 0 failed`. Nenhum dos dois estava
+errado — eles falavam de **universos diferentes**, e a diferença não tinha dono.
+
+É a §14 de novo, com outro artefato: *quando o universo de um gate é lista derivada de artefato
+OPT-IN, quem nunca entrou não reprova — some*. E é também a lição de
+`uniao-de-vias-cegas-nao-e-cobertura.md`: dois gates verdes não somam cobertura enquanto ninguém
+calcula a **interseção dos furos**.
+
+### O conserto
+
+Um teste de **completude** no próprio contrato, comparando `EDGES` contra a **ÁRVORE** — não contra
+outra lista escrita à mão:
+
+- `versao.ts` é o mesmo marcador que `edgesInstrumentadas()` do `scripts/sonda-fingerprint.ts` usa,
+  então os dois gates passam a falar do **mesmo conjunto** — que era a divergência de origem.
+- Ele reprova nos **dois sentidos**: pasta com `versao.ts` fora de `EDGES` (o caso medido), e
+  `EDGES` apontando para pasta que não tem mais `versao.ts` (lista que aponta para o que não existe
+  apodrece em silêncio).
+- E tem **guard de controle positivo vazio**: se a varredura não achar pasta nenhuma, o gate
+  REPROVA em vez de passar. Uma lista vazia por ERRO (cwd errado) é indistinguível de lista vazia
+  por mérito — a regra de `sonda-ausente-em-script-que-apaga.md`.
+
+Falsificado nas três direções, uma camada por vez: apontar `RAIZ_FUNCTIONS` para `_shared/` grita
+"controle positivo vazio"; declarar uma `edge-fantasma` grita "sem `versao.ts` na árvore"; e o
+controle positivo original — rodar o gate **antes** de acrescentar as 5 — nomeia as 5.
+
+As 5 entraram com a forma que **já tinham** (medido: `classificarSonda` antes do `createClient`,
+`respostaSonda` no handler, gate `authorizeCron*` que aceita `x-cron-secret`), então o conserto não
+pediu mudança de código de produção nenhuma — só parou de deixá-las invisíveis. O contrato foi de
+40 para **54** edges declaradas.
+
+## 16. O ciclo do `recommend`: bump ANTES do deploy, e a evidência que expira em 6h (2026-08-24)
+
+Registrado retroativamente em 2026-09-06 — e o atraso é metade da lição (ver o fim da seção).
+
+Primeiro ciclo em que o **bump do marcador precedeu o deploy de propósito**, e por isso a sonda teve
+o que discriminar. A sequência: #1898 instrumentou a edge (`v1.5-denominador-observados`), #1901
+consertou o `_shared/paginate.ts` — a 1ª linha da página não era comparada ao cursor, então
+sobreposição pontual virava **duplicata silenciosa** no keyset —, e #1915 bumpou para
+`v1.6-keyset-cursor-na-primeira-linha`, **27 min depois** do fix. Nenhum dos três foi seguido de
+deploy: a `main` ficou uma versão à frente e o bug seguiu ativo no bundle servido.
+
+| | `versao` respondida | quando |
+|---|---|---|
+| sonda 58859 (antes) | `v1.5-denominador-observados` | 2026-08-23 20:50:41Z |
+| sonda 58962 (depois) | `v1.6-keyset-cursor-na-primeira-linha` | 2026-08-24 01:13:07Z |
+
+Payload cru da 58962, colado na hora:
+`{"ok":true,"probe":true,"versao":"v1.6-keyset-cursor-na-primeira-linha","edge":"recommend"}`.
+
+**O pré-flight que torna a viagem verificável** é comparar `main` × prod ANTES de pedir o deploy
+(`deploy-no-op-por-desenho.md`): marcadores iguais ⇒ a sonda responde a mesma string tendo o deploy
+acontecido ou não. Aqui eram diferentes — a viagem valia.
+
+**A sonda ANTERIOR já diz se a próxima é segura.** Nesta edge o fluxo real grava `recommendation_log`,
+que é o **sensor de desfecho** do motor: sondar um bundle pré-sensor inventaria uma recomendação que
+ninguém fez e enviesaria a própria medição de acerto. Não era preciso deduzir o risco — a 58859 já
+ecoava `probe:true`, o que prova que o sensor estava no ar. Generalizando: **resposta anterior com eco
+⇒ a próxima sonda é barata; resposta anterior sem eco ⇒ ela já pagou o efeito, e isso por si só é o
+veredito.**
+
+**Leitura por `request_id`, nunca por `order by id desc limit 1`.** Foi assim que o #1915 quase
+provocou um redeploy à toa: o `desc limit 1` pegou o tick do watchdog — `edge` NULL, `versao` NULL,
+status 200 —, que é **byte a byte** a assinatura de "bundle velho rodou o fluxo real". Casar por chave
+exclusiva do corpo é a mesma regra do §2 (cron × resposta por horário).
+
+**Guard anti-reversão pós-deploy** (o Lovable já reverteu fix mergeado — #1077→#1080), as duas
+camadas: *source* — `rows.length === 0` seguia com 2 ocorrências em `_shared/paginate.ts`, `VERSAO`
+seguia `v1.6`, e nenhum commit `Changes` do bot; *comportamento* — a sonda acima.
+
+### A evidência de deploy tem prazo de validade — o registro é que não
+
+`net._http_response` retém ~6h. Quando esta seção foi escrita, 13 dias depois, a query
+`where content::jsonb->>'edge'='recommend'` devolvia **0 linhas**: os ids 58859/58962 não são mais
+reconferíveis por ninguém. O que sobrevive é o que foi **colado** no registro — payload cru, id,
+timestamp — e não o ponteiro para a linha. Vale para toda prova que mora numa tabela com retenção:
+**"está na 58962" envelhece para "confie em mim" em seis horas.**
+
+O que continuava conferível em 2026-09-06, e confere: a `main` ainda declara
+`v1.6-keyset-cursor-na-primeira-linha` e **nenhum commit tocou** `recommend/` ou `_shared/paginate.ts`
+desde `392132e71` — ou seja, o par main×prod provado em 24/08 seguia válido, por ausência de mudança e
+não por nova medição.

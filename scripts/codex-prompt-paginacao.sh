@@ -40,7 +40,18 @@ recortar() {
   printf '%s\n' "$saida"
 }
 
-sha_de() { git log origin/main --format=%h --grep "(#$1)" -1 -- 2>/dev/null || true; }
+# Resolve o número do PR para o SHA do commit que o ENTREGOU.
+# ⚠️ `--grep` varre a mensagem INTEIRA (assunto + corpo) e `-1` fica com o commit MAIS
+# RECENTE: um PR posterior que cite "(#N)" em prosa no corpo ROUBAVA o SHA do PR real —
+# o prompt saía com SHA plausível e ERRADO (medido 2026-08-29: `(#1856)` resolvia para o
+# citador 4dd2a0271 em vez de 4b592b506; `(#1889)` para 0ed5a9b31 em vez de b559e8bdd).
+# A âncora é a convenção de squash-merge do repo: o marcador `(#N)` FECHA o ASSUNTO.
+# Preso por scripts/test-codex-prompt-paginacao.sh (com --falsificar).
+sha_de() {
+  git log origin/main --format='%h%x09%s' --grep "(#$1)" -- 2>/dev/null \
+  | awk -F'\t' -v suf="(#$1)" \
+      'substr($2, length($2) - length(suf) + 1) == suf { print $1; exit }'
+}
 
 # Extração ANTES do heredoc, cada uma com a sua morte explícita. Se qualquer recorte falhar, o
 # script morre aqui e nenhum prompt é emitido — em vez de emitir um prompt mutilado.

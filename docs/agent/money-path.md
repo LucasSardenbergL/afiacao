@@ -67,9 +67,12 @@
 - **Assinatura (estrutural, AST — grep MENTE aqui):** desestruturação `const { data } = useX()` sem `error`/`isError`, cujo `data` (ou uma **derivada** dele) guarda um `return null`. Testar "trata erro?" com grep de `error` no arquivo dá **falso negativo** justo nos piores casos: `text-status-error` do Tailwind casa e o arquivo passa.
 - **O padrão certo já existia no repo:** `DataHealthBadge` faz `isError ? 'red' : badgeLevel(data ?? [])` — fail-closed. `DataHealthBanner`, MESMO hook 20 linhas ao lado, fazia `const { data } = useDataHealth()` e sumia da tela financeira. Copie do primeiro.
 - **Ferramenta:** `estadoDeLeitura`/`naoConsegui` (`@/lib/leitura/estado-de-leitura`) nomeiam as 9 combinações de `status × fetchStatus`, e `<AvisoLeituraFalhou>` é o que a tela mostra em `erro`/`sem-rede`. **O quarto estado é o OFFLINE** (`pending` + `paused`): `isLoading` é FALSE, `data` undefined e `error` null — quem testa só `isLoading`/`error` cai no ramo do vazio. Num PWA de campo não é o caso raro.
-- **Gate:** `src/__tests__/erro-colapsado-em-vazio-gate.test.ts` (baseline por contagem) fiscaliza a **auto-ocultação total** (`return null`). A forma `jsx-&&` fica de fora **de propósito** — 93 sítios, idioma legítimo na maioria; gateá-la faria a baseline crescer por motivo benigno e ensinaria a atualizá-la no automático, que é como um gate morre. Ela está MEDIDA e é o segundo front.
+- **Gate:** `src/__tests__/erro-colapsado-em-vazio-gate.test.ts` fiscaliza **duas** formas, com baselines separadas e por CONTAGEM: a **auto-ocultação total** (`return null`, 44 sítios/34 arquivos, desde 2026-08-22) e o **`return-afirmativo`** (`return <JSX com texto>` sob a mesma guarda — 13 sítios/13 arquivos, desde 2026-09-06, `docs/historico/o-check-verde-que-a-falha-acende.md`). As duas contagens têm **unidades diferentes e não são comparáveis**: a 1ª conta BINDINGS de hook, a 2ª conta LINHAS (um mesmo `return` é taintado por N hooks — `ToolHistory:174` é UM sítio, não dois). A 2ª entrou porque **13/13 são alcançáveis** (todo hook faz `if (error) throw error`): não há fatia inerte que vire ruído. A forma `jsx-&&` fica de fora **de propósito** — 93 sítios, idioma legítimo na maioria; gateá-la faria a baseline crescer por motivo benigno e ensinaria a atualizá-la no automático, que é como um gate morre. Ela está MEDIDA e é o segundo front — **inventariado em 2026-09-06** (`docs/historico/a-forma-que-some-e-a-forma-que-mente.md`): dos 93, **21 não lançam** (o `queryFn` engole com `return data ?? []` ⇒ `error` nunca popula e mexer na UI é *fix* INERTE), e **16 têm default `= []`** ⇒ em vez de sumir, a tela **afirma "não há"** — sub-tipo mais grave que o gateado. Ordem por dano medido no doc; a decisão de deixar `jsx-&&` fora do gate **continua certa**.
+- **Terceiro front — `return <mensagem afirmativa>` (medido 2026-09-06, `docs/historico/o-check-verde-que-a-falha-acende.md`):** nem `null` nem `&&`, e o mais afirmativo dos três — a falha de leitura acende `CheckCircle2 text-status-success` + "Todas as fichas aprovadas estão completas" sobre **116 pendências reais** (`CompletudeSection`). São **13 sítios**, e **13/13 LANÇAM** (zero inertes, ao contrário dos 21/93 do 2º front) ⇒ é a melhor candidata a gate das três. Em 4 deles o hook faz `.maybeSingle()` + `data ?? null`: a diferença entre "não existe" (`null`) e "não consegui ler" (`undefined`) **existe no dado e o `if (!data)` a descarta**. Resolver hook por NOME mente — há dois `useCompletude` exportados; resolva por `import`.
 - **Convergência independente (2026-08-22):** o #1892 derivou À MÃO o mesmo mapeamento dentro do `MixGapCard` (`pausado`/`inerte`/`carregando` sobre `fetchStatus`) enquanto este helper nascia em paralelo — duas sessões, a mesma máquina de estados. É evidência de que o mapeamento está certo **e** a duplicação que o helper existe para eliminar: quem tocar o `MixGapCard` a seguir deve trocá-la por `estadoDeLeitura` (fonte única).
 - **Telemetria junto:** evento de adoção sai em TODO estado resolvido (erro inclusive) e leva `null` — nunca `0`/`'green'` — senão a série soma falha de leitura a "ninguém abriu".
+- **Falha ESPERADA não vira aviso (2026-08-23):** antes de traduzir leitura falha em `<AvisoLeituraFalhou>`, pergunte se aquela falha é o DESENHO para parte de quem abre a tela. `radar_kpis` faz `RAISE 'forbidden'` e `/radar` só exige `RequireStaff` ⇒ avisar produziria alarme FABRICADO para todo staff não-gestor. O conserto é **não fazer a pergunta** (`enabled` espelhando o gate do servidor → estado `desabilitada`, que `naoConsegui()` exclui de propósito), não avisar mais bonito. Ausência de acesso chega como NULL (`get_carteira_saude`) **ou como EXCEÇÃO** (`radar_kpis`) — as duas exigem "não renderiza e não emite".
+- **Se o componente também ESCREVE, a classe vira caminho de escrita cega:** `TierClienteBadge` afirmava "Definir tier" na falha e abria o dialog com selects vazios, de onde um Salvar sobrescreveria por `upsert` o tier que não conseguiu ler (orienta preço de partida). Fail-CLOSED: **sem leitura não se edita**.
 
 ## Aposentar código: "quem chama?" é a pergunta errada
 
@@ -176,6 +179,7 @@ do cliente, invisíveis ao recálculo do dono real. Caso completo, com os númer
 - **Função/RPC/trigger/policy money-path → `prove-sql-money-path`** (PG17 local com falsificação) ANTES de entregar a migration. plpgsql é late-bound: `CREATE` passa com SQL inválido, só falha ao EXECUTAR. O teste aplica a migração REAL, semeia, faz asserts positivos E negativos (SQLSTATE + re-raise), prova RLS (`SET ROLE` + GUC), e **se sabota de propósito pra provar que os asserts têm dente**.
 - **Assert negativo** captura a `SQLSTATE`/condição ESPERADA e re-lança o resto. `WHEN OTHERS THEN 'OK'` é teatro (engole o erro real). Sentinela do teste nunca contém o texto que o código emite (anti-teatro de ILIKE).
 - **Falsificação só vale se o vermelho for do SEU assert — exit code não distingue "pegou o bug" de "não rodou nada".** Um harness pode falhar ANTES de testar (filtro que não casa arquivo, path errado, import quebrado, migration que nem aplica) → exit≠0 → parece a prova que você queria, e é só o comando quebrado. Regra: toda rodada de falsificação exige **(a) baseline VERDE explícito antes** (prova que o comando roda e quantos asserts existem) e **(b) conferir a CONTAGEM e os NOMES dos vermelhos** — têm de ser os que aquela sabotagem mira, e só eles. Mordido 2026-07-16 (#1358): `bun run test -- $T` com 2 paths numa variável → o vitest recebeu `"a b"` como **filtro único** → `No test files found` → `exit=1` com **0 testes rodados**; as 2 primeiras sabotagens "provaram" o nada, e o tell estava à vista (contagem de falhas = **0**). Irmão do `| tail` que **engole** o exit code — aqui o exit **mente**.
+  - ⚠️ **Refactor que move uma defesa de EXPLÍCITA para ESTRUTURAL APOSENTA a falsificação dela — e ela vira falso-verde silencioso (2026-08-30, identidade de linha).** O `F4` provava o guard de SKU repetido exibindo "sobram duas linhas do mesmo código". Com o casamento em dois níveis, quem impede o valor dobrado passou a ser o requisito de 1-1 entre os remanescentes, que é ESTRUTURAL: com o guard sabotado o pós-estado sai **correto**, e a falsificação saiu SEM DENTE. A sabotagem continuava certa; o **sintoma** é que tinha mudado de lugar. ⇒ **Falsificação não se re-roda depois de um refactor de defesa: ela se RE-DERIVA** — pergunte "qual é o sintoma HOJE?" ANTES de rodar, e desconfie de falsificação que segue passando sem ninguém ter mexido nela. O antídoto que vale para as duas versões é afirmar a **INVARIANTE** (aqui: "pós-estado == conjunto desejado"), nunca uma **contagem**: a contagem de linhas de um SKU passou verde nos dois defeitos do `F12`, e a invariante pegou os dois. Narrativa: `docs/historico/identidade-de-linha-do-item.md`.
   - ⚠️ **Em suíte JS, o TELL de "não rodou nada" é o TOTAL de testes (2026-07-22).** Duas sabotagens de uma rodada de 6 saíram inválidas por motivos OPOSTOS, e as duas se leem como prova: (a) `perl s/scoresIndisponivel/false && scoresIndisponivel/g` pegou também a DECLARAÇÃO (`const false && x = …`) → **Syntax Error** → o vitest reportou `55 passed (55)` com `exit=1` e **zero falhas** — o vermelho veio do parser, e os 5 testes que deviam julgar a sabotagem não existiram; (b) o padrão foi escrito `pagina` contra um código que diz `página` → **não casou nada** → `60 passed`, verde de código INTACTO, que se lê como *"o assert não tem dente"* e convida a enfraquecê-lo. ⇒ **fixe o total esperado e compare** (`case "$linha" in *"(60)") ;; *) echo VERMELHO INVALIDO ;; esac`), e faça a sabotagem **provar que aplicou** (`grep -q` do texto sabotado + veredito no log) ANTES de rodar. Acento é armadilha de padrão: ancore em trecho **ASCII**. Corolário do "exit code não distingue 'pegou o bug' de 'não rodou nada'": em JS o discriminador barato é o **DENOMINADOR**.
   - ⚠️ **Script de falsificação SABOTA `src/` in-place — mesma família do `mutcheck` (§36).** Enquanto ele roda, `git status`/`git diff` mostram arquivos money-path que você não tocou, e um `git add -A` na janela commitaria a sabotagem. Não commite, não rode Codex e não leia os arquivos sob sabotagem com a rodada viva; espere, confirme a restauração (`git diff --name-only` dos alvos, vazio) e só então prossiga. `trap … EXIT` restaurando é obrigatório — sem ele uma interrupção deixa a sabotagem no repo. (Se o job ainda estiver na FILA do `heavy`, nada foi aplicado: matar ali é seguro.)
   - ⚠️ **`psql -c "..."` IGNORA o stdin — a sabotagem por heredoc nunca roda (mordido 2026-07-19, Fatia 5B).** `P -q -c "SET check_function_bodies = off;" <<'SQL' CREATE OR REPLACE FUNCTION … SQL` **não** cria a função: com `-c`, o psql executa só aquele comando e descarta o heredoc, **em silêncio**. A falsificação seguinte passa então a medir a função ORIGINAL, e o desfecho depende do harness: com `set -e` o script morre sem mensagem (foi o que aconteceu — o log terminou em "── falsificação ──" e mais nada), e **sem** `set -e` ela reporta "não reproduziu o bug", que se lê como *"o assert não tem dente"* e convida a enfraquecê-lo. ⇒ o `SET` vai **dentro** do heredoc, ou use `-f arquivo`; e desconfie de qualquer falsificação cujo log não mostre a linha de veredito que você escreveu para ela.
@@ -218,7 +222,12 @@ do cliente, invisíveis ao recálculo do dono real. Caso completo, com os númer
 
 ## Segunda opinião adversária (Codex)
 
-- Rodar Codex em cada etapa de trabalho money-path: **metodologia → spec → plano → adversarial no código**. `/codex` (consult/challenge). Modelo `gpt-5.6-sol` (frontier da família 5.6; exige codex-cli ≥ 0.143), reasoning **`xhigh` SEMPRE** — a 2ª opinião roda no teto, não em degrau econômico. ⚠️ **O modelo é MEDIÇÃO datada:** ping `codex exec --model M -c model_reasoning_effort="xhigh" --sandbox read-only "responda apenas: OK"`. Em 2026-08-23 (conta paga): `sol`/`terra`/`luna` → rc=0; `gpt-5.6`, `gpt-5.3-codex`, `gpt-5.1-codex-max` → 400. 🔴 **Se um modelo der 400, suspeite do TOKEN antes do direito de acesso:** o servidor cobra pelo CLAIM do token, e um token velho carrega o plano ANTIGO — em 22/08 o `sol` deu 400 porque o claim dizia `free` numa conta paga, e `codex logout && codex login` devolveu o modelo na hora. **Outro modelo responder NÃO inocenta o login** (os tiers de baixo seguem servidos com o plano rebaixado): foi essa inferência que trocou o default por 2 dias sem ninguém ver a causa. Reasoning `high` (consult rotineiro) ou `xhigh` explícito (adversarial money-path). `max` (teto novo do 5.6, acima de xhigh) só PONTUAL em quality-first extremo (engine financeira nova, RLS de alto risco) — a doc da OpenAI manda comparar com xhigh antes de adotar, e a cota é o limitador.
+- Rodar Codex em cada etapa de trabalho money-path: **metodologia → spec → plano → adversarial no código**. `/codex` (consult/challenge). Modelo `gpt-6-astra` (geração acima da família 5.6; exige codex-cli ≥ 0.153.1 — cask `codex` do brew), reasoning **`max` SEMPRE** (ordem do founder 2026-09-05; um degrau acima do `xhigh`. O catálogo 0.153.4 lista ainda `ultra`, que NÃO é degrau de raciocínio — é `max` + delegação automática a subagentes; ver **Nível de reasoning** abaixo) — a 2ª opinião roda no teto, não em degrau econômico. ⚠️ **O modelo é MEDIÇÃO datada:** ping `codex exec --model M -c model_reasoning_effort="xhigh" --sandbox read-only "responda apenas: OK"`. Em 2026-09-05 (codex-cli 0.153.4, conta paga): `gpt-6-astra`/`max` → rc=0 (6s); `gpt-6-astra`/`ultra` → rc=0 (7s). Em 2026-08-23: `sol`/`terra`/`luna` → rc=0; `gpt-5.6`, `gpt-5.3-codex`, `gpt-5.1-codex-max` → 400. 🔴 **Se um modelo der 400, suspeite do TOKEN antes do direito de acesso:** o servidor cobra pelo CLAIM do token, e um token velho carrega o plano ANTIGO — em 22/08 o `sol` deu 400 porque o claim dizia `free` numa conta paga, e `codex logout && codex login` devolveu o modelo na hora. **Outro modelo responder NÃO inocenta o login** (os tiers de baixo seguem servidos com o plano rebaixado): foi essa inferência que trocou o default por 2 dias sem ninguém ver a causa. Reasoning: `max` é o default do wrapper desde 2026-09-05 (antes: `high` no consult rotineiro, `xhigh` no adversarial money-path, `max` só pontual); QUAL nível usar está no bullet **Nível de reasoning** abaixo — a cota decide QUANDO, nunca qual nível.
+- **Nível de reasoning — decida nesta ordem: (1) piso por RISCO, (2) natureza da tarefa, (3) cota.** Definido 2026-09-05 com 3 pareceres do próprio Codex (o mesmo prompt em `xhigh`/`max`/`ultra`) e medição (n=1, prompt de 2,9 KB, os três concorrentes): `xhigh` 56 s/10,0k tokens · `max` 131 s/14,2k · `ultra` 66 s/5,2k. Brevidade da pergunta ("cabe numa tela"), atenção do founder ("não vai revisar linha a linha") e saldo de cota **não** são critérios de nível.
+  - **`max` (default) — piso por risco.** Qualquer consult cujo DOMÍNIO é money-path (precificação, reposição/compras, financeiro, RLS/authz, migration), **com ou sem código** (metodologia de DRE sem código É money-path); segurança (gatilho (d) abaixo); irreversibilidade técnica (DROP, migration destrutiva, recompute) **ou econômica** (recompute reversível no banco cujo efeito já saiu — compra disparada, faturamento emitido); e toda 2ª rodada. Discordância do parecer com o meu diagnóstico é possível ACERTO do Codex, não gatilho de escalada: a 2ª rodada é `max` com a evidência nova NO PROMPT (executada, não argumentada).
+  - **`xhigh` — degrau econômico EXPLÍCITO (`-r xhigh`), só quando nenhum piso acima é tocado:** design review de tela (a), fronteira de módulo (b), incidente de sync com fatos coletados (c), revisão de doc/prompt/metodologia FORA do money-path. A economia é real mas modesta (~30% dos tokens, metade do tempo, n=1): nunca justifica rebaixar um money-path.
+  - **`ultra` — fora do ritual até haver piloto com ganho medido.** No catálogo 0.153.4 `ultra` = "Maximum reasoning with automatic task delegation": é o `max` mais delegação a subagentes, **não** um degrau de raciocínio (a API pública nem o lista). Num parecer single-shot não delega nada (medido: 0 delegações). **Gravidade não é gatilho** — risco maior pede PROVA POR EXECUÇÃO (prove-sql, falsificação), não mais raciocínio. Único candidato: tarefa AGÊNTICA multi-arquivo em sandbox read-only (varredura de módulo inteiro), e só após o piloto: 3 casos históricos congelados (2 com defeito conhecido, 1 sem), `max` vs `ultra` com contexto idêntico e avaliação cega, contando só achados extras CONFIRMADOS POR EXECUÇÃO, falsos positivos e consumo. Sem piloto, `-r ultra` não entra em PR.
+  - **Cota decide QUANDO, nunca QUAL nível.** Exit 75 do wrapper = janela ESGOTADA (não "perto do fim"; o `codex exec` não expõe saldo) e o balde é o mesmo para todo nível — rebaixar não cria capacidade. Money-path: espera o reset da janela ou vai pro Caminho B; consult não-crítico é adiado. Registre no PR nível + segundos + tokens de cada consult — é o sensor que o piloto do `ultra` exige, e desde 2026-09-05 o próprio cabeçalho do `scripts/codex-async.sh` traz os três: `=== PARECER CODEX (modelo M · reasoning R · tentativa N · 131s · 14.243 tokens) ===`. Copie o cabeçalho, não recalcule. **`tokens ?` significa AUSENTE, não zero** (o codex não emitiu rodapé): registre `?`, jamais 0 — um consult com custo 0 envenena justo a comparação de consumo que o piloto mede. Os tokens vêm do rodapé TEXTUAL do `codex exec`, não do `--json`, por duas medições de 2026-09-05: `--json` esvazia o stderr e migra o erro para o stdout (quebraria a classificação cota/modelo/transitório do wrapper), e o `usage` do JSONL conta `input_tokens` com cache (19.985) onde o rodapé cobra o não-cacheado (7.823) — as medições já publicadas acima vieram do rodapé, então trocar a fonte trocaria a régua no meio do piloto.
 - **Gatilhos além do money-path** (aprovados 2026-07-09, capacidades novas do 5.6-sol): (a) **design review adversarial** quando um PR redesenha tela operacional inteira ou cria página nova — design judgment virou ponto forte do 5.6; segundo olho INDEPENDENTE do `/design-review`; (b) **fronteira de módulo** em refactor estrutural — consult com o mapa de acoplamento no prompt ANTES de fixar cada corte (ex.: contrato SPIN telefonia↔farmer no F3); (c) **incidente de sync com assinatura NOVA** — quando o `diagnose-supabase-sync` esgota as assinaturas do `sync.md`, consult com os fatos coletados (`net._http_response`/`fin_sync_log`/cursores) no prompt; (d) **segurança fora do money-path estrito** — PWA/fila offline, WebRTC/LGPD, prompt-injection em edge LLM. São gatilhos por critério, NUNCA "chama pra tudo" (cota). ⚠️ Safeguards cyber do 5.6 rodam DURANTE a geração e podem pausar/recusar challenge legítimo de segurança → reformular com enquadramento defensivo explícito ("código próprio, hardening"), não insistir no mesmo prompt.
 - **Transporte: `scripts/codex-async.sh` via Bash `run_in_background:true`** — a sessão segue trabalhando e integra o parecer quando o processo termina (nunca `codex exec` cru em foreground: ~350 esperas de até 23min no diagnóstico 2026-07, com o founder de "botão de retomar"). O script faz preflight de auth (falha claro ANTES de gastar quota), retry/backoff só em transitório, hard-stop de 20min (codex trava com processo vivo) e detecta cota esgotada apontando o Caminho B. A skill `/codex` (gstack) carrega o ritual completo — **invocá-la 1× por sessão basta**; consultas seguintes na MESMA sessão vão direto pelo script (o SKILL.md dela custa ~38k tokens por invocação).
 - **Apresente o parecer CRU + a calibração SEPARADA — nunca só a síntese mastigada.** O founder tem de distinguir o que o **Codex** escreveu (achados, severidade, onde ele discorda de você/concede) do que é **decisão SUA** de escopo (o que vira v1/v2, downgrade de severidade). Apagar essa fronteira faz a 2ª opinião parecer fabricada e mata a auditoria (mordido 2026-07-08: apresentei o veredito já integrado → *"esse da você é o Codex?"*). O `codex-async.sh` preserva o arquivo cru (`$out` não é limpo pelo trap) — **mostre-o** ao apresentar, e rotule a calibração como sua.
@@ -270,6 +279,33 @@ Numa trava, **coluna nullable é fail-OPEN**: `coluna >= x` com NULL é NULL, o 
 
 Sinal para revisão: **tabela de intenção que cresce sem a contagem de entidades DISTINTAS crescer** ⇒ o defeito está na chave de idempotência, não no volume. É uma query, e nenhuma tela mostra.
 
+## Teste de money-path que PISCA: o teto que você LÊ não é o que governa
+
+Teste que pisca em money-path treina todo mundo a ignorar vermelho — é o oposto da evidência
+positiva. Mas "é a máquina, sobe o timeout" é quase sempre o diagnóstico errado: **meça o trabalho
+real fora do runner ANTES de tocar em qualquer teto** (um `bun run` num script solto com
+`performance.now()`), e enumere as CAMADAS de teto, que não são uma:
+
+- `it(..., N)` no próprio teste — e ele **encurta** o teto global se for menor;
+- `testTimeout` do vitest (hoje 20000, subido no #271 pelo cold-start sob CPU saturada);
+- **`asyncUtilTimeout` do testing-library** — o que realmente governa `findBy*`/`waitFor`, e que
+  seguia no **default de 1000ms** até ser fixado em 5000 em `src/test/setup.ts`.
+
+⚠️ O estouro do `findBy*` **não se parece com timeout**: sai como `Unable to find role=...`, que lê
+como *elemento ausente*. Foi o que mascarou o flake do `SalesQuotes.accountGuard` (P0-B): medido,
+o caminho até a asserção levava **5.894ms** sob carga contra um budget de **1s**, enquanto o
+`it(..., 15000)` do arquivo aparentava 15s de folga que não existia.
+
+**Subir teto é legítimo só quando o budget é que estava errado** — e mantenha-o ABAIXO do teto de
+cima, senão você troca uma falha diagnosticável (com dump de DOM) por um timeout opaco do runner.
+Quando o errado é o CUSTO, o fix não é teto nenhum: o `manifesto.gate` gastava 29,2s contra teto de
+20s porque recompilava `new RegExp` por (arquivo × padrão) — memoizar resolveu (#1893).
+
+**Falsifique nos dois sentidos, senão o teto novo CEGOU o teste:** teto=1 tem de reproduzir o
+sintoma EXATO, e **sabotar a asserção tem de dar vermelho**. Detalhe e receita:
+`docs/historico/flaky-sob-carga-teto-e-custo.md`.
+
+
 ## Diagnóstico
 
 "Diagnosticado ≠ corrigido" — ver `diagnose-supabase-sync` (estados rígidos de saída; só declara RECUPERADO com novo ciclo + efeito no dado; a ação corretiva é entregue ao humano, nunca aplicada às cegas).
@@ -308,3 +344,75 @@ números em `docs/historico/fila-de-prontidao-e-sensor-de-derivada.md`.
   achados que eu não tinha visto (a graduação escreve por fora do fusível; usar o denominador de *habilitados*)
   e errou o dimensionamento de um terceiro (a rota de primeira compra cobre **5**, não os 81). Verifique cada
   alegação verificável antes de replanejar em cima dela.
+
+## Guard fora da escrita não é guard (TOCTOU em plpgsql)
+
+`SELECT … INTO` → `IF … THEN recusa` → `UPDATE … WHERE id` **não** protege nada sob concorrência:
+decide sobre um retrato que nenhum lock cobre, e o `UPDATE` por PK grava mesmo depois de a linha
+ter virado outra coisa. Custou um pedido de compra REAL no Omie carimbado `cancelado_humano`
+(`cancelar_pedido_sugerido`, [P1] Codex do #2204).
+
+- **O predicado tem de morar na instrução que GRAVA:** `UPDATE … WHERE id = … AND <guard>
+  RETURNING id`. Em READ COMMITTED o Postgres espera o lock do concorrente e **re-avalia o
+  predicado contra a versão nova** (EvalPlanQual), pulando a linha se ela não se qualifica mais.
+  Padrão já existente no repo: `iniciar_envio_portal_pre_claim`.
+- **Releitura depois de 0 linhas serve só para a MENSAGEM** — se ela voltar a decidir, o TOCTOU
+  volta junto.
+- **Teste sequencial não distingue "tem guard" de "o guard é atômico".** O corpo velho passa no
+  sequencial e perde a corrida. Exija: duas conexões, **baseline vermelho** com o corpo antigo
+  REAL (sem ele, verde pode ser "a corrida não aconteceu") e um controle inócuo (concorrência em
+  OUTRA linha não pode bloquear).
+- **`sleep` NÃO é barreira — a ordem tem de ser OBSERVADA.** Com `sleep`, um escalonamento
+  invertido deixa o assert verde sem que a corrida tenha acontecido: o bloqueador commita antes
+  de a vítima começar e até o código VELHO produz o resultado esperado. Barreira de verdade:
+  (1) o bloqueador faz o `UPDATE` dentro de um `DO` e **exige `FOUND`** (senão a corrida "roda"
+  sobre zero linhas); (2) toma um **advisory lock** logo depois, sinal visível de outra sessão de
+  que já travou — e a vítima só é lançada quando esse sinal aparece; (3) o orquestrador **polla
+  `pg_blocking_pids`** até VER a vítima bloqueada, e só então libera. O resultado carrega o
+  testemunho do bloqueio, e um caso extra falsifica a barreira (sem colisão ela tem de dizer
+  "não"). **Rodar nos dois locales pegou isto** — não como teste de tradução, mas como **segunda
+  amostra de escalonamento**: verde 6× em `C`, vermelho na 1ª em `pt_BR.UTF-8`.
+- **Sonda "id que não existe" por `min(id) - 1` é falsa.** Um `INSERT` com id menor ainda não
+  commitado torna o id "ausente" numa linha REAL entre a sonda e a escrita — sequence crescente
+  não ordena commits. Use `NULL`: `id = NULL` nunca casa uma PK.
+- **Assert de `42501` em função `SECURITY INVOKER` mede o privilégio ERRADO** se o papel também
+  não tiver acesso à TABELA — o mesmo `42501` viria de dentro. Conceda as camadas internas no
+  fixture, negue só a entrada, e falsifique concedendo `EXECUTE`.
+- **Lock não atravessa round-trip.** `SELECT … FOR UPDATE` numa edge é inexequível quando a
+  leitura e a escrita são chamadas PostgREST separadas com HTTP externo no meio — cada uma é sua
+  própria transação. Ali o instrumento é **claim atômico** antes da chamada, não lock.
+- **Conditional final UPDATE ingênuo é PIOR que nada** quando o efeito externo já aconteceu:
+  0 linhas ⇒ o PO existe no fornecedor e o banco nunca grava o identificador ⇒ órfão invisível.
+  O fato externo grava-se incondicionalmente; só a **transição de status** é condicional.
+
+→ `docs/historico/guard-fora-da-escrita-nao-e-guard.md`
+
+## Guard DENTRO da RPC protege a porta; o que fecha a CLASSE é trigger
+
+Defesa que mora numa RPC só vale para quem passa por ela. PostgREST cru, SQL na mão e a próxima
+RPC que **reimplemente** a operação escapam — e reimplementar é o modo comum de falha (#2231).
+Quando o invariante é da TABELA, o lugar dele é um **trigger** (precedente da casa:
+`pp_bloqueia_cancel_com_claim`).
+
+- **Recusar sem oferecer porta não elimina a operação — empurra-a para fora da fronteira.** O caso
+  legítimo continua acontecendo, agora sem evidência nem trilha. Guard novo em operação que a
+  operação REALMENTE precisa fazer nasce com a porta junto, ou vira SQL na mão.
+- **O portão do trigger é GUC de sessão, nunca "coluna de intenção":** o mesmo `UPDATE` cru
+  carimbaria a coluna na mesma instrução. GUC fecha porque o PostgREST **não expõe `set_config`**
+  (é de `pg_catalog`; o cliente só alcança `public`). E o GUC carrega o **id da linha**, não um
+  booleano — senão a autorização de um registro vaza para o próximo da transação.
+- **O trigger BEFORE recebe em `OLD` a versão RE-AVALIADA** — então ele fecha o TOCTOU até para
+  quem grava `WHERE id` sem predicado, que é o que a RPC só consegue com o predicado no `WHERE`.
+  Afirmação sobre o motor: **meça** com baseline vermelho, não deduza.
+- **Antes de armar o trigger, meça quem mais escreve** (funções `prosrc`, edges) e transforme cada
+  transição legítima em assert — inclusive **"linha já no estado final aceita `UPDATE` posterior"**,
+  senão o guard congela silenciosamente as linhas históricas.
+- **Cubra o vocabulário por PREFIXO, não por lista**, quando não há CHECK na coluna: status novo
+  nasce coberto em vez de escapar até alguém lembrar de editar a lista.
+- **Sonda de execução que faz `UPDATE` em linha REAL tem de se auto-reverter** (SQLSTATE próprio
+  para forçar rollback do subtransaction nos DOIS ramos) — depender do `BEGIN/COMMIT` do arquivo
+  é apostar em como o bloco foi colado.
+- **`mktemp /tmp/x.XXXXXX.sql` cria o nome LITERAL no macOS** (X só valem no fim): o harness passa
+  UMA vez e depois morre com `File exists`. Teste que só passa uma vez não é regressão.
+
+→ `docs/historico/cancelamento-pos-disparo-porta-com-evidencia.md`

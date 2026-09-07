@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# CAMADA: VALOR da variável. `-v ON_ERROR_STOP=off` é presença sem efeito — um gate que só
+# procura o NOME da flag fica verde aqui, que é a versão textual de "ausente ≠ zero".
+set -uo pipefail
+PSQL="$HOME/.config/afiacao/psql-ro"
+"$PSQL" -v ON_ERROR_STOP=off -tA -f consulta.sql

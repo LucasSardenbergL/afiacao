@@ -68,6 +68,12 @@ const CODIGOS_INTERNOS = new Set([
   'KEYSET_FORA_DE_ORDEM',
   'KEYSET_CHAVE_REPETIDA',
   'KEYSET_PAGINA_SOBREPOSTA',
+  // A RPC-snapshot declara quantos itens produziu e o cliente confere contra o array que chegou.
+  // Divergiu, alguma camada entre o Postgres e o Deno entregou menos — modo PRÓPRIO, e não
+  // `MALFORMADA`: a resposta está bem-formada, o que falta é CONTEÚDO, e o conserto é outro
+  // (investigar o transporte, não a forma). As formas malformadas daquela leitura seguem em
+  // `MALFORMADA` de propósito — é o mesmo defeito entrando pela porta do lado.
+  'SNAPSHOT_TRUNCADO',
 ]);
 
 export function codigoDoErro(erro: ErroPostgrest | null | undefined): string {

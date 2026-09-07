@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,10 +26,24 @@ Deno.serve(async (req) => {
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // ⚠️ SONDA DE VERSÃO — vem ANTES do gate seguinte de propósito: ela não dispara nada, e é pelo
+  // `x-cron-secret` que o founder a alcança sem abrir o app (o gate de auth decide por comparação
+  // de env pura ⇒ IO-free). Daqui pra frente a edge envia WhatsApp de verdade ao cliente.
+  // Corpo lido UMA vez — `req.json()` não se consome duas. Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto: unknown = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") {
+    return json({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
   // Envio de WhatsApp é ação de staff (ou automação service_role). Cron não envia texto livre.
   if (auth.via === "cron") return json({ error: "forbidden", detail: "apenas staff ou service_role" }, 403);
 
-  const { conversationId, text } = await req.json().catch(() => ({}));
+  // Já parseado acima (para a sonda). Normaliza não-objeto para {} — preserva o comportamento
+  // antigo de `.catch(() => ({}))` sem deixar um body `null` quebrar os acessos.
+  const { conversationId, text } = (typeof corpoBruto === "object" && corpoBruto !== null &&
+    !Array.isArray(corpoBruto) ? corpoBruto : {}) as { conversationId?: string; text?: string };
   if (!conversationId || !text) return json({ error: "conversationId e text obrigatórios" }, 400);
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });

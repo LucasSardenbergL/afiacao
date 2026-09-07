@@ -29,14 +29,19 @@ export const respostaSonda = criarRespostaSonda("generate-bundle-argument");
  * é ele que distingue um bundle novo de um velho em produção.
  *
  * `v1.0-prompt-sem-margem` = o contrato do #1520 nesta edge: o prompt da LLM não imprime mais
- * margem por SKU nem LIE do bundle, e o tipo do payload não pede `margin`/`lieBundle`. Nasce
+ * margem por SKU nem LIE do bundle, e o tipo do payload não pede `margin`/`lieBundle`. Nasceu
  * nomeando essa fatia porque é a entrega cuja prova de deploy faltou — um bundle que responde este
  * marcador é necessariamente ≥ o #1520.
+ *
+ * `v1.1-cota-ia` = o caminho de DISPARO passou a consumir cota (`ia_consumir_cota`). A fatia
+ * importa para o deploy porque a RPC é FAIL-CLOSED: sem a linha de `generate-bundle-argument` em
+ * `ia_uso_limite`, este bundle responde 503 em vez de gerar. Um bundle que ecoa este marcador
+ * exige que o seed JÁ tenha rodado — é por isso que a ordem é seed primeiro, deploy depois.
  *
  * ⚠️ O sensor só prova versões A PARTIR DE SI MESMO: ausência do campo `versao` na resposta é
  * bundle pré-marcador, não "versão errada".
  */
-export const VERSAO = "v1.0-prompt-sem-margem";
+export const VERSAO = "v1.1-cota-ia";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

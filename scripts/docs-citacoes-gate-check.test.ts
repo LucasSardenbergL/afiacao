@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  ALVOS_VIVOS,
+  apenasAncoradas,
   auditarCitacoes,
   CONGELADOS,
   contarCitacoesEm,
@@ -72,6 +74,50 @@ describe('parseCitacoes — o que conta como citação', () => {
   it('registra a linha do DOC, para a mensagem apontar onde consertar', () => {
     const [c] = parseCitacoes(DOC, 'linha1\nlinha2\n`src/a.ts:9`<!--cita: z-->').citacoes;
     expect(c.linhaDoDoc).toBe(3);
+  });
+});
+
+describe('parseCitacoes — âncora que quebrou de linha ainda é âncora', () => {
+  it('adota a âncora da linha SEGUINTE — a varredura é linha a linha e o `\\s*` nunca vê o `\\n`', () => {
+    const [c] = parseCitacoes(DOC, 'como diz `src/a.ts:12`\n<!--cita: const x--> — e segue o texto')
+      .citacoes;
+    expect(c).toMatchObject({ alvo: 'src/a.ts', linhas: ['12'], ancora: 'const x' });
+  });
+
+  it('a citação continua com a linha DELA, não a da âncora', () => {
+    const [c] = parseCitacoes(DOC, 'topo\nveja `src/a.ts:12`\n<!--cita: const x-->').citacoes;
+    expect(c.linhaDoDoc).toBe(2);
+  });
+
+  it('NÃO adota se sobrou texto depois da citação — a âncora abaixo não é dela', () => {
+    const [c] = parseCitacoes(DOC, 'veja `src/a.ts:12` e pare aqui\n<!--cita: const x-->').citacoes;
+    expect(c.ancora).toBeNull();
+  });
+
+  it('com DUAS citações na linha, só a última adota — senão a âncora vira de quem não é dona', () => {
+    const cs = parseCitacoes(DOC, '`src/a.ts:1` e `src/b.ts:2`\n<!--cita: const x-->').citacoes;
+    expect(cs.map((c) => c.ancora)).toEqual([null, 'const x']);
+  });
+
+  it('linha seguinte que não é âncora não vira âncora', () => {
+    const [c] = parseCitacoes(DOC, 'veja `src/a.ts:12`\nparágrafo comum').citacoes;
+    expect(c.ancora).toBeNull();
+  });
+
+  it('citação na ÚLTIMA linha do arquivo não estoura ao espiar a próxima', () => {
+    expect(() => parseCitacoes(DOC, 'veja `src/a.ts:12`')).not.toThrow();
+    expect(parseCitacoes(DOC, 'veja `src/a.ts:12`').citacoes[0].ancora).toBeNull();
+  });
+});
+
+describe('apenasAncoradas — a promessa que o autor escreveu à mão', () => {
+  it('fica só com quem tem âncora', () => {
+    const cs = [cita('src/a.ts', ['1'], 'x'), cita('src/b.ts', ['2'], null)];
+    expect(apenasAncoradas(cs).map((c) => c.alvo)).toEqual(['src/a.ts']);
+  });
+
+  it('âncora VAZIA continua sendo âncora — quem recusa é o auditor, não o filtro', () => {
+    expect(apenasAncoradas([cita('src/a.ts', ['1'], '')])).toHaveLength(1);
   });
 });
 
@@ -291,6 +337,18 @@ describe('parseCitacoes — o que foi PULADO também é relato', () => {
   });
 });
 
+describe('escondidas — o que a cerca ABERTA engoliu, para o chamador decidir', () => {
+  it('devolve a citação engolida, e não só o número', () => {
+    const r = parseCitacoes(DOC, 'antes\n```\nveja `src/a.ts:9`<!--cita: z-->');
+    expect(r.escondidas.map((c) => c.alvo)).toEqual(['src/a.ts']);
+    expect(apenasAncoradas(r.escondidas)).toHaveLength(1);
+  });
+
+  it('cerca fechada não esconde nada', () => {
+    expect(parseCitacoes(DOC, '```\nveja `src/a.ts:9`\n```').escondidas).toEqual([]);
+  });
+});
+
 describe('fora do escopo — o gate diz o que NÃO olhou', () => {
   it('lista o doc congelado por diretório, que o varredor de vivos nunca vê', () => {
     const raiz = fixture({
@@ -360,5 +418,35 @@ describe('fora do escopo — o gate diz o que NÃO olhou', () => {
       emCerca: 0,
     });
     expect(s).toContain('0 fora do escopo');
+  });
+});
+
+describe('ALVOS_VIVOS × docs/agent/skills.md — a lista transcrita à mão drifa do código', () => {
+  // `.claude/skills` entrou em `ALVOS_VIVOS` em 2026-08-31 e o parágrafo do `skills.md` seguiu
+  // afirmando que a pasta estava FORA do gate. Quem lesse antes de escrever uma skill concluía que
+  // podia citar `arquivo:linha` sem a âncora `<!--cita:-->` — e descobria no CI, não na escrita; ou,
+  // pior, deixava de citar linha por achar que ninguém conferiria. O defeito é a transcrição à mão:
+  // ela envelhece calada. Este guard faz o doc falhar JUNTO com a mudança que o invalidou.
+  //
+  // A 1ª versão deste teste era TEATRO e a falsificação pegou: pedir que cada alvo aparecesse na
+  // SEÇÃO ficava VERDE com a lista sabotada — porque `.claude/skills` aparece na frase que abre o
+  // parágrafo. Teria passado no doc ERRADO também, que dizia a pasta FORA citando-a pelo nome. O
+  // que se mede é a ENUMERAÇÃO, delimitada por marcador co-locado, e por IGUALDADE DE CONJUNTO —
+  // `toContain` é cego a entrada sobrando.
+  const INICIO = '<!--alvos-vivos:inicio-->';
+  const FIM = '<!--alvos-vivos:fim-->';
+
+  const listaDoDoc = () => {
+    const md = readFileSync(join(process.cwd(), 'docs/agent/skills.md'), 'utf8');
+    const i = md.indexOf(INICIO);
+    const f = md.indexOf(FIM);
+    // Fail-CLOSED: sonda que não acha o alvo é ausência de dado, não aprovação.
+    expect(i, `marcador ${INICIO} sumiu de docs/agent/skills.md`).toBeGreaterThanOrEqual(0);
+    expect(f, `marcador ${FIM} sumiu de docs/agent/skills.md`).toBeGreaterThan(i);
+    return [...md.slice(i + INICIO.length, f).matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  };
+
+  it('a enumeração do doc é exatamente `ALVOS_VIVOS`', () => {
+    expect([...listaDoDoc()].sort()).toEqual([...ALVOS_VIVOS].sort());
   });
 });

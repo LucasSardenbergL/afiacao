@@ -8,8 +8,12 @@ export interface OrderItem {
   descricao: string;
   unidade?: string;
   quantidade: number;
-  valor_unitario: number;
-  valor_total: number;
+  /** `null` = preco NAO SABIDO (veio assim do Omie). O guard de fronteira
+   *  (invalidPricedOrderItemIndices) ja o trata como invalido e BLOQUEIA o salvar:
+   *  quem edita precisa informar o preco, e nao herdar um R$ 0,00 fabricado. */
+  valor_unitario: number | null;
+  /** `null` enquanto nao ha preco unitario — `qtd * null` seria 0 fabricado. */
+  valor_total: number | null;
   tint_cor_id?: string;
   tint_nome_cor?: string;
   tint_formula_id?: string;

@@ -3,6 +3,7 @@ import { AUTHZ_TABELAS_FECHADAS, type TabelaFechada } from './authz-tabelas-fech
 import {
   auditGrantsTabelas,
   compararGrantsProd,
+  TABELA_AUSENTE,
   type GrantFinding,
   type MedicaoProd,
 } from './lib/authz-grants';
@@ -10,8 +11,13 @@ import {
 describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
   // Lista EXAUSTIVA de propósito: a allowlist é curada, então crescer é decisão, não acidente.
   // Adicionar tabela aqui sem medir prod é o modo de falha que o §5.2 do design descreve.
-  it('tem as três tabelas money-path fechadas por privilégio', () => {
+  it('tem as três tabelas money-path fechadas por privilégio + o ledger de atestação de deploy', () => {
+    // `deploy_atestacoes` (2026-09-05): não é money-path — é o instrumento que DECIDE deploy de
+    // edge (`bun run pendencias:deploy`). Entrou DEPOIS do apply em prod, de propósito: registrada
+    // antes (#2199), o audit de prod crashava em `relation does not exist` e o carimbo não podia
+    // ser gravado — o CI ficou vermelho em CARIMBO_CONTRATO_MUDOU sem remédio possível por PR.
     expect(Object.keys(AUTHZ_TABELAS_FECHADAS).sort()).toEqual([
+      'public.deploy_atestacoes',
       'public.omie_products',
       'public.product_costs',
       'public.sales_orders',
@@ -262,8 +268,9 @@ describe('compararGrantsProd — audit de prod (puro)', () => {
 
   it('6. tabela ausente da medição → limpo (zero privilégio é o estado mais fechado)', () => {
     // Só entra no mapa o privilégio PRESENTE; tabela sem nenhum privilégio simplesmente não
-    // aparece. Tabela INEXISTENTE em prod não chega aqui: has_table_privilege já teria feito o
-    // psql falhar, e o executável sai 2 (erro de execução) antes de comparar.
+    // aparece. Tabela INEXISTENTE em prod NÃO chega aqui como chave ausente: o auditor a marca com
+    // a sentinela TABELA_AUSENTE (teste 8) — até 2026-09-05 has_table_privilege derrubava o psql
+    // e o executável saía 2 antes de comparar (crash, não achado).
     expect(compararGrantsProd({}, AL)).toHaveLength(0);
   });
 
@@ -273,5 +280,36 @@ describe('compararGrantsProd — audit de prod (puro)', () => {
     };
     const f = compararGrantsProd(m, AL);
     expect(codigos(f)).toEqual(['NAO_APLICADA']);
+  });
+
+  it('8. tabela que NÃO existe em prod (sentinela TABELA_AUSENTE) → TABELA_NAO_APLICADA (error), nunca limpo', () => {
+    // O objeto ausente é a assinatura da armadilha-mãe: a migration que CRIA (e fecha) a tabela
+    // mergeou e nunca foi colada no SQL Editor. Até 2026-09-05 o auditor nem chegava aqui —
+    // has_table_privilege derrubava o psql e o executável saía 2 (crash) — e exit 2 não grava
+    // carimbo: a dívida ficava INVISÍVEL em vez de datada. Ausência do objeto é ACHADO NOMEADO.
+    const m: MedicaoProd = { 'public.product_costs': TABELA_AUSENTE };
+    const f = compararGrantsProd(m, AL);
+    expect(codigos(f)).toEqual(['TABELA_NAO_APLICADA']);
+    expect(f[0].level).toBe('error');
+    expect(f[0].tabela).toBe('public.product_costs');
+    expect(f[0].file).toBe('(prod)');
+    expect(f[0].msg).toContain(ANCORA); // nomeia a migration a colar, não só "não existe"
+  });
+
+  it('9. ausente E fechadaPor=null → TABELA_NAO_APLICADA vence o FECHO_PENDENTE (prod não tem o objeto)', () => {
+    // FECHO_PENDENTE diz "prod NÃO foi comparada ao contrato" — mas o contrato afirma, no mínimo,
+    // que a tabela EXISTE. Sem o objeto não há o que deixar de comparar: vale o achado mais forte.
+    const f = compararGrantsProd({ 'public.product_costs': TABELA_AUSENTE }, AL_PENDENTE);
+    expect(codigos(f)).toEqual(['TABELA_NAO_APLICADA']);
+    expect(f[0].level).toBe('error');
+  });
+
+  it('10. a sentinela é distinta de "sem privilégio": {} segue limpo, TABELA_AUSENTE acusa', () => {
+    // Dente da representação: se a sentinela colapsasse em "nenhum privilégio" (o `?? {}` de
+    // antes), a tabela inexistente viraria o estado MAIS FECHADO possível — verde por cegueira.
+    expect(compararGrantsProd({ 'public.product_costs': {} }, AL)).toHaveLength(0);
+    expect(codigos(compararGrantsProd({ 'public.product_costs': TABELA_AUSENTE }, AL))).toEqual([
+      'TABELA_NAO_APLICADA',
+    ]);
   });
 });

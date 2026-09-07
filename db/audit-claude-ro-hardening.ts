@@ -32,7 +32,10 @@
  * (3) Schema/tabela AUSENTE não é o mesmo que NEGADO. `has_schema_privilege` ERRA (3F000) quando
  *     o schema não existe, e um objeto que sumiu lido como "negado com sucesso" é o falso-verde
  *     perfeito: a sentinela comemoraria justamente por ter perdido o que vigiava. `to_regnamespace`
- *     /`to_regclass` separam os dois casos, e AUSENTE conta como divergência.
+ *     separa os dois casos no eixo de SCHEMA; no de RELAÇÃO, quem separa é um LEFT JOIN em
+ *     `pg_class` — e NÃO `to_regclass`, que precisa de USAGE no schema para resolver o nome e
+ *     ERRA (em vez de devolver NULL) justamente no cenário que se quer acusar. Nos dois eixos,
+ *     AUSENTE conta como divergência.
  *
  * ── E uma que o `net` obriga ───────────────────────────────────────────────────────────────────
  *
@@ -44,6 +47,42 @@
  * PUBLIC que se vê hoje é o default do próprio pg_net, e um bump pode mexer nele nos dois
  * sentidos. Por isso `extversion` também é asserção: quando o fingerprint divergir, a linha da
  * versão diz na hora se a causa foi um upgrade ou alguém colando SQL.
+ *
+ * ── E os dois eixos que a reconciliação de 2026-09-06 obriga (PR #2275) ────────────────────────
+ *
+ * O fecho de `pg_read_all_data` levou junto o schema `private` (3 MVs de diagnóstico) e a
+ * telemetria de login — e NINGUÉM notou por 13 dias, porque não havia asserção sobre eles. A
+ * reconciliação devolveu os dois: `GRANT USAGE ON SCHEMA private` e uma PONTE de view
+ * (`private.auth_refresh_tokens_diag`) que projeta 7 colunas de `auth.refresh_tokens` sem reabrir
+ * o schema `auth`. Os dois foram colados à mão, como todo o resto — logo, sem asserção aqui,
+ * regridem no mesmo silêncio. Três regressões distintas, cada uma com sua asserção:
+ *
+ *   (a) revogar o USAGE em `private` → o diagnóstico de MV morre. Cobertura por "0 objetos SEM
+ *       SELECT", igual a `public`, MAIS as 3 MVs nomeadas em `tabelasLegiveis`: sem os nomes, um
+ *       `DROP` das três deixaria o schema vazio e "0 sem SELECT" ficaria VERDE por vacuidade.
+ *
+ *   (b) recriar a ponte SEM `security_invoker=on` → ela passa a ler como o OWNER e o ACL por
+ *       coluna deixa de ser barreira (§4: `CREATE OR REPLACE VIEW` sem o `WITH` RESETA a opção).
+ *       ⚠️ `reloptions` guarda o LITERAL do `WITH`: `= on` grava `on`, `= true` grava `true`.
+ *       Casar um literal só é o falso-negativo documentado no §4 — por isso os DOIS são aceitos.
+ *       E `SEM_RELOPTIONS` (view viva, opção resetada) tem mensagem própria, separada de
+ *       `AUSENTE` (view sumiu): são causas diferentes e o conserto é diferente.
+ *
+ *   (c) acrescentar `token`/`parent` à projeção → reabre a escalada inteira (refresh token vivo
+ *       troca-se por JWT de master com a anon key, que é pública). Duas asserções independentes:
+ *       a projeção da ponte (`pg_attribute` da view) e o ACL por COLUNA da tabela de origem.
+ *
+ * ⚠️ O ACL de coluna é lido de `pg_attribute.attacl`, NUNCA de `has_column_privilege`. Medido nesta
+ * prod: como `claude_ro` não tem USAGE em `auth`, `has_column_privilege('claude_ro',
+ * 'auth.refresh_tokens','token','SELECT')` ERRA com `permission denied for schema auth` em vez de
+ * devolver `f` — e o erro derrubaria a query inteira, virando exit 2 (medição impossível) onde se
+ * queria uma asserção. `to_regclass('auth.refresh_tokens')` erra do mesmo jeito, e pela mesma
+ * razão. O catálogo (`pg_class`/`pg_namespace`/`pg_attribute`) é legível a qualquer papel: o
+ * caminho que funciona é o JOIN por NOME. A ponte inverte a lição do §1 ("catálogo não prova
+ * alcance") sem revogá-la — por isso ela também tem sonda executiva, dos DOIS lados: a leitura
+ * das 7 colunas tem de SUCEDER (o `GRANT` de 25/08 já ficou inerte uma vez) e `token` tem de
+ * falhar. Ali a SQLSTATE esperada é `42703` (coluna inexistente), não `42501`: a ponte não
+ * esconde a coluna por privilégio, ela simplesmente não a projeta.
  *
  * ── Por que a sonda executiva existe, se já há `has_*_privilege` ───────────────────────────────
  *
@@ -78,8 +117,28 @@ type Baseline = {
   /** Fingerprint do schema `net`: linhas `F|assinatura|acl`, `R|nome|kind|acl`, `N|net|nspacl`. */
   netAcl: string[];
   pgNetVersion: string;
-  /** Consultas que TÊM de falhar com 42501 — prova de alcance real, que o catálogo não dá. */
-  sondasNegadas: { rotulo: string; sql: string }[];
+  /** Consultas que TÊM de falhar — prova de alcance real, que o catálogo não dá. `sqlstate`
+   *  default `42501`; a ponte usa `42703`, que é coluna-não-existe e não privilégio. */
+  sondasNegadas: { rotulo: string; sql: string; sqlstate?: string }[];
+  /** Consultas que TÊM de SUCEDER. Um GRANT que o catálogo registra e o executor não honra já
+   *  aconteceu aqui (o de 25/08 em `auth.refresh_tokens`): alcance só se prova RODANDO. */
+  sondasPermitidas: { rotulo: string; sql: string }[];
+  /** Schemas cuja cobertura é medida por "0 objetos SEM SELECT" — nunca pelo total (decisão 2). */
+  schemasCobertura: string[];
+  /** A ponte de view que devolve a telemetria de login sem reabrir o schema `auth`. */
+  ponte: {
+    schema: string;
+    relacao: string;
+    /** `reloptions` preserva o literal do `WITH` — `=on` e `=true` são o MESMO desenho (§4). */
+    invokerAceitos: string[];
+    /** Projeção EXATA. Coluna que SAI também é divergência: a telemetria morreria pela metade. */
+    colunas: string[];
+    /** As que reabrem a escalada. Presença aqui é P0, não drift. */
+    colunasProibidas: string[];
+  };
+  /** ACL por COLUNA da tabela-fonte, como fingerprint `coluna|attacl`. Acusa nos dois sentidos:
+   *  `token`/`parent` GANHANDO ACL e qualquer uma das 7 de telemetria PERDENDO o dela. */
+  authColAcl: { schema: string; tabela: string; entradas: string[] };
 };
 
 /**
@@ -90,10 +149,18 @@ const BASELINE_PROD: Baseline = {
   rolattrs: 'super=f bypassrls=t createrole=f createdb=f login=t',
   memberships: 0,
   guc: 'default_transaction_read_only=on',
-  schemasComAlcance: ['public', 'cron', 'supabase_migrations', 'net'],
+  // `private` entrou em 2026-09-06 (#2275): é o schema das 3 MVs de diagnóstico, e caiu no fecho
+  // de 25/08 sem ninguém notar por 13 dias — exatamente o que uma sentinela existe para impedir.
+  schemasComAlcance: ['public', 'private', 'cron', 'supabase_migrations', 'net'],
   // `net` fica FORA desta lista de propósito: o alcance dele vem de PUBLIC, não de grant nominal.
   schemasSemAlcance: ['auth', 'vault', 'storage', 'realtime', 'graphql_public', 'extensions'],
   tabelasLegiveis: [
+    // As 3 MVs de `private` vão NOMEADAS de propósito: a cobertura "0 sem SELECT" é vacuamente
+    // verde num schema vazio, então sem os nomes um DROP das três passaria batido.
+    'private.mv_oportunidade_badge',
+    'private.customer_metrics_mv',
+    'private.mv_sku_ranking_negociacao_paralela',
+    'private.auth_refresh_tokens_diag', // a ponte: SELECT é o que a telemetria de login consome
     'cron.job',
     'cron.job_run_details',
     'net._http_response', // ritual da canária de deploy (docs/agent/deploy.md) depende desta
@@ -125,7 +192,40 @@ const BASELINE_PROD: Baseline = {
     // A joia da coroa do histórico: é `auth.refresh_tokens` que virava sessão de master.
     { rotulo: 'auth.refresh_tokens', sql: 'SELECT count(*) FROM auth.refresh_tokens' },
     { rotulo: 'vault.decrypted_secrets', sql: 'SELECT decrypted_secret FROM vault.decrypted_secrets LIMIT 1' },
+    // 42703, não 42501: a ponte não NEGA a coluna, ela não a projeta. Se um dia alguém a
+    // acrescentar, esta sonda vira 42501 (o ACL de coluna barra) ou SUCESSO (se o ACL cair
+    // junto) — e as duas leituras são vermelho aqui, porque nenhuma é `42703`.
+    { rotulo: 'token na ponte', sqlstate: '42703',
+      sql: 'SELECT token FROM private.auth_refresh_tokens_diag LIMIT 1' },
   ],
+  sondasPermitidas: [
+    { rotulo: 'ponte de telemetria', sql: 'SELECT count(*) FROM private.auth_refresh_tokens_diag' },
+  ],
+  schemasCobertura: ['public', 'private'],
+  ponte: {
+    schema: 'private',
+    relacao: 'auth_refresh_tokens_diag',
+    invokerAceitos: ['security_invoker=on', 'security_invoker=true'],
+    colunas: ['created_at', 'id', 'instance_id', 'revoked', 'session_id', 'updated_at', 'user_id'],
+    colunasProibidas: ['token', 'parent'],
+  },
+  authColAcl: {
+    schema: 'auth',
+    tabela: 'refresh_tokens',
+    // As 7 de telemetria carregam o GRANT de 25/08; `token`/`parent` NÃO têm ACL próprio, e é
+    // essa ausência que mantém a 2ª barreira de pé sob `security_invoker=on`.
+    entradas: [
+      'created_at|{claude_ro=r/postgres}',
+      'id|{claude_ro=r/postgres}',
+      'instance_id|{claude_ro=r/postgres}',
+      'parent|SEM_ACL',
+      'revoked|{claude_ro=r/postgres}',
+      'session_id|{claude_ro=r/postgres}',
+      'token|SEM_ACL',
+      'updated_at|{claude_ro=r/postgres}',
+      'user_id|{claude_ro=r/postgres}',
+    ],
+  },
 };
 
 /** Erro de EXECUÇÃO, não de contrato: exit 2. Um audit que não conseguiu medir não pode sair 0 —
@@ -193,17 +293,66 @@ SELECT 'ROW|SCHEMA|'||s||'|'||(CASE
          WHEN has_schema_privilege(${lit(PAPEL)}, s, 'USAGE') THEN 'SIM' ELSE 'NAO' END)
   FROM unnest(${arr([...b.schemasComAlcance, ...b.schemasSemAlcance])}) s
 UNION ALL
+-- ⚠️ NADA de 'to_regclass(t)' aqui, e a razão é o 'private': resolver um NOME de relação exige
+-- USAGE no schema, então no dia em que o USAGE for revogado o 'to_regclass' ERRA (não devolve
+-- NULL) e derruba a query INTEIRA — a regressão sairia como exit 2 ("não consegui medir") em vez
+-- de exit 1 ("regrediu"), com a mensagem errada. O LEFT JOIN pelo catálogo é indiferente ao
+-- USAGE, e 'has_table_privilege' por OID não faz resolução de nome (é o mesmo motivo pelo qual
+-- ele não enxerga o USAGE — §1). Assim 'AUSENTE' continua sendo AUSENTE de verdade.
 SELECT 'ROW|TABELA|'||t||'|'||(CASE
-         WHEN to_regclass(t) IS NULL THEN 'AUSENTE'
-         WHEN has_table_privilege(${lit(PAPEL)}, t, 'SELECT') THEN 'SIM' ELSE 'NAO' END)
+         WHEN r.oid IS NULL THEN 'AUSENTE'
+         WHEN has_table_privilege(${lit(PAPEL)}, r.oid, 'SELECT') THEN 'SIM' ELSE 'NAO' END)
   FROM unnest(${arr(b.tabelasLegiveis)}) t
+  LEFT JOIN LATERAL (
+    SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+     WHERE n.nspname=split_part(t,'.',1) AND c.relname=split_part(t,'.',2) LIMIT 1
+  ) r ON true
 UNION ALL
 -- "0 sem SELECT", não "413": ver decisão (2) no cabeçalho. O total viaja junto só como contexto
--- para o humano — quem decide o veredito é o segundo número.
-SELECT 'ROW|COBERTURA|public|'||count(*)::text||'|'||
-       count(*) FILTER (WHERE NOT has_table_privilege(${lit(PAPEL)}, c.oid, 'SELECT'))::text
-  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-  WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m')
+-- para o humano — quem decide o veredito é o segundo número. O LATERAL com agregado devolve
+-- SEMPRE 1 linha por schema (inclusive 0 objetos), então o piso de linhas segue determinístico;
+-- e schema AUSENTE sai rotulado, porque "0 objetos, 0 sem SELECT" num schema que sumiu é o
+-- falso-verde da decisão (3) na sua forma mais discreta.
+SELECT 'ROW|COBERTURA|'||s||'|'||(CASE
+         WHEN to_regnamespace(s) IS NULL THEN 'AUSENTE|AUSENTE'
+         ELSE x.total::text||'|'||x.sem::text END)
+  FROM unnest(${arr(b.schemasCobertura)}) s
+  CROSS JOIN LATERAL (
+    SELECT count(*) AS total,
+           count(*) FILTER (WHERE NOT has_table_privilege(${lit(PAPEL)}, c.oid, 'SELECT')) AS sem
+      FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+     WHERE n.nspname=s AND c.relkind IN ('r','p','v','m')
+  ) x
+UNION ALL
+-- A PONTE (#2275). Emite SEMPRE, como o PGNET abaixo: se a view sumir, uma linha a menos
+-- derrubaria o piso e o veredito viraria exit 2 ("não consegui medir") onde o certo é exit 1
+-- ("regrediu"). 'SEM_RELOPTIONS' ≠ 'AUSENTE': a primeira é a view viva com o invoker RESETADO
+-- por um 'CREATE OR REPLACE' sem o 'WITH' (§4), a segunda é a view apagada.
+SELECT 'ROW|PONTE|reloptions|'||coalesce((
+         SELECT coalesce(array_to_string(c.reloptions,','),'SEM_RELOPTIONS')
+           FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname=${lit(b.ponte.schema)} AND c.relname=${lit(b.ponte.relacao)}
+            AND c.relkind='v'),'AUSENTE')
+UNION ALL
+-- Projeção da ponte, uma linha por coluna (conjunto, não contagem). Zero linhas é divergência
+-- legítima e o grupo acima diz a causa — por isso este NÃO entra no piso.
+SELECT 'ROW|PONTECOL|'||a.attname
+  FROM pg_attribute a
+  JOIN pg_class c ON c.oid=a.attrelid
+  JOIN pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname=${lit(b.ponte.schema)} AND c.relname=${lit(b.ponte.relacao)}
+   AND a.attnum>0 AND NOT a.attisdropped
+UNION ALL
+-- ACL por COLUNA da tabela-fonte. JOIN por NOME de propósito: 'to_regclass('auth.refresh_tokens')'
+-- e 'has_column_privilege(...)' ERRAM com 'permission denied for schema auth' quando quem mede é o
+-- 'claude_ro' (medido nesta prod), e um ERROR aqui abortaria a query INTEIRA — a asserção viraria
+-- falha de medição. O catálogo, por outro lado, é legível a qualquer papel.
+SELECT 'ROW|AUTHCOL|'||a.attname||'|'||coalesce(a.attacl::text,'SEM_ACL')
+  FROM pg_attribute a
+  JOIN pg_class c ON c.oid=a.attrelid
+  JOIN pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname=${lit(b.authColAcl.schema)} AND c.relname=${lit(b.authColAcl.tabela)}
+   AND a.attnum>0 AND NOT a.attisdropped
 UNION ALL
 SELECT 'ROW|NETACL|'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')|'
        ||coalesce(p.proacl::text,'DEFAULT')||'|F'
@@ -225,9 +374,12 @@ type Medicao = {
   papel: Record<string, string>;
   schemas: Record<string, string>;
   tabelas: Record<string, string>;
-  cobertura: { total: number; semSelect: number } | null;
+  cobertura: Record<string, { total: string; semSelect: string }>;
   netAcl: string[];
   pgNet: string | null;
+  ponteReloptions: string | null;
+  ponteColunas: string[];
+  authColAcl: string[];
 };
 
 function medir(b: Baseline): Medicao {
@@ -238,7 +390,10 @@ function medir(b: Baseline): Medicao {
     // psql-ro ausente, sem rede, credencial revogada e SQL inválido caem todos aqui.
     erroFatal(`falha ao consultar o banco via psql-ro (${PSQL}): ${(e as Error).message}`);
   }
-  const m: Medicao = { papel: {}, schemas: {}, tabelas: {}, cobertura: null, netAcl: [], pgNet: null };
+  const m: Medicao = {
+    papel: {}, schemas: {}, tabelas: {}, cobertura: {}, netAcl: [], pgNet: null,
+    ponteReloptions: null, ponteColunas: [], authColAcl: [],
+  };
   let lidas = 0;
   for (const linha of saida.split('\n')) {
     if (!linha.startsWith('ROW|')) continue; // descarta o eco de SET do psqlrc e linhas em branco
@@ -248,8 +403,11 @@ function medir(b: Baseline): Medicao {
     if (grupo === 'PAPEL') m.papel[campos[2]] = campos.slice(3).join('|');
     else if (grupo === 'SCHEMA') m.schemas[campos[2]] = campos[3];
     else if (grupo === 'TABELA') m.tabelas[campos[2]] = campos[3];
-    else if (grupo === 'COBERTURA') m.cobertura = { total: Number(campos[3]), semSelect: Number(campos[4]) };
+    else if (grupo === 'COBERTURA') m.cobertura[campos[2]] = { total: campos[3], semSelect: campos[4] };
     else if (grupo === 'PGNET') m.pgNet = campos[3];
+    else if (grupo === 'PONTE') m.ponteReloptions = campos[3];
+    else if (grupo === 'PONTECOL') m.ponteColunas.push(campos[2]);
+    else if (grupo === 'AUTHCOL') m.authColAcl.push(`${campos[2]}|${campos.slice(3).join('|')}`);
     else if (grupo === 'NETACL') {
       // O discriminador (F/R/N) vai no FIM, não no começo: as três formas têm número de campos
       // diferente (função = nome+acl, relação = nome+kind+acl, schema = nome+nspacl), e um
@@ -263,7 +421,12 @@ function medir(b: Baseline): Medicao {
   // Vir menos que o piso significa medição quebrada (parser, psqlrc, saída truncada), e medição
   // quebrada lida como "nada divergente" é o falso-verde perfeito: um audit silencioso é
   // indistinguível de um audit que aprovou.
-  const pisoFixo = 5 + b.schemasComAlcance.length + b.schemasSemAlcance.length + b.tabelasLegiveis.length + 1 + 1;
+  // PONTECOL e AUTHCOL ficam FORA do piso: zero linha ali é regressão de verdade (view apagada,
+  // tabela-fonte sumida) e o comparador de conjunto a reporta como exit 1. Entrassem no piso, a
+  // mesma regressão sairia como exit 2 — severidade errada e mensagem enganosa.
+  const pisoFixo =
+    5 + b.schemasComAlcance.length + b.schemasSemAlcance.length + b.tabelasLegiveis.length +
+    b.schemasCobertura.length + 1 /* PGNET */ + 1 /* PONTE|reloptions */;
   const netLidas = m.netAcl.length;
   if (lidas < pisoFixo + 1 || netLidas < 1) {
     erroFatal(
@@ -280,7 +443,8 @@ function medir(b: Baseline): Medicao {
  * abortaria a query inteira no primeiro erro, levando junto a medição de catálogo.
  */
 function sondar(sondas: Baseline['sondasNegadas']): { rotulo: string; ok: boolean; obs: string }[] {
-  return sondas.map(({ rotulo, sql }) => {
+  return sondas.map(({ rotulo, sql, sqlstate }) => {
+    const esperada = sqlstate ?? '42501';
     try {
       execFileSync(PSQL, ['-v', 'VERBOSITY=verbose', '-tA', '-c', sql], {
         encoding: 'utf8',
@@ -291,16 +455,40 @@ function sondar(sondas: Baseline['sondasNegadas']): { rotulo: string; ok: boolea
     } catch (e) {
       const err = e as { stderr?: Buffer | string; stdout?: Buffer | string };
       const texto = `${err.stderr ?? ''}${err.stdout ?? ''}`;
-      // 42501 = insufficient_privilege. ASCII, invariante a locale: é o único pedaço da mensagem
-      // que sobrevive a uma troca de `lc_messages` no servidor.
-      const negado = texto.includes('42501');
+      // A SQLSTATE é ASCII e invariante a locale: é o único pedaço da mensagem que sobrevive a uma
+      // troca de `lc_messages` no servidor (medido: esta prod fala pt_BR — "LINHA"/"DICA").
+      const negado = texto.includes(esperada);
       return {
         rotulo,
         ok: negado,
         obs: negado
-          ? 'negado com 42501'
-          : `falhou SEM 42501 (outro erro): ${texto.replace(/\s+/g, ' ').trim().slice(0, 160)}`,
+          ? `negado com ${esperada}`
+          : `falhou SEM ${esperada} (outro erro): ${texto.replace(/\s+/g, ' ').trim().slice(0, 160)}`,
       };
+    }
+  });
+}
+
+/**
+ * O espelho da sonda negativa: a consulta tem de SUCEDER. Existe porque o `GRANT SELECT` de 7
+ * colunas de 25/08 ficou INERTE no catálogo por falta de USAGE de schema — "concedido" e
+ * "alcançável" são estados diferentes, e só o executor sabe qual é qual. Se a ponte cair, esta
+ * sonda é a que percebe; nenhuma asserção de catálogo perceberia.
+ */
+function sondarPermitidas(
+  sondas: Baseline['sondasPermitidas'],
+): { rotulo: string; ok: boolean; obs: string }[] {
+  return sondas.map(({ rotulo, sql }) => {
+    try {
+      const saida = execFileSync(PSQL, ['-v', 'VERBOSITY=verbose', '-tA', '-c', sql], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return { rotulo, ok: true, obs: `alcançável (${saida.trim().split('\n').pop() ?? ''})` };
+    } catch (e) {
+      const err = e as { stderr?: Buffer | string; stdout?: Buffer | string };
+      const texto = `${err.stderr ?? ''}${err.stdout ?? ''}`.replace(/\s+/g, ' ').trim();
+      return { rotulo, ok: false, obs: `consulta FALHOU — o alcance caiu: ${texto.slice(0, 160)}` };
     }
   });
 }
@@ -329,32 +517,110 @@ for (const s of b.schemasComAlcance) cmp(`schema ${s} alcançável`, 'SIM', m.sc
 for (const s of b.schemasSemAlcance) cmp(`schema ${s} FORA de alcance`, 'NAO', m.schemas[s] ?? '(sem linha)');
 for (const t of b.tabelasLegiveis) cmp(`SELECT em ${t}`, 'SIM', m.tabelas[t] ?? '(sem linha)');
 
-if (!m.cobertura) div.push('cobertura de public: linha ausente na medição');
-else {
-  cmp('objetos de public SEM SELECT', '0', String(m.cobertura.semSelect));
-  ok.push(`cobertura de public: ${m.cobertura.total} objetos (r/p/v/m), todos com SELECT`);
+for (const s of b.schemasCobertura) {
+  const c = m.cobertura[s];
+  if (!c) div.push(`cobertura de ${s}: linha ausente na medição`);
+  else {
+    cmp(`objetos de ${s} SEM SELECT`, '0', c.semSelect);
+    if (c.semSelect === '0') ok.push(`cobertura de ${s}: ${c.total} objetos (r/p/v/m), todos com SELECT`);
+  }
 }
 
 cmp('versão do pg_net', b.pgNetVersion, m.pgNet ?? '(sem linha)');
 
-// Fingerprint do net: conjunto contra conjunto, para acusar nos DOIS sentidos.
-const esperados = new Set(b.netAcl);
-const medidos = new Set(m.netAcl);
-const sumiram = [...esperados].filter((x) => !medidos.has(x)).sort();
-const surgiram = [...medidos].filter((x) => !esperados.has(x)).sort();
-if (sumiram.length === 0 && surgiram.length === 0) {
-  ok.push(`ACL do schema net: ${medidos.size} entradas, idênticas ao baseline`);
-} else {
+/** Conjunto contra conjunto, para acusar nos DOIS sentidos — fechou, abriu e apareceu novo. */
+const cmpConjunto = (
+  rotulo: string,
+  esperadosArr: readonly string[],
+  medidosArr: readonly string[],
+  okFmt: (n: number) => string,
+) => {
+  const esperados = new Set(esperadosArr);
+  const medidos = new Set(medidosArr);
+  const sumiram = [...esperados].filter((x) => !medidos.has(x)).sort();
+  const surgiram = [...medidos].filter((x) => !esperados.has(x)).sort();
+  if (sumiram.length === 0 && surgiram.length === 0) {
+    ok.push(okFmt(medidos.size));
+    return;
+  }
   div.push(
-    `ACL do schema net mudou (${sumiram.length} sumiram, ${surgiram.length} surgiram)` +
+    `${rotulo} mudou (${sumiram.length} sumiram, ${surgiram.length} surgiram)` +
       sumiram.map((x) => `\n      − ${x}`).join('') +
       surgiram.map((x) => `\n      + ${x}`).join(''),
   );
+};
+
+cmpConjunto(
+  'ACL do schema net',
+  b.netAcl,
+  m.netAcl,
+  (n) => `ACL do schema net: ${n} entradas, idênticas ao baseline`,
+);
+
+// ── a ponte de view (#2275) ────────────────────────────────────────────────────────────────────
+// O invoker vem PRIMEIRO: com ele resetado, o ACL por coluna deixa de ser barreira e as duas
+// asserções seguintes passariam a medir um mundo onde `token` já é legível pelo OWNER.
+const ponteNome = `${b.ponte.schema}.${b.ponte.relacao}`;
+const reloptions = m.ponteReloptions ?? '(sem linha)';
+if (reloptions === 'AUSENTE') {
+  div.push(
+    `ponte ${ponteNome} NÃO EXISTE — a telemetria de login morreu\n` +
+      `      recrie com o bloco de db/reconciliacao-claude-ro-private-auth.sql`,
+  );
+} else if (reloptions === 'SEM_RELOPTIONS') {
+  div.push(
+    `ponte ${ponteNome} perdeu o security_invoker\n` +
+      `      um CREATE OR REPLACE VIEW sem o WITH RESETA a opção (database.md §4): a view voltou\n` +
+      `      a ler como o OWNER e o ACL por coluna DEIXOU de ser barreira`,
+  );
+} else if (b.ponte.invokerAceitos.some((v) => reloptions.split(',').includes(v))) {
+  ok.push(`ponte ${ponteNome}: ${reloptions} (lê como o CALLER — o ACL por coluna segue barreira)`);
+} else {
+  div.push(
+    `ponte ${ponteNome} com reloptions inesperado\n` +
+      `      esperado: um de ${b.ponte.invokerAceitos.join(' | ')}\n` +
+      `      medido:   ${reloptions}`,
+  );
 }
+
+// A asserção de SEGURANÇA, separada do drift: presença de `token`/`parent` na projeção é P0.
+const proibidasNaPonte = b.ponte.colunasProibidas.filter((c) => m.ponteColunas.includes(c));
+if (proibidasNaPonte.length > 0) {
+  div.push(
+    `🚨 ponte ${ponteNome} projeta ${proibidasNaPonte.join('/')}\n` +
+      `      isto REABRE a escalada: refresh token vivo troca-se por JWT de master em\n` +
+      `      POST /auth/v1/token?grant_type=refresh_token, que só pede a anon key (pública)`,
+  );
+} else if (m.ponteColunas.length > 0) {
+  ok.push(`ponte ${ponteNome} não projeta ${b.ponte.colunasProibidas.join('/')}`);
+}
+
+// E o drift da projeção, nas duas direções: coluna que SAI mata metade da telemetria em silêncio.
+cmpConjunto(
+  `projeção da ponte ${ponteNome}`,
+  b.ponte.colunas,
+  m.ponteColunas,
+  (n) => `projeção da ponte ${ponteNome}: ${n} colunas, idênticas ao baseline`,
+);
+
+// ── ACL por COLUNA da tabela-fonte (a 2ª barreira, lida de pg_attribute.attacl) ───────────────
+const fonteNome = `${b.authColAcl.schema}.${b.authColAcl.tabela}`;
+cmpConjunto(
+  `ACL por coluna de ${fonteNome}`,
+  b.authColAcl.entradas,
+  m.authColAcl,
+  (n) =>
+    `ACL por coluna de ${fonteNome}: ${n} colunas, idênticas ao baseline ` +
+    `(${b.ponte.colunasProibidas.join('/')} SEM ACL próprio)`,
+);
 
 for (const s of sondar(b.sondasNegadas)) {
   if (s.ok) ok.push(`sonda ${s.rotulo}: ${s.obs}`);
   else div.push(`sonda ${s.rotulo}\n      ${s.obs}`);
+}
+for (const s of sondarPermitidas(b.sondasPermitidas)) {
+  if (s.ok) ok.push(`sonda + ${s.rotulo}: ${s.obs}`);
+  else div.push(`sonda + ${s.rotulo}\n      ${s.obs}`);
 }
 
 console.log(`\n🔒 sentinela do endurecimento de \`${PAPEL}\` — baseline de 2026-08-25\n`);

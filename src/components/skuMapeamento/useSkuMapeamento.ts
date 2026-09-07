@@ -95,6 +95,11 @@ export function useSkuMapeamento() {
   const upsertMut = useMutation({
     mutationFn: async (payload: typeof EMPTY_FORM & { id?: number }) => {
       const { id, ...rest } = payload;
+      // fator_conversao = unidades do PORTAL por unidade do Omie; ≤0/NaN faria a edge abortar o pedido
+      // (fail-closed). Lança → cai no onError (toast), sem o toast de sucesso.
+      if (!(Number.isFinite(Number(rest.fator_conversao)) && Number(rest.fator_conversao) > 0)) {
+        throw new Error('Fator de conversão tem de ser > 0 (ex.: 0,2 = Omie em litro, portal em balde de 5 L)');
+      }
       if (id) {
         const { error } = await supabase
           .from('sku_fornecedor_externo')

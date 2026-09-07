@@ -12,7 +12,9 @@
 // ============================================================================
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -180,6 +182,44 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do gate desta edge, de propósito, e com duas
+  // diferenças em relação às edges cujo gate já aceita cron-secret (as mesmas da `omie-nfe-webhook`):
+  //  1. o corpo é consumido AQUI (req.json() é one-shot) e reaproveitado no fluxo real abaixo;
+  //  2. a sonda tem gate PRÓPRIO (`authorizeCronOrStaff`) em vez de esperar o gate desta edge.
+  //     O gate daqui é `x-webhook-secret`, o segredo compartilhado com o Omie (que não emite JWT),
+  //     e não aceita `x-cron-secret` — mas é pelo SQL Editor, com cron-secret, que a sonda é
+  //     invocada em produção; atrás dele ela seria inalcançável para quem precisa dela. Nenhum
+  //     caminho fica sem auth, e o FLUXO REAL continua exigindo o webhook-secret logo abaixo.
+  // O custo é pago só quando `probe` vem no corpo: sem a chave, nada disto executa.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // O erro de JSON inválido é GUARDADO e relançado no ponto antigo (dentro do try), para que a
+  // resposta continue sendo o 500 do catch geral. Engoli-lo faria um corpo quebrado virar `{}` e
+  // sair como 200 `unknown_app_key` — o webhook do Omie leria "recebi e descartei" em vez de erro.
+  let corpoBruto;
+  let erroParseCorpo: unknown = null;
+  try {
+    corpoBruto = await req.json();
+  } catch (e) {
+    corpoBruto = {};
+    erroParseCorpo = e;
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   const expectedSecret = Deno.env.get("OMIE_WEBHOOK_SECRET");
   const providedSecret = req.headers.get("x-webhook-secret");
   if (!expectedSecret || !providedSecret || !timingSafeEq(expectedSecret, providedSecret)) {
@@ -190,7 +230,9 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const payload = (await req.json()) as OmieWebhookPayload;
+    // Já parseado acima (para a sonda); o throw do corpo inválido é relançado no ponto antigo.
+    if (erroParseCorpo !== null) throw erroParseCorpo;
+    const payload = corpoBruto as OmieWebhookPayload;
 
     if (payload.ping) {
       console.log("[ping] webhook teste recebido");

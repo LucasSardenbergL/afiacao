@@ -5,15 +5,41 @@ import { Card } from '@/components/ui/card';
 import { Phone, TrendingUp, Wallet, Clock, AlertTriangle, Building2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
+/**
+ * Resumo 360 do cliente a partir das chamadas gravadas (`farmer_calls` com transcript).
+ *
+ * CLASSE "erro colapsado em vazio" (docs/historico/fase-sem-sinal.md), pela porta do
+ * IRMÃO: `const { data } = useCustomerCalls(...)` sem ler `error`, `data ?? []` degradando
+ * a ausência para vazio e `totalCalls === 0` apagando o bloco. Numa ficha de cliente isso
+ * é caro por afirmação: quem abre o 360 e não vê o resumo conclui que NUNCA se falou com
+ * aquele cliente — e decide a abordagem por aí. `farmer_calls` tem 0 linhas hoje (psql-ro,
+ * 2026-08-23); o gatilho é a primeira chamada com transcript.
+ */
 export function CustomerProfile360Summary({ customerId }: { customerId: string }) {
-  const { data } = useCustomerCalls(customerId);
-  const profile = aggregateCustomerProfile(data ?? []);
+  const q = useCustomerCalls(customerId);
+  const { data } = q;
+  const estado = estadoDeLeitura(q);
 
+  // Sem NADA em mãos: avisa em vez de afirmar "nunca falamos com este cliente".
+  if (naoConsegui(estado) && !data) {
+    return (
+      <Card className="p-3">
+        <AvisoLeituraFalhou oque="o histórico de chamadas deste cliente" estado={estado} className="mb-0" />
+      </Card>
+    );
+  }
+  const velho = desatualizado(q, Boolean(data));
+
+  // Ausência VERIFICADA: os estados sem leitura saíram acima.
+  const profile = aggregateCustomerProfile(data ?? []);
   if (profile.totalCalls === 0) return null;
 
   return (
     <Card className="p-3 space-y-3">
+      {velho && <AvisoLeituraFalhou oque="a leitura mais recente" estado={velho} className="mb-0" />}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KPI icon={Phone} label="Chamadas" value={profile.totalCalls.toString()} sub={profile.lastCallAt ? `Última ${formatDistanceToNow(new Date(profile.lastCallAt), { locale: ptBR, addSuffix: true })}` : ''} />
         <KPI icon={Clock} label="Duração total" value={`${Math.floor(profile.totalDurationSeconds / 60)}min`} />

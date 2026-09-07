@@ -10,6 +10,7 @@
  *  - Só ponto: 1-2 casas ou inteiro "0…" = decimal (`"12.5"`,`"0.999"`); vários pontos = milhar pt-BR.
  *    Exatamente 3 casas com inteiro que parece grupo de milhar (`"1.234"`) é AMBÍGUO → `null`.
  *  - Agrupamento mal formado (grupos ≠ 3 dígitos) → `null`.
+ *  - Inteiro vazio com fração (`",5"`, `".5"`, `"-,5"`) = 0,5 · separador solto (`","`, `"."`) → `null`.
  *
  * Existe porque `parseFloat("12,5")` = 12 (engole a vírgula do teclado decimal pt-BR),
  * transformando 12,50 em 1250 no input de preço do pedido.
@@ -25,7 +26,9 @@ export function parseDecimalBR(input: string): number | null {
 
   const finish = (intPart: string, frac: string): number | null => {
     const norm = frac ? `${intPart}.${frac}` : intPart;
-    if (!/^\d+(\.\d+)?$/.test(norm)) return null;
+    // Inteiro vazio é legítimo SÓ com fração (",5"/".5" → 0,5); vazio total (","/".") → null,
+    // nunca 0 — `Number('') === 0` seria fabricação de zero.
+    if (!/^(\d+|\d*\.\d+)$/.test(norm)) return null;
     const n = Number((neg ? '-' : '') + norm);
     return Number.isFinite(n) ? n : null;
   };

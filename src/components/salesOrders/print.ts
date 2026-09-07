@@ -4,16 +4,27 @@ import { buildPrintData } from '@/components/sales/print/buildPrintHtml';
 import { openPrintOrder } from '@/components/OrderPrintLayout';
 import type { CompanyFilter, OmiePayload, OrderItem, SalesOrderRow } from '@/components/sales/print/types';
 import type { SalesOrder } from './types';
+import { totalLinhaOuAusente } from '@/lib/format';
 
 // Total da linha do item. Alguns pedidos (ex.: rascunho) gravam valor_total = 0
 // no item embora o valor_unitario esteja preenchido — nesse caso calculamos
-// quantidade × valor_unitário para não exibir/imprimir R$ 0,00.
+// quantidade × valor_unitário, ou `null` quando o preço é NÃO SABIDO.
+//
+// Era `valor_total || (quantidade || 0) * (valor_unitario || 0)`, que devolvia `0` para item sem
+// preço e imprimia "R$ 0,00" no cupom do cliente — o mesmo byte para "de graça" e "não sei".
+// Agora a ausência atravessa como `null` e a tela mostra "—" (formatPrecoOuAusente).
+// `valor_total` continua tendo precedência quando existe: é o total que o Omie já apurou.
 export function itemTotal(item: {
   valor_total?: number | null;
   quantidade?: number | null;
   valor_unitario?: number | null;
-}): number {
-  return item.valor_total || (item.quantidade || 0) * (item.valor_unitario || 0);
+}): number | null {
+  // `if (item.valor_total)` e nao `!== null`: o `||` original tratava 0 como "AINDA NAO
+  // CALCULADO" e caia no fallback — e um rascunho chega com valor_total 0 e preco unitario
+  // preenchido. Trocar isso por um teste de nulidade devolvia 0 para o rascunho e apagava
+  // o total da tela e do cupom (pego pelo challenge do Codex; ha teste que fixa o caso).
+  if (item.valor_total) return item.valor_total;
+  return totalLinhaOuAusente(item.quantidade, item.valor_unitario);
 }
 
 // sales_orders.account → empresa do cupom. colacor_sc é a entidade Colacor S.C.

@@ -2,21 +2,22 @@
 -- PostgreSQL database dump
 --
 
-\restrict tsosDzLbWGhsTBLEXzCmP2eN2y0oL6uqEIjXYVxejvbK5DwKogiacdRnjod7ngv
+\restrict TYblAFvg7zrh9JK7rVfgv0hn2pFKlRWuGBTVX04nAr4jeZA8c7YcmyajDm5gBw8
 
 -- Dumped from database version 17.6
--- Dumped by pg_dump version 17.10 (Homebrew)
+-- Dumped by pg_dump version 17.9
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
 SET transaction_timeout = 0;
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
+SET client_encoding = 'SQL_ASCII';
+SET standard_conforming_strings = off;
 SELECT pg_catalog.set_config('search_path', '', false);
 SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
+SET escape_string_warning = off;
 SET row_security = off;
 
 --
@@ -502,19 +503,7 @@ CREATE FUNCTION private.cap_carteira_escrever(_uid uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-  SELECT COALESCE(
-    _uid IS NOT NULL
-    AND (
-      public.has_role(_uid, 'master'::public.app_role)
-      OR (
-        public.has_role(_uid, 'employee'::public.app_role)
-        AND EXISTS (
-          SELECT 1 FROM public.commercial_roles cr
-           WHERE cr.user_id = _uid
-             AND cr.commercial_role IN ('gerencial','estrategico','super_admin')
-        )
-      )
-    ), false);
+  SELECT COALESCE(_uid IS NOT NULL AND public.has_role(_uid, 'master'::public.app_role), false);
 $$;
 
 
@@ -522,7 +511,7 @@ $$;
 -- Name: FUNCTION cap_carteira_escrever(_uid uuid); Type: COMMENT; Schema: private; Owner: -
 --
 
-COMMENT ON FUNCTION private.cap_carteira_escrever(_uid uuid) IS 'E2/FU4 — ESCREVER (INSERT/UPDATE/DELETE) em carteira/farmer/tarefas de outro vendedor. Hoje concede ao mesmo conjunto que cap_carteira_ler; separada para permitir apertar a escrita sem reabrir a leitura (spec §4.2).';
+COMMENT ON FUNCTION private.cap_carteira_escrever(_uid uuid) IS 'Capability de ESCRITA da carteira: master-only. Reflete o acesso EFETIVO medido em 2026-08-28 (nenhum usuario possui os papeis comerciais que a versao anterior testava) e falha FECHADO para todo papel ainda nao decidido. Estritamente mais estreita que private.cap_carteira_ler, que segue com gerencial/estrategico/super_admin.';
 
 
 --
@@ -2095,6 +2084,190 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
                  CASE u.grau WHEN 'broken' THEN 0 ELSE 1 END, u.eixo
       ) d
     ) p
+    UNION ALL
+    -- ── analytics_outbox_transporte ──────────────────────────────────────────────
+    -- Promove a CHECK a query que já existia como COMENTÁRIO em
+    -- 20260825225850_analytics_outbox_cron.sql:47 ("Como CONFERIR que isto está
+    -- mesmo funcionando"). Recado não é sensor: ninguém a rodou nas 32h do apagão.
+    --
+    -- ⚠️ O eixo é IDADE DA FILA ATIVA, e NÃO `tentativas`/`quarentena_em`. No
+    -- incidente de 2026-08-26 o worker morreu ANTES do claim (guard de config na
+    -- edge), então 105/105 linhas ficaram em tentativas=0, ultimo_erro=NULL,
+    -- quarentena_em=NULL por 32h. Um check que lesse a máquina de retry teria
+    -- ficado VERDE o apagão inteiro — leria colunas impecáveis e concluiria saúde.
+    -- Só `min(ocorrido_em)` do que não foi aceito denuncia fila que não anda.
+    --
+    -- ⚠️ LIMIARES (revisados no ritual Codex de 2026-08-29, que derrubou os meus):
+    --   • 2h ('stale'): o drain roda */5 ⇒ 2h são 24 oportunidades de cron perdidas
+    --     e já atravessam os degraus rápidos do backoff (1+3+9+27+81 min = 2h01).
+    --     Não é falha isolada; é padrão. Com o Sentinela em */30, o 1º aviso chega
+    --     entre 2h e 2h30.
+    --   • 6h ('broken'): ainda ANTES de o backoff assentar no teto de 4h e MUITO
+    --     antes da quarentena (que só chega em tentativas>=8, ~14h somando
+    --     1+3+9+27+81+240+240+240 min). Permite reparo no MESMO dia.
+    --     ⚠️ Minha proposta original era 24h, justificada por "depois do horizonte
+    --     de 14h da quarentena, logo a máquina de retry nunca rodou". O argumento
+    --     estava certo e a conclusão errada: o que o sensor compra é PRAZO DE
+    --     REPARO, e 24h joga fora um dia inteiro para ganhar uma inferência que o
+    --     `probable_cause` já entrega de graça.
+    --   • BACKSTOP (o que serve a pergunta que originou tudo isto): qualquer linha
+    --     NÃO ACEITA a menos de 7 dias do próprio `purgar_em` é 'broken', por mais
+    --     nova que a fila esteja. É o alarme de "vou perder isto para SEMPRE em
+    --     ≤7 dias", e é o único ramo que enxerga a linha em QUARENTENA — que fica
+    --     não-aceita indefinidamente e por isso é excluída do eixo de idade (senão
+    --     uma quarentena legítima pinta o check de vermelho por 30 dias e o canal
+    --     vira ruído).
+    --
+    -- ⚠️ `message` é ESTÁVEL de propósito — sem contagem, sem idade. O fingerprint
+    -- do watchdog é md5(source|status|severity|message) e `v_material` EXIGE que
+    -- ele se REPITA em duas avaliações consecutivas para escalar. Mensagem que
+    -- carrega o número da fila muda a cada tick, nunca se confirma, e o check vira
+    -- um sensor que avisa uma vez e emudece enquanto a fila cresce — o mesmo
+    -- silêncio, de roupa nova. Os números vivos vão em `age_seconds` (que o
+    -- fingerprint ignora por contrato) e em `probable_cause` (que nem chega ao
+    -- alerta — é da tela /health).
+    --
+    -- ⚠️ `age_seconds` NULL com status 'ok' é o caso SAUDÁVEL (fila vazia ⇒ min()
+    -- NULL), e é contrato explícito desde 20260815153218 — não é dado faltando.
+    --
+    -- ⚠️ severity 'warning', não 'critical': o horizonte de perda é de ~30 dias e o
+    -- backstop avisa 7 dias antes do fim, então nada aqui é emergência no sentido
+    -- de `saldo_bancario`. Inflar severidade é como se muta um canal — e canal
+    -- mudo é este mesmo silêncio outra vez. (10 critical / 19 warning / 7 info.)
+    SELECT 'analytics_outbox_transporte'::text, 'analytics'::text,
+      CASE WHEN ob.quase_perdidas > 0                      THEN 'broken'
+           WHEN ob.idade_s > 6*3600                        THEN 'broken'
+           WHEN ob.idade_s > 2*3600 OR ob.quarentena > 0   THEN 'stale'
+           ELSE 'ok' END,
+      ob.idade_s,
+      (6*3600)::bigint,
+      'min_ocorrido_em_nao_aceito'::text,
+      CASE WHEN ob.quase_perdidas > 0
+             THEN 'Outbox de analytics: evento sera APAGADO sem aceite em menos de 7 dias'
+           WHEN ob.idade_s > 6*3600
+             THEN 'Outbox de analytics PARADA: a fila nao drena ha mais de 6h'
+           WHEN ob.idade_s > 2*3600
+             THEN 'Outbox de analytics lenta: a fila nao drena ha mais de 2h'
+           WHEN ob.quarentena > 0
+             THEN 'Outbox de analytics: evento em quarentena, sera purgado sem aceite'
+           ELSE 'Outbox de analytics drenando' END,
+      ob.ultimo_erro,
+      CASE WHEN ob.quase_perdidas > 0 OR ob.idade_s > 2*3600 OR ob.quarentena > 0
+             THEN 'Na fila: ' || ob.na_fila || ' | quarentena: ' || ob.quarentena
+                  || ' | a <7d da purga: ' || ob.quase_perdidas
+                  || '. Worker morto ANTES do claim (segredo/deploy/gate) deixa tentativas=0 e '
+                  || 'ultimo_erro NULL — a verdade HTTP esta em net._http_response, NAO em '
+                  || 'cron.job_run_details nem em acoes_execucoes.'
+           ELSE NULL END,
+      'Confira net._http_response e os secrets da edge analytics-outbox-drain. Reprocessar e so '
+      || 'zerar proxima_tentativa_em (e quarentena_em, se for o caso). O que expirar vira contagem '
+      || 'em public.analytics_outbox_perda: a serie do PostHog fica com buraco DECLARADO, nao com zero.',
+      'warning'::text
+    FROM (
+      SELECT
+        EXTRACT(EPOCH FROM now() - min(o.ocorrido_em)
+                  FILTER (WHERE o.aceito_em IS NULL AND o.quarentena_em IS NULL))::bigint AS idade_s,
+        count(*) FILTER (WHERE o.aceito_em IS NULL AND o.quarentena_em IS NULL)::int      AS na_fila,
+        count(*) FILTER (WHERE o.quarentena_em IS NOT NULL)::int                          AS quarentena,
+        -- ⚠️ O backstop olha `purgar_em`, não idade: é a ÚNICA leitura que enxerga
+        -- a quarentena (não-aceita para sempre) e a linha cujo prazo encurtou por
+        -- qualquer motivo. `aceito_em IS NULL` sozinho — sem excluir quarentena —
+        -- é de propósito aqui: perder é perder, tenha sido desistência ou pane.
+        count(*) FILTER (WHERE o.aceito_em IS NULL
+                           AND o.purgar_em < now() + interval '7 days')::int               AS quase_perdidas,
+        -- ⚠️ `ultimo_erro` da linha ATIVA mais velha, não `max()` de erro qualquer:
+        -- tem de descrever a MESMA linha que a idade acusa, senão o operador lê o
+        -- erro de um evento e a idade de outro.
+        (SELECT o2.ultimo_erro FROM public.analytics_outbox o2
+          WHERE o2.aceito_em IS NULL AND o2.quarentena_em IS NULL
+          ORDER BY o2.ocorrido_em, o2.id LIMIT 1)                                          AS ultimo_erro
+      FROM public.analytics_outbox o
+    ) ob
+    UNION ALL
+    -- ── analytics_outbox_trigger ────────────────────────────────────────────────
+    -- O trigger `analytics_outbox_pedido_compra` é FAIL-OPEN de propósito: telemetria
+    -- nunca pode reprovar o money-path — aprovar uma compra não falha porque a outbox
+    -- está indisponível. O preço declarado é que um INSERT perdido vira um `RAISE
+    -- WARNING` e mais nada: não nasce linha, então nem o sensor de transporte
+    -- (`analytics_outbox_transporte`) nem a lápide (`analytics_outbox_perda`) têm o que
+    -- contar. A perda acontece ANTES de qualquer um dos dois.
+    --
+    -- ⚠️ O comentário do próprio trigger diz que o que o salva de virar "sonda que
+    -- degrada em silêncio" é a view `analytics_outbox_reconciliacao`. Só que a view é
+    -- uma VIEW: ela responde quando alguém pergunta, e ninguém perguntava. Mesmo
+    -- "recado, não sensor" que o #2098 corrigiu uma camada abaixo.
+    --
+    -- ⚠️ POR QUE NÃO USO A VIEW COMO FONTE, e isso é medição, não preferência: ela
+    -- compara CONTAGENS numa janela de 7 dias. Medido em 2026-08-29, ela acusa
+    -- `aprovada: na_fonte=8, na_outbox=4` — déficit de 4 que é PURO HISTÓRICO: as
+    -- aprovações de 25–26/08 são anteriores ao trigger, que nasceu em 26/08 16:16.
+    -- Um check ligado nela nasceria VERMELHO por um motivo correto, e ensinaria o
+    -- operador a ignorar o canal na primeira semana.
+    --
+    -- A reconciliação aqui é LINHA A LINHA, pela chave de dedup determinística que o
+    -- trigger monta (`'pcs:' || id || ':' || evento`). Sem `LIKE`, sem contagem: ou a
+    -- linha daquela aprovação existe, ou não existe.
+    --
+    -- ⚠️ JANELA DE 48h, e o número tem razão de ser: a outbox PURGA linha aceita 7 dias
+    -- após o aceite. Reconciliar numa janela ≥7 dias faz a purga fabricar déficit falso
+    -- — a linha existiu, cumpriu seu papel e foi eliminada. 48h fica folgadamente dentro
+    -- da retenção (aceitas: 7d; pendentes/quarentena: 30d), então nada que entrou na
+    -- janela pode ter sido apagado. (Achado do ritual Codex de 2026-08-29.)
+    --
+    -- ⚠️ SEM PISO de data, e é escolha explícita: seria tentador ancorar em
+    -- `min(ocorrido_em)` da outbox para ignorar o pré-trigger, mas esse piso ANDA — a
+    -- purga empurra o mínimo para frente e, quando ele ultrapassa a janela, o check fica
+    -- verde por construção. Fail-open disfarçado de guard. Piso constante também não é
+    -- preciso: a janela de 48h já é estritamente posterior ao nascimento do trigger, e
+    -- essa distância só cresce. Se o trigger for dropado e recriado, as aprovações do
+    -- intervalo aparecem como órfãs — o que está CERTO.
+    --
+    -- ⚠️ A linha `expirada` da view fica DE FORA. A própria view a marca 'indicativa'
+    -- porque a expiração não tem timestamp dedicado e usa `atualizado_em`, que qualquer
+    -- UPDATE posterior reescreve. Um check em cima disso alterna sozinho. Precisão >
+    -- recall: vigio o que se PROVA (`aprovado_em` é imutável) e digo que o resto não é
+    -- vigiado, em vez de vigiar mal.
+    --
+    -- ⚠️ Existe um segundo caminho para órfão, e ele NÃO é falso positivo: um pedido
+    -- INSERIDO já aprovado cai no primeiro ramo do `ELSIF` (`TG_OP = 'INSERT'`) e emite
+    -- só 'criada' — o funil perde a transição 'aprovada'. Medidos 2 casos históricos,
+    -- ZERO depois do trigger nascer. Se acender por essa causa, a correção é o ramo do
+    -- trigger, não o limiar daqui.
+    --
+    -- ⚠️ `orfaos = 0` com ZERO aprovações na janela é 'ok' legítimo (fim de semana), não
+    -- sensor cego: aqui o denominador é atividade de negócio, e não há evento a perder.
+    -- O denominador vivo vai em `probable_cause`, para o operador ver "0 de 0" e "0 de
+    -- 12" como coisas diferentes.
+    SELECT 'analytics_outbox_trigger'::text, 'analytics'::text,
+      CASE WHEN tg.orfaos > 0 THEN 'broken' ELSE 'ok' END,
+      tg.idade_s,
+      (48*3600)::bigint,
+      'aprovado_em_sem_linha_na_outbox'::text,
+      CASE WHEN tg.orfaos > 0
+             THEN 'Trigger da outbox PERDEU evento: aprovacao de compra sem linha na fila'
+           ELSE 'Trigger da outbox: nenhuma aprovacao orfa' END,
+      NULL::text,
+      CASE WHEN tg.orfaos > 0
+             THEN 'Orfas: ' || tg.orfaos || ' de ' || tg.aprovacoes || ' aprovacoes em 48h. '
+                  || 'O trigger e fail-open: o INSERT perdido virou RAISE WARNING nos logs do '
+                  || 'Postgres e mais nada. Segunda causa possivel: pedido INSERIDO ja aprovado, '
+                  || 'que emite so reposicao.sugestao_criada.'
+           ELSE NULL END,
+      'Ache o WARNING [analytics_outbox] nos logs do Postgres para a SQLSTATE real. O evento '
+      || 'perdido nao se recupera do trigger: reinsira em analytics_outbox com chave_dedup '
+      || 'pcs:<id>:reposicao.sugestao_aprovada e ocorrido_em = aprovado_em do pedido.',
+      'warning'::text
+    FROM (
+      SELECT
+        count(*) FILTER (WHERE o.chave_dedup IS NULL)::int AS orfaos,
+        count(*)::int                                      AS aprovacoes,
+        EXTRACT(EPOCH FROM now() - min(p.aprovado_em)
+                  FILTER (WHERE o.chave_dedup IS NULL))::bigint AS idade_s
+        FROM public.pedido_compra_sugerido p
+        LEFT JOIN public.analytics_outbox o
+               ON o.chave_dedup = 'pcs:' || p.id::text || ':reposicao.sugestao_aprovada'
+       WHERE p.aprovado_em > now() - interval '48 hours'
+    ) tg
   )
   -- P1: campos de "problema" (erro técnico, causa provável, remédio) só saem quando
   -- o check NÃO está ok. Check verde = nada a reportar.
@@ -3045,8 +3218,46 @@ CREATE FUNCTION public.analytics_outbox_purgar() RETURNS integer
 DECLARE
   v_removidas integer;
 BEGIN
-  DELETE FROM public.analytics_outbox WHERE purgar_em < now();
-  GET DIAGNOSTICS v_removidas = ROW_COUNT;
+  -- ⚠️ ATOMICIDADE (achado do Codex, e o desenho já o satisfazia): a agregação sai
+  -- do `DELETE ... RETURNING`, numa instrução só. Agregar num SELECT e deletar em
+  -- seguida, em duas instruções, deixaria duas purgas concorrentes agregarem as
+  -- MESMAS linhas e só uma deletá-las — perda contada em dobro. E como tudo é uma
+  -- transação, se a lápide não puder ser gravada o DELETE volta atrás: nunca se
+  -- apaga sem recibo.
+  --
+  -- ⚠️ CTEs que MODIFICAM dado ("data-modifying WITH") rodam SEMPRE e até o fim,
+  -- independentemente de a query principal ler a saída delas — é o que garante
+  -- que `gravadas` executa mesmo o SELECT final só olhando `removidas`. Todas
+  -- enxergam o MESMO snapshot, então a lápide vê exatamente o que o DELETE levou.
+  WITH removidas AS (
+    DELETE FROM public.analytics_outbox
+     WHERE purgar_em < now()
+    RETURNING ocorrido_em, evento, aceito_em, quarentena_em
+  ),
+  perdidas AS (
+    SELECT r.ocorrido_em::date AS dia,
+           r.evento,
+           CASE WHEN r.quarentena_em IS NOT NULL THEN 'quarentena'
+                ELSE 'sem_aceite' END AS motivo,
+           count(*)::integer  AS quantidade,
+           min(r.ocorrido_em) AS mais_antigo
+      FROM removidas r
+     WHERE r.aceito_em IS NULL
+     GROUP BY 1, 2, 3
+  ),
+  gravadas AS (
+    INSERT INTO public.analytics_outbox_perda AS p
+                (dia, evento, motivo, quantidade, mais_antigo)
+    SELECT pe.dia, pe.evento, pe.motivo, pe.quantidade, pe.mais_antigo
+      FROM perdidas pe
+    ON CONFLICT ON CONSTRAINT analytics_outbox_perda_pk DO UPDATE
+      SET quantidade    = p.quantidade + EXCLUDED.quantidade,
+          mais_antigo   = least(p.mais_antigo, EXCLUDED.mais_antigo),
+          registrado_em = now()
+    RETURNING 1
+  )
+  SELECT count(*)::integer INTO v_removidas FROM removidas;
+
   RETURN v_removidas;
 END;
 $$;
@@ -3516,6 +3727,100 @@ BEGIN
   GET DIAGNOSTICS v_count = ROW_COUNT;
   RETURN v_count;
 END $$;
+
+
+--
+-- Name: apriori_universo_snapshot(text[], integer, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apriori_universo_snapshot(p_status_nao_venda text[], p_teto_linhas integer DEFAULT 250000, p_teto_bytes bigint DEFAULT 25165824) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  -- Espelho da autoridade `STATUS_NAO_VENDA` (TS `_shared/universo-pedidos.ts`, que por sua vez
+  -- espelha o corpo em prod de `private.margem_cliente_agregada()`).
+  c_canonico  constant text[] := ARRAY['cancelado','rascunho','pendente','orcamento'];
+  c_max_linhas constant integer := 500000;
+  c_max_bytes  constant bigint  := 33554432;  -- 32 MiB — o máximo ABSOLUTO, não contornável
+  v_teto_linhas integer := least(coalesce(p_teto_linhas, 0), c_max_linhas);
+  v_teto_bytes  bigint  := least(coalesce(p_teto_bytes, 0), c_max_bytes);
+  v_itens jsonb;
+  v_bytes bigint;
+BEGIN
+  -- FAIL-CLOSED na denylist. Não basta "não-vazia e sem NULL": uma lista que OMITA `cancelado`
+  -- passaria nessas duas checagens e produziria um universo semanticamente inválido — pedido
+  -- cancelado virando venda — sem erro nenhum (achado do challenge Codex). A função exige
+  -- IGUALDADE DE CONJUNTO com a lista canônica, ignorando ordem e repetição. Isso transforma a
+  -- paridade TS↔SQL, que hoje é um guard de teste, em invariante EXECUTÁVEL no banco: divergiu,
+  -- a leitura para — que é o desfecho certo quando a alternativa é publicar regra errada.
+  IF p_status_nao_venda IS NULL
+     OR (SELECT array_agg(DISTINCT x ORDER BY x) FROM unnest(p_status_nao_venda) x) IS DISTINCT FROM
+        (SELECT array_agg(DISTINCT x ORDER BY x) FROM unnest(c_canonico) x)
+  THEN
+    RAISE EXCEPTION 'apriori_universo_snapshot: denylist de status divergente da canônica (recebido %, esperado %) — publicar o universo com outra denylist é publicar regra de associação sobre pedido que não é venda', p_status_nao_venda, c_canonico
+      USING ERRCODE = '22023';
+  END IF;
+  IF v_teto_linhas <= 0 OR v_teto_bytes <= 0 THEN
+    RAISE EXCEPTION 'apriori_universo_snapshot: teto inválido (linhas=%, bytes=%)', v_teto_linhas, v_teto_bytes
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- ═══ A ÚNICA QUERY QUE TOCA AS TABELAS ═══════════════════════════════════════════════════
+  -- Um snapshot MVCC. O JOIN interno é o que era o `sales_orders!inner`; os filtros de universo
+  -- (produto vinculado, não-apagado, status de venda) são os mesmos do call-site de hoje.
+  -- `ORDER BY` dentro do agregado: o Apriori é reprodutível só se a ordem de entrada for estável.
+  -- `oi.id` desempata e NÃO é projetado — ele existia no `.select()` só porque o cursor do keyset
+  -- precisava dele, e o cursor morreu aqui.
+  SELECT coalesce(
+           jsonb_agg(
+             jsonb_build_object(
+               'sales_order_id', t.sales_order_id,
+               'product_id',     t.product_id,
+               'sales_orders',   jsonb_build_object('account', t.account)
+             )
+             ORDER BY t.sales_order_id, t.product_id, t.id
+           ),
+           '[]'::jsonb
+         )
+    INTO v_itens
+  FROM (
+    SELECT oi.id, oi.sales_order_id, oi.product_id, so.account
+    FROM public.order_items oi
+    JOIN public.sales_orders so ON so.id = oi.sales_order_id
+    WHERE oi.product_id IS NOT NULL
+      AND so.deleted_at IS NULL
+      AND so.status <> ALL (p_status_nao_venda)
+    ORDER BY oi.id
+    LIMIT v_teto_linhas + 1
+  ) t;
+  -- ═════════════════════════════════════════════════════════════════════════════════════════
+
+  -- Daqui para baixo NADA lê tabela: é computação sobre o valor já materializado.
+  IF jsonb_array_length(v_itens) > v_teto_linhas THEN
+    RAISE EXCEPTION 'apriori_universo_snapshot: universo excede o teto de % linhas — aumente o teto DEPOIS de conferir o heap da edge, ou volte a paginar COM snapshot', v_teto_linhas
+      USING ERRCODE = '54000';
+  END IF;
+  v_bytes := octet_length(v_itens::text);
+  IF v_bytes > v_teto_bytes THEN
+    RAISE EXCEPTION 'apriori_universo_snapshot: universo com % bytes excede o teto de % bytes — aumente o teto DEPOIS de conferir o heap da edge, ou volte a paginar COM snapshot', v_bytes, v_teto_bytes
+      USING ERRCODE = '54000';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'total',       jsonb_array_length(v_itens),
+    'bytes_itens', v_bytes,
+    'itens',       v_itens
+  );
+END;
+$$;
+
+
+--
+-- Name: FUNCTION apriori_universo_snapshot(p_status_nao_venda text[], p_teto_linhas integer, p_teto_bytes bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.apriori_universo_snapshot(p_status_nao_venda text[], p_teto_linhas integer, p_teto_bytes bigint) IS 'Universo do Apriori num snapshot CONSISTENTE de leitura (uma única query = um snapshot MVCC), fechando a CESTA RASGADA da leitura paginada. NÃO garante revisão logicamente completa do pedido — o writer não é atômico (ver cabeçalho da migration). Fail-closed: denylist divergente e estouro de teto LANÇAM, nunca truncam.';
 
 
 --
@@ -5040,6 +5345,96 @@ $$;
 
 
 --
+-- Name: cockpit_itens_snapshot(timestamp with time zone, integer, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cockpit_itens_snapshot(p_created_at_de timestamp with time zone, p_teto_linhas integer DEFAULT 150000, p_teto_bytes bigint DEFAULT 25165824) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  c_max_linhas constant integer := 500000;
+  c_max_bytes  constant bigint  := 33554432;
+  v_teto_linhas integer := least(coalesce(p_teto_linhas, 0), c_max_linhas);
+  v_teto_bytes  bigint  := least(coalesce(p_teto_bytes, 0), c_max_bytes);
+  v_itens jsonb;
+  v_bytes bigint;
+BEGIN
+  -- Sem prefiltro de carga a leitura viraria a tabela INTEIRA (70.531 linhas contra 14.628 na
+  -- janela medida) — degradar para "tudo" é o oposto de fail-closed.
+  IF p_created_at_de IS NULL THEN
+    RAISE EXCEPTION 'cockpit_itens_snapshot: `p_created_at_de` ausente — sem o prefiltro de carga a leitura viraria a tabela inteira'
+      USING ERRCODE = '22023';
+  END IF;
+  IF v_teto_linhas <= 0 OR v_teto_bytes <= 0 THEN
+    RAISE EXCEPTION 'cockpit_itens_snapshot: teto inválido (linhas=%, bytes=%)', v_teto_linhas, v_teto_bytes
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- ═══ A ÚNICA QUERY QUE TOCA AS TABELAS ═══════════════════════════════════════════════════
+  SELECT coalesce(
+           jsonb_agg(
+             jsonb_build_object(
+               'customer_user_id',    t.customer_user_id,
+               'product_id',          t.product_id,
+               'omie_codigo_produto', t.omie_codigo_produto,
+               'quantity',            t.quantity,
+               'unit_price',          t.unit_price,
+               'discount',            t.discount,
+               'sales_order_id',      t.sales_order_id,
+               'sales_orders', jsonb_build_object(
+                 'status',         t.status,
+                 'deleted_at',     t.deleted_at,
+                 'order_date_kpi', t.order_date_kpi,
+                 'account',        t.account,
+                 'origem',         t.origem,
+                 'checkout_id',    t.checkout_id
+               )
+             )
+             ORDER BY t.id
+           ),
+           '[]'::jsonb
+         )
+    INTO v_itens
+  FROM (
+    SELECT oi.id, oi.customer_user_id, oi.product_id, oi.omie_codigo_produto, oi.quantity,
+           oi.unit_price, oi.discount, oi.sales_order_id,
+           so.status, so.deleted_at, so.order_date_kpi, so.account, so.origem, so.checkout_id
+    FROM public.order_items oi
+    JOIN public.sales_orders so ON so.id = oi.sales_order_id
+    WHERE oi.created_at >= p_created_at_de
+    ORDER BY oi.id
+    LIMIT v_teto_linhas + 1
+  ) t;
+  -- ═════════════════════════════════════════════════════════════════════════════════════════
+
+  IF jsonb_array_length(v_itens) > v_teto_linhas THEN
+    RAISE EXCEPTION 'cockpit_itens_snapshot: universo excede o teto de % linhas — aumente o teto DEPOIS de conferir o heap da edge, ou estreite a janela de carga', v_teto_linhas
+      USING ERRCODE = '54000';
+  END IF;
+  v_bytes := octet_length(v_itens::text);
+  IF v_bytes > v_teto_bytes THEN
+    RAISE EXCEPTION 'cockpit_itens_snapshot: universo com % bytes excede o teto de % bytes — aumente o teto DEPOIS de conferir o heap da edge, ou estreite a janela de carga', v_bytes, v_teto_bytes
+      USING ERRCODE = '54000';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'total',       jsonb_array_length(v_itens),
+    'bytes_itens', v_bytes,
+    'itens',       v_itens
+  );
+END;
+$$;
+
+
+--
+-- Name: FUNCTION cockpit_itens_snapshot(p_created_at_de timestamp with time zone, p_teto_linhas integer, p_teto_bytes bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.cockpit_itens_snapshot(p_created_at_de timestamp with time zone, p_teto_linhas integer, p_teto_bytes bigint) IS 'Itens do cockpit de valor num snapshot CONSISTENTE de leitura (uma única query = um snapshot MVCC), fechando a CESTA RASGADA da leitura paginada. NÃO garante revisão logicamente completa do pedido — o writer não é atômico (ver cabeçalho da migration). Fail-closed: prefiltro ausente e estouro de teto LANÇAM, nunca truncam.';
+
+
+--
 -- Name: concluir_com_comprovacao(uuid, text, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5675,7 +6070,8 @@ DECLARE
     'reposicao_sayerlack_fabricado','omie_tipo_produto_oben','vendas_familia_ausente',
     'tint_cobertura_bases',
     'custos_proxy_conf_alta','custos_product_cost_revivido','pedidos_compra_sync',
-    'carteira_identidade_quarentena','sync_state_saude'];
+    'carteira_identidade_quarentena','sync_state_saude',
+    'analytics_outbox_transporte','analytics_outbox_trigger'];
   v_deadman_h int := 3;   -- cron é */30 ⇒ 3h = 6 rodadas completas perdidas
   r           record;
   v_rows      jsonb;
@@ -9041,7 +9437,11 @@ BEGIN
                    'reposicao_portal_pipeline','reposicao_portal_humano',
                    'reposicao_sayerlack_fabricado','omie_tipo_produto_oben',
                    'vendas_familia_ausente','tint_cobertura_bases','carteira_identidade_quarentena',
-                   'custos_proxy_conf_alta','custos_product_cost_revivido','alert_channel','pedidos_compra_sync');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
+                   'custos_proxy_conf_alta','custos_product_cost_revivido','alert_channel','pedidos_compra_sync',
+                   -- [2026-08-29] `sync_state_saude` estava faltando desde 2026-08-24: o check
+                   -- existia, alertava, e o RESUMO do e-mail nao o listava. Entra junto.
+                   'sync_state_saude','analytics_outbox_transporte',
+                   'analytics_outbox_trigger');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
 
   v_titulo := '[Watchdog'
               || CASE WHEN (v_ativos + v_dh_ativos) > 0
@@ -15064,6 +15464,356 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: reconciliar_pedidos_omie(jsonb, text[], timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reconciliar_pedidos_omie(p_pedidos jsonb, p_status_gerido_omie text[], p_lido_em timestamp with time zone) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+DECLARE
+  -- Espelho da autoridade `STATUS_OMIE` (TS `_shared/omie-pedido.ts`): os status cujo dono é o
+  -- Omie. Status app-avançado (`confirmado`, `entregue`, ...) NÃO está aqui de propósito — quem
+  -- reconcilia por cima dele apaga trabalho humano.
+  c_status_omie  constant text[] := ARRAY['importado','separacao','enviado','faturado','cancelado'];
+  -- Teto do LOTE. A página do ListarPedidos é de 100; 500 é folga. NÃO é parâmetro: um limite que
+  -- o chamador contorna passando um número maior não é limite (achado do challenge do #2132).
+  c_max_pedidos  constant integer := 500;
+
+  v_pedido        jsonb;
+  v_account       text;
+  v_hash          text;
+  v_status_omie   text;
+  v_itens         jsonb;
+  v_items_json    jsonb;
+  v_total_novo    numeric;
+
+  v_order_id      uuid;
+  v_customer      uuid;
+  v_status_atual  text;
+  v_total_atual   numeric;
+  v_status_novo   text;
+
+  v_n_validos     integer;
+  v_n_distintos   integer;
+  v_atual_dup     integer;
+  v_items_atual   jsonb;
+  v_subtotal_atual numeric;
+  v_lido_atual    timestamptz;
+  v_cab_mudou     boolean;
+  v_stale         integer := 0;
+  v_ambiguo       integer := 0;
+  v_del int; v_upd int; v_ins int;
+  v_itens_mudaram boolean;
+  v_status_mudou  boolean;
+  v_total_mudou   boolean;
+
+  v_upserts       integer := 0;
+  v_divergences   integer := 0;
+  v_corrections   integer := 0;
+  v_sku_repetido  integer := 0;
+  v_sem_item      integer := 0;
+  v_sem_pai       integer := 0;
+  v_falhas        jsonb   := '[]'::jsonb;
+BEGIN
+  IF p_pedidos IS NULL OR jsonb_typeof(p_pedidos) <> 'array' THEN
+    RAISE EXCEPTION 'reconciliar_pedidos_omie: p_pedidos deve ser array jsonb (veio %)', jsonb_typeof(p_pedidos)
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- FAIL-CLOSED na lista de status geridos pelo Omie, ANTES do loop: se a lista divergiu, NENHUM
+  -- pedido deve ser tocado. Não basta "não-vazia e sem NULL" — uma lista que ACRESCENTE
+  -- `confirmado` faria a reconciliação rebaixar um pedido que o time já avançou à mão, e uma que
+  -- OMITA `importado` congelaria pedidos legítimos em silêncio. Exigir IGUALDADE DE CONJUNTO
+  -- promove a paridade TS↔SQL de guard de teste a invariante EXECUTÁVEL em produção — a mesma
+  -- forma que `apriori_universo_snapshot` usa para a denylist de status (#2132).
+  IF p_status_gerido_omie IS NULL
+     OR (SELECT array_agg(DISTINCT x ORDER BY x) FROM unnest(p_status_gerido_omie) x) IS DISTINCT FROM
+        (SELECT array_agg(DISTINCT x ORDER BY x) FROM unnest(c_status_omie) x)
+  THEN
+    RAISE EXCEPTION 'reconciliar_pedidos_omie: lista de status geridos pelo Omie divergente da canônica (recebido %, esperado %) — reconciliar status com outra lista é clobberar status app-avançado ou congelar pedido legítimo',
+      p_status_gerido_omie, c_status_omie
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Ausente ≠ "agora". Assumir `now()` faria toda chamada parecer a mais fresca de todas e
+  -- desligaria o CAS em silêncio — a leitura velha voltaria a vencer.
+  IF p_lido_em IS NULL THEN
+    RAISE EXCEPTION 'reconciliar_pedidos_omie: p_lido_em ausente — sem o instante da leitura não há como barrar escrita de revisão VELHA'
+      USING ERRCODE = '22023';
+  END IF;
+  -- Leitura no futuro é relógio torto do chamador, e um carimbo torto envenena o CAS de todos os
+  -- runs seguintes (nenhum deles conseguiria mais escrever). Tolerância de 1 min para skew.
+  IF p_lido_em > now() + interval '1 minute' THEN
+    RAISE EXCEPTION 'reconciliar_pedidos_omie: p_lido_em no futuro (% > %) — relógio do chamador envenenaria o compare-and-set', p_lido_em, now()
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF jsonb_array_length(p_pedidos) > c_max_pedidos THEN
+    RAISE EXCEPTION 'reconciliar_pedidos_omie: lote de % pedidos excede o teto de % — divida a chamada (truncar em silêncio seria pior)',
+      jsonb_array_length(p_pedidos), c_max_pedidos
+      USING ERRCODE = '54000';
+  END IF;
+
+  -- ⚠️ ORDEM DETERMINÍSTICA (achado do challenge). Uma chamada é UMA transação: os locks dos
+  -- pedidos já processados ficam presos até o fim dela. Dois lotes contendo os mesmos pedidos em
+  -- ordens diferentes — inclusive cruzando com `criar_pedidos_com_itens` — formam ciclo AB/BA e
+  -- deadlockam. Ordenar por (account, hash_payload) faz toda chamada pegar os locks na MESMA
+  -- ordem, o que torna o ciclo impossível em vez de improvável.
+  FOR v_pedido IN
+    SELECT e FROM jsonb_array_elements(p_pedidos) e
+     ORDER BY e->>'account', e->>'hash_payload'
+  LOOP
+    -- ── subtransação por pedido (G9 da irmã): um pedido ruim não derruba os outros, e o que ele
+    --    tiver escrito até o erro é DESFEITO — que é justamente a atomicidade lógica pedida aqui.
+    --    Substitui o "grava itens primeiro, cabeçalho só se nenhum item falhou" que o TS fazia à
+    --    mão, e que nunca cobriu a falha ENTRE dois writes de item. ──
+    BEGIN
+      v_order_id := NULL;
+      v_del := 0; v_upd := 0; v_ins := 0;
+
+      v_account     := v_pedido->>'account';
+      v_hash        := v_pedido->>'hash_payload';
+      v_status_omie := v_pedido->>'status_omie';   -- NULL = etapa desconhecida (o TS já decidiu)
+      v_itens       := coalesce(v_pedido->'itens', '[]'::jsonb);
+      v_items_json  := v_pedido->'items';
+
+      IF v_account IS NULL OR v_hash IS NULL THEN
+        RAISE EXCEPTION 'pedido sem account/hash_payload' USING ERRCODE = '22023';
+      END IF;
+
+      -- Ausente ≠ zero (money-path §2). `total` faltando NÃO vira 0: zerar o total de um pedido
+      -- real é fabricar número no caminho da positivação/comissão. Idem `items`, cuja ausência
+      -- não pode virar `[]` — isso APAGARIA o retrato do pedido no cabeçalho.
+      IF (v_pedido->>'total') IS NULL THEN
+        RAISE EXCEPTION 'pedido % sem total — ausente não é zero', v_hash USING ERRCODE = '22023';
+      END IF;
+      v_total_novo := (v_pedido->>'total')::numeric;
+      IF v_items_json IS NULL OR jsonb_typeof(v_items_json) <> 'array' THEN
+        RAISE EXCEPTION 'pedido % sem items (jsonb array) — ausente não é lista vazia', v_hash USING ERRCODE = '22023';
+      END IF;
+      IF v_status_omie IS NOT NULL AND NOT (v_status_omie = ANY (c_status_omie)) THEN
+        RAISE EXCEPTION 'pedido % com status_omie desconhecido (%)', v_hash, v_status_omie USING ERRCODE = '22023';
+      END IF;
+
+      -- [A4/G7] guard de leitura vazia/malformada: sem item VÁLIDO o pedido NÃO é reconciliado —
+      -- nem itens nem cabeçalho. Um ListarPedidos degenerado não pode zerar o total de um pedido
+      -- real nem apagar seus itens.
+      SELECT count(*), count(DISTINCT (it->>'omie_codigo_produto')::bigint)
+        INTO v_n_validos, v_n_distintos
+        FROM jsonb_array_elements(v_itens) AS it
+       WHERE (it->>'omie_codigo_produto') IS NOT NULL;
+      IF v_n_validos = 0 THEN
+        v_sem_item := v_sem_item + 1;
+        CONTINUE;
+      END IF;
+
+      -- Identidade IMUTÁVEL: o pai vem pelo hash determinístico (único pelo índice parcial
+      -- uniq_sales_orders_omie_hash), NUNCA por omie_numero_pedido — pegaria a linha errada
+      -- (causa-raiz #B). `FOR UPDATE` serializa contra `criar_pedidos_com_itens`, que trava o
+      -- mesmo pai. Sem pai não há o que reconciliar: quem INSERE é o omie-vendas-sync.
+      -- P1-3: `items`/`subtotal`/`omie_reconciliado_em` entram na leitura porque entram na DECISÃO.
+      SELECT id, customer_user_id, status, total, items, subtotal, omie_reconciliado_em
+        INTO v_order_id, v_customer, v_status_atual, v_total_atual,
+             v_items_atual, v_subtotal_atual, v_lido_atual
+        FROM public.sales_orders
+       WHERE account = v_account AND hash_payload = v_hash
+       FOR UPDATE;
+      IF v_order_id IS NULL THEN
+        v_sem_pai := v_sem_pai + 1;
+        CONTINUE;
+      END IF;
+
+      -- ── P1-2: COMPARE-AND-SET. Uma leitura mais VELHA que a que produziu o estado atual não
+      --    escreve. Sem isto, o `FOR UPDATE` garante que as escritas não se entrelaçam, mas não
+      --    que a ÚLTIMA a chegar é a mais NOVA — e o banco fica atomicamente errado. `>=` e não
+      --    `>`: duas páginas do MESMO run trazem o mesmo carimbo e a segunda não pode ser barrada,
+      --    então o empate só é rejeitado quando nada mudaria de qualquer forma — por isso o
+      --    empate PASSA e só o estritamente ANTERIOR é recusado.
+      IF v_lido_atual IS NOT NULL AND p_lido_em < v_lido_atual THEN
+        v_stale := v_stale + 1;
+        CONTINUE;
+      END IF;
+
+      -- ── P1-1 (achado do challenge, MEDIDO em prod: 1.179 pares repetidos em 1.049 pedidos
+      --    Omie vivos): `omie_codigo_produto` NÃO é identidade de linha, e a duplicidade tem DOIS
+      --    lados. O guard antigo olhava só o conjunto desejado, e com isso:
+      --      · duplicata no estado ATUAL caía toda no `UPDATE` (`d.cod = a.cod`), as duas linhas
+      --        recebiam o MESMO conteúdo, nenhuma era deletada — e o cabeçalho passava a
+      --        descrever UMA linha enquanto existiam duas. Apriori e cockpit DOBRAM o valor.
+      --      · duplicata no DESEJADO pulava os itens mas reconciliava o cabeçalho — "filhos
+      --        velhos + cabeçalho novo", que é a revisão MISTA que esta função existe para
+      --        eliminar. O antigo assert C6 exigia esse comportamento: o teste protegia o defeito.
+      --    Enquanto não houver identidade de linha persistida (`det.ide.codigo_item` — correção
+      --    ESTRUTURAL, escopo próprio, exige backfill das ~70 mil linhas vivas), o desfecho certo
+      --    é NÃO TOCAR NO PEDIDO: nem itens, nem cabeçalho. Precisão > recall — um pedido que
+      --    fica na revisão anterior COMPLETA é honesto; um pedido com valor dobrado, não.
+      SELECT count(*) INTO v_atual_dup FROM (
+        SELECT 1 FROM public.order_items
+         WHERE sales_order_id = v_order_id AND omie_codigo_produto IS NOT NULL
+         GROUP BY omie_codigo_produto HAVING count(*) > 1
+      ) d;
+      IF v_n_distintos <> v_n_validos OR v_atual_dup > 0 THEN
+        v_ambiguo := v_ambiguo + 1;
+        IF v_n_distintos <> v_n_validos THEN
+          v_sku_repetido := v_sku_repetido + 1;
+        END IF;
+        CONTINUE;
+      END IF;
+
+      BEGIN
+        -- ── A reconciliação INTEIRA numa única statement. As três CTEs de escrita enxergam o
+        --    MESMO snapshot inicial, que é exatamente o que se quer: os três conjuntos são
+        --    disjuntos por construção (remover / atualizar / inserir), então nenhuma precisa ver
+        --    o efeito da outra. Espelha `diffOrderItens` do TS, inclusive a tolerância de 1e-6
+        --    que evita reescrever linha por ruído de ponto flutuante. ──
+        WITH desejado AS (
+          SELECT (it->>'omie_codigo_produto')::bigint          AS cod,
+                 coalesce((it->>'quantity')::numeric, 1)       AS quantity,
+                 coalesce((it->>'unit_price')::numeric, 0)     AS unit_price,
+                 coalesce((it->>'discount')::numeric, 0)       AS discount,
+                 (it->>'product_id')::uuid                     AS product_id,
+                 it->>'hash_payload'                           AS hash_payload
+            FROM jsonb_array_elements(v_itens) AS it
+           WHERE (it->>'omie_codigo_produto') IS NOT NULL
+        ),
+        atual AS (
+          SELECT id, omie_codigo_produto AS cod, quantity, unit_price, discount, product_id
+            FROM public.order_items
+           WHERE sales_order_id = v_order_id
+        ),
+        del AS (
+          DELETE FROM public.order_items oi
+           USING atual a
+           WHERE oi.id = a.id
+             AND NOT EXISTS (SELECT 1 FROM desejado d WHERE d.cod = a.cod)
+          RETURNING 1
+        ),
+        upd AS (
+          UPDATE public.order_items oi
+             SET quantity     = d.quantity,
+                 unit_price   = d.unit_price,
+                 discount     = d.discount,
+                 product_id   = d.product_id,
+                 -- o update REPARA a identidade do item (hash legado de conteúdo → de identidade)
+                 hash_payload = d.hash_payload
+            FROM atual a
+            JOIN desejado d ON d.cod = a.cod
+           WHERE oi.id = a.id
+             AND NOT (      abs(coalesce(a.quantity,   0) - d.quantity)   < 1e-6
+                        AND abs(coalesce(a.unit_price, 0) - d.unit_price) < 1e-6
+                        AND abs(coalesce(a.discount,   0) - d.discount)   < 1e-6
+                        AND a.product_id IS NOT DISTINCT FROM d.product_id )
+          RETURNING 1
+        ),
+        ins AS (
+          -- `created_at` fica de fora: o trigger `trg_order_items_created_at_omie` herda a data do
+          -- PAI para todo pedido `omie\_%`. Passá-la aqui duplicaria a regra em dois lugares.
+          INSERT INTO public.order_items (
+            sales_order_id, customer_user_id, product_id, omie_codigo_produto,
+            quantity, unit_price, discount, hash_payload
+          )
+          SELECT v_order_id, v_customer, d.product_id, d.cod,
+                 d.quantity, d.unit_price, d.discount, d.hash_payload
+            FROM desejado d
+           WHERE NOT EXISTS (SELECT 1 FROM atual a WHERE a.cod = d.cod)
+          RETURNING 1
+        )
+        SELECT (SELECT count(*) FROM del), (SELECT count(*) FROM upd), (SELECT count(*) FROM ins)
+          INTO v_del, v_upd, v_ins;
+      END;
+
+      v_itens_mudaram := (v_del + v_upd + v_ins) > 0;
+      v_corrections   := v_corrections + v_del + v_upd + v_ins;
+
+      -- [A4] status só reconcilia com etapa CONHECIDA (status_omie não-nulo) e status local ainda
+      -- gerido pelo Omie — nunca rebaixa para 'importado' por leitura malformada nem clobbera
+      -- status app-avançado. NUNCA toca hash_payload do pai (causa-raiz #B).
+      -- ⚠️ A autoridade aqui é `c_status_omie`, a constante — NÃO o parâmetro. O parâmetro é um
+      -- CHECKSUM: ele existe para o TS DECLARAR o que acha que é a lista, e o banco conferir. Se
+      -- ele fosse a autoridade, remover o guard de igualdade lá em cima bastaria para uma lista
+      -- vinda de fora clobberar status app-avançado. Assim, o guard e o efeito são defesas
+      -- INDEPENDENTES: derrubar uma não abre a outra (provado em F2b do harness).
+      v_status_novo  := CASE WHEN v_status_omie IS NOT NULL AND v_status_atual = ANY (c_status_omie)
+                             THEN v_status_omie ELSE v_status_atual END;
+      v_status_mudou := v_status_atual IS DISTINCT FROM v_status_novo;
+      v_total_mudou  := abs(coalesce(v_total_atual, 0) - v_total_novo) > 0.01;
+      -- ── P1-3 (achado do challenge): a decisão de gravar ignorava `items` e `subtotal` atuais.
+      --    Efeitos concretos disso: uma mudança só de descrição/cor no retrato virava NO-OP
+      --    PERMANENTE; um estado legado "filhos novos, cabeçalho antigo" nunca era reparado se
+      --    total e status coincidissem; e um `subtotal` torto sozinho jamais se corrigia. Uma
+      --    reconciliação declarativa que não compara o que grava não é declarativa. ──
+      v_cab_mudou := v_status_mudou
+                  OR v_total_mudou
+                  OR v_items_atual IS DISTINCT FROM v_items_json
+                  OR abs(coalesce(v_subtotal_atual, 0) - v_total_novo) > 0.01
+                  -- o próprio carimbo do CAS precisa avançar, senão uma leitura nova que não muda
+                  -- nada deixaria o pedido preso no carimbo antigo e reabriria a janela de stale
+                  OR v_lido_atual IS DISTINCT FROM p_lido_em;
+
+      IF v_cab_mudou OR v_itens_mudaram THEN
+        UPDATE public.sales_orders
+           SET status     = v_status_novo,
+               total      = v_total_novo,
+               subtotal   = v_total_novo,
+               items      = v_items_json,
+               omie_reconciliado_em = p_lido_em,
+               updated_at = now()
+         WHERE id = v_order_id;
+        -- `upserts` conta trabalho REAL. Avançar só o carimbo (leitura nova, conteúdo idêntico)
+        -- não é uma reconciliação — contá-la inflaria a métrica que o log publica.
+        IF v_status_mudou OR v_total_mudou OR v_itens_mudaram
+           OR v_items_atual IS DISTINCT FROM v_items_json
+           OR abs(coalesce(v_subtotal_atual, 0) - v_total_novo) > 0.01 THEN
+          v_upserts := v_upserts + 1;
+        END IF;
+        IF v_status_mudou OR v_total_mudou THEN
+          v_divergences := v_divergences + 1;
+        END IF;
+      END IF;
+
+    -- ── P1-4 (achado do challenge): ALLOWLIST, não catch-all. O `WHEN OTHERS` capturava
+    --    deadlock (40P01), serialization failure (40001), permissão, relação/coluna ausente e
+    --    trigger quebrado como se fossem "um pedido ruim" — e como a função retornava
+    --    normalmente, `rpcErr` ficava nulo na edge e a run saía `complete` mesmo com 100 de 100
+    --    pedidos falhando. Uma migration não aplicada em metade do schema pareceria um dia de
+    --    dados sujos. Aqui ficam só as classes de DADO, que são de fato por-pedido; qualquer
+    --    outra sobe e derruba a chamada inteira, que é o desfecho honesto para falha sistêmica.
+    EXCEPTION
+      WHEN data_exception              -- 22xxx: cast inválido, jsonb malformado, o nosso 22023
+        OR integrity_constraint_violation  -- 23xxx: FK de product_id, NOT NULL, unique
+      THEN
+      -- G8: a falha do pedido é REGISTRADA com SQLSTATE e mensagem, nunca engolida como sucesso
+      -- invisível. Tudo que este pedido escreveu foi desfeito pela subtransação.
+      v_falhas := v_falhas || jsonb_build_object(
+        'hash', v_pedido->>'hash_payload',
+        'omie_pedido_id', v_pedido->'omie_pedido_id',
+        'sqlstate', SQLSTATE, 'erro', SQLERRM);
+    END;
+  END LOOP;
+
+  RETURN jsonb_build_object(
+    'upserts',      v_upserts,
+    'divergences',  v_divergences,
+    'corrections',  v_corrections,
+    'sku_repetido', v_sku_repetido,
+    'ambiguo',      v_ambiguo,     -- pedidos NÃO tocados por duplicidade de SKU (atual ou desejado)
+    'stale',        v_stale,       -- pedidos NÃO tocados por leitura mais velha que a publicada
+    'sem_item',     v_sem_item,
+    'sem_pai',      v_sem_pai,
+    'falhas',       v_falhas);
+END;
+$$;
+
+
+--
+-- Name: FUNCTION reconciliar_pedidos_omie(p_pedidos jsonb, p_status_gerido_omie text[], p_lido_em timestamp with time zone); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.reconciliar_pedidos_omie(p_pedidos jsonb, p_status_gerido_omie text[], p_lido_em timestamp with time zone) IS 'Fase 2 de criar_pedidos_com_itens: reconcilia pedido Omie ALTERADO (itens + cabeçalho) numa ÚNICA transação por pedido, fechando a janela em que o pedido ficava meio-reconciliado e visível aos consumidores money-path. Diff DECLARATIVO computado dentro da transação sob FOR UPDATE do pai (sem TOCTOU, idempotente). Fail-closed: lista de status por igualdade de conjunto, total/items/p_lido_em ausentes LANÇAM, lote com teto não-contornável. Compare-and-set por p_lido_em (leitura VELHA não sobrescreve revisão nova). Duplicidade de omie_codigo_produto — no estado ATUAL ou no desejado — PULA o pedido inteiro (SKU não é identidade de linha). Lote ordenado por (account,hash_payload) contra deadlock AB/BA. EXCEPTION por ALLOWLIST (22xxx/23xxx); classe sistêmica RELANÇA. Retorna {upserts,divergences,corrections,sku_repetido,ambiguo,stale,sem_item,sem_pai,falhas[]}.';
 
 
 --
@@ -21708,7 +22458,9 @@ CREATE TABLE public.sales_orders (
     pedido_programado_envio_id uuid,
     customer_document text,
     whatsapp_conversation_id uuid,
-    whatsapp_proposta_dedupe text
+    whatsapp_proposta_dedupe text,
+    omie_reconciliado_em timestamp with time zone,
+    CONSTRAINT sales_orders_hash_omie_canonico CHECK (((hash_payload IS NULL) OR (hash_payload !~~ 'omie\_%'::text) OR ((omie_pedido_id IS NOT NULL) AND (hash_payload = ((('omie_'::text || account) || '_'::text) || (omie_pedido_id)::text)))))
 );
 
 
@@ -21717,6 +22469,20 @@ CREATE TABLE public.sales_orders (
 --
 
 COMMENT ON COLUMN public.sales_orders.deleted_at IS 'Soft-delete timestamp. NULL = ativo. SalesOrders.deleteOrder seta antes de chamar Omie; se Omie falhar, rollback pra NULL. Queries default filtram WHERE deleted_at IS NULL.';
+
+
+--
+-- Name: COLUMN sales_orders.omie_reconciliado_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sales_orders.omie_reconciliado_em IS 'Instante em que a edge BUSCOU no Omie a revisão que gerou a última reconciliação deste pedido. Escrito por UM writer só (reconciliar_pedidos_omie) e usado como compare-and-set: uma leitura mais VELHA que esta não sobrescreve. NULL = nunca reconciliado por este caminho (aceita a 1ª).';
+
+
+--
+-- Name: CONSTRAINT sales_orders_hash_omie_canonico ON sales_orders; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT sales_orders_hash_omie_canonico ON public.sales_orders IS 'Linha nascida no sync do Omie (hash_payload omie_*) tem de ter omie_pedido_id e hash canonico omie_<account>_<pid>. Defesa em profundidade do guard de reenvio de criar_pedido (_shared/reenvio-pedido.ts): impede que um write-back grave pid novo sobre hash velho e o pedido original suma no proximo sync via ON CONFLICT no-op. Codex 2026-08-29.';
 
 
 --
@@ -23660,6 +24426,22 @@ CREATE SEQUENCE public.analytics_outbox_id_seq
 --
 
 ALTER SEQUENCE public.analytics_outbox_id_seq OWNED BY public.analytics_outbox.id;
+
+
+--
+-- Name: analytics_outbox_perda; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_outbox_perda (
+    dia date NOT NULL,
+    evento text NOT NULL,
+    motivo text NOT NULL,
+    quantidade integer NOT NULL,
+    mais_antigo timestamp with time zone NOT NULL,
+    registrado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT analytics_outbox_perda_motivo_ck CHECK ((motivo = ANY (ARRAY['sem_aceite'::text, 'quarentena'::text]))),
+    CONSTRAINT analytics_outbox_perda_qtd_ck CHECK ((quantidade > 0))
+);
 
 
 --
@@ -34769,6 +35551,14 @@ ALTER TABLE ONLY public.analytics_outbox
 
 
 --
+-- Name: analytics_outbox_perda analytics_outbox_perda_pk; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_outbox_perda
+    ADD CONSTRAINT analytics_outbox_perda_pk PRIMARY KEY (dia, evento, motivo);
+
+
+--
 -- Name: analytics_outbox analytics_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45567,6 +46357,28 @@ CREATE POLICY analytics_outbox_master_read ON public.analytics_outbox FOR SELECT
 
 
 --
+-- Name: analytics_outbox_perda; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.analytics_outbox_perda ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: analytics_outbox_perda analytics_outbox_perda_master_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY analytics_outbox_perda_master_read ON public.analytics_outbox_perda FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = auth.uid()) AND (ur.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: analytics_outbox_perda analytics_outbox_perda_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY analytics_outbox_perda_service_all ON public.analytics_outbox_perda TO service_role USING (true) WITH CHECK (true);
+
+
+--
 -- Name: analytics_outbox analytics_outbox_service_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -50876,5 +51688,5 @@ CREATE POLICY wts_staff_read ON public.whatsapp_template_sends FOR SELECT TO aut
 -- PostgreSQL database dump complete
 --
 
-\unrestrict tsosDzLbWGhsTBLEXzCmP2eN2y0oL6uqEIjXYVxejvbK5DwKogiacdRnjod7ngv
+\unrestrict TYblAFvg7zrh9JK7rVfgv0hn2pFKlRWuGBTVX04nAr4jeZA8c7YcmyajDm5gBw8
 

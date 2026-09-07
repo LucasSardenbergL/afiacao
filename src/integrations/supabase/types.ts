@@ -379,6 +379,33 @@ export type Database = {
         }
         Relationships: []
       }
+      analytics_outbox_perda: {
+        Row: {
+          dia: string
+          evento: string
+          mais_antigo: string
+          motivo: string
+          quantidade: number
+          registrado_em: string
+        }
+        Insert: {
+          dia: string
+          evento: string
+          mais_antigo: string
+          motivo: string
+          quantidade: number
+          registrado_em?: string
+        }
+        Update: {
+          dia?: string
+          evento?: string
+          mais_antigo?: string
+          motivo?: string
+          quantidade?: number
+          registrado_em?: string
+        }
+        Relationships: []
+      }
       atp_decisoes: {
         Row: {
           account: string
@@ -1728,6 +1755,78 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      deploy_atestacoes: {
+        Row: {
+          edge: string
+          fonte: string
+          observado_em: string
+          registrado_em: string
+          request_id: number
+          versao: string
+          via: string
+        }
+        Insert: {
+          edge: string
+          fonte: string
+          observado_em: string
+          registrado_em?: string
+          request_id: number
+          versao: string
+          via: string
+        }
+        Update: {
+          edge?: string
+          fonte?: string
+          observado_em?: string
+          registrado_em?: string
+          request_id?: number
+          versao?: string
+          via?: string
+        }
+        Relationships: []
+      }
+      deploy_sonda_alvos: {
+        Row: {
+          ativo: boolean
+          edge: string
+          habilitado_em: string
+          motivo: string
+        }
+        Insert: {
+          ativo?: boolean
+          edge: string
+          habilitado_em?: string
+          motivo: string
+        }
+        Update: {
+          ativo?: boolean
+          edge?: string
+          habilitado_em?: string
+          motivo?: string
+        }
+        Relationships: []
+      }
+      deploy_sonda_disparos: {
+        Row: {
+          edge: string
+          enfileirado_em: string
+          request_id: number
+          tick_id: string
+        }
+        Insert: {
+          edge: string
+          enfileirado_em?: string
+          request_id: number
+          tick_id: string
+        }
+        Update: {
+          edge?: string
+          enfileirado_em?: string
+          request_id?: number
+          tick_id?: string
+        }
+        Relationships: []
       }
       des_checkin_qualitativo: {
         Row: {
@@ -8486,7 +8585,7 @@ export type Database = {
           product_id: string | null
           quantity: number
           sales_order_id: string
-          unit_price: number
+          unit_price: number | null
         }
         Insert: {
           created_at?: string | null
@@ -8498,7 +8597,7 @@ export type Database = {
           product_id?: string | null
           quantity?: number
           sales_order_id: string
-          unit_price?: number
+          unit_price?: number | null
         }
         Update: {
           created_at?: string | null
@@ -8510,7 +8609,7 @@ export type Database = {
           product_id?: string | null
           quantity?: number
           sales_order_id?: string
-          unit_price?: number
+          unit_price?: number | null
         }
         Relationships: [
           {
@@ -9185,6 +9284,7 @@ export type Database = {
           estoque_atual: number | null
           estoque_fisico: number | null
           estoque_maximo: number | null
+          fator_embalagem_portal: number | null
           id: number
           modo_promocao: string | null
           pedido_id: number
@@ -9211,6 +9311,7 @@ export type Database = {
           estoque_atual?: number | null
           estoque_fisico?: number | null
           estoque_maximo?: number | null
+          fator_embalagem_portal?: number | null
           id?: number
           modo_promocao?: string | null
           pedido_id: number
@@ -9237,6 +9338,7 @@ export type Database = {
           estoque_atual?: number | null
           estoque_fisico?: number | null
           estoque_maximo?: number | null
+          fator_embalagem_portal?: number | null
           id?: number
           modo_promocao?: string | null
           pedido_id?: number
@@ -9268,6 +9370,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_des_pedidos_em_transito"
             referencedColumns: ["pedido_id"]
+          },
+          {
+            foreignKeyName: "pedido_compra_item_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "pedido_compra_item_promocao_item_id_fkey"
@@ -9314,6 +9423,10 @@ export type Database = {
           canal_usado: string | null
           cancelado_em: string | null
           cancelado_por: string | null
+          cancelamento_pos_disparo_em: string | null
+          cancelamento_pos_disparo_evidencia: string | null
+          cancelamento_pos_disparo_motivo: string | null
+          cancelamento_pos_disparo_por: string | null
           condicao_origem: string | null
           condicao_pagamento_codigo: string | null
           condicao_pagamento_descricao: string | null
@@ -9364,6 +9477,10 @@ export type Database = {
           canal_usado?: string | null
           cancelado_em?: string | null
           cancelado_por?: string | null
+          cancelamento_pos_disparo_em?: string | null
+          cancelamento_pos_disparo_evidencia?: string | null
+          cancelamento_pos_disparo_motivo?: string | null
+          cancelamento_pos_disparo_por?: string | null
           condicao_origem?: string | null
           condicao_pagamento_codigo?: string | null
           condicao_pagamento_descricao?: string | null
@@ -9414,6 +9531,10 @@ export type Database = {
           canal_usado?: string | null
           cancelado_em?: string | null
           cancelado_por?: string | null
+          cancelamento_pos_disparo_em?: string | null
+          cancelamento_pos_disparo_evidencia?: string | null
+          cancelamento_pos_disparo_motivo?: string | null
+          cancelamento_pos_disparo_por?: string | null
           condicao_origem?: string | null
           condicao_pagamento_codigo?: string | null
           condicao_pagamento_descricao?: string | null
@@ -9472,6 +9593,13 @@ export type Database = {
             referencedRelation: "v_des_pedidos_em_transito"
             referencedColumns: ["pedido_id"]
           },
+          {
+            foreignKeyName: "pedido_compra_sugerido_split_parent_id_fkey"
+            columns: ["split_parent_id"]
+            isOneToOne: false
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
+          },
         ]
       }
       pedidos_portal_tentativas: {
@@ -9522,6 +9650,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_des_pedidos_em_transito"
             referencedColumns: ["pedido_id"]
+          },
+          {
+            foreignKeyName: "pedidos_portal_tentativas_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -11515,6 +11650,51 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_cancelamento_pos_disparo_audit: {
+        Row: {
+          evidencia: string
+          executado_em: string
+          executado_por: string
+          executado_por_uid: string | null
+          id: number
+          justificativa: string | null
+          motivo: string
+          omie_pedido_compra_id: string | null
+          pedido_id: number
+          status_anterior: string
+          status_novo: string
+          valor_total: number | null
+        }
+        Insert: {
+          evidencia: string
+          executado_em?: string
+          executado_por: string
+          executado_por_uid?: string | null
+          id?: number
+          justificativa?: string | null
+          motivo: string
+          omie_pedido_compra_id?: string | null
+          pedido_id: number
+          status_anterior: string
+          status_novo: string
+          valor_total?: number | null
+        }
+        Update: {
+          evidencia?: string
+          executado_em?: string
+          executado_por?: string
+          executado_por_uid?: string | null
+          id?: number
+          justificativa?: string | null
+          motivo?: string
+          omie_pedido_compra_id?: string | null
+          pedido_id?: number
+          status_anterior?: string
+          status_novo?: string
+          valor_total?: number | null
+        }
+        Relationships: []
+      }
       reposicao_cold_start_log: {
         Row: {
           acao: string
@@ -12437,6 +12617,7 @@ export type Database = {
           omie_numero_pedido: string | null
           omie_payload: Json | null
           omie_pedido_id: number | null
+          omie_reconciliado_em: string | null
           omie_response: Json | null
           order_date_kpi: string | null
           origem: string | null
@@ -12468,6 +12649,7 @@ export type Database = {
           omie_numero_pedido?: string | null
           omie_payload?: Json | null
           omie_pedido_id?: number | null
+          omie_reconciliado_em?: string | null
           omie_response?: Json | null
           order_date_kpi?: string | null
           origem?: string | null
@@ -12499,6 +12681,7 @@ export type Database = {
           omie_numero_pedido?: string | null
           omie_payload?: Json | null
           omie_pedido_id?: number | null
+          omie_reconciliado_em?: string | null
           omie_response?: Json | null
           order_date_kpi?: string | null
           origem?: string | null
@@ -18584,6 +18767,45 @@ export type Database = {
         }
         Relationships: []
       }
+      vw_cancelamento_pos_disparo_sem_evidencia: {
+        Row: {
+          cancelado_em: string | null
+          cancelado_por: string | null
+          empresa: string | null
+          fornecedor_nome: string | null
+          horario_disparo_real: string | null
+          id: number | null
+          justificativa_cancelamento: string | null
+          omie_pedido_compra_id: string | null
+          status: string | null
+          valor_total: number | null
+        }
+        Insert: {
+          cancelado_em?: string | null
+          cancelado_por?: string | null
+          empresa?: string | null
+          fornecedor_nome?: string | null
+          horario_disparo_real?: string | null
+          id?: number | null
+          justificativa_cancelamento?: string | null
+          omie_pedido_compra_id?: string | null
+          status?: string | null
+          valor_total?: number | null
+        }
+        Update: {
+          cancelado_em?: string | null
+          cancelado_por?: string | null
+          empresa?: string | null
+          fornecedor_nome?: string | null
+          horario_disparo_real?: string | null
+          id?: number | null
+          justificativa_cancelamento?: string | null
+          omie_pedido_compra_id?: string | null
+          status?: string | null
+          valor_total?: number | null
+        }
+        Relationships: []
+      }
       vw_pcp_bom_validacao: {
         Row: {
           componente_codigo: number | null
@@ -18798,6 +19020,14 @@ export type Database = {
         Returns: Json
       }
       apply_score_updates: { Args: { p_updates: Json }; Returns: number }
+      apriori_universo_snapshot: {
+        Args: {
+          p_status_nao_venda: string[]
+          p_teto_bytes?: number
+          p_teto_linhas?: number
+        }
+        Returns: Json
+      }
       aprovar_pedido_sugerido: {
         Args: { p_pedido_id: number; p_usuario: string }
         Returns: Json
@@ -18966,6 +19196,14 @@ export type Database = {
       }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
+      cockpit_itens_snapshot: {
+        Args: {
+          p_created_at_de: string
+          p_teto_bytes?: number
+          p_teto_linhas?: number
+        }
+        Returns: Json
+      }
       concluir_com_comprovacao: {
         Args: { p_leitura?: number; p_tarefa_id: string; p_url?: string }
         Returns: undefined
@@ -19007,6 +19245,16 @@ export type Database = {
         }
         Returns: number
       }
+      corrigir_cancelamento_pos_disparo: {
+        Args: {
+          p_evidencia: string
+          p_justificativa?: string
+          p_motivo: string
+          p_pedido_id: number
+          p_usuario: string
+        }
+        Returns: Json
+      }
       criar_pedidos_com_itens: { Args: { p_pedidos: Json }; Returns: Json }
       criar_plano_tatico: {
         Args: {
@@ -19020,6 +19268,26 @@ export type Database = {
       delete_push_subscription: {
         Args: { p_endpoint: string }
         Returns: undefined
+      }
+      deploy_atestacoes_colher: { Args: never; Returns: number }
+      deploy_atestacoes_janela_viva: {
+        Args: never
+        Returns: {
+          edge: string
+          fonte: string
+          observado_em: string
+          request_id: number
+          versao: string
+          via: string
+        }[]
+      }
+      deploy_sonda_disparar: {
+        Args: { p_alvos?: string[] }
+        Returns: {
+          edge: string
+          request_id: number
+          tick_id: string
+        }[]
       }
       des_data_faturamento_prevista: {
         Args: {
@@ -19541,6 +19809,8 @@ export type Database = {
           gross_margin_pct: number
           itens_com_custo: number
           itens_sem_custo: number
+          itens_sem_custo_conhecido: number
+          itens_sem_preco: number
           receita_com_custo: number
         }[]
       }
@@ -19948,6 +20218,14 @@ export type Database = {
           valor: number
         }[]
       }
+      reconciliar_pedidos_omie: {
+        Args: {
+          p_lido_em: string
+          p_pedidos: Json
+          p_status_gerido_omie: string[]
+        }
+        Returns: Json
+      }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_oportunidade_badge: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
@@ -20066,6 +20344,10 @@ export type Database = {
           p_omie_codigo_produto: number
         }
         Returns: undefined
+      }
+      remover_itens_pedido_sugerido: {
+        Args: { p_item_ids: number[]; p_pedido_id: number; p_usuario: string }
+        Returns: Json
       }
       reposicao__po_id: { Args: { p: string }; Returns: number }
       reposicao__trim: { Args: { p: string }; Returns: string }
@@ -20226,6 +20508,10 @@ export type Database = {
         }[]
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
+      sayerlack_aplicar_custo_portal: {
+        Args: { p_itens: Json; p_pedido_id: number; p_valor_total: number }
+        Returns: number
+      }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
       seed_targets_faltantes: {
         Args: never
@@ -20491,12 +20777,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -20520,11 +20806,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -20545,11 +20831,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -20570,11 +20856,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -20587,11 +20873,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

@@ -366,3 +366,40 @@ pergunta estava errada.
 cada valor no pai (`git grep -c '<valor>' <sha>^ -- supabase/functions/` = 0), que é o análogo do
 guard `--pai`. Aqui os dois valores passaram: `v1.1-eco-identidade-fonte` e `v1.2-eco-identidade-fonte`
 têm 0 ocorrência em `069540905^`.
+
+## Adendo 2026-08-30 — 5/5 pelo eco passivo, e "a via está esgotada" desmentida DUAS vezes
+
+Desfecho da verificação do `069540905` (#2079): **os 5 steps ecoaram o marcador novo**, sem sonda ativa,
+sem SQL Editor, sem nenhuma ação do founder.
+
+| edge | marcador | ticks |
+|---|---|---|
+| `ctes-recebidos` · `sku-items` · `vendas-items` | `v1.1-eco-identidade-fonte` | 62431 (00:15Z) em diante |
+| `nfes-recebidas` | `v1.2-eco-identidade-fonte` | 63334 · 63400 · 63468 |
+| `pedidos-compra` | `v1.1-eco-identidade-fonte` | 63804 (10:15Z) · 63887 |
+
+O caro não foi a espera — foi **o que eu concluí durante ela**, duas vezes:
+
+1. Após **9 ticks** (18h) sem eco de `pedidos`/`nfes`, com os dois cravando `duracao_ms` 25.002 contra
+   os 10–12s do `ctes`, escrevi que "a via passiva está esgotada para esses dois steps" e recomendei
+   **sonda ativa** — que custa bloco `net.http_post` colado pelo founder. Seis horas depois o `nfes`
+   respondeu, e respondeu em **três ticks seguidos**.
+2. Corrigido isso, o watcher de `pedidos` fechou 6h com `exit 3` ("sem `respondido`"). Enunciei de novo
+   o fim da linha. `pedidos` respondeu **35 minutos** depois de o watcher expirar.
+
+A duração cravada no teto **descreve** o step (ele realmente estoura os 25s quase sempre); ela **não**
+prevê o tick em que a carga do Omie cede. Ler "0/9" como propriedade do sistema é a mesma falácia que
+esta sessão passou o dia evitando na leitura do `modo` — `background` é ausência de dado — só que
+cometida uma camada acima, **na conclusão sobre o sensor** em vez de na leitura dele. O sinal raro não
+avisa que vai chegar; o custo de esperar mais um tick é zero e o de comprar a resposta é o SQL Editor
+do founder.
+
+**Regra:** enquanto a espera não bloquear decisão nenhuma, "não veio ainda" **nunca** se promove a "não
+vem" — e um `exit 3` de watcher é o fim da *janela dele*, não o fim da via. O gatilho para pagar sonda
+ativa continua sendo o que a §"O gatilho para reconsiderar" já dizia: atraso que provoque ciclo
+incorreto, reparo de dados ou resposta a incidente. Nenhum dos dois casos aqui chegou perto disso.
+
+Nota de mecânica que caiu junto: o watcher deste ciclo nasceu com **controle positivo** — a mesma query
+com a janela recuada tinha de achar o tick já conhecido antes de armar. Foi o que garantiu que os
+`background` fossem lidos como ausência de dado e não como sonda cega; sem ele, os dois enganos acima
+teriam sido indistinguíveis de um bug de query.

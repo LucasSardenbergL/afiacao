@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# CAMADA: forma longa `--file=`, que não é cluster de letra curta.
+set -uo pipefail
+PSQL="$HOME/.config/afiacao/psql-ro"
+"$PSQL" --no-psqlrc --file=consulta.sql

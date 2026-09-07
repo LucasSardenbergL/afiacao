@@ -742,3 +742,85 @@ precedente (`pr-collision-guard`), mas exige guardar **estado** (hash/timestamp 
 peça que nenhum hook do repo tem hoje. Construir o estado antes de saber se o aviso basta é a
 armadilha da *fase N+1 sem sinal da fase N*: entrega-se o aviso, mede-se se a classe reincide, e só
 então se paga o estado.
+
+---
+
+## O QUARTO gate de edge: `sonda:bump` (medido 2026-08-28, PR #2101)
+
+Este doc — e a linha do CLAUDE.md que aponta para ele — dizia **três** gates de edge no CI:
+`test:edges`, `edges:typecheck` e o vitest que lê a edge como TEXTO. São **quatro**. O quarto é
+`bun run sonda:bump` (`scripts/sonda-versao-bump-gate.ts`), e ele reprovou o #2101 depois das
+outras três terem passado verdes localmente:
+
+```
+✗ generate-bundle-argument: o corpo mudou (…/index.ts) e o marcador continua
+  `v1.0-prompt-sem-margem` — o mesmo da base.
+```
+
+**A regra:** mudou o CORPO de uma edge que tem `versao.ts` ⇒ bumpe o `VERSAO` (formato
+`vN.N-slug`, nomeando a FATIA da entrega), no mesmo PR.
+
+**Por que ele não é burocracia, e é justamente o gate que dói perder:** o Lovable não dá outra
+prova de qual bundle está no ar. Uma edge chamada pelo BROWSER não deixa rastro em
+`net._http_response` nem linha em `cron.job_run_details` — a sonda `{"probe":true}` é o único
+sensor. Sem o bump, ela responde a MESMA string tendo a fatia subido ou não: o sensor continua
+verde e passa a afirmar deploy que não aconteceu. É a família "ausência de sinal lida como
+aprovação", e o gate existe para impedir que o sensor minta.
+
+**Consequência para quem valida antes de entregar:** a lista "tocou `supabase/functions/` ⇒ rode
+`test:edges`, `edges:typecheck`, `lint` e o vitest completo" é **incompleta**. São cinco, e
+`sonda:bump` é o único que roda em ~1s — não há motivo para descobri-lo pelo vermelho do CI.
+
+**Efeito colateral que também é obrigação:** o marcador aparece por extenso na tabela de sondas de
+`docs/agent/deploy.md`. Bumpar `versao.ts` e deixar o doc citando a string velha manda o founder
+esperar a resposta errada — é o mesmo defeito de número obsoleto em gate. Atualize os dois.
+
+## O QUINTO: `sonda:fingerprint` — e por que ele NÃO é o `sonda:bump` (medido 2026-08-29, PR #2115)
+
+A seção acima corrigiu "3 gates" para **4** e nomeou o quarto: `sonda:bump`. A correção estava certa
+e ficou **incompleta** — são **cinco**. E a prova é limpa, porque veio de uma rodada em que o quarto
+passou e o quinto reprovou:
+
+No #2115 eu mudei `analytics-outbox-drain/index.ts`, rodei os três de funcionamento
+(`test:edges` 937/0, `edges:typecheck` 0 crash, `vitest` 7453) **e** bumpei o `VERSAO` — o
+`sonda:bump` recusou até eu nomear a fatia (`v1.1-guard-dentro-do-registro`), exatamente como esta
+seção descreve. Com os quatro verdes, abri o PR. O `validate` reprovou:
+
+```
+✗ analytics-outbox-drain: fonte mudou e o mapa não — commitado ba221806ade7…, atual b03bbf880f09…
+Conserto: `bun run sonda:fingerprint -- --write` e commite o mapa.
+```
+
+### Os dois de sonda perguntam coisas diferentes
+
+| gate | pergunta | artefato | conserto |
+|---|---|---|---|
+| `sonda:bump` | **O QUE** mudou | `VERSAO` em `<edge>/versao.ts` | manual — é gate, recusa até você nomear a fatia |
+| `sonda:fingerprint` | **QUE** a fonte mudou | hash em `_shared/sonda-fingerprints.ts` | mecânico — `-- --write` |
+
+A assimetria do conserto é o tell de que são coisas distintas: o `VERSAO` é uma **decisão** (qual
+fatia esta entrega é), então nenhuma ferramenta pode escrevê-lo por você; o hash é um **fato** sobre
+bytes, então escrevê-lo à mão só criaria erro. Fazer um não faz o outro, e a própria mensagem do
+`fingerprint` diz isso ao pé: *"o fingerprint diz QUE a fonte mudou, o `VERSAO` diz O QUE mudou, e a
+sonda serve os dois"*.
+
+### Por que o quinto não é redundante com os três de funcionamento
+
+Os três primeiros perguntam **"a edge funciona?"**. O `fingerprint` pergunta **"o mapa que a sonda
+serve ainda DESCREVE esta fonte?"** — e ele é o denominador do `sonda:sql` e do `pendencias:deploy`.
+Fonte mudando sem o mapa mudar produz um verificador que afirma, **com confiança**, sobre um bundle
+que não existe mais. Sensor que responde com certeza sobre dado velho é pior que sensor ausente: é a
+classe que este repo mais paga caro.
+
+### A lição de método, que é mais cara que a contagem
+
+Corrigir "3 → 4" a partir de UM incidente deixa o próximo incidente para descobrir o quinto. Nas duas
+vezes a descoberta foi a mesma: rodar os gates conhecidos, ficar verde, abrir o PR, e o CI achar um
+que não estava na lista. **A contagem é o resultado, não o método.** O método é enumerar a fonte:
+`.github/workflows/*.yml` diz quais passos o `validate` roda, e é ele — não a memória do CLAUDE.md —
+que responde quantos são. Ao mexer em edge instrumentada, o mínimo é:
+
+```bash
+bun run test:edges && bun run edges:typecheck && heavy bun run test \
+  && bun run sonda:fingerprint && bun run sonda:bump <edge>
+```

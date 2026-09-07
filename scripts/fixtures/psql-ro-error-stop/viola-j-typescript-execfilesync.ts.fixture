@@ -1,0 +1,10 @@
+// CAMADA: fronteira TS. `execFileSync` com `-f` no array de argumentos.
+import { execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+const PSQL = process.env.PSQL_RO ?? join(homedir(), '.config', 'afiacao', 'psql-ro');
+
+export function consultar(arquivo: string): string {
+  return execFileSync(PSQL, ['-tA', '-f', arquivo], { encoding: 'utf8' });
+}

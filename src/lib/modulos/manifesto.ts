@@ -58,7 +58,10 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useGamificationScore.ts",
       "src/hooks/useSharpeningSuggestions.ts",
     ],
-    testes: ["src/pages/__tests__/CentralFerramenta.test.tsx"],
+    testes: [
+      "src/pages/__tests__/CentralFerramenta.test.tsx",
+      "src/pages/__tests__/ToolDetalhe.estados.test.tsx",
+    ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
   {
@@ -128,6 +131,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/__tests__/financeiro.test.ts",
+      "src/pages/__tests__/FinanceiroIc.leitura-falhou.test.tsx",
       "src/hooks/__tests__/useFinanceiroRegime.test.tsx",
       "src/hooks/__tests__/usePeriodOverride.test.tsx",
       "src/hooks/__tests__/useUtiContas.test.ts",
@@ -188,6 +192,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
+      "src/components/unified-order/__tests__/TierClienteBadge.estados.test.tsx",
       "src/hooks/__tests__/cross-sell-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/cross-sell-vendaveis-erro-de-codigo.test.tsx",
       "src/hooks/__tests__/cross-sell-identidade-account.test.tsx",
@@ -290,6 +295,10 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/components/intelligence/__tests__/tabs-erro-honesto.test.tsx",
+      "src/components/__tests__/recommendation-card-sim-indisponivel.test.tsx",
+      "src/components/radar/__tests__/RadarKpis.estados.test.tsx",
+      "src/components/dashboard/__tests__/ClosersMtdHero.estados.test.tsx",
+      "src/components/dashboard/__tests__/MinhasVisitasResultadoCard.estados.test.tsx",
       "src/hooks/__tests__/bundle-argumento-gravacao-calada.test.tsx",
       "src/hooks/__tests__/bundle-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/bundle-conta-unica.test.tsx",
@@ -377,7 +386,10 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useCompletude.ts",
       "src/hooks/useCustomerLastSalesOrder.ts",
     ],
-    testes: ["src/pages/__tests__/AdminCustomers.erro-honesto.test.tsx"],
+    testes: [
+      "src/pages/__tests__/AdminCustomers.erro-honesto.test.tsx",
+      "src/components/customer/__tests__/CustomerProfile360Summary.estados.test.tsx",
+    ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
   {
@@ -438,7 +450,11 @@ export const MODULOS: ModuloApp[] = [
       "src/queries/usePedidosASeparar.ts",
       "src/hooks/useEstoqueValor.ts",
     ],
-    testes: ["src/services/__tests__/picking-confirm.test.ts"],
+    testes: [
+      "src/services/__tests__/picking-confirm.test.ts",
+      "src/pages/__tests__/AdminEstoquePicking.leitura-falhou.test.tsx",
+      "src/pages/__tests__/RecebimentoConferencia.estados.test.tsx",
+    ],
     risco: { moneyPath: true, offlineFirst: true, authSensitive: false },
   },
   {
@@ -465,7 +481,10 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/hooks/__tests__/useReposicaoSessao.test.ts",
+      "src/pages/__tests__/AdminReposicaoOportunidades.negociacao-leitura.test.tsx",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.test.tsx",
+      "src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx",
+      "src/pages/__tests__/AdminReposicaoPromocaoDetail.estados.test.tsx",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
@@ -560,6 +579,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/hooks/__tests__/useExtractSpecs.test.tsx",
       "src/hooks/__tests__/useKnowledgeBaseList.test.tsx",
+      "src/pages/__tests__/AdminKnowledgeBaseDetail.estados.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
@@ -616,6 +636,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/contexts/__tests__/WebRTCCallContext.test.tsx",
+      "src/pages/__tests__/WhatsappInbox.sla-leitura-falhou.test.tsx",
       "src/contexts/__tests__/webrtc-context-split.test.ts",
       "src/hooks/__tests__/useCallBackend.test.tsx",
       "src/hooks/__tests__/useCatalisadorLink.erro-honesto.test.tsx",

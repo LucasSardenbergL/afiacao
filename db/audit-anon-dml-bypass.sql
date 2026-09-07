@@ -36,3 +36,8 @@ vetor2 AS (  -- invoker ON mas a tabela-base NÃO tem RLS → nada barra o DML d
 SELECT 'HIT|'||view||' | '||role||' | '||motivo AS line
 FROM ( SELECT * FROM vetor1 UNION ALL SELECT * FROM vetor2 ) x
 ORDER BY line;
+
+-- Marcador de CONCLUSAO (evidencia POSITIVA, lido pelo .sh): prova que a query chegou ao FIM.
+-- "0 linhas HIT|" sozinho e ambiguo — e o que sai tanto de "nao ha fogo" quanto de "a query nem
+-- rodou" (erro, timeout, permissao revogada). Sem esta linha o .sh recusa em vez de dizer LIMPO.
+SELECT 'FIM|audit-anon-dml-bypass';

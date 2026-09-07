@@ -99,6 +99,10 @@ function renderPage() {
 }
 
 async function clickEnviar() {
+  // O botão só existe DEPOIS que a query de orçamentos resolve (antes disso a tela é <Skeleton>),
+  // então este findBy é uma espera real, não um getBy disfarçado. Quem governa o teto aqui é o
+  // `asyncUtilTimeout` (src/test/setup.ts), NÃO o timeout do `it` — não re-adicione `it(..., N)`
+  // aqui achando que compra folga para esta linha: não compra, e foi o que mascarou o flake.
   const btn = await screen.findByRole('button', { name: /Enviar Pedido/i });
   fireEvent.click(btn);
 }
@@ -129,7 +133,7 @@ describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTE
     // Sucesso do edge → marca 'rascunho' + toast de sucesso.
     await waitFor(() => expect(h.updateSalesOrder).toHaveBeenCalledWith({ status: 'rascunho' }));
     expect(h.toastSuccess).toHaveBeenCalled();
-  }, 15000);
+  });
 
   it('edge fail-closed (identidade não provada) → toast de erro e NÃO marca rascunho (sem status órfão)', async () => {
     h.quotes = [makeQuote('oben')];
@@ -139,7 +143,7 @@ describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTE
     await waitFor(() => expect(h.toastError).toHaveBeenCalled());
     // Orçamento intacto p/ retry: a falha do edge não pode deixar o status órfão em 'rascunho'.
     expect(h.updateSalesOrder).not.toHaveBeenCalled();
-  }, 15000);
+  });
 
   it('edge bloqueou por crédito → aviso e NÃO marca rascunho (não foi criado PV)', async () => {
     h.quotes = [makeQuote('colacor')];
@@ -149,5 +153,5 @@ describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTE
     await waitFor(() => expect(h.invoke).toHaveBeenCalled());
     expect(h.updateSalesOrder).not.toHaveBeenCalled();
     expect(h.toastSuccess).not.toHaveBeenCalled();
-  }, 15000);
+  });
 });

@@ -11,6 +11,9 @@
 // produção importa através dessa fronteira.
 
 import { removerComentarios } from "./limpeza-fonte.ts";
+
+/** Raiz das edge functions, relativa à raiz do repo (o cwd em que `deno test` roda). */
+const RAIZ_FUNCTIONS = "supabase/functions";
 import * as disparar from "../disparar-pedidos-aprovados/versao.ts";
 import * as portalSayerlack from "../enviar-pedido-portal-sayerlack/versao.ts";
 import * as conciliar from "../conciliar-pedido-portal/versao.ts";
@@ -50,6 +53,27 @@ import * as syncCtes from "../omie-sync-ctes-recebidos/versao.ts";
 import * as syncPedidosCompra from "../omie-sync-pedidos-compra/versao.ts";
 import * as syncSkuItems from "../omie-sync-sku-items/versao.ts";
 import * as syncVendasItems from "../omie-sync-vendas-items/versao.ts";
+import * as outboxDrain from "../analytics-outbox-drain/versao.ts";
+import * as omieSync from "../omie-sync/versao.ts";
+import * as malhaSync from "../omie-malha-sync/versao.ts";
+import * as nfeRecebimentoSync from "../omie-nfe-recebimento-sync/versao.ts";
+import * as syncMetadados from "../omie-sync-metadados/versao.ts";
+import * as omieWebhook from "../omie-webhook/versao.ts";
+import * as aplicarParametros from "../omie-aplicar-parametros/versao.ts";
+import * as recurringOrders from "../process-recurring-orders/versao.ts";
+import * as programadoExtrair from "../pedido-programado-extrair/versao.ts";
+import * as cmcBackfill from "../cmc-snapshot-backfill/versao.ts";
+import * as whatsappSend from "../whatsapp-send/versao.ts";
+import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
+import * as enviarPush from "../enviar-push/versao.ts";
+import * as nvoipCalls from "../nvoip-calls/versao.ts";
+import * as dispatchNotif from "../dispatch-notifications/versao.ts";
+import * as sondaRelay from "../sonda-relay/versao.ts";
+import * as identifyTool from "../identify-tool/versao.ts";
+import * as analyzeServices from "../analyze-services/versao.ts";
+import * as copilotAnalyze from "../copilot-analyze/versao.ts";
+import * as elevenlabsTranscribe from "../elevenlabs-transcribe/versao.ts";
+import { SONDA_CRON_ALVOS } from "./sonda-cron-alvos.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -182,6 +206,50 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "omie-sync-ctes-recebidos", mod: syncCtes },
   { nome: "omie-sync-sku-items", mod: syncSkuItems },
   { nome: "omie-sync-vendas-items", mod: syncVendasItems },
+  // Décima primeira leva (2026-08-28): a edge que nasceu DEPOIS do padrão e ficou fora dele. A
+  // `analytics-outbox-drain` (#2035) não tinha `versao.ts` nem entrada no mapa de fingerprints, e o
+  // efeito disso não é reprovar em lugar nenhum — é DESAPARECER: `sonda:sql` recusa por falta de
+  // sensor, e `pendencias:deploy` tira o denominador do mapa commitado, então ela não entrava nem
+  // como pendência. O critério que a traz é o da `carteira-rebuild` invertido: aqui sondar o bundle
+  // pré-sensor é BARATO (o cron `*/5` chama o mesmo caminho com os mesmos defaults, então sondar
+  // adianta um tick), e mesmo assim o deploy era inverificável — em 2026-08-28 ele só se provou por
+  // N1 + uma string literal de erro que estava no corpo por ACASO. Barato de chamar e possível de
+  // verificar seguem sendo propriedades diferentes (sexta leva); só o marcador dá a segunda.
+  { nome: "analytics-outbox-drain", mod: outboxDrain },
+  // Décima segunda leva (2026-09-05): a continuação da 11ª sobre a CLASSE CEGA do Passo 3 do
+  // `/fecho` (#2170) — edge FORA do mapa de fingerprints E importando `_shared/`. A 11ª levou as 5
+  // de efeito fora do nosso banco; esta leva as que escrevem no money-path do NOSSO banco, pelo
+  // lado do sync Omie. A via (c) fechou a ENUMERAÇÃO; o `versao.ts` é o que dá SUPRESSÃO por
+  // evidência positiva servida.
+  { nome: "omie-sync", mod: omieSync },
+  { nome: "omie-malha-sync", mod: malhaSync },
+  { nome: "omie-nfe-recebimento-sync", mod: nfeRecebimentoSync },
+  { nome: "omie-sync-metadados", mod: syncMetadados },
+  { nome: "omie-webhook", mod: omieWebhook },
+  { nome: "omie-aplicar-parametros", mod: aplicarParametros },
+  // 12ª leva, 2ª metade: o lado PEDIDO/COMPRA da mesma classe cega.
+  { nome: "process-recurring-orders", mod: recurringOrders },
+  { nome: "pedido-programado-extrair", mod: programadoExtrair },
+  { nome: "cmc-snapshot-backfill", mod: cmcBackfill },
+  // 11ª leva (#2170) — as 5 de efeito FORA do nosso banco. Elas ganharam `versao.ts` e entraram no
+  // mapa de fingerprints, mas ficaram fora DESTE arquivo: instrumentadas e sem gate de FORMA
+  // nenhum, invisíveis porque o universo daqui é opt-in. É o caso que o gate de completude logo
+  // abaixo passou a reprovar; entram agora com a forma que já tinham.
+  { nome: "whatsapp-send", mod: whatsappSend },
+  { nome: "whatsapp-send-template", mod: whatsappTemplate },
+  { nome: "enviar-push", mod: enviarPush },
+  { nome: "nvoip-calls", mod: nvoipCalls },
+  { nome: "dispatch-notifications", mod: dispatchNotif },
+  { nome: "sonda-relay", mod: sondaRelay },
+  // 12ª leva — as 4 que queimam COTA DE IA. Ficaram de fora das 11 anteriores justamente as
+  // que gastam o orçamento da ORGANIZAÇÃO na Anthropic/ElevenLabs: quando se perguntou "o gate
+  // de cota (`consumirCota`) está NO AR?", não havia resposta possível — sem sonda, a única
+  // prova de versão seria queimar cota autenticado em prod, e `ia_uso_evento` (a tabela que
+  // registraria o uso) tem purga de 7 dias, então o zero dela é ausência de dado, não veredito.
+  { nome: "identify-tool", mod: identifyTool },
+  { nome: "analyze-services", mod: analyzeServices },
+  { nome: "copilot-analyze", mod: copilotAnalyze },
+  { nome: "elevenlabs-transcribe", mod: elevenlabsTranscribe },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -217,6 +285,38 @@ const ESCRITA_NOSSO_BANCO = [
   "omie-sync-ctes-recebidos",
   "omie-sync-sku-items",
   "omie-sync-vendas-items",
+  // Décima segunda leva (2026-09-05), o lado sync Omie da classe cega. `omie-sync` roteia por
+  // `action` e escreve dos dois lados (OS no ERP + `orders`/`omie_ordens_servico`/`loyalty_points`
+  // aqui); `omie-malha-sync` reescreve `pcp_malha_staging`, de onde sai a necessidade de compra;
+  // `omie-nfe-recebimento-sync` insere `nfe_recebimentos` e, em escrita SEPARADA,
+  // `nfe_recebimento_itens` — a retentativa PULA a NF que ficou só com cabeçalho;
+  // `omie-sync-metadados` reescreve `omie_products` e carimba o frescor em `sync_state`;
+  // `omie-webhook` grava `omie_webhook_events` e despacha o processamento em background;
+  // `omie-aplicar-parametros` ALTERA o cadastro do produto no Omie e baixa `fila_aplicacao_omie`.
+  "omie-sync",
+  "omie-malha-sync",
+  "omie-nfe-recebimento-sync",
+  "omie-sync-metadados",
+  "omie-webhook",
+  "omie-aplicar-parametros",
+  // 12ª leva, 2ª metade — pedido/compra. `process-recurring-orders` insere `orders` de verdade e
+  // AVANÇA o `next_order_date` (o run legítimo seguinte pula a data consumida);
+  // `pedido-programado-extrair` paga token da Anthropic e faz delete+insert em
+  // `pedidos_programados_itens`; `cmc-snapshot-backfill` reescreve `cmc_snapshot`, a base de custo
+  // que o motor de reposição e o DRE consomem.
+  "process-recurring-orders",
+  "pedido-programado-extrair",
+  "cmc-snapshot-backfill",
+  // 11ª leva: entram na varredura estrutural pelo mesmo motivo da nona (`monthly-report`) — o preço
+  // de um `probe` mal grafado caindo no fluxo real. Aqui ele é irreversível FORA do nosso banco:
+  // mensagem de WhatsApp entregue (a de template ainda é TARIFADA), push no aparelho, LIGAÇÃO
+  // originada, e-mail pelo Gmail + evento no Calendar. Ficam FORA de GATE_PROPRIO: o gate das cinco
+  // é `authorizeCronOrStaff`/`authorizeCron`, que já aceita o `x-cron-secret` do SQL Editor.
+  "whatsapp-send",
+  "whatsapp-send-template",
+  "enviar-push",
+  "nvoip-calls",
+  "dispatch-notifications",
 ];
 
 /**
@@ -263,6 +363,20 @@ const FORMA_NORMALIZADA = [
   // grafado caindo no fluxo real é o rebuild completo (lease + ~6909 upserts). Fica FORA de
   // GATE_PROPRIO: o gate dela é `authorizeCronOrStaff`, que já aceita o `x-cron-secret`.
   "carteira-rebuild",
+  // Décima primeira leva: entra na varredura estrutural mesmo sendo a de MENOR custo por disparo
+  // acidental. A FORMA não tem a ver com o preço (o bloco de abertura já dizia isso) — o que se
+  // exige é fail-closed, IO-free e nunca sem auth, e uma edge que nasce hoje nasce nessa forma ou
+  // não nasce. Fica FORA de GATE_PROPRIO: o gate dela é `authorizeCronOrStaff`, que já aceita o
+  // `x-cron-secret` com que o SQL Editor sonda.
+  "analytics-outbox-drain",
+  // 12ª leva: mesma razão da sétima (`analyze-unified-order`) — não é a escrita que põe uma
+  // edge aqui, é o preço de um `probe` mal grafado cair no fluxo real. Nestas quatro o preço é
+  // token pago à Anthropic/ElevenLabs, cobrado da cota da ORGANIZAÇÃO, com imagem de até 8 MB
+  // ou áudio de até 10 MB anexado.
+  "identify-tool",
+  "analyze-services",
+  "copilot-analyze",
+  "elevenlabs-transcribe",
 ];
 
 /**
@@ -279,6 +393,13 @@ const FORMA_NORMALIZADA = [
  */
 const ANCORA_CLIENT: Record<string, string> = {
   "omie-sync-status-produtos": "makeClient(",
+  // A `omie-webhook` é o outro desvio, e por causa oposta: o client não nasce no handler NENHUM —
+  // é `const supabase = createClient(...)` no TOPO do módulo. `trechoDoHandler` corta a partir do
+  // `Deno.serve(`, então `createClient(` não aparece lá e o gate cairia no ramo "controle positivo
+  // vazio". A âncora honesta passa a ser a primeira função do handler que USA esse client
+  // (`registrarEvento`, o insert em `omie_webhook_events`): a propriedade que o gate protege é a
+  // sonda responder antes do IO, e para client de módulo o IO começa no primeiro uso.
+  "omie-webhook": "registrarEvento(",
 };
 
 /** Destas o gate NÃO aceita `x-cron-secret`, então a sonda precisa de gate PRÓPRIO. */
@@ -303,16 +424,91 @@ const ANCORA_CLIENT: Record<string, string> = {
 // `net.http_post` do SQL Editor manda `x-cron-secret` e nenhum Bearer, então uma sonda atrás desse
 // gate seria inalcançável exatamente para quem precisa dela — o furo medido em prod na `recommend`
 // (#1882). A contrapartida é que a sonda não pode responder sem auth nenhuma: daí o gate próprio.
+// `omie-webhook` é a gêmea estrutural da `omie-nfe-webhook`: o gate dela é o `x-webhook-secret`
+// compartilhado com o Omie, que o `net.http_post` do SQL Editor não emite. Sem gate próprio a
+// sonda ficaria inalcançável exatamente para quem precisa dela.
 const GATE_PROPRIO = [
   "omie-cliente",
   "omie-nfe-webhook",
+  "omie-webhook",
   "recommend",
   "fin-valor-cockpit",
   "fin-funding",
   "omie-financeiro",
   "analyze-unified-order",
   "ai-ops-agent",
+  // 12ª leva: as três abrem o handler direto no JWT do usuário (`startsWith("Bearer ")` +
+  // `getUser`/`getClaims`) e nunca leram `x-cron-secret`. Sem gate próprio a sonda ficaria
+  // inalcançável pelo SQL Editor — o furo medido na `recommend` (#1882). A quarta,
+  // `copilot-analyze`, fica FORA de propósito: o gate dela já é `authorizeCronOrStaff`, que
+  // aceita o `x-cron-secret`, e repeti-lo seria auth duplicada sem propriedade nova.
+  "identify-tool",
+  "analyze-services",
+  "elevenlabs-transcribe",
 ];
+
+/** As pastas que TÊM `versao.ts` — a verdade da árvore, não a lista declarada aqui. */
+function edgesComMarcadorNaArvore(): string[] {
+  const nomes: string[] = [];
+  for (const d of Deno.readDirSync(RAIZ_FUNCTIONS)) {
+    if (!d.isDirectory || d.name === "_shared") continue;
+    try {
+      Deno.statSync(`${RAIZ_FUNCTIONS}/${d.name}/versao.ts`);
+      nomes.push(d.name);
+    } catch {
+      // sem marcador: não é edge instrumentada, não é assunto deste arquivo
+    }
+  }
+  return nomes.sort();
+}
+
+Deno.test("EDGES cobre TODA pasta com versao.ts — universo opt-in perde membro em SILÊNCIO", () => {
+  // Este é o gate que faltava, e ele nasce de uma falha MEDIDA, não de zelo.
+  //
+  // Todo teste deste arquivo varre `EDGES` (ou uma sublista dela). `EDGES` é uma lista OPT-IN:
+  // quem instrumenta uma edge e esquece de acrescentar a linha aqui não REPROVA — SOME. É
+  // exatamente o modo de falha que fez nascer o `scripts/sonda-edge-nova-gate.ts` ("quando o
+  // universo de um gate é lista derivada de artefato opt-in, quem nunca entrou não reprova") e o
+  // que `docs/historico/uniao-de-vias-cegas-nao-e-cobertura.md` chama de pendência que some por
+  // AUSÊNCIA DE DADO.
+  //
+  // Aconteceu aqui, uma leva antes desta: as 5 da 11ª (#2170 — `whatsapp-send`,
+  // `whatsapp-send-template`, `enviar-push`, `nvoip-calls`, `dispatch-notifications`) ganharam
+  // `versao.ts` e entraram no mapa de fingerprints, mas NÃO neste arquivo. O `sonda:fingerprint`
+  // dizia 45/45 e este contrato dizia 40/40 — os dois verdes, sobre universos diferentes, e
+  // ninguém reprovando pelas 5 que ficaram sem gate de FORMA nenhum.
+  //
+  // Comparar contra a ÁRVORE (e não contra outra lista escrita à mão) é o ponto: `versao.ts` é o
+  // mesmo marcador que `edgesInstrumentadas()` do `scripts/sonda-fingerprint.ts` usa, então os
+  // dois gates passam a falar do MESMO conjunto — que era a divergência de origem.
+  const declaradas = new Set(EDGES.map((e) => e.nome));
+  const naArvore = edgesComMarcadorNaArvore();
+
+  if (naArvore.length === 0) {
+    throw new Error(
+      "nenhuma pasta com versao.ts encontrada — controle positivo vazio. O gate mediu o diretório " +
+        "errado (cwd deve ser a raiz do repo), e uma lista vazia por ERRO passa por lista vazia " +
+        "por mérito.",
+    );
+  }
+
+  const faltando = naArvore.filter((n) => !declaradas.has(n));
+  if (faltando.length > 0) {
+    throw new Error(
+      `edge(s) com versao.ts FORA de EDGES: ${faltando.join(", ")} — instrumentada e sem nenhum ` +
+        `gate de FORMA. Acrescente a linha em EDGES (e a lista estrutural que couber), ou remova ` +
+        `o versao.ts se a instrumentação não era para existir.`,
+    );
+  }
+
+  const sobrando = [...declaradas].filter((n) => !naArvore.includes(n)).sort();
+  if (sobrando.length > 0) {
+    throw new Error(
+      `EDGES declara edge sem versao.ts na árvore: ${sobrando.join(", ")} — a edge foi removida ou ` +
+        `renomeada e a linha ficou. Lista que aponta para o que não existe apodrece em silêncio.`,
+    );
+  }
+});
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
   for (const { nome, mod } of EDGES) {
@@ -690,7 +886,24 @@ Deno.test("gate próprio: onde o gate da edge não aceita cron-secret, a sonda N
  * lista quando a segunda apareceu: herdar a regra é o que impede a terceira nessa forma de ficar
  * de fora em silêncio.
  */
-const BEARER_NO_HANDLER = ["recommend", "analyze-unified-order"];
+const BEARER_NO_HANDLER = [
+  "recommend",
+  "analyze-unified-order",
+  // 12ª leva: as quatro de IA têm o `startsWith` próprio, e nas quatro a sonda vem antes dele.
+  "identify-tool",
+  "analyze-services",
+  "copilot-analyze",
+  "elevenlabs-transcribe",
+];
+
+/**
+ * A âncora do gate abaixo aceita as DUAS grafias de aspa. O literal `startsWith("Bearer ")`
+ * casava só o arquivo que usa aspa dupla; `copilot-analyze` e `elevenlabs-transcribe` escrevem
+ * `startsWith('Bearer ')` e cairiam no ramo "âncora não encontrada" — vermelho correto, mas
+ * pela razão errada (a propriedade medida é a ORDEM sonda↔gate, não a aspa do arquivo).
+ * Continua fail-closed: sem âncora, o gate para.
+ */
+const RE_BEARER_NO_HANDLER = /startsWith\((["'])Bearer \1\)/;
 
 Deno.test("onde o handler tem gate de Bearer próprio, a sonda vem ANTES dele", () => {
   // Medido em prod (2026-08-22): `net.http_post` com `x-cron-secret` e SEM `Authorization`
@@ -707,7 +920,7 @@ Deno.test("onde o handler tem gate de Bearer próprio, a sonda vem ANTES dele", 
   for (const nome of BEARER_NO_HANDLER) {
     const h = trechoDoHandler(nome);
     const posSonda = h.indexOf("classificarSonda(");
-    const posBearer = h.indexOf('startsWith("Bearer ")');
+    const posBearer = h.search(RE_BEARER_NO_HANDLER);
     if (posSonda < 0 || posBearer < 0) {
       throw new Error(`${nome}: âncoras não encontradas (controle positivo vazio)`);
     }
@@ -1099,6 +1312,25 @@ const STEPS_CRON_DIARIO: Array<{ edge: string; key: string }> = [
   { edge: "omie-sync-vendas-items", key: "vendas" },
 ];
 
+/**
+ * TODA edge cuja resposta carrega o marcador, e não só a da sonda — o conjunto que os gates de ECO
+ * abaixo varrem.
+ *
+ * Os 5 steps do cron diário o estrearam, mas a propriedade que os gates exigem não é "ser step do
+ * `omie-cron-diario`": é o corpo desta edge chegar a `net._http_response`, onde se lê PASSIVAMENTE.
+ * A `analytics-outbox-drain` (#2035, instrumentada em 2026-08-28) cumpre isso por uma via mais
+ * curta e mais frequente que a dos steps — o cron dela faz `net.http_post` DIRETO nela a cada 5
+ * minutos, sem orquestrador no meio, então nem a identidade depende da `key` que um pai escolheu.
+ *
+ * Extrair a lista, em vez de dar um gate próprio à edge nova, é o que impede o eco de virar duas
+ * verdades: um segundo bloco de asserts envelheceria separado, e a metade sem teste é a que deixa
+ * de valer.
+ */
+const ECOAM_VERSAO: string[] = [
+  ...STEPS_CRON_DIARIO.map((s) => s.edge),
+  "analytics-outbox-drain",
+];
+
 /** O helper de resposta anexa o marcador a TODO corpo, e não só ao da sonda? */
 function ecoaVersaoEmTodaResposta(codigo: string): boolean {
   // O helper é `function jsonRes(...) { return new Response(JSON.stringify({ ...body, versao: VERSAO }), …) }`.
@@ -1107,14 +1339,19 @@ function ecoaVersaoEmTodaResposta(codigo: string): boolean {
   return /\.\.\.\s*\w+\s*,\s*versao:\s*VERSAO/.test(codigo);
 }
 
-Deno.test("os 5 steps do cron diário ECOAM `versao` em toda resposta, não só na da sonda", () => {
+Deno.test("as edges do ECO carregam `versao` em toda resposta, não só na da sonda", () => {
   // O ponto principal da décima leva, e a metade que dispensa invocação. O `omie-cron-diario` faz
   // `JSON.parse` do corpo de cada step e o devolve inteiro em `resultados.<key>.body`, então o
   // marcador viaja para `net._http_response` no tick de 2h do jobid 52 — prova de deploy sem
   // chamar nada, sem cron secret e sem pagar o efeito caro. Sem este eco sobra só a sonda, e
   // sondar um bundle PRÉ-sensor nestas edges DISPARA o fluxo real (nenhuma roteia por `action`):
   // a única prova barata só serviria DEPOIS do deploy que ela existe para verificar.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  //
+  // A `analytics-outbox-drain` entrou depois (2026-08-28) por uma via mais curta: o cron dela bate
+  // DIRETO na edge a cada 5 minutos, sem orquestrador, então o corpo daqui já É o que fica em
+  // `net._http_response`. Nela o argumento do custo não vale (sondar adianta um tick do `*/5`) — o
+  // que vale é o outro: sem eco, uma fatia interna à edge não deixa discriminador nenhum.
+  for (const edge of ECOAM_VERSAO) {
     const codigo = codigoDaEdge(edge);
     if (!ecoaVersaoEmTodaResposta(codigo)) {
       throw new Error(
@@ -1161,13 +1398,18 @@ Deno.test("CALIBRAÇÃO: o gate do eco reprova o marcador que só a sonda carreg
   }
 });
 
-Deno.test("décima leva: o corpo do Request é lido UMA vez só", () => {
+Deno.test("edges do ECO: o corpo do Request é lido UMA vez só", () => {
   // Mesmo motivo do gate homônimo da oitava leva: a sonda obrigou o parse a SUBIR para antes do
   // client, e toda leitura que existia depois teve de passar a reusar a variável. Um `req.json()`
-  // a mais reintroduz o bug em SILÊNCIO — nestas quatro ele faria `empresa`/`dias`/`trigger` do
-  // corpo serem ignorados, e o step mudaria de escopo (ou de modo incremental×completo) sem erro
-  // nenhum. É a classe "ausente ≠ zero" na leitura de parâmetro.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  // a mais reintroduz o bug em SILÊNCIO — nos steps do cron diário ele faria `empresa`/`dias`/
+  // `trigger` do corpo serem ignorados, e o step mudaria de escopo (ou de modo
+  // incremental×completo) sem erro nenhum. É a classe "ausente ≠ zero" na leitura de parâmetro.
+  //
+  // Na `analytics-outbox-drain` o gate é PREVENTIVO e não corretivo: ela não lia o corpo antes da
+  // sonda, então a única leitura é a que a sonda trouxe. É justamente aí que a segunda leitura
+  // entra sem ninguém notar — o primeiro parâmetro que essa edge vier a aceitar (um `p_limite` do
+  // SQL Editor, digamos) nasceria lido de um corpo já consumido, ou seja, vazio.
+  for (const edge of ECOAM_VERSAO) {
     const ocorrencias = trechoDoHandler(edge).match(/req\.json\(\)/g) ?? [];
     if (ocorrencias.length !== 1) {
       throw new Error(
@@ -1208,7 +1450,7 @@ Deno.test("o ECO identifica a edge e a FONTE — `versao` sozinho não diz QUEM 
   // 2. `fonte` — fatia que chegue INTEIRA por `_shared/` não move o `VERSAO` (o `sonda:bump` exclui
   //    `_shared/` por medição), e o eco responderia idêntico nos dois bundles. O `fonte` é derivado
   //    do fecho transitivo e o CI o regrava, então não depende de disciplina.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  for (const edge of ECOAM_VERSAO) {
     const codigo = codigoDaEdge(edge);
     if (!/\.\.\.\s*\w+\s*,\s*versao:\s*VERSAO\s*,\s*edge:\s*EDGE\s*,\s*fonte:\s*FONTE/.test(codigo)) {
       throw new Error(
@@ -1223,7 +1465,7 @@ Deno.test("o ECO identifica a edge e a FONTE — `versao` sozinho não diz QUEM 
 Deno.test("o EDGE declarado é o nome do diretório da function", () => {
   // Um `EDGE` errado é pior que nenhum: o eco passa a AFIRMAR identidade falsa, e o veredito aponta
   // para a edge errada com toda a confiança.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  for (const edge of ECOAM_VERSAO) {
     const fonte = Deno.readTextFileSync(`supabase/functions/${edge}/versao.ts`);
     const m = /export const EDGE = "([^"]+)"/.exec(fonte);
     if (!m) throw new Error(`${edge}: versao.ts não exporta EDGE`);
@@ -1237,12 +1479,53 @@ Deno.test("o FONTE do eco sai da MESMA fábrica que a sonda serve", () => {
   // Se o `FONTE` fosse uma cópia literal do hash, ele congelaria: o CI regrava o mapa, e um valor
   // transcrito à mão passaria a mentir silenciosamente na primeira mudança de `_shared/` — que é
   // exatamente o furo que este campo existe para fechar.
-  for (const { edge } of STEPS_CRON_DIARIO) {
+  for (const edge of ECOAM_VERSAO) {
     const fonte = Deno.readTextFileSync(`supabase/functions/${edge}/versao.ts`);
     if (!/export const FONTE = respostaSonda\(VERSAO\)\.fonte;/.test(removerComentarios(fonte))) {
       throw new Error(
         `${edge}: FONTE não é derivado de respostaSonda — um hash transcrito à mão congela e mente`,
       );
+    }
+  }
+});
+
+/**
+ * ── Sonda de deploy POR CRON: o ramo vive DENTRO do bloco `OPTIONS` ────────────────────────────
+ *
+ * Spec `docs/superpowers/specs/2026-09-05-sonda-por-cron-fail-closed-design.md` §4.2. O bloco
+ * `OPTIONS` é o único lugar em que uma edge pode responder "qual bundle sou eu" sem risco: é a
+ * primeira instrução do handler em todo template Supabase, antes do gate de auth e de qualquer IO,
+ * e já era assim antes de o sensor existir — por isso bundle velho responde só o CORS.
+ *
+ * Fora do bloco, o ramo deixa de ser estrutural. Depois do `return` do CORS, vira código morto e o
+ * cron fica em silêncio para sempre (o pior estado: PARECE instrumentado). Este gate fecha os dois.
+ */
+Deno.test("sonda por cron: o ramo atenderSondaOptions vive DENTRO do bloco OPTIONS, antes do CORS, e o CORS não mudou", () => {
+  for (const { edge } of SONDA_CRON_ALVOS) {
+    const h = trechoDoHandler(edge);
+    const bloco = h.match(/if \(req\.method === ['"]OPTIONS['"]\) \{([\s\S]*?)\n\s*\}/);
+    if (!bloco) throw new Error(`${edge}: bloco OPTIONS não encontrado no handler`);
+    const corpo = bloco[1];
+    const posRamo = corpo.indexOf("atenderSondaOptions(");
+    const posCors = corpo.indexOf("return new Response(null, { headers: corsHeaders })");
+    if (posRamo < 0) {
+      throw new Error(`${edge}: o bloco OPTIONS não chama atenderSondaOptions — o cron nunca atesta esta edge`);
+    }
+    if (posCors < 0) {
+      throw new Error(`${edge}: a resposta de CORS do bloco OPTIONS mudou de forma — o preflight do browser tem de continuar idêntico`);
+    }
+    if (posRamo > posCors) {
+      throw new Error(`${edge}: atenderSondaOptions está DEPOIS do return de CORS — código morto, o cron ficaria em silêncio`);
+    }
+    if (!/if \(sonda\) return sonda;/.test(corpo)) {
+      throw new Error(`${edge}: o resultado de atenderSondaOptions não é devolvido`);
+    }
+    const returns = (corpo.match(/return /g) ?? []).length;
+    if (returns !== 2) {
+      throw new Error(`${edge}: o bloco OPTIONS tem ${returns} returns — têm de ser exatamente 2 (sonda e CORS)`);
+    }
+    if (/req\.json\(|req\.text\(|createClient\(|fetch\(/.test(corpo)) {
+      throw new Error(`${edge}: IO dentro do bloco OPTIONS — o ramo tem de continuar sem custo`);
     }
   }
 });

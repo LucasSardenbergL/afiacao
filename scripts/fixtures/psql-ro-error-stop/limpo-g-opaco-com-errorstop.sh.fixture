@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# O par positivo de `viola-h`: repasse opaco é aceitável quando o ON_ERROR_STOP vem embutido na
+# própria função-wrapper — é exatamente o que `db/test-fu4f-fase3-paridade-ts-sql.sh` faz.
+set -uo pipefail
+PSQL="$HOME/.config/afiacao/psql-ro"
+Q() { "$PSQL" -v ON_ERROR_STOP=1 -q "$@"; }
+Q -f consulta.sql

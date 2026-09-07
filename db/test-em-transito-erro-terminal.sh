@@ -54,7 +54,8 @@ CREATE TABLE public.sku_parametros (empresa text, sku_codigo_omie bigint, sku_de
 CREATE TABLE public.sku_estoque_atual (empresa text, sku_codigo_omie text, estoque_fisico numeric, estoque_pendente_entrada numeric, fonte_sync text);
 CREATE TABLE public.sku_embalagem_equivalencia (empresa text, grupo_id uuid, sku_codigo_omie text, fator_para_base numeric, ativo boolean);
 CREATE TABLE public.sku_preco_fornecedor_capturado (empresa text, sku_codigo_omie text, preco numeric, status text, capturado_em timestamptz);
-CREATE TABLE public.sku_fornecedor_externo (empresa text, sku_omie text, sku_portal text, ativo boolean);
+CREATE TABLE public.sku_fornecedor_externo (empresa text, fornecedor_nome text, sku_omie text, sku_portal text, ativo boolean,
+  fator_conversao numeric NOT NULL DEFAULT 1);  -- [EMBALAGEM PORTAL] a funcao le fornecedor_nome + fator_conversao (20260904232555)
 CREATE TABLE public.inventory_position (omie_codigo_produto bigint, account text, saldo numeric DEFAULT 0, cmc numeric, synced_at timestamptz);
 CREATE TABLE public.company_config (key text UNIQUE, value text);
 CREATE TABLE public.omie_products (omie_codigo_produto bigint, account text, descricao text, familia text, ativo boolean, tipo_produto text, metadata jsonb DEFAULT '{}');
@@ -78,7 +79,7 @@ CREATE TABLE public.pedido_compra_sugerido (id bigserial PRIMARY KEY, empresa te
 CREATE TABLE public.pedido_compra_item (id bigserial PRIMARY KEY, pedido_id bigint REFERENCES pedido_compra_sugerido(id) ON DELETE CASCADE,
   sku_codigo_omie text, sku_descricao text, estoque_atual numeric, ponto_pedido numeric, estoque_maximo numeric,
   qtde_sugerida numeric, qtde_final numeric, preco_unitario numeric, valor_linha numeric, primeira_compra boolean,
-  estoque_fisico numeric, estoque_a_caminho numeric);
+  estoque_fisico numeric, estoque_a_caminho numeric, fator_embalagem_portal numeric);  -- [EMBALAGEM PORTAL] o fixture de restauro grava esta coluna
 CREATE TABLE public.reposicao_estoque_nao_confirmado_log (id uuid DEFAULT gen_random_uuid(), run_id uuid, criado_em timestamptz DEFAULT now(),
   empresa text, sku_codigo_omie text, sku_descricao text, grupo_codigo text, motivo text, estoque_efetivo numeric, ponto_pedido numeric, fonte_sync text);
 SQL

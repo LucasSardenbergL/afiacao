@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/EmptyState';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 /**
  * Form de resposta com estado PRÓPRIO: digitar não re-renderiza a lista de
@@ -73,7 +75,13 @@ const ConversationsSkeleton = () => (
 export default function WhatsappInbox() {
   const conversationsQuery = useWhatsappConversations();
   const conversations = conversationsQuery.data ?? [];
-  const { data: slaRows = [] } = useWhatsappSla();
+  // `useWhatsappSla` LANÇA (fetchWhatsappSla faz `throw new Error(res.error.message)`) —
+  // quem convertia a falha em vazio era o `= []` DESTE binding. Com o Map vazio o
+  // <SlaBadge> sumia de TODAS as linhas e a lista ficava completa e sem nenhum sinal:
+  // a leitura natural é "ninguém estourando SLA", sobre um relógio de 15/30 min.
+  const slaQuery = useWhatsappSla();
+  const slaRows = slaQuery.data ?? [];
+  const estadoSla = estadoDeLeitura(slaQuery);
   const slaByConv = useMemo(
     () => new Map(slaRows.map((r) => [r.conversation_id, r])),
     [slaRows],
@@ -89,6 +97,16 @@ export default function WhatsappInbox() {
   return (
     <div className="flex h-[calc(100vh-3rem)]">
       <aside className="w-80 border-r overflow-y-auto">
+        {naoConsegui(estadoSla) && (
+          <div className="p-3 pb-0">
+            <AvisoLeituraFalhou
+              oque="o tempo de espera (SLA) das conversas"
+              estado={estadoSla}
+              testId="aviso-sla-whatsapp"
+              className="mb-0"
+            />
+          </div>
+        )}
         {conversationsQuery.isLoading ? (
           // Loading ≠ vazio: o "Sem conversas" durante o fetch escondia
           // cliente esperando resposta (SLA de 15/30min em jogo).

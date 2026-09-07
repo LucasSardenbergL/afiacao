@@ -11,11 +11,19 @@ import { getEstoqueZoneClass, formatBRL } from './shared';
 import { type Linha } from './useDetalhesModal';
 import { precoEditavelDaLinha } from './preco-edit';
 
+// Nº de embalagens do portal que a quantidade representa (40 L × 0,2 = 8 BB). round6 mata a poeira
+// binária (40 × 0,2 = 8,000000000000002 em IEEE-754) — mesmo helper da edge (qtde-portal.ts).
+function embalagens(qtdeFinal: number | null | undefined, fator: number | null | undefined): number {
+  return Math.round(Number(qtdeFinal ?? 0) * Number(fator ?? 0) * 1e6) / 1e6;
+}
+
 interface ItensTableProps {
   linhas: Linha[];
   podeEditar: boolean;
   totalAtual: number;
   onEditQty: (id: number, raw: string) => void;
+  // blur: commita a quantidade ao múltiplo da embalagem do fornecedor (o hook conhece o fator do item)
+  onBlurQty: (id: number) => void;
   podeEditarPreco: boolean;
   onEditPreco: (id: number, raw: string) => void;
   onRemover: (l: Linha) => void;
@@ -33,6 +41,7 @@ export function ItensTable({
   podeEditar,
   totalAtual,
   onEditQty,
+  onBlurQty,
   podeEditarPreco,
   onEditPreco,
   onRemover,
@@ -122,7 +131,20 @@ export function ItensTable({
                 {/* Frente B — a geração elevou a qtde ao mínimo forçado (final > sugerida natural,
                     sem ajuste humano E sem promoção: com promoção a causa do aumento é o forward_buying,
                     não o mínimo — esconder evita atribuir a causa errada). */}
-                {!l.ajustado_humano && !l.modo_promocao && Number(l.qtde_final ?? 0) > Number(l.qtde_sugerida ?? 0) && (
+                {/* [EMBALAGEM PORTAL] o motor arredondou ao múltiplo da embalagem do fornecedor (litro → balde):
+                    a causa do final > sugerida é a EMBALAGEM, não o mínimo forçado — sem isto o badge abaixo
+                    atribuiria a causa errada. Nº de embalagens = qtde_final × fator (7,4 = alguém editou a
+                    quantidade fora do múltiplo; a edge RECUSA o envio — o blur do input já sobe ao múltiplo). */}
+                {l.fator_embalagem_portal != null && Number(l.fator_embalagem_portal) > 0 && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] h-4"
+                    title={`Arredondado ao múltiplo da embalagem do fornecedor: ${Number(l.qtde_sugerida ?? 0)} → ${Number(l.qtde_final ?? 0)} (${embalagens(l.qtde_final, l.fator_embalagem_portal)} embalagens no portal)`}
+                  >
+                    {embalagens(l.qtde_final, l.fator_embalagem_portal)} emb. do fornecedor
+                  </Badge>
+                )}
+                {!l.ajustado_humano && !l.modo_promocao && l.fator_embalagem_portal == null && Number(l.qtde_final ?? 0) > Number(l.qtde_sugerida ?? 0) && (
                   <Badge variant="outline" className="text-[10px] h-4 border-status-warning/60 text-status-warning">
                     mínimo forçado
                   </Badge>
@@ -155,6 +177,7 @@ export function ItensTable({
                   className="h-8 w-24 ml-auto text-right tabular-nums"
                   value={l._qtd}
                   onChange={(e) => onEditQty(l.id, e.target.value)}
+                  onBlur={() => onBlurQty(l.id)}
                 />
               ) : (
                 <span className={cn(

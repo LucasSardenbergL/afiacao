@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# CAMADA: descoberta de VÍNCULO. O nome não está na lista de sementes — se o gate só olhasse
+# $PSQL/$PSQL_RO/$PSQLRO/$AFIACAO_PSQL, este arquivo passaria verde.
+set -uo pipefail
+CONSULTA_PROD="$HOME/.config/afiacao/psql-ro"
+CONSULTA_PROD -tA -f consulta.sql
+"$CONSULTA_PROD" -tA -f consulta.sql

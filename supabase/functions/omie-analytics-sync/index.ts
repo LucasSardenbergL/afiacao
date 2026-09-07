@@ -3,7 +3,12 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { fetchAll } from "../_shared/paginate.ts";
-import { STATUS_NAO_VENDA_POSTGREST } from "../_shared/universo-pedidos.ts";
+import type { BancoPostgrest } from "../_shared/paginate.ts";
+// O universo do Apriori não é lido aqui dentro: esta edge importa
+// `npm:@supabase/supabase-js@2` e nunca roda sob `--no-remote`, então nenhuma afirmação
+// sobre essa leitura era executável. Mora em `_shared/itens-com-pedido.ts`, provada em
+// `itens-com-pedido_test.ts` contra um double que muta entre páginas.
+import { carregarItensApriori } from "../_shared/itens-com-pedido.ts";
 import { agruparCestasPorSegmento, calcularRegrasDoSegmento, type RegraAssoc } from "../_shared/apriori.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
@@ -2221,31 +2226,25 @@ async function computeAssociationRules(db: SupabaseClient) {
     );
   }
 
-  // O tipo declara a forma REAL da linha, INCLUSIVE o objeto embedado. Declarar só as duas
-  // colunas era uma mentira de tipo — a resposta traz o `sales_orders` em cada uma das ~68 mil
-  // linhas, e um tipo que esconde isso esconde também o custo de memória de quem for revisar.
-  const items = await fetchAll<{
-    sales_order_id: string | null;
-    product_id: string | null;
-    sales_orders: { status: string | null; deleted_at: string | null; account: string | null } | null;
-  }>(
-    (from, to) =>
-      db
-        .from("order_items")
-        // `id` NÃO entra no select: o `.order()` não exige a coluna projetada (mesma
-        // convenção de `useBundleEngine`), e são ~68 mil linhas — o uuid a mais seria
-        // payload puro numa edge que já segura o universo inteiro em memória.
-        // `account` entra no MESMO embed: segmentar com uma segunda leitura paginada seria
-        // 2×K instantes (§14 — paginar não faz snapshot), e a conta que classifica a cesta
-        // tem de vir do MESMO instante em que a cesta foi lida.
-        .select("sales_order_id, product_id, sales_orders!inner(status, deleted_at, account)")
-        .not("product_id", "is", null)
-        .not("sales_orders.status", "in", STATUS_NAO_VENDA_POSTGREST)
-        .is("sales_orders.deleted_at", null)
-        .order("id", { ascending: true })
-        .range(from, to),
-    "order_items/assoc-rules",
-  );
+  // Universo do Apriori: `order_items` com o pedido pai EMBEDADO, por KEYSET.
+  //
+  // Era `fetchAll` + `.range(from, to)` — paginação por OFFSET debaixo do hard DELETE que
+  // `sync-reprocess/index.ts` faz em `order_items` (`.delete().in('id', diff.deletar)`, cron
+  // `15 */2 * * *`). Um DELETE antes do offset corrente encolhe a tabela e a página seguinte
+  // começa uma linha adiante: item VIVO pulado, com a contagem fechando — e este universo não
+  // vai para uma tela, vira regra de associação PUBLICADA globalmente, então a linha que some
+  // não deixa sintoma, deixa uma regra que ninguém consegue explicar depois.
+  //
+  // O `id` passou a entrar no `.select()`, contra o que o comentário anterior defendia. Ele
+  // estava certo no que media: são ~68,7 mil linhas (medido 2026-08-29) e o uuid a mais é
+  // ~2,5 MB de payload puro numa edge que já segura o universo inteiro em memória. O que
+  // faltava na conta é que sem a coluna projetada não existe cursor — e sem cursor a leitura
+  // pagina por offset. 2,5 MB é o preço de o universo não ter buracos.
+  //
+  // O embed continua sendo o mesmo e pelo mesmo motivo: segmentar com uma segunda leitura
+  // paginada seria 2×K instantes (§14 — paginar não faz snapshot), e a conta que classifica a
+  // cesta tem de vir do MESMO instante em que a cesta foi lida.
+  const items = await carregarItensApriori(db as unknown as BancoPostgrest);
 
   // `items.length === 0` agora só pode ser "li a tabela inteira e não há item" — falha de
   // leitura virou exceção acima. Antes os dois estados chegavam aqui iguais.

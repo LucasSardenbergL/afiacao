@@ -1134,9 +1134,11 @@ export interface PredicadoEsperado {
  * policy em `public`; 11 estão congeladas aqui. ⇒ **Convergência medida sobre uma amostra
  * escolhida por semelhança não é convergência — é o método se ouvindo falar.**
  *
- * ⚠️ `cap_compras_ler`, `cap_credito_escrever` e `cap_preco_escrever` têm o MESMO `srcMd5`
- * (`5faf2a21…`): três capabilities distintas cujo corpo hoje é o mesmo `has_role(master)`. Não é
- * duplicação a limpar — é o estado a congelar, e o dia em que uma divergir é o sinal que se quer.
+ * ⚠️ `cap_compras_ler`, `cap_credito_escrever`, `cap_preco_escrever` e — desde 2026-08-29 —
+ * `cap_carteira_escrever` têm o MESMO `srcMd5` (`5faf2a21…`): QUATRO capabilities distintas cujo
+ * corpo hoje é o mesmo `has_role(master)`. Não é duplicação a limpar — é o estado a congelar, e o
+ * dia em que uma divergir é o sinal que se quer. A quarta entrou por escolha explícita: o corpo
+ * dela foi copiado byte-a-byte do `cap_compras_ler` para NÃO criar um 5º md5 para a mesma regra.
  */
 export const AUTHZ_RLS_PREDICADOS: Record<string, PredicadoEsperado> = {
   'private.cap_carteira_ler': {
@@ -1147,19 +1149,24 @@ export const AUTHZ_RLS_PREDICADOS: Record<string, PredicadoEsperado> = {
       '`master` OU (`employee` E `commercial_roles` em gerencial/estrategico/super_admin) — corpo ' +
       'lido de prod. O predicado de carteira de MAIOR alcance: 22 tabelas (medido por pg_depend), ' +
       'das quais o contrato cura UMA. Congelar o corpo cobre as 22 no eixo 3 sem curar o conteúdo ' +
-      'das outras 21 — o mesmo retorno que `cap_compras_ler` deu na 3ª rodada. ⚠️ Corpo IDÊNTICO ' +
-      'ao de `cap_carteira_escrever`: hoje LER e ESCREVER carteira são a mesma autorização.',
+      'das outras 21 — o mesmo retorno que `cap_compras_ler` deu na 3ª rodada. Até 2026-08-29 o ' +
+      'corpo era IDÊNTICO ao de `cap_carteira_escrever` (LER e ESCREVER eram a mesma autorização); ' +
+      'a migration `20260828213000` estreitou a ESCRITA para `master`-only e deixou ESTA intacta. ' +
+      'Os dois md5 divergem de propósito desde então, e reconvergir é achado.',
   },
   'private.cap_carteira_escrever': {
     secdef: true,
     cfg: 'search_path=public',
-    srcMd5: '836e8f46f863eefd75b3b46a49eba81a',
+    srcMd5: '5faf2a21a46209aaf0ffa75041af6b4b',
     motivo:
-      'Gate de ESCRITA da carteira em 15 tabelas (medido). O `srcMd5` é o MESMO de ' +
-      '`cap_carteira_ler` — não é duplicação a limpar, é o estado a congelar: quem hoje LÊ a ' +
-      'carteira também a ESCREVE, e o dia em que os dois divergirem (ou em que afrouxar a leitura ' +
-      'arrastar a escrita junto) é exatamente o sinal que se quer ver. Perder o SECDEF aqui quebra ' +
-      'a autorização por BAIXO: a policy fica idêntica e passa a negar para todo mundo.',
+      'Gate de ESCRITA da carteira em 15 tabelas (medido). `master`-only desde ' +
+      '`20260828213000_cap_carteira_escrever_master_only` (aplicada 2026-08-29, md5 conferido em ' +
+      'prod). Até então o corpo era o MESMO de `cap_carteira_ler` — quem lia a carteira escrevia —, ' +
+      'e foi o congelamento da 4ª rodada que tornou isso visível. O corpo novo é cópia byte-a-byte ' +
+      'de `cap_compras_ler`, o que faz este md5 ser o do QUARTETO abaixo, de propósito: um texto ' +
+      'equivalente-porém-diferente criaria um md5 distinto para a mesma regra, que é ruído puro ' +
+      'neste eixo. Voltar a coincidir com `cap_carteira_ler` (`836e8f46…`) é o alarme. Perder o ' +
+      'SECDEF aqui quebra a autorização por BAIXO: a policy fica idêntica e passa a negar para todos.',
   },
   'private.carteira_visivel_para': {
     secdef: true,
@@ -1181,9 +1188,10 @@ export const AUTHZ_RLS_PREDICADOS: Record<string, PredicadoEsperado> = {
       'alcance que este contrato passa a congelar depois de `has_role`: 18 policies em 14 tabelas ' +
       '(medido por pg_depend), das quais o contrato cura UMA (`pedido_compra_item`). Congelar o corpo ' +
       'cobre as 14 no eixo 3 mesmo sem curar o conteúdo das outras 13 — é o melhor retorno por entrada ' +
-      'do arquivo inteiro. ⚠️ Corpo IDÊNTICO ao de `cap_preco_escrever`/`cap_credito_escrever`, logo o ' +
-      'mesmo md5 nas três: são capabilities distintas com a mesma regra hoje, e o dia em que uma ' +
-      'divergir é exatamente o que se quer ver.',
+      'do arquivo inteiro. ⚠️ Corpo IDÊNTICO ao de `cap_preco_escrever`/`cap_credito_escrever` e, ' +
+      'desde 2026-08-29, ao de `cap_carteira_escrever` — logo o mesmo md5 nas QUATRO: são ' +
+      'capabilities distintas com a mesma regra hoje, e o dia em que uma divergir é exatamente o ' +
+      'que se quer ver.',
   },
   'private.cap_credito_escrever': {
     secdef: true,

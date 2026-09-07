@@ -26,6 +26,7 @@
  * não corrupção. Se um dia doer, a saída é a co-localização, não um gate textual.
  */
 import { describe, it, expect } from 'vitest';
+import { extractObjects } from './lib/migration-objects';
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -69,5 +70,71 @@ describe('linhaArtefatoEscrito', () => {
     expect(linhaArtefatoEscrito('/repo/docs/migrations-audit.md', 'abc')).toBe(
       '✓ Escrito /repo/docs/migrations-audit.md (3 bytes)',
     );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// `bodyMd5` — o que fecha o ponto cego do `CREATE OR REPLACE` (Seção 3 do audit).
+//
+// O defeito: as Seções 1 e 2 perguntam "o objeto existe?". Para um objeto RECRIADO isso não
+// responde "a migration foi aplicada?" — a função existe desde a primeira, e o audit devolve ✅
+// com ou sem o apply da segunda. Medido: 231 dos 1307 objetos do inventário são recriados.
+// Os dois testes abaixo travam as DUAS armadilhas que quase fizeram a correção nascer quebrada.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+describe('bodyMd5 — a receita tem de ser a MESMA do banco', () => {
+  it('o md5 bate com o que o Postgres calcula para a função real de prod', () => {
+    // Âncora não-sintética: este corpo é o de `private.cap_carteira_escrever` em produção, e
+    // `5faf2a21…` foi MEDIDO lá (psql-ro, 2026-08-29) — não derivado deste código. Se a receita
+    // divergir do banco, este teste é o que grita.
+    const sql = `CREATE OR REPLACE FUNCTION private.cap_carteira_escrever(_uid uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  SELECT COALESCE(_uid IS NOT NULL AND public.has_role(_uid, 'master'::public.app_role), false);
+$function$;`;
+    const fn = extractObjects(sql).find((o) => o.kind === 'function');
+    expect(fn?.bodyMd5).toBe('5faf2a21a46209aaf0ffa75041af6b4b');
+  });
+
+  it('COMENTÁRIO no corpo CONTA — o prosrc do Postgres guarda comentário', () => {
+    // 🔴 A armadilha que quase passou: o extrator roda sobre o SQL com comentários REMOVIDOS, mas
+    // `pg_proc.prosrc` os guarda. Calcular o md5 sobre o texto strippado dá um hash que nunca bate
+    // com o banco para qualquer função com `--` no corpo. Medido: com o texto strippado a Seção 3
+    // acusava 52 DERIVA; com o cru, 24 — 28 alarmes FALSOS, e alarme falso em massa é como uma
+    // seção nova nasce desligada.
+    const comComentario = `CREATE FUNCTION public.f() RETURNS int LANGUAGE sql AS $$
+  -- explica a regra
+  SELECT 1;
+$$;`;
+    const semComentario = `CREATE FUNCTION public.f() RETURNS int LANGUAGE sql AS $$
+  SELECT 1;
+$$;`;
+    const a = extractObjects(comComentario).find((o) => o.kind === 'function')?.bodyMd5;
+    const b = extractObjects(semComentario).find((o) => o.kind === 'function')?.bodyMd5;
+    expect(a).toBeDefined();
+    expect(a).not.toBe(b);
+  });
+
+  it('a quebra de linha inicial vira ESPAÇO, não some — `btrim` do PG só tira espaço', () => {
+    // 🔴 `btrim(x)` com UM argumento remove apenas ESPAÇOS, nunca `\n`. O corpo de `AS $f$\n  SELECT`
+    // começa com quebra de linha, que SOBREVIVE ao btrim e vira um espaço à esquerda no
+    // `regexp_replace`. Um `.trim()` de JS removeria e produziria md5 diferente do banco.
+    const comQuebra = extractObjects('CREATE FUNCTION public.g() RETURNS int LANGUAGE sql AS $$\nSELECT 1;\n$$;')
+      .find((o) => o.kind === 'function')?.bodyMd5;
+    const semQuebra = extractObjects('CREATE FUNCTION public.g() RETURNS int LANGUAGE sql AS $$SELECT 1;$$;')
+      .find((o) => o.kind === 'function')?.bodyMd5;
+    expect(comQuebra).toBeDefined();
+    expect(comQuebra).not.toBe(semQuebra); // o espaço à esquerda é parte do que o banco hasheia
+  });
+
+  it('corpo não extraível degrada para AUSENTE, nunca para um md5 inventado', () => {
+    // Ausência de dado não pode virar "confere": sem `bodyMd5` a função simplesmente fica FORA da
+    // Seção 3, em vez de entrar nela com um hash que ninguém mediu.
+    const semDollarQuote = `CREATE FUNCTION public.h() RETURNS int LANGUAGE c AS 'MODULE_PATHNAME', 'h';`;
+    const fn = extractObjects(semDollarQuote).find((o) => o.kind === 'function');
+    expect(fn).toBeDefined();
+    expect(fn?.bodyMd5).toBeUndefined();
   });
 });

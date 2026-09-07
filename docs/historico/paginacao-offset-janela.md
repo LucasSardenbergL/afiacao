@@ -123,7 +123,7 @@ Isso vale para QUALQUER cap, sem `count:'exact'` e sem mexer nos 21 call-sites. 
 requisição a mais por leitura, a que volta vazia. O fim da tabela deixa de ser uma inferência a
 partir de um número que o servidor escolhe, e passa a ser um fato observado.
 
-## ⚠️ REVISÃO INDEPENDENTE PENDENTE
+## O Caminho B que cobriu o intervalo (a revisão independente RODOU depois — ver o fim deste doc)
 
 O ritual `/codex` desta entrega **não rodou**: a cota do ChatGPT Plus (janela rolante de 7
 dias) esgotou em 2026-08-21 — `codex-async.sh` saiu com `COTA_ESGOTADA` (exit 75) antes de
@@ -232,3 +232,292 @@ Gate: RED verificado antes do fix (`esperava lançar KEYSET_PAGINA_SOBREPOSTA, m
 vermelhos por **código errado**, provando que o teste casa a classificação e não "lançou algo")
 · tirar `KEYSET_PAGINA_SOBREPOSTA` da allowlist (`veio desconhecido`, provando que a entrada é
 carga e não enfeite).
+
+## A revisão independente RODOU (2026-08-29) — `DONE_WITH_CONCERNS`
+
+A cota voltou antes de 20/09. O ritual rodou com o prompt **gerado** por
+`scripts/codex-prompt-paginacao.sh` (não o guardado, que este doc já declarava defasado):
+`gpt-5.6-sol`, `reasoning=xhigh`, `exit 0`, 9.388 bytes. **O marcador de pendência sai — mas a
+revisão não voltou limpa, e o parecer pediu explicitamente para não fechar como "sem achados".**
+
+### O que ela derrubou DESTE doc
+
+- **Os pares PR↔SHA do prompt estavam errados**, e o parecer não conseguiu usá-los. Não era
+  erro de redação: `sha_de()` do gerador resolvia o número com `git log --grep "(#N)" -1`, e o
+  `--grep` varre a mensagem INTEIRA — um PR posterior que cita "(#N)" em prosa no CORPO roubava
+  o SHA. `(#1856)` resolvia para `4dd2a0271` (o citador) em vez de `4b592b506`; `(#1889)` para
+  `0ed5a9b31` em vez de `b559e8bdd`. **A ironia é a lição:** este gerador nasceu para o prompt
+  não envelhecer em silêncio, e errava em silêncio de outro jeito — entregando SHA plausível.
+  Consertado ancorando no ASSUNTO (a convenção de squash-merge fecha o assunto com `(#N)`), com
+  `scripts/test-codex-prompt-paginacao.sh` + `--falsificar`, ambos no CI.
+- **"21 call-sites" não reproduz.** O parecer contou 62 expressões `fetchAll` no HEAD; a
+  contagem literal em código de edge não-teste dá **119** de `fetchAll` mais 9 de
+  `fetchAllKeyset`. Seja qual for a definição que produziu 21, **este doc não a registra** — e
+  número sem receita de contagem é exatamente o que a doutrina do repo condena. Não repita o 21.
+- **`omie_products` não foi escolhido por DELETE** — o histórico local registra zero deletes; o
+  mecanismo era mutação do filtro `ativo`.
+
+### O que ela confirmou
+
+Nenhum **P0**. A sonda de versão (#1877/#1882) está limpa: `req.json()` uma vez → `corpoBruto`
+→ `classificarSonda` → auth → reuso; sem bypass de `action` por cron secret, sem vazamento de
+versão com `Bearer x`, sem efeito colateral antes dos gates.
+
+### Segue aberto (nomeado para não passar por consertado)
+
+- **Keyset não é snapshot, e offset desloca** — natureza da paginação sem transação, não
+  defeito introduzido por #1856/#1889. Mas a suíte de keyset **aceita** insert atrás do cursor:
+  ela exige "sem duplicata", não exige que o insert apareça. O teste não mede o que o nome sugere.
+- **P1 money-path novos, não tratados aqui:** `fin-valor-cockpit/index.ts:477` (`order_items`,
+  com INSERT e hard DELETE vivos em `sync-reprocess/index.ts:314`) e `:483` (`sales_orders`,
+  hard DELETE em `omie-vendas-sync/index.ts:3370`) — o cockpit **cruza as duas listas** em
+  `:486`, então migrar só uma não fecha nada. Mais dois: `_shared/mapas-paginados.ts:71`
+  (snapshot mensal persistente) e `omie-analytics-sync/index.ts:2227` (universo Apriori,
+  publicado globalmente). Correção de fato para o cockpit é **uma consulta só** (join +
+  agregação sob o mesmo snapshot), não dois keysets separados.
+- **`fetchAllKeyset` não tem orçamento** de páginas/linhas/deadline: escrita sustentada pode
+  mantê-lo vivo até o timeout externo.
+- **P2:** desde #1882 o JSON é parseado antes de qualquer auth — body inválido anônimo virou
+  400 (era 401) e body grande é materializado pré-auth. Não fabrica dado; amplia superfície.
+
+### O que a revisão NÃO prova
+
+`n_tup_ins/del/upd` acumulado não prova taxa nem sobreposição temporal (`stats_reset`
+desconhecido). **Igualdade de contagem não prova igualdade de identidade** — a simulação do
+parecer terminou 2.299 × 2.299 com a identidade trocada e uma linha viva de R$ 1.000.000
+omitida, sem exceção. Os guards só validam linhas DEVOLVIDAS: não detectam o que o `.gt()`
+suprimiu. E os testes usam doubles estáticos — não provam gateway, RLS, réplica nem snapshot
+entre requests.
+
+## Os 4 P1 da revisão: fechados (2026-08-29) — e o que a medição derrubou no caminho
+
+Entrega irmã da revisão acima, no mesmo dia. Fechou os quatro alvos que a seção "Segue
+aberto" nomeou, e **não** do jeito que ela supunha em dois pontos.
+
+### O cockpit não precisava de dois keysets — precisava de uma leitura só
+
+`fin-valor-cockpit` lia `order_items` (offset) e `sales_orders` (offset) e cruzava em memória
+por `sales_order_id`. São **dois defeitos empilhados**, e é a distinção que decide o conserto:
+
+| defeito | o que causa | conserto |
+|---|---|---|
+| deslocamento | DELETE antes do offset ⇒ linha VIVA pulada, contagem fechando | keyset |
+| cruzamento | duas paginações ⇒ pai e filho de instantes incompatíveis | **pai embedado** |
+
+Keyset nos dois lados conserta o primeiro e **não** conserta o segundo: cada leitura fica
+consistente consigo, nenhuma fica consistente com a outra. A correção é `order_items` com
+`sales_orders!inner(...)` — o pai chega na MESMA linha, no MESMO request.
+
+**E sai mais barata do que o que substitui**, o que inverte a intuição de "join é caro":
+medido em prod (psql-ro 2026-08-29) 16.548 itens no prefetch TTM + 31.114 pedidos = **49
+páginas viravam 17**. A segunda leitura lia a tabela INTEIRA de pedidos para consultar uma
+fração dela.
+
+Efeito colateral que não era o alvo e vale mais que uma otimização: os três `Set` montados de
+`salesOrdersAll` (janela, faturabilidade, conta) e o `canalPorPedido` viravam **descarte
+silencioso** quando o pai não era encontrado — `agregarPorCanal` faz `.get(id) ?? 'outro'`, ou
+seja, receita carimbada num canal errado em vez de erro. Com o `!inner` o pai é garantido pelo
+servidor. Hoje isso é vazio na prática (FK viva, **0 órfãos e 0 nulos** em `sales_order_id`,
+medido), então a mudança é de GARANTIA, não de resultado — e é assim que ela deve ser lida.
+
+### O P1 do snapshot mensal era LATENTE, não ativo
+
+`_shared/mapas-paginados.ts:carregarPedidosDoMes` foi listado junto dos outros três. A medição
+diz outra coisa: o mês mais cheio de `sales_orders` tem **629 pedidos** — cabe numa página de
+1.000, então a leitura **não pagina hoje** e o deslocamento nunca aconteceu. Migrou mesmo
+assim (custa três linhas, o dano seria num snapshot CONGELADO que ninguém recalcula, e o dia
+em que a primeira página encher não vem com aviso), mas **registrar a prioridade real importa**:
+tratar os quatro como equivalentes é o que faz a próxima leitura desta lista superestimar o
+risco de um e subestimar o do cockpit, que pagina 17 vezes por execução.
+
+### O `id` do Apriori: o comentário antigo estava certo no que media
+
+`omie-analytics-sync` documentava que `id` **não** entrava no `.select()` porque são ~68,7 mil
+linhas e o uuid seria ~2,5 MB de payload puro. A conta está certa. O que faltava nela é que
+**sem a coluna projetada não existe cursor** — e sem cursor a leitura pagina por offset debaixo
+do hard DELETE de `sync-reprocess`. 2,5 MB é o preço de o universo publicado globalmente não
+ter buracos. Este é o formato de erro a procurar em decisão de payload: a conta de custo
+correta, sobre a alternativa errada.
+
+### O teste que a revisão disse não existir agora existe
+
+A crítica era precisa: `paginate-keyset_test.ts` exige "sem duplicata" e **não** exige que o
+insert apareça — o nome prometia mais que o código dava. `itens-com-pedido_test.ts` fecha isso
+afirmando o comportamento **REAL**, não o desejado: insert atrás do cursor **não aparece**, e o
+teste fica VERMELHO se alguém trocar por uma leitura que dê snapshot, obrigando a decisão a ser
+revista em vez de herdada.
+
+A decisão registrada: **basta**. O que some é linha NASCIDA durante a leitura (segundos), numa
+janela TTM de 365 dias — perda de recall recente. O que o keyset elimina é o outro dano, o
+grave: linha ANTIGA e viva PULADA, mudando número já fechado. Precisão > recall.
+
+E o cenário do DELETE roda **contra as duas paginações no mesmo teste**, exigindo que a por
+offset FALHE: sem essa metade, um verde do keyset não distinguiria "resistiu" de "o cenário não
+deslocava nada". O teste também mostra por que guard de contagem não serve — o offset devolveu
+**exatamente** tantas linhas quanto a tabela tem ao fim, porque a linha pulada e a deletada se
+cancelam no total.
+
+### A revisão independente DESTA entrega rodou e voltou `bloquear` — o achado é real
+
+`codex-async.sh`, `gpt-5.6-sol`, `reasoning=xhigh`. Confirmou A (a semântica do `!inner` é a
+suposta: filtro em coluna do embed elimina a linha RAIZ), B (uuid usa `uuid_internal_cmp` nos
+dois lados — `ORDER BY` e `>` não podem discordar; collation não participa) e D (sem estouro
+demonstrável). E derrubou o enquadramento do limite, que estava confortável demais:
+
+**CESTA RASGADA — perda de PRECISÃO, não o recall recente que eu tinha declarado aceitável.**
+Itens irmãos do mesmo pedido têm uuids v4 **espalhados**, logo caem em páginas diferentes. Se
+o pai vira `cancelado` (ou é soft/hard-deletado — `sync-reprocess`, o soft-delete do app,
+`omie-vendas-sync` com cascade) depois da 1ª página, os irmãos já lidos **ficam** no acumulado
+e os posteriores são eliminados pelo filtro do embed. Sai **meio pedido**, sem exceção, com
+todos os ids estritamente crescentes — e os guards de `fetchAllKeyset` **não veem**, porque só
+olham as chaves DEVOLVIDAS; o que o filtro suprimiu é invisível para eles.
+
+Não existe instante em que essa cesta parcial seja verdadeira. Isso é diferente, em natureza,
+do insert atrás do cursor: aquele é linha que ainda não existia, este é um pedido que existe
+inteiro e chega pela metade — em regra de associação **publicada globalmente**.
+
+A suíte passava verde porque a fixture dava **um pedido por item**: ela não conseguia nem
+expressar o defeito (e o double registrava `.not()` sem aplicar, então filtro de embed não
+filtrava nada). As duas coisas foram corrigidas, e o cenário do Codex agora roda contra o
+código real: `itens-com-pedido_test.ts` reproduz **1 de 2 irmãos, sem exceção**.
+
+**Por que a entrega segue e não foi revertida:** ela é estritamente melhor que o offset que
+substitui — elimina o pulo de linha viva e o cruzamento de instantes entre duas paginações — e
+a cesta rasgada **já existia** sob offset, junto com os outros dois. Segurar a melhoria até o
+snapshot existir seria trocar um defeito por três. O que não pode acontecer é o limite passar
+por consertado: por isso ele tem teste com dente, e está listado abaixo como ABERTO.
+
+### Segue aberto (não passou por consertado)
+
+- ~~**CESTA RASGADA entre páginas**~~ — **FECHADA em 2026-08-30**, ver a seção abaixo.
+- **`fetchAllKeyset` não tem orçamento** de páginas/linhas/deadline: escrita sustentada pode
+  mantê-lo vivo até o timeout externo. Intocado por esta entrega.
+- **P2 do JSON pré-auth** (#1882): body inválido anônimo virou 400 e body grande é
+  materializado antes da auth. Intocado.
+- **Os doubles não são o PostgREST.** A suíte prova a TRADUÇÃO (cursor, ordem, filtros por
+  página, erro que lança) e o COMPORTAMENTO sob mutação simulada. Não prova gateway, RLS,
+  réplica, nem que `!inner` sobre `sales_orders` mantém o plano sob volume em prod.
+
+## A CESTA RASGADA fechada (2026-08-30) — e a pendência MAIOR que ela escondia
+
+**O conserto.** A paginação DESAPARECEU dos dois consumidores. Cada leitura passou a ser uma
+chamada a uma RPC (`apriori_universo_snapshot`, `cockpit_itens_snapshot`) que devolve o universo
+inteiro construído por **uma única query SQL** — e uma statement enxerga **um** snapshot MVCC. Pai
+e filhos, e todos os pedidos entre si, vêm do mesmo instante por CONSTRUÇÃO. Fecha junto o recall
+recente (não há mais cursor para uma linha nascer atrás dele) e a falta de orçamento de páginas do
+`fetchAllKeyset`, os dois nomeados acima.
+
+**Dos três caminhos que o parecer nomeou, o escolhido foi (a) — mas numa variante que ele não
+nomeou: sem materializar tabela e sem paginar a materialização.** Paginar uma materialização
+exigiria tabela real + `snapshot_id` + GC, isto é, ESCRITA a cada leitura, para reconquistar uma
+consistência que a query única já dá. O (b) (version fence) foi rejeitado por ser garantia
+CONDICIONAL — detecta e aborta, com o furo A→B→A e dependência de `created_at` como proxy de
+visibilidade — a um custo maior de código e prova. O (c) sozinho segue sendo o que o parecer disse
+que era.
+
+### A regra que sai daqui: consistência não pode depender de QUALIFICADOR
+
+Uma função `STABLE` de fato executa suas sub-queries no snapshot da query chamadora, e teria
+bastado. **Não foi usada assim de propósito.** Pendurar a garantia no `STABLE` a deixaria à mercê
+de um `CREATE OR REPLACE` futuro que o omita — o qualificador volta ao default `VOLATILE` e a
+consistência cai **sem erro nenhum**. É exatamente a armadilha do `WITH (security_invoker=on)` que
+o CLAUDE.md já registra, por outra porta. Por isso: **exatamente uma query toca as tabelas**, e
+tudo o mais (contagem, medição, tetos) opera sobre o `jsonb` já materializado.
+
+Isso não é teoria: `db/test-snapshot-universo-itens.sh` aplica a migration REAL com uma única troca
+— `STABLE` → `VOLATILE` — e exige que o resultado siga correto sob escrita concorrente. Passou
+(`N=2 DUR=3.99 SOBREP=SIM`).
+
+### A prova (PG17, 35 asserts, falsificação — `db/test-snapshot-universo-itens.sh`)
+
+O caso central é uma corrida REAL, não uma simulação: um writer cancela o pai **enquanto** a RPC
+executa, e o teste **exige a sobreposição temporal** (`T0 < TW < T1`) — se o commit não cair dentro
+da janela de execução, ele FALHA por "cenário sem dente" em vez de passar de graça. Resultados:
+
+| assert | desfecho |
+|---|---|
+| D1 — a leitura PAGINADA, com writer entre as páginas | **rasga**: 1 de 2 irmãos (o cenário tem dente) |
+| D2b — a RPC, com writer commitando DURANTE a execução | **inteira**: `N=2 DUR=4.07 SOBREP=SIM` |
+| E1 — a mesma RPC marcada `VOLATILE` | **inteira**: a garantia é da query única |
+| F3 — a RPC sabotada em DUAS queries + `pg_sleep` | **rasga**: `N=1` (a alternativa recusada, medida) |
+
+Três lições de harness, todas de falsos-verdes pegos aqui:
+- **`anon` barrado pelo motivo errado.** Sem `GRANT SELECT` nas tabelas stub, `anon` era barrado por
+  não enxergar `order_items` — o assert dizia "o REVOKE funciona" sem nunca ter exercitado o REVOKE.
+- **Sabotagem que contamina o assert vizinho não prova o vizinho.** Juntar as duas falsificações num
+  `sed` só fazia a inversão do comparador (F1) rejeitar a denylist canônica que F2 usa; o assert
+  acusou "o teto seguiu barrando", diagnóstico que aponta para o lugar errado. Uma sabotagem por
+  arquivo.
+- **`mktemp` com sufixo é BSD×GNU.** `mktemp /tmp/x.XXXXXX.sql` cria o nome LITERAL no macOS e a 2ª
+  execução morre com "File exists". Os X vão no FIM.
+
+### O erro de medição que o challenge pegou — e que teria ido para o PR
+
+A primeira versão desta entrega afirmava **2,8 MB** para o universo do Apriori. Estava errado: o
+número veio de `jsonb_agg(product_id)` agrupado **por pedido**, e a RPC devolve **um objeto por
+item**, repetindo `sales_order_id` e as chaves JSON. O real, medido com a forma EXATA que a função
+devolve, é **10.501.344 bytes — 3,7x maior**. A lição não é "medir": é que **medir uma forma
+PARECIDA não é medir**, e o número errado já estava escrito no comentário da migration com cara de
+evidência. Números finais (psql-ro, 2026-08-30):
+
+| | itens | bytes | tempo |
+|---|---|---|---|
+| Apriori | 68.692 | 10.501.344 (10,5 MB) | 752 ms server-side |
+| cockpit TTM | 14.628 | 6.345.896 (6,3 MB) | — |
+
+Contra 256 MB de heap da Edge e um `statement_timeout` de no máximo 60 s: folga de ~25x em memória
+e ~80x em tempo. (A forma de CESTAS agrupadas sairia em 5.629.734 bytes, −46%; ficou de fora de
+propósito — agrupar mudaria `agruparCestasPorSegmento`, e esta entrega é de TRANSPORTE.)
+
+### O que mais o challenge derrubou
+
+- **Teto contornável não é teto.** `p_teto_bytes` era um parâmetro que o chamador podia AFROUXAR.
+  Agora os dois tetos passam por `least(...)` contra um máximo interno (500k linhas / 32 MiB).
+- **Denylist "não-vazia e sem NULL" não bastava.** Uma lista que OMITA `cancelado` passaria nessas
+  checagens e produziria um universo com pedido cancelado dentro — regra de associação publicada
+  sobre o que não é venda, **sem erro nenhum**. A função agora exige **igualdade de CONJUNTO** com a
+  sua cópia canônica. Isso promove a paridade TS↔SQL de guard de teste a **invariante executável em
+  produção**. (E tem contrapeso: B9 prova que reordenar a lista no TS não quebra a leitura.)
+- **O fusível de cardinalidade precisa agir ANTES do `jsonb_agg`.** Resolvido sem abrir mão da query
+  única: `LIMIT n+1` na subquery. O `+1` é o que separa "couberam exatamente n" de "havia mais" —
+  sem ele, `n` linhas seriam indistinguíveis de truncagem.
+- **O guard de "2ª página" em `carregarPedidosDoMes` foi ABANDONADO.** A ideia era LANÇAR se a
+  leitura precisasse de uma segunda página. É bomba-relógio disfarçada de fusível: com 1.000 linhas
+  não dá para distinguir "existem exatamente 1.000" de truncamento, ele derrubaria o teste que
+  espera 2.300 pedidos (`mapas-paginados_test.ts`), e — o que decide — o snapshot mensal lê QUATRO
+  fontes em momentos distintos, então "uma página é atômica" seria verdade para uma delas e falso
+  para o snapshot publicado.
+
+### Segue aberto (não passou por consertado)
+
+- ~~**ATOMICIDADE LÓGICA DO PEDIDO**~~ — **FECHADA em 2026-08-30** pela RPC de escrita
+  `reconciliar_pedidos_omie` (migration `20260830190000`), que é a **Fase 2** que
+  `criar_pedidos_com_itens` (#929) declarou em junho. O teste que a pendência exigia existe e
+  passa: `db/test-reconciliar-pedidos-omie.sh` T1 (leitura durante reconciliação não-commitada,
+  com sobreposição temporal exigida) e F1 (o writer de HOJE no mesmo cenário RASGA). Lição,
+  medição e o que segue aberto em [`atomicidade-logica-do-pedido.md`](atomicidade-logica-do-pedido.md).
+  O texto original da pendência fica abaixo, porque a distinção que ele faz é o valor dele:
+
+- **ATOMICIDADE LÓGICA DO PEDIDO — a pendência que a cesta rasgada escondia.** A garantia entregue é
+  de LEITURA: tudo que volta pertence a um instante do banco. Isso **não** é uma revisão
+  logicamente completa do pedido, porque **o writer não é atômico**: `sync-reprocess` reparte a
+  reconciliação em VÁRIAS transações (itens numa, remoção dos velhos noutra, cabeçalho depois).
+  Existe portanto um instante REAL e commitado em que o pedido está meio-reconciliado — e o
+  snapshot vai lê-lo corretamente, **porque ele existiu**. A distinção é o coração do assunto: a
+  cesta rasgada era um estado que **nunca** existiu (artefato da paginação); este EXISTIU.
+  Correção: atomizar a ESCRITA — RPC de escrita por pedido, ou `order_revision` imutável com troca
+  de ponteiro `published_revision` no fim. **O teste que ela exige** (e que nenhum teste atual
+  cobre): duas sessões, a B commitando só PARTE dos itens novos e pausando antes de remover os
+  velhos e atualizar o cabeçalho; a A chama a RPC; exigir revisão antiga completa **ou** nova
+  completa, nunca mistura. A entrega atual FALHA nesse teste, e isso está dito.
+- **O snapshot mensal (`carteira-positivacao-snapshot`) lê QUATRO fontes em instantes distintos**
+  (assignments, pedidos, contatos, visitas) e persiste em lotes de 500 em transações separadas,
+  continuando após erro. `carregarPedidosDoMes` seguir consistente consigo não torna o snapshot
+  publicado consistente. Intocado por esta entrega.
+- **O tamanho máximo de RESPOSTA do gateway da Supabase não é documentado publicamente.** Os tetos
+  são conservadores por causa disso, e o payload é medido, não estimado — mas "não documentado" não
+  é "sem limite".
+- **Os doubles não são o PostgREST.** A suíte Deno prova o lado do cliente; o PG17 prova o lado do
+  banco. Nenhum dos dois prova o gateway, RLS em produção, nem o comportamento de um `jsonb` de
+  10,5 MB atravessando o Data API real.
+- **P2 do JSON pré-auth** (#1882). Intocado.

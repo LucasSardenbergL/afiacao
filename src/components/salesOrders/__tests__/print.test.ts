@@ -47,8 +47,15 @@ describe('itemTotal', () => {
   it('calcula qtd × unit quando valor_total ausente', () => {
     expect(itemTotal({ quantidade: 3, valor_unitario: 10 })).toBe(30);
   });
-  it('zero quando não há dados', () => {
-    expect(itemTotal({})).toBe(0);
+  // Mudou de propósito nesta fatia: sem preço unitário NÃO há total, e devolver 0 era
+  // exatamente a fabricação que a fatia mata (a tela imprimia "R$ 0,00" de um item cujo
+  // preço o Omie não informou). O caller mostra "—". O caso do RASCUNHO — `valor_total: 0`
+  // com preço presente — continua caindo no cálculo e devolvendo 100; é o teste acima.
+  it('NULL (não zero) quando não há dados: ausente ≠ zero', () => {
+    expect(itemTotal({})).toBeNull();
+    expect(itemTotal({ quantidade: 3 })).toBeNull();                       // qtd sem preço
+    expect(itemTotal({ quantidade: 3, valor_unitario: null })).toBeNull(); // preço explicitamente ausente
+    expect(itemTotal({ quantidade: 3, valor_unitario: 0 })).toBe(0);       // zero INFORMADO é 0, não "—"
   });
 });
 

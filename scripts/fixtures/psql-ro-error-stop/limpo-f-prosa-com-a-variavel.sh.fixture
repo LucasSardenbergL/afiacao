@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# CAMADA: máscara de contexto. A variável aparece DENTRO de literal — é mensagem, não invocação.
+# A mensagem abaixo carrega, DE PROPÓSITO, um texto que seria violação se fosse lido como código:
+# sem a máscara, o fiscal grita na prosa que ENSINA a regra. Contar prosa também infla o
+# denominador do gate com sítios que não executam nada.
+set -uo pipefail
+PSQL="$HOME/.config/afiacao/psql-ro"
+[ -x "$PSQL" ] || { echo "psql-ro ausente ($PSQL) — nada foi consultado"; exit 2; }
+motivo="cuidado: ($PSQL -tA -f consulta.sql) mente, sai 0 mesmo com ERROR"
+echo "$motivo"
+"$PSQL" -Atc "SELECT 1"

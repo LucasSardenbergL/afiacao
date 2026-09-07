@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-08-28T23:49:46.372Z",
-  "sourceHead": "6cc3041bbd8a9a5d8e7c3670d9329b40382aaca6",
+  "medidoEm": "2026-09-07T02:50:18.295Z",
+  "sourceHead": "2b7d1eccda04a53016a8db0a288822da9d0637a6",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,46 +11,84 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 43 função(ões) da allowlist.",
-      "denominador": "🔎 authz:funcoes:prod — 43 definição(ões) lida(s) para 43 chave(s) da allowlist.",
-      "contratoFingerprint": "760e7a22bda323ff845831d4665dc8e3ad440eabd60dbffb433de78644409172",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 2 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 51 definição(ões) lida(s) para 53 chave(s) da allowlist.",
+      "contratoFingerprint": "64b41961bc9dbef53a46ad25ee644825a52315e84d829a3ffa0e0db628eb227a",
       "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
-      "achados": []
+      "achados": [
+        {
+          "id": "87f43176e34ff5f2",
+          "linha": "❌ public.reposicao_selar_pedido — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_selar_pedido está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-09-07",
+          "ultimaVez": "2026-09-07"
+        },
+        {
+          "id": "6a1e618f655a78ad",
+          "linha": "❌ public.reposicao_conferir_envio — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_conferir_envio está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-09-07",
+          "ultimaVez": "2026-09-07"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
       "exit": 0,
-      "resumo": "✅ audit-grants — 3 tabela(s) conferida(s); prod bate com o contrato.",
+      "resumo": "✅ audit-grants — 4 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
-      "contratoFingerprint": "cee49cfd1b9dfcf0bf046f21dc14626f61c305829eca9e7242889f8d037c6529",
-      "auditorFingerprint": "c3f5fb7f9d9470133e862672765f314e8e146508ced179cfbc9e8822e2d6bc02",
+      "contratoFingerprint": "e015c7b09546978db7aa13a6975d776615220aa57993bf56ac5c8f662a9ad721",
+      "auditorFingerprint": "2447dc6da98d86ee801d160670a34461f204480c768926ec4be32bf0cfc9cb7c",
       "achados": []
     },
     "audit": {
       "script": "authz:audit:prod",
-      "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 19 funções, e as 3 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 19 definição(ões) lida(s) para 19 chave(s) do manifest.",
-      "contratoFingerprint": "20a1123dff0c63b3ee2b93bcc1a4ca6fe62bdabd0d7f37032c942289c8c8e387",
+      "exit": 1,
+      "resumo": "authz:audit:prod — 4 divergência(s).",
+      "denominador": "🔎 authz:audit:prod — 21 definição(ões) lida(s) para 23 chave(s) do manifest.",
+      "contratoFingerprint": "ed2a339e3e6509a01d4572607d8fd0946ee8e757c6abe1445a8c4900c089708d",
       "auditorFingerprint": "0866cf4f10a49635c4ed8590c7ed4861b254c4b75cc4e58ca1cdb15b038993c1",
-      "achados": []
+      "achados": [
+        {
+          "id": "ad7de5d080a699e2",
+          "linha": "❌ AUSENTE_EM_PROD: public.reposicao_selar_pedido está no AUTHZ_MANIFEST e não existe no banco.",
+          "primeiraVez": "2026-09-07",
+          "ultimaVez": "2026-09-07"
+        },
+        {
+          "id": "4cf734dfa25f0b1d",
+          "linha": "❌ AUSENTE_EM_PROD: public.reposicao_conferir_envio está no AUTHZ_MANIFEST e não existe no banco.",
+          "primeiraVez": "2026-09-07",
+          "ultimaVez": "2026-09-07"
+        },
+        {
+          "id": "7947a84aeb8b9b09",
+          "linha": "❌ GATE_VIVO_FALHOU: aprovar_pedido_sugerido(bigint,text) — falta cap_compras_ler",
+          "primeiraVez": "2026-09-07",
+          "ultimaVez": "2026-09-07"
+        },
+        {
+          "id": "257297e1a0831e90",
+          "linha": "❌ MD5_DIVERGIU: public.get_defasagem_cliente (20260718190000_authz_capability_matrix_e2.sql): esperado 037ede84a229d5798214511433afb65d, prod tem 7856c3052596d66a6f5ac8eb0a06c1c0",
+          "primeiraVez": "2026-09-06",
+          "ultimaVez": "2026-09-07"
+        }
+      ]
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
       "exit": 0,
-      "resumo": "✅ 25 asserções batem. O endurecimento continua de pé.",
+      "resumo": "✅ 38 asserções batem. O endurecimento continua de pé.",
       "denominador": null,
-      "contratoFingerprint": "fba1c503ed8f6d3413deff12596a6c84ce30986ac11fa6b8d53af7b3f0c17273",
-      "auditorFingerprint": "24e1576e4a7397bb21e7419fa19980d4a48b3f7e5cff1d0b95f2d74c96b7a6ae",
+      "contratoFingerprint": "292fc5d3416e039778f0ea22dc5e678787af6a84163dd8b6b4ff1f0f2cbbc26d",
+      "auditorFingerprint": "f60c65576a980c4d5328f52d597cad76c66865e458ffdaa33f633a5daa17e64b",
       "achados": []
     },
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 335 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
+      "resumo": "✅ audit-rls — 340 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
       "denominador": null,
-      "contratoFingerprint": "8f09f8737e150c53a13d24d49ece9a1144f2657a7d7f97203841467e09300e14",
+      "contratoFingerprint": "983189279bc797985d2ff78f0ee10434d7c6ab7e582d223ff02d0bddd84841b0",
       "auditorFingerprint": "f24bdcecdcf841257b1c817fbeecddf0b47b91ae42c8784d68e110b86a126986",
       "achados": []
     }

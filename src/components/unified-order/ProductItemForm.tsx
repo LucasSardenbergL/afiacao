@@ -8,6 +8,8 @@ import { keyDeSku, type CurrentSpec } from '@/lib/knowledge-base/spec-link';
 import { FichaTecnicaSheet } from '@/components/unified-order/FichaTecnicaSheet';
 import { usePrecoCockpit, type ItemCockpitInput } from '@/hooks/usePrecoCockpit';
 import { FAIXA_UI } from '@/lib/preco/faixa-ui';
+import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { VendaAssistidaSelo } from '@/components/unified-order/VendaAssistidaSelo';
 import type { OpcaoResolvida } from '@/lib/venda-assistida/resolver-opcao';
 import { cn } from '@/lib/utils';
@@ -76,7 +78,14 @@ export function ProductItemForm({
       }))
       .filter(i => i.preco > 0 && Number.isFinite(i.codigo) && i.empresa !== '');
   }, [products, prices, customerPricesLoading, precoLoading, customerUserId, getPrecoNascimento]);
-  const { data: cockpitList } = usePrecoCockpit(cockpitInputs);
+  const cockpit = usePrecoCockpit(cockpitInputs);
+  const cockpitList = cockpit.data;
+  // Mesma classe do carrinho: a faixa some quando a RPC falha e o PREÇO segue exibido, o que
+  // afirma "margem OK" sobre o preço que o item vai NASCER. Enquanto os preços do contrato
+  // carregam, `cockpitInputs` é [] ⇒ query 'desabilitada' ⇒ sem aviso (transitório, não é falha).
+  const estadoCockpit = estadoDeLeitura(cockpit);
+  const avisoCockpit = desatualizado(cockpit, cockpitList !== undefined)
+    ?? (naoConsegui(estadoCockpit) ? estadoCockpit : null);
   // produtos da busca são únicos por código (e tint é filtrado fora) → Map por código.
   const cockpitByCode = useMemo(
     () => new Map((cockpitList ?? []).map(l => [l.codigo, l])),
@@ -111,6 +120,13 @@ export function ProductItemForm({
           <div className="flex items-center gap-1.5 mb-2 text-[11px] text-muted-foreground" role="status">
             <Loader2 className="w-3 h-3 animate-spin" /> Carregando preços do contrato…
           </div>
+        )}
+        {avisoCockpit && (
+          <AvisoLeituraFalhou
+            oque="a margem dos produtos da lista"
+            estado={avisoCockpit}
+            testId="aviso-cockpit-lista"
+          />
         )}
         {loading ? (
           <Loader2 className="w-5 h-5 animate-spin mx-auto" />

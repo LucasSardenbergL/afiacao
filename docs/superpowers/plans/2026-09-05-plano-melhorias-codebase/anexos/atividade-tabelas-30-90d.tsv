@@ -1,0 +1,180 @@
+_quarantine_omie_clientes_20260722	0	0	2026-05-25
+abc_xyz_classification	0	0	
+addresses	0	2436	2026-07-18
+ai_decision_audit_log	0	0	
+ai_decisions	0	1133	2026-07-17
+atp_decisoes	1	1	2026-08-08
+cache_lotes	0	0	2026-04-13
+call_log	0	12	2026-06-09
+carteira_coverage	0	0	
+carteira_positivacao_snapshot	7301	21511	2026-09-01
+cliente_grupo_membros	0	0	
+cliente_grupos	0	0	
+cliente_item_mapa	0	4	2026-07-16
+cockpit_audit_log	0	5	2026-07-18
+commercial_roles	0	0	2026-05-18
+company_config	1	13	2026-08-26
+company_profiles	0	0	2026-04-17
+conversao_unidades	0	0	
+cte_associados	0	0	
+customer_canonical_alias	0	1633	2026-06-13
+customer_contacts	0	0	
+customer_preferred_items	0	1	2026-06-08
+customer_processes	0	0	
+customer_segments	1	5	2026-08-22
+default_prices	0	0	2026-02-22
+estoque_reservas	1	1	2026-08-08
+farmer_agenda	0	0	
+farmer_association_rules	16	16	2026-09-04
+farmer_audit_log	0	0	
+farmer_bundle_recommendations	1	1	2026-08-21
+farmer_calls	0	0	
+farmer_client_scores	0	428	2026-07-22
+farmer_config	0	0	
+farmer_copilot_events	0	0	
+farmer_copilot_sessions	0	0	
+farmer_diagnostic_questions	0	0	
+farmer_experiment_clients	0	0	
+farmer_experiments	0	0	
+farmer_governance_proposals	0	0	
+farmer_learning_weights	0	0	
+farmer_mixgap_feedback	0	0	
+farmer_performance_scores	0	0	
+farmer_recommendations	13657	13657	2026-08-21
+farmer_tactical_plans	294	782	2026-09-04
+fin_antecipacoes	0	0	
+fin_categoria_dre_mapping	0	0	2026-03-29
+fin_categorias	0	0	2026-03-29
+fin_conciliacao	0	0	
+fin_contas_correntes	1	1	2026-08-18
+fin_contas_pagar	126	478	2026-09-04
+fin_contas_receber	718	1998	2026-09-04
+fin_eliminacoes_intercompany	0	0	
+fin_eliminacoes_log	0	0	
+fin_estoque_valor	0	0	
+fin_eventos_eventuais	0	0	
+fin_eventos_recorrentes	0	0	
+fin_fechamento_log	0	0	
+fin_fechamentos	0	0	
+fin_movimentacoes	3204	9546	2026-09-04
+fin_permissoes	0	0	
+gov_iniciativas	0	0	
+health_score_history	397980	895118	2026-09-04
+inventory_position	56	336	2026-09-03
+kb_catalisador_links	0	0	
+kb_chunks	0	751	2026-06-13
+kb_competitor_products	0	0	
+kb_competitors	0	0	
+kb_documents	0	297	2026-06-13
+kb_extraction_drafts	0	0	
+kb_product_spec_versions	0	119	2026-06-13
+kb_product_specs	0	119	2026-06-13
+loyalty_points	0	0	
+loyalty_redemptions	0	0	
+margin_audit_log	1588	6927	2026-08-30
+melhoria_itens	0	0	
+melhoria_mensagens	0	0	
+nfe_efetivacao_tentativas	14	43	2026-08-20
+nfe_recebimento_itens	0	0	
+nfe_recebimentos	16	23	2026-09-04
+omie_clientes_nao_vinculados	10145	10145	2026-09-04
+omie_customer_account_map	0	16118	2026-07-19
+omie_ordens_servico	0	0	2026-02-26
+omie_product_spec_links	0	0	
+omie_products	16	92	2026-09-03
+omie_servicos	0	1	2026-07-03
+omie_vendedor_map	0	0	2026-05-24
+order_items	1198	3322	2026-09-04
+order_messages	0	0	
+order_price_history	0	0	
+order_reviews	0	0	
+orders	0	0	
+pedidos_programados	0	2	2026-07-16
+pedidos_programados_envios	0	1	2026-07-03
+pedidos_programados_itens	0	5	2026-07-16
+permission_change_log	0	0	
+permission_overrides	0	0	
+picking_events	0	0	
+picking_task_items	0	0	
+picking_tasks	0	0	
+prime_assinaturas	0	0	
+prime_beneficio_uso	0	0	
+prime_planos	0	0	
+priority_score_log	397980	895118	2026-09-04
+production_orders	0	0	
+profiles	0	392	2026-07-18
+purchase_orders_tracking	94	494	2026-09-05
+push_subscriptions	0	0	
+radar_contatos	0	5	2026-06-15
+radar_empresas	0	526176	2026-06-12
+rag_chunks	0	0	
+recommendation_log	15	55	2026-08-22
+recurring_schedules	0	0	
+referrals	0	0	
+regua_preco_log	0	0	
+reposition_parameters	0	0	
+route_calendar_override	0	0	
+route_contact_log	0	0	
+route_schedule	0	0	2026-05-30
+route_visits	0	0	
+sales_orders	546	1583	2026-09-04
+sales_price_history	1168	5874	2120-10-25
+sending_quality_logs	0	0	
+sku_leadtime_history	163	954	2026-09-04
+standard_processes	0	0	
+sync_reprocess_log	1251	3600	2026-09-05
+sync_state	0	14	2026-07-29
+tarefa_eventos	0	0	
+tarefa_satisfacao_candidatos	0	0	
+tarefa_templates	0	0	
+tarefas	0	0	
+tint_bases	0	0	2026-03-23
+tint_colecoes	0	0	
+tint_corantes	0	0	2026-03-23
+tint_embalagens	0	0	2026-03-23
+tint_formula_itens	1855010	1858462	2026-09-04
+tint_formulas	15206	513161	2026-09-04
+tint_importacoes	21389	64103	2026-09-04
+tint_integration_settings	0	0	2026-03-29
+tint_keys_snapshots	66	66	2026-09-04
+tint_produtos	0	0	2026-03-23
+tint_reconciliation_items	0	0	2026-03-29
+tint_reconciliation_runs	0	0	2026-03-29
+tint_skus	0	0	2026-03-23
+tint_staging_bases	66640	66864	2026-09-04
+tint_staging_corantes	16674	16730	2026-09-04
+tint_staging_cores_catalogo	0	0	
+tint_staging_cores_personalizadas	0	0	
+tint_staging_embalagens	4764	4780	2026-09-04
+tint_staging_formula_itens	39525	481243	2026-09-04
+tint_staging_formulas	9964	132066	2026-09-04
+tint_staging_precos_base	0	0	
+tint_staging_preparacao_itens	0	0	
+tint_staging_preparacoes	0	0	
+tint_staging_produtos	23780	23860	2026-09-04
+tint_staging_skus	262020	262900	2026-09-04
+tint_subcolecoes	0	1	2026-06-18
+tint_sync_errors	20009	38903	2026-09-04
+tint_sync_runs	21485	81490	2026-09-04
+tint_vendas	0	0	
+tint_vendas_itens	0	0	
+tool_categories	0	0	2026-02-07
+tool_events	0	0	
+tool_specifications	0	0	2026-02-21
+training_modules	0	0	2026-02-22
+user_departments	0	0	
+user_roles	0	392	2026-07-18
+user_tools	0	0	2026-04-10
+venda_bloqueio_credito_log	0	0	
+venda_excecao_credito	0	0	
+venda_items_history	752	2048	2026-09-04
+vendor_sip_credentials	0	0	2026-05-17
+visitas_agendadas	0	0	
+warehouses	0	0	2026-04-13
+webauthn_challenges	0	0	
+webauthn_credentials	0	0	
+whatsapp_conversations	0	0	
+whatsapp_messages	0	0	
+whatsapp_sla_digest_log	22	65	2026-09-04
+whatsapp_template_sends	0	0	
+whatsapp_templates	0	2	2026-07-13

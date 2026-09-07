@@ -34,6 +34,7 @@ function setup(overrides: Partial<React.ComponentProps<typeof ItensTable>> = {})
     podeEditar: true,
     totalAtual: 30,
     onEditQty: vi.fn(),
+    onBlurQty: vi.fn(),
     podeEditarPreco: false,
     onEditPreco: vi.fn(),
     onRemover: vi.fn(),
@@ -62,6 +63,9 @@ describe('ItensTable', () => {
     const input = screen.getByRole('spinbutton') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '7' } });
     expect(props.onEditQty).toHaveBeenCalledWith(1, '7');
+    // sair do campo commita a quantidade ao múltiplo da embalagem (37 → 40 com fator 0,2) — o hook decide, a tabela avisa
+    fireEvent.blur(input);
+    expect(props.onBlurQty).toHaveBeenCalledWith(1);
 
     const buttons = screen.getAllByRole('button');
     fireEvent.click(buttons[0]); // remover
@@ -115,6 +119,23 @@ describe('ItensTable', () => {
   it('item antigo (split NULL): cai no efetivo sem sublinha', () => {
     setup({ podeEditar: false, linhas: [linha({ estoque_atual: 5, estoque_fisico: null, estoque_a_caminho: null })] });
     expect(screen.queryByText(/a caminho/)).toBeNull();
+  });
+});
+
+describe('ItensTable — múltiplo da embalagem do portal (litro → balde)', () => {
+  it('motor arredondou (fator 0,2): badge "8 emb. do fornecedor" e NÃO "mínimo forçado"', () => {
+    setup({ linhas: [linha({ qtde_sugerida: 36, qtde_final: 40, fator_embalagem_portal: 0.2, ajustado_humano: null, modo_promocao: null })] });
+    expect(screen.getByText('8 emb. do fornecedor')).toBeTruthy();
+    expect(screen.queryByText('mínimo forçado')).toBeNull();
+  });
+  it('sem fator (null): final > sugerida segue atribuído ao mínimo forçado (regressão)', () => {
+    setup({ linhas: [linha({ qtde_sugerida: 36, qtde_final: 40, fator_embalagem_portal: null, ajustado_humano: null, modo_promocao: null })] });
+    expect(screen.getByText('mínimo forçado')).toBeTruthy();
+    expect(screen.queryByText(/emb\. do fornecedor/)).toBeNull();
+  });
+  it('quantidade editada depois (37 L × 0,2): mostra 7.4 — não esconde que deixou de ser múltiplo', () => {
+    setup({ linhas: [linha({ qtde_sugerida: 36, qtde_final: 37, fator_embalagem_portal: 0.2, ajustado_humano: true })] });
+    expect(screen.getByText('7.4 emb. do fornecedor')).toBeTruthy();
   });
 });
 

@@ -8,6 +8,20 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classificarPosLogin, decidirAlertaPortal, ehFalhaSistemicaDoPortal } from "../_shared/sayerlack-pos-login.ts";
+import {
+  FatorAprovadoDivergenteError,
+  FatorConversaoInvalidoError,
+  indexarMapeamentos,
+  MapeamentoAmbiguoError,
+  QtdeNaoMultiploEmbalagemError,
+  qtdePortalCanonica,
+  verificarFatorAprovado,
+} from "./qtde-portal.ts";
+import {
+  casarLinhasComItens, classificarErroRpcCusto, consolidarLinhasPortal, derivarCustos, extrairAddJson, resumirCaptura,
+  type AddJsonPortal, type ItemPedido, type LinhaDom, type MotivoRpcCusto, type ResultadoMatch,
+} from "./captura-custo.ts";
+import { escritaCritica } from "../_shared/escrita-critica.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +59,9 @@ export default async ({ page, context }) => {
   // fica no page.evaluate abaixo porque ele roda no contexto da página e não
   // enxerga este escopo.
   const classificarPosLogin = ${classificarPosLogin.toString()};
+  // Leitor do JSON do "Efetivar" (POST /order-creation/form/add → data.itens + data.value), interpolado
+  // do ./captura-custo.ts via .toString() — fonte única testada em deno test (money-path: custo).
+  const extrairAddJson = ${extrairAddJson.toString()};
   // Não usamos timeout interno menor que o Browserless: em 14/05, o pedido #116
   // clicou em "Efetivar Pedido" por volta de 53s e a Promise.race anterior
   // devolveu TIMEOUT_INTERNO aos 55s, encerrando o browser antes do portal concluir.
@@ -392,6 +409,10 @@ export default async ({ page, context }) => {
         // Totais capturados do #datatable_itens (custo). Propaga o que o runFlow
         // anexou em raw.data.itens_capturados pro Deno casar com os itens.
         itens_capturados: Array.isArray(data.itens_capturados) ? data.itens_capturados : [],
+        // JSON do Efetivar ({itens, value, ordernum}) e diagnóstico do scrape (headers/idx/amostra) —
+        // consumidos pela captura de custo no Deno. null/ausente = sem prova, nunca lista vazia.
+        portal_add_json: data.portal_add_json || null,
+        scrape_debug: data.scrape_debug || null,
         safeToRetry,
         needsReconciliation,
         evidence: {
@@ -468,14 +489,6 @@ export default async ({ page, context }) => {
 
   const runFlow = async () => {
    try {
-    console.log('[DEBUG_CREDS]', JSON.stringify({
-      user_present: typeof user === 'string' && user.length > 0,
-      user_length: user?.length ?? 0,
-      pass_present: typeof pass === 'string' && pass.length > 0,
-      pass_length: pass?.length ?? 0,
-      portalUrl,
-      clienteCodigo,
-    }));
 
     await applyStealth();
     trace.push({ step: 'login_start', t: Date.now() - t0 });
@@ -540,16 +553,6 @@ export default async ({ page, context }) => {
           bodyPreview: body.substring(0, 1500),
         };
       });
-      console.log('[DEBUG_LOGIN_CHECK]', JSON.stringify({
-        via: loginCheck.via,
-        url: loginCheck.url,
-        alertText: loginErrorInfo.alertText,
-        bodyContains_naoEPossivel: loginErrorInfo.bodyPreview.includes('Não é possível'),
-        bodyContains_credenciaisInvalidas:
-          loginErrorInfo.bodyPreview.toLowerCase().includes('credenciais') ||
-          loginErrorInfo.bodyPreview.toLowerCase().includes('inválida'),
-        bodyPreview_first_500: loginErrorInfo.bodyPreview.substring(0, 500),
-      }));
       return {
         data: {
           success: false,
@@ -653,9 +656,6 @@ export default async ({ page, context }) => {
     trace.push({ step: 'navegacao_via_menu_start', urlAtual: page.url(), t: Date.now() - t0 });
 
     const urlAposLogin = page.url();
-    if (!urlAposLogin.endsWith('/home') && !urlAposLogin.includes('/home')) {
-      console.log('[DEBUG_NAV] URL inesperada após login:', urlAposLogin);
-    }
 
     // Sidebar já foi expandida e confirmada na checagem pós-login acima (uma etapa só:
     // expandir → esperar o sinal → classificar). O segundo par expandir+esperar que morava
@@ -672,7 +672,6 @@ export default async ({ page, context }) => {
       }
       return { clicked: false, found_links: links.length, all_texts: links.map((l) => (l.innerText || '').trim().substring(0, 30)).slice(0, 10) };
     });
-    console.log('[DEBUG_CLICK_VENDAS]', JSON.stringify(expandiu_vendas));
     trace.push({ step: 'clicked_vendas', expandiu_vendas, t: Date.now() - t0 });
     await page.waitForFunction(function() {
       const links = Array.from(document.querySelectorAll('a'));
@@ -705,7 +704,6 @@ export default async ({ page, context }) => {
         links_com_order_creation: allLinks.filter((l) => (l.getAttribute('href') || '').includes('order-creation')).map((l) => ({ href: l.getAttribute('href'), text: (l.innerText || '').trim().substring(0, 50) })),
       };
     });
-    console.log('[DEBUG_CLICK_PEDIDOS]', JSON.stringify(clicou_pedidos));
     trace.push({ step: 'clicked_pedidos', clicou_pedidos, t: Date.now() - t0 });
 
     if (!clicou_pedidos.clicked) {
@@ -734,7 +732,6 @@ export default async ({ page, context }) => {
     await sleep(2000); // dá tempo do DOM da página de pedidos estabilizar
 
     const urlAposClick = page.url();
-    console.log('[DEBUG_AFTER_CLICK_PEDIDOS]', JSON.stringify({ url: urlAposClick, chegou_em_order_creation: urlAposClick.endsWith('/order-creation') }));
     trace.push({ step: 'after_click_pedidos', url: urlAposClick, t: Date.now() - t0 });
 
     await page.waitForSelector('#btnNovoPedido', { timeout: budgetFor('btn-novo-pedido', 25_000) });
@@ -842,7 +839,6 @@ export default async ({ page, context }) => {
           debug_btns_visible: debug_btns_visible
         };
       }, i);
-      console.log('[DEBUG_INCLUIR_ITEM_CLICK]', JSON.stringify({ iteration: i, ...addItemClicado }));
       trace.push({ step: 'incluir_item_clicked_iter_' + i, addItemClicado, t: Date.now() - t0 });
       if (!addItemClicado.clicked) {
         const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
@@ -881,7 +877,6 @@ export default async ({ page, context }) => {
           has_select2_it_codigo_container_exact: !!document.querySelector('#select2-it_codigo-container'),
         };
       });
-      console.log('[DEBUG_DOM_APOS_INCLUIR_2]', JSON.stringify({ iteration: i, ...debugDomAposIncluir }));
       trace.push({ step: 'dom_apos_incluir_iter_' + i, debugDomAposIncluir, t: Date.now() - t0 });
       // AGORA o waitForSelector original, mas com fallback inteligente
       let select2ContainerSel = '#select2-it_codigo-container';
@@ -889,7 +884,6 @@ export default async ({ page, context }) => {
         const visibleContainer = debugDomAposIncluir.select2_containers_it_codigo.find(function(c) { return c.visible; });
         if (visibleContainer) {
           select2ContainerSel = '#' + visibleContainer.id;
-          console.log('[DEBUG_SELECT2_FALLBACK]', 'Usando ID alternativo: ' + select2ContainerSel);
           trace.push({ step: 'select2_fallback_iter_' + i, sel: select2ContainerSel, t: Date.now() - t0 });
         }
       }
@@ -903,7 +897,6 @@ export default async ({ page, context }) => {
           btn_primary_texts: allBtns.map((b) => (b.innerText || '').trim().substring(0, 30)),
         };
       });
-      console.log('[DEBUG_POS_INCLUIR_ITEM]', JSON.stringify({ iteration: i, ...debugPosIncluir }));
       await page.click(select2ContainerSel);
       await sleep(300);
       await page.waitForSelector('.select2-search__field', { timeout: budgetFor('item-' + i + '-select2-search', 5_000) });
@@ -961,7 +954,6 @@ export default async ({ page, context }) => {
         };
       });
       trace.push({ step: 'debug_btn_gravar_iter_' + i, t: Date.now() - t0, debugGravarItem: debugGravarItem });
-      console.log('[DEBUG_BTN_GRAVAR]', JSON.stringify({ iteration: i, ...debugGravarItem }));
 
       // PR12: o portal Sayerlack às vezes ignora o click do #btnGravarItem
       // silenciosamente — o POST /save-tab-preco-session não dispara e a row
@@ -989,7 +981,6 @@ export default async ({ page, context }) => {
 
       if (!saveResult.ok) {
         // Retry: portal ignorou o click. Tenta de novo.
-        console.warn('[DEBUG_ITEM_SAVE_RETRY]', JSON.stringify({ iteration: i, sku: item.sku_portal }));
         trace.push({ step: 'item_' + i + '_save_retry', t: Date.now() - t0 });
         saveConfirm = armarSaveWait('item-' + i + '-save-retry');
         await page.click('#btnGravarItem');
@@ -1038,30 +1029,65 @@ export default async ({ page, context }) => {
     }, { timeout: budgetFor('validacao-pre-efetivar', 15_000), polling: 250 });
     trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0, remaining: remainingMs() });
 
-    // === Scrape #datatable_itens (custo + Prz Ent) — header/value matching, robusto a layout ===
+    // === Scrape #datatable_itens (Prz Ent + Qtd UN + Preço Venda) — header-matching + identidade por TOKEN ===
+    // Histórico: 97/97 envios (jun→set/2026) vinham com sku_portal='' e total_raw='' — o sku só era
+    // atribuído se UMA célula fosse IGUAL ao código (a célula não é texto puro) e o "total" era a ÚLTIMA
+    // célula (coluna de ações, vazia). A tabela NÃO tem coluna Total: colunas reais (spec 2026-07-14) são
+    // UN · Cap Emb · Qtd Fat · Qtd UN · Preço Fat · Preço UN · Prz Ent · % Desconto · Preço Venda (líquido/embalagem).
+    // O custo de linha nasce no Deno (captura-custo.ts) SÓ quando Σ(Preço Venda × Qtd UN) FECHA com o total
+    // do JSON do Efetivar — coluna errada aqui não vira custo. A amostra viaja no envelope pra diagnóstico.
     const skusConhecidos = items.map(function(it){ return (it.sku_portal || '').trim().toUpperCase(); }).filter(Boolean);
     const scrape = await page.evaluate(function(skus) {
       function norm(s){ return (s || '').trim().toUpperCase(); }
       var table = document.querySelector('#datatable_itens');
-      if (!table) return { ok: false, motivo: 'sem_tabela', headers: [], przIdx: -1, rows: [] };
-      var ths = Array.from(table.querySelectorAll('thead th')).map(function(th){ return (th.innerText || '').trim(); });
-      var przIdx = ths.findIndex(function(h){ return /prz|prazo/i.test(h); });
-      var rows = Array.from(table.querySelectorAll('tbody tr')).map(function(tr){
+      if (!table) return { ok: false, motivo: 'sem_tabela', headers: [], przIdx: -1, idx: {}, rows: [], amostra: [] };
+      function compacta(s, n){ return (s || '').replace(/\\s+/g, ' ').trim().substring(0, n); }
+      var ths = Array.from(table.querySelectorAll('thead th')).map(function(th){ return compacta(th.innerText, 40); });
+      // EXATAMENTE um header casando; 0 ou >1 ⇒ -1 (coluna ambígua não é coluna).
+      function idxDe(re){ var hits = []; ths.forEach(function(h, i){ if (re.test(h)) hits.push(i); }); return hits.length === 1 ? hits[0] : -1; }
+      var przIdx = idxDe(/prz|prazo/i);
+      var idx = {
+        qtd_un: idxDe(/qtd\\.?\\s*un\\b/i),
+        preco_venda: idxDe(/pre[çc]o\\s*venda/i),
+        preco_un: idxDe(/pre[çc]o\\s*un\\b/i),
+        desconto: idxDe(/desconto/i),
+      };
+      // Célula com input/select VISÍVEL usa .value (linha em edição renderiza inputs); senão innerText.
+      function cellVal(tds, i) {
+        if (i < 0 || i >= tds.length) return '';
+        var input = tds[i].querySelector('input:not([type=hidden]):not([type=password]), select');
+        if (input && typeof input.value === 'string' && input.value.trim() !== '') return input.value.trim();
+        return compacta(tds[i].innerText, 60);
+      }
+      // Placeholder do DataTables ("Nenhum dado disponível") é <tr> real — não é linha (pegadinha #2).
+      var trs = Array.from(table.querySelectorAll('tbody tr')).filter(function(tr){ return !tr.querySelector('td.dataTables_empty'); });
+      var amostra = [];
+      var rows = trs.map(function(tr, ri){
         var tds = Array.from(tr.querySelectorAll('td'));
-        var texts = tds.map(function(td){ return (td.innerText || '').trim(); });
-        // código: SÓ identifica se EXATAMENTE 1 célula bate (igualdade) um sku conhecido — evita
-        // atribuir o sku errado a uma linha por colisão de célula; 0 ou >1 → sku vazio = naoCasado (seguro).
-        var cellsSku = texts.filter(function(t){ return skus.indexOf(norm(t)) !== -1; });
+        var texto = (tr.innerText || '');
+        Array.from(tr.querySelectorAll('input:not([type=hidden]):not([type=password]), select')).forEach(function(el){
+          if (typeof el.value === 'string') texto += ' ' + el.value;
+          if (el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions.length) texto += ' ' + (el.selectedOptions[0].innerText || '');
+        });
+        // Identidade por TOKEN exato (tokenização [^A-Z0-9.], pontas sem ponto): "WP06.3900QT - DESC" casa,
+        // "WP06.3900QTX" não. Exatamente 1 sku conhecido ⇒ sku; 0 ou >1 ⇒ '' (naoCasado, seguro).
+        var tokens = norm(texto).split(/[^A-Z0-9.]+/).map(function(t){ return t.replace(/^\\.+|\\.+$/g, ''); });
+        var achados = skus.filter(function(s){ return tokens.indexOf(s) !== -1; });
+        // Diagnóstico estritamente limitado: 2 linhas × 20 células × 30 chars (nunca evidência pra liberar escrita).
+        if (ri < 2) amostra.push(tds.slice(0, 20).map(function(_td, ci){ return compacta(cellVal(tds, ci), 30); }));
         return {
-          sku_portal: cellsSku.length === 1 ? norm(cellsSku[0]) : '',
-          prz_ent_raw: (przIdx >= 0 && texts[przIdx] != null) ? texts[przIdx] : '',
-          total_raw: texts.length ? texts[texts.length - 1] : '',
+          sku_portal: achados.length === 1 ? achados[0] : '',
+          prz_ent_raw: cellVal(tds, przIdx),
+          qtd_un_raw: cellVal(tds, idx.qtd_un),
+          preco_venda_raw: cellVal(tds, idx.preco_venda),
+          preco_un_raw: cellVal(tds, idx.preco_un),
+          desconto_raw: cellVal(tds, idx.desconto),
         };
       });
-      return { ok: true, przIdx: przIdx, headers: ths, rows: rows };
+      return { ok: true, przIdx: przIdx, idx: idx, headers: ths.slice(0, 20), rows: rows, amostra: amostra };
     }, skusConhecidos);
-    console.log('[DEBUG_SCRAPE_ITENS]', JSON.stringify({ ok: scrape.ok, przIdx: scrape.przIdx, headers: scrape.headers, n: (scrape.rows || []).length, amostra: (scrape.rows || []).slice(0, 3) }));
-    trace.push({ step: 'scrape_datatable', n: (scrape.rows || []).length, przIdx: scrape.przIdx, t: Date.now() - t0 });
+    var scrapeDebug = { ok: scrape.ok, motivo: scrape.motivo || null, przIdx: scrape.przIdx, idx: scrape.idx || {}, headers: scrape.headers || [], amostra: scrape.amostra || [] };
+    trace.push({ step: 'scrape_datatable', n: (scrape.rows || []).length, przIdx: scrape.przIdx, idx: scrape.idx || {}, skus_identificados: (scrape.rows || []).filter(function(r){ return !!r.sku_portal; }).length, t: Date.now() - t0 });
     var linhasPortal = scrape.rows || [];
 
     // === Gate de grupo: Prz Ent (inteiro) === ltEsperado, EXATO. Fail-OPEN na incerteza (bug de seletor/sem config NÃO trava). ===
@@ -1159,7 +1185,6 @@ export default async ({ page, context }) => {
       };
     });
     trace.push({ step: 'pre_click_efetivar_diag', t: Date.now() - t0, diag: preClickDiag });
-    console.log('[DEBUG_PRE_CLICK_EFETIVAR]', JSON.stringify(preClickDiag));
 
     // === PR3: wait composto pós-submit ===
     // Arma os 4 sinais ANTES do click — qualquer um que cumpra ganha. Ignora
@@ -1197,7 +1222,6 @@ export default async ({ page, context }) => {
       };
     });
     trace.push({ step: 'snapshot_pos_efetivar_imediato', t: Date.now() - t0, snapshot: snapImediato });
-    console.log('[DEBUG_POS_EFETIVAR_IMEDIATO]', JSON.stringify(snapImediato));
 
     // Aguarda o primeiro sinal positivo. Se nenhum cumprir no budget, lança
     // AggregateError (Promise.any) — capturado e classificado abaixo.
@@ -1208,7 +1232,6 @@ export default async ({ page, context }) => {
       firstSignal = { kind: 'none', error: (err && err.message) || String(err) };
     }
     trace.push({ step: 'first_signal', kind: firstSignal.kind, t: Date.now() - t0, remaining: remainingMs() });
-    console.log('[DEBUG_FIRST_SIGNAL]', JSON.stringify({ kind: firstSignal.kind, error: firstSignal.error || null }));
 
     // Microjanela: 250ms a mais pro recorder receber o body da response caso o
     // sinal vencedor tenha sido banner/modal/url (que chegam antes do network
@@ -1229,6 +1252,8 @@ export default async ({ page, context }) => {
     // do JSON em formato ISO YYYY-MM-DD; ex.: "2026-05-22"). Usada pelo
     // disparar-pedidos-aprovados como base do dDtPrevisao do Omie (+ 2 dias).
     let portalDataEntrega = null;
+    // Custo: JSON do Efetivar (data.itens[{item,value}] + data.value). null = sem prova (nunca lista vazia).
+    let portalAddJson = null;
 
     if (firstSignal.kind === 'network' && firstSignal.response) {
       const r = await readResponseBodySafe(firstSignal.response);
@@ -1240,6 +1265,7 @@ export default async ({ page, context }) => {
       };
       if (r.parsed && r.parsed.success === false) bodySuccessFalse = true;
       if (r.parsed && !bodySuccessFalse) {
+        try { portalAddJson = extrairAddJson(r.parsed); } catch (e) { portalAddJson = null; }
         protocolo = tryExtractProtocoloFromObject(r.parsed);
         if (protocolo) protocoloSource = 'network_json';
         // PR4: data_entrega top-level (ISO YYYY-MM-DD). Validação estrita
@@ -1284,9 +1310,6 @@ export default async ({ page, context }) => {
       bodySuccessFalse,
       t: Date.now() - t0
     });
-    console.log('[DEBUG_SUBMIT_CLASSIFIED]', JSON.stringify({
-      firstSignalKind: firstSignal.kind, protocolo, protocoloSource, portalDataEntrega, responseInfo, bodySuccessFalse
-    }));
 
     const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false, encoding: 'base64' }).catch(() => null);
 
@@ -1326,7 +1349,9 @@ export default async ({ page, context }) => {
           protocolo,
           protocoloSource,
           portal_data_entrega: portalDataEntrega,
-          itens_capturados: linhasPortal.map(function(l){ return { sku_portal: l.sku_portal, total_raw: l.total_raw, prz_ent_raw: l.prz_ent_raw }; }),
+          itens_capturados: linhasPortal,
+          portal_add_json: portalAddJson,
+          scrape_debug: scrapeDebug,
           firstSignal: { kind: firstSignal.kind },
           responseInfo,
           successText: protocolo ? ('Pedido ' + protocolo + ' criado com sucesso') : null,
@@ -1404,81 +1429,9 @@ export default async ({ page, context }) => {
 `;
 
 // ============================================================================
-// Captura de custo do portal (Deno scope — NÃO roda dentro do Browserless).
-// ESPELHO VERBATIM de src/lib/reposicao/sayerlack-scraping-pedido.ts — manter
-// em sincronia. (parseDiasPrzEnt é dependência de casarLinhasComItens; o gate
-// de grupo roda no browser, então validarGrupoLeadtime fica fora daqui.)
+// Captura de custo do portal: funções puras em ./captura-custo.ts (espelho verbatim em
+// src/lib/reposicao/sayerlack-scraping-pedido.ts, comparado byte a byte no vitest).
 // ============================================================================
-function parseBRL(s: string): number | null {
-  if (typeof s !== 'string') return null;
-  const limpo = s.replace(/[^\d,.-]/g, '').trim();
-  if (!limpo) return null;
-  const normal = limpo.replace(/\./g, '').replace(',', '.'); // pt-BR: ponto=milhar, vírgula=decimal
-  const n = Number(normal);
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseDiasPrzEnt(s: string): number | null {
-  if (typeof s !== 'string') return null;
-  const m = s.match(/-?\d+/);
-  if (!m) return null;
-  const n = Number(m[0]);
-  return Number.isInteger(n) ? n : null;
-}
-
-interface LinhaPortal { sku_portal: string; prz_ent_raw: string; total_raw: string; }
-interface ItemPedido {
-  item_id: number; sku_codigo_omie: string; sku_descricao: string | null;
-  sku_portal: string | null; qtde_final: number; preco_atual: number;
-}
-interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; }
-interface ResultadoMatch { casados: Casado[]; naoCasados: ItemPedido[]; ambiguos: ItemPedido[]; }
-
-function normPortal(s: string | null): string { return (s ?? '').trim().toUpperCase(); }
-
-function casarLinhasComItens(linhas: LinhaPortal[], itens: ItemPedido[]): ResultadoMatch {
-  const casados: Casado[] = [];
-  const naoCasados: ItemPedido[] = [];
-  const ambiguos: ItemPedido[] = [];
-
-  const itensPorSku = new Map<string, ItemPedido[]>();
-  for (const it of itens) {
-    const k = normPortal(it.sku_portal);
-    if (!k) { naoCasados.push(it); continue; }
-    const arr = itensPorSku.get(k) ?? [];
-    arr.push(it); itensPorSku.set(k, arr);
-  }
-  const linhasPorSku = new Map<string, LinhaPortal[]>();
-  for (const ln of linhas) {
-    const k = normPortal(ln.sku_portal);
-    if (!k) continue;
-    const arr = linhasPorSku.get(k) ?? [];
-    arr.push(ln); linhasPorSku.set(k, arr);
-  }
-  for (const [k, its] of itensPorSku) {
-    const lns = linhasPorSku.get(k) ?? [];
-    if (its.length > 1 || lns.length > 1) { ambiguos.push(...its); continue; }
-    if (lns.length === 0) { naoCasados.push(its[0]); continue; }
-    casados.push({ item: its[0], prz_ent: parseDiasPrzEnt(lns[0].prz_ent_raw), total_linha: parseBRL(lns[0].total_raw) });
-  }
-  return { casados, naoCasados, ambiguos };
-}
-
-interface CustoUpdate { item_id: number; preco_unitario: number; valor_linha: number; }
-function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
-
-function derivarCustos(res: ResultadoMatch): { updates: CustoUpdate[]; pulados: { sku_codigo_omie: string; motivo: string }[] } {
-  const updates: CustoUpdate[] = [];
-  const pulados: { sku_codigo_omie: string; motivo: string }[] = [];
-  for (const c of res.casados) {
-    const total = c.total_linha; const qtde = c.item.qtde_final;
-    if (total == null || !(total > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'total_invalido' }); continue; }
-    if (!(qtde > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'qtde_invalida' }); continue; }
-    if (round2(total) === round2(qtde * c.item.preco_atual)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'sem_mudanca' }); continue; }
-    updates.push({ item_id: c.item.item_id, preco_unitario: total / qtde, valor_linha: total }); // precisão cheia
-  }
-  return { updates, pulados };
-}
 
 interface PedidoCandidato {
   id: number;
@@ -1498,6 +1451,9 @@ interface ItemMapeado {
   unidade_portal: string | null;
   fator_conversao: number;
   mapeamento_ativo: boolean | null;
+  // fator com que o MOTOR arredondou qtde_final ao múltiplo da embalagem (#2157). NULL/undefined = não
+  // arredondou. Conferido contra o fator VIVO antes do envio (`verificarFatorAprovado`) — TOCTOU aprovação→envio.
+  fator_embalagem_portal?: number | string | null;
   // preço unitário atual do item (base da tolerância na captura de custo do portal)
   preco_atual?: number;
 }
@@ -1526,6 +1482,7 @@ interface PedidoItemDireto {
   sku_codigo_omie: string;
   sku_descricao: string;
   qtde_final: number | string;
+  fator_embalagem_portal: number | string | null;
 }
 
 interface SkuFornecedorExternoRow {
@@ -1567,12 +1524,6 @@ async function uploadScreenshot(
       const commaIdx = cleaned.indexOf(",");
       if (commaIdx !== -1) cleaned = cleaned.substring(commaIdx + 1);
     }
-    console.log("[DEBUG_SCREENSHOT_PREFIX]", JSON.stringify({
-      pedido_id: pedidoId,
-      has_data_prefix: base64?.startsWith("data:") ?? false,
-      base64_length: cleaned?.length ?? 0,
-      base64_first_20: cleaned?.substring(0, 20) ?? null,
-    }));
     const bytes = Uint8Array.from(atob(cleaned), (c) => c.charCodeAt(0));
     const path = `pedido_${pedidoId}_${Date.now()}${suffix}.png`;
     const { error: upErr } = await supabase.storage
@@ -1664,6 +1615,63 @@ async function processarPedido(
     duracao_ms: 0,
   };
 
+  // Recusa ANTES de qualquer efeito externo (nenhum POST ao Browserless): não-retentável, motivo visível ao
+  // comprador em `portal_erro`, evidência com `requestSent: false`. escritaCritica: se o status não gravar,
+  // o pedido voltaria à fila e re-tentaria com o MESMO dado — a recusa tem de ser durável.
+  async function recusarPreBrowserless(motivo: string, e: Error, extra: Record<string, unknown> = {}): Promise<ProcessResult> {
+    result.status_final = "erro_nao_retentavel";
+    result.erro = e.message;
+    result.tentativas += 1;
+    await escritaCritica(
+      `pedido_compra_sugerido.update(erro_nao_retentavel:${motivo})`,
+      supabase.from("pedido_compra_sugerido").update({
+        status_envio_portal: result.status_final,
+        portal_tentativas: result.tentativas,
+        portal_erro: result.erro,
+        portal_proximo_retry_em: null,
+      }).eq("id", pedido.id),
+    );
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: result.status_final,
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "pre_browserless", motivo, ...extra, requestSent: false },
+      browserlessResponseMs: null,
+      erro: result.erro,
+    });
+    console.log(`[envio-portal] Pedido #${pedido.id}: recusado pré-Browserless (${motivo}) — ${e.message}`);
+    result.duracao_ms = Date.now() - t0;
+    return result;
+  }
+
+  // Falha TRANSIENTE pré-Browserless (banco indisponível ao ler itens/de-para): retentável em 15 min até
+  // MAX_TENTATIVAS, depois definitiva. Nenhum POST foi enviado.
+  async function falharTransientePreBrowserless(motivo: string, erro: string): Promise<ProcessResult> {
+    result.erro = erro;
+    result.tentativas += 1;
+    const esgotado = result.tentativas >= MAX_TENTATIVAS;
+    result.status_final = esgotado ? "erro_nao_retentavel" : "erro_retentavel";
+    await escritaCritica(
+      `pedido_compra_sugerido.update(${result.status_final}:${motivo})`,
+      supabase.from("pedido_compra_sugerido").update({
+        status_envio_portal: result.status_final,
+        portal_tentativas: result.tentativas,
+        portal_erro: result.erro,
+        portal_proximo_retry_em: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      }).eq("id", pedido.id),
+    );
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: result.status_final,
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "pre_browserless", motivo, requestSent: false },
+      browserlessResponseMs: null,
+      erro: result.erro,
+    });
+    result.duracao_ms = Date.now() - t0;
+    return result;
+  }
+
   // Idempotencia: pedido comprovadamente no portal nao e reprocessado.
   // Cobre o estado legado (enviado_portal) e o novo (sucesso_portal), ambos
   // exigem protocolo confirmado.
@@ -1679,97 +1687,85 @@ async function processarPedido(
     return result;
   }
 
-  // 1. Buscar itens com mapeamento
-  console.log("[DEBUG_RPC] tentando RPC envio_portal_itens_mapeados, pedido_id=", pedido.id);
-  const { data: itens, error: itensErr } = await supabase.rpc("envio_portal_itens_mapeados", {
-    p_pedido_id: pedido.id,
-  }).select("*") as unknown as { data: ItemMapeado[] | null; error: PostgrestErrorLike | null };
-
-  let itensList: ItemMapeado[] | null = itens;
-  console.log("[DEBUG_RPC_RESULT]", JSON.stringify({
-    pedido_id: pedido.id,
-    itensErr: itensErr ? { message: itensErr.message, code: itensErr.code, details: itensErr.details } : null,
-    itensList_isNull: itensList === null,
-    itensList_isArray: Array.isArray(itensList),
-    itensList_length: Array.isArray(itensList) ? itensList.length : 'N/A',
-  }));
-  // Fallback: query direta caso RPC nao exista
-  if (itensErr || !itensList) {
-    const { data: itensDirectRaw, error: e2 } = await supabase
-      .from("pedido_compra_item")
-      .select(`
-        id,
-        sku_codigo_omie,
-        sku_descricao,
-        qtde_final
-      `)
-      .eq("pedido_id", pedido.id)
-      .order("id", { ascending: true });
-    const itensDirect = (itensDirectRaw ?? []) as unknown as PedidoItemDireto[];
-    if (e2 || !itensDirectRaw) {
-      // Erro de banco ao buscar itens — transiente, nenhum POST foi enviado.
-      result.erro = `Erro ao buscar itens: ${e2?.message ?? "desconhecido"}`;
-      result.tentativas += 1;
-      const esgotado = result.tentativas >= MAX_TENTATIVAS;
-      result.status_final = esgotado ? "erro_nao_retentavel" : "erro_retentavel";
-      await supabase.from("pedido_compra_sugerido").update({
-        status_envio_portal: result.status_final,
-        portal_tentativas: result.tentativas,
-        portal_erro: result.erro,
-        portal_proximo_retry_em: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      }).eq("id", pedido.id);
-      await gravarTentativa(supabase, pedido.id, {
-        iniciadoEm,
-        statusResultado: result.status_final,
-        elapsedMs: Date.now() - t0,
-        evidence: { phase: "pre_browserless", motivo: "erro_buscar_itens", requestSent: false },
-        browserlessResponseMs: null,
-        erro: result.erro,
-      });
-      result.duracao_ms = Date.now() - t0;
-      return result;
-    }
-    const skus = itensDirect.map((i) => i.sku_codigo_omie);
-    console.log("[DEBUG_FALLBACK_ITENS]", JSON.stringify({
-      pedido_id: pedido.id,
-      pedido_empresa: pedido.empresa,
-      itensDirect_count: itensDirect?.length ?? 0,
-      skus_extraidos: skus,
-    }));
-    const { data: mapsRaw, error: mapsErr } = await supabase
-      .from("sku_fornecedor_externo")
-      .select("sku_omie, sku_portal, unidade_portal, fator_conversao, ativo")
-      .eq("empresa", pedido.empresa)
-      .ilike("fornecedor_nome", "%SAYERLACK%")
-      .in("sku_omie", skus);
-    const maps = (mapsRaw ?? []) as unknown as SkuFornecedorExternoRow[];
-    console.log("[DEBUG_FALLBACK_MAPS]", JSON.stringify({
-      pedido_id: pedido.id,
-      filtro_empresa: pedido.empresa,
-      filtro_fornecedor_pattern: '%SAYERLACK%',
-      filtro_skus: skus,
-      maps_count: maps.length,
-      maps_amostra: maps.slice(0, 3).map((m) => ({ sku_omie: m.sku_omie, sku_portal: m.sku_portal, ativo: m.ativo })),
-      mapsErr: mapsErr ? { message: mapsErr.message, code: mapsErr.code } : null,
-    }));
-    const mapByOmie = new Map<string, SkuFornecedorExternoRow>();
-    maps.forEach((m) => mapByOmie.set(m.sku_omie, m));
-    itensList = itensDirect.map((i) => {
-      const m = mapByOmie.get(i.sku_codigo_omie);
-      return {
-        item_id: i.id,
-        sku_codigo_omie: i.sku_codigo_omie,
-        sku_descricao: i.sku_descricao,
-        qtde_final: Number(i.qtde_final),
-        sku_portal: m?.sku_portal ?? null,
-        unidade_portal: m?.unidade_portal ?? null,
-        fator_conversao: Number(m?.fator_conversao ?? 1),
-        mapeamento_ativo: m?.ativo ?? null,
-      };
+  // 1. Buscar itens + de-para do fornecedor — caminho ÚNICO.
+  // Aqui havia uma tentativa de RPC `envio_portal_itens_mapeados` com esta query como fallback. A RPC
+  // nunca existiu em nenhum schema de prod (medido 2× em 2026-09-05): o fallback SEMPRE foi o caminho
+  // vivo, e a chamada só gastava um roundtrip PostgREST e um erro de log por envio.
+  // A RPC não foi escrita de propósito — sem contrato definido, um de-para divergente do que o MOTOR
+  // usou manda o pedido errado ao fornecedor (precisão>recall, docs/agent/reposicao.md §portal Sayerlack).
+  const { data: itensDirectRaw, error: itensErr } = await supabase
+    .from("pedido_compra_item")
+    .select(`
+      id,
+      sku_codigo_omie,
+      sku_descricao,
+      qtde_final,
+      fator_embalagem_portal
+    `)
+    .eq("pedido_id", pedido.id)
+    .order("id", { ascending: true });
+  const itensDirect = (itensDirectRaw ?? []) as unknown as PedidoItemDireto[];
+  if (itensErr || !itensDirectRaw) {
+    // Erro de banco ao buscar itens — transiente, nenhum POST foi enviado.
+    result.erro = `Erro ao buscar itens: ${itensErr?.message ?? "desconhecido"}`;
+    result.tentativas += 1;
+    const esgotado = result.tentativas >= MAX_TENTATIVAS;
+    result.status_final = esgotado ? "erro_nao_retentavel" : "erro_retentavel";
+    await supabase.from("pedido_compra_sugerido").update({
+      status_envio_portal: result.status_final,
+      portal_tentativas: result.tentativas,
+      portal_erro: result.erro,
+      portal_proximo_retry_em: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    }).eq("id", pedido.id);
+    await gravarTentativa(supabase, pedido.id, {
+      iniciadoEm,
+      statusResultado: result.status_final,
+      elapsedMs: Date.now() - t0,
+      evidence: { phase: "pre_browserless", motivo: "erro_buscar_itens", requestSent: false },
+      browserlessResponseMs: null,
+      erro: result.erro,
     });
+    result.duracao_ms = Date.now() - t0;
+    return result;
   }
+  const skus = itensDirect.map((i) => i.sku_codigo_omie);
+  const { data: mapsRaw, error: mapsErr } = await supabase
+    .from("sku_fornecedor_externo")
+    .select("sku_omie, sku_portal, unidade_portal, fator_conversao, ativo")
+    .eq("empresa", pedido.empresa)
+    // Chave EXATA do pedido — a mesma que o motor usa (sp.fornecedor_nome = sfe.fornecedor_nome, #2157).
+    // Era ILIKE '%SAYERLACK%': com um alias cadastrado, o Map podia escolher outro fator/SKU do que o motor.
+    .eq("fornecedor_nome", pedido.fornecedor_nome)
+    .in("sku_omie", skus);
+  if (mapsErr || !mapsRaw) {
+    // Falha de banco ao ler o de-para é TRANSIENTE — antes virava mapa vazio → "SKUs sem mapeamento ativo"
+    // definitivo e FALSO (challenge Codex 2026-09-05, P2). Mesmo contrato do "Erro ao buscar itens" acima.
+    return await falharTransientePreBrowserless("erro_buscar_mapeamentos", `Erro ao buscar mapeamentos: ${mapsErr?.message ?? "desconhecido"}`);
+  }
+  const maps = mapsRaw as unknown as SkuFornecedorExternoRow[];
+  let mapByOmie: Map<string, SkuFornecedorExternoRow>;
+  try {
+    mapByOmie = indexarMapeamentos(maps);
+  } catch (e) {
+    if (!(e instanceof MapeamentoAmbiguoError)) throw e;
+    return await recusarPreBrowserless("mapeamento_ambiguo", e, { sku: e.sku, n: e.n });
+  }
+  const itensList: ItemMapeado[] = itensDirect.map((i) => {
+    const m = mapByOmie.get(i.sku_codigo_omie);
+    return {
+      item_id: i.id,
+      sku_codigo_omie: i.sku_codigo_omie,
+      sku_descricao: i.sku_descricao,
+      qtde_final: Number(i.qtde_final),
+      sku_portal: m?.sku_portal ?? null,
+      unidade_portal: m?.unidade_portal ?? null,
+      fator_conversao: Number(m?.fator_conversao ?? 1),
+      mapeamento_ativo: m?.ativo ?? null,
+      fator_embalagem_portal: i.fator_embalagem_portal,
+    };
+  });
 
-  if (!itensList || itensList.length === 0) {
+  if (itensList.length === 0) {
     // Erro logico — retentar nao resolve.
     result.status_final = "erro_nao_retentavel";
     result.erro = "Pedido sem itens";
@@ -1791,16 +1787,6 @@ async function processarPedido(
     result.duracao_ms = Date.now() - t0;
     return result;
   }
-
-  console.log("[DEBUG_PRE_VALIDATION]", JSON.stringify({
-    pedido_id: pedido.id,
-    itensList_final: itensList.map((i) => ({
-      sku_codigo_omie: i.sku_codigo_omie,
-      sku_portal: i.sku_portal,
-      mapeamento_ativo: i.mapeamento_ativo,
-      qtde_final: i.qtde_final,
-    })),
-  }));
 
   // 2. Validar SKUs
 
@@ -1867,13 +1853,41 @@ async function processarPedido(
     }
   }
 
-  // 3. Calcular qtde portal
-  // Portal Sayerlack só aceita unidades inteiras: arredondar SEMPRE para cima.
-  const itemsPortal = itensList.map((i) => ({
-    sku_portal: i.sku_portal!,
-    qtde: Math.max(1, Math.ceil(i.qtde_final * i.fator_conversao)),
-    sku_descricao: i.sku_descricao,
-  }));
+  // 3. Calcular qtde portal — ENVIADO = APROVADO (nada aqui transforma a compra; só confere e recusa)
+  // Portal Sayerlack só aceita unidades inteiras: `qtdePortal` converte a unidade do Omie para a do portal via
+  // `fator_conversao` (ex.: litro → balde 0,2) com ceil. Fail-closed: fator inválido aborta o pedido INTEIRO antes
+  // de qualquer status/Browserless — enviar parcial ou "NaN" no input do portal é irreversível.
+  // TOCTOU aprovação→envio (Codex 2026-09-05): o comprador aprovou `qtde_final` arredondada pelo motor com
+  // `fator_embalagem_portal`; se o fator VIVO mudou desde então (0,2 → 0,18) — ou o item foi aprovado SEM fator
+  // (NULL = 1:1) e alguém cadastrou 0,2 depois — esta compra seria outra: recusar o pedido INTEIRO.
+  // Quantidade fora do múltiplo (Codex P0 no #2166): 37 L editado à mão com fator 0,2 virava 8 BB = 40 L gravados
+  // e enviados sem reaprovação. `qtdePortalCanonica` faz o round-trip (qtdeFisicaOmie(qtdePortal(q)) = q) e recusa;
+  // a normalização que ANTES escrevia `qtde_final` aqui SAIU — a edge não é mais escritora de item. O ciclo regrava
+  // e/ou o comprador corrige (a UI já grava no múltiplo) e reaprova.
+  let itemsPortal: Array<{ sku_portal: string; qtde: number; sku_descricao: string }>;
+  try {
+    itemsPortal = itensList.map((i) => {
+      verificarFatorAprovado(i.fator_embalagem_portal, i.fator_conversao, i.sku_codigo_omie);
+      return {
+        sku_portal: i.sku_portal!,
+        qtde: qtdePortalCanonica(i.qtde_final, i.fator_conversao, i.sku_codigo_omie),
+        sku_descricao: i.sku_descricao,
+      };
+    });
+  } catch (e) {
+    if (e instanceof FatorAprovadoDivergenteError) {
+      return await recusarPreBrowserless(e.motivo, e, {
+        sku: e.sku, fator_aprovado: e.fatorAprovado, fator_vivo: e.fatorVivo,
+      });
+    }
+    if (e instanceof QtdeNaoMultiploEmbalagemError) {
+      return await recusarPreBrowserless("qtde_nao_multiplo_embalagem", e, {
+        sku: e.sku, qtde_final: e.qtdeFinal, fator: e.fator, qtde_portal: e.qtdePortal, qtde_fisica: e.qtdeFisica,
+      });
+    }
+    if (!(e instanceof FatorConversaoInvalidoError)) throw e;
+    return await recusarPreBrowserless("fator_conversao_invalido", e, { sku: e.sku });
+  }
 
   // 4. Marcar como enviando
   await supabase.from("pedido_compra_sugerido").update({
@@ -2098,32 +2112,85 @@ async function processarPedido(
       protocolo: envelope.protocolo ?? null,
       enviadoPortalEm: true,
     });
-    // Captura de custo do portal: itens_capturados [{sku_portal, total_raw}]. Idempotente (só antes do Omie existir). Best-effort.
+    // Captura de custo do portal (best-effort; idempotente — só antes do PO Omie existir).
+    // Fontes: portal_add_json (JSON do Efetivar) + itens_capturados (DOM). O custo de linha só nasce
+    // PROVADO (1 item ⇒ total do pedido; N itens ⇒ DOM com checksum) — ver ./captura-custo.ts.
+    // ESCRITA: uma RPC transacional (`sayerlack_aplicar_custo_portal`) — o gate "só antes do PO Omie" é
+    // compare-and-set NO BANCO (não o snapshot `jaTemOmie`, que fica como atalho barato), e os itens são
+    // tudo-ou-nada (ROW_COUNT == n ⇒ senão SQLSTATE CP004 + ROLLBACK): nunca custo MISTO persistido.
+    // SENSOR: envio com sucesso e ≥1 item sem custo provado = `cego` → warn estruturado + resumo em
+    // portal_resposta.captura_custo (esta edge é o único writer de portal_resposta neste estado).
+    // Medir: docs/agent/reposicao.md §Portal Sayerlack (query de captura cega).
     // (envelope === bResp.data já é o envelope achatado do buildEnvelope; itens_capturados é top-level, não envelope.data.)
     try {
-      const capturados = ((envelope?.itens_capturados ?? []) as Array<{ sku_portal: string; total_raw: string; prz_ent_raw?: string }>);
+      const capturados = (Array.isArray(envelope?.itens_capturados) ? envelope.itens_capturados : []) as LinhaDom[];
+      const addJson = (envelope?.portal_add_json ?? null) as AddJsonPortal | null;
       const jaTemOmie = !!(pedido as { omie_pedido_compra_numero?: string | null }).omie_pedido_compra_numero;
-      if (capturados.length > 0 && !jaTemOmie) {
+      // O que ESTA execução digitou no portal (sku + qtde em unidade do portal): prova de quantidade aceita.
+      const esperados = itemsPortal.map((i) => ({ sku_portal: i.sku_portal, qtde_portal: i.qtde }));
+      const cons = consolidarLinhasPortal(capturados, addJson, esperados);
+      let match: ResultadoMatch | null = null;
+      let pulados: { sku_codigo_omie: string; motivo: string }[] = [];
+      let planejados = 0;
+      let atualizados = 0;
+      let erroRpc: { motivo: MotivoRpcCusto; sqlstate: string | null } | null = null;
+      if (!jaTemOmie) {
         const itensParaCusto: ItemPedido[] = itensList.map((i) => ({
           item_id: i.item_id, sku_codigo_omie: i.sku_codigo_omie, sku_descricao: i.sku_descricao,
           sku_portal: i.sku_portal, qtde_final: Number(i.qtde_final), preco_atual: Number((i as { preco_atual?: number }).preco_atual ?? 0),
         }));
-        const linhas: LinhaPortal[] = capturados.map((c) => ({ sku_portal: c.sku_portal, prz_ent_raw: c.prz_ent_raw ?? '', total_raw: c.total_raw }));
-        const match = casarLinhasComItens(linhas, itensParaCusto);
-        const { updates, pulados } = derivarCustos(match);
-        for (const u of updates) {
-          await supabase.from("pedido_compra_item").update({ preco_unitario: u.preco_unitario, valor_linha: u.valor_linha }).eq("id", u.item_id);
+        match = casarLinhasComItens(cons.linhas, itensParaCusto);
+        const derivado = derivarCustos(match);
+        pulados = derivado.pulados;
+        // Só escreve quando o pedido INTEIRO está provado (fonte ≠ nenhuma ⇒ conjunto local↔JSON↔DOM fechado e
+        // todos casados): nunca mistura custo novo com custo antigo no mesmo PO (Codex P1).
+        // `total_pedido != null` entra na prova: sem o total provado não há `valor_total` — e a RPC é
+        // tudo-ou-nada (itens + total na mesma transação), então não existe "itens sem total".
+        const pedidoInteiroProvado = cons.fonte !== 'nenhuma' && cons.total_pedido != null && match.naoCasados.length === 0
+          && match.ambiguos.length === 0 && match.casados.length === itensParaCusto.length && !pulados.some((p) => p.motivo !== 'sem_mudanca');
+        if (pedidoInteiroProvado) {
+          planejados = derivado.updates.length;
+          // planejados === 0 = todos 'sem_mudanca' (custo já batia): nada a gravar, não é cegueira.
+          if (planejados > 0) {
+            // UMA transação: CAS (omie IS NULL + sucesso_portal) no próprio UPDATE + todos os itens + valor_total.
+            // Recusa = SQLSTATE CP00x + ROLLBACK; `data` = nº de itens gravados (== planejados, senão a RPC lançou).
+            const { data: gravados, error: eRpc } = await supabase.rpc("sayerlack_aplicar_custo_portal", {
+              p_pedido_id: pedido.id,
+              p_itens: derivado.updates,
+              p_valor_total: cons.total_pedido,
+            }) as unknown as { data: number | null; error: PostgrestErrorLike | null };
+            if (eRpc) {
+              // Casa a MARCA (SQLSTATE) — código desconhecido é `erro_rpc` (transiente), nunca motivo fabricado.
+              erroRpc = { motivo: classificarErroRpcCusto(eRpc.code), sqlstate: eRpc.code ?? null };
+              console.error(`[envio-portal] Pedido #${pedido.id}: RPC de custo recusou (${eRpc.code ?? 'sem código'} → ${erroRpc.motivo}):`, eRpc.message);
+            } else if (Number(gravados) !== planejados) {
+              // Contrato violado (não devia acontecer: a RPC lança quando ROW_COUNT ≠ n) — trate como não gravado.
+              erroRpc = { motivo: 'erro_rpc', sqlstate: null };
+              console.error(`[envio-portal] Pedido #${pedido.id}: RPC de custo devolveu ${String(gravados)} ≠ planejados ${planejados}`);
+            } else {
+              atualizados = planejados;
+            }
+          }
         }
-        if (updates.length > 0) {
-          // valor_total = Σ TODOS os itens (casados pelo total capturado; não-casados/ambíguos pelo valor atual)
-          // — não subconta itens que o scrape não casou (Codex P1).
-          const totalCasados = match.casados.reduce((s, c) => s + (c.total_linha ?? (c.item.qtde_final * c.item.preco_atual)), 0);
-          const totalOutros = [...match.naoCasados, ...match.ambiguos].reduce((s, it) => s + (it.qtde_final * it.preco_atual), 0);
-          const novoTotal = totalCasados + totalOutros;
-          await supabase.from("pedido_compra_sugerido").update({ valor_total: novoTotal }).eq("id", pedido.id);
-        }
-        console.log(`[envio-portal] Pedido #${pedido.id}: custo capturado — ${updates.length} atualizados, ${pulados.length} pulados`);
       }
+      const resumo = resumirCaptura({
+        cons, match, pulados, planejados, atualizados, jaTemOmie, erroRpc,
+        nDom: capturados.length, nJson: addJson?.itens.length ?? 0, nItens: itensList.length,
+      });
+      const linhaLog = JSON.stringify({ pedido_id: pedido.id, protocolo: envelope?.protocolo ?? null, ...resumo, scrape_debug: envelope?.scrape_debug ?? null });
+      if (resumo.cego) console.warn('[SENSOR_CAPTURA_CUSTO_CEGA]', linhaLog);
+      else console.log('[envio-portal] captura_custo', linhaLog);
+      // Auditoria NÃO autoritativa (ninguém decide custo/PO por ela). CAS por estado: só escreve se o pedido
+      // ainda está no sucesso_portal que ESTA execução acabou de gravar (watchdog/outra execução não é atropelada).
+      const traceAnterior = Array.isArray(envelope?.trace) ? envelope.trace : [];
+      const { error: eResumo } = await supabase.from("pedido_compra_sugerido").update({
+        portal_resposta: {
+          ...envelope,
+          captura_custo: resumo,
+          trace: [...traceAnterior, { step: 'captura_custo', fonte: resumo.fonte, motivo: resumo.motivo, atualizados: resumo.atualizados, cego: resumo.cego }],
+        },
+      }).eq("id", pedido.id).eq("status_envio_portal", "sucesso_portal");
+      if (eResumo) console.error(`[envio-portal] Pedido #${pedido.id}: persistir captura_custo falhou:`, eResumo.message);
     } catch (e) {
       console.error(`[envio-portal] Pedido #${pedido.id}: falha best-effort na captura de custo:`, e instanceof Error ? e.message : String(e));
     }

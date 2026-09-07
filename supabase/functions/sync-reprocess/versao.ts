@@ -22,18 +22,46 @@
 // inválido é PRESERVADO e relançado no ponto antigo, para que a resposta continue sendo o 500 do
 // catch geral — mudar isso trocaria a mensagem de erro de quem manda corpo quebrado.
 
+// ⚠️ v1.1 — o EFEITO abaixo mudou de FORMA, não só de texto. Antes, a reconciliação de um pedido
+// eram N+M+2 escritas PostgREST soltas, e um run interrompido no meio deixava o pedido com itens
+// da revisão velha convivendo com os da nova (e o `order_items` apagado não voltava pela mesma
+// chamada). Agora ela é UMA transação por pedido (RPC `reconciliar_pedidos_omie`, migration
+// 20260830190000): a falha reverte o pedido INTEIRO, que fica na revisão anterior completa.
+// ⚠️ v1.2 — o challenge Codex ao PR #2134 derrubou 4 P1 da v1.1, e dois mudam o COMPORTAMENTO
+// observável: (1) pedido com `omie_codigo_produto` duplicado — no payload OU já no banco (1.049
+// pedidos vivos medidos em prod) — deixa de ser reconciliado por completo e fica congelado na
+// revisão anterior, surfaçando em `error_message`; (2) a reconciliação passa a ser compare-and-set
+// pelo instante da leitura, então uma página buscada mais cedo NÃO sobrescreve o que uma busca
+// mais recente publicou. Bundle novo + migration velha (2 argumentos) = a RPC não resolve e a
+// reconciliação LANÇA.
+// ⚠️ Esta edge depende de uma migration MANUAL. Bundle novo + migration não aplicada = a RPC não
+// existe e a reconciliação de pedidos LANÇA (por desenho — ver `if (rpcErr)` no index).
+
 export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
 import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("sync-reprocess");
 
+// ⚠️ v1.4 — IDENTIDADE DE LINHA (a v1.3 é a do preço ausente, entrega #2224 — não a substitua). A edge passa a extrair `det.ide.codigo_item` de cada item do
+// `ListarPedidos` e a mandá-lo à RPC, que ganhou casamento em DOIS níveis (identidade primeiro,
+// SKU só onde é 1-1 entre os remanescentes nos dois lados). Duas consequências observáveis:
+// (1) pedido com SKU repetido — 1.049 vivos em prod, e a duplicidade é LEGÍTIMA (o payload do
+// Omie repete o SKU em 1.177 dos 1.179 pares) — volta a reconciliar QUANDO o payload traz a
+// identidade, em vez de ficar congelado; (2) a coluna `order_items.omie_codigo_item` é adotada
+// incrementalmente pela própria reconciliação, sem backfill.
+// ⚠️ O bundle novo é INERTE se o `ListarPedidos` não devolver o campo: sem ele nada muda de
+// comportamento, e `metadata.itens_com_codigo_item / itens_lidos` do log é quem responde — essa
+// medição é o motivo de a entrega ser segura de subir sem a resposta na mão.
+// ⚠️ Bundle novo + a migration da identidade NÃO aplicada: a RPC antiga não conhece o argumento
+// `omie_codigo_item` no item, e o ignora — não lança, mas a identidade nunca é gravada e os dois
+// sensores ficam em zero para sempre. É o falso-negativo a vigiar ao ler o log.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+export const VERSAO = "v1.4-identidade-de-linha-codigo-item";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
-  "esta edge reprocessa pedidos, produtos e estoque do Omie: DELETA e reinsere order_items, " +
-  "atualiza sales_orders e faz upsert em product_costs — a tabela de custo que a margem e o motor " +
-  "de recomendação leem; um run não pedido reescreve custo e item de pedido usando a janela de " +
-  "dias que a config resolver sozinha, e o order_items apagado não volta pela mesma chamada";
+  "esta edge reprocessa pedidos, produtos e estoque do Omie: reconcilia order_items e sales_orders " +
+  "(agora numa transação por pedido, via RPC reconciliar_pedidos_omie) e faz upsert em " +
+  "product_costs — a tabela de custo que a margem e o motor de recomendação leem; um run não " +
+  "pedido reescreve custo e item de pedido usando a janela de dias que a config resolver sozinha";

@@ -96,4 +96,22 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
       'uma policy anon futura o converte em escrita real. Fecha com REVOKE INSERT, DELETE ON ' +
       'public.sales_orders FROM anon; até lá o alarme fica de pé, por desenho.',
   },
+  'public.deploy_atestacoes': {
+    // Registrada DEPOIS do apply, de propósito. O #2199 tentou registrar JUNTO com a migration e o
+    // CI ficou vermelho sem remédio: o contrato mudou (CARIMBO_CONTRATO_MUDOU), mas re-medir prod
+    // era impossível — a tabela não existia lá ainda e o audit crashava em `relation does not
+    // exist` (exit 2, carimbo não grava). Ordem que funciona: migration mergeia → founder cola →
+    // psql-ro confirma o objeto → allowlist + carimbo no MESMO commit.
+    fechadaPor: '20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'ledger de atestação de deploy de edge (qual bundle (versao, fonte) prod respondeu, copiado de ' +
+      'net._http_response pelo cron deploy-atestacoes-colher). NÃO é money-path: é o instrumento que ' +
+      'DECIDE deploy (`bun run pendencias:deploy`) — escrita aberta deixaria qualquer usuário FABRICAR ' +
+      'atestação. Só o cron (postgres, dono) escreve; authenticated lê por policy de staff. Nasce ' +
+      'fechada na própria migration (REVOKE ALL por NOME de anon/authenticated + GRANT SELECT a ' +
+      'authenticated). Medido por psql-ro 2026-09-05 22:41 UTC, após o apply: relacl anon AUSENTE, ' +
+      'authenticated=r, rls=on, 2 policies; has_table_privilege = SIM só em authenticated/SELECT nos ' +
+      '8 privilégios × 2 roles.',
+  },
 };

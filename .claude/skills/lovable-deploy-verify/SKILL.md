@@ -4,13 +4,16 @@ description: >-
   Ritual de "está REALMENTE no ar?" para QUALQUER entrega neste repo (Afiação/Colacor),
   que roda em Lovable Cloud. Use SEMPRE que terminar de mergear um PR e precisar saber o que falta pra
   a mudança ir a produção, ou quando o usuário perguntar "já está no ar?", "deu pra ver no app?",
-  "publiquei?", "preciso dar Publish?", "tem que deployar a edge?". Vale mesmo quando o usuário não
+  "publiquei?", "preciso dar Publish?", "tem que deployar a edge?", "falta configurar algum secret?".
+  Vale mesmo quando o usuário não
   diz "deploy" e só assume que mergear basta ("terminei, era só isso?", "pode testar agora?"). Por quê:
   o Lovable NÃO auto-deploya NADA a partir de push no GitHub — mergear na main deixa o código na main,
   mas o app continua servindo o build anterior. TRÊS coisas são manuais e independentes: (1) FRONTEND
   (Publish no editor do Lovable), (2) EDGE FUNCTIONS (chat do Lovable, ler do repo, verbatim), (3)
-  MIGRATIONS (SQL Editor — coberto pela skill lovable-db-operator). A skill empacota: detectar quais
-  das 3 se aplicam ao diff, montar o checklist de pendências do founder, montar o prompt de deploy de
+  MIGRATIONS (SQL Editor — coberto pela skill lovable-db-operator). E uma QUARTA que não é camada de
+  código e mesmo assim trava tudo: (4) SECRET novo de edge (Edge Functions → Secrets) — sem ele a edge
+  sobe Active, o cron fica verde e a função morre no 1º Deno.env.get. A skill empacota: detectar quais
+  das 4 se aplicam ao diff, montar o checklist de pendências do founder, montar o prompt de deploy de
   edge, e VERIFICAR o deploy do frontend pelos bytes do bundle (hash do index + grep da string-alvo em
   TODOS os chunks). NÃO use para: a mudança de banco em si (use lovable-db-operator), escrever a feature,
   ou debugar erro de runtime no app (use /investigate).
@@ -48,16 +51,16 @@ As **três** coisas são deploy manual e **independente**, e NENHUMA acontece so
 ## A Lei de Ferro (guardrail inegociável)
 
 1. **Você nunca diz "está no ar" sem prova.** Mergear na main **não publica nada**. Frontend: os **bytes do bundle** confirmam (string-alvo nos chunks — Passo 4). Edge **não serve seu código**, logo não há prova por bytes — a prova é a **escada** existência (`verify-edge.sh`) → versão (Management API/painel) → comportamento (probe); `Active` sozinho prova existência, **não** que a versão nova subiu. Até lá: "mergeado na main; **falta Publish/deploy** pra ir ao ar".
-2. **As 3 camadas são independentes — sempre diga QUAIS se aplicam.** Um diff só-frontend não precisa de deploy de edge; um diff de edge precisa de deploy via chat *e* (se mexeu em UI) Publish. Liste só o que o diff realmente toca.
+2. **As camadas de deploy são independentes — sempre diga QUAIS se aplicam.** Um diff só-frontend não precisa de deploy de edge; um diff de edge precisa de deploy via chat *e* (se mexeu em UI) Publish — e, se a edge lê um `Deno.env.get` que nenhuma outra lê, o **secret** antes do deploy. Liste só o que o diff realmente toca.
 3. **Edge deploy SÓ DEPOIS do merge, e VERBATIM.** Deployar "da main" antes do merge faz o Lovable ler a main **velha** (já mordeu em #383/#252 — a action nova não existia no binário → `400 "Ação desconhecida"`). E o Lovable tende a "melhorar" o código — o prompt deve mandar **não modificar/reinterpretar**, ler de `supabase/functions/<nome>/index.ts` e deployar idêntico.
 4. **Verificar frontend varre TODOS os chunks, e enumerá-los é a UNIÃO de duas fontes.** Nenhuma sozinha é completa (validado em prod 2026-06-18 + Codex): (a) o **fechamento transitivo** do grafo lazy do Vite — o entry lista só o 1º nível via `__vite__mapDeps(["assets/x.js"])` (sem barra, aspas), e um lazy-dentro-de-página guarda o mapDeps no chunk DELE (entry=260, closure=274); (b) o **precache do Workbox** (`/sw.js`), que omite chunks grandes (globIgnores/maxFileSize — faltavam 6). Use a UNIÃO. Grep de literais `/assets/...` dá 0 (o bug original). Contagem 0/1 = enumeração quebrada — conserte antes de concluir.
-5. **Todo artefato pro founder tem o DESTINO rotulado na 1ª linha** — `🟣 SQL Editor` / `💬 chat do Lovable` / `🖱️ Publish (editor do Lovable)` / `⌨️ seu terminal` — e **zero placeholders** (`<VALOR>` não substituído já foi colado em produção) — e **valor de EXEMPLO plausível CONTA como placeholder, com falha PIOR, porque é CALADA**: o `<VALOR>` quebra ruidoso (404, erro de sintaxe), o número plausível devolve uma linha real de OUTRO emissor. Em 2026-08-24 um `WHERE id = 58967` inventado leu o tick do watchdog e reprovou um deploy money-path CORRETO. Campo que o founder substitui nasce sintaticamente **inválido** (`COLE_AQUI_O_REQUEST_ID`), nunca preenchido de exemplo → `deploy.md` §Canárias. JS/bash NUNCA vai pro SQL Editor (já foi colado lá 4×); o rótulo responde de antemão o "isso eu colo onde?".
+5. **Todo artefato pro founder tem o DESTINO rotulado na 1ª linha** — `🟣 SQL Editor` / `💬 chat do Lovable` / `🖱️ Publish (editor do Lovable)` / `🔑 Secrets (Lovable → Edge Functions → Secrets)` / `⌨️ seu terminal` — e **zero placeholders** (`<VALOR>` não substituído já foi colado em produção) — e **valor de EXEMPLO plausível CONTA como placeholder, com falha PIOR, porque é CALADA**: o `<VALOR>` quebra ruidoso (404, erro de sintaxe), o número plausível devolve uma linha real de OUTRO emissor. Em 2026-08-24 um `WHERE id = 58967` inventado leu o tick do watchdog e reprovou um deploy money-path CORRETO. Campo que o founder substitui nasce sintaticamente **inválido**, nunca preenchido de exemplo. ⚠️ **Mas o inválido é o SEGUNDO melhor: a regra forte é ELIMINAR o campo.** Placeholder inválido protege contra o ESQUECIMENTO, nunca contra a substituição ERRADA — no mesmo 2026-08-24, **3 de 4** `request_id` transportados à mão eram resposta de CRON, e a saída não tinha como acusar. Quando o valor pode ser carregado pelo próprio sistema, carregue: o passo 1 da sonda passou a **escrever o passo 2 com o id embutido** (→ `deploy.md` §Sonda de versão; `docs/historico/sonda-request-id-a-mao.md`).  JS/bash NUNCA vai pro SQL Editor (já foi colado lá 4×); o rótulo responde de antemão o "isso eu colo onde?".
 
 ## O ritual — 5 passos
 
 Crie estes todos (TodoWrite) ao fechar uma entrega que pode precisar de deploy:
 
-1. **Classificar o diff** — quais das 3 camadas o PR toca (frontend / edge / migration)?
+1. **Classificar o diff** — o que o PR exige de manual (frontend / edge / migration / **secret**)?
 2. **Pendências do founder** — montar o checklist do que ele precisa fazer manualmente
 3. **Prompt de edge** (se houver edge) — montar o handoff "ler do repo, verbatim, não melhorar"
 4. **Verificar o deploy** — frontend pelos bytes; edge pela escada existência→versão→comportamento
@@ -67,28 +70,69 @@ Crie estes todos (TodoWrite) ao fechar uma entrega que pode precisar de deploy:
 
 ### Passo 1 — Classificar o diff
 
-Quais das 3 camadas o PR toca? A lógica canônica — ampliada para pegar **arquivos de build na raiz**
-(`vite.config`, `package.json`, …), não só `src/` — vive em [`evals/classify.sh`](evals/classify.sh) e é
-coberta por [`evals/run.sh`](evals/run.sh) (8 casos + mutation-check):
+O que o PR exige de manual? A lógica canônica — ampliada para pegar **arquivos de build na raiz**
+(`vite.config`, `package.json`, …), não só `src/`, e para acusar **secret novo de edge** — vive em
+[`evals/classify.sh`](evals/classify.sh) e é coberta por [`evals/run.sh`](evals/run.sh) (16 casos +
+mutation-check). **Rode da raiz do repo** (a 4ª linha lê o conteúdo das edges, não só os nomes):
 
 ```bash
 git diff --name-only origin/main...HEAD \
   | .claude/skills/lovable-deploy-verify/evals/classify.sh
-# -> frontend=SIM|não · edge=SIM|não · migration=SIM|não
+# -> frontend=SIM|não · edge=SIM|não · migration=SIM|não · secrets=não|NOME,…|?dinamico
 ```
 
-### Passo 2 — Checklist de pendências do founder (ORDEM TRAVADA: merge → SQL → edge → Publish)
+**A 4ª linha é a camada que as três não cobrem.** Um secret novo não é frontend, não é edge e não é
+migration — e mesmo assim é dependência manual do founder, com o pior modo de falha que existe aqui:
+edge **Active**, cron **verde**, `cron.job_run_details = succeeded`, e a função morrendo no 1º
+`Deno.env.get` com 500 sem fazer nada. Descoberto no #2035 — `analytics-outbox-drain` lê
+`POSTHOG_INGEST_KEY`, que nenhuma outra edge lê; naquele deploy o secret já estava configurado, o que
+foi **sorte**: nenhum dos 3 passos tinha como acusar antes de rodar.
+
+Como ler a saída:
+
+| `secrets=` | Significa | O que fazer |
+|---|---|---|
+| `não` | nenhuma edge tocada lê env que as outras já não leiam | nada |
+| `NOME1,NOME2` | **candidatos a secret novo** | linha 🔑 no Passo 2, **antes** do deploy da edge |
+| `?dinamico` | a edge lê env por nome **computado** (`` Deno.env.get(`OMIE_${empresa}_APP_KEY`) ``) | conferir **à mão** quais nomes aquilo resolve |
+
+⚠️ **`?dinamico` não é "não tem secret" — é "não sei".** O script resolve nome literal; nome montado em
+runtime ele não resolve, e tratar isso como silêncio seria ler ausência de dado como aprovação. E a
+lista é de **candidatos**: a verdade sobre o que existe é o painel de Secrets, não o repo — o script
+compara o diff com as *outras* edges do repo, então secret que só este PR usa aparece mesmo que já
+esteja configurado. Errar para mais custa uma linha de checklist; errar para menos custa uma edge morta.
+
+### Passo 2 — Checklist de pendências do founder (ORDEM TRAVADA: merge → SQL → secret → edge → Publish)
 
 **Nada de deploy antes do MERGE** (Lei de Ferro #3 — o Lovable lê da main). Entregar SÓ as linhas que se aplicam (do passo 1), NESTA ordem, cada uma com o destino rotulado:
 
 > ⚠️ **Pra ir ao ar, falta (manual no Lovable) — nesta ordem, APÓS o merge do PR:**
 > - [ ] 🟣 **SQL Editor**: migration Z *(se tocou `supabase/migrations/` — bloco da `lovable-db-operator`; banco ANTES do código que o consome)*
+> - [ ] 🔑 **Secrets (Lovable → Edge Functions → Secrets)**: confirmar que `NOME_DO_SECRET` existe *(se o passo 1 deu `secrets=` com nome ou `?dinamico`)*
 > - [ ] 💬 **chat do Lovable**: deploy das edges X, Y — verbatim da main *(se tocou `supabase/functions/`)*
+>       — **QUAIS edges: as que `bun run pendencias:deploy` lista como `DIVERGE_P1`/`INCOERENTE`/`SEM_MAPA_NO_BUNDLE`**
+>       (2026-09-05). Não derive a lista do diff: "o mapa mudou"/"closure mudou" NÃO é motivo — só
+>       `(versao, fonte)` servido ≠ main. `DIVERGE_P2` (só `_shared/`) entra na leva agrupada, escala em 7 d.
+>       Após o deploy, **uma** colagem do `sonda:sql` da leva atesta no ledger `deploy_atestacoes` — e vale até
+>       o `fonte` da main mudar; nunca peça sonda "para conferir de novo" (`docs/agent/deploy.md` §Edge: o veredito é o ledger)
 > - [ ] 🖱️ **Publish** do frontend no editor do Lovable *(se o passo 1 deu frontend=SIM; por último — o build novo nasce contra banco/edge já atualizados)*
+
+**O secret vem ANTES do deploy da edge, e a ordem não é estética.** Deployar primeiro sobe uma função
+que responde 500 no primeiro request — e como ela fica `Active` e o cron acusa `succeeded`, a verificação
+do Passo 4 pode carimbar "no ar" uma edge que não faz nada. Secret primeiro, edge depois, e o probe do
+Passo 4 vira prova de verdade. **Nunca escreva o VALOR do secret no chat nem no PR** (a transcrição
+persiste em disco): a linha pede ao founder para *conferir/criar* pelo nome, e o valor só existe no painel.
 
 ### Passo 3 — Prompt de deploy de edge (se aplicável)
 
-Montar pro founder colar no chat do Lovable (um por edge tocada):
+Montar pro founder colar no chat do Lovable, para as edges que o `pendencias:deploy` deu como pendentes
+— este passo decide o **conteúdo** do prompt, o closure ∪ {mapa}; ele NÃO decide *se* a edge precisa de
+deploy, e o mapa ter mudado depois do PR não é motivo (ver Passo 2).
+
+**UMA colagem por LEVA, não por edge (medido 2026-09-06).** Com 2+ edges pendentes, monte um prompt
+único numerando-as, cada uma com a SUA lista de arquivos — a forma exata está no fim deste passo, e a
+medição (8 edges, 70 arquivos, 54/54 depois) no §Estado. O prompt de 1 edge abaixo continua sendo a
+unidade de construção, e é o que você usa quando a leva tem uma só:
 
 > Edit the existing edge function `<nome>` and replace its code with the current contents of
 > `supabase/functions/<nome>/index.ts` from the `main` branch. Deploy it **verbatim** — do NOT modify,
@@ -110,6 +154,83 @@ git show --name-status --format='' <sha-do-merge> -- supabase/functions/ | grep 
 # A = arquivo NOVO (é o que o prompt de 1 arquivo esquece) · M = modificado
 ```
 
+🔴 **O `--name-status` é ESTRUTURALMENTE CEGO ao import NOVO de arquivo PRÉ-EXISTENTE — a fatia de
+deploy é o CLOSURE DE IMPORTS, não o diff (2026-08-30, #2101).** O comando acima lista o que o commit
+TOCOU; o bundle carrega o que o `index.ts` ALCANÇA. Arquivo que já existia e passou a ser importado não
+sai em nenhum dos dois lados (`A` nem `M`) — e é exatamente o que impede a função de bootar. No #2101 a
+`generate-bundle-argument` ganhou `+import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts"`
+com o `ia-cota.ts` **inalterado desde 2026-07-31**: o `--name-status` devolvia três arquivos, e os três
+estavam certos para a pergunta errada. Feche o closure, sempre:
+
+```bash
+# imports locais de 1º nível — repita em cada arquivo alcançado até não achar mais
+grep -oE 'from "\.\.?/[^"]+"' supabase/functions/<edge>/index.ts | sort -u
+# algum deles é import NOVO nesta edge? (resposta POSITIVA no diff, nunca de memória)
+# UM ponto só no padrão: `\.\.` perderia `from "./helper.ts"` — e 41 dos 96 diretórios de edge
+# importam assim, o mesmo ponto cego que este bloco existe para fechar (medido 2026-08-30)
+git show <sha-do-merge> -- supabase/functions/<edge>/index.ts | grep -E '^\+.*from "\.'
+```
+
+⚠️ E some ao closure o **mapa** `_shared/sonda-fingerprints.ts`: a `fecharGrafo()` do gerador o exclui
+de propósito (senão o hash se auto-referenciaria) — e ainda assim precisa ir no deploy, porque é ele
+que alimenta o campo `fonte`. **Fatia = closure ∪ {mapa}.** ⚠️ Isso vale para quem derive a lista da
+`fecharGrafo()` ou do campo `fonte`; o `grep` acima, seguido até o fim, **alcança** o mapa por
+`versao.ts` → `_shared/sonda-versao.ts` → `./sonda-fingerprints.ts`. Achar o mapa ali é o esperado, não
+sinal de que você errou o procedimento (medido 2026-08-30, auditando este bloco).
+
+🔴 **E o closure sobre QUAL intervalo? O `<sha>` do PR nomeado é a pergunta ERRADA — a fatia tem
+eixo TEMPO (2026-08-30, #2123).** O `--name-status <sha>` responde *"o que aquele commit tocou"*; o
+Lovable deploya a **`main`**. As duas divergem assim que qualquer outro PR toca o mesmo closure
+depois — e com o auto-merge fechando PR em minutos, isso é o caso comum, não o raro. Verificando as
+7 edges do #2123 (`1cab89d49`, 04:04Z), **dois** PRs posteriores tinham tocado o mesmo closure, o
+último (#2132) **32 min** antes da medição: o pedido montado pela lista do #2123 subiria a main com
+três `_shared/` faltando, e a função não bootaria — o modo de falha do #2020, alcançado por outro
+caminho. Meça o **intervalo até `origin/main`**, e feche o closure sobre ele:
+
+```bash
+git fetch origin   # ANTES de medir — e OUTRA VEZ antes de ENTREGAR (ver o ⚠️ abaixo)
+git diff --name-status <sha-do-PR>^ origin/main -- supabase/functions/ | grep -v '_test\.ts$'
+```
+
+⚠️ **Sincronizar antes de MEDIR não basta — sincronize antes de ENTREGAR.** Na mesma sessão a main
+andou **duas vezes em ~1h30**: a segunda não tocou `supabase/functions/` (o pedido seguiu válido)
+mas tocou `scripts/sonda-versao-sql.ts`, deixando o bloco de sonda **já entregue ao founder** com o
+gerador anterior. Entre a medição e a entrega existe o tempo em que você escreve.
+
+🔴 **E o `git fetch` não basta: o closure tem de LER A REF, não o working tree (2026-09-04).** As
+duas regras acima mandam sincronizar antes de medir e antes de entregar — e as duas foram
+**obedecidas** na sessão em que isto mordeu. O furo é outro: `fetch` atualiza `origin/main`, mas
+`grep` e `os.path.isfile` continuam lendo os **bytes do working tree**, que é onde o `HEAD` da
+worktree estiver. Uma worktree **um commit atrás** devolve um closure que se parece com um closure —
+mesma forma, mesmo formato, menos arquivos — e nada na saída denuncia. Medido verificando a
+`enviar-pedido-portal-sayerlack`: contra o working tree, **5** arquivos; contra `origin/main`,
+**7**. Os dois que sumiram eram exatamente os que o pedido não pode perder — `qtde-portal.ts`
+(arquivo NOVO) e `escrita-critica.ts` (o import novo de arquivo pré-existente, o furo do #2101) —,
+e a função não bootaria sem nenhum dos dois. É `ausente ≠ zero` na dimensão **ÁRVORE**: irmão do
+eixo TEMPO acima, com o mesmo desfecho (deploy que não boota) por um caminho que o `git fetch` não
+fecha. Leia da ref, sempre — e a ref é a MESMA que o Lovable deploya:
+
+```bash
+git show origin/main:supabase/functions/<edge>/index.ts | grep -oE "from ['\"]\.\.?/[^'\"]+['\"]"
+# repita em cada arquivo alcançado, sempre com `git show origin/main:<path>` — nunca `cat <path>`
+```
+
+⚠️ E o guard de contagem 0/1 vale para o **arnês**, não só para o regex. Na mesma sessão a primeira
+tentativa de closure usou `declare -A` num script bash — que no **bash 3.2 do macOS não existe** — e
+imprimiu `0 arquivos`. Ali a falha foi ruidosa (`declare: -A: invalid option` no stderr), mas a
+saída útil era **byte a byte** a de uma edge que não importa nada: o zero só não virou veredito
+porque a contagem foi conferida. Trate `0` e `1` como **enumeração quebrada** venha de onde vier —
+regex cego, interpretador sem a feature, ou árvore errada.
+
+Fecho positivo do caso: com os 7 arquivos nomeados, a sonda pós-deploy respondeu
+`v1.2-qtde-portal-fator-embalagem` **e** `fonte 0996dd3c…` idêntico ao `sonda-fingerprints.ts` da
+main — que é a prova de que os quatro `_shared/` subiram junto, e não só o `index.ts`.
+
+⚠️ **E o `from` tem aspas SIMPLES neste repo.** Um regex de closure que só case `from "…"` devolve
+lista **vazia** para as edges que usam `'…'` — 3 das 7 aqui. Vazio de regex cego é byte a byte o
+vazio de "não importa nada": case `from ['\"]`, e trate contagem 0/1 como **enumeração quebrada**,
+nunca como resposta.
+
 E nomeie cada um, marcando o novo (teste e doc ficam de fora — não vão pro bundle):
 
 > Edit the edge function `<nome>` and update it from the `main` branch using the current contents of
@@ -124,6 +245,31 @@ Exercitado no #2009 (`carteira-rebuild`, 3 arquivos de código, 1 deles novo): a
 `probe:true · versao:v1.0-sensor-inicial · edge:carteira-rebuild · fonte:8d2589d0…`, e o `fonte` bateu
 com o `bun run sonda:fingerprint` da main — que é justamente a prova de que o `_shared/` subiu junto, e
 não só o `index.ts` (#2018).
+
+#### A LEVA num prompt só (2 ou mais edges) — a forma medida
+
+Mesmo conteúdo por edge, uma colagem só. O cabeçalho pede o total e proíbe pular; cada edge vira uma
+**seção numerada** com o closure ∪ {mapa} DELA; o fecho pede a confirmação item a item, que é o que
+dá ao founder o relato para comparar com a sonda. Medido em 2026-09-06 com **8 edges / 70 arquivos**:
+as 8 responderam `versao` + `fonte` da main e o `pendencias:deploy` fechou 54/54 (§Estado):
+
+> Edit the following **eight** existing edge functions and update **each** of them from the `main`
+> branch using the current contents of the files listed under it. Deploy all of them **verbatim** —
+> do NOT modify, reinterpret, "improve", or reformat any code. Deploy every function listed; do not
+> skip any.
+>
+> **1. `<nome-1>`**
+> - `supabase/functions/<nome-1>/index.ts`
+> - … (o closure ∪ {mapa} desta edge, um arquivo por linha)
+>
+> **2. `<nome-2>`**
+> - …
+>
+> After deploying, list the eight function names and confirm that **each one** shows **Active**.
+
+⚠️ **O relato do chat não substitui a sonda — ele diz o que perguntar a ela.** Se o Lovable disser que
+pulou alguma, tire-a do bloco de sonda antes de rodar; se disser que deployou todas, a sonda é quem
+confirma. Uma leva = um prompt = **um** bloco de `bun run sonda:sql <edges…>`.
 
 ### Passo 4 — Verificar o frontend pelos bytes (após Publish)
 
@@ -381,7 +527,123 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
 - **N1 existência** — automático e barato, mas só prova que a função está servida, **não** que é a versão nova.
 - **N2 versão** — seria o canônico (`version` sobe, `updated_at` fica recente), mas aqui é **estruturalmente indisponível**: o app roda em **Lovable Cloud** e o Supabase (`fzvklzpomgnyikkfkzai`) é da **org do Lovable** — o founder não tem conta com acesso ao ref, logo **não existe Access Token que ele possa gerar**. ⛔ **Não peça o PAT** (pedido 3× já: 2× em 2026-07-23 + 1× em 2026-08-19 — nas três o agente seguiu o texto da ferramenta, não o doc). `~/.config/afiacao/supabase-pat` existe vazio: mecanismo válido, sem quem preencha. O substituto do N2 é o **rastro do commit do bot** na `main` (`Deployed …`/`Redeployed …`) — prova que UM deploy rodou, não QUAL versão.
 - **N3 comportamento** — chamar com a assinatura da mudança (gated → founder logado / cron secret). Sem N2 aqui, é a **única prova de versão** que existe neste setup — não um luxo. Edge sem canária: declare "N1 + rastro; versão não provada", **nunca** "no ar".
-  - **5 edges já nascem com canária** (#1772): `fin-cashflow-engine`, `omie-cliente`, `omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas` respondem `{"probe":true}` com `{ok,probe:true,versao}` (contrato em `supabase/functions/_shared/sonda-versao.ts`). O eco `probe:true` é **obrigatório** na leitura: bundle ANTERIOR à sonda **ignora o parâmetro e executa o fluxo real** (sync Omie de verdade) — por isso **só sonde DEPOIS do deploy**, e resposta sem o eco já é o veredito "bundle velho, e ele rodou o efeito caro". Invocação sem terminal: bloco `net.http_post` no 🟣 SQL Editor + leitura de `net._http_response` (receita em `docs/agent/deploy.md` §Canárias).
+  - **N3 pela MENSAGEM DE ERRO única — a via mais barata, e só existe enquanto algo está quebrado
+    (2026-08-29, #2035).** Antes de instrumentar sonda, **leia o corpo do erro que o cron já gravou**:
+    se a mensagem for única no repo (`git grep` prova), ela identifica o BUNDLE. Na
+    `analytics-outbox-drain`, `{"erro":"POSTHOG_INGEST_KEY nao configurado"}` (id 62407) existia em UM
+    arquivo — `supabase/functions/analytics-outbox-drain/index.ts:129`<!--cita: POSTHOG_INGEST_KEY nao configurado-->, criado pelo PR — logo só aquele bundle podia emiti-la: prova de VERSÃO sem
+    PAT, sem canária, sem invocar nada. Bônus de graça: o 500 vem DEPOIS do `authorizeCronOrStaff`,
+    então a mesma linha prova que o `x-cron-secret` do Vault está correto (errado pararia em 401).
+    ⛔ Não vale para mensagem genérica (`{"error":"internal"}`) nem para string que também existe em
+    `_shared/` ou noutra edge — aí prova o módulo, não a versão daquela edge. E prova o bundle que
+    RESPONDEU, não que o trabalho deu certo (mesma ressalva do eco de `versao`). Detalhe:
+    [`docs/historico/fail-closed-como-sensor-de-deploy.md`](../../../docs/historico/fail-closed-como-sensor-de-deploy.md).
+    🔴 **A 4ª pré-condição, que as três acima não cobrem: a string tem de estar ausente do bundle
+    ANTERIOR da MESMA edge (2026-08-29, #2086).** O `+` no diff prova que a **linha** é nova — não
+    que a **string** seja. Na `elevenlabs-transcribe`, `{"error":"Token inválido"}` nasceu no guard
+    novo de `claims.sub` e parecia perfeita, mas a mesma edge **já a emitia** no gate de assinatura
+    do JWT: os dois bundles respondem 401 com o corpo idêntico, e "recebi `Token inválido` ⇒ bundle
+    novo" é **falso positivo** — o erro que ENCERRA a verificação (irmão da sentinela não-exclusiva
+    do Passo 4). Meça no pai, exigindo resposta POSITIVA — **zero** é a condição, qualquer outro
+    número mata a via:
+    ```bash
+    git show <sha-do-merge>^:supabase/functions/<edge>/index.ts | grep -c '<string>'
+    ```
+    E confira também o repo (`git grep`): a mesma `Token inválido` sai de **10** arquivos, então nem
+    a unicidade global se sustentava. Detalhe:
+    [`docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md`](../../../docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md).
+  - **5 edges já nascem com canária** (#1772): `fin-cashflow-engine`, `omie-cliente`, `omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas` respondem `{"probe":true}` com `{ok,probe:true,versao}` (contrato em `supabase/functions/_shared/sonda-versao.ts`). O eco `probe:true` é **obrigatório** na leitura: bundle ANTERIOR à sonda **ignora o parâmetro e executa o fluxo real** (sync Omie de verdade) — por isso **só sonde DEPOIS do deploy**, e resposta sem o eco já é o veredito "bundle velho, e ele rodou o efeito caro". Invocação sem terminal: bloco `net.http_post` no 🟣 SQL Editor + leitura de `net._http_response` — receita canônica em `docs/agent/deploy.md` §Sonda de versão. **Use o bloco de lá verbatim**: são dois passos por imposição do `pg_net` (só despacha após o COMMIT, e o SQL Editor roda o batch como UMA transação), e o passo 1 **escreve o passo 2 com o `request_id` já embutido** justamente para que ninguém transporte o número à mão — foi assim que resposta de CRON passou por sonda em 2026-08-24 (`docs/historico/sonda-request-id-a-mao.md`). Nunca `ORDER BY id DESC LIMIT 1`.
+    🔴 **HTTP 401 na sonda NÃO é veredito — é ambiguidade, e o bloco agora a fecha sozinho
+    (2026-08-30).** Um 401 tem DUAS causas que o dado não separa: (a) bundle **pré-sonda**, que
+    ignorou o `{"probe":true}`, caiu no gate JWT e recusou; ou (b) **`CRON_SECRET` ausente/errado no
+    vault**, com `authorizeCronOrStaff` recusando o header. Nos dois o corpo vem sem `versao` e o
+    status é 401 — e ler (b) como (a) manda redeployar edge que **já está no ar** (`ausente ≠ zero`
+    na dimensão CREDENCIAL, irmão do guard temporal do #2079). O SQL gerado por `bun run sonda:sql`
+    passou a cruzar um **controle de credencial na MESMA consulta** (CTE `controle_credencial`:
+    ≥10 respostas 2xx e ZERO 401 recentes **fora da leva**, em `net._http_response`) e só então
+    emite veredito determinado; sem essa prova responde **INDETERMINADO**, nunca "bundle velho" —
+    fail-CLOSED, igual ao `CONTROLE_CRUZADO_NAO_OBSERVADO` do `verify-edge-escrita.sh`. Isto nasceu
+    de o desempate ter sido feito **à mão, fora da ferramenta**, ao verificar o deploy de
+    `generate-bundle-argument` (#2101): recado que depende de o operador lembrar é exatamente como
+    a armadilha da sentinela não-exclusiva passou. Guardado por `evals/sonda-veredito-401-eval.sh`,
+    o único eval que **EXECUTA** o SQL (Postgres efêmero) — casar string não observa ordem de `WHEN`
+    nem `NULL > 0`, que é onde este ramo erra.
+  - ✅ **A exceção que torna a sonda ativa segura ANTES do deploy — e é a única ordem em que ela
+    EVITA um deploy, em vez de só confirmá-lo (2026-08-30).** O "só sonde DEPOIS do deploy" acima
+    vale enquanto o bundle em prod puder ser ANTERIOR à sonda — aí o probe vira efeito caro. Quando a
+    versão que se TEME estar no ar já tinha sonda (v1.0 → v1.1), esse risco não existe, e sondar
+    antes responde "o deploy é redundante?" de graça. Prove no PAI, nunca de memória — resposta
+    POSITIVA, com marcador diferente do da main:
+    `git show <sha-do-merge>^:supabase/functions/<edge>/versao.ts | grep VERSAO`. Foi assim que
+    `generate-bundle-argument` (`v1.0-prompt-sem-margem`) e `omie-sync-pedidos-compra`
+    (`v1.0-eco-versao-passivo`) se provaram JÁ no ar, cancelando o pedido de deploy das duas. **N
+    edges num único statement**, com o `request_id` pareado ao NOME — mata a anotação à mão que a Lei
+    de Ferro #5 pune:
+    ```sql
+    SELECT e.nome, net.http_post(
+      url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/' || e.nome,
+      headers := jsonb_build_object('Content-Type','application/json',
+        'x-cron-secret',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
+      body := jsonb_build_object('probe', true),
+      timeout_milliseconds := 20000) AS request_id
+    FROM (VALUES ('COLE_A_EDGE_1'),('COLE_A_EDGE_2')) e(nome);
+    ```
+    Depois leia pelos ids devolvidos (`WHERE id IN (…)`, nunca `ORDER BY id DESC`), exigindo os
+    **três**: `versao` da main, `fonte` idêntico ao `sonda-fingerprints.ts` (é ele que prova que o
+    `_shared/` subiu junto, não só o `index.ts`) e o eco `probe:true`.
+  - 💰 **QUEM entra no `--caro` — o critério é o EFEITO, não a FORMA do handler (2026-09-05).** A
+    trava existe porque o bundle **PRÉ-sensor ignora o `{"probe":true}` e roda o fluxo real**;
+    `bun run sonda:sql <edges> --caro=<subconjunto>` separa as caras num bloco com trava por `CASE`,
+    mas por **default trata TODAS como baratas** — o subconjunto é decisão sua, e ela erra silenciosa
+    nos dois sentidos (de menos = pedido criado no Omie à toa; de mais = trava que o founder destrava
+    no braço sem precisar). Decida em duas metades, **MEDINDO cada uma**:
+    1. **A edge ESCREVE ou chama serviço externo no fluxo real?** Uma linha faz a triagem:
+       ```bash
+       grep -nE '\.(upsert|insert|update|delete)\(|\.rpc\(|fetch\(' supabase/functions/<edge>/index.ts
+       ```
+       **Zero efeito ⇒ BARATA**, qualquer que seja a forma do handler. Mas o grep é TRIAGEM, não
+       veredito — contagem 0 só vira resposta depois de **LER** os hits, porque dois deles mentem:
+       (a) `fetch(` de **GET de leitura** (`/auth/v1/user`, `?select=…`) é gate de auth, não efeito;
+       (b) **`.delete(` casa com `Set.delete` do JS**, que não toca banco nenhum. Foi assim que a
+       `fin-valor-cockpit` (738 linhas) se provou BARATA: zero `.upsert/.insert/.update/.rpc`, os
+       três `fetch` são GETs de `/auth/v1/user` + `user_roles` + `commercial_roles`, e o único
+       `.delete(` é
+       `supabase/functions/fin-valor-cockpit/index.ts:579`<!--cita: custoBaixaConfianca.delete(-->,
+       um `Set` de JS. Pior caso de sondá-la com bundle pré-sensor: **computar e devolver** — NULO.
+    2. **Se escreve: o efeito é REVERSÍVEL, e qual o ALCANCE?** "Cara" não é binário, e o que a trava
+       compra varia em ordens de grandeza. `carteira-positivacao-snapshot` faz **UM upsert
+       idempotente** por
+       `supabase/functions/carteira-positivacao-snapshot/index.ts:104`<!--cita: onConflict: 'mes,customer_user_id'-->,
+       sem chamada externa, e o cron dela é **MENSAL** (`jobid` 80, `0 8 1 * *`).
+       🔴 **Disparar fora de hora NÃO custa "uma linha parcial do mês corrente" — a formulação
+       original errava nas DUAS pontas (medido em prod 2026-09-05).** A primeira ZERA o custo: o
+       probe **retorna antes de escrever**
+       (`supabase/functions/carteira-positivacao-snapshot/index.ts:42`<!--cita: respostaSonda(VERSAO)-->
+       contra o upsert da 104), então bundle **v1.0+** grava **nada** — o upsert só sai no ramo
+       PRÉ-sensor, que é precisamente o que a trava guarda. E mesmo nesse ramo o alvo default é o
+       **mês ANTERIOR**, fechado
+       (`supabase/functions/carteira-positivacao-snapshot/index.ts:62`<!--cita: nowBrt.getMonth() - 1-->),
+       não o corrente. A distinção não é cosmética: o consumidor é o UTI de contas
+       (`src/hooks/useUtiContas.ts:254`<!--cita: .from('carteira_positivacao_snapshot')-->), que lê
+       os 2 meses mais recentes com snapshot para decidir entrada — um parcial do mês CORRENTE teria
+       custo money-path; reescrever o anterior, fechado, não. Empírico: o probe (`request_id` 69358)
+       voltou `{"ok":true,"probe":true,"versao":"v1.1-pedidos-do-mes-keyset",…}` **sem** os campos
+       `mes`/`total`/`upserted` do fluxo real ⇒ zero escrita, e a edge provada NO AR de graça. Já
+       `omie-sync-pedidos-compra` escreve em vários pontos, publica por RPC e **dispara sync real de
+       pedidos de compra no Omie** (`fetch` com `method: "POST"`) — outra ordem de grandeza. As duas
+       merecem o `--caro`; só a segunda justifica **adiar a sonda** até depois do deploy em vez de só
+       travar o bloco.
+    ⛔ **PROXY REPROVADO: "a edge despacha por `body.action`?" (medido e descartado 2026-09-05).** O
+    raciocínio era — se despacha e o `default:` recusa, `{"probe":true}` sem `action` é inócuo; se
+    não despacha, roda o fluxo único ⇒ cara. A metade POSITIVA continua valendo, e os três `default:`
+    que medi de fato recusam (`omie-analytics-sync` e `sync-reprocess` devolvem 400 "Ação
+    desconhecida", `omie-vendas-sync` faz `throw`). **É a AUSÊNCIA de dispatch que não prova o
+    contrário** — `ausente ≠ zero` aplicado à FORMA do handler: `fin-valor-cockpit` não tem `switch`
+    nenhum, e mesmo assim não escreve nada. O proxy a marcou cara; medir o efeito a devolveu barata.
+    Forma é preditor, efeito é prova. Guardado por `evals/criterio-caro-eval.sh`, que **EXECUTA** o
+    grep acima — extraído desta própria seção, fail-CLOSED se sumir — contra as três edges e exige a
+    classificação de volta: o `docs:citacoes` prova que a LINHA citada existe, só o eval prova que
+    ela ainda **diz aquilo**, e é o que impede o exemplo de apodrecer no repo vivo.
   - **N3 PASSIVO — a FORMA do JSON prova a versão quando a edge JÁ é chamada por cron (2026-08-26).**
     Dispensa as duas dependências acima (founder logado / cron secret): `net._http_response` retém o
     **corpo** da resposta que o cron já produziu. Se as duas versões do código retornam objetos com
@@ -422,6 +684,43 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        medido 2026-08-26: 208 linhas cobrindo 5h55). Run de ontem **não está lá** — fora da janela,
        volta-se ao N3 ativo. Confira o número com
        `~/.config/afiacao/psql-ro -Atc "SELECT name, setting FROM pg_settings WHERE name = 'pg_net.ttl';"`.
+    5. 🔴 **O GUARD TEMPORAL — o INVERSO do limite acima, e pior que ele (2026-08-28, #2079).** O
+       item 4 cobre "o run é velho demais e SUMIU": ausência honesta, que se percebe. O sentido
+       inverso não se percebe — **os ticks presentes são todos ANTERIORES ao merge**. Aí a query roda
+       com **exit 0** e devolve linhas perfeitamente legíveis, com o marcador VELHO, que se lê como
+       "deploy pendente". É falso NEGATIVO com cara de veredito confiante, e o preço é mandar o
+       founder redeployar edge money-path à toa. Medido verificando o #2079: às **23:41Z** o TTL
+       tinha os ticks de 18:15, 20:15 e **22:15** contra um merge às **22:32** — todos pré-merge,
+       todos ecoando `v1.0-eco-versao-passivo`, e nenhum deles dizendo coisa alguma sobre este
+       deploy. O tick seguinte (**00:15Z**) provou que as edges **já estavam no ar** desde antes.
+       É `ausente ≠ zero` na dimensão **TEMPO**: **anterior ≠ ausência de deploy** — irmão da regra
+       do `background` (lá a coluna `modo` separa "não subiu" de "não deu tempo de coletar"; aqui a
+       coluna `created` separa "não subiu" de "**ainda não foi medido**").
+       **Virou SCRIPT, não recado** — recado depende de alguém lembrar, que é exatamente como a
+       armadilha da sentinela não-exclusiva passou:
+       ```bash
+       .claude/skills/lovable-deploy-verify/scripts/verify-edge-eco.sh \
+         --desde '<timestamp do merge, UTC>' \
+         --esperado 'ctes=v1.1-eco-identidade-fonte,nfes=v1.2-eco-identidade-fonte' [--steps 'ctes,nfes']
+       # 0 = NO AR · 1 = bundle VELHO provado (aí sim pendente) · 2 = INDETERMINADO · 3 = RECUSA
+       ```
+       ⚠️ **O marcador é POR EDGE, e o script RECUSA o "marcador do lote".** Edges de uma mesma leva
+       partem de pontos diferentes: no #2079 quatro foram a `v1.1-eco-identidade-fonte` e a **`nfes`
+       a `v1.2`** (ela vinha de `v1.1-deadline-relogio`). Um `--esperado` único aplicado a vários
+       steps classificaria a divergente como bundle VELHO — o falso negativo que este script existe
+       para impedir, cometido pelo próprio script. Por isso valor único só passa com **1** step útil;
+       com mais, é **exit 3** pedindo o mapa (chave = step do orquestrador **ou** edge ecoada), e um
+       step útil sem marcador no mapa também recusa, porque comparar contra nada fabrica veredito.
+       Casado com o adendo "o marcador esperado é POR EDGE, não 'o bump do lote'" de
+       [`verificabilidade-do-conjunto-orquestrado.md`](../../../docs/historico/verificabilidade-do-conjunto-orquestrado.md).
+       Três coisas que ele guarda e a query crua não: **(a)** sem tick posterior ao corte ⇒ **exit 2**,
+       nunca 1; **(b)** o veredito sai do **tick MAIS RECENTE** — um tick gravado entre o merge e o
+       deploy ecoa o marcador velho com toda a razão, é história, e julgar por ele reprova deploy
+       correto; **(c)** **fail-CLOSED** na via de leitura, inclusive presente-porém-QUEBRADA (responde
+       vazio sem erro), caso em que "0 ticks" se leria como *indeterminado* em vez de *recusa* — e é
+       só nele que o ping tem dente, porque com a via totalmente morta o guard da contagem já recusa
+       sozinho (a 1ª sabotagem escrita saiu inócua por isso, e o eval registra o porquê).
+       Rede: `evals/verify-edge-eco-eval.sh` — 12 casos + 4 sabotagens, no gate `evals/run.sh`.
     - ⛔ **Dois sinais que PARECEM discriminar deploy e NÃO discriminam** — os dois foram testados neste
       mesmo ciclo e reprovados (narrativa em `docs/historico/verificar-sonda-versao.md` §12):
       **(a) duração da execução** (`acoes_execucoes`) — o run pós-mudança caiu para 24,0 s contra a faixa
@@ -470,6 +769,120 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
       `? 'resultados'` não separa os dois casos; `jsonb_typeof(...) = 'object'` separa — já embutido
       na query acima. Falha ruidosa (exit 1), então não fabrica veredito — mas com janela estreita
       ela dorme, e é exatamente ao acumular ticks que ela acorda.
+
+      🔴 **"Reli o TTL inteiro" NÃO é critério de parada — a regra acima foi SATISFEITA antes de eu
+      errar (2026-08-30).** Verificando este MESMO #2079, reli os três ticks do TTL (22:15 · 00:15 ·
+      02:15Z), vieram todos `background`, e conclui que o eco não alcançava o `pedidos` — montando
+      pedido de deploy. Ele estava no ar o tempo todo: os ticks **63804 (10:15Z)** e **63887
+      (12:15Z)** ecoaram `v1.1-eco-identidade-fonte`, e o **63967 (14:15Z)** voltou a `background`. A
+      intermitência do step é MAIOR que a janela — o TTL de 6 h cabe ~3 ticks de 2 h, então "tudo
+      `background` no TTL" é a leitura ESPERADA de um step que responde de vez em quando, não
+      evidência de que a via não o alcança. Reler o TTL descarta o tick PRÉ-merge (é para isso que
+      serve); não descarta a via. **O critério de parada é a DECISÃO, não a janela:** enquanto
+      esperar não bloqueia nada, `background` no TTL inteiro é INDETERMINADO e o próximo passo é o
+      próximo tick — de graça. Casado com o #2124
+      ([`verificabilidade-do-conjunto-orquestrado.md`](../../../docs/historico/verificabilidade-do-conjunto-orquestrado.md)),
+      que mediu a mesma falácia duas vezes: `exit 3` de watcher é o fim da JANELA dele, não da via.
+
+  - **N3 PASSIVO por ESCRITA DE APLICAÇÃO — a edge que o USUÁRIO chama também deixa rastro
+    (2026-08-29, #2086).** As duas vias passivas acima nascem do **cron**: é ele que produz a linha em
+    `net._http_response`, e ela morre no `pg_net.ttl = 6 h`. Edge chamada por **usuário** (transcrição,
+    upload, copiloto) nunca aparece lá — a escada caía direto no N3 ativo, que aqui custa o founder
+    logado. Mas quando a fatia nova **ESCREVE em tabela de aplicação**, essa escrita é assinatura do
+    bundle do mesmo jeito: **dura 7 dias** (não as 6 h do `pg_net`), não depende de cron e não
+    invoca nada. ⚠️ A 1ª versão desta seção dizia "**não expira**", e era **falso**: o cron
+    `ia-uso-evento-purga` (`23 4 * * *`, `active=t` medido em prod) apaga
+    `criado_em < now() - interval '7 days'`. Janela maior que a do `pg_net`, e finita. O #2086 pôs gate de
+    cota na `elevenlabs-transcribe`; o gate chama a RPC `ia_consumir_cota`, que faz `INSERT INTO
+    public.ia_uso_evento (user_id, funcao)`. O bundle velho **nem importava** `_shared/ia-cota.ts` —
+    logo é **incapaz** de emitir a linha. Quatro linhas entre 00:32:26Z e 00:33:27Z contra o merge às
+    **00:17:10Z** provaram o deploy sem PAT, sem canária e sem sondar nada.
+    1. **As três condições — sem elas a presença não separa versão:**
+       **(a) a escrita é EXCLUSIVA do bundle novo** (irmão do `--pai`): o velho tem de ser *incapaz*,
+       não apenas improvável — prove no diff que a linha que escreve **nasceu** no PR (o `import` do
+       módulo saiu como `+`). Se ele já escrevia na mesma tabela com o mesmo discriminador, presença
+       não diz nada.
+       **(b) o discriminador nomeia a EDGE** — aqui a coluna `funcao` carrega o slug, e `git grep` do
+       slug em `origin/main` acha **um** caller (o `index.ts` da própria edge). Sem isso prova-se o
+       módulo `_shared/` compartilhado, não a versão daquela edge — mesma ressalva da mensagem única.
+       **(c) nenhum 2º emissor** — o frontend chama a **EDGE**, não a RPC, e o harness roda em PG17
+       local. O que o `git grep` **não** fecha é a mão no 🟣 SQL Editor, então leia o **padrão**: as 4
+       do mesmo `user_id` vieram espaçadas em **segundos a dezenas de segundos** (22/27/12 s — tempo
+       de gravar áudio), e isso é uso de app; rajada de milissegundos ou `user_id` sem sessão é teste
+       manual. **Sem linha em `profiles` NÃO desqualifica** — alias fiscal sem `profiles` é legítimo
+       (`database.md` §5) e o cadastro em `/auth` é aberto. Meça o vínculo com `EXISTS(...)`:
+       `coalesce(p.name,'…')` em LEFT JOIN lê igual para "não existe linha" e "coluna NULL".
+       🔴 **Mas o `f` que o #2086/#2106 mediram NÃO era um desses casos — era a CHAVE ERRADA
+       (medido 2026-08-29).** `public.profiles` tem `id` **e** `user_id`, e a FK de `ia_uso_evento`
+       aponta para `auth.users(id)`, que casa com **`profiles.user_id`**. As duas leituras, lado a
+       lado, no mesmo `user_id` das 4 escritas:
+       ```
+        chave_id (a usada)  | chave_user_id |       nome
+       ---------------------+---------------+------------------
+        f                   | t             | Lucas Sardenberg     (role master, em user_roles)
+       ```
+       O usuário **tem** `profiles` — o `f` era artefato do join, não um vínculo ausente. A regra
+       acima continua valendo por si (aliases fiscais existem), mas **este caso não é exemplo dela**:
+       era um staff conhecido, e a pergunta ao founder respondeu o que a chave certa já respondia. É
+       a família `ausente ≠ zero` na dimensão **CHAVE**: um join que não casa devolve "não existe",
+       byte a byte igual a "existe e é nulo", e a explicação plausível fecha a investigação em cima
+       de uma medição defeituosa. **A role não vive em `profiles`** (é `public.user_roles`), e
+       `auth.users` é **inacessível** ao `claude_ro` (`permission denied for schema auth`) — logo a
+       identidade só se lê por `profiles`, e só pela chave certa. `scripts/verify-edge-escrita.sh`
+       já faz os dois joins.
+    2. 🔴 **A direção é uma só: presença prova, ausência NÃO reprova.** Zero linhas pode ser "não
+       deployou" **ou** "ninguém usou a feature", e edge de usuário não tem denominador que separe os
+       dois. `ausente ≠ zero` de novo: sem chamada não houve medição, e "0 linhas" lê-se
+       **INDETERMINADO**, nunca "deploy pendente". É a metade boa do guard temporal do #2079 — lá o
+       risco era ler tick PRÉ-merge como pendência; aqui a evidência só pode existir **depois**, então
+       o erro possível custa uma espera, não um redeploy à toa de edge money-path.
+    3. 🔴 **O controle negativo prescrito aqui NÃO MATERIALIZAVA — corrigido 2026-08-29.** A 1ª
+       versão mandava ler `GROUP BY funcao` sobre `ia_uso_evento` e afirmava que as vizinhas com
+       limite configurado "saem em zero na mesma leitura". **Não saem:** `GROUP BY` só produz
+       grupos que **têm** linhas. Rodado em prod, devolveu **uma** linha (a própria edge) e as três
+       vizinhas não apareceram — nem como zero. Quem seguisse a receita ao pé da letra registrava
+       "controle negativo passou" **sem ter observado nada** — e a própria seção se contradizia, já
+       que o comentário do bloco dizia `linha única`. Para o controle EXISTIR, o universo tem de vir
+       da tabela de **LIMITES** unida ao alvo (só os limites esconderia o alvo se a config dele fosse
+       removida). Isto e os guards abaixo são hoje do **script**, não da sua memória:
+
+       ```bash
+       .claude/skills/lovable-deploy-verify/scripts/verify-edge-escrita.sh \
+         --desde '<timestamp do merge, UTC>' --funcao '<slug da edge>'
+       # 0 = BUNDLE_NOVO_OBSERVADO_EM_T · 2 = INDETERMINADO · 3 = RECUSA
+       # 🔴 NENHUM exit significa "bundle velho": a via é unidirecional por construção.
+       ```
+
+       Ele materializa o controle (`CONTROLE_CRUZADO_OK`), **diz quando não pôde observá-lo**
+       (`CONTROLE_CRUZADO_NAO_OBSERVADO`, universo só com o alvo — nunca "passou"), e **recusa**
+       quando a query não discrimina (`CORRELACAO_SUSPEITA`: toda vizinha com o mesmo total é a
+       assinatura do filtro solto contando a tabela inteira). Rede: `evals/verify-edge-escrita-eval.sh`
+       — 17 casos + 4 sabotagens, no gate `evals/run.sh`.
+    3b. 🔴 **A presença prova PASSADO, não estado ATUAL (2ª opinião, Codex).** Uma linha pós-merge
+       prova que o bundle novo atendeu ≥1 chamada **naquele instante** — não que ele siga no ar: um
+       redeploy ou revert posterior deixa o rastro **intacto**. Por isso o exit 0 se chama
+       `BUNDLE_NOVO_OBSERVADO_EM_T` e a saída repete que não é "versão atual confirmada". Para
+       afirmar "está no ar AGORA" continua sendo preciso sonda viva ou marcador observado **depois
+       do último deploy possível**.
+    3c. ⚠️ **O join de proveniência é `profiles.user_id`, NUNCA `profiles.id`.** A tabela tem as
+       **duas** colunas e a FK de `ia_uso_evento` aponta para `auth.users(id)`, que casa com
+       `profiles.user_id`. Com `p.id` o join devolve "sem profile" para usuário legítimo — falso
+       sinal de "`user_id` inventado" bem no teste da condição (c), que foi onde mordeu. A **role**
+       (`master`/`employee`) vive em `public.user_roles`, não em `profiles`; e `auth.users` é
+       **inacessível** ao `claude_ro` (`permission denied for schema auth`), então a identidade só se
+       lê por `profiles`. O script já faz os dois joins certos.
+    4. **Leia onde o INSERT mora no código ANTES de ler a linha.** Em `ia_consumir_cota` ele fica
+       **depois** de todos os `RETURN` de bloqueio, então a linha prova chamada **PERMITIDA** — e de
+       quebra que a migration do limite entrou **antes** do deploy (bloqueada teria voltado 503
+       `sem_limite` sem gravar nada). INSERT incondicional provaria só a chamada: a diferença é o que
+       você pode afirmar depois.
+    ```bash
+    # ⌨️ seu terminal — só se precisar ler à mão o que o script já lê. O timestamp NASCE inválido
+    # de propósito (Lei de Ferro #5): troque pelo do SEU merge, em UTC.
+    # ⚠️ O universo parte de `ia_uso_limite` UNIDO ao alvo — NÃO de um `GROUP BY` sobre
+    #    `ia_uso_evento`, que não materializa as vizinhas em zero e mata o controle negativo.
+    ~/.config/afiacao/psql-ro -c "WITH universo AS (SELECT funcao AS f FROM public.ia_uso_limite UNION SELECT 'COLE_O_SLUG_DA_EDGE') SELECT u.f, (SELECT count(*) FROM public.ia_uso_evento e WHERE e.funcao = u.f) AS total, (SELECT count(*) FROM public.ia_uso_evento e WHERE e.funcao = u.f AND e.criado_em > 'COLE_O_TIMESTAMP_DO_MERGE_UTC') AS pos_merge FROM universo u ORDER BY 2 DESC, 1;"
+    ```
 
 ### Passo 4b — QA visual pós-Publish (Claude-in-Chrome na sessão logada do founder)
 
@@ -611,4 +1024,79 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   `input[type="checkbox"]` — a sentinela que o Passo 4 recomenda — segue silenciosa. AVISA e nunca
   recusa, como a sonda de lib. Rede: 3 casos bidirecionais + sabotagem `falsify_marca` (o fixture
   nunca modelou isto — bundle fake não é minificado, sentinela idêntica nos dois universos).
+- [x] **GUARD TEMPORAL do N3 passivo (2026-08-28, verificando o #2079):** a skill cobria o TTL só no
+  sentido "run velho SUMIU ⇒ N3 ativo"; o inverso — **TTL cheio, mas só de ticks PRÉ-merge** — devolvia
+  linhas legíveis com o marcador velho e se lia como "deploy pendente" (falso NEGATIVO, que **encerra**
+  a verificação com um pedido caro ao founder). Virou `scripts/verify-edge-eco.sh`: sem tick posterior
+  ao corte ⇒ **exit 2 INDETERMINADO**, nunca 1; veredito pelo **tick mais recente** (o intermediário
+  entre merge e deploy é história); fail-closed inclusive na via presente-porém-quebrada. Rede:
+  `evals/verify-edge-eco-eval.sh` (12 casos + 4 sabotagens) no gate. A falsificação pagou DUAS vezes:
+  a sabotagem do ping saiu **inócua** e revelou que ele só tem dente contra a via MUDA (não contra a
+  morta, onde a contagem já recusa); e o `--esperado` único — que o script aceitava — reprovaria a
+  `nfes` (v1.2) como bundle velho num lote v1.1, então **valor único agora recusa** com >1 step útil.
+- [x] **N3 PASSIVO por ESCRITA DE APLICAÇÃO (2026-08-29, #2086 `elevenlabs-transcribe`):** as duas vias
+  passivas anteriores nascem do cron e morrem no `pg_net.ttl = 6 h` — edge chamada por **usuário** não
+  passa por nenhuma delas, e a escada caía no N3 ativo (que custa o founder logado). Quando a fatia nova
+  escreve em tabela de aplicação, a escrita é assinatura do bundle com janela de **7 dias**: o gate de cota insere em
+  `ia_uso_evento(user_id, funcao)` e o bundle velho, que nem importava `_shared/ia-cota.ts`, é **incapaz**
+  de produzir a linha — 4 delas 15 min após o merge provaram o deploy sem PAT, sem canária, sem invocar
+  nada. Vale só na direção **presença**: ausência é "ninguém usou", não "não subiu". Controle negativo de
+  graça (as vizinhas com limite configurado saem em zero na mesma query), desde que o `GROUP BY` não seja
+  filtrado pela edge. Detalhe no Passo 4.
+- [x] **A via da ESCRITA virou SCRIPT, e a receita em prosa tinha 4 furos (2026-08-29):** ela
+  nasceu no #2086 e apodreceu em 3 dias — verificando as 3 edges do chip de 01:50Z, todos apareceram.
+  **(1)** O controle negativo prescrito (`GROUP BY funcao` sobre `ia_uso_evento`) **não
+  materializava**: `GROUP BY` não produz grupo vazio, então as vizinhas nunca saíam "em zero" e o
+  operador registrava "controle passou" sem observar nada — a seção se contradizia sozinha, com
+  `linha única` escrito no próprio comentário. **(2)** O join de proveniência usava `profiles.id`
+  quando a chave é `profiles.user_id` (a tabela tem as duas), devolvendo "sem profile" para usuário
+  legítimo — falso sinal de "`user_id` inventado" bem na condição (c). **(3)** A 2ª opinião (Codex,
+  `gpt-5.6-sol` xhigh) achou o furo maior: a escrita prova **passado**, não estado atual — redeploy
+  ou revert posterior deixa o rastro intacto, então o exit 0 é `BUNDLE_NOVO_OBSERVADO_EM_T` e nunca
+  "versão atual". **(4)** E o "**não expira**" era literalmente falso: o cron `ia-uso-evento-purga`
+  (`23 4 * * *`, `active=t` em prod) apaga acima de **7 dias**. Virou
+  `scripts/verify-edge-escrita.sh` (universo = limites ∪ alvo; `CONTROLE_CRUZADO_OK` /
+  `_NAO_OBSERVADO` / `CORRELACAO_SUSPEITA`; fail-closed na via; **nenhum** exit significa "bundle
+  velho"), com `evals/verify-edge-escrita-eval.sh` — 17 casos + 4 sabotagens — no gate. A
+  falsificação pagou de novo: a sabotagem do ping saiu **inócua** contra a via totalmente muda
+  (o guard do universo vazio recusa sozinho), e só mordeu no cenário `psql_mudo_parcial` — via que
+  cala no ping mas ainda devolve linhas, onde sem o ping o script leria via quebrada como "ninguém
+  usou a feature". Mesma lição que o eval do `verify-edge-eco` já tinha registrado, redescoberta
+  medindo.
+- [x] **O closure lê a REF, não o working tree (2026-09-04, `enviar-pedido-portal-sayerlack`):** as
+  regras de sincronizar antes de medir/entregar estavam sendo **obedecidas**, e ainda assim o closure
+  saiu curto — `git fetch` move `origin/main`, mas `grep`/`cat` leem os bytes do working tree, e a
+  worktree estava 1 commit atrás. **5 arquivos contra os 7 reais**, faltando justamente o `qtde-portal.ts`
+  (novo) e o `escrita-critica.ts` (import novo de arquivo pré-existente, o furo do #2101) — os dois sem os
+  quais a função não boota. `ausente ≠ zero` na dimensão **ÁRVORE**, irmão do eixo TEMPO do #2123. Junto,
+  o guard de contagem 0/1 estendido do regex para o **arnês**: um `declare -A` em bash 3.2 do macOS
+  imprimiu `0 arquivos`, saída idêntica à de uma edge que não importa nada. Detalhe no Passo 3.
+- [x] **O veredito de deploy de edge tem MEMÓRIA (2026-09-05):** ledger `public.deploy_atestacoes` +
+  cron `deploy-atestacoes-colher` copiam `net._http_response` antes do `pg_net.ttl` (6h) apagar, e
+  `bun run pendencias:deploy` julga a matriz `(versao, fonte)` contra a main — P1 (bump declarado, deploy
+  no PR) · P2 (só `_shared/`, leva agrupada, escala em 7 d) · INCOERENTE (deploy parcial) ·
+  NUNCA_ATESTADA (a única sonda humana; pendência, não aviso). Antes: 47/54 edges "sem sonda na janela"
+  a cada sessão e o founder colando o SQL de sonda toda vez. **Cron de sonda ativa derrubado pelo Codex**
+  (rollback pré-sensor dispararia o fluxo real — `monthly-report` = e-mail para a base). Prova:
+  `db/test-deploy-atestacoes.sh` (24/24 + 4 sabotagens vermelhas). Detalhe em
+  `docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`.
+- [x] **UM prompt por LEVA, não por edge (2026-09-06, medido em prod com 8 edges):** o Passo 3 dizia
+  "um por edge tocada" e isso custava N colagens no chat do Lovable. Medido numa leva real — as 8 caras
+  (`calculate-scores`, `carteira-positivacao-snapshot`, `fin-cashflow-engine`, `monthly-report`,
+  `omie-sync-status-produtos`, `scoring-recalc-batch`, `tactical-plans-batch`,
+  `visit-score-recalc-batch`), **70 arquivos** de closure, um único prompt numerando as 8 com a lista
+  de arquivos de cada uma: as 8 responderam a sonda com `versao` **e** `fonte` batendo a main
+  (request_id 70879–70886, lidos um a um), e o `pendencias:deploy` foi de 46/54 para **54/54, exit 0**.
+  **Zero deploy parcial** — nenhuma `SEM_MAPA_NO_BUNDLE` nem `INCOERENTE`, que é o modo de falha
+  temido (o prompt que nomeia poucos arquivos e a função não boota).
+  ⚠️ **O que a medição NÃO prova, e por que o teste era fraco nessa dimensão:** as 8 estavam
+  `NUNCA_ATESTADA` — estado ANTES **desconhecido** —, então "o Lovable deployou as 8" e "deployou
+  algumas e as outras já estavam idênticas à main" produzem o MESMO eco. O que ficou provado é o par
+  que importa para a decisão: o prompt em lote **não** deixa edge pela metade, e depois dele as 8
+  servem o bundle da main. Para fechar a outra metade, repita numa leva com ≥1 edge em `DIVERGE_P1`
+  MEDIDA antes (aí o antes é conhecido e a transição prova o deploy) — enquanto isso não acontecer,
+  a recomendação vale por conveniência com risco medido, não por prova de atomicidade.
+  **Forma do prompt que funcionou** (Passo 3): cabeçalho pedindo as N funções + "Deploy every function
+  listed; do not skip any", uma seção **numerada** por edge com o closure ∪ {mapa} dela, e o fecho
+  "list the N function names and confirm that **each one** shows Active".
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

@@ -3,7 +3,7 @@
 // substituindo o flip de status + UPDATE no SQL Editor. Money-path: nunca grava
 // preço <= 0 (o disparo rejeita nValUnit=0 no Omie).
 import type { PedidoItem, Status } from './types';
-import { quantidadeCompraInteira } from '@/lib/reposicao/compras-otimizador-helpers';
+import { quantidadeCompraCanonica } from '@/lib/reposicao/qtde-portal';
 
 // Estados em que o custo de um item de primeira compra (preço 0) pode ser definido
 // na tela:
@@ -53,14 +53,17 @@ export interface ItemUpdate {
 // e de preço (`precoEdit`, undefined = sem edição de preço). Money-path: só inclui
 // `preco_unitario` quando houve edição de preço; quantidade-só preserva o preço atual.
 export function montarUpdateItem(
-  item: Pick<PedidoItem, 'qtde_final' | 'qtde_sugerida' | 'preco_unitario'>,
+  item: Pick<PedidoItem, 'qtde_final' | 'qtde_sugerida' | 'preco_unitario' | 'fator_embalagem_portal'>,
   qtdEdit: number | undefined,
   precoEdit: number | undefined,
 ): ItemUpdate {
   const temPrecoEdit = precoEdit !== undefined;
   // [QTDE-INTEIRA] grava sempre quantidade inteira (ceil): nem a edição humana nem o fallback
   // do qtde_final legado (poeira decimal do estoque do Omie) podem persistir fração no pedido.
-  const qtd = quantidadeCompraInteira(qtdEdit ?? Number(item.qtde_final ?? item.qtde_sugerida ?? 0));
+  // [EMBALAGEM PORTAL] e, se o motor arredondou com fator (litro → balde), grava no MÚLTIPLO da embalagem
+  // (37 → 40 com 0,2): a edge do portal RECUSA o envio fora do múltiplo (enviado = aprovado) — gravar aqui é
+  // o que evita o comprador aprovar 37 e só descobrir na recusa.
+  const qtd = quantidadeCompraCanonica(qtdEdit ?? Number(item.qtde_final ?? item.qtde_sugerida ?? 0), item.fator_embalagem_portal);
   const preco = temPrecoEdit ? (precoEdit as number) : Number(item.preco_unitario ?? 0);
   // Custo desconhecido = sem edição de preço E preço atual ausente/<=0 (item de primeira
   // compra). Aí valor_linha degrada para null (não fabrica qtd*0=0); o disparo já barra

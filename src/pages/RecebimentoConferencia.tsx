@@ -29,6 +29,9 @@ import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confir
 import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebimento-divergencia';
 import { addCte, type AddCteVars } from '@/services/recebimento-cte';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { interpretarRespostaEfetivacao } from '@/lib/recebimento/efetivacao-resposta';
+import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
@@ -126,7 +129,7 @@ export default function RecebimentoConferencia() {
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   // Fetch NF-e
-  const { data: nfe, isLoading } = useQuery({
+  const { data: nfe, isLoading, status: statusNfe, fetchStatus: fetchNfe, error: erroNfe } = useQuery({
     queryKey: ['nfe_conferencia', id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -143,6 +146,12 @@ export default function RecebimentoConferencia() {
     },
     enabled: !!id,
   });
+  // `status`/`error` nomeados na desestruturação: um `const q = useQuery(…)` tiraria o sítio
+  // do gate da classe por CEGUEIRA, não por conserto.
+  // `.single()` LANÇA PGRST116 quando não acha a NF-e, e isso chegava aqui idêntico a uma
+  // queda de rede. Conferência é passo de RECEBIMENTO: "NF-e não encontrada" durante uma
+  // falha manda o operador procurar um documento que EXISTE.
+  const estadoNfe = estadoDeRegistro({ status: statusNfe, fetchStatus: fetchNfe, error: erroNfe }, nfe != null);
 
   // Fetch scanned lotes grouped
   const { data: lotes } = useQuery<NfeLoteEscaneado[]>({
@@ -417,10 +426,22 @@ export default function RecebimentoConferencia() {
           body: { nfe_recebimento_id: id },
           headers: { Authorization: `Bearer ${session?.access_token}` },
         });
-        if (res.error) throw res.error;
-
-        const totalLotes = new Set(((lotes ?? []) as NfeLoteEscaneado[]).map((l) => l.numero_lote)).size;
-        toast.success(`NF-e ${nfeTyped?.numero_nfe} efetivada — ${totalConferida} unidades, ${totalLotes} lotes registrados`);
+        // Money-path: o veredito vem do CORPO (`success`/`modo`), não do transporte. A edge
+        // respondia 200 com `success:false` e este toast dizia "efetivada" sobre uma falha (M-01).
+        const veredito = await interpretarRespostaEfetivacao(res);
+        // A edge já gravou o status final (efetivado/parcial/falha) na NF: refletir em TODA saída,
+        // inclusive na lista (/recebimento) para onde navegamos — o cache dela é global (Codex P2).
+        queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
+        queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
+        queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
+        if (veredito.tipo === 'falha') throw new Error(veredito.mensagem);
+        if (veredito.tipo === 'parcial') {
+          toast.warning(`NF-e ${nfeTyped?.numero_nfe}: efetivação PARCIAL — ${veredito.mensagem}. Reprocesse na lista.`);
+        } else {
+          const totalLotes = new Set(((lotes ?? []) as NfeLoteEscaneado[]).map((l) => l.numero_lote)).size;
+          const verbo = veredito.modo === 'reconciliado' ? 'reconciliada (já estava recebida no Omie)' : 'efetivada';
+          toast.success(`NF-e ${nfeTyped?.numero_nfe} ${verbo} — ${totalConferida} unidades, ${totalLotes} lotes registrados`);
+        }
       } else {
         toast.warning('Conferência finalizada com divergências. Aguardando resolução.');
       }
@@ -442,6 +463,16 @@ export default function RecebimentoConferencia() {
       return next;
     });
   };
+
+  // ANTES do loading: no PWA de campo sem rede a query fica pending+paused, `isLoading` é
+  // FALSE, e a tela caía direto no "NF-e não encontrada".
+  if (naoConsegui(estadoNfe)) {
+    return (
+      <div className="max-w-lg mx-auto py-20 px-4">
+        <AvisoLeituraFalhou oque="esta NF-e" estado={estadoNfe} variante="bloco" />
+      </div>
+    );
+  }
 
   if (isLoading) {
     // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um

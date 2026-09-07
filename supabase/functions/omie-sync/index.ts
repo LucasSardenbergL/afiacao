@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -889,13 +890,50 @@ Deno.serve(async (req) => {
   if (!auth.ok) return auth.response;
 
   try {
+    // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do createClient, para seguir sendo o único
+    // caminho sem custo. O `authorizeCronOrStaff` acima aceita o `x-cron-secret` do SQL Editor ⇒
+    // sem gate próprio. Daqui pra frente a edge inclui/altera/EXCLUI OS no Omie e reescreve
+    // `orders`/`omie_ordens_servico`/`loyalty_points`. Ver versao.ts / _shared/sonda-versao.ts.
+    //
+    // ⚠️ O corpo de um Request só se lê UMA vez, e o parse teve de SUBIR para cá. O erro de JSON
+    // inválido é guardado e RELANÇADO no ponto antigo (abaixo), para que a resposta continue sendo
+    // o 500 do catch geral — engoli-lo faria um corpo quebrado virar `action: undefined` e cair no
+    // `default` 400 "Ação não reconhecida", mandando o chamador consertar a coisa errada.
+    // Sem anotação de propósito (mesma razão da `omie-nfe-webhook`): `req.json()` devolve `any`, e
+    // é esse o tipo que os acessos com alias abaixo (`orderData`, `staffContext?.customerOmieCode`,
+    // …) sempre tiveram. Anotar `unknown` os quebraria; anotar `Record<string, any>` reprova no
+    // ESLint. Instrumentar não é hora de retipar.
+    let corpoBruto;
+    let erroParseCorpo: unknown = null;
+    try {
+      corpoBruto = await req.json();
+    } catch (e) {
+      corpoBruto = {};
+      erroParseCorpo = e;
+    }
+
+    const decisaoSonda = classificarSonda(corpoBruto);
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (decisaoSonda.tipo === "ambiguo") {
+      return new Response(
+        JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     // Cliente com service role para operações internas
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-    const body = await req.json();
+    // Já parseado acima (para a sonda); o throw do corpo inválido é relançado no ponto antigo.
+    if (erroParseCorpo !== null) throw erroParseCorpo;
+    const body = corpoBruto;
     const { action, orderId, orderData, profileData, addressData, staffContext } = body;
 
     // userId preenchido apenas quando o caller é staff (JWT). Em chamadas

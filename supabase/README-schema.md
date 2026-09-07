@@ -1,6 +1,6 @@
 # Snapshot de schema — `schema-snapshot.sql`
 
-> Gerado em **2026-08-08** (anterior: 2026-08-06) a partir do banco de produção (Supabase do Lovable, projeto `fzvklzpomgnyikkfkzai`, PostgreSQL 17.6) via `pg_dump --schema-only --schema=public --schema=private --no-owner --no-privileges`. ✅ Inclui os schemas `public` **e** `private` (47.285 linhas); **replay-validado em 2026-08-08** (ver §"Status do replay"). Esta geração (a **2ª de 08/08**) incorpora o **CHECK de finitude money-path** (PR #1691) e a `expirar_planos_taticos` (PR #1693) — ver o "por quê" no `schema-snapshot.manifest.md`.
+> Gerado em **2026-09-05** (anterior: 2026-08-28) a partir do banco de produção (Supabase do Lovable, projeto `fzvklzpomgnyikkfkzai`, PostgreSQL 17.6) via `pg_dump --schema-only --schema=public --schema=private --no-owner --no-privileges`. ✅ Inclui os schemas `public` **e** `private` (51.692 linhas; prod nesta data: 336 tabelas / 703 policies). Re-dump motivado por **deriva de DR**: cinco objetos vivos em prod estavam ausentes do snapshot anterior — `analytics_outbox_perda`, `reconciliar_pedidos_omie`, `cockpit_itens_snapshot`, `apriori_universo_snapshot` e a constraint `sales_orders_hash_omie_canonico` (guard money-path contra pedido duplicado no Omie, que um restore teria apagado em silêncio). ⚠️ Replay ainda **não** re-validado nesta geração (rodar `db/verify-snapshot-replay.sh`).
 
 ## O que é
 

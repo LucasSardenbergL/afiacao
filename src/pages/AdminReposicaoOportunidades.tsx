@@ -20,6 +20,8 @@ import { OportunidadesTable } from "@/components/reposicao/oportunidades/Oportun
 import { GerarCicloDialog } from "@/components/reposicao/oportunidades/GerarCicloDialog";
 import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
 import { ULTIMA_EXECUCAO_QUERY_KEY } from "@/components/execucoes/tipos";
+import { estadoDeLeitura, naoConsegui } from "@/lib/leitura/estado-de-leitura";
+import { AvisoLeituraFalhou } from "@/components/leitura/AvisoLeituraFalhou";
 
 // Escritor deste slug é a PRÓPRIA função SQL ciclo_oportunidade_do_dia (migration
 // 20260722110000): captura o clique manual E o cron das 11:05. O frontend só LÊ.
@@ -81,18 +83,23 @@ export default function AdminReposicaoOportunidades() {
   );
 
   // Contador de sugestões "novas" de negociação paralela (banner)
-  const { data: negociacaoNovasCount = 0 } = useQuery({
+  const negociacaoQuery = useQuery({
     queryKey: ["negociacao-paralela-sugestoes-count"],
     queryFn: async () => {
-      const { count } = await supabase
+      const { count, error } = await supabase
         .from("v_sugestao_negociacao_ativa" as never)
         .select("*", { count: "exact", head: true })
         .eq("empresa", EMPRESA)
         .eq("status", "nova");
+      // Sem este throw a query fica `success` com 0 e <AvisoLeituraFalhou> seria
+      // INALCANÇÁVEL por construção — o conserto tem de começar aqui, não no `&&`.
+      if (error) throw error;
       return count ?? 0;
     },
     staleTime: 30_000,
   });
+  const negociacaoNovasCount = negociacaoQuery.data ?? 0;
+  const estadoNegociacao = estadoDeLeitura(negociacaoQuery);
 
   // ============ QUERIES ============
   const { data: oportunidades = [], isLoading, isFetching } = useQuery({
@@ -326,6 +333,14 @@ export default function AdminReposicaoOportunidades() {
             <UltimaExecucao acao={ACAO_GERAR_CICLO} />
           </div>
         </header>
+
+        {naoConsegui(estadoNegociacao) && (
+          <AvisoLeituraFalhou
+            oque="as sugestões de negociação paralela"
+            estado={estadoNegociacao}
+            testId="aviso-negociacao"
+          />
+        )}
 
         {!bannerNegociacaoFechado && negociacaoNovasCount > 0 && (
           <NegociacaoBanner

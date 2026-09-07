@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os DOIS evals:
+# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os SETE evals:
 #   (1) classify        — classificação de diff do Passo 1 (classify.sh vs classify-eval.json)
 #   (2) verify-frontend — enumeração + exit codes do Passo 4 (harness local determinístico)
+#   (3) verify-edge-eco  — guard TEMPORAL do N3 passivo (só ticks pré-merge ⇒ indeterminado)
+#   (4) verify-edge-escrita — N3 passivo por escrita de aplicação
+#   (5) sonda-veredito-401  — guard de CREDENCIAL do SQL de sondagem (401 é ambíguo; EXECUTA o SQL)
+#   (6) criterio-caro      — critério MEDIDO do `--caro` (efeito, não forma do handler)
+#   (7) edges-pendentes-sql — classificação do Passo 3 do /fecho (EXECUTA o SQL do gate passivo)
 # Exit 0 = tudo passou. Exit 1 = alguma divergência.
-# Falsificação (prova que os evals têm dente): --falsify sabota AMBOS e exige vermelho
-#   (classify inverte os esperados; verify-frontend sabota a enumeração). Exit 0 só se pegou tudo.
+# Falsificação (prova que os evals têm dente): --falsify sabota TODOS e exige vermelho
+#   (classify sabota o gabarito UMA CHAVE POR VEZ e depois muta o classify.sh real; verify-frontend
+#   sabota a enumeração; verify-edge-eco arranca o guard temporal, o fail-closed do ping e o filtro
+#   do tick mais recente; criterio-caro sabota SKILL.md e as três edges-exemplo, uma por vez).
+#   Exit 0 só se pegou tudo.
 set -uo pipefail
 cd "$(dirname "$0")" || exit 2
 
@@ -14,29 +22,108 @@ rc=0
 
 echo "== (1) classify — Passo 1 =="
 if python3 - "$@" <<'PY'
-import json, subprocess, sys
+import json, os, subprocess, sys, tempfile
+
 falsify = "--falsify" in sys.argv
 cases = json.load(open("classify-eval.json"))
-diverg = 0
-for c in cases:
-    out = subprocess.run(["bash", "classify.sh"],
-                         input="\n".join(c["files"]) + "\n",
-                         capture_output=True, text=True).stdout
-    got = dict(l.split("=") for l in out.strip().splitlines())
-    exp = dict(c["expect"])
-    if falsify:  # sabota o gabarito: agora got==exp seria o ERRO
-        exp = {k: ("SIM" if v == "não" else "não") for k, v in exp.items()}
-    ok = (got == exp)
-    if not ok:
-        diverg += 1
-    print(f"  [{'ok ' if ok else 'XX '}] {c['name']}")
-n = len(cases)
-if falsify:
-    # esperamos que TODOS divirjam; se algum 'passou', o eval é cego
-    print(f"--falsify: {diverg}/{n} divergiram (esperado: {n}/{n})")
-    sys.exit(0 if diverg == n else 1)
-print(f"{n - diverg}/{n} passaram")
-sys.exit(1 if diverg else 0)
+
+def roda(caso, script="classify.sh"):
+    """Cada caso roda num tmpdir PRÓPRIO: as 3 primeiras camadas são função pura dos nomes,
+    mas a 4ª (secrets) lê o disco. Sem sandbox o eval passaria a depender do estado do repo
+    real — caso sem `fixtures` roda contra árvore vazia e por isso dá secrets=não."""
+    with tempfile.TemporaryDirectory() as raiz:
+        for p, conteudo in caso.get("fixtures", {}).items():
+            alvo = os.path.join(raiz, p)
+            os.makedirs(os.path.dirname(alvo), exist_ok=True)
+            with open(alvo, "w") as fh:
+                fh.write(conteudo)
+        r = subprocess.run(["bash", script],
+                           input="\n".join(caso["files"]) + "\n",
+                           capture_output=True, text=True,
+                           env=dict(os.environ, CLASSIFY_RAIZ=raiz))
+    return dict(l.split("=", 1) for l in r.stdout.strip().splitlines())
+
+def sabota(valor, chave):
+    # `secrets` não é booleano: inverter SIM/não não o tocaria. Sem regra própria, a sabotagem
+    # das OUTRAS chaves já bastaria para divergir e a 4ª camada ficaria sem dente.
+    if chave == "secrets":
+        return "não" if valor != "não" else "POSTHOG_INGEST_KEY"
+    return "SIM" if valor == "não" else "não"
+
+# Mutações do classify.sh REAL (cópia em tmp; o versionado nunca é mutado). Cada uma arranca
+# uma decisão da 4ª camada e precisa deixar ≥1 caso VERMELHO — se não deixar, o gabarito é cego
+# naquele eixo e o eval está passando por acidente.
+MUTACOES = [
+    ("universo inclui os próprios arquivos tocados (edge se compara consigo mesma)",
+     'comm -23 "$tmp/todos" "$tmp/tocados" > "$tmp/universo"',
+     'cp "$tmp/todos" "$tmp/universo"'),
+    ("nome dinâmico vira silêncio em vez de ?dinamico",
+     'if [ "$dinamico" = 1 ]; then',
+     'if [ "$dinamico" = 9 ]; then'),
+    ("_test.ts tocado conta como código de edge",
+     "/^supabase\\/functions\\/.*\\.ts$/ && !/_test\\.ts$/",
+     "/^supabase\\/functions\\/.*\\.ts$/"),
+    ("não subtrai o universo: todo secret lido vira 'novo'",
+     'comm -23 "$tmp/usados" "$tmp/conhecidos" > "$tmp/novos"',
+     'cp "$tmp/usados" "$tmp/novos"'),
+    ("_test.ts entra no universo e faz secret novo parecer conhecido",
+     "| awk '!/_test\\.ts$/' | sort -u > \"$tmp/todos\"",
+     '| sort -u > "$tmp/todos"'),
+]
+
+falha = 0
+if not falsify:
+    diverg = 0
+    for c in cases:
+        got, exp = roda(c), dict(c["expect"])
+        ok = (got == exp)
+        if not ok:
+            diverg += 1
+            print(f"  [XX ] {c['name']}\n        esperado {exp}\n        obtido   {got}")
+        else:
+            print(f"  [ok ] {c['name']}")
+    print(f"{len(cases) - diverg}/{len(cases)} passaram")
+    falha = 1 if diverg else 0
+else:
+    # (a) gabarito sabotado UMA CHAVE POR VEZ — prova que cada chave participa da comparação.
+    #     Sabotar todas de uma vez deixaria a 4ª camada carona nas outras três.
+    cegas = []
+    for c in cases:
+        got = roda(c)
+        if set(got) != set(c["expect"]):
+            cegas.append(f"{c['name']}: saída {sorted(got)} ≠ gabarito {sorted(c['expect'])}")
+            continue
+        for chave, valor in c["expect"].items():
+            exp = dict(c["expect"], **{chave: sabota(valor, chave)})
+            if got == exp:
+                cegas.append(f"{c['name']}: chave '{chave}' sem dente")
+    n = len(cases) * 4
+    print(f"  gabarito por chave: {n - len(cegas)}/{n} sabotagens pegas")
+    for c in cegas:
+        print(f"    [XX ] {c}")
+
+    # (b) mutação do classify.sh real — o gabarito acima não cobre isto: ele prova que o eval
+    #     compara, não que a lógica tem dente. Aqui a lógica é arrancada e exigimos vermelho.
+    fonte = open("classify.sh").read()
+    with tempfile.TemporaryDirectory() as td:
+        mutante = os.path.join(td, "classify.sh")
+        for nome, de, para in MUTACOES:
+            if de not in fonte:
+                cegas.append(f"mutação NO-OP (alvo sumiu do classify.sh): {nome}")
+                print(f"    [XX ] mutação NO-OP: {nome}")
+                continue
+            with open(mutante, "w") as fh:
+                fh.write(fonte.replace(de, para, 1))
+            pegou = [c["name"] for c in cases if roda(c, mutante) != c["expect"]]
+            if pegou:
+                print(f"  [ok ] mutação pega ({len(pegou)} caso(s)): {nome}")
+            else:
+                cegas.append(f"mutação NÃO pega por nenhum caso: {nome}")
+                print(f"  [XX ] mutação passou despercebida: {nome}")
+    falha = 1 if cegas else 0
+    print(f"--falsify: {len(cegas)} cegueira(s) (esperado: 0)")
+
+sys.exit(falha)
 PY
 then :; else rc=1; fi
 
@@ -46,6 +133,62 @@ if [ "$FALSIFY" = 1 ]; then
   bash verify-frontend-eval.sh --falsify || rc=1
 else
   bash verify-frontend-eval.sh || rc=1
+fi
+
+echo ""
+echo "== (3) verify-edge-eco — guard temporal do N3 passivo =="
+if [ "$FALSIFY" = 1 ]; then
+  bash verify-edge-eco-eval.sh --falsify || rc=1
+else
+  bash verify-edge-eco-eval.sh || rc=1
+fi
+
+echo ""
+echo "== (4) verify-edge-escrita — N3 passivo por escrita de aplicação =="
+if [ "$FALSIFY" = 1 ]; then
+  bash verify-edge-escrita-eval.sh --falsify || rc=1
+else
+  bash verify-edge-escrita-eval.sh || rc=1
+fi
+
+echo ""
+# (5) O ÚNICO eval que EXECUTA SQL: o veredito do Passo 2 da sonda de versão decide por semântica
+# de NULL e ordem de WHEN, que casamento de string não observa. Sobe um Postgres efêmero (initdb
+# local, zero rede — mesmo padrão dos db/test-*.sh) e lê a coluna `veredito` do banco.
+# Exit 2 do eval = via de prova não observável; propaga como FALHA de propósito: sem Postgres o
+# gate não passa em silêncio (ausência de dado nunca vira aprovação — é a regra que este próprio
+# eval guarda no SQL).
+echo "== (5) sonda-veredito-401 — 401 ambíguo: bundle velho × CRON_SECRET =="
+if [ "$FALSIFY" = 1 ]; then
+  bash sonda-veredito-401-eval.sh --falsify || rc=1
+else
+  bash sonda-veredito-401-eval.sh || rc=1
+fi
+
+echo ""
+# (6) Prosa que cita CÓDIGO VIVO apodrece calada: o `docs:citacoes` prova que a linha citada
+# existe, e mais nada. Este eval EXECUTA o grep do critério — extraído da própria SKILL.md,
+# fail-CLOSED se sumir — contra as três edges que ela classifica, e exige o veredito de volta.
+echo "== (6) criterio-caro — quem entra no --caro: efeito medido, não forma do handler =="
+if [ "$FALSIFY" = 1 ]; then
+  bash criterio-caro-eval.sh --falsify || rc=1
+else
+  bash criterio-caro-eval.sh || rc=1
+fi
+
+echo ""
+# (7) O irmão PASSIVO do (5): o Passo 3 do /fecho decide quais edges da janela ainda precisam de
+# chip, e é ele quem APAGA pendência. O SQL dele ganhou CTE de vínculo, três classes em UNION ALL
+# e uma contagem que viaja na mesma resposta — nada disso é legível por grep, e uma CTE quebrada
+# derruba o script para exit 2, que vira chip para TODA a janela (o ruído que ele corta). Mora
+# aqui, e não na skill `fecho`, porque este é o único agregador de evals que o CI roda: eval fora
+# do CI é falsificação que só roda à mão. A suíte de FORMA segue em
+# `scripts/test-fecho-edges-pendentes.sh` (rodada por `bun run test:falsificacao`).
+echo "== (7) edges-pendentes-sql — classificação do Passo 3 do /fecho, EXECUTANDO o SQL =="
+if [ "$FALSIFY" = 1 ]; then
+  bash edges-pendentes-sql-eval.sh --falsify || rc=1
+else
+  bash edges-pendentes-sql-eval.sh || rc=1
 fi
 
 echo ""

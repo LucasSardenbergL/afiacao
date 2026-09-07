@@ -26,6 +26,15 @@ import {
   resumirErro,
   TETO_EVENTOS_POR_LOTE,
 } from "./payload.ts";
+import {
+  classificarSonda,
+  EDGE,
+  EFEITO,
+  erroSondaAmbigua,
+  FONTE,
+  respostaSonda,
+  VERSAO,
+} from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -52,27 +61,41 @@ interface DbRpc {
   ): Promise<{ data: unknown; error: { message: string } | null }>;
 }
 
+// TODA resposta carrega `versao`/`edge`/`fonte` — não só a da sonda. É a metade da prova de deploy
+// que dispensa invocação: o cron `analytics-outbox-drain` faz `net.http_post` DIRETO nesta edge a
+// cada 5 minutos, então o corpo daqui cai em `net._http_response` e o marcador se lê PASSIVAMENTE,
+// sem chamar nada, sem cron secret e sem pagar efeito. Ver versao.ts.
+function jsonRes(corpo: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...corpo, versao: VERSAO, edge: EDGE, fonte: FONTE }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
-  const json = (corpo: unknown, status = 200) =>
-    new Response(JSON.stringify(corpo), {
-      status,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient, do
+  // claim e de qualquer POST ao PostHog. Esta edge NÃO lia o corpo do request; o parse nasce aqui
+  // já no lugar certo, e o `catch` mantém o caminho do cron (corpo `{}` → fluxo real) intacto.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  const body = await req.json().catch(() => ({}));
+
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+  // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no fluxo real por omissão.
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ erro: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
 
   // ⚠️ Chave ausente é falha de CONFIGURAÇÃO e sai com status de erro. Degradar
   // em silêncio aqui produziria exatamente a leitura envenenada que este
   // trabalho existe para acabar: fila crescendo, cron verde, série vazia — e
   // ninguém consegue distinguir "não houve fenômeno" de "o cano nunca abriu".
   const ingestKey = Deno.env.get("POSTHOG_INGEST_KEY");
-  if (!ingestKey) {
-    console.error("[analytics-outbox-drain] POSTHOG_INGEST_KEY ausente — nada foi drenado");
-    return json({ erro: "POSTHOG_INGEST_KEY nao configurado" }, 500);
-  }
 
   const db = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -84,15 +107,37 @@ Deno.serve(async (req) => {
       db as unknown as DbRegistro,
       "analytics_outbox.drenar",
       auth.via === "cron" ? { via: "cron" } : { via: "staff", userId: auth.userId },
-      () => drenar(db as unknown as DbRpc, ingestKey),
+      // ⚠️ O guard da chave mora DENTRO do callback registrado — e essa posição é
+      // a lição, não um detalhe de estilo. Ele já foi um `return` ANTES do
+      // `comRegistro`, e por isso o apagão de 2026-08-26 (32h, 13× HTTP 500)
+      // deixou ZERO linhas de falha em `acoes_execucoes`: o registro nunca chegou
+      // a ser aberto. Três superfícies diziam "saudável ou ausente" ao mesmo
+      // tempo — `cron.job_run_details` = succeeded (só prova o ENQUEUE), o
+      // registro de execução vazio, e as colunas da fila impecáveis (tentativas=0,
+      // porque a máquina de retry fica rio abaixo do claim, que nunca rodou).
+      // Lançando aqui dentro, `comRegistro` fecha o registro com status='erro' e
+      // re-lança — o `catch` externo devolve a MESMA resposta HTTP de antes.
+      //
+      // ⚠️ A string do erro é IDÊNTICA de propósito. O #2091 a documentou como
+      // prova de VERSÃO da edge sem PAT: `git grep` mostra que ela existe em UM
+      // arquivo só, então um 500 com este corpo em `net._http_response` identifica
+      // o bundle. Reescrevê-la ("faltou a chave", "chave ausente") não quebraria
+      // teste nenhum e apagaria em silêncio uma via de verificação de deploy.
+      () => {
+        if (!ingestKey) {
+          console.error("[analytics-outbox-drain] POSTHOG_INGEST_KEY ausente — nada foi drenado");
+          throw new Error("POSTHOG_INGEST_KEY nao configurado");
+        }
+        return drenar(db as unknown as DbRpc, ingestKey);
+      },
       (r) => ({ ...r }),
     );
-    return json(resultado);
+    return jsonRes({ ...resultado });
   } catch (e) {
     // mensagemDeErro evita o "[object Object]" que esconde a causa no painel.
     const msg = mensagemDeErro(e) ?? "(sem mensagem)";
     console.error("[analytics-outbox-drain] falhou:", msg);
-    return json({ erro: msg }, 500);
+    return jsonRes({ erro: msg }, 500);
   }
 });
 

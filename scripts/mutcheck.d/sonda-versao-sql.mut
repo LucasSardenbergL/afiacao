@@ -9,8 +9,9 @@
 PEGA      | trava do bloco caro CASE -> WHERE (teatro) | s/CASE WHEN g\.confirmei/WHERE g.confirmei/
 PEGA      | leitura sai da lista canonica (LEFT->JOIN) | s/LEFT JOIN ids i/JOIN ids i/
 PEGA      | resposta ausente vira veredito (LEFT->JOIN)| s/LEFT JOIN net\._http_response/JOIN net._http_response/
-PEGA      | ramo AGUARDE some do veredito              | s/'AGUARDE —/'AGUARDOU —/
-PEGA      | placeholder do bloco que le fica invalido  | s/jsonb_each_text\('\{\}'::jsonb\)/jsonb_each_text('<COLE_AQUI>'::jsonb)/
+PEGA      | ramo AGUARDE some do passo EMBUTIDO        | s/'AGUARDE — o request_id embutido/'AGUARDOU — o request_id embutido/
+PEGA      | ramo AGUARDE some do passo do ECO          | s/'AGUARDE — o request_id colado/'AGUARDOU — o request_id colado/
+PEGA      | placeholder do bloco que le fica invalido  | s/: `'\{\}'::jsonb`;/: `'<COLE_AQUI>'::jsonb`;/
 PEGA      | marcador hardcoded em vez de lido do arquivo | s/lit\(e\.versao\)/lit('v1.0-sensor-inicial')/
 PEGA      | timeout_milliseconds implicito (default 5s) | s/timeout_milliseconds := 20000/-- sem timeout/
 PEGA      | --caro forasteira aceita em silencio       | s/!edges\.includes\(c\)/false/
@@ -19,9 +20,106 @@ PEGA      | eco probe:true dispensado no CONFIRMADO    | s/AND l\.corpo ->> 'pro
 # Os 4 abaixo guardam o `fonte` — o campo que prova deploy VERBATIM (#2018). Sem eles a suíte
 # aceitava um veredito que julga só o `versao`, e o bundle que sobe index.ts+versao.ts SEM o
 # _shared/sonda-fingerprints.ts saía como 'DEPLOY CONFIRMADO': falso POSITIVO, a classe pior.
-PEGA      | ramo DEPLOY PARCIAL neutralizado (nao dispara) | s/COALESCE\(l\.corpo ->> 'fonte', 'nao-mapeada'\) = 'nao-mapeada'/false/
+PEGA      | ramo DEPLOY PARCIAL neutralizado (nao dispara) | s/l\.corpo ->> 'fonte' = 'nao-mapeada'/false/
+# Os 3 abaixo separam as DUAS causas de "sem fingerprint no ar", que o `COALESCE(fonte,'nao-mapeada')`
+# fundia num ramo so: campo AUSENTE = bundle anterior ao #1998 (deploy antigo INTEIRO) x campo
+# PRESENTE valendo `nao-mapeada` = mapa que subiu sem esta edge (parcial de verdade). Medido em prod
+# 2026-09-05: 5 edges no 1o estado saindo com o texto do 2o. Desfecho igual, causa nomeada errada.
+PEGA      | ramo PRE_SONDA_FONTE neutralizado (nao dispara) | s/NOT \(l\.corpo \? 'fonte'\)/false/
+PEGA      | campo ausente volta a ser chamado de DEPLOY PARCIAL | s/THEN 'PRE_SONDA_FONTE/THEN 'DEPLOY PARCIAL (ausente)/
+PEGA      | o COALESCE que fundia as duas causas volta        | s/WHEN NOT \(l\.corpo \? 'fonte'\)/WHEN COALESCE(l.corpo ->> 'fonte', 'nao-mapeada') = 'nao-mapeada'/
 PEGA      | CONFIRMADO dispensa o fonte (falso POSITIVO)   | s/AND l\.corpo ->> 'fonte' = l\.fonte_esperada/AND true/
 PEGA      | fingerprint hardcoded em vez de lido do mapa   | s/lit\(e\.fonte\)/lit('0'.repeat(64))/
 PEGA      | edge fora do mapa degrada em vez de lancar     | s/if \(!\(edge in mapa\)\)/if (false)/
+# Os 6 abaixo guardam o ramo do 401 — o UNICO 4xx ambiguo (bundle pre-sonda que caiu no gate JWT
+# x CRON_SECRET invalido no vault). Sem eles a suite aceitava o veredito confiante 'BUNDLE VELHO'
+# para os dois casos, e o desfecho era redeployar edge que ja estava no ar: `ausente != zero` na
+# dimensao CREDENCIAL. A SEMANTICA (o CASE devolvendo mesmo o veredito) e provada EXECUTANDO, em
+# .claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh; aqui mede-se o dente da
+# suite textual, que e o que roda no gate de mutacao.
+# ⚠️ Os dois mutantes de INDETERMINADO ancoram no texto PRÓPRIO de cada ramo (401 ambíguo x
+# ausência de linha na janela). `perl -pe s///` casa uma vez POR LINHA: um padrão que sirva
+# aos dois muta as DUAS e cai no guard de substituição única do mutcheck como INVÁLIDA — que
+# é ausência de medição, não medição. Ramo novo com esse prefixo: ancore no texto dele.
+PEGA      | 4xx generico perde a cobertura (404 cai no ELSE)       | s/l\.status_code >= 400/l.status_code = 401/
+PEGA      | fallback do 401 deixa de ser INDETERMINADO (fail-open)    | s/THEN 'INDETERMINADO — 401 nao separa/THEN 'BUNDLE VELHO (pre-sonda) — 401 nao separa/
+PEGA      | controle nao exclui a propria leva (a sonda se avaliza)   | s/AND NOT EXISTS \(SELECT 1 FROM ids i2 WHERE i2\.request_id = r\.id\)/AND true/
+PEGA      | piso do controle zerado (1 resposta 2xx ja 'prova')       | s/PISO_CONTROLE_CREDENCIAL = 10/PISO_CONTROLE_CREDENCIAL = 0/
+PEGA      | 401 alheio deixa de desqualificar o controle              | s/AND c\.recusas_recentes = 0/AND true/
+PEGA      | controle nao chega na projecao (CROSS JOIN removido)      | s/ CROSS JOIN controle_credencial c//
+# Os 7 abaixo guardam a LEITURA SEM COLAGEM (#2127). Ela troca o `request_id` colado a mao pelo ECO
+# do slug que a propria resposta carrega — e cada guard aqui e a diferenca entre achar a linha CERTA
+# e achar UMA linha. Sem eles a suite aceitava um SQL que le a resposta de OUTRA execucao.
+PEGA      | casamento por slug neutralizado (pega qualquer linha) | s/WHERE rr\.corpo ->> 'edge' = e\.edge/WHERE true/
+PEGA      | casamento dispensa probe:true (pega linha de CRON)    | s/AND rr\.corpo ->> 'probe' = 'true'/AND true/
+PEGA      | janela larga: sondagem de ontem vira veredito de hoje | s/interval '\$\{janelaMin\} minutes'/interval '30 days'/
+PEGA      | teto da janela removido (guard do #2079 desligado)    | s/ \|\| janelaMin > JANELA_MAX_MIN//
+PEGA      | LIMIT 1 sem desempate (created EMPATA em prod)        | s/ORDER BY rr\.created DESC, rr\.id DESC/ORDER BY rr.created DESC/
+PEGA      | LATERAL vira INNER: edge sem eco SOME da saida        | s/LEFT JOIN LATERAL \(/JOIN LATERAL (/
+PEGA      | ausencia de linha vira veredito NEGATIVO (eco)        | s/'INDETERMINADO — nenhuma resposta/'BUNDLE VELHO — nenhuma resposta/
+PEGA      | ausencia de linha vira veredito NEGATIVO (embutido)   | s/'INDETERMINADO — esta edge não tem request_id/'BUNDLE VELHO — esta edge não tem request_id/
+# Cast desprotegido: um corpo nao-JSON alheio na janela aborta a consulta INTEIRA — e a leitura
+# morre no lugar de julgar, que e falha por MECANICA lida como ausencia de resposta.
+PEGA      | cast para jsonb sem o filtro textual antes            | s/AND left\(ltrim\(r\.content\), 1\) = '\{'//
+# O recorte e a divisao de trabalho: o disparo precisa do founder (vault+INSERT), a leitura roda no
+# psql-ro. Recorte que vaza um lado no outro devolve a leitura para a mao do founder.
+PEGA      | --so-disparo passa a emitir a leitura junto           | s/const querLeitura = !opts\.soDisparo;/const querLeitura = true;/
+PEGA      | --so-leitura passa a emitir o disparo junto           | s/const querDisparo = !opts\.soLeitura;/const querDisparo = true;/
 SOBREVIVE | timeout 20s -> 30s (valor nao e pinado)    | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
 SOBREVIVE | ORDER BY por posicao (cosmetico)           | s/ORDER BY l\.edge;/ORDER BY 1;/
+# Os 8 abaixo guardam o GUARD DE SINCRONIA (worktree defasado). O gerador já lia a fonte da verdade
+# do repo em vez da memória do operador — mas "o repo" pode ser um checkout VELHO, e aí o
+# `esperado(...)` sai de um retrato que a main já superou. MEDIDO 2026-09-05: worktree dois merges
+# atrás emitiu `v1.5-custo-portal-rpc-cas` para uma edge que a main tinha em `v1.7`; a edge no ar
+# respondeu v1.7 e o veredito comparado seria "BUNDLE VELHO SERVINDO" numa edge recém-deployada.
+# Falso NEGATIVO de money-path (redeployar à toa). Só não saiu errado porque o guard temporal do
+# #2079 devolveu INDETERMINADO antes da comparação — acidente, não desenho.
+# ⚠️ O `r.status ?? 127` do `gitReal` (spawn morto por sinal/timeout ⇒ fail-CLOSED) NÃO tem mutação
+#    aqui: `git` fora de repo devolve 128, não `null`, e forjar um spawn morto viraria teste do
+#    Node. É limite CONHECIDO da medição, não cobertura silenciosa.
+PEGA      | guard de sincronia desligado no main                   | s/conferirSincronia\(deps\.raiz, edges, semRede === true, deps\.git\)/{ aviso: null }/
+PEGA      | divergencia vira warning que se le e ignora            | s/if \(ausentes\.length > 0 \|\| divergentes\.length > 0\) \{/if (false) {/
+PEGA      | comparacao de conteudo INVERTIDA (igual=divergente)    | s/r\.stdout !== readFileSync/r.stdout === readFileSync/
+PEGA      | bump nao-mergeado deixa de contar como divergencia     | s/ausentes\.push\(caminho\)/void caminho/
+PEGA      | fatia perde o mapa (so o versao.ts e conferido)        | s/, ARQ_MAPA\]/]/
+PEGA      | fetch some: compara contra retrato velho por padrao    | s/const f = git\(\['fetch', REMOTO, RAMO_DEPLOYADO\]\);/const f = { status: 0, stdout: '', stderr: '' };/
+PEGA      | fetch que falha degrada em vez de abortar              | s/if \(f\.status !== 0\) \{/if (false) {/
+PEGA      | --sem-rede passa a valer SEMPRE (guard vira opt-in)    | s/semRede === true/true/
+# O `cwd` do `gitReal`. O #2227 tirou a ref `origin/main` herdada do checkout (a causa do
+# `mutation-check` vermelho em todo PR — docs/historico/teste-que-afirma-o-checkout.md) e pôs um
+# repo fixture no lugar. Esta linha é o que transforma esse conserto em COBERTURA: com a asserção
+# valendo o sha DAQUELE repo, ignorar a raiz pedida fica vermelho — e fica nos dois ambientes (com
+# `origin/main` presente volta outro sha; sem ela, o checkout de PR, o `rev-parse` sai 1).
+PEGA      | gitReal ignora a raiz pedida (cwd do processo)        | s/cwd: raiz,/cwd: process.cwd(),/
+# O ramo do MEIO do `gitReal`, irmã da linha acima. Os dois extremos que o describe cobria não
+# exercitam o status 1: repo COM a ref devolve 0, fora de repo devolve 128 — e 1 é justamente o que
+# o git responde quando o repo é VÁLIDO e só a `origin/main` falta, o estado do checkout raso que
+# derrubou o `mutation-check`. MEDIDO 2026-09-06: contra a suíte de então (90 testes) esta mutação
+# SOBREVIVIA, ou seja, o executor podia traduzir "ref ausente" em APROVADO e ninguém ficava vermelho
+# — fail-OPEN na dimensão exata do #2227. O caso `em repo git SEM a ref` a mata; esta linha é o que
+# impede a prova de viver só na transcrição de quem mediu (docs/historico/falsificacao-fora-do-ci.md).
+PEGA      | ref ausente (1) traduzida em APROVADO (fail-OPEN)     | s/return \{ status: r\.status \?\? 127,/return { status: (r.status === 1 ? 0 : (r.status ?? 127)),/
+# Os 6 abaixo guardam a MIGRAÇÃO do #2278: o passo de disparo devolve o passo de leitura já ESCRITO
+# (`format($sonda$…$sonda$, m.ids)`), com o mapa `edge→id` embutido. O que se copia é a célula, não o
+# número — a classe de docs/historico/sonda-request-id-a-mao.md, aqui na variante coletiva (o blob
+# `{"edge": id}` inteiro). Sem eles a suíte aceitava o gerador VOLTANDO a entregar o blob.
+PEGA      | passo 1 volta a ENTREGAR o blob de ids                | s/AS passo_\$\{passoLeitura\}_copie_esta_celula/AS ids_opcionais_passo_${passoLeitura}/
+PEGA      | mapa embutido vira {} (o blob faz falta de novo)      | s/embutido \? `\$\{ids\.expr\}::jsonb`/embutido ? `'{}'::jsonb`/
+# As 3 abaixo cobrem as armadilhas do `format()` que o SQL de hoje NÃO exercita (o corpo emitido não
+# tem `%` nem `$`): sem teste DIRETO em `escaparParaFormat` elas ficariam verdes por acidente do
+# corpus — docs/historico/gates-textuais-cegos.md.
+PEGA      | escape de % desligado (o corpo vira diretiva)         | s/\.replaceAll\('%', '%%'\)//
+PEGA      | escape roda DEPOIS do placeholder (vira %%1\$L)       | s/texto\.replaceAll\('%', '%%'\)\.replaceAll\(SENTINELA_MAPA, \(\) => '%1\$L'\)/texto.replaceAll(SENTINELA_MAPA, () => '%1$L').replaceAll('%', '%%')/
+PEGA      | guard do dollar-quoting desligado (passo truncado)    | s/if \(texto\.includes\(TAG_SONDA\)\) \{/if (false) {/
+# O ramo do id que aponta para a execução REAL (cron ecoa edge/versao/fonte e não ecoa probe). Sem
+# ele a linha cai no ELSE e sai 'BUNDLE VELHO' com a versão CERTA — falso NEGATIVO medido em prod
+# 2026-09-06 (resposta 71275).
+PEGA      | ramo do id que NAO e sonda neutralizado               | s/l\.corpo ->> 'probe' IS DISTINCT FROM 'true'/false/
+# A variante NULL-blind do mesmo ramo (`<>` no lugar de `IS DISTINCT FROM`): com `probe` AUSENTE a
+# comparação vale NULL, o ramo não dispara e o texto continua no arquivo — inalcançável. Medido
+# 2026-09-06: as DUAS mutações acima SOBREVIVIAM enquanto a suíte só procurava a string do ramo, que
+# é a cegueira descrita no bloco do `? 'fonte'`. Quem lhes deu dente foi a asserção que cola
+# CONDIÇÃO e RAMO (`WHEN … IS DISTINCT FROM 'true'` seguido do `THEN 'NAO E RESPOSTA DE SONDA`); o
+# veredito EXECUTADO continua provado no cenário `cron_sem_probe` do
+# .claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh.
+PEGA      | negacao NULL-blind no ramo do nao-sonda               | s/IS DISTINCT FROM 'true'/<> 'true'/

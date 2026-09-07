@@ -23,6 +23,16 @@
 # ║   (I) DROP SCHEMA vault                          → exit 1   ← AUSENTE ≠ "negado com sucesso"  ║
 # ║   (J) baseline pede pg_net 0.19.5, banco não tem → exit 1                                    ║
 # ║   (K) psql que devolve vazio                     → exit 2   ← medição quebrada ≠ aprovação    ║
+# ║  ── a reconciliação de 2026-09-06 (#2275): `private` + a ponte de view ───────────────────    ║
+# ║   (L) REVOKE USAGE ON SCHEMA private             → exit 1   ← a perda de 25/08 que passou     ║
+# ║   (M) DROP de uma das 3 MVs                      → exit 1   ← AUSENTE, não schema vazio       ║
+# ║   (N) MV nova em private sem GRANT               → exit 1   ← cobertura "0 sem SELECT"        ║
+# ║   (O) ponte recriada SEM o WITH (invoker reset)  → exit 1   ← §4: o REPLACE RESETA a opção    ║
+# ║   (P) ponte recriada com `= true`                → exit 0   ← NÃO pode dar falso-vermelho     ║
+# ║   (Q) ponte passa a projetar `token`             → exit 1   ← reabre a escalada (P0)          ║
+# ║   (R) GRANT SELECT (token) em auth.refresh_tokens→ exit 1   ← a 2ª barreira caindo            ║
+# ║   (S) DROP da ponte                              → exit 1   ← telemetria morta ≠ "tudo bem"   ║
+# ║   (T) REVOKE SELECT na ponte                     → exit 1   ← só a sonda EXECUTIVA percebe    ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 PGBIN="/opt/homebrew/opt/postgresql@17/bin"
@@ -75,8 +85,33 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public, cron, supabase_migrations TO claude
 CREATE SCHEMA auth;           CREATE SCHEMA vault;    CREATE SCHEMA storage;
 CREATE SCHEMA realtime;       CREATE SCHEMA extensions;
 CREATE SCHEMA graphql_public;
-CREATE TABLE auth.refresh_tokens(id bigint, token text, revoked boolean);
+-- As 9 colunas MEDIDAS na prod: 7 de telemetria + `token`/`parent`, que são a escalada.
+CREATE TABLE auth.refresh_tokens(
+  instance_id uuid, id bigint, token text, user_id text, revoked boolean,
+  created_at timestamptz, updated_at timestamptz, parent text, session_id uuid);
+INSERT INTO auth.refresh_tokens(id, token, revoked) VALUES (1,'segredo',false);
+-- O GRANT por COLUNA de 25/08: as 7 de telemetria, e SÓ elas. `token`/`parent` ficam sem ACL
+-- próprio — é essa ausência que a ponte com `security_invoker=on` transforma em 2ª barreira.
+GRANT SELECT (created_at, id, instance_id, revoked, session_id, updated_at, user_id)
+  ON auth.refresh_tokens TO claude_ro;
 CREATE VIEW  vault.decrypted_secrets AS SELECT 'x'::text AS decrypted_secret;
+
+-- schema `private`: as 3 MVs de diagnóstico que caíram no fecho de 25/08 sem ninguém notar.
+CREATE SCHEMA private;
+CREATE MATERIALIZED VIEW private.mv_oportunidade_badge AS SELECT 1 AS n;
+CREATE MATERIALIZED VIEW private.customer_metrics_mv AS SELECT 1 AS n;
+CREATE MATERIALIZED VIEW private.mv_sku_ranking_negociacao_paralela AS SELECT 1 AS n;
+
+-- A PONTE. `security_invoker = on` é o ponto todo: a leitura roda como o CALLER, então o ACL por
+-- COLUNA acima continua sendo barreira. Note que `claude_ro` NÃO tem USAGE em `auth` e ainda
+-- assim lê esta view — o rewriter não re-checa USAGE de schema ao expandir uma view, e é
+-- exatamente esse comportamento que o cenário (A) prova de verdade neste PG17.
+CREATE VIEW private.auth_refresh_tokens_diag WITH (security_invoker = on) AS
+  SELECT instance_id, id, user_id, revoked, created_at, updated_at, session_id
+    FROM auth.refresh_tokens;
+
+GRANT USAGE ON SCHEMA private TO claude_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA private TO claude_ro;
 
 -- schema net com os DEFAULTS do pg_net: funções com proacl NULL (=> EXECUTE p/ PUBLIC),
 -- tabelas e SEQUÊNCIA com PUBLIC nos privilégios, dono `supabase_admin`.
@@ -122,9 +157,34 @@ BASELINE_OK=$(cat <<'JSON'
   "rolattrs": "super=f bypassrls=t createrole=f createdb=f login=t",
   "memberships": 0,
   "guc": "default_transaction_read_only=on",
-  "schemasComAlcance": ["public","cron","supabase_migrations","net"],
+  "schemasComAlcance": ["public","private","cron","supabase_migrations","net"],
   "schemasSemAlcance": ["auth","vault","storage","realtime","graphql_public","extensions"],
-  "tabelasLegiveis": ["cron.job","cron.job_run_details","net._http_response","supabase_migrations.schema_migrations"],
+  "tabelasLegiveis": ["private.mv_oportunidade_badge","private.customer_metrics_mv",
+    "private.mv_sku_ranking_negociacao_paralela","private.auth_refresh_tokens_diag",
+    "cron.job","cron.job_run_details","net._http_response","supabase_migrations.schema_migrations"],
+  "schemasCobertura": ["public","private"],
+  "ponte": {
+    "schema": "private",
+    "relacao": "auth_refresh_tokens_diag",
+    "invokerAceitos": ["security_invoker=on","security_invoker=true"],
+    "colunas": ["created_at","id","instance_id","revoked","session_id","updated_at","user_id"],
+    "colunasProibidas": ["token","parent"]
+  },
+  "authColAcl": {
+    "schema": "auth",
+    "tabela": "refresh_tokens",
+    "entradas": [
+      "created_at|{claude_ro=r/postgres}",
+      "id|{claude_ro=r/postgres}",
+      "instance_id|{claude_ro=r/postgres}",
+      "parent|SEM_ACL",
+      "revoked|{claude_ro=r/postgres}",
+      "session_id|{claude_ro=r/postgres}",
+      "token|SEM_ACL",
+      "updated_at|{claude_ro=r/postgres}",
+      "user_id|{claude_ro=r/postgres}"
+    ]
+  },
   "netAcl": [
     "F|http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer)|DEFAULT",
     "F|http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer)|DEFAULT",
@@ -138,7 +198,12 @@ BASELINE_OK=$(cat <<'JSON'
   "pgNetVersion": "AUSENTE",
   "sondasNegadas": [
     { "rotulo": "auth.refresh_tokens", "sql": "SELECT count(*) FROM auth.refresh_tokens" },
-    { "rotulo": "vault.decrypted_secrets", "sql": "SELECT decrypted_secret FROM vault.decrypted_secrets LIMIT 1" }
+    { "rotulo": "vault.decrypted_secrets", "sql": "SELECT decrypted_secret FROM vault.decrypted_secrets LIMIT 1" },
+    { "rotulo": "token na ponte", "sqlstate": "42703",
+      "sql": "SELECT token FROM private.auth_refresh_tokens_diag LIMIT 1" }
+  ],
+  "sondasPermitidas": [
+    { "rotulo": "ponte de telemetria", "sql": "SELECT count(*) FROM private.auth_refresh_tokens_diag" }
   ]
 }
 JSON
@@ -216,7 +281,15 @@ echo; echo "── (H) o schema auth volta a ser alcançável ──────
 S -c "GRANT USAGE ON SCHEMA auth TO claude_ro; GRANT SELECT ON auth.refresh_tokens TO claude_ro;"
 roda "auth reaberto: catálogo acusa" 1 "schema auth FORA de alcance"
 roda "auth reaberto: sonda executiva acusa" 1 "consulta teve SUCESSO"
-S -c "REVOKE ALL ON auth.refresh_tokens FROM claude_ro; REVOKE USAGE ON SCHEMA auth FROM claude_ro;"
+# ⚠️ MEDIDO em PG17, e é armadilha de prod, não detalhe de teste: `REVOKE ALL ON <tabela>` NÃO se
+# limita ao nível de TABELA — apaga os GRANTs por COLUNA junto (e `REVOKE SELECT ON <tabela>` faz
+# exatamente o mesmo). Ou seja: um "vamos apertar mais" colado no SQL Editor destrói de lambuja o
+# GRANT das 7 colunas de 25/08 e mata a ponte de telemetria, sem erro nenhum. Aqui o efeito seria
+# pior que um cenário vermelho: sem re-conceder as colunas, a 2ª barreira ficaria destruída e TODO
+# cenário seguinte sairia vermelho por herança — falha em cascata lida como 11 bugs diferentes.
+S -c "REVOKE ALL ON auth.refresh_tokens FROM claude_ro; REVOKE USAGE ON SCHEMA auth FROM claude_ro;
+      GRANT SELECT (created_at, id, instance_id, revoked, session_id, updated_at, user_id)
+        ON auth.refresh_tokens TO claude_ro;"
 roda "auth fechado de novo (a acusação SOME)" 0
 
 echo; echo "── (I) objeto que SUMIU não é objeto NEGADO ───────────────────────────────────"
@@ -234,6 +307,84 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/psql-mudo"; chmod +x "$TMP/psql-m
 PSQL_FAKE="$TMP/psql-mudo" roda "psql que devolve vazio" 2 "medição inconsistente"
 printf '#!/usr/bin/env bash\nexit 3\n' > "$TMP/psql-quebrado"; chmod +x "$TMP/psql-quebrado"
 PSQL_FAKE="$TMP/psql-quebrado" roda "psql que falha" 2 "falha ao consultar o banco"
+
+# ╔═ a reconciliação de 2026-09-06 (#2275): `private` + a ponte de view ═════════════════════════╗
+# Cada cenário abaixo sabota UM eixo e exige vermelho, e cada um é seguido do controle "a acusação
+# SOME" — sem esse controle uma asserção sempre-vermelha aprovaria tudo (falsificacao-sem-linha-de-
+# base.md). A ORDEM importa: `private` primeiro, ponte depois, ACL de coluna por último, porque a
+# ponte depende do schema e o ACL de coluna só é barreira enquanto o invoker estiver `on`.
+VDEF="SELECT instance_id, id, user_id, revoked, created_at, updated_at, session_id FROM auth.refresh_tokens"
+
+echo; echo "── (L) o USAGE em private revogado — a perda de 25/08 que passou 13 dias ──────"
+# ⚠️ Aqui o CATÁLOGO por si não bastaria: `has_table_privilege` não enxerga o USAGE do schema, então
+# as 4 relações de `private` continuam respondendo SIM e a cobertura continua "0 sem SELECT". Quem
+# percebe é o eixo de schema E a sonda EXECUTIVA — é a lição do §1 em forma de teste.
+S -c "REVOKE USAGE ON SCHEMA private FROM claude_ro;"
+roda "private inalcançável: sonda executiva acusa" 1 "o alcance caiu"
+roda "private inalcançável: catálogo de schema acusa" 1 "medido:   NAO"
+S -c "GRANT USAGE ON SCHEMA private TO claude_ro;"
+roda "USAGE devolvido (a acusação SOME)" 0
+
+echo; echo "── (M) DROP de uma das 3 MVs de diagnóstico ──────────────────────────────────"
+S -c "DROP MATERIALIZED VIEW private.mv_oportunidade_badge;"
+roda "MV sumida vira AUSENTE, não 'schema vazio'" 1 "medido:   AUSENTE"
+S -c "CREATE MATERIALIZED VIEW private.mv_oportunidade_badge AS SELECT 1 AS n;
+      GRANT SELECT ON private.mv_oportunidade_badge TO claude_ro;"
+roda "MV recriada (a acusação SOME)" 0
+
+echo; echo "── (N) relação nova em private sem GRANT ─────────────────────────────────────"
+S -c "CREATE MATERIALIZED VIEW private.mv_recem_nascida AS SELECT 1 AS n;
+      REVOKE SELECT ON private.mv_recem_nascida FROM claude_ro;"
+roda "MV nova invisível ao diagnóstico" 1 "objetos de private SEM SELECT"
+S -c "DROP MATERIALIZED VIEW private.mv_recem_nascida;"
+roda "MV nova removida (a acusação SOME)" 0
+
+echo; echo "── (O) a ponte recriada SEM o WITH: o invoker RESETA (§4) ────────────────────"
+S -c "CREATE OR REPLACE VIEW private.auth_refresh_tokens_diag AS $VDEF;"
+roda "invoker resetado: a view voltou a ler como OWNER" 1 "perdeu o security_invoker"
+S -c "CREATE OR REPLACE VIEW private.auth_refresh_tokens_diag WITH (security_invoker = on) AS $VDEF;"
+roda "WITH reposto (a acusação SOME)" 0
+
+echo; echo "── (P) '= true' é o MESMO desenho que '= on' — não pode dar falso-vermelho ───"
+# `reloptions` preserva o LITERAL do WITH (§4): casar só `=on` classificaria uma ponte perfeitamente
+# segura como regressão. Sentinela que grita à toa é desligada — este cenário é o freio disso.
+S -c "CREATE OR REPLACE VIEW private.auth_refresh_tokens_diag WITH (security_invoker = true) AS $VDEF;"
+roda "ponte com literal 'true' segue VERDE" 0 "security_invoker=true"
+S -c "CREATE OR REPLACE VIEW private.auth_refresh_tokens_diag WITH (security_invoker = on) AS $VDEF;"
+
+echo; echo "── (Q) a ponte passa a projetar 'token' — reabre a escalada ──────────────────"
+# A marca é «REABRE a escalada», NÃO «projeta token»: o ramo VERDE emite "não projeta token/parent",
+# que CONTÉM "projeta token" — casar essa string faria o assert passar pela própria sentinela
+# (a regra anti-teatro do CLAUDE.md). `CREATE OR REPLACE VIEW` só acrescenta coluna NO FIM.
+S -c "DROP VIEW private.auth_refresh_tokens_diag;
+      CREATE VIEW private.auth_refresh_tokens_diag WITH (security_invoker = on) AS
+        SELECT instance_id, id, user_id, revoked, created_at, updated_at, session_id, token
+          FROM auth.refresh_tokens;
+      GRANT SELECT ON private.auth_refresh_tokens_diag TO claude_ro;"
+roda "ponte com token: a asserção de projeção acusa" 1 "REABRE a escalada"
+S -c "DROP VIEW private.auth_refresh_tokens_diag;
+      CREATE VIEW private.auth_refresh_tokens_diag WITH (security_invoker = on) AS $VDEF;
+      GRANT SELECT ON private.auth_refresh_tokens_diag TO claude_ro;"
+roda "ponte sem token (a acusação SOME)" 0
+
+echo; echo "── (R) a 2ª barreira: GRANT SELECT (token) na tabela-fonte ───────────────────"
+S -c "GRANT SELECT (token) ON auth.refresh_tokens TO claude_ro;"
+roda "token ganhou ACL próprio" 1 "ACL por coluna de auth.refresh_tokens mudou"
+S -c "REVOKE SELECT (token) ON auth.refresh_tokens FROM claude_ro;"
+roda "ACL de token revogado (a acusação SOME)" 0
+
+echo; echo "── (S) a ponte APAGADA não é 'tudo bem' ──────────────────────────────────────"
+S -c "DROP VIEW private.auth_refresh_tokens_diag;"
+roda "ponte apagada: a telemetria morreu" 1 "NÃO EXISTE"
+S -c "CREATE VIEW private.auth_refresh_tokens_diag WITH (security_invoker = on) AS $VDEF;
+      GRANT SELECT ON private.auth_refresh_tokens_diag TO claude_ro;"
+roda "ponte recriada (a acusação SOME)" 0
+
+echo; echo "── (T) só a sonda EXECUTIVA percebe o SELECT revogado na ponte ───────────────"
+S -c "REVOKE SELECT ON private.auth_refresh_tokens_diag FROM claude_ro;"
+roda "SELECT revogado: a sonda positiva acusa" 1 "o alcance caiu"
+S -c "GRANT SELECT ON private.auth_refresh_tokens_diag TO claude_ro;"
+roda "SELECT devolvido (a acusação SOME)" 0
 
 echo
 if [ "$FALHAS" -eq 0 ]; then

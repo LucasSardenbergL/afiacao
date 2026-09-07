@@ -149,8 +149,136 @@ git diff --name-only origin/main...HEAD -- supabase/functions/
 # ⚠️ E o que OUTRAS sessões mergearam na janela desta — MESMO argumento do passo 2, e ele vale
 # aqui palavra por palavra: edge de terceiro entra na main sem ninguém aqui saber, também NÃO
 # se auto-deploya (chat do Lovable, manual) e a falha é igualmente SILENCIOSA.
-git log origin/main --since="<hora de início da sessão>" --name-only --format="" -- supabase/functions/ | sort -u
+#
+# Este script enumera a janela INTEIRA (a desta sessão e a das outras) e já classifica quem
+# precisa de chip. Use-o em vez do `git log` cru — o cru é o gatilho velho, ver abaixo.
+bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início da sessão> UTC"
+# aceita REVISÃO (SHA), DATA RELATIVA ("3 hours ago") ou DATA ABSOLUTA **com fuso explícito**.
+# ⚠️ Data absoluta SEM fuso é RECUSADA (exit 3, marca `DESDE_SEM_FUSO`). Aqui o `--desde` cai no
+#    `git rev-list --before=`, que lê data nua como hora LOCAL, enquanto TODO timestamp da doc
+#    deste repo é UTC — e os scripts irmãos (verify-edge-eco/escrita) mandam o mesmo flag para o
+#    psql, que é UTC. Copiar um timestamp UTC acerta lá e erra aqui, por um offset inteiro e em
+#    silêncio: medido 2026-09-05, `--desde "2026-09-05 17:34"` em GMT-3 pulou o merge das 19:40Z e
+#    devolveu `✅ nenhuma edge na janela` sobre uma janela de DUAS. Escreva "… 17:34 UTC".
+# Se você anotou o SHA de origin/main ao abrir a sessão, prefira o SHA: não tem fuso para errar.
+# exit 0 = nada pendente · 1 = abra chip para a lista · 2 = MECÂNICA não confiável (o script já
+# imprime tudo como pendente; trate assim) · 3 = uso inválido
+#
+# Ele consulta o LEDGER durável por dentro (`bun run pendencias:deploy --json`) para a edge que não
+# respondeu na janela viva de 6h — então precisa de `bun` e `jq` no PATH, e faz um `git fetch origin
+# main`. Faltando qualquer um, a saída diz `LEDGER_NAO_CONSULTADO` e a edge segue pendente
+# (fail-closed) — nunca "limpo". Não rode `pendencias:deploy` à mão só para conferir: é o mesmo
+# veredito, e a sonda humana é UMA por leva de deploy.
+#
+# Se VOCÊ acabou de disparar sondas nesta sessão, cole os request_id: é o único vínculo que
+# alcança o bundle que responde sem dizer de quem é (ver `SONDA_ANONIMA` na tabela abaixo).
+# ... --request-ids "conciliar-pedido-portal=69377,process-nfe=69381"
 ```
+
+**O gatilho deste passo é "sem prova de estar no ar", não "tem commit na janela".** O `git log`
+cru era o gatilho antigo, e num repo com dezenas de worktrees ele é quase sempre verdadeiro: a
+MESMA edge virava chip em toda sessão que fechasse na mesma janela, e fila de chips iguais
+enterra o chip que importava. O script troca isso pela evidência que já existe de graça — o campo
+`fonte` que a sonda serve (SHA-256 do fecho transitivo dos imports) comparado com
+`sonda-fingerprints.ts` da main:
+
+| veredito | o que significa | chip? |
+|---|---|---|
+| `NO_AR` | `fonte` servido == main, **na janela viva** — o bundle no ar é este | **não** |
+| `LEDGER_CONFERE` | sem sonda na janela, mas o **ledger** `deploy_atestacoes` atesta `CONFERE` **e** o `fonte` atestado bate com o mapa da REF | **não** — prova DURÁVEL, além das 6 h |
+| `LEDGER_DIVERGE` | o ledger julgou `DIVERGE_P1/P2`, `INCOERENTE` ou `SEM_MAPA_NO_BUNDLE` | sim, PROVADO — e **não** sondar antes do deploy |
+| `LEDGER_DISCORDA` | o ledger diz `CONFERE`, mas com `fonte` ≠ o do mapa da REF | sim — as duas leituras não batem |
+| `LEDGER_NAO_CONSULTADO` | o `pendencias:deploy` não respondeu (exit 2/anômalo, stdout vazio, sem a marca de formato, JSON ilegível, bun/jq ausente) | sim (fail-closed) |
+| `DESATUALIZADA` | `fonte` servido ≠ main — bundle VELHO servindo | sim, e prioritário |
+| `PRE_SONDA_FONTE` | respondeu a sonda (200 + eco de `probe`/`versao`) **sem** o campo `fonte` — bundle anterior ao #1998 | sim, e prioritário |
+| `SEM_PROVA` + `SONDA_ANONIMA` | há resposta de sonda na janela **sem eco de slug** — existe e não é atribuível | sim (fail-closed), e o `--request-ids` determina |
+| `SEM_PROVA` | fora do mapa de sondas, sem sonda na janela, ou mecânica quebrada | sim (fail-closed) |
+| `INERTE` | edge **aposentada**: o `index.ts` na REF (`origin/main`) carrega `// EDGE-APOSENTADA:` — o handler responde 410 antes de qualquer lógica, bundle novo e velho se comportam igual | **não** — deploy não muda comportamento; não pedir ao founder |
+
+🧾 **O ledger `deploy_atestacoes` é consultado ANTES de qualquer `SEM_PROVA` (2026-09-06).** A
+janela viva de `net._http_response` morre no `pg_net.ttl` (6 h), e até ontem o Passo 3 só olhava
+para ela: edge deployada e **atestada** há mais de 6 h saía `SEM_PROVA` → chip → sessão nova que
+rodava `bun run pendencias:deploy` e descobria que já estava `✅ confere`. Cada chip falso custa uma
+sessão, e o remédio impresso (`sonda:sql`) convidava a re-sondar — que em edge cara com bundle
+pré-sensor **executa o fluxo real**. O ledger existe desde o #2199 para isso; o script não o lia.
+Agora lê, pelo `bun run pendencias:deploy --json`, e três coisas importam:
+
+- **onde entra:** só na edge **do mapa** e **sem resposta na janela viva**. Quem respondeu na janela
+  é julgado por ela — é a evidência mais fresca, e um `CONFERE` histórico **não** apaga um
+  `DESATUALIZADA` de agora.
+- **DUPLA CHAVE para absolver:** o rótulo `CONFERE` do CLI **e** o `fonte` atestado igual ao do mapa
+  da REF que o próprio script leu. Ler só o rótulo herdaria qualquer defeito do CLI
+  ([gates-textuais-cegos.md](../../../docs/historico/gates-textuais-cegos.md): ≥1 eixo POR FORA).
+- **fail-CLOSED com resposta POSITIVA:** 7 avarias testadas (exit 0 mudo, saída não-JSON, contrato
+  de outra versão, vereditos ilegíveis, exit 2, exit 3, exit 127) viram `LEDGER_NAO_CONSULTADO` e a
+  edge segue pendente. E a mecânica do banco tem **precedência**: `psql-ro` reprovado ⇒ o ledger nem
+  é consultado. Detalhe: [fecho-nao-lia-o-ledger.md](../../../docs/historico/fecho-nao-lia-o-ledger.md).
+
+🪦 **`INERTE` é a única prova que vem do git, não do banco (2026-09-05, `tint-import`).** A edge
+foi aposentada em #1401 (410 `TINT_IMPORT_RETIRED` logo após a auth), mas continua TOCADA por PR
+porque carrega o espelho VERBATIM de `parse-decimal-br.ts` que o `edge-parse-parity.test.ts` exige —
+cada PR do parser (#2184) a punha na janela como `SEM_PROVA`, chip para o founder, por um deploy
+sem efeito. Prova passiva é impossível (fora do mapa) e prova ativa seria teatro. O que existe é o
+marcador DECLARADO, lido da REF e nunca do working tree; o gate `_shared/edge-aposentada-marcador_test.ts`
+exige `status: 410` no mesmo arquivo (marcador em edge viva = vermelho). Contrato de quem marca: a
+aposentadoria JÁ está no ar — o único deploy que importaria é o que a instala.
+Detalhe: `docs/historico/edge-aposentada-inerte-no-fecho.md`.
+
+⚠️ **`PRE_SONDA_FONTE` é pendência PROVADA, não indeterminada — e nasceu de um falso
+INDETERMINADO.** `criarRespostaSonda` só passou a servir `fonte` no #1998 (~2026-08-25): um bundle
+ANTERIOR responde `{ok, probe, versao, edge}` — 200, com eco —, e a 1ª versão do script filtrava
+essas linhas por `? 'fonte'` ANTES de classificar, então elas sumiam e a edge caía em "nenhuma
+sonda na janela: INDETERMINADO". Medido em prod (2026-09-05): das 40 edges do mapa, **7** eram
+isso, e o script alegava não ter observado nada sobre as 7 — sendo que o 200 sem `fonte` PROVA que
+o ar é anterior ao #1998. Ausência FABRICADA não é fail-closed: é ruído com o mesmo desfecho do
+sinal, e enterra o chip que importa. Continuam INDETERMINADOS (`SEM_PROVA`): 401, resposta sem eco
+de `probe` (pré-sensor) e ausência real de linha.
+
+⚠️ **E há um degrau ANTES desse: o bundle que nem ecoa o slug.** O casamento resposta↔edge usa
+`content->>'edge'`, que só nasceu no #1789 — bundle anterior responde `{ok,probe,versao}` e mais
+nada. Medido 2026-09-05 (request_ids 69377-69381): das 5 edges sondadas, as 2 que ecoam `edge`
+saíram `PRE_SONDA_FONTE` e as 3 restantes saíram "nenhuma sonda em 6 hours" — o **mesmo** erro do
+`PRE_SONDA_FONTE` uma geração de campo atrás, e desta vez com a resposta gravada no banco. Não dá
+para presumir de qual edge é a linha (`net.http_request_queue`, a única tabela do pg_net com a URL,
+é apagada quando a resposta chega — conferido no mesmo dia), então **a identidade ausente continua
+ausente**: o veredito é INDETERMINADO e o chip continua. O que mudou é a saída dizer `SONDA_ANONIMA`
+e contar quantas há, em vez de alegar que ninguém sondou — e apontar o `--request-ids`, que é o
+único vínculo determinístico. Com os 5 ids colados, as 5 edges daquele dia saíram `PRE_SONDA_FONTE`:
+pendência PROVADA que o diagnóstico anterior escondia.
+
+🔴 **A direção é uma só: presença PROVA, ausência NÃO reprova** (#2086/#2095). O script só sabe
+SUPRIMIR chip com evidência POSITIVA; ele é o lado que APAGA pendência, então na dúvida é chip.
+O mapa cobre ~40 das ~95 edges — as outras seguem virando chip como sempre, nada regride.
+Medido em 2026-08-28 numa janela real de 24h: 7 edges na janela, 3 provadas no ar, **4 chips em
+vez de 7**. E não é só corte: o `DESATUALIZADA` é sinal que o gatilho velho nunca teve — ele
+mostra bundle velho SERVINDO, que é a falha silenciosa que este passo existe para pegar.
+
+⚠️ **`_shared/` na janela: a ponta que FALTA decide se é cegueira ou só lista mais larga.** O guard
+das duas pontas do mapa nasceu com um `||` — faltando QUALQUER uma, exit 2 por atacado —, e isso
+travava o passo justamente na janela de MAIOR risco: quando `_shared/` muda é quando mais edge é
+afetada por transitividade. Medido 2026-09-05 (`--desde "2026-08-21 20:00"`): 26 arquivos de
+`_shared/` tocados, 41 das 95 edges afetadas, e **veredito nenhum** — porque o commit-base era
+anterior ao #1998, que CRIOU o mapa. As duas pontas não têm o mesmo papel: `mapa_agora` (main) é a
+fonte do `esperado` de toda edge, e sem ele a cegueira é real (exit 2 segue certo); `mapa_base` só
+ESTREITA o diff, e sem ele nenhum par casa e a via (a) emite o mapa INTEIRO como alvo — o
+**superconjunto seguro**, a lista larga e não a vazia. Corrigida a assimetria, a MESMA janela
+devolve **16 `NO_AR` provadas + 25 `SEM_PROVA`** no lugar de 41 pendências cegas. Degradar aqui é
+AMPLIAR a enumeração, nunca absolver: cada alvo segue classificado um a um por prova positiva.
+
+🕳️ **`SEM_PROVA` por "nenhuma sonda na janela" NÃO se resolve esperando — DISPARE.** Não existe
+cron de sondagem: `cron.job` tem 93 jobs e **zero** com `probe`. Quem dá prova passiva é só a edge
+cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) **e** tem cron frequente —
+`analytics-outbox-drain` (5 em 5 min) é o caso típico. Medido 2026-09-05: **24 das 54 edges do
+mapa não têm cron NENHUM** (webhook como `omie-nfe-webhook`, ou invocada sob demanda pelo app como
+`analyze-unified-order`), e para essas a prova passiva é *impossível*; ainda por cima
+`net._http_response` expira no TTL do pg_net, então a janela só encolhe. O remédio é
+`bun run sonda:sql <edge>…` — PASSO 1 (escrita + vault) o founder cola no SQL Editor do Lovable;
+PASSO 2 julga em SELECT puro (`--so-leitura`, roda no `psql-ro`); com o id em mãos, `--request-ids
+<slug>=<id>` fecha o vínculo. ⚠️ Aprendido caro: o autor do próprio script leu este ramo como
+"espere o próximo tick do cron" **horas depois de escrevê-lo**, ao verificar dois deploys reais — a
+espera nunca terminaria, e o `SEM_PROVA` persistente passaria por pendência real (chip eterno numa
+edge que já está no ar). O script hoje imprime o remédio no rodapé, preso pelo caso 3b e pela
+sabotagem (a6).
 
 Se a sessão tocou edge: ela foi deployada via chat do Lovable? (Evidência: o founder confirmou
 na conversa, ou a canária/probe respondeu com o comportamento novo.) Pendente → inclua o prompt
@@ -165,8 +293,9 @@ alargou a consulta por conta própria — pela letra deste passo, ele teria olha
 `git log`, visto commit que não era dele, e seguido em frente.
 
 Destino de edge de terceiro **não é** "deployar por ela" nem "assumir que a outra sessão já
-pediu": é **chip** (a sessão dona pode ter fechado sem pedir o deploy), com o prompt mandando
-CONFIRMAR antes de pedir deploy redundante. E o prompt tem de nomear **todos** os arquivos,
+pediu": é **chip** (a sessão dona pode ter fechado sem pedir o deploy) — para as que o script
+marcar como pendentes, e só para elas —, com o prompt mandando CONFIRMAR antes de pedir deploy
+redundante. E o prompt tem de nomear **todos** os arquivos,
 `_shared` novo incluído — prompt que nomeia um só deixa a edge sem bootar (#2020).
 
 ### Passo 4 — Publish do frontend

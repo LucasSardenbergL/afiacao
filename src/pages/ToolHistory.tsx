@@ -17,6 +17,8 @@ import { ptBR } from 'date-fns/locale';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
 import { escapeHtml } from '@/lib/escape-html';
+import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 /* ─── Criticality (shared logic with Tools.tsx) ─── */
 
@@ -101,9 +103,18 @@ const ToolHistory = () => {
   const [showQR, setShowQR] = useState(false);
   const qrRef = useRef<HTMLDivElement>(null);
 
-  const { data: tool, isPending: loadingTool } = useUserToolDetail(toolId);
+  // A desestruturação fica DIRETA sobre o hook e nomeia `status`/`error` de propósito:
+  // guardar a query num `const q = useX()` faria o sítio SUMIR do gate da classe por
+  // CEGUEIRA (ele só rastreia `const {…} = useX(…)`), não por conserto — e o gate não
+  // distingue os dois. Com as chaves de erro nomeadas, ele vê o tratamento e segue vigiando
+  // este arquivo.
+  const { data: tool, status: statusTool, fetchStatus: fetchTool, error: erroTool, isPending: loadingTool } =
+    useUserToolDetail(toolId);
   const { data: eventsAsc = [], isPending: loadingEvents } = useToolEvents(toolId);
   const loading = loadingTool || loadingEvents;
+  // `.maybeSingle()` devolve `null` para "esta ferramenta não existe" e `undefined` só em
+  // loading/erro — a diferença que o `if (!tool)` abaixo apagava.
+  const estadoTool = estadoDeRegistro({ status: statusTool, fetchStatus: fetchTool, error: erroTool }, tool != null);
   // O hook devolve asc (cache compartilhado com ToolReports); a timeline mostra o mais recente primeiro.
   const events = useMemo(() => [...eventsAsc].reverse(), [eventsAsc]);
 
@@ -159,6 +170,18 @@ const ToolHistory = () => {
 
     return { criticality, avgInterval, daysSinceLast, accumulatedCost, recommendation, intervalDays };
   }, [tool, sharpeningEvents]);
+
+  // ANTES do loading de propósito: sem rede a query fica pending+paused, e o skeleton
+  // ficaria girando para sempre sobre uma leitura que não vai acontecer.
+  if (naoConsegui(estadoTool)) {
+    return (
+      <div className="min-h-screen bg-background pb-24">
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <AvisoLeituraFalhou oque="o histórico desta ferramenta" estado={estadoTool} variante="bloco" />
+        </main>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

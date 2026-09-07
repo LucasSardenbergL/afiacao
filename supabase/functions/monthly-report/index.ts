@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   type BancoPostgrest,
@@ -228,6 +229,12 @@ async function authenticateRequest(req: Request): Promise<{ authenticated: boole
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
+    // Sonda de deploy por cron (spec v5 §4.2): responde a versão SÓ com a credencial
+    // dedicada, sem IO. Sem ela — inclusive no preflight do browser — cai no CORS de
+    // sempre, byte a byte. É o único ramo que um bundle velho já interrompia antes de
+    // tudo, e é por isso que o cron pode perguntar sem poder disparar.
+    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
+    if (sonda) return sonda;
     return new Response(null, { headers: corsHeaders });
   }
 

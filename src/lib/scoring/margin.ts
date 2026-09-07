@@ -196,6 +196,16 @@ function resolveProductId(
  * bruta infla silenciosamente (ausente ≠ zero, money-path). O cliente que só compra SKU
  * sem custo fica com receita/custo 0 → margem indefinida (não 100%).
  *
+ * Item sem PREÇO utilizável (ausente/0/lixo) é excluído pela MESMA régua e contado em `semPreco`,
+ * para o caller degradar a confiança. Antes (M-04) ele entrava com receita 0 e custo cheio — margem
+ * NEGATIVA fabricada, que rebaixava o health score do cliente.
+ *
+ * A ORIGEM foi fechada em 2026-09-05 (migration 20260905225613): `order_items.unit_price` aceita
+ * NULL, a RPC de ingestão distingue "não informou" de "informou 0", e o espelho SQL
+ * `private.margem_cliente_agregada()` exige `preco_unit > 0` — antes era `>= 0`, e como a coluna
+ * era NOT NULL o ramo `IS NOT NULL` dele nunca executava em produção. Enquanto essa origem
+ * esteve aberta, este guard era a ÚNICA defesa real; agora ele é a segunda, e as duas concordam.
+ *
  * `omieToProductId` mapeia omie_codigo_produto → UUID; sem ele, itens que só têm o código
  * Omie (a maioria absoluta em produção) são descartados.
  */
@@ -203,20 +213,26 @@ export function accumulateMarginFromItems(
   items: MarginItem[],
   costMap: Map<string, number>,
   omieToProductId?: Map<number, string>,
-): { revenue: number; cost: number } {
+): { revenue: number; cost: number; semPreco: number } {
   let revenue = 0;
   let cost = 0;
+  let semPreco = 0;
   for (const item of items) {
     const productId = resolveProductId(item, omieToProductId);
     if (!productId) continue;
     const c = costMap.get(productId);
     if (c == null) continue;
+    // Finitude POSITIVA, como o custo: ausente/0/negativo/NaN/lixo → item FORA (receita E custo).
+    const price = valorMedido(item.unit_price) ?? valorMedido(item.valor_unitario);
+    if (price === null || !(price > 0)) {
+      semPreco += 1;
+      continue;
+    }
     const qty = Number(item.quantity || item.quantidade || 1);
-    const price = Number(item.unit_price || item.valor_unitario || 0);
     revenue += price * qty;
     cost += c * qty;
   }
-  return { revenue, cost };
+  return { revenue, cost, semPreco };
 }
 
 /**

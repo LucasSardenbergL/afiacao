@@ -64,7 +64,10 @@ export function MapeamentoFormDialog({
             <Label>Fator de conversão</Label>
             <Input
               type="number"
-              step="0.0001"
+              step="any"
+              min="0.000001"
+              required
+              title="Unidades do PORTAL por unidade do Omie (ex.: 0,2 = Omie em litro, portal em balde de 5 L). Sempre > 0."
               value={form.fator_conversao}
               onChange={(e) => setForm({ ...form, fator_conversao: Number(e.target.value) })}
             />

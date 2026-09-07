@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **496** custom migrations totais
-- **1712** objetos esperados (criados por estas migrations)
+- **525** custom migrations totais
+- **1787** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 514
-  - `rls_policy`: 453
-  - `index`: 250
-  - `cron_job`: 168
-  - `table`: 159
-  - `trigger`: 88
-  - `view`: 76
+  - `function`: 562
+  - `rls_policy`: 462
+  - `index`: 257
+  - `cron_job`: 171
+  - `table`: 165
+  - `trigger`: 89
+  - `view`: 77
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4165,6 +4165,220 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `private.cap_carteira_escrever` | — |
+
+### `20260828213000_cap_carteira_escrever_master_only.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_carteira_escrever` | — |
+
+### `20260828224542_ia_uso_limite_generate_bundle_argument.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260829012000_analytics_outbox_perda_visivel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_outbox_purgar` | — |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+| `table` | `public.analytics_outbox_perda` | — |
+| `rls_policy` | `public.analytics_outbox_perda_service_all` | `analytics_outbox_perda` |
+| `rls_policy` | `public.analytics_outbox_perda_master_read` | `analytics_outbox_perda` |
+
+### `20260829041500_analytics_outbox_trigger_sensor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260829081556_sales_orders_hash_omie_canonico.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260830122701_margin_audit_log_master_pode_ler.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.Strategic+ can view margin audit` | `margin_audit_log` |
+
+### `20260830122702_remove_trigger_auto_super_admin.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260830123820_snapshot_atomico_universo_itens.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apriori_universo_snapshot` | — |
+| `function` | `public.cockpit_itens_snapshot` | — |
+
+### `20260830190000_reconciliar_pedidos_omie.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reconciliar_pedidos_omie` | — |
+
+### `20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_promocoes_no_ciclo` | — |
+
+### `20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260904233000_sku_fornecedor_externo_fator_positivo.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260905090000_sayerlack_custo_portal_cas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_aplicar_custo_portal` | — |
+
+### `20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.deploy_atestacoes_janela_viva` | — |
+| `function` | `public.deploy_atestacoes_colher` | — |
+| `table` | `public.deploy_atestacoes` | — |
+| `index` | `public.idx_deploy_atestacoes_edge_observado` | `deploy_atestacoes` |
+| `cron_job` | `cron.deploy-atestacoes-colher` | — |
+| `rls_policy` | `public.deploy_atestacoes_select_staff` | `deploy_atestacoes` |
+| `rls_policy` | `public.deploy_atestacoes_service_all` | `deploy_atestacoes` |
+
+### `20260905224959_cancelar_pedido_guard_atomico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cancelar_pedido_sugerido` | — |
+
+### `20260905225613_preco_ausente_nao_e_zero.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_pedidos_com_itens` | — |
+| `function` | `public.reconciliar_pedidos_omie` | — |
+| `function` | `private.margem_cliente_agregada` | — |
+| `function` | `public.get_customer_margin_summary` | — |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.get_defasagem_cliente` | — |
+
+### `20260906105549_remover_itens_pedido_guard.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.remover_itens_pedido_sugerido` | — |
+
+### `20260906151204_deploy_sonda_cron_fail_closed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.deploy_sonda_disparar` | — |
+| `table` | `public.deploy_sonda_alvos` | — |
+| `table` | `public.deploy_sonda_disparos` | — |
+| `index` | `public.idx_deploy_sonda_disparos_tick` | `deploy_sonda_disparos` |
+| `index` | `public.idx_deploy_sonda_disparos_edge_quando` | `deploy_sonda_disparos` |
+| `cron_job` | `cron.deploy-sonda-cron` | — |
+| `rls_policy` | `public.deploy_sonda_alvos_select_staff` | `deploy_sonda_alvos` |
+| `rls_policy` | `public.deploy_sonda_disparos_select_staff` | `deploy_sonda_disparos` |
+
+### `20260906151715_aprovar_pedido_guard_atomico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aprovar_pedido_sugerido` | — |
+
+### `20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao__valida_cancelamento_pos_disparo` | — |
+| `function` | `public.corrigir_cancelamento_pos_disparo` | — |
+| `view` | `public.vw_cancelamento_pos_disparo_sem_evidencia` | — |
+| `table` | `public.reposicao_cancelamento_pos_disparo_audit` | — |
+| `index` | `public.idx_reposicao_cancel_pos_disparo_audit_pedido` | `reposicao_cancelamento_pos_disparo_audit` |
+| `trigger` | `public.trg_valida_cancelamento_pos_disparo` | `pedido_compra_sugerido` |
+| `rls_policy` | `public.reposicao_cancel_pos_disparo_audit_select_staff` | `reposicao_cancelamento_pos_disparo_audit` |
+
+### `20260906154202_cancelar_pedido_revoke_anon.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260906164001_captura_authz_gate_custo_rpcs_preco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+| `function` | `public.get_tint_prices` | — |
+| `function` | `public.get_preco_cockpit` | — |
+
+### `20260906164002_captura_authz_escopo_carteira_farmer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.farmer_recomendacoes_substituir` | — |
+| `function` | `public.farmer_bundle_recomendacoes_substituir` | — |
+
+### `20260906165706_aprovar_pedido_revoke_anon.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260906170000_reposicao_selo_aprovacao_m1_expandir.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_pedido_e_portal` | — |
+| `function` | `public.reposicao_selo_itens` | — |
+| `function` | `public.reposicao_selar_pedido` | — |
+| `function` | `public.reposicao_conferir_envio` | — |
+| `function` | `public.aprovar_pedido_sugerido` | — |
+| `function` | `public.aprovar_pedido_sugerido` | — |
+| `function` | `public.cancelar_pedido_sugerido` | — |
+| `function` | `public.iniciar_envio_portal_pre_claim` | — |
+| `function` | `public.envio_portal_claim_ids` | — |
+| `function` | `public.envio_portal_lock_candidatos` | — |
+| `function` | `public.pedido_compra_split` | — |
+| `index` | `public.ux_sku_fornecedor_externo_ativo` | `sku_fornecedor_externo` |
+
+### `20260906172718_cancelamento_pos_disparo_gate_canonico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.corrigir_cancelamento_pos_disparo` | — |
+
+### `20260906180000_order_items_identidade_linha.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reconciliar_pedidos_omie` | — |
+
+### `20260906180303_deploy_sonda_resultados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.deploy_sonda_resultados_colher` | — |
+| `table` | `public.deploy_sonda_resultados` | — |
+| `index` | `public.idx_deploy_sonda_resultados_edge` | `deploy_sonda_resultados` |
+| `index` | `public.idx_deploy_sonda_resultados_tick` | `deploy_sonda_resultados` |
+| `cron_job` | `cron.deploy-sonda-resultados-colher` | — |
+| `rls_policy` | `public.deploy_sonda_resultados_select_staff` | `deploy_sonda_resultados` |
+
+### `20260906193522_valor_total_portal_provado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_aplicar_custo_portal` | — |
 
 ## Próximos passos por status
 

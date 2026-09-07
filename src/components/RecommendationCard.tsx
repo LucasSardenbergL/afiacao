@@ -9,6 +9,9 @@ import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 
 const fmt = (v: number | null | undefined) => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtPct = (v: number) => `${(v * 100).toFixed(0)}%`;
+// 3 casas do breakdown de admin. `null` é "não medi" (cluster truncado), NUNCA 0,000 —
+// a mesma degradação honesta que `fmt` já faz com dinheiro ausente.
+const fmt3 = (v: number | null | undefined) => v == null ? '—' : v.toFixed(3);
 
 const EXPLANATION_ICONS: Record<string, typeof Sparkles> = {
   association: Package,
@@ -107,7 +110,7 @@ export const RecommendationCard = React.memo(function RecommendationCard({
               </div>
               <div className="bg-muted rounded px-1.5 py-1 text-center">
                 <span className="text-muted-foreground block">Sim</span>
-                <span className="font-mono font-semibold">{item._admin.sim_score.toFixed(3)}</span>
+                <span className="font-mono font-semibold">{fmt3(item._admin.sim_score)}</span>
               </div>
               <div className="bg-muted rounded px-1.5 py-1 text-center">
                 <span className="text-muted-foreground block">Ctx</span>

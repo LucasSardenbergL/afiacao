@@ -1,4 +1,4 @@
-# Deploy no Lovable — 3 camadas manuais (referência operacional)
+# Deploy no Lovable — 3 camadas manuais + o secret (referência operacional)
 
 > O que NÃO acontece sozinho no merge. Lição durável carregada sob demanda. Runbook passo-a-passo completo: `docs/runbooks/lovable-supabase.md`. Banco/migration: `docs/agent/database.md`. Verificação: skill `lovable-deploy-verify`.
 
@@ -29,16 +29,19 @@ O job `validate` do `.github/workflows/ci.yml` tem **muito mais que os 5 gates �
 1. **`manifesto.gate.test.ts`** (dentro do `bun run test`) — todo arquivo de `src/` precisa de **1 dono declarado** em `src/lib/modulos/manifesto.ts` (`codigo`/`testes` do módulo). Arquivo novo sem entrada sai como `[orfao]`. Sobreposição de globs entre módulos e glob que não casa nada também são erro. `NAO_CLASSIFICADOS` é dívida datada e está VAZIO — não seja o primeiro a sujá-lo.
 2. **`bunx knip`** — export sem consumidor. Núcleo de domínio novo, ainda sem UI, tende a bater aqui: os testes tornam as *funções* alcançáveis (o `vitest.config.ts` é entry no `knip.json`), mas **tipo/interface exportado que só o próprio arquivo usa fica órfão**. Correção certa é tirar o `export` do que é interno — reexportar quando a fase seguinte lhe der consumidor —, não engordar o `ignore` do `knip.json`.
 
-## Merge na `main` ≠ produção — 3 deploys MANUAIS e independentes
+## Merge na `main` ≠ produção — 3 deploys MANUAIS e independentes (+ a 4ª dependência)
 
 1. **Migration** → colar o SQL no **SQL Editor do Lovable** → Run → validar com query de contagem. O Lovable **NÃO** aplica migration de nome custom sozinho (falha SILENCIOSA: a feature compila e quebra em runtime). Detalhe + ritual + skill `lovable-db-operator`: `docs/agent/database.md`.
 2. **Frontend** → **Publish** manual no editor do Lovable. `steu.lovable.app` serve o **build velho** até o Publish (lição 2026-05-31: mergear e achar que foi pro ar é o erro recorrente).
 3. **Edge functions** → criadas/editadas pelo **chat do Lovable** (ele lê `supabase/functions/<nome>/index.ts` do repo e deploya **verbatim**), **NÃO** pela UI Cloud (que só mostra logs).
+4. **SECRET novo de edge** → **Edge Functions → Secrets**, e **antes** do deploy da edge. Não é camada de código — nenhuma das 3 acima o acusa — e falha do jeito mais caro: a edge fica **Active**, o cron fica **verde**, `cron.job_run_details` diz `succeeded`, e a função morre no 1º `Deno.env.get` devolvendo 500 sem fazer nada. Deployar antes do secret **arma** exatamente esse estado, e a verificação por sonda pode carimbar "no ar" uma edge que não faz nada. #2035 (`analytics-outbox-drain` ↔ `POSTHOG_INGEST_KEY`, lido por essa edge e por nenhuma outra) só não quebrou porque o secret já estava lá — **sorte, não processo**.
 
 **Achar UMA camada pendente é SINTOMA — audite as TRÊS do MESMO PR.** As camadas deployam separado, mas o PR que as tocou é um só: migration não-aplicada é evidência de **PR não-deployado**, não de migration esquecida. E o caminho de detecção enviesa — um `/fecho` que varre migrations acha migrations; frontend e edge nem entram no campo de visão. Ao detectar qualquer pendência, classifique o diff por camada antes de fechar o caso:
 
 ```bash
 git show --name-only --format="" <sha> | awk '/^supabase\/migrations/{m++} /^supabase\/functions/{e++} /^src\//{f++} END{print "mig="m+0" edge="e+0" front="f+0}'
+# as 4 de uma vez (secret inclusive), da RAIZ do repo — fonte única do Passo 1 da lovable-deploy-verify:
+git show --name-only --format="" <sha> | .claude/skills/lovable-deploy-verify/evals/classify.sh
 ```
 
 Mordido 2026-08-14 (#1520 `9f7e8962`, FU4-F fase 3): o `/fecho` pegou `…130000_fecha_product_costs.sql` mergeada e não aplicada, aplicou, verificou — caso encerrado. O mesmo PR trazia **5 migrations + frontend (já publicado) + 2 edges nunca confirmadas**, e edge velha ali é money-path concreto, porque o front novo é que mudou o contrato: `generate-bundle-argument` imprime `p.margin.toFixed(2)`/`bundle.lieBundle.toFixed(2)` num payload que o hook publicado **parou de mandar** (→ **TypeError**, argumento de venda não gera); `generate-tactical-plan` ordena as recomendações por `lie_bundle DESC`, hoje NULL em toda linha, e DESC implica NULLS FIRST → **topBundle arbitrário, plano tático sobre ranking fabricado**. ⚠️ O risco é assimétrico: com as duas metades faltando elas se cancelam, então **aplicar só a camada que apareceu pode ser o que ARMA a quebra** — é a armadilha do `carteira-rebuild` (abaixo) vista pelo lado do PR, não da edge.
@@ -47,11 +50,16 @@ Mordido 2026-08-14 (#1520 `9f7e8962`, FU4-F fase 3): o `/fecho` pegou `…130000
 
 - **Deploy SÓ depois do merge** — o chat lê a `main`; deployar antes pega o código velho.
 - **Deployar uma edge sobe o ARQUIVO INTEIRO da `main`, não só o seu diff** → o pré-flight é das dependências de banco de TODO o arquivo, inclusive código de PRs de TERCEIROS mergeados desde o último deploy dela. É a irmã da armadilha da migration silenciosa, vista do outro lado: não foi a migration que faltou aplicar — foi o **deploy do código que a exigia** que chegou depois e revelou a falta. Mordido 2026-07-17 (Fatia 2 do épico-drop): deployei `carteira-rebuild` verbatim (a MINHA mudança tinha as deps checadas: `identity_state` existia no schema) — mas o arquivo da main carregava junto o lease do #1333 (`claim_carteira_rebuild`/`finalizar_carteira_rebuild`), mergeado dias antes, cuja migration NUNCA fora aplicada. As duas metades faltando (edge do #1333 nunca deployada + migration nunca aplicada) se cancelavam; meu deploy correto trouxe só a metade-código → **rebuild 500 em produção por ~40min** (`claim: Could not find the function ... in the schema cache`), carteira congelada no snapshot do dia anterior (modo-falha seguro: o `claim` é o 1º passo, morre ANTES de escrever). **Pré-flight barato (roda em segundos, teria pego):** antes de dar o prompt de deploy de uma edge, cruze as RPCs que ela chama com o que existe em prod —
+- ⚠️ **Fatia com edge NOVA + RPC nova: a migration vai PRIMEIRO — e `PGRST202` é a assinatura de que não foi** (medido 2026-09-05, #2176/pedido #2459). O Publish da edge é um clique independente e chega antes do apply manual; o aviso em prosa no corpo do PR **não** impediu. No intervalo, a edge chama uma função que o PostgREST não acha no schema cache e devolve **`PGRST202`** — se um sensor mostra esse código, o diagnóstico não é a lógica nem o dado externo, é **migration não colada**, sem abrir log. O fail-closed protege o BANCO (nada parcial, nada fabricado) e **não** protege o efeito externo: no #2459 o pedido seguiu ao fornecedor e o PO Omie nasceu 3,49% acima do que o portal cobrou. ⇒ o estado intermediário é **money-path**, não higiene: aplique a migration antes, e vigie o intervalo em vez de presumi-lo inócuo.
+- ⚠️ **"Tocou `src/` ⇒ falta Publish" é FALSO — a camada de deploy se decide por ALCANCE, não por diretório** (medido 2026-09-05, no próprio #2176). O PR tocou `src/lib/reposicao/sayerlack-scraping-pedido.ts` e um handoff leu isso como Publish pendente; o arquivo é **espelho verbatim** da edge (Deno não importa de `src/`), existe para o vitest, e seu **único** importador é o próprio teste — sem barrel, sem import dinâmico ⇒ nenhum entry point o alcança e ele **nunca entra em bundle servido ao browser**. Hoje são **2** assim, ambos com 0 importadores de runtime: `sayerlack-scraping-pedido.ts` e `sayerlack-classificacao.ts`. ⇒ antes de pedir Publish por causa de um caminho em `src/`, meça quem importa (`grep -rE "from ['\"].*<base>['\"]" src` descontando testes); pedir o Publish que não era necessário gasta a única alavanca manual que o founder tem e ensina a ignorar o pedido seguinte.
   ```bash
-  grep -rhoE "\.rpc\('[a-z_]+'" supabase/functions/<edge>/ | sed "s/.*rpc('//;s/'//" | sort -u
-  # cada uma: ~/.config/afiacao/psql-ro -c "select 1 from pg_proc where proname='<rpc>';"  (vazio = bomba armada)
+  bun run preflight:rpcs <edge> [<edge>...]
   ```
-  Varredura do repo inteiro em 2026-07-17: das 16 RPCs chamadas por edges, as 16 existem em prod — o `claim_carteira_rebuild` era o único caso. Vale o mesmo raciocínio p/ tabela/coluna/view nova que o arquivo referencie.
+  Ele segue o **fecho transitivo dos imports locais** (o mesmo grafo que dá o `fonte` da sonda de versão — pré-flight e sonda falam do MESMO conjunto de arquivos), lista cada RPC com `arquivo:linha`, e emite o SQL pronto para o `psql-ro`. **Exit `3` = a lista está INCOMPLETA** (há chamada cujo nome não é literal); `0` = completa. O `3` existe porque um `0` sobre uma lista que o extrator sabe estar furada é o falso verde que o pré-flight existe para matar.
+
+  ⚠️ **O comando anterior deste runbook era um `grep` e ele MENTIA.** Era `grep -rhoE "\.rpc\('[a-z_]+'"` sobre o diretório da edge, com três cegueiras que produzem a mesma falha — uma lista curta que parece completa: (1) só casava **aspas simples**; (2) só varria o **diretório** da edge, e helpers de `_shared/` chamam RPC; (3) só via o nome **literal** colado no `.rpc(`. Medido em 2026-08-30: das **53** RPCs literais chamadas em `supabase/functions/`, ele enxergava **16**. A frase que este parágrafo substituiu dizia *"das 16 RPCs chamadas por edges, as 16 existem em prod"* — o denominador era 53, e o 16/16 tranquilizava sobre um terço do universo. Varredura das 95 edges com a ferramenta nova: **4** têm chamada por indireção (`calculate-scores`, `melhoria-triagem`, `fin-valor-cockpit`, `omie-analytics-sync`) — as 4 RPCs que estavam escondidas ali existem em prod (conferido), então a cegueira não tinha bomba armada hoje; o que ela tinha era um detector incapaz de dizer isso.
+
+  Vale o mesmo raciocínio p/ tabela/coluna/view nova que o arquivo referencie — para essas o cruzamento segue manual.
 - **Proibir "melhorias"** — instrua o chat a deployar **verbatim** o arquivo do repo (o Lovable tende a reescrever a função).
 - **Verificar por comportamento/bytes, não pela palavra do Lovable** — `503 LOAD_FUNCTION_ERROR` + zero `running` no log = a edge não BOOTA → fix é **redeploy**, não código (ver `docs/agent/sync.md`).
 - **`config.toml` pode vir com `[functions.<x>]` DUPLICADO** (bug do bot do Lovable) → TOML inválido (`redefine an already defined table`) que **quebra o `supabase` CLI** no parse. Fix: apagar a 2ª entrada (se idêntica = no-op de comportamento) — pode reaparecer num "Changes" do bot. (#974)
@@ -92,7 +100,10 @@ canary === true   E   contrato === '<marcador da fatia>'   E   ok === true
 
 ### Sonda de versão (`{"probe":true}`) — quando a edge não tem canária e o efeito é irreversível
 
-Canária prova **comportamento** com fixture; a **sonda** prova só **qual bundle está no ar** — e serve o caso em que a canária não cabe porque a edge não tem caminho barato nenhum. Mecanismo em `_shared/sonda-versao.ts` (#1747/#1750); cada edge contribui `VERSAO` + `EFEITO` no seu `versao.ts`. Instrumentadas — **disparo de pedido** (#1747/#1750): `disparar-pedidos-aprovados` (`v1.1-marco-causal`), `enviar-pedido-portal-sayerlack`, `conciliar-pedido-portal`, `gerar-pedidos-diario`, `pedido-programado-enviar`; **sem caminho de prova** (#1520): `generate-tactical-plan` (`v1.1-paginacao-eof-e-cursor`), `generate-bundle-argument` (`v1.0-prompt-sem-margem`); **efeito fora do nosso banco** (#1753): `omie-nfe-recebimento` e `process-nfe` — gêmeas, mesma tríade `AlterarRecebimento` → `AlterarEtapaRecebimento` etapa 40 → `ConcluirRecebimento`, que dá entrada de estoque e fiscal no ERP, e a `process-nfe` **não tem modo de teste nenhum**, nem o `diagnostico` read-only que a gêmea tem —, `sayerlack-captura-precos` (monta linha no pedido do portal do FORNECEDOR p/ ler preço; aborto deixa rascunho que passa por pedido humano) e `reposicao-depara-sayerlack-auto`; **escrita money-path no NOSSO banco** (#1767): `omie-cliente` — a mais cara das cinco, porque CRIA `auth.users` `@placeholder.local` + `profiles` e a ausência de `profiles` é o discriminante dos ~1.633 aliases fiscais (§5 do `database.md`): errar aqui apaga uma FRONTEIRA, não um número —, `fin-cashflow-engine` (projeção de 13 semanas que vira `fin_projecao_snapshots`/`fin_alertas` quando `save_snapshot:true`, o caminho do cron), `omie-sync-estoque` (reescreve o saldo do motor de reposição **e** avança o marcador de frescor: o run parcial apaga o sinal de que foi parcial), `omie-sync-nfes-recebidas` (rastreio nota↔pedido + `fin_sync_log`, lido sem filtro de `action` pelo cálculo de frescor) e `omie-nfe-webhook` (materializa o recebimento; cabeçalho e itens não são transacionais e a retentativa cai em "já importada", que esconde em vez de consertar). **escrita money-path no NOSSO banco, 2ª rodada**: `recommend` (#1898 — grava `recommendation_log`, o SENSOR DE DESFECHO do motor: sondar sem guarda inventaria uma recomendação que ninguém fez e enviesaria a própria medição de acerto; marcador hoje em `v1.5-denominador-observados`) e `omie-analytics-sync` (#1905 — reescreve `product_costs`, `order_items`, `sales_orders`, `inventory_position` e o mapa de identidade). ⚠️ Esta última JÁ tinha canária (`doc_ambiguo_probe`, na tabela acima) e mesmo assim precisou de sonda: a canária é NÃO-VERSIONADA e responde igual num bundle de hoje e num de três fatias atrás — **ter canária não dispensa marcador**. Nela a sonda é barata e o veredito é binário, porque a edge roteia por `action` e o bundle PRÉ-sensor cai no `default` com `400 "Ação desconhecida"`, sem tocar Omie nem banco. **oitava leva — as 7 que serviam o `paginate.ts` sem sensor NENHUM** (#1889/#1901): `calculate-scores`, `ai-ops-agent`, `omie-sync-status-produtos`, `sync-reprocess`, `scoring-recalc-batch`, `tactical-plans-batch` e `visit-score-recalc-batch` — o deploy delas era literalmente INVERIFICÁVEL (sem marcador, e sem fixture possível porque o #1889 é no-op por desenho). Junto vieram os bumps de `omie-cliente`, `generate-tactical-plan` e `reposicao-depara-sayerlack-auto`, presas num marcador que já respondia em prod, todas para `v1.1-paginacao-eof-e-cursor`. ⚠️ **O custo do bundle VELHO ignorando `probe` varia, e é ele que decide se sondar às cegas é seguro** — tabela por edge em `docs/historico/deploy-no-op-por-desenho.md` §8ª leva; das 7, só a `sync-reprocess` é barata (cai no `default` 400 antes de escrever) e só a `ai-ops-agent` é inócua (401 do gate de JWT). Nas outras 5, sondar um bundle pré-sensor DISPARA o run. Um gate novo (`nenhuma edge que serve o paginate.ts fica SEM prova de deploy`) fecha a classe: dependente nova nasce com sensor ou o CI reprova nomeando-a. Ficaram DE FORA de propósito as de leitura pura (`fin-funding`, `fin-valor-engine`, `fin-next-best-action`, …): chamá-las já é grátis, então a sonda não resolve problema que elas tenham — o que falta nelas é só o campo `versao` na resposta. Sem marcador declarado = `v1.0-sensor-inicial`. **sétima leva — `analyze-unified-order`** (#1930, marcador hoje em `v1.1-corpo-tipado`): a primeira que entra sem escrever no nosso banco E sem ser leitura barata. Motivo é o SEGUNDO do #1520 — chamada pelo BROWSER, não deixa rastro em `net._http_response` nem em `cron.job_run_details`. ⚠️ **Ela TEM canária versionada e mesmo assim precisou de sonda, e as duas NÃO se substituem:** o `contrato` da canária (`praticado-vence-omie-v1`, tabela acima) nomeia a fatia do MERGE DE PREÇO e vive DEPOIS do gate de staff — só o app logado a alcança; a `versao` da sonda nomeia a fatia do corpo/prompt e responde ANTES desse gate, com gate próprio, então é a única das duas que o founder dispara sem abrir o app. ⚠️ **Foi aqui que a armadilha "marcador congelado" mordeu de verdade:** `v1.0-prompt-invertido-cacheado` atravessou o #1938 sem bump, e a sonda provava "≥ #1930" e nada mais (medido em prod 2026-08-25, request_id 59657). O bump é obrigatório ANTES do deploy, e desde então há **dois** gates, que cobrem metades diferentes e nenhum substitui o outro: `bump v1.1-corpo-tipado` de `_shared/sonda-versao-contrato_test.ts` barra a **REGRESSÃO** (voltar ao valor literal que já respondia em prod), e `scripts/sonda-versao-bump-gate.ts` (`bun run sonda:bump`, no `validate`, só em `pull_request`) barra a **OMISSÃO** — que foi o que de fato aconteceu no #1938. Este último lê o DIFF contra o merge-base (por isso o checkout do job carrega `fetch-depth: 0`) e reprova nomeando a edge quando o **corpo servido** muda sem o `VERSAO` mudar junto. Corpo servido exclui `*_test.ts` (o bundle é byte-idêntico), o próprio `versao.ts` (é o marcador, e é quase todo prosa) e o que não sobrevive ao `removerComentarios` — comentário e reindentação não pedem marcador. Régua medida contra as 414 fatias anteriores a 2026-08-25, com o próprio gate decidindo: **26** tocam uma das 32 edges instrumentadas, **6 reprovariam** e o #1938 está entre elas, nenhuma sem mudança real de `index.ts` (o denominador ~68 do histórico conta os **94** diretórios de edge, não só os instrumentados). `supabase/functions/_shared/` fica **fora de propósito**: cobri-lo daria 290 pares (edge, fatia) em 25 PRs — ~12 marcadores a bumpar por PR —, e gate que grita 12× por PR é gate que alguém afrouxa. É fail-CLOSED: sem base determinável ou sem `VERSAO` legível ele reprova, porque não medir não é o mesmo que estar em ordem. ⚠️ **Ele NÃO era fail-CLOSED de verdade até 2026-08-25, e o furo era na fronteira de I/O — não no núcleo, que tinha 23 testes verdes:** o status do `git diff` era descartado, então comando que falha devolvia saída vazia, virava "nenhuma edge tocada" e imprimia o `✓` (a MESMA fatia que reprova dava `rc=0` trocando o `--head` por rev inexistente, porque o `--head` entrava CRU sem ser resolvido); e `versao.ts` ausente no HEAD era `continue` silencioso, ou seja **apagar o marcador junto com a mudança de corpo passava**. Corrigidos, com um assert por furo (eles se cobriam) e contrato de mutação em `scripts/mutcheck.d/sonda-versao-bump-gate.mut`. **Auditoria do débito ANTIGO** (o que o gate de transição não vê), feita com o próprio gate por `--base <c>^ --head <c>`: 12 fatias pós-bump e **2 congeladas**; re-medido após rebase, **1** (`disparar-pedidos-aprovados`/`dc67b4261`) — a `omie-analytics-sync` foi bumpada por worktree paralela em `5d8f1f779`. Nas duas o deploy JÁ tinha acontecido, então o bump tardio não devolve discriminação e deixa **deploy de edge pendente** só para realinhar marcador (prod respondia `v1.1-mapa-codigo-sem-alias`). Auditoria de débito **tem prazo de validade** com ~30 worktrees: re-meça antes de afirmar. Para auditar assim, use `git log -G` (o `-S` conta ocorrências e é cego a mudança só de VALOR) e exija o `✓` POSITIVO: "reprovou" e "recusou medir" dão o mesmo `exit 1`. A variante do `FONTE_SHA256` por **ledger guardado** foi desenhada, levada ao Codex e **perde para o fingerprint SERVIDO** que o `sonda:fingerprint` entregou: ledger fecha o furo no CI, servir fecha na PRODUÇÃO — regravar o hash deixa de ser exploit porque a resposta da sonda muda junto. Registro em `docs/historico/sonda-marcador-congelado.md`. **décima leva — os 4 steps restantes do `omie-cron-diario`** (2026-08-27): `omie-sync-pedidos-compra`, `omie-sync-ctes-recebidos`, `omie-sync-sku-items` e `omie-sync-vendas-items`, todas em `v1.0-eco-versao-passivo`. O critério aqui não é o efeito (os cinco steps escrevem money-path) — é que o deploy delas era **inverificável**: sem `versao.ts`, sem sonda e com o corpo de resposta byte-idêntico antes e depois de uma fatia. Medido no #2031 (coleira de RELÓGIO no `omieCall` dos 5 steps): só o 5º (`omie-sync-nfes-recebidas`, o único com sensor) se provou em prod; os outros quatro ficaram como INFERÊNCIA — e o sintoma que a coleira corrige (request pendurado) é indistinguível de "o Omie estava lento" quando não se sabe qual bundle está no ar. ⚠️ Sondar bundle PRÉ-sensor nas quatro é **caro**: nenhuma roteia por `action`, então o corpo desconhecido cai nos defaults e a varredura roda inteira. É exatamente por isso que elas vieram com o eco PASSIVO do bullet abaixo.
+Canária prova **comportamento** com fixture; a **sonda** prova só **qual bundle está no ar** — e serve o caso em que a canária não cabe porque a edge não tem caminho barato nenhum. Mecanismo em `_shared/sonda-versao.ts` (#1747/#1750); cada edge contribui `VERSAO` + `EFEITO` no seu `versao.ts`. Instrumentadas — **disparo de pedido** (#1747/#1750): `disparar-pedidos-aprovados` (`v1.1-marco-causal`), `enviar-pedido-portal-sayerlack`, `conciliar-pedido-portal`, `gerar-pedidos-diario`, `pedido-programado-enviar`; **sem caminho de prova** (#1520): `generate-tactical-plan` (`v1.1-paginacao-eof-e-cursor`), `generate-bundle-argument` (`v1.1-cota-ia`); **efeito fora do nosso banco** (#1753): `omie-nfe-recebimento` e `process-nfe` — gêmeas, mesma tríade `AlterarRecebimento` → `AlterarEtapaRecebimento` etapa 40 → `ConcluirRecebimento`, que dá entrada de estoque e fiscal no ERP, e a `process-nfe` **não tem modo de teste nenhum**, nem o `diagnostico` read-only que a gêmea tem —, `sayerlack-captura-precos` (monta linha no pedido do portal do FORNECEDOR p/ ler preço; aborto deixa rascunho que passa por pedido humano) e `reposicao-depara-sayerlack-auto`; **escrita money-path no NOSSO banco** (#1767): `omie-cliente` — a mais cara das cinco, porque CRIA `auth.users` `@placeholder.local` + `profiles` e a ausência de `profiles` é o discriminante dos ~1.633 aliases fiscais (§5 do `database.md`): errar aqui apaga uma FRONTEIRA, não um número —, `fin-cashflow-engine` (projeção de 13 semanas que vira `fin_projecao_snapshots`/`fin_alertas` quando `save_snapshot:true`, o caminho do cron), `omie-sync-estoque` (reescreve o saldo do motor de reposição **e** avança o marcador de frescor: o run parcial apaga o sinal de que foi parcial), `omie-sync-nfes-recebidas` (rastreio nota↔pedido + `fin_sync_log`, lido sem filtro de `action` pelo cálculo de frescor) e `omie-nfe-webhook` (materializa o recebimento; cabeçalho e itens não são transacionais e a retentativa cai em "já importada", que esconde em vez de consertar). **escrita money-path no NOSSO banco, 2ª rodada**: `recommend` (#1898 — grava `recommendation_log`, o SENSOR DE DESFECHO do motor: sondar sem guarda inventaria uma recomendação que ninguém fez e enviesaria a própria medição de acerto; marcador hoje em `v1.5-denominador-observados`) e `omie-analytics-sync` (#1905 — reescreve `product_costs`, `order_items`, `sales_orders`, `inventory_position` e o mapa de identidade). ⚠️ Esta última JÁ tinha canária (`doc_ambiguo_probe`, na tabela acima) e mesmo assim precisou de sonda: a canária é NÃO-VERSIONADA e responde igual num bundle de hoje e num de três fatias atrás — **ter canária não dispensa marcador**. Nela a sonda é barata e o veredito é binário, porque a edge roteia por `action` e o bundle PRÉ-sensor cai no `default` com `400 "Ação desconhecida"`, sem tocar Omie nem banco. **oitava leva — as 7 que serviam o `paginate.ts` sem sensor NENHUM** (#1889/#1901): `calculate-scores`, `ai-ops-agent`, `omie-sync-status-produtos`, `sync-reprocess`, `scoring-recalc-batch`, `tactical-plans-batch` e `visit-score-recalc-batch` — o deploy delas era literalmente INVERIFICÁVEL (sem marcador, e sem fixture possível porque o #1889 é no-op por desenho). Junto vieram os bumps de `omie-cliente`, `generate-tactical-plan` e `reposicao-depara-sayerlack-auto`, presas num marcador que já respondia em prod, todas para `v1.1-paginacao-eof-e-cursor`. ⚠️ **O custo do bundle VELHO ignorando `probe` varia, e é ele que decide se sondar às cegas é seguro** — tabela por edge em `docs/historico/deploy-no-op-por-desenho.md` §8ª leva; das 7, só a `sync-reprocess` é barata (cai no `default` 400 antes de escrever) e só a `ai-ops-agent` é inócua (401 do gate de JWT). Nas outras 5, sondar um bundle pré-sensor DISPARA o run. Um gate novo (`nenhuma edge que serve o paginate.ts fica SEM prova de deploy`) fecha a classe: dependente nova nasce com sensor ou o CI reprova nomeando-a. Ficaram DE FORA de propósito as de leitura pura (`fin-funding`, `fin-valor-engine`, `fin-next-best-action`, …): chamá-las já é grátis, então a sonda não resolve problema que elas tenham — o que falta nelas é só o campo `versao` na resposta. Sem marcador declarado = `v1.0-sensor-inicial`. **sétima leva — `analyze-unified-order`** (#1930, marcador hoje em `v1.1-corpo-tipado`): a primeira que entra sem escrever no nosso banco E sem ser leitura barata. Motivo é o SEGUNDO do #1520 — chamada pelo BROWSER, não deixa rastro em `net._http_response` nem em `cron.job_run_details`. ⚠️ **Ela TEM canária versionada e mesmo assim precisou de sonda, e as duas NÃO se substituem:** o `contrato` da canária (`praticado-vence-omie-v1`, tabela acima) nomeia a fatia do MERGE DE PREÇO e vive DEPOIS do gate de staff — só o app logado a alcança; a `versao` da sonda nomeia a fatia do corpo/prompt e responde ANTES desse gate, com gate próprio, então é a única das duas que o founder dispara sem abrir o app. ⚠️ **Foi aqui que a armadilha "marcador congelado" mordeu de verdade:** `v1.0-prompt-invertido-cacheado` atravessou o #1938 sem bump, e a sonda provava "≥ #1930" e nada mais (medido em prod 2026-08-25, request_id 59657). O bump é obrigatório ANTES do deploy, e desde então há **dois** gates, que cobrem metades diferentes e nenhum substitui o outro: `bump v1.1-corpo-tipado` de `_shared/sonda-versao-contrato_test.ts` barra a **REGRESSÃO** (voltar ao valor literal que já respondia em prod), e `scripts/sonda-versao-bump-gate.ts` (`bun run sonda:bump`, no `validate`, só em `pull_request`) barra a **OMISSÃO** — que foi o que de fato aconteceu no #1938. Este último lê o DIFF contra o merge-base (por isso o checkout do job carrega `fetch-depth: 0`) e reprova nomeando a edge quando o **corpo servido** muda sem o `VERSAO` mudar junto. Corpo servido exclui `*_test.ts` (o bundle é byte-idêntico), o próprio `versao.ts` (é o marcador, e é quase todo prosa) e o que não sobrevive ao `removerComentarios` — comentário e reindentação não pedem marcador. Régua medida contra as 414 fatias anteriores a 2026-08-25, com o próprio gate decidindo: **26** tocam uma das 32 edges instrumentadas, **6 reprovariam** e o #1938 está entre elas, nenhuma sem mudança real de `index.ts` (o denominador ~68 do histórico conta os **94** diretórios de edge, não só os instrumentados). `supabase/functions/_shared/` fica **fora de propósito**: cobri-lo daria 290 pares (edge, fatia) em 25 PRs — ~12 marcadores a bumpar por PR —, e gate que grita 12× por PR é gate que alguém afrouxa. É fail-CLOSED: sem base determinável ou sem `VERSAO` legível ele reprova, porque não medir não é o mesmo que estar em ordem. ⚠️ **Ele NÃO era fail-CLOSED de verdade até 2026-08-25, e o furo era na fronteira de I/O — não no núcleo, que tinha 23 testes verdes:** o status do `git diff` era descartado, então comando que falha devolvia saída vazia, virava "nenhuma edge tocada" e imprimia o `✓` (a MESMA fatia que reprova dava `rc=0` trocando o `--head` por rev inexistente, porque o `--head` entrava CRU sem ser resolvido); e `versao.ts` ausente no HEAD era `continue` silencioso, ou seja **apagar o marcador junto com a mudança de corpo passava**. Corrigidos, com um assert por furo (eles se cobriam) e contrato de mutação em `scripts/mutcheck.d/sonda-versao-bump-gate.mut`. **Auditoria do débito ANTIGO** (o que o gate de transição não vê), feita com o próprio gate por `--base <c>^ --head <c>`: 12 fatias pós-bump e **2 congeladas**; re-medido após rebase, **1** (`disparar-pedidos-aprovados`/`dc67b4261`) — a `omie-analytics-sync` foi bumpada por worktree paralela em `5d8f1f779`. Nas duas o deploy JÁ tinha acontecido, então o bump tardio não devolve discriminação e deixa **deploy de edge pendente** só para realinhar marcador (prod respondia `v1.1-mapa-codigo-sem-alias`). Auditoria de débito **tem prazo de validade** com ~30 worktrees: re-meça antes de afirmar. Para auditar assim, use `git log -G` (o `-S` conta ocorrências e é cego a mudança só de VALOR) e exija o `✓` POSITIVO: "reprovou" e "recusou medir" dão o mesmo `exit 1`. A variante do `FONTE_SHA256` por **ledger guardado** foi desenhada, levada ao Codex e **perde para o fingerprint SERVIDO** que o `sonda:fingerprint` entregou: ledger fecha o furo no CI, servir fecha na PRODUÇÃO — regravar o hash deixa de ser exploit porque a resposta da sonda muda junto. Registro em `docs/historico/sonda-marcador-congelado.md`. **décima leva — os 4 steps restantes do `omie-cron-diario`** (2026-08-27): `omie-sync-pedidos-compra`, `omie-sync-ctes-recebidos`, `omie-sync-sku-items` e `omie-sync-vendas-items`, todas em `v1.0-eco-versao-passivo`. O critério aqui não é o efeito (os cinco steps escrevem money-path) — é que o deploy delas era **inverificável**: sem `versao.ts`, sem sonda e com o corpo de resposta byte-idêntico antes e depois de uma fatia. Medido no #2031 (coleira de RELÓGIO no `omieCall` dos 5 steps): só o 5º (`omie-sync-nfes-recebidas`, o único com sensor) se provou em prod; os outros quatro ficaram como INFERÊNCIA — e o sintoma que a coleira corrige (request pendurado) é indistinguível de "o Omie estava lento" quando não se sabe qual bundle está no ar. ⚠️ Sondar bundle PRÉ-sensor nas quatro é **caro**: nenhuma roteia por `action`, então o corpo desconhecido cai nos defaults e a varredura roda inteira. É exatamente por isso que elas vieram com o eco PASSIVO do bullet abaixo.
+
+- **11ª leva — as 5 de efeito FORA do nosso banco que estavam na CLASSE CEGA do Passo 3** (2026-09-05): `whatsapp-send`, `whatsapp-send-template` (template é TARIFADO), `enviar-push`, `nvoip-calls` (origina LIGAÇÃO) e `dispatch-notifications` (e-mail pelo Gmail + evento no Calendar). Todas em `v1.0-sensor-inicial`; o mapa vai de 40 para 45. O critério da escolha é o de sempre (#1753, efeito que rollback nenhum recolhe), mas o motivo de ELAS terem aparecido é novo e vale a régua: **a união das duas vias de enumeração do `edges-pendentes.sh` deixava uma CLASSE fora — edge FORA do mapa que importa `_shared/`**. Medido sobre `origin/main`: 95 pastas com `index.ts`, 81 importam `_shared/`, 40 no mapa ⇒ **41 cegas**, e na janela 21/08→05/09 duas foram afetadas de fato (`visit-score-recalc-client` por `_shared/leitura-critica.ts`, e `elevenlabs-transcribe`). ⚠️ **Instrumentar as 41 seria o conserto ERRADO** — fecha os casos e não a classe, e como entrar no mapa só vira evidência positiva DEPOIS do deploy manual, uma leva de 41 produziria 41 deploys e 41 chips, exatamente a enxurrada que aquele script existe para cortar. O conserto da classe é a **via (c)** (`scripts/edges-afetadas.ts`): afetada = algum arquivo do fecho transitivo aparece no `git diff`, com universo = toda pasta com `index.ts`, no mapa ou fora. Não toca produção e erra para cima. → `docs/historico/uniao-de-vias-cegas-nao-e-cobertura.md`
+- **12ª leva — as 6 do SYNC OMIE que escrevem no money-path do NOSSO banco e também estavam na CLASSE CEGA** (2026-09-05): `omie-sync` (roteia por `action` e escreve dos DOIS lados — `IncluirOS`/`AlterarOS`/`ExcluirOS`/`IncluirCliente` no ERP mais `orders`/`omie_ordens_servico`/`loyalty_points`/carteira aqui), `omie-malha-sync` (reescreve `pcp_malha_staging`, de onde sai a necessidade de compra), `omie-nfe-recebimento-sync` (insere `nfe_recebimentos` e, em escrita SEPARADA, `nfe_recebimento_itens` — e o guard de duplicata faz a retentativa PULAR a NF que ficou só com cabeçalho, em vez de consertá-la), `omie-sync-metadados` (reescreve `omie_products` das duas contas e CARIMBA o frescor em `sync_state` — run parcial apaga o sinal de que foi parcial, igual à `omie-sync-estoque`), `omie-webhook` (grava `omie_webhook_events` e despacha o processamento em `waitUntil`) e `omie-aplicar-parametros` (`AlterarProduto` — escrita no ERP, não aqui). Todas em `v1.0-sensor-inicial`. **Num segundo PR, o lado PEDIDO/COMPRA da mesma classe:** `process-recurring-orders` (insere `orders` de verdade e AVANÇA o `next_order_date` — o run legítimo do dia seguinte PULA a data que a sonda consumiu), `pedido-programado-extrair` (paga token da Anthropic e faz delete+insert em `pedidos_programados_itens`) e `cmc-snapshot-backfill` (reescreve `cmc_snapshot`, a base de custo do motor de reposição e do DRE). Mapa: 45 → 51 → **54**. Foram DOIS PRs de propósito — 9 deploys manuais numa tacada é o que faz a fila de deploy virar pendência esquecida. ⚠️ E foi aqui que se descobriu que a lista `EDGES` do gate de contrato também era um universo OPT-IN: as 5 da 11ª leva estavam instrumentadas e FORA dela, logo sem gate de FORMA nenhum, com `sonda:fingerprint` dizendo 45/45 e o contrato dizendo 40/40 ao mesmo tempo. O contrato passou a exigir que `EDGES` cubra toda pasta com `versao.ts`, comparando contra a ÁRVORE. → `docs/historico/verificar-sonda-versao.md` §15 ⚠️ Duas entram com forma própria: a `omie-webhook` é a gêmea estrutural da `omie-nfe-webhook` e precisa de **gate PRÓPRIO** (o gate dela é `x-webhook-secret`, que o SQL Editor não emite) **e** de linha em `ANCORA_CLIENT` — o client dela nasce no TOPO do módulo, então `createClient(` não aparece no trecho do handler e o gate de posição cairia no ramo "controle positivo vazio"; a âncora honesta é o primeiro USO (`registrarEvento`). E na `omie-malha-sync` há **colisão de nomes que não é a mesma coisa**: o `action:"probe"` DELA inspeciona a forma do payload do Omie (read-only); a sonda de versão decide pelo campo `probe` do corpo. Um não substitui o outro.
 
 - **Efeito irreversível não é a única indicação — "não existe caminho de prova" também é.** As duas edges do #1520 entraram por este segundo motivo: o efeito é caro-mas-reversível (token do modelo, plano regravável), só que elas são chamadas pelo **BROWSER** e por isso não deixam rastro em `net._http_response` nem linha em `cron.job_run_details` — o par que torna uma edge de cron auditável de fora. Quando a pergunta "qual bundle está no ar?" não tem NENHUMA resposta possível, a sonda é o sensor, independentemente de o efeito ser reversível.
 
@@ -105,6 +116,9 @@ Canária prova **comportamento** com fixture; a **sonda** prova só **qual bundl
 - **A pergunta que ela responde** é "está no ar?", em 1 request, sem custo: responde ANTES do `createClient`, de toda query e de toda chamada externa. Com `x-cron-secret` o gate de auth decide por comparação de env pura ⇒ IO-free de ponta a ponta.
 - **A sonda também responde `fonte` — fingerprint da FONTE da edge (#1998).** SHA-256 sobre o fecho transitivo dos imports LOCAIS a partir do `index.ts`, **`_shared/` incluso**, gerado por `bun run sonda:fingerprint -- --write` e servido por `criarRespostaSonda`. Ele cobre o que o `versao` não alcança: mudança que chega inteira por `_shared/` não move o marcador humano, e o gate `sonda:bump` deixa `_shared/` de fora por medição (~12 bumps à mão por PR). Ler os dois: `versao` diz **o que** mudou (slug humano), `fonte` diz **que** mudou (derivado, sem depender de disciplina). `fonte` diferente do mapa da `main` ⇒ o bundle no ar foi buildado de outra fonte. ⚠️ É fingerprint da **FONTE**, não hash do bundle — não há `deno.lock` versionado e há range aberto (`npm:@supabase/supabase-js@2`), então a mesma fonte pode resolver dependência externa diferente; e ele **não prova atomicidade** do deploy manual.
 - ✅ **E ele rodou PONTA-A-PONTA em prod pela primeira vez em 2026-08-25**, na `carteira-rebuild` (instrumentada no #2009), logo após o deploy manual dela: `status_code=200`, `eco_probe=true`, `versao=v1.0-sensor-inicial` e `fonte=8d2589d0…986eb78a` — **idêntico** ao que `_shared/sonda-fingerprints.ts` guarda para ela na `main`. `versao` + `eco_probe` sozinhos só provariam que ALGUM bundle com sonda subiu; é o **`fonte` bater** que prova que o código servido hasheia o **grafo transitivo inteiro** igual à `main` — ou seja, **que o Lovable deployou VERBATIM**, a dúvida que a Lei de Ferro #3 da skill `lovable-deploy-verify` existe para cobrir e que até aqui ninguém conseguia responder. ⚠️ Prova a **FONTE, não o artefato final** (o range aberto do bullet acima continua valendo) — por isso o campo se chama `fonte` e não `bundle`.
+- ⚠️ **Resposta de sonda COM eco (`probe`+`versao`) e SEM `fonte` é prova POSITIVA de bundle anterior ao #1998 — nunca "não observei nada".** A leitura que filtra as respostas por `content ? 'fonte'` **antes** de classificar descarta exatamente essa classe e a edge cai no ramo de ausência de dado. Medido em 2026-09-05 (request_ids 69305–69314): **7 das 40** edges do mapa responderam 200 assim, e o Passo 3 do `/fecho` imprimiu "nenhuma sonda em 6 hours" para as 7 — mandando investigar o SENSOR quando o defeito era **deploy pendente**. Se a edge está no mapa, a main serve `fonte`; o ar não servir ⇒ o ar não é a main. Corrigido em `.claude/skills/fecho/scripts/edges-pendentes.sh` (ramo `PRE_SONDA_FONTE`); o gêmeo do #2148 (filtro `"probe"` perdendo o eco passivo) é o mesmo defeito no sinal oposto → `docs/historico/ausencia-fabricada-por-filtro-de-forma.md`.
+- ⚠️ **Um degrau ANTES: resposta de sonda SEM eco de `edge` EXISTE e não é atribuível — e isso também não é "não observei nada".** O eco do slug só nasceu no **#1789**; bundle anterior responde `{ok,probe,versao}` e mais nada, então toda leitura que casa por `content->>'edge'` (o `/fecho` e o `sonda:sql` sem colagem) fica cega para ele. Medido 2026-09-05 (request_ids 69377–69381): das 5 edges sondadas, só as 2 que ecoam `edge` saíram `PRE_SONDA_FONTE`; as 3 restantes saíram "nenhuma sonda em 6 hours" — pendência PROVADA virando ausência de dado, o **mesmo** erro da linha acima uma geração de campo atrás. **A identidade não se presume:** `net.http_request_queue` é a única tabela do pg_net que guarda a URL e é APAGADA quando a resposta chega (conferido no mesmo dia — a fila só tinha os ids em voo), então o `request_id` do disparo é o **único vínculo determinístico** que sobrevive. Daí o `--request-ids` do `edges-pendentes.sh` e o `ids` do `sonda:sql` — com os 5 ids colados, as 5 edges saíram `PRE_SONDA_FONTE`. Sem eles a saída diz `SONDA_ANONIMA` e **conta** quantas anônimas há, em vez de alegar que ninguém sondou; o veredito segue INDETERMINADO (chip), o que muda é o diagnóstico não mentir.
+- ⚠️ **`fonte` AUSENTE ≠ `fonte` valendo `nao-mapeada` — e um `COALESCE` fundindo os dois nomeia a causa ERRADA.** O `sonda:sql` respondia `DEPLOY PARCIAL — subiu index.ts+versao.ts, mas _shared/sonda-fingerprints.ts NAO` para as 5 respostas acima, em que não houve deploy parcial nenhum: é bundle inteiro anterior ao #1998. O desfecho prático coincide (redeployar), mas quem lê vai investigar um prompt de deploy que nomeou poucos arquivos — e ele não existiu. **Campo ausente ⇒ `PRE_SONDA_FONTE`** (o mesmo nome que o `edges-pendentes.sh` já usava: dois nomes para um estado é como o operador conclui que são dois problemas). **Campo presente valendo `nao-mapeada` ⇒ `DEPLOY PARCIAL` de verdade** — o bundle conhece o campo (logo é ≥ #1998) e o mapa que subiu não tem esta edge. A separação é semântica de ordem de `WHEN` e de `?` sobre jsonb: só aparece EXECUTANDO, e é o que o eval `edges-pendentes-sql-eval.sh` (+ os 2 cenários novos do `sonda-veredito-401-eval.sh`) guarda no CI.
 - ⚠️ **Verificar exige o eco `probe:true` E `versao`** — é a armadilha 1 acima vista de outro ângulo: bundle ANTERIOR à sonda **ignora o parâmetro e roda o FLUXO REAL**. Resposta sem esses campos = bundle velho **e ele executou o efeito caro** (PO no Omie, pedido no portal do fornecedor). **Sonde só depois de confirmar o deploy** — ou, quando a edge aceitar, com parâmetro que torne o fluxo real um no-op (no `disparar-pedidos-aprovados`, `"data_ciclo":"1970-01-01"`: nada casa no `.eq`/`.lte`).
 - **`probe` com valor não reconhecido é 400 fail-closed**, nunca execução por omissão — e grafias que o SQL Editor produz (`"true"`, `"1"`, caixa/espaço) contam como sonda: um `=== true` cru mandaria `{"probe":"true"}` para o efeito irreversível.
 - **Onde a sonda entra quando o gate da edge não aceita `x-cron-secret`:** nas duas de NF-e o gate é JWT de usuário staff, e é pelo SQL Editor (cron-secret) que a sonda é invocada — atrás do gate ela seria inalcançável justamente para quem precisa dela. Nelas a sonda responde ANTES desse gate, com gate PRÓPRIO (`authorizeCronOrStaff`): nenhum caminho fica sem auth, o fluxo real continua exigindo os dois, e o custo só é pago quando `probe` vem no corpo. Ao instrumentar uma edge nova, cheque **qual** gate ela tem antes de copiar o padrão. O #1767 acrescentou dois formatos de gate que o padrão original não previa: a `omie-nfe-webhook` usa `x-webhook-secret` (segredo compartilhado com o Omie, que não emite JWT), e a `omie-cliente` **não tem um gate só** — ele é POR AÇÃO dentro do switch, e `buscar_por_documento` é PÚBLICA (pré-cadastro, só rate-limit por IP). Nessa última, deixar a sonda seguir o gate da ação a tornaria ou inalcançável (nas de staff) ou **pública** (na de pré-cadastro) — as duas erradas; o gate próprio evita os dois. Regra prática: se a edge tem mais de um gate, o gate da sonda é sempre o dela, nunca "o da ação que calhar".
@@ -139,40 +153,115 @@ iguais, a viagem é inverificável e o bump vira pré-requisito, não consequên
 #1889 as três falhavam nisso, uma delas por canária NÃO-VERSIONADA (a ⚠️ #2 acima).
 → `docs/historico/deploy-no-op-por-desenho.md`
 
-**Como o founder invoca uma probe sem terminal** (ele não tem acesso de shell ao backend): cole no **SQL Editor do Lovable** — o segredo sai do vault, nunca do chat — e leia a resposta em `net._http_response`. Mesmo mecanismo do cron, com `timeout_milliseconds` EXPLÍCITO (default 5s mata silencioso). Trocando `action`/`url`, serve para as outras probes:
+**Como o founder invoca uma probe sem terminal** (ele não tem acesso de shell ao backend): cole no **SQL Editor do Lovable** — o segredo sai do vault, nunca do chat. Trocando `url`/`action`, serve para as outras probes.
+
+⚠️ **São DOIS blocos, e com o que está instalado fundi-los é IMPOSSÍVEL — a limitação é estrutural, não ergonômica.** O `net.http_post` só **enfileira** (`INSERT INTO net.http_request_queue … RETURNING id`); quem despacha é um **worker de fundo, em outra conexão**, que enxerga apenas linha **COMMITADA**. E o SQL Editor roda o que você cola como **UMA transação** (provado neste repo: um erro de sintaxe faz rollback do batch inteiro). Logo, dentro do mesmo bloco a requisição **ainda não saiu**, e nenhum truque contorna: `DO … PERFORM pg_sleep(20)` dorme ANTES do envio e lê zero linhas; temp table no mesmo batch idem (e num batch novo ela já morreu com a sessão); `\gset` é sintaxe do **cliente psql**, que não existe num editor web. Confirmado ao vivo 2026-08-24 — batch abortado ⇒ `http_request_queue` vazia e zero sondas disparadas. O que resolveria de fato é extensão: `http` (pgsql-http, síncrono, resposta na MESMA query) ou `dblink` (commit autônomo) — as duas **disponíveis e NÃO instaladas** neste banco, e instalar é mudança de banco em prod money-path, fora do escopo de uma receita de verificação.
+
+**O que muda então: o `request_id` nunca passa pela mão do founder.** O passo 1 dispara **e escreve o passo 2 já pronto, com o id embutido**, numa célula única — copia-se a célula, não se lê nem se redigita número nenhum. Foi exatamente esse pulo humano que fabricou veredito em 2026-08-24 → [`sonda-request-id-a-mao.md`](../historico/sonda-request-id-a-mao.md).
 
 ```sql
-SELECT net.http_post(
-  url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-financeiro',
-  headers := jsonb_build_object('Content-Type','application/json',
-    'x-cron-secret',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
-  body := jsonb_build_object('action','paginacao_probe'),
-  timeout_milliseconds := 20000) AS request_id;
--- ANOTE o request_id devolvido acima e TROQUE o marcador abaixo por ele. ~5s depois, na MESMA aba:
--- ⚠️ COALESCE: a `omie-analytics-sync` responde `{success,data:{...}}` (envelope de action), as
--- demais respondem no TOPO. Sem descer no `data`, a leitura devolve NULL nela — e NULL lido como
--- "não tem canária" é ausência de dado virando veredito. O `corpo` abaixo serve as duas formas.
-WITH r AS (
-  SELECT status_code,
-         COALESCE(content::jsonb->'data', content::jsonb) AS corpo
-  FROM net._http_response WHERE id = COLE_AQUI_O_REQUEST_ID  -- NÃO `ORDER BY id DESC LIMIT 1`, NÃO um nº de exemplo
+-- PASSO 1 — dispara a sonda E ESCREVE O PASSO 2. Copie inteira a célula devolvida.
+--   Para outra probe, troque em 3 lugares: edge_esperada, a url e o corpo (action/canary).
+WITH disparo AS (
+  SELECT 'omie-financeiro'::text AS edge_esperada,
+         net.http_post(
+           url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-financeiro',
+           headers := jsonb_build_object('Content-Type','application/json',
+             'x-cron-secret',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
+           body := jsonb_build_object('action','paginacao_probe'),
+           timeout_milliseconds := 20000) AS request_id  -- EXPLÍCITO: o default de 5s mata silencioso
 )
-SELECT status_code, corpo->'canary' AS canary, corpo->>'contrato' AS contrato, corpo->'ok' AS ok,
+SELECT format($f$
+-- PASSO 2 — espere ~5s e rode ISTO. O id já veio embutido: não há campo a preencher.
+WITH alvo AS (SELECT %1$s::bigint AS id, %2$L::text AS edge_esperada),
+     r AS (SELECT a.id, a.edge_esperada, h.status_code,
+                  -- COALESCE: a `omie-analytics-sync` responde {success,data:{…}}; as demais no TOPO.
+                  COALESCE(content::jsonb->'data', content::jsonb) AS corpo
+           FROM alvo a LEFT JOIN net._http_response h ON h.id = a.id)  -- LEFT: devolve 1 linha SEMPRE
+SELECT id AS request_id, edge_esperada, status_code,
+       corpo->>'edge' AS edge, corpo->>'versao' AS versao, corpo->>'contrato' AS contrato,
+       corpo->'probe' AS probe, corpo->'canary' AS canary, corpo->'ok' AS ok,
        (SELECT jsonb_agg(c->'caso') FROM jsonb_array_elements(corpo->'casos') c
-        WHERE (c->>'ok')::bool IS NOT TRUE) AS casos_vermelhos
+         WHERE (c->>'ok')::bool IS NOT TRUE) AS casos_vermelhos,
+       CASE WHEN corpo IS NULL                  THEN 'AGUARDE - sem resposta ainda (ou expirada: retencao ~6h)'
+            WHEN corpo->>'edge' = edge_esperada THEN 'SONDA - leia versao/contrato ao lado'
+            WHEN corpo->>'edge' IS NOT NULL     THEN 'ID TROCADO A MAO - respondeu OUTRA edge'
+            WHEN status_code >= 400             THEN 'BUNDLE VELHO recusou na borda - nada executou'
+            ELSE 'BUNDLE PRE-SENSOR - ignorou o probe e RODOU o fluxo real' END AS leitura
 FROM r;
+$f$, request_id, edge_esperada) AS passo_2_copie_esta_celula
+FROM disparo;
 ```
 
-⚠️ **`ORDER BY id DESC LIMIT 1` fabrica veredito NEGATIVO — leia pelo `request_id`.** Este banco recebe resposta de cron o tempo todo (só o watchdog responde a cada ~5 min, e há timestamps com DUAS respostas no mesmo microssegundo), então "a última linha" quase nunca é a sua: entre disparar e ler, um tick alheio entra na frente. Mordido ao vivo em 2026-08-23, com a receita desta seção: a sonda da `recommend` respondeu `{"ok":true,"probe":true,"versao":"v1.5-…","edge":"recommend"}` no id 58859, o `SELECT` pegou o 58858 (`{"modo":"watchdog",…}`, 41s antes) e devolveu `edge NULL, versao NULL, status_code 200` — que é **exatamente a assinatura de "bundle pré-sensor ignorou o probe e rodou o fluxo real"** (armadilha 1 abaixo). Um deploy correto lido como deploy ausente, e o desfecho seguinte é redeployar uma edge money-path à toa. O `id` de `net._http_response` **é** o `request_id` devolvido pelo `net.http_post` — filtrar por ele é determinístico e não custa nada. Sem o número em mãos, o desempate possível é `WHERE content::jsonb->>'edge' = '<nome-da-edge>'` (o campo nasceu para isso), mas ele **degrada para zero linhas** justamente no caso que mais importa — bundle velho não emite `edge` —, e zero linhas é indistinguível de "a resposta ainda não chegou": aí confirme com `SELECT max(id) FROM net._http_response` antes de concluir.
+**Por que `edge`/`versao`/`contrato` estão na projeção — e por que o `CASE` só é honesto com o id vindo do banco.** Resposta de cron **não emite `edge`**: medido nesta tabela em 2026-08-24, **159 respostas em 355 min (uma a cada ~2,2 min) e ZERO com o campo**. Na receita antiga, `edge NULL` significava DUAS coisas — "bundle pré-sensor" **ou** "li a linha de outro emissor" — e a segunda, que era a que acontecia, não tinha como se denunciar. Carregando o id por dentro do banco, a linha lida **é** a do meu request por construção: `edge NULL` volta a significar uma coisa só, e o ramo `ID TROCADO A MAO` só dispara se alguém editar o número à mão. A proteção aqui é **estrutural** (o humano saiu do caminho do id), não um check na saída — nenhuma coluna consegue acusar "você leu a linha errada" quando a linha errada é um cron mudo.
 
-⚠️ **Número de EXEMPLO no `WHERE id =` erra CALADO — é PIOR que o placeholder.** Variante da anterior, mordida 2026-08-23/24 na MESMA verificação, e é a Lei de Ferro #5 (`zero placeholders`) pelo avesso: o `<VALOR>` não substituído falha **ruidoso** — `<nome-da-edge>` deixado na URL rendeu dois `404 {"code":"NOT_FOUND"}` do **gateway** (ids 58965/58966): 2 chamadas perdidas e **zero veredito falso**. Já a "correção" que trocou o marcador por um id PLAUSÍVEL (`WHERE id = 58967`) não falhou — devolveu uma linha REAL de outro emissor. O probe era o **58977** (`{"ok":true,"probe":true,"versao":"v1.0-prompt-invertido-cacheado","edge":"analyze-unified-order"}`, verde); o 58967 era o tick do watchdog de 01:20:00Z, e `{"modo":"watchdog","conciliacao":0,"duracao_ms":193}` projeta `edge NULL, status_code 200, versao NULL` — **byte a byte** a assinatura de bundle pré-sensor. Deploy CORRETO lido como ausente, mesmo desfecho da ⚠️ acima (redeployar edge money-path à toa), e **nada na saída denuncia** que se leu o alvo errado. Não é azar: medido nesta tabela em 2026-08-24, **198 respostas em 355 min — uma nova a cada ~1,8 min, e ZERO delas emitindo `edge`** ⇒ id vizinho é tick alheio por padrão. **Regra: em receita de verificação, o campo que o founder substitui NUNCA carrega valor de EXEMPLO** — deixe-o sintaticamente inválido de propósito (`COLE_AQUI_O_REQUEST_ID` devolve `ERROR: column "cole_aqui_o_request_id" does not exist`, que ecoa a própria instrução), ou leia pelo `edge` do corpo com o guard de zero-linhas acima. Vale para TODA receita, não só esta: `id`, timestamp, ref de projeto, nº de PR. ⚠️ **"Inválido" é a regra do bloco que só LÊ** — no bloco que DISPARA (lote, abaixo) o placeholder é VÁLIDO e a trava real vai no `CASE`: lá o inválido aborta o batch inteiro por rollback, o que protege por ACIDENTE e mata a leitura junto. O eixo não é a sintaxe, é o que o campo errado CUSTA: numa leitura, ler a linha de outro emissor; num disparo, executar o efeito.
+⚠️ **Por que o bloco acima carrega o id por dentro: `ORDER BY id DESC LIMIT 1` fabrica veredito NEGATIVO.** As três ⚠️ desta subseção são o histórico da receita de DOIS passos com o número copiado à mão — hoje o passo 2 nasce com o id embutido e nenhuma delas é alcançável pelo caminho principal. Continuam valendo para o **fallback manual** (célula perdida, sonda disparada por outra via) e para qualquer receita nova. Este banco recebe resposta de cron o tempo todo (só o watchdog responde a cada ~5 min, e há timestamps com DUAS respostas no mesmo microssegundo), então "a última linha" quase nunca é a sua: entre disparar e ler, um tick alheio entra na frente. Mordido ao vivo em 2026-08-23, com a receita desta seção: a sonda da `recommend` respondeu `{"ok":true,"probe":true,"versao":"v1.5-…","edge":"recommend"}` no id 58859, o `SELECT` pegou o 58858 (`{"modo":"watchdog",…}`, 41s antes) e devolveu `edge NULL, versao NULL, status_code 200` — que é **exatamente a assinatura de "bundle pré-sensor ignorou o probe e rodou o fluxo real"** (armadilha 1 abaixo). Um deploy correto lido como deploy ausente, e o desfecho seguinte é redeployar uma edge money-path à toa. O `id` de `net._http_response` **é** o `request_id` devolvido pelo `net.http_post` — filtrar por ele é determinístico e não custa nada. Sem o número em mãos, o desempate possível é `WHERE content::jsonb->>'edge' = '<nome-da-edge>'` (o campo nasceu para isso), mas ele **degrada para zero linhas** justamente no caso que mais importa — bundle velho não emite `edge` —, e zero linhas é indistinguível de "a resposta ainda não chegou": aí confirme com `SELECT max(id) FROM net._http_response` antes de concluir.
+
+⚠️ **Número de EXEMPLO no `WHERE id =` erra CALADO — é PIOR que o placeholder.** Variante da anterior, mordida 2026-08-23/24 na MESMA verificação, e é a Lei de Ferro #5 (`zero placeholders`) pelo avesso: o `<VALOR>` não substituído falha **ruidoso** — `<nome-da-edge>` deixado na URL rendeu dois `404 {"code":"NOT_FOUND"}` do **gateway** (ids 58965/58966): 2 chamadas perdidas e **zero veredito falso**. Já a "correção" que trocou o marcador por um id PLAUSÍVEL (`WHERE id = 58967`) não falhou — devolveu uma linha REAL de outro emissor. O probe era o **58977** (`{"ok":true,"probe":true,"versao":"v1.0-prompt-invertido-cacheado","edge":"analyze-unified-order"}`, verde); o 58967 era o tick do watchdog de 01:20:00Z, e `{"modo":"watchdog","conciliacao":0,"duracao_ms":193}` projeta `edge NULL, status_code 200, versao NULL` — **byte a byte** a assinatura de bundle pré-sensor. Deploy CORRETO lido como ausente, mesmo desfecho da ⚠️ acima (redeployar edge money-path à toa), e **nada na saída denuncia** que se leu o alvo errado. Não é azar: medido nesta tabela em 2026-08-24, **198 respostas em 355 min — uma nova a cada ~1,8 min, e ZERO delas emitindo `edge`** ⇒ id vizinho é tick alheio por padrão. **Regra: em receita de verificação, o campo que o founder substitui NUNCA carrega valor de EXEMPLO** — deixe-o sintaticamente inválido de propósito (`COLE_AQUI_O_REQUEST_ID` devolve `ERROR: column "cole_aqui_o_request_id" does not exist`, que ecoa a própria instrução), ou leia pelo `edge` do corpo com o guard de zero-linhas acima. Vale para TODA receita, não só esta: `id`, timestamp, ref de projeto, nº de PR. ⚠️ **E a lição mais forte veio depois (2026-08-24): campo que o founder preenche à mão é campo que se deve ELIMINAR, não deixar inválido.** Placeholder inválido protege contra o esquecimento, nunca contra a substituição ERRADA — o número plausível continua entrando. Quando o valor pode ser carregado pelo próprio banco (aqui, o `format()` que escreve o passo 2), carregue: some-se a classe inteira em vez de sinalizá-la. → [`sonda-request-id-a-mao.md`](../historico/sonda-request-id-a-mao.md) ⚠️ **"Inválido" é a regra do bloco que só LÊ** — no bloco que DISPARA (lote, abaixo) o placeholder é VÁLIDO e a trava real vai no `CASE`: lá o inválido aborta o batch inteiro por rollback, o que protege por ACIDENTE e mata a leitura junto. O eixo não é a sintaxe, é o que o campo errado CUSTA: numa leitura, ler a linha de outro emissor; num disparo, executar o efeito.
+
+⚠️ **Edge NOVA nasce fora do radar, e nenhum gate de sonda reclama.** O universo de `sonda:bump` e
+`sonda:fingerprint` são as edges **instrumentadas**, e o denominador de `pendencias:deploy` sai do
+**mapa commitado** — quem nunca entrou na lista não reprova, some. A `analytics-outbox-drain` (#2035)
+passou assim e o deploy dela só se provou por arqueologia (N1 + uma string de erro que estava no corpo
+por acaso). Ao criar edge com cron próprio, a régua barata é conferir se ela **aparece** em
+`bun run pendencias:deploy`; e se ela é chamada por `net.http_post`, ecoe `versao`/`edge`/`fonte` em
+TODA resposta — o corpo já cai em `net._http_response`, e o N3 passivo sai de graça. →
+`docs/historico/verificar-sonda-versao.md` §14
 
 #### Sondar VÁRIAS edges numa tacada (leva inteira) — e as 3 armadilhas do SQL Editor
 
 Uma leva tem 5–10 edges, e repetir o par disparo/leitura por edge convida ao erro de trocar o `request_id`
-entre uma e outra. O padrão é disparar todas com `net.http_post` sobre um `VALUES` de nomes, agregar com
-`jsonb_object_agg(edge, request_id)::text` numa **célula única** para copiar, e no passo 2 reidratar com
-`jsonb_each_text('<colado>'::jsonb)`. Medido 2026-08-24 sondando a oitava leva (#1937).
+entre uma e outra. O padrão é disparar todas com `net.http_post` sobre um `VALUES` de nomes e agregar o par com
+`jsonb_object_agg(edge, request_id)::text` — e, desde 2026-09-06, **esse agregado não é mais ENTREGUE**: ele é
+interpolado por `format()` no texto do passo seguinte, que sai pronto numa **célula única**. Copia-se a célula,
+não o número. É a mesma correção do bloco de UMA edge acima, pela mesma razão
+([sonda-request-id-a-mao.md](../historico/sonda-request-id-a-mao.md)), e os DOIS blocos continuam dois pela
+mesma imposição do `pg_net`: o `http_post` só ENFILEIRA e o worker de fundo só enxerga linha COMMITADA,
+enquanto o SQL Editor roda o batch inteiro como UMA transação. Medido 2026-08-24 sondando a oitava leva
+(#1937); `format()` provado contra prod em 2026-09-06 (#2278).
+
+⚠️ **A leitura NÃO pede mais o `request_id` colado — ela acha a linha pelo ECO do slug.** A resposta da
+sonda carrega o próprio nome no corpo (`criarRespostaSonda` devolve `{ok, probe, versao, edge, fonte}`),
+então o passo de leitura procura, dentro de uma janela curta, a resposta que diz ser daquela edge. A
+colagem à mão era um passo que simplesmente **não acontece**: em 2026-08-30, verificando
+`generate-bundle-argument`, o disparo tinha funcionado (4 respostas HTTP 200 em `net._http_response`) e o
+veredito saiu `SEM ID — esta edge não saiu no JSON colado (bloco errado, ou trava fechada)`. Honesto, e
+ainda assim um round-trip inteiro com o founder por um deploy que já estava no ar. O `jsonb_each_text('{}')` VAZIO
+sobrevive no bloco standalone do `--so-leitura` — o caminho do eco, que o agente roda sozinho. No passo que o
+disparo ESCREVE, ele já vem preenchido, e é por isso que esse passo é estritamente melhor: o que o eco não
+alcança (bundle PRE-SENSOR e recusa HTTP, que respondem sem eco do slug) tem id e sai DETERMINADO — em vez de
+cair no INDETERMINADO junto com "não disparou" (ver os dois guards abaixo).
+
+⚠️ **O casamento exige `probe = 'true'`, não só o slug — senão ele lê a linha do CRON.** Medido em prod
+2026-08-30: a `analytics-outbox-drain` gravou **72** respostas em 6h com `{"edge":…,"versao":…}` e **sem**
+`probe` (é o cron dela, de 5 em 5 minutos), contra 5 respostas de sonda. Casando só pelo slug, o `LIMIT 1`
+escolhe a linha do cron, cujo `probe` é nulo, e o veredito cai no `ELSE`: **"BUNDLE VELHO" citando a versão
+CERTA** — falso NEGATIVO fabricado a partir da linha de outra execução, e o desfecho é redeployar à toa.
+Provado com as duas consultas lado a lado: `só-slug` devolveu a resposta 64047 (`probe` ausente),
+`slug+probe` devolveu zero. E o `ORDER BY` precisa do desempate por `id`: em prod as respostas 64031 e
+64032 têm `created` **idêntico ao microssegundo**, então `ORDER BY created DESC` sozinho deixa a escolha
+para o plano, não para o dado.
+
+⚠️ **Janela curta é obrigatória, e ausência de linha é `INDETERMINADO` — nunca "bundle velho".** Sem a
+janela, uma sondagem ANTIGA da mesma edge (o `pg_net.ttl` guarda 6h) seria lida como veredito de AGORA —
+o guard do #2079. Padrão 20 min, teto 120 (`--janela=<min>`); querer a janela inteira do TTL é querer a
+irmã PASSIVA, `bun run pendencias:deploy`, que já trata "não observada" como ausência de dado. E o que o
+eco **não** alcança: bundle PRÉ-SENSOR (HTTP 200 rodando o fluxo real) e recusa HTTP (>=400) respondem
+**sem** eco do slug, então caem em `INDETERMINADO` junto com "não disparou" e "ainda não chegou". O ramo
+nomeia as três causas em vez de escolher uma — contar as respostas sem eco na janela **não** as separa,
+porque a janela é cheia de cron alheio. Quem separa é o `request_id` do disparo, e é só para isso que a
+colagem continua existindo.
+
+**A divisão de trabalho que sai daí — o founder dispara, o agente lê.** Só o disparo precisa dele: lê
+`vault.decrypted_secrets` e faz INSERT via `net.http_post`, e o wrapper read-only recusa os dois
+(`permission denied for schema vault`, `cannot execute INSERT in a read-only transaction` — provado
+2026-08-30). A leitura é `SELECT` em `net._http_response`, que o `psql-ro` serve. Os recortes são flags,
+e a numeração dos passos é **absoluta** nos dois lados, para founder e agente nomearem a mesma coisa:
+
+```bash
+bun run sonda:sql --so-disparo <edge>…                        # cole ISTO no SQL Editor do Lovable
+bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro   # e leia o veredito você mesmo
+```
 
 **Não digite esse SQL: gere-o.** `bun run sonda:sql <edge>… [--caro=<edge>,…]` lê o `VERSAO` de cada
 `supabase/functions/<edge>/versao.ts` **e o fingerprint de `_shared/sonda-fingerprints.ts`**, e emite
@@ -182,6 +271,36 @@ lista `esperado(edge, versao_esperada, fonte_esperada)` transcrita na unha é o 
 desfecho é redeployar edge de money-path à toa), ou o inverso. Edge sem `versao.ts` **ou fora do
 mapa de fingerprints** derruba a geração inteira (nada de SQL parcial em silêncio), e `--caro` que
 não casa um nome da leva também — o typo deixaria a edge cara no bloco SEM trava.
+
+⚠️ **E "o repo" pode ser um checkout VELHO — o gerador confere isso ANTES de emitir SQL.** Ler a
+fonte da verdade do disco só é melhor que a memória do operador se o disco estiver na versão que a
+produção serve: o Lovable deploya a **`main`** (o mesmo eixo do #2123, que aqui o gerador não
+aplicava a si próprio). **Medido 2026-09-05:** worktree dois merges atrás emitiu
+`versao_esperada = v1.5-custo-portal-rpc-cas` para `enviar-pedido-portal-sayerlack`; a main já
+estava em `v1.7` (#2194/#2198) e a edge no ar respondeu `v1.7` ⇒ o veredito seria **"BUNDLE VELHO
+SERVINDO" numa edge recém-deployada** — falso NEGATIVO, e o desfecho é redeployar money-path à toa.
+Só não saiu errado porque o request tinha 37 min e o guard temporal do #2079 devolveu
+`INDETERMINADO` antes da comparação: **acidente, não desenho**. Hoje `sonda:sql` faz
+`git fetch origin main` e compara a fatia que vira o `esperado(...)` (o `versao.ts` de cada edge
+**pedida** + `_shared/sonda-fingerprints.ts`) contra `origin/main`; divergiu — ou não existe lá,
+que é bump ainda não mergeado — **aborta sem emitir SQL**, nomeando os arquivos e o
+`git fetch origin && git merge --ff-only origin/main`. O `fetch` é do script porque comparar contra
+a `origin/main` **em disco** é o mesmo defeito um nível acima (medido: fetch 0,9 s, `git show`
+0,03 s). Offline, `--sem-rede` pula **só o fetch** — a comparação continua, e o SQL sai com a idade
+do ref no topo. Detalhe e a decisão sobre "não consigo consultar":
+[sonda-le-worktree-defasado.md](../historico/sonda-le-worktree-defasado.md).
+
+**QUEM entra no `--caro` é MEDIDO, não presumido — o critério é o EFEITO, não a FORMA do handler.**
+Regra curta: edge que **não escreve nem chama serviço externo** no fluxo real é BARATA, e o pior
+caso de sondá-la com bundle pré-sensor é computar e devolver. O proxy "a edge despacha por
+`body.action`?" está **REPROVADO** — marcou `fin-valor-cockpit`, que não escreve nada, como cara
+(`ausente ≠ zero` aplicado à forma do handler: o `default:` que recusa prova que AQUELE caminho é
+inócuo, a ausência de dispatch não prova o contrário). O `grep` de triagem, as duas armadilhas que
+invertem a leitura (`fetch(` de GET de auth não é efeito; `.delete(` casa com `Set.delete` do JS) e
+o eixo reversibilidade/alcance ficam na **escada de edge** da skill `lovable-deploy-verify` —
+**cópia única de propósito**, porque só lá o critério é EXECUTADO pelo gate, que extrai o grep da
+própria skill e o roda contra as edges-exemplo
+(`.claude/skills/lovable-deploy-verify/evals/criterio-caro-eval.sh`).
 
 ⚠️ **O veredito julga o `fonte`, não só o `versao` — e o ramo `DEPLOY PARCIAL` vem ANTES do de
 confirmação.** O `versao` sai do `versao.ts` da PRÓPRIA edge: um deploy que suba `index.ts` +
@@ -194,7 +313,50 @@ manda olhar de novo. Testes: `scripts/sonda-versao-sql.test.ts` (as falsificaç�
 `versao.ts` e a entrada do mapa, e exigem que o valor velho suma do SQL) +
 `scripts/mutcheck.d/sonda-versao-sql.mut`, que no CI prova que a suíte **pega** a trava trocada por
 `WHERE`, o `LEFT JOIN` virado `JOIN`, o marcador/fingerprint hardcoded, o ramo `DEPLOY PARCIAL`
-neutralizado e o `AND fonte = fonte_esperada` dispensado do `DEPLOY CONFIRMADO`.
+neutralizado, o `AND fonte = fonte_esperada` dispensado do `DEPLOY CONFIRMADO` — e, desde a leitura sem
+colagem, o casamento sem `probe:true`, a janela alargada, o teto da janela removido, o `LIMIT 1` sem
+desempate e o `INDETERMINADO` trocado por veredito negativo.
+
+⚠️ **HTTP 401 é o ÚNICO 4xx ambíguo — tem ramo próprio, e o veredito determinado exige um controle
+de CREDENCIAL cruzado na mesma consulta.** Um 404 diz "não há edge servida nessa URL"; um 401 tem
+DUAS causas que o dado **não separa**: (a) bundle **pré-sonda** que ignorou o `{"probe":true}`, caiu
+no gate JWT e recusou, ou (b) **`CRON_SECRET` ausente/errado no vault**, com `authorizeCronOrStaff`
+recusando o header. Nos dois casos `versao` vem NULL e o status é 401. O ramo antigo (`versao IS NULL
+AND status_code >= 400 → 'BUNDLE VELHO … NADA executou'`) lia os dois como (a): **falso negativo
+confiante**, cujo desfecho é redeployar edge que já está no ar — `ausente ≠ zero` na dimensão
+CREDENCIAL, irmão exato do guard temporal do #2079 (`verify-edge-eco.sh`), onde tick pré-merge lido
+como pendência produzia o mesmo erro. Agora o bloco carrega o CTE `controle_credencial`: conta, em
+`net._http_response` e **excluindo a própria leva** (`NOT EXISTS`, porque `NOT IN` seria NULL-blind
+com a trava fechada), as respostas recentes de 6h — **≥10 2xx e ZERO 401** provam que o secret do
+vault está sendo aceito AGORA, e só então o 401 vira `'BUNDLE VELHO (pre-sonda)'`. Sem essa prova o
+veredito é **`INDETERMINADO`**, nunca "bundle velho": fail-CLOSED, como o
+`CONTROLE_CRUZADO_NAO_OBSERVADO` do `verify-edge-escrita.sh`. O piso não é `> 0` por **denominador**:
+com 1–2 respostas, "nenhum 401" não distingue secret bom de ninguém-bateu-na-porta. Nasceu de o
+desempate ter sido feito **à mão, fora da ferramenta**, ao verificar `generate-bundle-argument`
+(#2101) — ferramenta que depende de o operador lembrar é a armadilha da sentinela não-exclusiva.
+Provado **EXECUTANDO** em `.claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh`
+(Postgres efêmero, 8 cenários + 6 sabotagens): casar string ficaria verde justamente quando a ordem
+dos `WHEN` está errada, e `NULL > 0` não é falso — é NULL.
+
+⚠️ **O que esse controle NÃO fecha — e está escrito no próprio SQL:** ele é **populacional**, conclui
+"o secret está sendo aceito" a partir de tráfego que passou. Se o `CRON_SECRET` foi trocado **há
+poucos minutos** e **nenhum cron rodou desde a troca**, os 2xx da janela foram feitos com o secret
+ANTIGO e o controle avaliza indevidamente. O ramo **estreita** muito o erro (antes ele era
+incondicional), não o elimina; na próxima execução dos crons a recusa vira 401 e o controle se
+desqualifica sozinho. Regra prática: **se você acabou de mexer no vault, leia o veredito determinado
+como INDETERMINADO.**
+
+- ⚠️ **O JSON colado aqui era o análogo do `request_id` do bloco de cima — MIGRADO em 2026-09-06 (#2278).** O
+  passo 1 (e o 3) agora terminam em `format($sonda$…$sonda$, m.ids)`: devolvem o passo 2 (e o 4) já escrito, com o
+  mapa `edge→id` dentro, e nenhum identificador passa pela mão. **Mas o `LEFT JOIN` da bullet abaixo continua
+  obrigatório, e por um motivo que a migração NÃO cobre:** a célula é copiada por uma pessoa, e uma célula de
+  OUTRA leva (ou de outra sessão) tem mapa VÁLIDO com os nomes errados. Falsificado contra prod em 2026-09-06
+  trocando o mapa por `{"edge-de-outra-leva": 71275}`: a leitura devolveu **as 2 edges esperadas** com
+  `INDETERMINADO`, não zero linhas. O que a migração fecha é o dígito redigitado; o que o `LEFT JOIN` fecha é o
+  blob inteiro trocado — classes diferentes, guards diferentes. ⚠️ E `format()` obriga a **escapar `%` como
+  `%%`** no corpo embutido (senão `%` vira diretiva) e a conferir o dollar-quoting: o gerador escapa o corpo
+  ANTES de inserir o `%1$L` (na ordem inversa o próprio placeholder viraria `%%1$L`) e ABORTA se o texto contiver
+  a tag `$sonda$`, que encerraria a string no meio e emitiria um passo truncado.
 
 - ⚠️ **A trava do bloco perigoso tem de ser `CASE`, NÃO `WHERE`.** Quando parte da leva só pode ser sondada
   DEPOIS do deploy confirmado (bundle pré-sensor ignora o `probe` e dispara o run), a tentação é
@@ -206,6 +368,14 @@ neutralizado e o `AND fonte = fonte_esperada` dispensado do `DEPLOY CONFIRMADO`.
   é dependente de PLANO: na forma SIMPLES (projeção sem agregação) ele filtra antes e parece proteger —
   quem testar a trava assim lê "seguro" e leva para produção o bloco agregado, que é onde ela falha
   (4 formas medidas em `docs/historico/deploy-no-op-por-desenho.md`).
+- ⚠️ **Id que aponta para resposta que NÃO é sonda sai como "BUNDLE VELHO" com a versão CERTA.** Achado ao
+  falsificar a migração contra prod (2026-09-06): apontado para a resposta 71275 — o cron da
+  `analytics-outbox-drain`, que ecoa `edge`/`versao`/`fonte` e **não** ecoa `probe` —, o `CASE` caía no `ELSE` e
+  imprimia `BUNDLE VELHO — respondeu versao=v1.1-…` com versão e fonte IDÊNTICAS às esperadas. É o falso
+  NEGATIVO da armadilha do casamento só-por-slug, entrando pelo caminho dos `ids` (o `LATERAL` do eco já filtra
+  `probe = 'true'`; o `LEFT JOIN` pelo id não filtrava nada). O ramo `NAO E RESPOSTA DE SONDA` fecha isso, e vem
+  **antes** do `? 'fonte'`: um cron que ecoe `versao` sem `fonte` sairia como `PRE_SONDA_FONTE`, que nomeia
+  "bundle anterior ao #1998" — causa errada, mesma classe.
 - ⚠️ **A leitura tem de partir da lista canônica de edges, não dos ids.** Com `FROM ids JOIN esperado`, colar
   o JSON do bloco errado devolve **zero linhas** — e zero linhas lê-se como "nada a reportar", não como erro.
   Inverta (`FROM esperado LEFT JOIN ids`) e dê um ramo próprio ao id ausente: toda edge esperada aparece
@@ -216,7 +386,10 @@ neutralizado e o `AND fonte = fonte_esperada` dispensado do `DEPLOY CONFIRMADO`.
   só envia após o COMMIT, nada é disparado (confirmado ao vivo em 2026-08-24: `http_request_queue` vazia e
   zero respostas de sonda, com a tabela viva e recebendo cron). Foi o erro que salvou a viagem — mas depender
   disso é depender de o founder colar o arquivo INTEIRO e de o Editor abortar no ponto certo. Use um
-  placeholder VÁLIDO (`'{}'::jsonb`, que cai no ramo "sem id") e ponha a trava real no `CASE` acima.
+  placeholder VÁLIDO (`'{}'::jsonb`, que cai no ramo "sem id") e ponha a trava real no `CASE` acima. Com o mapa
+  embutido o bloco que dispara não tem mais campo de ids nenhum: o **único** campo que o founder toca ali é a
+  trava `'nao'` → `'sim'`, e ela é válida por construção — o `'{}'` continua vivo no bloco standalone do
+  `--so-leitura`, que é onde o placeholder ainda existe.
 - **Distinga rejeição de execução no veredito.** `status_code >= 400` sem `versao` é bundle velho que
   **recusou** o request (401 do gate de JWT na `ai-ops-agent`, 400 do `default` na `sync-reprocess`) —
   nada executou. Só `200` sem `versao` é "ignorou o `probe` e RODOU o fluxo real". Um veredito que junta os
@@ -225,6 +398,77 @@ neutralizado e o `AND fonte = fonte_esperada` dispensado do `DEPLOY CONFIRMADO`.
   sessão; expirada a linha, o `LEFT JOIN` devolve "aguarde" para sempre e a ambiguidade volta.
 
 Verde = `status_code 200` **E** `canary true` **E** `contrato` batendo com a tabela acima **E** `ok true` **E** `casos_vermelhos NULL` (os cinco, não só o `ok`). `400` com `"Ação desconhecida"` = **bundle velho**, a probe não subiu — e a lista `acoes_disponiveis` da resposta é a confirmação (não cita a action nova). ⚠️ Probe é **dry-run**: se um dia uma delas abrir linha em `fin_sync_log`, ela fabrica frescor — `_data_health_compute` e `fin_calcular_confiabilidade` leem essa tabela **sem filtrar `action`** (só o `fin_sync_heartbeat` filtra). No `omie-financeiro` isso é o `PROBE_ACTIONS` → `logId=""`, pinado no `edge-money-path-invariants`.
+
+#### O CUSTO da sonda, edge a edge — a triagem que decide `--caro` (2026-09-04)
+
+O `sonda:sql` aceita `--caro=<edge>,…` e o doc só registrava **uma** decisão ("das 7 daquela leva, só
+a `sync-reprocess` é barata"). Quem chega depois refaz a leitura de cabo a rabo, ou — pior — chuta
+pelo nome. Triadas as **25 edges mapeadas que não responderam** numa janela de `pg_net.ttl`, lendo o
+`index.ts` de cada uma: **5 baratas, 20 caras**.
+
+A pergunta da triagem é sempre a mesma: *se o bloco de sonda não existisse, o que este handler faria
+com um body `{"probe": true}`* — ou seja, sem `action` e sem os demais campos?
+
+**Baratas — o bundle velho recusa antes de qualquer efeito:**
+
+| edge | o que barra |
+|---|---|
+| `conciliar-pedido-portal` | 400 `pedido_id inválido` (`Number(undefined)` não é inteiro) |
+| `analyze-unified-order` | 401 do gate `Bearer` antigo; passando, 400 por falta de `text`/imagem antes da Anthropic |
+| `omie-nfe-recebimento` | 401 do gate staff (JWT) — **rigor feito no pai da sonda** (2026-09-06, `a086cc60a^`): `Authorization` sem `Bearer ` → 401 nas linhas 342-344, ANTES do `req.json()` da linha 378 — o bundle pré-sonda nem lê o corpo |
+| `omie-nfe-webhook` | 401 do gate `x-webhook-secret` |
+| `process-nfe` | 401 (`Bearer` + `getUser`); `nf_number` obrigatório barraria em seguida |
+
+⚠️ **Quatro das cinco recusam com 401 — que é o único 4xx ambíguo** (bundle pré-sonda *ou*
+`CRON_SECRET` errado). O bloco gerado já cruza o `controle_credencial` e responde `INDETERMINADO`;
+só a `conciliar-pedido-portal` devolve um 400 inequívoco. "Barata" aqui quer dizer **segura de
+disparar**, não **conclusiva**.
+
+✅ E as cinco **são sondáveis**: o gate que protege a sonda é `authorizeCronOrStaff`, que aceita
+`x-cron-secret`. Em `omie-nfe-recebimento` e `omie-nfe-webhook` isso é DELIBERADO — a sonda tem gate
+**próprio**, porque atrás do gate da edge (JWT staff / webhook-secret, que o Omie e o SQL Editor não
+emitem) ela seria inalcançável por quem precisa dela.
+
+**Caras (20) — não sonde:** `algorithm-a-audit`, `calculate-scores`, `carteira-positivacao-snapshot`,
+`carteira-rebuild`, `disparar-pedidos-aprovados`, `gerar-pedidos-diario`, `monthly-report`,
+`omie-nfe-reconcile`, `omie-sync-ctes-recebidos`, `omie-sync-nfes-recebidas`,
+`omie-sync-pedidos-compra`, `omie-sync-sku-items`, `omie-sync-status-produtos`,
+`omie-sync-vendas-items`, `pedido-programado-enviar`, `reposicao-depara-sayerlack-auto`,
+`sayerlack-captura-precos`, `scoring-recalc-batch`, `tactical-plans-batch`, `visit-score-recalc-batch`.
+
+🔴 **O padrão que faz uma edge ser cara quase nunca é `switch(action)` sem `default` — é o DEFAULT
+que transforma "sem parâmetro" em ação real.** `body.empresa ?? "OBEN"`, `?? "ALL"`, `dias = 30`,
+`resolverEmpresas(null) → ["OBEN"]`: o corpo `{"probe":true}` não tem nenhum campo, e é exatamente
+por isso que o caminho padrão dispara inteiro. Os dois piores: `monthly-report`, onde
+`send_email !== false` é **true** por omissão e `user_id` ausente significa **todos** (a sonda
+manda e-mail de verdade para a base); e `pedido-programado-enviar`, onde a falta de `envio_id` cai
+no ramo cron e processa **todos os envios agendados do dia**. Ao triar, procure `??`, `||` e default
+de destructuring ANTES de procurar o `default:` do switch.
+
+**12ª leva, triada na mesma régua (2026-09-05).** A triagem de cada uma fica no cabeçalho do
+`versao.ts` dela, junto do `EFEITO` — este é o resumo para escolher o `--caro`:
+
+| edge | bundle PRÉ-sensor com `{"probe":true}` | veredito |
+|---|---|---|
+| `omie-sync` | sem `action`, o `switch` cai no `default:` 400 `Ação não reconhecida` | barata, **inequívoca** |
+| `omie-malha-sync` | `action` ausente vira o `"probe"` DELA: `ListarEstruturas` p.1, 2 registros, read-only | barata, inequívoca |
+| `omie-aplicar-parametros` | `ids` vazio → 400 `ids vazio`, antes dos secrets e de toda escrita | barata, inequívoca |
+| `omie-webhook` | gate `x-webhook-secret` → 401 | barata, **ambígua** (cruze `controle_credencial`) |
+| `omie-nfe-recebimento-sync` | **não lê o corpo** — cai direto no laço de sync de todas as credenciais | **CARA** |
+| `omie-sync-metadados` | sem `accounts`, o default é as DUAS contas → sync inteiro + carimbo em `sync_state` | **CARA** |
+| `pedido-programado-extrair` | falta `pedido_programado_id` → 400 antes do Storage, da Anthropic e do delete | barata, inequívoca |
+| `cmc-snapshot-backfill` | `account` fora de `CONTAS_VALIDAS` → 400 antes do Omie e do upsert | barata, inequívoca |
+| `process-recurring-orders` | **não lê o corpo** — executa o tick inteiro; cria `orders` E avança `next_order_date` | **CARA** (a pior) |
+
+Confirma o padrão do bloco vermelho acima: nenhuma das três caras é `switch` sem `default` — **duas
+não leem o corpo NENHUM** (`omie-nfe-recebimento-sync`, `process-recurring-orders`) e a terceira tem
+`?? ["vendas","colacor_vendas"]`. Procure o default — e a ausência de leitura de corpo — ANTES do switch.
+
+⚠️ **A triagem lê o `index.ts` ATUAL descontando o bloco de sonda — é uma APROXIMAÇÃO do bundle
+velho, não o bundle velho.** Para rigor, confirme o guard no pai
+(`git show <sha-da-sonda>^:supabase/functions/<edge>/index.ts`); foi feito só na `process-nfe`. O
+erro possível é conservador nas que dependem de gate (um 401 a mais), mas não é nulo: guard que
+NASCEU com a fatia da sonda faria uma "barata" ser cara no bundle que está no ar.
 
 ### Assinatura no PRÓPRIO log da edge — N3 retroativo, sem canária e sem sonda
 
@@ -316,9 +560,81 @@ ao vivo**, sem credencial e sem ninguém avisar. A consequência prática, poré
 descreve o `v1.3` e não uma constante do sistema — levante a SUA assinatura com
 `git show <commit>:<arquivo>` a cada uso, nunca copie a tabela.
 
+**A PROMOÇÃO: com marcador EXPLÍCITO no corpo do erro, os três descartes caem (2026-08-28, #2063).**
+A tabela acima infere a versão de uma string **acidental** — daí exigir os três descartes e
+envelhecer a cada fatia. O #2063 fez o oposto por desenho: o helper `jsonRes` anexa `versao: VERSAO`
+a **TODA** resposta das suas 4 edges, o 401 do gate inclusive. A leitura vira direta, sem credencial:
+
+```console
+$ curl -s -X POST -d '{"probe":true}' .../functions/v1/omie-sync-pedidos-compra
+{"error":"Unauthorized","versao":"v1.0-eco-versao-passivo"}          # HTTP 401
+```
+
+O descarte (3) — "a versão velha não podia emitir isto" — se responde sozinho: o campo **nomeia** a
+versão em vez de deixá-la inferir, e não existia no bundle anterior (`versao.ts` é arquivo NOVO na
+fatia). O (1), do gateway, continua valendo e é barato: confira `verify_jwt = false` no
+`config.toml` ANTES, senão o 401 é do gateway e o corpo não é seu.
+
+**Custo ZERO de efeito — é o que a torna preferível à sonda `{"probe":true}` aqui.** O gate recusa
+antes de qualquer I/O (`if (!authHeader?.startsWith("Bearer ")) return false;`), então não há
+varredura no Omie nem escrita. Sondar um bundle PRÉ-sensor faria o oposto: sem roteamento por
+`action`, o corpo cai nos defaults e roda o sync inteiro (o aviso que cada `versao.ts` dos 4 traz).
+
+**Controle negativo de graça:** edge irmã SEM `versao.ts` (`omie-cron-diario`,
+`omie-sonda-recebimento`) responde `{"error":"Unauthorized"}` **sem** o campo — mesma linha de gate,
+mesma forma de corpo, mesmo 401. É o que prova que o marcador vem do nosso código, não da
+plataforma; sem esse par, "achei o campo" não discrimina.
+
+⚠️ **É o SOCORRO do eco passivo quando a linha do cron é INUTILIZÁVEL** (o `modo:"background"` da
+§anterior): em 2026-08-28 02:15Z, no MESMO tick, três steps trouxeram o marcador e `pedidos` veio
+com `versao` vazio. O 401 resolveu na hora — e mede AGORA, não no último tick.
+
+⚠️ **PRÉ-CONDIÇÃO que a via exige: o gate tem de ser INLINE na edge.** Medido no fecho de
+2026-08-29, e o modo de falha é o falso negativo caro. Nas 4 edges do #2063 o
+`authorizeCronOrStaff` é inline e a recusa passa pelo `jsonRes`, então o 401 carrega o marcador.
+Quando o gate vem de `_shared/auth.ts`, **não passa**: a edge faz `if (!auth.ok) return
+auth.response;` e a `Response` já vem pronta de lá (`function unauthorized(message =
+"Unauthorized")`), **por fora** do helper. O 401 dessa edge nunca carrega marcador — nem no bundle
+NOVO. Ler a ausência como "bundle velho" ⇒ pedir deploy de edge money-path **já no ar**.
+
+O caso: `analytics-outbox-drain` (#2094) respondeu `{"error":"Unauthorized"}` **sem** o campo, e o
+`jsonRes` dela na main anexa `versao`/`edge`/`fonte` — leitura que gritaria "não deployou". O eco
+PASSIVO desmentiu na mesma janela: o cron de 5 min (jobid 181) grava `versao:"v1.0-sensor-inicial"`
++ `edge:"analytics-outbox-drain"` em `net._http_response`, 4 ticks seguidos, status 200. **No ar.**
+
+⇒ **Antes de usar a via, confirme onde nasce o 401** (`grep -n 'Unauthorized' index.ts` — achou nada
+e o import é `_shared/auth.ts`? a via não discrimina AQUI). E o inverso do socorro vale: onde o 401
+é cego, quem enxerga é o eco passivo. As duas vias se cobrem em direções opostas — nenhuma sozinha
+cobre o parque.
+
+### Coluna NOVA como testemunha — o caso BINÁRIO do caminho anterior
+
+Quinto caminho, e um **caso especial do "Assinatura no PRÓPRIO log"** acima — vale destacar porque a
+prova muda de natureza. Lá a testemunha é uma coluna PREEXISTENTE cujo *valor* o defeito enviesava
+(`cost_source='UNKNOWN'`), e o veredito é estatístico: precisa argumentar que aquela distribuição não
+vem do código novo. Aqui a testemunha é uma **coluna que o PR ESTREOU** — e aí o argumento some, porque
+o código velho não podia escrever nela **por inexistência**: a ausência prévia é garantida por **DDL**,
+não inferida de amostra. Um único valor não-nulo já prova, e o `updated_at` do write diz **qual run**
+o gravou.
+
+**Caso que a fundou (`omie-analytics-sync`, #1888/A2, provado 2026-08-23):** as duas edges do PR não
+têm canária versionada, a Management API é indisponível e sondar às cegas dispara o sync real — os
+três degraus fechados. A coluna `omie_customer_account_map.evidence_document_normalized`, criada pela
+migration do próprio PR, foi de **0/16.118 para 10.822/16.118** em um dia, cada bloco com `updated_at`
+em cima do horário do cron da sua conta.
+
+**4 condições — todas obrigatórias:** (1) coluna NOVA; (2) migration **sem backfill** (senão prova o
+SQL, não a edge); (3) **writer exclusivo** — cheque `pg_trigger` **e** `pg_get_functiondef`, não só o
+TS; (4) um writer que roda **sozinho** (cron), senão "0" fica ambíguo entre bundle velho e
+ninguém-acionou. Falsifique sempre com *"que OUTRO caminho poderia ter preenchido isto?"*. Bônus: uma
+coluna que só o caminho saudável escreve vira **sensor de saúde** do writer — onde ela está NULL,
+aquele writer não passou. Caso completo:
+[`docs/historico/canaria-natural-de-schema.md`](../historico/canaria-natural-de-schema.md).
+
+
 ## Quando o Lovable reverte um fix — detectar e restaurar
 
-O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deployed"/"Deployou edge") e às vezes reverte um PR (~16% dos commits; ≥4-5 reversões money-path recentes). Prevenção é inviável (o bot precisa de escrita direta) → o jogo é **detectar + restaurar rápido** (MTTR), não governança perfeita. Spec: `docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md`.
+O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI — e a mensagem é **variável e majoritariamente genérica** ("Lovable update"/"Work in progress" dominam; o explícito varia: "Changes", "Deployed snapshot edge func", "Deployou … verbatim", este em pt-BR **cego a um `grep -i deployed`**), então grep de mensagem **só confirma, nunca nega** um deploy — e às vezes reverte um PR (~16% dos commits; ≥4-5 reversões money-path recentes). Prevenção é inviável (o bot precisa de escrita direta) → o jogo é **detectar + restaurar rápido** (MTTR), não governança perfeita. Spec: `docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md`.
 
 - **Sinais automáticos (CI desta frente, `.github/workflows/`):** Issue **`ci-main-red`** = a `main` quebrou build/typecheck/test (antes passava silencioso — ninguém alertado); Issue **`lovable-touched-sensitive`** = o bot tocou path money-path/edge **mesmo com CI verde** (regressão compilável — a classe do #1076/#1077); Issue **`lovable-reverted-merge`** = **reversão PROVADA por linha** — o commit direto removeu linhas que um merge das últimas 48h tinha adicionado; acusa QUAL PR foi desfeito + comando de restauração (`scripts/lovable-revert-scan.sh`, testável local: `test-lovable-revert-scan.sh`; filtra comentário puro e linha trivial — o bot apaga aviso sem reverter gate). Todas assinadas pro founder.
 - **Guardrails como rede (testes-invariantes):** `src/lib/reposicao/__tests__/edges-onorder-guardrail.test.ts` (janela on-order #1072/#1076) e `src/__tests__/edge-money-path-invariants.test.ts` (analyze: helper espelhado + paridade edge×src + gate de fallback `!(… in priceMap)` + canária #1077/#1080/#1089; e margem do `algorithm-a-audit`) **quebram o CI** se a regressão volta ao REPO. Em refactor legítimo, **reescrever o teste junto** — não deletar.
@@ -328,6 +644,34 @@ O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deploy
 
 ## Verificação de deploy
 
+### Edge: o veredito é o ledger, não a lista de arquivos do PR (2026-09-05)
+
+**Edge precisa de deploy ⇔ `(versao, fonte)` servido ≠ `(versao, fonte)` da main.** "O mapa mudou",
+"o closure mudou", "o PR X tocou a edge" NÃO são motivo — o mapa é excluído do hash de propósito, e o
+`fonte` já é o closure inteiro resumido. Quem responde é **`bun run pendencias:deploy`**, que lê o
+ledger `public.deploy_atestacoes` (alimentado pelo cron `deploy-atestacoes-colher` a partir de
+`net._http_response`, antes de o `pg_net.ttl` de 6h apagar) ∪ a janela viva, e julga a matriz do par:
+
+| estado | significa | ação |
+|---|---|---|
+| `DIVERGE_P1` | `fonte` ≠ e `versao` ≠ (bump declarado) | deploy **no PR** |
+| `DIVERGE_P2` | só o closure mudou (`_shared/`), par coerente com a main | leva agrupada; **escala em 7 d** |
+| `INCOERENTE` | par que nunca existiu na main (deploy parcial) | deploy dos arquivos que faltaram |
+| `SEM_MAPA_NO_BUNDLE` | `fonte: nao-mapeada` | subir o mapa |
+| `NUNCA_ATESTADA` / `SEM_FONTE_NO_ECO` | nunca vista / eco sem fonte | **a única sonda humana**: o comando sai no relatório |
+| exit 2 | mecânica (ledger ausente, coletor parado > 45 min, mapa ≠ fonte, linha fora do formato) | não é "tudo limpo" |
+
+A sonda humana é **uma por leva de deploy** (e a 1ª de edge nova): o founder cola o `sonda:sql` uma
+vez, a resposta entra no ledger em ≤ 15 min e vale até o `fonte` da main mudar. **A sonda por cron existe desde 2026-09-06 e é fail-closed por CONSTRUÇÃO**: o cron não fala com a
+edge — fala com a edge-relé `sonda-relay`, que emite um `OPTIONS` com credencial dedicada
+(`x-sonda-credencial`, HMAC de `SONDA_HMAC_KEY`). Bundle velho responde o CORS de sempre e **não
+executa nada** — provado EXECUTANDO cada closure histórico das edges da allowlist
+(`bun run sonda:cron-prova`), inclusive os que não autenticavam nada. Uma edge só entra na
+allowlist com 100 % dos closures `PASSA`. Credencial em header de POST **não** resolveria: bundle
+sem gate executa o fluxo real para qualquer POST (medido). Detalhe:
+`docs/historico/sonda-por-cron-fail-closed.md`. Detalhe, medição e o que ficou para depois:
+`docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`.
+
 - A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable. **N2 de edge (prova de versão) é automático quando `~/.config/afiacao/supabase-pat` existe** (Access Token do Supabase, `chmod 600`, padrão psql-ro): `verify-edge.sh` resolve env `SUPABASE_PAT` > arquivo e consulta a Management API; sem o arquivo, cada verificação de versão vira handoff manual na UI (custou 3 retomadas de sessão p/ confirmar 1 deploy). Teste: `scripts/test-verify-edge-pat.sh`. A varredura por bytes é **paralela** (`xargs -P`, halt-on-hit) — o bundle passou de 300 chunks e o modo 1-a-1 estourava o timeout.
   - ⚠️ **NÃO PEÇA O PAT AO FOUNDER: o projeto roda em Lovable Cloud e o Supabase é da org do LOVABLE** (confirmado pelo founder 2026-07-23, depois de eu pedir o token 2× na mesma sessão). Ele não tem conta no `supabase.com` com acesso ao ref `fzvklzpomgnyikkfkzai`, logo **não existe Access Token para ele gerar** e o N2 é estruturalmente indisponível — o arquivo `supabase-pat` continua válido como mecanismo, só que ninguém pode preenchê-lo neste setup. A escada real de prova de edge aqui é: **N1** (`verify-edge.sh`, OPTIONS → servida) **+ rastro do commit do bot** na `main` (`Deployed …`/`Redeployed …` — evidência de que o deploy rodou, não de qual versão) **+ canária comportamental** quando a edge tiver uma (a ÚNICA prova de versão disponível). Edge sem canária: declare "N1 + rastro; versão não provada" — nunca "no ar". Se a entrega for money-path e a prova importar, **crie a canária junto do fix** (padrão `identidade_probe`/`credito_gate_probe`), porque depois não haverá como provar.
 - ⚠️ **Grep de verificação anda PAREADO com um controle positivo, no MESMO comando — senão o vazio se lê como resposta (2026-07-20).** Verificação por bytes conclui por **ausência** ("a string não está lá"), e ausência é o resultado que qualquer erro de alvo produz: arquivo errado, download que não aconteceu, path inválido. Some ao grep da assinatura o grep de uma string que **comprovadamente existe** no alvo (ex.: `order_date_kpi` para o chunk do farmer); controle vazio = você mediu o lugar errado, e o resultado da assinatura **não vale nada** — não é "não encontrei", é "não procurei". Mordido 3× seguidas verificando o Publish de #1466/#1468/#1471: (a) grep no entry `index-*.js`, que **não contém** o código lazy-loaded — as ~119 páginas e vários hooks têm chunk próprio (`useFarmerScoring-*.js`, `useCrossSellEngine-*.js`), então o entry tem ~232KB de 5,6MB; (b) grep nos chunks `Farmer*.js` das páginas, quando o hook mora em chunk separado; (c) `xargs` abortando com `command line cannot be assembled, too long` → **0 arquivos baixados** e os dois greps seguintes lendo um diretório vazio, com cara de "não achei". Nas três o controle denunciou na hora. **Corolário:** valide a assinatura contra o código PRÉ-fix (`git show <sha>~1:<arquivo> | grep -c '<assinatura>'` tem de dar **0**, e `<sha>` dar ≥1) — sem isso você prova que uma string existe, não que a MUDANÇA entrou. **E prefira a skill à varredura ad-hoc:** ela já resolve paralelismo e lista de chunks; refazer com `curl` na mão é como se cai nos três buracos acima.
@@ -336,6 +680,7 @@ O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deploy
 - **Fix que é uma AUSÊNCIA não se prova por bytes.** Remover um `|| 0`, um fallback ou um default não deixa assinatura: no bundle minificado o nome da variável sumiu, e `x.get(a)||0` legítimo (contador, onde 0 é a resposta certa) é indistinguível do que você tirou. Ou você grepa o **par positivo** que entrou junto (no #1471, o `.order("product_id"` da paginação, que só existe pós-fix), ou aceita que a prova é **comportamental** — e vai para a tela.
 - **QA visual pós-Publish** (renderização/comportamento na tela, refactor visual sem texto novo): os bytes não bastam e o `/browse` headless **não monta** a SPA. O padrão é **Claude-in-Chrome na sessão logada do founder** (ele abre o app 1×; o agente confere as telas) — detalhado no Passo 4b da skill `lovable-deploy-verify`.
 - O acesso **read-only** ao banco (`psql-ro`, ver `docs/agent/database.md`) confirma migration aplicada sem depender do founder.
+- ⚠️ **A pendência escrita no corpo do PR ("falta deploy/Publish") é RECADO, não medição — MEÇA imediatamente antes de PEDIR (2026-09-06, chip do #2201).** Entre o PR e o chip, founder ou outra sessão já podem ter agido: o ledger foi de ⚪ NUNCA atestada a ✅ confere em **4 min** (sondas 70349/70352, `v1.1` + `fonte` da main), e o Publish já estava no ar (`verify-frontend.sh` exit 0). Edge: re-rode `bun run pendencias:deploy` (ou `bun run sonda:sql --so-leitura <edge> | psql-ro`) na hora de ENTREGAR, não só ao começar. Front: rode `verify-frontend.sh --pai <pai-do-PR> '<sentinela>'` ANTES de listar "Publish pendente" — exit 0 cancela a linha; só exit 1 com `CONTROLE_POSITIVO_OK` a mantém. Dois atores sondaram a mesma edge em 2,5 min: inócuo com sensor no ar, **uma execução real por colagem** numa edge cara pré-sensor → `docs/historico/pendencia-do-pr-nao-e-medicao.md`.
 
 ## Atualização do PWA — modelo `prompt` (offline-first; #1169)
 

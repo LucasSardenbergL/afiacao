@@ -5,6 +5,7 @@
 // Espelhos de src/lib/whatsapp/template-payload.ts e inbound.ts (Deno não importa do src/).
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -107,13 +108,31 @@ Deno.serve(async (req) => {
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // ⚠️ SONDA DE VERSÃO — vem ANTES do gate seguinte de propósito: ela não dispara nada, e é pelo
+  // `x-cron-secret` que o founder a alcança sem abrir o app (o gate de auth decide por comparação
+  // de env pura ⇒ IO-free). Daqui pra frente a edge dispara template TARIFADO ao cliente.
+  // Corpo lido UMA vez — `req.json()` não se consome duas. Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto: unknown = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") {
+    return json({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
   // Cron NÃO dispara template avulso — automação entra via service_role (motor de rota, PR posterior).
   if (auth.via === "cron") return json({ error: "forbidden", detail: "apenas staff ou service_role" }, 403);
 
-  const body = await req.json().catch(() => ({}));
-  const { templateNome, phoneE164, conversationId, dedupeKey } = body ?? {};
-  const bodyParams: string[] = Array.isArray(body?.bodyParams) ? body.bodyParams.map(String) : [];
-  const origem = ["manual", "proposta", "status_pedido", "rota"].includes(body?.origem) ? body.origem : "manual";
+  // Já parseado acima (para a sonda). Normaliza não-objeto para {} — preserva o comportamento
+  // antigo de `.catch(() => ({}))` sem deixar um body `null` quebrar os acessos.
+  const body = (typeof corpoBruto === "object" && corpoBruto !== null &&
+    !Array.isArray(corpoBruto) ? corpoBruto : {}) as Record<string, unknown>;
+  const { templateNome, phoneE164, conversationId, dedupeKey } = body as {
+    templateNome?: string; phoneE164?: string; conversationId?: string; dedupeKey?: string;
+  };
+  const bodyParams: string[] = Array.isArray(body.bodyParams) ? body.bodyParams.map(String) : [];
+  // `String(x ?? "")` preserva o `includes` antigo: undefined/null/não-string caem em "manual".
+  const origemBruta = String(body.origem ?? "");
+  const origem = ["manual", "proposta", "status_pedido", "rota"].includes(origemBruta) ? origemBruta : "manual";
   if (!templateNome || !dedupeKey || (!phoneE164 && !conversationId)) {
     return json({ error: "templateNome, dedupeKey e (phoneE164 ou conversationId) obrigatórios" }, 400);
   }

@@ -399,12 +399,78 @@ describe('guardrail money-path: criar_pedido não confia no espelho legado omie_
   });
 
   it('deriva do PEDIDO LOCAL (customer_user_id + customer_document), não confia no payload', () => {
-    // checkout_id entrou no select na fase 2 do ATP (o gate ATP ancora a reserva
-    // nele); o pin segue EXATO na forma nova — perder qualquer campo fica vermelho.
+    // checkout_id entrou no select na fase 2 do ATP (o gate ATP ancora a reserva nele);
+    // omie_pedido_id + hash_payload entraram no guard de reenvio (Codex 2026-08-29) — sem
+    // eles o guard classifica linha ENVIADA como virgem e volta a duplicar no Omie.
+    // O pin segue EXATO na forma nova — perder qualquer campo fica vermelho.
     expect(
       src,
       'o edge deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
-    ).toMatch(/select\("account, customer_user_id, customer_document, created_by, checkout_id"\)/);
+    ).toMatch(
+      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload"\)/,
+    );
+  });
+});
+
+// ── Guard de REENVIO da fronteira criar_pedido (achado Codex 2026-08-29, /codex do #2117) ──
+// A decisão é PURA e testada em Deno (_shared/reenvio-pedido_test.ts). Este bloco vigia o
+// WIRING no edge — que o Lovable pode reverter e commitar na main como "Changes".
+describe('guardrail money-path: criar_pedido recusa reenvio ANTES do IncluirPedido', () => {
+  const src = read(VENDAS);
+  const criar = blocoCriarPedido(src);
+  // Assert NEGATIVO sobre a fonte → limpar comentário primeiro (a prosa do guard cita
+  // criarPedidoVenda/IncluirPedido de propósito, ao explicar a ordem).
+  const criarLimpo = removerComentarios(criar);
+
+  it('sentinela: extraiu o bloco REAL do case criar_pedido (e o stripper não o esvaziou)', () => {
+    expect(criar).toContain('criarPedidoVenda(');
+    expect(criarLimpo).toContain('criarPedidoVenda(');
+    expect(criarLimpo.length, 'stripper comeu o miolo do bloco').toBeGreaterThan(500);
+  });
+
+  it('o edge USA a decisão pura (import + chamada), não uma cópia inline', () => {
+    expect(src, 'sumiu o import de reenvio-pedido.ts').toMatch(
+      /import \{[^}]*classificarEnvioPedido[^}]*\} from "\.\.\/_shared\/reenvio-pedido\.ts"/,
+    );
+    expect(criarLimpo, 'REGRESSÃO: o case criar_pedido parou de chamar o guard de reenvio')
+      .toMatch(/classificarEnvioPedido\(\s*soRow\s*\)/);
+  });
+
+  it('lê os campos que o guard precisa (sem eles, linha ENVIADA parece virgem)', () => {
+    expect(criarLimpo, 'omie_pedido_id saiu do select — o guard ficaria cego').toContain('omie_pedido_id');
+    expect(criarLimpo, 'hash_payload saiu do select — linha pull ficaria indistinguível').toContain('hash_payload');
+  });
+
+  it('a recusa é um throw (fail-closed), não um blocked que caller antigo lê como sucesso', () => {
+    expect(criarLimpo).toMatch(/if \(!vereditoEnvio\.permitido\) \{[\s\S]{0,400}?throw new Error\(/);
+    expect(
+      criarLimpo,
+      'a recusa de reenvio virou blocked — caller antigo trata blocked desconhecido como sucesso',
+    ).not.toMatch(/blocked:\s*["'](ja_enviado|reenvio)["']/);
+  });
+
+  it('ORDEM: o guard roda ANTES de criarPedidoVenda (um CHECK no banco seria tarde demais)', () => {
+    const iGuard = criarLimpo.indexOf('classificarEnvioPedido(');
+    const iEnvio = criarLimpo.indexOf('criarPedidoVenda(');
+    expect(iGuard, 'guard de reenvio não encontrado no bloco').toBeGreaterThan(-1);
+    expect(iEnvio, 'criarPedidoVenda não encontrado no bloco').toBeGreaterThan(-1);
+    expect(iGuard, 'o guard passou a rodar DEPOIS do IncluirPedido — o pedido já existiria no Omie')
+      .toBeLessThan(iEnvio);
+  });
+
+  it('o guard NÃO está atrás do if (account === "oben") do gate ATP (vale para toda conta)', () => {
+    const iGuard = criarLimpo.indexOf('classificarEnvioPedido(');
+    const iOben = criarLimpo.indexOf('account === "oben"');
+    expect(iOben, 'gate ATP oben-only não encontrado — bloco mudou de forma').toBeGreaterThan(-1);
+    expect(iGuard, 'o guard caiu dentro do ramo oben — pedido colacor voltaria a duplicar')
+      .toBeLessThan(iOben);
+  });
+
+  it('a decisão pura NÃO foi duplicada dentro do edge (fonte única)', () => {
+    expect(
+      removerComentarios(src),
+      'o edge redefiniu classificarEnvioPedido — cópia divergiria do módulo testado em Deno',
+    ).not.toMatch(/function classificarEnvioPedido/);
   });
 });
 
@@ -2832,14 +2898,43 @@ function blocoAssoc(s: string): string {
   return fim < 0 ? resto : resto.slice(0, fim);
 }
 
-describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de 1.000)', () => {
-  it('a leitura delega a fetchAll — nunca uma chamada single-shot', () => {
+// A QUERY MUDOU DE ARQUIVO (keyset + pedido pai embedado). Ela saiu do `index.ts` para
+// `_shared/itens-com-pedido.ts` pelo motivo do `recommend-leituras.ts`: a edge importa
+// `npm:@supabase/supabase-js@2` e nunca roda sob `--no-remote`, então nada dela era
+// EXECUTÁVEL. Hoje existem DUAS provas de comportamento, e elas cobrem metades diferentes:
+// `itens-com-pedido_test.ts` (Deno) prova o lado do CLIENTE — uma única ida ao banco, o parâmetro
+// certo, fail-closed no envelope —, e `db/test-snapshot-universo-itens.sh` (PG17) prova o lado do
+// BANCO, com escrita concorrente real e falsificação. Estes gates textuais continuam necessários
+// pelo que nenhuma das duas cobre: o double não é o PostgREST e o PG17 não vê o TypeScript, então
+// quem garante que o loader não VOLTOU a paginar — e que a denylist que ele manda vem do espelho
+// canônico — é a forma.
+const ASSOC_LOADER = 'supabase/functions/_shared/itens-com-pedido.ts';
+
+// Recorta a fatia APRIORI do loader. Antes a âncora era `const COLUNAS_APRIORI` (a string do
+// `.select()`); com a paginação removida, a única âncora que resta é a própria função.
+//
+// ⚠️ O recorte continua sendo por BLOCO e não pelo arquivo, pelo mesmo furo pego na falsificação
+// da entrega anterior: o loader tem DUAS leituras que se PARECEM (as duas chamam uma RPC-snapshot,
+// as duas validam o mesmo envelope), então medir o arquivo inteiro deixa uma satisfazer o assert
+// da outra. É o §"o DETECTOR mente" na forma mais barata de acontecer. (As exceções deliberadas
+// são os asserts de AUSÊNCIA — `.range(`, `.from(`, `fetchAll` —, medidos no arquivo TODO: nenhuma
+// das duas leituras pode paginar, e ali um falso positivo do vizinho é o desfecho que se quer.)
+function blocoApriori(fonte: string): string {
+  const i = fonte.indexOf('export async function carregarItensApriori(');
+  if (i < 0) throw new Error('carregarItensApriori não encontrada no loader (âncora quebrada)');
+  const resto = fonte.slice(i);
+  const fim = resto.slice(1).search(/\nexport (async function|interface|const) /);
+  return fim < 0 ? resto : resto.slice(0, fim + 1);
+}
+
+describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas, num único instante', () => {
+  it('a leitura delega ao loader compartilhado — nunca uma chamada single-shot', () => {
     const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
 
     expect(bloco, 'âncora quebrada: bloco vazio').not.toBe('');
     expect(
-      /const items = await fetchAll</.test(bloco),
-      'a leitura de order_items parou de delegar a fetchAll — o cap de 1.000 volta em silêncio',
+      /const items = await carregarItensApriori\(/.test(bloco),
+      'a leitura de order_items parou de delegar ao loader — o cap de 1.000 volta em silêncio',
     ).toBe(true);
     // O defeito original tinha ESTA forma. Assert negativo sobre a fonte SEM comentários:
     // a prosa acima cita o código proibido de propósito (§"O ALVO mente").
@@ -2847,52 +2942,82 @@ describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de
       /const\s*\{\s*data:\s*items\s*\}\s*=\s*await/.test(bloco),
       'voltou a desestruturar só `data` — o error da leitura vira "0 regras, preservadas"',
     ).toBe(false);
+    // Paginar à mão AQUI é a reintrodução por fora do loader — o padrão que custou ~20 PRs.
+    expect(
+      bloco.includes('.range('),
+      'voltou a paginar por offset dentro da edge — o loader existe justamente para isso não voltar',
+    ).toBe(false);
   });
 
-  it('pagina com ORDEM ESTÁVEL — sem .order() o .range() pula/duplica entre páginas', () => {
-    const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
+  it('NÃO pagina: a leitura é uma RPC-snapshot, e é a ausência de páginas que fecha a cesta rasgada', () => {
+    const arquivo = removerComentarios(read(ASSOC_LOADER));
+    const loader = blocoApriori(arquivo);
 
-    expect(count(bloco, '.range(from, to)'), 'esperava exatamente 1 .range() no bloco').toBe(1);
+    // Os três são asserts de AUSÊNCIA sobre o arquivo TODO, e cada um tapa uma porta distinta de
+    // volta ao defeito. A cesta rasgava porque a leitura atravessava VÁRIAS transações: irmãos do
+    // mesmo pedido caem em páginas diferentes, e o pai que muda de estado no meio elimina uns e
+    // deixa outros. Qualquer forma de multi-ida reabre isso — não só `.range()`.
     expect(
-      /\.order\("id",\s*\{\s*ascending:\s*true\s*\}\)/.test(bloco),
-      'sumiu o .order("id") — a chave é a PK de order_items, e é ELA que estabiliza a paginação',
+      arquivo.includes('.range('),
+      'o loader voltou ao offset — multi-ida, e a cesta volta a rasgar entre as idas',
+    ).toBe(false);
+    expect(
+      /fetchAll(Keyset)?</.test(arquivo),
+      'o loader voltou a paginar — keyset conserta o deslocamento, mas NÃO a consistência do pedido',
+    ).toBe(false);
+    expect(
+      /\bdb\.from\(/.test(arquivo),
+      'o loader voltou a ler tabela direto — a leitura tem de passar pela RPC-snapshot',
+    ).toBe(false);
+    // E o assert POSITIVO correspondente: pinar só a ausência deixaria passar um loader que não
+    // lê nada. É o §9 — "quando o que defende é a CHAMADA, pine a chamada".
+    expect(
+      /lerSnapshot\(\s*db,\s*"apriori_universo_snapshot"/.test(loader),
+      'a leitura do Apriori parou de chamar a RPC-snapshot',
     ).toBe(true);
   });
 
-  it('filtra o universo pela denylist da autoridade + deleted_at (paridade com useBundleEngine)', () => {
-    const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
+  it('o envelope da RPC é CONFERIDO — `total` do banco contra o array que chegou', () => {
+    const arquivo = removerComentarios(read(ASSOC_LOADER));
 
-    // A denylist NÃO pode ser literal aqui: literal é como a 3ª cópia divergiu
-    // (`mapas-paginados.ts` citava 3 dos 4 status). Tem de vir do espelho canônico.
-    //
-    // ⚠️ Pinar só o NOME da constante era guard frouxo (achado do challenge Codex xhigh):
-    // daria para apagar o `.not(…)` inteiro e deixar a constante num uso decorativo que
-    // mantém o assert VERDE. É o §9 — "gate de forma não protege a ESCOLHA"; quando o que
-    // defende é a CHAMADA, pine a chamada. Aqui: a constante DENTRO do `.not` do status.
+    // Sem paginação não há mais o guard de página curta, e o cap de 1.000 do PostgREST vale
+    // também para `.rpc()`. O que substitui aquela defesa é a conferência do envelope: o banco
+    // diz quantos itens produziu, e o cliente compara com o que chegou. Um loader que ignore
+    // `total` volta a poder seguir com um pedaço achando que é o todo.
     expect(
-      /\.not\(\s*"sales_orders\.status"\s*,\s*"in"\s*,\s*STATUS_NAO_VENDA_POSTGREST\s*\)/.test(bloco),
-      'o filtro de status saiu, ou a denylist deixou de vir do espelho canônico',
+      /total !== envelope\.itens\.length/.test(arquivo),
+      'sumiu a conferência de `total` contra o array — a truncagem no transporte volta a ser silenciosa',
     ).toBe(true);
     expect(
-      bloco.includes('sales_orders!inner('),
-      'sumiu o !inner — sem o join o filtro de status do PAI não é aplicado a nada',
-    ).toBe(true);
-    expect(
-      /\.is\("sales_orders\.deleted_at",\s*null\)/.test(bloco),
-      'sumiu o deleted_at IS NULL — é a METADE do contrato do universo, anda junto com a denylist',
+      /SNAPSHOT_TRUNCADO/.test(arquivo),
+      'a truncagem perdeu o código próprio — vira "falhou", que manda o operador caçar a coisa errada',
     ).toBe(true);
   });
 
-  it('o edge IMPORTA o espelho da denylist (não redeclara uma cópia local)', () => {
-    const fonte = removerComentarios(read(ANALYTICS));
+  it('manda a denylist da autoridade para a RPC (nunca uma literal local)', () => {
+    const loader = blocoApriori(removerComentarios(read(ASSOC_LOADER)));
+
+    // ⚠️ Pinar só o NOME da constante é guard frouxo (achado do challenge Codex xhigh): daria para
+    // deixá-la num uso decorativo e mandar outra coisa para o banco. Quando o que defende é a
+    // CHAMADA, pine a chamada — aqui, a constante DENTRO do argumento nomeado da RPC. O filtro em
+    // si mudou de lugar: ele agora é aplicado no SQL da função, que ainda por cima REJEITA uma
+    // denylist divergente da canônica dela.
+    expect(
+      /p_status_nao_venda:\s*STATUS_NAO_VENDA\b/.test(loader),
+      'a denylist deixou de ir para a RPC vinda do espelho canônico',
+    ).toBe(true);
+  });
+
+  it('o loader IMPORTA o espelho da denylist (não redeclara uma cópia local)', () => {
+    const loader = removerComentarios(read(ASSOC_LOADER));
 
     expect(
-      /import\s*\{[^}]*STATUS_NAO_VENDA_POSTGREST[^}]*\}\s*from\s*"\.\.\/_shared\/universo-pedidos\.ts"/.test(fonte),
+      /import\s*\{[^}]*STATUS_NAO_VENDA[^}]*\}\s*from\s*"\.\/universo-pedidos\.ts"/.test(loader),
       'a constante deixou de vir de _shared/universo-pedidos.ts',
     ).toBe(true);
     expect(
-      /const\s+STATUS_NAO_VENDA/.test(fonte),
-      'o edge redeclarou a denylist localmente — vira a 4ª cópia, que é o defeito que este PR fechou',
+      /const\s+STATUS_NAO_VENDA/.test(loader),
+      'o loader redeclarou a denylist localmente — vira a 4ª cópia, que é o defeito que este PR fechou',
     ).toBe(false);
   });
 });
@@ -3393,5 +3518,80 @@ describe('guardrail money-path: P1-c transferência de código (writer NÃO tran
       mirrorBlockNamed(src, 'omie transferencia-codigo'),
       'edge divergiu do helper de src/ — o Lovable reescreveu o classificador no deploy?',
     ).toBe(mirrorBlockNamed(helper, 'omie transferencia-codigo'));
+  });
+});
+
+describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista de status tem paridade TS↔SQL', () => {
+  const REPROCESS = 'supabase/functions/sync-reprocess/index.ts';
+  const CANON = 'supabase/functions/_shared/omie-pedido.ts';
+  const MIGRATION = 'supabase/migrations/20260830190000_reconciliar_pedidos_omie.sql';
+  const src = removerComentarios(read(REPROCESS));
+
+  it('o reconcile de pedido NÃO volta a escrever order_items por PostgREST', () => {
+    // O defeito que esta entrega fechou: N inserts + M updates + 1 delete + 1 update de cabeçalho,
+    // cada um a sua transação, deixando um instante REAL e commitado com itens da revisão velha
+    // convivendo com os da nova. Um `.from("order_items").insert/update/delete` de volta aqui
+    // reabre a janela SEM erro nenhum — por isso o assert é sobre a AUSÊNCIA da forma, sobre a
+    // fonte já sem comentários (a prosa acima cita as três operações de propósito).
+    for (const op of ['insert', 'update', 'delete']) {
+      expect(
+        src,
+        `sync-reprocess voltou a escrever order_items por PostgREST (.${op}) — a reconciliação tem de passar pela RPC atômica`,
+      ).not.toContain(`from("order_items").${op}`);
+    }
+    expect(src).not.toContain('.from("order_items")');
+  });
+
+  it('e chama a RPC atômica com as TRÊS chaves do contrato', () => {
+    expect(src).toContain('db.rpc("reconciliar_pedidos_omie"');
+    expect(src).toContain('p_pedidos: pedidosRpc');
+    expect(src).toContain('p_status_gerido_omie: STATUS_GERIDO_OMIE');
+    // `p_lido_em` é o compare-and-set: sem ele a RPC LANÇA (fail-closed), mas o CI pega antes.
+    expect(src).toContain('p_lido_em: lidoEm');
+  });
+
+  it('o carimbo de leitura é por PÁGINA, não por run', () => {
+    // Uma run longa com o carimbo tirado uma vez só faria a última página parecer tão fresca
+    // quanto a primeira, e o compare-and-set perderia resolução exatamente onde ele importa.
+    const iPag = src.indexOf('const pedidosRpc: PedidoReconciliar[] = []');
+    const iLido = src.indexOf('const lidoEm = new Date().toISOString()');
+    expect(iLido, 'lidoEm não encontrado').toBeGreaterThan(-1);
+    // ambos dentro do laço de páginas: lidoEm imediatamente antes do acumulador da página
+    expect(iLido).toBeLessThan(iPag);
+    expect(iPag - iLido, 'lidoEm ficou longe do laço da página — saiu para o escopo da run?').toBeLessThan(400);
+  });
+
+  it('página inteira falhando LANÇA — falha sistêmica não sai como run verde', () => {
+    expect(src).toContain('fails.length === pedidosRpc.length');
+    const i = src.indexOf('fails.length === pedidosRpc.length');
+    expect(src.slice(i, i + 400)).toContain('throw new Error(');
+  });
+
+  it('erro da RPC LANÇA — run verde sem reconciliar nada mascararia perda total', () => {
+    const i = src.indexOf('reconciliar_pedidos_omie');
+    expect(i, 'chamada da RPC não encontrada').toBeGreaterThan(-1);
+    const bloco = src.slice(i, i + 1200);
+    expect(bloco).toContain('if (rpcErr)');
+    expect(bloco).toContain('throw new Error(');
+  });
+
+  it('a lista de status enviada à RPC é a MESMA que a migration exige (paridade por CONJUNTO)', () => {
+    // A RPC compara `p_status_gerido_omie` por conjunto com a sua cópia canônica e LANÇA se
+    // divergir — fail-closed, mas só em runtime. Este assert pega no CI. Sem ele, mudar a lista
+    // num lado deixaria a reconciliação parada em produção até alguém ler o error_message.
+    const ts = read(CANON).match(/export const STATUS_GERIDO_OMIE[^=]*=\s*\[([\s\S]*?)\]/);
+    expect(ts, 'STATUS_GERIDO_OMIE não encontrada no canon TS').not.toBeNull();
+    const sql = read(MIGRATION).match(/c_status_omie\s+constant\s+text\[\]\s*:=\s*ARRAY\[([^\]]*)\]/);
+    expect(sql, 'c_status_omie não encontrada na migration').not.toBeNull();
+
+    const extrair = (bruto: string) =>
+      [...bruto.matchAll(/['"]([a-z_]+)['"]/g)].map((m) => m[1]).sort();
+    const doTs = extrair(ts![1]);
+    const doSql = extrair(sql![1]);
+
+    // Guard anti-teatro: uma regex que não casasse nada deixaria dois arrays VAZIOS iguais, e o
+    // assert passaria sem ter comparado coisa alguma.
+    expect(doTs.length, 'a extração do TS não achou nenhum status — regex quebrada').toBe(5);
+    expect(doSql).toEqual(doTs);
   });
 });

@@ -5,6 +5,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -95,18 +96,43 @@ Deno.serve(async (req) => {
   const __auth = await authorizeCronOrStaff(req);
   if (!__auth.ok) return __auth.response;
 
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+  // sem custo. O `authorizeCronOrStaff` acima aceita o `x-cron-secret` do SQL Editor ⇒ sem gate
+  // próprio. Daqui pra frente a edge ALTERA o cadastro do produto no Omie (`AlterarProduto`) —
+  // escrita no ERP, não no nosso banco. Corpo lido UMA vez e reaproveitado abaixo.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let corpoBruto: unknown = {};
+  try {
+    corpoBruto = await req.json();
+  } catch (_) { /* parse de body opcional */ }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
+  // Já parseado acima (para a sonda). Normaliza não-objeto para {} — preserva o comportamento
+  // antigo do `catch` de body opcional sem deixar um corpo `null`/array quebrar os acessos.
+  const body = (typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+    ? corpoBruto
+    : {}) as { empresa?: unknown; ids?: unknown };
   let empresa = "OBEN";
   let ids: number[] = [];
-  try {
-    const body = await req.json();
-    if (body?.empresa) empresa = String(body.empresa).toUpperCase();
-    if (Array.isArray(body?.ids)) ids = body.ids.map((x: unknown) => Number(x)).filter(Boolean);
-  } catch (_) { /* parse de body opcional */ }
+  if (body.empresa) empresa = String(body.empresa).toUpperCase();
+  if (Array.isArray(body.ids)) ids = body.ids.map((x: unknown) => Number(x)).filter(Boolean);
 
   if (ids.length === 0) {
     return new Response(JSON.stringify({ error: "ids vazio" }), {

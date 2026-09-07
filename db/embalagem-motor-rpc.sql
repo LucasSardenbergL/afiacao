@@ -53,6 +53,15 @@
 --   sobrescrever qtde_final DEPOIS: exceção documentada à invariante) · capados_n no marker do run.
 --   Tabela do log + colunas novas + config na migration *_reposicao_teto_cobertura_motor.sql (corpo idêntico).
 
+-- ➕ 2026-09-04 — MÚLTIPLO DA EMBALAGEM DO PORTAL (litro → balde) — o motor grava qtde_final já na compra FÍSICA.
+--   3 SKUs Sayerlack em LITRO no Omie comprados em BALDE de 5 L (sku_fornecedor_externo.fator_conversao=0,2). A edge
+--   de envio já normalizava no envio (#2149: 36 L → 8 BB → 40 L); o comprador aprovava 36 e via 40 depois. Agora:
+--   CTE portal_fator (ativo, >0, <>1, <1e9; join por fornecedor_nome = o da linha — precisão>recall) → só SKU SEM
+--   grupo de equivalência → qtde_final e qtde_sem_teto = trim_scale(round(ceil(round(q×f,6))/f,6)) (espelho de
+--   qtdeFisicaOmie(qtdePortal())). qtde_sugerida fica em L (rastro); fator gravado em pedido_compra_item.
+--   fator_embalagem_portal (coluna nova; a tela troca "mínimo forçado" por "N embalagens"). Prova PG17
+--   db/test-qtde-multiplo-embalagem.sh. Coluna + corpo na migration *_reposicao_qtde_multiplo_embalagem_portal.sql.
+
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql
@@ -184,6 +193,18 @@ BEGIN
     FROM sku_fornecedor_externo
     WHERE empresa = p_empresa AND ativo = TRUE AND sku_portal IS NOT NULL AND btrim(sku_portal) <> ''
   ),
+  -- [EMBALAGEM PORTAL] fator_conversao = unidades do PORTAL por unidade do OMIE (0,2 = litro → balde 5 L).
+  -- Só fator ATIVO, finito e > 0, DIFERENTE de 1, chaveado por (empresa, fornecedor, sku) — a UNIQUE da tabela.
+  -- O join adiante exige fornecedor_nome = o da linha (sp.fornecedor_nome): precisão > recall — de-para de
+  -- OUTRO fornecedor nunca decide a embalagem desta compra. Fator ≤ 0/NaN/Infinity é ignorado aqui (status quo em L);
+  -- a edge, que tem efeito externo, é quem lança (fail-closed na fronteira).
+  portal_fator AS (
+    SELECT sku_omie::text AS sku, fornecedor_nome, fator_conversao AS fator
+    FROM sku_fornecedor_externo
+    WHERE empresa = p_empresa AND ativo = TRUE
+      AND fator_conversao IS NOT NULL AND fator_conversao > 0 AND fator_conversao <> 1
+      AND fator_conversao < 1e9   -- UMA guarda de finitude: NaN e Infinity ordenam ACIMA de todo número em numeric (NaN > 0 é TRUE)
+  ),
   -- [P0-a] Saldo físico do Omie por SKU (account-aware; 1 linha/SKU, a mais recente). As 2 fontes de estoque
   -- DIVERGEM: inventory_position tem alguns galões (WP87/WP04), sku_estoque_atual tem outros (WP01). GREATEST
   -- (adiante) pega o galão real de onde estiver.
@@ -289,7 +310,8 @@ BEGIN
            -- o estoque da OBEN vive em 'vendas'; PRESENÇA da linha de inv (isl.sku), p/ casar o gate de grupo.
            ((sea.sku_codigo_omie IS NULL OR COALESCE(sea.fonte_sync, '') = 'cold_start_seed') AND isl.sku IS NULL) AS linha_nao_confirmada,
            ge.grupo_nao_confirmado,
-           sea.fonte_sync AS linha_fonte_sync
+           sea.fonte_sync AS linha_fonte_sync,
+           pf.fator AS fator_portal   -- [EMBALAGEM PORTAL] NULL = sem de-para com fator ≠ 1 p/ este fornecedor
     FROM sku_parametros sp
     LEFT JOIN sku_grupo_producao sg ON sg.empresa = sp.empresa AND sg.sku_codigo_omie = sp.sku_codigo_omie::text
     LEFT JOIN sku_estoque_atual sea ON sea.empresa = sp.empresa AND sea.sku_codigo_omie = sp.sku_codigo_omie::text
@@ -306,6 +328,7 @@ BEGIN
     LEFT JOIN grupo_estoque ge ON ge.grupo_id = ea.grupo_id
     LEFT JOIN embalagem_escolhida ee ON ee.grupo_id = ea.grupo_id
     LEFT JOIN membro_elegivel me_anc ON me_anc.grupo_id = ea.grupo_id AND me_anc.sku = sp.sku_codigo_omie::text
+    LEFT JOIN portal_fator pf ON pf.sku = sp.sku_codigo_omie::text AND pf.fornecedor_nome = sp.fornecedor_nome
     WHERE sp.empresa = p_empresa
       AND sp.habilitado_reposicao_automatica = TRUE
       AND COALESCE(sp.tipo_reposicao, 'automatica') = 'automatica'
@@ -340,7 +363,9 @@ BEGIN
                    COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) <= sp.ponto_pedido
   ),
   -- ── DECISÃO: troca p/ galão só se ESTRITAMENTE mais barato/base e a âncora também é elegível ──
-  skus_necessitando AS (
+  -- [EMBALAGEM PORTAL] esta CTE decide em unidades-Omie (L) ou em embalagens do grupo; o múltiplo do portal
+  -- entra na CTE seguinte (skus_necessitando), que é a que os INSERTs leem.
+  skus_decididos AS (
     SELECT b.empresa,
            CASE WHEN trocou THEN b.sku_escolhido ELSE b.ancora_sku END AS sku_codigo_omie,
            CASE WHEN trocou
@@ -384,9 +409,13 @@ BEGIN
            CASE WHEN b.grupo_nao_confirmado THEN 'grupo_membro_seed_only'
                 WHEN b.linha_nao_confirmada THEN 'linha_seed_only'
                 ELSE NULL END AS motivo,
-           b.linha_fonte_sync
+           b.linha_fonte_sync,
+           b.fator_embalagem
     FROM (
       SELECT b0.*,
+             -- [EMBALAGEM PORTAL] só SKU SEM grupo de equivalência: no grupo, qtde_final já é nº de embalagens
+             -- (QT↔GL) e o de-para dos concentrados tem fator 1 — aplicar aqui compraria N× a mais.
+             CASE WHEN b0.equiv_grupo IS NULL THEN b0.fator_portal ELSE NULL END AS fator_embalagem,
              ( b0.sku_escolhido IS NOT NULL
                AND b0.sku_escolhido <> b0.ancora_sku
                AND b0.ancora_custo_base IS NOT NULL                 -- âncora elegível (comparável)
@@ -421,6 +450,38 @@ BEGIN
         AND COALESCE(pcs9.tipo_ciclo, 'normal') <> 'normal'
         AND pci9.sku_codigo_omie = CASE WHEN b.trocou THEN b.sku_escolhido ELSE b.ancora_sku END
     )
+  ),
+  -- ── [EMBALAGEM PORTAL] múltiplo da embalagem do fornecedor, ANTES da aprovação ──────────────────
+  -- SKU em LITRO no Omie comprado em BALDE (fator 0,2): 36 L → ceil(7,2) = 8 BB → 40 L. É o número que a
+  -- edge enviar-pedido-portal-sayerlack gravaria de qualquer forma no envio (qtdeFisicaOmie(qtdePortal()));
+  -- antecipar faz o comprador aprovar o que será comprado. Fórmula espelho do helper qtde-portal.ts:
+  --   trim_scale(round(GREATEST(1, ceil(round(q × fator, 6))) / fator, 6))   -- trim_scale: grava 40, não 40.000000
+  -- GREATEST(1, …) = o max(1, …) de qtdePortal: necessidade > 0 nunca vira ZERO embalagens (fator minúsculo faria
+  -- round(q×f,6)=0 → ceil 0 → a linha sumiria do pedido em silêncio — Codex P1-5). Domínio: 1/fator tem de ser
+  -- inteiro em unidades Omie (0,2 → 5 L); com 1/3,6 o resultado 3,6 L seria integerizado depois e a edge leria
+  -- 4 L como 2 galões (7,2 L) — só cadastre fator cujo inverso é inteiro.
+  -- round6 ANTES do ceil: 36 × (1/3,6) em numeric = 10,000000000000000000008 → ceil 11 = um galão a mais,
+  -- sem desfazer. round6 DEPOIS: 3 ÷ 0,3333333333333333 = 9,0000000000000009 → 9 (paridade com o TS).
+  -- qtde_sem_teto recebe a MESMA conversão: capada ⇔ qtde_final < qtde_sem_teto compara na MESMA unidade
+  -- (cap 27 L→30 L vs 36 L→40 L segue capada; cap 36→40 vs 38→40 deixa de sê-lo porque FISICAMENTE são os
+  -- mesmos 8 baldes — o cap não mudou a compra). Linha capada a ZERO fica 0 (o CASE exige > 0).
+  -- qtde_sugerida NÃO muda (rastro em L; a tela mostra "36 → 40" com a causa certa via fator_embalagem_portal).
+  skus_necessitando AS (
+    SELECT sd.empresa, sd.sku_codigo_omie, sd.sku_descricao, sd.fornecedor_nome, sd.grupo_codigo,
+           sd.ponto_pedido, sd.estoque_maximo, sd.estoque_fisico, sd.estoque_a_caminho, sd.estoque_efetivo,
+           sd.qtde_sugerida,
+           CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_final > 0
+                THEN trim_scale(round(GREATEST(1, ceil(round(sd.qtde_final * sd.fator_embalagem, 6))) / sd.fator_embalagem, 6))
+                ELSE sd.qtde_final END AS qtde_final,
+           CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_sem_teto > 0
+                THEN trim_scale(round(GREATEST(1, ceil(round(sd.qtde_sem_teto * sd.fator_embalagem, 6))) / sd.fator_embalagem, 6))
+                ELSE sd.qtde_sem_teto END AS qtde_sem_teto,
+           sd.cap_teto_ancora, sd.teto_dias_linha, sd.demanda_diaria_linha, sd.classe_abc_efetiva,
+           sd.preco_unitario, sd.primeira_compra, sd.horario_corte_pedido, sd.valor_maximo_mensal, sd.delta_max_perc,
+           sd.suprimido, sd.motivo, sd.linha_fonte_sync,
+           CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_final > 0 THEN sd.fator_embalagem ELSE NULL END
+             AS fator_embalagem_portal
+    FROM skus_decididos sd
   ),
   -- [GATE estoque-não-confirmado] LOG dos suprimidos ANTES de inserir o pedido — senão vira subcompra silenciosa.
   log_ins AS (
@@ -470,11 +531,12 @@ BEGIN
   INSERT INTO pedido_compra_item (
     pedido_id, sku_codigo_omie, sku_descricao, estoque_atual, ponto_pedido, estoque_maximo,
     qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra,
-    estoque_fisico, estoque_a_caminho, qtde_sem_teto, teto_cobertura_aplicado
+    estoque_fisico, estoque_a_caminho, qtde_sem_teto, teto_cobertura_aplicado, fator_embalagem_portal
   )
   SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
          sn.qtde_sugerida, sn.qtde_final, sn.preco_unitario, sn.qtde_final * sn.preco_unitario, sn.primeira_compra,
-         sn.estoque_fisico, sn.estoque_a_caminho, sn.qtde_sem_teto, (sn.qtde_final < sn.qtde_sem_teto)
+         sn.estoque_fisico, sn.estoque_a_caminho, sn.qtde_sem_teto, (sn.qtde_final < sn.qtde_sem_teto),
+         sn.fator_embalagem_portal
   FROM skus_inseriveis sn
   JOIN pedidos_por_fornecedor_grupo pfg
     ON pfg.fornecedor_nome = sn.fornecedor_nome AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'');
@@ -497,3 +559,24 @@ BEGIN
   RETURN QUERY SELECT v_pedidos, v_skus, v_valor, v_bloqueados;
 END;
 $function$;
+
+DO $post$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'pedido_compra_item' AND column_name = 'fator_embalagem_portal'
+  ) THEN
+    RAISE EXCEPTION 'POST FALHOU: pedido_compra_item.fator_embalagem_portal ausente — o INSERT do motor quebraria (42703) no próximo ciclo';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'gerar_pedidos_sugeridos_ciclo'
+      AND pg_get_functiondef(p.oid) LIKE '%fator_embalagem_portal%'
+  ) THEN
+    RAISE EXCEPTION 'POST FALHOU: gerar_pedidos_sugeridos_ciclo sem o arredondamento por embalagem — a função viva não é esta';
+  END IF;
+  RAISE NOTICE 'OK: coluna fator_embalagem_portal + motor com múltiplo de embalagem do portal';
+END
+$post$;
+
+COMMIT;

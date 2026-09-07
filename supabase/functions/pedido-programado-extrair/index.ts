@@ -7,6 +7,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SYSTEM_PROMPT = `Você extrai dados de um PDF de PEDIDO DE COMPRA da LIDER INDUSTRIA E COMERCIO DE ESTOFADOS (layout tabular monoespaçado, "PEDIDO No..:" no topo, itens com QUANTIDADE|UN|COD.ITEM/NUM.ORDEM|DESCRICAO|PRECO UNITARIO, COD.FORN e DATA ENTREGA por item, possível "ANEXO AO PEDIDO" na última página).
 Regras:
@@ -126,8 +127,23 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+  // sem custo. O `authorizeCronOrStaff` acima aceita o `x-cron-secret` do SQL Editor ⇒ sem gate
+  // próprio. Corpo lido UMA vez e reaproveitado abaixo (req.json() não se consome duas). Daqui pra
+  // frente a edge paga tokens da Anthropic e APAGA os itens já extraídos antes de reinseri-los.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto: unknown = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return json(200, respostaSonda(VERSAO));
+  if (decisaoSonda.tipo === "ambiguo") {
+    return json(400, { versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) });
+  }
+
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const { pedido_programado_id } = await req.json().catch(() => ({}));
+  // Já parseado acima (para a sonda). Normaliza não-objeto para {} — preserva o comportamento
+  // antigo do `.catch(() => ({}))` sem deixar um corpo `null`/array quebrar o destructuring.
+  const { pedido_programado_id } = (typeof corpoBruto === "object" && corpoBruto !== null &&
+    !Array.isArray(corpoBruto) ? corpoBruto : {}) as { pedido_programado_id?: string };
   if (!pedido_programado_id) return json(400, { error: "pedido_programado_id é obrigatório" });
 
   const { data: pedido, error: pedErr } = await supabase

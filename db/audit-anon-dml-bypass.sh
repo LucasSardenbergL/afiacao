@@ -31,7 +31,21 @@ SQL_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/audit-anon-dml-bypass.sq
 [ -f "$SQL_FILE" ] || { echo "❌ query ausente: $SQL_FILE"; exit 2; }
 
 echo "→ auditando views atualizáveis anon/authenticated-DML no public (prod, read-only)…"
-RAW="$("$PSQL" -tA -f "$SQL_FILE")" || { echo "❌ falha ao consultar (psql-ro)"; exit 2; }
+# DUAS camadas, e nenhuma cobre a outra:
+#  (1) -v ON_ERROR_STOP=1 — o wrapper psql-ro NAO o passa, e lido de `-f`/stdin o psql sai 0
+#      MESMO com ERROR (medido 2026-09-05; so a forma `-c` sai 1). Sem isto, um SQL que nunca
+#      rodou cai no `#HITS -eq 0` e vira "✅ LIMPO": falha ABERTA num linter de seguranca.
+#  (2) o marcador FIM| — pega o que o exit code nao pega (query trocada/truncada que roda "bem"
+#      mas nao e mais esta), e e imune a locale, ao contrario de um grep por '^ERROR'.
+RAW="$("$PSQL" -v ON_ERROR_STOP=1 -tA -f "$SQL_FILE")" || { echo "❌ falha ao consultar (psql-ro)"; exit 2; }
+
+case "$RAW" in
+  *"FIM|audit-anon-dml-bypass"*) ;;
+  *) echo "❌ INDETERMINADO — a query não chegou ao fim (sem o marcador de conclusão)."
+     echo "   Isto NÃO é 'limpo': é ausência de dado. Saída crua:"
+     printf '%s\n' "$RAW" | sed 's/^/     /'
+     exit 2 ;;
+esac
 
 # filtra o marcador 'HIT|' (ignora as tags 'SET' que o psqlrc-ro read-only ecoa no stdout)
 HITS=()

@@ -68,6 +68,16 @@ describe('preco-edit — montarUpdateItem (money-path: não reescrever preço v�
     expect(u.valor_linha).toBeCloseTo(3 * 25.35);
   });
 
+  it('[EMBALAGEM PORTAL] com fator do motor, a qtde editada grava no MÚLTIPLO (37 → 40 com 0,2) — a edge recusa fora dele', () => {
+    const u = montarUpdateItem({ ...item, fator_embalagem_portal: 0.2 }, 37, undefined);
+    expect(u.qtde_final).toBe(40);
+    expect(u.valor_linha).toBe(40 * 20);
+    // sem fator: ceil inteiro de sempre (regressão)
+    expect(montarUpdateItem({ ...item, fator_embalagem_portal: null }, 36.2, undefined).qtde_final).toBe(37);
+    // fallback do qtde_final legado também passa pelo múltiplo (o item veio 37 do banco e só o preço foi editado)
+    expect(montarUpdateItem({ qtde_final: 37, qtde_sugerida: 36, preco_unitario: 0, fator_embalagem_portal: 0.2 }, undefined, 25).qtde_final).toBe(40);
+  });
+
   it('price-only com qtde_final null usa qtde_sugerida', () => {
     const u = montarUpdateItem({ qtde_final: null, qtde_sugerida: 8, preco_unitario: 0 }, undefined, 25.35);
     expect(u.qtde_final).toBe(8);

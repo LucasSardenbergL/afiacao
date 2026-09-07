@@ -13,7 +13,7 @@
 // `BancoPostgrest` (contrato estrutural) e não `SupabaseClient`: `test:edges` roda com
 // `--no-remote`, então um módulo testável não pode importar `npm:` nem para tipo. O
 // call-site passa `supabase as unknown as BancoPostgrest` (padrão do monthly-report).
-import { fetchAll, type BancoPostgrest } from "./paginate.ts";
+import { fetchAll, fetchAllKeyset, type BancoPostgrest } from "./paginate.ts";
 import { STATUS_NAO_VENDA_POSTGREST } from "./universo-pedidos.ts";
 
 export interface LinhaAssignment {
@@ -68,10 +68,29 @@ export async function carregarPedidosDoMes(
   mesIso: string,
   fimIso: string,
 ): Promise<LinhaPedidoMes[]> {
-  return await fetchAll<LinhaPedidoMes>(
-    (de, ate) =>
-      db.from<LinhaPedidoMes>("sales_orders")
-        .select("customer_user_id, total, order_date_kpi")
+  // KEYSET, e não `.range()`. `sales_orders` tem hard DELETE vivo
+  // (`omie-vendas-sync/index.ts`), e sob offset um DELETE antes do cursor faz a página
+  // seguinte começar uma linha adiante: um pedido VIVO é PULADO, com a contagem fechando.
+  // Aqui isso não some de uma tela — vira `had_order_in_month:false` num snapshot CONGELADO
+  // que ninguém recalcula, que é o mesmo dano do §2 (ausente ≠ zero) por outra porta.
+  //
+  // Honestidade sobre a MEDIÇÃO: hoje esta leitura NÃO pagina — o mês mais cheio da tabela
+  // tem 629 pedidos (psql-ro 2026-08-29) e cabe numa página de 1.000, então o deslocamento
+  // é LATENTE, não ativo. A troca é preventiva e custa três linhas; o crescimento é orgânico
+  // (~29 mil inserts acumulados em `sales_orders`) e o dia em que a primeira página encher
+  // não vem com aviso.
+  // `id` fica FORA de `LinhaPedidoMes`: ele é transporte (a chave do cursor), não dado do
+  // snapshot. Declará-lo no tipo público obrigaria todo consumidor a inventar um id nas
+  // fixtures — `carteira-positivacao-snapshot/montar-linhas_test.ts` reprovou por isso —, o
+  // que é pedir ao chamador que conheça a paginação de dentro. O tipo interno carrega a
+  // coluna; o contrato de saída segue o mesmo de antes.
+  type LinhaComCursor = LinhaPedidoMes & { id: string };
+  return await fetchAllKeyset<LinhaComCursor, string>(
+    (cursor, limite) => {
+      let q = db.from<LinhaComCursor>("sales_orders")
+        // `id` entra no `.select()` porque o CURSOR precisa dele — sob `.range()` a coluna do
+        // `.order()` não precisava estar projetada, e a falta só apareceria em runtime.
+        .select("id, customer_user_id, total, order_date_kpi")
         // Era a literal `"(cancelado,rascunho,pendente)"` — TRÊS dos quatro status da
         // autoridade (`orcamento` faltava), uma terceira cópia do conceito que já tinha
         // divergido. Passa a apontar para o espelho canônico. Medido em prod antes de
@@ -87,9 +106,11 @@ export async function carregarPedidosDoMes(
         // recalcula. Medido em prod antes de aplicar: 0 linhas com `deleted_at` — no-op hoje.
         .is("deleted_at", null)
         .gte("order_date_kpi", mesIso)
-        .lt("order_date_kpi", fimIso)
-        .order("id", { ascending: true })
-        .range(de, ate),
+        .lt("order_date_kpi", fimIso);
+      if (cursor !== null) q = q.gt("id", cursor);
+      return q.order("id", { ascending: true }).limit(limite);
+    },
+    (l) => l.id,
     "sales_orders",
   );
 }

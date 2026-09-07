@@ -14,17 +14,15 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
 
 /**
  * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
- *
- * `v1.1-pos-login-no-envio` (8ee8afa15): o pós-login deixou de inferir sucesso de `url_changed` e passou a
- * classificar por SINAIS do DOM (menu do sidebar e campos de senha), via `_shared/sayerlack-pos-login.ts`. Antes, troca de
- * senha exigida pelo portal virava exceção — o `url_changed` mudava e lia como dashboard.
- *
- * ⚠️ Este bump é TARDIO: o 8ee8afa15 mergeou em 2026-08-21 e o marcador ficou em
- * `v1.0-sensor-inicial`, então a sonda não discriminava aquele deploy. Ele NÃO recupera a
- * discriminação perdida — reata só o sentido positivo, do próximo deploy em diante
- * (`docs/historico/sonda-marcador-congelado.md`).
+ * O CHANGELOG de cada versão vive em `docs/historico/versao-enviar-pedido-portal-sayerlack.md`
+ * (aqui ele afundava o arquivo: cada bump só acrescenta comentário, e o gate `limpeza-fonte`
+ * acusou 6 linhas de código em 66). Resumo: v1.1 pós-login por sinais do DOM · v1.2 fator de
+ * embalagem · v1.3 fator aprovado ≠ vivo · v1.4 captura de custo deixou de ser cega ·
+ * v1.5 escrita do custo em RPC transacional com CAS · v1.6 Preço Venda é o total da linha ·
+ * v1.7 enviado = aprovado na quantidade (NULL lê-se 1:1; qtde fora do múltiplo recusa; normalização sai) ·
+ * v1.8 itens+de-para por caminho único (a RPC inexistente e a instrumentação `[DEBUG_*]` saíram).
  */
-export const VERSAO = "v1.1-pos-login-no-envio";
+export const VERSAO = "v1.8-itens-caminho-unico";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

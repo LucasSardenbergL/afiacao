@@ -85,7 +85,10 @@ autorizar qualquer autenticado. Medindo quem cobriria isso: **nenhuma** das 4 fu
 predicados de RLS. Ninguém as vigiava.
 
 Daí o **terceiro eixo**: md5 do `prosrc` das funções-predicado, com `prosecdef` e `proconfig`
-junto. Elas são **descobertas por `pg_depend`** (`classid='pg_policy'` → `refclassid='pg_proc'`),
+junto — sob a **mesma normalização** de cima: `md5(regexp_replace(btrim(prosrc), '\s+', ' ', 'g'))`
+(`db/audit-rls-prod.ts`). **Todo md5 de corpo citado neste arquivo é o normalizado**, e
+`md5(prosrc)` cru devolve OUTRO valor — o trio de `5faf2a21…` mede `86052d07…` cru (aferido
+2026-08-29). Elas são **descobertas por `pg_depend`** (`classid='pg_policy'` → `refclassid='pg_proc'`),
 não por regex sobre o texto da policy: o §4 do `database.md` guarda duas varreduras textuais que
 produziram falso-positivo integral, e uma função chamada dentro de um `COALESCE` não aparece onde
 um grep espera. Função descoberta que não esteja declarada é `PREDICADO_NAO_DECLARADO` — erro,
@@ -700,3 +703,167 @@ funcao`: os três predicados entram como chamada DIRETA, não pelo fecho.
 movem — a tabela continua no grafo. O que muda é o número **derivado**, e ele mudou sozinho:
 `7 curada(s), 71 lacuna(s)` contra `6 / 72`. É a prova de que a decisão do §7.2 (declarar o total,
 derivar a lacuna) faz o que prometeu.
+
+### 11.1 A 2ª opinião derrubou a escolha — e o motivo é reutilizável
+
+A separação do §11 removia **apenas** `estrategico` da capability de escrita. O ritual `/codex`
+(xhigh, conduzido sem o founder copiar/colar) derrubou isso com um argumento que se sustenta:
+
+> "Você provou a mecânica, não a regra de negócio. Remover somente `estrategico`, deixando
+> `gerencial` e `super_admin`, parece taxonomia inferida pelo nome, não política confirmada. O
+> teste vermelho ao reinseri-lo apenas congela essa suposição."
+
+Está certo, e o remédio dele é melhor: **`master`-only** reproduz o acesso **efetivo medido** (nenhum
+usuário possui os três papéis) e falha **fechado** para todo papel ainda não decidido. Se as duas
+opções são invenção, ganha a que **preserva comportamento por construção**.
+
+> **Lição:** *um teste que fica vermelho quando você desfaz a sua escolha prova que a escolha está
+> implementada, não que ela está certa.* Falsificação mede o **dente do assert**, nunca a
+> **correção da regra** — para essa, o oráculo é outro (revisão independente, ou o dado que
+> mostraria a política real).
+
+O custo foi pago com os olhos abertos e está no cabeçalho da migration:
+`20260718190000_authz_capability_matrix_e2.sql` **registrou** a intenção de que os três papéis
+tivessem carteira. `master`-only **descarta uma decisão registrada** — não apenas evita inventar
+uma. A troca: em autorização, o dia em que existir um `gerencial` de verdade é um dia melhor para
+decidir do que hoje, e nesse dia a negação é visível.
+
+O corpo novo foi copiado **byte-a-byte** de `private.cap_compras_ler`, e o harness trava isso
+(`A15b`): o md5 tem de colapsar em `5faf2a21…`, o trio que o contrato já documenta. Texto
+equivalente-porém-diferente criaria um **quarto md5 para a mesma regra** — ruído puro no eixo 3.
+
+#### Onde a 2ª opinião errou, por falta de contexto do repo — e o furo que apareceu ao verificar
+
+O Codex propôs, para a janela entre merge e apply, um contrato com `accepted = {antigo, novo}`.
+Não cabe: o contrato deste repo significa **"estado medido em prod"**, e mover o md5 antes do apply
+deixaria o gate do carimbo vermelho em **todo PR do repo**, não só no da mudança.
+
+Mas a preocupação tinha fundo, e verificá-la achou um buraco de verdade:
+
+> `docs/migrations-audit.md` registra esta migration como o objeto `function
+> private.cap_carteira_escrever` e a checa por **EXISTÊNCIA**. A função existe desde julho. Logo o
+> audit devolve ✅ **com ou sem o apply** — falso verde para **todo `CREATE OR REPLACE` de objeto
+> já existente**.
+
+É a mesma classe do arquivo inteiro, no mecanismo que existe justamente para pegar "mergeou e
+ninguém aplicou": **existência fazendo as vezes de estado**. Fica registrado como pendência com o
+formato da correção já claro — para objeto recriado, o inventário precisa guardar o md5 do corpo
+ESPERADO, não só o nome.
+
+### 11.2 Aplicada — e a medição pós-apply que quase não aconteceu
+
+`20260828213000_cap_carteira_escrever_master_only.sql` foi colada no SQL Editor em 2026-08-29. A
+verificação pediu **cinco** medições, e o valor da rodada está em ter exigido as cinco:
+
+| o que | esperado | medido |
+|---|---|---|
+| `srcMd5` de `cap_carteira_escrever` | `5faf2a21…` (previsto ANTES do apply) | `5faf2a21…` ✅ |
+| `prosecdef` / `proconfig` | `true` / `search_path=public` | idem ✅ |
+| `srcMd5` de `cap_carteira_ler` | `836e8f46…` (intacta) | idem ✅ |
+| `EXECUTE` de `authenticated` | preservado | `true` ✅ |
+| `EXECUTE` de `anon` | negado (PUBLIC segue revogado) | `false` ✅ |
+
+O md5 bater com o que fora **previsto antes** do apply é o que transforma "rodei" em evidência: se
+viesse outro valor, o certo seria parar, não carimbar. (Os dois md5 desta tabela são **normalizados**,
+§3 — conferir com `md5(prosrc)` cru dá `86052d07…`/`4a2f49ed…` e faz a tabela parecer falsa.)
+
+#### A armadilha de leitura que apareceu no meio
+
+As duas últimas linhas **não voltaram** na primeira medição. A saída trouxe três resultados e um
+`ERROR: permission denied for schema private` no fim — e um `grep` pelas linhas que interessavam
+teria mostrado três ✅ e **nenhum sinal do que faltou**.
+
+A causa: `has_function_privilege('anon', 'private.cap_carteira_escrever(uuid)', 'EXECUTE')` resolve
+a função **pela assinatura em texto**, e isso exige `USAGE` no schema — que o `claude_ro` não tem.
+Ler `pg_proc` direto funciona (catálogo é legível); **resolver o nome, não**. A forma por **OID**
+(`has_function_privilege(rol, p.oid, 'EXECUTE')`, com `p` vindo de um join em `pg_proc`) não passa
+por resolução de nome e devolve o dado.
+
+> **Lição:** *a mesma função do Postgres tem sobrecargas com requisitos de permissão diferentes.*
+> Sob um papel read-only deliberadamente estreito, prefira sempre a forma por **OID** — e trate
+> linha que não voltou como **ausência de dado**, nunca como o valor que você esperava. Aqui o
+> `psql` sinalizou com um ERROR; num caso com `LEFT JOIN` ou agregação, o mesmo buraco sairia como
+> `NULL` silencioso.
+
+### 11.3 O furo do §11.1, fechado — e as duas armadilhas que quase o fecharam errado
+
+O §11.1 registrou a pendência: `docs/migrations-audit.md` checa objeto por **existência**, e a
+função existia desde julho — logo o audit devolvia ✅ com ou sem o apply. Medido antes de corrigir:
+**231 dos 1307 objetos** do inventário (18%) são definidos por mais de uma migration. É latente,
+não um incidente: nenhuma migration está hoje por aplicar.
+
+**O desenho errado, e por que o número o derrubou.** A correção óbvia — comparar o md5 do corpo e
+reprovar quando difere — foi medida antes de ser escrita: **88 funções** divergiam do repo. Se
+isso virasse ❌, o audit ganharia 88 alarmes que em sua maioria **não** significam "falta colar
+SQL", e sim **deriva de prod** (edição direta no SQL Editor, que é o modo normal de operar este
+banco). Alarme falso em massa é como uma seção nova nasce desligada.
+
+Separar os estados é o que torna a seção útil. Medido em prod (2026-08-29), entre as funções
+recriadas com corpo extraível:
+
+| estado | nº | o que significa |
+|---|---|---|
+| corpo vivo == **última** migration | 68 | ✅ em dia |
+| corpo vivo == migration **anterior** | **0** | ❌ *a posterior não foi aplicada* — o defeito |
+| corpo vivo == **nenhuma** declarada | 24 | 🔴 deriva de prod — **não** é "falta colar" |
+
+O estado do meio é o único que manda agir, e é exatamente o que a checagem por existência dava
+como ✅.
+
+#### 🔴 Duas armadilhas, ambas pegas por medir DUAS vezes
+
+A classificação foi implementada em **SQL** (a seção emitida) e em **TypeScript** (um script de
+medição), com a exigência de que as duas batessem. **Não bateram**, duas vezes:
+
+1. **Migration UUID ignorada.** A primeira comparação usava a última migration **custom** que
+   define a função. Mas as de nome UUID — aplicadas sozinhas pelo builder do Lovable — também
+   redefinem objetos: medido, a última definição de `public.fin_user_can_access` está numa delas.
+   ⚠️ *Correção do que eu havia escrito aqui:* afirmei que ignorá-las **acusaria DERIVA numa
+   função em dia**. Medi, e é falso — na seção final, restrita a objetos recriados, **nenhuma
+   função muda de classificação**. O dano real é **cobertura**: com as UUID a seção vigia 98
+   funções, sem elas 87, e as 11 que saem simplesmente deixam de ser checadas. Silêncio, não
+   alarme falso — o modo de falha mais discreto, e o mesmo que o §11.1 documenta. A afirmação
+   errada sobreviveu a um commit porque a falsificação que eu montei para ela media a coisa
+   errada (contagem de DERIVA, que **cai** ao excluir UUID porque a cobertura encolhe).
+2. **Comentário strippado do corpo.** O extrator roda sobre o SQL com comentários **removidos**;
+   `pg_proc.prosrc` os **guarda**. O md5 do texto strippado nunca bate com o banco para qualquer
+   função com `--` no corpo. Efeito medido: **52 DERIVA com o texto strippado × 24 com o cru** —
+   28 alarmes falsos.
+
+> **Lição:** *duas implementações que PRECISAM bater são o oráculo mais barato que existe para um
+> hash.* Nenhuma das duas armadilhas apareceria numa implementação só: cada uma produzia um
+> resultado plausível, autoconsistente e errado. A mesma técnica pegou a armadilha do `btrim`
+> (§11.2) — três defeitos, um método.
+>
+> E a lição de escopo: *a correção certa de um falso ✅ raramente é um ❌.* Aqui era **três**
+> estados, porque "não aplicada" e "deriva" pedem ações opostas e a checagem ingênua as
+> confundia.
+
+### 11.4 Pendências abertas no fecho de 2026-08-29 (cópia durável dos chips)
+
+Três pendências saíram desta série com chip criado. **Chip é destino perecível** — mora dentro da
+sessão que o criou, e não há fila global. Se a sessão for arquivada antes do clique, não há
+caminho conhecido de volta. Por isso o conteúdo essencial fica aqui.
+
+**1. Confirmar o deploy das 8 edges mergeadas entre 28 e 29/08.** Cinco sessões paralelas
+mergearam mudanças em `supabase/functions/` na mesma janela; neste repo merge **não** deploya edge
+(chat do Lovable, manual), e a sessão dona pode ter fechado sem pedir. Arquivos: `_shared/`
+(`sonda-fingerprints.ts`, `sonda-versao-contrato_test.ts`), `analytics-outbox-drain`,
+`elevenlabs-transcribe`, `generate-bundle-argument`, e os quatro `omie-sync-*`
+(`ctes-recebidos`, `nfes-recebidas`, `pedidos-compra`, `sku-items`, `vendas-items`). O pedido de
+deploy tem de nomear **todos**, `_shared` incluído — prompt que nomeia um só deixa a edge sem
+bootar (#2020). ⚠️ Duas são de SEGURANÇA (gate de IA paga): se não estiverem no ar, o gate está no
+repo e não em produção. Confirmar antes via `versao.ts`/sonda, para não pedir deploy redundante.
+
+**2. Triar as 27 funções em `🔴 DERIVA`.** A Seção 3 do #2105 passou a enxergá-las: corpo vivo que
+não bate com **nenhuma** migration do repo — edição direta no SQL Editor que o repo nunca soube.
+Zero em `NAO APLICADA` (bom). O produto é uma lista classificada (o vivo é mais novo ou mais
+velho? divergência semântica ou formatação? é money-path?), não "consertar as 27" — a maioria deve
+ser deriva benigna. Se alguma for money-path com divergência semântica, **isso** é o achado.
+
+**3. Decidir o vocabulário morto de `commercial_role`.** 8 valores no enum, **3 linhas** na tabela
+(`farmer`×2, `master`×1), e as capabilities de carteira testando três valores que ninguém tem — o
+CLAUDE.md ainda descreve um terceiro vocabulário ("gestor/vendedor"). A evidência barata para
+decidir entre migração abandonada, provisionamento sob demanda e divergência de fonte está no
+§11.1, na ordem que a 2ª opinião propôs. ⚠️ Não repetir a afirmação errada corrigida no §11.1: os
+`farmer` **têm** acesso à carteira, linha a linha, por `carteira_visivel_para`.
