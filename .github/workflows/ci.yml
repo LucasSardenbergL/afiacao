@@ -677,6 +677,22 @@ jobs:
       - name: Docs links gate (link relativo de .md resolve)
         run: bun run docs:links
 
+      # Frescura do manual: o CLAUDE.md e a maquinaria conferem um ao outro nos DOIS sentidos.
+      # (1) nome citado que nao aponta para nada — `manifesto.gate` era citado como comando e nao
+      # existe em package.json nem em workflow; (2) gate que reprova e o manual nao cita — foi o
+      # `docs:indice` que reprovou o #2328, ausente do CLAUDE.md. As duas metades custam o mesmo:
+      # o gate so reprova DEPOIS do fato quando podia ter orientado ANTES.
+      # O sentido 2 nao varre prosa. Ele exige o censo delimitado de docs/agent/deploy.md, que
+      # bate EXATO com o inventario daqui — porque a versao anterior era prosa datada ("15 steps",
+      # 2026-08-23) e era a UNICA mencao de 5 gates num CI que ja tinha 28. Aceitar prosa que
+      # envelhece faria o gate nascer incapaz de pegar o proprio caso de origem: sempre-verde e o
+      # espelho de sempre-vermelha.
+      # Este step e o eixo de DENTRO — ele le o ci.yml morando no ci.yml. Os de fora sao
+      # `gates-frescura-check.test.ts` (vitest, fixtures sinteticas) e `test-gates-frescura.sh`
+      # (bash, sabota copia real), este ultimo sob `test:hooks` e `test:falsificacao`.
+      - name: Frescura do manual (CLAUDE.md <-> ci.yml/hooks, dois sentidos)
+        run: bun run gates:frescura
+
       # Anti-regressão de DEAD CODE (export sem consumidor, dep sem import). Existe porque o gate
       # só-local não barra ninguém, e isso foi MEDIDO: o #1212 zerou os 254 achados e verificou
       # `exit 0` em 2026-07-07, mas ficou 4 semanas em CONFLICTING (estado em que o auto-merge
