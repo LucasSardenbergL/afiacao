@@ -54,7 +54,8 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // baseline por arquivo aceitaria um 2º sítio no mesmo arquivo em silêncio. A lista só
 // ENCOLHE, e encolhe registrada — diminuir também reprova, pedindo a atualização.
 //
-// DÍVIDA (2026-08-23): estes 39 sítios são a classe medida, não sítios aprovados. A fatia
+// DÍVIDA (2026-09-07): estes 36 sítios de auto-ocultação (+ 9 de retorno afirmativo, na
+// baseline de baixo) são a classe medida, não sítios aprovados. A fatia
 // de maior dano saiu nesta leva (banner de saúde de dados, alertas de fluxo de caixa,
 // painel de saúde da carteira) porque neles a ausência AFIRMA segurança e o dano estava
 // medido em prod. O resto sai por domínio, e a ordem é por dano — não por facilidade.
