@@ -25,10 +25,12 @@ const AGENDA_META: Record<AgendaItem['agenda_type'], { label: string; icon: type
  * WebRTC makeCall.
  */
 export function AgendaTodayList() {
-  const { agenda, isLoading } = useMyAgendaToday(10);
-  // A agenda sai de `farmer_client_scores` filtrado por [eu, ...cobertos]. Se a cobertura
-  // não pôde ser lida, ela encolhe em silêncio — e o texto de vazio abaixo manda
-  // "Recalcular", instrução ATIVA sobre um vazio que talvez não exista.
+  const { agenda, isLoading, agendaIndisponivel, agendaDesatualizada } = useMyAgendaToday(10);
+  // A agenda sai de `farmer_client_scores` filtrado por [eu, ...cobertos], e o vazio dessa
+  // conta tem DUAS origens que falham calado. Se a cobertura não pôde ser lida, a lista
+  // encolhe em silêncio; se os SCORES não puderam ser lidos, ela some inteira — e o texto de
+  // vazio abaixo manda "Recalcular", instrução ATIVA sobre um vazio que talvez não exista.
+  // A 2ª dimensão vem do próprio hook, em `agendaIndisponivel`/`agendaDesatualizada`.
   const { coberturaIndisponivel } = useCarteirasQueEuCubro();
   const { makeCall } = useWebRTCCallContext();
 
@@ -58,6 +60,22 @@ export function AgendaTodayList() {
     );
   }
 
+  // A leitura dos SCORES não aconteceu e não há nada em mãos. Vem ANTES do aviso de
+  // cobertura porque é a RAIZ da agenda: sem `farmer_client_scores` não há lista nenhuma,
+  // com ou sem cobertura. (Quando a rede cai, as duas leituras pausam juntas e este ramo
+  // responde primeiro — de propósito: um aviso que nomeia a causa mais funda, não dois.)
+  if (agendaIndisponivel) {
+    return (
+      <Card className="p-4">
+        <AvisoLeituraFalhou
+          oque="a sua agenda do dia"
+          estado={agendaIndisponivel}
+          className="mb-0"
+        />
+      </Card>
+    );
+  }
+
   if (coberturaIndisponivel && agenda.length === 0) {
     return (
       <Card className="p-4">
@@ -72,8 +90,13 @@ export function AgendaTodayList() {
 
   if (agenda.length === 0) {
     return (
-      <Card className="p-6 text-center text-xs text-muted-foreground">
-        Sem clientes na agenda. Vá em <span className="font-mono">/farmer</span> antigo e clique &quot;Recalcular&quot; pra popular farmer_client_scores.
+      <Card className="p-6">
+        {agendaDesatualizada && (
+          <AvisoLeituraFalhou oque="a sua agenda do dia" estado={agendaDesatualizada} />
+        )}
+        <div className="text-center text-xs text-muted-foreground">
+          Sem clientes na agenda. Vá em <span className="font-mono">/farmer</span> antigo e clique &quot;Recalcular&quot; pra popular farmer_client_scores.
+        </div>
       </Card>
     );
   }
@@ -92,6 +115,15 @@ export function AgendaTodayList() {
 
   return (
     <Card className="divide-y divide-border">
+      {agendaDesatualizada && (
+        <div className="p-3">
+          <AvisoLeituraFalhou
+            oque="a sua agenda do dia"
+            estado={agendaDesatualizada}
+            className="mb-0"
+          />
+        </div>
+      )}
       {coberturaIndisponivel && (
         <div className="p-3">
           <AvisoLeituraFalhou
