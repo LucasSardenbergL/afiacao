@@ -553,10 +553,29 @@ O tamanho explica a raridade: `$ORIG` tinha 59.252 B contra os 64 KiB de buffer 
 90% da capacidade, margem de 6 KB. Quase sempre o `printf` despeja tudo antes de o `grep` fechar;
 sob escalonamento adverso (runner de 2 vCPUs, logo depois de um `bun` + Postgres), não.
 
-**Não tente reproduzir no macOS:** o BSD grep DRENA o stdin antes de sair, e a corrida não aparece
-nem em 400 tentativas. Falsificar só aqui não prova nada (é a lição do #1483 de novo). O guard
-[`scripts/test-guard-noop-sabotagem.sh`](../../scripts/test-guard-noop-sabotagem.sh) contorna isso
-com um shim que tem a semântica do GNU `grep -q`, tornando a condição determinística nos dois lados.
+**No macOS a corrida não aparece — mas o motivo NÃO é o grep.** Medido em 2026-09-07: com o payload
+passando da capacidade do pipe, tanto o `/usr/bin/grep` (BSD grep 2.6.0-FreeBSD) quanto o `ugrep`
+que embrulha o `grep` desta máquina (§4) saem no primeiro casamento e matam o escritor —
+`writer=141 grep=0`, idêntico ao Linux. O que blinda o macOS é o mesmo que torna o Linux raro: os
+59 KB cabem no buffer, e o `printf` termina antes. Por isso 400 tentativas sob 8 hogs de CPU deram
+zero fabricações — e por isso a atribuição "o BSD grep drena o stdin" está errada.
+
+A consequência é prática, e é o contrário de "não tente": **o macOS reproduz, de forma
+determinística, se você tirar a corrida do caminho** — basta empurrar o payload para além do buffer,
+e aí o escritor tem bytes pendentes por CAPACIDADE em vez de por escalonamento:
+
+```bash
+bash -c 'set -o pipefail
+  ORIG="$(cat scripts/sonda-versao-sql.ts)$(head -c 120000 </dev/zero | tr "\0" x)"
+  printf "%s" "$ORIG" | command grep -qF "l.status_code = 401"
+  ps=("${PIPESTATUS[@]}"); echo "writer=${ps[0]} grep=${ps[1]}"'   # → writer=141 grep=0
+```
+
+Isso é diagnóstico por MECANISMO, não por reprodução do gatilho: o que fica provado é que
+`pipefail` troca o veredito do consumidor pelo do produtor morto; o escalonamento adverso do runner
+continua sem reprodução local, e é honesto dizer isso. O guard
+[`scripts/test-guard-noop-sabotagem.sh`](../../scripts/test-guard-noop-sabotagem.sh) chega no mesmo
+lugar por outro caminho — um shim com a semântica do GNU `grep -q` — e vale nos dois sistemas.
 
 A contramedida é não usar pipeline para decidir presença — busca no próprio shell, sem fork:
 
