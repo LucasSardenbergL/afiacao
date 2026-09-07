@@ -122,7 +122,13 @@ describe('AgendaTodayList — scores ilegíveis não podem virar "clique em Reca
       farmer_client_scores: { data: [LINHA_SCORE], error: null },
     };
     renderLista();
-    expect(await textoDoAviso()).toMatch(/sem conexão/i);
+    const t = await textoDoAviso();
+    expect(t).toMatch(/sem conexão/i);
+    // ⚠️ O aviso tem de NOMEAR os scores. Só "sem conexão" é teatro: o `onlineManager` é
+    // global, então a COBERTURA também pausa, e o aviso dela diz exatamente a mesma frase.
+    // Medido por falsificação — sabotar o hook para tratar só `erro` (ignorando o
+    // `pending+paused`) deixava este teste VERDE, segurado pelo guard do #1908.
+    expect(t).toMatch(/a sua agenda do dia/i);
     await waitFor(() => expect(screen.queryByText(MANDA_RECALCULAR)).toBeNull());
   });
 
