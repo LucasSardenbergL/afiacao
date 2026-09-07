@@ -131,6 +131,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/__tests__/financeiro.test.ts",
+      "src/pages/__tests__/FinanceiroIc.leitura-falhou.test.tsx",
       "src/hooks/__tests__/useFinanceiroRegime.test.tsx",
       "src/hooks/__tests__/usePeriodOverride.test.tsx",
       "src/hooks/__tests__/useUtiContas.test.ts",
@@ -444,6 +445,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/services/__tests__/picking-confirm.test.ts",
+      "src/pages/__tests__/AdminEstoquePicking.leitura-falhou.test.tsx",
       "src/pages/__tests__/RecebimentoConferencia.estados.test.tsx",
     ],
     risco: { moneyPath: true, offlineFirst: true, authSensitive: false },
@@ -472,6 +474,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/hooks/__tests__/useReposicaoSessao.test.ts",
+      "src/pages/__tests__/AdminReposicaoOportunidades.negociacao-leitura.test.tsx",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.test.tsx",
       "src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.estados.test.tsx",
@@ -626,6 +629,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/contexts/__tests__/WebRTCCallContext.test.tsx",
+      "src/pages/__tests__/WhatsappInbox.sla-leitura-falhou.test.tsx",
       "src/contexts/__tests__/webrtc-context-split.test.ts",
       "src/hooks/__tests__/useCallBackend.test.tsx",
       "src/hooks/__tests__/useCatalisadorLink.erro-honesto.test.tsx",

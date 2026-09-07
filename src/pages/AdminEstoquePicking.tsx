@@ -42,6 +42,8 @@ import {
 import { toast } from "sonner";
 import { ScanBar } from "@/components/picking/ScanBar";
 import { EmptyState } from "@/components/EmptyState";
+import { estadoDeLeitura, naoConsegui } from "@/lib/leitura/estado-de-leitura";
+import { AvisoLeituraFalhou } from "@/components/leitura/AvisoLeituraFalhou";
 import { usePedidosASeparar } from "@/queries/usePedidosASeparar";
 import { useEnviarParaSeparacao } from "@/queries/useEnviarParaSeparacao";
 
@@ -304,18 +306,25 @@ function PickingTab({ account }: { account: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [lastScan, setLastScan] = useState<{ raw: string; kind: string; method: string; at: number } | null>(null);
 
-  const { data, isLoading } = useQuery({
+  // `const { data } = await …; return data ?? []` ENGOLIA o erro: a query ficava
+  // `success` com [] e a frase "Nenhuma task de picking." era dita com a mesma
+  // convicção do vazio real. O conserto começa aqui — sem o throw, o aviso da UI
+  // seria inalcançável por construção.
+  const listaQuery = useQuery({
     queryKey: ["pk-picking-list", account],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("picking_tasks")
         .select("id, sales_order_id, status, assigned_to, created_at")
         .eq("account", account.toLowerCase())
         .order("created_at", { ascending: false })
         .limit(200);
+      if (error) throw error;
       return data ?? [];
     },
   });
+  const { data, isLoading } = listaQuery;
+  const estadoLista = estadoDeLeitura(listaQuery);
 
   const { data: items } = useQuery({
     queryKey: ["pk-picking-items", expanded],
@@ -356,6 +365,16 @@ function PickingTab({ account }: { account: string }) {
       )}
       <Card>
       <CardContent className="p-0">
+        {naoConsegui(estadoLista) && (
+          <div className="p-3">
+            <AvisoLeituraFalhou
+              oque="as tasks de picking"
+              estado={estadoLista}
+              testId="aviso-picking-lista"
+              className="mb-0"
+            />
+          </div>
+        )}
         <Table>
           <TableHeader>
             <TableRow>
@@ -368,7 +387,7 @@ function PickingTab({ account }: { account: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(data ?? []).length === 0 && (
+            {!naoConsegui(estadoLista) && (data ?? []).length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                   Nenhuma task de picking.
@@ -547,17 +566,20 @@ function EstoqueTab({ account }: { account: string }) {
 
 /* ─── Movimentações tab ─── */
 function MovimentacoesTab() {
-  const { data, isLoading } = useQuery({
+  const eventosQuery = useQuery({
     queryKey: ["pk-events"],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("picking_events")
         .select("id, event_type, picking_task_id, lote_esperado, lote_informado, justificativa, created_at")
         .order("created_at", { ascending: false })
         .limit(300);
+      if (error) throw error;
       return data ?? [];
     },
   });
+  const { data, isLoading } = eventosQuery;
+  const estadoEventos = estadoDeLeitura(eventosQuery);
 
   if (isLoading)
     return <PageSkeleton variant="list" />;
@@ -565,6 +587,16 @@ function MovimentacoesTab() {
   return (
     <Card>
       <CardContent className="p-0">
+        {naoConsegui(estadoEventos) && (
+          <div className="p-3">
+            <AvisoLeituraFalhou
+              oque="as movimentações de picking"
+              estado={estadoEventos}
+              testId="aviso-picking-eventos"
+              className="mb-0"
+            />
+          </div>
+        )}
         <Table>
           <TableHeader>
             <TableRow>
@@ -577,7 +609,7 @@ function MovimentacoesTab() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(data ?? []).length === 0 && (
+            {!naoConsegui(estadoEventos) && (data ?? []).length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                   Sem movimentações.
@@ -609,23 +641,28 @@ function MovimentacoesTab() {
 
 /* ─── Auditoria tab ─── */
 function AuditoriaTab({ account }: { account: string }) {
-  const { data, isLoading } = useQuery({
+  const auditoriaQuery = useQuery({
     queryKey: ["pk-auditoria", account],
     queryFn: async () => {
-      const { data: tasks } = await supabase
+      const { data: tasks, error: erroTasks } = await supabase
         .from("picking_tasks")
         .select("id, sales_order_id, completed_at, notes")
         .eq("account", account.toLowerCase())
         .eq("status", "concluido")
         .order("completed_at", { ascending: false })
         .limit(200);
+      if (erroTasks) throw erroTasks;
       const ids = (tasks ?? []).map((t) => t.id);
       const divCount: Record<string, number> = {};
       if (ids.length) {
-        const { data: items } = await supabase
+        // A 2ª leitura também lança: contar 0 divergência porque os ITENS não vieram
+        // é o mesmo dano da aba inteira, só que num número — e a coluna "Divergências"
+        // pintaria um badge VERDE de 0 sobre uma conferência que ninguém leu.
+        const { data: items, error: erroItens } = await supabase
           .from("picking_task_items")
           .select("picking_task_id, lote_fefo, lote_separado, quantidade, quantidade_separada")
           .in("picking_task_id", ids);
+        if (erroItens) throw erroItens;
         for (const it of items ?? []) {
           const isDiv =
             (it.lote_separado && it.lote_fefo && it.lote_separado !== it.lote_fefo) ||
@@ -638,6 +675,8 @@ function AuditoriaTab({ account }: { account: string }) {
       return (tasks ?? []).map((t) => ({ ...t, divergencias: divCount[t.id] ?? 0 }));
     },
   });
+  const { data, isLoading } = auditoriaQuery;
+  const estadoAuditoria = estadoDeLeitura(auditoriaQuery);
 
   if (isLoading)
     return <PageSkeleton variant="list" />;
@@ -645,6 +684,16 @@ function AuditoriaTab({ account }: { account: string }) {
   return (
     <Card>
       <CardContent className="p-0">
+        {naoConsegui(estadoAuditoria) && (
+          <div className="p-3">
+            <AvisoLeituraFalhou
+              oque="a auditoria de tasks concluídas"
+              estado={estadoAuditoria}
+              testId="aviso-picking-auditoria"
+              className="mb-0"
+            />
+          </div>
+        )}
         <Table>
           <TableHeader>
             <TableRow>
@@ -656,7 +705,7 @@ function AuditoriaTab({ account }: { account: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(data ?? []).length === 0 && (
+            {!naoConsegui(estadoAuditoria) && (data ?? []).length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                   Nenhuma task concluída.

@@ -15,6 +15,8 @@ import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { parsePostgresFinanceiroError } from '@/lib/financeiro/error-handler';
 import { useNavigate, Link } from 'react-router-dom';
 import { useIcMatches } from '@/hooks/useIcMatches';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import {
   Loader2, Building2, Lock, Unlock, Clock,
   Eye, RotateCcw, Plus, History, ShieldCheck, AlertTriangle,
@@ -49,9 +51,14 @@ const FinanceiroFechamento = () => {
   const [motivoReabertura] = useState('');
   const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
   const [mappingPendentes, setMappingPendentes] = useState<Array<{id: string; nome: string}>>([]);
-  const { data: icDiv } = useIcMatches('divergencia_valor');
-  const { data: icSem } = useIcMatches('sem_contrapartida');
-  const totalIc = (icDiv?.length ?? 0) + (icSem?.length ?? 0);
+  const icDivQuery = useIcMatches('divergencia_valor');
+  const icSemQuery = useIcMatches('sem_contrapartida');
+  const totalIc = (icDivQuery.data?.length ?? 0) + (icSemQuery.data?.length ?? 0);
+  // Duas leituras somadas: se QUALQUER uma não aconteceu, o total é parcial e o silêncio
+  // do `totalIc > 0` deixa de significar "não há pendência IC" — numa tela de FECHAMENTO
+  // contábil essa ausência afirma segurança. `useIcMatches` LANÇA, então a falha chega aqui
+  // como `data === undefined` e `?? 0` a converteria em zero (ausente ≠ zero).
+  const estadoIc = [estadoDeLeitura(icDivQuery), estadoDeLeitura(icSemQuery)].find(naoConsegui);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -114,6 +121,15 @@ const FinanceiroFechamento = () => {
 
   return (
     <div className="space-y-4 pb-24">
+      {estadoIc && (
+        <AvisoLeituraFalhou
+          oque="as pendências intercompany"
+          estado={estadoIc}
+          testId="aviso-ic-fechamento"
+        />
+      )}
+      {/* Com dado PARCIAL em mãos os dois convivem: apagar o que foi lido por causa da
+          leitura que falhou trocaria um defeito por outro. */}
       {totalIc > 0 && (
         <div className="flex items-center gap-2 text-xs text-status-warning bg-status-warning-bg p-2 rounded-md">
           <AlertTriangle className="h-3 w-3 flex-shrink-0" />
