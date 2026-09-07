@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **526** custom migrations totais
+- **527** custom migrations totais
 - **1787** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 562
@@ -4381,6 +4381,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.sayerlack_aplicar_custo_portal` | — |
 
 ### `20260907095338_authz_revoke_anon_rpc_reposicao.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260907101349_deploy_sonda_alvos_onda1.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
