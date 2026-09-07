@@ -169,3 +169,53 @@ binding (`= []`) + condição `length === 0` + texto afirmativo — tem o mesmo 
 gateada e são 16 sítios, não 93. Isso é um PR próprio, com baseline própria e falsificação; e o
 pré-requisito dele é o item 2 acima, porque num hook que engole o erro o gate estaria fiscalizando
 a camada errada.
+
+## Fatia #1 FECHADA — `usePrecoCockpit` (2026-09-06)
+
+Os dois consumidores (`CartItemList`, `ProductItemForm` — e são **exatamente** dois) passaram a
+ler o estado da query, não só o `data`: `estadoDeLeitura` + `naoConsegui`/`desatualizado` +
+`<AvisoLeituraFalhou>`. O preço continua na tela **com** o aviso — apagar a linha do carrinho
+porque o cockpit falhou trocaria um defeito por outro (`estado-de-leitura.ts`, `desatualizado`).
+
+### 1. A guarda que já existia mockava o hook — e o mock era PARCIAL
+
+O briefing mandou conferir `CartItemList.priceGuard.test.tsx` antes de mexer, contra o risco de
+"tratamento parcial já existente" tornar o fix inerte. O que ele cobre é **nada** desta classe:
+mocka `usePrecoCockpit: () => ({ data: undefined })` — isto é, roda o componente **exatamente no
+estado de falha** — e afirma só o `aria-invalid` do preço. O erro nunca foi olhado.
+
+O achado que vale como regra é o **formato do mock**: `{ data: undefined }` não tem `status` nem
+`fetchStatus`. Depois do fix, `estadoDeLeitura({status: undefined, fetchStatus: undefined})` não
+casa nenhum `if` e cai no `return 'carregando'` — o teste antigo segue verde **por acidente de
+ramo**, não por desenho. Um mock de hook precisa ter a forma que o componente LÊ; mock parcial
+transforma "o componente escolheu este ramo" em "o objeto não tinha o campo". Completado para
+`{ data: undefined, status: 'pending', fetchStatus: 'idle' }` — 'desabilitada', que é o estado
+que aquele teste de fato quer (cockpit indiferente ao guard de preço).
+
+### 2. A RPC lança por DESENHO, não só por acidente de transporte
+
+`get_preco_cockpit` é SECURITY DEFINER e tem dois `RAISE EXCEPTION` no corpo (psql-ro, 2026-09-06):
+
+```
+RAISE EXCEPTION 'forbidden' USING errcode = '42501'
+  IF NOT (auth.uid() IS NOT NULL AND (has_role(auth.uid(),'employee') OR has_role(auth.uid(),'master')))
+RAISE EXCEPTION 'too many items (max 200)' USING errcode = '22023'
+```
+
+ACL: `authenticated=X`, **`anon` sem EXECUTE**. O caminho alcançável não é exótico — é a **aba de
+balcão aberta o dia inteiro**: token expira, `auth.uid()` vira null, a RPC responde 42501, e a
+régua de margem some de um carrinho que continua editável e submetível. A tela do erro era
+byte-a-byte a tela da margem saudável em faixa `neutro`.
+
+### 3. O caminho dos 200 itens NÃO é alcançável — e o zero fica registrado
+
+Antes de usar "carrinho grande derruba a régua" como argumento, medi. `sales_orders` grava os
+itens em coluna `items` jsonb (confirmado pelo ESCRITOR, `submitOrder.ts:216`, não pelo nome):
+
+| pedidos | máx itens | p99 | acima de 200 |
+|---|---|---|---|
+| 31.248 | **28** | 9,0 | **0** |
+
+O limite de 200 nunca foi tocado em 31 mil pedidos. Registrar o zero é o que impede o próximo a
+inflar o argumento — mesma disciplina que separou `orders` (0 linhas) de `sales_orders` (508/30d)
+na medição original, só que agora contra um erro **meu**, plausível e verificável em duas queries.
