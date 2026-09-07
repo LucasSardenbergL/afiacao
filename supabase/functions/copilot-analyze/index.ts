@@ -8,6 +8,7 @@ import {
   traduzirErroAnthropic,
 } from "../_shared/anthropic.ts";
 import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { normalizarAnalise, TOOL_COPILOTO } from "./copiloto-tools.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -24,6 +25,37 @@ Deno.serve(async (req) => {
   const __auth = await authorizeCronOrStaff(req);
   if (!__auth.ok) return __auth.response;
 
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ATRÁS do `authorizeCronOrStaff` acima, que já aceita o
+  // `x-cron-secret` do SQL Editor ⇒ sem gate próprio (mesmo desenho do `omie-sync`; as outras
+  // três edges de IA precisam de gate próprio porque abrem direto no JWT do usuário). Daqui pra
+  // frente a edge queima cota de IA e chama a Anthropic. Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // ⚠️ O corpo só se lê UMA vez. O erro de JSON inválido é GUARDADO e relançado no ponto antigo
+  // (abaixo), para que a resposta continue sendo o 500 do catch geral: engoli-lo faria um corpo
+  // quebrado virar `transcript: undefined` e cair no 400 de transcrição curta, mandando o
+  // chamador consertar a coisa errada.
+  let corpoBruto;
+  let erroParseCorpo: unknown = null;
+  try {
+    corpoBruto = await req.json();
+  } catch (e) {
+    corpoBruto = {};
+    erroParseCorpo = e;
+  }
+
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === 'sonda') {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (decisaoSonda.tipo === 'ambiguo') {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
   try {
     // Authenticate user
     const authHeader = req.headers.get('Authorization');
@@ -39,7 +71,9 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const { transcript, customerContext, currentPhase, currentIntent, bundleContext } = await req.json();
+    // Já parseado acima (para a sonda); o throw do corpo inválido é relançado no ponto antigo.
+    if (erroParseCorpo !== null) throw erroParseCorpo;
+    const { transcript, customerContext, currentPhase, currentIntent, bundleContext } = corpoBruto;
 
     if (!transcript || transcript.trim().length < 5) {
       return new Response(

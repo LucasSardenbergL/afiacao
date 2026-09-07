@@ -8,7 +8,9 @@ import {
   traduzirErroAnthropic,
 } from "../_shared/anthropic.ts";
 import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { normalizarItens, TOOL_SERVICOS } from "./servico-tools.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,6 +30,42 @@ interface UserTool {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do gate `Bearer ` e do createClient, como na
+  // `analyze-unified-order`. Quem sonda precisa do `x-cron-secret`/staff do
+  // `authorizeCronOrStaff`: o gate PRÓPRIO existe porque atrás do JWT de usuário desta edge a
+  // sonda seria inalcançável para o cron. ⚠️ Esta edge é `verify_jwt = true` (ausente do
+  // `config.toml`), então o relé precisa mandar TAMBÉM um `Authorization: Bearer <jwt>` — sem
+  // ele o 401 vem do GATEWAY e não prova nada. Daqui pra frente a edge queima cota de IA e
+  // chama a Anthropic. Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // ⚠️ O corpo só se lê UMA vez. O erro de JSON inválido é GUARDADO e relançado no ponto antigo
+  // (abaixo), para que a resposta continue sendo o 500 do catch geral: engoli-lo faria um corpo
+  // quebrado virar `text: undefined` e cair no 400 de validação, mandando o chamador consertar
+  // a coisa errada.
+  let corpoBruto;
+  let erroParseCorpo: unknown = null;
+  try {
+    corpoBruto = await req.json();
+  } catch (e) {
+    corpoBruto = {};
+    erroParseCorpo = e;
+  }
+
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 
   try {
@@ -54,7 +92,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { text, userTools } = await req.json();
+    // Já parseado acima (para a sonda); o throw do corpo inválido é relançado no ponto antigo.
+    if (erroParseCorpo !== null) throw erroParseCorpo;
+    const { text, userTools } = corpoBruto;
 
     // Input validation
     if (!text || typeof text !== "string") {

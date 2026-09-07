@@ -69,6 +69,10 @@ import * as enviarPush from "../enviar-push/versao.ts";
 import * as nvoipCalls from "../nvoip-calls/versao.ts";
 import * as dispatchNotif from "../dispatch-notifications/versao.ts";
 import * as sondaRelay from "../sonda-relay/versao.ts";
+import * as identifyTool from "../identify-tool/versao.ts";
+import * as analyzeServices from "../analyze-services/versao.ts";
+import * as copilotAnalyze from "../copilot-analyze/versao.ts";
+import * as elevenlabsTranscribe from "../elevenlabs-transcribe/versao.ts";
 import { SONDA_CRON_ALVOS } from "./sonda-cron-alvos.ts";
 
 /**
@@ -237,6 +241,15 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "nvoip-calls", mod: nvoipCalls },
   { nome: "dispatch-notifications", mod: dispatchNotif },
   { nome: "sonda-relay", mod: sondaRelay },
+  // 12ª leva — as 4 que queimam COTA DE IA. Ficaram de fora das 11 anteriores justamente as
+  // que gastam o orçamento da ORGANIZAÇÃO na Anthropic/ElevenLabs: quando se perguntou "o gate
+  // de cota (`consumirCota`) está NO AR?", não havia resposta possível — sem sonda, a única
+  // prova de versão seria queimar cota autenticado em prod, e `ia_uso_evento` (a tabela que
+  // registraria o uso) tem purga de 7 dias, então o zero dela é ausência de dado, não veredito.
+  { nome: "identify-tool", mod: identifyTool },
+  { nome: "analyze-services", mod: analyzeServices },
+  { nome: "copilot-analyze", mod: copilotAnalyze },
+  { nome: "elevenlabs-transcribe", mod: elevenlabsTranscribe },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -356,6 +369,14 @@ const FORMA_NORMALIZADA = [
   // não nasce. Fica FORA de GATE_PROPRIO: o gate dela é `authorizeCronOrStaff`, que já aceita o
   // `x-cron-secret` com que o SQL Editor sonda.
   "analytics-outbox-drain",
+  // 12ª leva: mesma razão da sétima (`analyze-unified-order`) — não é a escrita que põe uma
+  // edge aqui, é o preço de um `probe` mal grafado cair no fluxo real. Nestas quatro o preço é
+  // token pago à Anthropic/ElevenLabs, cobrado da cota da ORGANIZAÇÃO, com imagem de até 8 MB
+  // ou áudio de até 10 MB anexado.
+  "identify-tool",
+  "analyze-services",
+  "copilot-analyze",
+  "elevenlabs-transcribe",
 ];
 
 /**
@@ -416,6 +437,14 @@ const GATE_PROPRIO = [
   "omie-financeiro",
   "analyze-unified-order",
   "ai-ops-agent",
+  // 12ª leva: as três abrem o handler direto no JWT do usuário (`startsWith("Bearer ")` +
+  // `getUser`/`getClaims`) e nunca leram `x-cron-secret`. Sem gate próprio a sonda ficaria
+  // inalcançável pelo SQL Editor — o furo medido na `recommend` (#1882). A quarta,
+  // `copilot-analyze`, fica FORA de propósito: o gate dela já é `authorizeCronOrStaff`, que
+  // aceita o `x-cron-secret`, e repeti-lo seria auth duplicada sem propriedade nova.
+  "identify-tool",
+  "analyze-services",
+  "elevenlabs-transcribe",
 ];
 
 /** As pastas que TÊM `versao.ts` — a verdade da árvore, não a lista declarada aqui. */
@@ -857,7 +886,24 @@ Deno.test("gate próprio: onde o gate da edge não aceita cron-secret, a sonda N
  * lista quando a segunda apareceu: herdar a regra é o que impede a terceira nessa forma de ficar
  * de fora em silêncio.
  */
-const BEARER_NO_HANDLER = ["recommend", "analyze-unified-order"];
+const BEARER_NO_HANDLER = [
+  "recommend",
+  "analyze-unified-order",
+  // 12ª leva: as quatro de IA têm o `startsWith` próprio, e nas quatro a sonda vem antes dele.
+  "identify-tool",
+  "analyze-services",
+  "copilot-analyze",
+  "elevenlabs-transcribe",
+];
+
+/**
+ * A âncora do gate abaixo aceita as DUAS grafias de aspa. O literal `startsWith("Bearer ")`
+ * casava só o arquivo que usa aspa dupla; `copilot-analyze` e `elevenlabs-transcribe` escrevem
+ * `startsWith('Bearer ')` e cairiam no ramo "âncora não encontrada" — vermelho correto, mas
+ * pela razão errada (a propriedade medida é a ORDEM sonda↔gate, não a aspa do arquivo).
+ * Continua fail-closed: sem âncora, o gate para.
+ */
+const RE_BEARER_NO_HANDLER = /startsWith\((["'])Bearer \1\)/;
 
 Deno.test("onde o handler tem gate de Bearer próprio, a sonda vem ANTES dele", () => {
   // Medido em prod (2026-08-22): `net.http_post` com `x-cron-secret` e SEM `Authorization`
@@ -874,7 +920,7 @@ Deno.test("onde o handler tem gate de Bearer próprio, a sonda vem ANTES dele", 
   for (const nome of BEARER_NO_HANDLER) {
     const h = trechoDoHandler(nome);
     const posSonda = h.indexOf("classificarSonda(");
-    const posBearer = h.indexOf('startsWith("Bearer ")');
+    const posBearer = h.search(RE_BEARER_NO_HANDLER);
     if (posSonda < 0 || posBearer < 0) {
       throw new Error(`${nome}: âncoras não encontradas (controle positivo vazio)`);
     }
