@@ -68,12 +68,15 @@ function item(): ProductCartItem {
   return { type: 'product', product: produto, quantity: 1, unit_price: 10 } as unknown as ProductCartItem;
 }
 
-function comQuery(ui: React.ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+function novoQc() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+}
+
+function comQuery(ui: React.ReactElement, qc = novoQc()) {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
-function renderCarrinho() {
+function renderCarrinho(qc?: QueryClient) {
   return comQuery(
     <CartItemList
       cart={{ length: 1 }}
@@ -94,6 +97,7 @@ function renderCarrinho() {
       customerUserId="c1"
       customerName="Cliente"
     />,
+    qc,
   );
 }
 
@@ -136,6 +140,25 @@ describe('CartItemList — cockpit ilegível NÃO pode virar silêncio', () => {
     resposta = { data: [linha()], error: null };
     renderCarrinho();
     expect(await screen.findByText(AVISO)).toBeTruthy();
+  });
+
+  it('DADO EM CACHE + offline no refetch: avisa SEM apagar a régua (o composto)', async () => {
+    // Único ramo que `naoConsegui` não alcança: com dado já respondido o status é
+    // 'success' (⇒ `estadoDeLeitura` = 'pronta') e só o `fetchStatus: 'paused'` denuncia
+    // que a informação na tela é velha. Escolher entre a régua e o aviso seria trocar um
+    // defeito por outro — o desenho mostra os DOIS (`estado-de-leitura.ts`, `desatualizado`).
+    const qc = novoQc();
+    resposta = { data: [linha()], error: null };
+    renderCarrinho(qc);
+    expect(await screen.findByText('Abaixo do custo')).toBeTruthy();
+    expect(screen.queryByText(AVISO)).toBeNull();
+
+    onlineManager.setOnline(false);
+    void qc.invalidateQueries();
+
+    expect(await screen.findByText(AVISO)).toBeTruthy();
+    // e a régua CONTINUA na tela, com o aviso ao lado
+    expect(screen.getByText('Abaixo do custo')).toBeTruthy();
   });
 
   it('erro e faixa-neutra NÃO produzem a mesma tela (o colapso, medido)', async () => {
