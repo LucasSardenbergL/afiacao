@@ -75,36 +75,45 @@ function StatusBadge({ status }: { status: string | null }) {
 
 /* ─── KPIs ─── */
 function KpiCards({ account }: { account: string }) {
-  const { data: tasksAbertas } = useQuery({
+  // Os quatro cards ENGOLIAM o erro (`const { count } = await supabase…; return count ?? 0`). A
+  // leitura que falha deixa `data === undefined`, o `?? 0` do render a converte em "0", e o
+  // separador lê "0 Tasks Abertas" / "0 SKUs Críticos" / "0,0% FEFO" como afirmação sobre o chão
+  // de fábrica. É a classe IRMÃ da que some — `ausente → zero` (CLAUDE.md §Money-path) — e é pior:
+  // um número tem exatamente a mesma aparência quando é medido e quando é fabricado, então nada
+  // na tela convida o usuário a desconfiar. O `throw` é o começo obrigatório: sem ele a UI não tem
+  // como saber que falhou, e degradar o card seria inalcançável por construção (fix inerte).
+  const tasksAbertasQuery = useQuery({
     queryKey: ["pk-tasks-abertas", account],
     queryFn: async () => {
-      const { count } = await supabase
+      const { count, error } = await supabase
         .from("picking_tasks")
         .select("*", { count: "exact", head: true })
         .eq("account", account.toLowerCase())
         .in("status", ["pendente", "em_andamento"]);
+      if (error) throw error;
       return count ?? 0;
     },
     refetchInterval: 60000,
   });
 
-  const { data: pedidosAguardando } = useQuery({
+  const pedidosAguardandoQuery = useQuery({
     queryKey: ["pk-pedidos-aguardando", account],
     queryFn: async () => {
-      const { count } = await supabase
+      const { count, error } = await supabase
         .from("picking_tasks")
         .select("*", { count: "exact", head: true })
         .eq("account", account.toLowerCase())
         .eq("status", "pendente");
+      if (error) throw error;
       return count ?? 0;
     },
     refetchInterval: 60000,
   });
 
-  const { data: skusCriticos } = useQuery({
+  const skusCriticosQuery = useQuery({
     queryKey: ["pk-skus-criticos", account],
     queryFn: async () => {
-      const { count } = await supabase
+      const { count, error } = await supabase
         // Porta OPERACIONAL (FU4-F fase 2): conta SKUs zerados sem tocar custo. `head:true` não
         // retorna linhas — mas a tabela crua exigiria cap_custo_ler e devolveria 0 ao separador,
         // fabricando "nenhum SKU crítico" (o anti-padrão count-exact-vira-0-silencioso).
@@ -112,79 +121,126 @@ function KpiCards({ account }: { account: string }) {
         .select("*", { count: "exact", head: true })
         .eq("account", account)
         .lte("saldo", 0);
+      // O comentário acima já NOMEAVA este anti-padrão e a query mesmo assim não lançava: sem o
+      // `throw`, a negativa de permissão que ele descreve virava o "0" que ele condena.
+      if (error) throw error;
       return count ?? 0;
     },
     refetchInterval: 60000,
   });
 
-  const { data: fefoCompliance } = useQuery({
+  const fefoQuery = useQuery({
     queryKey: ["pk-fefo-compliance", account],
     queryFn: async () => {
-      const { data: tasks } = await supabase
+      const { data: tasks, error: erroTasks } = await supabase
         .from("picking_tasks")
         .select("id")
         .eq("account", account.toLowerCase());
+      if (erroTasks) throw erroTasks;
       const ids = (tasks ?? []).map((t) => t.id);
-      if (!ids.length) return { pct: 0, total: 0, ok: 0 };
-      const { data: items } = await supabase
+      // Sem task não há denominador: `total: 0` é a AUSÊNCIA de itens separados, não 0% de
+      // conformidade. Devolver `pct: 0` aqui pintava o card de vermelho ("0,0%") afirmando um
+      // descumprimento que ninguém cometeu — `pct: null` deixa o render dizer "—".
+      if (!ids.length) return { pct: null, total: 0, ok: 0 };
+      const { data: items, error: erroItens } = await supabase
         .from("picking_task_items")
         .select("lote_fefo, lote_separado")
         .in("picking_task_id", ids)
         .not("lote_separado", "is", null);
+      if (erroItens) throw erroItens;
       const total = (items ?? []).length;
       const ok = (items ?? []).filter(
         (i) => i.lote_fefo && i.lote_separado && i.lote_fefo === i.lote_separado,
       ).length;
-      return { pct: total ? (ok / total) * 100 : 0, total, ok };
+      return { pct: total ? (ok / total) * 100 : null, total, ok };
     },
     refetchInterval: 60000,
   });
 
+  const tasksAbertas = tasksAbertasQuery.data;
+  const pedidosAguardando = pedidosAguardandoQuery.data;
+  const skusCriticos = skusCriticosQuery.data;
+  const fefoCompliance = fefoQuery.data;
+
+  const estados = [
+    estadoDeLeitura(tasksAbertasQuery),
+    estadoDeLeitura(pedidosAguardandoQuery),
+    estadoDeLeitura(skusCriticosQuery),
+    estadoDeLeitura(fefoQuery),
+  ] as const;
+  const [estadoTasks, estadoPedidos, estadoSkus, estadoFefo] = estados;
+  // O aviso é do BLOCO: um único card mudo já basta para que o painel não sirva de base de
+  // decisão, e o usuário não tem como saber QUAL número parou de ser medido só olhando. Entre as
+  // causas, `sem-rede` tem precedência na mensagem — é a única sobre a qual ele pode agir.
+  const semLeitura = estados.filter(naoConsegui);
+  const estadoBloco = semLeitura.find((e) => e === "sem-rede") ?? semLeitura[0];
+
+  // Card que não foi lido não tem número NEM cor: "—" em tom neutro. Pintar de
+  // `text-muted-foreground` (a cor do zero) seria trocar uma mentira por outra mais discreta —
+  // "0 SKUs Críticos" em cinza calmo é a leitura que o separador faz de um estoque sadio.
+  const MUDO = { valor: "—", tone: "text-muted-foreground/60", border: "border-dashed border-border" };
+
   const cards = [
-    {
-      label: "Tasks Abertas",
-      value: tasksAbertas ?? 0,
-      icon: ClipboardList,
-      tone: (tasksAbertas ?? 0) > 0 ? "text-primary" : "text-muted-foreground",
-      border: (tasksAbertas ?? 0) > 0 ? "border-primary/40" : "border-border",
-    },
-    {
-      label: "Pedidos Aguardando",
-      value: pedidosAguardando ?? 0,
-      icon: Clock,
-      tone:
-        (pedidosAguardando ?? 0) > 0 ? "text-warning" : "text-muted-foreground",
-      border:
-        (pedidosAguardando ?? 0) > 0 ? "border-warning/40" : "border-border",
-    },
-    {
-      label: "SKUs Críticos",
-      value: skusCriticos ?? 0,
-      icon: AlertTriangle,
-      tone:
-        (skusCriticos ?? 0) > 0 ? "text-destructive" : "text-muted-foreground",
-      border:
-        (skusCriticos ?? 0) > 0 ? "border-destructive/40" : "border-border",
-    },
-    {
-      label: "FEFO Compliance",
-      value: `${(fefoCompliance?.pct ?? 0).toFixed(1)}%`,
-      icon: ShieldCheck,
-      tone:
-        (fefoCompliance?.pct ?? 0) >= 90
-          ? "text-success"
-          : (fefoCompliance?.pct ?? 0) >= 70
-            ? "text-warning"
-            : "text-destructive",
-      border:
-        (fefoCompliance?.pct ?? 0) >= 90
-          ? "border-success/40"
-          : "border-border",
-    },
+    naoConsegui(estadoTasks)
+      ? { label: "Tasks Abertas", value: MUDO.valor, icon: ClipboardList, tone: MUDO.tone, border: MUDO.border }
+      : {
+          label: "Tasks Abertas",
+          value: tasksAbertas ?? 0,
+          icon: ClipboardList,
+          tone: (tasksAbertas ?? 0) > 0 ? "text-primary" : "text-muted-foreground",
+          border: (tasksAbertas ?? 0) > 0 ? "border-primary/40" : "border-border",
+        },
+    naoConsegui(estadoPedidos)
+      ? { label: "Pedidos Aguardando", value: MUDO.valor, icon: Clock, tone: MUDO.tone, border: MUDO.border }
+      : {
+          label: "Pedidos Aguardando",
+          value: pedidosAguardando ?? 0,
+          icon: Clock,
+          tone:
+            (pedidosAguardando ?? 0) > 0 ? "text-warning" : "text-muted-foreground",
+          border:
+            (pedidosAguardando ?? 0) > 0 ? "border-warning/40" : "border-border",
+        },
+    naoConsegui(estadoSkus)
+      ? { label: "SKUs Críticos", value: MUDO.valor, icon: AlertTriangle, tone: MUDO.tone, border: MUDO.border }
+      : {
+          label: "SKUs Críticos",
+          value: skusCriticos ?? 0,
+          icon: AlertTriangle,
+          tone:
+            (skusCriticos ?? 0) > 0 ? "text-destructive" : "text-muted-foreground",
+          border:
+            (skusCriticos ?? 0) > 0 ? "border-destructive/40" : "border-border",
+        },
+    // `pct == null` cobre DOIS casos que não são 0%: a leitura que falhou e o denominador vazio
+    // (nenhum item separado ainda). Nos dois, o que existe é ausência de medida.
+    naoConsegui(estadoFefo) || fefoCompliance?.pct == null
+      ? { label: "FEFO Compliance", value: MUDO.valor, icon: ShieldCheck, tone: MUDO.tone, border: MUDO.border }
+      : {
+          label: "FEFO Compliance",
+          value: `${fefoCompliance.pct.toFixed(1)}%`,
+          icon: ShieldCheck,
+          tone:
+            fefoCompliance.pct >= 90
+              ? "text-success"
+              : fefoCompliance.pct >= 70
+                ? "text-warning"
+                : "text-destructive",
+          border:
+            fefoCompliance.pct >= 90 ? "border-success/40" : "border-border",
+        },
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="space-y-3">
+      {estadoBloco && (
+        <AvisoLeituraFalhou
+          oque="os indicadores de picking e estoque"
+          estado={estadoBloco}
+          testId="aviso-picking-kpis"
+        />
+      )}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className={c.border}>
           <CardContent className="pt-4 flex items-center justify-between">
@@ -198,6 +254,7 @@ function KpiCards({ account }: { account: string }) {
           </CardContent>
         </Card>
       ))}
+      </div>
     </div>
   );
 }
@@ -326,19 +383,27 @@ function PickingTab({ account }: { account: string }) {
   const { data, isLoading } = listaQuery;
   const estadoLista = estadoDeLeitura(listaQuery);
 
-  const { data: items } = useQuery({
+  // Os itens da task expandida tinham DUAS saídas erradas para a mesma falha: engolindo o erro,
+  // `data` virava `[]` e a gaveta dizia "Sem itens." sobre uma task que tem itens; e um `throw`
+  // sozinho deixaria `data === undefined`, que o render lê como "Carregando itens..." — um
+  // spinner ETERNO, a forma que some disfarçada de lentidão. Por isso o throw vem junto com o
+  // estado, e o render passa a distinguir os três.
+  const itensQuery = useQuery({
     queryKey: ["pk-picking-items", expanded],
     enabled: !!expanded,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("picking_task_items")
         .select(
           "id, product_descricao, quantidade, quantidade_separada, status, lote_fefo, lote_separado",
         )
         .eq("picking_task_id", expanded ?? "");
+      if (error) throw error;
       return data ?? [];
     },
   });
+  const { data: items } = itensQuery;
+  const estadoItens = estadoDeLeitura(itensQuery);
 
   // Handler de scan — v1: registra o último bipe e mostra feedback. A integração com a task ativa
   // (auto-foco no item correspondente, optimistic update) virá quando #19 (TouchPickingView) for
@@ -420,7 +485,13 @@ function PickingTab({ account }: { account: string }) {
                 {expanded === t.id && (
                   <TableRow>
                     <TableCell colSpan={6} className="bg-muted/30 p-4">
-                      {!items ? (
+                      {naoConsegui(estadoItens) ? (
+                        <AvisoLeituraFalhou
+                          oque="os itens desta task"
+                          estado={estadoItens}
+                          testId="aviso-picking-itens"
+                        />
+                      ) : !items ? (
                         <div className="text-sm text-muted-foreground">Carregando itens...</div>
                       ) : items.length === 0 ? (
                         <div className="text-sm text-muted-foreground">Sem itens.</div>
@@ -485,10 +556,13 @@ type LinhaEstoqueOperacional = {
 function EstoqueTab({ account }: { account: string }) {
   const [search, setSearch] = useState("");
 
-  const { data, isLoading } = useQuery({
+  // Única aba com fonte VIVA: `inventory_position` tinha 3.166 linhas em prod (psql-ro,
+  // 2026-09-07). O erro engolido virava `[]` e a tabela dizia "Nenhum SKU encontrado." — e a
+  // negativa de permissão da view operacional é justamente o modo de falha esperado aqui.
+  const inventarioQuery = useQuery({
     queryKey: ["pk-inventory", account],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         // Porta OPERACIONAL: saldo sem custo (FU4-F fase 2). A tabela inventory_position exige
         // private.cap_custo_ler — o separador não tem, e não precisa: aqui se consulta SALDO.
         // `as never`: a view é nova e ainda não está nos tipos gerados (padrão já usado em
@@ -498,9 +572,12 @@ function EstoqueTab({ account }: { account: string }) {
         .eq("account", account)
         .order("saldo", { ascending: true })
         .limit(500);
+      if (error) throw error;
       return (data ?? []) as unknown as LinhaEstoqueOperacional[];
     },
   });
+  const { data, isLoading } = inventarioQuery;
+  const estadoInventario = estadoDeLeitura(inventarioQuery);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -522,7 +599,14 @@ function EstoqueTab({ account }: { account: string }) {
             className="pl-8"
           />
         </div>
-        {isLoading ? (
+        {naoConsegui(estadoInventario) ? (
+          <AvisoLeituraFalhou
+            oque="as posições de estoque"
+            estado={estadoInventario}
+            variante="bloco"
+            testId="aviso-picking-inventario"
+          />
+        ) : isLoading ? (
           <PageSkeleton variant="list" />
         ) : (
           <Table>
