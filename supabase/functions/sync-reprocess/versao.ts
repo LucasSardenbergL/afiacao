@@ -43,8 +43,21 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("sync-reprocess");
 
+// ⚠️ v1.4 — IDENTIDADE DE LINHA (a v1.3 é a do preço ausente, entrega #2224 — não a substitua). A edge passa a extrair `det.ide.codigo_item` de cada item do
+// `ListarPedidos` e a mandá-lo à RPC, que ganhou casamento em DOIS níveis (identidade primeiro,
+// SKU só onde é 1-1 entre os remanescentes nos dois lados). Duas consequências observáveis:
+// (1) pedido com SKU repetido — 1.049 vivos em prod, e a duplicidade é LEGÍTIMA (o payload do
+// Omie repete o SKU em 1.177 dos 1.179 pares) — volta a reconciliar QUANDO o payload traz a
+// identidade, em vez de ficar congelado; (2) a coluna `order_items.omie_codigo_item` é adotada
+// incrementalmente pela própria reconciliação, sem backfill.
+// ⚠️ O bundle novo é INERTE se o `ListarPedidos` não devolver o campo: sem ele nada muda de
+// comportamento, e `metadata.itens_com_codigo_item / itens_lidos` do log é quem responde — essa
+// medição é o motivo de a entrega ser segura de subir sem a resposta na mão.
+// ⚠️ Bundle novo + a migration da identidade NÃO aplicada: a RPC antiga não conhece o argumento
+// `omie_codigo_item` no item, e o ignora — não lança, mas a identidade nunca é gravada e os dois
+// sensores ficam em zero para sempre. É o falso-negativo a vigiar ao ler o log.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.3-preco-ausente-nao-e-zero";
+export const VERSAO = "v1.4-identidade-de-linha-codigo-item";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

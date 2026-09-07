@@ -51,6 +51,15 @@ interface OmieProdutoItem {
 
 interface OmiePedidoItem {
   produto?: OmieProdutoItem;
+  // IDENTIDADE DE LINHA do item dentro do pedido. `codigo_item` é atribuído pelo Omie
+  // ("preenchimento automático", doc do endpoint produtos/pedido/) e é o que permite distinguir
+  // duas linhas do MESMO produto — que existem, são legítimas e somam 1.179 pares em prod.
+  // ⚠️ Declarado OPCIONAL de propósito: quem lê `ide.codigo_item` hoje no repo é o
+  // `omie-vendas-sync`, e ele lê do `ConsultarPedido` — endpoint DIFERENTE deste `ListarPedidos`.
+  // Que o ListarPedidos o devolva está na doc oficial e NÃO está medido (a mesma página documenta
+  // `infoCadastro.dAlt/hAlt`, que o #2134 não conseguiu provar que chegam). Por isso a ausência é
+  // um caminho normal, não um erro: sem o campo tudo degrada para o casamento por SKU de hoje.
+  ide?: { codigo_item?: number | string };
   observacao?: { obs_item?: string };
   inf_adic?: { dados_adicionais_item?: string };
 }
@@ -205,6 +214,17 @@ async function reprocessOrders(
   let skuRepetido = 0; // SKU repetido no payload do Omie
   let ambiguos = 0;    // pedidos NÃO tocados por duplicidade (payload OU banco) — sem identidade de linha
   let stale = 0;       // pedidos pulados pelo compare-and-set (leitura mais velha que a publicada)
+  // ── SENSOR da identidade de linha, COM DENOMINADOR. Não existe payload de `ListarPedidos`
+  //    persistido em lugar nenhum do banco (`omie_webhook_events` tem 192 linhas e ZERO com
+  //    `det`), então até aqui não havia como responder "o ListarPedidos devolve
+  //    `det.ide.codigo_item`?" senão pela doc — que nesta API já se provou insuficiente uma vez.
+  //    Estes dois contadores respondem na PRIMEIRA run, e contam TODO item da página, não só o
+  //    dos pedidos reconciliados: um numerador sem denominador não distingue "o campo não vem"
+  //    de "não houve pedido para reconciliar hoje".
+  let itensLidos = 0;
+  let itensComIdentidade = 0;
+  let identidadeAdotada = 0;   // linhas que GANHARAM omie_codigo_item (vem da RPC)
+  let identidadeUsada = 0;     // pedidos diffados por identidade de linha (vem da RPC)
 
   try {
     // Preload codigo_produto -> product_id (1x por run; evita N+1 por item, igual ao repararOrfaos).
@@ -262,6 +282,14 @@ async function reprocessOrders(
         const itensRpc: ItemReconciliar[] = itensValidos.map((it) => {
           const prod = it.produto!;
           const cod = Number(prod.codigo_produto);
+          // IDENTIDADE DE LINHA. `Number.isSafeInteger` + `> 0` porque um `codigo_item` inválido
+          // (string vazia, 0, NaN de um shape inesperado) é PIOR que ausente: ausente degrada
+          // para o casamento por SKU, que é conhecido e guardado; um número fabricado casaria a
+          // linha ERRADA dentro do pedido, em silêncio, no caminho do dinheiro.
+          const codItemBruto = Number(it.ide?.codigo_item);
+          const codItem = Number.isSafeInteger(codItemBruto) && codItemBruto > 0 ? codItemBruto : null;
+          if (codItem !== null) itensComIdentidade++;
+          itensLidos++;
           return {
             omie_codigo_produto: cod,
             quantity: prod.quantidade || 1,
@@ -274,6 +302,7 @@ async function reprocessOrders(
             product_id: productMap.get(cod) ?? null,
             // hash de IDENTIDADE do item, nunca de conteúdo (causa-raiz #B no nível item)
             hash_payload: `${hashPayload}_${cod}`,
+            omie_codigo_item: codItem,
           };
         });
 
@@ -319,6 +348,7 @@ async function reprocessOrders(
           upserts?: number; divergences?: number; corrections?: number;
           sku_repetido?: number; ambiguo?: number; stale?: number;
           sem_item?: number; sem_pai?: number;
+          identidade_adotada?: number; identidade_usada?: number;
           falhas?: Array<Record<string, unknown>>;
         };
         upserts += r.upserts || 0;
@@ -332,8 +362,10 @@ async function reprocessOrders(
         }
         ambiguos += r.ambiguo || 0;
         stale += r.stale || 0;
+        identidadeAdotada += r.identidade_adotada || 0;
+        identidadeUsada += r.identidade_usada || 0;
         if (r.ambiguo) {
-          console.warn(`[Reprocess][${account}] ${r.ambiguo} pedido(s) NÃO reconciliados por SKU duplicado (${r.sku_repetido || 0} no payload do Omie, o resto já duplicado no banco) — seguem na revisão anterior COMPLETA`);
+          console.warn(`[Reprocess][${account}] ${r.ambiguo} pedido(s) NÃO reconciliados por ambiguidade sem identidade de linha (${r.sku_repetido || 0} por SKU repetido no payload do Omie; o resto por duplicidade já gravada no banco) — seguem na revisão anterior COMPLETA`);
         }
         if (r.stale) {
           console.warn(`[Reprocess][${account}] ${r.stale} pedido(s) pulados por leitura mais VELHA que a já publicada (compare-and-set)`);
@@ -344,7 +376,7 @@ async function reprocessOrders(
         if (fails.length > 0 && fails.length === pedidosRpc.length) {
           throw new Error(`[Reprocess][${account}] TODOS os ${fails.length} pedidos da pág ${pagina} falharam na RPC — falha sistêmica, não dado sujo: ${JSON.stringify(fails[0])}`);
         }
-        console.log(`[Reprocess][${account}] RPC pág ${pagina}: upserts=${r.upserts || 0} corrections=${r.corrections || 0} divergences=${r.divergences || 0} sem_pai=${r.sem_pai || 0} sem_item=${r.sem_item || 0}`);
+        console.log(`[Reprocess][${account}] RPC pág ${pagina}: upserts=${r.upserts || 0} corrections=${r.corrections || 0} divergences=${r.divergences || 0} sem_pai=${r.sem_pai || 0} sem_item=${r.sem_item || 0} identidade_adotada=${r.identidade_adotada || 0} identidade_usada=${r.identidade_usada || 0}`);
       }
 
       console.log(`[Reprocess][${account}] Orders page ${pagina}/${totalPaginas}`);
@@ -356,7 +388,21 @@ async function reprocessOrders(
       divergences_found: divergences,
       corrections_applied: corrections,
       duration_ms: Date.now() - startTime,
-      metadata: { pages: totalPaginas, window_days: windowDays, falhas, sku_repetido: skuRepetido, ambiguos, stale },
+      metadata: {
+        pages: totalPaginas, window_days: windowDays, falhas, sku_repetido: skuRepetido, ambiguos, stale,
+        // SENSOR da identidade de linha, com DENOMINADOR (`itens_lidos`). É por esta chave que se
+        // responde, contra a PROD e sem depender da doc do Omie, se o `ListarPedidos` devolve
+        // `det.ide.codigo_item`:
+        //   itens_com_codigo_item = 0 e itens_lidos > 0  → o campo NÃO vem; tudo segue no SKU
+        //   itens_com_codigo_item > 0                    → vem, e a adoção já está acontecendo
+        //   itens_lidos = 0                              → não houve item na janela: SEM DADO,
+        //                                                  e é isso que o denominador impede de
+        //                                                  ler como "o campo não vem"
+        itens_lidos: itensLidos,
+        itens_com_codigo_item: itensComIdentidade,
+        identidade_adotada: identidadeAdotada,
+        identidade_usada: identidadeUsada,
+      },
       // Pedido que falhou na RPC ou SKU repetido (itens não reconciliados por ambiguidade) NÃO
       // derruba a run (idempotente: próximo ciclo reconcilia), mas NÃO mente 'complete' limpo —
       // surfaça em error_message p/ o watchdog/health (achado Codex).
