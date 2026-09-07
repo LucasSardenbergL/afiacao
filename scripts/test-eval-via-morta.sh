@@ -69,6 +69,13 @@ cegas=0
 julgadas=0'
 # Neutraliza SÓ o discriminador — a via segue morta. É a mutação que devolve o comportamento
 # anterior à correção, e o que prova que `via_viva` é load-bearing (e não enfeite).
+# No modo normal o laço de sabotagem nem existe: a morte precisa ser injetada ANTES da bifurcação,
+# senão a mutação é no-op e o caso ficaria verde por CEGUEIRA (foi o que aconteceu na 1ª versão).
+# shellcheck disable=SC2016  # padrão LITERAL a casar no arquivo: expandir seria o erro
+MATA_VIA_CEDO_DE='if [ "$FALSIFY" = 0 ]; then'
+# shellcheck disable=SC2016  # padrão LITERAL a casar no arquivo: expandir seria o erro
+MATA_VIA_CEDO_PARA='P() { return 1; }   # <<< via morta ANTES da bifurcação de modo
+if [ "$FALSIFY" = 0 ]; then'
 # shellcheck disable=SC2016  # padrão LITERAL a casar no arquivo: expandir seria o erro
 TIRA_GUARD_DE='if [ -n "$via_sab" ] && ! via_viva; then'
 TIRA_GUARD_PARA='if false; then'
@@ -123,6 +130,7 @@ if [ "$FALSIFICAR" = 0 ]; then
     *) ok "S3 nenhuma sabotagem foi creditada com a via morta" ;;
   esac
 
+  prepara "$EVALDIR/eval.sh" "$MATA_VIA_CEDO_DE" "$MATA_VIA_CEDO_PARA" || exit 2
   r=$(roda "$EVALDIR/eval.sh"); r_rc="${r%%|*}"; r_out="${r#*|}"
   case "$r_rc:$r_out" in
     2:*"$MARCA"*) ok "S4 modo normal com a via morta ⇒ exit 2 (via), não 1 (divergência de contrato)" ;;
