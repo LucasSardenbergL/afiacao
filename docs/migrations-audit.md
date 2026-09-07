@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **522** custom migrations totais
-- **1773** objetos esperados (criados por estas migrations)
+- **523** custom migrations totais
+- **1774** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 549
+  - `function`: 550
   - `rls_policy`: 462
   - `index`: 256
   - `cron_job`: 171
@@ -4350,6 +4350,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_deploy_sonda_resultados_tick` | `deploy_sonda_resultados` |
 | `cron_job` | `cron.deploy-sonda-resultados-colher` | — |
 | `rls_policy` | `public.deploy_sonda_resultados_select_staff` | `deploy_sonda_resultados` |
+
+### `20260906193522_valor_total_portal_provado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_aplicar_custo_portal` | — |
 
 ## Próximos passos por status
 

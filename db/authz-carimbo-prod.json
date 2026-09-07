@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-06T22:22:46.508Z",
-  "sourceHead": "f9ac7ee3ef9e8c7ff40989c9d2d95f7c14bb2f18",
+  "medidoEm": "2026-09-07T00:39:47.537Z",
+  "sourceHead": "6f450b941f117003f5779ff705dc0c0f42a6994f",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -14,7 +14,7 @@
       "exit": 0,
       "resumo": "✅ o EXECUTE de prod bate com o contrato nas 46 função(ões) da allowlist.",
       "denominador": "🔎 authz:funcoes:prod — 46 definição(ões) lida(s) para 46 chave(s) da allowlist.",
-      "contratoFingerprint": "1cc154f20aca91356bf189c935cab8111d1d4f22251c537b13432e11d394c853",
+      "contratoFingerprint": "e7a07836b573c5bcb275928587c03dfa4b568d43135d8e79d23eb9834a8b51c8",
       "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
       "achados": []
     },
@@ -39,7 +39,7 @@
           "id": "257297e1a0831e90",
           "linha": "❌ MD5_DIVERGIU: public.get_defasagem_cliente (20260718190000_authz_capability_matrix_e2.sql): esperado 037ede84a229d5798214511433afb65d, prod tem 7856c3052596d66a6f5ac8eb0a06c1c0",
           "primeiraVez": "2026-09-06",
-          "ultimaVez": "2026-09-06"
+          "ultimaVez": "2026-09-07"
         }
       ]
     },
