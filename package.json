@@ -42,6 +42,7 @@
     "preflight:rpcs": "bun scripts/edge-rpcs.ts",
     "pendencias": "bash scripts/pendencias.sh",
     "pendencias:deploy": "bun scripts/pendencias-deploy.ts",
+    "pendencias:prompt": "bun scripts/pendencias-prompt.ts",
     "mutcheck": "bash scripts/mutcheck-all.sh",
     "mutcheck:selftest": "bash scripts/mutcheck.sh --selftest",
     "wt": "bash scripts/new-worktree.sh",
