@@ -467,6 +467,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/hooks/__tests__/useReposicaoSessao.test.ts",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.test.tsx",
+      "src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
