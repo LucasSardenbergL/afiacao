@@ -21,7 +21,7 @@ avisos=""
 if [ -f package.json ] && [ ! -d node_modules ] && command -v bun >/dev/null 2>&1; then
   log="${TMPDIR:-/tmp}/bun-install-wt-$$.log"
   (bun install >"$log" 2>&1 &)
-  avisos="${avisos}node_modules AUSENTE → 'bun install' já disparado em background (log: $log). Aguarde-o antes de test/typecheck — 'Cannot find module' agora seria falso vermelho (CI real: gh pr checks). "
+  avisos="${avisos}node_modules AUSENTE → 'bun install' já disparado em background (log: $log). Aguarde-o antes de test/typecheck — com o install EM VOO a árvore fica PARCIAL, e o falso vermelho tem DOIS sintomas: 'Cannot find module' (óbvio) e erro de RUNTIME do React — tipicamente 'Cannot read properties of null (reading ...)' vindo de dentro de um componente, que parece bug do SEU código. Discriminador: 'bun install --frozen-lockfile'; se ficar verde em segundos com o lockfile intacto, era a árvore. (CI real: gh pr checks). "
 fi
 
 # --- 2) swap (macOS: "total = 10240.00M  used = 9100.00M  ...") ---------------
