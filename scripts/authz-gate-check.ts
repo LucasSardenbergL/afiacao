@@ -166,8 +166,12 @@ export function auditAuthz(migrations: Migration[]): Finding[] {
  *  · alvo no manifest + migration POSTERIOR ao last-writer → ERRO (ou AVISO se baselinada);
  *  · alvo OPACO (loop sobre `pg_proc`, nenhum literal do manifest) → AVISO: não dá para saber o
  *    alvo, e inventar erro aqui seria acusar sem dado;
- *  · alvo fora do manifest, ou reescrita SUPERADA por um `CREATE OR REPLACE` posterior → nada,
- *    porque a Parte A voltou a medir a última definição e a afirmação dela é verdadeira de novo.
+ *  · alvo fora do manifest → nada;
+ *  · reescrita SUPERADA por um `CREATE` parseável posterior → nada, porque a Parte A voltou a
+ *    medir a última definição e a afirmação dela é verdadeira de novo — SALVO se a reescrita
+ *    ainda constar da baseline: aí é ERRO (`REESCRITA_BASELINE_OBSOLETA`), porque a entrada
+ *    sobreviveu à dívida que a justificava e passa a apontar o audit de prod para um corpo que
+ *    não existe mais.
  *
  * O CÓDIGO ASCII no início da msg é contrato com os testes (e legível no log do CI): asserção
  * que casa frase em pt-BR quebra conforme o locale (#1483).
@@ -196,10 +200,31 @@ function auditReescritas(ordered: Migration[], lastMention: Map<string, { file: 
 
     for (const fnKey of doManifest) {
       const mention = lastMention.get(fnKey);
-      // reescrita ANTERIOR ao último CREATE: aquele CREATE é a última definição, Parte A ok.
-      if (mention && mig.file.localeCompare(mention.file) <= 0) continue;
-
       const conhecida = REESCRITAS_CONHECIDAS_INDEX.get(chaveReescrita(mig.file, fnKey));
+      // reescrita ANTERIOR ao último CREATE: aquele CREATE é a última definição, Parte A ok.
+      if (mention && mig.file.localeCompare(mention.file) <= 0) {
+        // …mas a ENTRADA da baseline não caduca junto, e é isso que a torna perigosa: aqui o gate
+        // estático EMUDECE (a afirmação da Parte A voltou a ser verdadeira), enquanto o audit de
+        // prod segue exigindo o `md5ProdEsperado` REGISTRADO — o de um corpo que o CREATE
+        // posterior já substituiu. O alarme que sobra (MD5_DIVERGIU) nomeia o ARQUIVO DA
+        // BASELINE, mandando investigar uma migration que não tem nada com o caso; foi
+        // exatamente o que custou o diagnóstico de `get_defasagem_cliente` entre 05/09 e 07/09.
+        // Duas máquinas leem a mesma baseline e só UMA sabe que ela foi superada: a assimetria é
+        // o defeito, e o conserto é a baseline ser PODADA quando a dívida é paga.
+        //
+        // Fail-closed no `parsed`: menção não-parseável não devolveu medição nenhuma à Parte A,
+        // então ali a entrada continua justificada (esse caso é da Parte A, em `unparsedRaw`).
+        if (conhecida && mention.parsed) {
+          findings.push({
+            level: 'error',
+            file: mig.file,
+            fn: fnKey,
+            msg: `[REESCRITA_BASELINE_OBSOLETA] a entrada de ${fnKey} em scripts/authz-reescritas-conhecidas.ts declara uma dívida JÁ PAGA: ${mention.file} recria a função com CREATE parseável e é POSTERIOR a esta migration, logo a Parte A voltou a medir a última definição. Enquanto a entrada existir, o md5ProdEsperado (${conhecida.md5ProdEsperado}) ancora um corpo obsoleto e o \`bun run authz:audit:prod\` acusa MD5_DIVERGIU apontando o arquivo ERRADO. Remova a entrada — a memória do caso vai para docs/historico/, não para a baseline.`,
+          });
+        }
+        continue;
+      }
+
       const ondeAParteAOlha = mention ? mention.file : '(nenhum CREATE no repo)';
       if (conhecida) {
         findings.push({

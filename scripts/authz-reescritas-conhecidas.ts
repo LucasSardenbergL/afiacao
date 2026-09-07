@@ -17,6 +17,16 @@
  * O CI **não** confere (não tem prod). Quem confere é `bun run authz:audit:prod`, que também roda
  * o `checkGate` no corpo VIVO. É isso que fecha o laço: a baseline vira asserção verificável em
  * vez de desculpa, e drift futuro no corpo aparece como md5 divergente.
+ *
+ * 🔴 **A entrada TEM PRAZO, e ele não é uma data: é a chegada de um `CREATE` parseável posterior.**
+ * Quando outra migration recria a função com `CREATE [OR REPLACE] FUNCTION` literal, a Parte A
+ * volta a medir a última definição e a dívida está PAGA — a entrada tem de ser REMOVIDA no mesmo
+ * PR. Deixá-la é pior que inútil: o `authz:check` emudece (a afirmação da Parte A virou
+ * verdadeira), mas o `authz:audit:prod` continua exigindo o `md5ProdEsperado` de um corpo que não
+ * existe mais, e o MD5_DIVERGIU resultante NOMEIA O ARQUIVO DESTA BASELINE — mandando investigar
+ * uma migration inocente. Foi o que aconteceu com `get_defasagem_cliente` (05/09 → 07/09) e com
+ * `get_preco_cockpit`; hoje quem cobra a poda é o `REESCRITA_BASELINE_OBSOLETA` da Parte D.
+ * A memória do caso vai para `docs/historico/`, não para esta lista.
  */
 export interface ReescritaConhecida {
   /** migration que faz a reescrita (o arquivo que a Parte A não consegue ler como definição) */
@@ -31,22 +41,6 @@ export interface ReescritaConhecida {
 }
 
 export const AUTHZ_REESCRITAS_CONHECIDAS: ReescritaConhecida[] = [
-  {
-    arquivo: '20260718190000_authz_capability_matrix_e2.sql',
-    funcao: 'public.get_preco_cockpit',
-    motivo:
-      'FU4/E2 trocou o gate `pode_ver_carteira_completa` por `private.cap_custo_ler` por regexp sobre a definição viva, porque o corpo do repo divergia de prod e colar um corpo teria REVERTIDO o hardening. Efeito medido: em prod esta função já NÃO chama pode_ver_carteira_completa; quem bloqueia é has_role(employee|master). A dívida de CONTRATO que isso deixou — o manifest listando a cláusula morta como alternativa do anyOf — foi paga em 2026-08-15 (requiredGate agora descreve só o has_role real). O que ESTA entrada continua declarando é a divergência que sobra: o repo mascara o numérico com `v_pode_num := pode_ver_carteira_completa(…)` e prod com cap_custo_ler, então a Parte A segue medindo um corpo que não é o que roda.',
-    provaExecutada: 'db/test-authz-capability-matrix.sh',
-    md5ProdEsperado: '4f3fb7df939e467f82d36a065e2f0957',
-  },
-  {
-    arquivo: '20260718190000_authz_capability_matrix_e2.sql',
-    funcao: 'public.get_defasagem_cliente',
-    motivo:
-      'Mesma reescrita do E2, mesmo motivo. Em prod `pode_ver_carteira_completa` sobrou só como MENÇÃO em comentário (não é chamada); quem bloqueia é has_role(employee|master) + cap_custo_ler para o numérico. Cláusula morta removida do anyOf do manifest em 2026-08-15, junto com a da get_preco_cockpit; a entrada permanece porque a divergência de MASCARAMENTO entre repo e prod permanece.',
-    provaExecutada: 'db/test-authz-capability-matrix.sh',
-    md5ProdEsperado: '037ede84a229d5798214511433afb65d',
-  },
   {
     arquivo: '20260814022626_reposicao_po_inexistente_antes_de.sql',
     funcao: 'public.reposicao_pos_candidatos',

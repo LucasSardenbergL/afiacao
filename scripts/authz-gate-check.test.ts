@@ -508,6 +508,24 @@ END $r$;`;
     expect(errorsOf(f).filter((e) => e.msg.includes('REESCRITA_VIVA'))).toHaveLength(0);
   });
 
+  it('CREATE posterior + entrada AINDA na baseline → REESCRITA_BASELINE_OBSOLETA (a poda é devida)', () => {
+    // Usa a entrada REAL da baseline (o índice é do módulo, não injetável) e coloca um CREATE
+    // parseável DEPOIS dela: é a configuração exata em que o `authz:check` emudeceria enquanto o
+    // `authz:audit:prod` seguiria cobrando um md5 de corpo morto.
+    const GATE_COMPRAS = `IF NOT COALESCE(private.cap_compras_ler(auth.uid()),false) THEN RAISE EXCEPTION 'Acesso negado'; END IF; `;
+    const f = auditAuthz([
+      mig('20260814022626_reposicao_po_inexistente_antes_de.sql', reescritaViva('public.reposicao_pos_candidatos(text)')),
+      mig('20260901000000_recria.sql', fn('reposicao_pos_candidatos', GATE_COMPRAS + READ)),
+    ]);
+    const err = errorsOf(f).filter((e) => e.msg.includes('REESCRITA_BASELINE_OBSOLETA'));
+    expect(err).toHaveLength(1);
+    expect(err[0].fn).toBe('public.reposicao_pos_candidatos');
+    // aponta a migration que PAGOU a dívida — é o dado que faltou no diagnóstico de 07/09
+    expect(err[0].msg).toContain('20260901000000_recria.sql');
+    // e o aviso que a entrada justificava não é emitido junto: os dois desfechos são exclusivos
+    expect(f.filter((e) => e.msg.includes('REESCRITA_VIVA_BASELINADA'))).toHaveLength(0);
+  });
+
   it('reescrita de função FORA do manifest não é assunto da Parte D (senão vira ruído e é desligada)', () => {
     const f = auditAuthz([
       mig('20260101000000_cria.sql', fn('fin_estimar_estoque_omie', GATE + READ)),
@@ -560,6 +578,18 @@ describe('AUTHZ_REESCRITAS_CONHECIDAS — a baseline não pode ser decoração',
   it('md5ProdEsperado tem forma de md5 (32 hex) — placeholder não ancora nada', () => {
     const tortos = AUTHZ_REESCRITAS_CONHECIDAS.filter((r) => !/^[0-9a-f]{32}$/.test(r.md5ProdEsperado));
     expect(tortos.map((r) => r.funcao)).toEqual([]);
+  });
+
+  it('nenhuma entrada da baseline foi SUPERADA por um CREATE posterior (baseline não podada)', () => {
+    // O prazo de uma entrada não é uma data: é a chegada de um CREATE parseável posterior, que
+    // devolve a medição à Parte A. Passado esse ponto a entrada não protege mais nada e ainda
+    // desvia o alarme do `authz:audit:prod` para o arquivo errado — foi assim que o MD5_DIVERGIU
+    // de `get_defasagem_cliente` ficou aberto de 05/09 a 07/09 culpando uma migration inocente.
+    const migs = readdirSync(dirMig)
+      .filter((f) => f.endsWith('.sql'))
+      .map((f) => ({ file: f, sql: readFileSync(join(dirMig, f), 'utf8') }));
+    const obsoletas = auditCompleto(migs).filter((f) => f.msg.includes('REESCRITA_BASELINE_OBSOLETA'));
+    expect(obsoletas.map((f) => `${f.file}::${f.fn}`)).toEqual([]);
   });
 
   it('o repo real não tem NENHUMA reescrita de função do manifest fora da baseline', () => {
