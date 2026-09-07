@@ -89,6 +89,17 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
   // gateada ao anônimo, e aí o gate no corpo é a ÚNICA tranca (auth.uid() NULL ⇒ has_role false
   // ⇒ hoje bloqueia, mas passa a depender de o gate ser fail-closed no uid NULL — e o próprio
   // manifesto documenta que `pedido_compra_split` NÃO é, por compatibilidade com cron).
+  // 2026-09-06 — a RPC de aprovação. `authenticated` alcança DE PROPÓSITO (é o botão "Aprovar"
+  // do comprador logado); o que a Parte E protege aqui é o `anon`, que a 20260906165706 (outra
+  // sessão) já revogou e esta migration reafirma. Os DOIS overloads existem sob a mesma chave:
+  // o de 3 args é SECURITY DEFINER com gate `cap_compras_ler`, o de 2 args é INVOKER com o
+  // MESMO gate e delega ao de 3. A regra da casa colapsa por `schema.name` e é fail-closed —
+  // aqui as duas assinaturas têm a mesma postura, então o colapso não esconde nada.
+  'public.aprovar_pedido_sugerido': {
+    fechadaPor: '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql',
+    permitido: PORTA_GATE,
+    motivo: 'aprova pedido de compra e sela os itens; gate private.cap_compras_ler nos dois overloads',
+  },
   // 2026-09-06 — as 2 primitivas do SELO DE APROVAÇÃO do pedido Sayerlack (M1, #2187).
   // `authenticated` alcança DE PROPÓSITO: quem aprova é o comprador logado, e o gate no corpo é
   // `private.cap_compras_ler`. O que esta Parte E protege aqui é o `anon` — a migration nasce

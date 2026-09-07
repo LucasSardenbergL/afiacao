@@ -451,16 +451,29 @@ BEGIN
   -- senão a UI velha pararia de aprovar entre o apply da M1 e o Publish.
   IF p_itens_vistos IS NOT NULL THEN
     BEGIN
+      -- `preco_unitario` entra no token a pedido da sessão do #2258 (selo de preço no disparo,
+      -- "disparado = aprovado no OMIE"), e o motivo é bom: as 4 RPCs que geram/alteram itens
+      -- (ciclo, oportunidade, promoções, remover_itens) são SECURITY INVOKER e executáveis por
+      -- `authenticated`, então quando um humano roda o ciclo pela tela o `current_user` é
+      -- indistinguível de um UPDATE cru dele — o trigger de procedência de lá NÃO separa os dois
+      -- na fase pré-aprovação. Quem separa é ESTE token, que compara "o que você viu" com "o que
+      -- está lá" no instante da aprovação.
+      -- ⚠️ NÃO contradiz a §8.4 do spec (preço fora do SELO): o token é anti-TOCTOU de LEITURA,
+      -- o selo é procedência. O selo segue sem preço.
+      -- ⚠️ Fail-closed: token que omitir `preco_unitario` passa a divergir de um item com preço.
+      -- É o lado seguro — não há chamador enviando token ainda (a UI é fatia posterior).
       WITH visto AS (
         SELECT (e->>'id')::bigint AS id,
                e->>'sku_codigo_omie' AS sku,
                trim_scale((e->>'qtde_final')::numeric)::text AS q,
-               trim_scale((e->>'fator_embalagem_portal')::numeric)::text AS f
+               trim_scale((e->>'fator_embalagem_portal')::numeric)::text AS f,
+               trim_scale((e->>'preco_unitario')::numeric)::text AS pr
           FROM jsonb_array_elements(p_itens_vistos) e
       ), atual AS (
         SELECT i.id, i.sku_codigo_omie AS sku,
                trim_scale(i.qtde_final)::text AS q,
-               trim_scale(i.fator_embalagem_portal)::text AS f
+               trim_scale(i.fator_embalagem_portal)::text AS f,
+               trim_scale(i.preco_unitario)::text AS pr
           FROM public.pedido_compra_item i WHERE i.pedido_id = p_pedido_id
       )
       SELECT count(*) INTO v_div FROM (

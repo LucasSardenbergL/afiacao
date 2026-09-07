@@ -170,7 +170,7 @@ SQL
 marca() { P -c "DO \$t\$ BEGIN PERFORM public.reposicao_selar_pedido($1); RAISE WARNING 'SEM_ERRO'; EXCEPTION WHEN SQLSTATE '$2' THEN RAISE WARNING 'MARCA_OK'; END \$t\$;" 2>&1 | grep -oE 'SEM_ERRO|MARCA_OK' | head -1; }
 
 echo "--- POSITIVOS ---"
-R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":40,\"fator_embalagem_portal\":0.2},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null}]'::jsonb")
+R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":40,\"fator_embalagem_portal\":0.2,\"preco_unitario\":10},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null,\"preco_unitario\":20}]'::jsonb")
 case "$R" in *'"status": "ok"'*) ok "P1 RPC 3-args com token correto aprova";; *) bad "P1 RPC 3-args recusou: $R";; esac
 eq  "P2 selou (selo tem 64 hex)" "$(Pq -c "SELECT length(aprovacao_selo) FROM public.pedido_compra_sugerido WHERE id=100")" "64"
 eq  "P3 snapshot do de-para gravado no item"  "$(snap 101)" "TEH350500BB/0.2"
@@ -217,13 +217,15 @@ eq "N7 recusa NAO deixa rastro: status intacto" "$(status 600)" "pendente_aprova
 R=$(aprova 600 "NULL::jsonb"); case "$R" in *'"error"'*) ok "N8 RPC devolve {error} (contrato do front) na fracao";; *) bad "N8 RPC nao devolveu error: $R";; esac
 eq "N9 recusa nao selou"                       "$(selo 600)" "NULO"
 eq "N10 recusa nao aprovou"                    "$(status 600)" "pendente_aprovacao"
-R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":45,\"fator_embalagem_portal\":0.2},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null}]'::jsonb")
+R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":45,\"fator_embalagem_portal\":0.2,\"preco_unitario\":10},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null,\"preco_unitario\":20}]'::jsonb")
 case "$R" in *'mudaram desde'*) ok "N11 token com qtde divergente -> recarregue";; *) bad "N11 token divergente passou: $R";; esac
 eq "N12 token divergente nao selou"            "$(selo 100)" "NULO"
-R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"OUTRO.SKU\",\"qtde_final\":40,\"fator_embalagem_portal\":0.2},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null}]'::jsonb")
+R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"OUTRO.SKU\",\"qtde_final\":40,\"fator_embalagem_portal\":0.2,\"preco_unitario\":10},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null,\"preco_unitario\":20}]'::jsonb")
 case "$R" in *'mudaram desde'*) ok "N13 token com SKU trocado (mesma qtde) -> recarregue";; *) bad "N13 SKU trocado passou: $R";; esac
-R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":40,\"fator_embalagem_portal\":0.2}]'::jsonb")
+R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":40,\"fator_embalagem_portal\":0.2,\"preco_unitario\":10}]'::jsonb")
 case "$R" in *'mudaram desde'*) ok "N14 token com item FALTANDO -> recarregue";; *) bad "N14 conjunto menor passou: $R";; esac
+R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":40,\"fator_embalagem_portal\":0.2,\"preco_unitario\":99},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null,\"preco_unitario\":20}]'::jsonb")
+case "$R" in *'mudaram desde'*) ok "N14b token com PRECO divergente -> recarregue (requisito do #2258)";; *) bad "N14b preco divergente passou: $R";; esac
 P -q -c "SET test.uid='99999999-9999-9999-9999-999999999999'" >/dev/null
 R=$(P -c "SET test.uid='99999999-9999-9999-9999-999999999999'; SELECT public.reposicao_selar_pedido(100);" 2>&1 | grep -c "42501\|Acesso negado" || true)
 if [ "$R" -ge 1 ]; then ok "N15 uid sem cap_compras_ler -> 42501"; else bad "N15 gate de capacidade nao barrou"; fi
@@ -354,7 +356,7 @@ P -q -c "DELETE FROM public.sku_fornecedor_externo WHERE sku_portal='X2'"
 restaura
 
 sabota "s/IF v_div > 0 THEN/IF false THEN/"
-seed; R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":45,\"fator_embalagem_portal\":0.2},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null}]'::jsonb")
+seed; R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":45,\"fator_embalagem_portal\":0.2,\"preco_unitario\":10},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null,\"preco_unitario\":20}]'::jsonb")
 case "$R" in *'"status": "ok"'*) ok "F5 sem a comparacao do token, o token divergente PASSA (N11-N14 tem dente)";; *) bad "F5 sabotei o token e N11 nao mudou: $R";; esac
 restaura
 
