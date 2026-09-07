@@ -24,7 +24,7 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 export default function AdminKnowledgeBaseDetail() {
   const { id } = useParams<{ id: string }>();
 
-  const qDoc = useQuery({
+  const { data, isLoading, status, fetchStatus, error } = useQuery({
     queryKey: ['kb-document', id],
     enabled: !!id,
     queryFn: async (): Promise<KbDocument | null> => {
@@ -38,10 +38,12 @@ export default function AdminKnowledgeBaseDetail() {
     // polling enquanto processa
     refetchInterval: (q) => (q.state.data?.status === 'processing' ? 3000 : false),
   });
-  const { data, isLoading } = qDoc;
+  // `status`/`error` são nomeados na própria desestruturação de propósito: guardar a query
+  // num `const q = useQuery(…)` tiraria o sítio do gate da classe por CEGUEIRA (ele só
+  // rastreia `const {…} = useX(…)`), não por conserto.
   // `.single()` LANÇA quando não acha (PGRST116), e isso chegava aqui idêntico a uma queda
   // de rede — a distinção só existe lendo o CÓDIGO do erro.
-  const estadoDoc = estadoDeRegistro(qDoc, data != null);
+  const estadoDoc = estadoDeRegistro({ status, fetchStatus, error }, data != null);
 
   const { data: chunkCount } = useQuery({
     queryKey: ['kb-chunks-count', id],

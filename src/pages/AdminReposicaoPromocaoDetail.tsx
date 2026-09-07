@@ -40,7 +40,7 @@ export default function AdminReposicaoPromocaoDetail() {
     | "negociacao_cliente";
 
   // ============ QUERIES ============
-  const qCampanha = useQuery({
+  const { data: campanha, isLoading: loadingCampanha, status: statusCampanha, fetchStatus: fetchCampanha, error: erroCampanha } = useQuery({
     queryKey: ["promocao-campanha", id],
     queryFn: async () => {
       if (isNew) return null;
@@ -54,10 +54,11 @@ export default function AdminReposicaoPromocaoDetail() {
     },
     enabled: !isNew,
   });
-  const { data: campanha, isLoading: loadingCampanha } = qCampanha;
+  // `status`/`error` nomeados na desestruturação: um `const q = useQuery(…)` tiraria o sítio
+  // do gate da classe por CEGUEIRA, não por conserto.
   // `.single()` LANÇA PGRST116 quando não acha, e isso chegava idêntico a uma queda de rede.
   // O `!isNew` do guard antigo só protegia o modo de CRIAÇÃO: em edição a frase mentia.
-  const estadoCampanha = estadoDeRegistro(qCampanha, campanha != null);
+  const estadoCampanha = estadoDeRegistro({ status: statusCampanha, fetchStatus: fetchCampanha, error: erroCampanha }, campanha != null);
 
   const { data: itens = [], isLoading: loadingItens } = useQuery({
     queryKey: ["promocao-itens", id],

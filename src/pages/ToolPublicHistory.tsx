@@ -23,13 +23,14 @@ const EVENT_ICONS: Record<string, { label: string; icon: typeof Wrench; color: s
 
 const ToolPublicHistory = () => {
   const { toolId } = useParams<{ toolId: string }>();
-  const q = useToolPublicHistory(toolId);
-  const { data, isPending: loading } = q;
+  // Desestruturação DIRETA nomeando `status`/`error`: um `const q = useX()` tiraria o sítio
+  // do gate da classe por CEGUEIRA, não por conserto (o detector só rastreia `const {…} = useX(…)`).
+  const { data, status, fetchStatus, error, isPending: loading } = useToolPublicHistory(toolId);
   const tool = data?.tool ?? null;
   const events = data?.events ?? [];
   // O `?? null` acima colapsa "a RPC respondeu que não existe" com "a RPC não respondeu";
   // o estado abaixo é lido da QUERY, que ainda sabe a diferença.
-  const estado = estadoDeRegistro(q, data?.tool != null);
+  const estado = estadoDeRegistro({ status, fetchStatus, error }, data?.tool != null);
 
   // ANTES do loading: sem rede a query fica pending+paused e o skeleton giraria para sempre.
   if (naoConsegui(estado)) {

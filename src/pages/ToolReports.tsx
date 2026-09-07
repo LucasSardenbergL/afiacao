@@ -81,14 +81,16 @@ const ToolReports = () => {
   const { toolId } = useParams<{ toolId: string }>();
   const navigate = useNavigate();
 
-  const qTool = useUserToolDetail(toolId);
-  const { data: tool } = qTool;
+  // Desestruturação DIRETA nomeando `status`/`error`: um `const q = useX()` tiraria o sítio
+  // do gate da classe por CEGUEIRA, não por conserto (o detector só rastreia `const {…} = useX(…)`).
+  const { data: tool, status: statusTool, fetchStatus: fetchTool, error: erroTool, isPending: loadingTool } =
+    useUserToolDetail(toolId);
   const { data: events = [], isPending: loadingEvents } = useToolEvents(toolId);
   const { data: priceHistory = [], isPending: loadingPrices } = useToolPriceHistory(toolId);
-  const loading = qTool.isPending || loadingEvents || loadingPrices;
+  const loading = loadingTool || loadingEvents || loadingPrices;
   // `.maybeSingle()`: `null` é "não existe", `undefined` é loading/erro — o `if (!tool)`
   // de baixo apagava a diferença que o hook preservou.
-  const estadoTool = estadoDeRegistro(qTool, tool != null);
+  const estadoTool = estadoDeRegistro({ status: statusTool, fetchStatus: fetchTool, error: erroTool }, tool != null);
 
   const analysis = useMemo(() => {
     if (!tool) return null;

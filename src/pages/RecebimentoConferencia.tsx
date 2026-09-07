@@ -129,7 +129,7 @@ export default function RecebimentoConferencia() {
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   // Fetch NF-e
-  const qNfe = useQuery({
+  const { data: nfe, isLoading, status: statusNfe, fetchStatus: fetchNfe, error: erroNfe } = useQuery({
     queryKey: ['nfe_conferencia', id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -146,11 +146,12 @@ export default function RecebimentoConferencia() {
     },
     enabled: !!id,
   });
-  const { data: nfe, isLoading } = qNfe;
+  // `status`/`error` nomeados na desestruturação: um `const q = useQuery(…)` tiraria o sítio
+  // do gate da classe por CEGUEIRA, não por conserto.
   // `.single()` LANÇA PGRST116 quando não acha a NF-e, e isso chegava aqui idêntico a uma
   // queda de rede. Conferência é passo de RECEBIMENTO: "NF-e não encontrada" durante uma
   // falha manda o operador procurar um documento que EXISTE.
-  const estadoNfe = estadoDeRegistro(qNfe, nfe != null);
+  const estadoNfe = estadoDeRegistro({ status: statusNfe, fetchStatus: fetchNfe, error: erroNfe }, nfe != null);
 
   // Fetch scanned lotes grouped
   const { data: lotes } = useQuery<NfeLoteEscaneado[]>({

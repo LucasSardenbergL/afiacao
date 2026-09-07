@@ -103,13 +103,18 @@ const ToolHistory = () => {
   const [showQR, setShowQR] = useState(false);
   const qrRef = useRef<HTMLDivElement>(null);
 
-  const qTool = useUserToolDetail(toolId);
-  const { data: tool } = qTool;
+  // A desestruturação fica DIRETA sobre o hook e nomeia `status`/`error` de propósito:
+  // guardar a query num `const q = useX()` faria o sítio SUMIR do gate da classe por
+  // CEGUEIRA (ele só rastreia `const {…} = useX(…)`), não por conserto — e o gate não
+  // distingue os dois. Com as chaves de erro nomeadas, ele vê o tratamento e segue vigiando
+  // este arquivo.
+  const { data: tool, status: statusTool, fetchStatus: fetchTool, error: erroTool, isPending: loadingTool } =
+    useUserToolDetail(toolId);
   const { data: eventsAsc = [], isPending: loadingEvents } = useToolEvents(toolId);
-  const loading = qTool.isPending || loadingEvents;
+  const loading = loadingTool || loadingEvents;
   // `.maybeSingle()` devolve `null` para "esta ferramenta não existe" e `undefined` só em
   // loading/erro — a diferença que o `if (!tool)` abaixo apagava.
-  const estadoTool = estadoDeRegistro(qTool, tool != null);
+  const estadoTool = estadoDeRegistro({ status: statusTool, fetchStatus: fetchTool, error: erroTool }, tool != null);
   // O hook devolve asc (cache compartilhado com ToolReports); a timeline mostra o mais recente primeiro.
   const events = useMemo(() => [...eventsAsc].reverse(), [eventsAsc]);
 
