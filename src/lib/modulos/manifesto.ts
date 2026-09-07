@@ -458,6 +458,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/services/__tests__/picking-confirm.test.ts",
       "src/pages/__tests__/AdminEstoquePicking.leitura-falhou.test.tsx",
+      "src/pages/__tests__/AdminEstoquePicking.kpis-nao-fabricam-zero.test.tsx",
       "src/pages/__tests__/RecebimentoConferencia.estados.test.tsx",
     ],
     risco: { moneyPath: true, offlineFirst: true, authSensitive: false },
