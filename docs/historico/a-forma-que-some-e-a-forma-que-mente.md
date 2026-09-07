@@ -90,10 +90,17 @@ perdido é um terço da operação. As telas de cliente têm 5.664 *contas*, e c
    lança; some a régua de margem (`markup %`, faixa, "repassar p/", "revisar") e **o preço fica**.
    Denominador **508 pedidos/30d** — a superfície mais viva do sistema. Ausência afirma "margem OK"
    sobre a tela em que o preço é decidido. Money-path literal.
-2. **`AdminReposicaoPedidos.tsx:652 + 662`.** `(pedidos ?? []).filter(status==='bloqueado_guardrail')`
+2. ✅ **ENTREGUE (fatia #2, 2026-09-06).** **`AdminReposicaoPedidos.tsx:652 + 662`.** `(pedidos ?? []).filter(status==='bloqueado_guardrail')`
    ⇒ falha de leitura apaga `<Alert> N pedidos bloqueados por guardrail. Revise antes do disparo.` e
    `<Alert> N SKUs abaixo do ponto sem fornecedor — não entram em compra`. 80 expirados sem
    aprovação em 30d provam a tela em uso; a ausência afirma "nada bloqueado" **antes do disparo**.
+   Corrigido com `estadoDeLeitura`/`naoConsegui` + `<AvisoLeituraFalhou>`, **âncora de teste
+   própria por leitura** (o guard de uma não pode passar verde pelo aviso da outra) e o ramo
+   COMPOSTO para cache-com-refetch-falho — apagar pedidos vivos por causa de um refetch seria
+   trocar um defeito por outro. O rodapé de truncamento da :681 ficou de fora, como classificado.
+   Guard: `src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx` (9 casos, a
+   PÁGINA rodando, só o supabase mockado), falsificado com 5 dentes — um por camada, com
+   controle verde na MESMA invocação do laço.
 3. **`GovernanceAudit.tsx:447` + `TintDashboard.tsx:128`.** Sub-tipo que MENTE, fontes de 11.869 e
    1.656 linhas. Os dois hooks **engolem o erro** ⇒ a correção começa no `queryFn`, não na UI.
 4. **`ConfirmacaoPanel.tsx:185–197`** (badges pendente/aguardando/bloqueado no aceite do ciclo) e
