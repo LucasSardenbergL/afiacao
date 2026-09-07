@@ -210,3 +210,58 @@ aprova tudo. Cada camada restaura com `git checkout --` e o restauro é conferid
 | L4 | **detector cego** (predicado de texto sempre falso) | 13→0: um gate cego passaria verde para sempre |
 | L5 | **dedup quebrada** (contar por hook) | `ToolHistory` 1→2: a dedup é load-bearing em dado real, não só na fixture |
 
+
+## Quitação da fatia de fonte ZERADA (2026-09-07, PR desta sessão)
+
+O item 4 acima previa **chip com gatilho**. O que foi feito em vez disso: **correção agora**,
+pelo motivo que o próprio item dá — "corrigir ANTES da primeira linha". Com a tabela vazia não há
+comportamento observável a regredir, o fix é o mais barato que vai ficar, e quando a fonte encher o
+defeito já não existe. Chip com gatilho só teria valor se o fix fosse caro; ele não é.
+
+Os 6, com a forma e o mecanismo do colapso:
+
+| sítio | fonte (linhas) | como o colapso era escrito | fix |
+|---|---|---|---|
+| `ProvasParaAuditar:244` | `v_tarefas_estado` (0) | default `= []` no binding | `estadoDeLeitura` |
+| `CustomerCallsTab:16` | `farmer_calls` (0) | `!data \|\| length === 0` | `estadoDeLeitura` |
+| `CustomerVisitsTab:26` | `route_visits` (0) | `!data \|\| length === 0` | `estadoDeLeitura` |
+| `GrupoCliente360:42` | `cliente_grupos` (0) | derivada: `!grupo` de `grupos?.find()` | `estadoDeLeitura` |
+| `OrderDetail:166` | `orders` (0) | `!order` sobre `.maybeSingle()` | `estadoDeRegistro` |
+| `AdminStandardProcessDetail:45` | `standard_processes` (0) | `!data` sobre `.maybeSingle()` | `estadoDeRegistro` |
+
+**`ProvasParaAuditar` não era a forma que a medição registrou.** A tabela do achado 3 o classificou
+como lista `!data || data.length === 0`; o código escreve `const { data: provas = [], isLoading }` e
+`if (provas.length === 0)`. O colapso vinha do **default no binding** — a forma do 2º front — e não
+do `||` digitado à mão. O erro de classificação não muda o veredito (o hook lança, o sítio é
+alcançável) mas muda o FIX: não há `!data` para desdobrar, e a query precisa ser lida por
+`estadoDeLeitura` antes do `data` já achatado em `[]`.
+
+### O que a medição provou, e o que ela não provaria sozinha
+
+`contarRetornoAfirmativo` foi de **9 para 3**. Zero, porém, é o que a CEGUEIRA também produz: o
+detector só rastreia desestruturação direta (`const {…} = useX(…)`), e um `const q = useX()` faria
+os 6 sumirem sem conserto nenhum. A prova de que lado veio o zero: **apagar a chave de erro de cada
+binding e re-medir** — 6/6 voltaram a contar 1, isto é, o detector VÊ o tratamento e segue vigiando
+os arquivos. Um sítio cegado teria ficado em zero nas duas medições.
+
+Falsificação: **18/18 sabotagens pegas** (3 camadas × 6 sítios), com controle verde (24/24) na mesma
+invocação **antes do 1º `sed`** — guard morto, guard estreitado a `'erro'` só (o 4º estado volta a
+mentir), e aviso incondicional (que prova que o teste também exige o SILÊNCIO quando a leitura deu
+certo — senão "sempre avisa" passaria como fix).
+
+O controle pagou o próprio custo na 1ª execução: **abortou sem sabotar nada**, porque um dos 5
+arquivos estava vermelho (o mock de `supabase` não tinha `channel`, e o `<OrderChat>` do caminho
+feliz derrubava a árvore). Sem ele, as 18 sabotagens teriam dado "vermelho" contra uma suíte já
+quebrada e eu teria reportado 18/18 com um teste morto no meio — a falsificação sem linha de base
+que `falsificacao-sem-linha-de-base.md` descreve.
+
+Nota de ambiente, porque custou duas execuções: `heavy` **aborta com exit 1** quando esgota os 1800s
+de fila, e o exit 1 do laço starvado é indistinguível do exit 1 de "sabotagem passou verde" se você
+olhar só o código. O sinal que separa os dois é textual (`heavy: timeout (1800s)` vs `VEREDITO:`).
+Laço longo em máquina saturada precisa que o monitor vigie **a tomada do slot**, não só o veredito.
+
+### Resíduo da classe, medido
+
+Sobram **3** na `BASELINE_AFIRMATIVO`: `CompletudeSection` — em voo no PR #2305 — e
+`ToolHistory`/`ToolReports`, resíduo já documentado na própria baseline (a query IRMÃ `useToolEvents`
+ainda engole o erro no default `= []`; `tool_events` tem 0 linhas).
