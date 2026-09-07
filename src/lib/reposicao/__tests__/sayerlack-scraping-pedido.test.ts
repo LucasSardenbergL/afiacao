@@ -190,8 +190,24 @@ describe('derivarCustos', () => {
     expect(r.updates[0].valor_linha).toBe(1633.45);
     expect(r.updates[0].preco_unitario).toBeCloseTo(408.3625, 4);
   });
-  it('mantém (não sobrescreve) quando o total da linha bate ao centavo', () => {
+  it('mantém (não sobrescreve) quando o total da linha bate DE VERDADE', () => {
     const r = derivarCustos(matchCusto({ qtde: 4, preco_atual: 408.36, total: 1633.44 })); // 4*408.36=1633.44
+    expect(r.updates).toHaveLength(0);
+    expect(r.pulados[0]).toMatchObject({ motivo: 'sem_mudanca' });
+  });
+  // O furo que o Codex achou (2026-09-06): pular por `round2(a) === round2(b)` deixava passar até
+  // ~meio centavo POR ITEM, enquanto o checksum soma o DOM em precisão CHEIA. Com 2 itens assim, o
+  // conjunto PERSISTIDO divergia do DOM acima da tolerância (0,0198 > 0,00515) e o checksum passava
+  // do mesmo jeito — ele valida o DOM, não o que fica gravado. Uma diferença sub-centavo é mudança.
+  it('diferença ABAIXO do centavo NÃO é sem_mudanca — senão o persistido foge do DOM que o checksum validou', () => {
+    const r = derivarCustos(matchCusto({ qtde: 1, preco_atual: 100, total: 100.004 }));
+    expect(r.pulados).toHaveLength(0);
+    expect(r.updates).toHaveLength(1);
+    expect(r.updates[0].valor_linha).toBe(100.004); // precisão cheia, não 100.00
+  });
+  it('ruído binário de `qtde * preco` continua sendo sem_mudanca (não vira escrita inútil)', () => {
+    // 3 * 0.1 = 0.30000000000000004 em double: diferença de ~5.5e-17, quatro ordens abaixo do centavo.
+    const r = derivarCustos(matchCusto({ qtde: 3, preco_atual: 0.1, total: 0.3 }));
     expect(r.updates).toHaveLength(0);
     expect(r.pulados[0]).toMatchObject({ motivo: 'sem_mudanca' });
   });
