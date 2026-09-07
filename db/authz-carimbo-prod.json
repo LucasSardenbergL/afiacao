@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-07T01:25:39.098Z",
-  "sourceHead": "4e85936af326d4db51239a2d03b6d41aba8222e3",
+  "medidoEm": "2026-09-07T02:50:18.295Z",
+  "sourceHead": "2b7d1eccda04a53016a8db0a288822da9d0637a6",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -77,10 +77,10 @@
     "claudeRo": {
       "script": "authz:claude-ro:prod",
       "exit": 0,
-      "resumo": "✅ 25 asserções batem. O endurecimento continua de pé.",
+      "resumo": "✅ 38 asserções batem. O endurecimento continua de pé.",
       "denominador": null,
-      "contratoFingerprint": "fba1c503ed8f6d3413deff12596a6c84ce30986ac11fa6b8d53af7b3f0c17273",
-      "auditorFingerprint": "24e1576e4a7397bb21e7419fa19980d4a48b3f7e5cff1d0b95f2d74c96b7a6ae",
+      "contratoFingerprint": "292fc5d3416e039778f0ea22dc5e678787af6a84163dd8b6b4ff1f0f2cbbc26d",
+      "auditorFingerprint": "f60c65576a980c4d5328f52d597cad76c66865e458ffdaa33f633a5daa17e64b",
       "achados": []
     },
     "rls": {
