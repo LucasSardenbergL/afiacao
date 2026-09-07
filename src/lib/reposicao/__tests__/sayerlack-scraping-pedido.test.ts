@@ -238,6 +238,29 @@ describe('consolidarLinhasPortal (contrato espelhado)', () => {
     expect(c.fonte).toBe('json_total_unico');
     expect(c.linhas[0]).toMatchObject({ sku_portal: 'A', total_linha: 19.6 });
   });
+  // O sensor era CEGO justamente aqui: com 1 item, `total_linha = json.value`, então comparar o
+  // provado com a soma das linhas DEPOIS da gravação dá zero POR CONSTRUÇÃO. O Preço Venda do DOM
+  // já estava parseado e ia para o lixo (`checksum: semChecksum`). Números do #2459: DOM 362,9698
+  // contra JSON 374,77 — R$ 11,80 (3,2510%) cuja origem segue em aberto.
+  it('1 item ⇒ o checksum MEDE a divergência DOM × JSON (sem gatear: tolerancia_abs null)', () => {
+    const c = consolidarLinhasPortal(
+      [dom({ sku_portal: 'A', qtd_un_raw: '2', preco_un_raw: '181,4849', preco_venda_raw: '362,9698' })],
+      { itens: [{ item: 'A', value: 181.4849 }], value: 374.77, ordernum: 1 },
+      [{ sku_portal: 'A', qtde_portal: 2 }],
+    );
+    expect(c.fonte).toBe('json_total_unico');
+    expect(c.linhas[0].total_linha).toBe(374.77); // aceitação inalterada: quem manda é o json.value
+    expect(c.checksum.soma_dom).toBeCloseTo(362.9698, 4);
+    expect(c.checksum.total_json).toBe(374.77);
+    expect(c.checksum.delta_abs).toBeCloseTo(11.8002, 4);
+    expect(c.checksum.delta_rel).toBeCloseTo(0.031486, 5);
+    expect(c.checksum.tolerancia_abs).toBeNull(); // este ramo não tem gate — só medição
+  });
+  it('1 item sem Preço Venda no DOM ⇒ mede null, não fabrica zero', () => {
+    const c = consolidarLinhasPortal([dom({ sku_portal: '', preco_venda_raw: '' })], { itens: [{ item: 'A', value: 12 }], value: 19.6, ordernum: 1 }, [esp[0]]);
+    expect(c.checksum.soma_dom).toBeNull();
+    expect(c.checksum.delta_abs).toBeNull();
+  });
   it('defeito de prod (DOM cego, N itens) ⇒ nenhuma/dom_incompleto e zero custo', () => {
     const c = consolidarLinhasPortal([dom({ sku_portal: '' }), dom({ sku_portal: '' })], json, esp);
     expect(c).toMatchObject({ fonte: 'nenhuma', motivo: 'dom_incompleto' });

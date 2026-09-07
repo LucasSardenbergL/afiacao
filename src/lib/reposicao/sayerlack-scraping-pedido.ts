@@ -222,9 +222,23 @@ export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | nu
 
   // (3) 1 item ⇒ o total líquido do pedido É o total da linha.
   if (skusJson.length === 1) {
+    // O Preço Venda do DOM JÁ foi parseado acima e era jogado fora aqui — e era isso que tornava a
+    // divergência INVISÍVEL no pedido unitário: com `total_linha = json.value`, comparar depois da
+    // gravação dá delta zero POR CONSTRUÇÃO (Codex 2026-09-06). O #2459 é exatamente este caso —
+    // DOM 362,9698 contra JSON 374,77, R$ 11,80 (3,2510%) de origem ainda não identificada.
+    // Aqui o checksum MEDE, não decide: o pedido de 1 item continua aceito pelo `json.value` como
+    // sempre foi, e `tolerancia_abs: null` marca que não existe gate neste ramo.
+    const somaDom = provadas[0]?.precoVenda ?? null;
+    const deltaAbs = somaDom != null && json.value != null && Number.isFinite(somaDom) && Number.isFinite(json.value)
+      ? Math.abs(json.value - somaDom) : null;
     return {
       linhas: [{ sku_portal: skusJson[0], prz_ent_raw: przDe(skusJson[0]), total_linha: json.value }],
-      fonte: 'json_total_unico', motivo: null, total_pedido: json.value, checksum: semChecksum,
+      fonte: 'json_total_unico', motivo: null, total_pedido: json.value,
+      checksum: {
+        soma_dom: somaDom, total_json: json.value, delta_abs: deltaAbs,
+        delta_rel: deltaAbs != null && json.value ? deltaAbs / json.value : null,
+        tolerancia_abs: null,
+      },
     };
   }
 
