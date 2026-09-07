@@ -92,3 +92,53 @@ ponta a ponta no banco de produção em modo leitura: o `format()` produz SQL v�
 inexistente devolve **uma** linha `AGUARDE` em vez de zero. Os dois corpos de cron do incidente, lidos com
 id vindo do banco, caem em `BUNDLE PRE-SENSOR` — o veredito correto para *aquele request*; lidos com id
 trocado à mão, era o veredito de um request que ninguém fez.
+
+## O mesmo defeito no bloco do LOTE — migrado (2026-09-06, #2273)
+
+A seção irmã do `deploy.md` ("Sondar VÁRIAS edges numa tacada") tinha a variante coletiva: o passo de
+disparo terminava em `SELECT jsonb_object_agg(edge, request_id)::text AS ids_opcionais_passo_2`, e o de
+leitura abria com um `jsonb_each_text('{}'::jsonb)` onde alguém colava aquele blob. O SQL do lote não é
+digitado — sai de `bun run sonda:sql` (`scripts/sonda-versao-sql.ts`) —, então a migração é lá, e o
+`deploy.md` a descreve. Hoje o passo 1 (e o 3, das caras) termina em
+`format($sonda$…$sonda$, m.ids)`: **devolve o passo 2 (e o 4) já escrito, com o mapa `edge→id` dentro**.
+Continuam sendo dois blocos pela mesma imposição do `pg_net` verificada acima — nada aqui contorna o
+COMMIT.
+
+**O que a migração fecha e o que ela NÃO fecha.** No bloco de uma edge, o campo desapareceu: não há mais
+nada para o humano preencher. No lote, a **célula** ainda é copiada por uma pessoa — o que sumiu é o
+dígito, não o transporte. Uma célula de OUTRA leva tem mapa sintaticamente VÁLIDO com os nomes errados, e
+contra isso o guard continua sendo o `FROM esperado LEFT JOIN ids` (nunca `FROM ids JOIN esperado`):
+falsificado contra prod trocando o mapa por `{"edge-de-outra-leva": 71275}`, a leitura devolveu **as 2
+edges esperadas** com `INDETERMINADO`, não zero linhas — e zero linhas se leria como "nada a reportar".
+São classes diferentes com guards diferentes; a migração não dispensa o `LEFT JOIN`.
+
+**O que a migração ganha, além da ergonomia:** o mapa embutido é o que o **eco não alcança**. Bundle
+PRE-SENSOR e recusa HTTP respondem sem ecoar o slug e, no caminho do eco, caem em `INDETERMINADO` junto
+com "não disparou"; com o id do próprio disparo em mãos, saem determinados. O `ids` vazio também
+desqualificava o controle de credencial do 401 (o `NOT EXISTS` não excluía a própria leva) — embutido, o
+401 volta a ser determinável.
+
+**Achado da falsificação: um ramo do `CASE` não era disjunto.** Apontado o mapa para a resposta **71275**
+— o cron da `analytics-outbox-drain`, que ecoa `edge`/`versao`/`fonte` e **não** ecoa `probe` —, a
+leitura caía no `ELSE` e imprimia `BUNDLE VELHO — respondeu versao=v1.1-… (esperado v1.1-…)`, com versão
+e fonte **idênticas** às esperadas: o falso negativo da armadilha do casamento só-por-slug, entrando pelo
+caminho dos `ids` (o `LATERAL` do eco já filtra `probe = 'true'`; o `LEFT JOIN` por id não filtrava
+nada). O ramo `NAO E RESPOSTA DE SONDA` fecha isso e vem **antes** do `? 'fonte'` — um cron que ecoe
+`versao` sem `fonte` sairia como `PRE_SONDA_FONTE`, que nomeia "bundle anterior ao #1998": causa errada,
+mesma classe. O defeito era anterior à migração e só aparecia para quem colasse o blob; foi a
+falsificação da migração que o exibiu.
+
+**Duas armadilhas do `format()` que o corpus não exercita.** `%` no corpo vira diretiva, e a tag do
+dollar-quoting dentro do corpo encerraria a string no meio (passo seguinte emitido pela metade, sem erro
+visível). O SQL de hoje não tem nenhum dos dois caracteres — medido —, então um teste que só olhasse o
+SQL emitido ficaria verde por **acidente do corpus** ([gates-textuais-cegos.md](gates-textuais-cegos.md)).
+Daí `escaparParaFormat()` ser exportada e testada direto: escapa `%` **antes** de plantar o `%1$L` (na
+ordem inversa o próprio placeholder viraria `%%1$L` e o mapa sairia literal) e lança quando a tag aparece.
+
+**Falsificação (prod, leitura, `psql-ro -v ON_ERROR_STOP=1`, com as chamadas `net.http_post` trocadas por
+ids literais — `claude_ro` não dispara POST):** o passo 1 rodou no banco e devolveu o passo 2 escrito com
+`jsonb_each_text('{"fin-valor-cockpit": 999999999, "analytics-outbox-drain": 71275}'::jsonb)`; executado,
+devolveu **2 linhas** — id inexistente ⇒ `AGUARDE` (não zero linhas), id de cron ⇒ `NAO E RESPOSTA DE
+SONDA` (antes: `BUNDLE VELHO`). Mapa de outra leva ⇒ 2 linhas `INDETERMINADO`. Passo 3 com a trava
+FECHADA ⇒ mapa `{"fin-valor-cockpit": null}` e **1 linha** dizendo que a trava do passo 3 ficou fechada —
+a trava continua sendo `CASE`, nunca `WHERE`, e nenhum POST sai dela.
