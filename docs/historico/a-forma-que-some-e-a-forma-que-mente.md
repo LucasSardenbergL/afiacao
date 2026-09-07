@@ -114,6 +114,27 @@ perdido é um terço da operação. As telas de cliente têm 5.664 *contas*, e c
 (`fin_ic_matches` = 0), `AdminReposicaoOportunidades:330` (0), `AdminEstoquePicking:371,580,659`
 (0), `WhatsappInbox:110` (0). Corrigir **antes da primeira linha**, porque depois some calado.
 
+## O delta da baseline não diz QUAL dos dois aconteceu (achado da fatia #2)
+
+Corrigir o sítio #2 derrubou `contarAutoOcultacao` deste arquivo de **2 para 1** — e o gate
+exige registrar o encolhimento. O que a fatia mediu é que **o mesmo delta tem dois motivos
+opostos, e o gate não os distingue**:
+
+| recorte | o que o detector vê | é conserto? |
+|---|---|---|
+| `const q = useQuery(…)` + `q.data` adiante | o sítio SOME: o alias de `data` é casado na desestruturação **da chamada**, e sem ele não há sítio | **não** — a linha de silêncio continua lá |
+| `const { data, status, fetchStatus } = useQuery(…)` | `temErro = true` (`status` ∈ `CHAVES_DE_ERRO`) | **sim** — o componente PROVA acesso ao estado de falha |
+
+Os dois imprimem `(2→1)`. O primeiro passou typecheck, lint e os 9 testes do guard novo — o
+refactor era plausível e a queda parecia recompensa. **Encolher baseline é uma afirmação
+sobre a REALIDADE, e precisa da mesma evidência positiva que qualquer outra**: aqui, o
+`temErro` do sítio. Esta é a versão de sensor da regra que já vale para dado
+(`docs/historico/evidencia-positiva-shell.md`): ausência de sítio não é sítio corrigido.
+
+Corolário para quem varrer o resto do inventário: a correção desta classe **muda a
+desestruturação do hook**, então quase todo sítio corrigido vai encolher a baseline. Cada
+encolhimento precisa dizer POR QUE — e "o número caiu" não é o porquê.
+
 ## O que considero LEGÍTIMO, e por quê
 
 Sete padrões cobrem a maioria dos 93. Em nenhum deles a ausência afirma segurança:
