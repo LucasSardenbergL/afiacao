@@ -1,3 +1,10 @@
+/**
+ * @vitest-environment jsdom
+ *
+ * Exceção ao particionamento por extensão (`projects` em vitest.config.ts): este é um
+ * `.ts` — logo, no ambiente `node` por padrão — mas toca DOM. O docblock sobrepõe o
+ * project e é local ao arquivo, então não vira ímã de conflito entre worktrees.
+ */
 // Trava o contrato do item tintométrico no BALCÃO: o item do carrinho carrega
 // `tint_formula_id` (a fórmula da cor) além de cor/nome/custo. Já era o
 // comportamento correto — este teste é a rede de regressão que mantém o balcão
