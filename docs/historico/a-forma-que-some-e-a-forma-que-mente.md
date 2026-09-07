@@ -90,22 +90,171 @@ perdido é um terço da operação. As telas de cliente têm 5.664 *contas*, e c
    lança; some a régua de margem (`markup %`, faixa, "repassar p/", "revisar") e **o preço fica**.
    Denominador **508 pedidos/30d** — a superfície mais viva do sistema. Ausência afirma "margem OK"
    sobre a tela em que o preço é decidido. Money-path literal.
-2. **`AdminReposicaoPedidos.tsx:652 + 662`.** `(pedidos ?? []).filter(status==='bloqueado_guardrail')`
+2. ✅ **ENTREGUE (fatia #2, 2026-09-06).** **`AdminReposicaoPedidos.tsx:652 + 662`.** `(pedidos ?? []).filter(status==='bloqueado_guardrail')`
    ⇒ falha de leitura apaga `<Alert> N pedidos bloqueados por guardrail. Revise antes do disparo.` e
    `<Alert> N SKUs abaixo do ponto sem fornecedor — não entram em compra`. 80 expirados sem
    aprovação em 30d provam a tela em uso; a ausência afirma "nada bloqueado" **antes do disparo**.
-3. **`GovernanceAudit.tsx:447` + `TintDashboard.tsx:128`.** Sub-tipo que MENTE, fontes de 11.869 e
-   1.656 linhas. Os dois hooks **engolem o erro** ⇒ a correção começa no `queryFn`, não na UI.
+   Corrigido com `estadoDeLeitura`/`naoConsegui` + `<AvisoLeituraFalhou>`, **âncora de teste
+   própria por leitura** (o guard de uma não pode passar verde pelo aviso da outra) e o ramo
+   COMPOSTO para cache-com-refetch-falho — apagar pedidos vivos por causa de um refetch seria
+   trocar um defeito por outro. O rodapé de truncamento da :681 ficou de fora, como classificado.
+   Guard: `src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx` (9 casos, a
+   PÁGINA rodando, só o supabase mockado), falsificado com 5 dentes — um por camada, com
+   controle verde na MESMA invocação do laço.
+3. ✅ **ENTREGUE (fatia #3, 2026-09-07).** **`GovernanceAudit.tsx:447` + `TintDashboard.tsx:128`.**
+   Os dois hooks **engoliam o erro** ⇒ a correção começou no `queryFn`, não na UI. ⚠️ **A
+   classificação acima estava errada pela metade:** só o `GovernanceAudit` MENTE; o card do
+   `TintDashboard:128` **SOME**. E a leitura do código achou mais três sítios no par — o
+   `{marginLog?.length || 0} registros.` da :411 (número afirmativo), o "Nenhuma importação" da
+   `TintDashboard:122` (frase, sobre 64.175 linhas) e **5 KPIs por `count ?? 0`** sobre 994.882
+   fórmulas, que não são a forma `jsx-&&` e sim o `?? 0` do §2. Detalhe e denominadores re-medidos
+   na seção "Fatia #3 FECHADA" no fim deste arquivo.
 4. **`ConfirmacaoPanel.tsx:185–197`** (badges pendente/aguardando/bloqueado no aceite do ciclo) e
    **`Recebimento.tsx:312`** (badge de pendência por armazém; 5 pendentes + 1 falha).
 5. **`AdminReposicaoPromocoes.tsx:165`** (2 rascunhos vivos) e **`FinanceiroMapping.tsx:170`**
    (`= []` no binding; denominador parcial — a fração sem mapeamento vive na edge
    `fin-suggest-mapping` e **não foi medida**).
 
-**Dano hoje ZERO ⇒ chip com gatilho, não correção agora** (mesmo perfil do `carteira_coverage`):
+~~**Dano hoje ZERO ⇒ chip com gatilho, não correção agora**~~ — **QUITADO em 2026-09-06**,
+antes da primeira linha, exatamente como o gatilho previa:
+[gatilho-quitado-antes-da-primeira-linha.md](gatilho-quitado-antes-da-primeira-linha.md).
 `FinanceiroFechamento:117` + `FinanceiroIntercompany:106` + `FinanceiroIntercompanyFila:129`
 (`fin_ic_matches` = 0), `AdminReposicaoOportunidades:330` (0), `AdminEstoquePicking:371,580,659`
-(0), `WhatsappInbox:110` (0). Corrigir **antes da primeira linha**, porque depois some calado.
+(0), `WhatsappInbox:110` (0) — as 4 fontes re-medidas em 0 no dia da correção.
+
+Duas correções ao que está escrito acima, medidas na quitação: **`WhatsappInbox` NÃO engole o
+erro** (`fetchWhatsappSla` lança; quem converte falha em vazio é o `= []` do binding do
+consumidor — um TERCEIRO lugar, fora do `queryFn` e fora do `&&`), e o `queryFn` de
+`AdminEstoquePicking:659` tem **duas** leituras, não uma: sem `throw` na 2ª a coluna
+"Divergências" pinta um badge verde de "0" sobre o que ninguém leu.
+
+## O delta da baseline não diz QUAL dos dois aconteceu (achado da fatia #2)
+
+Corrigir o sítio #2 derrubou `contarAutoOcultacao` deste arquivo de **2 para 1** — e o gate
+exige registrar o encolhimento. O que a fatia mediu é que **o mesmo delta tem dois motivos
+opostos, e o gate não os distingue**:
+
+| recorte | o que o detector vê | é conserto? |
+|---|---|---|
+| `const q = useQuery(…)` + `q.data` adiante | o sítio SOME: o alias de `data` é casado na desestruturação **da chamada**, e sem ele não há sítio | **não** — a linha de silêncio continua lá |
+| `const { data, status, fetchStatus } = useQuery(…)` | `temErro = true` (`status` ∈ `CHAVES_DE_ERRO`) | **sim** — o componente PROVA acesso ao estado de falha |
+
+Os dois imprimem `(2→1)`. O primeiro passou typecheck, lint e os 9 testes do guard novo — o
+refactor era plausível e a queda parecia recompensa. **Encolher baseline é uma afirmação
+sobre a REALIDADE, e precisa da mesma evidência positiva que qualquer outra**: aqui, o
+`temErro` do sítio. Esta é a versão de sensor da regra que já vale para dado
+(`docs/historico/evidencia-positiva-shell.md`): ausência de sítio não é sítio corrigido.
+
+Corolário para quem varrer o resto do inventário: a correção desta classe **muda a
+desestruturação do hook**, então quase todo sítio corrigido vai encolher a baseline. Cada
+encolhimento precisa dizer POR QUE — e "o número caiu" não é o porquê.
+
+## FECHADO — o detector segue o alias por uma indireção (2026-09-07)
+
+O buraco da tabela acima está fechado: `acharColapsos` passou a reconhecer o sítio também
+quando o resultado do hook é ligado a um nome e lido depois — `const q = useQuery(…)` seguido
+de `q.data`, ou de `const { data } = q` num segundo statement.
+
+**A decisão foi por MEDIDA, não por gosto.** A pergunta anterior à correção era o
+denominador: se quase ninguém escrevesse na forma por alias, o certo seria registrar a
+limitação e não endurecer nada. Medido em `src/**` antes de tocar no detector: **1.266**
+declarações `const x = use…()` sem desestruturação, **123** delas lendo `x.data`, e **100**
+lendo `data` sem NENHUMA chave de `CHAVES_DE_ERRO`. Não é ~0 — e a lista inclui exatamente os
+domínios que este doc classifica como de maior dano: `useDataHealth`, `useCashflowAlertas`,
+`useCarteiraSaude`, `usePrecoCockpit`.
+
+As três regras da forma direta valem inteiras pelo alias, e é isso que mantém a baseline
+confiável em vez de só maior:
+
+| regra | pela desestruturação | pelo alias |
+|---|---|---|
+| sem `data` não há colapso a afirmar | binding sem `data` | nenhum `q.data` no escopo |
+| `CHAVES_DE_ERRO` ABSOLVE | `const { data, status } = useX()` | `q.error` / `q.status`, ou `const { data, status } = q` |
+| `...rest` pode carregar o error → não afirmar | `const { data, ...rest }` | passar `q` adiante (`<Filho q={q}/>`, `f(q)`, `{...q}`, `q["data"]`) |
+
+### Duas armadilhas que a implementação encontrou
+
+**A raiz do tainting deixou de ser só identificador.** Na forma por alias sem
+desestruturação, o que carrega o dado é o ACESSO `q.data` — que não é identificador nenhum. O
+ponto fixo das derivadas varria só identificadores e devolveria o mesmo falso "consertado"
+que o endurecimento existe para fechar.
+
+**Outra chamada de hook NÃO é derivada do data — é outra FONTE, com error próprio.** Sem essa
+exclusão, `const outraQ = useQuery({ queryKey: [q.data] })` marcava `outraQ` como derivada, e
+daí `if (outraQ.isLoading) return null` — guarda de CARREGAMENTO — passava a contar como
+colapso de leitura. Em `src/hooks/useExcecoesGestor.ts` isso produzia **4 sítios falsos**: o
+`const data = useMemo(…)` marcava o nome `data`, que colide com o `const { data, error } =
+await supabase…` de cada `queryFn`, e a contaminação chegava até o `isLoading`. `useMemo` e
+`useCallback` ficam FORA da exclusão — são o veículo canônico da derivada, o caminho pelo qual
+o `DataHealthBanner` escapou da primeira versão desta varredura. Baseline que cresce por
+motivo benigno é como um gate morre, e essa é a mesma aritmética que mantém `jsx-&&` fora.
+
+### O crescimento é ACHADO, não regressão
+
+Medido antes e depois, arquivo a arquivo: **nenhum arquivo encolheu**. O que apareceu são
+sítios que já estavam lá e eram invisíveis.
+
+| baseline | antes | depois | entraram |
+|---|---|---|---|
+| auto-ocultação | 27 arquivos | 34 (+8 sítios) | `useCheckinQualitativo`, `useSimuladorData` (2), `ApprovalQueueSection`, `RadarMapa`, `ExcecaoCreditoDialog`, `useReposicaoSessao`, `useSinalPositivacao` |
+| `return-afirmativo` | 2 arquivos | 4 | `PosicaoAtualTab`, `ApprovalQueueSection` |
+
+A medida vale para a árvore em que ela foi feita, e esta foi RE-MEDIDA três vezes. A primeira
+passagem deu 32→38; depois a main mergeou o #2297 (5 sítios de card de dashboard), o #2298
+(mexeu em `useSinalPositivacao`) e, na véspera da entrega, o #2305/#2317 (que esvaziaram quase
+toda a baseline afirmativa). Rebasar sem RE-MEDIR teria reintroduzido entradas já quitadas e
+perdido a 8ª — número medido em árvore velha não é número. **Nenhum arquivo encolheu em nenhuma
+das três medições.**
+
+Nem todo sítio novo é auto-ocultação de COMPONENTE, e quem for quitar precisa saber disso:
+`ApprovalQueueSection` e `PosicaoAtualTab` apagam ou mentem na tela; `RadarMapa`,
+`useSinalPositivacao` e o `handleExtrair` da fila são `return` PELADO dentro de effect ou
+handler — que o detector conta como silêncio desde 2026-08-22, semântica pré-existente e não
+classe nova. São a classe MEDIDA, não sítios aprovados.
+
+O pior dos novos é `ApprovalQueueSection`: quando a leitura da fila falha, a tela acende o ✓
+VERDE com "Nada pra aprovar — suba boletins na aba Documentos". É literalmente o padrão de
+`docs/historico/o-check-verde-que-a-falha-acende.md`, uma indireção mais fundo.
+
+### Falsificação
+
+Cinco sabotagens, uma camada por vez, com o CONTROLE verde na MESMA invocação do laço
+(abortando antes do 1º `sed` se ele não fosse verde): matar a forma por alias inteira ·
+desligar `CHAVES_DE_ERRO` pelo alias · desligar a regra do `...rest`/repasse · tirar a raiz
+`q.data` do ponto fixo · tirar a exclusão de OUTRA FONTE. **5/5 ficaram vermelhas**, e cada
+uma derrubou exatamente os casos previstos — nenhuma camada sobreviveu como redundante.
+
+### Achado de brinde: exit 1 com 19/19 VERDES
+
+A primeira execução da suíte real reprovou por **timeout**, não por asserção — e cronometrar
+antes de consertar foi o que impediu o conserto errado: a varredura ficou mais RÁPIDA com o
+detector endurecido (12,3s → 9,8s, mesma máquina, back-to-back), então o estouro era custo de
+infra, não regressão deste PR.
+
+O modo de falha merece nome próprio. Com ~79s de laço CPU-bound segurando o event loop, o worker
+do vitest morria com `Timeout calling "onTaskUpdate"` e a suíte saía com **exit 1 exibindo
+`Tests 19 passed (19)`**. Quem lesse o resumo diria "passou". É a mesma família de
+`docs/historico/evidencia-positiva-shell.md`: **o veredito é o exit code, não o texto bonito
+acima dele** — e um vermelho que aparece como verde ensina a ignorar vermelho.
+
+O conserto NÃO é deste PR: a `main` resolveu antes, pelo #2311
+(`docs/historico/flaky-sob-carga-teto-e-custo.md`), com **orçamento por FONTE** em vez de um teto
+fixo. Eu tinha escrito o meu (varredura compartilhada entre as duas baselines + pré-filtro
+textual) e **descartei no rebase**, porque o do #2311 é melhor onde importa: um teto em ms/fonte
+acompanha o repo crescer sem afrouxar o **custo unitário**, que é justamente o sinal que
+denunciaria uma regressão do detector. Compartilhar a varredura teria zerado o tempo do segundo
+teste e apagado esse sinal. Conflito de arquivo é só um eixo — antes de insistir na própria
+versão, vale ver se a `main` já entregou a coisa, e melhor.
+
+### O que NÃO foi fechado
+
+O tainting continua **cego a escopo**: ele casa NOMES. Quando o nome marcado é `data` — o mais
+comum do repo — ele colide com qualquer `const { data, error } = await supabase…` aninhado num
+`queryFn`. A exclusão de OUTRA FONTE corta o caminho pelo qual essa colisão estava chegando a
+guardas de carregamento, mas **não remove a colisão**. Quem for endurecer o próximo eixo:
+o conserto de verdade é sombreamento (desmarcar, dentro de cada função aninhada, os nomes que
+ela re-declara) — e ele mexe também na forma direta, então precisa da mesma medida
+antes/depois, arquivo a arquivo, que esta entrega usou.
 
 ## O que considero LEGÍTIMO, e por quê
 
@@ -141,3 +290,165 @@ binding (`= []`) + condição `length === 0` + texto afirmativo — tem o mesmo 
 gateada e são 16 sítios, não 93. Isso é um PR próprio, com baseline própria e falsificação; e o
 pré-requisito dele é o item 2 acima, porque num hook que engole o erro o gate estaria fiscalizando
 a camada errada.
+
+## Fatia #1 FECHADA — `usePrecoCockpit` (2026-09-06)
+
+Os dois consumidores (`CartItemList`, `ProductItemForm` — e são **exatamente** dois) passaram a
+ler o estado da query, não só o `data`: `estadoDeLeitura` + `naoConsegui`/`desatualizado` +
+`<AvisoLeituraFalhou>`. O preço continua na tela **com** o aviso — apagar a linha do carrinho
+porque o cockpit falhou trocaria um defeito por outro (`estado-de-leitura.ts`, `desatualizado`).
+
+### 1. A guarda que já existia mockava o hook — e o mock era PARCIAL
+
+O briefing mandou conferir `CartItemList.priceGuard.test.tsx` antes de mexer, contra o risco de
+"tratamento parcial já existente" tornar o fix inerte. O que ele cobre é **nada** desta classe:
+mocka `usePrecoCockpit: () => ({ data: undefined })` — isto é, roda o componente **exatamente no
+estado de falha** — e afirma só o `aria-invalid` do preço. O erro nunca foi olhado.
+
+O achado que vale como regra é o **formato do mock**: `{ data: undefined }` não tem `status` nem
+`fetchStatus`. Depois do fix, `estadoDeLeitura({status: undefined, fetchStatus: undefined})` não
+casa nenhum `if` e cai no `return 'carregando'` — o teste antigo segue verde **por acidente de
+ramo**, não por desenho. Um mock de hook precisa ter a forma que o componente LÊ; mock parcial
+transforma "o componente escolheu este ramo" em "o objeto não tinha o campo". Completado para
+`{ data: undefined, status: 'pending', fetchStatus: 'idle' }` — 'desabilitada', que é o estado
+que aquele teste de fato quer (cockpit indiferente ao guard de preço).
+
+### 2. A RPC lança por DESENHO, não só por acidente de transporte
+
+`get_preco_cockpit` é SECURITY DEFINER e tem dois `RAISE EXCEPTION` no corpo (psql-ro, 2026-09-06):
+
+```
+RAISE EXCEPTION 'forbidden' USING errcode = '42501'
+  IF NOT (auth.uid() IS NOT NULL AND (has_role(auth.uid(),'employee') OR has_role(auth.uid(),'master')))
+RAISE EXCEPTION 'too many items (max 200)' USING errcode = '22023'
+```
+
+ACL: `authenticated=X`, **`anon` sem EXECUTE**. O caminho alcançável não é exótico — é a **aba de
+balcão aberta o dia inteiro**: token expira, `auth.uid()` vira null, a RPC responde 42501, e a
+régua de margem some de um carrinho que continua editável e submetível. A tela do erro era
+byte-a-byte a tela da margem saudável em faixa `neutro`.
+
+### 3. O caminho dos 200 itens NÃO é alcançável — e o zero fica registrado
+
+Antes de usar "carrinho grande derruba a régua" como argumento, medi. `sales_orders` grava os
+itens em coluna `items` jsonb (confirmado pelo ESCRITOR, `submitOrder.ts:216`, não pelo nome):
+
+| pedidos | máx itens | p99 | acima de 200 |
+|---|---|---|---|
+| 31.248 | **28** | 9,0 | **0** |
+
+O limite de 200 nunca foi tocado em 31 mil pedidos. Registrar o zero é o que impede o próximo a
+inflar o argumento — mesma disciplina que separou `orders` (0 linhas) de `sales_orders` (508/30d)
+na medição original, só que agora contra um erro **meu**, plausível e verificável em duas queries.
+
+## Fatia #3 FECHADA — `GovernanceAudit` + `TintDashboard` (2026-09-07)
+
+O item 3 da ordem por dano, fechado no padrão da fatia #1: o `queryFn` LANÇA, e a tela usa
+`estadoDeLeitura` + `naoConsegui`/`desatualizado` + `<AvisoLeituraFalhou>`, com âncora de teste
+própria por leitura e o ramo composto para cache-com-refetch-falho.
+
+### 1. A classificação deste inventário estava errada pela metade — e o erro é do tipo que ele mesmo denuncia
+
+Acima está escrito que os dois sítios são "sub-tipo que MENTE". A leitura do código mostra que o
+par tem **três** comportamentos diferentes, não um — e o mais caro dos três não é nenhum dos dois
+sub-tipos catalogados:
+
+| sítio | o que a falha de leitura produz | sub-tipo | fonte (psql-ro, 2026-09-07) |
+|---|---|---|---|
+| `GovernanceAudit:447` "Sem registros de auditoria" | frase afirmativa | **mente** | `margin_audit_log` = 12.913 |
+| `GovernanceAudit:411` `{marginLog?.length \|\| 0} registros.` | **número** afirmativo | **mente** | idem — não estava no inventário |
+| `TintDashboard:128` card "Últimos Erros de Importação" | o card **some** | some | `tint_importacoes` erro>0 = 2.124 |
+| `TintDashboard:122` "Nenhuma importação" | frase afirmativa | **mente** | `tint_importacoes` (oben) = 64.175 |
+| `TintDashboard` — 5 KPIs por `count ?? 0` | **zero fabricado** | nenhum dos dois | `tint_formulas` (oben) = **994.882** |
+
+Os 5 KPIs são o achado que a varredura da forma `jsx-&&` **não podia** ter encontrado, porque não
+são a forma: `useMetrics` faz seis leituras num `Promise.all` e não desestrutura `error` em
+**nenhuma** delas, devolvendo `count ?? 0`. Uma leitura que falha vira "0 fórmulas" sobre quase um
+milhão de linhas — o `?? 0` do §2 do money-path (ausente ≠ zero), a classe IRMÃ, escondida atrás do
+sítio que o inventário foi buscar. Quem varrer o resto: **o `&&` é a assinatura, não o perímetro** —
+ao abrir um sítio, leia o `queryFn` inteiro, não só a linha que o detector apontou.
+
+### 2. Os denominadores de ontem já estavam velhos, e na direção que fortalece o argumento
+
+| fonte | inventário (2026-09-06) | medido (2026-09-07) | delta em 1 dia |
+|---|---|---|---|
+| `margin_audit_log` | 11.869 | **12.913** | **+1.044** |
+| `tint_importacoes` erro>0 | 1.656 | **2.124** | **+468** |
+
+Não é fonte histórica parada: as duas são escritas AGORA. Vale como método — um denominador tem
+data, e re-medir antes de corrigir custa uma query. (O `tint_importacoes` do inventário também não
+filtrava `account`, que é o que o hook faz; aqui os 2.124 já são de `oben`, e coincidem com o total
+porque hoje não há outra conta na tabela.)
+
+### 3. O escopo foi decidido por MEDIÇÃO, e o zero fica registrado
+
+`GovernanceAudit` tem outras duas abas com a mesma forma colapsada (`filteredAlgoLog.length === 0`
+⇒ "Nenhum registro encontrado com os filtros atuais"), e os hooks delas **já lançavam** — seriam
+correção alcançável e barata, no mesmo arquivo, no mesmo commit. Ficaram de fora porque
+`permission_change_log` e `farmer_audit_log` medem **0 linhas** hoje: dano zero, e corrigir por
+simetria seria inflar o diff com o argumento que não tenho. É o mesmo critério do "gatilho" que
+esta doc já usou — e o zero fica escrito para que o próximo não precise re-medir para descobrir
+que não vale, nem o assuma sem medir.
+
+### 4. `naoConsegui` e `desatualizado` podem ser verdade ao MESMO tempo — e o desenho ingênuo mostra dois avisos
+
+Com dado no cache e um refetch que falha, `status` é `'error'` (⇒ `naoConsegui` verdadeiro) **e**
+`desatualizado` devolve `'erro'`: escrever os dois `<AvisoLeituraFalhou>` guardados só por eles
+renderiza o aviso duplicado. O guard que separa é o dado em mãos, exatamente como a fatia #2 já
+escrevia — `naoConsegui(estado) && !dado ? estado : null` para o aviso sozinho, e
+`desatualizado(fatia, Boolean(dado))` para o composto. Não é estilo: é o que faz os dois ramos
+serem mutuamente exclusivos.
+
+### 5. Um bug de brinde que a correção elimina de graça
+
+`(!marginLog || marginLog.length === 0)` casa **`carregando`** junto com o vazio: enquanto a
+auditoria de margem carregava, a tabela já dizia "Sem registros de auditoria". Trocar por
+`marginLog?.length === 0` (só a query que RESPONDEU afirma) apaga o flash sem uma linha a mais.
+O mesmo vale para o `isLoading` do `TintDashboard`, que gateava o skeleton sozinho e é **FALSE no
+offline** — sem rede a tela inteira caía no ramo dos zeros, sem erro nenhum ter acontecido.
+
+### 6. A falsificação: 15 camadas, uma por vez, com controle verde na MESMA invocação
+
+`bunx vitest run` sobre os dois guards, num laço só: CONTROLE → 15 sabotagens (uma por vez,
+`git checkout --` entre elas) → RE-CONTROLE. **15/15 vermelhas, 0 sobreviventes.** O laço aborta
+ANTES da 1ª sabotagem se o controle não estiver verde — e abortou, duas vezes, o que é o motivo de
+existir: sabotar com a suíte já vermelha aprovaria qualquer coisa.
+
+Os dois controles vermelhos foram defeitos **do teste**, não do código, e um deles vale como regra:
+
+> **A âncora de navegação de um teste não pode casar a copy do próprio aviso que ele fiscaliza.**
+> `await screen.getByText(/Auditoria de Margem/i)` servia para abrir a aba — e casava também o
+> `<AvisoLeituraFalhou oque="a auditoria de margem">`. Resultado: o helper só quebrava nos 3 testes
+> em que o aviso APARECE, isto é, exatamente naqueles em que o código está certo. Um teste que
+> falha só quando a correção funciona é pior que teste nenhum. A âncora passou a ser o `<th>` da
+> tabela, que existe nos quatro estados e não é texto de aviso.
+
+Os outros dois: o `RecorrentesHojeCard`, deixado rodando de verdade para não criar aresta de
+fronteira, chega em `useAuth` por dentro do `useMinhasRecorrentesHoje` e derruba a página inteira
+sem Provider — o guard morria no HOST, não na leitura que fiscaliza (`AuthContext` é plataforma, o
+mock não cria aresta); e `getByText('180')` nunca casaria, porque `{kpi(a)} / {kpi(b)}` é UM nó de
+texto (`"180 / 220"`) — `getNodeText` concatena os filhos de texto diretos.
+
+**Dois guards teriam passado verdes por REDUNDÂNCIA, e a correção foi no teste, não no código.**
+`contagem()` é fail-closed em dois eixos (`error` e `count == null`), mas com a fixture falhando as
+6 leituras juntas o `throw` do `lastImport.error` disparava primeiro e cobria os dois. Foram
+separados em três fixtures — `so-contagem` (erro só nas contagens), `contagem-nula` (resposta OK
+sem a contagem) e `erro-com-contagem` (o único eixo que só o guard de `error` enxerga). Sem isso,
+sabotar qualquer um deles continuaria vermelho **pelo motivo errado**, e o dente não provaria nada.
+
+Uma nota de método sobre o ramo composto: o `desatualizado()` das métricas era provado por
+`onlineManager.setOnline(false)` + `invalidateQueries()`, e esse caminho **não pausou** a query
+naquele host (o mesmo padrão funciona no `GovernanceAudit` e no card de erros — a diferença não foi
+diagnosticada). Trocado pelo ramo `status:'error'` com dado em mãos, que é determinístico e prova a
+mesma propriedade; o ramo `paused` do mesmo helper segue coberto pelo composto do card de erros.
+**Os dois ramos têm dente — só não pelo mesmo host.**
+
+### 7. A fila do `heavy` é parte do custo, e mede-se como qualquer outra coisa
+
+Uma rodada inteira foi perdida para `heavy: timeout (1800s) esperando vaga` — **1 slot, 8 sessões
+na fila, ~35min de espera cada**. O slot não estava órfão (conferido: `pid` vivo, em `tsc`, 9min de
+execução), então não havia nada a destravar. `AFIACAO_HEAVY_TIMEOUT=7200` resolveu a espera; o que
+tornou o custo pagável foi **empacotar validação + controle + 15 sabotagens num script só** — 17
+invocações de vitest dentro de UMA vaga, em vez de 17 vaga(s). Timeout de fila é **ausência de
+dado**, não reprovação: reportá-lo como "a falsificação falhou" seria a mesma fabricação que esta
+doc inteira persegue.

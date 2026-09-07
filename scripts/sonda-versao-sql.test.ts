@@ -250,9 +250,20 @@ describe('PASSO 1 — dispara a leva numa tacada', () => {
     expect(sql).toContain('jsonb_object_agg(edge, request_id)::text');
   });
 
-  it('timeout_milliseconds é EXPLÍCITO — o default de 5s mata silencioso', () => {
+  // O default do `net.http_post` é 5s e mata silencioso (CLAUDE.md §armadilhas · docs/agent/sync.md).
+  // A asserção ANTERIOR era `/timeout_milliseconds\s*:=\s*\d+/`: ela media a FORMA (existe UM
+  // número), não a invariante que o próprio nome promete. `:= 1` e `:= 0` são "explícitos" e são
+  // PIORES que o default — matam a sondagem antes de qualquer resposta, e o desfecho é a leitura
+  // devolvendo ausência de linha para uma edge que respondeu. MEDIDO 2026-09-07 por mutcheck
+  // exploratório (controle+ verde na mesma invocação): 20000→3000, →1 e →0 SOBREVIVIAM.
+  // Pinar o valor em 20000 seria fachada: 20s é TUNING, não fronteira — por isso 20000→30000 segue
+  // `SOBREVIVE` declarado no .mut. A fronteira é o piso, e é ela que esta asserção pina.
+  const DEFAULT_PG_NET_MS = 5000;
+  it('timeout_milliseconds é EXPLÍCITO e ACIMA do default de 5s, que mata silencioso', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    expect(sql).toMatch(/timeout_milliseconds\s*:=\s*\d+/);
+    const m = sql.match(/timeout_milliseconds\s*:=\s*(\d+)\)/);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThan(DEFAULT_PG_NET_MS);
   });
 
   it('o corpo pede a SONDA, não o fluxo real', () => {
@@ -516,6 +527,18 @@ describe('o PASSO 1 ESCREVE o passo 2 — o mapa edge→id não passa pela mão 
     expect(iNaoSonda).toBeGreaterThan(-1);
     expect(iNaoSonda).toBeLessThan(iPreFonte);
     expect(ramoDe(sql, 'NAO E RESPOSTA DE SONDA')).toMatch(/probe:true/);
+  });
+
+  it('a CONDIÇÃO do ramo é NULL-safe e está colada nele — texto presente não é ramo alcançável', () => {
+    // Sem esta asserção o ramo passa a ser texto decorativo: trocar a condição por `false` (ou por
+    // um `<>`, que com `probe` AUSENTE vale NULL e nunca dispara) deixa a string no arquivo e a
+    // suíte VERDE — a cegueira que o próprio .mut descreve e que só EXECUTANDO se vê. Medido: as
+    // duas mutações SOBREVIVIAM antes daqui. `IS DISTINCT FROM` é o operador NULL-safe, e é
+    // exatamente o corpo SEM o campo `probe` (o cron) que o ramo precisa alcançar.
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toMatch(
+      /WHEN l\.corpo ->> 'probe' IS DISTINCT FROM 'true'\n\s*THEN 'NAO E RESPOSTA DE SONDA/,
+    );
   });
 });
 

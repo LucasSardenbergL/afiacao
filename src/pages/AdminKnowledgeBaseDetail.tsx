@@ -18,11 +18,13 @@ import { SpecLinkPanel } from '@/components/knowledge-base/SpecLinkPanel';
 import { CatalisadorLinkPanel } from '@/components/knowledge-base/CatalisadorLinkPanel';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 export default function AdminKnowledgeBaseDetail() {
   const { id } = useParams<{ id: string }>();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, status, fetchStatus, error } = useQuery({
     queryKey: ['kb-document', id],
     enabled: !!id,
     queryFn: async (): Promise<KbDocument | null> => {
@@ -36,6 +38,12 @@ export default function AdminKnowledgeBaseDetail() {
     // polling enquanto processa
     refetchInterval: (q) => (q.state.data?.status === 'processing' ? 3000 : false),
   });
+  // `status`/`error` são nomeados na própria desestruturação de propósito: guardar a query
+  // num `const q = useQuery(…)` tiraria o sítio do gate da classe por CEGUEIRA (ele só
+  // rastreia `const {…} = useX(…)`), não por conserto.
+  // `.single()` LANÇA quando não acha (PGRST116), e isso chegava aqui idêntico a uma queda
+  // de rede — a distinção só existe lendo o CÓDIGO do erro.
+  const estadoDoc = estadoDeRegistro({ status, fetchStatus, error }, data != null);
 
   const { data: chunkCount } = useQuery({
     queryKey: ['kb-chunks-count', id],
@@ -47,6 +55,16 @@ export default function AdminKnowledgeBaseDetail() {
       return count ?? 0;
     },
   });
+
+  // ANTES do loading: sem rede a query fica pending+paused, `isLoading` é FALSE, e a tela
+  // caía direto no "não encontrado".
+  if (naoConsegui(estadoDoc)) {
+    return (
+      <div className="container mx-auto p-4">
+        <AvisoLeituraFalhou oque="este documento da base de conhecimento" estado={estadoDoc} variante="bloco" />
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

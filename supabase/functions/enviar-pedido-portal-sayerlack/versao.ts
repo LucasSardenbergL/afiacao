@@ -22,7 +22,7 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * v1.7 enviado = aprovado na quantidade (NULL lê-se 1:1; qtde fora do múltiplo recusa; normalização sai) ·
  * v1.8 itens+de-para por caminho único (a RPC inexistente e a instrumentação `[DEBUG_*]` saíram).
  */
-export const VERSAO = "v1.8-itens-caminho-unico";
+export const VERSAO = "v1.9-prova-sem-mudanca-e-sensor-unitario";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

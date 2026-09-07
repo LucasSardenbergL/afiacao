@@ -2150,9 +2150,14 @@ async function processarPedido(
           && match.ambiguos.length === 0 && match.casados.length === itensParaCusto.length && !pulados.some((p) => p.motivo !== 'sem_mudanca');
         if (pedidoInteiroProvado) {
           planejados = derivado.updates.length;
-          // planejados === 0 = todos 'sem_mudanca' (custo já batia): nada a gravar, não é cegueira.
-          if (planejados > 0) {
-            // UMA transação: CAS (omie IS NULL + sucesso_portal) no próprio UPDATE + todos os itens + valor_total.
+          // planejados === 0 = todos 'sem_mudanca' (custo já batia). A RPC é chamada MESMO ASSIM: a
+          // prova do portal vale por si — antes ela era DESCARTADA e as colunas do provado ficavam
+          // nulas apesar de a compra estar comprovada (Codex 2026-09-06). O SQL aceita array vazio
+          // desde 20260906193522; DEPLOYAR ESTA EDGE SÓ DEPOIS DO APPLY dessa migration, senão a
+          // versão anterior da RPC recusa o array vazio com CP001.
+          {
+            // UMA transação: CAS (omie IS NULL + sucesso_portal) no próprio UPDATE + todos os itens +
+            // o total provado em coluna dedicada + o derivado remantido sobre todos os itens.
             // Recusa = SQLSTATE CP00x + ROLLBACK; `data` = nº de itens gravados (== planejados, senão a RPC lançou).
             const { data: gravados, error: eRpc } = await supabase.rpc("sayerlack_aplicar_custo_portal", {
               p_pedido_id: pedido.id,

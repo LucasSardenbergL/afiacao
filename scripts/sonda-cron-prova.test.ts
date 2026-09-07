@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   chaveDoManifesto,
+  identidadeDosControles,
   classificarVeredito,
   gateG1,
   gateG3,
@@ -34,6 +35,23 @@ describe('gateG1 — o ramo dentro do bloco OPTIONS, antes do CORS', () => {
       "    return new Response(null, { headers: corsHeaders });\n    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);\n    if (sonda) return sonda;",
     );
     expect(gateG1('monthly-report', invertido)).toMatch(/DEPOIS do return de CORS/);
+  });
+  it("aceita corpo de CORS que não é `null` — o preflight de 'ok' é o de 3 edges REAIS", () => {
+    // Regressão de 2026-09-07: o gate casava a string literal `new Response(null, …)`, e
+    // `reposicao-depara-sayerlack-auto`, `carteira-positivacao-snapshot` e `omie-nfe-webhook`
+    // respondem `'ok'` desde sempre. Passar no gate exigiria MUDAR o preflight delas — o oposto
+    // do que ele protege. O gêmeo deste gate vive em `_shared/sonda-versao-contrato_test.ts`.
+    for (const corpo of ["'ok'", '"ok"', '`ok`']) {
+      const variante = OPTIONS_OK.replace('new Response(null,', `new Response(${corpo},`);
+      expect(gateG1('reposicao-depara-sayerlack-auto', variante)).toBeNull();
+    }
+  });
+  it('reprova quando o fallback de CORS SOME — corpo literal é o que separa fallback de chamada', () => {
+    const semCors = OPTIONS_OK.replace('    return new Response(null, { headers: corsHeaders });\n', '');
+    expect(gateG1('monthly-report', semCors)).toMatch(/perdeu o return de CORS/);
+    // Uma CHAMADA no lugar do literal não é o fallback: pode fazer IO e mudar o preflight.
+    const comChamada = OPTIONS_OK.replace('new Response(null,', 'new Response(montarCors(),');
+    expect(gateG1('monthly-report', comChamada)).toMatch(/perdeu o return de CORS/);
   });
   it('reprova IO dentro do bloco — e NÃO se engana com IO citado em comentário', () => {
     const comIo = OPTIONS_OK.replace('    if (sonda) return sonda;', '    if (sonda) return sonda;\n    await supabase.from("t").select();\n    void fetch("x");');
@@ -134,8 +152,19 @@ describe('classificarVeredito', () => {
 
 describe('cache e enumeração', () => {
   it('a chave muda com o harness — closure igual, instrumento diferente, veredito a refazer', () => {
-    expect(chaveDoManifesto('c1', 'h1')).not.toBe(chaveDoManifesto('c1', 'h2'));
-    expect(chaveDoManifesto('c1', 'h1')).toBe(chaveDoManifesto('c1', 'h1'));
+    expect(chaveDoManifesto('c1', 'h1', 'x1')).not.toBe(chaveDoManifesto('c1', 'h2', 'x1'));
+    expect(chaveDoManifesto('c1', 'h1', 'x1')).toBe(chaveDoManifesto('c1', 'h1', 'x1'));
+  });
+  it('a chave muda com os CONTROLES — trocar o controle por um inerte tem de reexecutar', () => {
+    // Regressão de 2026-09-07: sem isto, sabotar o corpo do controle de `sync-reprocess` deixava
+    // os 43 vereditos em cache e a falsificação saía VERDE. Controle inerte aprova qualquer coisa.
+    expect(chaveDoManifesto('c1', 'h1', 'x1')).not.toBe(chaveDoManifesto('c1', 'h1', 'x2'));
+  });
+  it('a identidade dos controles é ESTÁVEL por edge e DISTINTA entre edges com controles diferentes', () => {
+    expect(identidadeDosControles('sync-reprocess')).toBe(identidadeDosControles('sync-reprocess'));
+    expect(identidadeDosControles('sync-reprocess')).not.toBe(identidadeDosControles('sonda-relay'));
+    // Edge fora da allowlist não tem controle: identidade do vazio, nunca um throw silencioso.
+    expect(identidadeDosControles('nao-existe')).toBe(identidadeDosControles('outra-que-nao-existe'));
   });
   it('o ponto fixo alcança dependência que só existia no passado, e os commits QUE SÓ ELA tem', () => {
     // O caso real: `_shared/velho.ts` não existe mais hoje, mas um `index.ts` antigo o importava.

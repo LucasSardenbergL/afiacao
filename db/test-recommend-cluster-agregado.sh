@@ -159,7 +159,6 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── asserts ──"
 
-RPC="SELECT denominador, observados, produtos, truncado FROM public.recommend_cluster_agregado('critico')"
 P1="'00000000-0000-4000-8000-000000000000'"   # o produto que pesado E leve compraram
 
 # ── A0. CONTROLE: o defeito EXISTE neste seed ────────────────────────────────

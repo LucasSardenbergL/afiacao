@@ -1,5 +1,7 @@
 import { useCompletude } from '@/hooks/useCompletude';
 import { rotularCampo } from '@/lib/knowledge-base/campo-labels';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Link } from 'react-router-dom';
@@ -8,11 +10,39 @@ import { Loader2, CheckCircle2 } from 'lucide-react';
 /**
  * Aba "Dados faltantes" (Fase B1): produtos aprovados com campos importantes vazios,
  * do mais incompleto pro menos. Read-only — clica e vai pro detalhe do boletim.
+ *
+ * O ✓ VERDE SÓ PODE APARECER EM `pronta`. `useCompletude` faz `if (error) throw error`,
+ * então na falha `data` é `undefined` — a mesma condição do vazio. O `!data ||
+ * data.length === 0` que estava aqui colapsava as duas à mão, com `||`, e a tela
+ * respondia à queda de leitura com ícone de sucesso e uma frase universal ("Todas as
+ * fichas… estão completas"). Medido em prod (2026-09-06): 119 fichas aprovadas, 116 com
+ * campo faltando — o estado NORMAL desta tela são 116 pendências de trabalho, e a falha
+ * as substituía por um check verde para as 3 pessoas que enxergam esta aba
+ * (docs/historico/o-check-verde-que-a-falha-acende.md, achado 1).
+ *
+ * A desestruturação liga `status` de PROPÓSITO: é chave de `CHAVES_DE_ERRO`, então o
+ * detector de `src/lib/gates/erro-colapsado-em-vazio.ts` enxerga o tratamento e SEGUE
+ * vigiando o arquivo. Trocar por `const q = useCompletude()` sumiria com o sítio do gate
+ * por CEGUEIRA — e o gate não distingue isso de conserto.
  */
 export function CompletudeSection() {
-  const { data, isLoading } = useCompletude();
+  const { data, status, fetchStatus } = useCompletude();
+  const estado = estadoDeLeitura({ status, fetchStatus });
 
-  if (isLoading) {
+  // ANTES do loading, e não depois: sem rede a query fica `pending` + `paused`, com
+  // `isLoading` FALSE, `data` `undefined` e `error` `null`. O 4º estado passa reto por
+  // um guard de `isLoading`/`error` e cai no ramo do "está tudo completo".
+  if (naoConsegui(estado)) {
+    return (
+      <AvisoLeituraFalhou
+        oque="a lista de fichas com dados importantes faltando"
+        estado={estado}
+        variante="bloco"
+      />
+    );
+  }
+
+  if (estado !== 'pronta') {
     return (
       <div className="flex justify-center py-8">
         <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
@@ -20,6 +50,9 @@ export function CompletudeSection() {
     );
   }
 
+  // Só alcançável com a leitura FEITA — aqui o vazio é mesmo "não há pendência", e o ✓
+  // verde é verdade. (`!data` sobrevive porque o tipo de `UseQueryResult` admite
+  // `undefined`; em `success` a `queryFn` sempre devolveu um array.)
   if (!data || data.length === 0) {
     return (
       <Card className="p-8 text-center text-xs text-muted-foreground">

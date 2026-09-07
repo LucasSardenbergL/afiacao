@@ -161,9 +161,13 @@ semear() {
 
 # rodar <cenario> [args extras do alvo...] — publica saída em $out e exit code em $rc
 out=""; rc=0
+# `via_caiu` acumula os casos em que a VIA não respondeu (≠ respondeu OUTRA coisa). `semear` só usa
+# o Postgres — nunca o script sob sabotagem — então seed falhado é infraestrutura por construção.
+via_caiu=""
 rodar() {
   local cen="$1"; shift
-  semear "$cen" >/dev/null 2>&1 || { out="SEED_FALHOU"; rc=99; return; }
+  semear "$cen" >/dev/null 2>&1 || {
+    out="SEED_FALHOU"; rc=99; via_caiu="${via_caiu}${cen}/SEED_FALHOU "; return; }
   out="$(AFIACAO_PSQL="$TMP/psql-ro" FECHO_MAPA_FONTE="$TMP/mapa.ts" \
          bash "$ALVO" "$@" 2>&1)"; rc=$?
 }
@@ -196,6 +200,7 @@ caso() {
 # por acidente, e um marcador que casa sempre é asserção sem dente (#1483).
 executar_casos() {
   erros=0
+  via_caiu=""
   caso no_ar eco_com_fonte_batendo 0 "NO_AR" \
     "eco do slug + fonte igual a main ⇒ prova positiva, sem chip" "" -- edge-a
   caso pre_sonda_fonte eco_sem_fonte 1 "PRE_SONDA_FONTE" \
@@ -234,6 +239,11 @@ executar_casos() {
 if [ "$FALSIFY" = 0 ]; then
   echo "== edges-pendentes-sql — classificação do Passo 3 do /fecho, EXECUTANDO o SQL =="
   executar_casos
+  if [ -n "$via_caiu" ]; then
+    echo "  ❌ VIA_NAO_OBSERVAVEL: cenário(s) sem resposta nenhuma — $via_caiu"
+    echo "     Isto NÃO é divergência de contrato: o Postgres efêmero não respondeu."
+    exit 2
+  fi
   [ "$erros" -eq 0 ] && echo "  tudo bateu: 13 cenários" || echo "  ❌ $erros divergência(s) acima"
   [ "$erros" -eq 0 ] || exit 1
   exit 0
@@ -242,12 +252,47 @@ fi
 # ── falsificação: cada sabotagem precisa deixar ≥1 cenário VERMELHO ────────────────────────────
 echo "== edges-pendentes-sql --falsify — sabota o script e exige vermelho =="
 ORIG=$(cat "$ALVO_REAL")
+
+# via_viva — a via de prova ainda responde? Sonda POSITIVA fim-a-fim com o script JÁ RESTAURADO:
+# semeia o caminho feliz e exige a marca conhecida de volta. Irmã da `via_viva` do
+# `sonda-veredito-401-eval.sh`, e pelo mesmo motivo: vermelho por AUSÊNCIA de resposta não prova o
+# mesmo que vermelho por resposta DIVERGENTE, e creditar a sabotagem pelo primeiro aprova 100% das
+# sabotagens seguintes sem ter olhado nenhuma.
+VIA_MOTIVO=""
+via_viva() {
+  local o r
+  semear eco_com_fonte_batendo >/dev/null 2>&1 || {
+    VIA_MOTIVO="a semeadura falhou — o Postgres efêmero morreu no meio do laço."; return 1; }
+  o=$(AFIACAO_PSQL="$TMP/psql-ro" FECHO_MAPA_FONTE="$TMP/mapa.ts" bash "$ALVO" edge-a 2>&1); r=$?
+  if [ "$r" -ne 0 ]; then
+    VIA_MOTIVO="o script ÍNTEGRO saiu $r no caminho feliz: ${o:0:160}"; return 1
+  fi
+  case "$o" in
+    *NO_AR*) return 0 ;;
+    *) VIA_MOTIVO="o script ÍNTEGRO deixou de confirmar o caminho feliz: ${o:0:160}"; return 1 ;;
+  esac
+}
+
 cegas=0
+julgadas=0
 sabotar() { # nome de para
   local nome="$1" de="$2" para="$3"
-  if ! printf '%s' "$ORIG" | command grep -qF -- "$de"; then
-    printf '  [XX ] sabotagem NO-OP (alvo sumiu do script): %s\n' "$nome"; cegas=$((cegas + 1)); return
-  fi
+  # Busca no PRÓPRIO shell: sem pipe, sem fork, sem locale. NÃO devolver `printf | command grep -qF`
+  # aqui — sob `set -o pipefail` o status do pipeline NÃO é o do grep: `grep -q` sai no PRIMEIRO
+  # match e fecha o pipe, o `printf` (que ainda tinha bytes a escrever) morre de SIGPIPE e o
+  # pipeline devolve 141 com o grep tendo ACHADO (`PIPESTATUS=141 0`). Este guard leria 141 como
+  # "não achei" e acusaria alvo ausente com o alvo PRESENTE — reprovando o CI à toa e ensinando a
+  # re-rodar, que apaga sinal. É corrida (só dispara se o `printf` não terminar antes), então
+  # aparece como flake. Medido no eval IRMÃO (`sonda-veredito-401`, run 34116946335 na main,
+  # 2026-09-07): 2 das 11 sabotagens acusaram alvo ausente com o texto BYTE-IDÊNTICO ao do run
+  # que passou. Este guard era a mesma construção sobre um `$ORIG` do mesmo porte — mesmo risco.
+  # `"$de"` entre aspas DENTRO do padrão casa LITERALMENTE: `?`/`*` do alvo não viram curinga.
+  # Guardado por `scripts/test-guard-noop-sabotagem.sh` (roda o guard sob um leitor com a semântica
+  # do GNU `grep -q`, que o BSD grep do macOS não tem). → docs/historico/evidencia-positiva-shell.md
+  case "$ORIG" in
+    *"$de"*) ;;
+    *) printf '  [XX ] sabotagem NO-OP (alvo sumiu do script): %s\n' "$nome"; cegas=$((cegas + 1)); return ;;
+  esac
   printf '%s' "$ORIG" | python3 -c '
 import sys
 de, para = sys.argv[1], sys.argv[2]
@@ -255,12 +300,23 @@ sys.stdout.write(sys.stdin.read().replace(de, para))
 ' "$de" "$para" > "$ALVO"
   chmod +x "$ALVO"
   executar_casos >"$TMP/falsify.out" 2>&1
-  if [ "$erros" -ne 0 ]; then
-    printf '  [ok ] pegada: %s\n' "$nome"
-  else
-    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA: %s\n' "$nome"; cegas=$((cegas + 1))
-  fi
+  local err_sab="$erros" via_sab="$via_caiu"
+  # Restaura ANTES de julgar: `via_viva` precisa do script íntegro para ser sonda da VIA, e não
+  # da sabotagem.
   printf '%s' "$ORIG" > "$ALVO"; chmod +x "$ALVO"
+  if [ "$err_sab" -eq 0 ]; then
+    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA: %s\n' "$nome"; cegas=$((cegas + 1)); return
+  fi
+  if [ -n "$via_sab" ] && ! via_viva; then
+    printf '  ❌ VIA_NAO_OBSERVAVEL: a via caiu durante a sabotagem "%s".\n' "$nome"
+    printf '     %s\n' "$VIA_MOTIVO"
+    printf '     cenário(s) sem resposta: %s\n' "$via_sab"
+    printf '     As %s sabotagem(ns) já julgadas valem; as seguintes NÃO foram tentadas.\n' "$julgadas"
+    echo   "     Isto NÃO é 'o contrato mudou' e NÃO se conserta editando a sabotagem."
+    exit 2
+  fi
+  julgadas=$((julgadas + 1))
+  printf '  [ok ] pegada: %s\n' "$nome"
 }
 
 sabotar "a 3a classe (casamento por request_id) some do SQL" \

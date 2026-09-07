@@ -9,8 +9,9 @@
 PEGA      | trava do bloco caro CASE -> WHERE (teatro) | s/CASE WHEN g\.confirmei/WHERE g.confirmei/
 PEGA      | leitura sai da lista canonica (LEFT->JOIN) | s/LEFT JOIN ids i/JOIN ids i/
 PEGA      | resposta ausente vira veredito (LEFT->JOIN)| s/LEFT JOIN net\._http_response/JOIN net._http_response/
-PEGA      | ramo AGUARDE some do veredito              | s/'AGUARDE —/'AGUARDOU —/
-PEGA      | placeholder do bloco que le fica invalido  | s/jsonb_each_text\('\{\}'::jsonb\)/jsonb_each_text('<COLE_AQUI>'::jsonb)/
+PEGA      | ramo AGUARDE some do passo EMBUTIDO        | s/'AGUARDE — o request_id embutido/'AGUARDOU — o request_id embutido/
+PEGA      | ramo AGUARDE some do passo do ECO          | s/'AGUARDE — o request_id colado/'AGUARDOU — o request_id colado/
+PEGA      | placeholder do bloco que le fica invalido  | s/: `'\{\}'::jsonb`;/: `'<COLE_AQUI>'::jsonb`;/
 PEGA      | marcador hardcoded em vez de lido do arquivo | s/lit\(e\.versao\)/lit('v1.0-sensor-inicial')/
 PEGA      | timeout_milliseconds implicito (default 5s) | s/timeout_milliseconds := 20000/-- sem timeout/
 PEGA      | --caro forasteira aceita em silencio       | s/!edges\.includes\(c\)/false/
@@ -55,7 +56,8 @@ PEGA      | janela larga: sondagem de ontem vira veredito de hoje | s/interval '
 PEGA      | teto da janela removido (guard do #2079 desligado)    | s/ \|\| janelaMin > JANELA_MAX_MIN//
 PEGA      | LIMIT 1 sem desempate (created EMPATA em prod)        | s/ORDER BY rr\.created DESC, rr\.id DESC/ORDER BY rr.created DESC/
 PEGA      | LATERAL vira INNER: edge sem eco SOME da saida        | s/LEFT JOIN LATERAL \(/JOIN LATERAL (/
-PEGA      | ausencia de linha vira veredito NEGATIVO              | s/THEN 'INDETERMINADO — nenhuma resposta/THEN 'BUNDLE VELHO — nenhuma resposta/
+PEGA      | ausencia de linha vira veredito NEGATIVO (eco)        | s/'INDETERMINADO — nenhuma resposta/'BUNDLE VELHO — nenhuma resposta/
+PEGA      | ausencia de linha vira veredito NEGATIVO (embutido)   | s/'INDETERMINADO — esta edge não tem request_id/'BUNDLE VELHO — esta edge não tem request_id/
 # Cast desprotegido: um corpo nao-JSON alheio na janela aborta a consulta INTEIRA — e a leitura
 # morre no lugar de julgar, que e falha por MECANICA lida como ausencia de resposta.
 PEGA      | cast para jsonb sem o filtro textual antes            | s/AND left\(ltrim\(r\.content\), 1\) = '\{'//
@@ -63,8 +65,27 @@ PEGA      | cast para jsonb sem o filtro textual antes            | s/AND left\(
 # psql-ro. Recorte que vaza um lado no outro devolve a leitura para a mao do founder.
 PEGA      | --so-disparo passa a emitir a leitura junto           | s/const querLeitura = !opts\.soDisparo;/const querLeitura = true;/
 PEGA      | --so-leitura passa a emitir o disparo junto           | s/const querDisparo = !opts\.soLeitura;/const querDisparo = true;/
-SOBREVIVE | timeout 20s -> 30s (valor nao e pinado)    | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
-SOBREVIVE | ORDER BY por posicao (cosmetico)           | s/ORDER BY l\.edge;/ORDER BY 1;/
+# O `timeout_milliseconds`. A linha `PEGA` la em cima ja provava que ele nao pode ficar IMPLICITO
+# (o default de 5s do net.http_post mata silencioso). O que faltava era o PISO: a assercao de entao
+# so exigia `:= \d+`, que e a FORMA e nao a invariante — e `:= 1` satisfaz "explicito" sendo PIOR
+# que o default. MEDIDO 2026-09-07 com controle+ verde na MESMA invocacao: 20000 -> 3000, -> 1 e
+# -> 0 SOBREVIVIAM as 54 mutacoes deste contrato. As duas abaixo sao o dente novo; a de 5000 e a
+# mutacao de FRONTEIRA (pina que a comparacao e `>` estrito, nao `>=`: com `>=` ela sobrevive).
+PEGA      | timeout IGUAL ao default de 5s (fronteira > vs >=) | s/timeout_milliseconds := 20000/timeout_milliseconds := 5000/
+PEGA      | timeout ABAIXO do default (3s: pior que implicito) | s/timeout_milliseconds := 20000/timeout_milliseconds := 3000/
+# ACEITO, com justificativa: 20s e TUNING, nao fronteira. Nenhuma decisao do gerador depende de o
+# numero ser 20000 em vez de 30000 — o que decide e estar ACIMA do piso de 5s, e ISSO agora tem
+# asercao (as duas PEGA acima). Pinar 20000 seria fachada: travaria o valor sem invariante atras,
+# e a proxima pessoa que ajustasse o tuning ficaria vermelha sem ter quebrado nada.
+SOBREVIVE | timeout 20s -> 30s (tuning acima do piso)  | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
+# ACEITO, com justificativa: INERTE, nao apenas cosmetico. `SELECT l.edge,` e a PRIMEIRA coluna da
+# projecao final (conferido em 2026-09-07), entao `ORDER BY 1` e EXATAMENTE o mesmo plano e a mesma
+# ordem — o mutante nao muda nem a saida. E mesmo que a 1a coluna mudasse, ordem de LINHAS de um
+# relatorio de leitura nao entra em veredito nenhum: o veredito e por linha, no CASE.
+# ⚠️ O que tornaria isto FALSO: alguem inserir coluna antes de `l.edge` no SELECT. Ai `ORDER BY 1`
+# passa a ordenar por outra coisa — continua sem mudar veredito, mas deixa de ser inerte. Se essa
+# insercao acontecer, esta linha vira `?` ou some; nao a promova a PEGA sem invariante atras.
+SOBREVIVE | ORDER BY por posicao (inerte: edge e a 1a col) | s/ORDER BY l\.edge;/ORDER BY 1;/
 # Os 8 abaixo guardam o GUARD DE SINCRONIA (worktree defasado). O gerador já lia a fonte da verdade
 # do repo em vez da memória do operador — mas "o repo" pode ser um checkout VELHO, e aí o
 # `esperado(...)` sai de um retrato que a main já superou. MEDIDO 2026-09-05: worktree dois merges
@@ -97,3 +118,27 @@ PEGA      | gitReal ignora a raiz pedida (cwd do processo)        | s/cwd: raiz,
 # — fail-OPEN na dimensão exata do #2227. O caso `em repo git SEM a ref` a mata; esta linha é o que
 # impede a prova de viver só na transcrição de quem mediu (docs/historico/falsificacao-fora-do-ci.md).
 PEGA      | ref ausente (1) traduzida em APROVADO (fail-OPEN)     | s/return \{ status: r\.status \?\? 127,/return { status: (r.status === 1 ? 0 : (r.status ?? 127)),/
+# Os 6 abaixo guardam a MIGRAÇÃO do #2278: o passo de disparo devolve o passo de leitura já ESCRITO
+# (`format($sonda$…$sonda$, m.ids)`), com o mapa `edge→id` embutido. O que se copia é a célula, não o
+# número — a classe de docs/historico/sonda-request-id-a-mao.md, aqui na variante coletiva (o blob
+# `{"edge": id}` inteiro). Sem eles a suíte aceitava o gerador VOLTANDO a entregar o blob.
+PEGA      | passo 1 volta a ENTREGAR o blob de ids                | s/AS passo_\$\{passoLeitura\}_copie_esta_celula/AS ids_opcionais_passo_${passoLeitura}/
+PEGA      | mapa embutido vira {} (o blob faz falta de novo)      | s/embutido \? `\$\{ids\.expr\}::jsonb`/embutido ? `'{}'::jsonb`/
+# As 3 abaixo cobrem as armadilhas do `format()` que o SQL de hoje NÃO exercita (o corpo emitido não
+# tem `%` nem `$`): sem teste DIRETO em `escaparParaFormat` elas ficariam verdes por acidente do
+# corpus — docs/historico/gates-textuais-cegos.md.
+PEGA      | escape de % desligado (o corpo vira diretiva)         | s/\.replaceAll\('%', '%%'\)//
+PEGA      | escape roda DEPOIS do placeholder (vira %%1\$L)       | s/texto\.replaceAll\('%', '%%'\)\.replaceAll\(SENTINELA_MAPA, \(\) => '%1\$L'\)/texto.replaceAll(SENTINELA_MAPA, () => '%1$L').replaceAll('%', '%%')/
+PEGA      | guard do dollar-quoting desligado (passo truncado)    | s/if \(texto\.includes\(TAG_SONDA\)\) \{/if (false) {/
+# O ramo do id que aponta para a execução REAL (cron ecoa edge/versao/fonte e não ecoa probe). Sem
+# ele a linha cai no ELSE e sai 'BUNDLE VELHO' com a versão CERTA — falso NEGATIVO medido em prod
+# 2026-09-06 (resposta 71275).
+PEGA      | ramo do id que NAO e sonda neutralizado               | s/l\.corpo ->> 'probe' IS DISTINCT FROM 'true'/false/
+# A variante NULL-blind do mesmo ramo (`<>` no lugar de `IS DISTINCT FROM`): com `probe` AUSENTE a
+# comparação vale NULL, o ramo não dispara e o texto continua no arquivo — inalcançável. Medido
+# 2026-09-06: as DUAS mutações acima SOBREVIVIAM enquanto a suíte só procurava a string do ramo, que
+# é a cegueira descrita no bloco do `? 'fonte'`. Quem lhes deu dente foi a asserção que cola
+# CONDIÇÃO e RAMO (`WHEN … IS DISTINCT FROM 'true'` seguido do `THEN 'NAO E RESPOSTA DE SONDA`); o
+# veredito EXECUTADO continua provado no cenário `cron_sem_probe` do
+# .claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh.
+PEGA      | negacao NULL-blind no ramo do nao-sonda               | s/IS DISTINCT FROM 'true'/<> 'true'/

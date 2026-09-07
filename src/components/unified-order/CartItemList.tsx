@@ -21,6 +21,8 @@ import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
 import type { ReguaCartItem } from '@/lib/regua-preco/regua-preco-ui';
 import { useReguaPrecoLog } from '@/hooks/useReguaPrecoLog';
 import { isInvalidProductPrice } from '@/services/orderSubmission/priceGuard';
+import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { PriceInput } from './PriceInput';
 
 interface CartItemListProps {
@@ -67,7 +69,18 @@ export function CartItemList({
       .filter(i => i.preco > 0 && Number.isFinite(i.codigo) && i.empresa !== ''),
     [obenProductItems, colacorProductItems, customerUserId],
   );
-  const { data: cockpitList } = usePrecoCockpit(cockpitItens);
+  const cockpit = usePrecoCockpit(cockpitItens);
+  const cockpitList = cockpit.data;
+  // A régua de margem (faixa, markup %, folga em R$) SOME quando `get_preco_cockpit` falha —
+  // e O PREÇO FICA na tela. Sem falar, a ausência afirma "margem OK" exatamente onde o preço é
+  // decidido (money-path §"A leitura que falha e vira silêncio afirmativo"; 508 pedidos/30d em
+  // `sales_orders`). `desatualizado` cobre o dado velho em mãos (refetch que falha, precedência
+  // sem-rede > erro); `naoConsegui` cobre o 1º fetch que não voltou — inclusive o QUARTO ESTADO,
+  // o offline (`pending`+`paused`), em que `isLoading` é FALSE e `error` é null. Carrinho sem
+  // produto deixa a query `enabled:false` ⇒ 'desabilitada' ⇒ sem aviso (a pergunta não foi feita).
+  const estadoCockpit = estadoDeLeitura(cockpit);
+  const avisoCockpit = desatualizado(cockpit, cockpitList !== undefined)
+    ?? (naoConsegui(estadoCockpit) ? estadoCockpit : null);
   const cockpitByKey = useMemo(() => {
     const m = new Map<string, LinhaCockpit>();
     cockpitItens.forEach((inp, i) => {
@@ -251,6 +264,14 @@ export function CartItemList({
           <p className="text-xs text-muted-foreground text-center py-6">Nenhum item adicionado</p>
         ) : (
           <div className="space-y-3">
+            {avisoCockpit && (
+              <AvisoLeituraFalhou
+                oque="a margem dos itens do carrinho"
+                estado={avisoCockpit}
+                testId="aviso-cockpit-carrinho"
+                className="mb-0"
+              />
+            )}
             {obenProductItems.length > 0 && renderProductGroup(obenProductItems, 'Oben', <Building2 className="w-3 h-3 inline mr-1" />)}
 
             {colacorProductItems.length > 0 && (

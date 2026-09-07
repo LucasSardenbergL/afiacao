@@ -232,6 +232,11 @@ export interface ItemReconciliar {
   discount: number;
   product_id: string | null;
   hash_payload: string;
+  /** IDENTIDADE DE LINHA (`det.ide.codigo_item`), quando o payload a traz. `null` quando não —
+   *  e aí a RPC casa por `omie_codigo_produto`, que só é identidade se o SKU não se repetir no
+   *  pedido. Ausente ≠ zero: `0` não é um `codigo_item` válido e vira `null` na origem, nunca um
+   *  número fabricado que casaria linha errada. */
+  omie_codigo_item: number | null;
 }
 
 export interface PedidoReconciliar {

@@ -130,11 +130,27 @@ export function PedidoRow({
           }
           // valor_linha null = custo desconhecido → não fabricar valor_total (ausente ≠ zero)
           if (update.valor_linha !== null) {
-            const { error: cabUpErr } = await supabase
+            // O `status` do passo 1 foi lido em OUTRA ida à rede: entre ele e este UPDATE cabe a
+            // aprovação de outra aba, o disparo, o portal e a gravação do custo PROVADO. Sem
+            // predicado, este `.eq("id")` sobrescrevia o total do fornecedor com a soma local —
+            // e nem precisava de fração, nem de edição pós-portal (Codex 2026-09-06). O CAS do
+            // passo 2 protege só a QUANTIDADE do item; o cabeçalho ficava a descoberto.
+            // Repetir o predicado AQUI transforma a leitura do passo 1 em compare-and-set real.
+            const { data: cabGravado, error: cabUpErr } = await supabase
               .from("pedido_compra_sugerido")
               .update({ valor_total: update.valor_linha, atualizado_em: nowIso })
-              .eq("id", row.id);
+              .eq("id", row.id)
+              .in("status", [...STATUS_APROVAVEIS])
+              .select("id");
             if (cabUpErr) throw cabUpErr;
+            // 0 linhas = o pedido saiu da faixa aprovável no meio da edição. O item JÁ mudou (passo
+            // 2), então parar aqui é o certo: seguir para o disparo mandaria ao fornecedor uma
+            // quantidade nova com um cabeçalho que ninguém conferiu. Falha ALTO, não em silêncio.
+            if (!cabGravado || cabGravado.length === 0) {
+              toast.error("O pedido saiu da faixa aprovável enquanto você editava (outra aba aprovou ou disparou) — recarregue e confira a quantidade.");
+              onChanged();
+              return;
+            }
           }
         }
         // Trilha canônica: APROVAR = DISPARAR NA HORA (não mais só UPDATE + esperar o cron).

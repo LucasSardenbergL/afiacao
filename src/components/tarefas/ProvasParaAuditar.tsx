@@ -26,6 +26,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useProvasParaAuditar, useAuditarTarefa } from '@/hooks/useTarefasFase2';
 import { useSalespeople } from '@/hooks/useCoverage';
 import type { TarefaInstancia } from '@/lib/tarefas/templates-types';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -222,7 +224,14 @@ function ControlesAuditoria({ prova, auditarTarefa }: ControlesAuditoriaProps) {
 // ---------------------------------------------------------------------------
 
 export function ProvasParaAuditar() {
-  const { data: provas = [], isLoading } = useProvasParaAuditar();
+  // A desestruturação fica DIRETA sobre o hook e nomeia `status`/`fetchStatus` de
+  // propósito: guardar a query num `const q = useX()` faria o sítio SUMIR do gate da
+  // classe por CEGUEIRA (ele só rastreia `const {…} = useX(…)`), não por conserto.
+  const { data: provas = [], status: statusProvas, fetchStatus: fetchProvas, isLoading } =
+    useProvasParaAuditar();
+  // O default `= []` do binding colapsa "falhou" em "não há": `data` é `undefined` no erro
+  // e vira `[]` aqui. `estadoDeLeitura` lê a query, não o `data` já achatado.
+  const leituraProvas = estadoDeLeitura({ status: statusProvas, fetchStatus: fetchProvas });
   const { auditarTarefa } = useAuditarTarefa();
   const { data: salespeople = [] } = useSalespeople();
 
@@ -230,6 +239,19 @@ export function ProvasParaAuditar() {
     (userId: string) => salespeople.find((s) => s.user_id === userId)?.name ?? userId.slice(0, 8),
     [salespeople],
   );
+
+  // ANTES do loading de propósito: sem rede a query fica pending+paused e `isLoading` é
+  // FALSE — o 4º estado cairia direto no "Nenhuma prova aguardando auditoria".
+  if (naoConsegui(leituraProvas)) {
+    return (
+      <AvisoLeituraFalhou
+        oque="as provas aguardando auditoria"
+        estado={leituraProvas}
+        variante="bloco"
+        testId="aviso-provas-auditar"
+      />
+    );
+  }
 
   if (isLoading) {
     return (

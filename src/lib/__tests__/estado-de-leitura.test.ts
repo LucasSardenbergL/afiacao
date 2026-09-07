@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { estadoDeLeitura, naoConsegui, desatualizado, type EstadoLeitura, type FatiaDeQuery } from '../leitura/estado-de-leitura';
+import {
+  estadoDeLeitura,
+  naoConsegui,
+  desatualizado,
+  estadoDeRegistro,
+  ehNaoEncontrado,
+  PGRST_NENHUMA_LINHA,
+  type EstadoLeitura,
+  type FatiaDeQuery,
+} from '../leitura/estado-de-leitura';
 
 /**
  * O mapeamento (status × fetchStatus) → estado é EXAUSTIVO de propósito: estado sem nome
@@ -82,5 +91,117 @@ describe('desatualizado — dado em mãos + leitura falha = mostre os DOIS', () 
   it('leitura boa não inventa aviso', () => {
     expect(desatualizado({ status: 'success', fetchStatus: 'idle' }, true)).toBeNull();
     expect(desatualizado({ status: 'success', fetchStatus: 'fetching' }, true)).toBeNull();
+  });
+});
+
+/**
+ * ── LEITURA DE UM REGISTRO POR ID — os dois terminadores, dois mecanismos ─────────────
+ *
+ * `estadoDeLeitura` responde "a leitura aconteceu?". Não responde "esta linha existe?",
+ * e é essa segunda pergunta que as telas de detalhe respondem ERRADO: `if (!registro)`
+ * → "não encontrado" cobre também "o banco caiu" (achado 3 de
+ * docs/historico/o-check-verde-que-a-falha-acende.md).
+ *
+ * O eixo que separa as duas NÃO é o mesmo nos dois terminadores do PostgREST, e é por isso
+ * que um fix só não serve aos dois:
+ *
+ *   `.maybeSingle()` → a distinção EXISTE no dado: sucesso com `data === null` é
+ *                      "não existe"; `undefined` só sai de loading ou erro. O componente
+ *                      que escreve `if (!x)` DESCARTA o que o hook preservou.
+ *   `.single()`      → a distinção NÃO existe sem ler o erro: 0 linhas LANÇA PGRST116,
+ *                      e chega ao componente idêntico a uma queda de rede.
+ *
+ * Os dois casos abaixo são enumerados separados de propósito: uma implementação que
+ * cubra só o `data === null` passa no primeiro bloco e reprova no segundo.
+ */
+describe('ehNaoEncontrado — só o código do PostgREST para "0 linhas" conta', () => {
+  it('PGRST116 (o `.single()` que não achou a linha) é não-encontrado', () => {
+    expect(ehNaoEncontrado({ code: PGRST_NENHUMA_LINHA })).toBe(true);
+    expect(PGRST_NENHUMA_LINHA).toBe('PGRST116');
+  });
+
+  it('outro erro do PostgREST NÃO é não-encontrado — inclusive os plausíveis', () => {
+    // PGRST301 = JWT expirado; 42501 = permissão negada por RLS. Ambos são falha de
+    // leitura com cara de "sumiu", e é exatamente aí que a tela mentiria.
+    expect(ehNaoEncontrado({ code: 'PGRST301' })).toBe(false);
+    expect(ehNaoEncontrado({ code: '42501' })).toBe(false);
+  });
+
+  it('erro de rede (Error sem `code`) NÃO é não-encontrado', () => {
+    expect(ehNaoEncontrado(new Error('Failed to fetch'))).toBe(false);
+  });
+
+  it('ausência de erro não é não-encontrado', () => {
+    expect(ehNaoEncontrado(null)).toBe(false);
+    expect(ehNaoEncontrado(undefined)).toBe(false);
+  });
+
+  it('a string solta não passa por erro — o eixo é `error.code`, não o texto', () => {
+    // Um `includes('PGRST116')` sobre a mensagem passaria aqui e casaria também a
+    // mensagem de UM erro embrulhado por outro. O contrato é o campo.
+    expect(ehNaoEncontrado('PGRST116')).toBe(false);
+    expect(ehNaoEncontrado(new Error('PGRST116: no rows'))).toBe(false);
+  });
+});
+
+describe('estadoDeRegistro — `.maybeSingle()`: a distinção vem do DADO', () => {
+  const ok = { status: 'success', fetchStatus: 'idle' } as const;
+
+  it('respondeu e veio linha → pronta', () => {
+    expect(estadoDeRegistro({ ...ok, error: null }, true)).toBe('pronta');
+  });
+
+  it('respondeu e veio null → inexistente (o hook sabia; o componente jogava fora)', () => {
+    expect(estadoDeRegistro({ ...ok, error: null }, false)).toBe('inexistente');
+  });
+
+  it('LANÇOU sem registro → erro, NUNCA inexistente', () => {
+    expect(estadoDeRegistro({ status: 'error', fetchStatus: 'idle', error: new Error('boom') }, false)).toBe('erro');
+  });
+});
+
+describe('estadoDeRegistro — `.single()`: a distinção vem do CÓDIGO DO ERRO', () => {
+  it('PGRST116 → inexistente (0 linhas, não falha)', () => {
+    expect(
+      estadoDeRegistro({ status: 'error', fetchStatus: 'idle', error: { code: PGRST_NENHUMA_LINHA } }, false),
+    ).toBe('inexistente');
+  });
+
+  it('qualquer outro erro → erro, mesmo sem registro em mãos', () => {
+    expect(
+      estadoDeRegistro({ status: 'error', fetchStatus: 'idle', error: { code: 'PGRST301' } }, false),
+    ).toBe('erro');
+  });
+});
+
+describe('estadoDeRegistro — o 4º estado (offline) NÃO pode virar "inexistente"', () => {
+  it('pending + paused → sem-rede, mesmo sem registro em mãos', () => {
+    // `networkMode:'online'` sem rede: `isLoading` é FALSE e `data` é `undefined`. Quem
+    // ramifica só por `isLoading`/`error` cai no ramo do "não encontrado" — o offline é o
+    // estado que engana quem "já trata erro" (#1874).
+    expect(estadoDeRegistro({ status: 'pending', fetchStatus: 'paused', error: null }, false)).toBe('sem-rede');
+  });
+
+  it('pending + fetching → carregando · pending + idle → desabilitada', () => {
+    expect(estadoDeRegistro({ status: 'pending', fetchStatus: 'fetching', error: null }, false)).toBe('carregando');
+    expect(estadoDeRegistro({ status: 'pending', fetchStatus: 'idle', error: null }, false)).toBe('desabilitada');
+  });
+
+  it('nenhum estado de pendência consulta `temRegistro` — não há dado para consultar', () => {
+    for (const fetchStatus of ['fetching', 'paused', 'idle'] as const) {
+      const q = { status: 'pending', fetchStatus, error: null } as const;
+      expect(estadoDeRegistro(q, false)).toBe(estadoDeRegistro(q, true));
+    }
+  });
+});
+
+describe('naoConsegui — "inexistente" é resposta, não falha', () => {
+  it('não aciona o aviso de leitura falhada', () => {
+    expect(naoConsegui('inexistente')).toBe(false);
+  });
+
+  it('erro e sem-rede continuam acionando', () => {
+    expect(naoConsegui('erro')).toBe(true);
+    expect(naoConsegui('sem-rede')).toBe(true);
   });
 });

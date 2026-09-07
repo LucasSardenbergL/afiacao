@@ -795,7 +795,7 @@ BEGIN
 END $$;
 SQL
 )
-echo "$SAB" | grep -q 'SAB_PASSOU' && echo "  OK B1 (falsificação) — policy velha deixou o employee ler → B1 tem dente" || { echo "  B1 FALHOU (falsificação): $SAB"; exit 1; }
+if echo "$SAB" | grep -q 'SAB_PASSOU'; then echo "  OK B1 (falsificação) — policy velha deixou o employee ler → B1 tem dente"; else echo "  B1 FALHOU (falsificação): $SAB"; exit 1; fi
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 DROP POLICY IF EXISTS "cmc_ledger_select_staff" ON public.cmc_ledger;
 CREATE POLICY "cmc_ledger_select_gestor" ON public.cmc_ledger FOR SELECT TO authenticated

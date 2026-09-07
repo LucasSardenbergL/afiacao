@@ -32,7 +32,7 @@ export const respostaSonda = criarRespostaSonda("reposicao-depara-sayerlack-auto
  * página VAZIA (não mais página curta, #1889) e cursor comparado à PRIMEIRA linha da página
  * (#1901). Nenhum bundle anterior a esta fatia pode responder esta string.
  */
-export const VERSAO = "v1.1-paginacao-eof-e-cursor";
+export const VERSAO = "v1.2-sonda-options";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

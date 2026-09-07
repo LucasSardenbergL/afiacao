@@ -124,18 +124,18 @@ case "$GOT1" in t) ok "lock é POR-OP (advisory de outra OP está livre)";; *) b
 wait "$LOCK_A" 2>/dev/null || true
 
 echo "═══ ZONA 9: C6 governança do consumo_mp (money-path) ═══"
-NOCOMP=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='${AAAA}'; SELECT fn_pcp_registrar_evento('$(uuidgen|tr A-Z a-z)','${OP5}','consumo_mp','dev1',9,'2026-07-05 08:10:00','producao',NULL,NULL,NULL);" 2>&1 || true)
+NOCOMP=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='${AAAA}'; SELECT fn_pcp_registrar_evento('$(uuidgen|tr '[:upper:]' '[:lower:]')','${OP5}','consumo_mp','dev1',9,'2026-07-05 08:10:00','producao',NULL,NULL,NULL);" 2>&1 || true)
 case "$NOCOMP" in *"componente_codigo, quantidade>0 e unidade"*) ok "consumo_mp sem componente/qtd ⇒ EXCEPTION";; *) bad "consumo sem invariantes NÃO barrado: $NOCOMP";; esac
-NOMOTIVO=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='${AAAA}'; SELECT fn_pcp_registrar_evento('$(uuidgen|tr A-Z a-z)','${OP5}','consumo_mp','dev1',9,'2026-07-05 08:10:00',NULL,900002,1,'G');" 2>&1 || true)
+NOMOTIVO=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='${AAAA}'; SELECT fn_pcp_registrar_evento('$(uuidgen|tr '[:upper:]' '[:lower:]')','${OP5}','consumo_mp','dev1',9,'2026-07-05 08:10:00',NULL,900002,1,'G');" 2>&1 || true)
 case "$NOMOTIVO" in *"consumo_mp exige motivo"*) ok "consumo_mp sem motivo ⇒ EXCEPTION";; *) bad "consumo sem motivo NÃO barrado: $NOMOTIVO";; esac
 # consumo válido em OP em_producao ⇒ OK (não-anômalo). OP5 está em_producao (ZONA 4).
-CONS_OK=$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='${AAAA}'; SELECT fn_pcp_registrar_evento('$(uuidgen|tr A-Z a-z)','${OP5}','consumo_mp','dev1',5,'2026-07-05 08:20:00','erro_formula',900003,0.5,'G');")
+CONS_OK=$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='${AAAA}'; SELECT fn_pcp_registrar_evento('$(uuidgen|tr '[:upper:]' '[:lower:]')','${OP5}','consumo_mp','dev1',5,'2026-07-05 08:20:00','erro_formula',900003,0.5,'G');")
 eq "consumo válido (erro_formula+componente) em produção ⇒ não-anômalo" "$CONS_OK" "em_producao"
 
 echo "═══ ZONA 10: C3 gate fail-closed + RLS + append-only + superfície das funções ═══"
-NS=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='${BBBB}'; SELECT fn_pcp_iniciar_apontamento('$(uuidgen|tr A-Z a-z)','${OP5}','dev1',1,'2026-07-05 08:00:00');" 2>&1 || true)
+NS=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='${BBBB}'; SELECT fn_pcp_iniciar_apontamento('$(uuidgen|tr '[:upper:]' '[:lower:]')','${OP5}','dev1',1,'2026-07-05 08:00:00');" 2>&1 || true)
 case "$NS" in *"apenas staff"*) ok "não-staff barrado (fail-closed)";; *) bad "não-staff NÃO barrado: $NS";; esac
-NULLUID=$(P -tA -c "SET ROLE authenticated; SELECT fn_pcp_iniciar_apontamento('$(uuidgen|tr A-Z a-z)','${OP5}','dev1',1,'2026-07-05 08:00:00');" 2>&1 || true)
+NULLUID=$(P -tA -c "SET ROLE authenticated; SELECT fn_pcp_iniciar_apontamento('$(uuidgen|tr '[:upper:]' '[:lower:]')','${OP5}','dev1',1,'2026-07-05 08:00:00');" 2>&1 || true)
 case "$NULLUID" in *"apenas staff"*) ok "auth.uid() NULL barrado (fail-closed C3)";; *) bad "uid NULL NÃO barrado: $NULLUID";; esac
 PROJ=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='${AAAA}'; SELECT fn_pcp_projetar_op('${OP1}');" 2>&1 || true)
 case "$PROJ" in *"permission denied"*) ok "fn_pcp_projetar_op sem grant (interna) ⇒ authenticated barrado";; *) bad "projetar_op exposta: $PROJ";; esac

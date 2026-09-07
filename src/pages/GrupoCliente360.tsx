@@ -16,6 +16,8 @@ import { GrupoFinanceiroTab } from '@/components/grupos/GrupoFinanceiroTab';
 import { GrupoComercialTab } from '@/components/grupos/GrupoComercialTab';
 import { GrupoContatosTab } from '@/components/grupos/GrupoContatosTab';
 import { formatDoc } from '@/lib/grupos/format';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const RELATION_BADGE: Record<RelationType, string> = {
   sucessao: 'sucessão',
@@ -26,11 +28,28 @@ const RELATION_BADGE: Record<RelationType, string> = {
 export default function GrupoCliente360() {
   const { grupoId } = useParams<{ grupoId: string }>();
   const navigate = useNavigate();
-  const { data: grupos, isLoading } = useClienteGrupos();
+  // Desestruturação DIRETA nomeando as chaves de erro: um `const q = useX()` faria o sítio
+  // sumir do gate da classe por CEGUEIRA, não por conserto.
+  const { data: grupos, status: statusGrupos, fetchStatus: fetchGrupos, isLoading } =
+    useClienteGrupos();
+  const leituraGrupos = estadoDeLeitura({ status: statusGrupos, fetchStatus: fetchGrupos });
   const removeMembro = useRemoveMembro();
   const [addOpen, setAddOpen] = useState(false);
 
   const grupo = grupos?.find((g) => g.id === grupoId);
+
+  // ANTES do loading: sem rede a query fica pending+paused e `isLoading` é FALSE — o `.find()`
+  // sobre `undefined` daria `undefined` e a tela afirmaria "Grupo não encontrado".
+  if (naoConsegui(leituraGrupos)) {
+    return (
+      <div className="container mx-auto max-w-3xl space-y-4 p-4 sm:p-6">
+        <Button variant="ghost" size="sm" className="gap-1" onClick={() => navigate('/gestao/grupos-cliente')}>
+          <ArrowLeft className="h-4 w-4" /> Grupos
+        </Button>
+        <AvisoLeituraFalhou oque="os grupos de cliente" estado={leituraGrupos} variante="bloco" />
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

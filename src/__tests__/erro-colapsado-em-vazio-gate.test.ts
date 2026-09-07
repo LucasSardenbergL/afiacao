@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, onTestFailed } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { acharColapsos, contarAutoOcultacao } from '@/lib/gates/erro-colapsado-em-vazio';
+import { acharColapsos, contarAutoOcultacao, contarRetornoAfirmativo } from '@/lib/gates/erro-colapsado-em-vazio';
 
 // GATE — "erro colapsado em vazio": a leitura que falha e vira silêncio afirmativo.
 //
@@ -11,10 +11,17 @@ import { acharColapsos, contarAutoOcultacao } from '@/lib/gates/erro-colapsado-e
 // `error` colapsa esses estados numa tela em branco só — e quando a tela é um ALERTA ou um
 // painel de SAÚDE, a ausência AFIRMA segurança: "não consegui ler" chega como "está tudo bem".
 //
-// A FORMA FISCALIZADA é a auto-ocultação TOTAL (`return null`/ternário guardado pela
-// leitura), que apaga o componente inteiro sem deixar rastro. A forma `jsx-&&` fica de fora
-// de propósito e está MEDIDA em docs/agent/money-path.md — o porquê está no cabeçalho de
-// `@/lib/gates/erro-colapsado-em-vazio`.
+// SÃO DUAS FORMAS FISCALIZADAS, com baselines SEPARADAS:
+//   1. auto-ocultação TOTAL (`return null`/ternário guardado pela leitura) — apaga o
+//      componente sem deixar rastro. Gateada em 2026-08-22.
+//   2. `return-afirmativo` (`return <JSX com texto>` sob a mesma guarda) — em vez de sumir,
+//      MENTE com especificidade. Gateada em 2026-09-06
+//      (docs/historico/o-check-verde-que-a-falha-acende.md).
+//
+// A forma `jsx-&&` fica de fora de propósito, e o argumento é ARITMÉTICO: 93 sítios, idioma
+// legítimo na maioria, 21 deles INERTES (o hook engole o erro) — a baseline cresceria por
+// motivo benigno, que é como um gate morre. A forma 2 são 13 sítios e 13/13 alcançáveis.
+// O porquê completo está no cabeçalho de `@/lib/gates/erro-colapsado-em-vazio`.
 //
 // Por que AST e não texto: a pergunta "o componente trata o erro?" respondida por grep de
 // `error` dá FALSO NEGATIVO justamente nos piores casos — `text-status-error` do Tailwind
@@ -47,7 +54,8 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // baseline por arquivo aceitaria um 2º sítio no mesmo arquivo em silêncio. A lista só
 // ENCOLHE, e encolhe registrada — diminuir também reprova, pedindo a atualização.
 //
-// DÍVIDA (2026-08-22): estes 44 sítios são a classe medida, não sítios aprovados. A fatia
+// DÍVIDA (2026-09-07): estes 36 sítios de auto-ocultação (+ 9 de retorno afirmativo, na
+// baseline de baixo) são a classe medida, não sítios aprovados. A fatia
 // de maior dano saiu nesta leva (banner de saúde de dados, alertas de fluxo de caixa,
 // painel de saúde da carteira) porque neles a ausência AFIRMA segurança e o dano estava
 // medido em prod. O resto sai por domínio, e a ordem é por dano — não por facilidade.
@@ -58,20 +66,63 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // devolve os ids E o estado da leitura. O gatilho não era dano em prod — `carteira_coverage`
 // tem 0 linhas (psql-ro, 2026-08-22) — e sim o PRIMEIRO cadastro de cobertura, a partir do
 // qual a carteira coberta sumiria calada de sugestões, scores, plano tático e copilot.
+//
+// QUITADA em 2026-08-23 — a fatia dos CARDS DE DASHBOARD (5 sítios, 5 arquivos): Radar,
+// placar MTD do closer, breakdown de visitas, resumo 360 do cliente e badge de tier.
+// A ordem saiu do denominador medido em prod (psql-ro), não da severidade herdada do
+// briefing — que apontava o ClosersMtdHero como o pior por ser "a linha do defeito
+// original" e errou o alvo, exatamente como o ranking herdado do CoveragePanel errara em
+// 2026-08-22:
+//   · RadarKpis            → `radar_empresas` com 526.176 empresas, 523.180 `a_contatar`,
+//                            lote 2026-05 `complete`. ÚNICO com dano VIVO: apagava, sem
+//                            rastro, o resumo de meio milhão de prospects — com a lista
+//                            ainda na tela, o que faz o painel parecer só "sem números".
+//   · TierClienteBadge     → `cliente_tier_preco` 0 linhas. Dano hoje zero, mas a forma é
+//                            a mais cara: AFIRMAVA "Definir tier" e deixava sobrescrever,
+//                            por upsert, o tier que não conseguiu ler (preço de partida).
+//   · ClosersMtdHero, MinhasVisitasResultadoCard → `route_visits` 0 linhas.
+//   · CustomerProfile360Summary                  → `farmer_calls` 0 linhas.
+// Os quatro de denominador zero seguem o critério do `useMyActiveCoverage`: o gatilho é o
+// PRIMEIRO registro, e o custo de corrigir agora é uma fração do de descobrir depois.
+//
+// Achado que sobrevive à leva: em `RadarKpis` a ausência de ACESSO chegava como EXCEÇÃO,
+// não como NULL — a RPC `radar_kpis` faz `RAISE 'forbidden'` para quem não é gestor/master
+// e a rota `/radar` só exige `RequireStaff`. Corrigir a classe sem ver isso teria trocado
+// um silêncio por um alarme FABRICADO para todo staff não-gestor. O gate de acesso foi
+// para o `enabled` do hook, onde a negativa vira `desabilitada` — estado que `naoConsegui`
+// exclui de propósito — em vez de virar aviso.
+//
+// CRESCEU EM 2026-09-07 (+7 arquivos, +8 sítios) e o crescimento é ACHADO, não regressão: o
+// detector passou a seguir o resultado do hook por UMA indireção (`const q = useQuery(...)` e,
+// adiante, `q.data` ou `const { data } = q`). Antes disso a forma por alias era INVISÍVEL — e o
+// buraco não era teórico: mover a desestruturação para o statement seguinte derrubava a
+// contagem com a linha de silêncio INTACTA, produzindo o MESMO delta do conserto legítimo. O
+// gate aprovava a cegueira e o conserto pelo mesmo número
+// (docs/historico/a-forma-que-some-e-a-forma-que-mente.md; medido no #2283).
+//
+// Denominador da fatia, medido ANTES de mexer: 1.266 declarações `const x = use…()` sem
+// desestruturação, 123 lendo `x.data`, 100 sem NENHUMA chave de `CHAVES_DE_ERRO`. Não era ~0 —
+// por isso endurecer ganhou de só registrar a limitação.
+//
+// LEIA ANTES DE QUITAR UM DESTES: nem todo sítio novo é auto-ocultação de COMPONENTE.
+// `ApprovalQueueSection` e `PosicaoAtualTab` apagam ou mentem na tela; `RadarMapa`,
+// `useSinalPositivacao` e o `handleExtrair` da fila são `return` PELADO dentro de effect ou
+// handler — que o detector conta como silêncio desde 2026-08-22, semântica pré-existente e não
+// classe nova. São a classe MEDIDA, não sítios aprovados.
 const BASELINE = new Map<string, number>([
   ["src/components/adminPrime/PrimePlanosTab.tsx", 1],
-  ["src/components/customer/CustomerProfile360Summary.tsx", 1],
   ["src/components/customerDashboard/RecomendacoesCliente.tsx", 1],
-  ["src/components/dashboard/ClosersMtdHero.tsx", 1],
   ["src/components/dashboard/FollowupsSugeridosCard.tsx", 1],
   ["src/components/dashboard/GestorExcecoes.tsx", 1],
-  ["src/components/dashboard/MinhasVisitasResultadoCard.tsx", 1],
+  ["src/components/des/checkinQualitativo/useCheckinQualitativo.ts", 1],
+  ["src/components/des/simulador/useSimuladorData.ts", 2],
   ["src/components/farmer/ChamadasPendentesNudge.tsx", 1],
   ["src/components/farmer/copilot/OfertaCruaCard.tsx", 1],
   ["src/components/financeiro/cashflow/EventosOnboarding.tsx", 1],
+  ["src/components/knowledge-base/ApprovalQueueSection.tsx", 1],
   ["src/components/knowledge-base/RendimentoCalculator.tsx", 1],
   ["src/components/knowledge-base/VersionHistory.tsx", 1],
-  ["src/components/radar/RadarKpis.tsx", 1],
+  ["src/components/radar/RadarMapa.tsx", 1],
   ["src/components/reposicao/aplicacao/useAplicacaoFila.ts", 2],
   ["src/components/reposicao/cadeiaLogistica/useCadeiaLogistica.ts", 1],
   ["src/components/reposicao/pedidos/useDetalhesModal.ts", 1],
@@ -80,23 +131,125 @@ const BASELINE = new Map<string, number>([
   ["src/components/tarefas/MinhasTarefasCard.tsx", 1],
   ["src/components/tarefas/RecorrentesHojeCard.tsx", 1],
   ["src/components/tintColorSelect/useTintColorSelect.ts", 1],
-  ["src/components/unified-order/TierClienteBadge.tsx", 1],
+  ["src/components/unified-order/ExcecaoCreditoDialog.tsx", 1],
   ["src/components/whatsapp/SlaCardMeuDia.tsx", 1],
+  ["src/hooks/useReposicaoSessao.ts", 1],
+  ["src/hooks/useSinalPositivacao.ts", 1],
   ["src/hooks/useUnifiedOrder.ts", 2],
   ["src/pages/AdminReposicaoAlertas.tsx", 1],
-  ["src/pages/AdminReposicaoPedidos.tsx", 2],
+  // 2→1 (fatia #2 do inventário `{data && <X/>}`, 2026-09-06): a query do CICLO passou a
+  // desestruturar `status`/`fetchStatus` — chave de CHAVES_DE_ERRO — para alimentar
+  // `estadoDeLeitura` + <AvisoLeituraFalhou> nos alertas de pré-disparo. O sítio que sobra é o
+  // da fila `atencao`, ainda cega. ⚠️ Este delta de 1 seria IDÊNTICO se eu tivesse trocado a
+  // desestruturação por `const q = useQuery(…)`: aí o sítio some porque o detector perde o
+  // alias de `data`, sem uma linha de silêncio corrigida (medido no caminho deste PR). O gate
+  // não distingue "consertado" de "cegado" — quem encolhe a baseline precisa provar qual dos
+  // dois é, e a prova é o `temErro` do sítio.
+  ["src/pages/AdminReposicaoPedidos.tsx", 1],
   ["src/pages/FinanceiroMapping.tsx", 1],
   ["src/pages/GovernanceMathParams.tsx", 1],
   ["src/pages/GovernancePermissions.tsx", 1],
   ["src/pages/RotaPropostas.tsx", 1],
   ["src/pages/SalesPrintDashboard.tsx", 6],
+  ["src/pages/Training.tsx", 2],
+]);
+
+// BASELINE PRÓPRIA da 2ª forma gateada (`return-afirmativo`), medida em 2026-09-06 sobre
+// 1.472 fontes: **13 sítios em 13 arquivos** — e 13/13 ALCANÇÁVEIS (todos os hooks fazem
+// `if (error) throw error`). Não há a fatia inerte que faria a baseline virar ruído, que é
+// o que manteve `jsx-&&` fora do gate.
+//
+// UNIDADE DIFERENTE DA DE CIMA, de propósito — os dois números NÃO são comparáveis, não
+// some nem subtraia: `contarAutoOcultacao` conta BINDINGS de hook que colapsam
+// (`Training.tsx` = 2 porque DOIS hooks distintos guardam o mesmo ternário da linha 150);
+// `contarRetornoAfirmativo` conta LINHAS distintas, porque um mesmo `return` é taintado por
+// N hooks do componente e contar por hook inflaria (`ToolHistory:174` é UM sítio, não dois).
+//
+// DÍVIDA, em ordem de dano MEDIDO em prod (o doc traz os denominadores):
+//   1. `CompletudeSection` — QUITADO: era o ÚNICO urgente (116 pendências reais viravam ✓
+//      verde de "tudo completo" quando `kb_product_specs` não lia — afirmação positiva em
+//      superfície de saúde). Hoje ramifica por `estadoDeLeitura` ANTES do loading, com o
+//      binding ligando `status` de propósito para o detector SEGUIR vigiando o arquivo.
+//   2. os 3 de `.single()` (`kb_documents` 297, `nfe_recebimentos` 47, `promocao_campanha`
+//      17) — QUITADOS (#2293): "não encontrado" cobria também "o banco caiu"; hoje
+//      ramificam por `PGRST116`.
+//   3. os 3 de ferramenta (`user_tools` = 4) — o ÚNICO grupo que ainda resta na baseline
+//      (`ToolHistory`, `ToolReports`; `ToolPublicHistory` já saiu). O hook JÁ devolve
+//      `null` vs `undefined`; o componente só precisa parar de descartar a distinção, e o
+//      resíduo está explicado na nota logo abaixo.
+//   4. os 6 de fonte ZERADA — QUITADOS (#2317), antes da primeira linha, como pedia a
+//      medição. `ProvasParaAuditar` era o mais perigoso quando enchesse: "Nenhuma prova
+//      aguardando auditoria" é afirmação de CONTROLE, e a auditoria sumiria no dia em que
+//      a leitura falhasse.
+//
+// A lista acima foi conferida contra a BASELINE_AFIRMATIVO nesta data — um mapa de dívida
+// que lista grupo já quitado é a mesma falha que este gate persegue, só que no comentário.
+//
+// Dois eixos vizinhos foram medidos junto e vieram ZERO — medido, não presumido:
+// `<EmptyState title="…"/>` (texto por ATRIBUTO, sem JsxText) = 0; ternário cujo ramo do
+// colapso é afirmativo = 0 (o único candidato, `Training.tsx:150`, tem ramo `null` — é
+// `ternario-null`, JÁ na baseline de cima; contá-lo aqui seria contar o mesmo sítio duas
+// vezes). O critério estrito não esconde fatia nenhuma.
+//
+// CRESCEU EM 2026-09-07 (+2) pelo MESMO endurecimento da baseline de cima — a forma por alias
+// passou a ser visível. `PosicaoAtualTab` diz "Nenhum dado disponível para <empresa> ·
+// T<trimestre>/<ano>" e `ApprovalQueueSection` acende o ✓ VERDE com "Nada pra aprovar" — as
+// duas afirmam com especificidade o que a leitura falhada não sabe.
+const BASELINE_AFIRMATIVO = new Map<string, number>([
+  ["src/components/des/PosicaoAtualTab.tsx", 1],
+  ["src/components/knowledge-base/ApprovalQueueSection.tsx", 1],
+  // Resíduo MEDIDO, não fix pela metade: a leitura de `user_tools` já ramifica
+  // (`estadoDeRegistro`), mas o guard é `!tool || !healthMetrics` e `healthMetrics` deriva
+  // de `useToolEvents` — a query IRMÃ, que ainda engole o erro no default `= []` do binding.
+  // `tool_events` é uma das fontes ZERADAS (0 linhas) que a medição de 2026-09-06 separou
+  // para depois; quando ela for tratada, estes dois zeram e saem daqui.
   ["src/pages/ToolHistory.tsx", 1],
   ["src/pages/ToolReports.tsx", 1],
-  ["src/pages/Training.tsx", 2],
 ]);
 
 describe('gate: erro colapsado em vazio', () => {
   const fontes = listarFontes(DIRS[0]);
+
+  // ORÇAMENTO DA VARREDURA — medido 2026-09-07 nesta M2 8GB (issue #2311).
+  //
+  // Os dois `it` que varrem as fontes são o 1º e o 2º testes MAIS LENTOS da suíte inteira
+  // (8.134 testes): 12.643ms e 10.263ms. O 3º colocado fica em 9.820ms e NENHUM outro teste
+  // do repo passa de 15s. Medido para o pior deles, do mais limpo ao mais real:
+  //   2,05 ms/fonte fora do runner (bun/JSC e node/V8 concordam) · 3,32 ms/fonte no vitest
+  //   isolado · 8,58 ms/fonte no vitest sob a suíte COMPLETA (contenção entre workers).
+  // Contra o `testTimeout: 20000` global sobra 1,58× — folga fina demais para a variância de
+  // uma máquina de dev saturada, e foi ela que estourou em 2026-09-06 (21.754ms). O teto
+  // global não é orçamento desta classe: nasceu no #271 dimensionado para cold-start de
+  // RENDER, com 195 arquivos de teste no repo (hoje 786).
+  //
+  // O teto é POR FONTE e não um número fixo, porque a causa que aperta sozinha é o repo
+  // crescer: assim ele acompanha o denominador sem afrouxar o custo UNITÁRIO, que é o que
+  // denuncia regressão do detector. O piso mantém o orçamento SEMPRE acima do global —
+  // teto abaixo do global ENCURTARIA a folga em vez de ampliá-la, que é exatamente como o
+  // `it(..., 15000)` removido em docs/historico/flaky-sob-carga-teto-e-custo.md criava
+  // falsa leitura de folga.
+  const MS_POR_FONTE_TETO = 40; // 4,7× o pior medido sob contenção (8,58 ms/fonte)
+  const ORCAMENTO_VARREDURA_MS = Math.max(20_000, fontes.length * MS_POR_FONTE_TETO);
+
+  // `Test timed out in Nms` não nomeia causa nenhuma — e teto maior só ajuda se PRESERVA o
+  // diagnóstico (mesma lição do doc acima). Isto imprime, na falha, o discriminante das três
+  // hipóteses que a #2311 deixou abertas: carga, crescimento do repo, ou custo do detector.
+  function armarDiagnosticoDeVarredura(): void {
+    const inicio = performance.now();
+    onTestFailed(() => {
+      const ms = performance.now() - inicio;
+      const porFonte = ms / fontes.length;
+      console.error(
+        `\n[#2311] varredura: ${fontes.length} fontes em ${Math.round(ms)}ms = ` +
+          `${porFonte.toFixed(2)} ms/fonte (orçamento ${ORCAMENTO_VARREDURA_MS}ms a ${MS_POR_FONTE_TETO} ms/fonte).\n` +
+          `  Referência medida 2026-09-07: 2,05 fora do runner · 3,32 isolado · 8,58 sob a suíte completa.\n` +
+          `  ms/fonte DENTRO da referência  → foi CARGA da máquina; o detector está íntegro.\n` +
+          `  ms/fonte ACIMA da referência   → é o DETECTOR (acharColapsos), e teto maior só esconde.\n` +
+          `  fontes muito acima de 1.473    → o REPO cresceu; suba MS_POR_FONTE_TETO apenas se o\n` +
+          `                                   custo unitário continuar dentro da referência.`,
+      );
+    });
+  }
 
   it('o walker enxerga o repo — varredura vazia seria verde por CEGUEIRA', () => {
     expect(fontes.length, 'walker listou fontes de menos — glob/recursão quebrada').toBeGreaterThan(1000);
@@ -105,6 +258,7 @@ describe('gate: erro colapsado em vazio', () => {
   });
 
   it('nenhum sítio NOVO de auto-ocultação, e a baseline não encolhe sem registro', () => {
+    armarDiagnosticoDeVarredura();
     const medido = new Map<string, number>();
     for (const rel of fontes) {
       const n = contarAutoOcultacao(readFileSync(resolve(RAIZ, rel), 'utf8'), rel);
@@ -136,7 +290,7 @@ describe('gate: erro colapsado em vazio', () => {
       'Sítio da classe foi corrigido — ATUALIZE a BASELINE deste gate (a lista só ' +
       `encolhe registrada). Arquivos (baseline→medido): ${quitados.join(', ')}`,
     ).toEqual([]);
-  });
+  }, ORCAMENTO_VARREDURA_MS);
 
   it('calibração: a assinatura casa o controle PRÉ-fix do #1859', () => {
     // Verbatim do MixGapCard antes do #1859 (git show 588aa2ad8~1) — reduzido ao miolo.
@@ -208,12 +362,255 @@ describe('gate: erro colapsado em vazio', () => {
     // teste de componente ISOLADO não prova o estado que o HOST decide.
     const fonte = readFileSync(resolve(RAIZ, 'src/pages/FarmerCalls.tsx'), 'utf8');
     const presos = acharColapsos(fonte, 'src/pages/FarmerCalls.tsx')
-      .filter((s) => s.silencios.length > 0);
+      .filter((s) => s.colapsos.length > 0);
     expect(
-      presos.map((s) => `${s.hook}(${s.aliasData}) → ${s.silencios.map((x) => x.forma).join(',')}`),
+      presos.map((s) => `${s.hook}(${s.aliasData}) → ${s.colapsos.map((x) => x.forma).join(',')}`),
       'uma leitura sem `error` voltou a esconder bloco em FarmerCalls — o MixGapCard pode ' +
       'estar preso de novo no && de uma query irmã',
     ).toEqual([]);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────
+  // 2ª FORMA GATEADA: `return-afirmativo` — o colapso que MENTE em vez de sumir.
+  // ─────────────────────────────────────────────────────────────────────────────────────
+
+  it('nenhum sítio NOVO de `return` afirmativo, e a baseline não encolhe sem registro', () => {
+    armarDiagnosticoDeVarredura();
+    const medido = new Map<string, number>();
+    for (const rel of fontes) {
+      const n = contarRetornoAfirmativo(readFileSync(resolve(RAIZ, rel), 'utf8'), rel);
+      if (n > 0) medido.set(rel, n);
+    }
+
+    const reintroducoes: string[] = [];
+    for (const [arquivo, n] of medido) {
+      const base = BASELINE_AFIRMATIVO.get(arquivo) ?? 0;
+      if (n > base) reintroducoes.push(`${arquivo} (${base}→${n})`);
+    }
+    const quitados: string[] = [];
+    for (const [arquivo, base] of BASELINE_AFIRMATIVO) {
+      const n = medido.get(arquivo) ?? 0;
+      if (n < base) quitados.push(`${arquivo} (${base}→${n})`);
+    }
+
+    expect(
+      reintroducoes,
+      'Hook cujo `data` é lido SEM o `error` do mesmo hook e vira `return <texto>`: a falha ' +
+      'de leitura não some — ela AFIRMA. "Não encontrado"/"tudo completo" é o que o usuário ' +
+      'lê quando o banco caiu. Leia o `error` do hook e ramifique: `data === null` (não ' +
+      'achei ESTE id) ≠ `undefined` + erro (não consegui ler). Use `estadoDeLeitura` de ' +
+      `@/lib/leitura e <AvisoLeituraFalhou>. Arquivos (baseline→medido): ${reintroducoes.join(', ')}`,
+    ).toEqual([]);
+
+    expect(
+      quitados,
+      'Sítio da 3ª forma foi corrigido — ATUALIZE a BASELINE_AFIRMATIVO (a lista só encolhe ' +
+      `registrada). Arquivos (baseline→medido): ${quitados.join(', ')}`,
+    ).toEqual([]);
+  }, ORCAMENTO_VARREDURA_MS);
+
+  it('calibração: casa o pior sítio medido — o ✓ VERDE que a falha acende', () => {
+    // Verbatim reduzido de src/components/knowledge-base/CompletudeSection.tsx:24.
+    // `useCompletude` faz `if (error) throw error` sobre `kb_product_specs`: quando a leitura
+    // falha, `isLoading` é false, `data` é undefined, e a tela afirma saúde com semáforo
+    // verde. Medido em prod (2026-09-06): 119 fichas aprovadas, 116 com campo faltando.
+    const verdeNaFalha = `
+      export function CompletudeSection() {
+        const { data, isLoading } = useCompletude();
+        if (isLoading) return <Loader2 className="animate-spin" />;
+        if (!data || data.length === 0) return (
+          <Card>
+            <CheckCircle2 className="text-status-success" />
+            Todas as fichas aprovadas estão completas nos dados importantes.
+          </Card>
+        );
+        return <ul>{data.map(f => <li key={f.id}>{f.nome}</li>)}</ul>;
+      }`;
+    expect(
+      contarRetornoAfirmativo(verdeNaFalha, 'CompletudeSection.tsx'),
+      'a assinatura deixou de casar o pior sítio da classe',
+    ).toBe(1);
+  });
+
+  it('calibração: NÃO casa o pós-fix que LÊ o erro — senão é varredura teatro', () => {
+    const posFix = `
+      export function CompletudeSection() {
+        const { data, error, isLoading } = useCompletude();
+        if (isLoading) return <Loader2 className="animate-spin" />;
+        if (error) return <AvisoLeituraFalhou />;
+        if (!data || data.length === 0) return <Card>Todas as fichas estão completas.</Card>;
+        return <ul>{data.map(f => <li key={f.id}>{f.nome}</li>)}</ul>;
+      }`;
+    expect(
+      contarRetornoAfirmativo(posFix, 'CompletudeSection.tsx'),
+      'falso positivo: o pós-fix lê `error` e ainda assim casou',
+    ).toBe(0);
+  });
+
+  it('o recorte NÃO é "todo return com texto": sem texto visível não conta', () => {
+    // A guarda existe para não transformar loading/estrutura legítimos em achado. Um
+    // `return <Skeleton/>` sob a mesma condição não AFIRMA nada — não há frase para mentir.
+    const semTexto = `
+      export function Card() {
+        const { data } = useX();
+        if (!data) return <PageSkeleton variant="lista" />;
+        return <div>{data.n}</div>;
+      }`;
+    expect(
+      contarRetornoAfirmativo(semTexto, 'Card.tsx'),
+      'o gate passou a casar JSX sem texto — o recorte virou "todo return", que pega ' +
+      'skeleton e empty state legítimo',
+    ).toBe(0);
+  });
+
+  it('DEDUP por linha: um mesmo `return` taintado por 2 hooks é UM sítio, não dois', () => {
+    // Foi a armadilha de contagem da medição: contar por hook inflaria `ToolHistory:174`
+    // para 2. A unidade desta baseline é (arquivo, linha) — e é por isso que ela NÃO é
+    // comparável com a de auto-ocultação, que conta BINDINGS.
+    const doisHooks = `
+      export function ToolHistory() {
+        const { data: tool } = useUserToolDetail(id);
+        const { data: healthMetrics } = useToolHealth(id);
+        if (!tool || !healthMetrics) return (<div><p>Ferramenta não encontrada</p></div>);
+        return <div>{tool.nome}</div>;
+      }`;
+    expect(
+      contarRetornoAfirmativo(doisHooks, 'ToolHistory.tsx'),
+      'a dedup por (arquivo, linha) regrediu — a baseline vai inflar por hook',
+    ).toBe(1);
+    expect(
+      acharColapsos(doisHooks, 'ToolHistory.tsx')
+        .flatMap((s) => s.colapsos.filter((c) => c.forma === 'return-afirmativo')).length,
+      'o detector precisa CONTINUAR vendo o sítio por cada hook — a dedup é do CONTADOR, ' +
+      'não do walker (quem investiga quer saber quais hooks tocam a guarda)',
+    ).toBe(2);
+  });
+
+  it('as duas baselines são independentes — a forma nova não contamina a antiga', () => {
+    const soAfirmativo = `
+      export function Card() {
+        const { data } = useX();
+        if (!data) return <p>Nada encontrado</p>;
+        return <div>{data.n}</div>;
+      }`;
+    expect(contarAutoOcultacao(soAfirmativo, 'Card.tsx'), 'return afirmativo vazou para a baseline de auto-ocultação').toBe(0);
+    expect(contarRetornoAfirmativo(soAfirmativo, 'Card.tsx')).toBe(1);
+
+    const soNull = `
+      export function Card() {
+        const { data } = useX();
+        if (!data) return null;
+        return <div>{data.n}</div>;
+      }`;
+    expect(contarAutoOcultacao(soNull, 'Card.tsx')).toBe(1);
+    expect(contarRetornoAfirmativo(soNull, 'Card.tsx'), 'auto-ocultação vazou para a baseline afirmativa').toBe(0);
+  });
+
+  // ── A INDIREÇÃO DO ALIAS (2026-09-07) ───────────────────────────────────────────────
+  // O buraco medido no #2283: o detector só reconhecia o sítio quando a desestruturação
+  // acontecia NA PRÓPRIA CHAMADA. Mover para o statement seguinte fazia a contagem CAIR com
+  // a linha de silêncio intacta — e o delta era IDÊNTICO ao do conserto legítimo, então a
+  // baseline aprovava a cegueira e o conserto pelo mesmo número.
+  const SILENCIO = 'if (!pedidos) return null;';
+
+  it('refactor SEM desestruturação não derruba a contagem — o buraco do #2283', () => {
+    const direto = `
+      export function Painel() {
+        const { data: pedidos } = usePedidos();
+        ${SILENCIO}
+        return <div>{pedidos.length}</div>;
+      }`;
+    const porAlias = `
+      export function Painel() {
+        const q = usePedidos();
+        const { data: pedidos } = q;
+        ${SILENCIO}
+        return <div>{pedidos.length}</div>;
+      }`;
+    const semDesestruturar = `
+      export function Painel() {
+        const q = usePedidos();
+        if (!q.data) return null;
+        return <div>{q.data.length}</div>;
+      }`;
+
+    expect(contarAutoOcultacao(direto, 'Painel.tsx'), 'controle: a forma direta precisa contar 1').toBe(1);
+    expect(
+      contarAutoOcultacao(porAlias, 'Painel.tsx'),
+      'mover a desestruturação para o statement seguinte NÃO pode zerar o sítio — a linha de ' +
+      'silêncio continua lá, e o gate estaria aprovando cegueira com o delta do conserto',
+    ).toBe(1);
+    expect(
+      contarAutoOcultacao(semDesestruturar, 'Painel.tsx'),
+      'ler `q.data` direto, sem desestruturar em lugar nenhum, é o mesmo sítio',
+    ).toBe(1);
+  });
+
+  it('a regra de CHAVES_DE_ERRO vale pelo alias: ler `q.error`/`q.status` ABSOLVE', () => {
+    const porPropriedade = `
+      export function Painel() {
+        const q = usePedidos();
+        if (q.error) return <Erro/>;
+        if (!q.data) return null;
+        return <div>{q.data.length}</div>;
+      }`;
+    const porDesestruturacao = `
+      export function Painel() {
+        const q = usePedidos();
+        const { data: pedidos, status } = q;
+        ${SILENCIO}
+        return <div>{pedidos.length}</div>;
+      }`;
+    expect(contarAutoOcultacao(porPropriedade, 'Painel.tsx'), '`q.error` prova acesso ao estado de falha').toBe(0);
+    expect(contarAutoOcultacao(porDesestruturacao, 'Painel.tsx'), '`status` está em CHAVES_DE_ERRO — absolve igual').toBe(0);
+  });
+
+  it('o análogo do `...rest` pelo alias: passar `q` adiante não afirma o colapso', () => {
+    const rest = `
+      export function Painel() {
+        const q = usePedidos();
+        const { data: pedidos, ...resto } = q;
+        ${SILENCIO}
+        return <div>{pedidos.length}</div>;
+      }`;
+    const repassado = `
+      export function Painel() {
+        const q = usePedidos();
+        if (!q.data) return null;
+        return <Filho q={q}/>;
+      }`;
+    expect(contarAutoOcultacao(rest, 'Painel.tsx'), '`...resto` pode carregar o error — precisão > recall').toBe(0);
+    expect(
+      contarAutoOcultacao(repassado, 'Painel.tsx'),
+      'entregar `q` inteiro torna as chaves não-enumeráveis AQUI — mesma regra do `...rest`',
+    ).toBe(0);
+  });
+
+  it('a derivada continua propagando pelo alias, e OUTRA FONTE não contamina', () => {
+    const derivada = `
+      export function Painel() {
+        const q = usePedidos();
+        const check = q.data?.find((p) => p.urgente);
+        if (!check) return null;
+        return <div>{check.id}</div>;
+      }`;
+    expect(contarAutoOcultacao(derivada, 'Painel.tsx'), 'o ponto fixo precisa enxergar `q.data` como raiz').toBe(1);
+
+    // `outraQ` é uma query NOVA, com error PRÓPRIO — não é derivada do data de `q`. Sem esta
+    // regra, `if (outraQ.isLoading) return null` (guarda de CARREGAMENTO) virava colapso de
+    // leitura: 4 sítios falsos em `useExcecoesGestor.ts`, por colisão do nome `data`.
+    const outraFonte = `
+      export function Painel() {
+        const q = usePedidos();
+        const outraQ = usePerfis({ chave: q.data });
+        if (outraQ.isLoading) return null;
+        return <div>{q.data?.length}</div>;
+      }`;
+    expect(
+      contarAutoOcultacao(outraFonte, 'Painel.tsx'),
+      'guarda sobre o ESTADO de outra query não é colapso da leitura desta — baseline que ' +
+      'cresce por motivo benigno é como um gate morre',
+    ).toBe(0);
   });
 
   it('a forma `jsx-&&` é detectada mas NÃO gateada — a distinção é deliberada', () => {
@@ -224,7 +621,7 @@ describe('gate: erro colapsado em vazio', () => {
       }`;
     expect(contarAutoOcultacao(host, 'Page.tsx'), 'jsx-&& não pode entrar na baseline gateada').toBe(0);
     expect(
-      acharColapsos(host, 'Page.tsx')[0]?.silencios[0]?.forma,
+      acharColapsos(host, 'Page.tsx')[0]?.colapsos[0]?.forma,
       'o detector precisa CONTINUAR enxergando a forma jsx-&& (ela é o segundo front, medido)',
     ).toBe('jsx-&&');
   });

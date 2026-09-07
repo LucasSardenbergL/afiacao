@@ -1507,7 +1507,14 @@ Deno.test("sonda por cron: o ramo atenderSondaOptions vive DENTRO do bloco OPTIO
     if (!bloco) throw new Error(`${edge}: bloco OPTIONS não encontrado no handler`);
     const corpo = bloco[1];
     const posRamo = corpo.indexOf("atenderSondaOptions(");
-    const posCors = corpo.indexOf("return new Response(null, { headers: corsHeaders })");
+    // O corpo do preflight NÃO é `null` em toda edge: `reposicao-depara-sayerlack-auto`,
+    // `carteira-positivacao-snapshot` e `omie-nfe-webhook` respondem `'ok'` desde sempre. Casar a
+    // forma literal `null` obrigaria a MUDAR o preflight dessas edges para o gate passar — o
+    // oposto do que ele protege. O que importa é que o fallback de CORS continue existindo, com
+    // corpo LITERAL (nada de chamada), e venha DEPOIS do ramo da sonda.
+    const mCors = /return new Response\((?:null|'[^']*'|"[^"]*"|`[^`]*`), \{ headers: corsHeaders \}\)/
+      .exec(corpo);
+    const posCors = mCors ? mCors.index : -1;
     if (posRamo < 0) {
       throw new Error(`${edge}: o bloco OPTIONS não chama atenderSondaOptions — o cron nunca atesta esta edge`);
     }

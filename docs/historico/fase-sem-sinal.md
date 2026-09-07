@@ -2105,3 +2105,156 @@ vínculo commit↔PR que o repo garante é o trailer, e ele se lê com
 `git log -1 --format=%s <sha> | grep -o '(#[0-9]*)'`. Confira ANTES de escrever o número num doc —
 um registro histórico com o PR errado aponta o leitor futuro para a discussão errada, e o erro é
 silencioso porque o número existe.
+## Os cards de dashboard: o briefing errou o alvo de novo, e o "sem acesso" veio como EXCEÇÃO (2026-08-23)
+
+Fatia seguinte da classe varrida no #1886 — os 5 sítios de auto-ocultação em cards de
+dashboard, todos na baseline, nenhum com dono. Duas coisas sobreviveram à leva.
+
+**1. A severidade herdada errou o alvo — pela segunda vez, e agora vinda do próprio
+briefing que ensinava a não herdá-la.** O chip listava `ClosersMtdHero` em primeiro, com um
+argumento forte: aquela linha (`if (isLoading || !k || k.totalVisitas === 0) return null`)
+é *literalmente* o defeito original da classe. Os denominadores (psql-ro, 2026-08-23)
+inverteram a ordem:
+
+| card | fonte | denominador | dano hoje |
+|---|---|---|---|
+| **RadarKpis** | `radar_empresas` | **526.176 empresas, 523.180 `a_contatar`**, lote 2026-05 `complete` | **VIVO** |
+| ClosersMtdHero | `route_visits` | **0 linhas** | zero |
+| MinhasVisitasResultadoCard | `route_visits` | **0 linhas** | zero |
+| CustomerProfile360Summary | `farmer_calls` | **0 linhas** | zero |
+| TierClienteBadge | `cliente_tier_preco` | **0 linhas** | zero (mas money-path) |
+
+O `RadarKpis` era o único com dano vivo, e o pior tipo de dano: como a LISTA de empresas
+continua na tela quando só o placar falha, o painel não parece quebrado — parece um Radar
+que não tem números. Reforço da regra: *severidade herdada é hipótese até ter denominador,
+inclusive quando quem a herda é o autor da regra.*
+
+**Nota de método:** medir "0 linhas" com uma role read-only exige antes provar que o zero
+não é a própria RLS — o mesmo colapso "não consegui" → "não há", uma camada abaixo.
+`claude_ro` tem `rolbypassrls = t` (conferido antes de ler os denominadores), então o zero
+é dado. Sem essa checagem, a medição que corrige a classe teria cometido a classe.
+
+**2. A ausência de ACESSO nem sempre chega como NULL — no Radar ela chega como EXCEÇÃO.**
+O #1886 registrou o caso `get_carteira_saude`, que faz `RETURN NULL` para quem não tem
+role: ausência de acesso reconhecível *depois* da leitura, tratada com "não renderiza e não
+emite". A RPC `radar_kpis` faz `RAISE EXCEPTION 'forbidden: gestor/master only'` — e como a
+rota `/radar` só exige `RequireStaff`, todo staff não-gestor ABRE a página e recebe um erro
+**por desenho**. Aplicar a correção da classe sem ver isso teria trocado um silêncio por um
+alarme FABRICADO, exibido a quem nunca poderia ver o número: precisão > recall, do lado
+errado.
+
+A saída não foi detectar a string `forbidden` no erro (frágil e tardia), e sim mover o gate
+para o `enabled` do hook, espelhando a condição do servidor (`isMaster ||
+isGestorComercial` ≡ `pode_ver_carteira_completa`). Aí a negativa de acesso vira
+`desabilitada` — o estado que `naoConsegui()` exclui *de propósito*, "a pergunta que não foi
+feita". O helper já tinha o nome certo para isso; faltava alguém chegar com o caso.
+
+> **Regra:** antes de transformar uma leitura falha em aviso, pergunte se aquela falha é
+> ESPERADA para parte de quem abre a tela. Se for, o conserto é não fazer a pergunta
+> (`enabled`), não é avisar mais bonito. Gate de acesso que só existe no servidor produz,
+> na UI corrigida, um alarme para quem não tem acesso.
+
+**3. O tier foi o caso onde a auto-ocultação era o menor dos males.** `TierClienteBadge` não
+só sumia para quem não edita: para quem edita, AFIRMAVA "Definir tier" e abria o dialog com
+os selects vazios — de onde um Salvar sobrescreveria por `upsert` o tier vigente que o
+componente não conseguiu ler, num campo que orienta preço de partida. Correção fail-CLOSED:
+sem leitura não se edita. Vale a generalização — *num componente que também ESCREVE, "erro
+colapsado em vazio" deixa de ser um defeito de exibição e vira um caminho de escrita sobre
+informação ausente.*
+
+## A correção dos 3 rótulos do #1896 (2026-08-23): rótulo com DEFAULT constante não é fato
+
+Os três achados que sobreviveram à verificação da revisão retroativa foram corrigidos juntos porque
+são a MESMA classe em três eixos: **um valor constante ocupando o lugar de um fato que ainda não foi
+lido**. `is_hunter:false` sem ter lido o papel, `sujeito ausente` na dedup, e `número velho sem
+marca de frescor` são todos a versão em rótulo do `Number(null)===0` do §2 do money-path.
+
+### A1 — o rótulo saiu do PARÂMETRO e foi para dentro do sensor
+
+O host fazia `useSinalPositivacao(commercialRole === 'hunter')`. Corrigir o host deixaria a fábrica
+de pé: **os dashboards passavam literal** (`useSinalPositivacao(true|false)`) e o gate
+`if (isLoading)` do `CommercialDashboard` **não cobre o offline** — com `networkMode:'online'` a
+query pausada tem `isLoading === false` (v5: `isPending && isFetching`) e `data ?? null` devolve
+`null`, então um hunter sem rede caía no `FarmerDashboardV2` e emitia `is_hunter:false` por outro
+caminho. Tirar o parâmetro da assinatura fecha os três hosts de uma vez: **não é disciplina, é
+estrutura** — não existe mais argumento a fabricar.
+
+⚠️ **O discriminante não é `isLoading`.** Foi a primeira correção óbvia e teria sido INERTE
+exatamente no caso medido. Quem responde "o papel é conhecido?" é o `estado` do `estadoDeLeitura`
+(mapeamento exaustivo de status × fetchStatus), e só `'pronta'` autoriza tratar `data` como fato.
+Por isso `useMyCommercialRole` passou a expor `estado` ao lado de `isLoading`.
+
+**SEGURAR o evento enquanto o papel carrega foi a 1ª decisão, e o `/codex` a derrubou.** O
+raciocínio original: emitir com `null` e corrigir depois custaria DOIS eventos por visita, e
+segurando o `null` passaria a significar uma coisa só — "a leitura do papel não chegou a desfecho".
+O furo: **a leitura do papel não tem garantia de TÉRMINO.** Rede parcial/captive portal deixa a
+promise pendente sem disparar retry (o navegador segue `online`, então não há `paused` nem `error`),
+e aí segurar não adia a linha — **apaga**. Pior: o sensor IRMÃO não espera papel nenhum e emite na
+mesma visita, então os dois passariam a discordar sobre o vendedor ter visto a tela.
+
+Num sensor que existe para dar DENOMINADOR, perder linha é o pior defeito possível — é a própria
+classe que este documento inteiro persegue. O desenho final emite com `null` (honesto: "ainda não
+sei") e põe o rótulo na CHAVE de dedup, para que a correção nunca seja engolida. Duas linhas
+distinguíveis valem mais que uma linha ausente ou mentirosa.
+
+⚠️ Lição de método: eu escolhi "segurar" **aplicando precisão > recall**, que é regra deste repo —
+e apliquei no eixo errado. Precisão > recall governa **agir/mostrar**, não **medir**: numa métrica
+de cobertura, suprimir a linha é o erro caro, e o §2 (degradar para `null`, jamais fabricar) é que
+governa. Regra certa, domínio errado.
+
+### A2 — o sujeito entra na CHAVE, o booleano entra no PAYLOAD
+
+`trackedEstado` sobrevivia à troca de `effectiveUserId` porque `ImpersonationProvider` é Context e a
+rota não remonta. A chave de dedup passou a ser `sujeito|estado:motivo`. O **id do alvo fica só na
+chave** (que é um ref local e nunca sai do browser); o que vai ao PostHog é `sob_lente: boolean` —
+para não contar staff como vendedor basta o booleano, e mandar uid de terceiro seria dado pessoal a
+mais sem uma pergunta a mais respondida.
+
+O mesmo defeito estava VIVO no irmão (`MixGapCard`, `useMyMixGap` também chaveia por
+`effectiveUserId`) e foi corrigido junto — dois sensores que alimentam a mesma leitura de adoção
+não podem divergir na disciplina de dedup.
+
+### A3 — `estado` descreve o DADO, `desatualizado` descreve o FRESCOR
+
+Com número no cache o estado é `'pronta'` mesmo que o refetch tenha falhado, e o número REAL vai
+junto (é o que o vendedor está olhando); o que muda é `desatualizado: 'erro'|'sem_rede'`. Sem número
+em mãos, `'erro'`/`'sem-rede'` e tudo `null`. A dedup precisa do motivo na chave, senão engole a
+transição "número fresco" → "número velho", que é o sinal de leitura falhando em campo.
+
+A tradução `'sem-rede'`→`'sem_rede'` saiu do `MixGapCard` para `src/lib/leitura/serie.ts`: um
+literal duplicado não diverge no dia em que é copiado, diverge no dia em que só um dos dois é
+tocado — que é literalmente o que aconteceu entre o #1892 e o #1896, com 1 dia de intervalo.
+
+**NÃO alinhado de propósito:** o `estado` deste evento continua `'sem-rede'` enquanto o do irmão é
+`'aguardando_rede'`. São eventos DIFERENTES com histórico próprio no PostHog; renomear partiria a
+série em duas que ninguém soma depois. O que precisava ser comum — a disciplina de dedup e o
+alfabeto do campo NOVO — está comum.
+
+### O harness: mock síncrono apaga a dimensão
+
+O teste de host não tinha COMO ver A1 nem A2 (`useMyCommercialRole` mockado síncrono com o valor
+final; `useImpersonation` fixo). O guard novo roda os hooks de VERDADE e dubla só a borda: o papel
+resolve por promessa controlada pelo teste, e a lente é um objeto MUTÁVEL entre renders. A helper
+`eventos()` devolve TODAS as chamadas do slug, não a última — contar é parte da asserção, senão um
+segundo escritor do mesmo slug inflaria o denominador com a suíte verde.
+
+### Falsificado, medido (2026-08-23)
+
+**9 sabotagens, 9 vermelhos** (`sabotagens que NÃO produziram vermelho: 0`): rótulo fabricado ·
+papel que volta a engolir o `error` · dedup sem sujeito · dedup sem motivo · rótulo fora da chave ·
+números fora da chave · `Set` virando slot único · `mes` fora do payload · dedup do IRMÃO sem
+sujeito. Verde final: `Test Files 769 passed (769)`, `Tests 7955 passed | 1 skipped (7956)`,
+`typecheck` exit 0.
+
+⚠️ **Duas falsificações do PRÓPRIO harness falharam antes disso, e as duas eram ausência-de-dado
+lida como aprovação** — a mesma classe que este sensor existe para matar, uma camada acima:
+
+1. `-t` do vitest é REGEX. O `+` em `-t "cache quente + OFFLINE"` casou NADA, o vitest disse
+   `Tests 8 skipped (8)` e saiu **exit 0** — e eu li isso como "o teste não pega o defeito".
+2. `heavy` esgotou o timeout de fila e ABORTOU sem executar; a notificação do harness disse
+   "exit code 0" (o `echo` final zera o exit do compound) enquanto o log dizia
+   `timeout (1800s) esperando vaga — abortando`.
+
+Daí a guarda que o script ganhou: **exigir `Tests N passed|failed` no log antes de julgar o exit**,
+e ler o veredito do MARCADOR no arquivo, nunca da notificação. Detalhe em
+`docs/historico/evidencia-positiva-shell.md` (§14 e §15).

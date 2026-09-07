@@ -190,8 +190,24 @@ describe('derivarCustos', () => {
     expect(r.updates[0].valor_linha).toBe(1633.45);
     expect(r.updates[0].preco_unitario).toBeCloseTo(408.3625, 4);
   });
-  it('mantém (não sobrescreve) quando o total da linha bate ao centavo', () => {
+  it('mantém (não sobrescreve) quando o total da linha bate DE VERDADE', () => {
     const r = derivarCustos(matchCusto({ qtde: 4, preco_atual: 408.36, total: 1633.44 })); // 4*408.36=1633.44
+    expect(r.updates).toHaveLength(0);
+    expect(r.pulados[0]).toMatchObject({ motivo: 'sem_mudanca' });
+  });
+  // O furo que o Codex achou (2026-09-06): pular por `round2(a) === round2(b)` deixava passar até
+  // ~meio centavo POR ITEM, enquanto o checksum soma o DOM em precisão CHEIA. Com 2 itens assim, o
+  // conjunto PERSISTIDO divergia do DOM acima da tolerância (0,0198 > 0,00515) e o checksum passava
+  // do mesmo jeito — ele valida o DOM, não o que fica gravado. Uma diferença sub-centavo é mudança.
+  it('diferença ABAIXO do centavo NÃO é sem_mudanca — senão o persistido foge do DOM que o checksum validou', () => {
+    const r = derivarCustos(matchCusto({ qtde: 1, preco_atual: 100, total: 100.004 }));
+    expect(r.pulados).toHaveLength(0);
+    expect(r.updates).toHaveLength(1);
+    expect(r.updates[0].valor_linha).toBe(100.004); // precisão cheia, não 100.00
+  });
+  it('ruído binário de `qtde * preco` continua sendo sem_mudanca (não vira escrita inútil)', () => {
+    // 3 * 0.1 = 0.30000000000000004 em double: diferença de ~5.5e-17, quatro ordens abaixo do centavo.
+    const r = derivarCustos(matchCusto({ qtde: 3, preco_atual: 0.1, total: 0.3 }));
     expect(r.updates).toHaveLength(0);
     expect(r.pulados[0]).toMatchObject({ motivo: 'sem_mudanca' });
   });
@@ -221,6 +237,29 @@ describe('consolidarLinhasPortal (contrato espelhado)', () => {
     const c = consolidarLinhasPortal([dom({ sku_portal: '', preco_venda_raw: '' })], { itens: [{ item: 'A', value: 12 }], value: 19.6, ordernum: 1 }, [esp[0]]);
     expect(c.fonte).toBe('json_total_unico');
     expect(c.linhas[0]).toMatchObject({ sku_portal: 'A', total_linha: 19.6 });
+  });
+  // O sensor era CEGO justamente aqui: com 1 item, `total_linha = json.value`, então comparar o
+  // provado com a soma das linhas DEPOIS da gravação dá zero POR CONSTRUÇÃO. O Preço Venda do DOM
+  // já estava parseado e ia para o lixo (`checksum: semChecksum`). Números do #2459: DOM 362,9698
+  // contra JSON 374,77 — R$ 11,80 (3,2510%) cuja origem segue em aberto.
+  it('1 item ⇒ o checksum MEDE a divergência DOM × JSON (sem gatear: tolerancia_abs null)', () => {
+    const c = consolidarLinhasPortal(
+      [dom({ sku_portal: 'A', qtd_un_raw: '2', preco_un_raw: '181,4849', preco_venda_raw: '362,9698' })],
+      { itens: [{ item: 'A', value: 181.4849 }], value: 374.77, ordernum: 1 },
+      [{ sku_portal: 'A', qtde_portal: 2 }],
+    );
+    expect(c.fonte).toBe('json_total_unico');
+    expect(c.linhas[0].total_linha).toBe(374.77); // aceitação inalterada: quem manda é o json.value
+    expect(c.checksum.soma_dom).toBeCloseTo(362.9698, 4);
+    expect(c.checksum.total_json).toBe(374.77);
+    expect(c.checksum.delta_abs).toBeCloseTo(11.8002, 4);
+    expect(c.checksum.delta_rel).toBeCloseTo(0.031486, 5);
+    expect(c.checksum.tolerancia_abs).toBeNull(); // este ramo não tem gate — só medição
+  });
+  it('1 item sem Preço Venda no DOM ⇒ mede null, não fabrica zero', () => {
+    const c = consolidarLinhasPortal([dom({ sku_portal: '', preco_venda_raw: '' })], { itens: [{ item: 'A', value: 12 }], value: 19.6, ordernum: 1 }, [esp[0]]);
+    expect(c.checksum.soma_dom).toBeNull();
+    expect(c.checksum.delta_abs).toBeNull();
   });
   it('defeito de prod (DOM cego, N itens) ⇒ nenhuma/dom_incompleto e zero custo', () => {
     const c = consolidarLinhasPortal([dom({ sku_portal: '' }), dom({ sku_portal: '' })], json, esp);

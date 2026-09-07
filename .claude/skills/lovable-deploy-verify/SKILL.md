@@ -613,16 +613,16 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
     2. **Se escreve: o efeito é REVERSÍVEL, e qual o ALCANCE?** "Cara" não é binário, e o que a trava
        compra varia em ordens de grandeza. `carteira-positivacao-snapshot` faz **UM upsert
        idempotente** por
-       `supabase/functions/carteira-positivacao-snapshot/index.ts:104`<!--cita: onConflict: 'mes,customer_user_id'-->,
+       `supabase/functions/carteira-positivacao-snapshot/index.ts:112`<!--cita: onConflict: 'mes,customer_user_id'-->,
        sem chamada externa, e o cron dela é **MENSAL** (`jobid` 80, `0 8 1 * *`).
        🔴 **Disparar fora de hora NÃO custa "uma linha parcial do mês corrente" — a formulação
        original errava nas DUAS pontas (medido em prod 2026-09-05).** A primeira ZERA o custo: o
        probe **retorna antes de escrever**
-       (`supabase/functions/carteira-positivacao-snapshot/index.ts:42`<!--cita: respostaSonda(VERSAO)-->
-       contra o upsert da 104), então bundle **v1.0+** grava **nada** — o upsert só sai no ramo
+       (`supabase/functions/carteira-positivacao-snapshot/index.ts:50`<!--cita: respostaSonda(VERSAO)-->
+       contra o upsert da 112), então bundle **v1.0+** grava **nada** — o upsert só sai no ramo
        PRÉ-sensor, que é precisamente o que a trava guarda. E mesmo nesse ramo o alvo default é o
        **mês ANTERIOR**, fechado
-       (`supabase/functions/carteira-positivacao-snapshot/index.ts:62`<!--cita: nowBrt.getMonth() - 1-->),
+       (`supabase/functions/carteira-positivacao-snapshot/index.ts:70`<!--cita: nowBrt.getMonth() - 1-->),
        não o corrente. A distinção não é cosmética: o consumidor é o UTI de contas
        (`src/hooks/useUtiContas.ts:254`<!--cita: .from('carteira_positivacao_snapshot')-->), que lê
        os 2 meses mais recentes com snapshot para decidir entrada — um parcial do mês CORRENTE teria

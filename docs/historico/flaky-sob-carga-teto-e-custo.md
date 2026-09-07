@@ -63,8 +63,52 @@ coisas que uma memoização apressada erra:
 Medições independentes convergem na ordem de grandeza (29,2s aqui, ~40s lá; a árvore de `src/` e a
 carga diferem entre as datas) — e a correção **não tocou em nenhum timeout**.
 
+## Instância 3 — `erro-colapsado-em-vazio-gate.test.ts` (#2311): medir ISOLADO **subestima 4×**
+
+Gate AST (compiler API do TypeScript sobre 1.473 fontes, 8,5 MiB) estourou com `Test timed out in
+20000ms` — 21.754ms — na M2 saturada; verde no CI. A hipótese de entrada era "o teto de render virou
+orçamento de varredura num repo que quadruplicou" (o `testTimeout: 20000` do #271 foi calibrado com
+195 arquivos de teste; hoje são 786).
+
+**O passo 1 da receita, sozinho, teria mandado fechar como não-reproduzível.** Medido em 2026-09-07,
+do mais limpo ao mais real, o pior `it`:
+
+| regime | pior `it` | folga contra 20s | subestima o real em |
+|---|---|---|---|
+| fora do runner (`bun`/JSC) | 3.267ms | 6,1× | 3,9× |
+| fora do runner (`node`/V8) | 2.435ms | 8,2× | 5,2× |
+| vitest, arquivo **isolado** | 4.890ms | 4,1× | 2,6× |
+| vitest, **suíte completa** | **12.643ms** | **1,58×** | — |
+
+Fora do runner o trabalho é ~3s contra um teto de 20s, e a conclusão sedutora é "o teto está
+folgado, foi a máquina". Errado: o número que governa é o da **suíte completa**, 4× maior, porque o
+regime que custa é a **contenção entre os workers paralelos do vitest** — e nem a execução fora do
+runner nem a execução isolada *dentro* do vitest reproduzem esse regime, por construção. Repetir a
+medição isolada, em duas engines e sob load 120 com 4,1GB de swap, dá sempre ~3s: **estabilidade da
+medida errada não é evidência**.
+
+Contexto que só a suíte completa dá, e que decide a escala da correção: esses dois `it` são o **1º e
+o 2º testes mais lentos de 8.134**; o 3º fica em 9.820ms e nenhum outro passa de 15s. Uma varredura
+estática achou **21 testes** da classe "gate que varre o repo dentro do `it`", todos no teto global —
+mas a medição mostrou o risco **concentrado em um arquivo**, não espalhado. Contar sítios da classe
+prevê exposição; só medir prevê qual estoura.
+
+Fix: orçamento próprio nos dois `it`, **por fonte** (40 ms/fonte, 4,7× o pior medido) e não um número
+fixo — a causa que aperta sozinha é o repo crescer, então o teto acompanha o denominador sem
+afrouxar o custo unitário, que é o que denuncia regressão do detector. Piso `Math.max(20_000, …)`
+para nunca ficar ABAIXO do global (a armadilha da instância 1). E como "teto maior só ajuda se
+preserva o diagnóstico", um `onTestFailed` imprime fontes/ms/ms-por-fonte contra a referência
+medida, separando carga · repo · detector — as três hipóteses que o timeout nu não distingue.
+
+Descartados com medição, não com suposição: motor de JS (bun e node concordam), memória (pico de
+219MB), custo do detector (2,05 ms/fonte, estável), e cache incremental — memoizar `acharColapsos`
+baratearia o **2º** `it`, deixando o 1º, que é o gargalo, intacto.
+
 ## A receita
 
+0. **Meça no regime que falhou.** Fora do runner e isolado-no-runner medem *o custo*; só a **suíte
+   completa** mede a *contenção entre workers*, que na instância 3 valia 4× e era o número que
+   governava. Medida isolada estável, repetida em duas engines, continua sendo a medida errada.
 1. **Meça o trabalho real fora do runner** (`bun run` num script solto, `performance.now()`). Um
    teste que leva 29s de CPU não é flaky — está acima do teto, e o teto não é o problema.
 2. **Enumere as camadas de teto**, não "o timeout": `it(..., N)` · `testTimeout` do runner ·

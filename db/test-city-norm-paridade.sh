@@ -63,16 +63,21 @@ grep -v '^#' "$REPO_ROOT/db/city-norm-corpus.txt" | grep -v '^$' > "$CORPUS"
 # NBSP (U+00A0) no meio · múltiplos espaços + bordas · NBSP nas bordas · só espaços.
 # (TAB fica de fora: é delimitador do COPY text e ambos os lados o tratam via
 #  \s/[[:space:]] igualmente — a divergência que importa é NBSP/unicode.)
-printf 'NOVA\xc2\xa0SERRANA (MG)\n' >> "$CORPUS"
-printf '  Carmo   do  Cajuru  (MG)  \n' >> "$CORPUS"
-printf '\xc2\xa0Divin\xc3\xb3polis\xc2\xa0(MG)\xc2\xa0\n' >> "$CORPUS"
-printf '   \n' >> "$CORPUS"
+{
+  printf 'NOVA\xc2\xa0SERRANA (MG)\n'
+  printf '  Carmo   do  Cajuru  (MG)  \n'
+  printf '\xc2\xa0Divin\xc3\xb3polis\xc2\xa0(MG)\xc2\xa0\n'
+  printf '   \n'
+} >> "$CORPUS"
 
 echo "→ lado TS (bun + normalizeCityKey)…"
 ( cd "$REPO_ROOT" && bun scripts/city-norm-print.ts "$CORPUS" ) > "$WORK/ts.out"
 
 echo "→ lado SQL (route_city_norm)…"
 # COPY text interpreta \ como escape — o corpus não tem backslash (assert):
+# shellcheck disable=SC1003  # o '\\' e BARRA literal para o grep (BRE), nao tentativa de escapar
+# aspa. Reescrever nao vale a pena: [\\] nao compila no ugrep (o `grep` local deste repo) e o -F
+# continua disparando o mesmo aviso — a troca so viraria divergencia local x CI (licao #1483).
 if grep -q '\\' "$CORPUS"; then echo "FAIL: corpus com backslash (COPY text escaparia)"; exit 1; fi
 P -v ON_ERROR_STOP=1 -q <<SQL
 CREATE TABLE corpus_caso (id bigserial PRIMARY KEY, raw text);
@@ -92,6 +97,7 @@ if [ -f "$REPO_ROOT/db/city-norm-corpus-prod.txt" ]; then
   echo "→ corpus de PROD detectado — diferencial…"
   PRODC="$WORK/prod.txt"
   grep -v '^#' "$REPO_ROOT/db/city-norm-corpus-prod.txt" | grep -v '^$' > "$PRODC"
+  # shellcheck disable=SC1003  # idem linha acima: barra literal, nao escape de aspa.
   if grep -q '\\' "$PRODC"; then echo "FAIL: corpus de prod com backslash"; exit 1; fi
   ( cd "$REPO_ROOT" && bun scripts/city-norm-print.ts "$PRODC" ) > "$WORK/ts-prod.out"
   P -v ON_ERROR_STOP=1 -q -c "TRUNCATE corpus_caso;"

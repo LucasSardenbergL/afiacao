@@ -9,6 +9,15 @@
 # ║  enquanto outra chama a RPC de snapshot REAL. Exige revisão ANTIGA completa ou ║
 # ║  NOVA completa — nunca mistura. F1 prova que o cenário tem dente reproduzindo  ║
 # ║  o writer de HOJE (statements soltas), que FALHA nele de propósito.            ║
+# ║                                                                                ║
+# ║  ZONA 6 (I1-I8 + F10-F13): IDENTIDADE DE LINHA (`omie_codigo_item`). A         ║
+# ║  invariante afirmada é sempre a MESMA — o pós-estado é EXATAMENTE o conjunto   ║
+# ║  desejado. Contagem de linhas de um SKU passa verde em dois defeitos           ║
+# ║  diferentes; a invariante pega os dois.                                        ║
+# ║                                                                                ║
+# ║  A cadeia de migrations aplicada é a REAL e tem TRÊS elos, não dois: a do meio ║
+# ║  (#2224, preço) também recria esta função. Sem ela aqui, uma recriação a       ║
+# ║  partir do corpo velho reverteria o NULL-safe de preço e o harness não veria.  ║
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -30,7 +39,7 @@ cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/de
 cleanup() {
   "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
   rm -rf "$(dirname "$DATA")"
-  rm -f "${SAB1:-}" "${SAB2:-}" "${SAB3:-}" "${SAB4:-}" "${BLOQ_OUT:-}" "${LEIT_OUT:-}"
+  rm -f "${SAB1:-}" "${SAB2:-}" "${SAB3:-}" "${SAB4:-}" "${BLOQ_OUT:-}" "${LEIT_OUT:-}" "${MIG_PRECO:-}"
 }
 trap cleanup EXIT
 
@@ -120,10 +129,57 @@ SQL
 # As DUAS: a do #2132 é o LEITOR sob o qual a atomicidade da escrita é observada. Testar a escrita
 # contra um SELECT ad-hoc provaria a RPC contra um leitor que não existe em produção.
 MIG_SNAP="$REPO_ROOT/supabase/migrations/20260830123820_snapshot_atomico_universo_itens.sql"
-MIG="$REPO_ROOT/supabase/migrations/20260830190000_reconciliar_pedidos_omie.sql"
+MIG_BASE="$REPO_ROOT/supabase/migrations/20260830190000_reconciliar_pedidos_omie.sql"
+# ⚠️ A cadeia é aplicada na ORDEM REAL, e a do MEIO não é decorativa: a `20260905225613` (#2224)
+# também faz `CREATE OR REPLACE` desta função — ela tornou `order_items.unit_price` NULLABLE e
+# deixou o diff de preço NULL-SAFE. Aplicar só a base e a minha esconderia exatamente o risco que
+# custou o rebase desta fatia: recriar a função a partir do corpo de 30/08 REVERTERIA o #2224 em
+# silêncio. Com a de preço no meio, qualquer regressão dessa classe aparece aqui.
+MIG_PRECO_FULL="$REPO_ROOT/supabase/migrations/20260905225613_preco_ausente_nao_e_zero.sql"
+# ⚠️ Dela entra um RECORTE, e o recorte é deliberado: a migration inteira também define
+# `private.margem_cliente_agregada()`, que depende de meia dúzia de tabelas de outro domínio e
+# arrastaria a Zona 1 inteira para dentro deste harness. O que importa AQUI é o que o sujeito
+# desta prova depende: o `unit_price` nullable e o corpo vigente da função. Os dois vêm do
+# arquivo REAL por extração (nunca copiados à mão), então uma mudança lá aparece aqui.
+MIG_PRECO="$(mktemp "/tmp/preco-${SLUG}.XXXXXX.sql")"
+{
+  grep '^ALTER TABLE public.order_items ALTER COLUMN unit_price' "$MIG_PRECO_FULL"
+  # ⚠️ O terminador é `$function$` SOZINHO na linha, com o `;` numa linha seguinte — NÃO
+  # `$function$;`. Casar o terminador errado não dá erro: o range do sed simplesmente segue até o
+  # PRÓXIMO `$function$` do arquivo e arrasta a função seguinte (`private.margem_cliente_agregada`)
+  # para dentro do recorte. Mordido nesta fatia, e o sintoma foi um erro de schema ausente —
+  # sorte, porque a versão silenciosa desse mesmo erro seria aplicar código de outro domínio.
+  # shellcheck disable=SC2016  # `$function$` é o delimitador LITERAL do corpo PL/pgSQL — aspas
+  # duplas fariam o shell expandir `$function` e o recorte casaria o terminador errado.
+  sed -n '/^CREATE OR REPLACE FUNCTION public.reconciliar_pedidos_omie/,/^\$function\$$/p' "$MIG_PRECO_FULL"
+  echo ";"
+} > "$MIG_PRECO"
+# Recorte incompleto OU excessivo é falso-verde nos dois sentidos: o harness aplicaria a cadeia
+# errada em silêncio. Exige as 2 ALTER, o terminador, e NENHUM vazamento de outro schema.
+[ "$(grep -c '^ALTER TABLE public.order_items ALTER COLUMN unit_price' "$MIG_PRECO")" = "2" ] \
+  && [ "$(grep -c "^[$]function[$]$" "$MIG_PRECO")" = "1" ] \
+  && [ "$(grep -c 'private\.' "$MIG_PRECO")" = "0" ] \
+  || { echo "  ❌ recorte da migration de preço veio incompleto ou vazou outra função — a cadeia provada não seria a real"; exit 1; }
+# ⚠️ `$MIG` é a migration VIGENTE — a que define a função de HOJE — e por isso é o alvo de TODA
+# sabotagem das Zonas 5 e 6. Restaurar depois de sabotar re-aplica só `$MIG`, que basta: ela
+# define a função inteira. Se um dia a vigente virar outra, é ESTA linha que muda — não as
+# sabotagens.
+MIG="$REPO_ROOT/supabase/migrations/20260906180000_order_items_identidade_linha.sql"
 P -q -f "$MIG_SNAP"
+P -q -f "$MIG_BASE"
+P -q -f "$MIG_PRECO"
 P -q -f "$MIG"
-echo "migrations aplicadas: $(basename "$MIG_SNAP") + $(basename "$MIG")"
+echo "migrations aplicadas: $(basename "$MIG_SNAP") + $(basename "$MIG_BASE") + $(basename "$MIG_PRECO") + $(basename "$MIG")"
+# A régua de preço do #2224 tem de continuar de pé DEPOIS da minha recriar a função. Sentinela
+# barata, no lugar exato onde uma reversão silenciosa entraria.
+PRECO_OK="$(Pq -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+  WHERE n.nspname='public' AND p.proname='reconciliar_pedidos_omie'
+    AND p.prosrc LIKE '%a.unit_price IS NULL AND d.unit_price IS NULL%';")"
+[ "$PRECO_OK" = "1" ] || { echo "  ❌ a migration da identidade REVERTEU o diff NULL-safe de preço do #2224"; exit 1; }
+# A coluna de identidade de linha nasce da MIGRATION, não da Zona 1: se o `ADD COLUMN` dela
+# falhasse, o harness inteiro precisa ficar vermelho aqui e não passar por cima em silêncio.
+COL_ID="$(Pq -c "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='order_items' AND column_name='omie_codigo_item';")"
+[ "$COL_ID" = "1" ] || { echo "  ❌ a migration não criou order_items.omie_codigo_item"; exit 1; }
 
 # ══════════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED: um pedido com uma REVISÃO ANTIGA COMPLETA
@@ -577,7 +633,7 @@ echo "── F6: sabota a CTE de DELETE — exija VERMELHO em T2b ──"
 # Sem a remoção, o pós-estado vira "desejado + o que já estava lá": exatamente a revisão
 # "nova mais um estranho" que o diff computado FORA da transação produziria.
 SAB5="$(mktemp "/tmp/sab5-${SLUG}.XXXXXX.sql")"
-sed "s/^             AND NOT EXISTS (SELECT 1 FROM desejado d WHERE d.cod = a.cod)$/             AND false/" "$MIG" > "$SAB5"
+sed "s/^             AND NOT EXISTS (SELECT 1 FROM par WHERE par.aid = a.id)$/             AND false/" "$MIG" > "$SAB5"
 eq "F6 sabotagem aplicada (a CTE de delete não casa mais ninguém)" \
    "$(grep -c '^             AND false$' "$SAB5")" "1"
 P -q -f "$SAB5"
@@ -636,22 +692,29 @@ echo "── F4: sabota o guard de duplicidade — exija VERMELHO em C6d (o caso
 # A sabotagem é o guard ANTIGO, que olhava só o conjunto desejado: é o defeito exato que o
 # challenge Codex achou e que atinge 1.049 pedidos Omie vivos hoje.
 SAB3="$(mktemp "/tmp/sab3-${SLUG}.XXXXXX.sql")"
-sed "s/^      IF v_n_distintos <> v_n_validos OR v_atual_dup > 0 THEN$/      IF v_n_distintos <> v_n_validos THEN/" "$MIG" > "$SAB3"
+sed "s/^        IF v_n_distintos <> v_n_validos OR v_atual_dup > 0 THEN$/        IF v_n_distintos <> v_n_validos THEN/" "$MIG" > "$SAB3"
 eq "F4 sabotagem aplicada (o guard volta a olhar só o payload)" \
-   "$(grep -c '^      IF v_n_distintos <> v_n_validos THEN$' "$SAB3")" "1"
+   "$(grep -c '^        IF v_n_distintos <> v_n_validos THEN$' "$SAB3")" "1"
 P -q -f "$SAB3"
 seed
 P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id)
          VALUES ('$U','$P2',2,3,20,0,'omie_oben_777_2_dup','$PA');"
+CONGELADO="$(Pq -c "SELECT count(*)||'|'||(SELECT total FROM public.sales_orders WHERE id='$PA') FROM public.order_items WHERE sales_order_id='$PA';")"
 P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO);" >/dev/null
-# Com o guard antigo: as DUAS linhas do código 2 recebem o mesmo conteúdo, nenhuma é deletada, e o
-# cabeçalho é gravado como se houvesse uma. É o valor DOBRADO chegando ao Apriori.
-DUP_N="$(Pq -c "SELECT count(*) FROM public.order_items WHERE sales_order_id='$PA' AND omie_codigo_produto=2;")"
-CAB_N="$(Pq -c "SELECT jsonb_array_length(items) FROM public.sales_orders WHERE id='$PA';")"
-if [ "$DUP_N" = "2" ] && [ "$CAB_N" = "2" ]; then
-  ok "F4 C6d/C6e ficam VERMELHOS: sem o guard sobram $DUP_N linhas do código 2 e o cabeçalho descreve $CAB_N itens — valor DOBRADO no Apriori"
+# ⚠️ O SINTOMA desta sabotagem MUDOU com o casamento em dois níveis, e a mudança é a notícia.
+# Antes, sem o guard, as duas linhas do código 2 caíam no mesmo `UPDATE` e nenhuma era deletada:
+# valor DOBRADO. Hoje o nível 2 só casa por SKU quando ele é 1-1 entre os REMANESCENTES DOS DOIS
+# LADOS, então as duas linhas ambíguas não casam com ninguém — caem no DELETE, e os itens
+# desejados entram pelo INSERT. O pós-estado continua sendo exatamente o conjunto desejado.
+# ⇒ O guard NÃO é mais o que impede o valor dobrado (isso agora é estrutural, e é o F10 que
+#   prova). O que ele impede é o pedido ambíguo ser RECONSTRUÍDO a cada run: sem identidade de
+#   linha o casamento nunca estabiliza, então o rebuild se repetiria a cada 2 h, com `corrections`
+#   inflado para sempre. Congelar é estável; reconstruir em loop, não. Por isso ele fica.
+TOCADO="$(Pq -c "SELECT count(*)||'|'||(SELECT total FROM public.sales_orders WHERE id='$PA') FROM public.order_items WHERE sales_order_id='$PA';")"
+if [ "$TOCADO" != "$CONGELADO" ]; then
+  ok "F4 C6d/C6e ficam VERMELHOS: sem o guard o pedido ambíguo deixa de ser congelado e é reconstruído [$CONGELADO → $TOCADO]"
 else
-  bad "F4 SEM DENTE: com o guard antigo vieram linhas=$DUP_N cabeçalho=$CAB_N — a sabotagem não reproduz o defeito de prod"
+  bad "F4 SEM DENTE: com o guard sabotado o pedido seguiu intacto [$TOCADO] — C6d/C6e passam pelo motivo errado"
 fi
 P -q -f "$MIG"
 
@@ -737,10 +800,30 @@ BEGIN
 END $f$;
 SQL
 
-echo "── F5: remove o REVOKE — exija VERMELHO em C9 ──"
+echo "── F5c: só o REVOKE sai, a POSTCONDIÇÃO fica — a migration tem de ABORTAR sozinha ──"
+# Defesa em PROFUNDIDADE, na forma do F2/F2b: o `REVOKE` é a defesa, e o assert `A4` embutido na
+# própria migration é a segunda. Derrubar UMA não pode abrir a outra. Aqui só o REVOKE cai; o
+# apply precisa MORRER no A4, com a SQLSTATE de RAISE (P0001) — e não terminar em "Success" com a
+# RPC de ESCRITA aberta para `anon`, que é exatamente como isso apareceria no SQL Editor.
+SAB4C="$(mktemp "/tmp/sab4c-${SLUG}.XXXXXX.sql")"
+grep -v '^REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie' "$MIG" > "$SAB4C"
+P -q -c "DROP FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamptz);" >/dev/null   # DROP reseta o ACL
+if P -q -f "$SAB4C" >/dev/null 2>&1
+then bad "F5c SEM DENTE: a migration sem o REVOKE aplicou LIMPO — a postcondição A4 não é uma segunda defesa"
+else ok "F5c a própria migration ABORTA no A4 quando o REVOKE some — o apply manual não termina em Success com anon executando"
+fi
+rm -f "$SAB4C"
+P -q -f "$MIG"
+
+echo "── F5: remove o REVOKE E o assert A4 — exija VERMELHO em C9 ──"
+# Agora o alvo é o C9, e por isso a sabotagem precisa derrubar AS DUAS defesas: com o A4 de pé o
+# arquivo nem aplica (F5c acima), e o `bad` que sairia daqui seria sobre o assert errado — uma
+# falsificação contaminada, que é o que a Lei #3 proíbe.
 SAB4="$(mktemp "/tmp/sab4-${SLUG}.XXXXXX.sql")"
-grep -v '^REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie' "$MIG" > "$SAB4"
+grep -v '^REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie' "$MIG" \
+  | sed "/-- A4: o ACL não afrouxou/,/END IF;/d" > "$SAB4"
 eq "F5 sabotagem aplicada (o REVOKE sai do arquivo)" "$(grep -c '^REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie' "$SAB4")" "0"
+eq "F5 sabotagem aplicada (o assert A4 sai junto)" "$(grep -c 'A4 FALHOU' "$SAB4")" "0"
 P -q -c "DROP FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamptz);" >/dev/null   # DROP reseta o ACL
 P -q -f "$SAB4"
 if P -q -c "SET ROLE anon; SELECT public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO, $LIDO);" >/dev/null 2>&1
@@ -750,6 +833,199 @@ P -q -c "DROP FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestampt
 P -q -f "$MIG"
 eq "F5b restaurado: anon volta a ser barrado" \
    "$(P -q -c "SET ROLE anon; SELECT public.reconciliar_pedidos_omie('[]'::jsonb, $GERIDO, $LIDO);" >/dev/null 2>&1 && echo executou || echo barrado)" "barrado"
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# ZONA 6 — IDENTIDADE DE LINHA (`order_items.omie_codigo_item`)
+# ══════════════════════════════════════════════════════════════════════════════════
+# O que esta zona prova, em uma frase: com identidade de linha, o pedido de SKU repetido — o caso
+# REAL de prod (1.179 pares em 1.049 pedidos, e o payload do Omie repete o SKU em 1.177 deles) —
+# volta a reconciliar, CORRETAMENTE e de forma ESTÁVEL, em vez de ficar congelado.
+# A invariante afirmada em todos os asserts é sempre a mesma: **o pós-estado é exatamente o
+# conjunto desejado**. Não "parecido", não "sem duplicata" — igual.
+echo
+echo "── ZONA 6: identidade de linha ──"
+
+CI1=501; CI2=502; CI3=503
+IT() { # monta um item do payload: cod qty preco product_id [codigo_item]
+  printf '{"omie_codigo_produto":%s,"quantity":%s,"unit_price":%s,"discount":0,"product_id":"%s","hash_payload":"omie_oben_777_%s"%s}' \
+    "$1" "$2" "$3" "$4" "$1" "${5:+,\"omie_codigo_item\":$5}"
+}
+PED() { # monta o pedido: total items_json itens_json
+  printf '[{"account":"oben","hash_payload":"omie_oben_777","omie_pedido_id":777,"status_omie":"separacao","total":%s,"items":%s,"itens":[%s]}]' "$1" "$2" "$3"
+}
+# Retrato do pedido como CONJUNTO, na forma em que "igual ao desejado" se verifica.
+ESTADO="SELECT coalesce(string_agg(coalesce(omie_codigo_item::text,'-')||':'||omie_codigo_produto||':'||(quantity::int), ',' ORDER BY coalesce(omie_codigo_item,0), omie_codigo_produto, quantity), '(vazio)')
+          FROM public.order_items WHERE sales_order_id='$PA'"
+R_() { Pq -c "SELECT ((('$1'::jsonb)->>'$2')); "; }
+
+# ── I1: ADOÇÃO. Payload idêntico ao estado, só que carregando a identidade. Nada de money-path
+#    muda — e é exatamente por isso que este é o assert que decide se o desenho nasce vivo ou
+#    inerte: se a adoção não for motivo PRÓPRIO de escrita, a coluna nunca se preenche num pedido
+#    estável, e a identidade só existiria onde já não fazia falta.
+seed
+MESMA_ID="$(PED 80.00 '[{"omie_codigo_produto":1},{"omie_codigo_produto":2}]' "$(IT 1 2 10 "$P1" $CI1),$(IT 2 3 20 "$P2" $CI2)")"
+R1=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$MESMA_ID'::jsonb, $GERIDO, $LIDO)::text;")
+eq "I1 adoção sem mudança de conteúdo (adotada=2, corrections=0, upserts=0)" \
+   "$(Pq -c "SELECT (('$R1'::jsonb)->>'identidade_adotada')||'|'||(('$R1'::jsonb)->>'corrections')||'|'||(('$R1'::jsonb)->>'upserts');")" "2|0|0"
+eq "I1b a identidade FICOU gravada nas duas linhas" \
+   "$(Pq -c "SELECT string_agg(omie_codigo_item::text, ',' ORDER BY omie_codigo_produto) FROM public.order_items WHERE sales_order_id='$PA';")" "501,502"
+eq "I1c a cesta continua a revisão ANTIGA COMPLETA — adoção NÃO é reconciliação" "$(Pq -c "$CESTA")" "$ANTIGA_COMPLETA"
+
+R2=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$MESMA_ID'::jsonb, $GERIDO, $LIDO)::text;")
+eq "I2 adoção é IDEMPOTENTE: a segunda passada não reescreve nada" \
+   "$(Pq -c "SELECT (('$R2'::jsonb)->>'identidade_adotada')||'|'||(('$R2'::jsonb)->>'corrections');")" "0|0"
+
+# ── I3: O CASO DOS 1.049 — SKU repetido nos DOIS lados, estado legado SEM identidade. Hoje este
+#    pedido é PULADO (ambiguo=1) e fica congelado na revisão anterior. Com a identidade no
+#    payload ele reconcilia: as duas linhas ambíguas não casam com ninguém pelo SKU (o nível 2
+#    exige 1-1 entre os remanescentes NOS DOIS LADOS), caem no DELETE, e os itens desejados
+#    entram pelo INSERT já carregando o `codigo_item`. Pós-estado = conjunto desejado.
+seed_dup() {
+  seed
+  P -q -c "INSERT INTO public.order_items (customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, hash_payload, sales_order_id)
+           VALUES ('$U','$P2',2,7,20,0,'omie_oben_777_2','$PA');"   # 2ª linha LEGÍTIMA do código 2
+}
+seed_dup
+ITENS_DUP="$(IT 1 2 10 "$P1" $CI1),$(IT 2 3 20 "$P2" $CI2),$(IT 2 7 20 "$P2" $CI3)"
+DUP_ID="$(PED 220.00 '[{"omie_codigo_produto":1},{"omie_codigo_produto":2},{"omie_codigo_produto":2}]' "$ITENS_DUP")"
+R3=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$DUP_ID'::jsonb, $GERIDO, $LIDO)::text;")
+eq "I3 pedido de SKU repetido DEIXA de ser pulado (ambiguo=0, identidade_usada=1)" \
+   "$(Pq -c "SELECT (('$R3'::jsonb)->>'ambiguo')||'|'||(('$R3'::jsonb)->>'identidade_usada')||'|'||(('$R3'::jsonb)->>'sku_repetido');")" "0|1|0"
+eq "I3b pós-estado É o conjunto desejado — as DUAS linhas do código 2 sobrevivem, cada uma com a sua" \
+   "$(Pq -c "$ESTADO")" "501:1:2,502:2:3,503:2:7"
+eq "I3c o cabeçalho descreve os TRÊS itens (nem dobrado, nem de menos)" \
+   "$(Pq -c "SELECT jsonb_array_length(items)||'|'||total FROM public.sales_orders WHERE id='$PA';")" "3|220.00"
+
+# ── I4: e ESTABILIZA. Este é o assert que justifica a identidade em vez de simplesmente deixar o
+#    pedido ambíguo ser reconstruído: sem `codigo_item` o casamento nunca converge e o rebuild se
+#    repetiria a cada run (a cada 2 h), com `corrections` inflado para sempre. Com ela, a segunda
+#    passada é um no-op de verdade.
+R4=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$DUP_ID'::jsonb, $GERIDO, $LIDO)::text;")
+eq "I4 a segunda passada do MESMO payload ambíguo é no-op (corrections=0, adotada=0) — não há esteira" \
+   "$(Pq -c "SELECT (('$R4'::jsonb)->>'corrections')||'|'||(('$R4'::jsonb)->>'identidade_adotada');")" "0|0"
+eq "I4b e o pós-estado seguiu idêntico" "$(Pq -c "$ESTADO")" "501:1:2,502:2:3,503:2:7"
+
+# ── I5 (G-a): identidade repetida NO PAYLOAD. A chave que existe para desempatar está empatada:
+#    fail-closed, o pedido inteiro é pulado.
+seed_dup
+ANTES_I5="$(Pq -c "$ESTADO")"
+DUP_CID="$(PED 220.00 '[{"omie_codigo_produto":1},{"omie_codigo_produto":2},{"omie_codigo_produto":2}]' "$(IT 1 2 10 "$P1" $CI1),$(IT 2 3 20 "$P2" $CI2),$(IT 2 7 20 "$P2" $CI2)")"
+R5=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$DUP_CID'::jsonb, $GERIDO, $LIDO)::text;")
+eq "I5 codigo_item repetido no PAYLOAD: pedido pulado (ambiguo=1, corrections=0)" \
+   "$(Pq -c "SELECT (('$R5'::jsonb)->>'ambiguo')||'|'||(('$R5'::jsonb)->>'corrections');")" "1|0"
+eq "I5b nada foi tocado" "$(Pq -c "$ESTADO")" "$ANTES_I5"
+
+# ── I6 (G-b): identidade repetida NO BANCO. ESTE é o lado que a versão anterior desta função
+#    esqueceu na chave antiga, e o motivo de o parecer ter BLOQUEADO a entrega. A chave mudou; a
+#    armadilha não. Sem este guard as duas linhas casariam com o MESMO item desejado no nível 1 —
+#    ambas atualizadas, nenhuma deletada: o valor DOBRADO de volta, com roupa nova.
+seed
+P -q -c "UPDATE public.order_items SET omie_codigo_item = $CI2 WHERE sales_order_id='$PA';"   # AS DUAS
+ANTES_I6="$(Pq -c "$ESTADO")"
+R6=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$MESMA_ID'::jsonb, $GERIDO, $LIDO)::text;")
+eq "I6 codigo_item repetido no BANCO com payload limpo: pedido pulado (ambiguo=1)" \
+   "$(Pq -c "SELECT (('$R6'::jsonb)->>'ambiguo')||'|'||(('$R6'::jsonb)->>'corrections');")" "1|0"
+eq "I6b nada foi tocado — o valor NÃO foi dobrado" "$(Pq -c "$ESTADO")" "$ANTES_I6"
+
+# ── I7: identidade PARCIAL cai no caminho LEGADO por desenho. Misturar duas chaves de casamento
+#    dentro do mesmo pedido é reabrir a classe de defeito que esta entrega fecha; com SKU único a
+#    reconciliação segue normal e adota só a identidade que veio.
+seed
+PARCIAL="$(PED 80.00 '[{"omie_codigo_produto":1},{"omie_codigo_produto":2}]' "$(IT 1 2 10 "$P1" $CI1),$(IT 2 3 20 "$P2")")"
+R7=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$PARCIAL'::jsonb, $GERIDO, $LIDO)::text;")
+eq "I7 identidade parcial: caminho legado (identidade_usada=0), sem pular o pedido (ambiguo=0)" \
+   "$(Pq -c "SELECT (('$R7'::jsonb)->>'identidade_usada')||'|'||(('$R7'::jsonb)->>'ambiguo')||'|'||(('$R7'::jsonb)->>'identidade_adotada');")" "0|0|1"
+eq "I7b adotou só a que veio; a outra segue sem identidade" "$(Pq -c "$ESTADO")" "-:2:3,501:1:2"
+
+# ── I8: duplicidade só no ATUAL, payload identificado e limpo (o C6d com identidade). O pedido
+#    reconcilia e sobra UMA linha do código 2 — não duas.
+seed_dup
+NOVA_ID="$(PED 330.00 '[{"omie_codigo_produto":2},{"omie_codigo_produto":3}]' "$(IT 2 9 20 "$P2" $CI2),$(IT 3 5 30 "$P3" $CI3)")"
+R8=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA_ID'::jsonb, $GERIDO, $LIDO)::text;")
+eq "I8 duplicata no banco + payload identificado: reconcilia (ambiguo=0)" \
+   "$(Pq -c "SELECT (('$R8'::jsonb)->>'ambiguo')||'|'||(('$R8'::jsonb)->>'identidade_usada');")" "0|1"
+eq "I8b pós-estado = desejado (UMA linha do código 2, e a do 3)" "$(Pq -c "$ESTADO")" "502:2:9,503:3:5"
+eq "I8c e o leitor REAL vê a revisão NOVA COMPLETA" "$(Pq -c "$CESTA")" "$NOVA_COMPLETA"
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# FALSIFICAÇÕES DA ZONA 6 — uma sabotagem por bloco (sabotagem que contamina o assert
+# vizinho não prova o vizinho). Cada uma restaura `$MIG` antes da seguinte.
+# ══════════════════════════════════════════════════════════════════════════════════
+echo "── F10: remove o 1-1 do lado ATUAL no nível 2 — exija VERMELHO em I8b (valor DOBRADO) ──"
+# É a defesa ESTRUTURAL contra o defeito que o parecer achou: sem ela, as duas linhas do mesmo SKU
+# casam com o MESMO item desejado, as duas são atualizadas, nenhuma é deletada.
+SAB9="$(mktemp "/tmp/sab9-${SLUG}.XXXXXX.sql")"
+sed "s/^           WHERE a.cod IN (SELECT cod FROM ar1)$/           WHERE true/" "$MIG" > "$SAB9"
+eq "F10 sabotagem aplicada (o nível 2 aceita casar com SKU repetido no atual)" \
+   "$(grep -c '^           WHERE true$' "$SAB9")" "1"
+P -q -f "$SAB9"
+seed_dup
+P -q -c "SELECT public.reconciliar_pedidos_omie('$NOVA_ID'::jsonb, $GERIDO, $LIDO);" >/dev/null
+EST_F10="$(Pq -c "$ESTADO")"
+if [ "$EST_F10" = "502:2:9,503:3:5" ]; then
+  bad "F10 SEM DENTE: sem o 1-1 do lado atual o pós-estado seguiu correto [$EST_F10] — I8b não prova nada"
+else
+  ok "F10 I8b fica VERMELHO: sem o 1-1 do lado ATUAL sobram duas linhas do código 2 [$EST_F10] — valor DOBRADO"
+fi
+P -q -f "$MIG"; rm -f "$SAB9"
+
+echo "── F11: remove a adoção como motivo de escrita — exija VERMELHO em I1 (desenho INERTE) ──"
+# A falha mais cara possível aqui não é escrever errado: é a coluna nunca se preencher e ninguém
+# ver, porque o pedido estável não dispara UPDATE por nenhum outro motivo.
+SAB10="$(mktemp "/tmp/sab10-${SLUG}.XXXXXX.sql")"
+sed "s/^                        AND (d.cid IS NULL OR a.cid IS NOT DISTINCT FROM d.cid) )$/                        AND true )/" "$MIG" > "$SAB10"
+eq "F11 sabotagem aplicada (a diferença de identidade deixa de contar como mudança)" \
+   "$(grep -c '^                        AND true )$' "$SAB10")" "1"
+P -q -f "$SAB10"
+seed
+P -q -c "SELECT public.reconciliar_pedidos_omie('$MESMA_ID'::jsonb, $GERIDO, $LIDO);" >/dev/null
+ID_F11="$(Pq -c "SELECT count(*) FROM public.order_items WHERE sales_order_id='$PA' AND omie_codigo_item IS NOT NULL;")"
+if [ "$ID_F11" = "0" ]; then
+  ok "F11 I1/I1b ficam VERMELHOS: sem a adoção como motivo próprio, NENHUMA linha ganha identidade — o desenho nasceria inerte"
+else
+  bad "F11 SEM DENTE: $ID_F11 linha(s) ganharam identidade mesmo com a sabotagem — I1 passa pelo motivo errado"
+fi
+P -q -f "$MIG"; rm -f "$SAB10"
+
+echo "── F12: remove o G-b (identidade repetida no BANCO) — exija VERMELHO em I6 ──"
+SAB11="$(mktemp "/tmp/sab11-${SLUG}.XXXXXX.sql")"
+sed "s/^      IF v_atual_id_dup > 0 THEN$/      IF false THEN/" "$MIG" > "$SAB11"
+eq "F12 sabotagem aplicada (o guard do lado do banco some)" "$(grep -c '^      IF false THEN$' "$SAB11")" "1"
+P -q -f "$SAB11"
+seed
+P -q -c "UPDATE public.order_items SET omie_codigo_item = $CI2 WHERE sales_order_id='$PA';"
+ANTES_F12="$(Pq -c "$ESTADO")"
+P -q -c "SELECT public.reconciliar_pedidos_omie('$MESMA_ID'::jsonb, $GERIDO, $LIDO);" >/dev/null
+EST_F12="$(Pq -c "$ESTADO")"
+# ⚠️ O sintoma NÃO é "sobram duas linhas do mesmo SKU" — foi assim que a primeira versão deste
+# assert saiu SEM DENTE, medindo a contagem de um código só. É pior e mais silencioso: as duas
+# linhas que compartilham a identidade casam AMBAS com o MESMO item desejado, recebem as duas o
+# conteúdo dele (a linha do código 1 fica com a quantidade e o preço do código 2, sem trocar de
+# `omie_codigo_produto`), nenhuma é deletada — e o item que ficou sem par é INSERIDO por cima.
+# O pós-estado deixa de ser o conjunto desejado, que é a invariante desta função.
+if [ "$EST_F12" != "$ANTES_F12" ] && [ "$EST_F12" != "501:1:2,502:2:3" ]; then
+  ok "F12 I6/I6b ficam VERMELHOS: sem o guard do lado do BANCO o pós-estado deixa de ser o desejado [$EST_F12] — o defeito do parecer, com a chave nova"
+else
+  bad "F12 SEM DENTE: com o G-b sabotado o pós-estado veio [$EST_F12] — I6 passa pelo motivo errado"
+fi
+P -q -f "$MIG"; rm -f "$SAB11"
+
+echo "── F13: remove o G-a (identidade repetida no PAYLOAD) — exija VERMELHO em I5 ──"
+SAB12="$(mktemp "/tmp/sab12-${SLUG}.XXXXXX.sql")"
+sed "s/^      IF v_n_id_desej > 0 AND v_n_id_desej_d <> v_n_id_desej THEN$/      IF false THEN/" "$MIG" > "$SAB12"
+eq "F13 sabotagem aplicada (o guard do lado do payload some)" "$(grep -c '^      IF false THEN$' "$SAB12")" "1"
+P -q -f "$SAB12"
+seed_dup
+P -q -c "SELECT public.reconciliar_pedidos_omie('$DUP_CID'::jsonb, $GERIDO, $LIDO);" >/dev/null
+EST_F13="$(Pq -c "$ESTADO")"
+# Com dois itens desejados carregando o MESMO codigo_item, os dois casam com a mesma linha local:
+# um deles não é inserido, e o pós-estado deixa de ser o conjunto desejado (item de MENOS).
+if [ "$EST_F13" = "$ANTES_I5" ]; then
+  bad "F13 SEM DENTE: sem o G-a o pedido seguiu intocado [$EST_F13] — I5 passa pelo motivo errado"
+else
+  ok "F13 I5/I5b ficam VERMELHOS: sem o G-a o payload contraditório é aplicado e o pós-estado deixa de ser o desejado [$EST_F13]"
+fi
+P -q -f "$MIG"; rm -f "$SAB12"
 
 echo
 echo "═══ RESULTADO: $PASS pass · $FAIL fail ═══"
