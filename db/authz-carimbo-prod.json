@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-06T22:56:12.267Z",
-  "sourceHead": "c7f12cde61fbccc69f6dc5f8198177b16bd6a3a4",
+  "medidoEm": "2026-09-07T00:30:05.373Z",
+  "sourceHead": "1d324d6fc7d9e2231fd2c6bb5e79cc3c333de84e",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -13,21 +13,21 @@
       "script": "authz:funcoes:prod",
       "exit": 1,
       "resumo": "authz:funcoes:prod — 2 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 46 definição(ões) lida(s) para 48 chave(s) da allowlist.",
-      "contratoFingerprint": "65296445e94d0aa26d63db883b77979e2508f25c0af270cf26f35b8d6a74fded",
+      "denominador": "🔎 authz:funcoes:prod — 47 definição(ões) lida(s) para 49 chave(s) da allowlist.",
+      "contratoFingerprint": "6a1f2811a44c6e3face9ffdcf7f7f6ac118cd6dd753f7c1508cda425a70081d0",
       "auditorFingerprint": "caabc19be3ea3ea381bc8c37617f9d7c1f0b5491958f5f8ffdc9a9ca851e508e",
       "achados": [
         {
           "id": "87f43176e34ff5f2",
           "linha": "❌ public.reposicao_selar_pedido — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_selar_pedido está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
           "primeiraVez": "2026-09-06",
-          "ultimaVez": "2026-09-06"
+          "ultimaVez": "2026-09-07"
         },
         {
           "id": "6a1e618f655a78ad",
           "linha": "❌ public.reposicao_conferir_envio — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_conferir_envio está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
           "primeiraVez": "2026-09-06",
-          "ultimaVez": "2026-09-06"
+          "ultimaVez": "2026-09-07"
         }
       ]
     },
@@ -43,28 +43,34 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 1,
-      "resumo": "authz:audit:prod — 3 divergência(s).",
-      "denominador": "🔎 authz:audit:prod — 20 definição(ões) lida(s) para 22 chave(s) do manifest.",
-      "contratoFingerprint": "14a4d1ac41ca317e29304a95eb03319f270f85cace0d6d332783de007954c397",
+      "resumo": "authz:audit:prod — 4 divergência(s).",
+      "denominador": "🔎 authz:audit:prod — 21 definição(ões) lida(s) para 23 chave(s) do manifest.",
+      "contratoFingerprint": "ed2a339e3e6509a01d4572607d8fd0946ee8e757c6abe1445a8c4900c089708d",
       "auditorFingerprint": "0866cf4f10a49635c4ed8590c7ed4861b254c4b75cc4e58ca1cdb15b038993c1",
       "achados": [
         {
           "id": "ad7de5d080a699e2",
           "linha": "❌ AUSENTE_EM_PROD: public.reposicao_selar_pedido está no AUTHZ_MANIFEST e não existe no banco.",
           "primeiraVez": "2026-09-06",
-          "ultimaVez": "2026-09-06"
+          "ultimaVez": "2026-09-07"
         },
         {
           "id": "4cf734dfa25f0b1d",
           "linha": "❌ AUSENTE_EM_PROD: public.reposicao_conferir_envio está no AUTHZ_MANIFEST e não existe no banco.",
           "primeiraVez": "2026-09-06",
-          "ultimaVez": "2026-09-06"
+          "ultimaVez": "2026-09-07"
+        },
+        {
+          "id": "7947a84aeb8b9b09",
+          "linha": "❌ GATE_VIVO_FALHOU: aprovar_pedido_sugerido(bigint,text) — falta cap_compras_ler",
+          "primeiraVez": "2026-09-07",
+          "ultimaVez": "2026-09-07"
         },
         {
           "id": "257297e1a0831e90",
           "linha": "❌ MD5_DIVERGIU: public.get_defasagem_cliente (20260718190000_authz_capability_matrix_e2.sql): esperado 037ede84a229d5798214511433afb65d, prod tem 7856c3052596d66a6f5ac8eb0a06c1c0",
           "primeiraVez": "2026-09-06",
-          "ultimaVez": "2026-09-06"
+          "ultimaVez": "2026-09-07"
         }
       ]
     },
