@@ -20,16 +20,13 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  # `issues: write` NÃO é para o merge — é para o FECHAMENTO da issue vinculada.
-  # Medido no #2320 (2026-09-07): o corpo trazia `Resolve #2311`, o GitHub REGISTROU o
-  # vínculo (`closingIssuesReferences` retornava a issue), o PR mergeou na main às
-  # 14:47:25Z — e 21min depois a issue seguia aberta. O timeline dela tem um único
-  # ClosedEvent, manual, com `closer: null`. Falha SILENCIOSA: keyword reconhecida,
-  # fechamento não acontece, ninguém recebe erro, e a issue entregue parece pendente.
-  # `issues:` e `pull-requests:` são escopos DISTINTOS no GITHUB_TOKEN, e fechar uma
-  # issue (não um PR) cai no primeiro. Detalhe e teste em #2322.
-  # Cobaia que mede o efeito desta linha: #2329 (resultado registrado em #2322).
-  issues: write
+  # ⚠️ NÃO adicione `issues: write` achando que conserta o auto-close de `Closes #N`.
+  # Foi testado e REPROVOU (#2322): com a permissão na main, o PR #2330 mergeou às
+  # 19:02:53Z com o vínculo registrado, e a issue #2329 seguia aberta 7min depois —
+  # mesmo desfecho do #2320/#2311 SEM a permissão. O bloco `permissions:` governa o
+  # token DURANTE o run; o auto-merge acontece depois, fora dele, e em ambos os casos
+  # `mergedBy` foi `app/github-actions`. A pista viva é essa — o ator do merge —, não
+  # o escopo do token. Investigação em #2322.
 
 jobs:
   enable-auto-merge:
