@@ -121,7 +121,7 @@ export default function AdminReposicaoPedidos() {
     return () => clearInterval(t);
   }, []);
 
-  const qPedidos = useQuery({
+  const { data: pedidos, isLoading, status: statusPedidos, fetchStatus: fetchPedidos } = useQuery({
     queryKey: ['pedidos-ciclo', dataHoje],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -135,7 +135,12 @@ export default function AdminReposicaoPedidos() {
     },
     refetchInterval: 30_000,
   });
-  const { data: pedidos, isLoading } = qPedidos;
+  // A FATIA, não a query: `estadoDeLeitura` é estrutural (`{status, fetchStatus}`) de propósito, e
+  // guardar o resultado inteiro num `const q = useQuery(…)` custaria caro por um motivo que não é
+  // de estilo — o detector do gate `erro-colapsado-em-vazio` casa o alias de `data` NA
+  // DESESTRUTURAÇÃO da chamada. Trocá-la por `q.data` some com o sítio inteiro da contagem (medido:
+  // este arquivo caía de 2 para 1 sem que uma linha de silêncio tivesse sido corrigida).
+  const fatiaPedidos = { status: statusPedidos, fetchStatus: fetchPedidos };
 
   // Fila CROSS-CICLO de "precisa de atenção": pedidos que exigem ação humana em
   // QUALQUER ciclo (a lista de hoje não pega travado de ciclo passado). Critério
@@ -549,19 +554,19 @@ export default function AdminReposicaoPedidos() {
   // "Disparar". A ausência do alerta é lida como "nada bloqueado" logo antes da compra;
   // por isso a leitura que não aconteceu precisa FALAR aqui (docs/historico/
   // a-forma-que-some-e-a-forma-que-mente.md, sítio #2 por dano medido).
-  const estadoPedidos = estadoDeLeitura(qPedidos);
+  const estadoPedidos = estadoDeLeitura(fatiaPedidos);
   // Sem NADA em mãos, o aviso é o único conteúdo possível.
   const pedidosSemLeitura: EstadoSemLeitura | null =
     naoConsegui(estadoPedidos) && !pedidos ? estadoPedidos : null;
   // COM o ciclo no cache e um refetch que falhou (refetchInterval de 30s → é o caso
   // comum), apagar os pedidos vivos trocaria um defeito por outro: a lista fica, com o
   // aviso de que está velha.
-  const pedidosVelhos = desatualizado(qPedidos, Boolean(pedidos));
+  const pedidosVelhos = desatualizado(fatiaPedidos, Boolean(pedidos));
 
   // SKUs abaixo do ponto que NÃO geram pedido por falta de fornecedor cadastrado.
   // A RPC (20260604170000) passou a exigir fornecedor — esses ficavam como
   // cabeçalho-fantasma na fila; agora aparecem aqui, pra não sumirem em silêncio.
-  const qSemFornecedor = useQuery({
+  const { data: semFornecedor, status: statusSemFornecedor, fetchStatus: fetchSemFornecedor } = useQuery({
     queryKey: ['reposicao-sku-sem-fornecedor', EMPRESA],
     queryFn: async (): Promise<SkuSemFornecedor[]> => {
       const { data, error } = await supabase
@@ -575,13 +580,13 @@ export default function AdminReposicaoPedidos() {
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
-  const { data: semFornecedor } = qSemFornecedor;
+  const fatiaSemFornecedor = { status: statusSemFornecedor, fetchStatus: fetchSemFornecedor };
   // [erro-colapsado-em-vazio] Mesmo defeito, outra fonte: `semFornecedor` undefined apaga
   // o alerta e a tela afirma que nada ficou de fora da compra por falta de fornecedor.
-  const estadoSemFornecedor = estadoDeLeitura(qSemFornecedor);
+  const estadoSemFornecedor = estadoDeLeitura(fatiaSemFornecedor);
   const semFornecedorSemLeitura: EstadoSemLeitura | null =
     naoConsegui(estadoSemFornecedor) && !semFornecedor ? estadoSemFornecedor : null;
-  const semFornecedorVelho = desatualizado(qSemFornecedor, Boolean(semFornecedor));
+  const semFornecedorVelho = desatualizado(fatiaSemFornecedor, Boolean(semFornecedor));
 
   // [GATE estoque-não-confirmado] suprimidos do ÚLTIMO recálculo do motor (reflete os pedidos na tela) + contexto
   // 24h (crônico?). ultimoRunId vem do carimbo em reposicao_motor_run (o último recálculo REAL, limpo ou não) — não

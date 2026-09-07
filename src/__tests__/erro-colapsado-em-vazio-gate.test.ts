@@ -84,7 +84,15 @@ const BASELINE = new Map<string, number>([
   ["src/components/whatsapp/SlaCardMeuDia.tsx", 1],
   ["src/hooks/useUnifiedOrder.ts", 2],
   ["src/pages/AdminReposicaoAlertas.tsx", 1],
-  ["src/pages/AdminReposicaoPedidos.tsx", 2],
+  // 2→1 (fatia #2 do inventário `{data && <X/>}`, 2026-09-06): a query do CICLO passou a
+  // desestruturar `status`/`fetchStatus` — chave de CHAVES_DE_ERRO — para alimentar
+  // `estadoDeLeitura` + <AvisoLeituraFalhou> nos alertas de pré-disparo. O sítio que sobra é o
+  // da fila `atencao`, ainda cega. ⚠️ Este delta de 1 seria IDÊNTICO se eu tivesse trocado a
+  // desestruturação por `const q = useQuery(…)`: aí o sítio some porque o detector perde o
+  // alias de `data`, sem uma linha de silêncio corrigida (medido no caminho deste PR). O gate
+  // não distingue "consertado" de "cegado" — quem encolhe a baseline precisa provar qual dos
+  // dois é, e a prova é o `temErro` do sítio.
+  ["src/pages/AdminReposicaoPedidos.tsx", 1],
   ["src/pages/FinanceiroMapping.tsx", 1],
   ["src/pages/GovernanceMathParams.tsx", 1],
   ["src/pages/GovernancePermissions.tsx", 1],
