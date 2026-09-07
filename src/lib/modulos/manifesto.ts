@@ -793,6 +793,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/escrita-critica-gate.test.ts",
       "src/__tests__/erro-object-object-gate.test.ts",
       "src/__tests__/afinidade-nao-e-dinheiro-gate.test.ts",
+      "src/__tests__/filtro-sem-projecao-gate.test.ts",
       "src/__tests__/potencial-nao-medido-gate.test.ts",
       "src/__tests__/segredo-em-log-gate.test.ts",
       "src/__tests__/rpc-set-returning-paginacao-gate.test.ts",
