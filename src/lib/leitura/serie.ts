@@ -14,7 +14,7 @@
 //
 // O `satisfies` é o que torna a tabela exaustiva: se `EstadoSemLeitura` ganhar um terceiro membro,
 // isto PARA DE COMPILAR em vez de mandar `undefined` para o PostHog.
-import { desatualizado, type EstadoSemLeitura, type FatiaDeQuery } from './estado-de-leitura';
+import { desatualizado, type EstadoLeitura, type EstadoSemLeitura, type FatiaDeQuery } from './estado-de-leitura';
 
 // Sem `export`: os dois sensores consomem `motivoNaSerie()`, não a tabela. Exportá-la seria
 // deadcode (o `knip` do CI reprova) — e pior, seria um segundo caminho para traduzir o motivo,
@@ -36,4 +36,36 @@ export type MotivoDesatualizado = (typeof MOTIVO_NA_SERIE)[EstadoSemLeitura];
 export function motivoNaSerie(q: FatiaDeQuery, temDado: boolean): MotivoDesatualizado | null {
   const m = desatualizado(q, temDado);
   return m === null ? null : MOTIVO_NA_SERIE[m];
+}
+
+// ─── O SEGUNDO EIXO: o ESTADO da leitura, não o motivo de o número estar velho ───
+//
+// `motivoNaSerie` acima cobre o eixo "o que está na tela pode estar velho". O outro eixo é o
+// DESFECHO da leitura, e ele vazou pelos mesmos 20cm de código: `carteira.saude_vista` (#1886) e
+// `carteira.positivacao_vista` (#1896) mandaram o retorno de `estadoDeLeitura` CRU para dentro do
+// `track()` — `{ estado }` —, e o helper fala `'sem-rede'` com HÍFEN enquanto a série fala
+// `sem_rede`. O #1886 fez isso 27 MINUTOS depois de o `sem_rede` nascer no #1892.
+//
+// Nada disso fica vermelho sozinho: a tela não muda, e o `tsc` não via porque
+// `track(event, properties?: Record<string, unknown>)` não tipava o payload. O que quebra é a
+// CONTINUIDADE da série — quem filtra `estado = sem_rede` passa a enxergar um dos eventos, não
+// os três. O gate que torna a reintrodução vermelha vive em `@/lib/analytics` (o tipo de `track`
+// recusa union de literais hifenizado); esta tabela é a saída certa que ele empurra.
+//
+// Exaustiva sobre `EstadoLeitura` inteiro, e não só sobre os dois de `EstadoSemLeitura`: estado
+// novo no helper não compila até alguém decidir como ele se chama na série.
+const ESTADO_NA_SERIE = {
+  carregando: 'carregando',
+  'sem-rede': 'sem_rede',
+  erro: 'erro',
+  desabilitada: 'desabilitada',
+  pronta: 'pronta',
+} as const satisfies Record<EstadoLeitura, string>;
+
+/** Sem `export` na tabela, pelo mesmo motivo do `MOTIVO_NA_SERIE`: um caminho só para traduzir. */
+type EstadoNaSerie = (typeof ESTADO_NA_SERIE)[EstadoLeitura];
+
+/** O desfecho da leitura já no alfabeto da série — nenhum membro hifenizado, por construção. */
+export function estadoNaSerie(e: EstadoLeitura): EstadoNaSerie {
+  return ESTADO_NA_SERIE[e];
 }

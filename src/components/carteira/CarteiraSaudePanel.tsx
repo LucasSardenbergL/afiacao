@@ -7,6 +7,7 @@ import { track } from '@/lib/analytics';
 import type { SaudeNivel } from '@/lib/carteira-saude/types';
 import { estadoDeLeitura, naoConsegui, desatualizado, type EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { estadoNaSerie } from '@/lib/leitura/serie';
 
 const DOT: Record<SaudeNivel, string> = {
   green: 'bg-status-success-bold',
@@ -82,7 +83,10 @@ export function CarteiraSaudePanel() {
           statusCoverage(data.score_coverage).nivel,
         ])
       : null;
-    track('carteira.saude_vista', { estado, nivel });
+    // `estadoNaSerie(...)` e não `estado` cru: o helper fala `'sem-rede'` (hífen) e a série
+    // `carteira.*` fala `sem_rede`. A troca não muda a tela nem o `tsc` — muda o nome sob o qual
+    // o evento passa a sair, e o breakdown perde o histórico sem avisar.
+    track('carteira.saude_vista', { estado: estadoNaSerie(estado), nivel });
   }, [estado, data, semAcesso]);
 
   // Sem NADA em mãos: só o aviso — é o caso que o defeito escondia.

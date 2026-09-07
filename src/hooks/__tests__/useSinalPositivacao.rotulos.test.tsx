@@ -153,7 +153,9 @@ describe('defeito 1 — is_hunter não pode ser FABRICADO', () => {
 
     await waitFor(() => expect(eventos()).toHaveLength(1));
     const [payload] = eventos();
-    expect(payload.estado).toBe('sem-rede');
+    // `sem_rede` com UNDERSCORE: o payload fala a língua da SÉRIE, não a do helper (que devolve
+    // `'sem-rede'`). Traduzido por `estadoNaSerie` na fronteira do `track()`.
+    expect(payload.estado).toBe('sem_rede');
     expect(payload.is_hunter, 'rótulo fabricado: offline afirmou "não é hunter" sem ter lido o papel').toBeNull();
   });
 
@@ -391,5 +393,61 @@ describe('achados do /codex — o que o 1º fix ainda deixava corromper a série
 
     await waitFor(() => expect(eventos()).toHaveLength(1));
     expect(eventos()[0].mes).toBe('2026-08-01');
+  });
+});
+
+/**
+ * FRONTEIRA DE TELEMETRIA — o alfabeto do evento é CONGELADO aqui, e de propósito.
+ *
+ * Este sensor consome `estadoDeLeitura` e mandava o retorno CRU para o `track()` (`{ estado }`).
+ * O helper devolve `'sem-rede'` — com HÍFEN — e a série `carteira.*` fala `sem_rede`, que o
+ * `carteira.mixgap_visto` já emitia 2h antes deste hook nascer. O eixo do `desatualizado` ganhou
+ * tradutor (`motivoNaSerie`); o do `estado` ficou sem, e ninguém viu porque nada fica vermelho:
+ * a tela não muda e o `tsc` não via — `track` não tipava o payload.
+ *
+ * A asserção é sobre o LITERAL porque o comportamento sobreviveria inteiro à troca. E a varredura
+ * genérica vale mais que as chaves conhecidas: os testes acima usam `toMatchObject`, que ignora
+ * chave EXTRA — acrescentar `leitura: 'sem-rede'` ao payload os deixaria TODOS verdes.
+ */
+describe('o alfabeto do evento não muda por refactor', () => {
+  const ESTADOS = ['pronta', 'erro', 'sem_rede'];
+
+  function conferirAlfabeto(ev: Record<string, unknown>) {
+    expect(ESTADOS, `estado fora do alfabeto congelado: ${String(ev.estado)}`).toContain(ev.estado);
+    for (const [chave, v] of Object.entries(ev)) {
+      if (typeof v === 'string') {
+        expect(v, `\`${chave}\` veio hifenizado (\`${v}\`) — é o vocabulário de ` +
+          '`estadoDeLeitura` vazando para o PostHog: a tela continua certa e a série QUEBRA')
+          .not.toMatch(/-/);
+      }
+    }
+  }
+
+  it('OFFLINE: `sem_rede` no evento, nunca o `sem-rede` do helper', async () => {
+    onlineManager.setOnline(false);
+
+    montar();
+
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+    const [ev] = eventos();
+    expect(ev.estado, 'o literal do helper escorreu para a série').toBe('sem_rede');
+    conferirAlfabeto(ev);
+  });
+
+  it('ERRO e leitura OK também saem sob o alfabeto da série', async () => {
+    respostaPositivacao = { data: null, error: ERRO_TIMEOUT };
+    const { unmount } = montar();
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+    expect(eventos()[0].estado).toBe('erro');
+    conferirAlfabeto(eventos()[0]);
+    unmount();
+
+    track.mockClear();
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    respostaPositivacao = { data: POSITIVACAO, error: null };
+    montar();
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+    expect(eventos()[0].estado).toBe('pronta');
+    conferirAlfabeto(eventos()[0]);
   });
 });

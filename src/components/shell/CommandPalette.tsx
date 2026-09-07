@@ -21,7 +21,7 @@ import {
   type Command,
 } from './CommandsRegistry';
 import { useRegisterShortcuts } from './ShortcutsRegistry';
-import { useGlobalSearch, useSearchRecents, type SearchResult } from '@/hooks/useGlobalSearch';
+import { useGlobalSearch, KIND_NA_SERIE, useSearchRecents, type SearchResult } from '@/hooks/useGlobalSearch';
 import { track } from '@/lib/analytics';
 
 /**
@@ -41,7 +41,11 @@ export function CommandPalette() {
   };
 
   const goToResult = (r: SearchResult) => {
-    track('cmdk.result_clicked', { kind: r.kind, has_subtitle: !!r.subtitle });
+    // `KIND_NA_SERIE[...]` e não `r.kind` cru: o tipo é kebab-case (`'sales-order'`) e o payload
+    // é snake_case. O literal está no CÓDIGO desde 2026-05-14, mas medido no PostHog em
+    // 2026-08-23 nunca foi emitido — zero eventos, com o pipe vivo —, então normalizar não parte
+    // histórico nenhum. `git log` data o CÓDIGO; só a query data a SÉRIE.
+    track('cmdk.result_clicked', { kind: KIND_NA_SERIE[r.kind], has_subtitle: !!r.subtitle });
     pushRecent(r);
     navigate(r.path);
     close();

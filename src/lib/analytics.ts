@@ -151,13 +151,52 @@ export function initAnalytics(): void {
 }
 
 /**
+ * GATE DE VOCABULÁRIO — um literal HIFENIZADO não entra no payload de um evento.
+ *
+ * O defeito que este tipo torna vermelho não quebra a tela e não quebrava o `tsc`: ele quebra a
+ * CONTINUIDADE de uma série do PostHog, em silêncio. Uma camada interna nomeia seus estados em
+ * kebab-case porque é o idioma natural de um union em TS (`estadoDeLeitura` devolve `'sem-rede'`);
+ * o payload aqui é snake_case por convenção (`total_eligible`, `is_hunter`, `dias_sem_comprar`).
+ * Mandar o literal da camada adiante é uma linha que passa em todo review — `{ estado }` — e a
+ * série passa a sair sob um nome novo a partir daquele deploy. Medido 3× (#1886 e #1896 com
+ * `sem-rede`; o `kind` do Cmd-K, achado por ESTE gate e fora do alcance de qualquer busca pelo
+ * helper). A saída certa é uma tabela ao lado do tipo que dona o vocabulário: `estadoNaSerie`
+ * (@/lib/leitura/serie) e `KIND_NA_SERIE` (@/hooks/useGlobalSearch).
+ *
+ * `string extends T` é a válvula que faz o gate ser preciso em vez de barulhento: uma string
+ * LIVRE (nome de família, id, path — tipo `string`) passa, porque não é vocabulário fechado e
+ * ninguém filtra dashboard por ela. O que o gate recusa é o union de LITERAIS — que é exatamente
+ * o enum de uma camada interna escorrendo para a fronteira. Medido: 3 erros em ~150 `track()` do
+ * repo, todos verdadeiros, zero falso-positivo.
+ *
+ * LIMITE conhecido: vale no primeiro nível do payload, que é o contrato desta função ("primitivos
+ * serializáveis") e o que todos os sítios fazem hoje — zero payload aninhado. No dia em que
+ * alguém aninhe (`{ ctx: { estado } }`), o hífen volta a passar; a defesa aí é o assert de runtime
+ * que varre o payload inteiro. Limite consciente e escrito, não buraco invisível.
+ *
+ * Se um dia uma série REAL já viver com hífen (medido, não suposto — `git log` data o CÓDIGO, só
+ * a query data a SÉRIE), a saída é uma escotilha nomeada e greppável que widene para `string`.
+ * Escreva-a no dia em que o caso existir, com a medição ao lado; hoje não existe nenhum.
+ */
+type SemHifen<T> = T extends string
+  ? string extends T
+    ? T
+    : T extends `${string}-${string}`
+      ? never
+      : T
+  : T;
+
+/**
  * Track de evento. Convenção: `<area>.<action>`.
  * Properties devem ser primitivos serializáveis (string/number/boolean).
  *
  *   track('cmdk.opened');
  *   track('pedido.criado', { valor: 1234.5, num_itens: 3, empresa: 'oben' });
  */
-export function track(event: string, properties?: Record<string, unknown>): void {
+export function track<P extends Record<string, unknown>>(
+  event: string,
+  properties?: P & { [K in keyof P]: SemHifen<P[K]> },
+): void {
   withPosthog((p) => p.capture(event, properties), `track:${event}`);
 }
 

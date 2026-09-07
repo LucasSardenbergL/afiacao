@@ -3,7 +3,7 @@ import { useMyPositivacao } from '@/hooks/useMyPositivacao';
 import { useMyCommercialRole } from '@/hooks/useMyCommercialRole';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { estadoDeLeitura, revalidando } from '@/lib/leitura/estado-de-leitura';
-import { motivoNaSerie } from '@/lib/leitura/serie';
+import { estadoNaSerie, motivoNaSerie } from '@/lib/leitura/serie';
 import { track } from '@/lib/analytics';
 
 /**
@@ -152,7 +152,10 @@ export function useSinalPositivacao(): EstadoSinal | null {
     if (emitidas.current.has(chave)) return;
     emitidas.current.add(chave);
     track('carteira.positivacao_vista', {
-      estado,
+      // Traduzido na fronteira: aqui dentro o estado é `'sem-rede'` (a língua do helper) e no
+      // evento sai `sem_rede` (a língua da série, que o `carteira.mixgap_visto` já falava). O
+      // `desatualizado` abaixo já passava pelo `motivoNaSerie`; este eixo não tinha tradutor.
+      estado: estadoNaSerie(estado),
       mes,
       pct: temDado ? data.pctPositivacao : null,
       positivados,

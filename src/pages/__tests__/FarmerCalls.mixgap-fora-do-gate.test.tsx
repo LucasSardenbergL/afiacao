@@ -333,7 +333,9 @@ describe('FarmerCalls — a positivação que falha também tem estado explícit
     const payload = evento('carteira.positivacao_vista')!;
     // 'sem-rede' e NÃO 'erro': vendedor em campo sem sinal não é a RPC quebrada, e colapsar os
     // dois faria a série culpar o backend por cobertura de celular.
-    expect(payload.estado, 'offline virou "sem acesso" e o sensor calou').toBe('sem-rede');
+    // UNDERSCORE: o vocabulário da série `carteira.*` — o `'sem-rede'` do helper é traduzido por
+    // `estadoNaSerie` na fronteira do `track()`.
+    expect(payload.estado, 'offline virou "sem acesso" e o sensor calou').toBe('sem_rede');
     expect(payload.total_eligible, 'offline fabricou número em vez de degradar para null').toBeNull();
     umaEmissao('carteira.positivacao_vista');
   });

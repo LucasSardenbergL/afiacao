@@ -9,6 +9,8 @@ import {
   type EstadoLeitura,
   type FatiaDeQuery,
 } from '../leitura/estado-de-leitura';
+import { estadoNaSerie } from '../leitura/serie';
+import { track } from '../analytics';
 
 /**
  * O mapeamento (status × fetchStatus) → estado é EXAUSTIVO de propósito: estado sem nome
@@ -203,5 +205,60 @@ describe('naoConsegui — "inexistente" é resposta, não falha', () => {
   it('erro e sem-rede continuam acionando', () => {
     expect(naoConsegui('erro')).toBe(true);
     expect(naoConsegui('sem-rede')).toBe(true);
+  });
+});
+
+
+/**
+ * O helper tem DOIS vocabulários e eles se parecem o bastante para serem trocados sem ninguém
+ * ver: aqui dentro os estados são kebab-case (`'sem-rede'`, idioma natural de um union em TS) e
+ * na série do PostHog são snake_case (`sem_rede`, o que `carteira.mixgap_visto` emite). Trocar um
+ * pelo outro não muda a tela e — antes do gate em `track()` — não movia o `tsc`: o que quebrava
+ * era a CONTINUIDADE da série, e em silêncio.
+ */
+describe('estadoNaSerie — o helper dito na língua do PostHog', () => {
+  const TODOS: EstadoLeitura[] = ['carregando', 'sem-rede', 'erro', 'desabilitada', 'pronta'];
+
+  it('nenhum estado traduz para literal hifenizado — é o alfabeto que o PostHog vê', () => {
+    for (const e of TODOS) {
+      expect(estadoNaSerie(e), `\`${e}\` traduz para um literal hifenizado`).not.toMatch(/-/);
+    }
+  });
+
+  it('o único que MUDA de nome é o hifenizado — os outros são identidade, de propósito', () => {
+    expect(estadoNaSerie('sem-rede')).toBe('sem_rede');
+    for (const e of TODOS.filter((e) => e !== 'sem-rede')) expect(estadoNaSerie(e)).toBe(e);
+  });
+});
+
+/**
+ * GATE-DO-GATE — quem reprova o vazamento é o `tsc`, e esta diretiva é quem prova que ele ainda
+ * reprova.
+ *
+ * O `@ts-expect-error` abaixo É a asserção: se alguém afrouxar o tipo de `track()` de volta para
+ * `Record<string, unknown>`, o erro esperado deixa de acontecer, a diretiva vira "unused" e o
+ * `bun run typecheck` REPROVA. Sem isso o gate seria decoração — um tipo que ninguém falsifica é
+ * um tipo que some num refactor sem nada ficar vermelho.
+ *
+ * ⚠️ O vitest transpila sem type-check: o vermelho deste bloco aparece no `bun run typecheck`
+ * (que cobre `src` inteiro, testes inclusive), não em `bun run test`.
+ */
+describe('track() recusa o vocabulário hifenizado no payload', () => {
+  it('o literal do helper não compila; o traduzido compila; string livre passa', () => {
+    const estado: EstadoLeitura = 'sem-rede';
+
+    // @ts-expect-error — `'sem-rede'` é o vocabulário do HELPER, não o da série. É exatamente a
+    // linha que os dois sensores da carteira escreveram (`{ estado }`), verde em todo review.
+    track('teste.gate_de_vocabulario', { estado });
+
+    // A saída certa: traduzir na fronteira.
+    track('teste.gate_de_vocabulario', { estado: estadoNaSerie(estado) });
+
+    // String LIVRE continua passando — o gate recusa union de LITERAIS, não texto qualquer. Sem
+    // essa válvula ele barraria `familia`, `id`, `path` e viraria ruído que se aprende a ignorar.
+    const familia: string = 'poliuretano-brilhante';
+    track('teste.gate_de_vocabulario', { familia });
+
+    expect(estadoNaSerie(estado)).toBe('sem_rede');
   });
 });
