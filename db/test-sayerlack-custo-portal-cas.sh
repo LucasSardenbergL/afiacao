@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS public.pedido_compra_sugerido (
   id bigint PRIMARY KEY,
   omie_pedido_compra_numero text,
   status_envio_portal text NOT NULL DEFAULT 'nao_aplicavel',
+  portal_protocolo text,
   valor_total numeric DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS public.pedido_compra_item (
@@ -78,9 +79,14 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — APLICAR A MIGRATION REAL (Lei #1)
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/supabase/migrations/20260905090000_sayerlack_custo_portal_cas.sql"
+# A BASE cria a 1ª versão da RPC; a NOVA (sob prova) reescreve por cima e cria as colunas do
+# provado. Aplicar as duas na ordem prova o caminho REAL do SQL Editor — não um mundo em que a
+# versão anterior nunca existiu. $MIG (a sabotável) é sempre a NOVA.
+MIG_BASE="$REPO_ROOT/supabase/migrations/20260905090000_sayerlack_custo_portal_cas.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260906193522_valor_total_portal_provado.sql"
+P -q -f "$MIG_BASE"
 P -q -f "$MIG"
-echo "migration aplicada: $(basename "$MIG")"
+echo "migrations aplicadas: $(basename "$MIG_BASE") + $(basename "$MIG")"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED (re-semeável: cada bloco de assert parte do MESMO estado)
@@ -90,16 +96,20 @@ echo "migration aplicada: $(basename "$MIG")"
 seed() {
 P -q <<'SQL'
 TRUNCATE public.pedido_compra_item, public.pedido_compra_sugerido;
-INSERT INTO public.pedido_compra_sugerido (id, omie_pedido_compra_numero, status_envio_portal, valor_total) VALUES
-  (100, NULL,   'sucesso_portal',   0),
-  (200, '7788', 'sucesso_portal',   0),
-  (300, NULL,   'enviando_portal',  0),
-  (400, NULL,   'sucesso_portal',   0);
+INSERT INTO public.pedido_compra_sugerido (id, omie_pedido_compra_numero, status_envio_portal, portal_protocolo, valor_total) VALUES
+  (100, NULL,   'sucesso_portal',  'PROTO-100', 0),
+  (200, '7788', 'sucesso_portal',  'PROTO-200', 0),
+  (300, NULL,   'enviando_portal', NULL,        0),
+  (400, NULL,   'sucesso_portal',  'PROTO-400', 0),
+  (500, NULL,   'sucesso_portal',  'PROTO-500', 0),
+  (600, NULL,   'sucesso_portal',  'PROTO-600', 0);
 INSERT INTO public.pedido_compra_item (id, pedido_id, preco_unitario, valor_linha) VALUES
   (101, 100, 10, 100), (102, 100, 20, 200), (103, 100, 30, 300),
   (201, 200, 10, 100),
   (301, 300, 10, 100),
-  (401, 400, 10, 100);
+  (401, 400, 10, 100),
+  (501, 500, NULL, NULL), (502, 500, 10, 100);
+-- 600 fica SEM item de propósito (CP005 pelo outro lado).
 SQL
 }
 seed
@@ -123,6 +133,11 @@ SQL
 }
 # Estado observável de um pedido: "preco/valor dos itens|valor_total" (comparar antes/depois).
 estado() { Pq -c "SELECT string_agg(i.id||':'||i.preco_unitario||'/'||i.valor_linha, ',' ORDER BY i.id)||'|'||p.valor_total FROM public.pedido_compra_sugerido p JOIN public.pedido_compra_item i ON i.pedido_id=p.id WHERE p.id=$1 GROUP BY p.valor_total;"; }
+# Colunas do PROVADO: "valor|protocolo" (NULL vira 'ø') — separado de estado() para que os asserts
+# de "nada gravado" continuem legíveis e possam cobrar as DUAS grandezas.
+provado() { Pq -c "SELECT coalesce(valor_total_portal_provado::text,'ø')||'|'||coalesce(valor_total_portal_provado_protocolo,'ø')||'|'||CASE WHEN valor_total_portal_provado_em IS NULL THEN 'sem-ts' ELSE 'com-ts' END FROM public.pedido_compra_sugerido WHERE id=$1"; }
+SEM_PROVA='ø|ø|sem-ts'
+
 ITENS_100='[{"item_id":101,"preco_unitario":12.5,"valor_linha":125},{"item_id":102,"preco_unitario":22.25,"valor_linha":222.5}]'
 INTACTO_100='101:10/100,102:20/200,103:30/300|0'
 
@@ -133,10 +148,21 @@ echo "── asserts ──"
 # A1 caminho feliz: 2 dos 3 itens no array (o 3º é 'sem_mudanca') → retorna 2, grava os 2, total provado; o 3º intacto.
 seed
 R=$(rpc "100, '$ITENS_100'::jsonb, 347.5"); eq "A1 elegível: retorna o nº de itens gravados" "$R" "RPC_OK_2"
-eq "A1 itens 101/102 gravados, 103 intacto, valor_total = total provado" "$(estado 100)" "101:12.5/125,102:22.25/222.5,103:30/300|347.5"
+eq "A1 itens 101/102 gravados, 103 intacto, valor_total = DERIVADO (125+222,5+300)" "$(estado 100)" "101:12.5/125,102:22.25/222.5,103:30/300|647.5"
+# O coração da entrega: as duas grandezas coexistem. O provado (347,5) NÃO é a soma das linhas
+# (647,5) — é o que o portal cobrou. Antes, 347,5 ficava em valor_total e a soma sumia.
+eq "A1 provado em coluna dedicada, com o protocolo da compra" "$(provado 100)" "347.5|PROTO-100|com-ts"
 
 # A2 idempotência de estado: 2ª chamada com o mesmo payload é aceita (omie ainda NULL) e não muda nada.
 R=$(rpc "100, '$ITENS_100'::jsonb, 347.5"); eq "A2 re-chamada com omie ainda NULL é aceita" "$R" "RPC_OK_2"
+
+# A3 — array VAZIO (todos os preços já coincidiam: 'sem_mudanca'). Era CP001 e a prova era DESCARTADA
+# (Codex 2026-09-06, defeito 2). Agora grava o provado e recalcula o derivado: 100+200+300 = 600,
+# corrigindo o valor_total=0 que o seed deixou obsoleto.
+seed
+R=$(rpc "100, '[]'::jsonb, 590"); eq "A3 prova sem mudança de preço é aceita (0 itens atualizados)" "$R" "RPC_OK_0"
+eq "A3 itens intactos e valor_total REMANTIDO sobre todos eles" "$(estado 100)" "101:10/100,102:20/200,103:30/300|600"
+eq "A3 provado gravado mesmo sem item a atualizar" "$(provado 100)" "590|PROTO-100|com-ts"
 
 # N1 CP002 — PO Omie já existe: recusa e NÃO toca em nada.
 seed
@@ -155,6 +181,7 @@ R=$(rpc "999, '[{\"item_id\":1,\"preco_unitario\":1,\"valor_linha\":1}]'::jsonb,
 seed
 R=$(rpc "100, '[{\"item_id\":101,\"preco_unitario\":12.5,\"valor_linha\":125},{\"item_id\":401,\"preco_unitario\":5,\"valor_linha\":50}]'::jsonb, 175"); eq "N4 item de outro pedido → CP004" "$R" "RPC_ERR_CP004"
 eq "N4 ROLLBACK: item legítimo 101 e valor_total do 100 NÃO mudaram" "$(estado 100)" "$INTACTO_100"
+eq "N4 ROLLBACK: o provado do passo (1) também foi desfeito" "$(provado 100)" "$SEM_PROVA"
 eq "N4 item 401 (do pedido 400) intacto" "$(estado 400)" "401:10/100|0"
 
 # N5 CP004 — id inexistente.
@@ -165,9 +192,8 @@ eq "N5 nada gravado" "$(estado 100)" "$INTACTO_100"
 R=$(rpc "100, '[{\"item_id\":101,\"preco_unitario\":12.5,\"valor_linha\":125},{\"item_id\":101,\"preco_unitario\":13,\"valor_linha\":130}]'::jsonb, 255"); eq "N6 id repetido → CP004" "$R" "RPC_ERR_CP004"
 eq "N6 nada gravado" "$(estado 100)" "$INTACTO_100"
 
-# N7 CP001 — payload: vazio, não-array, preço 0, preço NaN, valor Infinity, total NaN, total Infinity, total 0, item_id não-inteiro.
+# N7 CP001 — payload: não-array, preço 0, preço NaN, valor Infinity, total NaN, total Infinity, total 0, item_id não-inteiro.
 for caso in \
-  "vazio|100, '[]'::jsonb, 10" \
   "nao_array|100, '{\"item_id\":101}'::jsonb, 10" \
   "preco_zero|100, '[{\"item_id\":101,\"preco_unitario\":0,\"valor_linha\":1}]'::jsonb, 10" \
   "preco_nan|100, '[{\"item_id\":101,\"preco_unitario\":\"NaN\",\"valor_linha\":1}]'::jsonb, 10" \
@@ -180,6 +206,17 @@ for caso in \
   R=$(rpc "$args"); eq "N7 payload $nome → CP001" "$R" "RPC_ERR_CP001"
 done
 eq "N7 nada gravado em nenhum caso" "$(estado 100)" "$INTACTO_100"
+
+# N8 CP005 — item sem valor_linha: o derivado é INDETERMINADO. `COALESCE(sum(...),0)` fabricaria
+# um total (o 502, de 100) e o gate de valor mínimo decidiria com ele. Fail-closed: nada gravado,
+# nem o provado — a prova do portal não vale mais que a integridade do número que o gate lê.
+seed
+R=$(rpc "500, '[]'::jsonb, 250"); eq "N8 item sem valor_linha → CP005" "$R" "RPC_ERR_CP005"
+eq "N8 ROLLBACK: nem o provado ficou" "$(provado 500)" "$SEM_PROVA"
+
+# N9 CP005 — pedido sem nenhum item: sum() de zero linhas é NULL, não 0.
+R=$(rpc "600, '[]'::jsonb, 250"); eq "N9 pedido sem itens → CP005" "$R" "RPC_ERR_CP005"
+eq "N9 nada gravado" "$(provado 600)" "$SEM_PROVA"
 
 # P1/P2 privilégio — anon e authenticated NÃO executam (42501 = insufficient_privilege, o fecho REAL).
 R=$(rpc "100, '$ITENS_100'::jsonb, 347.5" "SET ROLE authenticated;"); eq "P1 authenticated sem EXECUTE → 42501" "$R" "RPC_ERR_42501"
@@ -207,7 +244,9 @@ eq "C1 custo NÃO trocou depois de o PO existir" "$(estado 100)" "101:10/100,102
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): uma defesa por vez → exija VERMELHO → restaura com a migration REAL
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── falsificação ──"
-SAB="$(mktemp /tmp/sab-custo-cas.XXXXXX.sql)"
+# mktemp SEM sufixo após os X: o BSD (macOS) só substitui os X no FIM do template — com
+# `.XXXXXX.sql` ele cria o nome LITERAL e a 2ª execução na mesma máquina morre em "File exists".
+SAB="$(mktemp)"
 # sabota(<padrão sed>) — gera a migration FURADA a partir da real; aborta se o padrão não casou (no-op = teatro).
 sabota() {
   sed -e "$1" "$MIG" > "$SAB"
@@ -223,9 +262,9 @@ if [ "$R" = "RPC_OK_1" ]; then ok "F1 sem CAS de omie, o custo troca com PO exis
 restaura
 
 # F2 — sem a contagem ROW_COUNT == n: N4 tem de virar escrita PARCIAL persistida.
-sabota 's/IF v_afetadas <> v_n THEN/IF false THEN/'
+sabota 's/IF v_atualizados <> v_n THEN/IF false THEN/'
 R=$(rpc "100, '[{\"item_id\":101,\"preco_unitario\":12.5,\"valor_linha\":125},{\"item_id\":401,\"preco_unitario\":5,\"valor_linha\":50}]'::jsonb, 175")
-if [ "$R" = "RPC_OK_1" ] && [ "$(estado 100)" = "101:12.5/125,102:20/200,103:30/300|175" ]; then ok "F2 sem a contagem, custo MISTO persiste (N4 tem dente)"; else bad "F2 sabotei a contagem e N4 não mudou ($R / $(estado 100))"; fi
+if [ "$R" = "RPC_OK_1" ] && [ "$(estado 100)" = "101:12.5/125,102:20/200,103:30/300|625" ]; then ok "F2 sem a contagem, custo MISTO persiste (N4 tem dente)"; else bad "F2 sabotei a contagem e N4 não mudou ($R / $(estado 100))"; fi
 restaura
 
 # F3 — sem o CAS de status: N2 tem de passar.
@@ -260,6 +299,22 @@ restaura
 sabota 's/IF auth\.uid() IS NOT NULL$/IF false/'
 R=$(rpc "100, '$ITENS_100'::jsonb, 347.5" "SET test.uid='22222222-2222-2222-2222-222222222222';")
 if [ "$R" = "RPC_OK_2" ]; then ok "F7 sem gate de papel, customer com privilégio grava (P4 tem dente)"; else bad "F7 sabotei o gate e P4 não mudou ($R)"; fi
+restaura
+
+# F9 — sem o passo (3): o defeito que o Codex apontou no desenho ORIGINAL desta entrega. Trocar só
+# a coluna do passo (1) deixa `valor_total` descrevendo os preços de ANTES da prova. Com a sabotagem,
+# A1 fica verde-falso: itens somam 647,5 e o cabeçalho continua no 0 do seed.
+seed; sabota 's/UPDATE public\.pedido_compra_sugerido SET valor_total = v_derivado WHERE id = p_pedido_id;/PERFORM 1;/'
+R=$(rpc "100, '$ITENS_100'::jsonb, 347.5")
+if [ "$R" = "RPC_OK_2" ] && [ "$(estado 100)" = "101:12.5/125,102:22.25/222.5,103:30/300|0" ]; then ok "F9 sem o recálculo, valor_total fica OBSOLETO sobre itens novos (A1/A3 têm dente)"; else bad "F9 sabotei o recálculo e A1 não mudou ($R / $(estado 100))"; fi
+restaura
+
+# F10 — CP005 trocado por passa-tudo: o pedido 500 tem item SEM custo; sum() ignora NULL e o
+# cabeçalho recebe 100 — um total FABRICADO (o gate de mínimo leria 100 num pedido cujo valor real
+# é desconhecido). É a diferença entre "ausente" e "zero" (CLAUDE.md, money-path §2).
+seed; sabota 's/IF v_itens_total = 0 OR v_sem_custo > 0 THEN/IF false THEN/'
+R=$(rpc "500, '[]'::jsonb, 250"); VT500=$(Pq -c "SELECT valor_total FROM public.pedido_compra_sugerido WHERE id=500")
+if [ "$R" = "RPC_OK_0" ] && [ "$VT500" = "100" ]; then ok "F10 sem o CP005, item sem custo vira total fabricado (N8/N9 têm dente)"; else bad "F10 sabotei o CP005 e N8 não mudou ($R / vt=$VT500)"; fi
 restaura
 
 # Controle: a migration REAL re-aplicada continua verde no assert central (restaura não deixou sabotagem).

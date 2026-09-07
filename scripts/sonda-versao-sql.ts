@@ -392,21 +392,55 @@ function httpPost(ref: string, indent: string): string {
 }
 
 /**
+ * De onde o CTE `ids` da leitura tira o mapa `edge → request_id`.
+ *
+ * `eco` é o bloco standalone (`--so-leitura`): o `{}` fica como está e a linha se acha pelo eco do
+ * slug. `embutido` é o passo de leitura que o passo de DISPARO escreve por `format()` — o mapa já
+ * vem dentro, e nenhum identificador passa pela mão de ninguém. Os dois textos saem da MESMA
+ * função de propósito: duas cópias do veredito divergiriam, e a que o founder recebe é a embutida.
+ */
+type FonteDosIds =
+  | { readonly modo: 'eco' }
+  | { readonly modo: 'embutido'; readonly expr: string; readonly passoDisparo: number };
+
+const ECO: FonteDosIds = { modo: 'eco' };
+
+/**
+ * Marcador do lugar do mapa dentro do texto que vira argumento de `format()`.
+ *
+ * Existe para que o escape de `%` (obrigatório: `format()` lê `%` como diretiva) rode sobre o
+ * corpo INTEIRO antes de o placeholder entrar — na ordem inversa, o próprio `%1$L` viraria `%%1$L`
+ * e o mapa sairia literal no passo seguinte. Caractere de controle porque não aparece em SQL.
+ */
+export const SENTINELA_MAPA = '\u0001mapa\u0001';
+
+/** Tag do dollar-quoting que embrulha o passo de leitura dentro do `format()`. */
+const TAG_SONDA = '$sonda$';
+
+/**
  * Bloco de DISPARO — o único que precisa do founder: lê `vault.decrypted_secrets` e faz INSERT via
  * `net.http_post`, e o wrapper read-only recusa os dois (`permission denied for schema vault` e
  * `cannot execute INSERT in a read-only transaction`, provado 2026-08-30).
  *
- * O id e o nome da edge saem agregados na MESMA execução (`jsonb_object_agg`): é o que impede o
- * `request_id` de viajar sozinho e ser copiado para a linha da edge errada. Desde que a leitura
- * casa pelo ECO do slug, esse JSON deixou de ser INSUMO e virou ESCAPE: só quem cai em
- * INDETERMINADO por (c) — PRE-SENSOR ou recusa HTTP, que não ecoam — precisa dele.
+ * O id e o nome da edge saem agregados na MESMA execução (`jsonb_object_agg`), e desde 2026-09-06 o
+ * agregado não é mais ENTREGUE ao operador: ele é interpolado por `format()` no texto do passo
+ * seguinte, que sai pronto numa célula única. O que se copia é a célula, não o número — é a mesma
+ * correção que o bloco de UMA edge recebeu, pela mesma razão (docs/historico/sonda-request-id-a-mao.md):
+ * identificador transportado à mão troca o alvo em silêncio, e a resposta de cron que ele acerta por
+ * acidente tem exatamente a assinatura de "bundle velho".
+ *
+ * São DOIS blocos por imposição do pg_net, não por ergonomia: o `http_post` só ENFILEIRA, e o worker
+ * de fundo enxerga apenas linha COMMITADA — dentro do mesmo batch (o SQL Editor roda tudo como UMA
+ * transação) a requisição ainda não saiu. `pg_sleep`, temp table e `\gset` não contornam isso.
  */
 function blocoDisparo(
   ref: string,
   leva: EdgeSondada[],
-  passoLeitura: number,
+  passoDisparo: number,
+  janelaMin: number,
   comTrava = false,
 ): string {
+  const passoLeitura = passoDisparo + 1;
   const cabeca = comTrava
     ? `WITH guard(confirmei_o_deploy) AS (VALUES ('nao')),  -- ⬅️ 'nao' → 'sim' só DEPOIS do verde\n` +
       `alvos(edge) AS (VALUES\n${valuesAlvos(leva)}\n),\n`
@@ -422,10 +456,67 @@ function blocoDisparo(
     `disparos AS (\n` +
     `  SELECT a.edge,\n` +
     projecao +
+    `),\n` +
+    `mapa AS (\n` +
+    `  -- O par (edge, id) é agregado na MESMA execução que disparou: o request_id nunca existe\n` +
+    `  -- solto, e por isso não há como colá-lo na linha da edge errada.\n` +
+    `  SELECT jsonb_object_agg(edge, request_id)::text AS ids FROM disparos\n` +
     `)\n` +
-    `SELECT jsonb_object_agg(edge, request_id)::text AS ids_opcionais_passo_${passoLeitura}\n` +
-    `FROM disparos;\n`
+    `-- O PASSO ${passoLeitura} sai ESCRITO na célula abaixo, com o mapa já dentro. Copie a célula\n` +
+    `-- INTEIRA e rode/entregue como está: não há número a anotar nem campo a preencher.\n` +
+    `SELECT format(${TAG_SONDA}\n` +
+    corpoDoPassoDeLeitura(leva, janelaMin, passoDisparo) +
+    `${TAG_SONDA}, m.ids) AS passo_${passoLeitura}_copie_esta_celula\n` +
+    `FROM mapa m;\n`
   );
+}
+
+/**
+ * O texto do passo de leitura, pronto para virar o 1º argumento de `format()`.
+ *
+ * Duas conversões, nesta ordem, e a ordem é a correção: (1) todo `%` do corpo vira `%%`, senão
+ * `format()` o interpreta como diretiva e aborta ou corrompe o SQL emitido; (2) só então o
+ * sentinela vira `%1$L`, que interpola o mapa como LITERAL — `%L` cita e escapa sozinho, e devolve
+ * `NULL` sem aspas quando o agregado é nulo (trava fechada), o que o `jsonb_each_text` lê como
+ * zero pares, não como erro. O dollar-quoting é conferido antes: corpo que contenha a tag encerraria
+ * a string no meio e o passo seguinte sairia truncado — fail-CLOSED, com o nome do que colidiu.
+ */
+function corpoDoPassoDeLeitura(
+  leva: EdgeSondada[],
+  janelaMin: number,
+  passoDisparo: number,
+): string {
+  const passoLeitura = passoDisparo + 1;
+  const texto =
+    `-- PASSO ${passoLeitura} — lê e julga. O mapa edge→id já está EMBUTIDO aqui, escrito pelo passo\n` +
+    `--          ${passoDisparo}: nada a colar. Espere ~10s pela resposta HTTP. É SELECT puro —\n` +
+    `--          roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro\n` +
+    blocoLeitura(leva, janelaMin, {
+      modo: 'embutido',
+      expr: SENTINELA_MAPA,
+      passoDisparo,
+    });
+  return escaparParaFormat(texto);
+}
+
+/**
+ * Prepara um texto para virar o 1º argumento de `format()`: escapa `%` e planta o `%1$L`.
+ *
+ * Exportada porque é AQUI que as duas armadilhas do `format()` moram, e nenhuma delas aparece no
+ * SQL emitido hoje (o corpo atual não tem `%` nem `$`): sem um teste direto, as duas ficariam
+ * cobertas por acidente do corpus — verdes até o dia em que alguém escrever um `%` num comentário.
+ */
+export function escaparParaFormat(texto: string): string {
+  if (texto.includes(TAG_SONDA)) {
+    throw new Error(
+      `o texto contém a tag de dollar-quoting ${TAG_SONDA} e sairia TRUNCADO dentro do ` +
+        '`format()` — o passo seguinte seria emitido pela metade e ninguém veria. Troque a ' +
+        'TAG_SONDA por uma que não apareça no corpo. Nenhum SQL foi emitido.',
+    );
+  }
+  // A ordem é a correção: escapar DEPOIS de plantar o placeholder transformaria `%1$L` em `%%1$L`,
+  // e o mapa sairia literal — o passo seguinte leria a string "%1$L" como se fosse o JSON.
+  return texto.replaceAll('%', '%%').replaceAll(SENTINELA_MAPA, () => '%1$L');
 }
 
 /**
@@ -525,7 +616,46 @@ const PISO_CONTROLE_CREDENCIAL = 10;
  * colagem é o que UPGRADE um 401 ambíguo a veredito determinado, exatamente como é a saída da
  * causa (c). É por isso que ela sobrevive: deixou de ser INSUMO e virou ESCAPE, nos dois casos.
  */
-function blocoLeitura(leva: EdgeSondada[], janelaMin: number): string {
+function blocoLeitura(leva: EdgeSondada[], janelaMin: number, ids: FonteDosIds = ECO): string {
+  const embutido = ids.modo === 'embutido';
+  const exprIds = embutido ? `${ids.expr}::jsonb` : `'{}'::jsonb`;
+  const passoDisparo = ids.modo === 'embutido' ? ids.passoDisparo : null;
+  const comentarioIds = embutido
+    ? `  -- EMBUTIDO pelo passo ${passoDisparo} — o mapa \`edge → request_id\` foi escrito pelo próprio banco\n` +
+      `  -- no disparo (format()), então aqui não há nada a colar nem a redigitar. É ele que separa a\n` +
+      `  -- causa (c) do INDETERMINADO: PRE-SENSOR e recusa HTTP respondem SEM eco do slug, mas TÊM id.\n`
+    : `  -- OPCIONAL — deixe o {} como está. O eco do slug acha a linha sozinho; colar aqui o JSON do\n` +
+      `  -- disparo só serve para separar a causa (c) do INDETERMINADO (PRE-SENSOR / recusa HTTP).\n`;
+  const comentarioControle = embutido
+    ? `    -- ⚠️ Com o mapa EMBUTIDO o \`ids\` nunca está vazio, e é isso que faz esta exclusão valer: o\n` +
+      `    --    401 desta leva não entra na contagem de recusas contra si mesmo, e o veredito do 401\n` +
+      `    --    pode sair DETERMINADO — o que com o \`ids\` vazio era impossível.\n`
+    : `    -- ⚠️ Com o \`ids\` VAZIO (o padrão desde que a leitura acha pelo eco), esta exclusão não\n` +
+      `    --    exclui nada: um 401 desta leva conta como recusa e o controle se auto-desqualifica.\n` +
+      `    --    É fail-CLOSED — vira INDETERMINADO, nunca veredito confiante. Para DETERMINAR um\n` +
+      `    --    401, cole o JSON do disparo no \`ids\` acima.\n`;
+  const semId = embutido
+    ? `'INDETERMINADO — esta edge não tem request_id no mapa embutido NEM eco de sonda na janela ` +
+      `de ${janelaMin} min. Isto é ausência de dado, não veredito negativo: ou a trava do passo ` +
+      `${passoDisparo} ficou FECHADA e nada foi disparado, ou a célula veio de OUTRA leva — confira ` +
+      `se os nomes das edges batem'`
+    : `'INDETERMINADO — nenhuma resposta de sonda desta edge na janela de ${janelaMin} min. Isto ` +
+      `é ausência de dado, não veredito negativo: pode ser (a) o disparo não ter rodado, (b) a ` +
+      `resposta ainda a caminho (leva ~10s) — rode este passo de novo, ou (c) bundle PRE-SENSOR / ` +
+      `recusa HTTP, que responde SEM eco do slug e é invisível aqui; para separar (c), cole o ` +
+      `request_id do disparo no ids acima'`;
+  const aguarde = embutido
+    ? `'AGUARDE — o request_id embutido pelo passo ${passoDisparo} ainda não tem resposta HTTP ` +
+      `(leva ~10s); rode este passo de novo'`
+    : `'AGUARDE — o request_id colado ainda não tem resposta HTTP (leva ~10s); rode este passo de novo'`;
+  const textoIdDeOutraExecucao = embutido
+    ? `'O mapa veio embutido, logo o id e do disparo desta celula: ou a celula e de OUTRA leva/sessao, ou esta edge respondeu o fluxo real.'`
+    : `'O id colado no ids aponta para outra execucao — foi ele que trocou o alvo.'`;
+  const sufixo401 = embutido
+    ? `                'O mapa embutido ja exclui esta leva do controle, entao o que falta e ' ||\n` +
+      `                'TRAFEGO de fundo: 2xx fora da leva abaixo do piso de ${PISO_CONTROLE_CREDENCIAL} em 6h'\n`
+    : `                'Se o ids acima estiver vazio, o 401 DESTA leva conta como recusa e desqualifica ' ||\n` +
+      `                'o controle: cole o JSON do disparo no ids para DETERMINAR este veredito'\n`;
   return (
     `WITH esperado(edge, versao_esperada, fonte_esperada) AS (VALUES\n${valuesEsperado(leva)}\n),\n` +
     `recentes AS (\n` +
@@ -540,10 +670,9 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number): string {
     `    AND left(ltrim(r.content), 1) = '{'\n` +
     `),\n` +
     `ids AS (\n` +
-    `  -- OPCIONAL — deixe o {} como está. O eco do slug acha a linha sozinho; colar aqui o JSON do\n` +
-    `  -- disparo só serve para separar a causa (c) do INDETERMINADO (PRE-SENSOR / recusa HTTP).\n` +
+    comentarioIds +
     `  SELECT chave AS edge, valor::bigint AS request_id\n` +
-    `  FROM jsonb_each_text('{}'::jsonb) AS t(chave, valor)\n` +
+    `  FROM jsonb_each_text(${exprIds}) AS t(chave, valor)\n` +
     `),\n` +
     `controle_credencial AS (\n` +
     `  -- Controle de CREDENCIAL: o 401 acima é ambíguo (bundle velho × CRON_SECRET inválido) e só\n` +
@@ -559,10 +688,7 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number): string {
     `    -- contagem de recusas e o controle se auto-envenena (nenhum 401 seria explicável nunca).\n` +
     `    -- NOT EXISTS, não NOT IN: a trava fechada do bloco caro devolve request_id NULL, e\n` +
     `    -- \`NOT IN\` com NULL é NULL-blind — zeraria o controle inteiro em silêncio.\n` +
-    `    -- ⚠️ Com o \`ids\` VAZIO (o padrão desde que a leitura acha pelo eco), esta exclusão não\n` +
-    `    --    exclui nada: um 401 desta leva conta como recusa e o controle se auto-desqualifica.\n` +
-    `    --    É fail-CLOSED — vira INDETERMINADO, nunca veredito confiante. Para DETERMINAR um\n` +
-    `    --    401, cole o JSON do disparo no \`ids\` acima.\n` +
+    comentarioControle +
     `    AND NOT EXISTS (SELECT 1 FROM ids i2 WHERE i2.request_id = r.id)\n` +
     `    -- ⚠️ O que este controle NAO fecha: CRON_SECRET trocado ha poucos minutos E nenhum\n` +
     `    --    cron rodado desde a troca — o trafego 2xx da janela usou o secret ANTIGO e\n` +
@@ -599,13 +725,9 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number): string {
     `       l.corpo ->> 'fonte'  AS fonte_respondida,\n` +
     `       CASE\n` +
     `         WHEN l.request_id IS NULL\n` +
-    `           THEN 'INDETERMINADO — nenhuma resposta de sonda desta edge na janela de ` +
-    `${janelaMin} min. Isto é ausência de dado, não veredito negativo: pode ser (a) o disparo não ` +
-    `ter rodado, (b) a resposta ainda a caminho (leva ~10s) — rode este passo de novo, ou (c) ` +
-    `bundle PRE-SENSOR / recusa HTTP, que responde SEM eco do slug e é invisível aqui; para ` +
-    `separar (c), cole o request_id do disparo no ids acima'\n` +
+    `           THEN ` + semId + `\n` +
     `         WHEN l.status_code IS NULL\n` +
-    `           THEN 'AGUARDE — o request_id colado ainda não tem resposta HTTP (leva ~10s); rode este passo de novo'\n` +
+    `           THEN ` + aguarde + `\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code = 401\n` +
     `              AND c.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL} AND c.recusas_recentes = 0\n` +
     `           THEN 'BUNDLE VELHO (pre-sonda) — 401, e o CRON_SECRET esta PROVADO bom agora (' ||\n` +
@@ -616,12 +738,23 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number): string {
     `                'controle de credencial NAO foi observado (2xx fora da leva em 6h: ' ||\n` +
     `                c.ok_recentes || ', recusas 401: ' || c.recusas_recentes || '). Confira o ' ||\n` +
     `                'CRON_SECRET no vault ANTES de redeployar — nao ha prova de bundle velho aqui. ' ||\n` +
-    `                'Se o ids acima estiver vazio, o 401 DESTA leva conta como recusa e desqualifica ' ||\n` +
-    `                'o controle: cole o JSON do disparo no ids para DETERMINAR este veredito'\n` +
+    sufixo401 +
     `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code >= 400\n` +
     `           THEN 'BUNDLE VELHO — recusou o request (HTTP ' || l.status_code || '), NADA executou'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL\n` +
     `           THEN 'PRE-SENSOR — HTTP 200 sem versao: ignorou o probe e RODOU O FLUXO REAL'\n` +
+    // Ramo do id que aponta para uma resposta que NAO e da sonda. So o caminho dos `ids` chega
+    // aqui — o LATERAL do eco ja exige `probe = 'true'` —, e sem este ramo a linha cai no ELSE e
+    // sai 'BUNDLE VELHO' citando a versao CERTA: o falso NEGATIVO que esta secao documenta na
+    // armadilha do casamento so-por-slug. Medido em prod 2026-09-06 apontando o mapa para a
+    // resposta 71275 (cron da analytics-outbox-drain, que ecoa edge/versao/fonte e nao ecoa probe).
+    // Vem ANTES do `? 'fonte'`: cron que ecoa versao sem fonte sairia como PRE_SONDA_FONTE, que
+    // nomeia bundle anterior ao #1998 — causa errada, mesma classe.
+    `         WHEN l.corpo ->> 'probe' IS DISTINCT FROM 'true'\n` +
+    `           THEN 'NAO E RESPOSTA DE SONDA — o corpo tem versao mas NAO tem probe:true, entao ' ||\n` +
+    `                'e a execucao REAL desta edge (cron), nao a sonda: nao ha veredito de deploy ' ||\n` +
+    `                'aqui. ' || ${textoIdDeOutraExecucao} || ' Respondeu versao=' ||\n` +
+    `                COALESCE(l.corpo ->> 'versao', '?') || ' (esperado ' || l.versao_esperada || ')'\n` +
     `         WHEN NOT (l.corpo ? 'fonte')\n` +
     `           THEN 'PRE_SONDA_FONTE — respondeu a sonda (200 + probe) e o corpo NAO TEM o campo ' ||\n` +
     `                'fonte: o bundle no ar e ANTERIOR ao #1998, que criou o campo. E deploy ANTIGO ' ||\n` +
@@ -698,14 +831,17 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
       partes.push(
         `-- PASSO 1 — dispara as ${leva.length} edge(s) baratas da leva. É o bloco do FOUNDER: lê o\n` +
           `--          vault e faz INSERT, e o wrapper read-only recusa os dois.\n` +
-          blocoDisparo(ref, leva, 2),
+          `-- Ele DEVOLVE o passo 2 já escrito, com o mapa edge→id dentro: copie a célula inteira.\n` +
+          blocoDisparo(ref, leva, 1, janelaMin),
       );
     }
     if (querLeitura) {
       partes.push(
-        `-- PASSO 2 — lê e julga. NÃO precisa colar nada: a resposta da sonda ecoa o próprio slug,\n` +
-          `--          e o bloco a encontra na janela de ${janelaMin} min. É SELECT puro — roda no\n` +
-          `--          read-only: bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro\n` +
+        `-- PASSO 2 — lê e julga SEM mapa nenhum: a resposta da sonda ecoa o próprio slug, e o bloco\n` +
+          `--          a encontra na janela de ${janelaMin} min. É SELECT puro — roda no read-only:\n` +
+          `--          bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro\n` +
+          `-- ⚠️ Esta é a versão do ECO. A que o passo 1 devolve é ESTRITAMENTE melhor: com o mapa\n` +
+          `--    embutido, PRE-SENSOR e recusa HTTP (que não ecoam) saem determinados, e o 401 também.\n` +
           blocoLeitura(leva, janelaMin),
       );
     }
@@ -723,8 +859,10 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
           `--    docs/agent/deploy.md §"Sondar VÁRIAS edges numa tacada"). E NÃO valide um filtro numa\n` +
           `--    consulta simples para se convencer: lá ele filtra antes e PARECE proteger; é nesta\n` +
           `--    forma, agregada, que ele falha. Trava fechada devolve {"edge": null} e NADA sai —\n` +
-          `--    o passo seguinte não acha eco na janela e responde INDETERMINADO.\n` +
-          blocoDisparo(ref, leva, 4, true),
+          `--    o passo seguinte não acha eco na janela, e o mapa que ele recebe embutido vem com\n` +
+          `--    id nulo — as duas coisas dizem INDETERMINADO, que é o honesto: nada foi disparado.\n` +
+          `-- Ele também DEVOLVE o passo 4 já escrito, com o mapa dentro: copie a célula inteira.\n` +
+          blocoDisparo(ref, leva, 3, janelaMin, true),
       );
     }
     if (querLeitura) {
