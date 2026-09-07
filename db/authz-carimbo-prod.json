@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-07T19:49:26.480Z",
-  "sourceHead": "f4157a592d23dd57443d47f0c94ae437b933aa23",
+  "medidoEm": "2026-09-07T20:22:16.383Z",
+  "sourceHead": "f724073f189f391fb85b2a647ff92528074f40e5",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -29,19 +29,12 @@
     },
     "audit": {
       "script": "authz:audit:prod",
-      "exit": 1,
-      "resumo": "authz:audit:prod — 1 divergência(s).",
+      "exit": 0,
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 1 reescritas baselinadas batem no md5 de prod.",
       "denominador": "🔎 authz:audit:prod — 24 definição(ões) lida(s) para 23 chave(s) do manifest.",
-      "contratoFingerprint": "ed2a339e3e6509a01d4572607d8fd0946ee8e757c6abe1445a8c4900c089708d",
+      "contratoFingerprint": "8f1d9f39d6dce5925a10cb88bb1205c27093b051114367d23e8797e147171ab3",
       "auditorFingerprint": "0866cf4f10a49635c4ed8590c7ed4861b254c4b75cc4e58ca1cdb15b038993c1",
-      "achados": [
-        {
-          "id": "257297e1a0831e90",
-          "linha": "❌ MD5_DIVERGIU: public.get_defasagem_cliente (20260718190000_authz_capability_matrix_e2.sql): esperado 037ede84a229d5798214511433afb65d, prod tem 7856c3052596d66a6f5ac8eb0a06c1c0",
-          "primeiraVez": "2026-09-06",
-          "ultimaVez": "2026-09-07"
-        }
-      ]
+      "achados": []
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
