@@ -37,13 +37,6 @@ export type SitioColapso = {
   colapsos: { forma: FormaDeColapso; linha: number }[];
 };
 
-const identsDe = (no: ts.Node): Set<string> => {
-  const s = new Set<string>();
-  const v = (n: ts.Node) => { if (ts.isIdentifier(n)) s.add(n.text); ts.forEachChild(n, v); };
-  v(no);
-  return s;
-};
-
 const ehSilencio = (e: ts.Expression | undefined): boolean =>
   !e || e.kind === ts.SyntaxKind.NullKeyword
   || (ts.isIdentifier(e) && e.text === "undefined")
@@ -84,6 +77,115 @@ const funcaoDona = (n: ts.Node): ts.Node | undefined => {
  * seguido de `if (!check) return null` foi exatamente como o DataHealthBanner escapou da
  * primeira versão desta varredura.
  */
+/**
+ * O que a chamada do hook LIGOU no componente — a mesma pergunta em duas formas de escrita.
+ *
+ * DIRETA: `const { data: x, error } = useQuery(...)` — as chaves estão na desestruturação.
+ * POR ALIAS: `const q = useQuery(...)` e, adiante, `q.data` ou `const { data: x } = q` — as
+ * mesmas chaves, uma indireção depois.
+ *
+ * A forma por alias NÃO é refinamento cosmético: sem ela o gate é BURLÁVEL por refactor
+ * puro. Mover a desestruturação para o statement seguinte fazia o sítio sumir da contagem
+ * com a linha de silêncio intacta — e o delta na baseline (2→1) era IDÊNTICO ao do conserto
+ * legítimo (desestruturar `status`), então o gate aprovava a cegueira e o conserto pelo
+ * mesmo número. Medido em 2026-09-06 no #2283, registrado em
+ * docs/historico/a-forma-que-some-e-a-forma-que-mente.md.
+ */
+type Ligacao = {
+  /** nome legível do data para quem investiga: `pedidos` ou `q.data`. */
+  aliasData: string;
+  padraoDefault: string | null;
+  /** identificadores que JÁ carregam o data — raiz do ponto fixo das derivadas. */
+  raizes: string[];
+  /** alias do hook quando o data é lido como `q.data`; null na forma direta. */
+  aliasHook: string | null;
+};
+
+const ligacaoDireta = (bind: ts.ObjectBindingPattern, sf: ts.SourceFile): Ligacao | null => {
+  let aliasData: string | null = null;
+  let padraoDefault: string | null = null;
+  let temErro = false;
+  let temRest = false;
+  for (const el of bind.elements) {
+    if (el.dotDotDotToken) { temRest = true; continue; }
+    const prop = el.propertyName ? el.propertyName.getText(sf) : el.name.getText(sf);
+    if (CHAVES_DE_ERRO.has(prop)) temErro = true;
+    if (prop === "data") {
+      aliasData = el.name.getText(sf);
+      padraoDefault = el.initializer ? el.initializer.getText(sf) : null;
+    }
+  }
+  // `...rest` pode carregar o `error`; não dá para afirmar o colapso — precisão > recall.
+  if (!aliasData || temErro || temRest) return null;
+  return { aliasData, padraoDefault, raizes: [aliasData], aliasHook: null };
+};
+
+/**
+ * Enumera as chaves que o escopo lê DO ALIAS. As três regras da forma direta valem inteiras:
+ * sem `data` não há colapso a afirmar; qualquer chave de `CHAVES_DE_ERRO` (inclusive lida
+ * como `q.status`) prova acesso ao estado de falha e ABSOLVE o sítio; e o análogo do
+ * `...rest` — passar `q` adiante em vez de ler chave dele — torna as chaves não-enumeráveis
+ * aqui e também absolve, porque precisão > recall é o que mantém a baseline confiável.
+ */
+const ligacaoPorAlias = (alias: string, escopo: ts.Node, sf: ts.SourceFile): Ligacao | null => {
+  let leData = false;
+  let temErro = false;
+  let opaco = false;
+  let padraoDefault: string | null = null;
+  const raizes: string[] = [];
+  const anota = (prop: string) => {
+    if (CHAVES_DE_ERRO.has(prop)) temErro = true;
+    if (prop === "data") leData = true;
+  };
+  const v = (n: ts.Node): void => {
+    if (ts.isIdentifier(n) && n.text === alias) {
+      const p: ts.Node | undefined = n.parent;
+      // `q.data`, `q.error`, `q?.status`
+      if (p && ts.isPropertyAccessExpression(p) && p.expression === n) { anota(p.name.text); return; }
+      if (p && ts.isVariableDeclaration(p)) {
+        if (p.name === n) return;                       // a própria `const q = useQuery(...)`
+        if (p.initializer === n && ts.isObjectBindingPattern(p.name)) {
+          for (const el of p.name.elements) {           // `const { data: pedidos, error } = q`
+            if (el.dotDotDotToken) { opaco = true; continue; }
+            const prop = el.propertyName ? el.propertyName.getText(sf) : el.name.getText(sf);
+            anota(prop);
+            if (prop === "data") {
+              raizes.push(el.name.getText(sf));
+              if (el.initializer) padraoDefault = el.initializer.getText(sf);
+            }
+          }
+          return;
+        }
+      }
+      opaco = true;   // `<X q={q}/>`, `f(q)`, `{...q}`, `q["data"]` — chaves não enumeráveis
+      return;
+    }
+    ts.forEachChild(n, v);
+  };
+  v(escopo);
+  if (!leData || temErro || opaco) return null;
+  return { aliasData: raizes[0] ?? `${alias}.data`, padraoDefault, raizes, aliasHook: alias };
+};
+
+/**
+ * `const outraQ = useQuery({ queryKey: [q.data] })` NÃO é derivada do data: é OUTRA FONTE,
+ * com error próprio. Propagar tainting por ela contamina tudo que só toca o ESTADO dela
+ * (`outraQ.isLoading`) e faz o gate contar guarda de CARREGAMENTO como colapso de leitura —
+ * medido em `useExcecoesGestor.ts`, onde `if (isLoading) return null` dentro de um `useMemo`
+ * virava 4 sítios por colisão de NOME (o `const { data } = await supabase` de cada `queryFn`
+ * colide com o `data` marcado). Baseline que cresce por motivo benigno é como um gate morre.
+ *
+ * `useMemo`/`useCallback` ficam de FORA da exclusão porque são o veículo canônico da
+ * derivada — `const check = useMemo(() => q.data?.find(...), [q.data])` é exatamente o
+ * caminho pelo qual o DataHealthBanner escapou da primeira versão desta varredura.
+ */
+const DERIVA = new Set(["useMemo", "useCallback"]);
+const ehOutraFonte = (e: ts.Expression): boolean => {
+  const c = ts.isAwaitExpression(e) ? e.expression : e;
+  return ts.isCallExpression(c) && ts.isIdentifier(c.expression)
+    && /^use[A-Z]/.test(c.expression.text) && !DERIVA.has(c.expression.text);
+};
+
 export function acharColapsos(conteudo: string, nomeArquivo: string): SitioColapso[] {
   const sf = ts.createSourceFile(
     nomeArquivo, conteudo, ts.ScriptTarget.Latest, /* setParentNodes */ true,
@@ -93,30 +195,39 @@ export function acharColapsos(conteudo: string, nomeArquivo: string): SitioColap
   const linhaDe = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
 
   const visita = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer) {
+    if (ts.isVariableDeclaration(node) && node.initializer
+        && (ts.isObjectBindingPattern(node.name) || ts.isIdentifier(node.name))) {
       const chamada = ts.isAwaitExpression(node.initializer) ? node.initializer.expression : node.initializer;
       if (ts.isCallExpression(chamada) && ts.isIdentifier(chamada.expression) && /^use[A-Z]/.test(chamada.expression.text)) {
-        let aliasData: string | null = null;
-        let padraoDefault: string | null = null;
-        let temErro = false;
-        let temRest = false;
-        for (const el of node.name.elements) {
-          if (el.dotDotDotToken) { temRest = true; continue; }
-          const prop = el.propertyName ? el.propertyName.getText(sf) : el.name.getText(sf);
-          if (CHAVES_DE_ERRO.has(prop)) temErro = true;
-          if (prop === "data") {
-            aliasData = el.name.getText(sf);
-            padraoDefault = el.initializer ? el.initializer.getText(sf) : null;
-          }
-        }
-        // `...rest` pode carregar o `error`; não dá para afirmar o colapso — precisão > recall.
-        if (aliasData && !temErro && !temRest) {
-          const escopo = funcaoDona(node) ?? sf;
+        const escopo = funcaoDona(node) ?? sf;
+        const lig = ts.isObjectBindingPattern(node.name)
+          ? ligacaoDireta(node.name, sf)
+          : ligacaoPorAlias((node.name as ts.Identifier).text, escopo, sf);
+        if (lig) {
+          const marcados = new Set(lig.raizes);
+          /**
+           * A raiz do tainting tem DUAS formas: o identificador que carrega o data e — na
+           * forma por alias sem desestruturação — o acesso `q.data`, que não é identificador
+           * nenhum. Uma varredura só de identificadores não vê a segunda e devolve o mesmo
+           * falso "consertado" que este endurecimento existe para fechar.
+           */
+          const contemRaiz = (no: ts.Node): boolean => {
+            let achou = false;
+            const v = (n: ts.Node) => {
+              if (achou) return;
+              if (lig.aliasHook && ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression)
+                  && n.expression.text === lig.aliasHook && n.name.text === "data") { achou = true; return; }
+              if (ts.isIdentifier(n) && marcados.has(n.text)) { achou = true; return; }
+              ts.forEachChild(n, v);
+            };
+            v(no);
+            return achou;
+          };
 
-          const marcados = new Set([aliasData]);
           const declaracoes: ts.VariableDeclaration[] = [];
           const coleta = (n: ts.Node) => {
-            if (ts.isVariableDeclaration(n) && n.initializer && ts.isIdentifier(n.name)) declaracoes.push(n);
+            if (ts.isVariableDeclaration(n) && n.initializer && ts.isIdentifier(n.name)
+                && !ehOutraFonte(n.initializer)) declaracoes.push(n);
             ts.forEachChild(n, coleta);
           };
           coleta(escopo);
@@ -124,13 +235,11 @@ export function acharColapsos(conteudo: string, nomeArquivo: string): SitioColap
             let mudou = false;
             for (const d of declaracoes) {
               if (marcados.has((d.name as ts.Identifier).text)) continue;
-              for (const id of identsDe(d.initializer!)) {
-                if (marcados.has(id)) { marcados.add((d.name as ts.Identifier).text); mudou = true; break; }
-              }
+              if (contemRaiz(d.initializer!)) { marcados.add((d.name as ts.Identifier).text); mudou = true; }
             }
             if (!mudou) break;
           }
-          const toca = (no: ts.Node) => [...identsDe(no)].some((id) => marcados.has(id));
+          const toca = contemRaiz;
 
           const colapsos: SitioColapso["colapsos"] = [];
           const busca = (n: ts.Node): void => {
@@ -167,8 +276,8 @@ export function acharColapsos(conteudo: string, nomeArquivo: string): SitioColap
           };
           busca(escopo);
 
-          if (colapsos.length || padraoDefault) {
-            sitios.push({ hook: chamada.expression.text, aliasData, linha: linhaDe(node), padraoDefault, colapsos });
+          if (colapsos.length || lig.padraoDefault) {
+            sitios.push({ hook: chamada.expression.text, aliasData: lig.aliasData, linha: linhaDe(node), padraoDefault: lig.padraoDefault, colapsos });
           }
         }
       }

@@ -91,16 +91,38 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // um silêncio por um alarme FABRICADO para todo staff não-gestor. O gate de acesso foi
 // para o `enabled` do hook, onde a negativa vira `desabilitada` — estado que `naoConsegui`
 // exclui de propósito — em vez de virar aviso.
+//
+// CRESCEU EM 2026-09-07 (+7 arquivos, +8 sítios) e o crescimento é ACHADO, não regressão: o
+// detector passou a seguir o resultado do hook por UMA indireção (`const q = useQuery(...)` e,
+// adiante, `q.data` ou `const { data } = q`). Antes disso a forma por alias era INVISÍVEL — e o
+// buraco não era teórico: mover a desestruturação para o statement seguinte derrubava a
+// contagem com a linha de silêncio INTACTA, produzindo o MESMO delta do conserto legítimo. O
+// gate aprovava a cegueira e o conserto pelo mesmo número
+// (docs/historico/a-forma-que-some-e-a-forma-que-mente.md; medido no #2283).
+//
+// Denominador da fatia, medido ANTES de mexer: 1.266 declarações `const x = use…()` sem
+// desestruturação, 123 lendo `x.data`, 100 sem NENHUMA chave de `CHAVES_DE_ERRO`. Não era ~0 —
+// por isso endurecer ganhou de só registrar a limitação.
+//
+// LEIA ANTES DE QUITAR UM DESTES: nem todo sítio novo é auto-ocultação de COMPONENTE.
+// `ApprovalQueueSection` e `PosicaoAtualTab` apagam ou mentem na tela; `RadarMapa`,
+// `useSinalPositivacao` e o `handleExtrair` da fila são `return` PELADO dentro de effect ou
+// handler — que o detector conta como silêncio desde 2026-08-22, semântica pré-existente e não
+// classe nova. São a classe MEDIDA, não sítios aprovados.
 const BASELINE = new Map<string, number>([
   ["src/components/adminPrime/PrimePlanosTab.tsx", 1],
   ["src/components/customerDashboard/RecomendacoesCliente.tsx", 1],
   ["src/components/dashboard/FollowupsSugeridosCard.tsx", 1],
   ["src/components/dashboard/GestorExcecoes.tsx", 1],
+  ["src/components/des/checkinQualitativo/useCheckinQualitativo.ts", 1],
+  ["src/components/des/simulador/useSimuladorData.ts", 2],
   ["src/components/farmer/ChamadasPendentesNudge.tsx", 1],
   ["src/components/farmer/copilot/OfertaCruaCard.tsx", 1],
   ["src/components/financeiro/cashflow/EventosOnboarding.tsx", 1],
+  ["src/components/knowledge-base/ApprovalQueueSection.tsx", 1],
   ["src/components/knowledge-base/RendimentoCalculator.tsx", 1],
   ["src/components/knowledge-base/VersionHistory.tsx", 1],
+  ["src/components/radar/RadarMapa.tsx", 1],
   ["src/components/reposicao/aplicacao/useAplicacaoFila.ts", 2],
   ["src/components/reposicao/cadeiaLogistica/useCadeiaLogistica.ts", 1],
   ["src/components/reposicao/pedidos/useDetalhesModal.ts", 1],
@@ -109,7 +131,10 @@ const BASELINE = new Map<string, number>([
   ["src/components/tarefas/MinhasTarefasCard.tsx", 1],
   ["src/components/tarefas/RecorrentesHojeCard.tsx", 1],
   ["src/components/tintColorSelect/useTintColorSelect.ts", 1],
+  ["src/components/unified-order/ExcecaoCreditoDialog.tsx", 1],
   ["src/components/whatsapp/SlaCardMeuDia.tsx", 1],
+  ["src/hooks/useReposicaoSessao.ts", 1],
+  ["src/hooks/useSinalPositivacao.ts", 1],
   ["src/hooks/useUnifiedOrder.ts", 2],
   ["src/pages/AdminReposicaoAlertas.tsx", 1],
   // 2→1 (fatia #2 do inventário `{data && <X/>}`, 2026-09-06): a query do CICLO passou a
@@ -165,7 +190,14 @@ const BASELINE = new Map<string, number>([
 // colapso é afirmativo = 0 (o único candidato, `Training.tsx:150`, tem ramo `null` — é
 // `ternario-null`, JÁ na baseline de cima; contá-lo aqui seria contar o mesmo sítio duas
 // vezes). O critério estrito não esconde fatia nenhuma.
+//
+// CRESCEU EM 2026-09-07 (+2) pelo MESMO endurecimento da baseline de cima — a forma por alias
+// passou a ser visível. `PosicaoAtualTab` diz "Nenhum dado disponível para <empresa> ·
+// T<trimestre>/<ano>" e `ApprovalQueueSection` acende o ✓ VERDE com "Nada pra aprovar" — as
+// duas afirmam com especificidade o que a leitura falhada não sabe.
 const BASELINE_AFIRMATIVO = new Map<string, number>([
+  ["src/components/des/PosicaoAtualTab.tsx", 1],
+  ["src/components/knowledge-base/ApprovalQueueSection.tsx", 1],
   // Resíduo MEDIDO, não fix pela metade: a leitura de `user_tools` já ramifica
   // (`estadoDeRegistro`), mas o guard é `!tool || !healthMetrics` e `healthMetrics` deriva
   // de `useToolEvents` — a query IRMÃ, que ainda engole o erro no default `= []` do binding.
@@ -472,6 +504,113 @@ describe('gate: erro colapsado em vazio', () => {
       }`;
     expect(contarAutoOcultacao(soNull, 'Card.tsx')).toBe(1);
     expect(contarRetornoAfirmativo(soNull, 'Card.tsx'), 'auto-ocultação vazou para a baseline afirmativa').toBe(0);
+  });
+
+  // ── A INDIREÇÃO DO ALIAS (2026-09-07) ───────────────────────────────────────────────
+  // O buraco medido no #2283: o detector só reconhecia o sítio quando a desestruturação
+  // acontecia NA PRÓPRIA CHAMADA. Mover para o statement seguinte fazia a contagem CAIR com
+  // a linha de silêncio intacta — e o delta era IDÊNTICO ao do conserto legítimo, então a
+  // baseline aprovava a cegueira e o conserto pelo mesmo número.
+  const SILENCIO = 'if (!pedidos) return null;';
+
+  it('refactor SEM desestruturação não derruba a contagem — o buraco do #2283', () => {
+    const direto = `
+      export function Painel() {
+        const { data: pedidos } = usePedidos();
+        ${SILENCIO}
+        return <div>{pedidos.length}</div>;
+      }`;
+    const porAlias = `
+      export function Painel() {
+        const q = usePedidos();
+        const { data: pedidos } = q;
+        ${SILENCIO}
+        return <div>{pedidos.length}</div>;
+      }`;
+    const semDesestruturar = `
+      export function Painel() {
+        const q = usePedidos();
+        if (!q.data) return null;
+        return <div>{q.data.length}</div>;
+      }`;
+
+    expect(contarAutoOcultacao(direto, 'Painel.tsx'), 'controle: a forma direta precisa contar 1').toBe(1);
+    expect(
+      contarAutoOcultacao(porAlias, 'Painel.tsx'),
+      'mover a desestruturação para o statement seguinte NÃO pode zerar o sítio — a linha de ' +
+      'silêncio continua lá, e o gate estaria aprovando cegueira com o delta do conserto',
+    ).toBe(1);
+    expect(
+      contarAutoOcultacao(semDesestruturar, 'Painel.tsx'),
+      'ler `q.data` direto, sem desestruturar em lugar nenhum, é o mesmo sítio',
+    ).toBe(1);
+  });
+
+  it('a regra de CHAVES_DE_ERRO vale pelo alias: ler `q.error`/`q.status` ABSOLVE', () => {
+    const porPropriedade = `
+      export function Painel() {
+        const q = usePedidos();
+        if (q.error) return <Erro/>;
+        if (!q.data) return null;
+        return <div>{q.data.length}</div>;
+      }`;
+    const porDesestruturacao = `
+      export function Painel() {
+        const q = usePedidos();
+        const { data: pedidos, status } = q;
+        ${SILENCIO}
+        return <div>{pedidos.length}</div>;
+      }`;
+    expect(contarAutoOcultacao(porPropriedade, 'Painel.tsx'), '`q.error` prova acesso ao estado de falha').toBe(0);
+    expect(contarAutoOcultacao(porDesestruturacao, 'Painel.tsx'), '`status` está em CHAVES_DE_ERRO — absolve igual').toBe(0);
+  });
+
+  it('o análogo do `...rest` pelo alias: passar `q` adiante não afirma o colapso', () => {
+    const rest = `
+      export function Painel() {
+        const q = usePedidos();
+        const { data: pedidos, ...resto } = q;
+        ${SILENCIO}
+        return <div>{pedidos.length}</div>;
+      }`;
+    const repassado = `
+      export function Painel() {
+        const q = usePedidos();
+        if (!q.data) return null;
+        return <Filho q={q}/>;
+      }`;
+    expect(contarAutoOcultacao(rest, 'Painel.tsx'), '`...resto` pode carregar o error — precisão > recall').toBe(0);
+    expect(
+      contarAutoOcultacao(repassado, 'Painel.tsx'),
+      'entregar `q` inteiro torna as chaves não-enumeráveis AQUI — mesma regra do `...rest`',
+    ).toBe(0);
+  });
+
+  it('a derivada continua propagando pelo alias, e OUTRA FONTE não contamina', () => {
+    const derivada = `
+      export function Painel() {
+        const q = usePedidos();
+        const check = q.data?.find((p) => p.urgente);
+        if (!check) return null;
+        return <div>{check.id}</div>;
+      }`;
+    expect(contarAutoOcultacao(derivada, 'Painel.tsx'), 'o ponto fixo precisa enxergar `q.data` como raiz').toBe(1);
+
+    // `outraQ` é uma query NOVA, com error PRÓPRIO — não é derivada do data de `q`. Sem esta
+    // regra, `if (outraQ.isLoading) return null` (guarda de CARREGAMENTO) virava colapso de
+    // leitura: 4 sítios falsos em `useExcecoesGestor.ts`, por colisão do nome `data`.
+    const outraFonte = `
+      export function Painel() {
+        const q = usePedidos();
+        const outraQ = usePerfis({ chave: q.data });
+        if (outraQ.isLoading) return null;
+        return <div>{q.data?.length}</div>;
+      }`;
+    expect(
+      contarAutoOcultacao(outraFonte, 'Painel.tsx'),
+      'guarda sobre o ESTADO de outra query não é colapso da leitura desta — baseline que ' +
+      'cresce por motivo benigno é como um gate morre',
+    ).toBe(0);
   });
 
   it('a forma `jsx-&&` é detectada mas NÃO gateada — a distinção é deliberada', () => {
