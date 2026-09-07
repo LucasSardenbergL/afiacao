@@ -2169,3 +2169,24 @@ final; `useImpersonation` fixo). O guard novo roda os hooks de VERDADE e dubla s
 resolve por promessa controlada pelo teste, e a lente é um objeto MUTÁVEL entre renders. A helper
 `eventos()` devolve TODAS as chamadas do slug, não a última — contar é parte da asserção, senão um
 segundo escritor do mesmo slug inflaria o denominador com a suíte verde.
+
+### Falsificado, medido (2026-08-23)
+
+**9 sabotagens, 9 vermelhos** (`sabotagens que NÃO produziram vermelho: 0`): rótulo fabricado ·
+papel que volta a engolir o `error` · dedup sem sujeito · dedup sem motivo · rótulo fora da chave ·
+números fora da chave · `Set` virando slot único · `mes` fora do payload · dedup do IRMÃO sem
+sujeito. Verde final: `Test Files 769 passed (769)`, `Tests 7955 passed | 1 skipped (7956)`,
+`typecheck` exit 0.
+
+⚠️ **Duas falsificações do PRÓPRIO harness falharam antes disso, e as duas eram ausência-de-dado
+lida como aprovação** — a mesma classe que este sensor existe para matar, uma camada acima:
+
+1. `-t` do vitest é REGEX. O `+` em `-t "cache quente + OFFLINE"` casou NADA, o vitest disse
+   `Tests 8 skipped (8)` e saiu **exit 0** — e eu li isso como "o teste não pega o defeito".
+2. `heavy` esgotou o timeout de fila e ABORTOU sem executar; a notificação do harness disse
+   "exit code 0" (o `echo` final zera o exit do compound) enquanto o log dizia
+   `timeout (1800s) esperando vaga — abortando`.
+
+Daí a guarda que o script ganhou: **exigir `Tests N passed|failed` no log antes de julgar o exit**,
+e ler o veredito do MARCADOR no arquivo, nunca da notificação. Detalhe em
+`docs/historico/evidencia-positiva-shell.md` (§14 e §15).
