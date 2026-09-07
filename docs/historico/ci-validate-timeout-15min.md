@@ -32,6 +32,26 @@ Decompondo `gh run view <id> --json jobs` (campo `steps[].startedAt/completedAt`
 **+52% em 11 dias, monotônico.** E o problema era maior que o relatado: não eram "dois runs hoje" —
 eram **5 estouros em 69 runs (7%)**, com **49% dos runs acima de 14 minutos**.
 
+### A outra metade, medida em paralelo (#2338)
+
+Outra sessão atacou o mesmo sintoma no mesmo dia e chegou primeiro
+([`timeout-de-job-e-ausencia-de-dado.md`](timeout-de-job-e-ausencia-de-dado.md)). Ela mediu o eixo que
+esta aqui não mediu — a **variância**: o runner do Actions vem em duas populações e todo step escala
+junto (~30%), com **nenhum** cancelamento abaixo de 900s. E extraiu a regra mais importante das duas:
+**timeout de job não é veredito, é ausência de dado** — a única falha do repo capaz de reprovar código
+SADIO. O #2285 morreu assim, com `test:edges` em 1037 passed / 0 failed.
+
+As duas medições são verdadeiras e complementares, e nenhuma sozinha explica o sintoma:
+
+- a **tendência** (+52% em 11 dias) fechou a margem — é ela que marcou a data da colisão;
+- a **variância** (±30% por sorte de runner) decidiu **qual** run morreu naquele dia.
+
+Por isso os consertos não competem: o #2338 comprou folga (15→25min), o que trata a variância e era o
+alívio certo para aquela hora. O fan-out trata a tendência, e ao fazê-lo torna aqueles 25min
+desnecessários — com o caminho crítico em ~395s, cada job carrega teto próprio com folga **maior** do
+que o número comprava no job serial. Subir o teto de novo continua sendo a resposta certa para um
+runner mais lento; não é resposta para um job que cresce.
+
 ### A hipótese que a medição DESCARTOU
 
 Havia 3-4 runs de CI simultâneos na main (sessões `/fecho` paralelas disparando `gh workflow run`), e
