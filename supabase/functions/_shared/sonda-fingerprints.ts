@@ -27,7 +27,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "disparar-pedidos-aprovados": "1885293ff4d579fa780172689fef32cd079aa68eb02a4d3adcb2d96af83be487",
   "dispatch-notifications": "f29d8d0a57a4ccfe8f6fd76645d6c76ad13c891460b6913f24b43ae43cdca114",
   "elevenlabs-transcribe": "6e8f1f351e78f3ab0be470147340f86ce8a3e51d644b5b757f1dd235d9e6a8e2",
-  "enviar-pedido-portal-sayerlack": "9dfbb2adcab0e51a29ea5a8ddb3527800453e2c146d4c5d52a14bfc68f59d215",
+  "enviar-pedido-portal-sayerlack": "348c7eca7894b7d49386605f9b5aef4d5c567288cf5d5d829101427a9e2ff1d9",
   "enviar-push": "38302707026818b24e43f4936dea80f7648c68b2c1351385c7ddd5e396bdd9d5",
   "fin-cashflow-engine": "5327584f8d1bfc36b2f150428575bc459aafd16df4fae37223a20e89425a9a5d",
   "fin-funding": "740615f4f2e2d469bc2e4930dd742e01733ec4b828f16724d3be818a1d4ac32d",
