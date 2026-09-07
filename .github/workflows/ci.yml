@@ -90,7 +90,27 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # ⚠️ NÃO baixe este teto sem REMEDIR. Ele não é orçamento de tempo — é o ponto em que o CI
+    # para de dizer a verdade. Timeout de job produz `validate = fail` com ZERO teste reprovado:
+    # o sintoma é indistinguível de uma reprovação real, e quem lê o check acredita que quebrou
+    # algo. Isso é AUSÊNCIA DE DADO, não veredito — mesma classe da doutrina de evidência positiva
+    # (`docs/historico/evidencia-positiva-shell.md`), e a única falha do repo que reprova código SADIO.
+    # A medição e a regra generalizada: `docs/historico/timeout-de-job-e-ausencia-de-dado.md`.
+    #
+    # Medido em 2026-09-07 sobre 58 runs (`gh api .../runs/<id>/jobs`, duração por step): com o
+    # teto em 15min os verdes iam de 650s a 900s — o mais lento batendo EXATAMENTE no teto — e os
+    # 5 cancelados caíam em 901/901/904/904/917s. Nenhum cancelamento abaixo de 900s: não eram
+    # cancelamentos humanos nem de concorrência, era o relógio. 43% dos verdes (20/46) fechavam
+    # nos últimos 30s antes do corte, e ~10% dos runs que passariam morriam por sorte de runner
+    # (o #2285 foi um deles: `test:edges` 1037 passed / 0 failed, cancelado aos 915s).
+    #
+    # A causa é a MÁQUINA, não um step: o runner do Actions vem em duas populações e TODO step
+    # escala junto (`Tests` 273s↔391s, typecheck 37s↔52s, hooks 60s↔71s). Não há gordura a cortar
+    # — `Tests` (vitest, 43% do job) roda 8.134 testes e `Falsificação` (22%) é o método exigido
+    # pelo CLAUDE.md, com o controle verde na MESMA invocação. 25min = ~63% de folga sobre o pior
+    # observado, muito além da variância de runner. Regressão de tempo continua VISÍVEL no
+    # histórico do Actions; o teto só deixa de mentir sobre ela.
+    timeout-minutes: 25
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue; contents:read p/ checkout.
     permissions:
       contents: read
@@ -723,7 +743,11 @@ jobs:
   # .mut amadurecerem. `--selftest` valida a própria ferramenta. Ver CLAUDE.md §13.
   mutation-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Mesmo motivo do teto do `validate` (leia o comentário lá): timeout aqui seria ausência de
+    # dado vestida de reprovação. Medido em 2026-09-07 sobre 28 runs: 346s a 533s — o pior já
+    # consumia 89% do teto de 10min, um runner lento de distância do mesmo falso-vermelho. 15min
+    # devolve a folga sem esconder regressão.
+    timeout-minutes: 15
     # FORA do `schedule` de propósito. O run diário existe para provar que a main passa nos gates
     # BLOQUEANTES; este job é informativo, não-required, e pode ficar INVÁLIDO por refactor legítimo
     # (ver o comentário acima). Rodando diário ele falharia sem abrir Issue nenhuma — os dois steps
