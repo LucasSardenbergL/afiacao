@@ -122,8 +122,22 @@ import { FarmerDashboardV2 } from '../FarmerDashboardV2';
 import { HunterDashboard } from '../HunterDashboard';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
-function renderHost(Host: () => JSX.Element) {
+/**
+ * O papel comercial vai SEMEADO no cache, e isso é fidelidade à produção — não conveniência.
+ *
+ * O `is_hunter` do evento deixou de ser literal passado pelo host (era fabricado: `false`/`true`
+ * cravados no JSX valiam mesmo quando o papel não tinha sido lido) e passou a ser DERIVADO da
+ * leitura de `useMyCommercialRole` dentro do próprio sensor. Só `estado === 'pronta'` vira fato;
+ * fora dela o rótulo é `null` (§ revisão retroativa do #1896).
+ *
+ * Em produção estes dois hosts só montam DEPOIS de o `CommercialDashboard` ter lido o papel — é o
+ * papel que escolhe qual dashboard renderizar. Semear o cache reproduz isso; não semear criaria um
+ * contexto que não existe (host montado sem papel conhecido) e o teste passaria a medir o vazio.
+ * Sem a semente, o caso OFFLINE fica impossível de passar: a query do papel também pausa.
+ */
+function renderHost(Host: () => JSX.Element, papel: 'farmer' | 'hunter') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  qc.setQueryData(['my-commercial-role', VENDEDOR], papel);
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
@@ -182,10 +196,11 @@ const HOSTS = [
 ] as const;
 
 describe.each(HOSTS)('$nome — o placar não some calado', ({ Host, kpiDoHero, oque, isHunter }) => {
+  const papel = isHunter ? 'hunter' as const : 'farmer' as const;
   it('DETECTOR: leitura OK → o hero monta e NÃO há aviso', async () => {
     // Sem este caso, "o aviso não apareceu" e "o host nem montou" seriam indistinguíveis — que é
     // exatamente como um teste fica verde por cegueira.
-    renderHost(Host);
+    renderHost(Host, papel);
 
     expect(await screen.findByText(kpiDoHero)).toBeTruthy();
     // Casa a FRASE do aviso, não `role="status"` vazio: o `CacaConteudo` tem um banner de status
@@ -199,7 +214,7 @@ describe.each(HOSTS)('$nome — o placar não some calado', ({ Host, kpiDoHero, 
   it('a RPC falha → o aviso aparece, dizendo que a informação não chegou', async () => {
     respostaPositivacao = { data: null, error: ERRO_TIMEOUT };
 
-    renderHost(Host);
+    renderHost(Host, papel);
 
     const texto = await textoDosAvisos();
     expect(
@@ -224,7 +239,7 @@ describe.each(HOSTS)('$nome — o placar não some calado', ({ Host, kpiDoHero, 
     // campo este é o caso comum, não o raro.
     onlineManager.setOnline(false);
 
-    renderHost(Host);
+    renderHost(Host, papel);
 
     const texto = await textoDosAvisos();
     expect(
