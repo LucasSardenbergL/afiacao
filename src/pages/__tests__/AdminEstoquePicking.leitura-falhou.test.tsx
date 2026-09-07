@@ -20,8 +20,14 @@ import { MemoryRouter } from 'react-router-dom';
 type Resposta = { data: unknown; error: { message: string } | null; count?: number | null };
 
 let falharEm: string | null = null;
-const OK_VAZIO: Resposta = { data: [], error: null, count: 0 };
+/** Linhas por tabela — permite a 1ª leitura VIR e só a 2ª falhar. Um mock que só sabe
+ *  "tudo ok" ou "tudo erro" não alcança a 2ª leitura de um queryFn encadeado. */
+let dados: Record<string, unknown[]> = {};
 const ERRO: Resposta = { data: null, error: { message: 'permission denied' }, count: null };
+const ok = (t: string): Resposta => {
+  const linhas = dados[t] ?? [];
+  return { data: linhas, error: null, count: linhas.length };
+};
 
 function builder(resposta: () => Resposta) {
   const q: Record<string, unknown> = {};
@@ -31,7 +37,7 @@ function builder(resposta: () => Resposta) {
 }
 
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: (t: string) => builder(() => (t === falharEm ? ERRO : OK_VAZIO)) },
+  supabase: { from: (t: string) => builder(() => (t === falharEm ? ERRO : ok(t))) },
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/hooks/useIsTouchDevice', () => ({ useIsTouchDevice: () => false }));
@@ -57,7 +63,7 @@ function renderAba(aba: string) {
   };
 }
 
-beforeEach(() => { falharEm = null; });
+beforeEach(() => { falharEm = null; dados = {}; });
 afterEach(() => { onlineManager.setOnline(true); vi.restoreAllMocks(); });
 
 describe('Picking (aba "picking") — "Nenhuma task de picking." é afirmação, não default', () => {
@@ -142,5 +148,29 @@ describe('Picking (aba "auditoria") — "Nenhuma task concluída." é afirmaçã
 
     expect(await screen.findByText(/Nenhuma task concluída/i)).toBeTruthy();
     expect(screen.queryByTestId('aviso-picking-auditoria')).toBeNull();
+  });
+
+  /**
+   * A SEGUNDA leitura da aba. As tasks vêm; só os ITENS falham. Sem `throw` na 2ª,
+   * `divCount` fica vazio e cada linha recebe `divergencias: 0` — a coluna pinta um
+   * badge VERDE de "0" sobre uma conferência que ninguém conseguiu ler. É o mesmo dano
+   * da aba inteira, reduzido a um número.
+   *
+   * Este caso existe porque o laço de falsificação mostrou a camada VERDE sob sabotagem:
+   * um queryFn com N leituras precisa de N sabotagens, e sem um mock que devolva sucesso
+   * numa tabela e erro na outra a 2ª leitura é INALCANÇÁVEL pelo teste.
+   */
+  it('ERRO só nos ITENS: não pinta 0 divergência sobre o que ninguém leu', async () => {
+    dados = {
+      picking_tasks: [
+        { id: 't1', sales_order_id: 'so1', completed_at: '2026-09-01T00:00:00Z', notes: null },
+      ],
+    };
+    falharEm = 'picking_task_items';
+    const { qc, container } = renderAba('auditoria');
+
+    await waitFor(() => expect(qc.getQueryState(['pk-auditoria', 'OBEN'])?.status).toBe('error'));
+    expect(await screen.findByTestId('aviso-picking-auditoria')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/Nenhuma task concluída/i);
   });
 });
