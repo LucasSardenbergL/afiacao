@@ -4,6 +4,7 @@ import type { Estado, Veredito } from './pendencias-deploy';
 import {
   conferirCobertura,
   type EdgeParaDeploy,
+  ESTADOS_DE_DEPLOY,
   montarPrompt,
   numeral,
   selecionarParaDeploy,
@@ -39,6 +40,21 @@ function fatia(edge: string): EdgeParaDeploy {
     ],
   };
 }
+
+describe('ESTADOS_DE_DEPLOY — o conjunto é a decisão de produto, não detalhe', () => {
+  it('é EXATAMENTE a divergência medida: nem mais, nem menos', () => {
+    // Fixado de propósito. Acrescentar `NUNCA_ATESTADA` aqui faria o gerador pedir deploy de edge
+    // cujo estado ANTES é desconhecido — ausência de dado virando ordem de deploy, que é o gasto
+    // redundante que o ledger existe para evitar. Quem mudar este conjunto quebra este teste e
+    // tem de justificar no PR.
+    expect([...ESTADOS_DE_DEPLOY].sort()).toEqual([
+      'DIVERGE_P1',
+      'DIVERGE_P2',
+      'INCOERENTE',
+      'SEM_MAPA_NO_BUNDLE',
+    ]);
+  });
+});
 
 describe('selecionarParaDeploy', () => {
   it('pega os quatro estados de divergência medida', () => {
