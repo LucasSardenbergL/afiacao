@@ -402,24 +402,39 @@ baseline vira decoração e nada mais a segura.
 4. ~~**`DROP FUNCTION` + `CREATE FUNCTION` reseta o ACL**~~ — o item 1 do §7.4 foi **FECHADO em
    2026-08-15 pela Parte E** (§9): `authz:check` passou a vigiar o grant de EXECUTE das funções
    classificadas, e `bun run authz:funcoes:prod` mede o ACL vivo em prod.
-5. **A reconciliação repo×prod de `get_preco_cockpit` e `get_defasagem_cliente` está ABERTA**
-   (aberta pelo pagamento da dívida de contrato do §8.1, em 2026-08-15). O gate de bloqueio já é o
-   mesmo nos dois lados — `has_role(employee|master)` —, então **não há risco de autorização
-   pendente**; o que diverge é o MASCARAMENTO do numérico: repo `pode_ver_carteira_completa`, prod
-   `cap_custo_ler`. Enquanto durar, a Parte A mede um corpo que não é o que roda e as duas seguem
-   na baseline de reescritas. Fechar = uma migration `CREATE OR REPLACE` trazendo o corpo do repo
-   para o de prod, o que as devolve à auditabilidade estática e apaga as duas entradas da baseline.
-   Custo real: migration nova ⇒ ritual `lovable-db-operator` + apply MANUAL no SQL Editor, e o
-   corpo colado precisa preservar `SECURITY DEFINER`/`STABLE`/`SET search_path`/ACL — exatamente o
-   que o §8.2 lembra que um corpo colado perde de graça. Não é urgente; é dívida declarada.
+5. ~~**A reconciliação repo×prod de `get_preco_cockpit` e `get_defasagem_cliente` está ABERTA**~~ —
+   **FECHADO em 2026-09-07**, e *não* pela migration que este item previa. As duas se reconciliaram
+   sozinhas, por entregas de outro domínio que recriaram as funções com `CREATE OR REPLACE` textual
+   partindo do corpo VIVO: `20260905225613_preco_ausente_nao_e_zero.sql` (#2224) para
+   `get_defasagem_cliente` e `20260906164001_captura_authz_gate_custo_rpcs_preco.sql` (#2251) para
+   `get_preco_cockpit` — ambas mergeadas **e aplicadas em prod** (medido por `psql-ro` em
+   2026-09-07: `order_items.unit_price` nullable sem default; `COMMENT ON FUNCTION`, o sensor de
+   apply da captura, presente). Com o last-writer do repo virando um `CREATE` parseável, a Parte A
+   voltou a medir o corpo que roda: o `prosrc` do repo é **byte-a-byte idêntico** ao de prod nas
+   duas (md5 normalizado `4f3fb7df939e467f82d36a065e2f0957` e `7856c3052596d66a6f5ac8eb0a06c1c0`).
+   A poda das duas entradas de `scripts/authz-reescritas-conhecidas.ts` saiu no **#2339**; sobra só
+   `reposicao_pos_candidatos`. **Nenhuma migration foi escrita para fechar este item** — escrever
+   uma teria sido apply redundante no colo do founder (`deploy-redundante-ledger-e-cron-de-sonda.md`).
+
+   **O custo real do item não foi a dívida; foi o modo como ela caducou.** Entre a #2224 (05/09) e a
+   poda, a baseline ficou MENTINDO: o `md5ProdEsperado` de `get_defasagem_cliente` seguiu
+   `037ede84…` depois de o corpo mudar legitimamente, e `authz:audit:prod` passou a **falhar** com
+   `MD5_DIVERGIU` acusando "drift em prod" — quando o que houve foi o *repo alcançar prod*, o
+   desfecho que a baseline queria. **Uma entrada só se justifica enquanto a migration que ela cita
+   ainda for a última a definir aquela função**, e nenhuma das três guardas de
+   `AUTHZ_REESCRITAS_CONHECIDAS — a baseline não pode ser decoração` olhava esse eixo: todas
+   conferem a entrada contra o ARQUIVO da reescrita, que é imutável e casa o detector para sempre.
+   Pior, a Parte D **emudece** de propósito quando existe `CREATE` posterior — o silêncio certo de
+   uma máquina virava o ponto cego da outra. Coberto pelo erro `REESCRITA_BASELINE_OBSOLETA` do
+   #2339, que faz a poda ser cobrada pelo CI em vez de aparecer como incêndio de prod.
 
 ---
 
 # 9. O grant de EXECUTE de FUNÇÃO entra no contrato — Parte E (2026-08-15)
 
 > Fecha o **§7.4 item 1**, reafirmado no §8.5 item 4 — o último item aberto de VIGILÂNCIA
-> deste documento (o §8.5 item 5, aberto no mesmo dia, é dívida de RECONCILIAÇÃO repo×prod:
-> não é ponto cego do CI, e não há autorização pendente nele).
+> deste documento (o §8.5 item 5, aberto no mesmo dia, era dívida de RECONCILIAÇÃO repo×prod:
+> não era ponto cego do CI, e não havia autorização pendente nele — **FECHADO em 2026-09-07**).
 > `CREATE OR REPLACE FUNCTION` PRESERVA o ACL; o par `DROP FUNCTION` + `CREATE
 > FUNCTION` **não** — a função renasce com o default privilege do projeto. As Partes A/D julgam o
 > GATE no corpo, a Parte C julga grant de TABELA, e **nada** julgava grant de FUNÇÃO.
