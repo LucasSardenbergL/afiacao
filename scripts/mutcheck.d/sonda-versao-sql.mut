@@ -65,8 +65,27 @@ PEGA      | cast para jsonb sem o filtro textual antes            | s/AND left\(
 # psql-ro. Recorte que vaza um lado no outro devolve a leitura para a mao do founder.
 PEGA      | --so-disparo passa a emitir a leitura junto           | s/const querLeitura = !opts\.soDisparo;/const querLeitura = true;/
 PEGA      | --so-leitura passa a emitir o disparo junto           | s/const querDisparo = !opts\.soLeitura;/const querDisparo = true;/
-SOBREVIVE | timeout 20s -> 30s (valor nao e pinado)    | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
-SOBREVIVE | ORDER BY por posicao (cosmetico)           | s/ORDER BY l\.edge;/ORDER BY 1;/
+# O `timeout_milliseconds`. A linha `PEGA` la em cima ja provava que ele nao pode ficar IMPLICITO
+# (o default de 5s do net.http_post mata silencioso). O que faltava era o PISO: a assercao de entao
+# so exigia `:= \d+`, que e a FORMA e nao a invariante — e `:= 1` satisfaz "explicito" sendo PIOR
+# que o default. MEDIDO 2026-09-07 com controle+ verde na MESMA invocacao: 20000 -> 3000, -> 1 e
+# -> 0 SOBREVIVIAM as 54 mutacoes deste contrato. As duas abaixo sao o dente novo; a de 5000 e a
+# mutacao de FRONTEIRA (pina que a comparacao e `>` estrito, nao `>=`: com `>=` ela sobrevive).
+PEGA      | timeout IGUAL ao default de 5s (fronteira > vs >=) | s/timeout_milliseconds := 20000/timeout_milliseconds := 5000/
+PEGA      | timeout ABAIXO do default (3s: pior que implicito) | s/timeout_milliseconds := 20000/timeout_milliseconds := 3000/
+# ACEITO, com justificativa: 20s e TUNING, nao fronteira. Nenhuma decisao do gerador depende de o
+# numero ser 20000 em vez de 30000 — o que decide e estar ACIMA do piso de 5s, e ISSO agora tem
+# asercao (as duas PEGA acima). Pinar 20000 seria fachada: travaria o valor sem invariante atras,
+# e a proxima pessoa que ajustasse o tuning ficaria vermelha sem ter quebrado nada.
+SOBREVIVE | timeout 20s -> 30s (tuning acima do piso)  | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
+# ACEITO, com justificativa: INERTE, nao apenas cosmetico. `SELECT l.edge,` e a PRIMEIRA coluna da
+# projecao final (conferido em 2026-09-07), entao `ORDER BY 1` e EXATAMENTE o mesmo plano e a mesma
+# ordem — o mutante nao muda nem a saida. E mesmo que a 1a coluna mudasse, ordem de LINHAS de um
+# relatorio de leitura nao entra em veredito nenhum: o veredito e por linha, no CASE.
+# ⚠️ O que tornaria isto FALSO: alguem inserir coluna antes de `l.edge` no SELECT. Ai `ORDER BY 1`
+# passa a ordenar por outra coisa — continua sem mudar veredito, mas deixa de ser inerte. Se essa
+# insercao acontecer, esta linha vira `?` ou some; nao a promova a PEGA sem invariante atras.
+SOBREVIVE | ORDER BY por posicao (inerte: edge e a 1a col) | s/ORDER BY l\.edge;/ORDER BY 1;/
 # Os 8 abaixo guardam o GUARD DE SINCRONIA (worktree defasado). O gerador já lia a fonte da verdade
 # do repo em vez da memória do operador — mas "o repo" pode ser um checkout VELHO, e aí o
 # `esperado(...)` sai de um retrato que a main já superou. MEDIDO 2026-09-05: worktree dois merges

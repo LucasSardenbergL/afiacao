@@ -250,9 +250,20 @@ describe('PASSO 1 — dispara a leva numa tacada', () => {
     expect(sql).toContain('jsonb_object_agg(edge, request_id)::text');
   });
 
-  it('timeout_milliseconds é EXPLÍCITO — o default de 5s mata silencioso', () => {
+  // O default do `net.http_post` é 5s e mata silencioso (CLAUDE.md §armadilhas · docs/agent/sync.md).
+  // A asserção ANTERIOR era `/timeout_milliseconds\s*:=\s*\d+/`: ela media a FORMA (existe UM
+  // número), não a invariante que o próprio nome promete. `:= 1` e `:= 0` são "explícitos" e são
+  // PIORES que o default — matam a sondagem antes de qualquer resposta, e o desfecho é a leitura
+  // devolvendo ausência de linha para uma edge que respondeu. MEDIDO 2026-09-07 por mutcheck
+  // exploratório (controle+ verde na mesma invocação): 20000→3000, →1 e →0 SOBREVIVIAM.
+  // Pinar o valor em 20000 seria fachada: 20s é TUNING, não fronteira — por isso 20000→30000 segue
+  // `SOBREVIVE` declarado no .mut. A fronteira é o piso, e é ela que esta asserção pina.
+  const DEFAULT_PG_NET_MS = 5000;
+  it('timeout_milliseconds é EXPLÍCITO e ACIMA do default de 5s, que mata silencioso', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    expect(sql).toMatch(/timeout_milliseconds\s*:=\s*\d+/);
+    const m = sql.match(/timeout_milliseconds\s*:=\s*(\d+)\)/);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThan(DEFAULT_PG_NET_MS);
   });
 
   it('o corpo pede a SONDA, não o fluxo real', () => {
