@@ -1,6 +1,6 @@
 import { useCompletude } from '@/hooks/useCompletude';
 import { rotularCampo } from '@/lib/knowledge-base/campo-labels';
-import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -29,31 +29,39 @@ export function CompletudeSection() {
   const { data, status, fetchStatus } = useCompletude();
   const estado = estadoDeLeitura({ status, fetchStatus });
 
-  // ANTES do loading, e não depois: sem rede a query fica `pending` + `paused`, com
-  // `isLoading` FALSE, `data` `undefined` e `error` `null`. O 4º estado passa reto por
-  // um guard de `isLoading`/`error` e cai no ramo do "está tudo completo".
-  if (naoConsegui(estado)) {
-    return (
-      <AvisoLeituraFalhou
-        oque="a lista de fichas com dados importantes faltando"
-        estado={estado}
-        variante="bloco"
-      />
-    );
-  }
-
-  if (estado !== 'pronta') {
-    return (
-      <div className="flex justify-center py-8">
-        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  // Só alcançável com a leitura FEITA — aqui o vazio é mesmo "não há pendência", e o ✓
-  // verde é verdade. (`!data` sobrevive porque o tipo de `UseQueryResult` admite
-  // `undefined`; em `success` a `queryFn` sempre devolveu um array.)
+  // NADA EM MÃOS — os três estados que colapsavam num só. A guarda externa é o que
+  // impede o aviso de ENGOLIR uma lista que já está na tela (ver o `velho`, adiante):
+  // sem ela, `status:'error'` com as 116 pendências no cache troca a lista por uma faixa.
+  // Para todo caso SEM lista o comportamento é idêntico ao do #2305 — `[]` de sucesso
+  // entra aqui igual, e `undefined` + `pronta` segue caindo no ✓ verde.
   if (!data || data.length === 0) {
+    // ANTES do loading, e não depois: sem rede a query fica `pending` + `paused`, com
+    // `isLoading` FALSE, `data` `undefined` e `error` `null`. O 4º estado passa reto por
+    // um guard de `isLoading`/`error` e cai no ramo do "está tudo completo".
+    // Sem lista em mãos não há o que preservar, então o aviso vai SOZINHO — é o caso que
+    // o próprio `desatualizado` manda tratar assim, e é o que impede o ✓ verde de
+    // aparecer com uma nota de rodapé ao lado de "não consegui ler".
+    if (naoConsegui(estado)) {
+      return (
+        <AvisoLeituraFalhou
+          oque="a lista de fichas com dados importantes faltando"
+          estado={estado}
+          variante="bloco"
+        />
+      );
+    }
+
+    if (estado !== 'pronta') {
+      return (
+        <div className="flex justify-center py-8">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
+
+    // Só alcançável com a leitura FEITA — aqui o vazio é mesmo "não há pendência", e o ✓
+    // verde é verdade. (`!data` sobrevive porque o tipo de `UseQueryResult` admite
+    // `undefined`; em `success` a `queryFn` sempre devolveu um array.)
     return (
       <Card className="p-8 text-center text-xs text-muted-foreground">
         <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-status-success opacity-70" />
@@ -62,8 +70,26 @@ export function CompletudeSection() {
     );
   }
 
+  // LISTA EM MÃOS. Um refetch que FALHA não pode apagá-la: trocar as
+  // 116 pendências de trabalho por um aviso é consertar o sensor quebrando a tela —
+  // honesto para o alarme, regressão para quem ia pedir os dados à fábrica. O desenho que
+  // serve aos dois é composto: lista PRESERVADA + a faixa dizendo que está velha
+  // (`desatualizado`, em @/lib/leitura/estado-de-leitura, medido no MixGapCard pelo #1892).
+  //
+  // ⚠️ `{ status, fetchStatus }` de novo, e não um `q` inteiro: a desestruturação que liga
+  // `status` é o que mantém este arquivo VISÍVEL para o gate (ver o cabeçalho).
+  const velho = desatualizado({ status, fetchStatus }, true);
+
   return (
     <div className="space-y-2">
+      {velho && (
+        <AvisoLeituraFalhou
+          oque="a atualização da lista de fichas com dados faltando"
+          estado={velho}
+          className="mb-0"
+          testId="aviso-completude-desatualizada"
+        />
+      )}
       <p className="text-2xs text-muted-foreground">
         {data.length} produto{data.length > 1 ? 's' : ''} com dados importantes faltando — sua lista pra pedir à fábrica.
       </p>
