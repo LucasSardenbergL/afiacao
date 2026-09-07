@@ -21,7 +21,21 @@ Como provar o que está **SERVIDO** nesse host (hash do index + grep nos chunks)
 O CI do `.github/workflows/ci.yml` tem **muito mais que os 5 gates óbvios**. Desde 2026-09-07 os steps
 vivem em **4 jobs paralelos** (`typecheck` · `testes` · `edges-e-build` · `gates-e-falsificacao`), e
 `validate` virou o **agregador** que os exige — é ele o único required check, então continua sendo
-"o que bloqueia o PR", mas o vermelho agora aparece no job filho. Em 2026-08-23 eram 15 steps: `tsc` (app) · `scripts:typecheck` · `test` · `test:edges` (Deno) · `edges:typecheck` · `build` · `lint` · `claude:size` · `test:hooks` · `authz:check` · `bunpin:check` · `docs:indice` · `docs:citacoes` · `docs:links` · **`bunx knip`** (dead code). Mais o job `mutation-check` (`mutcheck:selftest` + `mutcheck`).
+"o que bloqueia o PR", mas o vermelho agora aparece no job filho.
+
+O censo abaixo é MANTIDO PELA MÁQUINA: `bun run gates:frescura` reprova se um gate do `ci.yml`
+faltar aqui **e** se um nome daqui deixar de reprovar. A versão anterior desta lista era prosa
+datada — congelou em "15 steps" de 2026-08-23 enquanto o CI crescia, e por dois meses foi a única
+menção que `docs:indice`, `docs:links`, `bunpin:check`, `mutcheck:selftest` e `scripts:typecheck`
+tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere os dois lados.
+
+<!--gates:frescura inicio-->
+
+**Gates do CI — reprovam o PR** (29): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `mutcheck` · `mutcheck:selftest` · `scripts:typecheck` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
+
+**Hooks que NEGAM a chamada de ferramenta** (5, permissionDecision deny): `check-gstack.sh` · `destructive-bash-guard.sh` · `heavy-guard.sh` · `migration-collision-guard.sh` · `migration-immutability-guard.sh`.
+
+<!--gates:frescura fim-->
 
 ⚠️ **`bunx knip` É bloqueante** — export sem consumidor derruba PR. O `/health` roda o mesmo knip localmente, mas "também roda no /health" **não** significa "só roda no /health".
 
