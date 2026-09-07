@@ -10,6 +10,8 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
+import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const EVENT_ICONS: Record<string, { label: string; icon: typeof Wrench; color: string; bg: string }> = {
   sharpening: { label: 'Afiação', icon: Wrench, color: 'text-status-info', bg: 'bg-status-info-bg' },
@@ -21,9 +23,24 @@ const EVENT_ICONS: Record<string, { label: string; icon: typeof Wrench; color: s
 
 const ToolPublicHistory = () => {
   const { toolId } = useParams<{ toolId: string }>();
-  const { data, isPending: loading } = useToolPublicHistory(toolId);
+  const q = useToolPublicHistory(toolId);
+  const { data, isPending: loading } = q;
   const tool = data?.tool ?? null;
   const events = data?.events ?? [];
+  // O `?? null` acima colapsa "a RPC respondeu que não existe" com "a RPC não respondeu";
+  // o estado abaixo é lido da QUERY, que ainda sabe a diferença.
+  const estado = estadoDeRegistro(q, data?.tool != null);
+
+  // ANTES do loading: sem rede a query fica pending+paused e o skeleton giraria para sempre.
+  if (naoConsegui(estado)) {
+    return (
+      <div className="min-h-screen bg-background">
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <AvisoLeituraFalhou oque="o histórico desta ferramenta" estado={estado} variante="bloco" />
+        </main>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -40,6 +57,9 @@ const ToolPublicHistory = () => {
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
         <Wrench className="w-16 h-16 text-muted-foreground mb-4" />
         <h1 className="text-xl font-bold text-foreground">Ferramenta não encontrada</h1>
+        {/* A hipótese do QR só é dita aqui: neste ramo a RPC RESPONDEU que a ferramenta não
+            existe. Antes ela também cobria falha de leitura, e mandava o cliente com a
+            etiqueta na mão jogá-la fora por causa de um timeout. */}
         <p className="text-muted-foreground mt-2">O QR code pode estar desatualizado</p>
       </div>
     );

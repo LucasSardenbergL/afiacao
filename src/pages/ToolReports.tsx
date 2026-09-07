@@ -4,6 +4,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useUserToolDetail, useToolEvents, useToolPriceHistory } from '@/queries/useUserTools';
+import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import {
   Wrench, DollarSign, TrendingUp,
   BarChart3, Clock, AlertTriangle, ShieldCheck, HelpCircle,
@@ -79,10 +81,14 @@ const ToolReports = () => {
   const { toolId } = useParams<{ toolId: string }>();
   const navigate = useNavigate();
 
-  const { data: tool, isPending: loadingTool } = useUserToolDetail(toolId);
+  const qTool = useUserToolDetail(toolId);
+  const { data: tool } = qTool;
   const { data: events = [], isPending: loadingEvents } = useToolEvents(toolId);
   const { data: priceHistory = [], isPending: loadingPrices } = useToolPriceHistory(toolId);
-  const loading = loadingTool || loadingEvents || loadingPrices;
+  const loading = qTool.isPending || loadingEvents || loadingPrices;
+  // `.maybeSingle()`: `null` é "não existe", `undefined` é loading/erro — o `if (!tool)`
+  // de baixo apagava a diferença que o hook preservou.
+  const estadoTool = estadoDeRegistro(qTool, tool != null);
 
   const analysis = useMemo(() => {
     if (!tool) return null;
@@ -142,6 +148,18 @@ const ToolReports = () => {
       cumulativeChart,
     };
   }, [tool, events, priceHistory]);
+
+  // ANTES do loading de propósito: sem rede a query fica pending+paused e o skeleton
+  // giraria para sempre sobre uma leitura que não vai acontecer.
+  if (naoConsegui(estadoTool)) {
+    return (
+      <div className="min-h-screen bg-background pb-24">
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <AvisoLeituraFalhou oque="os relatórios desta ferramenta" estado={estadoTool} variante="bloco" />
+        </main>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

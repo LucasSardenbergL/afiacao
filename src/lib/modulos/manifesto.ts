@@ -58,7 +58,10 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useGamificationScore.ts",
       "src/hooks/useSharpeningSuggestions.ts",
     ],
-    testes: ["src/pages/__tests__/CentralFerramenta.test.tsx"],
+    testes: [
+      "src/pages/__tests__/CentralFerramenta.test.tsx",
+      "src/pages/__tests__/ToolDetalhe.estados.test.tsx",
+    ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
   {
@@ -439,7 +442,10 @@ export const MODULOS: ModuloApp[] = [
       "src/queries/usePedidosASeparar.ts",
       "src/hooks/useEstoqueValor.ts",
     ],
-    testes: ["src/services/__tests__/picking-confirm.test.ts"],
+    testes: [
+      "src/services/__tests__/picking-confirm.test.ts",
+      "src/pages/__tests__/RecebimentoConferencia.estados.test.tsx",
+    ],
     risco: { moneyPath: true, offlineFirst: true, authSensitive: false },
   },
   {
@@ -468,6 +474,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useReposicaoSessao.test.ts",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.test.tsx",
       "src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx",
+      "src/pages/__tests__/AdminReposicaoPromocaoDetail.estados.test.tsx",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
@@ -562,6 +569,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/hooks/__tests__/useExtractSpecs.test.tsx",
       "src/hooks/__tests__/useKnowledgeBaseList.test.tsx",
+      "src/pages/__tests__/AdminKnowledgeBaseDetail.estados.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },

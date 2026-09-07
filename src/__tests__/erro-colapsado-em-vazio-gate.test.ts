@@ -105,8 +105,6 @@ const BASELINE = new Map<string, number>([
   ["src/pages/GovernancePermissions.tsx", 1],
   ["src/pages/RotaPropostas.tsx", 1],
   ["src/pages/SalesPrintDashboard.tsx", 6],
-  ["src/pages/ToolHistory.tsx", 1],
-  ["src/pages/ToolReports.tsx", 1],
   ["src/pages/Training.tsx", 2],
 ]);
 

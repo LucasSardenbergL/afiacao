@@ -30,6 +30,8 @@ import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebi
 import { addCte, type AddCteVars } from '@/services/recebimento-cte';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { interpretarRespostaEfetivacao } from '@/lib/recebimento/efetivacao-resposta';
+import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
@@ -127,7 +129,7 @@ export default function RecebimentoConferencia() {
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   // Fetch NF-e
-  const { data: nfe, isLoading } = useQuery({
+  const qNfe = useQuery({
     queryKey: ['nfe_conferencia', id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -144,6 +146,11 @@ export default function RecebimentoConferencia() {
     },
     enabled: !!id,
   });
+  const { data: nfe, isLoading } = qNfe;
+  // `.single()` LANÇA PGRST116 quando não acha a NF-e, e isso chegava aqui idêntico a uma
+  // queda de rede. Conferência é passo de RECEBIMENTO: "NF-e não encontrada" durante uma
+  // falha manda o operador procurar um documento que EXISTE.
+  const estadoNfe = estadoDeRegistro(qNfe, nfe != null);
 
   // Fetch scanned lotes grouped
   const { data: lotes } = useQuery<NfeLoteEscaneado[]>({
@@ -455,6 +462,16 @@ export default function RecebimentoConferencia() {
       return next;
     });
   };
+
+  // ANTES do loading: no PWA de campo sem rede a query fica pending+paused, `isLoading` é
+  // FALSE, e a tela caía direto no "NF-e não encontrada".
+  if (naoConsegui(estadoNfe)) {
+    return (
+      <div className="max-w-lg mx-auto py-20 px-4">
+        <AvisoLeituraFalhou oque="esta NF-e" estado={estadoNfe} variante="bloco" />
+      </div>
+    );
+  }
 
   if (isLoading) {
     // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um

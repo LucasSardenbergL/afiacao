@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { estadoDeRegistro, naoConsegui } from "@/lib/leitura/estado-de-leitura";
+import { AvisoLeituraFalhou } from "@/components/leitura/AvisoLeituraFalhou";
 import { Loader2, ChevronRight } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -38,7 +40,7 @@ export default function AdminReposicaoPromocaoDetail() {
     | "negociacao_cliente";
 
   // ============ QUERIES ============
-  const { data: campanha, isLoading: loadingCampanha } = useQuery({
+  const qCampanha = useQuery({
     queryKey: ["promocao-campanha", id],
     queryFn: async () => {
       if (isNew) return null;
@@ -52,6 +54,10 @@ export default function AdminReposicaoPromocaoDetail() {
     },
     enabled: !isNew,
   });
+  const { data: campanha, isLoading: loadingCampanha } = qCampanha;
+  // `.single()` LANÇA PGRST116 quando não acha, e isso chegava idêntico a uma queda de rede.
+  // O `!isNew` do guard antigo só protegia o modo de CRIAÇÃO: em edição a frase mentia.
+  const estadoCampanha = estadoDeRegistro(qCampanha, campanha != null);
 
   const { data: itens = [], isLoading: loadingItens } = useQuery({
     queryKey: ["promocao-itens", id],
@@ -388,6 +394,16 @@ export default function AdminReposicaoPromocaoDetail() {
 
   // ============ CANCEL DIALOG ============
   const [cancelOpen, setCancelOpen] = useState(false);
+
+  // ANTES do loading: sem rede a query fica pending+paused e `loadingCampanha` é FALSE.
+  // (No modo criação a query é `enabled: false` → estado 'desabilitada', que não avisa.)
+  if (!isNew && naoConsegui(estadoCampanha)) {
+    return (
+      <div className="container mx-auto p-6">
+        <AvisoLeituraFalhou oque="esta campanha de promoção" estado={estadoCampanha} variante="bloco" />
+      </div>
+    );
+  }
 
   if (loadingCampanha && !isNew) {
     return (
