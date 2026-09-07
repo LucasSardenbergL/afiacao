@@ -109,10 +109,18 @@ perdido é um terço da operação. As telas de cliente têm 5.664 *contas*, e c
    (`= []` no binding; denominador parcial — a fração sem mapeamento vive na edge
    `fin-suggest-mapping` e **não foi medida**).
 
-**Dano hoje ZERO ⇒ chip com gatilho, não correção agora** (mesmo perfil do `carteira_coverage`):
+~~**Dano hoje ZERO ⇒ chip com gatilho, não correção agora**~~ — **QUITADO em 2026-09-06**,
+antes da primeira linha, exatamente como o gatilho previa:
+[gatilho-quitado-antes-da-primeira-linha.md](gatilho-quitado-antes-da-primeira-linha.md).
 `FinanceiroFechamento:117` + `FinanceiroIntercompany:106` + `FinanceiroIntercompanyFila:129`
 (`fin_ic_matches` = 0), `AdminReposicaoOportunidades:330` (0), `AdminEstoquePicking:371,580,659`
-(0), `WhatsappInbox:110` (0). Corrigir **antes da primeira linha**, porque depois some calado.
+(0), `WhatsappInbox:110` (0) — as 4 fontes re-medidas em 0 no dia da correção.
+
+Duas correções ao que está escrito acima, medidas na quitação: **`WhatsappInbox` NÃO engole o
+erro** (`fetchWhatsappSla` lança; quem converte falha em vazio é o `= []` do binding do
+consumidor — um TERCEIRO lugar, fora do `queryFn` e fora do `&&`), e o `queryFn` de
+`AdminEstoquePicking:659` tem **duas** leituras, não uma: sem `throw` na 2ª a coluna
+"Divergências" pinta um badge verde de "0" sobre o que ninguém leu.
 
 ## O delta da baseline não diz QUAL dos dois aconteceu (achado da fatia #2)
 
