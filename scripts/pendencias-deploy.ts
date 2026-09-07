@@ -85,6 +85,14 @@ import {
   type Relatorio,
   type Veredito,
 } from './lib/pendencias-deploy';
+import {
+  alvosForaDoRepo,
+  cronSondaParado,
+  type AtestacaoAtribuida,
+  type Disparo,
+  julgarSondaCron,
+} from './lib/sonda-cron-testemunha';
+import { SONDA_CRON_ALVOS } from '../supabase/functions/_shared/sonda-cron-alvos';
 import { ARQ_MAPA, parsearMapa, RAIZ_EDGES } from './sonda-fingerprint';
 import { git, lerNaRev } from './sonda-versao-bump-gate';
 import { extrairVersao } from './sonda-versao-sql';
@@ -240,6 +248,101 @@ WHERE r.c IS NOT NULL
   AND jsonb_typeof(r.c -> 'versao') = 'string'
   AND length(r.c ->> 'versao') BETWEEN 1 AND 120
 ORDER BY r.created DESC, r.id DESC;
+`.trim();
+
+export const MIGRATION_SONDA_CRON = '20260906151204_deploy_sonda_cron_fail_closed.sql';
+export const CRON_SONDA = 'deploy-sonda-cron';
+
+/**
+ * ── A sonda por CRON como testemunha (F3) ────────────────────────────────────────────────────
+ *
+ * As três leituras abaixo respondem juntas a única pergunta que a matriz do par NÃO responde: *o
+ * bundle que o ledger jura estar no ar continua lá?* A ligação é sempre por `request_id` — a
+ * atribuição gravada na mesma transação do disparo — porque atribuir por TEMPO deixa uma resposta
+ * atrasada mascarar dois ticks silenciosos logo depois de um rollback.
+ *
+ * Se as tabelas ainda não existem (F2 não aplicada), a seção inteira sai como AVISO e o resto do
+ * relatório continua valendo: fazer o CLI reprovar por uma migration pendente transformaria uma
+ * entrega em voo num bloqueio para todo mundo.
+ */
+export const SQL_SONDA_CRON_ALVOS = `
+SELECT edge FROM public.deploy_sonda_alvos WHERE ativo ORDER BY edge;
+`.trim();
+
+/** Os disparos dos 2 ticks mais recentes: (tick, edge, request_id), mais recente primeiro. */
+export const SQL_SONDA_CRON_DISPAROS = `
+WITH ticks AS (
+  SELECT tick_id, max(enfileirado_em) AS quando
+  FROM public.deploy_sonda_disparos
+  GROUP BY tick_id
+  ORDER BY quando DESC
+  LIMIT 2
+)
+SELECT d.tick_id::text, d.edge, d.request_id
+FROM public.deploy_sonda_disparos d
+JOIN ticks t ON t.tick_id = d.tick_id
+ORDER BY t.quando DESC, d.edge;
+`.trim();
+
+/**
+ * Quais desses `request_id` viraram atestação, e com que identidade no CORPO.
+ *
+ * Lê o LEDGER e a janela viva — a mesma união do veredito principal. Uma atestação que só existe
+ * na janela ainda não foi colhida, e ignorá-la faria o CLI acusar silêncio nos 15 minutos entre a
+ * resposta e a passagem do coletor.
+ */
+export const SQL_SONDA_CRON_ATESTACOES = `
+WITH ticks AS (
+  SELECT tick_id, max(enfileirado_em) AS quando
+  FROM public.deploy_sonda_disparos
+  GROUP BY tick_id
+  ORDER BY quando DESC
+  LIMIT 2
+), pedidos AS (
+  SELECT d.request_id FROM public.deploy_sonda_disparos d JOIN ticks t ON t.tick_id = d.tick_id
+), tudo AS (
+  SELECT request_id, edge FROM public.deploy_atestacoes
+  UNION ALL
+  SELECT request_id, edge FROM public.deploy_atestacoes_janela_viva()
+)
+SELECT DISTINCT tudo.request_id, tudo.edge
+FROM tudo JOIN pedidos p ON p.request_id = tudo.request_id
+ORDER BY 1;
+`.trim();
+
+/** Minutos desde o último sucesso do cron de SONDA (não o do ledger). `nunca` = recém-aplicado. */
+/**
+ * A CLASSE que o relé declarou por `request_id`, enquanto a janela do pg_net a preserva.
+ *
+ * Sem isso o achado especula três hipóteses de rollback mesmo quando a causa está escrita no corpo
+ * (`sem-chave`, `timeout`, `cors-sem-sonda`). Guards de forma idênticos aos da janela viva: filtro
+ * textual ANTES do cast, e o cast dentro de um `CASE` — ordem de avaliação é da LINGUAGEM, não do
+ * plano, e um corpo truncado que comece com `{` abortaria a consulta inteira.
+ */
+export const SQL_SONDA_CRON_MOTIVOS = `
+SELECT r.id, r.c ->> 'classe'
+FROM (
+  SELECT d.request_id AS id,
+         CASE WHEN x.content IS JSON OBJECT THEN x.content::jsonb END AS c
+  FROM public.deploy_sonda_disparos d
+  JOIN net._http_response x ON x.id = d.request_id
+  WHERE d.enfileirado_em > now() - interval '48 hours'
+    AND x.content IS NOT NULL
+    AND left(ltrim(x.content), 1) = '{'
+    AND x.content LIKE '%"classe"%'
+) r
+WHERE r.c IS NOT NULL
+  AND jsonb_typeof(r.c -> 'classe') = 'string'
+ORDER BY r.id;
+`.trim();
+
+export const SQL_SAUDE_CRON_SONDA = `
+SELECT coalesce(
+  round((extract(epoch FROM (now() - max(d.end_time))) / 60.0)::numeric, 1)::text,
+  'nunca')
+FROM cron.job j
+LEFT JOIN cron.job_run_details d ON d.jobid = j.jobid AND d.status = 'succeeded'
+WHERE j.jobname = '${CRON_SONDA}';
 `.trim();
 
 /**
@@ -469,6 +572,129 @@ function imprimir(rel: Relatorio, linhasSemIdentidade: string[]): void {
   }
 }
 
+/**
+ * Lê e julga a sonda por CRON. Devolve as linhas a imprimir e quantos ACHADOS houve (pendências).
+ *
+ * Degrada com AVISO — nunca com exit 2 — quando as tabelas da F2 não existem: a F3 pode chegar ao
+ * repo antes de o founder colar a migration, e reprovar por isso transformaria uma entrega em voo
+ * num bloqueio para todas as sessões. A mecânica de verdade (cron parado, banco fora do repo) só
+ * se aplica quando a F2 JÁ está no ar, porque só aí o silêncio significa alguma coisa.
+ */
+export function secaoSondaCron(
+  estadoPorEdge: Map<string, string>,
+  ler: (sql: string) => string,
+): { linhas: string[]; achados: number; mecanica: string | null } {
+  const linhas: string[] = [];
+  let ativos: string[];
+  try {
+    ativos = semChatter(ler(SQL_SONDA_CRON_ALVOS));
+  } catch (e) {
+    const stderr = String((e as Error & { stderr?: string | Buffer }).stderr ?? '');
+    // ASCII em caixa fixa: `exist` casa "does not exist" E "nao existe" sem depender de acento.
+    if (stderr.includes('deploy_sonda_alvos') && stderr.includes('exist')) {
+      return {
+        linhas: [
+          `\n🕒 SONDA POR CRON: ainda não instalada — a migration ${MIGRATION_SONDA_CRON} não foi aplicada.`,
+          '   Enquanto isso, a atestação continua dependendo da sonda humana (`bun run sonda:sql`).',
+        ],
+        achados: 0,
+        mecanica: null,
+      };
+    }
+    return { linhas: [], achados: 0, mecanica: `leitura da sonda por cron falhou — ${(e as Error).message}` };
+  }
+
+  const doRepo = SONDA_CRON_ALVOS.map((a) => a.edge);
+  const intrusos = alvosForaDoRepo(ativos, doRepo);
+  if (intrusos.length > 0) {
+    return {
+      linhas: [],
+      achados: 0,
+      mecanica:
+        `o banco sonda edge(s) que o repo NÃO aprovou: ${intrusos.join(', ')}. ` +
+        'Só a allowlist do repo teve todos os closures históricos executados (`bun run sonda:cron-prova`). ' +
+        `Desative no banco: UPDATE public.deploy_sonda_alvos SET ativo = false WHERE edge IN ('${intrusos.join("','")}');`,
+    };
+  }
+
+  const saude = semChatter(ler(SQL_SAUDE_CRON_SONDA));
+  const minutos = saude.length === 1 && saude[0] !== 'nunca' ? Number(saude[0]) : null;
+  if (saude.length !== 1) {
+    return { linhas: [], achados: 0, mecanica: `o cron '${CRON_SONDA}' não existe em prod — a migration ${MIGRATION_SONDA_CRON} não foi aplicada inteira.` };
+  }
+  if (minutos !== null && !Number.isFinite(minutos)) {
+    return { linhas: [], achados: 0, mecanica: `a saúde do cron '${CRON_SONDA}' veio ilegível: ${saude[0]}` };
+  }
+  if (cronSondaParado(minutos)) {
+    return {
+      linhas: [],
+      achados: 0,
+      mecanica:
+        `o cron '${CRON_SONDA}' não tem execução bem-sucedida há ${saude[0]} min. ` +
+        'Sem ele o silêncio das edges não significa nada — confira cron.job_run_details.',
+    };
+  }
+
+  const disparos: Disparo[] = [];
+  const ticksRecentes: string[] = [];
+  for (const linha of semChatter(ler(SQL_SONDA_CRON_DISPAROS))) {
+    const [tickId, edge, req] = linha.split('|');
+    const requestId = Number(req);
+    if (!tickId || !edge || !Number.isFinite(requestId)) {
+      return { linhas: [], achados: 0, mecanica: `linha de disparo fora do formato: ${linha}` };
+    }
+    disparos.push({ tickId, edge, requestId });
+    if (!ticksRecentes.includes(tickId)) ticksRecentes.push(tickId);
+  }
+
+  const atestacoes: AtestacaoAtribuida[] = [];
+  for (const linha of semChatter(ler(SQL_SONDA_CRON_ATESTACOES))) {
+    const [req, edge] = linha.split('|');
+    const requestId = Number(req);
+    if (!edge || !Number.isFinite(requestId)) {
+      return { linhas: [], achados: 0, mecanica: `linha de atestação fora do formato: ${linha}` };
+    }
+    atestacoes.push({ requestId, edgeDoCorpo: edge });
+  }
+
+  // A causa que o relé declarou, quando a janela ainda a preserva. Falha aqui NÃO é mecânica: o
+  // veredito não depende dela, só a qualidade da explicação — degradar para "não sei" é honesto,
+  // reprovar seria trocar um diagnóstico melhor por nenhum relatório.
+  const motivos: Array<{ requestId: number; classe: string }> = [];
+  try {
+    for (const linha of semChatter(ler(SQL_SONDA_CRON_MOTIVOS))) {
+      const [req, classe] = linha.split('|');
+      const requestId = Number(req);
+      if (classe && Number.isFinite(requestId)) motivos.push({ requestId, classe });
+    }
+  } catch {
+    // segue sem os motivos
+  }
+
+  const r = julgarSondaCron({
+    ativosNoBanco: ativos,
+    allowlistDoRepo: doRepo,
+    ticksRecentes,
+    disparos,
+    atestacoes,
+    estadoPorEdge,
+    motivos,
+  });
+
+  const atestadas = new Set(atestacoes.map((a) => a.requestId));
+  const respondidos = disparos.filter((d) => atestadas.has(d.requestId)).length;
+  linhas.push(
+    `\n🕒 SONDA POR CRON — ${ativos.length} edge(s) ativa(s), ${ticksRecentes.length} tick(s) recente(s), ` +
+      `${respondidos}/${disparos.length} disparo(s) atestado(s)`,
+  );
+  for (const a of r.achados) linhas.push(`   🔴 ${a.classe} · ${a.edge}: ${a.detalhe}`);
+  for (const aviso of r.avisos) linhas.push(`   ⚠️  ${aviso}`);
+  if (r.achados.length === 0 && r.avisos.length === 0) {
+    linhas.push('   ✅ toda edge ativa foi atestada nos ticks recentes — o bundle do ledger continua no ar');
+  }
+  return { linhas, achados: r.achados.length, mecanica: null };
+}
+
 export function main(argv: string[] = []): number {
   let tolerarNunca: boolean;
   let idsBruto: string | null;
@@ -580,10 +806,22 @@ export function main(argv: string[] = []): number {
     return 2;
   }
 
+  // A sonda por cron (F3): lê os 2 últimos ticks e liga cada resposta ao disparo por `request_id`.
+  const estadoPorEdge = new Map(rel.vereditos.map((v) => [v.edge, v.estado as string]));
+  const secao = secaoSondaCron(estadoPorEdge, psql);
+  if (secao.mecanica !== null) {
+    console.error(`❌ MECÂNICA: ${secao.mecanica}`);
+    return 2;
+  }
+
   // No modo `--json` o stdout é SÓ o JSON: qualquer outra linha ali quebraria o parse do
   // consumidor, que trataria como não consultado. Avisos vão para o stderr.
   if (json) console.log(serializarRelatorio(rel, { ref: REF_MAIN, tolerarNunca }));
   else imprimir(rel, linhasSemIdentidade);
+  for (const linha of secao.linhas) {
+    if (json) console.error(linha);
+    else console.log(linha);
+  }
 
   const nunca = rel.vereditos.filter((v) => v.estado === 'NUNCA_ATESTADA').length;
   if (tolerarNunca && nunca > 0) {
@@ -591,12 +829,16 @@ export function main(argv: string[] = []): number {
     if (json) console.error(aviso);
     else console.log(aviso);
   }
-  return decidirExit({
+  const exit = decidirExit({
     totalPendentes: rel.totalPendentes,
     nuncaAtestadas: nunca,
     tolerarNunca,
     semIdentidade: naoAtribuidas.length,
   });
+  // Achado da sonda por cron é PENDÊNCIA: um silêncio de 2 ticks numa edge que o ledger diz
+  // CONFERE é a assinatura de rollback, e sair 0 com isso na tela é o silêncio virando aprovação
+  // uma camada acima. Nunca rebaixa um exit 2 de mecânica (que já retornou antes daqui).
+  return secao.achados > 0 ? Math.max(exit, 1) : exit;
 }
 
 if (import.meta.main) process.exit(main(process.argv.slice(2)));

@@ -13,6 +13,8 @@ import { FilaDoDia } from '@/components/fila/FilaDoDia';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
 import { useSinalPositivacao } from '@/hooks/useSinalPositivacao';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
 import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
 import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
@@ -30,7 +32,9 @@ import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNud
  */
 export function FarmerDashboardV2() {
   const [modoAntigoAberto, setModoAntigoAberto] = useState(false);
-  const { data: positivacao } = useMyPositivacao();
+  const qPositivacao = useMyPositivacao();
+  const { data: positivacao } = qPositivacao;
+  const estadoPositivacao = estadoDeLeitura(qPositivacao);
   useSinalPositivacao(false);
   const onToggleModoAntigo = (open: boolean) => {
     setModoAntigoAberto(open);
@@ -53,7 +57,13 @@ export function FarmerDashboardV2() {
       {/* Receita/positivação vêm de sales_orders, hoje parcial (backfill pendente) → aviso honesto */}
       <DadosVendaParciaisBanner />
 
-      {/* Placar do mês (KPIs da carteira) — o norte da farmer */}
+      {/* Placar do mês (KPIs da carteira) — o norte da farmer.
+          O aviso vem ANTES e FORA do `&&`: sem ele o placar sumia calado no erro/offline, e numa
+          tela que é o norte da vendedora a ausência AFIRMA que está tudo bem. Mesmo desenho de
+          `FarmerCalls`, que hospeda o mesmo hero (#1886). */}
+      {naoConsegui(estadoPositivacao) && (
+        <AvisoLeituraFalhou oque="a positivação da sua carteira" estado={estadoPositivacao} />
+      )}
       {positivacao && <PositivacaoHero kpis={positivacao} isHunter={false} />}
 
       {/* A fila É o dia. */}

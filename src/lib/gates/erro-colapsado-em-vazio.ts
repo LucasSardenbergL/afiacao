@@ -20,7 +20,13 @@ const CHAVES_DE_ERRO = new Set([
 
 // Sem `export`: o knip reprova export sem consumidor, e ninguém precisa NOMEAR a forma —
 // ela é alcançável pela estrutura de `SitioColapso`, que é o que o gate consome.
-type FormaDeSilencio = "return-null" | "ternario-null" | "jsx-&&";
+//
+// `return-afirmativo` NÃO é silêncio — por isso o tipo deixou de se chamar
+// `FormaDeSilencio`. As duas primeiras formas apagam o componente; a terceira o substitui
+// por uma FRASE ("Todas as fichas… estão completas", com ✓ verde). O colapso é o mesmo
+// — `data === undefined` de erro lido como vazio — mas o dano é maior, porque a ausência
+// deixa de afirmar segurança por OMISSÃO e passa a afirmá-la com texto e ícone.
+type FormaDeColapso = "return-null" | "ternario-null" | "jsx-&&" | "return-afirmativo";
 
 export type SitioColapso = {
   hook: string;
@@ -28,7 +34,7 @@ export type SitioColapso = {
   linha: number;
   /** default na própria desestruturação (`data: x = []`) — o irmão "ausente→vazio". */
   padraoDefault: string | null;
-  silencios: { forma: FormaDeSilencio; linha: number }[];
+  colapsos: { forma: FormaDeColapso; linha: number }[];
 };
 
 const identsDe = (no: ts.Node): Set<string> => {
@@ -42,6 +48,27 @@ const ehSilencio = (e: ts.Expression | undefined): boolean =>
   !e || e.kind === ts.SyntaxKind.NullKeyword
   || (ts.isIdentifier(e) && e.text === "undefined")
   || (ts.isJsxFragment(e) && e.children.every((c) => ts.isJsxText(c) && c.text.trim() === ""));
+
+/** `return ( <div/> )` chega como ParenthesizedExpression — pode haver mais de uma camada. */
+const desembrulhar = (e: ts.Expression): ts.Expression =>
+  ts.isParenthesizedExpression(e) ? desembrulhar(e.expression) : e;
+
+/**
+ * Texto literal que o usuário LÊ na tela. É o critério que separa a 3ª forma da 1ª: um
+ * `return <Skeleton/>` não afirma nada, um `return <p>Ferramenta não encontrada</p>` afirma.
+ * Só `JsxText` conta — texto por ATRIBUTO (`<EmptyState title="…"/>`) é outro eixo, medido
+ * à parte e zerado em 2026-09-06 (docs/historico/o-check-verde-que-a-falha-acende.md).
+ */
+const textoVisivel = (no: ts.Node): boolean => {
+  let achou = false;
+  const v = (n: ts.Node) => {
+    if (achou) return;
+    if (ts.isJsxText(n) && n.text.trim() !== "") { achou = true; return; }
+    ts.forEachChild(n, v);
+  };
+  v(no);
+  return achou;
+};
 
 const funcaoDona = (n: ts.Node): ts.Node | undefined => {
   let f: ts.Node | undefined = n.parent;
@@ -105,11 +132,20 @@ export function acharColapsos(conteudo: string, nomeArquivo: string): SitioColap
           }
           const toca = (no: ts.Node) => [...identsDe(no)].some((id) => marcados.has(id));
 
-          const silencios: SitioColapso["silencios"] = [];
+          const colapsos: SitioColapso["colapsos"] = [];
           const busca = (n: ts.Node): void => {
             if (ts.isIfStatement(n) && toca(n.expression)) {
               const vr = (x: ts.Node) => {
-                if (ts.isReturnStatement(x) && ehSilencio(x.expression)) silencios.push({ forma: "return-null", linha: linhaDe(x) });
+                if (ts.isReturnStatement(x)) {
+                  if (ehSilencio(x.expression)) {
+                    colapsos.push({ forma: "return-null", linha: linhaDe(x) });
+                  } else if (x.expression) {
+                    // MESMA guarda, outro desfecho: em vez de sumir, o componente MENTE.
+                    const alvo = desembrulhar(x.expression);
+                    const ehJsx = ts.isJsxElement(alvo) || ts.isJsxSelfClosingElement(alvo) || ts.isJsxFragment(alvo);
+                    if (ehJsx && textoVisivel(alvo)) colapsos.push({ forma: "return-afirmativo", linha: linhaDe(x) });
+                  }
+                }
                 ts.forEachChild(x, vr);
               };
               vr(n.thenStatement);
@@ -117,22 +153,22 @@ export function acharColapsos(conteudo: string, nomeArquivo: string): SitioColap
             if (ts.isReturnStatement(n) && n.expression && ts.isConditionalExpression(n.expression)
                 && toca(n.expression.condition)
                 && (ehSilencio(n.expression.whenTrue) || ehSilencio(n.expression.whenFalse))) {
-              silencios.push({ forma: "ternario-null", linha: linhaDe(n) });
+              colapsos.push({ forma: "ternario-null", linha: linhaDe(n) });
             }
             if (ts.isJsxExpression(n) && n.expression && ts.isBinaryExpression(n.expression)
                 && n.expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
                 && toca(n.expression.left)) {
               const dir = n.expression.right;
               if (ts.isJsxElement(dir) || ts.isJsxSelfClosingElement(dir) || ts.isJsxFragment(dir) || ts.isParenthesizedExpression(dir)) {
-                silencios.push({ forma: "jsx-&&", linha: linhaDe(n) });
+                colapsos.push({ forma: "jsx-&&", linha: linhaDe(n) });
               }
             }
             ts.forEachChild(n, busca);
           };
           busca(escopo);
 
-          if (silencios.length || padraoDefault) {
-            sitios.push({ hook: chamada.expression.text, aliasData, linha: linhaDe(node), padraoDefault, silencios });
+          if (colapsos.length || padraoDefault) {
+            sitios.push({ hook: chamada.expression.text, aliasData, linha: linhaDe(node), padraoDefault, colapsos });
           }
         }
       }
@@ -156,6 +192,33 @@ export function acharColapsos(conteudo: string, nomeArquivo: string): SitioColap
  */
 export function contarAutoOcultacao(conteudo: string, nomeArquivo: string): number {
   return acharColapsos(conteudo, nomeArquivo)
-    .filter((s) => s.silencios.some((x) => x.forma === "return-null" || x.forma === "ternario-null"))
+    .filter((s) => s.colapsos.some((x) => x.forma === "return-null" || x.forma === "ternario-null"))
     .length;
+}
+
+/**
+ * A 2ª forma FISCALIZADA: `return <JSX com texto>` guardado pela leitura — o colapso que
+ * MENTE em vez de sumir (docs/historico/o-check-verde-que-a-falha-acende.md, 2026-09-06).
+ *
+ * POR QUE ESTA E NÃO `jsx-&&`, e o argumento é aritmético e não estético: `jsx-&&` são 93
+ * sítios, idioma legítimo na maioria, e 21 deles INERTES — o hook engole o erro, a query
+ * fica `success` com `[]`, e o "fix" seria diff plausível com zero mudança de
+ * comportamento. Gatear aquilo faria a baseline crescer por motivo benigno, que é como um
+ * gate morre. Aqui são 13 sítios e **13 de 13 são alcançáveis** (todos os hooks fazem
+ * `if (error) throw error`): não há fatia inerte que vire ruído na baseline.
+ *
+ * O recorte NÃO é "todo `return` com texto" — isso pegaria empty state legítimo guardado
+ * por outra coisa. É `return` com JsxText não-vazio guardado por condição que toca o `data`
+ * de um hook cuja desestruturação NÃO liga `error`, que é o que `acharColapsos` já isola.
+ *
+ * DEDUPLICADO POR LINHA: um mesmo `return` é taintado por N hooks do componente, e contar
+ * por hook INFLA — `ToolHistory:174` é UM sítio, não dois. (O gate é por arquivo, então
+ * dedup por linha dentro do arquivo é a chave `(arquivo, linha)` do doc.)
+ */
+export function contarRetornoAfirmativo(conteudo: string, nomeArquivo: string): number {
+  const linhas = new Set<number>();
+  for (const s of acharColapsos(conteudo, nomeArquivo)) {
+    for (const c of s.colapsos) if (c.forma === "return-afirmativo") linhas.add(c.linha);
+  }
+  return linhas.size;
 }

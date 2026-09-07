@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { acharColapsos, contarAutoOcultacao } from '@/lib/gates/erro-colapsado-em-vazio';
+import { acharColapsos, contarAutoOcultacao, contarRetornoAfirmativo } from '@/lib/gates/erro-colapsado-em-vazio';
 
 // GATE — "erro colapsado em vazio": a leitura que falha e vira silêncio afirmativo.
 //
@@ -11,10 +11,17 @@ import { acharColapsos, contarAutoOcultacao } from '@/lib/gates/erro-colapsado-e
 // `error` colapsa esses estados numa tela em branco só — e quando a tela é um ALERTA ou um
 // painel de SAÚDE, a ausência AFIRMA segurança: "não consegui ler" chega como "está tudo bem".
 //
-// A FORMA FISCALIZADA é a auto-ocultação TOTAL (`return null`/ternário guardado pela
-// leitura), que apaga o componente inteiro sem deixar rastro. A forma `jsx-&&` fica de fora
-// de propósito e está MEDIDA em docs/agent/money-path.md — o porquê está no cabeçalho de
-// `@/lib/gates/erro-colapsado-em-vazio`.
+// SÃO DUAS FORMAS FISCALIZADAS, com baselines SEPARADAS:
+//   1. auto-ocultação TOTAL (`return null`/ternário guardado pela leitura) — apaga o
+//      componente sem deixar rastro. Gateada em 2026-08-22.
+//   2. `return-afirmativo` (`return <JSX com texto>` sob a mesma guarda) — em vez de sumir,
+//      MENTE com especificidade. Gateada em 2026-09-06
+//      (docs/historico/o-check-verde-que-a-falha-acende.md).
+//
+// A forma `jsx-&&` fica de fora de propósito, e o argumento é ARITMÉTICO: 93 sítios, idioma
+// legítimo na maioria, 21 deles INERTES (o hook engole o erro) — a baseline cresceria por
+// motivo benigno, que é como um gate morre. A forma 2 são 13 sítios e 13/13 alcançáveis.
+// O porquê completo está no cabeçalho de `@/lib/gates/erro-colapsado-em-vazio`.
 //
 // Por que AST e não texto: a pergunta "o componente trata o erro?" respondida por grep de
 // `error` dá FALSO NEGATIVO justamente nos piores casos — `text-status-error` do Tailwind
@@ -101,6 +108,49 @@ const BASELINE = new Map<string, number>([
   ["src/pages/ToolHistory.tsx", 1],
   ["src/pages/ToolReports.tsx", 1],
   ["src/pages/Training.tsx", 2],
+]);
+
+// BASELINE PRÓPRIA da 2ª forma gateada (`return-afirmativo`), medida em 2026-09-06 sobre
+// 1.472 fontes: **13 sítios em 13 arquivos** — e 13/13 ALCANÇÁVEIS (todos os hooks fazem
+// `if (error) throw error`). Não há a fatia inerte que faria a baseline virar ruído, que é
+// o que manteve `jsx-&&` fora do gate.
+//
+// UNIDADE DIFERENTE DA DE CIMA, de propósito — os dois números NÃO são comparáveis, não
+// some nem subtraia: `contarAutoOcultacao` conta BINDINGS de hook que colapsam
+// (`Training.tsx` = 2 porque DOIS hooks distintos guardam o mesmo ternário da linha 150);
+// `contarRetornoAfirmativo` conta LINHAS distintas, porque um mesmo `return` é taintado por
+// N hooks do componente e contar por hook inflaria (`ToolHistory:174` é UM sítio, não dois).
+//
+// DÍVIDA, em ordem de dano MEDIDO em prod (o doc traz os denominadores):
+//   1. `CompletudeSection` — ÚNICO urgente: 116 pendências reais viram ✓ verde de "tudo
+//      completo" quando `kb_product_specs` não lê. Afirmação positiva em superfície de saúde.
+//   2. os 3 de `.single()` (`kb_documents` 297, `nfe_recebimentos` 47, `promocao_campanha`
+//      17): "não encontrado" cobre também "o banco caiu" → ramificar por `PGRST116`.
+//   3. os 3 de ferramenta (`user_tools` = 4): o hook JÁ devolve `null` vs `undefined`; o
+//      componente só precisa parar de descartar a distinção.
+//   4. os 6 de fonte ZERADA hoje: corrigir ANTES da primeira linha. `ProvasParaAuditar` é o
+//      mais perigoso quando encher — "Nenhuma prova aguardando auditoria" é afirmação de
+//      CONTROLE, e a auditoria some no dia em que a leitura falhar.
+//
+// Dois eixos vizinhos foram medidos junto e vieram ZERO — medido, não presumido:
+// `<EmptyState title="…"/>` (texto por ATRIBUTO, sem JsxText) = 0; ternário cujo ramo do
+// colapso é afirmativo = 0 (o único candidato, `Training.tsx:150`, tem ramo `null` — é
+// `ternario-null`, JÁ na baseline de cima; contá-lo aqui seria contar o mesmo sítio duas
+// vezes). O critério estrito não esconde fatia nenhuma.
+const BASELINE_AFIRMATIVO = new Map<string, number>([
+  ["src/components/customer/CustomerCallsTab.tsx", 1],
+  ["src/components/customer/CustomerVisitsTab.tsx", 1],
+  ["src/components/knowledge-base/CompletudeSection.tsx", 1],
+  ["src/components/tarefas/ProvasParaAuditar.tsx", 1],
+  ["src/pages/AdminKnowledgeBaseDetail.tsx", 1],
+  ["src/pages/AdminReposicaoPromocaoDetail.tsx", 1],
+  ["src/pages/AdminStandardProcessDetail.tsx", 1],
+  ["src/pages/GrupoCliente360.tsx", 1],
+  ["src/pages/OrderDetail.tsx", 1],
+  ["src/pages/RecebimentoConferencia.tsx", 1],
+  ["src/pages/ToolHistory.tsx", 1],
+  ["src/pages/ToolPublicHistory.tsx", 1],
+  ["src/pages/ToolReports.tsx", 1],
 ]);
 
 describe('gate: erro colapsado em vazio', () => {
@@ -216,12 +266,147 @@ describe('gate: erro colapsado em vazio', () => {
     // teste de componente ISOLADO não prova o estado que o HOST decide.
     const fonte = readFileSync(resolve(RAIZ, 'src/pages/FarmerCalls.tsx'), 'utf8');
     const presos = acharColapsos(fonte, 'src/pages/FarmerCalls.tsx')
-      .filter((s) => s.silencios.length > 0);
+      .filter((s) => s.colapsos.length > 0);
     expect(
-      presos.map((s) => `${s.hook}(${s.aliasData}) → ${s.silencios.map((x) => x.forma).join(',')}`),
+      presos.map((s) => `${s.hook}(${s.aliasData}) → ${s.colapsos.map((x) => x.forma).join(',')}`),
       'uma leitura sem `error` voltou a esconder bloco em FarmerCalls — o MixGapCard pode ' +
       'estar preso de novo no && de uma query irmã',
     ).toEqual([]);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────
+  // 2ª FORMA GATEADA: `return-afirmativo` — o colapso que MENTE em vez de sumir.
+  // ─────────────────────────────────────────────────────────────────────────────────────
+
+  it('nenhum sítio NOVO de `return` afirmativo, e a baseline não encolhe sem registro', () => {
+    const medido = new Map<string, number>();
+    for (const rel of fontes) {
+      const n = contarRetornoAfirmativo(readFileSync(resolve(RAIZ, rel), 'utf8'), rel);
+      if (n > 0) medido.set(rel, n);
+    }
+
+    const reintroducoes: string[] = [];
+    for (const [arquivo, n] of medido) {
+      const base = BASELINE_AFIRMATIVO.get(arquivo) ?? 0;
+      if (n > base) reintroducoes.push(`${arquivo} (${base}→${n})`);
+    }
+    const quitados: string[] = [];
+    for (const [arquivo, base] of BASELINE_AFIRMATIVO) {
+      const n = medido.get(arquivo) ?? 0;
+      if (n < base) quitados.push(`${arquivo} (${base}→${n})`);
+    }
+
+    expect(
+      reintroducoes,
+      'Hook cujo `data` é lido SEM o `error` do mesmo hook e vira `return <texto>`: a falha ' +
+      'de leitura não some — ela AFIRMA. "Não encontrado"/"tudo completo" é o que o usuário ' +
+      'lê quando o banco caiu. Leia o `error` do hook e ramifique: `data === null` (não ' +
+      'achei ESTE id) ≠ `undefined` + erro (não consegui ler). Use `estadoDeLeitura` de ' +
+      `@/lib/leitura e <AvisoLeituraFalhou>. Arquivos (baseline→medido): ${reintroducoes.join(', ')}`,
+    ).toEqual([]);
+
+    expect(
+      quitados,
+      'Sítio da 3ª forma foi corrigido — ATUALIZE a BASELINE_AFIRMATIVO (a lista só encolhe ' +
+      `registrada). Arquivos (baseline→medido): ${quitados.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('calibração: casa o pior sítio medido — o ✓ VERDE que a falha acende', () => {
+    // Verbatim reduzido de src/components/knowledge-base/CompletudeSection.tsx:24.
+    // `useCompletude` faz `if (error) throw error` sobre `kb_product_specs`: quando a leitura
+    // falha, `isLoading` é false, `data` é undefined, e a tela afirma saúde com semáforo
+    // verde. Medido em prod (2026-09-06): 119 fichas aprovadas, 116 com campo faltando.
+    const verdeNaFalha = `
+      export function CompletudeSection() {
+        const { data, isLoading } = useCompletude();
+        if (isLoading) return <Loader2 className="animate-spin" />;
+        if (!data || data.length === 0) return (
+          <Card>
+            <CheckCircle2 className="text-status-success" />
+            Todas as fichas aprovadas estão completas nos dados importantes.
+          </Card>
+        );
+        return <ul>{data.map(f => <li key={f.id}>{f.nome}</li>)}</ul>;
+      }`;
+    expect(
+      contarRetornoAfirmativo(verdeNaFalha, 'CompletudeSection.tsx'),
+      'a assinatura deixou de casar o pior sítio da classe',
+    ).toBe(1);
+  });
+
+  it('calibração: NÃO casa o pós-fix que LÊ o erro — senão é varredura teatro', () => {
+    const posFix = `
+      export function CompletudeSection() {
+        const { data, error, isLoading } = useCompletude();
+        if (isLoading) return <Loader2 className="animate-spin" />;
+        if (error) return <AvisoLeituraFalhou />;
+        if (!data || data.length === 0) return <Card>Todas as fichas estão completas.</Card>;
+        return <ul>{data.map(f => <li key={f.id}>{f.nome}</li>)}</ul>;
+      }`;
+    expect(
+      contarRetornoAfirmativo(posFix, 'CompletudeSection.tsx'),
+      'falso positivo: o pós-fix lê `error` e ainda assim casou',
+    ).toBe(0);
+  });
+
+  it('o recorte NÃO é "todo return com texto": sem texto visível não conta', () => {
+    // A guarda existe para não transformar loading/estrutura legítimos em achado. Um
+    // `return <Skeleton/>` sob a mesma condição não AFIRMA nada — não há frase para mentir.
+    const semTexto = `
+      export function Card() {
+        const { data } = useX();
+        if (!data) return <PageSkeleton variant="lista" />;
+        return <div>{data.n}</div>;
+      }`;
+    expect(
+      contarRetornoAfirmativo(semTexto, 'Card.tsx'),
+      'o gate passou a casar JSX sem texto — o recorte virou "todo return", que pega ' +
+      'skeleton e empty state legítimo',
+    ).toBe(0);
+  });
+
+  it('DEDUP por linha: um mesmo `return` taintado por 2 hooks é UM sítio, não dois', () => {
+    // Foi a armadilha de contagem da medição: contar por hook inflaria `ToolHistory:174`
+    // para 2. A unidade desta baseline é (arquivo, linha) — e é por isso que ela NÃO é
+    // comparável com a de auto-ocultação, que conta BINDINGS.
+    const doisHooks = `
+      export function ToolHistory() {
+        const { data: tool } = useUserToolDetail(id);
+        const { data: healthMetrics } = useToolHealth(id);
+        if (!tool || !healthMetrics) return (<div><p>Ferramenta não encontrada</p></div>);
+        return <div>{tool.nome}</div>;
+      }`;
+    expect(
+      contarRetornoAfirmativo(doisHooks, 'ToolHistory.tsx'),
+      'a dedup por (arquivo, linha) regrediu — a baseline vai inflar por hook',
+    ).toBe(1);
+    expect(
+      acharColapsos(doisHooks, 'ToolHistory.tsx')
+        .flatMap((s) => s.colapsos.filter((c) => c.forma === 'return-afirmativo')).length,
+      'o detector precisa CONTINUAR vendo o sítio por cada hook — a dedup é do CONTADOR, ' +
+      'não do walker (quem investiga quer saber quais hooks tocam a guarda)',
+    ).toBe(2);
+  });
+
+  it('as duas baselines são independentes — a forma nova não contamina a antiga', () => {
+    const soAfirmativo = `
+      export function Card() {
+        const { data } = useX();
+        if (!data) return <p>Nada encontrado</p>;
+        return <div>{data.n}</div>;
+      }`;
+    expect(contarAutoOcultacao(soAfirmativo, 'Card.tsx'), 'return afirmativo vazou para a baseline de auto-ocultação').toBe(0);
+    expect(contarRetornoAfirmativo(soAfirmativo, 'Card.tsx')).toBe(1);
+
+    const soNull = `
+      export function Card() {
+        const { data } = useX();
+        if (!data) return null;
+        return <div>{data.n}</div>;
+      }`;
+    expect(contarAutoOcultacao(soNull, 'Card.tsx')).toBe(1);
+    expect(contarRetornoAfirmativo(soNull, 'Card.tsx'), 'auto-ocultação vazou para a baseline afirmativa').toBe(0);
   });
 
   it('a forma `jsx-&&` é detectada mas NÃO gateada — a distinção é deliberada', () => {
@@ -232,7 +417,7 @@ describe('gate: erro colapsado em vazio', () => {
       }`;
     expect(contarAutoOcultacao(host, 'Page.tsx'), 'jsx-&& não pode entrar na baseline gateada').toBe(0);
     expect(
-      acharColapsos(host, 'Page.tsx')[0]?.silencios[0]?.forma,
+      acharColapsos(host, 'Page.tsx')[0]?.colapsos[0]?.forma,
       'o detector precisa CONTINUAR enxergando a forma jsx-&& (ela é o segundo front, medido)',
     ).toBe('jsx-&&');
   });

@@ -6,12 +6,15 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
 import {
+  escaparParaFormat,
   fatiaDaVerdade,
   gerarSqlDaLeva,
   gitReal,
+  guardEfeitoLegado,
   main,
   parsearArgs,
   resolverLeva,
+  SENTINELA_MAPA,
   type ExecutorGit,
 } from './sonda-versao-sql';
 
@@ -320,6 +323,7 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
       'BUNDLE VELHO',
       'PRE-SENSOR',
       'BUNDLE VELHO (pre-sonda)',
+      'NAO E RESPOSTA DE SONDA',
       'INDETERMINADO',
     ]) {
       expect(sql, `ramo ausente: ${ramo}`).toContain(ramo);
@@ -422,9 +426,125 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
   });
 });
 
+describe('o PASSO 1 ESCREVE o passo 2 — o mapa edge→id não passa pela mão de ninguém', () => {
+  const raiz = () => fixture({ 'edge-a': 'v1.0-alfa', 'edge-b': 'v2.0-beta' });
+
+  // A classe é a do bloco de UMA edge (docs/historico/sonda-request-id-a-mao.md): identificador
+  // transportado à mão troca o alvo em silêncio, e a resposta de cron que ele acerta por acidente
+  // tem a assinatura de "bundle velho". Aqui o transporte era o blob `{"edge": id}` inteiro.
+  it('o disparo termina devolvendo o passo 2 escrito, numa célula única', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toContain('SELECT format($sonda$');
+    expect(sql).toContain('$sonda$, m.ids) AS passo_2_copie_esta_celula');
+    expect(sql).toMatch(/mapa AS \(/);
+  });
+
+  it('o agregado alimenta o format() — deixou de ser coluna ENTREGUE ao operador', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    // O par continua saindo da MESMA execução que disparou (é isso que impede o id de existir
+    // solto); o que sumiu é a coluna que o pedia de volta na mão.
+    expect(sql).toContain('jsonb_object_agg(edge, request_id)::text');
+    expect(sql).not.toContain('ids_opcionais_passo');
+  });
+
+  it('o passo embutido recebe o mapa por %1$L; só o standalone do eco fica com o {}', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const embutido = sql.slice(
+      sql.indexOf('SELECT format($sonda$'),
+      sql.indexOf('AS passo_2_copie_esta_celula'),
+    );
+    expect(embutido).toContain('jsonb_each_text(%1$L::jsonb)');
+    expect(embutido).not.toContain("jsonb_each_text('{}'::jsonb)");
+    expect(sql.slice(sql.indexOf('AS passo_2_copie_esta_celula'))).toContain(
+      "jsonb_each_text('{}'::jsonb)",
+    );
+  });
+
+  it('o bloco CARO escreve o passo 4 e a trava continua sendo CASE, não WHERE', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a', 'edge-b'], caras: ['edge-b'] });
+    expect(sql).toContain('AS passo_4_copie_esta_celula');
+    expect(sql).toContain("CASE WHEN g.confirmei_o_deploy = 'sim'");
+    // O `WHERE guard…` é o teatro que a seção do deploy.md falsificou nos dois sentidos: com a
+    // trava fechada o Postgres avalia a projeção do mesmo jeito e o http_post SAI.
+    expect(sql).not.toMatch(/WHERE\s+g?\.?confirmei_o_deploy/);
+  });
+
+  it('a trava FECHADA embute um mapa de ids NULOS — e isso vira INDETERMINADO, não silêncio', () => {
+    // Provado contra prod em 2026-09-06: o passo 3 travado devolve `{"edge-b": null}` e o passo 4
+    // escrito por ele responde 1 LINHA dizendo que a trava ficou fechada. Zero linhas se leria
+    // como "nada a reportar" — a inversão que o `FROM esperado LEFT JOIN ids` existe para impedir.
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-b'], caras: ['edge-b'] });
+    const embutido = sql.slice(sql.indexOf('SELECT format($sonda$'));
+    expect(embutido).toContain('FROM esperado e');
+    expect(ramoDe(embutido, 'INDETERMINADO —')).toMatch(/trava do passo 3 ficou FECHADA/);
+  });
+
+  it('o passo embutido e o standalone julgam pelos MESMOS ramos — nada de drift entre as duas', () => {
+    // Os dois textos saem da mesma função, mas com variações condicionais (comentários e três
+    // mensagens). Uma variação que apagasse um RAMO deixaria o founder — que recebe o embutido —
+    // com um veredito a menos, e o CI verde: os testes de ramo medem o SQL inteiro, onde a versão
+    // do eco basta para satisfazê-los.
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const emb = sql.slice(
+      sql.indexOf('SELECT format($sonda$'),
+      sql.indexOf('AS passo_2_copie_esta_celula'),
+    );
+    const eco = sql.slice(sql.indexOf('AS passo_2_copie_esta_celula'));
+    for (const ramo of [
+      'INDETERMINADO —',
+      'AGUARDE —',
+      'BUNDLE VELHO (pre-sonda) —',
+      'PRE-SENSOR —',
+      'NAO E RESPOSTA DE SONDA —',
+      'PRE_SONDA_FONTE —',
+      'DEPLOY PARCIAL —',
+      'DEPLOY CONFIRMADO',
+    ]) {
+      expect(emb, `ramo ausente no passo EMBUTIDO: ${ramo}`).toContain(ramo);
+      expect(eco, `ramo ausente no passo do ECO: ${ramo}`).toContain(ramo);
+    }
+  });
+
+  it('o ramo do id que NÃO é sonda vem ANTES do PRE_SONDA_FONTE', () => {
+    // Achado ao falsificar contra prod (resposta 71275, cron da analytics-outbox-drain, que ecoa
+    // edge/versao/fonte e não ecoa probe): sem este ramo a linha cai no ELSE e sai 'BUNDLE VELHO'
+    // com a versão CERTA. E depois do `? 'fonte'` ela sairia como PRE_SONDA_FONTE, que nomeia
+    // "bundle anterior ao #1998" — causa errada, mesma classe de falso negativo.
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const iNaoSonda = sql.indexOf('NAO E RESPOSTA DE SONDA');
+    const iPreFonte = sql.indexOf('PRE_SONDA_FONTE');
+    expect(iNaoSonda).toBeGreaterThan(-1);
+    expect(iNaoSonda).toBeLessThan(iPreFonte);
+    expect(ramoDe(sql, 'NAO E RESPOSTA DE SONDA')).toMatch(/probe:true/);
+  });
+});
+
+describe('escaparParaFormat — as duas armadilhas do format() que o corpus não exercita', () => {
+  // O SQL emitido hoje não tem `%` nem `$` (medido). Sem teste DIRETO, as duas proteções ficariam
+  // verdes por acidente do corpus — a classe de docs/historico/gates-textuais-cegos.md.
+  it('escapa `%` do corpo — senão o format() o lê como diretiva', () => {
+    expect(escaparParaFormat('100% do lote')).toBe('100%% do lote');
+  });
+
+  it('o placeholder entra DEPOIS do escape — na ordem inversa sairia %%1$L', () => {
+    expect(escaparParaFormat(`x ${SENTINELA_MAPA} y`)).toBe('x %1$L y');
+    expect(escaparParaFormat(`50% ${SENTINELA_MAPA}`)).toBe('50%% %1$L');
+  });
+
+  it('corpo que contenha a tag de dollar-quoting falha ALTO — sairia truncado', () => {
+    expect(() => escaparParaFormat('antes $sonda$ depois')).toThrow(/TRUNCADO/);
+  });
+});
+
 describe('PASSO 2 — acha a linha pelo ECO do slug, sem colar request_id nenhum', () => {
   const raiz = () => fixture({ 'edge-a': 'v1.0-alfa', 'edge-b': 'v2.0-beta' });
-  const leitura = (sql: string) => sql.slice(sql.indexOf('-- PASSO 2'));
+  // Desde a migração do #2273 há DOIS textos de passo 2: o que o passo 1 devolve escrito (com o
+  // mapa dentro) e o standalone do `--so-leitura` (o do eco). Ancorar em '-- PASSO 2' pegaria o
+  // primeiro e mediria o embutido achando que media o do eco — o recorte tem de nomear qual.
+  const FIM_DO_FORMAT = 'AS passo_2_copie_esta_celula';
+  const leitura = (sql: string) => sql.slice(sql.indexOf(FIM_DO_FORMAT));
+  const embutida = (sql: string) =>
+    sql.slice(sql.indexOf('SELECT format($sonda$'), sql.indexOf(FIM_DO_FORMAT));
   /** O corpo do `LEFT JOIN LATERAL (…) s ON true` — onde a linha da edge é ESCOLHIDA. */
   const lateral = (sql: string) => {
     const t = leitura(sql);
@@ -526,6 +646,17 @@ describe('PASSO 2 — acha a linha pelo ECO do slug, sem colar request_id nenhum
     expect(ramo).not.toContain('DEPLOY PARCIAL');
   });
 
+  it('o 401 do passo EMBUTIDO não manda colar nada — o mapa já está lá', () => {
+    // O texto do eco manda "cole o JSON no ids para DETERMINAR". Repetido no bloco embutido, ele
+    // mandaria o operador procurar um campo que não existe mais — e a saída certa ali é outra: o
+    // que falta é TRÁFEGO de fundo, não colagem. Provado em prod 2026-09-06 (#2273).
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    const ramo = ramoDe(embutida(sql), 'INDETERMINADO — 401');
+    expect(ramo).not.toMatch(/cole/i);
+    expect(ramo).toMatch(/embutido/);
+    expect(ramo).toMatch(/TRAFEGO/);
+  });
+
   it('o 401 sem colagem AUTO-DESQUALIFICA o controle — e a mensagem diz a saída', () => {
     // Interação entre a leitura sem colagem e o controle de credencial do #2131: o controle exclui
     // a própria leva por `NOT EXISTS (… ids …)`, e o `ids` agora nasce VAZIO. O 401 sob julgamento
@@ -591,12 +722,28 @@ describe('--janela — o guard temporal é configurável, mas fail-CLOSED', () =
 describe('divisão de trabalho — o founder dispara, o agente lê', () => {
   const raiz = () => fixture({ 'edge-a': 'v1.0-alfa', cara: 'v2.0-beta' });
 
-  it('--so-disparo entrega ao founder SÓ o que precisa de escrita (vault + INSERT)', () => {
+  /** O SQL que fica FORA do `format($sonda$…$sonda$)` — ou seja, o que de fato EXECUTA ali. */
+  const foraDoFormat = (sql: string) =>
+    sql
+      .split('$sonda$')
+      .filter((_, i) => i % 2 === 0)
+      .join('\n');
+
+  it('--so-disparo entrega ao founder SÓ o que EXECUTA escrita — a leitura viaja como TEXTO', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], soDisparo: true });
     expect(sql).toContain('-- PASSO 1');
     expect(sql).toContain('net.http_post(');
-    expect(sql).not.toContain('-- PASSO 2');
-    expect(sql).not.toContain('net._http_response');
+    // Desde o #2278 o passo 2 vai junto, mas como ARGUMENTO de `format()`: dentro do dollar-quoting
+    // ele é texto, não consulta. O recorte do founder continua sendo só o que precisa dele — o que
+    // não pode aparecer é um bloco de leitura EXECUTÁVEL, fora das aspas.
+    const fora = foraDoFormat(sql);
+    expect(fora).not.toContain('-- PASSO 2');
+    expect(fora).not.toContain('net._http_response');
+    // Controle POSITIVO: sem ele as duas negativas acima passariam medindo um recorte vazio (se o
+    // split mudasse de tag, por exemplo) — a cegueira de `docs/historico/gates-textuais-cegos.md`.
+    expect(sql).toContain('AS passo_2_copie_esta_celula');
+    expect(sql).toContain('net._http_response');
+    expect(fora.length).toBeGreaterThan(200);
   });
 
   it('--so-leitura entrega ao AGENTE só o que roda no psql-ro — nada de vault nem http_post', () => {
@@ -1030,5 +1177,37 @@ describe('gitReal: o executor de verdade responde o que o guard precisa julgar',
     criadas.push(fora);
     const r = gitReal(fora)(['rev-parse', '--verify', '--quiet', 'origin/main']);
     expect(r.status).not.toBe(0);
+  });
+});
+
+const RELE = ['monthly-report', 'calculate-scores', 'sonda-relay'];
+
+describe('guardEfeitoLegado — o último caminho de efeito deixa de ser o padrão', () => {
+  it('RECUSA edge da allowlist e oferece o one-liner do relé', () => {
+    const r = guardEfeitoLegado(['monthly-report'], false, RELE);
+    expect(r).toMatch(/RECUSADO/);
+    expect(r).toMatch(/deploy_sonda_disparar\(ARRAY\['monthly-report'\]\)/);
+    expect(r).toMatch(/FLUXO REAL/);
+  });
+  it('edge FORA da allowlist continua liberada — ela não tem caminho seguro ainda', () => {
+    expect(guardEfeitoLegado(['omie-sync-estoque'], false, RELE)).toBeNull();
+  });
+  it('--permitir-efeito-legado libera, e é a única forma de liberar', () => {
+    expect(guardEfeitoLegado(['monthly-report'], true, RELE)).toBeNull();
+  });
+  it('leva MISTA recusa nomeando só as que têm caminho seguro', () => {
+    const r = guardEfeitoLegado(['monthly-report', 'omie-sync-estoque'], false, RELE);
+    expect(r).toMatch(/monthly-report/);
+    expect(r).not.toMatch(/ARRAY\['monthly-report', 'omie-sync-estoque'\]/);
+  });
+  it('leva vazia não recusa', () => expect(guardEfeitoLegado([], false, RELE)).toBeNull());
+});
+
+describe('parsearArgs — a flag do efeito legado', () => {
+  it('reconhece --permitir-efeito-legado', () => {
+    expect(parsearArgs(['monthly-report', '--permitir-efeito-legado']).permitirEfeitoLegado).toBe(true);
+  });
+  it('sem a flag, o campo fica indefinido (o guard trata como NÃO permitido)', () => {
+    expect(parsearArgs(['monthly-report']).permitirEfeitoLegado).toBeUndefined();
   });
 });
