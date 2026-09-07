@@ -59,6 +59,13 @@ P -q <<'SQL'
 CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.uid',  true), '')::uuid $f$;
 CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.role', true), '') $f$;
 ALTER ROLE service_role BYPASSRLS;
+-- Pre-requisitos da CADEIA pos-disparo (copiados da PROD em 2026-09-07): o enum de papel e o
+-- `has_role` que a PORTA de conciliacao consulta. Stub por GUC, no mesmo idioma de auth.uid().
+CREATE TYPE public.app_role AS ENUM ('master', 'employee', 'customer');
+CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role)
+RETURNS boolean LANGUAGE sql STABLE AS $f$
+  SELECT coalesce(nullif(current_setting('test.approle', true), ''), '') = _role::text
+$f$;
 SQL
 
 PASS=0; FAIL=0
@@ -92,7 +99,10 @@ CREATE TABLE public.pedido_compra_sugerido (
   cancelamento_pos_disparo_motivo    text,
   cancelamento_pos_disparo_evidencia text,
   cancelamento_pos_disparo_por       text,
-  cancelamento_pos_disparo_em        timestamptz
+  cancelamento_pos_disparo_em        timestamptz,
+  -- Lidas pela VIEW de auditoria da cadeia pos-disparo (`vw_cancelamento_pos_disparo_sem_evidencia`).
+  fornecedor_nome                    text,
+  valor_total                        numeric
 );
 
 -- A testemunha do efeito EXTERNO. Escrita em transacao propria (cada `psql -c` e a sua), de modo
@@ -113,6 +123,13 @@ SQL
 #    e o que o sistema de HOJE faz, com A ja corrigido (achado do parecer Codex).
 # ══════════════════════════════════════════════════════════════════════════════════════════
 MIG_A="$REPO_ROOT/supabase/migrations/20260905224959_cancelar_pedido_guard_atomico.sql"
+# A CADEIA que a prod ja serve entre A e esta entrega. Sem ela o teste provaria contra um corpo de
+# `cancelar_pedido_sugerido` que nao existe mais em lugar nenhum -- e a conviv~encia com o trigger
+# irmao (`trg_valida_cancelamento_pos_disparo`, #2246/#2309) ficaria por SUPOSICAO.
+MIG_POS1="$REPO_ROOT/supabase/migrations/20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql"
+MIG_POS1B="$REPO_ROOT/supabase/migrations/20260906154202_cancelar_pedido_revoke_anon.sql"
+MIG_POS2="$REPO_ROOT/supabase/migrations/20260906172718_cancelamento_pos_disparo_gate_canonico.sql"
+MIG_POS3="$REPO_ROOT/supabase/migrations/20260907095841_disparado_simulado_e_estado_pos_disparo.sql"
 MIG="$REPO_ROOT/supabase/migrations/20260906190615_reposicao_claim_disparo_cenario_b.sql"
 POSTBLOCO="$(mktemp /tmp/postbloco-claim.XXXXXX)"
 # shellcheck disable=SC2016  # `$post$` e a TAG de dollar-quote do SQL: tem de ficar literal.
@@ -120,8 +137,12 @@ sed -n '/^DO \$post\$/,/^\$post\$;/p' "$MIG" > "$POSTBLOCO"
 [ -s "$POSTBLOCO" ] || { echo "INFRA: nao extrai o bloco de postcondicao do .sql"; exit 1; }
 
 P -q -f "$MIG_A"
+P -q -f "$MIG_POS1"
+P -q -f "$MIG_POS1B"
+P -q -f "$MIG_POS2"
+P -q -f "$MIG_POS3"
 P -q -f "$MIG"
-echo "migrations aplicadas: $(basename "$MIG_A") + $(basename "$MIG")"
+echo "migrations aplicadas: $(basename "$MIG_A") + cadeia pos-disparo (4) + $(basename "$MIG")"
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED + a EDGE MODELADA
@@ -150,6 +171,18 @@ cancelar_x() {
   local out rc
   out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
         -c "SELECT public.cancelar_pedido_sugerido($1, 'lucas', 'motivo do teste')::text;" 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then printf '%s\n' "$out" | tail -1
+  else printf 'EXC:%s\n' "$(printf '%s' "$out" | grep -o '\[[A-Z][A-Z-]*\]' | head -1)"; fi
+}
+# Veredito ASCII de caixa fixa: le a CHAVE do jsonb (`? 'error'`), nunca o texto da mensagem --
+# que tem acento, travessao e muda de idioma com lc_messages.
+cancelar_veredito() {
+  Pq -c "SELECT CASE WHEN public.cancelar_pedido_sugerido($1,'lucas','motivo do teste') ? 'error' THEN 'RECUSADO' ELSE 'PASSOU' END;"
+}
+porta_veredito() {
+  local out rc
+  out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
+        -c "SET test.role='service_role'; SELECT CASE WHEN public.corrigir_cancelamento_pos_disparo($1,'lucas','cancelado_junto_ao_fornecedor','PO cancelado no Omie em 2026-09-07, protocolo 4711') ? 'error' THEN 'RECUSADO' ELSE 'PASSOU' END;" 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ]; then printf '%s\n' "$out" | tail -1
   else printf 'EXC:%s\n' "$(printf '%s' "$out" | grep -o '\[[A-Z][A-Z-]*\]' | head -1)"; fi
 }
@@ -223,10 +256,24 @@ eq "C2c nem ganhou cancelado_em"                   "$(campo 2 cancelado_em)" "<n
 eq "C2d nem sofreu a higiene do portal (o retry agendado continua de pe)" \
    "$(campo 2 status_envio_portal)" "pendente_envio_portal"
 
-# ⚠️ `disparado_simulado` NAO e coberto: pendencia declarada (ver o cabecalho da secao 3 da
-# migration). Este assert grava o estado ATUAL para que uma mudanca futura apareca no diff.
-eq "C3 PENDENCIA DECLARADA: disparado_simulado AINDA e cancelavel (dry_run cria PO REAL no Omie)" \
-   "$(cancelar_x 8)" '{"status": "ok", "pedido_id": 8}'
+# `disparado_simulado` era PENDENCIA DECLARADA desta entrega; o #2309 a fechou (o dry_run cria PO
+# REAL no Omie, logo o estado e POS-disparo). Com a cadeia real aplicada, o assert vira o oposto --
+# e continua sendo o mesmo sensor: se alguem reabrir o buraco, esta linha fica vermelha.
+eq "C3 disparado_simulado NAO e mais cancelavel pela via normal (fechado no #2309)" \
+   "$(cancelar_veredito 8)" "RECUSADO"
+
+# ── CONVIVENCIA com a cadeia pos-disparo (#2246/#2309): dois triggers BEFORE na MESMA tabela ──
+# O meu (`trg_veta_...`) roda por ULTIMO (ordem alfabetica). O eixo aqui nao e o meu guard: e provar
+# que eu nao fechei a PORTA de conciliacao do vizinho no caminho em que ela deve passar.
+eq "C3b a PORTA de conciliacao do #2309 continua passando quando NAO ha disparo pendente" \
+   "$(porta_veredito 8)" "PASSOU"
+eq "C3c e o pedido de fato ficou cancelado por ela"  "$(campo 8 status)" "cancelado_humano"
+
+semear
+P -q -c "UPDATE public.pedido_compra_sugerido SET disparo_claim_em=NOW(), disparo_claim_por='edge@r9' WHERE id=8;" >/dev/null
+eq "C3d mas com disparo PENDENTE a porta tambem e vetada -- conciliar nao prova que a execucao em voo nao vai comprar" \
+   "$(porta_veredito 8)" "EXC:[CANCEL-COM-DISPARO-PENDENTE]"
+eq "C3e e a linha seguiu intacta"                    "$(campo 8 status)" "disparado_simulado"
 
 # C8 e o assert que o 2o parecer Codex exigiu: a GUC de correcao pos-disparo NAO libera pendencia de
 # disparo. Conciliar nao prova que uma execucao em voo nao vai comprar depois.
@@ -497,6 +544,27 @@ if [ "$F1" = '{"status": "ok", "pedido_id": 2}' ]; then
   ok "F1 sem o trigger, cancelar durante o disparo PASSA -- C2 tem dente"
 else
   bad "F1 sabotagem nao mudou nada (veio [$F1]) -- C2 nao esta medindo o veto"
+fi
+
+# F1b: na MESMA sabotagem (trigger fora), a PORTA de conciliacao deixa de ser vetada. Sem isto, C3d
+# poderia estar verde por causa do gate do VIZINHO -- e eu estaria creditando ao meu trigger uma
+# recusa que nao e minha.
+semear
+P -q -c "UPDATE public.pedido_compra_sugerido SET disparo_claim_em=NOW(), disparo_claim_por='edge@r9' WHERE id=8;" >/dev/null
+F1B="$(porta_veredito 8)"
+if [ "$F1B" = "PASSOU" ]; then
+  ok "F1b sem o trigger, a porta passa mesmo com disparo pendente -- C3d mede o MEU veto"
+else
+  bad "F1b sabotagem nao mudou nada (veio [$F1B]) -- C3d nao esta medindo o meu trigger"
+fi
+# F1c: o CONTROLE da MESMA sabotagem -- os gates do vizinho seguem de pe, entao eu dropei UM trigger,
+# nao a cadeia inteira. Sem este par, F1b passaria tambem num banco onde nada mais funciona.
+F1C="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
+      -c "SET test.role='service_role'; SELECT public.corrigir_cancelamento_pos_disparo(7,'lucas','motivo_invalido','evidencia');" 2>&1)" || true
+if printf '%s' "$F1C" | grep -q 'CANCEL-POS-DISPARO-MOTIVO'; then
+  ok "F1c CONTROLE: na MESMA sabotagem o gate de motivo do #2309 ainda recusa -- a sabotagem foi cirurgica"
+else
+  bad "F1c a sabotagem derrubou a cadeia inteira, nao so o meu trigger: $(printf '%s' "$F1C" | head -c 160)"
 fi
 
 # F2: claim SEM a allowlist de status. S2 tem de quebrar: ele reivindicaria um cancelado.

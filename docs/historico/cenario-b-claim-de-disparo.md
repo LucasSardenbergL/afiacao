@@ -159,17 +159,14 @@ O segundo: o `corrida()` fazia `tail -1` da saída do psql, e a exceção do tri
 
 ## Pendências (ditas para não serem lidas como fechadas)
 
-- **`disparado_simulado` continua cancelável.** `dry_run` **não** é dry-run: ele chama
-  `IncluirPedCompra` incondicionalmente e cria PEDIDO DE COMPRA REAL no Omie, só gravando
-  `disparado_simulado` em vez de `disparado`. Nem a denylist de `cancelar_pedido_sugerido` nem o
-  `trg_valida_cancelamento_pos_disparo` cobrem esse estado. O risco não é dormente: a única empresa
-  com linha em `empresa_configuracao_custos` é OBEN, em `producao` — qualquer empresa **sem** config
-  cai no default `dry_run` do código da edge. Não foi fechado aqui porque fechá-lo exige abrir a
-  saída correspondente em `corrigir_cancelamento_pos_disparo` (que recusa esse estado com
-  `[CANCEL-POS-DISPARO-ESTADO]`), e essa função foi reescrita na main em `20260906172718` **ainda não
-  aplicada na prod** — recriá-la a partir do corpo VIVO reverteria o gate canônico que aquela
-  migration instala. É fatia de quem já está naquela função. O harness grava o estado atual num
-  assert (`C3`), para que a mudança apareça no diff.
+- ~~**`disparado_simulado` continua cancelável.**~~ **FECHADO** pelo [#2309](https://github.com/LucasSardenbergL/afiacao/pull/2309)
+  (`20260907095841`), já aplicado na prod: o estado virou PÓS-disparo, com saída pela porta
+  `corrigir_cancelamento_pos_disparo`. A prova desta entrega passou a aplicar a cadeia inteira e
+  ganhou quatro asserts de **convivência** (C3b–C3e) mais a falsificação F1b/F1c — porque dois
+  triggers `BEFORE UPDATE` na mesma tabela é exatamente onde um guard novo cala o guard do vizinho
+  sem ninguém perceber. Aqui o meu roda por último e tem precedência quando há disparo em voo: a
+  porta serve para conciliar o que **já** aconteceu, e conciliar não prova que a execução em voo
+  não vai comprar depois.
 - **O portal Sayerlack fica fora.** A formulação honesta, do próprio parecer: *esta fatia arbitra
   cancelamento versus novas submissões ao Omie pelas execuções atualizadas; ela não impede envio ao
   portal, nem desfaz ou concilia pedidos já recebidos pelo fornecedor.* Um cancelamento pode vencer
@@ -180,3 +177,31 @@ O segundo: o `corrida()` fazia `tail -1` da saída do psql, e a exceção do tri
   **primeiro** (aditiva e inofensiva sozinha), deploy da edge **depois** — e a edge nova é
   **fail-closed**: sem conseguir reivindicar, ela não compra, então a ordem inversa pararia os
   disparos em vez de deixá-los desprotegidos.
+
+## Nota de método: o primeiro vermelho não é o bloqueante
+
+Com o PR aberto, o `validate` reprovou no step **Authz carimbo de prod**. Li a saída de cima para
+baixo, encontrei `❌ AUSENTE_EM_PROD: public.reposicao_selar_pedido` (função de OUTRO PR, mergeado e
+ainda não colado no SQL Editor), e concluí que a fila inteira estava travada esperando o founder.
+Errado — e caro: parei uma entrega pronta por um dia inteiro atrás de uma ação que não era
+necessária.
+
+O step tem comentário explícito no `ci.yml` dizendo o contrário: ele *"cobra só os eixos que um PR
+CONSEGUE consertar — contrato ou auditor mudou sem re-medir"*, e **idade e achado vivo em prod NÃO
+entram**, justamente para não travar ~30 worktrees por algo que só o founder conserta. O bloqueante
+real estava na PRIMEIRA linha, e era meu:
+
+```
+❌ [CARIMBO_CONTRATO_MUDOU] `funcoes`: o CONTRATO mudou desde a medição — prod nunca foi
+   verificado contra ele. Rode `bun run authz:carimbo:gravar` e commite o carimbo.
+```
+
+Eu havia adicionado `reposicao_claim_disparo` ao manifest sem re-medir. Um `authz:carimbo:gravar`
+resolveu; os `⚠️ [CARIMBO_ACHADO]` que eu tinha lido como causa são informativos por desenho
+(`bloqueiaPR: false`) e continuam lá, verdes, hoje.
+
+**A regra:** num gate que emite achados de várias severidades, o veredito é do eixo **BLOQUEANTE**,
+não do primeiro `❌` na tela. Antes de atribuir a reprovação a terceiros — e principalmente antes de
+pedir ação ao founder — case o achado com o eixo que o gate declara bloquear. `❌` é sinal de
+atenção; quem decide o exit é `bloqueiaPR`. Ler a saída na ordem em que ela imprime é ler pela
+diagramação, não pela semântica.

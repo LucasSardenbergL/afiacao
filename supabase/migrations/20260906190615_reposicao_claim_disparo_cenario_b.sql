@@ -174,17 +174,15 @@ GRANT EXECUTE ON FUNCTION public.reposicao_claim_disparo(bigint, text) TO servic
 -- possivelmente em voo (ou uma tentativa que morreu no meio) e cancelar aqui carimba "rejeitado"
 -- sobre um PO real.
 --
--- ⚠️ PENDÊNCIA DECLARADA, para não ser lida como fechada: `disparado_simulado` continua cancelável.
--- O parecer Codex desta fatia achou o buraco — `dry_run` NÃO é dry-run: ele chama `IncluirPedCompra`
--- incondicionalmente e CRIA PEDIDO DE COMPRA REAL no Omie, só gravando `disparado_simulado` em vez
--- de `disparado`. Nem a denylist de `cancelar_pedido_sugerido` nem o
--- `trg_valida_cancelamento_pos_disparo` cobrem esse estado. E o risco não é dormente: a ÚNICA
--- empresa com linha em `empresa_configuracao_custos` é OBEN, em `producao` — qualquer empresa SEM
--- config cai no default `dry_run` do código da edge. NÃO foi fechado aqui porque fechá-lo exige
--- abrir a saída correspondente em `corrigir_cancelamento_pos_disparo` (que hoje recusa
--- `disparado_simulado` com `[CANCEL-POS-DISPARO-ESTADO]`) — e essa função foi reescrita na main
--- em 20260906172718, ainda não aplicada na prod. Recriá-la a partir do corpo VIVO reverteria o gate
--- canônico que aquela migration instala. É fatia de quem já está naquela função.
+-- 📌 A pendência que esta migration declarou — `disparado_simulado` continuar cancelável — foi
+-- FECHADA na main pelo #2309 (`20260907095841`), já aplicado na prod: `dry_run` NÃO é dry-run (ele
+-- chama `IncluirPedCompra` incondicionalmente e cria PO REAL no Omie), então o estado passou a ser
+-- tratado como PÓS-disparo, com saída pela porta `corrigir_cancelamento_pos_disparo`. O eixo aqui
+-- é OUTRO e continua sendo só meu: aquele trigger fala do disparo que JÁ ACONTECEU; este fala do
+-- que está ACONTECENDO AGORA. Os dois convivem na mesma tabela (o meu roda por último, ordem
+-- alfabética) e a prova `db/test-claim-disparo-cenario-b.sh` aplica a cadeia inteira — C3b/C3c
+-- mostram a porta do vizinho passando, C3d mostra o meu veto tendo precedência quando há disparo
+-- em voo, e F1b/F1c falsificam esse par com controle na mesma sabotagem.
 CREATE OR REPLACE FUNCTION public.reposicao__veta_cancelamento_com_disparo_pendente()
 RETURNS trigger
 LANGUAGE plpgsql
