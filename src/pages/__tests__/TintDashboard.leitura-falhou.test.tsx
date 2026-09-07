@@ -27,7 +27,12 @@ type Resposta = { data: unknown; error: { message: string } | null; count: numbe
 const ERRO = { message: 'permission denied' };
 
 /** Qual leitura falha nesta rodada — nomeadas, porque alimentam partes distintas da tela. */
-let falha: 'nenhuma' | 'metricas' | 'erros' = 'nenhuma';
+/**
+ * `metricas` falha as 6 leituras juntas; `so-contagem` e `contagem-nula` isolam as tabelas de
+ * COUNT da `.maybeSingle()` da última importação — sem isso o `throw` do `lastImport.error`
+ * cobriria o guard de `contagem()` e a camada passaria verde por REDUNDÂNCIA, não por desenho.
+ */
+let falha: 'nenhuma' | 'metricas' | 'erros' | 'so-contagem' | 'contagem-nula' | 'erro-com-contagem' = 'nenhuma';
 let listaErros: unknown[] = [];
 let ultimaImportacao: unknown = null;
 
@@ -64,6 +69,16 @@ function resposta(tabela: string, chamados: Set<string>): Resposta {
       : { ...vazio, data: listaErros };
   }
   if (falha === 'metricas') return { ...vazio, error: ERRO };
+  const ehContagem = tabela === 'tint_formulas' || tabela === 'tint_skus' || tabela === 'tint_corantes';
+  // só as tabelas de COUNT falham — a `.maybeSingle()` da última importação responde normal
+  if (ehContagem && falha === 'so-contagem') return { ...vazio, error: ERRO };
+  // e o eixo do OUTRO guard: resposta OK, sem erro, mas sem a contagem pedida
+  if (ehContagem && falha === 'contagem-nula') return vazio;
+  // erro COM contagem preenchida: o único eixo que o guard `if (r.count == null)` não vê, e por
+  // isso o dente próprio do `if (r.error)`. Sem ele os dois guards seriam indistinguíveis no teste.
+  if (ehContagem && falha === 'erro-com-contagem') {
+    return { data: null, error: ERRO, count: CONTAGENS.formulas };
+  }
   if (tabela === 'tint_formulas') return { ...vazio, count: CONTAGENS.formulas };
   if (tabela === 'tint_skus') {
     return { ...vazio, count: chamados.has('not') ? CONTAGENS.skusMapeados : CONTAGENS.skusTodos };
@@ -146,6 +161,35 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
     expect(screen.queryByText('994.882')).toBeNull();
     // e o card da última importação parava de afirmar o vazio
     expect(screen.queryByText(FRASE_SEM_IMPORTACAO)).toBeNull();
+  });
+
+  it('ERRO só nas CONTAGENS: avisa — o throw da última importação não cobre este eixo', async () => {
+    falha = 'so-contagem';
+    renderPagina();
+
+    const aviso = await screen.findByTestId('aviso-leitura-metricas');
+    expect(aviso.getAttribute('data-estado')).toBe('erro');
+    expect(screen.queryByText('994.882')).toBeNull();
+  });
+
+  it('contagem AUSENTE sem erro: também avisa — `count ?? 0` fabricaria zero por outra porta', async () => {
+    falha = 'contagem-nula';
+    renderPagina();
+
+    const aviso = await screen.findByTestId('aviso-leitura-metricas');
+    expect(aviso.getAttribute('data-estado')).toBe('erro');
+    // o zero que o `?? 0` inventaria sobre 994.882 linhas não chega à tela
+    expect(screen.queryByText('0')).toBeNull();
+  });
+
+  it('erro COM contagem preenchida: avisa — este eixo só o guard de `error` enxerga', async () => {
+    falha = 'erro-com-contagem';
+    renderPagina();
+
+    const aviso = await screen.findByTestId('aviso-leitura-metricas');
+    expect(aviso.getAttribute('data-estado')).toBe('erro');
+    // a contagem VEIO, mas veio junto de um erro: exibi-la seria confiar num número não autorizado
+    expect(screen.queryByText('994.882')).toBeNull();
   });
 
   it('CONTROLE do vazio REAL: leu e não há importação → a frase é dita, e é VERDADE', async () => {

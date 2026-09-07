@@ -101,8 +101,14 @@ perdido é um terço da operação. As telas de cliente têm 5.664 *contas*, e c
    Guard: `src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx` (9 casos, a
    PÁGINA rodando, só o supabase mockado), falsificado com 5 dentes — um por camada, com
    controle verde na MESMA invocação do laço.
-3. **`GovernanceAudit.tsx:447` + `TintDashboard.tsx:128`.** Sub-tipo que MENTE, fontes de 11.869 e
-   1.656 linhas. Os dois hooks **engolem o erro** ⇒ a correção começa no `queryFn`, não na UI.
+3. ✅ **ENTREGUE (fatia #3, 2026-09-07).** **`GovernanceAudit.tsx:447` + `TintDashboard.tsx:128`.**
+   Os dois hooks **engoliam o erro** ⇒ a correção começou no `queryFn`, não na UI. ⚠️ **A
+   classificação acima estava errada pela metade:** só o `GovernanceAudit` MENTE; o card do
+   `TintDashboard:128` **SOME**. E a leitura do código achou mais três sítios no par — o
+   `{marginLog?.length || 0} registros.` da :411 (número afirmativo), o "Nenhuma importação" da
+   `TintDashboard:122` (frase, sobre 64.175 linhas) e **5 KPIs por `count ?? 0`** sobre 994.882
+   fórmulas, que não são a forma `jsx-&&` e sim o `?? 0` do §2. Detalhe e denominadores re-medidos
+   na seção "Fatia #3 FECHADA" no fim deste arquivo.
 4. **`ConfirmacaoPanel.tsx:185–197`** (badges pendente/aguardando/bloqueado no aceite do ciclo) e
    **`Recebimento.tsx:312`** (badge de pendência por armazém; 5 pendentes + 1 falha).
 5. **`AdminReposicaoPromocoes.tsx:165`** (2 rascunhos vivos) e **`FinanceiroMapping.tsx:170`**
@@ -227,3 +233,69 @@ itens em coluna `items` jsonb (confirmado pelo ESCRITOR, `submitOrder.ts:216`, n
 O limite de 200 nunca foi tocado em 31 mil pedidos. Registrar o zero é o que impede o próximo a
 inflar o argumento — mesma disciplina que separou `orders` (0 linhas) de `sales_orders` (508/30d)
 na medição original, só que agora contra um erro **meu**, plausível e verificável em duas queries.
+
+## Fatia #3 FECHADA — `GovernanceAudit` + `TintDashboard` (2026-09-07)
+
+O item 3 da ordem por dano, fechado no padrão da fatia #1: o `queryFn` LANÇA, e a tela usa
+`estadoDeLeitura` + `naoConsegui`/`desatualizado` + `<AvisoLeituraFalhou>`, com âncora de teste
+própria por leitura e o ramo composto para cache-com-refetch-falho.
+
+### 1. A classificação deste inventário estava errada pela metade — e o erro é do tipo que ele mesmo denuncia
+
+Acima está escrito que os dois sítios são "sub-tipo que MENTE". A leitura do código mostra que o
+par tem **três** comportamentos diferentes, não um — e o mais caro dos três não é nenhum dos dois
+sub-tipos catalogados:
+
+| sítio | o que a falha de leitura produz | sub-tipo | fonte (psql-ro, 2026-09-07) |
+|---|---|---|---|
+| `GovernanceAudit:447` "Sem registros de auditoria" | frase afirmativa | **mente** | `margin_audit_log` = 12.913 |
+| `GovernanceAudit:411` `{marginLog?.length \|\| 0} registros.` | **número** afirmativo | **mente** | idem — não estava no inventário |
+| `TintDashboard:128` card "Últimos Erros de Importação" | o card **some** | some | `tint_importacoes` erro>0 = 2.124 |
+| `TintDashboard:122` "Nenhuma importação" | frase afirmativa | **mente** | `tint_importacoes` (oben) = 64.175 |
+| `TintDashboard` — 5 KPIs por `count ?? 0` | **zero fabricado** | nenhum dos dois | `tint_formulas` (oben) = **994.882** |
+
+Os 5 KPIs são o achado que a varredura da forma `jsx-&&` **não podia** ter encontrado, porque não
+são a forma: `useMetrics` faz seis leituras num `Promise.all` e não desestrutura `error` em
+**nenhuma** delas, devolvendo `count ?? 0`. Uma leitura que falha vira "0 fórmulas" sobre quase um
+milhão de linhas — o `?? 0` do §2 do money-path (ausente ≠ zero), a classe IRMÃ, escondida atrás do
+sítio que o inventário foi buscar. Quem varrer o resto: **o `&&` é a assinatura, não o perímetro** —
+ao abrir um sítio, leia o `queryFn` inteiro, não só a linha que o detector apontou.
+
+### 2. Os denominadores de ontem já estavam velhos, e na direção que fortalece o argumento
+
+| fonte | inventário (2026-09-06) | medido (2026-09-07) | delta em 1 dia |
+|---|---|---|---|
+| `margin_audit_log` | 11.869 | **12.913** | **+1.044** |
+| `tint_importacoes` erro>0 | 1.656 | **2.124** | **+468** |
+
+Não é fonte histórica parada: as duas são escritas AGORA. Vale como método — um denominador tem
+data, e re-medir antes de corrigir custa uma query. (O `tint_importacoes` do inventário também não
+filtrava `account`, que é o que o hook faz; aqui os 2.124 já são de `oben`, e coincidem com o total
+porque hoje não há outra conta na tabela.)
+
+### 3. O escopo foi decidido por MEDIÇÃO, e o zero fica registrado
+
+`GovernanceAudit` tem outras duas abas com a mesma forma colapsada (`filteredAlgoLog.length === 0`
+⇒ "Nenhum registro encontrado com os filtros atuais"), e os hooks delas **já lançavam** — seriam
+correção alcançável e barata, no mesmo arquivo, no mesmo commit. Ficaram de fora porque
+`permission_change_log` e `farmer_audit_log` medem **0 linhas** hoje: dano zero, e corrigir por
+simetria seria inflar o diff com o argumento que não tenho. É o mesmo critério do "gatilho" que
+esta doc já usou — e o zero fica escrito para que o próximo não precise re-medir para descobrir
+que não vale, nem o assuma sem medir.
+
+### 4. `naoConsegui` e `desatualizado` podem ser verdade ao MESMO tempo — e o desenho ingênuo mostra dois avisos
+
+Com dado no cache e um refetch que falha, `status` é `'error'` (⇒ `naoConsegui` verdadeiro) **e**
+`desatualizado` devolve `'erro'`: escrever os dois `<AvisoLeituraFalhou>` guardados só por eles
+renderiza o aviso duplicado. O guard que separa é o dado em mãos, exatamente como a fatia #2 já
+escrevia — `naoConsegui(estado) && !dado ? estado : null` para o aviso sozinho, e
+`desatualizado(fatia, Boolean(dado))` para o composto. Não é estilo: é o que faz os dois ramos
+serem mutuamente exclusivos.
+
+### 5. Um bug de brinde que a correção elimina de graça
+
+`(!marginLog || marginLog.length === 0)` casa **`carregando`** junto com o vazio: enquanto a
+auditoria de margem carregava, a tabela já dizia "Sem registros de auditoria". Trocar por
+`marginLog?.length === 0` (só a query que RESPONDEU afirma) apaga o flash sem uma linha a mais.
+O mesmo vale para o `isLoading` do `TintDashboard`, que gateava o skeleton sozinho e é **FALSE no
+offline** — sem rede a tela inteira caía no ramo dos zeros, sem erro nenhum ter acontecido.
