@@ -207,7 +207,10 @@ SQL
   esac
 }
 
-# veredito <cenario> <dir_gerador> — devolve a string do veredito da edge-a
+# veredito <cenario> <dir_gerador> — devolve a string do veredito da edge-a, ou um SENTINELA de
+# NÃO-VEREDITO (`SEED_FALHOU`/`SQL_VAZIO`/vazio). Os dois desfechos são diferentes em espécie:
+# "o banco respondeu OUTRA coisa" é DADO (a asserção divergiu); "o banco não respondeu" é AUSÊNCIA
+# de dado. Quem confunde os dois aprova asserção sem prova — ver `via_viva` abaixo.
 veredito() {
   local cen="$1" gdir="$2"
   semear "$cen" >/dev/null 2>&1 || { echo "SEED_FALHOU"; return; }
@@ -217,9 +220,18 @@ veredito() {
 }
 
 rc=0
+# `via_caiu` acumula os NÃO-VEREDITOS da rodada corrente de `executar_casos`. Fica separado de `rc`
+# de propósito: `rc=1` significa "a suíte ficou vermelha", e vermelho por AUSÊNCIA de resposta não
+# prova o mesmo que vermelho por resposta DIVERGENTE.
+via_caiu=""
+sem_veredito() { # got — o banco/gerador não respondeu NADA que se possa julgar
+  case "${1:-}" in "" | SEED_FALHOU | SQL_VAZIO) return 0 ;; *) return 1 ;; esac
+}
 uma_linha_por_edge() { # cenario — o CROSS JOIN do controle não pode multiplicar a leva
   local cen="$1" n
-  semear "$cen" >/dev/null 2>&1 || { printf '  [XX ] %-26s seed falhou\n' "uma_linha_por_edge"; rc=1; return; }
+  semear "$cen" >/dev/null 2>&1 || {
+    printf '  [XX ] %-26s seed falhou\n' "uma_linha_por_edge"
+    via_caiu="${via_caiu}uma_linha_por_edge/SEED_FALHOU "; rc=1; return; }
   gera_sql "$GER" > "$TMP/leitura.sql" 2>/dev/null
   n=$(P -tAF'|' -f "$TMP/leitura.sql" 2>/dev/null | command grep -c . || true)
   if [ "$n" != "1" ]; then
@@ -232,6 +244,8 @@ uma_linha_por_edge() { # cenario — o CROSS JOIN do controle não pode multipli
 caso() { # nome cenario marcador_esperado descricao [marcador_PROIBIDO]
   local nome="$1" cen="$2" esp="$3" desc="$4" proibido="${5:-}" got
   got=$(veredito "$cen" "$GER")
+  # AUSÊNCIA de resposta não é resposta divergente: marca a via para `sabotar`/o epílogo julgarem.
+  sem_veredito "$got" && via_caiu="${via_caiu}${nome}/${got:-vazio} "
   case "$got" in
     *"$esp"*) ;;
     *) printf '  [XX ] %-26s veredito=%s\n        esperava conter "%s" — %s\n' "$nome" "${got:-<vazio>}" "$esp" "$desc"
@@ -251,6 +265,7 @@ caso() { # nome cenario marcador_esperado descricao [marcador_PROIBIDO]
 # casa por acidente, e um marcador que casa sempre é asserção sem dente (#1483).
 executar_casos() {
   rc=0
+  via_caiu=""
   caso velho_com_controle       velho_com_controle       "BUNDLE VELHO (pre-sonda)" \
     "401 com o secret PROVADO bom por tráfego de fundo ⇒ veredito determinado"
   caso sem_controle             sem_controle             "INDETERMINADO" \
@@ -280,6 +295,12 @@ executar_casos() {
 if [ "$FALSIFY" = 0 ]; then
   echo "== sonda-veredito-401 — 401 é ambíguo: bundle velho × CRON_SECRET inválido =="
   executar_casos
+  if [ -n "$via_caiu" ]; then
+    echo "  ❌ VIA_NAO_OBSERVAVEL: cenário(s) sem veredito nenhum — $via_caiu"
+    echo "     Isto NÃO é divergência de contrato: o banco/gerador não respondeu. psql.err:"
+    sed 's/^/       /' "$TMP/psql.err" 2>/dev/null | head -5
+    exit 2
+  fi
   [ "$rc" -eq 0 ] && echo "  tudo bateu: 11 vereditos + cardinalidade" || echo "  ❌ divergência(s) acima"
   exit "$rc"
 fi
@@ -294,8 +315,14 @@ ORIG=$(cat "$GER/sonda-versao-sql.ts")
 # serve — e outro processo e outro tmp. → docs/historico/falsificacao-sem-linha-de-base.md
 executar_casos > "$TMP/controle.out" 2>&1
 if [ "$rc" -ne 0 ]; then
-  echo "  [XX ] CONTROLE VERMELHO com o gerador INTEGRO — nenhuma sabotagem foi tentada:"
+  if [ -n "$via_caiu" ]; then
+    echo "  ❌ VIA_NAO_OBSERVAVEL: o controle nem chegou a ter veredito — $via_caiu"
+    echo "     Nenhuma sabotagem foi tentada, e NADA foi provado (≠ 'o contrato mudou')."
+  else
+    echo "  [XX ] CONTROLE VERMELHO com o gerador INTEGRO — nenhuma sabotagem foi tentada:"
+  fi
   cat "$TMP/controle.out"
+  [ -n "$via_caiu" ] && exit 2
   exit 1
 fi
 echo "  [ok ] controle: os $(command grep -c '^  \[ok \]' "$TMP/controle.out") cenarios passam com o gerador integro"
@@ -350,7 +377,33 @@ diagnostico_cegueira() { # alvo
 }
 # diagnostico-cegueira>>
 
+# via_viva — a via de prova ainda responde? Sonda POSITIVA fim-a-fim (Postgres + bun + o caminho
+# do SQL), com o gerador JÁ RESTAURADO: semeia o cenário mais simples e exige o veredito conhecido
+# de volta. `SELECT 1` não bastaria — provaria só o servidor, e a via tem três pernas.
+# Só faz sentido chamar DEPOIS da restauração: com o arquivo sabotado, um vazio é esperado.
+VIA_MOTIVO=""
+via_viva() {
+  local v
+  if [ "$(P -tAc 'SELECT 1' 2>/dev/null)" != "1" ]; then
+    VIA_MOTIVO="o Postgres efêmero parou de responder 'SELECT 1' (morreu no meio do laço)."; return 1
+  fi
+  if ! semear confirmado >/dev/null 2>&1; then
+    VIA_MOTIVO="o Postgres responde, mas a semeadura falhou (tabela/schema sumiu)."; return 1
+  fi
+  gera_sql "$GER" > "$TMP/via.sql" 2>/dev/null
+  if [ ! -s "$TMP/via.sql" ]; then
+    VIA_MOTIVO="o gerador ÍNTEGRO não emitiu SQL — bun caiu (veja $TMP/gen.err)."; return 1
+  fi
+  v=$(P -tAF'|' -f "$TMP/via.sql" 2>/dev/null | awk -F'|' 'NF>1 {print $NF}' | head -1)
+  case "$v" in
+    *"DEPLOY CONFIRMADO"*) return 0 ;;
+    *) VIA_MOTIVO="o gerador ÍNTEGRO deixou de confirmar o caminho feliz (veredito='${v:-vazio}')."
+       return 1 ;;
+  esac
+}
+
 cegas=0
+julgadas=0
 sabotar() { # nome de para
   local nome="$1" de="$2" para="$3"
   # Busca no PRÓPRIO shell: sem pipe, sem fork, sem locale. NÃO devolver `printf | command grep -qF`
@@ -375,12 +428,28 @@ de, para = sys.argv[1], sys.argv[2]
 sys.stdout.write(sys.stdin.read().replace(de, para))
 ' "$de" "$para" > "$GER/sonda-versao-sql.ts"
   executar_casos >"$TMP/falsify.out" 2>&1
-  if [ "$rc" -ne 0 ]; then
-    printf '  [ok ] pegada: %s\n' "$nome"
-  else
-    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA: %s\n' "$nome"; cegas=$((cegas + 1))
-  fi
+  local rc_sab="$rc" via_sab="$via_caiu"
+  # Restaura ANTES de julgar: `via_viva` precisa do gerador íntegro para ser sonda da VIA, e não
+  # da sabotagem.
   printf '%s' "$ORIG" > "$GER/sonda-versao-sql.ts"
+  if [ "$rc_sab" -eq 0 ]; then
+    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA: %s\n' "$nome"; cegas=$((cegas + 1)); return
+  fi
+  # Vermelho com ≥1 cenário SEM VEREDITO é ambíguo: ou a sabotagem quebrou o SQL (mérito dela), ou
+  # a via caiu no meio do laço — e aí TODA sabotagem seguinte herdaria um vermelho que já existia,
+  # saindo "pegada" sem provar nada. Foi o que se mediu: com a via morta logo após o controle, o
+  # `--falsify` dava 11/11 pegadas e exit 0. `ausente ≠ zero` na dimensão VIA DE PROVA.
+  if [ -n "$via_sab" ] && ! via_viva; then
+    printf '  ❌ VIA_NAO_OBSERVAVEL: a via caiu durante a sabotagem "%s".\n' "$nome"
+    printf '     %s\n' "$VIA_MOTIVO"
+    printf '     cenário(s) sem veredito: %s\n' "$via_sab"
+    printf '     As %s sabotagem(ns) já julgadas valem; as seguintes NÃO foram tentadas.\n' "$julgadas"
+    echo   "     Isto NÃO é 'o contrato mudou' e NÃO se conserta editando a sabotagem."
+    sed 's/^/       /' "$TMP/falsify.out" 2>/dev/null | head -8
+    exit 2
+  fi
+  julgadas=$((julgadas + 1))
+  printf '  [ok ] pegada: %s\n' "$nome"
 }
 
 sabotar "401 volta a cair no ramo generico >=400 (o falso 'bundle velho' que motivou tudo)" \
