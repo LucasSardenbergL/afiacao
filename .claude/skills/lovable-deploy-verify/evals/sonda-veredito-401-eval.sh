@@ -300,6 +300,56 @@ if [ "$rc" -ne 0 ]; then
 fi
 echo "  [ok ] controle: os $(command grep -c '^  \[ok \]' "$TMP/controle.out") cenarios passam com o gerador integro"
 
+# <<diagnostico-cegueira — extraido e testado por scripts/test-eval-diagnostico-cegueira.sh
+# O #2308 matou a CAUSA do NO-OP falso (sob `set -o pipefail`, o `grep -q` fechava o pipe, o
+# `printf` morria de SIGPIPE e o pipeline devolvia 141 com o grep tendo ACHADO). Com o pipeline
+# fora, um NO-OP volta a significar que o alvo sumiu DE VERDADE — e aí a pergunta que sobra é
+# ONDE ele sumiu: na captura (`$ORIG`), na cópia (`$GER`) ou na fonte (repo). Em 2026-09-07 essa
+# pergunta ficou 1 dia sem resposta porque a mensagem não trazia nenhum dos três eixos; medir os
+# três custa 4 linhas e só roda quando já houve cegueira.
+sha_de() { # arquivo -> sha256 | SEM-FERRAMENTA-DE-HASH (nunca vazio: vazio leria como "igual")
+  if command -v sha256sum >/dev/null 2>&1; then command sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then command shasum -a 256 "$1" | cut -d' ' -f1
+  else printf 'SEM-FERRAMENTA-DE-HASH'
+  fi
+}
+
+# SIM / NAO / ERRO-GREP-<rc>. "Nao achei" e "nao consegui procurar" sao respostas DIFERENTES:
+# grep sai 2 em erro, e o `if ! grep` original colapsava as duas em "alvo sumiu" — ausencia de
+# dado virando veredito, o oposto da regra de evidencia positiva.
+tem_alvo() { # arquivo alvo
+  local rc=0
+  command grep -qF "$2" "$1" 2>/dev/null || rc=$?
+  case "$rc" in
+    0) printf 'SIM' ;;
+    1) printf 'NAO' ;;
+    *) printf 'ERRO-GREP-%s' "$rc" ;;
+  esac
+}
+
+linha_eixo() { # rotulo arquivo alvo
+  if [ -f "$2" ]; then
+    printf '         %-14s %8s bytes  sha=%.12s  alvo=%s\n' \
+      "$1" "$(wc -c < "$2" | tr -d ' ')" "$(sha_de "$2")" "$(tem_alvo "$2" "$3")"
+  else
+    printf '         %-14s AUSENTE\n' "$1"
+  fi
+}
+
+diagnostico_cegueira() { # alvo
+  local de="$1" copia="$GER/sonda-versao-sql.ts" fonte="$RAIZ_REPO/scripts/sonda-versao-sql.ts"
+  local cap="$TMP/orig-capturado.txt"
+  printf '%s' "$ORIG" > "$cap"
+  linha_eixo 'captura(ORIG)' "$cap" "$de"
+  linha_eixo 'copia(GER)' "$copia" "$de"
+  linha_eixo 'fonte(repo)' "$fonte" "$de"
+  if [ -f "$copia" ] && [ -f "$fonte" ]; then
+    printf '         1a divergencia copia x fonte: %s\n' \
+      "$(command diff "$copia" "$fonte" 2>&1 | head -4 | tr '\n' '|' | cut -c1-200)"
+  fi
+}
+# diagnostico-cegueira>>
+
 cegas=0
 sabotar() { # nome de para
   local nome="$1" de="$2" para="$3"
@@ -315,7 +365,9 @@ sabotar() { # nome de para
   # do GNU `grep -q`, que o BSD grep do macOS não tem). → docs/historico/evidencia-positiva-shell.md
   case "$ORIG" in
     *"$de"*) ;;
-    *) printf '  [XX ] sabotagem NO-OP (alvo sumiu do gerador): %s\n' "$nome"; cegas=$((cegas + 1)); return ;;
+    *) printf '  [XX ] sabotagem NO-OP (alvo sumiu do gerador): %s\n' "$nome"
+       diagnostico_cegueira "$de"
+       cegas=$((cegas + 1)); return ;;
   esac
   printf '%s' "$ORIG" | python3 -c '
 import sys
