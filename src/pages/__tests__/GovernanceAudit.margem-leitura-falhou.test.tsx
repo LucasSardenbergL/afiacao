@@ -94,12 +94,19 @@ function renderPagina(qc = novoQc()) {
   );
 }
 
-/** A aba de margem é a terceira; o `TabsContent` do Radix só monta quando ela está ativa. */
+/**
+ * A aba de margem é a terceira; o `TabsContent` do Radix só monta quando ela está ativa.
+ *
+ * A âncora é o CABEÇALHO DA TABELA, não o título do card: `/Auditoria de Margem/i` casaria também
+ * a copy do próprio `<AvisoLeituraFalhou oque="a auditoria de margem">` — e aí o helper de
+ * navegação só quebrava nos testes em que o aviso aparece, que são exatamente os que importam.
+ * O `<thead>` fica fora de todo condicional, então serve nos quatro estados.
+ */
 async function abrirAbaMargem() {
   const tab = await screen.findByRole('tab', { name: /Margem/i });
   fireEvent.mouseDown(tab);
   fireEvent.click(tab);
-  await waitFor(() => expect(screen.getByText(/Auditoria de Margem/i)).toBeTruthy());
+  await screen.findByRole('columnheader', { name: 'M. Real' });
 }
 
 beforeEach(() => {

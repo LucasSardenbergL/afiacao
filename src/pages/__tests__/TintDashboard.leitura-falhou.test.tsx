@@ -112,6 +112,12 @@ vi.mock('@/integrations/supabase/client', () => ({
 vi.mock('@/contexts/ImpersonationContext', () => ({
   useImpersonation: () => ({ isImpersonating: false }),
 }));
+// O `RecorrentesHojeCard` (deixado rodando de verdade) chega em `useAuth` por dentro do
+// `useMinhasRecorrentesHoje`, e sem Provider ele LANÇA e derruba a página inteira — o guard
+// morreria no host, não na leitura que ele fiscaliza. `AuthContext` é plataforma ⇒ sem aresta.
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'u1' }, isAdmin: true, isStaff: true }),
+}));
 
 import TintDashboard from '../TintDashboard';
 
@@ -144,8 +150,10 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
   it('CONTROLE: leitura boa → os números reais aparecem e NÃO há aviso', async () => {
     renderPagina();
     expect(await screen.findByText('994.882')).toBeTruthy();
-    expect(screen.getByText('180')).toBeTruthy();
-    expect(screen.getByText('220')).toBeTruthy();
+    // os dois KPIs de mapeamento vivem num nó de texto SÓ ("180 / 220") — casar '180' sozinho
+    // não acharia nada, porque `getNodeText` concatena os filhos de texto diretos do elemento.
+    expect(screen.getByText('180 / 220')).toBeTruthy();
+    expect(screen.getByText('10 / 14')).toBeTruthy();
     expect(screen.queryByText(AVISO)).toBeNull();
     expect(screen.queryByText(FRASE_SEM_IMPORTACAO)).toBeNull();
   });
