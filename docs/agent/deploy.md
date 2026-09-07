@@ -18,7 +18,10 @@ Como provar o que está **SERVIDO** nesse host (hash do index + grep nos chunks)
 
 ## O que BLOQUEIA o PR — leia o `ci.yml` INTEIRO, não os primeiros steps
 
-O job `validate` do `.github/workflows/ci.yml` tem **muito mais que os 5 gates óbvios**. Em 2026-08-23 eram 15 steps: `tsc` (app) · `scripts:typecheck` · `test` · `test:edges` (Deno) · `edges:typecheck` · `build` · `lint` · `claude:size` · `test:hooks` · `authz:check` · `bunpin:check` · `docs:indice` · `docs:citacoes` · `docs:links` · **`bunx knip`** (dead code). Mais o job `mutation-check` (`mutcheck:selftest` + `mutcheck`).
+O CI do `.github/workflows/ci.yml` tem **muito mais que os 5 gates óbvios**. Desde 2026-09-07 os steps
+vivem em **4 jobs paralelos** (`typecheck` · `testes` · `edges-e-build` · `gates-e-falsificacao`), e
+`validate` virou o **agregador** que os exige — é ele o único required check, então continua sendo
+"o que bloqueia o PR", mas o vermelho agora aparece no job filho. Em 2026-08-23 eram 15 steps: `tsc` (app) · `scripts:typecheck` · `test` · `test:edges` (Deno) · `edges:typecheck` · `build` · `lint` · `claude:size` · `test:hooks` · `authz:check` · `bunpin:check` · `docs:indice` · `docs:citacoes` · `docs:links` · **`bunx knip`** (dead code). Mais o job `mutation-check` (`mutcheck:selftest` + `mutcheck`).
 
 ⚠️ **`bunx knip` É bloqueante** — export sem consumidor derruba PR. O `/health` roda o mesmo knip localmente, mas "também roda no /health" **não** significa "só roda no /health".
 

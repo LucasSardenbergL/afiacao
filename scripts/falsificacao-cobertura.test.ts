@@ -85,7 +85,7 @@ describe('cobertura do modo --falsificar', () => {
   it('o script test:falsificacao existe (sem ele o job do CI não roda nada)', () => {
     expect(
       pkg.scripts['test:falsificacao'],
-      'Faltou o script "test:falsificacao" no package.json — o job `falsificacao` do ci.yml o chama.',
+      'Faltou o script "test:falsificacao" no package.json — o job `gates-e-falsificacao` do ci.yml o chama.',
     ).toBeTruthy();
   });
 
