@@ -191,6 +191,45 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
   // O limite desta entrada, declarado: ela prova que a CHAMADA governa um ramo alcançável que
   // levanta exceção. NÃO prova que a exceção acontece para quem deve — isso é asserção
   // EXECUTADA, em db/test-pos-candidatos-guard-temporal.sh (D1/D4 + falsificações N1/N2/N3).
+  // 2026-09-06 — a RPC de aprovação virou SECURITY DEFINER no MESMO PR que fechou o P0-2 do
+  // challenge Codex, e por isso passou a exigir classificação. A troca não é cosmética: com as
+  // primitivas do selo fora do alcance de `authenticated`, alguém tem de poder executá-las, e a
+  // escolha foi concentrar isso na ÚNICA porta — a RPC — em vez de espalhar GRANTs.
+  // DEFINER bypassa a RLS de `pedido_compra_sugerido`, então o gate no corpo (`cap_compras_ler`)
+  // não é decoração: é o que substitui a policy.
+  // ⚠️ Vale só para o overload de 3 args. O de 2 args continua INVOKER de propósito — a
+  // postcondição da 20260906151715 (outra sessão) exige `prosecdef=false` nele, e é a assinatura
+  // que a UI velha chama. Os dois convivem porque o de 2 args é wrapper BEGIN ATOMIC do de 3.
+  'public.aprovar_pedido_sugerido': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'aprova pedido de compra e sela os itens (money-path); DEFINER desde a M1 do selo, gate private.cap_compras_ler',
+  },
+  // 2026-09-06 — as duas primitivas do SELO DE APROVAÇÃO do pedido Sayerlack
+  // (migration 20260906170000, spec docs/superpowers/specs/2026-09-05-selo-aprovacao-…).
+  // SECDEF por DESENHO, não por conveniência: como INVOKER, um aprovador sem SELECT em
+  // `sku_fornecedor_externo` veria 0 linhas de de-para e o pedido seria recusado por SA006
+  // pela razão ERRADA (achado P0-1 do challenge Codex sobre o desenho). O gate explícito
+  // `private.cap_compras_ler` substitui a RLS que o DEFINER bypassa.
+  //
+  // ⚠️ DÍVIDA DECLARADA, não esquecida: o challenge Codex sobre a M1 (P0-2) mostrou que o
+  // `GRANT EXECUTE … TO authenticated` de `reposicao_selar_pedido` fura a autorização por
+  // ESTADO planejada para a M2 — quem tem capacidade de compras pode selar direto e depois
+  // flipar o status por UPDATE, e o trigger da M2 veria "selo bate com os itens" e aceitaria.
+  // Quando isso for corrigido (revogar `authenticated`; a RPC pública de aprovação passa a
+  // SECURITY DEFINER com gate próprio), esta entrada MUDA de AUTHZ_MANIFEST para
+  // ACKNOWLEDGED_SENSITIVE — deixa de ser "alcançável com gate" e passa a ser "fechada por
+  // privilégio". Enquanto o grant existir, o lugar honesto dela é AQUI.
+  'public.reposicao_selar_pedido': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'sela a aprovação do pedido: lê fornecedor/de-para e grava o snapshot no item — money-path de compras (M1 do selo)',
+  },
+  'public.reposicao_conferir_envio': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'confere selo e de-para vivo antes do Browserless; devolve fornecedor/código do portal — money-path de compras (M1 do selo)',
+  },
   'public.reposicao_pos_candidatos': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },

@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **523** custom migrations totais
-- **1774** objetos esperados (criados por estas migrations)
+- **524** custom migrations totais
+- **1786** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 550
+  - `function`: 561
   - `rls_policy`: 462
-  - `index`: 256
+  - `index`: 257
   - `cron_job`: 171
   - `table`: 165
   - `trigger`: 89
@@ -4333,6 +4333,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260906165706_aprovar_pedido_revoke_anon.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260906170000_reposicao_selo_aprovacao_m1_expandir.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_pedido_e_portal` | — |
+| `function` | `public.reposicao_selo_itens` | — |
+| `function` | `public.reposicao_selar_pedido` | — |
+| `function` | `public.reposicao_conferir_envio` | — |
+| `function` | `public.aprovar_pedido_sugerido` | — |
+| `function` | `public.aprovar_pedido_sugerido` | — |
+| `function` | `public.cancelar_pedido_sugerido` | — |
+| `function` | `public.iniciar_envio_portal_pre_claim` | — |
+| `function` | `public.envio_portal_claim_ids` | — |
+| `function` | `public.envio_portal_lock_candidatos` | — |
+| `function` | `public.pedido_compra_split` | — |
+| `index` | `public.ux_sku_fornecedor_externo_ativo` | `sku_fornecedor_externo` |
 
 ### `20260906172718_cancelamento_pos_disparo_gate_canonico.sql`
 

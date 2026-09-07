@@ -115,6 +115,42 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
   // gateada ao anônimo, e aí o gate no corpo é a ÚNICA tranca (auth.uid() NULL ⇒ has_role false
   // ⇒ hoje bloqueia, mas passa a depender de o gate ser fail-closed no uid NULL — e o próprio
   // manifesto documenta que `pedido_compra_split` NÃO é, por compatibilidade com cron).
+  // 2026-09-06 — a RPC de aprovação. `authenticated` alcança DE PROPÓSITO (é o botão "Aprovar"
+  // do comprador logado); o que a Parte E protege aqui é o `anon`, que a 20260906165706 (outra
+  // sessão) já revogou e esta migration reafirma. Os DOIS overloads existem sob a mesma chave:
+  // o de 3 args é SECURITY DEFINER com gate `cap_compras_ler`, o de 2 args é INVOKER com o
+  // MESMO gate e delega ao de 3. A regra da casa colapsa por `schema.name` e é fail-closed —
+  // aqui as duas assinaturas têm a mesma postura, então o colapso não esconde nada.
+  'public.aprovar_pedido_sugerido': {
+    fechadaPor: '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql',
+    permitido: PORTA_GATE,
+    motivo: 'aprova pedido de compra e sela os itens; gate private.cap_compras_ler nos dois overloads',
+  },
+  // 2026-09-06 — as 2 primitivas do SELO DE APROVAÇÃO do pedido Sayerlack (M1, #2187).
+  // `authenticated` alcança DE PROPÓSITO: quem aprova é o comprador logado, e o gate no corpo é
+  // `private.cap_compras_ler`. O que esta Parte E protege aqui é o `anon` — a migration nasce
+  // com `REVOKE ALL … FROM PUBLIC` seguido de GRANT nomeado a authenticated/service_role.
+  // ⚠️ Dívida declarada (P0-2 do challenge Codex, mesma nota do AUTHZ_MANIFEST): o grant a
+  // `authenticated` em reposicao_selar_pedido permite selar direto e depois flipar o status,
+  // contornando a autorização por ESTADO da M2. Quando for revogado, estas duas saem de
+  // PORTA_GATE e passam a PORTA_FECHADA (e a entrada correspondente migra para ACKNOWLEDGED).
+  //
+  // ⚠️ ATÉ O APPLY MANUAL DA 20260906170000, `bun run authz:funcoes:prod` reporta as duas como
+  // [FUNCAO_AUSENTE_EM_PROD] e o carimbo carrega o achado como ⚠️ (não ❌). Isso é CORRETO e não
+  // é drift: elas não existem no banco porque a migration não foi colada — merge ≠ produção
+  // (database.md §2). Não silencie o achado tirando a entrada: sem ela o `authz:check` estático
+  // reprova a migration por SECDEF sensível não classificada, que é o gate que ela existe para
+  // satisfazer. O achado some sozinho no primeiro carimbo depois do apply.
+  'public.reposicao_selar_pedido': {
+    fechadaPor: '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql',
+    permitido: PORTA_GATE,
+    motivo: 'sela a aprovação do pedido (snapshot do de-para no item); gate private.cap_compras_ler',
+  },
+  'public.reposicao_conferir_envio': {
+    fechadaPor: '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql',
+    permitido: PORTA_GATE,
+    motivo: 'confere selo e de-para vivo antes do Browserless; gate private.cap_compras_ler',
+  },
   'public.fin_estimar_estoque_omie': {
     fechadaPor: '20260528150000_fin_estoque_omie_feed.sql',
     permitido: PORTA_GATE,
