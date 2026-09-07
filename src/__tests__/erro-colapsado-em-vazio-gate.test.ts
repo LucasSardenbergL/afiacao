@@ -105,8 +105,6 @@ const BASELINE = new Map<string, number>([
   ["src/pages/GovernancePermissions.tsx", 1],
   ["src/pages/RotaPropostas.tsx", 1],
   ["src/pages/SalesPrintDashboard.tsx", 6],
-  ["src/pages/ToolHistory.tsx", 1],
-  ["src/pages/ToolReports.tsx", 1],
   ["src/pages/Training.tsx", 2],
 ]);
 
@@ -142,14 +140,15 @@ const BASELINE_AFIRMATIVO = new Map<string, number>([
   ["src/components/customer/CustomerVisitsTab.tsx", 1],
   ["src/components/knowledge-base/CompletudeSection.tsx", 1],
   ["src/components/tarefas/ProvasParaAuditar.tsx", 1],
-  ["src/pages/AdminKnowledgeBaseDetail.tsx", 1],
-  ["src/pages/AdminReposicaoPromocaoDetail.tsx", 1],
   ["src/pages/AdminStandardProcessDetail.tsx", 1],
   ["src/pages/GrupoCliente360.tsx", 1],
   ["src/pages/OrderDetail.tsx", 1],
-  ["src/pages/RecebimentoConferencia.tsx", 1],
+  // Resíduo MEDIDO, não fix pela metade: a leitura de `user_tools` já ramifica
+  // (`estadoDeRegistro`), mas o guard é `!tool || !healthMetrics` e `healthMetrics` deriva
+  // de `useToolEvents` — a query IRMÃ, que ainda engole o erro no default `= []` do binding.
+  // `tool_events` é uma das fontes ZERADAS (0 linhas) que a medição de 2026-09-06 separou
+  // para depois; quando ela for tratada, estes dois zeram e saem daqui.
   ["src/pages/ToolHistory.tsx", 1],
-  ["src/pages/ToolPublicHistory.tsx", 1],
   ["src/pages/ToolReports.tsx", 1],
 ]);
 

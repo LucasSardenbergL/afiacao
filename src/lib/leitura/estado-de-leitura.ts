@@ -65,8 +65,74 @@ export function estadoDeLeitura(q: FatiaDeQuery): EstadoLeitura {
  * a re-afirmar o tipo na unha — e um `as` reintroduziria, por cast, exatamente a confusão
  * de estados que este módulo existe para impedir.
  */
-export function naoConsegui(e: EstadoLeitura): e is EstadoSemLeitura {
+export function naoConsegui(e: EstadoDeRegistro): e is EstadoSemLeitura {
   return e === 'erro' || e === 'sem-rede';
+}
+
+// ─── LEITURA DE UM REGISTRO POR ID ──────────────────────────────────────────────────
+//
+// `estadoDeLeitura` responde "a leitura aconteceu?". Uma tela de DETALHE precisa de uma
+// segunda resposta — "esta linha existe?" — e é ela que o front do `return` afirmativo
+// erra: `if (!registro) return <p>não encontrado</p>` cobre também "o banco caiu"
+// (docs/historico/o-check-verde-que-a-falha-acende.md, achado 3). O usuário sai procurar
+// um documento que existe.
+//
+// O eixo que separa as duas NÃO é o mesmo nos dois terminadores do PostgREST, e é por isso
+// que um fix só não serve aos dois:
+//
+//   `.maybeSingle()` → a distinção EXISTE no dado. Em SUCESSO, `null` é "não existe";
+//                      `undefined` só sai de loading ou erro. O componente que escreve
+//                      `if (!x)` DESCARTA o que o hook preservou.
+//   `.single()`      → a distinção NÃO existe sem ler o erro: 0 linhas LANÇA, e chega
+//                      idêntico a uma queda de rede.
+
+/**
+ * O código que o PostgREST devolve quando não pôde coagir o resultado a UM objeto.
+ *
+ * ⚠️ RESTRIÇÃO DE USO: `PGRST116` é "não deu UMA linha" — 0 linhas **ou mais de uma**
+ * (o comentário de `useKbProductSpecs.ts` documenta o caso >1 no repo). Tratá-lo como
+ * "não existe" só é correto quando o filtro é por CHAVE ÚNICA, onde >1 é impossível;
+ * sobre filtro não-único ele também significa "há linhas demais", que é defeito de dado
+ * — e aí "não encontrado" volta a mentir, só que na direção oposta.
+ */
+export const PGRST_NENHUMA_LINHA = 'PGRST116';
+
+/**
+ * O erro que chegou é "não achei a linha"? Casa o CAMPO `code`, nunca o texto.
+ *
+ * Casar a mensagem (`includes('PGRST116')`) casaria também um erro EMBRULHADO por outro,
+ * e a mensagem é do servidor: muda sem aviso.
+ */
+export function ehNaoEncontrado(erro: unknown): boolean {
+  return (
+    typeof erro === 'object' &&
+    erro !== null &&
+    (erro as { code?: unknown }).code === PGRST_NENHUMA_LINHA
+  );
+}
+
+/** `EstadoLeitura` mais o único estado que só uma leitura POR ID tem: a linha não existe. */
+export type EstadoDeRegistro = EstadoLeitura | 'inexistente';
+
+/**
+ * Os 6 estados de uma leitura de UM registro — com "não existe" separado de "não consegui".
+ *
+ * `temRegistro` só é consultado quando a query RESPONDEU: nos estados de pendência não há
+ * dado para consultar, e é justamente aí que mora o offline (`pending` + `paused`, com
+ * `isLoading` FALSE e `data` `undefined`) que faz o `if (!registro)` mentir sem que erro
+ * nenhum tenha acontecido.
+ *
+ * Serve aos dois terminadores porque lê os DOIS eixos: o dado em mãos e o código do erro.
+ * Quem passar só o primeiro (`.single()` sem `error`) recebe `'erro'` no não-achado — que
+ * é conservador e honesto, nunca "inexistente" fabricado.
+ */
+export function estadoDeRegistro(
+  q: FatiaDeQuery & { error?: unknown },
+  temRegistro: boolean,
+): EstadoDeRegistro {
+  if (q.status === 'error') return ehNaoEncontrado(q.error) ? 'inexistente' : 'erro';
+  if (q.status === 'success') return temRegistro ? 'pronta' : 'inexistente';
+  return estadoDeLeitura(q);
 }
 
 /**
