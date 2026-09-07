@@ -216,16 +216,22 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
     expect(screen.queryByText(FRASE_SEM_IMPORTACAO)).toBeNull();
   });
 
-  it('DADO EM CACHE + offline no refetch: avisa SEM apagar os números (o composto)', async () => {
+  it('DADO EM CACHE + refetch que FALHA: avisa SEM apagar os números (o composto)', async () => {
+    // Este é o ramo `status:'error'` de `desatualizado()` — determinístico, sem depender do
+    // instante em que o `onlineManager` pausa um refetch. O ramo `paused` do MESMO helper está
+    // coberto pelo composto do card de erros, logo abaixo: juntos cobrem os dois.
     const qc = novoQc();
     renderPagina(qc);
     expect(await screen.findByText('994.882')).toBeTruthy();
-    expect(screen.queryByText(AVISO)).toBeNull();
+    expect(screen.queryByTestId('aviso-leitura-metricas')).toBeNull();
 
-    onlineManager.setOnline(false);
-    void qc.invalidateQueries();
+    falha = 'metricas';
+    void qc.refetchQueries({ queryKey: ['tint-dashboard-metrics'] });
 
-    expect(await screen.findByText(AVISO)).toBeTruthy();
+    const aviso = await screen.findByTestId('aviso-leitura-metricas');
+    expect(aviso.getAttribute('data-estado')).toBe('erro');
+    // e os números CONTINUAM na tela, com o aviso ao lado — apagar 994.882 fórmulas já lidas
+    // porque um refetch falhou seria trocar um defeito por outro.
     expect(screen.getByText('994.882')).toBeTruthy();
   });
 
