@@ -2,6 +2,8 @@ import { Loader2 } from 'lucide-react';
 import { useCustomerVisits } from '@/hooks/useCustomerVisits';
 import { visitResultLabel, resumoVisitas } from '@/lib/visitas/visit-result';
 import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const toneClass: Record<string, string> = {
   success: 'text-status-success',
@@ -12,7 +14,20 @@ const toneClass: Record<string, string> = {
 };
 
 export function CustomerVisitsTab({ customerId }: { customerId: string }) {
-  const { data, isLoading } = useCustomerVisits(customerId);
+  // Desestruturação DIRETA nomeando `status`/`fetchStatus`: um `const q = useX()` faria o
+  // sítio sumir do gate da classe por CEGUEIRA, não por conserto.
+  const { data, status, fetchStatus, isLoading } = useCustomerVisits(customerId);
+  const leitura = estadoDeLeitura({ status, fetchStatus });
+
+  // ANTES do loading: sem rede a query fica pending+paused e `isLoading` é FALSE — o 4º
+  // estado cairia no "Nenhuma visita registrada".
+  if (naoConsegui(leitura)) {
+    return (
+      <div className="py-4">
+        <AvisoLeituraFalhou oque="as visitas deste cliente" estado={leitura} testId="aviso-visitas" />
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

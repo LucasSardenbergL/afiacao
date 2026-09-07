@@ -1828,6 +1828,36 @@ export type Database = {
         }
         Relationships: []
       }
+      deploy_sonda_resultados: {
+        Row: {
+          classe: string | null
+          colhido_em: string
+          edge: string
+          observado_em: string | null
+          request_id: number
+          status_code: number | null
+          tick_id: string
+        }
+        Insert: {
+          classe?: string | null
+          colhido_em?: string
+          edge: string
+          observado_em?: string | null
+          request_id: number
+          status_code?: number | null
+          tick_id: string
+        }
+        Update: {
+          classe?: string | null
+          colhido_em?: string
+          edge?: string
+          observado_em?: string | null
+          request_id?: number
+          status_code?: number | null
+          tick_id?: string
+        }
+        Relationships: []
+      }
       des_checkin_qualitativo: {
         Row: {
           ano: number
@@ -8581,6 +8611,7 @@ export type Database = {
           discount: number | null
           hash_payload: string | null
           id: string
+          omie_codigo_item: number | null
           omie_codigo_produto: number | null
           product_id: string | null
           quantity: number
@@ -8593,6 +8624,7 @@ export type Database = {
           discount?: number | null
           hash_payload?: string | null
           id?: string
+          omie_codigo_item?: number | null
           omie_codigo_produto?: number | null
           product_id?: string | null
           quantity?: number
@@ -8605,6 +8637,7 @@ export type Database = {
           discount?: number | null
           hash_payload?: string | null
           id?: string
+          omie_codigo_item?: number | null
           omie_codigo_produto?: number | null
           product_id?: string | null
           quantity?: number
@@ -9285,6 +9318,7 @@ export type Database = {
           estoque_fisico: number | null
           estoque_maximo: number | null
           fator_embalagem_portal: number | null
+          fator_portal_aprovado: number | null
           id: number
           modo_promocao: string | null
           pedido_id: number
@@ -9299,6 +9333,7 @@ export type Database = {
           qtde_sugerida: number
           sku_codigo_omie: string
           sku_descricao: string | null
+          sku_portal_aprovado: string | null
           teto_cobertura_aplicado: boolean
           valor_linha: number | null
         }
@@ -9312,6 +9347,7 @@ export type Database = {
           estoque_fisico?: number | null
           estoque_maximo?: number | null
           fator_embalagem_portal?: number | null
+          fator_portal_aprovado?: number | null
           id?: number
           modo_promocao?: string | null
           pedido_id: number
@@ -9326,6 +9362,7 @@ export type Database = {
           qtde_sugerida: number
           sku_codigo_omie: string
           sku_descricao?: string | null
+          sku_portal_aprovado?: string | null
           teto_cobertura_aplicado?: boolean
           valor_linha?: number | null
         }
@@ -9339,6 +9376,7 @@ export type Database = {
           estoque_fisico?: number | null
           estoque_maximo?: number | null
           fator_embalagem_portal?: number | null
+          fator_portal_aprovado?: number | null
           id?: number
           modo_promocao?: string | null
           pedido_id?: number
@@ -9353,6 +9391,7 @@ export type Database = {
           qtde_sugerida?: number
           sku_codigo_omie?: string
           sku_descricao?: string | null
+          sku_portal_aprovado?: string | null
           teto_cobertura_aplicado?: boolean
           valor_linha?: number | null
         }
@@ -9417,6 +9456,8 @@ export type Database = {
       }
       pedido_compra_sugerido: {
         Row: {
+          aprovacao_selo: string | null
+          aprovacao_selo_em: string | null
           aprovado_em: string | null
           aprovado_por: string | null
           atualizado_em: string | null
@@ -9457,6 +9498,7 @@ export type Database = {
           portal_erro: string | null
           portal_protocolo: string | null
           portal_proximo_retry_em: string | null
+          portal_recusa_motivo: string | null
           portal_resposta: Json | null
           portal_screenshot_url: string | null
           portal_tentativas: number | null
@@ -9469,8 +9511,13 @@ export type Database = {
           tipo_ciclo: string
           valor_mes_ate_agora: number | null
           valor_total: number
+          valor_total_portal_provado: number | null
+          valor_total_portal_provado_em: string | null
+          valor_total_portal_provado_protocolo: string | null
         }
         Insert: {
+          aprovacao_selo?: string | null
+          aprovacao_selo_em?: string | null
           aprovado_em?: string | null
           aprovado_por?: string | null
           atualizado_em?: string | null
@@ -9511,6 +9558,7 @@ export type Database = {
           portal_erro?: string | null
           portal_protocolo?: string | null
           portal_proximo_retry_em?: string | null
+          portal_recusa_motivo?: string | null
           portal_resposta?: Json | null
           portal_screenshot_url?: string | null
           portal_tentativas?: number | null
@@ -9523,8 +9571,13 @@ export type Database = {
           tipo_ciclo?: string
           valor_mes_ate_agora?: number | null
           valor_total?: number
+          valor_total_portal_provado?: number | null
+          valor_total_portal_provado_em?: string | null
+          valor_total_portal_provado_protocolo?: string | null
         }
         Update: {
+          aprovacao_selo?: string | null
+          aprovacao_selo_em?: string | null
           aprovado_em?: string | null
           aprovado_por?: string | null
           atualizado_em?: string | null
@@ -9565,6 +9618,7 @@ export type Database = {
           portal_erro?: string | null
           portal_protocolo?: string | null
           portal_proximo_retry_em?: string | null
+          portal_recusa_motivo?: string | null
           portal_resposta?: Json | null
           portal_screenshot_url?: string | null
           portal_tentativas?: number | null
@@ -9577,6 +9631,9 @@ export type Database = {
           tipo_ciclo?: string
           valor_mes_ate_agora?: number | null
           valor_total?: number
+          valor_total_portal_provado?: number | null
+          valor_total_portal_provado_em?: string | null
+          valor_total_portal_provado_protocolo?: string | null
         }
         Relationships: [
           {
@@ -19028,10 +19085,16 @@ export type Database = {
         }
         Returns: Json
       }
-      aprovar_pedido_sugerido: {
-        Args: { p_pedido_id: number; p_usuario: string }
-        Returns: Json
-      }
+      aprovar_pedido_sugerido:
+        | { Args: { p_pedido_id: number; p_usuario: string }; Returns: Json }
+        | {
+            Args: {
+              p_itens_vistos: Json
+              p_pedido_id: number
+              p_usuario: string
+            }
+            Returns: Json
+          }
       aprovar_versao_boletim: {
         Args: {
           p_change_note?: string
@@ -19289,6 +19352,7 @@ export type Database = {
           tick_id: string
         }[]
       }
+      deploy_sonda_resultados_colher: { Args: never; Returns: number }
       des_data_faturamento_prevista: {
         Args: {
           p_data_emissao: string
@@ -20373,6 +20437,15 @@ export type Database = {
           graduados: number
         }[]
       }
+      reposicao_conferir_envio: {
+        Args: { p_pedido_id: number }
+        Returns: {
+          depara_ok: boolean
+          divergencias: Json
+          motivo: string
+          selo_ok: boolean
+        }[]
+      }
       reposicao_marco_pre_omie: { Args: never; Returns: string }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
       reposicao_param_fila_sensor: {
@@ -20392,6 +20465,10 @@ export type Database = {
           p_threshold: number
         }
         Returns: Json
+      }
+      reposicao_pedido_e_portal: {
+        Args: { p_empresa: string; p_fornecedor_nome: string }
+        Returns: boolean
       }
       reposicao_persistir_qtde_inteira: {
         Args: { p_pedido_id: number }
@@ -20445,6 +20522,11 @@ export type Database = {
         }
         Returns: boolean
       }
+      reposicao_selar_pedido: {
+        Args: { p_pedido_id: number; p_reusar_snapshot?: boolean }
+        Returns: string
+      }
+      reposicao_selo_itens: { Args: { p_pedido_id: number }; Returns: string }
       reposicao_sincronizar_embalagem_wp: {
         Args: { p_empresa?: string }
         Returns: Json

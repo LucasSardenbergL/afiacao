@@ -11,7 +11,6 @@
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5461}"     # porta própria (evita colisão com outros harnesses em paralelo)

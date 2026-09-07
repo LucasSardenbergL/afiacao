@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **527** custom migrations totais
-- **1787** objetos esperados (criados por estas migrations)
+- **528** custom migrations totais
+- **1790** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 562
+  - `function`: 565
   - `rls_policy`: 462
   - `index`: 257
   - `cron_job`: 171
@@ -4383,6 +4383,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260907095338_authz_revoke_anon_rpc_reposicao.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260907095841_disparado_simulado_e_estado_pos_disparo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao__valida_cancelamento_pos_disparo` | — |
+| `function` | `public.cancelar_pedido_sugerido` | — |
+| `function` | `public.corrigir_cancelamento_pos_disparo` | — |
 
 ### `20260907101349_deploy_sonda_alvos_onda1.sql`
 

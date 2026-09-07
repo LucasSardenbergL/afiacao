@@ -38,6 +38,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const WHATSAPP_NUMBER = '553732221035';
 
@@ -75,7 +77,9 @@ const OrderDetail = () => {
   const [copied, setCopied] = useState(false);
   const [qualityData, setQualityData] = useState<QualityData[]>([]);
 
-  const { data: order, isLoading } = useQuery({
+  // Desestruturação DIRETA nomeando as chaves de erro: um `const q = useX()` faria o sítio
+  // sumir do gate da classe por CEGUEIRA, não por conserto.
+  const { data: order, status: statusOrder, fetchStatus: fetchOrder, error: erroOrder, isLoading } = useQuery({
     queryKey: ['order-detail', id],
     queryFn: async () => {
       if (!id) return null;
@@ -111,6 +115,10 @@ const OrderDetail = () => {
     },
     enabled: !!id,
   });
+  const estadoOrder = estadoDeRegistro(
+    { status: statusOrder, fetchStatus: fetchOrder, error: erroOrder },
+    order != null,
+  );
 
   const queryClient = useQueryClient();
   const [confirmAprovar, setConfirmAprovar] = useState(false);
@@ -157,6 +165,18 @@ const OrderDetail = () => {
       <div className="min-h-screen bg-background pb-24">
         <main className="pt-16 px-4 max-w-lg mx-auto">
           <PageSkeleton variant="detail" />
+        </main>
+      </div>
+    );
+  }
+
+  // `.maybeSingle()` devolve `null` para "este pedido não existe" e `undefined` só em
+  // loading/erro — a diferença que o `if (!order)` abaixo apagava.
+  if (naoConsegui(estadoOrder)) {
+    return (
+      <div className="min-h-screen bg-background pb-24">
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <AvisoLeituraFalhou oque="este pedido" estado={estadoOrder} variante="bloco" />
         </main>
       </div>
     );

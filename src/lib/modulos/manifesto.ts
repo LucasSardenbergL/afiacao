@@ -61,6 +61,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/pages/__tests__/CentralFerramenta.test.tsx",
       "src/pages/__tests__/ToolDetalhe.estados.test.tsx",
+      "src/pages/__tests__/OrderDetail.estados.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
@@ -97,7 +98,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/TarefasTemplates.tsx",
       "src/hooks/useTarefas*.ts",
     ],
-    testes: [],
+    testes: ["src/components/tarefas/__tests__/ProvasParaAuditar.estados.test.tsx"],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
   {
@@ -390,6 +391,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/pages/__tests__/AdminCustomers.erro-honesto.test.tsx",
       "src/components/customer/__tests__/CustomerProfile360Summary.estados.test.tsx",
+      "src/components/customer/__tests__/CustomerTabs.estados.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
@@ -408,7 +410,9 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/Tint*.tsx",
       "src/hooks/useTint*.ts",
     ],
-    testes: [],
+    testes: [
+      "src/pages/__tests__/TintDashboard.leitura-falhou.test.tsx",
+    ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
   {
@@ -542,6 +546,8 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/hooks/__tests__/useAuditTrail.test.tsx",
       "src/hooks/__tests__/useIniciativasIceberg.test.ts",
+      "src/pages/__tests__/GrupoCliente360.estados.test.tsx",
+      "src/pages/__tests__/GovernanceAudit.margem-leitura-falhou.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
@@ -580,7 +586,9 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/hooks/__tests__/useExtractSpecs.test.tsx",
       "src/hooks/__tests__/useKnowledgeBaseList.test.tsx",
+      "src/components/knowledge-base/__tests__/CompletudeSection.estados.test.tsx",
       "src/pages/__tests__/AdminKnowledgeBaseDetail.estados.test.tsx",
+      "src/pages/__tests__/AdminStandardProcessDetail.estados.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },

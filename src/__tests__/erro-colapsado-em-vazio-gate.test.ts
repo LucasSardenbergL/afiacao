@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, onTestFailed } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { acharColapsos, contarAutoOcultacao, contarRetornoAfirmativo } from '@/lib/gates/erro-colapsado-em-vazio';
@@ -141,15 +141,24 @@ const BASELINE = new Map<string, number>([
 // N hooks do componente e contar por hook inflaria (`ToolHistory:174` é UM sítio, não dois).
 //
 // DÍVIDA, em ordem de dano MEDIDO em prod (o doc traz os denominadores):
-//   1. `CompletudeSection` — ÚNICO urgente: 116 pendências reais viram ✓ verde de "tudo
-//      completo" quando `kb_product_specs` não lê. Afirmação positiva em superfície de saúde.
+//   1. `CompletudeSection` — QUITADO: era o ÚNICO urgente (116 pendências reais viravam ✓
+//      verde de "tudo completo" quando `kb_product_specs` não lia — afirmação positiva em
+//      superfície de saúde). Hoje ramifica por `estadoDeLeitura` ANTES do loading, com o
+//      binding ligando `status` de propósito para o detector SEGUIR vigiando o arquivo.
 //   2. os 3 de `.single()` (`kb_documents` 297, `nfe_recebimentos` 47, `promocao_campanha`
-//      17): "não encontrado" cobre também "o banco caiu" → ramificar por `PGRST116`.
-//   3. os 3 de ferramenta (`user_tools` = 4): o hook JÁ devolve `null` vs `undefined`; o
-//      componente só precisa parar de descartar a distinção.
-//   4. os 6 de fonte ZERADA hoje: corrigir ANTES da primeira linha. `ProvasParaAuditar` é o
-//      mais perigoso quando encher — "Nenhuma prova aguardando auditoria" é afirmação de
-//      CONTROLE, e a auditoria some no dia em que a leitura falhar.
+//      17) — QUITADOS (#2293): "não encontrado" cobria também "o banco caiu"; hoje
+//      ramificam por `PGRST116`.
+//   3. os 3 de ferramenta (`user_tools` = 4) — o ÚNICO grupo que ainda resta na baseline
+//      (`ToolHistory`, `ToolReports`; `ToolPublicHistory` já saiu). O hook JÁ devolve
+//      `null` vs `undefined`; o componente só precisa parar de descartar a distinção, e o
+//      resíduo está explicado na nota logo abaixo.
+//   4. os 6 de fonte ZERADA — QUITADOS (#2317), antes da primeira linha, como pedia a
+//      medição. `ProvasParaAuditar` era o mais perigoso quando enchesse: "Nenhuma prova
+//      aguardando auditoria" é afirmação de CONTROLE, e a auditoria sumiria no dia em que
+//      a leitura falhasse.
+//
+// A lista acima foi conferida contra a BASELINE_AFIRMATIVO nesta data — um mapa de dívida
+// que lista grupo já quitado é a mesma falha que este gate persegue, só que no comentário.
 //
 // Dois eixos vizinhos foram medidos junto e vieram ZERO — medido, não presumido:
 // `<EmptyState title="…"/>` (texto por ATRIBUTO, sem JsxText) = 0; ternário cujo ramo do
@@ -157,13 +166,6 @@ const BASELINE = new Map<string, number>([
 // `ternario-null`, JÁ na baseline de cima; contá-lo aqui seria contar o mesmo sítio duas
 // vezes). O critério estrito não esconde fatia nenhuma.
 const BASELINE_AFIRMATIVO = new Map<string, number>([
-  ["src/components/customer/CustomerCallsTab.tsx", 1],
-  ["src/components/customer/CustomerVisitsTab.tsx", 1],
-  ["src/components/knowledge-base/CompletudeSection.tsx", 1],
-  ["src/components/tarefas/ProvasParaAuditar.tsx", 1],
-  ["src/pages/AdminStandardProcessDetail.tsx", 1],
-  ["src/pages/GrupoCliente360.tsx", 1],
-  ["src/pages/OrderDetail.tsx", 1],
   // Resíduo MEDIDO, não fix pela metade: a leitura de `user_tools` já ramifica
   // (`estadoDeRegistro`), mas o guard é `!tool || !healthMetrics` e `healthMetrics` deriva
   // de `useToolEvents` — a query IRMÃ, que ainda engole o erro no default `= []` do binding.
@@ -176,6 +178,47 @@ const BASELINE_AFIRMATIVO = new Map<string, number>([
 describe('gate: erro colapsado em vazio', () => {
   const fontes = listarFontes(DIRS[0]);
 
+  // ORÇAMENTO DA VARREDURA — medido 2026-09-07 nesta M2 8GB (issue #2311).
+  //
+  // Os dois `it` que varrem as fontes são o 1º e o 2º testes MAIS LENTOS da suíte inteira
+  // (8.134 testes): 12.643ms e 10.263ms. O 3º colocado fica em 9.820ms e NENHUM outro teste
+  // do repo passa de 15s. Medido para o pior deles, do mais limpo ao mais real:
+  //   2,05 ms/fonte fora do runner (bun/JSC e node/V8 concordam) · 3,32 ms/fonte no vitest
+  //   isolado · 8,58 ms/fonte no vitest sob a suíte COMPLETA (contenção entre workers).
+  // Contra o `testTimeout: 20000` global sobra 1,58× — folga fina demais para a variância de
+  // uma máquina de dev saturada, e foi ela que estourou em 2026-09-06 (21.754ms). O teto
+  // global não é orçamento desta classe: nasceu no #271 dimensionado para cold-start de
+  // RENDER, com 195 arquivos de teste no repo (hoje 786).
+  //
+  // O teto é POR FONTE e não um número fixo, porque a causa que aperta sozinha é o repo
+  // crescer: assim ele acompanha o denominador sem afrouxar o custo UNITÁRIO, que é o que
+  // denuncia regressão do detector. O piso mantém o orçamento SEMPRE acima do global —
+  // teto abaixo do global ENCURTARIA a folga em vez de ampliá-la, que é exatamente como o
+  // `it(..., 15000)` removido em docs/historico/flaky-sob-carga-teto-e-custo.md criava
+  // falsa leitura de folga.
+  const MS_POR_FONTE_TETO = 40; // 4,7× o pior medido sob contenção (8,58 ms/fonte)
+  const ORCAMENTO_VARREDURA_MS = Math.max(20_000, fontes.length * MS_POR_FONTE_TETO);
+
+  // `Test timed out in Nms` não nomeia causa nenhuma — e teto maior só ajuda se PRESERVA o
+  // diagnóstico (mesma lição do doc acima). Isto imprime, na falha, o discriminante das três
+  // hipóteses que a #2311 deixou abertas: carga, crescimento do repo, ou custo do detector.
+  function armarDiagnosticoDeVarredura(): void {
+    const inicio = performance.now();
+    onTestFailed(() => {
+      const ms = performance.now() - inicio;
+      const porFonte = ms / fontes.length;
+      console.error(
+        `\n[#2311] varredura: ${fontes.length} fontes em ${Math.round(ms)}ms = ` +
+          `${porFonte.toFixed(2)} ms/fonte (orçamento ${ORCAMENTO_VARREDURA_MS}ms a ${MS_POR_FONTE_TETO} ms/fonte).\n` +
+          `  Referência medida 2026-09-07: 2,05 fora do runner · 3,32 isolado · 8,58 sob a suíte completa.\n` +
+          `  ms/fonte DENTRO da referência  → foi CARGA da máquina; o detector está íntegro.\n` +
+          `  ms/fonte ACIMA da referência   → é o DETECTOR (acharColapsos), e teto maior só esconde.\n` +
+          `  fontes muito acima de 1.473    → o REPO cresceu; suba MS_POR_FONTE_TETO apenas se o\n` +
+          `                                   custo unitário continuar dentro da referência.`,
+      );
+    });
+  }
+
   it('o walker enxerga o repo — varredura vazia seria verde por CEGUEIRA', () => {
     expect(fontes.length, 'walker listou fontes de menos — glob/recursão quebrada').toBeGreaterThan(1000);
     expect(fontes, 'o alvo corrigido sumiu da varredura').toContain('src/components/dataHealth/DataHealthBanner.tsx');
@@ -183,6 +226,7 @@ describe('gate: erro colapsado em vazio', () => {
   });
 
   it('nenhum sítio NOVO de auto-ocultação, e a baseline não encolhe sem registro', () => {
+    armarDiagnosticoDeVarredura();
     const medido = new Map<string, number>();
     for (const rel of fontes) {
       const n = contarAutoOcultacao(readFileSync(resolve(RAIZ, rel), 'utf8'), rel);
@@ -214,7 +258,7 @@ describe('gate: erro colapsado em vazio', () => {
       'Sítio da classe foi corrigido — ATUALIZE a BASELINE deste gate (a lista só ' +
       `encolhe registrada). Arquivos (baseline→medido): ${quitados.join(', ')}`,
     ).toEqual([]);
-  });
+  }, ORCAMENTO_VARREDURA_MS);
 
   it('calibração: a assinatura casa o controle PRÉ-fix do #1859', () => {
     // Verbatim do MixGapCard antes do #1859 (git show 588aa2ad8~1) — reduzido ao miolo.
@@ -299,6 +343,7 @@ describe('gate: erro colapsado em vazio', () => {
   // ─────────────────────────────────────────────────────────────────────────────────────
 
   it('nenhum sítio NOVO de `return` afirmativo, e a baseline não encolhe sem registro', () => {
+    armarDiagnosticoDeVarredura();
     const medido = new Map<string, number>();
     for (const rel of fontes) {
       const n = contarRetornoAfirmativo(readFileSync(resolve(RAIZ, rel), 'utf8'), rel);
@@ -330,7 +375,7 @@ describe('gate: erro colapsado em vazio', () => {
       'Sítio da 3ª forma foi corrigido — ATUALIZE a BASELINE_AFIRMATIVO (a lista só encolhe ' +
       `registrada). Arquivos (baseline→medido): ${quitados.join(', ')}`,
     ).toEqual([]);
-  });
+  }, ORCAMENTO_VARREDURA_MS);
 
   it('calibração: casa o pior sítio medido — o ✓ VERDE que a falha acende', () => {
     // Verbatim reduzido de src/components/knowledge-base/CompletudeSection.tsx:24.

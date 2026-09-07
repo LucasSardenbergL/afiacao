@@ -5,6 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { Beaker, Package, Droplets, FileUp, AlertTriangle } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RecorrentesHojeCard } from '@/components/tarefas/RecorrentesHojeCard';
+import {
+  estadoDeLeitura, naoConsegui, desatualizado, type EstadoSemLeitura,
+} from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const ACCOUNT = 'oben';
 
@@ -20,29 +24,49 @@ function useMetrics() {
         supabase.from('tint_corantes').select('id', { count: 'exact', head: true }).eq('account', ACCOUNT).not('omie_product_id', 'is', null),
         supabase.from('tint_importacoes').select('*').eq('account', ACCOUNT).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       ]);
+      // `count ?? 0` é a fabricação do §2 do money-path (ausente ≠ zero) em 5 KPIs de uma vez:
+      // sem olhar `error`, uma leitura que falhou virava "0 fórmulas" sobre 994.882 linhas
+      // (psql-ro, 2026-09-07). Ausência de contagem NÃO é contagem zero — LANÇA.
+      if (lastImport.error) throw lastImport.error;
       return {
-        totalFormulas: formulas.count ?? 0,
-        totalSkus: skusAll.count ?? 0,
-        skusMapped: skusMapped.count ?? 0,
-        totalCorantes: corantesAll.count ?? 0,
-        corantesMapped: corantesMapped.count ?? 0,
+        totalFormulas: contagem(formulas, 'fórmulas'),
+        totalSkus: contagem(skusAll, 'SKUs'),
+        skusMapped: contagem(skusMapped, 'SKUs mapeados'),
+        totalCorantes: contagem(corantesAll, 'corantes'),
+        corantesMapped: contagem(corantesMapped, 'corantes mapeados'),
         lastImport: lastImport.data,
       };
     },
   });
 }
 
+/**
+ * A contagem de UMA das leituras do `Promise.all` — ou uma exceção.
+ *
+ * `count` nulo SEM erro é ausência de dado igual (o PostgREST não devolveu a contagem pedida),
+ * e devolver 0 ali seria a mesma fabricação por outra porta. Fail-closed nos dois eixos.
+ */
+function contagem(r: { count: number | null; error: { message: string } | null }, oque: string): number {
+  if (r.error) throw r.error;
+  if (r.count == null) throw new Error(`contagem de ${oque} não veio na resposta`);
+  return r.count;
+}
+
 function useLastErrors() {
   return useQuery({
     queryKey: ['tint-dashboard-errors'],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('tint_importacoes')
         .select('id, tipo, arquivo_nome, registros_erro, erros_detalhe, created_at')
         .eq('account', ACCOUNT)
         .gt('registros_erro', 0)
         .order('created_at', { ascending: false })
         .limit(5);
+      // Sem desestruturar `error`, `data ?? []` fazia a query terminar em `success` com `[]` e o
+      // card "Últimos Erros de Importação" sumir CALADO — 2.124 importações com erro na fonte
+      // (psql-ro, 2026-09-07). O `error` do react-query nunca populava: o aviso era inalcançável.
+      if (error) throw error;
       return data ?? [];
     },
   });
@@ -55,15 +79,53 @@ const statusColor: Record<string, string> = {
   processando: 'bg-status-info-bg text-status-info border-status-info/40',
 };
 
-export default function TintDashboard() {
-  const { data: m, isLoading } = useMetrics();
-  const { data: errors } = useLastErrors();
+/** Um KPI que a leitura não trouxe mostra travessão, nunca "0" — o zero aqui seria inventado. */
+function kpi(v: number | undefined): string {
+  return v === undefined ? '—' : v.toLocaleString('pt-BR');
+}
 
-  if (isLoading) return <div className="space-y-4"><Skeleton className="h-8 w-64" /><div className="grid grid-cols-1 md:grid-cols-4 gap-4">{[1,2,3,4].map(i=><Skeleton key={i} className="h-28"/>)}</div></div>;
+export default function TintDashboard() {
+  // A DESESTRUTURAÇÃO com `status`/`fetchStatus` é o que dá acesso ao estado da leitura; trocá-la
+  // por `const q = useMetrics()` + `q.data` some com o sítio do detector do gate sem corrigir nada
+  // (docs/historico/a-forma-que-some-e-a-forma-que-mente.md, achado da fatia #2).
+  const { data: m, status: statusM, fetchStatus: fetchM } = useMetrics();
+  const { data: errors, status: statusE, fetchStatus: fetchE } = useLastErrors();
+
+  const fatiaM = { status: statusM, fetchStatus: fetchM };
+  const fatiaE = { status: statusE, fetchStatus: fetchE };
+  const estadoM = estadoDeLeitura(fatiaM);
+  const estadoE = estadoDeLeitura(fatiaE);
+  // `isLoading` era o ÚNICO gate do skeleton — e ele é FALSE no offline (`pending` + `paused`,
+  // `data` undefined, `error` null). Sem rede a tela caía inteira no ramo dos zeros.
+  const metricasSemLeitura: EstadoSemLeitura | null =
+    naoConsegui(estadoM) && !m ? estadoM : null;
+  const metricasVelhas = desatualizado(fatiaM, Boolean(m));
+  const errosSemLeitura: EstadoSemLeitura | null =
+    naoConsegui(estadoE) && !errors ? estadoE : null;
+  const errosVelhos = desatualizado(fatiaE, Boolean(errors));
+
+  if (estadoM === 'carregando') return <div className="space-y-4"><Skeleton className="h-8 w-64" /><div className="grid grid-cols-1 md:grid-cols-4 gap-4">{[1,2,3,4].map(i=><Skeleton key={i} className="h-28"/>)}</div></div>;
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Tintométrico — Dashboard</h1>
+
+      {metricasSemLeitura && (
+        <AvisoLeituraFalhou
+          oque="os números do tintométrico (fórmulas, SKUs, corantes e a última importação)"
+          estado={metricasSemLeitura}
+          variante="bloco"
+          testId="aviso-leitura-metricas"
+        />
+      )}
+      {metricasVelhas && (
+        <AvisoLeituraFalhou
+          oque="a leitura mais recente dos números do tintométrico"
+          estado={metricasVelhas}
+          variante="bloco"
+          testId="aviso-leitura-metricas"
+        />
+      )}
 
       {/* Tarefas recorrentes do operador — exibe só se houver instâncias abertas hoje */}
       <RecorrentesHojeCard />
@@ -75,7 +137,7 @@ export default function TintDashboard() {
             <Beaker className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{(m?.totalFormulas ?? 0).toLocaleString('pt-BR')}</p>
+            <p className="text-2xl font-bold">{kpi(m?.totalFormulas)}</p>
             <p className="text-xs text-muted-foreground">importadas</p>
           </CardContent>
         </Card>
@@ -86,7 +148,7 @@ export default function TintDashboard() {
             <Package className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{m?.skusMapped ?? 0} / {m?.totalSkus ?? 0}</p>
+            <p className="text-2xl font-bold">{kpi(m?.skusMapped)} / {kpi(m?.totalSkus)}</p>
             <p className="text-xs text-muted-foreground">mapeados ao Omie</p>
           </CardContent>
         </Card>
@@ -97,7 +159,7 @@ export default function TintDashboard() {
             <Droplets className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{m?.corantesMapped ?? 0} / {m?.totalCorantes ?? 0}</p>
+            <p className="text-2xl font-bold">{kpi(m?.corantesMapped)} / {kpi(m?.totalCorantes)}</p>
             <p className="text-xs text-muted-foreground">mapeados ao Omie</p>
           </CardContent>
         </Card>
@@ -108,7 +170,12 @@ export default function TintDashboard() {
             <FileUp className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {m?.lastImport ? (
+            {/* `m === undefined` (erro/offline) dizia "Nenhuma importação" sobre 64.175 linhas
+                em `tint_importacoes` — a mesma tela do vazio real. Terceiro sítio que MENTE
+                neste arquivo, confirmado por medição em 2026-09-07. */}
+            {m === undefined ? (
+              <p className="text-sm text-muted-foreground">—</p>
+            ) : m.lastImport ? (
               <>
                 <p className="text-sm font-medium">{m.lastImport.tipo}</p>
                 <p className="text-xs text-muted-foreground">
@@ -124,6 +191,23 @@ export default function TintDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {errosSemLeitura && (
+        <AvisoLeituraFalhou
+          oque="os últimos erros de importação"
+          estado={errosSemLeitura}
+          variante="bloco"
+          testId="aviso-leitura-erros"
+        />
+      )}
+      {errosVelhos && (
+        <AvisoLeituraFalhou
+          oque="a leitura mais recente dos erros de importação"
+          estado={errosVelhos}
+          variante="bloco"
+          testId="aviso-leitura-erros"
+        />
+      )}
 
       {errors && errors.length > 0 && (
         <Card>
