@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-07T19:49:26.480Z",
-  "sourceHead": "f4157a592d23dd57443d47f0c94ae437b933aa23",
+  "medidoEm": "2026-09-07T20:11:41.258Z",
+  "sourceHead": "207689068be65d1aef8c905689b8a4cb0b9d4431",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 53 função(ões) da allowlist.",
-      "denominador": "🔎 authz:funcoes:prod — 54 definição(ões) lida(s) para 53 chave(s) da allowlist.",
-      "contratoFingerprint": "64b41961bc9dbef53a46ad25ee644825a52315e84d829a3ffa0e0db628eb227a",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 54 definição(ões) lida(s) para 54 chave(s) da allowlist.",
+      "contratoFingerprint": "1de6daf5818878840d43924952eefa7f721f6e6bd55cbec672b6693f6400e67f",
       "auditorFingerprint": "7a0c358a4866c0f993973aa01b93f1d9b03d8269487c0c9b1c42207e0512efdf",
-      "achados": []
+      "achados": [
+        {
+          "id": "0f088a59c9dec54b",
+          "linha": "❌ public.reposicao_claim_disparo — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_claim_disparo está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-09-07",
+          "ultimaVez": "2026-09-07"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",

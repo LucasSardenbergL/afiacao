@@ -209,8 +209,14 @@ quem melhorar a reescrever esta linha em vez de deixar o doc mentir.
 
 ## Pendências
 
-- **Cenário B** continua aberto por desenho, com o caminho descrito acima. É fatia própria, com
-  deploy manual de edge (bump de `VERSAO` + fingerprint + os 4 gates de edge do CI).
+- ~~**Cenário B** continua aberto por desenho~~ — **FECHADO** em
+  [cenario-b-claim-de-disparo.md](cenario-b-claim-de-disparo.md) (migration `20260906190615`,
+  edge `v1.2-claim-disparo`), pelo caminho descrito acima e com duas correções que o desenho daqui
+  não previa: a marca de claim **não pode ser limpa por falha** (com dois runs, o `catch` de um
+  liberaria a linha enquanto o outro ainda pode comprar) e o guard mora num **trigger**, não no
+  `WHERE` da RPC — outra worktree disputava o corpo de `cancelar_pedido_sugerido`, e o trigger
+  cobre toda via de escrita em vez de só a RPC. `disparado_simulado` e o portal Sayerlack
+  seguem abertos, registrados lá.
 - **A remoção do último item continua fora da fronteira única.** `useDetalhesModal.ts` grava
   `status='cancelado_humano'` (mais os carimbos e a higiene do portal) por `UPDATE` cru
   `.eq('id', …)`, sem passar pela RPC e **sem guard de status no servidor**. Medido: o único

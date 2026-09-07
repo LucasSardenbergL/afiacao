@@ -121,7 +121,7 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/services/financeiroV2Service.ts', 2],
   ['supabase/functions/biometric-auth/index.ts', 3],
   ['supabase/functions/conciliar-pedido-portal/index.ts', 1],
-  ['supabase/functions/disparar-pedidos-aprovados/index.ts', 8],
+  ['supabase/functions/disparar-pedidos-aprovados/index.ts', 5],
   // 10→9: o `.insert()` do `fornecedor_alerta` passou a capturar `{ error }` ao virar o
   // sítio único `alertarFornecedor()`. Era o alerta de "senha do portal expirou" — uma
   // escrita cega no caminho que EXISTE para avisar o founder de que o pedido parou;

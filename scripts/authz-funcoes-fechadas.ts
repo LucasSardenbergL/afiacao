@@ -430,6 +430,12 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'arredonda/persiste qtde inteira do pedido — edge disparar-pedidos-aprovados',
   },
+  'public.reposicao_claim_disparo': {
+    fechadaPor: '20260906190615_reposicao_claim_disparo_cenario_b.sql',
+    permitido: PORTA_FECHADA,
+    motivo:
+      'reivindica o pedido antes do IncluirPedCompra (Cenário B do TOCTOU) — edge disparar-pedidos-aprovados, service_role. Aberta a authenticated, qualquer sessão poderia abrir uma pendência e travar o cancelamento do pedido',
+  },
   // ⚠️ Mesmo caso da `detectar_skus_sem_grupo` acima — mesma 20260510235956 concedendo a
   // authenticated, mesma âncora registrando o fecho. Sendo `RETURNS trigger`, o EXECUTE nem é o
   // que a faz rodar: Postgres não checa esse privilégio no disparo do trigger (provado em
