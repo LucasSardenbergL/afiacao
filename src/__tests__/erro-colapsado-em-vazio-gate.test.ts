@@ -141,15 +141,24 @@ const BASELINE = new Map<string, number>([
 // N hooks do componente e contar por hook inflaria (`ToolHistory:174` é UM sítio, não dois).
 //
 // DÍVIDA, em ordem de dano MEDIDO em prod (o doc traz os denominadores):
-//   1. `CompletudeSection` — ÚNICO urgente: 116 pendências reais viram ✓ verde de "tudo
-//      completo" quando `kb_product_specs` não lê. Afirmação positiva em superfície de saúde.
+//   1. `CompletudeSection` — QUITADO: era o ÚNICO urgente (116 pendências reais viravam ✓
+//      verde de "tudo completo" quando `kb_product_specs` não lia — afirmação positiva em
+//      superfície de saúde). Hoje ramifica por `estadoDeLeitura` ANTES do loading, com o
+//      binding ligando `status` de propósito para o detector SEGUIR vigiando o arquivo.
 //   2. os 3 de `.single()` (`kb_documents` 297, `nfe_recebimentos` 47, `promocao_campanha`
-//      17): "não encontrado" cobre também "o banco caiu" → ramificar por `PGRST116`.
-//   3. os 3 de ferramenta (`user_tools` = 4): o hook JÁ devolve `null` vs `undefined`; o
-//      componente só precisa parar de descartar a distinção.
-//   4. os 6 de fonte ZERADA hoje: corrigir ANTES da primeira linha. `ProvasParaAuditar` é o
-//      mais perigoso quando encher — "Nenhuma prova aguardando auditoria" é afirmação de
-//      CONTROLE, e a auditoria some no dia em que a leitura falhar.
+//      17) — QUITADOS (#2293): "não encontrado" cobria também "o banco caiu"; hoje
+//      ramificam por `PGRST116`.
+//   3. os 3 de ferramenta (`user_tools` = 4) — o ÚNICO grupo que ainda resta na baseline
+//      (`ToolHistory`, `ToolReports`; `ToolPublicHistory` já saiu). O hook JÁ devolve
+//      `null` vs `undefined`; o componente só precisa parar de descartar a distinção, e o
+//      resíduo está explicado na nota logo abaixo.
+//   4. os 6 de fonte ZERADA — QUITADOS (#2317), antes da primeira linha, como pedia a
+//      medição. `ProvasParaAuditar` era o mais perigoso quando enchesse: "Nenhuma prova
+//      aguardando auditoria" é afirmação de CONTROLE, e a auditoria sumiria no dia em que
+//      a leitura falhasse.
+//
+// A lista acima foi conferida contra a BASELINE_AFIRMATIVO nesta data — um mapa de dívida
+// que lista grupo já quitado é a mesma falha que este gate persegue, só que no comentário.
 //
 // Dois eixos vizinhos foram medidos junto e vieram ZERO — medido, não presumido:
 // `<EmptyState title="…"/>` (texto por ATRIBUTO, sem JsxText) = 0; ternário cujo ramo do
@@ -157,7 +166,6 @@ const BASELINE = new Map<string, number>([
 // `ternario-null`, JÁ na baseline de cima; contá-lo aqui seria contar o mesmo sítio duas
 // vezes). O critério estrito não esconde fatia nenhuma.
 const BASELINE_AFIRMATIVO = new Map<string, number>([
-  ["src/components/knowledge-base/CompletudeSection.tsx", 1],
   // Resíduo MEDIDO, não fix pela metade: a leitura de `user_tools` já ramifica
   // (`estadoDeRegistro`), mas o guard é `!tool || !healthMetrics` e `healthMetrics` deriva
   // de `useToolEvents` — a query IRMÃ, que ainda engole o erro no default `= []` do binding.
