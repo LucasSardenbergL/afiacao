@@ -580,25 +580,36 @@ describe('AUTHZ_REESCRITAS_CONHECIDAS — a baseline não pode ser decoração',
     expect(tortos.map((r) => r.funcao)).toEqual([]);
   });
 
+  /**
+   * `auditCompleto` sobre as ~650 migrations do repo é CARO, e os dois canários abaixo julgam o
+   * MESMO resultado por códigos diferentes. Rodá-lo duas vezes estourou o timeout de 20s da suíte
+   * com a máquina sob carga (medido 2026-09-07) — o custo é do laço, não da asserção, então a
+   * saída é computar uma vez, não afrouxar o timeout: teto maior esconderia a duplicação em vez
+   * de removê-la, e o próximo canário a entrar aqui pagaria o preço de novo.
+   */
+  let achadosDoRepo: ReturnType<typeof auditCompleto> | undefined;
+  const doRepo = () => {
+    achadosDoRepo ??= auditCompleto(
+      readdirSync(dirMig)
+        .filter((f) => f.endsWith('.sql'))
+        .map((f) => ({ file: f, sql: readFileSync(join(dirMig, f), 'utf8') })),
+    );
+    return achadosDoRepo;
+  };
+
   it('nenhuma entrada da baseline foi SUPERADA por um CREATE posterior (baseline não podada)', () => {
     // O prazo de uma entrada não é uma data: é a chegada de um CREATE parseável posterior, que
     // devolve a medição à Parte A. Passado esse ponto a entrada não protege mais nada e ainda
     // desvia o alarme do `authz:audit:prod` para o arquivo errado — foi assim que o MD5_DIVERGIU
     // de `get_defasagem_cliente` ficou aberto de 05/09 a 07/09 culpando uma migration inocente.
-    const migs = readdirSync(dirMig)
-      .filter((f) => f.endsWith('.sql'))
-      .map((f) => ({ file: f, sql: readFileSync(join(dirMig, f), 'utf8') }));
-    const obsoletas = auditCompleto(migs).filter((f) => f.msg.includes('REESCRITA_BASELINE_OBSOLETA'));
+    const obsoletas = doRepo().filter((f) => f.msg.includes('REESCRITA_BASELINE_OBSOLETA'));
     expect(obsoletas.map((f) => `${f.file}::${f.fn}`)).toEqual([]);
   });
 
   it('o repo real não tem NENHUMA reescrita de função do manifest fora da baseline', () => {
     // O canário do estado atual: se um PR novo introduzir o padrão sobre função do manifest,
     // este teste cai junto com o `authz:check` — e a mensagem diz qual arquivo.
-    const migs = readdirSync(dirMig)
-      .filter((f) => f.endsWith('.sql'))
-      .map((f) => ({ file: f, sql: readFileSync(join(dirMig, f), 'utf8') }));
-    const naoMedidas = auditCompleto(migs).filter((f) => f.msg.includes('REESCRITA_VIVA_NAO_MEDIDA'));
+    const naoMedidas = doRepo().filter((f) => f.msg.includes('REESCRITA_VIVA_NAO_MEDIDA'));
     expect(naoMedidas.map((f) => `${f.file}::${f.fn}`)).toEqual([]);
   });
 });
