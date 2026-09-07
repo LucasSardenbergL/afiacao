@@ -491,4 +491,4 @@ P -q -f "$MIG" >/dev/null
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
-[ "$FAIL" -eq 0 ] && echo "✅ HARNESS VERDE" || { echo "❌ HARNESS VERMELHO"; exit 1; }
+if [ "$FAIL" -eq 0 ]; then echo "✅ HARNESS VERDE"; else echo "❌ HARNESS VERMELHO"; exit 1; fi

@@ -427,8 +427,11 @@ echo "── falsificação ──"
 #      e é isso que mostra que P1 e P2 medem coisas DIFERENTES).
 reset_cli_a
 P -q -c "DROP INDEX public.ux_farmer_tactical_plans_dia_operacional;"
-[ -z "$(Pq -c "SELECT indexname FROM pg_indexes WHERE indexname='ux_farmer_tactical_plans_dia_operacional';")" ] \
-  && echo "  · sabotagem F1 aplicada (índice removido)" || { echo "  ⚠️  F1 NÃO aplicou — falsificação inválida"; FALS_BAD=$((FALS_BAD+1)); }
+if [ -z "$(Pq -c "SELECT indexname FROM pg_indexes WHERE indexname='ux_farmer_tactical_plans_dia_operacional';")" ]; then
+  echo "  · sabotagem F1 aplicada (índice removido)"
+else
+  echo "  ⚠️  F1 NÃO aplicou — falsificação inválida"; FALS_BAD=$((FALS_BAD+1))
+fi
 falsifica "F1 índice ausente → A10" p2_indice_barra_insert_cru
 if p1_recusa_com_mensagem; then echo "  ✅ CONTROLE F1 — a RPC continua segurando sem o índice (P1 e P2 são independentes)"; else echo "  ❌ CONTROLE F1 — P1 caiu junto: os asserts não são independentes"; FALS_BAD=$((FALS_BAD+1)); fi
 restaura_tudo

@@ -109,10 +109,10 @@ SELECT (SELECT count(*) FROM (SELECT * FROM nova EXCEPT SELECT * FROM orig) a)
      + (SELECT count(*) FROM (SELECT * FROM orig EXCEPT SELECT * FROM nova) b);
 SQL
 )
-[ "$A1" = "0" ] && ok "A1 paridade default EXATA (incl. órfãos+nome variável): 0 divergentes" || bad "A1: $A1 divergentes"
+if [ "$A1" = "0" ]; then ok "A1 paridade default EXATA (incl. órfãos+nome variável): 0 divergentes"; else bad "A1: $A1 divergentes"; fi
 
 A1B=$("${P[@]}" -t -A -c "SELECT count(*) FROM public.radar_contagem_por_municipio(p_limit=>2000) WHERE municipio_codigo LIKE 'orf%';")
-[ "$A1B" = "6" ] && ok "A1b órfãos preservados: 6 linhas" || bad "A1b órfãos: esperado 6, veio $A1B"
+if [ "$A1B" = "6" ]; then ok "A1b órfãos preservados: 6 linhas"; else bad "A1b órfãos: esperado 6, veio $A1B"; fi
 
 A2=$("${P[@]}" -t -A <<'SQL'
 WITH nova AS (SELECT * FROM public.radar_contagem_por_municipio(p_uf=>'MG', p_limit=>2000)),
@@ -121,22 +121,24 @@ SELECT (SELECT count(*) FROM (SELECT * FROM nova EXCEPT SELECT * FROM orig) a)
      + (SELECT count(*) FROM (SELECT * FROM orig EXCEPT SELECT * FROM nova) b);
 SQL
 )
-[ "$A2" = "0" ] && ok "A2 paridade com filtro UF (slow-path): 0 divergentes" || bad "A2: $A2 divergentes"
+if [ "$A2" = "0" ]; then ok "A2 paridade com filtro UF (slow-path): 0 divergentes"; else bad "A2: $A2 divergentes"; fi
 
 # A3: query interna do fast-path → Index Only Scan + 0 heap fetches (pós-vacuum)
 INNER="WITH agg AS MATERIALIZED (SELECT re.municipio_codigo AS mc, re.uf AS u, re.municipio_nome AS mn, count(*)::bigint AS t, count(*) FILTER (WHERE re.telefone1 IS NOT NULL OR re.telefone2 IS NOT NULL)::bigint AS ct, count(*) FILTER (WHERE re.prospeccao_status='a_contatar')::bigint AS ac FROM public.radar_empresas re WHERE re.ja_cliente=false AND re.prospeccao_status<>'descartado' GROUP BY re.municipio_codigo, re.uf, re.municipio_nome) SELECT a.mc, COALESCE(m.nome,a.mn), a.u, m.lat, m.lng, sum(a.t)::bigint, sum(a.ct)::bigint, sum(a.ac)::bigint FROM agg a LEFT JOIN public.radar_municipios m ON m.codigo=a.mc GROUP BY a.mc, COALESCE(m.nome,a.mn), a.u, m.lat, m.lng ORDER BY sum(a.t) DESC, a.mc LIMIT 500"
 PLAN="$("${P[@]}" -c "EXPLAIN (ANALYZE, BUFFERS) $INNER;")"
-echo "$PLAN" | grep -qiE "Index Only Scan using idx_radar_muni_cover" && ok "A3 fast-path: Index Only Scan em idx_radar_muni_cover" || { bad "A3 NÃO usou index-only"; echo "$PLAN" | grep -iE "scan|heap" | head; }
-echo "$PLAN" | grep -qiE "Seq Scan on radar_empresas|Parallel Seq Scan on radar_empresas" && bad "A3b ainda faz Seq Scan da radar_empresas" || ok "A3b sem Seq Scan da radar_empresas"
+if echo "$PLAN" | grep -qiE "Index Only Scan using idx_radar_muni_cover"; then ok "A3 fast-path: Index Only Scan em idx_radar_muni_cover"; else bad "A3 NÃO usou index-only"; echo "$PLAN" | grep -iE "scan|heap" | head; fi
+if echo "$PLAN" | grep -qiE "Seq Scan on radar_empresas|Parallel Seq Scan on radar_empresas"; then bad "A3b ainda faz Seq Scan da radar_empresas"; else ok "A3b sem Seq Scan da radar_empresas"; fi
 HEAP=$(echo "$PLAN" | grep -oiE "Heap Fetches: [0-9]+" | grep -oE "[0-9]+" | head -1 || echo "?")
 echo "  (Heap Fetches: ${HEAP:-?})"
 
 # A4: Execution Time da FUNÇÃO nova < original (média de 3, cache quente)
 tempo() { "${P[@]}" -t -A -c "EXPLAIN (ANALYZE) SELECT * FROM $1;" | grep -oiE "Execution Time: [0-9.]+" | grep -oE "[0-9.]+"; }
-warm1=$(tempo "public.radar_contagem_por_municipio()"); warm2=$(tempo "public.radar_contagem_original()")
+# aquecimento: rodamos as duas UMA vez so pelo efeito (encher o cache) — o tempo desta
+# passada e descartado de proposito; a medicao que vale e a de baixo (TNOVA/TORIG).
+tempo "public.radar_contagem_por_municipio()" >/dev/null; tempo "public.radar_contagem_original()" >/dev/null
 TNOVA=$(tempo "public.radar_contagem_por_municipio()"); TORIG=$(tempo "public.radar_contagem_original()")
 echo "  (Execution Time: nova=${TNOVA}ms  original=${TORIG}ms)"
-awk "BEGIN{exit !($TNOVA < $TORIG)}" && ok "A4 fast-path mais rápido que a original (${TNOVA} < ${TORIG} ms)" || bad "A4 fast-path NÃO mais rápido (${TNOVA} vs ${TORIG})"
+if awk "BEGIN{exit !($TNOVA < $TORIG)}"; then ok "A4 fast-path mais rápido que a original (${TNOVA} < ${TORIG} ms)"; else bad "A4 fast-path NÃO mais rápido (${TNOVA} vs ${TORIG})"; fi
 
 echo ""; [ "$FAIL" = "0" ] && echo "✅ TODOS OS ASSERTS PASSARAM" || echo "❌ HÁ FALHAS"
 exit $FAIL
