@@ -111,6 +111,20 @@ de deploy **não** é o closure do hash, difere dele por exatamente `_shared/son
 bun run sonda:sql copilot-analyze
 ```
 
+**O Passo 3 só existe DEPOIS do merge — e o script sabe disso.** Tentar gerar a sonda deste branch
+recusa, fail-closed (medido nesta sessão):
+
+```
+$ bun run sonda:sql copilot-analyze
+❌ working tree DESSINCRONIZADO da origin/main na fatia que vira o `esperado(...)`
+   — difere de origin/main: supabase/functions/
+rc=1
+```
+
+Está certo: o `esperado(...)` sai do `versao.ts` + do mapa da **main**, e emiti-lo a partir de um
+branch não-mergeado produziria um veredito que compara prod contra uma versão que não existe em
+lugar nenhum. Não tente pré-gerar a colagem da sonda — ela nasce depois do merge.
+
 O disparo precisa do founder (lê `vault.decrypted_secrets` e faz `INSERT` via `net.http_post`; o
 wrapper read-only recusa os dois). A **leitura** é `SELECT` em `net._http_response` e o agente faz
 sozinho (`--so-leitura`).
