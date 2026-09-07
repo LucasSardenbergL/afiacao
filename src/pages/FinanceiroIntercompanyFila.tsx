@@ -17,6 +17,8 @@ import {
   useReconcileIcNow,
   type IcMatch,
 } from '@/hooks/useIcMatches';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { toast } from 'sonner';
 import { RefreshCw, CheckCircle2, Ban } from 'lucide-react';
 
@@ -45,7 +47,12 @@ const STATUS_VARIANT: Record<
 
 export default function FinanceiroIntercompanyFila() {
   const [tab, setTab] = useState<IcMatch['status'] | 'all'>('divergencia_valor');
-  const { data, isLoading } = useIcMatches(tab === 'all' ? undefined : tab);
+  const filaQuery = useIcMatches(tab === 'all' ? undefined : tab);
+  const { data, isLoading } = filaQuery;
+  // O sub-tipo que MENTE: `!data || data.length === 0` casa tanto o vazio real quanto a
+  // leitura que não aconteceu, e a tela AFIRMA "Nenhum registro encontrado" nos dois casos.
+  // Sumir é ambíguo; afirmar o vazio sobre uma fila de reconciliação é uma frase falsa.
+  const estadoFila = estadoDeLeitura(filaQuery);
   const resolve = useResolveIcMatch();
   const reconcile = useReconcileIcNow();
 
@@ -117,16 +124,27 @@ export default function FinanceiroIntercompanyFila() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">
-                {data?.length ?? 0} registros
+                {/* `{data?.length ?? 0}` fabricava um zero a partir de ausência
+                    (`Number(null) === 0`) — o contador é a mesma mentira em números. */}
+                {naoConsegui(estadoFila) ? '—' : data?.length ?? 0} registros
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {naoConsegui(estadoFila) && (
+                <AvisoLeituraFalhou
+                  oque="a fila de reconciliação intercompany"
+                  estado={estadoFila}
+                  variante="bloco"
+                  testId="aviso-ic-fila"
+                  className="mb-0"
+                />
+              )}
               {isLoading && (
                 <div className="text-sm text-muted-foreground">
                   Carregando…
                 </div>
               )}
-              {!isLoading && (!data || data.length === 0) && (
+              {!naoConsegui(estadoFila) && !isLoading && (!data || data.length === 0) && (
                 <div className="text-sm text-muted-foreground py-8 text-center">
                   Nenhum registro encontrado
                 </div>

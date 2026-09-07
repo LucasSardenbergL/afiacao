@@ -11,6 +11,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Plus, Trash2, ArrowRight, BarChart3, AlertTriangle } from 'lucide-react';
 import { useIcMatches } from '@/hooks/useIcMatches';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { Link } from 'react-router-dom';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
@@ -29,9 +31,11 @@ const FinanceiroIntercompany = () => {
   const [consolidado, setConsolidado] = useState<ConsolidadoRow[]>([]);
   const [ano, setAno] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
-  const { data: icDiv } = useIcMatches('divergencia_valor');
-  const { data: icSem } = useIcMatches('sem_contrapartida');
-  const totalIc = (icDiv?.length ?? 0) + (icSem?.length ?? 0);
+  const icDivQuery = useIcMatches('divergencia_valor');
+  const icSemQuery = useIcMatches('sem_contrapartida');
+  const totalIc = (icDivQuery.data?.length ?? 0) + (icSemQuery.data?.length ?? 0);
+  // Mesmo alerta do Fechamento, mesma regra: soma parcial não autoriza o silêncio.
+  const estadoIc = [estadoDeLeitura(icDivQuery), estadoDeLeitura(icSemQuery)].find(naoConsegui);
 
   // New rule form
   const [newRegra, setNewRegra] = useState({
@@ -103,6 +107,13 @@ const FinanceiroIntercompany = () => {
 
   return (
     <div className="space-y-4 pb-24">
+      {estadoIc && (
+        <AvisoLeituraFalhou
+          oque="as pendências intercompany"
+          estado={estadoIc}
+          testId="aviso-ic-intercompany"
+        />
+      )}
       {totalIc > 0 && (
         <div className="flex items-center gap-2 text-xs text-status-warning bg-status-warning-bg p-2 rounded-md">
           <AlertTriangle className="h-3 w-3 flex-shrink-0" />
