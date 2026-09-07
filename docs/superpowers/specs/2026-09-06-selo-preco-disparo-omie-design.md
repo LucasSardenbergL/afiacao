@@ -74,8 +74,11 @@ o Codex reprovou a M1 dele, e a sessão irmã a refez "sobre a main (guard atôm
 guard atômico não tiver mais o ponto de enxerto que este spec assume, §4.5 é reescrita, não adaptada.
 
 ⚠️ **A classe de SQLSTATE `SA` é do #2187 e está se movendo.** Conferido contra a M1 real em
-2026-09-06: `SA001` e `SA003`–`SA008` já estão ocupados, e o `SA008` de lá é *'Pedido % mudou de
-estado durante a aprovação'* — a v3 deste spec colidia com ele. Por isso os ramos daqui usam a classe
+2026-09-06 e **re-medido depois da coordenação**: `SA001` e **`SA003`–`SA010`** estão ocupados — o
+`SA008` de lá é *'Pedido % mudou de estado durante a aprovação'*, e a v3 deste spec colidia com ele.
+A sessão irmã confirmou usar `SA008`, `SA009` e `SA010`; quando medi a M1 pela primeira vez só os
+`SA003`–`SA008` existiam. **A lista envelheceu em horas** — é a prova concreta de por que os códigos
+daqui vivem na classe `SP` (conferido: zero `SP00x` no branch de lá). Por isso os ramos daqui usam a classe
 **`SP`**, mesmo vivendo dentro das funções do #2187. **Ao implementar, re-conferir os códigos livres:
 esta lista envelhece a cada commit de lá.**
 
@@ -85,7 +88,13 @@ Consome, sem reimplementar: a RPC `aprovar_pedido_sugerido` de 3 args, o trigger
 `reposicao_pedido_e_portal`. Acrescenta um ramo ao trigger existente — **não cria um segundo trigger
 na mesma tabela**. Se o #2187 for reprovado ou remodelado, este spec é reescrito, não adaptado.
 
-### 2.1 🔴 Requisito que este spec IMPÕE ao #2187 (leitura obrigatória para quem mexe lá)
+### 2.1 ✅ Requisito ACORDADO com o #2187 (coordenado entre sessões em 2026-09-06)
+
+> **Estado:** enviado à sessão que reconstrói o #2187 e **aceito por ela**, textualmente: *"Requisito
+> legítimo e o segundo ponto é um furo real no meu §3.4.3 — vou acatar os dois."* ⚠️ **Isso é aceite em
+> conversa, não código.** A prova é o `p_itens_vistos` do #2187 conter `preco_unitario` **e** o token
+> vir do snapshot apresentado — conferir no branch antes de implementar aqui. Se o aceite não se
+> materializar, o risco pré-aprovação volta a ficar aberto e vira risco aceito nomeado (§9.9.2).
 
 **`preco_unitario` tem de entrar no token `p_itens_vistos`** da RPC `aprovar_pedido_sugerido` de 3 args
 (§3.4.3 do spec do #2187), ao lado de `id`, `sku_codigo_omie`, `qtde_final` e `fator_embalagem_portal`.
@@ -113,8 +122,8 @@ Requisito: o token vem do snapshot que foi exibido e confirmado (inline **e** em
 **Não contradiz a §8.4 do #2187:** lá a decisão foi manter preço fora do **selo**. O token é outra
 coisa — anti-TOCTOU de leitura, não procedência. O selo continua sem preço.
 
-**Se o #2187 recusar este requisito**, o risco pré-aprovação volta a ficar aberto e este spec tem de
-registrá-lo como risco aceito, com o caso da aba velha nomeado.
+**Se o aceite não se materializar em código**, o risco pré-aprovação volta a ficar aberto e este spec
+tem de registrá-lo como risco aceito, com o caso da aba velha nomeado.
 
 ## 3. O que existe hoje (medido em prod via psql-ro, 2026-09-06)
 
