@@ -36,6 +36,23 @@ describe('gateG1 — o ramo dentro do bloco OPTIONS, antes do CORS', () => {
     );
     expect(gateG1('monthly-report', invertido)).toMatch(/DEPOIS do return de CORS/);
   });
+  it("aceita corpo de CORS que não é `null` — o preflight de 'ok' é o de 3 edges REAIS", () => {
+    // Regressão de 2026-09-07: o gate casava a string literal `new Response(null, …)`, e
+    // `reposicao-depara-sayerlack-auto`, `carteira-positivacao-snapshot` e `omie-nfe-webhook`
+    // respondem `'ok'` desde sempre. Passar no gate exigiria MUDAR o preflight delas — o oposto
+    // do que ele protege. O gêmeo deste gate vive em `_shared/sonda-versao-contrato_test.ts`.
+    for (const corpo of ["'ok'", '"ok"', '`ok`']) {
+      const variante = OPTIONS_OK.replace('new Response(null,', `new Response(${corpo},`);
+      expect(gateG1('reposicao-depara-sayerlack-auto', variante)).toBeNull();
+    }
+  });
+  it('reprova quando o fallback de CORS SOME — corpo literal é o que separa fallback de chamada', () => {
+    const semCors = OPTIONS_OK.replace('    return new Response(null, { headers: corsHeaders });\n', '');
+    expect(gateG1('monthly-report', semCors)).toMatch(/perdeu o return de CORS/);
+    // Uma CHAMADA no lugar do literal não é o fallback: pode fazer IO e mudar o preflight.
+    const comChamada = OPTIONS_OK.replace('new Response(null,', 'new Response(montarCors(),');
+    expect(gateG1('monthly-report', comChamada)).toMatch(/perdeu o return de CORS/);
+  });
   it('reprova IO dentro do bloco — e NÃO se engana com IO citado em comentário', () => {
     const comIo = OPTIONS_OK.replace('    if (sonda) return sonda;', '    if (sonda) return sonda;\n    await supabase.from("t").select();\n    void fetch("x");');
     expect(gateG1('monthly-report', comIo)).toMatch(/IO dentro do bloco OPTIONS/);
