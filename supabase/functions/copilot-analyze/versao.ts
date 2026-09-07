@@ -27,7 +27,17 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("copilot-analyze");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+//
+// ⚠️ ESTE BUMP NÃO ACOMPANHA MUDANÇA DE COMPORTAMENTO — não procure por uma. Ele é o ANTES
+// CONHECIDO do piloto do deploy por MCP do Lovable: bumpar o marcador muda o `versao.ts`, que
+// está no closure, logo muda TAMBÉM o `fonte` — e a edge cai em `DIVERGE_P1` MEDIDO (par ≠ par),
+// em vez de `NUNCA_ATESTADA`, que é ausência de dado. Sem esse antes, "o MCP deployou" e "já
+// estava idêntico" produzem o MESMO eco, que foi exatamente a metade que a medição de 2026-09-06
+// não conseguiu separar. Esta edge é a cobaia porque o custo de errar é zero: gate
+// `authorizeCronOrStaff`, `verify_jwt = false` (sem 401 ambíguo do gateway), nenhuma escrita de
+// aplicação, e `farmer_copilot_sessions` MEDIDA em 0 (com controle positivo) — a feature nunca
+// foi ligada. Desfecho do piloto: `docs/historico/piloto-deploy-mcp-lovable.md`.
+export const VERSAO = "v1.1-piloto-mcp-lovable";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
