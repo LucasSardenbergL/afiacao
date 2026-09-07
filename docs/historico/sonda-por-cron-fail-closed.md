@@ -197,3 +197,60 @@ significar e quase nunca significa.
 
 A spec com o rastro completo das três rodadas e a decisão de cada achado:
 `docs/superpowers/specs/2026-09-05-sonda-por-cron-fail-closed-design.md`.
+
+## 10. O fechamento em produção (2026-09-07)
+
+A chave `SONDA_HMAC_KEY` foi provisionada pelo founder e a fatia F3 (`deploy_sonda_resultados`)
+aplicada. O mecanismo passou a se sustentar sozinho — e a virada tem hora marcada.
+
+| tick (UTC) | disparos | atestados |
+|---|---|---|
+| 09-06 22:37 · 09-07 00:37 | 3 | **0** — relé recusa, sem chave |
+| 09-07 01:07 em diante (6 ticks) | 3 | **3** |
+
+### 10.1 O efeito real ficou em zero — medido, não presumido
+
+A resposta `{"probe":true,…}` prova que o ramo de sonda atendeu, mas ela é a **própria** coisa sob
+suspeita: um bundle que respondesse assim e ainda executasse o fluxo devolveria o mesmo corpo. A
+testemunha independente é o contador de efeito. `calculate-scores` escreve em `priority_score_log`
+a cada execução real; nas 30 h que cobrem 5 ticks sondados ele escreveu em **quatro** momentos:
+
+```
+09-07 06:00 · 06:25      09-06 06:00 · 06:25
+```
+
+Nenhum em `:37`, e o padrão de 09-06 — quando a sonda ainda era **recusada** por falta de chave —
+é idêntico ao de 09-07, com ela atendendo. O dia anterior virou a linha de base: **ligar a sonda
+não mudou nada** no comportamento real da edge. É o teste de rollback do harness se repetindo em
+produção, com o contador em zero.
+
+Limite honesto: `monthly-report` não escreve em tabela nenhuma (só chama o Resend), então **não
+existe contador mensurável pelo psql-ro** para ela. O que a sustenta é a prova arquitetural — o
+ramo retorna antes de qualquer IO, demonstrado executando os 84 closures históricos — mais a
+analogia com o gêmeo mensurável. Quem quiser a medição direta precisa do painel do Resend.
+
+### 10.2 A cicatriz que justifica a `deploy_sonda_resultados`
+
+A semeadura colheu 24 linhas (8 ticks × 3 edges). Cruzando com o ledger:
+
+| tick | motivo colhido | no ledger | veredito |
+|---|---|---|---|
+| 06:37 · 08:37 · 10:37 | `atestou` / 200 | 3 | atestou |
+| 01:07 · 02:37 · 04:37 | **perdido** | 3 | atestou — a prova está no ledger |
+| **22:37 · 00:37** | **perdido** | **0** | **não atestou, e o porquê sumiu** |
+
+As duas últimas linhas são a falha que o mecanismo existia para não ter: sabe-se que não atestou,
+não se sabe mais por quê. O `pg_net.ttl` apagou a resposta em 6 h e o ledger, por desenho, só
+guarda sucesso. Elas ficam como cicatriz permanente — a tabela **preserva daqui para frente, não
+ressuscita o passado**, e é exatamente por isso que ela precisava existir antes de fazer falta.
+
+O par também mostra que as duas tabelas não se substituem: `(sem resposta)` no coletor **não** é
+veredito de falha — três desses ticks atestaram. Quem julga silêncio precisa das duas.
+
+### 10.3 Lição de método: predicado errado parece banco quebrado
+
+No pré-voo, `pg_get_function_identity_arguments(p.oid) = 'text'` devolveu **0** para
+`cron.unschedule` e simulou uma dependência ausente. O Postgres devolve `'job_name text'` — com o
+nome do parâmetro. O banco estava certo; a **pergunta** estava errada. Vale a mesma regra de
+`ausente ≠ zero`, um nível acima: antes de tratar zero como fato do mundo, confirme que o
+predicado sabe produzir não-zero.
