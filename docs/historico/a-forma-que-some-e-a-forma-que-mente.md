@@ -149,6 +149,113 @@ Corolário para quem varrer o resto do inventário: a correção desta classe **
 desestruturação do hook**, então quase todo sítio corrigido vai encolher a baseline. Cada
 encolhimento precisa dizer POR QUE — e "o número caiu" não é o porquê.
 
+## FECHADO — o detector segue o alias por uma indireção (2026-09-07)
+
+O buraco da tabela acima está fechado: `acharColapsos` passou a reconhecer o sítio também
+quando o resultado do hook é ligado a um nome e lido depois — `const q = useQuery(…)` seguido
+de `q.data`, ou de `const { data } = q` num segundo statement.
+
+**A decisão foi por MEDIDA, não por gosto.** A pergunta anterior à correção era o
+denominador: se quase ninguém escrevesse na forma por alias, o certo seria registrar a
+limitação e não endurecer nada. Medido em `src/**` antes de tocar no detector: **1.266**
+declarações `const x = use…()` sem desestruturação, **123** delas lendo `x.data`, e **100**
+lendo `data` sem NENHUMA chave de `CHAVES_DE_ERRO`. Não é ~0 — e a lista inclui exatamente os
+domínios que este doc classifica como de maior dano: `useDataHealth`, `useCashflowAlertas`,
+`useCarteiraSaude`, `usePrecoCockpit`.
+
+As três regras da forma direta valem inteiras pelo alias, e é isso que mantém a baseline
+confiável em vez de só maior:
+
+| regra | pela desestruturação | pelo alias |
+|---|---|---|
+| sem `data` não há colapso a afirmar | binding sem `data` | nenhum `q.data` no escopo |
+| `CHAVES_DE_ERRO` ABSOLVE | `const { data, status } = useX()` | `q.error` / `q.status`, ou `const { data, status } = q` |
+| `...rest` pode carregar o error → não afirmar | `const { data, ...rest }` | passar `q` adiante (`<Filho q={q}/>`, `f(q)`, `{...q}`, `q["data"]`) |
+
+### Duas armadilhas que a implementação encontrou
+
+**A raiz do tainting deixou de ser só identificador.** Na forma por alias sem
+desestruturação, o que carrega o dado é o ACESSO `q.data` — que não é identificador nenhum. O
+ponto fixo das derivadas varria só identificadores e devolveria o mesmo falso "consertado"
+que o endurecimento existe para fechar.
+
+**Outra chamada de hook NÃO é derivada do data — é outra FONTE, com error próprio.** Sem essa
+exclusão, `const outraQ = useQuery({ queryKey: [q.data] })` marcava `outraQ` como derivada, e
+daí `if (outraQ.isLoading) return null` — guarda de CARREGAMENTO — passava a contar como
+colapso de leitura. Em `src/hooks/useExcecoesGestor.ts` isso produzia **4 sítios falsos**: o
+`const data = useMemo(…)` marcava o nome `data`, que colide com o `const { data, error } =
+await supabase…` de cada `queryFn`, e a contaminação chegava até o `isLoading`. `useMemo` e
+`useCallback` ficam FORA da exclusão — são o veículo canônico da derivada, o caminho pelo qual
+o `DataHealthBanner` escapou da primeira versão desta varredura. Baseline que cresce por
+motivo benigno é como um gate morre, e essa é a mesma aritmética que mantém `jsx-&&` fora.
+
+### O crescimento é ACHADO, não regressão
+
+Medido antes e depois, arquivo a arquivo: **nenhum arquivo encolheu**. O que apareceu são
+sítios que já estavam lá e eram invisíveis.
+
+| baseline | antes | depois | entraram |
+|---|---|---|---|
+| auto-ocultação | 27 arquivos | 34 (+8 sítios) | `useCheckinQualitativo`, `useSimuladorData` (2), `ApprovalQueueSection`, `RadarMapa`, `ExcecaoCreditoDialog`, `useReposicaoSessao`, `useSinalPositivacao` |
+| `return-afirmativo` | 2 arquivos | 4 | `PosicaoAtualTab`, `ApprovalQueueSection` |
+
+A medida vale para a árvore em que ela foi feita, e esta foi RE-MEDIDA três vezes. A primeira
+passagem deu 32→38; depois a main mergeou o #2297 (5 sítios de card de dashboard), o #2298
+(mexeu em `useSinalPositivacao`) e, na véspera da entrega, o #2305/#2317 (que esvaziaram quase
+toda a baseline afirmativa). Rebasar sem RE-MEDIR teria reintroduzido entradas já quitadas e
+perdido a 8ª — número medido em árvore velha não é número. **Nenhum arquivo encolheu em nenhuma
+das três medições.**
+
+Nem todo sítio novo é auto-ocultação de COMPONENTE, e quem for quitar precisa saber disso:
+`ApprovalQueueSection` e `PosicaoAtualTab` apagam ou mentem na tela; `RadarMapa`,
+`useSinalPositivacao` e o `handleExtrair` da fila são `return` PELADO dentro de effect ou
+handler — que o detector conta como silêncio desde 2026-08-22, semântica pré-existente e não
+classe nova. São a classe MEDIDA, não sítios aprovados.
+
+O pior dos novos é `ApprovalQueueSection`: quando a leitura da fila falha, a tela acende o ✓
+VERDE com "Nada pra aprovar — suba boletins na aba Documentos". É literalmente o padrão de
+`docs/historico/o-check-verde-que-a-falha-acende.md`, uma indireção mais fundo.
+
+### Falsificação
+
+Cinco sabotagens, uma camada por vez, com o CONTROLE verde na MESMA invocação do laço
+(abortando antes do 1º `sed` se ele não fosse verde): matar a forma por alias inteira ·
+desligar `CHAVES_DE_ERRO` pelo alias · desligar a regra do `...rest`/repasse · tirar a raiz
+`q.data` do ponto fixo · tirar a exclusão de OUTRA FONTE. **5/5 ficaram vermelhas**, e cada
+uma derrubou exatamente os casos previstos — nenhuma camada sobreviveu como redundante.
+
+### Achado de brinde: exit 1 com 19/19 VERDES
+
+A primeira execução da suíte real reprovou por **timeout**, não por asserção — e cronometrar
+antes de consertar foi o que impediu o conserto errado: a varredura ficou mais RÁPIDA com o
+detector endurecido (12,3s → 9,8s, mesma máquina, back-to-back), então o estouro era custo de
+infra, não regressão deste PR.
+
+O modo de falha merece nome próprio. Com ~79s de laço CPU-bound segurando o event loop, o worker
+do vitest morria com `Timeout calling "onTaskUpdate"` e a suíte saía com **exit 1 exibindo
+`Tests 19 passed (19)`**. Quem lesse o resumo diria "passou". É a mesma família de
+`docs/historico/evidencia-positiva-shell.md`: **o veredito é o exit code, não o texto bonito
+acima dele** — e um vermelho que aparece como verde ensina a ignorar vermelho.
+
+O conserto NÃO é deste PR: a `main` resolveu antes, pelo #2311
+(`docs/historico/flaky-sob-carga-teto-e-custo.md`), com **orçamento por FONTE** em vez de um teto
+fixo. Eu tinha escrito o meu (varredura compartilhada entre as duas baselines + pré-filtro
+textual) e **descartei no rebase**, porque o do #2311 é melhor onde importa: um teto em ms/fonte
+acompanha o repo crescer sem afrouxar o **custo unitário**, que é justamente o sinal que
+denunciaria uma regressão do detector. Compartilhar a varredura teria zerado o tempo do segundo
+teste e apagado esse sinal. Conflito de arquivo é só um eixo — antes de insistir na própria
+versão, vale ver se a `main` já entregou a coisa, e melhor.
+
+### O que NÃO foi fechado
+
+O tainting continua **cego a escopo**: ele casa NOMES. Quando o nome marcado é `data` — o mais
+comum do repo — ele colide com qualquer `const { data, error } = await supabase…` aninhado num
+`queryFn`. A exclusão de OUTRA FONTE corta o caminho pelo qual essa colisão estava chegando a
+guardas de carregamento, mas **não remove a colisão**. Quem for endurecer o próximo eixo:
+o conserto de verdade é sombreamento (desmarcar, dentro de cada função aninhada, os nomes que
+ela re-declara) — e ele mexe também na forma direta, então precisa da mesma medida
+antes/depois, arquivo a arquivo, que esta entrega usou.
+
 ## O que considero LEGÍTIMO, e por quê
 
 Sete padrões cobrem a maioria dos 93. Em nenhum deles a ausência afirma segurança:
