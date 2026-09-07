@@ -3,6 +3,8 @@ import { Info } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useKpisVisitaMtd } from '@/hooks/useKpisVisitaMtd';
 import { formatBRL } from '@/components/customer360/format';
+import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 function KpiCard({ label, value, sub, info }: { label: string; value: string; sub?: string; info?: string }) {
   return (
@@ -33,11 +35,31 @@ function KpiCard({ label, value, sub, info }: { label: string; value: string; su
  * visita; NÃO é conciliado com o ERP → não é receita reconhecida nem base de comissão
  * (decisão Codex; ver docs/superpowers/specs/2026-06-13-kpis-closer-meu-dia-design.md).
  * A qualidade do dado é exposta (fechamentos sem valor, visitas sem resultado) pra não
- * mascarar subnotificação. Self-hide quando não há visita no mês.
+ * mascarar subnotificação. Self-hide quando não há visita no mês — VERIFICADO.
+ *
+ * CLASSE "erro colapsado em vazio" (docs/historico/fase-sem-sinal.md): a linha
+ * `if (isLoading || !k || k.totalVisitas === 0) return null` é o defeito original da
+ * classe — o hook LANÇA quando o SELECT em `route_visits` falha, e o placar do mês sumia
+ * do dashboard exatamente como se o vendedor não tivesse registrado nenhuma visita.
+ * `route_visits` tem 0 linhas hoje (psql-ro, 2026-08-23): o dano ainda não aconteceu, e o
+ * gatilho é a PRIMEIRA visita registrada — a partir dela, uma falha de leitura passa a
+ * afirmar "mês zerado" para quem vendeu.
  */
 export function ClosersMtdHero() {
-  const { data: k, isLoading } = useKpisVisitaMtd();
-  if (isLoading || !k || k.totalVisitas === 0) return null; // self-hide
+  const q = useKpisVisitaMtd();
+  const { data: k } = q;
+  const estado = estadoDeLeitura(q);
+
+  // Sem NADA em mãos: o placar não pode sumir calado — some junto com a conclusão
+  // "não vendi nada este mês", que é a leitura errada que ele mesmo induz.
+  if (naoConsegui(estado) && !k) {
+    return <AvisoLeituraFalhou oque="o seu placar do mês" estado={estado} className="mb-0" />;
+  }
+  // Com o placar em mãos e um refetch que falhou, os números FICAM — só declaram idade.
+  const velho = desatualizado(q, Boolean(k));
+  // `carregando`/`desabilitada` (sem uid) e o mês SEM visita — este é o único silêncio
+  // legítimo, e agora é um zero verificado, não a ausência de resposta.
+  if (estado === 'carregando' || !k || k.totalVisitas === 0) return null;
 
   const qualidade: string[] = [];
   if (k.fechadosSemValor > 0) qualidade.push(`${k.fechadosSemValor} fechamento${k.fechadosSemValor > 1 ? 's' : ''} sem valor`);
@@ -58,6 +80,7 @@ export function ClosersMtdHero() {
       {qualidade.length > 0 && (
         <p className="text-2xs text-muted-foreground">Qualidade do dado: {qualidade.join(' · ')}.</p>
       )}
+      {velho && <AvisoLeituraFalhou oque="a leitura mais recente do placar" estado={velho} className="mt-2" />}
     </div>
   );
 }

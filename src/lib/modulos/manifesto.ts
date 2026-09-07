@@ -192,6 +192,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
+      "src/components/unified-order/__tests__/TierClienteBadge.estados.test.tsx",
       "src/hooks/__tests__/cross-sell-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/cross-sell-vendaveis-erro-de-codigo.test.tsx",
       "src/hooks/__tests__/cross-sell-identidade-account.test.tsx",
@@ -295,6 +296,9 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/components/intelligence/__tests__/tabs-erro-honesto.test.tsx",
       "src/components/__tests__/recommendation-card-sim-indisponivel.test.tsx",
+      "src/components/radar/__tests__/RadarKpis.estados.test.tsx",
+      "src/components/dashboard/__tests__/ClosersMtdHero.estados.test.tsx",
+      "src/components/dashboard/__tests__/MinhasVisitasResultadoCard.estados.test.tsx",
       "src/hooks/__tests__/bundle-argumento-gravacao-calada.test.tsx",
       "src/hooks/__tests__/bundle-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/bundle-conta-unica.test.tsx",
@@ -383,7 +387,10 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useCompletude.ts",
       "src/hooks/useCustomerLastSalesOrder.ts",
     ],
-    testes: ["src/pages/__tests__/AdminCustomers.erro-honesto.test.tsx"],
+    testes: [
+      "src/pages/__tests__/AdminCustomers.erro-honesto.test.tsx",
+      "src/components/customer/__tests__/CustomerProfile360Summary.estados.test.tsx",
+    ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
   {
