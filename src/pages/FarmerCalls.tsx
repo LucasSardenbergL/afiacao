@@ -41,11 +41,16 @@ const FarmerCalls = () => {
   const qPositivacao = useMyPositivacao();
   const { data: positivacao } = qPositivacao;
   const estadoPositivacao = estadoDeLeitura(qPositivacao);
+  // `isHunter` aqui é só DESENHO (a copy do hero muda). O SENSOR não recebe mais este booleano:
+  // enquanto o papel não resolve, `commercialRole === 'hunter'` é `false` FABRICADO — e offline as
+  // duas leituras pausam juntas, então isso era determinístico, não corrida. O rótulo da série
+  // mora dentro do `useSinalPositivacao`, onde nenhum host pode inventá-lo (revisão retroativa do
+  // #1896, `docs/historico/fase-sem-sinal.md`).
   const { data: commercialRole } = useMyCommercialRole();
   const isHunter = commercialRole === 'hunter';
   // Sensor: emite `carteira.positivacao_vista` em TODO desfecho (o #1886 consertou o que a
   // tela mostra no erro; o que ela mede continuava só no ramo de sucesso).
-  useSinalPositivacao(isHunter);
+  useSinalPositivacao();
   const { isImpersonating, effectiveUserId } = useImpersonation();
 
   // Real Nvoip call integration for the dialog timer

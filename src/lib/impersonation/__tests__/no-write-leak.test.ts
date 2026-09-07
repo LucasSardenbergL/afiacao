@@ -12,6 +12,15 @@ const ALLOWED = new Set([
   'src/lib/impersonation/effective-user.ts',
   'src/hooks/useMyPositivacao.ts',
   'src/hooks/useMyMixGap.ts',
+  // Sensores da carteira (telemetria PURA, zero mutation): effectiveUserId entra SÓ na chave
+  // local de dedup — uma string que vive num useRef<Set> dentro da montagem e NUNCA sai do
+  // browser. Ao PostHog vai `sob_lente: boolean`, não o uid: para a série responder "isto é
+  // vendedor de verdade ou staff impersonando?" basta o booleano, e mandar uid de terceiro seria
+  // dado pessoal a mais sem uma pergunta a mais respondida. Sem o sujeito na chave, o ref
+  // sobrevive à troca de alvo (o Provider é Context, a rota não remonta) e a adoção do ALVO some
+  // da série — defeito medido na revisão retroativa do #1896.
+  'src/hooks/useSinalPositivacao.ts',
+  'src/components/farmer/MixGapCard.tsx',
   'src/hooks/useMyVisitSuggestions.ts',
   'src/hooks/useMyCarteiraScores.ts',
   'src/hooks/useImpersonatedAccessProfile.ts',

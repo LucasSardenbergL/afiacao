@@ -473,6 +473,51 @@ aqui a sonda mede a **tabela de processos** da máquina em vez do trabalho da pr
 eixo comum: a asserção pegou carona num estado GLOBAL compartilhado, e fica verde ou vermelha por
 motivo alheio ao objeto.
 
+### 14. `-t` do vitest é REGEX — filtro que casa NADA sai com exit **0**
+
+**Medido 2026-08-23, dentro do próprio script de falsificação.** Uma das cinco sabotagens rodou
+`bunx vitest run <arquivo> -t "cache quente + OFFLINE"` e voltou VERDE. Li isso como "o teste não
+pega o defeito" e quase registrei uma correção como não-provada.
+
+O `-t` é tratado como **expressão regular**. O `+` é quantificador, então o padrão pedia
+`quente` + um-ou-mais espaços + ` OFFLINE` — que não existe no nome do teste (lá o `+` é literal).
+Zero teste casou, o vitest imprimiu `Tests  8 skipped (8)` e saiu com **exit 0**. Ausência de dado
+lida como aprovação, dentro do script cujo trabalho é justamente negar isso.
+
+O agravante é o CONTEXTO: um filtro que não casa é indistinguível, pelo exit code, de uma suíte
+que passou. Num script de falsificação isso inverte o veredito — "a sabotagem não foi detectada"
+quando a verdade é "a sabotagem não foi TESTADA".
+
+**A regra:** filtro de teste é entrada de regex, não substring. Escolha um padrão sem
+metacaractere (`+ ? * ( ) [ ] . | ^ $ \`) **e** exija execução POSITIVA:
+
+    bunx vitest run "$arquivo" -t "$nome" > "$out" 2>&1
+    code=$?
+    grep -qE "Tests +[0-9]+ (passed|failed)" "$out" || { echo "HARNESS QUEBRADO: nada executou"; exit 1; }
+    [ "$code" -ne 0 ]   # só AQUI o vermelho vale como prova
+
+Irmã da nº 13 (sonda que mede o alvo errado) e da família toda: **contar o que rodou é parte da
+asserção.** `Tests N skipped` é ausência de dado; `Tests N passed|failed` é o dado.
+
+### 15. `heavy` esgota o timeout de fila e ABORTA sem rodar — e o `echo $?` esconde isso
+
+**Medido 2026-08-23, minutos depois da nº 14.** `heavy bash -c '…; echo "EXIT=$?"' > log; echo
+"WRAPPER_EXIT=$?" >> log` voltou como **"Background command completed (exit code 0)"** na
+notificação do harness. O log dizia outra coisa:
+
+    heavy: timeout (1800s) esperando vaga — abortando. (posição 2 na fila)
+    WRAPPER_EXIT=1
+
+Nenhuma das nove sabotagens rodou; nenhum `FALSIF_EXIT`, nenhum `SUITE_EXIT`. A notificação era
+verde porque o `echo` final zera o exit do compound (a armadilha já catalogada aqui), e o `heavy`
+é um **wrapper que pode abortar sem executar o trabalho** — o caso já previsto no CLAUDE.md,
+visto agora ao vivo, com fila de ~40 sessões disputando 1 slot.
+
+**A regra:** com wrapper de fila, "terminou" e "rodou" são perguntas DIFERENTES. O veredito é o
+marcador POSITIVO do trabalho no log (`FALSIF_EXIT=`, `SUITE_EXIT=`, `Tests N passed`), nunca o
+exit do conjunto nem a notificação de background. E vale a recíproca: um log **sem** o marcador é
+ausência de dado, não aprovação — pare e re-enfileire.
+
 ## O padrão por trás das treze
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
