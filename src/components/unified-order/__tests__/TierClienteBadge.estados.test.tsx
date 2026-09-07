@@ -119,7 +119,9 @@ describe('TierClienteBadge — "não consegui ler" NÃO pode virar "sem tier"', 
 
     resposta = { data: null, error: { message: 'boom' } };
     const erro = renderBadge();
-    await waitFor(() => expect(erro.container.textContent).not.toBe(''));
+    // Esperar o ESTADO FINAL, não "container não-vazio": era assim que este teste pegava o
+    // texto do `carregando` e comparava o transitório com o vazio.
+    await screen.findByText(AVISO);
     expect(erro.container.textContent).not.toBe(telaVazia);
   });
 });

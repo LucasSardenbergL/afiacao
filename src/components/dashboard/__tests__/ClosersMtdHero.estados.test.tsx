@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 /**
  * Guard da classe "erro colapsado em vazio" no placar MTD do closer.
@@ -38,7 +39,12 @@ const PLACAR = /Visitas registradas/i;
 let qc: QueryClient;
 function renderHero() {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return render(<QueryClientProvider client={qc}><ClosersMtdHero /></QueryClientProvider>);
+  // O KpiCard usa <Tooltip> do Radix, que EXIGE o provider (na app ele é global).
+  return render(
+    <QueryClientProvider client={qc}>
+      <TooltipProvider><ClosersMtdHero /></TooltipProvider>
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => { onlineManager.setOnline(true); });

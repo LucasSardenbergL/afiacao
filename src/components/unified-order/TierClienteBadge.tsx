@@ -73,12 +73,18 @@ export function TierClienteBadge({
 
   const temOben = !!tier?.oben;
   const temColacor = !!tier?.colacor;
-  // `semTier` só pode ser afirmado com a leitura PRONTA — daí o `!leituraFalhou`.
-  const semTier = !leituraFalhou && !temOben && !temColacor;
+  // `semTier` é uma AFIRMAÇÃO e só a leitura PRONTA a sustenta. Antes disto o estado
+  // `carregando` também caía aqui e o badge dizia "Definir tier" antes de saber — a mesma
+  // classe, no quarto estado: convidava a ESCREVER tier sobre uma leitura que não chegou.
+  const semTier = estado === 'pronta' && !temOben && !temColacor;
 
   // A leitura não aconteceu: o badge fala em vez de sumir OU de afirmar "Definir tier",
   // e não abre o dialog — editar exigiria conhecer o tier vigente, que é justamente o que
   // falta. Vale inclusive para quem não edita: aqui a ausência não é "nada a mostrar".
+  // Carregando: nada a afirmar ainda. Transitório e auto-resolvido (o helper trata este
+  // estado à parte de propósito), e um badge vazio pisca menos que um convite errado.
+  if (estado === 'carregando') return null;
+
   if (leituraFalhou) {
     return (
       <Badge
