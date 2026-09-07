@@ -103,13 +103,20 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
         const cestaSkus = new Set([...cestaFiltrada.principal, ...cestaFiltrada.secundarios].map(i => i.omie_codigo_produto));
         const { data: recData } = await supabase
           .from('farmer_recommendations')
-          .select('product_id, affinity_score, status')
+          .select('product_id, affinity_score, status, recommendation_type')
           .eq('customer_user_id', customerUserId!)
           // Só a geração VIGENTE. Desde 20260814223445 o recálculo aposenta a geração
           // anterior marcando-a `status='expirado'` — sem este filtro a proposta que vai
           // pro cliente no WhatsApp ofereceria SKU que o motor já descartou. Era inócuo
           // enquanto nada era expirado; passou a morder no instante em que algo é.
-          .eq('status', 'pendente');
+          .eq('status', 'pendente')
+          // Só CROSS-SELL. A seção é "experimente também" — produto COMPLEMENTAR. Sem este
+          // filtro o top-2 era ordenado por `affinity_score`, que carrega duas grandezas
+          // incomensuráveis: medido em prod (07/09/2026) o up-sell varria a seção de 183 dos
+          // 238 clientes, oferecendo a versão mais CARA do que o cliente já compra.
+          // ⚠️ O `.eq()` NÃO projeta a coluna — ela precisa estar no `.select()` acima, senão o
+          // helper recebe `undefined` e a seção vai a ZERO. Os dois andam juntos.
+          .eq('recommendation_type', 'cross_sell');
         const recs = (recData ?? []) as PreviewRec[];
         const recIds = [...new Set(recs.map(r => r.product_id).filter((x): x is string => !!x))];
         if (recIds.length > 0) {
