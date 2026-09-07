@@ -65,6 +65,34 @@ numa cópia do arnês em `scripts/`, roda `--falsificar` sob `LC_ALL=C` e `LC_AL
 exit 0 na versão da main e exit 1 **com** a marca ASCII `controle SEM sabotagem ja esta VERMELHO` no
 HEAD — reprovar sem a marca seria vermelho pelo motivo errado.
 
+## O outro lado do laço: a RESTAURAÇÃO também precisa de controle (2026-09-07)
+
+O controle protege a ENTRADA do laço. A saída ficou descoberta, e cobrou.
+
+Falsificando o `REESCRITA_BASELINE_OBSOLETA`, a etapa de atribuição — *"sem o código novo isto
+passa verde?"* — usou `git checkout HEAD~1 -- scripts/authz-gate-check.ts`. Esse comando **escreve
+no ÍNDICE**, não só no working tree. O `restaurar()` seguinte era `git checkout -- <path>`, que
+restaura **do índice** — ou seja, restaurou a versão sabotada por cima dela mesma. O laço imprimiu
+`RESTAURADO: exit 0` e terminou "verde".
+
+Dois agravantes, e nenhum é sobre git:
+
+1. **O verde final não distinguia.** Com a baseline já podada, `authz:check` sai 0 *com ou sem* o
+   gate novo — o controle de restauração media uma coisa que era verdadeira dos dois lados. É o
+   mesmo defeito do controle de entrada, espelhado: asserção que não separa os ramos.
+2. **O commit seguinte arrastou a reversão.** `git add <outro-arquivo> && git commit` commita o
+   ÍNDICE INTEIRO. O commit "regrava o carimbo" saiu carregando `authz-gate-check.ts | 33 +----`,
+   apagando a entrega do commit anterior. Só apareceu porque uma conferência de colisão listou os
+   arquivos do PR e o arquivo principal **não estava lá**.
+
+Correções que ficam, e a segunda é a que generaliza:
+
+- **Restaure por CÓPIA (`cp` de um backup), nunca por `git checkout`** dentro de um laço de
+  sabotagem. O git carrega estado (índice) que o laço não modela.
+- **A restauração se prova por CONTEÚDO, não por "o `cp` rodou":** exija a marca do código de volta
+  (`grep -c MARCA == n`) e `git diff --quiet`. "Restaurei" sem asserção é a mesma família de
+  `ausente ≠ zero` — ausência de erro no `cp` não é presença do arquivo certo.
+
 ## A regra
 
 **Arnês de falsificação começa com um CONTROLE**: a mesma invocação do laço de sabotagem, com a
@@ -72,3 +100,7 @@ sabotagem trocada por nada, exigida VERDE nos 2 locales, **abortando antes do pr
 ele o relatório de sabotagem é fabricado, e a suíte que roda em outro lugar (`test:hooks`) não cobre
 esse buraco. Corolário barato: **se o `--falsificar` ficar muito mais rápido do que n×2 execuções da
 suíte, ele não está rodando a suíte** — meça o tempo, é o sensor mais barato que existe.
+
+**E termina com um CONTROLE DE SAÍDA**: a restauração é asseverada pelo conteúdo do arquivo e por
+`git diff --quiet`, não pelo exit do `cp` — e a sabotagem nunca passa pelo índice do git, senão o
+próximo `git commit` de qualquer outra coisa a leva junto.
