@@ -28,6 +28,7 @@ permissions:
   # fechamento não acontece, ninguém recebe erro, e a issue entregue parece pendente.
   # `issues:` e `pull-requests:` são escopos DISTINTOS no GITHUB_TOKEN, e fechar uma
   # issue (não um PR) cai no primeiro. Detalhe e teste em #2322.
+  # Cobaia que mede o efeito desta linha: #2329 (resultado registrado em #2322).
   issues: write
 
 jobs:
