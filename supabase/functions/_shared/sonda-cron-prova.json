@@ -594,6 +594,309 @@
     "controle": "controle",
     "em": "2026-09-06T15:38:32.846Z"
    }
+  },
+  "sync-reprocess": {
+   "0a65825a90c7ef37303c75850c6a9ee46199649987a041c61d1595bc56e80f4c@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "55dea3f712de1c3125e5ea0050c37bff5a64a887",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:46.459Z"
+   },
+   "0ac435058213fcde50a1bcef4e400b164576fa8dbd6838ead47fe7d8dfee491f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "f6ac6055aa5b384cb3020e7ff28fcb93bad6de01",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:41.629Z"
+   },
+   "223f03659155dab3a05a34ca2c6e587dea169558a56962ad32ae47261f1145af@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "4e5547355472af26b1fc6457013d260231f5be70",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:57.755Z"
+   },
+   "245b9b86c324bc4e20a438a2ba66cb9e5b0f60601e44b33d5bd992e80afb9d75@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "314b2bca5dbbcbe0439509db306b1113db2e3a7b",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:49.341Z"
+   },
+   "312ac07773a992394571442fbe3ec5d3f9ba8b5a7df7d1172c3fdf9c72dd2dcb@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "ad43dd625978124dbe0277be68f1dee3eb8b9fd4",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:55.765Z"
+   },
+   "4836b92bbc1743808ccb170c3b1c9b9de39e28c5119862703f61974faa3ee955@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "55a8d7c3e10466f4bfc36ae79c5e52974e8f1845",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:54:02.646Z"
+   },
+   "49c61cb13bb6a15b937319561d75ea4319928c61dba4fefbcae6247452211de5@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "d0d8b4669c153ff901b27b95d9669440e08a4730",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:39.696Z"
+   },
+   "4b59bf6cebcf1d7f541ba92218046006bc5d819d96d85ff42d80fe88d3e8d0bf@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "497870dfad4c5034340b94e956161045ba5c71b0",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:54.672Z"
+   },
+   "5e51b8f658ff3e8747205e448230f19bdee4f8f0e370d71b509f930fb2aad2f8@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "5362ec76199a7872b4d93e29ae96a8a7aecf3112",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:38.539Z"
+   },
+   "6156db65a96f852dc0dedbc2d4beb7c61281ad0d33c732108e58574a64594b98@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "3cb2b1c77c22fb04fd3dbee0cac801c7d455877b",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:54:02.336Z"
+   },
+   "641f7295c663f4f2d773f2becdb15b602e3f0b9ac1d1c7ddbab7080faf4123d3@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "7f1198cf0e583b088abcdf003572f845e750806d",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:56.285Z"
+   },
+   "642c49b687e5bd5a1f5ba9a8c259d7431253ba77ac90bb9d8237786429cb3dcb@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "006d762043b96694ce7b48b81852002f49a27cea",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:42.185Z"
+   },
+   "64ddb3bf56d99128a917d57200c86c30332cc63ce687b3d356a31c17b0d16382@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "4b592b506e6c4826945306e71546d39ab74e476f",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:53.760Z"
+   },
+   "65b4ec94df239b9130b09cbaa34a8058d64b3ac9592228725770e6c1567b20ce@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "d1420a5479b1a4d709177839aa2ae44d7cb84cbb",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:58.826Z"
+   },
+   "6a531091ed39448cc10f9e028073d87bd01ef9139ae2dda3f8e1babbf5ae00f2@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "927a5adbb5a77313c720219a1ddf1d4b1fdb2f50",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:50.600Z"
+   },
+   "6b0228d0ba019ea0e2b4f44f0c0414f0df93c80eac40db70dba392770cb51df1@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "ef2ed1c69249a484cca708ca2c597f9814821ad0",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:54:02.079Z"
+   },
+   "6b8aa60ef55451c06c45f275ad82bc8b30ec78d09398b512a5d4b565fe56a6f1@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "1cab89d4927a518c3df701f3dfc6d93b48813d6a",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:44.478Z"
+   },
+   "7dc016d3039203809207b387f277d806b460c54d1c2d52c4eb2e3ff1384c0a00@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "0fe0bd3b846e8bc1a331832da432c615c2c02ded",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:42.822Z"
+   },
+   "7ec0dcc6f80ed8606976afc57d1c3fbd7b424a79f0d6afbafda686055913941b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "f11c737708669e116448e6f21ec3f410b844db07",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:55.355Z"
+   },
+   "84e1743d9286fc17a4d2a1bc1aa85a401016fa406cae7db7f29539779427c20d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "09050af035c0e3fca10e091a1333fb5876614529",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:50.013Z"
+   },
+   "8720d42a89dfe32a91f3e0141bbd70a1b2f0c8f1b0d7c70f75bd498bf0900107@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "46d76a8055ca61d3c0043afe0fe097f34d810537",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:54:01.451Z"
+   },
+   "88f35f0f1037c96cb0514f4da069041d32bda817d47c11086ba6c25f7c783874@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "b559e8bdd717275313ad2339a631af36c5298846",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:53.120Z"
+   },
+   "9049723a1936a751ca9cd8db2e845591cfad20c6039fe1841739984bfdfb6e01@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "2eb2375324dab9986393415223bfe6459053a304",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:57.139Z"
+   },
+   "92307b2ac21d5a989416497e43526a5e9d3049b5b1978fc5ade3c06d8906c193@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "db2a93050cd2b67755a3a61a5797f5e4a3b9de04",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:58.496Z"
+   },
+   "9b405591b5fab8c42800e2dc228d5d9cddddbece378e22820f7b380187643c77@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "c94c3a9c2f913bcc92e70a668e0eef2c888c09c6",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:52.090Z"
+   },
+   "9e16b24bb9d39dd61ddb5601a2709bc232b263f7c495a477723ccb4a8045bcb8@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "cfe50a559a41a5b66be7a4cbb551e4d141f7b621",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:48.580Z"
+   },
+   "a59dcca9bb830310a4b85cbb21569e6da9b2f6ddd52d3d48a103f52af954fdaf@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "e2520bc5b8a7dafec6ba5e3bb379ccc8c10c0bf5",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:34.496Z"
+   },
+   "b166810cc2ff03c6b500c51ad0d5d5432e45db19030d9ce324e9f191529d0b77@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "dc683164cf0211623b299f46d2b6652dd7613e46",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:51.281Z"
+   },
+   "ba71654279c43800580421b00f38cf9b32453f74213830d5f670a915fe014984@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "ac5951d27dcda894e892c589a0e0cbdae183f865",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:54.224Z"
+   },
+   "bd87013e1547c6215db39a8fdd79aed1d2e2f6d3106c02497f0e04aff2c3d988@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "85ba749f1b911ed56f62b89c35743b81a95d723f",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:34.933Z"
+   },
+   "c40eb6ae65684a046636a00cfc05d67ae623a0ac55f5c22ae6900a97c77f986d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "c4d6b062a3d2fbd6aca0b8ffba49c7cc59bd91a8",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:40.400Z"
+   },
+   "c78deaca59ddb3f1823d231d13e32bee60d1d0e6b3a7162af341680dee6b1ca2@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "4dd2a027173fdc13830ce3f2037fbae43591149e",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:41.136Z"
+   },
+   "d1c70a04a432e3ab08d5a324a4cc8afa7b17d902cfeb85d36ab9e669a2690201@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "bd59201106658cba27111e0f6a3972b5516ad0d4",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:47.956Z"
+   },
+   "d3b43e61291cd4bb1e8f570f2d820edb83bcbcf85fe3eb73fea01aa0b3c18daf@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "3c6957aeb41c9ef5d51c7b8fb05c28eb79927647",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:37.205Z"
+   },
+   "d576c99accdf9812e99b1324c6002445d5a7d24fc23cf20e7b8b829cf6781dcc@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "ae4067320d395921a925fb49cd9c33893a9f0921",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:35.367Z"
+   },
+   "d9ac98539ff1e9c005075cb5d1a187a6e081cd7c051852eda816cd61fe04158a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "1205b5b09d63afff29e02b4fbf81a299f36300bd",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:54:01.191Z"
+   },
+   "e441afde30719b1cfccb00c8dd21ef58c8d068d27680ca44c406143d660376c0@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "f0ebad7f61c3f6260983555ecd4d04df1fd7ab88",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:54:00.276Z"
+   },
+   "e5e100bef80186b10237b9e7ccd81f07e01390fae483e9c59eb2679660313acd@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "2ad994bc7fb78a14db30358cc4e67bab0f329146",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:54:00.887Z"
+   },
+   "e854a28fb84580f3e1e69a3b24990ccb9f24ced1b7e8c9fa4709677060c22dde@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "fe8518a1c86c31c3c10a36b3306681e9a70b5eee",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:35.719Z"
+   },
+   "ebc4f603c722e9d5041523f785c6324e570d5c386261774a3009335ffb161a63@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "ee5ebc93f0c6ba5cfc1ceedf268a7dd5282d9dde",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:58.122Z"
+   },
+   "f11c24d2036e039398afb019c6c3eadc56ef4b21f35232c4b74cbcb71a2a5b3a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "51c91beef1ea76b5175e2717bf7e9ae4b83299f3",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:52.538Z"
+   },
+   "f7518b9d2fe5ea96d75f0bf78224f34f0eb2af7b1c39363e9075f652ad9add04@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "8fbbdce6b55694494b697069931d6bfe3238856c",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:54:01.752Z"
+   },
+   "f7bb39b0db991c593f5616955e1fab7a1c41a8baaacda5cb62fd874cf644ed77@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208": {
+    "sha": "fa4bd6df54eeada7042102959548e671e097a188",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-07T12:53:59.602Z"
+   }
   }
  }
 }
