@@ -299,3 +299,49 @@ auditoria de margem carregava, a tabela já dizia "Sem registros de auditoria". 
 `marginLog?.length === 0` (só a query que RESPONDEU afirma) apaga o flash sem uma linha a mais.
 O mesmo vale para o `isLoading` do `TintDashboard`, que gateava o skeleton sozinho e é **FALSE no
 offline** — sem rede a tela inteira caía no ramo dos zeros, sem erro nenhum ter acontecido.
+
+### 6. A falsificação: 15 camadas, uma por vez, com controle verde na MESMA invocação
+
+`bunx vitest run` sobre os dois guards, num laço só: CONTROLE → 15 sabotagens (uma por vez,
+`git checkout --` entre elas) → RE-CONTROLE. **15/15 vermelhas, 0 sobreviventes.** O laço aborta
+ANTES da 1ª sabotagem se o controle não estiver verde — e abortou, duas vezes, o que é o motivo de
+existir: sabotar com a suíte já vermelha aprovaria qualquer coisa.
+
+Os dois controles vermelhos foram defeitos **do teste**, não do código, e um deles vale como regra:
+
+> **A âncora de navegação de um teste não pode casar a copy do próprio aviso que ele fiscaliza.**
+> `await screen.getByText(/Auditoria de Margem/i)` servia para abrir a aba — e casava também o
+> `<AvisoLeituraFalhou oque="a auditoria de margem">`. Resultado: o helper só quebrava nos 3 testes
+> em que o aviso APARECE, isto é, exatamente naqueles em que o código está certo. Um teste que
+> falha só quando a correção funciona é pior que teste nenhum. A âncora passou a ser o `<th>` da
+> tabela, que existe nos quatro estados e não é texto de aviso.
+
+Os outros dois: o `RecorrentesHojeCard`, deixado rodando de verdade para não criar aresta de
+fronteira, chega em `useAuth` por dentro do `useMinhasRecorrentesHoje` e derruba a página inteira
+sem Provider — o guard morria no HOST, não na leitura que fiscaliza (`AuthContext` é plataforma, o
+mock não cria aresta); e `getByText('180')` nunca casaria, porque `{kpi(a)} / {kpi(b)}` é UM nó de
+texto (`"180 / 220"`) — `getNodeText` concatena os filhos de texto diretos.
+
+**Dois guards teriam passado verdes por REDUNDÂNCIA, e a correção foi no teste, não no código.**
+`contagem()` é fail-closed em dois eixos (`error` e `count == null`), mas com a fixture falhando as
+6 leituras juntas o `throw` do `lastImport.error` disparava primeiro e cobria os dois. Foram
+separados em três fixtures — `so-contagem` (erro só nas contagens), `contagem-nula` (resposta OK
+sem a contagem) e `erro-com-contagem` (o único eixo que só o guard de `error` enxerga). Sem isso,
+sabotar qualquer um deles continuaria vermelho **pelo motivo errado**, e o dente não provaria nada.
+
+Uma nota de método sobre o ramo composto: o `desatualizado()` das métricas era provado por
+`onlineManager.setOnline(false)` + `invalidateQueries()`, e esse caminho **não pausou** a query
+naquele host (o mesmo padrão funciona no `GovernanceAudit` e no card de erros — a diferença não foi
+diagnosticada). Trocado pelo ramo `status:'error'` com dado em mãos, que é determinístico e prova a
+mesma propriedade; o ramo `paused` do mesmo helper segue coberto pelo composto do card de erros.
+**Os dois ramos têm dente — só não pelo mesmo host.**
+
+### 7. A fila do `heavy` é parte do custo, e mede-se como qualquer outra coisa
+
+Uma rodada inteira foi perdida para `heavy: timeout (1800s) esperando vaga` — **1 slot, 8 sessões
+na fila, ~35min de espera cada**. O slot não estava órfão (conferido: `pid` vivo, em `tsc`, 9min de
+execução), então não havia nada a destravar. `AFIACAO_HEAVY_TIMEOUT=7200` resolveu a espera; o que
+tornou o custo pagável foi **empacotar validação + controle + 15 sabotagens num script só** — 17
+invocações de vitest dentro de UMA vaga, em vez de 17 vaga(s). Timeout de fila é **ausência de
+dado**, não reprovação: reportá-lo como "a falsificação falhou" seria a mesma fabricação que esta
+doc inteira persegue.
