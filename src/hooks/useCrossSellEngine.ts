@@ -23,6 +23,7 @@ import {
   type LinhaDeProduto,
 } from '@/lib/farmer/upsell-ordem';
 import { acumularContaDeCompra, medirCoberturaContaDaOferta, ofertaNaContaDoCliente } from '@/lib/farmer/cobertura-conta-oferta';
+import { compararRecencia, instanteDoPedido, type MarcaDeCompra } from '@/lib/farmer/preco-referencia';
 import { toast } from 'sonner';
 import { precoUtilizavel } from '@/lib/format';
 
@@ -117,7 +118,19 @@ interface SalesOrderItem {
   valor_unitario?: number | string;
 }
 
+/** Histórico de UM SKU para UM cliente — o insumo do up-sell (`purchaseData`). */
+interface HistoricoDoSku {
+  /** Soma das quantidades compradas. Acumula sempre, independente de preço. */
+  qty: number;
+  /** Preço de referência: o do pedido mais RECENTE que informou preço (`precoEm` diz qual). */
+  price: number;
+  /** Procedência do `price` vigente; `null` enquanto nenhum item informou preço utilizável. */
+  precoEm: MarcaDeCompra | null;
+}
+
 interface SalesOrderRow {
+  /** PK. Entra no `select` só para DESEMPATAR `created_at` igual (ver `preco-referencia`). */
+  id: string;
   customer_user_id: string;
   items: SalesOrderItem[] | unknown;
   total: number | string | null;
@@ -449,7 +462,7 @@ export const useCrossSellEngine = () => {
         (de, ate) =>
           supabase
             .from('sales_orders')
-            .select('customer_user_id, items, total, created_at, account')
+            .select('id, customer_user_id, items, total, created_at, account')
             // DENYLIST + `deleted_at IS NULL`: o MESMO universo de
             // `private.margem_cliente_agregada()` e do `useFarmerScoring` (#1738). A allowlist que
             // estava aqui citava DOIS status que nunca existiram nesta tabela (`confirmado`,
@@ -620,7 +633,10 @@ export const useCrossSellEngine = () => {
       const indiceCatalogo = indexarCatalogoAtivo(products || []);
 
       // 7. Build per-customer purchase history. Sem `cost`: o custo não chega mais ao browser.
-      const customerProducts = new Map<string, Map<string, { qty: number; price: number }>>();
+      // `precoEm` = de ONDE veio o `price` que está valendo. Sem ele "último vence" não tem
+      // como saber o que é "último" a não ser pela ordem de LEITURA — que é `.order('id')`,
+      // uuid, e não tem relação com a data do pedido. Ver `@/lib/farmer/preco-referencia`.
+      const customerProducts = new Map<string, Map<string, HistoricoDoSku>>();
       // Contas em que cada cliente EFETIVAMENTE comprou — o lado "histórico" do sensor
       // `oferta_conta_do_cliente`. Sai de `sales_orders.account`, a mesma coluna que
       // qualifica o item, e é montado neste loop porque ele já varre todos os pedidos.
@@ -628,7 +644,11 @@ export const useCrossSellEngine = () => {
       let itensResolvidos = 0;
       let itensContaDivergente = 0;
 
-      for (const order of salesOrders || []) {
+      // Indexado porque a MARCA de preço leva a ordem de LEITURA como último desempate — ver
+      // `ordemDeLeitura` em `@/lib/farmer/preco-referencia`.
+      const pedidosLidos = salesOrders || [];
+      for (let ordemDeLeitura = 0; ordemDeLeitura < pedidosLidos.length; ordemDeLeitura++) {
+        const order = pedidosLidos[ordemDeLeitura];
         const cid = order.customer_user_id;
         if (!customerProducts.has(cid)) customerProducts.set(cid, new Map());
         const cp = customerProducts.get(cid)!;
@@ -637,7 +657,11 @@ export const useCrossSellEngine = () => {
         acumularContaDeCompra(contasDeCompraPorCliente, cid, order.account);
 
         const items: SalesOrderItem[] = Array.isArray(order.items) ? (order.items as SalesOrderItem[]) : [];
-        for (const item of items) {
+        // O instante do PEDIDO vale para todos os seus itens — resolvido uma vez, fora do laço.
+        const instantePedido = instanteDoPedido(order.created_at);
+        const pedidoId = typeof order.id === 'string' ? order.id : '';
+        for (let posicao = 0; posicao < items.length; posicao++) {
+          const item = items[posicao];
           // Resolução qualificada pela conta DO PEDIDO. `product_id` deixou de entrar direto:
           // é confrontado com o catálogo ativo e com a conta, como o código sempre foi.
           const r = resolverItemNoCatalogo(item, order.account, indiceCatalogo);
@@ -649,16 +673,30 @@ export const useCrossSellEngine = () => {
           const productId = r.productId;
           itensResolvidos++;
 
-          const existing = cp.get(productId) || { qty: 0, price: 0 };
+          const existing: HistoricoDoSku = cp.get(productId) || { qty: 0, price: 0, precoEm: null };
           existing.qty += Number(item.quantity || item.quantidade || 1);
-          // "último item vence", mas SÓ quando o último sabe o preço. Era
-          // `Number(unit_price || valor_unitario || 0)`: um item cujo preço o Omie não
-          // informou virava 0 e SOBRESCREVIA o preço bom de um pedido anterior do mesmo SKU
-          // — e o `price <= 0` lá embaixo então descartava o SKU do up-sell. Ou seja: uma
-          // ausência de dado apagava uma oferta legítima. Sem preço utilizável, mantém o que
-          // já se sabia (ausente ≠ zero).
+          // O preço de referência é o do pedido MAIS RECENTE, não o do "último lido". Duas
+          // correções empilhadas aqui, e as duas são de money-path:
+          //
+          //   1. (#2224) só sobrescreve quem SABE o preço. Era
+          //      `Number(unit_price || valor_unitario || 0)`: item sem preço informado pelo
+          //      Omie virava 0, apagava o preço bom de um pedido anterior, e o `price <= 0`
+          //      lá embaixo descartava o SKU do up-sell — ausência de dado matando oferta
+          //      legítima (ausente ≠ zero).
+          //   2. (este) "último" passa a ser por `created_at`, e não pela ordem de LEITURA.
+          //      A leitura vem de `fetchAllPages` com `.order('id')` — uuid —, então o
+          //      vencedor era sorteio: em prod o uuid pega um pedido ESTRITAMENTE mais antigo
+          //      em 29,2% dos pares (mediana 238 dias, máximo ~6 anos), e o preço difere em
+          //      17,7%. Como `razaoPreco = premiumPrice / referencia` é a chave PRIMÁRIA do
+          //      ranking desde o #1837, isso trocava o top-2 de 15,7% dos clientes.
           const precoItem = precoUtilizavel(item.unit_price) ?? precoUtilizavel(item.valor_unitario);
-          if (precoItem !== null && precoItem > 0) existing.price = precoItem;
+          if (precoItem !== null && precoItem > 0) {
+            const marca: MarcaDeCompra = { instante: instantePedido, pedidoId, ordemDeLeitura, posicao };
+            if (existing.precoEm === null || compararRecencia(marca, existing.precoEm) > 0) {
+              existing.price = precoItem;
+              existing.precoEm = marca;
+            }
+          }
           cp.set(productId, existing);
         }
       }
@@ -795,7 +833,7 @@ export const useCrossSellEngine = () => {
         if (!profile) continue;
 
         const healthScore = Math.max(Number(score.health_score || 0), 10); // min 10 to avoid zero
-        const customerPurchased = customerProducts.get(cid) || new Map();
+        const customerPurchased: Map<string, HistoricoDoSku> = customerProducts.get(cid) || new Map();
         const purchasedIds = new Set(customerPurchased.keys());
 
         // Engagement factor: based on answer rate and responsiveness
