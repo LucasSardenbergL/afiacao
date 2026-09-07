@@ -1,4 +1,4 @@
-# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v10)
+# Selo de preço no disparo — "disparado = aprovado" no OMIE (2026-09-06, v11 — APROVADO)
 
 > Money-path de compras. Origem: decisão **§8.4 do PR #2187** (spec
 > `2026-09-05-selo-aprovacao-pedido-sayerlack-design.md`, branch `claude/frosty-goodall-f12941`), que
@@ -41,8 +41,10 @@
 >   preço adulterado ao próprio token) e o reparo do §5.4 um P2 (produz capturas fictícias no sensor).
 >   Acatados — §9.10.
 >
-> 🔴 **A v10 ainda NÃO foi desafiada.** Rodada 6 é pré-condição da implementação, e não roda nesta
-> sessão (contexto). É a primeira tarefa de quem retomar.
+> ✅ **Rodada 6 sobre a v10: APROVAR** (`max · tentativa 1 · 295s · 74.423 tokens`) — *"não encontrei
+> achado novo P0/P1/P2 nos deltas examinados"*. **Seis rodadas, cinco reprovações.** As duas condições
+> da aprovação e a lista de riscos aceitos estão na **§9.11** — e elas são parte do contrato, não
+> observações.
 
 ## 1. A invariante — e por que NÃO é igualdade
 
@@ -771,6 +773,65 @@ da transação; escritores anteriores terminam antes do corte, os seguintes enco
   a fronteira de confiança."* — e quem aprova é `master`, a mesma capability de `cap_compras_ler`. **O
   token comprova correspondência com o snapshot, não procedência nem visualização humana.** Isso não
   justifica a releitura silenciosa do P1 acima.
+
+### 9.11 Sexta rodada (v10) — ✅ **APROVAR**, com duas condições
+
+`gpt-6-astra · max · tentativa 1 · 295s · 74.423 tokens`. *"Não encontrei achado novo P0/P1/P2 nos
+deltas examinados da v10."* Parecer sobre o DESENHO — as provas acompanham a implementação.
+
+#### 9.11.1 As duas condições (fazem parte da aprovação)
+
+1. **Não omitir o requisito do snapshot no #2187** (§2.1). A aprovação não vale sem ele.
+2. **Não substituir os testes comportamentais por testes só do comparador.** Testar o comparador SQL
+   não prova que a UI não reaproveita a confirmação antiga.
+
+#### 9.11.2 A propriedade decisiva do token é TEMPORAL — e o teste tem de atravessar a UI real
+
+*"A UI pode reapresentar 100. **Ela não pode reutilizar a confirmação de 10 para aprovar 100.**"*
+Releitura divergente invalida aquela tentativa; apresentar outro snapshot exige **nova ação explícita**.
+
+Protocolo do teste, em ordem: renderizar e confirmar que o snapshot apresentado contém 10 → alterar o
+banco para 100 → clicar em aprovar e **resolver releituras, cache e efeitos pendentes** → exigir que,
+**sem outra ação do usuário**, não haja aprovação bem-sucedida nem disparo. Enviar token 10 e receber
+recusa **é válido**; enviar token 100 automaticamente **é falha**. Só depois de apresentar a revisão
+atualizada e receber nova confirmação é que aprovar 100 pode passar. Repetir em **inline, modal e
+lote** — no lote a asserção acompanha o pedido divergente, sem exigir atomicidade global que este spec
+não promete.
+
+🔴 **Falsificação indispensável:** trocar a implementação por *"reler 100 → renderizar 100 → aprovar
+100 na continuação do mesmo clique"*. O teste tem de ficar **vermelho mesmo que 100 tenha aparecido no
+DOM**.
+
+⚠️ E verificar os **valores efetivamente apresentados**, não uma variável chamada `snapshot`: hoje a
+célula de preço do cockpit (`PedidoRowCells.tsx:8`) exibe `row.valor_total` — isso **não** demonstra
+apresentação dos preços dos ITENS que compõem o token.
+
+#### 9.11.3 O GUC de rotulagem: a distinção se sustenta, mas ele não autentica o autor
+
+Confirmado que o override **não concede escrita** (`postgres` já está autorizado pela tabela do §4.3, e
+o GUC não dispensa predicado de RPC nenhum). Mas `current_user` **muda** dentro de uma função SECDEF,
+então ele não identifica quem definiu o GUC. Cadeia possível, condicionada a acesso SQL e EXECUTE na
+captura: `ligar reposicao.reparo_carimbo → chamar sayerlack_aplicar_custo_portal → SECDEF executa como
+postgres → captura REAL recebe manual_sql → evento fica FORA da amostra`.
+
+**É omissão no sensor, não escrita indevida** — envenena o teto por falta em vez de por excesso. Não
+alcançável pelo HTTP existente (o wrapper público de `set_config` restringe a `fin.%`). Fica como
+risco aceito nomeado, e o teste do §5.4 deve verificar a origem gravada **e** o efeito no sensor.
+
+#### 9.11.4 Riscos aceitos, na íntegra do parecer
+
+- **Master deliberado passa**: grava 100 antes de aprovar e apresenta token de 100. O banco não
+  distingue um frontend deliberadamente falso de um master chamando a RPC direto com token
+  correspondente. Defensável porque quem aprova **é** master, a mesma capability de `cap_compras_ler`.
+- **O sensor pode não ser representativo**: *"quantidade de sinal não garante cobertura ou
+  representatividade para decidir o teto"*.
+- **O backfill aceita os valores existentes sem provar seu histórico**; escrita com trigger desativado
+  pode conservar um carimbo aparentemente válido.
+- **`valor_linha`/`valor_total` seguem fora** — inclusive o efeito no gate de valor mínimo (§10).
+- **Quantidade** depende da prevenção do #2187 e da conferência de transporte; a reconferência de selo
+  fica fora (§9.2).
+- **Recusa depois de o portal receber a ordem** deixa fornecedor com pedido e Omie sem PO; correção de
+  preço positivo pode exigir intervenção do founder.
 
 ### 9.6 O que o Codex NÃO transformou em achado
 
