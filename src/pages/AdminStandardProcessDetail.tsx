@@ -13,6 +13,8 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { StandardProcessEtapa } from '@/lib/standard-process/types';
+import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const ETAPA_TYPE_COLOR: Record<string, string> = {
   preparacao: 'bg-status-info-bg text-status-info-foreground',
@@ -29,9 +31,24 @@ export default function AdminStandardProcessDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { isMaster, user } = useAuth();
-  const { data, isLoading, refetch } = useStandardProcess(id ?? null);
+  // Desestruturação DIRETA nomeando as chaves de erro: um `const q = useX()` faria o sítio
+  // sumir do gate da classe por CEGUEIRA, não por conserto.
+  const { data, status, fetchStatus, error, isLoading, refetch } = useStandardProcess(id ?? null);
+  // `.maybeSingle()` devolve `null` para "este processo não existe" e `undefined` só em
+  // loading/erro — a diferença que o `if (!data)` abaixo apagava.
+  const estadoProcesso = estadoDeRegistro({ status, fetchStatus, error }, data != null);
   const approve = useApproveStandardProcess();
   const [editing, setEditing] = useState(false);
+
+  // ANTES do loading: sem rede a query fica pending+paused e `isLoading` é FALSE — o 4º
+  // estado cairia no "Processo não encontrado.".
+  if (naoConsegui(estadoProcesso)) {
+    return (
+      <div className="container mx-auto p-4">
+        <AvisoLeituraFalhou oque="este processo padrão" estado={estadoProcesso} variante="bloco" />
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

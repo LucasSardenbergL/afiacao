@@ -157,13 +157,7 @@ const BASELINE = new Map<string, number>([
 // `ternario-null`, JÁ na baseline de cima; contá-lo aqui seria contar o mesmo sítio duas
 // vezes). O critério estrito não esconde fatia nenhuma.
 const BASELINE_AFIRMATIVO = new Map<string, number>([
-  ["src/components/customer/CustomerCallsTab.tsx", 1],
-  ["src/components/customer/CustomerVisitsTab.tsx", 1],
   ["src/components/knowledge-base/CompletudeSection.tsx", 1],
-  ["src/components/tarefas/ProvasParaAuditar.tsx", 1],
-  ["src/pages/AdminStandardProcessDetail.tsx", 1],
-  ["src/pages/GrupoCliente360.tsx", 1],
-  ["src/pages/OrderDetail.tsx", 1],
   // Resíduo MEDIDO, não fix pela metade: a leitura de `user_tools` já ramifica
   // (`estadoDeRegistro`), mas o guard é `!tool || !healthMetrics` e `healthMetrics` deriva
   // de `useToolEvents` — a query IRMÃ, que ainda engole o erro no default `= []` do binding.
