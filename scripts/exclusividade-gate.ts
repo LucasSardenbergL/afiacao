@@ -27,6 +27,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import {
   MATRIZ_PATH,
   avaliar,
+  bloqueantesOpacos,
   derivar,
   fingerprintGate,
   fonteDoGate,
@@ -64,9 +65,10 @@ function main(): number {
   );
 
   const vereditos: Veredito[] = avaliar(matriz, gates, fps);
+  const opacos = bloqueantesOpacos(fonteCI);
 
   if (comoJson) {
-    console.log(JSON.stringify({ vereditos, matrizPresente: matriz !== null }, null, 2));
+    console.log(JSON.stringify({ vereditos, opacos, matrizPresente: matriz !== null }, null, 2));
     return vereditos.some((v) => v.severidade === 'REPROVA') ? 1 : 0;
   }
 
@@ -91,6 +93,16 @@ function main(): number {
   if (informativos.length) {
     console.log(`   (fora da conta, informativos por desenho: ${informativos.map((g) => g.nome).join(', ')})`);
   }
+  // O segundo contador, e o que MAIS importa: estes bloqueiam o PR e nao aparecem no numero acima,
+  // porque nao ha nome de script para cobrar. Sem esta linha, "N gate(s) bloqueante(s)" le como
+  // cobertura total — e foi assim que `bash db/roda-nucleo-ci.sh` (#2364) entrou isento e calado.
+  console.log(
+    `   ${opacos.length} step(s) bloqueante(s) FORA da conta por nao invocarem script ` +
+      `(sem nome de comando, o motor nao sabe roda-los):` +
+      (opacos.length
+        ? `\n${opacos.map((o) => `     - ${o.job}: ${o.step}\n       $ ${o.comando}`).join('\n')}`
+        : ' (nenhum)'),
+  );
 
   const ordem = { REPROVA: 0, AVISA: 1, RELATA: 2 } as const;
   for (const v of [...vereditos].sort((a, b) => ordem[a.severidade] - ordem[b.severidade])) {

@@ -165,6 +165,22 @@ export interface GateCI {
 }
 
 /**
+ * Nomes de script (`package.json`) que um `run:` invoca. É a ÚNICA definição de "este step tem
+ * nome de comando" no repo, de propósito: `inventarioCI` a usa para incluir, e
+ * `bloqueantesSemScript` (aqui) e `bloqueantesOpacos` (na máquina de exclusividade) a usam para o
+ * complemento — contar quem ficou de fora. Se as duas pontas usassem regras diferentes, um step
+ * poderia cair na fresta e sumir das DUAS listas, que é exatamente o silêncio que os contadores
+ * existem para quebrar.
+ */
+export function nomesDeScript(run: string): Set<string> {
+  const nomes = new Set<string>();
+  for (const m of run.matchAll(/\bbunx?\s+run\s+([a-zA-Z0-9:_.-]+)/g)) nomes.add(m[1]);
+  for (const m of run.matchAll(/\bbunx\s+(?!run\b)([a-z][a-zA-Z0-9_.-]*)/g)) nomes.add(m[1]);
+  for (const m of run.matchAll(/\bbun\s+(?!run\b|x\b)([a-z][a-zA-Z0-9_-]*)/g)) nomes.add(m[1]);
+  return nomes;
+}
+
+/**
  * Todo step com `run` que invoca um script e NÃO carrega `continue-on-error: true`.
  * O YAML é lido por parser (`yaml`), nunca por regex: `continue-on-error` é a diferença entre
  * bloqueio e aviso, e errá-la nos dois sentidos (acusar ruído / aprovar buraco) desliga o gate.
@@ -180,10 +196,7 @@ export function inventarioCI(fonte: string): GateCI[] {
       if (typeof st.run !== 'string') continue;
       if (st['continue-on-error'] === true) continue;
 
-      const nomes = new Set<string>();
-      for (const m of st.run.matchAll(/\bbunx?\s+run\s+([a-zA-Z0-9:_.-]+)/g)) nomes.add(m[1]);
-      for (const m of st.run.matchAll(/\bbunx\s+(?!run\b)([a-z][a-zA-Z0-9_.-]*)/g)) nomes.add(m[1]);
-      for (const m of st.run.matchAll(/\bbun\s+(?!run\b|x\b)([a-z][a-zA-Z0-9_-]*)/g)) nomes.add(m[1]);
+      const nomes = nomesDeScript(st.run);
 
       const alvo = st.name ? `name: ${st.name}` : st.run.split('\n')[0].trim();
       const idx = linhas.findIndex((l) => l.includes(alvo));
@@ -215,7 +228,7 @@ export function bloqueantesSemScript(fonte: string): string[] {
     for (const bruto of corpo?.steps ?? []) {
       const st = bruto as { name?: string; run?: unknown; 'continue-on-error'?: unknown };
       if (typeof st.run !== 'string' || st['continue-on-error'] === true) continue;
-      if (/\bbunx?\s+(?:run\s+)?[a-z]/.test(st.run)) continue;
+      if (nomesDeScript(st.run).size > 0) continue;
       saida.push(`${job}: ${st.name ?? '(sem nome)'}`);
     }
   }

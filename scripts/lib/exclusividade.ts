@@ -36,7 +36,7 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import { parse } from 'yaml';
 
-import { inventarioCI, type GateCI } from '../gates-frescura-check';
+import { inventarioCI, nomesDeScript, type GateCI } from '../gates-frescura-check';
 
 export const MATRIZ_PATH = 'scripts/exclusividade-matriz.json';
 export const CORPUS_DIR = 'scripts/exclusividade.d';
@@ -135,6 +135,73 @@ export function jobsBloqueantes(fonteCI: string): Set<string> {
 export function gatesCandidatos(fonteCI: string): GateAlvo[] {
   const bloq = jobsBloqueantes(fonteCI);
   return inventarioCI(fonteCI).map((g) => ({ ...g, bloqueiaPR: bloq.has(g.job) }));
+}
+
+export interface StepOpaco {
+  job: string;
+  step: string;
+  /** 1a linha COM CARNE do `run:`, truncada — o que ele executa, ja que nome ele nao tem. */
+  comando: string;
+}
+
+/**
+ * Steps que BLOQUEIAM o PR e que `gatesCandidatos` nao consegue nomear, porque nao invocam script
+ * do `package.json`. E o COMPLEMENTO exato do censo: mesma fonte, mesmo filtro de
+ * `continue-on-error`, mesmo `nomesDeScript` — o que sobra aqui e precisamente o que faltou la.
+ *
+ * ## Por que isto existe (a lacuna era medida, nao hipotetica)
+ *
+ * O #2364 acrescentou `run: bash db/roda-nucleo-ci.sh` ao `ci.yml`: um gate bloqueante REAL, em
+ * shell puro. `gatesCandidatos` nao o ve — e o cabecalho seguia anunciando "28 gate(s)
+ * bloqueante(s)", numero que le como cobertura TOTAL. Ou seja, a maquina que cobra prova de
+ * exclusividade de todo gate novo tinha, ela propria, um gate novo isento em silencio.
+ *
+ * Contar em voz alta nao fecha a lacuna — o motor de medicao invoca `bun run <nome>`, e sem nome
+ * de script nao ha o que invocar. Fecha o SILENCIO, que e o que fazia o numero mentir. Mesmo
+ * remedio, e pelo mesmo motivo, do `bloqueantesSemScript` do `gates:frescura`.
+ *
+ * ## Onde este contador e MAIS estreito que o do frescura, de proposito
+ *
+ * O do frescura conta todo step sem script; este so conta os de job alcancavel a partir de
+ * `validate.needs`. `authz-sentinela` aparece la e nao aqui — e certo nos dois: la o eixo e
+ * "reprova alguma coisa", aqui e "reprova o PR". Este arquivo tem o grafo de `needs`; o frescura
+ * nao.
+ *
+ * O job `validate` fica fora por consequencia: ele nao esta no proprio `needs`. Hoje nao esconde
+ * nada (seus unicos steps sao o agregador e os de Issue), mas e uma fresta latente — vale um
+ * arquivo proprio, nao um remendo local que faria o contador e `bloqueiaPR` falarem de universos
+ * diferentes.
+ */
+/**
+ * A 1a linha do `run:` que de fato EXECUTA algo. Pula vazio, comentario e prologo (`set -euo
+ * pipefail`, `shopt`, `export`), que sao 100% dos primeiros-linhas dos steps opacos de hoje: sem
+ * este filtro o contador imprimia `$ set -euo pipefail` tres vezes, que e presenca sem informacao
+ * — a mesma doenca, um andar abaixo, do numero que se queria consertar.
+ */
+export function primeiraLinhaComCarne(run: string, limite = 60): string {
+  const carne = run
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l && !l.startsWith('#') && !/^(?:set|shopt|export|umask)\s/.test(l));
+  const escolhida = carne ?? run.split('\n').find((l) => l.trim())?.trim() ?? '';
+  return escolhida.length > limite ? `${escolhida.slice(0, limite - 3)}...` : escolhida;
+}
+
+export function bloqueantesOpacos(fonteCI: string): StepOpaco[] {
+  const doc = parse(fonteCI) as { jobs?: Record<string, { steps?: unknown[] }> };
+  const bloq = jobsBloqueantes(fonteCI);
+  const saida: StepOpaco[] = [];
+
+  for (const [job, corpo] of Object.entries(doc.jobs ?? {})) {
+    if (!bloq.has(job)) continue;
+    for (const bruto of corpo?.steps ?? []) {
+      const st = bruto as { name?: string; run?: unknown; 'continue-on-error'?: unknown };
+      if (typeof st.run !== 'string' || st['continue-on-error'] === true) continue;
+      if (nomesDeScript(st.run).size > 0) continue;
+      saida.push({ job, step: st.name ?? '(sem nome)', comando: primeiraLinhaComCarne(st.run) });
+    }
+  }
+  return saida;
 }
 
 // ---------------------------------------------------------------------------------------------
