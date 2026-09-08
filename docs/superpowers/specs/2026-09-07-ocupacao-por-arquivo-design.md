@@ -92,7 +92,8 @@ Flag nova no script existente. Mesma fonte (`~/.claude/projects/**/*.jsonl`), me
 
 - Agrupa por `file_path` de `tool_use` (Read/Edit), somando `tamanho × requests_restantes`,
   onde `requests_restantes` é contado dentro da MESMA sessão.
-- **`Bash` fica de fora do agrupamento, e isso é declarado na saída** — ele é ~40% da
+- **`Bash` fica de fora do agrupamento, e isso é declarado na saída** *(decidido pelo founder,
+  2026-09-07 — não reabrir)* — ele é ~40% da
   ocupação mas não tem `file_path`, então some numa linha `(bash — sem arquivo)` em vez de
   desaparecer. Um ranking que omite 40% do custo sem dizer é o mesmo defeito de classe que
   este spec existe para corrigir: ausência apresentada como medida.
