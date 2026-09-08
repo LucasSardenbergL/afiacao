@@ -257,6 +257,28 @@ else
   fi
 fi
 
+# ---- 9) transcript truncado não pode matar a varredura inteira --------------
+# Caso NORMAL, não exótico: uma sessão viva está escrevendo o .jsonl agora, e a
+# última linha vem pela metade. Sob `set -e`, o jq que sai != 0 abortava o script
+# com exit 5 e ZERO mensagem — 684 outras sessões perdidas por causa de uma.
+# Fail-closed onde importa (nada extraído ⇒ vermelho), mas o descarte parcial
+# tem de ser ANUNCIADO: silenciá-lo seria o `2>/dev/null` que esta suíte
+# persegue, cometido pela própria régua.
+P9="$(novo_projects truncado)"
+J9="$P9/-Users-x-Projetos-afiacao-teste/t.jsonl"
+{ linha_use req_1 s4 t_a Read "$WT/docs/agent/vivo.md"; linha_res s4 t_a 4000
+  linha_req req_2 s4
+  printf '{"sessionId":"s4","requestId":"req_3","messa'; } > "$J9"
+if saida_t="$(CLAUDE_PROJECTS_DIR="$P9" bash "$ALVO" --por-arquivo --linhas 99 2>&1)"; then rc=0; else rc=$?; fi
+if [ "$rc" -eq 0 ] && tem "$saida_t" "docs/agent/vivo.md" && tem "$saida_t" "linha ilegível"; then
+  ok "transcript truncado: mede o que veio antes da quebra E anuncia o descarte"
+elif [ "$rc" -ne 0 ]; then
+  ruim "transcript truncado abortou a varredura inteira (exit $rc) — 1 sessao viva derruba todas"
+else
+  ruim "transcript truncado passou CALADO — descarte silencioso e o defeito que esta suite persegue"
+  printf '%s\n' "$saida_t" | sed 's/^/      /'
+fi
+
 # ---- falsificação -----------------------------------------------------------
 # Sabota uma CÓPIA do alvo (nunca o arquivo versionado) e EXIGE vermelho. Suíte
 # que não fica vermelha quando a invariante quebra é teatro.
@@ -342,6 +364,15 @@ if [ "${1:-}" = "--falsificar" ]; then
   sabota "marcador positivo de fim removido" \
          "execucao morta no meio passaria por completa" \
          's/^echo "OCUPACAO-CONTEXTO-OK/echo "fim/'
+  sabota "jq volta a rodar solto sob set -e" \
+         "1 sessao viva com linha parcial abortaria a varredura das outras 684" \
+         's/^  if ! jq -rc /  if jq -rc /'
+  # shellcheck disable=SC2016  # idem: `$parse_falhou` é o TEXTO procurado dentro
+  # do alvo — a variável não existe nesta shell, e expandir escreveria um padrão
+  # vazio que não casa nada.
+  sabota "descarte por linha ilegivel deixa de ser anunciado" \
+         "sessao truncada sairia da conta em silencio — o 2>\/dev\/null que a suite persegue" \
+         's/^if \[ "\$parse_falhou" -gt 0 \]; then/if false; then/'
   if [ -n "$LOC_VIRGULA" ]; then
     sabota "LC_ALL=C removido (saida a merce do locale)" \
            "sob $LOC_VIRGULA o printf sai com virgula e o sort -rn pode reordenar o ranking" \

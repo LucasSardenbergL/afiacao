@@ -144,8 +144,17 @@ fi
 BRUTO=$(mktemp -t ocupacao-contexto)
 trap 'rm -f "$BRUTO"' EXIT
 
+# `if ! jq`, e não `jq` solto: sob `set -e` um único transcript com linha
+# ilegível abortaria o script INTEIRO — exit 5, nenhuma mensagem, 684 sessões de
+# trabalho no lixo. E linha ilegível é o caso NORMAL aqui: uma sessão viva está
+# escrevendo o .jsonl neste instante, e a última linha vem pela metade. `set -e`
+# é suspenso pelo contexto de chamada, então o `if !` é o que segura.
+# O jq já emitiu tudo que veio ANTES do ponto de quebra, então o dado válido não
+# se perde — o que não pode é o descarte ser calado, senão a régua vira o
+# `2>/dev/null` que ela existe para denunciar. Por isso conta e declara.
+parse_falhou=0
 for f in "${ALVOS[@]}"; do
-  jq -rc '
+  if ! jq -rc '
     . as $l
     | ($l.sessionId // "?") as $s
     | (if ($l.message.usage != null)
@@ -155,8 +164,16 @@ for f in "${ALVOS[@]}"; do
         then "USE\t\($s)\t\(.id // "?")\t\(.name // "?")\t\((.input.file_path // "")|tostring|gsub("\t";" "))"
         elif .type=="tool_result" then "RES\t\($s)\t\(.tool_use_id // "?")\t\((.content|tostring)|length)"
         else empty end )
-  ' "$f" 2>/dev/null
-done >>"$BRUTO"
+  ' "$f" 2>/dev/null >>"$BRUTO"; then
+    parse_falhou=$((parse_falhou + 1))
+  fi
+done
+
+if [ "$parse_falhou" -gt 0 ]; then
+  echo "AVISO: ${parse_falhou} de ${#ALVOS[@]} sessão(ões) com linha ilegível (transcript" >&2
+  echo "       truncado ou sendo escrito agora). Os eventos ANTERIORES ao ponto de" >&2
+  echo "       quebra entraram na conta; o que vinha depois, nessas sessões, não." >&2
+fi
 
 # Controle POSITIVO: extração vazia sai vermelho. Um `jq` que morreu, um formato
 # de transcrição que mudou e um projeto realmente ocioso produzem exatamente a
