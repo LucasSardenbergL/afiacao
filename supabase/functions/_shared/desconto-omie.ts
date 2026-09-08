@@ -137,3 +137,27 @@ export function receitaLiquidaItem(
   const desc = finitoNaoNegativo(discount) ?? 0;
   return Math.round((preco * qtd - desc) * 100) / 100;
 }
+
+/**
+ * Preço unitário LÍQUIDO — para quem audita margem, que trabalha por unidade e não por linha.
+ *
+ * O desconto é da LINHA inteira, então ele se dilui pela quantidade: `preço − desconto/qtd`.
+ * Subtrair o desconto cheio de cada unidade multiplicaria o desconto pela quantidade (com qtd 2
+ * e R$ 10 de desconto, o preço unitário cairia 10 em vez de 5) e produziria margem pessimista
+ * fabricada. É a armadilha específica da troca de unidade: a fórmula percentual antiga
+ * `preço × (1 − d/100)` já era por unidade, então quem migrar por analogia direta erra aqui.
+ *
+ * `null` quando o preço é desconhecido ou a quantidade não serve de divisor.
+ */
+export function precoUnitarioLiquido(
+  unitPrice: number | null | undefined,
+  quantity: number | null | undefined,
+  discount: number | null | undefined,
+): number | null {
+  const preco = finitoNaoNegativo(unitPrice);
+  if (preco === null) return null;
+  const qtd = finitoNaoNegativo(quantity);
+  if (qtd === null || qtd === 0) return null;
+  const desc = finitoNaoNegativo(discount) ?? 0;
+  return Math.round((preco - desc / qtd) * 100) / 100;
+}

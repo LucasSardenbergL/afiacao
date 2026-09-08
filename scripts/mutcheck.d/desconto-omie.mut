@@ -1,0 +1,49 @@
+# Invariantes money-path da régua ÚNICA do desconto de item de pedido de venda.
+# @src: supabase/functions/_shared/desconto-omie.ts
+# @test: supabase/functions/_shared/desconto-omie_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ POR QUE ESTE ARQUIVO É O CENTRO DA ENTREGA, E NÃO UM EXTRA: o acervo de produção é
+# desconto = 0 em 100% das linhas, e com desconto zero as DUAS semânticas que brigavam
+# (`qtd·preço·(1−d/100)` e `qtd·preço−d`) dão o mesmo número. Uma suíte escrita sobre esse
+# acervo fica verde sem distinguir nada — verde por CEGUEIRA. As mutações abaixo trocam
+# justamente as decisões que só um caso com desconto ≠ 0 consegue observar. Se alguma
+# SOBREVIVER, a suíte voltou a ser cega no ponto exato que motivou a entrega.
+
+# ── O eixo do defeito: qual unidade a régua devolve ──────────────────────────────────────────
+# Trocar a subtração por fator percentual é literalmente o bug que existia em produção
+# (fin-valor-cockpit fazia `− d`, cinco outros consumidores faziam `× (1 − d/100)`).
+PEGA | receitaLiquida vira percentual (o bug de origem)   | s/preco \* qtd - desc/preco * qtd * (1 - desc \/ 100)/
+PEGA | receitaLiquida soma o desconto (- vira +)          | s/preco \* qtd - desc/preco * qtd + desc/
+
+# ── O discriminador: sem ele, valor e percentual colapsam ────────────────────────────────────
+# Ignorar `tipo_desconto` faz "10" virar sempre R$ 10 (ou sempre 10%), que é a ambiguidade
+# original com outra roupa.
+PEGA | tipo "P" passa a ser lido como valor              | s/bruto_desconto = doPercentual\(\);/bruto_desconto = valor;/
+PEGA | tipo "V" passa a ser lido como percentual         | s/bruto_desconto = valor;\n  } else if \(tipo === "P"\)/bruto_desconto = doPercentual();\n  } else if (tipo === "P")/
+PEGA | percentual deixa de incidir sobre a base          | s/return \(bruto \* perc\) \/ 100;/return perc;/
+PEGA | percentual divide por 10 em vez de 100            | s/\(bruto \* perc\) \/ 100/(bruto * perc) \/ 10/
+
+# ── Fail-closed: cada `null` aqui é um número inventado que deixaria de sê-lo ─────────────────
+# "Ambíguo → 0" é a fabricação canônica deste repo (`Number(null) === 0`): produz um desconto
+# plausível que ninguém informou. Vale para cada porta de saída.
+PEGA | discriminador desconhecido degrada para 0          | s/if \(\(valor === null \|\| valor === 0\) && \(perc === null \|\| perc === 0\)\) return 0;\n    return null;/return 0;/
+PEGA | percentual fora de faixa passa a ser aceito        | s/if \(perc === null \|\| perc > 100\) return null;/if (perc === null) return null;/
+PEGA | percentual sem base fabrica desconto               | s/if \(bruto === null\) return null;/if (bruto === null) return 0;/
+PEGA | desconto acima da base deixa de ser anomalia       | s/if \(bruto !== null && bruto_desconto > bruto \+ 0.005\) return null;//
+PEGA | valor negativo vira desconto em vez de lixo        | s/return Number.isFinite\(n\) && n >= 0 \? n : null;/return Number.isFinite(n) ? n : null;/
+PEGA | preço ausente vira receita zero (margem fabricada) | s/if \(preco === null\) return null;/if (preco === null) return 0;/
+
+# ── Preço unitário líquido: o desconto é da LINHA, dilui-se pela quantidade ───────────────────
+# Quem migrar por analogia com a fórmula percentual antiga (`preço × (1 − d/100)`, que já era
+# por unidade) tende a escrever `preço − desconto` e multiplicar o desconto pela quantidade.
+PEGA | preço unitário subtrai o desconto da linha inteira | s/preco - desc \/ qtd/preco - desc/
+PEGA | quantidade zero passa a dividir (Infinity)         | s/if \(qtd === null \|\| qtd === 0\) return null;/if (qtd === null) return null;/
+
+# ── Os dois campos sem discriminador: concordar é requisito, não detalhe ──────────────────────
+# Aceitar o valor quando os dois discordam escolhe no cara-ou-coroa — exatamente o que a
+# migration 20260723160000 se recusou a fazer, e com razão.
+PEGA | valor vence o percentual mesmo discordando         | s/bruto_desconto = Math.abs\(viaPerc - valor\) < 0.005 \? valor : null;/bruto_desconto = valor;/

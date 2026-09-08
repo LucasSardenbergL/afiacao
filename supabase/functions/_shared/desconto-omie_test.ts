@@ -8,7 +8,7 @@
 //
 // A âncora é qtd=2, preço=100, desconto=10 → percentual daria 180, absoluto daria 190.
 
-import { descontoItemOmie, receitaLiquidaItem } from "./desconto-omie.ts";
+import { descontoItemOmie, precoUnitarioLiquido, receitaLiquidaItem } from "./desconto-omie.ts";
 
 // `eq` local em vez de std/assert remoto: `test:edges` roda com `--no-remote`, e o flag não se
 // afrouxa por conveniência de teste (CLAUDE.md). Mesmo helper do omie-pedido_test.ts vizinho.
@@ -28,6 +28,29 @@ Deno.test("DISCRIMINANTE: o mesmo 10, com tipo diferente, dá desconto diferente
   const v = descontoItemOmie({ tipo_desconto: "V", valor_desconto: 10 }, bruto);
   const p = descontoItemOmie({ tipo_desconto: "P", percentual_desconto: 10 }, bruto);
   eq(v === p, false, "o tipo MUDA o resultado — o discriminador é lido de verdade");
+});
+
+Deno.test("DISCRIMINANTE: desconto grande é legítimo — a régua é a BASE, não o número 100", () => {
+  // Casos exigidos pela revisão do Codex. Sob a regra antiga (percentual), "desconto > 100" era
+  // inválido — `auditoria-margem.ts` trata 150 como lixo. Em valor absoluto, R$ 150 sobre uma
+  // base de R$ 200 é um desconto comum, e 100% é item grátis. Trocar a unidade sem trocar a
+  // régua de validade rejeitaria venda boa.
+  const bruto = 200; // qtd 2 × preço 100
+  eq(descontoItemOmie({ tipo_desconto: "V", valor_desconto: 150 }, bruto), 150, "R$ 150 de 200 é válido");
+  eq(receitaLiquidaItem(100, 2, 150), 50, "receita 50");
+  eq(descontoItemOmie({ tipo_desconto: "P", percentual_desconto: 100 }, bruto), 200, "100% = a base inteira");
+  eq(receitaLiquidaItem(100, 2, 200), 0, "item grátis: receita 0, não negativa");
+});
+
+Deno.test("preço unitário líquido divide o desconto pela quantidade", () => {
+  // Armadilha apontada na revisão: os consumidores que auditam MARGEM trabalham com preço
+  // UNITÁRIO. Subtrair o desconto da linha inteira de cada unidade multiplica o desconto pela
+  // quantidade — com qtd 2 e desconto 10, o preço unitário cairia 10 em vez de 5.
+  eq(precoUnitarioLiquido(100, 2, 10), 95, "R$ 10 na linha = R$ 5 por unidade");
+  eq(precoUnitarioLiquido(100, 2, 10) === 90, false, "NÃO subtrai o desconto inteiro de cada unidade");
+  eq(precoUnitarioLiquido(100, 1, 10), 90, "qtd 1: linha e unidade coincidem");
+  eq(precoUnitarioLiquido(null, 2, 10), null, "preço ausente não vira zero");
+  eq(precoUnitarioLiquido(100, 0, 10), null, "quantidade zero não divide");
 });
 
 Deno.test("REGRESSÃO do bug de origem: a chave `desconto` não existe na API e é ignorada", () => {
