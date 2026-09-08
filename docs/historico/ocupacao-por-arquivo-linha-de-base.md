@@ -70,6 +70,25 @@ hoje. **Nenhuma leitura trouxe o arquivo inteiro.**
 teto, não medida — e a diferença entre os dois é a única coisa que separa "estimei" de "medi".
 Vale para todo o resto da tabela: as colunas `n`/`chars tot` são observação, não derivação.
 
+## 4b. SEGUIMENTO (2026-09-08): metade do balde "sem arquivo" TEM arquivo
+
+A linha `(Bash - sem arquivo)` de 77,1% foi aberta em
+[`ocupacao-bash-por-comando.md`](ocupacao-bash-por-comando.md). Dois achados corrigem a leitura
+desta página:
+
+1. **`sed` 20,2% · `grep` 12,9% · `cat` 11,3% da ocupação TOTAL.** Somando `sed`+`cat`+`head`+
+   `tail`, **~35% de toda a ocupação é leitura de arquivo feita por shell** — oito vezes o
+   `docs/agent` inteiro. Classificar por prefixo daria 46,5% em "outros"; a regra do produtor de
+   pipeline dá **0,3%**.
+2. **50,5% da ocupação de Bash tem nome de arquivo** (1.101,6M de 2.180,6M tok×req) e estava
+   inteira dentro do balde sem `file_path`. `--ver-shell` a devolve ao ranking. Em particular
+   `src/` — reportado aqui como 1,6% — soma 209,0M lidos via shell, mais que `docs/agent`
+   (108,8M). **A tabela da §2 mede a tool `Read`, não a leitura.**
+
+Isto não invalida a §2: os números continuam certos para o que mediram. Muda a conclusão de
+prioridade — a leitura de arquivo é bem maior do que ela deixava ver, só não passava pela tool
+que a régua olhava.
+
 ## 5. Por que `Bash` aparece no ranking em vez de sumir
 
 Decisão do founder em 2026-09-07, e a linha de base mostra o tamanho do que estava em jogo: um

@@ -393,9 +393,11 @@ if [ "${1:-}" = "--falsificar" ]; then
   sabota "janela sem sessao vira sucesso" \
          "recorte errado pareceria projeto ocioso (exit 0 com tabela vazia)" \
          's/exit 3$/exit 0/'
+  # o alvo virou `kk[1] = ...` quando --ver-shell passou a poder repartir UMA
+  # saida entre varios arquivos; o rotulo agregado e o mesmo.
   sabota "chamada sem file_path e descartada" \
-         "Bash — 40% da ocupacao — sumiria do ranking sem uma palavra" \
-         's/k = "(" t " - sem arquivo)"/k = "x"/'
+         "Bash — 77% da ocupacao — sumiria do ranking sem uma palavra" \
+         's/kk\[1\] = "(" t " - sem arquivo)"/kk[1] = "x"/'
   sabota "normalizacao de worktree desligada" \
          "o mesmo doc lido de 30 worktrees viraria 30 linhas e nunca apareceria no topo" \
          's|sub("\^\.\*/" padrao "\[\^/\]\*/", "", q)|q = q|'

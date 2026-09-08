@@ -253,6 +253,13 @@ repo renderia 4,2%; cortar 10% do volume de Bash rende 7,7%.** Detalhe, top indi
 armadilhas que o levantamento pagou:
 [`ocupacao-por-arquivo-linha-de-base.md`](ocupacao-por-arquivo-linha-de-base.md).
 
+**Seguimento (2026-09-08)** — a fatia de Bash foi aberta por COMANDO em
+[`ocupacao-bash-por-comando.md`](ocupacao-bash-por-comando.md): `sed`+`cat`+`head`+`tail` são
+~35% da ocupação total (leitura de arquivo via shell, que o modo auto instrui a fazer), e o
+`bash-contexto-nudge` **ensinou** (`head -c`: 0% → 48% de adoção) mas **não corrige por evento**
+— e custava 4,1% da ocupação de Bash que existe para reduzir. Ver ali a curva de economia por
+teto de saída, e o corte já aplicado.
+
 Correção de método que veio junto: o `req` da régua era contado por **linha** do JSONL, e uma
 resposta com vários blocos vira várias linhas repetindo o mesmo `usage` — 329 linhas para 144
 requests reais (**2,28×**) numa sessão medida. Todo multiplicador saía inflado. Agora deduplica por

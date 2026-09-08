@@ -11,7 +11,9 @@
 # silêncio fique VERMELHO. Um teste que passa com o código sabotado não prova nada.
 set -u
 
-HOOK="$(cd "$(dirname "$0")/.." && pwd)/.claude/hooks/bash-contexto-nudge.sh"
+# NUDGE_OVERRIDE aponta para uma CÓPIA sabotada: é assim que a falsificação
+# reexecuta a suíte inteira contra o hook quebrado e exige vermelho.
+HOOK="${NUDGE_OVERRIDE:-$(cd "$(dirname "$0")/.." && pwd)/.claude/hooks/bash-contexto-nudge.sh}"
 [ -x "$HOOK" ] || { echo "hook não encontrado/executável: $HOOK" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq é necessário" >&2; exit 1; }
 
@@ -24,8 +26,19 @@ entrada() { # <n_chars> <comando> [tool_name]
       tool_response:( "x" * $n )}'
 }
 
+# Mesma entrada, agora com session_id — é a chave do corte "1o ensina, resto lembra".
+entrada_s() { # <n_chars> <comando> <session_id>
+  jq -n -c --arg cmd "$2" --arg sid "$3" --argjson n "$1" \
+    '{tool_name:"Bash", session_id:$sid, tool_input:{command:$cmd},
+      tool_response:( "x" * $n )}'
+}
+
 # roda o hook e devolve stdout
 executa() { printf '%s' "$1" | bash "$HOOK" 2>/dev/null; }
+# idem, com TMPDIR proprio: a marca de "ja ensinou" vive la, e sem isolar, a 2a
+# rodada de locale herdaria a marca da 1a e o caso do 1o disparo viraria falso.
+executa_t() { printf '%s' "$2" | TMPDIR="$1" bash "$HOOK" 2>/dev/null; }
+ctx_de() { printf '%s' "$1" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null; }
 
 checa() { # <titulo> <esperado: MARCADOR|VAZIO> <json>
   local titulo="$1" esperado="$2" json="$3" saida
@@ -77,6 +90,46 @@ rodada() {
                   tool_response:{stdout:("y" * 9000), stderr:"", exitCode:0}}')"
   checa "tool_response objeto 9k" "BASH-SAIDA-GRANDE" "$j"
 
+  # ---- o corte "1o disparo ENSINA, os seguintes so LEMBRAM" -------------------
+  # Medido: o texto longo entrou 2.726x e ocupou 88,7M tok*req (4,1% da ocupacao
+  # do proprio Bash), e o efeito POR EVENTO nao aparece na medicao. O 1o disparo
+  # da sessao continua completo; os seguintes viram uma linha.
+  local TD c1 c2 c3 n1 n2
+  TD="$(mktemp -d)"
+
+  # (10) 1o disparo da sessao -> texto COMPLETO
+  c1="$(ctx_de "$(executa_t "$TD" "$(entrada_s 5000 'psql -c "select * from t"' sessao-alfa)")")"
+  if printf '%s' "$c1" | command grep -qF "BASH-SAIDA-GRANDE"; then printf '  ok   1o disparo da sessao -> texto completo\n'
+  else printf '  FALHA 1o disparo nao trouxe BASH-SAIDA-GRANDE\n'; falhas=$((falhas + 1)); fi
+
+  # (11) 2o disparo da MESMA sessao -> texto BREVE
+  c2="$(ctx_de "$(executa_t "$TD" "$(entrada_s 5000 'psql -c "select * from u"' sessao-alfa)")")"
+  if printf '%s' "$c2" | command grep -qF "BASH-NUDGE-REPETIDO"; then printf '  ok   2o disparo da mesma sessao -> texto breve\n'
+  else printf '  FALHA 2o disparo repetiu o texto longo — o corte nao esta ativo\n'; falhas=$((falhas + 1)); fi
+
+  # (12) sessao DIFERENTE volta a ensinar: o corte e por sessao, nao global.
+  # Se fosse global, uma sessao nova nunca receberia a licao — que e justamente
+  # o unico efeito que a medicao atribui a este hook.
+  c3="$(ctx_de "$(executa_t "$TD" "$(entrada_s 5000 'psql -c "select * from v"' sessao-beta)")")"
+  if printf '%s' "$c3" | command grep -qF "BASH-SAIDA-GRANDE"; then printf '  ok   sessao nova volta a receber o texto completo\n'
+  else printf '  FALHA o corte vazou entre sessoes — sessao nova perdeu a licao\n'; falhas=$((falhas + 1)); fi
+
+  # (13) o texto breve tem de ser MESMO menor — e o unico motivo do corte.
+  # Sem esta assercao, trocar o marcador e manter os 861 chars passaria verde.
+  n1=${#c1}; n2=${#c2}
+  if [ "$n1" -gt 0 ] && [ "$n2" -gt 0 ] && [ "$n2" -lt "$(( n1 / 3 ))" ]; then
+    printf '  ok   texto breve e < 1/3 do completo (%s vs %s chars)\n' "$n2" "$n1"
+  else
+    printf '  FALHA breve=%s completo=%s — o corte nao economiza contexto\n' "$n2" "$n1"; falhas=$((falhas + 1)); fi
+
+  # (14) SEM session_id o hook mantem o comportamento antigo (fail-open): sem
+  # identidade nao ha como saber que e repeticao, e calar perderia a licao.
+  executa_t "$TD" "$(entrada 5000 'git diff')" >/dev/null
+  if ctx_de "$(executa_t "$TD" "$(entrada 5000 'git diff')")" | command grep -qF "BASH-SAIDA-GRANDE"; then
+    printf '  ok   sem session_id -> sempre completo (fail-open)\n'
+  else printf '  FALHA sem session_id o hook encurtou — nao ha como saber que e repeticao\n'; falhas=$((falhas + 1)); fi
+  rm -rf "$TD"
+
   # (9) o JSON emitido é válido e tem o hookEventName certo
   local ev
   ev="$(executa "$(entrada 5000 'ls')" | jq -r '.hookSpecificOutput.hookEventName' 2>/dev/null)"
@@ -110,6 +163,43 @@ if command grep -q '\-ge 1 \]' "$sabotado"; then
 else
   echo "  FALHA não consegui sabotar o hook (o padrão do limiar mudou?)"
   falhas=$((falhas + 1))
+fi
+
+# --- falsificação do corte "1o ensina, resto lembra" -------------------------
+# CONTROLE: as caixas (10)-(14) acima JÁ rodaram verdes nesta mesma invocação —
+# essa é a linha de base. Sem ela, um arnês sempre-vermelho aprovaria tudo.
+# Reexecução só no nível de cima: com NUDGE_OVERRIDE setado, pular.
+if [ -z "${NUDGE_OVERRIDE:-}" ]; then
+  echo "--- falsificação do corte por sessão (sabota o hook; a suíte TEM de quebrar) ---"
+  if [ "$falhas" -ne 0 ]; then
+    echo "  FALHA suíte já vermelha antes de sabotar — sabotar não provaria nada"
+    falhas=$((falhas + 1))
+  else
+    sab_dir="$(mktemp -d)"
+    sabota_hook() { # <descricao> <expressao sed>
+      local desc="$1" expr="$2" copia="$sab_dir/h.sh" erro
+      if ! erro="$(sed "$expr" "$HOOK" 2>&1 >"$copia")"; then
+        echo "  FALHA \"$desc\": sed inválido (${erro:0:50}) — sabotagem vazia"; falhas=$((falhas + 1)); return; fi
+      if cmp -s "$HOOK" "$copia"; then
+        echo "  FALHA \"$desc\": padrão não casou, hook intacto — sabotagem vazia"; falhas=$((falhas + 1)); return; fi
+      chmod +x "$copia"
+      if NUDGE_OVERRIDE="$copia" bash "$0" >/dev/null 2>&1; then
+        echo "  FALHA \"$desc\": hook sabotado e a suíte passou VERDE — invariante sem cobertura"
+        falhas=$((falhas + 1))
+      else echo "  ok   \"$desc\" -> vermelho"; fi
+    }
+    # shellcheck disable=SC2016  # $marca/$sessao/$tok_k sao literais: casam o TEXTO do hook,
+    # nao devem expandir aqui — expandir produziria padrao vazio e "sabotagem vazia".
+    sabota_hook "corte desligado (sempre texto longo)" \
+      's/^  if \[ -e "\$marca" \]; then repetido=1;/  if false; then repetido=1;/'
+    # shellcheck disable=SC2016  # idem: ${sessao} e' o texto-fonte do hook
+    sabota_hook "corte vira GLOBAL (sessao nova perde a licao)" \
+      's|bash-nudge-visto-\${sessao}|bash-nudge-visto-global|'
+    # shellcheck disable=SC2016  # idem: ${tok_k} e' o texto-fonte do hook
+    sabota_hook "texto breve deixa de ser breve" \
+      's|^    ctx="BASH-NUDGE-REPETIDO: +\${tok_k}k tokens no contexto\. Recorte.*|    ctx="BASH-NUDGE-REPETIDO: $(printf %500s . \| tr " " x)"|'
+    rm -rf "$sab_dir"
+  fi
 fi
 
 echo
