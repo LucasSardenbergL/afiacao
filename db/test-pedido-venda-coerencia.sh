@@ -310,8 +310,8 @@ echo "INSERT INTO order_items (sales_order_id, customer_user_id, omie_codigo_pro
 echo "BEGIN;" >&9
 echo "UPDATE sales_orders SET items = items || '[{\"omie_codigo_produto\":40,\"quantidade\":3,\"valor_unitario\":25,\"desconto\":0,\"descricao\":\"D\"}]'::jsonb, subtotal=175, total=175 WHERE id='aaaa0000-0000-0000-0000-000000000001';" >&9
 # ambas commitam: T1 primeiro, T2 depois
-echo "COMMIT;" >&8; echo "\\echo T1-FIM" >&8
-echo "COMMIT;" >&9; echo "\\echo T2-FIM" >&9
+echo "COMMIT;" >&8
+echo "COMMIT;" >&9
 exec 8>&-; exec 9>&-
 wait $S1 $S2 2>/dev/null || true
 O1="$(cat /tmp/pvc-s1.$$)"; O2="$(cat /tmp/pvc-s2.$$)"
