@@ -5,17 +5,25 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
+import { localizarCanarias } from './canaria-contrato-bump-gate';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+
 import {
+  CANARIAS,
   escaparParaFormat,
   fatiaDaVerdade,
   gerarSqlDaLeva,
+  gerarSqlDasCanarias,
   gitReal,
   guardEfeitoLegado,
   main,
   parsearArgs,
+  resolverCanarias,
   resolverLeva,
   SENTINELA_MAPA,
+  type CanariaRegistrada,
   type ExecutorGit,
+  type LeitorCanariasDoRepo,
 } from './sonda-versao-sql';
 
 const RAIZ_REPO = join(import.meta.dirname, '..');
@@ -1232,5 +1240,503 @@ describe('parsearArgs — a flag do efeito legado', () => {
   });
   it('sem a flag, o campo fica indefinido (o guard trata como NÃO permitido)', () => {
     expect(parsearArgs(['monthly-report']).permitirEfeitoLegado).toBeUndefined();
+  });
+});
+
+// ==========================================================================================
+// MODO CANÁRIA
+// ==========================================================================================
+
+/** O leitor REAL — o mesmo que a CLI injeta. Testar com um leitor de mentira provaria o dublê. */
+const lerCanariasReal: LeitorCanariasDoRepo = (raiz, edge) =>
+  localizarCanarias(
+    removerComentarios(readFileSync(join(raiz, 'supabase', 'functions', edge, 'index.ts'), 'utf8')),
+  );
+
+/**
+ * Um `index.ts` de mentira que hospeda a canária no arm que a `chave` do registro nomeia.
+ *
+ * `forma: 'versao'` reproduz a `generate-tactical-plan`: o marcador não é literal, vem por
+ * REFERÊNCIA ao símbolo `VERSAO` — e é a forma que o `canaria:bump` só passou a enxergar no #2374.
+ */
+function corpoDaEdge(chave: string, marcador: string, forma: 'contrato' | 'versao' = 'contrato'): string {
+  if (forma === 'versao') {
+    return (
+      'Deno.serve(async (req) => {\n' +
+      '  if (body.canary === true) {\n' +
+      '    return json({ canary: true, versao: VERSAO, ok: true });\n' +
+      '  }\n' +
+      '});\n'
+    );
+  }
+  if (chave.startsWith('case:')) {
+    const rota = chave.slice('case:'.length);
+    return (
+      'Deno.serve(async (req) => {\n' +
+      '  const { action } = await req.json();\n' +
+      '  switch (action) {\n' +
+      `      case "${rota}": {\n` +
+      `        result = { canary: true, contrato: "${marcador}", ok: true };\n` +
+      '        break;\n' +
+      '      }\n' +
+      '  }\n' +
+      '});\n'
+    );
+  }
+  return (
+    'Deno.serve(async (req) => {\n' +
+    '  if (ehCanaria(req)) {\n' +
+    `    return json({ canary: true, contrato: "${marcador}", ok: true });\n` +
+    '  }\n' +
+    '});\n'
+  );
+}
+
+/**
+ * Repo de mentira com TODAS as edges do registro `CANARIAS`, cada uma emitindo o marcador que
+ * `sobrepor` disser (ou um derivado do nome). Um teste sabota UMA coisa a partir daqui.
+ */
+function fixtureCanarias(sobrepor: Record<string, string> = {}): string {
+  const raiz = mkdtempSync(join(tmpdir(), 'canaria-sql-'));
+  criadas.push(raiz);
+  mkdirSync(join(raiz, 'supabase', 'functions'), { recursive: true });
+  writeFileSync(join(raiz, 'supabase', 'config.toml'), 'project_id = "refdementira000000ab"\n');
+  const porEdge = new Map<string, CanariaRegistrada[]>();
+  for (const c of CANARIAS) porEdge.set(c.edge, [...(porEdge.get(c.edge) ?? []), c]);
+  for (const [edge, lista] of porEdge) {
+    const dir = join(raiz, 'supabase', 'functions', edge);
+    mkdirSync(dir, { recursive: true });
+    const corpo = lista
+      .map((c) => corpoDaEdge(c.chave, sobrepor[c.nome] ?? `marcador-de-${c.nome}-v1`, c.campoMarcador))
+      .join('\n');
+    writeFileSync(join(dir, 'index.ts'), corpo);
+    writeFileSync(
+      join(dir, 'versao.ts'),
+      `export const VERSAO = "${sobrepor[edge] ?? `versao-de-${edge}`}";\n`,
+    );
+  }
+  return raiz;
+}
+
+/**
+ * Um `git` que ESPELHA o disco: `show origin/main:<x>` devolve o próprio arquivo, então a fatia
+ * sai "em dia". O guard de sincronia é assunto do último bloco, e lá o espelho é quebrado de
+ * propósito — um fake que devolvesse string vazia diria "em dia" por acidente, não por desenho.
+ */
+function gitEspelho(raiz: string, divergir: string | null = null): ExecutorGit {
+  return (args) => {
+    if (args[0] === 'fetch') return { status: 0, stdout: '', stderr: '' };
+    if (args[0] === 'rev-parse') return { status: 0, stdout: 'abc123456789\n', stderr: '' };
+    if (args[0] === 'show') {
+      const caminho = args[1].slice(args[1].indexOf(':') + 1);
+      if (divergir !== null && caminho.includes(divergir)) {
+        return { status: 0, stdout: '// outro conteúdo\n', stderr: '' };
+      }
+      try {
+        return { status: 0, stdout: readFileSync(join(raiz, caminho), 'utf8'), stderr: '' };
+      } catch {
+        return { status: 1, stdout: '', stderr: 'no such path' };
+      }
+    }
+    return { status: 0, stdout: '', stderr: '' };
+  };
+}
+
+describe('registro de canárias — o marcador SAI do repo, nunca do registro', () => {
+  it('contra o repo REAL: toda canária alcançável resolve, e o marcador é o que o index.ts emite', () => {
+    const alcancaveis = CANARIAS.filter((c) => c.inalcancavel === null).map((c) => c.nome);
+    const leva = resolverCanarias(RAIZ_REPO, alcancaveis, lerCanariasReal);
+    expect(leva).toHaveLength(alcancaveis.length);
+    for (const c of leva) {
+      expect(c.marcador, `${c.nome} sem marcador`).not.toBe('');
+      const emitido = lerCanariasReal(RAIZ_REPO, c.edge).find((e) => e.chave === c.chave);
+      expect(emitido, `${c.nome} não está no index.ts em ${c.chave}`).toBeDefined();
+      if (c.campoMarcador === 'contrato') {
+        expect(emitido?.contrato, `${c.nome} não bate com o index.ts`).toBe(c.marcador);
+      } else {
+        // Forma por REFERÊNCIA: o index.ts serve o símbolo, e o literal mora no `versao.ts`.
+        expect(emitido?.contrato, `${c.nome} deveria servir por referência`).toBeNull();
+        expect(emitido?.simbolo).toBe('VERSAO');
+        const versaoTs = readFileSync(
+          join(RAIZ_REPO, 'supabase', 'functions', c.edge, 'versao.ts'),
+          'utf8',
+        );
+        expect(versaoTs).toContain(`"${c.marcador}"`);
+      }
+    }
+  });
+
+  it('sabotar o index.ts muda o SQL — o marcador velho não sobrevive', () => {
+    const raiz = fixtureCanarias({ 'copilot-analyze': 'marcador-SABOTADO-v9' });
+    const sql = gerarSqlDasCanarias({
+      raiz,
+      nomes: ['copilot-analyze'],
+      ler: lerCanariasReal,
+    });
+    expect(sql).toContain("'marcador-SABOTADO-v9'");
+    expect(sql).not.toContain('marcador-de-copilot-analyze-v1');
+  });
+
+  it('cada canária leva o SEU marcador, não o da vizinha', () => {
+    const raiz = fixtureCanarias();
+    const sql = gerarSqlDasCanarias({
+      raiz,
+      nomes: ['copilot-analyze', 'omie-financeiro'],
+      ler: lerCanariasReal,
+    });
+    expect(sql).toContain("('copilot-analyze', 'contrato', 'marcador-de-copilot-analyze-v1'");
+    expect(sql).toContain("('omie-financeiro', 'contrato', 'marcador-de-omie-financeiro-v1'");
+  });
+
+  it('index.ts que não emite o `contrato` da chave registrada falha ALTO — nada é emitido', () => {
+    const raiz = fixtureCanarias();
+    writeFileSync(
+      join(raiz, 'supabase', 'functions', 'omie-financeiro', 'index.ts'),
+      'Deno.serve(() => json({ ok: true }));\n',
+    );
+    const msg = msgDoErro(() =>
+      gerarSqlDasCanarias({ raiz, nomes: ['omie-financeiro'], ler: lerCanariasReal }),
+    );
+    expect(msg).toMatch(/marcador ILEGÍVEL/);
+    expect(msg).toMatch(/case:paginacao_probe/);
+    expect(msg).toMatch(/Nenhum SQL foi emitido/);
+  });
+
+  it('acusa TODAS as canárias tortas de uma vez, não só a primeira', () => {
+    const raiz = fixtureCanarias();
+    for (const edge of ['omie-financeiro', 'omie-vendas-sync']) {
+      writeFileSync(join(raiz, 'supabase', 'functions', edge, 'index.ts'), 'Deno.serve(() => {});\n');
+    }
+    const msg = msgDoErro(() =>
+      gerarSqlDasCanarias({
+        raiz,
+        nomes: ['omie-financeiro', 'omie-vendas-sync'],
+        ler: lerCanariasReal,
+      }),
+    );
+    expect(msg).toMatch(/omie-financeiro/);
+    expect(msg).toMatch(/omie-vendas-sync/);
+  });
+});
+
+describe('registro COMPLETO — canária fora dele nunca seria disparada', () => {
+  it('contra o repo REAL: nenhuma canária emitida está fora do registro', () => {
+    expect(() =>
+      resolverCanarias(RAIZ_REPO, ['copilot-analyze'], lerCanariasReal),
+    ).not.toThrow();
+  });
+
+  it('uma 2ª canária na MESMA edge, sem entrada no registro, derruba a geração', () => {
+    const raiz = fixtureCanarias();
+    const dir = join(raiz, 'supabase', 'functions', 'omie-financeiro');
+    writeFileSync(
+      join(dir, 'index.ts'),
+      readFileSync(join(dir, 'index.ts'), 'utf8') +
+        '\nDeno.serve(async (req) => {\n' +
+        '  const { action } = await req.json();\n' +
+        '  switch (action) {\n' +
+        '      case "nova_probe": {\n' +
+        '        result = { canary: true, contrato: "nasceu-fora-da-tabela-v1", ok: true };\n' +
+        '        break;\n' +
+        '      }\n' +
+        '  }\n' +
+        '});\n',
+    );
+    const msg = msgDoErro(() =>
+      gerarSqlDasCanarias({ raiz, nomes: ['copilot-analyze'], ler: lerCanariasReal }),
+    );
+    expect(msg).toMatch(/FORA do registro CANARIAS/);
+    expect(msg).toMatch(/case:nova_probe/);
+    expect(msg).toMatch(/nasceu-fora-da-tabela-v1/);
+  });
+
+  it('a `generate-tactical-plan` que PASSAR a emitir `contrato` cobra o registro', () => {
+    const raiz = fixtureCanarias();
+    writeFileSync(
+      join(raiz, 'supabase', 'functions', 'generate-tactical-plan', 'index.ts'),
+      corpoDaEdge('if:1', 'agora-emite-contrato-v1', 'contrato'),
+    );
+    const msg = msgDoErro(() =>
+      gerarSqlDasCanarias({ raiz, nomes: ['generate-tactical-plan'], ler: lerCanariasReal }),
+    );
+    expect(msg).toMatch(/trocou de FORMA/);
+    expect(msg).toMatch(/agora-emite-contrato-v1/);
+    expect(msg).toMatch(/Nenhum SQL foi emitido/);
+  });
+
+  it('a que emite LITERAL e PASSAR a servir por referência também cobra — nos dois sentidos', () => {
+    const raiz = fixtureCanarias();
+    writeFileSync(
+      join(raiz, 'supabase', 'functions', 'copilot-analyze', 'index.ts'),
+      corpoDaEdge('if:1', 'irrelevante', 'versao'),
+    );
+    const msg = msgDoErro(() =>
+      gerarSqlDasCanarias({ raiz, nomes: ['copilot-analyze'], ler: lerCanariasReal }),
+    );
+    expect(msg).toMatch(/trocou de FORMA/);
+    expect(msg).toMatch(/REFERÊNCIA/);
+    // Sem esta conferência o registro leria `contrato` (ausente) e diria SEM MARCADOR — causa
+    // errada: o bundle está no ar, quem envelheceu foi o registro.
+    expect(msg).not.toMatch(/marcador ILEGÍVEL/);
+  });
+
+  it('símbolo que não é o `VERSAO` fica FORA do alcance, e o gerador DIZ isso', () => {
+    const raiz = fixtureCanarias();
+    writeFileSync(
+      join(raiz, 'supabase', 'functions', 'generate-tactical-plan', 'index.ts'),
+      'Deno.serve(async (req) => {\n' +
+        '  if (body.canary === true) {\n' +
+        '    return json({ canary: true, versao: OUTRO_SIMBOLO, ok: true });\n' +
+        '  }\n' +
+        '});\n',
+    );
+    const msg = msgDoErro(() =>
+      gerarSqlDasCanarias({ raiz, nomes: ['generate-tactical-plan'], ler: lerCanariasReal }),
+    );
+    expect(msg).toMatch(/OUTRO_SIMBOLO/);
+    expect(msg).toMatch(/só `VERSAO` é resolvível/);
+  });
+});
+
+describe('o CORPO do disparo é POR CANÁRIA — corpo errado cai no FLUXO REAL', () => {
+  const sqlReal = () =>
+    gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal });
+
+  it('as quatro formas da tabela do deploy.md saem no VALUES, cada uma na sua linha', () => {
+    const sql = sqlReal();
+    expect(sql).toContain(`('copilot-analyze', 'copilot-analyze', '{"canary": true}'::jsonb, '')`);
+    expect(sql).toContain(
+      `('omie-vendas-sync', 'omie-vendas-sync', '{"action": "identidade_probe"}'::jsonb, '')`,
+    );
+    expect(sql).toContain(
+      `('omie-analytics-sync:transferencia_probe', 'omie-analytics-sync', '{"action": "transferencia_probe"}'::jsonb, '')`,
+    );
+    expect(sql).toContain(`('carteira-rebuild', 'carteira-rebuild', '{}'::jsonb, '?canary=1')`);
+  });
+
+  it('a URL concatena o sufixo — sem isso a carteira-rebuild roda o rebuild REAL', () => {
+    expect(sqlReal()).toContain("/functions/v1/' || a.edge || a.sufixo");
+  });
+
+  it('o corpo vem da LINHA, não de um jsonb_build_object fixo', () => {
+    const sql = sqlReal();
+    expect(sql).toContain('body := a.corpo');
+    expect(sql).not.toContain("body := jsonb_build_object('canary'");
+  });
+
+  it('timeout_milliseconds é EXPLÍCITO e acima do default de 5s, que mata silencioso', () => {
+    expect(sqlReal()).toContain('timeout_milliseconds := 20000');
+  });
+
+  it('o segredo sai do vault, nunca do texto colado', () => {
+    expect(sqlReal()).toContain('vault.decrypted_secrets');
+  });
+});
+
+describe('a trava das CARAS vem do registro, não da memória de quem chama', () => {
+  it('as que caem em fluxo real caro saem em bloco COM trava, e as baratas sem', () => {
+    const sql = gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal });
+    const [passo1, passo3] = sql.split('-- PASSO 3');
+    expect(passo1).not.toContain('confirmei_o_deploy');
+    expect(passo1).toContain("('copilot-analyze'");
+    expect(passo3).toContain("confirmei_o_deploy = 'sim'");
+    expect(passo3).toContain("('carteira-rebuild'");
+    expect(passo3).toContain("('generate-tactical-plan'");
+    expect(passo3).not.toContain("('copilot-analyze', 'copilot-analyze'");
+  });
+
+  it('o bloco caro NOMEIA o efeito de cada canária, não diz só "é caro"', () => {
+    const sql = gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal });
+    expect(sql).toMatch(/carteira-rebuild: rebuild REAL da carteira/);
+    expect(sql).toMatch(/generate-tactical-plan: plano tatico com LLM/);
+  });
+
+  it('a trava é CASE, não filtro — filtro deixaria o http_post sair igual', () => {
+    const sql = gerarSqlDasCanarias({
+      raiz: RAIZ_REPO,
+      nomes: ['carteira-rebuild'],
+      ler: lerCanariasReal,
+    });
+    expect(sql).toContain("CASE WHEN g.confirmei_o_deploy = 'sim'");
+    expect(sql).not.toContain("WHERE g.confirmei_o_deploy = 'sim'");
+  });
+});
+
+describe('a canária inalcançável pelo SQL Editor é RECUSADA, não sondada', () => {
+  it('pedir a analyze-unified-order explica o gate e manda para o app logado', () => {
+    const msg = msgDoErro(() =>
+      gerarSqlDasCanarias({
+        raiz: RAIZ_REPO,
+        nomes: ['analyze-unified-order'],
+        ler: lerCanariasReal,
+      }),
+    );
+    expect(msg).toMatch(/gate de staff/);
+    expect(msg).toMatch(/Governança → Auditoria/);
+    expect(msg).toMatch(/Nenhum SQL foi emitido/);
+  });
+
+  it('a leva PADRÃO (sem nomes) não a inclui — 401 dela se leria como bundle velho', () => {
+    const sql = gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal });
+    expect(sql).not.toContain("('analyze-unified-order'");
+  });
+});
+
+describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
+  const sql = () => gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal });
+
+  it('a leitura NASCE dentro do format() do disparo — não existe versão sem mapa', () => {
+    const s = sql();
+    expect(s).toContain('SELECT format($sonda$');
+    // `jsonb_each_text('{}')` é o modo ECO da sonda; aqui ele significaria toda linha
+    // INDETERMINADA, porque a resposta da canária não ecoa o slug.
+    expect(s).not.toContain("jsonb_each_text('{}'::jsonb)");
+    expect(s).toContain('jsonb_each_text(%1$L::jsonb)');
+  });
+
+  it('CANARIA VERDE exige canary + marcador + ok, os três', () => {
+    const ramo = ramoDe(sql(), 'CANARIA VERDE');
+    const antes = sql().slice(0, sql().indexOf("THEN 'CANARIA VERDE"));
+    const cond = antes.slice(antes.lastIndexOf("WHEN l.corpo ->> 'canary' = 'true'"));
+    expect(cond).toContain("l.corpo ->> 'canary' = 'true'");
+    expect(cond).toContain('l.corpo ->> l.campo_marcador = l.marcador_esperado');
+    expect(cond).toContain("l.corpo ->> 'ok' = 'true'");
+    expect(ramo).toContain('CANARIA VERDE');
+  });
+
+  it('a leitura parte da lista CANÔNICA — zero linhas não pode virar "nada a reportar"', () => {
+    expect(sql()).toContain('WITH esperado(nome, campo_marcador, marcador_esperado, efeito) AS (VALUES');
+    expect(sql()).toContain('FROM esperado e');
+  });
+
+  it('desce no envelope `data` — a omie-analytics-sync responde aninhado', () => {
+    expect(sql()).toContain("COALESCE(x.content::jsonb -> 'data', x.content::jsonb)");
+  });
+
+  it('os ramos que separam BUNDLE VELHO de CANARIA VERMELHA estão todos nomeados', () => {
+    const s = sql();
+    for (const marca of [
+      'INDETERMINADO',
+      'AGUARDE',
+      'SEM CANARIA NO AR',
+      'CANARIA SEM MARCADOR',
+      'CANARIA DE OUTRA FATIA',
+      'CANARIA SEM VEREDITO',
+      'CANARIA VERMELHA',
+      'CANARIA VERDE',
+    ]) {
+      expect(s, `ramo ausente: ${marca}`).toContain(`THEN '${marca}`);
+    }
+  });
+
+  it('o 200 sem eco DIZ que rodou o fluxo real, e diz QUAL efeito', () => {
+    const ramo = ramoDe(sql(), 'SEM CANARIA NO AR — HTTP');
+    expect(ramo).toContain('RODOU O FLUXO REAL');
+    expect(ramo).toContain("|| l.efeito ||");
+    expect(ramo).toContain('NAO e canaria vermelha');
+  });
+
+  it('bundle velho e canária vermelha DIZEM que não são a mesma coisa', () => {
+    expect(ramoDe(sql(), 'SEM CANARIA NO AR — 401')).toContain('NAO e canaria vermelha');
+    expect(ramoDe(sql(), 'CANARIA VERMELHA')).toContain('NAO e deploy pendente');
+    expect(ramoDe(sql(), 'CANARIA DE OUTRA FATIA')).toContain('PRECISA DEPLOY');
+  });
+
+  it('o eco é julgado ANTES do status — a 500 da generate-tactical-plan é vermelha, não recusa', () => {
+    const s = sql();
+    const eco = s.indexOf("WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true' AND l.status_code >= 400");
+    const statusCru = s.indexOf('WHEN l.status_code >= 400');
+    expect(eco).toBeGreaterThan(-1);
+    // Não existe ramo que julgue o status sem antes exigir a ausência do eco.
+    expect(statusCru).toBe(-1);
+  });
+
+  it('o campo do marcador é POR CANÁRIA — a generate-tactical-plan serve em `versao`', () => {
+    const s = sql();
+    expect(s).toContain("('generate-tactical-plan', 'versao', ");
+    expect(s).toContain("('copilot-analyze', 'contrato', ");
+    expect(s).toContain('l.corpo ->> l.campo_marcador');
+  });
+});
+
+describe('CLI do modo canária — as flags sem sentido são RECUSADAS, não ignoradas', () => {
+  it('--canaria muda o significado dos posicionais', () => {
+    const a = parsearArgs(['--canaria', 'omie-analytics-sync:doc_ambiguo_probe']);
+    expect(a.canaria).toBe(true);
+    expect(a.edges).toEqual(['omie-analytics-sync:doc_ambiguo_probe']);
+  });
+
+  it('sem --canaria o campo fica indefinido (o modo sonda segue o padrão)', () => {
+    expect(parsearArgs(['copilot-analyze']).canaria).toBeUndefined();
+  });
+
+  it('--so-leitura é recusado: sem o mapa toda linha sairia INDETERMINADA', () => {
+    const msg = msgDoErro(() => parsearArgs(['--canaria', '--so-leitura']));
+    expect(msg).toMatch(/NÃO ecoa o slug/);
+  });
+
+  it('--caro é recusado: quem é caro está no registro, não na memória de quem chama', () => {
+    const msg = msgDoErro(() => parsearArgs(['--canaria', '--caro=carteira-rebuild']));
+    expect(msg).toMatch(/fluxoRealSeVelho/);
+  });
+
+  it('--so-disparo é recusado: em modo canária tudo o que se emite já é disparo', () => {
+    expect(msgDoErro(() => parsearArgs(['--canaria', '--so-disparo']))).toMatch(/--so-disparo/);
+  });
+
+  it('canária repetida na leva é recusada — linha duplicada dispara duas vezes', () => {
+    const msg = msgDoErro(() => parsearArgs(['--canaria', 'copilot-analyze', 'copilot-analyze']));
+    expect(msg).toMatch(/canária repetida/);
+  });
+
+  it('nome com `:` passa (é canária), e nome fora do registro sai com a LISTA das opções', () => {
+    expect(parsearArgs(['--canaria', 'omie-analytics-sync:transferencia_probe']).edges).toHaveLength(1);
+    const msg = msgDoErro(() =>
+      gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: ['copilot-analise'], ler: lerCanariasReal }),
+    );
+    expect(msg).toMatch(/canária desconhecida: copilot-analise/);
+    expect(msg).toMatch(/copilot-analyze/);
+  });
+
+  it('--canaria sem leitor injetado RECUSA — marcador digitado é a via do veredito falso', () => {
+    const saida: string[] = [];
+    const erros: string[] = [];
+    const rc = main(['--canaria', 'copilot-analyze'], {
+      raiz: RAIZ_REPO,
+      escrever: (t) => saida.push(t),
+      erro: (t) => erros.push(t),
+      git: gitEspelho(RAIZ_REPO),
+    });
+    expect(rc).toBe(1);
+    expect(saida).toHaveLength(0);
+    expect(erros.join('\n')).toMatch(/sem leitor de canárias/);
+  });
+
+  it('main --canaria escreve o SQL e devolve 0', () => {
+    const saida: string[] = [];
+    const rc = main(['--canaria', 'copilot-analyze'], {
+      raiz: RAIZ_REPO,
+      escrever: (t) => saida.push(t),
+      erro: () => {},
+      git: gitEspelho(RAIZ_REPO),
+      lerCanarias: lerCanariasReal,
+    });
+    expect(rc).toBe(0);
+    expect(saida.join('')).toContain('AS veredito');
+  });
+
+  it('o guard de sincronia vale IGUAL aqui — disco fora da main NÃO emite SQL', () => {
+    const saida: string[] = [];
+    const erros: string[] = [];
+    const rc = main(['--canaria', 'copilot-analyze'], {
+      raiz: RAIZ_REPO,
+      escrever: (t) => saida.push(t),
+      erro: (t) => erros.push(t),
+      git: gitEspelho(RAIZ_REPO, 'copilot-analyze'),
+      lerCanarias: lerCanariasReal,
+    });
+    expect(rc).toBe(1);
+    expect(saida).toHaveLength(0);
+    expect(erros.join('\n')).toMatch(/DESSINCRONIZADO/);
   });
 });
