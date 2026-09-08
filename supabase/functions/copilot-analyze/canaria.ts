@@ -158,11 +158,18 @@ function iguais(a: unknown, b: unknown): boolean {
 /**
  * Executa as fixtures contra o helper do BUNDLE e devolve o corpo da canária.
  *
+ * O `contrato` entra por PARÂMETRO, e não é capricho: o corpo servido sai INTEIRO daqui, então o
+ * `index.ts` não tem como falsear o `ok` remontando o objeto — trocar `ok: resultado.ok` por
+ * `ok: true` lá deixaria todo teste verde e a canária mentindo. Como bônus, a chamada
+ * `executarCanaria({ contrato: '...' })` põe o literal no `index.ts`, que é onde o `canaria:bump`
+ * o procura. A constante `CONTRATO_CANARIA` continua sendo a fonte da verdade, e a igualdade das
+ * duas pontas é vigiada por `scripts/canaria-contrato-espelhado.test.ts`.
+ *
  * Pura: sem rede, sem Anthropic, sem banco, sem cota. É o que permite chamá-la em produção antes
  * e depois de um deploy sem efeito colateral nenhum — e é por isso que o bloco que a chama vive
  * ANTES do `createClient`/`consumirCota`/`anthropic.messages.create` no `index.ts`.
  */
-export function executarCanaria(): RespostaCanaria {
+export function executarCanaria(opcoes: { contrato: string }): RespostaCanaria {
   const casos: Record<string, ResultadoCaso> = {};
   let tudoOk = true;
 
@@ -173,5 +180,5 @@ export function executarCanaria(): RespostaCanaria {
     casos[nome] = { ok, esperado: caso.esperado, obtido };
   }
 
-  return { canary: true, contrato: CONTRATO_CANARIA, ok: tudoOk, casos };
+  return { canary: true, contrato: opcoes.contrato, ok: tudoOk, casos };
 }

@@ -20,24 +20,24 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
 }
 
 Deno.test("canária: os TRÊS campos que docs/agent/deploy.md exige", () => {
-  const r = executarCanaria();
+  const r = executarCanaria({ contrato: CONTRATO_CANARIA });
   assertEquals(r.canary, true, "campo `canary` — sem ele a resposta se confunde com o fluxo real");
   assertEquals(r.contrato, "tudo-ou-nada-normalizar-v1", "campo `contrato` (VERSION MARKER)");
   assertEquals(r.ok, true, "campo `ok` — helper divergiu do contrato no bundle local");
 });
 
 Deno.test("canária: o contrato exportado é o mesmo que a resposta serve", () => {
-  assertEquals(executarCanaria().contrato, CONTRATO_CANARIA);
+  assertEquals(executarCanaria({ contrato: CONTRATO_CANARIA }).contrato, CONTRATO_CANARIA);
 });
 
 Deno.test("canária: TODO caso passa, e a falha nomeia QUAL", () => {
-  const r = executarCanaria();
+  const r = executarCanaria({ contrato: CONTRATO_CANARIA });
   const falhos = Object.entries(r.casos).filter(([, c]) => !c.ok).map(([n]) => n);
   assertEquals(falhos, [], "casos divergentes");
 });
 
 Deno.test("canária: cada caso individualmente — completa", () => {
-  const c = executarCanaria().casos.completa;
+  const c = executarCanaria({ contrato: CONTRATO_CANARIA }).casos.completa;
   assert(c !== undefined, "caso `completa` sumiu da canária");
   assertEquals(c.ok, true, "caso `completa` divergiu");
   assertEquals(
@@ -48,7 +48,7 @@ Deno.test("canária: cada caso individualmente — completa", () => {
 });
 
 Deno.test("canária: cada caso individualmente — os que TÊM de recusar", () => {
-  const { casos } = executarCanaria();
+  const { casos } = executarCanaria({ contrato: CONTRATO_CANARIA });
   for (const nome of ["sem_tipo_de_sugestao", "confianca_fora_de_faixa", "enum_invalido"]) {
     assert(casos[nome] !== undefined, `caso \`${nome}\` sumiu da canária`);
     assertEquals(casos[nome].esperado, null, `caso \`${nome}\`: o contrato é recusar`);
@@ -57,7 +57,7 @@ Deno.test("canária: cada caso individualmente — os que TÊM de recusar", () =
 });
 
 Deno.test("canária: cada caso individualmente — os que TÊM de aceitar degradando", () => {
-  const { casos } = executarCanaria();
+  const { casos } = executarCanaria({ contrato: CONTRATO_CANARIA });
   assertEquals(
     (casos.confianca_em_texto.obtido as { confidence: number } | null)?.confidence,
     78,
@@ -74,7 +74,7 @@ Deno.test("canária: cada caso individualmente — os que TÊM de aceitar degrad
 // um helper sempre-`null` (a sabotagem mais barata que existe) passaria em 100% deles. Exigir as
 // DUAS direções é o que torna as fixtures mutuamente falsificáveis.
 Deno.test("canária: as fixtures se falsificam mutuamente (as duas direções presentes)", () => {
-  const casos = Object.values(executarCanaria().casos);
+  const casos = Object.values(executarCanaria({ contrato: CONTRATO_CANARIA }).casos);
   const recusas = casos.filter((c) => c.esperado === null).length;
   const aceites = casos.filter((c) => c.esperado !== null).length;
   assert(recusas >= 1, `nenhum caso espera recusa — helper sempre-null passaria (${recusas})`);
@@ -83,8 +83,8 @@ Deno.test("canária: as fixtures se falsificam mutuamente (as duas direções pr
 
 Deno.test("canária: resposta determinística (antes × depois do deploy é comparável)", () => {
   assertEquals(
-    JSON.stringify(executarCanaria()),
-    JSON.stringify(executarCanaria()),
+    JSON.stringify(executarCanaria({ contrato: CONTRATO_CANARIA })),
+    JSON.stringify(executarCanaria({ contrato: CONTRATO_CANARIA })),
     "duas chamadas divergiram — há relógio, acaso ou ambiente no caminho",
   );
 });

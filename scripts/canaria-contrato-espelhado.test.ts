@@ -53,6 +53,16 @@ describe('canária da copilot-analyze: contrato espelhado e VISÍVEL ao gate', (
     expect(contratos).toContain('tudo-ou-nada-normalizar-v1');
   });
 
+  // O corpo servido tem de sair INTEIRO de `executarCanaria`. Se o index remontar o objeto, um
+  // `ok: true` fixo passaria por todos os testes — a canária mentindo verde, que é exatamente a
+  // classe que ela existe para pegar. Esta asserção é o que impede a remontagem de voltar.
+  it('o index serve o retorno DIRETO, sem remontar o corpo', () => {
+    const semEspaco = removerComentarios(fonteIndex).replace(/\s+/g, ' ');
+    expect(semEspaco).toContain(
+      "JSON.stringify(executarCanaria({ contrato: 'tudo-ou-nada-normalizar-v1' }))",
+    );
+  });
+
   // Controle positivo da CEGUEIRA — sem ele, o teste acima poderia estar verde por acaso e
   // ninguém saberia por que o literal existe. Aqui a sabotagem é aplicada a uma cópia sintética,
   // então o teste prova a regra sem depender de alguém sabotar o arquivo real.

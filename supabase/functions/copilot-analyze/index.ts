@@ -82,20 +82,16 @@ Deno.serve(async (req) => {
     );
   }
   if (decisaoCanaria.tipo === 'sonda') {
-    const resultado = executarCanaria();
+    // O corpo sai INTEIRO de `executarCanaria` — o index não remonta nada. Remontar aqui abriria
+    // a porta para `ok: true` fixo passando por todos os testes, que é a canária mentindo verde.
+    //
+    // ⚠️ O contrato vai como LITERAL, e não como `CONTRATO_CANARIA`: o `canaria:bump` acha canária
+    // por regex de `contrato: "..."` NO index.ts (`RE_EMISSAO`). MEDIDO nesta fatia — com o
+    // literal só no módulo, o gate respondeu "6 canária(s) conferida(s)" com e sem esta canária
+    // existir; com o literal aqui, passou a 7. A igualdade entre este literal e a constante de
+    // `canaria.ts` é vigiada por `scripts/canaria-contrato-espelhado.test.ts`.
     return new Response(
-      JSON.stringify({
-        canary: true,
-        // ⚠️ LITERAL, e NÃO `CONTRATO_CANARIA` — não é descuido. O `canaria:bump` acha canária por
-        // regex de `contrato: "..."` NO index.ts (`RE_EMISSAO`), então com identificador, ou com o
-        // literal morando só no módulo, o gate fica CEGO e a canária nasce sem vigilância. MEDIDO
-        // nesta fatia: `bun run canaria:bump` disse "6 canária(s) conferida(s)" com e sem esta
-        // aqui — verde por cegueira. A igualdade entre este literal e o `CONTRATO_CANARIA` de
-        // `canaria.ts` é vigiada por `scripts/canaria-contrato-espelhado.test.ts`.
-        contrato: 'tudo-ou-nada-normalizar-v1',
-        ok: resultado.ok,
-        casos: resultado.casos,
-      }),
+      JSON.stringify(executarCanaria({ contrato: 'tudo-ou-nada-normalizar-v1' })),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }
