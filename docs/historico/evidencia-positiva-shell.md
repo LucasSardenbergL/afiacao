@@ -65,6 +65,30 @@ fallback. ⇒ valide o **FORMATO esperado** da saída, não o exit do 1º ramo, 
 contratos por stub. Caso medido e o idioma correto: `docs/agent/worktrees.md`
 (§Portabilidade BSD × GNU).
 
+**Segundo caso, 2026-09-07 — `mktemp -t`, e o custo de só rodar num SO.** No BSD/macOS,
+`mktemp -t ocupacao-contexto` trata o argumento como **prefixo** e funciona. No GNU (o CI) ele é
+um **template**, que exige ≥3 `X` consecutivos: `mktemp: too few X's in template`, exit 1, e sob
+`set -e` o script inteiro morre — sem chegar em nenhuma das suas próprias mensagens de erro.
+
+O que torna este caso instrutivo não é a flag, é o **arnês**: a suíte tinha 12 casos, 10
+sabotagens e falsificação nos dois locales, e mesmo assim saiu **verde no macOS e vermelha no
+Linux pelo mesmo commit**. Falsificar em dois *locales* não diz nada sobre dois *sistemas
+operacionais* — são eixos independentes, e cobrir um com capricho não compra o outro. O aviso do
+CLAUDE.md (*"falsificar em UM ambiente não prova a asserção"*) vale para **qualquer** eixo de
+ambiente, não só o locale em que ele foi aprendido.
+
+A forma portável é template explícito, nunca `-t`:
+
+```bash
+BRUTO=$(mktemp "${TMPDIR:-/tmp}/ocupacao-contexto.XXXXXX")   # idêntico nos dois
+```
+
+E a contramedida que esta seção já prescrevia — **testar o outro contrato por stub** — é barata o
+bastante para caber no teste: um `mktemp` falso no `PATH` que reproduz a exigência dos X's, com
+**controle positivo do próprio stub** (ele tem de reprovar a forma BSD; um stub inerte aprovaria
+tudo). Implementado em
+[`scripts/test-ocupacao-por-arquivo.sh`](../../scripts/test-ocupacao-por-arquivo.sh), caso 10.
+
 ### 7. O WRAPPER devolve exit≠0 por conta PRÓPRIA — igualzinho ao comando embrulhado
 ```
 heavy: timeout (1800s) esperando vaga — abortando. (posição 1 na fila)
@@ -589,7 +613,52 @@ esac
 O antídoto geral vale igual: o `if !` acima **não** distinguia "não achei" de "a busca não pôde ser
 feita" — três estados espremidos em dois, com o terceiro caindo no lado que acusa.
 
-## O padrão por trás das dezesseis
+### 17. Flag que NÃO EXISTE no BSD + `2>/dev/null` — o erro morre no cano posto por higiene
+
+A #6 é a flag homônima que faz **outra coisa**. Esta é a irmã mais silenciosa: a flag **não existe**,
+o comando falha alto — e o `2>/dev/null` que estava ali por higiene apaga exatamente o grito.
+
+Medido em 2026-09-07, levantando a linha de base da ocupação por arquivo. O comando era, em
+essência:
+
+```bash
+# xargs -a é GNU. No BSD/macOS: "xargs: illegal option -- a" -> stderr -> /dev/null
+xargs -a lista-de-transcricoes.txt grep -l 'docs/agent' 2>/dev/null | wc -l
+#                                                       ^^^^^^^^^^^ posto para calar
+#                                        "arquivo sem match", calou o "flag inexistente"
+```
+
+Saída: vazia. `wc -l`: **0**. O veredito a um passo de ser escrito no doc era **"`docs/agent` nunca
+é lido — não vale destilar"**. A verdade, medida depois pelo caminho certo, eram **200 leituras em
+17 dias**, com `money-path.md` sozinho em 64.
+
+O que torna esta armadilha diferente da #12 (que também usa `2>/dev/null`) é **por que o
+silenciador estava ali**: não foi descuido. Ele foi posto para calar um ruído **esperado e
+inofensivo** — arquivos sem ocorrência, permissão negada num diretório ou outro. Só que ruído
+esperado e erro estrutural descem pelo **mesmo cano**, e o cano não sabe distinguir os dois. A
+higiene legítima de ontem é o apagador de evidência de hoje, sem que uma linha de código mude.
+
+E note o agravante que fecha a armadilha: o resultado **0** era plausível. Um número absurdo
+convidaria a conferir; um zero que confirma a suspeita de quem mede ("esses docs devem ser lidos
+pouco") passa direto. **Silêncio que concorda com a hipótese é o mais caro de todos.**
+
+Contramedidas, nesta ordem:
+
+1. **Controle positivo antes da medição.** Rode a mesma sonda contra um caso cuja resposta você
+   já sabe. Aqui: um arquivo que você acabou de ler nesta sessão *tem* de aparecer. Se o controle
+   der 0, é a sonda que está quebrada — não o mundo.
+2. **Nunca `2>/dev/null` num comando cujo silêncio é o dado.** Se o ruído incomoda, filtre o ruído
+   **nomeado** (`2> >(grep -v 'Permission denied' >&2)`), não o canal inteiro.
+3. **Zero é resposta que se PROVA**, como qualquer outra. `find`/`grep` que devolvem nada e
+   `find`/`grep` que não puderam rodar são o mesmo byte de saída — só o exit code capturado
+   colado, ou um marcador positivo, os separa.
+
+A régua que nasceu deste episódio ([`scripts/ocupacao-contexto.sh`](../../scripts/ocupacao-contexto.sh))
+sai **vermelha** quando lê sessões e não extrai nenhum evento, em vez de imprimir uma tabela
+vazia — e [`scripts/test-ocupacao-por-arquivo.sh`](../../scripts/test-ocupacao-por-arquivo.sh)
+tem o caso que dá nome à suíte justamente por isso.
+
+## O padrão por trás das dezessete
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -612,6 +681,12 @@ E a décima sexta fecha pelo lado do TRANSPORTE: o resultado está certo, o cana
 sujeito está certo — o que trai é o **encanamento** entre eles, que promove o acidente do escritor a
 veredito do leitor. Ela também é a única das dezesseis que erra para os DOIS lados conforme o
 agendamento, e é por isso que aparece como flake em vez de defeito.
+
+A décima sétima fecha pelo lado do TEMPO: a linha que apaga a evidência é a mesma que ontem só
+apagava ruído, e ela envelheceu sem mudar. Nenhuma revisão de diff a pegaria — não há diff. É
+também a única em que o **resultado errado concorda com a hipótese de quem mede**, e por isso a
+única cuja contramedida tem de ser rodada ANTES da medição, não depois: um controle cuja resposta
+já se conhece. Depois já é tarde, porque o número plausível não pede conferência.
 
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.
