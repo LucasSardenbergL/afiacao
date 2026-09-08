@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-08T01:22:06.083Z",
-  "sourceHead": "d012b8e214740b9752da0291afaea14d2b33ab1c",
+  "medidoEm": "2026-09-08T01:30:10.183Z",
+  "sourceHead": "534fba3bd2b2a6613912ae64941cf2a082794513",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -37,11 +37,6 @@
       "gate": "evals:deploy-verify:falsificacao",
       "desde": "2026-09-07",
       "motivo": "pre-existente quando a matriz nasceu; divida a medir"
-    },
-    {
-      "gate": "exclusividade",
-      "desde": "2026-09-07",
-      "motivo": "ANDAIME de bootstrap — sai assim que a medicao dele existir"
     },
     {
       "gate": "knip",
@@ -113,32 +108,37 @@
     {
       "gate": "bunpin:check",
       "verde": true,
-      "ms": 38
+      "ms": 74
     },
     {
       "gate": "claude:size",
       "verde": true,
-      "ms": 74
+      "ms": 75
     },
     {
       "gate": "docs:citacoes",
       "verde": true,
-      "ms": 1331
+      "ms": 4367
     },
     {
       "gate": "docs:indice",
       "verde": true,
-      "ms": 26
+      "ms": 50
     },
     {
       "gate": "docs:links",
       "verde": true,
-      "ms": 298
+      "ms": 2859
+    },
+    {
+      "gate": "exclusividade",
+      "verde": true,
+      "ms": 340
     },
     {
       "gate": "gates:frescura",
       "verde": true,
-      "ms": 112
+      "ms": 406
     },
     {
       "gate": "test",
@@ -155,45 +155,52 @@
       "origem": "scripts/bun-pin-gate-check.ts (incidente REST API do GitHub, 2026-07-16)",
       "execucoes": [
         {
-          "gate": "docs:indice",
-          "reprovou": false,
-          "ms": 24,
-          "fingerprint": "a41d30136cdb032d",
-          "fonteResolvida": true
-        },
-        {
           "gate": "bunpin:check",
           "reprovou": true,
-          "ms": 24,
+          "ms": 142,
           "fingerprint": "88d330029d1f9ad5",
           "fonteResolvida": true
         },
         {
           "gate": "claude:size",
           "reprovou": false,
-          "ms": 30,
+          "ms": 265,
           "fingerprint": "c4bf0d0879f91708",
-          "fonteResolvida": true
-        },
-        {
-          "gate": "gates:frescura",
-          "reprovou": false,
-          "ms": 107,
-          "fingerprint": "636086ebfd2abb47",
-          "fonteResolvida": true
-        },
-        {
-          "gate": "docs:links",
-          "reprovou": false,
-          "ms": 296,
-          "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
           "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 1201,
+          "ms": 5541,
           "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 197,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 1009,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "exclusividade",
+          "reprovou": false,
+          "ms": 356,
+          "fingerprint": "a7416a166977f88b",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 412,
+          "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         }
       ],
@@ -208,45 +215,52 @@
       "origem": "scripts/gates-frescura-check.ts (sentido 2 — gate nao citado)",
       "execucoes": [
         {
-          "gate": "docs:indice",
-          "reprovou": false,
-          "ms": 27,
-          "fingerprint": "a41d30136cdb032d",
-          "fonteResolvida": true
-        },
-        {
           "gate": "bunpin:check",
           "reprovou": false,
-          "ms": 24,
+          "ms": 59,
           "fingerprint": "88d330029d1f9ad5",
           "fonteResolvida": true
         },
         {
           "gate": "claude:size",
           "reprovou": false,
-          "ms": 30,
+          "ms": 89,
           "fingerprint": "c4bf0d0879f91708",
-          "fonteResolvida": true
-        },
-        {
-          "gate": "gates:frescura",
-          "reprovou": true,
-          "ms": 114,
-          "fingerprint": "636086ebfd2abb47",
-          "fonteResolvida": true
-        },
-        {
-          "gate": "docs:links",
-          "reprovou": false,
-          "ms": 284,
-          "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
           "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 2139,
+          "ms": 3359,
           "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 58,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 903,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "exclusividade",
+          "reprovou": false,
+          "ms": 270,
+          "fingerprint": "a7416a166977f88b",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": true,
+          "ms": 433,
+          "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         }
       ],
@@ -261,45 +275,52 @@
       "origem": "scripts/check-claude-md-budget.sh (MAX_LINE=2000)",
       "execucoes": [
         {
-          "gate": "docs:indice",
-          "reprovou": false,
-          "ms": 24,
-          "fingerprint": "a41d30136cdb032d",
-          "fonteResolvida": true
-        },
-        {
           "gate": "bunpin:check",
           "reprovou": false,
-          "ms": 32,
+          "ms": 161,
           "fingerprint": "88d330029d1f9ad5",
           "fonteResolvida": true
         },
         {
           "gate": "claude:size",
           "reprovou": true,
-          "ms": 34,
+          "ms": 112,
           "fingerprint": "c4bf0d0879f91708",
-          "fonteResolvida": true
-        },
-        {
-          "gate": "gates:frescura",
-          "reprovou": false,
-          "ms": 105,
-          "fingerprint": "636086ebfd2abb47",
-          "fonteResolvida": true
-        },
-        {
-          "gate": "docs:links",
-          "reprovou": false,
-          "ms": 276,
-          "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
           "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 1155,
+          "ms": 3762,
           "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 143,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 2007,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "exclusividade",
+          "reprovou": false,
+          "ms": 995,
+          "fingerprint": "a7416a166977f88b",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 492,
+          "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         }
       ],
@@ -314,38 +335,45 @@
       "origem": "parecer Codex 2026-09-07 (sobreposicao parcial docs:indice x docs:links)",
       "execucoes": [
         {
-          "gate": "docs:indice",
-          "reprovou": true,
-          "ms": 28,
-          "fingerprint": "a41d30136cdb032d",
-          "fonteResolvida": true
-        },
-        {
           "gate": "bunpin:check",
           "reprovou": false,
-          "ms": 24,
+          "ms": 46,
           "fingerprint": "88d330029d1f9ad5",
           "fonteResolvida": true
         },
         {
           "gate": "claude:size",
           "reprovou": false,
-          "ms": 28,
+          "ms": 52,
           "fingerprint": "c4bf0d0879f91708",
           "fonteResolvida": true
         },
         {
-          "gate": "gates:frescura",
-          "reprovou": false,
-          "ms": 101,
-          "fingerprint": "636086ebfd2abb47",
+          "gate": "docs:indice",
+          "reprovou": true,
+          "ms": 48,
+          "fingerprint": "a41d30136cdb032d",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": true,
-          "ms": 281,
+          "ms": 730,
           "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "exclusividade",
+          "reprovou": false,
+          "ms": 245,
+          "fingerprint": "a7416a166977f88b",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 633,
+          "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         }
       ],
@@ -360,45 +388,52 @@
       "origem": "parecer Codex 2026-09-07 (duplicacao docs:indice step x vitest)",
       "execucoes": [
         {
-          "gate": "docs:indice",
-          "reprovou": true,
-          "ms": 25,
-          "fingerprint": "a41d30136cdb032d",
-          "fonteResolvida": true
-        },
-        {
           "gate": "bunpin:check",
           "reprovou": false,
-          "ms": 25,
+          "ms": 55,
           "fingerprint": "88d330029d1f9ad5",
           "fonteResolvida": true
         },
         {
           "gate": "claude:size",
           "reprovou": false,
-          "ms": 29,
+          "ms": 81,
           "fingerprint": "c4bf0d0879f91708",
-          "fonteResolvida": true
-        },
-        {
-          "gate": "gates:frescura",
-          "reprovou": false,
-          "ms": 149,
-          "fingerprint": "636086ebfd2abb47",
-          "fonteResolvida": true
-        },
-        {
-          "gate": "docs:links",
-          "reprovou": false,
-          "ms": 275,
-          "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
           "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 1101,
+          "ms": 3306,
           "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:indice",
+          "reprovou": true,
+          "ms": 53,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 2206,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "exclusividade",
+          "reprovou": false,
+          "ms": 179,
+          "fingerprint": "a7416a166977f88b",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 266,
+          "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         }
       ],
@@ -413,44 +448,111 @@
       "origem": "docs/historico/README.md (dez links quebrados ja encontrados por este gate)",
       "execucoes": [
         {
-          "gate": "docs:indice",
-          "reprovou": false,
-          "ms": 23,
-          "fingerprint": "a41d30136cdb032d",
-          "fonteResolvida": true
-        },
-        {
           "gate": "bunpin:check",
           "reprovou": false,
-          "ms": 23,
+          "ms": 43,
           "fingerprint": "88d330029d1f9ad5",
           "fonteResolvida": true
         },
         {
           "gate": "claude:size",
           "reprovou": false,
-          "ms": 30,
+          "ms": 55,
           "fingerprint": "c4bf0d0879f91708",
           "fonteResolvida": true
         },
         {
-          "gate": "gates:frescura",
+          "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 104,
-          "fingerprint": "636086ebfd2abb47",
+          "ms": 9256,
+          "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 51,
+          "fingerprint": "a41d30136cdb032d",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": true,
-          "ms": 260,
+          "ms": 1353,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "exclusividade",
+          "reprovou": false,
+          "ms": 196,
+          "fingerprint": "a7416a166977f88b",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 251,
+          "fingerprint": "636086ebfd2abb47",
+          "fonteResolvida": true
+        }
+      ],
+      "parouCedo": false,
+      "invalido": null
+    },
+    {
+      "defeito": "matriz-gate-renomeado",
+      "defeitoFingerprint": "0b07c44b874d77b0",
+      "alvo": "scripts/exclusividade-matriz.json",
+      "suspeito": "exclusividade",
+      "origem": "2026-09-07, ao gerar a lista de dispensados desta propria entrega",
+      "execucoes": [
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 55,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 57,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 68,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "exclusividade",
+          "reprovou": true,
+          "ms": 215,
+          "fingerprint": "a7416a166977f88b",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 419,
+          "fingerprint": "636086ebfd2abb47",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 854,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
           "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 1129,
+          "ms": 3165,
           "fingerprint": "94085ea54871a324",
           "fonteResolvida": true
         }
