@@ -109,7 +109,9 @@ esteja configurado. Errar para mais custa uma linha de checklist; errar para men
 > ⚠️ **Pra ir ao ar, falta (manual no Lovable) — nesta ordem, APÓS o merge do PR:**
 > - [ ] 🟣 **SQL Editor**: migration Z *(se tocou `supabase/migrations/` — bloco da `lovable-db-operator`; banco ANTES do código que o consome)*
 > - [ ] 🔑 **Secrets (Lovable → Edge Functions → Secrets)**: confirmar que `NOME_DO_SECRET` existe *(se o passo 1 deu `secrets=` com nome ou `?dinamico`)*
-> - [ ] 💬 **chat do Lovable**: deploy das edges X, Y — verbatim da main *(se tocou `supabase/functions/`)*
+> - [ ] 💬 ~~chat do Lovable~~ → **A SESSÃO deploya** as edges X, Y pelo MCP (`send_message`), verbatim da main
+>       *(se tocou `supabase/functions/`)* — desde 2026-09-08 esta linha **não é mais pendência do founder**:
+>       veja o Passo 3, faça o deploy AQUI e reporte o resultado do ledger em vez de pedir a colagem a ele
 >       — **QUAIS edges: as que `bun run pendencias:deploy` lista como `DIVERGE_P1`/`INCOERENTE`/`SEM_MAPA_NO_BUNDLE`**
 >       (2026-09-05). Não derive a lista do diff: "o mapa mudou"/"closure mudou" NÃO é motivo — só
 >       `(versao, fonte)` servido ≠ main. `DIVERGE_P2` (só `_shared/`) entra na leva agrupada, escala em 7 d.
@@ -125,9 +127,30 @@ persiste em disco): a linha pede ao founder para *conferir/criar* pelo nome, e o
 
 ### Passo 3 — Prompt de deploy de edge (se aplicável)
 
-Montar pro founder colar no chat do Lovable, para as edges que o `pendencias:deploy` deu como pendentes
-— este passo decide o **conteúdo** do prompt, o closure ∪ {mapa}; ele NÃO decide *se* a edge precisa de
-deploy, e o mapa ter mudado depois do PR não é motivo (ver Passo 2).
+⚡ **NÃO monte o prompt à mão, e não peça ao founder para colar.** Desde 2026-09-08 as duas metades
+têm ferramenta: quem MONTA é `pendencias:prompt`/`pendencias:pacote`, e quem COLA é esta sessão, pelo
+MCP do Lovable (`docs/agent/deploy.md` §"Deploy de edge pela SESSÃO"):
+
+```bash
+bun scripts/pendencias-deploy.ts --json > /tmp/pend.json   # quem julga é o LEDGER, não o diff do PR
+bun scripts/pendencias-pacote.ts - < /tmp/pend.json        # gate de ordem: RPC em prod ANTES da edge
+# o Passo 2 do pacote vai VERBATIM para mcp__lovable__send_message
+#   (projeto `steu`, 8f005805-000a-42b7-88a1-9683f785fab6)
+```
+
+O gerador já resolve o closure ∪ {mapa} lendo de `origin/main` (**nunca** do working tree — #2123), já
+emite UMA colagem para a leva inteira e já carrega o `sha256` de cada arquivo com a ordem de conferir
+ANTES de deployar (#2362). Medido em 2026-09-08 numa leva de 2 (`omie-vendas-sync` money-path +
+`sync-reprocess`): **24/24 hashes conferidos**, ambas `Active`, 1,2 crédito, e `pendencias:deploy`
+em exit 0 na medição seguinte.
+
+⚠️ **`pacote` em exit 3 = BLOQUEADO**: a DDL de que a edge depende não está em prod. Não contorne
+mandando a colagem assim mesmo — aplicar migration continua sendo do founder (SQL Editor), e é ESSE
+o caso em que a pendência vira chip.
+
+O resto deste passo é o que o gerador faz por dentro — leia quando precisar auditá-lo, ou quando a
+edge estiver fora do que ele cobre. Ele decide o **conteúdo** do prompt; ele NÃO decide *se* a edge
+precisa de deploy, e o mapa ter mudado depois do PR não é motivo (ver Passo 2).
 
 **UMA colagem por LEVA, não por edge (medido 2026-09-06, e a transição observada em 2026-09-08).**
 Com 2+ edges pendentes, monte um prompt único numerando-as, cada uma com a SUA lista de arquivos — a

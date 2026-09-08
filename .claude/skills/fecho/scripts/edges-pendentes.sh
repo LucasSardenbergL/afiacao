@@ -102,7 +102,8 @@
 # única via que enxerga mudança em `_shared/`, que muda o bundle de N edges sem tocar na pasta de
 # nenhuma; (b) o `git log --name-only` das pastas — única via que enxerga edge FORA do mapa.
 #
-# Exit: 0 = nada pendente (todas provadas no ar) · 1 = há pendência → abra chip para a lista
+# Exit: 0 = nada pendente (todas provadas no ar) · 1 = há pendência → RESOLVA na sessão (deploy
+#       pelo MCP para as provadas, sonda para as SEM_PROVA); chip só se o braço estiver indisponível
 #       2 = a MECÂNICA não é confiável (sem banco, mapa ilegível, janela inválida) → trate TUDO
 #           como pendente; o script já imprime todos os alvos como SEM_PROVA
 #       3 = uso inválido
@@ -676,14 +677,29 @@ if [ "$n_chips" -eq 0 ]; then
   echo "✅ nenhum chip de deploy por estas edges: todas provadas no ar (pelo fingerprint servido na janela viva, ou pela atestação durável do ledger) ou aposentadas."
   exit 0
 fi
-echo "🎫 abra chip para: $(tr '\n' ' ' < "$tmp/chips")"
+# ⚠️ A MARCA É ASCII, CAIXA FIXA, e só aparece NESTE ramo. A suíte casa `RESOLVER_NESTA_SESSAO`
+# sem `-i`: marca com acento ou emoji casa diferente sob `LC_ALL=C` × `pt_BR.UTF-8` (#1483), e
+# marca que vaze para o rodapé casa em TODA execução e esvazia a asserção (ver o bloco acima).
+echo "🚀 RESOLVER_NESTA_SESSAO: $(tr '\n' ' ' < "$tmp/chips")"
 # A legenda descreve SEM repetir os marcadores (ver o bloco acima: token no rodapé casa sempre e
 # esvazia a asserção da suíte que o procura).
 echo "   (linha a linha acima: bundle velho servindo, sonda sem o campo de fonte e divergência do"
-echo "    ledger são pendência PROVADA · sem prova = indeterminado, chip por fail-closed · edge"
-echo "    aposentada e edge atestada pelo ledger não entram no chip)"
+echo "    ledger são pendência PROVADA · sem prova = indeterminado, entra por fail-closed · edge"
+echo "    aposentada e edge atestada pelo ledger ficam de fora)"
+echo
+echo "   🔧 O DESTINO DESTA LISTA É A SESSÃO QUE ESTÁ LENDO, NÃO UM CHIP. O braço que deploya"
+echo "      deixou de ser humano em 2026-09-08 (docs/agent/deploy.md, §Deploy de edge pela SESSÃO):"
+echo "        bun scripts/pendencias-deploy.ts --json > /tmp/pend.json"
+echo "        bun scripts/pendencias-pacote.ts - < /tmp/pend.json"
+echo "      e o Passo 2 do pacote vai VERBATIM para mcp__lovable__send_message. Depois MEÇA o"
+echo "      ledger: 'o Lovable disse Active' não é prova do bundle servido — pendencias:deploy é."
+echo "      Abrir chip aqui é devolver ao founder um trabalho que esta sessão faz em 2 comandos,"
+echo "      e foi por isso que a MESMA edge virava chip em toda sessão que fechava."
 # ⚠️ "nenhuma sonda na janela" NÃO se resolve esperando, e dizer só "INDETERMINADO" convida o
-# leitor a esperar. NÃO HÁ cron de sondagem: `cron.job` tem 93 jobs e ZERO com `probe`. Quem dá
+# leitor a esperar. O cron de sondagem existe desde 2026-09-06 (`deploy-sonda-cron`, 37 */2 * * *,
+# pelo relé OPTIONS fail-closed), mas cobre só a ALLOWLIST provada de
+# `_shared/sonda-cron-alvos.ts` — 7 edges de 59. Para as outras 52 esperar continua sendo
+# esperar para sempre, e o argumento abaixo vale palavra por palavra. Quem dá
 # prova passiva é só a edge cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) E tem cron
 # frequente — `analytics-outbox-drain` (5/5min) é o caso típico. Medido 2026-09-05: 24 das 54
 # edges do mapa não têm cron NENHUM (webhook, ou invocada sob demanda pelo app), e para essas a
