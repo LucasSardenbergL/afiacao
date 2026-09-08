@@ -60,7 +60,7 @@ exceções que envelhece sozinha.
 
 1. **Migration** → colar o SQL no **SQL Editor do Lovable** → Run → validar com query de contagem. O Lovable **NÃO** aplica migration de nome custom sozinho (falha SILENCIOSA: a feature compila e quebra em runtime). Detalhe + ritual + skill `lovable-db-operator`: `docs/agent/database.md`.
 2. **Frontend** → **Publish** manual no editor do Lovable. `steu.lovable.app` serve o **build velho** até o Publish (lição 2026-05-31: mergear e achar que foi pro ar é o erro recorrente).
-3. **Edge functions** → criadas/editadas pelo **chat do Lovable** (ele lê `supabase/functions/<nome>/index.ts` do repo e deploya **verbatim**), **NÃO** pela UI Cloud (que só mostra logs).
+3. **Edge functions** → criadas/editadas pelo **chat do Lovable** (ele lê `supabase/functions/<nome>/index.ts` do repo e deploya **verbatim**), **NÃO** pela UI Cloud (que só mostra logs). **Desde 2026-09-08 quem cola é a SESSÃO, pelo MCP** — §Deploy de edge pela SESSÃO.
 4. **SECRET novo de edge** → **Edge Functions → Secrets**, e **antes** do deploy da edge. Não é camada de código — nenhuma das 3 acima o acusa — e falha do jeito mais caro: a edge fica **Active**, o cron fica **verde**, `cron.job_run_details` diz `succeeded`, e a função morre no 1º `Deno.env.get` devolvendo 500 sem fazer nada. Deployar antes do secret **arma** exatamente esse estado, e a verificação por sonda pode carimbar "no ar" uma edge que não faz nada. #2035 (`analytics-outbox-drain` ↔ `POSTHOG_INGEST_KEY`, lido por essa edge e por nenhuma outra) só não quebrou porque o secret já estava lá — **sorte, não processo**.
 
 **Achar UMA camada pendente é SINTOMA — audite as TRÊS do MESMO PR.** As camadas deployam separado, mas o PR que as tocou é um só: migration não-aplicada é evidência de **PR não-deployado**, não de migration esquecida. E o caminho de detecção enviesa — um `/fecho` que varre migrations acha migrations; frontend e edge nem entram no campo de visão. Ao detectar qualquer pendência, classifique o diff por camada antes de fechar o caso:
@@ -109,6 +109,40 @@ Mordido 2026-08-14 (#1520 `9f7e8962`, FU4-F fase 3): o `/fecho` pegou `…130000
 - **"Deploy verbatim" manual é frágil p/ edge money-path** (cópia-fonte mutável do Lovable pode vencer — Codex 2026-06-26). Mitigar: prompt "deploy from `main` at SHA `<sha>`; do NOT reconcile from your internal copy; abort+report if it differs"; idealmente CI que falha se o invariante some, ou deploy por SHA/Action.
 - **Validar edge com `deno lint` é FALSO VERDE: quem barra o CI é o ESLint, e a SUPRESSÃO não é intercambiável.** Os dois lintam as edges, com regras diferentes: `bun lint` (= `eslint .`) cobre `supabase/functions/**` — de tudo que está sob `supabase/functions/`, o `ignores` do `eslint.config.js` exclui **só** `functions/mcp/**` (bundle auto-gerado) — e aplica `tseslint.configs.recommended`, onde **`no-explicit-any` é ERROR**. O `deno lint` tem a mesma regra, mas **cada linter só enxerga o SEU comentário**: `// deno-lint-ignore no-explicit-any` não diz nada ao ESLint, e `// eslint-disable-next-line @typescript-eslint/no-explicit-any` não diz nada ao deno lint. O repo exibe os dois lados da armadilha ao mesmo tempo (medido 2026-07-18): os **6 `any` pré-existentes** das edges têm supressão de ESLint e por isso figuram nos 198 problemas do `deno lint` **com o CI verde**; no #1432 eu fiz o inverso — suprimi só p/ deno, `deno lint` limpo, **CI vermelho com 4 erros**. Ou seja: nenhum dos dois linters, sozinho, prova o outro. **Regra: mexeu em edge, rode `bun lint` (o do CI) antes do push** — `deno lint`/`deno check`/`test:edges` são complemento, não substituto. (E o `bun lint` também não basta sozinho: o **vitest** é o terceiro caminho pelo qual uma edge reprova — bullet abaixo.) (Por que `deno lint` não entrou no CI: `docs/historico/ci-testes-edge-deno.md`.)
 - **O `vitest` também reprova edge — por TESTE DE FORMA, que lê `supabase/functions/` como TEXTO.** É a terceira perna, e **nenhum dos três comandos "de edge" a enxerga**: `test:edges` roda a suíte Deno, `edges:typecheck` type-checa, `bun lint` linta — o guardrail mora em `src/`, dentro do `include` do vitest (`src/**/*.{test,spec}.{ts,tsx}`), e casa **regex contra o código-fonte da edge** via `readFileSync`. Não é caso de canto: medido 2026-08-18, **20 arquivos de teste** leem edge como texto, cobrindo **70 dos 95** diretórios de `supabase/functions/` (reproduza com `for f in $(grep -rl supabase/functions src --include='*.test.ts'); do grep -q readFileSync "$f" && echo "$f"; done`). ⇒ **mudança PURAMENTE sintática numa edge — extrair helper de resposta, reordenar, renomear — pode ficar vermelha sem nenhuma mudança de semântica.** Mordido no #1772 (sonda de versão nas 5 edges de escrita money-path): centralizar as respostas da `omie-cliente` num helper `jsonRes(body, status)` — necessário para o marcador `versao` ir em TODA resposta — transformou o `status: 409` que o `edge-money-path-invariants` exigia a ≤700 chars de `if (mappingError)` em `jsonRes(..., 409)`. Os três comandos de edge **exit 0** (`test:edges`; `edges:typecheck` baseline 136/0; `bun lint` zero ocorrências em `supabase/functions`) e o `validate` **vermelho** mesmo assim. Corrigido em `f765a71b`: o padrão passou a aceitar as duas grafias **sem afrouxar o poder discriminante** — o que reprova continua sendo um ramo do `mappingError` que não responde 409 (engolir o erro faz a UI anexar a ferramenta ao cliente ERRADO), e o `toBe(2)` segue exigindo os DOIS ramos. **O guardrail estava CERTO em reagir**: em refactor legítimo, **reescrever o teste junto — não deletar** (mesma regra da §Lovable abaixo). **Rede estrutural (2026-08-18):** não precisa lembrar da lista — ao editar arquivo sob `supabase/functions/`, o hook `.claude/hooks/edge-guardrail-nudge.sh` (PreToolUse Write/Edit/MultiEdit) responde **quem lê AQUELE arquivo**, com o `bunx vitest run` já montado só com os testes afetados. Motor: `scripts/edges-guardrails-afetados.ts` (também rodável à mão: `bun scripts/edges-guardrails-afetados.ts supabase/functions/<edge>/index.ts`). Ele só **avisa** — quem reprova segue sendo o CI. Histórico das três pernas: `docs/historico/ci-testes-edge-deno.md`.
+
+### Deploy de edge pela SESSÃO (MCP) — o gesto deixou de ser do founder (2026-09-08)
+
+O chip *"a edge X precisa de deploy no chat do Lovable"* renascia a cada sessão porque o único
+braço capaz de colar era humano. Não é mais: o MCP oficial do Lovable está autenticado como o
+founder nesta máquina, e `send_message` é o MESMO canal do chat — medido em 2026-09-07/08
+(`docs/historico/piloto-deploy-mcp-lovable.md`).
+
+O procedimento — e ele não é "mandar um recado":
+
+```bash
+bun scripts/pendencias-deploy.ts --json > /tmp/pend.json   # quem julga é o LEDGER, não o diff do PR
+bun scripts/pendencias-pacote.ts - < /tmp/pend.json        # gate de ordem: RPC em prod ANTES da edge
+```
+
+O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,
+`8f005805-000a-42b7-88a1-9683f785fab6`). O prompt carrega o `sha256` de cada arquivo do closure e
+manda o agente **conferir antes de deployar** (#2362) — e foi essa conferência que fechou, na
+`copilot-analyze` de 2026-09-08, a metade **verbatim** que o piloto tinha deixado NÃO ATESTADA: os
+9 hashes foram conferidos contra `36f4fab91` e reportados batendo, ANTES do deploy. Custo medido:
+**0,9 crédito** para uma edge. O bot commita um merge `Lovable update` na `main` logo depois —
+confira o `git diff --stat` dele (no caso medido: só `src/integrations/supabase/types.ts`, +10
+linhas), porque é por esse mesmo caminho que o sync já reverteu fix mergeado.
+
+**O que continua sendo do founder, e por quê:**
+
+- **Publish** (Camada 2) e **migration** (Camada 3) — camadas independentes, e o resultado de uma
+  não se estende às outras. `query_database` entra como `postgres`, com `BYPASSRLS` medido e sem
+  rastro em `list_edits`: abrir escrita é decisão dele, em conversa própria.
+- **A PROVA no ledger.** O deploy sai pelo MCP; a atestação exige `net.http_post` (escrita) ou o
+  cron de sonda — e nem toda edge está na allowlist (`supabase/functions/_shared/sonda-cron-alvos.ts`).
+  Enquanto o ledger não vê, `pendencias:deploy` segue acusando divergência, e está **certo**: "o
+  Lovable disse Active" não é prova do bundle servido. Sonda anônima não substitui: em edge com
+  `authorizeCronOrStaff`, `{"probe":true}` com a chave publicável devolve **401** (medido).
 
 ## Gateway de IA do Lovable — teto MENSAL de créditos derruba 7 edges de uma vez
 
