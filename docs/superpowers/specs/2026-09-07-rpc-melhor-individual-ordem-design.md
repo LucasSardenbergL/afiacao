@@ -162,16 +162,31 @@ São dois estados diferentes e passam a ter nomes diferentes:
 
 | `situacao` | condição | significado |
 |---|---|---|
-| `eleito` | ordem conhecida em todo o grupo **e** um único candidato no topo | decidido por sinal |
-| `empatado` | ordem conhecida em todo o grupo **e** ≥2 candidatos no topo | igualdade MEDIDA |
-| `ordem_desconhecida` | **qualquer** `ordem` nula no grupo com ≥2 candidatos | ninguém mediu |
+| `eleito` | ordem conhecida em TODO o grupo · máximo ÚNICO · referência não-ambígua | decidido por sinal |
+| `empatado` | ordem conhecida em TODO o grupo · ≥2 candidatos no máximo | igualdade MEDIDA |
+| `unico_registrado` | grupo de UM candidato | identificável, mas nada foi ordenado |
+| `ordem_indisponivel` | ≥2 candidatos e QUALQUER `ordem` nula | ordenação ausente ou incompleta |
 
-Um grupo de **um único candidato** é `eleito` mesmo com `ordem` nula: não há escolha a fazer, e
-chamar isso de empate seria a mentira simétrica. `candidatos` conta **SKUs distintos** (`count
-(DISTINCT product_id)`), não linhas — "N produtos" exige unicidade por produto.
+⚠️ **`unico_registrado` existe porque `eleito` mentiria** (achado R2/3). Um grupo de um candidato
+com `ordem` nula não é empate — mas também não foi decidido por sinal de ordenação nenhum. Ser a
+única recomendação registrada permite identificá-la; não diz nada sobre a qualidade da escolha que
+a produziu. Colapsar os dois em `eleito` seria a mentira simétrica à do campo único da revisão 1.
 
-O caso `[1, 2, null]` cai em `ordem_desconhecida` por fail-closed: as ordens conhecidas mantêm sua
-relação entre si, mas nada situa a linha nula, e afirmar o vencedor exigiria descartá-la.
+⚠️ **`ordem_indisponivel` cobre DOIS casos e o rótulo não afirma mais do que sabe**: `[null,null]`
+é ordenação **ausente**; `[1,2,null]` é ordenação **incompleta** — as ordens conhecidas mantêm sua
+relação, mas nada situa a linha nula, e eleger exigiria descartá-la. Nos dois a resposta honesta é
+a mesma ("não dá para ordenar este grupo"), então o estado é um só; o que não se pode é chamar
+qualquer um deles de "ninguém mediu", que era a redação anterior.
+
+**`candidatos` conta conjuntos DIFERENTES por estado**, e isso é explícito no contrato porque
+contar o grupo inteiro em `empatado` seria falso (achado R2/3): em `[A:1, B:1, C:2]` há **2**
+empatados, não 3.
+
+| estado | `candidatos` conta |
+|---|---|
+| `empatado` | SKUs distintos **no topo** |
+| `ordem_indisponivel` | SKUs distintos **registrados no grupo** |
+| `eleito` · `unico_registrado` | 1 |
 
 **Guard estrutural: `product_id` só é não-nulo quando `situacao = 'eleito'`.** Sem eleição por
 sinal, não sai vencedor — impossível renderizar a moeda por descuido.
@@ -199,8 +214,10 @@ Também evita o `DROP`+`CREATE` que **reseta o ACL** (`database.md` §4).
 
 ### 3.5 Registros existentes (critério 3) — sem backfill
 
-Os 1.083 pendentes de 21/08 nascem com `ordem` nula ⇒ `situacao = 'ordem_desconhecida'` e a tela diz
-"ordenação indisponível — N recomendações registradas".
+Os 1.083 pendentes de 21/08 nascem com `ordem` nula. Os grupos com **≥2** candidatos saem
+`ordem_indisponivel`; os de **um só** candidato saem `unico_registrado` e exibem o nome — e a
+distinção não é teórica: 369 linhas up-sell em 186 grupos implicam **pelo menos 3 grupos de uma
+linha** (achado R2/3, que derrubou o "todos sairão como ordem desconhecida" da revisão 2).
 
 ⚠️ **Correção da revisão 1**, que se contradizia: eu afirmava que isso "vale no dia da migration,
 antes de qualquer recálculo". **Não vale** — §3.4 mantém a RPC antiga servindo o front antigo, então
@@ -222,9 +239,22 @@ O leitor muda em cinco pontos, e quatro deles são armadilhas que o challenge ap
    deliberado como falha de catálogo — fabricaria deterioração.
 4. **O filtro de inclusão do cartão** (`useBundleEngine.ts:1073`) passa a omitir o cliente só quando
    **ambos** os tipos são `nenhum`.
-5. **Validação em runtime da resposta**: tipo reconhecido, `candidatos` inteiro ≥1, sem duplicata
-   `(cliente,tipo)`, combinação `situacao`×`product_id` válida. O cast atual para
-   `MelhorIndividualRow[]` não valida nada.
+5. **Validação em runtime da resposta**: `customer_user_id` presente, tipo reconhecido,
+   `candidatos` inteiro ≥1, sem duplicata `(cliente,tipo)`, combinação `situacao`×`product_id`
+   válida. O cast atual para `MelhorIndividualRow[]` não valida nada. **A resposta inválida é
+   rejeitada INTEIRA como `leitura_falhou`, preservando a causa** — validar-e-descartar linhas
+   transformaria falha em ausência e entregaria um Map parcial apresentado como completo (achado
+   R2/4). Sem a checagem de `customer_user_id` as demais passam e a linha some na consulta pela
+   chave, que é a mesma falha por outra porta.
+6. **`geracoesExibidas`** (`useBundleEngine.ts:1057`) só recebe `run_id` quando o produto resolve.
+   Com os estados novos, cartões exibiriam empates e ordens indisponíveis de gerações diferentes
+   sem alimentar o canário — a contagem passa a acompanhar **todo estado exibido**,
+   independentemente de o SKU resolver.
+
+**Preservar** (o challenge listou, e nenhum é consequência automática do desenho): o cartão
+continua aparecendo quando há bundle, mesmo com os dois individuais em `nenhum`; o aviso do cartão
+recolhido (`CustomerBundleCard.tsx:68`), hoje dependente do estado individual único; e a proibição
+de comparar `ordem` de `run_id` diferentes dentro de uma mesma eleição.
 
 O cartão ganha duas células rotuladas, cada uma com:
 
@@ -274,10 +304,18 @@ na origem. O challenge executou os helpers reais trocando só os uuids e o vence
 | clientes atingidos | 14 |
 | **∩ com os 186 clientes de up-sell vivo** | **2 (1,1%)** |
 
-É limite **superior**: nem todo par ambíguo troca vencedor. A 1,1% dos clientes, propagar a
-ambiguidade até o contrato da RPC não se paga nesta entrega — mas **declarar** é obrigatório, e a
-entrega inclui um sensor que conta pares ambíguos por execução, para que o número deixe de depender
-de alguém lembrar de medir. Se ele subir, a propagação vira trabalho próprio.
+É limite **superior**: nem todo par ambíguo troca vencedor. Mas **incidência medida não fecha
+falha de contrato** (achado R2/1): um único caso basta para que `eleito` — que afirma "decidido por
+sinal" — esteja errado, e o Codex executou os helpers reais trocando só os uuids, obtendo topo
+numericamente único nos DOIS mundos, com vencedores diferentes.
+
+**Por isso a ambiguidade entra no contrato, não num sensor agregado.** Um sensor não permite ao
+consumidor distinguir os casos afetados; a flag permite. O motor já tem o dado no instante em que
+escolhe a referência: quando o topo por `instante` está empatado entre pedidos DISTINTOS **com
+preços diferentes**, o candidato up-sell derivado dela nasce marcado, e o grupo não pode sair
+`eleito` — cai em `ordem_indisponivel`. Custo: um booleano por linha, decidido onde a informação
+já existe. A alternativa que o Codex também aceitava — rebaixar `eleito` para "topo único do rank
+persistido" — foi descartada: ela conserta o texto e deixa o consumidor sem como distinguir.
 
 ## 6. Implantação (critério 3)
 
@@ -303,9 +341,23 @@ A ordem 1→2 é obrigatória: contra o schema velho, o `jsonb_to_recordset` **i
 A última não é barrada pelo CAS: se a aba antiga lê o head **depois** da geração nova, ela apresenta
 o head correto e grava normalmente — o CAS controla concorrência causal, não versão do produtor. E
 `FarmerRecommendations.tsx:45` calcula **ao montar**, então não depende de clique consciente.
-⇒ a validação de `ordem` no writer **não pode** rejeitar o payload legado (quebraria a aba antiga
-inteira); o que a entrega adiciona é um **contador de gerações sem `ordem`** no head, para a janela
-ser observável em vez de suposta.
+**O que a entrega faz aqui, dito como o que é** (achado R2/5): um contador **não** torna o writer
+fail-closed. São garantias diferentes — o writer segue permitindo que uma geração sem rank
+substitua uma com rank; o leitor degrada honestamente para `ordem_indisponivel`; e o contador
+apenas torna a regressão **observável**. Isto é **aceitação declarada de perda de cobertura**, não
+proteção contra ela, e a revisão 2 a descrevia como se fosse proteção.
+
+⚠️ E a justificativa que eu dei — "rejeitar quebraria a aba antiga inteira" — **não está
+demonstrada**: em `useCrossSellEngine.ts:1208` a falha de persistência gera aviso e mantém o
+cálculo em memória. O comportamento do build legado efetivamente servido precisa ser **verificado
+antes** de a afirmação entrar no PR; até lá ela sai da spec.
+
+O fechamento de verdade, se a exigência for impedir regressão após a adoção, é um **guard de
+versão/capacidade do produtor**, verificado atomicamente **antes de expirar linhas** — um produtor
+legado não consegue removê-lo. E **nunca copiar ranks antigos para uma geração nova**. O sensor tem
+de ser calculado **no servidor** (o produtor legado não sabe emiti-lo) e viver no **log de
+execuções** (`20260815181500_farmer_geracao_head_sensor.sql:446`), que tem denominador — como
+insumo do head atual ele seria sobrescrito.
 
 ## 7. O que mudou da revisão 1 (challenge Codex)
 
@@ -318,7 +370,20 @@ ser observável em vez de suposta.
 | 5 | Janelas de implantação; §3.4 contradizia §3.5 | §3.5 corrigida; §6 lista as janelas e o risco da aba antiga |
 | 6 | Afirmações além da evidência | §1.1 (incidência ≠ dano) e §3.2 (recuperação medida: **104 de 198**, depois de o proxy global ter mentido 198/198) |
 
-## 8. Prova
+### 7.1 Rodada 2 do challenge
+
+A revisão 2 foi de novo reprovada, e com razão em tudo que era verificável:
+
+| # | Achado R2 | Resolução |
+|---|---|---|
+| 1 | Medir incidência não fecha o contrato: `eleito` ainda podia ser arbitrário na origem | §5: a ambiguidade da referência virou **flag por linha** e bloqueia `eleito` |
+| 2 | `k` global pode empatar/inverter na carteira; e heterogeneidade ≠ máximo único | §3.2 remedida: **9/198**, com 4 controles |
+| 3 | Singleton com ordem nula não é `eleito`; `[1,2,null]` é incompleta, não ausente; `candidatos` sem conjunto definido | §3.3: 4 estados, e `candidatos` conta conjunto DIFERENTE por estado |
+| 4 | Faltava `geracoesExibidas` e o destino da resposta inválida | §3.6: 6º ponto + rejeição INTEIRA + `customer_user_id` na validação |
+| 5 | Contador não é fail-closed; "quebraria a aba antiga" não demonstrado | §6: reescrito como aceitação declarada de perda, e a afirmação não demonstrada foi retirada |
+| 6 | Afirmações além do medido | §3.2, §5 e §6 corrigidas; §8 rotulada como PLANO de prova |
+
+## 8. Plano de prova (ainda NÃO executado)
 
 Harness PG17 estendendo `db/test-farmer-geracao-vigente.sh` (hoje 31 asserts + 4 falsificações):
 
@@ -327,6 +392,10 @@ Harness PG17 estendendo `db/test-farmer-geracao-vigente.sh` (hoje 31 asserts + 4
   `ordem` nula sai `eleito` · `[]` na carteira vazia · dois objetos por cliente.
 - **negativos**: `ordem = 0` e negativa recusadas com a SQLSTATE nomeada, re-lançando o resto.
 - **RLS**: `SET ROLE authenticated` + GUC; carteira alheia não volta.
+- **exigidos pelo R2**: máximo PARCIALMENTE empatado (`[A:1,B:1,C:2]`) · ordem parcialmente nula
+  (`[1,2,null]`) · singleton com ordem nula saindo `unico_registrado` · falha de validação chegando
+  ao cartão como `leitura_falhou` (e não como Map parcial) · o interleaving "novo grava → antigo lê
+  head novo → antigo tenta gravar" · referência ambígua bloqueando `eleito`.
 - **falsificação**: uma camada por vez, com linha de base **verde na mesma invocação**, conferindo
   **contagem e NOMES** dos vermelhos.
 
@@ -349,3 +418,7 @@ provar que essa propriedade é medida.
 - **`p_ij` é 0 em 645 de 714 linhas cross-sell** (`Math.round(0,0002 × 1000)/10 = 0`): o vendedor lê
   "0,0%". Mesma quantização, outra coluna, outro consumidor.
 - **Moeda comum em R$** (§1.3): sem substrato hoje.
+- **O sinal do motor de cross-sell é grosso, e agora há evidência dimensionada disso**: 189 de 198
+  grupos têm `relevance` EXATAMENTE igual entre os candidatos do topo. Dar sinal novo (margem,
+  giro, recência do SKU no cliente) é o conserto da CAUSA — spec própria, com esta medição como
+  ponto de partida. Esta entrega trata o sintoma: para de apresentar o sorteio como veredicto.
