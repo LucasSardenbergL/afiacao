@@ -247,8 +247,23 @@ describe('useCrossSellEngine — as duas pontas do par vêm do banco', () => {
   });
 
   it('o `select` de `sales_orders` pede `account` — é a conta que qualifica cada item', () => {
-    const select = fonte.match(/\.select\('customer_user_id, items[^']*'\)/)?.[0];
+    // Ancorado nas COLUNAS, não na ordem delas: o casamento antigo exigia que o select
+    // COMEÇASSE em `customer_user_id`, e quebrou quando `id` entrou na frente. Guard de forma
+    // que depende da ordem de colunas dá falso VERMELHO em mudança inócua — e falso vermelho
+    // repetido é o que faz um guard ser desligado.
+    const select = fonte.match(/\.select\('[^']*customer_user_id[^']*items[^']*'\)/)?.[0];
     expect(select, 'o select de pedidos mudou de forma — reveja este guard').toBeTruthy();
     expect(select).toContain('account');
+  });
+
+  it('o `select` de `sales_orders` pede `id` — sem ele o desempate de recência colapsa', () => {
+    // `id` não é enfeite: `preco-referencia` desempata `created_at` igual pelo `pedidoId`, e
+    // sem a coluna ele vira `''` em TODOS os pedidos. Aí o `ordemDeLeitura` segura a barra
+    // (a degradação vira a ordem de leitura, que é coerente), mas a regra DECLARADA —
+    // "empate → maior id" — deixa de valer em silêncio. Em prod 258 pares (1,94%) empatam no
+    // `created_at` do topo, então este desempate roda de verdade.
+    const select = fonte.match(/\.select\('[^']*customer_user_id[^']*items[^']*'\)/)?.[0];
+    expect(select, 'o select de pedidos mudou de forma — reveja este guard').toBeTruthy();
+    expect(select).toMatch(/(^|')id,|, id[,']/);
   });
 });

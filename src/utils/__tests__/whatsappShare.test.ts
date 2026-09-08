@@ -1,3 +1,10 @@
+/**
+ * @vitest-environment jsdom
+ *
+ * Exceção ao particionamento por extensão (`projects` em vitest.config.ts): este é um
+ * `.ts` — logo, no ambiente `node` por padrão — mas toca DOM. O docblock sobrepõe o
+ * project e é local ao arquivo, então não vira ímã de conflito entre worktrees.
+ */
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { shareOrderViaWhatsApp } from '../whatsappShare';
 

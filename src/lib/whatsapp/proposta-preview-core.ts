@@ -7,7 +7,7 @@ import type { CrossSellCand } from './cross-sell';
 
 export interface PreviewOrder { id: string; account: string; order_date_kpi: string | null; created_at: string; status: string }
 export interface PreviewItem { omie_codigo_produto: number | null; quantity: number; unit_price: number; sales_order_id: string }
-export interface PreviewRec { product_id: string | null; affinity_score: number | null; status: string | null }
+export interface PreviewRec { product_id: string | null; affinity_score: number | null; status: string | null; recommendation_type: string | null }
 export interface PreviewProdById { id: string; omie_codigo_produto: number; descricao: string; ativo: boolean }
 
 export interface LinesContexto {
@@ -67,6 +67,28 @@ export function buildCrossSellCandidatos(recs: PreviewRec[], prodById: PreviewPr
   const byId = new Map(prodById.map(p => [p.id, p]));
   const out: CrossSellCand[] = [];
   for (const r of recs) {
+    // CONTRATO antes de tudo: `.eq('recommendation_type', …)` na query FILTRA mas NÃO projeta a
+    // coluna. Se o `.select()` a esquecer, o campo chega `undefined` — e tratar isso como "não é
+    // cross-sell" descartaria TUDO, zerando a seção dos 238 clientes em silêncio, com o teste do
+    // helper VERDE (a fixture fornece o campo que a query esqueceu). Ausente ≠ "não é" — quem não
+    // pode decidir tem de DIZER (money-path §6, achado do challenge Codex gpt-6-astra/max).
+    if (r.recommendation_type === undefined) {
+      throw new Error(
+        'buildCrossSellCandidatos: `recommendation_type` ausente no payload — a query precisa ' +
+        'PROJETAR a coluna, não só filtrar por ela. Sem isso a seção iria a zero em silêncio.',
+      );
+    }
+    // Só CROSS-SELL: a seção é "experimente também" (produto complementar). `affinity_score`
+    // carrega DUAS grandezas incomensuráveis — medido em prod 07/09/2026, o MÍNIMO do up-sell
+    // (0,0024) é 8× o p75 do cross-sell (0,0003) —, então ordenar os dois juntos por ele não
+    // ranqueia mérito, ranqueia escala: 183 dos 238 clientes recebiam a seção 100% up-sell, ou
+    // seja a versão mais CARA do que já compram. Ver docs/historico/affinity-score-duas-grandezas.md
+    //
+    // O filtro mora AQUI, antes do dedupe por SKU de `selecionarCrossSell`: fosse depois, uma
+    // linha up-sell poderia vencer o dedupe de um SKU e levar junto a oportunidade cross-sell
+    // daquele mesmo SKU. A query também filtra — ali é a aquisição; aqui é o contrato da SAÍDA,
+    // que é o que o nome desta função promete.
+    if (r.recommendation_type !== 'cross_sell') continue;
     if (!r.product_id || !STATUS_OFERECIVEL.has(r.status ?? '')) continue;
     const prod = byId.get(r.product_id);
     if (prod && prod.ativo) out.push({ omie_codigo_produto: prod.omie_codigo_produto, nome: prod.descricao, afinidade: r.affinity_score });

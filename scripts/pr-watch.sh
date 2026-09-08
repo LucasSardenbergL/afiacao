@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # pr-watch.sh — vigia o DESFECHO de um PR sob auto-merge e sai quando decidir:
 #   exit 0 = MERGEADO · 2 = fechado sem merge · 3 = CONFLITO (precisa rebase)
-#   exit 4 = CI VERMELHO · 5 = CONSULTEI e o PR segue sem desfecho (timeout)
+#   exit 4 = CI VERMELHO, ou CI SEM VEREDITO (check `cancelled`/`timed_out` —
+#            a mensagem distingue; ver o bloco `sem_veredito` lá embaixo)
+#   exit 5 = CONSULTEI e o PR segue sem desfecho (timeout)
 #   exit 6 = NÃO CONSEGUI CONSULTAR — estado DESCONHECIDO: confirme com
 #            `gh pr view <nº>` ANTES de reportar qualquer coisa ao founder
 #   exit 64 = uso/deps errados
@@ -75,6 +77,25 @@ decidir() {
   falhas="$(jq -r '[.statusCheckRollup[]? | select(((.conclusion // .state // "") | ascii_upcase) | test("FAILURE|ERROR")) | (.name // .context // "check")] | unique | join(", ")' <<<"$info")"
   if [ -n "$falhas" ]; then
     echo "❌ CI VERMELHO: PR #$pr — checks: $falhas — $url"
+    exit 4
+  fi
+
+  # Check que terminou SEM VEREDITO — `CANCELLED` (estouro de `timeout-minutes`, ou cancelamento
+  # manual) e `TIMED_OUT`/`STALE`. Não casava a regex acima até 2026-09-07, e a consequência era
+  # silêncio de 45 min: o check nunca vira verde, nunca casa FAILURE, e o watcher ia até o
+  # timeout sair **5** ("segue sem desfecho") — o mesmo falso negativo que o exit 6 veio separar
+  # do 5, só que pelo outro lado. Não é hipótese: naquele dia o job `validate` rodava a segundos
+  # do teto de 15 min e 5 de 69 runs saíram `cancelled`.
+  #
+  # Sai 4 junto com o vermelho de propósito: o desfecho ACIONÁVEL é idêntico (o auto-merge não
+  # vai acontecer e o PR precisa de humano), e um código novo quebraria quem já trata 0-6. Mas a
+  # MENSAGEM é outra — mandar o founder caçar um defeito de teste que não existe custa a mesma
+  # sessão que o silêncio custava. Ver docs/historico/ci-validate-timeout-15min.md.
+  sem_veredito="$(jq -r '[.statusCheckRollup[]? | select(((.conclusion // .state // "") | ascii_upcase) | test("^(CANCELLED|CANCELED|TIMED_OUT|STALE)$")) | (.name // .context // "check")] | unique | join(", ")' <<<"$info")"
+  if [ -n "$sem_veredito" ]; then
+    echo "⚠️ CI SEM VEREDITO (não é reprovação de teste): PR #$pr — checks: $sem_veredito — $url"
+    echo "   cancelled = estouro de \`timeout-minutes\` ou cancelamento; o CI não afirmou nada."
+    echo "   Meça antes de re-rodar: gh run view <id> --json jobs (quantos steps executaram?)."
     exit 4
   fi
 

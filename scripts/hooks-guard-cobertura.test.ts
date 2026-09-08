@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 import { SUITES_FORA_DO_CI } from './hooks-suites-baseline';
 
 /**
@@ -213,11 +214,24 @@ export function globParaRegex(glob: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
-/** Os globs do `test.include` do vitest.config.ts, lidos da FONTE (não repetidos aqui). */
+/**
+ * Os globs de TODOS os `test.include` do vitest.config.ts, lidos da FONTE (não repetidos aqui).
+ *
+ * Agrega TODAS as ocorrências, não a primeira. Desde o particionamento por ambiente a config tem
+ * um `include` por project (`node` para `.ts`, `dom` para `.tsx`); um parser que parasse na
+ * primeira enxergaria METADE da config e ficaria verde por ORDENAÇÃO dos projects, não por
+ * cobertura — inverter a ordem dos dois blocos deixaria `scripts/**` descoberto sem que uma linha
+ * de glob mudasse.
+ *
+ * E limpa comentário ANTES de casar, com o stripper compartilhado: o próprio vitest.config.ts
+ * explica os globs em prosa, e um `include: [...]` citado dentro de comentário seria lido como
+ * config de verdade — o gate passaria a se medir contra um glob que não roda nada.
+ */
 export function globsDoVitest(cfg: string): string[] {
-  const bloco = /include\s*:\s*\[([^\]]*)\]/.exec(cfg);
-  if (!bloco) return [];
-  return [...bloco[1].matchAll(/["'`]([^"'`]+)["'`]/g)].map((m) => m[1]);
+  const semComentario = removerComentarios(cfg);
+  return [...semComentario.matchAll(/include\s*:\s*\[([^\]]*)\]/g)].flatMap((bloco) =>
+    [...bloco[1].matchAll(/["'`]([^"'`]+)["'`]/g)].map((m) => m[1]),
+  );
 }
 
 /**
@@ -283,6 +297,28 @@ describe('globsDoVitest — parser', () => {
 
   it('devolve vazio quando não há include (não finge cobertura)', () => {
     expect(globsDoVitest('test: { environment: "jsdom" }')).toEqual([]);
+  });
+
+  it('agrega TODOS os include — um por project, não só o primeiro', () => {
+    // A forma real da config depois do particionamento por ambiente. Um parser que parasse no
+    // primeiro bloco devolveria só os dois globs do project `node`, e o gate de órfãs passaria a
+    // se medir contra meia config.
+    const cfg = `test: {
+      projects: [
+        { test: { name: "node", environment: "node", include: ["src/**/*.test.ts", "scripts/**/*.test.ts"] } },
+        { test: { name: "dom", environment: "jsdom", include: ["src/**/*.test.tsx"] } },
+      ],
+    }`;
+    expect(globsDoVitest(cfg)).toEqual(['src/**/*.test.ts', 'scripts/**/*.test.ts', 'src/**/*.test.tsx']);
+  });
+
+  it('NÃO lê include citado dentro de comentário (o config explica os globs em prosa)', () => {
+    const cfg = `test: {
+      // antes disto o include era include: ["src/**/*.{test,spec}.{ts,tsx}"] num bloco só
+      /* e o de scripts vivia em include: ["scripts/legado/**"] */
+      include: ["src/**/*.test.ts"],
+    }`;
+    expect(globsDoVitest(cfg)).toEqual(['src/**/*.test.ts']);
   });
 });
 

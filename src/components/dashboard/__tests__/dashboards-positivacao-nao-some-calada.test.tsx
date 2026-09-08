@@ -248,7 +248,8 @@ describe.each(HOSTS)('$nome — o placar não some calado', ({ Host, kpiDoHero, 
     ).toContain(`Sem conexão — não foi possível verificar ${oque}`);
 
     expect(evento('carteira.positivacao_vista')).toMatchObject({
-      estado: 'sem-rede', pct: null, is_hunter: isHunter,
+      // `sem_rede` (underscore) é o alfabeto da série; o `'sem-rede'` do helper fica na camada pura.
+      estado: 'sem_rede', pct: null, is_hunter: isHunter,
     });
   });
 });

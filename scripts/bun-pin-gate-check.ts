@@ -22,7 +22,9 @@
  *     do oven-sh/bun são tagueadas `bun-v*`), que também cai na API.
  *  2. FLOAT: o YAML lê `bun-version: 1.3` como o float 1.3 — e `1.30` também vira `1.3` (perde o
  *     zero). Razão INDEPENDENTE pra exigir x.y.z; o regex de formato já barra os dois.
- *  3. CONVERGÊNCIA: as ocorrências (hoje `validate` e `mutation-check`) têm que subir JUNTAS —
+ *  3. CONVERGÊNCIA: as ocorrências (hoje os 4 jobs do fan-out — `typecheck`, `testes`,
+ *     `edges-e-build`, `gates-e-falsificacao` — mais `authz-sentinela` e `mutation-check`) têm que
+ *     subir JUNTAS —
  *     senão os jobs rodam em versões diferentes de bun e divergem.
  *  + Todo `uses: oven-sh/setup-bun` precisa de um `bun-version`: o default da action é `latest`
  *    (mesmo SPOF). Provado por CONTAGEM (nº de usos == nº de pins) — ver checkArquivo.

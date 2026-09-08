@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **529** custom migrations totais
-- **1790** objetos esperados (criados por estas migrations)
+- **530** custom migrations totais
+- **1793** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 565
+  - `function`: 567
   - `rls_policy`: 462
   - `index`: 257
   - `cron_job`: 171
   - `table`: 165
-  - `trigger`: 89
+  - `trigger`: 90
   - `view`: 77
   - `enum_value`: 4
 
@@ -4373,6 +4373,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_deploy_sonda_resultados_tick` | `deploy_sonda_resultados` |
 | `cron_job` | `cron.deploy-sonda-resultados-colher` | — |
 | `rls_policy` | `public.deploy_sonda_resultados_select_staff` | `deploy_sonda_resultados` |
+
+### `20260906190615_reposicao_claim_disparo_cenario_b.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_claim_disparo` | — |
+| `function` | `public.reposicao__veta_cancelamento_com_disparo_pendente` | — |
+| `trigger` | `public.trg_veta_cancelamento_com_disparo_pendente` | `pedido_compra_sugerido` |
 
 ### `20260906193522_valor_total_portal_provado.sql`
 
