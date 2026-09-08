@@ -139,7 +139,7 @@ suite() {
 
   # 1. prova POSITIVA: fonte servida == main -> some o chip
   run ok "$tmp/psql-stub" edge-no-ar
-  if tem 'NO_AR' "$out" && [ "$rc" -eq 0 ] && ! tem 'abra chip' "$out"
+  if tem 'NO_AR' "$out" && [ "$rc" -eq 0 ] && ! tem 'RESOLVER_NESTA_SESSAO' "$out"
   then ok "fonte bate com a main -> NO_AR, exit 0, sem chip"
   else bad "fonte batendo devia dar NO_AR/exit 0 (rc=$rc): ${out:0:90}"; fi
 
@@ -553,7 +553,7 @@ MAPA3
   out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo3" FECHO_MAPA_FONTE="" \
          bash "$ALVO" edge-aposentada 2>&1)"; rc=$?
   if tem 'INERTE' "$out" && tem 'edge-aposentada' "$out" && tem 'founder' "$out" \
-     && [ "$rc" -eq 0 ] && ! tem 'abra chip' "$out"
+     && [ "$rc" -eq 0 ] && ! tem 'RESOLVER_NESTA_SESSAO' "$out"
   then ok "marcador EDGE-APOSENTADA na REF -> INERTE, exit 0, sem chip, e diz para nao pedir ao founder"
   else bad "edge aposentada devia dar INERTE/exit 0 sem chip (rc=$rc): ${out:0:120}"; fi
 
@@ -585,7 +585,7 @@ MAPA3
   #     `edge-muda` e a edge do fixture que NAO tem linha na janela viva — exatamente a que caia
   #     em "nenhuma sonda em 6 hours".
   LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
-  if tem 'LEDGER_CONFERE' "$out" && [ "$rc" -eq 0 ] && ! tem 'abra chip' "$out" \
+  if tem 'LEDGER_CONFERE' "$out" && [ "$rc" -eq 0 ] && ! tem 'RESOLVER_NESTA_SESSAO' "$out" \
      && ! tem 'SEM_PROVA' "$out"
   then ok "ledger CONFERE com fonte == REF -> LEDGER_CONFERE, exit 0, SEM chip (prova alem da janela)"
   else bad "ledger conferindo devia suprimir o chip (rc=$rc): ${out:0:160}"; fi
@@ -626,7 +626,7 @@ MAPA3
   #      deploy antes, sonda depois (a mesma assimetria do `--caro`).
   LEDGER_MODO=diverge run ok "$tmp/psql-stub" edge-muda
   linha_cmd="$(printf '%s' "$out" | command grep 'sonda:sql' || true)"
-  if tem 'LEDGER_DIVERGE' "$out" && [ "$rc" -eq 1 ] && tem 'abra chip' "$out" \
+  if tem 'LEDGER_DIVERGE' "$out" && [ "$rc" -eq 1 ] && tem 'RESOLVER_NESTA_SESSAO' "$out" \
      && ! tem 'edge-muda' "$linha_cmd"
   then ok "ledger DIVERGE -> pendencia PROVADA, chip, e FORA da lista do DISPARE"
   else bad "DIVERGE devia ser chip provado e nunca convidar a sondar (rc=$rc): ${out:0:200}"; fi
