@@ -109,7 +109,9 @@ esteja configurado. Errar para mais custa uma linha de checklist; errar para men
 > ⚠️ **Pra ir ao ar, falta (manual no Lovable) — nesta ordem, APÓS o merge do PR:**
 > - [ ] 🟣 **SQL Editor**: migration Z *(se tocou `supabase/migrations/` — bloco da `lovable-db-operator`; banco ANTES do código que o consome)*
 > - [ ] 🔑 **Secrets (Lovable → Edge Functions → Secrets)**: confirmar que `NOME_DO_SECRET` existe *(se o passo 1 deu `secrets=` com nome ou `?dinamico`)*
-> - [ ] 💬 **chat do Lovable**: deploy das edges X, Y — verbatim da main *(se tocou `supabase/functions/`)*
+> - [ ] 💬 ~~chat do Lovable~~ → **A SESSÃO deploya** as edges X, Y pelo MCP (`send_message`), verbatim da main
+>       *(se tocou `supabase/functions/`)* — desde 2026-09-08 esta linha **não é mais pendência do founder**:
+>       veja o Passo 3, faça o deploy AQUI e reporte o resultado do ledger em vez de pedir a colagem a ele
 >       — **QUAIS edges: as que `bun run pendencias:deploy` lista como `DIVERGE_P1`/`INCOERENTE`/`SEM_MAPA_NO_BUNDLE`**
 >       (2026-09-05). Não derive a lista do diff: "o mapa mudou"/"closure mudou" NÃO é motivo — só
 >       `(versao, fonte)` servido ≠ main. `DIVERGE_P2` (só `_shared/`) entra na leva agrupada, escala em 7 d.
@@ -125,13 +127,35 @@ persiste em disco): a linha pede ao founder para *conferir/criar* pelo nome, e o
 
 ### Passo 3 — Prompt de deploy de edge (se aplicável)
 
-Montar pro founder colar no chat do Lovable, para as edges que o `pendencias:deploy` deu como pendentes
-— este passo decide o **conteúdo** do prompt, o closure ∪ {mapa}; ele NÃO decide *se* a edge precisa de
-deploy, e o mapa ter mudado depois do PR não é motivo (ver Passo 2).
+⚡ **NÃO monte o prompt à mão, e não peça ao founder para colar.** Desde 2026-09-08 as duas metades
+têm ferramenta: quem MONTA é `pendencias:prompt`/`pendencias:pacote`, e quem COLA é esta sessão, pelo
+MCP do Lovable (`docs/agent/deploy.md` §"Deploy de edge pela SESSÃO"):
 
-**UMA colagem por LEVA, não por edge (medido 2026-09-06).** Com 2+ edges pendentes, monte um prompt
-único numerando-as, cada uma com a SUA lista de arquivos — a forma exata está no fim deste passo, e a
-medição (8 edges, 70 arquivos, 54/54 depois) no §Estado. O prompt de 1 edge abaixo continua sendo a
+```bash
+bun scripts/pendencias-deploy.ts --json > /tmp/pend.json   # quem julga é o LEDGER, não o diff do PR
+bun scripts/pendencias-pacote.ts - < /tmp/pend.json        # gate de ordem: RPC em prod ANTES da edge
+# o Passo 2 do pacote vai VERBATIM para mcp__lovable__send_message
+#   (projeto `steu`, 8f005805-000a-42b7-88a1-9683f785fab6)
+```
+
+O gerador já resolve o closure ∪ {mapa} lendo de `origin/main` (**nunca** do working tree — #2123), já
+emite UMA colagem para a leva inteira e já carrega o `sha256` de cada arquivo com a ordem de conferir
+ANTES de deployar (#2362). Medido em 2026-09-08 numa leva de 2 (`omie-vendas-sync` money-path +
+`sync-reprocess`): **24/24 hashes conferidos**, ambas `Active`, 1,2 crédito, e `pendencias:deploy`
+em exit 0 na medição seguinte.
+
+⚠️ **`pacote` em exit 3 = BLOQUEADO**: a DDL de que a edge depende não está em prod. Não contorne
+mandando a colagem assim mesmo — aplicar migration continua sendo do founder (SQL Editor), e é ESSE
+o caso em que a pendência vira chip.
+
+O resto deste passo é o que o gerador faz por dentro — leia quando precisar auditá-lo, ou quando a
+edge estiver fora do que ele cobre. Ele decide o **conteúdo** do prompt; ele NÃO decide *se* a edge
+precisa de deploy, e o mapa ter mudado depois do PR não é motivo (ver Passo 2).
+
+**UMA colagem por LEVA, não por edge (medido 2026-09-06, e a transição observada em 2026-09-08).**
+Com 2+ edges pendentes, monte um prompt único numerando-as, cada uma com a SUA lista de arquivos — a
+forma exata está no fim deste passo, e as duas medições (8 edges / 70 arquivos → 54/54; depois 2 edges
+com o ANTES **medido** no ledger, `DIVERGE_P1` → `CONFERE` → 59/59) no §Estado. O prompt de 1 edge abaixo continua sendo a
 unidade de construção, e é o que você usa quando a leva tem uma só:
 
 > Edit the existing edge function `<nome>` and replace its code with the current contents of
@@ -250,8 +274,10 @@ não só o `index.ts` (#2018).
 
 Mesmo conteúdo por edge, uma colagem só. O cabeçalho pede o total e proíbe pular; cada edge vira uma
 **seção numerada** com o closure ∪ {mapa} DELA; o fecho pede a confirmação item a item, que é o que
-dá ao founder o relato para comparar com a sonda. Medido em 2026-09-06 com **8 edges / 70 arquivos**:
-as 8 responderam `versao` + `fonte` da main e o `pendencias:deploy` fechou 54/54 (§Estado):
+dá ao founder o relato para comparar com a sonda. Medido em 2026-09-06 com **8 edges / 70 arquivos**
+(as 8 responderam `versao` + `fonte` da main, `pendencias:deploy` 54/54) e de novo em **2026-09-08**,
+desta vez com o ANTES conhecido — 2 edges, uma delas em `DIVERGE_P1` medido, que transitou para
+`CONFERE` depois do prompt único (§Estado):
 
 > Edit the following **eight** existing edge functions and update **each** of them from the `main`
 > branch using the current contents of the files listed under it. Deploy all of them **verbatim** —
@@ -1111,12 +1137,27 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   `NUNCA_ATESTADA` — estado ANTES **desconhecido** —, então "o Lovable deployou as 8" e "deployou
   algumas e as outras já estavam idênticas à main" produzem o MESMO eco. O que ficou provado é o par
   que importa para a decisão: o prompt em lote **não** deixa edge pela metade, e depois dele as 8
-  servem o bundle da main. Para fechar a outra metade, repita numa leva com ≥1 edge em `DIVERGE_P1`
-  MEDIDA antes (aí o antes é conhecido e a transição prova o deploy) — enquanto isso não acontecer,
-  a recomendação vale por conveniência com risco medido, não por prova de atomicidade.
+  servem o bundle da main. Para fechar a outra metade era preciso uma leva com ≥1 edge em `DIVERGE_P1`
+  MEDIDA antes — **e ela apareceu em 2026-09-08: item abaixo.** Até lá a recomendação valia por
+  conveniência com risco medido; agora a metade do EVENTO está medida.
   **Forma do prompt que funcionou** (Passo 3): cabeçalho pedindo as N funções + "Deploy every function
   listed; do not skip any", uma seção **numerada** por edge com o closure ∪ {mapa} dela, e o fecho
   "list the N function names and confirm that **each one** shows Active".
+- [x] **A metade do EVENTO, fechada — `DIVERGE_P1` → `CONFERE` num prompt em LOTE (2026-09-08):** a
+  leva prescrita acima apareceu, e não precisou ser fabricada. 2 edges, pacote `29258bf8ac3d` contra
+  `origin/main@5bc73bfac` (34 entradas, **24 arquivos únicos**), um prompt só, enviado por
+  `mcp__lovable__send_message` (canal do #2374) — 1,2 crédito. O ANTES saiu do ledger, não do relato:
+  `omie-vendas-sync` em **`DIVERGE_P1` medido** (prod `v1.2-preco-ausente-nao-e-zero` → main
+  `v1.3-edicao-write-back-atomico`, o fix money-path do #2370) e `sync-reprocess` em `DIVERGE_P2` com
+  **platô de 8 leituras do eco de cron em 13 h** no mesmo par. Depois do prompt: sonda de
+  `omie-vendas-sync` (`request_id` 72784, lido do mapa embutido pelo BANCO) com os quatro campos
+  batendo ⇒ `DEPLOY CONFIRMADO`; `sync-reprocess` atestada pelo relé; `pendencias:deploy` **exit 0,
+  59/59**. Um no-op teria deixado a `v1.2` no ar e o platô intacto — é isto que 2026-09-06 não podia
+  distinguir. **O que segue não provado:** N=2, não os 8 do lote grande; e o `sha256` que o agente
+  conferiu mede o REPO no sandbox, não os bytes servidos — a última ponte continua sendo o `fonte`
+  **declarado** pela sonda. Detalhe em
+  [`docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`](../../../docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md) §7,
+  cruzado com o piloto do MCP (que mediu o CANAL com divergência FABRICADA e N=1).
 - [x] **O carimbo `__BUILD_SHA__` voltou a ser REAL (2026-09-08):** de junho a setembro a skill
   registrava `"dev"` e declarava o caminho determinístico *inviável*, obrigando sentinela em todo
   run. Medido no piloto da Camada 2: o ar carimbava `bb9d8d2e` (= #2357, ancestral da main), o
