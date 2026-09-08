@@ -24,6 +24,13 @@ import {
 } from '@/lib/farmer/upsell-ordem';
 import { acumularContaDeCompra, medirCoberturaContaDaOferta, ofertaNaContaDoCliente } from '@/lib/farmer/cobertura-conta-oferta';
 import { compararRecencia, instanteDoPedido, type MarcaDeCompra } from '@/lib/farmer/preco-referencia';
+import { rankDenso } from '@/lib/farmer/rank-denso';
+import {
+  referenciaEhAmbigua,
+  registrarPrecoDoPedido,
+  topoVazio,
+  type TopoDeReferencia,
+} from '@/lib/farmer/referencia-ambigua';
 import { toast } from 'sonner';
 import { precoUtilizavel } from '@/lib/format';
 
@@ -57,6 +64,23 @@ export interface Recommendation {
    * que é o único sinal personalizado por cliente.
    */
   affinityScore: number;
+  /**
+   * O mesmo score SEM o arredondamento a 4 casas — o que o motor de fato calculou.
+   *
+   * `affinityScore` é `Math.round(x * 10000) / 10000`, e em prod isso colapsa 714 linhas de
+   * cross-sell em 32 valores distintos: ordenar por ele deixa o `sort` estável decidir entre
+   * empatados, e a ordem de inserção é a varredura do catálogo (`.order('id')`) — uuid outra
+   * vez. A ordenação e o rank usam ESTE campo; a tela e a coluna persistida seguem com o
+   * arredondado, que é o que sempre foi mostrado.
+   */
+  scoreCru: number;
+  /**
+   * Rank DENSO 1-based dentro de (cliente, tipo) — empatados compartilham o valor.
+   * Persistido em `farmer_recommendations.ordem`; é o que faz a ordem sobreviver à gravação.
+   */
+  ordem?: number;
+  /** O preço de referência deste CLIENTE saiu de um desempate por uuid (só up-sell). */
+  referenciaAmbigua?: boolean;
   complexityFactor: number;
   /**
    * `round(clusterAdherence × 12)` no cross-sell — uma REESCALA da fração de clientes do
@@ -126,6 +150,11 @@ interface HistoricoDoSku {
   price: number;
   /** Procedência do `price` vigente; `null` enquanto nenhum item informou preço utilizável. */
   precoEm: MarcaDeCompra | null;
+  /**
+   * Os pedidos que disputam a recência máxima, já reduzidos a um preço cada. É o que permite
+   * dizer se `price` foi escolhido por uuid — ver `referencia-ambigua.ts`.
+   */
+  topo: TopoDeReferencia;
 }
 
 interface SalesOrderRow {
@@ -673,7 +702,8 @@ export const useCrossSellEngine = () => {
           const productId = r.productId;
           itensResolvidos++;
 
-          const existing: HistoricoDoSku = cp.get(productId) || { qty: 0, price: 0, precoEm: null };
+          const existing: HistoricoDoSku =
+            cp.get(productId) || { qty: 0, price: 0, precoEm: null, topo: topoVazio() };
           existing.qty += Number(item.quantity || item.quantidade || 1);
           // O preço de referência é o do pedido MAIS RECENTE, não o do "último lido". Duas
           // correções empilhadas aqui, e as duas são de money-path:
@@ -692,6 +722,11 @@ export const useCrossSellEngine = () => {
           const precoItem = precoUtilizavel(item.unit_price) ?? precoUtilizavel(item.valor_unitario);
           if (precoItem !== null && precoItem > 0) {
             const marca: MarcaDeCompra = { instante: instantePedido, pedidoId, ordemDeLeitura, posicao };
+            // Registrado ANTES da escolha: o detector precisa dos pedidos que DISPUTAM o topo,
+            // não só do que venceu. Reduzir cada pedido ao seu preço intra-pedido (determinístico)
+            // e comparar só os empatados na recência máxima é o que separa "o uuid decidiu" de
+            // "a posição decidiu" — ver `referencia-ambigua.ts`.
+            registrarPrecoDoPedido(existing.topo, instantePedido, pedidoId, precoItem);
             if (existing.precoEm === null || compararRecencia(marca, existing.precoEm) > 0) {
               existing.price = precoItem;
               existing.precoEm = marca;
@@ -909,6 +944,7 @@ export const useCrossSellEngine = () => {
               productName: product.descricao,
               pij: Math.round(pij * 1000) / 10,
               affinityScore: Math.round(affinityScore * 10000) / 10000,
+              scoreCru: affinityScore,
               complexityFactor,
               clusterVolume,
               estoque: product.estoque ?? null,
@@ -1020,6 +1056,7 @@ export const useCrossSellEngine = () => {
                 currentProductName: currentProduct?.descricao || 'Produto atual',
                 pij: Math.round(pij * 1000) / 10,
                 affinityScore: Math.round(affinityScore * 10000) / 10000,
+              scoreCru: affinityScore,
                 complexityFactor,
                 clusterVolume: purchaseData.qty,
                 estoque: product.estoque ?? null,
@@ -1036,7 +1073,14 @@ export const useCrossSellEngine = () => {
 
         // Cross-sell ordena por AFINIDADE (desc) — lá o `pij` carrega `relevance`, que é
         // termo do PRODUTO, então o score realmente discrimina candidatos.
-        crossSellRecs.sort((a, b) => b.affinityScore - a.affinityScore);
+        //
+        // ⚠️ Pelo score CRU, não pelo arredondado. `affinityScore` é `round(x*10000)/10000`, e
+        // medido em prod isso colapsa 714 linhas em 32 valores: o `sort` é estável, então entre
+        // empatados vencia a ordem de inserção — a varredura do catálogo, ordenada por `id`. O
+        // top-3 do vendedor era uuid pelo mesmo mecanismo que a RPC. Ordenar pelo que o motor
+        // calculou não CRIA sinal (189 de 198 grupos empatam de verdade), mas para de fabricar
+        // uma ordem que ninguém mediu.
+        crossSellRecs.sort((a, b) => b.scoreCru - a.scoreCru);
 
         // Up-sell NÃO reordena aqui, e a ausência é o conserto: `upSellRecs` já chega
         // ordenado por `compararCandidatosUpSell`. Um `sort` por afinidade seria um no-op
@@ -1044,6 +1088,37 @@ export const useCrossSellEngine = () => {
         // afinidade decide. Foi essa declaração falsa que escondeu o defeito até aqui.
         const topCross = crossSellRecs.slice(0, 3);
         const topUp = upSellRecs.slice(0, VAGAS_UP_SELL);
+
+        // ── O RANK, que é o que sobrevive à persistência ──────────────────────────────────
+        // DENSO: empatados compartilham o número. Posições distintas apenas mudariam o
+        // endereço do defeito — de "vence o menor uuid" para "vence o menor índice do array",
+        // e o array vem do catálogo ordenado por `id`.
+        //
+        // Calculado sobre o TOP já cortado, não sobre a lista inteira: `ordem` é a posição
+        // DENTRO do que foi persistido, e é assim que a RPC a lê (o mínimo do grupo é o topo).
+        const ordemCross = rankDenso(topCross, (a, b) => b.scoreCru - a.scoreCru);
+        topCross.forEach((rec, i) => { rec.ordem = ordemCross[i]; });
+        const ordemUp = rankDenso(
+          topUp.map((rec) => upSellPorProduto.get(rec.productId)!.chave),
+          compararCandidatosUpSell,
+        );
+        topUp.forEach((rec, i) => { rec.ordem = ordemUp[i]; });
+
+        // ── A ambiguidade, do CLIENTE ─────────────────────────────────────────────────────
+        // Marca do cliente e não da linha: a dedup guarda por SKU só a melhor relação com uma
+        // base comprada, e a razão que decide essa "melhor" é justamente a que a referência
+        // sorteada altera — a flag da linha sumiria junto com a relação descartada. Basta UMA
+        // base comprada com referência arbitrária para que a ordem do up-sell inteiro deste
+        // cliente possa ter sido outra.
+        //
+        // `cross_sell` recebe `false` EXPLÍCITO: seu `pij` não usa preço nenhum
+        // (`0,15 × health × engagement × relevance`), então a afirmação é verdadeira sobre o
+        // tipo — e é o que impede o fail-closed da RPC de marcar o tipo inteiro como ambíguo.
+        const clienteComReferenciaAmbigua = [...customerPurchased.values()].some((h) =>
+          referenciaEhAmbigua(h.topo),
+        );
+        topUp.forEach((rec) => { rec.referenciaAmbigua = clienteComReferenciaAmbigua; });
+        topCross.forEach((rec) => { rec.referenciaAmbigua = false; });
 
         // SENSOR da ordem do up-sell — o entregável mínimo quando o sinal não decide.
         // Uma posição só conta como decidida se nenhum candidato DESCARTADO tem a chave
@@ -1161,6 +1236,12 @@ export const useCrossSellEngine = () => {
           current_product_id: rec.currentProductId || null,
           p_ij: rec.pij,
           affinity_score: rec.affinityScore,
+          // Sem `?? null` e sem `?? false`: um default aqui afirmaria medição que não houve, e
+          // a coluna é `NULL`-able justamente para distinguir "não medido" de "medido e falso".
+          // A RPC fecha a falha do outro lado (flag nula COM ordem preenchida conta como
+          // ambígua), e é o par das duas pontas que torna o contrato honesto.
+          ordem: rec.ordem,
+          referencia_ambigua: rec.referenciaAmbigua,
           complexity_factor: rec.complexityFactor,
           cluster_volume_estimate: rec.clusterVolume,
         })),
