@@ -241,6 +241,44 @@ ou não o experimento são decisões do founder. O que esta sessão entrega é o
 o experimento mede uma variável (a) que hoje não pode se mover, e duas (b, c) que já podem — e a
 variável que domina o resultado está fora das três.
 
+### O desenho, corrigido — e a baseline pré-registrada hoje
+
+O experimento continua valendo a pena; o que muda é **quais métricas ele pode reivindicar**.
+Pré-registro dos valores de **2026-09-07**, para que a comparação de 4 semanas não seja feita
+contra um número lembrado:
+
+| Métrica | Como medir (query, não recado) | **Baseline hoje** |
+|---|---|---|
+| **Vazão** (o que o recuo protege) | PRs mergeados / 30d | **625** (~21/dia) · 651 commits |
+| **(b) tempo até produção verificada** | `bun run pendencias:deploy` — `(versao, fonte)` servida × main, via ledger `deploy_atestacoes` | **59/59 edges atestadas, 0 pendências** |
+| **(c) retrabalho de integração** | PRs fechados sem merge; commits com marca de revert/conflito | **3 abandonados (0,5%)** · **10 commits** (1,5%) |
+| Fila parada | branches com commit e sem PR | **34** (23 ≥7d · 13 ≥30d · mais velha 93d) |
+| Mix | commits que não tocam `src/` ÷ que tocam | **3,31 : 1** |
+| Superfície nova | telas criadas / 30d (fora de `__tests__`) | **0** |
+| **(a) entregas usadas** | pageviews e escrita humana | **1 humano (90d)** · 8 rotas · 79 pageviews |
+
+**O que o experimento pode rodar já:** (b) e (c) são mensuráveis hoje, sem construir nada, e têm
+baseline. Mas note o que a baseline diz: **(b) já está em 0 pendências e (c) em 0,5%.** Nenhuma das
+duas tem folga para melhorar de forma detectável em 4 semanas — um limite de WIP só pode
+piorá-las. Um experimento cujas métricas de ganho estão saturadas e cuja métrica de custo (vazão)
+tem toda a folga do mundo é um experimento que **só pode produzir o resultado "recuar"**.
+
+**O que falta para (a) poder se mover** — e é aqui que o experimento vira útil:
+
+1. **População.** Enquanto `is_approved = true` for 4, "entregas usadas" mede um operador. Abrir a
+   base (ou um recorte dela) é o que dá denominador à métrica. **É decisão de produto do founder,
+   não consequência técnica desta medição.**
+2. **Canal.** Com o rastreador censurado, mesmo uma população aberta chegaria pela metade. O proxy
+   first-party recusado em #1984 é a via conhecida; o gatilho que ele mesmo definiu para reabrir a
+   discussão é exatamente esta situação — a censura deixou de degradar uma métrica secundária e
+   passou a impedir a pergunta central.
+
+**Critério de recuo, tornado operacional:** o Codex propôs "recuar se a vazão cair sem melhorar os
+outros dois". Com (b) e (c) já saturados, esse critério dispara quase certamente. A versão que
+preserva a intenção: **recuar se a vazão cair >20% (abaixo de ~500 PRs/30d) sem que a fila parada
+(34) caia pela metade** — porque drenar estoque morto é o ganho que um limite de WIP realmente
+pode entregar, e é o único dos quatro eixos com folga real.
+
 ## Lição
 
 **Antes de perguntar "quanto do que entregamos é usado?", meça quantas pessoas podem usar.** Uma
