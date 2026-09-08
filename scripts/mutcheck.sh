@@ -83,8 +83,13 @@ EOF
 fi
 
 # ───────────────────────── args ─────────────────────────
+# --seco: só perl+diff. NÃO mede cobertura (a suíte não roda) — mede se cada padrão do
+# .mut ainda é CIRÚRGICO no fonte de hoje: casa, e casa UMA linha. É o guard barato que
+# pega o .mut stale (o modo de falha do #2380) em ~1s em vez dos minutos da rodada cheia.
+SECO=0
+if [[ "${1:-}" == "--seco" ]]; then SECO=1; shift; fi
 if [[ $# -ne 3 ]]; then
-  echo "uso: $0 <src.ts> <test.ts> <mutations.mut>   (ou --selftest)" >&2
+  echo "uso: $0 [--seco] <src.ts> <test.ts> <mutations.mut>   (ou --selftest)" >&2
   exit 2
 fi
 SRC="$1"; TEST="$2"; MUT="$3"
@@ -122,11 +127,12 @@ echo "mutcheck: $SRC × $TEST"
 # falso-INVÁLIDO ("não compila"), mascarando a causa como se fosse cobertura. É controle do
 # AMBIENTE, não da cobertura. (Achado do Codex: sem isso o gate de CI fica vermelho mudo se
 # o bun sumir.)
-if ! compila; then
+if [[ $SECO -eq 1 ]]; then
+  echo "  baseline: — modo SECO (perl+diff; a suíte NÃO roda, logo isto não é veredito de cobertura)"
+elif ! compila; then
   echo "  baseline: ✗ o SRC ORIGINAL não compila com '${COMPILE_CMD[*]:-}' — harness/ambiente quebrado (bun no PATH?). Abortando." >&2
   exit 1
-fi
-if run_tests; then
+elif run_tests; then
   echo "  baseline: ✓ verde (compila + suíte passa)"
 else
   echo "  baseline: ✗ VERMELHO — a suíte já falha sem mutação. Resultados seriam lixo. Abortando." >&2
@@ -161,6 +167,12 @@ while IFS='|' read -r c_expect c_label c_expr || [[ -n "${c_expect:-}" ]]; do
     printf "  %-9s %-40s %s\n" "$c_expect" "$c_label" "⚠ INVÁLIDO (tocou $nl linhas — regex largo)"
     invalid=$((invalid+1)); problems=$((problems+1)); restore; continue
   fi
+  # No SECO o veredito termina aqui: o padrão casou e tocou UMA linha, que é tudo que
+  # este modo se propõe a afirmar. Segue sem compilar nem testar.
+  if [[ $SECO -eq 1 ]]; then
+    printf "  %-9s %-40s %s\n" "$c_expect" "$c_label" "✓ cirúrgica"
+    restore; continue
+  fi
   # guard 3: o mutante COMPILA? senão "morto pelo compilador" seria falso-PEGA (poder inflado)
   if ! compila; then
     printf "  %-9s %-40s %s\n" "$c_expect" "$c_label" "⚠ INVÁLIDO (não compila — seria falso-PEGA)"
@@ -186,11 +198,17 @@ done < "$MUT"
 
 # ───────────────────────── controle+ ─────────────────────────
 ctrl_msg="n/d"
-if [[ $ctrl_total -gt 0 ]]; then
+if [[ $SECO -eq 1 ]]; then
+  ctrl_msg="n/d (seco)"
+elif [[ $ctrl_total -gt 0 ]]; then
   if [[ $ctrl_ok -eq $ctrl_total ]]; then ctrl_msg="✓ ($ctrl_ok/$ctrl_total)"; else ctrl_msg="✗ ($ctrl_ok/$ctrl_total)"; fi
 else
   ctrl_msg="⚠ NENHUM controle+ (suspeite do harness)"; problems=$((problems+1))
 fi
 
-echo "sumário: $n mutações · $pegas pegas · $sobrev sobreviventes · $invalid inválidas · controle+ $ctrl_msg · $problems problema(s)"
+if [[ $SECO -eq 1 ]]; then
+  echo "sumário SECO: $n padrões · $((n-invalid)) cirúrgicos · $invalid ambíguo(s)/não-casado(s) · $problems problema(s) — cobertura NÃO medida"
+else
+  echo "sumário: $n mutações · $pegas pegas · $sobrev sobreviventes · $invalid inválidas · controle+ $ctrl_msg · $problems problema(s)"
+fi
 exit "$problems"
