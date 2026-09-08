@@ -15,18 +15,19 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5473}"
 SLUG="pedido-venda-coerencia"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
-CELLAR="$(brew --prefix "postgresql@${PGVER}")"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
+# PGBIN: resolvido por plataforma (macOS Homebrew / Linux PGDG) com conferencia
+# POSITIVA de que a major e a esperada. Fail-closed: PG ausente e ERRO, nunca skip.
+# Sem isto a prova roda so no laptop -- foi exatamente assim que ela reprovou no
+# job `provas-sql` ("postgresql@17 ausente: brew install"), que e o buraco que o
+# #2364 veio fechar.
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
