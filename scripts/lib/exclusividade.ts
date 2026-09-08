@@ -103,8 +103,12 @@ export interface GateAlvo extends GateCI {
   bloqueiaPR: boolean;
 }
 
-/** O unico job que o auto-merge exige por nome (`.github/workflows/auto-merge.yml`). */
-export const JOB_RAIZ = 'validate';
+/**
+ * O unico job que o auto-merge exige por nome (`.github/workflows/auto-merge.yml`). Sem `export`
+ * de proposito: os testes casam o literal `'validate'`, nao este simbolo — asserir contra a
+ * constante faria a assercao se mover junto com o codigo, que e teste que nao pode falhar.
+ */
+const JOB_RAIZ = 'validate';
 
 /**
  * Fecho transitivo de `validate.needs`, **com o proprio `validate` dentro**. Existe porque
