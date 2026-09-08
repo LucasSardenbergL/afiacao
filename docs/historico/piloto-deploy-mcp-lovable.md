@@ -1,6 +1,6 @@
 # Piloto: o MCP do Lovable deploya edge? — o CANAL sim; VERBATIM não foi atestado (2026-09-07)
 
-> ⚠️ **Este doc foi CORRIGIDO em 2026-09-08.** A primeira versão dizia "deploya edge
+> ⚠️ **Este doc foi CORRIGIDO em 2026-09-08 (#2358).** A primeira versão dizia "deploya edge
 > VERBATIM — SIM, medido". Duas revisões independentes (Codex `gpt-6-astra/max` e um subagente
 > Fable 5.1) derrubaram a metade "verbatim", e as duas estavam certas. O que segue é o veredito
 > corrigido; a §"O que as revisões derrubaram" lista o que mudou e por quê.
@@ -239,7 +239,7 @@ workspace do Lovable, a entrada do deploy e o artefato servido. As três podem d
 commit — e o deploy sai do **sandbox** (`supabase--deploy_edge_functions`, visível no trace do
 `get_message`), não de um checkout limpo da `main`.
 
-## O que as revisões derrubaram (2026-09-08)
+## O que as revisões derrubaram (2026-09-08, #2358)
 
 Duas revisões independentes, pedidas pelo founder depois que a v1 deste doc já estava mergeada:
 **Codex** (`gpt-6-astra`, reasoning `max`, 286 s, 119 k tokens, via `scripts/codex-async.sh`) e um
