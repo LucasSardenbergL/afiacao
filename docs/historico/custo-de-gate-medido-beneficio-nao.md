@@ -233,10 +233,46 @@ partição é asserida contra o `ci.yml` de verdade (nenhum step nas duas listas
 O `bloqueantesSemScript` usava uma aproximação diferente (`/\bbunx?\s+(?:run\s+)?[a-z]/`) que hoje
 concordava — passou a usar a mesma função, e a lista dele não mudou.
 
-Fica anotada uma fresta **latente**: o job `validate` não está no próprio `needs`, então nem
-`bloqueiaPR` nem o contador o alcançam. Hoje não esconde nada — seus únicos steps são o agregador e
-os de Issue. Remendar só o contador faria as duas contas falarem de universos diferentes, que é
-pior que a fresta.
+### A fresta latente, fechada logo depois: a raiz do fecho não estava no fecho
+
+O #2376 anotou uma fresta **latente**: o job `validate` não está no próprio `needs`, então nem
+`bloqueiaPR` nem o contador o alcançavam. A causa é estrutural, não esquecimento — **`needs` aponta
+para trás e ninguém aponta para a raiz**, então todo fecho transitivo calculado a partir de
+`X.needs` exclui `X` por construção. E a raiz é justamente o único job que o auto-merge exige por
+nome: se ela fica vermelha, o PR não mergeia.
+
+O ponto cego era **simétrico**, o pior formato: um step dentro do `validate` sumia das duas contas
+ao mesmo tempo — nem marcado `bloqueiaPR` (logo, nunca cobrado pela prova de exclusividade), nem
+listado como opaco. Uma fresta que nenhum dos dois números denuncia. Remendar só o contador faria
+as duas contas falarem de universos diferentes, que é pior que a fresta; por isso o conserto veio
+depois, mexendo nas duas ao mesmo tempo.
+
+O conserto é uma linha — `const fila = JOB_RAIZ in jobs ? [JOB_RAIZ] : []` —, e o efeito nas duas
+contas foi **medido**, não previsto:
+
+- bloqueantes: **28 → 28**. O `validate` não hospeda step que invoque script do `package.json`, e o
+  teste trava a *razão* disso (`gatesCandidatos(ci).filter(g => g.job === 'validate') == []`), nunca
+  o número 28 — travar o número apodreceria a cada gate novo;
+- opacos: **3 → 4**, com `validate: Todos os jobs passaram? (exige 'success' POSITIVO de cada um)`.
+
+**A raiz só entra se existir no arquivo.** Um `ci.yml` sem `validate` continua devolvendo conjunto
+vazio — a forma honesta de dizer "não achei o required check" em vez de somar um nome que ninguém
+escreveu. Ausência não vira presença; é a mesma regra de `ausente ≠ zero`, aplicada ao grafo.
+
+**O agregador não foi filtrado**, e a alternativa (um filtro nomeado e documentado) foi considerada.
+Três razões, em ordem de força:
+
+1. ele não é um no-op que soma resultados: tem lógica **própria**, que já falhou aberta — o guard de
+   denominador (`total -ne esperados`) e o guard **nominal** de `provas-sql`, este acrescentado pelo
+   parecer do Codex de 2026-09-07 sob *"cinco jobs quaisquer não provam que SQL entrou no
+   contrato"*. É a categoria exata que o contador existe para manter visível;
+2. o `gates:frescura` **já o listava** no contador dele (5 steps sem script, o `validate` entre
+   eles). Silenciá-lo aqui faria os dois contadores divergirem justamente onde concordam;
+3. filtrar por nome **quebraria a partição** asserida acima: o step ficaria fora das duas listas —
+   o silêncio de volta. Não é argumento de mesa: a sabotagem que insere o filtro derruba **dois**
+   testes, o do agregador e o da partição.
+
+Preço do fechamento: uma linha a mais no relatório do CI.
 
 ## O bootstrap tem um nó, e ele é honesto
 

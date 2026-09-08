@@ -99,13 +99,29 @@ describe('parseDefeitos', () => {
 describe('jobsBloqueantes — o que de fato reprova um PR', () => {
   const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
 
-  it('resolve o fecho transitivo de validate.needs', () => {
+  it('resolve o fecho transitivo de validate.needs — com a RAIZ dentro', () => {
     const y = ['jobs:', '  a: {}', '  b:', '    needs: [a]', '  validate:', '    needs: [b]'].join('\n');
-    expect([...jobsBloqueantes(y)].sort()).toEqual(['a', 'b']);
+    expect([...jobsBloqueantes(y)].sort()).toEqual(['a', 'b', 'validate']);
   });
 
   it('needs escrito como string (nao lista) tambem conta', () => {
-    expect([...jobsBloqueantes('jobs:\n  a: {}\n  validate:\n    needs: a')]).toEqual(['a']);
+    expect([...jobsBloqueantes('jobs:\n  a: {}\n  validate:\n    needs: a')].sort()).toEqual([
+      'a',
+      'validate',
+    ]);
+  });
+
+  // A fresta que o #2376 deixou aberta: `needs` aponta para tras, ninguem aponta para o
+  // `validate`, e um fecho que parte de `validate.needs` exclui a RAIZ por construcao — logo um
+  // step dentro dela sumia das DUAS contas ao mesmo tempo (nem `bloqueiaPR`, nem opaco).
+  it('o proprio validate BLOQUEIA o PR — e o required check do auto-merge', () => {
+    expect(jobsBloqueantes(ci).has('validate')).toBe(true);
+  });
+
+  // O outro lado da mesma linha: incluir a raiz nao pode virar presenca FABRICADA. Um ci.yml sem
+  // `validate` tem de continuar devolvendo vazio — que e como se diz "nao achei o required check".
+  it('sem job validate no arquivo, o conjunto e VAZIO (nao um nome inventado)', () => {
+    expect([...jobsBloqueantes('jobs:\n  a: {}\n  b:\n    needs: [a]')]).toEqual([]);
   });
 
   // A regressao concreta: `inventarioCI` filtra `continue-on-error` no STEP e nao ve a outra
@@ -165,6 +181,23 @@ describe('bloqueantesOpacos — exclusao silenciosa le como cobertura total', ()
     const nucleo = bloqueantesOpacos(ci).find((o) => o.comando.includes('roda-nucleo-ci.sh'));
     expect(nucleo, 'o contador tem de ve-lo').toBeDefined();
     expect(nucleo!.job).toBe('provas-sql');
+  });
+
+  // O agregador do `validate` e o caso que so aparece depois de a RAIZ entrar em
+  // `jobsBloqueantes`. Ele NAO e filtrado por nome de proposito: tem logica propria (guard de
+  // denominador + guard nominal de `provas-sql`) e e exatamente o que este contador existe para
+  // manter visivel. Se um dia alguem o silenciar por allowlist, este teste fica vermelho.
+  it('o agregador do validate esta DENTRO do contador — nao ha filtro por nome', () => {
+    const agregador = bloqueantesOpacos(ci).find((o) => o.job === 'validate');
+    expect(agregador, 'o step do required check tem de aparecer').toBeDefined();
+    expect(agregador!.step).toContain('Todos os jobs passaram');
+  });
+
+  // E o motivo de a conta de bloqueantes NAO ter mudado ao incluir a raiz: o `validate` nao
+  // hospeda nenhum step que invoque script do package.json. Trava a razao, nao o numero — travar
+  // o numero apodreceria a cada gate novo, que e o oposto do que esta maquina quer.
+  it('o validate nao acrescenta gate NOMEADO ao censo (por isso o total nao mudou)', () => {
+    expect(gatesCandidatos(ci).filter((g) => g.job === 'validate')).toEqual([]);
   });
 
   // A invariante que impede a FRESTA: censo e contador tem de PARTICIONAR os steps bloqueantes.
