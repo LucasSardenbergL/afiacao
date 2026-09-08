@@ -151,9 +151,8 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   { edge: "fin-valor-cockpit", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   { edge: "recommend", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   { edge: "generate-tactical-plan", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
-  // ⛔ CANDIDATAS DA ONDA 2 QUE A PROVA REPROVOU (2026-09-08) — medido, não estimado. Elas foram
-  // postas na lista, `sonda:cron-prova --backfill` executou a história inteira de cada uma, e o
-  // contador de efeito subiu. Ficam registradas para a onda 3 não repetir o trabalho:
+  // ⛔ CANDIDATAS DA ONDA 2 QUE A PROVA NÃO APROVOU (2026-09-08). Ficam registradas para a onda 3
+  // não repetir o trabalho:
   //   fin-cashflow-engine        0/37  closures PASSA
   //   omie-cliente               1/68
   //   omie-analytics-sync       16/86
@@ -161,10 +160,26 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   //   omie-sync-estoque         28/29
   //   omie-sync-nfes-recebidas  35/36
   //   generate-bundle-argument  12/14
-  // As quatro últimas chegam perto, e é aí que mora a tentação: 35/36 NÃO é "quase seguro" — o
-  // closure que falta é um bundle que já esteve no ar e que executaria efeito ao receber o
-  // `OPTIONS` do cron. Não há recorte de história que torne isso aceitável; o que resolve é achar
-  // POR QUE aquele closure falha, um a um. Entrar na lista é a PERGUNTA — quem responde é a prova.
+  //
+  // ⚠️ CORREÇÃO (mesma data, contado do log do backfill): a primeira redação deste bloco dizia
+  // que "o contador de efeito subiu" e que o closure faltante "executaria efeito ao receber o
+  // OPTIONS do cron". É FALSO, e do jeito mais caro: as sete somam **ZERO closures FALHA**. Todo
+  // não-PASSA aqui é `INVERIFICAVEL` — nenhum bundle executou efeito; o que faltou foi a outra
+  // metade da prova. Inflar "não medi" para "medi e é perigoso" num comentário que existe para
+  // calibrar evidência é o erro que este arquivo inteiro tenta impedir, e ele foi meu.
+  //
+  // O que INVERIFICAVEL quer dizer aqui, medido closure a closure:
+  //   · seis delas — CONTROLE INERTE. O `{}` dos controles padrão morre numa validação de entrada
+  //     antes do primeiro efeito, então o contador não sobe e o zero de (a) não vale nada. É o
+  //     MESMO diagnóstico que a `copilot-analyze` teve (14/15 → 15/15 com `TRANSCRIPT_REAL`), e
+  //     tem a MESMA correção: achar o corpo que leva o handler até o efeito.
+  //   · `omie-cliente` — outra causa: bundles históricos que nem importam
+  //     (`Identifier 'upsertAddressFromOmie' has already been declared`). Enquanto não se souber
+  //     se isso é o bundle ou o materializador, ela não é comparável às outras.
+  //
+  // Isso NÃO as promove a seguras: `INVERIFICAVEL` continua barrando, e é para isso que ele
+  // serve. Muda o trabalho da onda 3 — de "achar o efeito perigoso" para "consertar o controle".
+  // Entrar na lista é a PERGUNTA; quem responde é a prova.
   // FORA da onda 1, e o motivo é do CONTROLE, não do risco: `omie-webhook` e `omie-nfe-webhook`
   // recusam `{}` sem tocar em nada, e os closures saíram INVERIFICAVEL — o veredito honesto para
   // "não consegui fazer o contador subir". Zero efeito com controle inerte não prova nada: aprova

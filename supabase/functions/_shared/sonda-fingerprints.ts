@@ -66,7 +66,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "reposicao-depara-sayerlack-auto": "d08f9e56ca21f97883c52e148c615626f9429ff4a59c34256ea0eb0cf3d3f60a",
   "sayerlack-captura-precos": "067de5a255cf9b09e7d73995f2f6986d14cf1869dbfaf7242317866b3a263e1c",
   "scoring-recalc-batch": "3899eef2be43073b93b47445f4b36f29860c29f00b6d244cd2cffd0092bce4c6",
-  "sonda-relay": "a92ff28e928c66a6e5e8725de6794307aaa5e1cc3a7ad3dcb93517bec887f955",
+  "sonda-relay": "7303f390ddef9de6716a283e320ee0ca65114b2db179ad4c360170b963ba070f",
   "sync-reprocess": "a3f3b18975bfd5e9f74a1a78d825592f8448eaa86175998f18f238e7d899a09e",
   "tactical-plans-batch": "6d882834d7cef695d9879e1498b1b4e8cc9073bc50906279982a8cc015d6a8be",
   "visit-score-recalc-batch": "fc6e87d83a3d700cf802731a40ac10098be412a11e6e95e7826efb1364114a95",
