@@ -731,6 +731,18 @@ jobs:
       - name: Dead code gate (knip — export/dep sem consumidor)
         run: bunx knip
 
+      # A metade DETERMINÍSTICA do mutation-check, aqui porque é barata (~1s medido sobre 92
+      # padrões) e este job já é required via `validate`. Ela reprova quando ESTE diff INTRODUZ
+      # um `.mut` ambíguo — o modo de falha do #2380, que duplicou o bloco SQL, deixou 18
+      # padrões casando duas linhas e mergeou 42s depois do `mutation-check` concluir FAILURE,
+      # porque aquele job não é required. Comparar contra a base é o que devolve a falha a quem
+      # tocou o fonte, em vez de travar PR alheio — que é o motivo do job cheio seguir fora do
+      # caminho obrigatório (leia o comentário dele, mais abaixo).
+      # NÃO substitui o `mutation-check`: aqui a suíte não roda, então isto não afirma NADA
+      # sobre cobertura. Só afirma que os padrões ainda são cirúrgicos.
+      - name: Contratos de mutação ainda cirúrgicos (mutcheck --seco, introduzidos por ESTE diff)
+        run: bash scripts/mutcheck-seco-gate.sh origin/${{ github.base_ref || 'main' }}
+
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
   # success. Existe porque é o único context exigido pela branch protection da main e o que
@@ -776,9 +788,11 @@ jobs:
   # ## Custo
   #
   # Job próprio e PARALELO, entrando no `needs:` do `validate` — de propósito fora do
-  # `gates-e-falsificacao`, que é o gargalo atual (mediana 357s). Não precisa de bun
-  # nem de deno, e não precisa de `fetch-depth: 0` (nenhum gate aqui usa merge-base),
-  # então o preâmbulo é bem mais barato que o dos outros quatro.
+  # `gates-e-falsificacao`, que é o gargalo atual (mediana 357s). Carrega o RUNTIME bun
+  # (só o runtime, sem `bun install`) desde que `db/test-canaria-veredito.sh` entrou no
+  # núcleo: essa prova gera o SQL pelo próprio gerador em vez de conferir um retrato
+  # commitado. Não precisa de deno nem de `fetch-depth: 0` (nenhum gate aqui usa
+  # merge-base), então o preâmbulo segue mais barato que o dos outros quatro.
   provas-sql:
     runs-on: ubuntu-latest
     timeout-minutes: 12

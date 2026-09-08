@@ -36,6 +36,12 @@ set -uo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" || { echo "mutcheck-all: não consegui ir pra raiz do repo" >&2; exit 2; }
 MUTCHECK="scripts/mutcheck.sh"
 
+# --seco: repassado a cada contrato. Roda só perl+diff (sem suíte, sem compilar) para medir
+# se os padrões ainda são CIRÚRGICOS no fonte de hoje — é o que o gate barato do CI usa
+# (scripts/mutcheck-seco-gate.sh). Não mede cobertura; o sumário de cada contrato diz isso.
+SECO_ARGS=()
+if [[ "${1:-}" == "--seco" ]]; then SECO_ARGS=(--seco); shift; fi
+
 # MUTCHECK_DIR existe para o teste do SENSOR (scripts/test-mutcheck-sensor.sh) poder medir os
 # quatro estados — honrado, DIVERGE, INVÁLIDA e baseline vermelho — contra contratos de fixture,
 # em segundos. Sem isso a única forma de exercitar o alarme seria sabotar um contrato real e
@@ -93,7 +99,7 @@ for mut in "${muts[@]}"; do
   # capturado PELADO (um `| tee` aqui devolveria o status do tee — a classe de
   # docs/historico/evidencia-positiva-shell.md).
   saida=$(mktemp)
-  env ${envs[@]+"${envs[@]}"} bash "$MUTCHECK" "$src" "$tst" "$mut" > "$saida" 2>&1
+  env ${envs[@]+"${envs[@]}"} bash "$MUTCHECK" ${SECO_ARGS[@]+"${SECO_ARGS[@]}"} "$src" "$tst" "$mut" > "$saida" 2>&1
   rc=$?
   cat "$saida"
   registrar "$mut" "$rc" "$saida"
@@ -112,7 +118,13 @@ fi
 
 echo "══════════════════════════════════════════════════════════"
 if [[ ${#failed[@]} -eq 0 ]]; then
-  echo "mutcheck-all: ✓ ${#muts[@]} contrato(s) honrado(s) — nenhuma regressão de cobertura."
+  # No SECO a suíte não roda: afirmar "nenhuma regressão de cobertura" aqui seria vender
+  # como medição o que foi só conferência de padrão — a classe de evidencia-positiva-shell.md.
+  if [[ ${#SECO_ARGS[@]} -gt 0 ]]; then
+    echo "mutcheck-all: ✓ ${#muts[@]} contrato(s) com padrões CIRÚRGICOS — cobertura NÃO medida (modo seco)."
+  else
+    echo "mutcheck-all: ✓ ${#muts[@]} contrato(s) honrado(s) — nenhuma regressão de cobertura."
+  fi
   exit 0
 fi
 echo "mutcheck-all: ✗ ${#failed[@]}/${#muts[@]} contrato(s) com problema:"
