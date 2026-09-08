@@ -120,16 +120,52 @@ quartos de todo o `docs/agent`**. Média de 5,0 disparos por sessão; só o 1º 
 |---|---:|---|
 | **1º disparo ensina, repetições só lembram** (886 → 95 chars) | **65,4M tok×req = 72,9% do custo do hook ≈ 3,0% da ocupação de Bash** | ✅ aplicado |
 | deduplicar comando idêntico repetido na mesma sessão | 20,9M = **1,0%** | ❌ refutado — não paga |
-| baixar o teto de saída para 8.000 chars | 171,3M = 7,9% da ocupação de Bash | 🧭 decisão do founder |
-| … para 4.000 | 404,1M = 18,5% | 🧭 |
-| … para 3.000 | 537,1M = 24,6% | 🧭 |
-| … para 2.000 | 757,8M = **34,8%** (≈26,8% da ocupação TOTAL) | 🧭 |
+| baixar o teto de saída para 8.000 chars | 171,3M = 7,9% da ocupação de Bash | ❌ preterido — ganho modesto |
+| **… para 4.000** | **404,1M = 18,5% (≈14,3% da ocupação TOTAL)** | ✅ **aplicado** (2026-09-08) |
+| … para 3.000 | 537,1M = 24,6% | ❌ preterido |
+| … para 2.000 | 757,8M = **34,8%** (≈26,8% da ocupação TOTAL) | ❌ preterido — encosta no preview |
 
-**O teto já existe**, e a evidência é a forma da distribuição: entre 20k e 29k a frequência é um
+**O teto já existia**, e a evidência era a forma da distribuição: entre 20k e 29k a frequência é um
 platô achatado (11·26·18·12·9·12·10·10·13 por faixa de 1k) e acima de 29.000 há **zero** em
 69.737 chamadas. Saídas que seriam de 50k ou 1 MB foram todas grampeadas para dentro da faixa.
 Baixar esse teto é uma chave, não um refactor — a lição "procure a chave" do `piso-de-contexto.md`.
-É mudança de raio grande (trunca toda sessão do repo), por isso fica como proposta com número.
+
+A inferência estava certa **no número exato**. A chave é a env var `BASH_MAX_OUTPUT_LENGTH`, lida
+do bloco `env` do `.claude/settings.json`; no binário do harness (2.1.202):
+
+```js
+function Pft(){return bpe("BASH_MAX_OUTPUT_LENGTH",process.env.BASH_MAX_OUTPUT_LENGTH,jfo,qfo).effective}
+var qfo=150000, jfo=30000;   // default 30.000 · upperLimit 150.000 (acima disso é "capped")
+```
+
+Três coisas que só apareceram ao aplicar, e que valem mais que o número:
+
+1. **O bloco `env` não vai inteiro para `process.env`.** Há um allowlist (`jot`) e só o que está
+   nele passa: `if(jot.has(r.toUpperCase())) process.env[r]=n`. `BASH_MAX_OUTPUT_LENGTH` está lá,
+   ao lado de `BASH_DEFAULT_TIMEOUT_MS` e `BASH_MAX_TIMEOUT_MS` — mas uma chave **fora** dessa
+   lista seria escrita no arquivo, versionada, revisada em PR e **ignorada em silêncio**. Escrever
+   no settings não é evidência de que o harness leu: a sonda positiva é `echo $BASH_MAX_OUTPUT_LENGTH`
+   dentro de um comando Bash, que devolve o `process.env` do próprio harness. Ela acusou `4000` na
+   sessão corrente, **sem restart**.
+2. **Acima do teto o corte é fail-LOUD, não perda.** O harness não trunca em silêncio: salva a
+   saída inteira em arquivo, anuncia `Output too large (109.4KB). Full output saved to: <path>` e
+   mostra os primeiros 2.000 chars (`Emt=2000`, constante fixa — não é fração do teto). O fim, onde
+   moram o erro e o exit code, sai do contexto mas fica **recuperável num `Read`**. Foi essa
+   descoberta que permitiu escolher 4.000 em vez do 8.000 conservador: o risco que justificaria
+   começar alto é o de perda silenciosa, e ela não existe aqui.
+3. **A tabela SUBESTIMA os tetos altos.** Ela assumiu que a chamada passa a custar o teto; na
+   prática toda saída acima do teto colapsa para os mesmos ~2.000 chars. Logo a economia real de
+   4.000 é *maior* que 18,5% — quanto, não dá para dizer sem re-rodar o levantamento, e número
+   inventado aqui seria fabricação. A linha de 2.000 é a única em que teto ≈ preview e o cálculo
+   original já valia; ela foi preterida justamente por isso: ganharia pouco além de 4.000 e
+   afetaria 11% das chamadas em vez de ~4% (p95=3.347, p99=8.531).
+
+Provado nos dois lados antes de aplicar: 29.213 chars vieram **inteiros, com a última linha**;
+109,4KB viraram ponteiro para arquivo com a última linha ausente. O gate
+`scripts/teto-saida-bash.test.ts` lê o **arquivo**, não `process.env` — eixo por fora, já que
+`process.env` é a máquina que o gate vigiaria — e trava o invariante (presente · dígitos · abaixo
+do default de 30.000 · dentro do upperLimit), não o literal `4000`. Falsificado com 9 sabotagens
+× 2 locales, todas vermelhas, com controle verde na mesma invocação.
 
 Baixar o **gatilho** do nudge não é alternativa: ele já vê 38,7% da ocupação e é cego aos outros
 61,3%, que estão em chamadas pequenas — **77,9% das chamadas ficam abaixo de 1.000 chars e ainda
