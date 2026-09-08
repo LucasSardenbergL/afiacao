@@ -41,7 +41,10 @@ fi
 printf '%s\n' "$VERSAO" | grep -E '^version:' | sed 's/^/  shellcheck /'
 
 # ── Escopo ───────────────────────────────────────────────────────────────────────────────────────
-GLOBS=( 'scripts/*.sh' '.claude/hooks/*.sh' 'db/*.sh' )
+# `db/lib/*.sh` entrou junto com o primeiro helper compartilhado das provas SQL
+# (db/lib/pg-harness.sh): `db/*.sh` não desce um nível, e um helper que 289 provas
+# passariam a `source` é o ÚLTIMO arquivo do repo que pode ficar sem linter.
+GLOBS=( 'scripts/*.sh' '.claude/hooks/*.sh' 'db/*.sh' 'db/lib/*.sh' )
 
 ARQUIVOS=()
 for g in "${GLOBS[@]}"; do
