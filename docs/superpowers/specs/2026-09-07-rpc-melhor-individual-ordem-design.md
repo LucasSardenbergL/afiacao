@@ -132,78 +132,97 @@ Nulável porque as 1.083 linhas de 21/08 existem e não são recuperáveis (§3.
 714 de 714; e a `relevance` reconstruída (máx 0,0327 com `aB=0`) bate com a mediana 0,0338 obtida
 por um caminho **independente**, a razão entre os scores persistidos.
 
-⇒ Sobre os 238 grupos cross-sell: 40 já decididos pelo score + **9** recuperados = **49 eleitos
-(20,6%)**; **189 (79,4%) exibem empate**.
+⇒ Sobre os 238 grupos cross-sell **hoje persistidos**: 40 já decididos pelo score + **9**
+recuperados = 49 com vencedor; **189 sem**. ⚠️ Isto descreve o conjunto ATUAL — **não** é previsão
+da tela pós-entrega, e a revisão 3 apresentava como se fosse (achado R3/4). D3 muda a ordenação
+antes do corte, logo muda o próprio conjunto persistido: quem mede a tela é o sensor de §6.1.
 
-**O que isso muda na proposta de valor, dito sem maquiagem:** o rank do cross-sell quase não
-ELEGE — ele faz a tela **parar de mentir**. A causa é o sinal do motor ser grosso: `k ∈ [9,22]`
-sobre N=269, com `aB = 0` na maioria, produz colisão EXATA de `relevance`. Não é arredondamento,
-não é ordenação: é ausência de informação, e nenhuma mudança de `ORDER BY` a cria.
+**Dois recortes que o challenge exigiu, medidos agora:**
 
-O rank continua necessário — mas pelo **up-sell**, onde o score não carrega produto nenhum e a
-chave do #1837 (razão de preço, contínua) discrimina de verdade. Incluir o cross-sell na mesma
-coluna é quase de graça e remove a dependência do arredondamento como proxy de empate.
+| | resultado |
+|---|---|
+| tamanho dos grupos sem vencedor único (sobre os **189**, não os 94 da revisão 2) | **2 em 189 de 189** |
+| clientes **cross-only** (sem up-sell — os 52 em que o cross-sell é a ÚNICA indicação) | 52 |
+| …empatados no score arredondado | **52 de 52** |
+| …**recuperados pelo rank** | **0 de 52** |
+
+O segundo recorte é o que importa e é pior do que o agregado sugeria: **os 9 grupos que o rank
+recupera estão TODOS em clientes que também têm up-sell**, onde D1 já entrega o up-sell como a
+oferta do tipo dele. Nos 52 clientes em que a célula cross-sell é a única coisa que o vendedor tem,
+o rank não recupera **nenhuma** eleição.
+
+**O que isso muda na proposta de valor, dito sem maquiagem:** o rank do cross-sell não ELEGE — ele
+faz a tela **parar de mentir**. Hoje esses 52 clientes recebem um vencedor sorteado por uuid
+apresentado como veredicto; passam a receber **dois nomes rotulados como igualmente indicados**, e
+quem escolhe é o vendedor, que tem o contexto que o motor não tem. A causa é o sinal ser grosso:
+`k ∈ [9,22]` sobre N=269, com `aB = 0` na maioria, produz colisão EXATA de `relevance`. Não é
+arredondamento nem ordenação: é ausência de informação, e nenhuma mudança de `ORDER BY` a cria.
+
+O rank continua necessário pelo **up-sell**, onde o comparador do #1837 usa termos que **dependem do
+produto** — razão de preço e popularidade — enquanto o `pij` do cross-sell não usa nenhum. Essa é
+uma afirmação sobre o CÓDIGO, verificável em `upsell-ordem.ts:113`; **quanto** o up-sell discrimina
+em prod depois de referência, dedup e corte é a mesma pergunta não-derivável do banco de §6.1, e o
+sensor a responde. Incluir o cross-sell na mesma coluna é quase de graça e remove a dependência do
+arredondamento como proxy de empate.
 
 **Nada disto toca `affinity_score` nem `p_ij`.**
 
 ### 3.3 RPC `farmer_melhores_individuais_por_cliente(uuid)` (nome novo — §3.4)
 
-Devolve `jsonb` com até **dois** objetos por cliente:
+Devolve `jsonb` com até **dois** objetos por cliente (um por tipo):
 
 ```
-customer_user_id · recommendation_type · product_id · affinity_score · run_id
-                 · situacao · candidatos · produtos_empatados
+customer_user_id · recommendation_type · situacao · produtos · produto_eleito
+                 · candidatos · affinity_score · run_id
 ```
 
-⚠️ **A revisão 1 tinha UM campo `empatados` e ele MENTIA.** Com `ordem` nula em todo o grupo, ele
-diria "2 produtos igualmente indicados" — afirmando igualdade **medida** onde houve
-**desconhecimento**. É o `ausente ≠ zero` da casa reintroduzido dentro do conserto que veio matá-lo.
-São dois estados diferentes e passam a ter nomes diferentes:
+**Identidade e eleição são campos SEPARADOS** (achado R3/2). A revisão 3 tinha um único
+`product_id` preso ao guard "só é não-nulo em `eleito`" e, ao mesmo tempo, prometia exibir o nome
+do produto em `unico_registrado`. O nome não tinha de onde vir: o contrato eliminava o
+identificador exatamente nos estados em que a tela precisava dele. **Identificar produtos não exige
+afirmar prioridade entre eles** — e é essa separação que permite nomear sem eleger:
 
-| `situacao` | condição | significado |
-|---|---|---|
-| `eleito` | ordem conhecida em TODO o grupo · máximo ÚNICO · referência não-ambígua | decidido por sinal |
-| `empatado` | ordem conhecida em TODO o grupo · ≥2 candidatos no máximo | igualdade MEDIDA |
-| `unico_registrado` | grupo de UM candidato | identificável, mas nada foi ordenado |
-| `ordem_indisponivel` | ≥2 candidatos e QUALQUER `ordem` nula | ordenação ausente ou incompleta |
+- **`produtos`** — array de SKUs que a tela vai NOMEAR. Sempre ≥1 elemento.
+- **`produto_eleito`** — não-nulo **se e somente se** `situacao = 'eleito'`, e sempre um elemento de
+  `produtos`. É o guard estrutural que impede renderizar vencedor por descuido.
+- **`candidatos`** — **sempre** o tamanho do grupo registrado. Um número, um significado.
 
-⚠️ **`unico_registrado` existe porque `eleito` mentiria** (achado R2/3). Um grupo de um candidato
-com `ordem` nula não é empate — mas também não foi decidido por sinal de ordenação nenhum. Ser a
-única recomendação registrada permite identificá-la; não diz nada sobre a qualidade da escolha que
-a produziu. Colapsar os dois em `eleito` seria a mentira simétrica à do campo único da revisão 1.
+⚠️ A revisão 3 fazia `candidatos` contar um conjunto DIFERENTE por estado. Aquilo consertava a
+mentira do R2/3 (`[A:1, B:1, C:2]` tem **2** empatados, não 3) criando outra: um campo cujo
+denominador o consumidor precisa inferir do rótulo. Com `produtos` transportando quem é nomeado e
+`candidatos` medindo o grupo, o mesmo caso vira `produtos=[A,B]`, `candidatos=3` — e a tela diz
+"2 de 3", que é a frase verdadeira.
 
-⚠️ **`ordem_indisponivel` cobre DOIS casos e o rótulo não afirma mais do que sabe**: `[null,null]`
-é ordenação **ausente**; `[1,2,null]` é ordenação **incompleta** — as ordens conhecidas mantêm sua
-relação, mas nada situa a linha nula, e eleger exigiria descartá-la. Nos dois a resposta honesta é
-a mesma ("não dá para ordenar este grupo"), então o estado é um só; o que não se pode é chamar
-qualquer um deles de "ninguém mediu", que era a redação anterior.
+**Estados, em ordem de PRECEDÊNCIA** — a primeira condição que casar decide. Sem isso um singleton
+com ordem conhecida satisfaz duas linhas da tabela ao mesmo tempo (achado R3/2):
 
-**`candidatos` conta conjuntos DIFERENTES por estado**, e isso é explícito no contrato porque
-contar o grupo inteiro em `empatado` seria falso (achado R2/3): em `[A:1, B:1, C:2]` há **2**
-empatados, não 3.
+| # | `situacao` | condição | `produtos` | significado |
+|---|---|---|---|---|
+| 1 | `referencia_ambigua` | qualquer linha do grupo com a flag de §5 | todos os registrados | a ordem saiu de uma referência sorteada |
+| 2 | `ordem_indisponivel` | ≥2 candidatos e QUALQUER `ordem` nula | todos os registrados | ordenação ausente ou incompleta |
+| 3 | `unico_registrado` | exatamente 1 candidato | o único | identificável; nada foi ordenado |
+| 4 | `empatado` | ≥2 candidatos · ordens todas conhecidas · ≥2 no rank mínimo | os do topo | igualdade MEDIDA |
+| 5 | `eleito` | ≥2 candidatos · ordens todas conhecidas · 1 no rank mínimo | o vencedor | decidido por sinal |
 
-| estado | `candidatos` conta |
-|---|---|
-| `empatado` | SKUs distintos **no topo** |
-| `ordem_indisponivel` | SKUs distintos **registrados no grupo** |
-| `eleito` · `unico_registrado` | 1 |
+⚠️ **A precedência 1 é o que fecha o R3/1.** Ambiguidade a montante invalida qualquer afirmação de
+eleição **e** de empate: um empate calculado sobre uma referência sorteada não é igualdade medida,
+é coincidência de um sorteio. Colapsá-la em `ordem_indisponivel` também serviria à tela — mas
+apagaria a única distinção acionável entre "ninguém ordenou" (falta rank) e "ordenei sobre um dado
+arbitrário" (defeito a montante, em `preco-referencia.ts`). São causas diferentes com consertos
+diferentes, e um booleano paralelo ao lado do enum recriaria os dois-vocabulários-numa-coluna que
+o repo já pagou caro para desfazer.
 
-**Guard estrutural: `product_id` só é não-nulo quando `situacao = 'eleito'`.** Sem eleição por
-sinal, não sai vencedor — impossível renderizar a moeda por descuido.
+⚠️ **`unico_registrado` existe porque `eleito` mentiria** (achado R2/3). Um grupo de um candidato não
+foi decidido por sinal de ordenação nenhum: ser a única recomendação registrada permite
+identificá-la, e não diz nada sobre a qualidade da escolha que a produziu. Com a precedência, um
+singleton **nunca** sai `eleito`, tenha `ordem` ou não.
 
-**`produtos_empatados` (array de SKUs) é preenchido SÓ em `empatado`** — e a assimetria com
-`ordem_desconhecida` é o ponto: só listamos produtos quando a igualdade foi **medida**. Em
-`ordem_desconhecida` sai apenas a contagem, porque afirmar "estes são igualmente indicados" sobre
-linhas cuja ordem ninguém conhece seria a mesma mentira do campo único que a revisão 1 tinha.
+⚠️ **`ordem_indisponivel` cobre DOIS casos** e o rótulo não afirma mais do que sabe: `[null, null]`
+(ninguém ordenou) e `[1, 2, null]` (ordenação incompleta). A tela diz "ordenação indisponível", não
+"ninguém mediu" — a segunda frase seria falsa no segundo caso.
 
-Decisão de exibir a LISTA (delegada pelo founder, decidida por medição): os 94 empates reais têm
-**tamanho exatamente 2 — todos os 94**. Listar dois nomes ocupa o mesmo espaço que "2 produtos
-igualmente indicados" e é estritamente mais útil: o vendedor conhece o cliente e desempata com o
-que o motor não sabe. O teto é estrutural — o corte do motor persiste no máximo 3 cross-sell por
-cliente, então a lista nunca passa de 3.
-
-Preservados da RPC atual e pelos mesmos motivos: `coalesce(…, '[]'::jsonb)`, `SECURITY INVOKER`,
-`REVOKE`/`GRANT` nomeando as roles.
+O `affinity_score` continua no payload como **dado de diagnóstico do tipo**, nunca como critério
+entre tipos: D1 dissolveu a comparação, e §1.2 mostra por quê.
 
 ### 3.4 Por que nome NOVO
 
@@ -228,43 +247,71 @@ Backfill descartado: a ordem não é recuperável das colunas existentes, e re-d
 
 ### 3.6 Leitor e tela (D4)
 
-O leitor muda em cinco pontos, e quatro deles são armadilhas que o challenge apontou:
+O leitor muda em sete pontos; seis são armadilhas que o challenge apontou.
 
 1. **A chave do Map passa a incluir o tipo** (`useBundleEngine.ts:844`) — hoje é uma linha por
    cliente, e o segundo objeto sobrescreveria o primeiro.
-2. **A decisão sobre `situacao` acontece ANTES de consultar `productMap`.** Hoje `pid == null` cai
-   direto em `produto_nao_resolve` (`useBundleEngine.ts:1050`): sem esta ordem, todo empate viraria
-   "o SKU sumiu do catálogo". Só `eleito` tenta resolver SKU.
-3. **O sensor de resolução** (`useBundleEngine.ts:1163`) não pode contar `product_id` nulo
-   deliberado como falha de catálogo — fabricaria deterioração.
-4. **O filtro de inclusão do cartão** (`useBundleEngine.ts:1073`) passa a omitir o cliente só quando
+2. **Todo estado resolve nome no catálogo.** Hoje `pid == null` cai direto em `produto_nao_resolve`
+   (`useBundleEngine.ts:1050`). Com identidade separada de eleição (§3.3), o leitor resolve **todos**
+   os SKUs de `produtos`; `situacao` decide o que a apresentação SIGNIFICA, não se existe
+   apresentação. A regra da revisão 3 ("só `eleito` tenta resolver SKU") era o que tornava os nomes
+   prometidos irrecuperáveis.
+3. **SKU válido que não resolve ≠ leitura inválida** (achado R3/3). São dois defeitos distintos e a
+   tela não pode fundi-los:
+   - **nenhum** SKU de `produtos` resolve → célula `indisponivel · produto_nao_resolve`;
+   - **alguns** resolvem → mostra os que resolveram **e declara quantos não identificou**. Em
+     `empatado`, perder um nome **não** promove o outro a vencedor: a célula segue `empatado`, com
+     "1 de 2 não identificado". Esconder o participante que sumiu converteria uma falha de catálogo
+     em eleição — exatamente a fabricação que esta entrega existe para matar.
+4. **O sensor de resolução** (`useBundleEngine.ts:1163`) conta SKU que não resolve, e só isso —
+   estado sem eleição não é falha de catálogo e contá-lo fabricaria deterioração.
+5. **O filtro de inclusão do cartão** (`useBundleEngine.ts:1073`) passa a omitir o cliente só quando
    **ambos** os tipos são `nenhum`.
-5. **Validação em runtime da resposta**: `customer_user_id` presente, tipo reconhecido,
-   `candidatos` inteiro ≥1, sem duplicata `(cliente,tipo)`, combinação `situacao`×`product_id`
-   válida. O cast atual para `MelhorIndividualRow[]` não valida nada. **A resposta inválida é
-   rejeitada INTEIRA como `leitura_falhou`, preservando a causa** — validar-e-descartar linhas
-   transformaria falha em ausência e entregaria um Map parcial apresentado como completo (achado
-   R2/4). Sem a checagem de `customer_user_id` as demais passam e a linha some na consulta pela
-   chave, que é a mesma falha por outra porta.
-6. **`geracoesExibidas`** (`useBundleEngine.ts:1057`) só recebe `run_id` quando o produto resolve.
-   Com os estados novos, cartões exibiriam empates e ordens indisponíveis de gerações diferentes
-   sem alimentar o canário — a contagem passa a acompanhar **todo estado exibido**,
-   independentemente de o SKU resolver.
+6. **Validação em runtime, com invariantes ENTRE campos** (achado R3/3). Só validar campo a campo
+   deixa passar `{situacao:'empatado', candidatos:1, produtos:[]}` — que satisfaz "tipo reconhecido",
+   "inteiro ≥1" e "sem produto eleito fora de `eleito`", e não representa empate nenhum. O contrato
+   verificado:
 
-**Preservar** (o challenge listou, e nenhum é consequência automática do desenho): o cartão
-continua aparecendo quando há bundle, mesmo com os dois individuais em `nenhum`; o aviso do cartão
-recolhido (`CustomerBundleCard.tsx:68`), hoje dependente do estado individual único; e a proibição
-de comparar `ordem` de `run_id` diferentes dentro de uma mesma eleição.
+   | invariante | vale para |
+   |---|---|
+   | `customer_user_id` uuid presente · tipo reconhecido · `(cliente,tipo)` sem duplicata | todos |
+   | `situacao` ∈ enum de 5 · `candidatos` inteiro ≥1 | todos |
+   | `produtos` array de uuids válidos, **sem duplicatas**, `1 ≤ length ≤ candidatos` | todos |
+   | `produto_eleito` não-nulo **⟺** `situacao='eleito'`, e ∈ `produtos` | todos |
+   | `length(produtos) = 1` ∧ `candidatos ≥ 2` | `eleito` |
+   | `length(produtos) = 1` ∧ `candidatos = 1` | `unico_registrado` |
+   | `length(produtos) ≥ 2` ∧ `candidatos ≥ 2` | `empatado` · `ordem_indisponivel` |
 
-O cartão ganha duas células rotuladas, cada uma com:
+   **A resposta inválida é rejeitada INTEIRA como `leitura_falhou`, preservando a causa** —
+   validar-e-descartar linhas transformaria falha em ausência e entregaria um Map parcial
+   apresentado como completo (achado R2/4). Sem a checagem de `customer_user_id` as demais passam e
+   a linha some na consulta pela chave, que é a mesma falha por outra porta.
+7. **`geracoesExibidas`** (`useBundleEngine.ts:1057`) só recebe `run_id` quando o produto resolve.
+   Com os estados novos, cartões exibiriam empates e ordens indisponíveis de gerações diferentes sem
+   alimentar o canário — a contagem passa a acompanhar **todo estado exibido**.
+
+**Preservar** (o challenge listou, e nenhum é consequência automática do desenho): o cartão continua
+aparecendo quando há bundle, mesmo com os dois individuais em `nenhum`; o aviso do cartão recolhido
+(`CustomerBundleCard.tsx:68`), hoje dependente do estado individual único; e a proibição de comparar
+`ordem` de `run_id` diferentes dentro de uma mesma eleição.
+
+O cartão ganha **duas células rotuladas** ("Melhor complementar" · "Melhor upgrade"), cada uma com:
 
 | estado | mostra |
 |---|---|
-| `eleito` + SKU resolve | nome do produto |
-| `empatado` | "Igualmente indicados: A, B" (os nomes; sempre 2 hoje, teto 3) |
-| `ordem_desconhecida` | "Ordenação indisponível — N recomendações registradas" |
+| `eleito` | nome do produto |
+| `empatado` | "Igualmente indicados: A, B" (`candidatos` no rodapé quando > `length(produtos)`) |
+| `unico_registrado` | "Única registrada: A" |
+| `ordem_indisponivel` | "Ordenação indisponível — A, B (N registradas)" |
+| `referencia_ambigua` | "Sem ordem confiável — A, B" |
 | `nenhum` | — |
 | `indisponivel` | rótulo + motivo (leitura falhou · SKU fora do catálogo) |
+
+⚠️ **Nomear em todos os estados é o que evita trocar uma mentira por uma omissão.** A revisão 3
+mostrava contagem sem nomes quando a ordem era desconhecida, com o argumento de que listar produtos
+afirmaria igualdade. Não afirma: quem afirma é o RÓTULO, e o rótulo é o campo `situacao`. Retirar os
+nomes deixaria o vendedor sem nada acionável justamente nos 52 clientes cross-only, onde **nenhuma**
+eleição é recuperável (§3.2) — a célula viraria um aviso de indisponibilidade permanente.
 
 ### 3.7 Ordem em memória do cross-sell (D3)
 
@@ -287,14 +334,15 @@ demonstrou executando:
 A garantia fica restrita ao **cartão de bundles**. Estender à via do WhatsApp e ao corte é trabalho
 próprio, com medição própria.
 
-## 5. Ambiguidade a montante do rank — declarada e medida
+## 5. Ambiguidade a montante do rank — por CLIENTE, não por linha
 
-`compararRecencia` (`preco-referencia.ts:114`) desempata por `pedidoId` (uuid) quando as datas
-empatam. Isso escolhe o preço de **referência**, que é a chave primária da ordem do up-sell — logo
-um rank pode ser numericamente único (`situacao = 'eleito'`) e ainda carregar uma decisão arbitrária
-na origem. O challenge executou os helpers reais trocando só os uuids e o vencedor mudou de Y para X.
+`compararRecencia` (`preco-referencia.ts:108`) desempata por `pedidoId` (uuid) quando o instante é
+indistinguível — datas iguais **ou ambas ausentes**. Isso escolhe o preço de **referência**, que é a
+chave primária da ordem do up-sell: um rank pode ser numericamente único (`eleito`) e ainda carregar
+uma decisão arbitrária na origem. O challenge executou os helpers reais trocando só os uuids e o
+vencedor mudou.
 
-**Incidência, medida agora** (o challenge a declarou desconhecida):
+**Incidência, medida** (o challenge R1 a declarou desconhecida):
 
 | | n |
 |---|---|
@@ -304,30 +352,71 @@ na origem. O challenge executou os helpers reais trocando só os uuids e o vence
 | clientes atingidos | 14 |
 | **∩ com os 186 clientes de up-sell vivo** | **2 (1,1%)** |
 
-É limite **superior**: nem todo par ambíguo troca vencedor. Mas **incidência medida não fecha
-falha de contrato** (achado R2/1): um único caso basta para que `eleito` — que afirma "decidido por
-sinal" — esteja errado, e o Codex executou os helpers reais trocando só os uuids, obtendo topo
-numericamente único nos DOIS mundos, com vencedores diferentes.
+⚠️ Limite **superior** por um lado (nem todo par ambíguo troca vencedor) e possivelmente **inferior**
+pelo outro: a query casou empate de DATA, e o código também cai no uuid quando as duas marcas têm
+`instante` nulo — caso que a medição pode não ter contado. A regra do código não depende desta
+medição para estar certa; a medição serve para dimensionar o custo, e está declarada como
+aproximação.
 
-**Por isso a ambiguidade entra no contrato, não num sensor agregado.** Um sensor não permite ao
-consumidor distinguir os casos afetados; a flag permite. O motor já tem o dado no instante em que
-escolhe a referência: quando o topo por `instante` está empatado entre pedidos DISTINTOS **com
-preços diferentes**, o candidato up-sell derivado dela nasce marcado, e o grupo não pode sair
-`eleito` — cai em `ordem_indisponivel`. Custo: um booleano por linha, decidido onde a informação
-já existe. A alternativa que o Codex também aceitava — rebaixar `eleito` para "topo único do rank
-persistido" — foi descartada: ela conserta o texto e deixa o consumidor sem como distinguir.
+### 5.1 Por que por CLIENTE (achado R3/1)
+
+A revisão 3 marcava a LINHA derivada de uma base ambígua. **A flag desaparecia na deduplicação.** O
+motor guarda, por SKU, apenas sua melhor relação com uma base comprada (`useCrossSellEngine.ts:998`)
+— e a razão de preço que decide essa "melhor" é justamente a que a referência sorteada altera. O
+challenge executou o contraexemplo com os comparadores reais:
+
+| referência sorteada para a base A | melhor relação de X | melhor relação de Y | resultado |
+|---|---|---|---|
+| 100 | 230/150 = 1,5333 (base B) | 180/150 = 1,2 (base B) | **Y vence — nenhuma flag sobrevive** |
+| 200 | 230/200 = 1,15 (base A) | 180/150 = 1,2 (base B) | X vence — flag presente |
+
+Os **mesmos dois SKUs** chegam à persistência nos dois mundos. No primeiro, a RPC permitiria
+`eleito = Y` embora trocar exclusivamente os uuids altere o topo. Marcar só a relação que sobreviveu
+não basta: a ambiguidade tem de sobreviver às três decisões seguintes — **elegibilidade,
+deduplicação e corte**.
+
+**Regra:** a marca é do **cliente**, para o tipo `up_sell`, e é decidida **antes** dessas três
+decisões. Ao montar o mapa de preços por (cliente, SKU) — o laço de `useCrossSellEngine.ts:695` — o
+motor marca o cliente quando, ao comparar duas marcas do mesmo SKU, o instante é indistinguível
+entre `pedidoId` distintos **e os preços diferem**. Um cliente marcado tem TODAS as suas linhas
+`up_sell` gravadas com a flag, e o grupo sai `referencia_ambigua` (precedência 1 de §3.3).
+
+`cross_sell` **não** usa preço de referência: seu `pij` é `0,15 × health × engagement × relevance`,
+e `relevance` sai de aderência de cluster e regras de associação (`useCrossSellEngine.ts:882`). A
+flag é gravada `false` — afirmação verdadeira sobre o tipo, não silêncio.
+
+A alternativa mais seletiva que o challenge admite — marcar só quando o vencedor **não** é invariante
+entre as referências admissíveis — exigiria enumerar os mundos possíveis dentro do motor. Fica fora:
+mais caro, e a versão conservadora custa 2 clientes de 186.
+
+### 5.2 Coluna, validação e persistência
+
+- **Coluna:** `farmer_recommendations.referencia_ambigua boolean NULL`. **Não** `NOT NULL DEFAULT
+  false`: o default afirmaria "não ambígua" sobre 17.316 linhas legadas que ninguém mediu, que é o
+  `ausente ≠ zero` da casa dentro do conserto que veio matá-lo. `NULL` = não medido.
+- **Payload:** `p_linhas[].referencia_ambigua`, na mesma lista explícita de
+  `jsonb_to_recordset` que `ordem` (§6) — sem isso a chave é ignorada **em silêncio**.
+- **Validação no writer:** booleano ou ausente. Não-booleano recusa a gravação inteira com SQLSTATE
+  nomeada, no mesmo bloco que hoje valida `affinity_score`
+  (`farmer_recomendacoes_substituir`, L106-110 da definição de PROD).
+- **Leitura fail-closed:** a RPC agrega com `bool_or`, e **`NULL` com `ordem` preenchida conta como
+  ambígua**. Esse par só nasce de um produtor que grava rank sem gravar flag — impossível enquanto os
+  dois campos entram na mesma versão, e é exatamente por ser impossível que a falha tem de ser
+  fechada em vez de suposta. Linha legada (`ordem` nula) cai em `ordem_indisponivel` pela precedência
+  2 antes de a flag importar.
 
 ## 6. Implantação (critério 3)
 
-1. **Banco** (SQL Editor, `lovable-db-operator`): `ADD COLUMN ordem` · `CREATE OR REPLACE` de
-   `farmer_recomendacoes_substituir` (aceita e **valida** `ordem`: nula, ou inteiro ≥ 1) · `CREATE`
-   da RPC nova. Pré-flight contra `pg_get_functiondef` da PROD.
+1. **Banco** (SQL Editor, `lovable-db-operator`): `ADD COLUMN ordem smallint NULL` · `ADD COLUMN
+   referencia_ambigua boolean NULL` (§5.2) · `CREATE OR REPLACE` de `farmer_recomendacoes_substituir`
+   (aceita e **valida** os dois: `ordem` nula ou inteiro ≥ 1; `referencia_ambigua` booleana ou
+   ausente) · `CREATE` da RPC nova. Pré-flight contra `pg_get_functiondef` da PROD.
 2. **Publish**.
 3. **Recálculo**, que grava os ranks.
 4. **PR de limpeza** derruba a RPC antiga.
 
-A ordem 1→2 é obrigatória: contra o schema velho, o `jsonb_to_recordset` **ignoraria a chave
-`ordem` em silêncio** e nenhum rank seria persistido, sem erro nenhum.
+A ordem 1→2 é obrigatória: contra o schema velho, o `jsonb_to_recordset` **ignoraria as chaves
+novas em silêncio** e nem rank nem flag seriam persistidos, sem erro nenhum.
 
 **Janelas em que a tela segue errada** (o challenge listou, e são reais):
 
@@ -359,13 +448,27 @@ de ser calculado **no servidor** (o produtor legado não sabe emiti-lo) e viver 
 execuções** (`20260815181500_farmer_geracao_head_sensor.sql:446`), que tem denominador — como
 insumo do head atual ele seria sobrescrito.
 
+### 6.1 O sensor da distribuição — porque a tela pós-entrega NÃO está prevista
+
+§3.2 mede o conjunto **já persistido**. D3 (§3.7) muda a ordenação **antes** do `slice(0,3)`
+(`useCrossSellEngine.ts:1037`), logo muda **quais** SKUs são persistidos — e o challenge executou o
+contraexemplo: com N=269, `aB=0`, `k=[9,9,9,10]`, os quatro colidem no score arredondado
+(`0,0001`); a ordem antiga persiste A/B/C e a reconstrução encontra empate real, a ordem nova
+persiste D/A/B e encontra vencedor único. **"Empate entre os produtos persistidos" não demonstra
+ausência de vencedor entre os candidatos que o motor verá.** Prever a distribuição exigiria executar
+o pipeline TypeScript completo sobre um snapshot coerente — não é derivável do banco.
+
+Então a distribuição **não é prevista, é medida**: o produtor emite, no log de execuções (server-side,
+§6), a contagem de grupos por `situacao` e por tipo. Sem esse número, a fase seguinte — dar sinal
+novo ao motor de cross-sell — não tem denominador, e "ninguém reclamou" é ausência de dado.
+
 ## 7. O que mudou da revisão 1 (challenge Codex)
 
 | # | Achado | Resolução |
 |---|---|---|
 | 1 | O teste da `relevance` implícita não prova o cancelamento | §1.2 reescrita: evidência é o código; o teste foi retirado como prova e o método que distingue ficou registrado |
 | 2 | `empatados` mente com ordem nula | §3.3: `situacao` com 3 estados; `candidatos` conta SKUs distintos |
-| 3 | `product_id = NULL` colide com `produto_nao_resolve` | §3.6: cinco pontos do leitor, com a ordem das decisões explícita |
+| 3 | `product_id = NULL` colide com `produto_nao_resolve` | resolvido de vez na R4: identidade separada da eleição (§3.3), e o leitor resolve nome em todo estado (§3.6) |
 | 4 | Arbitrariedade a montante do rank | §5: medida (2/186) e declarada, com sensor |
 | 5 | Janelas de implantação; §3.4 contradizia §3.5 | §3.5 corrigida; §6 lista as janelas e o risco da aba antiga |
 | 6 | Afirmações além da evidência | §1.1 (incidência ≠ dano) e §3.2 (recuperação medida: **104 de 198**, depois de o proxy global ter mentido 198/198) |
@@ -383,42 +486,100 @@ A revisão 2 foi de novo reprovada, e com razão em tudo que era verificável:
 | 5 | Contador não é fail-closed; "quebraria a aba antiga" não demonstrado | §6: reescrito como aceitação declarada de perda, e a afirmação não demonstrada foi retirada |
 | 6 | Afirmações além do medido | §3.2, §5 e §6 corrigidas; §8 rotulada como PLANO de prova |
 
+### 7.2 Rodada 3 do challenge
+
+| # | achado | resposta na revisão 4 |
+|---|---|---|
+| 1 | a flag por linha **desaparece na dedup** — contraexemplo executado | §5.1: a marca é do CLIENTE, decidida antes de elegibilidade/dedup/corte; §5.2 especifica coluna, validação e persistência |
+| 2 | os 4 estados não formam contrato executável: `unico_registrado` exigia nome sem identificador; falta precedência; `ordem_desconhecida` ≠ enum | §3.3 reescrita: **identidade separada da eleição** (`produtos` + `produto_eleito`), 5 estados com PRECEDÊNCIA, nomenclatura única |
+| 3 | validador sem invariantes ENTRE campos aceita `empatado` com `candidatos:1` e array vazio; SKU que não resolve ≠ leitura inválida | §3.6.6: tabela de invariantes cruzados; §3.6.3 separa os dois defeitos |
+| 4 | 9/198 **não prevê** a tela pós-entrega (D3 muda o conjunto persistido); "todos os empates têm 2" vinha dos 94 | §3.2 rebaixada a descrição do conjunto atual + §6.1 (o sensor); histograma re-medido sobre os **189** (2 em 189/189) e o recorte cross-only (**0 de 52** recuperados) |
+| 5 | §8 podia ficar verde sem provar: oráculo contraditório, base SQL sem `p_head_visto`, ramos decisivos em TS | §8 reescrita em 3 camadas, sobre `test-farmer-head-geracao.sh`, com as sabotagens nomeadas e o esperado do interleaving escrito |
+
+O terceiro caminho que o challenge propôs — up-sell ordenado, cross-sell apresentado como **opções
+registradas sem prioridade afirmada** — é o que a §3.6 passa a fazer, agora que nomear deixou de
+depender de eleger.
+
 ## 8. Plano de prova (ainda NÃO executado)
 
-Harness PG17 estendendo `db/test-farmer-geracao-vigente.sh` (hoje 31 asserts + 4 falsificações):
+**Onde.** `db/test-farmer-head-geracao.sh`, **não** `db/test-farmer-geracao-vigente.sh` (achado
+R3/5). O segundo aplica só a `20260814223445` e testa uma assinatura de
+`farmer_recomendacoes_substituir` **sem `p_head_visto`** — que não é a que o front chama
+(`useCrossSellEngine.ts:1205`). O primeiro aplica a cadeia `20260814223445` + `20260815181500`, que é
+a assinatura real. Provar contra a antiga seria testar código que ninguém executa.
 
-- **positivos**: rank denso grava empatados com o mesmo valor · `situacao` nos três estados ·
-  `candidatos` conta SKUs distintos · `product_id` nulo fora de `eleito` · grupo de 1 candidato com
-  `ordem` nula sai `eleito` · `[]` na carteira vazia · dois objetos por cliente.
-- **negativos**: `ordem = 0` e negativa recusadas com a SQLSTATE nomeada, re-lançando o resto.
+**Três camadas, porque nenhuma cobre a outra.** Semear `ordem` e `referencia_ambigua` à mão no PG
+prova armazenamento e leitura — e é cega ao motor perder a flag na dedup, emitir posições distintas
+em vez de rank denso, ou omitir o campo ao montar `recRows`. Os ramos decisivos vivem em TypeScript.
+
+### 8.1 PG17 — contrato do banco
+
+- **positivos**: rank denso grava empatados com o mesmo valor · `situacao` nos **cinco** estados,
+  respeitando a PRECEDÊNCIA · `candidatos` = tamanho do grupo e `produtos` = quem é nomeado, no caso
+  `[A:1, B:1, C:2]` → `produtos=[A,B]`, `candidatos=3` · `produto_eleito` não-nulo **⟺** `eleito` ·
+  `[]` na carteira vazia · dois objetos por cliente · ordem parcialmente nula (`[1,2,null]`) →
+  `ordem_indisponivel` · **singleton com `ordem` nula → `unico_registrado`** (⚠️ a revisão 3 exigia
+  `eleito` nos positivos e `unico_registrado` nos casos do R2 — oráculo contraditório, achado R3/5;
+  a precedência de §3.3 resolve: singleton nunca é `eleito`) · `referencia_ambigua` vencendo
+  `empatado` **e** `eleito` · `NULL` na flag com `ordem` preenchida → `referencia_ambigua`.
+- **negativos**: `ordem = 0` e negativa recusadas com a SQLSTATE nomeada; `referencia_ambigua`
+  não-booleana idem — capturando a SQLSTATE esperada e **re-lançando o resto**.
 - **RLS**: `SET ROLE authenticated` + GUC; carteira alheia não volta.
-- **exigidos pelo R2**: máximo PARCIALMENTE empatado (`[A:1,B:1,C:2]`) · ordem parcialmente nula
-  (`[1,2,null]`) · singleton com ordem nula saindo `unico_registrado` · falha de validação chegando
-  ao cartão como `leitura_falhou` (e não como Map parcial) · o interleaving "novo grava → antigo lê
-  head novo → antigo tenta gravar" · referência ambígua bloqueando `eleito`.
-- **falsificação**: uma camada por vez, com linha de base **verde na mesma invocação**, conferindo
-  **contagem e NOMES** dos vermelhos.
+- **ACL**: `has_function_privilege` para `PUBLIC` e `anon` nas duas pontas.
 
-⚠️ **Armadilha herdada e específica**: `preco-de-referencia-escolhido-por-uuid.md` registra que o
-Codex removeu a referência da chave de ordenação e **12 testes seguiram verdes**, porque a fixture
-tinha **uma** base comprada — com uma base só, `premium/ref` ordena igual a `premium`. As fixtures
-de up-sell aqui terão **múltiplas bases com preços diferentes**, e haverá sabotagem dedicada a
-provar que essa propriedade é medida.
+### 8.2 Vitest — o produtor e o leitor
+
+- **produtor** (`useCrossSellEngine`): rank **denso** (empatados compartilham o valor; posições
+  distintas moveriam o bug do uuid para o índice do array) · a flag de §5.1 sobrevive a
+  elegibilidade, dedup e corte · `recRows` carrega os dois campos novos · D3 ordena pelo score **não
+  arredondado**.
+- **leitor** (`useBundleEngine`): os sete pontos de §3.6 · resposta inválida → `leitura_falhou`
+  **inteira** · SKU que não resolve em `empatado` → segue `empatado` com "1 de 2 não identificado",
+  **não** vira eleição.
+- **fixtures de up-sell com MÚLTIPLAS bases de compra com preços diferentes**: com uma base só, a
+  ordem por `premium/referência` coincide com a ordem por `premium` e uma sabotagem passa verde.
+
+### 8.3 Falsificação — uma camada por vez
+
+Linha de base **verde na mesma invocação** (cópia + `LC_ALL`, abortando antes do primeiro `sed`), e
+conferindo **contagem e NOMES** dos vermelhos. Sabotagens mínimas, cada uma mirando um ramo que só
+ela alcança:
+
+| sabotagem | o que fica vermelho se o teste vale |
+|---|---|
+| dedup guarda só a flag da relação vencedora | o cliente marcado sai `eleito` (R3/1) |
+| D3 volta a ordenar pelo score arredondado | o conjunto persistido muda |
+| rank vira posição sequencial em vez de denso | empate vira eleição por índice |
+| `recRows` omite `ordem` / `referencia_ambigua` | nada persiste, e o teste que "passava" era cego |
+| leitor descarta a linha inválida em vez da resposta | Map parcial apresentado como completo |
+| RPC perde a precedência (avalia `empatado` antes de `referencia_ambigua`) | grupo ambíguo afirma igualdade medida |
+
+### 8.4 O interleaving legado — o esperado escrito
+
+"Nova grava → antiga lê o head novo → antiga tenta gravar": sob a decisão de §6, **a gravação antiga
+é ACEITA**. O leitor degrada para `ordem_indisponivel` e o servidor registra a perda de cobertura no
+log de execuções. Um teste esperando recusa estaria provando outra decisão — e passaria a reprovar o
+código correto.
 
 ## 9. O que esta entrega NÃO fecha (declarado)
 
 - **A precedência entre tipos continua sem regra comercial.** D1 dissolve a comparação; não a
   resolve.
-- **Os 94 empates REAIS do cross-sell** (39,5% dos grupos) continuam sem vencedor — e é correto que
-  continuem: o motor não tem sinal que os distinga. Fechá-los exige **sinal novo** (margem, giro,
-  recência do SKU no cliente), que é trabalho de motor, não de ordenação. O que a entrega faz é
-  parar de **fingir** que há vencedor ali.
+- **Os 189 empates REAIS do cross-sell** (95,5% dos grupos empatados; **52 de 52** nos clientes
+  cross-only, §3.2) continuam sem vencedor — e é correto que continuem: o motor não tem sinal que os
+  distinga. Fechá-los exige **sinal novo** (margem, giro, recência do SKU no cliente), que é trabalho
+  de motor, não de ordenação. O que a entrega faz é parar de **fingir** que há vencedor ali.
+- **A distribuição da tela depois desta entrega não está prevista** (§6.1): D3 muda o conjunto
+  persistido, e prever exigiria executar o pipeline TS sobre um snapshot coerente. Quem responde é o
+  sensor server-side, e ele é entregue junto.
 - **A via do WhatsApp e o corte top-3/top-2** (§4).
-- **A ambiguidade da referência de preço** (§5) — declarada e sensoreada, não propagada.
+- **A ambiguidade da referência de preço não é CONSERTADA** (§5): ela passa a ser propagada por
+  cliente e a bloquear eleição — o conserto seria dar a `preco-referencia.ts` um critério que não
+  caia em uuid, e isso é spec própria.
 - **`p_ij` é 0 em 645 de 714 linhas cross-sell** (`Math.round(0,0002 × 1000)/10 = 0`): o vendedor lê
   "0,0%". Mesma quantização, outra coluna, outro consumidor.
 - **Moeda comum em R$** (§1.3): sem substrato hoje.
 - **O sinal do motor de cross-sell é grosso, e agora há evidência dimensionada disso**: 189 de 198
-  grupos têm `relevance` EXATAMENTE igual entre os candidatos do topo. Dar sinal novo (margem,
-  giro, recência do SKU no cliente) é o conserto da CAUSA — spec própria, com esta medição como
-  ponto de partida. Esta entrega trata o sintoma: para de apresentar o sorteio como veredicto.
+  grupos têm `relevance` EXATAMENTE igual entre os candidatos do topo, todos de tamanho 2. Dar sinal
+  novo é o conserto da CAUSA — spec própria, com esta medição como ponto de partida e o sensor de
+  §6.1 como denominador. Esta entrega trata o sintoma: para de apresentar o sorteio como veredicto.
