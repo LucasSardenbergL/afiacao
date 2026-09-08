@@ -305,11 +305,11 @@ deploy. Falsificar localmente antes de confiar: com o helper adulterado e os doi
 intactos, exigir **sonda verde + canária vermelha**. Ela pega o que (a) não pega — divergência que
 nasce DEPOIS da entrada do deploy (resolução de dependência, cache de build).
 
-AS DUAS ESTÃO ENTREGUES: (a) no #2362, (b) no #2363. Cada uma foi entrega própria, com
+AS DUAS ESTÃO ENTREGUES: (a) no #2362, (b) no #2367. Cada uma foi entrega própria, com
 falsificação própria — (a) toca o gerador de prompt de TODOS os deploys; (b) toca o corpo de uma
 edge. O que segue é o que cada uma mede e, principalmente, o que **não** mede.
 
-### (b) entregue — a canária determinística da `copilot-analyze` (#2363)
+### (b) entregue — a canária determinística da `copilot-analyze` (#2367)
 
 `{"canary":true}` na `copilot-analyze` executa `normalizarAnalise` sobre **6 fixtures** e responde
 `{canary, contrato: "tudo-ou-nada-normalizar-v1", ok, casos}`. O bloco vive antes do `createClient`,
