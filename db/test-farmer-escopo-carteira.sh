@@ -599,9 +599,12 @@ else
   restaura_ordem
 
   # F3 — `produtos` deixa de recortar o topo e nomeia o grupo inteiro no empate.
+  # O padrão seguiu a reescrita que tirou o quadrático (achado R5/1): `produtos` deixou de sair
+  # de subquery correlacionada e passa a escolher entre dois arrays montados uma vez só. O guard
+  # de "não casou o padrão" pegou a defasagem — sem ele este assert teria virado teatro.
   if sabota_ordem "produtos sem recorte de topo" \
-       "s/AND (f\.situacao NOT IN ('eleito', 'empatado') OR b\.ordem = f\.ordem_minima)/AND true/" \
-       'AND true'; then
+       "s/CASE WHEN f\.situacao IN ('eleito', 'empatado') THEN f\.topo_ids ELSE f\.todos_ids END/f.todos_ids/" \
+       'f.todos_ids$'; then
     vermelho "F3 empate nomeia só o topo" "$(nprod "$CT")" "2"
   fi
   restaura_ordem

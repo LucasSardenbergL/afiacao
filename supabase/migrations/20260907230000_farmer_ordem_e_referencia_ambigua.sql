@@ -357,6 +357,12 @@ BEGIN
   -- o que acabou de ser gravado — e com DENOMINADOR, porque sem ele a fase seguinte volta a se
   -- decidir por "ninguém reclamou", que é ausência de dado.
   --
+  -- ⚠️ O universo é "grupos PENDENTES no instante da gravação", NÃO "eleições exibidas". Os dois
+  -- divergem sem concorrência nenhuma: um grupo `eleito` cujo único SKU saiu do catálogo ativo
+  -- conta como eleito aqui e vira `indisponivel` na tela, e o leitor pula cliente sem `profile`.
+  -- Chamar isto de "distribuição da tela" seria afirmar além do que ele mede (achado R5/1);
+  -- medir o exibido exige um sensor DEPOIS da projeção, que é outra entrega.
+  --
   -- ⚠️ Reusa a RPC de LEITURA em vez de reimplementar a precedência dos 5 estados. Duas cópias
   -- da mesma regra divergem no primeiro conserto que só uma recebe, e aí o sensor passa a medir
   -- uma tela que não existe. A ordem em que as duas funções aparecem NESTE arquivo não importa:
@@ -480,13 +486,21 @@ AS $fn$
            count(DISTINCT b.run_id)
              + (count(*) FILTER (WHERE b.run_id IS NULL) > 0)::int      AS geracoes,
            max(b.affinity_score)                                        AS affinity_score,
-           (array_agg(b.run_id ORDER BY b.run_id))[1]                   AS run_id_qualquer
+           (array_agg(b.run_id ORDER BY b.run_id))[1]                   AS run_id_qualquer,
+           -- Os NOMES do grupo inteiro, montados na varredura que ja acontece. Eles saiam de
+           -- uma subquery CORRELACIONADA por grupo la embaixo, e o challenge (rodada 5) contou
+           -- o custo: 3.858 clientes x 5 recomendacoes = 7.716 grupos varrendo `base` uma vez
+           -- cada, ~149 milhoes de verificacoes — e o sensor arrastou isso para DENTRO da
+           -- transacao de gravacao, segurando os locks. `AS MATERIALIZED` no CTE externo nao
+           -- alcanca subquery interna: quem paga o correlacionado e o plano, nao o CTE.
+           jsonb_agg(DISTINCT b.product_id ORDER BY b.product_id)        AS todos_ids
     FROM base b
     GROUP BY 1, 2
   ),
   topo AS (
     SELECT g.customer_user_id, g.recommendation_type,
-           count(DISTINCT b.product_id) AS no_topo
+           count(DISTINCT b.product_id) AS no_topo,
+           jsonb_agg(DISTINCT b.product_id ORDER BY b.product_id) AS topo_ids
     FROM grupo g
     JOIN base b USING (customer_user_id, recommendation_type)
     WHERE g.ordem_minima IS NOT NULL AND b.ordem = g.ordem_minima
@@ -512,6 +526,13 @@ AS $fn$
            END AS situacao
     FROM grupo g
     LEFT JOIN topo t USING (customer_user_id, recommendation_type)
+  ),
+  -- Os arrays chegam PRONTOS ao SELECT externo — ele so escolhe QUAL, pelo estado.
+  nomeado AS (
+    SELECT f.*, g.todos_ids, t.topo_ids
+    FROM final f
+    JOIN grupo g USING (customer_user_id, recommendation_type)
+    LEFT JOIN topo t USING (customer_user_id, recommendation_type)
   )
   SELECT coalesce(
            jsonb_agg(to_jsonb(m) ORDER BY m.customer_user_id, m.recommendation_type),
@@ -521,20 +542,12 @@ AS $fn$
            f.affinity_score, f.run_id,
            -- `eleito` e `empatado` nomeiam o TOPO; os tres estados sem ordenacao confiavel
            -- nomeiam o grupo INTEIRO — la nao existe topo que signifique alguma coisa.
-           (SELECT jsonb_agg(DISTINCT b.product_id ORDER BY b.product_id)
-              FROM base b
-             WHERE b.customer_user_id    = f.customer_user_id
-               AND b.recommendation_type = f.recommendation_type
-               AND (f.situacao NOT IN ('eleito', 'empatado') OR b.ordem = f.ordem_minima)
-           ) AS produtos,
-           CASE WHEN f.situacao = 'eleito' THEN
-             (SELECT (array_agg(b.product_id ORDER BY b.product_id))[1]
-                FROM base b
-               WHERE b.customer_user_id    = f.customer_user_id
-                 AND b.recommendation_type = f.recommendation_type
-                 AND b.ordem               = f.ordem_minima)
-           END AS produto_eleito
-    FROM final f
+           CASE WHEN f.situacao IN ('eleito', 'empatado') THEN f.topo_ids ELSE f.todos_ids END
+             AS produtos,
+           -- Em `eleito` o topo tem exatamente UM elemento (é o que o estado significa), entao
+           -- o primeiro do array E o eleito — sem segunda varredura para descobrir isso.
+           CASE WHEN f.situacao = 'eleito' THEN f.topo_ids->>0 END AS produto_eleito
+    FROM nomeado f
   ) m
 $fn$;
 
