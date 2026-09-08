@@ -753,6 +753,13 @@ corrigir.
   de 2026-09-06 (8 edges, ANTES desconhecido, transição não observável), e é o que faltava para
   fechar aquela lacuna — mas só na metade CANAL. Não é "o MCP nunca edita": é "nenhuma edição
   REGISTRADA nesta", e a rede que pegaria uma edição NÃO registrada não existe hoje.
+  **Estendido em 2026-09-08, e vale registrar o que mudou:** uma leva de 2 edges saiu por
+  `send_message` num prompt em LOTE, com o ANTES lido do ledger e a divergência **natural** em vez de
+  fabricada (`omie-vendas-sync` em `DIVERGE_P1`, o fix money-path do #2370) — transição para `CONFERE`
+  observada nas duas, `pendencias:deploy` 59/59. É a primeira medição em que o CANAL (aqui) e a
+  transição de veredito num prompt de LEVA (lá) aparecem juntos; a metade **verbatim** continua
+  exatamente onde este piloto a deixou. Detalhe em
+  [`deploy-redundante-ledger-e-cron-de-sonda.md`](deploy-redundante-ledger-e-cron-de-sonda.md) §7.
 - **A cobaia foi escolhida por ser inócua.** `farmer_copilot_sessions` = 0, zero escrita, closure de
   7 arquivos. Uma edge grande ou money-path é mais superfície para o agente "melhorar", e este
   resultado não fala por ela.
