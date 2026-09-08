@@ -120,24 +120,26 @@ eq "D2 continua 77 linhas" 77 \
    "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id WHERE so.omie_pedido_id <> 12121128593;")"
 
 echo "== E · ausente != zero: chave 'desconto' faltando vira NULL, nao 0 =="
-# UMA transacao: com a CONSTRAINT TRIGGER instalada, cabecalho e linhas TEM de
-# mudar juntos. (A 1a versao deste teste usava statements soltos e a trigger a
-# recusou — comportamento correto dela, defeito do teste.)
+# Tira a chave `desconto` do jsonb de um dos alvos E zera as linhas dele na MESMA
+# transacao (0 linhas = push do app, que a trigger aceita). Depois roda O REPARO:
+# quem tem de produzir NULL e a expressao (el->>'desconto')::numeric do reparo —
+# se ela cair para o DEFAULT 0 da coluna, este assert fica VERMELHO.
 Q -q <<'SQL'
 BEGIN;
-UPDATE sales_orders SET items = jsonb_build_array(jsonb_build_object(
-  'omie_codigo_produto',(items->0->>'omie_codigo_produto')::bigint,'quantidade',1,'valor_unitario',10))
-WHERE omie_pedido_id=12137805363;
-DELETE FROM order_items WHERE sales_order_id=(SELECT id FROM sales_orders WHERE omie_pedido_id=12137805363);
-INSERT INTO order_items (sales_order_id,customer_user_id,product_id,omie_codigo_produto,quantity,unit_price,discount,hash_payload)
-SELECT so.id, so.customer_user_id, (SELECT id FROM omie_products p WHERE p.omie_codigo_produto=(el->>'omie_codigo_produto')::bigint),
-       (el->>'omie_codigo_produto')::bigint,(el->>'quantidade')::numeric,(el->>'valor_unitario')::numeric,(el->>'desconto')::numeric,
-       'omie_'||so.account||'_'||so.omie_pedido_id||'_'||(el->>'omie_codigo_produto')
-FROM sales_orders so CROSS JOIN LATERAL jsonb_array_elements(so.items) el WHERE so.omie_pedido_id=12137805363;
+UPDATE sales_orders so
+   SET items = (SELECT jsonb_agg(el - 'desconto') FROM jsonb_array_elements(so.items) el)
+ WHERE so.omie_pedido_id = 12137805363;
+DELETE FROM order_items WHERE sales_order_id = (SELECT id FROM sales_orders WHERE omie_pedido_id = 12137805363);
 COMMIT;
 SQL
-eq "E1 discount ficou NULL (nao virou 0 pelo DEFAULT)" "" \
-   "$(V "SELECT discount FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id WHERE so.omie_pedido_id=12137805363;")"
+# `|| true`: se o reparo RECUSAR (postcondicao), E1 mede o estado e reprova —
+# sem isso o set -e mataria o teste antes do assert falar.
+Q -q -f "$REPARO" >/dev/null 2>&1 || true
+eq "E1 discount NULL nas linhas sem a chave (nao virou 0 pelo DEFAULT)" 2 \
+   "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id
+         WHERE so.omie_pedido_id=12137805363 AND oi.discount IS NULL;")"
+eq "E2 o total de linhas nao mudou" 77 \
+   "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id WHERE so.omie_pedido_id <> 12121128593;")"
 
 echo
 if [ "$FALHAS" -eq 0 ]; then echo "PROVA-REPARO-OK (0 falhas)"; else echo "PROVA-REPARO-FALHOU ($FALHAS)"; exit 1; fi
