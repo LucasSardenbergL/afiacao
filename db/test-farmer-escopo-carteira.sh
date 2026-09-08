@@ -109,6 +109,12 @@ CREATE TABLE public.farmer_geracao_vigente (
 CREATE FUNCTION private.cap_carteira_escrever(p uuid) RETURNS boolean
   LANGUAGE sql STABLE AS $f$ SELECT false $f$;
 
+CREATE TABLE public._insumos_vistos (run_id uuid PRIMARY KEY, insumos jsonb);
+-- O writer e SECURITY INVOKER, entao este INSERT roda com os privilegios de QUEM chamou
+-- — e o harness chama sob `authenticated`. Sem o GRANT, o caminho feliz reprovaria por
+-- permissao de uma tabela que so existe no stub: assert vermelho pelo motivo ERRADO.
+GRANT SELECT, INSERT, UPDATE ON public._insumos_vistos TO PUBLIC;
+
 CREATE FUNCTION public.farmer_geracao_registrar(
   p_motor text, p_farmer_id uuid, p_run_id uuid, p_tipo text, p_n integer,
   p_completude text, p_motivo text, p_insumos jsonb, p_head uuid)
@@ -117,6 +123,10 @@ BEGIN
   INSERT INTO public.farmer_geracao_vigente (motor, farmer_id, run_id)
   VALUES (p_motor, p_farmer_id, p_run_id)
   ON CONFLICT (motor, farmer_id) DO UPDATE SET run_id = EXCLUDED.run_id;
+  -- O stub GUARDA os insumos: o sensor da distribuicao sai por este parametro, e descarta-lo
+  -- faria o assert dele passar por vacuidade — verde sobre um numero que ninguem emitiu.
+  INSERT INTO public._insumos_vistos (run_id, insumos) VALUES (p_run_id, p_insumos)
+  ON CONFLICT (run_id) DO UPDATE SET insumos = EXCLUDED.insumos;
 END $f$;
 SQL
 
@@ -298,6 +308,339 @@ esac
 P -q -f <(sem_guard "$MIG")
 eq "V1b restaurado: o gate de escopo volta a morder" "$(chamar farmer_recomendacoes_substituir "$(linha "$C3")" "$(geracao_atual farmer_recommendations)")" "FG009"
 rm -f "$DIVERG"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZONA 5 — A ORDEM DO MELHOR INDIVIDUAL (20260907230000)
+#
+# Esta migration sucede a 20260906164002 no MESMO writer (`CREATE OR REPLACE`, a
+# última a recriar vence), então é aqui que ela se prova — e não no harness de
+# head, cuja cadeia para na 20260815181500 e produz um writer que produção já não
+# tem (sem o gate de escopo). ⚠️ Dívida PREEXISTENTE, declarada: o
+# `db/test-farmer-head-geracao.sh` testa uma versão do writer anterior à de ontem.
+# ═══════════════════════════════════════════════════════════════════════════════
+echo "─── ordem do melhor individual ───"
+
+MIG_ORDEM="$REPO_ROOT/supabase/migrations/20260907230000_farmer_ordem_e_referencia_ambigua.sql"
+[ -f "$MIG_ORDEM" ] || { echo "migração ausente: $MIG_ORDEM"; exit 1; }
+P -q -f "$MIG_ORDEM"
+P -q -f "$MIG_ORDEM"
+ok "O0 migration da ordem é idempotente (aplicada 2x sem erro)"
+
+D="dddddddd-0000-4000-8000-00000000000d"      # farmer só desta zona
+VAZIO="eeeeeeee-0000-4000-8000-00000000000e"  # farmer sem NENHUMA linha
+CE="cccccccc-0000-4000-8000-0000000000e1"     # eleito
+CT="cccccccc-0000-4000-8000-0000000000a1"     # empatado com 3º candidato fora do topo
+CU="cccccccc-0000-4000-8000-0000000000b1"     # singleton SEM ordem
+CS="cccccccc-0000-4000-8000-0000000000c1"     # singleton COM ordem
+CP="cccccccc-0000-4000-8000-0000000000d1"     # ordenação parcial [1,2,NULL]
+CM="cccccccc-0000-4000-8000-0000000000f1"     # referência ambígua declarada
+CN="cccccccc-0000-4000-8000-0000000000e2"     # flag NULA com ordem preenchida
+P2="dddddddd-0000-4000-8000-000000000002"
+P3="dddddddd-0000-4000-8000-000000000003"
+RUND="99999999-0000-4000-8000-00000000000d"
+
+P -q <<SQL
+INSERT INTO public.farmer_client_scores (customer_user_id, farmer_id) VALUES
+  ('$CE','$D'),('$CT','$D'),('$CU','$D'),('$CS','$D'),('$CP','$D'),('$CM','$D'),('$CN','$D');
+
+INSERT INTO public.farmer_recommendations
+  (farmer_id, customer_user_id, recommendation_type, product_id, affinity_score,
+   status, run_id, ordem, referencia_ambigua)
+VALUES
+  ('$D','$CE','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+  ('$D','$CE','cross_sell','$P2'  ,0.1,'pendente','$RUND',2,false),
+
+  ('$D','$CT','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+  ('$D','$CT','cross_sell','$P2'  ,0.1,'pendente','$RUND',1,false),
+  ('$D','$CT','cross_sell','$P3'  ,0.1,'pendente','$RUND',2,false),
+
+  ('$D','$CU','up_sell'   ,'$PROD',0.1,'pendente','$RUND',NULL,false),
+  ('$D','$CS','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+
+  ('$D','$CP','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+  ('$D','$CP','cross_sell','$P2'  ,0.1,'pendente','$RUND',2,false),
+  ('$D','$CP','cross_sell','$P3'  ,0.1,'pendente','$RUND',NULL,false),
+
+  ('$D','$CM','up_sell'   ,'$PROD',0.1,'pendente','$RUND',1,true),
+  ('$D','$CM','up_sell'   ,'$P2'  ,0.1,'pendente','$RUND',2,true),
+
+  ('$D','$CN','up_sell'   ,'$PROD',0.1,'pendente','$RUND',1,NULL),
+  ('$D','$CN','up_sell'   ,'$P2'  ,0.1,'pendente','$RUND',2,NULL);
+SQL
+
+campo() { # <cliente> <campo>
+  Pq -c "SELECT j->>'$2' FROM jsonb_array_elements(
+           public.farmer_melhores_individuais_por_cliente('$D')) j
+          WHERE j->>'customer_user_id'='$1';"
+}
+nprod() { # <cliente> — quantos SKUs a tela vai NOMEAR
+  Pq -c "SELECT jsonb_array_length(j->'produtos') FROM jsonb_array_elements(
+           public.farmer_melhores_individuais_por_cliente('$D')) j
+          WHERE j->>'customer_user_id'='$1';"
+}
+
+# ── os cinco estados, e a PRECEDÊNCIA entre eles ────────────────────────────────
+eq "O1 topo único com ordem conhecida = eleito"         "$(campo "$CE" situacao)" "eleito"
+eq "O2 dois no rank mínimo = empatado"                  "$(campo "$CT" situacao)" "empatado"
+eq "O3 singleton SEM ordem = unico_registrado"          "$(campo "$CU" situacao)" "unico_registrado"
+# ⚠️ o assert que prende a precedência: sem ela este caso satisfaz 'unico_registrado'
+#    E 'topo único' ao mesmo tempo, e a versão anterior da spec exigia os DOIS.
+eq "O4 singleton COM ordem NÃO vira eleito"             "$(campo "$CS" situacao)" "unico_registrado"
+eq "O5 [1,2,NULL] = ordem_indisponivel (incompleta)"    "$(campo "$CP" situacao)" "ordem_indisponivel"
+eq "O6 flag=true vence topo único"                      "$(campo "$CM" situacao)" "referencia_ambigua"
+eq "O7 flag NULA com ordem preenchida é fail-closed"    "$(campo "$CN" situacao)" "referencia_ambigua"
+
+# ── identidade separada da eleição ──────────────────────────────────────────────
+eq "O8 empate nomeia só o TOPO"                         "$(nprod "$CT")" "2"
+eq "O9 candidatos conta o GRUPO, não o topo"            "$(campo "$CT" candidatos)" "3"
+eq "O10 ordem_indisponivel nomeia o grupo INTEIRO"      "$(nprod "$CP")" "3"
+eq "O11 eleito nomeia UM"                               "$(nprod "$CE")" "1"
+eq "O12 produto_eleito é o do rank mínimo"              "$(campo "$CE" produto_eleito)" "$PROD"
+eq "O13 produto_eleito não-nulo ⟺ eleito, na carteira inteira" \
+   "$(Pq -c "SELECT count(*) FROM jsonb_array_elements(
+               public.farmer_melhores_individuais_por_cliente('$D')) j
+              WHERE (j->>'produto_eleito' IS NOT NULL) <> (j->>'situacao'='eleito');")" "0"
+eq "O14 produtos NUNCA é vazio ou nulo" \
+   "$(Pq -c "SELECT count(*) FROM jsonb_array_elements(
+               public.farmer_melhores_individuais_por_cliente('$D')) j
+              WHERE coalesce(jsonb_array_length(j->'produtos'),0) < 1;")" "0"
+eq "O15 um objeto por (cliente,tipo) — 7 clientes, 7 objetos" \
+   "$(Pq -c "SELECT jsonb_array_length(public.farmer_melhores_individuais_por_cliente('$D'));")" "7"
+eq "O16 carteira vazia devolve [] e não NULL" \
+   "$(Pq -c "SELECT public.farmer_melhores_individuais_por_cliente('$VAZIO')::text;")" "[]"
+
+# ── o writer: as chaves novas ATRAVESSAM jsonb_to_recordset ─────────────────────
+# Sem as listas de colunas atualizadas nos DOIS blocos, a chave é ignorada em
+# SILÊNCIO — nada persiste e nada falha, que é o pior desfecho possível.
+LOTE_ORDEM="[{\"customer_user_id\":\"$C1\",\"recommendation_type\":\"cross_sell\",\"product_id\":\"$PROD\",\"affinity_score\":0.5,\"ordem\":1,\"referencia_ambigua\":false},
+             {\"customer_user_id\":\"$C1\",\"recommendation_type\":\"cross_sell\",\"product_id\":\"$P2\",\"affinity_score\":0.5,\"ordem\":1,\"referencia_ambigua\":true}]"
+RUNW="99999999-0000-4000-8000-000000000012"
+# `$COMO_A` porque o writer é gateado por authz (FG-acesso): sem a identidade, o assert
+# reprovaria por motivo ERRADO e a falsificação viraria teatro.
+GERACAO_A=$(Pq -c "SELECT coalesce(quote_literal(run_id::text)||'::uuid','NULL')
+                     FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$A';")
+[ -n "$GERACAO_A" ] || GERACAO_A=NULL
+P -q -c "$COMO_A SELECT public.farmer_recomendacoes_substituir('$A','$RUNW',$GERACAO_A,
+           '$LOTE_ORDEM'::jsonb,'completa',NULL,NULL,NULL);" >/dev/null
+eq "O17 o writer PERSISTE a ordem densa" \
+   "$(Pq -c "SELECT string_agg(ordem::text,',' ORDER BY product_id) FROM public.farmer_recommendations
+              WHERE run_id='$RUNW';")" "1,1"
+eq "O18 o writer PERSISTE a flag, sem coalescer" \
+   "$(Pq -c "SELECT string_agg(referencia_ambigua::text,',' ORDER BY product_id) FROM public.farmer_recommendations
+              WHERE run_id='$RUNW';")" "false,true"
+
+# ── negativos: a SQLSTATE ESPERADA, re-lançando o resto ─────────────────────────
+neg_ordem() { # <json> <sqlstate> <rótulo>
+  local saida
+  local vista
+  # A geração vigente é lida A CADA chamada: com a capturada lá em cima o lote morreria no
+  # CAS — reprovaria pelo motivo ERRADO, sem nunca alcançar a validação sob teste.
+  vista=$(Pq -c "SELECT coalesce(quote_literal(run_id::text)||'::uuid','NULL')
+                   FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$A';")
+  [ -n "$vista" ] || vista=NULL
+  saida=$(P -tA -c "$COMO_A DO \$t\$ BEGIN
+      PERFORM public.farmer_recomendacoes_substituir('$A','99999999-0000-4000-8000-0000000000ff',
+                $vista,'$1'::jsonb,'completa',NULL,NULL,NULL);
+      RAISE NOTICE 'NAO-RECUSOU';
+    EXCEPTION WHEN SQLSTATE '$2' THEN RAISE NOTICE 'RECUSOU-COMO-ESPERADO';
+    END \$t\$;" 2>&1 || true)
+  case "$saida" in
+    *RECUSOU-COMO-ESPERADO*) ok "$3" ;;
+    *) bad "$3 — veio: $(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-170)" ;;
+  esac
+}
+neg_ordem_valor() { # como neg_ordem, mas DEVOLVE o veredito em vez de contar assert
+  local vista saida
+  vista=$(Pq -c "SELECT coalesce(quote_literal(run_id::text)||'::uuid','NULL')
+                   FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$A';")
+  [ -n "$vista" ] || vista=NULL
+  saida=$(P -tA -c "$COMO_A DO \$t\$ BEGIN
+      PERFORM public.farmer_recomendacoes_substituir('$A','99999999-0000-4000-8000-0000000000fe',
+                $vista,'$1'::jsonb,'completa',NULL,NULL,NULL);
+      RAISE NOTICE 'PASSOU';
+    EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'RECUSOU:%', SQLSTATE;
+    END \$t\$;" 2>&1 || true)
+  case "$saida" in
+    *PASSOU*)       echo "PASSOU" ;;
+    *RECUSOU:FG007*) echo "RECUSOU" ;;
+    *RECUSOU:*)     echo "RECUSOU-OUTRO-MOTIVO:$(printf '%s' "$saida" | sed -n 's/.*RECUSOU:\([A-Z0-9]*\).*/\1/p' | head -1)" ;;
+    *)              echo "ERRO" ;;
+  esac
+  [ -n "${DEBUG_NEG:-}" ] && printf 'DEBUG_NEG[%s] vista=[%s] saida=[%s]\n' "$1" "$vista" "$(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-300)" >&2
+}
+LB="\"customer_user_id\":\"$C1\",\"recommendation_type\":\"cross_sell\",\"product_id\":\"$PROD\",\"affinity_score\":0.5"
+neg_ordem "[{$LB,\"ordem\":0}]"                       FG007 "O19 ordem 0 recusada (0 não é posição)"
+neg_ordem "[{$LB,\"ordem\":-1}]"                      FG007 "O20 ordem negativa recusada"
+neg_ordem "[{$LB,\"referencia_ambigua\":\"talvez\"}]" FG007 "O21 flag não-booleana recusada por TIPO, antes do cast"
+eq "O22 lote recusado NÃO expirou a geração vigente" \
+   "$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE run_id='$RUNW' AND status='pendente';")" "2"
+
+# ── a fronteira ────────────────────────────────────────────────────────────────
+# A RLS não é provada aqui (este harness não carrega a policy `frec_select_carteira`,
+# e provar contra uma policy stub provaria o stub). O que se prova é a afirmação do
+# DESENHO: a RPC não bypassa RLS — se virasse DEFINER, leria como owner.
+eq "O23 a RPC é SECURITY INVOKER (não bypassa RLS)" \
+   "$(Pq -c "SELECT prosecdef FROM pg_proc WHERE oid='public.farmer_melhores_individuais_por_cliente(uuid)'::regprocedure;")" "f"
+eq "O24 anon NÃO executa a RPC nova" \
+   "$(Pq -c "SELECT has_function_privilege('anon','public.farmer_melhores_individuais_por_cliente(uuid)','EXECUTE');")" "f"
+eq "O25 authenticated executa" \
+   "$(Pq -c "SELECT has_function_privilege('authenticated','public.farmer_melhores_individuais_por_cliente(uuid)','EXECUTE');")" "t"
+
+
+# ── achados da rodada 4 do challenge ───────────────────────────────────────────
+CG="cccccccc-0000-4000-8000-0000000000c2"   # duas gerações pendentes no mesmo grupo
+P -q <<SQL
+INSERT INTO public.farmer_client_scores (customer_user_id, farmer_id) VALUES ('$CG','$D');
+INSERT INTO public.farmer_recommendations
+  (farmer_id, customer_user_id, recommendation_type, product_id, affinity_score,
+   status, run_id, ordem, referencia_ambigua)
+VALUES
+  ('$D','$CG','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+  ('$D','$CG','cross_sell','$P2'  ,0.1,'pendente','99999999-0000-4000-8000-0000000000dd',2,false);
+SQL
+# Rank de G1 contra rank de G2 são universos diferentes: `ordem 1` não venceu de ninguém.
+eq "O26 geração MISTURADA no grupo não elege"      "$(campo "$CG" situacao)" "ordem_indisponivel"
+eq "O27 grupo incoerente não transporta run_id"    "$(campo "$CG" run_id)"   ""
+eq "O28 grupo coerente TRANSPORTA o run_id"        "$(campo "$CE" run_id)"   "$RUND"
+
+# O cast NÃO recusa representação textual — `boolean_in` aceita "false"/"off"/"0" e `int2in`
+# aceita "3". Sem a checagem de jsonb_typeof, um produtor defeituoso gravaria uma NEGATIVA
+# explícita de ambiguidade, e o teste com "talvez" ficaria verde sem provar nada.
+neg_ordem "[{$LB,\"referencia_ambigua\":\"false\"}]" FG007 "O29 flag \"false\" (string) é RECUSADA, não convertida"
+neg_ordem "[{$LB,\"referencia_ambigua\":0}]"         FG007 "O30 flag 0 é RECUSADA, não convertida"
+neg_ordem "[{$LB,\"ordem\":\"2\"}]"                  FG007 "O31 ordem \"2\" (string) é RECUSADA"
+# E o controle do outro lado: o tipo CERTO continua passando (a checagem não fecha demais).
+eq "O32 ordem numérica e flag booleana continuam aceitas" \
+   "$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE run_id='$RUNW';")" "2"
+
+# RLS: `prosecdef` diz que a RPC não bypassa; falta que ela LEIA de verdade sob a identidade.
+# Sem o assert positivo, uma resposta sempre-vazia aprovaria o negativo (achado do challenge).
+eq "O33 sob a identidade do DONO a carteira volta NÃO-vazia" \
+   "$(Pq -c "SET test.uid='$D'; SET test.role='authenticated';
+             SELECT jsonb_array_length(public.farmer_melhores_individuais_por_cliente('$D'));" | tail -1)" "8"
+
+
+# ── O SENSOR DA DISTRIBUIÇÃO (§6.1) ────────────────────────────────────────────
+# A distribuicao por situacao nao e derivavel do banco ANTES da entrega: D3 muda quais SKUs
+# sao persistidos, entao "empate entre os persistidos" nao demonstra ausencia de vencedor
+# entre os candidatos. Ela e MEDIDA no writer, sobre o que acabou de ser gravado.
+#
+# O writer do assert O17 gravou 2 linhas para $C1 com ordem 1,1 e uma delas com a flag ligada
+# — o grupo cai em `referencia_ambigua`, que e o estado de maior precedencia.
+eq "O34 o sensor grava a eleicao com DENOMINADOR" \
+   "$(Pq -c "SELECT (insumos->'individuais_eleicao'->>'n') || '/' ||
+                    (insumos->'individuais_eleicao'->>'esperado')
+             FROM public._insumos_vistos WHERE run_id='$RUNW';")" "0/1"
+eq "O35 a distribuicao nomeia TIPO e SITUACAO" \
+   "$(Pq -c "SELECT insumos->'individuais_eleicao'->'distribuicao'->>'cross_sell:referencia_ambigua'
+             FROM public._insumos_vistos WHERE run_id='$RUNW';")" "1"
+# Inerte por construcao: `ok:true` e sem piso. Uma evidencia que DEGRADA o head travaria a
+# fase 2 para sempre, porque `degradado` nunca autoriza expirar (money-path §13).
+eq "O36 o sensor e INERTE — mede sem julgar" \
+   "$(Pq -c "SELECT (insumos->'individuais_eleicao'->>'ok') || ':' ||
+                    coalesce(insumos->'individuais_eleicao'->>'pisoCobertura','sem-piso')
+             FROM public._insumos_vistos WHERE run_id='$RUNW';")" "true:sem-piso"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FALSIFICAÇÃO DA ORDEM — uma camada por vez
+#
+# ⚠️ LINHA DE BASE NA MESMA INVOCAÇÃO. Uma suíte sempre-vermelha aprova TODA
+# sabotagem, e rodar o controle noutra execução não prova nada sobre esta. Os
+# valores íntegros são re-lidos aqui e conferidos ANTES do primeiro `sed`; se
+# algum divergir, aborta em vez de "falsificar".
+# ═══════════════════════════════════════════════════════════════════════════════
+echo "─── falsificação: a ordem ───"
+
+BASE_OK=1
+base_confere() { # $1=rótulo $2=obtido $3=esperado
+  if [ "$2" = "$3" ]; then ok "base íntegra: $1 (=$2)"; else BASE_OK=0; bad "BASE JÁ VERMELHA em $1 — esperado [$3], veio [$2]; falsificar aqui seria teatro"; fi
+}
+base_confere "O6 ambígua"      "$(campo "$CM" situacao)" "referencia_ambigua"
+base_confere "O7 flag nula"    "$(campo "$CN" situacao)" "referencia_ambigua"
+base_confere "O26 mistura"     "$(campo "$CG" situacao)" "ordem_indisponivel"
+base_confere "O8 topo"         "$(nprod "$CT")"          "2"
+base_confere "O3 singleton"    "$(campo "$CU" situacao)" "unico_registrado"
+
+if [ "$BASE_OK" -ne 1 ]; then
+  bad "falsificação ABORTADA: a linha de base não está verde nesta invocação"
+else
+  SABO="$(mktemp /tmp/sabota-ordem.XXXXXX)"
+  restaura_ordem() { P -q -f "$MIG_ORDEM" >/dev/null 2>&1; }
+  sabota_ordem() { # $1=rótulo  $2=expressão sed  $3=marca obrigatória no sabotado
+    sed "$2" "$MIG_ORDEM" > "$SABO"
+    if ! command grep -q "$3" "$SABO"; then
+      bad "SABOTAGEM '$1' NÃO casou o padrão — o assert abaixo seria teatro"
+      return 1
+    fi
+    if ! P -q -f "$SABO" >/dev/null 2>&1; then
+      bad "SABOTAGEM '$1' casou o padrão mas NÃO APLICOU — o assert abaixo seria teatro"
+      return 1
+    fi
+    return 0
+  }
+  vermelho() { # $1=rótulo $2=obtido $3=o valor ÍNTEGRO, que NÃO pode sobreviver
+    if [ "$2" = "$3" ]; then bad "FALSIFICAÇÃO SEM DENTE: $1 continuou [$2] com a migration sabotada"
+    else ok "mordeu: $1 virou [$2] (íntegro: [$3])"; fi
+  }
+
+  # F1 — o fail-closed da flag nula vira fail-OPEN.
+  if sabota_ordem "flag nula fail-open" \
+       's/coalesce(b\.referencia_ambigua, b\.ordem IS NOT NULL)/coalesce(b.referencia_ambigua, false)/' \
+       'coalesce(b.referencia_ambigua, false)'; then
+    vermelho "F1 flag NULA com ordem" "$(campo "$CN" situacao)" "referencia_ambigua"
+  fi
+  restaura_ordem
+
+  # F2 — a precedência deixa de barrar geração misturada.
+  if sabota_ordem "mistura ignorada" \
+       's/WHEN g\.geracoes > 1/WHEN false/' 'WHEN false'; then
+    vermelho "F2 geração misturada" "$(campo "$CG" situacao)" "ordem_indisponivel"
+  fi
+  restaura_ordem
+
+  # F3 — `produtos` deixa de recortar o topo e nomeia o grupo inteiro no empate.
+  # O padrão seguiu a reescrita que tirou o quadrático (achado R5/1): `produtos` deixou de sair
+  # de subquery correlacionada e passa a escolher entre dois arrays montados uma vez só. O guard
+  # de "não casou o padrão" pegou a defasagem — sem ele este assert teria virado teatro.
+  if sabota_ordem "produtos sem recorte de topo" \
+       "s/CASE WHEN f\.situacao IN ('eleito', 'empatado') THEN f\.topo_ids ELSE f\.todos_ids END/f.todos_ids/" \
+       'f.todos_ids$'; then
+    vermelho "F3 empate nomeia só o topo" "$(nprod "$CT")" "2"
+  fi
+  restaura_ordem
+
+  # F4 — a precedência do singleton some, e ele passa a ser eleito por "topo único".
+  if sabota_ordem "singleton sem precedência" \
+       's/WHEN g\.candidatos = 1  *THEN/WHEN false THEN/' 'WHEN false THEN'; then
+    vermelho "F4 singleton COM ordem" "$(campo "$CS" situacao)" "unico_registrado"
+  fi
+  restaura_ordem
+
+  # F5 — a validação de ordem < 1 vira decoração.
+  if sabota_ordem "ordem < 1 desligada" \
+       's/AND r\.ordem < 1)/AND r.ordem < -32000)/' 'AND r.ordem < -32000)'; then
+    # ⚠️ o JSON sai para uma variável ANTES da chamada: dentro de `$( )` o bash faz BRACE
+    # EXPANSION em `{a,b}` e parte o payload em duas palavras — a função recebia `["ordem":0]`
+    # e o erro virava 22P02, um vermelho pelo motivo ERRADO.
+    J5="[{$LB,\"ordem\":0}]"
+    vermelho "F5 ordem 0 recusada" "$(neg_ordem_valor "$J5")" "RECUSOU"
+  fi
+  restaura_ordem
+
+  # F6 — a checagem de TIPO JSON some. Este é o que prova o achado: sem ela o cast
+  # CONVERTE "false" em false e grava uma negativa explícita de ambiguidade.
+  if sabota_ordem "tipo JSON não checado" \
+       's/IF v_tipo_errado > 0 THEN/IF v_tipo_errado > 999999 THEN/' 'v_tipo_errado > 999999'; then
+    J6="[{$LB,\"referencia_ambigua\":\"false\"}]"
+    vermelho "F6 flag \"false\" recusada" "$(neg_ordem_valor "$J6")" "RECUSOU"
+  fi
+  restaura_ordem
+
+  rm -f "$SABO"
+  # E o CONTROLE de saída: restaurada, a base volta a ficar verde na MESMA invocação.
+  eq "F7 restaurada, a migration volta a barrar a geração misturada" "$(campo "$CG" situacao)" "ordem_indisponivel"
+  eq "F8 restaurada, o fail-closed da flag volta"                    "$(campo "$CN" situacao)" "referencia_ambigua"
+fi
 
 echo "─── falsificação ───"
 P -q <<SQL

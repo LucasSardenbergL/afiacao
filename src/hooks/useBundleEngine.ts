@@ -16,6 +16,14 @@ import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-g
 import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { medirBundlesDeContaUnica } from '@/lib/farmer/cobertura-conta-oferta';
+import {
+  montarCelulaIndividual,
+  TIPOS_INDIVIDUAIS,
+  validarRespostaMelhorIndividual,
+  type CelulaIndividual,
+  type LinhaMelhorIndividual,
+  type TipoIndividual,
+} from '@/lib/farmer/melhor-individual';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -54,60 +62,32 @@ export interface BundleRecommendation {
   status: string;
 }
 
-// Não exportado: os consumidores falam em `ComparacaoIndividual` (a união), e só alcançam
-// isto pelo ramo `encontrado`. Export sem consumidor externo reprova no knip — que roda no
-// health stack, não no `bun run test` (mesma armadilha anotada em completude-snapshot.ts).
-interface IndividualComparison {
-  productId: string;
-  productName: string;
-  /**
-   * Score de AFINIDADE (adimensional) da melhor recomendação individual — NÃO é dinheiro.
-   * Era `lie: number` lendo `farmer_recommendations.lie`, que agora é sempre NULL: `Number(null)`
-   * daria 0 e fabricaria "nenhuma afinidade" onde o certo é "não medida" (money-path §2).
-   */
-  affinity: number | null;
-  type: 'cross_sell' | 'up_sell';
-}
-
 /**
- * O resultado da comparação com o melhor produto individual — TRÊS estados, não dois.
+ * As DUAS rotas individuais de um cliente, uma por tipo de motor.
  *
- * `IndividualComparison | null` colapsava "li e não existe" com "não consegui ler", e o
- * conjunto UI+filtro transformava o colapso numa AFIRMAÇÃO: a tela renderizava
- * `bestIndividual?.productName ?? '—'` e, pior, o cliente sem bundle próprio era OMITIDO da
- * lista inteira (`if (topBundles.length > 0 || bestIndividual)`). O traço não fabricava
- * número, mas a dupla fabricava o rótulo "não há rota individual para este cliente" — é o
- * §2 do money-path (ausente ≠ zero) na forma de rótulo, o mesmo defeito que o #1800 tirou
- * do `error` descartado e que sobrevivia um passo adiante, no tipo.
+ * Era um `bestIndividual` só, e o único era uma PRECEDÊNCIA de tipo não declarada: os dois
+ * motores gravam em `affinity_score` escalas incomensuráveis, e comparar entre elas elegia
+ * up_sell em 186 de 186 pares medidos em prod (07/09/2026) — sem que ninguém tivesse decidido
+ * que upgrade vale mais que complemento. Duas células ROTULADAS entregam as duas ofertas e
+ * devolvem a escolha a quem conhece o cliente, em vez de resolvê-la por artefato de escala.
  *
- * `indisponivel` existe porque a leitura é ACESSÓRIA e não derruba a carteira: ela não entra
- * em `p_linhas`, então falhar nela não pode custar os bundles já descobertos — mas também não
- * pode desaparecer.
+ * O `Record` deriva de `TIPOS_INDIVIDUAIS`, que é a fonte ÚNICA do vocabulário. A versão
+ * anterior declarava a união literal aqui e prometia que "um motor novo quebra no compilador";
+ * o challenge (R5/5) mostrou que não: o tipo gerado do Supabase diz `recommendation_type:
+ * string`, e com os vocabulários soltos um terceiro motor aceito pelo validador entrava no Map
+ * sem nunca virar célula — cliente só daquele tipo sumindo da lista em silêncio.
  */
-export type ComparacaoIndividual =
-  | { status: 'encontrado'; value: IndividualComparison }
-  | { status: 'nenhum' }
-  | {
-      status: 'indisponivel';
-      /**
-       * `leitura_falhou` — a RPC não respondeu; vale para a carteira inteira.
-       * `produto_nao_resolve` — a RPC respondeu, mas o SKU eleito não está no catálogo ATIVO
-       *   (ou veio sem `product_id`, que é nullable no schema). Antes isto caía em
-       *   `productName: prod?.descricao || 'Produto'` e a tela afirmava ter encontrado o
-       *   melhor individual exibindo um nome INVENTADO — a mesma fabricação de rótulo que esta
-       *   união veio matar, um nível abaixo. Medido em prod (20/08/2026): 0 de 671 pendentes
-       *   com score caem aqui hoje, mas `product_id` é nullable e o SKU pode ser desativado
-       *   DEPOIS da geração. (Achado 3 do challenge Codex.)
-       */
-      motivo: 'leitura_falhou' | 'produto_nao_resolve';
-    };
+export type IndividuaisDoCliente = Record<TipoIndividual, CelulaIndividual>;
+
+/** Reexportado para a tela não precisar conhecer o módulo do contrato. A fonte é UMA só. */
+export { TIPOS_INDIVIDUAIS };
 
 export interface CustomerBundles {
   customerId: string;
   customerName: string;
   healthScore: number;
   bundles: BundleRecommendation[];
-  bestIndividual: ComparacaoIndividual;
+  individuais: IndividuaisDoCliente;
   avgMonthlySpend: number;
   /** `null` = margem não apurada. NÃO trocar por 0: 0 classifica o cliente como "sensível a
    *  preço" via `classifyCustomerProfile`, um veredito que a ausência de dado não sustenta. */
@@ -165,21 +145,6 @@ interface SalesOrderRow {
 }
 
 /** Uma linha da RPC `farmer_melhor_individual_por_cliente` — já é O melhor do cliente. */
-interface MelhorIndividualRow {
-  customer_user_id: string;
-  /**
-   * NULLABLE no schema (`information_schema`, conferido 21/08/2026) — e o tipo dizia `string`.
-   * Era uma mentira BARATA de manter enquanto ninguém media: `productMap.get(null)` só dá miss
-   * e cai no mesmo ramo do SKU inativo. Com o sensor de resolução abaixo os dois passam a
-   * CONTAR, e um tipo que esconde uma das portas faz o número nascer torto. (Achado do
-   * challenge Codex gpt-5.6-sol/xhigh, 21/08.)
-   */
-  product_id: string | null;
-  affinity_score: number | string | null;
-  recommendation_type: 'cross_sell' | 'up_sell';
-  /** Geração a que a linha pertence. Todas deveriam trazer a MESMA — ver o aviso no toast. */
-  run_id: string | null;
-}
 
 // ─── Premissa do LIE do bundle (NÃO é aprendida) ─────────────────────
 // Constante ARBITRADA, não medição. Até 2026-07-21 o hook lia
@@ -804,7 +769,10 @@ export const useBundleEngine = () => {
       // PAGINADA como as outras: a capa de 1.000 do PostgREST vale para `.rpc()` igual a
       // `.from()` e já zerou este motor duas vezes (#1782, #1801). `customer_user_id` é
       // único no resultado do `DISTINCT ON`, logo é ordem TOTAL — paginar não pula linha.
-      const melhorIndividual = new Map<string, MelhorIndividualRow>();
+      // Chave `${cliente}:${tipo}`, não o cliente: a RPC devolve ATÉ DUAS linhas por cliente
+      // (uma por motor) e, com a chave antiga, a segunda sobrescreveria a primeira em silêncio —
+      // uma das duas rotas sumiria da tela apresentada como "não há".
+      const melhorIndividual = new Map<string, LinhaMelhorIndividual>();
       /**
        * A leitura acessória falhou — UMA vez, para a execução inteira. Era um CONTADOR de
        * clientes porque a consulta era por-cliente; com a leitura em bloco a falha deixou de
@@ -826,23 +794,23 @@ export const useBundleEngine = () => {
         // coerência deixa de ser probabilística, e o cap de 1.000 some por construção (ele
         // conta LINHAS, e agora há uma) — o caminho sai da classe #1782/#1801 em vez de se
         // defender dela.
-        const { data, error } = await supabase.rpc('farmer_melhor_individual_por_cliente', {
-          p_farmer_id: effectiveUserId,
-        });
+        // `as never` no nome porque `types.ts` é gerado pelo Lovable e ainda não conhece esta
+        // RPC — mesmo idioma do `farmer_bundle_recomendacoes_substituir` logo abaixo. O contrato
+        // de verdade não é o tipo gerado e sim `validarRespostaMelhorIndividual`, que roda em
+        // RUNTIME: um tipo estático não teria detido resposta malformada de qualquer forma.
+        const { data, error } = await supabase.rpc(
+          'farmer_melhores_individuais_por_cliente' as never,
+          { p_farmer_id: effectiveUserId } as never,
+        );
         if (error) throw error;
-        // `data` não-array é resposta MALFORMADA, nunca "vazio": a RPC faz
-        // `coalesce(…, '[]'::jsonb)` justamente para o vazio legítimo chegar como `[]`. Sem
-        // esta linha, `null` viraria `nenhum` para a carteira inteira — a leitura que não
-        // aconteceu apresentada como veredicto, que é o §6 do money-path (o contrato tem de
-        // EXPOR a falha, senão o caller não pode detectar). A prova SQL do outro lado deste
-        // par é o assert A3 do harness; mexer num sem o outro reabre o buraco.
-        if (!Array.isArray(data)) {
-          throw new Error(
-            `farmer_melhor_individual_por_cliente devolveu ${data === null ? 'null' : typeof data} em vez de array`,
-          );
-        }
-        for (const linha of data as unknown as MelhorIndividualRow[]) {
-          melhorIndividual.set(linha.customer_user_id, linha);
+        // Valida a resposta INTEIRA e LANÇA — nunca filtra. Descartar linha inválida daria um
+        // Map parcial apresentado como completo, e a linha ausente vira `nenhum` na tela, que é
+        // um VEREDICTO ("não há rota individual para este cliente"). Rejeitar tudo como
+        // `leitura_falhou` é a única saída honesta: vale para a carteira e não afirma nada.
+        // A checagem de formato uuid do `customer_user_id` faz parte disso — sem ela a linha
+        // some na consulta pela chave, que é a mesma falha entrando por outra porta.
+        for (const linha of validarRespostaMelhorIndividual(data)) {
+          melhorIndividual.set(`${linha.customer_user_id}:${linha.recommendation_type}`, linha);
         }
       } catch (erroIndividual) {
         console.error('Falha ao ler o melhor individual da carteira:', erroIndividual);
@@ -923,17 +891,22 @@ export const useBundleEngine = () => {
        */
       const geracoesExibidas = new Set<string>();
       /**
-       * Denominador do sensor de RESOLUÇÃO: registros que a RPC devolveu E que o laço de fato
-       * exercitou contra o `productMap` (depois do gate `if (!profile) continue`).
+       * Denominador do sensor de RESOLUÇÃO: SKUs que a resposta pediu para NOMEAR e que o laço
+       * de fato exercitou contra o `productMap` (depois do gate `if (!profile) continue`).
+       *
+       * A unidade passou de registro para SKU porque `produtos` virou array: uma célula
+       * `empatado` com 2 nomes pede duas resoluções, e contá-la como uma esconderia metade da
+       * deriva de catálogo. E o sensor mede SÓ catálogo — estado sem eleição não é falha de
+       * resolução, e somá-lo aqui fabricaria deterioração onde só há empate legítimo.
        *
        * Contado AQUI, não reaproveitado de `insumos.clientes_com_profile`: aquele conta sobre
        * `ativos` (carteira ∩ quem tem pedido) e este laço percorre TODO `clientScores` — em
        * prod os dois empatam, mas não é invariante, e um denominador que coincide por acaso é
        * o "rótulo com DEFAULT constante" do §5 esperando a base mudar.
        */
-      let comparacoesAvaliadas = 0;
-      /** Quantas delas resolveram para SKU do catálogo ATIVO — o numerador. */
-      let comparacoesResolvidas = 0;
+      let skusIndividuaisPedidos = 0;
+      /** Quantos deles o catálogo ATIVO soube nomear — o numerador. */
+      let skusIndividuaisResolvidos = 0;
 
       for (const score of clientScores) {
         const cid = score.customer_user_id;
@@ -1035,46 +1008,45 @@ export const useBundleEngine = () => {
         // `nenhum` = a RPC respondeu e este cliente não tem oferta individual pendente;
         // `indisponivel` = ninguém pode afirmar nada sobre este cliente (e o `motivo` diz por
         // quê: a leitura falhou, ou o SKU eleito não existe mais no catálogo ativo).
-        let bestIndividual: ComparacaoIndividual;
-        const rec = melhorIndividual.get(cid);
-        if (comparacaoIndisponivel) {
-          bestIndividual = { status: 'indisponivel', motivo: 'leitura_falhou' };
-        } else if (rec) {
-          comparacoesAvaliadas++;
-          // `product_id` separado ANTES do Map: com `string | null` o compilador passa a EXIGIR
-          // o tratamento, em vez de a chave `null` virar um miss indistinguível de SKU inativo.
-          const pid = rec.product_id;
-          const prod = pid == null ? undefined : productMap.get(pid);
-          // Ausente ≠ zero: `Number(null)` é 0 e afirmaria afinidade nula MEDIDA.
-          const afinidade = rec.affinity_score == null ? NaN : Number(rec.affinity_score);
-          if (pid == null || !prod?.descricao) {
-            // Era `productName: prod?.descricao || 'Produto'`: a tela dizia ter ENCONTRADO o
-            // melhor individual e mostrava um nome inventado. O `productMap` só tem SKU
-            // ATIVO, e `product_id` é nullable no schema — as duas portas caem aqui.
-            // "Encontrei algo que não sei identificar" é `não sei`, não `encontrei`.
-            bestIndividual = { status: 'indisponivel', motivo: 'produto_nao_resolve' };
-          } else {
-            geracoesExibidas.add(rec.run_id ?? 'sem-run');
-            comparacoesResolvidas++;
-            bestIndividual = {
-              status: 'encontrado',
-              value: {
-                productId: pid,
-                productName: prod.descricao,
-                affinity: Number.isFinite(afinidade) ? afinidade : null,
-                type: rec.recommendation_type,
-              },
-            };
+        // As duas rotas individuais, uma por motor — nomeadas, nunca comparadas entre si.
+        // O nome resolve em TODO estado: `situacao` decide o que a apresentação SIGNIFICA, não
+        // se existe apresentação. A regra anterior ("só o eleito tem identidade") era o que
+        // tornava irrecuperáveis os nomes dos 52 clientes cross-only, onde nenhuma eleição é
+        // possível — ali a célula viraria um aviso de indisponibilidade permanente.
+        const celulaDe = (tipo: TipoIndividual): CelulaIndividual => {
+          if (comparacaoIndisponivel) return { status: 'indisponivel', motivo: 'leitura_falhou' };
+
+          const linha = melhorIndividual.get(`${cid}:${tipo}`);
+          const celula = montarCelulaIndividual(
+            linha,
+            // `|| undefined`: descrição vazia é tão inútil quanto ausente, e deixá-la passar
+            // renderizaria uma célula com nome em branco — a versão silenciosa de inventar nome.
+            (sku) => productMap.get(sku)?.descricao || undefined,
+          );
+          if (linha) {
+            skusIndividuaisPedidos += linha.produtos.length;
+            skusIndividuaisResolvidos += celula.status === 'encontrado' ? celula.nomes.length : 0;
+            // Toda linha EXIBIDA alimenta o canário, não só a que elegeu alguém: com os estados
+            // novos o cartão mostra empates e ordens indisponíveis, e restringir a contagem ao
+            // eleito deixaria cartões misturando gerações sem ninguém avisar.
+            geracoesExibidas.add(linha.run_id ?? 'sem-run');
           }
-        } else {
-          bestIndividual = { status: 'nenhum' };
-        }
+          return celula;
+        };
+        // Literal COMPLETO em vez de `{} as IndividuaisDoCliente` preenchido num laço: o cast
+        // era o único ponto do caminho em que o tipo era AFIRMADO e não verificado, e um motor
+        // novo amanhã deixaria o campo `undefined` — a tela quebrando em runtime por uma
+        // omissão que o compilador tinha como pegar. Agora ele pega.
+        const individuais: IndividuaisDoCliente = {
+          cross_sell: celulaDe('cross_sell'),
+          up_sell: celulaDe('up_sell'),
+        };
 
         // `nenhum` é a ÚNICA ausência que autoriza omitir o cliente da lista, porque é a
         // única que foi de fato verificada. Com `indisponivel` o cliente entra mesmo sem
         // bundle: sumi-lo seria afirmar, pelo silêncio, que não há rota individual para
         // ele — a afirmação que nenhuma leitura sustentou.
-        if (topBundles.length > 0 || bestIndividual.status !== 'nenhum') {
+        if (topBundles.length > 0 || TIPOS_INDIVIDUAIS.some((t) => individuais[t].status !== 'nenhum')) {
           const purchasedProducts = [...purchased]
             .map((pid) => productMap.get(pid)?.descricao)
             .filter((d): d is string => Boolean(d));
@@ -1083,7 +1055,7 @@ export const useBundleEngine = () => {
             customerName: profile.name ?? '',
             healthScore,
             bundles: topBundles,
-            bestIndividual,
+            individuais,
             avgMonthlySpend: Number(score.avg_monthly_spend_180d || 0),
             grossMarginPct: margemConhecida(score.gross_margin_pct),
             categoryCount: Number(score.category_count || 0),
@@ -1162,12 +1134,13 @@ export const useBundleEngine = () => {
       };
       insumos.comparacao_individual_produto_resolvido = {
         ok: true,
-        // Por REGISTRO PENDENTE, que é a unidade da deriva: SKU desativado depois da geração do
-        // cross-sell, ou `product_id` null. As duas portas caem no ramo `produto_nao_resolve`,
-        // que hoje é o ÚNICO estado do motor invisível em toda parte — não está no toast, e sem
-        // esta chave não estaria no head.
-        n: comparacoesResolvidas,
-        esperado: comparacoesAvaliadas,
+        // Por SKU PEDIDO, que é a unidade da deriva: produto desativado depois da geração do
+        // cross-sell. Uma célula pede tantas resoluções quantos nomes promete, e é por isso que
+        // o denominador não é "células avaliadas" — em `empatado` isso contaria 1 onde há 2.
+        // A célula que perde TODOS os nomes cai em `produto_nao_resolve`, o único estado do
+        // motor invisível em toda parte: não está no toast, e sem esta chave não estaria no head.
+        n: skusIndividuaisResolvidos,
+        esperado: skusIndividuaisPedidos,
       };
 
       aplicarBundles(allCustomerBundles);
@@ -1178,7 +1151,7 @@ export const useBundleEngine = () => {
       // gravação — e é este flag que impede a tela de culpar a leitura por ela.
       setCalculado(true);
       // Linhas PERSISTÍVEIS, não clientes: um cliente entra em `allCustomerBundles` só com
-      // `bestIndividual` (`encontrado` ou `indisponivel`) e nenhum bundle, e essa comparação
+      // uma célula individual (`encontrado` ou `indisponivel`) e nenhum bundle, e ela
       // não vira linha nenhuma no payload da RPC. Contando clientes, esse caso travava o `registrarVazio()` do `catch` sobre uma
       // execução que de fato não produziu nada — o head parava de se mover e "nenhum registro
       // novo" voltava a significar duas coisas opostas (challenge Codex xhigh).

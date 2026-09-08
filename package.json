@@ -9,6 +9,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "lint:shell": "bash scripts/shellcheck-gate.sh",
+    "falsificar:individuais": "bash scripts/falsificar-individuais.sh",
     "preview": "vite preview",
     "test": "vitest run",
     "test:sonda-rollback": "deno test --no-remote --allow-read --allow-write --allow-run=deno,git,tar supabase/harness-sonda-rollback/",

@@ -9,13 +9,13 @@ import { captureException } from '@/lib/analytics';
  *
  * O motor lê o melhor individual da carteira e monta a comparação "bundle × melhor produto
  * individual". A leitura era um `.from('farmer_recommendations')` POR CLIENTE, dentro do laço,
- * e hoje é a RPC em bloco `farmer_melhor_individual_por_cliente` — a PORTA mudou, os dois
+ * e hoje é a RPC em bloco `farmer_melhores_individuais_por_cliente` — a PORTA mudou, os dois
  * defeitos abaixo são os mesmos e continuam sendo o que este arquivo guarda. O `error` era
  * DESCARTADO na desestruturação (`const { data: existingRecs } = await ...`), e daí saíam dois
  * defeitos de gravidade bem diferente:
  *
  *  1. `{ data: null, error }` resolvido — a falha vira "não há recomendação pendente":
- *     `bestIndividual` fica `null`, o cliente sem bundle próprio é OMITIDO da lista inteira, e
+ *     as células individuais ficam `null`, o cliente sem bundle próprio é OMITIDO da lista, e
  *     ao fim a execução ainda emite `toast.success`. É o §2 (ausente ≠ zero) na forma de
  *     rótulo: uma leitura que não aconteceu apresentada como veredicto.
  *
@@ -109,8 +109,8 @@ vi.mock('@/integrations/supabase/client', () => ({
         };
         return c;
       }
-      // A leitura do melhor individual — UMA tupla jsonb. As duas falhas entram por aqui.
-      if (nome === 'farmer_melhor_individual_por_cliente') {
+      // A leitura das ofertas individuais — UMA tupla jsonb. As duas falhas entram por aqui.
+      if (nome === 'farmer_melhores_individuais_por_cliente') {
         // A REJEIÇÃO é o caminho perigoso: escapa para o `catch` externo com todos os
         // insumos obrigatórios já íntegros. O `{ error }` resolvido é o silencioso.
         if (falhaMelhorIndividual === 'rejeita') return Promise.reject(new Error('Failed to fetch'));

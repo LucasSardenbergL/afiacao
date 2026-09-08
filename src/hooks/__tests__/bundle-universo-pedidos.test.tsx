@@ -193,7 +193,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => stubChain(tabela),
     rpc: (nome: string, args?: Record<string, unknown>) => {
-      if (nome === 'farmer_melhor_individual_por_cliente') {
+      if (nome === 'farmer_melhores_individuais_por_cliente') {
         return Promise.resolve({ data: [], error: null });
       }
       rpcArgs.push({ nome, args: args ?? {} });

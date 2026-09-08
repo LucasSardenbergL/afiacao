@@ -122,7 +122,7 @@ vi.mock('@/integrations/supabase/client', () => ({
       // O motor EXIGE array desta RPC (`devolveu null em vez de array` aborta o cálculo).
       // Vazio é o caso honesto aqui: nenhum cliente tem rota individual concorrente, então o
       // que sobra na tela é o bundle — que é o observável deste arquivo.
-      if (nome === 'farmer_melhor_individual_por_cliente') {
+      if (nome === 'farmer_melhores_individuais_por_cliente') {
         return { then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }) };
       }
       if (nome === 'get_skus_margem_positiva') {
