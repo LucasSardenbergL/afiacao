@@ -1,7 +1,9 @@
 # O write-back da edição escrevia meia história — e a metade que faltava era a do dinheiro
 
-**2026-09-07.** Conserto do escritor que a frente [invariante-do-agregado-sem-dono.md](invariante-do-agregado-sem-dono.md)
-nomeou e deixou de propósito para depois: `supabase/functions/omie-vendas-sync/index.ts`, action
+**2026-09-07.** Conserto do escritor que a frente da invariante do agregado nomeou e deixou de
+propósito para depois. O doc daquela frente (`invariante-do-agregado-sem-dono.md`) chega junto com
+o [PR #2363](https://github.com/LucasSardenbergL/afiacao/pull/2363) — este PR é pré-requisito dele
+e mergeia antes, então o link relativo ainda não resolveria. O escritor: `supabase/functions/omie-vendas-sync/index.ts`, action
 `alterar_pedido`. Sem este conserto, aplicar a CONSTRAINT TRIGGER daquele PR faria a edição de
 pedido **falhar** — com o Omie já mutado — em vez de parar de corromper.
 
