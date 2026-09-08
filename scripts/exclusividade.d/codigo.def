@@ -1,0 +1,16 @@
+# Defeitos na superficie de CODIGO — knip, lint, tsc, test.
+#
+# O corpus nasceu enviesado para documentacao e manifesto, e isso apareceu na primeira medicao: o
+# `test` (vitest) saiu com exclusividade zero simplesmente porque nenhum defeito mirava nele. Zero
+# por corpus enviesado le igual a zero por redundancia, e essa e a leitura que a ferramenta inteira
+# existe para impedir — entao o vies e divida, nao detalhe.
+#
+# Estas linhas comecam a pagar essa divida no eixo mais barato de escrever.
+
+# Export sem consumidor: a classe que o `knip` existe para barrar. Nasceu como defeito REAL desta
+# propria entrega — `Severidade` e `CodigoVeredito` sairam exportados de `lib/exclusividade.ts` sem
+# ninguem os importar, e o knip reprovou. Vale medir se mais alguem pega: o knip mora no job
+# gargalo, e se o `lint` ou o `tsc` cobrissem a mesma classe, o custo dele seria discutivel.
+# @origem: 2026-09-07, o knip reprovou esta propria entrega por 2 tipos exportados sem consumidor
+# @suspeito: knip
+knip-export-orfao | src/lib/preco/parse-decimal-br.ts | $_ .= "export const zumbiSemConsumidor = 1;\n" if eof

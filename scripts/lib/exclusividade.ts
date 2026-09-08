@@ -107,7 +107,7 @@ export interface GateAlvo extends GateCI {
  * Fecho transitivo de `validate.needs`. Existe porque `inventarioCI` filtra `continue-on-error` no
  * **step** e isso nao ve a outra forma de ser informativo: um JOB inteiro fora de `validate.needs`.
  *
- * E exatamente o caso do `mutation-check` (`ci.yml:921`), deliberadamente informativo e abrindo
+ * E exatamente o caso do `mutation-check` (`ci.yml:961`), deliberadamente informativo e abrindo
  * Issue desde o #2344 — que `inventarioCI` hoje lista junto dos bloqueantes. Derivar do grafo, em
  * vez de manter uma lista de excecoes, e o que impede este censo de envelhecer como envelheceu o
  * censo datado de 15 nomes que originou o `gates:frescura`.
@@ -356,9 +356,9 @@ export function derivar(m: Matriz): Exclusividade[] {
 // Veredito (o que o gate barato do CI imprime)
 // ---------------------------------------------------------------------------------------------
 
-export type Severidade = 'REPROVA' | 'AVISA' | 'RELATA';
+type Severidade = 'REPROVA' | 'AVISA' | 'RELATA';
 
-export type CodigoVeredito =
+type CodigoVeredito =
   | 'GATE_NOVO_SEM_EXCLUSIVIDADE'
   | 'MATRIZ_AUSENTE'
   | 'LINHA_PODRE'
