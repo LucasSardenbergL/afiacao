@@ -86,8 +86,20 @@ else
 fi
 eq "claude_rw nasce NOINHERIT (estado default é baixo)" \
    "$(q "select not rolinherit from pg_roles where rolname='claude_rw'")" "t"
-eq "claude_rw é membro de postgres (consegue elevar)" \
-   "$(q "select pg_has_role('claude_rw','postgres','MEMBER')")" "t"
+# Produção recusou `GRANT postgres TO claude_rw` (42501). O desenho não pode depender disso:
+# esta asserção existe para que reintroduzir a dependência quebre o teste na hora.
+eq "claude_rw NÃO é membro de postgres (o desenho não depende do GRANT recusado)" \
+   "$(q "select pg_has_role('claude_rw','postgres','MEMBER')")" "f"
+eq "a função é SECURITY DEFINER" \
+   "$(q "select prosecdef from pg_proc where oid='public.aplicar_sql(text,text,bigint)'::regprocedure")" "t"
+eq "a função tem search_path fixo (SECURITY DEFINER sem isso é escalada)" \
+   "$(q "select proconfig is not null from pg_proc where oid='public.aplicar_sql(text,text,bigint)'::regprocedure")" "t"
+eq "claude_rw EXECUTA a função" \
+   "$(q "select has_function_privilege('claude_rw','public.aplicar_sql(text,text,bigint)','EXECUTE')")" "t"
+eq "anon NÃO executa a função" \
+   "$(q "select has_function_privilege('anon','public.aplicar_sql(text,text,bigint)','EXECUTE')")" "f"
+eq "PUBLIC NÃO executa a função (a 2ª ponta do REVOKE)" \
+   "$(q "select has_function_privilege('public','public.aplicar_sql(text,text,bigint)','EXECUTE')")" "f"
 eq "anon NÃO lê o ledger" \
    "$(q "select has_table_privilege('anon','public.db_aplicacoes','SELECT')")" "f"
 eq "ledger nasce com RLS" \
@@ -122,6 +134,21 @@ fi
 aplicar() { ( cd "$REPO_ROOT" && AFIACAO_PSQL_RW="$SHIM" bash "$ALVO" "$@" ); }
 rc_de()   { local r=0; aplicar "$@" > "$WORK/out.log" 2>&1 || r=$?; echo "$r"; }
 
+# Uma sabotagem cujo padrão não CASA com o código é um no-op silencioso — e no-op silencioso
+# aprova tudo: o alvo roda intacto, o veredito não muda, e isso é indistinguível de "a
+# proteção existe". Aconteceu de verdade aqui: o apply passou de `-f -` para `-f "$APPLY_SQL"`
+# e o padrão do S2 virou letra morta sem nada avisar. Esta guarda exige que o arquivo tenha
+# MUDADO antes de a sabotagem valer como sabotagem.
+sabota() {
+  cp "$APLICAR" "$ALVO"
+  perl -0pi -e "$1" "$ALVO"
+  if cmp -s "$APLICAR" "$ALVO"; then
+    nok "sabotagem inerte" "o padrão não casou com o código — nada foi sabotado: $1"
+    return 1
+  fi
+  return 0
+}
+
 # ═════════════════════════════════════════════════════════════════════════════════════════
 if [ "$FALSIFICAR" -eq 0 ]; then
 echo "▶ A1 — apply inédito"
@@ -152,6 +179,22 @@ echo "SELECT 1;" > "$REPO_ROOT/$SUJO"
 eq "A6 exit 2" "$(rc_de "$SUJO")" "2"
 rm -f "$REPO_ROOT/$SUJO"
 
+echo "▶ A8 — sha divergente é recusado ANTES de executar"
+# A propriedade que o desenho recusado (GRANT) não daria: o corpo viaja como parâmetro, então
+# a função reconfere o hash. Chamada com sha mentiroso não pode executar nada.
+$PSQL -c "DROP TABLE IF EXISTS public.fixture_sha_mentiroso" >/dev/null 2>&1
+SHA_OUT="$WORK/sha.log"
+"$SHIM" -X -A -t -c "select public.aplicar_sql(
+   \$x\$CREATE TABLE public.fixture_sha_mentiroso(i int);\$x\$,
+   'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', 1)" > "$SHA_OUT" 2>&1 || true
+if grep -q 'sha divergente' "$SHA_OUT"; then
+  ok "A8 sha mentiroso é rejeitado com mensagem própria"
+else
+  nok "A8" "esperava 'sha divergente', veio: $(head -c 200 "$SHA_OUT")"
+fi
+eq "A8 e NADA foi executado" \
+   "$(q "select to_regclass('public.fixture_sha_mentiroso') is null")" "t"
+
 echo "▶ A7 — sonda fail-closed"
 SHIM_ERRADO="$WORK/psql-rw-errado"
 { echo '#!/usr/bin/env bash'
@@ -172,8 +215,10 @@ echo "▶ S1 — o marcador de fim deixa de ser emitido (psql sai 0 e o SQL não
 # VERDE, porque com rc≠0 o marcador não decide nada. Sabotagem no cenário errado aprova
 # qualquer coisa. O cenário em que o marcador é a ÚNICA testemunha é o inverso: exit 0 com
 # a transação incompleta. Tirar a emissão do marcador simula exatamente isso.
-cp "$APLICAR" "$ALVO"
-perl -0pi -e 's/^SELECT .*AS controle;$//m' "$ALVO"
+# O marcador agora é o RETURN da função, não um literal no script. Trocar a constante que o
+# script PROCURA simula "o marcador não chegou": rc=0, apply de fato ocorreu, e mesmo assim o
+# veredito não pode ser sucesso — é o que separa "exit 0" de "terminou".
+sabota "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m"
 S1="$(rc_de "$FIX_OK")"
 if [ "$S1" != "0" ]; then
   ok "S1 vermelho: sem marcador o exit 0 NÃO é aceito como sucesso ($S1 ≠ 0)"
@@ -183,9 +228,11 @@ fi
 $PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
 
 echo "▶ S2 — ON_ERROR_STOP removido"
-cp "$APLICAR" "$ALVO"
-perl -0pi -e 's/-v ON_ERROR_STOP=1 -f -/-f -/' "$ALVO"
-perl -0pi -e 's/^\\\\set ON_ERROR_STOP on$//m' "$ALVO"
+# shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE
+# do script alvo, onde $APPLY_SQL aparece literalmente. Expandir aqui faria o padrao
+# procurar o caminho do arquivo temporario — que nao existe no codigo — e a sabotagem
+# viraria inerte, que e exatamente a classe que o sabota() existe para pegar.
+sabota 's/-X -v ON_ERROR_STOP=1 -f "\$APPLY_SQL"/-X -f "\$APPLY_SQL"/; s/set ON_ERROR_STOP on//'
 S2="$(rc_de "$FIX_ERRO")"
 if [ "$S2" != "4" ]; then
   ok "S2 vermelho: sem ON_ERROR_STOP o erro deixa de ser erro ($S2 ≠ 4)"
@@ -195,8 +242,7 @@ fi
 $PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_meia; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
 
 echo "▶ S3 — checagem de 'já aplicada' removida"
-cp "$APLICAR" "$ALVO"
-perl -0pi -e 's/\*aplicada\*\)/*JAMAIS_CASA*)/' "$ALVO"
+sabota 's/\*aplicada\*\)/*JAMAIS_CASA*)/'
 rc_de "$FIX_OK" >/dev/null
 S3="$(rc_de "$FIX_OK")"
 if [ "$S3" != "3" ]; then

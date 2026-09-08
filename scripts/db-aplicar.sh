@@ -144,32 +144,45 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────────────────
 # 5) O APPLY — uma transação, elevação explícita e efêmera, recibo DENTRO
 # ─────────────────────────────────────────────────────────────────────────────────────────
+# O corpo viaja como PARÂMETRO dollar-quoted. Se o próprio arquivo contiver a tag, o quoting
+# se fecha cedo e o resto do arquivo vira SQL solto — fail-closed antes de qualquer conexão.
+TAG="aplicar_${SHA:0:12}"
+if grep -qF "\$${TAG}\$" "$ARQUIVO"; then
+  morre 2 "o arquivo contém a tag de quoting \$${TAG}\$ — recuso para não quebrar o corpo"
+fi
+
 FECHO="COMMIT;"
 [ "$ENSAIO" -eq 1 ] && FECHO="ROLLBACK;"
 
-RECIBO=""
-[ "$ENSAIO" -eq 0 ] && RECIBO="update public.db_aplicacoes
-     set estado='aplicada', concluido_em=now() where id=$ID;"
+# No ensaio não há tentativa commitada lá fora: cria-se uma DENTRO da transação, só para dar
+# um id à função, e o ROLLBACK leva tudo embora. `\gset` captura o id sem sair do psql.
+ABERTURA="SELECT $ID AS eid"
+if [ "$ENSAIO" -eq 1 ]; then
+  # sha prefixado: a linha do ensaio também vira 'aplicada' dentro da transação, e colidiria
+  # com o índice único de sucesso quando o arquivo JÁ foi aplicado de verdade. O prefixo some
+  # no ROLLBACK junto com a linha; o hash conferido pela função continua sendo o real.
+  ABERTURA="INSERT INTO public.db_aplicacoes (arquivo, sha256, commit_sha, estado)
+     VALUES ('$ARQUIVO', 'ensaio:$SHA', '$COMMIT', 'tentativa') RETURNING id AS eid"
+fi
+
+APPLY_SQL="$LOG_DIR/db-aplicar-corpo.$$.sql"
+{
+  printf '\\set ON_ERROR_STOP on\nBEGIN;\n'
+  # Timeouts via SET LOCAL, não via PGOPTIONS: o pooler do Supabase IGNORA PGOPTIONS
+  # (registrado no cabeçalho do psql-ro). Posto aqui, vale — e morre com a transação.
+  printf "SET LOCAL statement_timeout = '300s';\nSET LOCAL lock_timeout = '15s';\n"
+  printf '%s \\gset\n' "$ABERTURA"
+  printf 'SELECT public.aplicar_sql($%s$' "$TAG"
+  cat "$ARQUIVO"
+  printf '$%s$, %s, :eid) AS controle;\n%s\n' "$TAG" "'$SHA'" "$FECHO"
+} > "$APPLY_SQL"
 
 APPLY_OUT="$LOG_DIR/db-aplicar-apply.$$.log"
 set +e
-"$RW" -X -v ON_ERROR_STOP=1 -f - > "$APPLY_OUT" 2>&1 <<SQL
-\\set ON_ERROR_STOP on
-BEGIN;
--- Timeouts via SET LOCAL, não via PGOPTIONS: o pooler do Supabase IGNORA PGOPTIONS (registrado
--- no cabeçalho do psql-ro). Posto aqui, vale — e morre com a transação.
-SET LOCAL statement_timeout = '300s';
-SET LOCAL lock_timeout = '15s';
--- Elevação EXPLÍCITA e EFÊMERA: SET LOCAL morre com a transação, dê ela commit ou rollback.
-SET LOCAL ROLE postgres;
-\\i $ARQUIVO
-RESET ROLE;
-$RECIBO
-SELECT '$MARCADOR' AS controle;
-$FECHO
-SQL
+"$RW" -X -v ON_ERROR_STOP=1 -f "$APPLY_SQL" > "$APPLY_OUT" 2>&1
 RC=$?
 set -e
+rm -f "$APPLY_SQL"
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
 # 6) Veredito — exit 0 SOZINHO não prova nada. O marcador é a prova.
