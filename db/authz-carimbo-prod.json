@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-07T20:11:41.258Z",
-  "sourceHead": "207689068be65d1aef8c905689b8a4cb0b9d4431",
+  "medidoEm": "2026-09-08T00:54:40.705Z",
+  "sourceHead": "9f53b78773bce4a3b96389702c694283f72d249c",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,19 +11,12 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 1,
-      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 54 definição(ões) lida(s) para 54 chave(s) da allowlist.",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 54 função(ões) da allowlist.",
+      "denominador": "🔎 authz:funcoes:prod — 55 definição(ões) lida(s) para 54 chave(s) da allowlist.",
       "contratoFingerprint": "1de6daf5818878840d43924952eefa7f721f6e6bd55cbec672b6693f6400e67f",
       "auditorFingerprint": "7a0c358a4866c0f993973aa01b93f1d9b03d8269487c0c9b1c42207e0512efdf",
-      "achados": [
-        {
-          "id": "0f088a59c9dec54b",
-          "linha": "❌ public.reposicao_claim_disparo — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_claim_disparo está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-09-07",
-          "ultimaVez": "2026-09-07"
-        }
-      ]
+      "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -36,19 +29,12 @@
     },
     "audit": {
       "script": "authz:audit:prod",
-      "exit": 1,
-      "resumo": "authz:audit:prod — 1 divergência(s).",
+      "exit": 0,
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 1 reescritas baselinadas batem no md5 de prod.",
       "denominador": "🔎 authz:audit:prod — 24 definição(ões) lida(s) para 23 chave(s) do manifest.",
-      "contratoFingerprint": "ed2a339e3e6509a01d4572607d8fd0946ee8e757c6abe1445a8c4900c089708d",
+      "contratoFingerprint": "8f1d9f39d6dce5925a10cb88bb1205c27093b051114367d23e8797e147171ab3",
       "auditorFingerprint": "0866cf4f10a49635c4ed8590c7ed4861b254c4b75cc4e58ca1cdb15b038993c1",
-      "achados": [
-        {
-          "id": "257297e1a0831e90",
-          "linha": "❌ MD5_DIVERGIU: public.get_defasagem_cliente (20260718190000_authz_capability_matrix_e2.sql): esperado 037ede84a229d5798214511433afb65d, prod tem 7856c3052596d66a6f5ac8eb0a06c1c0",
-          "primeiraVez": "2026-09-06",
-          "ultimaVez": "2026-09-07"
-        }
-      ]
+      "achados": []
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
