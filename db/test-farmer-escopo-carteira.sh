@@ -109,6 +109,12 @@ CREATE TABLE public.farmer_geracao_vigente (
 CREATE FUNCTION private.cap_carteira_escrever(p uuid) RETURNS boolean
   LANGUAGE sql STABLE AS $f$ SELECT false $f$;
 
+CREATE TABLE public._insumos_vistos (run_id uuid PRIMARY KEY, insumos jsonb);
+-- O writer e SECURITY INVOKER, entao este INSERT roda com os privilegios de QUEM chamou
+-- — e o harness chama sob `authenticated`. Sem o GRANT, o caminho feliz reprovaria por
+-- permissao de uma tabela que so existe no stub: assert vermelho pelo motivo ERRADO.
+GRANT SELECT, INSERT, UPDATE ON public._insumos_vistos TO PUBLIC;
+
 CREATE FUNCTION public.farmer_geracao_registrar(
   p_motor text, p_farmer_id uuid, p_run_id uuid, p_tipo text, p_n integer,
   p_completude text, p_motivo text, p_insumos jsonb, p_head uuid)
@@ -117,6 +123,10 @@ BEGIN
   INSERT INTO public.farmer_geracao_vigente (motor, farmer_id, run_id)
   VALUES (p_motor, p_farmer_id, p_run_id)
   ON CONFLICT (motor, farmer_id) DO UPDATE SET run_id = EXCLUDED.run_id;
+  -- O stub GUARDA os insumos: o sensor da distribuicao sai por este parametro, e descarta-lo
+  -- faria o assert dele passar por vacuidade — verde sobre um numero que ninguem emitiu.
+  INSERT INTO public._insumos_vistos (run_id, insumos) VALUES (p_run_id, p_insumos)
+  ON CONFLICT (run_id) DO UPDATE SET insumos = EXCLUDED.insumos;
 END $f$;
 SQL
 
@@ -509,6 +519,27 @@ eq "O33 sob a identidade do DONO a carteira volta NÃO-vazia" \
    "$(Pq -c "SET test.uid='$D'; SET test.role='authenticated';
              SELECT jsonb_array_length(public.farmer_melhores_individuais_por_cliente('$D'));" | tail -1)" "8"
 
+
+# ── O SENSOR DA DISTRIBUIÇÃO (§6.1) ────────────────────────────────────────────
+# A distribuicao por situacao nao e derivavel do banco ANTES da entrega: D3 muda quais SKUs
+# sao persistidos, entao "empate entre os persistidos" nao demonstra ausencia de vencedor
+# entre os candidatos. Ela e MEDIDA no writer, sobre o que acabou de ser gravado.
+#
+# O writer do assert O17 gravou 2 linhas para $C1 com ordem 1,1 e uma delas com a flag ligada
+# — o grupo cai em `referencia_ambigua`, que e o estado de maior precedencia.
+eq "O34 o sensor grava a eleicao com DENOMINADOR" \
+   "$(Pq -c "SELECT (insumos->'individuais_eleicao'->>'n') || '/' ||
+                    (insumos->'individuais_eleicao'->>'esperado')
+             FROM public._insumos_vistos WHERE run_id='$RUNW';")" "0/1"
+eq "O35 a distribuicao nomeia TIPO e SITUACAO" \
+   "$(Pq -c "SELECT insumos->'individuais_eleicao'->'distribuicao'->>'cross_sell:referencia_ambigua'
+             FROM public._insumos_vistos WHERE run_id='$RUNW';")" "1"
+# Inerte por construcao: `ok:true` e sem piso. Uma evidencia que DEGRADA o head travaria a
+# fase 2 para sempre, porque `degradado` nunca autoriza expirar (money-path §13).
+eq "O36 o sensor e INERTE — mede sem julgar" \
+   "$(Pq -c "SELECT (insumos->'individuais_eleicao'->>'ok') || ':' ||
+                    coalesce(insumos->'individuais_eleicao'->>'pisoCobertura','sem-piso')
+             FROM public._insumos_vistos WHERE run_id='$RUNW';")" "true:sem-piso"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FALSIFICAÇÃO DA ORDEM — uma camada por vez

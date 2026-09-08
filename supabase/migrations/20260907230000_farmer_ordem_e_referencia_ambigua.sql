@@ -73,6 +73,9 @@ DECLARE
   v_inseridas      integer;
   v_head_atual     uuid;
   v_tipo_errado    integer;
+  v_eleitos        integer;
+  v_grupos         integer;
+  v_distribuicao   jsonb;
 BEGIN
   -- 1) Gate de MENSAGEM (a RLS é quem autoriza — ver cabeçalho).
   IF p_farmer_id IS NULL OR p_run_id IS NULL THEN
@@ -344,9 +347,61 @@ BEGIN
     v_head_atual := p_head_visto;
   END IF;
 
+  -- ── O SENSOR DA DISTRIBUIÇÃO ───────────────────────────────────────────────────────────
+  --
+  -- A distribuição por situação NÃO é derivável do banco antes da entrega: a mudança de ordem
+  -- em memória (D3) altera QUAIS SKUs são persistidos, e o challenge executou o contraexemplo
+  -- (N=269, k=[9,9,9,10]: a ordem antiga persiste A/B/C e encontra empate, a nova persiste
+  -- D/A/B e encontra vencedor único). "Empate entre os produtos persistidos" não demonstra
+  -- ausência de vencedor entre os candidatos que o motor verá. Então ela é MEDIDA, aqui, sobre
+  -- o que acabou de ser gravado — e com DENOMINADOR, porque sem ele a fase seguinte volta a se
+  -- decidir por "ninguém reclamou", que é ausência de dado.
+  --
+  -- ⚠️ Reusa a RPC de LEITURA em vez de reimplementar a precedência dos 5 estados. Duas cópias
+  -- da mesma regra divergem no primeiro conserto que só uma recebe, e aí o sensor passa a medir
+  -- uma tela que não existe. A ordem em que as duas funções aparecem NESTE arquivo não importa:
+  -- plpgsql resolve a chamada em RUNTIME, e o harness prova a chamada EXECUTANDO.
+  --
+  -- Ela é SECURITY INVOKER e este writer também, então a `frec_select_carteira` continua sendo
+  -- a fronteira: o sensor conta exatamente o que este usuário poderia ver.
+  --
+  -- `AS MATERIALIZED` não é estilo: sem ele o planner pode INLINE o CTE e executar a RPC uma
+  -- vez por referência — três varreduras da carteira inteira (3.858 clientes na maior) para
+  -- produzir um número. Com ele a chamada acontece UMA vez e as três leituras são do resultado.
+  WITH grupos AS MATERIALIZED (
+    SELECT
+      j->>'recommendation_type' AS tipo,
+      j->>'situacao'            AS situacao
+    FROM jsonb_array_elements(public.farmer_melhores_individuais_por_cliente(p_farmer_id)) j
+  ),
+  por_chave AS (
+    SELECT tipo || ':' || situacao AS chave, count(*) AS n
+    FROM grupos GROUP BY 1
+  )
+  SELECT
+    (SELECT count(*) FROM grupos WHERE situacao = 'eleito'),
+    (SELECT count(*) FROM grupos),
+    -- `coalesce` para `{}`: carteira sem grupo nenhum devolve NULL do agregado, e NULL aqui
+    -- seria indistinguível de "o sensor não rodou" — a mesma confusão que o `[]` da RPC evita.
+    coalesce((SELECT jsonb_object_agg(chave, n) FROM por_chave), '{}'::jsonb)
+  INTO v_eleitos, v_grupos, v_distribuicao;
+
   PERFORM public.farmer_geracao_registrar(
     'cross_sell', p_farmer_id, p_run_id, 'linhas', v_inseridas,
-    p_completude, p_motivo, p_insumos, v_head_atual
+    p_completude, p_motivo,
+    -- `||` do lado DIREITO: a chave do sensor nunca sobrescreve o que o produtor mediu, e um
+    -- `p_insumos` nulo vira `{}` para que a evidência nova não se perca junto com a ausência.
+    coalesce(p_insumos, '{}'::jsonb) || jsonb_build_object(
+      'individuais_eleicao', jsonb_build_object(
+        -- Inerte por construção (`ok:true`, sem `pisoCobertura`): mede sem julgar, como as
+        -- demais evidências do §13 — degradar o head por causa dela travaria a fase 2.
+        'ok', true,
+        'n', v_eleitos,
+        'esperado', v_grupos,
+        'distribuicao', v_distribuicao
+      )
+    ),
+    v_head_atual
   );
 
   RETURN jsonb_build_object(
