@@ -527,4 +527,25 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
       'irmã da acima para os bundles (useBundleEngine) — mesmo gate de escopo, mesma assinatura de ' +
       '8 args, mesma exigência de continuar INVOKER',
   },
+  // 2026-09-07 (#2363) — a invariante do agregado PEDIDO DE VENDA. As três fecham por
+  // PRIVILÉGIO (PORTA_FECHADA), não por gate: nenhuma é chamável por usuário. Quem as invoca é
+  // o executor de CONSTRAINT TRIGGER, que não reavalia EXECUTE do chamador a cada disparo — e
+  // por isso `authenticated` também é `false`, coerente com a entrada em ACKNOWLEDGED_SENSITIVE.
+  // O `REVOKE ALL … FROM PUBLIC, anon, authenticated` está na própria migration e a postcondição
+  // do apply ABORTA medindo has_function_privilege nos 9 pares role/função.
+  'public.pedido_venda_exigir_coerencia': {
+    fechadaPor: '20260907220000_pedido_venda_coerencia_agregado.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'verificador do agregado pedido de venda; lê order_items.unit_price, RETURNS void, só levanta 23514',
+  },
+  'public.pedido_venda_coerencia_cab': {
+    fechadaPor: '20260907220000_pedido_venda_coerencia_agregado.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'adaptador de CONSTRAINT TRIGGER em sales_orders; delega ao verificador do agregado',
+  },
+  'public.pedido_venda_coerencia_lin': {
+    fechadaPor: '20260907220000_pedido_venda_coerencia_agregado.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'adaptador de CONSTRAINT TRIGGER em order_items; delega ao verificador do agregado',
+  },
 };
