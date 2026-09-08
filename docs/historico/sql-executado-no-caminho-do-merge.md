@@ -80,7 +80,7 @@ mede comentário como se fosse código; aqui o *falsificador* sabota comentário
 errada sobre o gate. Por isso toda sabotagem em `db/falsifica-nucleo-ci.sh` **aborta se não mudar
 o que disse que ia mudar** — sabotagem que não aplicou é falsificação INVÁLIDA, não gate sem dente.
 
-## A falsificação: 19 asserts, 0 falhas
+## A falsificação: 20 asserts, 0 falhas
 
 Controle verde na **mesma invocação**, antes do primeiro `sed` — sem ele, uma suíte
 sempre-vermelha aprovaria tudo ([falsificacao-sem-linha-de-base.md](falsificacao-sem-linha-de-base.md)).
@@ -99,6 +99,31 @@ caminho, então rodá-las de dentro do espelho as faz ler as migrations do espel
 
 O executor também é falsificado — manifesto vazio, caminho inexistente, mínimo 0, duplicata, prova
 esvaziada, prova encolhida e Postgres ausente. Os sete reprovam pela marca certa.
+
+### 3. O que a 1ª execução no Ubuntu encontrou: `sed -i ''`
+
+O job reprovou na estreia, e por um defeito REAL — não por infraestrutura. `PG17` instalou, 12 das
+13 provas passaram, e `test-disparado-simulado-pos-disparo` saiu com:
+
+```
+sed: can't read s/AND status IN ('disparado', 'disparado_simulado', …
+```
+
+`sed -i '' "expr" arq` é **BSD-only**. No GNU o `''` é lido como o SCRIPT e a expressão vira NOME
+DE ARQUIVO. A prova passava no laptop e era impossível de reprovar lá — as 289 nasceram no macOS e
+nunca tinham visto um Linux. Duas das 289 tinham a construção; a forma portável é
+`sed "expr" arq > arq.tmp && mv arq.tmp arq`.
+
+Duas consequências:
+
+- **É a primeira captura do gate em produção**, e ela aconteceu antes de o gate mergear.
+- **O round-trip para descobrir isso custa ~13min de CI.** Então o guard entrou no runner: um
+  candidato do manifesto com `sed -i ''` REPROVA na leitura do manifesto, com a forma portável na
+  mensagem. Sabotagem correspondente na falsificação — é o 20º assert.
+
+⚠️ E a busca que não achou isso antes ensinou de novo a lição do manual: procurei por
+`sed -i ""` (aspas **duplas**) e obtive zero linhas. Zero linhas era **ausência de dado**, não
+ausência do problema — o acervo usa aspas simples.
 
 ## Custo
 

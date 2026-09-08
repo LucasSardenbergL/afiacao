@@ -73,6 +73,17 @@ while IFS= read -r linha || [ -n "$linha" ]; do
   for ja in ${scripts[@]+"${scripts[@]}"}; do
     [ "$ja" = "$caminho" ] && { echo "::error::$MANIFESTO:$linha_n — duplicata: $caminho"; exit 1; }
   done
+
+  # Construções BSD-only: o núcleo nasceu no macOS e roda no Ubuntu. `sed -i '' "expr" arq`
+  # é o caso medido (2026-09-07, 1ª execução deste job): no GNU o `''` vira o SCRIPT e a
+  # expressão vira NOME DE ARQUIVO — "sed: can't read s/...". A prova passa no laptop e
+  # reprova no CI, e o round-trip para descobrir isso custa ~13min. Barrar aqui é barato.
+  # A forma portável é `sed "expr" arq > arq.tmp && mv arq.tmp arq`.
+  if grep -qE "sed -i ''" "$REPO_ROOT/$caminho"; then
+    echo "::error::$caminho usa \`sed -i ''\` (BSD-only) — quebra no Linux do CI."
+    echo "         portável: sed \"expr\" arq > arq.tmp && mv arq.tmp arq"
+    exit 1
+  fi
   scripts+=("$caminho"); minimos+=("$minimo")
 done < "$MANIFESTO"
 

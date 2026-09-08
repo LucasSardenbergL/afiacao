@@ -420,7 +420,7 @@ restaurar
 #      [ZERO-LINHAS] -- recusa correta, mas por acidente, e apos a porta GUC ter sido aberta.
 extrai_funcao "$MIG" "corrigir_cancelamento_pos_disparo" > /tmp/sab-corr-$$.sql
 ANTES_F4=$(grep -c "AND status IN ('disparado', 'disparado_simulado', 'concluido_recebido')" /tmp/sab-corr-$$.sql)
-sed -i '' "s/AND status IN ('disparado', 'disparado_simulado', 'concluido_recebido')/AND status IN ('disparado', 'concluido_recebido')/" /tmp/sab-corr-$$.sql
+sed "s/AND status IN ('disparado', 'disparado_simulado', 'concluido_recebido')/AND status IN ('disparado', 'concluido_recebido')/" /tmp/sab-corr-$$.sql > /tmp/sab-corr-$$.sql.tmp && mv /tmp/sab-corr-$$.sql.tmp /tmp/sab-corr-$$.sql
 DEPOIS_F4=$(grep -c "AND status IN ('disparado', 'disparado_simulado', 'concluido_recebido')" /tmp/sab-corr-$$.sql || true)
 if [ "$ANTES_F4" = "1" ] && [ "$DEPOIS_F4" = "0" ]; then
   ok "F4-setup a sabotagem cirurgica pegou (o WHERE do UPDATE perdeu o estado novo, o IF manteve)"
@@ -471,7 +471,7 @@ restaurar
 #      o F6 estaria medindo o alarme errado. Entao parte-se do corpo NOVO e retira-se SO o portal.
 extrai_funcao "$MIG" "cancelar_pedido_sugerido" > /tmp/sab-velho-$$.sql
 ANTES_F6=$(grep -c "aceito_portal_sem_protocolo" /tmp/sab-velho-$$.sql)
-sed -i '' "s/'aceito_portal_sem_protocolo', //g" /tmp/sab-velho-$$.sql
+sed "s/'aceito_portal_sem_protocolo', //g" /tmp/sab-velho-$$.sql > /tmp/sab-velho-$$.sql.tmp && mv /tmp/sab-velho-$$.sql.tmp /tmp/sab-velho-$$.sql
 DEPOIS_F6=$(grep -c "aceito_portal_sem_protocolo" /tmp/sab-velho-$$.sql || true)
 if [ "$ANTES_F6" -ge 1 ] && [ "$DEPOIS_F6" = "0" ]; then
   ok "F6-setup a sabotagem do eixo do portal pegou (antes=$ANTES_F6 ocorrencias, depois=0)"
@@ -505,7 +505,7 @@ POSTBLOCO2="$(mktemp /tmp/postbloco2-simulado.XXXXXX)"
 sed -n '/^DO \$post\$/,/^\$post\$;/p' "$MIG" > "$POSTBLOCO2"
 extrai_funcao "$MIG" "reposicao__valida_cancelamento_pos_disparo" > /tmp/sab-cego-$$.sql
 ANTES_F7=$(grep -c "IF OLD.status NOT IN ('disparado', 'disparado_simulado', 'concluido_recebido')" /tmp/sab-cego-$$.sql)
-sed -i '' "s/IF OLD.status NOT IN ('disparado', 'disparado_simulado', 'concluido_recebido')/IF OLD.status NOT IN ('disparado', 'concluido_recebido')/" /tmp/sab-cego-$$.sql
+sed "s/IF OLD.status NOT IN ('disparado', 'disparado_simulado', 'concluido_recebido')/IF OLD.status NOT IN ('disparado', 'concluido_recebido')/" /tmp/sab-cego-$$.sql > /tmp/sab-cego-$$.sql.tmp && mv /tmp/sab-cego-$$.sql.tmp /tmp/sab-cego-$$.sql
 RESTA_F7=$(grep -c "disparado_simulado" /tmp/sab-cego-$$.sql || true)
 if [ "$ANTES_F7" = "1" ] && [ "$RESTA_F7" -ge 1 ]; then
   ok "F7-setup logica cega, comentarios intactos ($RESTA_F7 mencoes ao nome sobraram no corpo)"
@@ -531,7 +531,7 @@ restaurar
 
 # F8 — o mesmo para a SAIDA: logica cega no WHERE do UPDATE, comentarios intactos.
 extrai_funcao "$MIG" "corrigir_cancelamento_pos_disparo" > /tmp/sab-cego2-$$.sql
-sed -i '' "s/AND status IN ('disparado', 'disparado_simulado', 'concluido_recebido')/AND status IN ('disparado', 'concluido_recebido')/" /tmp/sab-cego2-$$.sql
+sed "s/AND status IN ('disparado', 'disparado_simulado', 'concluido_recebido')/AND status IN ('disparado', 'concluido_recebido')/" /tmp/sab-cego2-$$.sql > /tmp/sab-cego2-$$.sql.tmp && mv /tmp/sab-cego2-$$.sql.tmp /tmp/sab-cego2-$$.sql
 P -q -f /tmp/sab-cego2-$$.sql >/dev/null
 F8="$(P -tA -f "$POSTBLOCO2" 2>&1 || true)"
 if printf '%s' "$F8" | grep -q 'SAIDA-SEM-UPDATE'; then

@@ -199,6 +199,24 @@ printf '#!/usr/bin/env bash\necho "RESULTADO: 3 ok / 0 fail"\nexit 0\n' > "$ESPE
 exec_exige "prova ENCOLHIDA (3 asserts < 22) REPROVA" "o manifesto exige" \
   env MANIFESTO="$ESPELHO/manifesto-oco.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
 
+# `sed -i` no dialeto BSD numa prova do manifesto: verde no laptop, vermelho no CI.
+# Foi o defeito REAL que a 1ª execução deste job no Ubuntu encontrou (o GNU lê o
+# argumento vazio como SCRIPT e a expressão como NOME DE ARQUIVO).
+{ printf '#!/usr/bin/env bash\n'
+  printf 'sed -i %s "s/a/b/" /tmp/x\n' "''"
+  printf 'echo "RESULTADO: 30 ok / 0 fail"\n'
+} > "$ESPELHO/db/test-fin-sync-lease.sh"
+exec_exige "sed -i BSD-only numa prova do manifesto REPROVA" "BSD-only" \
+  env MANIFESTO="$ESPELHO/manifesto-oco.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+# Os casos acima reescrevem a MESMA prova do espelho, então este precisa devolvê-la a um
+# estado que passe pelas checagens anteriores — senão ele reprovaria pelo guard do caso
+# anterior e o veredito seria sobre outra coisa. Estado compartilhado entre casos de um
+# harness é a forma mais barata de fabricar "vermelho pelo motivo errado".
+{ printf '#!/usr/bin/env bash\n'
+  printf 'echo "RESULTADO: 30 ok / 0 fail"\n'
+} > "$ESPELHO/db/test-fin-sync-lease.sh"
+
 # Postgres ausente: o caso em que degradar aprovaria TUDO.
 printf 'db/test-fin-sync-lease.sh 22\n' > "$ESPELHO/manifesto-pg.txt"
 # `PGVER=99` não existe em caminho canônico nenhum, e nenhum `initdb` do PATH tem

@@ -96,6 +96,7 @@ O founder NÃO tem terminal/psql/CLI **de escrita** pro backend. Toda DDL/DML/mi
 - ⚠️ **O fechamento das provas (`[ "$FAIL" -eq 0 ]`) aceita `PASS=0`** — prova truncada, ou substituída por `exit 0`, sai VERDE. É por isso que o manifesto carrega o mínimo de asserts e o runner exige `pass ≥ mínimo`. Encolher a prova reprova até alguém baixar o número, e aí a perda fica no diff.
 - **Prova nova nasce com `. "$REPO_ROOT/db/lib/pg-harness.sh"`** — nunca `PGBIN="/opt/homebrew/..."` hardcoded (prende ao macOS e mantém a prova fora do CI). O helper é fail-CLOSED e confere a major POSITIVAMENTE; piso = a versão de prod (17.6).
 - **Candidato ao núcleo precisa ser AUTOCONTIDO**: só `initdb` + SQL do próprio repo. Quem depende de `psql-ro`/prod, de `deno`/`bun` ou de dado fora do repo fica de fora — a primeira vermelha por AMBIENTE ensina a tratar o job como flaky, que é como um gate morre.
+- ⚠️ **Prova nasce no macOS e roda no Ubuntu — nada de construção BSD-only.** `sed -i '' "expr" arq` quebra no GNU (o `''` vira o SCRIPT e a expressão vira NOME DE ARQUIVO): use `sed "expr" arq > arq.tmp && mv arq.tmp arq`. Foi o 1º defeito que o job `provas-sql` pegou, e o runner agora barra na leitura do manifesto.
 - ⚠️ **Falsificar prova SQL não pode tocar `supabase/migrations/`** (é DR, e há hook de imutabilidade): sabote um **espelho** em tmpdir. As provas resolvem `REPO_ROOT` pelo próprio caminho, então rodá-las de lá as faz ler as migrations de lá.
 
 ## 3. Schema não-rebuildável + snapshot
