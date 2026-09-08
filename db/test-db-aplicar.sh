@@ -12,7 +12,7 @@
 # ║   A5 --ensaio roda inteiro e não grava NADA (nem tabela, nem linha de ledger);          ║
 # ║   A6 arquivo não-commitado é recusado (exit 2) antes de tocar no banco;                 ║
 # ║   A7 sonda fail-closed: wrapper que responde como OUTRO papel sai 6, não 0.             ║
-# ║  Falsifica: (S1) marcador de fim ignorado → A3 vira 'sucesso' silencioso;               ║
+# ║  Falsifica: (S1) marcador deixa de ser emitido → exit 0 com SQL incompleto vira sucesso;║
 # ║             (S2) ON_ERROR_STOP removido → A3 troca 4 por 5 (erro vira desconhecido);    ║
 # ║             (S3) checagem de 'já aplicada' removida → A2 aplica duas vezes.             ║
 # ╚═══════════════════════════════════════════════════════════════════════════════════════╝
@@ -28,7 +28,12 @@ FIX_OK="db/fixtures/db-aplicar-ok.sql"
 FIX_ERRO="db/fixtures/db-aplicar-erro.sql"
 WORK="$(mktemp -d "/tmp/pgtest-db-aplicar.XXXXXX")"
 DATA="$WORK/data"
-export LC_ALL=C LANG=C
+# Locale é PARÂMETRO, não constante: `db-aplicar.sh` distingue falha-limpa (4) de
+# desconhecido (5) casando a palavra do psql, que em pt_BR é ERRO e em C é ERROR. Falsificar
+# num locale só aprovaria um casamento pela metade (#1483). Rode os DOIS:
+#   LC_TESTE=C bash db/test-db-aplicar.sh --falsificar
+#   LC_TESTE=pt_BR.UTF-8 bash db/test-db-aplicar.sh --falsificar
+export LC_ALL="${LC_TESTE:-C}" LANG="${LC_TESTE:-C}"
 
 FALSIFICAR=0
 [ "${1:-}" = "--falsificar" ] && FALSIFICAR=1
@@ -36,7 +41,7 @@ FALSIFICAR=0
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); printf '  ✅ %s\n' "$1"; }
 nok()  { FAIL=$((FAIL+1)); printf '  ❌ %s — %s\n' "$1" "$2"; }
-eq()   { [ "$2" = "$3" ] && ok "$1" || nok "$1" "esperado '$3', veio '$2'"; }
+eq()   { if [ "$2" = "$3" ]; then ok "$1"; else nok "$1" "esperado '$3', veio '$2'"; fi; }
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 [ -f "$BOOT" ] || { echo "bootstrap ausente: $BOOT"; exit 1; }
@@ -71,8 +76,11 @@ SQL
 echo "▶ bootstrap"
 BOOT_OUT="$WORK/boot.log"
 if $PSQL -f "$BOOT" > "$BOOT_OUT" 2>&1; then
-  grep -q 'BOOTSTRAP_OK' "$BOOT_OUT" && ok "bootstrap aplica e devolve BOOTSTRAP_OK" \
-    || nok "bootstrap" "sem marcador BOOTSTRAP_OK: $(tail -c 300 "$BOOT_OUT")"
+  if grep -q 'BOOTSTRAP_OK' "$BOOT_OUT"; then
+    ok "bootstrap aplica e devolve BOOTSTRAP_OK"
+  else
+    nok "bootstrap" "sem marcador BOOTSTRAP_OK: $(tail -c 300 "$BOOT_OUT")"
+  fi
 else
   nok "bootstrap" "falhou: $(tail -c 400 "$BOOT_OUT")"
 fi
@@ -87,8 +95,11 @@ eq "ledger nasce com RLS" \
 
 echo "▶ re-aplicar o bootstrap (idempotência)"
 if $PSQL -f "$BOOT" > "$WORK/boot2.log" 2>&1; then
-  grep -q 'BOOTSTRAP_OK' "$WORK/boot2.log" && ok "re-colar o bootstrap é seguro" \
-    || nok "idempotência" "2ª aplicação sem marcador"
+  if grep -q 'BOOTSTRAP_OK' "$WORK/boot2.log"; then
+    ok "re-colar o bootstrap é seguro"
+  else
+    nok "idempotência" "2ª aplicação sem marcador"
+  fi
 else
   nok "idempotência" "2ª aplicação falhou: $(tail -c 300 "$WORK/boot2.log")"
 fi
@@ -156,21 +167,31 @@ eq "controle: A1 aplica" "$(rc_de "$FIX_OK")" "0"
 eq "controle: A3 sai 4"  "$(rc_de "$FIX_ERRO")" "4"
 $PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
 
-echo "▶ S1 — marcador de fim ignorado"
+echo "▶ S1 — o marcador de fim deixa de ser emitido (psql sai 0 e o SQL não terminou)"
+# A 1ª versão desta sabotagem forçava TEM_MARCADOR=1 e rodava a fixture de ERRO — e ficava
+# VERDE, porque com rc≠0 o marcador não decide nada. Sabotagem no cenário errado aprova
+# qualquer coisa. O cenário em que o marcador é a ÚNICA testemunha é o inverso: exit 0 com
+# a transação incompleta. Tirar a emissão do marcador simula exatamente isso.
 cp "$APLICAR" "$ALVO"
-perl -0pi -e 's/^TEM_MARCADOR=0$/TEM_MARCADOR=1/m' "$ALVO"
-S1="$(rc_de "$FIX_ERRO")"
-[ "$S1" != "4" ] && ok "S1 vermelho: sem o marcador o veredito muda ($S1 ≠ 4)" \
-                 || nok "S1" "sabotagem NÃO mudou nada — o marcador não está sendo usado"
-$PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_meia; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
+perl -0pi -e 's/^SELECT .*AS controle;$//m' "$ALVO"
+S1="$(rc_de "$FIX_OK")"
+if [ "$S1" != "0" ]; then
+  ok "S1 vermelho: sem marcador o exit 0 NÃO é aceito como sucesso ($S1 ≠ 0)"
+else
+  nok "S1" "sabotagem NÃO mudou nada — exit 0 sozinho está bastando"
+fi
+$PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
 
 echo "▶ S2 — ON_ERROR_STOP removido"
 cp "$APLICAR" "$ALVO"
 perl -0pi -e 's/-v ON_ERROR_STOP=1 -f -/-f -/' "$ALVO"
 perl -0pi -e 's/^\\\\set ON_ERROR_STOP on$//m' "$ALVO"
 S2="$(rc_de "$FIX_ERRO")"
-[ "$S2" != "4" ] && ok "S2 vermelho: sem ON_ERROR_STOP o erro deixa de ser erro ($S2 ≠ 4)" \
-                 || nok "S2" "sabotagem NÃO mudou nada — ON_ERROR_STOP não está segurando"
+if [ "$S2" != "4" ]; then
+  ok "S2 vermelho: sem ON_ERROR_STOP o erro deixa de ser erro ($S2 ≠ 4)"
+else
+  nok "S2" "sabotagem NÃO mudou nada — ON_ERROR_STOP não está segurando"
+fi
 $PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_meia; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
 
 echo "▶ S3 — checagem de 'já aplicada' removida"
@@ -178,8 +199,11 @@ cp "$APLICAR" "$ALVO"
 perl -0pi -e 's/\*aplicada\*\)/*JAMAIS_CASA*)/' "$ALVO"
 rc_de "$FIX_OK" >/dev/null
 S3="$(rc_de "$FIX_OK")"
-[ "$S3" != "3" ] && ok "S3 vermelho: sem a checagem o re-apply deixa de ser no-op ($S3 ≠ 3)" \
-                 || nok "S3" "sabotagem NÃO mudou nada — a checagem de sha é inalcançada"
+if [ "$S3" != "3" ]; then
+  ok "S3 vermelho: sem a checagem o re-apply deixa de ser no-op ($S3 ≠ 3)"
+else
+  nok "S3" "sabotagem NÃO mudou nada — a checagem de sha é inalcançada"
+fi
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════════════════

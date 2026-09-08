@@ -100,16 +100,23 @@ if ! "$RW" -X -A -t -v ON_ERROR_STOP=1 -c "
   msg "$(head -c 600 "$EST_OUT")"; rm -f "$EST_OUT"
   morre 6 "não consegui LER o ledger (ausência de resposta ≠ 'nunca foi aplicado')"
 fi
-ESTADOS="$(tr -d ' \n' < "$EST_OUT")"; rm -f "$EST_OUT"
+ESTADOS="$(head -1 "$EST_OUT" | tr -d ' \n')"; rm -f "$EST_OUT"
 
-case "$ESTADOS" in
-  *desconhecido*)
-    morre 5 "há uma aplicação DESCONHECIDA destes mesmos bytes (sha $SHA).
+# As travas valem só para o apply REAL. O ensaio não grava nada: bloqueá-lo por "já aplicado"
+# não protege ninguém e empurra quem quer conferir para o caminho que escreve — o inverso do
+# que este script existe para fazer. Ensaiar é sempre permitido, inclusive (e principalmente)
+# quando há um DESCONHECIDO pendente, que é justamente a hora de investigar sem escrever.
+if [ "$ENSAIO" -eq 0 ]; then
+  case "$ESTADOS" in
+    *desconhecido*)
+      morre 5 "há uma aplicação DESCONHECIDA destes mesmos bytes (sha $SHA).
    Resposta perdida NÃO é falha — reaplicar pode aplicar duas vezes.
-   Resolva com leitura independente (psql-ro), decida, e atualize a linha à mão." ;;
-  *aplicada*)
-    msg "✅ já aplicado (sha $SHA) — nada a fazer."; exit 3 ;;
-esac
+   Resolva com leitura independente (psql-ro), decida, e atualize a linha à mão.
+   Para investigar sem escrever: bun run db:aplicar $ARQUIVO --ensaio" ;;
+    *aplicada*)
+      msg "✅ já aplicado (sha $SHA) — nada a fazer."; exit 3 ;;
+  esac
+fi
 msg "📋 ledger: $ESTADOS"
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
@@ -118,14 +125,19 @@ msg "📋 ledger: $ESTADOS"
 ID=""
 if [ "$ENSAIO" -eq 0 ]; then
   ID_OUT="$LOG_DIR/db-aplicar-id.$$.log"
-  if ! "$RW" -X -A -t -v ON_ERROR_STOP=1 -c "
+  # `-q` porque psql imprime o TAG do comando junto da linha: sem ele, `1` + `INSERT 0 1`
+  # colam e viram o id "1INSERT01". Pego pela prova PG17 na primeira execução.
+  if ! "$RW" -X -A -t -q -v ON_ERROR_STOP=1 -c "
     insert into public.db_aplicacoes (arquivo, sha256, commit_sha, estado)
     values ('$ARQUIVO', '$SHA', '$COMMIT', 'tentativa') returning id" > "$ID_OUT" 2>&1; then
     msg "$(head -c 600 "$ID_OUT")"; rm -f "$ID_OUT"
     morre 6 "não consegui gravar a tentativa — abortei ANTES de tocar no banco"
   fi
-  ID="$(tr -d ' \n' < "$ID_OUT")"; rm -f "$ID_OUT"
-  [ -n "$ID" ] || morre 6 "o insert da tentativa não devolveu id"
+  # Cinto E suspensório: só a 1ª linha, só dígitos. Um id não-numérico vira SQL quebrado lá
+  # na frente, DEPOIS de o apply já ter rodado — exatamente o momento em que falhar é mais caro.
+  ID="$(head -1 "$ID_OUT" | tr -dc '0-9')"
+  ID_CRU="$(head -c 120 "$ID_OUT")"; rm -f "$ID_OUT"
+  [ -n "$ID" ] || morre 6 "o insert da tentativa não devolveu id numérico (veio: '$ID_CRU')"
   msg "🧾 tentativa #$ID registrada"
 fi
 
