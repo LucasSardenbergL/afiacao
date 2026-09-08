@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 531
+-- Total de custom migrations: 532
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -572,7 +572,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260907095841', 'disparado_simulado_e_estado_pos_disparo', '20260907095841_disparado_simulado_e_estado_pos_disparo.sql'),
   ('20260907101349', 'deploy_sonda_alvos_onda1', '20260907101349_deploy_sonda_alvos_onda1.sql'),
   ('20260907160103', 'revoke_public_sensor_multi_conta', '20260907160103_revoke_public_sensor_multi_conta.sql'),
-  ('20260907223901', 'analytics_ledger_navegacao_rota_servida', '20260907223901_analytics_ledger_navegacao_rota_servida.sql')
+  ('20260907223901', 'analytics_ledger_navegacao_rota_servida', '20260907223901_analytics_ledger_navegacao_rota_servida.sql'),
+  ('20260908055405', 'analytics_ledger_navegacao_postcondicao_corrigida', '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2355,7 +2356,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
-  ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4186,7 +4188,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
-  ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
 )
 SELECT
   e.migration,
@@ -4605,6 +4608,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'farmer_melhor_individual_por_cliente', 2, '20260820133119_farmer_melhor_individual_atomico.sql', '988141c4ddcb0e43ff59b66491c5dc6a'),
   ('public', 'analytics_ledger_registrar', 1, '20260825214545_analytics_outbox.sql', 'cb48e471a07a312d89d94c3a0dbd6455'),
   ('public', 'analytics_ledger_registrar', 2, '20260907223901_analytics_ledger_navegacao_rota_servida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
+  ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'reconciliar_pedidos_omie', 1, '20260830190000_reconciliar_pedidos_omie.sql', '80a1000a7a543c8e3dfc756f4ab4df97'),

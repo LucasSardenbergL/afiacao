@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **531** custom migrations totais
-- **1794** objetos esperados (criados por estas migrations)
+- **532** custom migrations totais
+- **1795** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 568
+  - `function`: 569
   - `rls_policy`: 462
   - `index`: 257
   - `cron_job`: 171
@@ -4409,6 +4409,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260907223901_analytics_ledger_navegacao_rota_servida.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
+### `20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
