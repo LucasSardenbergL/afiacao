@@ -42,6 +42,15 @@ ok()  { PASS=$((PASS+1)); echo "  OK   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FALHOU $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], veio [$2]"; fi; }
 
+# roles do Supabase — a migration fecha as SECDEF por REVOKE nominal (PUBLIC+anon+
+# authenticated) e a postcondicao MEDE has_function_privilege; sem as roles o
+# harness nao conseguiria provar o ACL.
+P -q -c "DO \$r\$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
+END \$r\$;"
+
 echo "=== setup PG17 :$PORT ==="
 
 # ══════════════════════════════════════════════════════════════════
@@ -272,6 +281,11 @@ if [ "$RC_D1" -eq 0 ]; then
 else
   ok "D1 session_replication_role=replica tambem bloqueado (mais forte que o esperado)"
 fi
+
+# ACL medido pelo harness (a postcondicao da migration ja mede; este assert existe
+# para o harness NAO depender de a migration se auto-aprovar).
+eq "B7 ACL: zero pares role/funcao com EXECUTE (PUBLIC/anon/authenticated)" \
+   "$(Pq -c "SELECT count(*) FROM (VALUES ('public.pedido_venda_exigir_coerencia(uuid)'),('public.pedido_venda_coerencia_cab()'),('public.pedido_venda_coerencia_lin()')) f(sig), (VALUES ('public'),('anon'),('authenticated')) r(role) WHERE has_function_privilege(r.role, f.sig, 'EXECUTE')")" "0"
 
 # ══════════════════════════════════════════════════════════════════
 # ZONA 4b — RETRY CONCORRENTE (exigencia explicita do parecer)

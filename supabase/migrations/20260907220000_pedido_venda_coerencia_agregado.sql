@@ -168,6 +168,17 @@ ALTER TABLE sales_orders ENABLE ALWAYS TRIGGER trg_pedido_venda_coerencia_cab;
 ALTER TABLE order_items  ENABLE ALWAYS TRIGGER trg_pedido_venda_coerencia_lin;
 
 -- ────────────────────────────────────────────────────────────────────────────
+-- FECHAR POR PRIVILÉGIO. As três são SECURITY DEFINER e leem `unit_price`; nenhuma
+-- precisa ser chamável por usuário — quem as invoca é o executor de trigger, que
+-- não reavalia EXECUTE do chamador a cada disparo. Deixar EXECUTE aberto seria
+-- superfície SECDEF sem gate. REVOKE exige as DUAS pontas: `anon` e `authenticated`
+-- são MEMBROS de PUBLIC, então revogar só deles é NO-OP enquanto PUBLIC tiver =X/.
+-- ────────────────────────────────────────────────────────────────────────────
+REVOKE ALL ON FUNCTION public.pedido_venda_exigir_coerencia(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pedido_venda_coerencia_cab()        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pedido_venda_coerencia_lin()        FROM PUBLIC, anon, authenticated;
+
+-- ────────────────────────────────────────────────────────────────────────────
 -- POSTCONDIÇÃO — falha o apply se qualquer peça não ficou de pé.
 -- (o apply manual diverge do repo; ausência de erro não é prova de instalação)
 -- ────────────────────────────────────────────────────────────────────────────
@@ -194,6 +205,17 @@ BEGIN
     AND t.tgdeferrable AND t.tginitdeferred;
   IF v_n <> 2 THEN RAISE EXCEPTION '[POSTCOND] triggers nao sao DEFERRABLE INITIALLY DEFERRED: %', v_n; END IF;
 
-  RAISE NOTICE '[POSTCOND-OK] pedido_venda_coerencia instalada (2 triggers, ALWAYS, deferred)';
+  -- ACL medido, nao declarado: has_function_privilege e a fonte, o REVOKE e a intencao
+  SELECT count(*) INTO v_n
+  FROM (VALUES ('public.pedido_venda_exigir_coerencia(uuid)'),
+               ('public.pedido_venda_coerencia_cab()'),
+               ('public.pedido_venda_coerencia_lin()')) AS f(sig),
+       (VALUES ('public'),('anon'),('authenticated')) AS r(role)
+  WHERE has_function_privilege(r.role, f.sig, 'EXECUTE');
+  IF v_n <> 0 THEN
+    RAISE EXCEPTION '[POSTCOND] % pares role/funcao ainda com EXECUTE — SECDEF sensivel aberta', v_n;
+  END IF;
+
+  RAISE NOTICE '[POSTCOND-OK] pedido_venda_coerencia instalada (2 triggers, ALWAYS, deferred, ACL fechado)';
 END
 $post$;
