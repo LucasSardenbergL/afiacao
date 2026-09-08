@@ -1,9 +1,11 @@
-# Piloto: o MCP do Lovable deploya sozinho? — EDGE: só o canal; PUBLISH: canal E verbatim
+# Piloto: o MCP do Lovable deploya sozinho? — EDGE: só o canal; PUBLISH: canal E verbatim; MIGRATION: funciona, e fica fora
 
-> **Duas camadas medidas, por experimentos separados.** §Passos 1-3 = **edge** (`send_message`,
+> **Três camadas medidas, por experimentos separados.** §Passos 1-3 = **edge** (`send_message`,
 > 2026-09-07). §Camada 2 = **Publish do frontend** (`deploy_project`, 2026-09-08), que fecha nos
-> bytes a metade que a edge deixou aberta. A 3ª camada (migration/`query_database`) segue **não
-> medida** e fora da regra do CLAUDE.md.
+> bytes a metade que a edge deixou aberta. §Camada 3 = **migration** (`query_database`, 2026-09-07),
+> medida em ambiente descartável: o canal **funciona**, com semântica transacional completa — e é
+> justamente por isso que ela **continua fora** da regra do CLAUDE.md. A recomendação é manter a
+> regra como está, e o porquê está lá.
 
 > ⚠️ **Este doc foi CORRIGIDO em 2026-09-08 (#2358).** A primeira versão dizia "deploya edge
 > VERBATIM — SIM, medido". Duas revisões independentes (Codex `gpt-6-astra/max` e um subagente
@@ -518,21 +520,193 @@ nenhum dos 8 arquivos.
   ~21 sessões vivas no host, "alguém clicou Publish nesse minuto" é uma alternativa lógica que a
   medição não **exclui**, só torna implausível. Dito, para não virar certeza retroativa.
 - **`name` não foi exercitado** — de propósito, porque re-slugar quebraria o domínio canônico.
-- **A migration (3ª camada) segue não medida**, e `query_database` continua fora (abaixo).
+- **A migration (3ª camada) foi medida em 2026-09-07** — §Camada 3. Ela segue **fora** da regra do
+  CLAUDE.md, agora por medição e não por precaução.
+
+## Camada 3 — a migration (`query_database`): o canal FUNCIONA, e é por isso que a regra fica (2026-09-07)
+
+As duas camadas anteriores mediram ferramentas que **fazem uma coisa só**. Esta mede a que faz
+qualquer coisa: `query_database` recebe **dois** parâmetros (`project_id`, `sql`) e executa o que
+vier. Não há modo read-only, dry-run, transação exposta nem allowlist — e o read-only do
+`~/.config/afiacao/psql-ro` é do **wrapper**, não do papel, então aqui ele não existe.
+
+O resultado tem uma forma que vale nomear antes dos números, porque ela é contra-intuitiva: **a
+ferramenta é tecnicamente MELHOR do que se temia, e é exatamente isso que derruba o argumento do
+"é só ter cuidado".** Semântica transacional completa, erros honestos com SQLSTATE, DDL atômica. Nada
+disso é um freio — é um motor bom. O freio teria de ser o meu juízo, e juízo não é guard-rail.
+
+| metade | veredito | força |
+|---|---|---|
+| **O canal `query_database` executa migration?** | ✅ **CONFIRMADO**, com semântica transacional **completa** | 14 chamadas num Supabase descartável; cada pergunta com ANTES **medido** e **controle na mesma medição** — positivo (a linha que aparece) ou negativo (o papel que não enxerga) |
+| **Isso autoriza abrir escrita em produção?** | ❌ **NÃO — e a medição REFORÇA a regra, não a afrouxa** | o canal entra como `postgres`, dono do projeto, com **`BYPASSRLS` medido em comportamento**; e a escrita **não deixa rastro** em `list_edits` |
+
+### A cobaia — custo zero de criação, e o isolamento provado POR DENTRO
+
+A conta tinha **dois** projetos, não um: além do `steu` (produção), o `Sharp & Ready`
+(`0854b155-…`) — criado **26 s antes** do `steu` com o mesmo prompt inicial, nunca publicado, sem
+edição desde 2026-01-09. Um falso-começo de 8 meses. Cobaia pelo custo de dar errado, e de quebra
+sem `create_project`: o único gasto foi `enable_database`, que não envia mensagem de agente.
+
+🔴 **O isolamento não pôde ser provado por fora, e isso é um achado.** `get_database_status` devolve
+`{"enabled":true,"stack":"supabase"}` — **sem ref, sem URL**. Não há como comparar o banco da cobaia
+com o `fzvklzpomgnyikkfkzai` de produção pela superfície do MCP. A prova teve de vir **de dentro**, e
+por isso a primeira query foi uma **guarda fail-closed** — `SELECT` puro, segura mesmo no caso
+catastrófico em que o isolamento tivesse falhado:
+
+```json
+{"current_user":"postgres","session_user":"postgres","is_superuser":"off","db":"postgres",
+ "rol_super":false,"rol_bypassrls":true,"rol_createrole":true,"rol_createdb":true,
+ "tabelas_public":0,"marcadores_producao":0,"tabelas_auth":23,"pg":"PostgreSQL 17.6"}
+```
+
+`marcadores_producao` conta tabelas do repo (`user_roles`, `profiles`, `omie_clientes`,
+`farmer_copilot_sessions`, `deploy_atestacoes`, `company_settings`): **0**. Somado a
+`tabelas_public: 0` e `tabelas_auth: 23`, o banco é um Supabase real e **virgem**. Só depois desse
+zero houve qualquer escrita.
+
+### Leitura (a) — com qual role o MCP entra
+
+**`postgres`** — o dono do projeto Supabase. Três atributos importam, e um deles é o jogo inteiro:
+
+- `rolsuper: false` / `is_superuser: off` — **não** é superuser. Nuance real, registrada para não
+  virar folclore: coisas superuser-only (p. ex. `COPY FROM PROGRAM`) continuam fora.
+- **`rolbypassrls: true`** — atravessa RLS.
+- `rolcreaterole: true`, `rolcreatedb: true` — pode cunhar papéis novos.
+
+⚠️ Mas `rolbypassrls` lido de `pg_roles` é **declaração de catálogo** — a mesma classe de evidência
+que derrubou a metade "verbatim" da Camada 1. Foi medido **em comportamento**, com controle negativo
+na mesma leitura. Tabela com uma linha, `GRANT SELECT` dado ao `authenticated` (para que erro de
+permissão não se disfarce de bloqueio de RLS), `ENABLE` **e** `FORCE ROW LEVEL SECURITY`, **zero
+policies** — nega-tudo para todo mundo que não tenha `BYPASSRLS`:
+
+```json
+[{"papel":"postgres (o papel do MCP)","linhas_vistas":1},
+ {"papel":"authenticated (controle negativo)","linhas_vistas":0}]
+```
+
+O `authenticated` vê **0** — logo a RLS está de fato bloqueando e o teste não é vazio. O papel do MCP
+vê **1**. Em produção isso significa: toda a RLS do repo — o isolamento entre as 3 empresas, a
+separação customer/staff, os view-gates `selfservice_*` — é **invisível** para essa conexão.
+
+### Leitura (b) — transação, lote, DDL e repetição
+
+As quatro perguntas de segurança operacional, cada uma com ANTES medido:
+
+| pergunta | teste | resultado |
+|---|---|---|
+| DDL funciona? | `CREATE TABLE` (ANTES: `tabelas_public: 0`) | ✅ sim |
+| lote multi-statement? | 2 statements numa string | ✅ aceito; a resposta carrega as linhas do **último** |
+| `BEGIN…ROLLBACK` é respeitado? | `INSERT` dentro, leitura em conexão nova | ✅ **sim** — a linha não persistiu |
+| erro no meio do lote deixa estado parcial? | `INSERT 10` + `INSERT 10` (viola PK) | ✅ **não** — `23505`, e a 1ª linha **sumiu** |
+| a DDL também é atômica? | `CREATE TABLE` + `SELECT 1/0` | ✅ **sim** — `22012`, e `to_regclass` voltou `null` |
+| repetir migration não-idempotente? | `CREATE TABLE` de novo | ✅ falha **alto**: `42P07` |
+
+**Os erros não são engolidos** — voltam com SQLSTATE, nome da constraint e `DETAIL`
+(`23505`, `22012`, `42P07`, `42501` apareceram todos). E o vazio de cada teste é veredito e não
+sonda cega porque **o controle positivo está na mesma leitura**: a linha `99` (inserida sem
+rollback) aparece em todas as leituras em que as linhas sabotadas somem, e `to_regclass` devolve
+`piloto_c3_sonda` na mesma linha em que devolve `null` para a tabela desfeita.
+
+⚠️ **Uma armadilha para quem for scriptar isto:** um `CREATE TABLE` bem-sucedido responde
+`{"rows":[]}` — **byte a byte idêntico** a um `SELECT` que não achou nada. Sem rowcount, sem
+confirmação. Sucesso e vazio têm o mesmo eco; só o **erro** é distinguível.
+
+### Leitura (c) — houve edição registrada? O canal é auditável?
+
+**Não, e o vazio aqui é veredito.** ANTES capturado antes de tudo, DEPOIS após as 14 chamadas —
+incluindo `CREATE TABLE`, `INSERT`, `GRANT` e `ALTER TABLE … FORCE ROW LEVEL SECURITY`:
+
+```console
+$ diff antes-edits.json depois-edits.json; echo "DIFF_RC=$?"
+DIFF_RC=0  (0 = identico byte a byte)
+$ md5 -q antes-edits.json depois-edits.json
+25a7d7141e91a35cc3be4cadddc64a90
+25a7d7141e91a35cc3be4cadddc64a90
+```
+
+**Controle positivo:** `list_edits` deste projeto **devolve** uma edição (a de 2026-01-09,
+`f9712afee857…`). Então o zero é sobre uma ferramenta que comprovadamente reporta — não sobre uma
+ferramenta muda. Não há commit tampouco, e nem poderia haver: SQL não é código do repo.
+
+Consequência que a Camada 2 não tinha: lá, `deploy_project` era estreito e a ausência de edição era
+esperada. Aqui a ausência é **a própria superfície de risco** — uma escrita em produção por este
+canal não aparece em `list_edits`, não vira commit, e no banco só existiria em `pg_stat_statements`
+e nos logs do Supabase. **O canal é mudo por desenho.**
+
+### Duas descrições de ferramenta que não batem com o payload
+
+Mesma classe de defeito que derrubou o "verbatim" da Camada 1 — **declaração não lastreada pelo que
+a ferramenta entrega**:
+
+- `get_workspace` promete *"plan, credit balance, member count, and settings"*. O payload traz
+  `plan: "pro"` e **nenhum saldo**. Por isso o custo desta camada foi **estimado, não medido** — o
+  contrário do que a §"A cobaia" da Camada 2 conseguiu fazer.
+- `get_database_status` promete o status do banco e devolve `{enabled, stack}` — sem ref. É o que
+  forçou a guarda fail-closed por dentro.
+
+### O que a Camada 3 NÃO autoriza
+
+- 🔴 **O papel foi medido na COBAIA, não em produção** — por desenho, porque `query_database` nunca
+  foi apontada ao `8f005805-…`. Mesmo MCP e mesmo caminho de provisionamento tornam a inferência
+  forte, **mas é inferência**. Dito isto: **a recomendação abaixo não depende dela.** Mesmo que o
+  papel de produção fosse mais estreito, continuariam valendo os dois parâmetros, a ausência de
+  read-only/dry-run e o silêncio em `list_edits` — que são propriedades da **ferramenta**, medidas
+  no schema, não do banco.
+- **O banco era virgem.** Zero tabelas, zero extensões do repo, zero triggers, zero carga. A
+  atomicidade medida vale para DDL simples num banco vazio; não fala por uma migration real sobre
+  ~centenas de tabelas com lock contention.
+- **`CREATE INDEX CONCURRENTLY`, `VACUUM` e afins não foram testados.** Eles não rodam dentro de
+  bloco transacional, e o lote multi-statement **é** uma transação implícita (medido) — então há
+  motivo concreto para suspeitar que falhem acompanhados de outro statement. **Suspeita, não
+  medição:** parte das migrations reais do repo pode simplesmente não passar por este canal.
+- **Nada foi testado sob concorrência**, nem com outro projeto que o founder não possua (não havia
+  id para isso), nem com timeout/statement longo.
+- **N = 1 projeto, 1 sessão.**
+
+### A recomendação — a regra do CLAUDE.md fica exatamente como está
+
+**Escrita só pelo SQL Editor, founder colando.** A medição não abre exceção; ela fecha a discussão,
+por três razões que agora são medidas e não suposições:
+
+1. **Não existe configuração que torne isto seguro hoje.** A ferramenta tem dois parâmetros. Não há
+   papel restrito a pedir, modo de leitura a ligar, nem dry-run a exigir. O `psql-ro` funciona
+   porque o read-only mora no **wrapper** — e aqui a chamada é direta ao MCP, sem lugar onde pendurar
+   um wrapper.
+2. **Do lado da LEITURA, `query_database` não acrescenta nada.** O `psql-ro` já cobre
+   leitura/diagnóstico com read-only garantido. Trocar por um canal `postgres`-com-`BYPASSRLS` seria
+   pagar todo o risco por zero benefício.
+3. **O que se ganharia é o clique do founder; o que se perderia é a única testemunha humana.** No
+   SQL Editor alguém **lê o SQL antes do Run**. Neste canal não há revisor, não há registro em
+   `list_edits`, não há commit. A Lei de Ferro #2 da `lovable-db-operator` — toda mudança vem com
+   query de validação porque o founder precisa distinguir "aplicado" de "esqueci de colar" — perde o
+   sujeito: não haveria ninguém para esquecer.
+
+**O que a Camada 3 exigiria para mudar de veredito** (para não virar "nunca, porque sim"): um modo
+read-only ou um parâmetro de papel na própria ferramenta; ou um ledger de escritas equivalente ao
+`deploy_atestacoes`, alimentado server-side — algo que torne a escrita **visível depois de
+acontecer**. Nenhum dos dois existe hoje.
+
+💡 **Uma proposta que converte o crédito já gasto em valor permanente** (proposta, não decisão): a
+cobaia agora é um **Supabase PG17 real, vazio e descartável**, com o schema `auth` completo (23
+tabelas medidas) e os papéis `anon`/`authenticated`/`service_role`. Isso é justamente o que o PG17
+local dos `db/test-*.sh` **não** replica — e foi o que permitiu o teste de `BYPASSRLS` com controle
+negativo desta seção. Ela serve como **bancada de ensaio de RLS e de migration**: rodar a migration
+de verdade ali antes de o founder colar no SQL Editor, com `SET ROLE authenticated` de verdade. Sem
+tocar em produção, e sem mexer na regra.
 
 ## O que o veredito não autoriza
 
 O piloto respondeu **uma** pergunta. Estender além disto é refazer o erro que ele existiu para
 corrigir.
 
-- **`query_database` continua fora.** O MCP a expõe com poder de escrita (*"supports reads, writes,
-  and schema changes"*), e isso **contraria a regra atual do CLAUDE.md** — escrita só pelo SQL
-  Editor, founder colando. Mudar isso é decisão do founder em conversa própria, não efeito colateral
-  de um piloto que testou outra coisa. Esta sessão teve a tentação concreta: o disparo da sonda é um
+- **`query_database` continua fora — e desde 2026-09-07 isso é MEDIDO, não precaução** (§Camada 3).
+  Ela entra como `postgres`, dono do projeto, com `BYPASSRLS` medido em comportamento; não tem
+  read-only nem dry-run; e a escrita não deixa rastro em `list_edits`. Abrir escrita segue sendo
+  decisão do founder em conversa própria, não efeito colateral de um piloto. Esta sessão teve a tentação concreta: o disparo da sonda é um
   `INSERT`, e `query_database` o resolveria sem o founder. Não foi usado — usá-lo mediria um canal
   não-testado **com** outro, e contaminaria o veredito.
 - **`deploy_project` (o Publish do frontend) era outra camada, e foi MEDIDA em 2026-09-08** —
-  §Camada 2. O que segue não medido é a **migration**. As três camadas manuais do Lovable são
+  §Camada 2; e a **migration** em 2026-09-07 — §Camada 3. As três camadas manuais do Lovable são
   independentes, e o resultado de uma não se estende às outras.
 - **N = 1.** Uma edge, uma chamada, um ANTES conhecido. Isso é estritamente mais forte que a medição
   de 2026-09-06 (8 edges, ANTES desconhecido, transição não observável), e é o que faltava para
