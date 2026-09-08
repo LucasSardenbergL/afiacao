@@ -39,8 +39,14 @@ export const ESTADOS_DE_DEPLOY: readonly Estado[] = [
   'SEM_MAPA_NO_BUNDLE',
 ] as const;
 
-/** Um arquivo da fatia, com o sha256 dos bytes que a REF tem — não os do working tree. */
-export interface ArquivoDaFatia {
+/**
+ * Um arquivo da fatia, com o sha256 dos bytes que a REF tem — não os do working tree.
+ *
+ * Não exportada: quem monta a fatia (`pendencias-prompt.ts`) escreve o literal e o tipo é checado
+ * estruturalmente por `EdgeParaDeploy`. Exportar sem consumidor que a NOMEIE é export morto, e o
+ * `knip` reprova (com razão).
+ */
+interface ArquivoDaFatia {
   caminho: string;
   /** SHA-256 dos bytes crus, em hex minúsculo: o número que `sha256sum <caminho>` imprime. */
   sha256: string;
@@ -77,7 +83,7 @@ const HEX64 = /^[0-9a-f]{64}$/;
  * deploy correto. É o mesmo erro de `includes()` cru que a nota de substring abaixo já registrava,
  * num eixo diferente.
  */
-export function linhaDoArquivo(a: ArquivoDaFatia): string {
+function linhaDoArquivo(a: ArquivoDaFatia): string {
   return `- \`${a.caminho}\` — sha256 \`${a.sha256}\``;
 }
 
