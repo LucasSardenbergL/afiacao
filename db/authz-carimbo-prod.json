@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-08T00:54:40.705Z",
-  "sourceHead": "9f53b78773bce4a3b96389702c694283f72d249c",
+  "medidoEm": "2026-09-08T02:14:22.268Z",
+  "sourceHead": "9e5671da6471769ce052c86d70a9883399ed1cfb",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,31 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 54 função(ões) da allowlist.",
-      "denominador": "🔎 authz:funcoes:prod — 55 definição(ões) lida(s) para 54 chave(s) da allowlist.",
-      "contratoFingerprint": "1de6daf5818878840d43924952eefa7f721f6e6bd55cbec672b6693f6400e67f",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 3 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 55 definição(ões) lida(s) para 57 chave(s) da allowlist.",
+      "contratoFingerprint": "2eba5859665a1f864a628f5c5a727075696701263fedaaed24a24991b0d87d27",
       "auditorFingerprint": "7a0c358a4866c0f993973aa01b93f1d9b03d8269487c0c9b1c42207e0512efdf",
-      "achados": []
+      "achados": [
+        {
+          "id": "afc97da67551682b",
+          "linha": "❌ public.pedido_venda_exigir_coerencia — [FUNCAO_AUSENTE_EM_PROD] public.pedido_venda_exigir_coerencia está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-09-08",
+          "ultimaVez": "2026-09-08"
+        },
+        {
+          "id": "6caf7bf9467155bf",
+          "linha": "❌ public.pedido_venda_coerencia_cab — [FUNCAO_AUSENTE_EM_PROD] public.pedido_venda_coerencia_cab está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-09-08",
+          "ultimaVez": "2026-09-08"
+        },
+        {
+          "id": "bf335e6a58e32d61",
+          "linha": "❌ public.pedido_venda_coerencia_lin — [FUNCAO_AUSENTE_EM_PROD] public.pedido_venda_coerencia_lin está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-09-08",
+          "ultimaVez": "2026-09-08"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
