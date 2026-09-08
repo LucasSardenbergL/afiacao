@@ -46,6 +46,7 @@
     "pendencias": "bash scripts/pendencias.sh",
     "pendencias:deploy": "bun scripts/pendencias-deploy.ts",
     "pendencias:prompt": "bun scripts/pendencias-prompt.ts",
+    "pendencias:pacote": "bun scripts/pendencias-pacote.ts",
     "mutcheck": "bash scripts/mutcheck-all.sh",
     "mutcheck:selftest": "bash scripts/mutcheck.sh --selftest",
     "wt": "bash scripts/new-worktree.sh",
