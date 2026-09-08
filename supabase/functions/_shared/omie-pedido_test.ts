@@ -6,7 +6,7 @@ import {
   construirItemsJson,
   precoUnitarioOmie,
   contarItensSemPreco,
-  mesclarPrecoPreservado,
+  aplicarCorPreservandoItens,
   STATUS_GERIDO_OMIE,
 } from "./omie-pedido.ts";
 
@@ -129,43 +129,47 @@ Deno.test("construirItemsJson: preço ausente vira null no jsonb, não 0", () =>
   eq(out[1].valor_unitario, 0, "zero informado → 0 (os leitores mostram R$ 0,00)");
 });
 
-Deno.test("mesclarPrecoPreservado: o preço GRAVADO vence; a leitura nova nunca rebaixa", () => {
-  const novos = [
-    { omie_codigo_produto: 1, valor_unitario: null },
-    { omie_codigo_produto: 2, valor_unitario: 50 },
-    { omie_codigo_produto: 3, valor_unitario: null },
-  ];
+
+Deno.test("aplicarCorPreservandoItens: só a COR entra; o resto do item-jsonb é intocável", () => {
   const gravados = [
-    { omie_codigo_produto: 1, valor_unitario: 99 },   // o Omie esqueceu; o banco lembra
-    { omie_codigo_produto: 2, valor_unitario: 10 },   // leitura nova sabe → ela vence
-    { omie_codigo_produto: 9, valor_unitario: 77 },   // item que não existe mais
+    { omie_codigo_produto: 1, quantidade: 2, valor_unitario: 10, desconto: 0, descricao: "TINTA A" },
+    { omie_codigo_produto: 2, quantidade: 1, valor_unitario: 50, desconto: 0, descricao: "TINTA B" },
   ];
-  const out = mesclarPrecoPreservado(novos, gravados);
-  eq(out[0].valor_unitario, 99, "preço bom preservado (era o bug: seria APAGADO)");
-  eq(out[1].valor_unitario, 50, "leitura nova com preço não é sobrescrita pelo gravado");
-  eq(out[2].valor_unitario, null, "sem correspondente gravado, segue não sabido");
-  // Degradações que não podem virar exceção nem fabricar número:
-  eq(mesclarPrecoPreservado(novos, null)[0].valor_unitario, null, "gravados não-array → passa direto");
-  eq(mesclarPrecoPreservado(novos, [])[0].valor_unitario, null, "gravados vazio → passa direto");
-  eq(mesclarPrecoPreservado(novos, [{ omie_codigo_produto: 1, valor_unitario: -1 }])[0].valor_unitario, null,
-     "gravado LIXO não é preservado (seria promover corrupção a verdade)");
-  eq(mesclarPrecoPreservado(novos, [{ omie_codigo_produto: "1", valor_unitario: 42 }])[0].valor_unitario, 42,
-     "casa por código mesmo com tipos diferentes (o jsonb devolve number, o Omie manda string)");
-  // AMBIGUIDADE: com o código repetido não há como saber qual preço pertence a qual linha.
-  // Aplicar o primeiro aos dois espalha um preço para uma linha que talvez nunca o teve —
-  // precisão > recall: fica `null`. [P1 do challenge Codex]
-  eq(mesclarPrecoPreservado(novos, [
-       { omie_codigo_produto: 1, valor_unitario: 5 },
-       { omie_codigo_produto: 1, valor_unitario: 6 },
-     ])[0].valor_unitario, null, "código repetido nos GRAVADOS: não adivinha");
-  eq(mesclarPrecoPreservado(
-       [{ omie_codigo_produto: 7, valor_unitario: null }, { omie_codigo_produto: 7, valor_unitario: null }],
-       [{ omie_codigo_produto: 7, valor_unitario: 30 }],
-     ).map((x) => x.valor_unitario), [null, null],
-     "código repetido nos NOVOS: um preço gravado não vira dois");
-  // E o caso normal segue funcionando (a ambiguidade não pode ter matado a mescla).
-  eq(mesclarPrecoPreservado(
-       [{ omie_codigo_produto: 3, valor_unitario: null }],
-       [{ omie_codigo_produto: 3, valor_unitario: 30 }],
-     )[0].valor_unitario, 30, "código único: preserva normalmente");
+  // A leitura do Omie DISCORDA em quantidade e preço de propósito: é exatamente o pedido que a
+  // reconstrução corromperia, movendo o jsonb enquanto order_items fica parado.
+  const lidos = [
+    { omie_codigo_produto: 1, quantidade: 99, valor_unitario: 999, tint_nome_cor: "AZUL" },
+    { omie_codigo_produto: 2, quantidade: 99, valor_unitario: 999 },
+  ];
+  const out = aplicarCorPreservandoItens(gravados, lidos)!;
+  eq(out.length, 2, "não acrescenta nem remove item");
+  eq(out[0], { omie_codigo_produto: 1, quantidade: 2, valor_unitario: 10, desconto: 0, descricao: "TINTA A", tint_nome_cor: "AZUL" },
+     "cor entra; quantidade/preço/desconto/descrição gravados permanecem");
+  eq(out[1], gravados[1], "item sem cor na leitura fica idêntico");
+
+  // Nada a fazer → null, para o chamador PULAR o UPDATE (UPDATE inútil mexe em updated_at).
+  eq(aplicarCorPreservandoItens(gravados, [{ omie_codigo_produto: 1 }]), null, "nenhuma cor aplicável → null");
+  eq(aplicarCorPreservandoItens(null, lidos), null, "gravados não-array → null");
+  eq(aplicarCorPreservandoItens([], lidos), null, "gravados vazio → null");
+  eq(aplicarCorPreservandoItens(
+       [{ omie_codigo_produto: 1, tint_nome_cor: "VERDE" }], lidos), null,
+     "item que já tem cor não é reetiquetado → null (nada mudou)");
+
+  // Ambiguidade nos DOIS lados: uma cor não diz a qual linha pertence. Rotular errado é pior
+  // que não rotular — precisão > recall, a mesma régua do mesclarPrecoPreservado.
+  eq(aplicarCorPreservandoItens(
+       [{ omie_codigo_produto: 5 }, { omie_codigo_produto: 5 }],
+       [{ omie_codigo_produto: 5, tint_nome_cor: "AZUL" }]), null,
+     "código repetido nos GRAVADOS: não adivinha");
+  eq(aplicarCorPreservandoItens(
+       [{ omie_codigo_produto: 5 }],
+       [{ omie_codigo_produto: 5, tint_nome_cor: "AZUL" }, { omie_codigo_produto: 5, tint_nome_cor: "ROSA" }]), null,
+     "código repetido nos LIDOS: duas cores para um item = nenhuma");
+
+  // Casa por código com tipos diferentes (o jsonb devolve number, o Omie às vezes manda string).
+  eq(aplicarCorPreservandoItens(
+       [{ omie_codigo_produto: 8, valor_unitario: 7 }],
+       [{ omie_codigo_produto: "8", tint_nome_cor: "PRETO" }])!,
+     [{ omie_codigo_produto: 8, valor_unitario: 7, tint_nome_cor: "PRETO" }],
+     "casa por código mesmo com tipos diferentes");
 });

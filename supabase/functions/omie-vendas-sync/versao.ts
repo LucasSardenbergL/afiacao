@@ -56,7 +56,7 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * fronteira (linha já com `omie_pedido_id`, ou nascida no sync). Fatia EDGE-LOCAL ⇒ a canária
  * já ecoa este `versao`, e uma chamada basta para provar o bundle.
  */
-export const VERSAO = "v1.2-preco-ausente-nao-e-zero";
+export const VERSAO = "v1.3-edicao-write-back-atomico";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **530** custom migrations totais
-- **1793** objetos esperados (criados por estas migrations)
+- **531** custom migrations totais
+- **1794** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 567
+  - `function`: 568
   - `rls_policy`: 462
   - `index`: 257
   - `cron_job`: 171
@@ -4407,6 +4407,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260907160103_revoke_public_sensor_multi_conta.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260907210000_pedido_edicao_omie_atomica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_edicao_pedido_omie` | — |
 
 ## Próximos passos por status
 

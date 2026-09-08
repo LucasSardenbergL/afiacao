@@ -6,7 +6,7 @@ import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
-import { mesclarPrecoPreservado, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
+import { aplicarCorPreservandoItens, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
@@ -2656,16 +2656,22 @@ Deno.serve(async (req) => {
               for (const bfRow of bfRows || []) {
                 const jaTemCor = JSON.stringify(bfRow.items ?? []).includes('tint_nome_cor');
                 if (!jaTemCor) {
-                  // ⚠️ Este UPDATE SUBSTITUI o items-jsonb inteiro por uma reconstrução da
+                  // Este UPDATE já SUBSTITUIU o items-jsonb inteiro por uma reconstrução da
                   // leitura ATUAL do Omie. O escopo do backfill é acrescentar `tint_nome_cor`,
-                  // mas ele carrega junto todo o resto — inclusive o preço. Se o Omie tiver
-                  // parado de informar `valor_unitario` (ou informar lixo) em algum item, o
-                  // preço BOM que já estava gravado seria APAGADO por uma leitura pior.
-                  // Por isso o preço é MESCLADO, não sobrescrito: o valor gravado vence
-                  // sempre que for utilizável; o do Omie só entra onde não havia nada.
-                  const itemsMesclados = mesclarPrecoPreservado(bfItems, bfRow.items);
-                  const { error: bfUpErr } = await supabaseAdmin.from('sales_orders').update({ items: itemsMesclados }).eq('id', bfRow.id);
-                  if (!bfUpErr) bfPedidosAtualizados++;
+                  // mas ele carregava junto todo o resto — produto, quantidade, preço, desconto.
+                  // Preservar só o preço (`mesclarPrecoPreservado`) tapava metade do buraco: num
+                  // pedido canônico, que TEM linhas em `order_items` e cujas linhas ninguém
+                  // reescreve aqui, mover o jsonb e deixar as linhas paradas é a MESMA classe de
+                  // defeito do write-back da edição — o agregado sai incoerente em silêncio.
+                  // Agora a base é o que ESTÁ gravado e só a cor entra: o conjunto de itens, os
+                  // valores e o desconto ficam intocados, e a invariante vale por construção.
+                  // `null` = nada a acrescentar → não gasta UPDATE (que dispara trigger e mexe
+                  // em updated_at) para reescrever o mesmo jsonb.
+                  const itemsComCor = aplicarCorPreservandoItens(bfRow.items, bfItems);
+                  if (itemsComCor) {
+                    const { error: bfUpErr } = await supabaseAdmin.from('sales_orders').update({ items: itemsComCor }).eq('id', bfRow.id);
+                    if (!bfUpErr) bfPedidosAtualizados++;
+                  }
                 }
               }
             }
@@ -3051,6 +3057,12 @@ Deno.serve(async (req) => {
           unidade: item.unidade,
           quantidade: item.quantidade,
           valor_unitario: item.valor_unitario,
+          // `desconto` não é decorativo: a invariante do agregado compara os DOIS espelhos por
+          // (produto, quantidade, preço, desconto), e NULL é distinto de 0. Sem esta chave o jsonb
+          // diria NULL onde `order_items.discount` diz 0 e o pedido seria recusado. A edição não
+          // envia desconto ao Omie (ver inclPayload), então 0 é o que o ERP grava — e o que o
+          // sync leria de volta. Mesma chave/valor que `mapearItensJsonb` (_shared/omie-pedido.ts).
+          desconto: 0,
           valor_total: item.quantidade * item.valor_unitario,
           ...(item.tint_cor_id
             ? {
@@ -3336,6 +3348,10 @@ Deno.serve(async (req) => {
           editAccount,
         );
 
+        // Carimbo da leitura final do Omie — é ele que vira `p_lido_em` no compare-and-set do
+        // write-back. Tirado ANTES da chamada de propósito: carimbo mais VELHO é o lado seguro
+        // (no máximo recusa esta escrita), carimbo mais NOVO poderia encobrir uma leitura alheia.
+        const finalLidoEm = new Date().toISOString();
         const finalConsultResult = (await callOmieVendasApi(
           "produtos/pedido/",
           "ConsultarPedido",
@@ -3373,31 +3389,69 @@ Deno.serve(async (req) => {
           validated_items: finalOmieItems.length,
         };
 
-        // Write-back local CHECADO (Codex P1 do diff): o front agora depende
-        // EXCLUSIVAMENTE deste update (não persiste antes do gate — o baseline
-        // é sagrado). Erro/0-linhas aqui com o Omie JÁ mutado = estado
-        // divergente → devolver ERRO explícito (nunca success), para o caller
-        // avisar e ninguém re-salvar por cima sem recarregar.
-        const { data: editWb, error: editWbErr } = await supabaseAdmin
-          .from("sales_orders")
-          .update({
-            items: updatedItemsPayload,
-            subtotal: updatedSubtotal,
-            total: updatedSubtotal,
-            notes: editObs || existingOrder.notes,
-            omie_payload: editPayload,
-            omie_response: editResult,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", editSoId)
-          .select("id");
-        if (editWbErr || !editWb || editWb.length !== 1) {
+        // Identidade de linha do Omie para o espelho relacional. A edição APAGOU e RECRIOU
+        // todas as linhas lá, então os `codigo_item` que estavam gravados deixaram de existir.
+        // Os novos vêm da consulta final, casados pelo `codigo_item_integracao` que NÓS
+        // enviamos (índice+1) — casar por SKU ou pela posição da resposta erra com produto
+        // repetido. Sem correspondência → null: ausente não é zero, e a reconciliação seguinte
+        // ainda casa a linha por SKU. Guardar o código VELHO é que seria mentira.
+        const codigoItemPorIntegracao = new Map<number, number>();
+        for (const oi of finalOmieItems) {
+          const integ = Number(oi?.ide?.codigo_item_integracao);
+          const cod = Number(oi?.ide?.codigo_item);
+          if (Number.isInteger(integ) && integ > 0 && Number.isInteger(cod) && cod > 0) {
+            codigoItemPorIntegracao.set(integ, cod);
+          }
+        }
+        const itensRelacionais = editItemsTyped.map((item, index) => ({
+          omie_codigo_produto: item.omie_codigo_produto,
+          product_id: item.product_id ?? null,
+          quantity: item.quantidade,
+          unit_price: item.valor_unitario,
+          // Espelho de `desconto: 0` no jsonb — os dois lados têm de dizer a MESMA coisa.
+          discount: 0,
+          omie_codigo_item: codigoItemPorIntegracao.get(getOmieItemIntegrationCode(index)) ?? null,
+        }));
+
+        // Write-back local ATÔMICO (RPC `aplicar_edicao_pedido_omie`): o front depende
+        // EXCLUSIVAMENTE deste write-back (não persiste antes do gate — o baseline é sagrado).
+        // Antes daqui havia um `.update()` PostgREST que gravava SÓ o cabeçalho: num pedido
+        // canônico (que TEM linhas em `order_items`) as linhas ficavam na revisão VELHA enquanto
+        // o jsonb e o total iam para a NOVA. Medido em 2026-09-07: 15 pedidos, 14 `faturado`,
+        // R$ 27.795,25, 63 diferenças de item — e, como `fin-valor-cockpit`, `algorithm-a-audit`
+        // e `_shared/apriori.ts` ancoram em `order_items`, o item não escrito virava VAZIO (não
+        // erro): R$ 10.676,56 de venda faturada invisível para o money-path.
+        //
+        // A RPC grava as duas metades na MESMA transação, sob FOR UPDATE do pai, e confere a
+        // coerência RELENDO o que gravou. `p_lido_em` é o compare-and-set: sem ele um pull que
+        // leu o Omie ANTES desta edição e escreve DEPOIS reverte tudo — e reverte de forma
+        // COERENTE, então nenhuma invariante de agregado pegaria a reversão.
+        //
+        // O tratamento de erro segue o mesmo, e pelo mesmo motivo: o Omie JÁ foi mutado quando
+        // isto roda, então falha aqui = estado divergente entre os dois sistemas → ERRO
+        // explícito (nunca success), para ninguém re-salvar por cima sem recarregar.
+        const { data: editWb, error: editWbErr } = await supabaseAdmin.rpc("aplicar_edicao_pedido_omie", {
+          p_sales_order_id: editSoId,
+          p_items: updatedItemsPayload,
+          p_itens: itensRelacionais,
+          p_total: updatedSubtotal,
+          p_notes: editObs || existingOrder.notes,
+          p_omie_payload: editPayload,
+          p_omie_response: editResult,
+          p_lido_em: finalLidoEm,
+        });
+        // A RPC LANÇA em tudo que dá errado, então `error` cobre quase todo o espaço. O eco do
+        // id é o que separa "gravou" de "respondeu qualquer coisa": sem ele, um retorno vazio
+        // (RPC ausente/renomeada, assinatura trocada) passaria como sucesso.
+        const editWbEco = (editWb as { sales_order_id?: string } | null)?.sales_order_id;
+        if (editWbErr || editWbEco !== editSoId) {
           throw new Error(
             `Omie ATUALIZADO (${editItems.length} itens) mas o registro local falhou ` +
-              `(${editWbErr?.message ?? `${editWb?.length ?? 0} linhas`}) — NÃO re-salve sem recarregar o pedido; ` +
+              `(${editWbErr?.message ?? `RPC nao confirmou o pedido (${editWbEco ?? "sem eco"})`}) — NÃO re-salve sem recarregar o pedido; ` +
               `o Omie está com a versão nova e o app com a antiga.`,
           );
         }
+        console.log(`[Omie Vendas][${editAccount}] Write-back atômico: ${JSON.stringify(editWb)}`);
 
         result = { success: true, omie_response: editResult };
         break;

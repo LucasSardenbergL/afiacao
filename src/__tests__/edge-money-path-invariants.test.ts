@@ -3521,6 +3521,81 @@ describe('guardrail money-path: P1-c transferência de código (writer NÃO tran
   });
 });
 
+describe('guardrail money-path: o write-back da EDIÇÃO grava as DUAS metades do pedido', () => {
+  // O defeito que esta entrega fechou: `alterar_pedido` mutava o pedido no Omie e depois gravava
+  // SÓ o cabeçalho (`items` jsonb + total) por PostgREST, deixando `order_items` na revisão
+  // VELHA. Medido em 2026-09-07: 15 pedidos canônicos, 14 `faturado`, R$ 27.795,25 — e como o
+  // cockpit/apriori ancoram em `order_items`, o item não escrito vira VAZIO, não erro.
+  // Voltar a um `.update()` aqui NÃO daria erro nenhum: por isso o assert é sobre a AUSÊNCIA da
+  // forma, sobre a fonte já sem comentários (a prosa acima cita `.update()` de propósito).
+  const EDGE = 'supabase/functions/omie-vendas-sync/index.ts';
+  const src = removerComentarios(read(EDGE));
+  const bloco = (() => {
+    const i = src.indexOf('case "alterar_pedido"');
+    const f = src.indexOf('case "excluir_pedido"');
+    expect(i, 'case alterar_pedido não encontrado').toBeGreaterThan(-1);
+    expect(f, 'case excluir_pedido não encontrado').toBeGreaterThan(i);
+    return src.slice(i, f);
+  })();
+
+  it('a edição NÃO volta a gravar o pedido por .update() do PostgREST', () => {
+    expect(
+      bloco,
+      'alterar_pedido voltou a escrever sales_orders por PostgREST — o cabeçalho iria sem as linhas',
+    ).not.toContain('.update(');
+    expect(bloco, 'alterar_pedido escrevendo order_items solto: fora da transação do cabeçalho')
+      .not.toContain('from("order_items")');
+  });
+
+  it('e chama a RPC atômica com as OITO chaves do contrato', () => {
+    expect(bloco).toContain('rpc("aplicar_edicao_pedido_omie"');
+    for (const chave of [
+      'p_sales_order_id:', 'p_items:', 'p_itens:', 'p_total:',
+      'p_notes:', 'p_omie_payload:', 'p_omie_response:', 'p_lido_em:',
+    ]) {
+      expect(bloco, `chave ${chave} sumiu do payload da RPC`).toContain(chave);
+    }
+  });
+
+  it('os DOIS espelhos carregam desconto/discount — NULL é distinto de 0 na invariante', () => {
+    // Sem `desconto` no jsonb, o espelho relacional diria 0 onde o jsonb diz NULL e o pedido
+    // seria RECUSADO mesmo com as linhas certas. Medido: 100% dos 70.860 order_items têm
+    // discount = 0 e 100% dos 70.889 itens do jsonb têm a chave `desconto`.
+    expect(bloco, 'o jsonb da edição perdeu a chave desconto').toMatch(/desconto:\s*0/);
+    expect(bloco, 'o espelho relacional perdeu discount').toMatch(/discount:\s*0/);
+  });
+
+  it('o carimbo da leitura é tirado ANTES do ConsultarPedido final, não depois', () => {
+    // `p_lido_em` é o compare-and-set contra um pull atrasado. Carimbo tirado DEPOIS da consulta
+    // seria mais NOVO que a leitura que ele representa — e encobriria a leitura de outro.
+    const iCarimbo = bloco.indexOf('const finalLidoEm =');
+    const iConsulta = bloco.indexOf('const finalConsultResult =');
+    expect(iCarimbo, 'finalLidoEm não encontrado').toBeGreaterThan(-1);
+    expect(iConsulta, 'finalConsultResult não encontrado').toBeGreaterThan(-1);
+    expect(iCarimbo, 'o carimbo saiu de antes da consulta final').toBeLessThan(iConsulta);
+  });
+
+  it('a falha do write-back segue devolvendo ERRO explícito (o Omie já foi mutado)', () => {
+    expect(bloco).toContain('if (editWbErr || editWbEco !== editSoId)');
+    const i = bloco.indexOf('if (editWbErr || editWbEco !== editSoId)');
+    const trecho = bloco.slice(i, i + 500);
+    expect(trecho).toContain('throw new Error(');
+    // A frase existe para o operador não re-salvar por cima de um Omie já na versão nova.
+    expect(trecho).toContain('re-salve sem recarregar');
+  });
+
+  it('a migration da RPC declara a fronteira nas DUAS pontas e a postcondição de coerência', () => {
+    const mig = read('supabase/migrations/20260907210000_pedido_edicao_omie_atomica.sql');
+    expect(mig).toMatch(/REVOKE ALL ON FUNCTION public\.aplicar_edicao_pedido_omie[\s\S]{0,200}FROM PUBLIC, anon, authenticated;/);
+    expect(mig).toMatch(/GRANT EXECUTE ON FUNCTION public\.aplicar_edicao_pedido_omie[\s\S]{0,200}TO service_role;/);
+    // as duas metades + o predicado que a trigger irmã usa
+    expect(mig).toContain('DELETE FROM public.order_items');
+    expect(mig).toContain('INSERT INTO public.order_items');
+    expect(mig).toContain('UPDATE public.sales_orders');
+    expect(mig).toContain('EXCEPT ALL');
+  });
+});
+
 describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista de status tem paridade TS↔SQL', () => {
   const REPROCESS = 'supabase/functions/sync-reprocess/index.ts';
   const CANON = 'supabase/functions/_shared/omie-pedido.ts';

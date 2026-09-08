@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 530
+-- Total de custom migrations: 531
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -571,7 +571,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260907095338', 'authz_revoke_anon_rpc_reposicao', '20260907095338_authz_revoke_anon_rpc_reposicao.sql'),
   ('20260907095841', 'disparado_simulado_e_estado_pos_disparo', '20260907095841_disparado_simulado_e_estado_pos_disparo.sql'),
   ('20260907101349', 'deploy_sonda_alvos_onda1', '20260907101349_deploy_sonda_alvos_onda1.sql'),
-  ('20260907160103', 'revoke_public_sensor_multi_conta', '20260907160103_revoke_public_sensor_multi_conta.sql')
+  ('20260907160103', 'revoke_public_sensor_multi_conta', '20260907160103_revoke_public_sensor_multi_conta.sql'),
+  ('20260907210000', 'pedido_edicao_omie_atomica', '20260907210000_pedido_edicao_omie_atomica.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2353,7 +2354,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('valor_total_portal_provado', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
-  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', '')
+  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('pedido_edicao_omie_atomica', 'function', 'public', 'aplicar_edicao_pedido_omie', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4183,7 +4185,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('valor_total_portal_provado', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
-  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', '')
+  ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('pedido_edicao_omie_atomica', 'function', 'public', 'aplicar_edicao_pedido_omie', '')
 )
 SELECT
   e.migration,

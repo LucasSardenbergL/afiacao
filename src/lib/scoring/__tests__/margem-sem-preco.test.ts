@@ -116,11 +116,18 @@ describe('origem — a fatia FECHOU (o vigia do M-04 virou o invariante que ele 
     expect(mig).not.toMatch(/coalesce\(\(it->>'unit_price'\)::numeric, 0\),/);
   });
 
-  it('o backfill de cor MESCLA o preço em vez de sobrescrever o gravado', () => {
-    // O bloco reconstrói sales_orders.items inteiro a partir da leitura ATUAL do Omie. Sem a
-    // mescla, uma leitura sem `valor_unitario` APAGARIA um preço bom já gravado.
+  it('o backfill de cor NÃO reconstrói o items-jsonb: a base é o que está GRAVADO', () => {
+    // Antes, o bloco reconstruía sales_orders.items inteiro a partir da leitura ATUAL do Omie e
+    // preservava só o preço (mescla). Isso tapava metade do buraco: num pedido canônico — que TEM
+    // linhas em order_items, e cujas linhas este bloco não escreve — mover o jsonb e deixar as
+    // linhas paradas quebra a invariante do agregado em silêncio. Agora só a COR entra.
+    //
+    // O assert é sobre a DIREÇÃO, não sobre o nome da função: `bfRow.items` (o gravado) tem de ser
+    // o 1º argumento. Invertê-lo devolveria a reconstrução com outro rótulo — e é o único jeito de
+    // este bloco voltar a mexer em produto/quantidade/preço/desconto sem que ninguém veja.
     const src = fonte('supabase/functions/omie-vendas-sync/index.ts');
-    expect(src).toMatch(/mesclarPrecoPreservado\s*\(/);
+    expect(src).toMatch(/aplicarCorPreservandoItens\(\s*bfRow\.items\s*,\s*bfItems\s*\)/);
     expect(src).not.toMatch(/update\(\{\s*items:\s*bfItems\s*\}\)/);
+    expect(src).not.toMatch(/mesclarPrecoPreservado\s*\(/);
   });
 });
