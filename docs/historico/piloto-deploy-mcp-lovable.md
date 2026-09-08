@@ -305,9 +305,50 @@ deploy. Falsificar localmente antes de confiar: com o helper adulterado e os doi
 intactos, exigir **sonda verde + canária vermelha**. Ela pega o que (a) não pega — divergência que
 nasce DEPOIS da entrada do deploy (resolução de dependência, cache de build).
 
-(a) ESTÁ ENTREGUE (#2362); (b) segue pendente. (a) tocava o gerador de prompt de TODOS os deploys,
-então foi entrega própria, com falsificação própria — o que segue é o que ela mede e o que ela não
-mede.
+AS DUAS ESTÃO ENTREGUES: (a) no #2362, (b) no #2367. Cada uma foi entrega própria, com
+falsificação própria — (a) toca o gerador de prompt de TODOS os deploys; (b) toca o corpo de uma
+edge. O que segue é o que cada uma mede e, principalmente, o que **não** mede.
+
+### (b) entregue — a canária determinística da `copilot-analyze` (#2367)
+
+`{"canary":true}` na `copilot-analyze` executa `normalizarAnalise` sobre **6 fixtures** e responde
+`{canary, contrato: "tudo-ou-nada-normalizar-v1", ok, casos}`. O bloco vive antes do `createClient`,
+da cota e da Anthropic, e atrás do `authorizeCronOrStaff` do topo do handler: staff-gated, chamável
+em produção quantas vezes for preciso, sem queimar cota nem escrever nada.
+
+**Por que 6 e não 1.** Uma canária cujas fixtures não se falsificam mutuamente é teatro: se todo
+caso esperasse `null`, um helper sempre-`null` — a sabotagem mais barata que existe — passaria em
+100% deles. Os casos se derrubam em direções opostas, e um teste META (`as duas direções presentes`)
+reprova qualquer futura fixture que quebre isso:
+
+| sabotagem do helper | quem morre |
+|---|---|
+| sempre `null` | `completa`, `confianca_em_texto`, `motivos_com_lixo` |
+| validação relaxada (devolve parcial) | `sem_tipo_de_sugestao`, `enum_invalido` |
+| faixa de confiança ignorada | `confianca_fora_de_faixa` |
+| motivos não filtrados | `motivos_com_lixo` |
+
+**O gate que vigiava tudo estava CEGO para ela — medido.** O `canaria:bump` acha canária por regex de
+`contrato: "..."` **no `index.ts`** (`RE_EMISSAO`). Com o marcador morando só no módulo `canaria.ts`,
+`bun run canaria:bump` respondeu `6 canária(s) conferida(s)` **antes e depois** de a canária existir:
+verde por cegueira, e ela nasceria fora do único gate que vigia o bump do próprio marcador. Com o
+literal no `index.ts` o gate passou a `7`. Daí a duplicação deliberada — literal no `index.ts` para o
+gate, constante em `canaria.ts` para o teste Deno — com a igualdade vigiada por
+`scripts/canaria-contrato-espelhado.test.ts`, que carrega também o controle positivo da cegueira
+(sabota uma cópia sintética trocando o literal por identificador e exige que o gate deixe de ver).
+
+⚠️ **O que (b) NÃO fecha.** Ela pega, de forma decisiva, o **bundle velho servido** (cache de build):
+o corpo velho não conhece a flag, cai no fluxo real e responde 401/400 — sem o eco `canary:true`, que
+já é o veredito, do mesmo jeito que a ausência de `probe:true` é. Mas pega **resolução de
+dependência** apenas quando ela muda o comportamento observável do helper: `normalizarAnalise` é puro
+e não toca `npm:@anthropic-ai/sdk@^0.93.0` nem `npm:@supabase/supabase-js@2`, então uma troca de
+versão que não altere esse comportamento passa despercebida. Medir ISSO exige ecoar a versão
+**resolvida** da dependência no corpo da canária — fatia própria, e não medida aqui porque não dá
+para provar localmente que o SDK a expõe sem baixar e executar o pacote.
+
+⚠️ **(a) e (b) não se substituem, e nenhuma das duas prova adoção.** (a) prova que os bytes que
+ENTRAM no deploy são os da `main`; (b) prova que o que RESPONDE é o código que se deployou. Nenhuma
+diz que alguém usou a feature — `farmer_copilot_sessions` segue em 0.
 
 ### (a) entregue — o que o prompt passou a carregar (#2362)
 
