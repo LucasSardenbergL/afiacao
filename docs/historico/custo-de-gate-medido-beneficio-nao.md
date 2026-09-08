@@ -80,8 +80,8 @@ para prever o CI (`medir-ganho-de-ci-sob-ruido.md`: o runner varia 45%).
 | `docs:links` | **1**/7 | 2 | 903ms | só ele pega link quebrado FORA de índice |
 | `exclusividade` | **1**/7 | 1 | 245ms | só ele lê a matriz — nenhum outro gate a enxerga |
 | `gates:frescura` | **1**/7 | 1 | 419ms | só ele pega gate que sumiu do censo |
-| `docs:indice` | **0**/7 | 2 | 58ms | zero **por CÓPIA**, e a cópia só saiu pela metade — ver abaixo |
-| `test` (vitest) | 0/7 | 2 | 128s | `[s/ mira]`: nenhum defeito foi escrito para ele |
+| `docs:indice` | **0**/7 | 2 | 58ms | zero **por CÓPIA**; a cópia saiu em DUAS etapas e hoje ele tem **1** exclusivo — ver abaixo |
+| `test` (vitest) | 0/7 | 2 | 128s | `[s/ mira]`: nenhum defeito foi escrito para ele — e os 2 que ele pegava eram a CÓPIA, hoje remedidos em 0 |
 | `docs:citacoes` | 0/7 | 0 | 3,8s | `[s/ mira]`: idem — e é o mais caro dos "baratos" |
 
 ### O achado central, e ele inverte a recomendação
@@ -136,8 +136,9 @@ conjunto *é* a invariante do órfão. A implementação excede o contrato decla
 exatamente a parte que duplica o step. Uma guarda fiel ao que ela diz proteger cobraria *volume* de
 entradas ("o parse não morreu"), não *identidade* com a lista de arquivos.
 
-Estreitá-la é decisão em aberto, e deliberadamente não tomada aqui: enfraquecer uma rede anti-vácuo
-para ganhar 0 exclusivo é caro pelo lado errado. Fica medido para quem decidir.
+Estreitá-la ficou como decisão em aberto neste ponto — enfraquecer uma rede anti-vácuo para ganhar 0
+exclusivo é caro pelo lado errado, e sem falsificação não dava para saber se sobraria rede. A seção
+seguinte é o desfecho: ela foi estreitada, falsificada e remedida.
 
 #### Cuidado ao ler a coluna `mediana` desta remedição
 
@@ -152,6 +153,68 @@ máquinas e cargas diferentes, e não são comparáveis entre si.
 A sobreposição parcial com `docs:links` que o Codex também anotou está medida na segunda linha:
 os dois pegam o alvo-fantasma, mas só `docs:links` pega o link quebrado fora de um índice. As
 obrigações são **distintas** e as duas ficam.
+
+#### A guarda foi estreitada — e `docs:indice` deixou de ser `[redund]`
+
+A decisão acima foi tomada. A igualdade de conjunto virou um **piso de volume**:
+
+```ts
+// antes — igualdade de conjunto, que É a invariante do órfão
+expect(hrefs, `entradas de ${d.dir}/README.md`).toEqual([...d.arquivos].sort());
+
+// depois — volume: "o parse não morreu", e só isso
+expect(entradas.length, `entradas de ${d.dir}/README.md`)
+  .toBeGreaterThanOrEqual(Math.floor(d.arquivos.length / 2));
+```
+
+O piso é **metade dos arquivos do diretório**, não um número fixo. `docs/historico` tem 166 entradas
+para 166 arquivos, então a guarda folga **83 linhas**: apagar uma entrada não a acorda — isso é
+trabalho do step. Um piso fixo apodreceria (o histórico saiu de ~40 para 166 docs desde que o gate
+nasceu), e `> 0` seria teatro. Diretório com ≤1 arquivo cai em piso 0 de propósito: nessa escala não
+existe volume a conferir, e um `Math.max(1, …)` seria a igualdade de conjunto voltando pela porta dos
+fundos.
+
+**Falsificada antes de medida**, com controle verde na MESMA invocação (veredito lido do JSON do
+vitest, não do glifo do reporter):
+
+| sabotagem | a guarda | controle na mesma invocação |
+|---|---|---|
+| repo íntegro | ✓ verde | 34/34 |
+| `parseEntradas` → `[]` (a ameaça que o comentário declara) | **× vermelha** | 10 verdes / 24 vermelhos |
+| `parseEntradas` → `.slice(0, 1)` | **× vermelha** | **25 verdes** / 9 vermelhos |
+| defeito `indice-orfao` | ✓ verde | 34/34 — **cega ao órfão, que era o alvo** |
+| árvore restaurada | ✓ verde | 34/34 |
+
+A linha do `.slice(0, 1)` é a que separa piso honesto de teatro: 25 testes verdes ao lado, e a guarda
+mesmo assim vermelha. Sem ela, "vermelha sob `[]`" não distinguiria um piso de volume de um `> 0`.
+
+E a medição, sobre baseline verde nomeado (`810 arquivos, 8478 testes, 0 vermelhos`):
+
+```
+defeito indice-orfao  (alvo docs/historico/README.md, suspeito: docs:indice)
+  VERMELHO docs:indice (38ms)          <- e MAIS NADA: o `test` ficou verde
+
+[SO ELE]  docs:indice   exclusivos  1/8 - pegou  2 - mediana     58ms
+[s/ mira] test          exclusivos  0/8 - pegou  0 - mediana 185063ms
+```
+
+`docs:indice` saiu de `[redund] 0/8` para `[SO ELE] 1/8`, e o `RELATA EXCLUSIVIDADE_ZERO` sumiu do
+`bun run exclusividade`. **O step de 58ms passou a ter obrigação própria**, que era o que a medição
+do #2366 não conseguia enxergar por causa da cópia.
+
+**A remedição obrigou uma segunda célula.** O `indice-alvo-fantasma` só troca o destino de um link,
+sem mexer na contagem de entradas — então a guarda estreitada ficou cega a ele também, e a célula
+`test: true` que a matriz guardava virou uma medição que não correspondia mais a nada. Foi remedida
+junto (`test` false; `docs:indice` e `docs:links` seguem vermelhos, obrigações distintas). **Estreitar
+uma asserção invalida toda célula da matriz que dependia dela** — e o fingerprint não avisa: o do
+`test` é o de `vitest run`, que não muda quando um `.test.ts` muda.
+
+**A primeira tentativa de medir abortou, e o aborto estava certo.** O motor achou `test` vermelho no
+repo LIMPO (513s sob a carga de ~30 sessões) e recusou medir; minutos depois o mesmo repo limpo deu
+verde em 266s, e o baseline nomeado do re-run fechou 8478/8478. O guard de linha de base pagou-se
+sozinho: sem ele, o resultado teria saído com aparência de medição. Mas note que "vermelho" sem o
+NOME do que caiu é ausência de dado — por isso o re-run rodou a suíte à parte, para ter o nome caso
+reincidisse.
 
 ### Sobre os dois `[s/ mira]`
 
