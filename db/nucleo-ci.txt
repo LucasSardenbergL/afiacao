@@ -63,3 +63,15 @@ db/test-claim-disparo-cenario-b.sh         76
 db/test-disparado-simulado-pos-disparo.sh  59
 db/test-fin-sync-lease.sh                  22
 db/test-pedido-venda-coerencia.sh          31
+
+# ── Eixo 5 — VEREDITO DE DEPLOY ──────────────────────────
+# O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num
+# veredito: `CANARIA VERMELHA` que nunca dispara, 401 que vira fail-open, resposta
+# de ontem valendo como veredito de hoje. Esta prova é a única do núcleo que GERA o
+# SQL pelo próprio gerador (`bun scripts/sonda-versao-sql.ts --canaria --sem-rede`)
+# em vez de conferir um retrato commitado — por isso o job carrega o runtime bun, e
+# por isso ela envelhece junto com o gerador em vez de virar retrato velho.
+# Entrou no núcleo em 2026-09-08: o gate de mutação NÃO cobre o bloco canária (medido:
+# 10 de 12 mutações sobrevivem lá), e as 10 sabotagens daqui eram a única rede real —
+# rodando fora do CI, que pelo critério do repo é ausência de dado.
+db/test-canaria-veredito.sh                18

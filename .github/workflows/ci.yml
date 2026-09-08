@@ -788,6 +788,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # O núcleo inclui db/test-canaria-veredito.sh, que NÃO confere um SQL commitado:
+      # gera o SQL pelo PRÓPRIO gerador (`bun scripts/sonda-versao-sql.ts --canaria`) e
+      # sabota o resultado. É isso que faz a prova envelhecer junto com o gerador em vez
+      # de virar retrato velho. Só o RUNTIME é preciso — os imports do gerador são
+      # builtins `node:*` mais um relativo, então nada de `bun install` aqui.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
       # A versão é conferida POSITIVAMENTE, e o número exato vai para o log. Precedente
       # do próprio repo: o runner trazia shellcheck 0.9.0 contra 0.11.0 do laptop e o
       # gate reprovava PR sadio — "gate cuja VERDADE depende da versão do runner não é

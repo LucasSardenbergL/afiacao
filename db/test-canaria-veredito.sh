@@ -99,8 +99,11 @@ SQL
 
 # ------------------------------------------------------------------- asserções ---
 fail=0
-ok()  { printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { printf '  \033[31mFALHA\033[0m %s\n' "$1"; fail=1; }
+# Contadores para o recibo do nucleo-ci (db/roda-nucleo-ci.sh exige a linha
+# RESULTADO: <pass> ok / <fail> fail — sem ela, exit 0 nao prova que asseriu algo).
+PASS=0; FAIL=0
+ok()  { PASS=$((PASS+1)); printf '  \033[32mok\033[0m   %s\n' "$1"; }
+bad() { FAIL=$((FAIL+1)); printf '  \033[31mFALHA\033[0m %s\n' "$1"; fail=1; }
 
 # veredito <id-da-canaria> <arquivo-de-leitura> -> imprime o veredito daquela linha
 veredito() {
@@ -283,6 +286,7 @@ SQL
 if [ "${1:-}" != "--falsificar" ]; then
   printf '== canaria: BUNDLE VELHO x CANARIA VERMELHA ==\n'
   ALVO="$GERADO"; suite
+  echo "RESULTADO: $PASS ok / $FAIL fail"
   if [ "$fail" -eq 0 ]; then printf '\nVEREDITO DE CANARIA OK\n'; exit 0; fi
   printf '\nVERMELHO\n'; exit 1
 fi
