@@ -698,8 +698,9 @@ echo "      e foi por isso que a MESMA edge virava chip em toda sessão que fech
 # ⚠️ "nenhuma sonda na janela" NÃO se resolve esperando, e dizer só "INDETERMINADO" convida o
 # leitor a esperar. O cron de sondagem existe desde 2026-09-06 (`deploy-sonda-cron`, 37 */2 * * *,
 # pelo relé OPTIONS fail-closed), mas cobre só a ALLOWLIST provada de
-# `_shared/sonda-cron-alvos.ts` — 7 edges de 59. Para as outras 52 esperar continua sendo
-# esperar para sempre, e o argumento abaixo vale palavra por palavra. Quem dá
+# `_shared/sonda-cron-alvos.ts` — conte NO ARQUIVO (7 em 2026-09-06, 11 na onda 2 de 2026-09-08;
+# sobe a cada onda). Para a edge FORA dela, esperar continua sendo esperar para sempre, e o
+# argumento abaixo vale palavra por palavra. Quem dá
 # prova passiva é só a edge cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) E tem cron
 # frequente — `analytics-outbox-drain` (5/5min) é o caso típico. Medido 2026-09-05: 24 das 54
 # edges do mapa não têm cron NENHUM (webhook, ou invocada sob demanda pelo app), e para essas a
