@@ -205,7 +205,7 @@ export function montarPlanoCobertura(input: {
   let restante = gap_rs;
   for (const f of ordenadas) {
     if (restante <= 0) break;
-    const usa = Math.max(restante, f.capacidade_rs);
+    const usa = Math.min(restante, f.capacidade_rs);
     if (usa <= 0) continue;
     const item: ItemStack = { fonte: f.fonte, montante_rs: usa, custo_rs: custoEmReais(usa, horizonte_dias, f.rate_aa) };
     if (f.fonte === 'cheque_especial' && f.governanca_ordem >= 3) item.flag = 'emergencia';
