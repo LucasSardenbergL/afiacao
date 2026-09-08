@@ -110,30 +110,39 @@ Nulável porque as 1.083 linhas de 21/08 existem e não são recuperáveis (§3.
   referência cronológica de `preco-referencia.ts`. `upsell-ordem.ts` já tem o comparador **e** o
   predicado de empate (`candidatosEmpatam`, hoje privado) — o rank denso reusa os dois.
 
-**Quanto isso recupera, medido — e o primeiro número estava errado.** Dentro de um cliente,
-`relevance = 0,4·k/N + 0,6·aB`, com `k` = compradores distintos do SKU **na carteira** (N=269
-clientes, medido). Eu primeiro usei `k` GLOBAL como proxy e obtive "198 de 198 recuperáveis". O `k`
-de carteira **inverte parte do resultado**:
+**Quanto isso recupera, medido — e eu errei DUAS vezes antes de acertar.** Dentro de um cliente,
+`relevance = clamp(0,4·k/N + 0,6·aB, 0,01, 1,0)`, com `k` = compradores do SKU **na carteira**
+(N=269, medido) e `aB` reconstruído das regras de associação. Recuperável ⟺ o **máximo é ÚNICO**.
+
+| tentativa | critério usado | resultado | por que estava errado |
+|---|---|---|---|
+| 1 | `k` GLOBAL distinto | 198/198 | a carteira é 269 de milhares; SKUs que se separam na base colidem no recorte |
+| 2 | `k` de carteira distinto | 104/198 | heterogeneidade ≠ máximo único — `k=[6,6,5]` tem valores distintos e nenhum vencedor |
+| **3** | **máximo único de `relevance`** | **9/198 (4,5%)** | — |
 
 | | n | % dos 198 |
 |---|---|---|
-| grupos cross-sell empatados no topo | 198 | 100% |
-| `k` de carteira DIFERE ⇒ recuperável pelo score não-arredondado | **104** | **52,5%** |
-| `k` de carteira IGUAL | 94 | 47,5% |
-| desses 94, salvos por `assocBoost` diferente | **0** | — |
-| **empate REAL** (mesmo `k` **e** mesmo `aB` ⇒ mesma `relevance`) | **94** | **47,5%** |
+| máximo ÚNICO ⇒ recuperável pelo rank | **9** | 4,5% |
+| **sem vencedor único (empate REAL)** | **189** | **95,5%** |
 
-⇒ Sobre os 238 grupos cross-sell: 40 já decididos pelo score · 104 recuperados pelo rank ·
-**94 (39,5%) vão exibir "N produtos igualmente indicados"**.
+**Controles** (por que acredito nesta versão e não nas duas anteriores): a fórmula
+`clamp(buyerCount/totalCustomers, 0, 1)` foi conferida no código (`useCrossSellEngine.ts:872`);
+682 de 714 linhas têm `k ≥ 9`, que é o gate `cA ≥ 0,03`, e as outras 32 entram por `aB > 0`;
+`k ∈ [1,22]` com N=269 dá `cA·12 ∈ [0,045 , 0,98]`, que reproduz `cluster_volume_estimate = 1` em
+714 de 714; e a `relevance` reconstruída (máx 0,0327 com `aB=0`) bate com a mediana 0,0338 obtida
+por um caminho **independente**, a razão entre os scores persistidos.
 
-Esses 94 são **indistinguíveis para o motor** — mesma aderência de carteira, nenhuma regra de
-associação. `empatado` é a resposta verdadeira, e consertá-los seria dar **sinal novo** ao motor,
-não ordenar melhor. Fica declarado em §9.
+⇒ Sobre os 238 grupos cross-sell: 40 já decididos pelo score + **9** recuperados = **49 eleitos
+(20,6%)**; **189 (79,4%) exibem empate**.
 
-⚠️ Lição de método, e ela quase passou: um proxy pode ser *fortemente* correlacionado e ainda
-inverter o veredicto. `k` global distinto NÃO implica `k` de carteira distinto — a carteira é 269
-de milhares de clientes, e SKUs que se separam na base inteira colidem no recorte.
-(`cluster_volume_estimate` também não serve: é `1` em 714 de 714 linhas, no piso do `max(1,…)`.)
+**O que isso muda na proposta de valor, dito sem maquiagem:** o rank do cross-sell quase não
+ELEGE — ele faz a tela **parar de mentir**. A causa é o sinal do motor ser grosso: `k ∈ [9,22]`
+sobre N=269, com `aB = 0` na maioria, produz colisão EXATA de `relevance`. Não é arredondamento,
+não é ordenação: é ausência de informação, e nenhuma mudança de `ORDER BY` a cria.
+
+O rank continua necessário — mas pelo **up-sell**, onde o score não carrega produto nenhum e a
+chave do #1837 (razão de preço, contínua) discrimina de verdade. Incluir o cross-sell na mesma
+coluna é quase de graça e remove a dependência do arredondamento como proxy de empate.
 
 **Nada disto toca `affinity_score` nem `p_ij`.**
 
