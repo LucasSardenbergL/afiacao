@@ -151,7 +151,7 @@ git diff --name-only origin/main...HEAD -- supabase/functions/
 # se auto-deploya (chat do Lovable, manual) e a falha é igualmente SILENCIOSA.
 #
 # Este script enumera a janela INTEIRA (a desta sessão e a das outras) e já classifica quem
-# precisa de chip. Use-o em vez do `git log` cru — o cru é o gatilho velho, ver abaixo.
+# precisa de deploy. Use-o em vez do `git log` cru — o cru é o gatilho velho, ver abaixo.
 bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início da sessão> UTC"
 # aceita REVISÃO (SHA), DATA RELATIVA ("3 hours ago") ou DATA ABSOLUTA **com fuso explícito**.
 # ⚠️ Data absoluta SEM fuso é RECUSADA (exit 3, marca `DESDE_SEM_FUSO`). Aqui o `--desde` cai no
@@ -161,7 +161,7 @@ bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início d
 #    silêncio: medido 2026-09-05, `--desde "2026-09-05 17:34"` em GMT-3 pulou o merge das 19:40Z e
 #    devolveu `✅ nenhuma edge na janela` sobre uma janela de DUAS. Escreva "… 17:34 UTC".
 # Se você anotou o SHA de origin/main ao abrir a sessão, prefira o SHA: não tem fuso para errar.
-# exit 0 = nada pendente · 1 = abra chip para a lista · 2 = MECÂNICA não confiável (o script já
+# exit 0 = nada pendente · 1 = DEPLOYE a lista nesta sessão · 2 = MECÂNICA não confiável (o script já
 # imprime tudo como pendente; trate assim) · 3 = uso inválido
 #
 # Ele consulta o LEDGER durável por dentro (`bun run pendencias:deploy --json`) para a edge que não
@@ -182,7 +182,7 @@ enterra o chip que importava. O script troca isso pela evidência que já existe
 `fonte` que a sonda serve (SHA-256 do fecho transitivo dos imports) comparado com
 `sonda-fingerprints.ts` da main:
 
-| veredito | o que significa | chip? |
+| veredito | o que significa | pendência? |
 |---|---|---|
 | `NO_AR` | `fonte` servido == main, **na janela viva** — o bundle no ar é este | **não** |
 | `LEDGER_CONFERE` | sem sonda na janela, mas o **ledger** `deploy_atestacoes` atesta `CONFERE` **e** o `fonte` atestado bate com o mapa da REF | **não** — prova DURÁVEL, além das 6 h |
@@ -241,13 +241,13 @@ saíram `PRE_SONDA_FONTE` e as 3 restantes saíram "nenhuma sonda em 6 hours" �
 `PRE_SONDA_FONTE` uma geração de campo atrás, e desta vez com a resposta gravada no banco. Não dá
 para presumir de qual edge é a linha (`net.http_request_queue`, a única tabela do pg_net com a URL,
 é apagada quando a resposta chega — conferido no mesmo dia), então **a identidade ausente continua
-ausente**: o veredito é INDETERMINADO e o chip continua. O que mudou é a saída dizer `SONDA_ANONIMA`
+ausente**: o veredito é INDETERMINADO e a pendência continua. O que mudou é a saída dizer `SONDA_ANONIMA`
 e contar quantas há, em vez de alegar que ninguém sondou — e apontar o `--request-ids`, que é o
 único vínculo determinístico. Com os 5 ids colados, as 5 edges daquele dia saíram `PRE_SONDA_FONTE`:
 pendência PROVADA que o diagnóstico anterior escondia.
 
 🔴 **A direção é uma só: presença PROVA, ausência NÃO reprova** (#2086/#2095). O script só sabe
-SUPRIMIR chip com evidência POSITIVA; ele é o lado que APAGA pendência, então na dúvida é chip.
+SUPRIMIR pendência com evidência POSITIVA; ele é o lado que APAGA pendência, então na dúvida é chip.
 O mapa cobre ~40 das ~95 edges — as outras seguem virando chip como sempre, nada regride.
 Medido em 2026-08-28 numa janela real de 24h: 7 edges na janela, 3 provadas no ar, **4 chips em
 vez de 7**. E não é só corte: o `DESATUALIZADA` é sinal que o gatilho velho nunca teve — ele
@@ -265,8 +265,10 @@ ESTREITA o diff, e sem ele nenhum par casa e a via (a) emite o mapa INTEIRO como
 devolve **16 `NO_AR` provadas + 25 `SEM_PROVA`** no lugar de 41 pendências cegas. Degradar aqui é
 AMPLIAR a enumeração, nunca absolver: cada alvo segue classificado um a um por prova positiva.
 
-🕳️ **`SEM_PROVA` por "nenhuma sonda na janela" NÃO se resolve esperando — DISPARE.** Não existe
-cron de sondagem: `cron.job` tem 93 jobs e **zero** com `probe`. Quem dá prova passiva é só a edge
+🕳️ **`SEM_PROVA` por "nenhuma sonda na janela" NÃO se resolve esperando — DISPARE.** O cron de
+sondagem existe desde 2026-09-06 (`deploy-sonda-cron`, `37 */2 * * *`, pelo relé OPTIONS
+fail-closed), mas cobre só a allowlist provada de `_shared/sonda-cron-alvos.ts` — **7 edges de
+59**. Para as outras 52, esperar é esperar para sempre, e tudo abaixo vale palavra por palavra. Quem dá prova passiva é só a edge
 cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) **e** tem cron frequente —
 `analytics-outbox-drain` (5 em 5 min) é o caso típico. Medido 2026-09-05: **24 das 54 edges do
 mapa não têm cron NENHUM** (webhook como `omie-nfe-webhook`, ou invocada sob demanda pelo app como
@@ -280,9 +282,21 @@ espera nunca terminaria, e o `SEM_PROVA` persistente passaria por pendência rea
 edge que já está no ar). O script hoje imprime o remédio no rodapé, preso pelo caso 3b e pela
 sabotagem (a6).
 
-Se a sessão tocou edge: ela foi deployada via chat do Lovable? (Evidência: o founder confirmou
-na conversa, ou a canária/probe respondeu com o comportamento novo.) Pendente → inclua o prompt
-de deploy verbatim (skill `lovable-deploy-verify`, passo 3) na mensagem de fecho.
+Se a sessão tocou edge: ela está NO AR? (Evidência: o veredito do script acima — não a memória
+da conversa, e não "o Lovable disse Active".) **Pendente → DEPLOYE AQUI, nesta sessão**, não
+escreva um recado sobre isso:
+
+```bash
+bun scripts/pendencias-deploy.ts --json > /tmp/pend.json   # quem julga é o LEDGER
+bun scripts/pendencias-pacote.ts - < /tmp/pend.json        # gate de ordem: RPC em prod ANTES da edge
+```
+
+O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,
+`8f005805-000a-42b7-88a1-9683f785fab6`) — o canal é o mesmo do chat, e o prompt já carrega o
+`sha256` de cada arquivo do closure mandando o agente conferir ANTES de deployar. Detalhe,
+limites e o que continua sendo do founder: `docs/agent/deploy.md` §"Deploy de edge pela SESSÃO".
+Depois **meça o ledger de novo** — `pendencias:deploy` em exit 0 é a prova; o relato do agente
+não é.
 
 ⚠️ **"Se a sessão tocou edge" NÃO é o gatilho deste passo — é só o gatilho da metade dele.**
 Edge de TERCEIRO na janela é pendência desta `/fecho` do mesmo jeito que migration de terceiro é,
@@ -292,11 +306,27 @@ e pela mesma razão. Medido em 2026-08-26, na sessão do #2023/#2027: o `7e076f1
 alargou a consulta por conta própria — pela letra deste passo, ele teria olhado a saída do
 `git log`, visto commit que não era dele, e seguido em frente.
 
-Destino de edge de terceiro **não é** "deployar por ela" nem "assumir que a outra sessão já
-pediu": é **chip** (a sessão dona pode ter fechado sem pedir o deploy) — para as que o script
-marcar como pendentes, e só para elas —, com o prompt mandando CONFIRMAR antes de pedir deploy
-redundante. E o prompt tem de nomear **todos** os arquivos,
-`_shared` novo incluído — prompt que nomeia um só deixa a edge sem bootar (#2020).
+Destino de edge de terceiro **não é** "assumir que a outra sessão já pediu" — a dona pode ter
+fechado sem pedir o deploy. Mas também **não é mais um chip**: é o MESMO deploy pela sessão do
+bloco acima, para as que o script marcar como pendentes e só para elas.
+
+⚠️ **Por que o chip saiu daqui (pedido do founder, 2026-09-08).** O chip é um convite que só vira
+trabalho quando ele CLICA, e a sessão que ele abria clicando não fazia nada que esta não faça:
+re-rodava `pendencias:deploy` — o MESMO veredito que o script deste passo já consultou por dentro
+— e montava à mão uma colagem que `pendencias:prompt` emite pronta. Como o gatilho é "uma sessão
+fechou" e há ~30 worktrees, a mesma edge virava chip em toda sessão que fechasse antes do deploy
+acontecer: *"repetidamente esses chips abrem com a mesma necessidade"*. Enquanto o braço era
+humano isso era o melhor possível; desde o #2374 não é.
+
+**A pendência não sumiu com o chip — mudou de dono, e o dono é durável.** Ela mora no ledger
+`deploy_atestacoes`, não na sessão: nenhuma sessão precisa lembrar dela, e nenhuma pode
+declará-la resolvida sem `pendencias:deploy` em exit 0. Gerar o pacote NÃO resolve; enviar ao
+Lovable NÃO resolve; só a reconciliação com prod resolve.
+
+Chip aqui volta a ser o certo em UM caso: o braço indisponível (MCP fora, `send_message` falhando,
+`pendencias:pacote` em exit 3 por DDL que só o founder aplica). Aí o chip diz o que falta e por
+quê — e o prompt tem de nomear **todos** os arquivos, `_shared` novo incluído: prompt que nomeia
+um só deixa a edge sem bootar (#2020).
 
 ### Passo 4 — Publish do frontend
 
