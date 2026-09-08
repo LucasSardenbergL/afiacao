@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-08T01:38:48.852Z",
-  "sourceHead": "dac507e8359dd99132e4fb3be4f1e2155df0d72a",
+  "medidoEm": "2026-09-08T01:45:24.393Z",
+  "sourceHead": "97a0eda93643a5c74566ac9160d21d79ee0ae597",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -113,7 +113,7 @@
     {
       "gate": "claude:size",
       "verde": true,
-      "ms": 75
+      "ms": 112
     },
     {
       "gate": "docs:citacoes",
@@ -123,7 +123,7 @@
     {
       "gate": "docs:indice",
       "verde": true,
-      "ms": 37
+      "ms": 56
     },
     {
       "gate": "docs:links",
@@ -133,7 +133,7 @@
     {
       "gate": "exclusividade",
       "verde": true,
-      "ms": 340
+      "ms": 211
     },
     {
       "gate": "gates:frescura",
@@ -141,9 +141,24 @@
       "ms": 406
     },
     {
+      "gate": "knip",
+      "verde": true,
+      "ms": 3861
+    },
+    {
+      "gate": "lint",
+      "verde": true,
+      "ms": 19853
+    },
+    {
       "gate": "test",
       "verde": true,
       "ms": 215527
+    },
+    {
+      "gate": "tsc",
+      "verde": true,
+      "ms": 154
     }
   ],
   "linhas": [
@@ -448,6 +463,59 @@
           "reprovou": true,
           "ms": 128437,
           "fingerprint": "ad6cd6b8acf39571",
+          "fonteResolvida": false
+        }
+      ],
+      "parouCedo": false,
+      "invalido": null
+    },
+    {
+      "defeito": "knip-export-orfao",
+      "defeitoFingerprint": "8a68c7448971eb71",
+      "alvo": "src/lib/preco/parse-decimal-br.ts",
+      "suspeito": "knip",
+      "origem": "2026-09-07, o knip reprovou esta propria entrega por 2 tipos exportados sem consumidor",
+      "execucoes": [
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 32,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 36,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "tsc",
+          "reprovou": false,
+          "ms": 133,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false
+        },
+        {
+          "gate": "exclusividade",
+          "reprovou": false,
+          "ms": 109,
+          "fingerprint": "a7416a166977f88b",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "knip",
+          "reprovou": true,
+          "ms": 2217,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false
+        },
+        {
+          "gate": "lint",
+          "reprovou": false,
+          "ms": 15700,
+          "fingerprint": "9a7845d926241f66",
           "fonteResolvida": false
         }
       ],
