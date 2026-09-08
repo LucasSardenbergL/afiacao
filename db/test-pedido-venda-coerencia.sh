@@ -467,6 +467,6 @@ falso "jsonb-esvaziado-com-linhas-vivas" \
   "UPDATE sales_orders SET items='[]'::jsonb WHERE id='aaaa0000-0000-0000-0000-000000000001';"
 
 echo
-echo "=== TOTAL: $PASS ok, $FAIL falhas ==="
+echo "=== TOTAL: $PASS ok / $FAIL fail ==="   # formato lido por db/roda-nucleo-ci.sh
 [ "$FAIL" -eq 0 ] || exit 1
 echo "PROVA-PEDIDO-VENDA-COERENCIA-OK"

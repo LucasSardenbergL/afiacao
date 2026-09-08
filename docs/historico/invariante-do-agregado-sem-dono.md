@@ -73,10 +73,12 @@ Decisões que importam:
 ## Prova e falsificação
 
 `db/test-pedido-venda-coerencia.sh` — **31 asserts, PG17 descartável, dois locales, exit 0**.
-Hoje **não roda no CI** (o CI só faz shellcheck sobre `db/`); é o ritual `prove-sql-money-path`,
-executado localmente. ⚠️ O PR #2364 (em voo, não-draft) cria o job `provas-sql` com allowlist em
-`db/nucleo-ci.txt` — **quando ele mergear, acrescentar a linha `db/test-pedido-venda-coerencia.sh   31`**,
-senão esta prova fica fora do caminho obrigatório do merge.
+**Roda no CI**: o #2364 (mergeado durante esta frente) criou o job `provas-sql` e a allowlist
+`db/nucleo-ci.txt`; esta prova está registrada lá com `asserts≥31`, no caminho obrigatório do merge.
+⚠️ Ao registrar, o formato da linha de contagem importa: o runner lê `PASS=n FAIL=n`,
+`RESULTADO: n ok / n fail` ou `n ok / n fail` — o `n ok, n falhas` que eu usava **não casa**
+(`falh` ≠ `fail`) e teria reprovado com "exit 0 mas SEM contagem". Verificado aplicando a regex
+do runner na saída real, não lendo-a.
 
 - **ANTES**: reproduz o escritor alternativo real e mostra o banco aceitando a corrupção.
 - **DEPOIS**: o mesmo update é recusado; escrita atômica e push do app seguem passando.
