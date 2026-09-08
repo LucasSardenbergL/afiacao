@@ -16,13 +16,30 @@
 #   Read tinha 75 chamadas contra 769 do Bash — e custou MAIS. O tamanho por
 #   chamada é que manda, porque ele é relido para sempre.
 #
-# DUAS RÉGUAS, UMA FONTE:
+# TRÊS RÉGUAS, UMA FONTE:
 #   --por-ferramenta (default) responde "que TIPO de chamada ocupa";
 #   --por-arquivo             responde "que ARQUIVO ocupa" — a pergunta que
-#                             decide o que destilar primeiro.
-# Ambas somam o MESMO total: toda chamada sem `file_path` (Bash, Grep, Task…)
+#                             decide o que destilar primeiro;
+#   --por-comando             responde "que COMANDO ocupa" — a pergunta que
+#                             sobra depois que --por-arquivo aponta para Bash.
+#
+# POR QUE --por-comando NÃO CLASSIFICA POR PREFIXO: a primeira palavra do comando
+# quase nunca é o produtor da saída. `echo "--- x" && git worktree list | head`
+# classificaria como `echo`. Medido: por prefixo, 46,5% das chamadas caem em
+# "outros" (piso-de-contexto.md). Aqui o PRODUTOR é o head-word do 1º estágio de
+# cada PIPELINE (segmenta em `;` `&&` `||` e newline; dentro do pipeline só o 1º
+# estágio produz, o resto é filtro) — o que derruba o não-classificado para 0,3%
+# das chamadas. Esse percentual é IMPRESSO: uma taxonomia que não classifica não
+# está respondendo, e o número tem de aparecer junto da tabela.
+#
+# --ver-shell (com --por-arquivo): metade da ocupação de Bash é `sed -n`/`cat`/
+# `head`/`tail` sobre um arquivo NOMEADO — leitura de arquivo que cai em
+# `(Bash - sem arquivo)` só porque o harness não preenche `file_path`. Com este
+# flag esses bytes são atribuídos ao arquivo. É OPT-IN de propósito: a linha de
+# base de 2026-09-07 foi medida sem ele e continua reproduzível.
+# As três somam o MESMO total: toda chamada sem `file_path` (Bash, Grep, Task…)
 # vira a linha agregada `(<tool> — sem arquivo)` em vez de sumir. Bash sozinho é
-# ~40% da ocupação; um ranking que o omitisse sem dizer seria ausência
+# 77% da ocupação; um ranking que o omitisse sem dizer seria ausência
 # apresentada como medida — o defeito de classe que esta régua existe para achar.
 #
 # O QUE ESTA RÉGUA NÃO MEDE: só o tool_RESULT entra na conta. O INPUT da chamada
@@ -36,6 +53,8 @@
 #   scripts/ocupacao-contexto.sh --por-arquivo     # ranking por ARQUIVO (30d, projetos afiacao)
 #   scripts/ocupacao-contexto.sh --por-arquivo --dias 7 --linhas 30
 #   scripts/ocupacao-contexto.sh --por-arquivo --todos   # a máquina inteira, não só afiacao
+#   scripts/ocupacao-contexto.sh --por-comando           # ranking por COMANDO produtor
+#   scripts/ocupacao-contexto.sh --por-arquivo --ver-shell  # dobra `cat`/`sed` no ranking
 #
 # Fail-closed: sem sessão na janela, ou sem NENHUM evento extraído, o script sai
 # VERMELHO com a causa. Tabela vazia nunca é resposta — foi um `xargs -a` (que não
@@ -66,6 +85,7 @@ MODO=ferramenta
 DIAS=30
 TODOS=0
 LINHAS=0
+VER_SHELL=0
 AUTO_COLETA=0   # 1 só quando a janela/escopo REALMENTE selecionou os alvos
 
 while [ $# -gt 0 ]; do
@@ -77,10 +97,12 @@ while [ $# -gt 0 ]; do
     --top)     TOP="${2:?--top exige um número}"; shift 2 ;;
     --por-arquivo)    MODO=arquivo; shift ;;
     --por-ferramenta) MODO=ferramenta; shift ;;
+    --por-comando)    MODO=comando; shift ;;
+    --ver-shell)      VER_SHELL=1; shift ;;
     --dias)    DIAS="${2:?--dias exige um número}"; shift 2 ;;
     --linhas)  LINHAS="${2:?--linhas exige um número}"; shift 2 ;;
     --todos)   TODOS=1; shift ;;
-    -h|--help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,64p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "opção desconhecida: $1 (use --help)" >&2; exit 2 ;;
     *) ALVOS+=("$1"); shift ;;
   esac
@@ -88,8 +110,14 @@ done
 
 command -v jq >/dev/null || { echo "jq é necessário (brew install jq)" >&2; exit 1; }
 
+# Flag ignorado em silêncio é flag que mente sobre o que a tabela mede.
+if [ "$VER_SHELL" -eq 1 ] && [ "$MODO" != arquivo ]; then
+  echo "ERRO: --ver-shell só se aplica a --por-arquivo (modo atual: ${MODO})." >&2
+  exit 2
+fi
+
 if [ "$LINHAS" -le 0 ]; then
-  if [ "$MODO" = arquivo ]; then LINHAS=20; else LINHAS=14; fi
+  case "$MODO" in arquivo) LINHAS=20 ;; comando) LINHAS=22 ;; *) LINHAS=14 ;; esac
 fi
 
 # --top N: as N sessões maiores em bytes. O custo cresce ~quadraticamente com o
@@ -104,7 +132,7 @@ fi
 
 # --por-arquivo sem alvo explícito: a janela inteira. Default são os projetos do
 # repo (dir contendo $PADRAO_REPO); --todos abre para a máquina.
-if [ "$MODO" = arquivo ] && [ "${#ALVOS[@]}" -eq 0 ]; then
+if { [ "$MODO" = arquivo ] || [ "$MODO" = comando ]; } && [ "${#ALVOS[@]}" -eq 0 ]; then
   AUTO_COLETA=1
   DIRS_BUSCA=()
   if [ "$TODOS" -eq 1 ]; then
@@ -167,7 +195,7 @@ for f in "${ALVOS[@]}"; do
        then "REQ\t\($s)\t\($l.requestId // $l.uuid // "-")" else empty end),
     ( $l.message.content? | if type=="array" then .[] else empty end
       | if .type=="tool_use"
-        then "USE\t\($s)\t\(.id // "?")\t\(.name // "?")\t\((.input.file_path // "")|tostring|gsub("\t";" "))"
+        then "USE\t\($s)\t\(.id // "?")\t\(.name // "?")\t\((.input.file_path // "")|tostring|gsub("\t";" "))\t\((.input.command // "")|tostring|gsub("[\\t\\r]";" ")|gsub("\\n";";"))"
         elif .type=="tool_result" then "RES\t\($s)\t\(.tool_use_id // "?")\t\((.content|tostring)|length)"
         else empty end )
   ' "$f" 2>/dev/null >>"$BRUTO"; then
@@ -192,7 +220,81 @@ if [ ! -s "$BRUTO" ]; then
 fi
 
 awk -F'\t' -v cpt="$CHARS_POR_TOKEN" -v modo="$MODO" -v padrao="$PADRAO_REPO" \
-    -v lar="$HOME" '
+    -v lar="$HOME" -v ver_shell="$VER_SHELL" '
+BEGIN { ASPAS = sprintf("[%c%c]", 34, 39) }   # classe com aspa dupla e simples,
+# montada por codigo de caractere: embutir aspa simples na linha do shell fecharia
+# o programa awk, e o idioma de escape so vale DENTRO de uma string single-quoted.
+# ---- classificador de COMANDO -----------------------------------------------
+# O PRODUTOR da saída é o head-word do 1º estágio de cada PIPELINE. Segmenta em
+# `;` `&&` `||` (a newline já virou `;` no jq) e, dentro de um pipeline, só o 1º
+# estágio produz — `git log | head` é `git log`, não `head`. Sem esta regra a
+# classificação vira "primeira palavra", e a primeira palavra costuma ser `echo`
+# ou `cd`: por prefixo, 46,5% das chamadas caem em "outros".
+function limpa(t) {
+  sub(/^[ \t({]+/, "", t)
+  # FOO=bar cmd  — prefixo de atribuição não é o comando
+  while (t ~ /^[A-Za-z_][A-Za-z0-9_]*=/) sub(/^[A-Za-z_][A-Za-z0-9_]*=[^ ]*[ ]*/, "", t)
+  # wrappers que não produzem saída própria
+  while (t ~ /^(command|sudo|time|env|nohup|exec|builtin)[ ]+/) sub(/^[^ ]+[ ]+/, "", t)
+  sub(/^[ \t]+/, "", t)
+  return t }
+# DUAS classes, e confundi-las custa a classificação inteira:
+#  - `pula_segmento`: comando real que nunca é a causa do volume. Pular só a
+#    PALAVRA deixaria o argumento virar rótulo (`echo "--- x"` -> rótulo `x`).
+#  - `so_sintaxe`: palavra de estrutura. Aqui é o contrário — pular o segmento
+#    perderia o produtor que vem logo atrás (`do cat $f` -> perde o `cat`).
+function pula_segmento(w) {
+  if (w == "") return 1
+  return (w ~ /^(echo|printf|cd|set|export|true|:|\[|test|source|\.|fi|done|esac|for|while|if|until|case)$/) }
+function so_sintaxe(w) { return (w ~ /^(then|do|else|elif|\{|\()$/) }
+# multiplexer: `git` sozinho não é acionável — `git log` e `git diff` são.
+function subcmd(w, resto,   a, i, nn) {
+  if (w !~ /^(git|gh|bun|npm|npx|bunx|supabase|docker|deno|cargo|go)$/) return w
+  nn = split(resto, a, " ")
+  for (i = 1; i <= nn; i++) { if (a[i] != "" && a[i] !~ /^-/) return w " " a[i] }
+  return w }
+function classifica(cmd,   segs, ns, i, est, seg, w, resto, sp, guarda) {
+  gsub(ASPAS, " ", cmd)                 # aspas viram espaço: não mudam o head-word
+  ns = split(cmd, segs, /&&|\|\||;/)
+  for (i = 1; i <= ns; i++) {
+    split(segs[i], est, /\|/)           # dentro do pipeline, só o 1º estágio
+    seg = limpa(est[1])
+    # descasca palavra de sintaxe até achar o comando de verdade no MESMO segmento
+    for (guarda = 0; guarda < 6; guarda++) {
+      sp = index(seg, " ")
+      if (sp > 0) { w = substr(seg, 1, sp - 1); resto = substr(seg, sp + 1) }
+      else        { w = seg; resto = "" }
+      if (!so_sintaxe(w)) break
+      seg = limpa(resto) }
+    if (pula_segmento(w)) continue
+    if (w == "") continue
+    return subcmd(w, resto) }
+  return "(nao classificado)" }
+# ---- alvos de leitura via shell (--ver-shell) --------------------------------
+# `sed -n 1,120p X`, `cat X`, `head -40 X`, `tail X` leem um arquivo NOMEADO e
+# caem em `(Bash - sem arquivo)` só porque o harness não preenche file_path.
+function alvos(cmd,   segs, ns, i, est, seg, a, na, j, t, out) {
+  gsub(ASPAS, " ", cmd); ns = split(cmd, segs, /&&|\|\||;/)
+  for (i = 1; i <= ns; i++) {
+    split(segs[i], est, /\|/); seg = limpa(est[1])
+    na = split(seg, a, " ")
+    if (na == 0) continue
+    if (a[1] !~ /^(sed|cat|head|tail)$/) continue
+    out = ""
+    for (j = 2; j <= na; j++) {
+      t = a[j]
+      if (t ~ /^-/) continue                 # flag
+      if (t ~ /^[0-9,]+[a-z]?$/) continue    # range do sed (1,120p)
+      if (t ~ /^(s|y)\//) continue           # script do sed, não arquivo
+      if (t ~ /^[0-9]?[<>&]/) continue       # redirecionamento (2>/dev/null)
+      if (t ~ /^\$/) continue                # variável não resolvida
+      if (t ~ /\\/) continue                 # escape: expressão, não caminho
+      if (t ~ /^\/dev\//) continue
+      if (t !~ /[\/.]/) continue             # sem barra nem ponto: não é caminho
+      if (t !~ /^[A-Za-z0-9_.~@\/-]+$/) continue
+      out = out (out == "" ? "" : " ") t }
+    if (out != "") return out }
+  return "" }
 function normaliza(p,   q) {
   q = p
   # 1) o repo, em qualquer worktree, colapsa no caminho relativo ao repo
@@ -212,7 +314,7 @@ $1=="REQ" {
   s=$2; k=s SUBSEP $3
   if ($3 != "-" && (k in visto)) next
   visto[k]=1; req[s]++; next }
-$1=="USE" { nome[$2 SUBSEP $3]=$4; arq[$2 SUBSEP $3]=$5; next }
+$1=="USE" { nome[$2 SUBSEP $3]=$4; arq[$2 SUBSEP $3]=$5; cmd[$2 SUBSEP $3]=$6; next }
 # a posição importa: só se sabe quantos requests vêm DEPOIS no fim do arquivo
 $1=="RES" { n++; rsess[n]=$2; rid[n]=$3; rtam[n]=$4; rpos[n]=req[$2]; next }
 END {
@@ -220,23 +322,58 @@ END {
   for (i = 1; i <= n; i++) {
     ch = rsess[i] SUBSEP rid[i]
     t = (ch in nome) ? nome[ch] : "?"
-    if (modo == "arquivo") {
-      # rótulo em ASCII puro: o printf do awk conta BYTES, então um travessão
-      # desalinharia a coluna — e o teste casa esta string sem -i e sem locale.
-      if ((ch in arq) && arq[ch] != "") { k = normaliza(arq[ch]) } else { k = "(" t " - sem arquivo)" }
-    } else { k = t }
     restantes = req[rsess[i]] - rpos[i]; if (restantes < 0) restantes = 0
     o = (rtam[i] / cpt) * restantes
-    ocup[k] += o; chars[k] += rtam[i]; cnt[k]++; soma += o
-    if (rtam[i] > maior[k]) maior[k] = rtam[i]
+    # rótulo em ASCII puro: o printf do awk conta BYTES, então um travessão
+    # desalinharia a coluna — e o teste casa esta string sem -i e sem locale.
+    nk = 1; kk[1] = t; ww[1] = 1
+    if (modo == "arquivo") {
+      kk[1] = "(" t " - sem arquivo)"
+      if ((ch in arq) && arq[ch] != "") { kk[1] = normaliza(arq[ch]) }
+      else if (ver_shell == 1 && t == "Bash") {
+        alv = alvos(cmd[ch])
+        if (alv != "") {
+          # a saída de `cat A B` é UMA saída de dois arquivos e não há como saber
+          # o rateio — divide igual e DECLARA. Fabricar um rateio seria pior.
+          nk = split(alv, av, " ")
+          for (z = 1; z <= nk; z++) { kk[z] = normaliza(av[z]); ww[z] = 1 / nk }
+          vs_n++; vs_o += o } }
+    } else if (modo == "comando") {
+      kk[1] = "(" t " - sem comando)"
+      if (t == "Bash") {
+        bash_n++; bash_o += o
+        kk[1] = classifica(cmd[ch])
+        if (kk[1] == "(nao classificado)") { nc_n++; nc_o += o } }
+    }
+    for (z = 1; z <= nk; z++) {
+      k = kk[z]
+      ocup[k] += o * ww[z]; chars[k] += rtam[i] * ww[z]; cnt[k]++
+      if (rtam[i] > maior[k]) maior[k] = rtam[i] }
+    soma += o
   }
+  # Uma taxonomia que não classifica não está respondendo, e o número tem de sair
+  # JUNTO da tabela — senão o leitor toma um ranking de 54% do volume por um
+  # ranking do volume. Marcador ASCII, caixa fixa: casável com grep -F sem locale.
+  if (modo == "comando") {
+    if (bash_n > 0) {
+      printf "TAXONOMIA-NAO-CLASSIFICADO n=%d de %d chamadas Bash (%.1f%%), %.1f%% da ocupacao Bash\n",
+             nc_n, bash_n, 100*nc_n/bash_n, 100*nc_o/(bash_o>0?bash_o:1) > "/dev/stderr"
+      if (bash_o > 0 && 100*nc_o/bash_o > 25)
+        printf "TAXONOMIA-FRACA: mais de 25%% da ocupacao Bash sem classificar — a tabela abaixo NAO responde a pergunta.\n" > "/dev/stderr"
+    } else {
+      printf "TAXONOMIA-SEM-BASH: nenhuma chamada Bash na janela — a tabela abaixo nao mede comando.\n" > "/dev/stderr" }
+  }
+  if (modo == "arquivo" && ver_shell == 1)
+    printf "VER-SHELL n=%d leituras dobradas no ranking, %.1f%% da ocupacao total\n",
+           vs_n+0, 100*vs_o/(soma>0?soma:1) > "/dev/stderr"
   if (soma <= 0) soma = 1
   # zero-padding no 1º campo p/ ordenar numericamente com sort(1) sem perder a chave
   for (k in ocup)
     printf "%018.3f\t%s\t%d\t%d\t%d\t%.1f\n", ocup[k], k, cnt[k], chars[k], maior[k], 100*ocup[k]/soma
 }' "$BRUTO" | sort -rn | head -"$LINHAS" | awk -F'\t' -v modo="$MODO" '
-BEGIN { w = (modo == "arquivo") ? 56 : 30
-        cab = (modo == "arquivo") ? "arquivo" : "ferramenta"
+BEGIN { w = 30; cab = "ferramenta"
+        if (modo == "arquivo") { w = 56; cab = "arquivo" }
+        if (modo == "comando") { w = 34; cab = "comando (produtor)" }
         printf "\n%-*s %6s %12s %9s %13s %7s\n", w, cab, "n", "chars tot", "maior", "tok*req(M)", "%" }
 { printf "%-*s %6d %12d %9d %13.1f %6.1f%%\n", w, $2, $3, $4, $5, ($1+0)/1e6, $6 }'
 

@@ -658,7 +658,31 @@ sai **vermelha** quando lê sessões e não extrai nenhum evento, em vez de impr
 vazia — e [`scripts/test-ocupacao-por-arquivo.sh`](../../scripts/test-ocupacao-por-arquivo.sh)
 tem o caso que dá nome à suíte justamente por isso.
 
-## O padrão por trás das dezessete
+### 18. `awk -f prog.awk '{programa}' dado` — o PROGRAMA vira NOME DE ARQUIVO, e o exit é 0
+
+Com `-f`, o `awk` já sabe onde está o programa: **todo argumento posicional restante é ARQUIVO
+DE ENTRADA**. Um programa inline ao lado do `-f` não é programa — é o nome de um arquivo que não
+existe.
+
+```bash
+awk -f classif.awk '{k=classifica($5); n[k]++} END{print "classes:", length(n)}' dados.tsv
+#    ^ programa                ^ isto aqui e' um NOME DE ARQUIVO, nao codigo
+```
+
+O `classif.awk` só tinha `function`s e nenhuma regra, então o awk processou a entrada, não casou
+nada, **não imprimiu uma linha sequer e saiu 0**. Nem "arquivo não encontrado" apareceu: o nome
+inexistente foi consumido antes de qualquer leitura falhar.
+
+O sintoma é o mais perigoso do catálogo — **saída vazia com exit 0**, indistinguível de "a
+consulta rodou e não achou nada". No levantamento de 2026-09-08 a leitura ia ser *"nenhuma
+chamada Bash se classifica"*, sobre 69.737 chamadas que se classificam em 99,7%.
+
+**Contramedida:** dois `-f` (`awk -f funcoes.awk -f principal.awk dado`), e um marcador POSITIVO
+no `END` — se a linha de fim não sai, não houve resultado. Foi o que separou o defeito da
+resposta: `head -c 600 saida.txt` devolveu **nada**, e `echo "exit=$?"` devolveu **0**. Nenhum
+dos dois sozinho denuncia; a contradição entre eles, sim.
+
+## O padrão por trás das dezoito
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
