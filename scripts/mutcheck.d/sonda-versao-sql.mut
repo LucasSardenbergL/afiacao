@@ -142,3 +142,64 @@ PEGA      | ramo do id que NAO e sonda neutralizado               | s/l\.corpo -
 # veredito EXECUTADO continua provado no cenário `cron_sem_probe` do
 # .claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh.
 PEGA      | negacao NULL-blind no ramo do nao-sonda               | s/'probe' IS DISTINCT FROM 'true'/'probe' <> 'true'/
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# MODO CANÁRIA (#2380) — as 56 acima mediam SÓ o bloco da sonda
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# A canária decide sobre money-path pelo mesmo mecanismo, um degrau acima: o veredito manda
+# DEPLOY (bundle sem canária no ar) ou INVESTIGAR REGRESSÃO (canária vermelha), e trocar um pelo
+# outro custa deploy de edge de money-path à toa — ou dá por confirmado o que não subiu. A suíte
+# do modo tinha ~35 testes e o dente deles nunca fora medido: MEDIDO 2026-09-08, das 33 mutações
+# desenhadas aqui **13 SOBREVIVIAM** (ramo neutralizado, negação NULL-blind, JOIN que encolhe a
+# lista canônica, janela larga, as três peças do controle de credencial, pré-filtro cego do
+# registro e a partição da trava). Os 6 testes que as matam nasceram DESTE run — a mesma ordem de
+# trabalho do bloco do `probe` acima: a mutação é o teste do teste. Registro:
+# docs/historico/mut-nao-acompanhou-o-modo-novo.md
+# ⚠️ MECÂNICA: os dois blocos falam vocabulário quase igual, e um padrão que sirva aos dois muta 2
+# linhas e cai no guard de substituição única (INVÁLIDO = ausência de medição, não medição).
+# Ancore pelos ALIASES: a canária usa `ca`/`esp`/`mp`/`resp`/`cred`; a sonda usa `l`/`e`/`i`/`x`/`c`.
+# E as DUAS linhas do 401 são idênticas ENTRE SI — só o ramo do 4xx (`>= 400`) e o do 200 (que
+# termina no `\n`) são endereçáveis um a um.
+#
+# ── o JULGAMENTO: a ordem dos ramos é o desenho, e ramo sem condição é texto decorativo ──
+PEGA      | canaria: ramo do 200 sem eco (FLUXO REAL) some   | s/WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true'\\n/WHEN false\\n/
+PEGA      | canaria: negacao NULL-blind no ramo do 200       | s/'canary' IS DISTINCT FROM 'true'\\n/'canary' <> 'true'\\n/
+PEGA      | canaria: negacao NULL-blind no ramo do 4xx       | s/IS DISTINCT FROM 'true' AND ca\.status_code >= 400/<> 'true' AND ca.status_code >= 400/
+PEGA      | canaria: ramo DE OUTRA FATIA neutralizado        | s/WHEN ca\.corpo ->> ca\.campo_marcador IS DISTINCT FROM ca\.marcador_esperado/WHEN false/
+PEGA      | canaria: ramo CANARIA VERMELHA neutralizado      | s/WHEN ca\.corpo ->> 'ok' = 'false'/WHEN false/
+PEGA      | canaria: ramo do id ausente no mapa neutralizado | s/WHEN ca\.request_id IS NULL/WHEN false/
+PEGA      | canaria: VERDE dispensa o marcador (2 dos 3)     | s/AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado/AND true/
+# As duas abaixo são a MESMA falha em camadas diferentes: o campo do marcador é POR CANÁRIA, e
+# fixá-lo em `contrato` faz a `generate-tactical-plan` — a única que serve em `versao` — sair como
+# CANARIA SEM MARCADOR estando perfeita no ar. Uma muta o SQL, a outra a lista canônica que o
+# alimenta; nenhuma cobre a outra.
+PEGA      | canaria: campo do marcador fixo no SQL           | s/WHEN ca\.corpo ->> ca\.campo_marcador IS NULL/WHEN ca.corpo ->> \\'contrato\\' IS NULL/
+PEGA      | canaria: campo do marcador fixo na lista canonica| s/\$\{lit\(c\.campoMarcador\)\}/'contrato'/
+# ── a LEITURA: de onde saem as linhas, e o que as faz sumir ──
+PEGA      | canaria: envelope data some (analytics aninhada) | s/COALESCE\(resp\.content::jsonb -> 'data', resp\.content::jsonb\)/resp.content::jsonb/
+PEGA      | canaria: LEFT JOIN ids -> JOIN (sem id, SOME)    | s/LEFT JOIN ids mp ON/JOIN ids mp ON/
+PEGA      | canaria: LEFT JOIN da resposta -> JOIN           | s/LEFT JOIN net\._http_response resp ON/JOIN net._http_response resp ON/
+PEGA      | canaria: janela larga (celula de ontem julga hoje)| s/WHEN ca\.created <= now\(\) - interval '\$\{janelaMin\} minutes'/WHEN ca.created <= now() - interval '30 days'/
+PEGA      | canaria: controle nao exclui a propria leva      | s/AND NOT EXISTS \(SELECT 1 FROM ids mp2 WHERE mp2\.request_id = r\.id\)/AND true/
+PEGA      | canaria: 401 alheio nao desqualifica o controle  | s/AND cred\.recusas_recentes = 0/AND true/
+PEGA      | canaria: controle nao chega na projecao          | s/FROM lidas ca CROSS JOIN controle_credencial cred/FROM lidas ca/
+PEGA      | canaria: mapa embutido vira {} (tudo INDETERMIN.)| s/jsonb_each_text\(\$\{SENTINELA_MAPA\}::jsonb\)/jsonb_each_text('{}'::jsonb)/
+# ── o DISPARO: corpo errado não é "não respondeu" — é a edge caindo no FLUXO REAL ──
+PEGA      | canaria: corpo FIXO (as 4 formas viram 1)        | s/c\.disparo\.tipo === 'corpo' \? c\.disparo\.corpo : '\{\}'/'{"canary": true}'/
+PEGA      | canaria: sufixo de query some (rebuild REAL)     | s/c\.disparo\.tipo === 'query' \? c\.disparo\.query : ''/''/
+PEGA      | canaria: a URL perde o sufixo                    | s/\|\| a\.edge \|\| a\.sufixo/|| a.edge/
+PEGA      | canaria: as CARAS saem no bloco SEM trava        | s/const baratas = leva\.filter\(\(c\) => !c\.fluxoRealSeVelho\);/const baratas = leva;/
+PEGA      | canaria: o bloco caro perde a trava              | s/blocoDisparoCanaria\(ref, caras, 3, janelaMin, true\)/blocoDisparoCanaria(ref, caras, 3, janelaMin, false)/
+# ── o REGISTRO e o MARCADOR: derivados do repo, nunca digitados ──
+PEGA      | canaria do repo FORA do registro nao e conferida | s/  conferirRegistroCompleto\(raiz, ler\);/  void ler;/
+PEGA      | pre-filtro do registro por 'contrato' (cega a 8a)| s/canary\\s\*:\\s\*true/contrato/
+PEGA      | guard de campoMarcador desalinhado (literal)     | s/if \(reg\.campoMarcador !== 'contrato'\)/if (false)/
+PEGA      | guard de campoMarcador desalinhado (referencia)  | s/if \(reg\.campoMarcador !== 'versao'\)/if (false)/
+PEGA      | simbolo fora do alcance deixa de recusar         | s/if \(achada\.simbolo !== SIMBOLO_VERSAO\)/if (false)/
+PEGA      | inalcancavel deixa de barrar (401 = bundle velho)| s/const barradas = nomes\.filter\(\(n\) => porNome\.get\(n\)!\.inalcancavel !== null\);/const barradas: string[] = [];/
+PEGA      | a leva PADRAO passa a incluir a inalcancavel     | s/^      : CANARIAS\.filter\(\(c\) => c\.inalcancavel === null\)/      : CANARIAS/
+# ── a CLI: flag sem sentido é RECUSADA, não ignorada; e o guard de sincronia vale igual ──
+PEGA      | --canaria sem leitor deixa de recusar            | s/if \(deps\.lerCanarias === undefined\)/if (false)/
+PEGA      | guard de sincronia cego no modo canaria          | s/\[\.\.\.new Set\(leva\.map\(\(c\) => c\.edge\)\)\],/[],/
+PEGA      | --caro aceito em silencio no modo canaria        | s/^    if \(caras\.length > 0\)/    if (false)/
+PEGA      | --so-leitura aceito em silencio (leitura sem mapa)| s/if \(soLeitura === true\)/if (false)/
+PEGA      | canaria repetida na leva (dispara duas vezes)    | s/if \(repetidasC\.length > 0\)/if (false)/

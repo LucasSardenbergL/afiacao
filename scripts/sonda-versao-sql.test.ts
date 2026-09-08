@@ -1480,6 +1480,27 @@ describe('registro COMPLETO — canária fora dele nunca seria disparada', () =>
     expect(msg).not.toMatch(/marcador ILEGÍVEL/);
   });
 
+  it('a forasteira servida por REFERÊNCIA também é varrida — o pré-filtro é `canary:true`', () => {
+    // O pré-filtro por texto cru decide QUEM entra na varredura, e filtrar pela palavra `contrato`
+    // deixaria de fora exatamente a 8ª canária: a `generate-tactical-plan` serve o marcador em
+    // `versao`, por referência, e não tem a palavra `contrato` em lugar nenhum do arquivo. Uma 2ª
+    // canária nela nunca seria disparada, e a leva sairia verde sobre 7 de 8 — a cegueira que o
+    // #2374 fechou no gate, aqui dentro da ferramenta. MEDIDO 2026-09-08: trocar o pré-filtro por
+    // `/contrato/` SOBREVIVIA à suíte de então, porque as duas fixtures de forasteira usavam
+    // edges que emitem `contrato`.
+    const raiz = fixtureCanarias();
+    const dir = join(raiz, 'supabase', 'functions', 'generate-tactical-plan');
+    const bruto = readFileSync(join(dir, 'index.ts'), 'utf8');
+    expect(bruto, 'a fixture precisa ser CEGA a `contrato` para medir o pré-filtro').not.toContain('contrato');
+    writeFileSync(join(dir, 'index.ts'), `${bruto}\n${bruto.replace('versao: VERSAO', 'versao: SEGUNDA_VERSAO')}`);
+    const msg = msgDoErro(() =>
+      gerarSqlDasCanarias({ raiz, nomes: ['copilot-analyze'], ler: lerCanariasReal }),
+    );
+    expect(msg).toMatch(/FORA do registro CANARIAS/);
+    expect(msg).toMatch(/if:2/);
+    expect(msg).toMatch(/SEGUNDA_VERSAO/);
+  });
+
   it('símbolo que não é o `VERSAO` fica FORA do alcance, e o gerador DIZ isso', () => {
     const raiz = fixtureCanarias();
     writeFileSync(
@@ -1555,6 +1576,23 @@ describe('a trava das CARAS vem do registro, não da memória de quem chama', ()
     const sql = gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal });
     expect(sql).toMatch(/carteira-rebuild: rebuild REAL da carteira/);
     expect(sql).toMatch(/generate-tactical-plan: plano tatico com LLM/);
+  });
+
+  it('a canária CARA não aparece no bloco SEM trava — senão o passo 1 dispara o fluxo real', () => {
+    // A asserção irmã acima mede a trava DENTRO do bloco caro; esta mede a PARTIÇÃO, e são coisas
+    // diferentes. MEDIDO 2026-09-08: `const baratas = leva` (a partição desligada) SOBREVIVIA —
+    // as caras continuavam saindo no bloco 3 com trava, e passavam também no bloco 1, que não tem
+    // trava nenhuma. O founder colaria o passo 1 e o rebuild REAL da carteira rodaria ali mesmo.
+    const sql = gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal });
+    const passo1 = sql.slice(0, sql.indexOf('-- PASSO 3'));
+    const caras = CANARIAS.filter((c) => c.fluxoRealSeVelho && c.inalcancavel === null);
+    expect(caras.length, 'sem canária cara o teste passaria por vacuidade').toBeGreaterThan(0);
+    for (const c of caras) {
+      expect(passo1, `canária CARA no bloco sem trava: ${c.nome}`).not.toContain(`('${c.nome}', '${c.edge}'`);
+    }
+    // Controle positivo: o bloco 1 existe e leva as baratas — senão o `not.toContain` acima
+    // ficaria verde por o recorte estar vazio.
+    expect(passo1).toContain("('copilot-analyze', 'copilot-analyze'");
   });
 
   it('a trava é CASE, não filtro — filtro deixaria o http_post sair igual', () => {
@@ -1662,6 +1700,92 @@ describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
     expect(s).toContain("('generate-tactical-plan', 'versao', ");
     expect(s).toContain("('copilot-analyze', 'contrato', ");
     expect(s).toContain('ca.corpo ->> ca.campo_marcador');
+  });
+
+  it('cada ramo tem a CONDIÇÃO colada nele — ramo sem condição é texto decorativo', () => {
+    // A cegueira que o `.mut` da sonda já nomeia, agora medida aqui: asserção que só procura o
+    // TEXTO do ramo (`toContain("THEN 'CANARIA VERMELHA")`) fica verde com a condição trocada por
+    // `false` — a string continua no arquivo e o ramo nunca dispara. MEDIDO 2026-09-08: com a
+    // suíte de então, neutralizar `CANARIA DE OUTRA FATIA`, `CANARIA VERMELHA`, o ramo do 200 sem
+    // eco e o do id ausente SOBREVIVIA às 4 asserções de ramo deste describe. `IS DISTINCT FROM`
+    // é o operador NULL-safe, e é exatamente o corpo SEM o campo (bundle velho) que os ramos do
+    // eco precisam alcançar: com `<>` a comparação vale NULL e o ramo fica inalcançável.
+    const s = sql();
+    const pares: ReadonlyArray<readonly [RegExp, string]> = [
+      [/WHEN ca\.request_id IS NULL\n\s*THEN 'INDETERMINADO — esta canaria nao tem request_id/, 'id ausente no mapa'],
+      [/WHEN ca\.status_code IS NULL\n\s*THEN 'AGUARDE/, 'sem resposta HTTP ainda'],
+      [
+        /WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\.status_code = 401\n\s*AND cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0\n\s*THEN 'SEM CANARIA NO AR — 401/,
+        '401 com o controle de credencial',
+      ],
+      [
+        /WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\.status_code = 401\n\s*THEN 'INDETERMINADO — 401 nao separa/,
+        '401 sem controle observado',
+      ],
+      [
+        /WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\.status_code >= 400\n\s*THEN 'SEM CANARIA NO AR — o bundle recusou/,
+        '4xx/5xx sem eco',
+      ],
+      [
+        /WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true'\n\s*THEN 'SEM CANARIA NO AR — HTTP/,
+        '200 sem eco (o que RODOU O FLUXO REAL)',
+      ],
+      [/WHEN ca\.corpo ->> ca\.campo_marcador IS NULL\n\s*THEN 'CANARIA SEM MARCADOR/, 'sem o campo do marcador'],
+      [
+        /WHEN ca\.corpo ->> ca\.campo_marcador IS DISTINCT FROM ca\.marcador_esperado\n\s*THEN 'CANARIA DE OUTRA FATIA/,
+        'marcador divergente (a armadilha 2 do deploy.md)',
+      ],
+      [/WHEN ca\.corpo ->> 'ok' IS NULL\n\s*THEN 'CANARIA SEM VEREDITO/, 'sem o ok'],
+      [/WHEN ca\.corpo ->> 'ok' = 'false'\n\s*THEN 'CANARIA VERMELHA/, 'ok:false (regressão de verdade)'],
+    ];
+    for (const [re, rotulo] of pares) {
+      expect(s, `ramo sem condição colada: ${rotulo}`).toMatch(re);
+    }
+  });
+
+  it('os JOINs da leitura são LEFT — canária sem id ou sem resposta sai INDETERMINADA, não SOME', () => {
+    // Mesma invariante das duas mutações irmãs da sonda, na leitura da canária: `INNER` encolhe a
+    // lista canônica em silêncio, e a linha que some é justamente a da canária cuja trava ficou
+    // fechada (request_id NULL) ou cuja resposta ainda não chegou. Ausência de LINHA não pode
+    // apagar a canária do relatório — o ramo INDETERMINADO existe para dizer isso.
+    const s = sql();
+    expect(s).toContain('LEFT JOIN ids mp ON mp.nome = esp.nome');
+    expect(s).toContain('LEFT JOIN net._http_response resp ON resp.id = mp.request_id');
+    // Varredura: nenhum JOIN pelado abrindo linha em lugar nenhum do SQL da canária.
+    expect(s).not.toMatch(/\n\s*JOIN /);
+  });
+
+  it('a janela do guard temporal é a PEDIDA, e a mensagem cita o MESMO número', () => {
+    // O guard do #2079 vale igual aqui: a célula do passo 2 sobrevive num chat e, colada amanhã,
+    // julgaria o deploy de hoje pela resposta de ontem. A backreference cola o `interval` à
+    // mensagem — sem ela, um `interval '30 days'` com o texto dizendo "janela de 20 min" passa.
+    const padrao = gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: ['copilot-analyze'], ler: lerCanariasReal });
+    expect(padrao).toMatch(
+      /interval '(\d+) minutes'\n\s*THEN 'INDETERMINADO — a resposta e de ' \|\| ca\.created \|\| ', FORA da janela de \1 min/,
+    );
+    const larga = gerarSqlDasCanarias({
+      raiz: RAIZ_REPO,
+      nomes: ['copilot-analyze'],
+      janelaMin: 45,
+      ler: lerCanariasReal,
+    });
+    expect(larga).toContain("WHEN ca.created <= now() - interval '45 minutes'");
+    expect(msgDoErro(() =>
+      gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: ['copilot-analyze'], janelaMin: 999, ler: lerCanariasReal }),
+    )).toMatch(/janela/);
+  });
+
+  it('o controle de credencial não conta a PRÓPRIA leva — e chega na projeção pelo CROSS JOIN', () => {
+    // A mecânica é a da sonda, e cada peça responde por uma falha diferente: `NOT EXISTS` sobre a
+    // leva impede que a própria sondagem avalize o CRON_SECRET; `recusas_recentes = 0` faz um 401
+    // ALHEIO desqualificar o veredito confiante; e sem o CROSS JOIN o `cred` não existe na
+    // projeção — o veredito determinado do 401 vira erro de coluna, ou some.
+    const s = sql();
+    expect(s).toContain('AND NOT EXISTS (SELECT 1 FROM ids mp2 WHERE mp2.request_id = r.id)');
+    expect(s).toContain('FROM lidas ca CROSS JOIN controle_credencial cred');
+    expect(s).toMatch(
+      /AND cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0\n\s*THEN 'SEM CANARIA NO AR — 401/,
+    );
   });
 });
 
