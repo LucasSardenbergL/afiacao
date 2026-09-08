@@ -22,20 +22,25 @@ PEGA | receitaLiquida soma o desconto (- vira +)          | s/preco \* qtd - des
 # ── O discriminador: sem ele, valor e percentual colapsam ────────────────────────────────────
 # Ignorar `tipo_desconto` faz "10" virar sempre R$ 10 (ou sempre 10%), que é a ambiguidade
 # original com outra roupa.
-PEGA | tipo "P" passa a ser lido como valor              | s/bruto_desconto = doPercentual\(\);/bruto_desconto = valor;/
-PEGA | tipo "V" passa a ser lido como percentual         | s/bruto_desconto = valor;\n  } else if \(tipo === "P"\)/bruto_desconto = doPercentual();\n  } else if (tipo === "P")/
+PEGA | tipo "V" passa a ser lido como "P" (troca o eixo)  | s~if \(tipo === "V"\) \{~if (tipo === "P") {~
+PEGA | o ramo do tipo "P" fica inalcançável              | s~\} else if \(tipo === "P"\) \{~} else if (false) {~
 PEGA | percentual deixa de incidir sobre a base          | s/return \(bruto \* perc\) \/ 100;/return perc;/
 PEGA | percentual divide por 10 em vez de 100            | s/\(bruto \* perc\) \/ 100/(bruto * perc) \/ 10/
 
 # ── Fail-closed: cada `null` aqui é um número inventado que deixaria de sê-lo ─────────────────
 # "Ambíguo → 0" é a fabricação canônica deste repo (`Number(null) === 0`): produz um desconto
 # plausível que ninguém informou. Vale para cada porta de saída.
-PEGA | discriminador desconhecido degrada para 0          | s/if \(\(valor === null \|\| valor === 0\) && \(perc === null \|\| perc === 0\)\) return 0;\n    return null;/return 0;/
-PEGA | percentual fora de faixa passa a ser aceito        | s/if \(perc === null \|\| perc > 100\) return null;/if (perc === null) return null;/
+PEGA | discriminador desconhecido degrada para 0          | s~if \(\(valor === null \|\| valor === 0\) && \(perc === null \|\| perc === 0\)\) return 0;~return 0;~
+# MEDIDO, não presumido: esta mutação SOBREVIVE, e a suíte está certa em não matá-la. Com
+# percentual > 100 o produto `bruto·perc/100` sempre excede `bruto`, então o guard de "desconto
+# acima da base" (abaixo) já rejeita o caso — a checagem de faixa é defesa em profundidade
+# redundante, não uma invariante independente. Registrado em vez de removido porque documenta o
+# contrato [0,100] e barra futuros percentuais que não passem pelo guard da base.
+SOBREVIVE | percentual fora de faixa (redundante com o guard da base) | s~if \(perc === null \|\| perc > 100\) return null;~if (perc === null) return null;~
 PEGA | percentual sem base fabrica desconto               | s/if \(bruto === null\) return null;/if (bruto === null) return 0;/
 PEGA | desconto acima da base deixa de ser anomalia       | s/if \(bruto !== null && bruto_desconto > bruto \+ 0.005\) return null;//
 PEGA | valor negativo vira desconto em vez de lixo        | s/return Number.isFinite\(n\) && n >= 0 \? n : null;/return Number.isFinite(n) ? n : null;/
-PEGA | preço ausente vira receita zero (margem fabricada) | s/if \(preco === null\) return null;/if (preco === null) return 0;/
+PEGA | ausente vira zero na raiz (Number(null)===0)      | s~if \(raw === null \|\| raw === undefined\) return null;~if (raw === null || raw === undefined) return 0;~
 
 # ── Preço unitário líquido: o desconto é da LINHA, dilui-se pela quantidade ───────────────────
 # Quem migrar por analogia com a fórmula percentual antiga (`preço × (1 − d/100)`, que já era

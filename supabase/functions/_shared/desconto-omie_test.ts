@@ -11,11 +11,20 @@
 import { descontoItemOmie, precoUnitarioLiquido, receitaLiquidaItem } from "./desconto-omie.ts";
 
 // `eq` local em vez de std/assert remoto: `test:edges` roda com `--no-remote`, e o flag não se
-// afrouxa por conveniência de teste (CLAUDE.md). Mesmo helper do omie-pedido_test.ts vizinho.
+// afrouxa por conveniência de teste (CLAUDE.md).
+//
+// ⚠️ NÃO é o `eq` do omie-pedido_test.ts vizinho, e a diferença foi MEDIDA, não estilística:
+// aquele compara por `JSON.stringify`, que serializa `Infinity`, `-Infinity` e `NaN` todos como
+// a string "null" — indistinguíveis de `null` de verdade. A mutação "quantidade zero passa a
+// dividir" (scripts/mutcheck.d/desconto-omie.mut) SOBREVIVEU por causa disso: o helper devolvia
+// `-Infinity` e o assert que exigia `null` passava feliz. Um instrumento cego no ponto exato que
+// esta suíte existe para vigiar. `rotular` mantém os não-finitos visíveis.
+function rotular(v: unknown): string {
+  if (typeof v === "number" && !Number.isFinite(v)) return `<não-finito:${String(v)}>`;
+  return JSON.stringify(v) ?? "<undefined>";
+}
 function eq(a: unknown, b: unknown, msg: string) {
-  if (JSON.stringify(a) !== JSON.stringify(b)) {
-    throw new Error(`${msg}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
-  }
+  if (rotular(a) !== rotular(b)) throw new Error(`${msg}: ${rotular(a)} !== ${rotular(b)}`);
 }
 
 Deno.test("DISCRIMINANTE: o mesmo 10, com tipo diferente, dá desconto diferente", () => {
