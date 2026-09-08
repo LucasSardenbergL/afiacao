@@ -280,7 +280,12 @@ describe('useBundleEngine — as ofertas individuais em UMA leitura, com os esta
     // reconhecido, inteiro ≥1, sem eleito fora de `eleito` — e não representa empate nenhum.
     // Descartar só a linha ruim daria um Map parcial apresentado como completo: o cliente
     // afetado viraria `nenhum`, que é um veredicto. Rejeitar tudo é a saída honesta.
-    linhasExtras = [linhaIndividual(C9, [P2], { situacao: 'empatado', candidatos: 1 })];
+    // `produto_eleito: null` EXPLÍCITO: sem ele o helper o deriva do array de um elemento, a
+    // linha é recusada pela checagem de `produto_eleito` e este teste ficaria verde mesmo com a
+    // cardinalidade do `empatado` desligada — provando outra coisa que não a que promete.
+    linhasExtras = [
+      linhaIndividual(C9, [P2], { situacao: 'empatado', produto_eleito: null, candidatos: 1 }),
+    ];
     const result = await calcular();
 
     expect(acharCliente(result, C8)?.individuais.cross_sell.status).toBe('indisponivel');

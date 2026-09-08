@@ -155,7 +155,7 @@ sabotar 'F6 célula sem qualificador' src/components/farmer/bundles/CustomerBund
 sabotar 'F7 total de produtos = nomes resolvidos' src/lib/farmer/melhor-individual.ts \
   '    produtos: linha.produtos.length,' \
   '    produtos: nomes.length,' \
-  'sem nome'
+  'perde UM nome no catálogo continua empatado'
 
 # ── F8: o nome deixa de ser aparado ──────────────────────────────────────────────────────────
 # Achado R5/2: `if (nome)` aceita `"   "`, e a célula renderiza um parágrafo em branco contado
