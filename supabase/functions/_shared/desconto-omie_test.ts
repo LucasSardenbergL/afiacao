@@ -8,7 +8,12 @@
 //
 // A âncora é qtd=2, preço=100, desconto=10 → percentual daria 180, absoluto daria 190.
 
-import { descontoItemOmie, precoUnitarioLiquido, receitaLiquidaItem } from "./desconto-omie.ts";
+import {
+  type DescontoOmieBruto,
+  descontoItemOmie,
+  precoUnitarioLiquido,
+  receitaLiquidaItem,
+} from "./desconto-omie.ts";
 
 // `eq` local em vez de std/assert remoto: `test:edges` roda com `--no-remote`, e o flag não se
 // afrouxa por conveniência de teste (CLAUDE.md).
@@ -66,8 +71,9 @@ Deno.test("REGRESSÃO do bug de origem: a chave `desconto` não existe na API e 
   // `omie-vendas-sync` lia `prod.desconto`. A doc oficial (2026-09-07) não tem esse campo em
   // `det.produto` — ele é sempre undefined, e o `|| 0` gravava 0. Se alguém reintroduzir a chave
   // achando que ela vale, este assert quebra: um campo que a origem não envia não vira desconto.
-  // deno-lint-ignore no-explicit-any
-  const comChaveMorta = { desconto: 10 } as any;
+  // Tipado como a interseção, e não com `as any`: o ponto é justamente que `desconto` NÃO faz
+  // parte do contrato: ele entra aqui como campo estranho, do jeito que chegaria num payload.
+  const comChaveMorta: DescontoOmieBruto & { desconto: number } = { desconto: 10 };
   eq(descontoItemOmie(comChaveMorta, 200), 0, "chave inexistente na API não produz desconto");
 });
 
