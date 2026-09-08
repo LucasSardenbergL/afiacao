@@ -196,7 +196,29 @@ describe('coletarDaEdge — lê a árvore que recebeu, não o disco', () => {
 
   it('edge ausente NA ÁRVORE lança nomeando a árvore — ausência de dado não é "sem dependência"', () => {
     const arvore = arvoreFalsa({ 'supabase/functions/outra/index.ts': '' }, 'origin/main');
-    expect(() => coletarDaEdge('edge-fake', arvore)).toThrow(/origin\/main/);
+    // A mensagem do GUARD, não só o rótulo: o `fecharGrafo` também lança citando a árvore, então
+    // `toThrow(/origin\/main/)` ficava verde com o guard REMOVIDO. Pego na falsificação.
+    expect(() => coletarDaEdge('edge-fake', arvore)).toThrow(/edge não encontrada em origin\/main/);
+  });
+
+  it('árvore que muda sob os pés LANÇA — fonte vazia extrairia zero RPCs, e zero por cegueira libera', () => {
+    // O `fecharGrafo` lê cada arquivo do fecho ANTES desta função relê. Entre as duas leituras a
+    // ref pode se mover (dois `git show` distintos). Sem este ramo, `?? ''` transformaria o
+    // arquivo sumido em zero RPCs — a lista curta que o gate lê como "sem dependência".
+    const conteudo: Record<string, string> = {
+      [ENTRADA]: `await db.rpc('some_no_meio_do_caminho', {});\n`,
+    };
+    let leituras = 0;
+    const instavel: ArvoreDeFonte = {
+      rotulo: 'ref-instavel',
+      ler: (rel) => {
+        leituras += 1;
+        // As duas primeiras (guard + fecho) respondem; a terceira, a releitura, encontra o vazio.
+        if (leituras > 2) return null;
+        return rel in conteudo ? Buffer.from(conteudo[rel] as string, 'utf8') : null;
+      },
+    };
+    expect(() => coletarDaEdge('edge-fake', instavel)).toThrow(/sumiu de ref-instavel/);
   });
 
   it('segue o fecho DENTRO da árvore — helper de `_shared/` que só existe nela conta', () => {
