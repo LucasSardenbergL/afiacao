@@ -116,7 +116,7 @@ fi
 # Fecha dos DOIS lados: ordem certa com pesos errados passaria no teste acima.
 # 199× é a razão exata das posições; a asserção aceita só o intervalo em volta.
 pct_cedo="$(printf '%s\n' "$saida" | command grep 'cedo.md'  | command sed 's/.* \([0-9.]*\)%$/\1/')"
-if [ -n "$pct_cedo" ] && awk -v p="$pct_cedo" 'BEGIN{exit !(p > 99 && p <= 100)}'; then
+if [ -n "$pct_cedo" ] && LC_ALL=C awk -v p="$pct_cedo" 'BEGIN{exit !(p > 99 && p <= 100)}'; then
   ok "peso proporcional aos requests restantes (cedo = ${pct_cedo}%, esperado ~99,5%)"
 else
   ruim "cedo deveria levar ~99,5% da ocupacao, levou '${pct_cedo}%'"
@@ -156,13 +156,17 @@ fi
 
 # ---- 4) os dois modos somam o MESMO total (risco 2 do spec) -----------------
 # Conta pelo FIM (NF-1): o rótulo agregado tem espaços e quebraria índice fixo.
-soma_col5() { printf '%s\n' "$1" | command grep -E '%$' | awk '{s+=$(NF-1)} END{printf "%.1f", s}'; }
+# LC_ALL=C no awk do TESTE, não só no do alvo: sob pt_BR ele lê "1.2" como 1 (a
+# vírgula é que separa decimal lá), a soma desaba para zero e a trava de fixture
+# fraca logo abaixo — que compara com a string "0.0" — deixa passar um "0,0".
+# Foi assim que este mesmo caso voltou a ser vazio depois de já ter sido curado.
+soma_col5() { printf '%s\n' "$1" | command grep -E '%$' | LC_ALL=C awk '{s+=$(NF-1)} END{printf "%.1f", s}'; }
 por_ferr="$(CLAUDE_PROJECTS_DIR="$P3" bash "$ALVO" --por-ferramenta --linhas 99 \
               "$J3" 2>/dev/null)"
 sa="$(soma_col5 "$saida_b")"; sf="$(soma_col5 "$por_ferr")"
 # CONTROLE POSITIVO antes da igualdade: `0.0 = 0.0` é verdade em toda régua
 # quebrada que existe. A asserção só vale se as duas somas forem MEDIDAS.
-if [ "$sa" = "0.0" ] || [ -z "$sa" ]; then
+if [ "$sa" = "0.0" ] || [ "$sa" = "0,0" ] || [ -z "$sa" ]; then
   ruim "soma por-arquivo veio '$sa' — fixture sem poder, a igualdade abaixo nao provaria nada"
 elif [ "$sa" = "$sf" ]; then
   ok "total por ARQUIVO = total por FERRAMENTA ($sa M tok*req) — as duas reguas fecham"
@@ -222,6 +226,35 @@ if [ "$n_mesmo" = "1" ] && [ "$linha_n" = "2" ]; then
   ok "mesmo arquivo em 2 worktrees colapsa em 1 linha com n=2"
 else
   ruim "normalizacao falhou: $n_mesmo linha(s), n=$linha_n (esperado 1 linha, n=2)"
+fi
+
+# ---- 8) a saída não pode depender do LOCALE de quem roda --------------------
+# Sob pt_BR.UTF-8 o printf do awk emite "0,2" e não "0.2" — e a chave de
+# ordenação deste script é um `%018.3f`, então o `sort -rn` do meio do pipeline
+# passa a ler o número com a vírgula do locale e pode REORDENAR o ranking.
+# Não basta rodar a suíte sob um locale: o defeito só aparece no OUTRO. O teste
+# força os dois ele mesmo, em vez de esperar que o ambiente colabore.
+LOC_VIRGULA=""
+for L in pt_BR.UTF-8 pt_BR.utf8 de_DE.UTF-8 fr_FR.UTF-8 es_ES.UTF-8; do
+  if [ "$(LC_ALL="$L" awk 'BEGIN{printf "%.1f", 1.5}' 2>/dev/null)" = "1,5" ]; then
+    LOC_VIRGULA="$L"; break
+  fi
+done
+if [ -z "$LOC_VIRGULA" ]; then
+  # Nenhum locale de vírgula instalado ⇒ o defeito não tem como se manifestar
+  # AQUI. Isso é ausência de CASO, não aprovação — dizer "ok" seria a mesma
+  # fabricação que a suíte inteira existe para impedir.
+  printf '  \033[33mSKIP\033[0m  locale decimal-virgula ausente nesta maquina — caso 8 SEM cobertura\n'
+else
+  saida_loc="$(LC_ALL="$LOC_VIRGULA" bash "$ALVO" --por-arquivo --linhas 99 \
+                 "$P1/-Users-x-Projetos-afiacao-teste/tese.jsonl" 2>/dev/null)"
+  n_virg="$(printf '%s\n' "$saida_loc" | command grep -cE '[0-9],[0-9]+%?$' || true)"
+  if [ "$n_virg" = "0" ] && tem "$saida_loc" "cedo.md"; then
+    ok "sob $LOC_VIRGULA a saida sai com PONTO decimal (ranking nao muda com o ambiente)"
+  else
+    ruim "sob $LOC_VIRGULA sairam $n_virg numero(s) com virgula — saida depende do locale"
+    printf '%s\n' "$saida_loc" | sed 's/^/      /'
+  fi
 fi
 
 # ---- falsificação -----------------------------------------------------------
@@ -284,9 +317,16 @@ if [ "${1:-}" = "--falsificar" ]; then
   sabota "custo vira posicao em vez de restante" \
          "a TESE — Read caro no comeco viraria barato e o ranking inverteria" \
          's/restantes = req\[rsess\[i\]\] - rpos\[i\]/restantes = rpos[i]/'
+  # shellcheck disable=SC2016  # aspas simples de propósito: `$3` é o campo do
+  # AWK dentro do alvo, não uma variável desta shell. Expandir escreveria um
+  # padrão que não casa — sabotagem vazia, que a trava (2) pega só depois de
+  # custar uma rodada.
   sabota "dedupe por requestId desligado" \
          "varios blocos por resposta inflariam TODO multiplicador (2,28x medido)" \
          's/if ($3 != "-" \&\& (k in visto)) next/if (0) next/'
+  # shellcheck disable=SC2016  # idem: `$BRUTO` é o TEXTO literal procurado
+  # dentro do alvo. Aqui expandir seria pior que inútil — casaria o caminho do
+  # mktemp desta execução, que não existe no arquivo.
   sabota "extracao vazia deixa de ser erro" \
          "jq morto / formato mudado imprimiria tabela vazia como 'ocupacao zero'" \
          's/if \[ ! -s "\$BRUTO" \]; then/if false; then/'
@@ -302,6 +342,15 @@ if [ "${1:-}" = "--falsificar" ]; then
   sabota "marcador positivo de fim removido" \
          "execucao morta no meio passaria por completa" \
          's/^echo "OCUPACAO-CONTEXTO-OK/echo "fim/'
+  if [ -n "$LOC_VIRGULA" ]; then
+    sabota "LC_ALL=C removido (saida a merce do locale)" \
+           "sob $LOC_VIRGULA o printf sai com virgula e o sort -rn pode reordenar o ranking" \
+           's/^export LC_ALL=C$/: LC_ALL/'
+  else
+    # Sem locale de vírgula não há como sabotar isto AQUI. Anunciar em vez de
+    # pular calado: o laço estaria reportando cobertura que não exerceu.
+    printf '  \033[33mSKIP\033[0m  sabotagem do LC_ALL=C sem locale decimal-virgula — NAO exercitada\n'
+  fi
 
   echo
   if [ "$falhas" -eq 0 ]; then

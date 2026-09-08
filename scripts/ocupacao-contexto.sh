@@ -45,6 +45,15 @@
 # Nada sai da máquina; nenhum arquivo do projeto é alterado.
 set -euo pipefail
 
+# Números com PONTO decimal, SEMPRE. Sob pt_BR.UTF-8 (o locale desta máquina) o
+# `printf` do awk emite "0,2" no lugar de "0.2" — e o estrago não é cosmético:
+# a chave de ordenação deste script é um `%018.3f`, então o `sort -rn` do meio do
+# pipeline passa a ler "199,000" com a vírgula do locale e pode REORDENAR o
+# ranking. Uma régua cuja resposta depende do ambiente de quem a roda não é
+# régua. LC_ALL (não LC_NUMERIC) porque LC_ALL do ambiente venceria o mais
+# específico. Pego pela falsificação nos dois locales, não por revisão.
+export LC_ALL=C
+
 RAIZ="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 CHARS_POR_TOKEN=3.5   # aproximação p/ mistura pt-BR + código
 # Mesmo token que filtra os projetos e que normaliza o path: um arquivo lido de

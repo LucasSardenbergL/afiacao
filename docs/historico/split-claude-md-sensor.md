@@ -152,14 +152,55 @@ E o relatório passou a imprimir o **denominador** (`N sessões · N eventos de 
 aviso explícito quando é zero: sem denominador, a seção 1 lê-se como resposta negativa. Regra
 da casa aplicada ao próprio instrumento — *"exija ≥1 sinal POSITIVO com denominador"*.
 
-### Gate da fase 2 (positivo, não calendário)
+### Gate da fase 2 (positivo, não calendário) — **ENCERRADO em 2026-09-07**
 
-Rode `bun run claude:instr`; só destrave quando **ambos** aparecerem:
+O gate original era:
 
 1. **≥1 linha na seção 1 com um `agent_type`** — prova que o sensor ENXERGA subagente. Só
    então criar a 1ª `.claude/rules/*.md` com `paths:` e reler: se ELA nunca aparecer com
    `agent_type`, aí sim é resposta negativa ⇒ não mover convenção de frontend.
 2. **≥1 evento `motivo: compact`** — responde a pergunta 2.
+
+**O gate 1 nunca ia disparar, e agora se sabe por quê.** Sobre 1.741 eventos / 1.162 sessões /
+17 dias: `agent_type` aparece em **zero**. Não por falta de caso — a mesma janela tem **24
+diretórios `subagents/`, 148 arquivos de subagente e 75 transcrições com `isSidechain: true`**. O
+cruzamento por sessão fecha: `b0466403` rodou **34 subagentes → 3 eventos**; `ac72c4b2`, **8
+subagentes → 1 evento**. ⇒ **o `InstructionsLoaded` não é emitido para subagente.** É cegueira
+**estrutural** do hook, não ausência de dado — e uma condição de destravamento que depende de um
+evento que a plataforma não emite é uma espera que nunca termina.
+
+**A pergunta que o gate protegia foi respondida por fora dele, e a resposta é SIM:** sonda direta
+com um subagente `fable` proibido de usar tools (`tool_uses: 0` no `usage`, portanto sem chance de
+ter lido nada do disco) citou a primeira linha do `CLAUDE.md`, listou as **10 seções** e acertou
+três regras críticas (`security_invoker=on`, o `psql-ro`, o pt-BR). **O carregamento alcança o
+subagente; só o evento não é emitido.**
+
+Corolário para o orçamento: os 1.741 eventos contam **só sessões principais**, então o número real
+de carregamentos é maior — a premissa "toda sessão + subagente" que justifica o `claude:size` é
+**verdadeira**, e o teto é se possível conservador demais.
+
+**O gate 2 destravou sozinho:** 0 eventos `motivo: compact` em 22/08 → **18** hoje.
+
+⇒ Fase 2 **encerrada por resposta, não por desistência**. Mover regra para `.claude/rules/` com
+`paths:` deixou de estar bloqueada por falta de dado. O que a bloqueia agora é outra coisa, e é
+uma boa notícia: a medição de ocupação por arquivo mostrou que o `CLAUDE.md` é a **menor** metade
+do problema (o piso inteiro vale ~25,9% do custo de entrada, com 2/3 pertencendo ao harness), e a
+alavanca grande está nos 74% de conversa acumulada — onde **Bash sozinho é 77%**. Ver
+[`ocupacao-por-arquivo-linha-de-base.md`](ocupacao-por-arquivo-linha-de-base.md).
+
+### O segundo defeito de classe, também corrigido (2026-09-07)
+
+O `agente: (.agent_type // "principal")` era, palavra por palavra, o que a seção acima previa:
+*"subagente cujo payload omitisse `agent_type` seria rotulado 'principal' e responderia a pergunta
+1 errado e calado"*. Agora é `(.agent_type // null)` mais um `agente_fonte` (`payload` / `ausente`)
+que mantém a distinção **no dado**, não só no comentário — porque foi exatamente essa distinção
+que levou 16 dias para ser feita.
+
+E o sensor deixou de saber apenas **que** carregou: `bytes_arquivo` e `palavras_arquivo` passam a
+ser medidos do disco pelo próprio hook, via `file_path` (que o payload **traz**), já que
+`file_content` (que ele não traz) tornava `chars` `null` por contrato. `null` quando o arquivo é
+ilegível — 0 medido de arquivo legível é resposta certa; 0 vindo de um `wc` que falhou seria a
+mesma fabricação de novo, no mesmo arquivo.
 
 ### A inclinação, agora MEDIDA
 
