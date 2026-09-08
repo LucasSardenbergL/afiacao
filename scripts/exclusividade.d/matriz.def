@@ -1,0 +1,14 @@
+# Defeitos contra a PROPRIA matriz — o gate `exclusividade` pagando o preco que ele cobra.
+#
+# Quando a lista de dispensados foi gerada pela primeira vez, `exclusividade` entrou nela sozinho:
+# um gate novo se auto-dispensando da regra que existe para gates novos. E o unico jeito honesto de
+# sair dessa lista e o mesmo que ele exige de qualquer outro — exibir um defeito que so ele pega.
+#
+# Este e o defeito. Renomear a entrada de um gate na matriz e a falha REAL do fluxo: alguem renomeia
+# um gate no package.json, esquece de re-medir, e o gate volta a existir sem nenhuma evidencia de
+# que pega algo que os outros nao pegam. Nenhum outro gate do CI le este arquivo, entao se
+# `exclusividade` nao pegar, ninguem pega.
+
+# @origem: 2026-09-07, ao gerar a lista de dispensados desta propria entrega
+# @suspeito: exclusividade
+matriz-gate-renomeado | scripts/exclusividade-matriz.json | s/"gate": "knip"/"gate": "knip-RENOMEADO"/

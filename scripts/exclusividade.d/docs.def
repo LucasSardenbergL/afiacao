@@ -1,0 +1,28 @@
+# Defeitos na superficie de DOCUMENTACAO — docs:indice, docs:links, docs:citacoes.
+#
+# Este arquivo existe por causa de um achado concreto do parecer do Codex: `docs:indice` audita o
+# repositorio DENTRO do vitest (`scripts/docs-indice-gate-check.test.ts:265`, o bloco
+# "o repo de verdade") e DE NOVO num step separado do CI. Se as duas leituras cobrem o mesmo
+# defeito, o step e redundante — mas isso e uma hipotese ate ser MEDIDO, e medir e o que estas
+# linhas fazem.
+#
+# O Codex tambem anotou sobreposicao PARCIAL entre `docs:indice` e `docs:links` no eixo "link
+# aponta para arquivo inexistente". Parcial e a palavra importante: as obrigacoes sao distintas
+# (um cuida de indice completo, o outro de link que resolve), entao `indice-alvo-fantasma` existe
+# justamente para medir ONDE elas se encostam, e nao para justificar cortar uma das duas.
+
+# @origem: parecer Codex 2026-09-07 (duplicacao docs:indice step x vitest)
+# @suspeito: docs:indice
+indice-orfao | docs/historico/README.md | $_ = '' if /^\| \[medir-ganho-de-ci-sob-ruido\.md\]/
+
+# Entrada de indice que aponta para um arquivo que nao existe. Fica na FRONTEIRA entre os dois
+# gates de docs — e a fronteira e o unico lugar onde a medicao pode surpreender.
+# @origem: parecer Codex 2026-09-07 (sobreposicao parcial docs:indice x docs:links)
+# @suspeito: docs:links
+indice-alvo-fantasma | docs/historico/README.md | s/\(medir-ganho-de-ci-sob-ruido\.md\)/(medir-ganho-de-ci-sob-ruido-INEXISTENTE.md)/
+
+# Link relativo quebrado FORA de um indice: aqui `docs:indice` nao tem jurisdicao nenhuma, entao
+# se `docs:links` nao pegar, ninguem pega. E o contraste que da sentido a linha de cima.
+# @origem: docs/historico/README.md (dez links quebrados ja encontrados por este gate)
+# @suspeito: docs:links
+link-solto-quebrado | CLAUDE.md | s{\(docs/agent/database\.md\)}{(docs/agent/database-INEXISTENTE.md)}

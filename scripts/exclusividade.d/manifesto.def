@@ -1,0 +1,26 @@
+# Defeitos na superficie do MANIFESTO — o que descreve a propria maquina: package.json, ci.yml,
+# CLAUDE.md e o censo de docs/agent/deploy.md.
+#
+# E a superficie mais interessante para medir exclusividade, porque e onde os gates mais se
+# aproximam uns dos outros: varios leem os MESMOS tres arquivos, cada um por um motivo diferente.
+# Proximidade de leitura nao implica redundancia — e exatamente essa a diferenca que so a medicao
+# resolve.
+
+# `bun-version` fora do semver estrito reintroduz a dependencia de rede que derrubou todo PR do
+# repo em 2026-07-16. O flag `$feito` prende a substituicao na PRIMEIRA ocorrencia: o texto aparece
+# 6x no ci.yml, e substituir as 6 perturbaria 12 linhas — o motor recusaria como regex largo.
+# @origem: scripts/bun-pin-gate-check.ts (incidente REST API do GitHub, 2026-07-16)
+# @suspeito: bunpin:check
+bun-despinado | .github/workflows/ci.yml | $feito = 1 if !$feito && s/bun-version: 1\.3\.14/bun-version: latest/
+
+# Linha de manual acima de MAX_LINE (2000 chars) — a assinatura do "bullet de diario" que o budget
+# existe para empurrar de volta para docs/historico/.
+# @origem: scripts/check-claude-md-budget.sh (MAX_LINE=2000)
+# @suspeito: claude:size
+claude-md-linha-gigante | CLAUDE.md | s/^## Stack$/'## Stack ' . ('x' x 2100)/e
+
+# Sentido 2 do gates:frescura: um gate que existe, reprova, e sumiu do censo do manual. E a classe
+# que originou aquele gate (o censo datado de 15 nomes num CI que ja tinha 25).
+# @origem: scripts/gates-frescura-check.ts (sentido 2 — gate nao citado)
+# @suspeito: gates:frescura
+censo-sem-o-gate | docs/agent/deploy.md | s/ · `docs:citacoes`//
