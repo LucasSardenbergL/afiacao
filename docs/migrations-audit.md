@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **531** custom migrations totais
-- **1794** objetos esperados (criados por estas migrations)
+- **534** custom migrations totais
+- **1801** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 568
+  - `function`: 573
   - `rls_policy`: 462
   - `index`: 257
   - `cron_job`: 171
   - `table`: 165
-  - `trigger`: 90
+  - `trigger`: 92
   - `view`: 77
   - `enum_value`: 4
 
@@ -4413,6 +4413,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.aplicar_edicao_pedido_omie` | — |
+
+### `20260907220000_pedido_venda_coerencia_agregado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pedido_venda_exigir_coerencia` | — |
+| `function` | `public.pedido_venda_coerencia_cab` | — |
+| `function` | `public.pedido_venda_coerencia_lin` | — |
+| `trigger` | `public.trg_pedido_venda_coerencia_cab` | `sales_orders` |
+| `trigger` | `public.trg_pedido_venda_coerencia_lin` | `order_items` |
+
+### `20260907223901_analytics_ledger_navegacao_rota_servida.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
+### `20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
 
 ## Próximos passos por status
 

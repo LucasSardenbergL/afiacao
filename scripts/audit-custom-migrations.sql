@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 531
+-- Total de custom migrations: 534
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -572,7 +572,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260907095841', 'disparado_simulado_e_estado_pos_disparo', '20260907095841_disparado_simulado_e_estado_pos_disparo.sql'),
   ('20260907101349', 'deploy_sonda_alvos_onda1', '20260907101349_deploy_sonda_alvos_onda1.sql'),
   ('20260907160103', 'revoke_public_sensor_multi_conta', '20260907160103_revoke_public_sensor_multi_conta.sql'),
-  ('20260907210000', 'pedido_edicao_omie_atomica', '20260907210000_pedido_edicao_omie_atomica.sql')
+  ('20260907210000', 'pedido_edicao_omie_atomica', '20260907210000_pedido_edicao_omie_atomica.sql'),
+  ('20260907220000', 'pedido_venda_coerencia_agregado', '20260907220000_pedido_venda_coerencia_agregado.sql'),
+  ('20260907223901', 'analytics_ledger_navegacao_rota_servida', '20260907223901_analytics_ledger_navegacao_rota_servida.sql'),
+  ('20260908055405', 'analytics_ledger_navegacao_postcondicao_corrigida', '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2355,7 +2358,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
-  ('pedido_edicao_omie_atomica', 'function', 'public', 'aplicar_edicao_pedido_omie', '')
+  ('pedido_edicao_omie_atomica', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_exigir_coerencia', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_coerencia_cab', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_coerencia_lin', ''),
+  ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_cab', 'sales_orders'),
+  ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_lin', 'order_items'),
+  ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4186,7 +4196,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
-  ('pedido_edicao_omie_atomica', 'function', 'public', 'aplicar_edicao_pedido_omie', '')
+  ('pedido_edicao_omie_atomica', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_exigir_coerencia', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_coerencia_cab', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_coerencia_lin', ''),
+  ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_cab', 'sales_orders'),
+  ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_lin', 'order_items'),
+  ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
 )
 SELECT
   e.migration,
@@ -4214,7 +4231,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 107.
+-- Funções redefinidas com corpo extraível: 108.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4603,6 +4620,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'farmer_bundle_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', '3b68a4bda4fc43e049d07a37659ee55c'),
   ('public', 'farmer_melhor_individual_por_cliente', 1, '20260820124611_farmer_melhor_individual_bulk.sql', '82340cc6187de27edf766fdb7fad7c77'),
   ('public', 'farmer_melhor_individual_por_cliente', 2, '20260820133119_farmer_melhor_individual_atomico.sql', '988141c4ddcb0e43ff59b66491c5dc6a'),
+  ('public', 'analytics_ledger_registrar', 1, '20260825214545_analytics_outbox.sql', 'cb48e471a07a312d89d94c3a0dbd6455'),
+  ('public', 'analytics_ledger_registrar', 2, '20260907223901_analytics_ledger_navegacao_rota_servida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
+  ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'reconciliar_pedidos_omie', 1, '20260830190000_reconciliar_pedidos_omie.sql', '80a1000a7a543c8e3dfc756f4ab4df97'),

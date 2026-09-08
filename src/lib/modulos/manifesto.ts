@@ -714,6 +714,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/agruparPorMes.ts",
       "src/lib/analytics.ts",
       "src/lib/analytics-ledger.ts",
+      "src/lib/analytics-rota-canonica.ts",
       "src/lib/build-id.ts",
       "src/lib/erro-mensagem.ts",
       "src/lib/escape-html.ts",
