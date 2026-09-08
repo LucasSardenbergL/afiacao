@@ -120,9 +120,39 @@ perna A2 está re-medida e intacta, e a via que responde à pergunta já existe 
    `fetch` de dentro do app morrendo em 4 ms com navegação direta funcionando.
 2. **Responder se há customer prestes a ser aprovado.** É a condição (1), e nenhuma query a
    responde. Se houver, o gatilho ABRE — e mesmo então a primeira saída continua não sendo o proxy.
-3. **Só se (1) falhar e navegação fundamentar decisão:** estender a allowlist do ledger com **rota
-   canônica por dia** — não `pathname + search`, que é o que o `PageViewTracker` envia hoje e não
-   seria minimização.
+3. ~~**Só se (1) falhar e navegação fundamentar decisão:** estender a allowlist do ledger com rota
+   canônica por dia.~~ → **FEITO no mesmo PR**, por decisão do founder, que antecipou este passo em
+   vez de esperar (1). Registrado como está: a ordem que eu propus não foi a executada, e os dois
+   passos **não se substituem** — o item 1 mede se o canal do PostHog volta a falar; este mede a
+   navegação por um canal que nunca dependeu disso.
+
+## O Passo 3, entregue — o que ele mede e o que continua sem medir
+
+`navegacao.rota_servida` entrou na allowlist da RPC `analytics_ledger_registrar`, e o
+`PageViewTracker` passa a registrar **uma linha por rota canônica, por titular, por dia** — no nosso
+Postgres, pelo mesmo caminho PostgREST que o probe mediu entregando enquanto o PostHog estava mudo.
+
+A chave é a **forma** da rota (`/orders/:id`), não a URL: `src/lib/analytics-rota-canonica.ts`
+mascara todo segmento que não se prove estático, com alfabeto fechado — `@`, `%`, acento, segmento
+acima de 24 chars e hex longo viram `:id`. **Fail-closed de propósito:** perder granularidade de uma
+rota é aceitável; um e-mail ou um CNPJ entrarem no acervo de telemetria não é. A querystring nunca
+chega ao ledger (o `$pageview` do PostHog segue com a URL crua — lá o dado não vira acervo nosso).
+
+O gate que segura isso é `src/lib/__tests__/analytics-rota-canonica.test.ts`: além dos unitários da
+máscara, ele canonicaliza **toda** rota declarada no `App.tsx` (lida com o stripper compartilhado,
+não com regex local) e exige que nenhuma vaze caractere fora do alfabeto, que nenhum nome de
+parâmetro sobreviva, e que **nenhuma rota estática seja mascarada por engano** — sem esta última
+asserção, `() => ':id'` passaria em tudo.
+
+⚠️ **O que este passo NÃO prova, e é preciso dizer antes que alguém leia a contagem como adoção:**
+
+- **`servido`, não `visto`.** Prova que o app renderizou a rota. Aba aberta e ignorada conta igual.
+- **Não retroage.** O acervo começa vazio no dia do apply; toda leitura anterior a ele é ausência de
+  dado, não zero — inclusive a das 156 rotas que o #2360 não viu.
+- **Numerador e denominador têm de ser canonicalizados do MESMO jeito.** O `App.tsx` declara
+  `tools/:toolId`; o ledger grava `/tools/:id`. Comparar cru dá cobertura falsa para baixo.
+- **A fase seguinte não é "instrumentar mais"** — é ter ≥1 leitura com denominador. Enquanto não
+  houver, "está no ar" continua sendo ausência de dado (`fase-sem-sinal.md`).
 
 ## Lição
 
@@ -153,4 +183,13 @@ bash scripts/posthog-query.sh "SELECT event, count() n FROM events WHERE event L
 
 # 5. A perna A2 — se algum dia der != 8307 bytes/text-html, o modelo de deploy MUDOU
 for p in /ingest/ /ingest/e/ /api/health; do curl -s -o /dev/null -w "$p %{http_code} %{content_type} %{size_download}\n" "https://steu.lovable.app$p"; done
+
+# 6. A pergunta do founder, pelo canal IMUNE — quais telas chegam a ser abertas
+#    ⚠️ 0 linhas ANTES do apply da migration é ausência de dado, não "ninguém usa".
+~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1 -c "SELECT props->>'rota' rota, count(DISTINCT user_id) titulares, count(*) titular_dias, min(ocorrido_em)::date desde, 'FIM_OK' m FROM analytics_outbox WHERE evento='navegacao.rota_servida' GROUP BY 1 ORDER BY 2 DESC, 3 DESC"
+
+# 6b. O DENOMINADOR comparável. Contagem crua das rotas declaradas — para virar
+#     cobertura, o lado do App.tsx tem de passar pela MESMA canonicalizarRota()
+#     (`tools/:toolId` vira `/tools/:id`); comparar cru mente para baixo.
+grep -c '<Route path="' src/App.tsx
 ```

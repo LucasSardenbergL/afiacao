@@ -777,6 +777,16 @@ de aparelhos mede **quem consegue falar**, não quem mais usa. Registro completo
 correções que o ritual Codex fez ao parecer, e a prova ponta a ponta de que a quarta saída entrega):
 [`proxy-posthog-reavaliado.md`](../historico/proxy-posthog-reavaliado.md).
 
+📍 **O que saiu dessa re-avaliação (mesmo PR):** a allowlist do ledger ganhou
+**`navegacao.rota_servida`** — uma linha por **rota canônica / titular / dia**, emitida pelo
+`PageViewTracker` para o nosso Postgres. A chave é a **forma** da rota (`/orders/:id`), produzida por
+`canonicalizarRota` (`src/lib/analytics-rota-canonica.ts`) com **alfabeto fechado e máscara
+fail-closed** — segmento que não se prova estático vira `:id`, e a querystring **nunca** chega ao
+ledger (o `$pageview` continua com a URL crua; lá o dado não vira acervo nosso). ⚠️ Ao ler a
+cobertura, canonicalize **os dois lados**: o `App.tsx` declara `tools/:toolId`, o ledger grava
+`/tools/:id` — comparar cru mente para baixo. E **`servido` ≠ visto**, e o acervo **não retroage**:
+leitura anterior ao apply é ausência de dado, não zero.
+
 ### O probe de `attempt_id` — como LER (2026-08-26)
 
 A condição (2) do gatilho acima deixou de ser recado. O par é `public.telemetria_probes`
