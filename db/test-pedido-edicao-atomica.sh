@@ -18,19 +18,18 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT="${PGPORT_TEST:-5461}"
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
+PORT="${PGPORT_TEST:-5484}"   # porta propria: 5461 ja e usada por outras 2 provas do nucleo
 SLUG="pedido-edicao-atomica"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithreaded during startup")
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
-
-CELLAR="$(brew --prefix "postgresql@${PGVER}")"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
+# PGBIN resolvido por PLATAFORMA (macOS Homebrew / Linux PGDG) pelo helper compartilhado. O
+# template desta skill traz `/opt/homebrew/...` hardcoded, e é exatamente isso que mantinha a
+# prova FORA do CI: no runner Linux o caminho não existe e o job `provas-sql` morria com
+# "postgresql@17 ausente: brew install". O helper é fail-CLOSED e confere a MAJOR do binário.
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
