@@ -31,11 +31,21 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 <!--gates:frescura inicio-->
 
-**Gates do CI — reprovam o PR** (29): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `mutcheck` · `mutcheck:selftest` · `scripts:typecheck` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
+**Gates do CI — reprovam o PR** (28): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
+
+**Rodam no CI mas NÃO reprovam** (2, informativos por desenho): `mutcheck` · `mutcheck:selftest`.
 
 **Hooks que NEGAM a chamada de ferramenta** (5, permissionDecision deny): `check-gstack.sh` · `destructive-bash-guard.sh` · `heavy-guard.sh` · `migration-collision-guard.sh` · `migration-immutability-guard.sh`.
 
 <!--gates:frescura fim-->
+
+⚠️ **A segunda lista não é decoração — até 2026-09-07 aqueles dois nomes estavam na PRIMEIRA.** O
+job `mutation-check` está fora de `validate.needs` (`ci.yml:921`) e abre Issue em vez de barrar,
+desde o #2344; o censo mesmo assim os anunciava como "reprovam o PR". A causa é que `inventarioCI`
+filtra `continue-on-error` no **step** e não enxerga a outra forma de ser informativo, que é o
+**job inteiro** ficar fora do `needs`. Quem separa hoje é `jobsBloqueantes`
+(`scripts/lib/exclusividade.ts`), pelo fecho transitivo do grafo — derivado, e não uma lista de
+exceções que envelhece sozinha.
 
 ⚠️ **`bunx knip` É bloqueante** — export sem consumidor derruba PR. O `/health` roda o mesmo knip localmente, mas "também roda no /health" **não** significa "só roda no /health".
 

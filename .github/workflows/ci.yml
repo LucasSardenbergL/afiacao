@@ -693,6 +693,26 @@ jobs:
       - name: Frescura do manual (CLAUDE.md <-> ci.yml/hooks, dois sentidos)
         run: bun run gates:frescura
 
+      # Exclusividade: um gate NOVO precisa provar que pega algo que nenhum outro pega.
+      #
+      # Este step e BARATO por construcao — le um JSON e compara com o ci.yml; nao executa gate
+      # nenhum. A medicao cara (n defeitos x m gates, sabotando o repo REAL, uma sabotagem por
+      # vez) roda FORA do CI em `bun run exclusividade:medir` e grava
+      # `scripts/exclusividade-matriz.json`. Mesmo desenho do `authz:carimbo`: medir onde ha o
+      # que medir, bloquear onde precisa bloquear.
+      #
+      # POR QUE EXISTE: o custo de um gate e medido para sempre (segundos neste log, a cada PR) e
+      # ate 2026-09-07 o beneficio nao era medido em lugar nenhum. Com um lado da conta visivel e
+      # o outro nao, "criar mais um gate" era sempre a escolha barata — 15 comandos-gate entraram
+      # em 3 semanas e ESTE job cresceu 4,4x em 11 dias.
+      #
+      # O QUE ELE NAO FAZ: reprovar por exclusividade zero. Corpus curto nao mede gate raro
+      # (`docs:links` tem dez achados no proprio historico e nao apareceu numa janela de 80 runs),
+      # e condenar por ausencia de sinal e a armadilha no 1 do repo. Zero e RELATADO, com o
+      # denominador colado. Quem corta e o founder, com a evidencia na mao.
+      - name: Exclusividade de gate (gate novo prova o que so ele pega)
+        run: bun run exclusividade
+
       # Anti-regressão de DEAD CODE (export sem consumidor, dep sem import). Existe porque o gate
       # só-local não barra ninguém, e isso foi MEDIDO: o #1212 zerou os 254 achados e verificou
       # `exit 0` em 2026-07-07, mas ficou 4 semanas em CONFLICTING (estado em que o auto-merge

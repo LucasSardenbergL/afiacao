@@ -2,7 +2,108 @@
   "schemaVersion": 1,
   "medidoEm": "2026-09-08T01:22:06.083Z",
   "sourceHead": "d012b8e214740b9752da0291afaea14d2b33ab1c",
-  "dispensados": [],
+  "dispensados": [
+    {
+      "gate": "authz:carimbo",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "authz:check",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "build",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "canaria:bump",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "edges:typecheck",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "evals:deploy-verify",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "evals:deploy-verify:falsificacao",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "knip",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "lint",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "lint:shell",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "scripts:typecheck",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "sonda:bump",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "sonda:cron-prova",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "sonda:fingerprint",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "sonda:nova",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "test:edges",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "test:falsificacao",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "test:hooks",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "test:sonda-rollback",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    },
+    {
+      "gate": "tsc",
+      "desde": "2026-09-07",
+      "motivo": "pre-existente quando a matriz nasceu; divida a medir"
+    }
+  ],
   "baseline": [
     {
       "gate": "bunpin:check",
