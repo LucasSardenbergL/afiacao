@@ -35,11 +35,34 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
+# ---- peso do arquivo, medido do DISCO -----------------------------------
+# O payload nunca traz `file_content` (1.741 eventos, zero ocorrências), então
+# `chars` é null por contrato. Mas ele traz `file_path` — e o peso está a um
+# `wc` de distância. Sem isto, o sensor sabia QUE carregou e não QUANTO.
+#
+# `ausente ≠ zero`, de novo e no mesmo arquivo: `wc` que falhou devolve string
+# vazia, e gravar 0 aí fabricaria "arquivo vazio" a partir de "não consegui ler".
+# Só dígito puro é aceito. Um arquivo realmente vazio mede 0 e 0 é a resposta
+# CERTA — o que se recusa é o 0 que veio de erro, não o 0 medido.
+fp=$(printf '%s' "$entrada" | jq -r '.file_path // empty' 2>/dev/null) || fp=''
+bytes_arquivo=null
+palavras_arquivo=null
+if [ -n "$fp" ] && [ -r "$fp" ] && [ -f "$fp" ]; then
+  b=$(wc -c <"$fp" 2>/dev/null | tr -d ' ') || b=''
+  w=$(wc -w <"$fp" 2>/dev/null | tr -d ' ') || w=''
+  case "$b" in ''|*[!0-9]*) ;; *) bytes_arquivo="$b" ;; esac
+  case "$w" in ''|*[!0-9]*) ;; *) palavras_arquivo="$w" ;; esac
+fi
+
 # printf '%s' — nunca `echo "$json" | jq`: o echo do zsh interpreta escapes e corrompe o JSON.
-if ! printf '%s' "$entrada" | jq -c --arg ts "$ts" '{
+if ! printf '%s' "$entrada" | jq -c --arg ts "$ts" \
+      --argjson bytes "$bytes_arquivo" --argjson palavras "$palavras_arquivo" '{
       ts: $ts,
       motivo: (.load_reason // "?"),
       arquivo: (.file_path // "?"),
+      # o que o payload não diz, o disco diz: peso REAL do que foi carregado.
+      bytes_arquivo: $bytes,
+      palavras_arquivo: $palavras,
       # ausente ≠ zero: `(.file_content // "") | length` gravava 0 quando o payload
       # NÃO traz o campo — ausência de dado virando a MEDIDA 0 (a mesma fabricação
       # que `Number(null)===0` é no money-path). null diz "não sei"; 0 mentiria.
@@ -49,7 +72,15 @@ if ! printf '%s' "$entrada" | jq -c --arg ts "$ts" '{
       # saber se `agent_type` estava AUSENTE (⇒ o "principal" abaixo é default, não
       # observação) no dia em que um subagente finalmente aparecer.
       campos: (keys|join(",")),
-      agente: (.agent_type // "principal"),
+      # ERA `// "principal"`: um default rotulando como OBSERVAÇÃO o que nunca foi
+      # observado. Medido em 2026-09-07: `agent_type` não aparece em 1 de 1.741
+      # eventos, e o cruzamento fecha o caso — a sessão b0466403 rodou 34
+      # subagentes e emitiu 3 eventos; ac72c4b2, 8 subagentes e 1 evento. O hook é
+      # estruturalmente CEGO a subagente: o InstructionsLoaded não é emitido para
+      # ele. (O CLAUDE.md CHEGA lá — provado por sonda direta com tool_uses: 0.)
+      # `agente_fonte` mantém a distinção viva no dado, não só no comentário.
+      agente: (.agent_type // null),
+      agente_fonte: (if has("agent_type") then "payload" else "ausente" end),
       agent_id: (.agent_id // null),
       sessao: (.session_id // "?"),
       cwd: (.cwd // "?")
