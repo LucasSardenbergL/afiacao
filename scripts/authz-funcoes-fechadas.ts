@@ -271,6 +271,31 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
   // Aqui a Parte E protege o fecho INTEIRO: sem o REVOKE, um DROP+CREATE devolve a função a
   // `anon` E `authenticated` de uma vez, e não há gate no corpo para segurar — é justamente por
   // isso que estas foram classificadas como ACK e não no manifesto.
+  // 2026-09-08 — a função MAIS PODEROSA do banco, e por isso a que mais precisa estar aqui.
+  // `aplicar_sql` é SECURITY DEFINER com dona `postgres`: quem a executa aplica DDL arbitrário
+  // com os privilégios do dono dos 425 objetos de `public`. Ela existe porque a plataforma
+  // recusa `GRANT postgres TO <papel>` (42501 — só quem tem ADMIN sobre `postgres` pode, e
+  // isso é só o `supabase_admin`), então executar-como é o único caminho para automatizar o
+  // apply de migration (decisão do founder, 2026-09-08; ver docs/historico/).
+  //
+  // Por que a entrada importa MAIS que as outras: antes dela, esta auditoria lia 57 funções de
+  // allowlist e a `aplicar_sql` não era uma delas — a função com mais poder do banco era a
+  // única INVISÍVEL ao sentinela que existe para vigiar EXECUTE. Verde por ausência de dado.
+  // Com a entrada, qualquer GRANT futuro a `anon` ou `authenticated` (um DROP+CREATE sem
+  // reemitir o REVOKE, por exemplo) vira VERMELHO em vez de passar batido.
+  //
+  // `fechadaPor: null` é honesto e não é dívida: o fecho não pode morar em
+  // supabase/migrations/ porque o Lovable não aplica migration de nome custom — ele vive em
+  // `db/claude-rw-bootstrap.sql`, colado à mão uma vez. O EXECUTE nominal é só do `claude_rw`,
+  // papel NOINHERIT sem privilégio próprio cuja senha existe apenas na máquina do founder —
+  // e `claude_rw` não é uma RoleVigiada justamente porque não é role de browser.
+  'public.aplicar_sql': {
+    fechadaPor: null,
+    permitido: PORTA_FECHADA,
+    motivo:
+      'porta de escrita automatizada (SECURITY DEFINER = postgres, executa DDL arbitrário); ' +
+      'EXECUTE nominal só para claude_rw — nenhuma role de browser pode alcançar, nunca',
+  },
   'private.atp_disponivel': {
     fechadaPor: '20260808012000_atp_reconciliacao_fase3.sql',
     permitido: PORTA_FECHADA,
