@@ -19055,6 +19055,19 @@ export type Database = {
         Args: { p_erro: string; p_ids: number[] }
         Returns: number
       }
+      aplicar_edicao_pedido_omie: {
+        Args: {
+          p_items: Json
+          p_itens: Json
+          p_lido_em: string
+          p_notes: string
+          p_omie_payload: Json
+          p_omie_response: Json
+          p_sales_order_id: string
+          p_total: number
+        }
+        Returns: Json
+      }
       aplicar_exclusao_fornecedores: { Args: never; Returns: Json }
       aplicar_parametros_automatico_diario: {
         Args: { p_empresa: string }
@@ -20165,6 +20178,10 @@ export type Database = {
           lote: number
           total: number
         }[]
+      }
+      pedido_venda_exigir_coerencia: {
+        Args: { p_id: string }
+        Returns: undefined
       }
       pedidos_programados_watchdog_claims: { Args: never; Returns: number }
       pode_ler_custo: { Args: never; Returns: boolean }
