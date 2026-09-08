@@ -80,7 +80,7 @@ para prever o CI (`medir-ganho-de-ci-sob-ruido.md`: o runner varia 45%).
 | `docs:links` | **1**/7 | 2 | 903ms | só ele pega link quebrado FORA de índice |
 | `exclusividade` | **1**/7 | 1 | 245ms | só ele lê a matriz — nenhum outro gate a enxerga |
 | `gates:frescura` | **1**/7 | 1 | 419ms | só ele pega gate que sumiu do censo |
-| `docs:indice` | **0**/7 | 2 | 58ms | **redundante — ver abaixo** |
+| `docs:indice` | **0**/7 | 2 | 58ms | zero **por CÓPIA**, e a cópia só saiu pela metade — ver abaixo |
 | `test` (vitest) | 0/7 | 2 | 128s | `[s/ mira]`: nenhum defeito foi escrito para ele |
 | `docs:citacoes` | 0/7 | 0 | 3,8s | `[s/ mira]`: idem — e é o mais caro dos "baratos" |
 
@@ -101,8 +101,53 @@ quebrou, na hora. Cortar a asserção do vitest tira a mesma detecção de dentr
 onde ela chega ao autor no meio de 800 arquivos.
 
 **A recomendação é manter o step e retirar a duplicata do vitest** — o inverso do que "o step é
-redundante" sugeriria. O corte em si não foi executado: é decisão de produto, e a evidência está
-na matriz.
+redundante" sugeriria.
+
+#### O corte foi executado — e a duplicação NÃO saiu inteira
+
+A asserção que auditava o repo de ponta a ponta dentro do vitest
+(`auditarIndices(lerDiretoriosIndexados())`) saiu. Remedindo `indice-orfao` logo depois:
+
+```
+defeito indice-orfao
+  VERMELHO docs:indice (363ms)
+  VERMELHO test (687061ms)      <- continuou pegando
+[redund]  docs:indice  exclusivos 0/8 - pegou 2
+```
+
+`docs:indice` segue com exclusivo ZERO. O corte acertou o alvo — o step continua vermelho, então
+não foi ele que se perdeu —, mas a detecção do órfão **sobrevive noutro lugar do mesmo arquivo**:
+a guarda anti-vácuo `cada índice real tem exatamente uma entrada por doc do diretório`. Sabotando
+o repo e rodando só aquele arquivo (controle verde de 34 na mesma invocação), o vermelho é único e
+tem nome:
+
+```
+× o repo de verdade > cada índice real tem exatamente uma entrada por doc do diretório
+  Tests  1 failed | 33 passed (34)
+```
+
+As outras duas guardas do bloco ficaram VERDES sob o defeito — elas são cegas ao órfão, anti-vácuo
+de verdade. A duplicação está inteira num `expect` só.
+
+**A lição é sobre o formato da asserção, não sobre o gate.** A guarda declara, no próprio
+comentário, proteger as invariantes 3/4/5 de um parse que devolvesse `[]`. Mas ela foi escrita como
+IGUALDADE DE CONJUNTO entre as entradas do índice e os arquivos do diretório — e igualdade de
+conjunto *é* a invariante do órfão. A implementação excede o contrato declarado, e o excedente é
+exatamente a parte que duplica o step. Uma guarda fiel ao que ela diz proteger cobraria *volume* de
+entradas ("o parse não morreu"), não *identidade* com a lista de arquivos.
+
+Estreitá-la é decisão em aberto, e deliberadamente não tomada aqui: enfraquecer uma rede anti-vácuo
+para ganhar 0 exclusivo é caro pelo lado errado. Fica medido para quem decidir.
+
+#### Cuidado ao ler a coluna `mediana` desta remedição
+
+O `test` acima aparece com 687s, contra os 128s da primeira medição — a mesma máquina sob swap
+(~30 sessões vivas na M2 8GB), não uma regressão do gate. O baseline saltou de 215s para 468s no
+mesmo intervalo. **O eixo VERDE/VERMELHO atravessou a carga sem se mexer; o eixo do TEMPO variou
+5×** — bem além dos 45% de ruído de runner que `medir-ganho-de-ci-sob-ruido.md` registra. A matriz
+guarda `medidoEm`/`sourceHead` GLOBAIS, mas a remedição é PARCIAL por desenho (`--defeitos`/
+`--gates` reescrevem só as células pedidas): logo, medianas de células diferentes podem vir de
+máquinas e cargas diferentes, e não são comparáveis entre si.
 
 A sobreposição parcial com `docs:links` que o Codex também anotou está medida na segunda linha:
 os dois pegam o alvo-fantasma, mas só `docs:links` pega o link quebrado fora de um índice. As
