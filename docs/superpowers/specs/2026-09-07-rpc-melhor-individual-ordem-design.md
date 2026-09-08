@@ -4,6 +4,19 @@
 > deixou a RPC de fora **de propósito**, com 5 critérios de aceite. Este é o desenho que os atende.
 > Re-medição em prod: 07/09/2026, `psql-ro`, geração de 21/08/2026, 1.083 recomendações pendentes.
 
+> 🚧 **STATUS: REPROVADA NO CHALLENGE — não implementar esta versão.** Challenge Codex
+> (`gpt-6-astra`, `max`, 522 s, 159k tokens) derrubou quatro peças, todas confirmadas no código:
+> (a) o teste da `relevance` implícita é fraco — como o up-sell vence os 186 pares, o limite
+> superior do clamp passa por construção e não testa nada; (b) `empatados` **mente** quando a
+> `ordem` é nula: "N produtos igualmente indicados" afirma igualdade MEDIDA onde houve
+> desconhecimento (é `ausente ≠ zero` com outra roupa); (c) `product_id = NULL` colide com o ramo
+> `produto_nao_resolve` do leitor atual (`useBundleEngine.ts:1050`), virando "SKU sumiu" em vez de
+> "empatou"; (d) há escolha arbitrária **a montante** do rank — `compararRecencia` desempata por
+> `pedidoId` (uuid) quando as datas empatam, e o vencedor do up-sell muda sem que o rank deixe de
+> parecer inequívoco. Além disso a RPC **não** é fronteira que toda via cruza: o preview do
+> WhatsApp lê a tabela direto e reordena pelo score arredondado. Revisão em curso.
+
+
 ## 1. O que a re-medição acrescentou à fotografia do #2350
 
 A fotografia do doc **reproduziu exatamente** (714 cross-sell + 369 up-sell, mesmas faixas, 186/186
