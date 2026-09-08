@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 534
+-- Total de custom migrations: 536
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -575,7 +575,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260907210000', 'pedido_edicao_omie_atomica', '20260907210000_pedido_edicao_omie_atomica.sql'),
   ('20260907220000', 'pedido_venda_coerencia_agregado', '20260907220000_pedido_venda_coerencia_agregado.sql'),
   ('20260907223901', 'analytics_ledger_navegacao_rota_servida', '20260907223901_analytics_ledger_navegacao_rota_servida.sql'),
-  ('20260908055405', 'analytics_ledger_navegacao_postcondicao_corrigida', '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql')
+  ('20260907230000', 'farmer_ordem_e_referencia_ambigua', '20260907230000_farmer_ordem_e_referencia_ambigua.sql'),
+  ('20260908055405', 'analytics_ledger_navegacao_postcondicao_corrigida', '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql'),
+  ('20260908070850', 'deploy_sonda_alvos_onda2', '20260908070850_deploy_sonda_alvos_onda2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2365,6 +2367,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_cab', 'sales_orders'),
   ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_lin', 'order_items'),
   ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
+  ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_melhores_individuais_por_cliente', ''),
   ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
 ),
 obj_status AS (
@@ -4203,6 +4207,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_cab', 'sales_orders'),
   ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_lin', 'order_items'),
   ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
+  ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_melhores_individuais_por_cliente', ''),
   ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
 )
 SELECT
@@ -4615,6 +4621,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'farmer_recomendacoes_substituir', 1, '20260814223445_farmer_recomendacoes_geracao_vigente.sql', '39e59cbfb7071472c9eaa0baaf733282'),
   ('public', 'farmer_recomendacoes_substituir', 2, '20260815181500_farmer_geracao_head_sensor.sql', '55e4fc0765dd5cd10ff3e8ee60c4ce45'),
   ('public', 'farmer_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', 'db77f24d70a09cc45b69e46c7a7b7532'),
+  ('public', 'farmer_recomendacoes_substituir', 4, '20260907230000_farmer_ordem_e_referencia_ambigua.sql', '0860be9adbe77df30496d4586ee84a8a'),
   ('public', 'farmer_bundle_recomendacoes_substituir', 1, '20260814223445_farmer_recomendacoes_geracao_vigente.sql', '87b8ab8a7ca30c1dc64f6cd4c0c4cfaa'),
   ('public', 'farmer_bundle_recomendacoes_substituir', 2, '20260815181500_farmer_geracao_head_sensor.sql', '264eb147710156edf8b3e3f3e17e4fb0'),
   ('public', 'farmer_bundle_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', '3b68a4bda4fc43e049d07a37659ee55c'),
