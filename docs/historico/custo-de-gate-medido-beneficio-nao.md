@@ -126,6 +126,73 @@ A causa é fina: `inventarioCI` filtra `continue-on-error` no **step**, e não e
 de ser informativo — o **job inteiro** ficar fora do `needs`. Quem separa agora é `jobsBloqueantes`,
 pelo fecho transitivo do grafo: derivado, não uma lista de exceções que envelhece sozinha.
 
+## O segundo sub-achado: a própria máquina tinha um gate isento, em silêncio
+
+O cabeçalho anunciava **"28 gate(s) bloqueante(s) no ci.yml"**. O número lia como cobertura total —
+e não era. A lista de gates vem de `gatesCandidatos` → `inventarioCI`, que só reconhece step que
+invoca **script do `package.json`** (`bun run x`, `bunx x`, `bun x`). Step bloqueante escrito em
+shell puro passa direto.
+
+Não é hipótese. O #2364 acrescentou `run: bash db/roda-nucleo-ci.sh` ao `ci.yml`, num job dentro de
+`validate.needs`. Medido depois do merge:
+
+```
+bun -e "import {gatesCandidatos} from './scripts/lib/exclusividade.ts';
+import {readFileSync} from 'node:fs';
+const g=gatesCandidatos(readFileSync('.github/workflows/ci.yml','utf8'));
+console.log(g.length, g.some(x=>/nucleo/.test(x.nome)));"
+# -> 30 false
+```
+
+A máquina que cobra de todo gate novo a prova de contribuição exclusiva tinha, ela própria, um gate
+novo bloqueante **isento e calado**.
+
+### O remédio, e o que ele deliberadamente NÃO faz
+
+O gate passou a imprimir um segundo contador, ao lado do de informativos:
+
+```
+   3 step(s) bloqueante(s) FORA da conta por nao invocarem script (sem nome de comando, ...):
+     - gates-e-falsificacao: shellcheck pinado 0.11.0 (o runner traz 0.9.0)
+       $ ver=v0.11.0
+     - provas-sql: PostgreSQL 17 (PGDG) — instala e confere a versão
+       $ if [ ! -x /usr/lib/postgresql/17/bin/initdb ]; then
+     - provas-sql: Núcleo de provas SQL executadas (db/nucleo-ci.txt)
+       $ bash db/roda-nucleo-ci.sh
+```
+
+Isso **não fecha a lacuna** — fecha o **silêncio**, que era o que fazia o número mentir. É o mesmo
+remédio, e pelo mesmo motivo, do `bloqueantesSemScript` do `gates:frescura`: *exclusão silenciosa lê
+como cobertura total*.
+
+Cobrar de fato desses steps (dar-lhes identidade e incluí-los em `gatesCandidatos`) foi considerado
+e **adiado com motivo medido**, não por preguiça: o motor de medição executa cada gate com
+`spawnSync('bun', ['run', <nome>])`. Sem nome de script **não há o que invocar** — cobrar exigiria
+um segundo executor, e no caso do núcleo SQL um PostgreSQL 17 na máquina que mede. Passar a cobrar
+sem poder medir só teria dois desfechos: reprovar o CI de imediato, ou uma linha nova em
+`dispensados`. Dívida declarada trocada por dívida declarada, com um executor a mais para manter.
+Fica para quando o contador mostrar que a lacuna cresceu.
+
+### Duas decisões finas
+
+**O contador é mais estreito que o do frescura, de propósito.** O do frescura conta todo step sem
+script (5 hoje); este só conta os de job alcançável a partir de `validate.needs` (3). O
+`authz-sentinela` aparece lá e não aqui — certo nos dois: lá o eixo é *"reprova alguma coisa"*, aqui
+é *"reprova o PR"*. Este arquivo tem o grafo de `needs`; o `gates:frescura` não.
+
+**A regra de "tem nome de comando" agora é uma só.** Censo e contador têm de **particionar** os
+steps bloqueantes: se cada ponta usasse sua própria regra, um step poderia cair na fresta e sumir
+das **duas** listas — o silêncio de volta, agora com dois números lhe dando cobertura. Os três
+regexes viraram `nomesDeScript()` em `gates-frescura-check.ts`, usada pelas duas pontas, e a
+partição é asserida contra o `ci.yml` de verdade (nenhum step nas duas listas, nenhum em nenhuma).
+O `bloqueantesSemScript` usava uma aproximação diferente (`/\bbunx?\s+(?:run\s+)?[a-z]/`) que hoje
+concordava — passou a usar a mesma função, e a lista dele não mudou.
+
+Fica anotada uma fresta **latente**: o job `validate` não está no próprio `needs`, então nem
+`bloqueiaPR` nem o contador o alcançam. Hoje não esconde nada — seus únicos steps são o agregador e
+os de Issue. Remendar só o contador faria as duas contas falarem de universos diferentes, que é
+pior que a fresta.
+
 ## O bootstrap tem um nó, e ele é honesto
 
 Um gate novo reprova por falta de medição; a medição exige baseline verde; o baseline inclui o

@@ -13,10 +13,12 @@
 import { readFileSync, readdirSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 
 import {
   CORPUS_DIR,
   avaliar,
+  bloqueantesOpacos,
   derivar,
   fingerprintDefeito,
   fonteDoGate,
@@ -24,11 +26,13 @@ import {
   gatesCandidatos,
   jobsBloqueantes,
   parseDefeitos,
+  primeiraLinhaComCarne,
   resumir,
   type GateAlvo,
   type LinhaMatriz,
   type Matriz,
 } from './lib/exclusividade';
+import { nomesDeScript } from './gates-frescura-check';
 
 const linha = (over: Partial<LinhaMatriz> = {}): LinhaMatriz => ({
   defeito: 'd1',
@@ -119,6 +123,85 @@ describe('jobsBloqueantes — o que de fato reprova um PR', () => {
     for (const j of ['typecheck', 'testes', 'edges-e-build', 'gates-e-falsificacao']) {
       expect(b.has(j), `${j} deveria bloquear`).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// O contador de opacos — o que o numero "N gate(s) bloqueante(s)" estava escondendo
+// ---------------------------------------------------------------------------------------------
+
+describe('bloqueantesOpacos — exclusao silenciosa le como cobertura total', () => {
+  const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
+  const yml = (jobs: string) => `jobs:\n${jobs}\n  validate:\n    needs: [j]`;
+
+  it('step bloqueante SEM nome de script aparece', () => {
+    const y = yml("  j:\n    steps:\n      - name: nucleo\n        run: bash db/roda-nucleo-ci.sh");
+    expect(bloqueantesOpacos(y)).toEqual([{ job: 'j', step: 'nucleo', comando: 'bash db/roda-nucleo-ci.sh' }]);
+  });
+
+  it('step COM nome de script nao aparece — ele ja e cobrado pelo censo', () => {
+    const y = yml("  j:\n    steps:\n      - name: t\n        run: bun run test");
+    expect(bloqueantesOpacos(y)).toEqual([]);
+  });
+
+  it('continue-on-error nao aparece — informativo por desenho nao e lacuna', () => {
+    const y = yml("  j:\n    steps:\n      - name: aviso\n        continue-on-error: true\n        run: bash x.sh");
+    expect(bloqueantesOpacos(y)).toEqual([]);
+  });
+
+  // O eixo aqui e "reprova o PR", nao "reprova alguma coisa" — e o que separa este contador do
+  // `bloqueantesSemScript` do gates:frescura, que nao tem o grafo de `needs` e por isso lista
+  // tambem o `authz-sentinela`. Os dois estao certos, em eixos diferentes.
+  it('step de job FORA de validate.needs nao aparece', () => {
+    const y = `jobs:\n  solto:\n    steps:\n      - name: x\n        run: bash x.sh\n  j: {}\n  validate:\n    needs: [j]`;
+    expect(bloqueantesOpacos(y)).toEqual([]);
+    expect(bloqueantesOpacos(ci).some((o) => o.job === 'authz-sentinela')).toBe(false);
+  });
+
+  // A REGRESSAO que originou tudo: o #2364 pos `bash db/roda-nucleo-ci.sh` num job bloqueante e
+  // `gatesCandidatos` nao o viu — o cabecalho seguiu dizendo "28 gate(s)" e ninguem soube.
+  it('o ci.yml de VERDADE: o nucleo SQL do #2364 esta fora do censo e DENTRO do contador', () => {
+    expect(gatesCandidatos(ci).some((g) => /nucleo/.test(g.nome)), 'o censo nao o nomeia').toBe(false);
+    const nucleo = bloqueantesOpacos(ci).find((o) => o.comando.includes('roda-nucleo-ci.sh'));
+    expect(nucleo, 'o contador tem de ve-lo').toBeDefined();
+    expect(nucleo!.job).toBe('provas-sql');
+  });
+
+  // A invariante que impede a FRESTA: censo e contador tem de PARTICIONAR os steps bloqueantes.
+  // Se as duas pontas usassem regras diferentes para "tem nome de comando", um step poderia sumir
+  // das DUAS listas — e aí o silencio voltaria, agora com dois numeros para dar-lhe cobertura.
+  it('todo step bloqueante com `run` cai em EXATAMENTE uma das duas listas', () => {
+    const doc = parse(ci) as { jobs?: Record<string, { steps?: unknown[] }> };
+    const bloq = jobsBloqueantes(ci);
+    const opacos = new Set(bloqueantesOpacos(ci).map((o) => `${o.job}\u0000${o.step}`));
+    let vistos = 0;
+
+    for (const [job, corpo] of Object.entries(doc.jobs ?? {})) {
+      if (!bloq.has(job)) continue;
+      for (const bruto of corpo?.steps ?? []) {
+        const st = bruto as { name?: string; run?: unknown; 'continue-on-error'?: unknown };
+        if (typeof st.run !== 'string' || st['continue-on-error'] === true) continue;
+        vistos++;
+        const chave = `${job}\u0000${st.name ?? '(sem nome)'}`;
+        const noCenso = nomesDeScript(st.run).size > 0;
+        expect(noCenso !== opacos.has(chave), `${chave} caiu nas duas listas ou em nenhuma`).toBe(true);
+      }
+    }
+    expect(vistos, 'a varredura tem de ter olhado steps de verdade').toBeGreaterThan(10);
+  });
+});
+
+describe('primeiraLinhaComCarne', () => {
+  it('pula vazio, comentario e prologo de shell', () => {
+    expect(primeiraLinhaComCarne('\n# comenta\nset -euo pipefail\nexport A=1\nbash x.sh')).toBe('bash x.sh');
+  });
+
+  it('so prologo devolve o prologo, nunca string vazia (presenca > silencio)', () => {
+    expect(primeiraLinhaComCarne('set -euo pipefail')).toBe('set -euo pipefail');
+  });
+
+  it('trunca com reticencia dentro do limite', () => {
+    expect(primeiraLinhaComCarne('bash '.repeat(30), 20)).toBe('bash bash bash ba...');
   });
 });
 
