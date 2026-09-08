@@ -166,6 +166,15 @@ canal que fala.** O mesmo aparelho que era invisível em 100% dos eventos estava
 por outro cano, no mesmo instante. O par imune × censurável não é sofisticação — é o mínimo para
 que "não apareceu" signifique alguma coisa.
 
+E uma terceira, que veio da entrega e não da medição: **a suíte 22/22 verde escondia um guard que
+nunca executava.** A máscara de rota tinha uma regra dedicada a UUID; sabotá-la deixava tudo verde,
+porque UUID tem 36 chars e já caía antes no teto de 24 do segmento. Nenhuma asserção mentia — a
+cobertura semântica estava certa, e por isso mesmo o teste não podia denunciar a camada morta. Só a
+falsificação **camada por camada** separa "protegido" de "protegido por outra coisa", e ela custou
+uma rodada de `sed`. ⚠️ E o roteiro precisa do **controle verde na mesma invocação**: a rodada em
+que o `sed` da última camada falhou saiu por *"NÃO CONSEGUI"* — se aquele ramo não existisse, o
+script teria terminado sem a camada e eu leria o silêncio como aprovação.
+
 ## Como re-medir
 
 ```bash
