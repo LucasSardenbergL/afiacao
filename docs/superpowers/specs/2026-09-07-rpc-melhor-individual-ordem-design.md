@@ -143,7 +143,7 @@ Devolve `jsonb` com até **dois** objetos por cliente:
 
 ```
 customer_user_id · recommendation_type · product_id · affinity_score · run_id
-                 · situacao · candidatos
+                 · situacao · candidatos · produtos_empatados
 ```
 
 ⚠️ **A revisão 1 tinha UM campo `empatados` e ele MENTIA.** Com `ordem` nula em todo o grupo, ele
@@ -165,7 +165,18 @@ O caso `[1, 2, null]` cai em `ordem_desconhecida` por fail-closed: as ordens con
 relação entre si, mas nada situa a linha nula, e afirmar o vencedor exigiria descartá-la.
 
 **Guard estrutural: `product_id` só é não-nulo quando `situacao = 'eleito'`.** Sem eleição por
-sinal, não sai nome — impossível renderizar a moeda por descuido.
+sinal, não sai vencedor — impossível renderizar a moeda por descuido.
+
+**`produtos_empatados` (array de SKUs) é preenchido SÓ em `empatado`** — e a assimetria com
+`ordem_desconhecida` é o ponto: só listamos produtos quando a igualdade foi **medida**. Em
+`ordem_desconhecida` sai apenas a contagem, porque afirmar "estes são igualmente indicados" sobre
+linhas cuja ordem ninguém conhece seria a mesma mentira do campo único que a revisão 1 tinha.
+
+Decisão de exibir a LISTA (delegada pelo founder, decidida por medição): os 94 empates reais têm
+**tamanho exatamente 2 — todos os 94**. Listar dois nomes ocupa o mesmo espaço que "2 produtos
+igualmente indicados" e é estritamente mais útil: o vendedor conhece o cliente e desempata com o
+que o motor não sabe. O teto é estrutural — o corte do motor persiste no máximo 3 cross-sell por
+cliente, então a lista nunca passa de 3.
 
 Preservados da RPC atual e pelos mesmos motivos: `coalesce(…, '[]'::jsonb)`, `SECURITY INVOKER`,
 `REVOKE`/`GRANT` nomeando as roles.
@@ -211,7 +222,7 @@ O cartão ganha duas células rotuladas, cada uma com:
 | estado | mostra |
 |---|---|
 | `eleito` + SKU resolve | nome do produto |
-| `empatado` | "N produtos igualmente indicados" |
+| `empatado` | "Igualmente indicados: A, B" (os nomes; sempre 2 hoje, teto 3) |
 | `ordem_desconhecida` | "Ordenação indisponível — N recomendações registradas" |
 | `nenhum` | — |
 | `indisponivel` | rótulo + motivo (leitura falhou · SKU fora do catálogo) |
