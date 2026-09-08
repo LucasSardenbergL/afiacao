@@ -72,8 +72,11 @@ Decisões que importam:
 
 ## Prova e falsificação
 
-`db/test-pedido-venda-coerencia.sh` — **30 asserts, PG17 descartável, dois locales, exit 0**.
-Não roda no CI (o CI só faz shellcheck sobre `db/`); é o ritual `prove-sql-money-path`, executado localmente.
+`db/test-pedido-venda-coerencia.sh` — **31 asserts, PG17 descartável, dois locales, exit 0**.
+Hoje **não roda no CI** (o CI só faz shellcheck sobre `db/`); é o ritual `prove-sql-money-path`,
+executado localmente. ⚠️ O PR #2364 (em voo, não-draft) cria o job `provas-sql` com allowlist em
+`db/nucleo-ci.txt` — **quando ele mergear, acrescentar a linha `db/test-pedido-venda-coerencia.sh   31`**,
+senão esta prova fica fora do caminho obrigatório do merge.
 
 - **ANTES**: reproduz o escritor alternativo real e mostra o banco aceitando a corrupção.
 - **DEPOIS**: o mesmo update é recusado; escrita atômica e push do app seguem passando.
