@@ -57,6 +57,47 @@ describe('extrairRpcs — fail-closed onde o nome NÃO é literal', () => {
   });
 });
 
+// ── cegueira (4): LITERAL PARCIAL — a única que errava para o lado do FALSO VERDE ─────────────
+// As outras três cegueiras produzem lista CURTA: o gate recusa, e recusar é o desfecho seguro.
+// Esta produzia um nome ERRADO com exit 0 — o gate cruzava com prod `has_role` (que existe) e
+// liberava uma edge que chama `has_role_v2` (que pode não existir), reencenando o #2285 por
+// dentro da própria ferramenta que existe para preveni-lo. Achada pelo Codex em 2026-09-08.
+describe('extrairRpcs — o literal tem de ser o argumento INTEIRO', () => {
+  it('NÃO reporta `has_role` quando a chamada é `"has_role" + "_v2"` — o nome é outro', () => {
+    const r = extrairRpcs('await db.rpc("has_role" + "_v2", {});', 'a.ts');
+    expect(r.rpcs).toHaveLength(0);
+    expect(r.indirecoes).toHaveLength(1);
+  });
+
+  it('NÃO reporta o prefixo quando o nome é montado com variável (`"pre_" + sufixo`)', () => {
+    // O pior caso: `pre_` provavelmente não existe em prod, então o gate cruzaria um nome que
+    // ninguém chama — e a RPC real nunca seria verificada.
+    const r = extrairRpcs('await db.rpc("pre_" + sufixo, {});', 'a.ts');
+    expect(r.rpcs).toHaveLength(0);
+    expect(r.indirecoes).toHaveLength(1);
+  });
+
+  it('NÃO reporta literal seguido de chamada de método (`"nome".toUpperCase()`)', () => {
+    const r = extrairRpcs('await db.rpc("nome".toUpperCase(), {});', 'a.ts');
+    expect(r.rpcs).toHaveLength(0);
+    expect(r.indirecoes).toHaveLength(1);
+  });
+
+  // Os controles: o aperto acima não pode custar as formas REAIS do repo. Sem estes, um regex que
+  // recusasse tudo passaria nos três testes de cima — sempre-vermelho aprova qualquer coisa.
+  it('CONTROLE: literal seguido de vírgula continua literal', () => {
+    expect(extrairRpcs('await db.rpc("nome_ok", {});', 'a.ts').rpcs.map((a) => a.nome)).toEqual(['nome_ok']);
+  });
+
+  it('CONTROLE: literal seguido de `)` (sem argumentos) continua literal', () => {
+    expect(extrairRpcs('await db.rpc("nome_ok");', 'a.ts').rpcs.map((a) => a.nome)).toEqual(['nome_ok']);
+  });
+
+  it('CONTROLE: espaço entre o literal e a vírgula não quebra', () => {
+    expect(extrairRpcs('await db.rpc("nome_ok" , {});', 'a.ts').rpcs.map((a) => a.nome)).toEqual(['nome_ok']);
+  });
+});
+
 describe('extrairRpcs — comentário não é dependência', () => {
   it('IGNORA `.rpc(` citado em comentário de linha', () => {
     // Não é hipótese: `_shared/itens-com-pedido.ts` cita `.range()` e `fetchAllKeyset` em prosa
@@ -97,12 +138,27 @@ describe('coletarDaEdge — contra o repo REAL', () => {
     expect(r.rpcs.map((a) => a.nome)).toContain('omie_sync_identity_snapshot');
   });
 
-  it('ACUSA a indireção real de `_shared/itens-com-pedido.ts` em vez de omiti-la', () => {
-    // Este é o sítio que motivou a entrega: o loader chama `db.rpc<unknown>(fn, args)`, com o nome
-    // vindo do call-site. Sem o aviso, `apriori_universo_snapshot` e `cockpit_itens_snapshot`
-    // sumiriam do pré-flight — e sumir em silêncio é como o pré-flight vira falso VERDE.
+  it('vê as DUAS RPCs de `_shared/itens-com-pedido.ts`, sem indireção nenhuma', () => {
+    // Este sítio motivou a entrega original e MUDOU em 2026-09-08. Ele chamava
+    // `db.rpc<unknown>(fn, args)` num helper que recebia o nome, e o extrator — corretamente —
+    // acusava indireção. Só que acusar tem preço: o gate de `pendencias-pacote.ts` recusa liberar
+    // a edge sem conseguir medir a cobertura, e isso travou o deploy de `fin-valor-cockpit` com as
+    // duas RPCs existindo em prod o tempo todo (exit 3, "a lista está INCOMPLETA").
+    //
+    // A saída foi eliminar a indireção por CONSTRUÇÃO — literal no `.rpc(` de cada loader, com a
+    // validação seguindo compartilhada — em vez de ensinar o extrator a resolvê-la (2ª opinião do
+    // Codex: a análise ampliaria o código responsável pela garantia do gate, e provar "nenhum
+    // outro nome alcança esta chamada" exige mais do que os call-sites serem literais).
+    //
+    // Este teste trava as duas metades: as RPCs aparecem NOMEADAS, e o arquivo não volta a
+    // esconder dependência atrás de parâmetro. Se alguém reintroduzir o helper, ele fica vermelho.
     const r = coletarDaEdge('fin-valor-cockpit');
-    expect(r.indirecoes.map((i) => i.arquivo)).toContain('supabase/functions/_shared/itens-com-pedido.ts');
+    expect(r.rpcs.map((a) => a.nome).sort()).toEqual(
+      expect.arrayContaining(['apriori_universo_snapshot', 'cockpit_itens_snapshot']),
+    );
+    expect(r.indirecoes.map((i) => i.arquivo)).not.toContain(
+      'supabase/functions/_shared/itens-com-pedido.ts',
+    );
   });
 
   it('edge inexistente FALHA — nunca devolve lista vazia (que se lê como "sem dependências")', () => {

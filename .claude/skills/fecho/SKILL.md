@@ -289,8 +289,9 @@ da conversa, e não "o Lovable disse Active".) **Pendente → DEPLOYE AQUI, nest
 escreva um recado sobre isso:
 
 ```bash
-bun scripts/pendencias-deploy.ts --json > /tmp/pend.json   # quem julga é o LEDGER
-bun scripts/pendencias-pacote.ts - < /tmp/pend.json        # gate de ordem: RPC em prod ANTES da edge
+PEND=$(mktemp -t pend)                                     # único por invocação: /tmp/pend.json colide entre worktrees
+bun scripts/pendencias-deploy.ts --json > "$PEND"          # quem julga é o LEDGER
+bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: RPC em prod ANTES da edge
 ```
 
 O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,

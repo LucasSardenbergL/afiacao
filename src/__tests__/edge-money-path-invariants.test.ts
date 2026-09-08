@@ -2971,9 +2971,16 @@ describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas, num ú
     ).toBe(false);
     // E o assert POSITIVO correspondente: pinar só a ausência deixaria passar um loader que não
     // lê nada. É o §9 — "quando o que defende é a CHAMADA, pine a chamada".
+    // A FORMA mudou em 2026-09-08 e o pin acompanhou: era `lerSnapshot(db, "apriori_…", …)`, um
+    // helper que recebia o nome por parâmetro. O nome saiu do parâmetro e voltou para o `.rpc(`
+    // porque o pré-flight de RPCs (`scripts/lib/edge-rpcs.ts`) é estático e só enxerga o literal
+    // colado na chamada — com o helper, a dependência de banco ficava invisível para ele, e o gate
+    // de deploy recusava liberar a edge por não conseguir MEDIR a cobertura. O invariante aqui é o
+    // mesmo de antes (a leitura passa pela RPC-snapshot); o literal INLINE é o que o torna também
+    // verificável de fora.
     expect(
-      /lerSnapshot\(\s*db,\s*"apriori_universo_snapshot"/.test(loader),
-      'a leitura do Apriori parou de chamar a RPC-snapshot',
+      /\bdb\.rpc(<[^>]*>)?\(\s*"apriori_universo_snapshot"/.test(loader),
+      'a leitura do Apriori parou de chamar a RPC-snapshot pelo nome LITERAL — se virou variável ou helper, o pré-flight deixa de ver a dependência e o gate de deploy trava',
     ).toBe(true);
   });
 
