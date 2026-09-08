@@ -1,5 +1,6 @@
 {
  "imports": {
-  "npm:@supabase/supabase-js@2": "./stubs/supabase.ts"
+  "npm:@supabase/supabase-js@2": "./stubs/supabase.ts",
+  "npm:@anthropic-ai/sdk@^0.93.0": "./stubs/anthropic.ts"
  }
 }
