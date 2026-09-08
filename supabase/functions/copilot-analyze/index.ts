@@ -8,7 +8,9 @@ import {
   traduzirErroAnthropic,
 } from "../_shared/anthropic.ts";
 import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
+import { classificarFlag, erroFlagAmbigua } from "../_shared/sonda-versao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { executarCanaria } from "./canaria.ts";
 import { normalizarAnalise, TOOL_COPILOTO } from "./copiloto-tools.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -54,6 +56,35 @@ Deno.serve(async (req) => {
       JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
+  }
+
+  // ⚠️ CANÁRIA DE DEPLOY ({"canary":true}) — irmã da sonda acima, e NÃO substituta dela.
+  //
+  // A sonda responde marcadores DECLARADOS (`versao` é literal, `fonte` é a constante que o
+  // `sonda:fingerprint` grava): provam qual bundle DIZ ser, não o que ele FAZ. O #2362 fechou a
+  // entrada do deploy (sha256 por arquivo lido de `origin/main`); entre aquela entrada e o bundle
+  // servido continuam livres o cache de build e a resolução de dependência — `npm:` com range
+  // ABERTO está fora do closure, que só anda por import local. A canária EXECUTA o helper e
+  // compara com o contrato. Fronteira do que ela pega: cabeçalho de `canaria.ts`.
+  //
+  // POSIÇÃO — antes do `createClient`, da cota e da Anthropic, de propósito: a canária é chamável
+  // em produção quantas vezes for preciso sem queimar cota nem escrever nada. Fica ATRÁS do
+  // `authorizeCronOrStaff` (topo do handler), então é staff-gated como `docs/agent/deploy.md`
+  // §Canárias prescreve, e alcançável pelo SQL Editor via `x-cron-secret`.
+  //
+  // A SONDA VENCE quando as duas flags vêm juntas: ela é a mais barata e a que o verificador
+  // chama primeiro; quem quer a canária manda só `{"canary":true}`.
+  const decisaoCanaria = classificarFlag(corpoBruto, 'canary');
+  if (decisaoCanaria.tipo === 'ambiguo') {
+    return new Response(
+      JSON.stringify({ error: erroFlagAmbigua('canary', decisaoCanaria.valor, EFEITO), versao: VERSAO }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+  if (decisaoCanaria.tipo === 'sonda') {
+    return new Response(JSON.stringify(executarCanaria()), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   try {
