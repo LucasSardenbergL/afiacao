@@ -964,10 +964,28 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
 - **Agendar** (cron de sistema, sem gastar Claude): `*/30 * * * * cd <repo> && bash .../monitor-deploy.sh
   >> ~/.config/afiacao/deploy-monitor.log 2>&1` (exit 3/4 = avisar; combine com `osascript`/email).
 
-⚠️ **Confirmado em prod (2026-06-26):** o ar serve `__BUILD_SHA__="dev"` — o build do Lovable roda **sem
-`.git`**, então o carimbo nunca materializa um SHA real e o caminho determinístico é **inviável neste host**.
-Consequência operacional: o monitor **depende SEMPRE da sentinela** (2º arg) — sem ela, exit 4 ("indeterminado")
-a cada run. E **passe a URL com `https://`**: sem esquema, o `curl` (sem `-L`) volta vazio e o monitor reporta
+✅ **MUDOU — o carimbo determinístico FUNCIONA (medido em prod 2026-09-08).** De 2026-06-26 até
+2026-09-07 esta seção dizia que o ar servia `__BUILD_SHA__="dev"` (o build do Lovable roda sem `.git`),
+que o caminho determinístico era *"inviável neste host"* e que o monitor *"depende SEMPRE da sentinela"*.
+**Não depende mais.** O `resolveCommitSha()` do `vite.config.ts` varre 14 env de SHA de várias
+plataformas ANTES de cair em `git rev-parse` e só então em `"dev"` — alguma delas passou a existir no
+host de build, e o ar hoje carimba SHA real:
+
+```console
+$ curl -s https://steu.lovable.app/assets/index-<hash>.js | grep -o '__BUILD_SHA__="[^"]*"'
+__BUILD_SHA__="bb9d8d2e"          # = bb9d8d2ed7e7…, ancestral de origin/main, 1 commit atrás
+$ bash .../monitor-deploy.sh https://steu.lovable.app      # SEM sentinela
+  ⚠️ ATRASADO: ar serve bb9d8d2e, main em 84a115a4 → Publish pendente      # exit 3
+```
+
+**Consequência operacional grande: a verificação de frontend deixou de precisar de sentinela**, e com
+ela some toda a família de armadilhas do Passo 4 — exclusividade no `--pai`, 2º emissor na lib
+(`SENTINELA_TAMBEM_NA_LIB`), `SENTINELA_DELIMITADA`, "refactor visual não tem texto novo". O Passo 4
+continua valendo para provar que um **conteúdo específico** está no ar; para a pergunta "o ar ==
+`origin/main`?", o monitor agora responde sozinho, determinístico, com **2 requests**.
+⚠️ **Confira o carimbo antes de confiar** (`git rev-parse --verify <sha>^{commit}` + `merge-base
+--is-ancestor`): se voltar a `"dev"`, o monitor cai em exit 4 e a sentinela volta a ser obrigatória —
+o mecanismo é uma env do host de build, que não é nossa e pode sumir sem aviso. E **passe a URL com `https://`**: sem esquema, o `curl` (sem `-L`) volta vazio e o monitor reporta
 falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 
 ## Referências
@@ -1099,4 +1117,16 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   **Forma do prompt que funcionou** (Passo 3): cabeçalho pedindo as N funções + "Deploy every function
   listed; do not skip any", uma seção **numerada** por edge com o closure ∪ {mapa} dela, e o fecho
   "list the N function names and confirm that **each one** shows Active".
+- [x] **O carimbo `__BUILD_SHA__` voltou a ser REAL (2026-09-08):** de junho a setembro a skill
+  registrava `"dev"` e declarava o caminho determinístico *inviável*, obrigando sentinela em todo
+  run. Medido no piloto da Camada 2: o ar carimbava `bb9d8d2e` (= #2357, ancestral da main), o
+  `monitor-deploy.sh` **sem sentinela** deu **exit 3** com o diagnóstico certo e, após o Publish,
+  **exit 0**. Verificação de frontend agora custa 2 requests e escapa das 3 armadilhas de sentinela
+  do Passo 4. Detalhe em [`docs/historico/piloto-deploy-mcp-lovable.md`](../../../docs/historico/piloto-deploy-mcp-lovable.md) §Camada 2.
+- [x] **O Publish (`deploy_project`) pelo MCP foi medido (2026-09-08), e as DUAS metades fecharam:**
+  canal (transição `monitor-deploy.sh` rc 3 → 0, zero colagem humana) **e** verbatim — este último
+  atestável aqui, ao contrário da edge, porque **o frontend serve o próprio código**: entry idêntico
+  módulo carimbo+hashes de nome (com sabotagem exigindo vermelho), 51/317 chunks byte-idênticos como
+  controle de determinismo, 12/12 amostrados idênticos. Cobertura honesta: **64 dos 317**. N=1 e o
+  diff era 100% docs — não fala por Publish que carrega mudança de `src/`.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

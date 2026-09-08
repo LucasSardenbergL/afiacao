@@ -1,4 +1,9 @@
-# Piloto: o MCP do Lovable deploya edge? — o CANAL sim; VERBATIM não foi atestado (2026-09-07)
+# Piloto: o MCP do Lovable deploya sozinho? — EDGE: só o canal; PUBLISH: canal E verbatim
+
+> **Duas camadas medidas, por experimentos separados.** §Passos 1-3 = **edge** (`send_message`,
+> 2026-09-07). §Camada 2 = **Publish do frontend** (`deploy_project`, 2026-09-08), que fecha nos
+> bytes a metade que a edge deixou aberta. A 3ª camada (migration/`query_database`) segue **não
+> medida** e fora da regra do CLAUDE.md.
 
 > ⚠️ **Este doc foi CORRIGIDO em 2026-09-08 (#2358).** A primeira versão dizia "deploya edge
 > VERBATIM — SIM, medido". Duas revisões independentes (Codex `gpt-6-astra/max` e um subagente
@@ -301,6 +306,181 @@ nasce DEPOIS da entrada do deploy (resolução de dependência, cache de build).
 Nenhuma das duas foi implementada aqui. (a) toca o gerador de prompt de TODOS os deploys, então é
 entrega própria, com falsificação própria.
 
+## Camada 2 — o Publish do frontend (`deploy_project`): as DUAS metades medidas (2026-09-08)
+
+O §"O que o veredito não autoriza" registrava `deploy_project` como **outra camada, e não medida**.
+Esta seção a mede. O resultado é **estritamente mais forte** que o da edge, por uma razão estrutural
+que precisa vir antes dos números: **o frontend SERVE o próprio código.** A edge não — e é daí que
+nasce toda a assimetria. Lá o `fonte` é fingerprint **declarado** (constante lida de um arquivo
+commitado), e por isso a metade "verbatim" ficou `NÃO ATESTADA`. Aqui a verificação lê os **bytes
+que o navegador baixa**, então a mesma pergunta é respondível.
+
+| metade | veredito | força |
+|---|---|---|
+| **O CANAL `deploy_project` publica?** | ✅ **CONFIRMADO** | transição de um ANTES **medido** (`monitor-deploy.sh` rc **3 → 0**), sem colagem humana em ponto nenhum |
+| **O Publish foi VERBATIM?** | ✅ **ATESTADO NOS BYTES** (amostra: 64 dos 317 chunks) | bytes servidos, não constante declarada — e com **controle de falsificação** provando que a sonda discrimina |
+
+### O ANTES — conhecido de graça, e sem tocar em `src/`
+
+A Camada 1 teve de **fabricar** a divergência (bump do `VERSAO`, #2347). Aqui não foi preciso: o ar
+já estava atrasado, e o instrumento disse isso sozinho.
+
+🔴 **Porque o instrumento mudou — e a `lovable-deploy-verify` estava desatualizada.** A §Smoke E2E
+dela registra, desde 2026-06-26, que o ar serve `__BUILD_SHA__="dev"` (o build do Lovable roda sem
+`.git`), logo *"o caminho determinístico é **inviável** neste host"* e o monitor *"depende SEMPRE da
+sentinela"*. **Não depende mais.** O ar carimba SHA real:
+
+```console
+$ curl -s https://steu.lovable.app/assets/index-DCGIbHW4.js | grep -o '__BUILD_SHA__="[^"]*"'
+__BUILD_SHA__="bb9d8d2e"
+```
+
+`bb9d8d2e` resolve para `bb9d8d2ed7e7…` (#2357), **ancestral de `origin/main`, um commit atrás** —
+medido com `git rev-parse --verify` + `git merge-base --is-ancestor`, resposta positiva nos dois. O
+`resolveCommitSha()` do `vite.config.ts` varre 14 env de SHA de várias plataformas antes de cair em
+`git rev-parse` e só então em `"dev"`; alguma delas passou a existir no host de build. Consequência
+prática grande: **a verificação de frontend deixou de precisar de sentinela**, e com ela some toda a
+família de armadilhas do Passo 4 (exclusividade no `--pai`, 2º emissor na lib, `SENTINELA_DELIMITADA`).
+
+Então o ANTES, medido com o instrumento oficial e rc capturado:
+
+```console
+$ bash .claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh https://steu.lovable.app
+[2026-09-07T21:42:03] main=84a115a4  ar=bb9d8d2e  deploy-novo=nao
+  ⚠️ ATRASADO: ar serve bb9d8d2e, main em 84a115a4 → Publish pendente
+MONITOR_RC=3
+```
+
+**E uma ambiguidade que costuma envenenar este teste foi eliminada ANTES do disparo, não depois.**
+Um Publish que não muda nada tem duas explicações — "não publicou" e "publicou de um workspace
+atrasado" — e elas produzem o mesmo eco. `mcp__lovable__list_edits` separou as duas de antemão: a
+edição mais recente do projeto era `84a115a439cd…`, **a própria HEAD da `main`**, `completed` às
+00:36:29Z. O workspace **já tinha** o material certo; o que faltava era só o clique.
+
+### A cobaia — o custo de dar errado, medido e não estimado
+
+O Publish é **atômico**: publica a `main` inteira, então não se escolhe *o quê* publicar. O que se
+escolhe é **QUANDO** — e a janela em que este piloto rodou tem custo de dar errado próximo de zero,
+o que foi medido, não suposto:
+
+```console
+$ git diff --name-only bb9d8d2e origin/main | sed 's#/.*##' | sort -u
+docs
+$ git diff --name-only bb9d8d2e origin/main -- src/ vite.config.ts package.json index.html | wc -l
+0
+```
+
+O intervalo ar→main é **100% documentação**. Publicar leva **zero** mudança de código ao frontend, e
+o único delta observável esperado nos bytes é o próprio carimbo. Isso também respeita a regra que o
+piloto anterior firmou: **não se calibra régua com a própria régua** — o instrumento aqui é o carimbo
++ o `monitor-deploy.sh`, e a cobaia é o Publish num momento de diff nulo em código.
+
+⚠️ **O parâmetro que NÃO foi passado, de propósito.** `deploy_project` aceita `name` — *"Project slug
+for the published URL"*. Passá-lo poderia **re-slugar** e quebrar `steu.lovable.app`, que é o domínio
+canônico de toda a verificação. Foi enviado **só** `project_id`, e a resposta confirmou a URL
+preservada.
+
+### A ação — só o MCP
+
+```
+mcp__lovable__deploy_project(project_id: 8f005805-…)
+→ {"status":"pending","deployment_id":"9efbd228-c231-4f83-91d4-5b8aff17ab0c",
+   "url":"https://steu.lovable.app", …}
+```
+
+**Zero colagem humana**, que é a condição do experimento. A espera foi armada com **teto e ramo que
+diz "não consegui"** (`espera-sem-desistencia.md`): 40 tentativas × 15 s, marcador `TRANSICAO_OK` no
+sucesso e `NAO_CONSEGUI … AUSENCIA DE DADO … NAO veredito negativo` no estouro. Fechou na **1ª**
+tentativa.
+
+### Leitura (a) — os bytes servidos
+
+```console
+$ bash .../monitor-deploy.sh https://steu.lovable.app
+[2026-09-07T21:45:22] main=84a115a4  ar=84a115a4  deploy-novo=SIM (index-DCGIbHW4 -> index-C4XI56cx)
+  ✅ sincronizado: ar serve 84a115a4 == origin/main
+MONITOR_RC=0
+```
+
+**Dois observáveis se moveram** — o carimbo (`bb9d8d2e` → `84a115a4`, exatamente a HEAD da `main`) e
+o hash do entry (`index-DCGIbHW4` → `index-C4XI56cx`), que é o sinal auxiliar que o Passo 4 da skill
+já mandava anotar.
+
+### Leitura (b) — o VERBATIM, que na Camada 1 não foi atestável
+
+Primeiro um susto que virou prova. Normalizando **só** o carimbo, os dois entries divergiam em
+**3.326 bytes** — com tamanho **idêntico** (238.025 = 238.025). Ler isso como "o agente editou" teria
+sido errado; ler como ruído, também. As janelas divergentes responderam:
+
+```console
+ANT: Deps,d=(m.f||(m.f=["assets/WebRTCCallContext-0CAso5BO.js","assets/vendor-react-Dm9CHLxI.js
+NOV: Deps,d=(m.f||(m.f=["assets/WebRTCCallContext-DgJvwEh8.js","assets/vendor-react-Dm9CHLxI.js
+```
+
+São **hashes de nome de chunk** — comprimento fixo, o que explica o tamanho idêntico. E a cascata é
+determinística: o carimbo vive no **entry** ⇒ o conteúdo do entry muda ⇒ o hash do entry muda ⇒ todo
+chunk que **importa** o entry tem sua string de import reescrita ⇒ o hash dele muda também. Medido
+em dois chunks baixados nas duas versões (os nomes com hash continuam servidos): `StatusBadge`
+diferia em **7** bytes e `OrderChat` em **15**, e em ambos os casos os bytes divergentes estavam
+**todos dentro de `./index-<hash>.js`**. Nada mais.
+
+O `vendor-react-Dm9CHLxI.js` — que **não** importa o entry — saiu **idêntico nos dois builds**, e
+esse é o controle que separa a explicação acima de "o build simplesmente não é determinístico":
+**51 dos 317** chunks mantiveram nome+hash exatos. Build não-determinístico teria movido os 317.
+
+Com isso, o teste do verbatim e o seu controle:
+
+```console
+$ norm() { sed -E -e 's/__BUILD_SHA__="[0-9a-f]{7,40}"/__BUILD_SHA__="X"/g' \
+                  -e 's/-[A-Za-z0-9_-]{8}\.js/-HASH.js/g' "$1" | shasum -a 256; }
+entry ANTIGO normalizado: 4df6d7797dfda353c9533b16ae618ed772904eeddc869fb104e37a028a0b579f
+entry NOVO   normalizado: 4df6d7797dfda353c9533b16ae618ed772904eeddc869fb104e37a028a0b579f
+==> VERBATIM_OK
+
+# CONTROLE — sabotar e exigir vermelho, com marcador POSITIVO da mutação
+$ perl -pi -e 's/StatusBadge/StatusBadgeZ/ if $. == 1' sabotado.js
+sabotagem aplicada? marcador POSITIVO: 1 ocorrencia(s)
+sabotado normalizado: 6ee822f5b10cfea01d09d30ddd9b89f9844c0f695d64e3924747e1ad8589abf7
+==> CONTROLE_OK — a normalizacao ACUSA mudanca de conteudo real
+```
+
+O controle não é enfeite: sem ele, uma normalização larga demais (que apagasse conteúdo junto com os
+hashes) daria verde para qualquer coisa — o `SONDA_NAO_DISCRIMINA` do Passo 4, cometido numa sonda
+nova. E ampliando a amostra para **12** dos 266 chunks que mudaram de hash, baixando as duas versões
+de cada e normalizando as referências: **12 idênticos, 0 divergentes, 0 falhas de download**.
+
+**Cobertura honesta do verbatim: 64 dos 317 chunks** — 1 entry (com falsificação), 51 por identidade
+de nome+hash, 12 amostrados byte a byte. Não são os 317.
+
+### Leitura (c) — houve edição registrada?
+
+Como na Camada 1, e com a mesma ressalva sobre o que ela vale:
+
+- `git log 84a115a43..origin/main` → **0 commits**. E, ao contrário do piloto anterior, com
+  **controle positivo na mesma medição**: o mesmo comando enxerga **171** commits do bot em 60 d, então
+  o vazio é veredito e não grep cego.
+- `mcp__lovable__list_edits` → a edição mais recente segue sendo `edt-98a8cf9d…` / `84a115a4` /
+  00:36:29Z, **byte a byte a mesma do baseline**. O `deploy_project` não produziu edição nenhuma.
+
+**E aqui a auditoria vale mais do que valia lá**, por uma diferença de superfície: `send_message`
+aciona um **agente capaz de editar código**; `deploy_project` é uma ferramenta estreita, que só
+publica. O modo de falha "o agente melhorou o código no caminho" tem, nesta camada, uma superfície
+menor — e os bytes acima o descartam para os 64 chunks medidos, o que a Camada 1 não pôde fazer para
+nenhum dos 8 arquivos.
+
+### O que a Camada 2 NÃO autoriza
+
+- **N = 1**, e o diff era **100% docs**. Este resultado **não fala** por um Publish que carrega
+  mudança real de `src/` — que é o caso normal, e onde o agente teria o que "melhorar". O verbatim
+  atestado aqui é o de um build cuja única entrada variável foi o carimbo.
+- **A amostra do verbatim é 64/317**, não a totalidade.
+- **A janela é de menos de 1 minuto** entre a chamada e a transição. O `deployment_id` devolvido
+  amarra o deploy à chamada, e o ANTES foi medido 00:43:21Z com o ar ainda em `bb9d8d2e` — mas com
+  ~21 sessões vivas no host, "alguém clicou Publish nesse minuto" é uma alternativa lógica que a
+  medição não **exclui**, só torna implausível. Dito, para não virar certeza retroativa.
+- **`name` não foi exercitado** — de propósito, porque re-slugar quebraria o domínio canônico.
+- **A migration (3ª camada) segue não medida**, e `query_database` continua fora (abaixo).
+
 ## O que o veredito não autoriza
 
 O piloto respondeu **uma** pergunta. Estender além disto é refazer o erro que ele existiu para
@@ -312,8 +492,9 @@ corrigir.
   de um piloto que testou outra coisa. Esta sessão teve a tentação concreta: o disparo da sonda é um
   `INSERT`, e `query_database` o resolveria sem o founder. Não foi usado — usá-lo mediria um canal
   não-testado **com** outro, e contaminaria o veredito.
-- **`deploy_project` (o Publish do frontend) é outra camada, e segue não medida.** As três camadas
-  manuais do Lovable são independentes: este piloto cobre **edge**, não frontend nem migration.
+- **`deploy_project` (o Publish do frontend) era outra camada, e foi MEDIDA em 2026-09-08** —
+  §Camada 2. O que segue não medido é a **migration**. As três camadas manuais do Lovable são
+  independentes, e o resultado de uma não se estende às outras.
 - **N = 1.** Uma edge, uma chamada, um ANTES conhecido. Isso é estritamente mais forte que a medição
   de 2026-09-06 (8 edges, ANTES desconhecido, transição não observável), e é o que faltava para
   fechar aquela lacuna — mas só na metade CANAL. Não é "o MCP nunca edita": é "nenhuma edição
