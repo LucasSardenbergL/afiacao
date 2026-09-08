@@ -150,63 +150,68 @@ export function construirItemsJson(det: DetInput[]): ItemJson[] {
 }
 
 /**
- * Mescla o preço GRAVADO por cima de uma reconstrução do items-jsonb, casando por
- * `omie_codigo_produto`. Serve a um caso específico e real: um backfill cujo escopo é
- * acrescentar UM campo (a cor da tinta) reconstrói o array inteiro a partir da leitura atual
- * do Omie e, ao gravar, leva junto o preço daquela leitura. Se o Omie tiver parado de informar
- * `valor_unitario` desde o sync original, o preço bom seria APAGADO por uma leitura pior — uma
- * perda silenciosa, num campo que o backfill nem pretendia tocar.
+ * Backfill de cor: acrescenta `tint_nome_cor` aos itens JÁ GRAVADOS, sem tocar em mais nada.
  *
- * Regra: a leitura NOVA vence quando sabe o preço. Só onde ela não sabe é que o preço gravado
- * é reaproveitado, e apenas se for utilizável — um gravado LIXO não é promovido a verdade.
+ * A direção importa. O backfill nasceu RECONSTRUINDO o items-jsonb inteiro a partir da leitura
+ * ATUAL do Omie: o escopo declarado era a cor, mas ele carregava junto produto, quantidade,
+ * preço e desconto. Num pedido canônico — que tem linhas em `order_items` e ninguém as reescreve
+ * aqui — isso move UM dos dois espelhos do agregado e deixa o outro parado: a mesma classe de
+ * defeito do write-back da edição (ver 20260907210000_pedido_edicao_omie_atomica.sql).
+ * Havia aqui um `mesclarPrecoPreservado` que preservava o preço gravado — meia solução, porque o
+ * resto do item continuava vindo da leitura nova. Esta função tapa a classe inteira invertendo
+ * quem manda: a BASE é o que está gravado, e só a cor entra. (Aquele helper saiu junto: sem a
+ * reconstrução, ficou sem chamador.)
  *
- * ⚠️ CÓDIGO REPETIDO NÃO É MESCLADO, e essa é a decisão que importa. Com dois itens do mesmo
- * `omie_codigo_produto` não há como saber qual preço pertence a qual linha; aplicar o primeiro
- * aos dois espalharia um preço para uma linha que talvez nunca o teve. Precisão > recall: na
- * ambiguidade o campo fica `null` ("não sei") em vez de receber um palpite. A repetição é rara
- * mas não hipotética — a RPC de reconciliação também recusa SKU duplicado, então não há quem
- * conserte depois. [P1 do challenge Codex]
- *
- * Casa por código com `String(...)` porque o jsonb devolve number e o Omie às vezes manda
- * string. Lê apenas `valor_unitario`: medido em prod (psql-ro, 2026-09-05), os 70.927 itens do
- * items-jsonb têm `valor_unitario` e ZERO têm `unit_price` — o shape é único.
+ * Só casa código 1-1 nos dois lados — código repetido não diz qual cor pertence a qual linha, e
+ * adivinhar rotularia o item errado. Item que já tem cor não é tocado. Devolve `null` quando não
+ * há nada a fazer (nada gravado, ou nenhuma cor aplicável), para o chamador PULAR o UPDATE em vez
+ * de reescrever o jsonb igual — UPDATE que não muda nada ainda assim dispara trigger e updated_at.
  */
-export function mesclarPrecoPreservado<T extends { omie_codigo_produto?: number | string; valor_unitario: number | null }>(
-  novos: T[],
+export function aplicarCorPreservandoItens(
   gravados: unknown,
-): T[] {
-  if (!Array.isArray(gravados)) return novos;
-  const porCodigo = new Map<string, number>();
+  lidos: Array<{ omie_codigo_produto?: number | string | null; tint_nome_cor?: string }>,
+): Array<Record<string, unknown>> | null {
+  if (!Array.isArray(gravados) || gravados.length === 0) return null;
+
+  const corPorCodigo = new Map<string, string>();
   const ambiguos = new Set<string>();
-  for (const g of gravados) {
-    if (g === null || typeof g !== "object") continue;
-    const linha = g as Record<string, unknown>;
-    const cod = linha.omie_codigo_produto;
+  for (const l of lidos) {
+    const cod = l?.omie_codigo_produto;
     if (cod === null || cod === undefined) continue;
     const chave = String(cod);
-    if (porCodigo.has(chave) || ambiguos.has(chave)) { ambiguos.add(chave); porCodigo.delete(chave); continue; }
-    const preco = precoUnitarioOmie(linha.valor_unitario);
-    if (preco !== null) porCodigo.set(chave, preco);
+    if (corPorCodigo.has(chave) || ambiguos.has(chave)) { ambiguos.add(chave); corPorCodigo.delete(chave); continue; }
+    if (typeof l.tint_nome_cor === "string" && l.tint_nome_cor.length > 0) corPorCodigo.set(chave, l.tint_nome_cor);
   }
-  // Repetição do lado NOVO também é ambígua: um preço gravado único não diz a qual das duas
-  // linhas novas ele pertence, e copiá-lo para as duas inventaria receita.
+
+  // Repetição do lado GRAVADO também é ambígua: uma cor só não diz a qual das duas linhas ela
+  // pertence, e copiá-la para as duas rotularia um item que pode ser de outra cor.
   const vistos = new Set<string>();
-  for (const n of novos) {
-    const cod = n.omie_codigo_produto;
+  for (const g of gravados) {
+    if (g === null || typeof g !== "object") continue;
+    const cod = (g as Record<string, unknown>).omie_codigo_produto;
     if (cod === null || cod === undefined) continue;
     const chave = String(cod);
     if (vistos.has(chave)) ambiguos.add(chave);
     vistos.add(chave);
   }
-  if (porCodigo.size === 0) return novos;
-  return novos.map((n) => {
-    if (n.valor_unitario !== null) return n; // a leitura nova já sabe o preço
-    if (n.omie_codigo_produto === null || n.omie_codigo_produto === undefined) return n;
-    const chave = String(n.omie_codigo_produto);
-    if (ambiguos.has(chave)) return n;      // código repetido: não adivinha
-    const gravado = porCodigo.get(chave);
-    return gravado === undefined ? n : { ...n, valor_unitario: gravado };
+  if (corPorCodigo.size === 0) return null;
+
+  let mudou = false;
+  const saida = gravados.map((g) => {
+    if (g === null || typeof g !== "object" || Array.isArray(g)) return g as Record<string, unknown>;
+    const linha = g as Record<string, unknown>;
+    if (typeof linha.tint_nome_cor === "string" && linha.tint_nome_cor.length > 0) return linha;
+    const cod = linha.omie_codigo_produto;
+    if (cod === null || cod === undefined) return linha;
+    const chave = String(cod);
+    if (ambiguos.has(chave)) return linha;
+    const cor = corPorCodigo.get(chave);
+    if (cor === undefined) return linha;
+    mudou = true;
+    return { ...linha, tint_nome_cor: cor };
   });
+
+  return mudou ? saida : null;
 }
 
 // ── Contrato do payload da RPC `reconciliar_pedidos_omie` (migration 20260830190000) ──────────

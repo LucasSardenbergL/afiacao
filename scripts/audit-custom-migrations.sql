@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 532
+-- Total de custom migrations: 534
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -572,6 +572,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260907095841', 'disparado_simulado_e_estado_pos_disparo', '20260907095841_disparado_simulado_e_estado_pos_disparo.sql'),
   ('20260907101349', 'deploy_sonda_alvos_onda1', '20260907101349_deploy_sonda_alvos_onda1.sql'),
   ('20260907160103', 'revoke_public_sensor_multi_conta', '20260907160103_revoke_public_sensor_multi_conta.sql'),
+  ('20260907210000', 'pedido_edicao_omie_atomica', '20260907210000_pedido_edicao_omie_atomica.sql'),
+  ('20260907220000', 'pedido_venda_coerencia_agregado', '20260907220000_pedido_venda_coerencia_agregado.sql'),
   ('20260907223901', 'analytics_ledger_navegacao_rota_servida', '20260907223901_analytics_ledger_navegacao_rota_servida.sql'),
   ('20260908055405', 'analytics_ledger_navegacao_postcondicao_corrigida', '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql')
 ),
@@ -2356,6 +2358,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('pedido_edicao_omie_atomica', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_exigir_coerencia', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_coerencia_cab', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_coerencia_lin', ''),
+  ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_cab', 'sales_orders'),
+  ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_lin', 'order_items'),
   ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
 ),
@@ -4188,6 +4196,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'reposicao__valida_cancelamento_pos_disparo', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'cancelar_pedido_sugerido', ''),
   ('disparado_simulado_e_estado_pos_disparo', 'function', 'public', 'corrigir_cancelamento_pos_disparo', ''),
+  ('pedido_edicao_omie_atomica', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_exigir_coerencia', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_coerencia_cab', ''),
+  ('pedido_venda_coerencia_agregado', 'function', 'public', 'pedido_venda_coerencia_lin', ''),
+  ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_cab', 'sales_orders'),
+  ('pedido_venda_coerencia_agregado', 'trigger', 'public', 'trg_pedido_venda_coerencia_lin', 'order_items'),
   ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
 )
