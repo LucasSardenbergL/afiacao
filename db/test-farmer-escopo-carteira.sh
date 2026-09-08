@@ -439,6 +439,25 @@ neg_ordem() { # <json> <sqlstate> <rótulo>
     *) bad "$3 — veio: $(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-170)" ;;
   esac
 }
+neg_ordem_valor() { # como neg_ordem, mas DEVOLVE o veredito em vez de contar assert
+  local vista saida
+  vista=$(Pq -c "SELECT coalesce(quote_literal(run_id::text)||'::uuid','NULL')
+                   FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$A';")
+  [ -n "$vista" ] || vista=NULL
+  saida=$(P -tA -c "$COMO_A DO \$t\$ BEGIN
+      PERFORM public.farmer_recomendacoes_substituir('$A','99999999-0000-4000-8000-0000000000fe',
+                $vista,'$1'::jsonb,'completa',NULL,NULL,NULL);
+      RAISE NOTICE 'PASSOU';
+    EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'RECUSOU:%', SQLSTATE;
+    END \$t\$;" 2>&1 || true)
+  case "$saida" in
+    *PASSOU*)       echo "PASSOU" ;;
+    *RECUSOU:FG007*) echo "RECUSOU" ;;
+    *RECUSOU:*)     echo "RECUSOU-OUTRO-MOTIVO:$(printf '%s' "$saida" | sed -n 's/.*RECUSOU:\([A-Z0-9]*\).*/\1/p' | head -1)" ;;
+    *)              echo "ERRO" ;;
+  esac
+  [ -n "${DEBUG_NEG:-}" ] && printf 'DEBUG_NEG[%s] vista=[%s] saida=[%s]\n' "$1" "$vista" "$(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-300)" >&2
+}
 LB="\"customer_user_id\":\"$C1\",\"recommendation_type\":\"cross_sell\",\"product_id\":\"$PROD\",\"affinity_score\":0.5"
 neg_ordem "[{$LB,\"ordem\":0}]"                       FG007 "O19 ordem 0 recusada (0 não é posição)"
 neg_ordem "[{$LB,\"ordem\":-1}]"                      FG007 "O20 ordem negativa recusada"
@@ -489,6 +508,105 @@ eq "O32 ordem numérica e flag booleana continuam aceitas" \
 eq "O33 sob a identidade do DONO a carteira volta NÃO-vazia" \
    "$(Pq -c "SET test.uid='$D'; SET test.role='authenticated';
              SELECT jsonb_array_length(public.farmer_melhores_individuais_por_cliente('$D'));" | tail -1)" "8"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FALSIFICAÇÃO DA ORDEM — uma camada por vez
+#
+# ⚠️ LINHA DE BASE NA MESMA INVOCAÇÃO. Uma suíte sempre-vermelha aprova TODA
+# sabotagem, e rodar o controle noutra execução não prova nada sobre esta. Os
+# valores íntegros são re-lidos aqui e conferidos ANTES do primeiro `sed`; se
+# algum divergir, aborta em vez de "falsificar".
+# ═══════════════════════════════════════════════════════════════════════════════
+echo "─── falsificação: a ordem ───"
+
+BASE_OK=1
+base_confere() { # $1=rótulo $2=obtido $3=esperado
+  if [ "$2" = "$3" ]; then ok "base íntegra: $1 (=$2)"; else BASE_OK=0; bad "BASE JÁ VERMELHA em $1 — esperado [$3], veio [$2]; falsificar aqui seria teatro"; fi
+}
+base_confere "O6 ambígua"      "$(campo "$CM" situacao)" "referencia_ambigua"
+base_confere "O7 flag nula"    "$(campo "$CN" situacao)" "referencia_ambigua"
+base_confere "O26 mistura"     "$(campo "$CG" situacao)" "ordem_indisponivel"
+base_confere "O8 topo"         "$(nprod "$CT")"          "2"
+base_confere "O3 singleton"    "$(campo "$CU" situacao)" "unico_registrado"
+
+if [ "$BASE_OK" -ne 1 ]; then
+  bad "falsificação ABORTADA: a linha de base não está verde nesta invocação"
+else
+  SABO="$(mktemp /tmp/sabota-ordem.XXXXXX)"
+  restaura_ordem() { P -q -f "$MIG_ORDEM" >/dev/null 2>&1; }
+  sabota_ordem() { # $1=rótulo  $2=expressão sed  $3=marca obrigatória no sabotado
+    sed "$2" "$MIG_ORDEM" > "$SABO"
+    if ! command grep -q "$3" "$SABO"; then
+      bad "SABOTAGEM '$1' NÃO casou o padrão — o assert abaixo seria teatro"
+      return 1
+    fi
+    if ! P -q -f "$SABO" >/dev/null 2>&1; then
+      bad "SABOTAGEM '$1' casou o padrão mas NÃO APLICOU — o assert abaixo seria teatro"
+      return 1
+    fi
+    return 0
+  }
+  vermelho() { # $1=rótulo $2=obtido $3=o valor ÍNTEGRO, que NÃO pode sobreviver
+    if [ "$2" = "$3" ]; then bad "FALSIFICAÇÃO SEM DENTE: $1 continuou [$2] com a migration sabotada"
+    else ok "mordeu: $1 virou [$2] (íntegro: [$3])"; fi
+  }
+
+  # F1 — o fail-closed da flag nula vira fail-OPEN.
+  if sabota_ordem "flag nula fail-open" \
+       's/coalesce(b\.referencia_ambigua, b\.ordem IS NOT NULL)/coalesce(b.referencia_ambigua, false)/' \
+       'coalesce(b.referencia_ambigua, false)'; then
+    vermelho "F1 flag NULA com ordem" "$(campo "$CN" situacao)" "referencia_ambigua"
+  fi
+  restaura_ordem
+
+  # F2 — a precedência deixa de barrar geração misturada.
+  if sabota_ordem "mistura ignorada" \
+       's/WHEN g\.geracoes > 1/WHEN false/' 'WHEN false'; then
+    vermelho "F2 geração misturada" "$(campo "$CG" situacao)" "ordem_indisponivel"
+  fi
+  restaura_ordem
+
+  # F3 — `produtos` deixa de recortar o topo e nomeia o grupo inteiro no empate.
+  if sabota_ordem "produtos sem recorte de topo" \
+       "s/AND (f\.situacao NOT IN ('eleito', 'empatado') OR b\.ordem = f\.ordem_minima)/AND true/" \
+       'AND true'; then
+    vermelho "F3 empate nomeia só o topo" "$(nprod "$CT")" "2"
+  fi
+  restaura_ordem
+
+  # F4 — a precedência do singleton some, e ele passa a ser eleito por "topo único".
+  if sabota_ordem "singleton sem precedência" \
+       's/WHEN g\.candidatos = 1  *THEN/WHEN false THEN/' 'WHEN false THEN'; then
+    vermelho "F4 singleton COM ordem" "$(campo "$CS" situacao)" "unico_registrado"
+  fi
+  restaura_ordem
+
+  # F5 — a validação de ordem < 1 vira decoração.
+  if sabota_ordem "ordem < 1 desligada" \
+       's/AND r\.ordem < 1)/AND r.ordem < -32000)/' 'AND r.ordem < -32000)'; then
+    # ⚠️ o JSON sai para uma variável ANTES da chamada: dentro de `$( )` o bash faz BRACE
+    # EXPANSION em `{a,b}` e parte o payload em duas palavras — a função recebia `["ordem":0]`
+    # e o erro virava 22P02, um vermelho pelo motivo ERRADO.
+    J5="[{$LB,\"ordem\":0}]"
+    vermelho "F5 ordem 0 recusada" "$(neg_ordem_valor "$J5")" "RECUSOU"
+  fi
+  restaura_ordem
+
+  # F6 — a checagem de TIPO JSON some. Este é o que prova o achado: sem ela o cast
+  # CONVERTE "false" em false e grava uma negativa explícita de ambiguidade.
+  if sabota_ordem "tipo JSON não checado" \
+       's/IF v_tipo_errado > 0 THEN/IF v_tipo_errado > 999999 THEN/' 'v_tipo_errado > 999999'; then
+    J6="[{$LB,\"referencia_ambigua\":\"false\"}]"
+    vermelho "F6 flag \"false\" recusada" "$(neg_ordem_valor "$J6")" "RECUSOU"
+  fi
+  restaura_ordem
+
+  rm -f "$SABO"
+  # E o CONTROLE de saída: restaurada, a base volta a ficar verde na MESMA invocação.
+  eq "F7 restaurada, a migration volta a barrar a geração misturada" "$(campo "$CG" situacao)" "ordem_indisponivel"
+  eq "F8 restaurada, o fail-closed da flag volta"                    "$(campo "$CN" situacao)" "referencia_ambigua"
+fi
 
 echo "─── falsificação ───"
 P -q <<SQL
