@@ -799,3 +799,117 @@ fabricado. Aqui não foi preciso: o eco do slug bastou.
   argumento MAIS forte) e já reverteu fix mergeado (#1076, #1445→#1478). Deploy em push cru levaria a reversão
   dele a produção em minutos. Se um dia automatizar, o gatilho é **merge de PR** (sufixo `(#NNN)`) e
   quem decide é `pendencias:deploy`.
+
+## Re-teste de 2026-09-08 — a pergunta voltou em 1 dia, e a resposta ganhou um freio de MÁQUINA
+
+O founder perguntou de novo, com outras palavras: "descubra se você consegue colar o que precisa no
+SQL Editor do Lovable". **O primeiro movimento não foi medir — foi procurar o ARTEFATO** (regra
+multi-sessão do CLAUDE.md: a tarefa pode já estar entregue na main sem colidir com arquivo nenhum).
+Achou este doc, `d698ec7cb`, de 24h antes. Sem essa busca, o custo seria refazer as 14 chamadas da
+Camada 3 para chegar no mesmo lugar. **Registrar o veredito num doc procurável é o que fez a
+segunda pergunta custar uma varredura em vez de um piloto.**
+
+O re-teste rendeu **uma medição nova** e **duas correções** — as duas contra afirmações deste doc.
+
+### 🆕 O freio deixou de ser só o meu juízo — mas ainda não é o guard-rail que a §Camada 3 pediu
+
+A §Camada 3 fechou com "o freio teria de ser o meu juízo, e juízo não é guard-rail". **Hoje há um
+freio de máquina:** uma sonda de identidade **puramente `SELECT`** (`current_user`, `rolsuper`,
+`rolbypassrls`, `search_path`, `statement_timeout`) foi **NEGADA pelo classificador do auto mode**
+antes de sair da sessão — `Permission for this action was denied by the Claude Code auto mode
+classifier`. Nem leitura passou.
+
+Precisão sobre o que isso é e o que **não** é:
+
+| afirmação | força |
+|---|---|
+| A chamada foi barrada sem chegar ao banco | ✅ medido, 1 observação |
+| O bloqueio é da FERRAMENTA, não do statement | 🟡 **1 ponto só** — o `SELECT` era a única sonda enviada; não re-tentei após a negativa (re-disparar ferramenta negada é contornar a intenção do freio, não medi-la) |
+| Isso satisfaz a condição de reabertura da §Camada 3 | ❌ **NÃO** — é freio do **modo de permissão da sessão**, não do repo: não é durável entre sessões, não é configurável por invariante, e **não gera trilha nenhuma**. A condição continua sendo read-only/papel na ferramenta, ou ledger de escritas server-side |
+
+Efeito colateral medido no mesmo turno: o classificador **também** barrou um `cat` do
+`.claude/settings.json`. Consequência honesta — a afirmação "não existe regra `deny` para
+`query_database`" **não foi verificada em primeira mão** nesta sessão.
+
+### ✏️ Correção 1 — "é política, não limitação técnica" está ERRADO como enunciado
+
+A varredura desta sessão concluiu "o bloqueio é política, e política já testada". O Codex derrubou
+com citação: `docs/runbooks/lovable-supabase.md:5-7` (maio/2026) registra **"O Lucas NÃO tem acesso
+a terminal/curl/Supabase CLI pro backend. Todo acesso ao banco e edge functions é feito
+exclusivamente pela UI do Lovable"**. A colagem **nasceu de limitação técnica real** — não de
+desenho de segurança.
+
+O enunciado correto tem duas metades, e trocar uma pela outra reescreve a história:
+
+- **Origem (maio/2026): limitação técnica.** Não havia rota; a UI era a única.
+- **Postura atual (07/09/2026): política deliberada.** A §Camada 3 mediu que a rota EXISTE e
+  escolheu não usá-la. Decisão tomada **sabendo** da capacidade — é isso que a torna política, e
+  não a ausência de alternativa.
+
+Só a segunda metade sustenta a regra hoje. Vender a primeira como se fosse desenho seria inventar
+motivação retroativa — e o `money-path.md:15` ("**Gate humano na escrita** — o founder no loop pra
+escrita money-path (migration via SQL Editor)") já basta sem essa muleta.
+
+### ✏️ Correção 2 — "a escrita não deixa rastro" excede o que foi medido
+
+A §Camada 3 e a §"O que o veredito não autoriza" afirmam que a escrita não deixa rastro. O que o
+ANTES/DEPOIS de 14 chamadas prova é mais estreito: **`list_edits` não registra**. Não prova que o
+Lovable não guarda log server-side em lugar nenhum — é a própria regra **"ausente ≠ zero"** do
+CLAUDE.md aplicada contra este doc. O controle ANTES/DEPOIS é bom e continua valendo; o que não
+vale é generalizar de uma superfície para todas.
+
+Isso **não** afrouxa o veredito: um log que eu não consigo ler, nomear nem apontar não é trilha de
+auditoria para efeito de money-path. Mas a frase certa é "**sem trilha que eu possa exibir**", não
+"sem rastro".
+
+### 🤝 2ª opinião — Codex escolheu (d) por caminho independente
+
+`scripts/codex-async.sh -r max` (gpt-6-astra, 443s, 96.682 tokens, tentativa 1, exit 0). Perguntado
+entre (a) adotar tudo, (b) só leitura, (c) escrita com gate, (d) não adotar, escolheu **(d)**,
+comparando as alternativas em vez de julgar em abstrato:
+
+- **(b) "só leitura"** é ilusório: *"continua expondo a mesma ferramenta capaz de escrever. Uma
+  instrução no prompt não equivale ao bloqueio do `psql-ro`"* — o read-only do wrapper é estrutural,
+  a promessa de só ler é comportamental.
+- **(c)** só volta à mesa com gate externo **efetivo**: *"uma confirmação genérica no chat é
+  insuficiente"*.
+
+Ele também recusou o enquadramento de que a colagem é limpa. Falhas do caminho manual, nomeadas:
+bloco antigo, incompleto, ordem errada, aplicação esquecida ou duplicada — e **a colagem também não
+garante recibo confiável**. O clique preserva a *oportunidade* de revisão; não prova revisão.
+
+**Contrato do gate, se algum dia (c) voltar** — isto SUBSTITUI o "ledger server-side" vago da
+§Camada 3 por especificação executável:
+
+> founder aprova **projeto + commit + SHA-256 do SQL exato**; o executor só aceita esse artefato,
+> com **aprovação de uso único** e **sem rota alternativa direta ao MCP**; verifica pré-condições,
+> executa atomicamente, registra tentativa/aprovação **fora** da transação e recibo de aplicação
+> **dentro** dela; valida depois por leitura independente; e **nunca reaplica resultado
+> desconhecido** automaticamente (resposta HTTP perdida ≠ falha).
+
+Codex: *"isso é infraestrutura nova, não uma capacidade demonstrada do canal atual"*. Enquanto ela
+não existir, (d) segue.
+
+### Armadilha para quem for medir equivalência um dia
+
+`CREATE INDEX CONCURRENTLY` **não cabe em bloco transacional** — a atomicidade provada na Camada 3
+não se estende a ele. Sequências e efeitos externos também não voltam no rollback. E o timeout do
+transporte HTTP exige ensaio próprio: **resposta perdida é resultado DESCONHECIDO**, não falha —
+reaplicar por reflexo é como se aplica uma migration duas vezes.
+
+### Quanto confiar nos números de linha deste addendum
+
+Rodei `docs:citacoes` e deu verde — **e o verde não valia nada aqui**. Falsifiquei: corrompi o
+TEXTO citado e depois o NÚMERO da linha, e o gate ficou verde nas duas sabotagens (controle verde
+na mesma invocação, arquivo restaurado ao fim). Isso é **ausência de dado**, não aprovação.
+
+A causa é DESENHO, não buraco: `ALVOS_VIVOS` do gate é
+`['CLAUDE.md', 'docs/agent', 'docs/visual-direction', 'docs/runbooks', '.claude/skills']` — e
+`docs/historico` está fora de propósito, pelo motivo que o próprio gate escreve: *"um relatório
+fechado cita o código do DIA dele; forçá-lo a acompanhar a `main` reescreveria o registro para
+descrever um mundo que ele não observou"*. Um doc datado não deve perseguir a main.
+
+Consequência para quem ler daqui a seis meses: as citações acima foram conferidas **à mão nesta
+sessão** (`lovable-supabase.md:5-7`, `piloto:653-657`, `money-path.md:15` — abertas e lidas, não
+inferidas), e valem como **fotografia de 2026-09-08**. Se a linha não bater mais, o deslocamento é
+esperado e não invalida o achado — procure pelo TEXTO citado, não pelo número.
