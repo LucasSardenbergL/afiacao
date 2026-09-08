@@ -525,7 +525,42 @@ depender de eleger.
 - `sabota_ordem` conferia que o PADRÃO casou, não que a migration APLICOU — sabotagem inerte é
   lida como "sem dente" e manda o diagnóstico para o lugar errado.
 
-## 8. Plano de prova (ainda NÃO executado)
+### 7.4 Rodada 5 — o leitor, a tela e o sensor
+
+Reprovou. Os quatro achados foram reproduzidos por ele **executando** os helpers reais e
+renderizando React em memória, não lendo o diff.
+
+| # | Achado | Resolução |
+|---|---|---|
+| 1 | Custo **quadrático** levado para dentro da transação de gravação: `produtos` saía de subquery correlacionada por grupo sobre `base`, e `produto_eleito` repetia a varredura — ~149M verificações com 7.716 grupos, segurando os locks do INSERT. `AS MATERIALIZED` não alcança subquery interna | arrays montados na varredura que `grupo`/`topo` já fazem; o SELECT externo só ESCOLHE qual, e em `eleito` o topo tem um elemento, logo `topo_ids->>0` |
+| 2 | `if (nome)` aceita `"   "`: célula com parágrafo em BRANCO, contada como resolvida, sem aviso. O schema permite a descrição | `trim()` antes de aceitar, com teste dos DOIS lados — aparar não pode virar recusa de produto que existe |
+| 4 | O `title` **diagnosticava** desativação ("não está no catálogo ativo"), mas produto ATIVO com `descricao` vazia produz o mesmo estado | texto passa a dizer o que o código sabe: não identificou pelo nome |
+| 5 | "Um motor novo quebra no compilador" era **falso**: o tipo gerado diz `recommendation_type: string`, e o vocabulário vivia em 3 lugares soltos. Validador aceitando um 3º tipo que a lista não conhece faz a linha entrar no Map e nunca virar célula — cliente só daquele tipo SOME | `TIPOS_INDIVIDUAIS` vira fonte única; união, iteração e `Record` derivam dela |
+
+Sobre o **sensor**, ele corrigiu sem exagerar: não há defeito de MVCC (o `INSERT` do writer
+`VOLATILE` termina antes do statement que chama a RPC `STABLE`) nem de RLS por aninhamento, e a
+definição estrita da §6.1 está cumprida. O que estava excessivo era a **promessa**: o universo é
+"grupos pendentes no instante da gravação", não "eleições exibidas" — um `eleito` cujo SKU saiu do
+catálogo conta aqui e vira `indisponivel` na tela, e o leitor pula cliente sem `profile`. Medir o
+exibido exige um sensor **depois** da projeção, que é outra entrega.
+
+Sobre a rejeição global da resposta inválida (§3.6.6), a posição dele: *"Não é a única alternativa
+honesta… Porém, isso exige outro contrato; simplesmente filtrar linhas inválidas continuaria
+errado. Não reprovo o fechamento global, por si só, nesta entrega."*
+
+### 7.5 O que só a FALSIFICAÇÃO encontrou
+
+A suíte de integração da leitura inválida passava **pelo motivo errado**. O helper deriva
+`produto_eleito` do array, e com um produto só ele saía não-nulo: a linha era recusada pela
+checagem de `produto_eleito`, nunca pela cardinalidade do `empatado` que o teste diz guardar.
+Sabotar a cardinalidade deixou o teste VERDE — e é assim que se descobre. Mesma classe dos
+negativos que morriam no CAS: verde por outra razão que não a prometida.
+
+E o alvo da sabotagem F7 apontava para o teste do cartão, que monta a célula à mão e é **imune por
+desenho** — ele testa renderização, não projeção. Escolher o alvo errado teria registrado como
+"camada frágil" o que era separação correta de responsabilidade.
+
+## 8. Plano de prova (EXECUTADO — ver §8.5)
 
 **Onde.** `db/test-farmer-head-geracao.sh`, **não** `db/test-farmer-geracao-vigente.sh` (achado
 R3/5). O segundo aplica só a `20260814223445` e testa uma assinatura de
@@ -585,6 +620,21 @@ ela alcança:
 é ACEITA**. O leitor degrada para `ordem_indisponivel` e o servidor registra a perda de cobertura no
 log de execuções. Um teste esperando recusa estaria provando outra decisão — e passaria a reprovar o
 código correto.
+
+### 8.5 O que a prova produziu (executado)
+
+| camada | evidência | resultado |
+|---|---|---|
+| banco | `db/test-farmer-escopo-carteira.sh` (PG17, a migration REAL) | **67 asserts, 0 falhas**, exit 0 |
+| banco — falsificação | 8 sabotagens SQL, controle verde na mesma invocação | todas com dente |
+| TS | 5 suítes (`melhor-individual`, `CustomerBundleCard`, `bulk`, `leitura-falha`, `head-vazio`) | **81 testes**, exit 0 |
+| TS — falsificação | `scripts/falsificar-individuais.sh` (8 sabotagens, alvo casado por NOME) | **8 de 8 com dente**, exit 0 |
+| tipos | `bun run typecheck` (src + scripts/db) | exit 0 |
+| shell | `bun run lint:shell` | 0 achados em 385 arquivos |
+
+O guard "a sabotagem NÃO casou o padrão" pagou por si duas vezes: a F3 do harness SQL apontava
+para o texto da subquery que a correção do quadrático removeu, e sem ele o assert teria seguido
+verde sobre uma sabotagem que nunca existiu.
 
 ## 9. O que esta entrega NÃO fecha (declarado)
 
