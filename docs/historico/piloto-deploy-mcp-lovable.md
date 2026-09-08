@@ -303,8 +303,47 @@ deploy. Falsificar localmente antes de confiar: com o helper adulterado e os doi
 intactos, exigir **sonda verde + canária vermelha**. Ela pega o que (a) não pega — divergência que
 nasce DEPOIS da entrada do deploy (resolução de dependência, cache de build).
 
-Nenhuma das duas foi implementada aqui. (a) toca o gerador de prompt de TODOS os deploys, então é
-entrega própria, com falsificação própria.
+(a) ESTÁ ENTREGUE (#2362); (b) segue pendente. (a) tocava o gerador de prompt de TODOS os deploys,
+então foi entrega própria, com falsificação própria — o que segue é o que ela mede e o que ela não
+mede.
+
+### (a) entregue — o que o prompt passou a carregar (#2362)
+
+`bun run pendencias:prompt <edge>` agora emite, por arquivo da fatia, `` - `caminho` — sha256 `<hex64>` ``,
+seguido de um bloco de conferência com **três** ramos: bate → deploya · difere → **não deploya** e
+devolve a tabela `file | expected | actual` · **não conseguiu medir** → **não deploya** e diz por
+quê. O terceiro ramo não é preciosismo: sem ele, o `sha256sum` ausente do sandbox cai em "não achei
+diferença", que é ausência de dado lida como aprovação — a falha de
+[sonda-ausente-em-script-que-apaga.md](sonda-ausente-em-script-que-apaga.md).
+
+**Duas decisões que o item (a) original não nomeava, e que mudaram o desenho:**
+
+1. **A fatia e os hashes saem de `origin/main`, nunca do working tree.** `fecharGrafo` ganhou o seam
+   `ArvoreDeFonte` e a borda usa `arvoreDaRef('origin/main')`; o `git fetch` é DO script, porque a
+   ref em disco também é um retrato. Sem isso a entrega teria reintroduzido o eixo **ÁRVORE** de
+   2026-09-04 (5 arquivos contra o disco, 7 contra a ref, na `enviar-pedido-portal-sayerlack`) —
+   que `git fetch` sozinho não fecha, e que produziria hashes de um estado que não vai ao ar.
+2. **A auto-conferência casa o PAR caminho↔hash, não os dois soltos.** Conferir `inclui o caminho?`
+   e `inclui o hash?` separadamente fica verde com os hashes **trocados** entre dois arquivos — os
+   dois aparecem, cada um ao lado do arquivo errado — e aí o agente confere 8, acha 8 divergências
+   e aborta um deploy **correto**. Um renderizador único (`linhaDoArquivo`) serve o prompt e o
+   check, para as duas noções não divergirem.
+
+Medido na entrega: os 8 hashes do prompt real de `copilot-analyze` conferem com
+`git show origin/main:<arq> | shasum -a 256` (8 conferidos, 0 divergências), e a falsificação exigiu
+vermelho **na marca do ramo** em três sabotagens — ler o working tree, devolver o closure do disco,
+e hash constante —, com controle verde na mesma invocação antes do primeiro `sed`.
+
+O teste novo é da FRONTEIRA (`scripts/pendencias-prompt.test.ts`), não do núcleo: o núcleo puro
+tinha 35 verdes e não alcança o eixo ÁRVORE, que só existe na borda de I/O. Mesma lição já registrada
+no `sonda-versao-bump-gate` — "os dois falsos-verdes corrigidos aqui estavam ambos FORA do núcleo
+puro, que tinha 23 testes verdes".
+
+⚠️ **O que (a) NÃO fecha, e o doc não deve deixar virar folclore:** ela prova que os bytes que
+ENTRAM no deploy são os da `main`. Não prova nada sobre o que sai — resolução de dependência e cache
+de build continuam livres, porque `npm:@anthropic-ai/sdk@^0.93.0` e `npm:@supabase/supabase-js@2`
+são ranges ABERTOS, fora do closure. É exatamente a fatia que (b) cobre, e é por isso que as duas
+são complementares e não substitutas.
 
 ## Camada 2 — o Publish do frontend (`deploy_project`): as DUAS metades medidas (2026-09-08)
 

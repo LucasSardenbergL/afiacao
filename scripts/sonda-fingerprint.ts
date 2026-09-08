@@ -117,23 +117,74 @@ export function extrairImportsLocais(fonte: string): string[] {
   return [...new Set(achados)];
 }
 
+/**
+ * De ONDE o fecho lê os bytes. `ler` devolve `null` quando o arquivo não existe NAQUELA árvore, e
+ * `rotulo` entra na mensagem de erro — "não resolve" tem desfechos diferentes conforme a árvore
+ * (working tree defasado ≠ import quebrado na main).
+ *
+ * ‼️ O seam existe porque `git fetch` NÃO fecha o eixo ÁRVORE: ele move `origin/main`, e
+ * `readFileSync` continua lendo o working tree, que é onde o HEAD da worktree estiver. Medido em
+ * 2026-09-04 na `enviar-pedido-portal-sayerlack` — **5** arquivos contra o disco, **7** contra a
+ * ref, e os dois que sumiram (`qtde-portal.ts`, `escrita-critica.ts`) eram exatamente os que
+ * impediam a função de bootar. Um fecho curto se PARECE com um fecho: mesma forma, mesmo formato,
+ * menos arquivos, e nada na saída denuncia. É `ausente ≠ zero` na dimensão ÁRVORE
+ * (`.claude/skills/lovable-deploy-verify/SKILL.md` §Passo 3).
+ *
+ * Quem precisa da REF pede a árvore da ref; o default continua sendo o disco, que é o certo para o
+ * GATE (ele julga o que está sendo commitado).
+ */
+export interface ArvoreDeFonte {
+  /** Como esta árvore se chama numa mensagem de erro. Ex.: `working tree`, `origin/main`. */
+  rotulo: string;
+  /** Bytes CRUS de `rel` (relativo à raiz do repo), ou `null` se não existe nesta árvore. */
+  ler(rel: string): Buffer | null;
+}
+
+/** A árvore de trabalho — o default histórico do `fecharGrafo`, agora nomeado. */
+export function arvoreDeTrabalho(raiz = process.cwd()): ArvoreDeFonte {
+  return {
+    rotulo: 'working tree',
+    ler(rel) {
+      const abs = resolve(raiz, rel);
+      return existsSync(abs) ? readFileSync(abs) : null;
+    },
+  };
+}
+
+/**
+ * SHA-256 dos bytes CRUS de UM arquivo — o mesmo número que `sha256sum <arquivo>` imprime.
+ *
+ * Não confundir com `digerir()`: aquele é o fingerprint da FATIA INTEIRA
+ * (`caminho \0 tamanho \0 bytes` encadeados, em ordem), e nenhum comando de shell o reproduz.
+ * Este aqui existe justamente para ser CONFERÍVEL DO OUTRO LADO — é o que o prompt de deploy embute
+ * para o agente do Lovable recalcular no sandbox dele antes de publicar.
+ */
+export function sha256Arquivo(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
 /** Fecho transitivo dos imports locais a partir de `entrada`. Caminhos relativos ao repo, ordenados. */
-export function fecharGrafo(entrada: string, raiz = process.cwd()): string[] {
+export function fecharGrafo(
+  entrada: string,
+  raiz = process.cwd(),
+  arvore: ArvoreDeFonte = arvoreDeTrabalho(raiz),
+): string[] {
   const vistos = new Set<string>();
   const fila = [resolve(raiz, entrada)];
   while (fila.length > 0) {
     const abs = fila.pop() as string;
     const rel = relative(raiz, abs);
     if (vistos.has(rel)) continue;
-    if (!existsSync(abs)) {
+    const bytes = arvore.ler(rel);
+    if (bytes === null) {
       throw new Error(
-        `import local que NÃO resolve: ${rel} (a partir de ${entrada}). Fail-closed: um fecho ` +
-          `incompleto produziria fingerprint que ignora arquivo servido.`,
+        `import local que NÃO resolve em ${arvore.rotulo}: ${rel} (a partir de ${entrada}). ` +
+          `Fail-closed: um fecho incompleto produziria fingerprint que ignora arquivo servido.`,
       );
     }
     if (ehTeste(rel) || rel === ARQ_MAPA) continue;
     vistos.add(rel);
-    for (const esp of extrairImportsLocais(readFileSync(abs, 'utf8'))) {
+    for (const esp of extrairImportsLocais(bytes.toString('utf8'))) {
       fila.push(resolve(dirname(abs), esp));
     }
   }
