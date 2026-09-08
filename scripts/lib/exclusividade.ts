@@ -99,18 +99,36 @@ export function parseDefeitos(texto: string, arquivo: string): Defeito[] {
 // ---------------------------------------------------------------------------------------------
 
 export interface GateAlvo extends GateCI {
-  /** True so se o job dele e alcancavel a partir de `validate.needs` (fecho transitivo). */
+  /** True so se o job dele e o `validate` ou alcancavel a partir dele (fecho de `needs`). */
   bloqueiaPR: boolean;
 }
 
+/** O unico job que o auto-merge exige por nome (`.github/workflows/auto-merge.yml`). */
+export const JOB_RAIZ = 'validate';
+
 /**
- * Fecho transitivo de `validate.needs`. Existe porque `inventarioCI` filtra `continue-on-error` no
- * **step** e isso nao ve a outra forma de ser informativo: um JOB inteiro fora de `validate.needs`.
+ * Fecho transitivo de `validate.needs`, **com o proprio `validate` dentro**. Existe porque
+ * `inventarioCI` filtra `continue-on-error` no **step** e isso nao ve a outra forma de ser
+ * informativo: um JOB inteiro fora de `validate.needs`.
  *
  * E exatamente o caso do job `mutation-check` do `ci.yml`, deliberadamente informativo e abrindo
  * Issue desde o #2344 — que `inventarioCI` hoje lista junto dos bloqueantes. Derivar do grafo, em
  * vez de manter uma lista de excecoes, e o que impede este censo de envelhecer como envelheceu o
  * censo datado de 15 nomes que originou o `gates:frescura`.
+ *
+ * ## Por que a RAIZ entra no fecho (o #2376 a deixou de fora)
+ *
+ * `needs` aponta para tras — ninguem aponta para o `validate` —, entao um fecho que parte de
+ * `validate.needs` exclui a raiz por CONSTRUCAO. E a raiz e justamente o unico job que o
+ * auto-merge exige por nome: se ele fica vermelho, o PR nao mergeia. O efeito era um ponto cego
+ * simetrico, o pior tipo: um step dentro do `validate` sumia das DUAS contas ao mesmo tempo — nem
+ * `gatesCandidatos` o marcava `bloqueiaPR` (logo, nunca cobrado pela prova de exclusividade), nem
+ * `bloqueantesOpacos` o listava. Hoje o `validate` so hospeda o agregador; "hoje nao esconde nada"
+ * e exatamente o que valia para o `provas-sql` ate o #2364 por la acrescentar um gate em shell.
+ *
+ * A raiz so entra se EXISTIR no arquivo. Somar um nome que o `ci.yml` nao tem seria fabricar
+ * presenca — e um `ci.yml` sem `validate` deve continuar devolvendo conjunto VAZIO, que e a forma
+ * honesta de dizer "nao encontrei o required check aqui".
  */
 export function jobsBloqueantes(fonteCI: string): Set<string> {
   const doc = parse(fonteCI) as { jobs?: Record<string, { needs?: unknown }> };
@@ -122,7 +140,7 @@ export function jobsBloqueantes(fonteCI: string): Set<string> {
     return [];
   };
   const vistos = new Set<string>();
-  const fila = [...needsDe('validate')];
+  const fila = JOB_RAIZ in jobs ? [JOB_RAIZ] : [];
   while (fila.length) {
     const j = fila.pop()!;
     if (vistos.has(j)) continue;
@@ -167,10 +185,15 @@ export interface StepOpaco {
  * "reprova alguma coisa", aqui e "reprova o PR". Este arquivo tem o grafo de `needs`; o frescura
  * nao.
  *
- * O job `validate` fica fora por consequencia: ele nao esta no proprio `needs`. Hoje nao esconde
- * nada (seus unicos steps sao o agregador e os de Issue), mas e uma fresta latente — vale um
- * arquivo proprio, nao um remendo local que faria o contador e `bloqueiaPR` falarem de universos
- * diferentes.
+ * ## O agregador do `validate` aparece aqui — e isso e o certo, nao ruido
+ *
+ * Desde que `jobsBloqueantes` passou a incluir a raiz, o step "Todos os jobs passaram?" cai neste
+ * contador. Ele nao e um no-op que soma resultados: tem logica PROPRIA, ja falha-aberta uma vez —
+ * o guard de DENOMINADOR (`total -ne esperados`, contra o jq que devolve nada) e o guard NOMINAL
+ * de `provas-sql`, acrescentado pelo parecer do Codex de 2026-09-07 sob a frase "cinco jobs
+ * quaisquer nao provam que SQL entrou no contrato". Um step assim e a categoria exata que este
+ * contador existe para manter visivel. Filtra-lo por nome reabriria o silencio na unica linha que
+ * o fecha, e devolveria a lista de excecoes que `jobsBloqueantes` se recusa a manter.
  */
 /**
  * A 1a linha do `run:` que de fato EXECUTA algo. Pula vazio, comentario e prologo (`set -euo
