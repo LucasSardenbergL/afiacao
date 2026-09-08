@@ -110,13 +110,30 @@ Nulável porque as 1.083 linhas de 21/08 existem e não são recuperáveis (§3.
   referência cronológica de `preco-referencia.ts`. `upsell-ordem.ts` já tem o comparador **e** o
   predicado de empate (`candidatosEmpatam`, hoje privado) — o rank denso reusa os dois.
 
-**Quanto isso recupera, medido** (o challenge cobrou o número): dentro de um cliente e com `aB=0`,
-`pij ∝ k`, sendo `k` os compradores distintos do SKU. Nos 198 grupos cross-sell empatados,
-**198 (100%) têm `k` distinto entre os empatados**, com spread de até 49 compradores — ou seja, o
-empate é **artefato do arredondamento** e o rank o desfaz. Zero grupos com `k` igual.
-⚠️ `k` aqui é a contagem GLOBAL de compradores, proxy do `k` restrito à carteira que o motor usa;
-`k` global distinto implica fortemente `k` de carteira distinto, mas não prova.
-(`cluster_volume_estimate` não serve de proxy: é `1` em 714 de 714 linhas, no piso do `max(1,…)`.)
+**Quanto isso recupera, medido — e o primeiro número estava errado.** Dentro de um cliente,
+`relevance = 0,4·k/N + 0,6·aB`, com `k` = compradores distintos do SKU **na carteira** (N=269
+clientes, medido). Eu primeiro usei `k` GLOBAL como proxy e obtive "198 de 198 recuperáveis". O `k`
+de carteira **inverte parte do resultado**:
+
+| | n | % dos 198 |
+|---|---|---|
+| grupos cross-sell empatados no topo | 198 | 100% |
+| `k` de carteira DIFERE ⇒ recuperável pelo score não-arredondado | **104** | **52,5%** |
+| `k` de carteira IGUAL | 94 | 47,5% |
+| desses 94, salvos por `assocBoost` diferente | **0** | — |
+| **empate REAL** (mesmo `k` **e** mesmo `aB` ⇒ mesma `relevance`) | **94** | **47,5%** |
+
+⇒ Sobre os 238 grupos cross-sell: 40 já decididos pelo score · 104 recuperados pelo rank ·
+**94 (39,5%) vão exibir "N produtos igualmente indicados"**.
+
+Esses 94 são **indistinguíveis para o motor** — mesma aderência de carteira, nenhuma regra de
+associação. `empatado` é a resposta verdadeira, e consertá-los seria dar **sinal novo** ao motor,
+não ordenar melhor. Fica declarado em §9.
+
+⚠️ Lição de método, e ela quase passou: um proxy pode ser *fortemente* correlacionado e ainda
+inverter o veredicto. `k` global distinto NÃO implica `k` de carteira distinto — a carteira é 269
+de milhares de clientes, e SKUs que se separam na base inteira colidem no recorte.
+(`cluster_volume_estimate` também não serve: é `1` em 714 de 714 linhas, no piso do `max(1,…)`.)
 
 **Nada disto toca `affinity_score` nem `p_ij`.**
 
@@ -279,7 +296,7 @@ ser observável em vez de suposta.
 | 3 | `product_id = NULL` colide com `produto_nao_resolve` | §3.6: cinco pontos do leitor, com a ordem das decisões explícita |
 | 4 | Arbitrariedade a montante do rank | §5: medida (2/186) e declarada, com sensor |
 | 5 | Janelas de implantação; §3.4 contradizia §3.5 | §3.5 corrigida; §6 lista as janelas e o risco da aba antiga |
-| 6 | Afirmações além da evidência | §1.1 (incidência ≠ dano) e §3.2 (recuperação medida: 198/198) |
+| 6 | Afirmações além da evidência | §1.1 (incidência ≠ dano) e §3.2 (recuperação medida: **104 de 198**, depois de o proxy global ter mentido 198/198) |
 
 ## 8. Prova
 
@@ -303,6 +320,10 @@ provar que essa propriedade é medida.
 
 - **A precedência entre tipos continua sem regra comercial.** D1 dissolve a comparação; não a
   resolve.
+- **Os 94 empates REAIS do cross-sell** (39,5% dos grupos) continuam sem vencedor — e é correto que
+  continuem: o motor não tem sinal que os distinga. Fechá-los exige **sinal novo** (margem, giro,
+  recência do SKU no cliente), que é trabalho de motor, não de ordenação. O que a entrega faz é
+  parar de **fingir** que há vencedor ali.
 - **A via do WhatsApp e o corte top-3/top-2** (§4).
 - **A ambiguidade da referência de preço** (§5) — declarada e sensoreada, não propagada.
 - **`p_ij` é 0 em 645 de 714 linhas cross-sell** (`Math.round(0,0002 × 1000)/10 = 0`): o vendedor lê
