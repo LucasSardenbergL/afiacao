@@ -120,9 +120,17 @@ founder nesta máquina, e `send_message` é o MESMO canal do chat — medido em 
 O procedimento — e ele não é "mandar um recado":
 
 ```bash
-bun scripts/pendencias-deploy.ts --json > /tmp/pend.json   # quem julga é o LEDGER, não o diff do PR
-bun scripts/pendencias-pacote.ts - < /tmp/pend.json        # gate de ordem: RPC em prod ANTES da edge
+PEND=$(mktemp -t pend)                                     # caminho ÚNICO — ver a nota abaixo
+bun scripts/pendencias-deploy.ts --json > "$PEND"          # quem julga é o LEDGER, não o diff do PR
+bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: RPC em prod ANTES da edge
 ```
+
+⚠️ **O caminho é `mktemp`, não `/tmp/pend.json` — e isso não é preciosismo.** Este doc prescrevia o
+nome FIXO, e com ~30 worktrees rodando o mesmo procedimento ele é um ímã de colisão: em 2026-09-08 o
+arquivo foi sobrescrito por OUTRA sessão entre a escrita e a leitura desta (22.563 → 22.577 bytes,
+`JSON Parse error: Unexpected EOF` no meio da análise). O modo de falha ruidoso é o sortudo; o caro é
+o silencioso — o `pendencias-pacote.ts` lendo o veredito de uma leva que não é a sua, com a saída
+inteira parecendo normal. `ausente ≠ zero` na dimensão **ARQUIVO COMPARTILHADO**.
 
 O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,
 `8f005805-000a-42b7-88a1-9683f785fab6`). O prompt carrega o `sha256` de cada arquivo do closure e

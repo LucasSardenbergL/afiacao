@@ -132,8 +132,9 @@ têm ferramenta: quem MONTA é `pendencias:prompt`/`pendencias:pacote`, e quem C
 MCP do Lovable (`docs/agent/deploy.md` §"Deploy de edge pela SESSÃO"):
 
 ```bash
-bun scripts/pendencias-deploy.ts --json > /tmp/pend.json   # quem julga é o LEDGER, não o diff do PR
-bun scripts/pendencias-pacote.ts - < /tmp/pend.json        # gate de ordem: RPC em prod ANTES da edge
+PEND=$(mktemp -t pend)                                     # único por invocação: /tmp/pend.json colide entre worktrees
+bun scripts/pendencias-deploy.ts --json > "$PEND"          # quem julga é o LEDGER, não o diff do PR
+bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: RPC em prod ANTES da edge
 # o Passo 2 do pacote vai VERBATIM para mcp__lovable__send_message
 #   (projeto `steu`, 8f005805-000a-42b7-88a1-9683f785fab6)
 ```
