@@ -101,6 +101,22 @@ export function medirEmProd(sql: string): string {
   });
 }
 
+/**
+ * Separa `--saida <arquivo>` dos alvos. Pura, e exportada porque a expressão que ela substitui
+ * fabricava VEREDITO VERDE: com `--saida` ausente, `args.indexOf('--saida')` é `-1`, logo
+ * `iSaida + 1` é **0**, e o `filter` descartava o argumento de índice 0 — o `-` do pipe canônico
+ * impresso no próprio `uso:`, ou a única edge nomeada. A leva chegava vazia e o CLI anunciava
+ * "✓ nada pendente de deploy" sobre uma leva que nunca leu. Medido em 2026-09-08:
+ * `pendencias:pacote copilot-analyze` dizia "nada pendente" enquanto `pendencias:deploy` a
+ * acusava `DIVERGE_P1` — o gate de ordem do #2369 nasceu cego no caminho que ele existe para
+ * gatear.
+ */
+export function separarSaida(args: readonly string[]): { nomes: string[]; saida?: string } {
+  const iSaida = args.indexOf('--saida');
+  if (iSaida < 0) return { nomes: [...args] };
+  return { nomes: args.filter((_, i) => i !== iSaida && i !== iSaida + 1), saida: args[iSaida + 1] };
+}
+
 export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz)): number {
   const todos = argv.filter((a) => a !== '');
   const semRede = todos.includes('--sem-rede');
@@ -113,13 +129,11 @@ export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz))
     return 2;
   }
 
-  const iSaida = args.indexOf('--saida');
-  const saidaExplicita = iSaida >= 0 ? args[iSaida + 1] : undefined;
-  if (iSaida >= 0 && saidaExplicita === undefined) {
+  const { nomes: nomesArg, saida: saidaExplicita } = separarSaida(args);
+  if (args.includes('--saida') && saidaExplicita === undefined) {
     process.stderr.write('⛔ mecânica: --saida sem caminho\n');
     return 2;
   }
-  const nomesArg = args.filter((_, i) => i !== iSaida && i !== iSaida + 1);
 
   let nomes: string[];
   try {
@@ -133,8 +147,16 @@ export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz))
   }
 
   if (nomes.length === 0) {
-    process.stderr.write('✓ nada pendente de deploy — nenhum pacote a emitir\n');
-    return 1;
+    // Leva vazia só é NOTÍCIA quando veio do veredito (`-`). Com alvos NOMEADOS, lista vazia é
+    // mecânica quebrada — foi exatamente assim que o bug de índice se escondeu por um dia.
+    if (nomesArg.length === 1 && nomesArg[0] === '-') {
+      process.stderr.write('✓ nada pendente de deploy — nenhum pacote a emitir\n');
+      return 1;
+    }
+    process.stderr.write(
+      '⛔ mecânica: alvos nomeados sumiram no parsing de argumentos — leva NÃO consultada\n',
+    );
+    return 2;
   }
 
   // ── camada 1: o que a leva EXIGE do banco ──────────────────────────────────────────────────
