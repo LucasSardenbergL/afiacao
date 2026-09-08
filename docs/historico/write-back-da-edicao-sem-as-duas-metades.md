@@ -109,6 +109,34 @@ Duas armadilhas que a própria prova pegou e viraram comentário no harness: `VA
 `GRANT` de duas linhas faz o apply abortar por **sintaxe** — vermelho pelo motivo errado, que é a
 forma mais fácil de uma falsificação virar teatro.
 
+## Acidente da própria entrega: `git add -A` com o `mutcheck` vivo
+
+Vale mais que a lição de agregado, porque reincide em qualquer sessão. Eu rodei os gates do CI
+localmente em background — entre eles `bun run mutcheck` — e depois commitei com `git add -A`.
+Mutation testing trabalha **escrevendo a mutação no arquivo**, rodando a suíte e restaurando. O
+`add -A` pegou a janela e levou para dentro do commit (e para o `push`):
+
+- `src/lib/financeiro/funding-helpers.ts`: `Math.min(restante, capacidade)` → `Math.max(...)`.
+  Não é cosmético — `usa` passaria a poder exceder o gap restante **e** a capacidade da fonte,
+  inflando o plano de cobertura. Money-path, num PR que não tem nada a ver com financeiro.
+- `vitest.config.ts.timestamp-*.mjs`: artefato temporário do vitest.
+
+Pego pelo hook de money-path da sessão ("1 arquivo(s) uncommitted") — que apontou o arquivo
+**depois** do push. O que fechou o diagnóstico foi comparar contra `origin/main` (`git show
+origin/main:<arquivo>`), não contra `HEAD`: o índice já estava contaminado, então `git diff` sozinho
+mostrava a direção invertida e convidava a concluir que a `main` é que estava errada.
+
+A regra que sai daí, e que não é sobre veredito (por isso não entra no catálogo de
+[evidencia-positiva-shell.md](evidencia-positiva-shell.md), que é sobre LER resultado):
+
+> **`git add -A` não é um comando sobre a MINHA mudança — é sobre o ESTADO DO DIRETÓRIO.** E o
+> diretório tem outros escritores: mutation testing, geradores de tipo, `--write` de gate,
+> artefato de bundler. Com qualquer um deles em voo, staging é por **caminho explícito**.
+
+Corolário: antes de `push` num PR de money-path, `git diff origin/main --name-only` e conferir se a
+lista é **só** a da entrega. Um arquivo que você não sabe explicar por que está ali é um arquivo que
+você não está entregando de propósito.
+
 ## Ordem de implantação e o que NÃO foi feito
 
 1. `20260907210000_pedido_edicao_omie_atomica.sql` (SQL Editor) → 2. deploy da edge (Publish) →
