@@ -39,6 +39,11 @@
       "motivo": "pre-existente quando a matriz nasceu; divida a medir"
     },
     {
+      "gate": "exclusividade",
+      "desde": "2026-09-07",
+      "motivo": "ANDAIME de bootstrap — sai assim que a medicao dele existir"
+    },
+    {
       "gate": "knip",
       "desde": "2026-09-07",
       "motivo": "pre-existente quando a matriz nasceu; divida a medir"

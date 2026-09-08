@@ -40,7 +40,7 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 <!--gates:frescura fim-->
 
 ⚠️ **A segunda lista não é decoração — até 2026-09-07 aqueles dois nomes estavam na PRIMEIRA.** O
-job `mutation-check` está fora de `validate.needs` (`ci.yml:921`) e abre Issue em vez de barrar,
+job `mutation-check` está fora de `validate.needs` (`ci.yml:961`<!--cita: # BLOQUEANTES; este job é informativo, não-required, e pode ficar INVÁLIDO por refactor legítimo-->) e abre Issue em vez de barrar,
 desde o #2344; o censo mesmo assim os anunciava como "reprovam o PR". A causa é que `inventarioCI`
 filtra `continue-on-error` no **step** e não enxerga a outra forma de ser informativo, que é o
 **job inteiro** ficar fora do `needs`. Quem separa hoje é `jobsBloqueantes`
