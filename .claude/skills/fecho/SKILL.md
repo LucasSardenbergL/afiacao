@@ -267,8 +267,10 @@ AMPLIAR a enumeração, nunca absolver: cada alvo segue classificado um a um por
 
 🕳️ **`SEM_PROVA` por "nenhuma sonda na janela" NÃO se resolve esperando — DISPARE.** O cron de
 sondagem existe desde 2026-09-06 (`deploy-sonda-cron`, `37 */2 * * *`, pelo relé OPTIONS
-fail-closed), mas cobre só a allowlist provada de `_shared/sonda-cron-alvos.ts` — **7 edges de
-59**. Para as outras 52, esperar é esperar para sempre, e tudo abaixo vale palavra por palavra. Quem dá prova passiva é só a edge
+fail-closed), mas cobre só a allowlist provada de `_shared/sonda-cron-alvos.ts` — **contada NO
+ARQUIVO, nunca de cabeça**: 7 alvos em 2026-09-06, 11 na onda 2 de 2026-09-08, e o número sobe a
+cada onda aprovada. Para toda edge FORA dela, esperar é esperar para sempre, e tudo abaixo vale
+palavra por palavra. Quem dá prova passiva é só a edge
 cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) **e** tem cron frequente —
 `analytics-outbox-drain` (5 em 5 min) é o caso típico. Medido 2026-09-05: **24 das 54 edges do
 mapa não têm cron NENHUM** (webhook como `omie-nfe-webhook`, ou invocada sob demanda pelo app como
