@@ -7,7 +7,14 @@ import { enqueue } from '@/lib/offline-queue';
  * erros de validação (400/422 etc) propagam normalmente.
  */
 export function isNetworkError(err: unknown): boolean {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return true;
+  // `=== false`, NUNCA `!navigator.onLine`: sonda AUSENTE não é prova de offline. Onde
+  // `navigator` existe mas `onLine` é `undefined` (Node 21+ define `globalThis.navigator`
+  // sem ele), `!undefined` é `true` e TODO erro — `permission denied`, violação de
+  // constraint — vira "erro de rede", vai pra fila, e a UI diz "salvo offline" por cima de
+  // um erro real. Pior: `flush` só faz `attempts++`, sem teto, então o item envenenado
+  // nunca sai da fila. Sem `onLine`, erro de rede DE VERDADE ainda cai nos regexes abaixo
+  // (`Failed to fetch`/`NetworkError`/`Load failed`). Coberto por `useOfflineMutation.node.test.ts`.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
   if (err instanceof TypeError && /network|fetch|failed/i.test(err.message)) return true;
   // PostgREST sem rede pode estourar genérico — checkar mensagem
   if (err instanceof Error && /networkerror|failed to fetch|load failed/i.test(err.message)) return true;
@@ -67,8 +74,10 @@ export function useOfflineMutation<TData, TVars>({
   });
 
   const mutateAsync = async (vars: TVars): Promise<TData | null> => {
-    // 1. Offline imediato → enfileira sem nem tentar
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    // 1. Offline imediato → enfileira sem nem tentar.
+    // `=== false` pelo mesmo motivo do guard de `isNetworkError`: com `onLine` ausente,
+    // `!undefined` faria o hook enfileirar SEM SEQUER TENTAR a mutação.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       await enqueue(kind, vars);
       setQueued(true);
       return null;

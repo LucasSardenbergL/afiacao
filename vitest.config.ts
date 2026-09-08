@@ -30,6 +30,14 @@ export default defineConfig({
     // ambiente no próprio arquivo (`// @vitest-environment jsdom`), que sobrepõe o project e é
     // local ao arquivo (zero conflito). Arquivo `.ts` NOVO que precise de DOM falha com
     // "document is not defined"; a saída é o mesmo docblock — não afrouxar este particionamento.
+    //
+    // ⚠️ AO ESCREVER ESSE DOCBLOCK: o vitest procura o token no TEXTO do arquivo, não numa
+    // declaração. Citá-lo EM PROSA liga o ambiente — inclusive negando ("sem <token> de
+    // propósito" põe o arquivo em jsdom). E o rótulo da saída (`|node|`) é o nome do PROJECT,
+    // não o ambiente que rodou, então ele não denuncia a troca: o sintoma é VERDE provando
+    // outra coisa. Teste cujo valor depende do ambiente deve ASSERIR o ambiente (ex.:
+    // `expect(navigator.onLine).toBeUndefined()` em `src/hooks/useOfflineMutation.node.test.ts`).
+    // Medido em 2026-09-07: docs/historico/docblock-de-ambiente-que-liga-o-que-nega.md
     projects: [
       {
         extends: true,
