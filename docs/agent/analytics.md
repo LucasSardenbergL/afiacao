@@ -766,6 +766,17 @@ observação**, não ausência de censura. Não leia o 🟡 como "não há bloqu
 saída abaixo, que o ritual Codex trouxe e que domina as duas: ela não depende de browser, então
 não há o que bloquear, e não contorna a escolha de ninguém.
 
+⚠️ **RE-AVALIADO em 2026-09-08 — a recusa se MANTÉM, e o probe inverteu a leitura do #2360.** O
+gatilho foi declarado puxado por [`quanto-do-entregue-e-usado.md`](../historico/quanto-do-entregue-e-usado.md),
+mas ele é **CONJUNTIVO** e só a condição (2) disparou: o `probe-censura.sh` ficou 🔴 pela primeira
+vez (aparelho `1aedeba2` — **173 probes gravados, 0 eventos no PostHog, nunca**), enquanto customers
+aprovados seguem **0**. ⚠️ E `count()=0` **não fecha** a condição (1): ela é *"PRESTES a ser
+aprovado"*, e isso não sai de query nenhuma — sai do founder. A inversão que muda a leitura: no
+canal imune, o iPhone que era "97,7% dos eventos" é **9% dos boots** — num canal censurado o ranking
+de aparelhos mede **quem consegue falar**, não quem mais usa. Registro completo (com as quatro
+correções que o ritual Codex fez ao parecer, e a prova ponta a ponta de que a quarta saída entrega):
+[`proxy-posthog-reavaliado.md`](../historico/proxy-posthog-reavaliado.md).
+
 ### O probe de `attempt_id` — como LER (2026-08-26)
 
 A condição (2) do gatilho acima deixou de ser recado. O par é `public.telemetria_probes`
