@@ -262,10 +262,11 @@ describe('lerDiretoriosIndexados — descoberta', () => {
 });
 
 describe('o repo de verdade', () => {
-  it('os índices REAIS do repo passam no gate', () => {
-    const achados = auditarIndices(lerDiretoriosIndexados());
-    expect(achados, `gate vermelho no repo: ${msgs(achados)}`).toHaveLength(0);
-  });
+  // A auditoria de ponta a ponta do repo real (`auditarIndices(lerDiretoriosIndexados())`) NÃO mora
+  // aqui: ela é o step `docs:indice` do CI. Medido em #2366, o exclusivo dos dois era ZERO um por
+  // causa do outro — e entre um step de 58ms que diz na hora o que quebrou e a mesma detecção no
+  // fim de um vitest de 128s, quem sai é a cópia lenta. O que fica abaixo são as guardas
+  // ANTI-VÁCUO, que o step não tem como fazer por si: elas vigiam o próprio gate, não o repo.
 
   // ⚠️ Guarda ANTI-VÁCUO. Sem ela, um glob que para de casar (ou um `docs/` renomeado) faz o gate
   // acima passar por não achar NADA — "verde por ausência de dado", a mesma família do "glob de
