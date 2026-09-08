@@ -72,6 +72,7 @@ DECLARE
   v_expiradas      integer;
   v_inseridas      integer;
   v_head_atual     uuid;
+  v_tipo_errado    integer;
 BEGIN
   -- 1) Gate de MENSAGEM (a RLS é quem autoriza — ver cabeçalho).
   IF p_farmer_id IS NULL OR p_run_id IS NULL THEN
@@ -146,6 +147,21 @@ BEGIN
     RAISE EXCEPTION 'geração vigente mudou durante o cálculo (vista: %, atual: %) — nada foi alterado',
       coalesce(p_geracao_vista::text, 'nenhuma'), coalesce(v_geracao_atual::text, 'nenhuma')
       USING ERRCODE = 'FG006';
+  END IF;
+
+  -- 6-pre) TIPO JSON BRUTO das chaves novas — antes do cast, porque o cast NÃO recusa.
+  -- `jsonb_to_recordset` encaminha o valor para a função de entrada do tipo, e `boolean_in`
+  -- aceita "false", "off" e "0"; `int2in` aceita "3". Um produtor defeituoso gravaria uma
+  -- NEGATIVA EXPLÍCITA de ambiguidade — ou uma ordem — em vez de ser recusado, e um teste
+  -- que só experimenta "talvez" fica verde sem provar a exigência (achado do challenge).
+  SELECT count(*) INTO v_tipo_errado
+  FROM jsonb_array_elements(p_linhas) AS e(linha)
+  WHERE (e.linha ? 'ordem'              AND jsonb_typeof(e.linha->'ordem')              NOT IN ('number','null'))
+     OR (e.linha ? 'referencia_ambigua' AND jsonb_typeof(e.linha->'referencia_ambigua') NOT IN ('boolean','null'));
+
+  IF v_tipo_errado > 0 THEN
+    RAISE EXCEPTION '% linha(s) com ordem não-numérica ou referencia_ambigua não-booleana — nada foi expirado',
+      v_tipo_errado USING ERRCODE = 'FG007';
   END IF;
 
   -- 6) VALIDAÇÃO ANTES DE MEXER (nada é expirado se o lote tem lixo).
@@ -401,8 +417,15 @@ AS $fn$
            count(*) FILTER (WHERE b.ordem IS NULL)                      AS sem_ordem,
            min(b.ordem)                                                 AS ordem_minima,
            bool_or(coalesce(b.referencia_ambigua, b.ordem IS NOT NULL)) AS ambigua,
+           -- Geracoes DISTINTAS no grupo. O `+ (… IS NULL)` nao e decoracao: `count(DISTINCT)`
+           -- IGNORA NULL, entao [G1, NULL] passaria por coerente. A trigger trg_frec_exige_run_id
+           -- torna run_id nulo impossivel em `pendente` hoje — e e justamente por isso que a
+           -- checagem tem de ser explicita: quando a trigger cair, a falha tem de aparecer aqui
+           -- em vez de virar uma eleicao entre universos diferentes.
+           count(DISTINCT b.run_id)
+             + (count(*) FILTER (WHERE b.run_id IS NULL) > 0)::int      AS geracoes,
            max(b.affinity_score)                                        AS affinity_score,
-           (array_agg(b.run_id ORDER BY b.run_id))[1]                   AS run_id
+           (array_agg(b.run_id ORDER BY b.run_id))[1]                   AS run_id_qualquer
     FROM base b
     GROUP BY 1, 2
   ),
@@ -416,10 +439,18 @@ AS $fn$
   ),
   final AS (
     SELECT g.customer_user_id, g.recommendation_type, g.candidatos, g.ordem_minima,
-           g.affinity_score, g.run_id,
+           g.affinity_score,
+           -- Geracao INCOERENTE nao transporta run_id: mandar um dos dois esconderia a mistura
+           -- do proprio canario do leitor, que conta geracoes distintas EXIBIDAS.
+           CASE WHEN g.geracoes = 1 THEN g.run_id_qualquer END AS run_id,
            CASE
              WHEN g.ambigua                              THEN 'referencia_ambigua'
-             WHEN g.candidatos >= 2 AND g.sem_ordem > 0  THEN 'ordem_indisponivel'
+             -- Rank so e comparavel DENTRO de uma geracao: `ordem 1` de G1 contra `ordem 2` de
+             -- G2 sao universos diferentes, e elegeria o primeiro sem que nada os tenha
+             -- comparado. O writer normal nao produz isso (ele substitui a geracao inteira),
+             -- mas NAO e invariante da tabela — a trigger exige run_id, nao geracao unica.
+             WHEN g.geracoes > 1
+               OR (g.candidatos >= 2 AND g.sem_ordem > 0) THEN 'ordem_indisponivel'
              WHEN g.candidatos = 1                       THEN 'unico_registrado'
              WHEN coalesce(t.no_topo, 2) > 1             THEN 'empatado'
              ELSE                                             'eleito'

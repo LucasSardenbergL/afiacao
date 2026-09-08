@@ -442,7 +442,7 @@ neg_ordem() { # <json> <sqlstate> <rótulo>
 LB="\"customer_user_id\":\"$C1\",\"recommendation_type\":\"cross_sell\",\"product_id\":\"$PROD\",\"affinity_score\":0.5"
 neg_ordem "[{$LB,\"ordem\":0}]"                       FG007 "O19 ordem 0 recusada (0 não é posição)"
 neg_ordem "[{$LB,\"ordem\":-1}]"                      FG007 "O20 ordem negativa recusada"
-neg_ordem "[{$LB,\"referencia_ambigua\":\"talvez\"}]" 22P02 "O21 flag não-booleana morre no CAST, antes de expirar"
+neg_ordem "[{$LB,\"referencia_ambigua\":\"talvez\"}]" FG007 "O21 flag não-booleana recusada por TIPO, antes do cast"
 eq "O22 lote recusado NÃO expirou a geração vigente" \
    "$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE run_id='$RUNW' AND status='pendente';")" "2"
 
@@ -456,6 +456,39 @@ eq "O24 anon NÃO executa a RPC nova" \
    "$(Pq -c "SELECT has_function_privilege('anon','public.farmer_melhores_individuais_por_cliente(uuid)','EXECUTE');")" "f"
 eq "O25 authenticated executa" \
    "$(Pq -c "SELECT has_function_privilege('authenticated','public.farmer_melhores_individuais_por_cliente(uuid)','EXECUTE');")" "t"
+
+
+# ── achados da rodada 4 do challenge ───────────────────────────────────────────
+CG="cccccccc-0000-4000-8000-0000000000c2"   # duas gerações pendentes no mesmo grupo
+P -q <<SQL
+INSERT INTO public.farmer_client_scores (customer_user_id, farmer_id) VALUES ('$CG','$D');
+INSERT INTO public.farmer_recommendations
+  (farmer_id, customer_user_id, recommendation_type, product_id, affinity_score,
+   status, run_id, ordem, referencia_ambigua)
+VALUES
+  ('$D','$CG','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+  ('$D','$CG','cross_sell','$P2'  ,0.1,'pendente','99999999-0000-4000-8000-0000000000dd',2,false);
+SQL
+# Rank de G1 contra rank de G2 são universos diferentes: `ordem 1` não venceu de ninguém.
+eq "O26 geração MISTURADA no grupo não elege"      "$(campo "$CG" situacao)" "ordem_indisponivel"
+eq "O27 grupo incoerente não transporta run_id"    "$(campo "$CG" run_id)"   ""
+eq "O28 grupo coerente TRANSPORTA o run_id"        "$(campo "$CE" run_id)"   "$RUND"
+
+# O cast NÃO recusa representação textual — `boolean_in` aceita "false"/"off"/"0" e `int2in`
+# aceita "3". Sem a checagem de jsonb_typeof, um produtor defeituoso gravaria uma NEGATIVA
+# explícita de ambiguidade, e o teste com "talvez" ficaria verde sem provar nada.
+neg_ordem "[{$LB,\"referencia_ambigua\":\"false\"}]" FG007 "O29 flag \"false\" (string) é RECUSADA, não convertida"
+neg_ordem "[{$LB,\"referencia_ambigua\":0}]"         FG007 "O30 flag 0 é RECUSADA, não convertida"
+neg_ordem "[{$LB,\"ordem\":\"2\"}]"                  FG007 "O31 ordem \"2\" (string) é RECUSADA"
+# E o controle do outro lado: o tipo CERTO continua passando (a checagem não fecha demais).
+eq "O32 ordem numérica e flag booleana continuam aceitas" \
+   "$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE run_id='$RUNW';")" "2"
+
+# RLS: `prosecdef` diz que a RPC não bypassa; falta que ela LEIA de verdade sob a identidade.
+# Sem o assert positivo, uma resposta sempre-vazia aprovaria o negativo (achado do challenge).
+eq "O33 sob a identidade do DONO a carteira volta NÃO-vazia" \
+   "$(Pq -c "SET test.uid='$D'; SET test.role='authenticated';
+             SELECT jsonb_array_length(public.farmer_melhores_individuais_por_cliente('$D'));" | tail -1)" "8"
 
 echo "─── falsificação ───"
 P -q <<SQL
