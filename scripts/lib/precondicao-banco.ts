@@ -31,6 +31,25 @@
  * família vazia ⇒ o domínio inteiro não está em prod, ou o nome está errado (não cole nada, vá
  * diagnosticar). Um "ausente" sem essa distinção manda reaplicar migration sobre um diagnóstico
  * que ninguém fez.
+ *
+ * ## O que este gate NÃO mede: a ASSINATURA (declarado, não deduzido)
+ *
+ * A sonda casa `pg_proc.proname` — o NOME. Ela responde *"foi criada?"* e é CEGA para *"foi
+ * alterada?"*: uma RPC antiga, de mesmo nome e assinatura incompatível com a que a edge chama,
+ * conta como PRESENTE e o gate libera. O erro sai em runtime, com a mesma cara do #2285
+ * (`Could not find the function … in the schema cache`) — só que depois do deploy.
+ *
+ * Fica declarado, e não corrigido, por PRECISÃO > RECALL (money-path). Conferir assinatura exige
+ * saber a assinatura ESPERADA, que só existe no call-site (`db.rpc(nome, { a, b })`) — um segundo
+ * extrator, com cegueiras próprias (arg por variável, spread, objeto montado antes), cujo modo de
+ * falha é o BLOQUEIO FALSO. E gate de deploy que bloqueia sem razão não é conservador: ele ensina
+ * o operador a contorná-lo, e aí não gateia mais nada. O eixo 3 (`indirecoes`) já mostra o preço
+ * de extrair do call-site, e ali a resposta errada era só INCERTA.
+ *
+ * **Gatilho de reentrada** (o mesmo formato do limite "só função, não coluna"): o primeiro
+ * incidente em que a RPC EXISTIA e mesmo assim a edge quebrou por contrato — assinatura, tipo de
+ * retorno ou overload ambíguo. Até lá, o que cobre este buraco é a ordem canônica, não este gate:
+ * DDL primeiro, e a migration que ALTERA uma função em uso declara isso no cabeçalho.
  */
 
 /** Marca de formato que a sonda carimba no marcador de fim; o parser recusa outra. */

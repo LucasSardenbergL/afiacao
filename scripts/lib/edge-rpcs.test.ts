@@ -121,20 +121,24 @@ describe('extrairRpcs — comentário não é dependência', () => {
 // Fixture prova a TRADUÇÃO; só o repo real prova que as cegueiras 2 (escopo) e 3 (indireção)
 // estão fechadas onde elas de fato acontecem. Se estes casos virarem fixture, o gate volta a
 // medir a si mesmo.
+import { type ArvoreDeFonte, arvoreDeTrabalho } from '../sonda-fingerprint';
 import { coletarDaEdge } from './edge-rpcs';
+
+// A procedência é ARGUMENTO, não default: estes casos afirmam sobre o working tree e dizem isso.
+const DISCO = arvoreDeTrabalho();
 
 describe('coletarDaEdge — contra o repo REAL', () => {
   it('segue o fecho de imports: acha RPC que mora em `_shared/`, não só no diretório da edge', () => {
     // `recommend` chama `recommend_cluster_agregado` de dentro de `_shared/recommend-leituras.ts`.
     // O grep do runbook, que só varria `supabase/functions/recommend/`, não via essa dependência —
     // e o deploy sobe o fecho inteiro, não o diretório.
-    const r = coletarDaEdge('recommend');
+    const r = coletarDaEdge('recommend', DISCO);
     expect(r.rpcs.map((a) => a.nome)).toContain('recommend_cluster_agregado');
     expect(r.rpcs.find((a) => a.nome === 'recommend_cluster_agregado')?.arquivo).toMatch(/_shared\//);
   });
 
   it('acha RPC escrita com aspas DUPLAS (36 das 53 do repo eram invisíveis)', () => {
-    const r = coletarDaEdge('omie-analytics-sync');
+    const r = coletarDaEdge('omie-analytics-sync', DISCO);
     expect(r.rpcs.map((a) => a.nome)).toContain('omie_sync_identity_snapshot');
   });
 
@@ -152,7 +156,7 @@ describe('coletarDaEdge — contra o repo REAL', () => {
     //
     // Este teste trava as duas metades: as RPCs aparecem NOMEADAS, e o arquivo não volta a
     // esconder dependência atrás de parâmetro. Se alguém reintroduzir o helper, ele fica vermelho.
-    const r = coletarDaEdge('fin-valor-cockpit');
+    const r = coletarDaEdge('fin-valor-cockpit', DISCO);
     expect(r.rpcs.map((a) => a.nome).sort()).toEqual(
       expect.arrayContaining(['apriori_universo_snapshot', 'cockpit_itens_snapshot']),
     );
@@ -162,7 +166,45 @@ describe('coletarDaEdge — contra o repo REAL', () => {
   });
 
   it('edge inexistente FALHA — nunca devolve lista vazia (que se lê como "sem dependências")', () => {
-    expect(() => coletarDaEdge('edge-que-nao-existe')).toThrow(/edge-que-nao-existe/);
+    expect(() => coletarDaEdge('edge-que-nao-existe', DISCO)).toThrow(/edge-que-nao-existe/);
+  });
+});
+
+// ── a ÁRVORE manda: a resposta é sobre a fonte que o chamador declarou ────────────────────────
+// O `pendencias:pacote` gateia a colagem que sai de `origin/main`, e lia as RPCs do disco. Numa
+// worktree atrasada isso mede o `index.ts` errado e libera o que devia bloquear (#2285 de novo).
+// Estes casos exercitam a extração DIRETO na unidade — o teste de nível `main` não os alcança,
+// porque lá o `fatiaDeDeploy` lança antes por outro motivo.
+describe('coletarDaEdge — lê a árvore que recebeu, não o disco', () => {
+  const ENTRADA = 'supabase/functions/edge-fake/index.ts';
+
+  function arvoreFalsa(arquivos: Record<string, string>, rotulo = 'ref-de-teste'): ArvoreDeFonte {
+    return {
+      rotulo,
+      ler: (rel) => (rel in arquivos ? Buffer.from(arquivos[rel] as string, 'utf8') : null),
+    };
+  }
+
+  it('acha a RPC que só existe NA ÁRVORE — o disco desta worktree não participa', () => {
+    // `edge-fake` não existe em `supabase/functions/`: se a leitura caísse para o disco, isto
+    // lançaria em vez de achar a RPC. É a asserção que a versão anterior não conseguia passar.
+    const r = coletarDaEdge('edge-fake', arvoreFalsa({
+      [ENTRADA]: `await db.rpc('rpc_so_da_ref', {});\n`,
+    }));
+    expect(r.rpcs.map((a) => a.nome)).toEqual(['rpc_so_da_ref']);
+  });
+
+  it('edge ausente NA ÁRVORE lança nomeando a árvore — ausência de dado não é "sem dependência"', () => {
+    const arvore = arvoreFalsa({ 'supabase/functions/outra/index.ts': '' }, 'origin/main');
+    expect(() => coletarDaEdge('edge-fake', arvore)).toThrow(/origin\/main/);
+  });
+
+  it('segue o fecho DENTRO da árvore — helper de `_shared/` que só existe nela conta', () => {
+    const r = coletarDaEdge('edge-fake', arvoreFalsa({
+      [ENTRADA]: `import { f } from '../_shared/ajuda.ts';\nawait db.rpc('da_entrada', {});\n`,
+      'supabase/functions/_shared/ajuda.ts': `await db.rpc('do_shared', {});\n`,
+    }));
+    expect(r.rpcs.map((a) => a.nome)).toEqual(['da_entrada', 'do_shared']);
   });
 });
 
