@@ -2,12 +2,109 @@
 // Extraído verbatim de src/pages/FarmerBundles.tsx (god-component split).
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronDown, ChevronUp, Layers, Zap } from 'lucide-react';
-import type { BundleRecommendation, CustomerBundles } from '@/hooks/useBundleEngine';
+import { ChevronDown, ChevronUp, Layers, TrendingUp, Zap } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { TIPOS_INDIVIDUAIS, type BundleRecommendation, type CustomerBundles } from '@/hooks/useBundleEngine';
+import type { CelulaIndividual, SituacaoIndividual } from '@/lib/farmer/melhor-individual';
 import { classifyCustomerProfile, profileLabels, type CustomerProfile, type BundleArgument } from '@/hooks/useBundleArguments';
 import type { useDiagnosticQuestions } from '@/hooks/useDiagnosticQuestions';
 import type { CustomerCtx } from './types';
 import { BundleCardFull } from './BundleCardFull';
+
+/**
+ * O que cada rota individual se chama na tela — e por que são DUAS.
+ *
+ * A célula única comparava `affinity_score` de dois motores cujas escalas não são
+ * comensuráveis, e o resultado era uma precedência de tipo que ninguém decidiu (up_sell venceu
+ * 186 de 186 pares em prod). Rotular as duas devolve a escolha a quem conhece o cliente.
+ */
+const ROTULOS: Record<(typeof TIPOS_INDIVIDUAIS)[number], { titulo: string; Icone: LucideIcon }> = {
+  cross_sell: { titulo: 'Melhor complementar', Icone: Zap },
+  up_sell: { titulo: 'Melhor upgrade', Icone: TrendingUp },
+};
+
+/**
+ * O QUALIFICADOR é quem afirma prioridade — não a lista de nomes.
+ *
+ * Foi o argumento que decidiu mostrar nomes em todo estado: listar dois produtos não diz que um
+ * vence o outro; quem diria isso é o rótulo, e o rótulo aqui declara exatamente o que se sabe.
+ * `eleito` não tem qualificador porque só ali houve eleição de verdade.
+ *
+ * `alerta` marca os dois estados em que a ordem NÃO é confiável — o aviso vai no qualificador e
+ * não nos nomes, que continuam acionáveis: o vendedor pode ofertar qualquer um dos dois.
+ */
+const QUALIFICADOR: Record<SituacaoIndividual, { texto: string; alerta: boolean } | null> = {
+  eleito: null,
+  empatado: { texto: 'Igualmente indicados', alerta: false },
+  unico_registrado: { texto: 'Única registrada', alerta: false },
+  ordem_indisponivel: { texto: 'Ordenação indisponível', alerta: true },
+  referencia_ambigua: { texto: 'Sem ordem confiável', alerta: true },
+};
+
+const CelulaDeRota = ({ titulo, Icone, celula }: { titulo: string; Icone: LucideIcon; celula: CelulaIndividual }) => {
+  const indisponivel = celula.status === 'indisponivel';
+  return (
+    <div className="rounded p-1.5 text-center bg-muted">
+      <Icone className={`w-3 h-3 mx-auto mb-0.5 ${indisponivel ? 'text-status-warning' : 'text-status-info'}`} />
+      <p className="text-[9px] text-muted-foreground">{titulo}</p>
+      {/* TRÊS ausências distintas, e o traço só serve a UMA. O `?? '—'` de antes dava o mesmo
+          sinal para "li e não há" e para "não consegui ler" — e, junto com o filtro que omitia
+          o cliente sem bundle, transformava a falha de leitura na afirmação "não há rota
+          individual para este cliente" (money-path §2 na forma de rótulo). */}
+      {celula.status === 'indisponivel' ? (
+        <p
+          className="text-[10px] font-bold text-status-warning leading-tight"
+          title={
+            celula.motivo === 'leitura_falhou'
+              ? "A leitura das recomendações individuais falhou nesta execução. Não é 'não existe' — é 'não sei'. Recalcule para tentar de novo."
+              : 'A recomendação existe, mas não foi possível identificar nenhum produto dela pelo nome — pode ser SKU fora do catálogo ativo ou cadastro sem descrição.'
+          }
+        >
+          Indisponível
+        </p>
+      ) : celula.status === 'nenhum' ? (
+        <p className="text-xs font-bold" title="Este cliente não tem oferta pendente desta rota.">
+          —
+        </p>
+      ) : (
+        <CelulaEncontrada celula={celula} />
+      )}
+    </div>
+  );
+};
+
+const CelulaEncontrada = ({ celula }: { celula: Extract<CelulaIndividual, { status: 'encontrado' }> }) => {
+  const qualificador = QUALIFICADOR[celula.situacao];
+  const semNome = celula.produtos - celula.nomes.length;
+  return (
+    <>
+      {qualificador && (
+        <p className={`text-[8px] leading-tight ${qualificador.alerta ? 'text-status-warning' : 'text-muted-foreground'}`}>
+          {qualificador.texto}
+        </p>
+      )}
+      <p className="text-xs font-bold leading-tight break-words">{celula.nomes.join(' · ')}</p>
+      {/* Declarar o que sumiu é o que impede a falha de catálogo de virar eleição: num
+          `empatado` que perdeu um nome, esconder o ausente promoveria o sobrevivente a
+          vencedor — a fabricação exata que esta tela existe para não cometer. */}
+      {semNome > 0 && (
+        <p
+          className="text-[8px] text-status-warning leading-tight"
+          title="Estes SKUs foram recomendados e não foi possível identificá-los pelo nome — SKU fora do catálogo ativo, ou cadastro sem descrição."
+        >
+          {semNome} de {celula.produtos} sem nome
+        </p>
+      )}
+      {/* Só em `empatado`: nos estados que nomeiam o grupo inteiro `produtos = candidatos` por
+          invariante, e em `eleito` os demais candidatos PERDERAM — não estão escondidos. */}
+      {celula.situacao === 'empatado' && celula.candidatos > celula.produtos && (
+        <p className="text-[8px] text-muted-foreground leading-tight">
+          empate entre {celula.produtos} de {celula.candidatos}
+        </p>
+      )}
+    </>
+  );
+};
 
 interface CustomerBundleCardProps {
   data: CustomerBundles;
@@ -30,7 +127,12 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
   // isso são milhares de cartões anunciando uma taxa de conversão que ninguém calculou.
   // (Achado 4 do challenge Codex — consequência direta de consertar a omissão.)
   const melhorProbabilidade = data.bundles[0]?.pBundle ?? null;
-  const comparacaoIndisponivel = data.bestIndividual.status === 'indisponivel';
+  // Quantas das DUAS rotas ninguém consegue afirmar. Vale como aviso no cartão RECOLHIDO: sem
+  // ele, o cliente que só entrou na lista por causa da falha se apresenta como um cartão comum,
+  // e o operador teria de expandir um a um para descobrir que não sabemos nada dele.
+  const rotasIndisponiveis = TIPOS_INDIVIDUAIS.filter(
+    (tipo) => data.individuais[tipo].status === 'indisponivel',
+  ).length;
 
   // grossMarginPct passa SEM `|| 0`: o guard dentro de classifyCustomerProfile só funciona se o
   // null chegar até lá. Coagir aqui tornaria a correção inerte (a armadilha do #1508).
@@ -68,8 +170,12 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
               {/* O estado indisponível precisa aparecer COLAPSADO: sem isto, o cliente que só
                   entrou na lista por causa da falha se apresenta como um cartão comum, e o
                   operador teria de expandir um a um para descobrir que não sabemos nada dele. */}
-              {comparacaoIndisponivel && (
-                <span className="text-[10px] font-semibold text-status-warning">comparação indisponível</span>
+              {rotasIndisponiveis > 0 && (
+                <span className="text-[10px] font-semibold text-status-warning">
+                  {rotasIndisponiveis === TIPOS_INDIVIDUAIS.length
+                    ? 'comparação indisponível'
+                    : `${rotasIndisponiveis} rota indisponível`}
+                </span>
               )}
               <Badge variant="outline" className={`text-[7px] ${profileInfo.color}`}>{profileInfo.label}</Badge>
             </div>
@@ -79,15 +185,20 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
 
         {expanded && (
           <div className="mt-3 space-y-3">
-            {/* Duas rotas de oferta — SEM declarar vencedor.
+            {/* TRÊS rotas de oferta — SEM declarar vencedor entre nenhuma delas.
                 O card antes coroava 🏆 quem tivesse o maior LIE em R$. Isso não sobrevive a duas
                 coisas: (1) sem custo no browser não há lucro esperado para comparar; (2) mesmo os
                 scores de afinidade não são comensuráveis entre si — `pBundle` multiplica por
                 `lift/2` e não é limitado a 1, enquanto o score individual é uma probabilidade.
-                Eleger vencedor entre as duas escalas era um número inventado. */}
+                Eleger vencedor entre as duas escalas era um número inventado.
+
+                A terceira célula nasceu do MESMO defeito um nível abaixo: complementar e upgrade
+                dividiam uma célula e disputavam por `affinity_score`, escalas igualmente
+                incomensuráveis. Separá-las não é enfeite de layout — é parar de responder por
+                artefato de escala uma pergunta que ninguém fez. */}
             <div className="bg-muted/50 rounded-lg p-2">
               <p className="text-[9px] font-semibold mb-1">📊 Rotas de oferta</p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div className="rounded p-1.5 text-center bg-muted">
                   <Layers className="w-3 h-3 mx-auto mb-0.5 text-status-success" />
                   <p className="text-[9px] text-muted-foreground">Melhor bundle</p>
@@ -95,34 +206,14 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
                     {melhorProbabilidade == null ? 'Sem bundle' : `${melhorProbabilidade.toFixed(1)}%`}
                   </p>
                 </div>
-                <div className="rounded p-1.5 text-center bg-muted">
-                  <Zap className={`w-3 h-3 mx-auto mb-0.5 ${comparacaoIndisponivel ? 'text-status-warning' : 'text-status-info'}`} />
-                  <p className="text-[9px] text-muted-foreground">Melhor individual</p>
-                  {/* TRÊS estados, não dois. O `?? '—'` de antes lia a união colapsada em
-                      `IndividualComparison | null` e dava o MESMO traço para "li e não há" e
-                      para "não consegui ler" — e, junto com o filtro que omitia da lista o
-                      cliente sem bundle, transformava a falha de leitura na afirmação "não há
-                      rota individual para este cliente" (money-path §2 na forma de rótulo).
-                      O traço continua sendo o certo para `nenhum`: ali a leitura ACONTECEU. */}
-                  {data.bestIndividual.status === 'encontrado' ? (
-                    <p className="text-xs font-bold">{data.bestIndividual.value.productName}</p>
-                  ) : data.bestIndividual.status === 'indisponivel' ? (
-                    <p
-                      className="text-[10px] font-bold text-status-warning leading-tight"
-                      title={
-                        data.bestIndividual.motivo === 'leitura_falhou'
-                          ? "A leitura das recomendações individuais falhou nesta execução. Não é 'não existe' — é 'não sei'. Recalcule para tentar de novo."
-                          : 'A recomendação existe, mas o produto dela não está no catálogo ativo — não dá para dizer qual é.'
-                      }
-                    >
-                      Comparação indisponível
-                    </p>
-                  ) : (
-                    <p className="text-xs font-bold" title="Este cliente não tem oferta individual pendente.">
-                      —
-                    </p>
-                  )}
-                </div>
+                {TIPOS_INDIVIDUAIS.map((tipo) => (
+                  <CelulaDeRota
+                    key={tipo}
+                    titulo={ROTULOS[tipo].titulo}
+                    Icone={ROTULOS[tipo].Icone}
+                    celula={data.individuais[tipo]}
+                  />
+                ))}
               </div>
             </div>
 

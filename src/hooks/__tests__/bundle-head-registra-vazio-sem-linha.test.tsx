@@ -9,7 +9,7 @@ import { renderHook, act } from '@testing-library/react';
  *
  *     linhasProduzidas = allCustomerBundles.some((cb) => cb.bundles.length > 0)
  *
- * Um cliente entra em `allCustomerBundles` com `bundles: []` quando só tem `bestIndividual`
+ * Um cliente entra em `allCustomerBundles` com `bundles: []` quando só tem oferta individual
  * — e essa comparação não vira linha nenhuma no `p_linhas` da RPC de substituição. Contando
  * CLIENTES (`allCustomerBundles.length > 0`, como era antes), esse caso travava o
  * `registrarVazio()` do `catch` sobre uma execução que não produziu nada: o head parava de se
@@ -72,9 +72,11 @@ function dadosDa(tabela: string): unknown[] {
     case 'omie_products': return PRODUTOS;
     case 'profiles': return ['c9', 'c8'].map(perfil);
     case 'sales_orders': return PEDIDOS;
-    // O ingrediente do caso: com `bestIndividual` o cliente ENTRA em `allCustomerBundles`
-    // mesmo com `topBundles` vazio (`if (topBundles.length > 0 || bestIndividual)`) — e é
-    // exatamente esse cliente que a contagem antiga confundia com uma linha gravável.
+    // O ingrediente do caso: com uma célula individual não-`nenhum` o cliente ENTRA em
+    // `allCustomerBundles` mesmo com `topBundles` vazio — e é exatamente esse cliente que a
+    // contagem antiga confundia com uma linha gravável. Aqui quem o faz entrar é o
+    // `indisponivel`: a RPC das individuais cai no default do mock (`data: null` sem erro),
+    // que é FALHA de leitura, e falha não autoriza omitir ninguém.
     case 'farmer_recommendations':
       return [{ product_id: 'P4', affinity_score: 0.9, recommendation_type: 'cross_sell' }];
     default: return [];
@@ -147,7 +149,7 @@ beforeEach(() => {
 });
 
 describe('useBundleEngine — head registra o vazio quando não houve linha', () => {
-  it('FG-VAZIO-SEM-LINHA: cliente só com bestIndividual não conta como linha produzida', async () => {
+  it('FG-VAZIO-SEM-LINHA: cliente só com oferta individual não conta como linha produzida', async () => {
     const { result } = renderHook(() => useBundleEngine());
     await act(async () => { await result.current.calculateBundles(); });
 
