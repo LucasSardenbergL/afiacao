@@ -310,6 +310,17 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
  * v2: auditar cada uma individualmente e cruzar com os grants reais.
  */
 export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
+  // Invariante do agregado pedido de venda (2026-09-07, #2363 — migration 20260907220000).
+  // Lê `order_items.unit_price` para comparar os dois espelhos do pedido (jsonb x relacional),
+  // mas NÃO é customer-facing e NÃO projeta dado: RETURNS void, só levanta 23514. Quem a invoca
+  // é o executor de CONSTRAINT TRIGGER, que não reavalia EXECUTE do chamador a cada disparo —
+  // por isso fecha por PRIVILÉGIO com `REVOKE ALL ... FROM PUBLIC, anon, authenticated` na
+  // própria migration, e a postcondição do apply ABORTA medindo has_function_privilege nos 9
+  // pares role/funcao (não declara: mede). Assert espelho no harness: B7 de
+  // db/test-pedido-venda-coerencia.sh.
+  'public.pedido_venda_exigir_coerencia',
+  'public.pedido_venda_coerencia_cab',
+  'public.pedido_venda_coerencia_lin',
   // ATP fase 1 (2026-08-06): cálculo interno disponivel = saldo−reservas−segurança. Lê
   // inventory_position mas NÃO é executável por authenticated/anon (REVOKE ALL na própria
   // migration; GRANT só service_role) — chamada exclusivamente pelas 4 RPCs gateadas acima.

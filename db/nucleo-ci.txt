@@ -57,3 +57,4 @@ db/test-sales_orders_omie_hash_unique.sh    5
 db/test-claim-disparo-cenario-b.sh         76
 db/test-disparado-simulado-pos-disparo.sh  59
 db/test-fin-sync-lease.sh                  22
+db/test-pedido-venda-coerencia.sh          31
