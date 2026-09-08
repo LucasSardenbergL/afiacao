@@ -107,11 +107,32 @@
  * ⚠️ **O que este gate NÃO alcança, e onde o próximo esforço rende.** Nas duas edges sem sonda, a
  * régua de corpo servido cobre o diretório da edge e **não** `_shared/` — e elas também não têm o
  * fingerprint do #1998. Uma mudança de comportamento que chegue por `_shared/` nessas duas continua
- * sem marcador que se mexa. O desenho que resolve já está no repo, na `generate-tactical-plan`:
- * servir o marcador da canária no campo `versao`, o MESMO símbolo da sonda, faz a canária herdar o
- * `sonda:bump` E o fingerprint de graça. Custo declarado em `5d8f1f779`: quem verificar pelo nome
- * `contrato` passa a ler `undefined`, então a mudança tem de ir junto com a §Canárias do
- * `deploy.md`.
+ * sem marcador que se mexa.
+ *
+ * ## Duas FORMAS de emissão — e a cegueira mora na DESCOBERTA, não na régua
+ *
+ * O marcador é achado por TEXTO no `index.ts`, e a forma importa:
+ *
+ *   · `contrato: "<literal>"` — 7 das 8 canárias;
+ *   · `versao: <SÍMBOLO>` no bloco que emite `canary: true` — a `generate-tactical-plan`, que ACOPLA
+ *     o contrato da canária ao `VERSAO` da sonda (o desenho que o `5d8f1f779` recomendou: herda o
+ *     `sonda:bump` E o fingerprint de graça). O literal mora no `versao.ts` e é resolvido por
+ *     `extrairVersao` FORA do fecho de definições — ver a nota na resolução, porque pôr o `versao.ts`
+ *     entre as fontes visíveis mudaria a régua de toda canária que ECOA o `VERSAO`.
+ *
+ * A segunda forma ficou invisível até 2026-09-08, e o preço foi MEDIDO: sabotando a `margemConhecida`
+ * de `_shared/tactical-margem.ts` (`ausente` passando a fabricar ZERO — a decisão money-path que essa
+ * canária existe para atestar), sem bumpar marcador, os DOIS gates saíam 0. O irmão porque exclui
+ * `_shared/`; este porque não enxergava a canária. O furo NÃO era "marcador sem gate": no eixo do
+ * diretório da edge o `sonda:bump` reprova (exit 1). Faltava exatamente o eixo que ESTE gate
+ * reivindica — `_shared/` por símbolo.
+ *
+ * Daí o ALARME DE COBERTURA: edge que EMITE canária e da qual a descoberta não localiza nenhuma
+ * reprova por não conseguir MEDIR. Sem ele um formato novo nasce invisível e o gate segue
+ * respondendo "✓ N conferidas" — a classe do #2363, agora medida duas vezes no mesmo repo.
+ * ⚠️ Ele é zero-por-EDGE, então não vê cobertura PARCIAL: a `identidade_snapshot_probe` da
+ * `omie-vendas-sync` emite `canary: true` sem marcador próprio e divide a edge com uma canária
+ * localizada, então não o cite como prova de que toda emissão está coberta.
  *
  * Uso:
  *   bun run canaria:bump                        # base = merge-base com origin/main (ou GITHUB_BASE_REF)
@@ -140,6 +161,32 @@ const ARQ_SONDA = 'versao.ts';
 const RE_EMISSAO = /contrato\s*:\s*(["'])([^"'\n]+)\1/;
 
 /**
+ * A MESMA emissão, servida no campo `versao` por REFERÊNCIA a símbolo — a forma da
+ * `generate-tactical-plan`: `{ canary: true, versao: VERSAO, ok, resultados }`, onde `VERSAO` é o
+ * símbolo do `versao.ts`, o MESMO que a sonda serve.
+ *
+ * Por que esta forma é reconhecida em vez de corrigida na edge: o cabeçalho deste arquivo já a
+ * nomeia como o desenho que RESOLVE o buraco das edges sem fingerprint ("servir o marcador da
+ * canária no campo `versao` … faz a canária herdar o `sonda:bump` E o fingerprint de graça"). Pedir
+ * um `contrato` literal ao lado do `versao` poria DOIS campos com o mesmo valor sob réguas
+ * diferentes; reconhecer a forma dá UM marcador vigiado por dois gates em eixos COMPLEMENTARES —
+ * o irmão cobre o diretório da edge, este cobre a superfície da canária, `_shared/` incluído.
+ *
+ * Exige identificador seguido de `,` ou `}`: `versao: "literal"` não casa de propósito (aí o
+ * marcador é literal e o caminho é o `contrato`), e o que escapar cai no alarme de cobertura.
+ */
+const RE_EMISSAO_VERSAO = /versao\s*:\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*[,}]/;
+
+/**
+ * O sinal de que um `index.ts` HOSPEDA canária. Não serve para achar o marcador — serve de ALARME:
+ * emitir canária e o gate não localizar nenhuma é CEGUEIRA, não ausência (ver `coletarEstadoCanarias`).
+ */
+const RE_SINAL_CANARIA = /canary\s*:\s*true/;
+
+/** o único símbolo de marcador que este gate sabe resolver — o mesmo que o irmão lê do `versao.ts` */
+const SIMBOLO_MARCADOR = 'VERSAO';
+
+/**
  * Abertura do ARM que hospeda a canária. As canárias deste repo têm duas formas só:
  * `case "<rota>": {` (probe roteada por `action`) e `if (<gate da canária>) {`.
  */
@@ -161,8 +208,14 @@ const PROFUNDIDADE_FECHO = 6;
 export interface Canaria {
   /** chave estável para parear base×HEAD: `case:<rota>` ou `if:<ordinal no arquivo>` */
   chave: string;
-  /** o marcador emitido */
-  contrato: string;
+  /** o marcador emitido como LITERAL; `null` quando vem por REFERÊNCIA a símbolo (ver `simbolo`) */
+  contrato: string | null;
+  /**
+   * Símbolo que CARREGA o marcador, quando a canária o serve no campo `versao` (`versao: VERSAO`).
+   * O literal mora noutro arquivo (`versao.ts`), e esta função enxerga um arquivo só — então quem
+   * RESOLVE é o chamador. `null` = o marcador veio literal, no campo `contrato`.
+   */
+  simbolo: string | null;
   /** o arm que hospeda a canária, já sem comentário; null = não deu para delimitar → fail-CLOSED */
   bloco: string | null;
 }
@@ -196,35 +249,86 @@ const indentacao = (linha: string): number => linha.length - linha.trimStart().l
 export function localizarCanarias(fonteSemComentario: string): Canaria[] {
   const linhas = fonteSemComentario.split('\n');
   const achadas: Canaria[] = [];
+  const armsVistos = new Set<number>();
   let ordinalIf = 0;
+  const chaveDoArm = (rota: string | null): string => (rota ? `case:${rota}` : `if:${++ordinalIf}`);
+
+  // Passada 1 — o marcador LITERAL no campo `contrato`. É a forma de 7 das 8 canárias, e a ordem
+  // em que ela consome `ordinalIf` é a de sempre: as chaves `if:N` já emitidas não se mexem.
   for (let i = 0; i < linhas.length; i++) {
     const emissao = linhas[i].match(RE_EMISSAO);
     if (!emissao) continue;
-    const indEmissao = indentacao(linhas[i]);
-    let canaria: Canaria | null = null;
-    for (let j = i - 1; j >= 0 && canaria === null; j--) {
-      if (linhas[j].trim() === '' || indentacao(linhas[j]) >= indEmissao) continue;
-      const arm = linhas[j].match(RE_ARM);
-      if (!arm) continue;
-      const indArm = arm[1].length;
-      let fim = linhas.length - 1;
-      for (let k = j + 1; k < linhas.length; k++) {
-        if (linhas[k].trim() === '') continue;
-        if (indentacao(linhas[k]) <= indArm) {
-          fim = k;
-          break;
-        }
-      }
-      if (fim <= i) continue; // arm que fechou ANTES da emissão: não é o dela
-      canaria = {
-        chave: arm[3] ? `case:${arm[3]}` : `if:${++ordinalIf}`,
-        contrato: emissao[2],
-        bloco: linhas.slice(j, fim + 1).join('\n'),
-      };
+    const arm = armDaEmissao(linhas, i);
+    if (arm === null) {
+      achadas.push({ chave: `emissao:${i + 1}`, contrato: emissao[2], simbolo: null, bloco: null });
+      continue;
     }
-    achadas.push(canaria ?? { chave: `emissao:${i + 1}`, contrato: emissao[2], bloco: null });
+    armsVistos.add(arm.linhaArm);
+    achadas.push({
+      chave: chaveDoArm(arm.rota),
+      contrato: emissao[2],
+      simbolo: null,
+      bloco: arm.bloco,
+    });
+  }
+
+  // Passada 2 — o marcador servido no campo `versao`, por referência ao símbolo da sonda. Ancorada
+  // no BLOCO (não na linha da emissão) para não depender de os dois campos caberem numa linha só.
+  //
+  // Três descartes, e cada um evita um falso positivo MEDIDO neste repo:
+  //   · arm já visto  → a `omie-vendas-sync` emite `canary: true` DUAS vezes no mesmo
+  //     `case "identidade_probe"`; sem isto a mesma canária entraria duplicada;
+  //   · bloco com `contrato:` → quando as duas formas convivem, o marcador é o `contrato` (é o que
+  //     a tabela do `deploy.md` manda verificar), e a passada 1 já o pegou;
+  //   · `versao:` com valor que não é identificador → literal ou expressão: fora do alcance, e o
+  //     alarme de cobertura é quem responde por isso.
+  for (let i = 0; i < linhas.length; i++) {
+    if (!RE_SINAL_CANARIA.test(linhas[i])) continue;
+    const arm = armDaEmissao(linhas, i);
+    if (arm === null || armsVistos.has(arm.linhaArm)) continue;
+    if (RE_EMISSAO.test(arm.bloco)) continue;
+    const ref = arm.bloco.match(RE_EMISSAO_VERSAO);
+    if (ref === null) continue;
+    armsVistos.add(arm.linhaArm);
+    achadas.push({
+      chave: chaveDoArm(arm.rota),
+      contrato: null,
+      simbolo: ref[1],
+      bloco: arm.bloco,
+    });
   }
   return achadas;
+}
+
+/**
+ * O ARM que hospeda a emissão da linha `i`, delimitado por INDENTAÇÃO (ver o porquê acima).
+ *
+ * Devolve a LINHA do arm além do bloco: é ela — e não a chave — que dedupa as duas passadas, porque
+ * a chave `if:N` só pode ser emitida quando a canária é ACEITA, sob pena de o contador andar em
+ * candidato descartado e renomear as canárias já cobertas.
+ */
+function armDaEmissao(
+  linhas: string[],
+  i: number,
+): { linhaArm: number; rota: string | null; bloco: string } | null {
+  const indEmissao = indentacao(linhas[i]);
+  for (let j = i - 1; j >= 0; j--) {
+    if (linhas[j].trim() === '' || indentacao(linhas[j]) >= indEmissao) continue;
+    const arm = linhas[j].match(RE_ARM);
+    if (!arm) continue;
+    const indArm = arm[1].length;
+    let fim = linhas.length - 1;
+    for (let k = j + 1; k < linhas.length; k++) {
+      if (linhas[k].trim() === '') continue;
+      if (indentacao(linhas[k]) <= indArm) {
+        fim = k;
+        break;
+      }
+    }
+    if (fim <= i) continue; // arm que fechou ANTES da emissão: não é o dela
+    return { linhaArm: j, rota: arm[3] ?? null, bloco: linhas.slice(j, fim + 1).join('\n') };
+  }
+  return null;
 }
 
 /**
@@ -467,8 +571,27 @@ export function coletarEstadoCanarias(base: string, headRev: string | null): Est
   for (const edge of edges.sort()) {
     const indexHead = lerLado(LADO_HEAD, `${RAIZ_EDGES}/${edge}/index.ts`, headRev);
     if (indexHead === null) continue;
-    const canariasHead = localizarCanarias(removerComentarios(indexHead));
-    if (canariasHead.length === 0) continue;
+    const limpoHead = removerComentarios(indexHead);
+    const canariasHead = localizarCanarias(limpoHead);
+    if (canariasHead.length === 0) {
+      // CEGUEIRA ≠ ausência. Uma edge que EMITE canária e da qual eu não localizo nenhuma tem o
+      // marcador fora do alcance da descoberta — e seguir em frente responderia "✓ N canária(s)
+      // conferida(s)" com e sem essa canária existir. É a classe MEDIDA no #2363 (o gate respondeu
+      // "6" antes e depois de a canária da `copilot-analyze` nascer, porque o literal morava fora
+      // do `index.ts`) e é a mesma que deixou a `generate-tactical-plan` descoberta até aqui.
+      //
+      // ⚠️ Limite declarado: isto é zero-por-EDGE, então NÃO prova cobertura de toda emissão — a
+      // `identidade_snapshot_probe` da `omie-vendas-sync` emite `canary: true` sem marcador próprio
+      // e não dispara o alarme, porque divide a edge com uma canária localizada.
+      if (RE_SINAL_CANARIA.test(limpoHead)) {
+        throw new FalhaAoMedir(
+          `a edge \`${edge}\` EMITE canária (\`canary: true\` em ${RAIZ_EDGES}/${edge}/index.ts) e eu ` +
+            'não localizei NENHUMA. O marcador dela está fora do alcance da descoberta — que ' +
+            'reconhece `contrato: "<literal>"` e `versao: <SÍMBOLO>` no bloco da canária.',
+        );
+      }
+      continue;
+    }
 
     // Distinguir "a edge não existia na base" (legítimo: a canária NASCE) de "o `git show` falhou"
     // é o que impede o segundo virar o primeiro — e o primeiro faz o gate PASSAR.
@@ -491,6 +614,37 @@ export function coletarEstadoCanarias(base: string, headRev: string | null): Est
     // `contrato` é o único marcador que existe, e a régua tem de ser a mesma do gate irmão.
     const fonteSonda = lerLado(LADO_HEAD, `${RAIZ_EDGES}/${edge}/${ARQ_SONDA}`, headRev);
     const temSonda = fonteSonda !== null && extrairVersao(fonteSonda) !== null;
+
+    // Resolução do marcador servido por SÍMBOLO. Ela mora AQUI, e não no fecho de definições, de
+    // propósito: pôr o `versao.ts` entre as fontes visíveis faria o `VERSAO` entrar na SUPERFÍCIE
+    // de toda canária que o ecoa — e a `identidade_probe` da `omie-vendas-sync` ecoa. Um bump só do
+    // `VERSAO` passaria a exigir bump do `contrato` dela, mudando a régua calibrada em 400 fatias.
+    // [Codex #3] Resolver o VALOR por fora preserva a régua e entrega só a descoberta que falta.
+    const fonteSondaBase = lerNaRev(base, `${RAIZ_EDGES}/${edge}/${ARQ_SONDA}`);
+    const resolverMarcador = (c: Canaria, fonte: string | null, ehHead: boolean): string | null => {
+      if (c.simbolo === null) return c.contrato;
+      if (c.simbolo !== SIMBOLO_MARCADOR) {
+        throw new FalhaAoMedir(
+          `a canária \`${c.chave}\` de \`${edge}\` serve o marcador no campo \`versao\` a partir ` +
+            `do símbolo \`${c.simbolo}\`, e eu só sei resolver \`${SIMBOLO_MARCADOR}\` (o do ` +
+            `\`${ARQ_SONDA}\`). Sem resolver o símbolo eu compararia NOMES, não marcadores.`,
+        );
+      }
+      const literal = fonte === null ? null : extrairVersao(fonte);
+      if (literal === null) {
+        // Fail-CLOSED nos DOIS lados. [Codex] Na base isto é o furo mais traiçoeiro: devolver
+        // `null` aqui faria o núcleo ler "a canária NASCEU nesta fatia" e DISPENSAR o bump — o
+        // gate ficaria verde justamente quando não conseguiu ler o marcador anterior.
+        throw new FalhaAoMedir(
+          `a canária \`${c.chave}\` de \`${edge}\` serve o marcador pelo \`${SIMBOLO_MARCADOR}\` ` +
+            `do \`${ARQ_SONDA}\`, e eu não consegui LER esse literal ${ehHead ? 'no HEAD' : 'na BASE'}.`,
+        );
+      }
+      return literal;
+    };
+    const marcadorDoHead = (c: Canaria): string => resolverMarcador(c, fonteSonda, true)!;
+    const marcadorDaBase = (c: Canaria | null): string | null =>
+      c === null ? null : resolverMarcador(c, fonteSondaBase, false);
     const regua: AchadoCanaria['regua'] = temSonda ? 'superficie-da-canaria' : 'corpo-servido';
 
     const defsHead = temSonda
@@ -523,8 +677,8 @@ export function coletarEstadoCanarias(base: string, headRev: string | null): Est
           edge,
           chave: canaria.chave,
           regua,
-          contratoBase: naBase?.contrato ?? null,
-          contratoHead: canaria.contrato,
+          contratoBase: marcadorDaBase(naBase),
+          contratoHead: marcadorDoHead(canaria),
           corpo: [],
           indelimitavel: true,
         });
@@ -534,8 +688,8 @@ export function coletarEstadoCanarias(base: string, headRev: string | null): Est
         edge,
         chave: canaria.chave,
         regua,
-        contratoBase: naBase?.contrato ?? null,
-        contratoHead: canaria.contrato,
+        contratoBase: marcadorDaBase(naBase),
+        contratoHead: marcadorDoHead(canaria),
         corpo: temSonda
           ? [
               {
