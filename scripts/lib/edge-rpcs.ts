@@ -12,6 +12,10 @@
 //      fecho de imports, não só o diretório).
 //   3. INDIREÇÃO. Só vê o nome LITERAL colado no `.rpc(`. Um helper que receba o nome por
 //      parâmetro fica invisível — e some da lista sem deixar rastro.
+//   4. LITERAL PARCIAL. Casava a aspa de abertura e o miolo, sem exigir que o argumento
+//      TERMINASSE ali — então `.rpc("has_role" + "_v2")` reportava `has_role` e ZERO indireções.
+//      Diferente das outras três, esta errava para o lado ERRADO: gate verde cruzando com prod um
+//      nome que a edge não chama. Corrigida pelo lookahead `[,)]` (detalhe no NOME_LITERAL).
 //
 // A (3) não tem conserto por extração: o nome pode vir de qualquer lugar. O que ela tem é o
 // desfecho certo — ACUSAR. Uma indireção não vira lista vazia silenciosa; vira um aviso com
@@ -50,7 +54,23 @@ export interface ExtracaoRpc {
 // (1) reencenada por outra porta.
 const CHAMADA_RPC = /\.rpc\s*(?:<[^>()]*>)?\s*\(\s*/g;
 // As TRÊS aspas do JS. O template só conta quando não interpola: `` `x${y}` `` é indireção.
-const NOME_LITERAL = /^(['"`])([A-Za-z0-9_]+)\1/;
+//
+// O lookahead `[,)]` é a cegueira (4), e ela era um FALSO VERDE — a pior das quatro, porque as
+// outras três erram para MENOS (lista curta, gate recusa) e esta errava para o LADO ERRADO:
+// `db.rpc("has_role" + "_v2")` casava o prefixo, reportava `has_role`, ZERO indireções e exit 0.
+// O gate então cruzava com prod o nome ERRADO — verificava `has_role`, que existe, e liberava o
+// deploy de uma edge que chama `has_role_v2`, que pode não existir. É exatamente o #2285 que o
+// pré-flight existe para prevenir, alcançado por dentro da própria ferramenta. Pior ainda com
+// variável: `db.rpc("prefixo_" + sufixo)` reportava `prefixo_`, um nome que provavelmente não
+// existe em lugar nenhum. Achado pelo Codex na 2ª opinião de 2026-09-08 e reproduzido antes de
+// corrigir; nenhuma edge do repo explorava o furo na data (medido: 0 ocorrências em origin/main,
+// contra 30 arquivos com `.rpc(` literal como controle positivo).
+//
+// A regra: depois do literal, o argumento tem de TERMINAR — `,` (vem outro argumento) ou `)` (fim
+// da chamada). Qualquer outra coisa significa que a expressão CONTINUA, e aí o literal é um
+// PEDAÇO do nome, não o nome. Some para o lado seguro: `"nome" as string` também vira indireção,
+// que é uma recusa a mais e nunca um verde a mais.
+const NOME_LITERAL = /^(['"`])([A-Za-z0-9_]+)\1\s*(?=[,)])/;
 
 function numeroDaLinha(fonte: string, indice: number): number {
   let linha = 1;
