@@ -32,8 +32,15 @@ function pathsDeclarados(): string[] {
 }
 
 describe('canonicalizarRota — a máscara recusa o que não é forma de tela', () => {
-  it('UUID vira :id', () => {
+  it('UUID vira :id — quem o pega é o teto de 24 chars, não uma regra dedicada', () => {
+    // A regra `/^[0-9a-f]{8}-…$/` existiu e a falsificação a derrubou: era
+    // inalcançável (UUID tem 36 chars). Esta asserção passou a ancorar o teto —
+    // subi-lo acima de 32 deixa UUID passar cru, e é aqui que fica vermelho.
     expect(canonicalizarRota('/orders/3f2a9c1e-4b7d-4e21-9f88-1c0de5a7b210')).toBe('/orders/:id');
+  });
+
+  it('UUID sem hífens vira :id — aqui quem pega é o hex longo', () => {
+    expect(canonicalizarRota('/orders/3f2a9c1e4b7d4e219f881c0de5a7b210')).toBe('/orders/:id');
   });
 
   it('id numérico vira :id', () => {

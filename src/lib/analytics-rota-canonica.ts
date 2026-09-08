@@ -28,9 +28,22 @@ const MAX_SEGMENTOS = 6;
  */
 const MAX_CHARS = 100;
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SO_DIGITOS = /^[0-9]+$/;
 const HEX_LONGO = /^[0-9a-f]{12,}$/;
+
+/**
+ * Segmento longo é token/slug gerado muito antes de ser nome de tela: o maior
+ * segmento estático do `App.tsx` tem 18 chars (`standard-processes`).
+ *
+ * ⚠️ Este teto é quem mascara UUID. Houve aqui uma regra `/^[0-9a-f]{8}-…$/`
+ * dedicada, e a falsificação a derrubou: sabotá-la deixava a suíte VERDE,
+ * porque UUID tem 36 chars (32 sem hífen) e já caía neste teto antes. Guard
+ * inalcançável que parece proteger é pior que ausência — foi removido, e o
+ * teste `UUID vira :id` passou a apontar para cá. Consequência a saber ao mexer
+ * neste número: subi-lo acima de 32 volta a deixar UUID passar CRU, e é esse
+ * teste que fica vermelho.
+ */
+const MAX_CHARS_SEGMENTO = 24;
 
 /**
  * Alfabeto do que pode passar CRU. Deliberadamente estreito: letras minúsculas,
@@ -49,10 +62,8 @@ const TRUNCADO = ':trunc';
 function canonicalizarSegmento(seg: string): string {
   // `.` e `..` são navegação, não tela — e nunca deveriam chegar aqui.
   if (seg === '.' || seg === '..') return MASCARA;
-  if (UUID.test(seg) || SO_DIGITOS.test(seg) || HEX_LONGO.test(seg)) return MASCARA;
-  // Segmento longo é token/slug gerado muito antes de ser nome de tela: o maior
-  // segmento estático do `App.tsx` tem 18 chars (`standard-processes`).
-  if (seg.length > 24) return MASCARA;
+  if (SO_DIGITOS.test(seg) || HEX_LONGO.test(seg)) return MASCARA;
+  if (seg.length > MAX_CHARS_SEGMENTO) return MASCARA;
   if (!SEGMENTO_ESTATICO.test(seg)) return MASCARA;
   return seg;
 }
