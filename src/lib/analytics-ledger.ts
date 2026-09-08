@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { canonicalizarRota } from '@/lib/analytics-rota-canonica';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { logger } from '@/lib/logger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -34,7 +35,18 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
  * percepção humana ele não consegue provar, e um nome que afirma "visto" seria
  * uma garantia sem teste.
  */
-export type EventoLedger = 'carteira.mixgap_servido';
+export type EventoLedger =
+  | 'carteira.mixgap_servido'
+  /**
+   * Uma rota canônica servida a um titular, UMA VEZ POR DIA (a janela de dedup
+   * é da RPC). Responde "quais telas chegam a ser abertas" por um cano que o
+   * navegador não escolhe entregar — a pergunta que o canal do PostHog não
+   * consegue responder, medido em `docs/historico/proxy-posthog-reavaliado.md`.
+   *
+   * ⚠️ `servido`, não `visto`: prova que o app RENDERIZOU a rota. Aba aberta e
+   * ignorada conta igual.
+   */
+  | 'navegacao.rota_servida';
 
 /**
  * Registra um evento decisório no ledger server-side.
@@ -77,4 +89,41 @@ export async function registrarNoLedger(
       error: mensagemDeErro(e) ?? '(sem mensagem)',
     });
   }
+}
+
+/**
+ * Rotas já registradas NESTA aba, por dia UTC. Não é a fonte da verdade do
+ * dedup — essa é o `chave_dedup` da RPC, que sobrevive a recarga, a outra aba e
+ * a outro aparelho. Isto aqui só evita a viagem de rede que o banco descartaria
+ * com `ON CONFLICT DO NOTHING`, e evita a chamada dupla do StrictMode em dev.
+ *
+ * O dia entra na chave porque uma aba aberta atravessa a meia-noite UTC: sem
+ * ele, a sessão longa deixaria de registrar a partir do 2º dia — o dedup local
+ * calaria um sinal que o banco aceitaria.
+ */
+const rotasDaSessao = new Set<string>();
+
+/**
+ * Registra que uma rota foi servida ao titular logado.
+ *
+ * Recebe `pathname` — nunca `pathname + search`; ver `canonicalizarRota`.
+ *
+ * ⚠️ Marca a rota como enviada ANTES de saber se a RPC deu certo. É troca
+ * deliberada: sem isso, uma falha de rede vira uma tentativa por navegação até
+ * a aba fechar. O custo é perder o registro daquela rota naquele dia naquela
+ * aba — e a mesma rota volta amanhã, ou em outra aba hoje.
+ */
+export async function registrarNavegacaoNoLedger(pathname: string): Promise<void> {
+  // Mesmo gate da fonte que `registrarNoLedger` aplica — repetido aqui para não
+  // queimar a marca de sessão sob a lente: sem isto, sair da lente na mesma aba
+  // deixaria as rotas já visitadas mudas pelo resto do dia.
+  if (isLensActive()) return;
+
+  const rota = canonicalizarRota(pathname);
+  const diaUtc = new Date().toISOString().slice(0, 10);
+  const marca = `${diaUtc}|${rota}`;
+  if (rotasDaSessao.has(marca)) return;
+  rotasDaSessao.add(marca);
+
+  await registrarNoLedger('navegacao.rota_servida', rota, { rota });
 }
