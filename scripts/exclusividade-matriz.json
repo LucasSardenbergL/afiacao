@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-08T09:32:20.005Z",
-  "sourceHead": "fe40aaa4dbbbca4bc09e4eea9a8b57c449f26257",
+  "medidoEm": "2026-09-08T11:11:03.138Z",
+  "sourceHead": "b199ba1599a108cd92c0d454150c6662839e078d",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -123,12 +123,12 @@
     {
       "gate": "docs:indice",
       "verde": true,
-      "ms": 99
+      "ms": 51
     },
     {
       "gate": "docs:links",
       "verde": true,
-      "ms": 522
+      "ms": 978
     },
     {
       "gate": "exclusividade",
@@ -153,7 +153,7 @@
     {
       "gate": "test",
       "verde": true,
-      "ms": 468349
+      "ms": 266623
     },
     {
       "gate": "tsc",
@@ -366,14 +366,14 @@
         {
           "gate": "docs:indice",
           "reprovou": true,
-          "ms": 39,
+          "ms": 163,
           "fingerprint": "a41d30136cdb032d",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": true,
-          "ms": 449,
+          "ms": 1296,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
@@ -393,8 +393,8 @@
         },
         {
           "gate": "test",
-          "reprovou": true,
-          "ms": 110792,
+          "reprovou": false,
+          "ms": 185063,
           "fingerprint": "ad6cd6b8acf39571",
           "fonteResolvida": false
         }
