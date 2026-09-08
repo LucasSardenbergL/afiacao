@@ -18,6 +18,7 @@ import {
   guardEfeitoLegado,
   main,
   parsearArgs,
+  PISO_CONTROLE_CREDENCIAL,
   resolverCanarias,
   resolverLeva,
   SENTINELA_MAPA,
@@ -1786,6 +1787,23 @@ describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
     expect(s).toMatch(
       /AND cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0\n\s*THEN 'SEM CANARIA NO AR — 401/,
     );
+  });
+
+  it('o piso do controle é a CONSTANTE — zerá-lo deixaria UMA resposta 2xx provar a credencial', () => {
+    // As asserções acima casam `>= \d+`, que aceita `>= 0`. Com piso zero UMA resposta 2xx já
+    // "prova" a credencial — o oposto do que o controle existe para fazer, e o gate de mutação
+    // não via a diferença. Referenciar a constante importada mantém a asserção viva quando o
+    // piso for ajustado, em vez de pedir edição de teste a cada tuning.
+    const s = sql();
+    expect(s).toContain(`cred.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL}`);
+    expect(s).not.toMatch(/cred\.ok_recentes >= 0\b/);
+  });
+
+  it('401 sem controle observado permanece INDETERMINADO — nunca veredito confiante', () => {
+    // O fail-CLOSED do 401 ambíguo: sem controle de credencial provado, 401 não separa
+    // bundle-sem-canária de CRON_SECRET inválido. Trocar este THEN por um veredito confiante
+    // é fail-open — e nenhuma asserção da suíte pegava a troca.
+    expect(sql()).toMatch(/THEN 'INDETERMINADO — 401 nao separa bundle sem canaria/);
   });
 });
 
