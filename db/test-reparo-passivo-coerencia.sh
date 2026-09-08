@@ -9,6 +9,7 @@ RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE="${FIXTURE:-}"
 [ -n "$FIXTURE" ] && [ -f "$FIXTURE" ] || { echo "FIXTURE=<caminho.sql> obrigatorio"; exit 1; }
 REPARO="${REPARO:-$RAIZ/db/reparo-passivo-coerencia-pedido-venda.sql}"
+REPARO15="${REPARO15:-$RAIZ/db/reparo-15o-pedido-11701.sql}"
 MIGRACAO="${MIGRACAO:-}"
 
 PGVER=17; PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"; PORT="${PGPORT_TEST:-5479}"
@@ -28,6 +29,16 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
 
 echo "== esquema =="
 Q -q <<'SQL'
+-- roles do Supabase: a migration mergeada fecha as SECDEF por REVOKE NOMINAL
+-- (PUBLIC + anon + authenticated) e a postcondicao dela MEDE has_function_privilege.
+-- Sem as roles aqui, o apply morre em "role anon does not exist" e o teste nunca
+-- chega a rodar o reparo COM a trigger no ar.
+DO $r$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
+END $r$;
+
 CREATE TABLE omie_products (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   omie_codigo_produto bigint UNIQUE, descricao text);
 CREATE TABLE sales_orders (id uuid PRIMARY KEY, omie_pedido_id bigint, account text NOT NULL,
@@ -140,6 +151,107 @@ eq "E1 discount NULL nas linhas sem a chave (nao virou 0 pelo DEFAULT)" 2 \
          WHERE so.omie_pedido_id=12137805363 AND oi.discount IS NULL;")"
 eq "E2 o total de linhas nao mudou" 77 \
    "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id WHERE so.omie_pedido_id <> 12121128593;")"
+
+echo "== F · o 15o pedido (11701 / omie 12121128593) — Omie desempatou: 1x221,80 =="
+# Ficou de fora do reparo dos 14 de proposito (o preco parecia quantidade
+# colapsada). O founder consultou o Omie em 2026-09-08 e o Omie diz 1 unidade a
+# 221,80 — o jsonb estava certo. Aqui prova-se o reparo dedicado.
+CAB_ANTES_F="$(V "SELECT md5(string_agg(so.id::text||so.total||so.subtotal||so.items::text||so.status, '|' ORDER BY so.id)) FROM sales_orders so;")"
+eq "F0 ANTES: o banco diz 2x110,90" 1 \
+   "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id
+         WHERE so.omie_pedido_id=12121128593 AND oi.omie_codigo_produto=8689743515
+           AND oi.quantity=2 AND oi.unit_price=110.90;")"
+
+if Q -q -f "$REPARO15" 2>/tmp/reparo15-erro.log; then ok "F1 reparo do 15o commitou"
+else bad "F1 reparo do 15o commitou" "exit 0" "$(head -c 300 /tmp/reparo15-erro.log)"; fi
+
+eq "F2 ZERO pedidos divergem (os 15 coerentes)" 0 "$(V "$DIVERGENTES;")"
+eq "F3 6 linhas no 11701" 6 \
+   "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id WHERE so.omie_pedido_id=12121128593;")"
+eq "F4 DEPOIS: a linha virou 1x221,80" 1 \
+   "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id
+         WHERE so.omie_pedido_id=12121128593 AND oi.omie_codigo_produto=8689743515
+           AND oi.quantity=1 AND oi.unit_price=221.80;")"
+eq "F5 a linha 2x110,90 sumiu" 0 \
+   "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id
+         WHERE so.omie_pedido_id=12121128593 AND oi.quantity=2 AND oi.unit_price=110.90;")"
+eq "F6 CABECALHO intacto (md5) — nao mexeu no dinheiro emitido" "$CAB_ANTES_F" \
+   "$(V "SELECT md5(string_agg(so.id::text||so.total||so.subtotal||so.items::text||so.status, '|' ORDER BY so.id)) FROM sales_orders so;")"
+eq "F7 soma visivel = total do cabecalho" 1 \
+   "$(V "SELECT count(*) FROM sales_orders so WHERE so.omie_pedido_id=12121128593
+         AND round((SELECT sum(oi.quantity*oi.unit_price-coalesce(oi.discount,0)) FROM order_items oi WHERE oi.sales_order_id=so.id),2) = round(so.total,2);")"
+# F8 documenta a garantia da TRIGGER de herança, nao do reparo: passar now() no
+# INSERT nao a derruba (o BEFORE INSERT sobrescreve). Nao e falsificavel pelo
+# script — esta aqui porque a regressao a vigiar e alguem REMOVER a trigger.
+eq "F8 created_at herdou a DATA DO PEDIDO" 0 \
+   "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id
+         WHERE so.omie_pedido_id=12121128593 AND oi.created_at <> so.created_at;")"
+eq "F13 hash_payload no formato do escritor canonico" 0 \
+   "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id
+         WHERE so.omie_pedido_id=12121128593
+           AND oi.hash_payload <> 'omie_'||so.account||'_'||so.omie_pedido_id||'_'||oi.omie_codigo_produto;")"
+eq "F9 uma unidade a MENOS no sinal de demanda (12 -> 11)" 11 \
+   "$(V "SELECT sum(oi.quantity)::int FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id WHERE so.omie_pedido_id=12121128593;")"
+
+# NAO e idempotente de proposito: a pre-condicao ancora no estado conferido no
+# Omie, entao re-colar tem de ABORTAR — e dizendo que ja foi aplicado, nao com um
+# erro obscuro. Assert casa a MARCA do ramo, nao "lancou algo".
+if Q -q -f "$REPARO15" >/tmp/reparo15-2a.log 2>&1; then
+  bad "F10 2a execucao RECUSA (fail-closed)" "exit != 0" "commitou de novo"
+else
+  ok "F10 2a execucao RECUSA (fail-closed)"
+fi
+# rotulo IDENTICO nos dois ramos: assert cujo texto de falha nao casa com o de
+# sucesso e invisivel para quem faz grep (o falsificador quase deu verde por isso).
+if grep -q 'JA APLICADO' /tmp/reparo15-2a.log; then ok "F11 recusa pela marca certa (JA APLICADO)"
+else bad "F11 recusa pela marca certa (JA APLICADO)" "JA APLICADO" "$(head -c 200 /tmp/reparo15-2a.log)"; fi
+eq "F12 continua 6 linhas (a recusa nao mexeu em nada)" 6 \
+   "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id WHERE so.omie_pedido_id=12121128593;")"
+
+echo "== G · fail-closed sobre estado que MUDOU =="
+if [ -n "$MIGRACAO" ]; then
+  # Com a trigger no ar nao da para construir o cenario: tornar o 11701
+  # incoerente e exatamente o que ela recusa. Entao o que se prova aqui e a
+  # propriedade complementar — o pedido fica IMUNE a UPDATE que o desalinhe.
+  if Q -q -c "UPDATE order_items oi SET quantity = 9
+                FROM sales_orders so
+               WHERE so.id = oi.sales_order_id AND so.omie_pedido_id = 12121128593;" >/dev/null 2>&1; then
+    bad "G1 trigger recusa UPDATE que desalinha o agregado" "exit != 0" "aceitou"
+  else
+    ok "G1 trigger recusa UPDATE que desalinha o agregado"
+  fi
+else
+  # Sem a trigger: sabota o jsonb (1x221,80 vira 3x221,80) DEPOIS de restaurar o
+  # estado-antes das linhas, e exige que a PRE-CONDICAO aborte pela marca do jsonb.
+  Q -q >/dev/null 2>&1 <<'SQL'
+BEGIN;
+DELETE FROM order_items oi USING sales_orders so
+ WHERE so.id = oi.sales_order_id AND so.omie_pedido_id = 12121128593
+   AND oi.omie_codigo_produto = 8689743515 AND oi.quantity = 1 AND oi.unit_price = 221.80;
+INSERT INTO order_items (sales_order_id, customer_user_id, product_id, omie_codigo_produto,
+                         quantity, unit_price, discount, hash_payload, omie_codigo_item)
+SELECT so.id, so.customer_user_id,
+       (SELECT p.id FROM omie_products p WHERE p.omie_codigo_produto = 8689743515),
+       8689743515, 2, 110.90, 0, 'omie_'||so.account||'_'||so.omie_pedido_id||'_8689743515', NULL
+  FROM sales_orders so WHERE so.omie_pedido_id = 12121128593;
+UPDATE sales_orders so SET items = (
+   SELECT jsonb_agg(CASE WHEN (el->>'valor_unitario')::numeric = 221.80
+                         THEN jsonb_set(el, '{quantidade}', '3') ELSE el END)
+   FROM jsonb_array_elements(so.items) el)
+ WHERE so.omie_pedido_id = 12121128593;
+COMMIT;
+SQL
+  if Q -q -f "$REPARO15" >/tmp/reparo15-g.log 2>&1; then
+    bad "G1 recusa estado divergente do verificado" "exit != 0" "commitou assim mesmo"
+  else
+    ok "G1 recusa estado divergente do verificado"
+  fi
+  if grep -q 'jsonb nao diz mais 1x221,80' /tmp/reparo15-g.log; then
+    ok "G2 recusa pela marca certa (jsonb mudou)"
+  else
+    bad "G2 recusa pela marca certa" "jsonb nao diz mais 1x221,80" "$(head -c 200 /tmp/reparo15-g.log)"
+  fi
+fi
 
 echo
 if [ "$FALHAS" -eq 0 ]; then echo "PROVA-REPARO-OK (0 falhas)"; else echo "PROVA-REPARO-FALHOU ($FALHAS)"; exit 1; fi
