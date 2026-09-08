@@ -137,7 +137,7 @@ const CASOS: Readonly<Record<string, CasoCanaria>> = {
   },
 };
 
-export interface ResultadoCaso {
+interface ResultadoCaso {
   readonly ok: boolean;
   readonly esperado: unknown;
   readonly obtido: unknown;
