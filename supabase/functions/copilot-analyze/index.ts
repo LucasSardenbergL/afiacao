@@ -82,9 +82,22 @@ Deno.serve(async (req) => {
     );
   }
   if (decisaoCanaria.tipo === 'sonda') {
-    return new Response(JSON.stringify(executarCanaria()), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    const resultado = executarCanaria();
+    return new Response(
+      JSON.stringify({
+        canary: true,
+        // ⚠️ LITERAL, e NÃO `CONTRATO_CANARIA` — não é descuido. O `canaria:bump` acha canária por
+        // regex de `contrato: "..."` NO index.ts (`RE_EMISSAO`), então com identificador, ou com o
+        // literal morando só no módulo, o gate fica CEGO e a canária nasce sem vigilância. MEDIDO
+        // nesta fatia: `bun run canaria:bump` disse "6 canária(s) conferida(s)" com e sem esta
+        // aqui — verde por cegueira. A igualdade entre este literal e o `CONTRATO_CANARIA` de
+        // `canaria.ts` é vigiada por `scripts/canaria-contrato-espelhado.test.ts`.
+        contrato: 'tudo-ou-nada-normalizar-v1',
+        ok: resultado.ok,
+        casos: resultado.casos,
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
   }
 
   try {

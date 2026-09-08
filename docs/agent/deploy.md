@@ -103,7 +103,7 @@ Grep na `main` prova a **fonte**; a canária prova o **deploy**. Chame com `?can
 canary === true   E   contrato === '<marcador da fatia>'   E   ok === true
 ```
 
-**As 7 canárias estão versionadas** (a dívida das 3 sem marcador fechou em 2026-08-23; a 7ª nasceu versionada no #1991 e só entrou nesta tabela em 2026-08-25 — ver ⚠️ "canária fora da tabela" abaixo). Canária sem `contrato` só tem `canary` + `ok`, o que **não** protege contra deploy integralmente velho (ver ⚠️ abaixo): canária nova nasce COM marcador — e o marcador **nomeia a fatia** que ela verifica, nunca um `v1.0-sensor-inicial` genérico (esse só é honesto quando o sensor nasce na mesma fatia).
+**As 8 canárias estão versionadas** (a dívida das 3 sem marcador fechou em 2026-08-23; a 7ª nasceu versionada no #1991 e só entrou nesta tabela em 2026-08-25 — ver ⚠️ "canária fora da tabela" abaixo). Canária sem `contrato` só tem `canary` + `ok`, o que **não** protege contra deploy integralmente velho (ver ⚠️ abaixo): canária nova nasce COM marcador — e o marcador **nomeia a fatia** que ela verifica, nunca um `v1.0-sensor-inicial` genérico (esse só é honesto quando o sensor nasce na mesma fatia).
 
 | edge | rota | `contrato` esperado | o que a fixture discrimina |
 |---|---|---|---|
@@ -114,6 +114,10 @@ canary === true   E   contrato === '<marcador da fatia>'   E   ok === true
 | `carteira-rebuild` | `?canary=1` | `trava-saida-v1` | conflito permanece com `eligible=false` (velho: some) **+** trava de saída do bootstrap (velho: grava ~Hunter) | ⚠️ **também tem sonda `{"probe":true\}` desde o #2009** — a canária prova COMPORTAMENTO (a trava de saída) e o `VERSAO` prova o DEPLOY; antes ela acumulava os dois papéis e o `contrato` ficou parado de 2026-07-20 a 2026-08-08 enquanto duas fatias reais entravam.
 | `generate-tactical-plan` | `{"canary":true}` | `v1.1-paginacao-eof-e-cursor` ⚠️ servido no campo **`versao`**, não `contrato` | margem ausente degrada em vez de fabricar (velho: NULL→`?? 0`→R$0/h; #1498) |
 | `omie-financeiro` | `paginacao_probe` | `paginacao-guards-v1` | guards de paginação do #1598: piso NÃO encolhe (vazia antes do fim = anomalia; velho: `\|\| 1` → "fim"), reversa só completa com sonda vazia (velho: `pagina < 1` → complete), fingerprint sem colisão (velho: `1ºcódigo:count`), resposta sem array LANÇA (velho: `\|\| []` → "página vazia" = fim) |
+| `copilot-analyze` | `{"canary":true}` | `tudo-ou-nada-normalizar-v1` | o tudo-ou-nada de `normalizarAnalise` (#2363): meia análise é `null`, confiança fora de 0–100 é `null`, enum inválido é `null` — e, nas duas direções, string numérica vira número e motivo não-string sai da lista sem derrubar a análise. **6 fixtures que se falsificam mutuamente** (helper sempre-`null` morre em 3, helper relaxado morre nos outros 3). ⚠️ Ela nasceu para o buraco que o #2362 NÃO fecha: aquele prova o que ENTRA no deploy (sha256 por arquivo, de `origin/main`), esta prova o que SAI |
+
+⚠️ **O `canaria:bump` só enxerga o `contrato` emitido como LITERAL no `index.ts`** (`RE_EMISSAO`, regex de `contrato: "..."`) — canária cujo marcador more num módulo da edge, ou saia por identificador, nasce FORA do único gate que vigia o bump dela, e o gate segue verde: MEDIDO no #2363, "6 canária(s) conferida(s)" antes e depois de a 7ª existir. Por isso a `copilot-analyze` duplica o marcador de propósito — literal no `index.ts` para o gate, constante em `canaria.ts` para o teste Deno — com a igualdade vigiada por `scripts/canaria-contrato-espelhado.test.ts`, que traz também o controle positivo da cegueira.
+
 
 ### Sonda de versão (`{"probe":true}`) — quando a edge não tem canária e o efeito é irreversível
 
