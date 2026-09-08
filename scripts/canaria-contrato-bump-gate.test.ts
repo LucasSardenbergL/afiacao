@@ -291,6 +291,12 @@ const SOB_TESTE: Array<{ edge: string; chave: string; simbolo: string }> = [
   { edge: 'omie-analytics-sync', chave: 'case:transferencia_probe', simbolo: 'classificarLoteProof' },
   { edge: 'omie-financeiro', chave: 'case:paginacao_probe', simbolo: 'desfechoVarreduraReversa' },
   { edge: 'omie-vendas-sync', chave: 'case:identidade_probe', simbolo: 'decideAccountIdentity' },
+  // A 8ª canária — a que serve o marcador em `versao`. Entra aqui com DOIS símbolos de propósito:
+  // `avaliarCanariaMargem` é o que o bloco chama DIRETO, e `margemConhecida` está um salto adiante,
+  // em `_shared/`. É esse segundo que prova o eixo pelo qual ela estava descoberta — se o fecho
+  // transitivo parar de alcançá-lo, isto fica vermelho ANTES de o gate ficar cego.
+  { edge: 'generate-tactical-plan', chave: 'if:1', simbolo: 'avaliarCanariaMargem' },
+  { edge: 'generate-tactical-plan', chave: 'if:1', simbolo: 'margemConhecida' },
 ];
 
 // A fronteira de I/O é onde o gate irmão embarcou DOIS falsos-verdes com 23 testes de núcleo
