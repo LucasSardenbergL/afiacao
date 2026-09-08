@@ -9475,6 +9475,8 @@ export type Database = {
           data_ciclo: string
           delta_vs_anterior_perc: number | null
           dias_parcelas: string | null
+          disparo_claim_em: string | null
+          disparo_claim_por: string | null
           empresa: string
           enviado_portal_em: string | null
           fornecedor_nome: string | null
@@ -9535,6 +9537,8 @@ export type Database = {
           data_ciclo?: string
           delta_vs_anterior_perc?: number | null
           dias_parcelas?: string | null
+          disparo_claim_em?: string | null
+          disparo_claim_por?: string | null
           empresa: string
           enviado_portal_em?: string | null
           fornecedor_nome?: string | null
@@ -9595,6 +9599,8 @@ export type Database = {
           data_ciclo?: string
           delta_vs_anterior_perc?: number | null
           dias_parcelas?: string | null
+          disparo_claim_em?: string | null
+          disparo_claim_por?: string | null
           empresa?: string
           enviado_portal_em?: string | null
           fornecedor_nome?: string | null
@@ -20429,6 +20435,10 @@ export type Database = {
           ja_existe: number
           nao_elegivel: number
         }[]
+      }
+      reposicao_claim_disparo: {
+        Args: { p_origem: string; p_pedido_id: number }
+        Returns: Json
       }
       reposicao_cold_start_parametros: {
         Args: { p_empresa?: string; p_limite?: number; p_run_id?: string }
