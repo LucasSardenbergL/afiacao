@@ -3576,9 +3576,11 @@ export type Database = {
           lie: number | null
           m_ij: number | null
           offered_at: string | null
+          ordem: number | null
           p_ij: number | null
           product_id: string | null
           recommendation_type: string
+          referencia_ambigua: boolean | null
           rejected_at: string | null
           rejection_reason: string | null
           run_id: string | null
@@ -3603,9 +3605,11 @@ export type Database = {
           lie?: number | null
           m_ij?: number | null
           offered_at?: string | null
+          ordem?: number | null
           p_ij?: number | null
           product_id?: string | null
           recommendation_type: string
+          referencia_ambigua?: boolean | null
           rejected_at?: string | null
           rejection_reason?: string | null
           run_id?: string | null
@@ -3630,9 +3634,11 @@ export type Database = {
           lie?: number | null
           m_ij?: number | null
           offered_at?: string | null
+          ordem?: number | null
           p_ij?: number | null
           product_id?: string | null
           recommendation_type?: string
+          referencia_ambigua?: boolean | null
           rejected_at?: string | null
           rejection_reason?: string | null
           run_id?: string | null
@@ -19516,6 +19522,10 @@ export type Database = {
         Returns: Json
       }
       farmer_melhor_individual_por_cliente: {
+        Args: { p_farmer_id: string }
+        Returns: Json
+      }
+      farmer_melhores_individuais_por_cliente: {
         Args: { p_farmer_id: string }
         Returns: Json
       }
