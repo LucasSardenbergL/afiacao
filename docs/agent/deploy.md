@@ -87,6 +87,20 @@ Mordido 2026-08-14 (#1520 `9f7e8962`, FU4-F fase 3): o `/fecho` pegou `…130000
   ⚠️ **O comando anterior deste runbook era um `grep` e ele MENTIA.** Era `grep -rhoE "\.rpc\('[a-z_]+'"` sobre o diretório da edge, com três cegueiras que produzem a mesma falha — uma lista curta que parece completa: (1) só casava **aspas simples**; (2) só varria o **diretório** da edge, e helpers de `_shared/` chamam RPC; (3) só via o nome **literal** colado no `.rpc(`. Medido em 2026-08-30: das **53** RPCs literais chamadas em `supabase/functions/`, ele enxergava **16**. A frase que este parágrafo substituiu dizia *"das 16 RPCs chamadas por edges, as 16 existem em prod"* — o denominador era 53, e o 16/16 tranquilizava sobre um terço do universo. Varredura das 95 edges com a ferramenta nova: **4** têm chamada por indireção (`calculate-scores`, `melhoria-triagem`, `fin-valor-cockpit`, `omie-analytics-sync`) — as 4 RPCs que estavam escondidas ali existem em prod (conferido), então a cegueira não tinha bomba armada hoje; o que ela tinha era um detector incapaz de dizer isso.
 
   Vale o mesmo raciocínio p/ tabela/coluna/view nova que o arquivo referencie — para essas o cruzamento segue manual.
+
+  ⚠️ **Mas emitir a query não é rodá-la — e no #2285 ninguém rodou.** O `preflight:rpcs` entrega o SQL
+  e confia no operador; é a mesma prosa executável do cabeçalho da migration, só que em SQL. Quem
+  fecha o laço é **`bun run pendencias:pacote <edge>…`** (ou `pendencias:deploy --json | pendencias:pacote -`):
+  ele RODA a sonda pelo `psql-ro`, julga fail-closed e **recusa emitir a colagem da edge** enquanto
+  prod não tiver as RPCs — a colagem não é "marcada como pendente", ela **não é escrita**, porque um
+  pacote que traz a colagem junto de um aviso entrega a tentação com a advertência. Exit **`3` =
+  bloqueado**; o pacote sai em ARQUIVO (markdown), identificado por SHA da estrutura (mesma leva ⇒
+  mesmo SHA), na ordem **DDL → edges → Publish**. Cada RPC ausente vem com a contagem da **família**
+  (irmãs de mesmo prefixo), que separa duas ações opostas: família povoada ⇒ falta ESTA migration,
+  aplique-a; família **vazia** ⇒ o domínio não está em prod ou o nome mudou ⇒ **diagnostique, não
+  reaplique**. Cobre só RPC **literal** e só **função** (coluna/tabela/policy seguem manuais) — e
+  não decide deploy: quem decide é o ledger. Narrativa e falsificação:
+  [`precondicao-de-banco-como-gate.md`](../historico/precondicao-de-banco-como-gate.md).
 - **Proibir "melhorias"** — instrua o chat a deployar **verbatim** o arquivo do repo (o Lovable tende a reescrever a função).
 - **Verificar por comportamento/bytes, não pela palavra do Lovable** — `503 LOAD_FUNCTION_ERROR` + zero `running` no log = a edge não BOOTA → fix é **redeploy**, não código (ver `docs/agent/sync.md`).
 - **`config.toml` pode vir com `[functions.<x>]` DUPLICADO** (bug do bot do Lovable) → TOML inválido (`redefine an already defined table`) que **quebra o `supabase` CLI** no parse. Fix: apagar a 2ª entrada (se idêntica = no-op de comportamento) — pode reaparecer num "Changes" do bot. (#974)

@@ -1,9 +1,7 @@
 # O write-back da edição escrevia meia história — e a metade que faltava era a do dinheiro
 
-**2026-09-07.** Conserto do escritor que a frente da invariante do agregado nomeou e deixou de
-propósito para depois. O doc daquela frente (`invariante-do-agregado-sem-dono.md`) chega junto com
-o [PR #2363](https://github.com/LucasSardenbergL/afiacao/pull/2363) — este PR é pré-requisito dele
-e mergeia antes, então o link relativo ainda não resolveria. O escritor: `supabase/functions/omie-vendas-sync/index.ts`, action
+**2026-09-07.** Conserto do escritor que a frente [invariante-do-agregado-sem-dono.md](invariante-do-agregado-sem-dono.md)
+(#2363) nomeou e deixou de propósito para depois: `supabase/functions/omie-vendas-sync/index.ts`, action
 `alterar_pedido`. Sem este conserto, aplicar a CONSTRAINT TRIGGER daquele PR faria a edição de
 pedido **falhar** — com o Omie já mutado — em vez de parar de corromper.
 
@@ -114,8 +112,12 @@ forma mais fácil de uma falsificação virar teatro.
 ## Ordem de implantação e o que NÃO foi feito
 
 1. `20260907210000_pedido_edicao_omie_atomica.sql` (SQL Editor) → 2. deploy da edge (Publish) →
-3. `20260907220000_pedido_venda_coerencia_agregado.sql` (o PR #2363). **Invertido, a edição de
+3. `20260907220000_pedido_venda_coerencia_agregado.sql` (do #2363). **Invertido, a edição de
 pedido passa a falhar com o Omie já mutado.**
+
+⚠️ O #2363 **mergeou antes deste PR** (2026-09-08). Merge não é apply: as duas migrations chegaram
+à `main` na ordem inversa da que precisam ser COLADAS. A ordem acima é a que vale — e ela não se
+lê no histórico do git, só aqui e no corpo dos dois PRs.
 
 Não foi feito, e continua aberto:
 

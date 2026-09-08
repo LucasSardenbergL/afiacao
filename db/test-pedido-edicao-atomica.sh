@@ -432,6 +432,11 @@ apply_sabotado "G5 REVOKE que não tira PUBLIC (a função fica aberta)" \
   's|FROM PUBLIC, anon, authenticated;|FROM postgres;|' 'executavel por PUBLIC'
 
 echo
+# Linha de contagem no formato que `db/roda-nucleo-ci.sh` sabe extrair (`RESULTADO: n ok / n fail`).
+# Sem ela o runner reprova com "exit 0 mas SEM linha de contagem" — que e o certo: prova trocada
+# por um `exit 0` nao pode passar por prova. A linha humana abaixo carrega as pendencias, que o
+# formato do runner nao tem onde guardar.
+echo "RESULTADO: $PASS ok / $FAIL fail"
 echo "=== TOTAL: $PASS ok, $FAIL falhas, $PEND pendentes ==="
 [ "$FAIL" -eq 0 ] || exit 1
 # O marcador NOMEIA o que foi provado. Com a trigger irmã ausente ele é OUTRA string: um grep

@@ -234,6 +234,30 @@ mais caro que existe; a mesma leitura no último request é quase de graça.
 Régua: `scripts/ocupacao-contexto.sh --top 3`. O guard de Read do #1647 (nudge por volume e
 por releitura) ataca a fatia nº 1; `.claude/hooks/bash-contexto-nudge.sh` ataca a nº 2.
 
+### A mesma ocupação, por ARQUIVO (2026-09-07) — e Bash quase dobra
+
+A tabela acima é de **3 sessões** (as mais caras de 7 dias). Sobre **685 sessões / 30 dias**, com
+a régua estendida para agrupar por `file_path` (`--por-arquivo`), a proporção muda de figura:
+
+| grupo | % da ocupação |
+|---|---:|
+| **chamada sem `file_path`** — Bash sozinho **77,1%**, mais Agent/MCP/TaskStop | **81,3%** |
+| `docs/agent/` (os 12 arquivos) | 4,2% |
+| `src/` | 1,6% |
+| `scripts/` + `db/` | 1,4% |
+| `supabase/` · `docs/` (resto) | 0,9% cada |
+
+Read continua sendo a **chamada** mais cara por unidade, mas o Bash acumula 65.754 chamadas e
+58,9 MB de saída na janela — e é aí que está a alavanca. **Zerar toda a documentação de agente do
+repo renderia 4,2%; cortar 10% do volume de Bash rende 7,7%.** Detalhe, top individual e as duas
+armadilhas que o levantamento pagou:
+[`ocupacao-por-arquivo-linha-de-base.md`](ocupacao-por-arquivo-linha-de-base.md).
+
+Correção de método que veio junto: o `req` da régua era contado por **linha** do JSONL, e uma
+resposta com vários blocos vira várias linhas repetindo o mesmo `usage` — 329 linhas para 144
+requests reais (**2,28×**) numa sessão medida. Todo multiplicador saía inflado. Agora deduplica por
+`(sessão, requestId)`, como o `tokens-report.sh` já fazia desde 06/08 pelo mesmo motivo.
+
 ### O erro no Bash não é esquecer o `head`
 
 As maiores saídas medidas **já usavam** `| head -120` e `| head -60` — e ainda despejaram

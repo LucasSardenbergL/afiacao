@@ -49,6 +49,11 @@ db/test-caca-custo-producao.sh              6
 db/test-cancelar-pedido-guard-atomico.sh   48
 db/test-apply-score-updates.sh             32
 db/test-sales_orders_omie_hash_unique.sh    5
+# O write-back da EDIÇÃO: cabeçalho E linhas do pedido na MESMA transação. O mínimo é 54 de
+# propósito — 51 é o que a prova roda quando a migration da trigger irmã (20260907220000) some do
+# repo, e nesse caso a INTERAÇÃO entre as duas deixa de ser verificada em silêncio. O número aqui
+# é o que faz esse silêncio virar vermelho.
+db/test-pedido-edicao-atomica.sh           54
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
 # A janela entre dois round-trips PostgREST, com uma chamada HTTP que cria pedido de
@@ -57,3 +62,4 @@ db/test-sales_orders_omie_hash_unique.sh    5
 db/test-claim-disparo-cenario-b.sh         76
 db/test-disparado-simulado-pos-disparo.sh  59
 db/test-fin-sync-lease.sh                  22
+db/test-pedido-venda-coerencia.sh          31
