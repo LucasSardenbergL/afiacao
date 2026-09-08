@@ -500,6 +500,31 @@ O terceiro caminho que o challenge propôs — up-sell ordenado, cross-sell apre
 registradas sem prioridade afirmada** — é o que a §3.6 passa a fazer, agora que nomear deixou de
 depender de eleger.
 
+### 7.3 Rodada 4 do challenge — e o que a EXECUÇÃO acrescentou
+
+| # | achado | resposta na revisão 5 |
+|---|---|---|
+| 1 | o detector de ambiguidade erra dos DOIS lados: escapa (desempate intra-pedido pela posição) e marca demais (empate histórico já superado) | `referencia-ambigua.ts`: cada (cliente,SKU,pedido) é reduzido ao preço da regra intra-pedido, e só os pedidos empatados na recência MÁXIMA são comparados. 9 testes, incluindo os dois casos do challenge |
+| 2 | a RPC do plano não é executável (`id` não projetado em `base`) | já corrigido na implementação antes do parecer; o plano foi alinhado. E o challenge **confirma**, por enumeração de 22.620 combinações, que a precedência não tem buraco |
+| 3 | mistura de gerações: `ordem 1` de G1 contra `ordem 2` de G2 elege sem que nada os tenha comparado | a RPC detecta e cai em `ordem_indisponivel`, sem transportar `run_id`. `count(DISTINCT)` ignora NULL, então o NULL é contado à parte |
+| 4 | o validador aceita não-uuid, e faltava `length(produtos) = candidatos` nos estados que nomeiam o grupo | `melhor-individual.ts` com formato uuid e a igualdade; 22 testes |
+| 5 | o cast NÃO recusa `"false"`/`"off"`/`0` — `boolean_in` converte | validação de `jsonb_typeof` **antes** do cast, com controle do outro lado. A falsificação F6 prova: sem ela, `"false"` PASSA |
+| 6 | a matriz de falsificação mapeava sabotagem TS para assert SQL | falsificação do banco tem 6 sabotagens na camada certa, todas com dente; as de TS ficam com os testes de TS |
+| 7 | o sensor não tem entrega verificável | pendente — §6.1 define o quê, falta o onde (`farmer_geracao_registrar`, na migration nova) |
+
+**O que só apareceu EXECUTANDO** (e que nenhuma leitura tinha pego):
+
+- **O harness certo não era o `test-farmer-head-geracao.sh`.** O critério do challenge está certo
+  (a base precisa ter `p_head_visto`), mas aquela cadeia para na `20260815181500` e produz um
+  writer que produção já não tem — sem o gate de escopo de carteira que a `20260906164002`
+  acrescentou em 06/09. A base é essa: **a última a recriar o writer é a que vale**.
+- `pg_get_functiondef` não emite o `;` final, e o wrapper `psql-ro` ecoa dois `SET` para dentro do
+  arquivo. Os dois viram erro de sintaxe num apply manual.
+- Dentro de `$( )` o bash faz **brace expansion** em `{a,b}`: o payload JSON da falsificação era
+  partido em duas palavras, e o `22P02` resultante passava por vermelho legítimo.
+- `sabota_ordem` conferia que o PADRÃO casou, não que a migration APLICOU — sabotagem inerte é
+  lida como "sem dente" e manda o diagnóstico para o lugar errado.
+
 ## 8. Plano de prova (ainda NÃO executado)
 
 **Onde.** `db/test-farmer-head-geracao.sh`, **não** `db/test-farmer-geracao-vigente.sh` (achado
