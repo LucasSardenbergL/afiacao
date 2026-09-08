@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-08T01:30:10.183Z",
-  "sourceHead": "534fba3bd2b2a6613912ae64941cf2a082794513",
+  "medidoEm": "2026-09-08T01:38:48.852Z",
+  "sourceHead": "dac507e8359dd99132e4fb3be4f1e2155df0d72a",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -123,12 +123,12 @@
     {
       "gate": "docs:indice",
       "verde": true,
-      "ms": 50
+      "ms": 37
     },
     {
       "gate": "docs:links",
       "verde": true,
-      "ms": 2859
+      "ms": 522
     },
     {
       "gate": "exclusividade",
@@ -143,7 +143,7 @@
     {
       "gate": "test",
       "verde": true,
-      "ms": 350626
+      "ms": 215527
     }
   ],
   "linhas": [
@@ -351,14 +351,14 @@
         {
           "gate": "docs:indice",
           "reprovou": true,
-          "ms": 48,
+          "ms": 39,
           "fingerprint": "a41d30136cdb032d",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": true,
-          "ms": 730,
+          "ms": 449,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
@@ -375,6 +375,13 @@
           "ms": 633,
           "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
+        },
+        {
+          "gate": "test",
+          "reprovou": true,
+          "ms": 110792,
+          "fingerprint": "ad6cd6b8acf39571",
+          "fonteResolvida": false
         }
       ],
       "parouCedo": true,
@@ -411,14 +418,14 @@
         {
           "gate": "docs:indice",
           "reprovou": true,
-          "ms": 53,
+          "ms": 182,
           "fingerprint": "a41d30136cdb032d",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": false,
-          "ms": 2206,
+          "ms": 782,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
@@ -435,6 +442,13 @@
           "ms": 266,
           "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
+        },
+        {
+          "gate": "test",
+          "reprovou": true,
+          "ms": 128437,
+          "fingerprint": "ad6cd6b8acf39571",
+          "fonteResolvida": false
         }
       ],
       "parouCedo": false,
