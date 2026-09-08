@@ -13,6 +13,7 @@
  *   bun run exclusividade:medir -- --defeitos a,b    # so estes defeitos
  *   bun run exclusividade:medir -- --gates x,y       # so estes gates
  *   bun run exclusividade:medir -- --dry             # lista o plano e o custo, nao executa nada
+ *   bun run exclusividade:medir -- --sem-poda        # nao para no 2o vermelho: quer o conjunto COMPLETO
  *
  * Exit: 0 mediu - 1 abortou (baseline sujo, arvore suja, corpus vazio) - 2 erro interno.
  *
@@ -61,6 +62,13 @@ const flag = (n: string): string | null => {
 const soDefeitos = flag('--defeitos')?.split(',').map((s) => s.trim());
 const soGates = flag('--gates')?.split(',').map((s) => s.trim());
 const dry = args.includes('--dry');
+/**
+ * Desliga a poda do 2o vermelho. A poda e correta para o objetivo padrao (exclusividade ja esta
+ * refutada com 2 vermelhos), mas ela responde "e exclusivo?" — nao "QUEM pega?". Investigar uma
+ * duplicacao especifica ("o vitest cobre o step do docs:indice?") exige o conjunto COMPLETO, e sob
+ * poda o gate caro simplesmente nunca roda. Custa a lista inteira por defeito; use dirigido.
+ */
+const semPoda = args.includes('--sem-poda');
 const TIMEOUT_MS = Number(process.env.EXCL_TIMEOUT_MS ?? 900_000);
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> };
@@ -274,7 +282,7 @@ function main(): number {
           console.log(`  VERMELHO ${g.nome} (${r.ms}ms)`);
           // Poda: 2 vermelhos ja refutam exclusividade. Os demais ficam DESCONHECIDOS, e
           // `parouCedo` impede que a derivacao os leia como "nao reprovaram".
-          if (vermelhos >= 2) {
+          if (vermelhos >= 2 && !semPoda) {
             parouCedo = true;
             console.log(`  (poda: 2 vermelhos, exclusividade ja refutada — ${ordenados.length - execucoes.length} gate(s) nao rodado(s))`);
             break;
