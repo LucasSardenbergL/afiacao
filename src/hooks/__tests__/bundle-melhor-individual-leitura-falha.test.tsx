@@ -9,7 +9,7 @@ import { captureException } from '@/lib/analytics';
  *
  * O motor lê o melhor individual da carteira e monta a comparação "bundle × melhor produto
  * individual". A leitura era um `.from('farmer_recommendations')` POR CLIENTE, dentro do laço,
- * e hoje é a RPC em bloco `farmer_melhor_individual_por_cliente` — a PORTA mudou, os dois
+ * e hoje é a RPC em bloco `farmer_melhores_individuais_por_cliente` — a PORTA mudou, os dois
  * defeitos abaixo são os mesmos e continuam sendo o que este arquivo guarda. O `error` era
  * DESCARTADO na desestruturação (`const { data: existingRecs } = await ...`), e daí saíam dois
  * defeitos de gravidade bem diferente:
