@@ -285,3 +285,75 @@ atomicidade, e a skill diz isso em voz alta.
 nenhum — é ele que a `verificar-sonda-versao.md` chama de relato, e o repo inteiro é construído sobre
 "relato de veredito não é veredito". O que ele serve é para *estreitar a pergunta*: se o Lovable
 disser que pulou alguma, tire-a do bloco de sonda antes de rodar. A prova continua sendo o `fonte`.
+
+## 7. A outra metade — `DIVERGE_P1` → `CONFERE` observado num prompt em LOTE (2026-09-08)
+
+O §6 prescreveu o teste que faltava: *"repetir o prompt único numa leva com ≥1 edge em `DIVERGE_P1`
+MEDIDA antes"*. A leva apareceu dois dias depois — e, ao contrário do piloto do MCP, **não precisou
+ser fabricada**: era uma pendência real de money-path esperando deploy.
+
+**A leva.** 2 edges, pacote `29258bf8ac3d` (`bun run pendencias:pacote`), montado contra
+`origin/main@5bc73bfac`: **34 entradas de arquivo, 24 únicas** — os 10 duplicados são o `_shared/`
+que as duas compartilham, listado uma vez por edge porque o prompt numera por EDGE, não por arquivo
+(a redundância é do formato, e é ela que impede o furo do #2020). Um único prompt numerando as duas,
+enviado por `mcp__lovable__send_message` — o canal do #2374, não colagem humana. O agente conferiu os
+24 `sha256` contra `5bc73bfa`, reportou zero divergência e deployou na tool call seguinte. Custo:
+**1,2 crédito**.
+
+**O ANTES, lido do ledger — é ele que faz disto um EVENTO e não um estado.** As duas linhas abaixo
+saem de `public.deploy_atestacoes` por `request_id`, não do relato do chat:
+
+| edge | estado ANTES | evidência do ANTES | DEPOIS | `request_id` |
+|---|---|---|---|---|
+| `omie-vendas-sync` | **`DIVERGE_P1`** — prod `v1.2-preco-ausente-nao-e-zero` / `5e3a00e7dfdf` → main `v1.3-edicao-write-back-atomico` / `c9b3be428206` | req **72154**, 2026-09-07 19:14:14Z | `v1.3-edicao-write-back-atomico` + `c9b3be428206` ⇒ `CONFERE` | **72784**, 10:09:44Z |
+| `sync-reprocess` | **`DIVERGE_P2`** — `versao` igual (`v1.5-sonda-options`), fonte `67eab2b2a17b` → `a3f3b18975bf` | **8 observações consecutivas** do eco de cron, 2026-09-07 19:16:47Z → 2026-09-08 08:37:00Z, todas no MESMO par | fonte `a3f3b18975bf` ⇒ `CONFERE` | **72783**, 10:09:35Z |
+
+O P1 é o fix money-path do write-back atômico (#2370): os DOIS campos do par mudaram, que é a forma
+mais forte da transição. O P2 é o caso mais interessante como evidência — o ANTES não foi uma leitura
+única que pudesse ser ruído: foi um **platô de 8 leituras ao longo de 13 h**, e o único evento
+conhecido entre a última (08:37:00Z) e o novo par (10:09:35Z) foi o prompt em lote. O `request_id`
+72784 saiu do mapa `edge | request_id` embutido pelo BANCO no PASSO 2 do `sonda:sql` — nunca
+transportado à mão (Lei de Ferro #5); a sonda devolveu HTTP 200 com os quatro campos batendo
+(`edge`, `versao`, `fonte`, `probe`) ⇒ `DEPLOY CONFIRMADO`. `sync-reprocess` foi atestada pelo relé
+(`deploy_sonda_disparar`).
+
+**O que isto fecha.** A metade que o §6 declarou aberta: aqui o ANTES era conhecido e medido, então a
+transição prova o deploy **pelo evento**, não só pelo estado. O lado positivo deixou de ser
+indistinguível do no-op — um no-op teria deixado `omie-vendas-sync` em `v1.2` e o platô do
+`sync-reprocess` intacto. A recomendação de **um prompt por LEVA** deixa de valer só por conveniência
+com risco medido.
+
+**O que continua NÃO provado, e a ressalva não some, encolhe.**
+
+- **N = 2, não 8.** A atomicidade do lote foi observada num par; o teste de 2026-09-06 tinha os 8, mas
+  sem ANTES. Nenhuma das duas medições é a outra, e "zero deploy parcial em 2 de 2" não é a mesma
+  afirmação que "em 8 de 8".
+- **O `sha256` mede o REPO no sandbox, não os bytes que o runtime passou a servir.** O agente conferiu
+  os arquivos que leu contra `5bc73bfa`; a ponte entre "arquivo certo no sandbox" e "bundle certo em
+  produção" continua sendo o `fonte` **DECLARADO** da sonda — a constante `FONTE_SHA256[edge]` lida de
+  `_shared/sonda-versao.ts`, sem hashear nada em runtime. É o mesmo limite que o §Deploy de edge pela
+  SESSÃO de [`docs/agent/deploy.md`](../agent/deploy.md) já nomeia, e que a metade "verbatim" do
+  piloto do MCP deixou explicitamente em aberto.
+
+**O cruzamento com o piloto do MCP — as duas metades encostam pela primeira vez.**
+[`piloto-deploy-mcp-lovable.md`](piloto-deploy-mcp-lovable.md) mediu o **canal** em 2026-09-07 e foi
+honesto sobre o preço: para ter um ANTES conhecido teve de **fabricar** a divergência (bump do
+`VERSAO` da `copilot-analyze`, #2347), com **N = 1** e uma edge escolhida por ser inócua — e o
+§"O que o veredito não autoriza" registra isso. Esta leva não fabricou nada: a divergência era
+natural, a cobaia do P1 é money-path, e o prompt era em LOTE. Canal (MCP) e transição de veredito
+(`DIVERGE_P1` → `CONFERE`) aparecem juntos numa medição só, o que nenhuma das duas anteriores tinha.
+O que a soma **não** dá é a metade verbatim: ela segue exatamente onde o piloto a deixou.
+
+### Evidência
+
+- **Ledger, `psql-ro`** (leitura direta de `deploy_atestacoes`, ordenada por `observado_em`): as 5
+  linhas de `omie-vendas-sync` e as 11 de `sync-reprocess` acima — ANTES, platô e DEPOIS, com
+  `request_id` e `fonte` por linha. Re-confirmação em 72787 (10:14:56Z), mesmo par.
+- **`bun run pendencias:deploy` → exit 0, cobertura 59/59**, com as duas na lista de `✅ confere`.
+  Re-medido horas depois, de outra worktree: **exit 0, 59/59** de novo, `omie-vendas-sync` e
+  `sync-reprocess` presentes — e a seção de cron reportando `8/8 disparo(s) atestado(s)`. (O que esta
+  segunda rodada NÃO é: um teste contra main que andou. Os 5 commits desde `5bc73bfa` **não tocam**
+  `supabase/functions/` — `git log 5bc73bfac..origin/main -- supabase/functions/` sai vazio —, então o
+  lado esperado é idêntico. Ela mede persistência do veredito, não robustez a drift.)
+- **O artefato do prompt** (`pacote-deploy-29258bf8ac3d.md`): 34 entradas, 24 caminhos únicos, 10
+  `_shared/` repetidos exatamente 2× — contados no arquivo, não estimados.
