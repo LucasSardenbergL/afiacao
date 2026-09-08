@@ -20,6 +20,7 @@ import { carregarItensCockpit } from "../_shared/itens-com-pedido.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { valorMedido } from "../_shared/score-ponderado.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -417,7 +418,13 @@ const ESTOQUE_ACCOUNTS = ["vendas", "oben"];
 const CONFIG_DEFAULT: CockpitConfig = { margem_minima_pct: 0.15, desconto_max_pct: 0.10, prazo_alvo_dias: 30, dias_estoque_max: 120, sample_min_receita: 5000 };
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    // Sonda de deploy por cron (F4, onda 2). Só responde com a credencial HMAC válida; sem
+    // ela o preflight do browser recebe a mesma resposta de sempre, byte a byte.
+    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
+    if (sonda) return sonda;
+    return new Response(null, { headers: corsHeaders });
+  }
 
   // Sonda de versão — ANTES do gate normal e do `createClient`, com gate PRÓPRIO.
   // Antes do gate normal porque ele exige Bearer + role e o caminho documentado de invocação

@@ -31,6 +31,7 @@ import {
   toolDoModo,
 } from "./plano-helpers.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSondaTactical, VERSAO } from "./versao.ts";
+import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -53,6 +54,10 @@ function clampRecencyCapDays(raw: unknown): number {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
+    // Sonda de deploy por cron (F4, onda 2). Só responde com a credencial HMAC válida; sem ela o
+    // preflight do browser recebe a mesma resposta de sempre, byte a byte.
+    const sonda = await atenderSondaOptions(req, () => respostaSondaTactical(), VERSAO);
+    if (sonda) return sonda;
     return new Response('ok', { headers: corsHeaders });
   }
   const __auth = await authorizeCronOrStaff(req);

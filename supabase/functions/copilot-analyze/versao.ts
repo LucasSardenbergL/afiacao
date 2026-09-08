@@ -42,7 +42,7 @@ export const respostaSonda = criarRespostaSonda("copilot-analyze");
 // ⚠️ O `VERSAO` e o `contrato` da canária são marcadores DIFERENTES e não se substituem: este
 // diz QUAL bundle respondeu (declarado), o `contrato` diz O QUE o verde está afirmando (medido).
 // Os gates são irmãos e independentes — `sonda:bump` vigia este, `canaria:bump` vigia aquele.
-export const VERSAO = "v1.2-canaria-tudo-ou-nada";
+export const VERSAO = "v1.3-sonda-cron-onda2";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

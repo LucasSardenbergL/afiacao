@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 536
+-- Total de custom migrations: 537
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -577,6 +577,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260907223901', 'analytics_ledger_navegacao_rota_servida', '20260907223901_analytics_ledger_navegacao_rota_servida.sql'),
   ('20260907230000', 'farmer_ordem_e_referencia_ambigua', '20260907230000_farmer_ordem_e_referencia_ambigua.sql'),
   ('20260908055405', 'analytics_ledger_navegacao_postcondicao_corrigida', '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql'),
+  ('20260908070850', 'deploy_sonda_alvos_onda2', '20260908070850_deploy_sonda_alvos_onda2.sql'),
   ('20260908072658', 'order_items_desconto_valor', '20260908072658_order_items_desconto_valor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES

@@ -42,11 +42,11 @@ import { MODELO, toolDoModo } from "./plano-helpers.ts";
  * desta própria edge, cujo `contrato` é o marcador daqui. O bump é PRÉ-REQUISITO do deploy.
  * → `docs/historico/deploy-no-op-por-desenho.md`
  *
- * `v1.1-paginacao-eof-e-cursor` nomeia os dois fixes que a fatia carrega: EOF por página VAZIA
+ * `v1.2-sonda-cron-onda2` nomeia os dois fixes que a fatia carrega: EOF por página VAZIA
  * (não mais página curta, #1889) e cursor comparado à PRIMEIRA linha da página (#1901). Um bundle
  * que responde esta string é necessariamente ≥ esta fatia — e, por transitividade, ≥ o #1520.
  */
-export const VERSAO = "v1.1-paginacao-eof-e-cursor";
+export const VERSAO = "v1.2-sonda-cron-onda2";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
