@@ -120,6 +120,13 @@ não é um resultado.**
    ambiente colabore — com `SKIP` explícito, e não "ok", quando a máquina não tem locale de vírgula
    instalado.
 
+3. **`mktemp -t` só existe com esse significado no BSD.** A suíte saiu **verde no macOS e vermelha
+   no CI** pelo mesmo commit: no GNU, `-t` recebe um *template* que exige ≥3 `X`, e
+   `too few X's` derrubava o script via `set -e` antes de qualquer mensagem própria. Falsificar
+   nos dois **locales** não diz nada sobre dois **sistemas operacionais** — são eixos
+   independentes. Coberto agora por stub do contrato GNU (com controle positivo do stub) e
+   registrado na armadilha #6.
+
 Contar **menção** em vez de leitura foi o terceiro erro, cometido e medido antes do spec: dava 505
 ocorrências para `money-path` contra 64 leituras reais (8×), e o contaminante era o índice do
 próprio CLAUDE.md. Só `tool_use.input.file_path` conta.

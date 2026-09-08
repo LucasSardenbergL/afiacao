@@ -65,6 +65,30 @@ fallback. ⇒ valide o **FORMATO esperado** da saída, não o exit do 1º ramo, 
 contratos por stub. Caso medido e o idioma correto: `docs/agent/worktrees.md`
 (§Portabilidade BSD × GNU).
 
+**Segundo caso, 2026-09-07 — `mktemp -t`, e o custo de só rodar num SO.** No BSD/macOS,
+`mktemp -t ocupacao-contexto` trata o argumento como **prefixo** e funciona. No GNU (o CI) ele é
+um **template**, que exige ≥3 `X` consecutivos: `mktemp: too few X's in template`, exit 1, e sob
+`set -e` o script inteiro morre — sem chegar em nenhuma das suas próprias mensagens de erro.
+
+O que torna este caso instrutivo não é a flag, é o **arnês**: a suíte tinha 12 casos, 10
+sabotagens e falsificação nos dois locales, e mesmo assim saiu **verde no macOS e vermelha no
+Linux pelo mesmo commit**. Falsificar em dois *locales* não diz nada sobre dois *sistemas
+operacionais* — são eixos independentes, e cobrir um com capricho não compra o outro. O aviso do
+CLAUDE.md (*"falsificar em UM ambiente não prova a asserção"*) vale para **qualquer** eixo de
+ambiente, não só o locale em que ele foi aprendido.
+
+A forma portável é template explícito, nunca `-t`:
+
+```bash
+BRUTO=$(mktemp "${TMPDIR:-/tmp}/ocupacao-contexto.XXXXXX")   # idêntico nos dois
+```
+
+E a contramedida que esta seção já prescrevia — **testar o outro contrato por stub** — é barata o
+bastante para caber no teste: um `mktemp` falso no `PATH` que reproduz a exigência dos X's, com
+**controle positivo do próprio stub** (ele tem de reprovar a forma BSD; um stub inerte aprovaria
+tudo). Implementado em
+[`scripts/test-ocupacao-por-arquivo.sh`](../../scripts/test-ocupacao-por-arquivo.sh), caso 10.
+
 ### 7. O WRAPPER devolve exit≠0 por conta PRÓPRIA — igualzinho ao comando embrulhado
 ```
 heavy: timeout (1800s) esperando vaga — abortando. (posição 1 na fila)

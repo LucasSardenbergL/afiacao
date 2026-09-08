@@ -279,6 +279,44 @@ else
   printf '%s\n' "$saida_t" | sed 's/^/      /'
 fi
 
+# ---- 10) portabilidade BSD × GNU, por STUB ---------------------------------
+# Esta suíte ficou VERDE no macOS e VERMELHA no CI (Linux) pelo mesmo código:
+# `mktemp -t <prefixo>` é flag homônima — no BSD o argumento é um PREFIXO, no GNU
+# é um TEMPLATE que exige ≥3 X's, e `mktemp: too few X's` derrubava o script
+# inteiro via `set -e`, com exit 1 e sem mensagem própria.
+# Rodar a suíte num SO não prova portabilidade nenhuma. O antídoto que
+# `evidencia-positiva-shell.md` §6 já prescrevia é este: testar o OUTRO contrato
+# por stub, na máquina que se tem.
+STUB="$tmp/stub-gnu"; mkdir -p "$STUB"
+# shellcheck disable=SC2016  # aspas simples de propósito no bloco todo: isto é o
+# CÓDIGO-FONTE do stub sendo escrito em disco. `$@`/`$ult` têm de chegar literais
+# ao arquivo — expandir aqui gravaria os valores desta shell e o stub nasceria
+# inerte, aprovando exatamente o que deveria reprovar.
+{ printf '#!/usr/bin/env bash\n'
+  printf '# imita o contrato GNU: template posicional precisa de >=3 X consecutivos\n'
+  printf 'ult=""; for a in "$@"; do ult="$a"; done\n'
+  printf 'case "$ult" in\n'
+  printf '  -*) ;;\n'
+  printf '  *XXX*) ;;\n'
+  printf '  *) echo "mktemp: too few X'"'"'s in template '"'"'$ult'"'"'" >&2; exit 1 ;;\n'
+  printf 'esac\n'
+  printf 'exec /usr/bin/mktemp "$@"\n'; } > "$STUB/mktemp"
+chmod +x "$STUB/mktemp"
+# Controle positivo do próprio stub: ele TEM de reprovar a forma BSD, senão o
+# caso abaixo passaria por um stub inerte — verde por cegueira.
+if PATH="$STUB:$PATH" mktemp -t sem-xis >/dev/null 2>&1; then
+  ruim "stub GNU inerte (aceitou 'mktemp -t sem-xis') — o caso de portabilidade nao prova nada"
+else
+  saida_g="$(PATH="$STUB:$PATH" CLAUDE_PROJECTS_DIR="$P1" bash "$ALVO" \
+               --por-arquivo --linhas 99 2>&1 || true)"
+  if tem "$saida_g" "OCUPACAO-CONTEXTO-OK" && ! tem "$saida_g" "too few X"; then
+    ok "roda sob o contrato GNU de mktemp (stub) — nao so sob o do BSD"
+  else
+    ruim "quebrou sob o contrato GNU de mktemp — verde no macOS, vermelho no CI"
+    printf '%s\n' "$saida_g" | command grep -F "mktemp" | sed 's/^/      /'
+  fi
+fi
+
 # ---- falsificação -----------------------------------------------------------
 # Sabota uma CÓPIA do alvo (nunca o arquivo versionado) e EXIGE vermelho. Suíte
 # que não fica vermelha quando a invariante quebra é teatro.
@@ -364,6 +402,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   sabota "marcador positivo de fim removido" \
          "execucao morta no meio passaria por completa" \
          's/^echo "OCUPACAO-CONTEXTO-OK/echo "fim/'
+  # shellcheck disable=SC2016  # `$(mktemp …)` aqui é o TEXTO que o sed casa e
+  # escreve no alvo; expandir rodaria o mktemp desta shell e gravaria um caminho
+  # fixo — sabotagem que não sabota, e o alvo passaria a usar um arquivo só.
+  sabota "mktemp volta a forma so-BSD (-t <prefixo>)" \
+         "verde no macOS e vermelho no CI pelo mesmo codigo — flag homonima BSD x GNU" \
+         's|^BRUTO=$(mktemp .*)$|BRUTO=$(mktemp -t ocupacao-contexto)|'
   sabota "jq volta a rodar solto sob set -e" \
          "1 sessao viva com linha parcial abortaria a varredura das outras 684" \
          's/^  if ! jq -rc /  if jq -rc /'

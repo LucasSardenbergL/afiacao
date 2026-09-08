@@ -141,7 +141,13 @@ fi
 #   REQ <sessao> <requestId>          -> passou um request faturável (marca o tempo)
 #   USE <sessao> <id> <nome> <path>   -> amarra tool_use_id ao nome e ao arquivo
 #   RES <sessao> <id> <chars>         -> um resultado entrou no histórico
-BRUTO=$(mktemp -t ocupacao-contexto)
+# Template explícito, e NUNCA `mktemp -t <prefixo>`: `-t` é flag homônima
+# BSD×GNU — no macOS o argumento é um PREFIXO e funciona; no GNU (o CI) é um
+# TEMPLATE que exige ≥3 X's, e `mktemp: too few X's` derruba o script inteiro via
+# `set -e`. Verde no macOS, vermelho no Linux, pelo mesmo código. É a armadilha #6
+# de docs/historico/evidencia-positiva-shell.md, e ela custou uma rodada de CI
+# justamente no PR que a documenta.
+BRUTO=$(mktemp "${TMPDIR:-/tmp}/ocupacao-contexto.XXXXXX")
 trap 'rm -f "$BRUTO"' EXIT
 
 # `if ! jq`, e não `jq` solto: sob `set -e` um único transcript com linha
