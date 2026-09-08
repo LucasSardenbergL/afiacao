@@ -348,38 +348,38 @@ sabota() { # <descricao> <expressao-sed>
 
 # (a1) O ramo que dá sentido ao arquivo: sem ele, "está no ar" vira "está correto".
 sabota "sem o ramo de ok:false (a vermelha perde o nome)" \
-  "s/WHEN l\.corpo ->> 'ok' = 'false'/WHEN false/"
+  "s/WHEN ca\.corpo ->> 'ok' = 'false'/WHEN false/"
 # (a2) A conjunção do ramo verde, agora ALCANÇÁVEL pelo fixture de \`ok\` não-booleano.
 sabota "verde deixa de exigir ok:true (ok nao-booleano vira verde)" \
-  "s/AND l\.corpo ->> 'ok' = 'true'//"
+  "s/AND ca\.corpo ->> 'ok' = 'true'//"
 # (b1) O ramo que nomeia a divergência de marcador.
 sabota "sem o ramo de marcador divergente (a outra fatia perde o nome)" \
-  "s/WHEN l\.corpo ->> l\.campo_marcador IS DISTINCT FROM l\.marcador_esperado/WHEN false/"
+  "s/WHEN ca\.corpo ->> ca\.campo_marcador IS DISTINCT FROM ca\.marcador_esperado/WHEN false/"
 # (b2) A armadilha 2 do deploy.md RECONSTRUÍDA: nada no CASE julga o marcador. O bundle velho
 #      compara velho x velho, responde ok:true, e o veredito sai CANARIA VERDE — mentindo verde.
 sabota "o CASE inteiro deixa de julgar o marcador (bundle velho MENTE VERDE)" \
-  "s/WHEN l\.corpo ->> l\.campo_marcador IS DISTINCT FROM l\.marcador_esperado/WHEN false/; s/AND l\.corpo ->> l\.campo_marcador = l\.marcador_esperado//"
+  "s/WHEN ca\.corpo ->> ca\.campo_marcador IS DISTINCT FROM ca\.marcador_esperado/WHEN false/; s/AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado//"
 # (b3) O marcador esperado que sai do REPO vira um digitado qualquer: a canária no ar deixa de bater.
 sabota "marcador esperado fabricado no VALUES (repo deixa de mandar)" \
   "s/(\('copilot-analyze', 'contrato', ')[^']*/\1marcador-fabricado-v0/"
 # (b4) O campo do marcador deixa de ser POR CANÁRIA: quem serve em \`versao\` some.
 sabota "marcador lido sempre de 'contrato' (a generate-tactical-plan some)" \
-  "s/l\.corpo ->> l\.campo_marcador/l.corpo ->> 'contrato'/g"
+  "s/ca\.corpo ->> ca\.campo_marcador/ca.corpo ->> 'contrato'/g"
 # (c) A ORDEM dos ramos: julgar o status ANTES do eco faz a vermelha de HTTP 500 da
 #     generate-tactical-plan sair como 'recusou o request'.
 sabota "status julgado antes do eco (500 vermelha vira bundle velho)" \
-  "s/WHEN l\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND l\.status_code >= 400/WHEN l.status_code >= 400/"
+  "s/WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\.status_code >= 400/WHEN ca.status_code >= 400/"
 # (d) O envelope \`data\`: sem descer nele, as canárias da omie-analytics-sync somem para
 #     'sem eco' — um bundle correto classificado como velho.
 sabota "sem o COALESCE do envelope data (analytics vira 'sem eco')" \
-  "s/COALESCE\(x\.content::jsonb -> 'data', x\.content::jsonb\)/x.content::jsonb/"
+  "s/COALESCE\(resp\.content::jsonb -> 'data', resp\.content::jsonb\)/resp.content::jsonb/"
 # (e) NULL-blind: trocar IS DISTINCT FROM por <> faz a chave AUSENTE devolver NULL, o ramo do
 #     eco não casa, e a resposta sem `canary` cai adiante no CASE.
 sabota "eco testado por <> (NULL-blind: chave ausente devolve NULL)" \
-  "s/l\.corpo ->> 'canary' IS DISTINCT FROM 'true'/l.corpo ->> 'canary' <> 'true'/g"
+  "s/ca\.corpo ->> 'canary' IS DISTINCT FROM 'true'/l.corpo ->> 'canary' <> 'true'/g"
 # (f) A janela: sem ela, uma resposta de outra sessão vira veredito de agora.
 sabota "sem o guard de janela (resposta velha vira veredito de agora)" \
-  "/WHEN l\.created <= now\(\) - interval/,+3d"
+  "/WHEN ca\.created <= now\(\) - interval/,+3d"
 
 if [ "$falhou" -eq 0 ]; then printf '\nFALSIFICACAO OK — todo verde tem vermelho alcancavel\n'; exit 0; fi
 printf '\nVERMELHO\n'; exit 1

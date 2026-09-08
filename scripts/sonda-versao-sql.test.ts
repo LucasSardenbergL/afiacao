@@ -1524,8 +1524,14 @@ describe('o CORPO do disparo é POR CANÁRIA — corpo errado cai no FLUXO REAL'
     expect(sql).not.toContain("body := jsonb_build_object('canary'");
   });
 
+  // Mede o PISO, não o número: 20s é TUNING e o `.mut` declara 20000→30000 como SOBREVIVE.
+  // Pinar o literal aqui reprovaria um ajuste legítimo — a fronteira é o default de 5s do pg_net,
+  // que mata silencioso (é a mesma lição da asserção irmã da sonda, algumas centenas de linhas
+  // acima; ela foi aprendida por mutcheck e esta cópia nasceu ignorando-a).
   it('timeout_milliseconds é EXPLÍCITO e acima do default de 5s, que mata silencioso', () => {
-    expect(sqlReal()).toContain('timeout_milliseconds := 20000');
+    const m = sqlReal().match(/timeout_milliseconds\s*:=\s*(\d+)\)/);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThan(5000);
   });
 
   it('o segredo sai do vault, nunca do texto colado', () => {
@@ -1597,20 +1603,20 @@ describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
   it('CANARIA VERDE exige canary + marcador + ok, os três', () => {
     const ramo = ramoDe(sql(), 'CANARIA VERDE');
     const antes = sql().slice(0, sql().indexOf("THEN 'CANARIA VERDE"));
-    const cond = antes.slice(antes.lastIndexOf("WHEN l.corpo ->> 'canary' = 'true'"));
-    expect(cond).toContain("l.corpo ->> 'canary' = 'true'");
-    expect(cond).toContain('l.corpo ->> l.campo_marcador = l.marcador_esperado');
-    expect(cond).toContain("l.corpo ->> 'ok' = 'true'");
+    const cond = antes.slice(antes.lastIndexOf("WHEN ca.corpo ->> 'canary' = 'true'"));
+    expect(cond).toContain("ca.corpo ->> 'canary' = 'true'");
+    expect(cond).toContain('ca.corpo ->> ca.campo_marcador = ca.marcador_esperado');
+    expect(cond).toContain("ca.corpo ->> 'ok' = 'true'");
     expect(ramo).toContain('CANARIA VERDE');
   });
 
   it('a leitura parte da lista CANÔNICA — zero linhas não pode virar "nada a reportar"', () => {
     expect(sql()).toContain('WITH esperado(nome, campo_marcador, marcador_esperado, efeito) AS (VALUES');
-    expect(sql()).toContain('FROM esperado e');
+    expect(sql()).toContain('FROM esperado esp');
   });
 
   it('desce no envelope `data` — a omie-analytics-sync responde aninhado', () => {
-    expect(sql()).toContain("COALESCE(x.content::jsonb -> 'data', x.content::jsonb)");
+    expect(sql()).toContain("COALESCE(resp.content::jsonb -> 'data', resp.content::jsonb)");
   });
 
   it('os ramos que separam BUNDLE VELHO de CANARIA VERMELHA estão todos nomeados', () => {
@@ -1632,7 +1638,7 @@ describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
   it('o 200 sem eco DIZ que rodou o fluxo real, e diz QUAL efeito', () => {
     const ramo = ramoDe(sql(), 'SEM CANARIA NO AR — HTTP');
     expect(ramo).toContain('RODOU O FLUXO REAL');
-    expect(ramo).toContain("|| l.efeito ||");
+    expect(ramo).toContain("|| ca.efeito ||");
     expect(ramo).toContain('NAO e canaria vermelha');
   });
 
@@ -1644,8 +1650,8 @@ describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
 
   it('o eco é julgado ANTES do status — a 500 da generate-tactical-plan é vermelha, não recusa', () => {
     const s = sql();
-    const eco = s.indexOf("WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true' AND l.status_code >= 400");
-    const statusCru = s.indexOf('WHEN l.status_code >= 400');
+    const eco = s.indexOf("WHEN ca.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca.status_code >= 400");
+    const statusCru = s.indexOf('WHEN ca.status_code >= 400');
     expect(eco).toBeGreaterThan(-1);
     // Não existe ramo que julgue o status sem antes exigir a ausência do eco.
     expect(statusCru).toBe(-1);
@@ -1655,7 +1661,7 @@ describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
     const s = sql();
     expect(s).toContain("('generate-tactical-plan', 'versao', ");
     expect(s).toContain("('copilot-analyze', 'contrato', ");
-    expect(s).toContain('l.corpo ->> l.campo_marcador');
+    expect(s).toContain('ca.corpo ->> ca.campo_marcador');
   });
 });
 
