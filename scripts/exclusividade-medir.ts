@@ -311,7 +311,14 @@ function main(): number {
     medidoEm: new Date().toISOString(),
     sourceHead: spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
     dispensados: anterior?.dispensados ?? [],
-    baseline,
+    // O baseline ACUMULA por uniao, com a medicao mais recente de cada gate vencendo. Substituir
+    // apagaria os gates das rodadas anteriores — e como `derivar()` usa o baseline para saber
+    // quem NAO rodou num defeito, um baseline truncado devolveria `naoMedido` vazio para gates
+    // que de fato nao rodaram: ausencia lida como cobertura, dentro da propria ferramenta.
+    baseline: [
+      ...(anterior?.baseline ?? []).filter((b) => !baseline.some((n) => n.gate === b.gate)),
+      ...baseline,
+    ].sort((a, b) => a.gate.localeCompare(b.gate)),
     // Medicao parcial (--gates/--defeitos) ACRESCENTA, nunca apaga o que ja foi medido antes.
     linhas: [
       ...(anterior?.linhas ?? []).filter((l) => !linhas.some((n) => n.defeito === l.defeito)),

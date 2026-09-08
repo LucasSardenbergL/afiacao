@@ -253,6 +253,19 @@ export interface Exclusividade {
   exclusivos: string[];
   pegou: string[];
   naoMedido: string[];
+  /**
+   * True se ALGUM defeito do corpus declara este gate em `@suspeito` — ou seja, se o corpus
+   * chegou a MIRAR nele.
+   *
+   * Sem esta distincao a ferramenta comete, contra si mesma, a falha que existe para evitar. Na
+   * primeira medicao real o `test` (vitest) apareceu com exclusividade zero e foi rotulado
+   * "redundante" — quando a verdade e que nenhum dos 6 defeitos do corpus era de codigo de
+   * aplicacao. Zero ali nao media redundancia: media um corpus que nunca apontou para ele.
+   *
+   * `@suspeito` continua sem podar NADA da medicao — todo gate roda contra todo defeito. Ele so
+   * decide como o RESULTADO e rotulado, que e a diferenca entre informar e enganar.
+   */
+  corpusMirou: boolean;
   msTotal: number;
   msMediana: number;
 }
@@ -262,12 +275,25 @@ export function derivar(m: Matriz): Exclusividade[] {
   const pega = (g: string): Exclusividade => {
     let e = porGate.get(g);
     if (!e) {
-      e = { gate: g, exclusivos: [], pegou: [], naoMedido: [], msTotal: 0, msMediana: 0 };
+      e = {
+        gate: g,
+        exclusivos: [],
+        pegou: [],
+        naoMedido: [],
+        corpusMirou: m.linhas.some((l) => l.suspeito === g),
+        msTotal: 0,
+        msMediana: 0,
+      };
       porGate.set(g, e);
     }
     return e;
   };
   const duracoes = new Map<string, number[]>();
+
+  // Todo gate do baseline entra no resultado, mesmo que nao apareca em nenhuma linha valida.
+  // Sem isto, um gate cujas unicas linhas foram INVALIDADAS simplesmente sumia da derivacao — e
+  // sumir do relatorio e a pior forma de exclusividade zero: a que nem se sabe que existe.
+  for (const b of m.baseline) pega(b.gate);
 
   for (const linha of m.linhas) {
     const rodados = new Set(linha.execucoes.map((e) => e.gate));
@@ -308,6 +334,7 @@ export type CodigoVeredito =
   | 'MATRIZ_AUSENTE'
   | 'LINHA_PODRE'
   | 'EXCLUSIVIDADE_ZERO'
+  | 'CORPUS_NAO_MIROU'
   | 'FRESCOR_INDISPONIVEL';
 
 export interface Veredito {
@@ -387,15 +414,30 @@ export function avaliar(
     }
 
     if (medido && e.exclusivos.length === 0 && e.pegou.length > 0) {
-      out.push({
-        severidade: 'RELATA',
-        gate: g.nome,
-        codigo: 'EXCLUSIVIDADE_ZERO',
-        motivo:
-          `pegou ${e.pegou.length} de ${m.linhas.length} defeito(s) do corpus, e em NENHUM foi o ` +
-          `unico — outro gate tambem pegou. Isto NAO e "nao pega nada": e redundancia medida ` +
-          `NESTE corpus de ${m.linhas.length}.`,
-      });
+      // Zero so pode ser lido como REDUNDANCIA se o corpus chegou a mirar neste gate. Se nenhum
+      // defeito o declara em `@suspeito`, o zero mede o corpus, nao o gate — e chamar isso de
+      // redundancia seria a ferramenta cometendo contra si a falha que ela existe para evitar.
+      out.push(
+        e.corpusMirou
+          ? {
+              severidade: 'RELATA',
+              gate: g.nome,
+              codigo: 'EXCLUSIVIDADE_ZERO',
+              motivo:
+                `pegou ${e.pegou.length} de ${m.linhas.length} defeito(s) do corpus, e em NENHUM foi o ` +
+                `unico — outro gate tambem pegou. Isto NAO e "nao pega nada": e redundancia medida ` +
+                `NESTE corpus de ${m.linhas.length}.`,
+            }
+          : {
+              severidade: 'RELATA',
+              gate: g.nome,
+              codigo: 'CORPUS_NAO_MIROU',
+              motivo:
+                `pegou ${e.pegou.length} defeito(s) de carona, mas NENHUM dos ${m.linhas.length} do ` +
+                `corpus foi escrito mirando nele (@suspeito). Zero aqui mede o CORPUS, nao o gate — ` +
+                `escreva um defeito do dominio dele antes de concluir qualquer coisa.`,
+            },
+      );
     }
   }
   return out;
@@ -407,15 +449,18 @@ export function resumir(m: Matriz): string {
     .filter((e) => e.pegou.length + e.exclusivos.length > 0 || e.naoMedido.length > 0)
     .map((e) => {
       const excl = e.exclusivos.length;
-      const marca = excl > 0 ? '[SO ELE]' : e.pegou.length > 0 ? '[redund]' : '[      ]';
+      const marca =
+        excl > 0 ? '[SO ELE]' : !e.corpusMirou ? '[s/ mira]' : e.pegou.length > 0 ? '[redund]' : '[      ]';
       return (
-        `${marca} ${e.gate.padEnd(34)} exclusivos ${String(excl).padStart(2)}/${m.linhas.length}` +
+        `${marca.padEnd(9)} ${e.gate.padEnd(34)} exclusivos ${String(excl).padStart(2)}/${m.linhas.length}` +
         ` - pegou ${String(e.pegou.length).padStart(2)} - mediana ${String(e.msMediana).padStart(6)}ms`
       );
     });
   return [
     `matriz de exclusividade — ${m.linhas.length} defeito(s) x ${m.baseline.length} gate(s), medida em ${m.medidoEm}`,
     ...linhas,
-    `   [SO ELE] = tem defeito que so ele pega - [redund] = tudo que pega, outro tambem pega (NESTE corpus de ${m.linhas.length})`,
+    `   [SO ELE]  = ha defeito que SO ele pega`,
+    `   [redund]  = o corpus mirou nele e tudo que pega, outro tambem pega (NESTE corpus de ${m.linhas.length})`,
+    `   [s/ mira] = nenhum defeito do corpus foi escrito para ele — zero aqui mede o CORPUS, nao o gate`,
   ].join('\n');
 }
