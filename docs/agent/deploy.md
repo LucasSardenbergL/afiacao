@@ -176,6 +176,25 @@ canary === true   E   contrato === '<marcador da fatia>'   E   ok === true
 | `omie-financeiro` | `paginacao_probe` | `paginacao-guards-v1` | guards de paginação do #1598: piso NÃO encolhe (vazia antes do fim = anomalia; velho: `\|\| 1` → "fim"), reversa só completa com sonda vazia (velho: `pagina < 1` → complete), fingerprint sem colisão (velho: `1ºcódigo:count`), resposta sem array LANÇA (velho: `\|\| []` → "página vazia" = fim) |
 | `copilot-analyze` | `{"canary":true}` | `tudo-ou-nada-normalizar-v1` | o tudo-ou-nada de `normalizarAnalise` (#2367): meia análise é `null`, confiança fora de 0–100 é `null`, enum inválido é `null` — e, nas duas direções, string numérica vira número e motivo não-string sai da lista sem derrubar a análise. **6 fixtures que se falsificam mutuamente** (helper sempre-`null` morre em 3, helper relaxado morre nos outros 3). ⚠️ Ela nasceu para o buraco que o #2362 NÃO fecha: aquele prova o que ENTRA no deploy (sha256 por arquivo, de `origin/main`), esta prova o que SAI |
 
+### Como DISPARAR (`bun run sonda:sql --canaria`)
+
+O SQL sai pronto do mesmo gerador da sonda — **não escreva `net.http_post` à mão**:
+
+```bash
+bun run sonda:sql --canaria                     # todas as alcançáveis pelo SQL Editor
+bun run sonda:sql --canaria copilot-analyze omie-financeiro
+```
+
+O que ele fecha, e por que cada um importa:
+
+- **O corpo é POR CANÁRIA** (a tabela acima tem quatro formas). Corpo errado não é "canária que não respondeu": a edge cai no **fluxo real** — na `carteira-rebuild` isso é o rebuild inteiro (lease + upserts), na `generate-tactical-plan` é token de LLM sem gate de auth na frente. Quem cai nessa classe sai em bloco **com trava**, e a trava vem do REGISTRO (`fluxoRealSeVelho`), não da memória de quem chama.
+- **O marcador esperado é DERIVADO do repo** pelo mesmo extrator do gate `canaria:bump` (`localizarCanarias`), nunca digitado — nas **duas** formas que ele conhece desde o #2374: `contrato: "<literal>"` (7 canárias) e `versao: VERSAO`, por referência ao símbolo do `versao.ts` (a `generate-tactical-plan`). O `campoMarcador` do registro é conferido contra a forma que o repo usa **nos dois sentidos**: canária que troque de forma RECUSA a geração até o registro acompanhar — sem isso, o sentido `versao`→`contrato` diria "sem marcador" (causa errada) e o inverso leria o marcador da SONDA achando que é o da canária.
+- **A `analyze-unified-order` é recusada**: a canária dela vive depois do gate de staff (JWT), o SQL Editor recebe 401, e 401 se lê como bundle velho. Ela é do APP LOGADO. (A **sonda** dela é alcançável.)
+- **PASSO 1 é do founder** (vault + INSERT) e devolve o **PASSO 2 já escrito, com o mapa `nome → request_id` dentro** — aqui isso não é conveniência: a resposta da canária **não ecoa o slug**, então sem o mapa nenhuma linha é atribuível. Por isso `--so-leitura` é recusado.
+- **BUNDLE VELHO ≠ CANÁRIA VERMELHA**, e o veredito diz qual é: ausência do eco `canary` (401 com controle de credencial, outro 4xx, ou **200 que rodou o fluxo real**) sai como `SEM CANARIA NO AR` — desfecho DEPLOY. Marcador divergente sai como `CANARIA DE OUTRA FATIA` (a armadilha 2 abaixo: o bundle velho compara velho×velho e responde `ok:true`). Só `ok:false` **com o marcador batendo** é `CANARIA VERMELHA` — desfecho investigar a regressão. ⚠️ O eco é julgado **antes** do status: a `generate-tactical-plan` responde **HTTP 500** quando a canária dela reprova.
+
+Prova executada (PG17 local, 18 asserções + 10 sabotagens com controle verde): `bash db/test-canaria-veredito.sh [--falsificar]`. Não entra no `nucleo-ci.txt` porque precisa de `bun` para gerar o SQL, e o job `provas-sql` é deliberadamente sem bun.
+
 ⚠️ **O `canaria:bump` só enxerga o `contrato` emitido como LITERAL no `index.ts`** (`RE_EMISSAO`, regex de `contrato: "..."`) — canária cujo marcador more num módulo da edge, ou saia por identificador, nasce FORA do único gate que vigia o bump dela, e o gate segue verde: MEDIDO no #2367, "6 canária(s) conferida(s)" antes e depois de a 7ª existir. Por isso a `copilot-analyze` duplica o marcador de propósito — literal no `index.ts` para o gate, constante em `canaria.ts` para o teste Deno — com a igualdade vigiada por `scripts/canaria-contrato-espelhado.test.ts`, que traz também o controle positivo da cegueira.
 
 

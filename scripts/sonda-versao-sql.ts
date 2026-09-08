@@ -34,7 +34,7 @@
  * `--so-disparo` e `--so-leitura` recortam exatamente nessa fronteira.
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ARQ_MAPA, lerMapaCommitado } from './sonda-fingerprint';
@@ -876,6 +876,649 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
   return partes.join('\n');
 }
 
+// ==========================================================================================
+// MODO CANÁRIA — a irmã COMPORTAMENTAL da sonda
+// ==========================================================================================
+//
+// A sonda responde "qual bundle está no ar?". A canária responde "o COMPORTAMENTO que esta fatia
+// atesta continua no ar?" — ela roda o helper REAL sobre fixtures e devolve o veredito. Até aqui
+// o disparo dela era `net.http_post` escrito à mão a cada verificação, com o CASE do veredito
+// reescrito junto (fecho do #2367: o SQL saiu do bloco da sonda trocando `'probe'` por `'canary'`).
+// Duas coisas viajavam na mão nesse caminho, e as duas produzem VEREDITO FALSO:
+//
+//   1. O CORPO. Ele NÃO é uniforme — `docs/agent/deploy.md` §"Canárias de deploy" lista quatro
+//      formas: `{"canary":true}`, `?canary=1` na URL, e rotas nomeadas por `action`
+//      (`identidade_probe`, `doc_ambiguo_probe`, `transferencia_probe`, `paginacao_probe`). Corpo
+//      errado não é "canária que não respondeu": a edge cai no FLUXO REAL, e em várias delas isso
+//      é caro e ESCREVE (a `carteira-rebuild` faz o rebuild inteiro, lease + upserts).
+//   2. O MARCADOR esperado. Digitado errado, o veredito sai "bundle velho" numa canária que está
+//      no ar — o mesmo falso do cabeçalho deste arquivo, uma camada acima. Aqui ele é DERIVADO do
+//      repo (o `contrato` emitido no `index.ts`, lido pelo mesmo extrator que o gate `canaria:bump`
+//      usa), nunca digitado no registro.
+//
+// POR QUE A LEITURA NÃO ACHA A LINHA PELO ECO DO SLUG, como a da sonda: a resposta da canária NÃO
+// ecoa o nome da edge. Medido nas 7 emissões: `{canary, contrato, ok, ...}` — `executarCanaria` da
+// `copilot-analyze`, o `result` das três `omie-*`, o `Response` da `carteira-rebuild`. Sem eco não
+// há como casar resposta com edge sem o `request_id`, e por isso o modo canária SÓ existe na forma
+// de mapa EMBUTIDO: o passo 1 escreve o passo 2 com o mapa dentro, e `--so-leitura` é RECUSADO —
+// um bloco de leitura sem mapa aqui não seria "menos preciso", seria INDETERMINADO em toda linha.
+
+/** Como a canária é acordada. Não é uniforme entre as 8 — ver a tabela do `deploy.md`. */
+export type DisparoCanaria =
+  /** corpo JSON no POST (`{"canary":true}` ou `{"action":"<rota>"}`) */
+  | { readonly tipo: 'corpo'; readonly corpo: string }
+  /** query string na URL (`?canary=1`) — o corpo vai `{}` */
+  | { readonly tipo: 'query'; readonly query: string };
+
+export interface CanariaRegistrada {
+  /** identificador na CLI. Edge com DUAS canárias precisa de sufixo: `<edge>:<rota>`. */
+  readonly nome: string;
+  readonly edge: string;
+  /** Chave de `localizarCanarias` que hospeda esta canária: `case:<rota>` ou `if:<ordinal>`. */
+  readonly chave: string;
+  readonly disparo: DisparoCanaria;
+  /** Campo da resposta que carrega o marcador. A `generate-tactical-plan` serve em `versao`. */
+  readonly campoMarcador: 'contrato' | 'versao';
+  /**
+   * `null` = alcançável pelo SQL Editor. Texto = por que NÃO é, e o que fazer no lugar. Canária
+   * atrás de gate de JWT de usuário é inalcançável por `x-cron-secret`: pedir o disparo dela aqui
+   * devolveria 401, e 401 se lê como "bundle velho" — veredito falso sobre uma canária que talvez
+   * esteja perfeita. Recusar é o honesto.
+   */
+  readonly inalcancavel: string | null;
+  /**
+   * O que um bundle SEM esta canária faz com o disparo. `true` = cai no fluxo real e ele é
+   * caro/escreve, então ela sai no bloco COM trava. Derivado do código, não da memória de quem
+   * chama: o `--caro` da sonda depende de o operador lembrar, e aqui esquecer significa rebuild
+   * real da carteira ou token de LLM queimado.
+   */
+  readonly fluxoRealSeVelho: boolean;
+  /** O efeito do fluxo real, nomeado. Entra no veredito de "rodou o fluxo real". */
+  readonly efeitoSeVelho: string;
+}
+
+/**
+ * As 8 canárias de `docs/agent/deploy.md` §"Canárias de deploy".
+ *
+ * O que está aqui é o que NÃO dá para derivar: como acordar a canária, e onde ela responde. O
+ * MARCADOR não está — ele é lido do repo por `resolverCanarias`, que também recusa canária do repo
+ * fora deste registro (a armadilha "canária fora da tabela" do próprio `deploy.md`).
+ */
+export const CANARIAS: readonly CanariaRegistrada[] = [
+  {
+    nome: 'copilot-analyze',
+    edge: 'copilot-analyze',
+    chave: 'if:1',
+    disparo: { tipo: 'corpo', corpo: '{"canary": true}' },
+    campoMarcador: 'contrato',
+    inalcancavel: null,
+    // A canária responde ANTES do gate de `Bearer`: um bundle sem ela cai no gate e devolve 401.
+    fluxoRealSeVelho: false,
+    efeitoSeVelho: 'analise por LLM (token) — mas o gate de Bearer recusa antes',
+  },
+  {
+    nome: 'carteira-rebuild',
+    edge: 'carteira-rebuild',
+    chave: 'if:1',
+    disparo: { tipo: 'query', query: '?canary=1' },
+    campoMarcador: 'contrato',
+    inalcancavel: null,
+    // Sem o ramo `?canary=1` a requisição segue para o rebuild REAL: lease + upserts na carteira.
+    fluxoRealSeVelho: true,
+    efeitoSeVelho: 'rebuild REAL da carteira (lease + upserts) — idempotente, mas e ESCRITA',
+  },
+  {
+    nome: 'generate-tactical-plan',
+    edge: 'generate-tactical-plan',
+    // Serve o marcador no campo `versao`, por REFERÊNCIA ao `VERSAO` do `versao.ts` — a única das
+    // 8 nessa forma. O `canaria:bump` passou a enxergá-la no #2374 (`contrato: null` + `simbolo`),
+    // e é dele que sai o sinal: `resolverCanarias` cobra que `campoMarcador` case com a forma que
+    // o REPO usa, nos dois sentidos.
+    chave: 'if:1',
+    disparo: { tipo: 'corpo', corpo: '{"canary": true}' },
+    campoMarcador: 'versao',
+    inalcancavel: null,
+    // `body.canary === true` é comparação CRUA (não passa pelo classificador), e a edge não tem
+    // gate de auth antes: bundle velho vai direto para o plano com LLM.
+    fluxoRealSeVelho: true,
+    efeitoSeVelho: 'plano tatico com LLM (token) — nao ha gate de auth antes para segurar',
+  },
+  {
+    nome: 'omie-vendas-sync',
+    edge: 'omie-vendas-sync',
+    chave: 'case:identidade_probe',
+    disparo: { tipo: 'corpo', corpo: '{"action": "identidade_probe"}' },
+    campoMarcador: 'contrato',
+    inalcancavel: null,
+    fluxoRealSeVelho: false,
+    efeitoSeVelho: 'action desconhecida LANCA antes de qualquer escrita',
+  },
+  {
+    nome: 'omie-analytics-sync:doc_ambiguo_probe',
+    edge: 'omie-analytics-sync',
+    chave: 'case:doc_ambiguo_probe',
+    disparo: { tipo: 'corpo', corpo: '{"action": "doc_ambiguo_probe"}' },
+    campoMarcador: 'contrato',
+    inalcancavel: null,
+    fluxoRealSeVelho: false,
+    efeitoSeVelho: 'action desconhecida devolve 400 antes de qualquer escrita',
+  },
+  {
+    nome: 'omie-analytics-sync:transferencia_probe',
+    edge: 'omie-analytics-sync',
+    chave: 'case:transferencia_probe',
+    disparo: { tipo: 'corpo', corpo: '{"action": "transferencia_probe"}' },
+    campoMarcador: 'contrato',
+    inalcancavel: null,
+    fluxoRealSeVelho: false,
+    efeitoSeVelho: 'action desconhecida devolve 400 antes de qualquer escrita',
+  },
+  {
+    nome: 'omie-financeiro',
+    edge: 'omie-financeiro',
+    chave: 'case:paginacao_probe',
+    disparo: { tipo: 'corpo', corpo: '{"action": "paginacao_probe"}' },
+    campoMarcador: 'contrato',
+    inalcancavel: null,
+    // O `default` fecha o log como ERRO (não `complete`), então não carimba frescor falso.
+    fluxoRealSeVelho: false,
+    efeitoSeVelho: 'action desconhecida fecha o fin_sync_log como erro — nao carimba frescor',
+  },
+  {
+    nome: 'analyze-unified-order',
+    edge: 'analyze-unified-order',
+    chave: 'if:1',
+    disparo: { tipo: 'corpo', corpo: '{"canary": true}' },
+    campoMarcador: 'contrato',
+    inalcancavel:
+      'a canária de preço vive DEPOIS do gate de staff (JWT de usuário), e o gate não conhece ' +
+      '`x-cron-secret` — pelo SQL Editor ela responde 401, que é indistinguível de bundle velho. ' +
+      'Chame-a pelo APP LOGADO: Governança → Auditoria, card "Canária de preço". (A SONDA desta ' +
+      'edge é alcançável e responde antes do gate: `bun run sonda:sql analyze-unified-order`.)',
+    fluxoRealSeVelho: false,
+    efeitoSeVelho: 'inalcancavel pelo SQL Editor',
+  },
+];
+
+/**
+ * O único símbolo de marcador resolvível — o mesmo que o `canaria:bump` sabe seguir. Canária que
+ * sirva `versao: <outro>` fica FORA do alcance, e dizer isso é melhor do que adivinhar.
+ */
+const SIMBOLO_VERSAO = 'VERSAO';
+
+/** Uma canária do registro com o marcador que o REPO diz que ela emite hoje. */
+export interface CanariaResolvida extends CanariaRegistrada {
+  readonly marcador: string;
+}
+
+/**
+ * Lê do repo as canárias de UMA edge: a chave do arm e o marcador emitido.
+ *
+ * Injetado, e não importado no topo, pelo MESMO motivo documentado em `guardEfeitoLegado`: o eval
+ * da skill `lovable-deploy-verify` copia SÓ `sonda-versao-sql.ts` e `sonda-fingerprint.ts` para um
+ * diretório temporário e importa daqui. Um import de topo de `canaria-contrato-bump-gate` (que por
+ * sua vez importa `@/lib/gates/limpeza-fonte`) não resolveria lá, o módulo inteiro deixaria de
+ * carregar, e os cenários do eval voltariam a devolver `SQL_VAZIO`. Quem executa como CLI resolve
+ * o leitor real no fim deste arquivo.
+ */
+export type LeitorCanariasDoRepo = (
+  raiz: string,
+  edge: string,
+) => ReadonlyArray<{ chave: string; contrato: string | null; simbolo: string | null }>;
+
+/** Pastas de `supabase/functions/` que podem hospedar canária (toda pasta com `index.ts`). */
+function edgesDoRepo(raiz: string): string[] {
+  const dir = join(raiz, 'supabase', 'functions');
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && existsSync(join(dir, d.name, 'index.ts')))
+    .map((d) => d.name)
+    .sort();
+}
+
+/**
+ * Toda canária do REPO tem de estar no registro — senão a leva silenciosamente pula uma.
+ *
+ * É a armadilha "canária fora da tabela" do `deploy.md` aplicada à ferramenta: o `canaria:bump`
+ * mediu "6 canária(s) conferida(s)" ANTES e DEPOIS de a 7ª existir, e nada ficou vermelho. Um
+ * registro que só cresce quando alguém lembra tem o mesmo modo de falha, e aqui ele é pior: a
+ * canária ausente do registro nunca é DISPARADA, então a verificação sai verde sobre 7 de 8.
+ *
+ * O pré-filtro por texto CRU é `canary:true`, o mesmo SINAL que o gate usa, e não `contrato`: a
+ * `generate-tactical-plan` serve o marcador em `versao` e não tem a palavra `contrato` em lugar
+ * nenhum do código — filtrar por ela deixaria a 8ª canária fora da varredura, que é exatamente a
+ * cegueira que o #2374 fechou no gate. É superset seguro porque `removerComentarios` só REMOVE:
+ * uma fonte sem o sinal no bruto não pode ganhá-lo depois da limpeza.
+ */
+function conferirRegistroCompleto(raiz: string, ler: LeitorCanariasDoRepo): void {
+  const registradas = new Set(CANARIAS.map((c) => `${c.edge} ${c.chave}`));
+  const forasteiras: string[] = [];
+  for (const edge of edgesDoRepo(raiz)) {
+    const bruto = readFileSync(join(raiz, 'supabase', 'functions', edge, 'index.ts'), 'utf8');
+    if (!/canary\s*:\s*true/.test(bruto)) continue;
+    for (const c of ler(raiz, edge)) {
+      if (!registradas.has(`${edge} ${c.chave}`)) {
+        forasteiras.push(`${edge} (${c.chave} -> ${c.contrato ?? `versao: ${c.simbolo ?? '?'}`})`);
+      }
+    }
+  }
+  if (forasteiras.length > 0) {
+    throw new Error(
+      `canária no REPO e FORA do registro CANARIAS: ${forasteiras.join(', ')}. ` +
+        'Uma canária que não está no registro nunca é disparada, e a leva sai verde sem tê-la ' +
+        'verificado — é a armadilha "canária fora da tabela" do deploy.md dentro da ferramenta. ' +
+        'Acrescente a entrada (nome, disparo, campoMarcador, fluxoRealSeVelho) e a linha na ' +
+        'tabela de docs/agent/deploy.md §Canárias. Nenhum SQL foi emitido.',
+    );
+  }
+}
+
+/**
+ * Resolve os nomes pedidos em canárias com MARCADOR VINDO DO REPO — ou LANÇA.
+ *
+ * Acusa tudo de uma vez, como `resolverLeva`: quem pediu 5 canárias quer saber quais 2 estão
+ * tortas. Nada é emitido enquanto houver uma pendente.
+ */
+export function resolverCanarias(
+  raiz: string,
+  nomes: string[],
+  ler: LeitorCanariasDoRepo,
+): CanariaResolvida[] {
+  conferirRegistroCompleto(raiz, ler);
+  const porNome = new Map(CANARIAS.map((c) => [c.nome, c]));
+  const desconhecidas = nomes.filter((n) => !porNome.has(n));
+  if (desconhecidas.length > 0) {
+    throw new Error(
+      `canária desconhecida: ${desconhecidas.join(', ')}. As registradas são: ` +
+        `${CANARIAS.map((c) => c.nome).join(', ')}. Nenhum SQL foi emitido.`,
+    );
+  }
+  const barradas = nomes.filter((n) => porNome.get(n)!.inalcancavel !== null);
+  if (barradas.length > 0) {
+    throw new Error(
+      barradas.map((n) => `${n}: ${porNome.get(n)!.inalcancavel}`).join(' | ') +
+        ' Nenhum SQL foi emitido.',
+    );
+  }
+
+  const semMarcador: string[] = [];
+  const campoDesalinhado: string[] = [];
+  const resolvidas: CanariaResolvida[] = [];
+  for (const nome of nomes) {
+    const reg = porNome.get(nome)!;
+    const achada = ler(raiz, reg.edge).find((c) => c.chave === reg.chave);
+    if (achada === undefined) {
+      semMarcador.push(`${nome} (o index.ts de ${reg.edge} não hospeda canária em ${reg.chave})`);
+      continue;
+    }
+
+    // O campo que o registro LÊ tem de ser o campo que o repo SERVE, nos dois sentidos. Sem esta
+    // conferência, uma canária que trocasse de forma continuaria "funcionando" lendo o campo
+    // errado: no sentido `versao`→`contrato` o veredito só saberia dizer SEM MARCADOR; no sentido
+    // inverso ele leria o marcador da SONDA achando que é o da canária — dois papéis num campo só,
+    // o defeito de `canaria-papel-duplo.md`. Fail-CLOSED: o registro acompanha, ou nada é emitido.
+    if (achada.contrato !== null) {
+      if (reg.campoMarcador !== 'contrato') {
+        campoDesalinhado.push(
+          `${nome} (o repo emite o LITERAL \`contrato: "${achada.contrato}"\`, o registro lê ` +
+            `\`${reg.campoMarcador}\`)`,
+        );
+        continue;
+      }
+      resolvidas.push({ ...reg, marcador: achada.contrato });
+      continue;
+    }
+
+    if (achada.simbolo === null) {
+      semMarcador.push(`${nome} (a canária em ${reg.chave} não serve marcador nenhum)`);
+      continue;
+    }
+    if (reg.campoMarcador !== 'versao') {
+      campoDesalinhado.push(
+        `${nome} (o repo serve por REFERÊNCIA em \`versao: ${achada.simbolo}\`, o registro lê ` +
+          `\`${reg.campoMarcador}\`)`,
+      );
+      continue;
+    }
+    if (achada.simbolo !== SIMBOLO_VERSAO) {
+      semMarcador.push(
+        `${nome} (serve \`versao: ${achada.simbolo}\`, e só \`${SIMBOLO_VERSAO}\` é resolvível — ` +
+          'o literal desse símbolo é o que o `versao.ts` declara)',
+      );
+      continue;
+    }
+    const texto = (() => {
+      try {
+        return readFileSync(caminhoVersao(raiz, reg.edge), 'utf8');
+      } catch {
+        return null;
+      }
+    })();
+    const versao = texto === null ? null : extrairVersao(texto);
+    if (versao === null) {
+      semMarcador.push(`${nome} (versao.ts sem \`export const VERSAO = "..."\` legível)`);
+      continue;
+    }
+    resolvidas.push({ ...reg, marcador: versao });
+  }
+
+  const problemas: string[] = [];
+  if (semMarcador.length > 0) {
+    problemas.push(`marcador ILEGÍVEL no repo: ${semMarcador.join(', ')}`);
+  }
+  if (campoDesalinhado.length > 0) {
+    problemas.push(
+      'a canária trocou de FORMA e o registro não acompanhou: ' +
+        `${campoDesalinhado.join(', ')} — ajuste \`campoMarcador\` no registro e a tabela de ` +
+        'docs/agent/deploy.md §Canárias',
+    );
+  }
+  if (problemas.length > 0) {
+    throw new Error(
+      `${problemas.join(' | ')}. O marcador esperado é DERIVADO do repo de propósito: digitá-lo ` +
+        'no registro é a via do veredito falso que esta ferramenta existe para fechar. ' +
+        'Nenhum SQL foi emitido.',
+    );
+  }
+  return resolvidas;
+}
+
+/** Lista `('nome', 'edge', '<corpo>'::jsonb, '<sufixo>'),` para o `VALUES` do disparo. */
+function valuesAlvosCanaria(leva: CanariaResolvida[]): string {
+  return leva
+    .map((c) => {
+      const corpo = c.disparo.tipo === 'corpo' ? c.disparo.corpo : '{}';
+      const sufixo = c.disparo.tipo === 'query' ? c.disparo.query : '';
+      return `  (${lit(c.nome)}, ${lit(c.edge)}, ${lit(corpo)}::jsonb, ${lit(sufixo)})`;
+    })
+    .join(',\n');
+}
+
+/** Lista `('nome', 'campo', 'marcador', 'efeito'),` para a lista canônica da leitura. */
+function valuesEsperadoCanaria(leva: CanariaResolvida[]): string {
+  return leva
+    .map(
+      (c) =>
+        `  (${lit(c.nome)}, ${lit(c.campoMarcador)}, ${lit(c.marcador)}, ${lit(c.efeitoSeVelho)})`,
+    )
+    .join(',\n');
+}
+
+/**
+ * A chamada `net.http_post` da canária. Difere da da sonda em DOIS pontos, e os dois importam: o
+ * corpo vem da LINHA (não é `jsonb_build_object('probe', true)` fixo, porque as 8 não têm corpo
+ * uniforme) e a URL leva sufixo de query, porque a `carteira-rebuild` se acorda por `?canary=1`.
+ */
+function httpPostCanaria(ref: string, indent: string): string {
+  const i = indent;
+  return (
+    'net.http_post(\n' +
+    `${i}  url := 'https://${ref}.supabase.co/functions/v1/' || a.edge || a.sufixo,\n` +
+    `${i}  headers := jsonb_build_object(\n` +
+    `${i}    'Content-Type', 'application/json',\n` +
+    `${i}    'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets\n` +
+    `${i}                      WHERE name = 'CRON_SECRET' LIMIT 1)),\n` +
+    `${i}  body := a.corpo,\n` +
+    `${i}  timeout_milliseconds := 20000)`
+  );
+}
+
+/**
+ * Bloco de DISPARO da canária — o único que precisa do founder, pela mesma razão da sonda: lê
+ * `vault.decrypted_secrets` e faz INSERT via `net.http_post`, e o wrapper read-only recusa os dois.
+ *
+ * Ele DEVOLVE o passo de leitura já escrito, com o mapa `nome → request_id` interpolado por
+ * `format()`. Aqui isso não é conveniência, é REQUISITO: a resposta da canária não ecoa o slug, e
+ * sem o mapa nenhuma linha seria atribuível. Continuam sendo DOIS blocos pela imposição do pg_net
+ * (o `http_post` só ENFILEIRA; o worker de fundo só enxerga linha COMMITADA).
+ */
+function blocoDisparoCanaria(
+  ref: string,
+  leva: CanariaResolvida[],
+  passoDisparo: number,
+  janelaMin: number,
+  comTrava = false,
+): string {
+  const passoLeitura = passoDisparo + 1;
+  const cabeca = comTrava
+    ? "WITH guard(confirmei_o_deploy) AS (VALUES ('nao')),  -- ⬅️ 'nao' → 'sim' só DEPOIS do verde\n" +
+      `alvos(nome, edge, corpo, sufixo) AS (VALUES\n${valuesAlvosCanaria(leva)}\n),\n`
+    : `WITH alvos(nome, edge, corpo, sufixo) AS (VALUES\n${valuesAlvosCanaria(leva)}\n),\n`;
+  const projecao = comTrava
+    ? "         CASE WHEN g.confirmei_o_deploy = 'sim'\n" +
+      `              THEN ${httpPostCanaria(ref, '                   ')}\n` +
+      '         END AS request_id\n' +
+      '  FROM alvos a CROSS JOIN guard g\n'
+    : `         ${httpPostCanaria(ref, '         ')} AS request_id\n` + '  FROM alvos a\n';
+  return (
+    cabeca +
+    'disparos AS (\n' +
+    '  SELECT a.nome,\n' +
+    projecao +
+    '),\n' +
+    'mapa AS (\n' +
+    '  -- O par (nome, id) é agregado na MESMA execução que disparou: o request_id nunca existe\n' +
+    '  -- solto, e por isso não há como colá-lo na linha da canária errada.\n' +
+    '  SELECT jsonb_object_agg(nome, request_id)::text AS ids FROM disparos\n' +
+    ')\n' +
+    `-- O PASSO ${passoLeitura} sai ESCRITO na célula abaixo, com o mapa já dentro. Copie a célula\n` +
+    '-- INTEIRA e rode/entregue como está: não há número a anotar nem campo a preencher.\n' +
+    `SELECT format(${TAG_SONDA}\n` +
+    corpoDoPassoDeLeituraCanaria(leva, janelaMin, passoDisparo) +
+    `${TAG_SONDA}, m.ids) AS passo_${passoLeitura}_copie_esta_celula\n` +
+    'FROM mapa m;\n'
+  );
+}
+
+/** O texto do passo de leitura da canária, pronto para virar o 1º argumento de `format()`. */
+function corpoDoPassoDeLeituraCanaria(
+  leva: CanariaResolvida[],
+  janelaMin: number,
+  passoDisparo: number,
+): string {
+  const passoLeitura = passoDisparo + 1;
+  const texto =
+    `-- PASSO ${passoLeitura} — lê e julga a CANÁRIA. O mapa nome→id já está EMBUTIDO aqui, escrito\n` +
+    `--          pelo passo ${passoDisparo}: nada a colar. Espere ~10s pela resposta HTTP. É SELECT\n` +
+    '--          puro — roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro\n' +
+    blocoLeituraCanaria(leva, janelaMin, passoDisparo);
+  return escaparParaFormat(texto);
+}
+
+/**
+ * O JULGAMENTO da canária. Exige os TRÊS campos que o `deploy.md` §Canárias manda —
+ * `canary === true` E `<campoMarcador> === '<marcador>'` E `ok === true` — e, antes deles, separa
+ * a classe que a receita à mão confundia:
+ *
+ *   BUNDLE VELHO  ≠  CANÁRIA VERMELHA
+ *
+ * Um bundle anterior à canária IGNORA a flag e cai no fluxo real: responde 401 (gate), outro 4xx,
+ * ou 200 sem eco nenhum de `canary`. Nada disso é "a fixture reprovou" — é "não há canária no ar",
+ * e o desfecho é DEPLOY, não investigar regressão de comportamento. A ausência do eco é veredito
+ * PRÓPRIO, e vem ANTES de qualquer leitura de marcador ou de `ok`, senão a linha cai no ELSE e sai
+ * com um texto que se lê como reprovação.
+ *
+ * A ordem dos ramos é o desenho:
+ *   1. sem id / sem resposta / fora da janela ....... ausência de dado, nunca veredito
+ *   2. sem eco `canary` ............................. SEM CANARIA NO AR (3 sabores: 401 com
+ *      controle de credencial, outro 4xx/5xx, e o 200 que RODOU O FLUXO REAL — o caro)
+ *   3. eco `canary` sem o campo do marcador ......... CANARIA SEM MARCADOR (pré-versionamento)
+ *   4. marcador DIVERGENTE .......................... CANARIA DE OUTRA FATIA — é a armadilha 2 do
+ *      deploy.md: o bundle velho carrega o `expected` VELHO e compara velho×velho, então o `ok:true`
+ *      dele MENTE VERDE. Por isso o marcador é julgado ANTES do `ok`, e não junto.
+ *   5. `ok` ausente ................................. CANARIA SEM VEREDITO (fail-closed)
+ *   6. `ok:false` COM marcador batendo .............. CANARIA VERMELHA — esta, sim, é regressão
+ *   7. os três campos ............................... CANARIA VERDE
+ *
+ * ⚠️ O ramo 2 vem antes de qualquer teste de status: a `generate-tactical-plan` responde HTTP **500**
+ * quando a canária dela reprova. Julgar pelo status antes do eco leria uma canária vermelha legítima
+ * como recusa de bundle velho — e mandaria redeployar em vez de investigar a regressão.
+ */
+function blocoLeituraCanaria(
+  leva: CanariaResolvida[],
+  janelaMin: number,
+  passoDisparo: number,
+): string {
+  return (
+    'WITH esperado(nome, campo_marcador, marcador_esperado, efeito) AS (VALUES\n' +
+    `${valuesEsperadoCanaria(leva)}\n),\n` +
+    'ids AS (\n' +
+    `  -- EMBUTIDO pelo passo ${passoDisparo} — o mapa \`nome → request_id\` foi escrito pelo próprio\n` +
+    '  -- banco no disparo (format()). A canária NÃO ecoa o slug, então este mapa não é atalho: é a\n' +
+    '  -- ÚNICA via de atribuir a resposta à canária certa. Trava fechada ⇒ id nulo ⇒ INDETERMINADO.\n' +
+    `  SELECT chave AS nome, valor::bigint AS request_id\n` +
+    `  FROM jsonb_each_text(${SENTINELA_MAPA}::jsonb) AS t(chave, valor)\n` +
+    '),\n' +
+    'controle_credencial AS (\n' +
+    '  -- Mesma mecânica da sonda: o 401 é ambíguo (bundle sem a canária × CRON_SECRET inválido) e\n' +
+    '  -- só vira veredito determinado se este bloco provar que o secret do vault está sendo ACEITO\n' +
+    '  -- agora. NOT EXISTS (não NOT IN): a trava fechada devolve request_id NULL, e `NOT IN` com\n' +
+    '  -- NULL é NULL-blind — zeraria o controle inteiro em silêncio.\n' +
+    '  SELECT count(*) FILTER (WHERE r.status_code BETWEEN 200 AND 299) AS ok_recentes,\n' +
+    '         count(*) FILTER (WHERE r.status_code = 401)               AS recusas_recentes\n' +
+    '  FROM net._http_response r\n' +
+    "  WHERE r.created > now() - interval '6 hours'\n" +
+    '    AND NOT EXISTS (SELECT 1 FROM ids i2 WHERE i2.request_id = r.id)\n' +
+    '),\n' +
+    'lidas AS (\n' +
+    '  -- Parte de `esperado`: zero linhas não pode virar "nada a reportar". O envelope `data` é\n' +
+    '  -- descido aqui porque a omie-analytics-sync responde `{success, data:{...}}` e as outras no\n' +
+    '  -- topo — sem o COALESCE as DUAS canárias dela sairiam como "sem eco".\n' +
+    '  SELECT e.nome, e.campo_marcador, e.marcador_esperado, e.efeito,\n' +
+    '         i.request_id, x.status_code, x.created,\n' +
+    '         CASE WHEN x.content IS NOT NULL AND left(ltrim(x.content), 1) = \'{\'\n' +
+    "              THEN COALESCE(x.content::jsonb -> 'data', x.content::jsonb)\n" +
+    '         END AS corpo\n' +
+    '  FROM esperado e\n' +
+    '  LEFT JOIN ids i ON i.nome = e.nome\n' +
+    '  LEFT JOIN net._http_response x ON x.id = i.request_id\n' +
+    ')\n' +
+    'SELECT l.nome,\n' +
+    '       l.request_id,\n' +
+    '       l.status_code,\n' +
+    "       l.corpo ->> 'canary' AS canary_respondido,\n" +
+    '       l.corpo ->> l.campo_marcador AS marcador_respondido,\n' +
+    '       l.marcador_esperado,\n' +
+    "       l.corpo ->> 'ok' AS ok_respondido,\n" +
+    '       CASE\n' +
+    '         WHEN l.request_id IS NULL\n' +
+    `           THEN 'INDETERMINADO — esta canaria nao tem request_id no mapa embutido pelo passo ` +
+    `${passoDisparo}. Isto e ausencia de dado, nao veredito: ou a trava ficou FECHADA e nada foi ` +
+    `disparado, ou a celula veio de OUTRA leva'\n` +
+    '         WHEN l.status_code IS NULL\n' +
+    `           THEN 'AGUARDE — o request_id embutido pelo passo ${passoDisparo} ainda nao tem ` +
+    `resposta HTTP (leva ~10s); rode este passo de novo'\n` +
+    `         WHEN l.created <= now() - interval '${janelaMin} minutes'\n` +
+    `           THEN 'INDETERMINADO — a resposta e de ' || l.created || ', FORA da janela de ` +
+    `${janelaMin} min: esta celula e de outra sessao e o veredito seria de um deploy anterior. ` +
+    `Redispare o passo ${passoDisparo}'\n` +
+    // ------------------------------------------------------------------ SEM CANARIA NO AR ---
+    // O eco vem ANTES do status de propósito: a generate-tactical-plan devolve 500 quando a
+    // canária dela REPROVA, e julgar pelo status primeiro leria regressão como bundle velho.
+    `         WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true' AND l.status_code = 401\n` +
+    `              AND c.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL} AND c.recusas_recentes = 0\n` +
+    `           THEN 'SEM CANARIA NO AR — 401, e o CRON_SECRET esta PROVADO bom agora (' ||\n` +
+    `                c.ok_recentes || ' resposta(s) 2xx e ZERO 401 fora desta leva em 6h), logo a ` +
+    `recusa e da EDGE: o bundle no ar e anterior a canaria, ela NAO rodou e NADA executou. Isto ` +
+    `NAO e canaria vermelha — o desfecho e DEPLOY'\n` +
+    `         WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true' AND l.status_code = 401\n` +
+    `           THEN 'INDETERMINADO — 401 nao separa bundle sem canaria de CRON_SECRET invalido, e ` +
+    `o controle de credencial NAO foi observado (2xx fora da leva em 6h: ' || c.ok_recentes ||\n` +
+    `                ', recusas 401: ' || c.recusas_recentes || '). Confira o CRON_SECRET no vault ` +
+    `ANTES de redeployar'\n` +
+    `         WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true' AND l.status_code >= 400\n` +
+    `           THEN 'SEM CANARIA NO AR — o bundle recusou o request (HTTP ' || l.status_code ||\n` +
+    `                '), NADA executou. Isto NAO e canaria vermelha: nao ha canaria no ar para ` +
+    `ficar vermelha'\n` +
+    `         WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true'\n` +
+    `           THEN 'SEM CANARIA NO AR — HTTP ' || l.status_code || ' SEM eco canary: o bundle ` +
+    `ignorou a flag e RODOU O FLUXO REAL (' || l.efeito || '). Isto NAO e canaria vermelha, e ` +
+    `canaria AUSENTE — e o efeito ja aconteceu'\n` +
+    // ------------------------------------------------------------ marcador antes do `ok` ---
+    '         WHEN l.corpo ->> l.campo_marcador IS NULL\n' +
+    `           THEN 'CANARIA SEM MARCADOR — respondeu canary:true e o corpo NAO TEM o campo ' ||\n` +
+    `                l.campo_marcador || ': o bundle e anterior ao versionamento da canaria. O ok ` +
+    `sozinho NAO discrimina reversao de fatia (armadilha 2 do deploy.md). PRECISA DEPLOY'\n` +
+    '         WHEN l.corpo ->> l.campo_marcador IS DISTINCT FROM l.marcador_esperado\n' +
+    `           THEN 'CANARIA DE OUTRA FATIA — respondeu ' || l.campo_marcador || '=' ||\n` +
+    `                COALESCE(l.corpo ->> l.campo_marcador, '?') || ' (esperado ' ||\n` +
+    `                l.marcador_esperado || '). O bundle velho carrega o expected VELHO e compara ` +
+    `velho x velho, entao o ok dele nao vale — e assim que uma reversao MENTE VERDE. PRECISA DEPLOY'\n` +
+    `         WHEN l.corpo ->> 'ok' IS NULL\n` +
+    `           THEN 'CANARIA SEM VEREDITO — canary:true e marcador batendo, mas o corpo nao traz ` +
+    `ok. Fail-closed: sem os TRES campos nao ha confirmacao'\n` +
+    `         WHEN l.corpo ->> 'ok' = 'false'\n` +
+    `           THEN 'CANARIA VERMELHA — o bundle no ar E o esperado (' || l.marcador_esperado ||\n` +
+    `                ') e a fixture REPROVOU: o comportamento regrediu. NAO e deploy pendente — ` +
+    `leia os casos do corpo para saber QUAL lado caiu'\n` +
+    `         WHEN l.corpo ->> 'canary' = 'true'\n` +
+    '              AND l.corpo ->> l.campo_marcador = l.marcador_esperado\n' +
+    `              AND l.corpo ->> 'ok' = 'true'\n` +
+    "           THEN 'CANARIA VERDE'\n" +
+    `         ELSE 'INDETERMINADO — combinacao nao prevista: canary=' ||\n` +
+    `              COALESCE(l.corpo ->> 'canary', '?') || ', ' || l.campo_marcador || '=' ||\n` +
+    `              COALESCE(l.corpo ->> l.campo_marcador, '?') || ', ok=' ||\n` +
+    `              COALESCE(l.corpo ->> 'ok', '?')\n` +
+    '       END AS veredito\n' +
+    'FROM lidas l CROSS JOIN controle_credencial c\n' +
+    'ORDER BY l.nome;\n'
+  );
+}
+
+/** A leva de canárias pedida, e o recorte. */
+export interface OpcoesCanaria {
+  raiz: string;
+  /** Nomes do registro `CANARIAS`. Vazio = todas as alcançáveis. */
+  nomes: string[];
+  janelaMin?: number;
+  ler: LeitorCanariasDoRepo;
+}
+
+/**
+ * Gera o SQL de verificação das canárias.
+ *
+ * A divisão em blocos é a MESMA da sonda, e pela mesma fronteira de permissão: o disparo precisa de
+ * ESCRITA (vault + INSERT do `net.http_post`) e passa pelo founder no SQL Editor; a leitura é SELECT
+ * em `net._http_response` e roda no `psql-ro`. O que muda é que aqui a leitura NÃO tem versão
+ * standalone — ela nasce dentro da célula que o disparo devolve.
+ */
+export function gerarSqlDasCanarias(opts: OpcoesCanaria): string {
+  const janelaMin = validarJanela(opts.janelaMin);
+  const pedidas =
+    opts.nomes.length > 0
+      ? opts.nomes
+      : CANARIAS.filter((c) => c.inalcancavel === null).map((c) => c.nome);
+  const leva = resolverCanarias(opts.raiz, pedidas, opts.ler);
+  const ref = lerProjectRef(opts.raiz);
+  const baratas = leva.filter((c) => !c.fluxoRealSeVelho);
+  const caras = leva.filter((c) => c.fluxoRealSeVelho);
+  const partes: string[] = [];
+
+  if (baratas.length > 0) {
+    partes.push(
+      `-- PASSO 1 — dispara as ${baratas.length} canária(s) cujo bundle velho NÃO cai em efeito caro.\n` +
+        '--          É o bloco do FOUNDER: lê o vault e faz INSERT, e o read-only recusa os dois.\n' +
+        '-- Ele DEVOLVE o passo 2 já escrito, com o mapa nome→id dentro: copie a célula inteira.\n' +
+        blocoDisparoCanaria(ref, baratas, 1, janelaMin),
+    );
+  }
+
+  if (caras.length > 0) {
+    partes.push(
+      `-- PASSO 3 — dispara as ${caras.length} canária(s) CARAS, com trava.\n` +
+        '-- ⚠️ Bundle sem a canária IGNORA a flag e RODA O FLUXO REAL destas:\n' +
+        caras.map((c) => `--    · ${c.nome}: ${c.efeitoSeVelho}\n`).join('') +
+        '--    Só abra a trava depois de o deploy estar confirmado por outro caminho (a SONDA da\n' +
+        '--    edge, `bun run sonda:sql <edge>`, responde antes de qualquer I/O e não tem efeito).\n' +
+        '-- ⚠️ A trava é CASE e NÃO um filtro: o Postgres avalia a projeção mesmo descartando todas\n' +
+        '--    as linhas, então travar por filtro deixa o http_post sair igual.\n' +
+        '-- Ele também DEVOLVE o passo 4 já escrito, com o mapa dentro: copie a célula inteira.\n' +
+        blocoDisparoCanaria(ref, caras, 3, janelaMin, true),
+    );
+  }
+
+  return partes.join('\n');
+}
+
 /** A leva pedida na linha de comando. */
 export interface ArgsCli {
   edges: string[];
@@ -886,12 +1529,19 @@ export interface ArgsCli {
   semRede?: boolean;
   /** Libera o bloco LEGADO (POST direto na edge) para uma edge que já tem o caminho seguro. */
   permitirEfeitoLegado?: boolean;
+  /** Modo CANÁRIA: os posicionais deixam de ser edges e viram nomes do registro `CANARIAS`. */
+  canaria?: boolean;
 }
 
 const USO =
   'uso: bun run sonda:sql <edge> [<edge> ...] [--caro=<edge>[,<edge>]] [--permitir-efeito-legado]\n' +
   '                        [--janela=<min>] [--so-disparo | --so-leitura]\n' +
+  '     bun run sonda:sql --canaria [<canaria> ...] [--janela=<min>]\n' +
   '  <edge>        nome do diretório em supabase/functions/ (precisa ter versao.ts)\n' +
+  '  --canaria     verifica a CANÁRIA (comportamento) em vez da sonda (bundle). Sem nomes, faz\n' +
+  '                todas as alcançáveis pelo SQL Editor. O corpo de disparo e o marcador esperado\n' +
+  '                saem do registro/repo — nunca digitados. Nomes registrados:\n' +
+  CANARIAS.map((c) => `                  ${c.nome}${c.inalcancavel === null ? '' : '  (inalcançável pelo SQL Editor)'}\n`).join('') +
   '  --caro        marca um SUBCONJUNTO da leva cujo bundle pré-sensor dispara o fluxo real;\n' +
   '                essas saem em bloco separado, com trava por CASE.\n' +
   `  --janela      janela do guard temporal da leitura, em minutos (padrão ${JANELA_PADRAO_MIN}, ` +
@@ -917,9 +1567,14 @@ export function parsearArgs(argv: string[]): ArgsCli {
   let soLeitura: boolean | undefined;
   let semRede: boolean | undefined;
   let permitirEfeitoLegado: boolean | undefined;
+  let canaria: boolean | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === '--canaria') {
+      canaria = true;
+      continue;
+    }
     if (arg === '--caro' || arg.startsWith('--caro=')) {
       const bruto = arg === '--caro' ? argv[++i] : arg.slice('--caro='.length);
       if (!bruto) throw new Error(`--caro sem valor.\n${USO}`);
@@ -956,6 +1611,50 @@ export function parsearArgs(argv: string[]): ArgsCli {
     edges.push(arg);
   }
 
+  if (canaria === true) {
+    // As flags da sonda que NÃO têm sentido aqui são RECUSADAS, não ignoradas. Flag aceita em
+    // silêncio é a via de "pedi --so-leitura e o SQL veio sem ela" — e `--caro` ignorado seria
+    // pior: quem o passou acredita ter armado a trava, e a trava aqui vem do registro.
+    const proibidas: string[] = [];
+    if (soLeitura === true) {
+      proibidas.push(
+        '--so-leitura: a resposta da canária NÃO ecoa o slug da edge, então um bloco de leitura ' +
+          'sem o mapa `nome → request_id` sairia INDETERMINADO em toda linha. Aqui a leitura já ' +
+          'vem escrita DENTRO da célula que o passo de disparo devolve — é ela que roda no psql-ro',
+      );
+    }
+    if (soDisparo === true) {
+      proibidas.push(
+        '--so-disparo: em modo canária TUDO o que se emite já é disparo (a leitura sai embutida ' +
+          'na célula de resposta dele), então o recorte não recorta nada',
+      );
+    }
+    if (caras.length > 0) {
+      proibidas.push(
+        '--caro: quais canárias caem em efeito caro num bundle velho é propriedade do CÓDIGO, e ' +
+          'está no registro CANARIAS (`fluxoRealSeVelho`). Depender de o operador lembrar é como ' +
+          'a trava deixa de ser armada justamente na noite em que ela importa',
+      );
+    }
+    if (permitirEfeitoLegado === true) {
+      proibidas.push('--permitir-efeito-legado: é do bloco legado da SONDA, não existe aqui');
+    }
+    if (proibidas.length > 0) {
+      throw new Error(`flag sem sentido em modo canária —\n  ${proibidas.join('\n  ')}\n${USO}`);
+    }
+    const repetidasC = edges.filter((e, i) => edges.indexOf(e) !== i);
+    if (repetidasC.length > 0) {
+      throw new Error(
+        `canária repetida na leva: ${[...new Set(repetidasC)].join(', ')} — ` +
+          'linha duplicada no VALUES é canária disparada duas vezes.',
+      );
+    }
+    // A forma dos nomes NÃO é validada por `FORMA_EDGE` (eles levam `:` quando a edge tem duas
+    // canárias): quem valida é `resolverCanarias`, contra o registro, e um nome fora dele já sai
+    // com a lista das opções — mais útil que "fora da forma".
+    return { edges, caras, janelaMin, soDisparo, soLeitura, semRede, permitirEfeitoLegado, canaria };
+  }
+
   if (edges.length === 0) throw new Error(`nenhuma edge na leva.\n${USO}`);
 
   const tortas = [...edges, ...caras].filter((e) => !FORMA_EDGE.test(e));
@@ -973,7 +1672,7 @@ export function parsearArgs(argv: string[]): ArgsCli {
     );
   }
 
-  return { edges, caras, janelaMin, soDisparo, soLeitura, semRede, permitirEfeitoLegado };
+  return { edges, caras, janelaMin, soDisparo, soLeitura, semRede, permitirEfeitoLegado, canaria };
 }
 
 /** Saídas da CLI, injetáveis para o teste ver o que foi escrito. */
@@ -993,6 +1692,12 @@ export interface DependenciasCli {
    * compilador cobra — quem chama `main` decide entre o `git` de verdade e um fabricado no teste.
    */
   git: ExecutorGit;
+  /**
+   * O leitor de canárias do repo. Injetado pelo mesmo motivo do `edgesComRele` (o eval copia só
+   * dois arquivos), mas AUSENTE aqui é fail-CLOSED e não "nenhuma": sem ele o marcador esperado
+   * teria de ser digitado, que é a via do veredito falso. `--canaria` sem leitor RECUSA.
+   */
+  lerCanarias?: LeitorCanariasDoRepo;
 }
 
 /** Ponto de entrada. Devolve o código de saída; NADA é escrito na saída quando falha. */
@@ -1033,18 +1738,44 @@ export function main(argv: string[], deps: DependenciasCli): number {
   let sql: string;
   let aviso: string | null;
   try {
-    const { edges, caras, janelaMin, soDisparo, soLeitura, semRede, permitirEfeitoLegado } = parsearArgs(argv);
-    const recusa = guardEfeitoLegado(edges, permitirEfeitoLegado === true, deps.edgesComRele ?? []);
-    if (recusa !== null) {
-      deps.erro(`❌ ${recusa}`);
-      return 1;
+    const { edges, caras, janelaMin, soDisparo, soLeitura, semRede, permitirEfeitoLegado, canaria } =
+      parsearArgs(argv);
+    if (canaria === true) {
+      if (deps.lerCanarias === undefined) {
+        throw new Error(
+          'modo canária sem leitor de canárias do repo: o marcador esperado sairia digitado, e ' +
+            'marcador digitado é a via do veredito FALSO que esta ferramenta fecha. Quem chama ' +
+            '`main` com --canaria precisa injetar `lerCanarias`. Nenhum SQL foi emitido.',
+        );
+      }
+      const nomes =
+        edges.length > 0
+          ? edges
+          : CANARIAS.filter((c) => c.inalcancavel === null).map((c) => c.nome);
+      const leva = resolverCanarias(deps.raiz, nomes, deps.lerCanarias);
+      sql = gerarSqlDasCanarias({ raiz: deps.raiz, nomes, janelaMin, ler: deps.lerCanarias });
+      // O guard de sincronia vale IGUAL aqui, sobre as EDGES das canárias pedidas: o marcador
+      // esperado é lido do DISCO, e disco atrás de `origin/main` produz o mesmo falso da sonda —
+      // "canária de outra fatia" contra um repo local velho, não contra o bundle que está no ar.
+      ({ aviso } = conferirSincronia(
+        deps.raiz,
+        [...new Set(leva.map((c) => c.edge))],
+        semRede === true,
+        deps.git,
+      ));
+    } else {
+      const recusa = guardEfeitoLegado(edges, permitirEfeitoLegado === true, deps.edgesComRele ?? []);
+      if (recusa !== null) {
+        deps.erro(`❌ ${recusa}`);
+        return 1;
+      }
+      // A leva é resolvida ANTES do guard de sincronia porque as duas falhas competem pelo mesmo
+      // texto e a da leva é mais específica: uma edge sem `versao.ts` deve ouvir "sem sensor", não
+      // "não existe em origin/main". Nada é escrito até as DUAS passarem — `gerarSqlDaLeva` só
+      // monta a string, e é este `escrever` lá embaixo que emite.
+      sql = gerarSqlDaLeva({ raiz: deps.raiz, edges, caras, janelaMin, soDisparo, soLeitura });
+      ({ aviso } = conferirSincronia(deps.raiz, edges, semRede === true, deps.git));
     }
-    // A leva é resolvida ANTES do guard de sincronia porque as duas falhas competem pelo mesmo
-    // texto e a da leva é mais específica: uma edge sem `versao.ts` deve ouvir "sem sensor", não
-    // "não existe em origin/main". Nada é escrito até as DUAS passarem — `gerarSqlDaLeva` só monta
-    // a string, e é este `escrever` lá embaixo que emite.
-    sql = gerarSqlDaLeva({ raiz: deps.raiz, edges, caras, janelaMin, soDisparo, soLeitura });
-    ({ aviso } = conferirSincronia(deps.raiz, edges, semRede === true, deps.git));
   } catch (e) {
     deps.erro(`❌ ${(e as Error).message}`);
     return 1;
@@ -1062,6 +1793,12 @@ if (import.meta.main) {
   // Import DINÂMICO, e só aqui: quem apenas importa este módulo (o eval da skill, que o copia para
   // um diretório temporário) não pode depender de `supabase/functions/` resolver.
   const { SONDA_CRON_ALVOS } = await import('../supabase/functions/_shared/sonda-cron-alvos');
+  // O leitor de canárias sai daqui pela MESMA razão, e reusa o extrator do gate `canaria:bump`:
+  // duas cópias da regra "onde mora o marcador" divergiriam, e a que não tem gate é a que decide
+  // errado. O stripper é o COMPARTILHADO (`removerComentarios`) — regex local não sabe o que é
+  // string e apagaria o miolo do arquivo antes da medição.
+  const { localizarCanarias } = await import('./canaria-contrato-bump-gate');
+  const { removerComentarios } = await import('@/lib/gates/limpeza-fonte');
   process.exit(
     main(process.argv.slice(2), {
       raiz: join(import.meta.dirname, '..'),
@@ -1069,6 +1806,10 @@ if (import.meta.main) {
       erro: (t) => console.error(t),
       git: gitReal(join(import.meta.dirname, '..')),
       edgesComRele: SONDA_CRON_ALVOS.map((a) => a.edge),
+      lerCanarias: (raiz, edge) =>
+        localizarCanarias(
+          removerComentarios(readFileSync(join(raiz, 'supabase', 'functions', edge, 'index.ts'), 'utf8')),
+        ),
     }),
   );
 }
