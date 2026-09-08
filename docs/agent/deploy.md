@@ -126,9 +126,11 @@ bun scripts/pendencias-pacote.ts - < /tmp/pend.json        # gate de ordem: RPC 
 
 O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,
 `8f005805-000a-42b7-88a1-9683f785fab6`). O prompt carrega o `sha256` de cada arquivo do closure e
-manda o agente **conferir antes de deployar** (#2362) — e foi essa conferência que fechou, na
-`copilot-analyze` de 2026-09-08, a metade **verbatim** que o piloto tinha deixado NÃO ATESTADA: os
-9 hashes foram conferidos contra `36f4fab91` e reportados batendo, ANTES do deploy. Custo medido:
+manda o agente **conferir antes de deployar** (#2362) — na `copilot-analyze` de 2026-09-08 os 9
+hashes foram conferidos contra `36f4fab91` e reportados batendo, e o `deploy_edge_functions` veio
+na tool call seguinte, sem edição entre as duas. Isso **estreita** a janela do "verbatim" que o
+piloto deixou NÃO ATESTADA — não a fecha: o `sha256sum` mede o REPO no sandbox, não os bytes que
+o runtime passou a servir, e essa última ponte segue sendo o `fonte` DECLARADO da sonda. Custo medido:
 **0,9 crédito** para uma edge. O bot commita um merge `Lovable update` na `main` logo depois —
 confira o `git diff --stat` dele (no caso medido: só `src/integrations/supabase/types.ts`, +10
 linhas), porque é por esse mesmo caminho que o sync já reverteu fix mergeado.
