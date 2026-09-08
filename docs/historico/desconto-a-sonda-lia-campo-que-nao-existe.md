@@ -51,14 +51,16 @@ A migration [`20260723160000_farmer_margem_correcoes_review.sql:151-165`](../../
 
 A lição não é sobre o Omie: **"o vizinho faz assim e funciona" não é evidência quando o vizinho fala com outro contrato.** A afirmação certa veio de ler a doc do endpoint em questão, não de generalizar do endpoint ao lado.
 
-## A ordem da correção não é livre
+## A ordem da correção não é livre — e depende de onde o dado vai
 
-Achado de desenho que vale mais que o helper: **os consumidores vêm antes da ingestão.**
+Achado de desenho que vale mais que o helper. Se a correção **reusasse `order_items.discount`**, a ordem seria obrigatoriamente *consumidores antes da ingestão*:
 
-- Com o acervo em zero, trocar a fórmula dos 7 consumidores é **numericamente inerte** — nenhum número em produção muda, e a mudança é verificável a custo baixo.
-- Corrigir a ingestão primeiro **ativa** a divergência: no instante em que o primeiro desconto real for gravado, os 5 consumidores percentuais passam a calcular errado sobre um dado que antes era neutro.
+- Com o acervo em zero, trocar a fórmula dos 7 consumidores é **numericamente inerte** — nenhum número em produção muda.
+- Corrigir a ingestão primeiro **ativaria** a divergência: no instante em que o primeiro desconto real fosse gravado, os 5 consumidores percentuais passariam a calcular errado sobre um dado que antes era neutro.
 
-O zero que escondeu o bug é a mesma propriedade que torna a correção dos consumidores segura. É uma janela, e ela fecha na primeira ingestão corrigida.
+**A coluna nova (`desconto_valor`) desfaz essa amarra, e é a sua vantagem principal.** Escrever num campo que ainda não tem leitor não ativa nada: a ingestão pode ser corrigida primeiro, o dado real passa a ser capturado desde já, e cada consumidor migra quando estiver pronto — quem não migrou lê `NULL` (não apurado), nunca um número errado. O acoplamento entre os 12 pontos deixa de existir.
+
+A lição generalizável não é "consumidores primeiro", é: **num campo com múltiplos leitores em desacordo, a ordem segura é ditada por quem lê o que você escreve.** Reusar a coluna acopla todos os passos numa sequência frágil; abrir uma coluna nova compra a liberdade de ordená-los.
 
 ## O fail-closed morre na fronteira do banco
 
