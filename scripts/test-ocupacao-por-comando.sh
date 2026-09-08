@@ -265,9 +265,16 @@ if [ "${1:-}" = "--falsificar" ]; then
   # shellcheck disable=SC2016  # $VER_SHELL/$MODO sao literais: casam o TEXTO do alvo
   sabota "flag fora de contexto passa calado" \
     's|^if \[ "\$VER_SHELL" -eq 1 \] && \[ "\$MODO" != arquivo \]; then|if false; then|'
-  # shellcheck disable=SC2016  # ${LC_ALL:-C} vai LITERAL para dentro do alvo sabotado
-  sabota "locale deixa de ser forcado" \
-    's|^export LC_ALL=C|export LC_ALL=${LC_ALL:-C}|'
+  # Esta sabotagem só tem detector se a máquina tiver locale de vírgula — é o
+  # caso 14, e ele sai SKIP no CI. Sabotar sem detector conta cobertura que não
+  # foi exercida: anuncia em vez de passar calado (mesma regra da suíte irmã).
+  if [ -n "$LOC_VIRGULA" ]; then
+    # shellcheck disable=SC2016  # ${LC_ALL:-C} vai LITERAL para dentro do alvo sabotado
+    sabota "locale deixa de ser forcado" \
+      's|^export LC_ALL=C|export LC_ALL=${LC_ALL:-C}|'
+  else
+    printf '  \033[33mSKIP\033[0m  sabotagem do LC_ALL=C sem locale decimal-virgula — NAO exercitada\n'
+  fi
 fi
 
 printf '\n'
