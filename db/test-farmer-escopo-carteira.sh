@@ -299,6 +299,164 @@ P -q -f <(sem_guard "$MIG")
 eq "V1b restaurado: o gate de escopo volta a morder" "$(chamar farmer_recomendacoes_substituir "$(linha "$C3")" "$(geracao_atual farmer_recommendations)")" "FG009"
 rm -f "$DIVERG"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZONA 5 — A ORDEM DO MELHOR INDIVIDUAL (20260907230000)
+#
+# Esta migration sucede a 20260906164002 no MESMO writer (`CREATE OR REPLACE`, a
+# última a recriar vence), então é aqui que ela se prova — e não no harness de
+# head, cuja cadeia para na 20260815181500 e produz um writer que produção já não
+# tem (sem o gate de escopo). ⚠️ Dívida PREEXISTENTE, declarada: o
+# `db/test-farmer-head-geracao.sh` testa uma versão do writer anterior à de ontem.
+# ═══════════════════════════════════════════════════════════════════════════════
+echo "─── ordem do melhor individual ───"
+
+MIG_ORDEM="$REPO_ROOT/supabase/migrations/20260907230000_farmer_ordem_e_referencia_ambigua.sql"
+[ -f "$MIG_ORDEM" ] || { echo "migração ausente: $MIG_ORDEM"; exit 1; }
+P -q -f "$MIG_ORDEM"
+P -q -f "$MIG_ORDEM"
+ok "O0 migration da ordem é idempotente (aplicada 2x sem erro)"
+
+D="dddddddd-0000-4000-8000-00000000000d"      # farmer só desta zona
+VAZIO="eeeeeeee-0000-4000-8000-00000000000e"  # farmer sem NENHUMA linha
+CE="cccccccc-0000-4000-8000-0000000000e1"     # eleito
+CT="cccccccc-0000-4000-8000-0000000000a1"     # empatado com 3º candidato fora do topo
+CU="cccccccc-0000-4000-8000-0000000000b1"     # singleton SEM ordem
+CS="cccccccc-0000-4000-8000-0000000000c1"     # singleton COM ordem
+CP="cccccccc-0000-4000-8000-0000000000d1"     # ordenação parcial [1,2,NULL]
+CM="cccccccc-0000-4000-8000-0000000000f1"     # referência ambígua declarada
+CN="cccccccc-0000-4000-8000-0000000000e2"     # flag NULA com ordem preenchida
+P2="dddddddd-0000-4000-8000-000000000002"
+P3="dddddddd-0000-4000-8000-000000000003"
+RUND="99999999-0000-4000-8000-00000000000d"
+
+P -q <<SQL
+INSERT INTO public.farmer_client_scores (customer_user_id, farmer_id) VALUES
+  ('$CE','$D'),('$CT','$D'),('$CU','$D'),('$CS','$D'),('$CP','$D'),('$CM','$D'),('$CN','$D');
+
+INSERT INTO public.farmer_recommendations
+  (farmer_id, customer_user_id, recommendation_type, product_id, affinity_score,
+   status, run_id, ordem, referencia_ambigua)
+VALUES
+  ('$D','$CE','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+  ('$D','$CE','cross_sell','$P2'  ,0.1,'pendente','$RUND',2,false),
+
+  ('$D','$CT','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+  ('$D','$CT','cross_sell','$P2'  ,0.1,'pendente','$RUND',1,false),
+  ('$D','$CT','cross_sell','$P3'  ,0.1,'pendente','$RUND',2,false),
+
+  ('$D','$CU','up_sell'   ,'$PROD',0.1,'pendente','$RUND',NULL,false),
+  ('$D','$CS','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+
+  ('$D','$CP','cross_sell','$PROD',0.1,'pendente','$RUND',1,false),
+  ('$D','$CP','cross_sell','$P2'  ,0.1,'pendente','$RUND',2,false),
+  ('$D','$CP','cross_sell','$P3'  ,0.1,'pendente','$RUND',NULL,false),
+
+  ('$D','$CM','up_sell'   ,'$PROD',0.1,'pendente','$RUND',1,true),
+  ('$D','$CM','up_sell'   ,'$P2'  ,0.1,'pendente','$RUND',2,true),
+
+  ('$D','$CN','up_sell'   ,'$PROD',0.1,'pendente','$RUND',1,NULL),
+  ('$D','$CN','up_sell'   ,'$P2'  ,0.1,'pendente','$RUND',2,NULL);
+SQL
+
+campo() { # <cliente> <campo>
+  Pq -c "SELECT j->>'$2' FROM jsonb_array_elements(
+           public.farmer_melhores_individuais_por_cliente('$D')) j
+          WHERE j->>'customer_user_id'='$1';"
+}
+nprod() { # <cliente> — quantos SKUs a tela vai NOMEAR
+  Pq -c "SELECT jsonb_array_length(j->'produtos') FROM jsonb_array_elements(
+           public.farmer_melhores_individuais_por_cliente('$D')) j
+          WHERE j->>'customer_user_id'='$1';"
+}
+
+# ── os cinco estados, e a PRECEDÊNCIA entre eles ────────────────────────────────
+eq "O1 topo único com ordem conhecida = eleito"         "$(campo "$CE" situacao)" "eleito"
+eq "O2 dois no rank mínimo = empatado"                  "$(campo "$CT" situacao)" "empatado"
+eq "O3 singleton SEM ordem = unico_registrado"          "$(campo "$CU" situacao)" "unico_registrado"
+# ⚠️ o assert que prende a precedência: sem ela este caso satisfaz 'unico_registrado'
+#    E 'topo único' ao mesmo tempo, e a versão anterior da spec exigia os DOIS.
+eq "O4 singleton COM ordem NÃO vira eleito"             "$(campo "$CS" situacao)" "unico_registrado"
+eq "O5 [1,2,NULL] = ordem_indisponivel (incompleta)"    "$(campo "$CP" situacao)" "ordem_indisponivel"
+eq "O6 flag=true vence topo único"                      "$(campo "$CM" situacao)" "referencia_ambigua"
+eq "O7 flag NULA com ordem preenchida é fail-closed"    "$(campo "$CN" situacao)" "referencia_ambigua"
+
+# ── identidade separada da eleição ──────────────────────────────────────────────
+eq "O8 empate nomeia só o TOPO"                         "$(nprod "$CT")" "2"
+eq "O9 candidatos conta o GRUPO, não o topo"            "$(campo "$CT" candidatos)" "3"
+eq "O10 ordem_indisponivel nomeia o grupo INTEIRO"      "$(nprod "$CP")" "3"
+eq "O11 eleito nomeia UM"                               "$(nprod "$CE")" "1"
+eq "O12 produto_eleito é o do rank mínimo"              "$(campo "$CE" produto_eleito)" "$PROD"
+eq "O13 produto_eleito não-nulo ⟺ eleito, na carteira inteira" \
+   "$(Pq -c "SELECT count(*) FROM jsonb_array_elements(
+               public.farmer_melhores_individuais_por_cliente('$D')) j
+              WHERE (j->>'produto_eleito' IS NOT NULL) <> (j->>'situacao'='eleito');")" "0"
+eq "O14 produtos NUNCA é vazio ou nulo" \
+   "$(Pq -c "SELECT count(*) FROM jsonb_array_elements(
+               public.farmer_melhores_individuais_por_cliente('$D')) j
+              WHERE coalesce(jsonb_array_length(j->'produtos'),0) < 1;")" "0"
+eq "O15 um objeto por (cliente,tipo) — 7 clientes, 7 objetos" \
+   "$(Pq -c "SELECT jsonb_array_length(public.farmer_melhores_individuais_por_cliente('$D'));")" "7"
+eq "O16 carteira vazia devolve [] e não NULL" \
+   "$(Pq -c "SELECT public.farmer_melhores_individuais_por_cliente('$VAZIO')::text;")" "[]"
+
+# ── o writer: as chaves novas ATRAVESSAM jsonb_to_recordset ─────────────────────
+# Sem as listas de colunas atualizadas nos DOIS blocos, a chave é ignorada em
+# SILÊNCIO — nada persiste e nada falha, que é o pior desfecho possível.
+LOTE_ORDEM="[{\"customer_user_id\":\"$C1\",\"recommendation_type\":\"cross_sell\",\"product_id\":\"$PROD\",\"affinity_score\":0.5,\"ordem\":1,\"referencia_ambigua\":false},
+             {\"customer_user_id\":\"$C1\",\"recommendation_type\":\"cross_sell\",\"product_id\":\"$P2\",\"affinity_score\":0.5,\"ordem\":1,\"referencia_ambigua\":true}]"
+RUNW="99999999-0000-4000-8000-000000000012"
+# `$COMO_A` porque o writer é gateado por authz (FG-acesso): sem a identidade, o assert
+# reprovaria por motivo ERRADO e a falsificação viraria teatro.
+GERACAO_A=$(Pq -c "SELECT coalesce(quote_literal(run_id::text)||'::uuid','NULL')
+                     FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$A';")
+[ -n "$GERACAO_A" ] || GERACAO_A=NULL
+P -q -c "$COMO_A SELECT public.farmer_recomendacoes_substituir('$A','$RUNW',$GERACAO_A,
+           '$LOTE_ORDEM'::jsonb,'completa',NULL,NULL,NULL);" >/dev/null
+eq "O17 o writer PERSISTE a ordem densa" \
+   "$(Pq -c "SELECT string_agg(ordem::text,',' ORDER BY product_id) FROM public.farmer_recommendations
+              WHERE run_id='$RUNW';")" "1,1"
+eq "O18 o writer PERSISTE a flag, sem coalescer" \
+   "$(Pq -c "SELECT string_agg(referencia_ambigua::text,',' ORDER BY product_id) FROM public.farmer_recommendations
+              WHERE run_id='$RUNW';")" "false,true"
+
+# ── negativos: a SQLSTATE ESPERADA, re-lançando o resto ─────────────────────────
+neg_ordem() { # <json> <sqlstate> <rótulo>
+  local saida
+  local vista
+  # A geração vigente é lida A CADA chamada: com a capturada lá em cima o lote morreria no
+  # CAS — reprovaria pelo motivo ERRADO, sem nunca alcançar a validação sob teste.
+  vista=$(Pq -c "SELECT coalesce(quote_literal(run_id::text)||'::uuid','NULL')
+                   FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$A';")
+  [ -n "$vista" ] || vista=NULL
+  saida=$(P -tA -c "$COMO_A DO \$t\$ BEGIN
+      PERFORM public.farmer_recomendacoes_substituir('$A','99999999-0000-4000-8000-0000000000ff',
+                $vista,'$1'::jsonb,'completa',NULL,NULL,NULL);
+      RAISE NOTICE 'NAO-RECUSOU';
+    EXCEPTION WHEN SQLSTATE '$2' THEN RAISE NOTICE 'RECUSOU-COMO-ESPERADO';
+    END \$t\$;" 2>&1 || true)
+  case "$saida" in
+    *RECUSOU-COMO-ESPERADO*) ok "$3" ;;
+    *) bad "$3 — veio: $(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-170)" ;;
+  esac
+}
+LB="\"customer_user_id\":\"$C1\",\"recommendation_type\":\"cross_sell\",\"product_id\":\"$PROD\",\"affinity_score\":0.5"
+neg_ordem "[{$LB,\"ordem\":0}]"                       FG007 "O19 ordem 0 recusada (0 não é posição)"
+neg_ordem "[{$LB,\"ordem\":-1}]"                      FG007 "O20 ordem negativa recusada"
+neg_ordem "[{$LB,\"referencia_ambigua\":\"talvez\"}]" 22P02 "O21 flag não-booleana morre no CAST, antes de expirar"
+eq "O22 lote recusado NÃO expirou a geração vigente" \
+   "$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE run_id='$RUNW' AND status='pendente';")" "2"
+
+# ── a fronteira ────────────────────────────────────────────────────────────────
+# A RLS não é provada aqui (este harness não carrega a policy `frec_select_carteira`,
+# e provar contra uma policy stub provaria o stub). O que se prova é a afirmação do
+# DESENHO: a RPC não bypassa RLS — se virasse DEFINER, leria como owner.
+eq "O23 a RPC é SECURITY INVOKER (não bypassa RLS)" \
+   "$(Pq -c "SELECT prosecdef FROM pg_proc WHERE oid='public.farmer_melhores_individuais_por_cliente(uuid)'::regprocedure;")" "f"
+eq "O24 anon NÃO executa a RPC nova" \
+   "$(Pq -c "SELECT has_function_privilege('anon','public.farmer_melhores_individuais_por_cliente(uuid)','EXECUTE');")" "f"
+eq "O25 authenticated executa" \
+   "$(Pq -c "SELECT has_function_privilege('authenticated','public.farmer_melhores_individuais_por_cliente(uuid)','EXECUTE');")" "t"
+
 echo "─── falsificação ───"
 P -q <<SQL
 ALTER TABLE public.farmer_client_scores DISABLE ROW LEVEL SECURITY;
