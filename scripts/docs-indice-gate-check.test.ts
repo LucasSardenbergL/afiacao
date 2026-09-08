@@ -278,12 +278,30 @@ describe('o repo de verdade', () => {
     expect(total).toBeGreaterThanOrEqual(20);
   });
 
-  // A mesma guarda no eixo das ENTRADAS: um parse quebrado que devolvesse [] zeraria as invariantes
-  // 3/4/5 em silêncio e ainda assim deixaria o gate verde no eixo do órfão.
-  it('cada índice real tem exatamente uma entrada por doc do diretório', () => {
+  // A mesma guarda no eixo das ENTRADAS — e ela cobra VOLUME, não IDENTIDADE.
+  //
+  // O que protege: TODAS as invariantes acima leem `parseEntradas`, e TODAS as unitárias deste
+  // arquivo o alimentam com markdown SINTÉTICO (`indice(...)`). Um parser que deixasse de
+  // reconhecer a forma do índice REAL passaria por elas inteiro e devolveria `[]` no repo — as
+  // invariantes 3/4/5 zeradas em silêncio, vácuo puro. Esta é a única asserção que aponta o parser
+  // para o corpus de verdade, e por isso ela não pode sair.
+  //
+  // O que ela deliberadamente NÃO faz: comparar as entradas com a LISTA DE ARQUIVOS. Igualdade de
+  // conjunto É a invariante do órfão, que é o eixo do step `docs:indice` do CI — e mantê-la aqui
+  // custava a mesma detecção dentro de um vitest de 128s por ZERO exclusivo, medido em
+  // `docs/historico/custo-de-gate-medido-beneficio-nao.md`.
+  //
+  // O piso é METADE dos arquivos do diretório: escala com o corpus (piso fixo apodrece — o
+  // histórico saiu de ~40 para 166 docs) e folga 83 linhas sobre o índice real, então apagar UMA
+  // entrada não acorda esta guarda; `[]` e "só casou a 1ª linha" acordam. Diretório com ≤1 arquivo
+  // cai em piso 0 de propósito: nessa escala não há volume a conferir, e um `Math.max(1, …)` seria
+  // a igualdade de conjunto voltando pela porta dos fundos.
+  it('o parse enxerga o índice REAL — volume de entradas, não identidade com os arquivos', () => {
     for (const d of lerDiretoriosIndexados()) {
-      const hrefs = parseEntradas(d.readme).map((e) => e.arquivo).sort();
-      expect(hrefs, `entradas de ${d.dir}/README.md`).toEqual([...d.arquivos].sort());
+      const entradas = parseEntradas(d.readme);
+      expect(entradas.length, `entradas de ${d.dir}/README.md`).toBeGreaterThanOrEqual(
+        Math.floor(d.arquivos.length / 2),
+      );
     }
   });
 
