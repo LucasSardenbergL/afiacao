@@ -103,3 +103,60 @@ e pede decisão caso a caso.
 Também não foi feito: corrigir o escritor alternativo (`omie-vendas-sync:3381`) para escrever as duas
 metades na mesma transação. Enquanto não for, a edição de pedido no Omie passa a **falhar em vez de
 corromper** — com o agravante de que o Omie já foi mutado quando a recusa acontece.
+
+## O passivo foi fechado (2026-09-08) — e o que ele ensinou
+
+Os 15 foram reparados e a trigger entrou em prod no mesmo dia. Medido por `psql-ro` depois do
+commit, de fora: **31.219 pedidos com linhas, 0 reprovados**; `order_items` 70.860 → 70.889;
+I2b (dano parcial) de 11 pedidos e **R$ 10.676,56 invisíveis** para **vazia**; I1/I3/I4 inalteradas;
+`sales_orders` sem um byte alterado. Scripts: `db/reparo-passivo-coerencia-pedido-venda.sql` (14) e
+`db/reparo-15o-pedido-11701.sql` (o suspenso), provados por `db/test-reparo-passivo-coerencia.sh`.
+
+**A direção do reparo foi `order_items ← jsonb`**, não o contrário. O jsonb somava exato ao cabeçalho
+em 15/15 contra 4/15 do relacional, nenhum dos 15 tinha chave de formato do app (`valor_total`/
+`unidade`/`codigo`), e o sync legado gravava linhas em blocos de 200 com erro só logado — o mecanismo
+exato de linha faltante. Não houve testemunha externa: `omie_payload`/`omie_response` são NULL nos 15
+e `omie_webhook_events` não referencia nenhum deles. Isso foi dito, não contornado.
+
+### O 15º: precisão > recall custa uma pergunta e paga
+
+Um pedido (11701 / omie 12121128593) ficou **de fora** do reparo dos 14. O jsonb dizia 1×221,80 onde
+o banco dizia 2×110,90 — e 221,80 = exatamente 2 × 110,90, o SKU nunca passou de 180,95 em 171
+referências, e as linhas irmãs do mesmo SKU no mesmo pedido eram 2×105,90 e 2×119,90. Parecia
+quantidade colapsada dentro do preço. **O Omie foi consultado e disse 1 unidade a R$ 221,80.** A
+heurística de preço perdeu para a fonte. O custo de ter perguntado foi uma pergunta; o custo de ter
+adivinhado seria uma unidade de demanda inventada num dos dois sentidos, sem ninguém saber qual.
+
+Uma pista intermediária **morreu na medição**: `tint_nome_cor` dizia "X097 CINZA BRILHO 20 = 2X
+900ML", o que parecia uma terceira testemunha da quantidade. Das 13 linhas da base com esse padrão,
+10 batem com a quantidade — mas as **3 que não batem são todas "texto diz 2, jsonb diz 1"**, e nas
+outras 2 o jsonb **e** o banco concordam em 1. O campo descreve a fórmula, não a quantidade vendida.
+Correlação de 77% num universo de 13 não é testemunha.
+
+### O que a disciplina pegou, e que teria passado sem ela
+
+- **FK antes de `DELETE`+`INSERT`**: zero tabelas referenciam `order_items` — o reparo dos 14 não
+  cascateou nada. Verificado **depois** do apply, o que é tarde. Num esquema com `ON DELETE CASCADE`
+  a jusante, o mesmo script apagaria filhos em silêncio. Sonda de script destrutivo é fail-closed.
+- **A migration MERGEADA não era a testada**: entre draft e merge ela ganhou `REVOKE` nominal das 3
+  SECDEF. Como `anon`/`authenticated` não existem em PG17 descartável, o apply morria em
+  `role "anon" does not exist` — o teste do próprio PR criava as roles, o meu não. **Diffar o que
+  foi mergeado contra o que foi provado** é passo, não zelo.
+- **Assert com rótulo diferente nos ramos ok/bad é invisível ao grep.** O F11 ficava vermelho de
+  verdade, mas o falsificador procurava `F11 … (JA APLICADO)` e o ramo de falha imprimia `F11 …` sem
+  o parêntese. A sabotagem quase foi contada como "assert sem dente" — quando o sem dente era o
+  falsificador. Rótulo idêntico nos dois ramos.
+- **Nem todo assert é falsificável pelo artefato que ele acompanha.** O de herança de `created_at`
+  prova a trigger `trg_order_items_created_at_omie` (BEFORE INSERT sobrescreve o valor), não o
+  reparo: passar `now()` não o derruba. Marcado no arquivo, para ninguém contar como prova do script.
+- **Fail-closed > idempotente, quando a decisão veio de fora do banco.** O reparo do 15º ancora na
+  linha exata que foi conferida no Omie e **recusa** a 2ª colada com `[PRE] JA APLICADO` — mensagem
+  que diz que não é erro. Re-rodar às cegas um script cuja premissa é uma consulta humana é pior que
+  abortar.
+
+### Continua em aberto
+
+Os 15 seguem com `omie_codigo_item` nulo e SKU repetido — a condição em que `reconciliar_pedidos_omie`
+os pula por ambiguidade (`omie_reconciliado_em` NULL em 15/15). Com a trigger no ar, se o Omie alterar
+um deles o cabeçalho é atualizado, as linhas não, e a transação é **recusada**. É a invariante
+funcionando, mas o modo de falha migrou de divergência silenciosa para falha de sync.
