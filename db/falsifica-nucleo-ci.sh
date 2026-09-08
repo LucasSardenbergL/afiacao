@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# falsifica-nucleo-ci.sh — o gate de provas SQL tem DENTE?
+# =====================================================================================
+#   bash db/falsifica-nucleo-ci.sh
+#
+# Um gate só vale o que ele REPROVA. Este harness restaura defeitos que existiram de
+# verdade neste repo e exige que o núcleo fique VERMELHO **pelo motivo certo** — não
+# por qualquer motivo. Depois desfaz e exige o verde de volta.
+#
+# ## As três regras que este arquivo obedece
+#
+# 1. **Controle verde na MESMA invocação, antes do primeiro `sed`.** Uma suíte
+#    sempre-vermelha aprovaria toda sabotagem, e o verde de outra invocação não é
+#    linha de base (docs/historico/falsificacao-sem-linha-de-base.md). Se o controle
+#    não passar, isto ABORTA sem sabotar nada.
+# 2. **A marca, não o vermelho.** Cada sabotagem declara a string que o vermelho tem
+#    de conter. `exit != 0` sozinho aceitaria falha de ambiente — Postgres ausente,
+#    porta ocupada, disco cheio — como se fosse captura. Não é.
+# 3. **Sabotagem que não aplicou é falsificação INVÁLIDA, não gate sem dente.** Toda
+#    sabotagem confere que mudou o arquivo, e o quê. Isto foi medido durante a escrita
+#    deste harness: a primeira tentativa contra `security_invoker` apagou uma linha de
+#    COMENTÁRIO, o teste seguiu verde — e a leitura ingênua seria "o gate não pega".
+#
+# ## Nunca toca `supabase/migrations/`
+#
+# O acervo de migrations é DR do Lovable, e há hook de imutabilidade sobre ele. Então
+# tudo aqui acontece num ESPELHO em tmpdir: as provas resolvem `REPO_ROOT` a partir do
+# próprio caminho (`dirname $BASH_SOURCE/..`), então rodá-las de dentro do espelho faz
+# com que leiam as migrations do espelho. O repo de trabalho fica intocado — não há
+# `git checkout --` nenhum no caminho de restauração, e nada a restaurar se isto morrer.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ESPELHO="$(mktemp -d "/tmp/falsif-nucleo.XXXXXX")"
+LOGS="$ESPELHO/_logs"; mkdir -p "$LOGS"
+PORTA=5920
+export LC_ALL=C LANG=C
+
+trap 'rm -rf "$ESPELHO"' EXIT
+
+OK=0; XX=0; FALHAS=()
+ok()  { OK=$((OK+1)); echo "  OK   $1"; }
+bad() { XX=$((XX+1)); FALHAS+=("$1"); echo "  XX   $1"; }
+
+echo "=== espelho em $ESPELHO ==="
+cp -R "$REPO_ROOT/db" "$ESPELHO/db"
+mkdir -p "$ESPELHO/supabase"
+cp -R "$REPO_ROOT/supabase/migrations" "$ESPELHO/supabase/migrations"
+
+# roda_prova <script-basename> -> ecoa rc; log em $LOGS/<nome>.<tag>.log
+roda_prova() {
+  local nome="$1" tag="$2" rc
+  PORTA=$((PORTA + 1))
+  PGPORT_TEST="$PORTA" bash "$ESPELHO/db/$nome.sh" > "$LOGS/$nome.$tag.log" 2>&1 && rc=0 || rc=$?
+  printf '%s' "$rc"
+}
+
+# ── CONTROLE INICIAL ────────────────────────────────────────────────────────────
+# Antes de qualquer sabotagem. Se uma destas já estiver vermelha, todo veredito
+# abaixo seria ruído — e o harness precisa dizer isso, não seguir em frente.
+echo
+echo "=== controle inicial (linha de base VERDE, mesma invocação) ==="
+for p in test-claim-disparo-cenario-b test-disparado-simulado-pos-disparo test-security-invoker-views; do
+  rc="$(roda_prova "$p" ctrl)"
+  if [ "$rc" -ne 0 ]; then
+    echo "::error::CONTROLE VERMELHO em $p (exit $rc) — abortando ANTES de sabotar."
+    echo "  sem linha de base verde, nenhuma captura abaixo significaria nada."
+    tail -20 "$LOGS/$p.ctrl.log" | sed 's/^/    /'
+    exit 1
+  fi
+  ok "controle verde: $p"
+done
+
+# ── SABOTAGENS DE BUG REAL ──────────────────────────────────────────────────────
+# aplica_e_exige <descrição> <prova> <arquivo-relativo> <marca-esperada> <python-de-sabotagem>
+aplica_e_exige() {
+  local desc="$1" prova="$2" rel="$3" marca="$4" py="$5"
+  local alvo="$ESPELHO/$rel"
+
+  cp "$alvo" "$alvo.intacto"
+  # A sabotagem é um programa que ABORTA se não mudar nada. "Não aplicou" e "gate sem
+  # dente" produzem o mesmo verde, e são coisas opostas — separá-las é o ponto.
+  if ! python3 -c "$py" "$alvo" > "$LOGS/sabotagem.log" 2>&1; then
+    bad "$desc — SABOTAGEM NÃO APLICOU (falsificação inválida): $(tail -1 "$LOGS/sabotagem.log")"
+    mv "$alvo.intacto" "$alvo"; return
+  fi
+
+  local rc; rc="$(roda_prova "$prova" sabotado)"
+  local log="$LOGS/$prova.sabotado.log"
+
+  if [ "$rc" -eq 0 ]; then
+    bad "$desc — o gate ficou VERDE com o defeito instalado"
+  elif ! grep -qF "$marca" "$log"; then
+    # Vermelho pelo motivo ERRADO é indistinguível de falha de ambiente.
+    bad "$desc — vermelho (exit $rc) mas SEM a marca '$marca'; motivo não confirmado"
+    grep -oE '\[[A-Z0-9-]+\]|❌.{0,70}' "$log" | sort -u | head -4 | sed 's/^/       visto: /'
+  else
+    ok "$desc — vermelho com a marca '$marca'"
+  fi
+
+  mv "$alvo.intacto" "$alvo"
+  # Restauração CONFERIDA: um harness que deixa a sabotagem para trás envenena tudo
+  # que rodar depois dele.
+  local rc2; rc2="$(roda_prova "$prova" restaurado)"
+  if [ "$rc2" -eq 0 ]; then ok "  └ restaurado: $prova volta ao verde"
+  else bad "  └ RESTAURAÇÃO FALHOU: $prova segue vermelho (exit $rc2)"; fi
+}
+
+echo
+echo "=== bug real 1 — #2285, Cenário B do TOCTOU (money-path) ==="
+echo "    a allowlist de status sai do WHERE que GRAVA: o claim passaria a decidir"
+echo "    sobre um retrato, e o cancelamento entre os round-trips volta a furar."
+aplica_e_exige \
+  "#2285 allowlist fora do UPDATE" \
+  "test-claim-disparo-cenario-b" \
+  "supabase/migrations/20260906190615_reposicao_claim_disparo_cenario_b.sql" \
+  "[CLAIM-GUARD-FORA-DO-UPDATE]" \
+  'import sys,pathlib
+p=pathlib.Path(sys.argv[1]); t=p.read_text()
+a="\n     AND status IN ('"'"'aprovado_aguardando_disparo'"'"', '"'"'falha_envio'"'"')"
+assert t.count(a)==1, f"esperava 1 ocorrencia da allowlist, achei {t.count(a)}"
+p.write_text(t.replace(a,"",1))'
+
+echo
+echo "=== bug real 2 — #2306, disparado_simulado não era estado pós-disparo ==="
+echo "    o dry-run cria pedido de compra REAL no Omie; tirar o estado do predicado"
+echo "    do trigger devolve o cancelamento silencioso de uma compra que aconteceu."
+aplica_e_exige \
+  "#2306 disparado_simulado escapa do trigger" \
+  "test-disparado-simulado-pos-disparo" \
+  "supabase/migrations/20260907095841_disparado_simulado_e_estado_pos_disparo.sql" \
+  "[GUARD-CEGO]" \
+  'import sys,pathlib
+p=pathlib.Path(sys.argv[1]); t=p.read_text()
+a="IF OLD.status NOT IN ('"'"'disparado'"'"', '"'"'disparado_simulado'"'"', '"'"'concluido_recebido'"'"') THEN"
+b="IF OLD.status NOT IN ('"'"'disparado'"'"', '"'"'concluido_recebido'"'"') THEN"
+assert t.count(a)>=1, "predicado do trigger nao encontrado"
+p.write_text(t.replace(a,b,1))'
+
+echo
+echo "=== bug real 3 — security_invoker omitido (classe #1375) ==="
+echo "    UMA view perde o invoker e passa a ler como OWNER, bypassando a RLS."
+echo "    É falha ABERTA: nada no CI textual a enxerga, e a tela segue funcionando."
+aplica_e_exige \
+  "view sem security_invoker vaza para customer" \
+  "test-security-invoker-views" \
+  "supabase/migrations/20260717015000_restaurar_security_invoker_views.sql" \
+  "customer NÃO lê v_sku_sigma_demanda" \
+  'import sys,pathlib
+p=pathlib.Path(sys.argv[1]); ls=p.read_text().splitlines(keepends=True)
+alvo="ALTER VIEW public.v_sku_sigma_demanda              SET (security_invoker = on);\n"
+i=[n for n,l in enumerate(ls) if l==alvo]
+assert len(i)==1, f"esperava 1 linha de CODIGO (nao comentario), achei {len(i)}"
+ls[i[0]]="-- "+alvo
+p.write_text("".join(ls))'
+
+# ── SABOTAGENS DO EXECUTOR ──────────────────────────────────────────────────────
+# O runner é código novo: ele também precisa reprovar quando deveria. Cada caso
+# abaixo é um jeito conhecido de um gate ficar verde sem ter provado nada.
+echo
+echo "=== o EXECUTOR reconhece as próprias falhas? ==="
+
+exec_exige() {
+  local desc="$1" marca="$2"; shift 2
+  local log="$LOGS/exec.$RANDOM.log" rc
+  "$@" > "$log" 2>&1 && rc=0 || rc=$?
+  if [ "$rc" -eq 0 ]; then bad "$desc — runner APROVOU"
+  elif ! grep -qF "$marca" "$log"; then
+    bad "$desc — reprovou (exit $rc) sem a marca '$marca'"; tail -3 "$log" | sed 's/^/       /'
+  else ok "$desc — reprovou com a marca certa"; fi
+}
+
+: > "$ESPELHO/manifesto-vazio.txt"
+exec_exige "manifesto VAZIO não é 'nada a fazer'" "não executa nada" \
+  env MANIFESTO="$ESPELHO/manifesto-vazio.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+printf 'db/test-nao-existe-mesmo.sh 10\n' > "$ESPELHO/manifesto-fantasma.txt"
+exec_exige "caminho inexistente ABORTA (não é filtrado)" "arquivo não existe" \
+  env MANIFESTO="$ESPELHO/manifesto-fantasma.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+printf 'db/test-fin-sync-lease.sh 0\n' > "$ESPELHO/manifesto-zero.txt"
+exec_exige "mínimo 0 é recusado (aprovaria prova vazia)" "precisa ser ≥1" \
+  env MANIFESTO="$ESPELHO/manifesto-zero.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+printf 'db/test-fin-sync-lease.sh 22\ndb/test-fin-sync-lease.sh 22\n' > "$ESPELHO/manifesto-dup.txt"
+exec_exige "duplicata no manifesto ABORTA" "duplicata" \
+  env MANIFESTO="$ESPELHO/manifesto-dup.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+# Prova substituída por um `exit 0` — o caso que a contagem de asserts existe para pegar,
+# e que `[ "$FAIL" -eq 0 ]` sozinho aceitaria.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$ESPELHO/db/test-fin-sync-lease.sh"
+printf 'db/test-fin-sync-lease.sh 22\n' > "$ESPELHO/manifesto-oco.txt"
+exec_exige "prova esvaziada (exit 0 sem asserts) REPROVA" "SEM linha de contagem" \
+  env MANIFESTO="$ESPELHO/manifesto-oco.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+# Prova que roda, mas encolheu abaixo do contrato do manifesto.
+printf '#!/usr/bin/env bash\necho "RESULTADO: 3 ok / 0 fail"\nexit 0\n' > "$ESPELHO/db/test-fin-sync-lease.sh"
+exec_exige "prova ENCOLHIDA (3 asserts < 22) REPROVA" "o manifesto exige" \
+  env MANIFESTO="$ESPELHO/manifesto-oco.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+# Postgres ausente: o caso em que degradar aprovaria TUDO.
+printf 'db/test-fin-sync-lease.sh 22\n' > "$ESPELHO/manifesto-pg.txt"
+# `PGVER=99` não existe em caminho canônico nenhum, e nenhum `initdb` do PATH tem
+# major 99 — então o helper percorre a busca inteira e precisa terminar em ERRO. Testa
+# o fail-closed do helper REAL, sem sabotá-lo, e sem depender do que está instalado.
+exec_exige "PostgreSQL ausente é ERRO, nunca skip" "PostgreSQL 99 não encontrado" \
+  env MANIFESTO="$ESPELHO/manifesto-pg.txt" PGVER=99 \
+  bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+# ── CONTROLE FINAL ──────────────────────────────────────────────────────────────
+echo
+echo "=== controle final — o verde voltou? ==="
+for p in test-claim-disparo-cenario-b test-disparado-simulado-pos-disparo test-security-invoker-views; do
+  rc="$(roda_prova "$p" final)"
+  if [ "$rc" -eq 0 ]; then ok "verde de volta: $p"
+  else bad "NÃO voltou ao verde: $p (exit $rc)"; fi
+done
+
+echo
+echo "=================================================="
+for f in ${FALHAS[@]+"${FALHAS[@]}"}; do echo "  ❌ $f"; done
+echo "FALSIFICACAO: OK=$OK XX=$XX"
+[ "$XX" -eq 0 ]

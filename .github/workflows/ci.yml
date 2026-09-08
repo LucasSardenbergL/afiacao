@@ -725,9 +725,88 @@ jobs:
   # É também aqui que `cancelled` deixa de ser invisível: job estourado por `timeout-minutes`
   # tem `result == 'cancelled'`, que NÃO é `success` e portanto reprova com nome próprio no log
   # — antes, o run inteiro saía `cancelled` e sumia de qualquer leitura que só procura `failure`.
+  # ══════════════════════════════════════════════════════════════════════════════
+  # provas-sql — SQL EXECUTADO no caminho obrigatório do merge.
+  #
+  # O buraco que este job fecha, medido em 2026-09-07: o repo tinha **289** arquivos
+  # `db/test-*.sh` — provas que sobem um Postgres 17 de verdade, aplicam a migration
+  # e asseveram o comportamento — e a única menção a eles no `ci.yml` era um
+  # COMENTÁRIO. Zero `services:`, zero postgres. Nenhuma linha de SQL era executada
+  # no caminho do merge.
+  #
+  # Isso deixava sem gate nenhum exatamente as classes que só um banco real pega, e
+  # que são as caras: TOCTOU / guard fora da escrita (10 fixes no histórico, 100%
+  # money-path), PL/pgSQL late-bound (o `CREATE` passa, a função só quebra em
+  # RUNTIME) e `security_invoker` omitido num CREATE OR REPLACE VIEW — falha ABERTA
+  # em que a view passa a ler como OWNER e bypassa RLS, e que nenhum gate textual vê.
+  #
+  # ## Por que binário do PGDG, e não `services: postgres:17`
+  #
+  # As 289 provas não conectam a um servidor externo: cada uma faz o seu próprio
+  # `initdb` + `pg_ctl` numa porta própria, cria fixtures, aplica a migration REAL do
+  # repo e destrói o cluster no `trap EXIT`. Um `services:` (container à parte) não
+  # compartilha o socket unix do runner e obrigaria a reescrever a conexão de todas
+  # — criando a divergência "roda no laptop / roda no CI" que o gate do shellcheck
+  # logo acima veio fechar. Pior: um cluster COMPARTILHADO não isola `CREATE ROLE`
+  # nem `ALTER ROLE`, que são de cluster e não de database — e boa parte das provas
+  # de RLS depende justamente disso (parecer Codex gpt-6-astra, 2026-09-07).
+  #
+  # Com o binário instalado no runner, a prova roda no CI EXATAMENTE como no laptop.
+  #
+  # ## Custo
+  #
+  # Job próprio e PARALELO, entrando no `needs:` do `validate` — de propósito fora do
+  # `gates-e-falsificacao`, que é o gargalo atual (mediana 357s). Não precisa de bun
+  # nem de deno, e não precisa de `fetch-depth: 0` (nenhum gate aqui usa merge-base),
+  # então o preâmbulo é bem mais barato que o dos outros quatro.
+  provas-sql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # A versão é conferida POSITIVAMENTE, e o número exato vai para o log. Precedente
+      # do próprio repo: o runner trazia shellcheck 0.9.0 contra 0.11.0 do laptop e o
+      # gate reprovava PR sadio — "gate cuja VERDADE depende da versão do runner não é
+      # gate, é sorteio". Aqui o piso é o que PRODUÇÃO roda (17.6 = 170006, medido via
+      # psql-ro), conferido pelo runner perguntando `server_version_num` ao servidor.
+      # Não se pina a minor exata de propósito: o PGDG remove pacotes antigos do índice,
+      # e um pin assim viraria vermelho por AMBIENTE — o que ensinaria a tratar este job
+      # como flaky, que é como um gate morre. O piso + o registro da versão dão o
+      # determinismo que importa sem essa fragilidade.
+      - name: PostgreSQL 17 (PGDG) — instala e confere a versão
+        run: |
+          set -euo pipefail
+          if [ ! -x /usr/lib/postgresql/17/bin/initdb ]; then
+            sudo install -d /usr/share/postgresql-common/pgdg
+            sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+              https://www.postgresql.org/media/keys/ACCC4CF8.asc
+            echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+          https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+              | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-17
+          fi
+          instalada="$(/usr/lib/postgresql/17/bin/initdb --version)"
+          echo "  $instalada"
+          printf '%s' "$instalada" | grep -qE '\(PostgreSQL\) 17\.' || {
+            echo "::error::initdb não é PostgreSQL 17: $instalada"; exit 1; }
+
+      # O runner (db/roda-nucleo-ci.sh) começa por uma SONDA: sobe um cluster e pergunta
+      # `server_version_num` ao servidor. Sem ela, "Postgres ausente" e "todas as provas
+      # passaram" produziriam o mesmo verde — `ausente ≠ zero` aplicado ao CI.
+      # Ele também exige, por prova, o mínimo de asserts declarado em `db/nucleo-ci.txt`:
+      # o fechamento das provas é `[ "$FAIL" -eq 0 ]`, que TAMBÉM aceita PASS=0, e uma
+      # prova truncada sairia 0. Falsificação: `bash db/falsifica-nucleo-ci.sh`.
+      - name: Núcleo de provas SQL executadas (db/nucleo-ci.txt)
+        run: bash db/roda-nucleo-ci.sh
+
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao]
+    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, provas-sql]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue.
@@ -741,10 +820,11 @@ jobs:
           RESULTADOS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          esperados=4
-          total=0; falhou=0
+          esperados=5
+          total=0; falhou=0; viu_provas_sql=0
           while IFS="$(printf '\t')" read -r job resultado; do
             total=$((total + 1))
+            [ "$job" = "provas-sql" ] && viu_provas_sql=1
             if [ "$resultado" = "success" ]; then
               echo "  ✅ $job: success"
             else
@@ -758,6 +838,14 @@ jobs:
           # Job novo no fan-out: some 1 aqui E no `needs:` acima (os dois, ou o CI avisa).
           if [ "$total" -ne "$esperados" ]; then
             echo "::error::li $total job(s), esperava $esperados — o agregador não pode afirmar nada."
+            exit 1
+          fi
+          # Guard NOMINAL (parecer Codex, 2026-09-07): "cinco jobs quaisquer não provam que SQL
+          # entrou no contrato". O denominador acima só conta; este exige a IDENTIDADE do job que
+          # executa as provas de banco. Sem ele, renomear `provas-sql` — ou trocá-lo por qualquer
+          # outro job — manteria total=5 e o agregador seguiria dizendo ✅ com o SQL fora do merge.
+          if [ "$viu_provas_sql" -ne 1 ]; then
+            echo "::error::o job 'provas-sql' não está entre os $total lidos — as provas SQL saíram do caminho obrigatório."
             exit 1
           fi
           if [ "$falhou" -ne 0 ]; then

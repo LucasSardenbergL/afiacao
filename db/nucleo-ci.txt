@@ -1,0 +1,59 @@
+# nucleo-ci.txt — as provas SQL EXECUTADAS que rodam no caminho obrigatório do merge.
+# =====================================================================================
+# Consumido por `db/roda-nucleo-ci.sh` (job `provas-sql` do ci.yml). Uma linha por
+# script; `#` comenta; linha vazia ignorada. O runner EXIGE que todo caminho aqui
+# exista e que o total executado bata com o total lido — lista vazia é ERRO, não
+# "nada a fazer".
+#
+# ## Por que uma allowlist, e não `db/test-*.sh`
+#
+# São 289 provas (medido 2026-09-07). Um glob traria junto as que dependem de prod
+# (`psql-ro`), de `deno`/`bun` ou de dados fora do repo — e a primeira vermelha por
+# AMBIENTE ensinaria a tratar este job como flaky, que é como um gate morre. A lista
+# cresce por adição deliberada: rode o candidato local, confirme que é autocontido
+# (só initdb + SQL do próprio script), e acrescente na seção do eixo.
+#
+# ## A ordem dos eixos (parecer Codex, 2026-09-07)
+#
+# autorização > finitude monetária > atomicidade > concorrência. É a ordem de dano:
+# um furo de autorização vale por todos os outros somados.
+
+# Formato: <caminho> <mínimo de asserts>
+# O segundo campo é CONTRATO, não enfeite: o fechamento das provas é
+# `[ "$FAIL" -eq 0 ]`, que **também aceita PASS=0** — uma prova truncada sai 0 e
+# passaria. O runner exige que o nº de asserts EXECUTADOS seja ≥ este número.
+# Subir asserts não quebra nada; encolher a prova reprova até alguém baixar o
+# número aqui — e aí a perda de cobertura fica no diff, que é o ponto.
+
+# ── Eixo 1 — AUTORIZAÇÃO ──────────────────────────────────────────────────────────
+# RLS sob `SET ROLE`, REVOKE nas DUAS pontas (PUBLIC e anon) e o `security_invoker`
+# das views. Esta última é a falha ABERTA que nenhum gate textual enxerga: omitir
+# `WITH (security_invoker=on)` num CREATE OR REPLACE RESETA a opção e a view passa a
+# ler como OWNER, bypassando RLS.
+db/test-security-invoker-views.sh          27
+db/test-views-invoker-off-p0.sh            25
+db/test-authz-revoke-anon-rpc.sh           19
+db/test-authz-is-not-true-escritas.sh      24
+
+# ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
+# `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
+# degrada para NULL; e a finitude é CHECK no banco, porque guard no writer protege
+# só aquele writer.
+db/test-preco-ausente-nao-e-zero.sh        54
+db/test-check-finitude-money-path.sh       27
+db/test-caca-custo-producao.sh              6
+
+# ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
+# "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
+# que grava (ou no trigger), nunca num SELECT anterior.
+db/test-cancelar-pedido-guard-atomico.sh   48
+db/test-apply-score-updates.sh             32
+db/test-sales_orders_omie_hash_unique.sh    5
+
+# ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
+# A janela entre dois round-trips PostgREST, com uma chamada HTTP que cria pedido de
+# compra REAL no meio. Nenhum lock atravessa uma transação que já commitou; o que
+# atravessa é uma marca durável na linha.
+db/test-claim-disparo-cenario-b.sh         76
+db/test-disparado-simulado-pos-disparo.sh  59
+db/test-fin-sync-lease.sh                  22

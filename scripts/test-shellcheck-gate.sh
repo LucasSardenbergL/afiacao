@@ -42,12 +42,15 @@ if ! shellcheck --version 2>/dev/null | grep -q 'ShellCheck'; then
 fi
 
 # monta_raiz <dir> — raiz de repo mínima com o gate no lugar que ele espera, e um arquivo LIMPO em
-# cada um dos três globs (assim o caso verde prova que houve leitura, e não vacuidade).
+# cada um dos globs (assim o caso verde prova que houve leitura, e não vacuidade).
+# A lista precisa acompanhar GLOBS= do gate: o guard de glob vazio é fail-closed, então um glob
+# novo sem diretório aqui reprova TODOS os casos abaixo por "escopo quebrado" — vermelho por
+# tabela, que é justamente o que o item 1 desta suíte existe para detectar.
 monta_raiz() {
   local raiz="$1" d
-  mkdir -p "$raiz/scripts" "$raiz/.claude/hooks" "$raiz/db"
+  mkdir -p "$raiz/scripts" "$raiz/.claude/hooks" "$raiz/db" "$raiz/db/lib"
   cp "$GATE" "$raiz/scripts/shellcheck-gate.sh"
-  for d in scripts .claude/hooks db; do
+  for d in scripts .claude/hooks db db/lib; do
     printf '#!/usr/bin/env bash\nset -euo pipefail\necho "limpo"\n' > "$raiz/$d/limpo.sh"
   done
 }
@@ -72,16 +75,16 @@ espera_vermelho() {
   fi
 }
 
-echo "── 1. controle: raiz limpa fica VERDE (e leu mesmo os 3 globs) ──"
+echo "── 1. controle: raiz limpa fica VERDE (e leu mesmo os 4 globs) ──"
 raiz="$tmp/limpa"; monta_raiz "$raiz"
 roda_gate "$raiz"
 if [ "$RC" -ne 0 ]; then
   fail "controle: raiz limpa deu rc=$RC — todo caso vermelho abaixo seria vermelho por tabela"
   echo "$OUT"
-elif ! printf '%s' "$OUT" | grep -q '0 achados em 4 arquivos'; then
+elif ! printf '%s' "$OUT" | grep -q '0 achados em 5 arquivos'; then
   fail "controle: o gate não disse quantos arquivos leu — verde sem denominador é ausência de dado"
 else
-  pass "controle: verde com os 4 arquivos lidos"
+  pass "controle: verde com os 5 arquivos lidos"
 fi
 
 echo "── 2. as classes que FABRICAM VEREDITO num harness de prova ──"
