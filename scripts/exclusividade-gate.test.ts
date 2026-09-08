@@ -20,6 +20,7 @@ import {
   derivar,
   fingerprintDefeito,
   fonteDoGate,
+  fundirLinhas,
   gatesCandidatos,
   jobsBloqueantes,
   parseDefeitos,
@@ -198,6 +199,46 @@ describe('derivar — as tres formas de fabricar resultado', () => {
       expect(e.exclusivos).toEqual([]);
       expect(e.pegou).toEqual(['d1']);
     }
+  });
+});
+
+describe('fundirLinhas — medicao parcial nao pode APAGAR medicao anterior', () => {
+  // O bug real, achado medindo: uma rodada com `--gates docs:*` substituiu a linha inteira de
+  // `indice-orfao` e apagou a execucao do `test` medida antes. `docs:indice`, que a medicao com o
+  // vitest tinha mostrado CO-PEGADO, reapareceu no relatorio como `[SO ELE]` — exclusividade
+  // FABRICADA a partir de dado que existia e foi descartado.
+  it('preserva execucao de gate que a rodada nova nao incluiu', () => {
+    const antiga = linha({ execucoes: [exec('docs:indice', true), exec('test', true)] });
+    const nova = linha({ execucoes: [exec('docs:indice', true)] });
+    expect(fundirLinhas(antiga, nova).execucoes.map((e) => e.gate)).toEqual(['docs:indice', 'test']);
+  });
+
+  it('a execucao NOVA do mesmo gate vence a antiga', () => {
+    const antiga = linha({ execucoes: [exec('g1', true, 111)] });
+    const nova = linha({ execucoes: [exec('g1', false, 222)] });
+    const [e] = fundirLinhas(antiga, nova).execucoes;
+    expect([e.reprovou, e.ms]).toEqual([false, 222]);
+  });
+
+  // Conservador de proposito: o erro tolerado e deixar de reconhecer um exclusivo, nunca inventar.
+  it('parouCedo propaga por OU — linha podada em qualquer rodada nunca vira exclusiva', () => {
+    const antiga = linha({ execucoes: [exec('g1', true)], parouCedo: true });
+    const nova = linha({ execucoes: [exec('g1', true)], parouCedo: false });
+    expect(fundirLinhas(antiga, nova).parouCedo).toBe(true);
+  });
+
+  it('sem linha antiga, devolve a nova intacta', () => {
+    const nova = linha({ execucoes: [exec('g1', true)] });
+    expect(fundirLinhas(undefined, nova)).toEqual(nova);
+  });
+
+  it('a fusao de fato IMPEDE o exclusivo fabricado (o cenario completo)', () => {
+    const antiga = linha({ suspeito: 'g1', execucoes: [exec('g1', true), exec('g2', true)] });
+    const parcial = linha({ suspeito: 'g1', execucoes: [exec('g1', true)] });
+    const semFusao = matriz({ linhas: [parcial] });
+    const comFusao = matriz({ linhas: [fundirLinhas(antiga, parcial)] });
+    expect(derivar(semFusao).find((e) => e.gate === 'g1')!.exclusivos, 'sem fusao, fabrica').toEqual(['d1']);
+    expect(derivar(comFusao).find((e) => e.gate === 'g1')!.exclusivos, 'com fusao, nao fabrica').toEqual([]);
   });
 });
 

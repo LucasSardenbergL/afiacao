@@ -247,6 +247,35 @@ export interface Matriz {
   linhas: LinhaMatriz[];
 }
 
+/**
+ * Funde a medicao NOVA de um defeito com a que ja estava na matriz, preservando as execucoes de
+ * gates que a rodada nova nao incluiu.
+ *
+ * ## O bug que isto conserta (achado medindo, nao pensando)
+ *
+ * A fusao era por `defeito`: a linha nova substituia a antiga inteira. Com `--gates`, uma rodada
+ * parcial de `indice-orfao` (so os gates de docs) apagou a execucao do `test` medida na rodada
+ * anterior — e `docs:indice`, que a medicao com o vitest tinha mostrado CO-PEGADO, reapareceu no
+ * relatorio como `[SO ELE]`.
+ *
+ * Ou seja: a forma mais cara de errar aqui, exclusividade FABRICADA a partir de dado que existia
+ * e foi descartado. Fundir por `(defeito, gate)` mantem cada celula medida ate ser re-medida.
+ *
+ * `parouCedo` propaga por OU: uma linha que parou cedo em qualquer das rodadas nunca vira
+ * exclusiva. Conservador de proposito — o erro tolerado e deixar de reconhecer um exclusivo, nunca
+ * inventar um.
+ */
+export function fundirLinhas(antiga: LinhaMatriz | undefined, nova: LinhaMatriz): LinhaMatriz {
+  if (!antiga) return nova;
+  const porGate = new Map(antiga.execucoes.map((e) => [e.gate, e]));
+  for (const e of nova.execucoes) porGate.set(e.gate, e);
+  return {
+    ...nova,
+    execucoes: [...porGate.values()].sort((a, b) => a.gate.localeCompare(b.gate)),
+    parouCedo: antiga.parouCedo || nova.parouCedo,
+  };
+}
+
 export interface Exclusividade {
   gate: string;
   /** Defeitos em que ele foi o UNICO vermelho, com a linha rodada ate o fim. */

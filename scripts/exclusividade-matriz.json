@@ -1,18 +1,38 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-08T01:16:19.333Z",
-  "sourceHead": "503eb8df18ca9dd676b62a61c1ed7eb895c983c8",
+  "medidoEm": "2026-09-08T01:22:06.083Z",
+  "sourceHead": "d012b8e214740b9752da0291afaea14d2b33ab1c",
   "dispensados": [],
   "baseline": [
     {
+      "gate": "bunpin:check",
+      "verde": true,
+      "ms": 38
+    },
+    {
+      "gate": "claude:size",
+      "verde": true,
+      "ms": 74
+    },
+    {
+      "gate": "docs:citacoes",
+      "verde": true,
+      "ms": 1331
+    },
+    {
       "gate": "docs:indice",
       "verde": true,
-      "ms": 28
+      "ms": 26
     },
     {
       "gate": "docs:links",
       "verde": true,
-      "ms": 443
+      "ms": 298
+    },
+    {
+      "gate": "gates:frescura",
+      "verde": true,
+      "ms": 112
     },
     {
       "gate": "test",
@@ -31,7 +51,7 @@
         {
           "gate": "docs:indice",
           "reprovou": false,
-          "ms": 30,
+          "ms": 24,
           "fingerprint": "a41d30136cdb032d",
           "fonteResolvida": true
         },
@@ -45,28 +65,28 @@
         {
           "gate": "claude:size",
           "reprovou": false,
-          "ms": 33,
+          "ms": 30,
           "fingerprint": "c4bf0d0879f91708",
           "fonteResolvida": true
         },
         {
           "gate": "gates:frescura",
           "reprovou": false,
-          "ms": 126,
+          "ms": 107,
           "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": false,
-          "ms": 329,
+          "ms": 296,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
           "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 1177,
+          "ms": 1201,
           "fingerprint": "94085ea54871a324",
           "fonteResolvida": true
         }
@@ -84,42 +104,42 @@
         {
           "gate": "docs:indice",
           "reprovou": false,
-          "ms": 24,
+          "ms": 27,
           "fingerprint": "a41d30136cdb032d",
           "fonteResolvida": true
         },
         {
           "gate": "bunpin:check",
           "reprovou": false,
-          "ms": 25,
+          "ms": 24,
           "fingerprint": "88d330029d1f9ad5",
           "fonteResolvida": true
         },
         {
           "gate": "claude:size",
           "reprovou": false,
-          "ms": 29,
+          "ms": 30,
           "fingerprint": "c4bf0d0879f91708",
           "fonteResolvida": true
         },
         {
           "gate": "gates:frescura",
           "reprovou": true,
-          "ms": 101,
+          "ms": 114,
           "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": false,
-          "ms": 332,
+          "ms": 284,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
           "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 1224,
+          "ms": 2139,
           "fingerprint": "94085ea54871a324",
           "fonteResolvida": true
         }
@@ -144,35 +164,35 @@
         {
           "gate": "bunpin:check",
           "reprovou": false,
-          "ms": 27,
+          "ms": 32,
           "fingerprint": "88d330029d1f9ad5",
           "fonteResolvida": true
         },
         {
           "gate": "claude:size",
           "reprovou": true,
-          "ms": 30,
+          "ms": 34,
           "fingerprint": "c4bf0d0879f91708",
           "fonteResolvida": true
         },
         {
           "gate": "gates:frescura",
           "reprovou": false,
-          "ms": 113,
+          "ms": 105,
           "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": false,
-          "ms": 271,
+          "ms": 276,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
           "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 1204,
+          "ms": 1155,
           "fingerprint": "94085ea54871a324",
           "fonteResolvida": true
         }
@@ -190,26 +210,40 @@
         {
           "gate": "docs:indice",
           "reprovou": true,
-          "ms": 64,
+          "ms": 28,
           "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 24,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 28,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 101,
+          "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": true,
-          "ms": 894,
+          "ms": 281,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
-        },
-        {
-          "gate": "test",
-          "reprovou": true,
-          "ms": 233988,
-          "fingerprint": "ad6cd6b8acf39571",
-          "fonteResolvida": false
         }
       ],
-      "parouCedo": false,
+      "parouCedo": true,
       "invalido": null
     },
     {
@@ -222,23 +256,44 @@
         {
           "gate": "docs:indice",
           "reprovou": true,
-          "ms": 105,
+          "ms": 25,
           "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 25,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 29,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 149,
+          "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": false,
-          "ms": 1301,
+          "ms": 275,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
-          "gate": "test",
-          "reprovou": true,
-          "ms": 266070,
-          "fingerprint": "ad6cd6b8acf39571",
-          "fonteResolvida": false
+          "gate": "docs:citacoes",
+          "reprovou": false,
+          "ms": 1101,
+          "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true
         }
       ],
       "parouCedo": false,
@@ -254,7 +309,7 @@
         {
           "gate": "docs:indice",
           "reprovou": false,
-          "ms": 24,
+          "ms": 23,
           "fingerprint": "a41d30136cdb032d",
           "fonteResolvida": true
         },
@@ -268,28 +323,28 @@
         {
           "gate": "claude:size",
           "reprovou": false,
-          "ms": 28,
+          "ms": 30,
           "fingerprint": "c4bf0d0879f91708",
           "fonteResolvida": true
         },
         {
           "gate": "gates:frescura",
           "reprovou": false,
-          "ms": 96,
+          "ms": 104,
           "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
         },
         {
           "gate": "docs:links",
           "reprovou": true,
-          "ms": 263,
+          "ms": 260,
           "fingerprint": "f56e762e306f0671",
           "fonteResolvida": true
         },
         {
           "gate": "docs:citacoes",
           "reprovou": false,
-          "ms": 1183,
+          "ms": 1129,
           "fingerprint": "94085ea54871a324",
           "fonteResolvida": true
         }

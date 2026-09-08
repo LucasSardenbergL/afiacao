@@ -43,6 +43,7 @@ import {
   fingerprintDefeito,
   fingerprintGate,
   fonteDoGate,
+  fundirLinhas,
   gatesCandidatos,
   parseDefeitos,
   resumir,
@@ -319,10 +320,13 @@ function main(): number {
       ...(anterior?.baseline ?? []).filter((b) => !baseline.some((n) => n.gate === b.gate)),
       ...baseline,
     ].sort((a, b) => a.gate.localeCompare(b.gate)),
-    // Medicao parcial (--gates/--defeitos) ACRESCENTA, nunca apaga o que ja foi medido antes.
+    // Medicao parcial (--gates/--defeitos) ACRESCENTA, nunca apaga o que ja foi medido antes —
+    // e a fusao e por (defeito, GATE), nao por defeito. Ver `fundirLinhas`: substituir a linha
+    // inteira descartava as execucoes dos gates fora do `--gates` da rodada, e ja fabricou um
+    // `[SO ELE]` para um gate que a rodada anterior tinha medido como co-pegado.
     linhas: [
       ...(anterior?.linhas ?? []).filter((l) => !linhas.some((n) => n.defeito === l.defeito)),
-      ...linhas,
+      ...linhas.map((n) => fundirLinhas((anterior?.linhas ?? []).find((l) => l.defeito === n.defeito), n)),
     ].sort((a, b) => a.defeito.localeCompare(b.defeito)),
   };
   writeFileSync(MATRIZ_PATH, `${JSON.stringify(matriz, null, 2)}\n`);
