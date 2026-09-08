@@ -14,6 +14,7 @@ import { carregarCluster, carregarInsumos } from "../_shared/recommend-leituras.
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -460,6 +461,10 @@ async function logEvent(
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
+    // Sonda de deploy por cron (F4, onda 2). Só responde com a credencial HMAC válida; sem ela o
+    // preflight do browser recebe a mesma resposta de sempre, byte a byte.
+    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
+    if (sonda) return sonda;
     return new Response(null, { headers: corsHeaders });
   }
 

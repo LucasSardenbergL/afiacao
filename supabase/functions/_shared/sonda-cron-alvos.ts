@@ -81,6 +81,19 @@ function comCorpo(base: ControlePositivo, corpo: string, porque: string): Contro
 /** O corpo que faz a `sync-reprocess` escrever: reconcilia pedidos e dá upsert em product_costs. */
 const ACTION_REPROCESS = '{"action":"reprocess_all"}';
 
+/**
+ * O corpo que faz a `copilot-analyze` chamar o LLM — sem ele o controle é INERTE. Medido em
+ * 2026-09-08: com `{}`, o closure `8224d4593` (fev/26, época SEM gate nenhum) devolve o 400 de
+ * `transcript.trim().length < 5` **antes** do `fetch('https://ai.lovable.dev/chat/v1')`, o
+ * contador não sobe e o veredito sai `INVERIFICAVEL` — 14/15 closures PASSA e a edge fica FORA.
+ * `INVERIFICAVEL` é o veredito honesto para "não consegui fazer o contador subir", nunca um
+ * quase-verde: o que ele diz é que o controle não prova nada, e controle inerte aprova qualquer
+ * coisa. A transcrição precisa passar dos 5 caracteres em TODA época — é o único gate de forma
+ * que o campo teve.
+ */
+const TRANSCRIPT_REAL =
+  '{"transcript":"cliente pediu orcamento de afiacao para 12 laminas industriais"}';
+
 // ⚠️ `sync-reprocess` NÃO entra na F1 por COLISÃO, não por risco: o PR #2224 (money-path, preço
 // ausente do Omie) bumpa o mesmo `versao.ts` para `v1.3-preco-ausente-nao-e-zero` e mergeia antes.
 // Ela entra na F4 (ondas), depois daquele merge, com `desde` próprio. A classe que ela traria
@@ -119,6 +132,39 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   { edge: "reposicao-depara-sayerlack-auto", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   { edge: "carteira-positivacao-snapshot", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   { edge: "process-recurring-orders", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  // F4 onda 2 (2026-09-08) — as que mais CHURNAM, que é o que faz o chip renascer: medido em
+  // `git log --since='60 days ago' -- 'supabase/functions/*/versao.ts'`, cada bump aqui é uma
+  // pendência de deploy que hoje espera colagem humana para virar prova. Continuam de fora as de
+  // efeito EXTERNO (`enviar-pedido-portal-sayerlack`, `disparar-pedidos-aprovados`,
+  // `sayerlack-captura-precos`): o risco de um closure histórico tocar o portal do fornecedor não
+  // se paga pela conveniência, e a prova delas é onda própria. Quem decide é o
+  // `sonda:cron-prova` — entrar na lista é a PERGUNTA, não a resposta.
+  {
+    edge: "copilot-analyze",
+    desde: null,
+    controles: [
+      comCorpo(SEM_CREDENCIAL, TRANSCRIPT_REAL, "época sem gate: o POST cru já chama o LLM"),
+      comCorpo(CRON, TRANSCRIPT_REAL, "época authorizeCronOrStaff"),
+      comCorpo(BEARER, TRANSCRIPT_REAL, "épocas que só aceitavam JWT/service role"),
+    ],
+  },
+  { edge: "fin-valor-cockpit", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  { edge: "recommend", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  { edge: "generate-tactical-plan", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  // ⛔ CANDIDATAS DA ONDA 2 QUE A PROVA REPROVOU (2026-09-08) — medido, não estimado. Elas foram
+  // postas na lista, `sonda:cron-prova --backfill` executou a história inteira de cada uma, e o
+  // contador de efeito subiu. Ficam registradas para a onda 3 não repetir o trabalho:
+  //   fin-cashflow-engine        0/37  closures PASSA
+  //   omie-cliente               1/68
+  //   omie-analytics-sync       16/86
+  //   omie-vendas-sync         127/188
+  //   omie-sync-estoque         28/29
+  //   omie-sync-nfes-recebidas  35/36
+  //   generate-bundle-argument  12/14
+  // As quatro últimas chegam perto, e é aí que mora a tentação: 35/36 NÃO é "quase seguro" — o
+  // closure que falta é um bundle que já esteve no ar e que executaria efeito ao receber o
+  // `OPTIONS` do cron. Não há recorte de história que torne isso aceitável; o que resolve é achar
+  // POR QUE aquele closure falha, um a um. Entrar na lista é a PERGUNTA — quem responde é a prova.
   // FORA da onda 1, e o motivo é do CONTROLE, não do risco: `omie-webhook` e `omie-nfe-webhook`
   // recusam `{}` sem tocar em nada, e os closures saíram INVERIFICAVEL — o veredito honesto para
   // "não consegui fazer o contador subir". Zero efeito com controle inerte não prova nada: aprova

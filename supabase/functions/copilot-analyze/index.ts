@@ -12,6 +12,7 @@ import { classificarFlag, erroFlagAmbigua } from "../_shared/sonda-versao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { executarCanaria } from "./canaria.ts";
 import { normalizarAnalise, TOOL_COPILOTO } from "./copiloto-tools.ts";
+import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
@@ -22,6 +23,10 @@ const corsHeaders = {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
+    // Sonda de deploy por cron (F4, onda 2). Só responde com a credencial HMAC válida; sem ela o
+    // preflight do browser recebe a mesma resposta de sempre, byte a byte.
+    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
+    if (sonda) return sonda;
     return new Response('ok', { headers: corsHeaders });
   }
   const __auth = await authorizeCronOrStaff(req);
