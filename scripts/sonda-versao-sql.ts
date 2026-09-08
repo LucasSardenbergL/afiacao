@@ -376,6 +376,20 @@ function valuesEsperado(leva: EdgeSondada[]): string {
   return leva.map((e) => `  (${lit(e.edge)}, ${lit(e.versao)}, ${lit(e.fonte)})`).join(',\n');
 }
 
+/**
+ * Teto de tempo do `net.http_post`, em ms. É CONSTANTE, e não literal repetido, porque a regra é
+ * uma só e vale para toda chamada: o default do pg_net é 5s e mata em SILÊNCIO (`sync.md`). Duas
+ * cópias do número são duas verdades, e a que ninguém atualiza é a que decide errado.
+ */
+const TIMEOUT_HTTP_MS = 20000;
+
+/**
+ * A trava do bloco caro, como CASE — nunca como filtro. O Postgres avalia a projeção mesmo
+ * descartando todas as linhas, então travar por `WHERE` deixa o `http_post` sair igual. Também
+ * mora aqui por ser uma verdade só: os blocos de disparo da sonda e da canária a compartilham.
+ */
+const TRAVA_CASE = "CASE WHEN g.confirmei_o_deploy = 'sim'";
+
 /** A chamada `net.http_post`, idêntica nos dois blocos de disparo. */
 function httpPost(ref: string, indent: string): string {
   const i = indent;
@@ -387,7 +401,7 @@ function httpPost(ref: string, indent: string): string {
     `${i}    'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets\n` +
     `${i}                      WHERE name = 'CRON_SECRET' LIMIT 1)),\n` +
     `${i}  body := jsonb_build_object('probe', true),\n` +
-    `${i}  timeout_milliseconds := 20000)`
+    `${i}  timeout_milliseconds := ${TIMEOUT_HTTP_MS})`
   );
 }
 
@@ -418,6 +432,16 @@ export const SENTINELA_MAPA = '\u0001mapa\u0001';
 const TAG_SONDA = '$sonda$';
 
 /**
+ * Fecha o `format()` e batiza a célula que o operador copia. Verdade ÚNICA para os dois blocos de
+ * disparo (sonda e canária): o nome da coluna é o que diz ao operador que ali mora um SQL pronto,
+ * e não um blob de ids para transportar à mão — duas cópias divergiriam, e a que diverge é a que
+ * devolve o operador ao round-trip que `docs/historico/sonda-request-id-a-mao.md` fechou.
+ */
+function rodapeDoFormat(passoLeitura: number): string {
+  return `${TAG_SONDA}, m.ids) AS passo_${passoLeitura}_copie_esta_celula\nFROM mapa m;\n`;
+}
+
+/**
  * Bloco de DISPARO — o único que precisa do founder: lê `vault.decrypted_secrets` e faz INSERT via
  * `net.http_post`, e o wrapper read-only recusa os dois (`permission denied for schema vault` e
  * `cannot execute INSERT in a read-only transaction`, provado 2026-08-30).
@@ -446,7 +470,7 @@ function blocoDisparo(
       `alvos(edge) AS (VALUES\n${valuesAlvos(leva)}\n),\n`
     : `WITH alvos(edge) AS (VALUES\n${valuesAlvos(leva)}\n),\n`;
   const projecao = comTrava
-    ? `         CASE WHEN g.confirmei_o_deploy = 'sim'\n` +
+    ? `         ${TRAVA_CASE}\n` +
       `              THEN ${httpPost(ref, '                   ')}\n` +
       `         END AS request_id\n` +
       `  FROM alvos a CROSS JOIN guard g\n`
@@ -466,8 +490,7 @@ function blocoDisparo(
     `-- INTEIRA e rode/entregue como está: não há número a anotar nem campo a preencher.\n` +
     `SELECT format(${TAG_SONDA}\n` +
     corpoDoPassoDeLeitura(leva, janelaMin, passoDisparo) +
-    `${TAG_SONDA}, m.ids) AS passo_${passoLeitura}_copie_esta_celula\n` +
-    `FROM mapa m;\n`
+rodapeDoFormat(passoLeitura)
   );
 }
 
@@ -1201,20 +1224,20 @@ export function resolverCanarias(
     resolvidas.push({ ...reg, marcador: versao });
   }
 
-  const problemas: string[] = [];
+  const pendencias: string[] = [];
   if (semMarcador.length > 0) {
-    problemas.push(`marcador ILEGÍVEL no repo: ${semMarcador.join(', ')}`);
+    pendencias.push(`marcador ILEGÍVEL no repo: ${semMarcador.join(', ')}`);
   }
   if (campoDesalinhado.length > 0) {
-    problemas.push(
+    pendencias.push(
       'a canária trocou de FORMA e o registro não acompanhou: ' +
         `${campoDesalinhado.join(', ')} — ajuste \`campoMarcador\` no registro e a tabela de ` +
         'docs/agent/deploy.md §Canárias',
     );
   }
-  if (problemas.length > 0) {
+  if (pendencias.length > 0) {
     throw new Error(
-      `${problemas.join(' | ')}. O marcador esperado é DERIVADO do repo de propósito: digitá-lo ` +
+      `${pendencias.join(' | ')}. O marcador esperado é DERIVADO do repo de propósito: digitá-lo ` +
         'no registro é a via do veredito falso que esta ferramenta existe para fechar. ' +
         'Nenhum SQL foi emitido.',
     );
@@ -1258,7 +1281,7 @@ function httpPostCanaria(ref: string, indent: string): string {
     `${i}    'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets\n` +
     `${i}                      WHERE name = 'CRON_SECRET' LIMIT 1)),\n` +
     `${i}  body := a.corpo,\n` +
-    `${i}  timeout_milliseconds := 20000)`
+    `${i}  timeout_milliseconds := ${TIMEOUT_HTTP_MS})`
   );
 }
 
@@ -1284,7 +1307,7 @@ function blocoDisparoCanaria(
       `alvos(nome, edge, corpo, sufixo) AS (VALUES\n${valuesAlvosCanaria(leva)}\n),\n`
     : `WITH alvos(nome, edge, corpo, sufixo) AS (VALUES\n${valuesAlvosCanaria(leva)}\n),\n`;
   const projecao = comTrava
-    ? "         CASE WHEN g.confirmei_o_deploy = 'sim'\n" +
+    ? `         ${TRAVA_CASE}\n` +
       `              THEN ${httpPostCanaria(ref, '                   ')}\n` +
       '         END AS request_id\n' +
       '  FROM alvos a CROSS JOIN guard g\n'
@@ -1304,8 +1327,7 @@ function blocoDisparoCanaria(
     '-- INTEIRA e rode/entregue como está: não há número a anotar nem campo a preencher.\n' +
     `SELECT format(${TAG_SONDA}\n` +
     corpoDoPassoDeLeituraCanaria(leva, janelaMin, passoDisparo) +
-    `${TAG_SONDA}, m.ids) AS passo_${passoLeitura}_copie_esta_celula\n` +
-    'FROM mapa m;\n'
+rodapeDoFormat(passoLeitura)
   );
 }
 
@@ -1377,90 +1399,90 @@ function blocoLeituraCanaria(
     '         count(*) FILTER (WHERE r.status_code = 401)               AS recusas_recentes\n' +
     '  FROM net._http_response r\n' +
     "  WHERE r.created > now() - interval '6 hours'\n" +
-    '    AND NOT EXISTS (SELECT 1 FROM ids i2 WHERE i2.request_id = r.id)\n' +
+    '    AND NOT EXISTS (SELECT 1 FROM ids mp2 WHERE mp2.request_id = r.id)\n' +
     '),\n' +
     'lidas AS (\n' +
     '  -- Parte de `esperado`: zero linhas não pode virar "nada a reportar". O envelope `data` é\n' +
     '  -- descido aqui porque a omie-analytics-sync responde `{success, data:{...}}` e as outras no\n' +
     '  -- topo — sem o COALESCE as DUAS canárias dela sairiam como "sem eco".\n' +
-    '  SELECT e.nome, e.campo_marcador, e.marcador_esperado, e.efeito,\n' +
-    '         i.request_id, x.status_code, x.created,\n' +
-    '         CASE WHEN x.content IS NOT NULL AND left(ltrim(x.content), 1) = \'{\'\n' +
-    "              THEN COALESCE(x.content::jsonb -> 'data', x.content::jsonb)\n" +
+    '  SELECT esp.nome, esp.campo_marcador, esp.marcador_esperado, esp.efeito,\n' +
+    '         mp.request_id, resp.status_code, resp.created,\n' +
+    '         CASE WHEN resp.content IS NOT NULL AND left(ltrim(resp.content), 1) = \'{\'\n' +
+    "              THEN COALESCE(resp.content::jsonb -> 'data', resp.content::jsonb)\n" +
     '         END AS corpo\n' +
-    '  FROM esperado e\n' +
-    '  LEFT JOIN ids i ON i.nome = e.nome\n' +
-    '  LEFT JOIN net._http_response x ON x.id = i.request_id\n' +
+    '  FROM esperado esp\n' +
+    '  LEFT JOIN ids mp ON mp.nome = esp.nome\n' +
+    '  LEFT JOIN net._http_response resp ON resp.id = mp.request_id\n' +
     ')\n' +
-    'SELECT l.nome,\n' +
-    '       l.request_id,\n' +
-    '       l.status_code,\n' +
-    "       l.corpo ->> 'canary' AS canary_respondido,\n" +
-    '       l.corpo ->> l.campo_marcador AS marcador_respondido,\n' +
-    '       l.marcador_esperado,\n' +
-    "       l.corpo ->> 'ok' AS ok_respondido,\n" +
+    'SELECT ca.nome,\n' +
+    '       ca.request_id,\n' +
+    '       ca.status_code,\n' +
+    "       ca.corpo ->> 'canary' AS canary_respondido,\n" +
+    '       ca.corpo ->> ca.campo_marcador AS marcador_respondido,\n' +
+    '       ca.marcador_esperado,\n' +
+    "       ca.corpo ->> 'ok' AS ok_respondido,\n" +
     '       CASE\n' +
-    '         WHEN l.request_id IS NULL\n' +
+    '         WHEN ca.request_id IS NULL\n' +
     `           THEN 'INDETERMINADO — esta canaria nao tem request_id no mapa embutido pelo passo ` +
     `${passoDisparo}. Isto e ausencia de dado, nao veredito: ou a trava ficou FECHADA e nada foi ` +
     `disparado, ou a celula veio de OUTRA leva'\n` +
-    '         WHEN l.status_code IS NULL\n' +
+    '         WHEN ca.status_code IS NULL\n' +
     `           THEN 'AGUARDE — o request_id embutido pelo passo ${passoDisparo} ainda nao tem ` +
     `resposta HTTP (leva ~10s); rode este passo de novo'\n` +
-    `         WHEN l.created <= now() - interval '${janelaMin} minutes'\n` +
-    `           THEN 'INDETERMINADO — a resposta e de ' || l.created || ', FORA da janela de ` +
+    `         WHEN ca.created <= now() - interval '${janelaMin} minutes'\n` +
+    `           THEN 'INDETERMINADO — a resposta e de ' || ca.created || ', FORA da janela de ` +
     `${janelaMin} min: esta celula e de outra sessao e o veredito seria de um deploy anterior. ` +
     `Redispare o passo ${passoDisparo}'\n` +
     // ------------------------------------------------------------------ SEM CANARIA NO AR ---
     // O eco vem ANTES do status de propósito: a generate-tactical-plan devolve 500 quando a
     // canária dela REPROVA, e julgar pelo status primeiro leria regressão como bundle velho.
-    `         WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true' AND l.status_code = 401\n` +
-    `              AND c.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL} AND c.recusas_recentes = 0\n` +
+    `         WHEN ca.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca.status_code = 401\n` +
+    `              AND cred.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL} AND cred.recusas_recentes = 0\n` +
     `           THEN 'SEM CANARIA NO AR — 401, e o CRON_SECRET esta PROVADO bom agora (' ||\n` +
-    `                c.ok_recentes || ' resposta(s) 2xx e ZERO 401 fora desta leva em 6h), logo a ` +
+    `                cred.ok_recentes || ' resposta(s) 2xx e ZERO 401 fora desta leva em 6h), logo a ` +
     `recusa e da EDGE: o bundle no ar e anterior a canaria, ela NAO rodou e NADA executou. Isto ` +
     `NAO e canaria vermelha — o desfecho e DEPLOY'\n` +
-    `         WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true' AND l.status_code = 401\n` +
+    `         WHEN ca.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca.status_code = 401\n` +
     `           THEN 'INDETERMINADO — 401 nao separa bundle sem canaria de CRON_SECRET invalido, e ` +
-    `o controle de credencial NAO foi observado (2xx fora da leva em 6h: ' || c.ok_recentes ||\n` +
-    `                ', recusas 401: ' || c.recusas_recentes || '). Confira o CRON_SECRET no vault ` +
+    `o controle de credencial NAO foi observado (2xx fora da leva em 6h: ' || cred.ok_recentes ||\n` +
+    `                ', recusas 401: ' || cred.recusas_recentes || '). Confira o CRON_SECRET no vault ` +
     `ANTES de redeployar'\n` +
-    `         WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true' AND l.status_code >= 400\n` +
-    `           THEN 'SEM CANARIA NO AR — o bundle recusou o request (HTTP ' || l.status_code ||\n` +
+    `         WHEN ca.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca.status_code >= 400\n` +
+    `           THEN 'SEM CANARIA NO AR — o bundle recusou o request (HTTP ' || ca.status_code ||\n` +
     `                '), NADA executou. Isto NAO e canaria vermelha: nao ha canaria no ar para ` +
     `ficar vermelha'\n` +
-    `         WHEN l.corpo ->> 'canary' IS DISTINCT FROM 'true'\n` +
-    `           THEN 'SEM CANARIA NO AR — HTTP ' || l.status_code || ' SEM eco canary: o bundle ` +
-    `ignorou a flag e RODOU O FLUXO REAL (' || l.efeito || '). Isto NAO e canaria vermelha, e ` +
+    `         WHEN ca.corpo ->> 'canary' IS DISTINCT FROM 'true'\n` +
+    `           THEN 'SEM CANARIA NO AR — HTTP ' || ca.status_code || ' SEM eco canary: o bundle ` +
+    `ignorou a flag e RODOU O FLUXO REAL (' || ca.efeito || '). Isto NAO e canaria vermelha, e ` +
     `canaria AUSENTE — e o efeito ja aconteceu'\n` +
     // ------------------------------------------------------------ marcador antes do `ok` ---
-    '         WHEN l.corpo ->> l.campo_marcador IS NULL\n' +
+    '         WHEN ca.corpo ->> ca.campo_marcador IS NULL\n' +
     `           THEN 'CANARIA SEM MARCADOR — respondeu canary:true e o corpo NAO TEM o campo ' ||\n` +
-    `                l.campo_marcador || ': o bundle e anterior ao versionamento da canaria. O ok ` +
+    `                ca.campo_marcador || ': o bundle e anterior ao versionamento da canaria. O ok ` +
     `sozinho NAO discrimina reversao de fatia (armadilha 2 do deploy.md). PRECISA DEPLOY'\n` +
-    '         WHEN l.corpo ->> l.campo_marcador IS DISTINCT FROM l.marcador_esperado\n' +
-    `           THEN 'CANARIA DE OUTRA FATIA — respondeu ' || l.campo_marcador || '=' ||\n` +
-    `                COALESCE(l.corpo ->> l.campo_marcador, '?') || ' (esperado ' ||\n` +
-    `                l.marcador_esperado || '). O bundle velho carrega o expected VELHO e compara ` +
+    '         WHEN ca.corpo ->> ca.campo_marcador IS DISTINCT FROM ca.marcador_esperado\n' +
+    `           THEN 'CANARIA DE OUTRA FATIA — respondeu ' || ca.campo_marcador || '=' ||\n` +
+    `                COALESCE(ca.corpo ->> ca.campo_marcador, '?') || ' (esperado ' ||\n` +
+    `                ca.marcador_esperado || '). O bundle velho carrega o expected VELHO e compara ` +
     `velho x velho, entao o ok dele nao vale — e assim que uma reversao MENTE VERDE. PRECISA DEPLOY'\n` +
-    `         WHEN l.corpo ->> 'ok' IS NULL\n` +
+    `         WHEN ca.corpo ->> 'ok' IS NULL\n` +
     `           THEN 'CANARIA SEM VEREDITO — canary:true e marcador batendo, mas o corpo nao traz ` +
     `ok. Fail-closed: sem os TRES campos nao ha confirmacao'\n` +
-    `         WHEN l.corpo ->> 'ok' = 'false'\n` +
-    `           THEN 'CANARIA VERMELHA — o bundle no ar E o esperado (' || l.marcador_esperado ||\n` +
+    `         WHEN ca.corpo ->> 'ok' = 'false'\n` +
+    `           THEN 'CANARIA VERMELHA — o bundle no ar E o esperado (' || ca.marcador_esperado ||\n` +
     `                ') e a fixture REPROVOU: o comportamento regrediu. NAO e deploy pendente — ` +
     `leia os casos do corpo para saber QUAL lado caiu'\n` +
-    `         WHEN l.corpo ->> 'canary' = 'true'\n` +
-    '              AND l.corpo ->> l.campo_marcador = l.marcador_esperado\n' +
-    `              AND l.corpo ->> 'ok' = 'true'\n` +
+    `         WHEN ca.corpo ->> 'canary' = 'true'\n` +
+    '              AND ca.corpo ->> ca.campo_marcador = ca.marcador_esperado\n' +
+    `              AND ca.corpo ->> 'ok' = 'true'\n` +
     "           THEN 'CANARIA VERDE'\n" +
     `         ELSE 'INDETERMINADO — combinacao nao prevista: canary=' ||\n` +
-    `              COALESCE(l.corpo ->> 'canary', '?') || ', ' || l.campo_marcador || '=' ||\n` +
-    `              COALESCE(l.corpo ->> l.campo_marcador, '?') || ', ok=' ||\n` +
-    `              COALESCE(l.corpo ->> 'ok', '?')\n` +
+    `              COALESCE(ca.corpo ->> 'canary', '?') || ', ' || ca.campo_marcador || '=' ||\n` +
+    `              COALESCE(ca.corpo ->> ca.campo_marcador, '?') || ', ok=' ||\n` +
+    `              COALESCE(ca.corpo ->> 'ok', '?')\n` +
     '       END AS veredito\n' +
-    'FROM lidas l CROSS JOIN controle_credencial c\n' +
-    'ORDER BY l.nome;\n'
+    'FROM lidas ca CROSS JOIN controle_credencial cred\n' +
+    'ORDER BY ca.nome;\n'
   );
 }
 

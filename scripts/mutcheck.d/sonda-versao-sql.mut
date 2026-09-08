@@ -8,12 +8,12 @@
 # Rode: scripts/mutcheck.sh scripts/sonda-versao-sql.ts scripts/sonda-versao-sql.test.ts scripts/mutcheck.d/sonda-versao-sql.mut
 PEGA      | trava do bloco caro CASE -> WHERE (teatro) | s/CASE WHEN g\.confirmei/WHERE g.confirmei/
 PEGA      | leitura sai da lista canonica (LEFT->JOIN) | s/LEFT JOIN ids i/JOIN ids i/
-PEGA      | resposta ausente vira veredito (LEFT->JOIN)| s/LEFT JOIN net\._http_response/JOIN net._http_response/
-PEGA      | ramo AGUARDE some do passo EMBUTIDO        | s/'AGUARDE — o request_id embutido/'AGUARDOU — o request_id embutido/
+PEGA      | resposta ausente vira veredito (LEFT->JOIN)| s/LEFT JOIN net\._http_response x ON/JOIN net._http_response x ON/
+PEGA      | ramo AGUARDE some do passo EMBUTIDO        | s/'AGUARDE — o request_id embutido pelo passo \$\{passoDisparo\} ainda não/'AGUARDOU — o request_id embutido pelo passo \$\{passoDisparo\} ainda não/
 PEGA      | ramo AGUARDE some do passo do ECO          | s/'AGUARDE — o request_id colado/'AGUARDOU — o request_id colado/
 PEGA      | placeholder do bloco que le fica invalido  | s/: `'\{\}'::jsonb`;/: `'<COLE_AQUI>'::jsonb`;/
 PEGA      | marcador hardcoded em vez de lido do arquivo | s/lit\(e\.versao\)/lit('v1.0-sensor-inicial')/
-PEGA      | timeout_milliseconds implicito (default 5s) | s/timeout_milliseconds := 20000/-- sem timeout/
+PEGA      | timeout_milliseconds implicito (default 5s) | s/^const TIMEOUT_HTTP_MS = 20000;/const TIMEOUT_HTTP_MS = 0;/
 PEGA      | --caro forasteira aceita em silencio       | s/!edges\.includes\(c\)/false/
 PEGA      | edge sem sensor degrada em vez de lancar   | s/if \(problemas\.length > 0\)/if (false)/
 PEGA      | eco probe:true dispensado no CONFIRMADO    | s/AND l\.corpo ->> 'probe' = 'true'/AND true/
@@ -42,17 +42,17 @@ PEGA      | edge fora do mapa degrada em vez de lancar     | s/if \(!\(edge in m
 # aos dois muta as DUAS e cai no guard de substituição única do mutcheck como INVÁLIDA — que
 # é ausência de medição, não medição. Ramo novo com esse prefixo: ancore no texto dele.
 PEGA      | 4xx generico perde a cobertura (404 cai no ELSE)       | s/l\.status_code >= 400/l.status_code = 401/
-PEGA      | fallback do 401 deixa de ser INDETERMINADO (fail-open)    | s/THEN 'INDETERMINADO — 401 nao separa/THEN 'BUNDLE VELHO (pre-sonda) — 401 nao separa/
+PEGA      | fallback do 401 deixa de ser INDETERMINADO (fail-open)    | s/THEN 'INDETERMINADO — 401 nao separa bundle velho/THEN 'BUNDLE VELHO (pre-sonda) — 401 nao separa bundle velho/
 PEGA      | controle nao exclui a propria leva (a sonda se avaliza)   | s/AND NOT EXISTS \(SELECT 1 FROM ids i2 WHERE i2\.request_id = r\.id\)/AND true/
 PEGA      | piso do controle zerado (1 resposta 2xx ja 'prova')       | s/PISO_CONTROLE_CREDENCIAL = 10/PISO_CONTROLE_CREDENCIAL = 0/
 PEGA      | 401 alheio deixa de desqualificar o controle              | s/AND c\.recusas_recentes = 0/AND true/
-PEGA      | controle nao chega na projecao (CROSS JOIN removido)      | s/ CROSS JOIN controle_credencial c//
+PEGA      | controle nao chega na projecao (CROSS JOIN removido)      | s/FROM lidas l CROSS JOIN controle_credencial c/FROM lidas l/
 # Os 7 abaixo guardam a LEITURA SEM COLAGEM (#2127). Ela troca o `request_id` colado a mao pelo ECO
 # do slug que a propria resposta carrega — e cada guard aqui e a diferenca entre achar a linha CERTA
 # e achar UMA linha. Sem eles a suite aceitava um SQL que le a resposta de OUTRA execucao.
 PEGA      | casamento por slug neutralizado (pega qualquer linha) | s/WHERE rr\.corpo ->> 'edge' = e\.edge/WHERE true/
 PEGA      | casamento dispensa probe:true (pega linha de CRON)    | s/AND rr\.corpo ->> 'probe' = 'true'/AND true/
-PEGA      | janela larga: sondagem de ontem vira veredito de hoje | s/interval '\$\{janelaMin\} minutes'/interval '30 days'/
+PEGA      | janela larga: sondagem de ontem vira veredito de hoje | s/r\.created > now\(\) - interval '\$\{janelaMin\} minutes'/r.created > now() - interval '30 days'/
 PEGA      | teto da janela removido (guard do #2079 desligado)    | s/ \|\| janelaMin > JANELA_MAX_MIN//
 PEGA      | LIMIT 1 sem desempate (created EMPATA em prod)        | s/ORDER BY rr\.created DESC, rr\.id DESC/ORDER BY rr.created DESC/
 PEGA      | LATERAL vira INNER: edge sem eco SOME da saida        | s/LEFT JOIN LATERAL \(/JOIN LATERAL (/
@@ -71,13 +71,13 @@ PEGA      | --so-leitura passa a emitir o disparo junto           | s/const quer
 # que o default. MEDIDO 2026-09-07 com controle+ verde na MESMA invocacao: 20000 -> 3000, -> 1 e
 # -> 0 SOBREVIVIAM as 54 mutacoes deste contrato. As duas abaixo sao o dente novo; a de 5000 e a
 # mutacao de FRONTEIRA (pina que a comparacao e `>` estrito, nao `>=`: com `>=` ela sobrevive).
-PEGA      | timeout IGUAL ao default de 5s (fronteira > vs >=) | s/timeout_milliseconds := 20000/timeout_milliseconds := 5000/
-PEGA      | timeout ABAIXO do default (3s: pior que implicito) | s/timeout_milliseconds := 20000/timeout_milliseconds := 3000/
+PEGA      | timeout IGUAL ao default de 5s (fronteira > vs >=) | s/^const TIMEOUT_HTTP_MS = 20000;/const TIMEOUT_HTTP_MS = 5000;/
+PEGA      | timeout ABAIXO do default (3s: pior que implicito) | s/^const TIMEOUT_HTTP_MS = 20000;/const TIMEOUT_HTTP_MS = 3000;/
 # ACEITO, com justificativa: 20s e TUNING, nao fronteira. Nenhuma decisao do gerador depende de o
 # numero ser 20000 em vez de 30000 — o que decide e estar ACIMA do piso de 5s, e ISSO agora tem
 # asercao (as duas PEGA acima). Pinar 20000 seria fachada: travaria o valor sem invariante atras,
 # e a proxima pessoa que ajustasse o tuning ficaria vermelha sem ter quebrado nada.
-SOBREVIVE | timeout 20s -> 30s (tuning acima do piso)  | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
+SOBREVIVE | timeout 20s -> 30s (tuning acima do piso)  | s/^const TIMEOUT_HTTP_MS = 20000;/const TIMEOUT_HTTP_MS = 30000;/
 # ACEITO, com justificativa: INERTE, nao apenas cosmetico. `SELECT l.edge,` e a PRIMEIRA coluna da
 # projecao final (conferido em 2026-09-07), entao `ORDER BY 1` e EXATAMENTE o mesmo plano e a mesma
 # ordem — o mutante nao muda nem a saida. E mesmo que a 1a coluna mudasse, ordem de LINHAS de um
@@ -103,7 +103,7 @@ PEGA      | bump nao-mergeado deixa de contar como divergencia     | s/ausentes\
 PEGA      | fatia perde o mapa (so o versao.ts e conferido)        | s/, ARQ_MAPA\]/]/
 PEGA      | fetch some: compara contra retrato velho por padrao    | s/const f = git\(\['fetch', REMOTO, RAMO_DEPLOYADO\]\);/const f = { status: 0, stdout: '', stderr: '' };/
 PEGA      | fetch que falha degrada em vez de abortar              | s/if \(f\.status !== 0\) \{/if (false) {/
-PEGA      | --sem-rede passa a valer SEMPRE (guard vira opt-in)    | s/semRede === true/true/
+PEGA      | --sem-rede passa a valer SEMPRE (guard vira opt-in)    | s/conferirSincronia\(deps\.raiz, edges, semRede === true/conferirSincronia(deps.raiz, edges, true/
 # O `cwd` do `gitReal`. O #2227 tirou a ref `origin/main` herdada do checkout (a causa do
 # `mutation-check` vermelho em todo PR — docs/historico/teste-que-afirma-o-checkout.md) e pôs um
 # repo fixture no lugar. Esta linha é o que transforma esse conserto em COBERTURA: com a asserção
@@ -141,4 +141,4 @@ PEGA      | ramo do id que NAO e sonda neutralizado               | s/l\.corpo -
 # CONDIÇÃO e RAMO (`WHEN … IS DISTINCT FROM 'true'` seguido do `THEN 'NAO E RESPOSTA DE SONDA`); o
 # veredito EXECUTADO continua provado no cenário `cron_sem_probe` do
 # .claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh.
-PEGA      | negacao NULL-blind no ramo do nao-sonda               | s/IS DISTINCT FROM 'true'/<> 'true'/
+PEGA      | negacao NULL-blind no ramo do nao-sonda               | s/'probe' IS DISTINCT FROM 'true'/'probe' <> 'true'/
