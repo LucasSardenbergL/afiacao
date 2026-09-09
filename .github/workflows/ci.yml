@@ -565,16 +565,6 @@ jobs:
       - name: Falsificação — sabota o alvo e EXIGE vermelho em cada regra
         run: bun run test:falsificacao
 
-      # O eixo 5 do gate de ordem (#2428) sabe ficar VERMELHO? Blocking, 0,06s, sem banco e sem
-      # rede — só fixtures. Este falsificador é da família "sempre falsifica" (não é
-      # `scripts/test-*.sh --falsificar`), então o vigia de FORMA do `falsificacao-cobertura.test.ts`
-      # NÃO o alcança: sem esta linha ele rodaria só quando alguém digitasse à mão, que é a mesma
-      # "prosa executável" que o #2285 mediu. Os dois blocos dele importam por igual — as sabotagens
-      # têm de virar o veredito, e a deriva histórica tem de seguir VERDE (um gate que reprovasse
-      # divergência bloquearia 17 das 65 RPCs de edge deste repo).
-      - name: Falsificação — o gate "existe ≠ está na versão" discrimina?
-        run: bun run falsificar:gate-corpo
-
       # Evals da skill lovable-deploy-verify — blocking. A skill decide se um Publish está NO AR
       # (Passo 4, verify-frontend.sh) e quais das 3 camadas de deploy um diff exige (Passo 1,
       # classify.sh). Errar isso é dar "está no ar" para mudança que não subiu — e os evals que

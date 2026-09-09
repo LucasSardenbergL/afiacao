@@ -10,6 +10,25 @@
 # São fixtures e não prod de propósito: o cenário "prod em dia" não existe em prod hoje (a migration
 # do incidente segue por aplicar), e um falsificador que só rode quando o banco coopera não roda.
 #
+# ## Por que ele NÃO é um step do CI (medido, não suposto)
+#
+# Tentei ligá-lo ao `gates-e-falsificacao` e o `exclusividade` reprovou: GATE_NOVO_SEM_EXCLUSIVIDADE
+# — "um gate custa segundos em todo PR, para sempre; a prova de que ele pega algo que os outros não
+# pegam é o preço". Fui medir em vez de fabricar um defeito para ganhar a métrica:
+#
+#   sabotagem: o ramo `CORPO_ANTERIOR` de `classificarCorpo` passa a devolver `DERIVA`
+#   controle verde antes  → vitest 0
+#   sob sabotagem         → vitest 1   ·  este script 1
+#
+# Os dois pegam. A cobertura de CI já está em `precondicao-banco.test.ts` e `pendencias-pacote.test.ts`,
+# que rodam no job `testes` e exercitam os MESMOS cenários (corpo anterior bloqueia, deriva libera,
+# overload indecidível, os dois controles positivos). Um step aqui só repetiria isso mais devagar.
+#
+# Então este arquivo é FERRAMENTA DE MÃO, da família de `falsificar-individuais.sh` e
+# `falsificar-baixa-nao-ingerida.sh`: serve para conferir o gate de uma vez só, em um comando, ao
+# mexer no eixo 5 — sem esperar a suíte inteira. Se um dia ele passar a cobrir algo que o vitest
+# não cobre, aí ele paga o próprio preço e vira step, com o defeito em `scripts/exclusividade.d/`.
+#
 # Uso: bun run falsificar:gate-corpo    ·    exit 0 = o gate discrimina; ≠0 = ele não discrimina.
 set -euo pipefail
 
