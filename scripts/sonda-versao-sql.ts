@@ -1815,12 +1815,11 @@ if (import.meta.main) {
   // Import DINÂMICO, e só aqui: quem apenas importa este módulo (o eval da skill, que o copia para
   // um diretório temporário) não pode depender de `supabase/functions/` resolver.
   const { SONDA_CRON_ALVOS } = await import('../supabase/functions/_shared/sonda-cron-alvos');
-  // O leitor de canárias sai daqui pela MESMA razão, e reusa o extrator do gate `canaria:bump`:
-  // duas cópias da regra "onde mora o marcador" divergiriam, e a que não tem gate é a que decide
-  // errado. O stripper é o COMPARTILHADO (`removerComentarios`) — regex local não sabe o que é
-  // string e apagaria o miolo do arquivo antes da medição.
-  const { localizarCanarias } = await import('./canaria-contrato-bump-gate');
-  const { removerComentarios } = await import('@/lib/gates/limpeza-fonte');
+  // O leitor de canárias sai daqui pela MESMA razão, e mora num módulo PRÓPRIO
+  // (`canaria-leitor-do-repo.ts`) porque a prova executada precisa do MESMO leitor: duas cópias da
+  // regra "onde mora o marcador" divergiriam, e a prova continuaria verde julgando um SQL que não é
+  // o que o operador cola.
+  const { lerCanariasDoRepo } = await import('./canaria-leitor-do-repo');
   process.exit(
     main(process.argv.slice(2), {
       raiz: join(import.meta.dirname, '..'),
@@ -1828,10 +1827,7 @@ if (import.meta.main) {
       erro: (t) => console.error(t),
       git: gitReal(join(import.meta.dirname, '..')),
       edgesComRele: SONDA_CRON_ALVOS.map((a) => a.edge),
-      lerCanarias: (raiz, edge) =>
-        localizarCanarias(
-          removerComentarios(readFileSync(join(raiz, 'supabase', 'functions', edge, 'index.ts'), 'utf8')),
-        ),
+      lerCanarias: lerCanariasDoRepo,
     }),
   );
 }
