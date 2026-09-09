@@ -41,17 +41,38 @@ rodar() {  # $1 = filtro -t; ecoa nada, devolve o rc do vitest
 # exatamente a falha que este script existe para nao cometer. Exigimos "N passed" com N>=1.
 casou_algum() { grep -qE 'Tests +[1-9][0-9]* passed' /tmp/prova-consumidores.$$.log; }
 
+# A arvore tem de estar LIMPA nos dois arquivos que este script mede. Nao e' preciosismo: em
+# 2026-09-09 este step rodava logo depois do `bun run mutcheck` (que muta e restaura o fonte) e o
+# CONTROLE saiu vermelho nos DOIS modos, com a mensagem dizendo apenas "nao ficou verde OU o filtro
+# nao casou" -- duas causas opostas no mesmo ramo, e nenhuma saida do vitest para separa-las.
+# Aqui a sujeira e' NOMEADA antes de qualquer medicao; restaurar em silencio apagaria trabalho
+# local de quem roda isto na maquina.
+sujos=$(git status --porcelain -- "$SRC" "$TESTE" 2>/dev/null)
+if [ -n "$sujos" ]; then
+  echo "PROVA_CONSUMIDORES_FIM abortada: arvore SUJA — o controle mediria outro codigo, nao o do repo"
+  printf '%s\n' "$sujos" | sed 's/^/  /'
+  exit 1
+fi
+
 falhas=0
 
 # ── CONTROLE: sem mutacao, os dois filtros tem de ficar VERDES e casar >=1 teste ──
 for par in "SONDA:$FILTRO_SONDA" "CANARIA:$FILTRO_CANARIA"; do
   modo="${par%%:*}"; filtro="${par#*:}"
-  if rodar "$filtro" && casou_algum; then
-    printf 'CONTROLE  %-8s verde e casou teste ✓\n' "$modo"
-  else
-    printf 'CONTROLE  %-8s NAO ficou verde ou o filtro nao casou teste algum ✗\n' "$modo"
-    printf '          (filtro: %s)\n' "$filtro"
+  # As duas causas de reprovacao sao SEPARADAS: suite vermelha e filtro que nao casa exigem
+  # consertos opostos, e junta-las num ramo so foi o que cegou o diagnostico no CI.
+  if ! rodar "$filtro"; then
+    printf 'CONTROLE  %-8s a suite ficou VERMELHA com este filtro ✗\n' "$modo"
+    printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
+    tail -25 /tmp/prova-consumidores.$$.log | sed 's/^/          /'
     falhas=$((falhas+1))
+  elif ! casou_algum; then
+    printf 'CONTROLE  %-8s o filtro NAO CASOU teste algum (vitest saiu 0 por VAZIO) ✗\n' "$modo"
+    printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
+    tail -25 /tmp/prova-consumidores.$$.log | sed 's/^/          /'
+    falhas=$((falhas+1))
+  else
+    printf 'CONTROLE  %-8s verde e casou teste ✓\n' "$modo"
   fi
 done
 if [ "$falhas" -ne 0 ]; then
