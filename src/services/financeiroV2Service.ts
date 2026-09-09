@@ -5,6 +5,7 @@ import type { Json } from "@/integrations/supabase/types";
 import type { DimRowRaw } from "@/lib/financeiro/orcamento-drill-helpers";
 import { coletarTitulosEntidade, parseMesDataEmissao, type EntidadeRowRaw } from "@/lib/financeiro/orcamento-entidade-helpers";
 import { parseSnapshotSemanas, type SnapshotEmpresa } from "@/lib/financeiro/cockpit-consolida-helpers";
+import { BAIXA_OMIE_LIST, baixaOuIndisponivel } from "@/lib/financeiro/procedencia-baixa";
 import type {
   FinFechamentoRow,
   FinFechamentoInsert,
@@ -95,9 +96,25 @@ export interface AnaliseDimensional {
   valor_dimensao: string;
   qtd_titulos: number;
   total_documento: number;
-  total_pago_recebido: number;
-  total_saldo: number;
+  /**
+   * `null` quando a FONTE não ingere a baixa (#396) — nunca o 0 fabricado que a coluna base tem
+   * em 100% do acervo. Ver `@/lib/financeiro/procedencia-baixa` e `motivo_baixa`.
+   */
+  total_pago_recebido: number | null;
+  /** Derivado da baixa no banco (coluna GERADA doc − pago) → degrada junto com ela. */
+  total_saldo: number | null;
+  /** Por que os dois acima são `null`; `null` aqui = os valores acima são confiáveis. */
+  motivo_baixa: string | null;
 }
+
+/**
+ * Acumulador interno da agregação: soma em NÚMERO e só degrada na saída. Somar sobre `null`
+ * reintroduziria o `Number(null) === 0` que esta correção existe para remover.
+ */
+type AcumuladorDimensional = Omit<
+  AnaliseDimensional,
+  'total_pago_recebido' | 'total_saldo' | 'motivo_baixa'
+> & { total_pago_recebido: number; total_saldo: number };
 
 // ── Mapping helpers (DB rows → narrowed app shapes) ───────────────────────
 
@@ -543,7 +560,7 @@ export async function getAnaliseDimensional(
   const col = (tipo === 'cr' ? dimColCr[dimensao] : dimColCp[dimensao]) as keyof DimRow;
 
   // Aggregate by dimension
-  const map = new Map<string, AnaliseDimensional>();
+  const map = new Map<string, AcumuladorDimensional>();
   for (const row of rows) {
     const rawKey = row[col];
     const key = rawKey == null ? 'Não informado' : String(rawKey);
@@ -568,7 +585,21 @@ export async function getAnaliseDimensional(
     map.set(key, existing);
   }
 
-  return Array.from(map.values()).sort((a, b) => b.total_documento - a.total_documento);
+  // DEGRADAÇÃO HONESTA, na saída e por FONTE (não por valor): as duas matviews agregam
+  // `fin_contas_{pagar,receber}`, cujas colunas de baixa o LIST do Omie nunca preenche (#396 —
+  // 0 em 100% do acervo, medido 2026-09-09). O total dessas colunas seria um número fabricado
+  // com aparência de fato; `total_documento` e `qtd_titulos` seguem sendo medidos e ficam.
+  //
+  // ⚠️ A decisão NÃO olha a soma. `soma === 0` como gatilho transformaria um mês legitimamente
+  // sem pagamento em "—", mentindo no sentido oposto — ver `procedencia-baixa.ts`.
+  return Array.from(map.values())
+    .sort((a, b) => b.total_documento - a.total_documento)
+    .map((linha) => ({
+      ...linha,
+      total_pago_recebido: baixaOuIndisponivel(linha.total_pago_recebido, BAIXA_OMIE_LIST),
+      total_saldo: baixaOuIndisponivel(linha.total_saldo, BAIXA_OMIE_LIST),
+      motivo_baixa: BAIXA_OMIE_LIST.motivo,
+    }));
 }
 
 /**
