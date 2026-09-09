@@ -192,8 +192,10 @@ _sabota() {
   else echo "  FAIL  $nome → alarme sobreviveu; a flag não está sob teste | out='$out'"; fail=1; fi
 }
 
+# shellcheck disable=SC2016  # sed: o padrão é literal do script alvo, expandir aqui o quebraria
 _sabota "sem --no-color no \`git diff\` (mata a lista 'removed')" \
   's|git diff --no-color "$sha^"|git diff "$sha^"|'
+# shellcheck disable=SC2016  # idem: literal do script alvo
 _sabota "sem --no-color no \`git show\` (mata a lista 'added')" \
   's|git show --no-color --format= "$m"|git show "$m"|'
 # O 3º `--no-color` (o do `git diff --name-only` da linha do `changed`) NÃO entra aqui de
@@ -203,7 +205,6 @@ _sabota "sem --no-color no \`git show\` (mata a lista 'added')" \
 
 SCAN_ATUAL=""
 COR_ENV=""
-cd "$base"
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi
