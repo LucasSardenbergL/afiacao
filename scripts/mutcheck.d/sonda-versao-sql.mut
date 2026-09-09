@@ -86,7 +86,10 @@ PEGA      | canaria: 401 determinado SEM testemunha ativa (fail-open) | s/AND at
 # vira prova — e `monthly-report@ef08dddd2` e um bundle historico que responde 200 a qualquer POST
 # ignorando a credencial. Foi o contraexemplo que derrubou a 1a versao deste controle.
 PEGA      | testemunha aceita 2xx sem provar a fonte (bundle anonimo) | s/AND l\.corpo ->> 'fonte'  = l\.fonte_esperada/AND true/
-PEGA      | canaria: testemunha aceita 2xx sem o marcador esperado    | s/AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado/AND true/
+# ⚠️ A ancora leva o sufixo `\`,` (fim do campo `testemunha`): o MESMO predicado aparece no ramo
+#    CANARIA VERDE, e sem o sufixo o `perl -pe` tocava as DUAS linhas -> INVALIDA, que e'
+#    ausencia de medicao. Medido 2026-09-09, no primeiro mutcheck deste contrato.
+PEGA      | canaria: testemunha aceita 2xx sem o marcador esperado    | s/AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado`,/AND true`,/
 # Denominador: linha com request_id NULL e trava FECHADA (nada disparado). Conta-la infla
 # `disparos_na_leva` e a mensagem do INDETERMINADO passa a mentir o denominador.
 PEGA      | controle ativo conta linha NAO disparada (denominador)    | s/WHERE \$\{a\}\.request_id IS NOT NULL/WHERE true/
@@ -221,7 +224,9 @@ PEGA      | canaria: negacao NULL-blind no ramo do 4xx       | s/IS DISTINCT FRO
 PEGA      | canaria: ramo DE OUTRA FATIA neutralizado        | s/WHEN ca\.corpo ->> ca\.campo_marcador IS DISTINCT FROM ca\.marcador_esperado/WHEN false/
 PEGA      | canaria: ramo CANARIA VERMELHA neutralizado      | s/WHEN ca\.corpo ->> 'ok' = 'false'/WHEN false/
 PEGA      | canaria: ramo do id ausente no mapa neutralizado | s/WHEN ca\.request_id IS NULL/WHEN false/
-PEGA      | canaria: VERDE dispensa o marcador (2 dos 3)     | s/AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado/AND true/
+# ⚠️ Ancorada no PREFIXO (aspas + indentacao do ramo): desde que o `controle_ativo` passou a usar
+#    o MESMO predicado como testemunha, um padrao sem prefixo toca as DUAS linhas -> INVALIDA.
+PEGA      | canaria: VERDE dispensa o marcador (2 dos 3)     | s/'              AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado/'              AND true/
 # As duas abaixo são a MESMA falha em camadas diferentes: o campo do marcador é POR CANÁRIA, e
 # fixá-lo em `contrato` faz a `generate-tactical-plan` — a única que serve em `versao` — sair como
 # CANARIA SEM MARCADOR estando perfeita no ar. Uma muta o SQL, a outra a lista canônica que o

@@ -519,10 +519,16 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
     expect(passo2).toMatch(/WHEN l\.created <= now\(\) - interval '20 minutes'/);
   });
 
-  it('o modo --so-leitura mantém o eco (lá não há mapa para ser autoritativo)', () => {
+  it('o modo --so-leitura mantém o eco, COM a janela que o governa', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], soLeitura: true });
     expect(sql).toMatch(/COALESCE\(s\.id, i\.request_id\)/);
     expect(sql).toContain('recentes AS (');
+    // ⚠️ A JANELA do `recentes` PRECISA de asserção AQUI, e a lacuna foi MEDIDA: quando o modo
+    // embutido deixou de emitir esse CTE, a mutação `interval '${janelaMin} minutes'` → `'30 days'`
+    // passou de PEGA a SOBREVIVE — os testes que a matavam liam o SQL do embutido. Sem esta linha,
+    // o eco volta a aceitar a sondagem de ontem como veredito de hoje, e ninguém vê.
+    expect(sql).toMatch(/WHERE r\.created > now\(\) - interval '20 minutes'/);
+    expect(sql).not.toMatch(/WHERE r\.created > now\(\) - interval '30 days'/);
   });
 
   it('DEPLOY CONFIRMADO exige o eco probe:true E a edge que respondeu, não só a versao', () => {
