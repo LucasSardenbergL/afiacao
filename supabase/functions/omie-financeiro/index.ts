@@ -240,9 +240,9 @@ interface OmieContaPagar {
   nValorTitulo?: number;
   valor_pago?: number;
   nValorPago?: number;
-  valor_desconto?: number;
-  valor_juros?: number;
-  valor_multa?: number;
+  // Sem `valor_desconto`/`valor_juros`/`valor_multa`: a API NÃO os envia neste endpoint (0
+  // ocorrências na doc oficial). Declará-los aqui era o que dava ao `t.valor_desconto` a
+  // aparência de leitura legítima. Ver o bloco do upsert e docs/historico/.
   status_titulo?: string;
   codigo_categoria?: string;
   cCodCateg?: string;
@@ -282,9 +282,9 @@ interface OmieContaReceber {
   nValorTitulo?: number;
   valor_recebido?: number;
   nValorPago?: number;
-  valor_desconto?: number;
-  valor_juros?: number;
-  valor_multa?: number;
+  // Sem `valor_desconto`/`valor_juros`/`valor_multa`: a API NÃO os envia neste endpoint (0
+  // ocorrências na doc oficial). Declará-los aqui era o que dava ao `t.valor_desconto` a
+  // aparência de leitura legítima. Ver o bloco do upsert e docs/historico/.
   status_titulo?: string;
   codigo_categoria?: string;
   cCodCateg?: string;
@@ -807,9 +807,18 @@ async function syncContasPagar(
         data_previsao: parseOmieDate(t.data_previsao || t.dDtPreworst),
         valor_documento: t.valor_documento || t.nValorTitulo || 0,
         valor_pago: t.valor_pago || t.nValorPago || 0,
-        valor_desconto: t.valor_desconto || 0,
-        valor_juros: t.valor_juros || 0,
-        valor_multa: t.valor_multa || 0,
+        // Sem desconto/juros/multa AQUI, de propósito — AUSENTE ≠ ZERO. `ListarContasPagar` não
+        // informa nada disso sobre o TÍTULO: na doc oficial (app.omie.com.br/api/v1/financas/
+        // contapagar/, lida em 2026-09-08) os campos chamam-se `desconto`/`juros`/`multa` e vivem
+        // na sub-tag `pagamento` — "Detalhes do pagamento (baixa)" —, e o nome `valor_desconto`
+        // tem ZERO ocorrências na doc inteira. O `|| 0` daqui afirmava "não houve desconto" onde a
+        // verdade é "este endpoint não diz": 0 em 60.607/60.607 títulos, com `valor_documento`
+        // 100% preenchido na MESMA linha como controle positivo.
+        // Por que OMITIR e não gravar `null`: o sync roda em ciclo. Escrever `null` explícito
+        // tornaria esta função um writer DESTRUTIVO — apagaria, a cada volta, qualquer valor que
+        // uma futura ingestão de baixas viesse a gravar nessas colunas. Omitir preserva no UPDATE.
+        // ⚠️ Depende do `DROP DEFAULT` nas colunas: com `DEFAULT 0`, o INSERT de título NOVO
+        // ressuscita o zero fabricado. Ver o bloco SQL em docs/historico/.
         status_titulo: status,
         categoria_codigo: t.codigo_categoria || t.cCodCateg || "",
         categoria_descricao: t.descricao_categoria || "",
@@ -951,9 +960,10 @@ async function syncContasReceber(
         data_previsao: parseOmieDate(t.data_previsao),
         valor_documento: t.valor_documento || t.nValorTitulo || 0,
         valor_recebido: t.valor_recebido || t.nValorPago || 0,
-        valor_desconto: t.valor_desconto || 0,
-        valor_juros: t.valor_juros || 0,
-        valor_multa: t.valor_multa || 0,
+        // Idem, endpoint espelho (ver o bloco em syncContasPagar): em /financas/contareceber/ os
+        // campos `desconto`/`juros`/`multa` pertencem à sub-tag `recebimento` ("Detalhes do
+        // recebimento (baixa)"), ao lado de "Data da Baixa". No nível raiz do
+        // `conta_receber_cadastro` os únicos `valor_*` são documento/pis/cofins/csll/ir/iss/inss.
         status_titulo: status,
         categoria_codigo: t.codigo_categoria || t.cCodCateg || "",
         categoria_descricao: t.descricao_categoria || "",
