@@ -15,11 +15,18 @@ cd "$(dirname "$0")/.." || exit 1
 
 SRC=scripts/sonda-versao-sql.ts
 TESTE=scripts/sonda-versao-sql.test.ts
-# A mutacao consolidada, LITERALMENTE a mesma linha do .mut (se divergirem, a prova nao prova nada).
-MUTACAO='s/AND NOT EXISTS \(SELECT 1 FROM ids id_leva WHERE id_leva\.request_id = r\.id\)/AND true/'
-# Um filtro por modo. Sao os testes que exercitam o CTE em cada gerador, e so eles.
-FILTRO_SONDA='sonda: conta 2xx e 401 na janela de 6h'
-FILTRO_CANARIA='canária: conta 2xx e 401 na janela de 6h'
+
+# ── As mutacoes compartilhadas, uma por CTE de cópia única ──────────────────────────────────────
+# Cada bloco e' `nome|mutacao|filtro da sonda|filtro da canaria`. As mutacoes sao LITERALMENTE as
+# linhas do `.mut` (se divergirem, a prova nao prova nada) e os filtros nomeiam testes que existem
+# em versao SONDA e CANARIA -- e cujos nomes NAO se contem (o `-t` do vitest casa por substring:
+# um nome contido no outro faria os dois rodarem juntos, e a prova por modo isolado deixaria de
+# isolar). Em 2026-09-09 entrou o SEGUNDO CTE, `controle_ativo`: ele decide o veredito do 401 nos
+# dois modos, entao herda a mesma exigencia -- morrer em CADA consumidor, nao so na suite agregada.
+CASOS=(
+  "controle_credencial (exclusao da propria leva)|s/AND NOT EXISTS \(SELECT 1 FROM ids id_leva WHERE id_leva\.request_id = r\.id\)/AND true/|sonda: conta 2xx e 401 na janela de 6h|canária: conta 2xx e 401 na janela de 6h"
+  "controle_ativo (denominador: so o que disparou)|s/WHERE \\\$\{a\}\.request_id IS NOT NULL/WHERE true/|sonda: controle ativo conta só o que ESTA leva disparou|canária: controle ativo conta só o que ESTA leva disparou"
+)
 
 restaurar() { git checkout -- "$SRC"; }
 # DOIS traps, pela licao do #2410: `trap ... INT TERM` roda o handler e a execucao SEGUE da
@@ -113,56 +120,68 @@ if [ -n "$sujos" ]; then
   exit 1
 fi
 
-falhas=0
-
-# ── CONTROLE: sem mutacao, os dois filtros tem de ficar VERDES e casar >=1 teste ──
-for par in "SONDA:$FILTRO_SONDA" "CANARIA:$FILTRO_CANARIA"; do
-  modo="${par%%:*}"; filtro="${par#*:}"
-  # As duas causas de reprovacao sao SEPARADAS: suite vermelha e filtro que nao casa exigem
-  # consertos opostos, e junta-las num ramo so foi o que cegou o diagnostico no CI.
-  if ! rodar "$filtro"; then
-    printf 'CONTROLE  %-8s a suite ficou VERMELHA com este filtro ✗\n' "$modo"
-    printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
-    tail -25 "$LOG" | sed 's/^/          /'
-    falhas=$((falhas+1))
-  elif [ ! -s "$VEREDITO" ]; then
-    # Terceira causa, e a mais perigosa de calar: o runner saiu 0 mas NAO deixou veredito. Sem dado
-    # nao ha aprovacao -- este ramo existe para nunca virar "casou" por omissao.
-    printf 'CONTROLE  %-8s NAO CONSEGUI MEDIR: o runner saiu 0 sem emitir o JSON ✗\n' "$modo"
-    printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
-    tail -25 "$LOG" | sed 's/^/          /'
-    falhas=$((falhas+1))
-  elif ! casou_algum; then
-    printf 'CONTROLE  %-8s o filtro NAO CASOU teste algum (vitest saiu 0 por VAZIO) ✗\n' "$modo"
-    printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
-    tail -25 "$LOG" | sed 's/^/          /'
-    falhas=$((falhas+1))
-  else
-    printf 'CONTROLE  %-8s verde e casou teste ✓\n' "$modo"
-  fi
-done
-if [ "$falhas" -ne 0 ]; then
-  echo "PROVA_CONSUMIDORES_FIM abortada: controle nao verde (mutar suite ja vermelha nao prova nada)"
-  exit 1
-fi
-
-# ── MUTANTE: cada modo, isolado, tem de ficar VERMELHO ──
-perl -i -pe "$MUTACAO" "$SRC"
-if git diff --quiet "$SRC"; then
-  echo "PROVA_CONSUMIDORES_FIM abortada: a mutacao NAO CASOU o fonte (padrao stale ante o .mut)"
-  exit 1
-fi
-
 mortos=0
-for par in "SONDA:$FILTRO_SONDA" "CANARIA:$FILTRO_CANARIA"; do
-  modo="${par%%:*}"; filtro="${par#*:}"
-  if rodar "$filtro"; then
-    printf 'MUTANTE   %-8s SOBREVIVEU ✗ (este modo nao cobre a exclusao da propria leva)\n' "$modo"
-  else
-    printf 'MUTANTE   %-8s morto ✓\n' "$modo"; mortos=$((mortos+1))
+esperados=0
+
+for caso in "${CASOS[@]}"; do
+  IFS='|' read -r NOME MUTACAO FILTRO_SONDA FILTRO_CANARIA <<< "$caso"
+  printf '\n── %s ──\n' "$NOME"
+  esperados=$((esperados + 2))
+  falhas=0
+
+  # ── CONTROLE: sem mutacao, os dois filtros tem de ficar VERDES e casar >=1 teste ──
+  for par in "SONDA:$FILTRO_SONDA" "CANARIA:$FILTRO_CANARIA"; do
+    modo="${par%%:*}"; filtro="${par#*:}"
+    # As duas causas de reprovacao sao SEPARADAS: suite vermelha e filtro que nao casa exigem
+    # consertos opostos, e junta-las num ramo so foi o que cegou o diagnostico no CI.
+    if ! rodar "$filtro"; then
+      printf 'CONTROLE  %-8s a suite ficou VERMELHA com este filtro ✗\n' "$modo"
+      printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
+      tail -25 "$LOG" | sed 's/^/          /'
+      falhas=$((falhas+1))
+    elif [ ! -s "$VEREDITO" ]; then
+      # Terceira causa, e a mais perigosa de calar: o runner saiu 0 mas NAO deixou veredito. Sem dado
+      # nao ha aprovacao -- este ramo existe para nunca virar "casou" por omissao.
+      printf 'CONTROLE  %-8s NAO CONSEGUI MEDIR: o runner saiu 0 sem emitir o JSON ✗\n' "$modo"
+      printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
+      tail -25 "$LOG" | sed 's/^/          /'
+      falhas=$((falhas+1))
+    elif ! casou_algum; then
+      printf 'CONTROLE  %-8s o filtro NAO CASOU teste algum (vitest saiu 0 por VAZIO) ✗\n' "$modo"
+      printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
+      tail -25 "$LOG" | sed 's/^/          /'
+      falhas=$((falhas+1))
+    else
+      printf 'CONTROLE  %-8s verde e casou teste ✓\n' "$modo"
+    fi
+  done
+  if [ "$falhas" -ne 0 ]; then
+    echo "PROVA_CONSUMIDORES_FIM abortada: controle nao verde (mutar suite ja vermelha nao prova nada)"
+    exit 1
   fi
+
+  # ── MUTANTE: cada modo, isolado, tem de ficar VERMELHO ──
+  perl -i -pe "$MUTACAO" "$SRC"
+  if git diff --quiet "$SRC"; then
+    echo "PROVA_CONSUMIDORES_FIM abortada: a mutacao NAO CASOU o fonte (padrao stale ante o .mut)"
+    echo "  caso: $NOME"
+    exit 1
+  fi
+
+  for par in "SONDA:$FILTRO_SONDA" "CANARIA:$FILTRO_CANARIA"; do
+    modo="${par%%:*}"; filtro="${par#*:}"
+    if rodar "$filtro"; then
+      printf 'MUTANTE   %-8s SOBREVIVEU ✗ (este modo nao cobre: %s)\n' "$modo" "$NOME"
+    else
+      printf 'MUTANTE   %-8s morto ✓\n' "$modo"; mortos=$((mortos+1))
+    fi
+  done
+
+  # Restaura ANTES do proximo caso: mutacoes empilhadas mediriam um fonte que ninguem escreveu, e
+  # o `git diff --quiet` do caso seguinte ficaria verde por sujeira da anterior.
+  restaurar
 done
 
 rm -f "$LOG" "$VEREDITO"
-echo "PROVA_CONSUMIDORES_FIM mortos=$mortos de 2"
-[ "$mortos" -eq 2 ]
+echo "PROVA_CONSUMIDORES_FIM mortos=$mortos de $esperados"
+[ "$mortos" -eq "$esperados" ] && [ "$esperados" -gt 0 ]

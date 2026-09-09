@@ -431,9 +431,98 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
     expect(sql).not.toMatch(/r\.id NOT IN \(/);
   });
 
-  it('o veredito determinado do 401 exige PISO de 2xx E zero recusas — amostra rasa não prova', () => {
+  // ── CONTROLE ATIVO ───────────────────────────────────────────────────────────────────────────
+  // Até 2026-09-09 quem determinava o 401 era o controle HISTÓRICO (`ok_recentes >= 10 AND
+  // recusas_recentes = 0`). Ele conta tráfego de FORA da leva e não sabe QUAL credencial autenticou
+  // o que contou — então o disparo com header errado tomava 401 na leva inteira, ficava fora da
+  // contagem pelo NOT EXISTS, e o veredito saía CONFIANTE. A prova passou a ser ATIVA: uma resposta
+  // DESTA leva, com IDENTIDADE verificada. A SEMÂNTICA é provada EXECUTANDO, em PG17
+  // (`db/test-canaria-veredito.sh`); aqui mede-se o dente da suíte textual, que é o que o mutcheck roda.
+  it('o veredito determinado do 401 exige TESTEMUNHA ATIVA — o histórico não decide mais', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    expect(sql).toMatch(/c\.ok_recentes >= 10 AND c\.recusas_recentes = 0/);
+    expect(sql).toMatch(/AND a\.aceitas_na_leva >= 1/);
+    // O histórico saiu da DECISÃO: se ele voltar a condicionar um ramo, a manifestação (b)
+    // (transporte quebrado avalizado por tráfego alheio) volta com ele.
+    expect(sql).not.toMatch(/c\.ok_recentes >= \d+ AND c\.recusas_recentes = 0/);
+  });
+
+  it('a testemunha é IDENTIDADE, não status — 2xx anônimo não prova credencial', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toContain('controle_ativo AS (');
+    // Os quatro elos: 2xx + recência + o eco de sonda + a identidade (versao E fonte esperadas).
+    // Sem o `fonte` (sha256 do arquivo servido) um bundle histórico que ignora a credencial e roda
+    // o fluxo real entraria como testemunha — o contraexemplo `monthly-report@ef08dddd2`.
+    expect(sql).toMatch(/l\.status_code BETWEEN 200 AND 299/);
+    expect(sql).toMatch(/AND l\.created > now\(\) - interval '20 minutes'/);
+    expect(sql).toMatch(/AND l\.corpo ->> 'probe'  = 'true'/);
+    expect(sql).toMatch(/AND l\.corpo ->> 'versao' = l\.versao_esperada/);
+    expect(sql).toMatch(/AND l\.corpo ->> 'fonte'  = l\.fonte_esperada/);
+  });
+
+  // Nome distinto do `it.each` lá embaixo de propósito: `prova-consumidores-controle.sh` filtra por
+  // `-t`, e dois testes cujo nome se contém casariam juntos — a prova por modo ISOLADO deixaria de
+  // isolar, que é a única coisa que ela existe para fazer.
+  it('o controle ativo chega na projeção da sonda pelo CROSS JOIN', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    // Denominador: com a trava FECHADA o request_id é NULL e nada saiu. Contar essa linha infla
+    // `disparos_na_leva`, e a mensagem do INDETERMINADO passa a mentir o denominador que exibe.
+    expect(sql).toMatch(/FROM lidas l\n {2}WHERE l\.request_id IS NOT NULL/);
+    expect(sql).toMatch(/FROM lidas l CROSS JOIN controle_credencial c CROSS JOIN controle_ativo a/);
+  });
+
+  it('os quatro estados do controle ativo são SEPARADOS — zero não funde ausência com recusa', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    // `ausente ≠ zero` aplicado ao próprio controle: pendente (sem resposta) e falha de transporte
+    // (o pg_net grava `error_msg` e deixa o status NULL) NÃO são recusa, e fundi-los num zero só
+    // faria a mensagem dizer "ninguém aceitou" onde a verdade é "ninguém respondeu ainda".
+    expect(sql).toMatch(/AS disparos_na_leva/);
+    expect(sql).toMatch(/AS aceitas_na_leva/);
+    expect(sql).toMatch(/AS recusadas_na_leva/);
+    expect(sql).toMatch(/AS pendentes_na_leva/);
+    expect(sql).toMatch(/AS falhas_na_leva/);
+    // A mensagem não pode afirmar recusa a partir de ausência de dado.
+    expect(sql).toMatch(/NENHUMA aceitacao foi OBSERVADA/);
+    expect(sql).not.toMatch(/nenhum disparo foi aceito/);
+  });
+
+  it('falha de TRANSPORTE não vira AGUARDE — repetir não ressuscita requisição morta', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    expect(sql).toMatch(/WHEN l\.erro_transporte IS NOT NULL/);
+    expect(sql).toMatch(/THEN 'FALHA DE TRANSPORTE/);
+    // Ordem: o ramo do transporte vem ANTES do AGUARDE, senão o status NULL o engole e o operador
+    // repete para sempre um request que já morreu — laço de espera fail-OPEN.
+    expect(sql.indexOf('l.erro_transporte IS NOT NULL')).toBeLessThan(
+      sql.indexOf('WHEN l.status_code IS NULL'),
+    );
+  });
+
+  it('no modo EMBUTIDO o id do disparo é AUTORITATIVO — o eco não sequestra a linha', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    // Recorte local: o SQL completo traz os DOIS textos de passo 2 (o embutido que o passo 1
+    // escreve, e o standalone do eco). Medir o inteiro pegaria o eco e a asserção passaria por
+    // acidente — exatamente o que o comentário do `FIM_DO_FORMAT` mais abaixo documenta.
+    const passo2 = sql.slice(
+      sql.indexOf('SELECT format($sonda$'),
+      sql.indexOf('AS passo_2_copie_esta_celula'),
+    );
+    // O `COALESCE(s.id, i.request_id)` preferia o ECO: com o request desta leva em 401 e um eco
+    // 200 de sondagem ANTERIOR ainda na janela, a linha era julgada pela execução velha enquanto o
+    // controle contava a nova. Pior: com a trava FECHADA (id NULL) um eco antigo fazia a linha sair
+    // julgada, quando o honesto é INDETERMINADO. O eco sobrevive só no `--so-leitura`.
+    expect(passo2).not.toMatch(/COALESCE\(s\.id, i\.request_id\)/);
+    expect(passo2).toMatch(/ {9}i\.request_id,/);
+    // Sem LATERAL do eco, `recentes` ficaria sem consumidor: CTE morto que se lê como se a janela
+    // ainda governasse a busca.
+    expect(passo2).not.toContain('recentes AS (');
+    // A recência que o eco herdava de `recentes` passa a ser ramo próprio: sem ele, a correção
+    // acima faria uma célula de OUTRA sessão sair julgada como de agora.
+    expect(passo2).toMatch(/WHEN l\.created <= now\(\) - interval '20 minutes'/);
+  });
+
+  it('o modo --so-leitura mantém o eco (lá não há mapa para ser autoritativo)', () => {
+    const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'], soLeitura: true });
+    expect(sql).toMatch(/COALESCE\(s\.id, i\.request_id\)/);
+    expect(sql).toContain('recentes AS (');
   });
 
   it('DEPLOY CONFIRMADO exige o eco probe:true E a edge que respondeu, não só a versao', () => {
@@ -679,25 +768,26 @@ describe('PASSO 2 — acha a linha pelo ECO do slug, sem colar request_id nenhum
   });
 
   it('o 401 do passo EMBUTIDO não manda colar nada — o mapa já está lá', () => {
-    // O texto do eco manda "cole o JSON no ids para DETERMINAR". Repetido no bloco embutido, ele
-    // mandaria o operador procurar um campo que não existe mais — e a saída certa ali é outra: o
-    // que falta é TRÁFEGO de fundo, não colagem. Provado em prod 2026-09-06 (#2273).
+    // O texto do eco manda rodar o disparo. Repetido no bloco embutido, ele mandaria o operador
+    // procurar um campo que não existe mais — e a saída certa ali é outra. Desde o controle ativo
+    // (2026-09-09) o que falta não é TRÁFEGO de fundo (o histórico não decide mais): é uma
+    // TESTEMUNHA nesta leva, e a saída é acrescentar à leva uma edge que se sabe no ar.
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
     const ramo = ramoDe(embutida(sql), 'INDETERMINADO — 401');
     expect(ramo).not.toMatch(/cole/i);
-    expect(ramo).toMatch(/embutido/);
-    expect(ramo).toMatch(/TRAFEGO/);
+    expect(ramo).toMatch(/testemunha/i);
+    expect(ramo).toMatch(/Acrescente a leva uma edge que voce SABE no ar/);
   });
 
-  it('o 401 sem colagem AUTO-DESQUALIFICA o controle — e a mensagem diz a saída', () => {
-    // Interação entre a leitura sem colagem e o controle de credencial do #2131: o controle exclui
-    // a própria leva por `NOT EXISTS (… ids …)`, e o `ids` agora nasce VAZIO. O 401 sob julgamento
-    // entra em `recusas_recentes` e o controle se auto-desqualifica — fail-CLOSED, vira
-    // INDETERMINADO. Quem lê precisa saber que a colagem é o que DETERMINA o veredito.
+  it('o 401 sem mapa não tem como testemunhar — e a mensagem diz a saída', () => {
+    // No `--so-leitura` não há request_id desta leva, logo não há testemunha possível e o veredito
+    // do 401 é INDETERMINADO por construção. A saída deixou de ser "cole o JSON no ids": passou a
+    // ser rodar o bloco de DISPARO, que embute o mapa. Fail-CLOSED nos dois casos — o que muda é
+    // que a instrução aponta para o passo que existe.
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
     const ramo = ramoDe(leitura(sql), 'INDETERMINADO — 401');
-    expect(ramo).toMatch(/ids/);
-    expect(ramo).toMatch(/DETERMINAR/);
+    expect(ramo).toMatch(/testemunhar/);
+    expect(ramo).toMatch(/bloco de DISPARO/);
     expect(ramo).not.toContain('BUNDLE VELHO');
   });
 
@@ -1724,8 +1814,8 @@ describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
       [/WHEN ca\.request_id IS NULL\n\s*THEN 'INDETERMINADO — esta canaria nao tem request_id/, 'id ausente no mapa'],
       [/WHEN ca\.status_code IS NULL\n\s*THEN 'AGUARDE/, 'sem resposta HTTP ainda'],
       [
-        /WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\.status_code = 401\n\s*AND cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0\n\s*THEN 'SEM CANARIA NO AR — 401/,
-        '401 com o controle de credencial',
+        /WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\.status_code = 401\n\s*AND ativo\.aceitas_na_leva >= 1\n\s*THEN 'SEM CANARIA NO AR — 401/,
+        '401 com TESTEMUNHA ativa desta leva',
       ],
       [
         /WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\.status_code = 401\n\s*THEN 'INDETERMINADO — 401 nao separa/,
@@ -1786,25 +1876,27 @@ describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
 
   it('o controle de credencial não conta a PRÓPRIA leva — e chega na projeção pelo CROSS JOIN', () => {
     // A mecânica é a da sonda, e cada peça responde por uma falha diferente: `NOT EXISTS` sobre a
-    // leva impede que a própria sondagem avalize o CRON_SECRET; `recusas_recentes = 0` faz um 401
-    // ALHEIO desqualificar o veredito confiante; e sem o CROSS JOIN o `cred` não existe na
-    // projeção — o veredito determinado do 401 vira erro de coluna, ou some.
+    // leva impede que a própria sondagem avalize o CRON_SECRET; e sem o CROSS JOIN os controles não
+    // existem na projeção — o veredito do 401 vira erro de coluna, ou some.
     const s = sql();
     expect(s).toContain('AND NOT EXISTS (SELECT 1 FROM ids id_leva WHERE id_leva.request_id = r.id)');
-    expect(s).toContain('FROM lidas ca CROSS JOIN controle_credencial cred');
-    expect(s).toMatch(
-      /AND cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0\n\s*THEN 'SEM CANARIA NO AR — 401/,
+    expect(s).toContain(
+      'FROM lidas ca CROSS JOIN controle_credencial cred CROSS JOIN controle_ativo ativo',
     );
+    // Quem DETERMINA é o ativo. O histórico ficou como contexto — se ele voltar a condicionar o
+    // ramo, a manifestação (b) (transporte quebrado avalizado por tráfego alheio) volta junto.
+    expect(s).toMatch(/AND ativo\.aceitas_na_leva >= 1\n\s*THEN 'SEM CANARIA NO AR — 401/);
+    expect(s).not.toMatch(/cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0/);
   });
 
-  it('o piso do controle é a CONSTANTE — zerá-lo deixaria UMA resposta 2xx provar a credencial', () => {
-    // As asserções acima casam `>= \d+`, que aceita `>= 0`. Com piso zero UMA resposta 2xx já
-    // "prova" a credencial — o oposto do que o controle existe para fazer, e o gate de mutação
-    // não via a diferença. Referenciar a constante importada mantém a asserção viva quando o
-    // piso for ajustado, em vez de pedir edição de teste a cada tuning.
+  it('o piso do controle é a CONSTANTE — zerá-lo apagaria o alarme de fundo quieto', () => {
+    // O piso perdeu o poder de DECIDIR quando o ativo assumiu, mas não o sentido: ele é o
+    // denominador que separa "o fundo está limpo" de "quase ninguém bateu na porta". Sem ele um
+    // `0 2xx e 0 recusas` se leria como fundo saudável — o oposto do que esse par diz.
     const s = sql();
-    expect(s).toContain(`cred.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL}`);
-    expect(s).not.toMatch(/cred\.ok_recentes >= 0\b/);
+    expect(s).toContain(`cred.ok_recentes < ${PISO_CONTROLE_CREDENCIAL}`);
+    expect(s).not.toMatch(/cred\.ok_recentes < 0\b/);
+    expect(s).toMatch(/fundo ANORMALMENTE QUIETO/);
   });
 
   it('401 sem controle observado permanece INDETERMINADO — nunca veredito confiante', () => {
@@ -2207,8 +2299,47 @@ describe('controle de credencial — a mecânica é a MESMA nos dois modos', () 
   // O que a extração NÃO unificou, e não pode unificar: cada modo DETERMINA o seu veredito, com o
   // seu alias e a sua prosa. Unificar isto seria transformar dois julgamentos distintos num só.
   it('o veredito do 401 continua SEPARADO — alias, gatilho e desfecho de cada modo', () => {
-    expect(sqlSonda()).toMatch(/c\.ok_recentes >= \d+ AND c\.recusas_recentes = 0\n\s*THEN 'BUNDLE VELHO \(pre-sonda\)/);
-    expect(sqlCanaria()).toMatch(/cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0\n\s*THEN 'SEM CANARIA NO AR/);
+    expect(sqlSonda()).toMatch(/a\.aceitas_na_leva >= 1\n\s*THEN 'BUNDLE VELHO \(pre-sonda\)/);
+    expect(sqlCanaria()).toMatch(/ativo\.aceitas_na_leva >= 1\n\s*THEN 'SEM CANARIA NO AR/);
+  });
+
+  // ── o SEGUNDO CTE compartilhado: `controle_ativo` ────────────────────────────────────────────
+  // Mesma razão do primeiro (mecânica única, prosa por modo), e a mesma ressalva: `PEGA` no
+  // mutcheck diz que ALGUM teste morreu, não que os DOIS modos estão cobertos. Quem prova isso é
+  // `scripts/prova-consumidores-controle.sh`, e é por estes nomes que ele filtra.
+  it.each([
+    ['sonda', sqlSonda],
+    ['canária', sqlCanaria],
+  ])('%s: controle ativo conta só o que ESTA leva disparou', (_n, gerar) => {
+    const sql = gerar();
+    expect(sql).toContain('controle_ativo AS (');
+    // O denominador. Linha com request_id NULL é trava FECHADA: nada saiu, e contá-la faria a
+    // mensagem do INDETERMINADO exibir um denominador que mente.
+    expect(sql).toMatch(/ {2}WHERE (l|ca)\.request_id IS NOT NULL/);
+    // Os quatro estados separados — `ausente ≠ zero` dentro do próprio controle.
+    expect(sql).toMatch(/AS disparos_na_leva/);
+    expect(sql).toMatch(/AS aceitas_na_leva/);
+    expect(sql).toMatch(/AS recusadas_na_leva/);
+    expect(sql).toMatch(/AS pendentes_na_leva/);
+    expect(sql).toMatch(/AS falhas_na_leva/);
+    // Recência: sem ela o controle conta qualquer resposta que ainda exista na tabela, e uma
+    // célula de outra sessão avaliza o veredito de agora.
+    expect(sql).toMatch(/AND (l|ca)\.created > now\(\) - interval '\d+ minutes'/);
+    // O histórico continua EXIBIDO, mas não decide mais em nenhum dos modos.
+    expect(sql).toMatch(/Trafego de fundo \(6h, fora desta leva, NAO decide o veredito\)/);
+  });
+
+  // A testemunha muda entre os modos porque o ECO muda — e é ela que impede o 2xx anônimo de um
+  // bundle que ignora a credencial (`monthly-report@ef08dddd2`) de virar prova.
+  it('a TESTEMUNHA é identidade verificada, e cada modo verifica o SEU eco', () => {
+    expect(sqlSonda()).toMatch(/AND l\.corpo ->> 'fonte'  = l\.fonte_esperada\)  AS aceitas_na_leva/);
+    expect(sqlCanaria()).toMatch(
+      /AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado\)  AS aceitas_na_leva/,
+    );
+    // ⚠️ A canária NÃO exige 2xx: a generate-tactical-plan responde 500 quando a fixture reprova, e
+    // esse request já passou pelo gate para chegar a executar. Exigir 2xx aqui descartaria
+    // justamente a resposta que mais prova a credencial.
+    expect(sqlCanaria()).not.toMatch(/ca\.status_code BETWEEN 200 AND 299\n\s*AND ca\.created/);
   });
 });
 

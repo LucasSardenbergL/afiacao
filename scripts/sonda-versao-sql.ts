@@ -896,30 +896,38 @@ function contextoHistorico(alias: string): string {
  * na dimensão CREDENCIAL, irmão do guard temporal do #2079, onde tick pré-merge lido como pendência
  * produzia o mesmo falso negativo confiante.
  *
- * Então o veredito determinado só sai quando o CONTROLE é observado na MESMA consulta (o CTE
- * `controle_credencial`): tráfego de fundo recente que PASSOU (≥ piso de 2xx) e NENHUMA recusa 401
- * fora desta leva provam que o secret do vault está sendo aceito AGORA — logo o 401 é da edge, não
- * da credencial. Sem essa prova o veredito é INDETERMINADO, nunca "bundle velho": fail-CLOSED,
- * igual ao `CONTROLE_CRUZADO_NAO_OBSERVADO` do `verify-edge-escrita.sh`. Antes disso a desambiguação
- * dependia de o operador lembrar de rodar duas consultas à mão (feito assim em 2026-08-30, no
- * #2101) — e recado que depende de alguém lembrar é exatamente como a armadilha da sentinela
- * não-exclusiva passou.
+ * Então o veredito determinado só sai quando um CONTROLE é observado na MESMA consulta. Antes
+ * disso a desambiguação dependia de o operador lembrar de rodar duas consultas à mão (feito assim
+ * em 2026-08-30, no #2101) — e recado que depende de alguém lembrar é exatamente como a armadilha
+ * da sentinela não-exclusiva passou.
  *
- * O QUE O CONTROLE NÃO PROVA: ele é populacional — conclui "o secret está sendo aceito" de
- * tráfego que passou. Não fecha a janela em que o `CRON_SECRET` foi trocado há poucos minutos e
- * NENHUM cron rodou desde a troca: ali os 2xx da janela foram feitos com o secret antigo e o
- * controle avaliza indevidamente. O ramo ESTREITA muito o erro (antes ele era incondicional),
- * não o elimina — e o SQL gerado diz isso ao operador, em vez de deixar a ressalva só no doc.
+ * ⚠️ QUEM DETERMINA É O `controle_ativo`, NÃO O HISTÓRICO — mudou em 2026-09-09. Até então quem
+ * determinava era o `controle_credencial`: tráfego de fundo recente que PASSOU (≥ piso de 2xx) e
+ * nenhuma recusa 401 fora desta leva. Ele é POPULACIONAL, e o parecer Codex do #2424 nomeou as
+ * duas manifestações do buraco: (a) `CRON_SECRET` trocado há minutos sem cron rodado desde — os
+ * 2xx da janela usaram o secret ANTIGO e avalizam indevidamente; (b) o PRÓPRIO disparo mandando
+ * header errado — a leva toma 401, os ids dela ficam FORA da contagem pelo `NOT EXISTS`, e o
+ * controle segue VERDE avalizando um transporte quebrado. (a) se desqualifica sozinha no próximo
+ * cron; (b) NÃO se corrige sozinha, e o desfecho é redeploy à toa de edge que já estava no ar.
  *
- * ⚠️ A EXCLUSÃO DA PRÓPRIA LEVA DEPENDE DO `ids`, QUE AGORA NASCE VAZIO. O controle exclui as
- * respostas desta leva por `NOT EXISTS (… ids …)`; sem a colagem, `ids` não tem linha nenhuma e o
- * 401 que estamos julgando ENTRA em `recusas_recentes` — o controle se auto-desqualifica e o
- * veredito é INDETERMINADO. Isso é fail-CLOSED (a direção segura: nunca produz "bundle velho"
- * confiante), mas torna o veredito DETERMINADO do 401 inalcançável pelo caminho sem colagem. Não
- * dá para consertar excluindo a janela da sonda do controle: as recusas 401 recentes dos crons —
- * justamente a prova de secret quebrado AGORA — sairiam junto, e o erro viraria fail-OPEN. Então a
- * colagem é o que UPGRADE um 401 ambíguo a veredito determinado, exatamente como é a saída da
- * causa (c). É por isso que ela sobrevive: deixou de ser INSUMO e virou ESCAPE, nos dois casos.
+ * O controle ATIVO fecha as duas porque a prova passou a ser da TENTATIVA ATUAL: uma resposta
+ * DESTA leva, correlacionada por `request_id`, com IDENTIDADE verificada (`versao` E `fonte`
+ * esperadas). O histórico continua EXIBIDO — o operador precisa enxergar o fundo — mas não
+ * condiciona ramo nenhum. Ele não some porque o ativo o SUBSUME: se a credencial foi aceita AGORA
+ * por um request desta leva, o que 52 crons fizeram em 6h não acrescenta prova; exigir os dois
+ * (AND) cobraria recall sem comprar precisão. A mecânica e a armadilha do "2xx cru" estão na
+ * docstring de `cteControleAtivo`.
+ *
+ * O QUE SE PERDEU, e é a troca deliberada (precisão > recall): quando a leva INTEIRA responde 401,
+ * não há testemunha e o veredito é INDETERMINADO — onde o histórico determinava. Na prática isso é
+ * a leva de UMA edge pré-sonda, e a saída está escrita no próprio ramo: acrescentar à leva uma edge
+ * que se sabe no ar. É o mesmo lugar onde a manifestação (b) morde, então o que se perde em recall
+ * é exatamente o que se ganha em não mentir.
+ *
+ * ⚠️ O `NOT EXISTS (… ids …)` do histórico segue valendo pelo outro motivo: sem ele o 401 sob
+ * julgamento entra em `recusas_recentes` e o controle se auto-envenena. Não dá para consertar
+ * excluindo a janela inteira da sonda: as recusas 401 recentes dos crons — justamente a prova de
+ * secret quebrado AGORA — sairiam junto, e o erro viraria fail-OPEN.
  */
 function blocoLeitura(leva: EdgeSondada[], janelaMin: number, ids: FonteDosIds = ECO): string {
   const embutido = ids.modo === 'embutido';
