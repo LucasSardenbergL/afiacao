@@ -1126,24 +1126,22 @@ jobs:
       - name: mutcheck — selftest (mecânica da ferramenta, sem vitest)
         run: bun run mutcheck:selftest
 
-      # O `mutcheck` abaixo roda a suíte INTEIRA e reporta o AGREGADO. Desde que a mecânica do
-      # `controle_credencial` virou uma função só (sonda + canária), "PEGA" passou a significar
-      # apenas "algum teste morreu" — uma metade bem coberta esconde a outra descoberta, e o `.mut`
-      # ficaria afirmando cobertura que ninguém mediu. Este step roda a MESMA mutação contra cada
-      # modo ISOLADO e exige vermelho nos dois. Vive aqui, e não à mão, porque falsificação que só
-      # roda à mão é ausência de dado (docs/historico/falsificacao-fora-do-ci.md).
+      # ⏸️ O step `prova por consumidor` (scripts/prova-consumidores-controle.sh) SAIU daqui em
+      # 2026-09-09, no mesmo dia em que entrou pelo #2424 — ele derrubou a main e a causa ainda
+      # NÃO é conhecida. O que se sabe, medido: no runner o passo reprova em ~1,45 s por execução
+      # (#2413) — tempo de falha de INICIALIZAÇÃO do vitest, não de rodar 164 testes —, o CONTROLE
+      # sai vermelho nos DOIS modos, e local é verde em todas as combinações tentadas: com e sem
+      # `LC_ALL=C`, e reproduzindo a sequência exata `mutcheck → prova`.
       #
-      # ⚠️ ANTES do `mutcheck`, não depois — e a ordem é o conserto de um vermelho de main real
-      # (2026-09-09). O step nasceu depois dele e o CONTROLE saiu vermelho nos DOIS modos no
-      # runner, verde nas duas execuções locais (inclusive sob `LC_ALL=C`). O `mutcheck` muta o
-      # fonte e restaura por cópia; este script MEDE o fonte. Rodando depois, ele herda o que a
-      # restauração alheia deixou — e o que ele mede deixa de ser o código do repo. Aqui ele roda
-      # sobre a árvore recém-checada, que é a condição em que foi validado. O guard de árvore suja
-      # dentro do próprio script é o cinto: ele NOMEIA a sujeira em vez de medir outro código.
-      # Custo MEDIDO 2026-09-08 na M2 do founder, sem `heavy`: 20s (4 rodadas de vitest filtradas
-      # por `-t`). O job tem teto de 15min e o `mutcheck` consome ~10min — cabe com folga.
-      - name: prova por consumidor — o mutante compartilhado morre nos DOIS modos
-        run: bash scripts/prova-consumidores-controle.sh
+      # Sai porque main vermelha é custo de TODAS as worktrees, e um gate cuja falha ninguém
+      # explica não é cobertura: é ruído com poder de veto. Não vira "verde condicional" nem
+      # `continue-on-error` — gate que não pode reprovar mente pior do que gate ausente.
+      #
+      # VOLTA quando a causa estiver medida. O script segue no repo, roda à mão, e agora despeja a
+      # saída do vitest na falha (era só isso que faltava para o diagnóstico não parar por falta de
+      # evidência). Enquanto ele não volta, a consolidação que o `.mut` declara — duas mutações
+      # gêmeas viraram uma — segue afirmada e NÃO medida no CI:
+      #   bash scripts/prova-consumidores-controle.sh
 
       - name: mutcheck — contratos de cobertura money-path (.mut)
         env:
