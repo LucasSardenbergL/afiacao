@@ -74,7 +74,7 @@ PEGA      | Markdown passa a ser ignorado         | s{\*\.svg \|}{*.svg | *.md |
 # Fechadas tornando o stub sensível a `origin/main` e à presença de `MB` nos diffs.
 PEGA      | merge-base usa a ref errada           | s{^(mb=.*)origin/main}{$1origin/master}
 PEGA      | diff de nomes perde a merge-base      | s{--name-only "\$mb" \$alvo}{--name-only \$alvo}
-PEGA      | diff de conteudo perde a merge-base   | s{git diff "\$mb" \$alvo -- "\$f"}{git diff \$alvo -- "\$f"}
+PEGA      | diff de conteudo perde a merge-base   | s{git diff --no-color "\$mb" \$alvo -- "\$f"}{git diff --no-color \$alvo -- "\$f"}
 
 # TTL do dedupe: sem ele o silêncio vira PERMANENTE naquela branch — fechado pelo caso 12b.
 PEGA      | silencio do dedupe nunca expira       | s{^    if \[ -f "\$marca" \] && \[ -z "\$\(find.*}{    if [ -f "\$marca" ]; then}
