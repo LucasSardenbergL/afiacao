@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Info } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
+import { BAIXA_OMIE_LIST, baixaOuIndisponivel } from '@/lib/financeiro/procedencia-baixa';
 import type {
   FinContaCorrenteRow,
   FinContaPagarRow,
@@ -13,6 +15,24 @@ import type {
 type DrillRow = FinContaCorrenteRow | FinContaPagarRow | FinContaReceberRow;
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/**
+ * ⚠️ `valor_recebido`/`valor_pago` de `fin_contas_{receber,pagar}` são 0 em 100% do acervo — o
+ * LIST do Omie não devolve a baixa (#396, medido em prod 2026-09-09). O `saldo` que este
+ * drill-down calculava (`valor_documento - valor_recebido`) tinha o subtraendo sempre zerado, e
+ * portanto mostrava o valor de FACE inclusive para título liquidado; a coluna "Recebido"/"Pago"
+ * mostrava R$ 0,00 sobre R$ 27,8M/R$ 28,9M. Ver `@/lib/financeiro/procedencia-baixa`.
+ *
+ * O gatilho é a PROCEDÊNCIA declarada, jamais `v === 0`: no dia em que a ingestão existir, esta
+ * constante muda e um zero medido volta a sair como R$ 0,00 — que é o fato.
+ */
+const BAIXA_INDISPONIVEL = !BAIXA_OMIE_LIST.ingereBaixa;
+
+/** Valor de baixa (ou do saldo derivado dela) sob a procedência da fonte deste drill-down. */
+const fmtBaixa = (v: number) => {
+  const apurado = baixaOuIndisponivel(v, BAIXA_OMIE_LIST);
+  return apurado === null ? '—' : fmt(apurado);
+};
 const fmtDate = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 
 export type DrillDownType = 
@@ -41,7 +61,8 @@ const TITLES: Record<string, string> = {
 export function CockpitDrillDown({ type, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<DrillRow[]>([]);
-  const [total, setTotal] = useState(0);
+  /** `null` = a fonte não ingere a baixa e o total seria a MESMA subtração fabricada. */
+  const [total, setTotal] = useState<number | null>(0);
 
   useEffect(() => {
     if (!type) return;
@@ -62,10 +83,24 @@ export function CockpitDrillDown({ type, onClose }: Props) {
           <SheetTitle className="flex items-center gap-3">
             {TITLES[type] || 'Detalhamento'}
             <Badge variant="secondary" className="text-xs">
-              {data.length} registros · Total: {fmt(total)}
+              {data.length} registros · Total: {total === null ? '—' : fmt(total)}
             </Badge>
           </SheetTitle>
         </SheetHeader>
+
+        {/* A degradação precisa DIZER por quê — e só nos tipos que leem a baixa: o drill-down de
+            CAIXA soma `saldo_atual` de `fin_contas_correntes`, outra fonte, que não degrada. */}
+        {!loading && BAIXA_INDISPONIVEL && type !== 'caixa' && data.length > 0 && (
+          <p className="flex items-start gap-2 text-xs text-muted-foreground mt-3">
+            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>
+              <strong className="font-medium">{type === 'cp_aberto' ? 'Pago' : 'Recebido'}</strong>,{' '}
+              <strong className="font-medium">Saldo</strong> e o total acima:{' '}
+              {BAIXA_OMIE_LIST.motivo}. Exibidos como “—” —{' '}
+              <strong className="font-medium">não são R$ 0,00</strong>. Valor e vencimento seguem medidos.
+            </span>
+          </p>
+        )}
 
         <div className="mt-4">
           {loading ? (
@@ -85,7 +120,7 @@ export function CockpitDrillDown({ type, onClose }: Props) {
   );
 }
 
-async function loadData(type: DrillDownType): Promise<{ rows: DrillRow[]; total: number }> {
+async function loadData(type: DrillDownType): Promise<{ rows: DrillRow[]; total: number | null }> {
   if (type === 'caixa') {
     const { data } = await supabase
       .from('fin_contas_correntes')
@@ -104,7 +139,10 @@ async function loadData(type: DrillDownType): Promise<{ rows: DrillRow[]; total:
       .order('data_vencimento', { ascending: true })
       .limit(500);
     const rows = data ?? [];
-    return { rows, total: rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0) };
+    return { rows, total: baixaOuIndisponivel(
+      rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0),
+      BAIXA_OMIE_LIST,
+    ) };
   }
 
   if (type === 'cp_aberto') {
@@ -115,7 +153,10 @@ async function loadData(type: DrillDownType): Promise<{ rows: DrillRow[]; total:
       .order('data_vencimento', { ascending: true })
       .limit(500);
     const rows = data ?? [];
-    return { rows, total: rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0) };
+    return { rows, total: baixaOuIndisponivel(
+      rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0),
+      BAIXA_OMIE_LIST,
+    ) };
   }
 
   if (type === 'cr_vencido' || type === 'inadimplencia') {
@@ -126,7 +167,10 @@ async function loadData(type: DrillDownType): Promise<{ rows: DrillRow[]; total:
       .order('data_vencimento', { ascending: true })
       .limit(500);
     const rows = data ?? [];
-    return { rows, total: rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0) };
+    return { rows, total: baixaOuIndisponivel(
+      rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0),
+      BAIXA_OMIE_LIST,
+    ) };
   }
 
   if (type === 'aging_critico') {
@@ -140,7 +184,10 @@ async function loadData(type: DrillDownType): Promise<{ rows: DrillRow[]; total:
       .order('data_vencimento', { ascending: true })
       .limit(500);
     const rows = data ?? [];
-    return { rows, total: rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0) };
+    return { rows, total: baixaOuIndisponivel(
+      rows.reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0),
+      BAIXA_OMIE_LIST,
+    ) };
   }
 
   return { rows: [], total: 0 };
@@ -190,7 +237,6 @@ function CRTable({ data }: { data: FinContaReceberRow[] }) {
       </TableHeader>
       <TableBody>
         {data.map((r, i) => {
-          const saldo = (r.valor_documento || 0) - (r.valor_recebido || 0);
           return (
             <TableRow key={i}>
               <TableCell><Badge variant="outline" className="text-[10px]">{r.company}</Badge></TableCell>
@@ -203,8 +249,8 @@ function CRTable({ data }: { data: FinContaReceberRow[] }) {
                 </Badge>
               </TableCell>
               <TableCell className="text-right text-sm">{fmt(r.valor_documento || 0)}</TableCell>
-              <TableCell className="text-right text-sm text-muted-foreground">{fmt(r.valor_recebido || 0)}</TableCell>
-              <TableCell className="text-right font-medium text-sm">{fmt(saldo)}</TableCell>
+              <TableCell className="text-right text-sm text-muted-foreground">{fmtBaixa(r.valor_recebido || 0)}</TableCell>
+              <TableCell className="text-right font-medium text-sm">{fmtBaixa((r.valor_documento || 0) - (r.valor_recebido || 0))}</TableCell>
             </TableRow>
           );
         })}
@@ -230,7 +276,6 @@ function CPTable({ data }: { data: FinContaPagarRow[] }) {
       </TableHeader>
       <TableBody>
         {data.map((r, i) => {
-          const saldo = (r.valor_documento || 0) - (r.valor_pago || 0);
           return (
             <TableRow key={i}>
               <TableCell><Badge variant="outline" className="text-[10px]">{r.company}</Badge></TableCell>
@@ -243,8 +288,8 @@ function CPTable({ data }: { data: FinContaPagarRow[] }) {
                 </Badge>
               </TableCell>
               <TableCell className="text-right text-sm">{fmt(r.valor_documento || 0)}</TableCell>
-              <TableCell className="text-right text-sm text-muted-foreground">{fmt(r.valor_pago || 0)}</TableCell>
-              <TableCell className="text-right font-medium text-sm">{fmt(saldo)}</TableCell>
+              <TableCell className="text-right text-sm text-muted-foreground">{fmtBaixa(r.valor_pago || 0)}</TableCell>
+              <TableCell className="text-right font-medium text-sm">{fmtBaixa((r.valor_documento || 0) - (r.valor_pago || 0))}</TableCell>
             </TableRow>
           );
         })}

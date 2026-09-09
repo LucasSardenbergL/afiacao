@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ContasPagarTab } from '../ContasPagarTab';
 import type { FinContaPagar } from '@/services/financeiroService';
+import { BAIXA_OMIE_LIST } from '@/lib/financeiro/procedencia-baixa';
+import type { TotaisContas } from '@/lib/financeiro/totais-contas';
 
 const cp: FinContaPagar = {
   id: 'cp-1',
@@ -23,7 +25,12 @@ const cp: FinContaPagar = {
   observacao: null,
 };
 
-const totals = { valor: 2000, pago: 0, saldo: 2000 };
+// A procedência REAL da tela: `fin_contas_pagar` não ingere a baixa (#396), então os asserts
+// abaixo são sobre a tela como ela existe hoje. A degradação em si é exercitada em
+// `contas-tabs.baixa-indisponivel.test.tsx`, que também cobre o controle de fonte confiável.
+const totals: TotaisContas = {
+  valor: 2000, baixa: null, saldo: null, procedencia: BAIXA_OMIE_LIST,
+};
 
 function noop() { /* */ }
 

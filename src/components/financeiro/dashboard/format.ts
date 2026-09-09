@@ -4,6 +4,15 @@
 export const fmt = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+/**
+ * Valor de BAIXA (ou do saldo derivado dela): "—" quando o consumidor marcou `null` porque a
+ * FONTE não ingere a baixa — ver `@/lib/financeiro/procedencia-baixa`.
+ *
+ * ⚠️ O gatilho é o `null` que veio da procedência, NUNCA `v === 0`: zero que chega como número é
+ * um fato medido e tem de aparecer como R$ 0,00.
+ */
+export const fmtBaixa = (v: number | null) => (v === null ? '—' : fmt(v));
+
 export const fmtCompact = (v: number) => {
   if (Math.abs(v) >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1)}M`;
   if (Math.abs(v) >= 1_000) return `R$ ${(v / 1_000).toFixed(1)}k`;

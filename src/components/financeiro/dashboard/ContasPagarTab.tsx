@@ -6,13 +6,14 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Clock, AlertTriangle, DollarSign, Download, History } from 'lucide-react';
+import { Clock, AlertTriangle, DollarSign, Download, History, Info } from 'lucide-react';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { type FinanceiroView } from '@/hooks/useFinanceiro';
 import {
   exportContasPagarCSV, downloadCSV, type FinContaPagar,
 } from '@/services/financeiroService';
-import { fmt, fmtDate, statusColor } from '@/components/financeiro/dashboard/format';
+import { fmt, fmtBaixa, fmtDate, statusColor } from '@/components/financeiro/dashboard/format';
+import type { TotaisContas } from '@/lib/financeiro/totais-contas';
 
 export function ContasPagarTab({
   cpFilter, setCpFilter, cpDateFrom, setCpDateFrom, cpDateTo, setCpDateTo,
@@ -25,7 +26,11 @@ export function ContasPagarTab({
   cpDateTo: string;
   setCpDateTo: (s: string) => void;
   contasPagar: FinContaPagar[];
-  cpTotals: { valor: number; pago: number; saldo: number };
+  /**
+   * `baixa`/`saldo` chegam `null` quando a FONTE não ingere a baixa (#396) — nunca o 0
+   * fabricado que `fin_contas_pagar` tem em 100% do acervo. Ver `motivoBaixa`.
+   */
+  cpTotals: TotaisContas;
   view: FinanceiroView;
   loading: boolean;
   onAudit: (t: { table: string; id: string; title: string }) => void;
@@ -33,6 +38,12 @@ export function ContasPagarTab({
   // Virtualização — mesmo racional da ContasReceberTab (tabs gêmeas): acima de
   // 100 linhas só as visíveis viram DOM; abaixo, renderização integral (idêntica
   // à original — inclusive em jsdom/testes, onde o container mede 0px).
+  // ⚠️ O gatilho é a PROCEDÊNCIA que o dashboard declarou, nunca `v === 0`: um período em que
+  // nada foi pago é um FATO e tem de aparecer como R$ 0,00, não como "—".
+  const baixaIndisponivel = !cpTotals.procedencia.ingereBaixa;
+  /** Célula de baixa/saldo POR TÍTULO: mesma coluna, mesma fonte, mesma degradação. */
+  const celulaBaixa = (v: number) => fmtBaixa(baixaIndisponivel ? null : v);
+
   const virtualizar = contasPagar.length > 100;
   const parentRef = useRef<HTMLDivElement>(null);
   const rowVirtualizer = useVirtualizer({
@@ -92,7 +103,7 @@ export function ContasPagarTab({
           <Badge variant="secondary">{contasPagar.length} títulos</Badge>
           {contasPagar.length > 0 && (
             <Button variant="ghost" size="sm" onClick={() => {
-              const csv = exportContasPagarCSV(contasPagar);
+              const csv = exportContasPagarCSV(contasPagar, cpTotals.procedencia);
               downloadCSV(csv, `contas_pagar_${view}_${cpFilter}.csv`);
             }}>
               <Download className="w-3.5 h-3.5 mr-1" />
@@ -101,6 +112,19 @@ export function ContasPagarTab({
           )}
         </div>
       </div>
+
+      {/* A degradação precisa DIZER por quê: um "—" mudo é lido como bug da tela, e quem precisa
+          do número vai buscá-lo no CSV — que também degrada, pelo mesmo gatilho. */}
+      {baixaIndisponivel && contasPagar.length > 0 && (
+        <p className="flex items-start gap-2 text-xs text-muted-foreground px-1">
+          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            <strong className="font-medium">Pago</strong> e <strong className="font-medium">Saldo</strong>:{' '}
+            {cpTotals.procedencia.motivo}. Exibidos como “—” — <strong className="font-medium">não são R$ 0,00</strong>.
+            Valor e vencimento seguem medidos.
+          </span>
+        </p>
+      )}
 
       {/* Totalizadores */}
       {contasPagar.length > 0 && (
@@ -111,11 +135,11 @@ export function ContasPagarTab({
           </div>
           <div className="p-3 rounded-lg bg-status-success-bg text-center">
             <p className="text-xs text-muted-foreground">Pago</p>
-            <p className="text-sm font-bold text-status-success">{fmt(cpTotals.pago)}</p>
+            <p className="text-sm font-bold text-status-success">{fmtBaixa(cpTotals.baixa)}</p>
           </div>
           <div className="p-3 rounded-lg bg-status-error-bg text-center">
             <p className="text-xs text-muted-foreground">Saldo</p>
-            <p className="text-sm font-bold text-status-error">{fmt(cpTotals.saldo)}</p>
+            <p className="text-sm font-bold text-status-error">{fmtBaixa(cpTotals.saldo)}</p>
           </div>
         </div>
       )}
@@ -165,8 +189,8 @@ export function ContasPagarTab({
                     </TableCell>
                     <TableCell className="text-sm">{fmtDate(cp.data_vencimento)}</TableCell>
                     <TableCell className="text-right font-medium">{fmt(cp.valor_documento)}</TableCell>
-                    <TableCell className="text-right text-status-success">{fmt(cp.valor_pago)}</TableCell>
-                    <TableCell className="text-right font-bold">{fmt(cp.saldo)}</TableCell>
+                    <TableCell className="text-right text-status-success">{celulaBaixa(cp.valor_pago)}</TableCell>
+                    <TableCell className="text-right font-bold">{celulaBaixa(cp.saldo)}</TableCell>
                     <TableCell>
                       <Badge className={`text-xs ${statusColor(cp.status_titulo)}`}>
                         {cp.status_titulo}
