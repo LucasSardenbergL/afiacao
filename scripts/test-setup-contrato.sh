@@ -221,13 +221,30 @@ rodar_sabotagem() {
     return
   fi
 
+  # Uma marca pode trazer ALTERNATIVAS separadas por `|`: a MESMA camada produz mensagens
+  # diferentes conforme o ambiente. Medido 2026-09-09: sem o shim, o macOS diz
+  # "Cannot read properties of undefined (reading \'setItem\')" — o `localStorage` do Node existe
+  # como binding vazio — e o runner do CI, sem esse binding, diz outra coisa. Aceitar as duas
+  # NÃO é afrouxar para "lançou algo": cada alternativa continua sendo específica do ramo do
+  # storage. É a mesma lição do `LC_ALL` (falsificar num ambiente só não prova a asserção).
   local faltando="" marca
   for marca in "$@"; do
-    sem_ansi "$saida" | grep -qaF -- "$marca" || faltando="$faltando '$marca'"
+    local achou=0 alt
+    while IFS= read -r alt; do
+      [ -z "$alt" ] && continue
+      sem_ansi "$saida" | grep -qaF -- "$alt" && { achou=1; break; }
+    done <<EOF_ALT
+$(printf '%s\n' "$marca" | tr '|' '\n')
+EOF_ALT
+    [ "$achou" -eq 1 ] || faltando="$faltando '$marca'"
   done
   if [ -n "$faltando" ]; then
     aviso "  ❌ [$nome] vermelho (rc=$rc) mas SEM a marca do ramo:$faltando"
     aviso "     Vermelho por outro motivo não prova que esta camada está coberta."
+    # Sem este dump o vermelho é indiagnosticável a distância: foi preciso um ciclo de CI
+    # inteiro só para descobrir QUAL mensagem o runner produzia.
+    aviso "     ── o que a saída sabotada trouxe (linhas de falha) ──"
+    sem_ansi "$saida" | grep -aE '×|✗|→|FAIL|Error|Test Files' | head -12 | sed 's/^/     /' >&2
     FALHAS=$((FALHAS + 1))
     return
   fi
@@ -242,7 +259,7 @@ aviso "═══ (B) SABOTAGEM — uma camada por vez, exigindo vermelho POR CAU
 rodar_sabotagem 'shim-de-storage-removido' "$ALVO_COMUM" \
   'installStorageShim("localStorage");' \
   '// SABOTADO: shim de localStorage removido' \
-  "reading 'setItem'"
+  "reading 'setItem'|localStorage is not defined|storage funcional"
 
 # 2) `configurable: false` no descriptor: o shim entra, mas nenhum teste consegue mais
 #    desligar/religar o storage depois do setup. A marca é o erro do próprio motor JS.
