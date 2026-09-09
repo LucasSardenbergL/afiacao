@@ -113,7 +113,32 @@ Deno.test("DISCRIMINANTE: receitaLiquidaItem SUBTRAI o desconto, não multiplica
   eq(receitaLiquidaItem(100, 2, 10), 190, "absoluto: 190");
   eq(receitaLiquidaItem(100, 2, 10) === 180, false, "NÃO é a fórmula percentual");
   eq(receitaLiquidaItem(100, 2, 0), 200, "sem desconto");
-  eq(receitaLiquidaItem(100, 2, null), 200, "desconto ausente conta como zero desconto");
+});
+
+// DISCRIMINANTE do fail-closed na SAÍDA. O teste anterior fixava `receitaLiquidaItem(100,2,null)
+// === 200` — "desconto ausente conta como zero desconto" — e isso era o bug original renascido:
+// `descontoItemOmie` recusa-se a ler o desconto (null), o consumidor troca por 0, e a receita
+// volta CHEIA. 200 é exatamente o número superestimado que este módulo existe para impedir; o
+// contrato de mutação vigiava `Number(null)===0` na ENTRADA (`finitoNaoNegativo`) e deixava a
+// SAÍDA aberta. Achado pela 2ª opinião (Codex, 2026-09-08) e provado executando.
+Deno.test("DISCRIMINANTE: desconto DESCONHECIDO não vira zero — receita degrada para null", () => {
+  // O caminho real: o Omie mandou um discriminador que não sabemos ler, COM desconto > 0.
+  const desconhecido = descontoItemOmie({ tipo_desconto: "X", valor_desconto: 10 }, 200);
+  eq(desconhecido, null, "pré-condição: a leitura degradou");
+
+  eq(receitaLiquidaItem(100, 2, desconhecido), null, "não sei o desconto ⇒ não sei a receita");
+  eq(receitaLiquidaItem(100, 2, desconhecido) === 200, false, "NÃO é a receita cheia (fabricação)");
+  eq(precoUnitarioLiquido(100, 2, desconhecido), null, "não sei o desconto ⇒ não sei o preço");
+  eq(precoUnitarioLiquido(100, 2, desconhecido) === 100, false, "NÃO é o preço cheio (fabricação)");
+
+  // A linha ainda não apurada (`order_items.desconto_valor` NULL, o acervo inteiro hoje) entra
+  // pelo mesmo portão: NULL é "não apurado", nunca "não há desconto".
+  eq(receitaLiquidaItem(100, 2, null), null, "coluna não apurada ⇒ null");
+  eq(receitaLiquidaItem(100, 2, undefined), null, "desconto não informado ⇒ null");
+
+  // E o contraste que prova que o portão não fechou DEMAIS: 0 é dado, e passa.
+  eq(receitaLiquidaItem(100, 2, 0), 200, "0 é 'o Omie informou que não há desconto' — é dado");
+  eq(precoUnitarioLiquido(100, 2, 0), 100, "idem no preço unitário");
 });
 
 Deno.test("receitaLiquidaItem degrada para null quando o preço é desconhecido", () => {

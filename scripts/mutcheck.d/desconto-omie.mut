@@ -42,6 +42,19 @@ PEGA | desconto acima da base deixa de ser anomalia       | s/if \(bruto !== nul
 PEGA | valor negativo vira desconto em vez de lixo        | s/return Number.isFinite\(n\) && n >= 0 \? n : null;/return Number.isFinite(n) ? n : null;/
 PEGA | ausente vira zero na raiz (Number(null)===0)      | s~if \(raw === null \|\| raw === undefined\) return null;~if (raw === null || raw === undefined) return 0;~
 
+# ── A SAÍDA também é porta: o fail-closed morria um passo depois de nascer ────────────────────
+# O contrato acima vigiava `Number(null)===0` na ENTRADA (`finitoNaoNegativo`) e deixava a saída
+# aberta: `receitaLiquidaItem`/`precoUnitarioLiquido` faziam `finitoNaoNegativo(discount) ?? 0`,
+# convertendo o `null` de `descontoItemOmie` — "não sei o desconto" — em receita CHEIA. Era o
+# `prod.desconto || 0` original renascido um andar acima, com o mesmo efeito: superestimar a
+# receita. Achado pela 2ª opinião (Codex, 2026-09-08) e provado executando ANTES de corrigir.
+# As duas mutações abaixo são a restauração literal do defeito; ambas TÊM de morrer.
+# Elas casam por NOME DE FUNÇÃO (flag `$f` no `perl -pe`, que guarda estado entre linhas) porque
+# a linha-alvo é textualmente IDÊNTICA nas duas funções. Número de linha seria mais simples e
+# ficaria stale no primeiro refactor — foi assim que o `.mut` da sonda quebrou a main no #2380.
+PEGA | receita: desconto desconhecido volta a virar zero  | $f=1 if /export function receitaLiquidaItem/; $f=0 if /export function precoUnitarioLiquido/; s/  const desc = finitoNaoNegativo\(discount\);/  const desc = finitoNaoNegativo(discount) ?? 0;/ if $f
+PEGA | preço unitário: desconto desconhecido vira zero    | $f=1 if /export function precoUnitarioLiquido/; s/  const desc = finitoNaoNegativo\(discount\);/  const desc = finitoNaoNegativo(discount) ?? 0;/ if $f
+
 # ── Preço unitário líquido: o desconto é da LINHA, dilui-se pela quantidade ───────────────────
 # Quem migrar por analogia com a fórmula percentual antiga (`preço × (1 − d/100)`, que já era
 # por unidade) tende a escrever `preço − desconto` e multiplicar o desconto pela quantidade.
