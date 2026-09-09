@@ -25,7 +25,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
-import { conciliarDescontosPedido, type ItemOmieDetalhe, type LinhaLocal } from "../_shared/desconto-backfill.ts";
+import {
+  conciliarDescontosPedido,
+  type ItemOmieDetalhe,
+  type LinhaLocal,
+  type MotivoRecusa,
+} from "../_shared/desconto-backfill.ts";
 import { avaliarPagina, MAX_PAGINAS_PEDIDOS, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -258,12 +263,18 @@ Deno.serve(async (req) => {
         const plano = conciliarDescontosPedido(locais, pedido.det ?? []);
         contagem.linhas_oferecidas += locais.length;
         contagem.linhas_apuradas += plano.apurados.length;
-        for (const r of plano.recusados) {
-          if (r.motivo === "ambiguo") contagem.recusa_ambiguo++;
-          else if (r.motivo === "sem_correspondencia") contagem.recusa_sem_correspondencia++;
-          else if (r.motivo === "base_indeterminada") contagem.recusa_base_indeterminada++;
-          else contagem.recusa_leitura_recusada++;
-        }
+        // Mapa tipado pelo próprio union em vez de uma cadeia de `else if`: com o `else` final,
+        // um typo num literal ("ambiguo_") cairia no ramo de leitura recusada em silêncio e
+        // inflaria o contador errado — a incompletude continuaria contada, mas mal classificada,
+        // e é a CLASSIFICAÇÃO que distingue "o acervo mudou" de "não sei ler o Omie". Aqui o
+        // compilador cobra uma chave por motivo, e motivo novo sem contador não compila.
+        const contadorPorMotivo: Record<MotivoRecusa, () => void> = {
+          ambiguo: () => contagem.recusa_ambiguo++,
+          sem_correspondencia: () => contagem.recusa_sem_correspondencia++,
+          base_indeterminada: () => contagem.recusa_base_indeterminada++,
+          leitura_recusada: () => contagem.recusa_leitura_recusada++,
+        };
+        for (const r of plano.recusados) contadorPorMotivo[r.motivo]();
 
         const porId = new Map(locais.map((l) => [l.id, l]));
         for (const a of plano.apurados) {
