@@ -4,7 +4,7 @@
 // Esta edge nasce COM sensor: cada execução devolve o denominador (alvos, apurados, e as recusas
 // por motivo) e o `cursor` de onde parou. "Rodou e não deu erro" não é sinal de nada aqui — o
 // modo de falha característico do backfill é apurar POUCO e parecer bem-sucedido.
-export const VERSAO = "v1.0-backfill-oben-ttm";
+export const VERSAO = "v1.1-unicidade-no-universo-completo";
 
 // O que a sonda prova quando responde: que o bundle no ar conhece a régua de conciliação por trio.
 // A edge é de EFEITO (escreve `order_items.desconto_valor`), então a sonda NUNCA escreve: ela
