@@ -190,3 +190,111 @@ asserção de que o recorte não vazou (aqui: `grep -c 'private\.'` = 0).
   classe de defeito que esta entrega fecha. Se aparecer volume disso, é fatia própria.
 - **O CAS segue usando o instante da LEITURA pela edge, não a revisão da ORIGEM** — herdado do
   #2134 e intocado aqui.
+
+---
+
+# O outro writer: o pedido passa a NASCER com identidade (2026-09-08)
+
+Continuação direta. Os dois primeiros itens de "Segue aberto" fecharam — um por **medição**, outro
+por **entrega**.
+
+## O sensor respondeu sozinho, em 24 h
+
+A pendência nº 1 não era um recado: era uma **query com denominador e com o falso-negativo
+nomeado**. Bastou lê-la (`psql-ro`, 2026-09-08):
+
+| janela | runs | `itens_lidos` | `itens_com_codigo_item` | `ambiguos` |
+|---|---|---|---|---|
+| 30 d **antes** de 07/09 20:00 | 378 | — | — | **684** |
+| **depois** | 12 | **4.220** | **4.220 (100 %)** | **0** |
+
+O `ListarPedidos` **devolve** `det.ide.codigo_item`. O falso-negativo que o doc mandava conferir
+antes de concluir qualquer coisa (migration não aplicada) foi descartado no mesmo Run: o
+`pg_get_functiondef` da PROD traz `v_ident`, `v_atual_id_dup` e `v_sku_repetido`.
+
+E o guard já não é mais alcançável na prática: pedidos com SKU repetido reconciliaram no mesmo dia
+com identidade completa nas linhas (12179930461 → 5/5, 12179183059 → 7/7), e **442 de 444** pedidos
+reconciliados desde então têm identidade em todas as linhas.
+
+> **A generalização:** pendência que nasce com a **query que a resolve** fecha por leitura.
+> Pendência que nasce como recado espera alguém lembrar — e o custo de lembrar cresce com o tempo,
+> exatamente quando o contexto que a tornaria barata já evaporou.
+
+## O que faltava: 1,4 % de cobertura, porque só um dos dois writers escrevia
+
+`criar_pedidos_com_itens` — a porta de entrada de **todo** pedido Omie — não gravava
+`omie_codigo_item`. Só a reconciliação adotava, e só dentro da janela (7 d / 30 d). Medido:
+**1.024 de 70.956 linhas (1,4 %)** com identidade.
+
+O que a cobertura baixa custa é preciso: enquanto a coluna é NULL, um pedido com SKU repetido só
+escapa do guard de ambiguidade se o **payload** trouxer identidade completa. Isso é um contrato de
+API de terceiro. Enquanto ele vale, o guard é inalcançável; no dia em que não valer, **1.067
+pedidos** (3,4 % de 31.249 — 494 oben, 573 colacor) voltam a ser puláveis, e pular é *silencioso*:
+o pedido inteiro fica na revisão velha, sem erro em lugar nenhum.
+
+A entrega faz o pedido **nascer** com identidade, com o guard `G-a` (identidade repetida no payload
+→ `NULL` em todas as linhas do pedido). Régua por **pedido**, não por linha — a mesma do `v_ident`.
+Gravar identidade repetida seria pior que não gravar: criaria a condição `G-b` da reconciliação,
+que congela o pedido **para sempre**. Ausente é reversível; ambíguo gravado não é.
+
+O acervo permite o guard nascer limpo: **0** pedidos com `omie_codigo_item` duplicado hoje.
+
+**Colacor é o caso que a média esconde:** `orders` reprocessou **1 vez, em 2026-02-28**;
+**0 de 19.706** pedidos com `omie_reconciliado_em`. Para essa conta a reconciliação nunca foi um
+caminho de adoção — esta RPC é o **único** que existe.
+
+## A LIÇÃO NOVA: a sabotagem que quebra a ARIDADE do SQL mede outra coisa
+
+`F7` desligava o `G-a` trocando `count(cid) = count(DISTINCT cid)` por `true`. O predicado saiu — e
+com ele a **agregação**: o CTE passou a devolver uma linha por item, a subquery escalar estourou, e
+o pedido morria por **erro de SQL** antes de chegar ao INSERT. O harness ficou vermelho, que é o
+que a falsificação pede.
+
+**Vermelho pelo motivo errado é indistinguível de vermelho pelo motivo certo** — e "aprova" um
+assert que talvez não tenha dente nenhum. Foi o sintoma (`<sem linhas>`, em vez de `777,777`) que
+denunciou: o pedido não existia, quando deveria existir *com* a identidade ambígua gravada.
+
+A sabotagem fiel preserva a **forma** e remove só a **decisão**: `count(cid) = count(cid)`. Mesma
+aridade, mesma agregação, guard sempre verdadeiro. Idem no `F9`: tirar a coluna da lista do INSERT
+deixava 10 expressões para 9 alvos (erro de SQL); a sabotagem certa é a **expressão** virar
+`NULL::bigint` — o corpo compila, o INSERT roda, e a coluna fica NULL para sempre, que é
+exatamente o estado pré-migration.
+
+## A LIÇÃO NOVA 2: o ÚLTIMO caso de uma suíte nunca prova a própria restauração
+
+`F6` dropava o índice único e chamava `restaura`, com o comentário `# recria o índice`. **Era
+falso** — `restaura()` re-aplica a *migration*, e o índice é pré-requisito da ZONA 1, de outra
+migration. O banco terminava o script sem índice.
+
+Isso viveu escondido porque o `F6` era o **último** caso. Ao acrescentar `F7`–`F9` depois dele, os
+três nasceram falhando com `42P10` — e o sintoma (`<sem linhas>`) era **idêntico** ao de uma
+sabotagem que funciona. Custou duas rodadas de diagnóstico para separar as duas causas.
+
+> **A generalização:** um `restaura()` só é provado pelo caso que vem **depois** dele. O último de
+> uma suíte de falsificação restaura contra ninguém — e um comentário afirmando o contrário é pior
+> que nenhum, porque desliga a suspeita. Ou o `restaura` **asserta** o que restaurou (foi o que
+> ficou: `F6r`), ou a suíte precisa de um caso-sentinela no fim.
+
+## O que NÃO foi feito, de propósito
+
+- **Sem backfill** das ~70 mil linhas históricas — o único leitor de `omie_codigo_item` é a própria
+  reconciliação, no instante em que o payload a fornece (o argumento original desta linhagem, e ele
+  não mudou).
+- **Sem `UNIQUE (sales_order_id, omie_codigo_item)`.** O acervo está limpo hoje, mas um UNIQUE
+  derrubaria o INSERT do pedido inteiro num dado sujo do Omie. O `G-a` degrada para `NULL`, que é
+  reversível — a mesma escolha de "precisão > recall" feita em toda esta linhagem.
+- **Nada foi afrouxado na invariante do agregado.** As CONSTRAINT TRIGGERs comparam
+  (produto, quantidade, preço, desconto); `omie_codigo_item` não entra nesse eixo, então gravá-la
+  não move o multiset. O guard de ambiguidade segue exatamente como está — o que muda é a
+  **entrada** nele.
+
+## Segue aberto (revisado)
+
+- ~~Se o `ListarPedidos` devolve `det.ide.codigo_item`~~ — **medido: sim, 4.220/4.220.**
+- ~~`criar_pedidos_com_itens` não grava identidade~~ — **fechado por esta entrega.**
+- **`ambiguos > 0` continua sendo só `console.warn`** e a run fecha `complete`. O indicador
+  *antecedente* é `itens_lidos > 0 AND itens_com_codigo_item = 0` (o campo parou de vir), que
+  acende **antes** de a ambiguidade voltar. Não há alarme sobre esse par — fatia própria.
+- **`sync-reprocess` de `orders` não roda para colacor** (1 run em 2026-02-28). Edição no Omie de
+  pedido colacor não chega ao app. É o dano maior desta vizinhança e não é escopo desta entrega.
+- **Item de KIT** e **o CAS pela leitura, não pela origem** — herdados, intocados.
