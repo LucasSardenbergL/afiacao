@@ -119,7 +119,11 @@ fi
 # 13 testes) e este arnês o leu como REPROVADO, derrubando o `test:hooks` no CI enquanto passava
 # verde local. Depender só do NO_COLOR seria uma camada só — quem define TTY é o runner, não nós.
 sem_ansi() { LC_ALL=C sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$1"; }
-rodar_testemunhas() { NO_COLOR=1 FORCE_COLOR=0 bunx vitest run "${TESTEMUNHAS[@]}" >"$1" 2>&1; }
+# COLUMNS: o vitest corta o nome do teste pela largura do terminal. No runner do CI ela e
+# estreita, e `instala um storage funcional` virava `instala um storage funcion…` — a marca
+# sumia por RETICENCIAS, com o vermelho intacto. Medido 2026-09-09 (run 34376550300):
+# reproduzido local com --project node, o nome aparece INTEIRO; no CI, nao.
+rodar_testemunhas() { NO_COLOR=1 FORCE_COLOR=0 COLUMNS=400 bunx vitest run "${TESTEMUNHAS[@]}" >"$1" 2>&1; }
 
 # ── auto-verificação do PARSER (a correção de 2026-09-09 precisa de testemunha) ───────────
 # Alimenta o leitor com a linha EXATA que o runner do CI produziu no run 34345092455 — com as
@@ -238,7 +242,7 @@ aviso "═══ (B) SABOTAGEM — uma camada por vez, exigindo vermelho POR CAU
 rodar_sabotagem 'shim-de-storage-removido' "$ALVO_COMUM" \
   'installStorageShim("localStorage");' \
   '// SABOTADO: shim de localStorage removido' \
-  'instala um storage funcional'
+  "reading 'setItem'"
 
 # 2) `configurable: false` no descriptor: o shim entra, mas nenhum teste consegue mais
 #    desligar/religar o storage depois do setup. A marca é o erro do próprio motor JS.
@@ -278,7 +282,7 @@ rodar_sabotagem 'setup-dom-vaza-para-o-project-node' "$ALVO_PARTICAO" \
 rodar_sabotagem 'project-dom-sem-o-setup-de-dom' "$ALVO_PARTICAO" \
   '          setupFiles: ["./src/test/setup.ts", "./src/test/setup-dom.ts"],' \
   '          setupFiles: ["./src/test/setup.ts"],' \
-  'o setup de DOM rodou: matchMedia existe e ecoa a query' \
+  'matchMedia existe e ecoa a query' \
   'o setup de DOM rodou: asyncUtilTimeout'
 
 # 5) O FLIP que motiva tudo isto: o client troca o `localStorage` por um adapter de memória. O
