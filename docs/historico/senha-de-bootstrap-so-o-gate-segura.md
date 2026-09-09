@@ -77,6 +77,34 @@ cobertura sumir sem deixar literal (caso S10).
 correção foi na expectativa. Vale registrar porque a tentação oposta — mexer no alvo até casar o
 teste — é como um gate perde o dente sem ninguém notar.
 
+### 7. O gate novo teve de pagar o pedágio — e a medição devolveu um resultado incômodo
+
+O CI reprovou o PR com `GATE_NOVO_SEM_EXCLUSIVIDADE`: o gate `exclusividade` cobra de todo gate
+novo a prova de que ele pega algo que nenhum outro pega ("um gate custa segundos em todo PR, para
+sempre; a prova é o preço"). O defeito escrito para pagar é o **real** — a senha no lugar do
+placeholder — e o resultado medido foi:
+
+```
+VERMELHOS: gate:senha-bootstrap, test:hooks     (23 verdes; poda em 2, 3 desconhecidos)
+[redund] gate:senha-bootstrap  exclusivos 0/9
+```
+
+**Dois gates pegam, e o segundo é a própria suíte deste gate** — `test:hooks` roda
+`test-gate-senha-bootstrap.sh`, cujo caso N3 executa o gate contra o repo de verdade. A
+exclusividade zero é artefato de o teste ser bom, não sinal de gate inútil. Daria para "ganhar"
+exclusividade apagando o N3; seria piorar a suíte para melhorar a métrica, exatamente o oposto do
+que a métrica existe para provocar. Ficou medido e declarado (`EXCLUSIVIDADE_ZERO` é **RELATA**, não
+reprova). O que o passo dedicado acrescenta sobre o `test:hooks` é o sinal **nomeado** e a mensagem
+certa (*rotacione*) em 4s, em vez de enterrada em 100s de suíte — e é o mesmo script que serve ao
+pre-commit, que é a camada que de fato impede.
+
+Dois atalhos que destravariam na hora e foram recusados, ambos por fabricarem veredito:
+`--ignorar-baseline` registraria o `exclusividade` como tendo pego o defeito, quando o vermelho dele
+era sobre o *ato de medir*; e a **lista de dispensados** é para gates pré-existentes de quando a
+matriz nasceu — um gate novo se auto-dispensando da regra que existe para gates novos é o pecado que
+o próprio `matriz.def` narra. A saída correta foi medir com os 28 gates, excluindo só o
+`exclusividade`, que demonstravelmente não lê `.sql`.
+
 ## O que continua sem freio de máquina
 
 `git commit --no-verify` pula o hook (é desenho do git; o caso N13 da suíte **afirma** isso em vez

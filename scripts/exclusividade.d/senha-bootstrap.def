@@ -15,6 +15,17 @@
 # e versionado. Ele tambem nao e um `.sql`, entao esta fora do escopo que o proprio gate varre — o
 # corpus nao se auto-detecta.
 
+# O QUE A MEDICAO DEVOLVEU, e por que ela nao foi "consertada": DOIS gates ficam vermelhos —
+# `gate:senha-bootstrap` e `test:hooks`. O segundo pega porque roda `test-gate-senha-bootstrap.sh`,
+# cujo caso N3 executa o gate contra o REPO DE VERDADE (existe para a suite nao provar so coisas
+# sobre fixtures). Ou seja: a exclusividade zero aqui e ARTEFATO do meu proprio teste ser bom, nao
+# sinal de que o gate nao pega nada. Daria para "ganhar" exclusividade apagando o N3 — e isso seria
+# piorar a suite para melhorar uma metrica, o oposto do que a metrica existe para provocar. Fica
+# como esta, medido e declarado.
+#
+# A poda parou apos 2 vermelhos: `sonda:cron-prova`, `test` e `test:falsificacao` ficaram
+# DESCONHECIDOS (nao "verdes"). Nao mudaria o veredito — exclusividade ja estava refutada.
+#
 # @origem: docs/historico/senha-de-bootstrap-so-o-gate-segura.md (2026-09-09)
 # @suspeito: gate:senha-bootstrap
 senha-no-lugar-do-placeholder | db/claude-rw-bootstrap.sql | s/PASSWORD 'TROQUE_ESTA_SENHA'/PASSWORD 'SENHA-DE-MENTIRA-DO-CORPUS'/
