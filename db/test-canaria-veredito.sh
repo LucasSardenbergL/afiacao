@@ -618,6 +618,18 @@ sabota_gerador "GERADOR sem o ramo de ok:false (o #2405 aprovava isto)" \
 # E a ORDEM dos ramos, que é o que só um teste EXECUTADO prova: julgar o status antes do eco.
 sabota_gerador "GERADOR julga o status antes do eco (500 vermelha vira bundle velho)" \
   "s/WHEN ca\\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\\.status_code >= 400/WHEN ca.status_code >= 400/"
+# ── o CONTROLE ATIVO (2026-09-09) ──────────────────────────────────────────────────────────────
+# Os casos novos desta suíte (testemunha ativa, leva inteira 401, 2xx anônimo) precisam de vermelho
+# ALCANÇÁVEL aqui também: o `.mut` prova o dente da suíte VITEST, que é outra invocação e outro
+# corpus. Sem estas duas, os casos novos poderiam ser sempre-verdes nesta suíte e ninguém veria.
+# A 1ª é o fail-OPEN que a correção fecha: sem exigir testemunha, o 401 volta a sair determinado
+# pelo histórico — e é exatamente o cenário "leva INTEIRA 401 com historico VERDE".
+sabota_gerador "GERADOR determina o 401 SEM testemunha ativa (fail-open)" \
+  "s/AND ativo\\.aceitas_na_leva >= 1/AND true/"
+# A 2ª é a armadilha do parecer Codex: testemunha por STATUS em vez de IDENTIDADE. Sem o marcador,
+# um 2xx anônimo (bundle histórico que ignora a credencial) passa a "provar" o secret.
+sabota_gerador "GERADOR aceita 2xx ANONIMO como testemunha (sem o marcador)" \
+  "s/AND ca\\.corpo ->> ca\\.campo_marcador = ca\\.marcador_esperado\`,/AND true\`,/"
 
 if [ "$falhou" -eq 0 ]; then printf '\nFALSIFICACAO OK — todo verde tem vermelho alcancavel\n'; exit 0; fi
 printf '\nVERMELHO\n'; exit 1
