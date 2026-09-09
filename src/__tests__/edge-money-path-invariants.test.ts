@@ -3740,3 +3740,57 @@ describe('desconto de item — a régua única, e o null que não pode virar zer
     expect(mig).toContain('desconto_valor = NULL');
   });
 });
+
+// ── omie-financeiro: desconto/juros/multa do TÍTULO não existem no Omie ──────────────────────
+// Medido em 2026-09-08. `ListarContasPagar`/`ListarContasReceber` devolvem a entidade
+// `conta_pagar_cadastro`/`conta_receber_cadastro`, cujo NÍVEL RAIZ não tem desconto/juros/multa.
+// Esses campos existem só na sub-tag da BAIXA (`pagamento`/`recebimento`), que a doc declara ser
+// usada apenas nos métodos de inclusão/alteração — e o nome `valor_desconto` tem ZERO ocorrências
+// nas duas docs oficiais. O `|| 0` que estava aqui gravava "não houve desconto" (afirmação) onde o
+// correto é "não sei": 0 em 60.607/60.607 títulos, com `valor_documento` 100% preenchido na MESMA
+// linha de código como controle positivo.
+//
+// Por que o assert é a AUSÊNCIA da chave no payload, e não `: null`: o sync roda em ciclo, então
+// escrever `null` explícito faria dele um writer destrutivo sobre uma futura ingestão de baixas.
+// E por que NÃO basta proibir a string `|| 0` (apontado pela revisão Codex de 2026-09-08):
+// `?? 0`, um helper ou qualquer outra expressão reproduziriam o defeito passando pelo gate. O
+// invariante forte é POSITIVO — a chave não é escrita, em nenhuma forma.
+const FINANCEIRO = 'supabase/functions/omie-financeiro/index.ts';
+const CAMPOS_BAIXA = ['valor_desconto', 'valor_juros', 'valor_multa'] as const;
+
+describe('guardrail money-path: omie-financeiro não fabrica desconto/juros/multa de título', () => {
+  const bruto = read(FINANCEIRO);
+  const src = removerComentarios(bruto);
+
+  it('sentinela: leu o edge real, e o stripper não comeu nem deixou de limpar o arquivo', () => {
+    expect(bruto.length, 'arquivo vazio/inexistente').toBeGreaterThan(10_000);
+    expect(src).toContain('ListarContasReceber');
+    expect(src).toContain('ListarContasPagar');
+    // Sobre-limpeza (comeu código) e SUB-limpeza (não tirou comentário nenhum) — os dois lados.
+    expect(src.length).toBeGreaterThan(bruto.length * 0.5);
+    expect(src.length).toBeLessThan(bruto.length);
+  });
+
+  it('controle positivo: os DOIS mapeamentos de título existem e são os alvos medidos', () => {
+    // Sem isto, um arquivo renomeado/refatorado deixaria os asserts negativos abaixo passando
+    // por vacuidade — verde por não ter olhado nada.
+    expect(count(src, 'valor_documento:'), 'os 2 upserts de título sumiram do arquivo').toBe(2);
+    expect(count(src, 'valor_pago:')).toBe(1);
+    expect(count(src, 'valor_recebido:')).toBe(1);
+  });
+
+  it('nenhum dos três campos é ESCRITO no payload — em forma nenhuma', () => {
+    for (const campo of CAMPOS_BAIXA) {
+      expect(count(src, `${campo}:`), `${campo} voltou a ser escrito no upsert`).toBe(0);
+    }
+  });
+
+  it('as interfaces de entrada NÃO declaram os campos (o tipo é que dava aparência de legítimo)', () => {
+    // Enquanto `valor_desconto?: number` existir em OmieContaPagar/OmieContaReceber, ler
+    // `t.valor_desconto` type-checa e o defeito volta sem ninguém notar.
+    for (const campo of CAMPOS_BAIXA) {
+      expect(src, `${campo} voltou ao tipo de entrada do Omie`).not.toContain(`${campo}?: number`);
+      expect(src, `${campo} voltou a ser lido do payload do Omie`).not.toContain(`t.${campo}`);
+    }
+  });
+});

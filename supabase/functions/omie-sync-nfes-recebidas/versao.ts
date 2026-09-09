@@ -44,7 +44,7 @@ export const EDGE = "omie-sync-nfes-recebidas";
  * corrige (request pendurado) é INDISTINGUÍVEL de "o Omie estava lento" quando se olha só o
  * resultado — sem saber qual bundle está no ar, não dá para dizer se a coleira falhou ou nem subiu.
  */
-export const VERSAO = "v1.2-eco-identidade-fonte";
+export const VERSAO = "v1.3-sonda-cron-onda4";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.
