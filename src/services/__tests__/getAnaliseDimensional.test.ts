@@ -82,6 +82,7 @@ vi.mock('@/lib/analytics', () => ({ captureException: vi.fn(), track: vi.fn() })
 
 import { getAnaliseDimensional } from '@/services/financeiroV2Service';
 import { ehFalhaDePagina } from '@/lib/postgrest';
+import { MOTIVO_BAIXA_NAO_INGERIDA } from '@/lib/financeiro/procedencia-baixa';
 
 /** Uma linha da matview dimensional, com 1 título e R$ 10 — o total é a CONTAGEM de linhas. */
 const linha = (i: number, tipo: 'cp' | 'cr'): Row => ({
@@ -174,5 +175,59 @@ describe('getAnaliseDimensional pagina a RPC set-returning', () => {
     const erro = await getAnaliseDimensional('cp', 'all', 'categoria', 2025).catch((e: unknown) => e);
     expect(ehFalhaDePagina(erro)).toBe(true);
     expect((erro as { motivo: string }).motivo).toBe('data_null_sem_error');
+  });
+});
+
+/**
+ * A segunda fabricação desta função — irmã da capa silenciosa acima, e mais cara que ela.
+ *
+ * `total_pago`/`total_recebido` e o `total_saldo` derivado deles vêm de colunas que o LIST do Omie
+ * NUNCA preenche (#396): 0 em 16.125/16.125 CP e 44.524/44.524 CR, medido em prod (psql-ro,
+ * 2026-09-09), sobre R$ 27,8M de títulos com status RECEBIDO. Somá-las produzia um "Total Recebido
+ * R$ 0,00" com aparência de fato — `ausente ≠ zero` (CLAUDE.md) com autoridade de agregado.
+ *
+ * O dublê acima é a prova de que o gatilho NÃO é o valor: cada linha traz `total_pago`/
+ * `total_recebido` = 10 e mesmo assim a saída degrada, porque quem decide é a PROCEDÊNCIA.
+ */
+describe('degradação da baixa: totais de pago/recebido e saldo saem null, por FONTE', () => {
+  it('CP: total_pago_recebido e total_saldo viram null; documento e qtd seguem medidos', async () => {
+    state.universo = Array.from({ length: 3 }, (_, i) => linha(i, 'cp'));
+
+    const [out] = await getAnaliseDimensional('cp', 'all', 'categoria', 2025);
+
+    expect(out.total_pago_recebido).toBeNull();
+    expect(out.total_saldo).toBeNull();
+    expect(out.total_documento).toBe(30); // o que é ingerido continua na tela
+    expect(out.qtd_titulos).toBe(3);
+  });
+
+  it('CR: mesmo desfecho pelo ramo de recebíveis (a matview é outra, a fonte é a mesma)', async () => {
+    state.universo = Array.from({ length: 2 }, (_, i) => linha(i, 'cr'));
+
+    const [out] = await getAnaliseDimensional('cr', 'all', 'categoria', 2026);
+
+    expect(out.total_pago_recebido).toBeNull();
+    expect(out.total_saldo).toBeNull();
+    expect(out.total_documento).toBe(20);
+  });
+
+  it('carrega o MOTIVO junto — "—" mudo na tela é lido como bug, não como dado ausente', async () => {
+    state.universo = [linha(0, 'cp')];
+
+    const [out] = await getAnaliseDimensional('cp', 'all', 'categoria', 2025);
+
+    expect(out.motivo_baixa).toBe(MOTIVO_BAIXA_NAO_INGERIDA);
+  });
+
+  it('🔒 o null é da FONTE, não de "a soma deu zero": somas ALTAS degradam igual', async () => {
+    // A cauda de 1.227 linhas × R$ 10 de baixa cada = R$ 12.270 somados. Uma implementação que
+    // degradasse por `soma === 0` devolveria esse número — que é exatamente a fabricação, só que
+    // maior. O que decide é de onde a coluna veio.
+    state.universo = Array.from({ length: 1227 }, (_, i) => linha(i, 'cp'));
+
+    const [out] = await getAnaliseDimensional('cp', 'all', 'categoria', 2025);
+
+    expect(out.total_pago_recebido).toBeNull();
+    expect(out.total_documento).toBe(12270); // a paginação segue inteira
   });
 });
