@@ -43,11 +43,27 @@ BARATAS="copilot-analyze omie-analytics-sync:doc_ambiguo_probe omie-financeiro"
 CARA="generate-tactical-plan"
 GERADO="$TMP/gerado.sql"
 # shellcheck disable=SC2086  # a lista de nomes é intencionalmente dividida em argumentos
-if ! (cd "$RAIZ" && bun scripts/sonda-versao-sql.ts --canaria $BARATAS "$CARA" --sem-rede) > "$GERADO" 2>"$TMP/gen.err"; then
+# `SONDA_REF_DEPLOYADA=HEAD`: este teste usa o gerador como produtor de TEXTO — ele compara o
+# SQL com um esperado e NÃO sonda prod nenhuma, então sincronia com o que está no ar é
+# irrelevante aqui. Sem isto o guard reprova todo PR que toque QUALQUER edge: ele compara o
+# working tree com `origin/main`, e no CI de um PR o working tree é o merge commit, que por
+# definição ainda não mergeou. Medido em 2026-09-09 — `provas-sql` verde na main e VERMELHO
+# em 5 PRs abertos simultâneos. Apontando para HEAD o guard compara o disco consigo mesmo:
+# as 5 portas continuam sendo exercitadas, muda só o alvo. E o SQL sai CARIMBADO como
+# ref não-padrão, então este artefato nunca passa por prova de deploy.
+if ! (cd "$RAIZ" && SONDA_REF_DEPLOYADA=HEAD bun scripts/sonda-versao-sql.ts --canaria $BARATAS "$CARA" --sem-rede) > "$GERADO" 2>"$TMP/gen.err"; then
   echo "VERMELHO — o gerador falhou:"; cut -c1-400 "$TMP/gen.err"; exit 1
 fi
 # Sonda POSITIVA: geração vazia/silenciosa viraria suíte verde sobre SQL nenhum.
 grep -q 'AS veredito' "$GERADO" || { echo "VERMELHO — SQL gerado não tem CASE de veredito"; exit 1; }
+# O SQL gerado com ref NÃO-PADRÃO tem de se DENUNCIAR no próprio texto. É o que impede a env
+# `SONDA_REF_DEPLOYADA` de virar porta dos fundos: sem o carimbo, um artefato gerado fora do
+# padrão seria indistinguível de um conferido contra a main, e o "BUNDLE VELHO" dele passaria por
+# veredito de deploy. Some o carimbo, esta linha fica VERMELHA.
+grep -q 'ref NÃO-PADRÃO' "$GERADO" || {
+  echo "VERMELHO — SQL gerado com SONDA_REF_DEPLOYADA=HEAD não veio CARIMBADO como ref não-padrão"
+  exit 1
+}
 grep -q 'net.http_post' "$GERADO" || { echo "VERMELHO — SQL gerado não dispara nada"; exit 1; }
 
 # extrai_leitura <ordinal> <arquivo_sql> — o corpo do n-ésimo `format($sonda$…$sonda$`, que é o

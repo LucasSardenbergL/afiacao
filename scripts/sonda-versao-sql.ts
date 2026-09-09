@@ -171,7 +171,29 @@ export function lerProjectRef(raiz: string): string {
 /** O que o Lovable deploya. Não é o `<sha>` do PR nomeado: é a MAIN (#2123). */
 const REMOTO = 'origin';
 const RAMO_DEPLOYADO = 'main';
-const REF_DEPLOYADA = `${REMOTO}/${RAMO_DEPLOYADO}`;
+/**
+ * Contra o que o guard de sincronia compara o disco. `origin/main` é a resposta em TODO uso real,
+ * porque é o que o Lovable deploya — e é o default quando a env não existe.
+ *
+ * A env existe por um defeito MEDIDO (2026-09-09): o guard compara o working tree com
+ * `origin/main`, e no CI de um PR o working tree é o merge commit — que por definição ainda NÃO
+ * está na main. Como `sonda-fingerprints.ts` entra sempre em `fatiaDaVerdade()`, e esse arquivo
+ * muda em QUALQUER PR que toque QUALQUER edge, o gate reprovava a fila inteira: medido com
+ * `provas-sql` **success na main** e **fail nos 5 PRs abertos** (#2405, #2407, #2412, #2413,
+ * #2415) no mesmo dia em que `db/test-canaria-veredito.sh` entrou no núcleo (#a1d25a38a).
+ *
+ * Quem precisa disso é o TESTE, não o operador: ele usa o gerador como produtor de TEXTO para
+ * comparar com um esperado, e não vai sondar prod nenhuma — a sincronia com o que está no ar é
+ * irrelevante ali. Apontando a ref para `HEAD`, o guard compara o disco consigo mesmo e continua
+ * EXERCITADO (as 5 portas rodam; o que muda é só o alvo da comparação).
+ *
+ * Por que isto não é uma porta dos fundos: o SQL emitido CARIMBA a ref usada no cabeçalho, então
+ * um artefato gerado fora do padrão se denuncia no próprio texto que alguém colaria. E o default
+ * segue fail-closed — não setar a env é o caminho normal.
+ */
+const REF_DEPLOYADA = process.env.SONDA_REF_DEPLOYADA?.trim() || `${REMOTO}/${RAMO_DEPLOYADO}`;
+/** `true` quando o guard NÃO está comparando com o que o Lovable deploya — vai para o SQL. */
+const REF_NAO_PADRAO = REF_DEPLOYADA !== `${REMOTO}/${RAMO_DEPLOYADO}`;
 
 /** O comando que conserta o worktree defasado — o mesmo que a mensagem de aborto entrega. */
 const CORRECAO = `git fetch ${REMOTO} && git merge --ff-only ${REF_DEPLOYADA}`;
@@ -302,6 +324,19 @@ export function conferirSincronia(
     );
   }
 
+  // Ref não-padrão CARIMBA o SQL, sempre — inclusive com rede. É o que impede a env de virar
+  // porta dos fundos silenciosa: quem colar o artefato lê, no próprio texto, contra o que ele foi
+  // conferido. Sem isto, um SQL gerado com `SONDA_REF_DEPLOYADA=HEAD` seria indistinguível de um
+  // gerado contra a main — e o veredito "BUNDLE VELHO" dele não valeria nada.
+  if (REF_NAO_PADRAO) {
+    return {
+      aviso:
+        `⚠️ ref NÃO-PADRÃO: o guard comparou o disco com \`${REF_DEPLOYADA}\`, não com ` +
+        `\`${REMOTO}/${RAMO_DEPLOYADO}\` (via SONDA_REF_DEPLOYADA). Isso existe para TESTE — o ` +
+        'veredito abaixo NÃO prova sincronia com o que o Lovable deploya. Não use este SQL para ' +
+        'decidir deploy.',
+    };
+  }
   if (!semRede) return { aviso: null };
   const data = git(['log', '-1', '--format=%ci', REF_DEPLOYADA]);
   const idade = data.status === 0 && data.stdout.trim() !== '' ? data.stdout.trim() : 'data desconhecida';
