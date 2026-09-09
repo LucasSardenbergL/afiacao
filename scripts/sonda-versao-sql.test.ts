@@ -425,7 +425,7 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
 
   it('o controle não conta a PRÓPRIA leva, e exclui por NOT EXISTS (NOT IN seria NULL-blind)', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
-    expect(sql).toMatch(/AND NOT EXISTS \(SELECT 1 FROM ids i2 WHERE i2\.request_id = r\.id\)/);
+    expect(sql).toMatch(/AND NOT EXISTS \(SELECT 1 FROM ids id_leva WHERE id_leva\.request_id = r\.id\)/);
     // A trava fechada do bloco caro devolve request_id NULL; `NOT IN` com NULL zeraria o
     // controle inteiro em silêncio, e todo 401 viraria INDETERMINADO por acidente.
     expect(sql).not.toMatch(/r\.id NOT IN \(/);
@@ -1782,7 +1782,7 @@ describe('PASSO 2 da canária — o julgamento exige os TRÊS campos', () => {
     // ALHEIO desqualificar o veredito confiante; e sem o CROSS JOIN o `cred` não existe na
     // projeção — o veredito determinado do 401 vira erro de coluna, ou some.
     const s = sql();
-    expect(s).toContain('AND NOT EXISTS (SELECT 1 FROM ids mp2 WHERE mp2.request_id = r.id)');
+    expect(s).toContain('AND NOT EXISTS (SELECT 1 FROM ids id_leva WHERE id_leva.request_id = r.id)');
     expect(s).toContain('FROM lidas ca CROSS JOIN controle_credencial cred');
     expect(s).toMatch(
       /AND cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0\n\s*THEN 'SEM CANARIA NO AR — 401/,
@@ -1886,5 +1886,118 @@ describe('CLI do modo canária — as flags sem sentido são RECUSADAS, não ign
     expect(rc).toBe(1);
     expect(saida).toHaveLength(0);
     expect(erros.join('\n')).toMatch(/DESSINCRONIZADO/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// O TRANSPORTE compartilhado (headers + segredo + timeout), depois que `httpPost` virou uma cópia
+// só. Antes desta extração a chamada era duplicada (sonda × canária) e os HEADERS não tinham UMA
+// asserção nas duas suítes (medido 2026-09-08: `grep -c 'x-cron-secret'` no teste = 0). O drift que
+// isso permitia se lê como o CONTRÁRIO do que é: header errado ⇒ 401 só na leva ⇒ o
+// `controle_credencial` (que mede tráfego de FORA da leva) segue verde ⇒ sai `BUNDLE VELHO
+// (pre-sonda)` / `SEM CANARIA NO AR` CONFIANTE ⇒ redeploy à toa de edge que já estava no ar.
+//
+// Varre TODAS as chamadas, não a primeira: o SQL tem `net.http_post` no bloco BARATO e no CARO, e
+// `toContain` sobre o texto inteiro fica verde com uma ocorrência correta escondendo outra quebrada
+// (ressalva do parecer Codex de 2026-09-08). O `.mut` ancora nestas invariantes.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+describe('transporte do disparo — os headers valem para os DOIS modos por construção', () => {
+  /** Cada `net.http_post(...)` do SQL, do `net.http_post(` até o `timeout_milliseconds := N)`. */
+  const chamadas = (sql: string): string[] =>
+    Array.from(sql.matchAll(/net\.http_post\([\s\S]*?timeout_milliseconds := \d+\)/g), (m) => m[0]);
+
+  const DEFAULT_PG_NET_MS = 5000;
+  // Os dois modos com os DOIS blocos presentes: na sonda o caro nasce de `caras`, na canária das
+  // canárias marcadas `fluxoRealSeVelho` (a leva inteira tem pelo menos uma). A leva da sonda leva
+  // uma edge barata E uma cara porque MEDI que `separar()` só emite o bloco barato quando sobra
+  // alguma barata: com `edges` e `caras` iguais o SQL sai com UMA chamada só, e um teste que
+  // varresse só ela ficaria verde ignorando o bloco caro — aquele onde um bundle pré-sensor cria
+  // PO de verdade no Omie.
+  const sqlSonda = () =>
+    gerarSqlDaLeva({
+      raiz: RAIZ_REPO,
+      edges: ['analytics-outbox-drain', 'carteira-rebuild'],
+      caras: ['carteira-rebuild'],
+    });
+  const sqlCanaria = () => gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal });
+
+  // Denominador explícito: as asserções abaixo varrem TODAS as chamadas, então elas ficariam verdes
+  // por AUSÊNCIA se o gerador parasse de emitir o bloco caro. Este teste é o que impede — ele fixa
+  // que há DUAS chamadas para varrer (barata + cara), e é o controle dos dois `it.each` seguintes.
+  it('os dois modos emitem chamada no bloco BARATO e no CARO — há 2 para varrer, não 1', () => {
+    expect(chamadas(sqlSonda())).toHaveLength(2);
+    expect(chamadas(sqlCanaria())).toHaveLength(2);
+  });
+
+  it.each([
+    ['sonda', sqlSonda],
+    ['canária', sqlCanaria],
+  ])('%s: TODA chamada manda o header x-cron-secret com o segredo do vault', (_nome, gerar) => {
+    const todas = chamadas(gerar());
+    expect(todas.length).toBeGreaterThan(0);
+    for (const c of todas) {
+      expect(c).toContain("'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets");
+      expect(c).toContain("WHERE name = 'CRON_SECRET' LIMIT 1)");
+      expect(c).toContain("'Content-Type', 'application/json'");
+      // O segredo sai do vault, nunca colado no texto: nada de literal parecendo credencial.
+      expect(c).not.toMatch(/x-cron-secret'\s*,\s*'[^']/);
+    }
+  });
+
+  it.each([
+    ['sonda', sqlSonda],
+    ['canária', sqlCanaria],
+  ])('%s: TODA chamada tem timeout EXPLÍCITO acima do default de 5s', (_nome, gerar) => {
+    const todas = chamadas(gerar());
+    expect(todas.length).toBeGreaterThan(0);
+    for (const c of todas) {
+      const m = c.match(/timeout_milliseconds := (\d+)\)/);
+      expect(m).not.toBeNull();
+      expect(Number(m![1])).toBeGreaterThan(DEFAULT_PG_NET_MS);
+    }
+  });
+
+  // O que a extração NÃO pode ter unificado: url e corpo são o alvo, e trocá-los troca o que roda.
+  it('o alvo continua distinto — a canária leva sufixo e corpo da linha; a sonda, probe fixo', () => {
+    for (const c of chamadas(sqlSonda())) {
+      expect(c).toContain("|| a.edge,");
+      expect(c).toContain("body := jsonb_build_object('probe', true)");
+    }
+    for (const c of chamadas(sqlCanaria())) {
+      expect(c).toContain('|| a.edge || a.sufixo,');
+      expect(c).toContain('body := a.corpo');
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// O CTE `controle_credencial`, depois que virou uma cópia só. A cópia da canária tinha nascido SEM
+// as asserções que dão sentido aos números (medido 2026-09-08: `BETWEEN 200 AND 299`, `= 401` e
+// `interval '6 hours'` eram pinados só no bloco da sonda — na cópia, `BETWEEN 200 AND 499` ou
+// `interval '6 days'` PASSAVA). Agora a mecânica é uma só e estas asserções valem nos dois modos.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+describe('controle de credencial — a mecânica é a MESMA nos dois modos', () => {
+  const sqlSonda = () => gerarSqlDaLeva({ raiz: RAIZ_REPO, edges: ['carteira-rebuild'] });
+  const sqlCanaria = () => gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal });
+
+  it.each([
+    ['sonda', sqlSonda],
+    ['canária', sqlCanaria],
+  ])('%s: conta 2xx e 401 na janela de 6h, e exclui a própria leva por NOT EXISTS', (_n, gerar) => {
+    const sql = gerar();
+    expect(sql).toContain('controle_credencial AS (');
+    expect(sql).toMatch(/count\(\*\) FILTER \(WHERE r\.status_code BETWEEN 200 AND 299\) AS ok_recentes/);
+    expect(sql).toMatch(/count\(\*\) FILTER \(WHERE r\.status_code = 401\)\s+AS recusas_recentes/);
+    expect(sql).toMatch(/r\.created > now\(\) - interval '6 hours'/);
+    expect(sql).toContain('AND NOT EXISTS (SELECT 1 FROM ids id_leva WHERE id_leva.request_id = r.id)');
+    // `NOT IN` com o request_id NULL da trava fechada é NULL-blind e zeraria o controle inteiro.
+    expect(sql).not.toMatch(/r\.id NOT IN \(/);
+  });
+
+  // O que a extração NÃO unificou, e não pode unificar: cada modo DETERMINA o seu veredito, com o
+  // seu alias e a sua prosa. Unificar isto seria transformar dois julgamentos distintos num só.
+  it('o veredito do 401 continua SEPARADO — alias, gatilho e desfecho de cada modo', () => {
+    expect(sqlSonda()).toMatch(/c\.ok_recentes >= \d+ AND c\.recusas_recentes = 0\n\s*THEN 'BUNDLE VELHO \(pre-sonda\)/);
+    expect(sqlCanaria()).toMatch(/cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0\n\s*THEN 'SEM CANARIA NO AR/);
   });
 });
