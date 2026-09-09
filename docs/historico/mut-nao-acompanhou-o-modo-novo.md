@@ -43,10 +43,15 @@ lugar nenhum.
 
 Os 6 testes que as matam nasceram desse run. O `.mut` foi de 56 para **90** mutações (88 pegas,
 as 2 sobreviventes declaradas de sempre, 0 inválidas, 0 problemas) e o contrato passou a custar
-158s locais no lugar de ~100s. O job `mutation-check` inteiro (`bun run mutcheck`,
-356 mutações) fecha em 602s locais e tem teto de 15min no CI, onde a medição de 2026-09-07 sobre
-28 runs deu 346-533s — a folga absorve as 34 novas, mas o próximo que engordar este contrato
-mede antes: o teto é o mesmo para todos os contratos somados.
+158s locais no lugar de ~100s.
+
+**O custo no CI, MEDIDO e não projetado** (run do #2399, 2026-09-08): o job `mutation-check`
+fechou em **10m03s** contra o teto de **15min** — 67% dele. A medição anterior, de 2026-09-07
+sobre 28 runs, dava 346-533s; as 34 mutações novas custaram ~70s de job. Sobra **~1/3 do teto**,
+e ele é o mesmo para os 24 contratos somados: quem for engordar o próximo `.mut` parte deste
+número, não da folga de antes. Estourar o `timeout-minutes` aqui não seria reprovação de
+cobertura — seria ausência de dado vestida de vermelho
+([timeout-de-job-e-ausencia-de-dado.md](timeout-de-job-e-ausencia-de-dado.md)).
 
 ## A régua
 
