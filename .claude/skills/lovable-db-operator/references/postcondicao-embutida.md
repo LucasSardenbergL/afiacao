@@ -31,10 +31,20 @@ Medido em PG17.10 local, mesma migration (constraint criada `NOT VALID` + postco
 | uma única string (simple-query), sem `BEGIN;` | 1 | não (transação implícita desfaz) |
 | **`BEGIN; … COMMIT;` explícito** | 3 | não |
 
-> **Regra:** envolva a migration em `BEGIN; … COMMIT;` explícito. É a única forma de o **arquivo**
-> garantir a atomicidade por si — sem depender de o cliente mandar tudo numa string só. Sem o
-> wrapper, a postcondição continua gritando (o que já é a maior parte do ganho), mas pode gritar
-> **sobre um estado meio-aplicado**.
+> **Regra (depende do CAMINHO, desde 2026-09-09):**
+> - **SQL Editor / MCP:** envolva em `BEGIN; … COMMIT;`. Ali nenhum executor garante atomicidade,
+>   então é a única forma de o **arquivo** garanti-la por si.
+> - **`bun run db:aplicar`:** **não** envolva. A transação é do executor (ele abre, grava o recibo
+>   dentro e fecha), e `aplicar_sql()` roda o corpo por `EXECUTE`, onde comando de transação é
+>   proibido — o script recusa o envelope antes de tocar o banco. Recusa também o que não roda em
+>   transação alguma (`RECUSA_FORA_DE_TRANSACAO`, p.ex. `CREATE INDEX CONCURRENTLY`).
+>
+> Em qualquer caminho, o **alarde** da postcondição é incondicional — é a maior parte do ganho.
+>
+> ⚠️ **A atomicidade "do arquivo" é menor do que parece.** Medido no corpus em 2026-09-09: das 112
+> migrations com `BEGIN;`, só **12** são emolduradas ponta-a-ponta — 18 trazem `SELECT` de
+> verificação DEPOIS do `COMMIT;` e 1 tem DDL ANTES do `BEGIN;`. O wrapper cobre o que está
+> dentro dele, não o arquivo.
 >
 > O exemplo canônico (`20260829081556`) **não** tem o wrapper — copie dele a lógica do assert,
 > não a moldura. As outras (`…_b_cleanup_dups_oben`, `…_fecha_product_costs`,

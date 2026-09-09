@@ -80,7 +80,9 @@ envelhece mal: ninguém a revisa, porque parece lei da física.
 
 1. **idempotente** (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, `UPDATE … WHERE col IS NULL`) —
    re-rodar não pode estragar;
-2. **transacional** (`BEGIN; … COMMIT;` explícito) — sem meio-aplicado;
+2. **transacional** — sem meio-aplicado. **Quem fornece a transação depende do caminho:** pelo
+   SQL Editor/MCP é o ARQUIVO (`BEGIN; … COMMIT;` explícito); pelo `bun run db:aplicar` é o
+   EXECUTOR, e aí o arquivo **não** leva envelope — ele é recusado se levar;
 3. **com postcondição** `DO $post$` que dá `RAISE EXCEPTION` se não pegar — a migration aborta
    sozinha em vez de terminar em silêncio;
 4. **pré-voo `psql-ro` 🟢** — o predicado da postcondição conferido ANTES, contra a prod.
