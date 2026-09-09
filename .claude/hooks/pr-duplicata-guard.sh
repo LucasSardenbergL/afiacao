@@ -56,6 +56,13 @@
 # Fail-open TOTAL: sem jq/git → exit 0; fetch falha → segue com refs locais; sem merge-base → exit 0;
 # arquivo ausente da main → pula (nada a duplicar ali). AVISA via additionalContext com
 # permissionDecision=allow — NUNCA bloqueia (PR legítimo que ESTENDE trabalho recém-mergeado existe).
+# ⚠️ `--no-color` NÃO é enfeite: a via 2 ("fui EU que introduzi") sai do prefixo `^+` do diff, e com
+# cor o ESC vem ANTES do `+` — o `grep` casa zero, `add_ids` sai vazio e o hook CALA. Fail-OPEN, no
+# pior sentido: o silêncio é indistinguível do "nada a avisar". O git não colore em pipe por default
+# mas obedece color.ui/color.diff=always de QUALQUER camada de config — e aqui ele roda na máquina do
+# founder, com o ~/.gitconfig DELE. Medido: `diff` humano COLORE; `--name-only`, `show <rev>:<path>`,
+# `merge-base` e `branch --show-current` saem limpos (a flag no `--name-only` é cinto-e-suspensório,
+# para não depender da versão do git). Classe: docs/historico/gate-que-le-saida-colorida.md.
 # Testes: scripts/test-pr-duplicata-guard.sh (roda no CI via `bun run test:hooks`).
 set -u
 
@@ -111,7 +118,7 @@ if [ "$modo" = commit ]; then
 fi
 
 # shellcheck disable=SC2086  # $alvo é UMA palavra (HEAD/--cached) ou vazio de propósito (árvore)
-mine="$(git diff --name-only "$mb" $alvo 2>/dev/null)" || exit 0
+mine="$(git diff --no-color --name-only "$mb" $alvo 2>/dev/null)" || exit 0
 [ -n "$mine" ] || exit 0
 
 # Identificador significativo: ≥12 chars, com underscore OU corcova camelCase.
@@ -134,7 +141,7 @@ while IFS= read -r f; do
   base_c="$(git show "$mb:$f" 2>/dev/null)" || base_c=""
 
   # shellcheck disable=SC2086  # idem: $alvo é palavra única ou vazio intencional
-  add_ids="$(git diff "$mb" $alvo -- "$f" 2>/dev/null | grep '^+' | grep -v '^+++' | _ids)"
+  add_ids="$(git diff --no-color "$mb" $alvo -- "$f" 2>/dev/null | grep '^+' | grep -v '^+++' | _ids)"
   [ -n "$add_ids" ] || continue
 
   novos="$(comm -23 <(printf '%s\n' "$add_ids") <(printf '%s\n' "$base_c" | _ids) 2>/dev/null)"
