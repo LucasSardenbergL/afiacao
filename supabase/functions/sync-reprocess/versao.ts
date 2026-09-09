@@ -57,7 +57,7 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // `omie_codigo_item` no item, e o ignora — não lança, mas a identidade nunca é gravada e os dois
 // sensores ficam em zero para sempre. É o falso-negativo a vigiar ao ler o log.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.5-sonda-options";
+export const VERSAO = "v1.6-identidade-regua-compartilhada";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
