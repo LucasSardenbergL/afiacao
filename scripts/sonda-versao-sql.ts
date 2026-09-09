@@ -212,6 +212,33 @@ export function fatiaDaVerdade(edges: string[]): string[] {
   return [...edges.map((e) => `supabase/functions/${e}/versao.ts`), ARQ_MAPA];
 }
 
+/**
+ * O fingerprint de UMA edge dentro do mapa, ou `null` se ela não estiver lá.
+ *
+ * O mapa é gerado e cobre as ~60 edges; comparar o ARQUIVO seria comparar 60 fatos para usar um.
+ * O `\b` no fim do nome importa: `omie-vendas` é prefixo de `omie-vendas-sync`, e casar por
+ * prefixo leria o hash da edge errada achando que são a mesma.
+ */
+export function entradaDoMapa(fonteDoMapa: string, edge: string): string | null {
+  const m = new RegExp(`"${edge.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*:\\s*"([0-9a-f]+)"`).exec(fonteDoMapa);
+  return m ? m[1] : null;
+}
+
+/**
+ * O mapa diverge NA edge sondada?
+ *
+ * Fail-CLOSED em duas direções, e a segunda é a que não é óbvia: entrada AUSENTE de qualquer lado
+ * conta como divergência. Se `null === null` fosse aceito, uma edge fora do mapa — exatamente o
+ * caso que o `sonda:fingerprint` existe para barrar — passaria por aqui como "sincronizada", e o
+ * `esperado(...)` sairia sem fingerprint nenhum.
+ */
+export function mapaDivergeNaEdge(mapaLocal: string, mapaDeployado: string, edge: string): boolean {
+  const local = entradaDoMapa(mapaLocal, edge);
+  const deployado = entradaDoMapa(mapaDeployado, edge);
+  if (local === null || deployado === null) return true;
+  return local !== deployado;
+}
+
 /** O que o guard concluiu. `aviso` só existe no caminho `--sem-rede`, que degradou de propósito. */
 export interface ResultadoSincronia {
   aviso: string | null;
@@ -280,7 +307,27 @@ export function conferirSincronia(
       ausentes.push(caminho);
       continue;
     }
-    if (r.stdout !== readFileSync(join(raiz, caminho), 'utf8')) divergentes.push(caminho);
+    const local = readFileSync(join(raiz, caminho), 'utf8');
+    if (caminho === ARQ_MAPA) {
+      // O MAPA compara-se por ENTRADA, não byte a byte — e a diferença não é folga, é precisão.
+      //
+      // Ele é gerado, cobre as ~60 edges, e o fingerprint é TRANSITIVO dos imports locais: mexer
+      // em UM `_shared/` muda a entrada de toda edge que o alcança. Como o gate `sonda:fingerprint`
+      // EXIGE regravar o mapa quando uma edge muda, a comparação byte a byte tornava os dois gates
+      // mutuamente exclusivos — nenhum PR que tocasse uma edge instrumentada passava nos dois.
+      // Medido em 2026-09-09: os PRs #2412 e #2405, de sessões diferentes, reprovaram com a MESMA
+      // mensagem; o último PR de edge a mergear (#2404) passou numa janela de corrida, antes de a
+      // canária entrar no núcleo do CI pelo #2403.
+      //
+      // A fatia certa nunca foi o arquivo. O `esperado(...)` de uma canária consome a entrada
+      // DAQUELA edge; a entrada de uma edge que ninguém está sondando não produz veredito falso
+      // para nenhuma. O que o guard fecha — retrato velho virando "BUNDLE VELHO SERVINDO" — segue
+      // fechado, porque a entrada da edge sondada continua sendo comparada, e ausência em qualquer
+      // ponta conta como divergência.
+      if (edges.some((e) => mapaDivergeNaEdge(local, r.stdout, e))) divergentes.push(caminho);
+      continue;
+    }
+    if (r.stdout !== local) divergentes.push(caminho);
   }
 
   if (ausentes.length > 0 || divergentes.length > 0) {

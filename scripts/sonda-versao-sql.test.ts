@@ -10,8 +10,10 @@ import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 import {
   CANARIAS,
+  entradaDoMapa,
   escaparParaFormat,
   fatiaDaVerdade,
+  mapaDivergeNaEdge,
   gerarSqlDaLeva,
   gerarSqlDasCanarias,
   gitReal,
@@ -1888,3 +1890,113 @@ describe('CLI do modo canária — as flags sem sentido são RECUSADAS, não ign
     expect(erros.join('\n')).toMatch(/DESSINCRONIZADO/);
   });
 });
+
+// ── A fatia do MAPA: por ENTRADA, não pelo arquivo inteiro ────────────────────────────────────
+// O guard comparava `sonda-fingerprints.ts` byte a byte com a origin/main. O mapa é GERADO, cobre
+// as ~60 edges, e o fingerprint é TRANSITIVO dos imports locais — então mexer em UM `_shared/`
+// muda a entrada de toda edge que o alcança. Combinado com o gate `sonda:fingerprint`, que EXIGE
+// regravar o mapa quando uma edge muda, os dois se tornavam mutuamente exclusivos: nenhum PR que
+// tocasse uma edge instrumentada passava nos dois. Medido em 2026-09-09 nos PRs #2412 e #2405,
+// que falharam com a MESMA mensagem; o último PR de edge a mergear (#2404) passou numa janela de
+// corrida, antes de a canária entrar no núcleo do CI pelo #2403.
+//
+// A fatia certa nunca foi o arquivo: o `esperado(...)` de uma canária consome a entrada DAQUELA
+// edge. A entrada de uma edge que ninguém está sondando não produz veredito falso para nenhuma.
+describe('fatia do mapa — entrada da edge sondada, não o arquivo inteiro', () => {
+  // Hex de verdade: o mapa real guarda sha256, e o extrator exige `[0-9a-f]+` para que uma
+  // entrada malformada devolva `null` (⇒ divergência) em vez de casar qualquer coisa. Fixture
+  // com "ZZZ" faria asserts passarem por acidente — `null !== 'bbb'` também é "diverge".
+  const MAPA_A = [
+    'export const FONTE_SHA256: Record<string, string> = {',
+    '  "copilot-analyze": "aa11",',
+    '  "omie-vendas-sync": "bb22",',
+    '};',
+  ].join('\n');
+  // Só `omie-vendas-sync` mudou — exatamente o que acontece quando um PR toca UMA edge.
+  const MAPA_B = MAPA_A.replace('"bb22"', '"cc33"');
+
+  it('entrada de OUTRA edge divergindo não é divergência para a sondada', () => {
+    expect(entradaDoMapa(MAPA_A, 'copilot-analyze')).toBe(entradaDoMapa(MAPA_B, 'copilot-analyze'));
+  });
+
+  it('entrada da PRÓPRIA edge divergindo continua sendo divergência', () => {
+    // O contraste que prova que o guard não foi apenas afrouxado: se a entrada da edge sondada
+    // mudar, o `esperado(...)` sai errado e o veredito vira "BUNDLE VELHO" numa edge no ar.
+    expect(entradaDoMapa(MAPA_A, 'omie-vendas-sync')).not.toBe(entradaDoMapa(MAPA_B, 'omie-vendas-sync'));
+  });
+
+  it('entrada AUSENTE devolve null, e null nunca casa com null', () => {
+    // Fail-closed: se as duas pontas devolvessem `null` e `null === null` fosse aceito, uma edge
+    // fora do mapa (o caso que o `sonda:fingerprint` existe para barrar) passaria como sincronizada.
+    expect(entradaDoMapa(MAPA_A, 'nao-existe')).toBeNull();
+    expect(mapaDivergeNaEdge(MAPA_A, MAPA_A, 'nao-existe')).toBe(true);
+  });
+
+  it('mapaDivergeNaEdge decide pelas entradas: mesma edge igual, outra edge irrelevante', () => {
+    expect(mapaDivergeNaEdge(MAPA_A, MAPA_B, 'copilot-analyze')).toBe(false);
+    expect(mapaDivergeNaEdge(MAPA_A, MAPA_B, 'omie-vendas-sync')).toBe(true);
+  });
+
+  it('a entrada é casada pelo NOME exato — prefixo não passa por ela', () => {
+    // `omie-vendas` é prefixo de `omie-vendas-sync`. Casar por prefixo leria o hash da edge errada
+    // e compararia duas coisas diferentes achando que são a mesma.
+    const mapa = MAPA_A.replace('"omie-vendas-sync": "bb22",', '"omie-vendas": "dd44",\n  "omie-vendas-sync": "bb22",');
+    expect(entradaDoMapa(mapa, 'omie-vendas')).toBe('dd44');
+    expect(entradaDoMapa(mapa, 'omie-vendas-sync')).toBe('bb22');
+  });
+
+  it('o guard REAL deixa passar um mapa que mudou só fora da fatia sondada', () => {
+    // O caso de produção: um PR mexe numa edge que a canária não sonda. Antes, isto abortava.
+    const saida: string[] = [];
+    const erros: string[] = [];
+    const rc = main(['--canaria', 'copilot-analyze'], {
+      raiz: RAIZ_REPO,
+      escrever: (t) => saida.push(t),
+      erro: (t) => erros.push(t),
+      git: gitEspelhoMapaAlterado(RAIZ_REPO, 'omie-vendas-sync'),
+      lerCanarias: lerCanariasReal,
+    });
+    expect(erros.join('\n')).not.toMatch(/DESSINCRONIZADO/);
+    expect(rc).toBe(0);
+    expect(saida.join('')).toContain('AS veredito');
+  });
+
+  it('o guard REAL continua abortando quando a entrada da edge SONDADA muda', () => {
+    // O par do anterior. Sem ele, o teste acima aprovaria um guard que nunca aborta.
+    const saida: string[] = [];
+    const erros: string[] = [];
+    const rc = main(['--canaria', 'copilot-analyze'], {
+      raiz: RAIZ_REPO,
+      escrever: (t) => saida.push(t),
+      erro: (t) => erros.push(t),
+      git: gitEspelhoMapaAlterado(RAIZ_REPO, 'copilot-analyze'),
+      lerCanarias: lerCanariasReal,
+    });
+    expect(rc).toBe(1);
+    expect(saida).toHaveLength(0);
+    expect(erros.join('\n')).toMatch(/DESSINCRONIZADO/);
+  });
+});
+
+/** Espelho que devolve o repo real, mas com a entrada de UMA edge trocada no mapa — o retrato
+ *  fiel do que um PR produz ao mexer numa edge (o fingerprint dela muda, o resto fica). */
+function gitEspelhoMapaAlterado(raiz: string, edgeAlterada: string): ExecutorGit {
+  return (args) => {
+    if (args[0] === 'fetch') return { status: 0, stdout: '', stderr: '' };
+    if (args[0] === 'rev-parse') return { status: 0, stdout: 'abc123456789\n', stderr: '' };
+    if (args[0] === 'show') {
+      const caminho = args[1].slice(args[1].indexOf(':') + 1);
+      try {
+        const conteudo = readFileSync(join(raiz, caminho), 'utf8');
+        if (!caminho.endsWith('sonda-fingerprints.ts')) return { status: 0, stdout: conteudo, stderr: '' };
+        const re = new RegExp(`("${edgeAlterada}":\\s*")([0-9a-f]+)(")`);
+        if (!re.test(conteudo)) throw new Error(`espelho inútil: ${edgeAlterada} não está no mapa real`);
+        return { status: 0, stdout: conteudo.replace(re, '$1deadbeef$3'), stderr: '' };
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith('espelho inútil')) throw e;
+        return { status: 1, stdout: '', stderr: 'no such path' };
+      }
+    }
+    return { status: 0, stdout: '', stderr: '' };
+  };
+}
