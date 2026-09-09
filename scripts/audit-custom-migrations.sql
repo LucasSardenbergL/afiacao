@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 540
+-- Total de custom migrations: 541
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -581,7 +581,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260908072658', 'order_items_desconto_valor', '20260908072658_order_items_desconto_valor.sql'),
   ('20260908163659', 'pedido_nasce_com_identidade_de_linha', '20260908163659_pedido_nasce_com_identidade_de_linha.sql'),
   ('20260908204421', 'deploy_sonda_alvos_onda3', '20260908204421_deploy_sonda_alvos_onda3.sql'),
-  ('20260908223555', 'deploy_sonda_alvos_onda4', '20260908223555_deploy_sonda_alvos_onda4.sql')
+  ('20260908223555', 'deploy_sonda_alvos_onda4', '20260908223555_deploy_sonda_alvos_onda4.sql'),
+  ('20260909074613', 'v_titulo_baixas_otica_canonica', '20260909074613_v_titulo_baixas_otica_canonica.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2374,7 +2375,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_melhores_individuais_por_cliente', ''),
   ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', ''),
-  ('pedido_nasce_com_identidade_de_linha', 'function', 'public', 'criar_pedidos_com_itens', '')
+  ('pedido_nasce_com_identidade_de_linha', 'function', 'public', 'criar_pedidos_com_itens', ''),
+  ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4215,7 +4217,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_melhores_individuais_por_cliente', ''),
   ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', ''),
-  ('pedido_nasce_com_identidade_de_linha', 'function', 'public', 'criar_pedidos_com_itens', '')
+  ('pedido_nasce_com_identidade_de_linha', 'function', 'public', 'criar_pedidos_com_itens', ''),
+  ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', '')
 )
 SELECT
   e.migration,
