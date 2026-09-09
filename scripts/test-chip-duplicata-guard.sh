@@ -23,7 +23,9 @@ export CDG_CACHE_DIR="$tmp/cache"
 # depender do repo real (que muda toda semana e tornaria a suíte flaky por motivo alheio).
 for wt in wtA wtB; do
   mkdir -p "$tmp/$wt/supabase/functions/omie-nfe-reconcile"
-  printf '{"scripts":{"pendencias:deploy":"x","mutcheck":"y","test":"z","wt":"w"}}\n' >"$tmp/$wt/package.json"
+  # "build" (5 letras) é o que exercita o filtro GENERICOS: "test"/"wt" já morrem no filtro de
+  # comprimento, então sem ele a mutação "GENERICOS vazio" sobrevivia (falsificação 2026-09-08).
+  printf '{"scripts":{"pendencias:deploy":"x","mutcheck":"y","test":"z","wt":"w","build":"b"}}\n' >"$tmp/$wt/package.json"
 done
 
 falhas=0
@@ -118,7 +120,9 @@ fi
 
 echo "== contrato de acionamento =="
 limpar
-s="$(printf '{"tool_name":"Bash","tool_input":{"command":"echo exit 2 inconsultavel"}}' \
+# A entrada alheia carrega um `title` que DISPARARIA o eixo MECÂNICA se o hook a aceitasse —
+# só assim o teste alcança a checagem de tool_name em vez de parar no título vazio.
+s="$(jq -n '{tool_name:"OutraFerramenta",tool_input:{title:"Destravar ledger: exit 2, sem prova"}}' \
   | CLAUDE_PROJECT_DIR="$tmp/wtA" bash "$HOOK" 2>/dev/null)"
 if calou "$s"; then
   ok "ferramenta que não é spawn_task → ignora"
