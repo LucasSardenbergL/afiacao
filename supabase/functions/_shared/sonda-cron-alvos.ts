@@ -208,6 +208,11 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
       comCorpo(SEM_CREDENCIAL, BUNDLE_MINIMO, "épocas SEM gate: o POST cru já chama o gateway"),
     ],
   },
+  // F4 onda 4 (2026-09-08) — destravada pela classe `NAO_COMPILA`. Ela tinha 35/36 closures com
+  // degrau; o único que faltava (`b880daeb1`, 2026-04-19) tem `index.ts` que NÃO PARSEIA, então
+  // nunca bootou e nunca respondeu a request nenhum. A prova agora o DISPENSA por nome, em vez de
+  // tratar "não consegui medir" e "não podia estar no ar" como a mesma coisa.
+  { edge: "omie-sync-nfes-recebidas", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   // ⛔ CANDIDATAS QUE A PROVA AINDA NÃO APROVOU. A coluna da direita é o resultado da ONDA 3,
   // depois que a sonda de corpos mediu o degrau de controle de cada uma:
   //   omie-vendas-sync         127/188 → 189/189  ✅ entrou (corpo {"action":"sync_products"})
@@ -215,15 +220,17 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   //   generate-bundle-argument  12/14  →  14/14   ✅ entrou (corpo bundle/customer/customerProfile)
   //   fin-cashflow-engine        0/37  — 8 closures de 2026-05-18/22 sem degrau em NENHUM corpo
   //   omie-sync-estoque         28/29  — 1 closure (f52ea01e8) sem degrau
-  //   omie-sync-nfes-recebidas  35/36  — 1 closure (b880daeb1) cujo `index.ts` NÃO PARSEIA
-  //   omie-cliente               1/68  — import quebra (`Identifier … already declared`)
+  //   omie-sync-nfes-recebidas  35/36 → 35/36 ✅ entrou na onda 4 (o 36º é `NAO_COMPILA`)
+  //   omie-cliente               1/68  — 2 closures dispensados por `NAO_COMPILA`, e os outros 65
+  //                                      seguem INERTES: ela precisa de CORPO medido, como as da
+  //                                      onda 3, não da classe nova. Onda 5.
   //
-  // As duas últimas são de uma classe que o desenho ainda não nomeia: bundle que **não compila**
-  // não pode ter bootado, logo não pode ter executado efeito ao receber o OPTIONS — mas a prova
-  // o trata como "não consegui medir" e barra a edge para sempre por causa de um commit-lixo.
-  // Medido fora do harness (`git cat-file -p <sha>:<path>` + `deno fmt`, com o HEAD do MESMO
-  // arquivo como controle em 0 SyntaxError), então não é artefato da materialização. Nomear essa
-  // classe é trabalho de onda própria: afrouxar um gate de segurança merece o seu próprio PR.
+  // A classe `NAO_COMPILA` nasceu aqui (onda 4) e é o que destravou a `nfes`: bundle que não
+  // compila não pode ter bootado, logo não respondeu a request nenhum, logo não executou efeito
+  // ao receber o OPTIONS. Tratar isso como "não consegui medir" barrava uma edge PARA SEMPRE por
+  // causa de um commit-lixo. O discriminador (`naoCompila()` em `scripts/sonda-cron-prova.ts`)
+  // é lista POSITIVA e separa NÃO-COMPILA de NÃO-RESOLVE: erro de resolução é falha do HARNESS,
+  // não prova nada sobre prod, e CONTINUA barrando. Dois sintéticos vigiam a fronteira.
   //
   // ⚠️ CORREÇÃO (mesma data, contado do log do backfill): a primeira redação deste bloco dizia
   // que "o contador de efeito subiu" e que o closure faltante "executaria efeito ao receber o
