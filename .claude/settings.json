@@ -20,6 +20,14 @@
   },
   "permissions": {
     "allow": [
+      "mcp__lovable__send_message",
+      "mcp__lovable__get_me",
+      "mcp__lovable__list_projects",
+      "mcp__lovable__get_project",
+      "mcp__lovable__list_messages",
+      "mcp__lovable__get_message",
+      "mcp__lovable__get_diff",
+      "mcp__lovable__list_edits",
       "Bash(heavy bun run test:*)",
       "Bash(heavy bun run typecheck:*)",
       "Bash(heavy bun run build:*)",

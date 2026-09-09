@@ -94,6 +94,24 @@ const ACTION_REPROCESS = '{"action":"reprocess_all"}';
 const TRANSCRIPT_REAL =
   '{"transcript":"cliente pediu orcamento de afiacao para 12 laminas industriais"}';
 
+/**
+ * Corpos da ONDA 3 — cada um é o degrau MEDIDO em que o contador de efeito sobe, não um chute.
+ * A sonda que os produziu executou a história inteira de cada edge contra uma escada de
+ * candidatos e reportou o primeiro degrau que sai de `inconclusivo`. Os números medidos:
+ *
+ *   `{"action":"sync_products"}`     omie-vendas-sync      189/189 closures com degrau
+ *   `{"action":"get_sync_state"}`    omie-analytics-sync    86/86
+ *   BUNDLE_MINIMO                    generate-bundle-arg.   14/14
+ *
+ * Trocar qualquer um destes por "algo parecido" REFAZ o bug que eles consertam: um corpo que não
+ * chega ao efeito devolve `inconclusivo`, e controle inerte aprova qualquer coisa. Se mexer, meça
+ * de novo — o veredito é da execução, não da leitura do handler.
+ */
+const ACTION_SYNC_PRODUCTS = '{"action":"sync_products"}';
+const ACTION_GET_SYNC_STATE = '{"action":"get_sync_state"}';
+const BUNDLE_MINIMO =
+  '{"bundle":{"products":[],"lieBundle":0,"confidence":0,"lift":0},"customer":{"name":"x"},"customerProfile":"x"}';
+
 // ⚠️ `sync-reprocess` NÃO entra na F1 por COLISÃO, não por risco: o PR #2224 (money-path, preço
 // ausente do Omie) bumpa o mesmo `versao.ts` para `v1.3-preco-ausente-nao-e-zero` e mergeia antes.
 // Ela entra na F4 (ondas), depois daquele merge, com `desde` próprio. A classe que ela traria
@@ -151,20 +169,81 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   { edge: "fin-valor-cockpit", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   { edge: "recommend", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   { edge: "generate-tactical-plan", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
-  // ⛔ CANDIDATAS DA ONDA 2 QUE A PROVA REPROVOU (2026-09-08) — medido, não estimado. Elas foram
-  // postas na lista, `sonda:cron-prova --backfill` executou a história inteira de cada uma, e o
-  // contador de efeito subiu. Ficam registradas para a onda 3 não repetir o trabalho:
-  //   fin-cashflow-engine        0/37  closures PASSA
-  //   omie-cliente               1/68
-  //   omie-analytics-sync       16/86
-  //   omie-vendas-sync         127/188
-  //   omie-sync-estoque         28/29
-  //   omie-sync-nfes-recebidas  35/36
-  //   generate-bundle-argument  12/14
-  // As quatro últimas chegam perto, e é aí que mora a tentação: 35/36 NÃO é "quase seguro" — o
-  // closure que falta é um bundle que já esteve no ar e que executaria efeito ao receber o
-  // `OPTIONS` do cron. Não há recorte de história que torne isso aceitável; o que resolve é achar
-  // POR QUE aquele closure falha, um a um. Entrar na lista é a PERGUNTA — quem responde é a prova.
+  // F4 onda 3 (2026-09-08) — as três que a onda 2 barrou por CONTROLE INERTE e que agora têm
+  // corpo MEDIDO. O método: uma sonda executou a história inteira de cada uma contra uma escada
+  // de corpos candidatos e reportou em que degrau o contador de efeito sobe. Cobertura: 189/189,
+  // 86/86 e 14/14 closures com degrau — nenhum ficou sem. Os corpos abaixo não são chute; cada um
+  // é o degrau que a medição apontou, e a nota diz o que ele exerce.
+  {
+    edge: "omie-vendas-sync",
+    desde: null,
+    controles: [
+      SEM_CREDENCIAL,
+      CRON,
+      BEARER,
+      comCorpo(CRON, ACTION_SYNC_PRODUCTS, "roteador por `action`: sem ela o handler devolve 400/500 antes do 1º `client.from`"),
+      comCorpo(BEARER, ACTION_SYNC_PRODUCTS, "idem, para as épocas cujo gate só aceitava JWT"),
+    ],
+  },
+  {
+    edge: "omie-analytics-sync",
+    desde: null,
+    controles: [
+      SEM_CREDENCIAL,
+      CRON,
+      BEARER,
+      comCorpo(CRON, ACTION_GET_SYNC_STATE, "a rota MAIS BARATA que ainda toca o banco (3 efeitos, zero fetch externo)"),
+      comCorpo(BEARER, ACTION_GET_SYNC_STATE, "idem, para as épocas de gate só-JWT"),
+    ],
+  },
+  {
+    edge: "generate-bundle-argument",
+    desde: null,
+    controles: [
+      SEM_CREDENCIAL,
+      CRON,
+      BEARER,
+      comCorpo(CRON, BUNDLE_MINIMO, "corpo mínimo que passa a validação e chega ao POST do gateway de IA"),
+      comCorpo(BEARER, BUNDLE_MINIMO, "idem"),
+      comCorpo(SEM_CREDENCIAL, BUNDLE_MINIMO, "épocas SEM gate: o POST cru já chama o gateway"),
+    ],
+  },
+  // ⛔ CANDIDATAS QUE A PROVA AINDA NÃO APROVOU. A coluna da direita é o resultado da ONDA 3,
+  // depois que a sonda de corpos mediu o degrau de controle de cada uma:
+  //   omie-vendas-sync         127/188 → 189/189  ✅ entrou (corpo {"action":"sync_products"})
+  //   omie-analytics-sync       16/86  →  86/86   ✅ entrou (corpo {"action":"get_sync_state"})
+  //   generate-bundle-argument  12/14  →  14/14   ✅ entrou (corpo bundle/customer/customerProfile)
+  //   fin-cashflow-engine        0/37  — 8 closures de 2026-05-18/22 sem degrau em NENHUM corpo
+  //   omie-sync-estoque         28/29  — 1 closure (f52ea01e8) sem degrau
+  //   omie-sync-nfes-recebidas  35/36  — 1 closure (b880daeb1) cujo `index.ts` NÃO PARSEIA
+  //   omie-cliente               1/68  — import quebra (`Identifier … already declared`)
+  //
+  // As duas últimas são de uma classe que o desenho ainda não nomeia: bundle que **não compila**
+  // não pode ter bootado, logo não pode ter executado efeito ao receber o OPTIONS — mas a prova
+  // o trata como "não consegui medir" e barra a edge para sempre por causa de um commit-lixo.
+  // Medido fora do harness (`git cat-file -p <sha>:<path>` + `deno fmt`, com o HEAD do MESMO
+  // arquivo como controle em 0 SyntaxError), então não é artefato da materialização. Nomear essa
+  // classe é trabalho de onda própria: afrouxar um gate de segurança merece o seu próprio PR.
+  //
+  // ⚠️ CORREÇÃO (mesma data, contado do log do backfill): a primeira redação deste bloco dizia
+  // que "o contador de efeito subiu" e que o closure faltante "executaria efeito ao receber o
+  // OPTIONS do cron". É FALSO, e do jeito mais caro: as sete somam **ZERO closures FALHA**. Todo
+  // não-PASSA aqui é `INVERIFICAVEL` — nenhum bundle executou efeito; o que faltou foi a outra
+  // metade da prova. Inflar "não medi" para "medi e é perigoso" num comentário que existe para
+  // calibrar evidência é o erro que este arquivo inteiro tenta impedir, e ele foi meu.
+  //
+  // O que INVERIFICAVEL quer dizer aqui, medido closure a closure:
+  //   · seis delas — CONTROLE INERTE. O `{}` dos controles padrão morre numa validação de entrada
+  //     antes do primeiro efeito, então o contador não sobe e o zero de (a) não vale nada. É o
+  //     MESMO diagnóstico que a `copilot-analyze` teve (14/15 → 15/15 com `TRANSCRIPT_REAL`), e
+  //     tem a MESMA correção: achar o corpo que leva o handler até o efeito.
+  //   · `omie-cliente` — outra causa: bundles históricos que nem importam
+  //     (`Identifier 'upsertAddressFromOmie' has already been declared`). Enquanto não se souber
+  //     se isso é o bundle ou o materializador, ela não é comparável às outras.
+  //
+  // Isso NÃO as promove a seguras: `INVERIFICAVEL` continua barrando, e é para isso que ele
+  // serve. Muda o trabalho da onda 3 — de "achar o efeito perigoso" para "consertar o controle".
+  // Entrar na lista é a PERGUNTA; quem responde é a prova.
   // FORA da onda 1, e o motivo é do CONTROLE, não do risco: `omie-webhook` e `omie-nfe-webhook`
   // recusam `{}` sem tocar em nada, e os closures saíram INVERIFICAVEL — o veredito honesto para
   // "não consegui fazer o contador subir". Zero efeito com controle inerte não prova nada: aprova
