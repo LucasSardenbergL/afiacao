@@ -573,4 +573,9 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'adaptador de CONSTRAINT TRIGGER em order_items; delega ao verificador do agregado',
   },
+  'public.desconto_backfill_aplicar': {
+    fechadaPor: '20260908220625_desconto_backfill_aplicar.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'escreve order_items.desconto_valor a partir do plano já conciliado; SECDEF, chamada só pela edge omie-desconto-backfill sob authorizeCronOrStaff',
+  },
 };
