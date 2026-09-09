@@ -85,6 +85,16 @@
         ]
       },
       {
+        "matcher": "spawn_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/chip-duplicata-guard.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {

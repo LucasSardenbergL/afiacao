@@ -96,6 +96,13 @@ rodar_eixo "DEPLOY" "edge em prod divergente da main (passivo, sem secret)" exit
   bun scripts/pendencias-deploy.ts
 rodar_eixo "CÓDIGO" "sessões mortas com trabalho fora da main" linha \
   bash scripts/wt-orfas.sh
+# EIXO FILA (2026-09-08) — os dois eixos acima medem trabalho que EXISTE e não chegou. Este mede o
+# oposto: obrigação REGISTRADA que ninguém pegou. Entrou junto com o `chip-duplicata-guard.sh`,
+# porque tirar o chip do caminho troca "a tarefa evapora com a sessão" por "a tarefa apodrece para
+# sempre" — e apodrecer é silencioso. O relógio corre desde a ABERTURA e só para com PR que
+# referencie a issue: comentário de bot mantém `updatedAt` fresco sem nada andar.
+rodar_eixo "FILA" "destino durável parado sem avanço comprovado (teto 48h)" exit \
+  bun scripts/fila-idade.ts
 
 echo ""
 echo "════════════════════ RESUMO ════════════════════"
