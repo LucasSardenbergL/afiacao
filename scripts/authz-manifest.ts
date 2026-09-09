@@ -525,6 +525,21 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // MEDIDO em `pg_default_acl`, concede EXECUTE a `anon` E `authenticated` no schema `public`.
   // Limite que continua valendo: o estático prova o que o REPO declara; grant colado à mão em
   // prod só aparece em `bun run authz:funcoes:prod`.
+  // A PORTA de escrita do canal `db:aplicar` (2026-09-07/08, #2394 — db/claude-rw-bootstrap.sql).
+  // É a função mais poderosa do banco: recebe SQL arbitrário e o EXECUTA como `postgres`. Está
+  // aqui, e não no AUTHZ_MANIFEST, porque o manifesto cataloga superfície ALCANÇÁVEL por
+  // anon/authenticated e esta não é — o bootstrap faz `REVOKE ALL ... FROM PUBLIC, anon,
+  // authenticated` e concede EXECUTE só a `claude_rw`. E não pode entrar em ACL_ONLY_INTERNAL:
+  // aquele Set discrimina SECURITY INVOKER, e esta é SECDEF de propósito (é o único mecanismo
+  // que a plataforma deixa — no PG16+ um papel não tem ADMIN sobre si mesmo, então `GRANT
+  // postgres TO claude_rw` é recusado com 42501 em produção; medido).
+  // O que a fecha, além do ACL: só aceita corpo cujo sha256 CASE com uma tentativa `tentativa`
+  // aberta no ledger `public.db_aplicacoes` (RLS ligada) — recusa id já fechado ou de outro corpo.
+  // ⚠️ Ela nasce por COLAGEM MANUAL no SQL Editor, não por migration do repo. Por isso o fecho
+  // NÃO está no repo (`fechadaPor: null`) e o gate estático não a vigia: quem a vigia é
+  // `bun run authz:funcoes:prod`, que MEDE o EXECUTE real de prod. Ver
+  // docs/historico/db-aplicar-colagem-manual-vira-comando.md.
+  'public.aplicar_sql',
 ]);
 
 /**
