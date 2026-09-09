@@ -3,6 +3,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
+import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
@@ -83,7 +84,17 @@ interface OmieDetalheItem {
     descricao?: string;
     quantidade?: number;
     valor_unitario?: number;
+    /** LEGADO — a API do Omie NÃO envia este campo. Declarado porque o código ainda o lê para a
+     *  coluna `order_items.discount`; em runtime é sempre `undefined`, e foi assim que 71.006
+     *  linhas nasceram com desconto 0 sem que ninguém medisse nada. */
     desconto?: number;
+    /** O trio REAL de desconto de `det.produto` (doc oficial, lida 2026-09-07). Sem estes três
+     *  campos declarados, `prod` continua atribuível a `DescontoOmieBruto` — todos os campos são
+     *  opcionais lá — e o type-check ficaria verde sobre um objeto que o tipo diz não ter
+     *  desconto nenhum. Quem lê é `descontoItemOmie`. */
+    tipo_desconto?: string;
+    percentual_desconto?: number;
+    valor_desconto?: number;
     cfop?: string;
   };
   imposto?: { cfop?: string };
@@ -1357,13 +1368,27 @@ async function syncPedidos(
         // `null` = o Omie não informou; a RPC grava NULL em order_items.unit_price. O `|| 0`
         // daqui era a origem da margem negativa fabricada: receita 0 com custo cheio.
         const precoItem = precoUnitarioOmie(prod.valor_unitario);
+        // Desconto CANÔNICO, em R$ da linha, pela régua única (_shared/desconto-omie.ts). Ela lê
+        // o trio que a API do Omie realmente manda (`tipo_desconto` "V"/"P" + `valor_desconto` +
+        // `percentual_desconto`) — `prod.desconto`, que o `discount` abaixo ainda usa, é uma chave
+        // que a API NÃO tem, e por isso a coluna legado é 0 em 71.006 linhas por cegueira.
+        //
+        // `null` = não sei ler este desconto, e vai NULL para a coluna: `?? 0` aqui devolveria
+        // receita cheia, indistinguível do caso legítimo "não há desconto". A base do percentual
+        // é qtd × preço; sem preço não há base, e a régua degrada sozinha.
+        const qtdItem = prod.quantidade || 1;
+        const descontoItem = descontoItemOmie(prod, precoItem === null ? null : qtdItem * precoItem);
         itensRpc.push({
           customer_user_id: customerUserId,
           product_id: productId,
           omie_codigo_produto: prod.codigo_produto,
-          quantity: prod.quantidade || 1,
+          quantity: qtdItem,
           unit_price: precoItem,
+          // LEGADO, intocado de propósito: 5 consumidores ainda a leem como percentual e 2 como
+          // valor. Como ela é 0 em todo o acervo, as duas fórmulas coincidem e ninguém erra hoje.
+          // Mudá-la aqui ativaria a divergência — é entrega própria.
           discount: prod.desconto || 0,
+          desconto_valor: descontoItem,
           hash_payload: `${hashPayload}_${prod.codigo_produto}`,
         });
         // O histórico de preço praticado já era fail-closed (só grava > 0) — mantido, agora
@@ -1500,10 +1525,13 @@ async function repararOrfaosItens(
         const qty = prod.quantidade || 1, price = precoUnitarioOmie(prod.valor_unitario), desc = prod.desconto || 0;
         if (price !== null) subtotal += qty * price * (1 - desc / 100);
         const productId = productMap.get(prod.codigo_produto) || null;
+        // Mesma régua do caminho principal — os dois escrevem na MESMA coluna, e uma delas
+        // divergindo reintroduz a ambiguidade que esta frente inteira existe para fechar.
         itensRpc.push({
           customer_user_id: pai.customer_user_id, product_id: productId,
           omie_codigo_produto: prod.codigo_produto,
           quantity: qty, unit_price: price, discount: desc,
+          desconto_valor: descontoItemOmie(prod, price === null ? null : qty * price),
           hash_payload: `${pai.hash_payload}_${prod.codigo_produto}`,
         });
         if (productId && price !== null && price > 0) precosRpc.push({ customer_user_id: pai.customer_user_id, product_id: productId, unit_price: price });
