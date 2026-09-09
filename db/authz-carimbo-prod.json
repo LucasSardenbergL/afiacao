@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-08T02:14:22.268Z",
-  "sourceHead": "9e5671da6471769ce052c86d70a9883399ed1cfb",
+  "medidoEm": "2026-09-09T01:09:54.676Z",
+  "sourceHead": "ee6686adf039324cb9d66b814fb2f08a905e2bbe",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,31 +11,12 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 1,
-      "resumo": "authz:funcoes:prod — 3 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 55 definição(ões) lida(s) para 57 chave(s) da allowlist.",
-      "contratoFingerprint": "2eba5859665a1f864a628f5c5a727075696701263fedaaed24a24991b0d87d27",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 58 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 59 definição(ões) lida(s) para 58 chave(s) da allowlist.",
+      "contratoFingerprint": "f07584155a0a654dc998e2334144044e58ece923ea11db2a808f7de4e84e90a0",
       "auditorFingerprint": "7a0c358a4866c0f993973aa01b93f1d9b03d8269487c0c9b1c42207e0512efdf",
-      "achados": [
-        {
-          "id": "afc97da67551682b",
-          "linha": "❌ public.pedido_venda_exigir_coerencia — [FUNCAO_AUSENTE_EM_PROD] public.pedido_venda_exigir_coerencia está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-09-08",
-          "ultimaVez": "2026-09-08"
-        },
-        {
-          "id": "6caf7bf9467155bf",
-          "linha": "❌ public.pedido_venda_coerencia_cab — [FUNCAO_AUSENTE_EM_PROD] public.pedido_venda_coerencia_cab está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-09-08",
-          "ultimaVez": "2026-09-08"
-        },
-        {
-          "id": "bf335e6a58e32d61",
-          "linha": "❌ public.pedido_venda_coerencia_lin — [FUNCAO_AUSENTE_EM_PROD] public.pedido_venda_coerencia_lin está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-09-08",
-          "ultimaVez": "2026-09-08"
-        }
-      ]
+      "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -67,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 341 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
+      "resumo": "✅ audit-rls — 342 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
       "denominador": null,
       "contratoFingerprint": "983189279bc797985d2ff78f0ee10434d7c6ab7e582d223ff02d0bddd84841b0",
       "auditorFingerprint": "f24bdcecdcf841257b1c817fbeecddf0b47b91ae42c8784d68e110b86a126986",

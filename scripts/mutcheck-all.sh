@@ -36,6 +36,23 @@ set -uo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" || { echo "mutcheck-all: não consegui ir pra raiz do repo" >&2; exit 2; }
 MUTCHECK="scripts/mutcheck.sh"
 
+# ─────────── repasse de sinal: o filho PRECISA do próprio trap para devolver o arquivo ───────────
+# O mutcheck.sh só devolve o fonte de produção quando o SEU trap EXIT roda. Se o sinal para
+# aqui (bun/heavy mandam SIGTERM ao pai), o filho vira ÓRFÃO restaurando com o log já fechado —
+# janela em que o arquivo mutado está no disco e um `git add -A` o varre. Repasse e ESPERE.
+FILHO=""
+# shellcheck disable=SC2329  # invocada pela string do `trap` abaixo, que o shellcheck não segue
+encerrar() {
+  trap '' INT TERM      # não deixe um 2º sinal cortar a espera pela restauração
+  if [[ -n "$FILHO" ]]; then
+    kill -TERM "$FILHO" 2>/dev/null || true
+    wait "$FILHO" 2>/dev/null || true
+  fi
+  exit $((128 + $1))
+}
+trap 'encerrar 15' TERM
+trap 'encerrar 2' INT
+
 # --seco: repassado a cada contrato. Roda só perl+diff (sem suíte, sem compilar) para medir
 # se os padrões ainda são CIRÚRGICOS no fonte de hoje — é o que o gate barato do CI usa
 # (scripts/mutcheck-seco-gate.sh). Não mede cobertura; o sumário de cada contrato diz isso.
@@ -99,8 +116,11 @@ for mut in "${muts[@]}"; do
   # capturado PELADO (um `| tee` aqui devolveria o status do tee — a classe de
   # docs/historico/evidencia-positiva-shell.md).
   saida=$(mktemp)
-  env ${envs[@]+"${envs[@]}"} bash "$MUTCHECK" ${SECO_ARGS[@]+"${SECO_ARGS[@]}"} "$src" "$tst" "$mut" > "$saida" 2>&1
-  rc=$?
+  # em background + `wait`: é o único jeito de ter o PID para repassar o sinal (acima).
+  env ${envs[@]+"${envs[@]}"} bash "$MUTCHECK" ${SECO_ARGS[@]+"${SECO_ARGS[@]}"} "$src" "$tst" "$mut" > "$saida" 2>&1 &
+  FILHO=$!
+  wait "$FILHO"; rc=$?
+  FILHO=""
   cat "$saida"
   registrar "$mut" "$rc" "$saida"
   rm -f "$saida"

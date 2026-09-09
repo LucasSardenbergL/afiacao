@@ -31,7 +31,13 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-canaria.XXXXXX")"
 DATA="$TMP/data"; SOCK="$TMP"
 # shellcheck disable=SC2329  # invocada pelo `trap` abaixo
-cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMP"; }
+WT_MAIN="$TMP/main"
+# shellcheck disable=SC2329  # invocada pelo `trap` abaixo
+cleanup() {
+  "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
+  git -C "$RAIZ" worktree remove --force "$WT_MAIN" >/dev/null 2>&1 || true
+  rm -rf "$TMP"
+}
 trap cleanup EXIT
 
 # ------------------------------------------------- o SQL REAL, gerado pelo script ---
@@ -42,8 +48,38 @@ trap cleanup EXIT
 BARATAS="copilot-analyze omie-analytics-sync:doc_ambiguo_probe omie-financeiro"
 CARA="generate-tactical-plan"
 GERADO="$TMP/gerado.sql"
+
+# ── ONDE o gerador roda: um worktree de `origin/main`, NÃO o disco desta sessão ───────────────
+# O gerador tem um guard de sincronia fail-closed: ele aborta se a "fatia da verdade"
+# (`<edge>/versao.ts` de cada canária + `_shared/sonda-fingerprints.ts`) diferir de `origin/main`.
+# No uso OPERACIONAL isso é a proteção inteira — marcador bumpado e não mergeado produziria um
+# veredito "BUNDLE VELHO SERVINDO" falso sobre uma edge que está no ar (incidente de 2026-09-05).
+#
+# Só que num PR essa fatia diverge de `origin/main` POR CONSTRUÇÃO: bumpar `versao.ts` é exigido
+# pelo gate `sonda:bump` e regravar o mapa pelo `sonda:fingerprint`. Quando esta prova entrou no
+# núcleo do CI (#2403), o efeito foi que os DOIS gates que o repo obriga num PR de edge passaram a
+# fazer este TERCEIRO reprovar — medido em dois PRs de domínios sem relação (#2405 money-path e
+# #2407 omie-financeiro), ambos vermelhos em `provas-sql` pela mesma linha.
+#
+# A saída NÃO é afrouxar o guard: é rodar o gerador onde a premissa dele VALE. O que esta suíte
+# julga é a LÓGICA do SQL gerado (os ramos do CASE, o eco, o disparo) — nada aqui depende de QUAL
+# marcador está no `versao.ts`, então a main serve tão bem quanto o disco, e ainda por cima é o
+# único estado em que o guard pode rodar de verdade. O guard em si continua provado onde sempre
+# esteve: `scripts/sonda-versao-sql.test.ts` ("o guard de sincronia vale IGUAL aqui — disco fora
+# da main NÃO emite SQL"), no job `testes`.
+if ! git -C "$RAIZ" worktree add --detach "$WT_MAIN" origin/main >"$TMP/wt.err" 2>&1; then
+  echo "VERMELHO — não consegui criar o worktree de origin/main (sem ele o guard de sincronia"
+  echo "           reprova por construção, e passar o disco no lugar seria DESLIGAR o guard):"
+  cut -c1-400 "$TMP/wt.err"; exit 1
+fi
+# Sonda POSITIVA de que é a main MESMO. Sem ela, um `worktree add` que caísse noutro commit
+# passaria despercebido e esta suíte estaria julgando SQL gerado de um estado qualquer.
+SHA_WT="$(git -C "$WT_MAIN" rev-parse HEAD)"
+SHA_MAIN="$(git -C "$RAIZ" rev-parse origin/main)"
+[ "$SHA_WT" = "$SHA_MAIN" ] || { echo "VERMELHO — worktree em $SHA_WT, origin/main em $SHA_MAIN"; exit 1; }
+
 # shellcheck disable=SC2086  # a lista de nomes é intencionalmente dividida em argumentos
-if ! (cd "$RAIZ" && bun scripts/sonda-versao-sql.ts --canaria $BARATAS "$CARA" --sem-rede) > "$GERADO" 2>"$TMP/gen.err"; then
+if ! (cd "$WT_MAIN" && bun scripts/sonda-versao-sql.ts --canaria $BARATAS "$CARA" --sem-rede) > "$GERADO" 2>"$TMP/gen.err"; then
   echo "VERMELHO — o gerador falhou:"; cut -c1-400 "$TMP/gen.err"; exit 1
 fi
 # Sonda POSITIVA: geração vazia/silenciosa viraria suíte verde sobre SQL nenhum.

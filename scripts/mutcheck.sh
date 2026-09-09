@@ -12,7 +12,10 @@
 # versionadas — viram o CONTRATO executável das invariantes que importam.
 #
 # Disciplina embutida (os guards que separam medição de sensação):
-#   - backup-por-cópia + trap: NUNCA deixa o arquivo de produção mutado, nem em Ctrl-C.
+#   - backup + trap que ENCERRA + restore VERIFICADO: não deixa o arquivo de produção
+#     mutado em saída normal, Ctrl-C (INT) ou SIGTERM. SIGKILL não passa por trap nenhum —
+#     esse caso é coberto pela rodada SEGUINTE, que RECUSA começar (sentinela em disco).
+#     A promessa antiga ("nem em Ctrl-C") era falsa: ver o bloco 'backup + revert garantido'.
 #   - baseline-check: se a suíte já está vermelha, aborta (resultado seria lixo).
 #   - guard anti-não-aplicação: perl que não casou = INVÁLIDO, não falso "sobrevive".
 #   - substituição única: mutação que toca >1 linha = regex largo (nó incerto) → INVÁLIDO.
@@ -43,6 +46,7 @@ set -euo pipefail
 if [[ "${1:-}" == "--selftest" ]]; then
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
+  export MUTCHECK_PENDENTES_DIR="$tmp/pendentes"
   src="$tmp/fixture.ts"; test="$tmp/fixture.runner"; mut="$tmp/fixture.mut"
   cat > "$src" <<'EOF'
 export const pick = (xs)=> Math.min(...xs); // anchor
@@ -78,6 +82,127 @@ EOF
   grep -q 'Math.min(...xs)' "$src" || { echo "selftest: FALHOU — backup/revert não restaurou Math.min"; fail=1; }
   grep -qiE "typo no EXPECT.*(INVÁLID|INVALID).*EXPECT desconhecido" <<<"$out" || { echo "selftest: FALHOU — EXPECT inválido (typo) devia ser recusado, não tratado como exploratório"; fail=1; }
   grep -q 'let a = 1' "$src" || { echo "selftest: FALHOU — revert não restaurou a mutação multi-linha"; fail=1; }
+
+  # ───────── caso SINAL: a garantia do cabeçalho ("nem em Ctrl-C") ganha gate ─────────
+  # Regressão real (2026-09-08): um SIGTERM externo no meio da rodada deixou
+  # .claude/hooks/destructive-bash-guard.sh MUTADO no disco — hook de segurança DESARMADO,
+  # varrido depois por um `git add -A`. O caminho feliz acima não pega isto: só a MORTE pega.
+  # A ORDEM importa: o sinal que chega ANTES da 1ª mutação é o fatal (o handler apagava o
+  # backup e o script SEGUIA vivo mutando sem volta); o que chega com o SRC já mutado é
+  # benigno — cobrimos os dois, senão o gate testa só a metade inofensiva.
+  sinal_src="$tmp/sinal.ts"; sinal_mut="$tmp/sinal.mut"; sinal_run="$tmp/sinal-runner.sh"
+  sinal_orig="$tmp/sinal.ORIG"; sinal_marcas="$tmp/marcas"; alvo=""
+  scripts_dir="$(cd "$(dirname "$0")" && pwd)"
+  cat > "$sinal_run" <<EOS
+#!/usr/bin/env bash
+echo r >> "$sinal_marcas"
+sleep 1
+exit 0
+EOS
+  chmod +x "$sinal_run"
+  cat > "$sinal_mut" <<EOS
+# @src: $sinal_src
+# @test: $sinal_src
+# @test_cmd: $sinal_run
+# @compile_cmd: true
+? | evento PreToolUse->PostToolUse | s{hookEventName: "PreToolUse"}{hookEventName: "PostToolUse"}
+? | alfa 1->99                     | s/alfa = 1/alfa = 99/
+EOS
+  sinal_falhou() { echo "selftest[sinal]: FALHOU — $1"; fail=1; }
+  criar_caso_sinal() {   # $1 (opcional) = "all" para exercitar o mutcheck-all.sh
+    : > "$sinal_marcas"
+    cat > "$sinal_src" <<'EOS'
+export const guard = { hookEventName: "PreToolUse" };
+export const alfa = 1;
+EOS
+    cp "$sinal_src" "$sinal_orig"
+    if [[ "${1:-}" == "all" ]]; then
+      MUTCHECK_DIR="$tmp/mutdir" bash "$scripts_dir/mutcheck-all.sh" >"$tmp/sinal.log" 2>&1 &
+    else
+      MUTCHECK_TEST_CMD="$sinal_run" MUTCHECK_COMPILE_CMD=true \
+        "$0" "$sinal_src" "$sinal_src" "$sinal_mut" >"$tmp/sinal.log" 2>&1 &
+    fi
+    alvo=$!
+  }
+  # Esperas por CONDIÇÃO, com TETO e ramo que DIZ que não conseguiu. Um `sleep` fixo aqui
+  # seria fail-OPEN: mataria fora da janela e o teste ficaria VERDE sem tê-la exercitado.
+  esperar_baseline() {  # runner rodando pela 1ª vez = baseline, SRC ainda intacto
+    local i=0
+    while [[ $i -lt 200 ]]; do
+      [[ -s "$sinal_marcas" ]] && return 0
+      i=$((i + 1)); sleep 0.1
+    done
+    return 1
+  }
+  esperar_mutado() {
+    local i=0
+    while [[ $i -lt 200 ]]; do
+      cmp -s "$sinal_src" "$sinal_orig" || return 0
+      i=$((i + 1)); sleep 0.1
+    done
+    return 1
+  }
+  matar_e_conferir() {  # $1=sinal $2=rótulo
+    kill -"$1" "$alvo" 2>/dev/null || true
+    wait "$alvo" 2>/dev/null || true
+    cmp -s "$sinal_src" "$sinal_orig" || sinal_falhou "SIG$1 $2 DEIXOU o SRC mutado no disco"
+  }
+  # caso $1=janela ("baseline"|"mutado"), $2=sinal, $3=rótulo, $4=modo
+  caso_sinal() {
+    criar_caso_sinal "${4:-}"
+    if [[ "$1" == "baseline" ]] && esperar_baseline; then matar_e_conferir "$2" "$3"
+    elif [[ "$1" == "mutado" ]] && esperar_mutado; then matar_e_conferir "$2" "$3"
+    else
+      sinal_falhou "janela '$1' não abriu em 20s ($3): NÃO exercitada — inconclusivo ≠ aprovado"
+      kill -KILL "$alvo" 2>/dev/null || true; wait "$alvo" 2>/dev/null || true
+    fi
+  }
+
+  caso_sinal baseline TERM "durante o baseline"      # (a) a ordem FATAL
+  caso_sinal mutado   TERM "com o SRC já mutado"     # (b) a ordem benigna, como regressão
+  mkdir -p "$tmp/mutdir" && cp "$sinal_mut" "$tmp/mutdir/caso.mut"
+  caso_sinal mutado   TERM "no PAI (mutcheck-all)" all   # (c) o pai TEM que esperar o filho
+
+  # (d) SIGKILL — nenhum trap intercepta. O que TEM que valer é a rodada SEGUINTE RECUSAR,
+  #     e recusar de verdade: se ela seguisse, o `cp "$SRC" "$BACKUP"` sobrescreveria o
+  #     backup bom com o conteúdo MUTADO e destruiria a única via de volta.
+  criar_caso_sinal
+  if ! esperar_mutado; then
+    sinal_falhou "janela não abriu no caso SIGKILL: NÃO exercitada — inconclusivo ≠ aprovado"
+    kill -KILL "$alvo" 2>/dev/null || true; wait "$alvo" 2>/dev/null || true
+  else
+    kill -KILL "$alvo" 2>/dev/null || true
+    wait "$alvo" 2>/dev/null || true
+    cmp -s "$sinal_src" "$sinal_orig" && sinal_falhou "SIGKILL não deixou o SRC mutado: cenário não montado"
+    rc2=0
+    MUTCHECK_TEST_CMD="$sinal_run" MUTCHECK_COMPILE_CMD=true \
+      "$0" "$sinal_src" "$sinal_src" "$sinal_mut" >"$tmp/sinal2.log" 2>&1 || rc2=$?
+    grep -q 'MUTCHECK-RESTO-DE-MUTACAO' "$tmp/sinal2.log" \
+      || sinal_falhou "após SIGKILL a rodada seguinte não gritou MUTCHECK-RESTO-DE-MUTACAO"
+    [[ $rc2 -eq 3 ]] || sinal_falhou "após SIGKILL a rodada seguinte NÃO recusou começar (exit $rc2, esperado 3)"
+    guardado=$(cat "$tmp"/pendentes/*.original 2>/dev/null || true)
+    [[ "$guardado" == "$(cat "$sinal_orig")" ]] \
+      || sinal_falhou "a rodada recusada sobrescreveu o backup com o conteúdo MUTADO — via de volta destruída"
+    rm -f "$tmp"/pendentes/*
+  fi
+
+  # (e) restore que FALHA tem que GRITAR e sair não-zero — devolver 0 sem conferir é o mesmo
+  #     fail-open um andar acima (o `cp` pode falhar calado: disco cheio, permissão, backup sumido).
+  criar_caso_sinal
+  if ! esperar_mutado; then
+    sinal_falhou "janela não abriu no caso restore-falha: NÃO exercitada — inconclusivo ≠ aprovado"
+    kill -KILL "$alvo" 2>/dev/null || true; wait "$alvo" 2>/dev/null || true
+  else
+    chmod a-w "$sinal_src"          # o `cp` de volta passa a falhar
+    rc3=0; wait "$alvo" 2>/dev/null || rc3=$?
+    grep -q 'MUTCHECK-FALHA-AO-RESTAURAR' "$tmp/sinal.log" \
+      || sinal_falhou "restore falhou e o mutcheck NÃO gritou MUTCHECK-FALHA-AO-RESTAURAR"
+    [[ $rc3 -ne 0 ]] || sinal_falhou "restore falhou e o mutcheck saiu 0 — veredito fabricado"
+    ls "$tmp"/pendentes/*.pendente >/dev/null 2>&1 \
+      || sinal_falhou "restore falhou e a sentinela foi APAGADA — a rodada seguinte não vai recusar"
+    chmod u+w "$sinal_src"; rm -f "$tmp"/pendentes/*
+  fi
+
   if [[ $fail -eq 0 ]]; then echo "selftest: ✓ mecânica ok (PEGA/SOBREVIVE/INVÁLIDO[não-casou·multi-linha·não-compila]/revert)"; exit 0; fi
   echo "--- saída do mutcheck sob teste ---"; echo "$out"; exit 1
 fi
@@ -108,10 +233,69 @@ read -ra TEST_CMD <<< "${MUTCHECK_TEST_CMD:-bunx vitest run}"
 read -ra COMPILE_CMD <<< "${MUTCHECK_COMPILE_CMD-bun build --target node --outfile /dev/null}"
 
 # ───────────────────────── backup + revert garantido ─────────────────────────
-BACKUP=$(mktemp)
+# O trap sozinho NÃO basta — e a forma ingênua era ATIVAMENTE pior (regressão 2026-09-08,
+# que deixou .claude/hooks/destructive-bash-guard.sh mutado no disco, hook DESARMADO):
+#   1. `trap ... INT TERM` em bash NÃO encerra o script: o handler roda e a execução SEGUE
+#      da instrução seguinte. Um handler que já apagava o BACKUP deixava o processo VIVO e
+#      sem volta — a `perl -i` seguinte mutava e todo `restore` virava `cp <inexistente>`,
+#      que só reclama em stderr. Fim: arquivo de produção mutado com exit 0.
+#      → INT/TERM apenas `exit`; quem restaura e limpa é o trap EXIT, uma vez só.
+#   2. restaurar sem CONFERIR é fail-OPEN (o `cp` pode falhar calado) → restaure e COMPARE.
+#   3. SIGKILL não passa por trap nenhum: nada dentro do processo evita o resto de mutação.
+#      Então quem recusa é a rodada SEGUINTE — sentinela em disco, fail-CLOSED.
+PENDENTES="${MUTCHECK_PENDENTES_DIR:-${TMPDIR:-/tmp}/mutcheck-pendentes}"
+mkdir -p "$PENDENTES"
+SRC_ABS="$(cd "$(dirname "$SRC")" && pwd)/$(basename "$SRC")"
+CHAVE="$PENDENTES/$(printf '%s' "$SRC_ABS" | tr -c 'A-Za-z0-9._-' '_')"
+BACKUP="$CHAVE.original"     # o backup É a via de recuperação: vive junto da sentinela,
+SENTINELA="$CHAVE.pendente"  # não em /tmp aleatório que ninguém acha depois.
+
+# guard de ENTRADA: sobrou mutação de uma rodada que morreu sem restaurar?
+if [[ -f "$SENTINELA" ]]; then
+  if [[ -f "$BACKUP" ]] && cmp -s "$SRC" "$BACKUP"; then
+    rm -f "$SENTINELA"   # arquivo íntegro: resto inofensivo, segue
+  else
+    {
+      echo "mutcheck: MUTCHECK-RESTO-DE-MUTACAO — a rodada anterior morreu com o SRC MUTADO."
+      echo "  arquivo: $SRC_ABS"
+      echo "  O conteúdo em disco NÃO é o original: é (ou pode ser) um bug PLANTADO. Não"
+      echo "  commite — foi assim que um hook de segurança entrou num 'git add -A'."
+      if [[ -f "$BACKUP" ]]; then
+        echo "  restaure:  cp '$BACKUP' '$SRC_ABS'"
+      else
+        echo "  backup perdido — restaure pelo git:  git checkout -- '$SRC_ABS'"
+      fi
+      echo "  e então:   rm '$SENTINELA'"
+    } >&2
+    exit 3
+  fi
+fi
+
 cp "$SRC" "$BACKUP"
-restore() { cp "$BACKUP" "$SRC"; }
-trap 'restore; rm -f "$BACKUP"' EXIT INT TERM
+printf 'mutcheck pendente para %s\n' "$SRC_ABS" > "$SENTINELA"
+
+# restore VERIFICADO: devolver 0 sem conferir seria o mesmo fail-open de novo.
+restore() {
+  cp "$BACKUP" "$SRC" 2>/dev/null || true
+  cmp -s "$SRC" "$BACKUP" && return 0
+  echo "mutcheck: MUTCHECK-FALHA-AO-RESTAURAR $SRC_ABS (backup: $BACKUP)" >&2
+  return 1
+}
+# shellcheck disable=SC2329  # invocada pela string do `trap` abaixo, que o shellcheck não segue
+finalizar() {
+  local rc=$?
+  trap '' INT TERM        # o encerramento não pode ser interrompido pela metade
+  if restore; then
+    rm -f "$BACKUP" "$SENTINELA"
+  else
+    echo "mutcheck: $SRC_ABS pode estar MUTADO — sentinela MANTIDA em $SENTINELA" >&2
+    if [[ $rc -eq 0 ]]; then rc=9; fi
+  fi
+  exit "$rc"
+}
+trap finalizar EXIT
+trap 'exit 143' TERM      # 128+15 — o `exit` é que dispara o EXIT acima
+trap 'exit 130' INT       # 128+2
 
 run_tests() { "${TEST_CMD[@]}" "$TEST" >/dev/null 2>&1; }  # exit code é a verdade
 compila() { [[ ${#COMPILE_CMD[@]} -eq 0 ]] && return 0; "${COMPILE_CMD[@]}" "$SRC" >/dev/null 2>&1; }
