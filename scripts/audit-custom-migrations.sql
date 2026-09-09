@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 543
+-- Total de custom migrations: 544
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -584,7 +584,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260908215704', 'desconto_valor_atravessa_os_escritores', '20260908215704_desconto_valor_atravessa_os_escritores.sql'),
   ('20260908220625', 'desconto_backfill_aplicar', '20260908220625_desconto_backfill_aplicar.sql'),
   ('20260908222500', 'snapshot_transporta_desconto_valor', '20260908222500_snapshot_transporta_desconto_valor.sql'),
-  ('20260908223555', 'deploy_sonda_alvos_onda4', '20260908223555_deploy_sonda_alvos_onda4.sql')
+  ('20260908223555', 'deploy_sonda_alvos_onda4', '20260908223555_deploy_sonda_alvos_onda4.sql'),
+  ('20260909074613', 'v_titulo_baixas_otica_canonica', '20260909074613_v_titulo_baixas_otica_canonica.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2382,7 +2383,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', ''),
-  ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', '')
+  ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
+  ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4228,7 +4230,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', ''),
-  ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', '')
+  ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
+  ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', '')
 )
 SELECT
   e.migration,

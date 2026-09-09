@@ -21,8 +21,8 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **543** custom migrations totais
-- **1809** objetos esperados (criados por estas migrations)
+- **544** custom migrations totais
+- **1810** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 581
   - `rls_policy`: 462
@@ -30,7 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `cron_job`: 171
   - `table`: 165
   - `trigger`: 92
-  - `view`: 77
+  - `view`: 78
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4484,6 +4484,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260908223555_deploy_sonda_alvos_onda4.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260909074613_v_titulo_baixas_otica_canonica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_titulo_baixas` | — |
 
 ## Próximos passos por status
 
