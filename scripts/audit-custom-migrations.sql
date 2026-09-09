@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 538
+-- Total de custom migrations: 540
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -579,7 +579,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260908055405', 'analytics_ledger_navegacao_postcondicao_corrigida', '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql'),
   ('20260908070850', 'deploy_sonda_alvos_onda2', '20260908070850_deploy_sonda_alvos_onda2.sql'),
   ('20260908072658', 'order_items_desconto_valor', '20260908072658_order_items_desconto_valor.sql'),
-  ('20260908204421', 'deploy_sonda_alvos_onda3', '20260908204421_deploy_sonda_alvos_onda3.sql')
+  ('20260908204421', 'deploy_sonda_alvos_onda3', '20260908204421_deploy_sonda_alvos_onda3.sql'),
+  ('20260908215704', 'desconto_valor_atravessa_os_escritores', '20260908215704_desconto_valor_atravessa_os_escritores.sql'),
+  ('20260908220625', 'desconto_backfill_aplicar', '20260908220625_desconto_backfill_aplicar.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2371,7 +2373,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_melhores_individuais_por_cliente', ''),
-  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'criar_pedidos_com_itens', ''),
+  ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
+  ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4211,7 +4217,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_melhores_individuais_por_cliente', ''),
-  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'criar_pedidos_com_itens', ''),
+  ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
+  ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', '')
 )
 SELECT
   e.migration,
@@ -4239,7 +4249,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 108.
+-- Funções redefinidas com corpo extraível: 109.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4550,6 +4560,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'enqueue_score_recalc_from_sinais', 2, '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql', '178166dc2c3e943e78ab5f7b3ceeebdb'),
   ('public', 'criar_pedidos_com_itens', 1, '20260617160000_criar_pedidos_com_itens.sql', 'd94bc895f6edcbad2fe3dad29f0b774f'),
   ('public', 'criar_pedidos_com_itens', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'd009751130dde7ae614b56948d926338'),
+  ('public', 'criar_pedidos_com_itens', 3, '20260908215704_desconto_valor_atravessa_os_escritores.sql', 'dec43a4d5dd5fbfd28c0cb96bd1ac629'),
   ('public', 'get_customer_sales_summary', 1, '20260618180000_get_customer_sales_summary.sql', 'e2f5bdc39c54b5f79938cb566bdca957'),
   ('public', 'get_customer_sales_summary', 2, '20260618190000_get_customer_sales_summary_blocklist.sql', '5682e854b19bfaed77d781743107107e'),
   ('public', 'get_customer_sales_summary', 3, '20260623150000_get_customer_sales_summary_tz_fallback.sql', '4754a171fadbd0bca17757e8245547ee'),
@@ -4637,6 +4648,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reconciliar_pedidos_omie', 1, '20260830190000_reconciliar_pedidos_omie.sql', '80a1000a7a543c8e3dfc756f4ab4df97'),
   ('public', 'reconciliar_pedidos_omie', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'cad0126b11adcbc4946da1c4566b26f5'),
   ('public', 'reconciliar_pedidos_omie', 3, '20260906180000_order_items_identidade_linha.sql', '0a18feb377a089da307c822912a3fb36'),
+  ('public', 'reconciliar_pedidos_omie', 4, '20260908215704_desconto_valor_atravessa_os_escritores.sql', '9086cdf6e69b8ca1b632d485d1c61dbf'),
   ('public', 'sayerlack_aplicar_custo_portal', 1, '20260905090000_sayerlack_custo_portal_cas.sql', 'ad876e8c210428971511537d07f019e6'),
   ('public', 'sayerlack_aplicar_custo_portal', 2, '20260906193522_valor_total_portal_provado.sql', 'b7ddc0e52eb4e7e23b9febf0ff8e5a98'),
   ('public', 'aprovar_pedido_sugerido', 1, '20260906151715_aprovar_pedido_guard_atomico.sql', 'f9ffc3b7db7801d9c19589ca8c0ec6f9'),
@@ -4646,7 +4658,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reposicao__valida_cancelamento_pos_disparo', 2, '20260907095841_disparado_simulado_e_estado_pos_disparo.sql', 'b6dfae7598c304d32411e9313f2452cd'),
   ('public', 'corrigir_cancelamento_pos_disparo', 1, '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql', '846b7fd56ccda97c8a53e529a5ff182c'),
   ('public', 'corrigir_cancelamento_pos_disparo', 2, '20260906172718_cancelamento_pos_disparo_gate_canonico.sql', '4ca937b4befd086a05b610e4619db24c'),
-  ('public', 'corrigir_cancelamento_pos_disparo', 3, '20260907095841_disparado_simulado_e_estado_pos_disparo.sql', '6cee6f8e6d6bc57286597dd6de9150d7')
+  ('public', 'corrigir_cancelamento_pos_disparo', 3, '20260907095841_disparado_simulado_e_estado_pos_disparo.sql', '6cee6f8e6d6bc57286597dd6de9150d7'),
+  ('public', 'aplicar_edicao_pedido_omie', 1, '20260907210000_pedido_edicao_omie_atomica.sql', '8531ed39f6bf2c7d5725342bc782c8fb'),
+  ('public', 'aplicar_edicao_pedido_omie', 2, '20260908215704_desconto_valor_atravessa_os_escritores.sql', '31c4fce633bf9a7363a45770e4d514c3')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2

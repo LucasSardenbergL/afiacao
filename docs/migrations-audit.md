@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **538** custom migrations totais
-- **1803** objetos esperados (criados por estas migrations)
+- **540** custom migrations totais
+- **1807** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 575
+  - `function`: 579
   - `rls_policy`: 462
   - `index`: 257
   - `cron_job`: 171
@@ -4454,6 +4454,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260908204421_deploy_sonda_alvos_onda3.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260908215704_desconto_valor_atravessa_os_escritores.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_pedidos_com_itens` | — |
+| `function` | `public.aplicar_edicao_pedido_omie` | — |
+| `function` | `public.reconciliar_pedidos_omie` | — |
+
+### `20260908220625_desconto_backfill_aplicar.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.desconto_backfill_aplicar` | — |
 
 ## Próximos passos por status
 
