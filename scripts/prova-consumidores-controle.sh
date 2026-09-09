@@ -39,7 +39,17 @@ rodar() {  # $1 = filtro -t; ecoa nada, devolve o rc do vitest
 
 # Guard: `-t` que nao casa teste nenhum faz o vitest sair 0 por VAZIO -- verde por ausencia, que e'
 # exatamente a falha que este script existe para nao cometer. Exigimos "N passed" com N>=1.
-casou_algum() { grep -qE 'Tests +[1-9][0-9]* passed' /tmp/prova-consumidores.$$.log; }
+#
+# ⚠️ O `sed` de ANSI NAO e' cosmetico -- sem ele o guard MENTE, e mentiu (PR #2413, 2026-09-09).
+# O vitest desliga cor quando a saida vai para arquivo num terminal local, mas MANTEM no runner do
+# CI. La o texto e' `^[[2m Test Files ^[[22m ^[[1m^[[32m1 passed`, e o padrao `Tests +N passed` nao
+# casa porque os escapes entram no meio dos espacos. Resultado: suite VERDE (1 passed | 165
+# skipped) lida como "o filtro nao casou teste algum", e o passo reprovava todo PR -- com a causa
+# invisivel, porque o log ia para /tmp. Guard que decide por texto FORMATADO herda a formatacao
+# como parte do contrato; o strip torna o predicado sobre o CONTEUDO, que e' o que se quer medir.
+casou_algum() {
+  sed 's/\x1b\[[0-9;]*m//g' "/tmp/prova-consumidores.$$.log" | grep -qE 'Tests +[1-9][0-9]* passed'
+}
 
 falhas=0
 
