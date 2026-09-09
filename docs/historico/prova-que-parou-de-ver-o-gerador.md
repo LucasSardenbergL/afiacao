@@ -57,6 +57,56 @@ descartável do HEAD, nunca no disco da sessão — ver #2410) e exige vermelho,
 mesmo caminho na mesma invocação. A primeira dessas sabotagens é literalmente a que o #2405
 aprovava. Se a prova voltar a julgar um retrato, essa linha fica verde e o `--falsificar` reprova.
 
+## Segundo capítulo: voltou a ver o gerador, e continuava sem ver a CLI
+
+**Ainda 2026-09-09.** O conserto acima devolveu a prova ao gerador deste disco — mas por um caminho
+NOVO. A prova passou a julgar a **fixture** (`db/lib/gerar-canaria-fixture.ts`), enquanto produção
+continua recebendo o SQL da **CLI**. Os dois terminam em `gerarSqlDeCanariasResolvidas`, então
+coincidiam. Por construção, e só por construção: nada obrigava que continuassem coincidindo.
+
+Medido, com a janela trocada de `janelaMin` para `19` só no ramo da CLI: ela seguiu saindo **0 com
+os mesmos 9 546 bytes**, o SQL operacional passou de `interval '20 minutes'` para `'19 minutes'` — e
+a prova executada continuou **21 ok / 0 fail**. A fixture saiu byte-a-byte IDÊNTICA. Com a CLI
+quebrada de vez (janela 777: exit 1, **zero bytes**), a prova ficou verde igual. Ela não enxergava a
+CLI de forma nenhuma — nem divergente, nem morta.
+
+> Mover o alvo da prova para um artefato IRMÃO do que vai para produção não é o mesmo defeito de
+> julgar outro estado, mas tem o mesmo desfecho: existe uma mudança que altera produção e não pode
+> reprovar a prova. Quando dois caminhos "dão no mesmo", pergunte o que OBSERVA que dão.
+
+## O que ficou (2)
+
+Uma asserção de correspondência, `EQUIVALENCIA_CANARIA`: o artefato da fixture tem de ser
+EXATAMENTE a moldura fixa envolvendo o que a CLI emitiu — sem `trim`, sem remover comentário, sem
+ordenar, sem normalizar espaço. A comparação é contra o **stdout do executável** da fixture, o mesmo
+comando que o `.sh` roda, e não contra o gerador chamado de dentro do teste: reconstruir o caminho
+da fixture no teste deixaria de fora qualquer filtro na ENTRADA dela.
+
+Compartilhar a função não bastaria (parecer Codex): *"identidade do ponto chamado não implica
+identidade da saída — alguém ainda pode acrescentar `sql = transformar(sql)` depois da função
+compartilhada, apenas na CLI"*. E igualdade textual **é** o contrato certo aqui — o erro seria usá-la
+para concluir que o CASE está correto, o que continua dependendo do PG17.
+
+As duas provas são assimétricas, e é isso que justifica manter as duas. Medido:
+
+| Sabotagem | `EQUIVALENCIA_CANARIA` | prova do CASE (PG17) |
+|---|---|---|
+| nenhuma (controle) | verde | verde |
+| default da janela 20→21 SÓ na CLI | **vermelha** | verde |
+| ramo `ok:false` no gerador compartilhado | verde | **vermelha** |
+
+A do meio está no `scripts/mutcheck.d/sonda-versao-sql.mut`, então roda no CI (falsificação que só
+roda à mão é ausência de dado).
+
+Dois defeitos vizinhos apareceram no caminho. A fixture **aceitava** leva com nome repetido que a
+CLI recusa — medido: CLI exit 1 com zero bytes, fixture exit 0 com 10 180 bytes carregando a linha
+duplicada no `VALUES`. A recusa vivia em `parsearArgs`, e a fixture é uma SEGUNDA fronteira que não
+passa por lá; virou `recusarCanariasRepetidas`, chamada pelas duas. E nenhum teste rodava o `main()`
+com o `gitReal`: trocar o executor por `r.stdout?.trim() ?? ''` passa nos três testes de `gitReal`
+(o sha já é comparado com trim, e vazio continua vazio) e faz `git show` perder a quebra final —
+um repo SINCRONIZADO passaria a ser recusado por divergência de bytes. Falso desses é o que faz
+alguém afrouxar o guard para destravar o CI, que é a espiral do #2414.
+
 **Ver também:** [falsificacao-sem-linha-de-base.md](falsificacao-sem-linha-de-base.md) (o controle
 verde na mesma invocação), [fase-sem-sinal.md](fase-sem-sinal.md) (ausência de sinal ≠ aprovação),
 [gates-textuais-cegos.md](gates-textuais-cegos.md) (verde por cegueira do medidor).

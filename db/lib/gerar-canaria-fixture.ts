@@ -42,7 +42,7 @@
 import { join } from 'node:path';
 
 import { lerCanariasDoRepo } from '../../scripts/canaria-leitor-do-repo';
-import { gerarSqlDasCanarias } from '../../scripts/sonda-versao-sql';
+import { gerarSqlDasCanarias, recusarCanariasRepetidas } from '../../scripts/sonda-versao-sql';
 
 /** Delimitadores do envelope. Distintos entre si e do `$sonda$` que o SQL gerado já usa. */
 const TAG_BLOCO = '$fixture_inerte$';
@@ -97,6 +97,9 @@ if (import.meta.main) {
   }
   const raiz = join(import.meta.dirname, '..', '..');
   try {
+    // A MESMA recusa da CLI, pela MESMA função: esta é a segunda fronteira que pede uma leva, e
+    // enquanto a checagem viveu só no `parsearArgs` a fixture emitia o que a CLI recusa emitir.
+    recusarCanariasRepetidas(nomes);
     process.stdout.write(
       envelopeInerte(gerarSqlDasCanarias({ raiz, nomes, ler: lerCanariasDoRepo })),
     );

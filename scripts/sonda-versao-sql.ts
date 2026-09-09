@@ -1679,6 +1679,29 @@ export interface OpcoesCanaria {
 }
 
 /**
+ * Recusa uma leva com nome repetido, ou não faz nada. LANÇA — nenhum SQL deve sair de leva torta.
+ *
+ * Mora aqui, e não dentro de `parsearArgs`, porque a CLI não é a única fronteira que pede uma leva:
+ * `db/lib/gerar-canaria-fixture.ts` é a segunda, e enquanto esta checagem viveu só no parse de
+ * argumentos as duas discordaram em silêncio. MEDIDO em 2026-09-09, com `copilot-analyze` pedida
+ * duas vezes: a CLI saiu 1 com ZERO bytes, e a fixture saiu 0 com 10 180 bytes carregando a linha
+ * DUPLICADA no `VALUES` — ou seja, a prova executada julgava um SQL que a CLI se recusa a emitir.
+ * Fronteira nova que chame o gerador chama esta função; é ela, não o parse, que define leva válida.
+ *
+ * `duplicadas`, e não `repetidas`: a sonda já tem uma `repetidas` sua, e o nome colidido faz o
+ * `sed` do `scripts/mutcheck.d/sonda-versao-sql.mut` tocar duas linhas e a mutação virar inválida.
+ */
+export function recusarCanariasRepetidas(nomes: readonly string[]): void {
+  const duplicadas = nomes.filter((e, i) => nomes.indexOf(e) !== i);
+  if (duplicadas.length > 0) {
+    throw new Error(
+      `canária repetida na leva: ${[...new Set(duplicadas)].join(', ')} — ` +
+        'linha duplicada no VALUES é canária disparada duas vezes.',
+    );
+  }
+}
+
+/**
  * Gera o SQL de verificação das canárias.
  *
  * A divisão em blocos é a MESMA da sonda, e pela mesma fronteira de permissão: o disparo precisa de
@@ -1867,13 +1890,7 @@ export function parsearArgs(argv: string[]): ArgsCli {
     if (proibidas.length > 0) {
       throw new Error(`flag sem sentido em modo canária —\n  ${proibidas.join('\n  ')}\n${USO}`);
     }
-    const repetidasC = edges.filter((e, i) => edges.indexOf(e) !== i);
-    if (repetidasC.length > 0) {
-      throw new Error(
-        `canária repetida na leva: ${[...new Set(repetidasC)].join(', ')} — ` +
-          'linha duplicada no VALUES é canária disparada duas vezes.',
-      );
-    }
+    recusarCanariasRepetidas(edges);
     // A forma dos nomes NÃO é validada por `FORMA_EDGE` (eles levam `:` quando a edge tem duas
     // canárias): quem valida é `resolverCanarias`, contra o registro, e um nome fora dele já sai
     // com a lista das opções — mais útil que "fora da forma".
