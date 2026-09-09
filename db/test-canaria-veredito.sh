@@ -76,28 +76,61 @@ fi
 # Sonda POSITIVA: geração vazia/silenciosa viraria suíte verde sobre SQL nenhum.
 grep -q 'AS veredito' "$GERADO" || { echo "VERMELHO — SQL gerado não tem CASE de veredito"; exit 1; }
 grep -q 'net.http_post' "$GERADO" || { echo "VERMELHO — SQL gerado não dispara nada"; exit 1; }
+# ARIDADE: a suíte recorta os blocos 1 (baratas) e 2 (cara) por ORDINAL. Se o gerador passar a
+# emitir um número diferente de blocos, cada `extrai_leitura` continua achando "um" bloco e a suíte
+# julgaria o SQL errado em silêncio — ordinal não é identidade. Aqui a contagem é conferida uma vez.
+# shellcheck disable=SC2016  # `$sonda$` e a TAG do dollar-quoting, nao uma variavel a expandir
+blocos_format="$(grep -cFx 'SELECT format($sonda$' "$GERADO")"
+[ "$blocos_format" = 2 ] || { echo "VERMELHO — esperava 2 blocos \`format(\$sonda\$\`, achei $blocos_format"; exit 1; }
 
-# extrai_leitura <ordinal> <arquivo_sql> — o corpo do n-ésimo `format($sonda$…$sonda$`, que é o
-# bloco de LEITURA que o passo de disparo devolve. O `%1$L` (placeholder do mapa) e o `%%` (escape
-# do format) são desfeitos aqui, exatamente como o Postgres faria ao executar o passo 1 — que aqui
-# não se executa: quem o roda é só a sonda de inércia, contra um `net.http_post` que REGISTRA em vez
-# de sair na rede, para provar que o artefato de fixture não dispara.
+# extrai_leitura <ordinal> <arquivo_sql> — recorta o 1º ARGUMENTO do n-ésimo `format($sonda$…$sonda$`,
+# que é o texto do bloco de LEITURA. Recorte BYTE-EXATO: o argumento começa no LF que fecha a linha
+# de abertura (daí o `buf = "\n"`), e até 2026-09-09 esse LF era descartado — 8037 B recortados
+# contra 8038 B reais, medido. Inócuo no SQL, mas "byte a byte" só vale se for byte a byte.
+#
+# FAIL-CLOSED, com o nome do que faltou, e por medição: abertura sem fechamento fazia o awk seguir
+# até o EOF e engolir 220 B de FORA do bloco (o `RAISE` do envelope inerte entrava no recorte), e um
+# fechamento plantado no meio truncava o bloco — as DUAS passavam pela sonda `grep -q 'AS veredito'`
+# do chamador, que só olha se o miolo ficou lá. Por isso o buffer só é impresso no END, depois de
+# abertura E fechamento confirmados: recorte que falha emite ZERO byte, como a CLI faz nas recusas.
 extrai_leitura() {
   local n="$1" arq="$2"
   awk -v alvo="$n" '
-    /^SELECT format\(\$sonda\$$/ { blocos++; if (blocos == alvo) { dentro = 1; next } }
-    /^\$sonda\$, m\.ids\)/      { if (dentro) exit }
-    dentro { print }
+    !dentro && /^SELECT format\(\$sonda\$$/ { if (++blocos == alvo) { dentro = 1; buf = "\n" } ; next }
+    dentro && /^\$sonda\$, m\.ids\)/        { fechou = 1; exit }
+    dentro { buf = buf $0 "\n" }
+    END {
+      if (!dentro) { print "recorte: nao achei a abertura do bloco " alvo > "/dev/stderr"; exit 3 }
+      if (!fechou) { print "recorte: bloco " alvo " sem o fechamento `$sonda$, m.ids)`" > "/dev/stderr"; exit 4 }
+      printf "%s", buf
+    }
   ' "$arq"
 }
 
 MAPA_BARATAS='{"copilot-analyze": 1001, "omie-analytics-sync:doc_ambiguo_probe": 1002, "omie-financeiro": 1003}'
 MAPA_CARA='{"generate-tactical-plan": 2001}'
 
-monta_leitura() { # <ordinal> <mapa-json> <arquivo_sql> -> stdout
-  extrai_leitura "$1" "$3" \
-    | sed "s|%1\$L|'$2'|" \
-    | sed 's|%%|%|g'
+# monta_leitura <ordinal> <mapa-json> <arquivo_sql> — o bloco de leitura COMO O POSTGRES O
+# ESCREVERIA, e não como dois `sed` imitariam. O passo 1 monta o passo 2 por `format(…, m.ids)`, e
+# até 2026-09-09 esta função reimplementava esse `format()` com `sed "s|%1$L|'$mapa'|"` + `sed
+# 's|%%|%|g'`. Medido contra o PG17 nos mesmos insumos: das 11 classes, 8 DIVERGEM — dois `%1$L` na
+# mesma linha (o `sed` não tem `/g`), aspa simples no mapa (`%L` duplica, o `sed` não), mapa NULL
+# (`%L` emite `NULL` cru, o `sed` emite `''`), backslash, `%%1$L`, `%%` dentro do mapa, `&` e `|`
+# (metacaracteres do `sed`, e o `|` MATA o comando). Coincidiam só porque o corpus de hoje tem `%1$L`
+# 1× e `%%` 0× — correto por acidente do conteúdo, não por desenho.
+#
+# Quem executa o `format()` agora é o PG17 que esta prova já sobe: o oráculo é o próprio Postgres,
+# então não sobra imitação para divergir. Corpo e mapa vão por ARQUIVO (`pg_read_file`, superuser
+# local) porque interpolá-los na linha de comando devolveria o problema de quoting pela outra porta.
+#
+# Não há caminho de mapa SQL `NULL` aqui de propósito: ele exigiria `disparos` com ZERO linhas, e o
+# gerador RECUSA leva vazia (medido: exit 1, zero bytes). Testá-lo seria caminho morto. O que a
+# trava fechada produz é OUTRA coisa — `{"nome": null}`, um par com valor nulo, não agregado nulo.
+monta_leitura() {
+  local corpo="$TMP/corpo-$1.txt" mapa="$TMP/mapa-$1.json"
+  extrai_leitura "$1" "$3" > "$corpo" || return 1
+  printf '%s' "$2" > "$mapa"
+  P -At -v ON_ERROR_STOP=1 -c "SELECT format(pg_read_file('$corpo'), pg_read_file('$mapa'))"
 }
 
 # ------------------------------------------ marcadores lidos DE VOLTA do SQL emitido ---
