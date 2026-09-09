@@ -18788,6 +18788,7 @@ export type Database = {
           data_baixa_final: string | null
           n_movimentos: number | null
           omie_codigo_lancamento: number | null
+          origem_baixa: string | null
           prazo_ponderado_dias: number | null
           tipo: string | null
           valor_baixado: number | null
