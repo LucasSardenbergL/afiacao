@@ -18788,6 +18788,7 @@ export type Database = {
           data_baixa_final: string | null
           n_movimentos: number | null
           omie_codigo_lancamento: number | null
+          origem_baixa: string | null
           prazo_ponderado_dias: number | null
           tipo: string | null
           valor_baixado: number | null
@@ -19440,6 +19441,7 @@ export type Database = {
           volume_min: number
         }[]
       }
+      desconto_backfill_aplicar: { Args: { p_linhas: Json }; Returns: Json }
       desfazer_contato_radar: { Args: { p_id: string }; Returns: Json }
       desfazer_contato_rota: { Args: { p_id: string }; Returns: Json }
       despinar_parametro: {
