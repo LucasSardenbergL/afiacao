@@ -809,7 +809,8 @@ function cteControleAtivo(prosa: ProsaDoControleAtivo): string {
     // Só linha DISPARADA entra no denominador: com a trava fechada o request_id é NULL e nada
     // saiu, e contá-la inflaria `disparos_na_leva` — o denominador da mensagem mentiria.
     `  WHERE ${a}.request_id IS NOT NULL\n` +
-    '),\n'
+    // SEM vírgula: este é sempre o ÚLTIMO CTE dos dois blocos, e o `SELECT` final vem logo abaixo.
+    ')\n'
   );
 }
 
