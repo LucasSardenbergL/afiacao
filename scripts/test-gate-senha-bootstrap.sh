@@ -11,6 +11,13 @@
 # tempo: vermelho E a string ausente de toda a saída. Vermelho sozinho passaria com um gate que
 # vaza.
 #
+# ── E o HOOK, end-to-end ─────────────────────────────────────────────────────────────────────────
+# N8..N13 instalam o pre-commit num repo git montado em $TMPDIR (com `core.hooksPath` fixado ali,
+# senão um hooksPath global da máquina de quem roda a suíte seria sobrescrito) e fazem `git commit`
+# de verdade: barrado com senha, aceito com placeholder. Provar o gate não prova o hook — entre os
+# dois há o instalador, o bit de execução e a resolução do caminho. N13 AFIRMA o buraco conhecido
+# (`--no-verify` passa), para a limitação viver na suíte e não só na prosa.
+#
 # ── Falsificação: controle verde na MESMA invocação, e sabotagem que MUDA o arquivo ──────────────
 # Antes de CADA sabotagem a raiz é remontada e reconferida verde; se não estiver, a suíte ABORTA —
 # uma suíte sempre-vermelha aprova tudo (docs/historico/falsificacao-sem-linha-de-base.md). E
@@ -194,6 +201,66 @@ modo_normal() {
     else
       ok 'N7 o gate reprova sem imprimir o literal'
     fi
+  fi
+
+  # ── hook pre-commit, END-TO-END: um `git commit` de verdade sendo barrado ──────────────────────
+  # Provar o GATE não prova o HOOK: entre os dois há o instalador, o `core.hooksPath`, o bit de
+  # execução e a resolução do caminho do gate a partir do toplevel. Cada um desses já foi, em algum
+  # repo, o motivo de um hook "instalado" que nunca rodou.
+  local H="$TMP/hook"
+  rm -rf "$H"; mkdir -p "$H/scripts" "$H/db"
+  git init -q "$H" >/dev/null 2>&1
+  git -C "$H" config user.email t@t; git -C "$H" config user.name t
+  # HERMÉTICO por decreto: sem esta linha, um `core.hooksPath` global na máquina de quem roda a
+  # suíte faria o instalador escrever no diretório de hooks REAL dessa pessoa.
+  git -C "$H" config core.hooksPath "$H/.git/hooks"
+  cp "$GATE" "$H/scripts/gate-senha-bootstrap.sh"
+
+  ( cd "$H" && bash "$REPO/scripts/instalar-hook-pre-commit.sh" ) > "$TMP/inst" 2>&1; rc=$?
+  if [ "$rc" -eq 0 ] && [ -x "$H/.git/hooks/pre-commit" ]; then
+    ok 'N8 instalador escreve um pre-commit executável e ele responde'
+  else
+    falhou "N8 instalador falhou (rc=$rc)"
+  fi
+  # `if <cmd>` e não `cmd; if [ $? ]`: o `$?` indireto é a marca SC2181 que este repo já pagou —
+  # com `set -e` ativo o bloco de erro fica inalcançável e o diagnóstico cala.
+  if ( cd "$H" && bash "$REPO/scripts/instalar-hook-pre-commit.sh" --verificar ) >/dev/null 2>&1; then
+    ok 'N9 --verificar responde instalado'
+  else
+    falhou 'N9 --verificar não reconheceu o hook recém-instalado'
+  fi
+
+  # N10 — o commit com senha é BARRADO, e nenhum commit nasce.
+  sed "s/TROQUE_ESTA_SENHA/$FALSA/" "$RAIZ/db/claude-rw-bootstrap.sql" > "$H/db/claude-rw-bootstrap.sql"
+  git -C "$H" add db/claude-rw-bootstrap.sql >/dev/null 2>&1
+  git -C "$H" commit -q -m 'tenta com senha' > "$TMP/c1" 2>&1; rc=$?
+  if [ "$rc" -ne 0 ] && ! git -C "$H" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    ok 'N10 git commit com senha no índice é BARRADO e nenhum commit nasce'
+  else
+    falhou "N10 o commit com senha passou (rc=$rc) — o hook não está no caminho"
+  fi
+  if grep -q "$FALSA" "$TMP/c1"; then falhou 'N11 a saída do commit VAZOU a senha'; else ok 'N11 a recusa do commit não imprime a senha'; fi
+
+  # N12 — com o placeholder, o commit passa. Um hook que barrasse tudo seria desinstalado no
+  # primeiro incômodo, e um guard desinstalado protege zero.
+  cp "$RAIZ/db/claude-rw-bootstrap.sql" "$H/db/claude-rw-bootstrap.sql"
+  git -C "$H" add db/claude-rw-bootstrap.sql >/dev/null 2>&1
+  git -C "$H" commit -q -m 'com placeholder' >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 0 ] && git -C "$H" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    ok 'N12 commit com o placeholder passa'
+  else
+    falhou "N12 commit limpo foi barrado (rc=$rc) — falso positivo"
+  fi
+
+  # N13 — o BURACO, afirmado em vez de suposto: `--no-verify` pula qualquer hook, por desenho do
+  # git. Este caso existe para que a limitação apareça na suíte, e não só na prosa do PR.
+  sed "s/TROQUE_ESTA_SENHA/$FALSA/" "$RAIZ/db/claude-rw-bootstrap.sql" > "$H/db/claude-rw-bootstrap.sql"
+  git -C "$H" add db/claude-rw-bootstrap.sql >/dev/null 2>&1
+  git -C "$H" commit -q --no-verify -m 'no-verify' >/dev/null 2>&1; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    ok 'N13 --no-verify passa (limitação conhecida: só o CI pega este caso)'
+  else
+    falhou 'N13 --no-verify foi barrado — o git mudou de comportamento, revise a doc do PR'
   fi
 }
 

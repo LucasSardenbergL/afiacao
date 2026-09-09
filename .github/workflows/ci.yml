@@ -502,6 +502,24 @@ jobs:
       - name: Shell lint gate (shellcheck — scripts/ + hooks/ + db/)
         run: bun run lint:shell
 
+      # A senha real do `claude_rw` não entra na história do repo. O `db/claude-rw-bootstrap.sql` é
+      # a única colagem manual que resta: o founder troca `TROQUE_ESTA_SENHA` pela senha real, cola
+      # no SQL Editor do Lovable e tem de restaurar o placeholder. Em 2026-09-07/08 a senha real
+      # ficou na árvore de trabalho DUAS vezes — nenhuma foi commitada, mas o que impediu foi um
+      # agente conferir na hora, e frase-em-doc não é guarda neste repo.
+      #
+      # O QUE ESTE PASSO NÃO É: ele não impede o vazamento. Quando ele reprova, o commit já está no
+      # remoto e a senha com ele — o que ele faz é DETECTAR e obrigar a rotação (a mensagem do gate
+      # diz isso). Quem impede é o pre-commit (`bun run hooks:instalar`), que roda o MESMO script
+      # com `--staged`. As duas camadas cobrem buracos diferentes de propósito: o hook não vale em
+      # `--no-verify` nem em máquina onde ninguém o instalou (o commit do sync do Lovable, por
+      # exemplo, nasce fora daqui); este passo não tem como ser pulado.
+      #
+      # O gate NUNCA imprime a linha ofensora — publicá-la neste log seria o próprio vazamento.
+      # Falsificação (10 sabotagens × 2 locales) roda em `Hooks guard tests` / `test:falsificacao`.
+      - name: Senha do bootstrap — placeholder no lugar (nunca imprime o literal)
+        run: bun run gate:senha-bootstrap
+
       # Anti-inchaço do CLAUDE.md (carregado em toda sessão+subagente). Teto
       # apertado (20 KB / 2,6k palavras / linha ≤2000c) vs ~13 KB pós-refactor
       # da frente 1 (2026-06-15). Estourar = mover a lição pra docs/agent/ e o
