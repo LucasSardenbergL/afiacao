@@ -30,8 +30,13 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-canaria.XXXXXX")"
 DATA="$TMP/data"; SOCK="$TMP"
+WT_SABOTADO="$TMP/wt-sabotado"   # só no --falsificar; ver a seção de falsificação
 # shellcheck disable=SC2329  # invocada pelo `trap` abaixo
-cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMP"; }
+cleanup() {
+  "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
+  git -C "$RAIZ" worktree remove --force "$WT_SABOTADO" >/dev/null 2>&1 || true
+  rm -rf "$TMP"
+}
 trap cleanup EXIT
 
 # ------------------------------------------------- o SQL REAL, gerado pelo script ---
@@ -42,8 +47,30 @@ trap cleanup EXIT
 BARATAS="copilot-analyze omie-analytics-sync:doc_ambiguo_probe omie-financeiro"
 CARA="generate-tactical-plan"
 GERADO="$TMP/gerado.sql"
+
+# ── ONDE o gerador roda: o DISCO desta sessão, por um caminho que não emite SQL operacional ──
+# A CLI (`bun scripts/sonda-versao-sql.ts --canaria`) tem guard de sincronia fail-CLOSED: ela RECUSA
+# emitir se a "fatia da verdade" (`<edge>/versao.ts` + `_shared/sonda-fingerprints.ts`) diferir de
+# `origin/main`. No uso OPERACIONAL isso é a proteção inteira — marcador bumpado e não mergeado
+# produziria um "BUNDLE VELHO SERVINDO" falso sobre edge que está no ar (incidente de 2026-09-05).
+#
+# Só que num PR essa fatia diverge POR CONSTRUÇÃO: `sonda:bump` obriga a bumpar o `versao.ts` e
+# `sonda:fingerprint` obriga a regravar o mapa. Quando esta prova entrou no núcleo do CI (#2403), os
+# três gates viraram mutuamente impossíveis e todo PR de edge reprovou em `provas-sql` (#2414).
+#
+# A primeira saída (#2405) foi rodar a CLI num worktree de `origin/main`. Destravou, e custou a prova
+# INTEIRA: medido em 2026-09-09, com o gerador do disco sabotado (`WHEN ca.corpo ->> 'ok' = 'false'`
+# → `WHEN false`, o ramo que dá nome à CANARIA VERMELHA) esta suíte saiu **19 ok / 0 fail** — ela
+# julgava o gerador da main, então nenhuma mudança do PR podia reprová-la. Verde por CEGUEIRA, na
+# única classe de PR que ela existe para pegar.
+#
+# Agora o SQL sai do gerador DESTE disco por `db/lib/gerar-canaria-fixture.ts`, que não passa pela
+# CLI e não emite SQL operacional: o que ele emite é INERTE (o SQL inteiro vira o valor de uma
+# variável dentro de um `DO` que só faz RAISE — ver a sonda de inércia logo abaixo). O guard segue
+# intocado no caminho que importa, e as cinco recusas dele continuam provadas onde já estavam, em
+# `scripts/sonda-versao-sql.test.ts` (código 1 **e** stdout de zero bytes), no job `testes`.
 # shellcheck disable=SC2086  # a lista de nomes é intencionalmente dividida em argumentos
-if ! (cd "$RAIZ" && bun scripts/sonda-versao-sql.ts --canaria $BARATAS "$CARA" --sem-rede) > "$GERADO" 2>"$TMP/gen.err"; then
+if ! (cd "$RAIZ" && bun db/lib/gerar-canaria-fixture.ts $BARATAS "$CARA") > "$GERADO" 2>"$TMP/gen.err"; then
   echo "VERMELHO — o gerador falhou:"; cut -c1-400 "$TMP/gen.err"; exit 1
 fi
 # Sonda POSITIVA: geração vazia/silenciosa viraria suíte verde sobre SQL nenhum.
@@ -52,8 +79,9 @@ grep -q 'net.http_post' "$GERADO" || { echo "VERMELHO — SQL gerado não dispar
 
 # extrai_leitura <ordinal> <arquivo_sql> — o corpo do n-ésimo `format($sonda$…$sonda$`, que é o
 # bloco de LEITURA que o passo de disparo devolve. O `%1$L` (placeholder do mapa) e o `%%` (escape
-# do format) são desfeitos aqui, exatamente como o Postgres faria ao executar o passo 1 — que este
-# banco não pode rodar, porque não tem `net.http_post`.
+# do format) são desfeitos aqui, exatamente como o Postgres faria ao executar o passo 1 — que aqui
+# não se executa: quem o roda é só a sonda de inércia, contra um `net.http_post` que REGISTRA em vez
+# de sair na rede, para provar que o artefato de fixture não dispara.
 extrai_leitura() {
   local n="$1" arq="$2"
   awk -v alvo="$n" '
@@ -95,6 +123,24 @@ CREATE SCHEMA net;
 CREATE TABLE net._http_response (
   id bigint PRIMARY KEY, status_code int, content text, created timestamptz NOT NULL
 );
+
+-- ── a armadilha da sonda de inércia ────────────────────────────────────────────────────────────
+-- Este banco ganha DE PROPÓSITO tudo o que o passo de disparo precisaria para funcionar: um
+-- `vault.decrypted_secrets` e um `net.http_post` que, em vez de sair na rede, REGISTRA a chamada.
+-- Sem isso a prova de inércia seria vazia — o SQL morreria em "função não existe" e ficaria
+-- impossível distinguir "não disparou porque está inerte" de "não disparou porque este banco é
+-- pobre". Com a armadilha armada, `fixture_sentinela` vazia é evidência POSITIVA de que o artefato
+-- não executa. O segredo é uma string de mentira: nada aqui sai da máquina.
+CREATE SCHEMA vault;
+CREATE TABLE vault.decrypted_secrets (name text, decrypted_secret text);
+INSERT INTO vault.decrypted_secrets VALUES ('CRON_SECRET', 'nao-e-segredo-e-fixture');
+CREATE TABLE public.fixture_sentinela (url text);
+CREATE FUNCTION net.http_post(
+  url text, headers jsonb DEFAULT '{}'::jsonb, body jsonb DEFAULT '{}'::jsonb,
+  timeout_milliseconds int DEFAULT 5000
+) RETURNS bigint LANGUAGE sql AS $fake$
+  INSERT INTO public.fixture_sentinela(url) VALUES (url) RETURNING 7777::bigint;
+$fake$;
 SQL
 
 # ------------------------------------------------------------------- asserções ---
@@ -132,6 +178,34 @@ suite() {
   # "nenhuma linha" — que é vermelho, mas pelo motivo errado. Aqui ele é nomeado.
   grep -q 'AS veredito' "$LB" || { bad "recorte do PASSO 2 saiu sem CASE de veredito"; return; }
   grep -q 'AS veredito' "$LC_ARQ" || { bad "recorte do PASSO 4 saiu sem CASE de veredito"; return; }
+
+  # ------------------------------------------------ (Z) o artefato é INERTE ---
+  # O SQL desta suíte NÃO passa pelo guard de sincronia da CLI (ele é impossível de satisfazer num
+  # PR — #2414). O que substitui o guard AQUI é a inércia: o artefato inteiro é um literal dentro de
+  # um `DO`, então colá-lo em produção não dispara canária nenhuma. Isso não é comentário: é medido,
+  # e nas DUAS pontas, porque cada uma sozinha aprova a outra sabotada.
+  local saida_inercia rc_inercia disparos
+  P -q -c "TRUNCATE public.fixture_sentinela;" >/dev/null
+  # Ponta 1 — o arquivo ABORTA, e com a marca do RAISE. Só "deu erro" aprovaria o envelope removido:
+  # sem ele o SQL morre em `vault`/`net` de mentira e o rc é != 0 do mesmo jeito.
+  saida_inercia="$(P -v ON_ERROR_STOP=1 -f "$ALVO" 2>&1)"; rc_inercia=$?
+  if [ "$rc_inercia" -eq 0 ]; then
+    bad "artefato de fixture rodou LIMPO — o envelope inerte sumiu, e colar isto dispararia"
+  elif printf '%s' "$saida_inercia" | grep -q 'ARTEFATO DE FIXTURE'; then
+    ok "artefato aborta com a marca do RAISE (não é 'deu erro' genérico)"
+  else
+    bad "artefato abortou SEM a marca do RAISE — veio '$(printf '%s' "${saida_inercia:0:90}")'"
+  fi
+  # Ponta 2 — e não disparou NADA. A armadilha (`net.http_post` que registra) está armada, então
+  # sentinela vazia é evidência POSITIVA, não ausência de dado. Sem `ON_ERROR_STOP` de propósito:
+  # é assim que o SQL Editor e o `psql -f` do dia a dia rodam, seguindo APÓS o erro.
+  P -q -f "$ALVO" >/dev/null 2>&1
+  disparos="$(P -t -A -c 'SELECT count(*) FROM public.fixture_sentinela;')"
+  if [ "$disparos" = "0" ]; then
+    ok "artefato não dispara nada nem sem ON_ERROR_STOP (sentinela vazia com a armadilha armada)"
+  else
+    bad "o artefato DISPAROU $disparos vez(es) — o SQL de fixture está executável"
+  fi
 
   # ---------------------------------------------------------- (A) o caso VERDE ---
   P -q -c "TRUNCATE net._http_response;" >/dev/null
@@ -353,7 +427,7 @@ sabota() { # <descricao> <expressao-sed>
     printf '  \033[31mFALHA\033[0m "%s": padrao nao casou, SQL intacto — falsificacao vazia\n' "$desc"; falhou=1; return
   fi
   local viu_vermelho=0 loc
-  # shellcheck disable=SC2031  # ver a nota do laco de controle: o escopo por subshell e o desenho
+  # shellcheck disable=SC2030,SC2031  # ver a nota do laco de controle: o escopo por subshell e o desenho
   for loc in C "$utf8"; do
     if ! ( export LC_ALL="$loc"; ALVO="$copia"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
       viu_vermelho=$((viu_vermelho + 1))
@@ -407,6 +481,97 @@ sabota "eco testado por <> (NULL-blind: chave ausente devolve NULL)" \
 # (f) A janela: sem ela, uma resposta de outra sessão vira veredito de agora.
 sabota "sem o guard de janela (resposta velha vira veredito de agora)" \
   "/WHEN ca\.created <= now\(\) - interval/,+3d"
+
+# ── (g) O ENVELOPE INERTE — o que substitui, AQUI, o guard de sincronia da CLI ─────────────────
+# As duas pontas da sonda (Z) precisam de dente próprio: cada uma sozinha aprova a outra sabotada.
+# (g1) Sem o RAISE, o arquivo roda LIMPO — e continua sem disparar, porque o payload segue literal:
+#      é exatamente o caso que a ponta 2 aprovaria sozinha.
+sabota "sem o RAISE do envelope (artefato roda limpo)" \
+  "/^  RAISE EXCEPTION 'ARTEFATO DE FIXTURE/d"
+# (g2) A moldura inteira some e o payload volta a ser COMANDO. O rc continua != 0 (este banco não
+#      tem tudo o que o SQL pede), então a ponta 1 sozinha aprovaria — quem pega é a sentinela.
+sabota "sem o envelope inteiro (o SQL de fixture volta a DISPARAR)" \
+  "/^DO \\\$fixture_inerte\\\$$/d; /^DECLARE$/d; /^  sql_da_canaria CONSTANT text/d; /^\\\$fixture_payload\\\$;$/d; /^BEGIN$/d; /^  RAISE EXCEPTION 'ARTEFATO DE FIXTURE/d; /^END$/d; /^\\\$fixture_inerte\\\$;$/d"
+
+# ── (h) O EIXO QUE ESTAVA CEGO: a suíte vê o GERADOR, não um retrato dele ──────────────────────
+# Todas as sabotagens acima mexem no SQL JÁ EMITIDO. Nenhuma delas nota se a suíte parou de julgar
+# o gerador deste disco — foi assim que o #2405 a deixou VERDE (19 ok / 0 fail) com o gerador
+# sabotado, ao gerar o SQL num worktree de `origin/main`. Aqui a sabotagem é no GERADOR, e num
+# worktree descartável: mutar o arquivo no disco da sessão é como um hook de segurança ficou mutado
+# em 2026-09-08 (#2410) quando o trap restaurou e o processo seguiu vivo.
+if ! git -C "$RAIZ" worktree add --detach "$WT_SABOTADO" HEAD >"$TMP/wt.err" 2>&1; then
+  printf '  \033[31mFALHA\033[0m nao consegui criar o worktree do HEAD (%s) — o eixo do GERADOR ficaria sem prova\n' \
+    "$(cut -c1-80 "$TMP/wt.err")"
+  exit 1
+fi
+GER_WT="$WT_SABOTADO/scripts/sonda-versao-sql.ts"
+
+gera_do_worktree() { # <arquivo-de-saida> -> 0 se gerou
+  # shellcheck disable=SC2086  # a lista de nomes é intencionalmente dividida em argumentos
+  (cd "$WT_SABOTADO" && bun db/lib/gerar-canaria-fixture.ts $BARATAS "$CARA") >"$1" 2>"$TMP/wt-gen.err"
+}
+
+# CONTROLE do eixo, na MESMA invocação: sem ele, um worktree que nem gera SQL aprovaria toda
+# sabotagem de gerador — a sempre-vermelha outra vez, agora um nível acima.
+CTRL_WT="$TMP/controle-wt.sql"
+if ! gera_do_worktree "$CTRL_WT"; then
+  printf '  \033[31mFALHA\033[0m o gerador do HEAD nem emite SQL (%s)\n' "$(cut -c1-80 "$TMP/wt-gen.err")"
+  exit 1
+fi
+ctrl_wt_verde=0
+for loc in C "$utf8"; do
+  # shellcheck disable=SC2030,SC2031  # ver a nota do laco de controle: o escopo por subshell e o desenho
+  if ( export LC_ALL="$loc"; ALVO="$CTRL_WT"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
+    ctrl_wt_verde=$((ctrl_wt_verde + 1))
+  fi
+done
+if [ "$ctrl_wt_verde" -ne 2 ]; then
+  printf '  \033[31mFALHA\033[0m controle do GERADOR nao ficou verde (%d/2) — o HEAD diverge do disco?\n' "$ctrl_wt_verde"
+  printf '            (esta parte roda sobre o HEAD COMMITADO: commite antes de falsificar)\n'
+  exit 1
+fi
+printf '  \033[32mok\033[0m   controle do gerador verde nos 2 locales\n'
+
+sabota_gerador() { # <descricao> <expressao-sed-no-gerador>
+  local desc="$1" expr="$2" copia="$TMP/sabotado-por-gerador.sql" erro
+  erro="$(sed -E -i.orig "$expr" "$GER_WT" 2>&1)"
+  if [ -n "$erro" ]; then
+    printf '  \033[31mFALHA\033[0m "%s": sed invalido (%s)\n' "$desc" "${erro:0:60}"; falhou=1
+    git -C "$WT_SABOTADO" checkout -- scripts/sonda-versao-sql.ts; rm -f "$GER_WT.orig"; return
+  fi
+  if cmp -s "$GER_WT.orig" "$GER_WT"; then
+    printf '  \033[31mFALHA\033[0m "%s": padrao nao casou, gerador intacto — falsificacao vazia\n' "$desc"
+    falhou=1; git -C "$WT_SABOTADO" checkout -- scripts/sonda-versao-sql.ts; rm -f "$GER_WT.orig"; return
+  fi
+  rm -f "$GER_WT.orig"
+  local viu_vermelho=0 loc
+  if ! gera_do_worktree "$copia"; then
+    # Gerador que nem compila também é "a suíte notou" — mas o motivo tem de aparecer.
+    printf '  \033[32mok\033[0m   "%s" -> o gerador sabotado nem emite SQL\n' "$desc"
+    git -C "$WT_SABOTADO" checkout -- scripts/sonda-versao-sql.ts; return
+  fi
+  for loc in C "$utf8"; do
+    # shellcheck disable=SC2031  # ver a nota do laco de controle: o escopo por subshell e o desenho
+    if ! ( export LC_ALL="$loc"; ALVO="$copia"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
+      viu_vermelho=$((viu_vermelho + 1))
+    fi
+  done
+  if [ "$viu_vermelho" -eq 2 ]; then
+    printf '  \033[32mok\033[0m   "%s" -> suite vermelha nos 2 locales\n' "$desc"
+  else
+    printf '  \033[31mFALHA\033[0m "%s": suite ficou VERDE (%d/2) — a suite NAO ve o gerador deste disco\n' \
+      "$desc" "$viu_vermelho"; falhou=1
+  fi
+  git -C "$WT_SABOTADO" checkout -- scripts/sonda-versao-sql.ts
+}
+
+# A MESMA mutação que ficou verde sob o #2405, agora no gerador: se a suíte voltar a julgar um
+# retrato (da main, de um commit, de um arquivo commitado), esta linha fica VERDE e reprova.
+sabota_gerador "GERADOR sem o ramo de ok:false (o #2405 aprovava isto)" \
+  "s/WHEN ca\\.corpo ->> 'ok' = 'false'/WHEN false/"
+# E a ORDEM dos ramos, que é o que só um teste EXECUTADO prova: julgar o status antes do eco.
+sabota_gerador "GERADOR julga o status antes do eco (500 vermelha vira bundle velho)" \
+  "s/WHEN ca\\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\\.status_code >= 400/WHEN ca.status_code >= 400/"
 
 if [ "$falhou" -eq 0 ]; then printf '\nFALSIFICACAO OK — todo verde tem vermelho alcancavel\n'; exit 0; fi
 printf '\nVERMELHO\n'; exit 1

@@ -15,6 +15,7 @@ import { removerComentarios } from "./limpeza-fonte.ts";
 /** Raiz das edge functions, relativa à raiz do repo (o cwd em que `deno test` roda). */
 const RAIZ_FUNCTIONS = "supabase/functions";
 import * as disparar from "../disparar-pedidos-aprovados/versao.ts";
+import * as descontoBackfill from "../omie-desconto-backfill/versao.ts";
 import * as portalSayerlack from "../enviar-pedido-portal-sayerlack/versao.ts";
 import * as conciliar from "../conciliar-pedido-portal/versao.ts";
 import * as gerarDiario from "../gerar-pedidos-diario/versao.ts";
@@ -90,6 +91,7 @@ type ModSonda = {
 
 const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "disparar-pedidos-aprovados", mod: disparar },
+  { nome: "omie-desconto-backfill", mod: descontoBackfill },
   { nome: "enviar-pedido-portal-sayerlack", mod: portalSayerlack },
   { nome: "conciliar-pedido-portal", mod: conciliar },
   { nome: "gerar-pedidos-diario", mod: gerarDiario },
@@ -261,6 +263,8 @@ const ESCRITA_NOSSO_BANCO = [
   "omie-sync-nfes-recebidas",
   "omie-nfe-webhook",
   "omie-analytics-sync",
+  // Backfill do desconto: escreve `order_items.desconto_valor` via `desconto_backfill_aplicar`.
+  "omie-desconto-backfill",
   // Oitava leva: escrita DIRETA. `calculate-scores` aplica `apply_score_updates`; `ai-ops-agent`
   // apaga e regrava `ai_decisions`; `omie-sync-status-produtos` reescreve `sku_status_omie` e o
   // flag `ativo` de `omie_products`; `sync-reprocess` deleta/reinsere `order_items` e faz upsert

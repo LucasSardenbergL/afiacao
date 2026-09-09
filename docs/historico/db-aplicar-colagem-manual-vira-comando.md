@@ -95,8 +95,12 @@ não é vigilância contínua.
 
 `db/claude-rw-bootstrap.sql` é colado no SQL Editor **uma vez** — é o único jeito de criar o papel
 e a função sem já ter o canal. É `CREATE OR REPLACE` e idempotente; mudar a função exige re-colar.
-E o arquivo carrega um placeholder de senha: **conferir que o placeholder voltou antes de commitar**
-(aconteceu duas vezes de a senha real ficar na árvore de trabalho; nenhuma foi commitada).
+E o arquivo carrega um placeholder de senha. Isto aqui era a única guarda — e frase não é guarda:
+aconteceu **duas vezes** de a senha real ficar na árvore de trabalho, e quem impediu o commit foi um
+agente conferir na hora. Desde 2026-09-09 o freio é de máquina (`bun run gate:senha-bootstrap` no CI
++ `pre-commit` via `bun run hooks:instalar`), e o procedimento mudou: troque o placeholder **dentro
+do SQL Editor**, depois de colar, nunca no arquivo em disco. Ver
+[senha-de-bootstrap-so-o-gate-segura.md](senha-de-bootstrap-so-o-gate-segura.md).
 
 ## Ponteiros
 

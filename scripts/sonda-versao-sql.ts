@@ -390,17 +390,42 @@ const TIMEOUT_HTTP_MS = 20000;
  */
 const TRAVA_CASE = "CASE WHEN g.confirmei_o_deploy = 'sim'";
 
-/** A chamada `net.http_post`, idêntica nos dois blocos de disparo. */
-function httpPost(ref: string, indent: string): string {
+/**
+ * O que muda entre o disparo da SONDA e o da CANÁRIA — e SÓ isso muda.
+ *
+ * `url` é o que vai DEPOIS de `/functions/v1/` (a canária concatena um sufixo de query, porque a
+ * `carteira-rebuild` se acorda por `?canary=1`); `corpo` é a expressão do `body` (a sonda manda um
+ * `{probe:true}` fixo, a canária lê da LINHA, porque as 8 não têm corpo uniforme).
+ */
+interface AlvoDoDisparo {
+  readonly url: string;
+  readonly corpo: string;
+}
+
+const ALVO_SONDA: AlvoDoDisparo = { url: 'a.edge', corpo: "jsonb_build_object('probe', true)" };
+const ALVO_CANARIA: AlvoDoDisparo = { url: 'a.edge || a.sufixo', corpo: 'a.corpo' };
+
+/**
+ * A chamada `net.http_post` dos DOIS blocos de disparo.
+ *
+ * Era duplicada (sonda × canária) e o que a cópia carregava junto eram os HEADERS — que nenhuma
+ * das duas suítes vigiava (medido 2026-09-08: `grep -c 'x-cron-secret'` no teste = 0). O drift
+ * silencioso que isso permitia é caro e se lê como o contrário do que é: header errado ⇒ 401 SÓ na
+ * leva ⇒ o `controle_credencial` (que mede tráfego de FORA da leva) segue verde ⇒ o veredito sai
+ * `BUNDLE VELHO (pre-sonda)` / `SEM CANARIA NO AR` CONFIANTE, e o desfecho é redeploy à toa de uma
+ * edge que já estava no ar. Com uma cópia só, o header é uma verdade só — e as asserções que o
+ * pinam valem para os dois modos por CONSTRUÇÃO, não por disciplina de quem copia.
+ */
+function httpPost(ref: string, indent: string, alvo: AlvoDoDisparo): string {
   const i = indent;
   return (
     `net.http_post(\n` +
-    `${i}  url := 'https://${ref}.supabase.co/functions/v1/' || a.edge,\n` +
+    `${i}  url := 'https://${ref}.supabase.co/functions/v1/' || ${alvo.url},\n` +
     `${i}  headers := jsonb_build_object(\n` +
     `${i}    'Content-Type', 'application/json',\n` +
     `${i}    'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets\n` +
     `${i}                      WHERE name = 'CRON_SECRET' LIMIT 1)),\n` +
-    `${i}  body := jsonb_build_object('probe', true),\n` +
+    `${i}  body := ${alvo.corpo},\n` +
     `${i}  timeout_milliseconds := ${TIMEOUT_HTTP_MS})`
   );
 }
@@ -471,10 +496,10 @@ function blocoDisparo(
     : `WITH alvos(edge) AS (VALUES\n${valuesAlvos(leva)}\n),\n`;
   const projecao = comTrava
     ? `         ${TRAVA_CASE}\n` +
-      `              THEN ${httpPost(ref, '                   ')}\n` +
+      `              THEN ${httpPost(ref, '                   ', ALVO_SONDA)}\n` +
       `         END AS request_id\n` +
       `  FROM alvos a CROSS JOIN guard g\n`
-    : `         ${httpPost(ref, '         ')} AS request_id\n` + `  FROM alvos a\n`;
+    : `         ${httpPost(ref, '         ', ALVO_SONDA)} AS request_id\n` + `  FROM alvos a\n`;
   return (
     cabeca +
     `disparos AS (\n` +
@@ -553,6 +578,64 @@ export function escaparParaFormat(texto: string): string {
  * anormalmente quieto e a resposta honesta é INDETERMINADO.
  */
 export const PISO_CONTROLE_CREDENCIAL = 10;
+
+/**
+ * A prosa que MUDA entre os dois modos no CTE do controle de credencial. A mecânica não muda —
+ * por isso ela vive numa cópia só, logo abaixo — mas a AMBIGUIDADE que o controle desfaz é
+ * diferente em cada um, e essa diferença é o que o operador lê para decidir.
+ *
+ * `exclusao` aceita '' quando o modo não tem nada a acrescentar ali. O que o controle NÃO fecha
+ * NÃO é parâmetro: é limitação da mecânica, e por isso o aviso é emitido pela própria função.
+ */
+interface ProsaDoControle {
+  /** Por que o 401 DESTE modo é ambíguo, e o que o controle prova. */
+  readonly cabeca: string;
+  /** O que a exclusão da própria leva vale neste modo (depende de o mapa `ids` estar cheio). */
+  readonly exclusao: string;
+}
+
+/**
+ * O CTE `controle_credencial` — a MECÂNICA, compartilhada pela sonda e pela canária.
+ *
+ * Era duplicada, e a cópia da canária nasceu SEM as asserções que davam sentido aos números
+ * (medido 2026-09-08: `BETWEEN 200 AND 299`, `= 401` e `interval '6 hours'` eram pinados só no
+ * bloco da sonda — na cópia, `BETWEEN 200 AND 499` ou `interval '6 days'` passava a suíte). Com
+ * uma cópia só, essas asserções valem para os DOIS modos por construção.
+ *
+ * O que ele decide: `ok_recentes` e `recusas_recentes` são a única prova de que o CRON_SECRET está
+ * sendo aceito AGORA. Sem eles o 401 é ambíguo e o veredito honesto é INDETERMINADO — com eles,
+ * cada bloco DETERMINA o seu próprio veredito, e é por isso que o veredito NÃO mora aqui.
+ */
+function cteControleCredencial(prosa: ProsaDoControle): string {
+  return (
+    'controle_credencial AS (\n' +
+    prosa.cabeca +
+    '  SELECT count(*) FILTER (WHERE r.status_code BETWEEN 200 AND 299) AS ok_recentes,\n' +
+    '         count(*) FILTER (WHERE r.status_code = 401)               AS recusas_recentes\n' +
+    '  FROM net._http_response r\n' +
+    "  WHERE r.created > now() - interval '6 hours'\n" +
+    '    -- A própria leva não pode se avalizar: sem isto, o 401 que estamos julgando entra na\n' +
+    '    -- contagem de recusas e o controle se auto-envenena (nenhum 401 seria explicável nunca).\n' +
+    '    -- NOT EXISTS, não NOT IN: a trava fechada do bloco caro devolve request_id NULL, e\n' +
+    '    -- `NOT IN` com NULL é NULL-blind — zeraria o controle inteiro em silêncio.\n' +
+    prosa.exclusao +
+    '    AND NOT EXISTS (SELECT 1 FROM ids id_leva WHERE id_leva.request_id = r.id)\n' +
+    // A ressalva vale para os DOIS modos porque é limitação da MECÂNICA, não do veredito — e até
+    // 2026-09-08 só o bloco da sonda a carregava, deixando quem lia a canária sem o mesmo aviso.
+    '    -- ⚠️ O que este controle NAO fecha: ele é HISTORICO. Prova que ALGUM trafego recente\n' +
+    '    --    passou, nao que ESTA leva mandou a credencial certa — e nao diz qual credencial\n' +
+    '    --    autenticou os 2xx que ele contou. Duas manifestacoes da mesma limitacao:\n' +
+    '    --    (a) CRON_SECRET trocado ha poucos minutos E nenhum cron rodado desde a troca — o\n' +
+    '    --        trafego 2xx da janela usou o secret ANTIGO e avaliza indevidamente;\n' +
+    '    --    (b) o proprio disparo mandando header errado — a leva toma 401, os ids dela ficam\n' +
+    '    --        FORA da contagem, e o controle segue verde avalizando um transporte quebrado.\n' +
+    '    --    Nos dois casos o veredito determinado abaixo sai CONFIANTE e errado. Na proxima\n' +
+    '    --    execucao dos crons (a) vira 401 e o controle se desqualifica sozinho; (b) nao se\n' +
+    '    --    corrige sozinho — e por isso os headers sao vigiados no gerador, pela suite.\n' +
+    '    --    Se voce ACABOU de mexer no vault, trate o veredito determinado como INDETERMINADO.\n' +
+    '),\n'
+  );
+}
 
 /**
  * Bloco de LEITURA e veredito. NÃO exige colar `request_id` nenhum.
@@ -697,28 +780,15 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number, ids: FonteDosIds =
     `  SELECT chave AS edge, valor::bigint AS request_id\n` +
     `  FROM jsonb_each_text(${exprIds}) AS t(chave, valor)\n` +
     `),\n` +
-    `controle_credencial AS (\n` +
-    `  -- Controle de CREDENCIAL: o 401 acima é ambíguo (bundle velho × CRON_SECRET inválido) e só\n` +
-    `  -- vira veredito determinado se ESTE bloco provar que o secret do vault está sendo ACEITO\n` +
-    `  -- agora. Lê a MESMA tabela do LEFT JOIN de cima de propósito: não acrescenta superfície de\n` +
-    `  -- permissão nova (se desse 'permission denied' o bloco inteiro já teria falhado), e um\n` +
-    `  -- controle que exige privilégio a mais viraria INDETERMINADO por acidente de ACL.\n` +
-    `  SELECT count(*) FILTER (WHERE r.status_code BETWEEN 200 AND 299) AS ok_recentes,\n` +
-    `         count(*) FILTER (WHERE r.status_code = 401)               AS recusas_recentes\n` +
-    `  FROM net._http_response r\n` +
-    `  WHERE r.created > now() - interval '6 hours'\n` +
-    `    -- A própria leva não pode se avalizar: sem isto, o 401 que estamos julgando entra na\n` +
-    `    -- contagem de recusas e o controle se auto-envenena (nenhum 401 seria explicável nunca).\n` +
-    `    -- NOT EXISTS, não NOT IN: a trava fechada do bloco caro devolve request_id NULL, e\n` +
-    `    -- \`NOT IN\` com NULL é NULL-blind — zeraria o controle inteiro em silêncio.\n` +
-    comentarioControle +
-    `    AND NOT EXISTS (SELECT 1 FROM ids i2 WHERE i2.request_id = r.id)\n` +
-    `    -- ⚠️ O que este controle NAO fecha: CRON_SECRET trocado ha poucos minutos E nenhum\n` +
-    `    --    cron rodado desde a troca — o trafego 2xx da janela usou o secret ANTIGO e\n` +
-    `    --    avalizaria indevidamente. Na proxima execucao dos crons isso vira 401 e o\n` +
-    `    --    controle se desqualifica sozinho. Se voce ACABOU de mexer no vault, trate o\n` +
-    `    --    veredito determinado abaixo como INDETERMINADO.\n` +
-    `),\n` +
+    cteControleCredencial({
+      cabeca:
+        `  -- Controle de CREDENCIAL: o 401 acima é ambíguo (bundle velho × CRON_SECRET inválido) e só\n` +
+        `  -- vira veredito determinado se ESTE bloco provar que o secret do vault está sendo ACEITO\n` +
+        `  -- agora. Lê a MESMA tabela do LEFT JOIN de cima de propósito: não acrescenta superfície de\n` +
+        `  -- permissão nova (se desse 'permission denied' o bloco inteiro já teria falhado), e um\n` +
+        `  -- controle que exige privilégio a mais viraria INDETERMINADO por acidente de ACL.\n`,
+      exclusao: comentarioControle,
+    }) +
     `lidas AS (\n` +
     `  SELECT e.edge, e.versao_esperada, e.fonte_esperada,\n` +
     `         COALESCE(s.id, i.request_id) AS request_id,\n` +
@@ -1267,25 +1337,6 @@ function valuesEsperadoCanaria(leva: CanariaResolvida[]): string {
 }
 
 /**
- * A chamada `net.http_post` da canária. Difere da da sonda em DOIS pontos, e os dois importam: o
- * corpo vem da LINHA (não é `jsonb_build_object('probe', true)` fixo, porque as 8 não têm corpo
- * uniforme) e a URL leva sufixo de query, porque a `carteira-rebuild` se acorda por `?canary=1`.
- */
-function httpPostCanaria(ref: string, indent: string): string {
-  const i = indent;
-  return (
-    'net.http_post(\n' +
-    `${i}  url := 'https://${ref}.supabase.co/functions/v1/' || a.edge || a.sufixo,\n` +
-    `${i}  headers := jsonb_build_object(\n` +
-    `${i}    'Content-Type', 'application/json',\n` +
-    `${i}    'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets\n` +
-    `${i}                      WHERE name = 'CRON_SECRET' LIMIT 1)),\n` +
-    `${i}  body := a.corpo,\n` +
-    `${i}  timeout_milliseconds := ${TIMEOUT_HTTP_MS})`
-  );
-}
-
-/**
  * Bloco de DISPARO da canária — o único que precisa do founder, pela mesma razão da sonda: lê
  * `vault.decrypted_secrets` e faz INSERT via `net.http_post`, e o wrapper read-only recusa os dois.
  *
@@ -1308,10 +1359,10 @@ function blocoDisparoCanaria(
     : `WITH alvos(nome, edge, corpo, sufixo) AS (VALUES\n${valuesAlvosCanaria(leva)}\n),\n`;
   const projecao = comTrava
     ? `         ${TRAVA_CASE}\n` +
-      `              THEN ${httpPostCanaria(ref, '                   ')}\n` +
+      `              THEN ${httpPost(ref, '                   ', ALVO_CANARIA)}\n` +
       '         END AS request_id\n' +
       '  FROM alvos a CROSS JOIN guard g\n'
-    : `         ${httpPostCanaria(ref, '         ')} AS request_id\n` + '  FROM alvos a\n';
+    : `         ${httpPost(ref, '         ', ALVO_CANARIA)} AS request_id\n` + '  FROM alvos a\n';
   return (
     cabeca +
     'disparos AS (\n' +
@@ -1390,17 +1441,15 @@ function blocoLeituraCanaria(
     `  SELECT chave AS nome, valor::bigint AS request_id\n` +
     `  FROM jsonb_each_text(${SENTINELA_MAPA}::jsonb) AS t(chave, valor)\n` +
     '),\n' +
-    'controle_credencial AS (\n' +
-    '  -- Mesma mecânica da sonda: o 401 é ambíguo (bundle sem a canária × CRON_SECRET inválido) e\n' +
-    '  -- só vira veredito determinado se este bloco provar que o secret do vault está sendo ACEITO\n' +
-    '  -- agora. NOT EXISTS (não NOT IN): a trava fechada devolve request_id NULL, e `NOT IN` com\n' +
-    '  -- NULL é NULL-blind — zeraria o controle inteiro em silêncio.\n' +
-    '  SELECT count(*) FILTER (WHERE r.status_code BETWEEN 200 AND 299) AS ok_recentes,\n' +
-    '         count(*) FILTER (WHERE r.status_code = 401)               AS recusas_recentes\n' +
-    '  FROM net._http_response r\n' +
-    "  WHERE r.created > now() - interval '6 hours'\n" +
-    '    AND NOT EXISTS (SELECT 1 FROM ids mp2 WHERE mp2.request_id = r.id)\n' +
-    '),\n' +
+    cteControleCredencial({
+      cabeca:
+        '  -- Mesma mecânica da sonda (é a MESMA função que emite este CTE): o 401 é ambíguo aqui\n' +
+        '  -- também, mas o par que ele separa é OUTRO — bundle sem a canária × CRON_SECRET\n' +
+        '  -- inválido — e por isso o veredito que o consome fica no bloco, não aqui.\n',
+      exclusao:
+        '    -- Aqui o mapa `ids` é SEMPRE embutido pelo disparo, então esta exclusão sempre vale:\n' +
+        '    -- o 401 desta leva não conta como recusa contra si mesmo.\n',
+    }) +
     'lidas AS (\n' +
     '  -- Parte de `esperado`: zero linhas não pode virar "nada a reportar". O envelope `data` é\n' +
     '  -- descido aqui porque a omie-analytics-sync responde `{success, data:{...}}` e as outras no\n' +
@@ -1815,12 +1864,11 @@ if (import.meta.main) {
   // Import DINÂMICO, e só aqui: quem apenas importa este módulo (o eval da skill, que o copia para
   // um diretório temporário) não pode depender de `supabase/functions/` resolver.
   const { SONDA_CRON_ALVOS } = await import('../supabase/functions/_shared/sonda-cron-alvos');
-  // O leitor de canárias sai daqui pela MESMA razão, e reusa o extrator do gate `canaria:bump`:
-  // duas cópias da regra "onde mora o marcador" divergiriam, e a que não tem gate é a que decide
-  // errado. O stripper é o COMPARTILHADO (`removerComentarios`) — regex local não sabe o que é
-  // string e apagaria o miolo do arquivo antes da medição.
-  const { localizarCanarias } = await import('./canaria-contrato-bump-gate');
-  const { removerComentarios } = await import('@/lib/gates/limpeza-fonte');
+  // O leitor de canárias sai daqui pela MESMA razão, e mora num módulo PRÓPRIO
+  // (`canaria-leitor-do-repo.ts`) porque a prova executada precisa do MESMO leitor: duas cópias da
+  // regra "onde mora o marcador" divergiriam, e a prova continuaria verde julgando um SQL que não é
+  // o que o operador cola.
+  const { lerCanariasDoRepo } = await import('./canaria-leitor-do-repo');
   process.exit(
     main(process.argv.slice(2), {
       raiz: join(import.meta.dirname, '..'),
@@ -1828,10 +1876,7 @@ if (import.meta.main) {
       erro: (t) => console.error(t),
       git: gitReal(join(import.meta.dirname, '..')),
       edgesComRele: SONDA_CRON_ALVOS.map((a) => a.edge),
-      lerCanarias: (raiz, edge) =>
-        localizarCanarias(
-          removerComentarios(readFileSync(join(raiz, 'supabase', 'functions', edge, 'index.ts'), 'utf8')),
-        ),
+      lerCanarias: lerCanariasDoRepo,
     }),
   );
 }

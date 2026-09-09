@@ -10,7 +10,10 @@
  *   3. reprovar um gate por exclusividade zero (o veredito que o parecer do Codex proibiu:
  *      corpus curto nao mede gate raro).
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
@@ -19,6 +22,7 @@ import {
   CORPUS_DIR,
   avaliar,
   bloqueantesOpacos,
+  conferirAncoraDaRaiz,
   derivar,
   fingerprintDefeito,
   fonteDoGate,
@@ -145,6 +149,84 @@ describe('jobsBloqueantes — o que de fato reprova um PR', () => {
 // ---------------------------------------------------------------------------------------------
 // O contador de opacos — o que o numero "N gate(s) bloqueante(s)" estava escondendo
 // ---------------------------------------------------------------------------------------------
+
+describe('conferirAncoraDaRaiz — o vacuo que desligaria a maquina inteira', () => {
+  const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
+  const autoMerge = readFileSync('.github/workflows/auto-merge.yml', 'utf8');
+
+  // CONTROLE. Vem primeiro de proposito: um `describe` que ja estivesse acusando por outro motivo
+  // aprovaria todas as sabotagens abaixo sem provar nada (docs/historico/falsificacao-sem-linha-de-base.md).
+  it('as fontes REAIS de hoje nao acusam nada', () => {
+    expect(conferirAncoraDaRaiz(ci, autoMerge)).toEqual([]);
+  });
+
+  // O literal, nunca o simbolo: `JOB_RAIZ` nao e exportado justamente para a assercao nao se mover
+  // junto com o codigo. Este `sed` e o defeito que o guard existe para pegar.
+  const ciSemRaiz = ci.replace(/^ {2}validate:$/m, '  valida-tudo:');
+
+  it('renomear o job `validate` no ci.yml REPROVA — nao devolve censo vazio calado', () => {
+    expect(ciSemRaiz).not.toBe(ci); // a sabotagem precisa ter MORDIDO
+    const codigos = conferirAncoraDaRaiz(ciSemRaiz, autoMerge).map((p) => p.codigo);
+    expect(codigos).toContain('RAIZ_AUSENTE_NO_CI');
+    expect(codigos).toContain('FECHO_BLOQUEANTE_VAZIO');
+  });
+
+  // A cascata inteira que o guard intercepta, medida no MESMO fixture: sem ele, isto e o que o
+  // gate veria — e "0 bloqueante(s)" le como cobertura total.
+  it('e o vacuo e REAL: sem o guard, todo gate viraria nao-bloqueante', () => {
+    expect(jobsBloqueantes(ciSemRaiz).size).toBe(0);
+    const cands = gatesCandidatos(ciSemRaiz);
+    expect(cands.length).toBeGreaterThan(20); // os gates continuam TODOS la...
+    expect(cands.filter((g) => g.bloqueiaPR)).toEqual([]); // ...e nenhum seria cobrado
+    expect(bloqueantesOpacos(ciSemRaiz)).toEqual([]);
+  });
+
+  it('auto-merge que nao cita mais o check REPROVA (as duas pontas discordam)', () => {
+    const semCitacao = autoMerge.replace(/`validate`/g, '`o check obrigatorio`');
+    expect(semCitacao).not.toBe(autoMerge);
+    expect(conferirAncoraDaRaiz(ci, semCitacao).map((p) => p.codigo)).toEqual(['ANCORA_AUTO_MERGE_PERDIDA']);
+  });
+
+  it('auto-merge AUSENTE REPROVA — some a segunda ponta, some o cruzamento', () => {
+    expect(conferirAncoraDaRaiz(ci, null).map((p) => p.codigo)).toEqual(['ANCORA_AUTO_MERGE_PERDIDA']);
+  });
+
+  // Casar a palavra solta acharia `validate` dentro de um `validate-schema` futuro e o guard ficaria
+  // verde por homonimo — a mesma familia do `grep` sem fronteira de palavra.
+  it('nao aceita homonimo: `validate` dentro de outro nome nao serve de ancora', () => {
+    const impostor = autoMerge.replace(/`validate`/g, '`validate-schema`');
+    expect(conferirAncoraDaRaiz(ci, impostor).map((p) => p.codigo)).toEqual(['ANCORA_AUTO_MERGE_PERDIDA']);
+  });
+
+  // ---- Eixo POR FORA: o BINARIO, com exit code de verdade -------------------------------------
+  // O vitest acima prova a funcao PURA. Guard puro e guard que pode nunca ter sido LIGADO ao exit
+  // code — a via morta. Estes dois rodam o processo real.
+  //
+  // O discriminante e o MARCADOR, nao o exit code sozinho: uma REPROVA legitima da matriz tambem
+  // sai 1, e casar so o numero faria a sabotagem "passar" pelo motivo errado no dia em que a
+  // matriz reprovasse. Marcador ASCII, caixa fixa, casado sem `-i`.
+  const MARCA = 'ANCORA-DA-RAIZ-QUEBRADA';
+  const rodarGate = (args: string[]) => {
+    const r = spawnSync('bun', ['scripts/exclusividade-gate.ts', ...args], { encoding: 'utf8' });
+    return { status: r.status, saida: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  };
+
+  it('o BINARIO reprova (exit 1 + marcador) contra um ci.yml sem a raiz', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'excl-ancora-'));
+    const arq = join(tmp, 'ci-sabotado.yml');
+    writeFileSync(arq, ciSemRaiz);
+    try {
+      const controle = rodarGate([]);
+      expect(controle.saida, 'controle ja vermelho — nenhuma sabotagem abaixo provaria nada').not.toContain(MARCA);
+
+      const sabotado = rodarGate(['--ci', arq]);
+      expect(sabotado.saida).toContain(MARCA);
+      expect(sabotado.status).toBe(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
 
 describe('bloqueantesOpacos — exclusao silenciosa le como cobertura total', () => {
   const ci = readFileSync('.github/workflows/ci.yml', 'utf8');

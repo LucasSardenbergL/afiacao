@@ -173,6 +173,16 @@ modo_falsificar() {
 
   sabotagem 'S7 fail-closed: ci.yml ilegivel' 'FRESCURA-FALHA' 2 \
     "printf '%s\n' 'jobs: [: : {' > .github/workflows/ci.yml"
+
+  # --- Anti-vácuo ------------------------------------------------------------------------------
+  # Os dois sentidos são cruzamentos de conjunto, e cruzar com VAZIO aprova sempre. Aqui a fonte
+  # continua legível (≠ S6/S7): ela simplesmente não tem mais nada dentro — o caso em que o gate
+  # imprime números honestos (`0 citacoes`) e mesmo assim assina "conferem nos dois sentidos".
+  sabotagem 'S8 anti-vacuo: manual sem UMA citacao reconhecida' 'FRESCURA-VACUO' 1 \
+    "printf '%s\n' '# Manual sem maquina nenhuma' 'so prosa, sem crase e sem bun run.' > CLAUDE.md"
+
+  sabotagem 'S9 anti-vacuo: maquina sem UM gate bloqueante' 'FRESCURA-VACUO' 1 \
+    "printf '%s\n' 'jobs: {}' > .github/workflows/ci.yml && rm -f .claude/settings.json"
 }
 
 if [ "${1:-}" = "--falsificar" ]; then

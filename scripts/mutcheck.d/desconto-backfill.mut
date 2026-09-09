@@ -1,0 +1,56 @@
+# Invariantes money-path da fronteira que atribui um desconto lido HOJE a uma linha antiga.
+# @src: supabase/functions/_shared/desconto-backfill.ts
+# @test: supabase/functions/_shared/desconto-backfill_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh
+# PEGA = a suíte DEVE matar. SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ POR QUE ESTE CONTRATO: a régua irmã (desconto-omie) decide QUANTO é o desconto. Este módulo
+# decide DE QUEM ele é — e o erro aqui não produz exceção nem divergência de total. Ele produz
+# uma linha com o desconto da vizinha, num pedido cuja soma continua plausível. A suíte precisa
+# ser capaz de ver isso, e uma suíte escrita sem linhas irmãs no mesmo pedido não é.
+
+# ── A chave: o bug do hash_payload renascido dentro do módulo que existe para evitá-lo ────────
+# `hash_payload` casa pedido × SKU. Se a chave deste módulo degenerar para SKU, ele volta a ser
+# aquilo — e as duas linhas irmãs do mesmo produto recebem o mesmo desconto.
+PEGA | a chave degenera para SKU (= hash_payload)         | s~\|\$\{quantizar\(q\)\}\|\$\{quantizar\(p\)\}~~
+PEGA | a chave ignora o preço (irmãs colidem)             | s~\|\$\{quantizar\(p\)\}`;~`;~
+PEGA | a chave ignora a quantidade                        | s~\$\{quantizar\(q\)\}\|~~
+# Sem quantizar, o drift de float separa a MESMA linha e NADA casa — o backfill rodaria inteiro
+# recusando tudo, com cara de "o acervo é irrecuperável". Quantizar demais faz o oposto: R$ 100,00
+# e R$ 100,01 colidem e o desconto de um item vai para o outro. As duas direções têm mutação.
+PEGA | a chave deixa de quantizar (drift separa a linha)  | s~return Math\.round\(n \* 1e6\) / 1e6;~return n;~
+PEGA | a quantização vira arredondamento grosseiro        | s~return Math\.round\(n \* 1e6\) / 1e6;~return Math.round(n);~
+
+# ── Unicidade dos DOIS lados ──────────────────────────────────────────────────────────────────
+# Cada lado sozinho parece suficiente e não é. Duas linhas locais para um item do Omie é tão
+# indecidível quanto um item para duas linhas: nos dois casos alguém recebe desconto de outro.
+PEGA | unicidade só do lado do Omie                       | s~if \(pares\.length > 1 \|\| irmasLocais\.length > 1\)~if (pares.length > 1)~
+PEGA | unicidade só do lado local                         | s~if \(pares\.length > 1 \|\| irmasLocais\.length > 1\)~if (irmasLocais.length > 1)~
+PEGA | ambiguidade deixa de ser vista (pega o primeiro)   | s~if \(pares\.length > 1 \|\| irmasLocais\.length > 1\)~if (false)~
+
+# ── Fail-closed: cada recusa que virar número é dinheiro inventado ────────────────────────────
+# `?? 0` na saída da régua é o defeito que já renasceu três vezes nesta frente — `prod.desconto
+# || 0` na ingestão, `finitoNaoNegativo(discount) ?? 0` dentro da régua, e o próximo endereço
+# natural é exatamente aqui, no primeiro consumidor dela.
+PEGA | recusa da régua vira desconto zero (?? 0)          | s~const desconto = descontoItemOmie\(prod, base\);~const desconto = descontoItemOmie(prod, base) ?? 0;~
+# Linha sem par no Omie apurada como zero: o pedido some do denominador de incompletude e a
+# receita fica CHEIA, numericamente idêntica ao caso legítimo "não há desconto".
+PEGA | linha sem correspondência é apurada como zero      | s~recusados\.push\(\{ id: linha\.id, motivo: "sem_correspondencia" \}\);~apurados.push({ id: linha.id, desconto_valor: 0 });~
+# `Number(null) === 0` na formação da chave: preço ausente vira preço zero e casa com o item de
+# brinde do Omie, apurando a linha errada em vez de recusá-la.
+PEGA | preço ausente vira preço ZERO na chave             | s~  const p = finitoNaoNegativo\(preco\);~  const p = finitoNaoNegativo(preco) ?? 0;~
+PEGA | quantidade ausente vira ZERO na chave              | s~  const q = finitoNaoNegativo\(qtd\);~  const q = finitoNaoNegativo(qtd) ?? 0;~
+PEGA | SKU ausente vira ZERO na chave                     | s~  const s = finitoNaoNegativo\(sku\);~  const s = finitoNaoNegativo(sku) ?? 0;~
+
+# ── A base do percentual ──────────────────────────────────────────────────────────────────────
+# `tipo_desconto: "P"` incide sobre a linha (qtd × preço), não sobre a unidade. Com qtd=2 e 10%,
+# a base errada devolve R$ 10 onde o certo é R$ 20 — metade do desconto, receita superestimada.
+PEGA | base do percentual vira o preço unitário           | s~\? null : q \* p;~? null : p;~
+PEGA | base do percentual ignora o preço                  | s~\? null : q \* p;~? null : q;~
+
+# ── Denominador: os motivos são o que distingue "o acervo mudou" de "não sei ler" ─────────────
+# Colapsar dois motivos num só não muda nenhum número, e é por isso que precisa de mutação
+# própria: a incompletude deixa de ser diagnosticável sem que nada fique vermelho por si.
+PEGA | base indeterminada é reportada como sem par        | s~recusados\.push\(\{ id: linha\.id, motivo: "base_indeterminada" \}\);~recusados.push({ id: linha.id, motivo: "sem_correspondencia" });~

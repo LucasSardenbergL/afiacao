@@ -1,8 +1,10 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
+import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
@@ -83,7 +85,17 @@ interface OmieDetalheItem {
     descricao?: string;
     quantidade?: number;
     valor_unitario?: number;
+    /** LEGADO — a API do Omie NÃO envia este campo. Declarado porque o código ainda o lê para a
+     *  coluna `order_items.discount`; em runtime é sempre `undefined`, e foi assim que 71.006
+     *  linhas nasceram com desconto 0 sem que ninguém medisse nada. */
     desconto?: number;
+    /** O trio REAL de desconto de `det.produto` (doc oficial, lida 2026-09-07). Sem estes três
+     *  campos declarados, `prod` continua atribuível a `DescontoOmieBruto` — todos os campos são
+     *  opcionais lá — e o type-check ficaria verde sobre um objeto que o tipo diz não ter
+     *  desconto nenhum. Quem lê é `descontoItemOmie`. */
+    tipo_desconto?: string;
+    percentual_desconto?: number;
+    valor_desconto?: number;
     cfop?: string;
   };
   imposto?: { cfop?: string };
@@ -980,6 +992,12 @@ async function syncPedidos(
   let skippedNoClient = 0;
   let skippedExisting = 0;
   let totalFailed = 0;
+  // SENSOR da identidade de linha, COM DENOMINADOR — o mesmo par de `sync-reprocess`. Sem o
+  // denominador, `itensComIdentidade = 0` é indistinguível de "não houve item nesta janela":
+  // ausência de dado lida como veredito. `pedidosIdentidadeAmbigua` é o G-a batendo.
+  let itensLidos = 0;
+  let itensComIdentidade = 0;
+  let pedidosIdentidadeAmbigua = 0;
   let reachedEnd = false;            // true SÓ no fim real do Omie (null = "Não existem registros", ou página vazia)
   let lastErrorKind: 'rate_limit' | 'transient' | 'http' | null = null;
 
@@ -1357,14 +1375,33 @@ async function syncPedidos(
         // `null` = o Omie não informou; a RPC grava NULL em order_items.unit_price. O `|| 0`
         // daqui era a origem da margem negativa fabricada: receita 0 com custo cheio.
         const precoItem = precoUnitarioOmie(prod.valor_unitario);
+        // Desconto CANÔNICO, em R$ da linha, pela régua única (_shared/desconto-omie.ts). Ela lê
+        // o trio que a API do Omie realmente manda (`tipo_desconto` "V"/"P" + `valor_desconto` +
+        // `percentual_desconto`) — `prod.desconto`, que o `discount` abaixo ainda usa, é uma chave
+        // que a API NÃO tem, e por isso a coluna legado é 0 em 71.006 linhas por cegueira.
+        //
+        // `null` = não sei ler este desconto, e vai NULL para a coluna: `?? 0` aqui devolveria
+        // receita cheia, indistinguível do caso legítimo "não há desconto". A base do percentual
+        // é qtd × preço; sem preço não há base, e a régua degrada sozinha.
+        const qtdItem = prod.quantidade || 1;
+        const descontoItem = descontoItemOmie(prod, precoItem === null ? null : qtdItem * precoItem);
         itensRpc.push({
           customer_user_id: customerUserId,
           product_id: productId,
           omie_codigo_produto: prod.codigo_produto,
-          quantity: prod.quantidade || 1,
+          quantity: qtdItem,
           unit_price: precoItem,
+          // LEGADO, intocado de propósito: 5 consumidores ainda a leem como percentual e 2 como
+          // valor. Como ela é 0 em todo o acervo, as duas fórmulas coincidem e ninguém erra hoje.
+          // Mudá-la aqui ativaria a divergência — é entrega própria.
           discount: prod.desconto || 0,
+          desconto_valor: descontoItem,
           hash_payload: `${hashPayload}_${prod.codigo_produto}`,
+          // IDENTIDADE DE LINHA (`det.ide.codigo_item`). Medido em prod 2026-09-08: o
+          // `ListarPedidos` — este MESMO endpoint — devolve o campo em 4.220/4.220 itens lidos
+          // pelo `sync-reprocess`. Nascer com identidade é o que torna o guard de ambiguidade da
+          // `reconciliar_pedidos_omie` INALCANÇÁVEL por construção, em vez de contornável.
+          omie_codigo_item: normalizarCodigoItemOmie(det.ide?.codigo_item),
         });
         // O histórico de preço praticado já era fail-closed (só grava > 0) — mantido, agora
         // pela MESMA régua. Ele exige POSITIVO porque "preço praticado zero" não é preço.
@@ -1375,6 +1412,20 @@ async function syncPedidos(
             unit_price: precoItem,
           });
         }
+      }
+
+      // G-a NO CLIENTE: identidade repetida entre linhas do MESMO pedido é PIOR que ausente —
+      // ela cria a condição `G-b` da `reconciliar_pedidos_omie` (identidade duplicada no ATUAL),
+      // que faz o reconciliador PULAR aquele pedido para sempre. Ausente é reversível (degrada
+      // para o casamento por SKU, o comportamento de hoje); ambíguo GRAVADO congela o pedido.
+      // Vale para o pedido inteiro, como o `v_ident` da RPC — a régua é por pedido, não por linha.
+      const idsDoPedido = itensRpc.map((it) => (it.omie_codigo_item ?? null) as number | null);
+      itensLidos += idsDoPedido.length;
+      if (identidadeDistinta(idsDoPedido)) {
+        itensComIdentidade += idsDoPedido.filter((c) => c !== null).length;
+      } else {
+        pedidosIdentidadeAmbigua++;
+        for (const it of itensRpc) it.omie_codigo_item = null;
       }
 
       pedidosRpc.push({
@@ -1420,7 +1471,7 @@ async function syncPedidos(
         totalFailed += fails.length;
         if (divs.length > 0) console.warn(`[sync_pedidos][${account}] ${divs.length} pedido(s) com cabeçalho divergente (Fase 2, NÃO reconciliado):`, JSON.stringify(divs.slice(0, 5)));
         if (fails.length > 0) console.error(`[sync_pedidos][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
-        console.log(`[sync_pedidos][${account}] RPC pág ${pagina}: inserted=${r.inserted || 0} repaired=${r.repaired || 0} items=${r.items || 0} skip_completo=${r.skipped_complete || 0} skip_sem_item=${r.skipped_no_items || 0} divergencia=${divs.length} falhas=${fails.length}`);
+        console.log(`[sync_pedidos][${account}] RPC pág ${pagina}: inserted=${r.inserted || 0} repaired=${r.repaired || 0} items=${r.items || 0} skip_completo=${r.skipped_complete || 0} skip_sem_item=${r.skipped_no_items || 0} divergencia=${divs.length} falhas=${fails.length} itens_com_codigo_item=${itensComIdentidade}/${itensLidos} identidade_ambigua=${pedidosIdentidadeAmbigua}`);
       }
     }
 
@@ -1432,7 +1483,7 @@ async function syncPedidos(
   // Completude = FIM REAL alcançado (null/página vazia), NUNCA pagina>totalPaginas.
   // Pausa (transitório/erro) ou budget de página esgotado ⟹ complete=false, retoma do `pagina`.
   const complete = reachedEnd;
-  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
+  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, itensLidos, itensComIdentidade, pedidosIdentidadeAmbigua, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
 }
 
 // ── Reparo dos órfãos PRESOS (pai sem itens, fora da janela do cron) ──────────────────
@@ -1500,10 +1551,13 @@ async function repararOrfaosItens(
         const qty = prod.quantidade || 1, price = precoUnitarioOmie(prod.valor_unitario), desc = prod.desconto || 0;
         if (price !== null) subtotal += qty * price * (1 - desc / 100);
         const productId = productMap.get(prod.codigo_produto) || null;
+        // Mesma régua do caminho principal — os dois escrevem na MESMA coluna, e uma delas
+        // divergindo reintroduz a ambiguidade que esta frente inteira existe para fechar.
         itensRpc.push({
           customer_user_id: pai.customer_user_id, product_id: productId,
           omie_codigo_produto: prod.codigo_produto,
           quantity: qty, unit_price: price, discount: desc,
+          desconto_valor: descontoItemOmie(prod, price === null ? null : qty * price),
           hash_payload: `${pai.hash_payload}_${prod.codigo_produto}`,
         });
         if (productId && price !== null && price > 0) precosRpc.push({ customer_user_id: pai.customer_user_id, product_id: productId, unit_price: price });

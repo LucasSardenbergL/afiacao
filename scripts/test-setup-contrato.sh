@@ -103,7 +103,35 @@ if [ "$FALSIFICAR" -eq 1 ] && [ -n "$(git status --short)" ]; then
 fi
 
 # ── (A) CONTROLE ──────────────────────────────────────────────────────────────────────────────
-rodar_testemunhas() { bunx vitest run "${TESTEMUNHAS[@]}" >"$1" 2>&1; }
+# NO_COLOR + strip de ANSI: DUAS camadas, de propósito. O vitest colore quando acha que há
+# TTY, e no runner do CI a linha de resumo sai como
+#   ESC[2m Test Files ESC[22m ESC[1mESC[32m2 passed...
+# — o `Test Files +N passed` abaixo NÃO casa nisso, porque entre as duas palavras há sequência
+# de escape, não espaço. Medido em 2026-09-09 (run 34345092455): o controle passou (2 arquivos,
+# 13 testes) e este arnês o leu como REPROVADO, derrubando o `test:hooks` no CI enquanto passava
+# verde local. Depender só do NO_COLOR seria uma camada só — quem define TTY é o runner, não nós.
+sem_ansi() { LC_ALL=C sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$1"; }
+rodar_testemunhas() { NO_COLOR=1 FORCE_COLOR=0 bunx vitest run "${TESTEMUNHAS[@]}" >"$1" 2>&1; }
+
+# ── auto-verificação do PARSER (a correção de 2026-09-09 precisa de testemunha) ───────────
+# Alimenta o leitor com a linha EXATA que o runner do CI produziu no run 34345092455 — com as
+# sequências de escape no meio de "Test Files" e "2 passed" — e exige que ele reconheça. Sem
+# isto, remover o `sem_ansi` volta a passar verde local e vermelho no CI, que foi o defeito.
+FIX_ANSI=$(printf '\033[2m Test Files \033[22m \033[1m\033[32m2 passed\033[39m\033[22m\033[90m (2)\033[39m\n')
+FIX_TMP="$TMPD/ansi-fixture.txt"; printf '%s\n' "$FIX_ANSI" > "$FIX_TMP"
+if sem_ansi "$FIX_TMP" | grep -qaE "Test Files +2 passed \(2\)"; then
+  aviso "  ✅ parser: reconhece a linha de resumo COLORIDA do CI"
+else
+  aviso "  ❌ parser CEGO a cor — o arnês reprovaria um controle verde no CI (foi o defeito de 2026-09-09)"
+  FALHAS=$((FALHAS + 1))
+fi
+# E o contrafactual, que é o que dá sentido ao caso acima: SEM a limpeza, a mesma linha NÃO casa.
+if grep -qaE "Test Files +2 passed \(2\)" "$FIX_TMP"; then
+  aviso "  ❌ a fixture não tem cor — o caso acima passaria mesmo com o parser cego"
+  FALHAS=$((FALHAS + 1))
+else
+  aviso "  ✅ contrafactual: a linha crua (com cor) de fato NÃO casa sem a limpeza"
+fi
 
 aviso "═══ (A) CONTROLE — as ${#TESTEMUNHAS[@]} testemunhas do contrato têm de estar VERDES ═══"
 SAIDA_CTRL="$TMPD/controle.txt"
@@ -111,11 +139,11 @@ rodar_testemunhas "$SAIDA_CTRL"
 RC_CTRL=$?
 # EVIDÊNCIA POSITIVA: `rc 0` sozinho não prova que os arquivos rodaram. Exigimos a linha de
 # resumo do vitest dizendo que os DOIS passaram — ausência de vermelho não é aprovação.
-if [ "$RC_CTRL" -eq 0 ] && grep -qaE "Test Files +${#TESTEMUNHAS[@]} passed \(${#TESTEMUNHAS[@]}\)" "$SAIDA_CTRL"; then
+if [ "$RC_CTRL" -eq 0 ] && sem_ansi "$SAIDA_CTRL" | grep -qaE "Test Files +${#TESTEMUNHAS[@]} passed \(${#TESTEMUNHAS[@]}\)"; then
   aviso "  ✅ controle VERDE — ${#TESTEMUNHAS[@]} arquivos passaram"
 else
   aviso "  ❌ controle NÃO fechou (rc=$RC_CTRL, ou o vitest não reportou os ${#TESTEMUNHAS[@]} arquivos passando):"
-  grep -aE "Test Files|Tests |FAIL|Error" "$SAIDA_CTRL" | head -20
+  sem_ansi "$SAIDA_CTRL" | grep -aE "Test Files|Tests |FAIL|Error" | head -20
   FALHAS=$((FALHAS + 1))
 fi
 
@@ -183,7 +211,7 @@ rodar_sabotagem() {
 
   local faltando="" marca
   for marca in "$@"; do
-    grep -qaF -- "$marca" "$saida" || faltando="$faltando '$marca'"
+    sem_ansi "$saida" | grep -qaF -- "$marca" || faltando="$faltando '$marca'"
   done
   if [ -n "$faltando" ]; then
     aviso "  ❌ [$nome] vermelho (rc=$rc) mas SEM a marca do ramo:$faltando"

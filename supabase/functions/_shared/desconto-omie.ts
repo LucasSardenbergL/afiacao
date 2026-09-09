@@ -67,7 +67,7 @@ export interface DescontoOmieBruto {
 /** Número finito não-negativo, ou `null` quando NÃO SABIDO. Mesma régua de `precoUnitarioOmie`:
  *  ausente e "informou 0" NÃO colapsam no mesmo byte, e lixo (NaN/Infinity/negativo) vira `null`,
  *  nunca 0 — `Number(null) === 0` é a fabricação que este repo persegue. */
-function finitoNaoNegativo(raw: unknown): number | null {
+export function finitoNaoNegativo(raw: unknown): number | null {
   if (raw === null || raw === undefined) return null;
   if (typeof raw !== "number" && typeof raw !== "string") return null;
   if (typeof raw === "string" && raw.trim() === "") return null;
