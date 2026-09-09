@@ -33,6 +33,30 @@
 //   3. O próprio Omie distribui o desconto de capa aos itens COMO VALOR (citação acima), e o
 //      exemplo canônico da doc traz `"tipo_desconto": "V"`.
 
+// ── O que o chamador faz com o null ───────────────────────────────────────────────────────────
+// `receitaLiquidaItem`/`precoUnitarioLiquido` devolvem `null` quando NÃO SABEM — e quem consome
+// não pode trocá-lo por 0. Com desconto, `null → 0` devolve o número CHEIO, numericamente
+// IDÊNTICO ao caso legítimo "o Omie informou que não há desconto": a fabricação fica invisível
+// na tela, sem nada para conferir. É o mesmo defeito que já renasceu duas vezes — `prod.desconto
+// || 0` na ingestão, depois `finitoNaoNegativo(discount) ?? 0` aqui dentro — e cujo próximo
+// endereço natural é exatamente o primeiro consumidor desta régua.
+//
+// A régua para quem consome, alinhada ao repo (ausente ≠ zero):
+//   1. Some só o que conhece — uma linha que degradou NÃO entra no total como 0.
+//   2. Conte as recusadas num contador SEPARADO e torne-o legível na superfície: "R$ X em 128
+//      de 130 itens" é verdade; "R$ X" com 2 itens comidos em silêncio não é.
+//   3. Nunca apresente um agregado incompleto com a mesma cara de um completo.
+//
+// ⚠️ O contra-exemplo está VIVO e é o consumidor previsto: `fin-valor-cockpit` compõe receita
+// com `l.discount ?? 0` em todos os pontos onde a monta à mão — endereço estável:
+//     git grep -n "discount ?? 0" supabase/functions/fin-valor-cockpit
+// Hoje isso é INALCANÇÁVEL, não ativo, e a diferença importa: medido em 2026-09-08,
+// `order_items.discount` tem default 0 e ZERO NULLs em 71.006 linhas, então o `?? 0` nunca
+// dispara. Ele acorda no dia em que a ingestão passar a gravar o `null` desta régua, ou quando
+// o cockpit passar a ler `order_items.desconto_valor` — nullable, sem default e 100% NULL
+// (71.006/71.006) na mesma medição. Ligar a leitura ANTES de trocar o `?? 0` converteria 71 mil
+// linhas de "não apurado" em receita cheia de uma vez só, e o total continuaria parecendo são.
+
 /** O que a API do Omie realmente devolve em `det.produto` para desconto. */
 export interface DescontoOmieBruto {
   tipo_desconto?: string | null;
@@ -124,6 +148,17 @@ export function descontoItemOmie(prod: DescontoOmieBruto | null | undefined, bru
  *
  * Devolve `null` quando o preço é desconhecido: `Number(null) === 0` transformaria "não sei o
  * preço" em "receita zero", que com custo cheio vira margem negativa fabricada.
+ *
+ * ⚠️ E devolve `null` quando o DESCONTO é desconhecido — o eixo que este módulo existe para
+ * proteger. `discount` nulo tem duas origens, e nenhuma delas é "não há desconto": ou
+ * `descontoItemOmie` recusou-se a ler (discriminador ambíguo, percentual fora de faixa,
+ * desconto maior que a base), ou a linha é anterior à apuração e `order_items.desconto_valor`
+ * ainda é NULL. `0` é a ÚNICA forma de dizer "o Omie informou que não há desconto".
+ *
+ * Tratar esse `null` como 0 devolveria a receita CHEIA — numericamente idêntica ao caso sem
+ * desconto — e seria o bug original (`prod.desconto || 0`) renascido um andar acima, com a
+ * mesma assinatura: superestimar a receita silenciosamente. Quem chama deve somar só o que
+ * conhece e tornar a incompletude legível (ver §"O que o chamador faz com o null" no cabeçalho).
  */
 export function receitaLiquidaItem(
   unitPrice: number | null | undefined,
@@ -134,7 +169,8 @@ export function receitaLiquidaItem(
   if (preco === null) return null;
   const qtd = finitoNaoNegativo(quantity);
   if (qtd === null) return null;
-  const desc = finitoNaoNegativo(discount) ?? 0;
+  const desc = finitoNaoNegativo(discount);
+  if (desc === null) return null;
   return Math.round((preco * qtd - desc) * 100) / 100;
 }
 
@@ -147,7 +183,9 @@ export function receitaLiquidaItem(
  * fabricada. É a armadilha específica da troca de unidade: a fórmula percentual antiga
  * `preço × (1 − d/100)` já era por unidade, então quem migrar por analogia direta erra aqui.
  *
- * `null` quando o preço é desconhecido ou a quantidade não serve de divisor.
+ * `null` quando o preço é desconhecido, quando a quantidade não serve de divisor, ou quando o
+ * DESCONTO é desconhecido — pela mesma razão de `receitaLiquidaItem`: desconto nulo tratado como
+ * zero devolve o preço CHEIO, que é o número superestimado que este módulo existe para impedir.
  */
 export function precoUnitarioLiquido(
   unitPrice: number | null | undefined,
@@ -158,6 +196,7 @@ export function precoUnitarioLiquido(
   if (preco === null) return null;
   const qtd = finitoNaoNegativo(quantity);
   if (qtd === null || qtd === 0) return null;
-  const desc = finitoNaoNegativo(discount) ?? 0;
+  const desc = finitoNaoNegativo(discount);
+  if (desc === null) return null;
   return Math.round((preco - desc / qtd) * 100) / 100;
 }
