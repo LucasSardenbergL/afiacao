@@ -95,7 +95,11 @@ CREATE UNIQUE INDEX uniq_sales_orders_omie_hash
 SQL
 
 # ── ZONA 2 — aplica a migration REAL (Lei #1) ────────────────────────────────────────────────
-MIG="$(ls "$REPO_ROOT"/supabase/migrations/*_desconto_valor_atravessa_os_escritores.sql | tail -1)"
+# `find`, não `ls`: SC2012 — e aqui não é purismo, o gate `lint:shell` entra em ZERO.
+# `sort` porque a ordem do find não é garantida, e o alvo é a migration mais RECENTE
+# com este slug (se um dia houver uma correção posterior, é ela que vale).
+MIG="$(find "$REPO_ROOT/supabase/migrations" -name "*_desconto_valor_atravessa_os_escritores.sql" | sort | tail -1)"
+[ -n "$MIG" ] || { echo "migration não encontrada — o harness testaria o NADA"; exit 1; }
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 

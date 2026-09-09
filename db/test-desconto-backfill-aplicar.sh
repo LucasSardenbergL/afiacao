@@ -54,7 +54,11 @@ CREATE TABLE public.order_items (
   omie_codigo_produto bigint, quantity numeric, unit_price numeric, desconto_valor numeric);
 SQL
 
-MIG="$(ls "$REPO_ROOT"/supabase/migrations/*_desconto_backfill_aplicar.sql | tail -1)"
+# `find`, não `ls`: SC2012 — e aqui não é purismo, o gate `lint:shell` entra em ZERO.
+# `sort` porque a ordem do find não é garantida, e o alvo é a migration mais RECENTE
+# com este slug (se um dia houver uma correção posterior, é ela que vale).
+MIG="$(find "$REPO_ROOT/supabase/migrations" -name "*_desconto_backfill_aplicar.sql" | sort | tail -1)"
+[ -n "$MIG" ] || { echo "migration não encontrada — o harness testaria o NADA"; exit 1; }
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
