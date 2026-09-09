@@ -142,3 +142,44 @@ a própria entrada é o que transforma esta classe de erro em um vermelho barato
 - **Não cobre secrets nem o frontend.** A ordem canônica é secrets → DDL → edges → frontend; o
   pacote mede o elo **DDL→edge** e ordena o resto sem medi-lo. Dizer que ordena não é dizer que mede.
 - **Não decide deploy.** Quem decide é o ledger; este script só responde "PODE AGORA?".
+- **Só existência, não ASSINATURA.** A sonda casa `pg_proc.proname`: ela responde *"foi criada?"* e
+  é cega para *"foi alterada?"*. Uma RPC antiga de mesmo nome com contrato incompatível conta como
+  presente e o gate libera — o erro sai em runtime, com a cara do #2285, só que depois do deploy.
+  Declarado e **não** corrigido por precisão > recall: conferir assinatura exige extrair a
+  ESPERADA do call-site (`db.rpc(nome, { a, b })`), um segundo extrator cujo modo de falha é o
+  **bloqueio falso** — e um gate de deploy que bloqueia sem razão ensina o operador a contorná-lo.
+  Gatilho de reentrada: o primeiro incidente em que a RPC **existia** e a edge quebrou por
+  contrato (assinatura, tipo de retorno, overload ambíguo).
+
+## 6. O buraco que o gate tinha na PRÓPRIA procedência (2026-09-08, achado pelo Codex)
+
+O gate nasceu com as duas metades lendo **fontes diferentes**, e o furo é o defeito que ele existe
+para impedir, reencenado pela ferramenta:
+
+| Metade | Lia de | Por quê |
+|---|---|---|
+| a **fatia** da colagem (`fatiaDeDeploy`) | `origin/main`, via `git show` | deliberado, medido no #2123: **o Lovable deploya a MAIN**, não este checkout |
+| a **descoberta das RPCs** (`coletarDaEdge`) | o **working tree**, via `existsSync`/`readFileSync` | herdado do `preflight:rpcs`, onde ler o disco é a resposta certa |
+
+Numa worktree atrasada — o normal aqui, com ~30 em paralelo — a edge da main chama uma RPC que este
+checkout desconhece. O gate então lia o `index.ts` **velho**, media em prod só as RPCs **velhas**
+(que existem), respondia `✅ pré-condição de banco satisfeita` e **emitia a colagem**. Nenhum eixo
+fail-closed disparava: os quatro vigiam a MEDIÇÃO, e aqui o defeito estava na **pergunta**.
+
+Na sessão que achou isto o worktree estava **4 commits atrás** da `origin/main` e o pacote foi
+emitido assim mesmo — não houve dano só porque nenhuma das 4 mudanças tocava as RPCs da leva.
+Sorte, como no #2285; não desenho.
+
+> **REGRA. Num gate, a fonte que RESPONDE e a fonte que a pergunta MEDE têm de ser a mesma — e a
+> procedência é ARGUMENTO, nunca default.** `coletarDaEdge(edge, arvore, raiz)` passou a exigir a
+> árvore: sem default de disco, todo chamador declara de onde sua resposta vale e o **typecheck**
+> cobra quem não declarar. A classe é mais larga que este gate: quando um verificador aceita
+> `raiz = process.cwd()` para ler o que outra metade lê de uma ref, o desacordo é silencioso e só
+> aparece na worktree atrasada de outra pessoa.
+
+**Falsificação** (controle verde na mesma invocação, uma camada por vez): montado o caso em que o
+disco tem o `index.ts` **sem** a RPC e `origin/main` tem **com**, e a RPC não está em prod. Contra o
+código anterior: **`0` — liberado**, que é o bug. Com a correção: **`3` — bloqueado**, a RPC nova
+nomeada no pacote e a colagem ausente. Os controles (disco e ref concordam ⇒ `0`; a RPC nova **já**
+em prod ⇒ `0`; edge fora da ref ⇒ `2`) ficaram verdes nas duas rodadas — sem eles, um gate que
+bloqueasse SEMPRE passaria pelo teste principal.

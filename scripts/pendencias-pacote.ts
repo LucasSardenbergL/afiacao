@@ -117,7 +117,12 @@ export function separarSaida(args: readonly string[]): { nomes: string[]; saida?
   return { nomes: args.filter((_, i) => i !== iSaida && i !== iSaida + 1), saida: args[iSaida + 1] };
 }
 
-export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz)): number {
+export function main(
+  argv: string[],
+  raiz = process.cwd(),
+  git = gitBytes(raiz),
+  medir = medirEmProd,
+): number {
   const todos = argv.filter((a) => a !== '');
   const semRede = todos.includes('--sem-rede');
   const args = todos.filter((a) => a !== '--sem-rede');
@@ -170,7 +175,10 @@ export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz))
     proc = { ref: REF_DEPLOYADA, sha: sincronizarRef(git, semRede) };
     const arvore = arvoreDaRef(REF_DEPLOYADA, git);
     fatias = nomes.map((edge) => {
-      const achado = coletarDaEdge(edge, raiz);
+      // A MESMA `arvore` das duas metades: a fatia da colagem e a descoberta das RPCs que a
+      // liberam têm de falar do MESMO arquivo. Ler as RPCs do disco enquanto a colagem sai da ref
+      // era o gate medindo um `index.ts` que ninguém vai deployar.
+      const achado = coletarDaEdge(edge, arvore, raiz);
       for (const r of achado.rpcs) pares.push({ edge, rpc: r.nome });
       indirecoes += achado.indirecoes.length;
       return { ...fatiaDeDeploy(edge, raiz, arvore), rpcs: achado.rpcs.map((r) => r.nome).sort() };
@@ -197,7 +205,7 @@ export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz))
   } else {
     let saida: string;
     try {
-      saida = medirEmProd(montarSondaPrecondicao(alvos.map((a) => a.rpc)));
+      saida = medir(montarSondaPrecondicao(alvos.map((a) => a.rpc)));
     } catch (e) {
       process.stderr.write(
         `⛔ mecânica: a sonda de pré-condição não rodou (${mensagemDeErro(e) ?? 'psql falhou'})\n` +
