@@ -49,6 +49,9 @@ ALTER ROLE service_role BYPASSRLS;
 SQL
 
 PASS=0; FAIL=0
+# mktemp exige que o padrão TERMINE em X (macOS): um sufixo depois do XXXXXX faz mkstemp falhar,
+# e com `set -e` o harness aborta antes do primeiro assert — barulhento, que é o certo.
+TMPF="$(mktemp "${TMPDIR:-/tmp}/fn-sabotada.XXXXXX")"
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
@@ -175,34 +178,40 @@ eq "C0 (controle) a reconciliação de fato mudou a base — sem isto, C1 passa 
 C1=$(Pq -c "SELECT desconto_valor IS NULL FROM public.order_items WHERE sales_order_id='$SOID' AND omie_codigo_produto=555;")
 eq "C1 base mudou → desconto INVALIDADO (não colado na base nova)" "$C1" "t"
 
-echo "═══ D · a migration se recusa a reverter outra sessão (pré-condição) ═══"
+echo "═══ D · a identidade de linha do #2405 sobrevive ao replace ═══"
 
-# O #2405 recria a MESMA função para gravar `omie_codigo_item`. Se ele for aplicado primeiro,
-# re-aplicar este arquivo apagaria aquilo em silêncio. A pré-condição transforma isso em erro.
-D1=$(P -q -v ON_ERROR_STOP=0 <<SQL 2>&1 | grep -c "ABORTADO" || true
-CREATE OR REPLACE FUNCTION public.criar_pedidos_com_itens(p_pedidos jsonb)
-RETURNS jsonb LANGUAGE plpgsql AS \$f\$
-BEGIN
-  -- simula a versão do #2405: menciona omie_codigo_item, não menciona desconto_valor
-  PERFORM 1 FROM public.order_items WHERE omie_codigo_item IS NOT NULL;
-  RETURN '{}'::jsonb;
-END \$f\$;
-\i $MIG
-SQL
-)
-eq "D1 pré-condição ABORTA sobre a versão do #2405 (não reverte em silêncio)" "$D1" "1"
-# Restaura a versão verdadeira para os asserts de falsificação abaixo.
-P -q -c "DROP FUNCTION IF EXISTS public.criar_pedidos_com_itens(jsonb);" >/dev/null
-P -q -f "$MIG"
+# O #2405 mergeou em 2026-09-09 e a seção 1/3 foi REGENERADA sobre a versão dele. O risco deixou
+# de ser "aplicar por cima e reverter" e passou a ser "regenerar de um snapshot velho e apagar" —
+# mesmo dano, outra porta. A postcondição cobra os dois campos juntos; aqui prova-se que ela morde.
+D0=$(Pq -c "SELECT position('omie_codigo_item' in pg_get_functiondef(p.oid)) > 0 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='criar_pedidos_com_itens';")
+eq "D0 a função aplicada carrega a identidade de linha do #2405" "$D0" "t"
+D1=$(Pq -c "SELECT position('desconto_valor' in pg_get_functiondef(p.oid)) > 0 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='criar_pedidos_com_itens';")
+eq "D1 e o desconto canônico, na MESMA função (consolidada, não alternada)" "$D1" "t"
+
+# Falsificação da cobrança: uma versão SEM omie_codigo_item tem de fazer a postcondição abortar.
+SABD="/tmp/sabotado-identidade-${SLUG}.sql"
+# Remove a coluna E o valor de forma CONSISTENTE. A primeira versão desta sabotagem comentava só
+# o valor e deixava a vírgula de `v_created_at,` órfã: a migration morria de erro de SINTAXE, não
+# na postcondição, e o assert lia "não abortou pela minha causa" como "não abortou". Sabotagem que
+# quebra o arquivo por outro motivo não exercita o eixo que se quer medir.
+perl -0pe 's/, omie_codigo_item\n/\n/; s/ *v_created_at,( *-- G6)\n *CASE WHEN \(SELECT ok FROM ga\) THEN c\.cid END\n/               v_created_at\1\n/' "$MIG" > "$SABD"
+if grep -q "discount, desconto_valor, hash_payload, created_at, omie_codigo_item" "$SABD"; then
+  bad "D2.0 a sabotagem da identidade NÃO removeu a coluna do INSERT — o assert seria teatro"
+else
+  ok "D2.0 (controle da sabotagem) a identidade foi removida do INSERT de fato"
+  D2=$(P -q -v ON_ERROR_STOP=0 -f "$SABD" 2>&1 | grep -c "perdeu a coluna omie_codigo_item" || true)
+  eq "D2 a postcondição ABORTA quando a identidade de linha some" "$D2" "1"
+  P -q -f "$MIG" >/dev/null
+fi
 
 echo "═══ E · FALSIFICAÇÃO (Lei #3): sabota → exige VERMELHO → restaura ═══"
 
 # E1 — o coalesce(...,0) na ingestão. Se este assert não ficar vermelho, A3 não tem dente e todo
 # o resto da prova é decoração: a coluna aceitaria "desconto zero" carimbado no acervo inteiro.
 SAB="/tmp/sabotado-${SLUG}.sql"
-sed "s/(it->>'desconto_valor')::numeric,/coalesce((it->>'desconto_valor')::numeric, 0),/" "$MIG" > "$SAB"
-if ! grep -q "coalesce((it->>'desconto_valor')::numeric, 0)" "$SAB"; then
-  bad "E0 a sabotagem NÃO alterou o arquivo — a falsificação abaixo seria teatro (sempre-verde)"
+sed "s/(\(c\.\)\{0,1\}it->>'desconto_valor')::numeric,/coalesce((\1it->>'desconto_valor')::numeric, 0),/g" "$MIG" > "$SAB"
+if ! grep -q "coalesce((c.it->>'desconto_valor')::numeric, 0)" "$SAB"; then
+  bad "E0 a sabotagem NÃO alterou a seção 1/3 (a que o assert observa) — a falsificação seria teatro"
 else
   ok "E0 (controle da sabotagem) o texto mudou de fato"
   P -q -c "DROP TABLE IF EXISTS public.order_items CASCADE;" >/dev/null 2>&1 || true
@@ -223,16 +232,30 @@ SQL
   # E2 — mesmo com a postcondição, prove o EFEITO: com o coalesce, o ausente deixa de ser NULL.
   # Postcondição e efeito são camadas distintas; sabotar uma por vez é o que distingue as duas.
   P -q -c "DROP FUNCTION IF EXISTS public.criar_pedidos_com_itens(jsonb);" >/dev/null
-  sed -n "/1\/3 · criar_pedidos_com_itens/,/^;$/p" "$SAB" | P -q -v ON_ERROR_STOP=1 >/dev/null 2>&1 || true
+  # Recorte da função sabotada. O `-s` é o CONTROLE: recorte vazio faria o assert abaixo medir um
+  # pedido que nunca foi criado, e "não virou 0" leria-se como aprovação. E o erro do apply vai
+  # para o log em vez de ser engolido — foi assim que a quebra do delimitador passou despercebida.
+  awk '/^CREATE OR REPLACE FUNCTION public.criar_pedidos_com_itens/{d=1} d{print} d&&/^;$/{exit}' "$SAB" > "$TMPF"
+  [ -s "$TMPF" ] || bad "E2.0 o recorte da função sabotada saiu VAZIO — o assert abaixo mediria o nada"
+  P -q -v ON_ERROR_STOP=1 -f "$TMPF" > "$TMPF.log" 2>&1 || true
   P -q -c "DELETE FROM public.sales_orders;" >/dev/null
-  P -q <<SQL >/dev/null 2>&1 || true
+  P -q > "$TMPF.pedido.log" 2>&1 <<SQL || true
 SELECT public.criar_pedidos_com_itens('[{
   "customer_user_id": "$c1", "created_by": "$sys", "account": "oben",
   "hash_payload": "omie_oben_9002", "omie_pedido_id": 9002, "omie_numero_pedido": "9002",
   "items": [], "subtotal": 0, "discount": 0, "total": 0, "status": "importado",
   "itens": [{"omie_codigo_produto": 557, "quantity": 3, "unit_price": 20, "hash_payload": "omie_oben_9002_557"}]}]'::jsonb);
 SQL
-  E2=$(Pq -c "SELECT coalesce((SELECT desconto_valor::text FROM public.order_items WHERE omie_codigo_produto=557), 'sem-linha');")
+  if grep -qi "erro\|error" "$TMPF.pedido.log"; then
+    bad "E2.1 a criação do pedido sabotado FALHOU — o assert abaixo mediria ausência, não efeito: $(cut -c1-160 "$TMPF.pedido.log" | head -2 | tr '\n' ' ')"
+  fi
+  E2N=$(Pq -c "SELECT count(*) FROM public.order_items WHERE omie_codigo_produto=557;")
+  if [ "$E2N" != "1" ]; then
+    bad "E2.2 esperava exatamente 1 linha do SKU 557, vieram [$E2N] — o assert abaixo mediria o nada"
+  fi
+  # `is_null` explícito: `-tA` devolve string vazia tanto para NULL quanto para '', e comparar com
+  # "" casaria os dois. O que se quer saber é se o coalesce sabotado transformou NULL em 0.
+  E2=$(Pq -c "SELECT coalesce(desconto_valor::text, 'NULO') FROM public.order_items WHERE omie_codigo_produto=557;")
   if [ "$E2" = "0" ]; then
     ok "E2 sabotado, o ausente VIRA 0 — A3 tem dente (é este número que ele barra)"
     PASS=$((PASS+1))
@@ -251,7 +274,9 @@ if ! grep -q "coalesce(NULL, oi.desconto_valor)" "$SAB3"; then
   bad "E3.0 a sabotagem da reconciliação NÃO alterou o arquivo — assert seria teatro"
 else
   ok "E3.0 (controle da sabotagem) o texto da reconciliação mudou de fato"
-  sed -n "/3\/3 · reconciliar_pedidos_omie/,/^;$/p" "$SAB3" | P -q -v ON_ERROR_STOP=1 >/dev/null
+  awk '/^CREATE OR REPLACE FUNCTION public.reconciliar_pedidos_omie/{d=1} d{print} d&&/^;$/{exit}' "$SAB3" > "$TMPF"
+  [ -s "$TMPF" ] || bad "E3.0b o recorte da reconciliação sabotada saiu VAZIO"
+  P -q -v ON_ERROR_STOP=1 -f "$TMPF" >/dev/null
   P -q -c "DELETE FROM public.sales_orders;" >/dev/null
   P -q <<SQL >/dev/null
 SELECT public.criar_pedidos_com_itens('[{

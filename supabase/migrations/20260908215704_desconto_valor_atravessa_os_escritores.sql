@@ -35,33 +35,20 @@
 
 BEGIN;
 
--- ── PRÉ-CONDIÇÃO: recusa rodar sobre um banco cujo estado esta migration não previu ───────────
--- Os corpos abaixo foram gerados de `pg_get_functiondef` da PROD em 2026-09-08. `CREATE OR
--- REPLACE` substitui o corpo INTEIRO: se outra migration tiver recriado a mesma função entre a
--- geração e o apply, aplicar isto REVERTE o trabalho dela — silenciosamente, sem erro e sem
--- diff visível, que é o modo de falha do "última a rodar vence" (database.md §2).
+-- ── CONSOLIDADA com o #2405, que mergeou em 2026-09-09 ───────────────────────────────────────
+-- A versão anterior deste arquivo trazia uma PRÉ-CONDIÇÃO que abortava se encontrasse
+-- `omie_codigo_item` em `criar_pedidos_com_itens`: naquele momento o #2405 estava aberto, e
+-- aplicar este arquivo por cima teria REVERTIDO o trabalho dele em silêncio — `CREATE OR REPLACE`
+-- substitui o corpo inteiro, sem erro e sem diff visível ("última a rodar vence", database.md §2).
 --
--- Isto não é hipotético nesta migration: o PR #2405 (`20260908163659_pedido_nasce_com_identidade
--- _de_linha.sql`) recria `criar_pedidos_com_itens` para gravar `omie_codigo_item` — na MESMA
--- linha de INSERT que esta aqui altera. `bun run wt:preflight` marcou 🔴 em 2026-09-08.
+-- Com o #2405 mergeado, a base oficial passou a ser a dele. A seção 1/3 abaixo foi REGENERADA a
+-- partir da migration `20260908163659` — a função carrega os DOIS campos, e o guard vira o seu
+-- oposto: a postcondição no fim cobra `omie_codigo_item` E `desconto_valor` juntos. Assim a
+-- reversão é pega vindo de qualquer lado, em vez de só de um.
 --
--- A regra: se o banco já tem algo que este arquivo não sabe preservar, ABORTA e pede regeneração.
--- Falha ruidosa custa um round-trip; reversão silenciosa custa a feature da outra sessão.
-DO $pre$
-DECLARE
-  v_def text;
-BEGIN
-  SELECT pg_get_functiondef(p.oid) INTO v_def
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'public' AND p.proname = 'criar_pedidos_com_itens';
-
-  IF v_def IS NOT NULL AND position('omie_codigo_item' in v_def) > 0 THEN
-    RAISE EXCEPTION
-      'ABORTADO: criar_pedidos_com_itens no banco já grava omie_codigo_item (o #2405 foi aplicado antes desta). Aplicar este arquivo REVERTERIA aquilo. Regenere a migration a partir do pg_get_functiondef atual — o desenho e os comentários seguem válidos, só o corpo-base mudou.'
-      USING HINT = 'psql-ro: SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname = ''criar_pedidos_com_itens'';';
-  END IF;
-END
-$pre$;
+-- ORDEM DE APPLY: a `20260908163659` primeiro (timestamp menor, e é a ordem natural). Se ela já
+-- tiver sido aplicada, esta acrescenta o desconto preservando a identidade; se não tiver, esta
+-- entrega as duas coisas de uma vez e a outra, aplicada depois, é idempotente no que interessa.
 
 -- ─────────────── 1/3 · criar_pedidos_com_itens (ingestão do sync) ───────────────
 CREATE OR REPLACE FUNCTION public.criar_pedidos_com_itens(p_pedidos jsonb)
@@ -181,15 +168,53 @@ BEGIN
 
       IF v_do_items THEN
         -- ── G6: order_items.created_at = created_at do PAI (nunca now()) ──
+        -- ── IDENTIDADE DE LINHA NO NASCIMENTO (`det.ide.codigo_item`) — o que esta migration
+        --    ACRESCENTA ao corpo vigente do #2224. Tudo abaixo veio de la por TRANSFORMACAO:
+        --    a regua de preco esta preservada VERBATIM (recriar do corpo de 17/06 teria
+        --    revertido o #2224 em silencio — "a ultima a recriar VENCE", database.md §4).
+        --
+        --    POR QUE: `criar_pedidos_com_itens` nascia com `omie_codigo_item` NULL, e so a
+        --    reconciliacao adotava a identidade depois. Enquanto ela e NULL, um pedido com SKU
+        --    repetido depende do payload trazer identidade COMPLETA para escapar do guard de
+        --    ambiguidade da `reconciliar_pedidos_omie` — e quando nao traz, o pedido inteiro e
+        --    PULADO (nem itens, nem cabecalho) e o app fica na revisao velha em silencio.
+        --    Nascer com identidade torna esse guard INALCANCAVEL por construcao, em vez de
+        --    contornavel. Medido em prod 2026-09-08: o `ListarPedidos` — o MESMO endpoint que
+        --    alimenta esta RPC — devolve o campo em 4.220/4.220 itens lidos.
+        WITH cand AS (
+          SELECT it,
+                 -- A REGUA: inteiro POSITIVO em texto decimal (ate 18 digitos, cabe em bigint).
+                 -- Um `codigo_item` invalido (vazio, 0, fracionario, negativo, texto) e PIOR que
+                 -- ausente: ausente degrada pro casamento por SKU, que e conhecido e guardado;
+                 -- um numero fabricado casaria a linha ERRADA dentro do pedido, em silencio, no
+                 -- caminho do dinheiro. O regex e TAMBEM o cast seguro — sem ele um shape
+                 -- inesperado derruba a subtransacao G9 e perde o pedido inteiro por um campo
+                 -- que e opcional por desenho. Espelha `_shared/omie-codigo-item.ts` (a edge
+                 -- filtra antes); aqui de novo porque a RPC e a fronteira e nao confia no caller.
+                 CASE WHEN (it->>'omie_codigo_item') ~ '^[1-9][0-9]{0,17}$'
+                      THEN (it->>'omie_codigo_item')::bigint END AS cid
+            FROM jsonb_array_elements(coalesce(v_pedido->'itens', '[]'::jsonb)) AS it
+           WHERE (it->>'omie_codigo_produto') IS NOT NULL
+        ),
+        ga AS (
+          -- G-a: a identidade so vale para o pedido INTEIRO quando e DISTINTA entre as linhas
+          -- que a trazem — a mesma regua POR PEDIDO do `v_ident` da reconciliacao, nao por
+          -- linha. `count(cid)` e `count(DISTINCT cid)` ignoram NULL: ausente NAO e duplicata de
+          -- ausente, senao um payload parcialmente lido zeraria a adocao inteira.
+          -- Gravar `codigo_item` repetido criaria a condicao `G-b` da `reconciliar_pedidos_omie`
+          -- (identidade duplicada no ATUAL), que faz o reconciliador PULAR aquele pedido PARA
+          -- SEMPRE — ele congela na revisao velha. Ausente e reversivel; ambiguo gravado nao e.
+          SELECT count(cid) = count(DISTINCT cid) AS ok FROM cand
+        )
         INSERT INTO public.order_items (
           sales_order_id, customer_user_id, product_id, omie_codigo_produto,
-          quantity, unit_price, discount, desconto_valor, hash_payload, created_at
+          quantity, unit_price, discount, desconto_valor, hash_payload, created_at, omie_codigo_item
         )
         SELECT v_order_id,
-               coalesce((it->>'customer_user_id')::uuid, (v_pedido->>'customer_user_id')::uuid),
-               (it->>'product_id')::uuid,
-               (it->>'omie_codigo_produto')::bigint,
-               coalesce((it->>'quantity')::numeric, 1),
+               coalesce((c.it->>'customer_user_id')::uuid, (v_pedido->>'customer_user_id')::uuid),
+               (c.it->>'product_id')::uuid,
+               (c.it->>'omie_codigo_produto')::bigint,
+               coalesce((c.it->>'quantity')::numeric, 1),
                -- REGUA DE PRECO NA INGESTAO — finitude NAO-NEGATIVA. O `coalesce(...,0)`
                -- anterior mapeava "o Omie nao informou" e "o Omie informou 0" no MESMO byte.
                -- Aqui os dois fatos ficam distintos:
@@ -200,22 +225,22 @@ BEGIN
                -- A ingestao NAO decide se o preco serve pra margem — isso e do CONSUMO, onde
                -- private.margem_cliente_agregada() aplica finitude POSITIVA (`> 0`) e exclui
                -- tambem o zero. Destruir o zero aqui perderia informacao da fonte de graca.
-               CASE WHEN (it->>'unit_price')::numeric >= 0
-                     AND (it->>'unit_price')::numeric < 'Infinity'::numeric
-                    THEN (it->>'unit_price')::numeric END,
-               coalesce((it->>'discount')::numeric, 0),
+               CASE WHEN (c.it->>'unit_price')::numeric >= 0
+                     AND (c.it->>'unit_price')::numeric < 'Infinity'::numeric
+                    THEN (c.it->>'unit_price')::numeric END,
+               coalesce((c.it->>'discount')::numeric, 0),
                -- REGUA DO DESCONTO — sem coalesce, de proposito. `discount` acima e a coluna
-               -- LEGADO (default 0, semantica ambigua); esta e a canonica, em R$ da linha.
-               -- NULL aqui significa NAO APURADO e e diferente de 0 = "o Omie informou que nao
-               -- ha desconto". Um `coalesce(...,0)` reintroduziria exatamente a fabricacao que
-               -- a coluna existe para evitar: o leitor antigo lia `prod.desconto`, chave que a
-               -- API do Omie nao tem, e o `|| 0` gravou zero em 71.006 linhas por CEGUEIRA.
-               -- Quem calcula o valor e _shared/desconto-omie.ts, na edge; aqui so transporta.
-               (it->>'desconto_valor')::numeric,
-               it->>'hash_payload',
-               v_created_at  -- G6
-        FROM jsonb_array_elements(coalesce(v_pedido->'itens', '[]'::jsonb)) AS it
-        WHERE (it->>'omie_codigo_produto') IS NOT NULL;
+               -- LEGADO (default 0, semantica ambigua entre percentual e valor); esta e a
+               -- canonica, em R$ da LINHA. NULL aqui significa NAO APURADO, e e diferente de
+               -- 0 = "o Omie informou que nao ha desconto". Um `coalesce(...,0)` reintroduziria
+               -- a fabricacao que a coluna existe para evitar: o leitor antigo lia
+               -- `prod.desconto`, chave que a API do Omie nao tem, e o `|| 0` gravou zero em
+               -- 71.006 linhas por CEGUEIRA. Quem calcula e _shared/desconto-omie.ts, na edge.
+               (c.it->>'desconto_valor')::numeric,
+               c.it->>'hash_payload',
+               v_created_at,  -- G6
+               CASE WHEN (SELECT ok FROM ga) THEN c.cid END
+        FROM cand c;
         GET DIAGNOSTICS v_n = ROW_COUNT;
         v_items := v_items + v_n;
 
@@ -251,9 +276,7 @@ BEGIN
     'skipped_complete', v_skipped_complete, 'skipped_no_items', v_skipped_no_items,
     'divergence', v_divergence, 'failed', v_failed);
 END;
-$function$
-
-;
+$function$;;
 
 -- ─────────────── 2/3 · aplicar_edicao_pedido_omie (edição de pedido) ───────────────
 CREATE OR REPLACE FUNCTION public.aplicar_edicao_pedido_omie(p_sales_order_id uuid, p_items jsonb, p_itens jsonb, p_total numeric, p_notes text, p_omie_payload jsonb, p_omie_response jsonb, p_lido_em timestamp with time zone)
@@ -1063,7 +1086,23 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: reconciliar_pedidos_omie não invalida desconto_valor no UPDATE — o desconto da base ANTIGA ficaria colado numa linha cuja base mudou.';
   END IF;
 
-  RAISE NOTICE 'OK: os 3 escritores de order_items transportam desconto_valor, nenhum com coalesce 0, e a reconciliação invalida.';
+  -- A identidade de linha do #2405 tem de SOBREVIVER a este replace. Sem esta cobrança, uma
+  -- regeneração futura a partir de um snapshot velho a apagaria em silêncio — que é exatamente o
+  -- risco que a pré-condição removida acima vigiava, agora fechado pelo lado positivo.
+  SELECT pg_get_functiondef(p.oid) INTO v_def
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public' AND p.proname = 'criar_pedidos_com_itens';
+  -- MENÇÃO não basta, e a falsificação provou: a função cita `omie_codigo_item` no guard G-a de
+  -- identidade repetida, então uma versão que perdesse a coluna do INSERT continuaria "mencionando"
+  -- e a cobrança ficava VERDE sobre o dano. O predicado é sobre a LISTA DE COLUNAS do INSERT.
+  IF v_def !~ 'INSERT INTO public\.order_items[^;]*omie_codigo_item' THEN
+    RAISE EXCEPTION 'FALHOU: o INSERT de criar_pedidos_com_itens perdeu a coluna omie_codigo_item — este apply reverteria a identidade de linha (#2405). Regenere a partir do pg_get_functiondef atual.';
+  END IF;
+  IF v_def !~ 'INSERT INTO public\.order_items[^;]*desconto_valor' THEN
+    RAISE EXCEPTION 'FALHOU: o INSERT de criar_pedidos_com_itens perdeu a coluna desconto_valor — o desconto apurado não chegaria à tabela.';
+  END IF;
+
+  RAISE NOTICE 'OK: os 3 escritores transportam desconto_valor sem coalesce 0, a reconciliação invalida, e a identidade de linha do #2405 sobreviveu.';
 END
 $post$;
 

@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
 import {
@@ -287,8 +288,7 @@ async function reprocessOrders(
           // (string vazia, 0, NaN de um shape inesperado) é PIOR que ausente: ausente degrada
           // para o casamento por SKU, que é conhecido e guardado; um número fabricado casaria a
           // linha ERRADA dentro do pedido, em silêncio, no caminho do dinheiro.
-          const codItemBruto = Number(it.ide?.codigo_item);
-          const codItem = Number.isSafeInteger(codItemBruto) && codItemBruto > 0 ? codItemBruto : null;
+          const codItem = normalizarCodigoItemOmie(it.ide?.codigo_item);
           if (codItem !== null) itensComIdentidade++;
           itensLidos++;
           return {
