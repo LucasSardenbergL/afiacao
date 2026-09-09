@@ -457,7 +457,7 @@ sabotar "401 volta a cair no ramo generico >=400 (o falso 'bundle velho' que mot
 sabotar "fail-closed vira fail-open: o fallback do 401 vira veredito confiante" \
         "'INDETERMINADO — 401" "'BUNDLE VELHO (pre-sonda) — 401"
 sabotar "controle deixa de excluir a PROPRIA leva (a sonda avaliza a si mesma)" \
-        "AND NOT EXISTS (SELECT 1 FROM ids i2 WHERE i2.request_id = r.id)" ""
+        "AND NOT EXISTS (SELECT 1 FROM ids id_leva WHERE id_leva.request_id = r.id)" ""
 sabotar "piso do controle zerado: uma unica resposta 2xx ja 'prova' o secret" \
         "const PISO_CONTROLE_CREDENCIAL = 10;" "const PISO_CONTROLE_CREDENCIAL = 0;"
 sabotar "401 alheio na janela deixa de desqualificar o controle" \

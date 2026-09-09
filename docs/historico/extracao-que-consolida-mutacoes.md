@@ -114,6 +114,33 @@ do próprio diff — `git diff --name-only origin/main...HEAD` filtrando os arqu
 > adicione por caminho explícito. E antes de abrir o PR, liste os arquivos do diff e confira que
 > **todos** estavam no escopo — arquivo alheio no diff é mutação commitada até prova em contrário.
 
+## O `.mut` não é o único sensor ancorado no TEXTO — e o gate rápido não vê os outros
+
+Reancorei as três mutações do `.mut`, o `mutcheck --seco` ficou verde em 24 contratos, a rodada
+cheia deu `0 inválidas`, e mesmo assim o CI reprovou. A causa: **o eval da skill
+`lovable-deploy-verify` tem sabotagens próprias ancoradas no mesmo arquivo** —
+`.claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh:459` sabota literalmente
+`"AND NOT EXISTS (SELECT 1 FROM ids i2 WHERE i2.request_id = r.id)"`. Depois da renomeação do alias
+a sabotagem virou NO-OP, e o arnês que a vigia (`scripts/test-eval-via-morta.sh --falsificar`)
+acusou `1 cegueira(s) (esperado: 0)` — de `11/11` para `10/11`.
+
+O que torna isso traiçoeiro: **nenhum gate local que eu rodei alcançava esse sensor.** O
+`mutcheck --seco` só conhece `scripts/mutcheck.d/*.mut`; o `mutcheck` cheio idem; a suíte vitest não
+lê a skill. Quem pega é `bun run test:falsificacao`, no job `gates-e-falsificacao` — e ele **também
+tinha o dente certo**: reprovou dizendo "a mutação não é o avesso da correção", que é exatamente a
+verdade (a sabotagem tinha deixado de reproduzir o defeito de origem).
+
+A varredura que fecha o buraco, antes de considerar um refactor pronto:
+
+```bash
+# para cada trecho de texto que a renomeação eliminou:
+grep -rn --exclude-dir=node_modules --exclude-dir=.git -F "<texto antigo>" .
+```
+
+> Renomear um identificador num arquivo money-path é mudar um **contrato textual de N sensores**,
+> não de um. O `.mut` é o mais visível — e por isso o mais fácil de confundir com o único.
+> Varra o repo pelo texto ELIMINADO, não pelos arquivos que você espera que citem.
+
 ## A regra
 
 > Ao extrair duplicação coberta por mutação, **consolidar não é perder** — mas o contrato não sabe
