@@ -62,8 +62,16 @@ git worktree add --detach "$BASE_WT" "$BASE_SHA" >/dev/null 2>&1 || {
   echo "::error::não consegui materializar a base em worktree — não dá para atribuir a falha."
   exit 2
 }
-# O gate roda o mutcheck DA BASE contra o fonte DA BASE: medir a base com o sensor de hoje
-# responderia outra pergunta.
+# O sensor é o de HOJE, aplicado ao fonte+contratos DA BASE. Duas razões: (1) a pergunta
+# aqui é mecânica — "este padrão casa UMA linha?" — e medi-la com dois critérios diferentes
+# nos dois lados não daria comparação nenhuma; (2) a base pode ser anterior ao próprio
+# `--seco`, e aí o script de lá ignoraria a flag e rodaria a suíte inteira por mutação —
+# minutos de gate, não segundos. Medido na falsificação: sem esta cópia o gate estourou
+# 240s sem terminar.
+cp scripts/mutcheck.sh scripts/mutcheck-all.sh "$BASE_WT/scripts/" || {
+  echo "::error::não consegui levar o sensor de hoje para a base — sem isso a comparação não é comparável."
+  exit 2
+}
 if (cd "$BASE_WT" && bash scripts/mutcheck-all.sh --seco > "$TMP/base.log" 2>&1); then
   : > "$TMP/base.txt"   # base limpa: tudo que o HEAD acusa é novo
 else
