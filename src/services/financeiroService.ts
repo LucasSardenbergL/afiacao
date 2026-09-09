@@ -429,9 +429,26 @@ export async function getFluxoCaixa(
   const movimentos = await buscarTodasPaginas(
     `movimentações do fluxo de caixa (${company})`,
     (from, to) => {
+      // ALLOWLIST POSITIVA de ótica. O Omie devolve o MESMO pagamento duas vezes — uma como
+      // lançamento do TÍTULO (`CONTA_A_*`) e outra como lançamento na CONTA CORRENTE
+      // (`CONTA_CORRENTE_*`) — e sem este filtro as duas somavam. Medido em ago/2026:
+      // entradas R$ 832,9 mil contra R$ 371,3 mil da ótica bancária (+124,3%); saídas
+      // +106,3%. Caixa REALIZADO é dinheiro que entrou/saiu da conta, então aqui vale a
+      // ótica bancária — que é a OPOSTA da usada em `v_titulo_baixas` (lá a pergunta é
+      // "quando o título foi baixado", e quem responde é a ótica do título).
+      // Sem fallback para a ótica do título: ausência de movimento bancário significa que o
+      // dinheiro não entrou na conta, não que entrou por outra via.
+      // A allowlist é POSITIVA porque `PREVISAO_PEDIDO_VENDA`/`PREVISAO_ORDEM_SERVICO`
+      // também são `tipo='E'` com valor>0 e título preenchido: por negação, PREVISÃO entraria
+      // como caixa realizado (R$ 0,34 M hoje) — dinheiro que não entrou.
+      // O filtro mora na QUERY, não no helper: o `.select()` abaixo não traz
+      // `categoria_descricao`, e filtrar no helper por uma coluna não selecionada ZERA o
+      // realizado em produção (armadilha achada pela revisão Codex — o mock do teste ignorava
+      // o `.select()` e aprovava essa versão quebrada).
       let q = supabase
         .from('fin_movimentacoes')
         .select('data_movimento, tipo, valor, omie_codigo_lancamento')
+        .in('categoria_descricao', ['CONTA_CORRENTE_REC', 'CONTA_CORRENTE_PAG'])
         .gte('data_movimento', dataInicio)
         .lte('data_movimento', dataFim);
       if (company !== 'all') q = q.eq('company', company);

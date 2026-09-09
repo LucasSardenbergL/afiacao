@@ -69,8 +69,23 @@ function makeBuilder(tabela: string) {
   const filtros: Array<(r: Row) => boolean> = [];
   const ordem: string[] = [];
   let janela: { from: number; to: number } | null = null;
+  // As colunas PEDIDAS. O mock antigo ignorava o `.select()` e devolvia a linha inteira —
+  // então um filtro sobre coluna NÃO selecionada passava verde aqui e virava `undefined` em
+  // produção. No caso desta suíte isso não é hipotético: filtrar por `categoria_descricao`
+  // sem incluí-la no select ZERA o fluxo realizado, e o mock antigo aprovava (11/11). Achado
+  // da revisão Codex. Projetar é o que dá dente ao teste.
+  let colunas: string[] | null = null;
+  const projetar = (r: Row): Row => {
+    if (!colunas) return r;
+    const out: Row = {};
+    for (const c of colunas) if (c in r) out[c] = r[c];
+    return out;
+  };
   const builder = {
-    select: (_cols: string) => builder,
+    select: (cols: string) => {
+      colunas = cols.split(',').map((c) => c.trim()).filter(Boolean);
+      return builder;
+    },
     eq: (col: string, val: unknown) => {
       filtros.push((r) => r[col] === val);
       return builder;
@@ -111,9 +126,10 @@ function makeBuilder(tabela: string) {
       const ordenadas = ordenarComoPostgres(casadas, ordem, n);
       // PostgREST real: a capa de 1.000 vale SEMPRE — sem range capa em 1.000, e
       // com range a janela nunca passa de 1.000 linhas.
-      const rows = janela
+      const rows = (janela
         ? ordenadas.slice(janela.from, Math.min(janela.to + 1, janela.from + 1000))
-        : ordenadas.slice(0, 1000);
+        : ordenadas.slice(0, 1000)
+      ).map(projetar);
       return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
     },
   };
@@ -130,12 +146,21 @@ const INICIO = '2026-01-01';
 const FIM = '2026-12-31';
 
 /** Movimento de caixa realizado. `valor` distinto por linha: pular ou duplicar altera a soma. */
-const mov = (i: number, dia: string, valor: number, tipo = 'E'): Row => ({
+const mov = (
+  i: number,
+  dia: string,
+  valor: number,
+  tipo = 'E',
+  // Default = a ótica BANCÁRIA, que é a única que conta como caixa realizado. Antes as
+  // fixtures não tinham categoria nenhuma, então a suíte inteira era cega para a ótica.
+  categoria_descricao = tipo === 'E' ? 'CONTA_CORRENTE_REC' : 'CONTA_CORRENTE_PAG',
+): Row => ({
   id: `mov-${String(i).padStart(6, '0')}`,
   company: 'oben',
   data_movimento: dia,
   tipo,
   valor,
+  categoria_descricao,
   omie_codigo_lancamento: 1000 + i,
 });
 
@@ -160,6 +185,80 @@ describe('getFluxoCaixa — caixa REALIZADO (fin_movimentacoes)', () => {
     state.falharNaRequisicao = {};
     state.dataNullNaRequisicao = {};
     state.requisicoes = {};
+  });
+
+  // O mock TEM de respeitar o `.select()`. Sem este caso, a projeção acrescentada acima não
+  // é exercida por teste nenhum: os casos de ótica filtram na QUERY (`.in`), que enxerga a
+  // linha inteira, e o helper não lê `categoria_descricao`. Medido ao falsificar — sabotar a
+  // projeção deixava a suíte VERDE.
+  //
+  // O que ele protege é concreto: a query não seleciona `categoria_descricao`, então mover o
+  // filtro de ótica para o helper faria o campo chegar `undefined`, o filtro rejeitaria tudo
+  // e o caixa realizado viraria ZERO em produção — com o mock cego aprovando a mudança.
+  it('o mock devolve SÓ as colunas do .select() — coluna não pedida chega undefined', async () => {
+    state.db.fin_movimentacoes = [mov(1, '2026-03-10', 500, 'E')];
+
+    const { supabase } = await import('@/integrations/supabase/client');
+    const { data } = await supabase
+      .from('fin_movimentacoes')
+      .select('data_movimento, tipo, valor, omie_codigo_lancamento')
+      .eq('company', 'oben');
+
+    expect(data?.[0]).toBeDefined();
+    expect(data![0].valor).toBe(500);
+    // a coluna EXISTE na linha semeada, mas não foi pedida — não pode vazar
+    expect('categoria_descricao' in data![0]).toBe(false);
+  });
+
+  // ── ÓTICA: o Omie devolve o MESMO pagamento duas vezes ───────────────────────────────
+  // Estes casos não existiam, e por isso a dobra viveu em produção: as fixtures antigas não
+  // tinham `categoria_descricao`, então nenhum teste podia distinguir uma ótica da outra.
+  it('o MESMO pagamento nas duas óticas conta UMA vez — a bancária', async () => {
+    // Um pagamento de R$ 500: o lançamento do título (dia 10) e o crédito em conta (dia 11,
+    // D+1 de compensação). Somar os dois daria 1.000 e ainda espalharia caixa por 2 dias.
+    state.db.fin_movimentacoes = [
+      mov(1, '2026-03-10', 500, 'E', 'CONTA_A_RECEBER'),
+      mov(1, '2026-03-11', 500, 'E', 'CONTA_CORRENTE_REC'),
+    ];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(somaRealizadoEntradas(fluxo)).toBe(500);
+    expect(fluxo.find((d) => d.data === '2026-03-11')?.entradas_realizadas).toBe(500);
+    expect(fluxo.find((d) => d.data === '2026-03-10')?.entradas_realizadas ?? 0).toBe(0);
+  });
+
+  it('PREVISÃO não é caixa realizado', async () => {
+    // `PREVISAO_*` é tipo 'E', valor>0 e TEM título — passa por todo filtro do helper.
+    // Por negação (`NOT LIKE 'CONTA_A_%'`) entraria como dinheiro que entrou. Não entrou.
+    state.db.fin_movimentacoes = [
+      mov(1, '2026-03-10', 700, 'E', 'PREVISAO_PEDIDO_VENDA'),
+      mov(2, '2026-03-10', 300, 'E', 'PREVISAO_ORDEM_SERVICO'),
+      mov(3, '2026-03-10', 100, 'E', 'CONTA_CORRENTE_REC'),
+    ];
+
+    expect(somaRealizadoEntradas(await getFluxoCaixa('oben', INICIO, FIM))).toBe(100);
+  });
+
+  it('as duas óticas do lado PAGAR também contam uma vez', async () => {
+    state.db.fin_movimentacoes = [
+      mov(1, '2026-03-10', 800, 'S', 'CONTA_A_PAGAR'),
+      mov(1, '2026-03-10', 800, 'S', 'CONTA_CORRENTE_PAG'),
+    ];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+    expect(fluxo.reduce((s, d) => s + d.saidas_realizadas, 0)).toBe(800);
+  });
+
+  it('baixas PARCIAIS na ótica bancária somam — não se deduplica por título', async () => {
+    // Duas baixas reais do mesmo título (nCodBaixa distinto no Omie). Deduplicar por título
+    // aqui perderia metade do caixa: são dois eventos bancários, não duas óticas de um.
+    state.db.fin_movimentacoes = [
+      { ...mov(1, '2026-03-10', 400, 'E'), id: 'mov-a' },
+      { ...mov(1, '2026-03-20', 600, 'E'), id: 'mov-b' },
+    ];
+
+    expect(somaRealizadoEntradas(await getFluxoCaixa('oben', INICIO, FIM))).toBe(1000);
   });
 
   it('erro numa página LANÇA — página perdida não vira fim da tabela', async () => {
