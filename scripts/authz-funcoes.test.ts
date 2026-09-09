@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, onTestFailed } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AUTHZ_FUNCOES_FECHADAS, type FuncaoFechada } from './authz-funcoes-fechadas';
@@ -596,10 +596,52 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
     .filter((f) => f.endsWith('.sql'))
     .map((f) => ({ file: f, sql: readFileSync(join(process.cwd(), 'supabase', 'migrations', f), 'utf8') }));
 
+  // ORÇAMENTO DA VARREDURA — medido 2026-09-09 nesta M2 8GB. O regime que decide é a suíte
+  // COMPLETA: fora do runner e isolado medem o CUSTO, só a suíte mede a CONTENÇÃO entre workers
+  // (passo 0 da receita em docs/historico/flaky-sob-carga-teto-e-custo.md).
+  //
+  // Os 4 `it` deste describe varrem as 721 migrations (7,7 MiB) do repo REAL — os dois do meio 4×
+  // cada, uma por função sabotada. O da grafia sem parêntese é o 3º teste mais lento de toda a
+  // suíte (8,1k testes), atrás só dos dois de `erro-colapsado-em-vazio-gate.test.ts`, que por isso
+  // já declaram orçamento próprio. Medido, do mais limpo ao mais real:
+  //   2,67–2,84 ms/migration fora do runner (bun/JSC) · 1,40–1,99 isolado no vitest ·
+  //   5,39 e 7,20 sob a suíte COMPLETA (duas execuções, load ~30) · 46,86 no incidente de
+  //   2026-09-09 com a máquina em load 50+ — 33.788ms, que estourou o `testTimeout: 20000` global
+  //   e derrubou a suíte inteira. O corpo é SÍNCRONO: o vitest não o interrompe no meio, só
+  //   constata o estouro quando ele retorna — por isso a duração relatada passa do próprio teto.
+  //
+  // O teto é POR MIGRATION e não um número fixo porque a causa que aperta sozinha é o repo
+  // crescer: assim ele acompanha o denominador sem afrouxar o custo UNITÁRIO, que é o que denuncia
+  // regressão do detector. Piso `Math.max(20_000, …)` para nunca ficar ABAIXO do global — teto
+  // menor que o de cima ENCURTA a folga em vez de ampliá-la (instância 1 do doc acima). Subir o
+  // `testTimeout` global era a tentação errada: afrouxaria os outros ~8.130 testes para acomodar 5.
+  const MS_POR_MIGRATION_TETO = 120; // 2,6× o pior evento REAL (46,86), a folga que o precedente guarda
+  const ORCAMENTO_VARREDURA_MS = Math.max(20_000, migrations.length * MS_POR_MIGRATION_TETO);
+
+  // `Test timed out in Nms` não nomeia causa nenhuma — e teto maior só ajuda se PRESERVA o
+  // diagnóstico. Na falha, isto separa as três hipóteses que o timeout nu confunde.
+  function armarDiagnosticoDeVarredura(): void {
+    const inicio = performance.now();
+    onTestFailed(() => {
+      const ms = performance.now() - inicio;
+      console.error(
+        `\n[authz-funcoes] varredura: ${migrations.length} migrations em ${Math.round(ms)}ms = ` +
+          `${(ms / migrations.length).toFixed(2)} ms/migration ` +
+          `(orçamento ${ORCAMENTO_VARREDURA_MS}ms a ${MS_POR_MIGRATION_TETO} ms/migration).\n` +
+          `  Referência 2026-09-09: 2,67 fora do runner · 1,99 isolado · 7,20 na suíte · 46,86 em load 50+.\n` +
+          `  ms/migration DENTRO da referência → foi CARGA da máquina; o detector está íntegro.\n` +
+          `  ms/migration ACIMA da referência  → é o DETECTOR (auditGrantsFuncoes), e teto maior só esconde.\n` +
+          `  migrations muito acima de 721     → o REPO cresceu; suba MS_POR_MIGRATION_TETO só se o\n` +
+          `                                      custo unitário continuar dentro da referência.`,
+      );
+    });
+  }
+
   it('as migrations do repo não têm reabertura de função (zero ERROS)', () => {
+    armarDiagnosticoDeVarredura();
     const erros = auditGrantsFuncoes(migrations, AUTHZ_FUNCOES_FECHADAS).filter((f) => f.level === 'error');
     expect(erros.map((e) => `${e.codigo} ${e.funcao} ${e.file}`)).toEqual([]);
-  });
+  }, ORCAMENTO_VARREDURA_MS);
 
   /** Tira todo REVOKE da migration que DROPa `fn`. `REVOKE ALL` **e** `REVOKE EXECUTE`: as duas
    *  formas convivem no repo (a 20260723150000 usa ALL; a 20260704120000, EXECUTE), e sabotar só
@@ -616,6 +658,7 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
   // Sem este teste, o verde acima seria indistinguível de "o detector não olhou nada". Estas 4 são
   // as que recriam DENTRO da própria migration-âncora — a forma que motivou a âncora inclusiva.
   it('o detector ENXERGA os DROP+CREATE que moram na âncora (não está inerte)', () => {
+    armarDiagnosticoDeVarredura();
     const alvo = [
       'public.get_ultimos_precos_cliente',
       'public.get_regua_preco',
@@ -628,7 +671,7 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
       );
       expect(r.length, fn).toBeGreaterThan(0);
     }
-  });
+  }, ORCAMENTO_VARREDURA_MS);
 
   /** Reescreve o `DROP FUNCTION <fn>(args)` REAL para a grafia SEM parêntese, e tira o REVOKE da
    *  mesma migration. É a sabotagem do #2001 aplicada à grafia nova: se o detector voltasse a
@@ -648,6 +691,7 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
   // Anti-inércia da grafia NOVA, contra o repo REAL — não contra fixture. Sem isto, os casos
   // sintéticos acima seriam compatíveis com "o detector novo nunca roda no pipeline de verdade".
   it('a grafia SEM parêntese é enxergada no repo REAL (não só em fixture)', () => {
+    armarDiagnosticoDeVarredura();
     const alvo = [
       'public.get_ultimos_precos_cliente',
       'public.get_regua_preco',
@@ -671,7 +715,7 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
       );
       expect(r.length, fn).toBeGreaterThan(0);
     }
-  });
+  }, ORCAMENTO_VARREDURA_MS);
 
   // A 5ª recriação do contrato, e ela documenta o MODELO em vez de escondê-lo: o DROP+CREATE de
   // `reposicao_pos_candidatos` está na 20260814000125, ANTERIOR à âncora dela (a 20260814022626,
@@ -679,13 +723,14 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
   // foi reestabelecido DEPOIS dela. Se um dia a âncora recuar, este teste vira vermelho e obriga
   // a revisitar a entrada, em vez de deixar a lacuna passar como silêncio.
   it('DROP+CREATE ANTERIOR à âncora não acusa — o ACL foi reestabelecido depois', () => {
+    armarDiagnosticoDeVarredura();
     const fn = 'public.reposicao_pos_candidatos';
     const r = auditGrantsFuncoes(semRevokeNaMigrationDoDrop(fn), AUTHZ_FUNCOES_FECHADAS).filter(
       (f) => f.funcao === fn,
     );
     expect(r).toEqual([]);
     expect(AUTHZ_FUNCOES_FECHADAS[fn].fechadaPor! > '20260814000125').toBe(true);
-  });
+  }, ORCAMENTO_VARREDURA_MS);
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════
