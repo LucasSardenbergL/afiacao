@@ -5,13 +5,13 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
-import { localizarCanarias } from './canaria-contrato-bump-gate';
-import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { lerCanariasDoRepo } from './canaria-leitor-do-repo';
 
 import {
   CANARIAS,
+  conferirSincronia,
   escaparParaFormat,
-  fatiaDaVerdade,
+  fontesDoEsperado,
   gerarSqlDaLeva,
   gerarSqlDasCanarias,
   gitReal,
@@ -972,10 +972,16 @@ function gitFalso(opts: {
   };
 }
 
-/** O estado SADIO: `origin/main` byte-a-byte igual ao disco, do qual cada teste sabota UMA coisa. */
+/**
+ * O estado SADIO: `origin/main` byte-a-byte igual ao disco, do qual cada teste sabota UMA coisa.
+ *
+ * Ele parte da PROVENIÊNCIA da leva, e não de uma lista escrita à mão: fixture montado por lista
+ * própria concorda com a implementação por coincidência, e passa a discordar em silêncio no dia em
+ * que o marcador ganha uma dependência nova — que é o defeito medido em 2026-09-09.
+ */
 function espelho(raiz: string, edges: string[]): Record<string, string> {
   return Object.fromEntries(
-    fatiaDaVerdade(edges).map((c) => [c, readFileSync(join(raiz, c), 'utf8')]),
+    fontesDoEsperado(resolverLeva(raiz, edges)).map((f) => [f.caminho, f.bytes]),
   );
 }
 
@@ -1248,11 +1254,13 @@ describe('parsearArgs — a flag do efeito legado', () => {
 // MODO CANÁRIA
 // ==========================================================================================
 
-/** O leitor REAL — o mesmo que a CLI injeta. Testar com um leitor de mentira provaria o dublê. */
-const lerCanariasReal: LeitorCanariasDoRepo = (raiz, edge) =>
-  localizarCanarias(
-    removerComentarios(readFileSync(join(raiz, 'supabase', 'functions', edge, 'index.ts'), 'utf8')),
-  );
+/**
+ * O leitor REAL — literalmente o que a CLI injeta, importado, não recriado.
+ *
+ * Até esta leva era uma CÓPIA da regra, e cópia da regra é o defeito que o módulo compartilhado
+ * existe para impedir: a suíte seguiria verde julgando um leitor que não é o que o operador roda.
+ */
+const lerCanariasReal: LeitorCanariasDoRepo = lerCanariasDoRepo;
 
 /**
  * Um `index.ts` de mentira que hospeda a canária no arm que a `chave` do registro nomeia.
@@ -1350,7 +1358,7 @@ describe('registro de canárias — o marcador SAI do repo, nunca do registro', 
     expect(leva).toHaveLength(alcancaveis.length);
     for (const c of leva) {
       expect(c.marcador, `${c.nome} sem marcador`).not.toBe('');
-      const emitido = lerCanariasReal(RAIZ_REPO, c.edge).find((e) => e.chave === c.chave);
+      const emitido = lerCanariasReal(RAIZ_REPO, c.edge).canarias.find((e) => e.chave === c.chave);
       expect(emitido, `${c.nome} não está no index.ts em ${c.chave}`).toBeDefined();
       if (c.campoMarcador === 'contrato') {
         expect(emitido?.contrato, `${c.nome} não bate com o index.ts`).toBe(c.marcador);
@@ -1886,6 +1894,208 @@ describe('CLI do modo canária — as flags sem sentido são RECUSADAS, não ign
     expect(rc).toBe(1);
     expect(saida).toHaveLength(0);
     expect(erros.join('\n')).toMatch(/DESSINCRONIZADO/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// A FATIA DA VERDADE DEPENDE DO MODO — e acompanha quem RESOLVE o marcador.
+//
+// MEDIDO EM 2026-09-09, contra o repo real, com a CLI de verdade:
+//
+//   · SUB-inclusão (o furo): o marcador da canária sai do literal `contrato: "..."` no `index.ts`
+//     da edge, e esse arquivo NÃO estava na fatia. Trocando `tudo-ou-nada-normalizar-v1` por
+//     `FABRICADO-NAO-MERGEADO-v9` no working tree, `--canaria copilot-analyze --sem-rede` saiu
+//     `exit 0`, com 9 545 bytes de SQL carregando o marcador FABRICADO, e zero menção a
+//     DESSINCRONIZADO. A canária no ar responderia o contrato ANTIGO, o veredito sairia
+//     `CANARIA DE OUTRA FATIA`, e isso se lê como deploy pendente — a MESMA classe de veredito
+//     falso do incidente de 2026-09-05 que este guard existe para fechar.
+//
+//   · SOBRE-inclusão: o modo canária não lê o mapa de fingerprints — `grep -c -i fingerprint` nos
+//     ~20 KB de SQL emitido por `--canaria copilot-analyze omie-analytics-sync:doc_ambiguo_probe
+//     omie-financeiro generate-tactical-plan --sem-rede` deu 0. Conferir arquivo que não participa
+//     do resultado não fecha veredito falso nenhum: só produz bloqueio (e o `sonda:fingerprint`
+//     EXIGE regravar esse mapa quando qualquer `_shared/` muda, então o bloqueio é rotina).
+//
+// O teste que existia antes desta leva passava por ACIDENTE: `gitEspelho(RAIZ_REPO,
+// 'copilot-analyze')` diverge todo caminho que CONTÉM o nome, e pegava o `versao.ts` — que, para
+// uma canária de `campoMarcador: 'contrato'`, não alimenta o `esperado(...)`. Divergência no
+// arquivo irrelevante, cegueira no que decide. Por isso os testes abaixo nomeiam o caminho EXATO.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+/** `git` espelho da `raiz`, divergindo nos caminhos EXATOS pedidos (nunca por substring). */
+function gitDivergindoEm(raiz: string, divergentes: string[]): ExecutorGit {
+  const alvo = new Set(divergentes);
+  return (args) => {
+    if (args[0] === 'fetch') return { status: 0, stdout: '', stderr: '' };
+    if (args[0] === 'rev-parse') return { status: 0, stdout: 'abc123456789\n', stderr: '' };
+    if (args[0] === 'log') return { status: 0, stdout: '2026-09-01 10:00:00 +0000\n', stderr: '' };
+    if (args[0] === 'show') {
+      const caminho = args[1].slice(args[1].indexOf(':') + 1);
+      if (alvo.has(caminho)) return { status: 0, stdout: '// outro conteúdo\n', stderr: '' };
+      try {
+        return { status: 0, stdout: readFileSync(join(raiz, caminho), 'utf8'), stderr: '' };
+      } catch {
+        return { status: 1, stdout: '', stderr: 'no such path' };
+      }
+    }
+    return { status: 0, stdout: '', stderr: '' };
+  };
+}
+
+/** Roda a CLI contra o repo REAL, com o leitor de canárias de verdade. Devolve o que ela emitiu. */
+function rodarCli(argv: string[], git: ExecutorGit) {
+  const saida: string[] = [];
+  const erros: string[] = [];
+  const codigo = main(argv, {
+    raiz: RAIZ_REPO,
+    escrever: (t) => saida.push(t),
+    erro: (t) => erros.push(t),
+    git,
+    lerCanarias: lerCanariasReal,
+  });
+  return { codigo, saida: saida.join(''), erros: erros.join('\n') };
+}
+
+const IDX = (edge: string) => `supabase/functions/${edge}/index.ts`;
+const VER = (edge: string) => `supabase/functions/${edge}/versao.ts`;
+const MAPA = 'supabase/functions/_shared/sonda-fingerprints.ts';
+
+describe('modo canária: a fatia SEGUE o `index.ts`, que é de onde o marcador sai', () => {
+  it('CONTROLE: espelho fiel emite o SQL — a suíte não é sempre-vermelha', () => {
+    const r = rodarCli(['--canaria', 'copilot-analyze'], gitDivergindoEm(RAIZ_REPO, []));
+    expect(r.codigo).toBe(0);
+    expect(r.saida).toContain('AS veredito');
+  });
+
+  it('o FURO de 2026-09-09: `contrato:` fora da main não emite SQL', () => {
+    const r = rodarCli(
+      ['--canaria', 'copilot-analyze'],
+      gitDivergindoEm(RAIZ_REPO, [IDX('copilot-analyze')]),
+    );
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe(''); // ZERO bytes: nada de SQL parcial
+    expect(r.erros).toMatch(/DESSINCRONIZADO/);
+    expect(r.erros).toContain(IDX('copilot-analyze'));
+  });
+
+  it('`index.ts` que só existe NESTE branch aborta — a edge no ar não hospeda essa canária', () => {
+    const git: ExecutorGit = (args) => {
+      if (args[0] === 'show' && args[1].endsWith(IDX('copilot-analyze'))) {
+        return { status: 128, stdout: '', stderr: "fatal: path ... does not exist in 'origin/main'" };
+      }
+      return gitDivergindoEm(RAIZ_REPO, [])(args);
+    };
+    const r = rodarCli(['--canaria', 'copilot-analyze'], git);
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe('');
+    expect(r.erros).toContain('não existe em origin/main');
+  });
+
+  it('a canária que serve por REFERÊNCIA leva o `versao.ts` junto — é de lá que o literal sai', () => {
+    const r = rodarCli(
+      ['--canaria', 'generate-tactical-plan'],
+      gitDivergindoEm(RAIZ_REPO, [VER('generate-tactical-plan')]),
+    );
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe('');
+    expect(r.erros).toContain(VER('generate-tactical-plan'));
+  });
+
+  it('cada canária confere o SEU `index.ts`: o da vizinha divergente não trava a leva', () => {
+    const r = rodarCli(
+      ['--canaria', 'copilot-analyze'],
+      gitDivergindoEm(RAIZ_REPO, [IDX('omie-financeiro')]),
+    );
+    expect(r.codigo).toBe(0);
+    expect(r.saida).toContain('AS veredito');
+  });
+
+  it('canária de `contrato` NÃO leva o `versao.ts`: ele não alimenta o marcador dela', () => {
+    // O par do teste acima. Sem ESTE, "a fatia acompanha o marcador" passaria com a fatia velha
+    // (que leva o `versao.ts` de toda edge) — e a sobre-inclusão seguiria de pé no modo canária.
+    const r = rodarCli(
+      ['--canaria', 'copilot-analyze'],
+      gitDivergindoEm(RAIZ_REPO, [VER('copilot-analyze')]),
+    );
+    expect(r.codigo).toBe(0);
+    expect(r.saida).toContain('AS veredito');
+  });
+
+  it('o mapa de fingerprints NÃO entra: o SQL da canária não carrega fingerprint nenhum', () => {
+    const r = rodarCli(['--canaria', 'copilot-analyze'], gitDivergindoEm(RAIZ_REPO, [MAPA]));
+    expect(r.codigo).toBe(0);
+    // A razão POSITIVA de o mapa poder sair: ele não alimenta o `esperado(...)` desta leva.
+    expect(r.saida.toLowerCase()).not.toContain('fingerprint');
+    expect(r.saida).toContain('AS veredito');
+  });
+
+  it('confere os BYTES que a geração usou, não uma segunda leitura do disco', () => {
+    // O parecer Codex de 2026-09-09: enquanto o gerador lê os arquivos e o guard lê de novo, há uma
+    // CORRIDA entre as duas leituras — o `esperado(...)` sai de uma e a aprovação vem da outra.
+    // Aqui o leitor devolve bytes que o disco não tem (como se o arquivo tivesse sido regravado
+    // entre as duas), e a `origin/main` é o disco, fiel. Guard que relesse o disco acharia tudo
+    // igual e aprovaria; guard que confere o que atravessou o marcador RECUSA.
+    const regravadoDepois: LeitorCanariasDoRepo = (raiz, edge) => {
+      const real = lerCanariasReal(raiz, edge);
+      if (edge !== 'copilot-analyze') return real;
+      return { ...real, fonte: { ...real.fonte, bytes: `${real.fonte.bytes}// gravado depois\n` } };
+    };
+    const saida: string[] = [];
+    const erros: string[] = [];
+    const rc = main(['--canaria', 'copilot-analyze'], {
+      raiz: RAIZ_REPO,
+      escrever: (t) => saida.push(t),
+      erro: (t) => erros.push(t),
+      git: gitDivergindoEm(RAIZ_REPO, []),
+      lerCanarias: regravadoDepois,
+    });
+    expect(rc).toBe(1);
+    expect(saida.join('')).toBe('');
+    expect(erros.join('\n')).toContain(IDX('copilot-analyze'));
+  });
+
+  it('o MESMO arquivo lido com bytes diferentes na mesma execução aborta — a corrida acontecendo', () => {
+    // `omie-analytics-sync` hospeda DUAS canárias, então o `index.ts` dela é lido duas vezes numa
+    // leva que peça as duas. Se as leituras discordarem, escolher uma é escolher qual metade do
+    // veredito é a verdadeira — e a escolha seria silenciosa.
+    let n = 0;
+    const instavel: LeitorCanariasDoRepo = (raiz, edge) => {
+      const real = lerCanariasReal(raiz, edge);
+      if (edge !== 'omie-analytics-sync') return real;
+      n += 1;
+      return { ...real, fonte: { ...real.fonte, bytes: `${real.fonte.bytes}// leitura ${n}\n` } };
+    };
+    const saida: string[] = [];
+    const erros: string[] = [];
+    const rc = main(
+      ['--canaria', 'omie-analytics-sync:doc_ambiguo_probe', 'omie-analytics-sync:transferencia_probe'],
+      {
+        raiz: RAIZ_REPO,
+        escrever: (t) => saida.push(t),
+        erro: (t) => erros.push(t),
+        git: gitDivergindoEm(RAIZ_REPO, []),
+        lerCanarias: instavel,
+      },
+    );
+    expect(rc).toBe(1);
+    expect(saida.join('')).toBe('');
+    expect(erros.join('\n')).toMatch(/bytes DIFERENTES dentro desta execução/);
+    expect(erros.join('\n')).toContain(IDX('omie-analytics-sync'));
+  });
+
+  it('fatia VAZIA aborta: não ter conferido nada não é ter conferido e aprovado', () => {
+    // A porta que fecha o modo NOVO que esquecer de registrar proveniência. Sem ela, o guard vira
+    // decorativo em silêncio — e silêncio, aqui, se lê como "o disco está na main".
+    const msg = msgDoErro(() => conferirSincronia([], false, gitDivergindoEm(RAIZ_REPO, [])));
+    expect(msg).toMatch(/fatia VAZIA/);
+    expect(msg).toMatch(/Nenhum SQL foi emitido/);
+  });
+
+  it('no modo SONDA o mesmo mapa divergente segue abortando — lá ele É metade do esperado', () => {
+    const r = rodarCli(['copilot-analyze'], gitDivergindoEm(RAIZ_REPO, [MAPA]));
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe('');
+    expect(r.erros).toContain(MAPA);
   });
 });
 

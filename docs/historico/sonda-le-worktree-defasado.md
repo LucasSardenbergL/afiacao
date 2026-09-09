@@ -141,3 +141,60 @@ Limite **conhecido** da medição, registrado no próprio `.mut`: o `r.status ??
 (spawn morto por sinal/timeout ⇒ fail-CLOSED) não tem mutação — `git` fora de repo devolve 128 e não
 `null`, e forjar um spawn morto viraria teste do Node, não do guard. É limite nomeado, não
 cobertura silenciosa.
+
+---
+
+## Epílogo (2026-09-09): a fatia certa não é uma LISTA — é o que o resolvedor LEU
+
+O guard acima nasceu com a fatia escrita à mão: `fatiaDaVerdade(edges)` devolvia os `versao.ts` das
+edges pedidas mais o mapa de fingerprints. Uma lista mantida **à parte da lógica de leitura** que
+ela existe para vigiar. Enquanto os dois lados concordarem, funciona; e nada obriga os dois lados a
+concordar. No modo `--canaria` eles já discordavam nos **dois sentidos** — medido com a CLI real:
+
+- **sobrava** o mapa: o modo canária não o lê (`grep -c -i fingerprint` em ~20 KB de SQL emitido por
+  quatro canárias deu **0**). Conferir arquivo que não participa do resultado não fecha veredito
+  falso nenhum — só produz bloqueio, e um bloqueio de rotina, porque o `sonda:fingerprint` exige
+  regravar esse mapa a cada mudança em `_shared/`;
+- **faltava** o `index.ts`, de onde o `contrato: "..."` da canária de fato sai. Um `contrato:`
+  alterado e não mergeado saía no SQL como marcador esperado e o guard não notava: `exit 0`, 9 545
+  bytes, o marcador FABRICADO dentro. A canária no ar responde o contrato antigo, o veredito sai
+  `CANARIA DE OUTRA FATIA`, e isso **se lê como deploy pendente** — o falso de 2026-09-05 de volta,
+  pela porta que ninguém vigiava.
+
+O eixo dos dois erros é o mesmo, e é o que vale guardar:
+
+> **Fatia de guard tem de ser DERIVADA da leitura que ela vigia, nunca uma lista paralela.** Quem
+> resolve o marcador é quem sabe de que arquivos ele saiu — então é ele que declara a fatia
+> (`proveniencia`), no mesmo gesto em que resolve. Lista à parte erra nos dois sentidos ao mesmo
+> tempo, e os dois são invisíveis: a sobra se lê como CI chato, a falta se lê como deploy pendente.
+
+E o teste que "cobria" isso passava por **acidente**: o espelho de `origin/main` divergia por
+*substring* do nome da edge, então pegava o `versao.ts` — que, para uma canária de
+`campoMarcador: 'contrato'`, não alimenta o `esperado(...)`. Divergência no arquivo irrelevante,
+cegueira no que decide. **Teste de fatia tem de nomear o caminho EXATO**; casar por substring aprova
+a fatia errada com a mesma cor de verde.
+
+### A metade que o Codex viu: conferir a SEGUNDA leitura não é conferir
+
+O gerador lia os arquivos e o guard lia de **novo**. Duas leituras são duas medições: o
+`esperado(...)` sai da primeira e a aprovação vem da segunda, e nada as obriga a concordar. A
+correção é a proveniência carregar os **bytes**, e `conferirSincronia` receber as fontes **sem a
+raiz** — não tem como reler, e quem garante isso é o compilador, não um comentário.
+
+Daí duas portas novas, as duas do tipo *ausente ≠ zero*: **fatia vazia aborta** (não ter conferido
+nada não é ter conferido e aprovado — fecha o modo futuro que esqueça de declarar proveniência) e
+**o mesmo arquivo lido com bytes diferentes na mesma execução aborta** (a corrida acontecendo;
+escolher qual leitura vale é escolher qual metade do veredito é a verdadeira).
+
+Mesma doutrina do #2427, achado no mesmo dia noutro gate: *procedência vira argumento obrigatório*.
+
+### E a sonda do próprio laço de falsificação mentiu primeiro
+
+A primeira rodada do laço abortou sozinha (`exit 8`) e essa é a parte que vale contar: o controle
+media "testes verdes" contando linhas com `✓`, e o reporter agrega o arquivo numa linha só —
+devolveu **1** onde havia **177**. O laço recusou em vez de aprovar com dado ruim, e a sonda passou
+a ler o número que a suíte reporta. Um controle que mede errado para BAIXO só custa uma rodada; se
+medisse errado para cima, teria avalizado sete sabotagens sem rodar nenhuma.
+
+Fechado em #2435 (issue #2414). O #2422 tinha atacado só a sobra — comparando o mapa por entrada,
+mas mantendo o modo canária conferindo um arquivo que ele não lê — e foi fechado sem mergear.
