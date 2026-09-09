@@ -74,4 +74,4 @@ db/test-pedido-venda-coerencia.sh          31
 # Entrou no núcleo em 2026-09-08: o gate de mutação NÃO cobre o bloco canária (medido:
 # 10 de 12 mutações sobrevivem lá), e as 10 sabotagens daqui eram a única rede real —
 # rodando fora do CI, que pelo critério do repo é ausência de dado.
-db/test-canaria-veredito.sh                18
+db/test-canaria-veredito.sh                21
