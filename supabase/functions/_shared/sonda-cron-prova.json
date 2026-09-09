@@ -2335,476 +2335,476 @@
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.193Z"
+    "em": "2026-09-09T01:19:46.204Z"
    },
    "0776635696bcbe8f9018a02a662b3e7686b9b7fed6853acf78429d21bd201f3e@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "1e6d260e7ca441a767d13ed2648f71932208a8e5",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.700Z"
+    "em": "2026-09-09T01:19:48.914Z"
    },
    "0a029c88bcbc764868dc686daf706960fb9c94357d4750c66e43b5d10756398c@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "6632d933236c851d8f32dd12b071cb7a220ac023",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:10.713Z"
+    "em": "2026-09-09T01:19:45.042Z"
    },
    "0e7bada2992bcdb12dace2406526b85123e0a141ad684e1bd73265288eef0020@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "9e9efac16a6c45eddd8a29dd289e4f829df5ddd8",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:10.907Z"
+    "em": "2026-09-09T01:19:45.415Z"
    },
    "0f5a532110b83aad807a175d09239574c6fc792d1ad3871d9857c72e73869cab@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "0aeb7ac3571fbc0e8cd4497befc146b840ad2ef9",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:10.591Z"
+    "em": "2026-09-09T01:19:44.843Z"
    },
    "2964c32e4db6732ef6d239a9433c46318d39f4cd353168f95a09e16efd9eb394@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "5ca03b02cb1320eb45424122a6f2db4cbf8f0f71",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:07.860Z"
+    "em": "2026-09-09T01:19:39.762Z"
    },
    "2a559716cbece9278f32cb62f682461f421f5a47d845d9482a5977c2668aa9b5@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "b2379855a1991e1656aa3d098222418409f29751",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:13.358Z"
+    "em": "2026-09-09T01:19:49.864Z"
    },
    "363a332f1678e77b9e5e0ddeadaa3299ff425059db92082b5a779eef4f600c8f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "d6156ea459c4b8a3086bfd8fd67028ada0731cef",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.585Z"
+    "em": "2026-09-09T01:19:47.128Z"
    },
    "37adc2d752ba4e4ecc70b6fab2cfeb8fca468619ae7d991992546b3e8b7e95fd@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "c4d6b062a3d2fbd6aca0b8ffba49c7cc59bd91a8",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:06.721Z"
+    "em": "2026-09-09T01:19:38.888Z"
    },
    "39550f2d79f0e03b1a4bde17080b3473d6bef5547df96f67eec73c0defb244c8@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "ad43dd625978124dbe0277be68f1dee3eb8b9fd4",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:09.925Z"
+    "em": "2026-09-09T01:19:43.350Z"
    },
    "3a6fccd2d64b82018a1f416645d9daa8de0b86bbc48bfd674050972c7671349d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "09050af035c0e3fca10e091a1333fb5876614529",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:08.486Z"
+    "em": "2026-09-09T01:19:41.159Z"
    },
    "3a9c1f3906f41f608de0058da07473e2f4b36630a70509c485024537205e61e0@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "77e46ab9937d92bdcda0de85e3c1bfcd1a93f3ef",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:10.065Z"
+    "em": "2026-09-09T01:19:43.548Z"
    },
    "3b10ca14c00e6debe9051e6c2b9cb829ef710e518e9dff5922e7e806be6d79c4@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "7f1198cf0e583b088abcdf003572f845e750806d",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:14.785Z"
+    "em": "2026-09-09T01:19:51.203Z"
    },
    "3b4521ebed049c7593b4bd2c63e6f709185382b93def406b06fbb45b2646cc2b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "4dd2a027173fdc13830ce3f2037fbae43591149e",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:06.961Z"
+    "em": "2026-09-09T01:19:39.089Z"
    },
    "3dccc3430e0d1f50fcd4b89bba0abb4218dca553347282bb66c77dc7df2b5e1d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "edd3690e55ca2adf84dd956c481b72c43e4ba354",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:10.809Z"
+    "em": "2026-09-09T01:19:45.237Z"
    },
    "45e87126ddb5d5075e7de0083e55f14d05b922c2868f70a212bdf98495ee8d7f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "104a9ff9fc30682418fa363aaa985015d87953a0",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:14.170Z"
+    "em": "2026-09-09T01:19:50.691Z"
    },
    "4aadfaec6e668786053d3dd01a3af226f16069492b9b44df380743b0ff44e046@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "fe8518a1c86c31c3c10a36b3306681e9a70b5eee",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:05.775Z"
+    "em": "2026-09-09T01:19:38.100Z"
    },
    "4c07484d96dbc9be3c834eb632063739645831474d0fd4544499aad1ddf6fdbe@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "55bd8dd34881ef63e6809e77308ef007c442ae9f",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.092Z"
+    "em": "2026-09-09T01:19:45.844Z"
    },
    "4f40fd386a821a4869f360ad43697d67464cdee8006e23c7eb441600ac3e40e6@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "3c15498c24e2c0aae820c3b2883e53b17e4a1bb3",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.097Z"
+    "em": "2026-09-09T01:19:48.023Z"
    },
    "4ff753fc453f39d9713b072251caf658e38dc68d99bab64c48171dd2444b2d77@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "1205b5b09d63afff29e02b4fbf81a299f36300bd",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.292Z"
+    "em": "2026-09-09T01:19:46.432Z"
    },
    "5b7a1e7ced2a67be335a2f33cdce36363a70b45403f3985408cf6bdb27d6beb8@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "6475fc4127989b5854bea8c1035ac000cb5f5aab",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.360Z"
+    "em": "2026-09-09T01:19:48.436Z"
    },
    "5bad2fc6c19ccf7ce697dc288878f56ddf43d439829f9b2e01841a76609a727d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "8f9cb63e07be90699945c6fcdd54925987acd2d9",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:14.312Z"
+    "em": "2026-09-09T01:19:50.821Z"
    },
    "5de5e82a1c095e689539a9273af3da47d613d090f5245df34c9eb690e41f0237@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "613d1a0cf6b158a21659a48f8d6c6006f402f6b3",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:13.662Z"
+    "em": "2026-09-09T01:19:50.264Z"
    },
    "63c905afbd937fc91583debca1113ad519cce98e1320e13f57f55fa3ca674d66@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "27163fc2a36d18dc26a3dbe34f1fcaee39114d38",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:56:13.963Z"
+    "em": "2026-09-09T01:19:50.565Z"
    },
    "66651e0401dc453b82d10bd9aca45c12a5c34165ea69d091edc587f976016864@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "dc74f2faaeebce5b93a6bb497df4b0208d4c7940",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.009Z"
+    "em": "2026-09-09T01:19:47.861Z"
    },
    "6a6fa7032c10c60687f5007c0e29bc8122c1b4c7fa83f52a8f2a30d4f5d9077d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "f6ac6055aa5b384cb3020e7ff28fcb93bad6de01",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:07.191Z"
+    "em": "2026-09-09T01:19:39.272Z"
    },
    "73e574662edbe432757315cf28818a58b26b170407a5298d525b98944e67f040@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "b05f81236f8333336c0a069e5a06f5c4f46e2570",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:13.241Z"
+    "em": "2026-09-09T01:19:49.730Z"
    },
    "74badb61775f8765cc434837c450721d616c63d5f253724d5bb6a4a39c84414d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "0887b9c450083974efbbc65d69b77aef4986ed4a",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.275Z"
+    "em": "2026-09-09T01:19:48.312Z"
    },
    "76d302f5f8804915df167814f872b147e4008ac4f4fcfc521aa81675ab6ccf51@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "d8cf071522d3621da85e7ecafc3ca1153ef13644",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:09.791Z"
+    "em": "2026-09-09T01:19:43.152Z"
    },
    "7bf436cfd6225ed5ee052b2deda8964f8eedbb1748f65660853abdfa0eaa4bbc@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "006d762043b96694ce7b48b81852002f49a27cea",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:07.410Z"
+    "em": "2026-09-09T01:19:39.437Z"
    },
    "802e06d3371c06868c8fbd29276daf3d565f649249dac0a7f8abc5d5dd8486ed@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "cc806e48a02392485b878e74aa51c9090d05bc06",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:14.513Z"
+    "em": "2026-09-09T01:19:50.958Z"
    },
    "885be89adf25f6222e1b4fe8317d32081e7f9a95e11d20c4c8730dbf3a6325a3@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "55dea3f712de1c3125e5ea0050c37bff5a64a887",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:09.201Z"
+    "em": "2026-09-09T01:19:42.263Z"
    },
    "8e2a25edfb423b000b61b12c75ee11b4e61a42a2d81773b1878f1ee369a4e14f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "2ad994bc7fb78a14db30358cc4e67bab0f329146",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.002Z"
+    "em": "2026-09-09T01:19:45.627Z"
    },
    "94f078a3c53de5b1ce2523f4831f1f7575c3315c47c9970dc53b87395a2acd24@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "3e6b43c33f59a1d476aaa50920eb3b10a7ea799f",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.447Z"
+    "em": "2026-09-09T01:19:48.551Z"
    },
    "958f829f97711f15752d565db991bcc7d35f443e64d73a7ac108e1c2630cbed7@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "a0596c33f1fd41ab3c6b0ac9b70898f9c7e7126e",
-    "veredito": "INVERIFICAVEL",
-    "motivo": "Identifier 'upsertAddressFromOmie' has already been declared at file:///var/folders/cz/94l8x0rn6hqfk080j49r247r0000gn/T/closure-omie-cliente-KRcB2L/supabase/functions/omie-cliente/index.ts:378:1",
+    "veredito": "NAO_COMPILA",
+    "motivo": "Identifier 'upsertAddressFromOmie' has already been declared at file:///var/folders/cz/94l8x0rn6hqfk080j49r247r0000gn/T/closure-omie-cliente-DhWdfA/supabase/functions/omie-cliente/index.ts:378:1",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.843Z"
+    "em": "2026-09-09T01:19:47.561Z"
    },
    "95b49fa1bdc201deb4972530c3705ce3ed9ea184c30ba64c5c5f38f152cbd618@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "3c6957aeb41c9ef5d51c7b8fb05c28eb79927647",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:06.033Z"
+    "em": "2026-09-09T01:19:38.313Z"
    },
    "95d6523c711304b0fe41738b6de77bb137cbadf2ac35498528218bdf97d34625@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "2e7ddef3f48524c1ffa0cd10e0e70882c41fa1e7",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.617Z"
+    "em": "2026-09-09T01:19:48.784Z"
    },
    "9b0c0c5e4a711044d5e9753f032e6c829506a1bf3b0e3cdc0669658b67384825@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "d4b8b3f6ff290d04cb3b7a2684803e4e61b2c25b",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.390Z"
+    "em": "2026-09-09T01:19:46.610Z"
    },
    "9fa3de6245f015e2e52c231e15fbb9a11ae13328ffb7442c889c468de9483d3a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "ead01beec9559e7ce4a6ae43ea985b66cd6ecbc5",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.949Z"
+    "em": "2026-09-09T01:19:49.329Z"
    },
    "a83e4e4b75f0c69026a17aab324c7ef676bb0679cb61243dfb0b147abd77cb5c@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "5b6ea22ad289bd81e0426fc472be81bbf1731456",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:10.294Z"
+    "em": "2026-09-09T01:19:44.186Z"
    },
    "a9a507cb1ba91119bd46a6021608defdb624bee266cd4d43bef6d8b6576f9004@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "19ec430e4a00b76b0beebc7be082e7674161222e",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.182Z"
+    "em": "2026-09-09T01:19:48.173Z"
    },
    "aaed193f444f991850d642f70948c27942f47a2e090a8ae50939dbebe4a98a99@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "d5015f7b945ba0153ade72fa9fd377ce775c3305",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.533Z"
+    "em": "2026-09-09T01:19:48.662Z"
    },
    "abdfff7f71ced054e840727bf774578918e18ce21fa98782cd61409944ca1125@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "8ec071d096c6d0c8925e98a2c5a72a948446cd7c",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:10.186Z"
+    "em": "2026-09-09T01:19:43.752Z"
    },
    "aeb4134937867ac99baf9036bad497c02bac6f2cfc373d71eea47eb02045ed03@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "e9ef9b7da1b55e9e6d2474d7e32a476e9a07e909",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.762Z"
+    "em": "2026-09-09T01:19:47.424Z"
    },
    "b8f8995b61b16c69f789804ccc8c58dd0a70914441b4ae9cb3a8b6496f371c07@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "7d87bfcd6dcbc2b14112e4bd55f15dcf060f8885",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.674Z"
+    "em": "2026-09-09T01:19:47.276Z"
    },
    "ba22b14958aa9d730087b203b3517db3d18a63f4e7585005c66ab128d64ce601@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "85a404ac6298f312c28e5c5f50ac409749d5b83b",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.485Z"
+    "em": "2026-09-09T01:19:46.861Z"
    },
    "babcfad4fc89f57d72a9ad74c60b276a01dff2fdd730e08d7c1cdc8cc628685a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "8e92d915459b9dfda3e775e9a24f7e8016c1802a",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.866Z"
+    "em": "2026-09-09T01:19:49.185Z"
    },
    "bc145a262c732b9430af5b4d360db6afd8aa4b255475dc2768452dc22afb6b66@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "8e5a640342f69ea7c83103cf9eaf4013c4ae8329",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:12.785Z"
+    "em": "2026-09-09T01:19:49.052Z"
    },
    "c6b9620e1c4438d6dc6f9b7fdc5c6f63b06a4d9ce1b51b82c73c628c23f29de9@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "c9440f94d1e5759d22ec209173f4c6abd2a42fc2",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:13.463Z"
+    "em": "2026-09-09T01:19:50.001Z"
    },
    "c71294644e8da891b3466ee02d7badf92c8dfc26f012291be4696cb484b03cd3@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "1e80be2bd9d8a179b85bf36f86c60b728a1f0744",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:13.035Z"
+    "em": "2026-09-09T01:19:49.464Z"
    },
    "c79a67c3a496e16f9608e766853b427574694a2c3c7bd426379291d3c16fbf1b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "cbe2c488cb62c8440b8213389c7142edf96642b7",
-    "veredito": "INVERIFICAVEL",
-    "motivo": "Identifier 'upsertAddressFromOmie' has already been declared at file:///var/folders/cz/94l8x0rn6hqfk080j49r247r0000gn/T/closure-omie-cliente-mzSiod/supabase/functions/omie-cliente/index.ts:378:1",
+    "veredito": "NAO_COMPILA",
+    "motivo": "Identifier 'upsertAddressFromOmie' has already been declared at file:///var/folders/cz/94l8x0rn6hqfk080j49r247r0000gn/T/closure-omie-cliente-KuiOdA/supabase/functions/omie-cliente/index.ts:378:1",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:11.922Z"
+    "em": "2026-09-09T01:19:47.692Z"
    },
    "cc07a4f27942dc3a1ceb2084d26e4a5f4e276c04a94bd7db9ba73e184f512637@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "bd59201106658cba27111e0f6a3972b5516ad0d4",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:09.490Z"
+    "em": "2026-09-09T01:19:42.658Z"
    },
    "cc744d77d47dcc3bace6fb7b4d758d987643d630ea2fd612f1de7543b5061b4a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "4b592b506e6c4826945306e71546d39ab74e476f",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:08.988Z"
+    "em": "2026-09-09T01:19:42.068Z"
    },
    "ccba61f0caef5c18af6ebba7c39167bc36aaed0511f235c3e9dad754fe1ba769@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "f11c737708669e116448e6f21ec3f410b844db07",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:09.649Z"
+    "em": "2026-09-09T01:19:42.918Z"
    },
    "cf7f308660b544d1f140cd35c57cdd646df13f349e34f46ef5577c351eb2a311@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "db45bff2f8d391379eb89988e4fcb0730a8bcf4c",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:13.763Z"
+    "em": "2026-09-09T01:19:50.411Z"
    },
    "d5688a12c7a4bb9a72799bbd4dfeda81ff4b8b1f06739373a6c7bb98fff72e33@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "d764fade88d303b558ac6da523358770a5ae1550",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:10.401Z"
+    "em": "2026-09-09T01:19:44.421Z"
    },
    "e2122c1f2d345e6676ca4f792bc9710d5efa9157d09e0d07e6427195f16a0f6f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "413ac11f99b5893c5ed422d4b18f06439e329b0d",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:13.131Z"
+    "em": "2026-09-09T01:19:49.593Z"
    },
    "e633caeccd4a50bc31c5cd75f5ffc582eb6cea5810af935e5b9c449e30bef946@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "a1a79893b8f6bd2166f9ea99083c3ecfd87ac4e8",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:10.500Z"
+    "em": "2026-09-09T01:19:44.627Z"
    },
    "ea67d4fa70038398776a1fad76881b02405d74529f766d34772e8b9a91ce15a4@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "b559e8bdd717275313ad2339a631af36c5298846",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:08.729Z"
+    "em": "2026-09-09T01:19:41.744Z"
    },
    "ec6f0d8d99fc5ef42cf3ca5555868ef2efa464d5f3a3ae3f34cbe7363fb343dd@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "ac5951d27dcda894e892c589a0e0cbdae183f865",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:09.358Z"
+    "em": "2026-09-09T01:19:42.446Z"
    },
    "f2b5e370c4f12f173495b42e6fe88c7a48876d737b2246a745ebd8ce042a4b0c@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "314b2bca5dbbcbe0439509db306b1113db2e3a7b",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:08.293Z"
+    "em": "2026-09-09T01:19:40.606Z"
    },
    "f611c216abd7a5cd82c5193194c51266b7acf4fd3d79ecbe4425859c95154a15@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "0fe0bd3b846e8bc1a331832da432c615c2c02ded",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:07.623Z"
+    "em": "2026-09-09T01:19:39.598Z"
    },
    "f8d5efee52f2e362c1e757ad7e9b7a24609cb9abdb2cfe7a076749a39ad7f6d5@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "e2520bc5b8a7dafec6ba5e3bb379ccc8c10c0bf5",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:05.344Z"
+    "em": "2026-09-09T01:19:37.784Z"
    },
    "fade69529ee1b7d62c65c640c98af721bf9df1030c078c93ec5c9dd55eaae92f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "5362ec76199a7872b4d93e29ae96a8a7aecf3112",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:06.268Z"
+    "em": "2026-09-09T01:19:38.498Z"
    },
    "fb46d72acdf79da2123f09ef67cc1d912be3601ec169f69b7180aba45f53c247@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "d0d8b4669c153ff901b27b95d9669440e08a4730",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:06.496Z"
+    "em": "2026-09-09T01:19:38.680Z"
    },
    "fd7a3053b4cc3708c94f649921f1206840eedba1531fd513b3478d3f6c9c666b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "cfe50a559a41a5b66be7a4cbb551e4d141f7b621",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:08.078Z"
+    "em": "2026-09-09T01:19:40.140Z"
    },
    "fdc03c446a95bac2826966ce61e7282d8dffa258417d938d4a7798b024875b47@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "721a4bb3c22dfb7236aed091881c22f3d0277358",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:13.564Z"
+    "em": "2026-09-09T01:19:50.134Z"
    },
    "fe0dad2b8d09c3bb7c96ecbd545f5f1dbe8eaf4a8c6c1f09e54a60448061b18b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "85ba749f1b911ed56f62b89c35743b81a95d723f",
     "veredito": "INVERIFICAVEL",
     "motivo": "{\"a\":{\"status\":200,\"probe\":false,\"efeitos\":0,\"fetches\":0,\"corpoHash\":\"2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df\",\"headers\":{\"access-control-allow-headers\":\"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-pla",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:56:05.567Z"
+    "em": "2026-09-09T01:19:37.943Z"
    }
   },
   "omie-nfe-webhook": {
@@ -3104,252 +3104,252 @@
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:29.686Z"
+    "em": "2026-09-09T01:18:22.377Z"
    },
    "12c222a035c780569edefae4456ba4c5457ec020890f07acd0e142ef50d4dae3@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "7e076f1f782c623ecbe18bc344ca22a613ce2999",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:22.778Z"
+    "em": "2026-09-09T01:18:18.798Z"
    },
    "1bbf30a2556f3edf3afbc4f01192b64dd35abcfb2e39236f32c8ae348b300f24@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "6a856500e8028405193b038ef320db3e36efc212",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:25.555Z"
+    "em": "2026-09-09T01:18:20.287Z"
    },
    "2022a40048effe07905b149c6859cba907174242c1cb525f6bc7e2364d80287d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "c434f59e0a369957b1b6a2eb94b6db7e864d4e8c",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:28.917Z"
+    "em": "2026-09-09T01:18:21.878Z"
    },
    "2a92532549be947aaecc8333a07f0da1938190b8b1284cc908a2b6d2ebc9d2be@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "ad43dd625978124dbe0277be68f1dee3eb8b9fd4",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:23.367Z"
+    "em": "2026-09-09T01:18:19.404Z"
    },
    "33d2a4428da6f9a79ec862a8f0827f3fd416bdbb2cae335a2d13800200bf87d8@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "118b10655794250931df7e7d87ad5a1a822de5c0",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:24.494Z"
+    "em": "2026-09-09T01:18:19.754Z"
    },
    "383bd23a33a72f1b7487135dcc472eb708bfb4bc9008a1a1ed0016013b359a33@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "a70ecf8fce547ed93ce5f45a0ed2b2f0980fb057",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:30.514Z"
+    "em": "2026-09-09T01:18:23.001Z"
    },
    "3919fa10b33fa8b124b3cd360ea441395dfafab76b7c8c2a00dca51efcbd2a13@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "246c8c4fabeac02bea2f58c8670c8b812d241052",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:30.206Z"
+    "em": "2026-09-09T01:18:22.823Z"
    },
    "4bc7abf8118105ea162dc3914ddb91e10f637c67d0b4e8cc6fa744b8f21619b3@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "6d0d7023c7d6ca75fdb0c00ae9bba5d16a1521ff",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:32.281Z"
+    "em": "2026-09-09T01:18:24.532Z"
    },
    "4ed7bfebece477481cb8b94512bc44d144ae26a4d02df81af7261ce7d6b4a45c@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
-    "sha": "069540905946efc3235f9cc0f47a698cc228cf07",
+    "sha": "20d37b021764fa67e1e879ba09aa108328980d18",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:23.983Z"
+    "em": "2026-09-09T01:18:18.997Z"
    },
    "57ef56eaaf2e37e0c4677d349af3acd365059860264836f238cd07cfe7b22f8c@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "5189c514a83e234a74a5167f60e90e058446c65b",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:28.642Z"
+    "em": "2026-09-09T01:18:21.730Z"
    },
    "63ac711a14fd6cff121b60bbc96b5bbd57ec4948b3e89abc051d90d3f5aee310@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "73af15ef7aba619ebd7b1880206259443aa78793",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:29.426Z"
+    "em": "2026-09-09T01:18:22.201Z"
    },
    "6a599ca5e63b16a371b07fb2aae7bef0bec617217cd90e1e6f546156c9ac19d1@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "37786db7fa58ae26ba56f42b2df8e3177a1d5fd0",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:25.243Z"
+    "em": "2026-09-09T01:18:20.132Z"
    },
    "6bbc8de241a5cbd05eadb635c5d74a759c1fbb61fb6518e1f67cec693fe8626f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "e7ee200760f463b35638faf8dba14d8e1caf0bb6",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:28.245Z"
+    "em": "2026-09-09T01:18:21.440Z"
    },
    "749a009ae713105c68847691018a8f6fe2ffedd59719dee7252f7e7e1ff03c48@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "7d1ef2661709f046fa772de0ab15987389c78824",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:29.935Z"
+    "em": "2026-09-09T01:18:22.617Z"
    },
    "74d5c6363ccfd3996ad0801f75c30aefc42e231fd049b66872bf9933dc22d958@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "dce3afa0e219342d1967e6008dc42334762e67a6",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:27.715Z"
+    "em": "2026-09-09T01:18:21.138Z"
    },
    "8856cc0ca8511a4461c6d9a3b7d49fac019b55585a04593ce7dd4b6a207d3160@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "b6a18dcf6324014741c2fe760253791025dfdc64",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:33.161Z"
+    "em": "2026-09-09T01:18:27.477Z"
    },
    "8b499205d9086f25ef29b4671ab7aea9674c82cefc3ce191158ab73bce3dff0b@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "873a397318fefd63f63998432175627ecf8e5457",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:31.559Z"
+    "em": "2026-09-09T01:18:23.886Z"
    },
    "9581481728169e5380afab641a33e3cfae7249135d60ad5a76e571c1f46d4deb@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "77e46ab9937d92bdcda0de85e3c1bfcd1a93f3ef",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:24.957Z"
+    "em": "2026-09-09T01:18:19.936Z"
    },
    "989eb6fc6e2a6de87f018d25be50894cdd9ba08a0c6b988e6a5660a58b1a0429@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "fd3e52bae128ca0d376c6f7a46b3757a6e61cacf",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:32.535Z"
+    "em": "2026-09-09T01:18:24.772Z"
    },
    "990985486f4c6c2ffd3f12d7dc9a5bce035785fb33c932134ed4adaca43be9d0@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "5c330a47b735d9da8c1838d492a9aced93675aa7",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:27.966Z"
+    "em": "2026-09-09T01:18:21.277Z"
    },
    "9f72a94278ee546980744bc25b3a8a002937b76536a755fac29a75a823752595@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "290837278f23a66af3d1ac36036d1fa738b5ba07",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:26.354Z"
+    "em": "2026-09-09T01:18:20.582Z"
    },
    "b7347a6533f5fc254e5d62d34319020475b18712c377934cf2f2b293bdb3321a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "b631e769f366c01859bf3550f82b356ec797d931",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:27.359Z"
+    "em": "2026-09-09T01:18:21.002Z"
    },
    "bd71c186da1c6721c92ed1fdd0b223c54321ccc5903ae711167911984d51a755@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "b880daeb1810db60ec5c87051ffd09daea4eaafe",
-    "veredito": "INVERIFICAVEL",
-    "motivo": "SyntaxError: Expected '}', got '<eof>'\n    |\n658 | });\n    |    ~\n    at file:///var/folders/cz/94l8x0rn6hqfk080j49r247r0000gn/T/closure-omie-sync-nfes-recebidas-9Hgn0e/supabase/functions/omie-sync-nf",
+    "veredito": "NAO_COMPILA",
+    "motivo": "SyntaxError: Expected '}', got '<eof>'\n    |\n658 | });\n    |    ~\n    at file:///var/folders/cz/94l8x0rn6hqfk080j49r247r0000gn/T/closure-omie-sync-nfes-recebidas-yYdxkK/supabase/functions/omie-sync-nf",
     "controle": "inconclusivo",
-    "em": "2026-09-08T09:54:29.140Z"
+    "em": "2026-09-09T01:18:22.037Z"
    },
    "c8d1053106f939c16ffb411d7f12f00c750afe29b47a7d3aea55324b392ddb9a@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "333892b34be6ffed43d173651bcd9cc1b1ef21f6",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:30.974Z"
+    "em": "2026-09-09T01:18:23.381Z"
    },
    "c99ef424d2b47617497ced846edf91a94d0ac3fda5397d7cef0d9691e16c3b59@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "4e466a736b3024c687d6f9cc06429657f71958cc",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:32.838Z"
+    "em": "2026-09-09T01:18:26.565Z"
    },
    "d3d9fae28b070d230a8af2998d16e828dba8ae1eb20bbe8fc4859b638cb94dc1@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "d8cf071522d3621da85e7ecafc3ca1153ef13644",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:23.052Z"
+    "em": "2026-09-09T01:18:19.220Z"
    },
    "d460b0da3cdc4aab202adbd1d5a9c5a0bd6986d2010fcfaa40247c1db9f8f9a2@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "4c44a9221b50b492bc49d47736f27df68c78eb6b",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:28.446Z"
+    "em": "2026-09-09T01:18:21.581Z"
    },
    "dab8877b1055eaf3fc1f5aa49ef7c469667ce9968e989167d277eebd36d9a6bf@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "4954df31222cc8f980b205323fd2c52819c8f30d",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:27.081Z"
+    "em": "2026-09-09T01:18:20.869Z"
    },
    "dcaa9b93015f03a0160ac0c14982bc9f40b762e0f031e162014795d35b8f30a5@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "dc67b4261d478d6910da296c9ddd3cc1e5aee962",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:23.657Z"
+    "em": "2026-09-09T01:18:19.573Z"
    },
    "dfbb740859beaf5e3e0e879fd8c043c474a83d56246be6f09cecd67a907ba537@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "45ff9438c48a0bf29c1d9aa196a0a0f8c033ae3c",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:30.733Z"
+    "em": "2026-09-09T01:18:23.182Z"
    },
    "e82773e1f543b165e095476269855e9acd617c594709728be2b068a9cf536183@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "a3b3eafa2583d46bd11d7960198025c031a71d32",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:31.781Z"
+    "em": "2026-09-09T01:18:24.101Z"
    },
    "ec6ade0e0f7f72ff3e7af2b26808925c1dbc307284a1e33ce0a9dc10140f768d@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "a81b0f01b9a6d96c741d9ac1ad9190f30ce5a4fa",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:26.077Z"
+    "em": "2026-09-09T01:18:20.436Z"
    },
    "efe7897eca49dd76e7fd8aa59c1359d8ed574ae3321046fa01d8e88ce0d8e086@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "b6a4da3e7c4b2c335a9dc98d73dfb83ee371db61",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:32.032Z"
+    "em": "2026-09-09T01:18:24.310Z"
    },
    "f6b0185e07561618652b3bd913d1514ee6a5227548210c6e96c3ecf164c50d11@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "ffdd230cadda2d265d324f33491e0d6c14513e62",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "sem-gate",
-    "em": "2026-09-08T09:54:31.232Z"
+    "em": "2026-09-09T01:18:23.648Z"
    },
    "fb0d9281c057ccf63d296b23640e8ab3424e4026d51d2dc34ceebdb5d376ad7f@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "37b18e560c241337127defaae8ff8cdec10fda87",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
-    "em": "2026-09-08T09:54:26.597Z"
+    "em": "2026-09-09T01:18:20.724Z"
    }
   },
   "omie-vendas-sync": {

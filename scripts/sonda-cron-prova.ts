@@ -53,7 +53,7 @@ export type Veredito = {
   tentativasControle?: Array<{ nome: string; status: number; efeitos: number; fetches: number }>;
   chamadas?: string[]; fetchUrls?: string[];
 };
-export type Classe = 'PASSA' | 'FALHA' | 'INVERIFICAVEL';
+export type Classe = 'PASSA' | 'FALHA' | 'INVERIFICAVEL' | 'NAO_COMPILA';
 type Entrada = { sha: string; veredito: Classe; motivo: string; controle: string; em: string };
 type Manifesto = { harness: string; vereditos: Record<string, Record<string, Entrada>> };
 
@@ -179,8 +179,42 @@ export function identidadeDosControles(edge: string): string {
   return createHash('sha256').update(JSON.stringify(alvo?.controles ?? [])).digest('hex').slice(0, 16);
 }
 
+/**
+ * Erros que provam que o bundle NÃO COMPILA — e a lista é POSITIVA de propósito.
+ *
+ * A distinção que ela faz é a única coisa que separa esta classe de uma porta dos fundos:
+ *
+ *   · NÃO COMPILA (aqui)  — `SyntaxError`, identificador duplicado, fonte não-parseável. O
+ *     arquivo é inválido em QUALQUER ambiente. Deno recusa o módulo, a função não boota, e um
+ *     bundle que não boota nunca respondeu a request nenhum — muito menos executou efeito ao
+ *     receber o `OPTIONS` do cron. É afirmação sobre o ARTEFATO, não sobre o harness.
+ *   · NÃO RESOLVE (fora)  — `Could not find a matching package`, módulo ausente, import relativo
+ *     inválido. Isso é falha do HARNESS materializando o closure: em prod o mesmo import
+ *     resolveria. Não prova nada sobre o bundle, e continua `INVERIFICAVEL` — barrando.
+ *
+ * Confundir os dois é o modo de falha caro: bastaria o harness perder um stub para uma edge
+ * inteira ser "perdoada". Por isso o default é BARRAR e só estes padrões saem da barra.
+ *
+ * Medido em 2026-09-08, FORA do harness (`git cat-file -p <sha>:<path>` + `deno fmt`, com o HEAD
+ * do mesmo arquivo como controle em 0 SyntaxError): `omie-sync-nfes-recebidas@b880daeb1` e os
+ * closures de `omie-cliente` caem no primeiro grupo — o `index.ts` commitado não parseia.
+ */
+const ERROS_DE_COMPILACAO: readonly RegExp[] = [
+  /\bSyntaxError\b/,
+  /has already been declared/,
+  /The module's source code could not be parsed/,
+];
+
+/** `true` só para erro que prova bundle inválido; qualquer outro erro continua barrando. */
+export function naoCompila(importErro: string): boolean {
+  return ERROS_DE_COMPILACAO.some((re) => re.test(importErro));
+}
+
 export function classificarVeredito(v: Veredito, closureTemORamo: boolean): Classe {
   if (v.efeitosNoImport > 0) return 'FALHA'; // IO no topo do módulo
+  // Ordem importa: o bundle que não compila é julgado ANTES do INVERIFICAVEL genérico, porque o
+  // que ele afirma é mais forte — "isto nunca esteve no ar", não "não consegui medir".
+  if (v.importErro !== null && naoCompila(v.importErro)) return 'NAO_COMPILA';
   if (v.importErro !== null || !v.handler) return 'INVERIFICAVEL';
   const a = v.a;
   if (a.efeitos > 0 || a.fetches > 0 || !a.quiesceu || a.status < 200 || a.status >= 300) return 'FALHA';
@@ -376,6 +410,7 @@ function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) =
   const idControles = identidadeDosControles(edge);
   const closures = enumerarClosures(edge, raiz);
   const ruins: string[] = [];
+  const naoCompilam: string[] = [];
   let passa = 0;
   m.vereditos[edge] ??= {};
   const visitadas = new Set<string>();
@@ -405,6 +440,9 @@ function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) =
       if (!commitado) log(`  ${edge}@${c.sha.slice(0, 9)} ${cls}${e.motivo ? ` — ${e.motivo.slice(0, 110)}` : ''}`);
     }
     if (e.veredito === 'PASSA') passa++;
+    // `NAO_COMPILA` não entra em `ruins`: o closure não podia estar no ar, então não há o que
+    // provar sobre ele. Mas vira LINHA no relatório — perdoar em silêncio é como um gate morre.
+    else if (e.veredito === 'NAO_COMPILA') naoCompilam.push(`${edge}@${e.sha.slice(0, 9)}: ${e.motivo.slice(0, 110)}`);
     else ruins.push(`${edge}@${e.sha.slice(0, 9)}: ${e.veredito} — ${e.motivo.slice(0, 140)}`);
   }
   // Poda: chave que nenhum closure enumerado usa é veredito de uma pergunta que não se faz mais
@@ -414,7 +452,7 @@ function provarEdge(edge: string, m: Manifesto, raiz: string, log: (s: string) =
   for (const k of Object.keys(m.vereditos[edge])) {
     if (!visitadas.has(k)) { delete m.vereditos[edge][k]; podadas++; }
   }
-  return { total: closures.length, passa, ruins, podadas };
+  return { total: closures.length, passa, ruins, naoCompilam, podadas };
 }
 
 export function main(argv: string[], raiz = process.cwd()): number {
@@ -431,6 +469,15 @@ export function main(argv: string[], raiz = process.cwd()): number {
     if (argv.includes('--falsificar')) {
       const sint = resolve(raiz, HARNESS, 'sinteticos');
       const devemPassar = new Set(['gate-ignorado', 'ramo-morto', 'padrao']);
+      // Esperado EXATO por sintético — o binário "PASSA vs resto" não distingue as duas classes
+      // que a onda 4 introduziu, e é justamente a distinção entre elas que precisa ser vigiada:
+      // `nao-compila` DISPENSA (bundle inválido nunca bootou) e `import-irresolvivel` BARRA
+      // (falha do harness não prova nada sobre prod). Trocar um pelo outro abre a porta dos
+      // fundos, e é isso que estas duas linhas impedem.
+      const classeExata = new Map<string, Classe>([
+        ['nao-compila', 'NAO_COMPILA'],
+        ['import-irresolvivel', 'INVERIFICAVEL'],
+      ]);
       let vermelhos = 0;
       for (const nome of readdirSync(sint).sort()) {
         const mapa = gerarImportMap(['npm:@supabase/supabase-js@2'], `file://${resolve(raiz, HARNESS, 'stubs')}`);
@@ -444,8 +491,9 @@ export function main(argv: string[], raiz = process.cwd()): number {
         const linhas = (r.stdout || '').trim().split('\n').filter((l) => l.startsWith('{'));
         if (linhas.length === 0) throw new Mecanica(`sintético ${nome}: runner sem veredito`);
         const cls = classificarVeredito(JSON.parse(linhas[linhas.length - 1]), false);
-        const esperado = devemPassar.has(nome) ? 'PASSA' : 'FALHA/INVERIFICAVEL';
-        const ok = devemPassar.has(nome) ? cls === 'PASSA' : cls !== 'PASSA';
+        const exata = classeExata.get(nome);
+        const esperado = exata ?? (devemPassar.has(nome) ? 'PASSA' : 'FALHA/INVERIFICAVEL');
+        const ok = exata ? cls === exata : (devemPassar.has(nome) ? cls === 'PASSA' : cls !== 'PASSA');
         log(`  sintético ${nome}: ${cls} (esperado ${esperado}) ${ok ? '✅' : '❌'}`);
         if (!ok) vermelhos++;
       }
@@ -468,6 +516,12 @@ export function main(argv: string[], raiz = process.cwd()): number {
       const r = provarEdge(edge, m, raiz, log, argv.includes('--gate'));
       log(`${edge}: ${r.passa}/${r.total} closures PASSA ${r.ruins.length ? '❌' : '✅'}${r.podadas ? ` (${r.podadas} entrada(s) órfã(s) podada(s))` : ''}`);
       for (const x of r.ruins) log(`   ${x}`);
+      // Dispensa NUNCA é silêncio: o closure que não compila sai NOMEADO, com o erro que o
+      // dispensou. Quem lê o relatório vê quantas provas não foram feitas, e por quê.
+      if (r.naoCompilam.length > 0) {
+        log(`   ⓘ ${r.naoCompilam.length} closure(s) NAO_COMPILA — dispensados (bundle inválido nunca bootou):`);
+        for (const x of r.naoCompilam) log(`      ${x}`);
+      }
       if (r.ruins.length > 0) falhas++;
     }
 
