@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 543
+-- Total de custom migrations: 544
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -583,6 +583,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260908204421', 'deploy_sonda_alvos_onda3', '20260908204421_deploy_sonda_alvos_onda3.sql'),
   ('20260908215704', 'desconto_valor_atravessa_os_escritores', '20260908215704_desconto_valor_atravessa_os_escritores.sql'),
   ('20260908220625', 'desconto_backfill_aplicar', '20260908220625_desconto_backfill_aplicar.sql'),
+  ('20260908222500', 'snapshot_transporta_desconto_valor', '20260908222500_snapshot_transporta_desconto_valor.sql'),
   ('20260908223555', 'deploy_sonda_alvos_onda4', '20260908223555_deploy_sonda_alvos_onda4.sql'),
   ('20260909074613', 'v_titulo_baixas_otica_canonica', '20260909074613_v_titulo_baixas_otica_canonica.sql')
 ),
@@ -2382,6 +2383,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', ''),
+  ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', '')
 ),
 obj_status AS (
@@ -4228,6 +4230,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'aplicar_edicao_pedido_omie', ''),
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', ''),
+  ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', '')
 )
 SELECT
@@ -4256,7 +4259,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 109.
+-- Funções redefinidas com corpo extraível: 110.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4654,6 +4657,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
+  ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),
+  ('public', 'cockpit_itens_snapshot', 2, '20260908222500_snapshot_transporta_desconto_valor.sql', 'a574d6225b93610547e57526585694a6'),
   ('public', 'reconciliar_pedidos_omie', 1, '20260830190000_reconciliar_pedidos_omie.sql', '80a1000a7a543c8e3dfc756f4ab4df97'),
   ('public', 'reconciliar_pedidos_omie', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'cad0126b11adcbc4946da1c4566b26f5'),
   ('public', 'reconciliar_pedidos_omie', 3, '20260906180000_order_items_identidade_linha.sql', '0a18feb377a089da307c822912a3fb36'),

@@ -3678,6 +3678,69 @@ describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista 
   });
 });
 
+// ── desconto de item: a régua tem de ser a ÚNICA, e o `null` dela não pode virar 0 ────────────
+// Por que TEXTUAL, e por que aqui: `fin-valor-cockpit` é a edge que compunha receita à mão com
+// `l.discount ?? 0` em quatro pontos. O `?? 0` já renasceu três vezes nesta frente — na ingestão
+// (`prod.desconto || 0`), dentro da própria régua (`finitoNaoNegativo(discount) ?? 0`, #2406) e
+// como próximo endereço natural, aqui no primeiro consumidor. Nenhuma dessas encarnações produz
+// exceção: elas devolvem a receita CHEIA, numericamente idêntica ao caso legítimo "não há
+// desconto". Um teste de valor não as distingue; a forma, sim.
+describe('desconto de item — a régua única, e o null que não pode virar zero', () => {
+  const cockpit = () => removerComentarios(read('supabase/functions/fin-valor-cockpit/index.ts'));
+
+  it('fin-valor-cockpit não compõe receita a partir da coluna LEGADO `discount`', () => {
+    const fonte = cockpit();
+    // A prosa do arquivo CITA o padrão proibido ao explicar por que ele saiu — por isso o
+    // stripper compartilhado é obrigatório aqui, e não higiene: sem ele este assert reprovaria
+    // justamente o código consertado.
+    expect(count(fonte, 'discount ?? 0')).toBe(0);
+    expect(count(fonte, 'discount || 0')).toBe(0);
+  });
+
+  it('fin-valor-cockpit calcula receita pela régua compartilhada', () => {
+    const fonte = cockpit();
+    expect(fonte).toContain('receitaLiquidaItem');
+    expect(fonte).toContain('_shared/desconto-omie.ts');
+  });
+
+  it('CALIBRAÇÃO: o gate reprova a forma PRÉ-fix e o stripper não o cega', () => {
+    // Sem este par, os dois asserts acima passariam sobre um arquivo vazio — e passariam também
+    // se o stripper apagasse o arquivo inteiro. O primeiro caso prova que a forma antiga É
+    // reprovada; o segundo, que código real sobrevive à limpeza.
+    const preFix = removerComentarios('const receita = l.unit_price * l.quantity - (l.discount ?? 0);');
+    expect(count(preFix, 'discount ?? 0')).toBe(1);
+    const soComentario = removerComentarios('// era `l.discount ?? 0` e virou receitaLiquidaItem\nconst x = 1;');
+    expect(count(soComentario, 'discount ?? 0')).toBe(0);
+    expect(soComentario).toContain('const x = 1');
+  });
+
+  it('a régua devolve null quando o desconto é desconhecido — e ninguém a reescreve com `?? 0`', () => {
+    // O eixo que o #2406 consertou DENTRO da régua. Se alguém o desfizer lá, todo consumidor
+    // volta a receber receita cheia sem que nenhum teste de consumidor mude de cor.
+    const regua = removerComentarios(read('supabase/functions/_shared/desconto-omie.ts'));
+    expect(count(regua, 'finitoNaoNegativo(discount) ?? 0')).toBe(0);
+    expect(regua).toContain('if (desc === null) return null;');
+  });
+
+  it('a migration dos escritores carrega a DEFESA contra o coalesce, e ela é provada executando', () => {
+    // ⚠️ Aqui NÃO cabe um `not.toContain('coalesce(...desconto_valor..., 0)')`, e a primeira
+    // versão deste teste caiu exatamente nisso: a migration CITA o padrão proibido na prosa que
+    // explica por que o predicado da postcondição precisou mudar. Reprovava o arquivo íntegro.
+    //
+    // O stripper compartilhado não resolve: ele entende `//` de TS, não `--` de SQL, e escrever
+    // um stripper de SQL local é a classe de bug que este arquivo inteiro documenta (regex que
+    // não sabe o que é string apaga o miolo ANTES da medição — verde por cegueira).
+    //
+    // O que se mede aqui é a presença da DEFESA. O EFEITO — que um coalesce sabotado de fato faz
+    // o ausente virar 0 — é provado executando, em db/test-desconto-valor-escritores.sh (asserts
+    // E1 e E2, com sabotagem e controle verde na mesma invocação). Camadas distintas de propósito.
+    const mig = read('supabase/migrations/20260908215704_desconto_valor_atravessa_os_escritores.sql');
+    expect(mig).toContain("(it->>'desconto_valor')::numeric");
+    expect(mig).toContain('FALHOU: % faz coalesce(desconto_valor, 0)');
+    expect(mig).toContain('desconto_valor = NULL');
+  });
+});
+
 // ── omie-financeiro: desconto/juros/multa do TÍTULO não existem no Omie ──────────────────────
 // Medido em 2026-09-08. `ListarContasPagar`/`ListarContasReceber` devolvem a entidade
 // `conta_pagar_cadastro`/`conta_receber_cadastro`, cujo NÍVEL RAIZ não tem desconto/juros/multa.

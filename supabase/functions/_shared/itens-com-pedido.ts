@@ -162,7 +162,16 @@ export interface ItemComPedidoCockpit {
   omie_codigo_produto: number | null;
   quantity: number;
   unit_price: number;
+  /** LEGADO — semântica ambígua (5 consumidores a leem como percentual, 2 como valor). É 0 em
+   *  100% do acervo por CEGUEIRA da ingestão, não por medição, e onde é 0 as duas fórmulas
+   *  coincidem. Não use em código novo. */
   discount: number | null;
+  /** Desconto CANÔNICO da linha, em R$ absolutos. `null` = NÃO APURADO, e é DIFERENTE de `0` =
+   *  o Omie informou que não há desconto. Quem consome usa `receitaLiquidaItem` e trata o `null`
+   *  pela §"O que o chamador faz com o null" de `_shared/desconto-omie.ts`: soma só o que
+   *  conhece, conta as recusadas à parte e torna a incompletude legível. Trocar por `?? 0`
+   *  devolve receita CHEIA, indistinguível do caso legítimo. */
+  desconto_valor: number | null;
   sales_order_id: string;
   /** O JOIN interno da RPC garante o pai — mas o tipo segue nullable porque fingir não-nulo aqui
    *  seria a mentira de tipo que o consumidor pagaria em runtime, e o consumidor CONTA os casos em

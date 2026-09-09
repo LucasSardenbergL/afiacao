@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **543** custom migrations totais
-- **1809** objetos esperados (criados por estas migrations)
+- **544** custom migrations totais
+- **1810** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 580
+  - `function`: 581
   - `rls_policy`: 462
   - `index`: 257
   - `cron_job`: 171
@@ -4474,6 +4474,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.desconto_backfill_aplicar` | — |
+
+### `20260908222500_snapshot_transporta_desconto_valor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cockpit_itens_snapshot` | — |
 
 ### `20260908223555_deploy_sonda_alvos_onda4.sql`
 
