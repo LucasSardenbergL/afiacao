@@ -4606,6 +4606,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_whatsapp_proposta_cotacao', 2, '20260713050000_whatsapp_proposta_cotacao_v2.sql', '10fd7be817823288fde96eaa690e9b88'),
   ('public', 'register_carteira_member', 1, '20260718170000_register_carteira_member.sql', 'a7b3a3e50c6b0a9d8a2b2ebfca67f6f2'),
   ('public', 'register_carteira_member', 2, '20260718200000_register_carteira_member_source_rpc.sql', 'ced1bd8ab62e689b15717373704766c8'),
+  ('public', 'register_carteira_member', 3, '20260821192817_omie_identidade_a2_client_to_user.sql', '2c2c11ead396e4538cae5126111ff951'),
   ('private', 'cap_carteira_escrever', 1, '20260718190000_authz_capability_matrix_e2.sql', '836e8f46f863eefd75b3b46a49eba81a'),
   ('private', 'cap_carteira_escrever', 2, '20260828210836_separar_cap_carteira_escrever.sql', '8dc8c3f7d9d53f52abd66f406f9dbc70'),
   ('private', 'cap_carteira_escrever', 3, '20260828213000_cap_carteira_escrever_master_only.sql', '5faf2a21a46209aaf0ffa75041af6b4b'),

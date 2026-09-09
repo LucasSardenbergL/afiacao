@@ -24,7 +24,7 @@ const arq = (caminho: string): { caminho: string; sha256: string } => ({
 const PROC = { ref: 'origin/main', sha: sha('commit-de-teste').slice(0, 40) };
 
 function fonte(over: Partial<PacoteFonte> = {}): PacoteFonte {
-  const veredito: VereditoPrecondicao = { estado: 'LIBERADA', ausentes: [], naoMedidos: [], motivos: [] };
+  const veredito: VereditoPrecondicao = { estado: 'LIBERADA', ausentes: [], naoMedidos: [], motivos: [], desatualizadas: [], naoConferidas: [] };
   return {
     edges: [
       {
@@ -45,11 +45,15 @@ const BLOQUEADA: VereditoPrecondicao = {
   ausentes: [{ rpc: 'reposicao_claim_disparo', edges: ['disparar-pedidos-aprovados'], familia: 22 }],
   naoMedidos: [],
   motivos: [],
+  desatualizadas: [],
+  naoConferidas: [],
 };
 
 const INCERTA: VereditoPrecondicao = {
   estado: 'INCERTA',
   ausentes: [],
+  desatualizadas: [],
+  naoConferidas: [],
   naoMedidos: ['reposicao_claim_disparo'],
   motivos: ['controle positivo ZERO'],
 };
