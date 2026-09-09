@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 538
+-- Total de custom migrations: 539
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -579,6 +579,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260908055405', 'analytics_ledger_navegacao_postcondicao_corrigida', '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql'),
   ('20260908070850', 'deploy_sonda_alvos_onda2', '20260908070850_deploy_sonda_alvos_onda2.sql'),
   ('20260908072658', 'order_items_desconto_valor', '20260908072658_order_items_desconto_valor.sql'),
+  ('20260908163659', 'pedido_nasce_com_identidade_de_linha', '20260908163659_pedido_nasce_com_identidade_de_linha.sql'),
   ('20260908204421', 'deploy_sonda_alvos_onda3', '20260908204421_deploy_sonda_alvos_onda3.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2371,7 +2372,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_melhores_individuais_por_cliente', ''),
-  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('pedido_nasce_com_identidade_de_linha', 'function', 'public', 'criar_pedidos_com_itens', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4211,7 +4213,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_ledger_navegacao_rota_servida', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
   ('farmer_ordem_e_referencia_ambigua', 'function', 'public', 'farmer_melhores_individuais_por_cliente', ''),
-  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_navegacao_postcondicao_corrigida', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('pedido_nasce_com_identidade_de_linha', 'function', 'public', 'criar_pedidos_com_itens', '')
 )
 SELECT
   e.migration,
@@ -4550,6 +4553,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'enqueue_score_recalc_from_sinais', 2, '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql', '178166dc2c3e943e78ab5f7b3ceeebdb'),
   ('public', 'criar_pedidos_com_itens', 1, '20260617160000_criar_pedidos_com_itens.sql', 'd94bc895f6edcbad2fe3dad29f0b774f'),
   ('public', 'criar_pedidos_com_itens', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'd009751130dde7ae614b56948d926338'),
+  ('public', 'criar_pedidos_com_itens', 3, '20260908163659_pedido_nasce_com_identidade_de_linha.sql', 'afdf7759d7f8e87577b6bd6565320e36'),
   ('public', 'get_customer_sales_summary', 1, '20260618180000_get_customer_sales_summary.sql', 'e2f5bdc39c54b5f79938cb566bdca957'),
   ('public', 'get_customer_sales_summary', 2, '20260618190000_get_customer_sales_summary_blocklist.sql', '5682e854b19bfaed77d781743107107e'),
   ('public', 'get_customer_sales_summary', 3, '20260623150000_get_customer_sales_summary_tz_fallback.sql', '4754a171fadbd0bca17757e8245547ee'),
