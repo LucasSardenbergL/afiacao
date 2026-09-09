@@ -78,6 +78,7 @@ const MARCA_FALHA = 'FRESCURA-FALHA';
 const MARCA_ORFAO = 'ORFAO';
 const MARCA_NAO_CITADO = 'NAO-CITADO';
 const MARCA_CENSO_OBSOLETO = 'CENSO-OBSOLETO';
+const MARCA_VACUO = 'FRESCURA-VACUO';
 
 export const CENSO_INICIO = '<!--gates:frescura inicio-->';
 export const CENSO_FIM = '<!--gates:frescura fim-->';
@@ -493,6 +494,39 @@ function main(): number {
     `frescura: ${opacos.length} step(s) bloqueante(s) SEM invocacao de script — fora do censo por nao terem nome de comando:` +
       (opacos.length > 0 ? `\n  - ${opacos.join('\n  - ')}` : ' (nenhum)'),
   );
+
+  // ---- Guarda ANTI-VÁCUO ---------------------------------------------------------------------
+  // Os dois sentidos deste gate são conjuntos cruzados, e cruzamento com conjunto VAZIO aprova
+  // sempre. O sentido 2 se defende sozinho por acidente feliz de desenho — inventário vazio faz o
+  // censo inteiro virar `CENSO-OBSOLETO`, censo vazio faz todo gate virar `NAO-CITADO` —, mas o
+  // sentido 1 NÃO: `extrairCitacoes` devolvendo `[]` zera os órfãos e o gate ainda assina
+  // "manual e maquina conferem nos dois sentidos", que é afirmação sobre leitura que não houve.
+  //
+  // É plausível, não hipotético: o CLAUDE.md é reescrito toda semana pela política de enxugar, e
+  // as citações são reconhecidas por FORMA (crase + `bun run`). Uma reescrita que troque o estilo
+  // de citação, ou um CLAUDE.md que mude de lugar, esvazia o sentido 1 em silêncio.
+  //
+  // O piso é ZERO de propósito: um mínimo maior (`>= 10 citações`) pegaria também a regex que
+  // casa 2 de 16, mas vira baseline a manter — e baseline desatualizada é o defeito que originou
+  // este gate. Zero não envelhece.
+  const vacuos: string[] = [];
+  if (citacoes.length === 0) {
+    vacuos.push(
+      `sentido 1 sem ENTRADA: zero citacoes reconhecidas em CLAUDE.md — o cruzamento manual→maquina ` +
+        `nao leu nada e aprovaria qualquer maquina. Zero citacao nao e "manual limpo", e leitura que falhou.`,
+    );
+  }
+  if (bloqueiam.length === 0) {
+    vacuos.push(
+      `sentido 2 sem ENTRADA: zero gates bloqueantes entre ci.yml e hooks — o cruzamento maquina→manual ` +
+        `nao leu nada. Nunca e verdade num repo com CI: e o inventario que parou de casar.`,
+    );
+  }
+  if (vacuos.length > 0) {
+    for (const v of vacuos) console.error(`${MARCA_VACUO}: ${v}`);
+    console.error(`${MARCA_FALHA}: ${vacuos.length} sentido(s) sem entrada — este gate nao pode afirmar nada hoje.`);
+    return 1;
+  }
 
   for (const v of orfaos) {
     console.error(`${MARCA_ORFAO}: \`${v.citacao.nome}\` em CLAUDE.md:${v.citacao.linha} — ${v.motivo}`);

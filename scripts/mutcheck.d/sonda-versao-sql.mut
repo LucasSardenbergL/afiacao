@@ -14,6 +14,16 @@ PEGA      | ramo AGUARDE some do passo do ECO          | s/'AGUARDE — o reques
 PEGA      | placeholder do bloco que le fica invalido  | s/: `'\{\}'::jsonb`;/: `'<COLE_AQUI>'::jsonb`;/
 PEGA      | marcador hardcoded em vez de lido do arquivo | s/lit\(e\.versao\)/lit('v1.0-sensor-inicial')/
 PEGA      | timeout_milliseconds implicito (default 5s) | s/^const TIMEOUT_HTTP_MS = 20000;/const TIMEOUT_HTTP_MS = 0;/
+# ── o TRANSPORTE (headers + segredo), que ate 2026-09-08 nao tinha UMA assercao nas duas suites ──
+# `grep -c 'x-cron-secret' scripts/sonda-versao-sql.test.ts` = 0 antes desta leva. Como a chamada
+# era DUPLICADA (sonda x canaria), o drift num dos lados passava silencioso -- e se le como o
+# CONTRARIO do que e: header errado => 401 SO na leva => o controle_credencial (que mede trafego
+# de FORA da leva) segue verde => sai 'BUNDLE VELHO (pre-sonda)'/'SEM CANARIA NO AR' CONFIANTE, e
+# o desfecho e redeploy a toa de edge que ja estava no ar. Com `httpPost` unificada, uma mutacao
+# aqui atinge os DOIS modos -- que e o ponto: a invariante passou a valer por CONSTRUCAO.
+PEGA      | header x-cron-secret com nome ERRADO (401 so na leva) | s/'x-cron-secret', \(SELECT decrypted_secret/'x-cron-secreto', (SELECT decrypted_secret/
+PEGA      | o segredo lido do vault deixa de ser o CRON_SECRET | s/WHERE name = 'CRON_SECRET' LIMIT 1/WHERE name = 'OUTRO_SEGREDO' LIMIT 1/
+PEGA      | Content-Type deixa de ser application/json     | s/'Content-Type', 'application\/json'/'Content-Type', 'text\/plain'/
 PEGA      | --caro forasteira aceita em silencio       | s/!edges\.includes\(c\)/false/
 PEGA      | edge sem sensor degrada em vez de lancar   | s/if \(problemas\.length > 0\)/if (false)/
 PEGA      | eco probe:true dispensado no CONFIRMADO    | s/AND l\.corpo ->> 'probe' = 'true'/AND true/
@@ -43,7 +53,15 @@ PEGA      | edge fora do mapa degrada em vez de lancar     | s/if \(!\(edge in m
 # é ausência de medição, não medição. Ramo novo com esse prefixo: ancore no texto dele.
 PEGA      | 4xx generico perde a cobertura (404 cai no ELSE)       | s/l\.status_code >= 400/l.status_code = 401/
 PEGA      | fallback do 401 deixa de ser INDETERMINADO (fail-open)    | s/THEN 'INDETERMINADO — 401 nao separa bundle velho/THEN 'BUNDLE VELHO (pre-sonda) — 401 nao separa bundle velho/
-PEGA      | controle nao exclui a propria leva (a sonda se avaliza)   | s/AND NOT EXISTS \(SELECT 1 FROM ids i2 WHERE i2\.request_id = r\.id\)/AND true/
+# CONSOLIDADA (2026-09-08): esta linha SUBSTITUI duas mutacoes gemeas que ancoravam no mesmo
+# `NOT EXISTS` duplicado, distinguidas so pelo alias -- `ids i2` (sonda) e `ids mp2` (canaria).
+# O CTE virou UMA funcao (`cteControleCredencial`), entao ha UM ponto de defeito e UMA mutacao.
+# Contagem: 90 -> 89 PEGA por consolidacao; as 2 que entram abaixo (headers) sao invariantes
+# NOVAS, nao reposicao contabil desta. O que a consolidacao NAO prova sozinha: o mutcheck le a
+# suite AGREGADA, entao 'PEGA' aqui diz que ALGUM teste morreu, nao que os DOIS modos estao
+# cobertos (ressalva do parecer Codex 2026-09-08). Quem prova isso e
+# `scripts/prova-consumidores-controle.sh`, que roda a mutacao contra cada modo ISOLADO.
+PEGA      | controle nao exclui a propria leva (nenhum modo se avaliza) | s/AND NOT EXISTS \(SELECT 1 FROM ids id_leva WHERE id_leva\.request_id = r\.id\)/AND true/
 PEGA      | piso do controle zerado (1 resposta 2xx ja 'prova')       | s/PISO_CONTROLE_CREDENCIAL = 10/PISO_CONTROLE_CREDENCIAL = 0/
 PEGA      | 401 alheio deixa de desqualificar o controle              | s/AND c\.recusas_recentes = 0/AND true/
 PEGA      | controle nao chega na projecao (CROSS JOIN removido)      | s/FROM lidas l CROSS JOIN controle_credencial c/FROM lidas l/
@@ -179,14 +197,15 @@ PEGA      | canaria: envelope data some (analytics aninhada) | s/COALESCE\(resp\
 PEGA      | canaria: LEFT JOIN ids -> JOIN (sem id, SOME)    | s/LEFT JOIN ids mp ON/JOIN ids mp ON/
 PEGA      | canaria: LEFT JOIN da resposta -> JOIN           | s/LEFT JOIN net\._http_response resp ON/JOIN net._http_response resp ON/
 PEGA      | canaria: janela larga (celula de ontem julga hoje)| s/WHEN ca\.created <= now\(\) - interval '\$\{janelaMin\} minutes'/WHEN ca.created <= now() - interval '30 days'/
-PEGA      | canaria: controle nao exclui a propria leva      | s/AND NOT EXISTS \(SELECT 1 FROM ids mp2 WHERE mp2\.request_id = r\.id\)/AND true/
+# (a mutacao 'canaria: controle nao exclui a propria leva' foi CONSOLIDADA na da sonda -- o CTE
+#  agora e emitido pela mesma funcao; ver a nota na secao do controle de credencial acima)
 PEGA      | canaria: 401 alheio nao desqualifica o controle  | s/AND cred\.recusas_recentes = 0/AND true/
 PEGA      | canaria: controle nao chega na projecao          | s/FROM lidas ca CROSS JOIN controle_credencial cred/FROM lidas ca/
 PEGA      | canaria: mapa embutido vira {} (tudo INDETERMIN.)| s/jsonb_each_text\(\$\{SENTINELA_MAPA\}::jsonb\)/jsonb_each_text('{}'::jsonb)/
 # ── o DISPARO: corpo errado não é "não respondeu" — é a edge caindo no FLUXO REAL ──
 PEGA      | canaria: corpo FIXO (as 4 formas viram 1)        | s/c\.disparo\.tipo === 'corpo' \? c\.disparo\.corpo : '\{\}'/'{"canary": true}'/
 PEGA      | canaria: sufixo de query some (rebuild REAL)     | s/c\.disparo\.tipo === 'query' \? c\.disparo\.query : ''/''/
-PEGA      | canaria: a URL perde o sufixo                    | s/\|\| a\.edge \|\| a\.sufixo/|| a.edge/
+PEGA      | canaria: a URL perde o sufixo (rebuild REAL)     | s/url: 'a\.edge \|\| a\.sufixo'/url: 'a.edge'/
 PEGA      | canaria: as CARAS saem no bloco SEM trava        | s/const baratas = leva\.filter\(\(c\) => !c\.fluxoRealSeVelho\);/const baratas = leva;/
 PEGA      | canaria: o bloco caro perde a trava              | s/blocoDisparoCanaria\(ref, caras, 3, janelaMin, true\)/blocoDisparoCanaria(ref, caras, 3, janelaMin, false)/
 # ── o REGISTRO e o MARCADOR: derivados do repo, nunca digitados ──

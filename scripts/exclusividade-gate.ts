@@ -12,8 +12,9 @@
  *   bun run exclusividade              # veredito (step do CI)
  *   bun run exclusividade -- --json    # veredito estruturado
  *   bun run exclusividade -- --resumo  # a matriz inteira em forma humana
+ *   bun run exclusividade -- --ci <arq> # so para falsificacao: le OUTRO ci.yml (ver `caminho`)
  *
- * Exit: 0 sem REPROVA - 1 ha REPROVA - 2 erro do proprio gate.
+ * Exit: 0 sem REPROVA - 1 ha REPROVA (ou a ancora da raiz quebrou) - 2 erro do proprio gate.
  *
  * ## Por que ele SEMPRE imprime os tres niveis, inclusive o que nao bloqueia
  *
@@ -25,9 +26,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 import {
+  AUTO_MERGE_PATH,
+  CI_PATH,
   MATRIZ_PATH,
   avaliar,
   bloqueantesOpacos,
+  conferirAncoraDaRaiz,
   derivar,
   fingerprintGate,
   fonteDoGate,
@@ -41,6 +45,17 @@ const args = process.argv.slice(2);
 const comoJson = args.includes('--json');
 const soResumo = args.includes('--resumo');
 
+/**
+ * Caminhos sobrescritiveis SO para falsificacao: `conferirAncoraDaRaiz` mora aqui dentro, e um
+ * guard que so o vitest exercita e um guard que pode nunca estar LIGADO ao exit code (a via morta
+ * classica). Com `--ci`, a suite roda o BINARIO contra um `ci.yml` sabotado e cobra o vermelho de
+ * verdade — no mesmo laco em que roda o `ci.yml` REAL e cobra o verde de controle.
+ */
+const caminho = (flag: string, padrao: string): string => {
+  const i = args.indexOf(flag);
+  return i >= 0 && args[i + 1] ? args[i + 1] : padrao;
+};
+
 function ler(): Matriz | null {
   if (!existsSync(MATRIZ_PATH)) return null;
   try {
@@ -51,8 +66,35 @@ function ler(): Matriz | null {
   }
 }
 
+/** ASCII, caixa fixa, sem acento: e o que a suite de falsificacao casa sem `-i`. */
+const MARCA_ANCORA = 'ANCORA-DA-RAIZ-QUEBRADA';
+
 function main(): number {
-  const fonteCI = readFileSync('.github/workflows/ci.yml', 'utf8');
+  const arqCI = caminho('--ci', CI_PATH);
+  const arqAutoMerge = caminho('--auto-merge', AUTO_MERGE_PATH);
+  const fonteCI = readFileSync(arqCI, 'utf8');
+
+  // GUARDA ANTI-VACUO, antes de qualquer contagem e em TODOS os modos. Tem de vir aqui porque a
+  // linha que este gate imprime logo abaixo — "N gate(s) bloqueante(s)" — se transforma, com a
+  // raiz perdida, num "0 gate(s) bloqueante(s)" verde: a maquina inteira desligada sem uma linha
+  // vermelha. Zero de bloqueante nunca e resposta; e a assinatura de que a pergunta nao foi feita.
+  const ancora = conferirAncoraDaRaiz(
+    fonteCI,
+    existsSync(arqAutoMerge) ? readFileSync(arqAutoMerge, 'utf8') : null,
+  );
+  if (ancora.length > 0) {
+    if (comoJson) {
+      console.log(JSON.stringify({ ancoraQuebrada: ancora, vereditos: [], opacos: [], matrizPresente: null }, null, 2));
+    } else {
+      console.error(
+        `${MARCA_ANCORA}: o required check NAO foi encontrado em ${arqCI} + ${arqAutoMerge} — esta ` +
+          `maquina nao pode afirmar nada sobre exclusividade hoje. (Isto NAO significa "nenhum gate bloqueia".)`,
+      );
+      for (const p of ancora) console.error(`  - ${p.codigo}: ${p.motivo}`);
+    }
+    return 1;
+  }
+
   const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> };
   const gates = gatesCandidatos(fonteCI);
   const matriz = ler();
@@ -68,7 +110,7 @@ function main(): number {
   const opacos = bloqueantesOpacos(fonteCI);
 
   if (comoJson) {
-    console.log(JSON.stringify({ vereditos, opacos, matrizPresente: matriz !== null }, null, 2));
+    console.log(JSON.stringify({ ancoraQuebrada: [], vereditos, opacos, matrizPresente: matriz !== null }, null, 2));
     return vereditos.some((v) => v.severidade === 'REPROVA') ? 1 : 0;
   }
 

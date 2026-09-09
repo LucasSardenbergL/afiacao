@@ -39,6 +39,8 @@ import { parse } from 'yaml';
 import { inventarioCI, nomesDeScript, type GateCI } from '../gates-frescura-check';
 
 export const MATRIZ_PATH = 'scripts/exclusividade-matriz.json';
+export const CI_PATH = '.github/workflows/ci.yml';
+export const AUTO_MERGE_PATH = '.github/workflows/auto-merge.yml';
 export const CORPUS_DIR = 'scripts/exclusividade.d';
 export const SCHEMA_VERSION = 1;
 
@@ -152,6 +154,106 @@ export function jobsBloqueantes(fonteCI: string): Set<string> {
     fila.push(...needsDe(j));
   }
   return vistos;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Guarda anti-vacuo da RAIZ — o `JOB_RAIZ` e um literal, e literal envelhece calado
+// ---------------------------------------------------------------------------------------------
+
+export interface AncoraQuebrada {
+  codigo: 'RAIZ_AUSENTE_NO_CI' | 'FECHO_BLOQUEANTE_VAZIO' | 'ANCORA_AUTO_MERGE_PERDIDA';
+  motivo: string;
+}
+
+/**
+ * Confere que o nome em `JOB_RAIZ` ainda e o required check de verdade. Nao devolve gate nenhum:
+ * devolve os motivos pelos quais a maquina de exclusividade **nao pode afirmar nada hoje**.
+ *
+ * ## O vacuo que isto fecha
+ *
+ * `jobsBloqueantes` parte de um LITERAL e ninguem conferia que ele existe. Renomeie o job
+ * `validate` no `ci.yml` (ou mude o required check de nome) e a cascata inteira desliga em
+ * silencio, sem uma linha vermelha:
+ *
+ *   fecho VAZIO -> `gatesCandidatos` marca TODOS com `bloqueiaPR: false` -> `avaliar`, que filtra
+ *   por `bloqueiaPR`, nao cobra NINGUEM -> `bloqueantesOpacos` nao lista nada -> o gate sai 0
+ *   anunciando "0 gate(s) bloqueante(s)".
+ *
+ * Zero lido como cobertura total e o mesmo veneno do guard de DENOMINADOR do agregador
+ * (`ci.yml`: "li $total job(s), esperava $esperados — o agregador nao pode afirmar nada") e da
+ * guarda anti-vacuo do gate de indice: `ausente != zero`, aplicado ao proprio censo.
+ *
+ * ## Por que cruzar com o `auto-merge.yml`, e o que esse cruzamento NAO promete
+ *
+ * A verdade sobre qual check e required nao mora no repo — mora na branch protection do GitHub
+ * (`gh api repos/:owner/:repo/branches/main/protection --jq .required_status_checks.contexts`,
+ * que em 2026-09-08 devolveu exatamente `["validate"]`). Consultar isso aqui exigiria rede e um
+ * token com `administration: read`, que o `GITHUB_TOKEN` do CI nao tem — e um gate barato que
+ * depende de rede vira um gate que degrada.
+ *
+ * Entao o cruzamento e de CONCORDANCIA, nao de derivacao: o `auto-merge.yml` cita o nome do
+ * required check (hoje so em prosa, no cabecalho — o `run:` dele e `gh pr merge --auto`, que nao
+ * nomeia check nenhum), e este guard exige que as TRES pontas digam a mesma coisa: o literal
+ * daqui, o nome do job no `ci.yml` e a citacao no `auto-merge.yml`. Renomear passa a custar tres
+ * edicoes coordenadas em vez de uma silenciosa.
+ *
+ * Ler PROSA de proposito e a excecao que confirma a regra do stripper compartilhado (gate textual
+ * nunca mede comentario): aqui o comentario nao e ruido em volta da medicao, e a unica ancora
+ * textual que o repo tem para o nome. O limite fica dito em voz alta: se alguem trocar o required
+ * check **na branch protection** sem tocar em arquivo nenhum, este guard segue verde e mentiroso.
+ * Esse eixo so se prova com `gh api`, e e trabalho de humano.
+ */
+export function conferirAncoraDaRaiz(fonteCI: string, fonteAutoMerge: string | null): AncoraQuebrada[] {
+  const problemas: AncoraQuebrada[] = [];
+
+  const doc = parse(fonteCI) as { jobs?: Record<string, unknown> };
+  const nomesDeJob = Object.keys(doc.jobs ?? {});
+  if (!nomesDeJob.includes(JOB_RAIZ)) {
+    problemas.push({
+      codigo: 'RAIZ_AUSENTE_NO_CI',
+      motivo:
+        `o required check \`${JOB_RAIZ}\` NAO esta entre os ${nomesDeJob.length} job(s) de ${CI_PATH} ` +
+        `[${nomesDeJob.join(', ') || 'nenhum'}] — o job foi renomeado/removido e o literal ficou stale. ` +
+        `Sem a raiz o fecho de bloqueantes vem vazio e esta maquina aprovaria TODO gate por ausencia de dado.`,
+    });
+  }
+
+  // Eixo proprio, e nao corolario do anterior: hoje `fecho vazio` <=> `raiz ausente`, mas quem
+  // decide isso e a implementacao de `jobsBloqueantes`. Se ela mudar de forma e passar a devolver
+  // vazio por outro caminho, o efeito para o gate e IDENTICO — logo a assercao e sobre o efeito.
+  const fecho = jobsBloqueantes(fonteCI);
+  if (fecho.size === 0) {
+    problemas.push({
+      codigo: 'FECHO_BLOQUEANTE_VAZIO',
+      motivo:
+        `\`jobsBloqueantes\` devolveu conjunto VAZIO para ${CI_PATH} — nenhum job bloqueia o PR segundo esta ` +
+        `leitura. Isso nunca e verdade num repo com CI: e a assinatura de que o required check nao foi ` +
+        `encontrado. NAO leia como "nenhum gate bloqueia".`,
+    });
+  }
+
+  // Marcado entre crases porque e assim que o `auto-merge.yml` cita o check no cabecalho; casar a
+  // palavra solta acharia `validate` dentro de `validation`/`validate-schema` de um step futuro.
+  const citado = `\`${JOB_RAIZ}\``;
+  if (fonteAutoMerge === null) {
+    problemas.push({
+      codigo: 'ANCORA_AUTO_MERGE_PERDIDA',
+      motivo:
+        `${AUTO_MERGE_PATH} nao existe — sumiu a segunda ponta que nomeia o required check, e com ela a ` +
+        `unica forma de este guard notar que \`${JOB_RAIZ}\` deixou de ser o check exigido.`,
+    });
+  } else if (!fonteAutoMerge.includes(citado)) {
+    problemas.push({
+      codigo: 'ANCORA_AUTO_MERGE_PERDIDA',
+      motivo:
+        `${AUTO_MERGE_PATH} nao cita mais ${citado} — as duas pontas do repo discordam sobre o nome do ` +
+        `required check. Confira a verdade com \`gh api repos/:owner/:repo/branches/main/protection ` +
+        `--jq .required_status_checks.contexts\` e alinhe o literal \`JOB_RAIZ\`, o job do ${CI_PATH} e a ` +
+        `citacao do ${AUTO_MERGE_PATH}.`,
+    });
+  }
+
+  return problemas;
 }
 
 export function gatesCandidatos(fonteCI: string): GateAlvo[] {
