@@ -321,6 +321,16 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.pedido_venda_exigir_coerencia',
   'public.pedido_venda_coerencia_cab',
   'public.pedido_venda_coerencia_lin',
+  // Backfill do desconto de item (2026-09-08, migration 20260908220625). Lê e escreve
+  // `order_items` — inclusive `unit_price`, que ela usa como PRECONDIÇÃO (`IS NOT DISTINCT FROM`)
+  // para recusar linha cuja base econômica mudou desde a leitura que montou o plano. Não é
+  // customer-facing e não projeta dado: devolve só contagens (pedidas/aplicadas/recusadas).
+  // Fecha por PRIVILÉGIO — `REVOKE ALL` de PUBLIC, anon e authenticated na própria migration, com
+  // `GRANT EXECUTE` só a service_role, e a postcondição do apply ABORTA medindo
+  // `has_function_privilege` nas quatro pontas (não declara: mede). O gate de quem chama está na
+  // FRONTEIRA, no `authorizeCronOrStaff` da edge `omie-desconto-backfill`. Asserts espelho: G1-G4
+  // de db/test-desconto-backfill-aplicar.sh.
+  'public.desconto_backfill_aplicar',
   // ATP fase 1 (2026-08-06): cálculo interno disponivel = saldo−reservas−segurança. Lê
   // inventory_position mas NÃO é executável por authenticated/anon (REVOKE ALL na própria
   // migration; GRANT só service_role) — chamada exclusivamente pelas 4 RPCs gateadas acima.
