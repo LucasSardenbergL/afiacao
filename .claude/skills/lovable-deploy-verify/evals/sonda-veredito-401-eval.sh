@@ -117,6 +117,9 @@ printf 'export const FONTE_SHA256: Record<string, string> = {\n  "edge-a": "%s",
 
 ID_SONDA=1000
 ID_TESTEMUNHA=1001
+# sha256 que NAO e o de nenhuma edge da fixture: `fonte` de outro bundle.
+FP_ERRADO=$(printf 'bundle-de-outra-fatia' | shasum -a 256 2>/dev/null | cut -d' ' -f1) \
+  || FP_ERRADO=$(printf 'bundle-de-outra-fatia' | sha256sum | cut -d' ' -f1)
 # A leva default é de UMA edge (o histórico deste eval); os cenários de testemunha trocam para o
 # par e restauram no fim, via `com_par`.
 LEVA="'edge-a'"
@@ -141,6 +144,16 @@ RUNNER
 # Roda um `caso` com a leva de DUAS edges e restaura a de uma. Sem o restauro, todo cenário
 # seguinte passaria a ler `edge-b` também — e um cenário que só semeia a resposta de `edge-a`
 # ficaria com a 2ª linha em INDETERMINADO, mudando o que os outros casos medem em silêncio.
+# Leva de DUAS edges com o mapa carregando SO a edge-a: e' o unico jeito de `disparos_na_leva`
+# (1) divergir do numero de linhas de `lidas` (2), que e' o que a sabotagem do denominador troca.
+com_par_mapa_parcial() {
+  local leva_antes="$LEVA" mapa_antes="$MAPA_IDS"
+  LEVA="'edge-a', 'edge-b'"
+  MAPA_IDS="{\"edge-a\": $ID_SONDA}"
+  caso "$@"
+  LEVA="$leva_antes"; MAPA_IDS="$mapa_antes"
+}
+
 com_par() {
   local leva_antes="$LEVA" mapa_antes="$MAPA_IDS"
   LEVA="'edge-a', 'edge-b'"
@@ -196,6 +209,33 @@ INSERT INTO net._http_response (id, status_code, content, created)
          ($ID_TESTEMUNHA, 200,
           '{"ok":true,"probe":true,"versao":"v0.9-antiga","edge":"edge-b","fonte":"$FP_B"}', now());
 SQL
+      ;;
+    testemunha_fonte_velha)   # eco de sonda com versao CERTA e FONTE de outro bundle: subiu
+                              # index.ts+versao.ts sem o _shared/sonda-fingerprints.ts. So testemunha
+                              # se o `fonte` for exigido — e o `fonte` e o elo que prova VERBATIM.
+      P -q <<SQL
+INSERT INTO net._http_response (id, status_code, content, created)
+  VALUES ($ID_SONDA, 401, '{"code":401}', now()),
+         ($ID_TESTEMUNHA, 200,
+          '{"ok":true,"probe":true,"versao":"v2.0-beta","edge":"edge-b","fonte":"$FP_ERRADO"}', now());
+SQL
+      ;;
+    testemunha_fora_da_janela)  # identidade COMPLETA, mas a resposta e de 95 min atras: e' de uma
+                                # sondagem ANTERIOR, e nao prova a credencial de AGORA. Sem a
+                                # recencia na testemunha, uma celula velha avaliza o veredito de hoje.
+      P -q <<SQL
+INSERT INTO net._http_response (id, status_code, content, created)
+  VALUES ($ID_SONDA, 401, '{"code":401}', now()),
+         ($ID_TESTEMUNHA, 200,
+          '{"ok":true,"probe":true,"versao":"v2.0-beta","edge":"edge-b","fonte":"$FP_B"}',
+          now() - interval '95 minutes');
+SQL
+      ;;
+    denominador_parcial)      # leva de DUAS edges e mapa com UMA: `disparos_na_leva` tem de contar
+                              # 1 (so o que saiu), nao 2. Contar a linha sem request_id — trava
+                              # FECHADA, nada disparado — faz a mensagem exibir denominador que mente.
+      P -q -c "INSERT INTO net._http_response (id, status_code, content, created)
+               VALUES ($ID_SONDA, 401, '{\"code\":401}', now());"
       ;;
     falha_de_transporte)  # pg_net 0.19.5: erro grava `error_msg` e deixa o status NULL. Lido como
                           # "resposta a caminho", o AGUARDE mandaria repetir para sempre.
@@ -336,6 +376,12 @@ executar_casos() {
     "2xx ANONIMO na leva não é testemunha (bundle que ignora a credencial)" "BUNDLE VELHO (pre-sonda)"
   com_par testemunha_versao_velha testemunha_versao_velha "INDETERMINADO" \
     "2xx com versao de OUTRO bundle não é testemunha" "BUNDLE VELHO (pre-sonda)"
+  com_par testemunha_fonte_velha testemunha_fonte_velha "INDETERMINADO" \
+    "2xx com versao certa e FONTE de outro bundle não é testemunha" "BUNDLE VELHO (pre-sonda)"
+  com_par testemunha_fora_da_janela testemunha_fora_da_janela "INDETERMINADO" \
+    "testemunha FORA da janela não prova a credencial de agora" "BUNDLE VELHO (pre-sonda)"
+  com_par_mapa_parcial denominador_parcial denominador_parcial "0 testemunha de 1 disparo(s)" \
+    "o denominador conta só o que DISPAROU (linha sem request_id não infla)"
   caso falha_de_transporte      falha_de_transporte      "FALHA DE TRANSPORTE" \
     "error_msg com status NULL é requisição MORTA, não 'aguarde'" "AGUARDE"
   caso sem_controle             sem_controle             "INDETERMINADO" \
@@ -526,14 +572,23 @@ sabotar "401 volta a cair no ramo generico >=400 (o falso 'bundle velho' que mot
         "l.status_code = 401" "false"
 sabotar "fail-closed vira fail-open: o fallback do 401 vira veredito confiante" \
         "'INDETERMINADO — 401" "'BUNDLE VELHO (pre-sonda) — 401"
-sabotar "controle deixa de excluir a PROPRIA leva (a sonda avaliza a si mesma)" \
-        "AND NOT EXISTS (SELECT 1 FROM ids id_leva WHERE id_leva.request_id = r.id)" ""
-sabotar "piso do controle zerado: uma unica resposta 2xx ja 'prova' o secret" \
-        "const PISO_CONTROLE_CREDENCIAL = 10;" "const PISO_CONTROLE_CREDENCIAL = 0;"
-sabotar "401 alheio na janela deixa de desqualificar o controle" \
-        "AND c.recusas_recentes = 0" ""
-sabotar "janela do controle esticada: 2xx de anteontem 'provam' o agora" \
-        "now() - interval '6 hours'" "now() - interval '100 years'"
+# ── REANCORADAS em 2026-09-09, quando o controle ATIVO passou a decidir ────────────────────────
+# As 4 daqui sabotavam o controle HISTORICO (`NOT EXISTS` da propria leva, piso, `recusas_recentes
+# = 0`, janela de 6h). Ele deixou de condicionar ramo nenhum — virou contexto exibido —, entao
+# estraga-lo nao muda mais veredito: as 4 viraram CEGAS (3 "passou despercebida" + 1 "alvo sumiu"),
+# medido pelo proprio `--falsify`. Isso NAO e perda de cobertura: e a prova migrando para quem
+# decide. Mesma reancoragem que o `.mut` recebeu; esquecer ESTE arquivo foi o que deixou o
+# `test:falsificacao` vermelho.
+sabotar "401 sai determinado SEM testemunha ativa (o fail-OPEN que o controle ativo fecha)" \
+        "AND a.aceitas_na_leva >= 1" "AND true"
+sabotar "testemunha aceita 2xx sem provar a FONTE (bundle anonimo vira prova)" \
+        "AND l.corpo ->> 'fonte'  = l.fonte_esperada" "AND true"
+sabotar "testemunha aceita 2xx sem provar a VERSAO (bundle de outra fatia vira prova)" \
+        "AND l.corpo ->> 'versao' = l.versao_esperada" "AND true"
+sabotar "testemunha sem RECENCIA: resposta velha da leva ainda testemunha" \
+        "AND l.created > now() - interval '\${janelaMin} minutes'" "AND true"
+sabotar "denominador do controle ativo conta linha NAO disparada (trava fechada)" \
+        "WHERE \${a}.request_id IS NOT NULL" "WHERE true"
 sabotar "controle nao chega na projecao (CROSS JOIN removido)" \
         " CROSS JOIN controle_credencial c" ""
 # As duas abaixo guardam a SEPARACAO das causas de "sem fingerprint no ar". Ela e semantica de
