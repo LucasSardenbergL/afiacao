@@ -8,7 +8,7 @@ import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContex
 import { getAnaliseDimensional, type Dimensao, type AnaliseDimensional } from '@/services/financeiroV2Service';
 import { downloadCSV } from '@/services/financeiroService';
 import {
-  Building2, BarChart3, PieChart, Download,
+  Building2, BarChart3, PieChart, Download, Info,
   ArrowDownCircle, ArrowUpCircle
 } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
@@ -18,6 +18,25 @@ const fmtCompact = (v: number) => {
   if (Math.abs(v) >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1)}M`;
   if (Math.abs(v) >= 1_000) return `R$ ${(v / 1_000).toFixed(1)}k`;
   return fmt(v);
+};
+
+/**
+ * Valores de BAIXA (pago/recebido) e o saldo derivado deles chegam `null` quando a fonte não os
+ * ingere (#396 — ver `@/lib/financeiro/procedencia-baixa`). "—" é a única saída honesta: exibir
+ * `R$ 0,00` afirmaria "nada foi recebido" sobre R$ 27,8M de títulos com status RECEBIDO.
+ *
+ * ⚠️ O gatilho é o `null` que o service marcou pela FONTE — nunca `v === 0`. Zero que chega como
+ * NÚMERO é um fato medido e continua sendo exibido como `R$ 0,00`.
+ */
+const fmtBaixa = (v: number | null) => (v === null ? '—' : fmtCompact(v));
+
+/**
+ * O CSV é montado por `join(',')` sem quoting — texto livre (motivo, nome de cliente) entra em
+ * célula e deslocaria as colunas. Escapa conforme RFC 4180.
+ */
+const campoCsv = (v: string | number) => {
+  const s = String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
 const dimensoes: { value: Dimensao; label: string; tipos: ('cr' | 'cp')[] }[] = [
@@ -63,19 +82,36 @@ const FinanceiroAnalytics = () => {
   useEffect(() => { load(); }, [load]);
 
   const total = data.reduce((s, d) => s + d.total_documento, 0);
-  const totalPagoRecebido = data.reduce((s, d) => s + d.total_pago_recebido, 0);
+
+  // Qualquer linha degradada CONTAMINA o agregado: somar só as linhas que têm valor devolveria um
+  // parcial com cara de total — a mesma fabricação, um nível acima.
+  const totalPagoRecebido = data.reduce<number | null>(
+    (s, d) => (s === null || d.total_pago_recebido === null ? null : s + d.total_pago_recebido),
+    0,
+  );
+  const motivoBaixa = data.find(d => d.motivo_baixa !== null)?.motivo_baixa ?? null;
+  const baixaIndisponivel = motivoBaixa !== null;
+  const rotuloBaixa = tipo === 'cr' ? 'Recebido' : 'Pago';
 
   const exportCSV = () => {
-    const header = ['Dimensão', 'Qtd Títulos', 'Total Documento', tipo === 'cr' ? 'Total Recebido' : 'Total Pago', 'Saldo', '% do Total'];
+    // A degradação alcança o CSV pelo MESMO gatilho da tela: sem isto, `toFixed(2)` reimprimiria o
+    // "0.00" fabricado num arquivo que sai daqui e vira anexo de e-mail, planilha e decisão.
+    const rotuloCsv = tipo === 'cr' ? 'Total Recebido' : 'Total Pago';
+    const sufixo = baixaIndisponivel ? ` (${motivoBaixa})` : '';
+    const header = [
+      'Dimensão', 'Qtd Títulos', 'Total Documento',
+      rotuloCsv + sufixo, 'Saldo' + sufixo, '% do Total',
+    ];
+    const celula = (v: number | null) => (v === null ? '—' : v.toFixed(2));
     const rows = data.map(d => [
       d.valor_dimensao,
       d.qtd_titulos,
       d.total_documento.toFixed(2),
-      d.total_pago_recebido.toFixed(2),
-      d.total_saldo.toFixed(2),
+      celula(d.total_pago_recebido),
+      celula(d.total_saldo),
       total > 0 ? ((d.total_documento / total) * 100).toFixed(1) + '%' : '0%',
-    ].join(','));
-    const csv = [header.join(','), ...rows].join('\n');
+    ].map(campoCsv).join(','));
+    const csv = [header.map(campoCsv).join(','), ...rows].join('\n');
     downloadCSV(csv, `analise_${tipo}_${dimensao}_${company}_${ano}${mes ? '_' + mes : ''}.csv`);
   };
 
@@ -172,13 +208,38 @@ const FinanceiroAnalytics = () => {
             <p className="text-xs text-muted-foreground">Total Documento</p>
             <p className="text-sm font-bold">{fmtCompact(total)}</p>
           </div>
-          <div className={`p-3 rounded-lg text-center ${tipo === 'cr' ? 'bg-status-success-bg' : 'bg-status-error-bg'}`}>
-            <p className="text-xs text-muted-foreground">{tipo === 'cr' ? 'Recebido' : 'Pago'}</p>
-            <p className={`text-sm font-bold ${tipo === 'cr' ? 'text-status-success' : 'text-status-error'}`}>
-              {fmtCompact(totalPagoRecebido)}
+          <div
+            className={`p-3 rounded-lg text-center ${
+              baixaIndisponivel ? 'bg-muted/50' : tipo === 'cr' ? 'bg-status-success-bg' : 'bg-status-error-bg'
+            }`}
+          >
+            <p className="text-xs text-muted-foreground">{rotuloBaixa}</p>
+            <p
+              className={`text-sm font-bold ${
+                baixaIndisponivel
+                  ? 'text-muted-foreground'
+                  : tipo === 'cr'
+                    ? 'text-status-success'
+                    : 'text-status-error'
+              }`}
+            >
+              {fmtBaixa(totalPagoRecebido)}
             </p>
           </div>
         </div>
+      )}
+
+      {/* A degradação precisa DIZER por quê: um "—" mudo é lido como bug da tela, e quem precisa do
+          número vai buscá-lo no CSV — que também degrada, pelo mesmo gatilho. */}
+      {!loading && baixaIndisponivel && data.length > 0 && (
+        <p className="flex items-start gap-2 text-xs text-muted-foreground px-1">
+          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            <strong className="font-medium">{rotuloBaixa}</strong> e <strong className="font-medium">Saldo</strong>:{' '}
+            {motivoBaixa}. Exibidos como “—” — <strong className="font-medium">não são R$ 0,00</strong>.
+            Total e Qtd seguem medidos.
+          </span>
+        </p>
       )}
 
       {/* Results table */}
@@ -199,7 +260,7 @@ const FinanceiroAnalytics = () => {
                     <TableHead className="min-w-[200px]">{dimensoes.find(d => d.value === dimensao)?.label}</TableHead>
                     <TableHead className="text-right w-20">Qtd</TableHead>
                     <TableHead className="text-right w-32">Total</TableHead>
-                    <TableHead className="text-right w-32">{tipo === 'cr' ? 'Recebido' : 'Pago'}</TableHead>
+                    <TableHead className="text-right w-32">{rotuloBaixa}</TableHead>
                     <TableHead className="text-right w-28">Saldo</TableHead>
                     <TableHead className="w-40">% do Total</TableHead>
                   </TableRow>
@@ -214,11 +275,25 @@ const FinanceiroAnalytics = () => {
                         </TableCell>
                         <TableCell className="text-right text-sm">{row.qtd_titulos}</TableCell>
                         <TableCell className="text-right text-sm font-medium">{fmtCompact(row.total_documento)}</TableCell>
-                        <TableCell className={`text-right text-sm ${tipo === 'cr' ? 'text-status-success' : 'text-status-error'}`}>
-                          {fmtCompact(row.total_pago_recebido)}
+                        <TableCell
+                          className={`text-right text-sm ${
+                            row.total_pago_recebido === null
+                              ? 'text-muted-foreground'
+                              : tipo === 'cr'
+                                ? 'text-status-success'
+                                : 'text-status-error'
+                          }`}
+                          title={row.motivo_baixa ?? undefined}
+                        >
+                          {fmtBaixa(row.total_pago_recebido)}
                         </TableCell>
-                        <TableCell className="text-right text-sm font-bold">
-                          {fmtCompact(row.total_saldo)}
+                        <TableCell
+                          className={`text-right text-sm ${
+                            row.total_saldo === null ? 'text-muted-foreground' : 'font-bold'
+                          }`}
+                          title={row.motivo_baixa ?? undefined}
+                        >
+                          {fmtBaixa(row.total_saldo)}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
