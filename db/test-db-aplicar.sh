@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
-# ╔═══════════════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — db/claude-rw-bootstrap.sql + scripts/db-aplicar.sh                        ║
-# ║  Rode:  bash db/test-db-aplicar.sh > /tmp/t.log 2>&1; echo $?                           ║
-# ║         bash db/test-db-aplicar.sh --falsificar    (3 sabotagens, exige VERMELHO)       ║
-# ║                                                                                        ║
-# ║  Prova, EXECUTANDO (PL/pgSQL e psql são late-bound; criar não é rodar):                 ║
-# ║   A1 apply inédito aplica e vira recibo 'aplicada' na MESMA transação;                  ║
-# ║   A2 re-apply dos MESMOS bytes é no-op (exit 3) — a trava é o sha, não o nome;          ║
-# ║   A3 migration que falha no meio NÃO deixa meia-tabela e sai 4;                         ║
-# ║   A4 a TENTATIVA sobrevive ao rollback (vira 'falhou') — as duas metades do contrato;   ║
-# ║   A5 --ensaio roda inteiro e não grava NADA (nem tabela, nem linha de ledger);          ║
-# ║   A6 arquivo não-commitado é recusado (exit 2) antes de tocar no banco;                 ║
-# ║   A7 sonda fail-closed: wrapper que responde como OUTRO papel sai 6, não 0.             ║
-# ║  Falsifica: (S1) marcador deixa de ser emitido → exit 0 com SQL incompleto vira sucesso;║
-# ║             (S2) ON_ERROR_STOP removido → A3 troca 4 por 5 (erro vira desconhecido);    ║
-# ║             (S3) checagem de 'já aplicada' removida → A2 aplica duas vezes.             ║
-# ╚═══════════════════════════════════════════════════════════════════════════════════════╝
+# ╔═════════════════════════════════════════════════════════════════════════════════════════╗
+# ║   PROVA PG17 — db/claude-rw-bootstrap.sql + scripts/db-aplicar.sh                       ║
+# ║   Rode:  bash db/test-db-aplicar.sh > /tmp/t.log 2>&1; echo $?                          ║
+# ║          bash db/test-db-aplicar.sh --falsificar    (5 sabotagens, exige VERMELHO)      ║
+# ║   Exit:  0 verde · 1 asserção vermelha · 3 CONTROLE podre (a falsificação nem começou)  ║
+# ║                                                                                         ║
+# ║   Prova, EXECUTANDO (PL/pgSQL e psql são late-bound; criar não é rodar):                ║
+# ║    A1 apply inédito aplica e vira recibo 'aplicada' na MESMA transação;                 ║
+# ║    A2 re-apply dos MESMOS bytes é no-op (exit 3) — a trava é o sha, não o nome;         ║
+# ║    A3 migration que falha no meio NÃO deixa meia-tabela e sai 4;                        ║
+# ║    A4 a TENTATIVA sobrevive ao rollback (vira 'falhou') — as duas metades do contrato;  ║
+# ║    A5 --ensaio roda inteiro e não grava NADA (nem tabela, nem linha de ledger);         ║
+# ║    A6 arquivo não-commitado é recusado (exit 2) antes de tocar no banco;                ║
+# ║    A7 sonda fail-closed: wrapper que responde como OUTRO papel sai 6, não 0;            ║
+# ║    A8 sha mentiroso é recusado pela função ANTES de executar o corpo;                   ║
+# ║    A9 tentativa já fechada não pode ser reusada (nem executa);                          ║
+# ║    A10 SQL COM envelope é recusado (exit 2) sem criar nada e sem gravar no ledger.      ║
+# ║   Falsifica: (S1) marcador E reconciliação cegos → veredito honesto: 5 (não sei);       ║
+# ║              (S2) ON_ERROR_STOP removido → A3 troca 4 por 5 (erro vira desconhecido);   ║
+# ║              (S3) checagem de 'já aplicada' removida → A2 aplica duas vezes;            ║
+# ║              (S4) só o marcador cego → o ledger responde e o script AVISA, não finge;   ║
+# ║              (S5) recusa do envelope removida → o corpo chega ao banco e A10 vira 4.    ║
+# ╚═════════════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,6 +32,11 @@ BOOT="$REPO_ROOT/db/claude-rw-bootstrap.sql"
 APLICAR="$REPO_ROOT/scripts/db-aplicar.sh"
 FIX_OK="db/fixtures/db-aplicar-ok.sql"
 FIX_ERRO="db/fixtures/db-aplicar-erro.sql"
+# A classe de entrada que faltava. ok/erro NÃO têm envelope — foi por isso que o #2421 passou
+# verde: o desenvelopador que ele instalou era no-op sobre as duas, e a prova exercitava só o
+# caso em que a transformação não transformava nada. Fixture que não representa a classe real
+# de entrada é teste cego, e o custo foi quebrar TODA migration com envelope sem ninguém ver.
+FIX_ENVELOPE="db/fixtures/db-aplicar-envelope.sql"
 WORK="$(mktemp -d "/tmp/pgtest-db-aplicar.XXXXXX")"
 DATA="$WORK/data"
 # Locale é PARÂMETRO, não constante: `db-aplicar.sh` distingue falha-limpa (4) de
@@ -149,6 +160,41 @@ sabota() {
   return 0
 }
 
+# O CONTROLE ABORTA — não reporta e segue. Sabotagem só prova algo contra uma linha de base
+# VERDE: se a CÓPIA já não reproduz o original NEM SABOTADA, toda sabotagem passa a "mudar o rc"
+# por acidente e fica verde. Sabotagem sempre-vermelha APROVA TUDO
+# (docs/historico/falsificacao-sem-linha-de-base.md).
+#
+# Aconteceu aqui, e é a razão de este bloco existir: o #2421 fez `db-aplicar.sh` resolver um
+# helper por `dirname "$0"` — caminho que, na cópia dentro de $WORK, não existe. A cópia morria
+# no preflight ANTES da primeira sabotagem, e as quatro sabotagens seguintes "mudaram o rc" sem
+# tocar em nada. O bloco de controle DETECTOU (`esperado '0', veio '2'`) e mesmo assim seguiu,
+# imprimindo seis linhas verdes antes do veredito. Detectar e seguir é quase não detectar: o
+# sinal chega depois de o ruído já ter ensinado a coisa errada, e quem lê o log de cima para
+# baixo vê a falsificação "funcionando".
+#
+# O #2434 removeu AQUELA dependência. Este aborto é a defesa contra a PRÓXIMA — qualquer coisa
+# que a cópia sabotada não encontre ao lado de si.
+controle() {
+  local nome="$1" veio="$2" esperado="$3"
+  if [ "$veio" = "$esperado" ]; then ok "controle: $nome"; return 0; fi
+  nok "controle: $nome" "esperado '$esperado', veio '$veio'"
+  cat <<FIM
+
+🛑 CONTROLE VERMELHO — abortando ANTES da primeira sabotagem.
+   A cópia sabotável ($ALVO) não reproduz o
+   original NEM SABOTADA. Nesse estado toda sabotagem muda o rc por acidente e fica
+   verde: sabotagem sempre-vermelha APROVA TUDO. Seguir daqui imprimiria linhas
+   verdes que não provam nada — foi o que este teste já fez uma vez.
+   Suspeite, nesta ordem: (1) dependência que a cópia não acha ao lado de si (helper
+   resolvido por \`dirname "\$0"\`), (2) cluster de teste caído, (3) fixture alterada.
+   O que a cópia respondeu:
+FIM
+  tail -20 "$WORK/out.log" | sed 's/^/     | /'
+  printf '\nPASS=%s FAIL=%s\nFIM_PROVA_VERMELHO\n' "$PASS" "$FAIL"
+  exit 3
+}
+
 # ═════════════════════════════════════════════════════════════════════════════════════════
 if [ "$FALSIFICAR" -eq 0 ]; then
 echo "▶ A1 — apply inédito"
@@ -178,6 +224,28 @@ SUJO="db/fixtures/.sujo-$$.sql"
 echo "SELECT 1;" > "$REPO_ROOT/$SUJO"
 eq "A6 exit 2" "$(rc_de "$SUJO")" "2"
 rm -f "$REPO_ROOT/$SUJO"
+
+echo "▶ A10 — SQL com envelope de transação é recusado"
+# O exit 2 é COMPARTILHADO por vários ramos de recusa (uso, arquivo ausente, não-commitado, tag
+# de quoting). Casar só o número aprovaria a recusa CERTA pelo motivo ERRADO — e o motivo errado
+# mais provável é o guard do A6 logo acima: se esta fixture deixar de estar commitada e limpa, o
+# script morre antes de chegar ao envelope, com o mesmo 2, e a asserção fica verde sem ter
+# exercitado nada. Por isso a MARCA da mensagem também é asserção. `-F` sobre pedaço ASCII de
+# caixa fixa: casar acento ou usar `-i` é o casamento pela metade que já migrou de locale (#1483).
+LEDGER_ANTES="$(q "select count(*) from public.db_aplicacoes")"
+eq "A10 exit 2" "$(rc_de "$FIX_ENVELOPE")" "2"
+if grep -qF 'BEGIN/COMMIT/ROLLBACK' "$WORK/out.log"; then
+  ok "A10 recusou pelo ENVELOPE — não por outro ramo que também sai 2"
+else
+  nok "A10" "saiu 2 sem a marca do envelope (motivo errado?): $(tail -c 250 "$WORK/out.log")"
+fi
+eq "A10 NADA foi criado" \
+   "$(q "select to_regclass('public.fixture_aplicar_envelope') is null")" "t"
+# A recusa mora na etapa 2 do script, antes de ler o ledger e antes de gravar a tentativa: o
+# ledger tem de ficar do MESMO tamanho. Cicatriz aqui seria ruído permanente em produção, para
+# um arquivo que nunca chegou perto do banco.
+eq "A10 NADA foi gravado no ledger" \
+   "$(q "select count(*) from public.db_aplicacoes")" "$LEDGER_ANTES"
 
 echo "▶ A8 — sha divergente é recusado ANTES de executar"
 # A propriedade que o desenho recusado (GRANT) não daria: o corpo viaja como parâmetro, então
@@ -224,8 +292,12 @@ eq "A7 papel errado sai 6, não 0" "$R7" "6"
 else
 # ═════════════════════════════════════════════════════════════════════════════════════════
 echo "▶ CONTROLE (sem sabotagem, na cópia) — tem de estar VERDE antes de sabotar"
-eq "controle: A1 aplica" "$(rc_de "$FIX_OK")" "0"
-eq "controle: A3 sai 4"  "$(rc_de "$FIX_ERRO")" "4"
+# Um controle por CLASSE de desfecho que as sabotagens vão mexer: sucesso (0), falha-limpa (4) e
+# recusa de preflight (2). O de recusa é o mais barato e o que teria pego o #2421 primeiro — ele
+# nem chega a abrir conexão, então falha nele grita "a cópia não roda", não "o banco está ruim".
+controle "A1 aplica"              "$(rc_de "$FIX_OK")"       "0"
+controle "A3 sai 4"               "$(rc_de "$FIX_ERRO")"     "4"
+controle "A10 recusa o envelope"  "$(rc_de "$FIX_ENVELOPE")" "2"
 $PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
 
 echo "▶ S1 — o marcador de fim deixa de ser emitido (psql sai 0 e o SQL não terminou)"
@@ -287,6 +359,27 @@ if [ "$S3" != "3" ]; then
 else
   nok "S3" "sabotagem NÃO mudou nada — a checagem de sha é inalcançada"
 fi
+$PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
+
+echo "▶ S5 — recusa do envelope removida (o corpo com BEGIN; chega ao banco)"
+# A alternância literal só existe no regex da checagem (linha única em db-aplicar.sh); a mensagem
+# e o comentário escrevem com barras, BEGIN/COMMIT/ROLLBACK, e não casam. Trocá-la por um nome
+# que nunca aparece em SQL deixa o `grep` sintaticamente vivo e semanticamente morto.
+sabota 's/\(BEGIN\|COMMIT\|ROLLBACK\|START TRANSACTION\)/(JAMAIS_CASA_ENVELOPE)/'
+S5="$(rc_de "$FIX_ENVELOPE")"
+# Exigir o 4 EXATO, não "≠ 2". 4 é o banco recusando por conta própria — `EXECUTE of transaction
+# commands is not implemented` —, e é isso que prova que A10 mede a recusa DO SCRIPT e não uma
+# barreira que existiria de qualquer jeito. Aceitar "qualquer coisa ≠ 2" deixaria passar a cópia
+# morrendo no preflight, que é exatamente a falha que o controle acima existe para pegar.
+if [ "$S5" = "4" ]; then
+  ok "S5 vermelho: sem a recusa o corpo vai ao banco, que o barra e devolve 4 (≠ 2)"
+else
+  nok "S5" "esperava 4 (o banco barrando); veio '$S5' / $(tail -c 200 "$WORK/out.log")"
+fi
+# E a transação do script tem de ter voltado atrás: envelope quebrado no meio é a meia-migration
+# que o desenho inteiro existe para impedir.
+eq "S5 e a tabela do envelope NÃO nasceu nem assim" \
+   "$(q "select to_regclass('public.fixture_aplicar_envelope') is null")" "t"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════════════════
