@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "medidoEm": "2026-09-09T01:09:54.676Z",
-  "sourceHead": "ee6686adf039324cb9d66b814fb2f08a905e2bbe",
+  "medidoEm": "2026-09-09T12:26:57.553Z",
+  "sourceHead": "34ce4b92469f452dd848b33d6b75d74bc8ebcb64",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 58 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 59 definição(ões) lida(s) para 58 chave(s) da allowlist.",
-      "contratoFingerprint": "f07584155a0a654dc998e2334144044e58ece923ea11db2a808f7de4e84e90a0",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 59 definição(ões) lida(s) para 59 chave(s) da allowlist.",
+      "contratoFingerprint": "c1b21b80504a6db032aa696d36bb0bf2a7fa81d860303c29c474be835d5e1bd2",
       "auditorFingerprint": "7a0c358a4866c0f993973aa01b93f1d9b03d8269487c0c9b1c42207e0512efdf",
-      "achados": []
+      "achados": [
+        {
+          "id": "14cdb3177415de35",
+          "linha": "❌ public.desconto_backfill_aplicar — [FUNCAO_AUSENTE_EM_PROD] public.desconto_backfill_aplicar está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-09-09",
+          "ultimaVez": "2026-09-09"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
