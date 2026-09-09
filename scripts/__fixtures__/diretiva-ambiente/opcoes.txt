@@ -1,0 +1,2 @@
+// @vitest-environment-options { "url": "http://x" }
+export const x = 1;

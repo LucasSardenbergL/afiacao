@@ -1,0 +1,2 @@
+// @vitest-environment happy-dom
+export const x = 1;

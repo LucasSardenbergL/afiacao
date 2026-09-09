@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-08T11:19:06.809Z",
-  "sourceHead": "3ffc105d0831a174e6f3e6cf6f63b948179c840f",
+  "medidoEm": "2026-09-09T00:50:30.850Z",
+  "sourceHead": "e752ee5cadaf729e89d0a2fe4f9591bcd132cf85",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -108,27 +108,27 @@
     {
       "gate": "bunpin:check",
       "verde": true,
-      "ms": 74
+      "ms": 857
     },
     {
       "gate": "claude:size",
       "verde": true,
-      "ms": 112
+      "ms": 6530
     },
     {
       "gate": "docs:citacoes",
       "verde": true,
-      "ms": 4367
+      "ms": 26932
     },
     {
       "gate": "docs:indice",
       "verde": true,
-      "ms": 33
+      "ms": 916
     },
     {
       "gate": "docs:links",
       "verde": true,
-      "ms": 978
+      "ms": 10292
     },
     {
       "gate": "exclusividade",
@@ -136,29 +136,34 @@
       "ms": 211
     },
     {
+      "gate": "gate:ambiente",
+      "verde": true,
+      "ms": 7500
+    },
+    {
       "gate": "gates:frescura",
       "verde": true,
-      "ms": 406
+      "ms": 6895
     },
     {
       "gate": "knip",
       "verde": true,
-      "ms": 3861
+      "ms": 24246
     },
     {
       "gate": "lint",
       "verde": true,
-      "ms": 19853
+      "ms": 348802
     },
     {
       "gate": "test",
       "verde": true,
-      "ms": 114328
+      "ms": 834323
     },
     {
       "gate": "tsc",
       "verde": true,
-      "ms": 154
+      "ms": 1437
     }
   ],
   "linhas": [
@@ -340,6 +345,168 @@
         }
       ],
       "parouCedo": false,
+      "invalido": null
+    },
+    {
+      "defeito": "diretiva-alias-jest",
+      "defeitoFingerprint": "7873c41834b06672",
+      "alvo": "src/lib/push/device.test.ts",
+      "suspeito": "gate:ambiente",
+      "origem": "2026-09-08, ao registrar `gate:ambiente` no CI (o alias `jest` e o caso 3 do gate)",
+      "execucoes": [
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 62,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 76,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 77,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 361,
+          "fingerprint": "313ebefc9f2599fc",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gate:ambiente",
+          "reprovou": true,
+          "ms": 705,
+          "fingerprint": "ced901a6da17fb30",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 2084,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "tsc",
+          "reprovou": false,
+          "ms": 653,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false
+        },
+        {
+          "gate": "docs:citacoes",
+          "reprovou": false,
+          "ms": 3786,
+          "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "knip",
+          "reprovou": true,
+          "ms": 5087,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false
+        }
+      ],
+      "parouCedo": true,
+      "invalido": null
+    },
+    {
+      "defeito": "diretiva-em-dobro",
+      "defeitoFingerprint": "d20bd15011c0ea88",
+      "alvo": "src/lib/push/device.test.ts",
+      "suspeito": "gate:ambiente",
+      "origem": "2026-09-08, apos a medicao do `diretiva-alias-jest` mostrar sobreposicao com `knip`",
+      "execucoes": [
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 78,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 59,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "tsc",
+          "reprovou": false,
+          "ms": 267,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 86,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 323,
+          "fingerprint": "313ebefc9f2599fc",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "gate:ambiente",
+          "reprovou": true,
+          "ms": 414,
+          "fingerprint": "ced901a6da17fb30",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 998,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "knip",
+          "reprovou": false,
+          "ms": 3684,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false
+        },
+        {
+          "gate": "docs:citacoes",
+          "reprovou": false,
+          "ms": 3220,
+          "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "lint",
+          "reprovou": false,
+          "ms": 45236,
+          "fingerprint": "9a7845d926241f66",
+          "fonteResolvida": false
+        },
+        {
+          "gate": "test",
+          "reprovou": true,
+          "ms": 359880,
+          "fingerprint": "ad6cd6b8acf39571",
+          "fonteResolvida": false
+        }
+      ],
+      "parouCedo": true,
       "invalido": null
     },
     {
