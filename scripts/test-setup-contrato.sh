@@ -95,8 +95,16 @@ trap 'restaurar; rm -rf "$TMPD"' EXIT
 # restauração com `git status` só é possível se o ponto de partida for vazio. No modo normal
 # (A) nada é mutado, então a exigência não se aplica — e exigi-la ali tornaria o script
 # inutilizável durante o desenvolvimento, sem ganho de segurança nenhum.
-if [ "$FALSIFICAR" -eq 1 ] && [ -n "$(git status --short)" ]; then
-  aviso "❌ árvore SUJA — commite antes de --falsificar. A rede sabota fonte em disco e a"
+# ⚠️ Só os arquivos que ESTE script muta — não a árvore inteira. Medido em 2026-09-09: o
+# `test:falsificacao` do CI roda vários gates em sequência, e um deles (`sonda:cron-prova`)
+# deixa `supabase/functions/_shared/sonda-cron-prova.json` modificado. Um guard sobre a árvore
+# toda reprovava ESTE script por sujeira ALHEIA — vermelho de 900s que não dizia nada sobre o
+# contrato de storage. O guard existe para garantir que a RESTAURAÇÃO é conferível, e isso só
+# depende dos arquivos sabotados.
+ARQUIVOS_MUTADOS=(src/test/setup.ts src/integrations/supabase/client.ts)
+if [ "$FALSIFICAR" -eq 1 ] && [ -n "$(git status --short -- "${ARQUIVOS_MUTADOS[@]}")" ]; then
+  aviso "❌ ALVO sujo — commite antes de --falsificar. A rede sabota fonte em disco e a"
+  aviso "   (só estes contam: ${ARQUIVOS_MUTADOS[*]})"
   aviso "   restauração depende de um ponto de partida limpo. \`git status --short\`:"
   git status --short
   exit 70
