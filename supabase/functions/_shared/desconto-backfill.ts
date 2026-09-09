@@ -78,17 +78,19 @@ export type MotivoRecusa =
   | "ambiguo"
   | "leitura_recusada";
 
-export interface LinhaApurada {
+interface LinhaApurada {
   id: string;
   /** R$ absolutos da LINHA inteira. `0` é dado, não ausência. */
   desconto_valor: number;
 }
 
-export interface LinhaRecusada {
+interface LinhaRecusada {
   id: string;
   motivo: MotivoRecusa;
 }
 
+/** O plano de escrita. `LinhaApurada`/`LinhaRecusada` não são exportadas: elas existem para
+ *  compor este tipo, e exportá-las sem consumidor seria superfície morta. */
 export interface PlanoDesconto {
   apurados: LinhaApurada[];
   recusados: LinhaRecusada[];
