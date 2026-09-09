@@ -12,6 +12,18 @@ export default defineConfig({
     // ⚠️ ESTE TETO É PARA RENDER, NÃO PARA GATE QUE VARRE O REPO. Nasceu no #271 (2026-05-24) com 195 arquivos de teste; hoje são 786, e ninguém o redimensionou. Medido em 2026-09-07 (#2311): dos 8.134 testes, só DOIS passam de 10s — os dois `it` de varredura AST de src/__tests__/erro-colapsado-em-vazio-gate.test.ts (12.643ms e 10.263ms sob a suíte completa), que por isso declaram orçamento PRÓPRIO, acima deste. O 3º mais lento fica em 9.820ms, com 2× de folga.
     // Gate de varredura NOVO que encoste em 10s deve declarar o seu teto (3º arg do `it`, POR FONTE), não subir este: subir aqui afrouxaria os outros 8.132 testes para acomodar 2.
     testTimeout: 20000,
+
+    // `pool` EXPLÍCITO: `threads` está bloqueado — scripts/sonda-fan-out.test.ts usa
+    // process.chdir(), que não existe em worker thread.
+    pool: "forks",
+    // `isolate` EXPLÍCITO: é o default, e declarar registra que NÃO abrimos mão dele.
+    poolOptions: { forks: { isolate: true } },
+    // O piso do pool. Sem isto, `minThreads` cai no default de `maxThreads` =
+    // availableParallelism()-1 (= 7 nesta M2) e o tinypool cria os mínimos JÁ NO
+    // CONSTRUTOR (tinypool/dist/index.js:533) — medido em 2026-09-09: rodar UM arquivo
+    // criava PICO DE 8 PROCESSOS, sete deles sem tarefa. Isso pesa em todo caminho
+    // curto: mutcheck (1 run por mutante), hooks, e a edição arquivo-a-arquivo.
+    minWorkers: 1,
     // Dois ambientes, particionados por EXTENSÃO. A união dos dois `include` é EXATAMENTE o
     // `include` único que existia antes (`src/**/*.{test,spec}.{ts,tsx}` + `scripts/**/*.test.ts`),
     // e a interseção é vazia: nenhum arquivo deixa de rodar nem roda duas vezes. O denominador
