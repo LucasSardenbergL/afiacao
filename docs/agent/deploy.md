@@ -31,7 +31,7 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 <!--gates:frescura inicio-->
 
-**Gates do CI — reprovam o PR** (29): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
+**Gates do CI — reprovam o PR** (30): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `falsificar:gate-corpo` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
 
 **Rodam no CI mas NÃO reprovam** (2, informativos por desenho): `mutcheck` · `mutcheck:selftest`.
 
