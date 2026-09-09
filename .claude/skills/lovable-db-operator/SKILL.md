@@ -29,7 +29,7 @@ Este repo roda em **Lovable Cloud**. Existe uma armadilha operacional real e sil
 
 O resultado é o pior tipo de bug: **a feature compila, o PR mergeia, o código referencia uma tabela que não existe no banco, e ninguém percebe até dar erro em produção.** Já aconteceu neste repo (ver histórico de audits na §5).
 
-Some-se a isso uma restrição dura: **a ESCRITA no banco é só do Lucas — colar SQL no SQL Editor do Lovable e clicar Run** (você não aplica migration por ele). Já a **LEITURA é sua**: `~/.config/afiacao/psql-ro` (role `claude_ro`, read-only) — use-a pra **pré-voar o SQL contra a PROD antes do handoff** (Passo 2.7) e pra **validar você mesmo depois do Run** (Passo 4), sem pedir nada ao founder.
+Some-se a isso o ENVELOPE de escrita (revisto 2026-09-09): **a sessão aplica SQL que seja idempotente + transacional + com postcondição, e só com o pré-voo `psql-ro` 🟢** — via `mcp__lovable__query_database`, validando por fora depois. **Fora do envelope a escrita é do Lucas**, colando no SQL Editor: DDL destrutivo, SQL sem postcondição, pré-voo não-verde, schema de sistema. Até esta data a seção dizia "só o Lucas", e a razão era lida como capacidade — o que era falso; regra que confunde "não devo" com "não consigo" ninguém revisa, porque parece lei da física. O porquê da revisão está em `docs/agent/database.md` §1. Já a **LEITURA é sua**: `~/.config/afiacao/psql-ro` (role `claude_ro`, read-only) — use-a pra **pré-voar o SQL contra a PROD antes do handoff** (Passo 2.7) e pra **validar você mesmo depois do Run** (Passo 4), sem pedir nada ao founder.
 
 Por isso esta skill existe: ela transforma "escrevi um SQL" em "o objeto existe no banco, validado", fechando a lacuna onde as coisas se perdem.
 
@@ -37,7 +37,7 @@ Por isso esta skill existe: ela transforma "escrevi um SQL" em "o objeto existe 
 
 Três regras que você **nunca** quebra, porque quebrá-las recria exatamente o bug que esta skill previne:
 
-1. **Você nunca finge que aplicou.** Você não tem como rodar SQL no banco de produção do Lovable. Não diga "criei a tabela", "apliquei a migration", "o índice está no ar". Diga "preparei o SQL pra você colar e rodar no Lovable". A migration só está aplicada quando o **usuário** rodou e a **query de validação** confirmou.
+1. **Você nunca finge que aplicou.** Esta continua sendo a lei — mudou só QUEM pode rodar, nunca o que conta como prova. Fora do envelope, prepare o SQL e diga que ainda NÃO está no banco. Dentro dele, aplicar é seu — mas "aplicada" é um estado que só a **query de validação por `psql-ro`** declara: nunca o seu relato, nunca o `{"rows":[]}` que o `query_database` devolve, e nunca a postcondição sozinha, que roda DENTRO da transação que se quer verificar e por isso é a mais fácil de enganar. Sem a 2ª testemunha, não diga "apliquei".
 2. **Toda mudança vem com query de validação.** Você sempre entrega, junto do SQL, uma query read-only que prova que o objeto passou a existir *depois* do Run. Sem ela, o usuário não tem como distinguir "aplicado" de "esqueci de colar". Essa query é a rede de segurança contra a falha silenciosa.
 3. **Migration de nome custom (timestamp), nunca UUID.** O timestamp `YYYYMMDDHHMMSS_<slug>.sql` é exatamente o que sinaliza "isto precisa de apply manual" e mantém ordenação. Nunca invente um nome UUID — esse formato é reservado pro builder do Lovable e te faria perder o controle de ordenação.
 
