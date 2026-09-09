@@ -25,6 +25,7 @@
  *   2 = NÃO consegui consultar (gh ausente/sem auth/erro) → "não consultado" ≠ "limpo"
  */
 import { execFileSync } from 'node:child_process';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export interface ItemFila {
   number: number;
@@ -104,7 +105,9 @@ function main(): never {
   } catch (erro) {
     // Fail-CLOSED: sem consulta não há veredito. Exit 2 faz o `pendencias.sh` imprimir
     // "NÃO CONSULTADO", que é a verdade — e não "nada pendente", que seria fabricação.
-    console.error(`não consegui consultar o GitHub: ${erro instanceof Error ? erro.message : String(erro)}`);
+    // `String(err)` cru fabrica "[object Object]" no erro PLANO (gate erro-object-object).
+    // `?? ` explícito: sem mensagem utilizável o helper devolve null, e QUEM CHAMA decide o texto.
+    console.error(`não consegui consultar o GitHub: ${mensagemDeErro(erro) ?? 'erro sem mensagem utilizável'}`);
     process.exit(2);
   }
 
