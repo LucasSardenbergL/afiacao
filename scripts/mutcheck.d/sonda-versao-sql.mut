@@ -67,8 +67,29 @@ PEGA      | fallback do 401 deixa de ser INDETERMINADO (fail-open)    | s/THEN '
 #    verde; hoje le o reporter JSON. Detalhe em docs/historico/gate-que-le-saida-colorida.md.)
 PEGA      | controle nao exclui a propria leva (nenhum modo se avaliza) | s/AND NOT EXISTS \(SELECT 1 FROM ids id_leva WHERE id_leva\.request_id = r\.id\)/AND true/
 PEGA      | piso do controle zerado (1 resposta 2xx ja 'prova')       | s/PISO_CONTROLE_CREDENCIAL = 10/PISO_CONTROLE_CREDENCIAL = 0/
-PEGA      | 401 alheio deixa de desqualificar o controle              | s/AND c\.recusas_recentes = 0/AND true/
 PEGA      | controle nao chega na projecao (CROSS JOIN removido)      | s/FROM lidas l CROSS JOIN controle_credencial c/FROM lidas l/
+# ── CONTROLE ATIVO (2026-09-09) ────────────────────────────────────────────────────────────────
+# REANCORADAS: sairam daqui `AND c.recusas_recentes = 0`, `cred.ok_recentes >= ${PISO}` e a gemea
+# `AND cred.recusas_recentes = 0` — os TRES protegiam conjuntos do controle HISTORICO que deixaram
+# de DECIDIR. O historico virou contexto exibido (o ativo o subsume: se a credencial foi aceita
+# AGORA por um request DESTA leva, o que 52 crons fizeram em 6h nao acrescenta prova). Nao e perda
+# de cobertura: as 4 abaixo guardam as invariantes que passaram a decidir, e o piso segue mutado
+# na linha acima — agora pelo texto do contexto, nao pelo veredito.
+#
+# A limitacao que elas fecham (parecer Codex, PR #2424 e 2026-09-09): o historico conta trafego de
+# FORA da leva, entao o disparo com header ERRADO tomava 401 na leva inteira, ficava fora da
+# contagem pelo NOT EXISTS, e o veredito saia 'BUNDLE VELHO' CONFIANTE — redeploy a toa. Prova
+# EXECUTADA em PG17: `db/test-canaria-veredito.sh`, caso "leva INTEIRA 401 com historico VERDE".
+PEGA      | 401 sai determinado SEM testemunha ativa (fail-open)      | s/AND a\.aceitas_na_leva >= 1/AND true/
+PEGA      | canaria: 401 determinado SEM testemunha ativa (fail-open) | s/AND ativo\.aceitas_na_leva >= 1/AND true/
+# A testemunha e IDENTIDADE, nao status. Sem o `fonte` (sha256 do arquivo servido) um 2xx ANONIMO
+# vira prova — e `monthly-report@ef08dddd2` e um bundle historico que responde 200 a qualquer POST
+# ignorando a credencial. Foi o contraexemplo que derrubou a 1a versao deste controle.
+PEGA      | testemunha aceita 2xx sem provar a fonte (bundle anonimo) | s/AND l\.corpo ->> 'fonte'  = l\.fonte_esperada/AND true/
+PEGA      | canaria: testemunha aceita 2xx sem o marcador esperado    | s/AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado/AND true/
+# Denominador: linha com request_id NULL e trava FECHADA (nada disparado). Conta-la infla
+# `disparos_na_leva` e a mensagem do INDETERMINADO passa a mentir o denominador.
+PEGA      | controle ativo conta linha NAO disparada (denominador)    | s/WHERE \$\{a\}\.request_id IS NOT NULL/WHERE true/
 # Os 7 abaixo guardam a LEITURA SEM COLAGEM (#2127). Ela troca o `request_id` colado a mao pelo ECO
 # do slug que a propria resposta carrega — e cada guard aqui e a diferenca entre achar a linha CERTA
 # e achar UMA linha. Sem eles a suite aceitava um SQL que le a resposta de OUTRA execucao.
@@ -214,7 +235,8 @@ PEGA      | canaria: LEFT JOIN da resposta -> JOIN           | s/LEFT JOIN net\.
 PEGA      | canaria: janela larga (celula de ontem julga hoje)| s/WHEN ca\.created <= now\(\) - interval '\$\{janelaMin\} minutes'/WHEN ca.created <= now() - interval '30 days'/
 # (a mutacao 'canaria: controle nao exclui a propria leva' foi CONSOLIDADA na da sonda -- o CTE
 #  agora e emitido pela mesma funcao; ver a nota na secao do controle de credencial acima)
-PEGA      | canaria: 401 alheio nao desqualifica o controle  | s/AND cred\.recusas_recentes = 0/AND true/
+# (a gemea 'canaria: 401 alheio nao desqualifica o controle' saiu daqui em 2026-09-09: o
+#  historico deixou de decidir, e o que decide agora esta na secao CONTROLE ATIVO acima)
 PEGA      | canaria: controle nao chega na projecao          | s/FROM lidas ca CROSS JOIN controle_credencial cred/FROM lidas ca/
 PEGA      | canaria: mapa embutido vira {} (tudo INDETERMIN.)| s/jsonb_each_text\(\$\{SENTINELA_MAPA\}::jsonb\)/jsonb_each_text('{}'::jsonb)/
 # ── o DISPARO: corpo errado não é "não respondeu" — é a edge caindo no FLUXO REAL ──
@@ -244,10 +266,9 @@ PEGA      | --caro aceito em silencio no modo canaria        | s/^    if \(caras
 PEGA      | --so-leitura aceito em silencio (leitura sem mapa)| s/if \(soLeitura === true\)/if (false)/
 PEGA      | canaria repetida na leva (dispara duas vezes)    | s/if \(duplicadas\.length > 0\)/if (false)/
 
-# As duas invariantes do controle de credencial que as asserções `>= \d+` NAO prendiam: o
-# regex aceita `>= 0`, e com piso zero UMA resposta 2xx ja "prova" a credencial. A segunda
-# guarda o fail-CLOSED do 401 ambiguo — trocar o THEN por veredito confiante e fail-open.
-PEGA      | canaria: piso do controle zerado (1 resposta 2xx ja 'prova')  | s/cred\.ok_recentes >= \$\{PISO_CONTROLE_CREDENCIAL\}/cred.ok_recentes >= 0/
+# O fail-CLOSED do 401 ambiguo: trocar o THEN por veredito confiante e fail-open. A gemea que
+# ancorava em `cred.ok_recentes >= ${PISO}` saiu em 2026-09-09 junto com o poder de decisao do
+# historico; o piso segue mutado na secao do controle, agora pelo texto do CONTEXTO.
 PEGA      | canaria: fallback do 401 deixa de ser INDETERMINADO (fail-open) | s/THEN 'INDETERMINADO — 401 nao separa bundle sem canaria/THEN 'SEM CANARIA NO AR — 401 nao separa bundle sem canaria/
 
 # EQUIVALENCIA_CANARIA — a prova executada (`db/test-canaria-veredito.sh`) julga o SQL da FIXTURE,
