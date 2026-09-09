@@ -102,7 +102,7 @@ export function VisaoGeralTab({
         />
         <KpiCard
           title="Saldo Bancário"
-          value={activeResumo?.saldo_total_cc || 0}
+          value={activeResumo?.saldo_total_cc ?? null}
           icon={Wallet}
           color="text-status-info"
           bgColor="bg-status-info-bg"
@@ -192,10 +192,10 @@ export function VisaoGeralTab({
               <div className="text-center p-3 rounded-lg bg-muted/40">
                 <p className="text-xs text-muted-foreground">Cobertura de Caixa</p>
                 <p className={`text-lg kpi-value mt-1 ${
-                  activeResumo.total_a_pagar > 0 && (activeResumo.saldo_total_cc / activeResumo.total_a_pagar) >= 0.5
+                  activeResumo.saldo_total_cc !== null && activeResumo.total_a_pagar > 0 && (activeResumo.saldo_total_cc / activeResumo.total_a_pagar) >= 0.5
                     ? 'text-status-success' : 'text-status-error'
                 }`}>
-                  {activeResumo.total_a_pagar > 0
+                  {activeResumo.saldo_total_cc !== null && activeResumo.total_a_pagar > 0
                     ? `${((activeResumo.saldo_total_cc / activeResumo.total_a_pagar) * 100).toFixed(0)}%`
                     : '—'}
                 </p>

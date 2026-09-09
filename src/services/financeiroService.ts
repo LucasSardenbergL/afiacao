@@ -14,7 +14,14 @@ import type {
 
 export interface FinResumo {
   contas_correntes: { descricao: string; saldo_atual: number; banco: string }[];
-  saldo_total_cc: number;
+  /**
+   * Soma dos saldos das contas ativas — `null` quando INDISPONÍVEL (nenhuma conta ativa,
+   * ou alguma conta com saldo desconhecido). Ausente ≠ zero: o `reduce` devolvia `0` tanto
+   * para "não sei" quanto para "as contas somam zero", e os dois alimentavam a mesma
+   * divisão de cobertura de caixa e a mesma projeção. Mesma blindagem que a
+   * `fin-cashflow-engine` já aplica com `exigirLinhas` no caminho dela.
+   */
+  saldo_total_cc: number | null;
   total_a_receber: number;
   total_a_pagar: number;
   total_vencido_receber: number;
@@ -246,7 +253,18 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
       somarSaldoPorStatus("fin_contas_pagar", company, VENCIDO_TITLE_STATUSES),
     ]);
 
-    const contasNorm = (contas || []).map((c) => ({
+    const contasBrutas = contas ?? [];
+
+    // Ausente ≠ zero. O `reduce` cru devolvia `0` em dois estados que NÃO são o mesmo fato:
+    // "nenhuma conta ativa" (a leitura não errou — RLS ou flag `ativo` podem devolver lista
+    // vazia sem erro) e "as contas somam zero". Esse zero fabricado desce para a divisão de
+    // cobertura de caixa (`financeiroAlerts`) como alerta crítico falso, e para a projeção de
+    // fluxo como âncora que a empresa não tem. Conta ativa com `saldo_atual` NULL contamina
+    // igual: a soma sairia INCOMPLETA, com cara de completa.
+    const saldoIndisponivel =
+      contasBrutas.length === 0 || contasBrutas.some((c) => c.saldo_atual == null);
+
+    const contasNorm = contasBrutas.map((c) => ({
       descricao: c.descricao ?? "",
       saldo_atual: c.saldo_atual ?? 0,
       banco: c.banco ?? "",
@@ -254,7 +272,9 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
 
     resumo[company] = {
       contas_correntes: contasNorm,
-      saldo_total_cc: contasNorm.reduce((s, c) => s + c.saldo_atual, 0),
+      saldo_total_cc: saldoIndisponivel
+        ? null
+        : contasNorm.reduce((s, c) => s + c.saldo_atual, 0),
       total_a_receber: totalAReceber,
       total_a_pagar: totalAPagar,
       total_vencido_receber: vencidoReceber,

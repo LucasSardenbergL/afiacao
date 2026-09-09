@@ -14,7 +14,7 @@ interface Projecao13CardProps {
   empresasAusentes: string[];
   empresasStale: string[];
   caixaInicialProjecao: number | null;  // caixa que a projeção consolidada usou (Σ saldo_inicial coorte)
-  saldoAtualBanco: number;              // totalCC atual
+  saldoAtualBanco: number | null;       // totalCC atual (null = indisponível)
   cohorteCompleta: boolean;             // !parcial — só compara com coorte completa
 }
 

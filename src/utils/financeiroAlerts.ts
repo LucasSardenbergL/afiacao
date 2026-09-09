@@ -43,8 +43,11 @@ export function generateAlerts(
       });
     }
 
-    // Cobertura de caixa baixa (<30% do CP)
-    if (r.total_a_pagar > 0 && r.saldo_total_cc / r.total_a_pagar < 0.30) {
+    // Cobertura de caixa baixa (<30% do CP). Sem saldo conhecido NÃO se alerta: com o zero
+    // fabricado de antes, saldo indisponível virava cobertura de 0% e disparava alerta
+    // CRÍTICO de liquidez sobre uma empresa que pode estar com o caixa cheio. Precisão >
+    // recall — o "—" do KPI de saldo é quem conta ao dono que o dado faltou.
+    if (r.saldo_total_cc !== null && r.total_a_pagar > 0 && r.saldo_total_cc / r.total_a_pagar < 0.30) {
       const pct = ((r.saldo_total_cc / r.total_a_pagar) * 100).toFixed(0);
       alerts.push({
         severity: Number(pct) < 15 ? 'critical' : 'warning',
