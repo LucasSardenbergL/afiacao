@@ -51,6 +51,15 @@ for par in "SONDA:$FILTRO_SONDA" "CANARIA:$FILTRO_CANARIA"; do
   else
     printf 'CONTROLE  %-8s NAO ficou verde ou o filtro nao casou teste algum ✗\n' "$modo"
     printf '          (filtro: %s)\n' "$filtro"
+    # DESPEJA O LOG. Sem isto a mensagem acima e' um veredito sem CAUSA: ela nao distingue
+    # "o filtro nao casou teste" de "o vitest morreu na carga" -- desfechos com conserto oposto.
+    # Medido em 2026-09-09 (PR #2413): o passo reprovou no CI em ~1,45s por execucao, tempo de
+    # falha de INICIALIZACAO e nao de rodar 164 testes, e o log ficava em /tmp, que o runner
+    # descarta. Reproduzir localmente a sequencia exata do CI (mutcheck -> prova) dava VERDE, e
+    # sem a saida do vitest nao havia por onde continuar. Ausencia de evidencia parava a
+    # investigacao; agora a causa viaja junto do veredito.
+    printf '          ── saida do vitest (ultimas 40 linhas) ──\n'
+    tail -40 "/tmp/prova-consumidores.$$.log" | sed 's/^/          | /'
     falhas=$((falhas+1))
   fi
 done
