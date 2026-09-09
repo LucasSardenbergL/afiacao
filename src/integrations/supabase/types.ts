@@ -1718,6 +1718,42 @@ export type Database = {
         }
         Relationships: []
       }
+      db_aplicacoes: {
+        Row: {
+          arquivo: string
+          ator: string
+          commit_sha: string | null
+          concluido_em: string | null
+          erro: string | null
+          estado: string
+          id: number
+          iniciado_em: string
+          sha256: string
+        }
+        Insert: {
+          arquivo: string
+          ator?: string
+          commit_sha?: string | null
+          concluido_em?: string | null
+          erro?: string | null
+          estado?: string
+          id?: never
+          iniciado_em?: string
+          sha256: string
+        }
+        Update: {
+          arquivo?: string
+          ator?: string
+          commit_sha?: string | null
+          concluido_em?: string | null
+          erro?: string | null
+          estado?: string
+          id?: never
+          iniciado_em?: string
+          sha256?: string
+        }
+        Relationships: []
+      }
       default_prices: {
         Row: {
           created_at: string
@@ -19103,6 +19139,10 @@ export type Database = {
           p_run_id: number
         }
         Returns: Json
+      }
+      aplicar_sql: {
+        Args: { p_id: number; p_sha: string; p_sql: string }
+        Returns: string
       }
       apply_score_updates: { Args: { p_updates: Json }; Returns: number }
       apriori_universo_snapshot: {

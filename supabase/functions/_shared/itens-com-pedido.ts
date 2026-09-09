@@ -43,7 +43,7 @@
 // edges importam `npm:@supabase/supabase-js@2` e NUNCA rodam sob `--no-remote`, então enquanto a
 // leitura morasse lá dentro nenhuma afirmação sobre ela seria EXECUTÁVEL. Aqui roda contra um
 // double que satisfaz `BancoPostgrest`, no runtime real.
-import { FalhaLeituraCritica } from "./leitura-critica.ts";
+import { FalhaLeituraCritica, type RespostaLeitura } from "./leitura-critica.ts";
 import type { BancoPostgrest } from "./paginate.ts";
 import { STATUS_NAO_VENDA } from "./universo-pedidos.ts";
 
@@ -84,22 +84,29 @@ function itensDoSnapshot(bruto: unknown, label: string): unknown[] {
   return envelope.itens;
 }
 
-/** Executa a RPC-snapshot e devolve os itens já validados. */
-async function lerSnapshot(
-  db: BancoPostgrest,
-  fn: string,
-  args: Record<string, unknown>,
-): Promise<unknown[]> {
-  // `rpc<unknown>` porque o tipo da interface (`data: T[] | null`) descreve o caso SETOF, e estas
-  // funções devolvem UM `jsonb` escalar. Não há cast fingindo o contrário: o que chega é `unknown`
-  // e quem estabelece a forma é `itensDoSnapshot`, em RUNTIME. Tipo estático não sabe o que o
-  // PostgREST devolveu; o parser sabe.
-  const { data, error } = await db.rpc<unknown>(fn, args);
+/**
+ * Valida a resposta da RPC-snapshot e devolve os itens.
+ *
+ * ⚠️ O nome da RPC NÃO entra aqui como fonte da chamada — ele fica LITERAL no `.rpc(` de cada
+ * loader. Este helper já recebeu `fn: string` e executava `db.rpc(fn, args)`, e isso tornava a
+ * dependência de banco INVISÍVEL para o pré-flight estático (`scripts/lib/edge-rpcs.ts`), que só
+ * enxerga o literal colado na chamada. O efeito não era um deploy errado: era o gate de
+ * `pendencias-pacote.ts` recusando liberar a edge por não conseguir MEDIR a cobertura — em
+ * 2026-09-08 isso travou o deploy de `fin-valor-cockpit` (exit 3, "a lista está INCOMPLETA"),
+ * com as duas RPCs existindo em prod o tempo todo. Manter o literal no call-site elimina a
+ * indireção por construção, que é mais barato e mais seguro do que ensinar o extrator a
+ * resolvê-la (2ª opinião do Codex nesta entrega). O `fn` aqui é só rótulo de erro.
+ */
+function validarSnapshot(resposta: RespostaLeitura<unknown[]>, fn: string): unknown[] {
   // Envelope na ORIGEM: o `code` do PostgREST (57014 timeout, 42501 RLS, 54000 teto estourado) é o
   // que separa "o banco piscou" de "a role não enxerga" de "o universo cresceu além do fusível" na
   // classificação operacional — e morreria num envelope aplicado por fora.
-  if (error) throw new FalhaLeituraCritica(fn, error);
-  return itensDoSnapshot(data, fn);
+  if (resposta.error) throw new FalhaLeituraCritica(fn, resposta.error);
+  // `rpc<unknown>` no call-site porque o tipo da interface (`data: T[] | null`) descreve o caso
+  // SETOF, e estas funções devolvem UM `jsonb` escalar. Não há cast fingindo o contrário: o que
+  // chega é `unknown` e quem estabelece a forma é `itensDoSnapshot`, em RUNTIME. Tipo estático não
+  // sabe o que o PostgREST devolveu; o parser sabe.
+  return itensDoSnapshot(resposta.data, fn);
 }
 
 export interface ItemComPedidoApriori {
@@ -123,9 +130,10 @@ export interface ItemComPedidoApriori {
  * para; que é o desfecho certo quando a alternativa é publicar regra sobre o que não é venda.
  */
 export async function carregarItensApriori(db: BancoPostgrest): Promise<ItemComPedidoApriori[]> {
-  const itens = await lerSnapshot(db, "apriori_universo_snapshot", {
+  const resposta = await db.rpc<unknown>("apriori_universo_snapshot", {
     p_status_nao_venda: STATUS_NAO_VENDA,
   });
+  const itens = validarSnapshot(resposta, "apriori_universo_snapshot");
   return itens as ItemComPedidoApriori[];
 }
 
@@ -176,8 +184,9 @@ export async function carregarItensCockpit(
   db: BancoPostgrest,
   createdAtDe: string,
 ): Promise<ItemComPedidoCockpit[]> {
-  const itens = await lerSnapshot(db, "cockpit_itens_snapshot", {
+  const resposta = await db.rpc<unknown>("cockpit_itens_snapshot", {
     p_created_at_de: createdAtDe,
   });
+  const itens = validarSnapshot(resposta, "cockpit_itens_snapshot");
   return itens as ItemComPedidoCockpit[];
 }
