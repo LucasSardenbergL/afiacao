@@ -93,7 +93,8 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp
 AS $funcao$
 DECLARE
-  v_sha_real text;
+  v_sha_real   text;
+  v_sha_ledger text;
 BEGIN
   IF p_sql IS NULL OR length(btrim(p_sql)) = 0 THEN
     RAISE EXCEPTION 'APLICAR_SQL: corpo vazio' USING ERRCODE = '22023';
@@ -106,16 +107,37 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- TRAVA e VALIDA a tentativa ANTES do EXECUTE. Conferir só depois seria tarde: o corpo já
+  -- teria rodado. E `WHERE id = p_id` sozinho não bastava — aceitava um id JÁ fechado (o corpo
+  -- executava de novo e a mesma linha era reescrita, sem violar unicidade nenhuma) e aceitava
+  -- um id de OUTRO hash (recibo apontando para bytes que não são os que rodaram). O FOR UPDATE
+  -- serializa quem tentar usar a mesma tentativa em paralelo.
+  SELECT sha256 INTO v_sha_ledger
+    FROM public.db_aplicacoes
+   WHERE id = p_id AND estado = 'tentativa'
+     FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'APLICAR_SQL: tentativa % inexistente ou já fechada — NADA foi executado', p_id
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- O ensaio grava o hash prefixado (a linha morre no ROLLBACK); fora isso, tem de bater.
+  IF v_sha_ledger NOT IN (p_sha, 'ensaio:' || p_sha) THEN
+    RAISE EXCEPTION 'APLICAR_SQL: tentativa % é de OUTRO corpo (ledger=%, recebido=%)',
+      p_id, v_sha_ledger, p_sha USING ERRCODE = '22023';
+  END IF;
+
   -- O apply. Erro aqui aborta a função inteira, e com ela o recibo abaixo: é o que garante
   -- que "aplicada" nunca sobrevive a uma migration que voltou atrás.
   EXECUTE p_sql;
 
   UPDATE public.db_aplicacoes
      SET estado = 'aplicada', concluido_em = now()
-   WHERE id = p_id;
+   WHERE id = p_id AND estado = 'tentativa';
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'APLICAR_SQL: tentativa % não existe no ledger', p_id USING ERRCODE = '22023';
+    RAISE EXCEPTION 'APLICAR_SQL: recibo % não pôde ser fechado', p_id USING ERRCODE = '22023';
   END IF;
 
   RETURN 'FIM_APLICACAO_OK';

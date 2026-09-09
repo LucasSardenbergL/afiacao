@@ -83,9 +83,25 @@ git ls-files --error-unmatch -- "$ARQUIVO" >/dev/null 2>&1 \
   || morre 2 "arquivo tem alteração não-commitada: $ARQUIVO
    O SHA-256 gravado no ledger precisa apontar para bytes recuperáveis na história."
 
-SHA="$(shasum -a 256 "$ARQUIVO" | awk '{print $1}')"
+# UMA leitura, três usos. Hash, checagem da tag e corpo precisam ver os MESMOS bytes: ler o
+# arquivo três vezes abre janela para trocar o conteúdo entre a checagem e o envio (o hash
+# recusaria uma troca comum, mas inserir o delimitador DEPOIS da checagem romperia o envelope).
+SNAP="$LOG_DIR/db-aplicar-corpo.$$.snap"
+cp "$ARQUIVO" "$SNAP"
+trap 'rm -f "$SNAP"' EXIT
+
+SHA="$(shasum -a 256 "$SNAP" | awk '{print $1}')"
 COMMIT="$(git rev-parse --short HEAD)"
-[ -n "$SHA" ] || morre 2 "não consegui calcular o sha256 de $ARQUIVO"
+case "$SHA" in
+  *[!0-9a-f]*|'') morre 2 "sha256 com formato inesperado para $ARQUIVO" ;;
+esac
+case "$COMMIT" in
+  *[!0-9a-f]*|'') morre 2 "commit com formato inesperado: '$COMMIT'" ;;
+esac
+
+# O NOME do arquivo entra em literal SQL. Estar commitado não o torna seguro: um apóstrofo já
+# quebra a query, e um nome construído emendaria comandos FORA da transação da migration.
+ARQUIVO_SQL="${ARQUIVO//\'/\'\'}"
 
 msg "📄 $ARQUIVO"
 msg "🔑 sha256 $SHA · commit $COMMIT"
@@ -125,19 +141,23 @@ msg "📋 ledger: $ESTADOS"
 ID=""
 if [ "$ENSAIO" -eq 0 ]; then
   ID_OUT="$LOG_DIR/db-aplicar-id.$$.log"
+  ID_ERR="$LOG_DIR/db-aplicar-id.$$.err"
   # `-q` porque psql imprime o TAG do comando junto da linha: sem ele, `1` + `INSERT 0 1`
   # colam e viram o id "1INSERT01". Pego pela prova PG17 na primeira execução.
   if ! "$RW" -X -A -t -q -v ON_ERROR_STOP=1 -c "
     insert into public.db_aplicacoes (arquivo, sha256, commit_sha, estado)
-    values ('$ARQUIVO', '$SHA', '$COMMIT', 'tentativa') returning id" > "$ID_OUT" 2>&1; then
-    msg "$(head -c 600 "$ID_OUT")"; rm -f "$ID_OUT"
+    values ('$ARQUIVO_SQL', '$SHA', '$COMMIT', 'tentativa') returning id" > "$ID_OUT" 2>"$ID_ERR"; then
+    msg "$(head -c 600 "$ID_ERR")"; rm -f "$ID_OUT" "$ID_ERR"
     morre 6 "não consegui gravar a tentativa — abortei ANTES de tocar no banco"
   fi
-  # Cinto E suspensório: só a 1ª linha, só dígitos. Um id não-numérico vira SQL quebrado lá
-  # na frente, DEPOIS de o apply já ter rodado — exatamente o momento em que falhar é mais caro.
-  ID="$(head -1 "$ID_OUT" | tr -dc '0-9')"
-  ID_CRU="$(head -c 120 "$ID_OUT")"; rm -f "$ID_OUT"
-  [ -n "$ID" ] || morre 6 "o insert da tentativa não devolveu id numérico (veio: '$ID_CRU')"
+  # VALIDAR, não sanear. `tr -dc '0-9'` sobre uma linha que traga aviso junto com número
+  # FABRICA outro id — e um id fabricado aponta o recibo para a tentativa errada. Por isso o
+  # stderr vai para arquivo próprio e a linha tem de ser inteiramente numérica.
+  ID="$(head -1 "$ID_OUT" | tr -d '[:space:]')"
+  ID_CRU="$(head -c 120 "$ID_OUT")"; rm -f "$ID_OUT" "$ID_ERR"
+  case "$ID" in
+    ''|*[!0-9]*) morre 6 "o insert da tentativa não devolveu uma linha só de dígitos (veio: '$ID_CRU')" ;;
+  esac
   msg "🧾 tentativa #$ID registrada"
 fi
 
@@ -147,7 +167,7 @@ fi
 # O corpo viaja como PARÂMETRO dollar-quoted. Se o próprio arquivo contiver a tag, o quoting
 # se fecha cedo e o resto do arquivo vira SQL solto — fail-closed antes de qualquer conexão.
 TAG="aplicar_${SHA:0:12}"
-if grep -qF "\$${TAG}\$" "$ARQUIVO"; then
+if grep -qF "\$${TAG}\$" "$SNAP"; then
   morre 2 "o arquivo contém a tag de quoting \$${TAG}\$ — recuso para não quebrar o corpo"
 fi
 
@@ -162,7 +182,7 @@ if [ "$ENSAIO" -eq 1 ]; then
   # com o índice único de sucesso quando o arquivo JÁ foi aplicado de verdade. O prefixo some
   # no ROLLBACK junto com a linha; o hash conferido pela função continua sendo o real.
   ABERTURA="INSERT INTO public.db_aplicacoes (arquivo, sha256, commit_sha, estado)
-     VALUES ('$ARQUIVO', 'ensaio:$SHA', '$COMMIT', 'tentativa') RETURNING id AS eid"
+     VALUES ('$ARQUIVO_SQL', 'ensaio:$SHA', '$COMMIT', 'tentativa') RETURNING id AS eid"
 fi
 
 APPLY_SQL="$LOG_DIR/db-aplicar-corpo.$$.sql"
@@ -173,7 +193,7 @@ APPLY_SQL="$LOG_DIR/db-aplicar-corpo.$$.sql"
   printf "SET LOCAL statement_timeout = '300s';\nSET LOCAL lock_timeout = '15s';\n"
   printf '%s \\gset\n' "$ABERTURA"
   printf 'SELECT public.aplicar_sql($%s$' "$TAG"
-  cat "$ARQUIVO"
+  cat "$SNAP"
   printf '$%s$, %s, :eid) AS controle;\n%s\n' "$TAG" "'$SHA'" "$FECHO"
 } > "$APPLY_SQL"
 
@@ -202,18 +222,43 @@ if [ "$RC" -eq 0 ] && [ "$TEM_MARCADOR" -eq 1 ]; then
 fi
 
 # Falhou. Distinguir rollback LIMPO de resultado DESCONHECIDO é o que evita a dupla aplicação.
-ERRO="$(grep -iE '^(psql:)?.*(ERRO|ERROR|FATAL|PANIC)' "$APPLY_OUT" | head -3 | tr '\n' ' ' | cut -c1-400)"
+# `|| true` NÃO é preguiça: sem ele, `grep` sem match devolve 1, o `pipefail` propaga e o
+# `set -e` MATA o script nesta atribuição — matando junto o ramo DESCONHECIDO logo abaixo,
+# que existe exatamente para o caso "nenhum erro reconhecível". O ramo ficava inalcançável no
+# único cenário que o justifica, e o teste não via porque aceitava "qualquer coisa ≠ 0".
+ERRO="$(grep -iE '^(psql:)?.*(ERRO|ERROR|FATAL|PANIC)' "$APPLY_OUT" | head -3 | tr '\n' ' ' | cut -c1-400 || true)"
 msg "$(tail -c 900 "$APPLY_OUT")"
 
 if [ "$ENSAIO" -eq 1 ]; then
   morre 4 "ENSAIO falhou (nada gravado, como esperado): ${ERRO:-sem mensagem}"
 fi
 
+# RECONCILIAR ANTES DE MARCAR. Um COMMIT que chegou e cuja RESPOSTA se perdeu deixa o recibo
+# em 'aplicada'. Sobrescrevê-lo com 'falhou' faria duas coisas ruins de uma vez: apagaria a
+# prova de que aplicou, e tiraria a linha do índice único parcial — liberando a REAPLICAÇÃO
+# dos mesmos bytes. Ler o estado antes de escrever é o que fecha esse buraco.
+EST_POS=""
+if "$RW" -X -A -t -q -c "select estado from public.db_aplicacoes where id=$ID" \
+     > "$LOG_DIR/db-aplicar-pos.$$.log" 2>/dev/null; then
+  EST_POS="$(head -1 "$LOG_DIR/db-aplicar-pos.$$.log" | tr -d '[:space:]')"
+fi
+rm -f "$LOG_DIR/db-aplicar-pos.$$.log"
+
+if [ "$EST_POS" = "aplicada" ]; then
+  msg "⚠️  o recibo #$ID está 'aplicada': o COMMIT CHEGOU e só a resposta se perdeu."
+  msg "   Não reescrevi a linha. Confira o efeito por psql-ro antes de qualquer outra coisa."
+  msg "   log: $APPLY_OUT"
+  exit 0
+fi
+
+# `and estado='tentativa'` em AMBOS os updates: nada aqui pode reescrever um recibo já
+# fechado. Se o estado não for mais 'tentativa', a linha simplesmente não é tocada.
 if [ "$RC" -ne 0 ] && [ -n "$ERRO" ]; then
   # O banco RESPONDEU com erro → a transação abortou → rollback limpo, sem meia-migration.
   ERRO_SQL="${ERRO//\'/\'\'}"
   "$RW" -X -A -t -c "update public.db_aplicacoes
-     set estado='falhou', concluido_em=now(), erro='$ERRO_SQL' where id=$ID" >/dev/null 2>&1 \
+     set estado='falhou', concluido_em=now(), erro='$ERRO_SQL'
+     where id=$ID and estado='tentativa'" >/dev/null 2>&1 \
     || msg "⚠️  não consegui marcar #$ID como 'falhou' — corrija a linha à mão"
   morre 4 "APPLY FALHOU e a transação voltou atrás (nada aplicado pela metade): $ERRO"
 fi
@@ -222,7 +267,8 @@ fi
 # que NÃO pode ser reaplicado automaticamente.
 "$RW" -X -A -t -c "update public.db_aplicacoes
    set estado='desconhecido', concluido_em=now(),
-       erro='sem marcador de fim; rc=$RC' where id=$ID" >/dev/null 2>&1 \
+       erro='sem marcador de fim; rc=$RC'
+   where id=$ID and estado='tentativa'" >/dev/null 2>&1 \
   || msg "⚠️  não consegui marcar #$ID como 'desconhecido' — corrija a linha à mão"
 morre 5 "RESULTADO DESCONHECIDO (rc=$RC, marcador '$MARCADOR' ausente).
    NÃO reaplique por reflexo. Confira o efeito por leitura independente (psql-ro) e decida.

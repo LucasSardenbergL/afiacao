@@ -195,6 +195,24 @@ fi
 eq "A8 e NADA foi executado" \
    "$(q "select to_regclass('public.fixture_sha_mentiroso') is null")" "t"
 
+echo "▶ A9 — tentativa JÁ FECHADA não pode ser reusada (nem executa)"
+# `WHERE id = p_id` sozinho aceitava um id já 'aplicada': o corpo rodava DE NOVO e a mesma
+# linha era reescrita, sem violar unicidade. Agora a validação trava ANTES do EXECUTE.
+$PSQL -c "DROP TABLE IF EXISTS public.fixture_reuso" >/dev/null 2>&1
+ID_FECHADO="$(q "select id from public.db_aplicacoes where estado='aplicada' order by id limit 1")"
+REUSO="$WORK/reuso.log"
+"$SHIM" -X -A -t -c "select public.aplicar_sql(
+   \$y\$CREATE TABLE public.fixture_reuso(i int);\$y\$,
+   encode(sha256(convert_to(\$y\$CREATE TABLE public.fixture_reuso(i int);\$y\$,'UTF8')),'hex'),
+   ${ID_FECHADO:-0})" > "$REUSO" 2>&1 || true
+if grep -qE 'inexistente ou já fechada' "$REUSO"; then
+  ok "A9 tentativa fechada é recusada com mensagem própria"
+else
+  nok "A9" "esperava recusa por tentativa fechada, veio: $(head -c 200 "$REUSO")"
+fi
+eq "A9 e o corpo NÃO foi executado" \
+   "$(q "select to_regclass('public.fixture_reuso') is null")" "t"
+
 echo "▶ A7 — sonda fail-closed"
 SHIM_ERRADO="$WORK/psql-rw-errado"
 { echo '#!/usr/bin/env bash'
@@ -218,12 +236,31 @@ echo "▶ S1 — o marcador de fim deixa de ser emitido (psql sai 0 e o SQL não
 # O marcador agora é o RETURN da função, não um literal no script. Trocar a constante que o
 # script PROCURA simula "o marcador não chegou": rc=0, apply de fato ocorreu, e mesmo assim o
 # veredito não pode ser sucesso — é o que separa "exit 0" de "terminou".
-sabota "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m"
+sabota "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m; s/^  EST_POS=.*\$/  EST_POS=''/m"
 S1="$(rc_de "$FIX_OK")"
-if [ "$S1" != "0" ]; then
-  ok "S1 vermelho: sem marcador o exit 0 NÃO é aceito como sucesso ($S1 ≠ 0)"
+# Exigir o código EXATO, não "≠ 0". A versão frouxa aceitou exit 1 — que era o script MORRENDO
+# por `set -e` na captura do erro (grep sem match ⇒ 1 ⇒ pipefail ⇒ morte), com o ramo
+# DESCONHECIDO inalcançável logo abaixo. A sabotagem ficava verde por cima de um ramo morto.
+#
+# Duas sabotagens juntas de propósito: some o marcador E some a reconciliação pelo ledger.
+# São as DUAS testemunhas independentes de que o apply terminou; cegar só uma deixa a outra
+# responder certo (foi o que aconteceu — com só o marcador cego, o script leu 'aplicada' no
+# ledger e concluiu, corretamente, que o COMMIT tinha chegado). Cegar as duas é o único
+# estado em que o veredito honesto é "não sei".
+if [ "$S1" = "5" ]; then
+  ok "S1 vermelho: cegas as DUAS testemunhas, o veredito é DESCONHECIDO (5) — ramo ALCANÇÁVEL"
 else
-  nok "S1" "sabotagem NÃO mudou nada — exit 0 sozinho está bastando"
+  nok "S1" "esperava exit 5 (desconhecido); veio '$S1'. 'Qualquer coisa ≠ 0' esconde ramo morto"
+fi
+
+echo "▶ S4 — só o marcador cego: o LEDGER responde, e o script não finge sucesso limpo"
+$PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
+sabota "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m"
+S4="$(rc_de "$FIX_OK")"
+if [ "$S4" = "0" ] && grep -q 'COMMIT CHEGOU' "$WORK/out.log"; then
+  ok "S4 a reconciliação pelo ledger reconhece o COMMIT e AVISA que a resposta se perdeu"
+else
+  nok "S4" "esperava exit 0 + aviso 'COMMIT CHEGOU'; veio '$S4' / $(tail -c 150 "$WORK/out.log")"
 fi
 $PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
 
