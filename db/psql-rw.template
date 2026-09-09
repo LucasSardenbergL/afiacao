@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# psql de ESCRITA -> Postgres de PRODUÇÃO do Afiação (Supabase/Lovable, claude_rw, eu-west-1).
+#
+# Instale com:  cp db/psql-rw.template ~/.config/afiacao/psql-rw && chmod +x ~/.config/afiacao/psql-rw
+# Este arquivo NÃO contém segredo — a senha vive só em ~/.config/afiacao/claude_rw.pgpass (chmod 600).
+#
+# Diferenças deliberadas do irmão `psql-ro`:
+#   • PSQLRC=/dev/null — o `psqlrc-ro` força SESSION READ ONLY; herdá-lo aqui quebraria toda
+#     escrita. Melhor não depender de qual psqlrc está no disco: este canal define o seu.
+#   • sem `SET SESSION ... READ ONLY`, obviamente.
+#   • SEM PGOPTIONS. O cabeçalho do `psql-ro` já registra: "o pooler ignora PGOPTIONS, mas
+#     respeita SET via psqlrc". Timeout posto aqui seria descartado EM SILÊNCIO — guard-rail
+#     que não existe é pior que guard-rail ausente, porque você acha que tem um.
+#     Os timeouts reais são `SET LOCAL` DENTRO da transação, em scripts/db-aplicar.sh.
+#
+# ⚠️ Este wrapper é o canal de ESCRITA em produção. Use via `bun run db:aplicar`, que carrega
+#    o ledger, o SHA-256, os timeouts e o marcador de fim. Chamá-lo cru contorna a trilha inteira.
+exec env PGPASSFILE="$HOME/.config/afiacao/claude_rw.pgpass" \
+  PSQLRC=/dev/null \
+  /opt/homebrew/opt/postgresql@17/bin/psql \
+  "host=aws-1-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=claude_rw.fzvklzpomgnyikkfkzai sslmode=require" "$@"
