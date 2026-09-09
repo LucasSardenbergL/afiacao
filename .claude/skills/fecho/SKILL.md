@@ -38,6 +38,28 @@ veredito, para nada ficar dependendo da memória dele:
    Exceção: pendência que depende de decisão/etapa futura (ex.: fase 5 que espera a 3) fica
    registrada em doc/plano com o gatilho de quando virar chip — e isso é dito no veredito.
 
+⚠️ **O destino 2 tem DUAS portas antes dele (pedido do founder, 2026-09-08: *"eu quero abrir
+chips que de fato eu precise clicar visto que você não consegue automatizar durante a sessão"*).**
+A escolha do destino é por **CAPACIDADE**, não por tamanho — "merece sessão própria" é a pergunta
+errada quando existe comando que responde aqui:
+
+- **Existe comando que responde a pergunta? Então RODE, não chipe.** `pendencias:deploy` para
+  "está no ar", `psql-ro` para "migration aplicada"/"cron rodou", `gh run list` para "main verde",
+  `wt:orfas` para "sessão morta com trabalho fora". Chip que manda o founder abrir sessão para
+  rodar um comando é ordem que eu deveria ter executado — e das 130 medidas na classe
+  "verificar/provar", **89 eram só isso**.
+- **Consulta que NÃO RESPONDEU não é pendência, é tentativa a repetir.** Exit 2, "inconsultável",
+  "não consegui consultar" = mecânica, e `ausente ≠ zero` vale no tempo. RODE DE NOVO antes de
+  virar chip; só se falhar OUTRA vez vira chip — e aí o chip é *"consertar o sensor"*, nunca
+  *"provar X"*. Caso: em 08/09 um `pendencias:deploy` em exit 2 virou chip e a re-execução no
+  mesmo dia deu exit 0 com 59/59.
+- **Estado COMPARTILHADO duplica por desenho.** Antes de chipar defeito de infra comum (CI, gate,
+  sonda, ledger, edge pendente), lembre que ~30 worktrees veem o mesmo estado: em 06–08/09, DOIS
+  defeitos viraram **35 chips**. O `chip-duplicata-guard.sh` avisa no `spawn_task`, mas o aviso
+  chega depois de você já ter decidido — decida antes.
+
+Detalhe e números: [chips-duplicados-por-estado-compartilhado.md](../../../docs/historico/chips-duplicados-por-estado-compartilhado.md).
+
 O veredito final rotula cada pendência com seu destino: ✔ resolvida agora · 🔘 chip
 "<título exato>" · 🚫 descartada (porquê) · 📌 registrada em <doc> com gatilho. **"PODE
 ARQUIVAR" só quando TODA pendência tem destino** — "fica na sua mão lembrar" não é destino.
