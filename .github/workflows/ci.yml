@@ -1126,27 +1126,32 @@ jobs:
       - name: mutcheck — selftest (mecânica da ferramenta, sem vitest)
         run: bun run mutcheck:selftest
 
-      # ⏸️ O step `prova por consumidor` (scripts/prova-consumidores-controle.sh) SAIU daqui em
-      # 2026-09-09, no mesmo dia em que entrou pelo #2424 — ele derrubou a main e a causa ainda
-      # NÃO é conhecida. O que se sabe, medido: no runner o passo reprova em ~1,45 s por execução
-      # (#2413) — tempo de falha de INICIALIZAÇÃO do vitest, não de rodar 164 testes —, o CONTROLE
-      # sai vermelho nos DOIS modos, e local é verde em todas as combinações tentadas: com e sem
-      # `LC_ALL=C`, e reproduzindo a sequência exata `mutcheck → prova`.
-      #
-      # Sai porque main vermelha é custo de TODAS as worktrees, e um gate cuja falha ninguém
-      # explica não é cobertura: é ruído com poder de veto. Não vira "verde condicional" nem
-      # `continue-on-error` — gate que não pode reprovar mente pior do que gate ausente.
-      #
-      # VOLTA quando a causa estiver medida. O script segue no repo, roda à mão, e agora despeja a
-      # saída do vitest na falha (era só isso que faltava para o diagnóstico não parar por falta de
-      # evidência). Enquanto ele não volta, a consolidação que o `.mut` declara — duas mutações
-      # gêmeas viraram uma — segue afirmada e NÃO medida no CI:
-      #   bash scripts/prova-consumidores-controle.sh
-
       - name: mutcheck — contratos de cobertura money-path (.mut)
         env:
           MUTCHECK_RESUMO: /tmp/mutcheck-resumo.json
         run: bun run mutcheck
+
+      # O `mutcheck` acima roda a suíte INTEIRA e reporta o AGREGADO. Desde que a mecânica do
+      # `controle_credencial` virou uma função só (sonda + canária), "PEGA" passou a significar
+      # apenas "algum teste morreu" — uma metade bem coberta esconde a outra descoberta, e o `.mut`
+      # ficaria afirmando cobertura que ninguém mediu. Este step roda a MESMA mutação contra cada
+      # modo ISOLADO e exige vermelho nos dois. Vive aqui, e não à mão, porque falsificação que só
+      # roda à mão é ausência de dado (docs/historico/falsificacao-fora-do-ci.md).
+      #
+      # 🔁 VOLTOU em 2026-09-09 (saiu pelo #2433 no mesmo dia, com a causa em aberto). A causa era
+      # o GUARD, não o vitest: ele decidia "o filtro casou teste?" com `grep -qE 'Tests +[0-9]*
+      # passed'` sobre a saída HUMANA, e no runner o vitest COLORE — entre `Tests` e o número há
+      # escapes ANSI que o `+` (só espaços) nunca casa. O vitest ficava verde e o guard reprovava:
+      # verde na M2, vermelho em TODO run do runner. Não era intermitente — o "verde do mesmo SHA"
+      # que confundiu o diagnóstico era o run `schedule`, em que este job inteiro é SKIPPED pelo
+      # `if` acima; job pulado não é job verde. O guard agora lê o reporter JSON (`numPassedTests`),
+      # e o `--selftest` abaixo trava a regressão em ~0,1s, sem vitest.
+      # Custo MEDIDO 2026-09-08 na M2 do founder, sem `heavy`: 20s (4 rodadas de vitest filtradas
+      # por `-t`). O job tem teto de 15min e o step acima consome ~10min — cabe com folga.
+      - name: prova por consumidor — o mutante compartilhado morre nos DOIS modos
+        run: |
+          bash scripts/prova-consumidores-controle.sh --selftest
+          bash scripts/prova-consumidores-controle.sh
 
       # ─── Sensor (2026-09-07) ────────────────────────────────────────────────
       # Este job JÁ rodava na main a cada push — ele só não FALAVA. O vermelho do #2279 durou
