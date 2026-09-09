@@ -1,9 +1,11 @@
 # Flaky "sob carga": o teto que você LÊ não é o que governa — e "é a máquina" esconde um número
 
 **Classe:** um teste pisca quando a M2 8GB está saturada, passa isolado, e a explicação sedutora é
-"é a máquina, sobe o timeout". Nas duas instâncias abaixo essa explicação estava **errada**: medir o
+"é a máquina, sobe o timeout". Nas instâncias **1 e 2** essa explicação estava **errada**: medir o
 trabalho real devolveu um número acionável — um teto na camada errada e um custo algorítmico. A
-carga só revelou; ela não foi a causa.
+carga só revelou; ela não foi a causa. Nas instâncias **3 e 4** a carga era real — e mesmo assim
+"sobe o timeout" continuava errado, porque o que subiu foi o teto **da fonte** (o `it` que varre),
+não o global: medir é que diz qual dos dois.
 
 **Discriminante (a pergunta que decide, ANTES de tocar em qualquer timeout):**
 *quanto tempo o trabalho real leva, e contra qual teto ele corre?* São duas medidas distintas, e
@@ -103,6 +105,36 @@ medida, separando carga · repo · detector — as três hipóteses que o timeou
 Descartados com medição, não com suposição: motor de JS (bun e node concordam), memória (pico de
 219MB), custo do detector (2,05 ms/fonte, estável), e cache incremental — memoizar `acharColapsos`
 baratearia o **2º** `it`, deixando o 1º, que é o gargalo, intacto.
+
+## Instância 4 — reincidência em `authz-*`: a triagem por MEDIÇÃO cortou 33 candidatos em 2
+
+Mesma classe da instância 3, arquivos diferentes: `scripts/authz-funcoes.test.ts` (4 `it`) e
+`scripts/authz-gate-check.test.ts` (2), que varrem as **721 migrations** (7,7 MiB) do repo. O `it`
+da grafia sem parêntese estourou com **33.788ms** contra o `testTimeout: 20000`, sob load 50+.
+
+Uma varredura estática achou **33 arquivos** da classe. Medir na suíte completa deixou **2**: fora o
+`erro-colapsado` (já conforme), só esses passam de 3s — o 4º colocado tem 15× de folga. De novo:
+contar sítios prevê exposição, só medir prevê qual estoura.
+
+Dois números que a instância 3 não tinha:
+
+- **O corpo é SÍNCRONO e o vitest não o interrompe no meio** — só constata o estouro quando ele
+  retorna. Por isso a duração relatada (33.788ms) passa do próprio teto (20.000ms): lê como
+  contradição, mas é o teste inteiro tendo rodado antes de ser reprovado.
+- **A contenção escala com a carga além do 4× medido lá:** o mesmo `it` deu 3.889ms e 5.194ms sob
+  load ~30, 11.580ms numa terceira execução e 33.788ms em load 50+ — **8,7×** de espalhamento
+  dentro do mesmo regime "suíte completa". O teto cobre o pior EVENTO observado, não a mediana.
+
+Fix: 120 ms/migration com piso `Math.max(20_000, …)` — 2,6× o pior evento, a mesma folga
+proporcional que o precedente guarda sobre o evento que o originou. Aplicado aos 4 `it` do describe,
+não só aos caros: o mais barato saltou de 933ms para 2.499ms entre duas execuções, e calibrar quatro
+números sem dado independente para cada um seria precisão fingida.
+
+Convivência com decisão anterior: o `authz-gate-check` já fora tocado pela mesma classe em
+2026-09-07, e a saída de lá foi **memoizar** (`doRepo()`), com o comentário recusando o teto. Isso
+não é desfeito: aquela decisão recusou o teto como SUBSTITUTO de remover a duplicação, e a
+duplicação segue removida — o teto cobre a UMA varredura que sobra, irredutível. Antes de subir
+teto, foi conferido que não havia o defeito da instância 2 (nenhum `new RegExp` recompilado em laço).
 
 ## A receita
 
