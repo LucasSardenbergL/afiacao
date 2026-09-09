@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-09T12:15:19.386Z",
-  "sourceHead": "495cbe2bc38914e662183fa8fa34a2aa6a458da7",
+  "medidoEm": "2026-09-09T17:12:27.094Z",
+  "sourceHead": "18f8a92bfd0658d7ac97d467e09726c577c3d2e1",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -108,147 +108,152 @@
     {
       "gate": "authz:carimbo",
       "verde": true,
-      "ms": 38
+      "ms": 57
     },
     {
       "gate": "authz:check",
       "verde": true,
-      "ms": 1012
+      "ms": 3530
     },
     {
       "gate": "build",
       "verde": true,
-      "ms": 18947
+      "ms": 202943
     },
     {
       "gate": "bunpin:check",
       "verde": true,
-      "ms": 40
+      "ms": 68
     },
     {
       "gate": "canaria:bump",
       "verde": true,
-      "ms": 2034
+      "ms": 3157
     },
     {
       "gate": "claude:size",
       "verde": true,
-      "ms": 32
+      "ms": 109
     },
     {
       "gate": "docs:citacoes",
       "verde": true,
-      "ms": 1372
+      "ms": 2624
     },
     {
       "gate": "docs:indice",
       "verde": true,
-      "ms": 26
+      "ms": 54
     },
     {
       "gate": "docs:links",
       "verde": true,
-      "ms": 306
+      "ms": 538
     },
     {
       "gate": "edges:typecheck",
       "verde": true,
-      "ms": 1535
+      "ms": 2283
     },
     {
       "gate": "evals:deploy-verify",
       "verde": true,
-      "ms": 12305
+      "ms": 20021
     },
     {
       "gate": "evals:deploy-verify:falsificacao",
       "verde": true,
-      "ms": 61626
+      "ms": 139557
     },
     {
       "gate": "exclusividade",
+      "verde": false,
+      "ms": 1312
+    },
+    {
+      "gate": "gate:ambiente",
       "verde": true,
-      "ms": 211
+      "ms": 936
     },
     {
       "gate": "gate:senha-bootstrap",
       "verde": true,
-      "ms": 6560
+      "ms": 23778
     },
     {
       "gate": "gates:frescura",
       "verde": true,
-      "ms": 223
+      "ms": 667
     },
     {
       "gate": "knip",
       "verde": true,
-      "ms": 2734
+      "ms": 10243
     },
     {
       "gate": "lint",
       "verde": true,
-      "ms": 19692
+      "ms": 132900
     },
     {
       "gate": "lint:shell",
       "verde": true,
-      "ms": 20627
+      "ms": 65979
     },
     {
       "gate": "scripts:typecheck",
       "verde": true,
-      "ms": 2251
+      "ms": 21460
     },
     {
       "gate": "sonda:bump",
       "verde": true,
-      "ms": 99
+      "ms": 360
     },
     {
       "gate": "sonda:cron-prova",
       "verde": true,
-      "ms": 235906
+      "ms": 423234
     },
     {
       "gate": "sonda:fingerprint",
       "verde": true,
-      "ms": 100
+      "ms": 112
     },
     {
       "gate": "sonda:nova",
       "verde": true,
-      "ms": 79
+      "ms": 97
     },
     {
       "gate": "test",
       "verde": true,
-      "ms": 110441
+      "ms": 137238
     },
     {
       "gate": "test:edges",
       "verde": true,
-      "ms": 4447
+      "ms": 4920
     },
     {
       "gate": "test:falsificacao",
-      "verde": true,
-      "ms": 522409
+      "verde": false,
+      "ms": 900038
     },
     {
       "gate": "test:hooks",
       "verde": true,
-      "ms": 110428
+      "ms": 149965
     },
     {
       "gate": "test:sonda-rollback",
       "verde": true,
-      "ms": 1924
+      "ms": 2065
     },
     {
       "gate": "tsc",
       "verde": true,
-      "ms": 148
+      "ms": 135
     }
   ],
   "linhas": [
@@ -431,6 +436,16 @@
       ],
       "parouCedo": false,
       "invalido": null
+    },
+    {
+      "defeito": "diretiva-em-string-troca-ambiente",
+      "defeitoFingerprint": "5d9a584afd3a5d67",
+      "alvo": "src/__tests__/app-route-dedupe.test.ts",
+      "suspeito": "gate:ambiente",
+      "origem": "docs/historico/vitest-um-arquivo-oito-processos.md (2026-09-09)",
+      "execucoes": [],
+      "parouCedo": false,
+      "invalido": "perl falhou: Bareword found where operator expected at -e line 1, near \"1i\"\n\t(Missing operator before i?)\nBackslash found where operator expected at -e line 1, near \"i\\\"\nsyntax error at -e line 1, near \"1i\"\nExecut"
     },
     {
       "defeito": "indice-alvo-fantasma",

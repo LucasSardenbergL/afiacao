@@ -1,0 +1,3 @@
+// @vitest-environment node
+export const x = 1;
+// @vitest-environment jsdom

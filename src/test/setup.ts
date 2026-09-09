@@ -12,7 +12,12 @@
 // at module top-level, so any test importing it crashes. Install a working
 // in-memory Storage shim whenever the ambient storage is missing OR broken
 // (a `typeof === "undefined"` guard is insufficient: Node's is defined-but-broken).
-function installStorageShim(name: "localStorage" | "sessionStorage") {
+// `export` para as testemunhas de contrato (`src/test/setup-ambiente-node.test.ts`) poderem
+// chamar a FUNÇÃO com um storage sintético — os dois ramos que importam (preserva o que
+// funciona, troca o que está quebrado) não são observáveis pelo efeito colateral do setup,
+// porque nesta máquina o shim entra nos DOIS ambientes. Só o `export` mudou aqui: a sonda
+// `setItem`/`removeItem` (em vez de `typeof`) é deliberada e continua intacta.
+export function installStorageShim(name: "localStorage" | "sessionStorage") {
   try {
     const existing = (globalThis as unknown as Record<string, Storage | undefined>)[name];
     if (existing) {

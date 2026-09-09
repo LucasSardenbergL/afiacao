@@ -223,6 +223,19 @@ jobs:
       - name: Tests
         run: bun run test
 
+      # O vitest procura `@vitest-environment` com REGEX NO ARQUIVO INTEIRO e aceita o alias
+      # `jest` (coverage.DfSpMS-b.js:2403). Num repo de gates textuais, um teste que CITE o
+      # literal para asserir sobre outro arquivo troca o próprio ambiente em silêncio — e fica
+      # verde, porque não sabe em que ambiente deveria estar. Reproduzido ao construir o gate, e
+      # medido de novo no #2336: citar o token EM PROSA liga o ambiente, inclusive negando
+      # (docs/historico/docblock-de-ambiente-que-liga-o-que-nega.md). Desde aquele PR a diretiva
+      # é o override oficial do particionamento por extensão — 22 arquivos a usam —, e até aqui
+      # o único guarda dela era um comentário no vitest.config.ts.
+      # Roda DEPOIS do `Tests` de propósito: o denominador do gate é a união dos `include` dos
+      # `test.projects`, e uma suíte vermelha por outro motivo tem de aparecer primeiro.
+      - name: Diretiva de ambiente — uma só, no cabeçalho, na allowlist
+        run: bun run gate:ambiente
+
   # ─── Job 3/4 — edges (Deno) + sondas de versão + build + lint (medido: ~150s) ─
   # Agrupados por TOOLCHAIN: é a fatia que precisa do Deno instalado. Build e lint vêm
   # junto por serem contíguos na ordem original e baratos (25s + 22s) — cabem à sombra
@@ -856,6 +869,19 @@ jobs:
             echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
           https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
               | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+            # O runner traz listas de terceiros (Chrome, Edge, MS) que este job NÃO usa, e o
+            # `apt-get update` varre TODAS: um índice inconsistente em qualquer uma aborta o
+            # step inteiro sob `set -e`. Medido 2026-09-09 (runs 34383259513 e dois reruns):
+            # `Hash Sum mismatch` no repo do Chrome derrubou `provas-sql` três vezes seguidas,
+            # sem nada a ver com PostgreSQL. Removemos só o que não é necessário — sem
+            # `|| true`, que mascararia falha real do PGDG ou do repo base.
+            # Glob AMPLO e por conteúdo: o runner declara essas fontes ora em `.list`, ora no
+            # formato deb822 `.sources` — remover só `google-chrome.list` não pegou (medido no
+            # run 34385454727, o erro persistiu). O `ls` fica para diagnóstico: sem ele, cada
+            # tentativa custa um ciclo de CI inteiro só para descobrir onde a fonte mora.
+            ls -la /etc/apt/sources.list.d/ || true
+            sudo rm -f /etc/apt/sources.list.d/*google* /etc/apt/sources.list.d/*chrome* \
+                       /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*msprod* || true
             sudo apt-get update -qq
             sudo apt-get install -y -qq postgresql-17
           fi

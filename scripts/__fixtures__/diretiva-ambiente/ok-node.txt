@@ -1,0 +1,2 @@
+// @vitest-environment node
+export const x = 1;
