@@ -875,8 +875,13 @@ jobs:
             # `Hash Sum mismatch` no repo do Chrome derrubou `provas-sql` três vezes seguidas,
             # sem nada a ver com PostgreSQL. Removemos só o que não é necessário — sem
             # `|| true`, que mascararia falha real do PGDG ou do repo base.
-            sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
-                       /etc/apt/sources.list.d/microsoft-*.list 2>/dev/null || true
+            # Glob AMPLO e por conteúdo: o runner declara essas fontes ora em `.list`, ora no
+            # formato deb822 `.sources` — remover só `google-chrome.list` não pegou (medido no
+            # run 34385454727, o erro persistiu). O `ls` fica para diagnóstico: sem ele, cada
+            # tentativa custa um ciclo de CI inteiro só para descobrir onde a fonte mora.
+            ls -la /etc/apt/sources.list.d/ || true
+            sudo rm -f /etc/apt/sources.list.d/*google* /etc/apt/sources.list.d/*chrome* \
+                       /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*msprod* || true
             sudo apt-get update -qq
             sudo apt-get install -y -qq postgresql-17
           fi
