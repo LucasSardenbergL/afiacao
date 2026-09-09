@@ -3,6 +3,7 @@ import type { Company } from "@/contexts/CompanyContext";
 import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
 import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/dso-dpo-helpers";
 import { OPEN_TITLE_STATUSES } from "@/lib/financeiro/titulo-status";
+import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
 import type {
   FinAgingPagarView,
@@ -755,30 +756,42 @@ function toCsvRow(values: (string | number)[]): string {
     .join(',');
 }
 
-export function exportContasPagarCSV(data: FinContaPagar[]): string {
+/**
+ * ⚠️ A procedência é OBRIGATÓRIA e explícita porque o CSV é o caminho que SAI da tela: vira anexo,
+ * planilha e decisão, longe de qualquer aviso que a página exiba. `valor_pago` e o `saldo` gerado
+ * a partir dele são 0 em 100% do acervo (#396) — exportar o número seria mandar uma fabricação
+ * para dentro de uma planilha. Quando a fonte não ingere a baixa, a célula leva o MOTIVO no lugar.
+ *
+ * O gatilho é a fonte declarada, nunca `valor === 0`: com a baixa ingerida, um 0 medido sai como
+ * `0`. Ver `@/lib/financeiro/procedencia-baixa`.
+ */
+export function exportContasPagarCSV(data: FinContaPagar[], procedencia: ProcedenciaBaixa): string {
   const header = [
     'Empresa', 'Fornecedor', 'CNPJ/CPF', 'Documento', 'Emissão',
     'Vencimento', 'Pagamento', 'Valor', 'Pago', 'Saldo', 'Status', 'Categoria'
   ];
+  const celulaBaixa = (v: number) => baixaOuIndisponivel(v, procedencia) ?? procedencia.motivo ?? '';
   const rows = data.map(cp => [
     cp.company, cp.nome_fornecedor, cp.cnpj_cpf, cp.numero_documento,
     cp.data_emissao || '', cp.data_vencimento || '', cp.data_pagamento || '',
-    cp.valor_documento, cp.valor_pago, cp.saldo, cp.status_titulo,
+    cp.valor_documento, celulaBaixa(cp.valor_pago), celulaBaixa(cp.saldo), cp.status_titulo,
     cp.categoria_descricao || cp.categoria_codigo
   ]);
   return [toCsvRow(header), ...rows.map(toCsvRow)].join('\n');
 }
 
-export function exportContasReceberCSV(data: FinContaReceber[]): string {
+/** Gêmeo de recebíveis do acima — mesma fabricação, mesmo gatilho por FONTE. */
+export function exportContasReceberCSV(data: FinContaReceber[], procedencia: ProcedenciaBaixa): string {
   const header = [
     'Empresa', 'Cliente', 'CNPJ/CPF', 'Documento', 'Pedido', 'Emissão',
     'Vencimento', 'Recebimento', 'Valor', 'Recebido', 'Saldo', 'Status', 'Categoria'
   ];
+  const celulaBaixa = (v: number) => baixaOuIndisponivel(v, procedencia) ?? procedencia.motivo ?? '';
   const rows = data.map(cr => [
     cr.company, cr.nome_cliente, cr.cnpj_cpf, cr.numero_documento,
     cr.numero_pedido || '', cr.data_emissao || '', cr.data_vencimento || '',
-    cr.data_recebimento || '', cr.valor_documento, cr.valor_recebido,
-    cr.saldo, cr.status_titulo, cr.categoria_descricao || cr.categoria_codigo
+    cr.data_recebimento || '', cr.valor_documento, celulaBaixa(cr.valor_recebido),
+    celulaBaixa(cr.saldo), cr.status_titulo, cr.categoria_descricao || cr.categoria_codigo
   ]);
   return [toCsvRow(header), ...rows.map(toCsvRow)].join('\n');
 }

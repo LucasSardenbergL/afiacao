@@ -98,8 +98,12 @@ Mordido 2026-08-14 (#1520 `9f7e8962`, FU4-F fase 3): o `/fecho` pegou `…130000
   mesmo SHA), na ordem **DDL → edges → Publish**. Cada RPC ausente vem com a contagem da **família**
   (irmãs de mesmo prefixo), que separa duas ações opostas: família povoada ⇒ falta ESTA migration,
   aplique-a; família **vazia** ⇒ o domínio não está em prod ou o nome mudou ⇒ **diagnostique, não
-  reaplique**. Cobre só RPC **literal** e só **função** (coluna/tabela/policy seguem manuais) — e
-  não decide deploy: quem decide é o ledger. Narrativa e falsificação:
+  reaplique**. Cobre só RPC **literal**, só **função** e só **existência** — assinatura incompatível
+  de RPC de mesmo nome passa (coluna/tabela/policy seguem manuais) — e não decide deploy: quem
+  decide é o ledger. **As duas metades leem a `origin/main`**: a fatia da colagem E a descoberta das
+  RPCs que a liberam. Ler as RPCs do disco enquanto a colagem saía da ref foi um bug real (2026-09-08,
+  §6 do doc abaixo) — numa worktree atrasada o gate media o `index.ts` que ninguém vai deployar e
+  liberava. Por isso `coletarDaEdge` exige a árvore como ARGUMENTO, sem default. Narrativa e falsificação:
   [`precondicao-de-banco-como-gate.md`](../historico/precondicao-de-banco-como-gate.md).
 - **Proibir "melhorias"** — instrua o chat a deployar **verbatim** o arquivo do repo (o Lovable tende a reescrever a função).
 - **Verificar por comportamento/bytes, não pela palavra do Lovable** — `503 LOAD_FUNCTION_ERROR` + zero `running` no log = a edge não BOOTA → fix é **redeploy**, não código (ver `docs/agent/sync.md`).

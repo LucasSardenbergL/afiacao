@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, onTestFailed } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { auditAuthz, auditCompleto, type Migration } from './authz-gate-check';
@@ -558,6 +558,37 @@ END $r$;`;
 describe('AUTHZ_REESCRITAS_CONHECIDAS — a baseline não pode ser decoração', () => {
   const dirMig = join(import.meta.dirname, '..', 'supabase', 'migrations');
 
+  // ORÇAMENTO DA VARREDURA — medido 2026-09-09 nesta M2 8GB, mesma classe e mesmo denominador do
+  // describe "contra o repo REAL" de authz-funcoes.test.ts (ver o comentário longo de lá).
+  //   1,93 e 2,93 ms/migration isolado no vitest · 4,83 e 7,00 sob a suíte COMPLETA (load ~30).
+  // O `it` que paga o `doRepo()` é o 4º teste mais lento da suíte inteira; sob o fator de contenção
+  // observado no irmão em load 50+ (~6,5×) ele bateria nos ~30s, contra o `testTimeout: 20000`.
+  //
+  // Isto NÃO desfaz a decisão de 2026-09-07 registrada logo abaixo: aquela recusou o teto como
+  // SUBSTITUTO de remover a duplicação — e a duplicação foi removida, é o que `doRepo()` memoiza.
+  // O que sobra é UMA varredura, custo irredutível desta classe, e é ele que o teto cobre. Se um
+  // canário novo voltar a computar por fora do `doRepo()`, o custo dobra e o alarme certo continua
+  // sendo a memoização, não subir este número.
+  const qtdMigrations = readdirSync(dirMig).filter((f) => f.endsWith('.sql')).length; // só LISTA
+  const MS_POR_MIGRATION_TETO = 120; // mesma calibração do irmão: 2,6× o pior evento real medido
+  const ORCAMENTO_VARREDURA_MS = Math.max(20_000, qtdMigrations * MS_POR_MIGRATION_TETO);
+
+  // Teto maior só ajuda se PRESERVA o diagnóstico: `Test timed out in Nms` não nomeia causa.
+  function armarDiagnosticoDeVarredura(): void {
+    const inicio = performance.now();
+    onTestFailed(() => {
+      const ms = performance.now() - inicio;
+      console.error(
+        `\n[authz-gate-check] varredura: ${qtdMigrations} migrations em ${Math.round(ms)}ms = ` +
+          `${(ms / qtdMigrations).toFixed(2)} ms/migration (orçamento ${ORCAMENTO_VARREDURA_MS}ms).\n` +
+          `  Referência 2026-09-09: 2,93 isolado · 7,00 sob a suíte completa.\n` +
+          `  DENTRO da referência → foi CARGA; o detector está íntegro.\n` +
+          `  ACIMA da referência  → é o DETECTOR (auditCompleto), ou o doRepo() deixou de memoizar\n` +
+          `                         e a varredura está rodando duas vezes — teto maior só esconde.`,
+      );
+    });
+  }
+
   it('toda entrada aponta para migration que EXISTE e função que está no AUTHZ_MANIFEST', () => {
     const quebradas = AUTHZ_REESCRITAS_CONHECIDAS.filter(
       (r) => !existsSync(join(dirMig, r.arquivo)) || !AUTHZ_MANIFEST[r.funcao],
@@ -598,18 +629,20 @@ describe('AUTHZ_REESCRITAS_CONHECIDAS — a baseline não pode ser decoração',
   };
 
   it('nenhuma entrada da baseline foi SUPERADA por um CREATE posterior (baseline não podada)', () => {
+    armarDiagnosticoDeVarredura();
     // O prazo de uma entrada não é uma data: é a chegada de um CREATE parseável posterior, que
     // devolve a medição à Parte A. Passado esse ponto a entrada não protege mais nada e ainda
     // desvia o alarme do `authz:audit:prod` para o arquivo errado — foi assim que o MD5_DIVERGIU
     // de `get_defasagem_cliente` ficou aberto de 05/09 a 07/09 culpando uma migration inocente.
     const obsoletas = doRepo().filter((f) => f.msg.includes('REESCRITA_BASELINE_OBSOLETA'));
     expect(obsoletas.map((f) => `${f.file}::${f.fn}`)).toEqual([]);
-  });
+  }, ORCAMENTO_VARREDURA_MS);
 
   it('o repo real não tem NENHUMA reescrita de função do manifest fora da baseline', () => {
+    armarDiagnosticoDeVarredura();
     // O canário do estado atual: se um PR novo introduzir o padrão sobre função do manifest,
     // este teste cai junto com o `authz:check` — e a mensagem diz qual arquivo.
     const naoMedidas = doRepo().filter((f) => f.msg.includes('REESCRITA_VIVA_NAO_MEDIDA'));
     expect(naoMedidas.map((f) => `${f.file}::${f.fn}`)).toEqual([]);
-  });
+  }, ORCAMENTO_VARREDURA_MS);
 });

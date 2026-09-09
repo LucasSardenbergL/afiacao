@@ -20,6 +20,7 @@
   },
   "permissions": {
     "allow": [
+      "Bash(bun run db:aplicar:*)",
       "mcp__lovable__send_message",
       "mcp__lovable__get_me",
       "mcp__lovable__list_projects",

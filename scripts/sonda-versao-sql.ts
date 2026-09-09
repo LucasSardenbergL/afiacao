@@ -37,18 +37,44 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { ARQ_MAPA, lerMapaCommitado } from './sonda-fingerprint';
+import { ARQ_MAPA, parsearMapa } from './sonda-fingerprint';
+
+/**
+ * Um arquivo que ALIMENTOU o `esperado(...)`, com os BYTES que a geração de fato usou.
+ *
+ * Os bytes viajam junto com o caminho de propósito. O guard confere o que a GERAÇÃO leu, não o que
+ * um segundo `readFileSync` devolveria: duas leituras do mesmo arquivo são duas MEDIÇÕES, o SQL sai
+ * da primeira, e conferir a segunda aprova bytes que ninguém emitiu. Desde que a proveniência
+ * carrega os bytes, `conferirSincronia` não recebe mais a `raiz` — não tem como reler, e é o
+ * compilador que garante isso, não um comentário.
+ */
+export interface FonteDoEsperado {
+  readonly caminho: string;
+  readonly bytes: string;
+}
 
 /** Uma edge da leva, com o marcador do `versao.ts` dela e o fingerprint da FONTE dela. */
 export interface EdgeSondada {
   edge: string;
   versao: string;
   fonte: string;
+  /** Os arquivos LIDOS para chegar em `versao` e `fonte` — a fatia que o guard confere. */
+  proveniencia: readonly FonteDoEsperado[];
+}
+
+/** Caminho do `versao.ts` de uma edge, RELATIVO à raiz do repo (é assim que o `git show` pede). */
+function relVersao(edge: string): string {
+  return `supabase/functions/${edge}/versao.ts`;
+}
+
+/** Caminho do `index.ts` de uma edge, RELATIVO à raiz — onde mora o `contrato:` da canária. */
+export function relIndex(edge: string): string {
+  return `supabase/functions/${edge}/index.ts`;
 }
 
 /** Caminho do `versao.ts` de uma edge, a partir da raiz do repo. */
 function caminhoVersao(raiz: string, edge: string): string {
-  return join(raiz, 'supabase', 'functions', edge, 'versao.ts');
+  return join(raiz, relVersao(edge));
 }
 
 /**
@@ -75,7 +101,18 @@ export function extrairVersao(fonte: string): string | null {
  * veredito — é veredito FALSO, e aqui o falso seria POSITIVO.
  */
 export function resolverLeva(raiz: string, edges: string[]): EdgeSondada[] {
-  const mapa = lerMapaCommitado(raiz);
+  // UMA leitura do mapa, e os bytes ficam: são eles que o guard confere. `lerMapaCommitado` leria
+  // de novo lá, e o `esperado(...)` teria saído da leitura de cá.
+  const bytesMapa = (() => {
+    try {
+      return readFileSync(join(raiz, ARQ_MAPA), 'utf8');
+    } catch {
+      return null;
+    }
+  })();
+  const mapa = bytesMapa === null ? {} : parsearMapa(bytesMapa);
+  const fonteMapa: FonteDoEsperado[] =
+    bytesMapa === null ? [] : [{ caminho: ARQ_MAPA, bytes: bytesMapa }];
   const semSensor: string[] = [];
   const semMarcador: string[] = [];
   const semFingerprint: string[] = [];
@@ -98,7 +135,15 @@ export function resolverLeva(raiz: string, edges: string[]): EdgeSondada[] {
       semFingerprint.push(edge);
       continue;
     }
-    resolvidas.push({ edge, versao, fonte: mapa[edge] });
+    resolvidas.push({
+      edge,
+      versao,
+      fonte: mapa[edge],
+      // O `versao.ts` DESTA edge (os bytes de que `versao` saiu) e o mapa (de que `fonte` saiu).
+      // Nada mais: `supabase/config.toml` decide PARA ONDE a sonda vai, não o que ela espera, e um
+      // ref velho falha ALTO (404 do gateway) em vez de virar "bundle velho".
+      proveniencia: [{ caminho: relVersao(edge), bytes: textoVersao }, ...fonteMapa],
+    });
   }
 
   const problemas: string[] = [];
@@ -202,14 +247,42 @@ export function gitReal(raiz: string): ExecutorGit {
 }
 
 /**
- * Os arquivos que ALIMENTAM o `esperado(edge, versao_esperada, fonte_esperada)` — nada além.
+ * A fatia da verdade: os arquivos que ALIMENTARAM o `esperado(...)`, com os bytes que alimentaram.
  *
- * A fatia é fechada de propósito: é exatamente o conjunto cujo retrato velho vira VEREDITO falso.
+ * Ela não é uma LISTA — é o que o resolvedor registrou ter lido. A lista mantida à parte da lógica
+ * de leitura foi o defeito medido em 2026-09-09, e nas DUAS direções: sobrava o mapa de
+ * fingerprints no modo canária (que não o lê: `grep -c fingerprint` nos ~20 KB de SQL emitido deu
+ * 0, então conferi-lo só produzia bloqueio) e faltava o `index.ts`, de onde o `contrato:` da
+ * canária realmente sai — um `contrato:` não mergeado saía como marcador esperado, o guard não
+ * notava, e o veredito `CANARIA DE OUTRA FATIA` se lia como deploy pendente. Fatia derivada da
+ * leitura não tem como divergir da leitura: quem acrescentar uma dependência ao marcador a
+ * acrescenta aqui pelo mesmo gesto.
+ *
  * `supabase/config.toml` fica de fora porque o `project_ref` não entra na comparação — ele decide
  * PARA ONDE a sonda vai, e um ref velho falha ALTO (404 do gateway), não vira "bundle velho".
  */
-export function fatiaDaVerdade(edges: string[]): string[] {
-  return [...edges.map((e) => `supabase/functions/${e}/versao.ts`), ARQ_MAPA];
+export function fontesDoEsperado(
+  resolvidas: ReadonlyArray<{ readonly proveniencia: readonly FonteDoEsperado[] }>,
+): FonteDoEsperado[] {
+  const porCaminho = new Map<string, string>();
+  const brigando: string[] = [];
+  for (const f of resolvidas.flatMap((r) => r.proveniencia)) {
+    const antes = porCaminho.get(f.caminho);
+    if (antes === undefined) porCaminho.set(f.caminho, f.bytes);
+    else if (antes !== f.bytes && !brigando.includes(f.caminho)) brigando.push(f.caminho);
+  }
+  if (brigando.length > 0) {
+    throw new Error(
+      `o mesmo arquivo foi lido com bytes DIFERENTES dentro desta execução: ` +
+        `${brigando.join(', ')}. É a corrida acontecendo — alguém gravou o arquivo entre duas ` +
+        'leituras, e o `esperado(...)` saiu de uma delas. Escolher qual conferir é escolher qual ' +
+        'metade do veredito é a verdadeira. Repita com o working tree parado. ' +
+        'Nenhum SQL foi emitido.',
+    );
+  }
+  return [...porCaminho]
+    .map(([caminho, bytes]) => ({ caminho, bytes }))
+    .sort((a, b) => a.caminho.localeCompare(b.caminho));
 }
 
 /** O que o guard concluiu. `aviso` só existe no caminho `--sem-rede`, que degradou de propósito. */
@@ -220,9 +293,15 @@ export interface ResultadoSincronia {
 /**
  * Confere que a fatia da verdade no working tree é IDÊNTICA à de `origin/main`, ou LANÇA.
  *
- * Fail-CLOSED em cinco portas, e nenhuma delas degrada para warning: um aviso que se lê e ignora
+ * Recebe as FONTES (caminho + bytes), não a raiz e uma lista de edges. Duas consequências, e as
+ * duas são o desenho: a fatia passa a depender do MODO — quem resolveu o marcador é quem diz o que
+ * o alimentou — e não há como reler o disco daqui, porque a raiz não chega. O que se confere é o
+ * que se emitiu.
+ *
+ * Fail-CLOSED em seis portas, e nenhuma delas degrada para warning: um aviso que se lê e ignora
  * devolve exatamente o veredito falso de 2026-09-05, só que com uma linha de texto por cima.
  *
+ *  0. fatia VAZIA ⇒ aborta: não ter conferido nada não é ter conferido e aprovado.
  *  1. `git` que não responde (binário ausente, timeout, não é repo) ⇒ aborta.
  *  2. `fetch` que falha ⇒ aborta nomeando `--sem-rede`, a única escada explícita.
  *  3. `origin/main` que não existe nem depois do fetch ⇒ aborta: não há com o que comparar, e
@@ -243,11 +322,21 @@ export interface ResultadoSincronia {
  * mais que o defeito que o guard fecha. A flag é explícita justamente para não ser o padrão.
  */
 export function conferirSincronia(
-  raiz: string,
-  edges: string[],
+  fontes: readonly FonteDoEsperado[],
   semRede: boolean,
   git: ExecutorGit,
 ): ResultadoSincronia {
+  // Porta 0 — fatia VAZIA. Não ter conferido nada não é ter conferido e aprovado: um modo novo que
+  // esqueça de registrar proveniência faria o guard passar em silêncio, e silêncio aqui se lê como
+  // "o disco está na main". É o `ausente ≠ zero` do money-path aplicado à própria fatia.
+  if (fontes.length === 0) {
+    throw new Error(
+      'fatia VAZIA: nenhum arquivo foi registrado como fonte do `esperado(...)`, então não há o ' +
+        'que comparar com a ' +
+        `${REF_DEPLOYADA} — e ausência de dado não é aprovação. Quem resolve o marcador tem de ` +
+        'declarar de que arquivos ele saiu (`proveniencia`). Nenhum SQL foi emitido.',
+    );
+  }
   if (!semRede) {
     const f = git(['fetch', REMOTO, RAMO_DEPLOYADO]);
     if (f.status !== 0) {
@@ -274,13 +363,14 @@ export function conferirSincronia(
 
   const ausentes: string[] = [];
   const divergentes: string[] = [];
-  for (const caminho of fatiaDaVerdade(edges)) {
+  for (const { caminho, bytes } of fontes) {
     const r = git(['show', `${REF_DEPLOYADA}:${caminho}`]);
     if (r.status !== 0) {
       ausentes.push(caminho);
       continue;
     }
-    if (r.stdout !== readFileSync(join(raiz, caminho), 'utf8')) divergentes.push(caminho);
+    // `bytes`, e não um `readFileSync` daqui: o que se confere tem de ser o que se EMITIU.
+    if (r.stdout !== bytes) divergentes.push(caminho);
   }
 
   if (ausentes.length > 0 || divergentes.length > 0) {
@@ -332,6 +422,14 @@ export interface OpcoesLeva {
   soDisparo?: boolean;
   /** Emite SÓ os blocos de leitura — o recorte que o agente roda no `psql-ro`. */
   soLeitura?: boolean;
+  /**
+   * A leva JÁ resolvida, quando quem chama precisa que o SQL saia dos MESMOS bytes que conferiu.
+   *
+   * É o caso da CLI: ela resolve, entrega a proveniência ao guard de sincronia e passa a leva de
+   * volta aqui. Sem isto, resolver de novo relê o disco — e o que o guard aprovou não seria,
+   * necessariamente, o que o SQL emitiu. Omitido, resolve daqui (o caminho dos testes de unidade).
+   */
+  resolvida?: readonly EdgeSondada[];
 }
 
 /**
@@ -909,7 +1007,11 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
   const janelaMin = validarJanela(opts.janelaMin);
   const grupos = separar(opts.edges, opts.caras ?? []);
   // Resolve a leva INTEIRA antes de emitir qualquer coisa: uma edge sem sensor derruba o SQL todo.
-  resolverLeva(opts.raiz, opts.edges);
+  // E resolve UMA vez: os dois grupos saem desta leitura. Antes eram três `resolverLeva` — três
+  // leituras do mesmo `versao.ts` na mesma chamada, e o guard conferia uma quarta.
+  const todas = opts.resolvida ?? resolverLeva(opts.raiz, opts.edges);
+  const porEdge = new Map(todas.map((e) => [e.edge, e]));
+  const daLista = (edges: string[]): EdgeSondada[] => edges.map((e) => porEdge.get(e)!);
   const ref = lerProjectRef(opts.raiz);
   const partes: string[] = [];
   // Os recortes escolhem QUAIS blocos saem; o número de cada um continua cravado no próprio bloco,
@@ -919,7 +1021,7 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
   const querLeitura = !opts.soDisparo;
 
   if (grupos.baratas.length > 0) {
-    const leva = resolverLeva(opts.raiz, grupos.baratas);
+    const leva = daLista(grupos.baratas);
     if (querDisparo) {
       partes.push(
         `-- PASSO 1 — dispara as ${leva.length} edge(s) baratas da leva. É o bloco do FOUNDER: lê o\n` +
@@ -941,7 +1043,7 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
   }
 
   if (grupos.caras.length > 0) {
-    const leva = resolverLeva(opts.raiz, grupos.caras);
+    const leva = daLista(grupos.caras);
     if (querDisparo) {
       partes.push(
         `-- PASSO 3 — dispara as ${leva.length} edge(s) CARAS, com trava.\n` +
@@ -1142,6 +1244,13 @@ const SIMBOLO_VERSAO = 'VERSAO';
 /** Uma canária do registro com o marcador que o REPO diz que ela emite hoje. */
 export interface CanariaResolvida extends CanariaRegistrada {
   readonly marcador: string;
+  /**
+   * Os arquivos LIDOS para chegar em `marcador`: o `index.ts` da edge sempre (é onde mora o
+   * `contrato:`, e onde `localizarCanarias` acha a chave e a FORMA), e o `versao.ts` só quando a
+   * canária serve por REFERÊNCIA — aí o literal está lá. O mapa de fingerprints não entra: o modo
+   * canária não o lê, e conferir o que não alimenta o resultado só produz bloqueio.
+   */
+  readonly proveniencia: readonly FonteDoEsperado[];
 }
 
 /**
@@ -1154,10 +1263,23 @@ export interface CanariaResolvida extends CanariaRegistrada {
  * carregar, e os cenários do eval voltariam a devolver `SQL_VAZIO`. Quem executa como CLI resolve
  * o leitor real no fim deste arquivo.
  */
-export type LeitorCanariasDoRepo = (
-  raiz: string,
-  edge: string,
-) => ReadonlyArray<{ chave: string; contrato: string | null; simbolo: string | null }>;
+export type LeitorCanariasDoRepo = (raiz: string, edge: string) => CanariasDoIndex;
+
+/**
+ * O que o leitor devolve: as canárias achadas E os bytes do `index.ts` de que elas saíram.
+ *
+ * A `fonte` vem do LEITOR, e não de um `readFileSync` do lado de cá, porque é ele quem sabe o que
+ * leu — e porque o que o guard confere tem de ser o que o marcador atravessou. Quando os dois
+ * lados leem por conta própria, o `esperado(...)` sai de uma leitura e a aprovação da outra.
+ */
+export interface CanariasDoIndex {
+  readonly canarias: ReadonlyArray<{
+    chave: string;
+    contrato: string | null;
+    simbolo: string | null;
+  }>;
+  readonly fonte: FonteDoEsperado;
+}
 
 /** Pastas de `supabase/functions/` que podem hospedar canária (toda pasta com `index.ts`). */
 function edgesDoRepo(raiz: string): string[] {
@@ -1188,7 +1310,7 @@ function conferirRegistroCompleto(raiz: string, ler: LeitorCanariasDoRepo): void
   for (const edge of edgesDoRepo(raiz)) {
     const bruto = readFileSync(join(raiz, 'supabase', 'functions', edge, 'index.ts'), 'utf8');
     if (!/canary\s*:\s*true/.test(bruto)) continue;
-    for (const c of ler(raiz, edge)) {
+    for (const c of ler(raiz, edge).canarias) {
       if (!registradas.has(`${edge} ${c.chave}`)) {
         forasteiras.push(`${edge} (${c.chave} -> ${c.contrato ?? `versao: ${c.simbolo ?? '?'}`})`);
       }
@@ -1238,7 +1360,12 @@ export function resolverCanarias(
   const resolvidas: CanariaResolvida[] = [];
   for (const nome of nomes) {
     const reg = porNome.get(nome)!;
-    const achada = ler(raiz, reg.edge).find((c) => c.chave === reg.chave);
+    const lido = ler(raiz, reg.edge);
+    // O `index.ts` entra na proveniência ANTES de sabermos se a canária resolve: é dele que sai a
+    // chave, a FORMA e (em 7 das 8) o próprio marcador. Um `index.ts` fora da main é exatamente o
+    // caso que passava batido — a canária no ar responde o contrato ANTIGO.
+    const doIndex: FonteDoEsperado = lido.fonte;
+    const achada = lido.canarias.find((c) => c.chave === reg.chave);
     if (achada === undefined) {
       semMarcador.push(`${nome} (o index.ts de ${reg.edge} não hospeda canária em ${reg.chave})`);
       continue;
@@ -1257,7 +1384,7 @@ export function resolverCanarias(
         );
         continue;
       }
-      resolvidas.push({ ...reg, marcador: achada.contrato });
+      resolvidas.push({ ...reg, marcador: achada.contrato, proveniencia: [doIndex] });
       continue;
     }
 
@@ -1287,11 +1414,18 @@ export function resolverCanarias(
       }
     })();
     const versao = texto === null ? null : extrairVersao(texto);
-    if (versao === null) {
+    if (versao === null || texto === null) {
       semMarcador.push(`${nome} (versao.ts sem \`export const VERSAO = "..."\` legível)`);
       continue;
     }
-    resolvidas.push({ ...reg, marcador: versao });
+    // Só ESTA forma leva o `versao.ts`: é a única em que o literal do marcador mora lá. Para uma
+    // canária de `contrato`, o `versao.ts` da mesma edge pode divergir da main sem produzir
+    // veredito falso nenhum — conferi-lo seria o bloqueio pelo bloqueio.
+    resolvidas.push({
+      ...reg,
+      marcador: versao,
+      proveniencia: [doIndex, { caminho: relVersao(reg.edge), bytes: texto }],
+    });
   }
 
   const pendencias: string[] = [];
@@ -1558,8 +1692,28 @@ export function gerarSqlDasCanarias(opts: OpcoesCanaria): string {
     opts.nomes.length > 0
       ? opts.nomes
       : CANARIAS.filter((c) => c.inalcancavel === null).map((c) => c.nome);
-  const leva = resolverCanarias(opts.raiz, pedidas, opts.ler);
-  const ref = lerProjectRef(opts.raiz);
+  return gerarSqlDeCanariasResolvidas(
+    opts.raiz,
+    resolverCanarias(opts.raiz, pedidas, opts.ler),
+    janelaMin,
+  );
+}
+
+/**
+ * O SQL de uma leva JÁ resolvida — a metade que a CLI usa, para resolver uma vez só.
+ *
+ * A separação não é estética: o guard de sincronia confere a proveniência da leva que ele recebeu,
+ * e o SQL tem de sair DESSA MESMA leva. Enquanto `main` resolvia por um lado e `gerarSqlDasCanarias`
+ * resolvia por dentro, havia duas leituras do `index.ts` na mesma execução — uma aprovada, outra
+ * emitida, e nada obrigando as duas a concordar.
+ */
+export function gerarSqlDeCanariasResolvidas(
+  raiz: string,
+  leva: readonly CanariaResolvida[],
+  janelaMinValidada: number,
+): string {
+  const janelaMin = janelaMinValidada;
+  const ref = lerProjectRef(raiz);
   const baratas = leva.filter((c) => !c.fluxoRealSeVelho);
   const caras = leva.filter((c) => c.fluxoRealSeVelho);
   const partes: string[] = [];
@@ -1823,17 +1977,15 @@ export function main(argv: string[], deps: DependenciasCli): number {
         edges.length > 0
           ? edges
           : CANARIAS.filter((c) => c.inalcancavel === null).map((c) => c.nome);
+      // UMA resolução: o guard confere os bytes DESTA leva, e é DESTA leva que o SQL sai. Resolver
+      // duas vezes (uma para conferir, outra para gerar) é aprovar uma leitura e emitir a outra.
       const leva = resolverCanarias(deps.raiz, nomes, deps.lerCanarias);
-      sql = gerarSqlDasCanarias({ raiz: deps.raiz, nomes, janelaMin, ler: deps.lerCanarias });
-      // O guard de sincronia vale IGUAL aqui, sobre as EDGES das canárias pedidas: o marcador
-      // esperado é lido do DISCO, e disco atrás de `origin/main` produz o mesmo falso da sonda —
+      // O guard de sincronia vale IGUAL aqui, sobre a PROVENIÊNCIA do marcador — o `index.ts` de
+      // onde o `contrato:` sai, e o `versao.ts` só quando a canária serve por referência. O
+      // marcador é lido do DISCO, e disco atrás de `origin/main` produz o mesmo falso da sonda:
       // "canária de outra fatia" contra um repo local velho, não contra o bundle que está no ar.
-      ({ aviso } = conferirSincronia(
-        deps.raiz,
-        [...new Set(leva.map((c) => c.edge))],
-        semRede === true,
-        deps.git,
-      ));
+      ({ aviso } = conferirSincronia(fontesDoEsperado(leva), semRede === true, deps.git));
+      sql = gerarSqlDeCanariasResolvidas(deps.raiz, leva, validarJanela(janelaMin));
     } else {
       const recusa = guardEfeitoLegado(edges, permitirEfeitoLegado === true, deps.edgesComRele ?? []);
       if (recusa !== null) {
@@ -1844,8 +1996,17 @@ export function main(argv: string[], deps: DependenciasCli): number {
       // texto e a da leva é mais específica: uma edge sem `versao.ts` deve ouvir "sem sensor", não
       // "não existe em origin/main". Nada é escrito até as DUAS passarem — `gerarSqlDaLeva` só
       // monta a string, e é este `escrever` lá embaixo que emite.
-      sql = gerarSqlDaLeva({ raiz: deps.raiz, edges, caras, janelaMin, soDisparo, soLeitura });
-      ({ aviso } = conferirSincronia(deps.raiz, edges, semRede === true, deps.git));
+      const levaSondada = resolverLeva(deps.raiz, edges);
+      ({ aviso } = conferirSincronia(fontesDoEsperado(levaSondada), semRede === true, deps.git));
+      sql = gerarSqlDaLeva({
+        raiz: deps.raiz,
+        edges,
+        caras,
+        janelaMin,
+        soDisparo,
+        soLeitura,
+        resolvida: levaSondada,
+      });
     }
   } catch (e) {
     deps.erro(`❌ ${(e as Error).message}`);
