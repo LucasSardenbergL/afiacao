@@ -552,7 +552,7 @@ export function escaparParaFormat(texto: string): string {
  * por janela de 6h (medido em 2026-08-30: 208 linhas, todas 200); abaixo de 10 o fundo está
  * anormalmente quieto e a resposta honesta é INDETERMINADO.
  */
-const PISO_CONTROLE_CREDENCIAL = 10;
+export const PISO_CONTROLE_CREDENCIAL = 10;
 
 /**
  * Bloco de LEITURA e veredito. NÃO exige colar `request_id` nenhum.
