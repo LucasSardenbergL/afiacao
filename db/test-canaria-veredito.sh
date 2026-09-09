@@ -242,13 +242,36 @@ SQL
   espera "401 SEM controle de credencial é INDETERMINADO, nunca veredito" \
     'copilot-analyze' "$LB" 'INDETERMINADO'
 
+  # O ramo determinado exige DUAS coisas: 2xx acima do piso E zero recusa 401 fora da leva.
+  # Os casos acima so exercitam a PRIMEIRA (no de cima o 401 esta DENTRO da leva, excluido
+  # pelo NOT EXISTS; no de baixo o ok_recentes fica em 0 e ja reprova por outro conjunto),
+  # entao `cred.recusas_recentes = 0` podia virar `true` sem nenhum teste reclamar — e virar
+  # `true` e fail-OPEN: manda deployar num CRON_SECRET quebrado AGORA. Este caso satisfaz o
+  # piso e ainda assim tem recusa alheia, isolando o segundo conjunto.
+  P -q -c "TRUNCATE net._http_response;" >/dev/null
+  P -q >/dev/null <<'SQL'
+INSERT INTO net._http_response (id, status_code, content, created) VALUES
+  (1001, 401, '{"code":401}', now()),
+  -- id FORA do mapa embutido {1001,1002,1003}: recusa de OUTRA chamada, nao desta leva
+  (1500, 401, '{"code":401}', now());
+INSERT INTO net._http_response (id, status_code, content, created)
+  SELECT 9000 + g, 200, '{"ok":true}', now() - (g || ' minutes')::interval FROM generate_series(1, 40) g;
+SQL
+  espera "401 com 2xx acima do piso mas recusa 401 ALHEIA = INDETERMINADO (fail-closed)" \
+    'copilot-analyze' "$LB" 'INDETERMINADO'
+
   P -q -c "TRUNCATE net._http_response;" >/dev/null
   P -q >/dev/null <<'SQL'
 INSERT INTO net._http_response (id, status_code, content, created) VALUES
   (1001, 404, '{"code":404}', now());
 SQL
+  # O prefixo TEM de nomear o RAMO. O `>= 400` e o ELSE comecam os dois com
+  # 'SEM CANARIA NO AR — ' e dizem coisas OPOSTAS: aqui NADA executou (o bundle recusou
+  # o request), la o fluxo real RODOU e o efeito JA ACONTECEU. Casar so o prefixo comum
+  # aprova os dois — era assim que a mutacao `>= 400` -> `= 401` sobrevivia: o 404 caia
+  # no ELSE e o teste continuava verde julgando o oposto.
   espera "4xx sem eco = recusou o request, NADA executou" \
-    'copilot-analyze' "$LB" 'SEM CANARIA NO AR'
+    'copilot-analyze' "$LB" 'SEM CANARIA NO AR — o bundle recusou o request (HTTP 404)'
 
   # ------------------------------------------------- (E) ausência de dado ---
   P -q -c "TRUNCATE net._http_response;" >/dev/null
