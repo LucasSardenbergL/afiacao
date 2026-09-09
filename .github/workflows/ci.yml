@@ -869,6 +869,14 @@ jobs:
             echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
           https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
               | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+            # O runner traz listas de terceiros (Chrome, Edge, MS) que este job NÃO usa, e o
+            # `apt-get update` varre TODAS: um índice inconsistente em qualquer uma aborta o
+            # step inteiro sob `set -e`. Medido 2026-09-09 (runs 34383259513 e dois reruns):
+            # `Hash Sum mismatch` no repo do Chrome derrubou `provas-sql` três vezes seguidas,
+            # sem nada a ver com PostgreSQL. Removemos só o que não é necessário — sem
+            # `|| true`, que mascararia falha real do PGDG ou do repo base.
+            sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                       /etc/apt/sources.list.d/microsoft-*.list 2>/dev/null || true
             sudo apt-get update -qq
             sudo apt-get install -y -qq postgresql-17
           fi
