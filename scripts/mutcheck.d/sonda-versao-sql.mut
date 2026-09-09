@@ -242,10 +242,20 @@ PEGA      | fatia da canaria perde o index.ts (o FURO de 2026-09-09) | s/resolvi
 PEGA      | canaria por REFERENCIA perde o versao.ts do marcador     | s/proveniencia: \[doIndex, \{ caminho: relVersao\(reg\.edge\), bytes: texto \}\],/proveniencia: [doIndex],/
 PEGA      | --caro aceito em silencio no modo canaria        | s/^    if \(caras\.length > 0\)/    if (false)/
 PEGA      | --so-leitura aceito em silencio (leitura sem mapa)| s/if \(soLeitura === true\)/if (false)/
-PEGA      | canaria repetida na leva (dispara duas vezes)    | s/if \(repetidasC\.length > 0\)/if (false)/
+PEGA      | canaria repetida na leva (dispara duas vezes)    | s/if \(duplicadas\.length > 0\)/if (false)/
 
 # As duas invariantes do controle de credencial que as asserções `>= \d+` NAO prendiam: o
 # regex aceita `>= 0`, e com piso zero UMA resposta 2xx ja "prova" a credencial. A segunda
 # guarda o fail-CLOSED do 401 ambiguo — trocar o THEN por veredito confiante e fail-open.
 PEGA      | canaria: piso do controle zerado (1 resposta 2xx ja 'prova')  | s/cred\.ok_recentes >= \$\{PISO_CONTROLE_CREDENCIAL\}/cred.ok_recentes >= 0/
 PEGA      | canaria: fallback do 401 deixa de ser INDETERMINADO (fail-open) | s/THEN 'INDETERMINADO — 401 nao separa bundle sem canaria/THEN 'SEM CANARIA NO AR — 401 nao separa bundle sem canaria/
+
+# EQUIVALENCIA_CANARIA — a prova executada (`db/test-canaria-veredito.sh`) julga o SQL da FIXTURE,
+# e producao recebe o SQL da CLI. Esta mutacao e a divergencia SILENCIOSA entre os dois: o default
+# da janela muda so no ramo operacional, a CLI segue saindo 0 com conteudo, a fixture segue com 20,
+# e o SQL operacional passa a aceitar resposta de ate 21 min — afrouxando o guard que impede uma
+# sondagem antiga virar veredito de agora (#2079). MEDIDO em 2026-09-09 na forma equivalente
+# (janela 19): a prova do CASE ficou 21 ok / 0 fail com a CLI divergente, e 21 ok / 0 fail tambem
+# com a CLI QUEBRADA emitindo zero bytes. Quem pega isto e a igualdade byte-a-byte, nao o PG17.
+# Desenho e sabotagem sao do parecer Codex de 2026-09-09.
+PEGA      | canaria: default da janela 20->21 SO na CLI (fixture segue 20) | s/validarJanela\(janelaMin\)/validarJanela(janelaMin ?? 21)/

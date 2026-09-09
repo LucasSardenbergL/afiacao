@@ -2211,3 +2211,222 @@ describe('controle de credencial — a mecânica é a MESMA nos dois modos', () 
     expect(sqlCanaria()).toMatch(/cred\.ok_recentes >= \d+ AND cred\.recusas_recentes = 0\n\s*THEN 'SEM CANARIA NO AR/);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// EQUIVALÊNCIA CLI ↔ FIXTURE
+//
+// A prova executada da ordem dos ramos do CASE (`db/test-canaria-veredito.sh`) julga o SQL da
+// FIXTURE; produção recebe o SQL da CLI. Até aqui os dois coincidiam POR CONSTRUÇÃO — ambos caem em
+// `gerarSqlDeCanariasResolvidas` — e NADA obrigava que continuassem coincidindo.
+//
+// MEDIDO em 2026-09-09, trocando `validarJanela(janelaMin)` por `validarJanela(19)` só no ramo da
+// CLI: a CLI seguiu saindo 0 com os mesmos 9 546 bytes, o SQL operacional passou de
+// `interval '20 minutes'` para `'19 minutes'` — a janela que impede uma sondagem antiga virar
+// veredito de agora (#2079) — e a prova executada continuou **21 ok / 0 fail**. A fixture saiu
+// byte-a-byte IDÊNTICA nos dois casos. Com a CLI quebrada de vez (janela 777: exit 1, ZERO bytes) a
+// prova também ficou verde: ela não enxerga a CLI de forma nenhuma.
+//
+// É a mesma classe do defeito de #2405 — a prova julgando um artefato que o PR não pode alterar —
+// voltando por outra porta. O que fecha a porta é uma asserção OBSERVÁVEL de correspondência, não a
+// localização textual da chamada (parecer Codex 2026-09-09: "identidade do ponto chamado não
+// implica identidade da saída — alguém ainda pode acrescentar `sql = transformar(sql)` depois da
+// função compartilhada, apenas na CLI").
+//
+// Por isso a comparação é contra o STDOUT DO EXECUTÁVEL da fixture, o mesmo que o `.sh` chama, e
+// não contra `gerarSqlDasCanarias` chamada aqui: reconstruir o caminho da fixture dentro do teste
+// deixaria de fora qualquer filtro ou pós-processamento na ENTRADA dela.
+// ---------------------------------------------------------------------------------------------
+
+/** Abertura do envelope, byte a byte. FIXA aqui de propósito: é o contrato da moldura. */
+const ABERTURA_FIXTURE = Buffer.from(
+  '-- ⚠️ ARTEFATO DE FIXTURE — este SQL NAO dispara nada.\n' +
+    '-- Gerado por db/lib/gerar-canaria-fixture.ts para db/test-canaria-veredito.sh. O SQL abaixo é\n' +
+    '-- o valor de uma VARIÁVEL: o bloco declara e aborta, então colar isto num SQL Editor não\n' +
+    '-- dispara canária nenhuma. Para o artefato OPERACIONAL (que dispara), use a CLI, que confere\n' +
+    '-- a sincronia com a origin/main antes de emitir:\n' +
+    '--   bun run sonda:sql --canaria <canaria> ...\n' +
+    'DO $fixture_inerte$\nDECLARE\n  sql_da_canaria CONSTANT text := $fixture_payload$\n',
+  'utf8',
+);
+
+/** Fechamento do envelope, byte a byte — começa pela quebra que o envelope acrescenta ao payload. */
+const FECHAMENTO_FIXTURE = Buffer.from(
+  '\n$fixture_payload$;\nBEGIN\n' +
+    "  RAISE EXCEPTION 'ARTEFATO DE FIXTURE — este SQL NAO dispara nada (% bytes inertes).', length(sql_da_canaria);\n" +
+    'END\n$fixture_inerte$;\n',
+  'utf8',
+);
+
+/** Toda canária que a CLI dispara quando ninguém nomeia nenhuma — o default OPERACIONAL. */
+const CANARIAS_ALCANCAVEIS = CANARIAS.filter((c) => c.inalcancavel === null).map((c) => c.nome);
+
+/** A leva que `db/test-canaria-veredito.sh` gera (BARATAS + CARA) — a que a prova de fato julga. */
+const LEVA_DO_SH = [
+  'copilot-analyze',
+  'omie-analytics-sync:doc_ambiguo_probe',
+  'omie-financeiro',
+  'generate-tactical-plan',
+];
+
+/**
+ * `origin/main` igual ao disco para a proveniência das CANÁRIAS pedidas.
+ *
+ * O `espelho()` da sonda parte de `resolverLeva` e traz só os `versao.ts` + o mapa; a canária lê o
+ * `contrato:` do `index.ts`, então o espelho dela precisa sair de `resolverCanarias`. Montar por
+ * lista escrita à mão concorda por coincidência e discorda em silêncio no dia em que o marcador
+ * ganha dependência nova.
+ */
+function espelhoCanarias(nomes: string[]): Record<string, string> {
+  return Object.fromEntries(
+    fontesDoEsperado(resolverCanarias(RAIZ_REPO, nomes, lerCanariasReal)).map((f) => [
+      f.caminho,
+      f.bytes,
+    ]),
+  );
+}
+
+/** O EXECUTÁVEL da fixture — o mesmo comando do `.sh`. `stdout` cru, sem decodificar. */
+function rodarFixtureExecutavel(nomes: string[]) {
+  const r = spawnSync('bun', ['db/lib/gerar-canaria-fixture.ts', ...nomes], { cwd: RAIZ_REPO });
+  return { codigo: r.status, stdout: r.stdout, stderr: r.stderr.toString('utf8') };
+}
+
+/**
+ * Exige que o artefato da fixture seja EXATAMENTE a moldura envolvendo o que a CLI emitiu.
+ *
+ * Sem `trim`, sem remover comentário, sem ordenar, sem normalizar espaço: a moldura é concatenada
+ * com prefixo e sufixo FIXOS, então nada é apagado dos dois lados. O esperado não passa por
+ * `envelopeInerte` de propósito — se aquele encoder começasse a descartar bytes, esconderia a perda
+ * das duas pontas ao mesmo tempo.
+ */
+function exigirEquivalencia(nomesCli: string[], nomesFixture: string[], rotulo: string) {
+  const cli = rodarCli(
+    ['--canaria', ...nomesCli],
+    gitFalso({ main: espelhoCanarias(nomesCli.length > 0 ? nomesCli : CANARIAS_ALCANCAVEIS) }),
+  );
+  expect(cli.codigo, `${rotulo}: a CLI recusou — ${cli.erros}`).toBe(0);
+  expect(cli.saida.length, `${rotulo}: CLI emitiu zero bytes`).toBeGreaterThan(0);
+
+  const fix = rodarFixtureExecutavel(nomesFixture);
+  expect(fix.codigo, `${rotulo}: a fixture recusou — ${fix.stderr}`).toBe(0);
+
+  const esperado = Buffer.concat([
+    ABERTURA_FIXTURE,
+    Buffer.from(cli.saida, 'utf8'),
+    FECHAMENTO_FIXTURE,
+  ]);
+  if (!fix.stdout.equals(esperado)) {
+    // Texto primeiro: dá diff legível. Se o texto empatar, a diferença é de BYTES — e aí o `toBe`
+    // acima passa, então o `throw` abaixo é o que impede o teste de aprovar por engano.
+    expect(fix.stdout.toString('utf8'), `EQUIVALENCIA_CANARIA (${rotulo})`).toBe(
+      esperado.toString('utf8'),
+    );
+    throw new Error(`EQUIVALENCIA_CANARIA (${rotulo}): bytes diferem com texto UTF-8 idêntico`);
+  }
+}
+
+describe('EQUIVALENCIA_CANARIA — o SQL que a prova julga é o SQL que a CLI emite', () => {
+  it('a leva do test-canaria-veredito.sh: artefato = moldura + saída da CLI, byte a byte', () => {
+    exigirEquivalencia(LEVA_DO_SH, LEVA_DO_SH, 'leva do .sh');
+  });
+
+  it('o DEFAULT da CLI (sem nomear canária) é a lista das alcançáveis, não outra', () => {
+    // A lista NÃO é pré-expandida dos dois lados: a CLI recebe vazio e expande sozinha, e é essa
+    // expansão que está sendo comparada contra a lista explícita.
+    exigirEquivalencia([], CANARIAS_ALCANCAVEIS, 'default operacional');
+  });
+
+  it('uma canária só, servida por REFERÊNCIA (marcador no campo `versao`)', () => {
+    exigirEquivalencia(['generate-tactical-plan'], ['generate-tactical-plan'], 'por referência');
+  });
+
+  it('SEM_REDE_SO_ACRESCENTA_AVISO: --sem-rede prefixa o aviso e não toca no corpo', () => {
+    const main0 = espelhoCanarias(LEVA_DO_SH);
+    const online = rodarCli(['--canaria', ...LEVA_DO_SH], gitFalso({ main: main0 }));
+    const offline = rodarCli(['--canaria', ...LEVA_DO_SH, '--sem-rede'], gitFalso({ main: main0 }));
+    expect(online.codigo).toBe(0);
+    expect(offline.codigo).toBe(0);
+    expect(offline.saida.endsWith(online.saida), 'SEM_REDE_SO_ACRESCENTA_AVISO').toBe(true);
+    const prefixo = offline.saida.slice(0, offline.saida.length - online.saida.length);
+    // O acréscimo é comentário SQL, e nomeia a flag: aviso que não sobrevive colado é aviso nenhum.
+    expect(prefixo.startsWith('-- ⚠️ --sem-rede')).toBe(true);
+    expect(prefixo.split('\n').filter((l) => l !== '').every((l) => l.startsWith('--'))).toBe(true);
+  });
+
+  it('as DUAS fronteiras recusam a leva com nome repetido, com a MESMA marca', () => {
+    const cli = rodarCli(['--canaria', 'copilot-analyze', 'copilot-analyze'], gitProibido());
+    const fix = rodarFixtureExecutavel(['copilot-analyze', 'copilot-analyze']);
+    expect(cli.codigo).toBe(1);
+    expect(cli.saida).toBe(''); // ZERO bytes
+    expect(fix.codigo).toBe(1);
+    expect(fix.stdout.length).toBe(0);
+    for (const texto of [cli.erros, fix.stderr]) {
+      expect(texto).toContain('canária repetida na leva: copilot-analyze');
+    }
+  });
+});
+
+/**
+ * O fixture de canárias virado repositório git de VERDADE, com `origin/main` no commit.
+ *
+ * Blindagem de config global idêntica à de `repoGitCru` — o porquê está lá. `spawnSync` cru de
+ * propósito: montar o fixture com o próprio `gitReal` faria o teste do executor depender do
+ * executor.
+ */
+function repoGitDeCanarias(): string {
+  const raiz = fixtureCanarias();
+  const git = (...args: string[]): string => {
+    const r = spawnSync('git', args, { cwd: raiz, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`fixture: git ${args.join(' ')} falhou: ${r.stderr}`);
+    return (r.stdout ?? '').trim();
+  };
+  git('init', '-q');
+  git('add', '-A');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit',
+    '--no-verify', '-qm', 'base');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  return raiz;
+}
+
+describe('o guard julga com o gitReal — não só com git de mentira', () => {
+  // Os três testes de `gitReal` acima exercitam só `rev-parse`. Nenhum confere os BYTES que
+  // `git show` devolve, e é sobre eles que o guard decide. O contraexemplo é do parecer Codex
+  // (2026-09-09) e está falsificado no `.mut`: trocar o executor por `r.stdout?.trim() ?? ''`
+  // deixa os três verdes — o sha já é comparado com trim, e vazio continua vazio — mas faz
+  // `git show` perder a quebra final do arquivo. Aí um repo SINCRONIZADO passa a ser recusado por
+  // divergência de bytes, e o veredito vira "DESSINCRONIZADO" onde não há divergência nenhuma.
+  // Falso desses manda gente afrouxar o guard para destravar o CI, que é a espiral do #2414.
+  it('repo git SINCRONIZADO de verdade: a CLI emite, e o SQL carrega o marcador do disco', () => {
+    const raiz = repoGitDeCanarias();
+    const saida: string[] = [];
+    const erros: string[] = [];
+    const codigo = main(['--canaria', 'copilot-analyze', '--sem-rede'], {
+      raiz,
+      escrever: (t) => saida.push(t),
+      erro: (t) => erros.push(t),
+      git: gitReal(raiz),
+      lerCanarias: lerCanariasReal,
+    });
+    expect(codigo, `a CLI recusou um repo sincronizado: ${erros.join('\n')}`).toBe(0);
+    expect(saida.join('')).toContain("'marcador-de-copilot-analyze-v1'");
+  });
+
+  it('divergência REAL contra o commit: recusa com ZERO bytes, nomeando o arquivo', () => {
+    const raiz = repoGitDeCanarias();
+    // Sabota o disco DEPOIS do commit: `origin/main` guarda o marcador antigo, o working tree não.
+    const idx = join(raiz, 'supabase', 'functions', 'copilot-analyze', 'index.ts');
+    writeFileSync(idx, readFileSync(idx, 'utf8').replace('marcador-de-copilot-analyze-v1', 'FABRICADO-v9'));
+    const saida: string[] = [];
+    const erros: string[] = [];
+    const codigo = main(['--canaria', 'copilot-analyze', '--sem-rede'], {
+      raiz,
+      escrever: (t) => saida.push(t),
+      erro: (t) => erros.push(t),
+      git: gitReal(raiz),
+      lerCanarias: lerCanariasReal,
+    });
+    expect(codigo).toBe(1);
+    expect(saida.join('')).toBe(''); // ZERO bytes — nada de SQL parcial com marcador fabricado
+    expect(erros.join('\n')).toContain('supabase/functions/copilot-analyze/index.ts');
+  });
+});
