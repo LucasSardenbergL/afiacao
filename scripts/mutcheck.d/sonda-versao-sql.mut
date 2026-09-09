@@ -118,14 +118,25 @@ SOBREVIVE | ORDER BY por posicao (inerte: edge e a 1a col) | s/ORDER BY l\.edge;
 # ⚠️ O `r.status ?? 127` do `gitReal` (spawn morto por sinal/timeout ⇒ fail-CLOSED) NÃO tem mutação
 #    aqui: `git` fora de repo devolve 128, não `null`, e forjar um spawn morto viraria teste do
 #    Node. É limite CONHECIDO da medição, não cobertura silenciosa.
-PEGA      | guard de sincronia desligado no main                   | s/conferirSincronia\(deps\.raiz, edges, semRede === true, deps\.git\)/{ aviso: null }/
+PEGA      | guard de sincronia desligado no main (modo sonda)      | s/conferirSincronia\(fontesDoEsperado\(levaSondada\), semRede === true, deps\.git\)/{ aviso: null }/
 PEGA      | divergencia vira warning que se le e ignora            | s/if \(ausentes\.length > 0 \|\| divergentes\.length > 0\) \{/if (false) {/
-PEGA      | comparacao de conteudo INVERTIDA (igual=divergente)    | s/r\.stdout !== readFileSync/r.stdout === readFileSync/
+PEGA      | fatia VAZIA passa (guard decorativo em silencio)       | s/if \(fontes\.length === 0\) \{/if (false) {/
+PEGA      | comparacao de conteudo INVERTIDA (igual=divergente)    | s/if \(r\.stdout !== bytes\)/if (r.stdout === bytes)/
 PEGA      | bump nao-mergeado deixa de contar como divergencia     | s/ausentes\.push\(caminho\)/void caminho/
-PEGA      | fatia perde o mapa (so o versao.ts e conferido)        | s/, ARQ_MAPA\]/]/
+# A fatia deixou de ser LISTA e virou o que o resolvedor registrou ter lido (#2414, 2026-09-09).
+# As mutações abaixo sabotam a PROVENIENCIA — o eixo onde a fatia agora pode ficar cega. As duas
+# direções importam: a que TIRA o mapa do modo sonda (sub-inclusão, veredito falso) e a que tira o
+# `index.ts` do modo canária, que era o furo MEDIDO: `contrato:` não mergeado saía como esperado.
+PEGA      | fatia do modo sonda perde o mapa (so versao.ts)        | s/proveniencia: \[\{ caminho: relVersao\(edge\), bytes: textoVersao \}, \.\.\.fonteMapa\],/proveniencia: [{ caminho: relVersao(edge), bytes: textoVersao }],/
+PEGA      | fatia do modo sonda perde o versao.ts (so o mapa)      | s/proveniencia: \[\{ caminho: relVersao\(edge\), bytes: textoVersao \}, \.\.\.fonteMapa\],/proveniencia: [...fonteMapa],/
+# A CORRIDA que o parecer Codex nomeou: a proveniencia deixa de ser o que o LEITOR usou e vira uma
+# SEGUNDA leitura do disco. Compila, e o veredito continua saindo — mas o que o guard aprova nao e
+# mais o que o marcador atravessou. So pega quem tenha um leitor que discorde do disco.
+PEGA      | proveniencia vira 2a leitura do disco (a corrida)      | s/const doIndex: FonteDoEsperado = lido\.fonte;/const doIndex: FonteDoEsperado = { caminho: relIndex(reg.edge), bytes: readFileSync(join(raiz, relIndex(reg.edge)), 'utf8') };/
+PEGA      | leitura discordante na mesma execucao passa em silencio| s/if \(brigando\.length > 0\) \{/if (false) {/
 PEGA      | fetch some: compara contra retrato velho por padrao    | s/const f = git\(\['fetch', REMOTO, RAMO_DEPLOYADO\]\);/const f = { status: 0, stdout: '', stderr: '' };/
 PEGA      | fetch que falha degrada em vez de abortar              | s/if \(f\.status !== 0\) \{/if (false) {/
-PEGA      | --sem-rede passa a valer SEMPRE (guard vira opt-in)    | s/conferirSincronia\(deps\.raiz, edges, semRede === true/conferirSincronia(deps.raiz, edges, true/
+PEGA      | --sem-rede passa a valer SEMPRE (guard vira opt-in)    | s/fontesDoEsperado\(levaSondada\), semRede === true/fontesDoEsperado(levaSondada), true/
 # O `cwd` do `gitReal`. O #2227 tirou a ref `origin/main` herdada do checkout (a causa do
 # `mutation-check` vermelho em todo PR — docs/historico/teste-que-afirma-o-checkout.md) e pôs um
 # repo fixture no lugar. Esta linha é o que transforma esse conserto em COBERTURA: com a asserção
@@ -222,7 +233,13 @@ PEGA      | inalcancavel deixa de barrar (401 = bundle velho)| s/const barradas 
 PEGA      | a leva PADRAO passa a incluir a inalcancavel     | s/^      : CANARIAS\.filter\(\(c\) => c\.inalcancavel === null\)/      : CANARIAS/
 # ── a CLI: flag sem sentido é RECUSADA, não ignorada; e o guard de sincronia vale igual ──
 PEGA      | --canaria sem leitor deixa de recusar            | s/if \(deps\.lerCanarias === undefined\)/if (false)/
-PEGA      | guard de sincronia cego no modo canaria          | s/\[\.\.\.new Set\(leva\.map\(\(c\) => c\.edge\)\)\],/[],/
+PEGA      | guard de sincronia cego no modo canaria          | s/conferirSincronia\(fontesDoEsperado\(leva\), semRede === true, deps\.git\)/conferirSincronia([], semRede === true, deps.git)/
+# O FURO MEDIDO em 2026-09-09: o marcador da canária sai do literal `contrato:` no `index.ts`, e
+# esse arquivo não estava na fatia. `--canaria copilot-analyze --sem-rede` com o contrato trocado no
+# working tree saiu `exit 0`, 9 545 bytes de SQL, carregando o marcador FABRICADO — a canária no ar
+# responderia o contrato antigo e o `CANARIA DE OUTRA FATIA` se leria como deploy pendente.
+PEGA      | fatia da canaria perde o index.ts (o FURO de 2026-09-09) | s/resolvidas\.push\(\{ \.\.\.reg, marcador: achada\.contrato, proveniencia: \[doIndex\] \}\);/resolvidas.push({ ...reg, marcador: achada.contrato, proveniencia: [] });/
+PEGA      | canaria por REFERENCIA perde o versao.ts do marcador     | s/proveniencia: \[doIndex, \{ caminho: relVersao\(reg\.edge\), bytes: texto \}\],/proveniencia: [doIndex],/
 PEGA      | --caro aceito em silencio no modo canaria        | s/^    if \(caras\.length > 0\)/    if (false)/
 PEGA      | --so-leitura aceito em silencio (leitura sem mapa)| s/if \(soLeitura === true\)/if (false)/
 PEGA      | canaria repetida na leva (dispara duas vezes)    | s/if \(repetidasC\.length > 0\)/if (false)/
