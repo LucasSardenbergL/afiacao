@@ -61,10 +61,10 @@ PEGA      | fallback do 401 deixa de ser INDETERMINADO (fail-open)    | s/THEN '
 # suite AGREGADA, entao 'PEGA' aqui diz que ALGUM teste morreu, nao que os DOIS modos estao
 # cobertos (ressalva do parecer Codex 2026-09-08). Quem prova isso e
 # `scripts/prova-consumidores-controle.sh`, que roda a mutacao contra cada modo ISOLADO.
-# ⏸️ ELE NAO RODA NO CI desde 2026-09-09 (derrubou a main; causa em apuracao — ver o comentario
-#    no job `mutation-check` do ci.yml). Ate voltar, a consolidacao acima esta AFIRMADA e nao
-#    medida automaticamente: rode `bash scripts/prova-consumidores-controle.sh` a mao antes de
-#    confiar nela, e trate 'PEGA' na linha consolidada como 'algum modo morreu', nao 'os dois'.
+# 🔁 ELE VOLTOU AO CI em 2026-09-09, no step `prova por consumidor` do job `mutation-check`: a
+#    consolidacao acima esta MEDIDA de novo, nao so afirmada. (Ficou 1 dia fora — o guard dele
+#    decidia por `grep` na saida COLORIDA do vitest e reprovava todo run do runner com o vitest
+#    verde; hoje le o reporter JSON. Detalhe em docs/historico/gate-que-le-saida-colorida.md.)
 PEGA      | controle nao exclui a propria leva (nenhum modo se avaliza) | s/AND NOT EXISTS \(SELECT 1 FROM ids id_leva WHERE id_leva\.request_id = r\.id\)/AND true/
 PEGA      | piso do controle zerado (1 resposta 2xx ja 'prova')       | s/PISO_CONTROLE_CREDENCIAL = 10/PISO_CONTROLE_CREDENCIAL = 0/
 PEGA      | 401 alheio deixa de desqualificar o controle              | s/AND c\.recusas_recentes = 0/AND true/
