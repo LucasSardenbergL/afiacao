@@ -142,8 +142,11 @@ relê o catálogo e dá `RAISE EXCEPTION` se o objeto não existir **ou existir 
 (constraint `NOT VALID`, índice `indisvalid=false`, view que perdeu `security_invoker`). Ele roda no
 mesmo Run de quem colou, então **uma migration que não pegou não termina em silêncio** — ela aborta
 na cara do founder, com o motivo escrito. Custa algumas linhas e é a defesa em profundidade da
-falha-mãe desta skill. Envolva a migration em `BEGIN; … COMMIT;` explícito: sem o wrapper a
-postcondição continua gritando, mas pode gritar sobre um estado meio-aplicado (medido em PG17).
+falha-mãe desta skill. **O wrapper `BEGIN; … COMMIT;` depende do CAMINHO** — não é mais regra
+única: para colar no SQL Editor/MCP, envolva (sem ele a postcondição continua gritando, mas pode
+gritar sobre um estado meio-aplicado — medido em PG17); para `bun run db:aplicar`, **não** envolva
+— a transação é do executor, e ele recusa o arquivo que traga envelope. `CREATE INDEX
+CONCURRENTLY` não roda em transação alguma, então só existe pelo caminho de cima.
 
 O predicado é **o mesmo** da query de validação do Passo 4, invertido (`IF NOT EXISTS (…) THEN RAISE
 EXCEPTION`). Template por tipo de objeto, critério de suficiência de cada um, as regras anti-teatro

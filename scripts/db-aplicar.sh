@@ -111,6 +111,30 @@ if grep -qiE '^[[:space:]]*(BEGIN|COMMIT|ROLLBACK|START TRANSACTION)[[:space:]]*
    proibidos. Remova o envelope: o SQL feito para o \`db:aplicar\` não leva \`BEGIN;\`/\`COMMIT;\`.
    (Migration para colar no SQL Editor leva — são caminhos diferentes.)"
 fi
+
+# ── RECUSAR comando que não roda em transação NENHUMA ──────────────────────────────────
+# A recusa acima é sobre a MOLDURA do arquivo, e tem conserto: tirar o envelope. Esta é outra
+# classe, e não tem — `CREATE INDEX CONCURRENTLY` não roda dentro de transação alguma, nem a
+# deste script. Como o recibo SÓ é atômico porque existe uma transação, os dois requisitos são
+# mutuamente exclusivos: este arquivo tem de ir pelo SQL Editor/MCP, e ponto.
+# Sem o guard, o erro chega cru do Postgres — depois de já ter gravado tentativa no ledger.
+#
+# Comentários de linha saem ANTES de casar, para não recusar arquivo que só MENCIONA o comando
+# num comentário. Remover texto apenas REDUZ casamento, então o engano cai no lado seguro: o
+# não-detectado vira o erro do PG, alto e com a transação desfeita.
+# E o padrão NÃO pode casar `REFRESH MATERIALIZED VIEW CONCURRENTLY` — 10 migrations do repo o
+# usam legitimamente, dentro de função, e ele roda em transação normalmente. Por isso cada
+# alternativa é ancorada em CREATE/DROP/REINDEX, nunca no `CONCURRENTLY` solto.
+FORA_TX="$(sed 's/--.*$//' "$SNAP" | tr '\n' ' ' | grep -oEi \
+  'CREATE[[:space:]]+(UNIQUE[[:space:]]+)?INDEX[[:space:]]+CONCURRENTLY|DROP[[:space:]]+INDEX[[:space:]]+CONCURRENTLY|REINDEX[^;]{0,80}CONCURRENTLY' \
+  | head -2 | tr '\n' ' ' || true)"
+if [ -n "$FORA_TX" ]; then
+  morre 2 "RECUSA_FORA_DE_TRANSACAO — comando que não roda dentro de transação nenhuma (nem a
+   deste script): $FORA_TX
+   Não é ajustável aqui: o recibo só é atômico porque há uma transação, e este comando a proíbe.
+   Vá pelo SQL Editor/MCP. Lá a postcondição embutida importa ainda mais — um CREATE INDEX
+   CONCURRENTLY que falha DEIXA o índice inválido para trás (é o assert de indisvalid)."
+fi
 case "$SHA" in
   *[!0-9a-f]*|'') morre 2 "sha256 com formato inesperado para $ARQUIVO" ;;
 esac

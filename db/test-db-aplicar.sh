@@ -2,7 +2,7 @@
 # ╔═════════════════════════════════════════════════════════════════════════════════════════╗
 # ║   PROVA PG17 — db/claude-rw-bootstrap.sql + scripts/db-aplicar.sh                       ║
 # ║   Rode:  bash db/test-db-aplicar.sh > /tmp/t.log 2>&1; echo $?                          ║
-# ║          bash db/test-db-aplicar.sh --falsificar    (5 sabotagens, exige VERMELHO)      ║
+# ║          bash db/test-db-aplicar.sh --falsificar    (9 sabotagens, exige VERMELHO)      ║
 # ║   Exit:  0 verde · 1 asserção vermelha · 3 CONTROLE podre (a falsificação nem começou)  ║
 # ║                                                                                         ║
 # ║   Prova, EXECUTANDO (PL/pgSQL e psql são late-bound; criar não é rodar):                ║
@@ -37,6 +37,8 @@ FIX_ERRO="db/fixtures/db-aplicar-erro.sql"
 # caso em que a transformação não transformava nada. Fixture que não representa a classe real
 # de entrada é teste cego, e o custo foi quebrar TODA migration com envelope sem ninguém ver.
 FIX_ENVELOPE="db/fixtures/db-aplicar-envelope.sql"
+FIX_CIC="db/fixtures/db-aplicar-cic.sql"
+FIX_CORPO="db/fixtures/db-aplicar-corpo-de-funcao.sql"
 WORK="$(mktemp -d "/tmp/pgtest-db-aplicar.XXXXXX")"
 DATA="$WORK/data"
 # Locale é PARÂMETRO, não constante: `db-aplicar.sh` distingue falha-limpa (4) de
@@ -69,6 +71,8 @@ trap cleanup EXIT
 
 PSQL="$PGBIN/psql -X -v ON_ERROR_STOP=1 -h localhost -p $PORT -U postgres -d postgres"
 q() { $PGBIN/psql -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null | tr -d ' \n'; }
+# q() esmaga espaco e quebra de linha — serve para escalar, nao para corpo de funcao.
+q_bruto() { $PGBIN/psql -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null; }
 
 # ─── fixture: o mínimo do Supabase que o bootstrap referencia ─────────────────────────────
 $PSQL >/dev/null 2>&1 <<'SQL'
@@ -289,6 +293,34 @@ SHIM_ERRADO="$WORK/psql-rw-errado"
 R7=0; ( cd "$REPO_ROOT" && AFIACAO_PSQL_RW="$SHIM_ERRADO" bash "$ALVO" "$FIX_OK" ) >/dev/null 2>&1 || R7=$?
 eq "A7 papel errado sai 6, não 0" "$R7" "6"
 
+echo "▶ A11/A12 — a 2ª classe de incompatibilidade, e o CONTROLE dos dois guards"
+# A10 (acima) cobre a MOLDURA, que tem conserto: tirar o envelope. A11 cobre a classe que NÃO
+# tem — CREATE INDEX CONCURRENTLY não roda em transação alguma, e o recibo só é atômico porque
+# há uma. Casamos o MARCADOR ASCII: "saiu 2" também é arquivo não-commitado, sha torto e sonda.
+eq "A11 CREATE INDEX CONCURRENTLY é recusado com exit 2" "$(rc_de "$FIX_CIC")" "2"
+if grep -q 'RECUSA_FORA_DE_TRANSACAO' "$WORK/out.log"; then
+  ok "A11 recusou pelo ramo CERTO (RECUSA_FORA_DE_TRANSACAO)"
+else
+  nok "A11 marcador" "exit 2 veio de OUTRO ramo — 'recusou' não é 'recusou por isto'"
+fi
+
+# A12 — o CONTROLE, e a asserção que mais importa: sem ela, um guard que recusasse TUDO passaria
+# em A10 e A11 com louvor. Alarme de guard tem DOIS lados, e só este mede o lado de baixo.
+# `BEGIN` (sem `;`) e `END;` em coluna 0 dentro de $$ são fecho de bloco PL/pgSQL — 81 arquivos
+# do repo os têm. `REFRESH MATERIALIZED VIEW CONCURRENTLY` não é `CREATE INDEX CONCURRENTLY` —
+# 10 migrations o usam e ele roda em transação normalmente.
+eq "A12 corpo de função com BEGIN/END; e REFRESH MV CONCURRENTLY APLICA" \
+   "$(rc_de "$FIX_CORPO")" "0"
+
+# A12b — o eixo POR FORA. Tudo acima mede o que o SCRIPT decidiu; este mede o que o BANCO
+# guardou. Sensor que só consulta a máquina vigiada herda o defeito dela: se alguém reintroduzir
+# transformação do corpo (o `desenvelopar-transacao.awk` revertido em #2434 era exatamente
+# isso), os guards seguem verdes e só esta comparação vê o corpo mudar. Ver S9.
+norm_corpo() { sed '/^[[:space:]]*$/d'; }   # só a quebra que o $-quote acrescenta; indentação NÃO
+CORPO_DB="$(q_bruto "select prosrc from pg_proc where oid='public.fixture_corpo_refresca()'::regprocedure" | norm_corpo || true)"
+CORPO_ARQ="$(awk '/AS \$funcao\$$/{f=1;next} /^\$funcao\$;$/{f=0} f' "$FIX_CORPO" | norm_corpo)"
+eq "A12b o corpo GUARDADO pelo Postgres é byte-a-byte o do arquivo" "$CORPO_DB" "$CORPO_ARQ"
+
 else
 # ═════════════════════════════════════════════════════════════════════════════════════════
 echo "▶ CONTROLE (sem sabotagem, na cópia) — tem de estar VERDE antes de sabotar"
@@ -380,6 +412,75 @@ fi
 # que o desenho inteiro existe para impedir.
 eq "S5 e a tabela do envelope NÃO nasceu nem assim" \
    "$(q "select to_regclass('public.fixture_aplicar_envelope') is null")" "t"
+
+echo "▶ S6 — guard de não-transacional desligado: CREATE INDEX CONCURRENTLY vai ao banco"
+$PSQL -c "DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
+# shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE do script
+if sabota 's/^if \[ -n "\$FORA_TX" \]; then/if false; then/m'; then
+  S6="$(rc_de "$FIX_CIC")"
+  if [ "$S6" = "4" ]; then
+    ok "S6 vermelho: sem o guard, o PG recusa o CONCURRENTLY dentro de transação (4 ≠ 2)"
+  else
+    nok "S6" "esperava exit 4 (o banco barrando); veio '$S6'"
+  fi
+fi
+
+echo "▶ S7 — guard ALARGADO para casar END; (a SOBRE-recusa) — o CONTROLE tem de cair"
+# S5/S6 provam que os guards PEGAM o que devem. Só S7 prova que A12 morde quando um guard passa
+# a pegar o que NÃO deve. `END;` é sinônimo de COMMIT no top level, mas fecha bloco PL/pgSQL e
+# aparece em coluna 0 dentro de $funcao$ — incluí-lo recusaria 81 arquivos legítimos do repo.
+# Se A12 seguisse verde aqui, ela não estaria medindo nada.
+$PSQL -c "DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
+if sabota 's/\(BEGIN\|COMMIT\|ROLLBACK\|START TRANSACTION\)/(BEGIN|COMMIT|ROLLBACK|END|START TRANSACTION)/'; then
+  S7="$(rc_de "$FIX_CORPO")"
+  if [ "$S7" = "2" ]; then
+    ok "S7 vermelho: guard alargado RECUSA o controle legítimo (2) — A12 mede de verdade"
+  else
+    nok "S7" "esperava exit 2 (controle recusado por END;); veio '$S7'"
+  fi
+fi
+
+echo "▶ S8 — transformação no CLIENTE: o BANCO é o freio, e é por isso que peel não mora aqui"
+# aplicar_sql() RE-CALCULA o sha256 do corpo recebido e compara com o declarado. Qualquer
+# transformação feita pelo cliente quebra a cadeia — foi o que derrubou o desenvelopamento do
+# #2421. Exigimos a marca ASCII 'sha divergente': "falhou" sozinho não diz por quê.
+$PSQL -c "DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
+# shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE do script
+if sabota 's/^  cat "\$SNAP"$/  sed "\/^END;\$\/d" "\$SNAP"/m'; then
+  S8="$(rc_de "$FIX_CORPO")"
+  if [ "$S8" = "4" ] && grep -q 'sha divergente' "$WORK/out.log"; then
+    ok "S8 vermelho: o banco recusou a transformação do cliente (sha divergente, exit 4)"
+  else
+    nok "S8" "esperava exit 4 COM 'sha divergente'; veio '$S8' (marca ausente = outra falha)"
+  fi
+fi
+
+echo "▶ S9 — transformação SERVER-SIDE: a única que o sha NÃO pega, e que só A12b enxerga"
+# O sha é conferido DENTRO de aplicar_sql. Uma transformação aplicada DEPOIS dessa conferência
+# passa por todos os guards do cliente, pelo ledger e pelo próprio sha — e é onde um peel teria
+# de morar. S8 mostra que nenhuma sabotagem do cliente derruba A12b; sem S9, A12b seria verde
+# por INALCANÇÁVEL. A transformação escolhida some com a indentação: o corpo segue VÁLIDO e a
+# função é criada normalmente. É a corrupção silenciosa de verdade.
+cp "$APLICAR" "$ALVO"   # esta sabotagem é no BOOTSTRAP; $ALVO ainda carrega a do S8
+BOOT_SAB="$WORK/bootstrap-sabotado.sql"
+perl -pe 's/^  EXECUTE p_sql;$/  EXECUTE regexp_replace(p_sql, E\x27\\n  \x27, E\x27\\n\x27, \x27g\x27);/' "$BOOT" > "$BOOT_SAB"
+if cmp -s "$BOOT" "$BOOT_SAB"; then
+  nok "S9 sabotagem inerte" "o padrão não casou com 'EXECUTE p_sql;' no bootstrap"
+else
+  $PSQL -c "DROP FUNCTION IF EXISTS public.fixture_corpo_refresca();
+            DROP TABLE IF EXISTS public.fixture_aplicar_corpo;
+            DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
+  $PSQL -f "$BOOT_SAB" >/dev/null 2>&1
+  S9="$(rc_de "$FIX_CORPO")"
+  C_DB="$(q_bruto "select prosrc from pg_proc where oid='public.fixture_corpo_refresca()'::regprocedure" | sed '/^[[:space:]]*$/d' || true)"
+  C_ARQ="$(awk '/AS \$funcao\$$/{f=1;next} /^\$funcao\$;$/{f=0} f' "$FIX_CORPO" | sed '/^[[:space:]]*$/d')"
+  if [ "$S9" = "0" ] && [ "$C_DB" != "$C_ARQ" ]; then
+    ok "S9 vermelho: peel no servidor aplica LIMPO (0) e só A12b vê o corpo ter mudado"
+  else
+    nok "S9" "esperava apply 0 com corpo DIFERENTE; veio rc='$S9', corpo $([ "$C_DB" = "$C_ARQ" ] && echo IGUAL || echo diferente)"
+  fi
+  $PSQL -f "$BOOT" >/dev/null 2>&1   # devolve a função verdadeira
+fi
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════════════════
