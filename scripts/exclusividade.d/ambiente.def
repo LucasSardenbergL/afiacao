@@ -41,3 +41,24 @@ diretiva-alias-jest | src/lib/push/device.test.ts | s/\@vitest-environment/\@jes
 # @origem: 2026-09-08, apos a medicao do `diretiva-alias-jest` mostrar sobreposicao com `knip`
 # @suspeito: gate:ambiente
 diretiva-em-dobro | src/lib/push/device.test.ts | s/^(import \{ describe, it, expect, vi, beforeEach, afterEach \} from 'vitest';)$/\/\/ nota: o cabecalho deste arquivo declara \@vitest-environment jsdom\n$1/
+
+# O eixo que os DOIS defeitos acima nao alcancam: a diretiva dentro de uma STRING DE CODIGO, que
+# TROCA o ambiente do arquivo de verdade. Os dois primeiros mantem o ambiente igual (o alias e
+# obedecido para o mesmo valor; a duplicata repete `jsdom` num arquivo que ja era `jsdom`) — por
+# isso o unico sintoma deles e cosmetico, e por isso `knip` alcancou o primeiro.
+#
+# Aqui o alvo e um `.test.ts` do project NODE que nao toca DOM e nao asserta o proprio ambiente.
+# A string faz o vitest move-lo para jsdom, e NADA reclama: o teste passa igual (nao dependia do
+# ambiente), `tsc` ve uma string valida, `lint` idem, `knip` nao le comentario nem string. O
+# arquivo passa a montar um DOM inteiro por execucao — o custo que o #2336 mediu em 406ms por
+# arquivo — e ninguem fica sabendo. E o dia em que ele PASSAR a depender do ambiente, passara
+# pela razao errada.
+#
+# ⚠️ MEDIDO 2026-09-09, por execucao direta antes de entrar aqui: injetei o literal numa string no
+# meio de `src/hooks/__tests__/useInfiniteScroll.test.ts` e rodei os dois candidatos a cobrir o
+# eixo — `knip` saiu **0 (verde)** e `gate:ambiente` saiu **1**, nomeando arquivo e linha. E a
+# razao e estrutural, nao sorte: `knip` alcancou o alias porque `jest` e um NOME que ele resolve;
+# aqui nao ha nome nenhum, so texto que o vitest le por regex.
+# @origem: docs/historico/vitest-um-arquivo-oito-processos.md (2026-09-09)
+# @suspeito: gate:ambiente
+diretiva-em-string-troca-ambiente | src/__tests__/app-route-dedupe.test.ts | 1i\const _exemplo = "docblock: @vitest-environment jsdom";
