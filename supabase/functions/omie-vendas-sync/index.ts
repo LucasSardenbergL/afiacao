@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
@@ -980,6 +981,12 @@ async function syncPedidos(
   let skippedNoClient = 0;
   let skippedExisting = 0;
   let totalFailed = 0;
+  // SENSOR da identidade de linha, COM DENOMINADOR — o mesmo par de `sync-reprocess`. Sem o
+  // denominador, `itensComIdentidade = 0` é indistinguível de "não houve item nesta janela":
+  // ausência de dado lida como veredito. `pedidosIdentidadeAmbigua` é o G-a batendo.
+  let itensLidos = 0;
+  let itensComIdentidade = 0;
+  let pedidosIdentidadeAmbigua = 0;
   let reachedEnd = false;            // true SÓ no fim real do Omie (null = "Não existem registros", ou página vazia)
   let lastErrorKind: 'rate_limit' | 'transient' | 'http' | null = null;
 
@@ -1365,6 +1372,11 @@ async function syncPedidos(
           unit_price: precoItem,
           discount: prod.desconto || 0,
           hash_payload: `${hashPayload}_${prod.codigo_produto}`,
+          // IDENTIDADE DE LINHA (`det.ide.codigo_item`). Medido em prod 2026-09-08: o
+          // `ListarPedidos` — este MESMO endpoint — devolve o campo em 4.220/4.220 itens lidos
+          // pelo `sync-reprocess`. Nascer com identidade é o que torna o guard de ambiguidade da
+          // `reconciliar_pedidos_omie` INALCANÇÁVEL por construção, em vez de contornável.
+          omie_codigo_item: normalizarCodigoItemOmie(det.ide?.codigo_item),
         });
         // O histórico de preço praticado já era fail-closed (só grava > 0) — mantido, agora
         // pela MESMA régua. Ele exige POSITIVO porque "preço praticado zero" não é preço.
@@ -1375,6 +1387,20 @@ async function syncPedidos(
             unit_price: precoItem,
           });
         }
+      }
+
+      // G-a NO CLIENTE: identidade repetida entre linhas do MESMO pedido é PIOR que ausente —
+      // ela cria a condição `G-b` da `reconciliar_pedidos_omie` (identidade duplicada no ATUAL),
+      // que faz o reconciliador PULAR aquele pedido para sempre. Ausente é reversível (degrada
+      // para o casamento por SKU, o comportamento de hoje); ambíguo GRAVADO congela o pedido.
+      // Vale para o pedido inteiro, como o `v_ident` da RPC — a régua é por pedido, não por linha.
+      const idsDoPedido = itensRpc.map((it) => (it.omie_codigo_item ?? null) as number | null);
+      itensLidos += idsDoPedido.length;
+      if (identidadeDistinta(idsDoPedido)) {
+        itensComIdentidade += idsDoPedido.filter((c) => c !== null).length;
+      } else {
+        pedidosIdentidadeAmbigua++;
+        for (const it of itensRpc) it.omie_codigo_item = null;
       }
 
       pedidosRpc.push({
@@ -1420,7 +1446,7 @@ async function syncPedidos(
         totalFailed += fails.length;
         if (divs.length > 0) console.warn(`[sync_pedidos][${account}] ${divs.length} pedido(s) com cabeçalho divergente (Fase 2, NÃO reconciliado):`, JSON.stringify(divs.slice(0, 5)));
         if (fails.length > 0) console.error(`[sync_pedidos][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
-        console.log(`[sync_pedidos][${account}] RPC pág ${pagina}: inserted=${r.inserted || 0} repaired=${r.repaired || 0} items=${r.items || 0} skip_completo=${r.skipped_complete || 0} skip_sem_item=${r.skipped_no_items || 0} divergencia=${divs.length} falhas=${fails.length}`);
+        console.log(`[sync_pedidos][${account}] RPC pág ${pagina}: inserted=${r.inserted || 0} repaired=${r.repaired || 0} items=${r.items || 0} skip_completo=${r.skipped_complete || 0} skip_sem_item=${r.skipped_no_items || 0} divergencia=${divs.length} falhas=${fails.length} itens_com_codigo_item=${itensComIdentidade}/${itensLidos} identidade_ambigua=${pedidosIdentidadeAmbigua}`);
       }
     }
 
@@ -1432,7 +1458,7 @@ async function syncPedidos(
   // Completude = FIM REAL alcançado (null/página vazia), NUNCA pagina>totalPaginas.
   // Pausa (transitório/erro) ou budget de página esgotado ⟹ complete=false, retoma do `pagina`.
   const complete = reachedEnd;
-  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
+  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, itensLidos, itensComIdentidade, pedidosIdentidadeAmbigua, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
 }
 
 // ── Reparo dos órfãos PRESOS (pai sem itens, fora da janela do cron) ──────────────────
