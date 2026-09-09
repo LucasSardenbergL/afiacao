@@ -14,6 +14,9 @@ import type { BancoPostgrest } from "../_shared/paginate.ts";
 // executável em teste. Extraída para `_shared/itens-com-pedido.ts`, que roda contra um
 // double em `itens-com-pedido_test.ts` (padrão de `recommend-leituras.ts`).
 import { carregarItensCockpit } from "../_shared/itens-com-pedido.ts";
+// A régua ÚNICA da receita líquida de linha. Ela devolve `null` quando o preço OU o desconto são
+// desconhecidos — ver §"O que o chamador faz com o null" no cabeçalho dela.
+import { receitaLiquidaItem } from "../_shared/desconto-omie.ts";
 // Gate da SONDA, não da edge: o `authorizeGestorOuMaster` abaixo exige `Authorization: Bearer` +
 // role comercial e nunca leu `x-cron-secret` — que é como o founder invoca do SQL Editor. A sonda
 // vem antes dele e traz o seu próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
@@ -150,7 +153,19 @@ function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm_fim: s
   }
   return { ar_medio: soma / janelaDias, v_real, v_proxy, v_sem_fecho };
 }
-type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null };
+type ComboInput = {
+  cliente: string;
+  sku: string;
+  receita_liquida: number;
+  quantidade: number;
+  custo_unitario: number | null;
+  /** O rateio de AR deste combo perdeu base: alguma linha DESTE CLIENTE não foi apurada, então
+   *  `receitaPorCliente` abaixo é um denominador incompleto e o capital seria redistribuído entre
+   *  os sobreviventes. Opcional para não quebrar os testes que montam combos à mão. */
+  rateio_ar_incompleto?: boolean;
+  /** Idem para o rateio de estoque, que usa `qtdPorSKU`. */
+  rateio_estoque_incompleto?: boolean;
+};
 type CapitalCliente = { cliente: string; ar_medio: number | null };
 type CapitalSKU = { sku: string; estoque_valor: number | null };
 // Status do EVP afirmável (espelho VERBATIM de src/lib/financeiro/valor-cockpit-helpers.ts).
@@ -178,8 +193,13 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
     const estS = estSraw != null && Number.isFinite(estSraw) && estSraw >= 0 ? estSraw : null;
     const rc = receitaPorCliente.get(c.cliente) ?? 0;
     const qs = qtdPorSKU.get(c.sku) ?? 0;
-    const ar_indisponivel = arC == null || rc <= 0;
-    const estoque_indisponivel = estS == null || qs <= 0;
+    // O rateio é proporcional: `arC * (receita_do_combo / receita_do_cliente)`. Se uma linha do
+    // cliente não foi apurada, `rc` é menor do que a receita real e cada combo sobrevivente
+    // recebe uma FATIA MAIOR do capital do que lhe cabe. O número sairia plausível e maior, que
+    // é a direção perigosa. Indisponibilizar é a leitura honesta — e ela é do GRUPO, não do
+    // combo: um combo 100% apurado é contaminado por um vizinho do mesmo cliente.
+    const ar_indisponivel = arC == null || rc <= 0 || c.rateio_ar_incompleto === true;
+    const estoque_indisponivel = estS == null || qs <= 0 || c.rateio_estoque_incompleto === true;
     const capital_parcial = ar_indisponivel || estoque_indisponivel;
     const a_cs = arC != null && rc > 0 ? arC * (c.receita_liquida / rc) : 0;
     const i_cs = estS != null && qs > 0 ? estS * (c.quantidade / qs) : 0;
@@ -549,6 +569,9 @@ Deno.serve(async (req: Request) => {
     }
     if (semPedidoPai > 0) console.warn(`[ValorCockpit][${COMPANY}] ${semPedidoPai} item(ns) sem pedido pai no embed — o \`!inner\` deveria tornar isso impossível; a receita desses itens NÃO entrou no cockpit`);
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
+    // (a recusa TOTAL da apuração é tratada adiante, em `apuracao_desconto.estado`: ela não é
+    // "sem vendas" — há vendas, o que falta é o desconto apurado, e a diferença é o que impede
+    // a tela de mostrar R$ 0 onde o honesto é "—".)
 
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
     // #8 (P0-B-bis PR-4): mapa user->codigo de DISPLAY pela view fresca account=oben (COMPANY). O espelho
@@ -614,19 +637,58 @@ Deno.serve(async (req: Request) => {
     // Combos cliente×SKU — cliente não-mapeado vira 'app:<uuid>' (NÃO funde clientes distintos).
     const comboMap = new Map<string, { cliente: string; sku: string; receita: number; qtd: number; desconto: number; product_id: string | null }>();
     const clienteParaNome = new Map<string, string>(); // cliente (omie/app) → nome do profile (1º encontrado)
+    // ── Cobertura da apuração ────────────────────────────────────────────────────────────────
+    // O denominador nasce ANTES de qualquer descarte monetário e sobre o MESMO universo que o
+    // cálculo usa: contar só o que sobreviveu faria o denominador se ajustar ao numerador, e
+    // nenhuma cobertura medida assim consegue ficar baixa.
+    //
+    // Os dois Sets abaixo não são estatística — eles ALTERAM o EVP. `montarCelulasComboEVP`
+    // rateia AR pela receita do cliente e estoque pela quantidade do SKU: tirar uma linha muda o
+    // denominador do rateio e redistribui capital entre as que ficaram. Um combo inteiramente
+    // apurado pode ter EVP comprometido porque OUTRO combo do mesmo cliente não foi. Por isso a
+    // incompletude viaja por cliente e por SKU, não só pelo combo.
+    let itensApurados = 0;
+    const clientesComRecusa = new Set<string>();
+    const skusComRecusa = new Set<string>();
+    // SKU que teve venda mas cuja apuração falhou continua sendo SKU COM VENDA. Sem isto ele
+    // sumiria dos combos e o giro executivo o classificaria como estoque parado — capital
+    // "morto" fabricado a partir de uma lacuna de leitura.
+    const skusComVendaObservada = new Set<string>();
     for (const l of linhas) {
       const cliente = userToOmie.get(l.customer_user_id) ?? `app:${l.customer_user_id}`;
       const nomeCli = userParaNome.get(l.customer_user_id);
       if (nomeCli && !clienteParaNome.has(cliente)) clienteParaNome.set(cliente, nomeCli);
       const sku = l.omie_codigo_produto != null ? String(l.omie_codigo_produto) : "sem_sku";
+      skusComVendaObservada.add(sku);
+      // `desconto_valor` é R$ absolutos da linha; `null` significa NÃO APURADO — ou a leitura do
+      // Omie foi recusada, ou a linha é anterior ao backfill. Substituí-lo por 0 devolveria a
+      // receita CHEIA, numericamente idêntica ao caso legítimo "não há desconto", e a fabricação
+      // ficaria invisível na tela. Era exatamente isto que o `l.discount ?? 0` daqui fazia.
+      const receita = receitaLiquidaItem(l.unit_price, l.quantity, l.desconto_valor);
+      if (receita === null) {
+        clientesComRecusa.add(cliente);
+        skusComRecusa.add(sku);
+        continue; // soma só o que conhece — a linha NÃO entra como 0
+      }
+      itensApurados++;
       const key = `${cliente}|${sku}`;
-      const receita = l.unit_price * l.quantity - (l.discount ?? 0);
       const acc = comboMap.get(key) ?? { cliente, sku, receita: 0, qtd: 0, desconto: 0, product_id: l.product_id };
-      acc.receita += receita; acc.qtd += l.quantity; acc.desconto += (l.discount ?? 0);
+      acc.receita += receita; acc.qtd += l.quantity; acc.desconto += (l.desconto_valor ?? 0);
       comboMap.set(key, acc);
     }
+    const itensRecusados = linhas.length - itensApurados;
     const comboVals = [...comboMap.values()];
-    const combos: ComboInput[] = comboVals.map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
+    const combos: ComboInput[] = comboVals.map((c) => ({
+      cliente: c.cliente,
+      sku: c.sku,
+      receita_liquida: c.receita,
+      quantidade: c.qtd,
+      custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null,
+      // O rateio deste combo perdeu base se o CLIENTE ou o SKU perderam qualquer linha — não
+      // basta olhar o próprio combo (ver a nota no laço acima).
+      rateio_ar_incompleto: clientesComRecusa.has(c.cliente),
+      rateio_estoque_incompleto: skusComRecusa.has(c.sku),
+    }));
 
     // Canal do pedido (PR1 Cabreúva-Colacor): MESMA base de linhas do cockpit (janela por
     // order_date_kpi + faturável + recorte Oben) agregada pelo canal de origem do pedido pai.
@@ -641,14 +703,20 @@ Deno.serve(async (req: Request) => {
       if (so == null || canalPorPedido.has(l.sales_order_id)) continue;
       canalPorPedido.set(l.sales_order_id, classificarCanalPedido({ origem: so.origem ?? null, checkout_id: so.checkout_id ?? null }));
     }
-    const itensCanal: ItemCanalInput[] = linhas.map((l) => ({
-      sales_order_id: l.sales_order_id,
-      cliente: userToOmie.get(l.customer_user_id) ?? `app:${l.customer_user_id}`,
-      receita_liquida: l.unit_price * l.quantity - (l.discount ?? 0),
-      quantidade: l.quantity,
-      desconto: l.discount ?? 0,
-      custo_unitario: l.product_id ? (custoPorProduto.get(l.product_id) ?? null) : null,
-    }));
+    // Canal usa a MESMA régua e o MESMO descarte: uma linha que não entrou na receita por cliente
+    // não pode entrar na receita por canal, ou os dois cortes do mesmo dinheiro deixam de somar.
+    const itensCanal: ItemCanalInput[] = linhas.flatMap((l) => {
+      const receita = receitaLiquidaItem(l.unit_price, l.quantity, l.desconto_valor);
+      if (receita === null) return [];
+      return [{
+        sales_order_id: l.sales_order_id,
+        cliente: userToOmie.get(l.customer_user_id) ?? `app:${l.customer_user_id}`,
+        receita_liquida: receita,
+        quantidade: l.quantity,
+        desconto: l.desconto_valor ?? 0,
+        custo_unitario: l.product_id ? (custoPorProduto.get(l.product_id) ?? null) : null,
+      }];
+    });
     const porCanal = agregarPorCanal(itensCanal, canalPorPedido);
 
     // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
@@ -704,7 +772,9 @@ Deno.serve(async (req: Request) => {
     // cockpit; dinheiro morto = capital de SKU sem venda no TTM. Retorno é PROXY (snapshot).
     const giroExecutivo = calcularGiroExecutivo({
       estoquePorSKU: estoqueValorPorSKU,
-      skusComVendaTTM: new Set(comboVals.map((c) => c.sku)),
+      // Observada, não apurada: ver a nota no laço dos combos. Um SKU cuja apuração falhou
+      // ainda teve venda, e classificá-lo como sem-venda inventaria dinheiro morto.
+      skusComVendaTTM: skusComVendaObservada,
       cmTTM: res.empresa.cm,
     });
 
@@ -752,6 +822,29 @@ Deno.serve(async (req: Request) => {
       evp_perda_garantida_receita_pct: res.evp_perda_garantida_receita_pct,
       sem_cm_receita_pct: res.sem_cm_receita_pct,
       hurdle_banda: res.hurdle_banda, // banda da sensibilidade (sem isto a UI nunca mostra 25/30/35 — P1 /codex)
+      // ── Cobertura da APURAÇÃO DO DESCONTO ───────────────────────────────────────────────────
+      // "R$ X em 128 de 130 itens" é verdade; "R$ X" com 2 itens comidos em silêncio não é. Um
+      // agregado incompleto NÃO PODE ter a mesma cara de um completo (régua de desconto-omie.ts),
+      // e é isto que dá à UI como dizer a diferença. O denominador é o universo do cockpit,
+      // contado antes dos descartes; `estado` é o que a tela deve mostrar:
+      //   sem_vendas  → não há item no recorte
+      //   sem_apuracao→ há itens e NENHUM é calculável: a receita é `null`, um "—", não R$ 0
+      //   parcial     → parte calculável; o valor vale para os itens apurados, e só para eles
+      //   completo    → todos calculáveis
+      apuracao_desconto: {
+        itens_no_universo: linhas.length,
+        itens_apurados: itensApurados,
+        itens_recusados: itensRecusados,
+        clientes_com_recusa: clientesComRecusa.size,
+        skus_com_recusa: skusComRecusa.size,
+        estado: linhas.length === 0
+          ? "sem_vendas"
+          : itensApurados === 0
+          ? "sem_apuracao"
+          : itensRecusados > 0
+          ? "parcial"
+          : "completo",
+      },
       config,
     }, 200);
   } catch (e) {

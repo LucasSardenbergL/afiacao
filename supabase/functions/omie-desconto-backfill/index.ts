@@ -27,7 +27,7 @@ import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
 import { conciliarDescontosPedido, type ItemOmieDetalhe, type LinhaLocal } from "../_shared/desconto-backfill.ts";
 import { avaliarPagina, MAX_PAGINAS_PEDIDOS, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
-import { respostaSonda, VERSAO } from "./versao.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 type Account = "oben" | "colacor";
@@ -86,13 +86,25 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
-  const db = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
-
   try {
     const corpo = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+
+    // Sonda de versão ({"probe":true}) — ANTES do createClient e de qualquer chamada ao Omie,
+    // para seguir sendo o único caminho SEM custo. `classificarSonda` (e não `=== true` cru) é o
+    // que a torna fail-closed: um `probe` de forma inesperada vira 400 explícito em vez de cair
+    // no fluxo normal e disparar um backfill de verdade — o custo que o EFEITO acima nomeia.
+    const decisaoSonda = classificarSonda(corpo);
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (decisaoSonda.tipo === "ambiguo") {
+      return new Response(
+        JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
     const account: Account = corpo.account === "colacor" ? "colacor" : "oben";
     const mesesJanela: number = Number.isFinite(corpo.meses) ? Number(corpo.meses) : 12;
     const paginaInicial: number = Number.isFinite(corpo.pagina) && Number(corpo.pagina) > 0 ? Number(corpo.pagina) : 1;
@@ -100,6 +112,11 @@ Deno.serve(async (req) => {
     // `dry_run` NÃO é um modo de teste decorativo: ele roda a conciliação inteira e devolve as
     // contagens sem escrever. É como se mede a cobertura ANTES de tocar em 10 mil linhas.
     const dryRun: boolean = corpo.dry_run === true;
+
+    const db = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
 
     const hoje = new Date();
     const de = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - mesesJanela, hoje.getUTCDate()));
