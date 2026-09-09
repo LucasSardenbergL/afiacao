@@ -193,6 +193,22 @@ sabotar 'F12 CSV degrada por valor' src/services/financeiroService.ts \
   const rows = data.map(cr => [" \
   'recebido 0 medido sai como 0'
 
+# O gêmeo de contas a pagar é uma CAMADA À PARTE: a asserção dele existia, mas sem sabotá-lo eu
+# estaria afirmando a cobertura em vez de prová-la — os dois exports são funções independentes.
+sabotar 'F13 CSV de contas a pagar não degrada' src/services/financeiroService.ts \
+  "  const celulaBaixa = (v: number) => baixaOuIndisponivel(v, procedencia) ?? procedencia.motivo ?? '';
+  const rows = data.map(cp => [" \
+  '  const celulaBaixa = (v: number) => v;
+  const rows = data.map(cp => [' \
+  'degrada Pago e Saldo no ramo de contas a pagar'
+
+sabotar 'F14 CSV de contas a pagar degrada por valor' src/services/financeiroService.ts \
+  "  const celulaBaixa = (v: number) => baixaOuIndisponivel(v, procedencia) ?? procedencia.motivo ?? '';
+  const rows = data.map(cp => [" \
+  "  const celulaBaixa = (v: number) => (v === 0 ? procedencia.motivo ?? '' : v);
+  const rows = data.map(cp => [" \
+  'pago 0 medido sai como 0 no ramo de contas a pagar'
+
 echo
 if [ "$falhou" -ne 0 ]; then
   echo "FALSIFICAÇÃO REPROVADA — ver marcas ✗ acima."
