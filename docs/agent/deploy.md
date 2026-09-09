@@ -73,6 +73,16 @@ git show --name-only --format="" <sha> | .claude/skills/lovable-deploy-verify/ev
 
 Mordido 2026-08-14 (#1520 `9f7e8962`, FU4-F fase 3): o `/fecho` pegou `…130000_fecha_product_costs.sql` mergeada e não aplicada, aplicou, verificou — caso encerrado. O mesmo PR trazia **5 migrations + frontend (já publicado) + 2 edges nunca confirmadas**, e edge velha ali é money-path concreto, porque o front novo é que mudou o contrato: `generate-bundle-argument` imprime `p.margin.toFixed(2)`/`bundle.lieBundle.toFixed(2)` num payload que o hook publicado **parou de mandar** (→ **TypeError**, argumento de venda não gera); `generate-tactical-plan` ordena as recomendações por `lie_bundle DESC`, hoje NULL em toda linha, e DESC implica NULLS FIRST → **topBundle arbitrário, plano tático sobre ranking fabricado**. ⚠️ O risco é assimétrico: com as duas metades faltando elas se cancelam, então **aplicar só a camada que apareceu pode ser o que ARMA a quebra** — é a armadilha do `carteira-rebuild` (abaixo) vista pelo lado do PR, não da edge.
 
+### O gate de ordem: "existe" ≠ "está na versão que a edge espera" (#2428)
+
+`bun run pendencias:pacote` recusa a colagem da edge enquanto prod não tem as RPCs que ela chama. Até 2026-09-09 ele perguntava só se a função **existe** — e existência não distingue a versão. Medido: `criar_pedidos_com_itens` estava em prod na versão anterior à migration da leva (mergeada, não aplicada); a edge mandava o desconto apurado e a **RPC velha descartava o campo sem erro nenhum**. Sem 500, sem log, sem sintoma: o sync reporta sucesso e o ledger passa a atestar `CONFERE` sobre metade de uma entrega. É o modo de falha mais caro do #2285 — a versão silenciosa dele.
+
+⚠️ **O conserto óbvio é o errado.** Reprovar "o corpo em prod diverge do repo" TRAVA TODO DEPLOY: apply manual diverge por DESENHO (§4 de `database.md`; ~210 objetos sem `CREATE` commitado). Medido nas 65 RPCs literais das 97 edges: **14 divergem, e 11 são deriva benigna** — um gate assim bloquearia 17/65 e seria contornado na 1ª semana.
+
+O que BLOQUEIA é **evidência POSITIVA de regressão**: prod rodar um corpo que o **próprio repo commitou ANTES** do atual (`md5(prosrc)` × histórico das migrations da ref). Divergir é normal; regredir para uma versão commitada não é. Quatro estados — `EM_DIA` (libera) · `CORPO_ANTERIOR` (**bloqueia**) · `DERIVA` e `INDECIDIVEL` (declaram a não-cobertura e liberam). A unidade conferida é a **MIGRATION**, não a função: ela confere as irmãs do mesmo `BEGIN; … COMMIT;`, senão um dos três escritores acoplados escapa por ser chamado por outra edge.
+
+Fica descoberto, de propósito: `DERIVA` não bloqueia — uma edição manual que também ignore o campo novo passa. **Fecha-se commitando a DDL**, não com mais gate. Narrativa completa, a medição e as três formas de o extrator FABRICAR o corpo esperado: [existe-nao-e-a-versao-que-a-edge-espera.md](../historico/existe-nao-e-a-versao-que-a-edge-espera.md).
+
 ## Edge — armadilhas
 
 - **Deploy SÓ depois do merge** — o chat lê a `main`; deployar antes pega o código velho.

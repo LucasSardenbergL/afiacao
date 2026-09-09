@@ -21,6 +21,19 @@ import { createHash } from 'node:crypto';
 
 import { removerComentariosSql } from './sql-comentarios';
 
+/**
+ * A receita ESTRITA de hash de corpo: md5 dos bytes utf-8, sem normalização nenhuma.
+ *
+ * É o que `md5(pg_proc.prosrc)` devolve. Mora AQUI, na fundação, e não no consumidor
+ * (`corpo-esperado.ts`), porque este arquivo é quem a aplica ao extrair — o import na outra
+ * direção fecharia um ciclo. Um dono só para as duas pontas que precisam coincidir (o extrator de
+ * migration e o autoteste da sonda): duas receitas escritas em dois lugares divergem calmamente, e
+ * a divergência não aparece como erro, aparece como DERIVA em massa.
+ */
+export function md5Exato(texto: string): string {
+  return createHash('md5').update(texto, 'utf8').digest('hex');
+}
+
 export type ObjectKind = 'table' | 'index' | 'function' | 'trigger' | 'cron_job' | 'enum_value' | 'rls_policy' | 'view';
 
 export interface ExtractedObject {
@@ -44,6 +57,21 @@ export interface ExtractedObject {
    * ausência aqui NUNCA vira "confere": o audit degrada para INDECIDÍVEL, não para ✅.
    */
   bodyMd5?: string;
+  /**
+   * function: md5 do corpo EXATO, byte a byte — o que `md5(pg_proc.prosrc)` devolve, sem
+   * normalização nenhuma.
+   *
+   * Existe ao lado de `bodyMd5` porque as duas receitas respondem perguntas diferentes, e o
+   * gate de deploy (#2428) precisa da estrita. O colapso `\s+ → ' '` do `bodyMd5` iguala corpos
+   * que o Postgres executa DIFERENTE — `SELECT 'a  b'` e `SELECT 'a b'` colidem, porque a receita
+   * não sabe onde começa um literal (achado do Codex, reproduzido). Para o audit isso é ruído
+   * tolerável; para "a RPC em prod é a versão que esta edge espera?" é uma igualdade que mente.
+   *
+   * Medido nas 65 RPCs literais das edges deste repo: a receita EXATA classifica as mesmas 48
+   * como em dia. A precisão a mais não custou recall nenhum — então o gate usa a estrita, e o
+   * audit segue com a sua, cada uma com autoteste contra o banco.
+   */
+  bodyMd5Exato?: string;
 }
 
 /** `btrim(x)` do Postgres com UM argumento: só ESPAÇOS, nunca `\n`/`\t`. Ver `bodyMd5`. */
@@ -51,36 +79,102 @@ function trimEspacos(s: string): string {
   return s.replace(/^ +| +$/g, '');
 }
 
-/** md5 do corpo com a receita do banco: btrim(espaços) → colapsa whitespace → md5. Interna: o
- *  consumidor é `corposCrusPorNome` logo abaixo — exportá-la sem consumidor externo reprova no
- *  gate de dead-code (`knip`), que só roda no CI. */
+/** md5 do corpo com a receita NORMALIZADA do audit: btrim(espaços) → colapsa whitespace → md5.
+ *  Interna: os consumidores são `corposCrusPorNome` logo abaixo (que também calcula a receita
+ *  ESTRITA, a do gate de deploy) — exportá-la sem consumidor externo reprova no gate de dead-code
+ *  (`knip`), que só roda no CI. */
 function md5CorpoFuncao(corpo: string): string {
   return createHash('md5').update(trimEspacos(corpo).replace(/\s+/g, ' '), 'utf8').digest('hex');
 }
 
+/** Uma declaração de função e o corpo CRU que ela realmente carrega. */
+interface CorpoDeclarado {
+  /** md5 pela receita do banco (`btrim` + colapso de whitespace) — o do audit. */
+  md5: string;
+  /** md5 do corpo EXATO, byte a byte: o que `md5(pg_proc.prosrc)` devolve. */
+  md5Exato: string;
+}
+
+/** `CREATE [OR REPLACE] FUNCTION [schema.]nome(` — a declaração, no texto MASCARADO. */
+const DECLARACAO_FUNCAO = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(\w+)\.)?(\w+)\s*\(/gi;
+
 /**
- * md5 do corpo de cada função, lido do SQL **CRU** e indexado por `schema.nome`.
+ * Corpo de cada função, lido do SQL **CRU** e indexado por `schema.nome`.
  *
- * 🔴 CRU, e não o texto sem comentários que o resto do extrator usa. `pg_proc.prosrc` **guarda os
- * comentários do corpo**; calcular o md5 sobre a versão comentário-strippada produz um hash que
- * NUNCA bate com o banco para qualquer função que tenha um `--` dentro. Medido em 2026-08-29: com
- * o texto strippado a Seção 3 classificou 52 funções como DERIVA e 36 em dia; com o texto cru, 24
- * e 69. Ou seja, 28 alarmes FALSOS — e alarme falso em massa é como uma seção nova nasce
- * desligada. O bug só apareceu porque a mesma classificação foi feita duas vezes, em SQL e em TS,
- * e as duas TINHAM de bater.
+ * 🔴 O corpo sai do CRU, e não do texto sem comentários que o resto do extrator usa.
+ * `pg_proc.prosrc` **guarda os comentários do corpo**; calcular o md5 sobre a versão
+ * comentário-strippada produz um hash que NUNCA bate com o banco para qualquer função que tenha um
+ * `--` dentro. Medido em 2026-08-29: com o texto strippado a Seção 3 classificou 52 funções como
+ * DERIVA e 36 em dia; com o texto cru, 24 e 69 — 28 alarmes FALSOS.
  *
- * Casa o primeiro `AS $tag$ … $tag$` depois de cada declaração e exige a MESMA tag no fecho — um
- * `$$` interno com tag diferente não fecha o bloco por engano. Overload no MESMO arquivo (mesmo
- * nome, assinaturas diferentes) colapsa no último: o consumidor compara "bate com alguma versão",
- * então o conservador é não distinguir.
+ * 🔴 Mas a DELIMITAÇÃO sai do texto MASCARADO, e é isso que o #2428 consertou. A v1 varria o cru
+ * com um único regex lazy (`FUNCTION nome\(…[\s\S]*?\bAS\s+(\$tag\$)([\s\S]*?)\3`), e o Codex
+ * reproduziu três formas de ele FABRICAR o corpo esperado — todas verificadas aqui antes de
+ * mexer, todas com o mesmo desfecho: o gate de deploy compararia prod contra um corpo que
+ * migration nenhuma declara.
+ *
+ *   a) `CREATE … f() AS $$ SELECT 2 $$` seguido do MESMO create **comentado** para rollback:
+ *      a última ocorrência vence e `f` ficava com o corpo do COMENTÁRIO (`SELECT 1`).
+ *   b) `f()` sem corpo dollar-quoted (`LANGUAGE sql RETURN 1`) seguida de `g() AS $$…$$`:
+ *      o lazy atravessava a fronteira e dava a `f` o corpo de `g` — e `g` ficava SEM corpo.
+ *   c) tag com dígito (`$v1$`), que `[A-Za-z_]*` não reconhecia: mesmo roubo de corpo que (b).
+ *
+ * O conserto usa uma propriedade que `removerComentariosSql` já tinha e ninguém explorava: ele
+ * **preserva os offsets** (troca cada caractere de comentário por espaço, mantendo os `\n`), então
+ * o índice no mascarado É o índice no cru. Delimitar no mascarado e fatiar do cru dá as duas
+ * coisas ao mesmo tempo: imunidade a comentário na hora de decidir ONDE o corpo começa, e os
+ * comentários internos preservados no hash.
+ *
+ * O varredor é linear e avança PARA DEPOIS do fecho de cada corpo consumido, de modo que uma
+ * declaração que apareça dentro de um corpo (SQL dinâmico, `EXECUTE format(…)`) não abre uma
+ * declaração nova. Sem corpo dollar-quoted ANTES da próxima declaração, a função entra sem corpo —
+ * e ausência de corpo NUNCA vira "confere": ela sai do histórico e o julgamento a chama de
+ * indecidível.
+ *
+ * Overload no MESMO arquivo (mesmo nome, assinaturas diferentes) ainda colapsa no último: quem
+ * compara decide o que fazer com isso, e o gate de deploy trata nome com overload em prod como
+ * indecidível em vez de "bate com algum".
  */
-function corposCrusPorNome(sqlCru: string): Map<string, string> {
-  const out = new Map<string, string>();
-  const re = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(\w+)\.)?(\w+)\s*\([\s\S]*?\bAS\s+(\$[A-Za-z_]*\$)([\s\S]*?)\3/gi;
-  for (const m of sqlCru.matchAll(re)) {
-    out.set(`${(m[1] ?? 'public').toLowerCase()}.${m[2].toLowerCase()}`, md5CorpoFuncao(m[4]));
+function corposCrusPorNome(sqlCru: string): Map<string, CorpoDeclarado> {
+  const mascarado = removerComentariosSql(sqlCru);
+  // A garantia de que o mascarado é um MAPA de offsets do cru, e não outro texto. Se algum dia o
+  // stripper deixar de preservar comprimento, fatiar o cru por índices do mascarado devolveria um
+  // pedaço deslocado — corpo silenciosamente errado, que é o modo de falha que este arquivo todo
+  // combate. Degradar aqui é seguro: sem corpo, o consumidor diz "não sei", nunca "confere".
+  if (mascarado.length !== sqlCru.length) return new Map();
+
+  const out = new Map<string, CorpoDeclarado>();
+  let pos = 0;
+  for (;;) {
+    DECLARACAO_FUNCAO.lastIndex = pos;
+    const m = DECLARACAO_FUNCAO.exec(mascarado);
+    if (m === null) return out;
+    const depoisDoNome = m.index + m[0].length;
+
+    // A janela desta declaração termina onde a PRÓXIMA começa — é o que impede o corpo de `g` de
+    // ser creditado a `f`.
+    DECLARACAO_FUNCAO.lastIndex = depoisDoNome;
+    const proxima = DECLARACAO_FUNCAO.exec(mascarado);
+    const limite = proxima === null ? mascarado.length : proxima.index;
+
+    pos = depoisDoNome;
+    const janela = mascarado.slice(depoisDoNome, limite);
+    // `$v1$` e `$_x$` são tags válidas: o dígito entra, e o fecho exige a MESMA tag.
+    const abre = /\bAS\s+(\$[A-Za-z_0-9]*\$)/i.exec(janela);
+    if (abre === null) continue;
+
+    const tag = abre[1];
+    const ini = depoisDoNome + abre.index + abre[0].length;
+    const fim = mascarado.indexOf(tag, ini);
+    if (fim < 0 || fim >= limite) continue;
+
+    const corpo = sqlCru.slice(ini, fim);
+    out.set(`${(m[1] ?? 'public').toLowerCase()}.${m[2].toLowerCase()}`, {
+      md5: md5CorpoFuncao(corpo),
+      md5Exato: md5Exato(corpo),
+    });
+    pos = fim + tag.length;
   }
-  return out;
 }
 
 /** split por vírgula no nível 0 de parênteses (preserva numeric(10,2) etc.) */
@@ -155,13 +249,13 @@ export function extractObjects(sql: string): ExtractedObject[] {
   const fnRe = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(\w+)\.)?(\w+)\s*\(/gi;
   for (const m of stripped.matchAll(fnRe)) {
     const args = balancedParens(stripped, m.index! + m[0].length - 1);
-    const md5Corpo = corpos.get(`${(m[1] || 'public').toLowerCase()}.${m[2].toLowerCase()}`);
+    const corpo = corpos.get(`${(m[1] || 'public').toLowerCase()}.${m[2].toLowerCase()}`);
     objects.push({
       kind: 'function',
       schema: m[1] || 'public',
       name: m[2],
       signature: normalizeSignature(args),
-      ...(md5Corpo === undefined ? {} : { bodyMd5: md5Corpo }),
+      ...(corpo === undefined ? {} : { bodyMd5: corpo.md5, bodyMd5Exato: corpo.md5Exato }),
     });
   }
 

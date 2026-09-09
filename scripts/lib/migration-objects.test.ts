@@ -286,3 +286,65 @@ describe('corpus real — nenhuma CREATE POLICY custom fica fora do inventário'
     expect(dinamicas).toBe(3); // as 3 EXECUTE format conhecidas — mudou? revise o descarte
   });
 });
+
+describe('corpo da função — a DELIMITAÇÃO decide, e ela sai do texto mascarado (#2428)', () => {
+  /** md5 exato de ' SELECT 1; ' — o corpo que só existe DENTRO do comentário de rollback.
+   *  Digitado, conferível com `printf ' SELECT 1; ' | md5`; um valor inventado aqui faria o
+   *  `not.toBe` abaixo passar por acidente, provando nada. */
+  const CORPO_COMENTADO = '30fe9eea032a2e0ddb7230da6d418d44';
+  const corpoDe = (sql: string, nome: string) =>
+    extractObjects(sql).find((o) => o.kind === 'function' && o.name === nome)?.bodyMd5Exato;
+
+  it('rollback COMENTADO não sequestra o corpo da função real', () => {
+    // O regex antigo varria o CRU e a ÚLTIMA ocorrência vencia: `f` ficava com `SELECT 1`, o corpo
+    // que existe só dentro do comentário. Um gate de deploy compararia prod contra um corpo que
+    // migration nenhuma declara — e chamaria de "atrasado" quem está em dia (ou vice-versa).
+    const sql = `
+CREATE OR REPLACE FUNCTION public.f() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;
+-- rollback:
+-- CREATE OR REPLACE FUNCTION public.f() RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;
+`;
+    const so = `CREATE OR REPLACE FUNCTION public.f() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;`;
+    expect(corpoDe(sql, 'f')).toBe(corpoDe(so, 'f'));
+    expect(corpoDe(sql, 'f')).not.toBe(CORPO_COMENTADO);
+    // E o positivo: o corpo comentado é MESMO este md5 — senão a asserção acima é vazia.
+    expect(corpoDe(`CREATE FUNCTION public.z() RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;`, 'z')).toBe(CORPO_COMENTADO);
+  });
+
+  it('função SEM corpo dollar-quoted não rouba o corpo da PRÓXIMA', () => {
+    const sql = `
+CREATE OR REPLACE FUNCTION public.f() RETURNS int LANGUAGE sql RETURN 1;
+CREATE OR REPLACE FUNCTION public.g() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;
+`;
+    // `f` sem corpo extraível é a resposta CERTA: ausência, que o consumidor chama de indecidível.
+    expect(corpoDe(sql, 'f')).toBeUndefined();
+    expect(corpoDe(sql, 'g')).toBeDefined();
+  });
+
+  it('tag dollar-quote com DÍGITO ($v1$) é reconhecida — senão o corpo migra para a vizinha', () => {
+    const sql = `
+CREATE OR REPLACE FUNCTION public.f() RETURNS int LANGUAGE sql AS $v1$ SELECT 1; $v1$;
+CREATE OR REPLACE FUNCTION public.g() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;
+`;
+    expect(corpoDe(sql, 'f')).not.toBe(corpoDe(sql, 'g'));
+    expect(corpoDe(sql, 'f')).toBeDefined();
+    expect(corpoDe(sql, 'g')).toBeDefined();
+  });
+
+  it('a receita EXATA separa corpos que a normalizada iguala', () => {
+    const a = `CREATE FUNCTION public.f() RETURNS text LANGUAGE sql AS $$ SELECT 'a  b'; $$;`;
+    const b = `CREATE FUNCTION public.f() RETURNS text LANGUAGE sql AS $$ SELECT 'a b'; $$;`;
+    const um = extractObjects(a)[0];
+    const dois = extractObjects(b)[0];
+    expect(um.bodyMd5).toBe(dois.bodyMd5); // a normalizada COLIDE — o defeito que o Codex achou
+    expect(um.bodyMd5Exato).not.toBe(dois.bodyMd5Exato); // a estrita, não
+  });
+
+  it('comentário DENTRO do corpo entra no hash — é o que o banco guarda em prosrc', () => {
+    const com = `CREATE FUNCTION public.f() RETURNS int LANGUAGE sql AS $$ -- nota
+ SELECT 1; $$;`;
+    const sem = `CREATE FUNCTION public.f() RETURNS int LANGUAGE sql AS $$
+ SELECT 1; $$;`;
+    expect(extractObjects(com)[0].bodyMd5Exato).not.toBe(extractObjects(sem)[0].bodyMd5Exato);
+  });
+});

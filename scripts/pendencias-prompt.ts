@@ -74,7 +74,7 @@ export interface SaidaGitBytes {
   erro: string;
 }
 
-export type ExecutorGitBytes = (args: string[]) => SaidaGitBytes;
+export type ExecutorGitBytes = (args: string[], entrada?: string) => SaidaGitBytes;
 
 /**
  * `git` de verdade, sem `encoding` (⇒ Buffer).
@@ -83,8 +83,15 @@ export type ExecutorGitBytes = (args: string[]) => SaidaGitBytes;
  * ausência de dado, e ausência de dado tem de cair no ramo fail-closed junto com o erro explícito.
  */
 export function gitBytes(raiz: string): ExecutorGitBytes {
-  return (args) => {
-    const r = spawnSync('git', args, { cwd: raiz, maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
+  return (args, entrada) => {
+    // `entrada` existe para o `cat-file --batch`, que lê a lista de objetos por stdin — é como o
+    // gate lê as 721 migrations da ref em UM spawn (0,05s) em vez de 721 `git show` (~27s).
+    const r = spawnSync('git', args, {
+      cwd: raiz,
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: 30_000,
+      ...(entrada === undefined ? {} : { input: entrada }),
+    });
     if (r.error) return { ok: false, bytes: Buffer.alloc(0), erro: r.error.message };
     return {
       ok: r.status === 0,

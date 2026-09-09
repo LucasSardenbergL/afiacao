@@ -13,6 +13,7 @@
     "hooks:instalar": "bash scripts/instalar-hook-pre-commit.sh",
     "falsificar:individuais": "bash scripts/falsificar-individuais.sh",
     "falsificar:baixa": "bash scripts/falsificar-baixa-nao-ingerida.sh",
+    "falsificar:gate-corpo": "bash db/falsificar-gate-corpo.sh",
     "preview": "vite preview",
     "test": "vitest run",
     "test:sonda-rollback": "deno test --no-remote --allow-read --allow-write --allow-run=deno,git,tar supabase/harness-sonda-rollback/",
