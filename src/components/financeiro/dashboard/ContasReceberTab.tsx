@@ -6,13 +6,14 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Clock, AlertTriangle, DollarSign, Download, History } from 'lucide-react';
+import { Clock, AlertTriangle, DollarSign, Download, History, Info } from 'lucide-react';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { type FinanceiroView } from '@/hooks/useFinanceiro';
 import {
   exportContasReceberCSV, downloadCSV, type FinContaReceber,
 } from '@/services/financeiroService';
-import { fmt, fmtDate, statusColor } from '@/components/financeiro/dashboard/format';
+import { fmt, fmtBaixa, fmtDate, statusColor } from '@/components/financeiro/dashboard/format';
+import type { TotaisContas } from '@/lib/financeiro/totais-contas';
 
 export function ContasReceberTab({
   crFilter, setCrFilter, crDateFrom, setCrDateFrom, crDateTo, setCrDateTo,
@@ -25,7 +26,11 @@ export function ContasReceberTab({
   crDateTo: string;
   setCrDateTo: (s: string) => void;
   contasReceber: FinContaReceber[];
-  crTotals: { valor: number; recebido: number; saldo: number };
+  /**
+   * `baixa`/`saldo` chegam `null` quando a FONTE não ingere a baixa (#396) — nunca o 0
+   * fabricado que `fin_contas_receber` tem em 100% do acervo. Ver `motivoBaixa`.
+   */
+  crTotals: TotaisContas;
   view: FinanceiroView;
   loading: boolean;
   onAudit: (t: { table: string; id: string; title: string }) => void;
@@ -36,6 +41,12 @@ export function ContasReceberTab({
   // renderização é integral (idêntica à original — inclusive em jsdom/testes,
   // onde o container mede 0px e o virtualizador não veria linha nenhuma).
   // NOTA: a tabela ganhou scroll interno (max-h) — necessário pro virtualizador.
+  // ⚠️ O gatilho é a PROCEDÊNCIA que o dashboard declarou, nunca `v === 0`: um período em que
+  // nada foi recebido é um FATO e tem de aparecer como R$ 0,00, não como "—".
+  const baixaIndisponivel = !crTotals.procedencia.ingereBaixa;
+  /** Célula de baixa/saldo POR TÍTULO: mesma coluna, mesma fonte, mesma degradação. */
+  const celulaBaixa = (v: number) => fmtBaixa(baixaIndisponivel ? null : v);
+
   const virtualizar = contasReceber.length > 100;
   const parentRef = useRef<HTMLDivElement>(null);
   const rowVirtualizer = useVirtualizer({
@@ -97,7 +108,7 @@ export function ContasReceberTab({
           <Badge variant="secondary">{contasReceber.length} títulos</Badge>
           {contasReceber.length > 0 && (
             <Button variant="ghost" size="sm" onClick={() => {
-              const csv = exportContasReceberCSV(contasReceber);
+              const csv = exportContasReceberCSV(contasReceber, crTotals.procedencia);
               downloadCSV(csv, `contas_receber_${view}_${crFilter}.csv`);
             }}>
               <Download className="w-3.5 h-3.5 mr-1" />
@@ -106,6 +117,19 @@ export function ContasReceberTab({
           )}
         </div>
       </div>
+
+      {/* A degradação precisa DIZER por quê: um "—" mudo é lido como bug da tela, e quem precisa
+          do número vai buscá-lo no CSV — que também degrada, pelo mesmo gatilho. */}
+      {baixaIndisponivel && contasReceber.length > 0 && (
+        <p className="flex items-start gap-2 text-xs text-muted-foreground px-1">
+          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            <strong className="font-medium">Recebido</strong> e <strong className="font-medium">Saldo</strong>:{' '}
+            {crTotals.procedencia.motivo}. Exibidos como “—” — <strong className="font-medium">não são R$ 0,00</strong>.
+            Valor e vencimento seguem medidos.
+          </span>
+        </p>
+      )}
 
       {/* Totalizadores */}
       {contasReceber.length > 0 && (
@@ -116,11 +140,11 @@ export function ContasReceberTab({
           </div>
           <div className="p-3 rounded-lg bg-status-success-bg text-center">
             <p className="text-xs text-muted-foreground">Recebido</p>
-            <p className="text-sm font-bold text-status-success">{fmt(crTotals.recebido)}</p>
+            <p className="text-sm font-bold text-status-success">{fmtBaixa(crTotals.baixa)}</p>
           </div>
           <div className="p-3 rounded-lg bg-status-info-bg text-center">
             <p className="text-xs text-muted-foreground">Saldo</p>
-            <p className="text-sm font-bold text-status-info">{fmt(crTotals.saldo)}</p>
+            <p className="text-sm font-bold text-status-info">{fmtBaixa(crTotals.saldo)}</p>
           </div>
         </div>
       )}
@@ -171,8 +195,8 @@ export function ContasReceberTab({
                     </TableCell>
                     <TableCell className="text-sm">{fmtDate(cr.data_vencimento)}</TableCell>
                     <TableCell className="text-right font-medium">{fmt(cr.valor_documento)}</TableCell>
-                    <TableCell className="text-right text-status-success">{fmt(cr.valor_recebido)}</TableCell>
-                    <TableCell className="text-right font-bold">{fmt(cr.saldo)}</TableCell>
+                    <TableCell className="text-right text-status-success">{celulaBaixa(cr.valor_recebido)}</TableCell>
+                    <TableCell className="text-right font-bold">{celulaBaixa(cr.saldo)}</TableCell>
                     <TableCell>
                       <Badge className={`text-xs ${statusColor(cr.status_titulo)}`}>
                         {cr.status_titulo}
