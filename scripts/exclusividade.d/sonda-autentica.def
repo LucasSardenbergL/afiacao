@@ -1,0 +1,17 @@
+# Defeito do eixo de `sonda:autentica` — "a resposta de sonda so sai DEPOIS do gate de credencial".
+#
+# POR QUE ESTE EIXO PRECISA DE GATE. O `controle_ativo` do `scripts/sonda-versao-sql.ts` trata uma
+# resposta de sonda como TESTEMUNHA de que o `x-cron-secret` foi aceito, e o veredito DETERMINADO de
+# um HTTP 401 depende disso. Uma edge que responda a sonda ANTES de autenticar produz uma testemunha
+# que nao testemunha nada: o SQL segue verde e manda redeployar edge money-path que ja estava no ar.
+#
+# POR QUE E PLAUSIVEL, e nao sabotagem de laboratorio: a sonda E diagnostico puro e sem efeito, e
+# "isto nao precisa de auth" e a leitura natural de quem instrumenta a proxima edge. O defeito abaixo
+# e exatamente o que essa leitura produz — codigo valido, que compila, com a suite verde.
+#
+# Alvo: `supabase/functions/fin-funding/index.ts`, que carrega a forma DOMINANTE do repo (o gate
+# dentro do `if` do classificador). A perturbacao e de UMA linha: a emissao sobe para antes do gate.
+#
+# @origem:   docs/historico/controle-populacional-nao-prova-a-tentativa.md (a cadeia de 3 elos do controle ativo)
+# @suspeito: sonda:autentica
+sonda-responde-antes-do-gate | supabase/functions/fin-funding/index.ts | $feito = 1 if !$feito && s/^(\s+)const authSonda = await authorizeCronOrStaff\(req\);$/$1if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);\n$1const authSonda = await authorizeCronOrStaff(req);/
