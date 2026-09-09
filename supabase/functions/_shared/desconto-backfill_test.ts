@@ -302,3 +302,28 @@ Deno.test("a mesma linha nunca aparece nas duas listas", () => {
   const ids = [...r.apurados.map((x) => x.id), ...r.recusados.map((x) => x.id)];
   eq(new Set(ids).size, ids.length, "sem id repetido entre apurados e recusados");
 });
+
+Deno.test("drift de ponto flutuante não separa a mesma linha", () => {
+  // `numeric` do Postgres atravessa string e volta a float; o JSON do Omie chega por outro
+  // caminho. 100.0000001 e 100 são a MESMA linha, e sem quantizar a chave elas viram trios
+  // distintos — o backfill recusaria tudo com cara de "o acervo é irrecuperável".
+  const r = conciliarDescontosPedido(
+    [{ id: "a", omie_codigo_produto: 555, quantity: 2, unit_price: 100.0000001 }],
+    [omie(555, 2, 100, { tipo_desconto: "V", valor_desconto: 10 })],
+  );
+  eq(apurados(r).a, 10, "diferença abaixo da 6ª casa não separa a linha");
+});
+
+Deno.test("diferença REAL de preço continua separando (a quantização não afrouxa demais)", () => {
+  // O contraste do teste acima: se quantizar virasse arredondamento grosseiro, R$ 100,00 e
+  // R$ 100,01 colidiriam e o desconto de um item iria para o outro.
+  const r = conciliarDescontosPedido(
+    [local("a", 555, 2, 100), local("b", 555, 2, 100.01)],
+    [
+      omie(555, 2, 100, { tipo_desconto: "V", valor_desconto: 10 }),
+      omie(555, 2, 100.01, { tipo_desconto: "V", valor_desconto: 30 }),
+    ],
+  );
+  eq(apurados(r).a, 10, "um centavo de diferença ainda é outra linha");
+  eq(apurados(r).b, 30, "e cada uma fica com o seu desconto");
+});

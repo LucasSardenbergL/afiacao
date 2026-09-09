@@ -94,6 +94,14 @@ export interface PlanoDesconto {
   recusados: LinhaRecusada[];
 }
 
+/** Quantiza a 6 casas: é o que faz dois caminhos numéricos distintos descreverem a MESMA linha.
+ *  `numeric` do Postgres chega como string e volta a float, e 100.0000001 e 100 são a mesma linha
+ *  — precisam produzir a mesma chave. Tolerância por comparação não serviria no lugar disto:
+ *  agrupamento exige relação de equivalência, e "quase igual" não é transitivo. */
+function quantizar(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+
 /** Chave de conteúdo do trio. Arredondar a 6 casas antes de compor a string é o que faz "100" e
  *  100 — e 100.0000001 vindo de dois caminhos numéricos distintos — descreverem a MESMA linha.
  *  Tolerância por comparação não serviria: agrupamento exige relação de equivalência, e
@@ -106,9 +114,10 @@ function chaveTrio(
   const s = finitoNaoNegativo(sku);
   const q = finitoNaoNegativo(qtd);
   const p = finitoNaoNegativo(preco);
-  if (s === null || q === null || p === null) return null;
-  const r = (n: number) => Math.round(n * 1e6) / 1e6;
-  return `${r(s)}|${r(q)}|${r(p)}`;
+  if (s === null) return null;
+  if (q === null) return null;
+  if (p === null) return null;
+  return `${quantizar(s)}|${quantizar(q)}|${quantizar(p)}`;
 }
 
 /** Índice chave → posições. Chave repetida marca a colisão em vez de sobrescrever: perder o
