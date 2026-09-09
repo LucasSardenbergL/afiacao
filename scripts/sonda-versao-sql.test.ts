@@ -454,9 +454,9 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os ramos', () 
     // o fluxo real entraria como testemunha — o contraexemplo `monthly-report@ef08dddd2`.
     expect(sql).toMatch(/l\.status_code BETWEEN 200 AND 299/);
     expect(sql).toMatch(/AND l\.created > now\(\) - interval '20 minutes'/);
-    expect(sql).toMatch(/AND l\.corpo ->> 'probe'  = 'true'/);
+    expect(sql).toMatch(/AND l\.corpo ->> 'probe' {2}= 'true'/);
     expect(sql).toMatch(/AND l\.corpo ->> 'versao' = l\.versao_esperada/);
-    expect(sql).toMatch(/AND l\.corpo ->> 'fonte'  = l\.fonte_esperada/);
+    expect(sql).toMatch(/AND l\.corpo ->> 'fonte' {2}= l\.fonte_esperada/);
   });
 
   // Nome distinto do `it.each` lá embaixo de propósito: `prova-consumidores-controle.sh` filtra por
@@ -2338,9 +2338,9 @@ describe('controle de credencial — a mecânica é a MESMA nos dois modos', () 
   // A testemunha muda entre os modos porque o ECO muda — e é ela que impede o 2xx anônimo de um
   // bundle que ignora a credencial (`monthly-report@ef08dddd2`) de virar prova.
   it('a TESTEMUNHA é identidade verificada, e cada modo verifica o SEU eco', () => {
-    expect(sqlSonda()).toMatch(/AND l\.corpo ->> 'fonte'  = l\.fonte_esperada\)  AS aceitas_na_leva/);
+    expect(sqlSonda()).toMatch(/AND l\.corpo ->> 'fonte' {2}= l\.fonte_esperada\) {2}AS aceitas_na_leva/);
     expect(sqlCanaria()).toMatch(
-      /AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado\)  AS aceitas_na_leva/,
+      /AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado\) {2}AS aceitas_na_leva/,
     );
     // ⚠️ A canária NÃO exige 2xx: a generate-tactical-plan responde 500 quando a fixture reprova, e
     // esse request já passou pelo gate para chegar a executar. Exigir 2xx aqui descartaria
