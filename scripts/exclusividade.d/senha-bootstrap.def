@@ -1,0 +1,31 @@
+# Defeito contra o freio da senha do bootstrap — `gate:senha-bootstrap` pagando o preco que o
+# `exclusividade` cobra de todo gate novo.
+#
+# Este e o defeito REAL, nao um inventado para a medicao: em 2026-09-07/08 a senha de producao do
+# `claude_rw` ficou na arvore de trabalho DUAS vezes (o founder troca o placeholder para colar no
+# SQL Editor do Lovable e precisa restaura-lo depois). Nenhuma foi commitada, mas o que impediu foi
+# um agente conferir na hora — e frase-em-doc nao e guarda neste repo.
+#
+# Por que nenhum outro gate ve isto: o arquivo e um `.sql` que ninguem compila, ninguem importa e
+# nenhum teste executa. `tsc`, `lint`, `knip`, `test`, `test:edges` e as provas SQL do nucleo nao o
+# leem; para todos eles o arquivo continua sintaticamente valido e identico em forma. O unico sinal
+# e SEMANTICO — o literal deixou de ser o placeholder — e so quem procura por ele enxerga.
+#
+# A senha do defeito e uma string inventada e marcada como tal, nunca uma senha real: este arquivo
+# e versionado. Ele tambem nao e um `.sql`, entao esta fora do escopo que o proprio gate varre — o
+# corpus nao se auto-detecta.
+
+# O QUE A MEDICAO DEVOLVEU, e por que ela nao foi "consertada": DOIS gates ficam vermelhos —
+# `gate:senha-bootstrap` e `test:hooks`. O segundo pega porque roda `test-gate-senha-bootstrap.sh`,
+# cujo caso N3 executa o gate contra o REPO DE VERDADE (existe para a suite nao provar so coisas
+# sobre fixtures). Ou seja: a exclusividade zero aqui e ARTEFATO do meu proprio teste ser bom, nao
+# sinal de que o gate nao pega nada. Daria para "ganhar" exclusividade apagando o N3 — e isso seria
+# piorar a suite para melhorar uma metrica, o oposto do que a metrica existe para provocar. Fica
+# como esta, medido e declarado.
+#
+# A poda parou apos 2 vermelhos: `sonda:cron-prova`, `test` e `test:falsificacao` ficaram
+# DESCONHECIDOS (nao "verdes"). Nao mudaria o veredito — exclusividade ja estava refutada.
+#
+# @origem: docs/historico/senha-de-bootstrap-so-o-gate-segura.md (2026-09-09)
+# @suspeito: gate:senha-bootstrap
+senha-no-lugar-do-placeholder | db/claude-rw-bootstrap.sql | s/PASSWORD 'TROQUE_ESTA_SENHA'/PASSWORD 'SENHA-DE-MENTIRA-DO-CORPUS'/

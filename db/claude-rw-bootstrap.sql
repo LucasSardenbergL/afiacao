@@ -2,8 +2,12 @@
 -- ║  claude-rw-bootstrap.sql — a ÚNICA colagem manual que resta                            ║
 -- ║  🟣 Lovable → SQL Editor → cole ISTO → Run.  Depois disso: `bun run db:aplicar`.        ║
 -- ║                                                                                        ║
--- ║  ⚠️ ANTES DE COLAR: troque TROQUE_ESTA_SENHA por uma senha forte, e guarde-a em         ║
--- ║     ~/.config/afiacao/claude_rw.pgpass (modo 600). NUNCA cole a senha no chat.          ║
+-- ║  ⚠️ A SENHA NÃO ENTRA NESTE ARQUIVO. Cole o arquivo INTEIRO no SQL Editor e só          ║
+-- ║     ENTÃO troque TROQUE_ESTA_SENHA (Cmd+F) por uma senha forte, DENTRO do editor.      ║
+-- ║     Guarde-a em ~/.config/afiacao/claude_rw.pgpass (600). NUNCA cole a senha no chat.  ║
+-- ║     Trocar no ARQUIVO já deixou a senha na árvore de trabalho duas vezes; agora        ║
+-- ║     `bun run gate:senha-bootstrap` (CI) e o pre-commit (`bun run hooks:instalar`)      ║
+-- ║     reprovam o commit. Reprovou no CI? A senha já está no remoto: ROTACIONE.           ║
 -- ║                                                                                        ║
 -- ║  Idempotente: re-colar é seguro (não recria papel, não duplica ledger, não reseta       ║
 -- ║  a senha de um papel que já existe).                                                    ║
