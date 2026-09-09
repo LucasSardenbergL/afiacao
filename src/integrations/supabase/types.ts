@@ -19441,6 +19441,7 @@ export type Database = {
           volume_min: number
         }[]
       }
+      desconto_backfill_aplicar: { Args: { p_linhas: Json }; Returns: Json }
       desfazer_contato_radar: { Args: { p_id: string }; Returns: Json }
       desfazer_contato_rota: { Args: { p_id: string }; Returns: Json }
       despinar_parametro: {
