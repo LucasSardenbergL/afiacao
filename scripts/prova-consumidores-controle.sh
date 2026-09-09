@@ -39,38 +39,54 @@ rodar() {  # $1 = filtro -t; ecoa nada, devolve o rc do vitest
 
 # Guard: `-t` que nao casa teste nenhum faz o vitest sair 0 por VAZIO -- verde por ausencia, que e'
 # exatamente a falha que este script existe para nao cometer. Exigimos "N passed" com N>=1.
-#
-# ⚠️ O `sed` de ANSI NAO e' cosmetico -- sem ele o guard MENTE, e mentiu (PR #2413, 2026-09-09).
-# O vitest desliga cor quando a saida vai para arquivo num terminal local, mas MANTEM no runner do
-# CI. La o texto e' `^[[2m Test Files ^[[22m ^[[1m^[[32m1 passed`, e o padrao `Tests +N passed` nao
-# casa porque os escapes entram no meio dos espacos. Resultado: suite VERDE (1 passed | 165
-# skipped) lida como "o filtro nao casou teste algum", e o passo reprovava todo PR -- com a causa
-# invisivel, porque o log ia para /tmp. Guard que decide por texto FORMATADO herda a formatacao
-# como parte do contrato; o strip torna o predicado sobre o CONTEUDO, que e' o que se quer medir.
 casou_algum() {
+  # ⚠️ O strip de ANSI e' A CAUSA do vermelho que o #2433 removeu do CI por nao conseguir explicar.
+  # MEDIDO no runner (PR #2413, 2026-09-09), com o log ja despejado: a suite estava VERDE --
+  # `Tests  1 passed | 165 skipped (166)`. Quem falhou foi ESTE guard. O vitest MANTEM as cores no
+  # CI e as DESLIGA ao redirecionar para arquivo num terminal local, entao la o texto e'
+  # `^[[2m Test Files ^[[22m ^[[1m^[[32m1 passed` e o padrao `Tests +N passed` nao casa: os escapes
+  # entram entre `Tests` e o numero. Dai os ~1,45s por execucao (o vitest rodava e passava, rapido
+  # porque 165 dos 166 testes eram pulados pelo `-t`) e dai o local nunca reproduzir.
+  #
+  # A licao e' a familia dos gates textuais cegos, com variante nova: guard que decide por texto
+  # FORMATADO herda a formatacao como parte do contrato. O `sed` torna o predicado sobre o CONTEUDO.
+  # Falsificado nas duas direcoes: log colorido com `1 passed` casa; `no tests` e `0 passed` seguem
+  # barrados -- o guard nao afrouxou, so voltou a enxergar.
   sed 's/\x1b\[[0-9;]*m//g' "/tmp/prova-consumidores.$$.log" | grep -qE 'Tests +[1-9][0-9]* passed'
 }
+
+# A arvore tem de estar LIMPA nos dois arquivos que este script mede. Nao e' preciosismo: em
+# 2026-09-09 este step rodava logo depois do `bun run mutcheck` (que muta e restaura o fonte) e o
+# CONTROLE saiu vermelho nos DOIS modos, com a mensagem dizendo apenas "nao ficou verde OU o filtro
+# nao casou" -- duas causas opostas no mesmo ramo, e nenhuma saida do vitest para separa-las.
+# Aqui a sujeira e' NOMEADA antes de qualquer medicao; restaurar em silencio apagaria trabalho
+# local de quem roda isto na maquina.
+sujos=$(git status --porcelain -- "$SRC" "$TESTE" 2>/dev/null)
+if [ -n "$sujos" ]; then
+  echo "PROVA_CONSUMIDORES_FIM abortada: arvore SUJA — o controle mediria outro codigo, nao o do repo"
+  printf '%s\n' "$sujos" | sed 's/^/  /'
+  exit 1
+fi
 
 falhas=0
 
 # ── CONTROLE: sem mutacao, os dois filtros tem de ficar VERDES e casar >=1 teste ──
 for par in "SONDA:$FILTRO_SONDA" "CANARIA:$FILTRO_CANARIA"; do
   modo="${par%%:*}"; filtro="${par#*:}"
-  if rodar "$filtro" && casou_algum; then
-    printf 'CONTROLE  %-8s verde e casou teste ✓\n' "$modo"
-  else
-    printf 'CONTROLE  %-8s NAO ficou verde ou o filtro nao casou teste algum ✗\n' "$modo"
-    printf '          (filtro: %s)\n' "$filtro"
-    # DESPEJA O LOG. Sem isto a mensagem acima e' um veredito sem CAUSA: ela nao distingue
-    # "o filtro nao casou teste" de "o vitest morreu na carga" -- desfechos com conserto oposto.
-    # Medido em 2026-09-09 (PR #2413): o passo reprovou no CI em ~1,45s por execucao, tempo de
-    # falha de INICIALIZACAO e nao de rodar 164 testes, e o log ficava em /tmp, que o runner
-    # descarta. Reproduzir localmente a sequencia exata do CI (mutcheck -> prova) dava VERDE, e
-    # sem a saida do vitest nao havia por onde continuar. Ausencia de evidencia parava a
-    # investigacao; agora a causa viaja junto do veredito.
-    printf '          ── saida do vitest (ultimas 40 linhas) ──\n'
-    tail -40 "/tmp/prova-consumidores.$$.log" | sed 's/^/          | /'
+  # As duas causas de reprovacao sao SEPARADAS: suite vermelha e filtro que nao casa exigem
+  # consertos opostos, e junta-las num ramo so foi o que cegou o diagnostico no CI.
+  if ! rodar "$filtro"; then
+    printf 'CONTROLE  %-8s a suite ficou VERMELHA com este filtro ✗\n' "$modo"
+    printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
+    tail -25 /tmp/prova-consumidores.$$.log | sed 's/^/          /'
     falhas=$((falhas+1))
+  elif ! casou_algum; then
+    printf 'CONTROLE  %-8s o filtro NAO CASOU teste algum (vitest saiu 0 por VAZIO) ✗\n' "$modo"
+    printf '          (filtro: %s) — ultimas linhas do vitest:\n' "$filtro"
+    tail -25 /tmp/prova-consumidores.$$.log | sed 's/^/          /'
+    falhas=$((falhas+1))
+  else
+    printf 'CONTROLE  %-8s verde e casou teste ✓\n' "$modo"
   fi
 done
 if [ "$falhas" -ne 0 ]; then

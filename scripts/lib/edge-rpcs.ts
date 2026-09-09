@@ -24,13 +24,11 @@
 //
 // O custo dessa cegueira já foi pago: 2026-07-17, `carteira-rebuild` foi deployada com
 // `claim_carteira_rebuild` inexistente em prod → 500 em produção por ~40 min, carteira congelada.
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 // Reusa o fecho de imports da SONDA em vez de reimplementá-lo. Não é economia de linhas: é o
 // mesmo grafo que decide o `fonte` do fingerprint de deploy, então pré-flight e sonda passam a
 // falar do MESMO conjunto de arquivos. Duas travessias independentes divergiriam em silêncio.
-import { fecharGrafo } from '../sonda-fingerprint';
+import { type ArvoreDeFonte, fecharGrafo } from '../sonda-fingerprint';
 
 interface AchadoRpc {
   nome: string;
@@ -108,22 +106,45 @@ export function extrairRpcs(fonte: string, arquivo: string): ExtracaoRpc {
  * Colhe as RPCs de uma edge INTEIRA — o fecho transitivo dos imports locais a partir do seu
  * `index.ts`, que é exatamente o que um deploy sobe.
  *
+ * ‼️ A PROCEDÊNCIA É OBRIGATÓRIA — não há default para `arvore`, de propósito.
+ *
+ * Esta função lia o WORKING TREE (`existsSync`/`readFileSync`) enquanto a colagem de deploy que ela
+ * gateia saía de `origin/main`. Numa worktree atrasada — o normal aqui — a edge da main chama uma
+ * RPC que este checkout desconhece: a lista saía curta, prod era medido só contra as RPCs velhas
+ * (que existem), e o gate respondia "pode subir". O #2285 reencenado pela ferramenta feita para
+ * evitá-lo. Um default de disco é o que torna esse erro FÁCIL de cometer e INVISÍVEL de ler; sem
+ * ele, todo chamador declara de qual árvore sua resposta vale, e o typecheck cobra os que não o
+ * fizerem. `raiz` continua opcional porque ela só RESOLVE caminhos relativos — não lê nada.
+ *
  * Fail-closed em edge inexistente: devolver `{rpcs: [], indirecoes: []}` para um nome errado
- * (typo, edge renomeada) se lê como "esta edge não tem dependência de banco" — a lista vazia que
- * parece uma resposta e é uma pergunta não feita.
+ * (typo, edge renomeada, ou uma edge que só existe no disco desta worktree) se lê como "esta edge
+ * não tem dependência de banco" — a lista vazia que parece uma resposta e é uma pergunta não feita.
  */
-export function coletarDaEdge(edge: string, raiz = process.cwd()): ExtracaoRpc {
+export function coletarDaEdge(
+  edge: string,
+  arvore: ArvoreDeFonte,
+  raiz = process.cwd(),
+): ExtracaoRpc {
   const entrada = `supabase/functions/${edge}/index.ts`;
-  if (!existsSync(resolve(raiz, entrada))) {
+  if (arvore.ler(entrada) === null) {
     throw new Error(
-      `edge não encontrada: ${edge} (esperava ${entrada}). Fail-closed: lista vazia para um nome ` +
-        `errado se leria como "sem dependências de banco".`,
+      `edge não encontrada em ${arvore.rotulo}: ${edge} (esperava ${entrada}). Fail-closed: lista ` +
+        `vazia para um nome errado se leria como "sem dependências de banco".`,
     );
   }
   const rpcs: AchadoRpc[] = [];
   const indirecoes: Indirecao[] = [];
-  for (const arquivo of fecharGrafo(entrada, raiz)) {
-    const r = extrairRpcs(readFileSync(resolve(raiz, arquivo), 'utf8'), arquivo);
+  for (const arquivo of fecharGrafo(entrada, raiz, arvore)) {
+    const bytes = arvore.ler(arquivo);
+    if (bytes === null) {
+      // `fecharGrafo` já leu cada um destes; chegar aqui é a árvore ter mudado sob os pés. Lançar,
+      // e nunca `?? ''`: fonte vazia extrai zero RPCs, e zero por cegueira é o falso verde.
+      throw new Error(
+        `arquivo do fecho sumiu de ${arvore.rotulo}: ${arquivo} — as RPCs dele não foram lidas, e ` +
+          `uma lista incompleta se leria como dependência a menos`,
+      );
+    }
+    const r = extrairRpcs(bytes.toString('utf8'), arquivo);
     rpcs.push(...r.rpcs);
     indirecoes.push(...r.indirecoes);
   }

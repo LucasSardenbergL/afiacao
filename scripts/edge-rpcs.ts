@@ -19,16 +19,27 @@
  */
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { coletarDaEdge, montarRelatorio } from './lib/edge-rpcs';
+import { arvoreDeTrabalho } from './sonda-fingerprint';
 
 export function main(argv: string[]): number {
   if (argv.length === 0) {
     console.error('uso: bun run preflight:rpcs <edge> [<edge>...]');
     return 1;
   }
+  // Este CLI inspeciona o código DESTE checkout, e diz isso em voz alta. A procedência é escolha
+  // do chamador desde que ler o disco enquanto a colagem saía de `origin/main` deixou o
+  // `pendencias:pacote` liberar uma edge cuja RPC nova ele nunca viu. Aqui o working tree é a
+  // resposta certa — você quer saber o que o SEU código chama — mas quem decide deploy é o
+  // `pendencias:pacote`, e ele mede a ref.
+  const arvore = arvoreDeTrabalho();
+  console.error(
+    `ℹ️  fonte: ${arvore.rotulo} — vale para ESTE checkout. O deploy sobe a \`origin/main\`; ` +
+      'quem gateia contra ela é `bun run pendencias:pacote`.',
+  );
   let pior = 0;
   for (const edge of argv) {
     try {
-      const r = montarRelatorio(edge, coletarDaEdge(edge));
+      const r = montarRelatorio(edge, coletarDaEdge(edge, arvore));
       console.log(r.texto);
       console.log('');
       pior = Math.max(pior, r.codigo);
