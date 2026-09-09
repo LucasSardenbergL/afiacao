@@ -789,10 +789,11 @@ jobs:
   #
   # Job próprio e PARALELO, entrando no `needs:` do `validate` — de propósito fora do
   # `gates-e-falsificacao`, que é o gargalo atual (mediana 357s). Carrega o RUNTIME bun
-  # (só o runtime, sem `bun install`) desde que `db/test-canaria-veredito.sh` entrou no
-  # núcleo: essa prova gera o SQL pelo próprio gerador em vez de conferir um retrato
-  # commitado. Não precisa de deno nem de `fetch-depth: 0` (nenhum gate aqui usa
-  # merge-base), então o preâmbulo segue mais barato que o dos outros quatro.
+  # (só o runtime, sem `bun install`) e `fetch-depth: 0` desde que
+  # `db/test-canaria-veredito.sh` entrou no núcleo: essa prova gera o SQL pelo próprio
+  # gerador em vez de conferir um retrato commitado, e o gerador RECUSA emitir sem uma
+  # `origin/main` contra a qual conferir que a árvore não está defasada. Não precisa de
+  # deno, então o preâmbulo segue mais barato que o dos outros quatro.
   provas-sql:
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -800,7 +801,13 @@ jobs:
       contents: read
 
     steps:
+      # fetch-depth: 0 porque `db/test-canaria-veredito.sh` gera o SQL pelo gerador real, e o
+      # gerador tem guard fail-CLOSED: sem `origin/main` para comparar ele RECUSA emitir, em vez
+      # de emitir a partir de uma árvore possivelmente defasada (o achado do #2143). Checkout
+      # raso não traz a main, e o job reprovava com "origin/main não existe neste repo".
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # O núcleo inclui db/test-canaria-veredito.sh, que NÃO confere um SQL commitado:
       # gera o SQL pelo PRÓPRIO gerador (`bun scripts/sonda-versao-sql.ts --canaria`) e
