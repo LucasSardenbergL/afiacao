@@ -87,38 +87,48 @@ EOF
   # Regressão real (2026-09-08): um SIGTERM externo no meio da rodada deixou
   # .claude/hooks/destructive-bash-guard.sh MUTADO no disco — hook de segurança DESARMADO,
   # varrido depois por um `git add -A`. O caminho feliz acima não pega isto: só a MORTE pega.
-  # A ORDEM importa: o sinal que chega ANTES da 1ª mutação é o fatal (o handler apaga o
-  # backup e o script SEGUE vivo mutando sem volta); o que chega com o SRC já mutado é
-  # benigno hoje — cobrimos os dois, senão o gate testa só a metade inofensiva.
+  # A ORDEM importa: o sinal que chega ANTES da 1ª mutação é o fatal (o handler apagava o
+  # backup e o script SEGUIA vivo mutando sem volta); o que chega com o SRC já mutado é
+  # benigno — cobrimos os dois, senão o gate testa só a metade inofensiva.
   sinal_src="$tmp/sinal.ts"; sinal_mut="$tmp/sinal.mut"; sinal_run="$tmp/sinal-runner.sh"
   sinal_orig="$tmp/sinal.ORIG"; sinal_marcas="$tmp/marcas"; alvo=""
+  scripts_dir="$(cd "$(dirname "$0")" && pwd)"
   cat > "$sinal_run" <<EOS
 #!/usr/bin/env bash
 echo r >> "$sinal_marcas"
-sleep 3
+sleep 1
 exit 0
 EOS
   chmod +x "$sinal_run"
-  cat > "$sinal_mut" <<'EOS'
+  cat > "$sinal_mut" <<EOS
+# @src: $sinal_src
+# @test: $sinal_src
+# @test_cmd: $sinal_run
+# @compile_cmd: true
 ? | evento PreToolUse->PostToolUse | s{hookEventName: "PreToolUse"}{hookEventName: "PostToolUse"}
 ? | alfa 1->99                     | s/alfa = 1/alfa = 99/
 EOS
-  criar_caso_sinal() {
+  sinal_falhou() { echo "selftest[sinal]: FALHOU — $1"; fail=1; }
+  criar_caso_sinal() {   # $1 (opcional) = "all" para exercitar o mutcheck-all.sh
     : > "$sinal_marcas"
     cat > "$sinal_src" <<'EOS'
 export const guard = { hookEventName: "PreToolUse" };
 export const alfa = 1;
 EOS
     cp "$sinal_src" "$sinal_orig"
-    MUTCHECK_TEST_CMD="$sinal_run" MUTCHECK_COMPILE_CMD=true \
-      "$0" "$sinal_src" "$sinal_src" "$sinal_mut" >"$tmp/sinal.log" 2>&1 &
+    if [[ "${1:-}" == "all" ]]; then
+      MUTCHECK_DIR="$tmp/mutdir" bash "$scripts_dir/mutcheck-all.sh" >"$tmp/sinal.log" 2>&1 &
+    else
+      MUTCHECK_TEST_CMD="$sinal_run" MUTCHECK_COMPILE_CMD=true \
+        "$0" "$sinal_src" "$sinal_src" "$sinal_mut" >"$tmp/sinal.log" 2>&1 &
+    fi
     alvo=$!
   }
   # Esperas por CONDIÇÃO, com TETO e ramo que DIZ que não conseguiu. Um `sleep` fixo aqui
   # seria fail-OPEN: mataria fora da janela e o teste ficaria VERDE sem tê-la exercitado.
-  esperar_baseline() {  # o runner rodando pela 1ª vez = baseline, SRC ainda intacto
+  esperar_baseline() {  # runner rodando pela 1ª vez = baseline, SRC ainda intacto
     local i=0
-    while [[ $i -lt 150 ]]; do
+    while [[ $i -lt 200 ]]; do
       [[ -s "$sinal_marcas" ]] && return 0
       i=$((i + 1)); sleep 0.1
     done
@@ -126,7 +136,7 @@ EOS
   }
   esperar_mutado() {
     local i=0
-    while [[ $i -lt 150 ]]; do
+    while [[ $i -lt 200 ]]; do
       cmp -s "$sinal_src" "$sinal_orig" || return 0
       i=$((i + 1)); sleep 0.1
     done
@@ -135,41 +145,62 @@ EOS
   matar_e_conferir() {  # $1=sinal $2=rótulo
     kill -"$1" "$alvo" 2>/dev/null || true
     wait "$alvo" 2>/dev/null || true
-    if ! cmp -s "$sinal_src" "$sinal_orig"; then
-      echo "selftest[sinal]: FALHOU — SIG$1 $2 DEIXOU o SRC mutado no disco"; fail=1
+    cmp -s "$sinal_src" "$sinal_orig" || sinal_falhou "SIG$1 $2 DEIXOU o SRC mutado no disco"
+  }
+  # caso $1=janela ("baseline"|"mutado"), $2=sinal, $3=rótulo, $4=modo
+  caso_sinal() {
+    criar_caso_sinal "${4:-}"
+    if [[ "$1" == "baseline" ]] && esperar_baseline; then matar_e_conferir "$2" "$3"
+    elif [[ "$1" == "mutado" ]] && esperar_mutado; then matar_e_conferir "$2" "$3"
+    else
+      sinal_falhou "janela '$1' não abriu em 20s ($3): NÃO exercitada — inconclusivo ≠ aprovado"
+      kill -KILL "$alvo" 2>/dev/null || true; wait "$alvo" 2>/dev/null || true
     fi
   }
 
-  # (a) SIGTERM durante o BASELINE — a ordem FATAL
-  criar_caso_sinal
-  if esperar_baseline; then matar_e_conferir TERM "durante o baseline"; else
-    echo "selftest[sinal]: FALHOU — baseline não começou em 15s: janela NÃO exercitada (inconclusivo ≠ aprovado)"; fail=1
-    kill -TERM "$alvo" 2>/dev/null || true; wait "$alvo" 2>/dev/null || true
-  fi
+  caso_sinal baseline TERM "durante o baseline"      # (a) a ordem FATAL
+  caso_sinal mutado   TERM "com o SRC já mutado"     # (b) a ordem benigna, como regressão
+  mkdir -p "$tmp/mutdir" && cp "$sinal_mut" "$tmp/mutdir/caso.mut"
+  caso_sinal mutado   TERM "no PAI (mutcheck-all)" all   # (c) o pai TEM que esperar o filho
 
-  # (b) SIGTERM com o SRC JÁ mutado
-  criar_caso_sinal
-  if esperar_mutado; then matar_e_conferir TERM "com o SRC já mutado"; else
-    echo "selftest[sinal]: FALHOU — SRC nunca ficou mutado em 15s: janela NÃO exercitada (inconclusivo ≠ aprovado)"; fail=1
-    kill -TERM "$alvo" 2>/dev/null || true; wait "$alvo" 2>/dev/null || true
-  fi
-
-  # (c) SIGKILL — nenhum trap intercepta; o que TEM que valer é a rodada SEGUINTE RECUSAR
+  # (d) SIGKILL — nenhum trap intercepta. O que TEM que valer é a rodada SEGUINTE RECUSAR,
+  #     e recusar de verdade: se ela seguisse, o `cp "$SRC" "$BACKUP"` sobrescreveria o
+  #     backup bom com o conteúdo MUTADO e destruiria a única via de volta.
   criar_caso_sinal
   if ! esperar_mutado; then
-    echo "selftest[sinal]: FALHOU — janela não exercitada no caso SIGKILL (inconclusivo ≠ aprovado)"; fail=1
+    sinal_falhou "janela não abriu no caso SIGKILL: NÃO exercitada — inconclusivo ≠ aprovado"
     kill -KILL "$alvo" 2>/dev/null || true; wait "$alvo" 2>/dev/null || true
   else
     kill -KILL "$alvo" 2>/dev/null || true
     wait "$alvo" 2>/dev/null || true
-    if cmp -s "$sinal_src" "$sinal_orig"; then
-      echo "selftest[sinal]: FALHOU — SIGKILL não deixou o SRC mutado: o cenário não chegou a ser montado"; fail=1
-    fi
-    saida2=$(MUTCHECK_TEST_CMD="$sinal_run" MUTCHECK_COMPILE_CMD=true \
-      "$0" "$sinal_src" "$sinal_src" "$sinal_mut" 2>&1) || true
-    if ! grep -q 'MUTCHECK-RESTO-DE-MUTACAO' <<<"$saida2"; then
-      echo "selftest[sinal]: FALHOU — após SIGKILL a rodada seguinte NÃO recusou começar (sem MUTCHECK-RESTO-DE-MUTACAO)"; fail=1
-    fi
+    cmp -s "$sinal_src" "$sinal_orig" && sinal_falhou "SIGKILL não deixou o SRC mutado: cenário não montado"
+    rc2=0
+    MUTCHECK_TEST_CMD="$sinal_run" MUTCHECK_COMPILE_CMD=true \
+      "$0" "$sinal_src" "$sinal_src" "$sinal_mut" >"$tmp/sinal2.log" 2>&1 || rc2=$?
+    grep -q 'MUTCHECK-RESTO-DE-MUTACAO' "$tmp/sinal2.log" \
+      || sinal_falhou "após SIGKILL a rodada seguinte não gritou MUTCHECK-RESTO-DE-MUTACAO"
+    [[ $rc2 -eq 3 ]] || sinal_falhou "após SIGKILL a rodada seguinte NÃO recusou começar (exit $rc2, esperado 3)"
+    guardado=$(cat "$tmp"/pendentes/*.original 2>/dev/null || true)
+    [[ "$guardado" == "$(cat "$sinal_orig")" ]] \
+      || sinal_falhou "a rodada recusada sobrescreveu o backup com o conteúdo MUTADO — via de volta destruída"
+    rm -f "$tmp"/pendentes/*
+  fi
+
+  # (e) restore que FALHA tem que GRITAR e sair não-zero — devolver 0 sem conferir é o mesmo
+  #     fail-open um andar acima (o `cp` pode falhar calado: disco cheio, permissão, backup sumido).
+  criar_caso_sinal
+  if ! esperar_mutado; then
+    sinal_falhou "janela não abriu no caso restore-falha: NÃO exercitada — inconclusivo ≠ aprovado"
+    kill -KILL "$alvo" 2>/dev/null || true; wait "$alvo" 2>/dev/null || true
+  else
+    chmod a-w "$sinal_src"          # o `cp` de volta passa a falhar
+    rc3=0; wait "$alvo" 2>/dev/null || rc3=$?
+    grep -q 'MUTCHECK-FALHA-AO-RESTAURAR' "$tmp/sinal.log" \
+      || sinal_falhou "restore falhou e o mutcheck NÃO gritou MUTCHECK-FALHA-AO-RESTAURAR"
+    [[ $rc3 -ne 0 ]] || sinal_falhou "restore falhou e o mutcheck saiu 0 — veredito fabricado"
+    ls "$tmp"/pendentes/*.pendente >/dev/null 2>&1 \
+      || sinal_falhou "restore falhou e a sentinela foi APAGADA — a rodada seguinte não vai recusar"
+    chmod u+w "$sinal_src"; rm -f "$tmp"/pendentes/*
   fi
 
   if [[ $fail -eq 0 ]]; then echo "selftest: ✓ mecânica ok (PEGA/SOBREVIVE/INVÁLIDO[não-casou·multi-linha·não-compila]/revert)"; exit 0; fi
