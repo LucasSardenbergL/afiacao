@@ -214,15 +214,25 @@ modo_falsificar() {
   sabotagem 'S5 dollar-quote em vez de aspa' 'BOOTSTRAP-SENHA-LITERAL' 1 \
     "printf 'ALTER ROLE w PASSWORD \$\$x\$\$;\n' >> db/outro.sql"
 
-  # O eixo de LOCALE: com `grep -i` no placeholder, isto passaria por canônico.
-  sabotagem 'S6 placeholder em caixa minúscula não vale como canônico' 'BOOTSTRAP-SEM-ANCORA' 1 \
+  # O eixo de LOCALE, e o que ele mede: se o gate casasse o placeholder com `grep -i`, esta linha
+  # passaria por CANÔNICA e a sabotagem ficaria VERDE. O marcador esperado é LITERAL (não
+  # SEM-ANCORA) porque a linha continua abrindo um literal — que é o diagnóstico mais informativo
+  # dos dois. A primeira versão desta suíte exigia SEM-ANCORA aqui: a expectativa é que estava
+  # errada, não o gate.
+  sabotagem 'S6 placeholder em caixa minúscula não vale como canônico' 'BOOTSTRAP-SENHA-LITERAL' 1 \
     "sed -i.bak \"s/PASSWORD 'TROQUE_ESTA_SENHA'/password 'troque_esta_senha'/\" db/claude-rw-bootstrap.sql && rm -f db/*.bak"
 
-  sabotagem 'S7 placeholder trocado por outro texto (âncora some)' 'BOOTSTRAP-SEM-ANCORA' 1 \
+  sabotagem 'S7 placeholder trocado por outro texto' 'BOOTSTRAP-SENHA-LITERAL' 1 \
     "sed -i.bak 's/TROQUE_ESTA_SENHA/COLOQUE_AQUI/' db/claude-rw-bootstrap.sql && rm -f db/*.bak"
 
   sabotagem 'S8 arquivo-âncora renomeado' 'BOOTSTRAP-SEM-ANCORA' 1 \
     "mv db/claude-rw-bootstrap.sql db/bootstrap-novo-nome.sql"
+
+  # A EVASÃO que a âncora existe para pegar: `format(%L)` monta a senha sem escrever `PASSWORD '`,
+  # então a varredura por literal fica cega. Nenhum achado + âncora sumida = SEM-ANCORA, e a
+  # reescrita passa a exigir uma decisão consciente em vez de apagar a cobertura em silêncio.
+  sabotagem 'S10 CREATE ROLE reescrito com format(%L): âncora some sem deixar literal' 'BOOTSTRAP-SEM-ANCORA' 1 \
+    "sed -i.bak \"s|CREATE ROLE claude_rw LOGIN NOINHERIT PASSWORD 'TROQUE_ESTA_SENHA';|EXECUTE format('CREATE ROLE claude_rw LOGIN NOINHERIT PASSWORD %L', v_senha);|\" db/claude-rw-bootstrap.sql && rm -f db/*.bak"
 
   sabotagem 'S9 escopo esvaziado (diretórios movidos)' 'BOOTSTRAP-GATE-FALHA' 2 \
     "rm -rf db supabase scripts"

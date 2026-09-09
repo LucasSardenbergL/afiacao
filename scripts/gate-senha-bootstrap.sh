@@ -103,20 +103,30 @@ if [ "$MODO" = arvore ]; then
     echo "BOOTSTRAP-GATE-FALHA: escopo vazio — nenhum .sql encontrado (diretório movido?)." >&2
     exit 2
   fi
+  for f in "${alvos[@]}"; do analisar "$f" "$f"; done
+
   # Âncora anti-vacuidade: o arquivo protegido tem de existir E carregar a forma canônica. Sem
   # isto, renomear o arquivo (ou reescrever o CREATE ROLE para outra forma, tipo `format(%L)`)
   # apagaria a cobertura em silêncio e o gate seguiria verde — cobertura que some sozinha é pior
   # que gate nenhum, porque o verde continua chegando.
-  if [ ! -f "$ANCORA" ]; then
-    echo "BOOTSTRAP-SEM-ANCORA: $ANCORA não existe. Se foi movido, aponte o gate para o novo caminho." >&2
-    exit 1
+  #
+  # A ORDEM importa, e custou um vermelho da falsificação para aparecer (caso S1): trocar o
+  # placeholder pela senha real faz a âncora sumir JUNTO. Com a âncora cobrada primeiro, o cenário
+  # mais provável do mundo real — o founder troca, cola, esquece de restaurar — era acusado como
+  # "âncora ausente", e a mensagem que o humano lia não dizia a única coisa que importa ali:
+  # há uma senha neste diff, ROTACIONE. O rc era 1 nos dois casos, então só o marcador denunciava.
+  # Por isso a varredura vem antes: quando há literal, quem fala é o diagnóstico específico.
+  if [ "$achados" -eq 0 ]; then
+    if [ ! -f "$ANCORA" ]; then
+      echo "BOOTSTRAP-SEM-ANCORA: $ANCORA não existe. Se foi movido, aponte o gate para o novo caminho." >&2
+      exit 1
+    fi
+    if ! grep -qE "$RE_CANONICA" "$ANCORA"; then
+      echo "BOOTSTRAP-SEM-ANCORA: $ANCORA não carrega a forma canônica PASSWORD 'TROQUE_ESTA_SENHA'." >&2
+      echo "   O gate mede a FORMA; sem ela ele não prova nada. Restaure o placeholder." >&2
+      exit 1
+    fi
   fi
-  if ! grep -qE "$RE_CANONICA" "$ANCORA"; then
-    echo "BOOTSTRAP-SEM-ANCORA: $ANCORA não carrega a forma canônica PASSWORD 'TROQUE_ESTA_SENHA'." >&2
-    echo "   O gate mede a FORMA; sem ela ele não prova nada. Restaure o placeholder." >&2
-    exit 1
-  fi
-  for f in "${alvos[@]}"; do analisar "$f" "$f"; done
 else
   # --staged: o que vai ser COMMITADO, lido do índice.
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
