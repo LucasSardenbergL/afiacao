@@ -21,6 +21,8 @@ import { ContasReceberTab } from '@/components/financeiro/dashboard/ContasRecebe
 import { ContasPagarTab } from '@/components/financeiro/dashboard/ContasPagarTab';
 import { ConcentracaoTab } from '@/components/financeiro/dashboard/ConcentracaoTab';
 import { useAuth } from '@/contexts/AuthContext';
+import { totaisReceber, totaisPagar } from '@/lib/financeiro/totais-contas';
+import { BAIXA_OMIE_LIST } from '@/lib/financeiro/procedencia-baixa';
 
 const today = new Date();
 const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, 1);
@@ -61,18 +63,21 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
     return generateAlerts(resumo, agingReceber, agingPagar);
   }, [resumo, agingReceber, agingPagar]);
 
-  // Summary totals for CP/CR
-  const crTotals = useMemo(() => ({
-    valor: contasReceber.reduce((s, r) => s + r.valor_documento, 0),
-    recebido: contasReceber.reduce((s, r) => s + r.valor_recebido, 0),
-    saldo: contasReceber.reduce((s, r) => s + r.saldo, 0),
-  }), [contasReceber]);
+  // Summary totals for CP/CR.
+  //
+  // A procedência é passada EXPLICITAMENTE: é a única linha a mudar no dia em que a ingestão da
+  // baixa existir (#396 — o LIST do Omie não a devolve, e as colunas ficam 0 em 100% do acervo).
+  // Somá-las cru devolvia um número FABRICADO com aparência de fato — "Recebido R$ 0,00" sobre
+  // R$ 27,8M de títulos com status RECEBIDO. Ver `@/lib/financeiro/procedencia-baixa`.
+  const crTotals = useMemo(
+    () => totaisReceber(contasReceber, BAIXA_OMIE_LIST),
+    [contasReceber],
+  );
 
-  const cpTotals = useMemo(() => ({
-    valor: contasPagar.reduce((s, r) => s + r.valor_documento, 0),
-    pago: contasPagar.reduce((s, r) => s + r.valor_pago, 0),
-    saldo: contasPagar.reduce((s, r) => s + r.saldo, 0),
-  }), [contasPagar]);
+  const cpTotals = useMemo(
+    () => totaisPagar(contasPagar, BAIXA_OMIE_LIST),
+    [contasPagar],
+  );
 
   // Initial load
   useEffect(() => {

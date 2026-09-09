@@ -93,30 +93,24 @@ trap 'rm -f "$SNAP"' EXIT
 SHA="$(shasum -a 256 "$SNAP" | awk '{print $1}')"
 COMMIT="$(git rev-parse --short HEAD)"
 
-# ── DESENVELOPAR a transação do arquivo ──────────────────────────────────────────────────────
-# As migrations deste repo saem da skill `lovable-db-operator` envolvidas em `BEGIN; … COMMIT;`
-# — e isso está CERTO para quem cola no SQL Editor. Aqui não: o corpo viaja como parâmetro de
-# `aplicar_sql()`, executado com `EXECUTE` dentro de PL/pgSQL, onde comando de transação é
-# proibido (`ERROR: EXECUTE of transaction commands is not implemented`). A transação já é minha,
-# com `SET LOCAL` de timeout e o recibo dentro dela.
+# ── RECUSAR arquivo com envelope de transação ────────────────────────────────────────────────
+# A transação é DAQUI: este script abre `BEGIN;`, põe `SET LOCAL` de timeout, grava o recibo
+# dentro e fecha com `COMMIT;`/`ROLLBACK;`. Um `BEGIN;` no corpo estoura no `EXECUTE` de
+# `aplicar_sql()` (`ERROR: EXECUTE of transaction commands is not implemented`).
 #
-# Medido em 2026-09-09, no ENSAIO (que é para isso que ele existe): a migration da onda 3 morreu
-# nessa linha antes de tocar o banco de verdade.
-#
-# O SHA continua sendo o do ARQUIVO COMMITADO — a identidade é o que está no repo, não o derivado.
-# E o desenvelopamento é fail-CLOSED: só o par exato `BEGIN;` na primeira linha útil + `COMMIT;`
-# na última é removido. `ROLLBACK`, `SAVEPOINT`, `BEGIN` no meio ou repetido ⇒ RECUSA, porque aí
-# a semântica que o autor quis não cabe numa transação só e adivinhar seria pior que parar.
-DESENV="$(dirname "$0")/lib/desenvelopar-transacao.awk"
-[ -f "$DESENV" ] || morre 2 "falta $DESENV — recuso aplicar sem o desenvelopador"
-SNAP_ENV="$LOG_DIR/db-aplicar-corpo.$$.env"
-if ! awk -f "$DESENV" "$SNAP" > "$SNAP_ENV" 2>/dev/null; then
-  rm -f "$SNAP_ENV"
-  morre 2 "o arquivo tem controle de transação que eu não sei desenvelopar com segurança
-   (esperado: no máximo UM \`BEGIN;\` na primeira linha útil e UM \`COMMIT;\` na última).
-   \`ROLLBACK\`, \`SAVEPOINT\` ou \`BEGIN\` repetido/no meio exigem decisão humana."
+# ⚠️ NÃO tente desenvolver isso removendo o `BEGIN;`/`COMMIT;` do corpo — eu tentei em 2026-09-09
+# (#2421) e o BANCO recusou, com razão: `aplicar_sql()` RE-CALCULA o sha256 do corpo recebido e
+# compara com o declarado (`db/claude-rw-bootstrap.sql:106`). Essa comparação é a garantia de que
+# o que EXECUTOU é byte a byte o que está no repo — é por isso que o ledger guarda sha + commit.
+# Qualquer transformação no cliente quebra a cadeia e vira `APLICAR_SQL: sha divergente`, que é o
+# banco fazendo o trabalho dele. O envelope pertence à migration feita para o SQL Editor; o SQL
+# feito para cá não leva envelope nenhum.
+if grep -qiE '^[[:space:]]*(BEGIN|COMMIT|ROLLBACK|START TRANSACTION)[[:space:]]*;' "$SNAP"; then
+  morre 2 "o arquivo tem controle de transação no corpo (BEGIN/COMMIT/ROLLBACK).
+   A transação é DESTE script — o corpo roda dentro dela, via EXECUTE, onde esses comandos são
+   proibidos. Remova o envelope: o SQL feito para o \`db:aplicar\` não leva \`BEGIN;\`/\`COMMIT;\`.
+   (Migration para colar no SQL Editor leva — são caminhos diferentes.)"
 fi
-mv "$SNAP_ENV" "$SNAP"
 case "$SHA" in
   *[!0-9a-f]*|'') morre 2 "sha256 com formato inesperado para $ARQUIVO" ;;
 esac

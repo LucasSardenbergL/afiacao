@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 import { localizarCanarias } from './canaria-contrato-bump-gate';
-import type { LeitorCanariasDoRepo } from './sonda-versao-sql';
+import { relIndex, type LeitorCanariasDoRepo } from './sonda-versao-sql';
 
 /**
  * O leitor que a CLI e a prova executada compartilham.
@@ -28,7 +28,10 @@ import type { LeitorCanariasDoRepo } from './sonda-versao-sql';
  * COMPARTILHADO (`removerComentarios`) — regex local não sabe o que é string e apagaria o miolo do
  * arquivo antes da medição.
  */
-export const lerCanariasDoRepo: LeitorCanariasDoRepo = (raiz, edge) =>
-  localizarCanarias(
-    removerComentarios(readFileSync(join(raiz, 'supabase', 'functions', edge, 'index.ts'), 'utf8')),
-  );
+export const lerCanariasDoRepo: LeitorCanariasDoRepo = (raiz, edge) => {
+  const caminho = relIndex(edge);
+  // UMA leitura, e os bytes saem junto: é este `index.ts` que o guard de sincronia confere contra a
+  // `origin/main`, e conferir uma SEGUNDA leitura aprovaria bytes que o marcador não atravessou.
+  const bytes = readFileSync(join(raiz, caminho), 'utf8');
+  return { canarias: localizarCanarias(removerComentarios(bytes)), fonte: { caminho, bytes } };
+};
