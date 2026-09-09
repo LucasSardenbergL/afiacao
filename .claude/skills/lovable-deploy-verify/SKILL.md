@@ -635,7 +635,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        `fin-valor-cockpit` (738 linhas) se provou BARATA: zero `.upsert/.insert/.update/.rpc`, os
        três `fetch` são GETs de `/auth/v1/user` + `user_roles` + `commercial_roles`, e o único
        `.delete(` é
-       `supabase/functions/fin-valor-cockpit/index.ts:586`<!--cita: custoBaixaConfianca.delete(-->,
+       `supabase/functions/fin-valor-cockpit/index.ts:609`<!--cita: custoBaixaConfianca.delete(-->,
        um `Set` de JS. Pior caso de sondá-la com bundle pré-sensor: **computar e devolver** — NULO.
     2. **Se escreve: o efeito é REVERSÍVEL, e qual o ALCANCE?** "Cara" não é binário, e o que a trava
        compra varia em ordens de grandeza. `carteira-positivacao-snapshot` faz **UM upsert
