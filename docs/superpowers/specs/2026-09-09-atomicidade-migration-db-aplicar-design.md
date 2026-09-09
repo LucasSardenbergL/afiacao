@@ -39,31 +39,35 @@ e o banco recusou), isto é, superfície nova na função `SECURITY DEFINER` mai
 
 ## O que ESTA entrega acrescenta
 
-A recusa entrou **sem teste e sem fixture**, e cobrindo só uma das duas classes.
+A decisão e a prova da recusa do ENVELOPE aterrissaram por outras sessões (#2421 → #2434 →
+`516fcfbe5`). Ficaram de fora três coisas:
 
-1. **`RECUSA_FORA_DE_TRANSACAO`** — 2ª classe de incompatibilidade, que nenhuma correção no
-   executor resolve: `CREATE INDEX CONCURRENTLY` não roda em transação alguma, e o recibo só é
-   atômico porque há uma. Não pode casar `REFRESH MATERIALIZED VIEW CONCURRENTLY` (10 arquivos).
-2. **Marcador ASCII** na recusa existente — a mensagem é acentuada, e casar `transação` faria a
-   prova refém do locale (lição #1483).
-3. **3 fixtures + A10/A11/A12/A12b**, incluindo o **controle** (corpo de função com `BEGIN`/`END;`
-   em coluna 0 + `REFRESH MV CONCURRENTLY`) — sem ele, um guard que recusasse TUDO passaria.
-4. **A12b, o eixo POR FORA:** compara o corpo que o **Postgres guardou** (`prosrc`) com o do
-   arquivo. Os demais asserts medem o que o SCRIPT decidiu; sensor que só consulta a máquina
-   vigiada herda o defeito dela.
-5. **Reconciliação dos 3 pontos de doutrina** — `SKILL.md`, `postcondicao-embutida.md` §1 e o
-   envelope do `database.md` não mencionavam `db:aplicar`: quem lesse a skill hoje escreveria
-   migration com envelope e bateria na recusa.
+1. **`RECUSA_FORA_DE_TRANSACAO`** — a classe que NÃO tem conserto. A recusa do envelope se
+   resolve tirando o `BEGIN;`; `CREATE INDEX CONCURRENTLY` não roda em transação alguma, e o
+   recibo só é atômico porque há uma. O padrão é ancorado em CREATE/DROP/REINDEX para não casar
+   `REFRESH MATERIALIZED VIEW CONCURRENTLY` (10 arquivos o usam legitimamente).
+2. **O CONTROLE (A12) + a sabotagem que o prova (S7).** A10/A11 mostram que os guards pegam o
+   que devem; um guard que recusasse TUDO passaria nas duas. A12 é a fixture que tem de APLICAR:
+   corpo de função com `BEGIN`/`END;` em coluna 0 dentro de `$funcao$` (81 arquivos do repo têm)
+   e `REFRESH MV CONCURRENTLY`. S7 alarga o guard para casar `END;` e exige que A12 caia.
+3. **A12b, o eixo POR FORA** — compara o corpo que o **Postgres guardou** (`prosrc`) com o do
+   arquivo. Todo o resto mede o que o SCRIPT decidiu, e sensor que só consulta a máquina vigiada
+   herda o defeito dela.
+4. **A doutrina**, que não mencionava `db:aplicar` em lugar nenhum: `SKILL.md`,
+   `postcondicao-embutida.md` §1 e o envelope do `database.md` seguiam mandando envolver em
+   `BEGIN; … COMMIT;`. Quem lesse a skill escreveria migration com envelope e bateria na recusa.
 
 ### Falsificação (todas exigem VERMELHO, com controle verde na mesma invocação)
 
-`S5` guard de envelope desligado → o PG recusa (4) · `S6` guard de CIC desligado → (4) ·
-`S7` guard alargado para casar `END;` → o **controle** cai (2), provando que A12 mede ·
-`S8` transformação no CLIENTE → o banco recusa (`sha divergente`), provando que ele é o freio
-final · `S9` transformação **SERVER-SIDE** → aplica limpo (0) e **só A12b vê o corpo mudar**.
+`S6` guard de CIC desligado → o PG recusa (4) · `S7` guard alargado para `END;` → o **controle**
+cai (2), provando que A12 mede · `S8` transformação no CLIENTE → o banco recusa (`sha divergente`)
+— foi o que derrubou o #2421 · `S9` transformação **SERVER-SIDE** → aplica limpo (0), passa por
+todo guard e por todo o ledger, e **só A12b vê o corpo mudar**.
 
-`S9` existe porque nenhuma sabotagem do cliente derruba A12b: sem ela, A12b seria verde por
-**inalcançável** — verde por não medir nada.
+S8 e S9 juntos são o argumento de por que A12b existe: nenhuma sabotagem do cliente a derruba, e
+sem S9 ela seria verde por **inalcançável** — verde por não medir nada.
+
+Prova: PG17.10, locales `C` e `pt_BR.UTF-8`, normal (36 ✅) e `--falsificar` (24 ✅), zero ❌.
 
 ## Limites declarados
 
