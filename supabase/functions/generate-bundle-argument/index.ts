@@ -16,6 +16,7 @@ import { blocoCliente, type ContextoCliente, REGRA_DADO_AUSENTE } from "./argume
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 
 // Formato do corpo, só com o que o prompt realmente lê. Antes vinha do `any` implícito de
 // `req.json()`; a sonda passou a ler o corpo cedo, então o tipo saiu do implícito para o explícito.
@@ -33,7 +34,13 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    // Sonda de deploy por cron (F4, onda 3). Só responde com a credencial HMAC válida; sem
+    // ela o preflight do browser recebe a mesma resposta de sempre, byte a byte.
+    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
+    if (sonda) return sonda;
+    return new Response(null, { headers: corsHeaders });
+  }
 
   // ⚠️ SONDA DE VERSÃO (`{"probe":true}`) — vem antes do createClient, do getUser e de qualquer
   // chamada à Anthropic: é o único caminho desta edge sem custo de token. Ela responde "qual bundle

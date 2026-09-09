@@ -10,6 +10,7 @@ import { aplicarCorPreservandoItens, precoUnitarioOmie } from "../_shared/omie-p
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
 
@@ -2467,6 +2468,10 @@ async function releaseVendasCursor(
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
+    // Sonda de deploy por cron (F4, onda 3). Só responde com a credencial HMAC válida; sem
+    // ela o preflight do browser recebe a mesma resposta de sempre, byte a byte.
+    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
+    if (sonda) return sonda;
     return new Response(null, { headers: corsHeaders });
   }
   const __auth = await authorizeCronOrStaff(req);
