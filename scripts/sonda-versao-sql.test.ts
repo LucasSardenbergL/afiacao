@@ -1362,6 +1362,19 @@ describe('registro de canárias — o marcador SAI do repo, nunca do registro', 
       expect(emitido, `${c.nome} não está no index.ts em ${c.chave}`).toBeDefined();
       if (c.campoMarcador === 'contrato') {
         expect(emitido?.contrato, `${c.nome} não bate com o index.ts`).toBe(c.marcador);
+        // Âncora INDEPENDENTE do leitor. A linha acima compara `lerCanariasReal` com
+        // `lerCanariasReal`: um leitor que passasse a devolver o campo errado — ou o marcador da
+        // canária vizinha — satisfaria os dois lados e o teste ficaria verde. O ramo por REFERÊNCIA
+        // abaixo já lia o `versao.ts` cru; o ramo `contrato` não tinha nada equivalente.
+        // Regex própria de propósito (não o stripper do código): é justamente o caminho do código
+        // que ela existe para não usar. As duas formas de aspas são REAIS no repo — a
+        // `copilot-analyze` emite com simples, a `omie-financeiro` com duplas.
+        const rel = `supabase/functions/${c.edge}/index.ts`;
+        const indexTs = readFileSync(join(RAIZ_REPO, rel), 'utf8');
+        expect(
+          new RegExp(`contrato:\\s*['"]${c.marcador}['"]`).test(indexTs),
+          `${c.nome}: o marcador resolvido não aparece como literal de \`contrato\` em ${rel}`,
+        ).toBe(true);
       } else {
         // Forma por REFERÊNCIA: o index.ts serve o símbolo, e o literal mora no `versao.ts`.
         expect(emitido?.contrato, `${c.nome} deveria servir por referência`).toBeNull();
@@ -2260,6 +2273,16 @@ const FECHAMENTO_FIXTURE = Buffer.from(
 /** Toda canária que a CLI dispara quando ninguém nomeia nenhuma — o default OPERACIONAL. */
 const CANARIAS_ALCANCAVEIS = CANARIAS.filter((c) => c.inalcancavel === null).map((c) => c.nome);
 
+/** As alcançáveis que NÃO caem em fluxo real se o bundle estiver velho — o disparo direto. */
+const CANARIAS_BARATAS = CANARIAS.filter((c) => c.inalcancavel === null && !c.fluxoRealSeVelho).map(
+  (c) => c.nome,
+);
+
+/** As alcançáveis CARAS — as que o passo 1 só dispara sob trava, por causa do efeito no fluxo real. */
+const CANARIAS_CARAS = CANARIAS.filter((c) => c.inalcancavel === null && c.fluxoRealSeVelho).map(
+  (c) => c.nome,
+);
+
 /** A leva que `db/test-canaria-veredito.sh` gera (BARATAS + CARA) — a que a prova de fato julga. */
 const LEVA_DO_SH = [
   'copilot-analyze',
@@ -2299,15 +2322,21 @@ function rodarFixtureExecutavel(nomes: string[]) {
  * `envelopeInerte` de propósito — se aquele encoder começasse a descartar bytes, esconderia a perda
  * das duas pontas ao mesmo tempo.
  */
-function exigirEquivalencia(nomesCli: string[], nomesFixture: string[], rotulo: string) {
+function exigirEquivalencia(
+  nomesCli: string[],
+  nomesFixture: string[],
+  rotulo: string,
+  /** Flags aplicadas aos DOIS lados — é a dimensão sob teste, não pode ir só para um. */
+  extras: string[] = [],
+) {
   const cli = rodarCli(
-    ['--canaria', ...nomesCli],
+    ['--canaria', ...nomesCli, ...extras],
     gitFalso({ main: espelhoCanarias(nomesCli.length > 0 ? nomesCli : CANARIAS_ALCANCAVEIS) }),
   );
   expect(cli.codigo, `${rotulo}: a CLI recusou — ${cli.erros}`).toBe(0);
   expect(cli.saida.length, `${rotulo}: CLI emitiu zero bytes`).toBeGreaterThan(0);
 
-  const fix = rodarFixtureExecutavel(nomesFixture);
+  const fix = rodarFixtureExecutavel([...nomesFixture, ...extras]);
   expect(fix.codigo, `${rotulo}: a fixture recusou — ${fix.stderr}`).toBe(0);
 
   const esperado = Buffer.concat([
@@ -2351,6 +2380,56 @@ describe('EQUIVALENCIA_CANARIA — o SQL que a prova julga é o SQL que a CLI em
     // O acréscimo é comentário SQL, e nomeia a flag: aviso que não sobrevive colado é aviso nenhum.
     expect(prefixo.startsWith('-- ⚠️ --sem-rede')).toBe(true);
     expect(prefixo.split('\n').filter((l) => l !== '').every((l) => l.startsWith('--'))).toBe(true);
+  });
+
+  // --- dimensões que a leva do `.sh` não separa (parecer Codex 2026-09-09, item 5) ---
+  //
+  // Uma leva mista passa verde mesmo que o tratamento de UM grupo divirja entre os dois caminhos,
+  // desde que o outro compense no total de bytes? Não — a igualdade é byte a byte. Mas ela só
+  // EXERCITA o que o corpus contém: enquanto a única comparação era a leva do `.sh`, a trava das
+  // caras, a janela e a ordem nunca apareciam sozinhas.
+
+  it('só as BARATAS (nenhuma trava de efeito caro no SQL)', () => {
+    exigirEquivalencia(CANARIAS_BARATAS, CANARIAS_BARATAS, 'só baratas');
+  });
+
+  it('só as CARAS (todas com trava, que é o bloco que o passo 1 não dispara)', () => {
+    exigirEquivalencia(CANARIAS_CARAS, CANARIAS_CARAS, 'só caras');
+  });
+
+  it('a ORDEM pedida é preservada nos DOIS caminhos — e ela MUDA o SQL', () => {
+    const invertida = [...LEVA_DO_SH].reverse();
+    exigirEquivalencia(invertida, invertida, 'ordem invertida');
+    // Sonda POSITIVA da dimensão: se algum dos lados ordenasse internamente, os dois SQL seriam
+    // iguais e o teste acima passaria sem testar ordem nenhuma — verde por não haver o que separar.
+    const normal = rodarCli(['--canaria', ...LEVA_DO_SH], gitFalso({ main: espelhoCanarias(LEVA_DO_SH) }));
+    const trocada = rodarCli(['--canaria', ...invertida], gitFalso({ main: espelhoCanarias(invertida) }));
+    expect(normal.codigo).toBe(0);
+    expect(trocada.codigo).toBe(0);
+    expect(normal.saida, 'ordem não afeta o SQL — a asserção acima não separa nada').not.toBe(
+      trocada.saida,
+    );
+  });
+
+  it('--janela EXPLÍCITA vale igual nos dois — e o default não a esconde', () => {
+    exigirEquivalencia(LEVA_DO_SH, LEVA_DO_SH, 'janela 45', ['--janela', '45']);
+    // De novo a sonda positiva: sem isto, uma janela ignorada pelos DOIS lados passaria verde.
+    const j45 = rodarCli(
+      ['--canaria', ...LEVA_DO_SH, '--janela', '45'],
+      gitFalso({ main: espelhoCanarias(LEVA_DO_SH) }),
+    );
+    expect(j45.saida).toContain("interval '45 minutes'");
+    expect(j45.saida, 'a janela explícita não substituiu o default').not.toContain(
+      "interval '20 minutes'",
+    );
+  });
+
+  it('as DUAS canárias da mesma edge continuam DISTINTAS na leva', () => {
+    const daMesmaEdge = CANARIAS.filter(
+      (c) => c.inalcancavel === null && c.edge === 'omie-analytics-sync',
+    ).map((c) => c.nome);
+    expect(daMesmaEdge.length, 'fixture do teste: esperava 2 canárias nesta edge').toBeGreaterThan(1);
+    exigirEquivalencia(daMesmaEdge, daMesmaEdge, 'duas canárias, uma edge');
   });
 
   it('as DUAS fronteiras recusam a leva com nome repetido, com a MESMA marca', () => {
