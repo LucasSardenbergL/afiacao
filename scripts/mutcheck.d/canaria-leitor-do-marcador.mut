@@ -1,0 +1,21 @@
+# Poder de discriminação da PROVENIÊNCIA do marcador da canária — a alegação "o marcador que o SQL
+# carrega é o que o `index.ts` emite no campo `contrato`". Ela decide sobre money-path: marcador
+# errado no SQL faz a canária no ar responder outro contrato, o veredito sai `CANARIA DE OUTRA
+# FATIA`, e isso se lê como deploy pendente (a classe do incidente de 2026-09-05).
+#
+# Por que este contrato existe. O teste "o marcador é o que o index.ts emite" comparava
+# `resolverCanarias(..., lerCanariasReal)` com `lerCanariasReal(...)`: os DOIS lados passam pelo
+# mesmo leitor, então um leitor que devolvesse o marcador errado satisfazia os dois e o teste ficava
+# verde. MEDIDO em 2026-09-09, com o leitor sabotado: SEM a âncora independente rc=0 (tautologia),
+# COM a âncora rc=1, controle verde na mesma invocação. O ramo por REFERÊNCIA já tinha âncora (lê o
+# `versao.ts` cru); o ramo `contrato` não tinha.
+#
+# O `@test` é o da SONDA, não o do próprio gate: é lá que mora a âncora que estas mutações exercitam.
+# @src: scripts/canaria-contrato-bump-gate.ts
+# @test: scripts/sonda-versao-sql.test.ts
+# Rode: scripts/mutcheck.sh scripts/canaria-contrato-bump-gate.ts scripts/sonda-versao-sql.test.ts scripts/mutcheck.d/canaria-leitor-do-marcador.mut
+#
+# Alvo ÚNICO de propósito: `contrato: emissao\[2\]` aparece 2x no arquivo, e mutação que toca duas
+# linhas o mutcheck recusa como inválida (regex largo).
+PEGA      | leitor devolve marcador FIXO (nao o do index.ts) | s/const emissao = linhas\[i\]\.match\(RE_EMISSAO\);/const emissao = linhas[i].match(RE_EMISSAO); if (emissao) emissao[2] = 'marcador-TROCADO-pela-mutacao';/
+PEGA      | leitor deforma o marcador (caixa alta)          | s/const emissao = linhas\[i\]\.match\(RE_EMISSAO\);/const emissao = linhas[i].match(RE_EMISSAO); if (emissao) emissao[2] = emissao[2].toUpperCase();/
