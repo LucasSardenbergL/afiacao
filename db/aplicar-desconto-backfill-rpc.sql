@@ -50,6 +50,7 @@ AS $fn$
 DECLARE
   v_pedidas   integer := 0;
   v_aplicadas integer := 0;
+  v_ja_apuradas integer := 0;
 BEGIN
   IF p_linhas IS NULL OR jsonb_typeof(p_linhas) <> 'array' THEN
     RAISE EXCEPTION 'desconto_backfill_aplicar: p_linhas tem de ser um array jsonb (veio %)',
@@ -82,16 +83,32 @@ BEGIN
        -- no plano, não uma entrada com null. Aceitar null aqui deixaria um bug do chamador
        -- apagar apuração já feita, em massa e sem sinal.
        AND pl.desconto_valor IS NOT NULL
+       -- SO ESCREVE O QUE AINDA NAO FOI APURADO. Sem isto, um writer que preencha a linha entre a
+       -- leitura que montou o plano e esta escrita seria SOBRESCRITO -- e sem divergencia visivel,
+       -- porque o trio (SKU, qtd, preco) continua batendo: o guard de base nao ve mudanca de
+       -- desconto. Reapurar nao e' inofensivo: o valor do plano foi lido ANTES, e o do outro
+       -- writer pode ser mais novo. Repetir o mesmo plano segue idempotente no que importa (a
+       -- linha ja tem o valor); o que muda e' que a corrida deixa de ter vencedor por sorte.
+       AND oi.desconto_valor IS NULL
      RETURNING 1
   )
   SELECT count(*) INTO v_aplicadas FROM aplicado;
 
   -- O chamador precisa das DUAS contagens. Só "aplicadas" não distingue "o plano tinha 40 linhas
   -- e 40 foram escritas" de "tinha 900 e 40 foram escritas porque 860 mudaram no meio do caminho".
+  -- `recusadas` agora junta DOIS fatos: base mudou desde a leitura, e linha ja apurada por outro
+  -- writer. O chamador precisa dos dois separados para nao ler "corrida perdida" como "acervo
+  -- inconsistente" -- consertos opostos.
+  SELECT count(*) INTO v_ja_apuradas
+    FROM jsonb_to_recordset(p_linhas) AS x(id uuid)
+    JOIN public.order_items oi ON oi.id = x.id
+   WHERE oi.desconto_valor IS NOT NULL;
+
   RETURN jsonb_build_object(
-    'pedidas',   v_pedidas,
-    'aplicadas', v_aplicadas,
-    'recusadas', v_pedidas - v_aplicadas
+    'pedidas',      v_pedidas,
+    'aplicadas',    v_aplicadas,
+    'recusadas',    v_pedidas - v_aplicadas,
+    'ja_apuradas',  v_ja_apuradas
   );
 END
 $fn$;
