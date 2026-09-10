@@ -85,13 +85,13 @@ Regras: 🔴 gap / 🟡 tem-parcial / 🟢 tem. Coluna Evidência **vazia proíb
 Priorização de programa é decisão de metodologia não-óbvia → passa pelo Codex (regra do CLAUDE.md). Dispare-o via **Bash com `run_in_background:true`** (o harness te re-invoca quando terminar — nunca segure a sessão em foreground) e siga trabalhando no rascunho do Passo 5 enquanto ele roda:
 
 ```bash
-scripts/codex-async.sh -r high "Priorize estes gaps do app B2B Afiação por IMPACTO×ESFORÇO.
+scripts/codex-async.sh -r xhigh "Priorize estes gaps do app B2B Afiação por IMPACTO×ESFORÇO.
 Money-path (preço/pedido/financeiro/reposição/estoque) primeiro. Separe quick-wins (1 PR)
 de épicos (fase multi-PR). Contexto e tabela: <cole a tabela do Passo 3 + 2 linhas de negócio>.
 NÃO abra supabase/schema-snapshot.sql."
 ```
 
-Defaults do script: `-m gpt-5.5 -r high -t 1200` (20min hard-stop). Se a cota do Codex estourar (não-transitório, o script avisa), siga pelo **Caminho B**: priorize você mesmo por impacto×esforço e grave `REVISÃO INDEPENDENTE PENDENTE` no roadmap (detalhe em `docs/agent/money-path.md`). Integre o parecer quando voltar — realoque a ordem, não ignore.
+Defaults do script: `-m gpt-6-astra -r max -t 1200` (20min hard-stop) — a fonte é o bloco de defaults, `scripts/codex-async.sh:62`<!--cita: modelo="gpt-6-astra"; reasoning="max"; timeout_s=1200-->, nunca só o comentário do cabeçalho (comentário deriva do código calado; a citação ancorada acima é vigiada pelo `docs:citacoes`, que reprova no dia em que o default mudar). **O `-r xhigh` acima é degrau econômico DELIBERADO, um abaixo do default** (`docs/agent/money-path.md`, bullet *Nível de reasoning*: `xhigh` cobre "metodologia FORA do money-path"): priorizar gaps produz uma FILA reversível — o próprio parecer entra "realocando a ordem" — e cada gap money-path ainda passa pelo seu Codex adversarial no Passo 5, então nenhum piso de `max` (irreversível · segurança · julgar a mecânica do dinheiro) é tocado. Não "corrija" para `max` sem mudar isso; **suba para o default quando o benchmark for do PRÓPRIO domínio money-path** (precificação, reposição/compras, financeiro) — aí o consult julga a mecânica, não a fila. ⚠️ O `-r high` que ficou aqui de 2026-07-07 a 2026-09-09 **não** era rebaixamento: era o default daquele dia (`-m gpt-5.5 -r high`, `codex-async.sh` em 1c461d818) copiado para dentro do exemplo, e `high` nem consta mais do catálogo de níveis. Se a cota do Codex estourar (não-transitório, o script avisa), siga pelo **Caminho B**: priorize você mesmo por impacto×esforço e grave `REVISÃO INDEPENDENTE PENDENTE` no roadmap (detalhe em `docs/agent/money-path.md`). Integre o parecer quando voltar — realoque a ordem, não ignore.
 
 ### Passo 5 — Programa em fases-PR (artefato #2)
 
