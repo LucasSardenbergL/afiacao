@@ -739,6 +739,107 @@ function cteControleCredencial(prosa: ProsaDoControle): string {
 }
 
 /**
+ * A prosa e o PREDICADO que mudam entre os dois modos no CTE do controle ATIVO.
+ *
+ * `alias` é como o modo batiza o `lidas` (a sonda usa `l`, a canária `ca`); `testemunha` é o
+ * predicado de IDENTIDADE VERIFICADA — o que separa "respondeu" de "respondeu PROVANDO ser o
+ * bundle do repo". Ele muda porque o eco muda (a sonda ecoa `probe`+`versao`+`fonte`; a canária
+ * ecoa `canary`+marcador), mas a MECÂNICA de contagem não muda, e por isso vive numa cópia só.
+ */
+interface ProsaDoControleAtivo {
+  /** Por que a testemunha DESTE modo prova a credencial do disparo. */
+  readonly cabeca: string;
+  /** Alias do `lidas` neste modo. */
+  readonly alias: string;
+  /** Predicado que faz de uma linha lida uma TESTEMUNHA de credencial aceita. */
+  readonly testemunha: string;
+}
+
+/**
+ * O CTE `controle_ativo` — a prova de credencial ATRIBUÍDA A ESTA LEVA. Compartilhado.
+ *
+ * POR QUE ELE EXISTE, e por que o `controle_credencial` não bastava. O histórico é POPULACIONAL:
+ * conta tráfego de FORA da leva e conclui "o CRON_SECRET está sendo aceito". Isso prova que ALGUM
+ * tráfego recente passou — não que ESTE disparo mandou a credencial certa, e não diz QUAL
+ * credencial autenticou os 2xx que contou. A manifestação cara é o disparo com header errado: a
+ * leva inteira toma 401, os ids dela ficam FORA da contagem (pelo `NOT EXISTS`), o histórico segue
+ * VERDE e o veredito sai `BUNDLE VELHO` CONFIANTE — redeploy à toa de uma edge que já estava no ar.
+ * Essa manifestação NÃO se corrige sozinha, e nenhuma asserção sobre o gerador a alcança: o #2424
+ * pinou os headers contra DRIFT NO CÓDIGO, mas o segredo pode estar errado/expirado no VAULT no
+ * instante do disparo, com o código intacto.
+ *
+ * ⚠️ POR QUE A TESTEMUNHA É IDENTIDADE, E NÃO STATUS 2xx. Foi a primeira versão deste controle, e
+ * ela era fail-OPEN. O parecer Codex (gpt-6-astra, 2026-09-09) derrubou-a com um contraexemplo do
+ * próprio repo: `monthly-report@ef08dddd2` é um bundle HISTÓRICO que ignora a credencial e manda
+ * e-mail para QUALQUER POST — responde 200 sem autenticar nada (o `sonda-relay/index.ts` documenta
+ * esse histórico). Como `resolverLeva()` aceita `monthly-report`, uma leva com esse bundle no ar
+ * produziria `aceitas >= 1` com a credencial INVÁLIDA. O erro de raciocínio tem nome: medir o gate
+ * no código da MAIN para afirmar uma propriedade do bundle NO AR — quando a razão de existir deste
+ * gerador é justamente que os dois divergem.
+ *
+ * O reparo é exigir que a resposta se IDENTIFIQUE: `versao` E `fonte` iguais às esperadas (sonda),
+ * marcador igual ao esperado (canária). Aí a cadeia fecha em três elos, e nenhum deles é suposição:
+ *   1. o `fonte` é o sha256 do arquivo servido ⇒ o bundle no ar é VERBATIM o do repo;
+ *   2. no repo, o gate `authorizeCron*` roda ANTES de emitir a resposta (medido 60/60 em
+ *      2026-09-09, e desde então IMPOSTO por `scripts/gate-sonda-autentica.ts` no CI);
+ *   3. o `request_id` amarra a resposta a ESTE disparo, não a tráfego de fundo.
+ * Logo o `x-cron-secret` deste disparo foi ACEITO — ativo, autenticado e atribuído. O bundle
+ * anônimo do contraexemplo não passa por (1), e um gate `Bearer` (a `recommend` histórica) recusa o
+ * nosso disparo, que não manda `Authorization`.
+ *
+ * ⚠️ ZERO TESTEMUNHA É AUSÊNCIA DE DADO, NÃO "NINGUÉM ACEITOU" — e por isso os quatro contadores
+ * são SEPARADOS em vez de um zero só: `pendentes` (sem resposta ainda) e `falhas` (transporte
+ * morreu: no pg_net 0.19.5 o erro grava `error_msg` e deixa o status NULL, e `timed_out` fica NULL
+ * no estouro — #2015) não são recusa. A mensagem diz "nenhuma aceitação foi OBSERVADA" com o
+ * denominador, nunca "nenhum disparo foi aceito": `ausente ≠ zero` aplicado ao próprio controle.
+ *
+ * Ele lê de `lidas`, não de `net._http_response` — de propósito, e isso é o que dá COERÊNCIA: o
+ * controle conta exatamente as linhas que o veredito julga. Contar por fora abriria a porta de o
+ * controle falar de uma execução e o veredito de outra.
+ */
+function cteControleAtivo(prosa: ProsaDoControleAtivo): string {
+  const a = prosa.alias;
+  return (
+    'controle_ativo AS (\n' +
+    prosa.cabeca +
+    '  SELECT count(*)                                            AS disparos_na_leva,\n' +
+    `         count(*) FILTER (WHERE ${prosa.testemunha})  AS aceitas_na_leva,\n` +
+    `         count(*) FILTER (WHERE ${a}.status_code = 401)           AS recusadas_na_leva,\n` +
+    `         count(*) FILTER (WHERE ${a}.status_code IS NULL\n` +
+    `                            AND ${a}.erro_transporte IS NULL)     AS pendentes_na_leva,\n` +
+    `         count(*) FILTER (WHERE ${a}.erro_transporte IS NOT NULL) AS falhas_na_leva\n` +
+    `  FROM lidas ${a}\n` +
+    // Só linha DISPARADA entra no denominador: com a trava fechada o request_id é NULL e nada
+    // saiu, e contá-la inflaria `disparos_na_leva` — o denominador da mensagem mentiria.
+    `  WHERE ${a}.request_id IS NOT NULL\n` +
+    // SEM vírgula: este é sempre o ÚLTIMO CTE dos dois blocos, e o `SELECT` final vem logo abaixo.
+    ')\n'
+  );
+}
+
+/**
+ * O texto que o veredito do 401 usa para EXIBIR o controle histórico sem deixá-lo decidir.
+ *
+ * O histórico saiu da decisão porque o ativo o SUBSUME: se a credencial foi aceita AGORA por um
+ * request DESTA leva, o que 52 crons fizeram nas últimas 6h não acrescenta prova — e exigi-lo
+ * junto (AND) só cobraria recall sem comprar precisão. Continua EXIBIDO porque quem lê o
+ * INDETERMINADO precisa enxergar o fundo para decidir o próximo passo.
+ */
+function contextoHistorico(alias: string): string {
+  return (
+    `' Trafego de fundo (6h, fora desta leva, NAO decide o veredito): ' || ${alias}.ok_recentes ||\n` +
+    `                ' resposta(s) 2xx e ' || ${alias}.recusas_recentes || ' recusa(s) 401' ||\n` +
+    // O piso perdeu o poder de DECIDIR quando o ativo assumiu, mas não perdeu o sentido: ele é o
+    // denominador que separa "o fundo está limpo" de "quase ninguém bateu na porta". Sem ele, um
+    // `0 2xx e 0 recusas` se leria como fundo saudável, que é o oposto do que esse par diz.
+    `                CASE WHEN ${alias}.ok_recentes < ${PISO_CONTROLE_CREDENCIAL}\n` +
+    `                     THEN ' — fundo ANORMALMENTE QUIETO (abaixo do piso de ` +
+    `${PISO_CONTROLE_CREDENCIAL} em 6h): nem como contexto ele informa.'\n` +
+    `                     ELSE '.' END`
+  );
+}
+
+/**
  * Bloco de LEITURA e veredito. NÃO exige colar `request_id` nenhum.
  *
  * COMO ELE ACHA A LINHA SOZINHO: a resposta da sonda ecoa o próprio slug —
@@ -798,30 +899,38 @@ function cteControleCredencial(prosa: ProsaDoControle): string {
  * na dimensão CREDENCIAL, irmão do guard temporal do #2079, onde tick pré-merge lido como pendência
  * produzia o mesmo falso negativo confiante.
  *
- * Então o veredito determinado só sai quando o CONTROLE é observado na MESMA consulta (o CTE
- * `controle_credencial`): tráfego de fundo recente que PASSOU (≥ piso de 2xx) e NENHUMA recusa 401
- * fora desta leva provam que o secret do vault está sendo aceito AGORA — logo o 401 é da edge, não
- * da credencial. Sem essa prova o veredito é INDETERMINADO, nunca "bundle velho": fail-CLOSED,
- * igual ao `CONTROLE_CRUZADO_NAO_OBSERVADO` do `verify-edge-escrita.sh`. Antes disso a desambiguação
- * dependia de o operador lembrar de rodar duas consultas à mão (feito assim em 2026-08-30, no
- * #2101) — e recado que depende de alguém lembrar é exatamente como a armadilha da sentinela
- * não-exclusiva passou.
+ * Então o veredito determinado só sai quando um CONTROLE é observado na MESMA consulta. Antes
+ * disso a desambiguação dependia de o operador lembrar de rodar duas consultas à mão (feito assim
+ * em 2026-08-30, no #2101) — e recado que depende de alguém lembrar é exatamente como a armadilha
+ * da sentinela não-exclusiva passou.
  *
- * O QUE O CONTROLE NÃO PROVA: ele é populacional — conclui "o secret está sendo aceito" de
- * tráfego que passou. Não fecha a janela em que o `CRON_SECRET` foi trocado há poucos minutos e
- * NENHUM cron rodou desde a troca: ali os 2xx da janela foram feitos com o secret antigo e o
- * controle avaliza indevidamente. O ramo ESTREITA muito o erro (antes ele era incondicional),
- * não o elimina — e o SQL gerado diz isso ao operador, em vez de deixar a ressalva só no doc.
+ * ⚠️ QUEM DETERMINA É O `controle_ativo`, NÃO O HISTÓRICO — mudou em 2026-09-09. Até então quem
+ * determinava era o `controle_credencial`: tráfego de fundo recente que PASSOU (≥ piso de 2xx) e
+ * nenhuma recusa 401 fora desta leva. Ele é POPULACIONAL, e o parecer Codex do #2424 nomeou as
+ * duas manifestações do buraco: (a) `CRON_SECRET` trocado há minutos sem cron rodado desde — os
+ * 2xx da janela usaram o secret ANTIGO e avalizam indevidamente; (b) o PRÓPRIO disparo mandando
+ * header errado — a leva toma 401, os ids dela ficam FORA da contagem pelo `NOT EXISTS`, e o
+ * controle segue VERDE avalizando um transporte quebrado. (a) se desqualifica sozinha no próximo
+ * cron; (b) NÃO se corrige sozinha, e o desfecho é redeploy à toa de edge que já estava no ar.
  *
- * ⚠️ A EXCLUSÃO DA PRÓPRIA LEVA DEPENDE DO `ids`, QUE AGORA NASCE VAZIO. O controle exclui as
- * respostas desta leva por `NOT EXISTS (… ids …)`; sem a colagem, `ids` não tem linha nenhuma e o
- * 401 que estamos julgando ENTRA em `recusas_recentes` — o controle se auto-desqualifica e o
- * veredito é INDETERMINADO. Isso é fail-CLOSED (a direção segura: nunca produz "bundle velho"
- * confiante), mas torna o veredito DETERMINADO do 401 inalcançável pelo caminho sem colagem. Não
- * dá para consertar excluindo a janela da sonda do controle: as recusas 401 recentes dos crons —
- * justamente a prova de secret quebrado AGORA — sairiam junto, e o erro viraria fail-OPEN. Então a
- * colagem é o que UPGRADE um 401 ambíguo a veredito determinado, exatamente como é a saída da
- * causa (c). É por isso que ela sobrevive: deixou de ser INSUMO e virou ESCAPE, nos dois casos.
+ * O controle ATIVO fecha as duas porque a prova passou a ser da TENTATIVA ATUAL: uma resposta
+ * DESTA leva, correlacionada por `request_id`, com IDENTIDADE verificada (`versao` E `fonte`
+ * esperadas). O histórico continua EXIBIDO — o operador precisa enxergar o fundo — mas não
+ * condiciona ramo nenhum. Ele não some porque o ativo o SUBSUME: se a credencial foi aceita AGORA
+ * por um request desta leva, o que 52 crons fizeram em 6h não acrescenta prova; exigir os dois
+ * (AND) cobraria recall sem comprar precisão. A mecânica e a armadilha do "2xx cru" estão na
+ * docstring de `cteControleAtivo`.
+ *
+ * O QUE SE PERDEU, e é a troca deliberada (precisão > recall): quando a leva INTEIRA responde 401,
+ * não há testemunha e o veredito é INDETERMINADO — onde o histórico determinava. Na prática isso é
+ * a leva de UMA edge pré-sonda, e a saída está escrita no próprio ramo: acrescentar à leva uma edge
+ * que se sabe no ar. É o mesmo lugar onde a manifestação (b) morde, então o que se perde em recall
+ * é exatamente o que se ganha em não mentir.
+ *
+ * ⚠️ O `NOT EXISTS (… ids …)` do histórico segue valendo pelo outro motivo: sem ele o 401 sob
+ * julgamento entra em `recusas_recentes` e o controle se auto-envenena. Não dá para consertar
+ * excluindo a janela inteira da sonda: as recusas 401 recentes dos crons — justamente a prova de
+ * secret quebrado AGORA — sairiam junto, e o erro viraria fail-OPEN.
  */
 function blocoLeitura(leva: EdgeSondada[], janelaMin: number, ids: FonteDosIds = ECO): string {
   const embutido = ids.modo === 'embutido';
@@ -835,12 +944,12 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number, ids: FonteDosIds =
       `  -- disparo só serve para separar a causa (c) do INDETERMINADO (PRE-SENSOR / recusa HTTP).\n`;
   const comentarioControle = embutido
     ? `    -- ⚠️ Com o mapa EMBUTIDO o \`ids\` nunca está vazio, e é isso que faz esta exclusão valer: o\n` +
-      `    --    401 desta leva não entra na contagem de recusas contra si mesmo, e o veredito do 401\n` +
-      `    --    pode sair DETERMINADO — o que com o \`ids\` vazio era impossível.\n`
-    : `    -- ⚠️ Com o \`ids\` VAZIO (o padrão desde que a leitura acha pelo eco), esta exclusão não\n` +
-      `    --    exclui nada: um 401 desta leva conta como recusa e o controle se auto-desqualifica.\n` +
-      `    --    É fail-CLOSED — vira INDETERMINADO, nunca veredito confiante. Para DETERMINAR um\n` +
-      `    --    401, cole o JSON do disparo no \`ids\` acima.\n`;
+      `    --    401 desta leva não entra na contagem de recusas contra si mesmo. Quem DETERMINA o\n` +
+      `    --    veredito do 401, porém, é o \`controle_ativo\` abaixo — este aqui só dá contexto.\n`
+    : `    -- ⚠️ Com o \`ids\` VAZIO (o padrão do --so-leitura), esta exclusão não exclui nada: um 401\n` +
+      `    --    desta leva conta como recusa e o controle se auto-desqualifica. É fail-CLOSED, mas\n` +
+      `    --    hoje isso é secundário: o veredito do 401 exige TESTEMUNHA ATIVA, e sem o mapa não\n` +
+      `    --    há request_id desta leva para testemunhar. Rode o bloco de DISPARO.\n`;
   const semId = embutido
     ? `'INDETERMINADO — esta edge não tem request_id no mapa embutido NEM eco de sonda na janela ` +
       `de ${janelaMin} min. Isto é ausência de dado, não veredito negativo: ou a trava do passo ` +
@@ -859,23 +968,74 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number, ids: FonteDosIds =
     ? `'O mapa veio embutido, logo o id e do disparo desta celula: ou a celula e de OUTRA leva/sessao, ou esta edge respondeu o fluxo real.'`
     : `'O id colado no ids aponta para outra execucao — foi ele que trocou o alvo.'`;
   const sufixo401 = embutido
-    ? `                'O mapa embutido ja exclui esta leva do controle, entao o que falta e ' ||\n` +
-      `                'TRAFEGO de fundo: 2xx fora da leva abaixo do piso de ${PISO_CONTROLE_CREDENCIAL} em 6h'\n`
-    : `                'Se o ids acima estiver vazio, o 401 DESTA leva conta como recusa e desqualifica ' ||\n` +
-      `                'o controle: cole o JSON do disparo no ids para DETERMINAR este veredito'\n`;
+    ? `                'Acrescente a leva uma edge que voce SABE no ar: a testemunha dela DETERMINA ' ||\n` +
+      `                'este 401. '\n`
+    : `                'Este modo nao embute o mapa, entao nao ha request_id desta leva para ' ||\n` +
+      `                'testemunhar: rode o bloco de DISPARO, que emite o passo de leitura com o ' ||\n` +
+      `                'mapa dentro. '\n`;
+  // ⚠️ NO MODO EMBUTIDO O ID É AUTORITATIVO — e o `COALESCE(s.id, …)` que havia aqui era um bug
+  // que só o controle ativo tornou visível (achado do parecer Codex, 2026-09-09): preferindo o
+  // ECO, a linha podia ser julgada por uma resposta de OUTRA execução (a sondagem anterior, ainda
+  // dentro da janela) enquanto o request DESTA leva tomava 401 — o veredito falando de uma
+  // execução e o controle de outra, na MESMA linha. Pior: com a trava FECHADA (request_id NULL,
+  // nada disparado) um eco antigo preenchia a linha e ela saía julgada, quando o honesto é
+  // INDETERMINADO. O eco sobrevive como o caminho do `--so-leitura`, onde não há mapa nenhum.
+  const projecaoLidas = embutido
+    ? `  SELECT e.edge, e.versao_esperada, e.fonte_esperada,\n` +
+      `         i.request_id,\n` +
+      `         x.status_code,\n` +
+      `         x.created,\n` +
+      `         x.error_msg AS erro_transporte,\n` +
+      `         CASE WHEN x.content IS NOT NULL AND left(ltrim(x.content), 1) = '{'\n` +
+      `              THEN COALESCE(x.content::jsonb -> 'data', x.content::jsonb)\n` +
+      `         END AS corpo\n`
+    : `  SELECT e.edge, e.versao_esperada, e.fonte_esperada,\n` +
+      `         COALESCE(s.id, i.request_id) AS request_id,\n` +
+      `         COALESCE(s.status_code, x.status_code) AS status_code,\n` +
+      `         COALESCE(s.created, x.created) AS created,\n` +
+      `         x.error_msg AS erro_transporte,\n` +
+      `         COALESCE(s.corpo,\n` +
+      `                  CASE WHEN x.content IS NOT NULL AND left(ltrim(x.content), 1) = '{'\n` +
+      `                       THEN COALESCE(x.content::jsonb -> 'data', x.content::jsonb)\n` +
+      `                  END) AS corpo\n`;
+  const lateralDoEco = embutido
+    ? ''
+    : `  LEFT JOIN LATERAL (\n` +
+      `    SELECT rr.id, rr.status_code, rr.created, rr.corpo\n` +
+      `    FROM recentes rr\n` +
+      `    WHERE rr.corpo ->> 'edge' = e.edge\n` +
+      `      AND rr.corpo ->> 'probe' = 'true'\n` +
+      `    ORDER BY rr.created DESC, rr.id DESC\n` +
+      `    LIMIT 1\n` +
+      `  ) s ON true\n`;
+  // A recência do caminho por ID não vinha de graça: o eco a herdava de `recentes`, o id não. Com
+  // o id autoritativo, sem este ramo uma célula de OUTRA sessão sairia julgada como de agora — a
+  // regressão que a correção acima criaria. É o gêmeo do guard que a canária já tinha.
+  const foraDaJanela = embutido
+    ? `         WHEN l.created <= now() - interval '${janelaMin} minutes'\n` +
+      `           THEN 'INDETERMINADO — a resposta e de ' || l.created || ', FORA da janela de ` +
+      `${janelaMin} min: esta celula e de OUTRA sessao e o veredito seria de um deploy anterior. ` +
+      `Redispare o passo ${passoDisparo}'\n`
+    : '';
+  // `recentes` existe para o LATERAL do eco, e com o id autoritativo o eco só sobrevive no
+  // `--so-leitura`. Emiti-lo no modo embutido deixaria um CTE sem consumidor: SQL morto que se lê
+  // como se a janela ainda governasse a busca, quando quem governa ali é o request_id.
+  const cteRecentes = embutido
+    ? ''
+    : `recentes AS (\n` +
+      `  -- A JANELA. O filtro textual roda ANTES do cast de propósito: um corpo não-JSON no meio da\n` +
+      `  -- janela abortaria a consulta inteira (mesma defesa da irmã passiva, pendencias-deploy.ts).\n` +
+      `  SELECT r.id, r.created, r.status_code,\n` +
+      `         COALESCE(r.content::jsonb -> 'data', r.content::jsonb) AS corpo\n` +
+      `  FROM net._http_response r\n` +
+      `  WHERE r.created > now() - interval '${janelaMin} minutes'\n` +
+      `    AND r.status_code IS NOT NULL\n` +
+      `    AND r.content IS NOT NULL\n` +
+      `    AND left(ltrim(r.content), 1) = '{'\n` +
+      `),\n`;
   return (
     `WITH esperado(edge, versao_esperada, fonte_esperada) AS (VALUES\n${valuesEsperado(leva)}\n),\n` +
-    `recentes AS (\n` +
-    `  -- A JANELA. O filtro textual roda ANTES do cast de propósito: um corpo não-JSON no meio da\n` +
-    `  -- janela abortaria a consulta inteira (mesma defesa da irmã passiva, pendencias-deploy.ts).\n` +
-    `  SELECT r.id, r.created, r.status_code,\n` +
-    `         COALESCE(r.content::jsonb -> 'data', r.content::jsonb) AS corpo\n` +
-    `  FROM net._http_response r\n` +
-    `  WHERE r.created > now() - interval '${janelaMin} minutes'\n` +
-    `    AND r.status_code IS NOT NULL\n` +
-    `    AND r.content IS NOT NULL\n` +
-    `    AND left(ltrim(r.content), 1) = '{'\n` +
-    `),\n` +
+    cteRecentes +
     `ids AS (\n` +
     comentarioIds +
     `  SELECT chave AS edge, valor::bigint AS request_id\n` +
@@ -891,25 +1051,29 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number, ids: FonteDosIds =
       exclusao: comentarioControle,
     }) +
     `lidas AS (\n` +
-    `  SELECT e.edge, e.versao_esperada, e.fonte_esperada,\n` +
-    `         COALESCE(s.id, i.request_id) AS request_id,\n` +
-    `         COALESCE(s.status_code, x.status_code) AS status_code,\n` +
-    `         COALESCE(s.corpo,\n` +
-    `                  CASE WHEN x.content IS NOT NULL AND left(ltrim(x.content), 1) = '{'\n` +
-    `                       THEN COALESCE(x.content::jsonb -> 'data', x.content::jsonb)\n` +
-    `                  END) AS corpo\n` +
+    projecaoLidas +
     `  FROM esperado e\n` +
-    `  LEFT JOIN LATERAL (\n` +
-    `    SELECT rr.id, rr.status_code, rr.corpo\n` +
-    `    FROM recentes rr\n` +
-    `    WHERE rr.corpo ->> 'edge' = e.edge\n` +
-    `      AND rr.corpo ->> 'probe' = 'true'\n` +
-    `    ORDER BY rr.created DESC, rr.id DESC\n` +
-    `    LIMIT 1\n` +
-    `  ) s ON true\n` +
+    lateralDoEco +
     `  LEFT JOIN ids i ON i.edge = e.edge\n` +
     `  LEFT JOIN net._http_response x ON x.id = i.request_id\n` +
-    `)\n` +
+    `),\n` +
+    cteControleAtivo({
+      cabeca:
+        `  -- Controle ATIVO: a prova de credencial ATRIBUÍDA a ESTA leva. O histórico acima conta\n` +
+        `  -- tráfego de FORA e não sabe qual credencial autenticou os 2xx que contou; este conta as\n` +
+        `  -- respostas DESTES request_ids. Testemunha é IDENTIDADE, não status: exige o eco da sonda\n` +
+        `  -- com \`versao\` E \`fonte\` ESPERADAS — aí o bundle no ar é VERBATIM o do repo, e no repo o\n` +
+        `  -- gate autentica antes de responder. Um 200 anônimo (bundle histórico que ignora a\n` +
+        `  -- credencial e roda o fluxo real) NÃO é testemunha, e é por isso que 2xx não basta.\n`,
+      alias: 'l',
+      testemunha:
+        `l.status_code BETWEEN 200 AND 299\n` +
+        `                            AND l.created > now() - interval '${janelaMin} minutes'\n` +
+        `                            AND l.corpo ->> 'probe'  = 'true'\n` +
+        `                            AND l.corpo ->> 'edge'   = l.edge\n` +
+        `                            AND l.corpo ->> 'versao' = l.versao_esperada\n` +
+        `                            AND l.corpo ->> 'fonte'  = l.fonte_esperada`,
+    }) +
     `SELECT l.edge,\n` +
     `       l.request_id,\n` +
     `       l.status_code,\n` +
@@ -920,19 +1084,32 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number, ids: FonteDosIds =
     `       CASE\n` +
     `         WHEN l.request_id IS NULL\n` +
     `           THEN ` + semId + `\n` +
+    // Falha de TRANSPORTE vem antes do AGUARDE: no pg_net 0.19.5 o erro grava `error_msg` e deixa
+    // o status NULL, indistinguível de "resposta a caminho" para quem só olha o status — e mandar
+    // "rode de novo" a cada 10s numa requisição que MORREU é laço de espera fail-OPEN.
+    `         WHEN l.erro_transporte IS NOT NULL\n` +
+    `           THEN 'FALHA DE TRANSPORTE — a requisicao nao chegou a ter resposta HTTP: ' ||\n` +
+    `                l.erro_transporte || '. Isto NAO e veredito de deploy e NAO adianta repetir ' ||\n` +
+    `                'sem antes resolver a causa (DNS, timeout, rede do pg_net)'\n` +
     `         WHEN l.status_code IS NULL\n` +
     `           THEN ` + aguarde + `\n` +
+    foraDaJanela +
     `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code = 401\n` +
-    `              AND c.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL} AND c.recusas_recentes = 0\n` +
-    `           THEN 'BUNDLE VELHO (pre-sonda) — 401, e o CRON_SECRET esta PROVADO bom agora (' ||\n` +
-    `                c.ok_recentes || ' resposta(s) 2xx e ZERO 401 fora desta leva em 6h), ' ||\n` +
-    `                'logo a recusa e da EDGE: nada executou'\n` +
+    `              AND a.aceitas_na_leva >= 1\n` +
+    `           THEN 'BUNDLE VELHO (pre-sonda) — 401, e a credencial DESTE disparo esta PROVADA ' ||\n` +
+    `                'ATIVAMENTE: ' || a.aceitas_na_leva || ' de ' || a.disparos_na_leva ||\n` +
+    `                ' request(s) desta leva voltou com IDENTIDADE VERIFICADA (probe + versao + ' ||\n` +
+    `                'fonte esperadas), logo o x-cron-secret foi ACEITO neste instante e a recusa ' ||\n` +
+    `                'e da EDGE: nada executou'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code = 401\n` +
-    `           THEN 'INDETERMINADO — 401 nao separa bundle velho de CRON_SECRET invalido, e o ' ||\n` +
-    `                'controle de credencial NAO foi observado (2xx fora da leva em 6h: ' ||\n` +
-    `                c.ok_recentes || ', recusas 401: ' || c.recusas_recentes || '). Confira o ' ||\n` +
-    `                'CRON_SECRET no vault ANTES de redeployar — nao ha prova de bundle velho aqui. ' ||\n` +
+    `           THEN 'INDETERMINADO — 401 nao separa bundle velho de CRON_SECRET invalido, e ' ||\n` +
+    `                'NENHUMA aceitacao foi OBSERVADA nesta leva (0 testemunha de ' ||\n` +
+    `                a.disparos_na_leva || ' disparo(s); 401: ' || a.recusadas_na_leva ||\n` +
+    `                ', sem resposta ainda: ' || a.pendentes_na_leva || ', falha de transporte: ' ||\n` +
+    `                a.falhas_na_leva || '). Isto e ausencia de prova, nao prova de que o secret ' ||\n` +
+    `                'esta ruim. Confira o CRON_SECRET no vault ANTES de redeployar. ' ||\n` +
     sufixo401 +
+    `                || ` + contextoHistorico('c') + `\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL AND l.status_code >= 400\n` +
     `           THEN 'BUNDLE VELHO — recusou o request (HTTP ' || l.status_code || '), NADA executou'\n` +
     `         WHEN l.corpo ->> 'versao' IS NULL\n` +
@@ -967,7 +1144,7 @@ function blocoLeitura(leva: EdgeSondada[], janelaMin: number, ids: FonteDosIds =
     `              ', edge=' || COALESCE(l.corpo ->> 'edge', '?') ||\n` +
     `              ' (esperado ' || l.versao_esperada || ' / ' || l.fonte_esperada || ')'\n` +
     `       END AS veredito\n` +
-    `FROM lidas l CROSS JOIN controle_credencial c\n` +
+    `FROM lidas l CROSS JOIN controle_credencial c CROSS JOIN controle_ativo a\n` +
     `ORDER BY l.edge;\n`
   );
 }
@@ -1598,13 +1775,28 @@ function blocoLeituraCanaria(
     '  -- topo — sem o COALESCE as DUAS canárias dela sairiam como "sem eco".\n' +
     '  SELECT esp.nome, esp.campo_marcador, esp.marcador_esperado, esp.efeito,\n' +
     '         mp.request_id, resp.status_code, resp.created,\n' +
+    '         resp.error_msg AS erro_transporte,\n' +
     '         CASE WHEN resp.content IS NOT NULL AND left(ltrim(resp.content), 1) = \'{\'\n' +
     "              THEN COALESCE(resp.content::jsonb -> 'data', resp.content::jsonb)\n" +
     '         END AS corpo\n' +
     '  FROM esperado esp\n' +
     '  LEFT JOIN ids mp ON mp.nome = esp.nome\n' +
     '  LEFT JOIN net._http_response resp ON resp.id = mp.request_id\n' +
-    ')\n' +
+    '),\n' +
+    cteControleAtivo({
+      cabeca:
+        '  -- Mesma mecânica da sonda (é a MESMA função que emite este CTE), com a testemunha do\n' +
+        '  -- OUTRO eco: aqui o que identifica o bundle é `canary:true` + o MARCADOR esperado.\n' +
+        '  -- ⚠️ E aqui a testemunha NÃO exige 2xx: a generate-tactical-plan responde HTTP 500 quando\n' +
+        '  --    a canária dela REPROVA, e isso é regressão de NEGÓCIO — o request já tinha passado\n' +
+        '  --    pelo gate para chegar a executar a fixture. Exigir 2xx descartaria justamente a\n' +
+        '  --    resposta que mais prova a credencial.\n',
+      alias: 'ca',
+      testemunha:
+        `ca.corpo ->> 'canary' = 'true'\n` +
+        `                            AND ca.created > now() - interval '${janelaMin} minutes'\n` +
+        `                            AND ca.corpo ->> ca.campo_marcador = ca.marcador_esperado`,
+    }) +
     'SELECT ca.nome,\n' +
     '       ca.request_id,\n' +
     '       ca.status_code,\n' +
@@ -1617,6 +1809,12 @@ function blocoLeituraCanaria(
     `           THEN 'INDETERMINADO — esta canaria nao tem request_id no mapa embutido pelo passo ` +
     `${passoDisparo}. Isto e ausencia de dado, nao veredito: ou a trava ficou FECHADA e nada foi ` +
     `disparado, ou a celula veio de OUTRA leva'\n` +
+    // Gêmeo do ramo da sonda: `error_msg` preenchido com status NULL é requisição MORTA, e o
+    // AGUARDE mandaria repetir para sempre uma coisa que não vai chegar.
+    '         WHEN ca.erro_transporte IS NOT NULL\n' +
+    `           THEN 'FALHA DE TRANSPORTE — a requisicao nao chegou a ter resposta HTTP: ' ||\n` +
+    `                ca.erro_transporte || '. Isto NAO e veredito de canaria e NAO adianta repetir ` +
+    `sem antes resolver a causa (DNS, timeout, rede do pg_net)'\n` +
     '         WHEN ca.status_code IS NULL\n' +
     `           THEN 'AGUARDE — o request_id embutido pelo passo ${passoDisparo} ainda nao tem ` +
     `resposta HTTP (leva ~10s); rode este passo de novo'\n` +
@@ -1628,16 +1826,19 @@ function blocoLeituraCanaria(
     // O eco vem ANTES do status de propósito: a generate-tactical-plan devolve 500 quando a
     // canária dela REPROVA, e julgar pelo status primeiro leria regressão como bundle velho.
     `         WHEN ca.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca.status_code = 401\n` +
-    `              AND cred.ok_recentes >= ${PISO_CONTROLE_CREDENCIAL} AND cred.recusas_recentes = 0\n` +
-    `           THEN 'SEM CANARIA NO AR — 401, e o CRON_SECRET esta PROVADO bom agora (' ||\n` +
-    `                cred.ok_recentes || ' resposta(s) 2xx e ZERO 401 fora desta leva em 6h), logo a ` +
+    `              AND ativo.aceitas_na_leva >= 1\n` +
+    `           THEN 'SEM CANARIA NO AR — 401, e a credencial DESTE disparo esta PROVADA ` +
+    `ATIVAMENTE: ' || ativo.aceitas_na_leva || ' de ' || ativo.disparos_na_leva || ' request(s) ` +
+    `desta leva voltou com o MARCADOR esperado, logo o x-cron-secret foi ACEITO neste instante e a ` +
     `recusa e da EDGE: o bundle no ar e anterior a canaria, ela NAO rodou e NADA executou. Isto ` +
     `NAO e canaria vermelha — o desfecho e DEPLOY'\n` +
     `         WHEN ca.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca.status_code = 401\n` +
     `           THEN 'INDETERMINADO — 401 nao separa bundle sem canaria de CRON_SECRET invalido, e ` +
-    `o controle de credencial NAO foi observado (2xx fora da leva em 6h: ' || cred.ok_recentes ||\n` +
-    `                ', recusas 401: ' || cred.recusas_recentes || '). Confira o CRON_SECRET no vault ` +
-    `ANTES de redeployar'\n` +
+    `NENHUMA aceitacao foi OBSERVADA nesta leva (0 testemunha de ' || ativo.disparos_na_leva ||\n` +
+    `                ' disparo(s); 401: ' || ativo.recusadas_na_leva || ', sem resposta ainda: ' ||\n` +
+    `                ativo.pendentes_na_leva || ', falha de transporte: ' || ativo.falhas_na_leva ||\n` +
+    `                '). Isto e ausencia de prova, nao prova de secret ruim. Confira o CRON_SECRET ` +
+    `no vault ANTES de redeployar.' || ` + contextoHistorico('cred') + `\n` +
     `         WHEN ca.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca.status_code >= 400\n` +
     `           THEN 'SEM CANARIA NO AR — o bundle recusou o request (HTTP ' || ca.status_code ||\n` +
     `                '), NADA executou. Isto NAO e canaria vermelha: nao ha canaria no ar para ` +
@@ -1672,7 +1873,7 @@ function blocoLeituraCanaria(
     `              COALESCE(ca.corpo ->> ca.campo_marcador, '?') || ', ok=' ||\n` +
     `              COALESCE(ca.corpo ->> 'ok', '?')\n` +
     '       END AS veredito\n' +
-    'FROM lidas ca CROSS JOIN controle_credencial cred\n' +
+    'FROM lidas ca CROSS JOIN controle_credencial cred CROSS JOIN controle_ativo ativo\n' +
     'ORDER BY ca.nome;\n'
   );
 }

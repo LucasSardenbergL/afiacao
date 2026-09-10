@@ -31,7 +31,7 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 <!--gates:frescura inicio-->
 
-**Gates do CI — reprovam o PR** (30): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gate:ambiente` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc``authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
+**Gates do CI — reprovam o PR** (31): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gate:ambiente` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:autentica` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc``authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:autentica` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
 
 **Rodam no CI mas NÃO reprovam** (2, informativos por desenho): `mutcheck` · `mutcheck:selftest`.
 
@@ -449,13 +449,22 @@ recusando o header. Nos dois casos `versao` vem NULL e o status é 401. O ramo a
 AND status_code >= 400 → 'BUNDLE VELHO … NADA executou'`) lia os dois como (a): **falso negativo
 confiante**, cujo desfecho é redeployar edge que já está no ar — `ausente ≠ zero` na dimensão
 CREDENCIAL, irmão exato do guard temporal do #2079 (`verify-edge-eco.sh`), onde tick pré-merge lido
-como pendência produzia o mesmo erro. Agora o bloco carrega o CTE `controle_credencial`: conta, em
-`net._http_response` e **excluindo a própria leva** (`NOT EXISTS`, porque `NOT IN` seria NULL-blind
-com a trava fechada), as respostas recentes de 6h — **≥10 2xx e ZERO 401** provam que o secret do
-vault está sendo aceito AGORA, e só então o 401 vira `'BUNDLE VELHO (pre-sonda)'`. Sem essa prova o
-veredito é **`INDETERMINADO`**, nunca "bundle velho": fail-CLOSED, como o
-`CONTROLE_CRUZADO_NAO_OBSERVADO` do `verify-edge-escrita.sh`. O piso não é `> 0` por **denominador**:
-com 1–2 respostas, "nenhum 401" não distingue secret bom de ninguém-bateu-na-porta. Nasceu de o
+como pendência produzia o mesmo erro. Agora o bloco carrega DOIS controles, e **quem decide é o ATIVO**
+(`controle_ativo`, desde 2026-09-09): ele conta, entre os `request_id` **desta leva**, as respostas
+com **identidade verificada** — eco de sonda com `versao` E `fonte` iguais às esperadas (na canária,
+`canary:true` + o marcador). Uma dessas basta: o `fonte` é o sha256 do arquivo servido, logo o bundle
+no ar é VERBATIM o do repo; no repo o gate autentica antes de responder (imposto por
+`bun run sonda:autentica`); e o `request_id` amarra a resposta a ESTE disparo. Só então o 401 vira
+`'BUNDLE VELHO (pre-sonda)'`. Sem testemunha o veredito é **`INDETERMINADO`**, nunca "bundle velho":
+fail-CLOSED, como o `CONTROLE_CRUZADO_NAO_OBSERVADO` do `verify-edge-escrita.sh`.
+⚠️ **2xx CRU não é testemunha** — `monthly-report@ef08dddd2` é um bundle histórico que responde 200 a
+qualquer POST ignorando a credencial; contá-lo seria fail-OPEN (parecer Codex, 2026-09-09).
+O `controle_credencial` (histórico: **≥10 2xx e ZERO 401** de FORA da leva em 6h, excluindo-a por
+`NOT EXISTS`, porque `NOT IN` seria NULL-blind com a trava fechada) continua **exibido como
+contexto** e não condiciona ramo nenhum: ele é populacional e não sabe QUAL credencial autenticou o
+que contou — com header errado, a leva inteira toma 401, fica fora da contagem dele, e ele avaliza um
+transporte quebrado. O piso segue valendo como **denominador** do contexto: com 1–2 respostas,
+"nenhum 401" não distingue secret bom de ninguém-bateu-na-porta. Nasceu de o
 desempate ter sido feito **à mão, fora da ferramenta**, ao verificar `generate-bundle-argument`
 (#2101) — ferramenta que depende de o operador lembrar é a armadilha da sentinela não-exclusiva.
 Provado **EXECUTANDO** em `.claude/skills/lovable-deploy-verify/evals/sonda-veredito-401-eval.sh`

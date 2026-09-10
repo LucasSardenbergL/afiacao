@@ -153,8 +153,13 @@ P() { "$PGBIN/psql" -p "$PORT" -h "$SOCK" -U postgres -d canaria_verify "$@"; }
 
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 CREATE SCHEMA net;
+-- `error_msg`/`timed_out` existem na tabela REAL do pg_net (0.19.5) e faltavam neste fake. Não é
+-- detalhe: quando o transporte morre, o pg_net grava `error_msg` e deixa o `status_code` NULL —
+-- indistinguível de "resposta a caminho" para quem só olha o status. Um fake sem a coluna torna
+-- esse ramo INEXPRIMÍVEL no teste, que é como ele passou tanto tempo sem existir.
 CREATE TABLE net._http_response (
-  id bigint PRIMARY KEY, status_code int, content text, created timestamptz NOT NULL
+  id bigint PRIMARY KEY, status_code int, content text, created timestamptz NOT NULL,
+  timed_out boolean, error_msg text
 );
 
 -- ── a armadilha da sonda de inércia ────────────────────────────────────────────────────────────
@@ -331,15 +336,63 @@ SQL
   espera "200 SEM eco canary = rodou o FLUXO REAL (não é vermelha)" \
     'copilot-analyze' "$LB" 'SEM CANARIA NO AR'
 
+  # ── O CONTROLE ATIVO: quem DETERMINA o 401 e' a testemunha DESTA leva ─────────────────────────
+  # Ate 2026-09-09 quem determinava era o controle HISTORICO (2xx de fora da leva em 6h). Ele nao
+  # sabe QUAL credencial autenticou o que contou, e por isso avalizava um transporte quebrado.
+  # Agora a prova tem de ser ATIVA: uma resposta DESTA leva com IDENTIDADE verificada.
+  P -q -c "TRUNCATE net._http_response;" >/dev/null
+  P -q >/dev/null <<SQL
+INSERT INTO net._http_response (id, status_code, content, created) VALUES
+  (1001, 401, '{"code":401,"message":"Unauthorized"}', now()),
+  -- TESTEMUNHA ATIVA: outra canaria DESTA leva voltou com o MARCADOR esperado. So um bundle que
+  -- autenticou chega a executar a fixture, entao o x-cron-secret deste disparo foi ACEITO agora.
+  (1002, 200, '{"success":true,"data":{"canary":true,"contrato":"$M_ANALYTICS","ok":true}}', now());
+SQL
+  espera "401 com TESTEMUNHA ATIVA na leva = SEM CANARIA NO AR" \
+    'copilot-analyze' "$LB" 'SEM CANARIA NO AR'
+
+  # ⚠️ O CASO QUE ESTA CORRECAO EXISTE PARA PEGAR — manifestacao (b) da limitacao do #2424: o
+  # disparo mandou o header ERRADO, a leva INTEIRA tomou 401, e o controle historico segue VERDE
+  # justamente porque os ids desta leva ficam FORA da contagem dele (pelo NOT EXISTS). Antes do
+  # controle ativo isto saia 'SEM CANARIA NO AR' CONFIANTE, e o desfecho era redeploy a toa de uma
+  # edge que ja estava no ar. Esta manifestacao NAO se corrige sozinha na proxima execucao.
   P -q -c "TRUNCATE net._http_response;" >/dev/null
   P -q >/dev/null <<'SQL'
 INSERT INTO net._http_response (id, status_code, content, created) VALUES
-  (1001, 401, '{"code":401,"message":"Unauthorized"}', now());
+  (1001, 401, '{"code":401}', now()),
+  (1002, 401, '{"code":401}', now()),
+  (1003, 401, '{"code":401}', now());
+-- Historico VERDE de proposito: 40 respostas 2xx alheias e ZERO recusa fora da leva. Se o
+-- historico ainda decidisse, esta linha sairia determinada — e errada.
 INSERT INTO net._http_response (id, status_code, content, created)
   SELECT 9000 + g, 200, '{"ok":true}', now() - (g || ' minutes')::interval FROM generate_series(1, 40) g;
 SQL
-  espera "401 com CRON_SECRET provado bom = SEM CANARIA NO AR" \
-    'copilot-analyze' "$LB" 'SEM CANARIA NO AR'
+  espera "leva INTEIRA 401 com historico VERDE = INDETERMINADO (historico nao determina)" \
+    'copilot-analyze' "$LB" 'INDETERMINADO'
+
+  # A testemunha e' IDENTIDADE, nao status: um 2xx que NAO ecoa o marcador esperado pode vir de um
+  # bundle historico que ignora a credencial e roda o fluxo real (o `monthly-report@ef08dddd2` do
+  # parecer Codex). Contar esse 200 como prova seria fail-OPEN.
+  P -q -c "TRUNCATE net._http_response;" >/dev/null
+  P -q >/dev/null <<'SQL'
+INSERT INTO net._http_response (id, status_code, content, created) VALUES
+  (1001, 401, '{"code":401}', now()),
+  -- 200 ANONIMO: sem eco de canary, sem marcador. Nao prova credencial nenhuma.
+  (1002, 200, '{"resultado":"ok","linhas":42}', now());
+SQL
+  espera "2xx ANONIMO na leva NAO e testemunha (bundle que ignora a credencial)" \
+    'copilot-analyze' "$LB" 'INDETERMINADO'
+
+  # Marcador de OUTRA fatia tambem nao testemunha: o bundle velho carrega o `expected` velho, e o
+  # que ele prova e' que ele e' velho — nao que a credencial de agora foi aceita.
+  P -q -c "TRUNCATE net._http_response;" >/dev/null
+  P -q >/dev/null <<'SQL'
+INSERT INTO net._http_response (id, status_code, content, created) VALUES
+  (1001, 401, '{"code":401}', now()),
+  (1002, 200, '{"success":true,"data":{"canary":true,"contrato":"fatia-anterior-v0","ok":true}}', now());
+SQL
+  espera "2xx com marcador de OUTRA fatia NAO e testemunha" \
+    'copilot-analyze' "$LB" 'INDETERMINADO'
 
   P -q -c "TRUNCATE net._http_response;" >/dev/null
   P -q >/dev/null <<'SQL'
@@ -349,23 +402,16 @@ SQL
   espera "401 SEM controle de credencial é INDETERMINADO, nunca veredito" \
     'copilot-analyze' "$LB" 'INDETERMINADO'
 
-  # O ramo determinado exige DUAS coisas: 2xx acima do piso E zero recusa 401 fora da leva.
-  # Os casos acima so exercitam a PRIMEIRA (no de cima o 401 esta DENTRO da leva, excluido
-  # pelo NOT EXISTS; no de baixo o ok_recentes fica em 0 e ja reprova por outro conjunto),
-  # entao `cred.recusas_recentes = 0` podia virar `true` sem nenhum teste reclamar — e virar
-  # `true` e fail-OPEN: manda deployar num CRON_SECRET quebrado AGORA. Este caso satisfaz o
-  # piso e ainda assim tem recusa alheia, isolando o segundo conjunto.
+  # `error_msg` preenchido com status NULL e' requisicao MORTA — no pg_net 0.19.5 e' assim que a
+  # falha de transporte aparece. Lido como "resposta a caminho", o AGUARDE mandaria repetir para
+  # sempre: laco de espera fail-OPEN, que este ramo fecha nomeando a causa.
   P -q -c "TRUNCATE net._http_response;" >/dev/null
   P -q >/dev/null <<'SQL'
-INSERT INTO net._http_response (id, status_code, content, created) VALUES
-  (1001, 401, '{"code":401}', now()),
-  -- id FORA do mapa embutido {1001,1002,1003}: recusa de OUTRA chamada, nao desta leva
-  (1500, 401, '{"code":401}', now());
-INSERT INTO net._http_response (id, status_code, content, created)
-  SELECT 9000 + g, 200, '{"ok":true}', now() - (g || ' minutes')::interval FROM generate_series(1, 40) g;
+INSERT INTO net._http_response (id, status_code, content, created, error_msg) VALUES
+  (1001, NULL, NULL, now(), 'Timeout was reached');
 SQL
-  espera "401 com 2xx acima do piso mas recusa 401 ALHEIA = INDETERMINADO (fail-closed)" \
-    'copilot-analyze' "$LB" 'INDETERMINADO'
+  espera "erro de transporte NAO e AGUARDE — repetir nao resolve" \
+    'copilot-analyze' "$LB" 'FALHA DE TRANSPORTE'
 
   P -q -c "TRUNCATE net._http_response;" >/dev/null
   P -q >/dev/null <<'SQL'
@@ -615,6 +661,18 @@ sabota_gerador "GERADOR sem o ramo de ok:false (o #2405 aprovava isto)" \
 # E a ORDEM dos ramos, que é o que só um teste EXECUTADO prova: julgar o status antes do eco.
 sabota_gerador "GERADOR julga o status antes do eco (500 vermelha vira bundle velho)" \
   "s/WHEN ca\\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\\.status_code >= 400/WHEN ca.status_code >= 400/"
+# ── o CONTROLE ATIVO (2026-09-09) ──────────────────────────────────────────────────────────────
+# Os casos novos desta suíte (testemunha ativa, leva inteira 401, 2xx anônimo) precisam de vermelho
+# ALCANÇÁVEL aqui também: o `.mut` prova o dente da suíte VITEST, que é outra invocação e outro
+# corpus. Sem estas duas, os casos novos poderiam ser sempre-verdes nesta suíte e ninguém veria.
+# A 1ª é o fail-OPEN que a correção fecha: sem exigir testemunha, o 401 volta a sair determinado
+# pelo histórico — e é exatamente o cenário "leva INTEIRA 401 com historico VERDE".
+sabota_gerador "GERADOR determina o 401 SEM testemunha ativa (fail-open)" \
+  "s/AND ativo\\.aceitas_na_leva >= 1/AND true/"
+# A 2ª é a armadilha do parecer Codex: testemunha por STATUS em vez de IDENTIDADE. Sem o marcador,
+# um 2xx anônimo (bundle histórico que ignora a credencial) passa a "provar" o secret.
+sabota_gerador "GERADOR aceita 2xx ANONIMO como testemunha (sem o marcador)" \
+  "s/AND ca\\.corpo ->> ca\\.campo_marcador = ca\\.marcador_esperado\`,/AND true\`,/"
 
 if [ "$falhou" -eq 0 ]; then printf '\nFALSIFICACAO OK — todo verde tem vermelho alcancavel\n'; exit 0; fi
 printf '\nVERMELHO\n'; exit 1

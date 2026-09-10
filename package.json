@@ -29,6 +29,7 @@
     "sonda:fanout": "bun scripts/sonda-fan-out.ts",
     "sonda:cron-prova": "bun scripts/sonda-cron-prova.ts",
     "sonda:nova": "bun scripts/sonda-edge-nova-gate.ts",
+    "sonda:autentica": "bun scripts/gate-sonda-autentica.ts",
     "canaria:bump": "bun scripts/canaria-contrato-bump-gate.ts",
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
     "authz:check": "bun scripts/authz-gate-check.ts",

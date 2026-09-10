@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-09T17:12:27.094Z",
-  "sourceHead": "18f8a92bfd0658d7ac97d467e09726c577c3d2e1",
+  "medidoEm": "2026-09-10T02:01:34.447Z",
+  "sourceHead": "1ebe696fcf7197cbc2e7eeb107d4baf0936f2bdb",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -108,62 +108,62 @@
     {
       "gate": "authz:carimbo",
       "verde": true,
-      "ms": 57
+      "ms": 34
     },
     {
       "gate": "authz:check",
       "verde": true,
-      "ms": 3530
+      "ms": 940
     },
     {
       "gate": "build",
       "verde": true,
-      "ms": 202943
+      "ms": 15000
     },
     {
       "gate": "bunpin:check",
       "verde": true,
-      "ms": 68
+      "ms": 29
     },
     {
       "gate": "canaria:bump",
       "verde": true,
-      "ms": 3157
+      "ms": 1728
     },
     {
       "gate": "claude:size",
       "verde": true,
-      "ms": 109
+      "ms": 32
     },
     {
       "gate": "docs:citacoes",
       "verde": true,
-      "ms": 2624
+      "ms": 1222
     },
     {
       "gate": "docs:indice",
       "verde": true,
-      "ms": 54
+      "ms": 24
     },
     {
       "gate": "docs:links",
       "verde": true,
-      "ms": 538
+      "ms": 263
     },
     {
       "gate": "edges:typecheck",
       "verde": true,
-      "ms": 2283
+      "ms": 1194
     },
     {
       "gate": "evals:deploy-verify",
       "verde": true,
-      "ms": 20021
+      "ms": 10545
     },
     {
       "gate": "evals:deploy-verify:falsificacao",
       "verde": true,
-      "ms": 139557
+      "ms": 41494
     },
     {
       "gate": "exclusividade",
@@ -173,42 +173,47 @@
     {
       "gate": "gate:ambiente",
       "verde": true,
-      "ms": 936
+      "ms": 338
     },
     {
       "gate": "gate:senha-bootstrap",
       "verde": true,
-      "ms": 23778
+      "ms": 4174
     },
     {
       "gate": "gates:frescura",
       "verde": true,
-      "ms": 667
+      "ms": 140
     },
     {
       "gate": "knip",
       "verde": true,
-      "ms": 10243
+      "ms": 1759
     },
     {
       "gate": "lint",
       "verde": true,
-      "ms": 132900
+      "ms": 11366
     },
     {
       "gate": "lint:shell",
       "verde": true,
-      "ms": 65979
+      "ms": 11562
     },
     {
       "gate": "scripts:typecheck",
       "verde": true,
-      "ms": 21460
+      "ms": 1419
+    },
+    {
+      "gate": "sonda:autentica",
+      "verde": true,
+      "ms": 76
     },
     {
       "gate": "sonda:bump",
       "verde": true,
-      "ms": 360
+      "ms": 73
     },
     {
       "gate": "sonda:cron-prova",
@@ -218,42 +223,42 @@
     {
       "gate": "sonda:fingerprint",
       "verde": true,
-      "ms": 112
+      "ms": 75
     },
     {
       "gate": "sonda:nova",
       "verde": true,
-      "ms": 97
+      "ms": 72
     },
     {
       "gate": "test",
       "verde": true,
-      "ms": 137238
+      "ms": 74504
     },
     {
       "gate": "test:edges",
       "verde": true,
-      "ms": 4920
+      "ms": 3295
     },
     {
       "gate": "test:falsificacao",
-      "verde": false,
-      "ms": 900038
+      "verde": true,
+      "ms": 461645
     },
     {
       "gate": "test:hooks",
       "verde": true,
-      "ms": 149965
+      "ms": 119622
     },
     {
       "gate": "test:sonda-rollback",
       "verde": true,
-      "ms": 2065
+      "ms": 2021
     },
     {
       "gate": "tsc",
       "verde": true,
-      "ms": 135
+      "ms": 116
     }
   ],
   "linhas": [
@@ -927,6 +932,66 @@
           "reprovou": true,
           "ms": 100268,
           "fingerprint": "43d5a398823f074b",
+          "fonteResolvida": true
+        }
+      ],
+      "parouCedo": true,
+      "invalido": null
+    },
+    {
+      "defeito": "sonda-responde-antes-do-gate",
+      "defeitoFingerprint": "439f075b5236b161",
+      "alvo": "supabase/functions/fin-funding/index.ts",
+      "suspeito": "sonda:autentica",
+      "origem": "docs/historico/controle-populacional-nao-prova-a-tentativa.md (a cadeia de 3 elos do controle ativo)",
+      "execucoes": [
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 26,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 23,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 29,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "authz:carimbo",
+          "reprovou": false,
+          "ms": 29,
+          "fingerprint": "11d2e328c4d885e9",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "sonda:nova",
+          "reprovou": false,
+          "ms": 94,
+          "fingerprint": "d11545e0b59f27b0",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "sonda:bump",
+          "reprovou": true,
+          "ms": 82,
+          "fingerprint": "381186d612b49532",
+          "fonteResolvida": true
+        },
+        {
+          "gate": "sonda:fingerprint",
+          "reprovou": true,
+          "ms": 79,
+          "fingerprint": "12cb3754bacedc00",
           "fonteResolvida": true
         }
       ],

@@ -406,6 +406,17 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bun run sonda:nova
 
+      # O QUARTO buraco, e o que sustenta o veredito do 401: o `controle_ativo` do
+      # `sonda-versao-sql.ts` trata uma resposta de sonda como TESTEMUNHA de que o `x-cron-secret`
+      # foi aceito. Isso só vale porque a resposta sai DEPOIS do gate de credencial — medido 60/60
+      # em 2026-09-09, e medição datada não impede a edge instrumentada AMANHÃ de responder antes
+      # de autenticar. Essa regressão não apareceria em lugar nenhum: o SQL seguiria verde,
+      # contando como prova uma resposta que não prova nada, e o desfecho é redeploy à toa de edge
+      # money-path. Gate de ESTADO (roda em TODO evento, ≠ dos `pull_request`-only acima): a
+      # invariante vale para a árvore inteira, não para a fatia.
+      - name: Sonda de versão — a resposta só sai DEPOIS do gate de credencial
+        run: bun run sonda:autentica
+
       # O outro MARCADOR. As canárias versionam por `contrato`, com a mesma classe de falha:
       # congelado, a canária responde a mesma string tendo o deploy acontecido ou não, e um deploy
       # integralmente velho compara `expected` velho com código velho e mente `ok:true`. A auditoria
