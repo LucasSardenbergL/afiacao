@@ -83,8 +83,9 @@ PEGA      | ausencia de linha vira veredito NEGATIVO (embutido)   | s/'INDETERMI
 # Cast desprotegido: um corpo nao-JSON alheio na janela aborta a consulta INTEIRA — e a leitura
 # morre no lugar de julgar, que e falha por MECANICA lida como ausencia de resposta.
 PEGA      | cast para jsonb sem o filtro textual antes            | s/AND left\(ltrim\(r\.content\), 1\) = '\{'//
-# O recorte e a divisao de trabalho: o disparo precisa do founder (vault+INSERT), a leitura roda no
-# psql-ro. Recorte que vaza um lado no outro devolve a leitura para a mao do founder.
+# O recorte e a divisao de trabalho: o disparo exige ESCRITA (vault+INSERT) e sai pelo envelope
+# (`bun run db:aplicar`, ou a colagem no SQL Editor); a leitura e SELECT puro e roda no psql-ro.
+# Recorte que vaza um lado no outro arrasta a leitura para o caminho de escrita.
 PEGA      | --so-disparo passa a emitir a leitura junto           | s/const querLeitura = !opts\.soDisparo;/const querLeitura = true;/
 PEGA      | --so-leitura passa a emitir o disparo junto           | s/const querDisparo = !opts\.soLeitura;/const querDisparo = true;/
 # O `timeout_milliseconds`. A linha `PEGA` la em cima ja provava que ele nao pode ficar IMPLICITO
