@@ -164,13 +164,32 @@ const mov = (
   omie_codigo_lancamento: 1000 + i,
 });
 
-const titulo = (i: number, dia: string, valor: number): Row => ({
+/**
+ * Título de CR. `saldo` é COMPUTADO aqui pela MESMA regra da coluna GERADA do banco
+ * (`valor_documento - COALESCE(valor_recebido, 0)`, confirmada em prod via psql-ro
+ * 2026-09-09) em vez de ser um campo livre: fixture que escolhe `saldo` à mão pode
+ * afirmar um estado que o Postgres nunca produz, e aí o teste prova a fixture, não a tela.
+ */
+const titulo = (i: number, dia: string, valor: number, recebido = 0): Row => ({
   id: `cr-${String(i).padStart(6, '0')}`,
   company: 'oben',
   data_vencimento: dia,
   data_recebimento: null,
   valor_documento: valor,
-  valor_recebido: 0,
+  valor_recebido: recebido,
+  saldo: valor - recebido,
+  status_titulo: 'A VENCER',
+});
+
+/** Título de CP — mesma regra do `saldo` gerado, com `valor_pago` no lugar de `valor_recebido`. */
+const tituloPagar = (i: number, dia: string, valor: number, pago = 0): Row => ({
+  id: `cp-${String(i).padStart(6, '0')}`,
+  company: 'oben',
+  data_vencimento: dia,
+  data_pagamento: null,
+  valor_documento: valor,
+  valor_pago: pago,
+  saldo: valor - pago,
   status_titulo: 'A VENCER',
 });
 
@@ -178,6 +197,8 @@ const somaRealizadoEntradas = (fluxo: { entradas_realizadas: number }[]) =>
   fluxo.reduce((s, d) => s + d.entradas_realizadas, 0);
 const somaPrevistoEntradas = (fluxo: { entradas_previstas: number }[]) =>
   fluxo.reduce((s, d) => s + d.entradas_previstas, 0);
+const somaPrevistoSaidas = (fluxo: { saidas_previstas: number }[]) =>
+  fluxo.reduce((s, d) => s + d.saidas_previstas, 0);
 
 describe('getFluxoCaixa — caixa REALIZADO (fin_movimentacoes)', () => {
   beforeEach(() => {
@@ -344,9 +365,7 @@ describe('getFluxoCaixa — caixa PREVISTO (fin_contas_receber / fin_contas_paga
   });
 
   it('erro no CP LANÇA', async () => {
-    state.db.fin_contas_pagar = [
-      { ...titulo(0, '2026-03-01', 10), data_pagamento: null, valor_pago: 0 },
-    ];
+    state.db.fin_contas_pagar = [tituloPagar(0, '2026-03-01', 10)];
     state.falharNaRequisicao.fin_contas_pagar = 1;
 
     await expect(getFluxoCaixa('oben', INICIO, FIM)).rejects.toBeInstanceOf(Error);
@@ -369,5 +388,40 @@ describe('getFluxoCaixa — caixa PREVISTO (fin_contas_receber / fin_contas_paga
     const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
 
     expect(somaPrevistoEntradas(fluxo)).toBe(25000);
+  });
+
+  // ── Baixa PARCIAL: a 4ª forma de a projeção mentir, e a única que mente pra CIMA ──
+  // As três acima subnotificavam (página perdida, ordem instável, capa de 1.000). Esta
+  // INFLA: um título parcialmente baixado segue com status ABERTO, mas a parte já
+  // recebida entrou na conta e já está no `saldo_atual` de `fin_contas_correntes` — a
+  // ÂNCORA da projeção. Somar `valor_documento` cheio conta esse dinheiro duas vezes.
+  // Mesmo eixo (dupla contagem no tempo) da correção do saldo projetado do FluxoCaixaTab,
+  // um degrau abaixo: lá era a semana, aqui é o título.
+
+  it('CR com baixa PARCIAL entra pelo SALDO, não pelo valor cheio', async () => {
+    // doc 1.000, recebido 400 ⇒ saldo 600. Os 400 já estão no saldo da conta corrente:
+    // prever 1.000 os conta de novo.
+    state.db.fin_contas_receber = [titulo(0, '2026-03-10', 1000, 400)];
+
+    expect(somaPrevistoEntradas(await getFluxoCaixa('oben', INICIO, FIM))).toBe(600);
+  });
+
+  it('CP com baixa PARCIAL entra pelo SALDO, não pelo valor cheio', async () => {
+    state.db.fin_contas_pagar = [tituloPagar(0, '2026-03-10', 1000, 400)];
+
+    expect(somaPrevistoSaidas(await getFluxoCaixa('oben', INICIO, FIM))).toBe(600);
+  });
+
+  it('título SEM baixa segue pelo valor cheio — a troca não muda o caso de hoje (#396)', async () => {
+    // Contrapeso do par acima: hoje `valor_recebido` é 0 em 100% do universo (o LIST do
+    // Omie não traz a baixa), então saldo == valor_documento e o previsto NÃO muda. Sem
+    // este caso, um bug que zerasse o previsto passaria pelos dois testes de parcial.
+    state.db.fin_contas_receber = [titulo(0, '2026-03-10', 1000)];
+    state.db.fin_contas_pagar = [tituloPagar(0, '2026-03-11', 700)];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(somaPrevistoEntradas(fluxo)).toBe(1000);
+    expect(somaPrevistoSaidas(fluxo)).toBe(700);
   });
 });
