@@ -1,12 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { slugsDaAllowlist } from '../supabase/functions/_shared/sonda-cron-alvos';
+import { fecharGrafo } from './sonda-fingerprint';
 import {
   auditarBump,
   coletarEstado,
   contaComoCorpo,
   extrairVersao,
+  FATIAS_EM_SHARED,
   main,
   montarEstado,
   normalizarFonte,
+  projetarAlvosDoRele,
   type EstadoEdge,
 } from './sonda-versao-bump-gate';
 
@@ -249,5 +255,160 @@ describe('main — fail-CLOSED de verdade: lista vazia por ERRO não é lista va
 
   it('controle: o MESMO par com --head válido mede e passa', () => {
     expect(main(['--base', 'HEAD', '--head', 'HEAD'])).toBe(0);
+  });
+});
+
+// ─── A fatia de UMA edge que mora em `_shared/`: a allowlist do cron é o comportamento do relé ───
+
+const ALLOWLIST = 'supabase/functions/_shared/sonda-cron-alvos.ts';
+const MARCADOR_RELE = 'supabase/functions/sonda-relay/versao.ts';
+
+/** Fonte mínima com a FORMA da allowlist real: tipo, controle nomeado, entradas, função de slugs. */
+function allowlist(slugs: string[], opcoes: { extra?: string; corpoControle?: string } = {}): string {
+  return [
+    'type AlvoSondaCron = { edge: string; desde: string | null; controles: readonly unknown[] };',
+    `const CRON = { metodo: "POST", headers: {}, corpo: ${JSON.stringify(opcoes.corpoControle ?? '{}')}, nota: "x" };`,
+    opcoes.extra ?? '',
+    'export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [',
+    ...slugs.map((s) => `  { edge: "${s}", desde: null, controles: [CRON] },`),
+    '];',
+    'export function slugsDaAllowlist() { return new Set(SONDA_CRON_ALVOS.map((a) => a.edge)); }',
+  ].join('\n');
+}
+
+describe('projetarAlvosDoRele — o pedaço da allowlist que o relé LÊ em runtime', () => {
+  it('é o conjunto de slugs, sem ordem', () => {
+    expect(projetarAlvosDoRele(allowlist(['b', 'a']))).toBe(projetarAlvosDoRele(allowlist(['a', 'b'])));
+    expect(projetarAlvosDoRele(allowlist(['a', 'b']))).not.toBe(projetarAlvosDoRele(allowlist(['a'])));
+  });
+
+  it('SUB-limpeza: candidata COMENTADA não é alvo (a allowlist real carrega candidatas em comentário)', () => {
+    const comCandidatas = allowlist(['a'], {
+      extra: '// { edge: "candidata-de-linha", desde: null, controles: [] },\n/* { edge: "candidata-de-bloco" } */',
+    });
+    expect(projetarAlvosDoRele(comCandidatas)).toBe(projetarAlvosDoRele(allowlist(['a'])));
+  });
+
+  it('mudar só `controles` NÃO muda a projeção — é dado da PROVA, não do relé', () => {
+    expect(projetarAlvosDoRele(allowlist(['a'], { corpoControle: '{"action":"reprocess_all"}' })))
+      .toBe(projetarAlvosDoRele(allowlist(['a'])));
+  });
+
+  it('CALIBRAÇÃO contra o runtime: no arquivo REAL, a projeção é exatamente `slugsDaAllowlist()`', () => {
+    // O eixo POR FORA da regex: se alguém reestruturar a allowlist (constante no lugar do literal,
+    // entrada montada por função), a projeção fica cega e este teste é quem denuncia — sem ele, a
+    // fatia voltaria a passar sem bump com o gate verde.
+    const esperado = [...slugsDaAllowlist()].sort();
+    expect(esperado.length).toBeGreaterThan(1);
+    expect(projetarAlvosDoRele(readFileSync(ALLOWLIST, 'utf8')).split('\n')).toEqual(esperado);
+  });
+});
+
+describe('FATIAS_EM_SHARED — a declaração confere com o repo', () => {
+  it('declara a allowlist do cron como fatia do relé', () => {
+    expect(FATIAS_EM_SHARED.map((f) => [f.edge, f.arquivo])).toContainEqual(['sonda-relay', ALLOWLIST]);
+  });
+
+  it('PREMISSA: cada arquivo declarado está no FECHO da edge dona (a MESMA `fecharGrafo` do `fonte`)', () => {
+    // Pega a declaração órfã: arquivo renomeado, typo no caminho, ou a edge que parou de importá-lo.
+    // Órfã não reprova ninguém — o par simplesmente nunca mais casa e o gate volta a ser cego.
+    for (const f of FATIAS_EM_SHARED) {
+      expect(fecharGrafo(`supabase/functions/${f.edge}/index.ts`)).toContain(f.arquivo);
+    }
+  });
+
+  it('PREMISSA da projeção: no fecho do relé, a allowlist só é lida por `slugsDaAllowlist`', () => {
+    // A projeção compara SÓ o conjunto de slugs. Se o relé (ou um módulo do fecho dele) passar a
+    // ler `SONDA_CRON_ALVOS` — `controles`, `desde` —, mudança nesses campos vira comportamento do
+    // relé que a projeção não enxerga, e o gate fica verde por cegueira. Este teste é quem avisa
+    // que a projeção precisa crescer junto.
+    const importadores = fecharGrafo('supabase/functions/sonda-relay/index.ts')
+      .filter((a) => a !== ALLOWLIST)
+      .map((a) => ({ a, fonte: removerComentarios(readFileSync(a, 'utf8')) }))
+      .filter(({ fonte }) => /sonda-cron-alvos\.ts["']/.test(fonte));
+    expect(importadores.map((i) => i.a)).toEqual(['supabase/functions/sonda-relay/index.ts']);
+    const nomes = importadores[0].fonte
+      .match(/import\s*\{([^}]*)\}\s*from\s*["'][^"']*sonda-cron-alvos\.ts["']/)?.[1]
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s !== '');
+    expect(nomes).toEqual(['slugsDaAllowlist']);
+  });
+});
+
+describe('auditarBump — a fatia declarada entra no corpo da edge DONA', () => {
+  const rele = (base: string | null, head: string | null, versaoHead = 'v1.1-alvos-da-onda-1') =>
+    estado({
+      edge: 'sonda-relay',
+      versaoBase: 'v1.1-alvos-da-onda-1',
+      versaoHead,
+      corpo: [{ caminho: ALLOWLIST, base, head }],
+    });
+
+  it('onda que ACRESCENTA alvo sem bumpar o relé → REPROVA nomeando o relé e a allowlist', () => {
+    expect(auditarBump([rele(allowlist(['a']), allowlist(['a', 'b']))])).toEqual([
+      { edge: 'sonda-relay', versao: 'v1.1-alvos-da-onda-1', motivo: 'sem-bump', arquivos: [ALLOWLIST] },
+    ]);
+  });
+
+  it('a mesma onda COM bump do relé → passa', () => {
+    expect(auditarBump([rele(allowlist(['a']), allowlist(['a', 'b']), 'v1.2-alvos-da-onda-2')])).toEqual([]);
+  });
+
+  it('alvo REMOVIDO também é comportamento do relé → reprova', () => {
+    expect(auditarBump([rele(allowlist(['a', 'b']), allowlist(['a']))])).toHaveLength(1);
+  });
+
+  it('só `controles` mudou → passa: o `fonte` do relé muda (DIVERGE_P2 honesto), o comportamento não', () => {
+    expect(auditarBump([rele(allowlist(['a']), allowlist(['a'], { corpoControle: '{"x":1}' }))])).toEqual([]);
+  });
+
+  it('a fatia é de UMA edge: a allowlist no corpo de OUTRA edge não conta', () => {
+    expect(
+      auditarBump([
+        estado({ edge: 'recommend', corpo: [{ caminho: ALLOWLIST, base: allowlist(['a']), head: allowlist(['a', 'b']) }] }),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe('montarEstado — a allowlist tocada vira estado do RELÉ; o resto de `_shared/` continua fora', () => {
+  const ler = (rev: string | null, caminho: string): string | null => {
+    if (caminho === MARCADOR_RELE) return 'export const VERSAO = "v1.1-alvos-da-onda-1";';
+    if (caminho === ALLOWLIST) return rev === 'BASE' ? allowlist(['a']) : allowlist(['a', 'b']);
+    if (caminho === 'supabase/functions/_shared/auth.ts') return rev === 'BASE' ? 'const a = 1;' : 'const a = 2;';
+    return null;
+  };
+
+  it('allowlist + helper comum tocados → só o relé vira estado, e reprova pela allowlist', () => {
+    const estados = montarEstado([ALLOWLIST, 'supabase/functions/_shared/auth.ts'], 'BASE', 'HEAD', ler);
+    expect(estados.map((e) => e.edge)).toEqual(['sonda-relay']);
+    expect(auditarBump(estados)).toEqual([
+      { edge: 'sonda-relay', versao: 'v1.1-alvos-da-onda-1', motivo: 'sem-bump', arquivos: [ALLOWLIST] },
+    ]);
+  });
+
+  it('controle: helper comum de `_shared/` sozinho continua FORA do gate (a exclusão medida fica de pé)', () => {
+    expect(montarEstado(['supabase/functions/_shared/auth.ts'], 'BASE', 'HEAD', ler)).toEqual([]);
+  });
+});
+
+describe('a história REAL — as ondas 2 a 5 passaram com o marcador do relé congelado', () => {
+  // Commits squash da `main`, imutáveis. O job `testes` do CI tem `fetch-depth: 0`; história rasa
+  // faz o `coletarEstado` LANÇAR (vermelho) — nunca devolver lista vazia (verde por acidente). E o
+  // assert casa a LISTA INTEIRA: prova também que nenhuma outra edge dessas fatias passa a reprovar.
+  const congelado = { edge: 'sonda-relay', versao: 'v1.1-alvos-da-onda-1', motivo: 'sem-bump', arquivos: [ALLOWLIST] };
+
+  it.each([
+    ['89887025b', 'onda 2 (#2388)'],
+    ['d96b69f06', 'onda 3 (#2404)'],
+    ['a73641e9c', 'onda 4 (#2415)'],
+    ['f4578bbff', 'onda 5 (#2461)'],
+  ])('%s — %s: reprova o relé, e só ele', (sha) => {
+    expect(auditarBump(coletarEstado(`${sha}^`, sha))).toEqual([congelado]);
+  });
+
+  it('controle: a onda 1 (54679dc35, #2313) BUMPOU o relé → nenhum achado', () => {
+    expect(auditarBump(coletarEstado('54679dc35^', '54679dc35'))).toEqual([]);
   });
 });

@@ -19,3 +19,13 @@ PEGA      | nada mais conta como corpo servido         | s/const EXT_CORPO = \['
 PEGA      | fronteira de string, nao de segmento       | s/if \(!caminho\.startsWith\(prefixo\)\) return false;/if (!caminho.startsWith(prefixo.slice(0, -1))) return false;/
 PEGA      | comentario passa a pedir bump (ruido)      | s/return removerComentarios\(fonte\)/return (fonte)/
 SOBREVIVE | largura do sha no texto do OK (cosmetico)  | s/base\.slice\(0, 9\)/base.slice(0, 7)/
+#
+# FATIAS_EM_SHARED (2026-09-10): a allowlist do cron é o comportamento do `sonda-relay`, e as ondas
+# 2 a 5 passaram com o marcador congelado porque `_shared/` inteiro ficava fora. Cada mutação abaixo
+# desfaz UMA peça do conserto; a suíte tem de nomear a peça (testes sintéticos + as 4 fatias REAIS).
+PEGA      | fatia em _shared volta a ser ignorada      | s/if \(declaradas\.length > 0\) \{/if (declaradas.length > 999) {/
+PEGA      | nucleo esquece a fatia declarada           | s/contaComoCorpo\(a\.caminho, e\.edge\) \|\| fatiaEmShared\(a\.caminho, e\.edge\) !== undefined/contaComoCorpo(a.caminho, e.edge)/
+PEGA      | fatia vale para QUALQUER edge              | s/f\.arquivo === caminho && f\.edge === edge/f.arquivo === caminho/
+PEGA      | arquivo inteiro no lugar da projecao       | s/return fatia \? fatia\.projetar\(fonte\) : normalizarFonte\(fonte\);/return normalizarFonte(fonte);/
+PEGA      | projecao cega (verde por cegueira)         | s/return \[\.\.\.slugs\]\.sort\(\)\.join\('\\n'\);/return '';/
+PEGA      | projecao sem stripper (sub-limpeza)        | s/removerComentarios\(fonte\)\.matchAll/fonte.matchAll/

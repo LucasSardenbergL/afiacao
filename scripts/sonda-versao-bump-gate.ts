@@ -56,6 +56,42 @@
  * O que cobre essa metade hoje é humano + o gate `nenhuma edge que serve o paginate.ts fica SEM
  * prova de deploy`, no `_shared/sonda-versao-contrato_test.ts`.
  *
+ * ## A exceção MEDIDA: arquivo de `_shared/` que É a fatia de UMA edge (`FATIAS_EM_SHARED`)
+ *
+ * A medição acima (2026-08-25) é de helpers COMPARTILHADOS. A allowlist do cron
+ * (`_shared/sonda-cron-alvos.ts`) nasceu em 2026-09-06, fora dessa população, e nenhuma das duas
+ * premissas vale para ela: tem UM consumidor (o `sonda-relay`, não ~12), e o conjunto de alvos É o
+ * que o relé aceita em runtime (`slugsDaAllowlist()`). As ondas 2 a 5 (`89887025b`, `d96b69f06`,
+ * `a73641e9c`, `f4578bbff`) mudaram esse conjunto sem bumpar o relé, e o ledger de prod registra
+ * quatro `fonte` servidos sob o mesmo `v1.1-alvos-da-onda-1`. A onda 1 tinha bumpado por conta
+ * própria: disciplina sem gate durou uma onda.
+ *
+ * O custo não é só o marcador humano. `pendencias:deploy` lê o `VERSAO` para escolher a FILA —
+ * `fonte` novo com `VERSAO` igual é DIVERGE_P2 (leva agrupada, só escala após 7 dias) —, e relé sem
+ * deploy responde `fora-da-allowlist` às alvos da onda: é comportamento declarado, P1 pela
+ * definição do próprio `scripts/lib/pendencias-deploy.ts`.
+ *
+ * Por que LISTA explícita, e não "todo `_shared/` com um consumidor" — medido nas 682 fatias da
+ * `main` desde o 1º `versao.ts` (`02fdad342`..`70fc305f3`): fechar o grafo daria 135 cobranças em
+ * 22 fatias, com picos de 32, 23, 18 e 16 numa só (a exclusão acima fica de pé). A regra
+ * estrutural "um consumidor INSTRUMENTADO" daria 5, uma FALSA — no `f6ac6055a` a
+ * `leitura-critica.ts` ganhou `exigirLista` para a `recommend`, que ainda não tinha `versao.ts`, e
+ * nada do que a `fin-cashflow-engine` chamava mudou. Contando TODAS as edges como consumidoras, a
+ * estrutural dá 4 de 4 — o mesmo que o par explícito. Ela perde em duas coisas: compara o arquivo
+ * inteiro (a allowlist precisa de projeção, abaixo) e poria o fecho das ~100 edges dentro deste
+ * gate, com veredito que muda quando OUTRO PR passa a importar o arquivo. Os outros arquivos de
+ * dono único mudaram 3 vezes na janela, nenhuma sem bump; se um escapar, é ela o próximo passo.
+ *
+ * Por que PROJEÇÃO, e não o arquivo inteiro: a allowlist é dupla — slugs (runtime do relé) e
+ * `controles`/`desde`/`nota` (dados da PROVA, que só o `sonda:cron-prova` lê). Mudar só `controles`
+ * muda o `fonte` do relé (o arquivo está no fecho) sem mudar o que ele faz: DIVERGE_P2 honesto.
+ * Cobrar bump ali faria o marcador mentir no sentido oposto.
+ *
+ * Quem vigia a declaração, no `.test.ts`: a CALIBRAÇÃO (projeção do arquivo real ===
+ * `slugsDaAllowlist()`, que pega sobre- e sub-limpeza) e a PREMISSA (o arquivo está no fecho da
+ * edge dona — pega a declaração órfã, que não reprova ninguém: só nunca mais casa). Um arquivo
+ * entra na lista quando a MEDIÇÃO mostra que ele é a fatia de uma edge só, não pelo nome.
+ *
  * ## Por que um script e não um teste
  *
  * Precisa do DIFF. O vitest lê edge como TEXTO mas não tem base de comparação; o `test:edges` roda
@@ -161,8 +197,56 @@ export function normalizarFonte(fonte: string): string {
     .join('\n');
 }
 
-function normalizarOuNull(fonte: string | null): string | null {
-  return fonte === null ? null : normalizarFonte(fonte);
+/**
+ * Arquivo de `_shared/` cuja mudança É a fatia de UMA edge — a exceção medida no cabeçalho.
+ */
+export interface FatiaEmShared {
+  /** a edge cujo comportamento o arquivo carrega */
+  edge: string;
+  /** caminho relativo à raiz do repo */
+  arquivo: string;
+  /**
+   * O pedaço do arquivo que é comportamento DESTA edge, em forma comparável: duas fontes com a
+   * mesma projeção são o mesmo comportamento para ela, mude o que mudar no resto do arquivo.
+   */
+  projetar: (fonte: string) => string;
+  /** o que a projeção mede, em uma frase — entra na mensagem de reprovação */
+  oQueConta: string;
+}
+
+/**
+ * Os slugs de `SONDA_CRON_ALVOS`, ordenados — a ÚNICA coisa da allowlist que o relé lê em runtime.
+ *
+ * Lê sobre o fonte limpo pelo stripper COMPARTILHADO: a allowlist carrega candidatas em
+ * comentário, e uma entrada comentada lida como alvo seria sub-limpeza — o gate cobraria bump por
+ * uma mudança que o relé nunca vê. Quem garante que a regex enxerga o que o runtime enxerga é a
+ * calibração do `.test.ts`, contra o próprio `slugsDaAllowlist()`.
+ */
+export function projetarAlvosDoRele(fonte: string): string {
+  const slugs = new Set<string>();
+  for (const m of removerComentarios(fonte).matchAll(/\bedge:\s*(["'])([^"'\n]+)\1/g)) slugs.add(m[2]);
+  return [...slugs].sort().join('\n');
+}
+
+export const FATIAS_EM_SHARED: readonly FatiaEmShared[] = [
+  {
+    edge: 'sonda-relay',
+    arquivo: `${RAIZ_EDGES}/_shared/sonda-cron-alvos.ts`,
+    projetar: projetarAlvosDoRele,
+    oQueConta: 'o conjunto de alvos da allowlist, que é o que o relé aceita em runtime',
+  },
+];
+
+/** A declaração que faz `caminho` contar no corpo de `edge`, se houver. */
+export function fatiaEmShared(caminho: string, edge: string): FatiaEmShared | undefined {
+  return FATIAS_EM_SHARED.find((f) => f.arquivo === caminho && f.edge === edge);
+}
+
+/** A forma que o núcleo compara: a projeção, para fatia declarada; a fonte normalizada, no resto. */
+function comparavel(caminho: string, edge: string, fonte: string | null): string | null {
+  if (fonte === null) return null;
+  const fatia = fatiaEmShared(caminho, edge);
+  return fatia ? fatia.projetar(fonte) : normalizarFonte(fonte);
 }
 
 /**
@@ -172,13 +256,18 @@ function normalizarOuNull(fonte: string | null): string | null {
  * filtro é o que separa "mudou o bundle" de "mudou um teste", e deixá-lo só no chamador significa
  * que um chamador futuro (uma auditoria, um harness) monta o estado sem ele e o gate passa a
  * gritar por `*_test.ts`. Gate que grita errado treina a ignorar — a regra mora no núcleo.
+ *
+ * Pela mesma razão a fatia declarada em `_shared/` é reconhecida AQUI, e não por um
+ * `contaComoCorpo` alargado: aquele predicado é importado pelos gates irmãos
+ * (`canaria-contrato-bump-gate.ts`, `sonda-edge-nova-gate.ts`) com o sentido "está na pasta da
+ * edge", e alargá-lo mudaria o que eles medem sem ninguém ter decidido isso.
  */
 export function auditarBump(edges: EstadoEdge[]): Achado[] {
   const achados: Achado[] = [];
   for (const e of edges) {
     const arquivos = e.corpo
-      .filter((a) => contaComoCorpo(a.caminho, e.edge))
-      .filter((a) => normalizarOuNull(a.base) !== normalizarOuNull(a.head))
+      .filter((a) => contaComoCorpo(a.caminho, e.edge) || fatiaEmShared(a.caminho, e.edge) !== undefined)
+      .filter((a) => comparavel(a.caminho, e.edge, a.base) !== comparavel(a.caminho, e.edge, a.head))
       .map((a) => a.caminho)
       .sort();
     if (arquivos.length === 0) continue;
@@ -262,13 +351,23 @@ export function montarEstado(
   ler: LeitorFonte,
 ): EstadoEdge[] {
   const porEdge = new Map<string, string[]>();
+  const adicionar = (edge: string, caminho: string) => {
+    const lista = porEdge.get(edge) ?? [];
+    lista.push(caminho);
+    porEdge.set(edge, lista);
+  };
   for (const caminho of tocados) {
+    // Fatia declarada em `_shared/` vai para o corpo da edge DONA; o resto de `_shared/` continua
+    // fora, de propósito (cabeçalho).
+    const declaradas = FATIAS_EM_SHARED.filter((f) => f.arquivo === caminho);
+    if (declaradas.length > 0) {
+      for (const f of declaradas) adicionar(f.edge, caminho);
+      continue;
+    }
     const m = caminho.match(new RegExp(`^${RAIZ_EDGES}/([^/]+)/`));
     if (!m || m[1] === '_shared') continue;
     if (!contaComoCorpo(caminho, m[1])) continue;
-    const lista = porEdge.get(m[1]) ?? [];
-    lista.push(caminho);
-    porEdge.set(m[1], lista);
+    adicionar(m[1], caminho);
   }
 
   const estados: EstadoEdge[] = [];
@@ -379,6 +478,12 @@ export function main(argv: string[]): number {
         `  outra prova de qual bundle está no ar. Bumpe \`VERSAO\` em ${RAIZ_EDGES}/${a.edge}/${ARQ_MARCADOR}\n` +
         '  nomeando a FATIA desta entrega (formato `vN.N-slug`), ANTES do deploy.',
     );
+    for (const f of a.arquivos.map((c) => fatiaEmShared(c, a.edge)).filter((f) => f !== undefined)) {
+      console.error(
+        `  ${f.arquivo} mora em \`_shared/\` mas é fatia declarada de \`${a.edge}\` (FATIAS_EM_SHARED):\n` +
+          `  o que mudou foi ${f.oQueConta}.`,
+      );
+    }
   }
   console.error(`\nsonda-bump-gate: ${achados.length} edge(s) alterada(s) sem bump do marcador.`);
   return 1;

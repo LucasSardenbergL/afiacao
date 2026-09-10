@@ -612,3 +612,73 @@ coberto nem por este gate nem pelo fingerprint. O desenho que fecha é o da `gen
 — servir o marcador da canária no campo `versao`, o mesmo símbolo da sonda, e herdar os dois
 mecanismos de graça. Este gate cobre a disciplina do marcador na janela do PR; ele não substitui
 isso.
+
+## O congelamento que o gate não via: a fatia do relé morava em `_shared/` (2026-09-10)
+
+**O que aconteceu.** O `sonda-relay` importa a allowlist `_shared/sonda-cron-alvos.ts`, e o que ele
+faz em runtime é função do conjunto de slugs dela (`slugsDaAllowlist()`). As ondas 2 a 5 da
+allowlist (`89887025b`, `d96b69f06`, `a73641e9c`, `f4578bbff`) mudaram esse conjunto; o `fonte` do
+relé mudou em todas, o `versao.ts` em nenhuma, e o `sonda:bump` passou verde — `_shared/` fica fora
+dele. O ledger de prod registra quatro `fonte` servidos sob o mesmo `v1.1-alvos-da-onda-1` (`d01c`,
+`a92f`, `b736`, `0c4d`). A onda 1 tinha bumpado por conta própria (`v1.0` → `v1.1`), e o PR da onda
+5 listou o relé À MÃO na tabela de deploy: o humano via o fingerprint, não o marcador.
+
+**Desenho ou descuido?** A exclusão de `_shared/` é desenho, medido em 2026-08-25 contra helpers
+COMPARTILHADOS, e continua certa para eles. A allowlist nasceu doze dias depois, fora da população
+medida, e nenhuma das duas premissas vale para ela: um consumidor só, e toda mudança desde o
+nascimento foi comportamento do relé. O descuido foi não reabrir a exclusão quando nasceu em
+`_shared/` um arquivo de dono único cujo conteúdo é comportamento.
+
+**Não era só o marcador humano.** O `pendencias:deploy` escolhe a FILA pelo `VERSAO`: `fonte` novo
+com `VERSAO` igual é DIVERGE_P2 (leva agrupada, só escala após 7 dias). Mas relé sem deploy responde
+`fora-da-allowlist` às alvos novas — o pré-requisito da onda ia para a fila opcional. Falha aberta
+não era: o par `(versao, fonte)` acusa a divergência de bundle; o que errava era a prioridade.
+
+**A medição que escolheu o conserto** — as 682 fatias first-parent da `main` desde o 1º
+`versao.ts` (`02fdad342`..`70fc305f3`), com a `fecharGrafo` do fingerprint sobre a árvore de cada
+fatia. Calibrada contra o `sonda:fanout`: reproduz os `SEM_BUMP=18` do #2132.
+
+| régua | cobranças sem bump | fatias | leitura |
+|---|---|---|---|
+| grafo completo (fecho inteiro, `_shared/` incluso) | 135 | 22 | picos de 32, 23, 18 e 16 numa fatia: a exclusão fica de pé |
+| estrutural, "UM consumidor **instrumentado**" | 5 | 5 | uma FALSA: no `f6ac6055a` a `leitura-critica.ts` ganhou `exigirLista` para a `recommend` (ainda sem `versao.ts`); nada que a `fin-cashflow-engine` chamava mudou |
+| estrutural, "UM consumidor entre **todas** as edges" | 4 | 4 | 4 de 4 — empata com o par |
+| par explícito `sonda-relay` × allowlist | 4 | 4 | 4 de 4 — as ondas 2 a 5 |
+
+**Por que o par, se a estrutural por todas as edges empatou.** Ela compara o arquivo inteiro, e a
+allowlist precisa de projeção (abaixo); e poria o fecho das ~100 edges dentro do gate, com veredito
+que muda quando OUTRO PR passa a importar o arquivo. Os outros arquivos de dono único mudaram 3
+vezes na janela, nenhuma sem bump — são lógica de UMA edge extraída para teste, e quem os muda
+percebe que está mudando a edge. A allowlist parece DADO sobre as alvos, não código do relé: é
+isso que a fez escapar quatro vezes.
+
+**O conserto.** `FATIAS_EM_SHARED` no gate: `(edge, arquivo, projeção)`. A projeção do relé é o
+conjunto de slugs — a allowlist também carrega `controles`/`desde`/`nota`, que só a prova lê, e
+mudar só isso segue DIVERGE_P2 honesto em vez de cobrar bump. O `contaComoCorpo` ficou intacto: os
+gates irmãos (`canaria:bump`, `sonda-edge-nova`) o importam com o sentido "está na pasta da edge".
+Gate velho × novo, fatia a fatia nas mesmas 682: **678 veredictos iguais, 4 divergentes =
+exatamente as ondas 2 a 5**. As 7 em que os dois reprovam são todas pré-gate (o #1938 entre elas).
+
+**Os dentes.** No `.test.ts`: a CALIBRAÇÃO da projeção contra o `slugsDaAllowlist()` do arquivo real
+(pega sobre- e sub-limpeza — a allowlist carrega candidatas comentadas); duas PREMISSAS — o arquivo
+está no fecho da edge dona (pega a declaração órfã, que não reprovaria ninguém) e, no fecho do
+relé, a allowlist só é lida por `slugsDaAllowlist` (se o relé passar a ler `controles`, a projeção
+fica estreita); e as 4 fatias REAIS com controle na onda 1, casando a lista inteira de achados. No
+`.mut`: 6 mutações novas, cada uma desfazendo uma peça — 14/14 PEGA, em `LC_ALL=C` e em
+`pt_BR.UTF-8`.
+
+**O relé NÃO foi bumpado neste conserto — e o porquê é um dado de prod.** O marcador segue dizendo
+`v1.1-alvos-da-onda-1`, e isso é falso. Mas às 23:14 UTC de 09-10 o relé foi deployado com a
+allowlist da onda 5: prod serve `(v1.1-alvos-da-onda-1, 6ca1)`, o par da `main` — CONFERE. Bumpar
+agora viraria DIVERGE_P1 e um deploy só para trocar a string, logo depois de um deploy: o
+redundante que o ledger existe para evitar. O marcador fica velho até a próxima mudança de alvos —
+e essa o gate agora obriga a bumpar.
+
+**Revisão independente PENDENTE.** O challenge do Codex (`gpt-6-astra`, `max`) voltou
+`COTA_ESGOTADA` com o plano do token = o assinado ⇒ Caminho B: auto-challenge (ele achou a 2ª
+premissa acima, que faltava) + falsificação. Rodar o Codex retroativo quando a cota voltar.
+
+**O que continua aberto.** Os outros 20 arquivos de dono único de `_shared/` não estão na lista. Se
+um escapar, o próximo passo medido é a estrutural por todas as edges (4 de 4 na janela), mantendo a
+projeção para as fatias declaradas. Quem mostra o candidato no PR já existe: o `sonda:fanout` lista
+o arquivo com UMA consumidora e `SEM_BUMP`.
