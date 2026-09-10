@@ -1,0 +1,13 @@
+# CANDIDATO gerado pelo Codex (experimento 2026-09-09) — NAO commitar sem revisao.
+# @src: src/lib/financeiro/aging-helpers.ts
+# @test: src/lib/financeiro/__tests__/aging-helpers.test.ts
+SOBREVIVE | Ignora o valor pago ao ponderar o atraso | s/a\.lags\.push\(\{ valor: lag, peso: pago \}\);/a.lags.push({ valor: lag, peso: 1 });/
+SOBREVIVE | Permite taxa de recebimento negativa no cenário | s/const taxa = Math\.min\(1, Math\.max\(0, 1 - perdaNova\)\);/const taxa = Math.min(1, 1 - perdaNova);/
+SOBREVIVE | Zera o prazo residual quando omitido | s/const residual = input\.lag_residual_default \?\? 15;/const residual = input.lag_residual_default ?? 0;/
+SOBREVIVE | Trunca dias fracionários no recebimento | s/d\.setUTCDate\(d\.getUTCDate\(\) \+ Math\.round\(days\)\);/d.setUTCDate(d.getUTCDate() + Math.trunc(days));/
+SOBREVIVE | Ordena os valores da mediana como texto | s/const s = \[\.\.\.xs\]\.sort\(\(a, b\) => a - b\);/const s = [...xs].sort();/
+SOBREVIVE | Rejeita exposição exatamente no volume mínimo | s/const volOk = a\.exposicao >= minVolume;/const volOk = a.exposicao > minVolume;/
+SOBREVIVE | Rejeita concentração exatamente em 60% | s/const concentracaoOk = a\.exposicao > 0 \? \(a\.topValor \/ a\.exposicao\) <= 0\.6 : false;/const concentracaoOk = a.exposicao > 0 ? (a.topValor \/ a.exposicao) < 0.6 : false;/
+SOBREVIVE | Calcula cobertura com saída diária exatamente no piso | s/return saidaDiaria > 0\.01 \? saldoCc \/ saidaDiaria : null;/return saidaDiaria >= 0.01 ? saldoCc \/ saidaDiaria : null;/
+PEGA | Rejeita cobertura empresarial exatamente em 40% | s/const empresaCalibravel = coberturaEmpresa >= coberturaMinEmpresa;/const empresaCalibravel = coberturaEmpresa > coberturaMinEmpresa;/
+PEGA | Desloca atraso de 30 dias para a faixa seguinte | s/if \(diasAtraso <= 30\) return '1-30';/if (diasAtraso < 30) return '1-30';/
