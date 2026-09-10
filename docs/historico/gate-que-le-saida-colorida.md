@@ -98,6 +98,47 @@ Falsificado com controle verde na mesma invocação (`FALSIFICACAO_FIM ok`): có
 guard voltando a ler o log → vermelho · guard que sempre aprova → vermelho · fail-closed removido →
 vermelho.
 
+## Os primos no `git`: mesma classe, mas **fail-OPEN**
+
+**2026-09-09, mesmo dia.** A varredura por primos achou dois gates decidindo pelo prefixo `^-`/`^+`
+da saída **humana** do `git`. A diferença com o caso do vitest é o SENTIDO da falha, e é a pior:
+lá o gate reprovava (barulhento, alguém investiga); aqui a lista sai vazia, e vazio é **aprovação**.
+
+| gate | decide | onde roda | com cor |
+|---|---|---|---|
+| `scripts/lovable-revert-scan.sh` | "o bot REVERTEU um merge recente?" | CI (`lovable-watch.yml`) | `reversao=false` — some o alarme que ele existe para dar |
+| `.claude/hooks/pr-duplicata-guard.sh` | "esse símbolo já foi entregue na main?" | máquina do founder | cala — indistinguível de "nada a avisar" |
+
+O git não colore em pipe por default, então nada disso aparece em teste local. Mas ele obedece
+`color.ui`/`color.diff=always` de **qualquer** camada: o `~/.gitconfig` de quem roda (o hook roda na
+máquina do founder), a config do repo, e `GIT_CONFIG_PARAMETERS` no ambiente — que um runner ou um
+wrapper pode carregar sem ninguém escrever uma linha de config.
+
+**Medido, comando a comando** (não suposto — a correção certa depende de qual sai sujo):
+
+| comando | com `color.ui=always` |
+|---|---|
+| `git diff` (humano), `git show <sha>` | **COLOREM** |
+| `git diff --name-only`, `git log --pretty=%H/%s`, `git show <rev>:<path>`, `rev-parse`, `merge-base`, `branch --show-current` | saem limpos |
+
+Daí a ordem de preferência: **saída de máquina quando existir** (`--name-only`, `--pretty`,
+`--numstat`, `<rev>:<path>`) e `--no-color` onde o diff humano é mesmo a fonte. `--no-color` é flag
+do subcomando e vence config de qualquer camada, inclusive `GIT_CONFIG_PARAMETERS` (medido); `-c
+color.ui=false` também vence, mas é mais fácil de perder num refactor.
+
+**O que trava a recaída.** Os dois testes (`test-lovable-revert-scan.sh`, `test-pr-duplicata-guard.sh`,
+ambos no `bun run test:hooks`) rodam o **mesmo cenário** com a cor ligada e exigem o **mesmo
+veredito** — no revert-scan pelas três vias (ambiente, `color.ui`, `color.diff`); no hook, o stub de
+git passou a colorir como o git real, e **só o `diff` de conteúdo**: colorir o `--name-only` ali
+tornaria a flag load-bearing por ficção, e o stub estaria mentindo a favor do hook.
+
+A falsificação tem **controle verde na mesma invocação** e um segundo eixo que costuma faltar: a
+cópia sabotada tem de **calar com cor e continuar avisando sem cor**. Sem esse par, um `sed` que
+destruísse o script inteiro entregaria o mesmo vermelho e seria creditado como prova. A sabotagem
+do `--no-color` no `--name-only` ficou **de fora de propósito**: ali a flag é cinto-e-suspensório
+contra versão futura do git, então sabotá-la ficaria verde — e sabotagem verde significa
+"redundante", que aqui é a resposta certa, não um teste cego.
+
 ## Regra
 
 **Gate não lê a saída formatada para humano quando existe saída de máquina.** Se a ferramenta tem

@@ -56,6 +56,16 @@ case "$1" in
     # do conjunto em produção, calando o guard. (lacuna da 2ª opinião, Codex 2026-08-19)
     case " $* " in *" MB "*) ;; *) exit 128 ;; esac
     a="$(_alvo "$@")"
+    # COR — modela o git REAL, medido: `diff` de conteúdo COLORE sob color.ui/color.diff=always
+    # (de config OU de GIT_CONFIG_PARAMETERS no ambiente) e obedece `--no-color` acima de tudo;
+    # `--name-only` sai LIMPO mesmo com always. Colorir o `--name-only` aqui tornaria a flag dele
+    # load-bearing por FICÇÃO — o stub mentiria a favor do hook, que é o oposto de um teste.
+    _nc=""; case " $* " in *" --no-color "*) _nc=1 ;; esac
+    _cor() {
+      if [ -n "${GIT_STUB_COLOR:-}" ] && [ -z "$_nc" ]; then
+        ESC=$(printf '\033'); sed "s/^/${ESC}[32m/; s/\$/${ESC}[m/"
+      else cat; fi
+    }
     case "$*" in
       *--name-only*)
         case "$a" in
@@ -67,9 +77,9 @@ case "$1" in
         f=""
         for x in "$@"; do f="$x"; done
         case "$a" in
-          head)   cat "$STUBDIR/diff_$(_slug "$f")"    2>/dev/null || true ;;
-          cached) cat "$STUBDIR/dcached_$(_slug "$f")" 2>/dev/null || true ;;
-          wt)     cat "$STUBDIR/dwt_$(_slug "$f")"     2>/dev/null || true ;;
+          head)   cat "$STUBDIR/diff_$(_slug "$f")"    2>/dev/null | _cor || true ;;
+          cached) cat "$STUBDIR/dcached_$(_slug "$f")" 2>/dev/null | _cor || true ;;
+          wt)     cat "$STUBDIR/dwt_$(_slug "$f")"     2>/dev/null | _cor || true ;;
         esac ;;
     esac ;;
   show)
@@ -413,7 +423,39 @@ _deve_avisar "encadeado lê índice/árvore (não o HEAD vazio)" "$out"
 out="$(_hook "$ENC" 'git commit -am "wip" && gh pr create --fill')"
 _deve_avisar "encadeado não é silenciado pelo dedupe (contém create)" "$out"
 
-echo "== 16. fail-open TOTAL: o hook nunca sai não-zero =="
+echo "== 16. COR: o veredito não pode depender de o git estar colorindo =="
+# A via 2 ("fui EU que introduzi") sai do `grep '^+'` sobre o diff. Com cor o ESC vem ANTES do
+# `+`: o grep casa ZERO, `add_ids` sai vazio e o hook CALA — fail-OPEN no pior sentido, porque o
+# silêncio é indistinguível de "nada a avisar". Este hook roda na máquina do FOUNDER, com o
+# ~/.gitconfig dele: um `color.ui = always` em qualquer camada bastava para desligar o guard sem
+# que ninguém percebesse. Classe: docs/historico/gate-que-le-saida-colorida.md.
+_base; _main; rm -rf "$CACHE"
+out="$(_hook "$MINE" "$CRIAR")"
+_deve_avisar "controle: cenário base SEM cor avisa (há verde de onde sair)" "$out"
+
+rm -rf "$CACHE"
+out="$(_hook "$MINE GIT_STUB_COLOR=1" "$CRIAR")"
+_deve_avisar "cor LIGADA no git NÃO muda o veredito" "$out"
+
+# Falsificação em DOIS eixos, e é o par que prova: a cópia sem `--no-color` tem de CALAR com cor
+# — e continuar AVISANDO sem cor. Só o segundo eixo separa "o silêncio veio da COR" de "o `sed`
+# quebrou o hook por outro motivo"; sem ele, uma sabotagem que destruísse o script inteiro
+# entregaria o mesmo vermelho e seria creditada como prova (falsificacao-sem-linha-de-base.md).
+# shellcheck disable=SC2016  # sed: o padrão é literal do hook, expandir aqui o quebraria
+sed 's|git diff --no-color "$mb" $alvo -- "$f"|git diff "$mb" $alvo -- "$f"|' \
+  "$HOOK" > "$stub/sem-no-color.sh"
+if cmp -s "$HOOK" "$stub/sem-no-color.sh"; then
+  _bad "sabotagem 'sem --no-color' não mudou nada (padrão sed obsoleto — o teste estaria cego)"
+else
+  rm -rf "$CACHE"
+  out="$(HOOK_ATUAL=$stub/sem-no-color.sh _hook "$MINE" "$CRIAR")"
+  _deve_avisar "CONTROLE da sabotagem: cópia sem --no-color, SEM cor, ainda avisa" "$out"
+  rm -rf "$CACHE"
+  out="$(HOOK_ATUAL=$stub/sem-no-color.sh _hook "$MINE GIT_STUB_COLOR=1" "$CRIAR")"
+  _deve_calar "sabotagem 'sem --no-color' + cor → CALA (a flag é load-bearing)" "$out"
+fi
+
+echo "== 17. fail-open TOTAL: o hook nunca sai não-zero =="
 if [ -s "$stub/exit-nao-zero.log" ]; then
   _bad "hook saiu não-zero: $(head -1 "$stub/exit-nao-zero.log")"
 else

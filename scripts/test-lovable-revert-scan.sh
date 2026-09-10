@@ -44,7 +44,15 @@ commit_pr() {
 # commit_direto <arquivo> <msg> — simula commit do bot (sem "(#N)")
 commit_direto() { git add "$1" && git commit -qm "$2"; }
 
-run_scan() { LRS_PATTERNS='^supabase/functions/' bash "$SCAN" 2>/dev/null; }
+# COR_ENV injeta a cor pelo AMBIENTE; SCAN_ATUAL aponta para uma CÓPIA sabotada. A fonte em
+# disco NUNCA é mutada: outra worktree (ou um vitest concorrente) leria o arquivo quebrado, e esse
+# vermelho é justamente o que ninguém consegue reproduzir depois.
+COR_ENV=""
+SCAN_ATUAL=""
+run_scan() {
+  # shellcheck disable=SC2086  # COR_ENV é lista KEY=VAL (ou vazia), precisa expandir em palavras
+  env $COR_ENV LRS_PATTERNS="^supabase/functions/" bash "${SCAN_ATUAL:-$SCAN}" 2>/dev/null
+}
 
 expect_hit() {  # <nome> <token1> <token2>
   local nome="$1" t1="$2" t2="$3" out
@@ -113,6 +121,90 @@ commit_pr supabase/functions/edge-x/index.ts "docs(edge): aviso" 105
 { printf 'const base = 1;\n' > supabase/functions/edge-x/index.ts; }
 commit_direto supabase/functions/edge-x/index.ts "Changes"
 expect_mudo "remocao de COMENTARIO puro nao conta (bot apaga aviso sem reverter gate)"
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# COR: o veredito não pode depender de o git estar colorindo
+#
+# A decisão sai do prefixo `^-`/`^+` da saída do git. Com cor o ESC vem ANTES do sinal, o `grep`
+# casa ZERO, a lista sai vazia e o scan conclui "sem reversão" — fail-OPEN: some justamente o
+# alarme que ele existe para dar. Medido antes do conserto: o caso-alvo abaixo saía MUDO nas três
+# vias. O git não colore em pipe por default, mas obedece color.ui/color.diff=always de QUALQUER
+# camada: o AMBIENTE (GIT_CONFIG_PARAMETERS, que o runner do CI pode carregar) e a config do
+# repo/global. Classe: docs/historico/gate-que-le-saida-colorida.md.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+echo "── cor LIGADA não pode mudar o veredito ──"
+
+# cenario_alvo <dir> — o mesmo caso-alvo do topo. O scan é read-only, então UM repo serve de
+# controle E de sabotagem: a única variável entre eles passa a ser o script, nunca o cenário.
+cenario_alvo() {
+  mkrepo "$1"
+  { printf 'const base = 1;\nif (!precoValidado) { throw new Error("gate"); }\nconst guardaDePreco = validaContraOmie(pedido);\n' > supabase/functions/edge-x/index.ts; }
+  commit_pr supabase/functions/edge-x/index.ts "fix(edge): blinda o gate de preco [money-path]" 100
+  { printf 'const base = 1;\n' > supabase/functions/edge-x/index.ts; }
+  commit_direto supabase/functions/edge-x/index.ts "Changes"
+}
+ALVO_PR="#100"
+ALVO_F="supabase/functions/edge-x/index.ts"
+
+cenario_alvo "$base/cor"
+
+COR_ENV="GIT_CONFIG_PARAMETERS='color.ui=always'"
+expect_hit "cor pelo AMBIENTE (GIT_CONFIG_PARAMETERS) — a via do runner" "$ALVO_PR" "$ALVO_F"
+COR_ENV=""
+
+git config color.ui always
+expect_hit "cor por color.ui na config do repo" "$ALVO_PR" "$ALVO_F"
+git config --unset color.ui
+
+git config color.diff always
+expect_hit "cor por color.diff (a chave específica do diff)" "$ALVO_PR" "$ALVO_F"
+git config --unset color.diff
+
+echo "── falsificação: a fixação de cor é LOAD-BEARING ──"
+# CONTROLE PRIMEIRO, e ele ABORTA as sabotagens se não estiver verde: sabotar um arnês que já está
+# vermelho aprova TUDO — toda sabotagem produz o vermelho exigido e o gate anuncia sucesso
+# (docs/historico/falsificacao-sem-linha-de-base.md). Este controle é a CÓPIA (não o alvo em
+# disco), com a cor LIGADA, no MESMO repo e na MESMA invocação das sabotagens: nada muda entre
+# ele e elas exceto o `sed`.
+cp "$SCAN" "$base/copia.sh"
+SCAN_ATUAL="$base/copia.sh"
+COR_ENV="GIT_CONFIG_PARAMETERS='color.ui=always'"
+
+controle_ok=0
+if printf '%s' "$(run_scan)" | grep -qF "REVERSAO"; then
+  controle_ok=1
+  echo "  ok    base  | CONTROLE: cópia intacta + cor ligada → REVERSAO (há verde de onde sair)"
+else
+  echo "  FAIL  CONTROLE vermelho ANTES da 1ª sabotagem — nada abaixo provaria coisa alguma"; fail=1
+fi
+
+# _sabota <nome> <expr-sed> — quebra UMA fixação de cor na cópia e exige que o alarme SUMA.
+_sabota() {
+  local nome="$1" expr="$2" out
+  [ "$controle_ok" -eq 1 ] || return 0
+  sed "$expr" "$SCAN" > "$base/copia.sh"
+  if cmp -s "$SCAN" "$base/copia.sh"; then
+    echo "  FAIL  sed obsoleto | $nome — a sabotagem não mudou NADA (o teste estaria cego)"; fail=1
+    return 0
+  fi
+  out="$(run_scan)"
+  if [ -z "$out" ]; then echo "  ok    sabot | $nome → alarme SUMIU (a flag é load-bearing)"
+  else echo "  FAIL  $nome → alarme sobreviveu; a flag não está sob teste | out='$out'"; fail=1; fi
+}
+
+# shellcheck disable=SC2016  # sed: o padrão é literal do script alvo, expandir aqui o quebraria
+_sabota "sem --no-color no \`git diff\` (mata a lista 'removed')" \
+  's|git diff --no-color "$sha^"|git diff "$sha^"|'
+# shellcheck disable=SC2016  # idem: literal do script alvo
+_sabota "sem --no-color no \`git show\` (mata a lista 'added')" \
+  's|git show --no-color --format= "$m"|git show "$m"|'
+# O 3º `--no-color` (o do `git diff --name-only` da linha do `changed`) NÃO entra aqui de
+# propósito: `--name-only` foi MEDIDO saindo limpo mesmo com color.ui=always, então a flag ali é
+# cinto-e-suspensório contra versão futura do git — sabotá-la ficaria VERDE, e sabotagem verde
+# sinaliza "redundante", que aqui é a resposta certa e intencional (não um teste cego).
+
+SCAN_ATUAL=""
+COR_ENV=""
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi
