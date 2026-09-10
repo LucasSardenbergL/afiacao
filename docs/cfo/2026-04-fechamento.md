@@ -16,6 +16,8 @@ mapeamento. A **ação nº1** que destrava o mês é mapear os impostos `2.06.*`
 
 ## 1. Resumo executivo
 
+- ⚠️ *Errata 2026-09-10: as tendências mensais desta linha estão infladas (dupla contagem em
+  `fin_movimentacoes`) — na ótica bancária a Oben gera ~+R$ 14 mil/mês. Ver a errata na §2.*
 - **Caixa**: grupo sustentado pela **Oben** (gera ~**+R$ 104 mil/mês**); **Colacor** (~−R$ 65 mil/mês)
   e **Colacor SC** (~−R$ 32 mil/mês) queimam caixa e operam com o **Itaú estourado** (provável
   cheque especial). Risco de liquidez concentrado nas duas que queimam.
@@ -35,6 +37,19 @@ mapeamento. A **ação nº1** que destrava o mês é mapear os impostos `2.06.*`
 
 **Movimentação líquida 90 dias** (cross-check via `fin_movimentacoes`): Colacor −R$ 195.200,47 ·
 Colacor SC −R$ 95.184,87 · Oben +R$ 311.873,09 — confirma a direção acima.
+
+> ⚠️ **Errata (2026-09-10) — a tendência mensal acima está INFLADA.** A coluna "Tendência" e o
+> resumo executivo saíram deste cross-check dividido por 3 (os três batem exatos: 311.873,09 ÷ 3 =
+> "+R$ 104 mil/mês"). E o bloco (c) da skill, que gerou o cross-check, somava as **duas óticas do
+> mesmo pagamento** em `fin_movimentacoes` (o lançamento do título **e** o do banco) mais as
+> previsões. Recalculado em 2026-09-10 para a mesma janela (2026-03-18 a 2026-06-16), só na ótica
+> bancária: Colacor **−R$ 130.641,98** (~−R$ 44 mil/mês) · Colacor SC **−R$ 53.223,51** (~−R$ 18
+> mil/mês) · Oben **+R$ 43.475,91** (~**+R$ 14 mil/mês**, não +R$ 104 mil). A direção se mantém; a
+> magnitude não — em particular, a Oben **não** sustenta o grupo na escala escrita acima.
+> Ressalva: o recálculo usa os dados de hoje, e os syncs desde junho mudaram linhas (o critério
+> antigo, rodado hoje na mesma janela, dá −247,8 mil / −110,7 mil / +212,7 mil, não os valores
+> publicados) — leia como ordem de grandeza. Detalhe:
+> [`docs/historico/cfo-caixa-90d-somava-as-duas-oticas.md`](../historico/cfo-caixa-90d-somava-as-duas-oticas.md).
 
 **Alertas ativos do engine** (Colacor): `caixa_negativo` **crítico** (~−370k) · inadimplência
 **29,6%** · cobertura **0 dias** · concentração de recebíveis **1649%** (índice do engine).

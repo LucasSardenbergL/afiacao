@@ -141,7 +141,11 @@ Pergunta: "o caixa fura o zero nas próximas 13 semanas?".
 A fonte canônica é o engine `fin-cashflow-engine` (tela `/financeiro/capital-giro`, tab "Fluxo 13s").
 O SQL **triangula 3 ângulos** (lição do 1º fechamento — projeção só-CR engana): (a) projeção CR,
 (b) **saldo por conta** (acha a conta-vilã — ex.: um Itaú estourado), (c) **fluxo real 90d** via
-`fin_movimentacoes` (pega o faturamento à vista que entra por cartão/PIX e não vira CR).
+`fin_movimentacoes` (pega o faturamento à vista que entra por cartão/PIX e não vira CR) — **só a ótica
+bancária**: o mesmo pagamento chega duas vezes nessa tabela (armadilha 9 de `references/schema-financeiro.md`).
+Adaptar o (c) ou escrever SQL novo sobre `fin_movimentacoes`? Filtre `categoria_descricao` por allowlist
+positiva — somar sem ela inflou a tendência do fechamento de abril (Oben: +R$ 104 mil/mês publicado,
+~+R$ 14 mil/mês na ótica bancária — errata em `docs/cfo/2026-04-fechamento.md`).
 - **Alerta vermelho** (decisão do dono): saldo projetado **negativo em qualquer semana**
   **OU** dias de cobertura abaixo do threshold de `fin_config_cashflow.thresholds->>'dias_cobertura_min'`.
 - **Não conclua só pela projeção (a).** Se a empresa fatura à vista (entradas_90d ≫ CR aberto),

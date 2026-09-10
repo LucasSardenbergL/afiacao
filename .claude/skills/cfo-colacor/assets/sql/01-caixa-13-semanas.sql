@@ -9,6 +9,8 @@
 --    CR). Por isso esta versão TRIANGULA: (a) projeção CR + (b) saldo por conta +
 --    (c) fluxo real de caixa via fin_movimentacoes. Cruze os três antes de concluir.
 --  • Verdade canônica = engine /financeiro/capital-giro. Aqui é cross-check.
+-- ⚠️ CORRIGIDO (2026-09-10): o (c) somava as DUAS óticas do mesmo pagamento + previsões
+--    (entradas ~2×). Agora soma só a ótica bancária — o porquê está no próprio bloco.
 -- READ-ONLY.
 -- ============================================================================
 
@@ -67,15 +69,34 @@ ORDER BY company, saldo_atual;   -- a mais negativa primeiro
 
 -- (c) FLUXO REAL de caixa últimos 90d (fin_movimentacoes) — pega o à vista que o CR não vê.
 --     Se entradas_90d >> CR aberto, a empresa fatura à vista → projeção (a) subestima entrada.
+--     ⚠️ SÓ a ótica BANCÁRIA (corrigido 2026-09-10). O Omie devolve o MESMO pagamento duas
+--     vezes, como lançamento do TÍTULO (CONTA_A_*) e como lançamento na CONTA CORRENTE
+--     (CONTA_CORRENTE_*), e ainda lista PREVISÕES (PREVISAO_*, tipo E, valor>0). Somar tudo
+--     contava o dinheiro ~2×: medido em 2026-09-10, entradas R$ 2,57 M contra R$ 1,14 M da
+--     ótica bancária (+124,7%), saídas +105,9%. A allowlist é POSITIVA — NOT LIKE 'CONTA_A_%'
+--     deixaria PREVISÃO entrar como caixa. Critério IDÊNTICO ao caixa realizado do produto
+--     (getFluxoCaixa + agregarRealizadoPorDia), só movimento com título e o valor absoluto.
+--     Transferência entre contas e tarifa (sem título) ficam FORA do fluxo, mas aparecem nas
+--     colunas sem_titulo_* para você ver o tamanho. Baixas parciais do mesmo título SOMAM
+--     (cada uma é um evento no banco), então nunca deduplique por título aqui.
+--     Prova executada (PG17, com falsificação): db/test-cfo-caixa-90d-otica.sh
+WITH banco AS (
+  SELECT company, tipo, abs(valor) AS valor, data_movimento,
+         (omie_codigo_lancamento IS NOT NULL) AS com_titulo
+  FROM fin_movimentacoes
+  WHERE data_movimento >= CURRENT_DATE - interval '90 days'
+    AND categoria_descricao IN ('CONTA_CORRENTE_REC', 'CONTA_CORRENTE_PAG')
+)
 SELECT company,
-       round(sum(valor) FILTER (WHERE tipo = 'E')::numeric,2) AS entradas_caixa_90d,
-       round(sum(valor) FILTER (WHERE tipo = 'S')::numeric,2) AS saidas_caixa_90d,
-       round((sum(valor) FILTER (WHERE tipo = 'E')
-            - sum(valor) FILTER (WHERE tipo = 'S'))::numeric,2) AS fluxo_liquido_90d,
-       count(*)            AS movimentos,
-       max(data_movimento) AS ultimo_movimento
-FROM fin_movimentacoes
-WHERE data_movimento >= CURRENT_DATE - interval '90 days'
+       round(sum(valor) FILTER (WHERE com_titulo AND tipo = 'E')::numeric,2) AS entradas_caixa_90d,
+       round(sum(valor) FILTER (WHERE com_titulo AND tipo = 'S')::numeric,2) AS saidas_caixa_90d,
+       round((sum(valor) FILTER (WHERE com_titulo AND tipo = 'E')
+            - sum(valor) FILTER (WHERE com_titulo AND tipo = 'S'))::numeric,2) AS fluxo_liquido_90d,
+       count(*) FILTER (WHERE com_titulo) AS movimentos,
+       max(data_movimento) AS ultimo_movimento,
+       round(sum(valor) FILTER (WHERE NOT com_titulo AND tipo = 'E')::numeric,2) AS sem_titulo_entradas_90d,
+       round(sum(valor) FILTER (WHERE NOT com_titulo AND tipo = 'S')::numeric,2) AS sem_titulo_saidas_90d
+FROM banco
 GROUP BY company ORDER BY company;
 
 -- (d) OVERLAY: eventos que a projeção (a) NÃO inclui — recorrentes (folha) e eventuais
