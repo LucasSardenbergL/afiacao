@@ -96,3 +96,34 @@ em vez de dívida descoberta dois dias depois por um alarme que culpa outra migr
   `MD5_DIVERGIU` nomeava `r.arquivo` — a baseline —, nunca o `CREATE` posterior que era a causa.
 - **Regravar a evidência não conserta a referência.** Quando um achado sobrevive à regravação do
   carimbo, a suspeita certa é que o valor *esperado* apodreceu, não que a medição falhou.
+
+## A mesma classe em PROSA — a limitação que sobrevive à capacidade (2026-09-10, #2455)
+
+A entrada não precisa ser `baseline` para ter condição de validade. Texto IMPRESSO por ferramenta
+também tem, só que implícita — e nenhuma máquina a cobra.
+
+- **O caso.** O `sonda:sql` imprimia no PASSO 1 *"É o bloco do FOUNDER: lê o vault e faz INSERT"*,
+  e o `pendencias:deploy` mandava *"founder cola no SQL Editor"*. A condição de validade, nunca
+  escrita, era *enquanto a sessão só tiver o `psql-ro`*. Ela morreu em 2026-09-08 com o
+  `bun run db:aplicar` (o envelope); o texto, não. A skill `/fecho` e o `docs/agent/database.md`
+  repetiam a mesma ideia (*"**Toda** DDL/DML é colada"*, *"eu **nunca** aplico escrita"*).
+- **O custo é multiplicado pelo leitor.** Prosa impressa por ferramenta é lida como instrução por
+  TODO agente que a roda: cada um herdava a limitação e devolvia ao founder um passo que deveria
+  executar. Nenhum teste pega — os testes casam o texto (que ele é impresso), não a verdade dele.
+- **E ela se propagava para artefato.** `db/sonda-pos-deploy-desconto-backfill.sql`, gerado em
+  2026-09-09 (#2452), nasceu com *"É o bloco do FOUNDER"* — e o ledger `db_aplicacoes` o registra
+  como `aplicada`, **pela sessão**. A frase que dizia "só o founder consegue" estava dentro de um
+  arquivo que a sessão executou.
+
+O que generaliza daqui:
+
+- **Capacidade nova exige varrer, na MESMA entrega, a prosa que a nega.** `git grep` das frases de
+  impossibilidade (*"founder cola"*, *"eu nunca"*, *"só o founder"*) no texto impresso por script,
+  nas skills e em `docs/agent/`. É a poda da baseline, só que sem máquina para cobrar.
+- **Reescrever é nomear o caminho real COM a condição que o torna válido — sem apagar a ressalva
+  que continua verdadeira.** O `psql-ro` segue recusando escrita, e é isso que explica por que o
+  envelope existe; o texto novo diz as duas coisas.
+- **Limitação ≠ guardrail.** Limitação é fato sobre capacidade e envelhece quando ela muda;
+  guardrail é decisão de desenho e não envelhece com ela (a skill `bi-colacor` diz *"Escrita é
+  sempre do founder"* por escolha do money-path, e ficou). **Recibo também não se reescreve:** os
+  `db/sonda-*.sql` aplicados têm o `sha256` dos bytes no ledger.
