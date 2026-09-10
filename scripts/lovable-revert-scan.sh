@@ -16,6 +16,15 @@
 # amostra das linhas quando há hit (exit 0 também — quem decide é quem lê o stdout; erro de git
 # → exit != 0 e o step do CI fica vermelho, visível). Filtra linha trivial (curta/só pontuação)
 # e COMENTÁRIO puro — o bot apaga comentário-aviso legitimamente sem reverter o gate (deploy.md).
+#
+# ⚠️ `--no-color` NÃO é enfeite: a decisão sai do prefixo `^-`/`^+` da saída do git, e com cor o
+# ESC vem ANTES do sinal — o `grep` casa zero, a lista sai vazia e o scan conclui "sem reversão".
+# É fail-OPEN: o silêncio vira aprovação, e some justo o alarme que este script existe para dar.
+# O git não colore em pipe por default, mas obedece color.ui/color.diff=always de QUALQUER camada
+# de config, inclusive `GIT_CONFIG_PARAMETERS` no ambiente do runner. Medido: `diff` humano e
+# `show <sha>` COLOREM; `--name-only`, `--pretty=%H/%s` e `rev-parse` saem limpos (a flag no
+# `--name-only` é cinto-e-suspensório, para não depender da versão do git). Classe em
+# docs/historico/gate-que-le-saida-colorida.md; falsificado em test-lovable-revert-scan.sh.
 # Falso-negativo aceito: reversão só-de-comentário/1-linha-curta escapa daqui, mas continua
 # coberta pela Issue genérica de path sensível. Testes: scripts/test-lovable-revert-scan.sh.
 set -u
@@ -30,7 +39,7 @@ minlen="${LRS_MIN_LEN:-12}"
 subj="$(git log -1 --pretty=%s "$sha")" || exit 1
 printf '%s' "$subj" | grep -qE '\(#[0-9]+\)[[:space:]]*$' && exit 0
 
-changed="$(git diff --name-only "$sha^" "$sha" | grep -E "$patterns" || true)"
+changed="$(git diff --no-color --name-only "$sha^" "$sha" | grep -E "$patterns" || true)"
 [ -n "$changed" ] || exit 0
 
 substantiva() {
@@ -42,13 +51,13 @@ substantiva() {
 
 while IFS= read -r f; do
   [ -n "$f" ] || continue
-  removed="$(git diff "$sha^" "$sha" -- "$f" | grep '^-' | grep -v '^---' | cut -c2- | substantiva | sort -u)"
+  removed="$(git diff --no-color "$sha^" "$sha" -- "$f" | grep '^-' | grep -v '^---' | cut -c2- | substantiva | sort -u)"
   [ -n "$removed" ] || continue
   merges="$(git log --since="$window" --first-parent -E --grep='\(#[0-9]+\)[[:space:]]*$' --pretty='%H' "$sha^" -- "$f" || true)"
   [ -n "$merges" ] || continue
   while IFS= read -r m; do
     [ -n "$m" ] || continue
-    added="$(git show "$m" -- "$f" | grep '^+' | grep -v '^+++' | cut -c2- | substantiva | sort -u)"
+    added="$(git show --no-color --format= "$m" -- "$f" | grep '^+' | grep -v '^+++' | cut -c2- | substantiva | sort -u)"
     [ -n "$added" ] || continue
     hits="$(comm -12 <(printf '%s\n' "$removed") <(printf '%s\n' "$added"))"
     [ -n "$hits" ] || continue
