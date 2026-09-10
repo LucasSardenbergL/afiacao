@@ -89,5 +89,5 @@ mais. Dois níveis, porque um não substitui o outro: o teste da função pura p
 render prova que ela **chega à tela** (trocar o cálculo sem religar o componente deixaria a correção
 inerte, e só o de render acusa isso).
 
-PR: #2446 · decisão de semântica com 2ª opinião Codex (gpt-6-astra max) · código em
+PR: #2459 · decisão de semântica com 2ª opinião Codex (gpt-6-astra max) · código em
 `src/components/financeiro/dashboard/fluxo-caixa-semanas.ts`.
