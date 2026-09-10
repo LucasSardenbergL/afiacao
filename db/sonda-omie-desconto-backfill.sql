@@ -28,7 +28,7 @@ SELECT format($sonda$
 --          1: nada a colar. Espere ~10s pela resposta HTTP. É SELECT puro —
 --          roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro
 WITH esperado(edge, versao_esperada, fonte_esperada) AS (VALUES
-  ('omie-desconto-backfill', 'v1.0-backfill-oben-ttm', 'd09a10f83d4fff48aa81194a43c3642310d0c1a8acd42b36795e5fbdfe7602f3')
+  ('omie-desconto-backfill', 'v1.1-unicidade-no-universo-completo', 'e6fefcf6e87b93f2dc054580bbeea645760d76f765345d6d49bbe05f1a18d368')
 ),
 recentes AS (
   -- A JANELA. O filtro textual roda ANTES do cast de propósito: um corpo não-JSON no meio da
