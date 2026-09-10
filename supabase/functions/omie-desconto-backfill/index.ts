@@ -32,6 +32,10 @@ import {
   type MotivoRecusa,
 } from "../_shared/desconto-backfill.ts";
 import { avaliarPagina, MAX_PAGINAS_PEDIDOS, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+// `fetchAll` porque o PostgREST capa em 1.000 linhas em SILÊNCIO: uma leitura truncada aqui
+// tiraria irmãos do universo e a unicidade voltaria a ser medida sobre conjunto incompleto —
+// o mesmo defeito por outro caminho.
+import { fetchAll } from "../_shared/paginate.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
@@ -144,6 +148,7 @@ Deno.serve(async (req) => {
       pedidos_sem_pai_local: 0,
       linhas_oferecidas: 0,
       linhas_apuradas: 0,
+      ja_apuradas_puladas: 0,
       recusa_ambiguo: 0,
       recusa_sem_correspondencia: 0,
       recusa_base_indeterminada: 0,
@@ -151,7 +156,8 @@ Deno.serve(async (req) => {
       escrita_pedida: 0,
       escrita_aplicada: 0,
       escrita_recusada_base_mudou: 0,
-      pedidos_incoerentes: 0,
+      // Conta LINHAS, não pedidos — o retry é por linha. O nome anterior mentia na unidade.
+      linhas_em_pedido_incoerente: 0,
     };
 
     let pagina = paginaInicial;
@@ -177,7 +183,15 @@ Deno.serve(async (req) => {
       for (const linha of linhas) {
         const { data: d1, error: e1 } = await db.rpc("desconto_backfill_aplicar", { p_linhas: [linha] });
         if (e1) {
-          contagem.pedidos_incoerentes++;
+          // Só a violação CONHECIDA da trigger de coerência (23514, check_violation) vira
+          // contador. Antes, QUALQUER erro caía aqui — timeout, permissão, indisponibilidade —
+          // e a edge terminava HTTP 200 depois de uma falha sistêmica, com a contagem parecendo
+          // apenas "alguns pedidos incoerentes". Erro que não sei nomear propaga. (Codex)
+          const sqlstate = (e1 as { code?: string }).code;
+          if (sqlstate !== "23514") {
+            throw new Error(`escrita recusada (SQLSTATE ${sqlstate ?? "desconhecida"}): ${e1.message}`);
+          }
+          contagem.linhas_em_pedido_incoerente++;
           continue;
         }
         const r1 = d1 as { aplicadas?: number; recusadas?: number } | null;
@@ -228,25 +242,42 @@ Deno.serve(async (req) => {
       for (const p of pais ?? []) idPorHash.set(String(p.hash_payload), String(p.id));
 
       const idsPedido = [...idPorHash.values()];
-      const { data: linhasDb, error: errLinhas } = idsPedido.length === 0
-        ? { data: [], error: null }
-        : await db
-          .from("order_items")
-          .select("id, sales_order_id, omie_codigo_produto, quantity, unit_price")
+      // ⚠️ SEM `.is("desconto_valor", null)` aqui, e a ausência é o ponto. A conciliação decide
+      // por UNICIDADE do trio (SKU, quantidade, preço) dos dois lados; calcular essa unicidade
+      // sobre um conjunto já filtrado é medi-la em outro universo. Um pedido com duas linhas do
+      // mesmo trio, uma já apurada, entregaria só a outra — que passaria a parecer ÚNICA e
+      // receberia um desconto que pode ser o do irmão. Não morde na primeira passada (tudo é
+      // NULL), morde em toda RETOMADA — e o job é retomável por desenho.
+      //
+      // Então: lê TODAS as linhas dos pedidos, concilia sobre o conjunto completo, e só depois
+      // descarta as que já têm desconto. Achado da 2ª opinião (Codex), confirmado no código.
+      const linhasDb = await fetchAll<{
+        id: string; sales_order_id: string; omie_codigo_produto: number | string | null;
+        quantity: number | string | null; unit_price: number | string | null;
+        desconto_valor: number | string | null;
+      }>((de, ate) =>
+        db.from("order_items")
+          .select("id, sales_order_id, omie_codigo_produto, quantity, unit_price, desconto_valor")
           .in("sales_order_id", idsPedido)
-          .is("desconto_valor", null);
-      if (errLinhas) throw new Error(`linhas: ${errLinhas.message}`);
+          .order("id", { ascending: true })
+          .range(de, ate)
+      , "order_items do backfill de desconto");
 
       const porPedido = new Map<string, LinhaLocal[]>();
-      for (const l of linhasDb ?? []) {
+      // `jaApuradas`: as linhas que entram na CONCILIAÇÃO (para a unicidade ser medida no universo
+      // certo) mas NÃO na escrita. Reapurar uma linha já preenchida sobrescreveria trabalho de
+      // outro writer com um valor lido depois — e o UPDATE tem seu próprio guard para isso.
+      const jaApuradas = new Set<string>();
+      for (const l of linhasDb) {
         const k = String(l.sales_order_id);
-        const lista = porPedido.get(k);
         const item: LinhaLocal = {
           id: String(l.id),
           omie_codigo_produto: l.omie_codigo_produto,
           quantity: l.quantity,
           unit_price: l.unit_price,
         };
+        if (l.desconto_valor !== null && l.desconto_valor !== undefined) jaApuradas.add(item.id);
+        const lista = porPedido.get(k);
         if (lista) lista.push(item);
         else porPedido.set(k, [item]);
       }
@@ -261,6 +292,8 @@ Deno.serve(async (req) => {
         if (locais.length === 0) continue;
 
         const plano = conciliarDescontosPedido(locais, pedido.det ?? []);
+        // O denominador conta o que foi OFERECIDO à conciliação; as já apuradas entram nela (pela
+        // unicidade) mas saem da escrita, e são contadas à parte para os dois números fecharem.
         contagem.linhas_oferecidas += locais.length;
         contagem.linhas_apuradas += plano.apurados.length;
         // Mapa tipado pelo próprio union em vez de uma cadeia de `else if`: com o `else` final,
@@ -278,6 +311,7 @@ Deno.serve(async (req) => {
 
         const porId = new Map(locais.map((l) => [l.id, l]));
         for (const a of plano.apurados) {
+          if (jaApuradas.has(a.id)) { contagem.ja_apuradas_puladas++; continue; }
           const base = porId.get(a.id)!;
           // A base viaja JUNTO do valor: a RPC reexige que a linha ainda seja a mesma na hora do
           // UPDATE. Entre esta leitura e a escrita, o sync ou uma edição podem ter mudado o preço.

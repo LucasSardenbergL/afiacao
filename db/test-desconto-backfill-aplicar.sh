@@ -98,12 +98,42 @@ eq "F4 preço NULL dos DOIS lados casa (IS NOT DISTINCT FROM), não é descartad
 F5=$(Pq -c "SELECT desconto_valor IS NULL FROM public.order_items WHERE id='$L5';")
 eq "F5 plano com desconto null NÃO escreve (não apaga apuração alheia)" "$F5" "t"
 F6=$(echo "$R" | tr -d ' ')
-eq "F6 contagens: 5 pedidas, 2 aplicadas, 3 recusadas" "$F6" '{"pedidas":5,"aplicadas":2,"recusadas":3}'
+eq "F6 contagens: 5 pedidas, 2 aplicadas, 3 recusadas, 2 já apuradas" "$F6" '{"pedidas":5,"aplicadas":2,"recusadas":3,"ja_apuradas":2}'
 
 # Idempotência: reaplicar o MESMO plano não acumula nem alterna.
 Pq -c "SELECT public.desconto_backfill_aplicar('[{\"id\":\"$L1\",\"desconto_valor\":10,\"base_quantity\":2,\"base_unit_price\":100,\"base_sku\":555}]'::jsonb);" >/dev/null
 F7=$(Pq -c "SELECT desconto_valor FROM public.order_items WHERE id='$L1';")
 eq "F7 reaplicar o mesmo plano é idempotente" "$F7" "10"
+
+echo "═══ I · concorrência: linha JÁ APURADA não é sobrescrita ═══"
+
+# Achado da 2ª opinião (Codex), confirmado no código: o UPDATE comparava SKU/qtd/preço mas não
+# exigia `desconto_valor IS NULL`. Um writer que preenchesse a linha entre a leitura que montou o
+# plano e esta escrita seria sobrescrito — SEM divergência visível, porque o trio continua batendo.
+P -q -c "UPDATE public.order_items SET desconto_valor = 55 WHERE id='$L1';" >/dev/null
+RJ=$(Pq -c "SELECT public.desconto_backfill_aplicar('[{\"id\":\"$L1\",\"desconto_valor\":10,\"base_quantity\":2,\"base_unit_price\":100,\"base_sku\":555}]'::jsonb);")
+I1=$(Pq -c "SELECT desconto_valor FROM public.order_items WHERE id='$L1';")
+eq "I1 linha já apurada por outro writer NÃO é sobrescrita" "$I1" "55"
+I2=$(echo "$RJ" | tr -d ' ')
+eq "I2 e o motivo vem SEPARADO de 'base mudou'" "$I2" '{"pedidas":1,"aplicadas":0,"recusadas":1,"ja_apuradas":1}'
+P -q -c "UPDATE public.order_items SET desconto_valor = NULL WHERE id='$L1';" >/dev/null
+
+# Falsificação: sem o guard, a sobrescrita acontece — é o dano que I1 barra.
+SABI="/tmp/sabotado-concorrencia-${SLUG}.sql"
+sed 's/       AND oi.desconto_valor IS NULL/       AND true/' "$MIG" > "$SABI"
+if ! grep -q "AND true" "$SABI"; then
+  bad "I3.0 a sabotagem do guard de concorrência NÃO alterou o arquivo — assert seria teatro"
+else
+  ok "I3.0 (controle da sabotagem) o guard de concorrência foi removido de fato"
+  P -q -f "$SABI" >/dev/null
+  P -q -c "UPDATE public.order_items SET desconto_valor = 55 WHERE id='$L1';" >/dev/null
+  Pq -c "SELECT public.desconto_backfill_aplicar('[{\"id\":\"$L1\",\"desconto_valor\":10,\"base_quantity\":2,\"base_unit_price\":100,\"base_sku\":555}]'::jsonb);" >/dev/null
+  I3=$(Pq -c "SELECT desconto_valor FROM public.order_items WHERE id='$L1';")
+  if [ "$I3" = "10" ]; then ok "I3 sem o guard, a apuração de outro writer é SOBRESCRITA — I1 tem dente"; PASS=$((PASS+1));
+  else bad "I3 sem o guard não houve sobrescrita (veio [$I3]) — I1 pode passar por inércia"; fi
+  P -q -f "$MIG" >/dev/null
+  P -q -c "UPDATE public.order_items SET desconto_valor = NULL WHERE id='$L1';" >/dev/null
+fi
 
 echo "═══ G · ACL: escrita de money-path fechada na fronteira ═══"
 G1=$(Pq -c "SELECT has_function_privilege('anon','public.desconto_backfill_aplicar(jsonb)','EXECUTE');")
@@ -158,11 +188,16 @@ fi
 
 # H3 — o guard do plano-null some: um bug do chamador passaria a APAGAR apuração em massa.
 SAB3="/tmp/sabotado3-${SLUG}.sql"
-sed 's/       AND pl.desconto_valor IS NOT NULL/       AND true/' "$MIG" > "$SAB3"
-if ! grep -q "AND true" "$SAB3"; then
-  bad "H3.0 a sabotagem do guard de null NÃO alterou o arquivo — assert seria teatro"
+sed -e 's/       AND pl.desconto_valor IS NOT NULL/       AND true/' \
+    -e 's/       AND oi.desconto_valor IS NULL/       AND true/' "$MIG" > "$SAB3"
+# DOIS guards protegem este eixo desde o achado de concorrência (Codex): `pl...IS NOT NULL` barra
+# o plano que manda null, e `oi...IS NULL` barra o UPDATE de linha já apurada. Sabotar UM só deixa
+# o outro segurando — e o assert leria "não houve dano" como "o guard tem dente", que é o inverso.
+# Por isso a sabotagem remove os dois: o que se mede é se ALGUÉM ainda protege o eixo.
+if [ "$(grep -c 'AND true' "$SAB3")" -ne 2 ]; then
+  bad "H3.0 a sabotagem NÃO removeu os DOIS guards — com um de pé o assert mediria o guard errado"
 else
-  ok "H3.0 (controle da sabotagem) o guard de plano-null foi removido de fato"
+  ok "H3.0 (controle da sabotagem) os dois guards do eixo foram removidos de fato"
   P -q -f "$SAB3" >/dev/null
   P -q -c "UPDATE public.order_items SET desconto_valor = 99 WHERE id='$L1';" >/dev/null
   Pq -c "SELECT public.desconto_backfill_aplicar('[{\"id\":\"$L1\",\"desconto_valor\":null,\"base_quantity\":2,\"base_unit_price\":100,\"base_sku\":555}]'::jsonb);" >/dev/null
