@@ -68,18 +68,22 @@ const FinanceiroCockpit = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 stagger-children">
         <CockpitCard
           title="Caixa Disponível"
-          value={fmtCompact(totalCC)}
-          positive={totalCC > 0}
+          value={totalCC === null ? '—' : fmtCompact(totalCC)}
+          positive={totalCC !== null && totalCC > 0}
           icon={Wallet}
-          detail={`Risco de liquidez: ${riscoLabel} (${(riscoLiquidez * 100).toFixed(0)}%)`}
+          detail={
+            riscoLiquidez === null
+              ? 'Risco de liquidez: — (saldo bancário indisponível)'
+              : `Risco de liquidez: ${riscoLabel} (${(riscoLiquidez * 100).toFixed(0)}%)`
+          }
           detailColor={riscoColor}
           badge="Saldo bancário real"
           onClick={() => setDrillDown('caixa')}
         />
         <CockpitCard
           title="Posição líquida (abertos)"
-          value={fmtCompact(totalCC + totalCR - totalCP)}
-          positive={totalCC + totalCR - totalCP > 0}
+          value={totalCC === null ? '—' : fmtCompact(totalCC + totalCR - totalCP)}
+          positive={totalCC !== null && totalCC + totalCR - totalCP > 0}
           icon={Target}
           detail={`+ ${fmtCompact(totalCR)} a receber / - ${fmtCompact(totalCP)} a pagar (abertos)`}
           badge="CR+CC−CP abertos · não é projeção"

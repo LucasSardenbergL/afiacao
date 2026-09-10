@@ -14,7 +14,7 @@ interface Projecao13CardProps {
   empresasAusentes: string[];
   empresasStale: string[];
   caixaInicialProjecao: number | null;  // caixa que a projeção consolidada usou (Σ saldo_inicial coorte)
-  saldoAtualBanco: number;              // totalCC atual
+  saldoAtualBanco: number | null;       // totalCC atual (null = indisponível)
   cohorteCompleta: boolean;             // !parcial — só compara com coorte completa
 }
 
@@ -55,9 +55,9 @@ export function Projecao13Card({ projecao13, dataReferencia, parcial, empresasPr
           </p>
         )}
         {/* Transparência: caixa que a projeção partiu vs saldo bancário atual (não muda nenhum número). */}
-        {cmpCaixa.disponivel ? (
+        {cmpCaixa.disponivel && caixaInicialProjecao !== null && saldoAtualBanco !== null && cmpCaixa.delta !== null ? (
           <p className="text-[11px] text-muted-foreground">
-            Caixa inicial da projeção: {fmtCompact(caixaInicialProjecao as number)} · saldo bancário atual {fmtCompact(saldoAtualBanco)} · Δ {fmtCompact(cmpCaixa.delta as number)}{' '}
+            Caixa inicial da projeção: {fmtCompact(caixaInicialProjecao)} · saldo bancário atual {fmtCompact(saldoAtualBanco)} · Δ {fmtCompact(cmpCaixa.delta)}{' '}
             <span className="opacity-70">(a diferença pode refletir movimentações após o snapshot)</span>
           </p>
         ) : (

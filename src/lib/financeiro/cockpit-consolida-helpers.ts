@@ -210,9 +210,16 @@ export function consolidarCockpit(input: { esperadas: string[]; snapshots: Snaps
 // Só quando a coorte é completa (caixa_inicial da coorte parcial × totalCC das 3 = maçã×laranja).
 export function compararCaixaInicial(input: {
   caixaInicialProjecao: number | null;
-  saldoAtualBanco: number;
+  /** `null` = saldo bancário indisponível — o delta seria contra um zero fabricado. */
+  saldoAtualBanco: number | null;
   cohorteCompleta: boolean;
 }): { disponivel: boolean; delta: number | null } {
-  const disponivel = input.cohorteCompleta && input.caixaInicialProjecao != null;
-  return { disponivel, delta: disponivel ? round2(input.saldoAtualBanco - (input.caixaInicialProjecao as number)) : null };
+  const disponivel =
+    input.cohorteCompleta && input.caixaInicialProjecao != null && input.saldoAtualBanco != null;
+  return {
+    disponivel,
+    delta: disponivel
+      ? round2((input.saldoAtualBanco as number) - (input.caixaInicialProjecao as number))
+      : null,
+  };
 }

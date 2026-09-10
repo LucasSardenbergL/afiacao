@@ -222,6 +222,10 @@ describe('compararCaixaInicial', () => {
     expect(compararCaixaInicial({ caixaInicialProjecao: null, saldoAtualBanco: 950, cohorteCompleta: true }))
       .toEqual({ disponivel: false, delta: null });
   });
+  it('saldo bancário indisponível → sem delta (o outro lado da subtração faltando é igual)', () => {
+    expect(compararCaixaInicial({ caixaInicialProjecao: 800, saldoAtualBanco: null, cohorteCompleta: true }))
+      .toEqual({ disponivel: false, delta: null });
+  });
 });
 
 describe('parseSnapshotSemanas (Number(null) não fabrica 0)', () => {

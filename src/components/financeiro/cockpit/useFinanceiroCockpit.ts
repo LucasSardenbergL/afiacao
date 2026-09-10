@@ -140,7 +140,11 @@ export function useFinanceiroCockpit() {
   };
 
   // Computed
-  const totalCC = Object.values(resumo).reduce((s, r) => s + r.saldo_total_cc, 0);
+  // Consolidado do grupo: indisponível se faltar o saldo de qualquer CNPJ (caixa é
+  // por-CNPJ, não-fungível — a parcela que falta não se estima pelas outras).
+  const totalCC: number | null = Object.values(resumo).some((r) => r.saldo_total_cc === null)
+    ? null
+    : Object.values(resumo).reduce((s, r) => s + (r.saldo_total_cc ?? 0), 0);
   const totalCR = Object.values(resumo).reduce((s, r) => s + r.total_a_receber, 0);
   const totalCP = Object.values(resumo).reduce((s, r) => s + r.total_a_pagar, 0);
   const totalVencidoCR = Object.values(resumo).reduce((s, r) => s + r.total_vencido_receber, 0);
@@ -164,11 +168,16 @@ export function useFinanceiroCockpit() {
   const margemOp = totalReceita > 0 ? (totalResultadoOp / totalReceita) * 100 : 0;
 
   // Risco de liquidez
-  const riscoLiquidez = totalCP > 0 && totalCC > 0
-    ? totalCC / totalCP
-    : 0;
-  const riscoLabel = riscoLiquidez >= 1 ? 'Baixo' : riscoLiquidez >= 0.5 ? 'Médio' : 'Alto';
-  const riscoColor = riscoLiquidez >= 1 ? 'text-status-success' : riscoLiquidez >= 0.5 ? 'text-status-warning' : 'text-status-error';
+  // Sem saldo conhecido não há razão de liquidez: `null`, não 0 — 0 aqui é rotulado
+  // 'Alto' e pintado de vermelho, ou seja, o dado que falta viraria um veredito.
+  const riscoLiquidez: number | null =
+    totalCC === null ? null : totalCP > 0 && totalCC > 0 ? totalCC / totalCP : 0;
+  const riscoLabel =
+    riscoLiquidez === null ? '—' : riscoLiquidez >= 1 ? 'Baixo' : riscoLiquidez >= 0.5 ? 'Médio' : 'Alto';
+  const riscoColor =
+    riscoLiquidez === null
+      ? 'text-muted-foreground'
+      : riscoLiquidez >= 1 ? 'text-status-success' : riscoLiquidez >= 0.5 ? 'text-status-warning' : 'text-status-error';
 
   // Concentração (do aging)
   const totalAgingCR = aging
