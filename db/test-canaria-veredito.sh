@@ -526,6 +526,16 @@ sabota "sem o RAISE do envelope (artefato roda limpo)" \
 sabota "sem o envelope inteiro (o SQL de fixture volta a DISPARAR)" \
   "/^DO \\\$fixture_inerte\\\$$/d; /^DECLARE$/d; /^  sql_da_canaria CONSTANT text/d; /^\\\$fixture_payload\\\$;$/d; /^BEGIN$/d; /^  RAISE EXCEPTION 'ARTEFATO DE FIXTURE/d; /^END$/d; /^\\\$fixture_inerte\\\$;$/d"
 
+# ── (i) O RECORTE — a fronteira entre o artefato e o que a suíte julga ───────────────────────
+# Todas as sabotagens acima mexem no CONTEÚDO do SQL. Esta mexe em ONDE ele começa e termina, que
+# até 2026-09-09 não tinha dente nenhum: com a tag de fechamento trocada, o `awk` seguia até o EOF
+# e devolvia 8257 B onde o bloco legítimo tem 8037 — 220 B de FORA, incluindo o `RAISE` do envelope
+# inerte. E passava pela sonda `grep -q 'AS veredito'` do chamador, porque o miolo continuava lá:
+# a sonda pergunta se o recorte tem o CASE, não se ele é o RECORTE CERTO.
+# shellcheck disable=SC2016  # `$sonda$`/`$OUTRA$` sao TAGS de dollar-quoting, nao variaveis
+sabota "fechamento do bloco com outra tag (recorte vaza ate o EOF)" \
+  's/^\$sonda\$, m\.ids\)/$OUTRA$, m.ids)/'
+
 # ── (h) O EIXO QUE ESTAVA CEGO: a suíte vê o GERADOR, não um retrato dele ──────────────────────
 # Todas as sabotagens acima mexem no SQL JÁ EMITIDO. Nenhuma delas nota se a suíte parou de julgar
 # o gerador deste disco — foi assim que o #2405 a deixou VERDE (19 ok / 0 fail) com o gerador

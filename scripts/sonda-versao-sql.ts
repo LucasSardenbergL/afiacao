@@ -623,8 +623,11 @@ rodapeDoFormat(passoLeitura)
  * Duas conversões, nesta ordem, e a ordem é a correção: (1) todo `%` do corpo vira `%%`, senão
  * `format()` o interpreta como diretiva e aborta ou corrompe o SQL emitido; (2) só então o
  * sentinela vira `%1$L`, que interpola o mapa como LITERAL — `%L` cita e escapa sozinho, e devolve
- * `NULL` sem aspas quando o agregado é nulo (trava fechada), o que o `jsonb_each_text` lê como
- * zero pares, não como erro. O dollar-quoting é conferido antes: corpo que contenha a tag encerraria
+ * `NULL` sem aspas (e não `''`) quando o agregado é nulo, o que o `jsonb_each_text` lê como zero
+ * pares, não como erro. Só que esse caso é o de `disparos` com ZERO linhas, e NÃO o da trava
+ * fechada, como esta linha dizia até 2026-09-09: a trava é um `CASE` que preserva a linha com
+ * `request_id` nulo, então o agregado sai `{"nome": null}` — um par de valor nulo, medido no PG17,
+ * não um agregado nulo. O dollar-quoting é conferido antes: corpo que contenha a tag encerraria
  * a string no meio e o passo seguinte sairia truncado — fail-CLOSED, com o nome do que colidiu.
  */
 function corpoDoPassoDeLeitura(
