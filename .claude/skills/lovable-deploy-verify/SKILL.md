@@ -1015,6 +1015,29 @@ continua valendo para provar que um **conteúdo específico** está no ar; para 
 o mecanismo é uma env do host de build, que não é nossa e pode sumir sem aviso. E **passe a URL com `https://`**: sem esquema, o `curl` (sem `-L`) volta vazio e o monitor reporta
 falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 
+⚠️ **`exit 3` responde "o ar É a `origin/main`?" — NÃO "o PR X está no ar?" (medido 2026-09-10).**
+O monitor compara por IGUALDADE, e com o auto-merge fechando PR em minutos a `main` anda enquanto
+você espera o Publish: ele passa a dizer "Publish pendente" **com o commit-alvo já servido**. No
+Publish do #2459 o #2445 mergeou 38 s depois do ANTES; com o ar já em `eee71c80`, o monitor seguiu em
+`ATRASADO` (rc 3) — com o #2459 **e** o #2458 no ar, e um delta ar→main sem nenhum arquivo em `src/`.
+Para a pergunta sobre UM PR, a checagem é ancestralidade:
+
+```bash
+git fetch origin
+PR=$(gh pr view <n> --json mergeCommit --jq .mergeCommit.oid)   # o SQUASH na main
+AR=<sha-do-ar>                                                  # o `ar=` que o monitor imprimiu
+git merge-base --is-ancestor "$PR" "$AR"; rc=$?
+# 0 = o PR está no ar · 1 = não está · 128 = SHA que o clone não conhece → NÃO CONSEGUI medir
+```
+
+As duas armadilhas fabricam "fora do ar", e as duas foram medidas no #2459: **rc 128 não é 1** — um
+`if …; then no-ar; else fora-do-ar; fi` lê como veredito um SHA que o clone não conhece (sem `fetch`,
+prefixo errado); e **o SHA é o do squash, nunca o head do branch** — o head (`a93c101ee`) existe no
+clone e dá rc **1** limpo, com cara de veredito, enquanto o squash (`eee71c80f`) dá 0. A mesma medição
+derrubou o critério "rc 3 → 0" como prova de Publish: com a `main` andando, `ar == main` fica
+inalcançável, e a transição que conta é a do `ar=` (e do entry). Detalhe em
+[`docs/historico/piloto-deploy-mcp-lovable.md`](../../../docs/historico/piloto-deploy-mcp-lovable.md) §"2ª medição".
+
 ## Referências
 - CLAUDE.md §"Deploy do FRONTEND (app) — Publish MANUAL no Lovable" (a técnica dos bytes; armadilha do chunk de nome inesperado)
 - CLAUDE.md §"Edge functions — caminho oficial Lovable" (deploy via chat, ler do repo, verbatim)
@@ -1171,4 +1194,10 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   módulo carimbo+hashes de nome (com sabotagem exigindo vermelho), 51/317 chunks byte-idênticos como
   controle de determinismo, 12/12 amostrados idênticos. Cobertura honesta: **64 dos 317**. N=1 e o
   diff era 100% docs — não fala por Publish que carrega mudança de `src/`.
+  **Medido em 2026-09-10 (N=2, o 1º com `src/`):** Publish do #2459 (`eee71c80f`, 11 arquivos de
+  runtime em `src/`) pelo mesmo `deploy_project` — sentinela exclusiva de **exit 1**
+  (+`CONTROLE_POSITIVO_OK`) a **exit 0** no chunk da página (`FinanceiroDashboard-*`,
+  +`CONTROLE_NEGATIVO_OK`), carimbo `895b93ee` → `eee71c80`. Prova o CANAL e o CONTEÚDO com `src/`
+  real; **não** o verbatim desse build (só a sentinela, sem diff contra build local) nem exclui um
+  clique humano no mesmo minuto. Rendeu a lição da ancestralidade (§Smoke E2E autônomo).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

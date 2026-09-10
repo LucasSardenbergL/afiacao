@@ -2,7 +2,8 @@
 
 > **Três camadas medidas, por experimentos separados.** §Passos 1-3 = **edge** (`send_message`,
 > 2026-09-07). §Camada 2 = **Publish do frontend** (`deploy_project`, 2026-09-08), que fecha nos
-> bytes a metade que a edge deixou aberta. §Camada 3 = **migration** (`query_database`, 2026-09-07),
+> bytes a metade que a edge deixou aberta — medida de novo em 2026-09-10, agora com mudança REAL de
+> `src/` (§"2ª medição"). §Camada 3 = **migration** (`query_database`, 2026-09-07),
 > medida em ambiente descartável: o canal **funciona**, com semântica transacional completa — e é
 > justamente por isso que ela **continua fora** da regra do CLAUDE.md. A recomendação é manter a
 > regra como está, e o porquê está lá.
@@ -550,11 +551,128 @@ publica. O modo de falha "o agente melhorou o código no caminho" tem, nesta cam
 menor — e os bytes acima o descartam para os 64 chunks medidos, o que a Camada 1 não pôde fazer para
 nenhum dos 8 arquivos.
 
+### 2ª medição (2026-09-10) — um Publish que carrega mudança REAL de `src/`
+
+A primeira ressalva do §"O que a Camada 2 NÃO autoriza", logo abaixo, era a mais pesada: N = 1, e um
+diff **100% docs**, em que a única entrada variável do build foi o carimbo. Esta medição é o caso que
+ela dizia não cobrir. E ela responde a uma pergunta **diferente** da 1ª — isso vem antes dos números,
+porque decide o que cada uma pode afirmar:
+
+| medição | pergunta | como se prova |
+|---|---|---|
+| 1ª — 2026-09-08, diff só de docs | nada mudou **além do carimbo**? (o VERBATIM) | normalizar carimbo + hashes de nome e comparar ANTES × DEPOIS |
+| 2ª — 2026-09-10, `src/` real | o **CONTEÚDO** da mudança chegou aos bytes servidos? | sentinela exclusiva do PR: ausente no ANTES → presente no DEPOIS |
+
+O método da 1ª não se aplica tal e qual. Lá, depois de normalizar carimbo e hashes de nome, ANTES e
+DEPOIS tinham de sair **idênticos** — e saíram. Com código novo eles divergem **por desenho** nos
+chunks que carregam a mudança, então "divergiu" deixa de ser sinal; o que separaria "mudou porque
+devia" de "mudou porque alguém mexeu no caminho" é comparar contra um build LOCAL do mesmo commit. Não
+foi feito (ver o NÃO prova, no fim desta seção).
+
+**O que foi publicado.** O #2459 (squash `eee71c80f`) toca **11 arquivos de runtime em `src/`** (+4
+de teste) — entre eles `src/components/financeiro/dashboard/FluxoCaixaTab.tsx`, o novo
+`fluxo-caixa-semanas.ts` e `src/services/financeiroService.ts`. O Publish é atômico, então subiu o
+intervalo inteiro `895b93ee..eee71c80` — **12 commits**, com o #2458 (`f00109b7d`, que também toca
+`financeiroService.ts`) no meio. Contagens medidas no git (`git rev-list --count`, `git diff
+--name-only … -- src/`), não relembradas.
+
+**A sentinela, provada exclusiva antes de tocar a rede.** `Saldo projetado a partir do saldo em conta
+de hoje` — texto de UI renderizado, sem aspas nas pontas — tem **0** ocorrências em `src/` no pai
+(`f4578bbff`) e no commit que o ar servia (`895b93ee`), e **1** arquivo no novo (`FluxoCaixaTab.tsx`).
+Escapa das três armadilhas de sentinela do Passo 4 da `lovable-deploy-verify` (não-exclusiva, 2º
+emissor na lib, delimitada).
+
+**ANTES — 20:02:07 GMT-3 (23:02:07Z)**, marcadores da sessão que executou:
+
+- `monitor-deploy.sh https://steu.lovable.app` → **rc 3**, `ar=895b93ee`, `main=eee71c80`;
+- `verify-frontend.sh --pai f4578bbff --novo eee71c80f 'Saldo projetado a partir do saldo em conta de hoje'`
+  → **exit 1**, com `✓ sentinela exclusiva: 0 ocorrências em f4578bbff · 1 arquivo(s) em eee71c80f`,
+  `LIB_SEM_A_SENTINELA`, 335 chunks (closure 335 · precache 327), entry `index-BVxIPEOW.js` e
+  `CONTROLE_POSITIVO_OK` — que é o que faz o `exit 1` valer "ausente", e não "sonda cega".
+
+**A AÇÃO — só o MCP**, com autorização explícita do founder na sessão (o Publish continua sendo
+alavanca dele — `docs/agent/deploy.md` §"O que continua sendo do founder"):
+
+```
+mcp__lovable__deploy_project(project_id: 8f005805-000a-42b7-88a1-9683f785fab6)
+→ {"status":"pending","deployment_id":"8e2022ad-dd11-43ca-bca9-45add2acc328","url":"https://steu.lovable.app"}
+```
+
+Só `project_id`, sem `name` — a mesma decisão da 1ª: `name` re-slugaria o domínio canônico.
+
+**DEPOIS — 20:03:09 GMT-3**, na 2ª tentativa de um poll de 20 s (≈ 1 min depois do ANTES):
+
+- `monitor-deploy.sh` → `ar=eee71c80` — exatamente o squash do #2459 — e entry `index-BVxIPEOW` →
+  `index-CpcoKz2r`;
+- `verify-frontend.sh` com a **mesma** sentinela e os mesmos `--pai`/`--novo` → **exit 0**:
+  `✅ ALVO em /assets/FinanceiroDashboard-DD8-ffbj.js` — o chunk da página que o PR mudou, e não um
+  chunk qualquer — e `CONTROLE_NEGATIVO_OK`.
+
+Três observáveis se moveram juntos, e não são da mesma natureza: o **carimbo** é o commit que o host
+de build **declara** ter compilado (vem de env, via `resolveCommitSha()`); o **hash do entry** diz que
+o bundle mudou, não o quê; a **sentinela** é CONTEÚDO do PR nos bytes. Só a terceira responde à
+pergunta desta medição — as outras duas são coerência. E note o que **não** serviu de critério: o rc
+do monitor. A `main` já estava em `70fc305f` desde 24 s antes do DEPOIS (lição de método, abaixo),
+então `ar == main` era inalcançável naquele minuto. O critério da 1ª medição (rc 3 → 0) só funcionou
+lá porque a `main` ficou parada.
+
+**Re-conferido às 23:14Z do mesmo dia**, só `curl` (2 requests), ao registrar esta seção: o ar segue
+em `eee71c80` — nenhum Publish posterior moveu o carimbo. E a mesma leitura é o caso da lição de
+método:
+
+```console
+$ bash .claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh https://steu.lovable.app
+[2026-09-10T20:14:11] main=70fc305f  ar=eee71c80  deploy-novo=nao
+  ⚠️ ATRASADO: ar serve eee71c80, main em 70fc305f → Publish pendente
+MONITOR_RC=3
+```
+
+**O que a 2ª medição PROVA:**
+
+- o canal `deploy_project` publica build com mudança de `src/` — **N = 2** no total, o **1º com
+  `src/`**, de novo sem colagem humana;
+- o **CONTEÚDO** da mudança está nos bytes servidos: sentinela exclusiva ausente → presente, com
+  controle **positivo** no ANTES (o `exit 1` era enxergar e não achar) e **negativo** no DEPOIS (o
+  `exit 0` não é o script dando verde para tudo).
+
+**O que NÃO prova:**
+
+- **que o bundle inteiro seja byte-idêntico a um build local da `main`.** Só a sentinela foi
+  conferida — uma string, num chunk. O VERBATIM atestado na 1ª (64/317 chunks) é de um build sem
+  código novo e **não se estende** a este;
+- **que ninguém tenha clicado Publish naquele minuto.** O `deployment_id` amarra o deploy à chamada,
+  como na 1ª; a alternativa segue implausível, mas não excluída;
+- **adoção.** Bytes servidos são disponibilidade: o SW do PWA só troca de build quando o cliente
+  clica.
+
+**Lição de método — "ATRASADO" responde se o ar É a `main`, não se o PR ESTÁ no ar.** O #2445
+mergeou às 23:02:45Z — **38 s depois do ANTES e 24 s antes do DEPOIS**: a `main` andou *dentro* do
+minuto de espera. O `monitor-deploy.sh` compara o ar com `origin/main` por **igualdade** e passou a
+dizer "ATRASADO → Publish pendente" **com o commit-alvo já servido**. Ele não está errado — responde
+"o ar == `origin/main`?". Erra quem lê ali a resposta de "o PR X está no ar?", e com o auto-merge
+fechando PR em minutos a `main` andar durante a espera é o caso **comum**, não o raro. Para um PR, a
+pergunta é de **ancestralidade** — medida na mesma leitura acima, e com controle:
+
+```console
+eee71c80f (#2459) ancestral do ar? rc=0
+f00109b7d (#2458) ancestral do ar? rc=0
+controle: 70fc305f3 (#2445, main) ancestral do ar? rc=1
+```
+
+E o "Publish pendente" nem apontava para algo a publicar no app: o delta ar→main (só o #2445) tem
+**0** arquivo em `src/` — CI, `scripts/`, docs e uma entrada nova em `package.json#scripts`. A
+receita, com as duas armadilhas que a fazem fabricar "fora do ar" (rc 128 lido como 1; head do branch
+no lugar do squash), mora na `lovable-deploy-verify` §"Smoke E2E autônomo".
+
 ### O que a Camada 2 NÃO autoriza
 
 - **N = 1**, e o diff era **100% docs**. Este resultado **não fala** por um Publish que carrega
   mudança real de `src/` — que é o caso normal, e onde o agente teria o que "melhorar". O verbatim
   atestado aqui é o de um build cuja única entrada variável foi o carimbo.
+  **Atualizado em 2026-09-10:** o caso com `src/` real foi medido (§"2ª medição", acima — o #2459,
+  11 arquivos de runtime; N = 2). O que ficou medido é o **CANAL** e o **CONTEÚDO**; o que esta
+  ressalva segue dizendo, e segue verdadeiro, é que o **VERBATIM** só foi atestado no build sem
+  código novo.
 - **A amostra do verbatim é 64/317**, não a totalidade.
 - **A janela é de menos de 1 minuto** entre a chamada e a transição. O `deployment_id` devolvido
   amarra o deploy à chamada, e o ANTES foi medido 00:43:21Z com o ar ainda em `bb9d8d2e` — mas com
@@ -746,8 +864,8 @@ corrigir.
   decisão do founder em conversa própria, não efeito colateral de um piloto. Esta sessão teve a tentação concreta: o disparo da sonda é um
   `INSERT`, e `query_database` o resolveria sem o founder. Não foi usado — usá-lo mediria um canal
   não-testado **com** outro, e contaminaria o veredito.
-- **`deploy_project` (o Publish do frontend) era outra camada, e foi MEDIDA em 2026-09-08** —
-  §Camada 2; e a **migration** em 2026-09-07 — §Camada 3. As três camadas manuais do Lovable são
+- **`deploy_project` (o Publish do frontend) era outra camada, e foi MEDIDA em 2026-09-08** — e de
+  novo em 2026-09-10, com `src/` real — §Camada 2; e a **migration** em 2026-09-07 — §Camada 3. As três camadas manuais do Lovable são
   independentes, e o resultado de uma não se estende às outras.
 - **N = 1.** Uma edge, uma chamada, um ANTES conhecido. Isso é estritamente mais forte que a medição
   de 2026-09-06 (8 edges, ANTES desconhecido, transição não observável), e é o que faltava para
