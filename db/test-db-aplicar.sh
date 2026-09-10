@@ -83,8 +83,27 @@ cleanup() {
 trap cleanup EXIT
 
 # ─── cluster ─────────────────────────────────────────────────────────────────────────────
-"$PGBIN/initdb" -D "$DATA" -U postgres --locale=C >/dev/null 2>&1
-"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -c listen_addresses=localhost" -l "$WORK/pg.log" -w start >/dev/null 2>&1
+# `-k "$WORK"`: o diretório do socket unix. Sem ele o postmaster usa o default COMPILADO, que
+# no PGDG (Ubuntu) é /var/run/postgresql — inexistente para o usuário do runner, e o servidor
+# não sobe. Conectamos por TCP, mas o postmaster cria o socket de qualquer jeito e ABORTA se
+# não puder. É o que reprovou a 1ª tentativa desta prova no CI; as 16 provas que já rodavam lá
+# passam `-k /tmp` pelo mesmo motivo. Aqui vai $WORK, que é por-prova: /tmp é compartilhado e
+# duas provas na mesma porta lógica brigariam pelo mesmo arquivo de socket.
+#
+# E a saída NÃO é mais descartada. Com `>/dev/null 2>&1` + `set -e`, um cluster que não sobe
+# matava o script MUDO: log vazio, exit 1, e o runner do núcleo imprimindo "── últimas linhas ──"
+# seguido de nada. Falha silenciosa é a pior classe de todas — a que não deixa nem por onde
+# começar. Cada ramo abaixo DIZ o que quebrou, com o que o Postgres respondeu.
+if ! "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C > "$WORK/initdb.log" 2>&1; then
+  echo "ERRO: initdb falhou (PGBIN=$PGBIN)"; tail -c 800 "$WORK/initdb.log"; exit 1
+fi
+if ! "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $WORK -c listen_addresses=localhost" \
+       -l "$WORK/pg.log" -w start > "$WORK/pgctl.log" 2>&1; then
+  echo "ERRO: o cluster de teste não subiu na porta $PORT (PGBIN=$PGBIN)"
+  echo "── pg_ctl ──"; tail -c 400 "$WORK/pgctl.log"
+  echo "── postmaster ──"; tail -c 800 "$WORK/pg.log" 2>/dev/null
+  exit 1
+fi
 
 PSQL="$PGBIN/psql -X -v ON_ERROR_STOP=1 -h localhost -p $PORT -U postgres -d postgres"
 q() { "$PGBIN/psql" -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null | tr -d ' \n'; }
