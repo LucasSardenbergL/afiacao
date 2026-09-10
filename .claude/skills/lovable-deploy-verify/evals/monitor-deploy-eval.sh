@@ -212,18 +212,22 @@ roda() {
     > "$out" 2>&1
 }
 
-# confere <saída> <exit obtido> <cenário> → 0 se o exit E a marca batem, e as marcas não se misturam
-confere() {
-  local exp esp marca
-  exp=$(esperado_de "$3") || return 1
-  esp=${exp%%|*}; marca=${exp#*|}
-  [ "$2" -eq "$esp" ] || return 1
-  command grep -F -q -- "$marca" "$1" || return 1
-  case "$esp" in
+# bate <saída> <exit obtido> <exit esperado> <marca> → 0 se o exit E a marca batem, e as marcas
+# não se misturam
+bate() {
+  [ "$2" -eq "$3" ] || return 1
+  command grep -F -q -- "$4" "$1" || return 1
+  case "$3" in
     5) ! command grep -F -q -- "ATRASADO" "$1" ;;
     3) ! command grep -F -q -- "SINCRONIZADO_EM_BUNDLE" "$1" ;;
     0) ! command grep -F -q -e "ATRASADO" -e "SINCRONIZADO_EM_BUNDLE" "$1" ;;
   esac
+}
+# confere <saída> <exit obtido> <cenário> → o desfecho declarado na tabela CASOS
+confere() {
+  local exp
+  exp=$(esperado_de "$3") || return 1
+  bate "$1" "$2" "${exp%%|*}" "${exp#*|}"
 }
 
 rc=0
@@ -322,40 +326,51 @@ PY
   }
 
   # Arrays paralelos, não tabela com separador: metade dos alvos contém `|` e `||`.
-  SAB_ID=(); SAB_ARQ=(); SAB_CEN=(); SAB_DE=(); SAB_PARA=()
-  sab() { SAB_ID+=("$1"); SAB_ARQ+=("$2"); SAB_CEN+=("$3"); SAB_DE+=("$4"); SAB_PARA+=("$5"); }
-  # id · arquivo (relativo à skill) · cenário que guarda o elo · de · para
+  SAB_ID=(); SAB_ARQ=(); SAB_CEN=(); SAB_PREV=(); SAB_DE=(); SAB_PARA=()
+  sab() { SAB_ID+=("$1"); SAB_ARQ+=("$2"); SAB_CEN+=("$3"); SAB_PREV+=("$4"); SAB_DE+=("$5"); SAB_PARA+=("$6"); }
+  # id · arquivo (relativo à skill) · cenário que guarda o elo · desfecho PREVISTO sob sabotagem
+  # (exit|marca) · de · para. O previsto é o que faz o vermelho ser pelo motivo CERTO: sabotagem
+  # que quebrasse a sintaxe do script daria "vermelho" também — exit 2, sem a marca prevista.
+  # Guard fail-closed arrancado ⇒ previsto é o VERDE indevido (exit 5): prova que ESTE elo era o
+  # único segurando o alarme naquele cenário.
+  VERDE_INDEVIDO='5|SINCRONIZADO_EM_BUNDLE'
   # shellcheck disable=SC2016  # literais do alvo, não devem expandir aqui
   {
-    sab ancestral scripts/monitor-deploy.sh nao_ancestral \
+    sab ancestral scripts/monitor-deploy.sh nao_ancestral "$VERDE_INDEVIDO" \
       '    1) atrasado NAO_ANCESTRAL' '    1) true || atrasado NAO_ANCESTRAL'
-    sab rc-do-diff scripts/monitor-deploy.sh diff_quebrado \
+    sab rc-do-diff scripts/monitor-deploy.sh diff_quebrado "$VERDE_INDEVIDO" \
       '[ "$drc" -eq 0 ] || atrasado DIFF_FALHOU' '[ "$drc" -ge 0 ] || atrasado DIFF_FALHOU'
-    sab delta-vazio scripts/monitor-deploy.sh diff_mudo \
+    sab delta-vazio scripts/monitor-deploy.sh diff_mudo "$VERDE_INDEVIDO" \
       '[ "$narq" -gt 0 ] 2>/dev/null' '[ "$narq" -ge 0 ] 2>/dev/null'
-    sab no-renames scripts/monitor-deploy.sh rename_src_docs \
+    sab no-renames scripts/monitor-deploy.sh rename_src_docs "$VERDE_INDEVIDO" \
       '--no-renames --no-relative' '--find-renames --no-relative'
-    sab fetch scripts/monitor-deploy.sh fetch_falhou \
+    sab fetch scripts/monitor-deploy.sh fetch_falhou "$VERDE_INDEVIDO" \
       '[ "$FETCH_OK" = 1 ] || atrasado FETCH_FALHOU' '[ "$FETCH_OK" = 1 ] || true || atrasado FETCH_FALHOU'
-    sab prefixo-do-carimbo scripts/monitor-deploy.sh carimbo_e_branch \
+    sab prefixo-do-carimbo scripts/monitor-deploy.sh carimbo_e_branch "$VERDE_INDEVIDO" \
       'case "$ar_full" in "$AIR_SHA"?*)' 'case "$ar_full" in ?*)'
-    sab marca-positiva scripts/monitor-deploy.sh python_mudo \
+    sab marca-positiva scripts/monitor-deploy.sh python_mudo "$VERDE_INDEVIDO" \
       '"0:PROVA_INERCIA_OK "*) ;;' '"0:"*) ;;'
-    sab fim-do-classify scripts/monitor-deploy.sh classify_mudo \
+    # o helper também exige a marca de fim do classificador: sem o guard do monitor, o mudo cai
+    # UM elo adiante — defesa em profundidade, e a marca muda de CLASSIFY_FALHOU para esta
+    sab fim-do-classify scripts/monitor-deploy.sh classify_mudo '3|motivo: PROVA_INDISPONIVEL' \
       'if (fim != 1 || lixo || n != esperado)' 'if (0)'
-    sab tabela-src evals/classify.sh src \
+    # sem a regra de src/, src/App.tsx não é ALCANCA nem INERTE: o fail-closed segura (exit 3),
+    # mas o MOTIVO troca — só o exit não enxergaria esta sabotagem
+    sab tabela-src evals/classify.sh src '3|motivo: SEM_CLASSIFICACAO' \
       'if (p ~ /^(src|public|' 'if (p ~ /^(public|'
-    sab desconhecido-segura evals/classify.sh desconhecido \
+    sab desconhecido-segura evals/classify.sh desconhecido "$VERDE_INDEVIDO" \
       '  return "DESCONHECIDO"' '  return "INERTE"'
-    sab package-json scripts/alcance-bundle.py pkg_deps \
+    sab package-json scripts/alcance-bundle.py pkg_deps "$VERDE_INDEVIDO" \
       '    if a != b:' '    if False:'
-    sab scripts-do-pipeline scripts/alcance-bundle.py pkg_script_build \
+    sab scripts-do-pipeline scripts/alcance-bundle.py pkg_script_build "$VERDE_INDEVIDO" \
       'return chave in GANCHOS_INSTALL or RE_BUILD.fullmatch(chave) is not None' 'return False'
-    sab build-puro scripts/alcance-bundle.py build_sujo \
+    sab build-puro scripts/alcance-bundle.py build_sujo "$VERDE_INDEVIDO" \
       'if not isinstance(v, str) or not RE_BUILD_PURO.fullmatch(v.strip()):' 'if False:'
-    sab fechamento scripts/alcance-bundle.py vazamento \
+    sab fechamento scripts/alcance-bundle.py vazamento "$VERDE_INDEVIDO" \
       '    if vazamentos:' '    if False:'
-    sab teste-fora-do-bundle scripts/alcance-bundle.py edge_so_teste \
+    # direção OPOSTA: sem a exclusão de teste o fechamento fica conservador demais e o espelho de
+    # helper em __tests__/ (padrão real do repo) vira "vazamento" — o cenário verde fica vermelho
+    sab teste-fora-do-bundle scripts/alcance-bundle.py edge_so_teste '3|motivo: ALCANCE_VAZA' \
       'and not RE_TESTE.search(p)' 'and True'
   }
 
@@ -385,7 +400,8 @@ PY
   #     em CADA locale (vermelho num só não prova a asserção).
   fals=0; total=0
   for i in "${!SAB_ID[@]}"; do
-    id=${SAB_ID[$i]} arq=${SAB_ARQ[$i]} cen=${SAB_CEN[$i]} de=${SAB_DE[$i]} para=${SAB_PARA[$i]}
+    id=${SAB_ID[$i]} arq=${SAB_ARQ[$i]} cen=${SAB_CEN[$i]} prev=${SAB_PREV[$i]}
+    de=${SAB_DE[$i]} para=${SAB_PARA[$i]}
     total=$((total + 1))
     rm -rf "$TMP/sab"
     espelho "$TMP/sab" || { echo "  [XX ] $id: espelho falhou"; rc=1; continue; }
@@ -393,16 +409,29 @@ PY
       echo "  [XX ] $id: a sabotagem NÃO aplicou ($(cat "$TMP/sab.err")) — o eval não estaria testando nada"
       rc=1; continue
     fi
-    pegou=0; n_loc=0
+    pegou=0; n_loc=0; errado=""
     for loc in $LOCALES; do
       n_loc=$((n_loc + 1))
       roda "$TMP/sab" "$cen" "$TMP/out" "$loc"; got=$?
-      confere "$TMP/out" "$got" "$cen" || pegou=$((pegou + 1))
+      if confere "$TMP/out" "$got" "$cen"; then
+        :                                              # seguiu verde: elo sem dente
+      elif bate "$TMP/out" "$got" "${prev%%|*}" "${prev#*|}"; then
+        pegou=$((pegou + 1))                           # vermelho PELO MOTIVO previsto
+      else
+        errado="$errado $loc:exit$got"                 # vermelho, mas por outro motivo
+      fi
     done
     if [ "$pegou" -eq "$n_loc" ]; then
-      fals=$((fals + 1)); printf '  [ok ] %-21s arrancado -> %-16s VERMELHO em %d locale(s)\n' "$id" "$cen" "$n_loc"
+      fals=$((fals + 1))
+      printf '  [ok ] %-20s -> %-16s VERMELHO pela marca prevista (%s) em %d locale(s)\n' \
+        "$id" "$cen" "$prev" "$n_loc"
+    elif [ -n "$errado" ]; then
+      printf '  [XX ] %-20s -> %s VERMELHO pelo motivo ERRADO (previsto %s; obtido%s)\n' \
+        "$id" "$cen" "$prev" "$errado"
+      sed 's/^/        | /' "$TMP/out" | head -6
+      rc=1
     else
-      printf '  [XX ] %-21s arrancado e %s seguiu VERDE em %d de %d locale(s) — elo sem dente\n' \
+      printf '  [XX ] %-20s arrancado e %s seguiu VERDE em %d de %d locale(s) — elo sem dente\n' \
         "$id" "$cen" "$((n_loc - pegou))" "$n_loc"
       rc=1
     fi
