@@ -298,17 +298,33 @@ cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) **e** tem cron frequente 
 mapa não têm cron NENHUM** (webhook como `omie-nfe-webhook`, ou invocada sob demanda pelo app como
 `analyze-unified-order`), e para essas a prova passiva é *impossível*; ainda por cima
 `net._http_response` expira no TTL do pg_net, então a janela só encolhe. O remédio é
-`bun run sonda:sql <edge>…` — PASSO 1 (escrita + vault) o founder cola no SQL Editor do Lovable;
-PASSO 2 julga em SELECT puro (`--so-leitura`, roda no `psql-ro`); com o id em mãos, `--request-ids
-<slug>=<id>` fecha o vínculo. ⚠️ Aprendido caro: o autor do próprio script leu este ramo como
-"espere o próximo tick do cron" **horas depois de escrevê-lo**, ao verificar dois deploys reais — a
-espera nunca terminaria, e o `SEM_PROVA` persistente passaria por pendência real (chip eterno numa
+`bun run sonda:sql <edge>…` — o PASSO 1 escreve (vault + INSERT): commite o `.sql` em `db/` e
+rode `bun run db:aplicar` (o envelope, `--ensaio` antes); colar no SQL Editor do Lovable é o
+FALLBACK, de quem só tem o `psql-ro`. PASSO 2 julga em SELECT puro (`--so-leitura`, roda no
+`psql-ro`); com o id em mãos, `--request-ids <slug>=<id>` fecha o vínculo. ⚠️ Aprendido caro: o
+autor do próprio script leu este ramo como "espere o próximo tick do cron" **horas depois de
+escrevê-lo**, ao verificar dois deploys reais — a espera nunca terminaria, e o `SEM_PROVA`
+persistente passaria por pendência real (chip eterno numa
 edge que já está no ar). O script hoje imprime o remédio no rodapé, preso pelo caso 3b e pela
 sabotagem (a6).
 
 Se a sessão tocou edge: ela está NO AR? (Evidência: o veredito do script acima — não a memória
 da conversa, e não "o Lovable disse Active".) **Pendente → DEPLOYE AQUI, nesta sessão**, não
 escreva um recado sobre isso:
+
+⚠️ **RE-MEÇA imediatamente antes de ENVIAR — a medição do passo 3 envelhece enquanto você decide.**
+O veredito `DESATUALIZADA`/`DIVERGE_P1` sai da última sonda gravada, que pode ter **horas**; e o cron
+de sondagem (`37 */2 * * *`) grava uma nova a qualquer momento, inclusive entre a sua medição e o seu
+envio. Medido em 2026-09-10: o fecho leu às 00:51Z uma sonda de **23:32Z** (`DIVERGE_P1`, v1.0), o
+cron sondou às **00:57Z** já com a v1.1 no ar — outra sessão havia deployado — e o envio ao Lovable
+saiu às ~01:16Z, **19 min depois de a pendência ter deixado de existir**. Não houve dano (o agente
+conferiu os 12 `sha256` e publicou o mesmo bundle), mas foi deploy redundante, que é a classe do
+`docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md` — e com ~30 worktrees a pendência que
+você mediu é frequentemente de OUTRA sessão, que também está fechando e também vai deployar.
+
+É o mesmo reflexo do `gh pr create` (CLAUDE.md §Multi-sessão: "RE-conferir imediatamente antes"), e
+custa um comando: rode `pendencias:deploy` de novo **depois** de montar o pacote e **antes** do
+`send_message`. Exit 0 ⇒ **não envie**: alguém chegou primeiro, e isso é desfecho ✅, não ❌.
 
 ```bash
 PEND=$(mktemp -t pend)                                     # único por invocação: /tmp/pend.json colide entre worktrees

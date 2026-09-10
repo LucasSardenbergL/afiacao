@@ -454,7 +454,7 @@ export function auditarContratos(canarias: EstadoCanaria[]): AchadoCanaria[] {
 // ─── I/O: git ────────────────────────────────────────────────────────────────────────────────
 
 /** marcador interno para "o lado HEAD", que pode ser uma rev ou o working tree */
-const LADO_HEAD = ' head';
+const LADO_HEAD = '\0head';
 
 const CACHE_FONTE = new Map<string, string | null>();
 

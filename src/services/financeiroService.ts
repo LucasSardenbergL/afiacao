@@ -14,7 +14,14 @@ import type {
 
 export interface FinResumo {
   contas_correntes: { descricao: string; saldo_atual: number; banco: string }[];
-  saldo_total_cc: number;
+  /**
+   * Soma dos saldos das contas ativas — `null` quando INDISPONÍVEL (nenhuma conta ativa,
+   * ou alguma conta com saldo desconhecido). Ausente ≠ zero: o `reduce` devolvia `0` tanto
+   * para "não sei" quanto para "as contas somam zero", e os dois alimentavam a mesma
+   * divisão de cobertura de caixa e a mesma projeção. Mesma blindagem que a
+   * `fin-cashflow-engine` já aplica com `exigirLinhas` no caminho dela.
+   */
+  saldo_total_cc: number | null;
   total_a_receber: number;
   total_a_pagar: number;
   total_vencido_receber: number;
@@ -246,7 +253,18 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
       somarSaldoPorStatus("fin_contas_pagar", company, VENCIDO_TITLE_STATUSES),
     ]);
 
-    const contasNorm = (contas || []).map((c) => ({
+    const contasBrutas = contas ?? [];
+
+    // Ausente ≠ zero. O `reduce` cru devolvia `0` em dois estados que NÃO são o mesmo fato:
+    // "nenhuma conta ativa" (a leitura não errou — RLS ou flag `ativo` podem devolver lista
+    // vazia sem erro) e "as contas somam zero". Esse zero fabricado desce para a divisão de
+    // cobertura de caixa (`financeiroAlerts`) como alerta crítico falso, e para a projeção de
+    // fluxo como âncora que a empresa não tem. Conta ativa com `saldo_atual` NULL contamina
+    // igual: a soma sairia INCOMPLETA, com cara de completa.
+    const saldoIndisponivel =
+      contasBrutas.length === 0 || contasBrutas.some((c) => c.saldo_atual == null);
+
+    const contasNorm = contasBrutas.map((c) => ({
       descricao: c.descricao ?? "",
       saldo_atual: c.saldo_atual ?? 0,
       banco: c.banco ?? "",
@@ -254,7 +272,9 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
 
     resumo[company] = {
       contas_correntes: contasNorm,
-      saldo_total_cc: contasNorm.reduce((s, c) => s + c.saldo_atual, 0),
+      saldo_total_cc: saldoIndisponivel
+        ? null
+        : contasNorm.reduce((s, c) => s + c.saldo_atual, 0),
       total_a_receber: totalAReceber,
       total_a_pagar: totalAPagar,
       total_vencido_receber: vencidoReceber,
@@ -363,7 +383,7 @@ export async function getFluxoCaixa(
     buscarTodasPaginas(`CR do fluxo de caixa (${company})`, (from, to) => {
       let q = supabase
         .from("fin_contas_receber")
-        .select("data_vencimento, data_recebimento, valor_documento, valor_recebido, status_titulo")
+        .select("data_vencimento, saldo, status_titulo")
         .gte("data_vencimento", dataInicio)
         .lte("data_vencimento", dataFim);
       if (company !== 'all') q = q.eq("company", company);
@@ -372,7 +392,7 @@ export async function getFluxoCaixa(
     buscarTodasPaginas(`CP do fluxo de caixa (${company})`, (from, to) => {
       let q = supabase
         .from("fin_contas_pagar")
-        .select("data_vencimento, data_pagamento, valor_documento, valor_pago, status_titulo")
+        .select("data_vencimento, saldo, status_titulo")
         .gte("data_vencimento", dataInicio)
         .lte("data_vencimento", dataFim);
       if (company !== 'all') q = q.eq("company", company);
@@ -398,11 +418,34 @@ export async function getFluxoCaixa(
     return fluxoMap.get(d)!;
   };
 
+  // PREVISTO = `saldo` (coluna GERADA em prod: `valor_documento - COALESCE(valor_recebido/pago, 0)`),
+  // nunca `valor_documento`. Um título com BAIXA PARCIAL continua com status ABERTO, mas a parte
+  // já baixada JÁ entrou na conta — e portanto já está no `saldo_atual` de `fin_contas_correntes`,
+  // que é a ÂNCORA da projeção desta tela. Somar o valor CHEIO conta essa parte duas vezes: é o
+  // mesmo eixo da dupla contagem corrigida no saldo projetado do FluxoCaixaTab (nível da SEMANA),
+  // um degrau abaixo — no nível do TÍTULO. Achado da 2ª opinião Codex, deixado fora daquele escopo
+  // de propósito. `saldo` é também a fonte de `somarSaldoAberto` (canônica de "aberto": DSO, KPIs
+  // de /financeiro/gestao, resumo), então as duas leituras param de divergir por construção.
+  //
+  // ⚠️ HOJE a troca é NUMERICAMENTE INERTE, e isso é medição, não esperança: o LIST do Omie não
+  // traz a baixa (#396), então `valor_recebido`/`valor_pago` são 0 em 100% do universo — medido
+  // 2026-09-09 via psql-ro: ZERO linhas com `saldo <> valor_documento` em 44.526 CR + 16.125 CP,
+  // RECEBIDO/PAGO inclusive. Ela é defesa em profundidade: o dia em que o ingest passar a gravar a
+  // baixa, esta tela já estará certa em vez de inflar o previsto em silêncio. Enquanto #396 não
+  // for resolvida, nenhuma baixa parcial chega aqui — o gatilho do defeito é o INGEST, não a tela.
+  //
+  // Por que aqui NÃO degrada para `null`/"—" como em `procedencia-baixa.ts` (#2437): aquele helper
+  // separa dois casos e este é o PRIMEIRO — "quem soma `saldo` FILTRANDO status", que o guard de
+  // `titulo-status.ts` protege. O segundo (coluna de baixa exibida CRUA: cards Recebido/Pago, a
+  // coluna Saldo por linha, o CSV) é que vira "—", porque ali nenhum filtro de status conserta o
+  // número. Aqui o filtro já exclui RECEBIDO/PAGO, que é onde `saldo == valor de face` mentiria;
+  // o que sobra é o valor de face de título ABERTO — o melhor fato disponível, não uma fabricação.
+  // Quando a rota `mf` passar a ingerir a baixa, esta soma fica certa sem mudar uma linha.
   for (const cr of crData) {
     if (cr.data_vencimento) {
       const day = ensureDay(cr.data_vencimento);
       if (cr.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cr.status_titulo)) {
-        day.entradas_previstas += cr.valor_documento || 0;
+        day.entradas_previstas += cr.saldo ?? 0;
       }
     }
   }
@@ -411,7 +454,7 @@ export async function getFluxoCaixa(
     if (cp.data_vencimento) {
       const day = ensureDay(cp.data_vencimento);
       if (cp.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cp.status_titulo)) {
-        day.saidas_previstas += cp.valor_documento || 0;
+        day.saidas_previstas += cp.saldo ?? 0;
       }
     }
   }

@@ -86,9 +86,28 @@ interface PedidoOmie {
 Deno.serve(async (req) => {
   // A sonda responde o marcador e SAI: esta edge escreve, e uma sonda que caísse no fluxo
   // normal dispararia um backfill de verdade. `null` = não é sonda, segue o caminho normal.
-  const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
-  if (sonda) return sonda;
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  //
+  // Ela mora DENTRO do bloco OPTIONS, e não antes dele, porque essa é a forma que o `gateG1` de
+  // `scripts/sonda-cron-prova.ts` sabe MEDIR — e a allowlist do cron (F4 onda 5) só aceita edge
+  // cujo preflight ele consegue ler.
+  //
+  // O que a troca preserva, e o que ela NÃO preserva (challenge Codex, 2026-09-09): a RESPOSTA de
+  // todo método é idêntica, porque `atenderSondaOptions` abre com
+  // `if (req.method !== METODO_SONDA) return null` (METODO_SONDA = "OPTIONS") — fora deste bloco
+  // ela só devolvia `null`. O que muda é um ponto de SUSPENSÃO: para POST/GET/HEAD havia um
+  // `await` antes do gate de auth, e agora não há. Isso é ordem de microtask, não resposta
+  // observável — mas "provadamente neutra" era forte demais, e a diferença fica escrita aqui em vez
+  // de virar surpresa de quem for medir latência ou ordem de log.
+  //
+  // O corpo `"ok"` fica byte a byte porque trocá-lo pelo `null` das outras edges mudaria o CORS
+  // servido ao browser para agradar um gate — mudar o medido para agradar o medidor. (Não é a
+  // parte (b) da prova que obriga isso: ela compara os negativos com o preflight do MESMO closure,
+  // não com uma resposta anterior à mudança.)
+  if (req.method === "OPTIONS") {
+    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
+    if (sonda) return sonda;
+    return new Response("ok", { headers: corsHeaders });
+  }
 
   // Gate na FRONTEIRA: a RPC abaixo é SECURITY DEFINER e bypassa RLS, então quem decide quem
   // pode reescrever desconto de item é aqui, não lá dentro.

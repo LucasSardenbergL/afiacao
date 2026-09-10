@@ -89,19 +89,48 @@ export function envelopeInerte(sql: string): string {
   );
 }
 
-if (import.meta.main) {
-  const nomes = process.argv.slice(2);
-  if (nomes.length === 0) {
-    console.error('uso: bun db/lib/gerar-canaria-fixture.ts <canaria> [<canaria> ...]');
-    process.exit(1);
+/**
+ * Separa `--janela <n>` dos nomes de canária. LANÇA se a flag vier sem valor.
+ *
+ * A janela precisa existir AQUI, e não só na CLI, para que `EQUIVALENCIA_CANARIA` possa comparar
+ * essa dimensão: enquanto o executável não a aceitava, a igualdade só cobria o default, e uma
+ * divergência no tratamento de `--janela` entre os dois caminhos passaria sem sensor — que é o
+ * defeito inteiro que aquela asserção existe para fechar.
+ *
+ * O VALOR não é validado aqui de propósito: quem recusa fora de 1..120 é o `validarJanela` do
+ * gerador, o MESMO que a CLI usa. Validar de novo aqui seria uma segunda régua para divergir.
+ */
+export function separarJanela(argv: readonly string[]): {
+  nomes: string[];
+  janelaMin: number | undefined;
+} {
+  const nomes: string[] = [];
+  let janelaMin: number | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== '--janela') {
+      nomes.push(argv[i]);
+      continue;
+    }
+    const valor = argv[i + 1];
+    if (valor === undefined) throw new Error('--janela sem valor (use `--janela <minutos>`).');
+    janelaMin = Number(valor);
+    i++;
   }
+  return { nomes, janelaMin };
+}
+
+if (import.meta.main) {
   const raiz = join(import.meta.dirname, '..', '..');
   try {
+    const { nomes, janelaMin } = separarJanela(process.argv.slice(2));
+    if (nomes.length === 0) {
+      throw new Error('uso: bun db/lib/gerar-canaria-fixture.ts <canaria> [...] [--janela <min>]');
+    }
     // A MESMA recusa da CLI, pela MESMA função: esta é a segunda fronteira que pede uma leva, e
     // enquanto a checagem viveu só no `parsearArgs` a fixture emitia o que a CLI recusa emitir.
     recusarCanariasRepetidas(nomes);
     process.stdout.write(
-      envelopeInerte(gerarSqlDasCanarias({ raiz, nomes, ler: lerCanariasDoRepo })),
+      envelopeInerte(gerarSqlDasCanarias({ raiz, nomes, janelaMin, ler: lerCanariasDoRepo })),
     );
   } catch (e) {
     console.error(`❌ ${(e as Error).message}`);

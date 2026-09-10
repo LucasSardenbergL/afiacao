@@ -46,7 +46,12 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     Object.keys(resumo).length > 0
       ? {
           contas_correntes: Object.values(resumo).flatMap(r => r.contas_correntes),
-          saldo_total_cc: Object.values(resumo).reduce((s, r) => s + r.saldo_total_cc, 0),
+          // Consolidado "todas": indisponível se faltar o saldo de QUALQUER CNPJ do grupo.
+          // Somar só quem respondeu daria um total menor apresentado como total do grupo —
+          // e caixa é por-CNPJ, não-fungível: a parcela que falta não se estima pelas outras.
+          saldo_total_cc: Object.values(resumo).some((r) => r.saldo_total_cc === null)
+            ? null
+            : Object.values(resumo).reduce((s, r) => s + (r.saldo_total_cc ?? 0), 0),
           total_a_receber: Object.values(resumo).reduce((s, r) => s + r.total_a_receber, 0),
           total_a_pagar: Object.values(resumo).reduce((s, r) => s + r.total_a_pagar, 0),
           total_vencido_receber: Object.values(resumo).reduce((s, r) => s + r.total_vencido_receber, 0),

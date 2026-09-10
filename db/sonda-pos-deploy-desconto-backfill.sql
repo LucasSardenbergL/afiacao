@@ -1,3 +1,26 @@
+-- ============================================================
+-- SONDA PÓS-DEPLOY — `omie-desconto-backfill`, leva do #2448
+--
+-- POR QUE UM ARQUIVO NOVO, e não reaplicar o irmão `db/sonda-omie-desconto-backfill.sql`:
+--   o `db:aplicar` guarda o sha256 no ledger `db_aplicacoes` e RECUSA os mesmos bytes
+--   ("já aplicado — nada a fazer", exit 3). Isso é desenho, não obstáculo: o ledger prova que
+--   UM corpo específico rodou, e reaplicar os mesmos bytes não é um fato novo. Sonda é uma
+--   MEDIÇÃO, e cada medição precisa de identidade própria para ser rastreável.
+--
+-- POR QUE ELA PRECISA EXISTIR AGORA:
+--   a 1ª atestação (irmão acima, aplicada 2026-09-09 23:32) mediu o bundle ANTERIOR ao #2448.
+--   O deploy da v1.1 aconteceu depois, e `edges-pendentes.sh` seguia lendo aquela resposta:
+--   `DESATUALIZADA · no ar d09a10f8… ≠ main e6fefcf6…`. O dado não estava errado — estava
+--   VELHO, e ler resposta velha como estado atual é o mesmo `ausente ≠ zero` no eixo do TEMPO.
+--
+--   E esperar não resolve: `omie-desconto-backfill` NÃO está na allowlist de
+--   `_shared/sonda-cron-alvos.ts` (conferido: 0 ocorrências), então nenhum tick do
+--   `deploy-sonda-cron` vai olhar para ela. Sem este disparo, a pendência é eterna.
+--
+-- Efeito: UM `net.http_post` com `{"probe": true}` — a edge responde o marcador e sai, sem tocar
+-- em `order_items`. O PASSO 2 (leitura) é SELECT puro e roda no psql-ro.
+-- ============================================================
+
 -- PASSO 1 — dispara as 1 edge(s) baratas da leva. É o bloco do FOUNDER: lê o
 --          vault e faz INSERT, e o wrapper read-only recusa os dois.
 -- Ele DEVOLVE o passo 2 já escrito, com o mapa edge→id dentro: copie a célula inteira.
@@ -28,7 +51,7 @@ SELECT format($sonda$
 --          1: nada a colar. Espere ~10s pela resposta HTTP. É SELECT puro —
 --          roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro
 WITH esperado(edge, versao_esperada, fonte_esperada) AS (VALUES
-  ('omie-desconto-backfill', 'v1.1-unicidade-no-universo-completo', 'e6fefcf6e87b93f2dc054580bbeea645760d76f765345d6d49bbe05f1a18d368')
+  ('omie-desconto-backfill', 'v1.0-backfill-oben-ttm', 'd09a10f83d4fff48aa81194a43c3642310d0c1a8acd42b36795e5fbdfe7602f3')
 ),
 recentes AS (
   -- A JANELA. O filtro textual roda ANTES do cast de propósito: um corpo não-JSON no meio da

@@ -6,7 +6,8 @@ import { fmtCompact } from '@/components/financeiro/dashboard/format';
 
 export function KpiCard({ title, value, icon: Icon, color, bgColor, subtitle, subtitleColor }: {
   title: string;
-  value: number;
+  /** `null` = indisponível → "—". Zero que chega como número é fato medido e aparece como R$ 0,00. */
+  value: number | null;
   icon: LucideIcon;
   color: string;
   bgColor: string;
@@ -19,7 +20,7 @@ export function KpiCard({ title, value, icon: Icon, color, bgColor, subtitle, su
         <div className="flex items-start justify-between">
           <div>
             <p className="text-xs text-muted-foreground font-medium">{title}</p>
-            <p className={`text-lg kpi-value mt-1 ${color}`}>{fmtCompact(value)}</p>
+            <p className={`text-lg kpi-value mt-1 ${color}`}>{value === null ? '—' : fmtCompact(value)}</p>
             {subtitle && (
               <p className={`text-xs mt-1 ${subtitleColor || 'text-muted-foreground'}`}>{subtitle}</p>
             )}
