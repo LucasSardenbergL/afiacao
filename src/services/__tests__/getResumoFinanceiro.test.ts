@@ -132,18 +132,56 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
   it('contas correntes: soma só as ativas da empresa e normaliza campos null', async () => {
     state.db.fin_contas_correntes = [
       { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 100, banco: '341' },
-      { company: 'oben', ativo: true, descricao: null, saldo_atual: null, banco: null },
+      { company: 'oben', ativo: true, descricao: null, saldo_atual: 20, banco: null },
       { company: 'oben', ativo: false, descricao: 'Encerrada', saldo_atual: 999, banco: '237' },
       { company: 'colacor', ativo: true, descricao: 'Outra', saldo_atual: 55, banco: '001' },
     ];
 
     const resumo = await getResumoFinanceiro(['oben']);
 
-    expect(resumo.oben.saldo_total_cc).toBe(100);
+    expect(resumo.oben.saldo_total_cc).toBe(120);
     expect(resumo.oben.contas_correntes).toEqual([
       { descricao: 'Itaú', saldo_atual: 100, banco: '341' },
-      { descricao: '', saldo_atual: 0, banco: '' },
+      { descricao: '', saldo_atual: 20, banco: '' },
     ]);
+  });
+
+  // Ausente ≠ zero. Estes dois casos eram um `0` cada — o mesmo `0` das contas que somam
+  // zero de verdade —, e desciam para a divisão de cobertura de caixa (alerta crítico falso)
+  // e para a âncora da projeção de fluxo.
+  it('conta ativa com saldo DESCONHECIDO torna o total indisponível, não menor', async () => {
+    state.db.fin_contas_correntes = [
+      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 100, banco: '341' },
+      { company: 'oben', ativo: true, descricao: 'Bradesco', saldo_atual: null, banco: '237' },
+    ];
+
+    const resumo = await getResumoFinanceiro(['oben']);
+
+    // Somar 100 seria apresentar um total INCOMPLETO com cara de completo.
+    expect(resumo.oben.saldo_total_cc).toBeNull();
+    // A listagem por conta continua como está — quem some é o TOTAL, que é o que decide.
+    expect(resumo.oben.contas_correntes).toHaveLength(2);
+  });
+
+  it('nenhuma conta ativa → total indisponível (lista vazia sem erro não prova caixa zero)', async () => {
+    state.db.fin_contas_correntes = [
+      { company: 'oben', ativo: false, descricao: 'Encerrada', saldo_atual: 999, banco: '237' },
+    ];
+
+    const resumo = await getResumoFinanceiro(['oben']);
+
+    expect(resumo.oben.saldo_total_cc).toBeNull();
+  });
+
+  it('contas que somam ZERO de verdade continuam sendo zero — fato medido, não ausência', async () => {
+    state.db.fin_contas_correntes = [
+      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 500, banco: '341' },
+      { company: 'oben', ativo: true, descricao: 'Bradesco', saldo_atual: -500, banco: '237' },
+    ];
+
+    const resumo = await getResumoFinanceiro(['oben']);
+
+    expect(resumo.oben.saldo_total_cc).toBe(0);
   });
 
   it('erro nos títulos LANÇA um Error real (nunca resumo parcial silencioso, nem "[object Object]" no banner)', async () => {
