@@ -2807,6 +2807,22 @@
     "em": "2026-09-09T01:19:37.943Z"
    }
   },
+  "omie-desconto-backfill": {
+   "d09a10f83d4fff48aa81194a43c3642310d0c1a8acd42b36795e5fbdfe7602f3@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "150856a593d573e1c0875b3e3dab9a58f575caff",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-10T01:19:38.938Z"
+   },
+   "e6fefcf6e87b93f2dc054580bbeea645760d76f765345d6d49bbe05f1a18d368@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "ccb04909bb45bf5cb3844e75857ba21f1bfc7d1d",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-09-10T01:19:39.230Z"
+   }
+  },
   "omie-nfe-webhook": {
    "103d9184f56b85c89905c4c0005ff005df7ed224da37df9e7620199bab75ce17@ad5e60cd07799ca3454d74ac246bcafbc38fba666945973cb1f9608b3b9b12ef:86d84cb3b339c208@642fcf96611c4a23": {
     "sha": "ad43dd625978124dbe0277be68f1dee3eb8b9fd4",

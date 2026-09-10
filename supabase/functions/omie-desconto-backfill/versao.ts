@@ -4,9 +4,13 @@
 // Esta edge nasce COM sensor: cada execução devolve o denominador (alvos, apurados, e as recusas
 // por motivo) e o `cursor` de onde parou. "Rodou e não deu erro" não é sinal de nada aqui — o
 // modo de falha característico do backfill é apurar POUCO e parecer bem-sucedido.
-export const VERSAO = "v1.1-unicidade-no-universo-completo";
+export const VERSAO = "v1.2-preflight-na-forma-que-a-prova-mede";
 
-// O que a sonda prova quando responde: que o bundle no ar conhece a régua de conciliação por trio.
+// O que a sonda prova quando responde: que o bundle no ar conhece a régua de conciliação por trio
+// E que o preflight já está na forma canônica — a guarda `atenderSondaOptions` DENTRO do bloco
+// `if (req.method === "OPTIONS")`, que é a única que o `gateG1` de `scripts/sonda-cron-prova.ts`
+// sabe medir. Esse é o pré-requisito de forma para a edge entrar na allowlist do cron (F4 onda 5)
+// e passar a ser atestada passivamente, em vez de por sonda humana a cada PR que a toca.
 // A edge é de EFEITO (escreve `order_items.desconto_valor`), então a sonda NUNCA escreve: ela
 // responde o marcador e sai, sem tocar no Omie e sem tocar no banco.
 export const EFEITO =
