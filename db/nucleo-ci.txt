@@ -54,6 +54,14 @@ db/test-sales_orders_omie_hash_unique.sh    5
 # repo, e nesse caso a INTERAÇÃO entre as duas deixa de ser verificada em silêncio. O número aqui
 # é o que faz esse silêncio virar vermelho.
 db/test-pedido-edicao-atomica.sh           54
+# O caminho pelo qual TODA mudança de banco entra em produção: `db:aplicar` + `aplicar_sql()`.
+# Tentativa gravada FORA da transação, recibo DENTRO; marcador positivo de fim; sha reconferido
+# pelo banco; e as duas classes de SQL que não cabem na transação do script (envelope e
+# `CREATE INDEX CONCURRENTLY`) recusadas antes de tocar no banco.
+# Entrou aqui porque a ausência já custou: o #2421 quebrou TODA migration com envelope e passou
+# verde no CI. Tinha duas camadas — as fixtures não cobriam a classe com `BEGIN;` (#2441), e a
+# prova rodava só no laptop, presa a um PGBIN de Homebrew. Portada para o pg-harness aqui.
+db/test-db-aplicar.sh                      36
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
 # A janela entre dois round-trips PostgREST, com uma chamada HTTP que cria pedido de

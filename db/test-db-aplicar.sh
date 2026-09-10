@@ -24,9 +24,16 @@
 # ╚═════════════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
+# Esta prova está em `db/nucleo-ci.txt` (job `provas-sql`): roda no caminho OBRIGATÓRIO do merge,
+# em modo normal, com mínimo de asserts declarado lá. Encolhê-la reprova o CI até alguém baixar
+# aquele número — e aí a perda de cobertura fica no diff, que é o ponto. O `--falsificar` continua
+# sendo local: ele sabota uma cópia e não é o que o runner executa.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
+# PGBIN resolvido por PLATAFORMA (macOS Homebrew / Linux PGDG), com conferência POSITIVA da
+# major — não `-x`, que um initdb de outra versão satisfaz. Hardcodar /opt/homebrew era a única
+# coisa que mantinha esta prova FORA do CI: o runner é ubuntu e o caminho não existe lá.
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"
 PORT="${PGPORT_TEST:-5481}"
 BOOT="$REPO_ROOT/db/claude-rw-bootstrap.sql"
 APLICAR="$REPO_ROOT/scripts/db-aplicar.sh"
@@ -56,8 +63,18 @@ ok()   { PASS=$((PASS+1)); printf '  ✅ %s\n' "$1"; }
 nok()  { FAIL=$((FAIL+1)); printf '  ❌ %s — %s\n' "$1" "$2"; }
 eq()   { if [ "$2" = "$3" ]; then ok "$1"; else nok "$1" "esperado '$3', veio '$2'"; fi; }
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 [ -f "$BOOT" ] || { echo "bootstrap ausente: $BOOT"; exit 1; }
+
+# SONDA de `shasum`, com resposta POSITIVA. É a única dependência do `db-aplicar.sh` que este
+# teste exerce e que o pg-harness não cobre — e é a que muda de plataforma: no macOS vem com o
+# sistema, no Linux vem do pacote `perl`. `command -v` não basta (presente-porém-quebrada
+# esvazia o guard igual): exigimos o hash CONHECIDO de uma entrada conhecida. Sem isso, a falta
+# apareceria lá dentro como "sha256 com formato inesperado", que culpa o arquivo errado.
+SHA_VAZIO="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+[ "$(printf '' | shasum -a 256 2>/dev/null | awk '{print $1}')" = "$SHA_VAZIO" ] || {
+  echo "ERRO: 'shasum -a 256' não respondeu o hash conhecido da entrada vazia."
+  echo "  O scripts/db-aplicar.sh depende dele para a identidade do que aplica."
+  echo "  Debian/Ubuntu: apt-get install -y perl   (shasum vem no pacote perl)"; exit 1; }
 
 cleanup() {
   "$PGBIN/pg_ctl" -D "$DATA" -m immediate stop >/dev/null 2>&1 || true
@@ -66,13 +83,32 @@ cleanup() {
 trap cleanup EXIT
 
 # ─── cluster ─────────────────────────────────────────────────────────────────────────────
-"$PGBIN/initdb" -D "$DATA" -U postgres --locale=C >/dev/null 2>&1
-"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -c listen_addresses=localhost" -l "$WORK/pg.log" -w start >/dev/null 2>&1
+# `-k "$WORK"`: o diretório do socket unix. Sem ele o postmaster usa o default COMPILADO, que
+# no PGDG (Ubuntu) é /var/run/postgresql — inexistente para o usuário do runner, e o servidor
+# não sobe. Conectamos por TCP, mas o postmaster cria o socket de qualquer jeito e ABORTA se
+# não puder. É o que reprovou a 1ª tentativa desta prova no CI; as 16 provas que já rodavam lá
+# passam `-k /tmp` pelo mesmo motivo. Aqui vai $WORK, que é por-prova: /tmp é compartilhado e
+# duas provas na mesma porta lógica brigariam pelo mesmo arquivo de socket.
+#
+# E a saída NÃO é mais descartada. Com `>/dev/null 2>&1` + `set -e`, um cluster que não sobe
+# matava o script MUDO: log vazio, exit 1, e o runner do núcleo imprimindo "── últimas linhas ──"
+# seguido de nada. Falha silenciosa é a pior classe de todas — a que não deixa nem por onde
+# começar. Cada ramo abaixo DIZ o que quebrou, com o que o Postgres respondeu.
+if ! "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C > "$WORK/initdb.log" 2>&1; then
+  echo "ERRO: initdb falhou (PGBIN=$PGBIN)"; tail -c 800 "$WORK/initdb.log"; exit 1
+fi
+if ! "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $WORK -c listen_addresses=localhost" \
+       -l "$WORK/pg.log" -w start > "$WORK/pgctl.log" 2>&1; then
+  echo "ERRO: o cluster de teste não subiu na porta $PORT (PGBIN=$PGBIN)"
+  echo "── pg_ctl ──"; tail -c 400 "$WORK/pgctl.log"
+  echo "── postmaster ──"; tail -c 800 "$WORK/pg.log" 2>/dev/null
+  exit 1
+fi
 
 PSQL="$PGBIN/psql -X -v ON_ERROR_STOP=1 -h localhost -p $PORT -U postgres -d postgres"
-q() { $PGBIN/psql -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null | tr -d ' \n'; }
+q() { "$PGBIN/psql" -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null | tr -d ' \n'; }
 # q() esmaga espaco e quebra de linha — serve para escalar, nao para corpo de funcao.
-q_bruto() { $PGBIN/psql -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null; }
+q_bruto() { "$PGBIN/psql" -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null; }
 
 # ─── fixture: o mínimo do Supabase que o bootstrap referencia ─────────────────────────────
 $PSQL >/dev/null 2>&1 <<'SQL'
