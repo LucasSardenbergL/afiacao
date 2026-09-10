@@ -12,6 +12,18 @@
 # Alvo: `supabase/functions/fin-funding/index.ts`, que carrega a forma DOMINANTE do repo (o gate
 # dentro do `if` do classificador). A perturbacao e de UMA linha: a emissao sobe para antes do gate.
 #
+# O QUE A MATRIZ DIZ, E O QUE ELA NAO CONSEGUE DIZER (medido 2026-09-10, sourceHead 1ebe696fc):
+#   · no motor, a poda parou no 2o vermelho — `sonda:bump` e `sonda:fingerprint` pegaram primeiro,
+#     por BYTES (qualquer mudanca num index.ts de edge instrumentada os aciona), e `sonda:autentica`
+#     NUNCA RODOU. A linha abaixo tem medicao, mas nao tem a execucao do proprio suspeito.
+#   · EFICACIA medida a parte, no alvo real, com controle verde na mesma invocacao: sem o defeito
+#     `sonda:autentica` rc=0; com ele, rc=1 citando fin-funding ("emite a resposta ANTES").
+#   · EXCLUSIVIDADE medida a parte, no fluxo que um autor DILIGENTE segue — o defeito + bump da
+#     VERSAO + `sonda:fingerprint -- --write`: bump rc=0, fingerprint rc=0, sonda:autentica rc=1.
+#     Os gates de bytes pegam o autor descuidado; so este pega o que fez o dever de casa.
+#   O corpus nao expressa o segundo cenario porque aceita UM alvo por defeito — e o cenario real
+#   toca tres arquivos. Zero exclusividade AQUI mede o formato do corpus, nao o gate.
+#
 # @origem:   docs/historico/controle-populacional-nao-prova-a-tentativa.md (a cadeia de 3 elos do controle ativo)
 # @suspeito: sonda:autentica
 sonda-responde-antes-do-gate | supabase/functions/fin-funding/index.ts | $feito = 1 if !$feito && s/^(\s+)const authSonda = await authorizeCronOrStaff\(req\);$/$1if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);\n$1const authSonda = await authorizeCronOrStaff(req);/
