@@ -51,9 +51,10 @@
  * main não mapeia ⇒ 🟠 FORA_DO_MAPA urgente — uma edge INVENTADA no relatório de deploy, e o slug
  * casa o regex da janela viva, então nada no banco a barraria; (b) o ledger é ETERNO e a janela do
  * pg_net dura 6h: a chance de atribuir morre com a janela, e a linha ficaria para sempre
- * impossível de reinterpretar; (c) este CLI lê pelo `psql-ro` — gravar exigiria o founder colar
- * SQL, custo humano por um dado que não conclui nada. A prova não se perde: ela vira CLASSE no
- * relatório (exit 1), e veredito por edge quando houver `--ids`.
+ * impossível de reinterpretar; (c) este CLI lê pelo `psql-ro` — gravar exigiria sair pelo envelope
+ * (`.sql` commitado em `db/` + `bun run db:aplicar`), custo por um dado que não conclui nada.
+ * A prova não se perde: ela vira CLASSE no relatório (exit 1), e veredito por edge quando
+ * houver `--ids`.
  *
  * POR QUE NÃO HÁ CRON DE SONDA ATIVA: o desenho inicial tinha um (6/6h, allowlist das edges que
  * já responderam `probe:true`). O Codex derrubou: rollback pelo Lovable, restauração de projeto
@@ -549,7 +550,9 @@ function imprimir(rel: Relatorio, linhasSemIdentidade: string[]): void {
   const sondar = edgesParaSondar(rel);
   if (sondar.length > 0) {
     console.log(
-      `\n   → sonda (founder cola no SQL Editor): bun run sonda:sql ${sondar.join(' ')}` +
+      `\n   → sonda: bun run sonda:sql ${sondar.join(' ')}` +
+        '\n     O PASSO 1 escreve (vault + INSERT): commite o .sql em db/ e rode `bun run db:aplicar` — ou' +
+        '\n     cole no SQL Editor. O PASSO 2 é SELECT puro e roda no psql-ro.' +
         '\n     A resposta entra no ledger em até 15 min (cron deploy-atestacoes-colher) e vale até o fonte da main mudar.',
     );
     // Sem `--ids` não dá para saber QUAIS destas já responderam — mas dá para não deixar as duas

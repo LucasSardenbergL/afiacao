@@ -298,11 +298,13 @@ cujo fluxo NORMAL já ecoa o envelope (`edge`+`fonte`) **e** tem cron frequente 
 mapa não têm cron NENHUM** (webhook como `omie-nfe-webhook`, ou invocada sob demanda pelo app como
 `analyze-unified-order`), e para essas a prova passiva é *impossível*; ainda por cima
 `net._http_response` expira no TTL do pg_net, então a janela só encolhe. O remédio é
-`bun run sonda:sql <edge>…` — PASSO 1 (escrita + vault) o founder cola no SQL Editor do Lovable;
-PASSO 2 julga em SELECT puro (`--so-leitura`, roda no `psql-ro`); com o id em mãos, `--request-ids
-<slug>=<id>` fecha o vínculo. ⚠️ Aprendido caro: o autor do próprio script leu este ramo como
-"espere o próximo tick do cron" **horas depois de escrevê-lo**, ao verificar dois deploys reais — a
-espera nunca terminaria, e o `SEM_PROVA` persistente passaria por pendência real (chip eterno numa
+`bun run sonda:sql <edge>…` — o PASSO 1 escreve (vault + INSERT): commite o `.sql` em `db/` e
+rode `bun run db:aplicar` (o envelope, `--ensaio` antes); colar no SQL Editor do Lovable é o
+FALLBACK, de quem só tem o `psql-ro`. PASSO 2 julga em SELECT puro (`--so-leitura`, roda no
+`psql-ro`); com o id em mãos, `--request-ids <slug>=<id>` fecha o vínculo. ⚠️ Aprendido caro: o
+autor do próprio script leu este ramo como "espere o próximo tick do cron" **horas depois de
+escrevê-lo**, ao verificar dois deploys reais — a espera nunca terminaria, e o `SEM_PROVA`
+persistente passaria por pendência real (chip eterno numa
 edge que já está no ar). O script hoje imprime o remédio no rodapé, preso pelo caso 3b e pela
 sabotagem (a6).
 

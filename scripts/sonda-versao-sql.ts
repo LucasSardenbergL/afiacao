@@ -1027,9 +1027,14 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
     const leva = daLista(grupos.baratas);
     if (querDisparo) {
       partes.push(
-        `-- PASSO 1 — dispara as ${leva.length} edge(s) baratas da leva. É o bloco do FOUNDER: lê o\n` +
-          `--          vault e faz INSERT, e o wrapper read-only recusa os dois.\n` +
-          `-- Ele DEVOLVE o passo 2 já escrito, com o mapa edge→id dentro: copie a célula inteira.\n` +
+        `-- PASSO 1 — dispara as ${leva.length} edge(s) baratas da leva. Exige ESCRITA: lê o vault e\n` +
+          '--          faz INSERT, e o wrapper read-only recusa os dois — o que NÃO é o mesmo que\n' +
+          '--          "só o founder consegue". Caminho da SESSÃO: commite este .sql em db/ e rode\n' +
+          '--          `bun run db:aplicar db/<arquivo>.sql` (`--ensaio` antes) — o envelope, com\n' +
+          '--          sha256, ledger e marcador de fim. Colar no SQL Editor do Lovable é o\n' +
+          '--          FALLBACK: de quem só tem o psql-ro (docs/agent/database.md §"o ENVELOPE").\n' +
+          '-- Ele DEVOLVE o passo 2 já escrito, com o mapa edge→id dentro: copie a saída inteira — a\n' +
+          '-- célula do SQL Editor, ou o log que o db:aplicar aponta no fim.\n' +
           blocoDisparo(ref, leva, 1, janelaMin),
       );
     }
@@ -1747,8 +1752,13 @@ export function gerarSqlDeCanariasResolvidas(
   if (baratas.length > 0) {
     partes.push(
       `-- PASSO 1 — dispara as ${baratas.length} canária(s) cujo bundle velho NÃO cai em efeito caro.\n` +
-        '--          É o bloco do FOUNDER: lê o vault e faz INSERT, e o read-only recusa os dois.\n' +
-        '-- Ele DEVOLVE o passo 2 já escrito, com o mapa nome→id dentro: copie a célula inteira.\n' +
+        '--          Exige ESCRITA: lê o vault e faz INSERT, e o read-only recusa os dois — o que\n' +
+        '--          NÃO é o mesmo que "só o founder consegue". Caminho da SESSÃO: commite este\n' +
+        '--          .sql em db/ e rode `bun run db:aplicar db/<arquivo>.sql` (`--ensaio` antes) —\n' +
+        '--          o envelope, com sha256, ledger e marcador de fim. Colar no SQL Editor é o\n' +
+        '--          FALLBACK: de quem só tem o psql-ro (docs/agent/database.md §"o ENVELOPE").\n' +
+        '-- Ele DEVOLVE o passo 2 já escrito, com o mapa nome→id dentro: copie a saída inteira — a\n' +
+        '-- célula do SQL Editor, ou o log que o db:aplicar aponta no fim.\n' +
         blocoDisparoCanaria(ref, baratas, 1, janelaMin),
     );
   }
