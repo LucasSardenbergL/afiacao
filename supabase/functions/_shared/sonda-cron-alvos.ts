@@ -213,6 +213,21 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   // nunca bootou e nunca respondeu a request nenhum. A prova agora o DISPENSA por nome, em vez de
   // tratar "não consegui medir" e "não podia estar no ar" como a mesma coisa.
   { edge: "omie-sync-nfes-recebidas", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  // F4 onda 5 (2026-09-09) — `omie-desconto-backfill`, a primeira edge que ENTRA declarando
+  // escrita. Ela reescreve `order_items.desconto_valor` (o `EFEITO` do `versao.ts` diz isso em voz
+  // alta), então o zero de (a) aqui não é formalidade: um OPTIONS que caísse no fluxo normal seria
+  // um backfill não pedido a cada 2h, carimbando desconto na base da receita líquida. O que a
+  // torna elegível é a ORDEM dentro do `index.ts` — `atenderSondaOptions` responde e SAI antes do
+  // `authorizeCronOrStaff`, do `createClient` e de qualquer chamada ao Omie — e o `classificarSonda`
+  // fail-closed, que manda `probe` malformado para um 400 explícito em vez de deixá-lo escorregar
+  // para o caminho que escreve. Nada disso é aceito por leitura: quem aprova é a prova abaixo.
+  //
+  // Motivo de entrar AGORA: sem alvo de cron não há atestação passiva, e toda sessão que rodava o
+  // `/fecho` depois de um PR tocar esta edge a via pendente e disparava sonda à mão. Em 2026-09-09
+  // isso rendeu DUAS sondas manuais no mesmo dia (#2447 e #2451), porque o #2448 mexeu no
+  // `index.ts` horas depois da 1ª atestação — o padrão de trabalho duplicado por estado não
+  // compartilhado de `docs/historico/chips-duplicados-por-estado-compartilhado.md`.
+  { edge: "omie-desconto-backfill", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
   // ⛔ CANDIDATAS QUE A PROVA AINDA NÃO APROVOU. A coluna da direita é o resultado da ONDA 3,
   // depois que a sonda de corpos mediu o degrau de controle de cada uma:
   //   omie-vendas-sync         127/188 → 189/189  ✅ entrou (corpo {"action":"sync_products"})
