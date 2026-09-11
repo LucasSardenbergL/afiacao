@@ -211,10 +211,14 @@ espera() {
     bad "$desc — [SQL-INVALIDO] a leitura nem executou: $(head -c 120 "$TMP/veredito.err" | tr '\n' ' ')"
     return
   fi
+  # `${marca}` COM chaves, e não é estilo: o `…` que vem depois é multibyte, e em locale UTF-8 no
+  # macOS o bash lê o 1º byte dele como parte do NOME — `${marca\xE2}`, "unbound variable" sob
+  # `set -u`, e a suíte MORRE na primeira asserção que discorda. Medido em 2026-09-10: no 2º locale
+  # do `--falsificar` toda sabotagem ficava "vermelha" por esse crash, sem julgar nada.
   case "$v" in
     "$marca"*) ok "$desc" ;;
     "")        bad "$desc — nenhuma linha para '$nome' (a leitura não parte de \`esperado\`?)" ;;
-    *)         bad "$desc — esperava '$marca…', veio '${v:0:90}'" ;;
+    *)         bad "$desc — esperava '${marca}…', veio '${v:0:90}'" ;;
   esac
 }
 
@@ -527,6 +531,11 @@ tem_marca() (
 # julga_log <log> <marca> -> ecoa "" se o vermelho é o CERTO; senão, o que está errado nele.
 julga_log() {
   if grep -qF '[SQL-INVALIDO]' "$1"; then printf 'a sabotagem QUEBROU o SQL (nao mudou o julgamento)'; return; fi
+  # Erro do próprio bash (`<script>: line N: ...`): a suíte MORREU em vez de julgar. Foi a forma do
+  # `${marca}…` sem chaves, que só mata em locale UTF-8 — e por isso só aparece no 2º locale.
+  if grep -qE '\.sh: line [0-9]+: ' "$1"; then
+    printf 'a suite MORREU com erro de shell (%s)' "$(grep -oE 'line [0-9]+: .{0,50}' "$1" | head -1)"; return
+  fi
   tem_marca "$1" "$2" || printf "vermelho SEM a marca '%s'" "$2"
 }
 
