@@ -83,3 +83,12 @@ db/test-pedido-venda-coerencia.sh          31
 # 10 de 12 mutações sobrevivem lá), e as 10 sabotagens daqui eram a única rede real —
 # rodando fora do CI, que pelo critério do repo é ausência de dado.
 db/test-canaria-veredito.sh                21
+
+# ── Eixo 6 — DUPLA CONTAGEM (o mesmo fato sob N óticas) ──────────────────────────
+# `fin_movimentacoes` guarda o MESMO pagamento do Omie duas vezes (lançamento do título e
+# lançamento no banco) e ainda previsões. Somar sem escolher a ótica dobra o caixa sem erro
+# nenhum. Esta prova executa o bloco (c) do SQL da skill CFO EXTRAÍDO DO ARQUIVO — é a única
+# rede de um SQL que não é migration: a skill é texto, e quem a editar reintroduzindo a dobra
+# só fica vermelho aqui. Entrou em 2026-09-10, quando a dobra já tinha inflado a tendência de
+# caixa publicada no fechamento de abril (docs/cfo/2026-04-fechamento.md, errata).
+db/test-cfo-caixa-90d-otica.sh             30

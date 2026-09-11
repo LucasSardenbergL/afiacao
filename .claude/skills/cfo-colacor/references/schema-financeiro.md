@@ -61,6 +61,23 @@ Tudo read-only. Fonte: migrations `supabase/migrations/2026032820*`, `2026051900
 8. **`fin_kpi_tributario` e `fin_confiabilidade` provavelmente VAZIAS.** O painel tributário calcula no
    front; a confiabilidade nunca foi rodada. Pra carga use `fin_dre_snapshots.impostos / receita_bruta`;
    pra escolher regime do DRE tenha plano B (ver SKILL bloco 4), pois `pct_valor_mapeado` pode não existir.
+9. **🔴 `fin_movimentacoes` NÃO é somável sem escolher a ÓTICA** (medido contra produção em 2026-09-10).
+   O Omie devolve o MESMO pagamento duas vezes, e as duas linhas persistem: como lançamento do TÍTULO
+   (`categoria_descricao` = `CONTA_A_RECEBER`/`CONTA_A_PAGAR`) e como lançamento na CONTA CORRENTE
+   (`CONTA_CORRENTE_REC`/`CONTA_CORRENTE_PAG`, a baixa bancária). E ainda lista PREVISÕES
+   (`PREVISAO_PEDIDO_VENDA`/`PREVISAO_ORDEM_SERVICO`, tipo `E` com valor>0 — não é dinheiro). Somar sem
+   filtro conta o dinheiro ~2× (entradas de 90d: R$ 2,57 M somando tudo × R$ 1,14 M na ótica bancária), e
+   a dobra nem é ×2 exato (21,3% dos pares divergem no valor, 39,4% na data). **Escolha pela PERGUNTA:**
+   - *recebimentos/pagamentos de títulos* (o operacional, que se compara com CR/CP — critério do caixa
+     realizado do produto) → `categoria_descricao IN ('CONTA_CORRENTE_REC','CONTA_CORRENTE_PAG')` **e**
+     `omie_codigo_lancamento IS NOT NULL`;
+   - *todo o dinheiro que entrou/saiu da conta* (liquidez POR CNPJ) → a mesma allowlist **sem** o filtro de
+     título: transferência intercompany e tarifa são caixa real daquele CNPJ (o caixa do grupo não é fungível);
+   - *quando o título foi baixado* → a view `v_titulo_baixas`, que já escolhe a ótica por título.
+   Allowlist SEMPRE positiva e exata: `NOT LIKE 'CONTA_A_%'` deixa PREVISÃO entrar como caixa, e um prefixo
+   (`LIKE 'CONTA_CORRENTE%'`) aceita uma ótica nova que ninguém classificou. Baixas parciais na ótica bancária
+   são eventos distintos e SOMAM — não deduplique por título. Foi esta armadilha que inflou a tendência do
+   fechamento de abril (errata em `docs/cfo/2026-04-fechamento.md`).
 
 ## Tabelas núcleo (Omie sincronizado)
 Migration `20260328200000_financial_module.sql`. PK `id uuid`, todas com `company text`.
@@ -92,7 +109,8 @@ UNIQUE `(company, omie_ncodcc)`. **Saldo inicial de caixa = Σ `saldo_atual` WHE
 ### `fin_movimentacoes`
 `omie_ncodmov bigint`, `omie_ncodcc bigint`, `data_movimento date`, `tipo text` (`'E'`/`'S'`),
 `valor numeric`, `categoria_codigo text`, `conciliado boolean`, `omie_codigo_lancamento bigint`,
-`natureza text` (CP/CR/TRF/OUT).
+`natureza text` (CP/CR/TRF/OUT), **`categoria_descricao text` = a ÓTICA** (o `cGrupo` do Omie, 6 valores —
+nunca some sem filtrá-la, ver armadilha 9). `conciliado` é sempre `false` (o sync regrava) — não é dado.
 
 ### `fin_categorias`
 Plano de contas Omie: `omie_codigo text`, `descricao text`, `tipo text` (`'R'`/`'D'`/`'T'`),

@@ -114,9 +114,30 @@ ela **aborta** — a sentinela casa a ausência do `RAISE NOTICE`, não o texto 
    pode esconder necessidade de financiamento.
 3. **O fluxo de caixa REALIZADO tem a mesma dobra e não passa por esta view** — lê `fin_movimentacoes`
    direto e soma as duas óticas: medido, **R$ 22,39 M** de entradas contra **R$ 11,43 M** da ótica de
-   banco sozinha.
+   banco sozinha. → **Fechado no #2443** (`getFluxoCaixa` passou a ler só a ótica bancária).
 
 Correção de fato registrada: eu havia escrito que descartar a ótica de conta corrente na ingestão
 "destruiria o fluxo de caixa" por causa dos R$ 6,0 M de extrato sem título. Falso —
 `agregarRealizadoPorDia` descarta movimento sem título **de propósito**. O argumento que sustenta a
 decisão é o da inércia do hash (lição 1), não esse.
+
+## Os três consumidores que sobraram (2026-09-10)
+
+Varredura do repo inteiro (`src/`, edges, migrations, todas as skills, `db/`, `scripts/`, `docs/cfo/`) mais
+`pg_proc`/`pg_views` da PROD: fora desta view e do `getFluxoCaixa`, só três leitores somavam
+`fin_movimentacoes` sem escolher a ótica. Antes de corrigir, a primeira pergunta foi se cada um **roda** —
+e dois não rodam:
+
+| consumidor | roda? (medido na PROD) | desfecho |
+|---|---|---|
+| bloco (c) da skill CFO | **sim** — consulta manual, e publicou a tendência de caixa do fechamento de abril | **fechado**: ótica bancária + prova no núcleo do CI + errata no relatório — [cfo-caixa-90d-somava-as-duas-oticas.md](cfo-caixa-90d-somava-as-duas-oticas.md) |
+| `fin_calcular_confiabilidade` | **não** — `fin_confiabilidade` com `n_tup_ins = 0`; sem cron, sem chamador SQL/TS/edge; EXECUTE só para `postgres`/`service_role` | **código morto, só registrado** (abaixo) |
+| `gerarConciliacao` (`FinanceiroConciliacao.tsx`) | **não** — `fin_conciliacao` com `n_tup_ins = 0`; `fin_permissoes` vazia e sem UI que a grave, então a policy `fin_conc_write` barra toda escrita do app | defesa da ótica, em PR separado (decisão do Lucas) |
+
+**`fin_calcular_confiabilidade`, se um dia for religada:** `total_mov` conta as duas óticas mais as
+previsões (dobrado); `pct_mov_conciliado` é uma razão sobre `fin_movimentacoes.conciliado`, flag que o sync
+regrava `false` em toda carga — daria 0% por construção, não por medição (a dobra quase se cancela na
+razão, mas a flag já a torna inútil); `mov_sem_titulo` só conta linha da ótica bancária (a do título sempre
+tem lançamento), então não dobra. Os leitores (`useFinanceiroZone`, `TransparencyBadge`, cockpit) já
+degradam para "—" com a tabela vazia, e nada é fabricado hoje. Religar exige antes a ótica bancária no
+`total_mov` e um sinal de conciliação que exista de verdade.
