@@ -17,7 +17,8 @@ mapeamento. A **ação nº1** que destrava o mês é mapear os impostos `2.06.*`
 ## 1. Resumo executivo
 
 - ⚠️ *Errata 2026-09-10: as tendências mensais desta linha estão infladas (dupla contagem em
-  `fin_movimentacoes`) — na ótica bancária a Oben gera ~+R$ 14 mil/mês. Ver a errata na §2.*
+  `fin_movimentacoes`) — reestimada na ótica bancária com os dados de hoje, a Oben gera ~+R$ 14
+  mil/mês e não cobre a queima das outras duas. Ver a errata na §2.*
 - **Caixa**: grupo sustentado pela **Oben** (gera ~**+R$ 104 mil/mês**); **Colacor** (~−R$ 65 mil/mês)
   e **Colacor SC** (~−R$ 32 mil/mês) queimam caixa e operam com o **Itaú estourado** (provável
   cheque especial). Risco de liquidez concentrado nas duas que queimam.
@@ -38,17 +39,26 @@ mapeamento. A **ação nº1** que destrava o mês é mapear os impostos `2.06.*`
 **Movimentação líquida 90 dias** (cross-check via `fin_movimentacoes`): Colacor −R$ 195.200,47 ·
 Colacor SC −R$ 95.184,87 · Oben +R$ 311.873,09 — confirma a direção acima.
 
-> ⚠️ **Errata (2026-09-10) — a tendência mensal acima está INFLADA.** A coluna "Tendência" e o
-> resumo executivo saíram deste cross-check dividido por 3 (os três batem exatos: 311.873,09 ÷ 3 =
-> "+R$ 104 mil/mês"). E o bloco (c) da skill, que gerou o cross-check, somava as **duas óticas do
-> mesmo pagamento** em `fin_movimentacoes` (o lançamento do título **e** o do banco) mais as
-> previsões. Recalculado em 2026-09-10 para a mesma janela (2026-03-18 a 2026-06-16), só na ótica
-> bancária: Colacor **−R$ 130.641,98** (~−R$ 44 mil/mês) · Colacor SC **−R$ 53.223,51** (~−R$ 18
-> mil/mês) · Oben **+R$ 43.475,91** (~**+R$ 14 mil/mês**, não +R$ 104 mil). A direção se mantém; a
-> magnitude não — em particular, a Oben **não** sustenta o grupo na escala escrita acima.
-> Ressalva: o recálculo usa os dados de hoje, e os syncs desde junho mudaram linhas (o critério
-> antigo, rodado hoje na mesma janela, dá −247,8 mil / −110,7 mil / +212,7 mil, não os valores
-> publicados) — leia como ordem de grandeza. Detalhe:
+> ⚠️ **Errata (2026-09-10) — a tendência mensal acima está inflada por dupla contagem.** A coluna
+> "Tendência" e o resumo executivo são, pela aritmética, este cross-check ÷ 3 (311.873,09 ÷ 3 ≈
+> R$ 104 mil; os três casam depois de arredondar — é inferência, não registro de como foram gerados).
+> E o bloco (c) da skill, que gerou o cross-check, somava as **duas óticas do mesmo pagamento** em
+> `fin_movimentacoes` (o lançamento do título **e** o do banco) mais as previsões. Reestimado em
+> 2026-09-10 para a mesma janela (2026-03-18 a 2026-06-16), com os dados de hoje:
+>
+> | 90 dias | publicado | critério antigo, dados de hoje | ótica bancária, dados de hoje |
+> |---|--:|--:|--:|
+> | Colacor | −195.200,47 | −247.847,56 | **−130.641,98** (~−R$ 44 mil/mês) |
+> | Colacor SC | −95.184,87 | −110.702,28 | **−53.223,51** (~−R$ 18 mil/mês) |
+> | Oben | +311.873,09 | +212.710,80 | **+43.475,91** (~+R$ 14 mil/mês) |
+>
+> São dois efeitos misturados, e só um é a correção: da 1ª para a 2ª coluna mudaram os **dados**
+> (syncs desde junho); da 2ª para a 3ª, com os mesmos dados, mudou só o **critério** — que sozinho
+> corta o líquido da Oben em 80%. Por CNPJ a direção se mantém (Colacor e SC queimam, Oben gera);
+> a magnitude não, e a Oben **não** cobre a queima das outras duas na escala escrita acima. No total
+> do grupo o sinal inverte (+R$ 21,5 mil publicado → −R$ 140,4 mil), mas o critério antigo com os
+> dados de hoje já dá −R$ 145,8 mil: essa inversão vem dos dados, não do filtro. Leia a última
+> coluna como média mensal histórica reestimada, não como previsão. Detalhe:
 > [`docs/historico/cfo-caixa-90d-somava-as-duas-oticas.md`](../historico/cfo-caixa-90d-somava-as-duas-oticas.md).
 
 **Alertas ativos do engine** (Colacor): `caixa_negativo` **crítico** (~−370k) · inadimplência

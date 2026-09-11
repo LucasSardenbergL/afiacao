@@ -91,4 +91,4 @@ db/test-canaria-veredito.sh                21
 # rede de um SQL que não é migration: a skill é texto, e quem a editar reintroduzindo a dobra
 # só fica vermelho aqui. Entrou em 2026-09-10, quando a dobra já tinha inflado a tendência de
 # caixa publicada no fechamento de abril (docs/cfo/2026-04-fechamento.md, errata).
-db/test-cfo-caixa-90d-otica.sh             21
+db/test-cfo-caixa-90d-otica.sh             30
