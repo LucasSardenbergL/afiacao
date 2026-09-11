@@ -231,5 +231,42 @@
       "migration": "não",
       "secrets": "DEEPGRAM_API_KEY"
     }
+  },
+  {
+    "name": "asset em public/ é copiado para o dist — muda o que o Publish serve",
+    "files": [
+      "public/favicon.ico"
+    ],
+    "expect": {
+      "frontend": "SIM",
+      "edge": "não",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": ".env versionado: VITE_* é inlinado no bundle",
+    "files": [
+      ".env"
+    ],
+    "expect": {
+      "frontend": "SIM",
+      "edge": "não",
+      "migration": "não",
+      "secrets": "não"
+    }
+  },
+  {
+    "name": "lockfile de texto (bun.lock) e tsconfig do app — a tabela única do --bundle vale aqui",
+    "files": [
+      "bun.lock",
+      "tsconfig.app.json"
+    ],
+    "expect": {
+      "frontend": "SIM",
+      "edge": "não",
+      "migration": "não",
+      "secrets": "não"
+    }
   }
 ]

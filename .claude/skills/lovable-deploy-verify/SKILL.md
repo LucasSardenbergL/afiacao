@@ -71,9 +71,11 @@ Crie estes todos (TodoWrite) ao fechar uma entrega que pode precisar de deploy:
 ### Passo 1 — Classificar o diff
 
 O que o PR exige de manual? A lógica canônica — ampliada para pegar **arquivos de build na raiz**
-(`vite.config`, `package.json`, …), não só `src/`, e para acusar **secret novo de edge** — vive em
-[`evals/classify.sh`](evals/classify.sh) e é coberta por [`evals/run.sh`](evals/run.sh) (16 casos +
-mutation-check). **Rode da raiz do repo** (a 4ª linha lê o conteúdo das edges, não só os nomes):
+(`vite.config`, `package.json`, `public/`, `.env`, tsconfig, lockfiles, …), não só `src/`, e para
+acusar **secret novo de edge** — vive em [`evals/classify.sh`](evals/classify.sh) e é coberta por
+[`evals/run.sh`](evals/run.sh) (19 casos + mutation-check). A tabela do `frontend=` é a MESMA que o
+monitor usa no modo `--bundle` (§Smoke E2E autônomo) — uma lista só, que não diverge. **Rode da raiz
+do repo** (a 4ª linha lê o conteúdo das edges, não só os nomes):
 
 ```bash
 git diff --name-only origin/main...HEAD \
@@ -982,14 +984,17 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
 
 ```bash
 .claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh [url] [sentinela]
-# exit 0 = sincronizado · 3 = ATRASADO (Publish pendente) · 4 = deploy novo, versão indeterminada
+# exit 0 = sincronizado (MESMO commit) · 5 = SINCRONIZADO_EM_BUNDLE (SHA atrás, delta provado fora do bundle)
+#      3 = ATRASADO (Publish pendente; a linha "motivo:" diz qual elo) · 4 = deploy novo, versão indeterminada
 ```
 
-- **Determinístico** quando o ar tem `__BUILD_SHA__="<sha>"` — compara com `origin/main`.
+- **Determinístico** quando o ar tem `__BUILD_SHA__="<sha>"` — compara com `origin/main`, e se o SHA
+  difere, PROVA (ou não) que o delta não alcança o bundle (bloco "SHA atrás ≠ bundle atrás" abaixo).
 - **Fallback**: se vier `"dev"` (Lovable sem `.git` no build) ou ausente (build pré-carimbo), passe uma
   `sentinela` (string de UI única do HEAD) → o monitor cai pro `verify-frontend.sh`.
 - **Agendar** (cron de sistema, sem gastar Claude): `*/30 * * * * cd <repo> && bash .../monitor-deploy.sh
-  >> ~/.config/afiacao/deploy-monitor.log 2>&1` (exit 3/4 = avisar; combine com `osascript`/email).
+  >> ~/.config/afiacao/deploy-monitor.log 2>&1` — avise em **2/3/4** e **não** em 5 (`case $? in 2|3|4)
+  osascript …;; esac`); um `monitor … || avisa` voltaria a gritar no exit 5, que é justamente o ruído cortado.
 
 ✅ **MUDOU — o carimbo determinístico FUNCIONA (medido em prod 2026-09-08).** De 2026-06-26 até
 2026-09-07 esta seção dizia que o ar servia `__BUILD_SHA__="dev"` (o build do Lovable roda sem `.git`),
@@ -1037,6 +1042,28 @@ clone e dá rc **1** limpo, com cara de veredito, enquanto o squash (`eee71c80f`
 derrubou o critério "rc 3 → 0" como prova de Publish: com a `main` andando, `ar == main` fica
 inalcançável, e a transição que conta é a do `ar=` (e do entry). Detalhe em
 [`docs/historico/piloto-deploy-mcp-lovable.md`](../../../docs/historico/piloto-deploy-mcp-lovable.md) §"2ª medição".
+
+✅ **SHA atrás ≠ bundle atrás — o monitor PROVA o delta antes de pedir Publish (2026-09-10).** O caso
+acima (ar `eee71c80`, delta sem `src/`) agora sai **exit 5 `SINCRONIZADO_EM_BUNDLE`**. Só rebaixa se
+TODO elo responder positivamente — senão fica `ATRASADO` com a marca do elo em `motivo:`:
+fetch ok (`FETCH_FALHOU`) · o carimbo resolve e é **ancestral** da main (`CARIMBO_NAO_RESOLVE`,
+`NAO_ANCESTRAL`) · `git diff --no-renames` sai 0 e não vazio (`DIFF_FALHOU`, `DELTA_VAZIO`) · todo arquivo
+é INERTE na tabela de `classify.sh --bundle` (`ALCANCA_BUNDLE`, `SEM_CLASSIFICACAO`) ·
+[`scripts/alcance-bundle.py`](scripts/alcance-bundle.py) prova na main que nada do bundle importa de fora
+da tabela, que o build é `vite build` puro e que o `package.json` só mudou em scripts fora do pipeline
+(`ALCANCE_VAZA`, `BUILD_NAO_RECONHECIDO`, `PACKAGE_JSON_ALCANCA`, `PROVA_INDISPONIVEL`).
+Três escolhas que não são óbvias e têm caso na rede (`evals/monitor-deploy-eval.sh`):
+- **A lista de inertes é FECHADA.** Arquivo que não está nem em ALCANCA nem em INERTE é
+  `DESCONHECIDO` e segura o alarme — "não casou com a lista de alcance" seria ausência de dado lida
+  como aprovação. Arquivo novo na raiz (um `playwright.config.ts`) custa um ATRASADO até alguém
+  classificá-lo na tabela. No último mês, **zero** commits caíram aqui.
+- **`scripts` do `package.json` NÃO é toda inerte.** `build`, `pre/post*` e os ganchos de install
+  são executados pelo pipeline: mudou um deles ⇒ alcança. E se o build da main não for `vite build`
+  puro (`vite build && node scripts/gera.js`), `scripts/` deixa de ser inerte e o monitor recusa.
+- **`--no-renames`.** Com a detecção de rename (default), `git mv src/x.ts docs/` aparece no
+  `--name-only` só como `docs/x.ts` — delta "só de docs" com arquivo saindo do bundle.
+O exit 5 ainda **não** responde "o PR X está no ar?" (é a receita de ancestralidade acima), e a prova
+de que um Publish aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
 
 ## Referências
 - CLAUDE.md §"Deploy do FRONTEND (app) — Publish MANUAL no Lovable" (a técnica dos bytes; armadilha do chunk de nome inesperado)
@@ -1200,4 +1227,28 @@ inalcançável, e a transição que conta é a do `ar=` (e do entry). Detalhe em
   +`CONTROLE_NEGATIVO_OK`), carimbo `895b93ee` → `eee71c80`. Prova o CANAL e o CONTEÚDO com `src/`
   real; **não** o verbatim desse build (só a sentinela, sem diff contra build local) nem exclui um
   clique humano no mesmo minuto. Rendeu a lição da ancestralidade (§Smoke E2E autônomo).
+- [x] **SHA atrás ≠ bundle atrás — o monitor parou de pedir Publish para delta sem efeito no frontend
+  (2026-09-10).** Medido na verificação do Publish do #2458: ar `eee71c80f`, main `70fc305f3`, o ar
+  ANCESTRAL da main, e o delta era 1 commit (#2445) em `.claude/skills/…/evals/*.sh`,
+  `.github/workflows/ci.yml`, `db/*.sh`, `docs/**`, `scripts/**` e `package.json` — neste, só
+  `+ "sonda:autentica"` em `scripts`. Bundle igual ao que um Publish geraria, e o monitor dava exit 3
+  "Publish pendente". O `git grep` do `git diff`/`name-only` no monitor dava 0: ele nunca olhava o
+  delta. **Medida de ruído:** dos 725 commits de 1º pai da main desde 2026-08-10, **552 (76%)** não
+  alcançam o bundle (496 só em inertes + 56 com `package.json` mudando só scripts fora do pipeline) e
+  0 caíram em DESCONHECIDO — com Publish logo após cada mudança de `src/`, o exit 3 cru estaria
+  ligado em ~3 de cada 4 commits. **Caso vivo pós-mudança, na mesma noite:** ar `70fc305f`, main
+  `95e93330` (#2462 + #2463, 3 arquivos de docs/skill) → **exit 5** em produção, onde o monitor antigo
+  pediria o 2º Publish desnecessário do dia. A armadilha da premissa: o `classify.sh` do Passo 1
+  marca QUALQUER `package.json` como frontend (certo lá), então usá-lo cru mantinha o alarme — virou
+  o modo `--bundle`, com a tabela ÚNICA (e ela trouxe para o Passo 1 `public/`, `.env`, tsconfig e os
+  lockfiles de texto, que faltavam). A premissa do pedido também tinha um furo, que a rede cobre: a
+  seção `scripts` não é toda inerte (`build` É o comando do build). Rede:
+  `evals/monitor-deploy-eval.sh` no gate `run.sh` (8) — tabela de 34 caminhos + 22 cenários com exit
+  E marca; `--falsify` com 15 sabotagens, cada uma exigindo o desfecho PREVISTO (não só "falhou") nos
+  2 locales, precedidas do controle verde (30 execuções) e seguidas do controle de saída por cksum.
+  Meta-prova (transitória): sabotagem que só quebra a sintaxe é reprovada como "vermelho pelo motivo
+  ERRADO", e a suíte incondicionalmente vermelha aborta no controle. Limite honesto: o fechamento lê
+  imports/refs de caminho por regex (relativo, `@/`, `/public`, glob, `new URL` relativo, `url()` de
+  CSS, strings `./` dos configs de build); leitura por nome COMPUTADO (`readFileSync(dir + x)`) no
+  `vite.config` escaparia — hoje o config não lê arquivo nenhum.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
