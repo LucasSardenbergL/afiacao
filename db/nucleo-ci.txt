@@ -18,12 +18,18 @@
 # autorização > finitude monetária > atomicidade > concorrência. É a ordem de dano:
 # um furo de autorização vale por todos os outros somados.
 
-# Formato: <caminho> <mínimo de asserts>
+# Formato: <caminho> <mínimo de asserts> [falsificar=<n> | falsificar=fora-do-ci]
 # O segundo campo é CONTRATO, não enfeite: o fechamento das provas é
 # `[ "$FAIL" -eq 0 ]`, que **também aceita PASS=0** — uma prova truncada sai 0 e
 # passaria. O runner exige que o nº de asserts EXECUTADOS seja ≥ este número.
 # Subir asserts não quebra nada; encolher a prova reprova até alguém baixar o
 # número aqui — e aí a perda de cobertura fica no diff, que é o ponto.
+#
+# O terceiro é OBRIGATÓRIO quando a prova tem modo `--falsificar` (o runner procura
+# a flag no arquivo e reprova a linha que não declara). `falsificar=<n>` roda o modo
+# aqui e exige ≥n sabotagens com o vermelho CERTO — mesma lógica de ratchet do 2º
+# campo. `falsificar=fora-do-ci` é exceção declarada, com o motivo em comentário na
+# MESMA linha; o runner a imprime em toda execução. Detalhe no cabeçalho do runner.
 
 # ── Eixo 1 — AUTORIZAÇÃO ──────────────────────────────────────────────────────────
 # RLS sob `SET ROLE`, REVOKE nas DUAS pontas (PUBLIC e anon) e o `security_invoker`
@@ -61,7 +67,10 @@ db/test-pedido-edicao-atomica.sh           54
 # Entrou aqui porque a ausência já custou: o #2421 quebrou TODA migration com envelope e passou
 # verde no CI. Tinha duas camadas — as fixtures não cobriam a classe com `BEGIN;` (#2441), e a
 # prova rodava só no laptop, presa a um PGBIN de Homebrew. Portada para o pg-harness aqui.
-db/test-db-aplicar.sh                      36
+# O `--falsificar` dela (9 sabotagens) segue FORA: o 2º locale tem de ser pt_BR, porque o
+# `db-aplicar.sh` separa falha-limpa de desconhecido casando ERRO×ERROR do psql, e o runner
+# ubuntu não tem pt_BR — rodar em (C, C.UTF-8) seria a falsificação-em-um-ambiente do #1483.
+db/test-db-aplicar.sh                      36  falsificar=fora-do-ci  # sem pt_BR no runner, ERRO×ERROR do psql ficaria sem prova — provisionar locale e provar numa falha real
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
 # A janela entre dois round-trips PostgREST, com uma chamada HTTP que cria pedido de
@@ -76,13 +85,15 @@ db/test-pedido-venda-coerencia.sh          31
 # O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num
 # veredito: `CANARIA VERMELHA` que nunca dispara, 401 que vira fail-open, resposta
 # de ontem valendo como veredito de hoje. Esta prova é a única do núcleo que GERA o
-# SQL pelo próprio gerador (`bun scripts/sonda-versao-sql.ts --canaria --sem-rede`)
-# em vez de conferir um retrato commitado — por isso o job carrega o runtime bun, e
-# por isso ela envelhece junto com o gerador em vez de virar retrato velho.
-# Entrou no núcleo em 2026-09-08: o gate de mutação NÃO cobre o bloco canária (medido:
-# 10 de 12 mutações sobrevivem lá), e as 10 sabotagens daqui eram a única rede real —
-# rodando fora do CI, que pelo critério do repo é ausência de dado.
-db/test-canaria-veredito.sh                21
+# SQL pelo próprio gerador (`db/lib/gerar-canaria-fixture.ts`, sobre o gerador do
+# disco) em vez de conferir um retrato commitado — por isso o job carrega o runtime
+# bun, e por isso ela envelhece junto com o gerador em vez de virar retrato velho.
+# Entrou no núcleo em 2026-09-08 porque o gate de mutação NÃO cobre o bloco canária
+# (medido: 10 de 12 mutações sobrevivem lá). Mas o que entrou foi o modo NORMAL: as
+# sabotagens — a rede que dava sentido à entrada — seguiram fora do CI até 2026-09-10,
+# quando ganharam o 3º campo abaixo (e, antes de entrar, a exigência de vermelho pelo
+# motivo CERTO: duas delas ficavam vermelhas por SQL que nem compilava).
+db/test-canaria-veredito.sh                24  falsificar=17
 
 # ── Eixo 6 — DUPLA CONTAGEM (o mesmo fato sob N óticas) ──────────────────────────
 # `fin_movimentacoes` guarda o MESMO pagamento do Omie duas vezes (lançamento do título e
