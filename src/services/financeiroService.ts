@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
 import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
 import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/dso-dpo-helpers";
-import { OPEN_TITLE_STATUSES } from "@/lib/financeiro/titulo-status";
+import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
 import type {
@@ -369,6 +369,19 @@ export async function getDRE(
   return (data || []) as unknown as FinDRE[];
 }
 
+/**
+ * Status que admitem ENTRADA prevista no fluxo de caixa: só os três que o Omie manda de fato.
+ * Os outros três do aberto canônico (`OPEN_TITLE_STATUSES`) não provam dinheiro a entrar:
+ * 'ABERTO'/'VENCIDO' são o fallback do ingest quando o Omie NÃO manda status (e 'ABERTO' é o
+ * DEFAULT da coluna), e 'PARCIAL' só tem remanescente confiável com a baixa gravada — sem ela
+ * (#396) o `saldo` é o documento cheio, e a parte já recebida, que está no saldo âncora,
+ * entraria de novo. A SAÍDA prevista usa o aberto canônico inteiro (`isOpenTitleStatus`): lá,
+ * contar o ambíguo é o erro conservador, e deixá-lo de fora é que inflaria o saldo projetado.
+ * A assimetria é deliberada — status ambíguo nunca infla o caixa projetado (decisão do founder
+ * sobre o parecer Codex de 2026-09-10). Quando #396 gravar a baixa, rediscutir o 'PARCIAL'.
+ */
+const STATUS_ENTRADA_PREVISTA: ReadonlySet<string> = new Set(['A VENCER', 'ATRASADO', 'VENCE HOJE']);
+
 export async function getFluxoCaixa(
   company: Company | 'all',
   dataInicio: string,
@@ -419,33 +432,50 @@ export async function getFluxoCaixa(
   };
 
   // PREVISTO = `saldo` (coluna GERADA em prod: `valor_documento - COALESCE(valor_recebido/pago, 0)`),
-  // nunca `valor_documento`. Um título com BAIXA PARCIAL continua com status ABERTO, mas a parte
-  // já baixada JÁ entrou na conta — e portanto já está no `saldo_atual` de `fin_contas_correntes`,
-  // que é a ÂNCORA da projeção desta tela. Somar o valor CHEIO conta essa parte duas vezes: é o
-  // mesmo eixo da dupla contagem corrigida no saldo projetado do FluxoCaixaTab (nível da SEMANA),
-  // um degrau abaixo — no nível do TÍTULO. Achado da 2ª opinião Codex, deixado fora daquele escopo
-  // de propósito. `saldo` é também a fonte de `somarSaldoAberto` (canônica de "aberto": DSO, KPIs
-  // de /financeiro/gestao, resumo), então as duas leituras param de divergir por construção.
+  // nunca `valor_documento`. Um título com BAIXA PARCIAL continua em aberto, mas a parte já baixada
+  // JÁ entrou na conta — e portanto já está no `saldo_atual` de `fin_contas_correntes`, que é a
+  // ÂNCORA da projeção desta tela. Somar o valor CHEIO conta essa parte duas vezes: é o mesmo eixo
+  // da dupla contagem corrigida no saldo projetado do FluxoCaixaTab (nível da SEMANA), um degrau
+  // abaixo — no nível do TÍTULO (#2458).
   //
-  // ⚠️ HOJE a troca é NUMERICAMENTE INERTE, e isso é medição, não esperança: o LIST do Omie não
+  // STATUS: assimétrico por direção — entrada só com status nativo do Omie
+  // (`STATUS_ENTRADA_PREVISTA`, onde está o porquê), saída com o aberto canônico.
+  //
+  // PISO ZERO, POR TÍTULO: baixa maior que o documento (juros/multa na baixa, ou status defasado)
+  // dá `saldo < 0` num título ainda aberto. Somado cru, vira entrada NEGATIVA no CR e, no CP, saída
+  // negativa — que SOBE o acumulado. O piso descarta a contribuição que inverteria a direção do
+  // título; não afirma que ele foi liquidado (juros, erro de baixa ou compensação, a coluna não
+  // diz qual). Devolução ao cliente não passa por aqui: o Omie a lança como CP separada, que segue
+  // entrando. Por título e não por dia: no dia, o negativo de um título comeria o vizinho.
+  //
+  // Onde isto encontra `somarSaldoAberto` (DSO, KPIs de /financeiro/gestao, resumo): na COLUNA e,
+  // no CP, no filtro de status. O NÚMERO não converge por construção: lá é a soma dos saldos
+  // armazenados (o negativo abate o total) de todo título aberto; aqui é caixa futuro por título,
+  // só na janela da tela e, na entrada, só com status nativo.
+  //
+  // ⚠️ HOJE tudo isto é NUMERICAMENTE INERTE, e isso é medição, não esperança: o LIST do Omie não
   // traz a baixa (#396), então `valor_recebido`/`valor_pago` são 0 em 100% do universo — medido
-  // 2026-09-09 via psql-ro: ZERO linhas com `saldo <> valor_documento` em 44.526 CR + 16.125 CP,
-  // RECEBIDO/PAGO inclusive. Ela é defesa em profundidade: o dia em que o ingest passar a gravar a
-  // baixa, esta tela já estará certa em vez de inflar o previsto em silêncio. Enquanto #396 não
-  // for resolvida, nenhuma baixa parcial chega aqui — o gatilho do defeito é o INGEST, não a tela.
+  // 2026-09-10 via psql-ro: ZERO linhas com `saldo <> valor_documento` ou `saldo < 0` em 44.543 CR
+  // + 16.125 CP, e zero com status 'ABERTO'/'VENCIDO'/'PARCIAL'. É defesa em profundidade: o gatilho
+  // destes defeitos é o INGEST, não a tela.
   //
   // Por que aqui NÃO degrada para `null`/"—" como em `procedencia-baixa.ts` (#2437): aquele helper
   // separa dois casos e este é o PRIMEIRO — "quem soma `saldo` FILTRANDO status", que o guard de
   // `titulo-status.ts` protege. O segundo (coluna de baixa exibida CRUA: cards Recebido/Pago, a
   // coluna Saldo por linha, o CSV) é que vira "—", porque ali nenhum filtro de status conserta o
   // número. Aqui o filtro já exclui RECEBIDO/PAGO, que é onde `saldo == valor de face` mentiria;
-  // o que sobra é o valor de face de título ABERTO — o melhor fato disponível, não uma fabricação.
-  // Quando a rota `mf` passar a ingerir a baixa, esta soma fica certa sem mudar uma linha.
+  // o que sobra é o valor de face de título em aberto — o melhor fato disponível, não uma fabricação.
+  //
+  // O que gravar a baixa (#396) NÃO conserta sozinho: (1) desconto concedido reduz a obrigação sem
+  // ser dinheiro recebido, e a coluna seguiria com o documento cheio; (2) a âncora e este fluxo são
+  // carregados em momentos diferentes (FinanceiroDashboard.tsx), e o "Sincronizar" recarrega só o
+  // resumo — um título que vira RECEBIDO na sincronização já está na âncora e segue aqui como
+  // entrada prevista até o fluxo recarregar. O (2) já acontece hoje, sem #396.
   for (const cr of crData) {
     if (cr.data_vencimento) {
       const day = ensureDay(cr.data_vencimento);
-      if (cr.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cr.status_titulo)) {
-        day.entradas_previstas += cr.saldo ?? 0;
+      if (cr.status_titulo != null && STATUS_ENTRADA_PREVISTA.has(cr.status_titulo)) {
+        day.entradas_previstas += Math.max(0, cr.saldo ?? 0);
       }
     }
   }
@@ -453,8 +483,8 @@ export async function getFluxoCaixa(
   for (const cp of cpData) {
     if (cp.data_vencimento) {
       const day = ensureDay(cp.data_vencimento);
-      if (cp.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cp.status_titulo)) {
-        day.saidas_previstas += cp.saldo ?? 0;
+      if (isOpenTitleStatus(cp.status_titulo)) {
+        day.saidas_previstas += Math.max(0, cp.saldo ?? 0);
       }
     }
   }
