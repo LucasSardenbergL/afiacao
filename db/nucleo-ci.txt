@@ -93,7 +93,7 @@ db/test-pedido-venda-coerencia.sh          31
 # sabotagens — a rede que dava sentido à entrada — seguiram fora do CI até 2026-09-10,
 # quando ganharam o 3º campo abaixo (e, antes de entrar, a exigência de vermelho pelo
 # motivo CERTO: duas delas ficavam vermelhas por SQL que nem compilava).
-db/test-canaria-veredito.sh                24  falsificar=17
+db/test-canaria-veredito.sh                24  falsificar=18
 
 # ── Eixo 6 — DUPLA CONTAGEM (o mesmo fato sob N óticas) ──────────────────────────
 # `fin_movimentacoes` guarda o MESMO pagamento do Omie duas vezes (lançamento do título e
