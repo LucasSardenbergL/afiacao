@@ -130,7 +130,9 @@ MAPA_CARA='{"generate-tactical-plan": 2001}'
 # trava fechada produz é OUTRA coisa — `{"nome": null}`, um par com valor nulo, não agregado nulo.
 monta_leitura() {
   local corpo="$TMP/corpo-$1.txt" mapa="$TMP/mapa-$1.json"
-  extrai_leitura "$1" "$3" > "$corpo" || return 1
+  # O stderr do recorte fica guardado: é ele que diz POR QUE o bloco não saiu (abertura ou
+  # fechamento ausente) — sem isso, "recorte sem CASE" é a mesma frase de um PG que morreu.
+  extrai_leitura "$1" "$3" > "$corpo" 2>"$TMP/recorte-$1.err" || return 1
   printf '%s' "$2" > "$mapa"
   P -At -v ON_ERROR_STOP=1 -c "SELECT format(pg_read_file('$corpo'), pg_read_file('$mapa'))"
 }
@@ -229,8 +231,10 @@ suite() {
   monta_leitura 2 "$MAPA_CARA"    "$ALVO" > "$LC_ARQ"
   # Sonda POSITIVA do recorte: awk que não casa devolveria arquivo vazio e TODA asserção sairia
   # "nenhuma linha" — que é vermelho, mas pelo motivo errado. Aqui ele é nomeado.
-  grep -q 'AS veredito' "$LB" || { bad "recorte do PASSO 2 saiu sem CASE de veredito"; return; }
-  grep -q 'AS veredito' "$LC_ARQ" || { bad "recorte do PASSO 4 saiu sem CASE de veredito"; return; }
+  grep -q 'AS veredito' "$LB" || {
+    bad "recorte do PASSO 2 saiu sem CASE de veredito ($(tr '\n' ' ' < "$TMP/recorte-1.err" 2>/dev/null | cut -c1-90))"; return; }
+  grep -q 'AS veredito' "$LC_ARQ" || {
+    bad "recorte do PASSO 4 saiu sem CASE de veredito ($(tr '\n' ' ' < "$TMP/recorte-2.err" 2>/dev/null | cut -c1-90))"; return; }
 
   # ------------------------------------------------ (Z) o artefato é INERTE ---
   # O SQL desta suíte NÃO passa pelo guard de sincronia da CLI (ele é impossível de satisfazer num
@@ -704,8 +708,10 @@ sabota g2 "sem o envelope inteiro (o SQL de fixture volta a DISPARAR)" \
 # inerte. E passava pela sonda `grep -q 'AS veredito'` do chamador, porque o miolo continuava lá:
 # a sonda pergunta se o recorte tem o CASE, não se ele é o RECORTE CERTO.
 # shellcheck disable=SC2016  # `$sonda$`/`$OUTRA$` sao TAGS de dollar-quoting, nao variaveis
+# A marca tem DUAS partes de propósito: "recorte sem CASE" sozinha é também a frase de um PG que
+# morreu no meio (o `format()` roda nele) — a 2ª parte é o erro do PRÓPRIO recorte.
 sabota i "fechamento do bloco com outra tag (recorte vaza ate o EOF)" \
-  "recorte do PASSO 2 saiu sem CASE de veredito" \
+  "recorte do PASSO 2 saiu sem CASE de veredito|sem o fechamento" \
   's/^\$sonda\$, m\.ids\)/$OUTRA$, m.ids)/'
 
 # ── (h) O EIXO QUE ESTAVA CEGO: o modo normal julga o GERADOR deste disco ─────────────────────────
