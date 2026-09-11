@@ -137,6 +137,8 @@ function semear() {
       mov('m-otica-nova', 'CONTA_CORRENTE_TRF', 'E', 90, null),
       // outra empresa
       mov('m-banco-colacor', 'CONTA_CORRENTE_REC', 'E', 1000, 1001, 'colacor'),
+      // já conciliado: não volta para a fila (hoje a flag é sempre false na PROD — ver o service)
+      { ...mov('m-banco-ja-conciliado', 'CONTA_CORRENTE_REC', 'E', 500, 1001), conciliado: true },
     ],
   };
 }
@@ -204,9 +206,12 @@ describe('gerarFilaConciliacao — falha não vira silêncio', () => {
     expect(state.upserts).toEqual([]);
   });
 
-  it('busca de título que falha REJEITA — não vira "sem match" (pendente)', async () => {
+  it('busca de título que falha é CONTADA como não gerada — não vira "sem match" (pendente)', async () => {
     state.erroNaLeitura.fin_contas_receber = { message: 'MARCA-BUSCA-CR permission denied for table fin_contas_receber', code: '42501' };
-    await expect(gerarFilaConciliacao('oben')).rejects.toMatchObject({ message: expect.stringContaining('MARCA-BUSCA-CR') });
+    const r = await gerarFilaConciliacao('oben');
+    // os 4 movimentos com título falham na busca; só o extrato sem título (sem busca) é gravado
+    expect(r).toEqual({ lidos: 5, criados: 1, falhas: 4, primeiraFalha: 'MARCA-BUSCA-CR permission denied for table fin_contas_receber' });
+    expect(movIdsGravados()).toEqual(['m-banco-sem-titulo']);
   });
 });
 
@@ -219,12 +224,12 @@ describe('resumirGeracaoConciliacao — o que o toast diz', () => {
     });
   });
 
-  it('com falha: ERRO que diz quantos foram recusados e por quê — nunca "0 itens gerados" como sucesso', () => {
+  it('com falha: ERRO que diz quantos ficaram de fora e por quê — nunca "0 itens gerados" como sucesso', () => {
     expect(
       resumirGeracaoConciliacao({ lidos: 5, criados: 0, falhas: 5, primeiraFalha: 'new row violates row-level security policy' }),
     ).toEqual({
       tipo: 'erro',
-      titulo: '5 de 5 itens recusados na fila de conciliação',
+      titulo: '5 de 5 itens não gerados na fila de conciliação',
       descricao: 'new row violates row-level security policy',
     });
   });
@@ -232,7 +237,7 @@ describe('resumirGeracaoConciliacao — o que o toast diz', () => {
   it('com falha sem mensagem: descrição honesta, não fabricada', () => {
     expect(resumirGeracaoConciliacao({ lidos: 3, criados: 2, falhas: 1, primeiraFalha: null })).toEqual({
       tipo: 'erro',
-      titulo: '1 de 3 itens recusados na fila de conciliação',
+      titulo: '1 de 3 itens não gerados na fila de conciliação',
       descricao: 'O banco recusou a gravação sem mensagem — tente de novo ou avise a equipe.',
     });
   });

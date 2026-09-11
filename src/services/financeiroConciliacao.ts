@@ -15,7 +15,9 @@
 //   (e) a leitura não pagina: com ~31 mil movimentos bancários, a capa de 1.000 do PostgREST
 //       pega um recorte arbitrário; e cada movimento faz até 2 idas ao banco (N+1);
 //   (f) a regra de valor compara a BAIXA com o `valor_documento` — baixa parcial, juros e
-//       desconto viram "divergência" (8.678 itens na simulação sobre a PROD).
+//       desconto viram "divergência" (8.678 itens na simulação sobre a PROD);
+//   (g) a TELA: o `load()` descarta o `error` das três leituras e conta os status sobre uma
+//       leitura com capa de 1.000 — acima disso o total e o "% conciliado" mentem.
 import { supabase } from '@/integrations/supabase/client';
 import type { Company } from '@/contexts/CompanyContext';
 import type { FinMovimentacaoRow } from '@/services/financeiroTypes';
@@ -29,7 +31,7 @@ export type ResultadoGeracaoConciliacao = {
   /** Movimentos da ótica bancária elegíveis (com conta corrente) — o denominador. */
   lidos: number;
   criados: number;
-  /** Gravações recusadas pelo banco (ex.: RLS sem `pode_conciliar`). */
+  /** Itens NÃO gerados: busca de título que falhou ou gravação recusada (ex.: RLS sem `pode_conciliar`). */
   falhas: number;
   primeiraFalha: string | null;
 };
@@ -66,6 +68,7 @@ export async function gerarFilaConciliacao(company: Company): Promise<ResultadoG
     let tituloValor: number | null = null;
     let tipoTitulo: 'CR' | 'CP' | null = null;
     let tipoMatch: 'automatico' | null = null;
+    let erroBusca: { message?: string } | null = null;
 
     if (mov.omie_codigo_lancamento) {
       const { data: cr, error: errCr } = await supabase
@@ -74,9 +77,9 @@ export async function gerarFilaConciliacao(company: Company): Promise<ResultadoG
         .eq('company', company)
         .eq('omie_codigo_lancamento', mov.omie_codigo_lancamento)
         .limit(1);
-      // Busca que falha não é "sem match": viraria item pendente com o título lá.
-      if (errCr) throw errCr;
-      if (cr && cr.length > 0) {
+      if (errCr) {
+        erroBusca = errCr;
+      } else if (cr && cr.length > 0) {
         tituloId = cr[0].id;
         tituloValor = cr[0].valor_documento;
         tipoTitulo = 'CR';
@@ -88,14 +91,23 @@ export async function gerarFilaConciliacao(company: Company): Promise<ResultadoG
           .eq('company', company)
           .eq('omie_codigo_lancamento', mov.omie_codigo_lancamento)
           .limit(1);
-        if (errCp) throw errCp;
-        if (cp && cp.length > 0) {
+        if (errCp) {
+          erroBusca = errCp;
+        } else if (cp && cp.length > 0) {
           tituloId = cp[0].id;
           tituloValor = cp[0].valor_documento;
           tipoTitulo = 'CP';
           tipoMatch = 'automatico';
         }
       }
+    }
+
+    // Busca que falha não é "sem match" — o item viraria pendente com o título lá. Conta como
+    // não gerado e segue: um timeout no meio não pode esconder quantos ficaram de fora.
+    if (erroBusca) {
+      falhas++;
+      primeiraFalha ??= erroBusca.message?.trim() || null;
+      continue;
     }
 
     const status = tipoMatch === 'automatico'
@@ -144,7 +156,7 @@ export function resumirGeracaoConciliacao(r: ResultadoGeracaoConciliacao): Resum
   }
   return {
     tipo: 'erro',
-    titulo: `${r.falhas} de ${r.lidos} itens recusados na fila de conciliação`,
+    titulo: `${r.falhas} de ${r.lidos} itens não gerados na fila de conciliação`,
     descricao: r.primeiraFalha ?? 'O banco recusou a gravação sem mensagem — tente de novo ou avise a equipe.',
   };
 }
