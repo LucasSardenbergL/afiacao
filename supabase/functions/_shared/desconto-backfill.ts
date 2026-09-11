@@ -78,10 +78,56 @@ export type MotivoRecusa =
   | "ambiguo"
   | "leitura_recusada";
 
+/**
+ * Como os campos de desconto vieram no item do Omie que casou — o SENSOR do backfill.
+ *
+ * A classificação olha os campos NUMÉRICOS (`valor_desconto`, `percentual_desconto`); o tipo
+ * sozinho não informa valor nenhum e vai à parte, em `tipo`.
+ *
+ *   ausentes    nenhum campo numérico veio (undefined, null ou string vazia) — com ou sem tipo. A
+ *               régua devolve 0 ("o Omie não informou desconto"), e esse 0 é IDÊNTICO, no número,
+ *               ao zero que o Omie informou. É o caso que uma cobertura de 100% esconde: o casamento
+ *               pelo trio (SKU, qtd, preço) não depende dos campos de desconto, então uma resposta
+ *               que não os trouxesse apuraria 100% das linhas como 0 — o acervo inteiro carimbado
+ *               "sem desconto", com cara de sucesso. ⚠️ Se o Omie OMITE os campos quando não há
+ *               desconto, `ausentes` é o caso normal das linhas sem desconto: sozinho ele não
+ *               reprova — quem separa "omite zeros" de "a resposta não traz os campos" é a
+ *               coexistência de positivas `informados` na mesma resposta e a conferência com o total
+ *               do pedido (`conferirTotalPedido`).
+ *   zerados     ao menos um campo numérico veio como 0 VÁLIDO e nenhum veio > 0. Este é o 0 que é
+ *               DADO. (Um tipo sem número NÃO é zero informado — é `ausentes`: foi o furo do 1º
+ *               desenho, apontado pelo Codex, em que `{tipo_desconto: "X"}` virava "zerados".)
+ *   informados  ao menos um campo numérico veio > 0. Descreve o CONTEÚDO dos campos, não o desconto
+ *               final: 0,001 arredonda a 0, e percentual sobre base zero dá 0 — por isso
+ *               `zero_por_campos.informados` existe e tem de ser explicável.
+ *   invalidos   um campo numérico veio preenchido e não é número finito não-negativo (lixo,
+ *               negativo, NaN), ou o tipo veio preenchido e não é string. A régua trata o campo
+ *               como AUSENTE e segue; o sensor não esconde que ele veio.
+ *
+ * O sensor NÃO muda nenhuma decisão: o valor apurado continua sendo o de `descontoItemOmie`. Ele
+ * só torna legível DE ONDE o número saiu, para que um acervo de zeros possa ser auditado.
+ */
+export type CamposDesconto = "ausentes" | "zerados" | "informados" | "invalidos";
+
+export interface OrigemDesconto {
+  campos: CamposDesconto;
+  /** `tipo_desconto` como a régua o lê (trim + maiúscula); "" quando não veio como string. */
+  tipo: string;
+  valor_desconto: number | null;
+  percentual_desconto: number | null;
+  /** A base do item do OMIE que casou — a que a régua usou. Não a local: o casamento quantiza a
+   *  6 casas, e uma linha local de qtd 1,0000001 casa com o item de qtd 1; contar a local como
+   *  "qtd > 1" fabricaria a evidência que o controle positivo exige. */
+  quantidade: number | null;
+  valor_unitario: number | null;
+}
+
 interface LinhaApurada {
   id: string;
   /** R$ absolutos da LINHA inteira. `0` é dado, não ausência. */
   desconto_valor: number;
+  /** De onde o número saiu — ver `CamposDesconto`. */
+  origem: OrigemDesconto;
 }
 
 interface LinhaRecusada {
@@ -120,6 +166,118 @@ function chaveTrio(
   if (q === null) return null;
   if (p === null) return null;
   return `${quantizar(s)}|${quantizar(q)}|${quantizar(p)}`;
+}
+
+/** O campo veio preenchido? String em branco conta como NÃO preenchida — é como o Omie costuma
+ *  mandar "sem valor", e contá-la como presente esconderia exatamente o caso `ausentes`. */
+function preenchido(raw: unknown): boolean {
+  if (raw === null || raw === undefined) return false;
+  if (typeof raw === "string") return raw.trim() !== "";
+  return true;
+}
+
+/** Classifica os campos de desconto do item do Omie. Ver `CamposDesconto`. */
+export function origemDesconto(prod: ItemOmieDetalhe["produto"]): OrigemDesconto {
+  const p = prod || {};
+  const tipo = typeof p.tipo_desconto === "string" ? p.tipo_desconto.trim().toUpperCase() : "";
+  const valor = finitoNaoNegativo(p.valor_desconto);
+  const perc = finitoNaoNegativo(p.percentual_desconto);
+  const valorVeio = preenchido(p.valor_desconto);
+  const percVeio = preenchido(p.percentual_desconto);
+  const tipoIlegivel = preenchido(p.tipo_desconto) && typeof p.tipo_desconto !== "string";
+
+  let campos: CamposDesconto;
+  if ((valorVeio && valor === null) || (percVeio && perc === null) || tipoIlegivel) {
+    campos = "invalidos";
+  } else if (!valorVeio && !percVeio) {
+    campos = "ausentes";
+  } else if ((valor !== null && valor > 0) || (perc !== null && perc > 0)) {
+    campos = "informados";
+  } else {
+    campos = "zerados";
+  }
+  return {
+    campos,
+    tipo,
+    valor_desconto: valor,
+    percentual_desconto: perc,
+    quantidade: finitoNaoNegativo(p.quantidade),
+    valor_unitario: finitoNaoNegativo(p.valor_unitario),
+  };
+}
+
+/**
+ * Amostra com UM representante garantido por combinação. As combinações de uma positiva são 6
+ * (tipo V/P/vazio × qtd > 1 sim/não) e cabem no teto; quando uma combinação NOVA chega com a
+ * amostra cheia, ela toma o lugar de uma entrada cuja combinação já tem outro representante.
+ * Sem isso, seis positivas "V/qtd 2" seguidas deixavam a "P/qtd 2" — justamente a que decide a
+ * semântica do percentual — fora do que se confere à mão (sequência reproduzida pelo Codex).
+ */
+export function registrarNaAmostra<T extends { combinacao: string }>(amostra: T[], item: T, teto: number): void {
+  const representantes = (c: string) => amostra.filter((x) => x.combinacao === c).length;
+  if (amostra.length < teto) { amostra.push(item); return; }
+  if (representantes(item.combinacao) > 0) return;
+  for (let i = amostra.length - 1; i >= 0; i--) {
+    if (representantes(amostra[i].combinacao) > 1) { amostra[i] = item; return; }
+  }
+}
+
+/**
+ * O pedido local está DENTRO da janela do alvo? A contagem do denominador sempre filtrou por
+ * `order_date_kpi >= de`, mas a seleção dos candidatos vinha só dos pedidos que o Omie devolve —
+ * e o filtro do `ListarPedidos` é por inclusão OU ALTERAÇÃO. Um pedido de 2024 alterado ontem
+ * oferecia filhos NULL e entrava no plano: escrita fora do alvo autorizado (achado do Codex).
+ *
+ * Comparação de `YYYY-MM-DD` como texto é cronológica. Data ausente ou fora do formato → FORA:
+ * sem data não há como afirmar que o pedido está no escopo, e a contagem do denominador também o
+ * exclui (o `gte` do PostgREST não casa NULL) — as duas pontas medem o mesmo universo.
+ */
+export function pedidoNaJanela(orderDateKpi: unknown, deIso: string): boolean {
+  if (typeof orderDateKpi !== "string") return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(orderDateKpi)) return false;
+  return orderDateKpi >= deIso;
+}
+
+/**
+ * Conferência do pedido contra o total que o PRÓPRIO Omie calcula (`total_pedido.valor_descontos`).
+ *
+ * É a testemunha por valor que não passa pela correspondência com o banco: soma o desconto que a
+ * régua lê em CADA item do `det` e compara com o total do cabeçalho. Um pedido com desconto no
+ * total e zero nos itens é o formato exato do furo que `ausentes` sozinho não denuncia (a régua
+ * leria 0 onde o Omie diz que há desconto).
+ *
+ *   confere        a soma dos itens bate com o total (tolerância de UM centavo por item: a régua
+ *                  arredonda cada item ao centavo, e o Omie pode arredondar o percentual de outro
+ *                  jeito — diferença de arredondamento não é desconto perdido)
+ *   diverge        os dois existem e não batem
+ *   sem_total      o cabeçalho não trouxe `valor_descontos` legível — ausência de dado, não "zero"
+ *   item_ilegivel  a régua recusou algum item (null) — a soma seria parcial, e parcial não confere
+ */
+export type ConferenciaTotalPedido = "confere" | "diverge" | "sem_total" | "item_ilegivel";
+
+export function conferirTotalPedido(
+  itensOmie: ItemOmieDetalhe[],
+  valorDescontosOmie: unknown,
+): { veredito: ConferenciaTotalPedido; soma_itens: number | null; total_omie: number | null } {
+  const total = finitoNaoNegativo(valorDescontosOmie);
+  let soma = 0;
+  let legivel = true;
+  for (const it of itensOmie) {
+    const q = finitoNaoNegativo(it.produto?.quantidade);
+    const p = finitoNaoNegativo(it.produto?.valor_unitario);
+    const d = descontoItemOmie(it.produto, q === null || p === null ? null : q * p);
+    if (d === null) { legivel = false; break; }
+    soma += d;
+  }
+  const somaItens = legivel ? Math.round(soma * 100) / 100 : null;
+  if (total === null) return { veredito: "sem_total", soma_itens: somaItens, total_omie: null };
+  if (somaItens === null) return { veredito: "item_ilegivel", soma_itens: null, total_omie: total };
+  const tolerancia = 0.01 * Math.max(1, itensOmie.length);
+  return {
+    veredito: Math.abs(somaItens - total) <= tolerancia ? "confere" : "diverge",
+    soma_itens: somaItens,
+    total_omie: total,
+  };
 }
 
 /** Índice chave → posições. Chave repetida marca a colisão em vez de sobrescrever: perder o
@@ -197,7 +355,7 @@ export function conciliarDescontosPedido(
       recusados.push({ id: linha.id, motivo: "leitura_recusada" });
       continue;
     }
-    apurados.push({ id: linha.id, desconto_valor: desconto });
+    apurados.push({ id: linha.id, desconto_valor: desconto, origem: origemDesconto(prod) });
   }
 
   return { apurados, recusados };

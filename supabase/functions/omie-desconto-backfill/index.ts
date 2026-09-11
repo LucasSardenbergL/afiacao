@@ -27,9 +27,13 @@ import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
 import {
   conciliarDescontosPedido,
+  conferirTotalPedido,
+  type ConferenciaTotalPedido,
   type ItemOmieDetalhe,
   type LinhaLocal,
   type MotivoRecusa,
+  pedidoNaJanela,
+  registrarNaAmostra,
 } from "../_shared/desconto-backfill.ts";
 import { avaliarPagina, MAX_PAGINAS_PEDIDOS, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 // `fetchAll` porque o PostgREST capa em 1.000 linhas em SILÊNCIO: uma leitura truncada aqui
@@ -79,9 +83,14 @@ function dataOmie(d: Date): string {
 }
 
 interface PedidoOmie {
-  cabecalho?: { codigo_pedido?: number };
+  cabecalho?: { codigo_pedido?: number; numero_pedido?: string | number };
   det?: ItemOmieDetalhe[];
+  /** O total que o PRÓPRIO Omie calcula — testemunha por valor em `conferirTotalPedido`. */
+  total_pedido?: { valor_descontos?: number | string | null };
 }
+
+/** Teto de cada amostra na resposta. A amostra é para CONFERIR à mão no Omie, não para somar. */
+const AMOSTRA_MAX = 10;
 
 Deno.serve(async (req) => {
   // A sonda responde o marcador e SAI: esta edge escreve, e uma sonda que caísse no fluxo
@@ -148,6 +157,8 @@ Deno.serve(async (req) => {
 
     const hoje = new Date();
     const de = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - mesesJanela, hoje.getUTCDate()));
+    // O MESMO limite serve ao denominador e à seleção dos candidatos — ver `pedidoNaJanela`.
+    const deIso = de.toISOString().slice(0, 10);
 
     // ── 1. Alvo local: as linhas ainda NÃO apuradas da conta, na janela ──────────────────────
     // O denominador nasce aqui, de uma contagem no banco — não do que o Omie devolver. Contar
@@ -158,7 +169,7 @@ Deno.serve(async (req) => {
       .select("id, sales_orders!inner(account, order_date_kpi)", { count: "exact", head: true })
       .is("desconto_valor", null)
       .eq("sales_orders.account", account)
-      .gte("sales_orders.order_date_kpi", de.toISOString().slice(0, 10));
+      .gte("sales_orders.order_date_kpi", deIso);
     if (errAlvo) throw new Error(`alvo: ${errAlvo.message}`);
 
     const contagem = {
@@ -177,6 +188,46 @@ Deno.serve(async (req) => {
       escrita_recusada_base_mudou: 0,
       // Conta LINHAS, não pedidos — o retry é por linha. O nome anterior mentia na unidade.
       linhas_em_pedido_incoerente: 0,
+      // Os dois `continue` do laço de pedidos descartavam pedido SEM contar. Com eles, os pedidos
+      // também fecham: pedidos_omie = sem_codigo + fora_da_janela + sem_pai_local
+      //                               + sem_linhas_locais + conciliados.
+      pedidos_sem_codigo: 0,
+      pedidos_fora_da_janela: 0,
+      pedidos_sem_linhas_locais: 0,
+      pedidos_conciliados: 0,
+    };
+
+    // ── O SENSOR do valor (v1.3) ─────────────────────────────────────────────────────────────
+    // As contagens acima dizem QUANTAS linhas foram apuradas, e nada sobre o NÚMERO apurado. Uma
+    // resposta do Omie sem os campos de desconto casaria o trio em 100% das linhas e a régua
+    // devolveria 0 para todas — mesma contagem, acervo inteiro carimbado "sem desconto". Daqui em
+    // diante a resposta separa o 0 que o Omie INFORMOU do 0 que saiu da AUSÊNCIA dos campos.
+    const diagnostico = {
+      apuradas_positivas: 0,
+      apuradas_zero: 0,
+      zero_por_campos: { ausentes: 0, zerados: 0, informados: 0, invalidos: 0 },
+      positivas_por_campos: { ausentes: 0, zerados: 0, informados: 0, invalidos: 0 },
+      positivas_qtd_maior_que_1: 0,
+      tipos: { V: 0, P: 0, vazio: 0, outro: 0 },
+      // Controle CONHECIDO: a linha que outro writer (a ingestão) já gravou é reapurada aqui por
+      // outra leitura do Omie. Divergir é sinal de que um dos dois caminhos lê errado. ⚠️ Numa
+      // RETOMADA as já apuradas incluem o que o próprio backfill gravou — aí o controle é circular;
+      // ele só vale como externo nas linhas que a ingestão gravou antes do backfill existir.
+      ja_apuradas_conferem: 0,
+      ja_apuradas_divergem: 0,
+      // Conferência de cada pedido conciliado contra `total_pedido.valor_descontos` do Omie.
+      pedidos_total: { confere: 0, diverge: 0, sem_total: 0, item_ilegivel: 0 } as Record<ConferenciaTotalPedido, number>,
+      pedidos_com_desconto_no_total: 0,
+    };
+    const amostraPositivas: Array<Record<string, unknown> & { combinacao: string }> = [];
+    const amostraDivergencias: Array<Record<string, unknown>> = [];
+    const amostraPedidosDivergentes: Array<Record<string, unknown>> = [];
+    // O PLANO por id: é o que permite conferir "os IDs escritos batem com o plano" por id e por
+    // valor — contagem igual com ids trocados passaria em qualquer conferência agregada.
+    const desfechos = {
+      plano_escrita: [] as Array<[string, number]>,
+      ja_apuradas: [] as Array<[string, number, number]>, // [id, gravado, apurado agora]
+      recusadas: [] as Array<[string, MotivoRecusa]>,
     };
 
     let pagina = paginaInicial;
@@ -252,13 +303,20 @@ Deno.serve(async (req) => {
 
       const { data: pais, error: errPais } = await db
         .from("sales_orders")
-        .select("id, hash_payload")
+        .select("id, hash_payload, order_date_kpi")
         .eq("account", account)
         .in("hash_payload", hashes);
       if (errPais) throw new Error(`pais: ${errPais.message}`);
 
+      // Só o pai DENTRO da janela oferece linhas: o filtro do Omie é por inclusão OU alteração, e
+      // sem este corte um pedido antigo alterado na janela entraria no plano de escrita — fora do
+      // alvo que o denominador mede e que a execução autorizou. O de fora é CONTADO, não sumido.
       const idPorHash = new Map<string, string>();
-      for (const p of pais ?? []) idPorHash.set(String(p.hash_payload), String(p.id));
+      const foraDaJanela = new Set<string>();
+      for (const p of pais ?? []) {
+        if (pedidoNaJanela(p.order_date_kpi, deIso)) idPorHash.set(String(p.hash_payload), String(p.id));
+        else foraDaJanela.add(String(p.hash_payload));
+      }
 
       const idsPedido = [...idPorHash.values()];
       // ⚠️ SEM `.is("desconto_valor", null)` aqui, e a ausência é o ponto. A conciliação decide
@@ -286,7 +344,7 @@ Deno.serve(async (req) => {
       // `jaApuradas`: as linhas que entram na CONCILIAÇÃO (para a unicidade ser medida no universo
       // certo) mas NÃO na escrita. Reapurar uma linha já preenchida sobrescreveria trabalho de
       // outro writer com um valor lido depois — e o UPDATE tem seu próprio guard para isso.
-      const jaApuradas = new Set<string>();
+      const jaApuradas = new Map<string, number>(); // id → valor já gravado por outro writer
       for (const l of linhasDb) {
         const k = String(l.sales_order_id);
         const item: LinhaLocal = {
@@ -295,7 +353,9 @@ Deno.serve(async (req) => {
           quantity: l.quantity,
           unit_price: l.unit_price,
         };
-        if (l.desconto_valor !== null && l.desconto_valor !== undefined) jaApuradas.add(item.id);
+        if (l.desconto_valor !== null && l.desconto_valor !== undefined) {
+          jaApuradas.set(item.id, Number(l.desconto_valor));
+        }
         const lista = porPedido.get(k);
         if (lista) lista.push(item);
         else porPedido.set(k, [item]);
@@ -304,11 +364,31 @@ Deno.serve(async (req) => {
       for (const pedido of pedidos) {
         contagem.pedidos_omie++;
         const codigo = pedido.cabecalho?.codigo_pedido;
-        if (typeof codigo !== "number") continue;
-        const paiId = idPorHash.get(`omie_${account}_${codigo}`);
-        if (!paiId) { contagem.pedidos_sem_pai_local++; continue; }
+        if (typeof codigo !== "number") { contagem.pedidos_sem_codigo++; continue; }
+        const hashPai = `omie_${account}_${codigo}`;
+        const paiId = idPorHash.get(hashPai);
+        if (!paiId) {
+          if (foraDaJanela.has(hashPai)) contagem.pedidos_fora_da_janela++;
+          else contagem.pedidos_sem_pai_local++;
+          continue;
+        }
         const locais = porPedido.get(paiId) ?? [];
-        if (locais.length === 0) continue;
+        if (locais.length === 0) { contagem.pedidos_sem_linhas_locais++; continue; }
+        contagem.pedidos_conciliados++;
+
+        // Testemunha por VALOR do próprio Omie, independente do casamento com o banco.
+        const total = conferirTotalPedido(pedido.det ?? [], pedido.total_pedido?.valor_descontos);
+        diagnostico.pedidos_total[total.veredito]++;
+        if (total.total_omie !== null && total.total_omie > 0) diagnostico.pedidos_com_desconto_no_total++;
+        if (total.veredito === "diverge" && amostraPedidosDivergentes.length < AMOSTRA_MAX) {
+          amostraPedidosDivergentes.push({
+            numero_pedido: pedido.cabecalho?.numero_pedido ?? null,
+            codigo_pedido: codigo,
+            total_omie: total.total_omie,
+            soma_itens: total.soma_itens,
+            itens: (pedido.det ?? []).length,
+          });
+        }
 
         const plano = conciliarDescontosPedido(locais, pedido.det ?? []);
         // O denominador conta o que foi OFERECIDO à conciliação; as já apuradas entram nela (pela
@@ -326,12 +406,69 @@ Deno.serve(async (req) => {
           base_indeterminada: () => contagem.recusa_base_indeterminada++,
           leitura_recusada: () => contagem.recusa_leitura_recusada++,
         };
-        for (const r of plano.recusados) contadorPorMotivo[r.motivo]();
+        for (const r of plano.recusados) {
+          contadorPorMotivo[r.motivo]();
+          desfechos.recusadas.push([r.id, r.motivo]);
+        }
 
         const porId = new Map(locais.map((l) => [l.id, l]));
         for (const a of plano.apurados) {
-          if (jaApuradas.has(a.id)) { contagem.ja_apuradas_puladas++; continue; }
           const base = porId.get(a.id)!;
+          // O sensor olha TODA apurada — inclusive as já gravadas —, porque ele mede a leitura do
+          // Omie, não a escrita.
+          const tipoChave = a.origem.tipo === "V" || a.origem.tipo === "P"
+            ? a.origem.tipo
+            : a.origem.tipo === "" ? "vazio" : "outro";
+          diagnostico.tipos[tipoChave]++;
+          if (a.desconto_valor > 0) {
+            diagnostico.apuradas_positivas++;
+            diagnostico.positivas_por_campos[a.origem.campos]++;
+            // A base do OMIE (a que a régua usou), não a local: o casamento quantiza a 6 casas, e
+            // uma linha local de qtd 1,0000001 contaria como "qtd > 1" sem ser (Codex).
+            const qtdMaiorQue1 = a.origem.quantidade !== null && a.origem.quantidade > 1;
+            if (qtdMaiorQue1) diagnostico.positivas_qtd_maior_que_1++;
+            registrarNaAmostra(amostraPositivas, {
+              combinacao: `${tipoChave}|qtd>1:${qtdMaiorQue1}`,
+              id: a.id,
+              numero_pedido: pedido.cabecalho?.numero_pedido ?? null,
+              codigo_pedido: codigo,
+              sku: base.omie_codigo_produto,
+              quantidade_omie: a.origem.quantidade,
+              valor_unitario_omie: a.origem.valor_unitario,
+              quantidade_local: base.quantity,
+              valor_unitario_local: base.unit_price,
+              tipo_desconto: a.origem.tipo,
+              valor_desconto: a.origem.valor_desconto,
+              percentual_desconto: a.origem.percentual_desconto,
+              desconto_valor: a.desconto_valor,
+            }, AMOSTRA_MAX);
+          } else {
+            diagnostico.apuradas_zero++;
+            diagnostico.zero_por_campos[a.origem.campos]++;
+          }
+
+          const gravado = jaApuradas.get(a.id);
+          if (gravado !== undefined) {
+            contagem.ja_apuradas_puladas++;
+            desfechos.ja_apuradas.push([a.id, gravado, a.desconto_valor]);
+            if (Math.abs(gravado - a.desconto_valor) < 0.005) {
+              diagnostico.ja_apuradas_conferem++;
+            } else {
+              diagnostico.ja_apuradas_divergem++;
+              if (amostraDivergencias.length < AMOSTRA_MAX) {
+                amostraDivergencias.push({
+                  id: a.id,
+                  numero_pedido: pedido.cabecalho?.numero_pedido ?? null,
+                  gravado,
+                  apurado_agora: a.desconto_valor,
+                  campos: a.origem.campos,
+                  tipo_desconto: a.origem.tipo,
+                });
+              }
+            }
+            continue;
+          }
+          desfechos.plano_escrita.push([a.id, a.desconto_valor]);
           // A base viaja JUNTO do valor: a RPC reexige que a linha ainda seja a mesma na hora do
           // UPDATE. Entre esta leitura e a escrita, o sync ou uma edição podem ter mudado o preço.
           pendentes.push({
@@ -363,6 +500,11 @@ Deno.serve(async (req) => {
         // O denominador vem primeiro de propósito: é ele que torna o numerador legível.
         linhas_nao_apuradas_no_alvo: alvoTotal ?? null,
         ...contagem,
+        diagnostico,
+        amostra_positivas: amostraPositivas,
+        amostra_divergencias: amostraDivergencias,
+        amostra_pedidos_total_divergente: amostraPedidosDivergentes,
+        desfechos,
         completo: acabou,
         proxima_pagina: acabou ? null : pagina,
       }),

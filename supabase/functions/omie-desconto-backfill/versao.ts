@@ -4,7 +4,17 @@
 // Esta edge nasce COM sensor: cada execução devolve o denominador (alvos, apurados, e as recusas
 // por motivo) e o `cursor` de onde parou. "Rodou e não deu erro" não é sinal de nada aqui — o
 // modo de falha característico do backfill é apurar POUCO e parecer bem-sucedido.
-export const VERSAO = "v1.2-preflight-na-forma-que-a-prova-mede";
+export const VERSAO = "v1.3-sensor-do-valor-plano-por-id-escrita-na-janela";
+
+// v1.3 — a resposta passa a dizer DE ONDE saiu o número apurado, não só quantos: separa o 0 que o
+// Omie informou do 0 que saiu da AUSÊNCIA dos campos de desconto (`diagnostico.zero_por_campos`),
+// confere cada pedido contra o `total_pedido.valor_descontos` do próprio Omie, traz amostra de
+// positivas (um representante por combinação tipo × qtd>1) com o nº do pedido para conferência à
+// mão, reconfere as linhas que a ingestão já gravou, e devolve o PLANO por id (`desfechos`).
+// Motivo: a 1ª execução real (2026-09-10, dry-run da pág. 1) apurou 215/215 com zero recusas —
+// número que é o MESMO se os campos de desconto não viessem na resposta.
+// E a ESCRITA fica restrita à janela que o denominador mede (`pedidoNaJanela`): o filtro do Omie é
+// por inclusão OU alteração, e um pedido antigo alterado na janela entrava no plano (Codex).
 
 // O que a sonda prova quando responde: que o bundle no ar conhece a régua de conciliação por trio
 // E que o preflight já está na forma canônica — a guarda `atenderSondaOptions` DENTRO do bloco
@@ -18,7 +28,7 @@ export const EFEITO =
   "desconto apurado nas linhas que ainda estão NULL, via desconto_backfill_aplicar — um run não " +
   "pedido consome quota da API do Omie e carimba desconto em milhares de linhas de venda, que é " +
   "a base da receita líquida do fin-valor-cockpit; `dry_run: true` roda a conciliação inteira e " +
-  "devolve as contagens SEM escrever nada";
+  "devolve as contagens e o plano por id SEM escrever nada";
 
 import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
