@@ -166,6 +166,12 @@ cenario() {
     classify_mudo)    echo "$BASE $SO_DOCS classify_mudo" ;;
     python_mudo)      echo "$BASE $SO_DOCS python_mudo" ;;
     fetch_falhou)     echo "$BASE $SO_DOCS fetch_falhou" ;;
+    # remote quebrado e a origin/main LOCAL = o commit do ar: cada um por uma porta do verde — a
+    # igualdade de string (carimbo de 8), o atalho do SHA cheio (carimbo de 7, dentro do delta) e o
+    # fallback sem carimbo ("dev" + entry igual ao do estado = "nada a relatar")
+    fetch_falhou_mesmo_commit) echo "$SO_DOCS $SO_DOCS fetch_falhou" ;;
+    fetch_falhou_carimbo_curto) echo "${SO_DOCS:0:7} $SO_DOCS fetch_falhou" ;;
+    fetch_falhou_sem_carimbo) echo "dev $SO_DOCS fetch_falhou" ;;
     carimbo_alheio)   echo "deadbee2 $SO_DOCS -" ;;
     carimbo_e_branch) echo "deadbee1 $SO_DOCS -" ;;
     alias_inerte)     echo "$ALIAS_BASE $ALIAS -" ;;
@@ -194,6 +200,9 @@ diff_mudo|3|motivo: DELTA_VAZIO
 classify_mudo|3|motivo: CLASSIFY_FALHOU
 python_mudo|3|motivo: PROVA_INDISPONIVEL
 fetch_falhou|3|motivo: FETCH_FALHOU
+fetch_falhou_mesmo_commit|3|motivo: FETCH_FALHOU
+fetch_falhou_carimbo_curto|3|motivo: FETCH_FALHOU
+fetch_falhou_sem_carimbo|3|motivo: FETCH_FALHOU
 carimbo_alheio|3|motivo: CARIMBO_NAO_RESOLVE
 carimbo_e_branch|3|motivo: CARIMBO_NAO_RESOLVE
 alias_inerte|3|motivo: ALCANCE_VAZA
@@ -210,6 +219,9 @@ roda() {
   if ! { git -C "$O" update-ref refs/heads/main "$main" && g remote set-url origin "$O"; }; then
     echo "fixture: não apontei a main" > "$out"; return 98
   fi
+  # estado = o entry que o curl falso serve: sem isto o 1º cenário da rodada vê "deploy novo" e o
+  # desfecho do fallback sem carimbo (o único que lê o estado) dependeria da ORDEM dos cenários
+  printf 'index-Fx1234\n' > "$TMP/estado"
   envs=(FAKE_AR_SHA="$carimbo" DEPLOY_MONITOR_STATE="$TMP/estado")
   [ -n "$loc" ] && envs+=(LC_ALL="$loc")
   case "$extra" in
@@ -305,7 +317,7 @@ while IFS='|' read -r nome esp marca; do
   fi
 done <<< "$CASOS"
 echo "$n_ok/$n_tot cenários passaram"
-[ "$n_tot" -ge 24 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
+[ "$n_tot" -ge 27 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
 
 # ── falsificação ────────────────────────────────────────────────────────────────────────────────
 if [ "$FALSIFY" = 1 ]; then
@@ -357,8 +369,18 @@ PY
       '[ "$narq" -gt 0 ] 2>/dev/null' '[ "$narq" -ge 0 ] 2>/dev/null'
     sab no-renames scripts/monitor-deploy.sh rename_src_docs "$VERDE_INDEVIDO" \
       '--no-renames --no-relative' '--find-renames --no-relative'
-    sab fetch scripts/monitor-deploy.sh fetch_falhou "$VERDE_INDEVIDO" \
-      '[ "$FETCH_OK" = 1 ] || atrasado FETCH_FALHOU' '[ "$FETCH_OK" = 1 ] || true || atrasado FETCH_FALHOU'
+    # o guard do fetch é UM só e fecha QUATRO portas do verde: um cenário por porta, cada um com o
+    # verde que ela daria sem ele — o 5 do delta, o 0 da igualdade de string, o 0 do atalho do SHA
+    # cheio e o 0 do fallback. Até 2026-09-10 o guard morava no delta e só fechava a primeira.
+    guard_fetch='[ "$FETCH_OK" = 1 ] || atrasado FETCH_FALHOU'
+    sem_guard_fetch='[ "$FETCH_OK" = 1 ] || true || atrasado FETCH_FALHOU'
+    sab fetch scripts/monitor-deploy.sh fetch_falhou "$VERDE_INDEVIDO" "$guard_fetch" "$sem_guard_fetch"
+    sab fetch-mesmo-commit scripts/monitor-deploy.sh fetch_falhou_mesmo_commit \
+      '0|sincronizado: ar serve' "$guard_fetch" "$sem_guard_fetch"
+    sab fetch-carimbo-curto scripts/monitor-deploy.sh fetch_falhou_carimbo_curto \
+      '0|sincronizado: ar serve' "$guard_fetch" "$sem_guard_fetch"
+    sab fetch-sem-carimbo scripts/monitor-deploy.sh fetch_falhou_sem_carimbo \
+      '0|nada a relatar' "$guard_fetch" "$sem_guard_fetch"
     sab prefixo-do-carimbo scripts/monitor-deploy.sh carimbo_e_branch "$VERDE_INDEVIDO" \
       'case "$ar_full" in "$AIR_SHA"?*)' 'case "$ar_full" in ?*)'
     sab marca-positiva scripts/monitor-deploy.sh python_mudo "$VERDE_INDEVIDO" \
@@ -454,7 +476,7 @@ PY
     fi
   done
   echo "  falsificações que pegaram: $fals/$total"
-  [ "$total" -ge 17 ] && [ "$fals" -eq "$total" ] || rc=1
+  [ "$total" -ge 20 ] && [ "$fals" -eq "$total" ] || rc=1
 
   # (C) CONTROLE DE SAÍDA — pelo CONTEÚDO: o laço nunca mutou o versionado.
   # shellcheck disable=SC2086
