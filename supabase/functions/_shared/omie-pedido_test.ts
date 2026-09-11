@@ -135,6 +135,11 @@ Deno.test("sem desconto, o subtotal é BIT A BIT o do legado — a reconciliaç�
     [item(1, { quantidade: 3, valor_unitario: 33.333 }), item(2, { quantidade: 7, valor_unitario: 0.1 })],
     [item(1, { quantidade: 1, valor_unitario: 1629.25 })],
     [item(1, { quantidade: 12, valor_unitario: 13.85 }), item(2, { quantidade: 1, valor_unitario: 86 }), item(3, { quantidade: 5, valor_unitario: 0.07 })],
+    // A fixture que SEPARA as políticas: arredondando por linha, 10 × round(1,004) = 10,00; no fim,
+    // round(10,04) = 10,04. As três acima dão o MESMO número nas duas políticas (conferido: 100,70,
+    // 1629,25 e 252,55 dos dois jeitos), então sem esta o teste ficaria verde com o arredondamento
+    // trocado — e é exatamente a troca que reescreveria centavos de pedido sem desconto.
+    Array.from({ length: 10 }, (_, i) => item(i + 1, { quantidade: 1, valor_unitario: 1.004 })),
   ];
   for (const det of fixtures) {
     const novo = subtotalPedidoComDesconto(det);

@@ -1,0 +1,39 @@
+# Invariantes money-path do SUBTOTAL do pedido de venda (`sales_orders.subtotal`/`total`).
+# @src: supabase/functions/_shared/omie-pedido.ts
+# @test: supabase/functions/_shared/omie-pedido_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ POR QUE ESTE CONTRATO EXISTE: o acervo gravado não distingue fórmula nenhuma. Medido em
+# 2026-09-10, 31.315/31.315 pais Omie têm `total == Σ qtd·preço` — o desconto nunca entrou, porque
+# a conta lia `prod.desconto`, chave que a API do Omie não tem. Onde o desconto é zero, qualquer
+# fórmula acerta e qualquer suíte fica verde. As mutações abaixo trocam as decisões que só um
+# caso com desconto ≠ 0 (ou com base em fração de centavo) consegue observar.
+
+# ── O eixo do defeito: de onde vem o desconto ─────────────────────────────────────────────────
+# A restauração literal do bug: percentual sobre a chave que a origem nunca envia.
+PEGA | volta a fórmula antiga (percentual da chave inexistente) | s/const desconto = descontoItemOmie\(prod, bruto\);/const desconto = bruto * (prod.desconto || 0) \/ 100;/
+PEGA | a base do desconto vira o preço UNITÁRIO, não a linha    | s/const desconto = descontoItemOmie\(prod, bruto\);/const desconto = descontoItemOmie(prod, price);/
+PEGA | a soma troca − por +                                     | s/subtotal \+= bruto - desconto;/subtotal += bruto + desconto;/
+
+# ── Fail-closed por PEDIDO: o `null` da régua não pode virar número ──────────────────────────
+# As duas saídas "óbvias" do desconto ilegível fabricam o total, e o challenge Codex de
+# 2026-09-10 mostrou a pior consequência da segunda: no órfão de total 0, uma soma parcial faria o
+# G5 de `criar_pedidos_com_itens` APROVAR o reparo. As duas TÊM de morrer.
+PEGA | desconto ilegível entra pelo BRUTO (o null → 0 renascido) | s/const desconto = descontoItemOmie\(prod, bruto\);/const desconto = descontoItemOmie(prod, bruto) ?? 0;/
+PEGA | desconto ilegível vira soma PARCIAL publicada               | s/if \(itensDescontoIlegivel > 0\) return \{ subtotal: null, itensDescontoIlegivel \};/if (false) return { subtotal: null, itensDescontoIlegivel };/
+# O inverso também é defeito: item sem preço já está FORA da conta, e contá-lo como ilegível
+# derrubaria para null um pedido cujo total é conhecido.
+PEGA | item sem preço passa a contar como ilegível                | s/if \(price === null\) continue;/if (price === null) { itensDescontoIlegivel += 1; continue; }/
+
+# ── O universo e a quantidade: o cabeçalho descreve as MESMAS linhas de `order_items` ────────
+PEGA | universo volta a ser todo det (item sem código entra)      | s/if \(!prod\.codigo_produto\) continue;/if (false) continue;/
+PEGA | quantidade 0 deixa de valer 1 (`??` no lugar de `||`)      | s/const qty = prod\.quantidade \|\| 1;/const qty = prod.quantidade ?? 1;/
+
+# ── Arredondamento: UMA vez, no fim — é o que mantém o legado bit a bit ──────────────────────
+# Arredondar por linha reescreveria centavos de pedido SEM desconto na primeira passada do
+# reprocess — uma "reconciliação" em massa que não é correção.
+PEGA | arredonda por LINHA (quebra o bit a bit do legado)         | s/subtotal \+= bruto - desconto;/subtotal += Math.round((bruto - desconto) * 100) \/ 100;/
+PEGA | some o arredondamento final                                | s/return \{ subtotal: Math\.round\(subtotal \* 100\) \/ 100, itensDescontoIlegivel: 0 \};/return { subtotal, itensDescontoIlegivel: 0 };/
