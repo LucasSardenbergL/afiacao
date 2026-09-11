@@ -566,6 +566,10 @@ export function estadoDoWorktree(gitFn: typeof git = git): EstadoWorktree | null
  *
  * LANÇA (⇒ exit 2) se o `git show` falhar: sem a allowlist da main não se sabe o que o banco pode
  * sondar, e tratar a falha como lista vazia transformaria TODA edge ativa em intrusa com UPDATE.
+ *
+ * Duas árvores, uma suposição: o `disco` é o import da árvore do SCRIPT; o git (ref, `rev-list`)
+ * roda no cwd. No uso real (raiz da worktree, como o /fecho chama) são a mesma; rodando o CLI de
+ * outro repo, só o diagnóstico da defasagem mistura as duas — o julgamento continua sendo da ref.
  */
 export function lerAllowlists(
   ler: (rev: string, caminho: string) => string | null = lerNaRev,
