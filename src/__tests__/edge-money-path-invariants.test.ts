@@ -3760,12 +3760,19 @@ describe('subtotal do pedido — a fórmula única dos três escritores do total
     // contra uma conta diferente da que o pai gravou ao nascer.
     expect(count(fonte, 'apurarSubtotalPedido(')).toBe(2);
     expect(count(fonte, 'apurado.subtotal === null')).toBe(2);
+    // A FIAÇÃO, não só a chamada: o número que vai ao payload é o do helper. Sem estes, chamar o
+    // helper para o `null` e somar o total por fora passaria verde.
+    expect(fonte).toMatch(/const subtotal = apurado\.subtotal;/);
+    expect(fonte).toMatch(/\n\s+subtotal,\n[\s\S]{0,400}?\n\s+total: subtotal,\n/);
+    expect(fonte).toContain('total: apurado.subtotal, status, order_date_kpi: pai.order_date_kpi,');
   });
 
   it('sync-reprocess usa o helper e NÃO reconcilia pedido de líquido desconhecido', () => {
     const fonte = removerComentarios(read(REPROCESS));
     expect(count(fonte, 'desc / 100')).toBe(0);
     expect(fonte).toMatch(/const total = subtotalPedidoComDesconto\(itens\);\s*if \(total === null\) \{/);
+    // e é ESSE `total` que vai à RPC
+    expect(fonte).toMatch(/\n\s+total,\n\s+items: construirItemsJson\(itens\),/);
   });
 
   it('o helper lê o desconto pela régua (nunca pela chave inexistente) e degrada o PEDIDO para null', () => {

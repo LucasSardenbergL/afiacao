@@ -204,6 +204,110 @@ else
   P -q -f "$MIG" >/dev/null
 fi
 
+echo "═══ F · o total LÍQUIDO atravessa as RPCs INTOCADAS (2026-09-10) ═══"
+
+# A entrega do subtotal líquido NÃO tem migration: a fórmula mudou na edge (`apurarSubtotalPedido`,
+# _shared/omie-pedido.ts) e as RPCs seguem as mesmas. O que se prova aqui é que as RPCs, como estão
+# em prod, fazem com o payload NOVO o que a decisão supõe — em especial o G5, que ficou intocado de
+# propósito. Números do pedido real oben 12183048572: bruto 1629,25, desconto 139,91, líquido 1489,34.
+P -q -c "DELETE FROM public.sales_orders WHERE hash_payload LIKE 'omie\_oben\_91%';" >/dev/null
+itens_desc() {  # $1 = número do pedido. As duas linhas do pedido real, com o desconto apurado.
+  echo "[{\"omie_codigo_produto\": 555, \"quantity\": 1, \"unit_price\": 460.25, \"desconto_valor\": 23.01, \"hash_payload\": \"omie_oben_$1_555\"},
+         {\"omie_codigo_produto\": 556, \"quantity\": 2, \"unit_price\": 584.5,  \"desconto_valor\": 116.9, \"hash_payload\": \"omie_oben_$1_556\"}]"
+}
+criar() {  # $1 = número, $2 = total do payload, $3 = itens → devolve o jsonb da RPC
+  Pq -c "SELECT public.criar_pedidos_com_itens('[{
+    \"customer_user_id\": \"$c1\", \"created_by\": \"$sys\", \"account\": \"oben\",
+    \"hash_payload\": \"omie_oben_$1\", \"omie_pedido_id\": $1, \"omie_numero_pedido\": \"$1\",
+    \"items\": [], \"subtotal\": $2, \"discount\": 0, \"total\": $2, \"status\": \"importado\",
+    \"itens\": $3}]'::jsonb);"
+}
+orfao_legado() {  # $1 = número, $2 = total gravado no NASCIMENTO (semântica antiga = bruto)
+  P -q -c "INSERT INTO public.sales_orders (customer_user_id, created_by, items, subtotal, total, status, omie_pedido_id, account, hash_payload)
+           VALUES ('$c1', '$sys', '[]', $2, $2, 'importado', $1, 'oben', 'omie_oben_$1');" >/dev/null
+}
+n_itens() { Pq -c "SELECT count(*) FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id WHERE so.hash_payload = 'omie_oben_$1';"; }
+
+# F1 — pedido NOVO nasce com o total líquido, e o cabeçalho é a soma das linhas pela régua.
+R=$(criar 9101 1489.34 "$(itens_desc 9101)")
+eq "F1.0 (controle) o pedido novo entrou" "$(printf '%s' "$R" | grep -c '"inserted": 1')" "1"
+F1=$(Pq -c "SELECT total FROM public.sales_orders WHERE hash_payload='omie_oben_9101';")
+eq "F1 o cabeçalho guarda o LÍQUIDO que a edge mandou" "$F1" "1489.34"
+F1b=$(Pq -c "SELECT so.total = sum(oi.quantity * oi.unit_price - oi.desconto_valor)
+               FROM public.sales_orders so JOIN public.order_items oi ON oi.sales_order_id = so.id
+              WHERE so.hash_payload='omie_oben_9101' GROUP BY so.total;")
+eq "F1b cabeçalho == Σ (qtd·preço − desconto_valor) das linhas — a identidade que a passada no acervo vai usar" "$F1b" "t"
+
+# F2 — a premissa do G5 intocado. Um órfão cujo pai nasceu com o total BRUTO (semântica antiga)
+# recebe o payload LÍQUIDO: o G5 RECUSA e reporta, em vez de reparar com cabeçalho que não
+# descreve as linhas. É fail-closed, e é o comportamento certo para a transição.
+orfao_legado 9102 1629.25
+R=$(criar 9102 1489.34 "$(itens_desc 9102)")
+eq "F2 órfão legado BRUTO × payload LÍQUIDO → divergência reportada" "$(printf '%s' "$R" | grep -c '"divergence": \[{')" "1"
+eq "F2a e NÃO reparado (nenhuma linha inserida)" "$(n_itens 9102)" "0"
+
+# F2b — o formato do ÚNICO órfão de prod (total 0, items vazio). O veredito não depende da
+# fórmula: com o bruto (1629,25) ele já divergia; com o líquido (1489,34) segue divergindo.
+orfao_legado 9103 0
+R=$(criar 9103 1629.25 "$(itens_desc 9103)")
+eq "F2b.0 o formato do órfão real (total 0) já divergia com o payload BRUTO (a fórmula antiga)" "$(printf '%s' "$R" | grep -c '"divergence": \[{')" "1"
+R=$(criar 9103 1489.34 "$(itens_desc 9103)")
+eq "F2b e segue divergindo com o LÍQUIDO — a mudança de fórmula não muda o veredito dele" "$(printf '%s' "$R" | grep -c '"divergence": \[{')" "1"
+
+# F2c — CONTROLE de F2: sem desconto, bruto == líquido e o reparo passa. Sem este, F2 seria
+# indistinguível de um G5 que recusa tudo.
+orfao_legado 9104 200
+R=$(criar 9104 200 '[{"omie_codigo_produto": 555, "quantity": 2, "unit_price": 100, "desconto_valor": 0, "hash_payload": "omie_oben_9104_555"}]')
+eq "F2c (controle) órfão SEM desconto é reparado normalmente" "$(printf '%s' "$R" | grep -c '"repaired": 1')" "1"
+
+# F3 — o reprocess converge o legado: pedido COM linhas, gravado bruto, reconciliado com o payload
+# líquido. O cabeçalho vira o líquido numa passada e a segunda leitura não reescreve mais nada.
+R=$(criar 9105 1629.25 "$(itens_desc 9105)")
+# O carimbo vai no PASSADO e cresce: a RPC recusa `p_lido_em` no futuro (guard do compare-and-set
+# contra relógio envenenado do chamador), então "+N minutos" aqui seria teste instável ou vermelho.
+reconc() {  # $1 = número, $2 = total, $3 = deslocamento do carimbo em minutos (negativo = passado)
+  Pq -c "SELECT public.reconciliar_pedidos_omie('[{
+    \"account\": \"oben\", \"hash_payload\": \"omie_oben_$1\", \"omie_pedido_id\": $1, \"total\": $2, \"items\": [],
+    \"itens\": [{\"omie_codigo_produto\": 555, \"quantity\": 1, \"unit_price\": 460.25, \"discount\": 0, \"hash_payload\": \"omie_oben_$1_555\"},
+                {\"omie_codigo_produto\": 556, \"quantity\": 2, \"unit_price\": 584.5,  \"discount\": 0, \"hash_payload\": \"omie_oben_$1_556\"}]
+    }]'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado'], now() + interval '$3 minutes') ->> 'divergences';"
+}
+eq "F3.0 a 1ª reconciliação conta a mudança de total" "$(reconc 9105 1489.34 -2)" "1"
+F3=$(Pq -c "SELECT total || '/' || subtotal FROM public.sales_orders WHERE hash_payload='omie_oben_9105';")
+eq "F3 total E subtotal convergem para o líquido numa passada" "$F3" "1489.34/1489.34"
+F3b=$(Pq -c "SELECT string_agg(desconto_valor::text, ',' ORDER BY omie_codigo_produto) FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id WHERE so.hash_payload='omie_oben_9105';")
+eq "F3b as linhas (base inalterada) conservam o desconto apurado" "$F3b" "23.01,116.9"
+eq "F3c a 2ª leitura igual não conta divergência — convergiu, não oscila" "$(reconc 9105 1489.34 -1)" "0"
+
+# F4 — sem desconto, a fórmula nova dá o MESMO número: a reconciliação não reescreve o total.
+R=$(criar 9106 200 '[{"omie_codigo_produto": 555, "quantity": 2, "unit_price": 100, "desconto_valor": 0, "hash_payload": "omie_oben_9106_555"}]')
+eq "F4 pedido sem desconto: nenhuma divergência de total na reconciliação" "$(P -tA -c "SELECT public.reconciliar_pedidos_omie('[{\"account\": \"oben\", \"hash_payload\": \"omie_oben_9106\", \"omie_pedido_id\": 9106, \"total\": 200, \"items\": [], \"itens\": [{\"omie_codigo_produto\": 555, \"quantity\": 2, \"unit_price\": 100, \"discount\": 0, \"hash_payload\": \"omie_oben_9106_555\"}]}]'::jsonb, ARRAY['importado','separacao','enviado','faturado','cancelado'], now() - interval '1 minute') ->> 'divergences';")" "0"
+
+# F5 — FALSIFICAÇÃO de F2, com o conserto REJEITADO como sabotagem: aumentar a tolerância do G5.
+# Com uma tolerância maior que o desconto, o mesmo órfão legado passa a ser REPARADO com o cabeçalho
+# bruto sobre linhas líquidas — duas portas de aprovação, e a errada abre. Se F5 não ficar vermelho,
+# F2 não tem dente. O controle é F2, na MESMA invocação e com a função verdadeira, logo acima.
+SABG5="/tmp/sabotado-g5-${SLUG}.sql"
+sed 's/v_pl_total) > 0\.01/v_pl_total) > 200/' "$MIG" > "$SABG5"
+if ! grep -q "v_pl_total) > 200" "$SABG5"; then
+  bad "F5.0 a sabotagem da tolerância NÃO alterou o G5 — a falsificação seria teatro"
+else
+  ok "F5.0 (controle da sabotagem) o G5 passou a tolerar R\$ 200"
+  awk '/^CREATE OR REPLACE FUNCTION public.criar_pedidos_com_itens/{d=1} d{print} d&&/^;$/{exit}' "$SABG5" > "$TMPF"
+  [ -s "$TMPF" ] || bad "F5.0b o recorte da função sabotada saiu VAZIO"
+  P -q -v ON_ERROR_STOP=1 -f "$TMPF" >/dev/null
+  orfao_legado 9107 1629.25
+  R=$(criar 9107 1489.34 "$(itens_desc 9107)")
+  if [ "$(n_itens 9107)" = "2" ]; then
+    ok "F5 com tolerância, o órfão legado é REPARADO sob cabeçalho bruto — F2 tem dente"
+  else
+    bad "F5 sabotado, o órfão legado NÃO foi reparado (itens=$(n_itens 9107)) — F2 pode passar por outro motivo"
+  fi
+  P -q -f "$MIG" >/dev/null   # restaura a função verdadeira (a migration inteira é idempotente)
+  R=$(criar 9108 1489.34 "$(itens_desc 9108)")
+  eq "F5r (restauração) a função verdadeira voltou: pedido novo entra de novo" "$(printf '%s' "$R" | grep -c '"inserted": 1')" "1"
+fi
+
 echo "═══ E · FALSIFICAÇÃO (Lei #3): sabota → exige VERMELHO → restaura ═══"
 
 # E1 — o coalesce(...,0) na ingestão. Se este assert não ficar vermelho, A3 não tem dente e todo

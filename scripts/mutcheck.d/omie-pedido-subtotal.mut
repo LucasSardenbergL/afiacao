@@ -30,7 +30,8 @@ PEGA | item sem preço passa a contar como ilegível                | s/if \(pri
 
 # ── O universo e a quantidade: o cabeçalho descreve as MESMAS linhas de `order_items` ────────
 PEGA | universo volta a ser todo det (item sem código entra)      | s/if \(!prod\.codigo_produto\) continue;/if (false) continue;/
-PEGA | quantidade 0 deixa de valer 1 (`??` no lugar de `||`)      | s/const qty = prod\.quantidade \|\| 1;/const qty = prod.quantidade ?? 1;/
+# (o rótulo não pode conter barra vertical — é o separador de campos deste formato)
+PEGA | quantidade 0 deixa de valer 1 (?? no lugar do OU lógico)  | s/const qty = prod\.quantidade \|\| 1;/const qty = prod.quantidade ?? 1;/
 
 # ── Arredondamento: UMA vez, no fim — é o que mantém o legado bit a bit ──────────────────────
 # Arredondar por linha reescreveria centavos de pedido SEM desconto na primeira passada do
