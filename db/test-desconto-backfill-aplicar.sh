@@ -34,6 +34,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 PORT="${PGPORT_TEST:-5474}"
 SLUG="desconto-backfill-aplicar"
