@@ -92,6 +92,27 @@
 #     vereditos ilegíveis, bun/jq ausente — tudo é `LEDGER_NAO_CONSULTADO`, e a edge segue
 #     pendente como antes de o ledger existir. Nunca "limpo".
 #
+# 🧭 A FRESCURA DO CLI — o veredito do ledger só vale se o CLI que o deu é o da REF (2026-09-10).
+# Tudo o que este script lê do git vem da REF; o CLI, não: ele roda DESTE working tree e importa
+# daqui o próprio código e a allowlist do cron (`_shared/sonda-cron-alvos.ts`). No /fecho a
+# worktree está quase sempre ATRÁS da main (a branch da sessão foi squash-mergeada, a main andou),
+# e o /fecho de 2026-09-10 mediu o custo: worktree 11 commits atrás, onda 5 do cron (#2461) já no
+# banco e fora do working tree → `❌ MECÂNICA: o banco sonda edge(s) que o repo NÃO aprovou` →
+# LEDGER_NAO_CONSULTADO → "DISPARE: sonda:sql" numa edge que ESCREVE. Na origin/main, a MESMA
+# medição dava DESATUALIZADA: a defasagem trocou o veredito E o remédio impresso.
+#   · O quê: o FECHO TRANSITIVO dos imports locais do CLI (relativos e `@/`), calculado na hora
+#     sobre o working tree — é o que o bun carrega. Lista à mão apodrece no 1º import novo (em
+#     2026-09-10 eram 9 arquivos em 4 diretórios, tocados por 33 commits em duas semanas). E SÓ
+#     ele: o mapa de fingerprints muda a cada merge de edge e o CLI o lê pela REF (`lerNaRev`).
+#   · Quando: DEPOIS da chamada. O CLI faz `git fetch origin main` e julga contra a REF que ELE
+#     vê; comparar antes mediria contra uma ref que ele move um segundo depois.
+#   · Desfecho: fecho ≠ REF ⇒ `LEDGER_WORKTREE_DEFASADA` — veredito DESCARTADO (até CONFERE: CLI
+#     velho julga com lógica velha), edge pendente (fail-closed) mas FORA do DISPARE (o ledger
+#     pode já ter a resposta), e o remédio exato para o estado do tree. A saída do CLI defasado NÃO
+#     é repetida: o remédio dela é de outra versão (em 2026-09-10, um UPDATE que desativaria o alvo
+#     APROVADO — #2464). Frescura NÃO verificável ⇒ `LEDGER_NAO_CONSULTADO`: prova ausente não vira
+#     "fresco" — nem "defasada", que não foi medida.
+#
 # Uso:
 #   edges-pendentes.sh <slug> [<slug> ...]      # classifica os slugs dados
 #   edges-pendentes.sh --desde "<data-ou-SHA>"  # deriva os slugs da janela (UNIÃO de 2 fontes)
@@ -114,7 +135,10 @@
 #      FECHO_REF (a REF mergeada que o script lê; default `origin/main` — SÓ para teste/falsificação,
 #      apontar para branch local em uso real faria o "desatualizada" mentir) ·
 #      FECHO_LEDGER_BIN (executável que substitui `bun scripts/pendencias-deploy.ts` — SÓ para
-#      teste: o harness aponta para um stub que devolve o JSON do contrato; em uso real, o CLI).
+#      teste: o harness aponta para um stub que devolve o JSON do contrato; em uso real, o CLI) ·
+#      FECHO_LEDGER_RAIZ (a casa do CLI: o repo cujo working tree o bun carrega e cuja frescura
+#      contra a REF se mede; default = o repo que hospeda este script — SÓ para teste: medir o
+#      checkout de quem roda a suíte a reprovaria em todo PR que tocasse o fecho do CLI).
 # Testes: scripts/test-fecho-edges-pendentes.sh (com --falsificar) — e o SQL roda de VERDADE em
 #         .claude/skills/lovable-deploy-verify/evals/edges-pendentes-sql-eval.sh (o ledger entra lá
 #         como INDISPONÍVEL de propósito: aquele eval mede o SQL da janela viva).
@@ -137,7 +161,11 @@ AFETADAS_TS="$BIN_RAIZ/scripts/edges-afetadas.ts"
 # O CLI que julga o LEDGER (`bun run pendencias:deploy`) e a MARCA de formato que a saída `--json`
 # dele tem de trazer (`FORMATO_JSON` no .ts — a paridade das duas pontas é testada como texto nos
 # dois harnesses). Sem a marca, exit 0/1 é "presente-porém-quebrado", não resposta.
-LEDGER_TS="$BIN_RAIZ/scripts/pendencias-deploy.ts"
+# `LEDGER_RAIZ` é a casa do CLI: o repo cujo working tree o bun carrega E cuja frescura contra a
+# REF se mede (§FRESCURA) — uma variável só, para o CLI medido e o CLI executado não divergirem.
+LEDGER_RAIZ="${FECHO_LEDGER_RAIZ:-$BIN_RAIZ}"
+LEDGER_REL="scripts/pendencias-deploy.ts"
+LEDGER_TS="$LEDGER_RAIZ/$LEDGER_REL"
 LEDGER_FORMATO='pendencias-deploy/1'
 
 tmp="$(mktemp -d)" || { echo "edges-pendentes: mktemp falhou"; exit 2; }
@@ -488,13 +516,94 @@ fi
 #
 # O ÚNICO ponto que invoca o CLI: stub (teste, `FECHO_LEDGER_BIN`) ou o bun real — MESMOS flags,
 # MESMO env. `PSQL_RO="$PSQL"`: o wrapper que este script já provou responder ao `SELECT 1`, não um
-# 2º caminho até o banco. `cd` na raiz do repo que hospeda o CLI: ele lê a ref via git no cwd (e
+# 2º caminho até o banco. `cd` na casa do CLI (`$LEDGER_RAIZ`): ele lê a ref via git no cwd (e
 # faz `git fetch origin main` — se a main andar entre a leitura do mapa acima e a dele, as chaves
 # não batem e o desfecho é chip; rode de novo). `bun` ausente sai daqui como exit 127, que cai no
 # `*)` abaixo: presença não se testa, resposta POSITIVA sim.
 invocar_ledger() {
   if [ -n "${FECHO_LEDGER_BIN:-}" ]; then set -- "$FECHO_LEDGER_BIN"; else set -- bun "$LEDGER_TS"; fi
-  (cd "$BIN_RAIZ" && PSQL_RO="$PSQL" "$@" --json)
+  (cd "$LEDGER_RAIZ" && PSQL_RO="$PSQL" "$@" --json)
+}
+
+# FRESCURA do CLI (ver o cabeçalho §FRESCURA). `normalizar_caminho` resolve `..` no TEXTO — o
+# `realpath` do macOS não tem `-m` — e devolve em `$_caminho`, sem subshell: roda uma vez por
+# import, e o arnês multiplica cada fork por ~90 execuções da suíte. Especificador com `*`/`?`/`[`
+# é recusado antes daqui: o laço abaixo expandiria glob contra o cwd.
+normalizar_caminho() {
+  local IFS=/ parte
+  _caminho=""
+  for parte in $1; do
+    case "$parte" in
+      ''|.) ;;
+      ..)   case "$_caminho" in */*) _caminho="${_caminho%/*}" ;; *) _caminho="" ;; esac ;;
+      *)    _caminho="${_caminho:+$_caminho/}$parte" ;;
+    esac
+  done
+}
+# O fecho transitivo dos imports LOCAIS do CLI, relativo a `$LEDGER_RAIZ` e lido do WORKING TREE
+# (é o que o bun carrega). SUPERCONJUNTO de propósito: import citado em comentário também entra —
+# custa no máximo um "defasada" que um checkout resolve; import que escapasse daqui seria CEGUEIRA.
+# Por isso o import DINÂMICO conta (`sonda-versao-sql.ts` faz `await import('./canaria-leitor-do-
+# repo')`, e ele puxa mais um arquivo), e o arquivo é lido com as linhas JUNTADAS: o Prettier
+# quebra `import(` longo em linhas, e um `grep` por linha perderia o especificador.
+# `node:*` e pacote npm ficam de fora: não moram no repo, a REF não os versiona aqui.
+fecho_do_cli() {
+  local fila="$LEDGER_REL" vistos=" " f dir m imp c
+  [ -f "$LEDGER_RAIZ/$LEDGER_REL" ] || return 1
+  while [ -n "$fila" ]; do
+    f="${fila%% *}"
+    case "$fila" in *" "*) fila="${fila#* }" ;; *) fila="" ;; esac
+    case "$vistos" in *" $f "*) continue ;; esac
+    vistos="$vistos$f "
+    printf '%s\n' "$f"
+    case "$f" in */*) dir="${f%/*}" ;; *) dir="." ;; esac
+    while IFS= read -r m; do
+      imp="${m#*[\"\']}"; imp="${imp%[\"\']}"   # o especificador, sem as aspas
+      case "$imp" in *[\*\?\[]*) continue ;; esac
+      case "$imp" in
+        ./*|../*) normalizar_caminho "$dir/$imp" ;;
+        @/*)      _caminho="src/${imp#@/}" ;;   # tsconfig.scripts.json: "@/*": ["./src/*"]
+        *)        continue ;;
+      esac
+      for c in "$_caminho" "$_caminho.ts" "$_caminho.tsx" "$_caminho/index.ts"; do
+        if [ -f "$LEDGER_RAIZ/$c" ]; then fila="${fila:+$fila }$c"; break; fi
+      done
+    done < <(tr '\n' ' ' < "$LEDGER_RAIZ/$f" 2>/dev/null \
+               | command grep -oE "(from|import|require)[[:space:]]*[(]?[[:space:]]*['\"][^'\"]+['\"]")
+  done
+}
+# 0 = o fecho do CLI é byte a byte o da REF · 1 = DEFASADO (os arquivos em "$tmp/cli_defasado") ·
+# 2 = NÃO verificável (sem a entrada, sem a REF na casa do CLI, git que não respondeu). Resposta
+# POSITIVA dos dois lados: `git diff` que falha não vira "sem diferença", e "diferente" sem dizer
+# QUAL arquivo não é resposta.
+cli_frescura() {
+  local arqs=() l rc
+  : > "$tmp/cli_defasado"
+  fecho_do_cli > "$tmp/cli_fecho" || return 2
+  while IFS= read -r l; do [ -n "$l" ] && arqs+=("$l"); done < "$tmp/cli_fecho"
+  [ "${#arqs[@]}" -gt 0 ] || return 2
+  git -C "$LEDGER_RAIZ" rev-parse --verify --quiet "$REF^{commit}" >/dev/null 2>&1 || return 2
+  git -C "$LEDGER_RAIZ" --no-optional-locks diff --name-only --exit-code "$REF" -- "${arqs[@]}" \
+    > "$tmp/cli_defasado" 2>/dev/null; rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) [ -s "$tmp/cli_defasado" ] && return 1; return 2 ;;
+    *) return 2 ;;
+  esac
+}
+# O remédio EXATO, pelo estado real do tree: checkout pelado num tree sujo falharia ou carregaria
+# a mudança local junto (e a defasagem voltaria). `git status` que não responde conta como sujo.
+remedio_sincronizar() {
+  local sinc st
+  sinc="git checkout --detach $REF"
+  [ "$REF" = "origin/main" ] && sinc="git fetch origin main && $sinc"
+  if st="$(git -C "$LEDGER_RAIZ" --no-optional-locks status --porcelain --untracked-files=no 2>/dev/null)" \
+     && [ -z "$st" ]; then
+    printf "cd '%s' && %s   (tree limpo) — e rode este script de novo" "$LEDGER_RAIZ" "$sinc"
+  else
+    printf "a worktree tem mudança LOCAL em arquivo rastreado: guarde-a num commit WIP (nunca 'git stash' pelado — a pilha é compartilhada entre as worktrees) e depois: cd '%s' && %s — e rode este script de novo" \
+      "$LEDGER_RAIZ" "$sinc"
+  fi
 }
 # Diagnóstico do ledger nos ramos INDETERMINADOS (nunca absolve): o chip nasce dizendo o que o
 # ledger sabia — NUNCA_ATESTADA pede a 1ª sonda humana; eco sem fonte pede sonda; "sem veredito" =
@@ -518,7 +627,7 @@ ledger_diverge() {
   return 1
 }
 
-ledger_ok=0; ledger_motivo=""
+ledger_ok=0; ledger_motivo=""; ledger_defasada=0
 : > "$tmp/ledger"; : > "$tmp/ledger_candidatos"
 # O gate é UM só, o mesmo do banco: mecânica reprovada = ledger nem é consultado (mesmo wrapper,
 # mesma desconfiança), e toda edge já está saindo SEM_PROVA com exit 2.
@@ -559,6 +668,18 @@ if [ -s "$tmp/ledger_candidatos" ]; then
     2) ledger_motivo="pendencias:deploy exit 2 (mecânica dele): $(head -c 200 "$tmp/ledger.err" | tr '\n' ' ')" ;;
     *) ledger_motivo="pendencias:deploy exit $ledger_rc: $(head -c 200 "$tmp/ledger.err" | tr '\n' ' ')" ;;
   esac
+  # FRESCURA — DEPOIS da chamada, contra a REF que o CLI acabou de buscar (§FRESCURA). Vale para
+  # QUALQUER desfecho dele: resposta boa de CLI defasado é descartada, e falha de CLI defasado ganha
+  # a causa certa (o motivo dele sai como detalhe, não como diagnóstico).
+  cli_frescura; frescura_rc=$?
+  case "$frescura_rc" in
+    0) ;;
+    1) ledger_defasada=1; ledger_ok=0 ;;
+    *) if [ "$ledger_ok" = 1 ]; then
+         ledger_ok=0
+         ledger_motivo="não consegui provar que o CLI desta worktree é o da $REF (fecho de imports ou REF ilegível em $LEDGER_RAIZ) — veredito descartado"
+       fi ;;
+  esac
 fi
 
 # ------------------------------------------------------------ veredito ---
@@ -569,7 +690,21 @@ if [ "$mecanica_ok" = 0 ]; then
   echo "⚠️ MECÂNICA NÃO CONFIÁVEL — $motivo"
   echo "   Fail-closed: sem evidência POSITIVA, toda edge da janela segue pendente."
 fi
-if [ -s "$tmp/ledger_candidatos" ] && [ "$ledger_ok" = 0 ]; then
+if [ "$ledger_defasada" = 1 ]; then
+  echo "⚠️ LEDGER_WORKTREE_DEFASADA — o CLI do ledger desta worktree NÃO é o da $REF; divergem do fecho de imports dele:"
+  sed 's/^/     /' "$tmp/cli_defasado"
+  echo "   O pendencias:deploy carrega DAQUI o código e a allowlist do cron (alvo novo do cron já no"
+  echo "   banco sai como '❌ MECÂNICA: o banco sonda edge(s) que o repo NÃO aprovou'). O veredito dele"
+  echo "   foi DESCARTADO: a edge sem resposta na janela viva segue pendente (fail-closed) — e não é"
+  echo "   caso de sonda nem de deploy às cegas: o ledger pode já ter a resposta. Sincronize e meça de novo:"
+  echo "      $(remedio_sincronizar)"
+  # A saída do CLI daqui NÃO é repetida: é de OUTRA versão, e o remédio que ela imprime não vale —
+  # o de 2026-09-10 era um UPDATE que desativaria o alvo APROVADO (desfaria a migration aplicada,
+  # #2464). Só o exit, que não manda ninguém fazer nada.
+  echo "   (a saída do pendencias:deploy desta worktree foi descartada sem ser repetida — é de outra"
+  echo "    versão, e o remédio dela, até um UPDATE que desativaria alvo aprovado do cron, não vale;"
+  echo "    exit dele: $ledger_rc)"
+elif [ -s "$tmp/ledger_candidatos" ] && [ "$ledger_ok" = 0 ]; then
   echo "⚠️ LEDGER_NAO_CONSULTADO — $ledger_motivo"
   echo "   A prova DURÁVEL (deploy_atestacoes) não entrou: edge sem resposta na janela viva segue"
   echo "   pendente, como antes de o ledger existir (fail-closed). Isto não é 'limpo'."
@@ -636,6 +771,12 @@ while read -r slug; do
     # bundle pré-sensor EXECUTA o fluxo real. Deploy antes, sonda depois (só para confirmar).
     printf '  LEDGER_DIVERGE %-34s ledger: %s — prod (%s, %s…) ≠ main (%s, %s…), visto há %s h via %s — deploy pendente PROVADO; NÃO sondar antes do deploy%s\n' \
       "$slug" "$l_estado" "$l_versao" "${l_obs:0:8}" "$l_vesp" "${esperado:0:8}" "$l_idade" "$l_via" "$(dica_anonimas)"
+  elif [ "$ledger_defasada" = 1 ] && [ -z "$servido" ]; then
+    # Candidata ao ledger cujo veredito foi descartado por DEFASAGEM (§FRESCURA): pendente por
+    # fail-closed, mas FORA do `sem_sonda` — o remédio é sincronizar e medir de novo. Mandar sondar
+    # agora era o ruído caro de 2026-09-10: sonda numa edge que ESCREVE, que o ledger já julgava.
+    printf '  SEM_PROVA      %-34s ledger descartado: worktree defasada (ver acima) — sincronize e meça de novo ANTES de sondar ou deployar%s\n' \
+      "$slug" "$(dica_anonimas)"
   elif [ -z "$servido" ] && [ "$n_anonimas" -gt 0 ]; then
     # Irmao do PRE_SONDA_FONTE, um degrau ATRAS: la o bundle responde `edge` e nao `fonte`; aqui
     # nao responde nem `edge` (anterior ao #1789), entao a resposta EXISTE e nao diz de quem e.
@@ -686,6 +827,12 @@ echo "🚀 RESOLVER_NESTA_SESSAO: $(tr '\n' ' ' < "$tmp/chips")"
 echo "   (linha a linha acima: bundle velho servindo, sonda sem o campo de fonte e divergência do"
 echo "    ledger são pendência PROVADA · sem prova = indeterminado, entra por fail-closed · edge"
 echo "    aposentada e edge atestada pelo ledger ficam de fora)"
+if [ "$ledger_defasada" = 1 ]; then
+  # sem repetir o marcador (ver o ⚠️ acima): o rodapé só impede que se pule do aviso para o deploy.
+  echo
+  echo "   ⛔ ANTES DE AGIR: esta lista foi medida SEM o ledger (worktree defasada, aviso no topo)."
+  echo "      Sincronize e rode de novo — o pendencias:deploy abaixo, rodado DAQUI, repetiria o erro."
+fi
 echo
 echo "   🔧 O DESTINO DESTA LISTA É A SESSÃO QUE ESTÁ LENDO, NÃO UM CHIP. O braço que deploya"
 echo "      deixou de ser humano em 2026-09-08 (docs/agent/deploy.md, §Deploy de edge pela SESSÃO):"

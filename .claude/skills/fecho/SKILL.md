@@ -174,6 +174,7 @@ git diff --name-only origin/main...HEAD -- supabase/functions/
 #
 # Este script enumera a janela INTEIRA (a desta sessão e a das outras) e já classifica quem
 # precisa de deploy. Use-o em vez do `git log` cru — o cru é o gatilho velho, ver abaixo.
+git fetch origin main && git checkout --detach origin/main  # SINCRONIZE antes de medir (tree limpo; DEPOIS do diff acima) — o CLI do ledger roda desta worktree
 bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início da sessão> UTC"
 # aceita REVISÃO (SHA), DATA RELATIVA ("3 hours ago") ou DATA ABSOLUTA **com fuso explícito**.
 # ⚠️ Data absoluta SEM fuso é RECUSADA (exit 3, marca `DESDE_SEM_FUSO`). Aqui o `--desde` cai no
@@ -211,6 +212,7 @@ enterra o chip que importava. O script troca isso pela evidência que já existe
 | `LEDGER_DIVERGE` | o ledger julgou `DIVERGE_P1/P2`, `INCOERENTE` ou `SEM_MAPA_NO_BUNDLE` | sim, PROVADO — e **não** sondar antes do deploy |
 | `LEDGER_DISCORDA` | o ledger diz `CONFERE`, mas com `fonte` ≠ o do mapa da REF | sim — as duas leituras não batem |
 | `LEDGER_NAO_CONSULTADO` | o `pendencias:deploy` não respondeu (exit 2/anômalo, stdout vazio, sem a marca de formato, JSON ilegível, bun/jq ausente) | sim (fail-closed) |
+| `LEDGER_WORKTREE_DEFASADA` | o fecho de imports do CLI do ledger (`pendencias-deploy.ts` + allowlist do cron + libs) nesta worktree ≠ o da REF — o veredito dele foi DESCARTADO, até `CONFERE` | sim (fail-closed), mas **não** sonde nem deploye: rode o remédio impresso (sincronizar) e meça de novo |
 | `DESATUALIZADA` | `fonte` servido ≠ main — bundle VELHO servindo | sim, e prioritário |
 | `PRE_SONDA_FONTE` | respondeu a sonda (200 + eco de `probe`/`versao`) **sem** o campo `fonte` — bundle anterior ao #1998 | sim, e prioritário |
 | `SEM_PROVA` + `SONDA_ANONIMA` | há resposta de sonda na janela **sem eco de slug** — existe e não é atribuível | sim (fail-closed), e o `--request-ids` determina |
