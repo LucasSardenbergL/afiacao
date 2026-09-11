@@ -985,17 +985,31 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
 ```bash
 .claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh [url] [sentinela]
 # exit 0 = sincronizado (MESMO commit) · 5 = SINCRONIZADO_EM_BUNDLE (SHA atrás, delta provado fora do bundle)
-#      3 = ATRASADO (Publish pendente; a linha "motivo:" diz qual elo) · 4 = deploy novo, versão indeterminada
-#      git fetch da main falhou ⇒ 3 "motivo: FETCH_FALHOU" em QUALQUER caminho — nunca 0/5/4 (só o 2 vem antes)
+#      3 = ATRASADO (Publish pendente; a linha "motivo:" diz qual elo) · 4 = versão indeterminada
+#      2 = site/entry não respondeu · 6 = USO_INVALIDO
+#      git fetch da main falhou ⇒ 3 "motivo: FETCH_FALHOU" em QUALQUER caminho — nunca 0/5/4 (só o 2 e o 6 vêm antes)
+.claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh --pr <n> [url]   # "o PR n está no ar?"
+# exit 0 = PR_NO_AR · 3 = PR_FORA_DO_AR · 6 = NAO_CONSEGUI_MEDIR (nunca "fora do ar"; fetch falho aqui é 6) — ver o ⚠️ abaixo
 ```
 
 - **Determinístico** quando o ar tem `__BUILD_SHA__="<sha>"` — compara com `origin/main`, e se o SHA
   difere, PROVA (ou não) que o delta não alcança o bundle (bloco "SHA atrás ≠ bundle atrás" abaixo).
 - **Fallback**: se vier `"dev"` (Lovable sem `.git` no build) ou ausente (build pré-carimbo), passe uma
-  `sentinela` (string de UI única do HEAD) → o monitor cai pro `verify-frontend.sh`.
+  `sentinela` (string de UI única do HEAD) → o monitor cai pro `verify-frontend.sh`, que tem **quatro**
+  saídas, não duas: 0 presente · 1 ausente · 2 sonda não confiável · 3 recusa. Até 2026-09-10 todo ≠0
+  virava "AUSENTE → Publish pendente"; agora o 2 e o 3 saem `motivo: SENTINELA_SEM_VEREDITO` (exit 3
+  para o alarme não calar — não porque falte Publish), e as últimas linhas do verify-frontend vêm junto.
+- **`deploy-novo` é POR CHECKOUT** (`<git-dir>/deploy-monitor.state`; cada worktree tem o seu, e ele
+  some com ela). Até 2026-09-10 era um arquivo só na máquina (`~/.config/afiacao/deploy-monitor.state`):
+  uma sessão que nunca tinha rodado o monitor via `deploy-novo=nao` porque OUTRA gravara o entry novo —
+  "desde a última checagem" de qualquer sessão, lido como "desde a minha". A 1ª checagem de um checkout
+  sai `deploy-novo=?`, nunca o `SIM (1a-vez …)` de antes. `DEPLOY_MONITOR_STATE` segue sobrescrevendo
+  (aponte dois checkouts para o mesmo arquivo se QUISER partilhar). É sinal auxiliar: a prova de Publish
+  é o carimbo (ou a sentinela), nunca o deploy-novo.
 - **Agendar** (cron de sistema, sem gastar Claude): `*/30 * * * * cd <repo> && bash .../monitor-deploy.sh
-  >> ~/.config/afiacao/deploy-monitor.log 2>&1` — avise em **2/3/4** e **não** em 5 (`case $? in 2|3|4)
-  osascript …;; esac`); um `monitor … || avisa` voltaria a gritar no exit 5, que é justamente o ruído cortado.
+  >> ~/.config/afiacao/deploy-monitor.log 2>&1` — avise em tudo que **não** for 0 ou 5 (`case $? in 0|5)
+  ;; *) osascript …;; esac`); um `monitor … || avisa` voltaria a gritar no exit 5, que é justamente o
+  ruído cortado, e uma lista fixa `2|3|4` calaria o 6 de uso inválido.
 
 ✅ **MUDOU — o carimbo determinístico FUNCIONA (medido em prod 2026-09-08).** De 2026-06-26 até
 2026-09-07 esta seção dizia que o ar servia `__BUILD_SHA__="dev"` (o build do Lovable roda sem `.git`),
@@ -1018,30 +1032,43 @@ continua valendo para provar que um **conteúdo específico** está no ar; para 
 `origin/main`?", o monitor agora responde sozinho, determinístico, com **2 requests**.
 ⚠️ **Confira o carimbo antes de confiar** (`git rev-parse --verify <sha>^{commit}` + `merge-base
 --is-ancestor`): se voltar a `"dev"`, o monitor cai em exit 4 e a sentinela volta a ser obrigatória —
-o mecanismo é uma env do host de build, que não é nossa e pode sumir sem aviso. E **passe a URL com `https://`**: sem esquema, o `curl` (sem `-L`) volta vazio e o monitor reporta
-falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
+o mecanismo é uma env do host de build, que não é nossa e pode sumir sem aviso. E **passe a URL com `https://`**: sem esquema o monitor recusa com exit 6 (`USO_INVALIDO`) — até
+2026-09-10 o `curl` (sem `-L`) voltava vazio e o monitor reportava falso `"fora do ar"` (exit 2), que
+não era o site caído, era a URL malformada.
 
-⚠️ **`exit 3` responde "o ar É a `origin/main`?" — NÃO "o PR X está no ar?" (medido 2026-09-10).**
-O monitor compara por IGUALDADE, e com o auto-merge fechando PR em minutos a `main` anda enquanto
-você espera o Publish: ele passa a dizer "Publish pendente" **com o commit-alvo já servido**. No
-Publish do #2459 o #2445 mergeou 38 s depois do ANTES; com o ar já em `eee71c80`, o monitor seguiu em
-`ATRASADO` (rc 3) — com o #2459 **e** o #2458 no ar, e um delta ar→main sem nenhum arquivo em `src/`.
-Para a pergunta sobre UM PR, a checagem é ancestralidade:
+⚠️ **Sem `--pr`, o monitor responde "o ar É a `origin/main`?" — NÃO "o PR X está no ar?" (medido
+2026-09-10).** Com o auto-merge fechando PR em minutos a `main` anda enquanto você espera o Publish:
+no do #2459 o #2445 mergeou 38 s depois do ANTES, e o monitor seguiu em `ATRASADO` com o #2459 **e**
+o #2458 já servidos. A pergunta sobre UM PR é de ancestralidade — e ela é a flag `--pr`:
 
 ```bash
-git fetch origin
-PR=$(gh pr view <n> --json mergeCommit --jq .mergeCommit.oid)   # o SQUASH na main
-AR=<sha-do-ar>                                                  # o `ar=` que o monitor imprimiu
-git merge-base --is-ancestor "$PR" "$AR"; rc=$?
-# 0 = o PR está no ar · 1 = não está · 128 = SHA que o clone não conhece → NÃO CONSEGUI medir
+.claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh --pr <n> [url]
+# 0 = PR_NO_AR · 3 = PR_FORA_DO_AR + (PR_TOCA_O_BUNDLE | PR_SEM_ALCANCE_NO_BUNDLE | PR_ALCANCE_NAO_PROVADO)
+# 6 = NAO_CONSEGUI_MEDIR (SHA_DESCONHECIDO · PR_NAO_MERGEADO · PR_BASE_NAO_E_MAIN · GH_FALHOU ·
+#     FETCH_FALHOU · CLONE_RASO · SEM_CARIMBO · CARIMBO_AMBIGUO) — nunca "fora do ar"
 ```
 
-As duas armadilhas fabricam "fora do ar", e as duas foram medidas no #2459: **rc 128 não é 1** — um
-`if …; then no-ar; else fora-do-ar; fi` lê como veredito um SHA que o clone não conhece (sem `fetch`,
-prefixo errado); e **o SHA é o do squash, nunca o head do branch** — o head (`a93c101ee`) existe no
-clone e dá rc **1** limpo, com cara de veredito, enquanto o squash (`eee71c80f`) dá 0. A mesma medição
-derrubou o critério "rc 3 → 0" como prova de Publish: com a `main` andando, `ar == main` fica
-inalcançável, e a transição que conta é a do `ar=` (e do entry). Detalhe em
+Por dentro é `gh pr view <n> --json mergeCommit` + `git merge-base --is-ancestor <squash> <ar>` com os
+três ramos explícitos — e virou flag, não receita, porque as duas armadilhas medidas no #2459
+fabricam "fora do ar" com cara de veredito: **rc 128 não é 1** (um `if …; then no-ar; else
+fora-do-ar; fi` lê como veredito um SHA que o clone não conhece) e **o SHA é o do squash, nunca o head
+do branch** — o head (`a93c101ee`) existe no clone e dá rc **1** limpo, o squash (`eee71c80f`) dá 0.
+Pelo mesmo caminho a flag fecha mais três: fetch falho é fail-CLOSED (exit 6 mesmo com os dois commits
+no clone), clone RASO é recusado (a ancestralidade para na borda e devolve rc 1 falso) e o carimbo tem
+de resolver para UM commit **com o prefixo conferido** (um branch chamado `a0a0a0a0` sequestraria o
+`^{commit}`). E dois limites ficam DITOS na saída, não calados:
+- **`PR_NO_AR` prova que o commit entrou no build, não que o conteúdo sobreviveu** — revert posterior
+  sai `AVISO_REVERT_POSTERIOR` (heurística de mensagem: `Reverts <repo>#N` ou o SHA do squash).
+- **`PR_FORA_DO_AR` não é "Publish pendente".** A linha de alcance roda a MESMA tabela (`classify.sh
+  --bundle`) e a MESMA prova (`alcance-bundle.py`) do exit 5 sobre o diff do próprio PR: um PR só de
+  docs sai `PR_SEM_ALCANCE_NO_BUNDLE`; sem prova completa, `PR_ALCANCE_NAO_PROVADO` — nunca "sem alcance".
+
+Medido em prod (2026-09-10, ar `70fc305f`): `--pr 2459` → exit 0; `--pr 2468` → exit 3 +
+`PR_SEM_ALCANCE_NO_BUNDLE` (4 arquivos da skill); `--pr 2467` → exit 3 + sem alcance (8 arquivos, 0 em
+`src/`, conferido no `gh`); `--pr 2469` (aberto) → exit 6. Rede: `evals/monitor-deploy-pr-eval.sh`
+(33 casos × 2 locales, falsificado). A mesma medição derrubou o critério "rc 3 → 0" como prova de
+Publish: com a `main` andando, `ar == main` fica inalcançável — a transição que conta é a do `ar=` (e do
+entry). Detalhe em
 [`docs/historico/piloto-deploy-mcp-lovable.md`](../../../docs/historico/piloto-deploy-mcp-lovable.md) §"2ª medição".
 
 ✅ **SHA atrás ≠ bundle atrás — o monitor PROVA o delta antes de pedir Publish (2026-09-10).** O caso
@@ -1063,8 +1090,8 @@ Três escolhas que não são óbvias e têm caso na rede (`evals/monitor-deploy-
   puro (`vite build && node scripts/gera.js`), `scripts/` deixa de ser inerte e o monitor recusa.
 - **`--no-renames`.** Com a detecção de rename (default), `git mv src/x.ts docs/` aparece no
   `--name-only` só como `docs/x.ts` — delta "só de docs" com arquivo saindo do bundle.
-O exit 5 ainda **não** responde "o PR X está no ar?" (é a receita de ancestralidade acima), e a prova
-de que um Publish aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
+O exit 5 **não** responde "o PR X está no ar?" (é o `--pr` acima), e a prova de que um Publish
+aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
 
 ## Referências
 - CLAUDE.md §"Deploy do FRONTEND (app) — Publish MANUAL no Lovable" (a técnica dos bytes; armadilha do chunk de nome inesperado)
