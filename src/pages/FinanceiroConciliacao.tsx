@@ -18,8 +18,8 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type {
   FinConciliacaoRow,
   FinContaCorrenteRow,
-  FinMovimentacaoRow,
 } from '@/services/financeiroTypes';
+import { gerarFilaConciliacao, resumirGeracaoConciliacao } from '@/services/financeiroConciliacao';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
@@ -34,10 +34,6 @@ const statusConfig: Record<ConciliacaoStatus, { label: string; color: string; ic
 };
 
 type ContaCorrenteFiltro = Pick<FinContaCorrenteRow, 'omie_ncodcc' | 'descricao' | 'banco'>;
-type MovimentacaoMatch = Pick<
-  FinMovimentacaoRow,
-  'id' | 'omie_ncodcc' | 'data_movimento' | 'valor' | 'descricao' | 'tipo' | 'omie_codigo_lancamento' | 'conciliado'
->;
 
 const FinanceiroConciliacao = () => {
   const [company, setCompany] = useState<Company>('oben');
@@ -115,76 +111,10 @@ const FinanceiroConciliacao = () => {
   const gerarConciliacao = async () => {
     toast.success('Gerando fila de conciliação...');
     try {
-      // Buscar movimentações não conciliadas
-      const { data: movs } = await supabase
-        .from('fin_movimentacoes')
-        .select('id, omie_ncodcc, data_movimento, valor, descricao, tipo, omie_codigo_lancamento, conciliado')
-        .eq('company', company)
-        .eq('conciliado', false);
-
-      let criados = 0;
-      for (const mov of (movs || []) as MovimentacaoMatch[]) {
-        // Tentar match automático por omie_codigo_lancamento
-        let tituloId: string | null = null;
-        let tituloValor: number | null = null;
-        let tipoTitulo: 'CR' | 'CP' | null = null;
-        let tipoMatch: string | null = null;
-
-        if (mov.omie_codigo_lancamento) {
-          // Buscar em CR
-          const { data: cr } = await supabase
-            .from('fin_contas_receber')
-            .select('id, valor_documento')
-            .eq('company', company)
-            .eq('omie_codigo_lancamento', mov.omie_codigo_lancamento)
-            .limit(1);
-          if (cr && cr.length > 0) {
-            tituloId = cr[0].id;
-            tituloValor = cr[0].valor_documento;
-            tipoTitulo = 'CR';
-            tipoMatch = 'automatico';
-          } else {
-            // Buscar em CP
-            const { data: cp } = await supabase
-              .from('fin_contas_pagar')
-              .select('id, valor_documento')
-              .eq('company', company)
-              .eq('omie_codigo_lancamento', mov.omie_codigo_lancamento)
-              .limit(1);
-            if (cp && cp.length > 0) {
-              tituloId = cp[0].id;
-              tituloValor = cp[0].valor_documento;
-              tipoTitulo = 'CP';
-              tipoMatch = 'automatico';
-            }
-          }
-        }
-
-        const status = tipoMatch === 'automatico'
-          ? (Math.abs(mov.valor - (tituloValor || 0)) < 0.01 ? 'conciliado' : 'divergencia')
-          : 'pendente';
-
-        if (mov.omie_ncodcc == null) continue;
-
-        const { error } = await supabase
-          .from('fin_conciliacao')
-          .upsert({
-            company,
-            omie_ncodcc: mov.omie_ncodcc,
-            mov_id: mov.id,
-            mov_data: mov.data_movimento,
-            mov_valor: mov.valor,
-            mov_descricao: mov.descricao,
-            tipo_titulo: tipoTitulo,
-            titulo_id: tituloId,
-            titulo_valor: tituloValor,
-            status,
-            tipo_match: tipoMatch,
-          }, { onConflict: 'id' });
-
-        if (!error) criados++;
-      }
-      toast.success(`${criados} itens gerados na fila de conciliação`);
+      // Só a ótica BANCÁRIA vira item, e gravação recusada é contada — ver o service.
+      const resumo = resumirGeracaoConciliacao(await gerarFilaConciliacao(company));
+      if (resumo.tipo === 'sucesso') toast.success(resumo.titulo);
+      else toast.error(resumo.titulo, { description: resumo.descricao });
       load();
     } catch (e) {
       const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';

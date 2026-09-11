@@ -142,6 +142,7 @@ export const MODULOS: ModuloApp[] = [
       "src/services/__tests__/exportContasCSV.baixa-indisponivel.test.ts",
       "src/services/__tests__/getCapitalDeGiro.test.ts",
       "src/services/__tests__/getFluxoCaixa.test.ts",
+      "src/services/__tests__/gerarFilaConciliacao.test.ts",
       "src/services/__tests__/getResumoFinanceiro.test.ts",
       "src/services/__tests__/getTopInadimplentes.test.ts",
       "src/services/__tests__/somarSaldoAberto.test.ts",

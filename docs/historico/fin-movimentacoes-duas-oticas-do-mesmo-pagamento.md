@@ -132,7 +132,10 @@ e dois não rodam:
 |---|---|---|
 | bloco (c) da skill CFO | **sim** — consulta manual, e publicou a tendência de caixa do fechamento de abril | **fechado**: ótica bancária + prova no núcleo do CI + errata no relatório — [cfo-caixa-90d-somava-as-duas-oticas.md](cfo-caixa-90d-somava-as-duas-oticas.md) |
 | `fin_calcular_confiabilidade` | **não** — `fin_confiabilidade` com `n_tup_ins = 0`; sem cron, sem chamador SQL/TS/edge; EXECUTE só para `postgres`/`service_role` | **código morto, só registrado** (abaixo) |
-| `gerarConciliacao` (`FinanceiroConciliacao.tsx`) | **não** — `fin_conciliacao` com `n_tup_ins = 0`; `fin_permissoes` vazia e sem UI que a grave, então a policy `fin_conc_write` barra toda escrita do app | defesa da ótica, em PR separado (decisão do Lucas) |
+| `gerarConciliacao` (`FinanceiroConciliacao.tsx`) | **não** — `fin_conciliacao` com `n_tup_ins = 0`; `fin_permissoes` vazia e sem UI que a grave, então a policy `fin_conc_write` barra toda escrita do app | **defesa, inerte hoje** (decisão do Lucas): ótica bancária na query + falha contada no toast; pré-requisitos para ligar listados — [conciliacao-otica-bancaria-defesa.md](conciliacao-otica-bancaria-defesa.md) |
+
+Com os três, nenhum leitor de `fin_movimentacoes` no repo nem na PROD soma as óticas sem escolher uma:
+um corrigido (a skill CFO), um defendido (a conciliação dormente) e um registrado como código morto.
 
 **`fin_calcular_confiabilidade`, se um dia for religada:** `total_mov` conta as duas óticas mais as
 previsões (dobrado); `pct_mov_conciliado` é uma razão sobre `fin_movimentacoes.conciliado`, flag que o sync
