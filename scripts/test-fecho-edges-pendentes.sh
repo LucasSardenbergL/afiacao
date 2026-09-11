@@ -104,9 +104,77 @@ case "${LEDGER_MODO:-confere}" in
   exit2)          echo "MECANICA: ledger public.deploy_atestacoes NAO existe" >&2; exit 2 ;;
   exit3)          echo "USO: argumento desconhecido" >&2; exit 3 ;;
   ausente)        exit 127 ;;                                      # bun/arquivo que não roda
+  # o DEFEITO de 2026-09-10, VERBATIM (pendencias-deploy.ts, `secaoSondaCron`): o banco já sonda um
+  # alvo que a allowlist CARREGADA pelo CLI não tem (onda 5 aplicada, `sonda-cron-alvos.ts` velho no
+  # disco) — e o remédio impresso é um UPDATE que desativaria o alvo APROVADO (#2464).
+  intruso)        printf '%s\n' "$MSG_INTRUSO" >&2; exit 2 ;;
+  # ...e o mesmo DEPOIS do `git fetch origin main` que o CLI real faz antes de julgar
+  # (pendencias-deploy.ts, `lerEsperados`): a REF anda DURANTE a chamada.
+  intruso-apos-fetch)
+                  git -C "$FECHO_LEDGER_RAIZ" update-ref refs/remotes/origin/main "$CORRIDA_NOVO"
+                  printf '%s\n' "$MSG_INTRUSO" >&2; exit 2 ;;
 esac
 LSTUB
 chmod +x "$tmp/ledger-stub"
+
+# ---------------------------------------------- a CASA do CLI do ledger (fixtures) ---
+# O alvo roda o `pendencias-deploy.ts` do WORKING TREE, e só aceita o veredito dele se o fecho de
+# imports desse CLI for byte a byte o da REF. Aqui a casa do CLI é um repo git de FIXTURE
+# (`FECHO_LEDGER_RAIZ`), nunca o checkout de quem roda a suíte: medir o repo real deixaria esta
+# suíte VERMELHA em todo PR que tocasse o fecho do CLI (~3 commits/dia na main) — gate que reprova
+# o trabalho alheio por um estado que não é defeito. Mesmo FORMATO do fecho real: import relativo
+# com `..` (a allowlist do cron), `./lib/` e o alias `@/` (tsconfig.scripts.json: `@/*` → `src/*`).
+cli_base() { # <dir> — HEAD == origin/main, tree limpo: o CLI desta "worktree" É o da REF
+  local d="$1"
+  mkdir -p "$d/scripts/lib" "$d/src/lib" "$d/supabase/functions/_shared"
+  git -C "$d" init -q -b main 2>/dev/null
+  git -C "$d" config user.email t@t; git -C "$d" config user.name t
+  printf "import { execFileSync } from 'node:child_process';\nimport { julgar } from './lib/pendencias-deploy';\nimport { SONDA_CRON_ALVOS } from '../supabase/functions/_shared/sonda-cron-alvos';\n" \
+    > "$d/scripts/pendencias-deploy.ts"
+  # a cadeia do fecho REAL `sonda-versao-sql.ts` → `await import('./canaria-leitor-do-repo')` →
+  # `@/lib/gates/limpeza-fonte`: import DINÂMICO, quebrado em linhas como o Prettier quebra, até o alias.
+  printf "export const julgar = 1;\nexport async function carregar() {\n  return await import(\n    './canaria'\n  );\n}\n" \
+    > "$d/scripts/lib/pendencias-deploy.ts"
+  printf "import { erro } from '@/lib/erro-mensagem';\nexport const canaria = erro;\n" > "$d/scripts/lib/canaria.ts"
+  printf "export const erro = 'e';\n" > "$d/src/lib/erro-mensagem.ts"
+  printf "export const SONDA_CRON_ALVOS = [{ edge: 'edge-a' }];\n" > "$d/supabase/functions/_shared/sonda-cron-alvos.ts"
+  # FORA do fecho, de propósito: o mapa muda a cada merge de edge e o CLI o lê pela REF
+  # (`lerNaRev`), nunca do disco — e um script vizinho que o CLI não importa.
+  printf 'export const FONTE_SHA256 = {};\n' > "$d/supabase/functions/_shared/sonda-fingerprints.ts"
+  printf 'export const outro = 1;\n' > "$d/scripts/outro.ts"
+  git -C "$d" add -A >/dev/null; git -C "$d" commit -qm base
+  git -C "$d" update-ref refs/remotes/origin/main HEAD
+}
+# a MAIN anda 1 commit mudando <arquivo> e o working tree fica para trás — o estado NORMAL no
+# /fecho (branch da sessão squash-mergeada, main andou). Tree LIMPO.
+cli_main_anda() { # <dir> <arquivo> <conteudo>
+  local d="$1" base; base="$(git -C "$d" rev-parse HEAD)"
+  printf '%s\n' "$3" > "$d/$2"
+  git -C "$d" commit -qam "main andou: $2"
+  git -C "$d" update-ref refs/remotes/origin/main HEAD
+  git -C "$d" checkout -q --detach "$base"
+}
+ALVOS_ONDA5="export const SONDA_CRON_ALVOS = [{ edge: 'edge-a' }, { edge: 'omie-desconto-backfill' }];"
+cli_ok="$tmp/cli-ok";               cli_base "$cli_ok"
+cli_defasado="$tmp/cli-defasado";   cli_base "$cli_defasado"
+cli_main_anda "$cli_defasado" supabase/functions/_shared/sonda-cron-alvos.ts "$ALVOS_ONDA5"
+cli_fora="$tmp/cli-fora-do-fecho"; cli_base "$cli_fora"
+cli_main_anda "$cli_fora" supabase/functions/_shared/sonda-fingerprints.ts 'export const FONTE_SHA256 = { "x": "y" };'
+cli_alias="$tmp/cli-alias";         cli_base "$cli_alias"
+cli_main_anda "$cli_alias" src/lib/erro-mensagem.ts "export const erro = 'mudou na main';"
+cli_sujo="$tmp/cli-sujo";           cli_base "$cli_sujo"
+printf "export const julgar = 'editado, sem commit';\n" >> "$cli_sujo/scripts/lib/pendencias-deploy.ts"
+cli_sem_ref="$tmp/cli-sem-ref";     cli_base "$cli_sem_ref"
+git -C "$cli_sem_ref" update-ref -d refs/remotes/origin/main
+# a CORRIDA: em dia no começo; o stub `intruso-apos-fetch` move a origin/main para CORRIDA_NOVO,
+# como o `git fetch origin main` do CLI real faria se a main andasse entre o fetch do /fecho e o dele.
+cli_corrida="$tmp/cli-corrida";     cli_base "$cli_corrida"
+cli_main_anda "$cli_corrida" supabase/functions/_shared/sonda-cron-alvos.ts "$ALVOS_ONDA5"
+CORRIDA_NOVO="$(git -C "$cli_corrida" rev-parse refs/remotes/origin/main)"
+CORRIDA_BASE="$(git -C "$cli_corrida" rev-parse HEAD)"
+git -C "$cli_corrida" update-ref refs/heads/futuro "$CORRIDA_NOVO"
+MSG_INTRUSO="❌ MECÂNICA: o banco sonda edge(s) que o repo NÃO aprovou: omie-desconto-backfill. Só a allowlist do repo teve todos os closures históricos executados (\`bun run sonda:cron-prova\`). Desative no banco: UPDATE public.deploy_sonda_alvos SET ativo = false WHERE edge IN ('omie-desconto-backfill');"
+export CORRIDA_NOVO MSG_INTRUSO
 
 export FECHO_MAPA_FONTE="$tmp/mapa.ts" STUB_PARES="$tmp/pares.txt" STUB_SQL_ECO="$tmp/sql.txt"
 export STUB_ANONIMAS=0
@@ -115,6 +183,9 @@ export SHA_NOVO SHA_VELHO
 # medem o comportamento SEM ele, e o fail-closed tem de mantê-los idênticos — a prova de que o
 # ledger só ACRESCENTA absolvição, nunca muda o resto.
 export FECHO_LEDGER_BIN="$tmp/ledger-stub" LEDGER_MODO=ausente
+# ...e a casa do CLI, por padrão, EM DIA com a REF: todo caso de ledger acima do 16i é também o
+# controle de que a trava de frescura não fabrica defasagem quando o CLI É o da REF.
+export FECHO_LEDGER_RAIZ="$cli_ok"
 
 # roda o alvo: `run <modo-do-stub> <psql> <args...>` publica a saida em $out e o codigo em $rc.
 # NAO devolve a saida por stdout de proposito: `run ...` executaria a funcao num SUBSHELL
@@ -655,6 +726,92 @@ MAPA3
   if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ] && ! tem 'LEDGER_CONFERE' "$out"
   then ok "psql mudo -> ledger NEM e consultado (fail-closed do banco tem precedencia)"
   else bad "com mecanica quebrada o ledger nao pode absolver (rc=$rc): ${out:0:200}"; fi
+
+  # ----------------------------------------------- FRESCURA do CLI do ledger ---
+  # 16i. O DEFEITO DE 2026-09-10, reproduzido: /fecho numa worktree 11 commits ATRAS da main, com
+  #      a onda 5 do cron (#2461) ja aplicada no banco e ausente do `sonda-cron-alvos.ts` do working
+  #      tree. O CLI sai exit 2 ("o banco sonda edge(s) que o repo NAO aprovou") e o diagnostico
+  #      dizia MECANICA + "DISPARE sonda" — numa edge que ESCREVE. A causa e a defasagem, e o
+  #      remedio e sincronizar: a edge segue pendente (fail-closed), mas NAO vai para o DISPARE
+  #      (o ledger pode ja ter a resposta) e o remedio sai exato para o tree LIMPO.
+  FECHO_LEDGER_RAIZ="$cli_defasado" LEDGER_MODO=intruso run ok "$tmp/psql-stub" edge-muda
+  linha_edge="$(printf '%s' "$out" | command grep 'SEM_PROVA' | command grep -- 'edge-muda' || true)"
+  linha_cmd="$(printf '%s' "$out" | command grep 'sonda:sql' || true)"
+  if tem 'LEDGER_WORKTREE_DEFASADA' "$out" && tem 'supabase/functions/_shared/sonda-cron-alvos.ts' "$out" \
+     && tem 'git checkout --detach origin/main' "$out" && ! tem 'commit WIP' "$out" \
+     && [ "$rc" -eq 1 ] && tem 'RESOLVER_NESTA_SESSAO' "$out" && tem 'worktree defasada' "$linha_edge" \
+     && ! tem 'edge-muda' "$linha_cmd" && ! tem 'LEDGER_NAO_CONSULTADO' "$out" && ! tem 'LEDGER_CONFERE' "$out" \
+     && tem 'ANTES DE AGIR' "$out" \
+     && ! tem 'aprovou: omie-desconto-backfill' "$out" && ! tem 'UPDATE public.deploy_sonda_alvos' "$out"
+  then ok "worktree atras da REF com alvo novo do cron -> LEDGER_WORKTREE_DEFASADA + remedio, pendente e FORA do DISPARE"
+  else bad "defasagem devia nomear a CAUSA e o remedio, sem mandar sondar (rc=$rc): ${out:0:260}"; fi
+  # ...e sem REPETIR a saida do CLI defasado: o remedio dela e de OUTRA versao, e o de 2026-09-10 era
+  #    um UPDATE que desativaria o alvo APROVADO (desfaria a migration aplicada, #2464). Hoje ele so
+  #    nao aparece porque o corte em 200 bytes cai antes — sorte, nao desenho; por isso as duas
+  #    asserções negativas acima: o trecho do slug (dentro do corte) e o UPDATE (fora dele).
+
+  # 16j. ESTRITO: o veredito de um CLI que nao e o da REF nao vale nem quando ABSOLVE. CLI velho
+  #      tambem julga com logica velha (o #2221 era exatamente "a resposta sem `edge` lida como
+  #      nunca atestada" -> re-sondar quem ja respondeu), e o remedio seria o de outra versao.
+  FECHO_LEDGER_RAIZ="$cli_defasado" LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  if tem 'LEDGER_WORKTREE_DEFASADA' "$out" && ! tem 'LEDGER_CONFERE' "$out" && [ "$rc" -eq 1 ] \
+     && tem 'RESOLVER_NESTA_SESSAO' "$out"
+  then ok "worktree defasada + CLI dizendo CONFERE -> veredito DESCARTADO (so vale o CLI da REF), chip"
+  else bad "CLI defasado nao pode absolver (rc=$rc): ${out:0:220}"; fi
+
+  # 16k. O PAR MINIMO do 16i: o MESMO exit 2 com o CLI EM DIA e mecanica DE VERDADE — o banco sonda
+  #      um alvo que a MAIN nao aprovou. Sem este lado, uma trava que chamasse todo exit 2 de
+  #      "defasada" passaria no 16i e esconderia o achado que o CLI existe para dar.
+  LEDGER_MODO=intruso run ok "$tmp/psql-stub" edge-muda
+  if tem 'LEDGER_NAO_CONSULTADO' "$out" && tem 'aprovou: omie-desconto-backfill' "$out" && [ "$rc" -eq 1 ] \
+     && ! tem 'LEDGER_WORKTREE_DEFASADA' "$out"
+  then ok "CLI em dia + banco sondando alvo fora da main -> segue MECANICA (LEDGER_NAO_CONSULTADO), nunca 'defasada'"
+  else bad "exit 2 com o CLI em dia nao e defasagem (rc=$rc): ${out:0:220}"; fi
+
+  # 16l. PRECISAO: a main andou FORA do fecho do CLI (o mapa de fingerprints, que muda a cada merge de
+  #      edge e o CLI le pela REF). Isso NAO e defasagem — medir o mapa, ou o repo inteiro,
+  #      trocaria o ruido de "mecanica" pelo de "defasada" em quase todo /fecho.
+  FECHO_LEDGER_RAIZ="$cli_fora" LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  if tem 'LEDGER_CONFERE' "$out" && [ "$rc" -eq 0 ] && ! tem 'LEDGER_WORKTREE_DEFASADA' "$out"
+  then ok "main andou so FORA do fecho do CLI (mapa) -> ledger consultado normalmente (LEDGER_CONFERE)"
+  else bad "mudanca fora do fecho do CLI nao pode bloquear o ledger (rc=$rc): ${out:0:220}"; fi
+
+  # 16m. A CADEIA FUNDA: o fecho real entra em `src/lib/` pelo alias `@/`, e parte dele so e alcancada
+  #      por import DINAMICO (`sonda-versao-sql.ts` -> `await import('./canaria-leitor-do-repo')`). O
+  #      levantamento feito a mao para este PR era cego ao dinamico e achou 9 arquivos; eram 11.
+  #      Aqui o arquivo divergente so se alcanca por: relativo -> import( quebrado em linhas ) -> @/.
+  FECHO_LEDGER_RAIZ="$cli_alias" LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  if tem 'LEDGER_WORKTREE_DEFASADA' "$out" && tem 'src/lib/erro-mensagem.ts' "$out" \
+     && ! tem 'LEDGER_CONFERE' "$out"
+  then ok "divergencia alcancada so por import dinamico (em linhas) + alias @/ -> DEFASADA nomeando o arquivo"
+  else bad "fecho do CLI devia seguir import dinamico e o alias @/ (rc=$rc): ${out:0:220}"; fi
+
+  # 16n. TREE SUJO: o checkout pelado falharia ou carregaria a mudanca local junto (e a defasagem
+  #      voltaria). O remedio muda — e sem `git stash` pelado, que e pilha COMPARTILHADA entre as
+  #      worktrees. O par minimo do remedio e o 16i (tree limpo).
+  FECHO_LEDGER_RAIZ="$cli_sujo" LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  if tem 'LEDGER_WORKTREE_DEFASADA' "$out" && tem 'scripts/lib/pendencias-deploy.ts' "$out" \
+     && tem 'commit WIP' "$out" && ! tem 'LEDGER_CONFERE' "$out"
+  then ok "mudanca LOCAL no fecho do CLI -> defasada, e o remedio manda guardar num commit WIP antes"
+  else bad "tree sujo devia pedir commit WIP antes de sincronizar (rc=$rc): ${out:0:220}"; fi
+
+  # 16o. A CORRIDA: em dia ANTES da chamada, defasada DEPOIS — o `git fetch origin main` do CLI trouxe
+  #      a onda nova. A comparacao que vale e contra a REF que o CLI julgou, que so existe depois que
+  #      ele volta; uma trava ANTES da chamada leria a mensagem de 2026-09-10 de novo.
+  git -C "$cli_corrida" update-ref refs/remotes/origin/main "$CORRIDA_BASE"
+  FECHO_LEDGER_RAIZ="$cli_corrida" LEDGER_MODO=intruso-apos-fetch run ok "$tmp/psql-stub" edge-muda
+  if tem 'LEDGER_WORKTREE_DEFASADA' "$out" && tem 'sonda-cron-alvos.ts' "$out" \
+     && ! tem 'LEDGER_NAO_CONSULTADO' "$out" && ! tem 'aprovou: omie-desconto-backfill' "$out"
+  then ok "REF andou DURANTE a chamada (fetch do CLI) -> a frescura e medida depois, contra a REF julgada"
+  else bad "a frescura devia ser medida contra a REF depois do fetch do CLI (rc=$rc): ${out:0:220}"; fi
+
+  # 16p. NAO VERIFICAVEL e fail-CLOSED: sem a REF na casa do CLI nao ha como provar que ele e o
+  #      da main — e prova de frescura ausente nao vira "fresco" (nem "defasada": nao foi medido).
+  FECHO_LEDGER_RAIZ="$cli_sem_ref" LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  if tem 'LEDGER_NAO_CONSULTADO' "$out" && ! tem 'LEDGER_CONFERE' "$out" && [ "$rc" -eq 1 ] \
+     && ! tem 'LEDGER_WORKTREE_DEFASADA' "$out"
+  then ok "frescura do CLI nao verificavel (REF ausente) -> LEDGER_NAO_CONSULTADO, nunca absolve"
+  else bad "sem provar a frescura o ledger nao pode absolver (rc=$rc): ${out:0:220}"; fi
 }
 
 # ---------------------------------------------------------------- falsificação ---
@@ -874,11 +1031,71 @@ if [ "${1:-}" = "--falsificar" ]; then
   #      texto como dado. O stub recusa (exit 64) — que é o comportamento certo do consumidor.
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   sabota "invocacao do ledger sem --json (texto humano lido como dado)" \
-    's%  (cd "$BIN_RAIZ" && PSQL_RO="$PSQL" "$@" --json)%  (cd "$BIN_RAIZ" \&\& PSQL_RO="$PSQL" "$@")%'
+    's%  (cd "$LEDGER_RAIZ" && PSQL_RO="$PSQL" "$@" --json)%  (cd "$LEDGER_RAIZ" \&\& PSQL_RO="$PSQL" "$@")%'
   # (l9) o DIAGNÓSTICO some da linha indeterminada: o chip volta a nascer sem dizer o que o ledger
   #      sabia, e "nenhuma sonda" deixa de distinguir NUNCA_ATESTADA de ledger mudo.
   sabota "diagnostico do ledger sumindo da linha SEM_PROVA" \
     's%    NUNCA_ATESTADA)   printf%    NUNCA_ATESTADA)   : printf%'
+
+  # ---- FRESCURA do CLI (2026-09-10). Uma camada por vez, e cada uma com o caso que SÓ ela pega:
+  #      a trava existe porque o CLI roda do working tree e a worktree do /fecho está quase sempre
+  #      atrás da main — a defasagem trocava o veredito E o remédio ("DISPARE sonda" numa edge que
+  #      escreve). O alvo segue sendo o lado que APAGA pendência: nenhuma destas pode absolver.
+  # (f1) a detecção some: o CLI defasado volta a ser lido como se fosse o da REF — o 16i volta a
+  #      dizer MECÂNICA + DISPARE, e o 16j volta a absolver com veredito de outra versão.
+  sabota "frescura do CLI sempre 'em dia' (deteccao da defasagem desligada)" \
+    's%  cli_frescura; frescura_rc=\$?%  frescura_rc=0%'
+  # (f2) a defasagem é detectada mas a resposta BOA do CLI defasado continua valendo (só a falha
+  #      ganharia a causa certa) — a trava vira diagnóstico, não mais gate.
+  sabota "defasagem detectada sem descartar o veredito do CLI defasado" \
+    's%    1) ledger_defasada=1; ledger_ok=0 ;;%    1) ledger_defasada=1 ;;%'
+  # (f3) frescura NÃO verificável lida como "em dia": prova ausente virando aprovação.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "frescura nao verificavel tratada como em dia (fail-open)" \
+    's%    \*) if \[ "$ledger_ok" = 1 \]; then%    *) if false; then%'
+  # (f4) a edge da leva defasada perde o ramo próprio e cai no "nenhuma sonda" — volta ao DISPARE,
+  #      que é o ruído caro de 2026-09-10 (sonda numa edge que ESCREVE).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "edge da leva defasada voltando ao DISPARE (ramo proprio neutralizado)" \
+    's%  elif \[ "$ledger_defasada" = 1 \] && \[ -z "$servido" \]; then%  elif false; then%'
+  # (f5) o fecho deixa de ser TRANSITIVO (só a entrada): a allowlist do cron é um IMPORT, não o CLI.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "fecho do CLI sem seguir imports (so o arquivo de entrada)" \
+    's%        if \[ -f "$LEDGER_RAIZ/$c" \]; then fila="${fila:+$fila }$c"; break; fi%        if [ -f "$LEDGER_RAIZ/$c" ]; then break; fi%'
+  # (f6-f8) as três portas por onde o fecho REAL chega a `src/lib/`: o alias `@/`, o import
+  #      DINÂMICO e o `import(` que o Prettier quebra em linhas — o levantamento à mão deste PR era
+  #      cego à 2a e achou 9 arquivos onde havia 11.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "fecho do CLI ignorando o alias @/" \
+    's%        @/\*)      _caminho="src/${imp#@/}" ;;%        @/*)      continue ;;%'
+  sabota "fecho do CLI sem reconhecer import dinamico" \
+    's%(from|import|require)\[\[:space:\]\]\*\[(\]?%(from|import|require)%'
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "fecho do CLI lendo por linha (import quebrado em linhas some)" \
+    's%    done < <(tr .\\n. . . < "$LEDGER_RAIZ/$f"%    done < <(cat < "$LEDGER_RAIZ/$f"%'
+  # (f9) o remédio perde o par mínimo: tree SUJO recebe o checkout pelado, que falharia ou levaria
+  #      a mudança local junto — e a defasagem voltaria na próxima medição.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "remedio ignorando tree sujo (checkout pelado sempre)" \
+    's%     && \[ -z "$st" \]; then%     || true; then%'
+  # (f10) a comparação sai de DEPOIS para ANTES da chamada: a REF que o `git fetch` do CLI trouxe
+  #      fica fora da medição — a corrida do 16o volta a imprimir a mensagem de 2026-09-10.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "frescura medida ANTES da chamada (cega ao fetch do CLI)" \
+    's%^  invocar_ledger > "$tmp/ledger.json"%  cli_frescura; frescura_antes=$?; invocar_ledger > "$tmp/ledger.json"%;s%^  cli_frescura; frescura_rc=\$?%  frescura_rc=$frescura_antes%'
+  # (f11) PRECISÃO: a comparação vira o repo inteiro — o mapa, que muda a cada merge de edge, e
+  #      qualquer script vizinho passariam a bloquear o ledger em quase todo /fecho.
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "frescura comparando o repo inteiro (e nao o fecho do CLI)" \
+    's%--exit-code "$REF" -- "${arqs\[@\]}"%--exit-code "$REF"%'
+  # (f12) o rodapé para de segurar a mão de quem pula do aviso direto para o deploy.
+  sabota "rodape deixando de mandar sincronizar antes de agir" \
+    '/ANTES DE AGIR: esta lista foi medida SEM o ledger/d'
+  # (f13) o aviso volta a REPETIR a saída do CLI defasado — o remédio de outra versão, que em
+  #      2026-09-10 era um UPDATE desativando o alvo aprovado (#2464).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "defasada repetindo a saida do CLI de outra versao (remedio alheio)" \
+    's%    exit dele: $ledger_rc)"%    exit dele: $ledger_rc) $ledger_motivo"%'
 
   # guard de fuso: as duas sabotagens sao SIMETRICAS de proposito, porque o guard erra dos DOIS
   # lados e cada lado tem um caso diferente para pegar. Frouxo demais (aceita tudo) devolve o bug
