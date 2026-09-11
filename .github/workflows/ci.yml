@@ -1126,7 +1126,12 @@ jobs:
     # dado vestida de reprovação. Medido em 2026-09-07 sobre 28 runs: 346s a 533s — o pior já
     # consumia 89% do teto de 10min, um runner lento de distância do mesmo falso-vermelho. 15min
     # devolve a folga sem esconder regressão.
-    timeout-minutes: 15
+    # 2026-09-10: 6 PRs seguidos entre 531s e 873s (#2462 a 27s do corte) — o job cresceu ~60% em
+    # 3 dias, um contrato por PR. No #2464 ele foi CANCELADO no último contrato (`valor-helpers`),
+    # com os 44s do contrato novo; sem folga, todo PR seguinte perderia o sinal. Quem pesa é
+    # `sonda-versao-sql.mut` (103 mutações, 7m26s ≈ metade do job). 25min volta a ~60% de uso; o
+    # conserto de fundo é o fan-out por contrato, como o `validate` fez no #2346.
+    timeout-minutes: 25
     # issues:write p/ o sensor abaixo abrir/fechar a Issue `mutcheck-cobertura`; contents:read p/ checkout.
     permissions:
       contents: read
