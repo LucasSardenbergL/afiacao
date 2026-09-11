@@ -27,17 +27,29 @@ import {
   type SondaSemIdentidade,
 } from './lib/pendencias-deploy';
 import {
+  ARQ_ALLOWLIST,
   CRON_COLETOR,
+  estadoDoWorktree,
+  extrairAlvosDaAllowlist,
   formatarSemIdentidade,
   FORMATO_JSON,
+  lerAllowlists,
   lerArgIds,
   lerArgJson,
   MIGRATION_LEDGER,
+  REF_MAIN,
+  secaoSondaCron,
   serializarRelatorio,
   SQL,
   SQL_SAUDE_COLETOR,
+  SQL_SAUDE_CRON_SONDA,
   SQL_SEM_IDENTIDADE,
+  SQL_SONDA_CRON_ALVOS,
+  SQL_SONDA_CRON_ATESTACOES,
+  SQL_SONDA_CRON_DISPAROS,
+  SQL_SONDA_CRON_MOTIVOS,
 } from './pendencias-deploy';
+import { SONDA_CRON_ALVOS } from '../supabase/functions/_shared/sonda-cron-alvos';
 
 const ESPERADOS: Record<string, Esperado> = {
   'edge-a': { fonte: 'aaa111', versao: 'v1.0-a' },
@@ -820,5 +832,221 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
     expect(sh).toContain('!= "$LEDGER_FORMATO"');
     // e só CONFERE com a 2ª chave (fonte observado == esperado da REF) absolve
     expect(sh).toContain('[ "$l_estado" = "CONFERE" ] && [ "$l_obs" = "$esperado" ]');
+  });
+});
+
+/**
+ * A allowlist do cron vem da MESMA ref que o resto do sensor (incidente de 2026-09-10).
+ *
+ * Um worktree 10 commits atrás tinha a allowlist do DISCO sem `omie-desconto-backfill`; a main e o
+ * banco já a tinham (migration da onda 5 aplicada). O guard comparava banco × import do disco, viu
+ * "intruso" e imprimiu o remédio: `UPDATE … SET ativo = false` — desfazer uma migration aplicada e
+ * tirar do cron uma edge provada. Worktree defasado é o caso COMUM num repo com ~30 worktrees.
+ *
+ * As edges fictícias abaixo existem na "ref" do teste e NÃO no import real do disco — é o que
+ * reproduz o disco atrasado sem depender de qual commit o worktree está.
+ */
+const UPDATE_MARCA = 'UPDATE public.deploy_sonda_alvos SET ativo = false';
+
+const lerBanco =
+  (ativos: string[], extra: { disparos?: string; atestacoes?: string } = {}) =>
+  (sql: string): string => {
+    if (sql === SQL_SONDA_CRON_ALVOS) return `${ativos.join('\n')}\n`;
+    if (sql === SQL_SAUDE_CRON_SONDA) return '12.5\n';
+    if (sql === SQL_SONDA_CRON_DISPAROS) return extra.disparos ?? '';
+    if (sql === SQL_SONDA_CRON_ATESTACOES) return extra.atestacoes ?? '';
+    if (sql === SQL_SONDA_CRON_MOTIVOS) return '';
+    throw new Error(`SQL inesperado no teste: ${sql.slice(0, 60)}`);
+  };
+
+const ATRAS_10 = { aFrente: 0, atras: 10 };
+const SEM_ESTADO = new Map<string, string>();
+
+describe('secaoSondaCron — o guard compara o banco com a allowlist da REF, não a do disco', () => {
+  it('(a) disco ATRASADO, ref e banco com a edge → sem mecânica, sem UPDATE, e o aviso nomeia a defasagem', () => {
+    const s = secaoSondaCron(SEM_ESTADO, lerBanco(['monthly-report', 'edge-aprovada-na-main']), {
+      ref: ['monthly-report', 'edge-aprovada-na-main'],
+      disco: ['monthly-report'],
+      worktree: ATRAS_10,
+    });
+    expect(s.mecanica).toBeNull();
+    const tudo = s.linhas.join('\n');
+    expect(tudo).not.toContain(UPDATE_MARCA);
+    // prova POSITIVA do ramo certo, não só ausência do errado
+    expect(tudo).toContain('ALLOWLIST_DEFASADA');
+    expect(tudo).toContain('edge-aprovada-na-main');
+    expect(tudo).toContain('10 commit(s)');
+    expect(tudo).toContain('sincronize antes de medir');
+  });
+
+  it('(b) edge ativa no banco e AUSENTE na ref (e no disco) → mecânica com o UPDATE, só dela', () => {
+    const s = secaoSondaCron(SEM_ESTADO, lerBanco(['monthly-report', 'edge-intrusa']), {
+      ref: ['monthly-report'],
+      disco: ['monthly-report'],
+      worktree: { aFrente: 0, atras: 0 },
+    });
+    expect(s.mecanica).not.toBeNull();
+    expect(s.mecanica).toContain('ALVO_SEM_APROVACAO');
+    expect(s.mecanica).toContain(`${UPDATE_MARCA} WHERE edge IN ('edge-intrusa');`);
+    expect(s.mecanica).not.toContain('ALVO_SO_NO_WORKTREE');
+  });
+
+  it('edge fora da ref mas DENTRO do disco → mecânica SEM UPDATE: nomeia o worktree e manda sincronizar', () => {
+    const s = secaoSondaCron(SEM_ESTADO, lerBanco(['monthly-report', 'edge-em-voo']), {
+      ref: ['monthly-report'],
+      disco: ['monthly-report', 'edge-em-voo'],
+      worktree: { aFrente: 2, atras: 0 },
+    });
+    expect(s.mecanica).not.toBeNull();
+    expect(s.mecanica).toContain('ALVO_SO_NO_WORKTREE');
+    expect(s.mecanica).toContain('edge-em-voo');
+    expect(s.mecanica).toContain('2 commit(s)');
+    expect(s.mecanica).not.toContain(UPDATE_MARCA);
+    expect(s.mecanica).not.toContain('ALVO_SEM_APROVACAO');
+  });
+
+  it('as duas classes juntas → o UPDATE lista SÓ a que falta também no disco', () => {
+    const s = secaoSondaCron(SEM_ESTADO, lerBanco(['edge-em-voo', 'edge-intrusa', 'monthly-report']), {
+      ref: ['monthly-report'],
+      disco: ['monthly-report', 'edge-em-voo'],
+      worktree: ATRAS_10,
+    });
+    expect(s.mecanica).toContain('ALVO_SEM_APROVACAO');
+    expect(s.mecanica).toContain('ALVO_SO_NO_WORKTREE');
+    expect(s.mecanica).toContain(`${UPDATE_MARCA} WHERE edge IN ('edge-intrusa');`);
+  });
+
+  it('o aviso "falta o INSERT" vem da REF: disco ADIANTADO não manda ativar edge que a main não aprovou', () => {
+    const s = secaoSondaCron(SEM_ESTADO, lerBanco(['monthly-report']), {
+      ref: ['monthly-report', 'edge-aprovada-na-main'],
+      disco: ['monthly-report', 'edge-em-voo'],
+      worktree: { aFrente: 1, atras: 1 },
+    });
+    expect(s.mecanica).toBeNull();
+    const tudo = s.linhas.join('\n');
+    expect(tudo).toContain('edge-aprovada-na-main: na allowlist do repo');
+    expect(tudo).not.toContain('edge-em-voo: na allowlist do repo');
+    // e nenhuma edge do import real do disco vaza para o julgamento
+    expect(tudo).not.toContain('sonda-relay: na allowlist do repo');
+  });
+
+  it('disco igual à ref → nenhum aviso de defasagem (silêncio aqui é o certo)', () => {
+    const s = secaoSondaCron(SEM_ESTADO, lerBanco(['monthly-report']), {
+      ref: ['monthly-report'],
+      disco: ['monthly-report'],
+      worktree: ATRAS_10,
+    });
+    expect(s.mecanica).toBeNull();
+    expect(s.linhas.join('\n')).not.toContain('ALLOWLIST_DEFASADA');
+  });
+});
+
+describe('estadoDoWorktree — quantos commits separam o worktree de origin/main', () => {
+  it('lê `rev-list --left-right --count HEAD...origin/main` (esquerda = à frente, direita = atrás)', () => {
+    let pedido: string[] = [];
+    const w = estadoDoWorktree((args) => {
+      pedido = args;
+      return { ok: true, saida: '3\t10' };
+    });
+    expect(w).toEqual({ aFrente: 3, atras: 10 });
+    expect(pedido).toEqual(['rev-list', '--left-right', '--count', `HEAD...${REF_MAIN}`]);
+  });
+
+  it('git que falha ou saída fora do formato → null (ausente ≠ zero: nunca "0 atrás")', () => {
+    expect(estadoDoWorktree(() => ({ ok: false, saida: '' }))).toBeNull();
+    expect(estadoDoWorktree(() => ({ ok: true, saida: 'lixo' }))).toBeNull();
+    expect(estadoDoWorktree(() => ({ ok: true, saida: '' }))).toBeNull();
+  });
+});
+
+const ALLOWLIST_FIXTURE = (corpo: string): string => `
+type Alvo = { edge: string; desde: string | null; nota?: string };
+// { edge: "fantasma-no-topo" }
+export const SONDA_CRON_ALVOS: readonly Alvo[] = [
+${corpo}
+];
+export function slugs(): ReadonlySet<string> {
+  return new Set(SONDA_CRON_ALVOS.map((a) => a.edge));
+}
+`;
+
+describe('extrairAlvosDaAllowlist — lê a allowlist da ref pela AST, e só a forma que sabe ler', () => {
+  it('o arquivo REAL: o parser concorda com o import (contrato pinado ao formato de verdade)', () => {
+    const texto = readFileSync(join(__dirname, '..', ARQ_ALLOWLIST), 'utf8');
+    const lidos = extrairAlvosDaAllowlist(texto);
+    expect(lidos).toEqual(SONDA_CRON_ALVOS.map((a) => a.edge));
+    expect(lidos).toContain('omie-desconto-backfill');
+    expect(lidos.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('comentário e string que CITAM um slug não aprovam ninguém', () => {
+    const texto = ALLOWLIST_FIXTURE(
+      [
+        '  { edge: "edge-a", desde: null },',
+        '  // { edge: "fantasma-comentario", desde: null },',
+        '  { edge: "edge-b", desde: null, nota: \'{ edge: "fantasma-string" }\' },',
+      ].join('\n'),
+    );
+    expect(extrairAlvosDaAllowlist(texto)).toEqual(['edge-a', 'edge-b']);
+  });
+
+  it('entrada multi-linha é lida como a de uma linha só', () => {
+    const texto = ALLOWLIST_FIXTURE('  {\n    edge: "edge-a",\n    desde: null,\n  },\n  { edge: "edge-b", desde: null },');
+    expect(extrairAlvosDaAllowlist(texto)).toEqual(['edge-a', 'edge-b']);
+  });
+
+  // Cada forma ruim vem DEPOIS de uma entrada válida: sozinha, ela também cairia no "array vazio" e
+  // o teste ficaria verde por outra camada — a que ele diz testar poderia sumir sem ninguém ver.
+  const VALIDA = '  { edge: "edge-valida", desde: null },\n';
+  it.each([
+    ['edge vinda de identificador (com cara de slug)', `${VALIDA}  { edge: omie, desde: null },`],
+    ['elemento espalhado', `${VALIDA}  ...OUTRA_LISTA,`],
+    ['objeto com spread', `${VALIDA}  { ...BASE, edge: "edge-a", desde: null },`],
+    ['elemento que não é objeto', `${VALIDA}  "edge-a",`],
+    ['objeto sem edge', `${VALIDA}  { desde: null },`],
+    ['slug fora do formato de edge', `${VALIDA}  { edge: "Edge A", desde: null },`],
+    ['array vazio (ausente ≠ zero)', ''],
+  ])('%s → ALLOWLIST_ILEGIVEL (fail-closed, nunca uma lista menor)', (_nome, corpo) => {
+    expect(() => extrairAlvosDaAllowlist(ALLOWLIST_FIXTURE(corpo))).toThrow(/ALLOWLIST_ILEGIVEL/);
+  });
+
+  it('texto TRUNCADO → ALLOWLIST_ILEGIVEL: a lista parcial viraria intruso falso e o UPDATE destrutivo', () => {
+    const inteiro = ALLOWLIST_FIXTURE('  { edge: "edge-a", desde: null },\n  { edge: "edge-b", desde: null },');
+    const truncado = inteiro.slice(0, inteiro.indexOf('"edge-b"') + 3);
+    expect(() => extrairAlvosDaAllowlist(truncado)).toThrow(/ALLOWLIST_ILEGIVEL/);
+  });
+
+  it('sem o export (ou só um const local) → ALLOWLIST_ILEGIVEL', () => {
+    expect(() => extrairAlvosDaAllowlist('export const OUTRA = [];')).toThrow(/ALLOWLIST_ILEGIVEL/);
+    expect(() => extrairAlvosDaAllowlist('const SONDA_CRON_ALVOS = [{ edge: "edge-a" }];')).toThrow(
+      /ALLOWLIST_ILEGIVEL/,
+    );
+  });
+});
+
+describe('lerAllowlists — a borda: ref pelo git, disco só para o diagnóstico', () => {
+  const TEXTO = ALLOWLIST_FIXTURE('  { edge: "edge-da-main", desde: null },');
+  const gitOk = () => ({ ok: true, saida: '0\t4' });
+
+  it('lê o arquivo NA REF (origin/main), e o disco vem do import — cada lista no seu campo', () => {
+    const pedidos: string[] = [];
+    const a = lerAllowlists(
+      (rev, caminho) => {
+        pedidos.push(`${rev}:${caminho}`);
+        return TEXTO;
+      },
+      [{ edge: 'edge-do-disco' }],
+      gitOk,
+    );
+    expect(pedidos).toEqual([`${REF_MAIN}:${ARQ_ALLOWLIST}`]);
+    expect(a.ref).toEqual(['edge-da-main']);
+    expect(a.disco).toEqual(['edge-do-disco']);
+    expect(a.worktree).toEqual({ aFrente: 0, atras: 4 });
+  });
+
+  it('`git show` que falha → ALLOWLIST_ILEGIVEL (mecânica), nunca "allowlist vazia"', () => {
+    // a marca do RAMO (git show), não só a da classe: texto vazio que chegasse ao parser também
+    // lançaria ALLOWLIST_ILEGIVEL, mas pelo motivo errado
+    expect(() => lerAllowlists(() => null, [{ edge: 'edge-do-disco' }], gitOk)).toThrow(/ALLOWLIST_ILEGIVEL.*git show/);
   });
 });

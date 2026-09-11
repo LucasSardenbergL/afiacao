@@ -1,0 +1,11 @@
+# Poder do teste PONTA A PONTA do `pendencias:deploy` sobre a allowlist do cron de sonda — as camadas
+# que os unitários (`pendencias-deploy-allowlist-ref.mut`) não alcançam, porque injetam o leitor:
+# o `git fetch` de `lerEsperados` (sem ele, a allowlist "da main" sai de uma `origin/main` que ninguém
+# buscou e o incidente de 2026-09-10 volta por outro caminho) e a fiação do `main()`.
+# Harness trazido pela sessão paralela `sharp-bohr-931460` (repo remoto + clone parado + psql falso).
+# @src: scripts/pendencias-deploy.ts
+# @test: scripts/pendencias-deploy-allowlist.test.ts
+# Rode: scripts/mutcheck.sh scripts/pendencias-deploy.ts scripts/pendencias-deploy-allowlist.test.ts scripts/mutcheck.d/pendencias-deploy-allowlist-e2e.mut
+PEGA | fetch pulado: a main velha julga os intrusos         | s/const fetch = git\(\['fetch', '--quiet', 'origin', 'main'\]\);/const fetch = { ok: true, saida: '' };/
+PEGA | main() entrega o disco como a allowlist da ref       | s/const secao = secaoSondaCron\(estadoPorEdge, psql, allowlists\);/const secao = secaoSondaCron(estadoPorEdge, psql, { ...allowlists, ref: allowlists.disco });/
+PEGA | ILEGIVEL engolido no main() vira lista vazia         | s/allowlists = lerAllowlists\(\);/try { allowlists = lerAllowlists(); } catch { allowlists = { ref: [], disco: [], worktree: null }; }/

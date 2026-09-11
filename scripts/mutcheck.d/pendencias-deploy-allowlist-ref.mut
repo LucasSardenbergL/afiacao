@@ -1,0 +1,27 @@
+# Poder de discriminação da suíte sobre a allowlist do cron de sonda no `pendencias:deploy`.
+# O incidente de 2026-09-10: o guard de intrusos comparava o banco com o import do DISCO; num
+# worktree 10 commits atrás, `omie-desconto-backfill` (na main e ativa no banco) virou "intrusa" e o
+# relatório imprimiu `UPDATE … SET ativo = false` — desfazer migration aplicada e tirar do cron uma
+# edge provada. Cada mutação abaixo devolve UMA camada da correção ao estado quebrado; a suíte tem de
+# ficar vermelha em todas. Baseline verde na MESMA invocação é do harness (aborta se já está vermelha).
+# @src: scripts/pendencias-deploy.ts
+# @test: scripts/pendencias-deploy.test.ts
+# Rode: scripts/mutcheck.sh scripts/pendencias-deploy.ts scripts/pendencias-deploy.test.ts scripts/mutcheck.d/pendencias-deploy-allowlist-ref.mut
+PEGA | guard volta a julgar pelo DISCO (o incidente)        | s/alvosForaDoRepo\(ativos, allowlists\.ref\)/alvosForaDoRepo(ativos, allowlists.disco)/
+PEGA | "falta o INSERT" volta a vir do disco               | s/allowlistDoRepo: allowlists\.ref,/allowlistDoRepo: allowlists.disco,/
+PEGA | edge so no worktree ganha o UPDATE                   | s/const semAprovacao = intrusos\.filter\(\(e\) => !noDisco\.has\(e\)\);/const semAprovacao = intrusos;/
+PEGA | ref lida do HEAD em vez de origin/main              | s/const texto = ler\(REF_MAIN, ARQ_ALLOWLIST\);/const texto = ler('HEAD', ARQ_ALLOWLIST);/
+PEGA | ref e disco trocados na borda                        | s/ref: extrairAlvosDaAllowlist\(texto\), disco: disco\.map\(\(a\) => a\.edge\)/ref: disco.map((a) => a.edge), disco: extrairAlvosDaAllowlist(texto)/
+PEGA | git show que falha vira allowlist vazia              | s/if \(texto === null\) \{/if (texto === null) { return { ref: [], disco: [], worktree: null };/
+PEGA | texto truncado passa (sem diagnostico de sintaxe)    | s/if \(sintaxe\.length > 0\) \{/if (false) {/
+PEGA | const local conta como a allowlist exportada         | s/if \(!st\.modifiers\?\.some\(\(m\) => m\.kind === ts\.SyntaxKind\.ExportKeyword\)\) continue;/void 0;/
+PEGA | elemento que nao e objeto e pulado, nao recusado     | s/if \(!ts\.isObjectLiteralExpression\(el\)\) throw ilegivel\(/if (!ts.isObjectLiteralExpression(el)) continue; void (/
+PEGA | objeto com spread e pulado, nao recusado             | s/if \(ts\.isSpreadAssignment\(p\)\) throw ilegivel\(/if (ts.isSpreadAssignment(p)) continue; void (/
+PEGA | edge vinda de identificador e aceita                 | s/!ts\.isStringLiteralLike\(p\.initializer\)\) \{/!(ts.isStringLiteralLike(p.initializer) || ts.isIdentifier(p.initializer))) {/
+PEGA | objeto sem edge e pulado, nao recusado               | s/if \(edge === null\) throw ilegivel\(/if (edge === null) continue; void (/
+PEGA | slug fora do formato e aceito                        | s/if \(!SLUG_EDGE\.test\(edge\)\) throw/if (false) throw/
+PEGA | array vazio vira "nenhuma aprovada"                  | s/if \(edges\.length === 0\) throw/if (edges.length < 0) throw/
+PEGA | git que falha vira "0 atras" (ausente vira zero)     | s/if \(!r\.ok\) return null;/if (!r.ok) return { aFrente: 0, atras: 0 };/
+PEGA | a frente e atras trocados                            | s/aFrente: Number\(m\[1\]\), atras: Number\(m\[2\]\)/aFrente: Number(m[2]), atras: Number(m[1])/
+PEGA | worktree atrasado nao manda sincronizar              | s/if \(w\.atras > 0\) \{/if (w.atras > 99) {/
+PEGA | aviso de defasagem some                              | s/if \(defasagem\) linhas\.push\(defasagem\);/void defasagem;/

@@ -198,3 +198,39 @@ medisse errado para cima, teria avalizado sete sabotagens sem rodar nenhuma.
 
 Fechado em #2435 (issue #2414). O #2422 tinha atacado só a sobra — comparando o mapa por entrada,
 mas mantendo o modo canária conferindo um arquivo que ele não lê — e foi fechado sem mergear.
+
+## Recorrência (2026-09-10): o guard da allowlist no `pendencias:deploy` — e o remédio era um UPDATE
+
+O `pendencias:deploy` nasceu em volta desta lição (`REF_MAIN`: "o instrumento lê a ref, não a
+árvore"). A seção do cron de sonda, que veio depois, reintroduziu o disco por um `import`:
+`SONDA_CRON_ALVOS` era a allowlist que decidia "intruso". Num worktree 10 commits atrás,
+`omie-desconto-backfill` estava na main e ativa no banco (migration da onda 5 aplicada), mas não no
+disco. Saída: exit 2, stdout vazio, e o remédio pronto para colar —
+`UPDATE public.deploy_sonda_alvos SET ativo = false WHERE edge IN ('omie-desconto-backfill')`.
+Desfaria uma migration aplicada e tiraria do cron uma edge provada.
+
+**Por que escapou:** `git show` tem cara de I/O; um `import { CONST }` tem cara de código. A
+varredura por "leitura do repo" procura `readFileSync`/`git show` e não enxerga o import de DADO.
+Num sensor que julga contra a ref, **todo import de dado do repo é uma segunda fonte de verdade.**
+
+**A torção nova — o remédio impresso é escrita por procuração.** O sensor não apaga nada, mas entrega
+ao humano o SQL que apaga, e a causa mais frequente (worktree defasado, ~30 no repo) recebia o
+remédio mais destrutivo. Vale para o remédio o padrão de [script que apaga](sonda-ausente-em-script-que-apaga.md):
+o destrutivo só sai quando a evidência vem da AUTORIDADE (a ref); o disco só NOMEIA a defasagem.
+O espelho estava no mesmo lugar: o aviso "falta o INSERT" também vinha do disco, e com o worktree
+ADIANTADO mandava ativar edge que a main não aprovou.
+
+**O fix:** a allowlist é lida de `origin/main` pela AST do TS — regex não serve, porque o arquivo
+cita o slug num comentário, e um regex aprovaria por comentário. Forma desconhecida, texto truncado
+ou array vazio → `ALLOWLIST_ILEGIVEL` (exit 2): uma lista MENOR que a real reproduz o incidente por
+outro caminho. O remédio passa a ser por ramo: `ALVO_SEM_APROVACAO` (fora da ref e do disco →
+UPDATE); `ALVO_SO_NO_WORKTREE` (fora da ref, dentro do disco → exit 2 sem UPDATE — sincronizar
+desempata entre remoção na main e entrega não mergeada); `ALLOWLIST_DEFASADA` (só aviso, com N
+commits atrás/M à frente).
+
+**A prova:** reproduzido contra prod, read-only, com a allowlist velha no disco — antes: exit 2 +
+UPDATE; depois: exit 0 (o mesmo veredito do controle com o disco em dia), zero UPDATE, aviso
+nomeando a defasagem. Falsificação versionada em `scripts/mutcheck.d/pendencias-deploy-allowlist-ref.mut`
+(uma mutação por camada). O irmão desta classe no `sonda:sql` — o `guardEfeitoLegado` também lê a
+allowlist do disco, e ali o furo é fail-OPEN (edge aprovada escapa da recusa do POST legado) — ficou
+como tarefa separada.
