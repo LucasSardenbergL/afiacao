@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   alvosForaDoRepo,
+  classificarSemPergunta,
   cronSondaParado,
   type Disparo,
   julgarSondaCron,
+  toleranciaDoCronMin,
 } from './sonda-cron-testemunha';
 
 const disparo = (tickId: string, edge: string, requestId: number): Disparo => ({ tickId, edge, requestId });
@@ -145,6 +147,106 @@ describe('julgarSondaCron — o silêncio como sinal de rollback', () => {
     };
     const r = julgarSondaCron(e);
     expect(r.achados[0]?.classe).toBe('SONDA_CRON_SILENCIOSA');
+  });
+});
+
+/**
+ * O que o juiz PULA sem acusar também tem de sair no resultado (2026-09-10, logo após a onda 5).
+ *
+ * `omie-desconto-backfill` entrou ativa no banco depois do último tick: nenhum tick a perguntou, o
+ * juiz corretamente não acusou — e o resumo, que só olhava achados e avisos, afirmou "toda edge ativa
+ * foi atestada" sobre 16 edges com 15 examinadas. Os dois `continue` que não deixavam rastro são
+ * exatamente as duas listas abaixo; nenhuma delas vira achado nem aviso.
+ */
+describe('julgarSondaCron — o que ficou FORA do exame sai no resultado, sem acusar', () => {
+  it('edge ativa que nenhum tick perguntou vai para semPergunta — e não vira achado nem aviso', () => {
+    const e = { ...base(), ativosNoBanco: ['monthly-report', 'omie-desconto-backfill'] };
+    const r = julgarSondaCron(e);
+    expect(r.semPergunta).toEqual(['omie-desconto-backfill']);
+    expect(r.achados).toEqual([]);
+    expect(r.avisos).toEqual([]);
+  });
+
+  it('edge perguntada em ao menos 1 dos ticks que julgam NÃO está em semPergunta', () => {
+    const e = { ...base(), disparos: [disparo('t2', 'monthly-report', 200)], atestacoes: [{ requestId: 200, edgeDoCorpo: 'monthly-report' }] };
+    expect(julgarSondaCron(e).semPergunta).toEqual([]);
+  });
+
+  it('pergunta num tick FORA dos 2 que julgam não conta como pergunta', () => {
+    const e = {
+      ...base(),
+      ticksRecentes: ['t3', 't2', 't1'],
+      disparos: [disparo('t1', 'monthly-report', 100)],
+      atestacoes: [{ requestId: 100, edgeDoCorpo: 'monthly-report' }],
+    };
+    expect(julgarSondaCron(e).semPergunta).toEqual(['monthly-report']);
+  });
+
+  it('nenhum tick na história (cron que nunca rodou): toda ativa fica em semPergunta', () => {
+    const e = { ...base(), ativosNoBanco: ['calculate-scores', 'monthly-report'], ticksRecentes: [], disparos: [], atestacoes: [] };
+    expect(julgarSondaCron(e).semPergunta).toEqual(['calculate-scores', 'monthly-report']);
+  });
+
+  it('silêncio relevado porque o ledger não diz CONFERE vai para silencioEsperado — sem acusar', () => {
+    const e = { ...base(), atestacoes: [], estadoPorEdge: new Map([['monthly-report', 'DIVERGE_P1']]) };
+    const r = julgarSondaCron(e);
+    expect(r.silencioEsperado).toEqual(['monthly-report']);
+    expect(r.achados).toEqual([]);
+    expect(r.avisos).toEqual([]);
+  });
+
+  it('tudo atestado: as duas listas vazias', () => {
+    const r = julgarSondaCron(base());
+    expect(r.semPergunta).toEqual([]);
+    expect(r.silencioEsperado).toEqual([]);
+  });
+
+  it('silêncio com CONFERE é achado, não silencioEsperado', () => {
+    const r = julgarSondaCron({ ...base(), atestacoes: [] });
+    expect(r.achados[0]?.classe).toBe('SONDA_CRON_SILENCIOSA');
+    expect(r.silencioEsperado).toEqual([]);
+  });
+});
+
+/**
+ * Esperar por uma pergunta tem TETO (laço de espera sem desistência é fail-OPEN): até ele, a edge sem
+ * pergunta é só a vez dela; acima, o dispatcher — que pergunta TODA ativa a cada tick — não está
+ * perguntando por ela. A tolerância é a mesma do `cronSondaParado`: uma definição só.
+ */
+describe('classificarSemPergunta — o teto da espera por uma pergunta', () => {
+  it('a tolerância é 2 períodos do cron + 15 min — 255 min no cron de 2 h, a mesma do cronSondaParado', () => {
+    expect(toleranciaDoCronMin()).toBe(255);
+    expect(toleranciaDoCronMin(1)).toBe(135);
+    expect(cronSondaParado(toleranciaDoCronMin())).toBe(false);
+    expect(cronSondaParado(toleranciaDoCronMin() + 0.1)).toBe(true);
+  });
+
+  it('espera dentro do teto: aguardando, com a medida', () => {
+    const c = classificarSemPergunta(['omie-desconto-backfill'], new Map([['omie-desconto-backfill', 40]]));
+    expect(c.aguardando).toEqual([{ edge: 'omie-desconto-backfill', minutos: 40 }]);
+    expect(c.atrasadas).toEqual([]);
+  });
+
+  it('no teto exato ainda aguarda; acima dele é atrasada', () => {
+    const c = classificarSemPergunta(['a', 'b'], new Map([['a', 255], ['b', 255.1]]));
+    expect(c.aguardando).toEqual([{ edge: 'a', minutos: 255 }]);
+    expect(c.atrasadas).toEqual([{ edge: 'b', minutos: 255.1 }]);
+  });
+
+  it('o teto acompanha o período do cron', () => {
+    const c = classificarSemPergunta(['a'], new Map([['a', 200]]), 1);
+    expect(c.atrasadas).toEqual([{ edge: 'a', minutos: 200 }]);
+  });
+
+  it('sem medida da espera: aguardando com minutos null — ausente não vira zero nem atraso', () => {
+    const c = classificarSemPergunta(['a'], new Map());
+    expect(c.aguardando).toEqual([{ edge: 'a', minutos: null }]);
+    expect(c.atrasadas).toEqual([]);
+  });
+
+  it('só classifica quem está em semPergunta — medida de edge perguntada é ignorada', () => {
+    const c = classificarSemPergunta([], new Map([['monthly-report', 999]]));
+    expect(c).toEqual({ aguardando: [], atrasadas: [] });
   });
 });
 
