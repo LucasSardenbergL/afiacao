@@ -30,7 +30,7 @@
 #        4 = deploy novo detectado mas versão indeterminada (sem carimbo nem sentinela)
 #        2 = site fora do ar / HTML mudou de forma
 # Marcas do motivo (exit 3): ALCANCA_BUNDLE · SEM_CLASSIFICACAO · PACKAGE_JSON_ALCANCA ·
-#   BUILD_NAO_RECONHECIDO · ALCANCE_VAZA · NAO_ANCESTRAL · CARIMBO_NAO_RESOLVE · FETCH_FALHOU ·
+#   BUILD_NAO_RECONHECIDO · ALCANCE_VAZA · NAO_ANCESTRAL · CARIMBO_NAO_RESOLVE · CARIMBO_AMBIGUO · FETCH_FALHOU ·
 #   GIT_FALHOU · DIFF_FALHOU · DELTA_VAZIO · CLASSIFY_FALHOU · PROVA_INDISPONIVEL
 # Estado: último hash de entry visto em $DEPLOY_MONITOR_STATE
 #         (default ~/.config/afiacao/deploy-monitor.state) — pra detectar "mudou desde a última vez".
@@ -62,6 +62,9 @@ if [ "$PREV" != "$ENTRY_HASH" ]; then DEPLOY="SIM (${PREV:-1a-vez} -> $ENTRY_HAS
 
 BODY=$(curl -fsS "$APP$ENTRY" 2>/dev/null || echo "")
 AIR_SHA=$(printf '%s' "$BODY" | grep -oE '__BUILD_SHA__="[0-9a-f]{7,8}"' | grep -oE '[0-9a-f]{7,8}' | head -1)
+# Carimbos DISTINTOS no entry: com mais de um, "o primeiro" é arbitrário — um literal
+# `__BUILD_SHA__="<hex>"` qualquer no código viraria o SHA do ar (medido 2026-09-10: 1 no ar, 0 em src/).
+N_CARIMBOS=$(printf '%s' "$BODY" | grep -oE '__BUILD_SHA__="[0-9a-f]{7,8}"' | sort -u | awk 'END { print NR }')
 IS_DEV=$(printf '%s' "$BODY" | grep -cE '__BUILD_SHA__="dev"' || true)
 
 echo "[$TS] main=$MAIN_SHA  ar=${AIR_SHA:-$([ "${IS_DEV:-0}" -gt 0 ] && echo dev || echo sem-carimbo)}  deploy-novo=$DEPLOY"
@@ -151,7 +154,8 @@ analisar_delta() {
   exit 5
 }
 
-# Caminho determinístico: carimbo de SHA real no ar
+# Caminho determinístico: carimbo de SHA real no ar — e UM só (ambíguo não pode virar verde nenhum)
+[ "${N_CARIMBOS:-0}" -le 1 ] || atrasado CARIMBO_AMBIGUO "o entry tem $N_CARIMBOS carimbos __BUILD_SHA__ distintos — não dá para saber qual commit o ar serve"
 if [ -n "$AIR_SHA" ]; then
   if [ "$AIR_SHA" = "$MAIN_SHA" ]; then echo "  ✅ sincronizado: ar serve $AIR_SHA == origin/main"; exit 0; fi
   analisar_delta

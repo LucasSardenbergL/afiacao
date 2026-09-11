@@ -1046,8 +1046,8 @@ inalcançável, e a transição que conta é a do `ar=` (e do entry). Detalhe em
 ✅ **SHA atrás ≠ bundle atrás — o monitor PROVA o delta antes de pedir Publish (2026-09-10).** O caso
 acima (ar `eee71c80`, delta sem `src/`) agora sai **exit 5 `SINCRONIZADO_EM_BUNDLE`**. Só rebaixa se
 TODO elo responder positivamente — senão fica `ATRASADO` com a marca do elo em `motivo:`:
-fetch ok (`FETCH_FALHOU`) · o carimbo resolve e é **ancestral** da main (`CARIMBO_NAO_RESOLVE`,
-`NAO_ANCESTRAL`) · `git diff --no-renames` sai 0 e não vazio (`DIFF_FALHOU`, `DELTA_VAZIO`) · todo arquivo
+fetch ok (`FETCH_FALHOU`) · o entry tem UM carimbo só e ele resolve e é **ancestral** da main
+(`CARIMBO_AMBIGUO`, `CARIMBO_NAO_RESOLVE`, `NAO_ANCESTRAL`) · `git diff --no-renames` sai 0 e não vazio (`DIFF_FALHOU`, `DELTA_VAZIO`) · todo arquivo
 é INERTE na tabela de `classify.sh --bundle` (`ALCANCA_BUNDLE`, `SEM_CLASSIFICACAO`) ·
 [`scripts/alcance-bundle.py`](scripts/alcance-bundle.py) prova na main que nada do bundle importa de fora
 da tabela, que o build é `vite build` puro e que o `package.json` só mudou em scripts fora do pipeline
@@ -1251,4 +1251,16 @@ de que um Publish aconteceu continua sendo a mudança do `ar=`/entry, não a tra
   imports/refs de caminho por regex (relativo, `@/`, `/public`, glob, `new URL` relativo, `url()` de
   CSS, strings `./` dos configs de build); leitura por nome COMPUTADO (`readFileSync(dir + x)`) no
   `vite.config` escaparia — hoje o config não lê arquivo nenhum.
+- [x] **Dois caminhos para um exit 5 FALSO, fechados no mesmo dia (2026-09-10, pós-#2465).** A 2ª
+  opinião do Codex (`challenge` só sobre "exit 5 falso") voltou **exit 75 — cota esgotada**, plano
+  declarado no token `prolite`; consult não-money-path ⇒ adiado, e o intervalo coberto pelo
+  **Caminho B** (auto-challenge nos mesmos eixos). **REVISÃO INDEPENDENTE PENDENTE**: rodar o mesmo
+  prompt quando a cota voltar. O auto-challenge achou dois furos, e a sabotagem de cada conserto
+  devolve exatamente o exit 5 indevido — prova de que eram alcançáveis: **(1)** o fechamento só lia
+  strings `./` dos configs, e `"@edge": path.resolve(__dirname, "supabase/functions/_shared")`
+  passava (o import `@edge/x` parece pacote para quem só lê `src/`) — agora string sem `./` num config
+  conta quando NOMEIA caminho existente, o que cobre alias, `publicDir`, `envDir` e `root`, sem recusa
+  falsa no repo real; **(2)** o carimbo era "o primeiro" `__BUILD_SHA__="<hex>"` do entry, e um
+  literal desses no código viraria o SHA do ar — mais de um distinto ⇒ `CARIMBO_AMBIGUO`. Rede: 24
+  cenários, 17 sabotagens, 34 controles verdes nos 2 locales.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

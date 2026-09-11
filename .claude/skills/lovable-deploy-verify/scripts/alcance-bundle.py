@@ -170,24 +170,46 @@ def ler_blobs(ref, paths):
 
 
 def specs_de(path, texto):
-    """(spec, só_relativo) de toda string que o arquivo usa como CAMINHO. Comentário entra de
-    propósito: varrer a mais só segura o alarme; limpar comentário com regex local é o que cega
-    gate textual (docs/historico/gates-textuais-cegos.md)."""
-    specs = [(m.group(2), False) for m in RE_IMPORT.finditer(texto)]
-    specs += [(m.group(2), True) for m in RE_URL.finditer(texto)]
+    """(spec, modo) de toda string que o arquivo usa como CAMINHO. Comentário entra de propósito:
+    varrer a mais só segura o alarme; limpar comentário com regex local é o que cega gate textual
+    (docs/historico/gates-textuais-cegos.md). modo: "qualquer" (import/glob/CSS/HTML), "relativo"
+    (só `./`/`../` contam) ou "config" (config de build: ver alvo_de)."""
+    specs = [(m.group(2), "qualquer") for m in RE_IMPORT.finditer(texto)]
+    specs += [(m.group(2), "relativo") for m in RE_URL.finditer(texto)]
     for m in RE_GLOB.finditer(texto):
-        specs += [(s.group(2).lstrip("!"), False) for s in RE_STR.finditer(m.group(1))]
+        specs += [(s.group(2).lstrip("!"), "qualquer") for s in RE_STR.finditer(m.group(1))]
     if path.endswith(".css"):
-        specs += [(m.group(2), False) for m in RE_CSS.finditer(texto)]
+        specs += [(m.group(2), "qualquer") for m in RE_CSS.finditer(texto)]
     if path.endswith(".html"):
-        specs += [(m.group(2), False) for m in RE_HTML.finditer(texto)]
+        specs += [(m.group(2), "qualquer") for m in RE_HTML.finditer(texto)]
     if "/" not in path and RE_CONFIG_RAIZ.fullmatch(path):
-        # config de build: TODA string relativa conta (alias, content do Tailwind, readFileSync).
-        specs += [(m.group(2), True) for m in RE_STR.finditer(texto)]
+        # config de build: TODA string conta (alias, content do Tailwind, publicDir, readFileSync).
+        specs += [(m.group(2), "config") for m in RE_STR.finditer(texto)]
     return specs
 
 
-def alvo_de(arq, spec, so_relativo, uniao, dirs_uniao):
+def nome_no_config(spec, uniao, dirs_uniao):
+    """String SEM `./` num config de build: vale se NOMEIA caminho que existe na raiz. É assim que
+    `path.resolve(__dirname, "supabase/functions/_shared")` vira alias, publicDir, envDir ou root
+    fora de src/ — e o import `@edge/x` que ele habilita parece PACOTE para quem lê só o src/.
+    Glob vale pelo diretório estático (`"docs/**/*.md"` → docs/); `"**/*.js"` do Workbox (relativo
+    ao dist) não nomeia nada e passa."""
+    if spec.startswith(("/", "@")) or spec in (".", ".."):
+        return None
+    curinga = re.search(r"[*{\[]", spec)
+    nome = spec[:curinga.start()] if curinga else spec
+    nome = (nome[:nome.rfind("/")] if "/" in nome else "") if curinga else nome.rstrip("/")
+    if not nome:
+        return None
+    nome = posixpath.normpath(nome)
+    if nome == "." or nome.startswith(".."):
+        return None
+    if curinga:
+        return nome + "/" if nome in dirs_uniao else None
+    return nome if (nome in uniao or nome in dirs_uniao) else None
+
+
+def alvo_de(arq, spec, modo, uniao, dirs_uniao):
     """Caminho (relativo à raiz) que `spec` referencia a partir de `arq`, ou None se não é arquivo
     do repo. Prefixo de glob volta terminado em "/". `uniao` = árvores do ar E da main: arquivo
     apagado no delta ainda é referência do bundle que o ar serve."""
@@ -195,7 +217,9 @@ def alvo_de(arq, spec, so_relativo, uniao, dirs_uniao):
     if not spec or spec.startswith("//") or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", spec):
         return None                          # http:, data:, virtual:, node:, protocolo-relativo
     relativo = spec in (".", "..") or spec.startswith(("./", "../"))
-    if so_relativo and not relativo:
+    if modo == "config" and not relativo:
+        return nome_no_config(spec, uniao, dirs_uniao)
+    if modo == "relativo" and not relativo:
         return None
     if spec.startswith("@/"):
         base = "src/" + spec[2:]
@@ -258,8 +282,8 @@ def provar_fechamento(ar, main, classify):
     conteudo = ler_blobs(main, varridos + links_bundle)
     refs = []
     for p in varridos:
-        for spec, so_relativo in specs_de(p, conteudo[p]):
-            alvo = alvo_de(p, spec, so_relativo, uniao, dirs_uniao)
+        for spec, modo in specs_de(p, conteudo[p]):
+            alvo = alvo_de(p, spec, modo, uniao, dirs_uniao)
             if alvo is not None:
                 refs.append((p, alvo))
     for p in links_bundle:                   # symlink no bundle: o build lê o ALVO

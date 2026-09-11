@@ -40,7 +40,8 @@ cat > "$TMP/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
 url=""; for a in "$@"; do url="$a"; done
 case "$url" in
-  */assets/index-*.js) printf 'var a=1;window.__BUILD_SHA__="%s";\n' "${FAKE_AR_SHA:?}" ;;
+  */assets/index-*.js) printf 'var a=1;window.__BUILD_SHA__="%s";\n' "${FAKE_AR_SHA:?}"
+                       [ -z "${FAKE_AR_SHA2:-}" ] || printf "var b='__BUILD_SHA__=\"%s\"';\n" "$FAKE_AR_SHA2" ;;
   */) printf '<html><script type="module" src="/assets/index-Fx1234.js"></script></html>\n' ;;
   *) exit 22 ;;
 esac
@@ -126,11 +127,18 @@ parte_de "$BASE"
 escreve package.json "$(pkg '' 18.3.1 'vite build && node scripts/gera.js')"; escreve scripts/gera.js 'console.log(1)'
 SUJO_BASE=$(commit build-sujo-base)
 escreve scripts/gera.js 'console.log(2)'; SUJO=$(commit build-sujo)
+# alias SEM `./` apontando para pasta inerte: o import `@edge/janela` parece pacote para quem só lê
+# src/ — o caminho está na string do vite.config (achado do auto-challenge, Caminho B, 2026-09-10)
+parte_de "$BASE"
+escreve vite.config.ts 'import path from "path"; export default { resolve: { alias: { "@": path.resolve(__dirname, "./src"), "@edge": path.resolve(__dirname, "supabase/functions/_shared") } } };'
+escreve src/lib/usa-alias.ts 'import { j } from "@edge/janela"; export const a = j;'
+ALIAS_BASE=$(commit alias-base)
+escreve supabase/functions/_shared/janela.ts 'export const j = 4;'; ALIAS=$(commit alias)
 g branch deadbee1 "$BASE"   # ref com cara de SHA: `deadbee1^{commit}` resolve o BRANCH
 if ! { g remote add origin "$O" && g push -q origin 'refs/tags/*:refs/tags/*'; }; then
   echo "❌ push do fixture falhou"; exit 2
 fi
-for v in BASE SO_DOCS C2445 SRC PKG_DEPS PKG_SCRIPTS PKG_BUILD PKG_FMT LATERAL RENAME DESC EDGE VAZA_BASE VAZA SUJO_BASE SUJO; do
+for v in BASE SO_DOCS C2445 SRC PKG_DEPS PKG_SCRIPTS PKG_BUILD PKG_FMT LATERAL RENAME DESC EDGE VAZA_BASE VAZA SUJO_BASE SUJO ALIAS_BASE ALIAS; do
   val=${!v:-}
   [ "${#val}" -eq 40 ] || [ "${#val}" -eq 64 ] || { echo "❌ fixture incompleto: $v='$val'"; exit 2; }
 done
@@ -160,6 +168,8 @@ cenario() {
     fetch_falhou)     echo "$BASE $SO_DOCS fetch_falhou" ;;
     carimbo_alheio)   echo "deadbee2 $SO_DOCS -" ;;
     carimbo_e_branch) echo "deadbee1 $SO_DOCS -" ;;
+    alias_inerte)     echo "$ALIAS_BASE $ALIAS -" ;;
+    carimbo_duplo)    echo "$BASE $SO_DOCS carimbo_duplo" ;;
   esac
 }
 
@@ -185,7 +195,9 @@ classify_mudo|3|motivo: CLASSIFY_FALHOU
 python_mudo|3|motivo: PROVA_INDISPONIVEL
 fetch_falhou|3|motivo: FETCH_FALHOU
 carimbo_alheio|3|motivo: CARIMBO_NAO_RESOLVE
-carimbo_e_branch|3|motivo: CARIMBO_NAO_RESOLVE'
+carimbo_e_branch|3|motivo: CARIMBO_NAO_RESOLVE
+alias_inerte|3|motivo: ALCANCE_VAZA
+carimbo_duplo|3|motivo: CARIMBO_AMBIGUO'
 
 esperado_de() { printf '%s\n' "$CASOS" | awk -F'|' -v c="$1" '$1 == c { print $2 "|" $3; achou = 1 } END { exit !achou }'; }
 
@@ -205,6 +217,7 @@ roda() {
     git_mudo)      caminho="$TMP/bin-git:$caminho"; envs+=(GIT_DIFF_MODO=mudo) ;;
     python_mudo)   caminho="$TMP/bin-py:$caminho" ;;
     classify_mudo) envs+=(DEPLOY_MONITOR_CLASSIFY="$TMP/classify-mudo.sh") ;;
+    carimbo_duplo) envs+=(FAKE_AR_SHA2="${SRC:0:8}") ;;   # 1º carimbo = BASE (delta só docs)
     fetch_falhou)  g remote set-url origin "$TMP/origem-que-nao-existe.git"
                    g update-ref refs/remotes/origin/main "$main" ;;
   esac
@@ -292,7 +305,7 @@ while IFS='|' read -r nome esp marca; do
   fi
 done <<< "$CASOS"
 echo "$n_ok/$n_tot cenários passaram"
-[ "$n_tot" -ge 22 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
+[ "$n_tot" -ge 24 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
 
 # ── falsificação ────────────────────────────────────────────────────────────────────────────────
 if [ "$FALSIFY" = 1 ]; then
@@ -372,6 +385,10 @@ PY
     # helper em __tests__/ (padrão real do repo) vira "vazamento" — o cenário verde fica vermelho
     sab teste-fora-do-bundle scripts/alcance-bundle.py edge_so_teste '3|motivo: ALCANCE_VAZA' \
       'and not RE_TESTE.search(p)' 'and True'
+    sab nome-no-config scripts/alcance-bundle.py alias_inerte "$VERDE_INDEVIDO" \
+      '        return nome_no_config(spec, uniao, dirs_uniao)' '        return None'
+    sab carimbo-ambiguo scripts/monitor-deploy.sh carimbo_duplo "$VERDE_INDEVIDO" \
+      '[ "${N_CARIMBOS:-0}" -le 1 ] || atrasado CARIMBO_AMBIGUO' '[ "${N_CARIMBOS:-0}" -ge 0 ] || atrasado CARIMBO_AMBIGUO'
   }
 
   # (A) CONTROLE — a mesma invocação do laço (espelho, cenário, locale), sabotagem trocada por
@@ -437,7 +454,7 @@ PY
     fi
   done
   echo "  falsificações que pegaram: $fals/$total"
-  [ "$total" -ge 15 ] && [ "$fals" -eq "$total" ] || rc=1
+  [ "$total" -ge 17 ] && [ "$fals" -eq "$total" ] || rc=1
 
   # (C) CONTROLE DE SAÍDA — pelo CONTEÚDO: o laço nunca mutou o versionado.
   # shellcheck disable=SC2086
