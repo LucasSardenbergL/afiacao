@@ -19,18 +19,18 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5473}"
 SLUG="desconto-valor-escritores"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
-CELLAR="$(brew --prefix "postgresql@${PGVER}")"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
+# PGBIN: resolvido por plataforma (macOS Homebrew / Linux PGDG) com conferência POSITIVA da
+# major — é o que deixa esta prova rodar no núcleo do CI (db/nucleo-ci.txt). O caminho fixo do
+# Homebrew que morava aqui a prendia à máquina local, e a §F (o G5 intocado, 2026-09-10) só vale
+# como gate se o CI a executar.
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
@@ -407,5 +407,7 @@ SQL
   fi
 fi
 
-echo "═══ RESULTADO: $PASS ok · $FAIL falhas ═══"
+# Formato `N ok / N fail`: é o que o runner do núcleo (db/roda-nucleo-ci.sh) sabe contar. O
+# `N ok · N falhas` que estava aqui não casava a regex dele — a prova sairia "exit 0 sem contagem".
+echo "═══ RESULTADO: $PASS ok / $FAIL fail ═══"
 [ "$FAIL" -eq 0 ]

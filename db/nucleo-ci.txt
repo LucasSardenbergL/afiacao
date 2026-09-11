@@ -42,6 +42,10 @@ db/test-authz-is-not-true-escritas.sh      24
 db/test-preco-ausente-nao-e-zero.sh        54
 db/test-check-finitude-money-path.sh       27
 db/test-caca-custo-producao.sh              6
+# O desconto de item: NULL = não apurado ≠ 0 nos TRÊS escritores de order_items, e (§F, 2026-09-10)
+# o total LÍQUIDO atravessando as RPCs intocadas — com o G5 sabotado pela tolerância maior que o
+# desconto (o conserto rejeitado) exigindo VERMELHO. 35 é o que a prova executa hoje.
+db/test-desconto-valor-escritores.sh       35
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
