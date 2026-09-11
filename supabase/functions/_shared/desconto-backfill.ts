@@ -107,9 +107,9 @@ export type MotivoRecusa =
  * O sensor NÃO muda nenhuma decisão: o valor apurado continua sendo o de `descontoItemOmie`. Ele
  * só torna legível DE ONDE o número saiu, para que um acervo de zeros possa ser auditado.
  */
-export type CamposDesconto = "ausentes" | "zerados" | "informados" | "invalidos";
+type CamposDesconto = "ausentes" | "zerados" | "informados" | "invalidos";
 
-export interface OrigemDesconto {
+interface OrigemDesconto {
   campos: CamposDesconto;
   /** `tipo_desconto` como a régua o lê (trim + maiúscula); "" quando não veio como string. */
   tipo: string;
@@ -177,7 +177,7 @@ function preenchido(raw: unknown): boolean {
 }
 
 /** Classifica os campos de desconto do item do Omie. Ver `CamposDesconto`. */
-export function origemDesconto(prod: ItemOmieDetalhe["produto"]): OrigemDesconto {
+function origemDesconto(prod: ItemOmieDetalhe["produto"]): OrigemDesconto {
   const p = prod || {};
   const tipo = typeof p.tipo_desconto === "string" ? p.tipo_desconto.trim().toUpperCase() : "";
   const valor = finitoNaoNegativo(p.valor_desconto);
