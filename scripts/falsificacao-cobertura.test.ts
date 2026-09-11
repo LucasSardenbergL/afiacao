@@ -20,8 +20,15 @@ import { join } from 'node:path';
 
 const RAIZ = join(import.meta.dirname, '..');
 
-/** A guarda de flag que liga o modo, como os scripts a escrevem: `if [ "${1:-}" = "--falsificar" ]`. */
-const GUARDA = /\[\s*"\$\{1:-\}"\s*=\s*"--falsificar"\s*\]/;
+/**
+ * A guarda de flag que liga o modo, como os scripts a escrevem: `if [ "${1:-}" = "--falsificar" ]`
+ * — ou INVERTIDA, `if [ "${1:-}" != "--falsificar" ]` (roda o normal e cai no modo depois). A forma
+ * invertida é a da `db/test-canaria-veredito.sh`, e a regex antiga (só `=`) não a casava: medido em
+ * 2026-09-10, a canária era invisível a este detector também por isso, além de morar fora de
+ * `scripts/`. As provas de `db/` são cobradas por outro vigia — o 3º campo do `db/nucleo-ci.txt`,
+ * conferido pelo `db/roda-nucleo-ci.sh`.
+ */
+const GUARDA = /\[\s*"\$\{1:-\}"\s*!?=\s*"--falsificar"\s*\]/;
 
 /** Suítes em `scripts/` que ACEITAM `--falsificar` (têm a guarda, não só citam a palavra). */
 export function suitesComModo(arquivos: string[], ler: (f: string) => string): string[] {
@@ -51,6 +58,30 @@ export function alvosFalsificados(cmd: string): string[] {
   }
   return [...new Set(achados)].sort();
 }
+
+describe('GUARDA — detector do modo', () => {
+  it('casa a guarda direta e a INVERTIDA (a forma da canária)', () => {
+    expect(GUARDA.test('if [ "${1:-}" = "--falsificar" ]; then')).toBe(true);
+    expect(GUARDA.test('if [ "${1:-}" != "--falsificar" ]; then')).toBe(true);
+  });
+
+  it('não casa quem só CITA a flag (comentário de uso, laço de outro script)', () => {
+    expect(GUARDA.test('#   bash db/x.sh --falsificar  # sabota e exige vermelho')).toBe(false);
+    expect(GUARDA.test('bash scripts/test-$t.sh --falsificar || exit 1')).toBe(false);
+  });
+
+  it('suitesComModo enxerga a suíte de guarda invertida', () => {
+    const fontes: Record<string, string> = {
+      'test-direta.sh': 'if [ "${1:-}" = "--falsificar" ]; then :; fi',
+      'test-invertida.sh': 'if [ "${1:-}" != "--falsificar" ]; then exit 0; fi',
+      'test-sem-modo.sh': 'echo ok',
+    };
+    expect(suitesComModo(Object.keys(fontes), (f) => fontes[f])).toEqual([
+      'test-direta.sh',
+      'test-invertida.sh',
+    ]);
+  });
+});
 
 describe('alvosFalsificados — parser', () => {
   it('expande o laço e devolve os arquivos que recebem a flag', () => {
