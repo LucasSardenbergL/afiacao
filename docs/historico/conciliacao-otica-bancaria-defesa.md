@@ -60,13 +60,13 @@ categoria nula e desconhecida, e o mock projeta só as colunas do `.select()` (a
 
 | sabotagem no service | caem |
 |---|---|
-| F1 sem a allowlist | 5 (ótica + contagem) |
+| F1 sem a allowlist | 6 (ótica + contagens) |
 | F2 filtro em JS sobre coluna não selecionada | 6 (a fila zera) |
-| F3 negação `NOT LIKE 'CONTA_A_%'` | 3 (previsão entra) |
+| F3 negação `NOT LIKE 'CONTA_A_%'` | 4 (previsão e ótica desconhecida entram) |
 | F4 engolir a gravação recusada | 1 — o da contagem |
 | F5 leitura que falha vira vazio | 1 — o dela |
-| F6 busca que falha vira "sem match" | o da busca |
-| F7 sem o filtro `conciliado = false` | o da ótica (o já-conciliado volta à fila) |
+| F6 busca que falha vira "sem match" | 1 — o dela |
+| F7 sem o filtro `conciliado = false` | 4 (o já-conciliado volta à fila) |
 
 Controle 11/11 antes e depois, na mesma invocação; a suíte roda inteira em toda sabotagem (o total é o
 sinal de que rodou). A suíte **não** afirma o status das baixas parciais: hoje elas saem "divergência"
