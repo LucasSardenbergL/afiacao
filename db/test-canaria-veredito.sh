@@ -20,7 +20,9 @@
 set -uo pipefail
 
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT=5441
+# Sobrescrevível como nas outras provas do núcleo: o `--falsificar` sobe a ENTRADA NORMAL de um
+# worktree com o PG desta execução ainda no ar, e as duas não podem disputar a mesma porta.
+PORT="${PGPORT_TEST:-5441}"
 export LC_ALL=C LANG=C  # sem isto o postmaster morre com "became multithreaded during startup"
 export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 # Resolve o PGBIN do PG17 pelo harness (laptop, PGDG, `PGBIN_OVERRIDE`) em vez de cravar o
@@ -128,7 +130,9 @@ MAPA_CARA='{"generate-tactical-plan": 2001}'
 # trava fechada produz é OUTRA coisa — `{"nome": null}`, um par com valor nulo, não agregado nulo.
 monta_leitura() {
   local corpo="$TMP/corpo-$1.txt" mapa="$TMP/mapa-$1.json"
-  extrai_leitura "$1" "$3" > "$corpo" || return 1
+  # O stderr do recorte fica guardado: é ele que diz POR QUE o bloco não saiu (abertura ou
+  # fechamento ausente) — sem isso, "recorte sem CASE" é a mesma frase de um PG que morreu.
+  extrai_leitura "$1" "$3" > "$corpo" 2>"$TMP/recorte-$1.err" || return 1
   printf '%s' "$2" > "$mapa"
   P -At -v ON_ERROR_STOP=1 -c "SELECT format(pg_read_file('$corpo'), pg_read_file('$mapa'))"
 }
@@ -189,9 +193,15 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); printf '  \033[32mok\033[0m   %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  \033[31mFALHA\033[0m %s\n' "$1"; fail=1; }
 
-# veredito <id-da-canaria> <arquivo-de-leitura> -> imprime o veredito daquela linha
+# veredito <id-da-canaria> <arquivo-de-leitura> -> imprime o veredito daquela linha; sai 3 se a
+# LEITURA nem executou. Até 2026-09-10 o stderr do psql ia para /dev/null e SQL que não compila
+# virava "nenhuma linha" — indistinguível de "a leitura não devolveu a canária". Foi assim que
+# duas sabotagens com SQL INVÁLIDO passaram por captura: vermelho em toda asserção, pelo motivo
+# errado. Com ON_ERROR_STOP o psql sai 3 no erro, e a asserção diz [SQL-INVALIDO].
 veredito() {
-  P -t -A -F'|' -f "$2" 2>/dev/null | awk -F'|' -v n="$1" '$1 == n { print $8 }'
+  local saida
+  saida="$(P -v ON_ERROR_STOP=1 -t -A -F'|' -f "$2" 2>"$TMP/veredito.err")" || return 3
+  printf '%s\n' "$saida" | awk -F'|' -v n="$1" '$1 == n { print $8 }'
 }
 
 # espera <descricao> <nome> <arquivo> <marca-esperada>
@@ -199,11 +209,18 @@ veredito() {
 # INDETERMINADO para CANARIA VERMELHA passaria num teste que só exigisse "não é verde".
 espera() {
   local desc="$1" nome="$2" arq="$3" marca="$4" v
-  v="$(veredito "$nome" "$arq")"
+  if ! v="$(veredito "$nome" "$arq")"; then
+    bad "$desc — [SQL-INVALIDO] a leitura nem executou: $(head -c 120 "$TMP/veredito.err" | tr '\n' ' ')"
+    return
+  fi
+  # `${marca}` COM chaves, e não é estilo: o `…` que vem depois é multibyte, e em locale UTF-8 no
+  # macOS o bash lê o 1º byte dele como parte do NOME — `${marca\xE2}`, "unbound variable" sob
+  # `set -u`, e a suíte MORRE na primeira asserção que discorda. Medido em 2026-09-10: no 2º locale
+  # do `--falsificar` toda sabotagem ficava "vermelha" por esse crash, sem julgar nada.
   case "$v" in
     "$marca"*) ok "$desc" ;;
     "")        bad "$desc — nenhuma linha para '$nome' (a leitura não parte de \`esperado\`?)" ;;
-    *)         bad "$desc — esperava '$marca…', veio '${v:0:90}'" ;;
+    *)         bad "$desc — esperava '${marca}…', veio '${v:0:90}'" ;;
   esac
 }
 
@@ -214,8 +231,10 @@ suite() {
   monta_leitura 2 "$MAPA_CARA"    "$ALVO" > "$LC_ARQ"
   # Sonda POSITIVA do recorte: awk que não casa devolveria arquivo vazio e TODA asserção sairia
   # "nenhuma linha" — que é vermelho, mas pelo motivo errado. Aqui ele é nomeado.
-  grep -q 'AS veredito' "$LB" || { bad "recorte do PASSO 2 saiu sem CASE de veredito"; return; }
-  grep -q 'AS veredito' "$LC_ARQ" || { bad "recorte do PASSO 4 saiu sem CASE de veredito"; return; }
+  grep -q 'AS veredito' "$LB" || {
+    bad "recorte do PASSO 2 saiu sem CASE de veredito ($(tr '\n' ' ' < "$TMP/recorte-1.err" 2>/dev/null | cut -c1-90))"; return; }
+  grep -q 'AS veredito' "$LC_ARQ" || {
+    bad "recorte do PASSO 4 saiu sem CASE de veredito ($(tr '\n' ' ' < "$TMP/recorte-2.err" 2>/dev/null | cut -c1-90))"; return; }
 
   # ------------------------------------------------ (Z) o artefato é INERTE ---
   # O SQL desta suíte NÃO passa pelo guard de sincronia da CLI (ele é impossível de satisfazer num
@@ -468,13 +487,94 @@ if [ "${1:-}" != "--falsificar" ]; then
 fi
 
 # ---------------------------------------------------------------- falsificação ---
-printf '== falsificacao (sabota o SQL e EXIGE vermelho) ==\n'
+# Roda no CAMINHO OBRIGATÓRIO desde 2026-09-10: `db/roda-nucleo-ci.sh` executa este modo pela
+# linha `falsificar=<n>` do `db/nucleo-ci.txt`. Antes só rodava à mão — e, sem ninguém rodar,
+# duas sabotagens apodreceram em "captura" de SQL que nem compilava (ver `tem_marca`).
+printf '== falsificacao (sabota e EXIGE vermelho PELO MOTIVO CERTO) ==\n'
 falhou=0
+# RECIBO para o runner. O exit 0 sozinho não basta a ele: um `--falsificar` que a guarda deixasse
+# de reconhecer rodaria o modo NORMAL e sairia 0 do mesmo jeito. Por isso a linha
+# `SABOTAGENS: <v> vermelhas / <f> falhas` só existe AQUI — o modo normal nunca a emite —, e o
+# runner exige f = 0 e v ≥ n: remover sabotagem reprova até alguém baixar o n no diff.
+SAB_VERMELHAS=0; SAB_FALHAS=0; SAB_IDS=" "; SAB_EXPRS=""
+sab_vermelha() { SAB_VERMELHAS=$((SAB_VERMELHAS + 1)); }
+sab_falha()    { SAB_FALHAS=$((SAB_FALHAS + 1)); falhou=1; }
+LOGS_F="$TMP/logs-falsificacao"; mkdir -p "$LOGS_F"
+ESC="$(printf '\033')"
+
 utf8=""
 for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
   if [ "$(LC_ALL="$cand" locale charmap 2>/dev/null)" = "UTF-8" ]; then utf8="$cand"; break; fi
 done
 [ -n "$utf8" ] || { printf '  \033[31mFALHA\033[0m nenhum locale UTF-8 — metade da cobertura fingindo ser inteira\n'; exit 1; }
+
+# roda_suite <alvo-sql> <locale> <log> -> 0 se a suíte ficou VERDE. A saída vai para o log e não
+# para /dev/null: sem ela não há como conferir POR QUE a suíte ficou vermelha — e, até 2026-09-10,
+# ninguém conferia.
+roda_suite() {
+  # shellcheck disable=SC2030  # o LC_ALL local ao subshell e o DESENHO: cada rodada da suite ve um
+  #                              locale, e o pai continua em C.
+  ( export LC_ALL="$2"; ALVO="$1"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$3" 2>&1
+}
+
+# tem_marca <log> <marca> -> 0 se UMA linha FALHA do log contém TODAS as partes da marca (separadas
+# por `|`). A marca é o que transforma o vermelho em informação: um trecho ASCII da asserção que a
+# sabotagem existe para derrubar e, quando a asserção é de veredito, o veredito ERRADO que veio
+# (`veio '...`). "A suíte ficou vermelha" sozinho aceitava QUALQUER vermelho: as sabotagens (e) e
+# (f) viveram de 2026-09-08 a 2026-09-10 como "captura" de um SQL que nem compilava — a (e) com o
+# alias `l` que o gerador já tinha renomeado para `ca`, a (f) apagando 4 linhas de um guard de 2 e
+# deixando um THEN órfão. Vermelho em TODA asserção, e o laço dizia `ok`.
+tem_marca() (
+  set -f   # a marca é TEXTO: a divisão por `|` não pode expandir glob
+  linhas="$(grep -F 'FALHA' "$1" || true)"
+  IFS='|'
+  for parte in $2; do linhas="$(printf '%s\n' "$linhas" | grep -F -- "$parte" || true)"; done
+  [ -n "$linhas" ]
+)
+
+# julga_log <log> <marca> -> ecoa "" se o vermelho é o CERTO; senão, o que está errado nele.
+julga_log() {
+  if grep -qF '[SQL-INVALIDO]' "$1"; then printf 'a sabotagem QUEBROU o SQL (nao mudou o julgamento)'; return; fi
+  # Erro do próprio bash (`<script>: line N: ...`): a suíte MORREU em vez de julgar. Foi a forma do
+  # `${marca}…` sem chaves, que só mata em locale UTF-8 — e por isso só aparece no 2º locale.
+  if grep -qE '\.sh: line [0-9]+: ' "$1"; then
+    printf 'a suite MORREU com erro de shell (%s)' "$(grep -oE 'line [0-9]+: .{0,50}' "$1" | head -1)"; return
+  fi
+  tem_marca "$1" "$2" || printf "vermelho SEM a marca '%s'" "$2"
+}
+
+mostra_falhas() { # <log> — as linhas FALHA, sem cor: é o que o runner mostra quando isto reprova
+  sed "s/${ESC}\[[0-9;]*m//g" "$1" | grep -a 'FALHA' | head -4 | cut -c1-160 | sed 's/^/            /'
+}
+
+# injeta <id> <marca> <alvo-sql> -> ecoa "" se a suíte fica vermelha COM a marca nos 2 locales
+injeta() {
+  local id="$1" marca="$2" alvo="$3" loc log m motivo=""
+  for loc in C "$utf8"; do
+    log="$LOGS_F/$id.$loc.log"
+    if roda_suite "$alvo" "$loc" "$log"; then motivo="$motivo [$loc: suite VERDE]"; continue; fi
+    m="$(julga_log "$log" "$marca")"
+    [ -z "$m" ] || motivo="$motivo [$loc: $m]"
+  done
+  printf '%s' "$motivo"
+}
+
+invalida() { # <id> <descricao> <motivo>
+  sab_falha; printf '  \033[31mFALHA\033[0m [%s] "%s": %s — falsificacao vazia\n' "$1" "$2" "$3"
+}
+
+# registra <id> <eixo:expressao> -> 1 se o id, ou a mesma expressão no mesmo eixo, já apareceu. A
+# contagem do recibo não distingue "17 sabotagens" de "16 e uma repetida": sem isto, duplicar uma
+# compensaria retirar outra, e o runner seguiria verde.
+registra() {
+  case "$SAB_IDS" in *" $1 "*) invalida "$1" "(id repetido)" "id DUPLICADO"; return 1 ;; esac
+  if [ -n "$SAB_EXPRS" ] && printf '%s\n' "$SAB_EXPRS" | grep -qxF -- "$2"; then
+    invalida "$1" "(expressao repetida)" "a MESMA sabotagem ja rodou com outro id"; return 1
+  fi
+  SAB_IDS="$SAB_IDS$1 "
+  SAB_EXPRS="${SAB_EXPRS:+$SAB_EXPRS
+}$2"
+}
 
 # CONTROLE VERDE na MESMA invocação do laço, ANTES do primeiro sed — e pelo MESMO caminho que as
 # sabotagens usam (cópia em $TMP, os dois locales, `ALVO` sobrescrito). Sem ele, uma suíte
@@ -483,11 +583,11 @@ done
 CONTROLE="$TMP/controle.sql"
 cp "$GERADO" "$CONTROLE"
 controle_verde=0
-# shellcheck disable=SC2030  # o LC_ALL local ao subshell e o DESENHO: cada rodada da suite ve um
-#                              locale, e o pai continua em C. Idem SC2031 no laco de sabotagem.
 for loc in C "$utf8"; do
-  if ( export LC_ALL="$loc"; ALVO="$CONTROLE"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
+  if roda_suite "$CONTROLE" "$loc" "$LOGS_F/controle.$loc.log"; then
     controle_verde=$((controle_verde + 1))
+  else
+    mostra_falhas "$LOGS_F/controle.$loc.log"
   fi
 done
 if [ "$controle_verde" -ne 2 ]; then
@@ -496,26 +596,38 @@ if [ "$controle_verde" -ne 2 ]; then
 fi
 printf '  \033[32mok\033[0m   controle verde nos 2 locales (o laco distingue verde de vermelho)\n'
 
-sabota() { # <descricao> <expressao-sed>
-  local desc="$1" expr="$2" copia="$TMP/sabotado.sql" erro
+# CONTROLE NEGATIVO DO JUIZ, também antes do primeiro sed que conta. O controle acima prova que o
+# laço sabe dizer VERDE; este prova que o juiz sabe dizer "vermelho ERRADO". Sem ele, um
+# `tem_marca` que sempre dissesse sim aprovaria toda sabotagem — o sempre-vermelho de novo, um
+# nível acima. Os dois casos são as duas formas que viveram aqui como captura.
+sed -E "s/ca\.corpo ->> 'canary' IS DISTINCT FROM 'true'/l.corpo ->> 'canary' <> 'true'/g" "$GERADO" > "$TMP/juiz-sql.sql"
+m="$(injeta juiz-sql "200 SEM eco canary = rodou o FLUXO REAL|veio 'CANARIA SEM MARCADOR" "$TMP/juiz-sql.sql")"
+case "$m" in
+  *"C: a sabotagem QUEBROU o SQL"*"$utf8: a sabotagem QUEBROU o SQL"*) ;;
+  *) printf '  \033[31mFALHA\033[0m o juiz NAO recusou SQL que nao compila (%s)\n' "${m:-aprovou}"; exit 1 ;;
+esac
+sed -E "s/AND ca\.corpo ->> 'ok' = 'true'//" "$GERADO" > "$TMP/juiz-marca.sql"
+m="$(injeta juiz-marca "ok:false COM marcador batendo = CANARIA VERMELHA|veio 'INDETERMINADO" "$TMP/juiz-marca.sql")"
+case "$m" in
+  *"C: vermelho SEM a marca"*"$utf8: vermelho SEM a marca"*) ;;
+  *) printf '  \033[31mFALHA\033[0m o juiz NAO recusou vermelho de OUTRA assercao (%s)\n' "${m:-aprovou}"; exit 1 ;;
+esac
+printf '  \033[32mok\033[0m   juiz recusa os 2 vermelhos errados (SQL que nao compila; marca de outra assercao)\n'
+
+sabota() { # <id> <descricao> <marca> <expressao-sed>
+  local id="$1" desc="$2" marca="$3" expr="$4" copia="$TMP/sabotado-$1.sql" erro motivo
+  registra "$id" "sql:$expr" || return 0
   erro="$(sed -E "$expr" "$GERADO" 2>&1 >"$copia")"
-  if [ -n "$erro" ]; then
-    printf '  \033[31mFALHA\033[0m "%s": sed invalido (%s) — falsificacao vazia\n' "$desc" "${erro:0:60}"; falhou=1; return
-  fi
-  if cmp -s "$GERADO" "$copia"; then
-    printf '  \033[31mFALHA\033[0m "%s": padrao nao casou, SQL intacto — falsificacao vazia\n' "$desc"; falhou=1; return
-  fi
-  local viu_vermelho=0 loc
-  # shellcheck disable=SC2030,SC2031  # ver a nota do laco de controle: o escopo por subshell e o desenho
-  for loc in C "$utf8"; do
-    if ! ( export LC_ALL="$loc"; ALVO="$copia"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
-      viu_vermelho=$((viu_vermelho + 1))
-    fi
-  done
-  if [ "$viu_vermelho" -eq 2 ]; then
-    printf '  \033[32mok\033[0m   "%s" -> suite vermelha nos 2 locales\n' "$desc"
+  if [ -n "$erro" ]; then invalida "$id" "$desc" "sed invalido (${erro:0:60})"; return 0; fi
+  if cmp -s "$GERADO" "$copia"; then invalida "$id" "$desc" "padrao nao casou, SQL intacto"; return 0; fi
+  motivo="$(injeta "$id" "$marca" "$copia")"
+  if [ -z "$motivo" ]; then
+    sab_vermelha
+    printf '  \033[32mok\033[0m   [%s] "%s" -> vermelha pelo motivo certo nos 2 locales\n' "$id" "$desc"
   else
-    printf '  \033[31mFALHA\033[0m "%s": suite ficou VERDE (%d/2 vermelhos) — assercao frouxa\n' "$desc" "$viu_vermelho"; falhou=1
+    sab_falha
+    printf '  \033[31mFALHA\033[0m [%s] "%s":%s\n' "$id" "$desc" "$motivo"
+    mostra_falhas "$LOGS_F/$id.C.log"
   fi
 }
 
@@ -525,51 +637,68 @@ sabota() { # <descricao> <expressao-sed>
 #    frouxa, era conjunção INALCANÇÁVEL pelos fixtures que existiam. Duas correções, ambas honestas:
 #    o fixture de `ok` não-booleano (acima) tornou a primeira alcançável, e a segunda é atacada onde
 #    ela decide de verdade — no ramo que NOMEIA a divergência.
+# A MARCA de cada uma (3º argumento) foi LIDA da saída real da suíte sabotada, não deduzida.
 
 # (a1) O ramo que dá sentido ao arquivo: sem ele, "está no ar" vira "está correto".
-sabota "sem o ramo de ok:false (a vermelha perde o nome)" \
+sabota a1 "sem o ramo de ok:false (a vermelha perde o nome)" \
+  "ok:false COM marcador batendo = CANARIA VERMELHA|veio 'INDETERMINADO" \
   "s/WHEN ca\.corpo ->> 'ok' = 'false'/WHEN false/"
 # (a2) A conjunção do ramo verde, agora ALCANÇÁVEL pelo fixture de \`ok\` não-booleano.
-sabota "verde deixa de exigir ok:true (ok nao-booleano vira verde)" \
+sabota a2 "verde deixa de exigir ok:true (ok nao-booleano vira verde)" \
+  "vira verde por omiss|veio 'CANARIA VERDE'" \
   "s/AND ca\.corpo ->> 'ok' = 'true'//"
 # (b1) O ramo que nomeia a divergência de marcador.
-sabota "sem o ramo de marcador divergente (a outra fatia perde o nome)" \
+sabota b1 "sem o ramo de marcador divergente (a outra fatia perde o nome)" \
+  "contrato de OUTRA fatia com ok:true|veio 'INDETERMINADO" \
   "s/WHEN ca\.corpo ->> ca\.campo_marcador IS DISTINCT FROM ca\.marcador_esperado/WHEN false/"
 # (b2) A armadilha 2 do deploy.md RECONSTRUÍDA: nada no CASE julga o marcador. O bundle velho
 #      compara velho x velho, responde ok:true, e o veredito sai CANARIA VERDE — mentindo verde.
-sabota "o CASE inteiro deixa de julgar o marcador (bundle velho MENTE VERDE)" \
+sabota b2 "o CASE inteiro deixa de julgar o marcador (bundle velho MENTE VERDE)" \
+  "contrato de OUTRA fatia com ok:true|veio 'CANARIA VERDE'" \
   "s/WHEN ca\.corpo ->> ca\.campo_marcador IS DISTINCT FROM ca\.marcador_esperado/WHEN false/; s/AND ca\.corpo ->> ca\.campo_marcador = ca\.marcador_esperado//"
 # (b3) O marcador esperado que sai do REPO vira um digitado qualquer: a canária no ar deixa de bater.
-sabota "marcador esperado fabricado no VALUES (repo deixa de mandar)" \
+sabota b3 "marcador esperado fabricado no VALUES (repo deixa de mandar)" \
+  "verde: canary+contrato+ok os TR|veio 'CANARIA DE OUTRA FATIA" \
   "s/(\('copilot-analyze', 'contrato', ')[^']*/\1marcador-fabricado-v0/"
 # (b4) O campo do marcador deixa de ser POR CANÁRIA: quem serve em \`versao\` some.
-sabota "marcador lido sempre de 'contrato' (a generate-tactical-plan some)" \
+sabota b4 "marcador lido sempre de 'contrato' (a generate-tactical-plan some)" \
+  "marcador no campo \`versao\` (generate-tactical-plan) fecha VERDE|veio 'CANARIA SEM MARCADOR" \
   "s/ca\.corpo ->> ca\.campo_marcador/ca.corpo ->> 'contrato'/g"
 # (c) A ORDEM dos ramos: julgar o status ANTES do eco faz a vermelha de HTTP 500 da
 #     generate-tactical-plan sair como 'recusou o request'.
-sabota "status julgado antes do eco (500 vermelha vira bundle velho)" \
+sabota c "status julgado antes do eco (500 vermelha vira bundle velho)" \
+  "HTTP 500 COM eco canary|veio 'SEM CANARIA NO AR" \
   "s/WHEN ca\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\.status_code >= 400/WHEN ca.status_code >= 400/"
 # (d) O envelope \`data\`: sem descer nele, as canárias da omie-analytics-sync somem para
 #     'sem eco' — um bundle correto classificado como velho.
-sabota "sem o COALESCE do envelope data (analytics vira 'sem eco')" \
+sabota d "sem o COALESCE do envelope data (analytics vira 'sem eco')" \
+  "do envelope \`data\` (omie-analytics-sync)|veio 'SEM CANARIA NO AR" \
   "s/COALESCE\(resp\.content::jsonb -> 'data', resp\.content::jsonb\)/resp.content::jsonb/"
 # (e) NULL-blind: trocar IS DISTINCT FROM por <> faz a chave AUSENTE devolver NULL, o ramo do
-#     eco não casa, e a resposta sem `canary` cai adiante no CASE.
-sabota "eco testado por <> (NULL-blind: chave ausente devolve NULL)" \
-  "s/ca\.corpo ->> 'canary' IS DISTINCT FROM 'true'/l.corpo ->> 'canary' <> 'true'/g"
-# (f) A janela: sem ela, uma resposta de outra sessão vira veredito de agora.
-sabota "sem o guard de janela (resposta velha vira veredito de agora)" \
-  "/WHEN ca\.created <= now\(\) - interval/,+3d"
+#     eco não casa, e a resposta sem `canary` cai adiante no CASE. O alias TEM de ser o do CASE
+#     (`ca`): com o `l` antigo o SQL nem compila — é o 1º caso do controle negativo do juiz.
+sabota e "eco testado por <> (NULL-blind: chave ausente devolve NULL)" \
+  "200 SEM eco canary = rodou o FLUXO REAL|veio 'CANARIA SEM MARCADOR" \
+  "s/ca\.corpo ->> 'canary' IS DISTINCT FROM 'true'/ca.corpo ->> 'canary' <> 'true'/g"
+# (f) A janela: sem ela, uma resposta de outra sessão vira veredito de agora. Neutraliza a CONDIÇÃO
+#     (`WHEN false`) em vez de apagar linhas: o `,+3d` antigo contava linhas de um guard que tem 2
+#     e levava junto o WHEN do ramo seguinte — sabotagem que depende da contagem de linhas envelhece
+#     com qualquer mudança de layout do gerador.
+sabota f "sem o guard de janela (resposta velha vira veredito de agora)" \
+  "resposta FORA da janela|veio 'CANARIA VERDE'" \
+  "s/WHEN ca\.created <= now\(\) - interval '[^']*'/WHEN false/"
 
 # ── (g) O ENVELOPE INERTE — o que substitui, AQUI, o guard de sincronia da CLI ─────────────────
 # As duas pontas da sonda (Z) precisam de dente próprio: cada uma sozinha aprova a outra sabotada.
 # (g1) Sem o RAISE, o arquivo roda LIMPO — e continua sem disparar, porque o payload segue literal:
 #      é exatamente o caso que a ponta 2 aprovaria sozinha.
-sabota "sem o RAISE do envelope (artefato roda limpo)" \
+sabota g1 "sem o RAISE do envelope (artefato roda limpo)" \
+  "artefato de fixture rodou LIMPO" \
   "/^  RAISE EXCEPTION 'ARTEFATO DE FIXTURE/d"
 # (g2) A moldura inteira some e o payload volta a ser COMANDO. O rc continua != 0 (este banco não
 #      tem tudo o que o SQL pede), então a ponta 1 sozinha aprovaria — quem pega é a sentinela.
-sabota "sem o envelope inteiro (o SQL de fixture volta a DISPARAR)" \
+sabota g2 "sem o envelope inteiro (o SQL de fixture volta a DISPARAR)" \
+  "o artefato DISPAROU" \
   "/^DO \\\$fixture_inerte\\\$$/d; /^DECLARE$/d; /^  sql_da_canaria CONSTANT text/d; /^\\\$fixture_payload\\\$;$/d; /^BEGIN$/d; /^  RAISE EXCEPTION 'ARTEFATO DE FIXTURE/d; /^END$/d; /^\\\$fixture_inerte\\\$;$/d"
 
 # ── (i) O RECORTE — a fronteira entre o artefato e o que a suíte julga ───────────────────────
@@ -579,29 +708,64 @@ sabota "sem o envelope inteiro (o SQL de fixture volta a DISPARAR)" \
 # inerte. E passava pela sonda `grep -q 'AS veredito'` do chamador, porque o miolo continuava lá:
 # a sonda pergunta se o recorte tem o CASE, não se ele é o RECORTE CERTO.
 # shellcheck disable=SC2016  # `$sonda$`/`$OUTRA$` sao TAGS de dollar-quoting, nao variaveis
-sabota "fechamento do bloco com outra tag (recorte vaza ate o EOF)" \
+# A marca tem DUAS partes de propósito: "recorte sem CASE" sozinha é também a frase de um PG que
+# morreu no meio (o `format()` roda nele) — a 2ª parte é o erro do PRÓPRIO recorte.
+sabota i "fechamento do bloco com outra tag (recorte vaza ate o EOF)" \
+  "recorte do PASSO 2 saiu sem CASE de veredito|sem o fechamento" \
   's/^\$sonda\$, m\.ids\)/$OUTRA$, m.ids)/'
 
-# ── (h) O EIXO QUE ESTAVA CEGO: a suíte vê o GERADOR, não um retrato dele ──────────────────────
-# Todas as sabotagens acima mexem no SQL JÁ EMITIDO. Nenhuma delas nota se a suíte parou de julgar
-# o gerador deste disco — foi assim que o #2405 a deixou VERDE (19 ok / 0 fail) com o gerador
-# sabotado, ao gerar o SQL num worktree de `origin/main`. Aqui a sabotagem é no GERADOR, e num
-# worktree descartável: mutar o arquivo no disco da sessão é como um hook de segurança ficou mutado
-# em 2026-09-08 (#2410) quando o trap restaurou e o processo seguiu vivo.
+# ── (h) O EIXO QUE ESTAVA CEGO: o modo normal julga o GERADOR deste disco ─────────────────────────
+# Todas as sabotagens acima mexem no SQL JÁ EMITIDO. Nenhuma delas nota se o modo normal parou de
+# julgar o gerador deste disco — foi assim que o #2405 a deixou VERDE (19 ok / 0 fail) com o
+# gerador sabotado, ao gerar o SQL num worktree de `origin/main`. Aqui a sabotagem é no GERADOR, num
+# worktree descartável do HEAD: mutar o arquivo no disco da sessão é como um hook de segurança
+# ficou mutado em 2026-09-08 (#2410) quando o trap restaurou e o processo seguiu vivo.
+#
+# Cada sabotagem de gerador passa por DOIS juízes, e os dois têm de dar o vermelho certo:
+#  · a ENTRADA NORMAL do worktree (`bash db/test-canaria-veredito.sh`, o comando que o CI roda) —
+#    é ela que prova o eixo, porque passa pela linha que GERA o SQL do modo normal. Até 2026-09-10
+#    este bloco só injetava na suíte o SQL gerado à parte, contornando justamente essa linha: uma
+#    regressão como a do #2405 (gerar num worktree da main) seguiria vermelha aqui e verde no CI
+#    (achado do parecer Codex desta data). Roda em C, porque a entrada exporta LC_ALL=C (o
+#    postmaster exige);
+#  · a INJEÇÃO na suíte nos 2 locales, que cobre o julgamento em UTF-8.
 if ! git -C "$RAIZ" worktree add --detach "$WT_SABOTADO" HEAD >"$TMP/wt.err" 2>&1; then
   printf '  \033[31mFALHA\033[0m nao consegui criar o worktree do HEAD (%s) — o eixo do GERADOR ficaria sem prova\n' \
     "$(cut -c1-80 "$TMP/wt.err")"
   exit 1
 fi
 GER_WT="$WT_SABOTADO/scripts/sonda-versao-sql.ts"
+GER_INTACTO="$TMP/sonda-versao-sql.ts.intacto"
+ENTRADA_WT="$WT_SABOTADO/db/test-canaria-veredito.sh"
+cp "$GER_WT" "$GER_INTACTO" || { printf '  \033[31mFALHA\033[0m nao guardei a copia intacta do gerador\n'; exit 1; }
 
 gera_do_worktree() { # <arquivo-de-saida> -> 0 se gerou
   # shellcheck disable=SC2086  # a lista de nomes é intencionalmente dividida em argumentos
   (cd "$WT_SABOTADO" && bun db/lib/gerar-canaria-fixture.ts $BARATAS "$CARA") >"$1" 2>"$TMP/wt-gen.err"
 }
 
-# CONTROLE do eixo, na MESMA invocação: sem ele, um worktree que nem gera SQL aprovaria toda
-# sabotagem de gerador — a sempre-vermelha outra vez, agora um nível acima.
+# A restauração é por CÓPIA e se prova por CONTEÚDO (docs/historico/falsificacao-sem-linha-de-base.md):
+# `git checkout --` restaura do ÍNDICE, e um exit ignorado deixaria a sabotagem anterior viva para a
+# seguinte levar o crédito. Se não confere, ABORTA — nada depois disto significaria alguma coisa.
+restaura_gerador() {
+  if cp "$GER_INTACTO" "$GER_WT" && cmp -s "$GER_INTACTO" "$GER_WT" \
+     && git -C "$WT_SABOTADO" diff --quiet -- scripts/sonda-versao-sql.ts; then
+    return 0
+  fi
+  printf '  \033[31mFALHA\033[0m a restauracao do gerador NAO conferiu — as sabotagens seguintes herdariam a anterior\n'
+  exit 1
+}
+
+# entrada_normal <id> <marca> -> ecoa "" se a ENTRADA NORMAL do worktree sai vermelha COM a marca
+entrada_normal() {
+  local log="$LOGS_F/$1.entrada.log" m
+  if PGPORT_TEST=$((PORT + 1)) bash "$ENTRADA_WT" > "$log" 2>&1; then printf ' [entrada normal: VERDE]'; return; fi
+  m="$(julga_log "$log" "$2")"
+  [ -z "$m" ] || printf ' [entrada normal: %s]' "$m"
+}
+
+# CONTROLES do eixo, na MESMA invocação: sem eles, um worktree que nem gera SQL — ou uma entrada que
+# nem sobe — aprovaria toda sabotagem de gerador: a sempre-vermelha outra vez, um nível acima.
 CTRL_WT="$TMP/controle-wt.sql"
 if ! gera_do_worktree "$CTRL_WT"; then
   printf '  \033[31mFALHA\033[0m o gerador do HEAD nem emite SQL (%s)\n' "$(cut -c1-80 "$TMP/wt-gen.err")"
@@ -609,9 +773,10 @@ if ! gera_do_worktree "$CTRL_WT"; then
 fi
 ctrl_wt_verde=0
 for loc in C "$utf8"; do
-  # shellcheck disable=SC2030,SC2031  # ver a nota do laco de controle: o escopo por subshell e o desenho
-  if ( export LC_ALL="$loc"; ALVO="$CTRL_WT"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
+  if roda_suite "$CTRL_WT" "$loc" "$LOGS_F/controle-wt.$loc.log"; then
     ctrl_wt_verde=$((ctrl_wt_verde + 1))
+  else
+    mostra_falhas "$LOGS_F/controle-wt.$loc.log"
   fi
 done
 if [ "$ctrl_wt_verde" -ne 2 ]; then
@@ -619,47 +784,52 @@ if [ "$ctrl_wt_verde" -ne 2 ]; then
   printf '            (esta parte roda sobre o HEAD COMMITADO: commite antes de falsificar)\n'
   exit 1
 fi
-printf '  \033[32mok\033[0m   controle do gerador verde nos 2 locales\n'
+if ! PGPORT_TEST=$((PORT + 1)) bash "$ENTRADA_WT" > "$LOGS_F/controle-entrada.log" 2>&1 \
+   || ! grep -qx 'VEREDITO DE CANARIA OK' "$LOGS_F/controle-entrada.log"; then
+  printf '  \033[31mFALHA\033[0m a ENTRADA NORMAL do worktree nao ficou verde sem sabotagem\n'
+  mostra_falhas "$LOGS_F/controle-entrada.log"
+  printf '            (esta parte roda sobre o HEAD COMMITADO: commite antes de falsificar)\n'
+  exit 1
+fi
+printf '  \033[32mok\033[0m   controle do gerador verde: injecao nos 2 locales e entrada normal do worktree\n'
 
-sabota_gerador() { # <descricao> <expressao-sed-no-gerador>
-  local desc="$1" expr="$2" copia="$TMP/sabotado-por-gerador.sql" erro
+sabota_gerador() { # <id> <descricao> <marca> <expressao-sed-no-gerador>
+  local id="$1" desc="$2" marca="$3" expr="$4" copia="$TMP/sabotado-por-gerador-$1.sql" erro motivo
+  registra "$id" "gerador:$expr" || return 0
   erro="$(sed -E -i.orig "$expr" "$GER_WT" 2>&1)"
   if [ -n "$erro" ]; then
-    printf '  \033[31mFALHA\033[0m "%s": sed invalido (%s)\n' "$desc" "${erro:0:60}"; falhou=1
-    git -C "$WT_SABOTADO" checkout -- scripts/sonda-versao-sql.ts; rm -f "$GER_WT.orig"; return
+    rm -f "$GER_WT.orig"; restaura_gerador; invalida "$id" "$desc" "sed invalido (${erro:0:60})"; return 0
   fi
   if cmp -s "$GER_WT.orig" "$GER_WT"; then
-    printf '  \033[31mFALHA\033[0m "%s": padrao nao casou, gerador intacto — falsificacao vazia\n' "$desc"
-    falhou=1; git -C "$WT_SABOTADO" checkout -- scripts/sonda-versao-sql.ts; rm -f "$GER_WT.orig"; return
+    rm -f "$GER_WT.orig"; restaura_gerador; invalida "$id" "$desc" "padrao nao casou, gerador intacto"; return 0
   fi
   rm -f "$GER_WT.orig"
-  local viu_vermelho=0 loc
   if ! gera_do_worktree "$copia"; then
-    # Gerador que nem compila também é "a suíte notou" — mas o motivo tem de aparecer.
-    printf '  \033[32mok\033[0m   "%s" -> o gerador sabotado nem emite SQL\n' "$desc"
-    git -C "$WT_SABOTADO" checkout -- scripts/sonda-versao-sql.ts; return
+    # Gerador que NEM EMITE é mecânica quebrada, não captura: a sabotagem mudou a SINTAXE, não a
+    # semântica, e a asserção que ela anuncia ninguém mediu. Até 2026-09-10 isto contava como `ok`.
+    restaura_gerador
+    invalida "$id" "$desc" "o gerador sabotado nem emite SQL ($(cut -c1-60 "$TMP/wt-gen.err"))"; return 0
   fi
-  for loc in C "$utf8"; do
-    # shellcheck disable=SC2031  # ver a nota do laco de controle: o escopo por subshell e o desenho
-    if ! ( export LC_ALL="$loc"; ALVO="$copia"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
-      viu_vermelho=$((viu_vermelho + 1))
-    fi
-  done
-  if [ "$viu_vermelho" -eq 2 ]; then
-    printf '  \033[32mok\033[0m   "%s" -> suite vermelha nos 2 locales\n' "$desc"
+  motivo="$(injeta "$id" "$marca" "$copia")$(entrada_normal "$id" "$marca")"
+  restaura_gerador
+  if [ -z "$motivo" ]; then
+    sab_vermelha
+    printf '  \033[32mok\033[0m   [%s] "%s" -> vermelha pelo motivo certo (entrada normal + 2 locales)\n' "$id" "$desc"
   else
-    printf '  \033[31mFALHA\033[0m "%s": suite ficou VERDE (%d/2) — a suite NAO ve o gerador deste disco\n' \
-      "$desc" "$viu_vermelho"; falhou=1
+    sab_falha
+    printf '  \033[31mFALHA\033[0m [%s] "%s":%s\n' "$id" "$desc" "$motivo"
+    mostra_falhas "$LOGS_F/$id.entrada.log"
   fi
-  git -C "$WT_SABOTADO" checkout -- scripts/sonda-versao-sql.ts
 }
 
-# A MESMA mutação que ficou verde sob o #2405, agora no gerador: se a suíte voltar a julgar um
-# retrato (da main, de um commit, de um arquivo commitado), esta linha fica VERDE e reprova.
-sabota_gerador "GERADOR sem o ramo de ok:false (o #2405 aprovava isto)" \
+# A MESMA mutação que ficou verde sob o #2405, agora no gerador: se o modo normal voltar a julgar um
+# retrato (da main, de um commit, de um arquivo commitado), a ENTRADA NORMAL fica VERDE e isto reprova.
+sabota_gerador h1 "GERADOR sem o ramo de ok:false (o #2405 aprovava isto)" \
+  "ok:false COM marcador batendo = CANARIA VERMELHA|veio 'INDETERMINADO" \
   "s/WHEN ca\\.corpo ->> 'ok' = 'false'/WHEN false/"
 # E a ORDEM dos ramos, que é o que só um teste EXECUTADO prova: julgar o status antes do eco.
-sabota_gerador "GERADOR julga o status antes do eco (500 vermelha vira bundle velho)" \
+sabota_gerador h2 "GERADOR julga o status antes do eco (500 vermelha vira bundle velho)" \
+  "HTTP 500 COM eco canary|veio 'SEM CANARIA NO AR" \
   "s/WHEN ca\\.corpo ->> 'canary' IS DISTINCT FROM 'true' AND ca\\.status_code >= 400/WHEN ca.status_code >= 400/"
 # ── o CONTROLE ATIVO (2026-09-09) ──────────────────────────────────────────────────────────────
 # Os casos novos desta suíte (testemunha ativa, leva inteira 401, 2xx anônimo) precisam de vermelho
@@ -667,12 +837,25 @@ sabota_gerador "GERADOR julga o status antes do eco (500 vermelha vira bundle ve
 # corpus. Sem estas duas, os casos novos poderiam ser sempre-verdes nesta suíte e ninguém veria.
 # A 1ª é o fail-OPEN que a correção fecha: sem exigir testemunha, o 401 volta a sair determinado
 # pelo histórico — e é exatamente o cenário "leva INTEIRA 401 com historico VERDE".
-sabota_gerador "GERADOR determina o 401 SEM testemunha ativa (fail-open)" \
+sabota_gerador h3 "GERADOR determina o 401 SEM testemunha ativa (fail-open)" \
+  "leva INTEIRA 401 com historico VERDE|veio 'SEM CANARIA NO AR" \
   "s/AND ativo\\.aceitas_na_leva >= 1/AND true/"
-# A 2ª é a armadilha do parecer Codex: testemunha por STATUS em vez de IDENTIDADE. Sem o marcador,
-# um 2xx anônimo (bundle histórico que ignora a credencial) passa a "provar" o secret.
-sabota_gerador "GERADOR aceita 2xx ANONIMO como testemunha (sem o marcador)" \
+# A 2ª e a 3ª são a armadilha do parecer Codex: testemunha que não prova IDENTIDADE. Aqui a
+# testemunha exige `canary:true` E o marcador esperado, e as duas camadas protegem casos DIFERENTES.
+# Medido em 2026-09-10 (a marca obrigatória pegou): tirar só o marcador NÃO faz o 2xx anônimo virar
+# testemunha — o `canary:true` ainda o barra —; quem quebra é o 2xx de OUTRA fatia. Até esta data a
+# (h4) se chamava "aceita 2xx ANONIMO" e a asserção do 2xx anônimo não tinha sabotagem nenhuma que
+# provasse o dente dela: as duas camadas a cobrem em redundância, e uma por vez fica verde.
+sabota_gerador h4 "GERADOR aceita 2xx de OUTRA fatia como testemunha (sem o marcador)" \
+  "2xx com marcador de OUTRA fatia NAO e testemunha|veio 'SEM CANARIA NO AR" \
   "s/AND ca\\.corpo ->> ca\\.campo_marcador = ca\\.marcador_esperado\`,/AND true\`,/"
+# A (h5) é a regressão que o #2445 fechou, modelada como ela era: testemunha por STATUS (2xx) no
+# lugar da identidade inteira. Um bundle histórico que ignora a credencial e roda o fluxo real
+# devolve 2xx anônimo — e passaria a "provar" que o secret deste disparo foi aceito.
+sabota_gerador h5 "GERADOR testemunha por STATUS, sem identidade (2xx ANONIMO prova o secret)" \
+  "2xx ANONIMO na leva NAO e testemunha|veio 'SEM CANARIA NO AR" \
+  "s/\`ca\\.corpo ->> 'canary' = 'true'\\\\n\` \\+/\`ca.status_code BETWEEN 200 AND 299\\\\n\` +/; s/AND ca\\.corpo ->> ca\\.campo_marcador = ca\\.marcador_esperado\`,/AND true\`,/"
 
-if [ "$falhou" -eq 0 ]; then printf '\nFALSIFICACAO OK — todo verde tem vermelho alcancavel\n'; exit 0; fi
+printf 'SABOTAGENS: %d vermelhas / %d falhas\n' "$SAB_VERMELHAS" "$SAB_FALHAS"
+if [ "$falhou" -eq 0 ]; then printf '\nFALSIFICACAO OK — todo verde tem vermelho alcancavel, e pelo motivo certo\n'; exit 0; fi
 printf '\nVERMELHO\n'; exit 1

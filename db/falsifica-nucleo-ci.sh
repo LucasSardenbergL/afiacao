@@ -91,7 +91,7 @@ aplica_e_exige() {
 
   if [ "$rc" -eq 0 ]; then
     bad "$desc — o gate ficou VERDE com o defeito instalado"
-  elif ! grep -qF "$marca" "$log"; then
+  elif ! grep -qF -e "$marca" "$log"; then
     # Vermelho pelo motivo ERRADO é indistinguível de falha de ambiente.
     bad "$desc — vermelho (exit $rc) mas SEM a marca '$marca'; motivo não confirmado"
     grep -oE '\[[A-Z0-9-]+\]|❌.{0,70}' "$log" | sort -u | head -4 | sed 's/^/       visto: /'
@@ -166,7 +166,7 @@ exec_exige() {
   local log="$LOGS/exec.$RANDOM.log" rc
   "$@" > "$log" 2>&1 && rc=0 || rc=$?
   if [ "$rc" -eq 0 ]; then bad "$desc — runner APROVOU"
-  elif ! grep -qF "$marca" "$log"; then
+  elif ! grep -qF -e "$marca" "$log"; then
     bad "$desc — reprovou (exit $rc) sem a marca '$marca'"; tail -3 "$log" | sed 's/^/       /'
   else ok "$desc — reprovou com a marca certa"; fi
 }
@@ -226,6 +226,110 @@ exec_exige "PostgreSQL ausente é ERRO, nunca skip" "PostgreSQL 99 não encontra
   env MANIFESTO="$ESPELHO/manifesto-pg.txt" PGVER=99 \
   bash "$ESPELHO/db/roda-nucleo-ci.sh"
 
+# ── O 3º CAMPO: a falsificação das provas no caminho obrigatório (2026-09-10) ──────────────
+# Caminho novo do runner, e com a mesma exigência dos de cima: reprovar PELO MOTIVO CERTO. Mas
+# recusa não basta — um runner que reprovasse TODA falsificação passaria em todos os casos de
+# recusa abaixo. Por isso o 1º caso é o CONTROLE POSITIVO: falsificação honesta, runner VERDE.
+echo
+echo "=== o EXECUTOR roda --falsificar e confere o RECIBO? ==="
+
+exec_verde() { # <descrição> <marca-que-o-verde-tem-de-conter> <cmd...>
+  local desc="$1" marca="$2"; shift 2
+  local log="$LOGS/exec-verde.$RANDOM.log" rc
+  "$@" > "$log" 2>&1 && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then bad "$desc — runner REPROVOU (exit $rc)"; tail -4 "$log" | sed 's/^/       /'
+  elif ! grep -qF -e "$marca" "$log"; then bad "$desc — verde SEM a marca '$marca'"; tail -3 "$log" | sed 's/^/       /'
+  else ok "$desc — verde com a marca certa"; fi
+}
+
+# fake_falsificavel <arquivo-no-espelho> <corpo do modo --falsificar> — prova falsa com modo:
+# o modo normal é sempre `RESULTADO: 5 ok / 0 fail`; o que muda de caso a caso é o --falsificar.
+fake_falsificavel() {
+  { printf '#!/usr/bin/env bash\n'
+    # shellcheck disable=SC2016  # o `${1:-}` é TEXTO da prova falsa: expande lá, não aqui
+    printf 'if [ "${1:-}" = "--falsificar" ]; then\n%s\nfi\n' "$2"
+    printf 'echo "RESULTADO: 5 ok / 0 fail"\n'
+  } > "$ESPELHO/db/$1"
+}
+MF="$ESPELHO/manifesto-falsif.txt"
+FALSO="db/test-fake-falsificavel.sh"
+
+fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 3 vermelhas / 0 falhas"; exit 0'
+printf '%s 5 falsificar=3\n' "$FALSO" > "$MF"
+exec_verde "CONTROLE: falsificação honesta passa, com a identidade (arquivo, modo) no recibo" \
+  "falsificacoes=1/1 fora_do_ci=0" env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+printf '%s 5 falsificar=fora-do-ci  # motivo-de-teste-XYZ\n' "$FALSO" > "$MF"
+exec_verde "exceção fora-do-ci é IMPRESSA com o motivo, nunca calada" \
+  "FORA DO CI — ausência de dado, não aprovação: motivo-de-teste-XYZ" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+printf '%s 5 falsifcar=3\n' "$FALSO" > "$MF"
+exec_exige "3º campo com erro de digitação ABORTA (não desliga a falsificação)" "3º campo inválido" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+printf '%s 5\n' "$FALSO" > "$MF"
+exec_exige "prova com modo --falsificar SEM declaração ABORTA" "tem modo --falsificar e a linha não diz" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+printf '%s 5 falsificar=fora-do-ci\n' "$FALSO" > "$MF"
+exec_exige "exceção fora-do-ci SEM motivo ABORTA" "sem o MOTIVO em comentário" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+printf 'db/test-fin-sync-lease.sh 22 falsificar=3\n' > "$MF"
+exec_exige "declarar falsificar numa prova SEM modo ABORTA" "não tem modo --falsificar" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+# A flag IGNORADA: a prova menciona `--falsificar` (passa o detector) mas não tem o modo, e sai 0
+# no modo normal. É o buraco que o recibo exclusivo existe para fechar.
+{ printf '#!/usr/bin/env bash\n# diz aceitar --falsificar, mas ignora a flag\n'
+  printf 'echo "RESULTADO: 5 ok / 0 fail"\n'; } > "$ESPELHO/$FALSO"
+printf '%s 5 falsificar=3\n' "$FALSO" > "$MF"
+exec_exige "flag IGNORADA (roda o modo normal e sai 0) REPROVA" "sem UM recibo" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 3 vermelhas / 0 falhas"; echo "SABOTAGENS: 9 vermelhas / 0 falhas"; exit 0'
+exec_exige "DOIS recibos (o tail -1 leria só o último) REPROVA" "recibos=2" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 3 vermelhas/0 falhas"; exit 0'
+exec_exige "recibo MALFORMADO (o emissor mudou sem o runner saber) REPROVA" "válidos=0" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 2 vermelhas / 0 falhas"; exit 0'
+exec_exige "falsificação ENCOLHIDA (2 < 3) REPROVA" "a falsificação encolheu" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 5 vermelhas / 1 falhas"; exit 0'
+exec_exige "sabotagem sem o vermelho certo com exit 0 REPROVA" "recibo e exit se contradizem" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 3 vermelhas / 0 falhas"; exit 1'
+exec_exige "--falsificar que sai !=0 REPROVA mesmo com recibo válido" "--falsificar: exit 1" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+# IDENTIDADE, não contagem: o runner sabotado PULA a falsificação da 2ª prova. A contagem de
+# provas continua batendo (2/2) — só o recibo por (arquivo, modo) vê o buraco. A sabotagem é
+# conferida por conteúdo antes de valer (regra 3 do cabeçalho).
+fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 3 vermelhas / 0 falhas"; exit 0'
+cp "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-2.sh"
+printf '%s 5 falsificar=3\ndb/test-fake-falsificavel-2.sh 5 falsificar=3\n' "$FALSO" > "$MF"
+if python3 - "$ESPELHO/db/roda-nucleo-ci.sh" "$ESPELHO/db/roda-nucleo-ci-pula.sh" > "$LOGS/sabotagem.log" 2>&1 <<'PY'
+import sys, pathlib
+t = pathlib.Path(sys.argv[1]).read_text()
+a = '*)    executa "${scripts[$i]}" falsificar "${falsifs[$i]}" ;;'
+assert t.count(a) == 1, f"esperava 1 chamada da falsificacao no laco, achei {t.count(a)}"
+pathlib.Path(sys.argv[2]).write_text(t.replace(a, '*)    [ "$i" -eq 1 ] || executa "${scripts[$i]}" falsificar "${falsifs[$i]}" ;;', 1))
+PY
+then
+  exec_exige "falsificação OMITIDA entre duas declaradas REPROVA pelo recibo de identidade" \
+    "sem recibo de conclusão: db/test-fake-falsificavel-2.sh falsificar" \
+    env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci-pula.sh"
+else
+  bad "runner que pula a falsificação — SABOTAGEM NÃO APLICOU (falsificação inválida): $(tail -1 "$LOGS/sabotagem.log")"
+fi
+rm -f "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-2.sh" "$ESPELHO/db/roda-nucleo-ci-pula.sh"
+
 # ── CONTROLE FINAL ──────────────────────────────────────────────────────────────
 echo
 echo "=== controle final — o verde voltou? ==="
@@ -239,4 +343,11 @@ echo
 echo "=================================================="
 for f in ${FALHAS[@]+"${FALHAS[@]}"}; do echo "  ❌ $f"; done
 echo "FALSIFICACAO: OK=$OK XX=$XX"
+# Piso de casos: este harness roda no CI (job `provas-sql`), e `[ "$XX" -eq 0 ]` sozinho aprovaria
+# um harness TRUNCADO — OK=0 XX=0 sai 0. Mesma lógica do mínimo de asserts do manifesto: tirar
+# caso reprova até alguém baixar o número aqui, e aí a perda de cobertura fica no diff.
+OK_MINIMO=33
+if [ "$OK" -lt "$OK_MINIMO" ]; then
+  echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
+fi
 [ "$XX" -eq 0 ]
