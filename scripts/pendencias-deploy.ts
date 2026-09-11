@@ -68,6 +68,8 @@ import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import ts from 'typescript';
+
 import {
   atribuirSondasSemIdentidade,
   DATA_ECO_COM_IDENTIDADE,
@@ -456,6 +458,195 @@ export function lerEsperados(): Record<string, Esperado> {
 }
 
 /**
+ * ── A allowlist do cron de sonda, lida NA REF ─────────────────────────────────────────────────
+ *
+ * Incidente de 2026-09-10: o guard de intrusos comparava o banco com o `import` de
+ * `SONDA_CRON_ALVOS` — o DISCO — enquanto o resto deste CLI julga contra a ref. Num worktree 10
+ * commits atrás, `omie-desconto-backfill` estava na main e ativa no banco (migration da onda 5
+ * aplicada), mas não no disco: virou "intrusa", e o relatório imprimiu o remédio pronto para colar
+ * — `UPDATE … SET ativo = false`, desfazendo a migration e tirando do cron uma edge provada. Duas
+ * fontes de verdade no mesmo sensor; a mais frequente das causas (worktree defasado, ~30 no repo)
+ * recebia o remédio mais destrutivo. O disco agora só NOMEIA a defasagem; quem julga é a ref.
+ */
+export const ARQ_ALLOWLIST = 'supabase/functions/_shared/sonda-cron-alvos.ts';
+
+const EXPORT_ALLOWLIST = 'SONDA_CRON_ALVOS';
+const SLUG_EDGE = /^[a-z0-9][a-z0-9-]*$/;
+
+/** Commits entre o worktree e a ref: `aFrente` = só no worktree, `atras` = só na main. */
+export interface EstadoWorktree {
+  aFrente: number;
+  atras: number;
+}
+
+/** Só `ref` julga. `disco` (o import desta árvore) existe para NOMEAR a defasagem, nunca para decidir. */
+export interface Allowlists {
+  ref: string[];
+  disco: string[];
+  worktree: EstadoWorktree | null;
+}
+
+function nomeDaPropriedade(nome: ts.PropertyName): string | null {
+  return ts.isIdentifier(nome) || ts.isStringLiteralLike(nome) ? nome.text : null;
+}
+
+/**
+ * Os slugs de `SONDA_CRON_ALVOS` num TEXTO do arquivo — pela AST do TS, sem executar nada.
+ *
+ * Texto porque a ref não está no disco; AST e não regex porque o arquivo CITA slugs em comentário
+ * (a entrada da onda 5 vem depois de um parágrafo que nomeia `omie-desconto-backfill`) e um regex
+ * aprovaria edge por comentário. Para a AST, comentário é trivia e string de `nota` não é propriedade.
+ *
+ * LANÇA `ALLOWLIST_ILEGIVEL` para toda forma que não seja `{ edge: "<slug>", … }` literal, para
+ * texto que não parseia e para o array vazio. Uma lista MENOR que a real é o pior erro possível
+ * aqui: a edge omitida vira intrusa e o relatório imprime o UPDATE que desativa edge aprovada — o
+ * incidente de novo, por outro caminho. Formato novo na main exige ensinar este parser no mesmo PR
+ * (o teste que o compara com o import real reprova antes).
+ */
+export function extrairAlvosDaAllowlist(fonte: string): string[] {
+  const ilegivel = (motivo: string) => new Error(`ALLOWLIST_ILEGIVEL: ${ARQ_ALLOWLIST} — ${motivo}`);
+
+  // Texto truncado ainda vira árvore (o parser do TS se recupera) — e a árvore de um corte no meio
+  // do array é uma lista MENOR com cara de lista inteira. O diagnóstico de sintaxe é o que a separa.
+  const sintaxe = ts.transpileModule(fonte, { reportDiagnostics: true }).diagnostics ?? [];
+  if (sintaxe.length > 0) {
+    throw ilegivel(`texto que não parseia: ${ts.flattenDiagnosticMessageText(sintaxe[0].messageText, ' ')}`);
+  }
+
+  const arquivo = ts.createSourceFile(ARQ_ALLOWLIST, fonte, ts.ScriptTarget.ESNext, true);
+  const trecho = (n: ts.Node) => n.getText(arquivo).replace(/\s+/g, ' ').slice(0, 80);
+  let array: ts.ArrayLiteralExpression | null = null;
+  for (const st of arquivo.statements) {
+    if (!ts.isVariableStatement(st)) continue;
+    if (!st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
+    for (const d of st.declarationList.declarations) {
+      if (!ts.isIdentifier(d.name) || d.name.text !== EXPORT_ALLOWLIST) continue;
+      if (!d.initializer || !ts.isArrayLiteralExpression(d.initializer)) {
+        throw ilegivel(`\`${EXPORT_ALLOWLIST}\` não é um array literal`);
+      }
+      array = d.initializer;
+    }
+  }
+  if (array === null) throw ilegivel(`sem \`export const ${EXPORT_ALLOWLIST}\``);
+
+  const edges: string[] = [];
+  for (const el of array.elements) {
+    if (!ts.isObjectLiteralExpression(el)) throw ilegivel(`entrada que não é objeto literal: ${trecho(el)}`);
+    let edge: string | null = null;
+    for (const p of el.properties) {
+      if (ts.isSpreadAssignment(p)) throw ilegivel(`entrada com spread: ${trecho(el)}`);
+      if (nomeDaPropriedade(p.name) !== 'edge') continue;
+      if (!ts.isPropertyAssignment(p) || !ts.isStringLiteralLike(p.initializer)) {
+        throw ilegivel(`\`edge\` que não é string literal: ${trecho(p)}`);
+      }
+      edge = p.initializer.text;
+    }
+    if (edge === null) throw ilegivel(`entrada sem \`edge\`: ${trecho(el)}`);
+    if (!SLUG_EDGE.test(edge)) throw ilegivel(`slug fora do formato de edge: "${edge}"`);
+    edges.push(edge);
+  }
+  if (edges.length === 0) throw ilegivel('array vazio — ausente ≠ zero: "nenhuma aprovada" e "não li" têm a mesma cara');
+  return edges;
+}
+
+/**
+ * Quantos commits separam o worktree da ref. `null` quando o git não responde ou responde fora do
+ * formato — ausente ≠ zero: o diagnóstico diz "não consegui contar", nunca "0 atrás".
+ */
+export function estadoDoWorktree(gitFn: typeof git = git): EstadoWorktree | null {
+  const r = gitFn(['rev-list', '--left-right', '--count', `HEAD...${REF_MAIN}`]);
+  if (!r.ok) return null;
+  const m = /^(\d+)\s+(\d+)$/.exec(r.saida.trim());
+  return m ? { aFrente: Number(m[1]), atras: Number(m[2]) } : null;
+}
+
+/**
+ * A allowlist da REF (que julga) e a do disco (que só nomeia a defasagem). Chame DEPOIS de
+ * `lerEsperados()`, que faz o fetch: a ref lida aqui é a recém-buscada.
+ *
+ * LANÇA (⇒ exit 2) se o `git show` falhar: sem a allowlist da main não se sabe o que o banco pode
+ * sondar, e tratar a falha como lista vazia transformaria TODA edge ativa em intrusa com UPDATE.
+ */
+export function lerAllowlists(
+  ler: (rev: string, caminho: string) => string | null = lerNaRev,
+  disco: readonly { edge: string }[] = SONDA_CRON_ALVOS,
+  gitFn: typeof git = git,
+): Allowlists {
+  const texto = ler(REF_MAIN, ARQ_ALLOWLIST);
+  if (texto === null) {
+    throw new Error(
+      `ALLOWLIST_ILEGIVEL: \`git show ${REF_MAIN}:${ARQ_ALLOWLIST}\` falhou — sem a allowlist da main ` +
+        'não sei o que o banco pode sondar (ausente ≠ vazia).',
+    );
+  }
+  return { ref: extrairAlvosDaAllowlist(texto), disco: disco.map((a) => a.edge), worktree: estadoDoWorktree(gitFn) };
+}
+
+/**
+ * A causa PROVÁVEL da defasagem, pelo que o git contou. Heurística: havendo commit de diferença, ele
+ * é o palpite; edição local não commitada só é nomeada quando não há commit de diferença (worktree
+ * atrás E com a allowlist editada sai como "atrás" — raro, e o "só na main/só no worktree" ao lado
+ * continua dizendo exatamente O QUE diverge).
+ */
+export function diagnosticoWorktree(w: EstadoWorktree | null): string {
+  if (w === null) return `não consegui contar os commits entre o seu worktree e ${REF_MAIN}`;
+  if (w.atras > 0) {
+    const frente = w.aFrente > 0 ? ` (e ${w.aFrente} à frente)` : '';
+    return `seu worktree está ${w.atras} commit(s) atrás de ${REF_MAIN}${frente} — sincronize antes de medir`;
+  }
+  if (w.aFrente > 0) return `seu worktree está ${w.aFrente} commit(s) à frente de ${REF_MAIN} — entrega ainda não mergeada`;
+  return `seu worktree não tem commit de diferença para ${REF_MAIN} — a divergência é edição NÃO commitada`;
+}
+
+/**
+ * O remédio depende de ONDE a edge intrusa falta. Só a que falta na ref E no disco recebe o
+ * UPDATE: nada que este worktree veja a aprova. A que o disco aprova e a main não é ambígua — sua
+ * entrega ainda não mergeada (banco adiantado) ou uma remoção na main que o worktree não viu — e
+ * desativar às cegas pode desfazer o que está a um merge de ser certo. Sincronizar desempata: se a
+ * main removeu, o disco perde a edge e a próxima leitura já imprime o UPDATE.
+ */
+function mecanicaDosIntrusos(intrusos: string[], a: Allowlists): string {
+  const noDisco = new Set(a.disco);
+  const semAprovacao = intrusos.filter((e) => !noDisco.has(e));
+  const soNoWorktree = intrusos.filter((e) => noDisco.has(e));
+  const partes: string[] = [];
+  if (semAprovacao.length > 0) {
+    partes.push(
+      `ALVO_SEM_APROVACAO — o banco sonda edge(s) que ${REF_MAIN} NÃO aprovou: ${semAprovacao.join(', ')}. ` +
+        'Só a allowlist da main teve todos os closures históricos executados (`bun run sonda:cron-prova`). ' +
+        `Desative no banco: UPDATE public.deploy_sonda_alvos SET ativo = false WHERE edge IN ('${semAprovacao.join("','")}');`,
+    );
+  }
+  if (soNoWorktree.length > 0) {
+    partes.push(
+      `ALVO_SO_NO_WORKTREE — o banco sonda edge(s) que o SEU worktree aprova e ${REF_MAIN} NÃO: ` +
+        `${soNoWorktree.join(', ')} (${diagnosticoWorktree(a.worktree)}). NÃO desative a partir desta leitura: ` +
+        `rode de novo depois de sincronizar com ${REF_MAIN} — se a main REMOVEU a edge, o sensor passa a imprimir ` +
+        'o UPDATE; se a aprovação é entrega ainda não mergeada, o banco foi adiantado antes do merge, e o ' +
+        'default-deny vale pela main até lá.',
+    );
+  }
+  return partes.join('\n   ');
+}
+
+/** Aviso (não reprova): a allowlist do disco difere da da ref. Igual → null — silêncio é o certo. */
+function avisoAllowlistDefasada(a: Allowlists): string | null {
+  const ref = new Set(a.ref);
+  const disco = new Set(a.disco);
+  const soNaMain = [...ref].filter((e) => !disco.has(e)).sort();
+  const soNoWorktree = [...disco].filter((e) => !ref.has(e)).sort();
+  if (soNaMain.length === 0 && soNoWorktree.length === 0) return null;
+  const diferencas = [
+    ...(soNaMain.length > 0 ? [`só na main: ${soNaMain.join(', ')}`] : []),
+    ...(soNoWorktree.length > 0 ? [`só no seu worktree: ${soNoWorktree.join(', ')}`] : []),
+  ];
+  return (
+    `   ⚠️  ALLOWLIST_DEFASADA — a allowlist do seu worktree difere da de ${REF_MAIN} (${diferencas.join('; ')}); ` +
+    `${diagnosticoWorktree(a.worktree)}. Este julgamento usou a de ${REF_MAIN}; o código do sensor é o do seu worktree.`
+  );
+}
+
+/**
  * O contexto que só o git responde.
  *
  * `parCoerente`: o commit mais ANTIGO em que a entrada `"edge": "fonte"` aparece no mapa é onde
@@ -582,10 +773,14 @@ function imprimir(rel: Relatorio, linhasSemIdentidade: string[]): void {
  * repo antes de o founder colar a migration, e reprovar por isso transformaria uma entrega em voo
  * num bloqueio para todas as sessões. A mecânica de verdade (cron parado, banco fora do repo) só
  * se aplica quando a F2 JÁ está no ar, porque só aí o silêncio significa alguma coisa.
+ *
+ * "O repo", aqui, é a allowlist de `origin/main` (`allowlists.ref`) — a mesma ref do resto do CLI.
+ * O disco só entra para escolher o remédio e nomear a defasagem (ver `lerAllowlists`).
  */
 export function secaoSondaCron(
   estadoPorEdge: Map<string, string>,
   ler: (sql: string) => string,
+  allowlists: Allowlists,
 ): { linhas: string[]; achados: number; mecanica: string | null } {
   const linhas: string[] = [];
   let ativos: string[];
@@ -607,17 +802,9 @@ export function secaoSondaCron(
     return { linhas: [], achados: 0, mecanica: `leitura da sonda por cron falhou — ${(e as Error).message}` };
   }
 
-  const doRepo = SONDA_CRON_ALVOS.map((a) => a.edge);
-  const intrusos = alvosForaDoRepo(ativos, doRepo);
+  const intrusos = alvosForaDoRepo(ativos, allowlists.ref);
   if (intrusos.length > 0) {
-    return {
-      linhas: [],
-      achados: 0,
-      mecanica:
-        `o banco sonda edge(s) que o repo NÃO aprovou: ${intrusos.join(', ')}. ` +
-        'Só a allowlist do repo teve todos os closures históricos executados (`bun run sonda:cron-prova`). ' +
-        `Desative no banco: UPDATE public.deploy_sonda_alvos SET ativo = false WHERE edge IN ('${intrusos.join("','")}');`,
-    };
+    return { linhas: [], achados: 0, mecanica: mecanicaDosIntrusos(intrusos, allowlists) };
   }
 
   const saude = semChatter(ler(SQL_SAUDE_CRON_SONDA));
@@ -676,7 +863,7 @@ export function secaoSondaCron(
 
   const r = julgarSondaCron({
     ativosNoBanco: ativos,
-    allowlistDoRepo: doRepo,
+    allowlistDoRepo: allowlists.ref,
     ticksRecentes,
     disparos,
     atestacoes,
@@ -690,6 +877,8 @@ export function secaoSondaCron(
     `\n🕒 SONDA POR CRON — ${ativos.length} edge(s) ativa(s), ${ticksRecentes.length} tick(s) recente(s), ` +
       `${respondidos}/${disparos.length} disparo(s) atestado(s)`,
   );
+  const defasagem = avisoAllowlistDefasada(allowlists);
+  if (defasagem) linhas.push(defasagem);
   for (const a of r.achados) linhas.push(`   🔴 ${a.classe} · ${a.edge}: ${a.detalhe}`);
   for (const aviso of r.avisos) linhas.push(`   ⚠️  ${aviso}`);
   if (r.achados.length === 0 && r.avisos.length === 0) {
@@ -720,6 +909,16 @@ export function main(argv: string[] = []): number {
   }
   if (Object.keys(esperados).length === 0) {
     console.error('❌ MECÂNICA: mapa de fingerprints VAZIO. Rode `bun run sonda:fingerprint`.');
+    return 2;
+  }
+
+  // Depois do fetch de `lerEsperados`: a allowlist que julga o banco é a da MESMA ref do mapa.
+  let allowlists: Allowlists;
+  try {
+    allowlists = lerAllowlists();
+  } catch (e) {
+    // formato que ESTE parser não conhece costuma ser worktree velho lendo main nova
+    console.error(`❌ MECÂNICA: ${(e as Error).message}\n   (${diagnosticoWorktree(estadoDoWorktree())})`);
     return 2;
   }
 
@@ -811,7 +1010,7 @@ export function main(argv: string[] = []): number {
 
   // A sonda por cron (F3): lê os 2 últimos ticks e liga cada resposta ao disparo por `request_id`.
   const estadoPorEdge = new Map(rel.vereditos.map((v) => [v.edge, v.estado as string]));
-  const secao = secaoSondaCron(estadoPorEdge, psql);
+  const secao = secaoSondaCron(estadoPorEdge, psql, allowlists);
   if (secao.mecanica !== null) {
     console.error(`❌ MECÂNICA: ${secao.mecanica}`);
     return 2;
