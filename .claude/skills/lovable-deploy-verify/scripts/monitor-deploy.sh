@@ -11,7 +11,7 @@
 # docs/scripts o dia todo, o exit 3 cru ficava ligado quase sempre, e alarme que dispara com a
 # resposta certa vira alarme ignorado. Quando ar ≠ main o monitor tenta PROVAR que o delta não
 # alcança o bundle, elo a elo, e só rebaixa se TODOS responderem positivamente:
-#   1. o `git fetch` desta rodada deu certo (main velha fabricaria o veredito);
+#   1. o `git fetch` desta rodada deu certo — pré-condição de TODO verde, não só deste (abaixo);
 #   2. o carimbo resolve para um commit local e ele é ANCESTRAL da main;
 #   3. `git diff --no-renames --name-only ar main` sai 0 e lista ≥1 arquivo (sem --no-renames,
 #      `git mv src/x.ts docs/` apareceria só como `docs/x.ts`);
@@ -22,6 +22,15 @@
 #      scripts que o pipeline não executa (build, pre/post e ganchos de install ALCANÇAM).
 # Elo sem resposta POSITIVA ⇒ ATRASADO (exit 3) com o motivo numa marca ASCII (linha "motivo:").
 #
+# Sem fetch, NENHUM verde (2026-09-10): o guard do elo 1 vivia só no caminho do exit 5, e com o
+# `git fetch origin main` falho sobravam três portas para o exit 0 que comparavam o ar com a main
+# LOCAL, possivelmente velha — a igualdade de string do carimbo, o atalho do SHA cheio (carimbo de
+# 7 chars do mesmo commit) e o fallback sem carimbo ("nada a relatar"). Ar == main velha e a main
+# real já andou com `src/` ⇒ "sincronizado", com uma linha de aviso que o cron não lê (ele lê o
+# EXIT). Agora FETCH_OK=0 ⇒ exit 3 FETCH_FALHOU ANTES de qualquer veredito: sem a main desta
+# rodada não há "ar == main?", e ausência de dado não vira verde nem quando a resposta calharia de
+# ser sim. Só o exit 2 (site fora do ar) é medido antes.
+#
 # Exit:  0 = sincronizado: o ar serve o MESMO commit da main (ou nada a relatar)
 #        5 = SINCRONIZADO_EM_BUNDLE: SHA atrás por N commits, delta PROVADO fora do bundle —
 #            Publish desnecessário. Não é 0 de propósito: "mesmo commit" ≠ "bundle equivalente",
@@ -29,6 +38,7 @@
 #        3 = ar ATRASADO (Publish pendente) — inclui "não consegui provar" (ver "motivo:")
 #        4 = deploy novo detectado mas versão indeterminada (sem carimbo nem sentinela)
 #        2 = site fora do ar / HTML mudou de forma
+#        Fetch desta rodada falhou ⇒ nem 0, nem 5, nem 4: sai 3 FETCH_FALHOU (só o 2 vem antes).
 # Marcas do motivo (exit 3): ALCANCA_BUNDLE · SEM_CLASSIFICACAO · PACKAGE_JSON_ALCANCA ·
 #   BUILD_NAO_RECONHECIDO · ALCANCE_VAZA · NAO_ANCESTRAL · CARIMBO_NAO_RESOLVE · CARIMBO_AMBIGUO · FETCH_FALHOU ·
 #   GIT_FALHOU · DIFF_FALHOU · DELTA_VAZIO · CLASSIFY_FALHOU · PROVA_INDISPONIVEL
@@ -67,12 +77,12 @@ AIR_SHA=$(printf '%s' "$BODY" | grep -oE '__BUILD_SHA__="[0-9a-f]{7,8}"' | grep 
 N_CARIMBOS=$(printf '%s' "$BODY" | grep -oE '__BUILD_SHA__="[0-9a-f]{7,8}"' | sort -u | awk 'END { print NR }')
 IS_DEV=$(printf '%s' "$BODY" | grep -cE '__BUILD_SHA__="dev"' || true)
 
-echo "[$TS] main=$MAIN_SHA  ar=${AIR_SHA:-$([ "${IS_DEV:-0}" -gt 0 ] && echo dev || echo sem-carimbo)}  deploy-novo=$DEPLOY"
-[ "$FETCH_OK" = 1 ] || echo "  (git fetch origin main FALHOU nesta rodada: a main acima pode estar velha)"
+AR_ROTULO=${AIR_SHA:-$([ "${IS_DEV:-0}" -gt 0 ] && echo dev || echo sem-carimbo)}
+echo "[$TS] main=$MAIN_SHA  ar=$AR_ROTULO  deploy-novo=$DEPLOY"
 
 # ATRASADO com o motivo numa marca ASCII — destino de TODO elo que não responde positivamente.
 atrasado() {
-  echo "  ⚠️ ATRASADO: ar serve $AIR_SHA, main em $MAIN_SHA → Publish pendente"
+  echo "  ⚠️ ATRASADO: ar serve $AR_ROTULO, main em $MAIN_SHA → Publish pendente"
   echo "     motivo: $1 — $2"
   exit 3
 }
@@ -88,7 +98,6 @@ analisar_delta() {
   # carimbo de 7 chars do MESMO commit: a comparação de string não enxerga, o SHA cheio sim
   if [ "$ar_full" = "$main_full" ]; then echo "  ✅ sincronizado: ar serve $AIR_SHA == origin/main"; exit 0; fi
 
-  [ "$FETCH_OK" = 1 ] || atrasado FETCH_FALHOU "git fetch origin main falhou nesta rodada — a main local pode estar velha"
   # `<hex>^{commit}` também resolve NOME de ref (um branch chamado "abcdef12"): exija o prefixo
   case "$ar_full" in "$AIR_SHA"?*) eh_sha "$ar_full" ;; *) false ;; esac \
     || atrasado CARIMBO_NAO_RESOLVE "o carimbo $AIR_SHA não resolve para um commit local (ambíguo, fora da main ou não buscado)"
@@ -153,6 +162,12 @@ analisar_delta() {
   echo "     prova: ${prova#PROVA_INERCIA_OK }"
   exit 5
 }
+
+# Elo 1 vale para TODO veredito, não só para o delta: sem o fetch desta rodada a origin/main local
+# pode estar velha, e sem a main não há "ar == main?" — nem por igualdade de string, nem pelo atalho
+# do SHA cheio, nem pelo fallback. Guard ÚNICO e ANTES de tudo: dentro de um caminho, ele deixava os
+# outros abertos (era o caso até 2026-09-10 — ver cabeçalho).
+[ "$FETCH_OK" = 1 ] || atrasado FETCH_FALHOU "git fetch origin main falhou nesta rodada — a main acima é a LOCAL e pode estar velha; sem ela não há verde"
 
 # Caminho determinístico: carimbo de SHA real no ar — e UM só (ambíguo não pode virar verde nenhum)
 [ "${N_CARIMBOS:-0}" -le 1 ] || atrasado CARIMBO_AMBIGUO "o entry tem $N_CARIMBOS carimbos __BUILD_SHA__ distintos — não dá para saber qual commit o ar serve"
