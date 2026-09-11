@@ -36,6 +36,7 @@ import {
   primeiraLinhaComCarne,
   resumir,
   textoDoDever,
+  type Defeito,
   type GateAlvo,
   type LinhaMatriz,
   type Matriz,
@@ -879,28 +880,37 @@ describe('resumir', () => {
 
 describe('o corpus de verdade', () => {
   const arquivos = readdirSync(CORPUS_DIR).filter((f) => f.endsWith('.def'));
-  const defeitos = arquivos.flatMap((f) => parseDefeitos(readFileSync(`${CORPUS_DIR}/${f}`, 'utf8'), f));
+  // Parse PREGUICOSO, dentro dos testes — nunca na coleta. O parser LANCA (dever de casa invalido ou
+  // pendurado), e um lancamento na coleta derruba o arquivo inteiro com "no tests": os ~100 testes
+  // somem junto com o sinal. Medido na falsificacao de 2026-09-10: rc=1 com ZERO testes executados.
+  let cache: Defeito[] | null = null;
+  const defeitos = (): Defeito[] =>
+    (cache ??= arquivos.flatMap((f) => parseDefeitos(readFileSync(`${CORPUS_DIR}/${f}`, 'utf8'), f)));
+
+  it('o corpus real PARSEIA — nenhum dever de casa invalido ou pendurado', () => {
+    expect(() => defeitos()).not.toThrow();
+  });
 
   // Guarda ANTI-VACUO: um glob que para de casar faria toda assercao abaixo passar por nao achar
   // NADA — verde por ausencia de dado, a mesma familia registrada em ci-testes-edge-deno.md.
   it('o corpus real tem defeitos (o gate nao passa a vazio)', () => {
     expect(arquivos.length).toBeGreaterThanOrEqual(1);
-    expect(defeitos.length).toBeGreaterThanOrEqual(5);
+    expect(defeitos().length).toBeGreaterThanOrEqual(5);
   });
 
   it('todo defeito tem alvo que EXISTE no repo — alvo morto nao mede nada', () => {
-    for (const d of defeitos) {
+    for (const d of defeitos()) {
       expect(readFileSync(d.alvo, 'utf8').length, `${d.id}: alvo ${d.alvo}`).toBeGreaterThan(0);
     }
   });
 
   it('todo id e unico (id repetido sobrescreveria a linha da matriz)', () => {
-    const ids = defeitos.map((d) => d.id);
+    const ids = defeitos().map((d) => d.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('todo defeito declara @suspeito e @origem — o relatorio confronta declarado x medido', () => {
-    for (const d of defeitos) {
+    for (const d of defeitos()) {
       expect(d.suspeito, `${d.id} sem @suspeito`).not.toBeNull();
       expect(d.origem, `${d.id} sem @origem`).not.toBeNull();
     }
@@ -911,6 +921,6 @@ describe('o corpus de verdade', () => {
   it('todo @suspeito nomeia um gate BLOQUEANTE do ci.yml (typo mira o vazio)', () => {
     const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
     const nomes = new Set(gatesCandidatos(ci).filter((g) => g.bloqueiaPR).map((g) => g.nome));
-    for (const d of defeitos) expect(nomes.has(d.suspeito!), `${d.id}: @suspeito ${d.suspeito}`).toBe(true);
+    for (const d of defeitos()) expect(nomes.has(d.suspeito!), `${d.id}: @suspeito ${d.suspeito}`).toBe(true);
   });
 });
