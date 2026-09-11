@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os SETE evals:
+# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os OITO evals:
 #   (1) classify        — classificação de diff do Passo 1 (classify.sh vs classify-eval.json)
 #   (2) verify-frontend — enumeração + exit codes do Passo 4 (harness local determinístico)
 #   (3) verify-edge-eco  — guard TEMPORAL do N3 passivo (só ticks pré-merge ⇒ indeterminado)
@@ -7,6 +7,7 @@
 #   (5) sonda-veredito-401  — guard de CREDENCIAL do SQL de sondagem (401 é ambíguo; EXECUTA o SQL)
 #   (6) criterio-caro      — critério MEDIDO do `--caro` (efeito, não forma do handler)
 #   (7) edges-pendentes-sql — classificação do Passo 3 do /fecho (EXECUTA o SQL do gate passivo)
+#   (8) monitor-deploy     — "SHA atrás ≠ bundle atrás": exit 5 só com prova positiva (repo-fixture)
 # Exit 0 = tudo passou. Exit 1 = alguma divergência.
 # Falsificação (prova que os evals têm dente): --falsify sabota TODOS e exige vermelho
 #   (classify sabota o gabarito UMA CHAVE POR VEZ e depois muta o classify.sh real; verify-frontend
@@ -189,6 +190,18 @@ if [ "$FALSIFY" = 1 ]; then
   bash edges-pendentes-sql-eval.sh --falsify || rc=1
 else
   bash edges-pendentes-sql-eval.sh || rc=1
+fi
+
+echo ""
+# (8) O monitor-deploy.sh rebaixa "ATRASADO" para SINCRONIZADO_EM_BUNDLE (exit 5) quando o delta
+# ar→main não alcança o bundle — um VERDE novo, e verde novo só vale com prova de cada elo. Roda o
+# monitor REAL num repo-fixture com origin bare local e `curl` falso (zero rede, não lê o repo real),
+# e casa exit + MARCA do ramo; o --falsify arranca cada elo em cópia e exige o desfecho PREVISTO.
+echo "== (8) monitor-deploy — SHA atrás não é bundle atrás (exit 5 só com prova positiva) =="
+if [ "$FALSIFY" = 1 ]; then
+  bash monitor-deploy-eval.sh --falsify || rc=1
+else
+  bash monitor-deploy-eval.sh || rc=1
 fi
 
 echo ""

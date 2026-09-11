@@ -10,23 +10,70 @@
 # As 3 primeiras camadas são função PURA dos nomes. A 4ª (secrets) precisa do CONTEÚDO
 # dos arquivos e do resto do repo, e por isso lê o disco a partir de $CLASSIFY_RAIZ
 # (default: $PWD — o Passo 1 roda da raiz do repo; o eval aponta para fixtures).
+#
+# Modo --bundle (usado pelo scripts/monitor-deploy.sh): mesma tabela, pergunta mais fina.
+#   Uso:   git diff --no-renames --name-only <ar> <main> | ./classify.sh --bundle
+#   Saída: "<CLASSE>\t<path>" por linha não vazia + "FIM_CLASSIFICACAO_BUNDLE <n>" no fim.
+#   CLASSE = ALCANCA | PACKAGE_JSON | INERTE | DESCONHECIDO (ver a tabela abaixo).
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Tabela ÚNICA do que alcança o bundle servido — fonte do `frontend=` do Passo 1 E do
+# `--bundle` do monitor. Duas listas separadas divergiriam (a do Passo 1 já tinha perdido
+# public/, .env, tsconfig e os lockfiles de texto: medido em 2026-09-10).
+#
+# ALCANCA  = lido pelo `vite build` ou pelo install que o precede: src/ e public/ (copiado
+#            para o dist), os configs de build, tsconfig (esbuild/resolução), .env (VITE_* é
+#            inlinado), lockfiles e config de install, patches/, e os globs de `content` do
+#            Tailwind fora de src/ (pages/, components/, app/).
+# PACKAGE_JSON = pode ou não alcançar; o Passo 1 conta como frontend (errar para mais custa
+#            uma linha de checklist) e o monitor compara o CONTEÚDO (alcance-bundle.py).
+# INERTE   = PROVADAMENTE fora do build. Lista FECHADA de propósito: path que não está nem
+#            aqui nem em ALCANCA é DESCONHECIDO, e desconhecido SEGURA o alarme do monitor
+#            (fail-closed). No Passo 1, desconhecido segue como frontend=não (comportamento
+#            de antes). "Inerte" só vale junto com a prova de fechamento do alcance-bundle.py
+#            (nada do bundle importa estes caminhos) — a tabela classifica NOMES.
+# ---------------------------------------------------------------------------
+AWK_TABELA='
+function alcanca(p) {
+  if (p ~ /^(src|public|patches|pages|components|app)\//) return 1
+  if (index(p, "/") != 0) return 0
+  return (p == "index.html" || p == "components.json" ||
+          p ~ /^(vite|tailwind|postcss)\.config\./ ||
+          p ~ /^tsconfig.*\.json$/ ||
+          p ~ /^\.env/ ||
+          p ~ /^(bun\.lockb?|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml)$/ ||
+          p ~ /^(bunfig\.toml|\.npmrc|\.yarnrc|\.yarnrc\.yml|\.pnpmfile\.cjs|\.browserslistrc|browserslist)$/)
+}
+function inerte(p) {
+  if (p ~ /^(docs|scripts|db|supabase|connector|\.claude|\.github)\//) return 1
+  if (index(p, "/") != 0) return 0
+  return (p ~ /\.md$/ || p ~ /^(vitest|eslint)\.config\./ || p == "knip.json" || p == ".gitignore")
+}
+function classe(p) {
+  if (alcanca(p)) return "ALCANCA"
+  if (p == "package.json") return "PACKAGE_JSON"
+  if (inerte(p)) return "INERTE"
+  return "DESCONHECIDO"
+}
+'
+
+if [ "${1:-}" = "--bundle" ]; then
+  awk "$AWK_TABELA"'
+    $0 == "" { next }
+    { n++; printf "%s\t%s\n", classe($0), $0 }
+    END { printf "FIM_CLASSIFICACAO_BUNDLE %d\n", n }'
+  exit 0
+fi
 
 RAIZ="${CLASSIFY_RAIZ:-$PWD}"
 entrada="$(cat)"
 
-printf '%s\n' "$entrada" | awk '
+printf '%s\n' "$entrada" | awk "$AWK_TABELA"'
   # FRONTEND = precisa de Publish. Não é só src/: qualquer arquivo que altere o
   # bundle servido conta (senão dá falso-negativo "não precisa Publish" quando
   # precisa — ex.: mexer no vite.config ou subir uma dependência).
-  /^src\//                  { fe=1 }
-  /^index\.html$/           { fe=1 }
-  /^vite\.config\./         { fe=1 }
-  /^tailwind\.config\./     { fe=1 }
-  /^postcss\.config\./      { fe=1 }
-  /^components\.json$/      { fe=1 }
-  /^package\.json$/         { fe=1 }
-  /^bun\.lockb$/            { fe=1 }
+  alcanca($0) || $0 == "package.json" { fe=1 }
   # EDGE = deploy via chat do Lovable (verbatim, só após merge)
   /^supabase\/functions\//  { ef=1 }
   # MIGRATION = SQL Editor (domínio da skill lovable-db-operator)
