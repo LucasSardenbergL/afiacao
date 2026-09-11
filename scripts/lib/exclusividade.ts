@@ -37,6 +37,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 
 import { inventarioCI, nomesDeScript, type GateCI } from '../gates-frescura-check';
+import { contaComoCorpo, extrairVersao } from '../sonda-versao-bump-gate';
 
 export const MATRIZ_PATH = 'scripts/exclusividade-matriz.json';
 export const CI_PATH = '.github/workflows/ci.yml';
@@ -57,8 +58,130 @@ export interface Defeito {
   arquivo: string;
   linha: number;
   origem: string | null;
-  /** Quem o AUTOR acha que pega. NUNCA poda a medicao — so entra no relatorio como declarado x medido. */
+  /**
+   * Quem o AUTOR acha que pega. Nao ORDENA nem PODA a medicao (a poda e por custo); o motor o
+   * executa DEPOIS do laco podado quando a poda o deixou de fora — ver `exclusividade-medir.ts`.
+   */
   suspeito: string | null;
+  /**
+   * O dever de casa do autor DILIGENTE, aplicado depois da sabotagem. Vazio = o autor DESCUIDADO,
+   * que e o que o corpus media antes desta coluna existir (e continua medindo por padrao).
+   */
+  deveres: DeverDeCasa[];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Dever de casa — o que o autor DILIGENTE faz junto do defeito, por VOCABULARIO FECHADO
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * ## Por que existe
+ *
+ * O `.def` aceitava UM alvo por defeito, e o autor que ele descrevia era sempre o DESCUIDADO. Para
+ * um gate semantico sobre edge instrumentada, qualquer mudanca no `index.ts` aciona tambem os gates
+ * de BYTES (`sonda:bump` exige bump do `VERSAO`; `sonda:fingerprint` exige o mapa regenerado) —
+ * entao a exclusividade medida do gate semantico era sempre zero, e o zero media o FORMATO do
+ * corpus, nao o gate. O autor que fez o dever de casa (bump + mapa) so e pego pelo gate semantico.
+ *
+ * ## Por que vocabulario FECHADO, e nao "rode este comando"
+ *
+ * Um pos-passo de comando livre FABRICA exclusividade: ele pode apagar o script de um concorrente,
+ * deixar o alvo intacto, sair 0 e mexer so em arquivo versionado — o estado passa por qualquer
+ * guarda de efeito, porque ja existe antes de o primeiro gate rodar (parecer Codex 2026-09-10).
+ * Aqui cada receita tem efeito EXATO, conferido pelo motor, e so entra no vocabulario por um
+ * criterio verificavel:
+ *
+ *   **a receita e o conserto que o PROPRIO gate concorrente prescreve na mensagem de falha dele.**
+ *
+ * E o que separa "o autor fez o dever de casa" de "o autor calou o gate": a neutralizacao e
+ * exatamente a que o gate desenhou para aceitar. `prescritaPor` guarda a citacao, e a suite exige
+ * que ela continue LITERALMENTE na fonte do gate — se o gate parar de prescrever, a receita cai.
+ */
+export type NomeReceita = 'bump-versao' | 'regenerar-fingerprints';
+
+export interface DeverDeCasa {
+  receita: NomeReceita;
+  args: string[];
+}
+
+interface DefReceita {
+  aridade: number;
+  prescritaPor: { gate: string; fonte: string; remedio: string };
+  /** Os UNICOS caminhos que a receita pode alterar. O motor confere por snapshot. */
+  saidas: (args: string[]) => string[];
+  /** A receita so e dever de casa DESTE defeito se o alvo esta no dominio do gate que a prescreve. */
+  cabe: (args: string[], alvo: string) => string | null;
+}
+
+const EDGE_VALIDA = /^[a-z0-9][a-z0-9-]*$/;
+
+export const RECEITAS: Record<NomeReceita, DefReceita> = {
+  'bump-versao': {
+    aridade: 1,
+    prescritaPor: { gate: 'sonda:bump', fonte: 'scripts/sonda-versao-bump-gate.ts', remedio: 'Bumpe \\`VERSAO\\`' },
+    saidas: ([edge]) => [`supabase/functions/${edge}/versao.ts`],
+    cabe: ([edge], alvo) => {
+      if (!EDGE_VALIDA.test(edge)) return `nome de edge invalido: ${edge}`;
+      return contaComoCorpo(alvo, edge) ? null : `o alvo ${alvo} nao e corpo servido da edge ${edge}`;
+    },
+  },
+  'regenerar-fingerprints': {
+    aridade: 0,
+    prescritaPor: {
+      gate: 'sonda:fingerprint',
+      fonte: 'scripts/sonda-fingerprint.ts',
+      remedio: 'bun run sonda:fingerprint -- --write',
+    },
+    saidas: () => ['supabase/functions/_shared/sonda-fingerprints.ts'],
+    cabe: (_args, alvo) => (alvo.startsWith('supabase/functions/') ? null : `o alvo ${alvo} nao e fonte de edge`),
+  },
+};
+
+/** O argv que a receita `regenerar-fingerprints` executa — o remedio prescrito, sem shell. */
+export const ARGV_REGENERAR_FINGERPRINTS = ['bun', 'run', 'sonda:fingerprint', '--', '--write'];
+
+export const textoDoDever = (dv: DeverDeCasa): string => [dv.receita, ...dv.args].join(' ');
+
+export const saidasDoDever = (dv: DeverDeCasa): string[] => RECEITAS[dv.receita].saidas(dv.args);
+
+function lerDever(texto: string, alvo: string): DeverDeCasa | string {
+  const [nome, ...args] = texto.split(/\s+/).filter(Boolean);
+  if (!(nome in RECEITAS)) {
+    return `receita "${nome}" fora do vocabulario (${Object.keys(RECEITAS).join(', ')}) — comando livre fabricaria exclusividade`;
+  }
+  const def = RECEITAS[nome as NomeReceita];
+  if (args.length !== def.aridade) return `receita ${nome} recebe ${def.aridade} argumento(s), veio ${args.length}`;
+  const fora = def.cabe(args, alvo);
+  if (fora) return `receita ${nome} fora do dominio do defeito: ${fora}`;
+  return { receita: nome as NomeReceita, args };
+}
+
+/** Sufixo do bump simulado. Nao tenta parecer versao real: o que importa e o `sonda:bump` le-lo. */
+const SUFIXO_BUMP = '-corpus-diligente';
+
+/**
+ * A receita `bump-versao`, pura: muda SO o literal da linha `export const VERSAO`. O "bump" e
+ * definido pelo leitor do proprio gate (`extrairVersao` do `sonda:bump`) — reescrever a regra aqui
+ * criaria uma segunda nocao de "o VERSAO mudou", que e como dois gates passam a discordar calados.
+ */
+export function aplicarBumpVersao(
+  texto: string,
+): { ok: true; novo: string; de: string; para: string } | { ok: false; motivo: string } {
+  const de = extrairVersao(texto);
+  if (de === null) return { ok: false, motivo: 'VERSAO ilegivel para o proprio sonda:bump' };
+  const linhas = texto.split('\n');
+  const exports = linhas.flatMap((l, i) => (/^\s*export\s+const\s+VERSAO\b/.test(l) ? [i] : []));
+  if (exports.length !== 1) {
+    return { ok: false, motivo: `${exports.length} linha(s) \`export const VERSAO\` — a receita exige exatamente 1` };
+  }
+  const para = `${de}${SUFIXO_BUMP}`;
+  const antes = linhas[exports[0]];
+  const depois = antes.replace(/(=\s*)(["'])(.*?)\2/, (_m, eq: string, q: string) => `${eq}${q}${para}${q}`);
+  if (depois === antes) return { ok: false, motivo: 'o literal do VERSAO nao esta na linha do export' };
+  linhas[exports[0]] = depois;
+  const novo = linhas.join('\n');
+  if (extrairVersao(novo) !== para) return { ok: false, motivo: 'o sonda:bump nao leria o VERSAO novo' };
+  return { ok: true, novo, de, para };
 }
 
 /**
@@ -66,11 +189,17 @@ export interface Defeito {
  * expressao perl legitimamente contem '|'. Um split ingenuo em 3 partes truncaria a regex no meio
  * e a sabotagem viraria uma nao-aplicacao silenciosa — que o motor classifica como INVALIDA, mas
  * so depois de ter gasto a execucao de todos os gates.
+ *
+ * `@origem`/`@suspeito` sao PEGAJOSOS (valem ate serem redefinidos); `@dever-de-casa` vale SO para
+ * a proxima linha de defeito. A assimetria e de proposito: um dever de casa herdado por engano
+ * neutralizaria os gates de bytes num defeito que nao o pediu. Por isso tambem ele e ESTRITO onde
+ * o resto do parser e leniente — receita invalida ou pendurada LANCA, em vez de sumir calada.
  */
 export function parseDefeitos(texto: string, arquivo: string): Defeito[] {
   const saida: Defeito[] = [];
   let origem: string | null = null;
   let suspeito: string | null = null;
+  let pendentes: { texto: string; linha: number }[] = [];
 
   texto.split('\n').forEach((bruta, i) => {
     const linha = bruta.trim();
@@ -80,6 +209,8 @@ export function parseDefeitos(texto: string, arquivo: string): Defeito[] {
       if (mo) origem = mo[1].trim();
       const ms = linha.match(/@suspeito:\s*(.+)$/);
       if (ms) suspeito = ms[1].trim();
+      const md = linha.match(/@dever-de-casa:\s*(.+)$/);
+      if (md) pendentes.push({ texto: md[1].trim(), linha: i + 1 });
       return;
     }
     const corte1 = linha.indexOf('|');
@@ -90,9 +221,21 @@ export function parseDefeitos(texto: string, arquivo: string): Defeito[] {
     const alvo = linha.slice(corte1 + 1, corte2).trim();
     const perl = linha.slice(corte2 + 1).trim();
     if (!id || !alvo || !perl) return;
-    saida.push({ id, alvo, perl, arquivo, linha: i + 1, origem, suspeito });
+    const deveres = pendentes.map((p) => {
+      const dv = lerDever(p.texto, alvo);
+      if (typeof dv === 'string') throw new Error(`DEVER-DE-CASA-INVALIDO ${arquivo}:${p.linha} (${id}): ${dv}`);
+      return dv;
+    });
+    pendentes = [];
+    saida.push({ id, alvo, perl, arquivo, linha: i + 1, origem, suspeito, deveres });
   });
 
+  if (pendentes.length) {
+    throw new Error(
+      `DEVER-DE-CASA-PENDURADO ${arquivo}:${pendentes[0].linha}: @dever-de-casa sem linha de defeito depois — ` +
+        'ele vale SO para a proxima linha, e aqui nao ha nenhuma.',
+    );
+  }
   return saida;
 }
 
@@ -261,6 +404,124 @@ export function gatesCandidatos(fonteCI: string): GateAlvo[] {
   return inventarioCI(fonteCI).map((g) => ({ ...g, bloqueiaPR: bloq.has(g.job) }));
 }
 
+// ---------------------------------------------------------------------------------------------
+// Paridade de invocacao — o motor roda O QUE O CI RODA
+// ---------------------------------------------------------------------------------------------
+
+export interface Invocacao {
+  argv: string[];
+  env: Record<string, string>;
+}
+
+export type ResultadoInvocacao = ({ ok: true } & Invocacao) | { ok: false; motivo: string };
+
+/** Token que o motor reproduz sem shell. Aspas, `$`, glob, `~`, redirecionamento: fora. */
+const TOKEN_SIMPLES = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/**
+ * A invocacao EXATA que o CI faz de um gate: argv + `env:` literal de workflow/job/step.
+ *
+ * ## O buraco que isto fecha (medido 2026-09-10)
+ *
+ * O motor rodava `bun run <nome>` para todo gate, e o CI nao roda isso para todos:
+ *
+ *   - `sonda:cron-prova`: o CI roda `-- --gate`. Sem ele, `sonda-cron-prova.ts` e o modo BACKFILL,
+ *     que termina em `gravarManifesto` — regravou `_shared/sonda-cron-prova.json` (+411/-264) e
+ *     todo gate seguinte do baseline mediu arvore suja (`test` vermelho, motor abortado).
+ *   - `tsc`: o CI roda `bunx tsc --noEmit -p tsconfig.app.json`. Sem script `tsc` no package.json,
+ *     `bun run tsc` roda o binario contra o tsconfig RAIZ (`files: []`) — NO-OP, rc=0 em 640ms. O
+ *     gate estava na matriz como "medido" sem nunca poder reprovar.
+ *   - `build`: o CI passa `NODE_ENV: production`; o motor nao passava.
+ *
+ * E a licao de `docs/historico/falsificacao-sem-linha-de-base.md` um andar acima: a medicao que
+ * roda OUTRA invocacao nao mede o gate, por mais que o nome bata.
+ *
+ * ## Por que o `run:` inteiro tem de SER o comando simples
+ *
+ * Recortar o comando de dentro de um step composto perderia o que o compoe: `cd sub; bun run g`
+ * perde o diretorio, `bun run g || true` perde o fato de o step nunca reprovar. O status do step e
+ * do step inteiro. Entao so um `run:` que e exatamente um comando simples e medivel; o resto e
+ * NAO-REPRODUZIVEL e o motor aborta nomeando o gate — nunca adivinha. `if: pull_request` e
+ * ignorado de proposito: o motor simula um PR.
+ *
+ * Mesma fonte e mesmo filtro de `inventarioCI` (`nomesDeScript`, sem `continue-on-error`, so jobs
+ * bloqueantes), mas SEM a deduplicacao dele: o mesmo gate invocado de dois jeitos e AMBIGUO.
+ */
+export function invocacaoDoCI(fonteCI: string, nome: string): ResultadoInvocacao {
+  type Passo = { name?: string; run?: unknown; env?: unknown; 'working-directory'?: unknown; 'continue-on-error'?: unknown };
+  type Job = { steps?: Passo[]; env?: unknown; defaults?: { run?: { 'working-directory'?: unknown } } };
+  const doc = parse(fonteCI) as { env?: unknown; defaults?: Job['defaults']; jobs?: Record<string, Job> };
+  const bloq = jobsBloqueantes(fonteCI);
+
+  const envLiteral = (bruto: unknown, onde: string): Record<string, string> | string => {
+    if (bruto === undefined || bruto === null) return {};
+    if (typeof bruto !== 'object') return `env de ${onde} nao e mapa`;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(bruto as Record<string, unknown>)) {
+      if (!['string', 'number', 'boolean'].includes(typeof v) || String(v).includes('${{')) {
+        return `env ${k} de ${onde} depende do contexto do GitHub (${JSON.stringify(v)})`;
+      }
+      out[k] = String(v);
+    }
+    return out;
+  };
+
+  const vistas = new Map<string, Invocacao>();
+  for (const [job, corpo] of Object.entries(doc.jobs ?? {})) {
+    if (!bloq.has(job)) continue;
+    for (const st of corpo?.steps ?? []) {
+      if (typeof st.run !== 'string' || st['continue-on-error'] === true) continue;
+      if (!nomesDeScript(st.run).has(nome)) continue;
+      const onde = `${job} / ${st.name ?? '(sem nome)'}`;
+      const nao = (porque: string): ResultadoInvocacao => ({ ok: false, motivo: `NAO-REPRODUZIVEL ${nome} em "${onde}": ${porque}` });
+
+      if (st['working-directory'] ?? corpo.defaults?.run?.['working-directory'] ?? doc.defaults?.run?.['working-directory']) {
+        return nao('working-directory muda o que roda');
+      }
+      const run = st.run.trim();
+      const argv = run.split(/\s+/);
+      if (run.includes('\n') || !argv.every((t) => TOKEN_SIMPLES.test(t))) {
+        return nao(`o run: nao e UM comando simples (\`${run.split('\n')[0].slice(0, 80)}\`)`);
+      }
+      const forma =
+        (argv[0] === 'bun' || argv[0] === 'bunx') && argv[1] === 'run'
+          ? argv[2]
+          : argv[0] === 'bunx' || argv[0] === 'bun'
+            ? argv[1]
+            : undefined;
+      if (forma !== nome) return nao(`o comando simples nao invoca ${nome} na posicao de script (\`${run}\`)`);
+
+      const envs = [envLiteral(doc.env, 'workflow'), envLiteral(corpo.env, `job ${job}`), envLiteral(st.env, onde)];
+      const erroEnv = envs.find((e): e is string => typeof e === 'string');
+      if (erroEnv) return nao(erroEnv);
+      const env = Object.assign({}, ...(envs as Record<string, string>[])) as Record<string, string>;
+      const inv = { argv, env };
+      vistas.set(assinaturaInvocacao(inv), inv);
+    }
+  }
+
+  if (vistas.size === 0) return { ok: false, motivo: `SEM-INVOCACAO ${nome}: nenhum step bloqueante do ci.yml o invoca` };
+  if (vistas.size > 1) {
+    return { ok: false, motivo: `AMBIGUA ${nome}: invocado de ${vistas.size} jeitos — ${[...vistas.keys()].join(' | ')}` };
+  }
+  const [inv] = vistas.values();
+  return { ok: true, ...inv };
+}
+
+/** Forma canonica de uma invocacao — e o que cada execucao grava e o que a derivacao compara. */
+export function assinaturaInvocacao(inv: Invocacao): string {
+  const env = Object.keys(inv.env)
+    .sort()
+    .map((k) => `${k}=${inv.env[k]}`);
+  return [...(env.length ? [`env{${env.join(',')}}`] : []), ...inv.argv].join(' ');
+}
+
+/**
+ * O que o motor rodava ANTES da paridade: `bun run <nome>`, sem env. Execucao gravada sem o campo
+ * `invocacao` foi, por construcao, isto — e so vale para gate que o CI de fato invoca assim.
+ */
+const assinaturaLegada = (nome: string): string => assinaturaInvocacao({ argv: ['bun', 'run', nome], env: {} });
+
 export interface StepOpaco {
   job: string;
   step: string;
@@ -339,7 +600,12 @@ export function bloqueantesOpacos(fonteCI: string): StepOpaco[] {
 
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex').slice(0, 16);
 
-export const fingerprintDefeito = (d: Defeito): string => sha(`${d.alvo} ${d.perl}`);
+/**
+ * O dever de casa entra no hash SO quando existe: defeito sem ele mantem o fingerprint de antes, e
+ * as linhas ja medidas da matriz nao apodrecem por uma coluna que elas nunca tiveram.
+ */
+export const fingerprintDefeito = (d: Defeito): string =>
+  sha(d.deveres?.length ? `${d.alvo} ${d.perl}\n${d.deveres.map(textoDoDever).join('\n')}` : `${d.alvo} ${d.perl}`);
 
 export interface FonteDoGate {
   comando: string;
@@ -404,6 +670,12 @@ export interface ExecucaoGate {
   ms: number;
   fingerprint: string;
   fonteResolvida: boolean;
+  /**
+   * `assinaturaInvocacao` do que o motor EXECUTOU. Ausente = execucao anterior a paridade de
+   * invocacao, que por construcao foi `bun run <gate>` (`assinaturaLegada`). A derivacao so aceita
+   * a execucao se ela bate com a invocacao do CI de hoje.
+   */
+  invocacao?: string;
 }
 
 export interface LinhaMatriz {
@@ -412,6 +684,10 @@ export interface LinhaMatriz {
   alvo: string;
   suspeito: string | null;
   origem: string | null;
+  /** O dever de casa aplicado (texto das receitas). Ausente = autor descuidado. */
+  deveres?: string[];
+  /** Caminhos que o dever de casa alterou, alem do alvo — para auditar o efeito, nao so a receita. */
+  tocados?: string[];
   execucoes: ExecucaoGate[];
   /**
    * True quando a medicao parou no 2o vermelho. Os gates nao rodados ficam DESCONHECIDOS —
@@ -460,9 +736,18 @@ export interface Matriz {
  * `parouCedo` propaga por OU: uma linha que parou cedo em qualquer das rodadas nunca vira
  * exclusiva. Conservador de proposito — o erro tolerado e deixar de reconhecer um exclusivo, nunca
  * inventar um.
+ *
+ * ## So funde a MESMA sabotagem, medida validamente dos dois lados (parecer Codex 2026-09-10)
+ *
+ * A fusao por gate ignorava `defeitoFingerprint` e `invalido`. Duas fabricacoes saiam dali:
+ * execucoes de uma sabotagem VELHA (o `.def` mudou, ou ganhou dever de casa) grudavam na linha da
+ * sabotagem nova, como se tivessem sido medidas contra ela; e execucoes de uma rodada INVALIDADA
+ * (ex.: um gate estourou o tempo no meio) ressuscitavam numa linha valida. Nos tres casos a linha
+ * nova substitui a antiga inteira — descartar dado de proveniencia duvidosa e o lado barato.
  */
 export function fundirLinhas(antiga: LinhaMatriz | undefined, nova: LinhaMatriz): LinhaMatriz {
   if (!antiga) return nova;
+  if (antiga.defeitoFingerprint !== nova.defeitoFingerprint || antiga.invalido || nova.invalido) return nova;
   const porGate = new Map(antiga.execucoes.map((e) => [e.gate, e]));
   for (const e of nova.execucoes) porGate.set(e.gate, e);
   return {
@@ -474,9 +759,20 @@ export function fundirLinhas(antiga: LinhaMatriz | undefined, nova: LinhaMatriz)
 
 export interface Exclusividade {
   gate: string;
-  /** Defeitos em que ele foi o UNICO vermelho, com a linha rodada ate o fim. */
+  /**
+   * Defeitos em que ele foi o UNICO vermelho numa linha COMPLETA: todo gate do universo executado,
+   * com a invocacao do CI, sem poda. So isto e `[SO ELE]`.
+   */
   exclusivos: string[];
+  /**
+   * Defeitos em que ele foi o unico vermelho ENTRE OS QUE RODARAM, numa linha que nao rodou todo o
+   * universo. Nao e exclusivo (os ausentes sao DESCONHECIDOS) nem redundante (ninguem mostrou outro
+   * detector): e medicao que nao terminou.
+   */
+  inconclusivos: string[];
   pegou: string[];
+  /** Linhas VALIDAS em que o gate foi executado com a invocacao do CI. So isto e medicao DELE. */
+  rodou: string[];
   naoMedido: string[];
   /**
    * True se ALGUM defeito do corpus declara este gate em `@suspeito` — ou seja, se o corpus
@@ -495,7 +791,32 @@ export interface Exclusividade {
   msMediana: number;
 }
 
-export function derivar(m: Matriz): Exclusividade[] {
+export interface OpcoesDerivacao {
+  /**
+   * Os gates que uma linha precisa ter executado para CERTIFICAR exclusivo — os bloqueantes do
+   * ci.yml de hoje. Sem ele, o baseline acumulado da matriz (maior, logo mais conservador).
+   */
+  universo?: readonly string[];
+  /**
+   * `assinaturaInvocacao` da invocacao ATUAL do CI por gate. Com ele, execucao de invocacao
+   * diferente (ou legada, quando o CI nao roda `bun run <gate>` cru) nao conta como execucao.
+   */
+  assinaturas?: ReadonlyMap<string, string>;
+}
+
+/**
+ * ## Desconhecido nunca e "nao reprovou" — nem para PODA, nem para COMPLETUDE
+ *
+ * `parouCedo` ja impedia a linha podada de certificar exclusivo. O resto da mesma classe seguia
+ * aberto: uma linha medida com `--gates` (7 de 31 gates, na matriz real de 2026-09-10) tinha 1
+ * vermelho, `parouCedo=false` e saia `[SO ELE]` — os 24 ausentes lidos como verdes. Certificar
+ * agora exige, POR NOME, cada gate do universo executado validamente; o unico vermelho de uma
+ * linha incompleta vira INCONCLUSIVO. E a execucao so conta se rodou o que o CI roda: o `tsc` que
+ * o motor media era `bun run tsc`, no-op contra o tsconfig raiz — verde que nao e evidencia.
+ */
+export function derivar(m: Matriz, opts: OpcoesDerivacao = {}): Exclusividade[] {
+  const universo = [...new Set(opts.universo ?? m.baseline.map((b) => b.gate))];
+  const noUniverso = new Set(universo);
   const porGate = new Map<string, Exclusividade>();
   const pega = (g: string): Exclusividade => {
     let e = porGate.get(g);
@@ -503,9 +824,12 @@ export function derivar(m: Matriz): Exclusividade[] {
       e = {
         gate: g,
         exclusivos: [],
+        inconclusivos: [],
         pegou: [],
+        rodou: [],
         naoMedido: [],
-        corpusMirou: m.linhas.some((l) => l.suspeito === g),
+        // A mira so conta em linha VALIDA: uma linha invalida mirou, mas nao mediu nada.
+        corpusMirou: m.linhas.some((l) => l.suspeito === g && !l.invalido),
         msTotal: 0,
         msMediana: 0,
       };
@@ -513,30 +837,40 @@ export function derivar(m: Matriz): Exclusividade[] {
     }
     return e;
   };
+  const compativel = (exec: ExecucaoGate): boolean => {
+    if (!opts.assinaturas) return true;
+    const atual = opts.assinaturas.get(exec.gate);
+    return atual !== undefined && atual === (exec.invocacao ?? assinaturaLegada(exec.gate));
+  };
   const duracoes = new Map<string, number[]>();
 
-  // Todo gate do baseline entra no resultado, mesmo que nao apareca em nenhuma linha valida.
+  // Todo gate do universo entra no resultado, mesmo que nao apareca em nenhuma linha valida.
   // Sem isto, um gate cujas unicas linhas foram INVALIDADAS simplesmente sumia da derivacao — e
   // sumir do relatorio e a pior forma de exclusividade zero: a que nem se sabe que existe.
-  for (const b of m.baseline) pega(b.gate);
+  for (const g of universo) pega(g);
 
   for (const linha of m.linhas) {
-    const rodados = new Set(linha.execucoes.map((e) => e.gate));
-    for (const b of m.baseline) if (!rodados.has(b.gate)) pega(b.gate).naoMedido.push(linha.defeito);
+    // Execucao de gate fora do universo (saiu do CI) nao pesa: exclusividade e relativa aos gates
+    // que existem hoje. Execucao de invocacao incompativel nao e execucao.
+    const validas = linha.execucoes.filter((e) => noUniverso.has(e.gate) && compativel(e));
+    const rodados = new Set(validas.map((e) => e.gate));
+    for (const g of universo) if (linha.invalido || !rodados.has(g)) pega(g).naoMedido.push(linha.defeito);
 
     if (linha.invalido) continue;
-    const vermelhos = linha.execucoes.filter((e) => e.reprovou);
-    // Linha podada nunca produz exclusivo: ela so existe porque >=2 gates ja ficaram vermelhos.
-    const ehExclusiva = !linha.parouCedo && vermelhos.length === 1;
+    const vermelhos = validas.filter((e) => e.reprovou);
+    // Linha podada ja teve >=2 vermelhos: exclusividade REFUTADA, nem inconclusiva.
+    const refutada = linha.parouCedo || vermelhos.length >= 2;
+    const completa = universo.every((g) => rodados.has(g));
 
-    for (const exec of linha.execucoes) {
+    for (const exec of validas) {
       const e = pega(exec.gate);
+      e.rodou.push(linha.defeito);
       if (!duracoes.has(exec.gate)) duracoes.set(exec.gate, []);
       duracoes.get(exec.gate)!.push(exec.ms);
       e.msTotal += exec.ms;
       if (!exec.reprovou) continue;
       e.pegou.push(linha.defeito);
-      if (ehExclusiva) e.exclusivos.push(linha.defeito);
+      if (!refutada) (completa ? e.exclusivos : e.inconclusivos).push(linha.defeito);
     }
   }
 
@@ -559,6 +893,7 @@ type CodigoVeredito =
   | 'MATRIZ_AUSENTE'
   | 'LINHA_PODRE'
   | 'EXCLUSIVIDADE_ZERO'
+  | 'EXCLUSIVIDADE_INCONCLUSIVA'
   | 'CORPUS_NAO_MIROU'
   | 'FRESCOR_INDISPONIVEL';
 
@@ -578,11 +913,20 @@ export interface Veredito {
  *                                    friccao que se contorna — sinal que ninguem le e pior que
  *                                    sinal nenhum, porque custa e ainda ensina a ignorar.
  *   exclusividade zero (existente) -> RELATA. Corte e decisao do founder; a ferramenta informa.
+ *
+ * ## "Medido" e EXECUTADO contra defeito valido — nunca "apareceu na matriz"
+ *
+ * O criterio era `pegou + naoMedido > 0`, e `naoMedido` e justamente a lista de defeitos em que o
+ * gate NAO rodou. Na matriz real de 2026-09-10, `sonda:autentica` (podado: `sonda:bump` e
+ * `sonda:fingerprint` pegaram primeiro, por bytes) e `gate:ambiente` tinham 0 execucoes em linha
+ * valida e 11 `naoMedido` cada — e saiam sem REPROVA e sem RELATA, silencio total. Ausencia de dado
+ * virando aprovacao, dentro da ferramenta que existe para nao deixar isso acontecer.
  */
 export function avaliar(
   m: Matriz | null,
   gates: GateAlvo[],
   fpAtual: Map<string, { fingerprint: string; resolvida: boolean }>,
+  assinaturas?: ReadonlyMap<string, string>,
 ): Veredito[] {
   const out: Veredito[] = [];
   const candidatos = gates.filter((g) => g.bloqueiaPR);
@@ -598,21 +942,27 @@ export function avaliar(
   }
 
   const dispensados = new Set(m.dispensados.map((d) => d.gate));
-  const exclus = new Map(derivar(m).map((e) => [e.gate, e]));
+  const exclus = new Map(derivar(m, { universo: candidatos.map((g) => g.nome), assinaturas }).map((e) => [e.gate, e]));
 
   for (const g of candidatos) {
     const e = exclus.get(g.nome);
-    const medido = e !== undefined && e.pegou.length + e.naoMedido.length > 0;
+    const medido = e !== undefined && e.rodou.length > 0;
 
     if (!medido && !dispensados.has(g.nome)) {
+      const fora = e?.naoMedido.length ?? 0;
       out.push({
         severidade: 'REPROVA',
         gate: g.nome,
         codigo: 'GATE_NOVO_SEM_EXCLUSIVIDADE',
         motivo:
-          `gate bloqueante sem NENHUM defeito medido. Um gate custa segundos em todo PR, para ` +
-          `sempre; a prova de que ele pega algo que os outros nao pegam e o preco. Escreva um ` +
-          `defeito em ${CORPUS_DIR}/ e rode \`bun run exclusividade:medir\`.`,
+          (fora > 0
+            ? `gate bloqueante NUNCA EXECUTADO contra defeito valido — ${fora} linha(s) da matriz o deixaram ` +
+              `de fora (poda por custo, --gates, linha invalida ou invocacao diferente da do CI). Ausencia de ` +
+              `execucao NAO e medicao. `
+            : `gate bloqueante sem NENHUM defeito medido. `) +
+          `Um gate custa segundos em todo PR, para sempre; a prova de que ele pega algo que os outros ` +
+          `nao pegam e o preco. Escreva um defeito em ${CORPUS_DIR}/ (o motor executa o @suspeito mesmo ` +
+          `quando a poda o deixaria de fora) e rode \`bun run exclusividade:medir\`.`,
       });
       continue;
     }
@@ -638,7 +988,19 @@ export function avaliar(
       }
     }
 
-    if (medido && e.exclusivos.length === 0 && e.pegou.length > 0) {
+    if (medido && e.exclusivos.length === 0 && e.pegou.length > 0 && e.inconclusivos.length > 0) {
+      // "Outro gate tambem pegou" seria FALSO aqui: nas linhas inconclusivas ninguem mais reprovou —
+      // os outros nao RODARAM. Nem exclusivo, nem redundante: medicao que nao terminou.
+      out.push({
+        severidade: 'RELATA',
+        gate: g.nome,
+        codigo: 'EXCLUSIVIDADE_INCONCLUSIVA',
+        motivo:
+          `foi o UNICO vermelho em ${e.inconclusivos.length} defeito(s) (${e.inconclusivos.join(', ')}), mas ` +
+          `nenhuma dessas linhas rodou todo gate bloqueante com a invocacao do CI — os ausentes sao ` +
+          `DESCONHECIDOS. Nao certifica exclusividade e NAO e redundancia; re-meca a linha com todos os gates.`,
+      });
+    } else if (medido && e.exclusivos.length === 0 && e.pegou.length > 0) {
       // Zero so pode ser lido como REDUNDANCIA se o corpus chegou a mirar neste gate. Se nenhum
       // defeito o declara em `@suspeito`, o zero mede o corpus, nao o gate — e chamar isso de
       // redundancia seria a ferramenta cometendo contra si a falha que ela existe para evitar.
@@ -668,24 +1030,42 @@ export function avaliar(
   return out;
 }
 
-/** Resumo humano. O denominador anda GRUDADO no numero — sem ele, zero le como "inutil". */
-export function resumir(m: Matriz): string {
-  const linhas = derivar(m)
-    .filter((e) => e.pegou.length + e.exclusivos.length > 0 || e.naoMedido.length > 0)
+/**
+ * Resumo humano. O denominador anda GRUDADO no numero — sem ele, zero le como "inutil". E o
+ * `rodou` anda junto do `pegou`: "pegou 0" de um gate que rodou em 7 linhas e de um que nao rodou
+ * em nenhuma sao afirmacoes opostas, e sem o `rodou` as duas se imprimiam iguais.
+ */
+export function resumir(m: Matriz, opts: OpcoesDerivacao = {}): string {
+  const n = (x: number) => String(x).padStart(2);
+  const derivados = derivar(m, opts);
+  const linhas = derivados
+    .filter((e) => e.rodou.length + e.naoMedido.length > 0)
     .map((e) => {
       const excl = e.exclusivos.length;
       const marca =
-        excl > 0 ? '[SO ELE]' : !e.corpusMirou ? '[s/ mira]' : e.pegou.length > 0 ? '[redund]' : '[      ]';
+        excl > 0
+          ? '[SO ELE]'
+          : e.inconclusivos.length > 0
+            ? '[inconcl]'
+            : !e.corpusMirou
+              ? '[s/ mira]'
+              : e.pegou.length > 0
+                ? '[redund]'
+                : '[      ]';
       return (
-        `${marca.padEnd(9)} ${e.gate.padEnd(34)} exclusivos ${String(excl).padStart(2)}/${m.linhas.length}` +
-        ` - pegou ${String(e.pegou.length).padStart(2)} - mediana ${String(e.msMediana).padStart(6)}ms`
+        `${marca.padEnd(9)} ${e.gate.padEnd(34)} exclusivos ${n(excl)}/${m.linhas.length}` +
+        ` - inconcl ${n(e.inconclusivos.length)} - pegou ${n(e.pegou.length)} de ${n(e.rodou.length)} rodado(s)` +
+        ` - mediana ${String(e.msMediana).padStart(6)}ms`
       );
     });
+  const comDever = m.linhas.filter((l) => l.deveres?.length).map((l) => `${l.defeito} [${l.deveres!.join(' + ')}]`);
   return [
-    `matriz de exclusividade — ${m.linhas.length} defeito(s) x ${m.baseline.length} gate(s), medida em ${m.medidoEm}`,
+    `matriz de exclusividade — ${m.linhas.length} defeito(s) x ${derivados.length} gate(s), medida em ${m.medidoEm}`,
     ...linhas,
-    `   [SO ELE]  = ha defeito que SO ele pega`,
+    `   [SO ELE]  = ha defeito que SO ele pega, numa linha que rodou TODO gate do universo`,
+    `   [inconcl] = unico vermelho entre os que rodaram, mas a linha nao rodou todo o universo — nao certifica`,
     `   [redund]  = o corpus mirou nele e tudo que pega, outro tambem pega (NESTE corpus de ${m.linhas.length})`,
     `   [s/ mira] = nenhum defeito do corpus foi escrito para ele — zero aqui mede o CORPUS, nao o gate`,
+    ...(comDever.length ? [`   linhas do autor DILIGENTE (com dever de casa): ${comDever.join('; ')}`] : []),
   ].join('\n');
 }

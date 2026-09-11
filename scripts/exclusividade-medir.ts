@@ -14,8 +14,11 @@
  *   bun run exclusividade:medir -- --gates x,y       # so estes gates
  *   bun run exclusividade:medir -- --dry             # lista o plano e o custo, nao executa nada
  *   bun run exclusividade:medir -- --sem-poda        # nao para no 2o vermelho: quer o conjunto COMPLETO
+ *   EXCL_TIMEOUT_MS=2400000 bun run exclusividade:medir   # teto POR execucao (default 15 min). Numa M2
+ *                                                         # carregada o `sonda:cron-prova -- --gate` leva ~19.
  *
- * Exit: 0 mediu - 1 abortou (baseline sujo, arvore suja, corpus vazio) - 2 erro interno.
+ * Exit: 0 mediu - 1 abortou (arvore suja, baseline vermelho, corpus vazio/invalido, invocacao nao
+ *       reproduzivel, suspeito desconhecido, GATE-ESCREVEU, RESTAURACAO-INCOMPLETA) - 2 erro interno.
  *
  * ## A disciplina (herdada do mutcheck.sh, onde ja foi pensada e ja achou buraco de verdade)
  *
@@ -28,29 +31,75 @@
  *  4. SUBSTITUICAO UNICA. Sabotagem que altera >1 linha e regex largo demais (no incerto):
  *     INVALIDA. Sem isso, "o gate pegou" pode ser sobre um estrago que ninguem commitaria.
  *  5. PODA POR CUSTO, NAO POR DECLARACAO. Gates rodam do mais barato ao mais caro e a linha para
- *     no 2o vermelho — a exclusividade ja esta refutada ali. A poda NUNCA consulta `@suspeito`:
- *     deixar o autor declarar quem e "plausivel" podaria a medicao a favor de quem declara.
+ *     no 2o vermelho — a exclusividade ja esta refutada ali. A ORDEM e o PONTO DE PARADA nunca
+ *     consultam `@suspeito`: deixar o autor declarar quem e "plausivel" podaria a medicao a favor
+ *     de quem declara.
+ *  6. PARIDADE DE INVOCACAO. Cada gate roda com o argv+env que o CI usa (`invocacaoDoCI`), nunca
+ *     `bun run <nome>` cru. O cru media o modo BACKFILL do `sonda:cron-prova` (que regrava o
+ *     manifesto e sujou o baseline inteiro) e um `tsc` NO-OP. Invocacao que o motor nao reproduz
+ *     ABORTA antes do baseline — adivinhar seria medir outro comando com o nome do gate.
+ *  7. WRITE-GUARD. Snapshot da arvore versionada (porcelain -uall + conteudo, entradas do indice,
+ *     HEAD) antes e depois de CADA execucao. Gate que escreveu: o motor restaura o que sabe
+ *     restaurar — nunca apaga o que o gate criou, nunca mexe no indice nem no HEAD — e ABORTA sem
+ *     gravar a matriz, porque toda medicao depois dele seria de outra arvore. Invalidar so a linha
+ *     pressuporia restauracao provada; a escrita inesperada e justamente a quebra dessa premissa.
+ *  8. O SUSPEITO RODA MESMO PODADO. Se a poda deixou o `@suspeito` de fora, ele roda depois, sozinho.
+ *     Nao favorece ninguem: isso so acontece com `parouCedo` (>=2 vermelhos), linha que ja nao
+ *     certifica exclusivo; a execucao extra so da ao suspeito o `rodou/pegou` que a poda lhe negou.
+ *     Sem ela, o suspeito saia "medido" sem nunca ter rodado (o caso `sonda:autentica`).
+ *  9. DEVER DE CASA POR RECEITA. `@dever-de-casa` aplica, depois da sabotagem, uma receita do
+ *     vocabulario FECHADO (`RECEITAS`), com efeito EXATO conferido por snapshot: so as saidas
+ *     declaradas mudam, e o alvo segue byte-identico ao pos-sabotagem. Receita que nao muda nada ou
+ *     falha = linha INVALIDA; receita que escreve fora das saidas = ABORTA.
+ * 10. CONTROLE DE SAIDA. Depois de restaurar cada defeito, o snapshot tem de ser IGUAL ao inicial.
+ *     "Restaurei" sem assercao e a mesma familia de ausente != zero.
+ *
+ * ## O que o write-guard NAO ve (limite declarado)
+ *
+ * Arquivo IGNORADO pelo git (`node_modules/`, `dist/`, caches) fica fora do snapshot: vigia-lo
+ * custaria hashear `node_modules` a cada execucao e daria falso positivo no `build`, que escreve
+ * `dist/` por oficio. O CI tambem nao isola isso por gate — cada JOB tem checkout novo, mas os gates
+ * de um mesmo job dividem a arvore. O residuo possivel (um gate lendo o `dist/` que outro deixou)
+ * segue existindo aqui como la.
  */
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
+  ARGV_REGENERAR_FINGERPRINTS,
   CORPUS_DIR,
   MATRIZ_PATH,
   SCHEMA_VERSION,
+  aplicarBumpVersao,
+  assinaturaInvocacao,
   fingerprintDefeito,
   fingerprintGate,
   fonteDoGate,
   fundirLinhas,
   gatesCandidatos,
+  invocacaoDoCI,
   parseDefeitos,
   resumir,
+  saidasDoDever,
+  textoDoDever,
   type BaselineGate,
   type Defeito,
+  type DeverDeCasa,
   type ExecucaoGate,
   type GateAlvo,
+  type Invocacao,
   type LinhaMatriz,
   type Matriz,
 } from './lib/exclusividade';
@@ -75,6 +124,9 @@ const TIMEOUT_MS = Number(process.env.EXCL_TIMEOUT_MS ?? 900_000);
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> };
 const fonteCI = readFileSync('.github/workflows/ci.yml', 'utf8');
 
+/** Falha do INSTRUMENTO: aborta a rodada inteira e nunca vira resultado de gate. */
+class Abortar extends Error {}
+
 // ---------------------------------------------------------------------------------------------
 // Restauracao — registrada ANTES de qualquer mutacao, para o trap valer desde o primeiro byte
 // ---------------------------------------------------------------------------------------------
@@ -82,6 +134,14 @@ const fonteCI = readFileSync('.github/workflows/ci.yml', 'utf8');
 const backups = new Map<string, string>();
 const tmp = join(tmpdir(), `exclusividade-${process.pid}`);
 mkdirSync(tmp, { recursive: true });
+
+/** O PRIMEIRO backup de um caminho e o original; nunca e sobrescrito pelo estado ja sabotado. */
+function registrarBackup(alvo: string): void {
+  if (backups.has(alvo)) return;
+  const copia = join(tmp, alvo.replace(/\//g, '__'));
+  copyFileSync(alvo, copia);
+  backups.set(alvo, copia);
+}
 
 function restaurarTudo(): void {
   for (const [alvo, copia] of backups) {
@@ -106,21 +166,176 @@ process.on('uncaughtException', (e) => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// Execucao de um gate
+// Snapshot da arvore versionada — a evidencia POSITIVA de que ninguem escreveu
 // ---------------------------------------------------------------------------------------------
 
-function rodarGate(nome: string): { reprovou: boolean; ms: number; estourou: boolean } {
+interface EntradaSuja {
+  xy: string;
+  digest: string;
+  conteudo: Buffer | null;
+}
+interface Snapshot {
+  head: string;
+  /** Hash de `git ls-files --stage`: porcelain nao distingue dois blobs staged de mesmo status. */
+  indice: string;
+  sujos: Map<string, EntradaSuja>;
+}
+interface Diferenca {
+  head: boolean;
+  indice: boolean;
+  caminhos: string[];
+}
+
+const hash = (b: Buffer | string): string => createHash('sha256').update(b).digest('hex');
+
+/** Leitura do git que so vale com sucesso POSITIVO: rc!=0 nunca e "arvore limpa". */
+function git(argv: string[]): Buffer {
+  const r = spawnSync('git', argv, { maxBuffer: 512 * 1024 * 1024 });
+  if (r.error || r.status !== 0) {
+    throw new Abortar(
+      `MECANICA: \`git ${argv.join(' ')}\` falhou (rc=${r.status}) — sem leitura positiva do git o motor nao ` +
+        `afirma nada sobre a arvore. ${String(r.stderr ?? '').slice(0, 200)}`,
+    );
+  }
+  return r.stdout;
+}
+
+function digestDe(p: string): { digest: string; conteudo: Buffer | null } {
+  let st;
+  try {
+    st = lstatSync(p);
+  } catch {
+    return { digest: 'AUSENTE', conteudo: null };
+  }
+  if (st.isSymbolicLink()) return { digest: `L:${readlinkSync(p)}`, conteudo: null };
+  if (!st.isFile()) return { digest: `T:${st.mode}`, conteudo: null };
+  const c = readFileSync(p);
+  return { digest: `F:${st.mode}:${hash(c)}`, conteudo: c };
+}
+
+function tirarSnapshot(): Snapshot {
+  const head = git(['rev-parse', '--verify', 'HEAD']).toString('utf8').trim();
+  const indice = hash(git(['ls-files', '--stage', '-z']));
+  const campos = git(['status', '--porcelain=v1', '-z', '--untracked-files=all']).toString('utf8').split('\0');
+  const sujos = new Map<string, EntradaSuja>();
+  for (let i = 0; i < campos.length; i++) {
+    const c = campos[i];
+    if (!c) continue;
+    const xy = c.slice(0, 2);
+    const p = c.slice(3);
+    sujos.set(p, { xy, ...digestDe(p) });
+    // Rename/copy no indice: o campo seguinte e a ORIGEM, que tambem saiu do lugar.
+    if (xy[0] === 'R' || xy[0] === 'C') {
+      const origem = campos[++i];
+      if (origem) sujos.set(origem, { xy: `${xy}<`, ...digestDe(origem) });
+    }
+  }
+  return { head, indice, sujos };
+}
+
+function diferenca(a: Snapshot, b: Snapshot): Diferenca {
+  const caminhos: string[] = [];
+  for (const p of new Set([...a.sujos.keys(), ...b.sujos.keys()])) {
+    const x = a.sujos.get(p);
+    const y = b.sujos.get(p);
+    if (!x || !y || x.xy !== y.xy || x.digest !== y.digest) caminhos.push(p);
+  }
+  return { head: a.head !== b.head, indice: a.indice !== b.indice, caminhos: caminhos.sort() };
+}
+
+const vazia = (d: Diferenca): boolean => !d.head && !d.indice && d.caminhos.length === 0;
+
+function descrever(d: Diferenca, a: Snapshot, b: Snapshot): string[] {
+  return [
+    ...(d.head ? [`HEAD moveu: ${a.head.slice(0, 9)} -> ${b.head.slice(0, 9)} (confira \`git reflog\`)`] : []),
+    ...(d.indice ? ['o INDICE do git mudou (entradas staged) — confira `git diff --cached`'] : []),
+    ...d.caminhos.map((p) => `${p}  [${a.sujos.get(p)?.xy ?? 'limpo'} -> ${b.sujos.get(p)?.xy ?? 'limpo'}]`),
+  ];
+}
+
+/**
+ * Devolve ao estado de `antes` o que foi escrito nos `caminhos` — so o que da para devolver sem
+ * destruir: conteudo de arquivo (do snapshot, ou do blob no HEAD CAPTURADO — nunca `git checkout`,
+ * que le do INDICE). Arquivo criado do zero fica; indice e HEAD nao sao tocados. Devolve o residuo
+ * DESTES caminhos (+ indice/HEAD) — o resto da arvore e assunto de quem o sujou de proposito.
+ */
+function desfazerEscrita(antes: Snapshot, caminhos: string[]): string[] {
+  for (const p of caminhos) {
+    const x = antes.sujos.get(p);
+    try {
+      if (x?.conteudo) {
+        mkdirSync(dirname(p), { recursive: true });
+        writeFileSync(p, x.conteudo);
+      } else if (!x && spawnSync('git', ['cat-file', '-e', `${antes.head}:${p}`]).status === 0) {
+        mkdirSync(dirname(p), { recursive: true });
+        writeFileSync(p, git(['cat-file', 'blob', `${antes.head}:${p}`]));
+      }
+    } catch {
+      // aparece no residuo abaixo
+    }
+  }
+  const depois = tirarSnapshot();
+  const resto = diferenca(antes, depois);
+  const tentados = new Set(caminhos);
+  return descrever({ ...resto, caminhos: resto.caminhos.filter((p) => tentados.has(p)) }, antes, depois);
+}
+
+function abortarPorEscrita(marca: string, quem: string, antes: Snapshot, dif: Diferenca, depois: Snapshot): never {
+  const escrito = descrever(dif, antes, depois);
+  const residuo = desfazerEscrita(antes, dif.caminhos);
+  throw new Abortar(
+    [
+      `${marca}: ${quem} alterou a arvore versionada:`,
+      ...escrito.map((l) => `  - ${l}`),
+      'Toda medicao depois disso seria de OUTRA arvore — a rodada foi abortada e a matriz NAO foi gravada.',
+      residuo.length
+        ? `Restauracao INCOMPLETA (o motor nao apaga arquivo criado nem mexe no indice/HEAD) — confira a mao:\n${residuo
+            .map((l) => `  - ${l}`)
+            .join('\n')}`
+        : 'O conteudo alterado foi restaurado e conferido por snapshot.',
+    ].join('\n'),
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Execucao de um gate — com a invocacao do CI, sob o write-guard
+// ---------------------------------------------------------------------------------------------
+
+interface GateMedivel extends GateAlvo {
+  inv: Invocacao;
+  assinatura: string;
+}
+
+interface Execucao {
+  reprovou: boolean;
+  ms: number;
+  estourou: boolean;
+  cauda: string;
+}
+
+function rodarGate(g: GateMedivel): Execucao {
   const t0 = Date.now();
-  const r = spawnSync('bun', ['run', nome], {
+  const r = spawnSync(g.inv.argv[0], g.inv.argv.slice(1), {
     encoding: 'utf8',
     timeout: TIMEOUT_MS,
+    maxBuffer: 256 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, CI: '1', FORCE_COLOR: '0' },
+    env: { ...process.env, CI: '1', FORCE_COLOR: '0', ...g.inv.env },
   });
   const ms = Date.now() - t0;
   // Timeout/kill nao e "passou": e ausencia de dado. Marcamos como estourou e a linha vira invalida.
   const estourou = r.signal !== null || r.error !== undefined;
-  return { reprovou: r.status !== 0, ms, estourou };
+  const cauda = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(-600);
+  return { reprovou: r.status !== 0, ms, estourou, cauda };
+}
+
+function rodarGuardado(g: GateMedivel, fase: string): Execucao {
+  const antes = tirarSnapshot();
+  const r = rodarGate(g);
+  const depois = tirarSnapshot();
+  const dif = diferenca(antes, depois);
+  if (!vazia(dif)) abortarPorEscrita('GATE-ESCREVEU', `\`${g.inv.argv.join(' ')}\` (${g.nome}, durante ${fase})`, antes, dif, depois);
+  return r;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -132,10 +347,7 @@ function sabotar(d: Defeito): string | null {
   if (!existsSync(d.alvo)) return `alvo inexistente: ${d.alvo}`;
 
   const antes = readFileSync(d.alvo, 'utf8');
-  const copia = join(tmp, d.alvo.replace(/\//g, '__'));
-  mkdirSync(tmp, { recursive: true });
-  copyFileSync(d.alvo, copia);
-  backups.set(d.alvo, copia);
+  registrarBackup(d.alvo);
 
   const r = spawnSync('perl', ['-i', '-pe', d.perl, d.alvo], { encoding: 'utf8' });
   if (r.status !== 0) return `perl falhou: ${(r.stderr || '').trim().slice(0, 200)}`;
@@ -170,11 +382,69 @@ function sabotar(d: Defeito): string | null {
   return null;
 }
 
-function restaurar(alvo: string): void {
-  const copia = backups.get(alvo);
-  if (!copia) return;
-  copyFileSync(copia, alvo);
-  backups.delete(alvo);
+// ---------------------------------------------------------------------------------------------
+// Dever de casa — receitas do vocabulario fechado, com efeito EXATO conferido por snapshot
+// ---------------------------------------------------------------------------------------------
+
+function executarReceita(dv: DeverDeCasa): string | null {
+  if (dv.receita === 'bump-versao') {
+    const [p] = saidasDoDever(dv);
+    const r = aplicarBumpVersao(readFileSync(p, 'utf8'));
+    if (!r.ok) return r.motivo;
+    writeFileSync(p, r.novo);
+    return null;
+  }
+  const [cmd, ...resto] = ARGV_REGENERAR_FINGERPRINTS;
+  const r = spawnSync(cmd, resto, {
+    encoding: 'utf8',
+    timeout: TIMEOUT_MS,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, CI: '1', FORCE_COLOR: '0' },
+  });
+  if (r.signal !== null || r.error) return `nao terminou (${r.signal ?? r.error?.message})`;
+  if (r.status !== 0) return `saiu ${r.status}: ${`${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(-200)}`;
+  return null;
+}
+
+/**
+ * Aplica o dever de casa do defeito. Devolve o motivo de invalidez (ou null) e os caminhos que ele
+ * alterou. Toda saida declarada entra no backup ANTES de a receita rodar — ela e restaurada junto
+ * com o alvo, no fim do defeito.
+ */
+function fazerDeverDeCasa(d: Defeito): { invalido: string | null; tocados: string[] } {
+  const inicio = tirarSnapshot();
+  for (const s of new Set(d.deveres.flatMap(saidasDoDever))) {
+    if (s === d.alvo) return { invalido: `a receita teria como saida o proprio alvo (${s})`, tocados: [] };
+    if (!existsSync(s)) return { invalido: `a saida ${s} nao existe — receita sem onde agir`, tocados: [] };
+    if (inicio.sujos.has(s)) {
+      return { invalido: `a saida ${s} ja estava suja antes do dever de casa — o efeito nao se confere`, tocados: [] };
+    }
+    registrarBackup(s);
+  }
+
+  for (const dv of d.deveres) {
+    const antes = tirarSnapshot();
+    const falha = executarReceita(dv);
+    const depois = tirarSnapshot();
+    const dif = diferenca(antes, depois);
+    const permitidas = new Set(saidasDoDever(dv));
+    // O ALVO nunca e saida (conferido acima), entao qualquer byte dele que a receita mexa cai aqui.
+    // E a exigencia e o alvo INTEIRO, nao a presenca da linha sabotada: a sabotagem pode virar
+    // codigo morto sem sair do arquivo.
+    const fora = { ...dif, caminhos: dif.caminhos.filter((p) => !permitidas.has(p)) };
+    if (!vazia(fora)) {
+      abortarPorEscrita('DEVER-DE-CASA-ESCREVEU-FORA', `a receita "${textoDoDever(dv)}" (saidas: ${[...permitidas].join(', ')})`, antes, fora, depois);
+    }
+    if (falha) return { invalido: `dever de casa "${textoDoDever(dv)}" falhou: ${falha}`, tocados: [] };
+    if (dif.caminhos.length === 0) {
+      return {
+        invalido: `dever de casa "${textoDoDever(dv)}" NAO alterou nada — a linha mediria o autor DESCUIDADO sob o nome do diligente`,
+        tocados: [],
+      };
+    }
+  }
+  return { invalido: null, tocados: diferenca(inicio, tirarSnapshot()).caminhos };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -184,12 +454,12 @@ function restaurar(alvo: string): void {
 function main(): number {
   // Guard 1a: arvore limpa. Sem isso, sujeira previa fica indistinguivel da sabotagem — e a
   // restauracao por copia devolveria o arquivo ao estado sujo achando que devolveu ao limpo.
-  const sujo = spawnSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).stdout.trim();
-  if (sujo && !args.includes('--permitir-sujo')) {
+  const inicial = tirarSnapshot();
+  if (inicial.sujos.size && !args.includes('--permitir-sujo')) {
     console.error('ABORTADO: arvore suja. A medicao muta arquivos reais e precisa de um estado');
     console.error('limpo para restaurar. Commite ou descarte antes (ou use --permitir-sujo se');
     console.error('as mudancas nao tocam nenhum alvo do corpus).');
-    console.error(sujo.split('\n').slice(0, 10).join('\n'));
+    console.error([...inicial.sujos.entries()].slice(0, 10).map(([p, e]) => `${e.xy} ${p}`).join('\n'));
     return 1;
   }
 
@@ -198,8 +468,13 @@ function main(): number {
     return 1;
   }
   let defeitos: Defeito[] = [];
-  for (const f of readdirSync(CORPUS_DIR).filter((f) => f.endsWith('.def')).sort()) {
-    defeitos.push(...parseDefeitos(readFileSync(join(CORPUS_DIR, f), 'utf8'), join(CORPUS_DIR, f)));
+  try {
+    for (const f of readdirSync(CORPUS_DIR).filter((f) => f.endsWith('.def')).sort()) {
+      defeitos.push(...parseDefeitos(readFileSync(join(CORPUS_DIR, f), 'utf8'), join(CORPUS_DIR, f)));
+    }
+  } catch (e) {
+    console.error(`ABORTADO: corpus invalido — ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
   }
   if (soDefeitos) defeitos = defeitos.filter((d) => soDefeitos.includes(d.id));
   if (defeitos.length === 0) {
@@ -207,15 +482,54 @@ function main(): number {
     return 1;
   }
 
-  let gates: GateAlvo[] = gatesCandidatos(fonteCI).filter((g) => g.bloqueiaPR);
-  if (soGates) gates = gates.filter((g) => soGates.includes(g.nome));
-  if (gates.length === 0) {
+  const bloqueantes: GateAlvo[] = gatesCandidatos(fonteCI).filter((g) => g.bloqueiaPR);
+  const selecionados = soGates ? bloqueantes.filter((g) => soGates.includes(g.nome)) : bloqueantes;
+  if (selecionados.length === 0) {
     console.error('ABORTADO: nenhum gate candidato (o filtro --gates nao casou nada?).');
+    return 1;
+  }
+  for (const n of soGates ?? []) {
+    if (!bloqueantes.some((g) => g.nome === n)) console.error(`aviso: --gates cita "${n}", que nao e gate bloqueante do ci.yml`);
+  }
+
+  // Guard 6: paridade de invocacao, ANTES de gastar o baseline.
+  const gates: GateMedivel[] = [];
+  const naoReproduziveis: string[] = [];
+  for (const g of selecionados) {
+    const inv = invocacaoDoCI(fonteCI, g.nome);
+    if (inv.ok) gates.push({ ...g, inv: { argv: inv.argv, env: inv.env }, assinatura: assinaturaInvocacao(inv) });
+    else naoReproduziveis.push(inv.motivo);
+  }
+  if (naoReproduziveis.length) {
+    console.error('ABORTADO: INVOCACAO-NAO-REPRODUZIVEL — o motor so mede o que o CI roda, exatamente:');
+    for (const m of naoReproduziveis) console.error(`  - ${m}`);
+    console.error('Transforme o step num comando simples, ou exclua o gate com --gates.');
+    return 1;
+  }
+
+  // Guard 8a: todo @suspeito nomeia um gate bloqueante. Typo miraria o vazio e o gate de verdade
+  // seguiria sem mira — melhor parar agora que depois do baseline.
+  const nomesBloq = new Set(bloqueantes.map((g) => g.nome));
+  const desconhecidos = defeitos.filter((d) => d.suspeito && !nomesBloq.has(d.suspeito));
+  if (desconhecidos.length) {
+    console.error('ABORTADO: SUSPEITO-DESCONHECIDO — @suspeito que nao e gate bloqueante do ci.yml:');
+    for (const d of desconhecidos) console.error(`  - ${d.id}: ${d.suspeito} (${d.arquivo}:${d.linha})`);
     return 1;
   }
 
   console.log(`plano: ${defeitos.length} defeito(s) x ${gates.length} gate(s) bloqueante(s)`);
   console.log(`gates: ${gates.map((g) => g.nome).join(', ')}`);
+  const naoCru = gates.filter((g) => g.inv.argv.join(' ') !== `bun run ${g.nome}` || Object.keys(g.inv.env).length);
+  if (naoCru.length) {
+    console.log('invocacao do CI (≠ `bun run <nome>` cru):');
+    for (const g of naoCru) console.log(`  ${g.nome.padEnd(22)} ${g.assinatura}`);
+  }
+  for (const d of defeitos) {
+    if (d.deveres.length) console.log(`dever de casa de ${d.id}: ${d.deveres.map(textoDoDever).join(' + ')}`);
+    if (d.suspeito && !gates.some((g) => g.nome === d.suspeito)) {
+      console.log(`aviso: o suspeito de ${d.id} (${d.suspeito}) esta FORA desta rodada — a linha NAO o medira`);
+    }
+  }
   if (dry) {
     console.log('--dry: nada foi executado.');
     return 0;
@@ -226,9 +540,11 @@ function main(): number {
   console.log('\nbaseline (repo limpo — todo gate precisa estar VERDE):');
   const baseline: BaselineGate[] = [];
   for (const g of gates) {
-    const r = rodarGate(g.nome);
-    baseline.push({ gate: g.nome, verde: !r.reprovou && !r.estourou, ms: r.ms });
-    console.log(`  ${!r.reprovou && !r.estourou ? 'verde' : 'VERMELHO'}  ${g.nome.padEnd(34)} ${r.ms}ms`);
+    const r = rodarGuardado(g, 'o baseline');
+    const verde = !r.reprovou && !r.estourou;
+    baseline.push({ gate: g.nome, verde, ms: r.ms });
+    console.log(`  ${verde ? 'verde' : 'VERMELHO'}  ${g.nome.padEnd(34)} ${r.ms}ms${r.estourou ? ` (ESTOUROU ${TIMEOUT_MS}ms)` : ''}`);
+    if (!verde && r.cauda) console.log(r.cauda.split('\n').map((l) => `      | ${l}`).join('\n'));
   }
   const jaVermelhos = baseline.filter((b) => !b.verde);
   if (jaVermelhos.length && !args.includes('--ignorar-baseline')) {
@@ -254,7 +570,25 @@ function main(): number {
   for (const d of defeitos) {
     console.log(`\ndefeito ${d.id}  (alvo ${d.alvo}${d.suspeito ? `, suspeito: ${d.suspeito}` : ''})`);
     let invalido = sabotar(d);
+    let tocados: string[] = [];
+    if (!invalido && d.deveres.length) {
+      const dc = fazerDeverDeCasa(d);
+      invalido = dc.invalido;
+      tocados = dc.tocados;
+      if (!invalido) console.log(`  dever de casa: ${d.deveres.map(textoDoDever).join(' + ')} — tocou ${tocados.join(', ')}`);
+    }
     const execucoes: ExecucaoGate[] = [];
+    const registrar = (g: GateMedivel, r: Execucao): void => {
+      const fp = fps.get(g.nome)!;
+      execucoes.push({
+        gate: g.nome,
+        reprovou: r.reprovou,
+        ms: r.ms,
+        fingerprint: fp.fingerprint,
+        fonteResolvida: fp.resolvida,
+        invocacao: g.assinatura,
+      });
+    };
     let parouCedo = false;
 
     if (invalido) {
@@ -262,8 +596,7 @@ function main(): number {
     } else {
       let vermelhos = 0;
       for (const g of ordenados) {
-        const r = rodarGate(g.nome);
-        const fp = fps.get(g.nome)!;
+        const r = rodarGuardado(g, `o defeito ${d.id}`);
         if (r.estourou) {
           // Estouro NAO e "o gate passou": e ausencia de dado. A linha inteira vira invalida, em
           // vez de registrar um verde que nunca foi observado.
@@ -271,13 +604,7 @@ function main(): number {
           invalido = `gate ${g.nome} estourou o tempo (${TIMEOUT_MS}ms)`;
           break;
         }
-        execucoes.push({
-          gate: g.nome,
-          reprovou: r.reprovou,
-          ms: r.ms,
-          fingerprint: fp.fingerprint,
-          fonteResolvida: fp.resolvida,
-        });
+        registrar(g, r);
         if (r.reprovou) {
           vermelhos++;
           console.log(`  VERMELHO ${g.nome} (${r.ms}ms)`);
@@ -290,14 +617,43 @@ function main(): number {
           }
         }
       }
+
+      // Guard 8b: o suspeito que a poda deixou de fora roda agora, sozinho. `parouCedo` fica como
+      // esta — a linha ja nao certifica exclusivo de ninguem, com ou sem esta execucao.
+      const suspeito = ordenados.find((g) => g.nome === d.suspeito);
+      if (!invalido && suspeito && !execucoes.some((e) => e.gate === suspeito.nome)) {
+        const r = rodarGuardado(suspeito, `o suspeito de ${d.id}`);
+        if (r.estourou) {
+          invalido = `o suspeito ${suspeito.nome} estourou o tempo (${TIMEOUT_MS}ms) na execucao fora da poda`;
+          console.log(`  ${suspeito.nome}: ESTOUROU o tempo — linha invalidada`);
+        } else {
+          registrar(suspeito, r);
+          console.log(`  ${r.reprovou ? 'VERMELHO' : 'verde'} ${suspeito.nome} (suspeito, rodado FORA da poda — ${r.ms}ms)`);
+        }
+      }
     }
-    restaurar(d.alvo);
+
+    restaurarTudo();
+    // Guard 10: controle de SAIDA. A arvore tem de voltar ao estado inicial, conferido por conteudo.
+    const agora = tirarSnapshot();
+    const residuo = diferenca(inicial, agora);
+    if (!vazia(residuo)) {
+      throw new Abortar(
+        [
+          `RESTAURACAO-INCOMPLETA: depois do defeito ${d.id} a arvore NAO voltou ao estado inicial:`,
+          ...descrever(residuo, inicial, agora).map((l) => `  - ${l}`),
+          'A matriz NAO foi gravada: o proximo defeito seria medido sobre outra arvore.',
+        ].join('\n'),
+      );
+    }
+
     linhas.push({
       defeito: d.id,
       defeitoFingerprint: fingerprintDefeito(d),
       alvo: d.alvo,
       suspeito: d.suspeito,
       origem: d.origem,
+      ...(d.deveres.length ? { deveres: d.deveres.map(textoDoDever), tocados } : {}),
       execucoes,
       parouCedo,
       invalido,
@@ -310,7 +666,7 @@ function main(): number {
   const matriz: Matriz = {
     schemaVersion: SCHEMA_VERSION,
     medidoEm: new Date().toISOString(),
-    sourceHead: spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
+    sourceHead: inicial.head,
     dispensados: anterior?.dispensados ?? [],
     // O baseline ACUMULA por uniao, com a medicao mais recente de cada gate vencendo. Substituir
     // apagaria os gates das rodadas anteriores — e como `derivar()` usa o baseline para saber
@@ -331,7 +687,14 @@ function main(): number {
   };
   writeFileSync(MATRIZ_PATH, `${JSON.stringify(matriz, null, 2)}\n`);
 
-  console.log(`\n${resumir(matriz)}`);
+  // O resumo usa o MESMO universo e as MESMAS assinaturas do gate do CI: certificar aqui com uma
+  // regra e la com outra seria o motor e o gate discordando calados sobre o mesmo JSON.
+  const assinaturas = new Map<string, string>();
+  for (const g of bloqueantes) {
+    const inv = invocacaoDoCI(fonteCI, g.nome);
+    if (inv.ok) assinaturas.set(g.nome, assinaturaInvocacao(inv));
+  }
+  console.log(`\n${resumir(matriz, { universo: bloqueantes.map((g) => g.nome), assinaturas })}`);
   console.log(`\ngravado em ${MATRIZ_PATH}`);
   const invalidas = linhas.filter((l) => l.invalido);
   if (invalidas.length) {
@@ -344,6 +707,15 @@ function main(): number {
 let codigo = 2;
 try {
   codigo = main();
+} catch (e) {
+  restaurarTudo();
+  if (e instanceof Abortar) {
+    console.error(`\nABORTADO — ${e.message}`);
+    codigo = 1;
+  } else {
+    console.error(e);
+    codigo = 2;
+  }
 } finally {
   restaurarTudo();
 }
