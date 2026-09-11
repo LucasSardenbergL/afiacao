@@ -3,14 +3,17 @@
 > Alvo: `.claude/skills/fecho/scripts/edges-pendentes.sh` (Passo 3 do `/fecho`). Classe:
 > [sonda-le-worktree-defasado.md](sonda-le-worktree-defasado.md) — "a proteção não se aplicava a
 > SI PRÓPRIA". O lado do CLI (a allowlist do cron lida da ref dentro do `pendencias-deploy.ts`) é o
-> #2464; este registro é o lado de quem CONSOME o CLI. Medido no `/fecho` de 2026-09-10 (~23:10Z).
+> #2464, mergeado em 2026-09-11 00:45Z; este registro é o lado de quem CONSOME o CLI — e continua
+> necessário depois dele, porque a worktree defasada roda justamente o CLI de ANTES do #2464, e a
+> defasagem de código e SQL não se resolve lendo a allowlist da ref. Medido no `/fecho` de
+> 2026-09-10 (~23:10Z).
 
 ## O defeito
 
 `edges-pendentes.sh` lê da REF tudo o que tira do git — mapa de fingerprints, janela, marcador de
 aposentadoria — e o `pendencias-deploy.ts` lê da REF o **esperado**. Mas o CLI **roda** do working
-tree: o código, o SQL e a allowlist do cron (`_shared/sonda-cron-alvos.ts`, um `import`) vêm do
-disco. No `/fecho` a worktree está quase sempre atrás da main — a branch da sessão foi
+tree: o código e o SQL vêm do disco — e, até o #2464, também a allowlist do cron que decidia
+"intruso" (`_shared/sonda-cron-alvos.ts`, um `import`). No `/fecho` a worktree está quase sempre atrás da main — a branch da sessão foi
 squash-mergeada e a main andou —, e o `/fecho` de 2026-09-10 mediu o custo: worktree 11 commits
 atrás, onda 5 do cron (#2461) já aplicada no banco e ausente do disco ⇒
 

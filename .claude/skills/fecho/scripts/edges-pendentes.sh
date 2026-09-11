@@ -93,8 +93,9 @@
 #     pendente como antes de o ledger existir. Nunca "limpo".
 #
 # 🧭 A FRESCURA DO CLI — o veredito do ledger só vale se o CLI que o deu é o da REF (2026-09-10).
-# Tudo o que este script lê do git vem da REF; o CLI, não: ele roda DESTE working tree e importa
-# daqui o próprio código e a allowlist do cron (`_shared/sonda-cron-alvos.ts`). No /fecho a
+# Tudo o que este script lê do git vem da REF; o CLI, não: ele roda DESTE working tree — o código
+# e o SQL vêm do disco, e, num CLI anterior ao #2464, também a allowlist do cron que decidia
+# "intruso" (`_shared/sonda-cron-alvos.ts`). No /fecho a
 # worktree está quase sempre ATRÁS da main (a branch da sessão foi squash-mergeada, a main andou),
 # e o /fecho de 2026-09-10 mediu o custo: worktree 11 commits atrás, onda 5 do cron (#2461) já no
 # banco e fora do working tree → `❌ MECÂNICA: o banco sonda edge(s) que o repo NÃO aprovou` →
@@ -693,10 +694,11 @@ fi
 if [ "$ledger_defasada" = 1 ]; then
   echo "⚠️ LEDGER_WORKTREE_DEFASADA — o CLI do ledger desta worktree NÃO é o da $REF; divergem do fecho de imports dele:"
   sed 's/^/     /' "$tmp/cli_defasado"
-  echo "   O pendencias:deploy carrega DAQUI o código e a allowlist do cron (alvo novo do cron já no"
-  echo "   banco sai como '❌ MECÂNICA: o banco sonda edge(s) que o repo NÃO aprovou'). O veredito dele"
-  echo "   foi DESCARTADO: a edge sem resposta na janela viva segue pendente (fail-closed) — e não é"
-  echo "   caso de sonda nem de deploy às cegas: o ledger pode já ter a resposta. Sincronize e meça de novo:"
+  echo "   O pendencias:deploy roda DAQUI: código e SQL de outra versão (e, se anterior ao #2464, a"
+  echo "   allowlist do cron — alvo novo já no banco saía como 'o banco sonda edge(s) que o repo NÃO"
+  echo "   aprovou'). O veredito dele foi DESCARTADO: a edge sem resposta na janela viva segue"
+  echo "   pendente (fail-closed) — e não é caso de sonda nem de deploy às cegas: o ledger pode já"
+  echo "   ter a resposta. Sincronize e meça de novo:"
   echo "      $(remedio_sincronizar)"
   # A saída do CLI daqui NÃO é repetida: é de OUTRA versão, e o remédio que ela imprime não vale —
   # o de 2026-09-10 era um UPDATE que desativaria o alvo APROVADO (desfaria a migration aplicada,
