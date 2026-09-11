@@ -597,6 +597,18 @@ a `origin/main` **em disco** é o mesmo defeito um nível acima (medido: fetch 0
 do ref no topo. Detalhe e a decisão sobre "não consigo consultar":
 [sonda-le-worktree-defasado.md](../historico/sonda-le-worktree-defasado.md).
 
+**E a allowlist do cron também vem da REF — a classe reincidiu nos DOIS sensores (2026-09-10).** A
+recusa do bloco legado (`guardEfeitoLegado`: edge com relé não leva `POST {"probe":true}` direto) e o
+guard de intrusos do `pendencias:deploy` liam `SONDA_CRON_ALVOS` do **disco**. Worktree atrás da main
+⇒ num, a recusa sumia calada (fail-OPEN); no outro, saía `UPDATE … ativo = false` numa edge aprovada.
+Hoje os dois leem `origin/main:_shared/sonda-cron-alvos.ts` pelo parser compartilhado
+(`scripts/lib/sonda-cron-allowlist.ts`, AST do TS — regex aprovaria slug citado em comentário); falha
+de leitura é MECÂNICA (`ALLOWLIST_ILEGIVEL`), nunca lista vazia, que desligaria o guard para todas; o
+disco só NOMEIA a defasagem (`ALLOWLIST_DEFASADA` + N commits atrás/à frente). **Assinatura da classe
+e o gate:** importador novo de `_shared/sonda-cron-alvos` em `scripts/`/`db/`/`.claude/` reprova em
+`scripts/gate-allowlist-sonda-da-ref.test.ts` — quem decide contra a ref usa a lib; quem lê disco ×
+disco entra na lista de permitidos com o porquê escrito.
+
 **QUEM entra no `--caro` é MEDIDO, não presumido — o critério é o EFEITO, não a FORMA do handler.**
 Regra curta: edge que **não escreve nem chama serviço externo** no fluxo real é BARATA, e o pior
 caso de sondá-la com bundle pré-sensor é computar e devolver. O proxy "a edge despacha por

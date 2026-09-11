@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
 import { lerCanariasDoRepo } from './canaria-leitor-do-repo';
+import * as kit from './lib/sonda-cron-allowlist';
 
 import {
   awkDoPasso,
@@ -39,8 +40,10 @@ afterEach(() => {
 });
 
 /**
- * Repo de mentira com `supabase/config.toml`, um `versao.ts` por edge pedida e o mapa de
- * fingerprints cobrindo TODAS elas — o estado sadio, do qual cada teste sabota UMA coisa.
+ * Repo de mentira com `supabase/config.toml`, um `versao.ts` por edge pedida, o mapa de
+ * fingerprints cobrindo TODAS elas e a allowlist do cron com uma edge que nenhum teste daqui pede
+ * — o estado sadio, do qual cada teste sabota UMA coisa. (Os cenários de allowlist moram em
+ * `sonda-versao-sql-allowlist.test.ts`.)
  */
 function fixture(edges: Record<string, string>, ref = 'refdementira000000ab'): string {
   const raiz = mkdtempSync(join(tmpdir(), 'sonda-sql-'));
@@ -51,6 +54,10 @@ function fixture(edges: Record<string, string>, ref = 'refdementira000000ab'): s
   escreverMapaFingerprints(
     raiz,
     Object.fromEntries(Object.keys(edges).map((edge) => [edge, fp(edge)])),
+  );
+  writeFileSync(
+    join(raiz, kit.ARQ_ALLOWLIST),
+    'export const SONDA_CRON_ALVOS = [{ edge: "edge-com-rele-de-mentira", desde: null }];\n',
   );
   return raiz;
 }
@@ -166,6 +173,7 @@ describe('edge sem sensor não é sondável — falha ALTO, nunca SQL parcial', 
       escrever: (t) => saida.push(t),
       erro: (t) => erros.push(t),
       git: gitProibido(),
+      allowlist: kit,
     });
     expect(codigo).toBe(1);
     expect(saida).toEqual([]);
@@ -1219,6 +1227,7 @@ describe('CLI', () => {
       escrever: (t) => saida.push(t),
       erro: (t) => erros.push(t),
       git: gitFalso({ main: espelho(raiz, ['edge-a']) }),
+      allowlist: kit,
     });
     expect(codigo).toBe(0);
     expect(saida.join('')).toContain(`('edge-a', 'v1.0-alfa', '${fp('edge-a')}')`);
@@ -1234,6 +1243,7 @@ describe('CLI', () => {
       escrever: (t) => saida.push(t),
       erro: (t) => erros.push(t),
       git: gitProibido(),
+      allowlist: kit,
     });
     expect(codigo).toBe(1);
     expect(saida).toEqual([]);
@@ -1286,9 +1296,12 @@ function gitFalso(opts: {
  * que o marcador ganha uma dependência nova — que é o defeito medido em 2026-09-09.
  */
 function espelho(raiz: string, edges: string[]): Record<string, string> {
-  return Object.fromEntries(
-    fontesDoEsperado(resolverLeva(raiz, edges)).map((f) => [f.caminho, f.bytes]),
-  );
+  return {
+    ...Object.fromEntries(fontesDoEsperado(resolverLeva(raiz, edges)).map((f) => [f.caminho, f.bytes])),
+    // A allowlist do cron também é lida NA ref (a recusa do bloco legado), e o estado sadio é a ref
+    // igual ao disco. Não é proveniência do `esperado(...)`: por isso entra aqui, e não pela fatia.
+    [kit.ARQ_ALLOWLIST]: readFileSync(join(raiz, kit.ARQ_ALLOWLIST), 'utf8'),
+  };
 }
 
 /** `git` que REPROVA se for chamado — prova que um ramo anterior abortou antes do guard. */
@@ -1301,7 +1314,7 @@ function gitProibido(): ExecutorGit {
 function rodar(raiz: string, argv: string[], git: ExecutorGit) {
   const saida: string[] = [];
   const erros: string[] = [];
-  const codigo = main(argv, { raiz, escrever: (t) => saida.push(t), erro: (t) => erros.push(t), git });
+  const codigo = main(argv, { raiz, escrever: (t) => saida.push(t), erro: (t) => erros.push(t), git, allowlist: kit });
   return { codigo, saida: saida.join(''), erros: erros.join('') };
 }
 
@@ -2183,6 +2196,7 @@ describe('CLI do modo canária — as flags sem sentido são RECUSADAS, não ign
       escrever: (t) => saida.push(t),
       erro: (t) => erros.push(t),
       git: gitEspelho(RAIZ_REPO),
+      allowlist: kit,
     });
     expect(rc).toBe(1);
     expect(saida).toHaveLength(0);
@@ -2196,6 +2210,7 @@ describe('CLI do modo canária — as flags sem sentido são RECUSADAS, não ign
       escrever: (t) => saida.push(t),
       erro: () => {},
       git: gitEspelho(RAIZ_REPO),
+      allowlist: kit,
       lerCanarias: lerCanariasReal,
     });
     expect(rc).toBe(0);
@@ -2210,6 +2225,7 @@ describe('CLI do modo canária — as flags sem sentido são RECUSADAS, não ign
       escrever: (t) => saida.push(t),
       erro: (t) => erros.push(t),
       git: gitEspelho(RAIZ_REPO, 'copilot-analyze'),
+      allowlist: kit,
       lerCanarias: lerCanariasReal,
     });
     expect(rc).toBe(1);
@@ -2272,6 +2288,7 @@ function rodarCli(argv: string[], git: ExecutorGit) {
     escrever: (t) => saida.push(t),
     erro: (t) => erros.push(t),
     git,
+    allowlist: kit,
     lerCanarias: lerCanariasReal,
   });
   return { codigo, saida: saida.join(''), erros: erros.join('\n') };
@@ -2368,6 +2385,7 @@ describe('modo canária: a fatia SEGUE o `index.ts`, que é de onde o marcador s
       escrever: (t) => saida.push(t),
       erro: (t) => erros.push(t),
       git: gitDivergindoEm(RAIZ_REPO, []),
+      allowlist: kit,
       lerCanarias: regravadoDepois,
     });
     expect(rc).toBe(1);
@@ -2395,6 +2413,7 @@ describe('modo canária: a fatia SEGUE o `index.ts`, que é de onde o marcador s
         escrever: (t) => saida.push(t),
         erro: (t) => erros.push(t),
         git: gitDivergindoEm(RAIZ_REPO, []),
+        allowlist: kit,
         lerCanarias: instavel,
       },
     );
@@ -2413,7 +2432,10 @@ describe('modo canária: a fatia SEGUE o `index.ts`, que é de onde o marcador s
   });
 
   it('no modo SONDA o mesmo mapa divergente segue abortando — lá ele É metade do esperado', () => {
-    const r = rodarCli(['copilot-analyze'], gitDivergindoEm(RAIZ_REPO, [MAPA]));
+    // `analytics-outbox-drain` e NÃO uma edge da allowlist do cron: a recusa do bloco legado roda
+    // ANTES da comparação da fatia (ela não depende do disco), então uma edge com relé sairia
+    // RECUSADA e este teste mediria o outro guard. Quem trocar por uma allowlistada vê isso aqui.
+    const r = rodarCli(['analytics-outbox-drain'], gitDivergindoEm(RAIZ_REPO, [MAPA]));
     expect(r.codigo).toBe(1);
     expect(r.saida).toBe('');
     expect(r.erros).toContain(MAPA);
@@ -2831,6 +2853,7 @@ describe('o guard julga com o gitReal — não só com git de mentira', () => {
       escrever: (t) => saida.push(t),
       erro: (t) => erros.push(t),
       git: gitReal(raiz),
+      allowlist: kit,
       lerCanarias: lerCanariasReal,
     });
     expect(codigo, `a CLI recusou um repo sincronizado: ${erros.join('\n')}`).toBe(0);
@@ -2849,6 +2872,7 @@ describe('o guard julga com o gitReal — não só com git de mentira', () => {
       escrever: (t) => saida.push(t),
       erro: (t) => erros.push(t),
       git: gitReal(raiz),
+      allowlist: kit,
       lerCanarias: lerCanariasReal,
     });
     expect(codigo).toBe(1);

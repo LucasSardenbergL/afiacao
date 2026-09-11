@@ -234,3 +234,88 @@ nomeando a defasagem. Falsificação versionada em `scripts/mutcheck.d/pendencia
 (uma mutação por camada). O irmão desta classe no `sonda:sql` — o `guardEfeitoLegado` também lê a
 allowlist do disco, e ali o furo é fail-OPEN (edge aprovada escapa da recusa do POST legado) — ficou
 como tarefa separada.
+
+## Recorrência, parte 2: o irmão no `sonda:sql` — e ali o furo era fail-OPEN
+
+A tarefa separada que a seção acima deixou nomeada. O `guardEfeitoLegado` RECUSA o bloco LEGADO do
+`sonda:sql` — `POST {"probe":true}` direto na edge, que num bundle pré-sensor executa o FLUXO REAL
+(medido: `monthly-report` chegou ao Resend; `calculate-scores` fez 11 escritas) — para as edges que
+já têm o caminho seguro, o relé por `OPTIONS`. A lista dessas edges vinha do `import` de
+`SONDA_CRON_ALVOS` na **borda da CLI**.
+
+**A direção do furo é a pior das duas.** No `pendencias:deploy` o disco defasado produzia um remédio
+destrutivo que o humano ainda podia recusar; aqui a proteção **sumia calada**: num worktree atrás da
+main, `omie-desconto-backfill` (que a main já tinha posto no relé, e que ESCREVE) não estava no
+disco, o guard não recusava, e o bloco saía igual ao de uma edge sem caminho seguro. Fail-OPEN no
+caso mais comum do repo.
+
+**Por que escapou aos testes:** o `guardEfeitoLegado` era testado SOZINHO, com uma lista fixa
+(`const RELE = [...]`), e **nenhum teste chamava o `main` com a allowlist**. O defeito não estava na
+função testada — estava na FIAÇÃO entre a borda e ela, que é justamente o que o teste unitário de
+uma função pura não alcança. Lição que generaliza: *função pura verde + borda não testada = guard
+decorativo*; quem escolhe a FONTE é a borda, e é dela que o teste tem de partir.
+
+**O fix** (`lerAllowlistDoRele`, `scripts/sonda-versao-sql.ts`):
+
+- a allowlist passa a ser lida **na ref**, dentro do `main`; a borda injeta só o PARSER. A injeção
+  continua existindo pela restrição real do arquivo — o eval da skill `lovable-deploy-verify` COPIA
+  `sonda-versao-sql.ts` + `sonda-fingerprint.ts` para um diretório temporário, e um import de topo
+  para `supabase/functions/` (ou para `scripts/lib/`, que puxa o `typescript`) fez 7 cenários do eval
+  devolverem `SQL_VAZIO`. O tipo vem por `import type`, que a transpilação apaga — verificado
+  carregando o módulo copiado para um `mktemp -d` com só os dois arquivos;
+- `git show` que falha, ou texto que o parser não lê, é **mecânica** (`ALLOWLIST_ILEGIVEL`, nada
+  emitido). Lista vazia desligaria a recusa para TODAS as edges — é o mesmo "ausente ≠ zero" do
+  #2464, pela porta oposta;
+- `DependenciasCli.allowlist` é **obrigatório no tipo**, pelo motivo que o `git` já carregava:
+  opcional valia "nenhuma" (`?? []`), e um guard que some em quem esquece de passá-lo é fail-OPEN.
+  O compilador cobra — e cobrou, nos 12 pontos de chamada da suíte;
+- **um `git fetch` por execução** (`umFetchPorExecucao`): a ref tem dois leitores no modo sonda (a
+  allowlist, que decide a recusa, e a fatia do `esperado(...)`), e dois fetches seriam duas MEDIÇÕES
+  — a main pode andar entre elas, e a recusa julgaria uma ref enquanto o veredito julga outra;
+- a recusa vem **antes** da comparação da fatia: ela não depende do disco (o relé não lê este
+  worktree), então um worktree defasado não deve adiar a resposta certa. Consequência medida na
+  suíte: um teste do guard de sincronia que usava `copilot-analyze` passou a sair RECUSADO antes de
+  medir o que dizia medir — reancorado numa edge FORA da allowlist, com o porquê escrito no teste.
+
+**Disco ≠ ref: nomear, não decidir.** A assimetria entre os dois sensores é real e vale registrar:
+no `pendencias:deploy` a lista MENOR é a perigosa (gera UPDATE), aqui a lista menor é a que afrouxa
+a recusa — a direção segura seria a UNIÃO. Mesmo assim quem julga é só a ref, por uma razão de
+produto: edge aprovada só no worktree não tem relé no ar (a migration que a ativa no banco pode nem
+ter sido aplicada), e recusar mandaria o operador para um relé que não responde. O que o disco faz é
+NOMEAR a divergência (`ALLOWLIST_DEFASADA` + N commits atrás/à frente), e o aviso sobe para o topo
+do SQL quando a divergência mudou o que foi emitido — o stderr some, o SQL colado num chat sobrevive.
+
+### A varredura (passo 2 do `/matar-classe`) e o gate
+
+Assinatura usada: *o script consulta uma ref como autoridade* **e** *obtém dado versionado do
+working tree* (import de dado, `readFileSync`, `cat`/`grep` em shell) **e** *esse dado alimenta uma
+decisão sem ser conferido contra a ref*. Calibrada nos dois pré-fix (casou) e no pós-fix do #2464
+(não casou). 78 arquivos do escopo tocam ref; os afetados foram três, e os dois novos viraram chip:
+
+| site | dado do disco | o que sai errado |
+|---|---|---|
+| `sonda-versao-sql.ts` (este PR) | `SONDA_CRON_ALVOS` | recusa do bloco legado desaparece |
+| `scripts/heavy-install.sh --status` | `sha_de scripts/heavy.sh` | instalado == disco ≠ main ⇒ "EM VOO" + exit 0: o vigia cala e o heavy defasado fica |
+| `lovable-deploy-verify/SKILL.md` §bloco bash | `grep ... index.ts` do disco | closure de deploy com 5 arquivos onde a main tem 7 (o próprio doc mediu isso) |
+
+Já-correto, por conferirem contra a ref ou julgarem disco × disco: `pendencias-deploy.ts` (o disco só
+nomeia), `sonda-cron-prova.ts`, `edges-afetadas.ts` (lê um `git archive`), `edges-pendentes.sh`,
+`pendencias-pacote.ts`, `monitor-deploy.sh`, `pr-duplicata-guard.sh`, `wt-preflight-migration.ts`.
+
+**O gate** é `scripts/gate-allowlist-sonda-da-ref.test.ts`: varre `scripts/`, `db/` e `.claude/` e
+RECUSA importador novo de `_shared/sonda-cron-alvos` (o dado do disco) fora de uma lista fechada com
+justificativa escrita — hoje `pendencias-deploy.ts` ("só nomeia") e `sonda-cron-prova.ts` ("disco ×
+disco"). Em shell, recusa menção ao arquivo fora de um `git show`. Mede o CÓDIGO pelo stripper
+compartilhado (`removerComentarios`/`removerComentariosShell`), porque a própria lição está escrita
+em comentário nesses arquivos e o texto cru ficaria vermelho pela PROSA.
+
+Falsificado nos dois locales (`LC_ALL=C` e `pt_BR.UTF-8`), com controle verde na MESMA invocação e
+abortando antes do 1º `sed` se o controle não estivesse verde: import novo num script não listado →
+vermelho em `IMPORTADORES_PERMITIDOS`; leitura em shell → vermelho em "working tree em shell";
+permitido que deixa de importar → vermelho em "vira lista morta". E o detector tem CONTROLE
+versionado dentro do próprio gate: ele casa os três formatos de import e NÃO casa o caminho usado
+como dado (`ARQ_ALLOWLIST`), que é o que a lib faz.
+
+**Limite conhecido, nomeado em vez de escondido:** o gate cobre ESTA allowlist, não todo dado
+versionado. Um sensor novo que importe outra constante do repo para julgar contra a ref continua
+passando; para esse eixo o que existe é a varredura do `/matar-classe` e esta página.

@@ -1,0 +1,26 @@
+# Poder de discriminação da suíte sobre o LEITOR da allowlist do cron de sonda — o parser e o
+# diagnóstico da defasagem que o `pendencias:deploy` e o `sonda:sql` compartilham desde 2026-09-10
+# (`scripts/lib/sonda-cron-allowlist.ts`). Uma lista MENOR que a real é o pior erro possível nos dois
+# consumidores: num, a edge omitida vira intrusa e o relatório imprime o UPDATE que a desativa; no
+# outro, ela escapa da recusa e o bloco legado faz POST direto numa edge que tem o relé.
+# As 8 primeiras e as 2 do diagnóstico vieram de `pendencias-deploy-allowlist-ref.mut` junto com o
+# código; as da divergência nasceram aqui. Baseline verde na MESMA invocação é do harness.
+# @src: scripts/lib/sonda-cron-allowlist.ts
+# @test: scripts/lib/sonda-cron-allowlist.test.ts
+# Rode: scripts/mutcheck.sh scripts/lib/sonda-cron-allowlist.ts scripts/lib/sonda-cron-allowlist.test.ts scripts/mutcheck.d/sonda-cron-allowlist.mut
+PEGA | texto truncado passa (sem diagnostico de sintaxe)    | s/if \(sintaxe\.length > 0\) \{/if (false) {/
+PEGA | const local conta como a allowlist exportada         | s/if \(!st\.modifiers\?\.some\(\(m\) => m\.kind === ts\.SyntaxKind\.ExportKeyword\)\) continue;/void 0;/
+PEGA | elemento que nao e objeto e pulado, nao recusado     | s/if \(!ts\.isObjectLiteralExpression\(el\)\) throw ilegivel\(/if (!ts.isObjectLiteralExpression(el)) continue; void (/
+PEGA | objeto com spread e pulado, nao recusado             | s/if \(ts\.isSpreadAssignment\(p\)\) throw ilegivel\(/if (ts.isSpreadAssignment(p)) continue; void (/
+PEGA | edge vinda de identificador e aceita                 | s/!ts\.isStringLiteralLike\(p\.initializer\)\) \{/!(ts.isStringLiteralLike(p.initializer) || ts.isIdentifier(p.initializer))) {/
+PEGA | objeto sem edge e pulado, nao recusado               | s/if \(edge === null\) throw ilegivel\(/if (edge === null) continue; void (/
+PEGA | slug fora do formato e aceito                        | s/if \(!SLUG_EDGE\.test\(edge\)\) throw/if (false) throw/
+PEGA | array vazio vira "nenhuma aprovada"                  | s/if \(edges\.length === 0\) throw/if (edges.length < 0) throw/
+PEGA | a frente e atras trocados                            | s/aFrente: Number\(m\[1\]\), atras: Number\(m\[2\]\)/aFrente: Number(m[2]), atras: Number(m[1])/
+PEGA | saida fora do formato vira "0 atras" (ausente=zero)  | s/\} : null;/} : { aFrente: 0, atras: 0 };/
+PEGA | worktree atrasado nao manda sincronizar              | s/if \(w\.atras > 0\) \{/if (w.atras > 99) {/
+PEGA | so a frente cai em "edicao nao commitada"            | s/if \(w\.aFrente > 0\) return/if (false) return/
+PEGA | git que nao contou deixa de ser dito                 | s/if \(w === null\) return/if (w === undefined) return/
+PEGA | ordem trocada vira divergencia (conjunto vira lista) | s/if \(soNaMain\.length === 0 && soNoWorktree\.length === 0\) return null;/if (ref.join() === disco.join()) return null;/
+PEGA | edge so na main some da descricao                    | s/\.\.\.\(soNaMain\.length > 0 \? \[/...(false ? [/
+PEGA | edge so no worktree some da descricao                | s/\.\.\.\(soNoWorktree\.length > 0 \? \[/...(false ? [/

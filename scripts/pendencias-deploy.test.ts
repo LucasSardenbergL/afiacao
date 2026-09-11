@@ -28,13 +28,12 @@ import {
   type Observacao,
   type SondaSemIdentidade,
 } from './lib/pendencias-deploy';
+import { ARQ_ALLOWLIST } from './lib/sonda-cron-allowlist';
 import {
-  ARQ_ALLOWLIST,
   CONSULTAS_NUVEM,
   CONSUMIDOR_NUVEM,
   CRON_COLETOR,
   estadoDoWorktree,
-  extrairAlvosDaAllowlist,
   formatarSemIdentidade,
   FORMATO_JSON,
   lerAllowlists,
@@ -57,7 +56,6 @@ import {
   SQL_SONDA_CRON_DISPAROS,
   SQL_SONDA_CRON_MOTIVOS,
 } from './pendencias-deploy';
-import { SONDA_CRON_ALVOS } from '../supabase/functions/_shared/sonda-cron-alvos';
 
 const ESPERADOS: Record<string, Esperado> = {
   'edge-a': { fonte: 'aaa111', versao: 'v1.0-a' },
@@ -999,60 +997,9 @@ export function slugs(): ReadonlySet<string> {
 }
 `;
 
-describe('extrairAlvosDaAllowlist — lê a allowlist da ref pela AST, e só a forma que sabe ler', () => {
-  it('o arquivo REAL: o parser concorda com o import (contrato pinado ao formato de verdade)', () => {
-    const texto = readFileSync(join(__dirname, '..', ARQ_ALLOWLIST), 'utf8');
-    const lidos = extrairAlvosDaAllowlist(texto);
-    expect(lidos).toEqual(SONDA_CRON_ALVOS.map((a) => a.edge));
-    expect(lidos).toContain('omie-desconto-backfill');
-    expect(lidos.length).toBeGreaterThanOrEqual(10);
-  });
-
-  it('comentário e string que CITAM um slug não aprovam ninguém', () => {
-    const texto = ALLOWLIST_FIXTURE(
-      [
-        '  { edge: "edge-a", desde: null },',
-        '  // { edge: "fantasma-comentario", desde: null },',
-        '  { edge: "edge-b", desde: null, nota: \'{ edge: "fantasma-string" }\' },',
-      ].join('\n'),
-    );
-    expect(extrairAlvosDaAllowlist(texto)).toEqual(['edge-a', 'edge-b']);
-  });
-
-  it('entrada multi-linha é lida como a de uma linha só', () => {
-    const texto = ALLOWLIST_FIXTURE('  {\n    edge: "edge-a",\n    desde: null,\n  },\n  { edge: "edge-b", desde: null },');
-    expect(extrairAlvosDaAllowlist(texto)).toEqual(['edge-a', 'edge-b']);
-  });
-
-  // Cada forma ruim vem DEPOIS de uma entrada válida: sozinha, ela também cairia no "array vazio" e
-  // o teste ficaria verde por outra camada — a que ele diz testar poderia sumir sem ninguém ver.
-  const VALIDA = '  { edge: "edge-valida", desde: null },\n';
-  it.each([
-    ['edge vinda de identificador (com cara de slug)', `${VALIDA}  { edge: omie, desde: null },`],
-    ['elemento espalhado', `${VALIDA}  ...OUTRA_LISTA,`],
-    ['objeto com spread', `${VALIDA}  { ...BASE, edge: "edge-a", desde: null },`],
-    ['elemento que não é objeto', `${VALIDA}  "edge-a",`],
-    ['objeto sem edge', `${VALIDA}  { desde: null },`],
-    ['slug fora do formato de edge', `${VALIDA}  { edge: "Edge A", desde: null },`],
-    ['array vazio (ausente ≠ zero)', ''],
-  ])('%s → ALLOWLIST_ILEGIVEL (fail-closed, nunca uma lista menor)', (_nome, corpo) => {
-    expect(() => extrairAlvosDaAllowlist(ALLOWLIST_FIXTURE(corpo))).toThrow(/ALLOWLIST_ILEGIVEL/);
-  });
-
-  it('texto TRUNCADO → ALLOWLIST_ILEGIVEL: a lista parcial viraria intruso falso e o UPDATE destrutivo', () => {
-    const inteiro = ALLOWLIST_FIXTURE('  { edge: "edge-a", desde: null },\n  { edge: "edge-b", desde: null },');
-    const truncado = inteiro.slice(0, inteiro.indexOf('"edge-b"') + 3);
-    expect(() => extrairAlvosDaAllowlist(truncado)).toThrow(/ALLOWLIST_ILEGIVEL/);
-  });
-
-  it('sem o export (ou só um const local) → ALLOWLIST_ILEGIVEL', () => {
-    expect(() => extrairAlvosDaAllowlist('export const OUTRA = [];')).toThrow(/ALLOWLIST_ILEGIVEL/);
-    expect(() => extrairAlvosDaAllowlist('const SONDA_CRON_ALVOS = [{ edge: "edge-a" }];')).toThrow(
-      /ALLOWLIST_ILEGIVEL/,
-    );
-  });
-});
-
+// O parser (`extrairAlvosDaAllowlist`) mora em `scripts/lib/sonda-cron-allowlist.ts`, compartilhado
+// com o `sonda:sql`, e os testes dele moram com ele (`scripts/lib/sonda-cron-allowlist.test.ts`).
+// Aqui fica só a borda deste CLI: de onde cada lista vem.
 describe('lerAllowlists — a borda: ref pelo git, disco só para o diagnóstico', () => {
   const TEXTO = ALLOWLIST_FIXTURE('  { edge: "edge-da-main", desde: null },');
   const gitOk = () => ({ ok: true, saida: '0\t4' });
