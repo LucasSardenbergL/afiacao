@@ -3,17 +3,25 @@ import {
   omieEtapaToStatus,
   etapaConhecida,
   subtotalPedidoComDesconto,
+  apurarSubtotalPedido,
   construirItemsJson,
   precoUnitarioOmie,
   contarItensSemPreco,
   aplicarCorPreservandoItens,
   STATUS_GERIDO_OMIE,
 } from "./omie-pedido.ts";
+import { descontoItemOmie, receitaLiquidaItem } from "./desconto-omie.ts";
 
+// `rotular` e não `JSON.stringify` puro: o stringify serializa `Infinity`/`NaN` como "null", e
+// o assert que exigisse um número passaria cego sobre um não-finito — medido na suíte da régua
+// (desconto-omie_test.ts), onde uma mutação sobreviveu exatamente por isso. O subtotal é número
+// money-path; o comparador precisa enxergar o eixo que ele vigia.
+function rotular(v: unknown): string {
+  if (typeof v === "number" && !Number.isFinite(v)) return `<não-finito:${String(v)}>`;
+  return JSON.stringify(v) ?? "<undefined>";
+}
 function eq(a: unknown, b: unknown, msg: string) {
-  if (JSON.stringify(a) !== JSON.stringify(b)) {
-    throw new Error(`${msg}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
-  }
+  if (rotular(a) !== rotular(b)) throw new Error(`${msg}: ${rotular(a)} !== ${rotular(b)}`);
 }
 
 Deno.test("etapa→status casa o canon do omie-vendas-sync", () => {
@@ -55,13 +63,179 @@ Deno.test("todo status que omieEtapaToStatus produz está na lista enviada à RP
   }
 });
 
-Deno.test("subtotal soma com desconto percentual, || (qty 0→1, igual ao sync) e arredonda", () => {
-  eq(subtotalPedidoComDesconto([{ produto: { quantidade: 2, valor_unitario: 10 } }]), 20, "sem desconto");
-  eq(subtotalPedidoComDesconto([{ produto: { quantidade: 1, valor_unitario: 100, desconto: 10 } }]), 90, "10%");
-  eq(subtotalPedidoComDesconto([{ produto: { quantidade: 3, valor_unitario: 33.333 } }]), 100, "arredonda");
-  eq(subtotalPedidoComDesconto([{ produto: { quantidade: 0, valor_unitario: 10 } }]), 10, "qty 0 → 1 (|| igual ao sync)");
+// ── subtotal do pedido ────────────────────────────────────────────────────────────────────────
+// ⚠️ O PONTO DESTE BLOCO: o acervo gravado não distingue fórmula nenhuma. Medido em 2026-09-10,
+// 31.315/31.315 pais Omie têm `total == Σ qtd·preço` — o desconto nunca entrou, porque a fórmula
+// antiga lia `prod.desconto`, chave que a API do Omie NÃO tem. Onde o desconto é zero, qualquer
+// fórmula acerta; por isso os casos que decidem semântica usam desconto ≠ 0 e fixam o número que
+// SÓ a leitura do trio real produz. Âncora da régua: qtd=2, preço=100, desconto=10 → 180 (P) /
+// 190 (V); a fórmula antiga dava 200 nos dois.
+
+// Todo item de fixture traz `codigo_produto`: é o universo do subtotal (o item que vira linha de
+// `order_items`), e o payload real do Omie sempre o traz. O caso SEM código tem teste próprio.
+type ProdutoFixture = {
+  codigo_produto?: number;
+  quantidade?: number;
+  valor_unitario?: number;
+  desconto?: number;
+  tipo_desconto?: string;
+  percentual_desconto?: number | string;
+  valor_desconto?: number | string;
+};
+const item = (cod: number, p: ProdutoFixture) => ({ produto: { ...p, codigo_produto: cod } });
+
+Deno.test("subtotal sem desconto: || (qty 0→1, igual ao sync), arredonda, det sem produto", () => {
+  eq(subtotalPedidoComDesconto([item(1, { quantidade: 2, valor_unitario: 10 })]), 20, "sem desconto");
+  eq(subtotalPedidoComDesconto([item(1, { quantidade: 3, valor_unitario: 33.333 })]), 100, "arredonda");
+  eq(subtotalPedidoComDesconto([item(1, { quantidade: 0, valor_unitario: 10 })]), 10, "qty 0 → 1 (|| igual ao sync)");
   eq(subtotalPedidoComDesconto([{}]), 0, "det sem produto");
 });
+
+Deno.test("REGRESSÃO: a chave `desconto` não existe na API do Omie e NÃO move o subtotal", () => {
+  // Este assert exigia 90 até 2026-09-10 — o teste CANONIZAVA o bug (money-path.md §6): ele
+  // afirmava como desejada a leitura percentual de um campo que a origem nunca envia. Em produção
+  // isso nunca disparou (a chave é sempre `undefined`), então o que o assert antigo protegia era
+  // só a fórmula errada. Hoje a chave é ignorada: sem o trio real, não há desconto a aplicar.
+  eq(subtotalPedidoComDesconto([item(1, { quantidade: 1, valor_unitario: 100, desconto: 10 })]), 100, "chave inexistente");
+});
+
+Deno.test("DISCRIMINANTE: o trio real decide — percentual dá 180, valor dá 190, e nunca os 200 do bruto", () => {
+  const base = { quantidade: 2, valor_unitario: 100 };
+  eq(subtotalPedidoComDesconto([item(1, { ...base, tipo_desconto: "P", percentual_desconto: 10 })]), 180, "P 10%");
+  eq(subtotalPedidoComDesconto([item(1, { ...base, tipo_desconto: "V", valor_desconto: 10 })]), 190, "V R$ 10");
+  // O Omie manda os dois campos preenchidos e o discriminador escolhe; o outro é ignorado.
+  eq(subtotalPedidoComDesconto([item(1, { ...base, tipo_desconto: "V", valor_desconto: 10, percentual_desconto: 25 })]), 190, "V ignora o %");
+});
+
+Deno.test("o pedido REAL de prod (oben 12183048572, 2026-09-10): 1489,34 — não os 1629,25 gravados", () => {
+  // O primeiro pedido com desconto que a régua apurou em order_items: 1×460,25 a 5% (R$ 23,01)
+  // e 2×584,50 a 10% (R$ 116,90). `sales_orders.total` foi gravado BRUTO, 9,4% acima do que o
+  // cliente paga pelas mercadorias. É o defeito medido, não um cenário construído.
+  const det = [
+    item(1, { quantidade: 1, valor_unitario: 460.25, tipo_desconto: "P", percentual_desconto: 5 }),
+    item(2, { quantidade: 2, valor_unitario: 584.5, tipo_desconto: "P", percentual_desconto: 10 }),
+  ];
+  eq(subtotalPedidoComDesconto(det), 1489.34, "líquido do pedido real");
+});
+
+Deno.test("a base do desconto é o MESMO qty·preço gravado em order_items (qty 0 → 1 dos dois lados)", () => {
+  // O sync grava `quantity: prod.quantidade || 1` e `desconto_valor` sobre essa base. Se o
+  // subtotal usasse outra quantidade, cabeçalho e linhas contariam histórias diferentes.
+  eq(subtotalPedidoComDesconto([item(1, { quantidade: 0, valor_unitario: 10, tipo_desconto: "P", percentual_desconto: 10 })]), 9, "base 1×10");
+});
+
+Deno.test("sem desconto, o subtotal é BIT A BIT o do legado — a reconciliação não reescreve quem não tem desconto", () => {
+  // `reconciliar_pedidos_omie` reescreve o total quando ele muda mais de R$ 0,01. Se a fórmula nova
+  // arredondasse por linha (ou somasse em outra ordem), pedidos SEM desconto passariam a "mudar" e
+  // a primeira passada do reprocess viraria uma reconciliação em massa que não houve.
+  // A fórmula ANTIGA, verbatim (`(1 − d/100)` com d = 0, que é o que a chave inexistente dava).
+  const legado = (det: Array<{ produto: ProdutoFixture }>) =>
+    Math.round(det.reduce((s, d) => s + (d.produto.quantidade || 1) * (d.produto.valor_unitario as number) * (1 - 0 / 100), 0) * 100) / 100;
+  const fixtures = [
+    [item(1, { quantidade: 3, valor_unitario: 33.333 }), item(2, { quantidade: 7, valor_unitario: 0.1 })],
+    [item(1, { quantidade: 1, valor_unitario: 1629.25 })],
+    [item(1, { quantidade: 12, valor_unitario: 13.85 }), item(2, { quantidade: 1, valor_unitario: 86 }), item(3, { quantidade: 5, valor_unitario: 0.07 })],
+  ];
+  for (const det of fixtures) {
+    const novo = subtotalPedidoComDesconto(det);
+    if (!Object.is(novo, legado(det))) throw new Error(`divergiu do legado: ${novo} !== ${legado(det)} em ${JSON.stringify(det)}`);
+    // desconto explicitamente zero pelo trio também é "sem desconto"
+    const comTrioZero = det.map((d) => ({ produto: { ...d.produto, tipo_desconto: "V", valor_desconto: 0, percentual_desconto: 0 } }));
+    if (!Object.is(subtotalPedidoComDesconto(comTrioZero), legado(det))) throw new Error(`trio zerado divergiu do legado em ${JSON.stringify(det)}`);
+  }
+});
+
+Deno.test("item sem preço segue FORA do subtotal (ausente ≠ zero) — e não conta como desconto ilegível", () => {
+  // Sem preço não há base: a régua nem é consultada. Um desconto ilegível NESSE item não derruba
+  // o pedido, porque o item já não entra na conta — contar aqui seria punir duas vezes.
+  const det = [
+    item(1, { quantidade: 2, valor_unitario: 100, tipo_desconto: "P", percentual_desconto: 10 }),
+    item(2, { quantidade: 5 }),
+    item(3, { quantidade: 1, tipo_desconto: "X", valor_desconto: 7 }),
+  ];
+  eq(apurarSubtotalPedido(det), { subtotal: 180, itensDescontoIlegivel: 0 }, "sem preço fora, sem contagem");
+});
+
+Deno.test("universo = os itens que VIRAM LINHA: det sem codigo_produto não entra no cabeçalho", () => {
+  // O sync só grava em order_items o item com código. Somá-lo no cabeçalho descreveria uma linha
+  // que não existe — e o reparo de órfão, que já filtrava por código, compararia contra outra conta.
+  const det = [
+    item(1, { quantidade: 2, valor_unitario: 100 }),
+    { produto: { quantidade: 1, valor_unitario: 999 } },
+    { produto: { codigo_produto: 0, quantidade: 1, valor_unitario: 999 } },
+  ];
+  eq(subtotalPedidoComDesconto(det), 200, "sem código fica fora");
+  // e o desconto ilegível de um item FORA do universo não derruba o pedido
+  eq(apurarSubtotalPedido([item(1, { quantidade: 1, valor_unitario: 10 }), { produto: { quantidade: 1, valor_unitario: 5, tipo_desconto: "X", valor_desconto: 1 } }]),
+    { subtotal: 10, itensDescontoIlegivel: 0 }, "ilegível fora do universo não conta");
+});
+
+Deno.test("desconto ILEGÍVEL derruba o subtotal para null — fail-closed por PEDIDO, nunca soma parcial", () => {
+  // As duas saídas "óbvias" fabricam: somar o item pelo bruto (o `null → 0` renascido) ou deixar SÓ
+  // ele de fora (soma parcial com cara de total — e no órfão de total 0 isso faria o G5 aprovar).
+  // `null` é "não publique esta revisão", e o chamador pula o pedido registrando-o.
+  const bom = item(1, { quantidade: 2, valor_unitario: 100, tipo_desconto: "P", percentual_desconto: 10 });
+  const casos: Array<[string, ProdutoFixture]> = [
+    ["tipo fora do vocabulário com desconto", { quantidade: 1, valor_unitario: 500, tipo_desconto: "X", valor_desconto: 50 }],
+    ["sem tipo, valor e percentual discordando", { quantidade: 1, valor_unitario: 100, valor_desconto: 20, percentual_desconto: 10 }],
+    ["percentual acima de 100", { quantidade: 1, valor_unitario: 100, tipo_desconto: "P", percentual_desconto: 150 }],
+    ["desconto maior que a base", { quantidade: 1, valor_unitario: 100, tipo_desconto: "V", valor_desconto: 120 }],
+  ];
+  for (const [nome, prod] of casos) {
+    eq(apurarSubtotalPedido([bom, item(2, prod)]), { subtotal: null, itensDescontoIlegivel: 1 }, nome);
+    eq(subtotalPedidoComDesconto([bom, item(2, prod)]), null, `${nome} (só o número)`);
+  }
+  // Controle: os MESMOS itens com leitura legível voltam a produzir número — o null vem da régua,
+  // não de o pedido ter dois itens.
+  eq(subtotalPedidoComDesconto([bom, item(2, { quantidade: 1, valor_unitario: 100, valor_desconto: 10, percentual_desconto: 10 })]), 270, "controle legível");
+  eq(apurarSubtotalPedido([item(1, { quantidade: 1, valor_unitario: 10, tipo_desconto: "X", valor_desconto: 1 }), item(2, { quantidade: 1, valor_unitario: 10, tipo_desconto: "X", valor_desconto: 2 })]),
+    { subtotal: null, itensDescontoIlegivel: 2 }, "conta todos os ilegíveis");
+});
+
+Deno.test("cabeçalho = Σ das linhas pela régua: o subtotal é a soma de receitaLiquidaItem do que o sync grava", () => {
+  // Monta as linhas EXATAMENTE como o omie-vendas-sync as manda à RPC (unit_price pela régua de
+  // preço, quantity `|| 1`, desconto_valor pela régua de desconto sobre qty·preço) e soma com a
+  // mesma função que os consumidores usam. É o contrato que amarra o cabeçalho às linhas — e ele
+  // vale EXATO quando cada base qty·preço é centavo inteiro (quantidade inteira, preço de 2 casas).
+  const det = [
+    item(1, { quantidade: 1, valor_unitario: 460.25, tipo_desconto: "P", percentual_desconto: 5 }),
+    item(2, { quantidade: 2, valor_unitario: 584.5, tipo_desconto: "P", percentual_desconto: 10 }),
+    item(3, { quantidade: 4, valor_unitario: 12.5, tipo_desconto: "V", valor_desconto: 3 }),
+    item(4, { quantidade: 1, valor_unitario: 86 }),
+  ];
+  eq(subtotalPedidoComDesconto(det), Math.round(somaDasLinhas(det) * 100) / 100, "cabeçalho × linhas");
+  // Número fixo, para o assert acima não passar com os DOIS lados errados do mesmo jeito:
+  // 437,24 (460,25 − 23,01) + 1052,10 (1169 − 116,90) + 47 (50 − 3) + 86.
+  eq(subtotalPedidoComDesconto(det), 1622.34, "número fixo");
+});
+
+Deno.test("com base em FRAÇÃO de centavo, cabeçalho e Σ das linhas diferem — no máximo ½ centavo por linha", () => {
+  // Achado do challenge Codex (2026-09-10): três linhas de 0,5 × 10,01 a 10%. O cabeçalho arredonda
+  // UMA vez (legado bit a bit, sem reescrita espúria); `receitaLiquidaItem` arredonda por linha.
+  // A diferença é real e LIMITADA — este teste a fixa em vez de esconder, e prova o limite.
+  const det = [1, 2, 3].map((cod) => item(cod, { quantidade: 0.5, valor_unitario: 10.01, tipo_desconto: "P", percentual_desconto: 10 }));
+  const cab = subtotalPedidoComDesconto(det);
+  const linhas = somaDasLinhas(det);
+  if (cab === null) throw new Error("fixture legível não pode dar null");
+  const dif = Math.abs(cab - linhas);
+  if (!(dif > 0)) throw new Error(`a fixture deveria EXIBIR a diferença (cab=${cab}, linhas=${linhas}) — sem ela o teste não mede o limite`);
+  if (!(dif <= 0.005 * det.length + 1e-9)) throw new Error(`diferença ${dif} acima de ½ centavo por linha`);
+});
+
+/** Σ receitaLiquidaItem das linhas, montadas como o sync as grava. */
+function somaDasLinhas(det: Array<{ produto: ProdutoFixture }>): number {
+  let soma = 0;
+  for (const d of det) {
+    const p = d.produto;
+    if (!p.codigo_produto) continue;
+    const qtd = p.quantidade || 1;
+    const preco = precoUnitarioOmie(p.valor_unitario);
+    const desc = descontoItemOmie(p, preco === null ? null : qtd * preco);
+    const receita = receitaLiquidaItem(preco, qtd, desc);
+    if (receita !== null) soma += receita;
+  }
+  return soma;
+}
 
 Deno.test("construirItemsJson casa o snapshot do sync (chaves + cor de tinta da obs)", () => {
   const det = [
@@ -108,14 +282,14 @@ Deno.test("subtotal: item SEM preço fica de fora (soma idêntica, incompletude 
   // Somar `qty·0` e omitir o item dão o MESMO número — o subtotal não muda, e é por isso que
   // ele não podia ser o sensor. O sensor é contarItensSemPreco / o null no items-jsonb.
   eq(subtotalPedidoComDesconto([
-    { produto: { quantidade: 2, valor_unitario: 10 } },
-    { produto: { quantidade: 5 } },
+    { produto: { codigo_produto: 1, quantidade: 2, valor_unitario: 10 } },
+    { produto: { codigo_produto: 2, quantidade: 5 } },
   ]), 20, "item sem preço não soma nada");
   eq(contarItensSemPreco([
     { produto: { quantidade: 2, valor_unitario: 10 } },
     { produto: { quantidade: 5 } },
   ]), 1, "e a ausência é CONTADA");
-  eq(subtotalPedidoComDesconto([{ produto: { quantidade: 2, valor_unitario: 0 } }]), 0, "zero informado soma 0");
+  eq(subtotalPedidoComDesconto([{ produto: { codigo_produto: 1, quantidade: 2, valor_unitario: 0 } }]), 0, "zero informado soma 0");
   eq(contarItensSemPreco([{ produto: { quantidade: 2, valor_unitario: 0 } }]), 0, "zero informado NÃO é ausência");
   eq(contarItensSemPreco([{ produto: { quantidade: 1, valor_unitario: -3 } }]), 1, "lixo conta como ausência");
 });

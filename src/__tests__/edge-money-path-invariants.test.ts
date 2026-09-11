@@ -3741,6 +3741,53 @@ describe('desconto de item — a régua única, e o null que não pode virar zer
   });
 });
 
+// ── subtotal do pedido: UMA fórmula — a da régua — nos três escritores do total ──────────────
+// Por que TEXTUAL: o subtotal é montado DENTRO das edges, e só o helper é testável por valor
+// (_shared/omie-pedido_test.ts). O que este bloco pega é a volta da conta inline
+// `qtd·preço·(1 − desc/100)` sobre `prod.desconto` — chave que a API do Omie NÃO tem, e que gravou
+// o total BRUTO em 31.315/31.315 pedidos — em qualquer dos três escritores, inclusive pela
+// reversão que o deploy do Lovable já commitou na main (docs/agent/deploy.md). E pega o `null`
+// do helper sendo ignorado: pedido de líquido desconhecido não pode chegar à RPC.
+describe('subtotal do pedido — a fórmula única dos três escritores do total', () => {
+  const SYNC = 'supabase/functions/omie-vendas-sync/index.ts';
+  const REPROCESS = 'supabase/functions/sync-reprocess/index.ts';
+  const CANON_PEDIDO = 'supabase/functions/_shared/omie-pedido.ts';
+
+  it('omie-vendas-sync não recalcula o subtotal inline — helper nos DOIS caminhos (sync e reparo), null tratado', () => {
+    const fonte = removerComentarios(read(SYNC));
+    expect(count(fonte, 'desc / 100')).toBe(0);
+    // `toBe(2)`, não `> 0`: um caminho só convertido deixaria o reparo de órfão comparando o G5
+    // contra uma conta diferente da que o pai gravou ao nascer.
+    expect(count(fonte, 'apurarSubtotalPedido(')).toBe(2);
+    expect(count(fonte, 'apurado.subtotal === null')).toBe(2);
+  });
+
+  it('sync-reprocess usa o helper e NÃO reconcilia pedido de líquido desconhecido', () => {
+    const fonte = removerComentarios(read(REPROCESS));
+    expect(count(fonte, 'desc / 100')).toBe(0);
+    expect(fonte).toMatch(/const total = subtotalPedidoComDesconto\(itens\);\s*if \(total === null\) \{/);
+  });
+
+  it('o helper lê o desconto pela régua (nunca pela chave inexistente) e degrada o PEDIDO para null', () => {
+    const canon = removerComentarios(read(CANON_PEDIDO));
+    const corpo = canon.match(/export function apurarSubtotalPedido[\s\S]*?\n}\n/);
+    expect(corpo, 'apurarSubtotalPedido não encontrada no canon').not.toBeNull();
+    expect(corpo![0]).toContain('descontoItemOmie(prod, bruto)');
+    expect(corpo![0]).not.toContain('prod.desconto');
+    expect(corpo![0]).toContain('return { subtotal: null, itensDescontoIlegivel }');
+  });
+
+  it('CALIBRAÇÃO: a forma pré-fix é reprovada, e a prosa que a cita não', () => {
+    // Sem este par, os asserts negativos acima passariam sobre um arquivo que o stripper tivesse
+    // esvaziado. O primeiro prova que a forma antiga É contada; o segundo, que código sobrevive.
+    const preFix = removerComentarios('const desc = prod.desconto || 0;\nif (price !== null) subtotal += qty * price * (1 - desc / 100);');
+    expect(count(preFix, 'desc / 100')).toBe(1);
+    const soComentario = removerComentarios('// era `qty * price * (1 - desc / 100)`\nconst x = 1;');
+    expect(count(soComentario, 'desc / 100')).toBe(0);
+    expect(soComentario).toContain('const x = 1');
+  });
+});
+
 // ── omie-financeiro: desconto/juros/multa do TÍTULO não existem no Omie ──────────────────────
 // Medido em 2026-09-08. `ListarContasPagar`/`ListarContasReceber` devolvem a entidade
 // `conta_pagar_cadastro`/`conta_receber_cadastro`, cujo NÍVEL RAIZ não tem desconto/juros/multa.
