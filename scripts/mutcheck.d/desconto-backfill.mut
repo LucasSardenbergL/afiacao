@@ -37,7 +37,7 @@ PEGA | ambiguidade deixa de ser vista (pega o primeiro)   | s~if \(pares\.length
 PEGA | recusa da régua vira desconto zero (?? 0)          | s~const desconto = descontoItemOmie\(prod, base\);~const desconto = descontoItemOmie(prod, base) ?? 0;~
 # Linha sem par no Omie apurada como zero: o pedido some do denominador de incompletude e a
 # receita fica CHEIA, numericamente idêntica ao caso legítimo "não há desconto".
-PEGA | linha sem correspondência é apurada como zero      | s~recusados\.push\(\{ id: linha\.id, motivo: "sem_correspondencia" \}\);~apurados.push({ id: linha.id, desconto_valor: 0 });~
+PEGA | linha sem correspondência é apurada como zero      | s~recusados\.push\(\{ id: linha\.id, motivo: "sem_correspondencia" \}\);~apurados.push({ id: linha.id, desconto_valor: 0, origem: origemDesconto(null) });~
 # `Number(null) === 0` na formação da chave: preço ausente vira preço zero e casa com o item de
 # brinde do Omie, apurando a linha errada em vez de recusá-la.
 PEGA | preço ausente vira preço ZERO na chave             | s~  const p = finitoNaoNegativo\(preco\);~  const p = finitoNaoNegativo(preco) ?? 0;~
@@ -54,3 +54,36 @@ PEGA | base do percentual ignora o preço                  | s~\? null : q \* p;
 # Colapsar dois motivos num só não muda nenhum número, e é por isso que precisa de mutação
 # própria: a incompletude deixa de ser diagnosticável sem que nada fique vermelho por si.
 PEGA | base indeterminada é reportada como sem par        | s~recusados\.push\(\{ id: linha\.id, motivo: "base_indeterminada" \}\);~recusados.push({ id: linha.id, motivo: "sem_correspondencia" });~
+
+# ── O SENSOR do valor (v1.3): de onde o número apurado saiu ───────────────────────────────────
+# A régua apura 0 tanto para "o Omie informou zero" quanto para "os campos não vieram". O número
+# é o mesmo; só a origem os separa — e é ela que torna um acervo de zeros auditável. Cada
+# mutação abaixo devolve o sensor ao estado em que "ausentes" e "zerados" não se distinguem, ou
+# em que ele descreve outro item que não o que casou.
+PEGA | sensor: campos ausentes viram 'zerados'            | s~    campos = "ausentes";~    campos = "zerados";~
+PEGA | sensor: string em branco conta como campo que veio | s~return raw\.trim\(\) !== "";~return true;~
+PEGA | sensor: campo ilegível passa por ausente/zerado    | s~\(valorVeio && valor === null\) \|\| \(percVeio && perc === null\)~false~
+PEGA | sensor: tipo cru, sem a normalização da régua     | s~p\.tipo_desconto\.trim\(\)\.toUpperCase\(\)~p.tipo_desconto~
+PEGA | sensor: positivo informado vira 'zerados'          | s~    campos = "informados";~    campos = "zerados";~
+PEGA | sensor: a origem não é a do item que casou        | s~origem: origemDesconto\(prod\)~origem: origemDesconto(null)~
+# O 1º desenho classificava pela presença de QUALQUER campo, e um tipo sozinho virava "zerados"
+# (P1 do Codex). A classificação é pelos campos NUMÉRICOS; tipo ilegível é "invalidos".
+PEGA | sensor: tipo sozinho volta a impedir 'ausentes'    | s~\} else if \(!valorVeio && !percVeio\) \{~} else if (!preenchido(p.tipo_desconto) && !valorVeio && !percVeio) {~
+PEGA | sensor: tipo não-string deixa de ser 'invalidos'   | s~const tipoIlegivel = preenchido\(p\.tipo_desconto\) && typeof p\.tipo_desconto !== "string";~const tipoIlegivel = false;~
+PEGA | sensor: a base do Omie não é transportada          | s~    quantidade: finitoNaoNegativo\(p\.quantidade\),~    quantidade: null,~
+
+# ── A janela restringe a ESCRITA ──────────────────────────────────────────────────────────────
+# Sem ela, pedido antigo alterado na janela (o filtro do Omie é inclusão OU alteração) entra no
+# plano — escrita fora do alvo que o denominador mede.
+PEGA | janela: o dia do limite fica fora (gt no lugar de gte) | s~return orderDateKpi >= deIso;~return orderDateKpi > deIso;~
+PEGA | janela: data ausente entra no escopo                | s~if \(typeof orderDateKpi !== "string"\) return false;~if (typeof orderDateKpi !== "string") return true;~
+PEGA | janela: formato não conferido (texto compara errado) | s~if \(!/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$/\.test\(orderDateKpi\)\) return false;~~
+
+# ── A amostra garante um representante por combinação ────────────────────────────────────────
+PEGA | amostra: combinação nova não toma vaga de duplicata | s~if \(representantes\(amostra\[i\]\.combinacao\) > 1\) \{ amostra\[i\] = item; return; \}~~
+PEGA | amostra: expulsa a única representante de outra     | s~if \(representantes\(amostra\[i\]\.combinacao\) > 1\)~if (representantes(amostra[i].combinacao) > 0)~
+
+# ── Conferência contra o total do Omie ────────────────────────────────────────────────────────
+PEGA | total: total ausente vira ZERO (confere por omissão) | s~const total = finitoNaoNegativo\(valorDescontosOmie\);~const total = finitoNaoNegativo(valorDescontosOmie) ?? 0;~
+PEGA | total: item ilegível some da soma (soma parcial)    | s~if \(d === null\) \{ legivel = false; break; \}~if (d === null) { continue; }~
+PEGA | total: tolerância vira folga que engole desconto    | s~const tolerancia = 0\.01 \* Math\.max~const tolerancia = 1 * Math.max~
