@@ -986,6 +986,7 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
 .claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh [url] [sentinela]
 # exit 0 = sincronizado (MESMO commit) · 5 = SINCRONIZADO_EM_BUNDLE (SHA atrás, delta provado fora do bundle)
 #      3 = ATRASADO (Publish pendente; a linha "motivo:" diz qual elo) · 4 = deploy novo, versão indeterminada
+#      git fetch da main falhou ⇒ 3 "motivo: FETCH_FALHOU" em QUALQUER caminho — nunca 0/5/4 (só o 2 vem antes)
 ```
 
 - **Determinístico** quando o ar tem `__BUILD_SHA__="<sha>"` — compara com `origin/main`, e se o SHA
@@ -1046,7 +1047,7 @@ inalcançável, e a transição que conta é a do `ar=` (e do entry). Detalhe em
 ✅ **SHA atrás ≠ bundle atrás — o monitor PROVA o delta antes de pedir Publish (2026-09-10).** O caso
 acima (ar `eee71c80`, delta sem `src/`) agora sai **exit 5 `SINCRONIZADO_EM_BUNDLE`**. Só rebaixa se
 TODO elo responder positivamente — senão fica `ATRASADO` com a marca do elo em `motivo:`:
-fetch ok (`FETCH_FALHOU`) · o entry tem UM carimbo só e ele resolve e é **ancestral** da main
+fetch ok (`FETCH_FALHOU` — pré-condição de TODO verde, o 0 inclusive) · o entry tem UM carimbo só e ele resolve e é **ancestral** da main
 (`CARIMBO_AMBIGUO`, `CARIMBO_NAO_RESOLVE`, `NAO_ANCESTRAL`) · `git diff --no-renames` sai 0 e não vazio (`DIFF_FALHOU`, `DELTA_VAZIO`) · todo arquivo
 é INERTE na tabela de `classify.sh --bundle` (`ALCANCA_BUNDLE`, `SEM_CLASSIFICACAO`) ·
 [`scripts/alcance-bundle.py`](scripts/alcance-bundle.py) prova na main que nada do bundle importa de fora
@@ -1263,4 +1264,26 @@ de que um Publish aconteceu continua sendo a mudança do `ar=`/entry, não a tra
   falsa no repo real; **(2)** o carimbo era "o primeiro" `__BUILD_SHA__="<hex>"` do entry, e um
   literal desses no código viraria o SHA do ar — mais de um distinto ⇒ `CARIMBO_AMBIGUO`. Rede: 24
   cenários, 17 sabotagens, 34 controles verdes nos 2 locales.
+- [x] **Sem fetch, NENHUM verde — o exit 0 comparava o ar com a main LOCAL velha (2026-09-10;
+  pré-existente, visto durante o #2465).** O guard `FETCH_FALHOU` morava no `analisar_delta`, depois
+  do atalho do SHA cheio, e só fechava a porta do exit 5. Com `git fetch origin main` falho sobravam
+  **três portas para o exit 0**, as três medidas vermelhas antes do conserto: a igualdade de string
+  do carimbo (8 chars), o atalho do SHA cheio (carimbo de 7 chars do mesmo commit) e o fallback sem
+  carimbo (`"dev"` + entry igual ao do estado → "nada a relatar"). Ar == main velha e a main real já
+  andou com `src/` ⇒ "sincronizado" — o cron lê o EXIT e recebia 0, com uma linha "(git fetch …
+  FALHOU)" que ninguém lê. Agora o guard é **único e vem antes de todo veredito**: `FETCH_OK=0` ⇒
+  exit 3 `motivo: FETCH_FALHOU`, nunca 0/5 (o 4 também vira 3; só o 2, site fora do ar, é medido
+  antes) — mesmo quando a resposta calharia de ser "sim": nos 2 cenários de carimbo a main real É o ar. O
+  guard interno saiu (ficaria inalcançável, e camada inalcançada não se falsifica). Rede: 27 cenários
+  (+3, um por porta) e 20 sabotagens (+3: a MESMA mutação do guard, cada uma exigindo o verde
+  PREVISTO da sua porta — `0|sincronizado: ar serve` ×2 e `0|nada a relatar`), 40 controles verdes
+  nos 2 locales. Fora da rede: o fallback de **sentinela** (exigiria o `verify-frontend.sh` com
+  rede) fica atrás do mesmo guard — coberto pela POSIÇÃO, não por um caso.
+- [ ] (latente) **`FETCH_OK=1` não prova que a `origin/main` andou.** `git fetch origin main` só move
+  `refs/remotes/origin/main` se o refspec configurado mapear `main`: num clone `--single-branch` de
+  outro branch ele sai **0** e só o `FETCH_HEAD` anda (medido em scratch, 2026-09-10: rc 0,
+  `origin/main` parada em `010535f0`, remoto em `0211030a`) — e o monitor compara com a main velha.
+  O repo usa o refspec padrão (`+refs/heads/*:refs/remotes/origin/*`), então hoje não morde. Fechar =
+  fetch com refspec explícito (`+refs/heads/main:refs/remotes/origin/main`) + cenário de refspec
+  estreito + sabotagem.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
