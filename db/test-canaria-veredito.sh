@@ -834,11 +834,21 @@ sabota_gerador h2 "GERADOR julga o status antes do eco (500 vermelha vira bundle
 sabota_gerador h3 "GERADOR determina o 401 SEM testemunha ativa (fail-open)" \
   "leva INTEIRA 401 com historico VERDE|veio 'SEM CANARIA NO AR" \
   "s/AND ativo\\.aceitas_na_leva >= 1/AND true/"
-# A 2ª é a armadilha do parecer Codex: testemunha por STATUS em vez de IDENTIDADE. Sem o marcador,
-# um 2xx anônimo (bundle histórico que ignora a credencial) passa a "provar" o secret.
-sabota_gerador h4 "GERADOR aceita 2xx ANONIMO como testemunha (sem o marcador)" \
-  "2xx ANONIMO na leva NAO e testemunha|veio 'SEM CANARIA NO AR" \
+# A 2ª e a 3ª são a armadilha do parecer Codex: testemunha que não prova IDENTIDADE. Aqui a
+# testemunha exige `canary:true` E o marcador esperado, e as duas camadas protegem casos DIFERENTES.
+# Medido em 2026-09-10 (a marca obrigatória pegou): tirar só o marcador NÃO faz o 2xx anônimo virar
+# testemunha — o `canary:true` ainda o barra —; quem quebra é o 2xx de OUTRA fatia. Até esta data a
+# (h4) se chamava "aceita 2xx ANONIMO" e a asserção do 2xx anônimo não tinha sabotagem nenhuma que
+# provasse o dente dela: as duas camadas a cobrem em redundância, e uma por vez fica verde.
+sabota_gerador h4 "GERADOR aceita 2xx de OUTRA fatia como testemunha (sem o marcador)" \
+  "2xx com marcador de OUTRA fatia NAO e testemunha|veio 'SEM CANARIA NO AR" \
   "s/AND ca\\.corpo ->> ca\\.campo_marcador = ca\\.marcador_esperado\`,/AND true\`,/"
+# A (h5) é a regressão que o #2445 fechou, modelada como ela era: testemunha por STATUS (2xx) no
+# lugar da identidade inteira. Um bundle histórico que ignora a credencial e roda o fluxo real
+# devolve 2xx anônimo — e passaria a "provar" que o secret deste disparo foi aceito.
+sabota_gerador h5 "GERADOR testemunha por STATUS, sem identidade (2xx ANONIMO prova o secret)" \
+  "2xx ANONIMO na leva NAO e testemunha|veio 'SEM CANARIA NO AR" \
+  "s/\`ca\\.corpo ->> 'canary' = 'true'\\\\n\` \\+/\`ca.status_code BETWEEN 200 AND 299\\\\n\` +/; s/AND ca\\.corpo ->> ca\\.campo_marcador = ca\\.marcador_esperado\`,/AND true\`,/"
 
 printf 'SABOTAGENS: %d vermelhas / %d falhas\n' "$SAB_VERMELHAS" "$SAB_FALHAS"
 if [ "$falhou" -eq 0 ]; then printf '\nFALSIFICACAO OK — todo verde tem vermelho alcancavel, e pelo motivo certo\n'; exit 0; fi
