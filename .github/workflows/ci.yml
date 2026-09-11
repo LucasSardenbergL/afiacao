@@ -852,10 +852,13 @@ jobs:
           fetch-depth: 0
 
       # O núcleo inclui db/test-canaria-veredito.sh, que NÃO confere um SQL commitado:
-      # gera o SQL pelo PRÓPRIO gerador (`bun scripts/sonda-versao-sql.ts --canaria`) e
-      # sabota o resultado. É isso que faz a prova envelhecer junto com o gerador em vez
-      # de virar retrato velho. Só o RUNTIME é preciso — os imports do gerador são
-      # builtins `node:*` mais um relativo, então nada de `bun install` aqui.
+      # gera o SQL pelo PRÓPRIO gerador (`db/lib/gerar-canaria-fixture.ts`) e, desde
+      # 2026-09-10, também o SABOTA aqui — o 3º campo `falsificar=<n>` do manifesto faz o
+      # runner rodar o `--falsificar` dela (antes as sabotagens só rodavam à mão). É isso
+      # que faz a prova envelhecer junto com o gerador em vez de virar retrato velho. Só o
+      # RUNTIME é preciso — os imports do gerador são builtins `node:*` mais um relativo,
+      # então nada de `bun install` aqui. O `--falsificar` também usa `git worktree add`
+      # (sabota o gerador num worktree do HEAD), que o checkout completo acima já cobre.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -906,9 +909,22 @@ jobs:
       # passaram" produziriam o mesmo verde — `ausente ≠ zero` aplicado ao CI.
       # Ele também exige, por prova, o mínimo de asserts declarado em `db/nucleo-ci.txt`:
       # o fechamento das provas é `[ "$FAIL" -eq 0 ]`, que TAMBÉM aceita PASS=0, e uma
-      # prova truncada sairia 0. Falsificação: `bash db/falsifica-nucleo-ci.sh`.
+      # prova truncada sairia 0. Falsificação: o step seguinte.
       - name: Núcleo de provas SQL executadas (db/nucleo-ci.txt)
         run: bash db/roda-nucleo-ci.sh
+
+      # O dente do RUNNER, provado onde o runner vale. `db/falsifica-nucleo-ci.sh` restaura
+      # defeitos que existiram e exige vermelho PELO MOTIVO CERTO: no runner (manifesto vazio,
+      # prova esvaziada ou encolhida, PG ausente, e — desde 2026-09-10 — o recibo `SABOTAGENS:`
+      # ausente, duplicado ou malformado, a flag ignorada, a falsificação encolhida ou OMITIDA)
+      # e em 3 migrations reais. Até 2026-09-10 ele só rodava à mão, e o runner acima acabava
+      # de ganhar um caminho novo: gate cujo dente só se prova à mão é ausência de dado
+      # (docs/historico/falsificacao-fora-do-ci.md). Tem controle positivo pelo runner — sem
+      # ele, um runner que reprovasse TUDO passaria em todos os casos de recusa — e piso de
+      # casos (`OK_MINIMO`), porque `XX=0` sozinho aprovaria o harness truncado.
+      # Serial DEPOIS do núcleo, de propósito: os dois sobem a sonda na porta TCP 5810.
+      - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
+        run: bash db/falsifica-nucleo-ci.sh
 
   validate:
     if: always()
