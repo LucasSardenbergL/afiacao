@@ -56,8 +56,17 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // ⚠️ Bundle novo + a migration da identidade NÃO aplicada: a RPC antiga não conhece o argumento
 // `omie_codigo_item` no item, e o ignora — não lança, mas a identidade nunca é gravada e os dois
 // sensores ficam em zero para sempre. É o falso-negativo a vigiar ao ler o log.
+// ⚠️ v1.7 — SUBTOTAL LÍQUIDO (2026-09-10). O `total` que a edge manda à RPC passa a ser Σ (qtd·preço
+// − desconto da régua), não mais `qtd·preço·(1 − prod.desconto/100)` — `desconto` pelado não existe
+// na API do Omie e o total saía BRUTO. Consequência observável na PRIMEIRA run: todo pedido COM
+// desconto de item da janela é reescrito para o líquido (`total`/`subtotal`). Sem desconto, o número
+// é bit a bit o antigo e nada é reescrito. Pedido com desconto ILEGÍVEL não é reconciliado (nem
+// itens nem cabeçalho) e surfaça em `error_message` + `metadata.desconto_ilegivel[_amostra]`.
+// ⚠️ Não conte a conversão pelo `divergences_found`: a RPC também grava total quando só o carimbo
+// do CAS avança, sem contar divergência. A prova da conversão é SQL (total × Σ das linhas).
+// ⚠️ ORDEM DE DEPLOY: esta ANTES da `omie-vendas-sync` v1.7 (ver o versao.ts de lá).
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.6-identidade-regua-compartilhada";
+export const VERSAO = "v1.7-subtotal-liquido-pela-regua";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
