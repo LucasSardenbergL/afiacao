@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os OITO evals:
+# run.sh — GATE de regressão da skill lovable-deploy-verify. Roda os NOVE evals:
 #   (1) classify        — classificação de diff do Passo 1 (classify.sh vs classify-eval.json)
 #   (2) verify-frontend — enumeração + exit codes do Passo 4 (harness local determinístico)
 #   (3) verify-edge-eco  — guard TEMPORAL do N3 passivo (só ticks pré-merge ⇒ indeterminado)
@@ -8,6 +8,7 @@
 #   (6) criterio-caro      — critério MEDIDO do `--caro` (efeito, não forma do handler)
 #   (7) edges-pendentes-sql — classificação do Passo 3 do /fecho (EXECUTA o SQL do gate passivo)
 #   (8) monitor-deploy     — "SHA atrás ≠ bundle atrás": exit 5 só com prova positiva (repo-fixture)
+#   (9) monitor-deploy-pr  — "o PR está no ar?" por ANCESTRALIDADE + estado por checkout (repo-fixture)
 # Exit 0 = tudo passou. Exit 1 = alguma divergência.
 # Falsificação (prova que os evals têm dente): --falsify sabota TODOS e exige vermelho
 #   (classify sabota o gabarito UMA CHAVE POR VEZ e depois muta o classify.sh real; verify-frontend
@@ -202,6 +203,18 @@ if [ "$FALSIFY" = 1 ]; then
   bash monitor-deploy-eval.sh --falsify || rc=1
 else
   bash monitor-deploy-eval.sh || rc=1
+fi
+
+echo ""
+# (9) O mesmo monitor responde OUTRA pergunta com `--pr <n>`: o squash do PR está na história do
+# commit servido? As armadilhas são as que fabricam "fora do ar" — rc 128 lido como 1, o head do
+# branch no lugar do squash (#2459), PR não mergeado, fetch falho, clone raso — e cada uma tem de
+# sair exit 6 (não consegui), nunca 3. Harness próprio para não colidir com o (8).
+echo "== (9) monitor-deploy --pr — o PR está no ar? (ancestralidade; 'não sei' é exit 6) =="
+if [ "$FALSIFY" = 1 ]; then
+  bash monitor-deploy-pr-eval.sh --falsify || rc=1
+else
+  bash monitor-deploy-pr-eval.sh || rc=1
 fi
 
 echo ""

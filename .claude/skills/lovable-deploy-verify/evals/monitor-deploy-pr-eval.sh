@@ -467,7 +467,8 @@ sabota "o prefixo do carimbo deixa de ser conferido (um branch sequestra o ^{com
   'case "$AR_FULL" in "$AIR_SHA"?*) eh_sha "$AR_FULL" ;; *) false ;; esac' \
   'case "$AR_FULL" in ?*) eh_sha "$AR_FULL" ;; *) false ;; esac'
 sabota "'sem alcance' sem a prova do alcance-bundle.py" prbuild \
-  '    "0:PROVA_INERCIA_OK "*)' '    *)'
+  $'    "0:PROVA_INERCIA_OK "*)\n      echo "     PR_SEM_ALCANCE_NO_BUNDLE:' \
+  $'    *)\n      echo "     PR_SEM_ALCANCE_NO_BUNDLE:'
 sabota "arquivo ALCANCA do PR deixa de contar" prfora \
   '  if [ "$nb" -gt 0 ]; then' '  if false; then'
 sabota "aviso de revert apagado" prrevert \
