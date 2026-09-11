@@ -1,24 +1,19 @@
 -- ============================================================
--- APLICAÇÃO via `bun run db:aplicar` — desconto_backfill_aplicar — a RPC que escreve o plano de apuração
+-- desconto_backfill_aplicar — `ja_apuradas` contada ANTES do UPDATE
 --
--- Mesmo EFEITO da migration de DR mais recente desta função,
--- `20260910214850_desconto_backfill_aplicar_ja_apuradas.sql`, SEM o envelope `BEGIN;`/`COMMIT;`:
--- a transação é do `db:aplicar`, que executa o corpo via `aplicar_sql()` — e lá comandos de
--- transação são proibidos. Os dois caminhos coexistem de propósito (#2434): a migration com
--- envelope é a que se cola no SQL Editor.
+-- Correção da `20260908220625_desconto_backfill_aplicar.sql` (que continua lá: é DR, imutável).
+-- Muda UMA coisa: a contagem de `ja_apuradas` passa para antes do UPDATE. A escrita, a
+-- precondição por linha, o guard de concorrência e o ACL ficam como estavam.
 --
--- Este arquivo é o ESTADO ATUAL da função, não o histórico. A cada correção ele é reescrito; o
--- histórico fica nas migrations (a anterior, `20260908220625_desconto_backfill_aplicar.sql`,
--- contava `ja_apuradas` DEPOIS do UPDATE) e no ledger `db_aplicacoes`, que guarda o sha de cada
--- versão aplicada. A paridade com a migration é PROVADA, não prometida:
--- `db/test-desconto-backfill-aplicar.sh` aplica este arquivo e exige o md5 do corpo da migration.
+-- O DEFEITO (achado em 2026-09-10 na execução do backfill Oben/TTM; conferido no
+-- `pg_get_functiondef` da PROD): a contagem rodava no statement seguinte ao UPDATE e enxergava
+-- as linhas que a própria chamada tinha acabado de aplicar. No cenário misto — 3 linhas no plano,
+-- 1 já preenchida por outro writer, 2 aplicáveis — ela devolvia ja_apuradas=3, e o certo é 1.
+-- A edge `omie-desconto-backfill` não lê `ja_apuradas` (só `aplicadas`/`recusadas`), então nada
+-- foi escrito errado. O dano era de observabilidade: o campo que existe para separar "corrida
+-- perdida" de "base mudou" dizia que toda linha aplicada tinha perdido a corrida.
 --
--- NÃO desenvelopar no cliente: `aplicar_sql()` recalcula o sha256 do corpo recebido e o
--- compara com o declarado. Qualquer transformação na hora do envio quebra a cadeia que
--- prova que o executado é byte a byte o que está no repo. Daí este arquivo ser COMMITADO.
---
--- Idempotente: só `CREATE OR REPLACE` e REVOKE/GRANT. A postcondição confere o ESTADO final
--- (corpo e ACL), não o caminho — reaplicar é seguro e dá o mesmo veredito.
+-- Prova executada e falsificação: db/test-desconto-backfill-aplicar.sh (grupo J).
 -- ============================================================
 
 -- ============================================================
@@ -47,6 +42,7 @@
 -- IDEMPOTENTE: reaplicar o mesmo plano reescreve os mesmos valores. Não há acumulação.
 -- ============================================================
 
+BEGIN;
 
 CREATE OR REPLACE FUNCTION public.desconto_backfill_aplicar(p_linhas jsonb)
 RETURNS jsonb
@@ -190,3 +186,4 @@ BEGIN
 END
 $post$;
 
+COMMIT;

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 544
+-- Total de custom migrations: 546
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -585,7 +585,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260908220625', 'desconto_backfill_aplicar', '20260908220625_desconto_backfill_aplicar.sql'),
   ('20260908222500', 'snapshot_transporta_desconto_valor', '20260908222500_snapshot_transporta_desconto_valor.sql'),
   ('20260908223555', 'deploy_sonda_alvos_onda4', '20260908223555_deploy_sonda_alvos_onda4.sql'),
-  ('20260909074613', 'v_titulo_baixas_otica_canonica', '20260909074613_v_titulo_baixas_otica_canonica.sql')
+  ('20260909074613', 'v_titulo_baixas_otica_canonica', '20260909074613_v_titulo_baixas_otica_canonica.sql'),
+  ('20260909222423', 'deploy_sonda_alvos_onda5', '20260909222423_deploy_sonda_alvos_onda5.sql'),
+  ('20260910214850', 'desconto_backfill_aplicar_ja_apuradas', '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2384,7 +2386,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', ''),
   ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
-  ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', '')
+  ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', ''),
+  ('desconto_backfill_aplicar_ja_apuradas', 'function', 'public', 'desconto_backfill_aplicar', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4231,7 +4234,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('desconto_valor_atravessa_os_escritores', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', ''),
   ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
-  ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', '')
+  ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', ''),
+  ('desconto_backfill_aplicar_ja_apuradas', 'function', 'public', 'desconto_backfill_aplicar', '')
 )
 SELECT
   e.migration,
@@ -4259,7 +4263,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 110.
+-- Funções redefinidas com corpo extraível: 111.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4674,7 +4678,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'corrigir_cancelamento_pos_disparo', 2, '20260906172718_cancelamento_pos_disparo_gate_canonico.sql', '4ca937b4befd086a05b610e4619db24c'),
   ('public', 'corrigir_cancelamento_pos_disparo', 3, '20260907095841_disparado_simulado_e_estado_pos_disparo.sql', '6cee6f8e6d6bc57286597dd6de9150d7'),
   ('public', 'aplicar_edicao_pedido_omie', 1, '20260907210000_pedido_edicao_omie_atomica.sql', '8531ed39f6bf2c7d5725342bc782c8fb'),
-  ('public', 'aplicar_edicao_pedido_omie', 2, '20260908215704_desconto_valor_atravessa_os_escritores.sql', '31c4fce633bf9a7363a45770e4d514c3')
+  ('public', 'aplicar_edicao_pedido_omie', 2, '20260908215704_desconto_valor_atravessa_os_escritores.sql', '31c4fce633bf9a7363a45770e4d514c3'),
+  ('public', 'desconto_backfill_aplicar', 1, '20260908220625_desconto_backfill_aplicar.sql', '59d9c1e4482bf524c5da1eff2700aa08'),
+  ('public', 'desconto_backfill_aplicar', 2, '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql', '09e34b475c6f2b9cfd832b90e62d9b77')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2
