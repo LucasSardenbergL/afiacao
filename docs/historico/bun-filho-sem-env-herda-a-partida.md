@@ -101,10 +101,12 @@ outros dois casamentos da assinatura são falso positivo conferido: um `delete` 
 como `env` explícito (`scripts/pendencias-deploy-allowlist.test.ts`) e um `vi.stubEnv` sem processo
 filho (`src/lib/__tests__/analytics-build-id.test.ts`).
 
-**Onde se abre filho.** 77 sites, **todos** em API cega (`spawnSync`, `execSync`, `execFileSync`):
-nenhum async, nenhum `Bun.spawn*` ou `Bun.$`, nenhum wrapper compartilhado em `scripts/lib/`. Os
-wrappers são locais por arquivo, e o `git()`/`lerNaRev()` de `scripts/sonda-versao-bump-gate.ts`
-serve outros quatro scripts. Quase todos sem `env`. Hoje é inofensivo porque nenhum processo bun
+**Onde se abre filho.** 79 linhas com chamada síncrona em 33 arquivos (61 fora de teste; `git grep
+-c`, com controle positivo), **todas** em API cega (`spawnSync`, `execSync`, `execFileSync`): nenhum
+arquivo importa as versões async de `node:child_process`, nenhum usa `Bun.spawn*` ou `Bun.$`, e não
+há wrapper compartilhado em `scripts/lib/`. Os wrappers são locais por arquivo, e o
+`git()`/`lerNaRev()` de `scripts/sonda-versao-bump-gate.ts` serve outros quatro scripts. Quase todas
+sem `env`. Hoje é inofensivo porque nenhum processo bun
 muta o ambiente antes deles, e aí o retrato da partida **é** o ambiente atual. É por isso que a trava
 mira a mutação, e não a chamada.
 
@@ -118,7 +120,7 @@ mira a mutação, e não a chamada.
 
 **Nenhum site de código mudou** — pela regra da entrega, *conserto só onde a medição mostrar
 efeito*. Sob bun, nenhum processo muta o ambiente antes de abrir filho; e o caso conhecido roda no
-vitest, onde a medição mostra a mutação chegando. Dar `env: process.env` aos 77 sites "por garantia"
+vitest, onde a medição mostra a mutação chegando. Dar `env: process.env` às 61 chamadas fora de teste "por garantia"
 seria diff grande, em arquivos quentes de dezenas de worktrees, sem efeito mensurável — e esconderia
 o que de fato protege hoje, que é não haver mutação.
 
@@ -133,7 +135,7 @@ Sem site afetado, a entrega é a trava — contramedida textual reincide, gate e
 regra `no-restricted-syntax` no `eslint.config.js` reprova **mutar `process.env`** em `scripts/` e
 `db/` (TS e JS), fora os `*.test.ts`:
 
-- **Mira a mutação, não a chamada.** Chamadas sem `env` são 77 no repo, e todas inofensivas enquanto
+- **Mira a mutação, não a chamada.** Chamadas síncronas sem `env` são dezenas no repo, todas inofensivas enquanto
   nada mutar antes delas; barrar a chamada seria ruído em arquivo quente. A mutação é a raiz que
   alcança o filho **até por função importada** — o formato do caso conhecido, em que quem muta e quem
   abre o filho moram em arquivos diferentes, e que regra nenhuma olhando só a chamada pegaria.
@@ -149,7 +151,26 @@ regra `no-restricted-syntax` no `eslint.config.js` reprova **mutar `process.env`
   confere, linha a linha e pela marca da mensagem, que cada forma é pega, que leitura e cópia passada
   como `env` não são, e que o escopo é o do bun.
 
-<!-- FALSIFICACAO -->
+**A prova do gate foi falsificada.** Com o commit feito antes (o `restaurar()` é `git checkout --`),
+controle verde na MESMA invocação e antes do primeiro sabotar, em `LC_ALL=C` **e** `pt_BR.UTF-8`, e
+execução positiva exigida: o JSON do vitest tinha de existir e contar 4 testes, senão a rodada valia
+"harness quebrado", nunca "vermelho". Cada sabotagem declara quais testes têm de cair **e** quais têm
+de ficar de pé — só a regra sabotada decide o resultado:
+
+| sabotagem no `eslint.config.js` | cai | fica de pé |
+|---|---|---|
+| `files` aponta para outro diretório | formas · escopo do bun | leituras · fora do node |
+| sem o `ignores: ["**/*.test.ts"]` | fora do node | formas · leituras · escopo do bun |
+| seletor de atribuição cego | formas · escopo do bun | leituras · fora do node |
+| seletor de reatribuição cego | formas · escopo do bun | leituras · fora do node |
+| seletor de `delete` cego | formas · escopo do bun | leituras · fora do node |
+| seletor de `Object`/`Reflect` cego | formas · escopo do bun | leituras · fora do node |
+| mensagem sem a marca | formas · escopo do bun | leituras · fora do node |
+
+Resultado: `CONTROLE_VERDE` 2/2, `VERMELHO_CERTO` 14/14 (7 sabotagens × 2 locales),
+`FALSIFICACAO_FALHOU` 0, `HARNESS_QUEBRADO` 0. Na árvore real, antes da entrega, o ESLint sobre
+`scripts/` e `db/` lintou 123 arquivos com **0 violações** da regra e 0 erros fatais — inclusive o
+único `.mjs` do escopo, que passou a ser lintado.
 
 ## Como re-medir (no bump do bun)
 
