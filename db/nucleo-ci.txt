@@ -71,6 +71,13 @@ db/test-claim-disparo-cenario-b.sh         76
 db/test-disparado-simulado-pos-disparo.sh  59
 db/test-fin-sync-lease.sh                  22
 db/test-pedido-venda-coerencia.sh          31
+# A escrita do backfill de desconto: o plano é lido ANTES e escrito depois, e o que atravessa a
+# janela são as marcas da própria linha — o trio (SKU, qtd, preço) e o `desconto_valor IS NULL`,
+# DENTRO do `WHERE` do UPDATE: base que mudou, ou linha já apurada por outro writer, não é escrita.
+# E o que ela DEVOLVE: `ja_apuradas` contado ANTES do UPDATE. Entrou em 2026-09-10, quando se viu
+# que a contagem somava as escritas da própria chamada e que esta prova CONFIRMAVA o número errado
+# (o esperado fora transcrito da saída). Até então rodava só no laptop.
+db/test-desconto-backfill-aplicar.sh       30
 
 # ── Eixo 5 — VEREDITO DE DEPLOY ──────────────────────────
 # O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num

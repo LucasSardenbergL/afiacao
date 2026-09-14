@@ -855,3 +855,38 @@ sem guarda de finitude ×2 → `NaN` no item) — cada uma vermelha e restaurada
 falsificação saboteia a função **extraída da própria migration** (não um fixture paralelo): o corpo que
 vai a produção é o que fica vermelho. (4) O harness da primeira rodada reprovou por `duplicate key` em
 `company_config` — a migration-base já semeia as chaves; seed de config é `ON CONFLICT DO UPDATE`.
+
+## `ja_apuradas` contava as escritas da própria chamada — e a prova certificava o número errado (2026-09-10, [PR #2475](https://github.com/LucasSardenbergL/afiacao/pull/2475), migration `20260910214850` — APLICADA via `db:aplicar`, recibo #58)
+
+**Problema.** `desconto_backfill_aplicar` devolve `{pedidas, aplicadas, recusadas, ja_apuradas}`; o
+`ja_apuradas` existe para separar, dentro de `recusadas`, "outro writer preencheu antes" de "a base
+mudou". Durante a execução do backfill Oben/TTM, lendo o `pg_get_functiondef` da PROD, viu-se que ele era
+contado num `SELECT` DEPOIS do `UPDATE` — e em plpgsql o statement seguinte enxerga o que a própria
+transação escreveu. Reproduzido em PG17 com o corpo da PROD (md5 idêntico): 3 linhas no plano, 1 já
+preenchida, 2 aplicáveis → `ja_apuradas=3` contra `recusadas=1`, estado impossível; o certo é 1. A edge só
+lê `aplicadas`/`recusadas`: nenhuma escrita saiu errada, o dano era de observabilidade.
+
+**Fix.** A contagem vai para ANTES do `UPDATE`; o resto da função fica igual. A alternativa
+`preenchidas_depois − aplicadas` foi recusada com contraexemplo EXECUTADO: com um id repetido no plano, o
+`UPDATE … FROM` escreve a linha uma vez e a subtração dá 1 onde o certo é 0. Limite aceito e escrito no
+corpo: entre os dois statements há uma janela de microssegundos; fechá-la pediria `FOR UPDATE` nas linhas
+recusadas — lock a mais num writer de money-path pela exatidão de um contador.
+
+**Prova.** `db/test-desconto-backfill-aplicar.sh` (30 asserts, dois locales, agora no `db/nucleo-ci.txt`):
+grupo J com a **linha de base** — o corpo VELHO real devolvendo 3 no mesmo cenário em que o novo devolve 1
+—, o contrafactual da subtração, e o grupo P, que exige que o arquivo do `db:aplicar` instale o md5 do
+corpo da migration. Falsificação por fora, num espelho, com controle verde na mesma invocação: com o corpo
+da PROD a prova fica vermelha em F6, J1, J3, J7 e P1; com o `db/` antigo, só em P1.
+
+**Lições.** (1) **O esperado do teste tinha sido TRANSCRITO DA SAÍDA.** O F6 esperava `ja_apuradas:2`
+num cenário em que nenhuma linha tinha desconto antes da chamada — as 2 eram escritas da própria chamada.
+A prova não deixava de pegar o defeito: ela o CERTIFICAVA. O esperado se deriva da regra ("quantas linhas
+tinham desconto antes?" ⇒ 0), e cenário que diz provar um defeito precisa da linha de base — o corpo velho
+devolvendo o número errado —, senão o verde pode ser só o cenário não exercitar nada. (2) Prova fora do
+núcleo tinha outros dois defeitos que ninguém via: a linha de fechamento (`n ok · m falhas`) nem casaria
+com o extrator do runner, e as sabotagens contavam `PASS` duas vezes. (3) Nada provava que o arquivo que
+vai para a PROD (`db/`) é o que a prova testa (a migration) — agora o grupo P prova. (4) O ledger
+`db_aplicacoes` não é inventário do que roda em prod: a versão anterior da RPC (a do #2448, com o guard de
+concorrência) estava em prod sem recibo — o ledger só tinha a 1ª versão (sha `0b414eb8d1`). Aqui não mudou
+nada, porque a PROD batia byte a byte com o repo antes da troca, mas quem ler o ledger como "o que está
+aplicado" erra.
