@@ -5,21 +5,25 @@
 # ║        bash db/test-pedido-total-liquido-acervo.sh --falsificar  > "$LOG" 2>&1            ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════════╝
 #
-# O QUE ESTA PROVA EXISTE PARA PEGAR. O modo normal afirma o comportamento; o `--falsificar`
-# sabota a migration (num espelho em tmpdir, nunca em supabase/migrations/) e exige VERMELHO em
-# cada item, com o verde de volta depois de restaurar — e só começa depois de uma linha de base
-# VERDE na MESMA invocação:
+# O QUE ESTA PROVA EXISTE PARA PEGAR. Aplica a CADEIA de DR (a migration base e a correção do gate
+# de mês). O modo normal afirma o comportamento; o `--falsificar` sabota a migration certa (num
+# espelho em tmpdir, nunca em supabase/migrations/) e exige VERMELHO em cada item, com o verde de
+# volta depois de restaurar — e só começa depois de uma linha de base VERDE na MESMA invocação:
 #   · converter o que as linhas não provam: desconto não apurado, linha inválida, líquido negativo,
 #     cabeçalho fora do padrão, total que já é o líquido ou que diverge dos dois;
 #   · converter cabeçalho reescrito DEPOIS do corte — desconto vencido (achado da 2ª opinião);
 #   · arredondar por linha em vez de uma vez no fim; perder a tolerância do float legado;
-#   · converter meio mês (mês com apuração incompleta); truncar em vez de recusar acima do limite;
+#   · converter meio mês — incompleto numa conta, ou completo numa e incompleto na outra (os
+#     comparadores sem filtro de conta somam as duas); truncar em vez de recusar acima do limite;
 #   · o ensaio escrever;
 #   · esperar o lock de um escritor (deadlock) em vez de pular; sobrescrever um total que mudou
 #     entre a escolha do lote e o lock;
 #   · um pedido incoerente derrubar o lote inteiro no COMMIT (23514 da trigger deferida);
-#   · a postcondição do conversor e a da migration sem dente;
-#   · o gêmeo do `db:aplicar` divergir da migration.
+#   · a postcondição do conversor e as das migrations sem dente;
+#   · o gêmeo do `db:aplicar` divergir da cadeia.
+#
+# Camada por camada: toda sabotagem é instalada SEM a postcondição da migration, para o assert do
+# harness responder sozinho; onde a postcondição é a camada sob teste, ela é conferida à parte.
 #
 # Recibos para db/roda-nucleo-ci.sh: o normal fecha com `RESULTADO: <n> ok / <m> fail`; o
 # `--falsificar` com `SABOTAGENS: <v> vermelhas / <f> falhas` — e nunca um no lugar do outro.
@@ -52,12 +56,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# `find | sort | tail`: a migration mais RECENTE com o slug é a que vale (SC2012 barra `ls`).
-MIG="$(find "$REPO_ROOT/supabase/migrations" -name "*_pedido_total_liquido_acervo.sql" | sort | tail -1)"
+# `find | sort | tail`: a migration mais RECENTE com cada slug é a que vale (SC2012 barra `ls`).
+MIG1="$(find "$REPO_ROOT/supabase/migrations" -name "*_pedido_total_liquido_acervo.sql" | sort | tail -1)"
+MIG2="$(find "$REPO_ROOT/supabase/migrations" -name "*_pedido_total_liquido_acervo_mes_entre_contas.sql" | sort | tail -1)"
 COER="$(find "$REPO_ROOT/supabase/migrations" -name "*_pedido_venda_coerencia_agregado.sql" | sort | tail -1)"
 DBF="$REPO_ROOT/db/aplicar-pedido-total-liquido-rpc.sql"
-if [ -z "$MIG" ] || [ -z "$COER" ] || [ ! -f "$DBF" ]; then
-  echo "migration, coerência ou gêmeo não encontrados — o harness testaria o NADA"; exit 1
+if [ -z "$MIG1" ] || [ -z "$MIG2" ] || [ -z "$COER" ] || [ ! -f "$DBF" ]; then
+  echo "migrations, coerência ou gêmeo não encontrados — o harness testaria o NADA"; exit 1
 fi
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
@@ -117,10 +122,11 @@ SQL
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 P -q -f "$SCHEMA"
 
-# ── ZONA 2 — as migrations REAIS (Lei #1): a coerência de prod e a passada ────────────────────
+# ── ZONA 2 — as migrations REAIS (Lei #1): a coerência de prod e a cadeia da passada ─────────
 P -q -f "$COER"
-P -q -f "$MIG"
-echo "migrations aplicadas: $(basename "$COER") · $(basename "$MIG") · modo $MODO"
+P -q -f "$MIG1"
+P -q -f "$MIG2"
+echo "cadeia aplicada: $(basename "$COER") · $(basename "$MIG1") · $(basename "$MIG2") · modo $MODO"
 
 # ── ZONA 3 — seeds e helpers ──────────────────────────────────────────────────────────────────
 P -q <<'SQL'
@@ -155,7 +161,7 @@ CREATE OR REPLACE FUNCTION public.t_seed() RETURNS void LANGUAGE plpgsql AS $f$
 BEGIN
   TRUNCATE public.order_items, public.sales_orders, public.pedido_total_liquido_conversoes RESTART IDENTITY;
   TRUNCATE public.t_resultado, public.t_barreira;
-  -- oben/2026-07 — mês COMPLETO
+  -- julho — COMPLETO nas duas contas
   PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000a1', 'oben', '2026-07-05', 1629.25,  -- o pedido real 12183048572
     '[{"sku":1001,"q":1,"p":460.25,"d":23.01},{"sku":1002,"q":2,"p":584.50,"d":116.90}]');
   PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000a2', 'oben', '2026-07-06', 100.00,   -- float legado, sem desconto
@@ -179,15 +185,17 @@ BEGIN
     '[{"sku":1012,"q":1,"p":100,"d":10}]', p_omie => false);
   PERFORM public.t_pedido('00000000-0000-0000-0000-000000000a14', 'oben', '2026-07-16', 80,
     '[{"sku":1013,"q":1,"p":80,"d":8}]');
-  -- oben/2026-06 — INCOMPLETO: b2 tem linha não apurada
+  -- e2 coerente; e1 (incoerente) entra fora desta transação, em semear()
+  PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000e2', 'oben', '2026-07-18', 40,
+    '[{"sku":5002,"q":1,"p":40,"d":4}]');
+  PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000c1', 'colacor', '2026-07-05', 450,
+    '[{"sku":3001,"q":1,"p":450,"d":13.5}]');
+  -- junho — INCOMPLETO: b2 tem linha não apurada
   PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000b1', 'oben', '2026-06-05', 100,
     '[{"sku":2001,"q":1,"p":100,"d":10}]');
   PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000b2', 'oben', '2026-06-06', 150,
     '[{"sku":2002,"q":1,"p":100,"d":10},{"sku":2003,"q":1,"p":50}]');
-  -- colacor/2026-07
-  PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000c1', 'colacor', '2026-07-05', 450,
-    '[{"sku":3001,"q":1,"p":450,"d":13.5}]');
-  -- oben/2026-05 — INCOMPLETO: linhas inválidas
+  -- maio — INCOMPLETO: linhas inválidas
   PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000d1', 'oben', '2026-05-05', 0.01,     -- líquido −0,01 no numeric
     '[{"sku":4001,"q":0.5,"p":0.01,"d":0.01}]');
   PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000d2', 'oben', '2026-05-06', 0,        -- preço ausente
@@ -196,9 +204,11 @@ BEGIN
     '[{"sku":4003,"q":1,"p":100,"d":"NaN"}]');
   PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000d4', 'oben', '2026-05-08', 60,
     '[{"sku":4004,"q":1,"p":60,"d":6}]');
-  -- oben/2026-04 — e2 coerente; e1 (incoerente) entra fora desta transação, em semear()
-  PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000e2', 'oben', '2026-04-06', 40,
-    '[{"sku":5002,"q":1,"p":40,"d":4}]');
+  -- abril — a oben COMPLETA, a colacor NÃO: o mês fica bloqueado para as duas
+  PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000f1', 'oben', '2026-04-06', 40,
+    '[{"sku":6001,"q":1,"p":40,"d":4}]');
+  PERFORM public.t_pedido('00000000-0000-0000-0000-0000000000f2', 'colacor', '2026-04-07', 150,
+    '[{"sku":6002,"q":1,"p":100,"d":10},{"sku":6003,"q":1,"p":50}]');
 END $f$;
 
 -- SQLSTATE do comando, ou OK. Os eventos de trigger DEFERIDA disparam aqui dentro (SET CONSTRAINTS
@@ -240,7 +250,7 @@ id() { printf '00000000-0000-0000-0000-%12s' "$1" | tr ' ' '0'; }
 A1="$(id a1)"; A2="$(id a2)"; A3="$(id a3)"; A4="$(id a4)"; A5="$(id a5)"; A6="$(id a6)"; A8="$(id a8)"
 A9="$(id a9)"; A10="$(id a10)"; A12="$(id a12)"; A13="$(id a13)"; A14="$(id a14)"
 B1="$(id b1)"; B2="$(id b2)"; C1="$(id c1)"; D1="$(id d1)"; D2="$(id d2)"; D3="$(id d3)"; D4="$(id d4)"
-E1="$(id e1)"; E2="$(id e2)"
+E1="$(id e1)"; E2="$(id e2)"; ABR1="$(id f1)"; ABR2="$(id f2)"
 
 semear() {
   P -q -c "SELECT public.t_seed();" >/dev/null
@@ -249,7 +259,7 @@ semear() {
   P -q >/dev/null <<SQL
 ALTER TABLE public.sales_orders DISABLE TRIGGER trg_pedido_venda_coerencia_cab;
 ALTER TABLE public.order_items  DISABLE TRIGGER trg_pedido_venda_coerencia_lin;
-SELECT public.t_pedido('$E1', 'oben', '2026-04-05', 70, '[{"sku":5001,"q":1,"p":70,"d":7}]',
+SELECT public.t_pedido('$E1', 'oben', '2026-07-17', 70, '[{"sku":5001,"q":1,"p":70,"d":7}]',
   p_items => '[{"omie_codigo_produto":5001,"quantidade":2,"valor_unitario":70,"desconto":0}]');
 ALTER TABLE public.sales_orders ENABLE ALWAYS TRIGGER trg_pedido_venda_coerencia_cab;
 ALTER TABLE public.order_items  ENABLE ALWAYS TRIGGER trg_pedido_venda_coerencia_lin;
@@ -339,8 +349,8 @@ semear
 
 if [ "$MODO" = normal ]; then
 
-P -q -f "$MIG"
-ok "M1 a migration re-aplica sem erro (idempotente; a postcondição roda de novo sobre os seeds)"
+P -q -f "$MIG1"; P -q -f "$MIG2"
+ok "M1 a cadeia re-aplica sem erro (idempotente; as postcondições rodam de novo sobre os seeds)"
 
 echo "═══ C · classificação — a decisão, pedido a pedido ═══"
 eq "C1 o pedido real com desconto e total bruto é convertível"          "$(classe "$A1")"  "convertivel"
@@ -364,7 +374,7 @@ echo "═══ REL · relatório por conta×mês, com denominador ═══"
 REL="$(Pq -c "SELECT m FROM jsonb_array_elements((public.pedido_total_liquido_relatorio('$CORTE'))->'por_conta_mes') m WHERE m->>'conta' = 'oben' AND m->>'mes' = '2026-07'")"
 eq "REL1 oben/2026-07: pedidos|líquido provado|sem desconto|convertível|Σ mudança|não apurado|outros|completo" \
    "$(campos "$REL" pedidos liquido_provado sem_desconto convertivel soma_mudanca_convertivel nao_apurado sem_prova_outros apuracao_completa)" \
-   "11|1|1|4|-153.90|0|5|true"
+   "13|1|1|6|-164.90|0|5|true"
 REL="$(Pq -c "SELECT m FROM jsonb_array_elements((public.pedido_total_liquido_relatorio('$CORTE'))->'por_conta_mes') m WHERE m->>'conta' = 'oben' AND m->>'mes' = '2026-06'")"
 eq "REL2 oben/2026-06 com linha não apurada: apuração incompleta" "$(campos "$REL" pedidos convertivel nao_apurado apuracao_completa)" "2|1|1|false"
 
@@ -373,9 +383,9 @@ F0="$(foto)"
 J="$(ensaiar)"
 eq "E1 elegíveis|incoerentes|Σ mudança prevista|excede o limite" "$(campos "$J" modo elegiveis incoerentes soma_mudanca_prevista excede_limite)" "ensaio|7|1|-178.40|false"
 eq "E2 o ensaio não escreveu nada (cabeçalhos, updated_at e registro)" "$(foto)" "$F0"
-eq "E3 meses bloqueados por apuração incompleta" \
-   "$(Pq -c "SELECT string_agg((b->>'conta') || '/' || (b->>'mes'), ',' ORDER BY b->>'mes' DESC) FROM jsonb_array_elements((\$j\$$J\$j\$::jsonb)->'meses_bloqueados') b")" \
-   "oben/2026-06,oben/2026-05"
+eq "E3 meses bloqueados, com a conta que bloqueia (abril: a colacor trava a oben)" \
+   "$(Pq -c "SELECT string_agg((b->>'conta') || '/' || (b->>'mes'), ',' ORDER BY b->>'mes' DESC, b->>'conta') FROM jsonb_array_elements((\$j\$$J\$j\$::jsonb)->'meses_bloqueados') b")" \
+   "oben/2026-06,oben/2026-05,colacor/2026-04,oben/2026-04"
 
 echo "═══ A · aplicar — escopo inteiro, mês completo exigido ═══"
 J="$(aplicar)"
@@ -383,8 +393,8 @@ eq "A1 escritos|incoerentes|em uso|mudaram sob lock|Σ mudança" "$(campos "$J" 
 eq "A2 o pedido real: total|subtotal|discount = 1489,34 (o líquido que o #2469 mediu)" "$(Pq -c "SELECT total || '|' || subtotal || '|' || discount FROM public.sales_orders WHERE id = '$A1'")" "1489.34|1489.34|0"
 eq "A3 convertidos: a8|a9|a14|c1|e2" "$(tot "$A8")|$(tot "$A9")|$(tot "$A14")|$(tot "$C1")|$(tot "$E2")" "9.01|95.00|72.00|436.50|36.00"
 eq "A4 intocados: a2 a3 a4 a5 a6 a10 a13" "$(tot "$A2")|$(tot "$A3")|$(tot "$A4")|$(tot "$A5")|$(tot "$A6")|$(tot "$A10")|$(tot "$A13")" "100.00|180|50|95|100|300|100"
-eq "A5 intocados: b1 b2 (mês incompleto) d1..d4 (linha inválida) e1 (incoerente)" \
-   "$(tot "$B1")|$(tot "$B2")|$(tot "$D1")|$(tot "$D2")|$(tot "$D3")|$(tot "$D4")|$(tot "$E1")" "100|150|0.01|0|100|60|70"
+eq "A5 intocados: b1 b2 (junho incompleto) d1..d4 (maio) e1 (incoerente) f1 f2 (abril: a colacor trava a oben)" \
+   "$(tot "$B1")|$(tot "$B2")|$(tot "$D1")|$(tot "$D2")|$(tot "$D3")|$(tot "$D4")|$(tot "$E1")|$(tot "$ABR1")|$(tot "$ABR2")" "100|150|0.01|0|100|60|70|40|150"
 eq "A6 nenhum pedido fora do lote teve updated_at mexido" \
    "$(Pq -c "SELECT count(*) FROM public.sales_orders WHERE id NOT IN ('$A1','$A8','$A9','$A14','$C1','$E2') AND updated_at NOT IN ('2026-09-01 12:00:00+00', '2026-09-12 00:00:00+00')")" "0"
 eq "A7 registro: linhas|lotes|Σ (depois − antes)|corte gravado" \
@@ -398,8 +408,8 @@ eq "A10 idempotente: nada mudou, nem updated_at" "$(foto)" "$F1"
 echo "═══ G · mês completo — o gate é explícito ═══"
 semear
 J="$(aplicar "p_exigir_mes_completo => false")"
-eq "G1 sem o gate: b1 e d4 também convertem" "$(campos "$J" escritos)|$(tot "$B1")|$(tot "$D4")" "8|90.00|54.00"
-eq "G2 sem o gate, o que as linhas não provam continua intocado" "$(tot "$B2")|$(tot "$D1")|$(tot "$D2")|$(tot "$D3")" "150|0.01|0|100"
+eq "G1 sem o gate: b1, d4 e f1 também convertem" "$(campos "$J" escritos)|$(tot "$B1")|$(tot "$D4")|$(tot "$ABR1")" "9|90.00|54.00|36.00"
+eq "G2 sem o gate, o que as linhas não provam continua intocado" "$(tot "$B2")|$(tot "$D1")|$(tot "$D2")|$(tot "$D3")|$(tot "$ABR2")" "150|0.01|0|100|150"
 
 echo "═══ S · escopo ═══"
 semear
@@ -407,7 +417,10 @@ J="$(aplicar "p_contas => ARRAY['colacor']")"
 eq "S1 só colacor" "$(campos "$J" escritos)|$(tot "$C1")|$(tot "$A1")" "1|436.50|1629.25"
 semear
 J="$(aplicar "p_mes_de => '2026-07-01', p_mes_ate => '2026-07-31'")"
-eq "S2 só julho: a1 a8 a9 a14 c1, e2 (abril) fica" "$(campos "$J" escritos)|$(tot "$E2")" "5|40"
+eq "S2 só julho: a1 a8 a9 a14 e2 c1; f1 (abril) fica" "$(campos "$J" escritos)|$(tot "$ABR1")" "6|40"
+semear
+J="$(aplicar "p_contas => ARRAY['oben']")"
+eq "S3 só oben, por escolha explícita: abril deixa de estar travado pela colacor" "$(campos "$J" escritos)|$(tot "$ABR1")|$(tot "$C1")" "6|36.00|450"
 
 echo "═══ L · limite que RECUSA (não trunca) ═══"
 semear
@@ -458,7 +471,7 @@ sessao_x "SELECT pg_advisory_xact_lock(hashtext('pedido_total_liquido_converter'
 eq "K3 duas conversões ao mesmo tempo: a segunda recusa com 55P03" "$(estado)" "55P03"
 liberar_x k3
 
-echo "═══ P · paridade: o gêmeo do db:aplicar instala a MESMA coisa que a migration ═══"
+echo "═══ P · paridade: o gêmeo do db:aplicar instala a MESMA coisa que a cadeia ═══"
 if grep -qiE '^[[:space:]]*(BEGIN|COMMIT|ROLLBACK|START TRANSACTION)[[:space:]]*;' "$DBF"; then
   bad "P1 o gêmeo tem controle de transação — o db:aplicar o recusaria"
 else
@@ -469,6 +482,11 @@ PG() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d gemeo -v ON_ERROR_STOP=1 
 PG -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 PG -q -f "$SCHEMA"
 PG -q -f "$COER"
+# A correção sozinha, num banco sem a migration base, tem de recusar DIZENDO o que falta.
+if PG -q -f "$MIG2" >"$TMPD/m2.out" 2>&1; then m2="aplicou"
+elif grep -q 'POSTCONDICAO FALHOU: conversor, classificador ou registro ausente' "$TMPD/m2.out"; then m2="recusou"
+else m2="outro_erro"; fi
+eq "M2 a correção aplicada sem a migration base recusa, com o motivo" "$m2" "recusou"
 PG -q -1 -f "$DBF"
 assinatura() {  # $1 = P | PG — funções (corpo, volatilidade, definer, config, ACL) + tabela (colunas, CHECK, índices, RLS, ACL)
   "$1" -tA -c "
@@ -487,7 +505,7 @@ assinatura() {  # $1 = P | PG — funções (corpo, volatilidade, definer, confi
       || '#' || (SELECT c.relrowsecurity::text || ':' || coalesce(c.relacl::text, '') FROM pg_class c
                   WHERE c.oid = 'public.pedido_total_liquido_conversoes'::regclass))"
 }
-eq "P2 o gêmeo instala as mesmas funções e a mesma tabela" "$(assinatura PG)" "$(assinatura P)"
+eq "P2 o gêmeo instala as mesmas funções e a mesma tabela que a cadeia" "$(assinatura PG)" "$(assinatura P)"
 # shellcheck disable=SC2016  # expressão perl: os $ são do perl, não do shell
 perl -0pe 's/oi\.desconto_valor <= oi\.quantity \* oi\.unit_price \+ 0\.005/oi.desconto_valor <= oi.quantity * oi.unit_price + 0.006/' "$DBF" > "$TMPD/gemeo-sabotado.sql"
 if cmp -s "$DBF" "$TMPD/gemeo-sabotado.sql"; then bad "P3 a sabotagem do gêmeo não mudou o texto (falsificação inválida)"; fi
@@ -514,7 +532,7 @@ sab_falha() { FALH=$((FALH+1)); echo "  ❌ $1"; }
 vermelha()  { if [ "$2" != "$3" ]; then sab_verm "$1 (sabotado: [$2] ≠ verde [$3])"; else sab_falha "$1 — a sabotagem ficou VERDE [$2]: o assert não tem dente"; fi; }
 # Vermelho reconhecido pela ASSINATURA do ramo que deveria disparar (não por "falhou algo").
 vermelha_por() { if [ "$2" = "$3" ]; then sab_verm "$1 (=$2)"; else sab_falha "$1 — esperado o ramo [$3], veio [$2]"; fi; }
-controle()  { if [ "$2" = "$3" ]; then echo "  ✅ $1 (=$2)"; else sab_falha "$1 — restaurada, a migration NÃO voltou ao verde: esperado [$3], veio [$2]"; fi; }
+controle()  { if [ "$2" = "$3" ]; then echo "  ✅ $1 (=$2)"; else sab_falha "$1 — restaurada, a cadeia NÃO voltou ao verde: esperado [$3], veio [$2]"; fi; }
 
 echo "═══ F0 · linha de base VERDE, nesta invocação, antes da primeira sabotagem ═══"
 BASE_OK=1
@@ -522,7 +540,7 @@ base() { if [ "$2" = "$3" ]; then echo "  ✅ $1 (=$2)"; else echo "  ❌ $1 —
 base "F0a classes" "$(classe "$A10")|$(classe "$B2")|$(classe "$A9")|$(classe "$A4")|$(classe "$D1")" "tocado_pos_corte|nao_apurado|convertivel|ambiguo|linha_invalida"
 F0="$(foto)"; ensaiar >/dev/null
 base "F0b o ensaio não escreve" "$(Pq -c "SELECT public.t_foto() = '$F0'")" "t"
-base "F0c o lote padrão aplica, e o gate segura o mês incompleto" "$(estado)|$(tot "$A8")|$(tot "$B1")|$(tot "$A1")" "OK|9.01|100|1489.34"
+base "F0c o lote padrão aplica; o gate segura junho e o abril travado pela colacor" "$(estado)|$(tot "$A8")|$(tot "$B1")|$(tot "$ABR1")|$(tot "$A1")" "OK|9.01|100|40|1489.34"
 semear
 base "F0d o limite recusa" "$(estado "p_limite => 3")" "TL002"
 base "F0e K1" "$(cenario_k1)" "$K1_VERDE"
@@ -532,123 +550,134 @@ if [ "$BASE_OK" -ne 1 ]; then
   exit 1
 fi
 
-echo "═══ F · cada sabotagem na migration exige VERMELHO; restaurada, o VERDE volta ═══"
+echo "═══ F · cada sabotagem exige VERMELHO; restaurada a cadeia, o VERDE volta ═══"
 TMPM="$TMPD/mig-sabotada.sql"
-sabotar() {  # $1 = rótulo; $2 = expressão perl (-0: atravessa linhas). Só escreve o espelho e confere.
-  perl -0pe "$2" "$MIG" > "$TMPM"
-  if cmp -s "$MIG" "$TMPM"; then
+sabotar() {  # $1 = rótulo; $2 = migration alvo; $3 = expressão perl (-0: atravessa linhas). Só escreve o espelho e confere.
+  perl -0pe "$3" "$2" > "$TMPM"
+  if cmp -s "$2" "$TMPM"; then
     sab_falha "$1 — a sabotagem não alterou o texto da migration (falsificação inválida)"
     return 1
   fi
 }
-restaurar() { P -q -f "$MIG" >/dev/null; }
+# shellcheck disable=SC2016  # expressão perl: os $ são do perl, não do shell
+instalar_sem_post() { perl -0pe 's/DO \$post\$.*?\$post\$;//s' "$TMPM" > "$TMPD/sem-post.sql"; P -q -f "$TMPD/sem-post.sql" >/dev/null; }
+postcondicao_de() {  # aplica o espelho COM a postcondição; ecoa aplicou | postcondicao | outro_erro
+  if P -q -f "$TMPM" >"$TMPD/post.out" 2>&1; then echo aplicou
+  elif grep -q 'POSTCONDICAO FALHOU' "$TMPD/post.out"; then echo postcondicao
+  else echo outro_erro; fi
+}
+restaurar() { P -q -f "$MIG1" >/dev/null; P -q -f "$MIG2" >/dev/null; }
 
 # shellcheck disable=SC2016  # todas as expressões perl abaixo usam $ do perl, não do shell
 {
-if sabotar F1 's/AND p_corte IS NOT NULL AND m\.atualizado_em >= p_corte/AND false/'; then
-  P -q -f "$TMPM" >/dev/null; semear
+# ── classificador (migration base): instalada sabotada, e a correção por cima ──
+if sabotar F1 "$MIG1" 's/AND p_corte IS NOT NULL AND m\.atualizado_em >= p_corte/AND false/'; then
+  instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
   vermelha "F1 sem o corte, o cabeçalho reescrito depois dele vira convertível" "$(classe "$A10")" "tocado_pos_corte"
   restaurar; controle "F1 controle" "$(classe "$A10")" "tocado_pos_corte"
 fi
 
-if sabotar F2 's/count\(\*\) FILTER \(WHERE oi\.desconto_valor IS NULL\)(\s+)AS n_nao_apurada/0::bigint$1AS n_nao_apurada/; s/sum\(oi\.quantity \* oi\.unit_price - oi\.desconto_valor\)(\s+)AS liquido_cru/sum(oi.quantity * oi.unit_price - coalesce(oi.desconto_valor, 0))$1AS liquido_cru/'; then
-  P -q -f "$TMPM" >/dev/null; semear
+if sabotar F2 "$MIG1" 's/count\(\*\) FILTER \(WHERE oi\.desconto_valor IS NULL\)(\s+)AS n_nao_apurada/0::bigint$1AS n_nao_apurada/; s/sum\(oi\.quantity \* oi\.unit_price - oi\.desconto_valor\)(\s+)AS liquido_cru/sum(oi.quantity * oi.unit_price - coalesce(oi.desconto_valor, 0))$1AS liquido_cru/'; then
+  instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
   vermelha "F2 coalesce(desconto_valor, 0): a linha não apurada vira desconto zero" "$(classe "$B2")" "nao_apurado"
   restaurar; controle "F2 controle" "$(classe "$B2")" "nao_apurado"
 fi
 
-if sabotar F3 's/sum\(oi\.quantity \* oi\.unit_price - oi\.desconto_valor\)(\s+)AS liquido_cru/sum(round(oi.quantity * oi.unit_price - oi.desconto_valor, 2))$1AS liquido_cru/'; then
-  P -q -f "$TMPM" >/dev/null; semear; aplicar >/dev/null
+if sabotar F3 "$MIG1" 's/sum\(oi\.quantity \* oi\.unit_price - oi\.desconto_valor\)(\s+)AS liquido_cru/sum(round(oi.quantity * oi.unit_price - oi.desconto_valor, 2))$1AS liquido_cru/'; then
+  instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear; aplicar >/dev/null
   vermelha "F3 arredondar por linha muda o centavo do a8" "$(tot "$A8")" "9.01"
   restaurar; semear; aplicar >/dev/null; controle "F3 controle" "$(tot "$A8")" "9.01"
 fi
 
-if sabotar F4 's/abs\(m\.total_atual - m\.bruto_r\) <= 0\.01/m.total_atual = m.bruto_r/g'; then
-  P -q -f "$TMPM" >/dev/null; semear
+if sabotar F4 "$MIG1" 's/abs\(m\.total_atual - m\.bruto_r\) <= 0\.01/m.total_atual = m.bruto_r/g'; then
+  instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
   vermelha "F4 sem a tolerância do float, o bruto a 1 centavo não converte" "$(classe "$A9")" "convertivel"
   restaurar; controle "F4 controle" "$(classe "$A9")" "convertivel"
 fi
 
-if sabotar F5 's/THEN \x27ambiguo\x27/THEN \x27convertivel\x27/'; then
-  P -q -f "$TMPM" >/dev/null; semear
+if sabotar F5 "$MIG1" 's/THEN \x27ambiguo\x27/THEN \x27convertivel\x27/'; then
+  instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
   vermelha "F5 sem o ambíguo, o desconto de 1 centavo converte" "$(classe "$A4")" "ambiguo"
   restaurar; controle "F5 controle" "$(classe "$A4")" "ambiguo"
 fi
 
-if sabotar F6 's/WHEN m\.liquido_r < 0/WHEN false/'; then
-  P -q -f "$TMPM" >/dev/null; semear
+if sabotar F6 "$MIG1" 's/WHEN m\.liquido_r < 0/WHEN false/'; then
+  instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
   vermelha "F6 sem o guard de líquido negativo, −0,01 vira convertível" "$(classe "$D1")" "linha_invalida"
   restaurar; controle "F6 controle" "$(classe "$D1")" "linha_invalida"
 fi
 
-if sabotar F7 's/ORDER BY so\.id(\s+)FOR UPDATE SKIP LOCKED\) t;/ORDER BY so.id$1FOR UPDATE) t;/'; then
-  P -q -f "$TMPM" >/dev/null
+# ── conversor (a correção): instalado sabotado, sem a postcondição ──
+if sabotar F7 "$MIG2" 's/ORDER BY so\.id(\s+)FOR UPDATE SKIP LOCKED\) t;/ORDER BY so.id$1FOR UPDATE) t;/'; then
+  instalar_sem_post
   vermelha "F7 sem SKIP LOCKED, o conversor espera o escritor" "$(cenario_k1)" "$K1_VERDE"
   restaurar; controle "F7 controle" "$(cenario_k1)" "$K1_VERDE"
 fi
 
-if sabotar F8 's/v_coerentes\) c(\s+)WHERE c\.classe = \x27convertivel\x27/v_coerentes) c$1WHERE true/'; then
-  P -q -f "$TMPM" >/dev/null
+if sabotar F8 "$MIG2" 's/v_coerentes\) c(\s+)WHERE c\.classe = \x27convertivel\x27/v_coerentes) c$1WHERE true/'; then
+  instalar_sem_post
   vermelha "F8 sem re-classificar sob o lock, o total que mudou é sobrescrito" "$(cenario_k2)" "$K2_VERDE"
   restaurar; controle "F8 controle" "$(cenario_k2)" "$K2_VERDE"
 fi
 
-if sabotar F9 's/PERFORM public\.pedido_venda_exigir_coerencia\(v_id\);/NULL;/'; then
-  P -q -f "$TMPM" >/dev/null; semear
+if sabotar F9 "$MIG2" 's/PERFORM public\.pedido_venda_exigir_coerencia\(v_id\);/NULL;/'; then
+  instalar_sem_post; semear
   vermelha_por "F9 sem a checagem de coerência, o incoerente derruba o lote no COMMIT (23514)" "$(estado)" "23514"
   restaurar; semear; controle "F9 controle" "$(estado)" "OK"
 fi
 
-if sabotar F10 's/AND \(NOT p_exigir_mes_completo OR m\.n_nao_apurado \+ m\.n_linha_invalida = 0\)/AND true/'; then
-  P -q -f "$TMPM" >/dev/null; semear; aplicar >/dev/null
-  vermelha "F10 sem o gate, o mês incompleto converte pela metade" "$(tot "$B1")" "100"
+if sabotar F10 "$MIG2" 's/AND \(NOT p_exigir_mes_completo OR c\.mes NOT IN \(SELECT b\.mes FROM mes_bloqueado b\)\)/AND true/'; then
+  semear
+  vermelha_por "F10a sem o gate, a postcondição da correção recusa o apply (o corpo novo não está lá)" "$(postcondicao_de)" "postcondicao"
+  instalar_sem_post; semear; aplicar >/dev/null
+  vermelha "F10b sem o gate, o mês incompleto converte pela metade" "$(tot "$B1")" "100"
   restaurar; semear; aplicar >/dev/null; controle "F10 controle" "$(tot "$B1")" "100"
 fi
 
-if sabotar F11 's/IF v_n_elegiveis > p_limite THEN/IF false THEN/'; then
-  P -q -f "$TMPM" >/dev/null; semear
+if sabotar F11 "$MIG2" 's/IF v_n_elegiveis > p_limite THEN/IF false THEN/'; then
+  instalar_sem_post; semear
   vermelha "F11 sem a recusa, o escopo acima do limite grava" "$(estado "p_limite => 3")" "TL002"
   restaurar; semear; controle "F11 controle" "$(estado "p_limite => 3")" "TL002"
 fi
 
-if sabotar F12 's/IF NOT p_aplicar THEN(\s+RETURN jsonb_build_object\(\s+\x27modo\x27, \x27ensaio\x27, \x27corte\x27, p_corte, \x27escopo\x27, v_escopo, \x27limite\x27, p_limite,\s+\x27excede_limite\x27, false)/IF false THEN$1/'; then
+if sabotar F12 "$MIG2" 's/IF NOT p_aplicar THEN(\s+RETURN jsonb_build_object\(\s+\x27modo\x27, \x27ensaio\x27, \x27corte\x27, p_corte, \x27escopo\x27, v_escopo, \x27limite\x27, p_limite,\s+\x27excede_limite\x27, false)/IF false THEN$1/'; then
   semear
-  # Camada 1: a postcondição da MIGRATION executa o ensaio e vê `modo: aplicado` — recusa o apply.
-  if P -q -f "$TMPM" >"$TMPD/f12.out" 2>&1; then f12="aplicou"
-  elif grep -q 'POSTCONDICAO FALHOU' "$TMPD/f12.out"; then f12="postcondicao"
-  else f12="outro_erro"; fi
-  vermelha_por "F12a o ensaio que cai no caminho de escrita: a postcondição da migration recusa o apply" "$f12" "postcondicao"
-  # Camada 2, uma de cada vez: instalada SEM a postcondição, a foto do harness também acusa.
-  perl -0pe 's/DO \$post\$.*?\$post\$;//s' "$TMPM" > "$TMPD/mig-sem-post.sql"
-  P -q -f "$TMPD/mig-sem-post.sql" >/dev/null; semear; F0="$(foto)"; ensaiar >/dev/null
+  vermelha_por "F12a o ensaio que cai no caminho de escrita: a postcondição da correção recusa o apply" "$(postcondicao_de)" "postcondicao"
+  instalar_sem_post; semear; F0="$(foto)"; ensaiar >/dev/null
   vermelha "F12b sem a postcondição, o ensaio grava — e a foto acusa" "$(Pq -c "SELECT public.t_foto() = '$F0'")" "t"
   restaurar; semear; F0="$(foto)"; ensaiar >/dev/null
   controle "F12 controle" "$(Pq -c "SELECT public.t_foto() = '$F0'")" "t"
 fi
 
-# F13: a postcondição da MIGRATION sobre a ACL. As funções saem antes — CREATE OR REPLACE preserva
-# a ACL antiga, e só uma função NOVA recebe os default privileges que o REVOKE sabotado deixaria.
+# F13: a postcondição da migration BASE sobre a ACL. As funções saem antes — CREATE OR REPLACE
+# preserva a ACL antiga, e só uma função NOVA recebe os default privileges que o REVOKE sabotado
+# deixaria de pé.
 DROP_FNS="DROP FUNCTION IF EXISTS public.pedido_total_liquido_converter(boolean, timestamptz, text[], date, date, integer, boolean), public.pedido_total_liquido_relatorio(timestamptz), public.pedido_total_liquido_classificar(timestamptz, uuid[])"
-if sabotar F13 's/(REVOKE ALL ON FUNCTION public\.pedido_total_liquido_converter\([^)]*\) FROM PUBLIC), anon, authenticated;/$1, authenticated;/'; then
+if sabotar F13 "$MIG1" 's/(REVOKE ALL ON FUNCTION public\.pedido_total_liquido_converter\([^)]*\) FROM PUBLIC), anon, authenticated;/$1, authenticated;/'; then
   P -q -c "$DROP_FNS"
-  if P -q -f "$TMPM" >"$TMPD/f13.out" 2>&1; then f13="aplicou"
-  elif grep -q 'POSTCONDICAO FALHOU' "$TMPD/f13.out"; then f13="postcondicao"
-  else f13="outro_erro"; fi
-  vermelha_por "F13 anon com EXECUTE: a postcondição da migration aborta o apply" "$f13" "postcondicao"
+  vermelha_por "F13 anon com EXECUTE: a postcondição da migration base aborta o apply" "$(postcondicao_de)" "postcondicao"
   P -q -c "$DROP_FNS"
-  if P -q -f "$MIG" >"$TMPD/f13.out" 2>&1; then f13="aplicou"; else f13="falhou"; fi
-  controle "F13 controle: a migration real, em banco sem as funções, aplica" "$f13" "aplicou"
+  if P -q -f "$MIG1" >"$TMPD/f13.out" 2>&1 && P -q -f "$MIG2" >>"$TMPD/f13.out" 2>&1; then f13="aplicou"; else f13="falhou"; fi
+  controle "F13 controle: a cadeia real, em banco sem as funções, aplica" "$f13" "aplicou"
 fi
 
-if sabotar F14 's/SET total    = a\.liquido,/SET total    = a.liquido - 0.01,/'; then
-  P -q -f "$TMPM" >/dev/null; semear
+if sabotar F14 "$MIG2" 's/SET total    = a\.liquido,/SET total    = a.liquido - 0.01,/'; then
+  instalar_sem_post; semear
   vermelha_por "F14 escrita errada por 1 centavo: a postcondição do conversor devolve o lote (TL001)" "$(estado)" "TL001"
   controle "F14 e a sabotagem não gravou nada" "$(tot "$A1")" "1629.25"
   restaurar; semear; controle "F14 controle" "$(estado)" "OK"
 fi
+
+if sabotar F15 "$MIG2" 's/SELECT m\.mes(\s+)FROM no_escopo m(\s+)GROUP BY m\.mes(\s+)HAVING/SELECT m.account, m.mes$1FROM no_escopo m$2GROUP BY m.account, m.mes$3HAVING/; s/c\.mes NOT IN \(SELECT b\.mes FROM mes_bloqueado b\)/(c.account, c.mes) NOT IN (SELECT b.account, b.mes FROM mes_bloqueado b)/'; then
+  semear
+  vermelha_por "F15a gate por conta×mês: a postcondição da correção recusa o apply" "$(postcondicao_de)" "postcondicao"
+  instalar_sem_post; semear; aplicar >/dev/null
+  vermelha "F15b gate por conta×mês: a oben de abril converte com a colacor incompleta" "$(tot "$ABR1")" "40"
+  restaurar; semear; aplicar >/dev/null; controle "F15 controle" "$(tot "$ABR1")" "40"
+fi
 }
 
-echo "═══ controle final: restaurada, o lote padrão de ponta a ponta ═══"
+echo "═══ controle final: restaurada a cadeia, o lote padrão de ponta a ponta ═══"
 semear
 controle "Z1 escritos|Σ mudança" "$(campos "$(aplicar)" escritos soma_mudanca)" "6|-171.40"
 

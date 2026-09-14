@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **547** custom migrations totais
-- **1817** objetos esperados (criados por estas migrations)
+- **548** custom migrations totais
+- **1818** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 585
+  - `function`: 586
   - `rls_policy`: 462
   - `index`: 259
   - `cron_job`: 171
@@ -4511,6 +4511,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.pedido_total_liquido_conversoes` | — |
 | `index` | `public.idx_pedido_total_liquido_conversoes_pedido` | `pedido_total_liquido_conversoes` |
 | `index` | `public.idx_pedido_total_liquido_conversoes_lote` | `pedido_total_liquido_conversoes` |
+
+### `20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pedido_total_liquido_converter` | — |
 
 ## Próximos passos por status
 

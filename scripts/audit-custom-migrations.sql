@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 547
+-- Total de custom migrations: 548
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -588,7 +588,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260909074613', 'v_titulo_baixas_otica_canonica', '20260909074613_v_titulo_baixas_otica_canonica.sql'),
   ('20260909222423', 'deploy_sonda_alvos_onda5', '20260909222423_deploy_sonda_alvos_onda5.sql'),
   ('20260910214850', 'desconto_backfill_aplicar_ja_apuradas', '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql'),
-  ('20260914181500', 'pedido_total_liquido_acervo', '20260914181500_pedido_total_liquido_acervo.sql')
+  ('20260914181500', 'pedido_total_liquido_acervo', '20260914181500_pedido_total_liquido_acervo.sql'),
+  ('20260914193000', 'pedido_total_liquido_acervo_mes_entre_contas', '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2394,7 +2395,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('pedido_total_liquido_acervo', 'table', 'public', 'pedido_total_liquido_conversoes', ''),
   ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_pedido', 'pedido_total_liquido_conversoes'),
-  ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_lote', 'pedido_total_liquido_conversoes')
+  ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_lote', 'pedido_total_liquido_conversoes'),
+  ('pedido_total_liquido_acervo_mes_entre_contas', 'function', 'public', 'pedido_total_liquido_converter', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4248,7 +4250,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('pedido_total_liquido_acervo', 'table', 'public', 'pedido_total_liquido_conversoes', ''),
   ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_pedido', 'pedido_total_liquido_conversoes'),
-  ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_lote', 'pedido_total_liquido_conversoes')
+  ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_lote', 'pedido_total_liquido_conversoes'),
+  ('pedido_total_liquido_acervo_mes_entre_contas', 'function', 'public', 'pedido_total_liquido_converter', '')
 )
 SELECT
   e.migration,
@@ -4276,7 +4279,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 111.
+-- Funções redefinidas com corpo extraível: 112.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4693,7 +4696,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'aplicar_edicao_pedido_omie', 1, '20260907210000_pedido_edicao_omie_atomica.sql', '8531ed39f6bf2c7d5725342bc782c8fb'),
   ('public', 'aplicar_edicao_pedido_omie', 2, '20260908215704_desconto_valor_atravessa_os_escritores.sql', '31c4fce633bf9a7363a45770e4d514c3'),
   ('public', 'desconto_backfill_aplicar', 1, '20260908220625_desconto_backfill_aplicar.sql', '59d9c1e4482bf524c5da1eff2700aa08'),
-  ('public', 'desconto_backfill_aplicar', 2, '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql', '09e34b475c6f2b9cfd832b90e62d9b77')
+  ('public', 'desconto_backfill_aplicar', 2, '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql', '09e34b475c6f2b9cfd832b90e62d9b77'),
+  ('public', 'pedido_total_liquido_converter', 1, '20260914181500_pedido_total_liquido_acervo.sql', 'ed8296520bc8513f55f4039161657cc8'),
+  ('public', 'pedido_total_liquido_converter', 2, '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql', 'dc365744059741095767a967d0c05055')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2
