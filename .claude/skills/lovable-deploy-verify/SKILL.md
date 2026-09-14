@@ -1279,11 +1279,23 @@ de que um Publish aconteceu continua sendo a mudança do `ar=`/entry, não a tra
   PREVISTO da sua porta — `0|sincronizado: ar serve` ×2 e `0|nada a relatar`), 40 controles verdes
   nos 2 locales. Fora da rede: o fallback de **sentinela** (exigiria o `verify-frontend.sh` com
   rede) fica atrás do mesmo guard — coberto pela POSIÇÃO, não por um caso.
-- [ ] (latente) **`FETCH_OK=1` não prova que a `origin/main` andou.** `git fetch origin main` só move
-  `refs/remotes/origin/main` se o refspec configurado mapear `main`: num clone `--single-branch` de
-  outro branch ele sai **0** e só o `FETCH_HEAD` anda (medido em scratch, 2026-09-10: rc 0,
-  `origin/main` parada em `010535f0`, remoto em `0211030a`) — e o monitor compara com a main velha.
-  O repo usa o refspec padrão (`+refs/heads/*:refs/remotes/origin/*`), então hoje não morde. Fechar =
-  fetch com refspec explícito (`+refs/heads/main:refs/remotes/origin/main`) + cenário de refspec
-  estreito + sabotagem.
+- [x] **`FETCH_OK=1` agora prova que a main LIDA é a desta rodada — nas duas pontas (2026-09-14; era a
+  pendência latente do #2473).** `git fetch origin main` só move `refs/remotes/origin/main` se o
+  refspec configurado mapear `main`: num clone `--single-branch` de outro branch ele sai **0** e só o
+  `FETCH_HEAD` anda (medido em scratch em 2026-09-10: rc 0, `origin/main` parada em `010535f0`, remoto
+  em `0211030a`; re-medido em 2026-09-14 no git 2.54: rc 0, ref no commit velho, `FETCH_HEAD` no novo).
+  A medição do conserto achou o **irmão do lado da LEITURA**: com o fetch perfeito, `git rev-parse
+  origin/main` resolve `refs/heads/origin/main` ANTES de `refs/remotes/`, e um branch LOCAL com esse
+  nome devolvia o commit velho, com o aviso `refname 'origin/main' is ambiguous` descartado no
+  `2>/dev/null`. Conserto: a MESMA ref completa nas duas pontas. O fetch nomeia o destino
+  (`+refs/heads/main:refs/remotes/origin/main`): exit 0 ⇒ ela foi escrita nesta rodada; destino
+  travado sai 1 e remoto sem `main` sai 128 ⇒ `FETCH_FALHOU`; main recuada acompanha o remoto pelo `+`.
+  E as duas leituras (`MAIN_SHA` e `main_full`) usam `refs/remotes/origin/main`. **Antes do conserto,**
+  `fetch_refspec_estreito` e `ref_main_ambigua` saíram **exit 0 `sincronizado: ar serve 3075e8f1 ==
+  origin/main`** com a main real adiante com `src/` (27/29); **depois**, exit 3 `motivo:
+  ALCANCA_BUNDLE` (29/29). Rede: 29 cenários (+2) e 23 sabotagens (+3, todas exigindo o verde indevido
+  PREVISTO `0|sincronizado: ar serve`: o destino nomeado de volta ao `main` cru e o nome curto em cada
+  leitura — o mesmo cenário guarda as duas, cada uma por uma porta, a igualdade de string e o atalho do
+  SHA cheio), 46 controles verdes nos 2 locales, 23/23 pegas. O repo real segue no refspec padrão e
+  sem `refs/heads/origin/*` (medido em 2026-09-14): era latente, e agora está fechado.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
