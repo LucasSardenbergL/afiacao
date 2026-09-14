@@ -742,7 +742,33 @@ Irmã da nº 4, pelo avesso: lá o `grep` (shim do `ugrep`) casa **demais** — 
 para provar ausência; aqui o `rg` olha **de menos**. Nas duas o comando faz exatamente o que promete,
 e o erro está em atribuir ao resultado um alcance que ele não tem.
 
-## O padrão por trás das dezenove
+### 20. API homônima entre node e bun não FALHA — o filho sem `env` herda a PARTIDA
+
+É a §6 (flag homônima BSD × GNU) na camada do RUNTIME. Sob bun 1.3.14, `spawnSync`, `execSync`,
+`execFileSync`, `Bun.spawn` e `Bun.spawnSync` chamados **sem** `env` entregam ao filho o ambiente de
+quando o bun arrancou. Um `process.env.GIT_CONFIG_GLOBAL = …` seguido de um `git()` importado some em
+silêncio — isolamento, config forjada e trace que "estão ligados" não estão. No node, logo no
+vitest, as mesmas linhas funcionam: **o teste verde prova o runtime em que rodou, não o script que o
+CI executa com `bun`**.
+
+Medido no próprio repo em 2026-09-14, com o bloco "fiação do git" de
+`scripts/sonda-versao-bump-gate.test.ts` e a config global **da partida** quebrada:
+
+| runner | partida benigna | partida quebrada |
+|---|---|---|
+| `bun test` | `1 pass` | **`1 fail`** |
+| vitest | `1 passed` | `1 passed` |
+
+A coluna benigna é a armadilha: **verde nos dois**, e sob bun sem isolar nada. Só a sabotagem da
+partida separa "isolou" de "a máquina calhou de ser benigna" — o controle cuja resposta já se
+conhece, de novo.
+
+⇒ filho que precisa de uma mutação recebe `env: { ...process.env, X }` explícito, ou o processo é
+re-executado com o ambiente montado na partida. Em `scripts/` e `db/` o ESLint barra a mutação na
+raiz. Matriz por API, upstream, varredura e a trava em
+[bun-filho-sem-env-herda-a-partida.md](bun-filho-sem-env-herda-a-partida.md).
+
+## O padrão por trás das vinte
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -777,6 +803,12 @@ pergunta estava certa — o que ficou sem declarar foi **onde** ela seria feita.
 verdade sobre o conjunto que a ferramenta escolheu ler, e a conclusão é escrita sobre o repo. É o
 corte silencioso do PostgREST (1.000 linhas, sem aviso) na camada da busca: o filtro existe por boa
 razão, e é por isso que ninguém lembra que ele está lá.
+
+A vigésima fecha pelo lado do RUNTIME: o comando é o mesmo, o teste é o mesmo e o exit code é
+honesto nos dois — o que muda é **quem executa**. É a §6 com um agravante: lá os dois contratos
+moram em máquinas diferentes (o macOS de quem desenvolve, o Linux do CI); aqui, o ambiente que
+aprova (vitest, node) e o que executa (`bun scripts/…`) convivem no mesmo `package.json`, a um `run`
+de distância, e nada no diff os distingue.
 
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.
