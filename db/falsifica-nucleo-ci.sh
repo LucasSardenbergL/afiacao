@@ -13,9 +13,11 @@
 #    sempre-vermelha aprovaria toda sabotagem, e o verde de outra invocação não é
 #    linha de base (docs/historico/falsificacao-sem-linha-de-base.md). Se o controle
 #    não passar, isto ABORTA sem sabotar nada.
-# 2. **A marca, não o vermelho.** Cada sabotagem declara a string que o vermelho tem
-#    de conter. `exit != 0` sozinho aceitaria falha de ambiente — Postgres ausente,
-#    porta ocupada, disco cheio — como se fosse captura. Não é.
+# 2. **A marca, não o vermelho — e a marca EXCLUSIVA da falha.** Cada sabotagem declara a
+#    string que o vermelho tem de conter. `exit != 0` sozinho aceitaria falha de ambiente —
+#    Postgres ausente, porta ocupada, disco cheio — como se fosse captura. Não é. E a marca
+#    que também sai no VERDE casa qualquer vermelho (o título de uma asserção aparece no ✅
+#    e no ❌): o `julga_captura` a confere contra o log do controle verde da mesma prova.
 # 3. **Sabotagem que não aplicou é falsificação INVÁLIDA, não gate sem dente.** Toda
 #    sabotagem confere que mudou o arquivo, e o quê. Isto foi medido durante a escrita
 #    deste harness: a primeira tentativa contra `security_invoker` apagou uma linha de
@@ -56,6 +58,42 @@ roda_prova() {
   printf '%s' "$rc"
 }
 
+# julga_captura <rc> <log-sabotado> <log-controle-verde> <marca> -> ecoa CERTO se o vermelho é o
+# certo; senão, o que está errado nele. O veredito é uma PALAVRA, nunca o silêncio (regra 5 de
+# docs/historico/falsificacao-da-canaria-no-caminho-obrigatorio.md).
+# A marca que já aparece no CONTROLE VERDE da mesma prova, nesta invocação, casa QUALQUER vermelho.
+# Foi a do bug real 3 até 2026-09-14 — o título da asserção, que o `eq` imprime no ✅ e no ❌: com a
+# asserção autorreferente e o vermelho vindo de OUTRA (a de metadados), este harness creditava a
+# captura (parecer Codex, 3ª rodada do #2472 — reproduzido por execução).
+julga_captura() {
+  local rc="$1" log="$2" ctrl="$3" marca="$4" no_verde
+  if [ "$rc" -eq 0 ]; then printf 'o gate ficou VERDE com o defeito instalado'; return 0; fi
+  grep -qF -e "$marca" "$ctrl" && no_verde=0 || no_verde=$?
+  case "$no_verde" in
+    1) ;;
+    0) printf "a marca '%s' aparece no CONTROLE VERDE da prova — casaria qualquer vermelho" "$marca"; return 0 ;;
+    *) printf 'nao consegui ler o controle verde (%s, grep saiu %s)' "$ctrl" "$no_verde"; return 0 ;;
+  esac
+  if grep -qF -e "$marca" "$log"; then printf 'CERTO'
+  else printf "vermelho (exit %s) mas SEM a marca '%s'; motivo não confirmado" "$rc" "$marca"; fi
+}
+
+# ── CONTROLE NEGATIVO DO JUIZ ───────────────────────────────────────────────────
+# Antes de qualquer Postgres, custo ~0. O juiz sabe RECUSAR a marca que também sai no verde? Os logs
+# são o cenário reproduzido do parecer, em ASCII: a marca só numa linha VERDE e o vermelho vindo de
+# OUTRA asserção. Sem este controle, voltar ao `grep` no log inteiro passaria por todos os casos
+# abaixo — eles só usam marcas que JÁ são exclusivas. O lado positivo são os 3 bugs reais: um juiz
+# que recusasse tudo os deixaria vermelhos.
+echo
+echo "=== controle negativo do juiz (marca que também sai no verde) ==="
+printf '  OK   customer NAO le v_exemplo (=0)\n' > "$LOGS/juiz.ctrl.log"
+printf '  OK   customer NAO le v_exemplo (=1)\n  FAIL outra assercao -- esperado [5], veio [4]\n' > "$LOGS/juiz.sabotado.log"
+m="$(julga_captura 1 "$LOGS/juiz.sabotado.log" "$LOGS/juiz.ctrl.log" "customer NAO le v_exemplo")"
+case "$m" in
+  *"CONTROLE VERDE"*) ok "juiz recusa a marca que também sai no controle verde (casaria qualquer vermelho)" ;;
+  *) bad "juiz NÃO recusou a marca que também sai no controle verde (${m:-saiu sem veredito})" ;;
+esac
+
 # ── CONTROLE INICIAL ────────────────────────────────────────────────────────────
 # Antes de qualquer sabotagem. Se uma destas já estiver vermelha, todo veredito
 # abaixo seria ruído — e o harness precisa dizer isso, não seguir em frente.
@@ -87,16 +125,16 @@ aplica_e_exige() {
   fi
 
   local rc; rc="$(roda_prova "$prova" sabotado)"
-  local log="$LOGS/$prova.sabotado.log"
+  local log="$LOGS/$prova.sabotado.log" veredito
 
-  if [ "$rc" -eq 0 ]; then
-    bad "$desc — o gate ficou VERDE com o defeito instalado"
-  elif ! grep -qF -e "$marca" "$log"; then
-    # Vermelho pelo motivo ERRADO é indistinguível de falha de ambiente.
-    bad "$desc — vermelho (exit $rc) mas SEM a marca '$marca'; motivo não confirmado"
-    grep -oE '\[[A-Z0-9-]+\]|❌.{0,70}' "$log" | sort -u | head -4 | sed 's/^/       visto: /'
+  # Vermelho pelo motivo ERRADO é indistinguível de falha de ambiente — e a marca que também sai no
+  # verde casa qualquer vermelho. Quem decide é o `julga_captura`, contra o controle verde da prova.
+  veredito="$(julga_captura "$rc" "$log" "$LOGS/$prova.ctrl.log" "$marca")"
+  if [ "$veredito" = CERTO ]; then
+    ok "$desc — vermelho com a marca '$marca', ausente do controle verde"
   else
-    ok "$desc — vermelho com a marca '$marca'"
+    bad "$desc — ${veredito:-o juiz saiu sem veredito}"
+    grep -oE '\[[A-Z0-9-]+\]|❌.{0,70}' "$log" | sort -u | head -4 | sed 's/^/       visto: /' || true
   fi
 
   mv "$alvo.intacto" "$alvo"
@@ -126,11 +164,14 @@ echo
 echo "=== bug real 2 — #2306, disparado_simulado não era estado pós-disparo ==="
 echo "    o dry-run cria pedido de compra REAL no Omie; tirar o estado do predicado"
 echo "    do trigger devolve o cancelamento silencioso de uma compra que aconteceu."
+# A marca é a do RAISE da postcondição, não a tag sozinha: `[GUARD-CEGO]` sai 2 vezes no controle
+# verde, nas asserções F5/F7 da própria prova (medido 2026-09-14 — tag: verde 2, sabotado 1;
+# `POST FALHOU [GUARD-CEGO]`: verde 0, sabotado 1).
 aplica_e_exige \
   "#2306 disparado_simulado escapa do trigger" \
   "test-disparado-simulado-pos-disparo" \
   "supabase/migrations/20260907095841_disparado_simulado_e_estado_pos_disparo.sql" \
-  "[GUARD-CEGO]" \
+  "POST FALHOU [GUARD-CEGO]" \
   'import sys,pathlib
 p=pathlib.Path(sys.argv[1]); t=p.read_text()
 a="IF OLD.status NOT IN ('"'"'disparado'"'"', '"'"'disparado_simulado'"'"', '"'"'concluido_recebido'"'"') THEN"
@@ -142,11 +183,14 @@ echo
 echo "=== bug real 3 — security_invoker omitido (classe #1375) ==="
 echo "    UMA view perde o invoker e passa a ler como OWNER, bypassando a RLS."
 echo "    É falha ABERTA: nada no CI textual a enxerga, e a tela segue funcionando."
+# A marca é a do ❌ do `eq`, não o título da asserção: o título sai também no ✅ e, no log inteiro,
+# casava qualquer vermelho — com a asserção autorreferente e o vermelho vindo da de metadados, este
+# caso ficava OK (parecer Codex 2026-09-14; medido — título: verde 1; esta marca: verde 0, sabotado 1).
 aplica_e_exige \
   "view sem security_invoker vaza para customer" \
   "test-security-invoker-views" \
   "supabase/migrations/20260717015000_restaurar_security_invoker_views.sql" \
-  "customer NÃO lê v_sku_sigma_demanda" \
+  "customer NÃO lê v_sku_sigma_demanda — esperado [0], veio [1]" \
   'import sys,pathlib
 p=pathlib.Path(sys.argv[1]); ls=p.read_text().splitlines(keepends=True)
 alvo="ALTER VIEW public.v_sku_sigma_demanda              SET (security_invoker = on);\n"
@@ -355,7 +399,7 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # Mas este piso mora no arquivo que ele vigia: um harness TRUNCADO perde o piso junto e sai 0
 # (parecer Codex 2026-09-14). No CI quem decide é o step do `provas-sql`, que confere o recibo
 # acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
-OK_MINIMO=34
+OK_MINIMO=35
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi
