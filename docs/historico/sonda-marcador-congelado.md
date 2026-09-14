@@ -663,7 +663,9 @@ exatamente as ondas 2 a 5**. As 7 em que os dois reprovam são todas pré-gate (
 (pega sobre- e sub-limpeza — a allowlist carrega candidatas comentadas); duas PREMISSAS — o arquivo
 está no fecho da edge dona (pega a declaração órfã, que não reprovaria ninguém) e, no fecho do
 relé, a allowlist só é lida por `slugsDaAllowlist` (se o relé passar a ler `controles`, a projeção
-fica estreita); e as 4 fatias REAIS com controle na onda 1, casando a lista inteira de achados. No
+fica estreita); e as 4 fatias REAIS com controle na onda 1, casando a lista inteira de achados
+(desde a #2474, como ENTRADAS congeladas e conferidas contra o git por `sonda:bump-ondas --check` —
+chamar `coletarEstado` sobre commits reais herdava o clone; ver `teste-que-afirma-o-checkout.md`). No
 `.mut`: 6 mutações novas, cada uma desfazendo uma peça — 14/14 PEGA, em `LC_ALL=C` e em
 `pt_BR.UTF-8`.
 

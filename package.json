@@ -25,6 +25,7 @@
     "edges:typecheck": "bun scripts/edges-typecheck-gate.ts",
     "psql:errorstop": "bun scripts/psql-ro-error-stop-gate.ts",
     "sonda:bump": "bun scripts/sonda-versao-bump-gate.ts",
+    "sonda:bump-ondas": "bun scripts/sonda-versao-bump-gate-ondas.ts",
     "sonda:fingerprint": "bun scripts/sonda-fingerprint.ts",
     "sonda:fanout": "bun scripts/sonda-fan-out.ts",
     "sonda:cron-prova": "bun scripts/sonda-cron-prova.ts",

@@ -176,3 +176,46 @@ isola a dependência do contrato, não a elimina como o fixture de 09-06 elimino
 Os dois ficaram fora deste conserto: mexer no `mutcheck.sh` no mesmo PR que apaga o vermelho mergearia
 sem que job required nenhum o exercitasse — exatamente o vetor do item 1. Entregas próprias, cada uma
 com a sua falsificação.
+
+### Adendo (mesmo dia): a dependência ELIMINADA — entradas congeladas no lugar do arquivo irmão
+
+O arquivo irmão (#2481) isolou o contrato, e o limite honesto acima tinha dois custos, medidos na
+consulta de desenho da #2474 ao Codex (`gpt-6-astra`, `max`). O irmão continua exigindo histórico: a
+bomba do clone raso só mudou de job. E "o poder do contrato não depende desses 5 testes" vale para as
+14 mutações que existiam; fora desse conjunto há duas sabotagens que só a história pegava:
+
+- trocar a lista do `git diff` do `coletarEstado` por `[]` — todos os outros testes de git seguem
+  verdes (`HEAD..HEAD` já é vazio, rev inexistente continua lançando);
+- um `extrairVersao` que exija `VERSAO` no fim do arquivo — passa em todo exemplo sintético e cai nas
+  ondas reais, porque o `versao.ts` de verdade tem export depois do marcador.
+
+**Conserto (formato B, escolhido com o Codex).** As ENTRADAS que o gate leu nas 5 fatias viram fixture
+versionado (`scripts/fixtures/sonda-versao-bump-gate-ondas.json`, ~186 KB): `tocados` do mesmo diff,
+`versao.ts` e allowlist como blobs INTEIROS e corpo como token `sha256_<hex>` do normalizado.
+`bun run sonda:bump-ondas -- --gerar | --check` gera e confere contra o git — sha, pai único,
+`tocados`, revisão × caminho × blob, o `lerNaRev` do gate, colisão de token e o estado (edges,
+marcadores, decisão "mudou?") igual ao do `coletarEstado` real. A necessidade de histórico mora no
+verificador, nunca na suíte. As ondas voltam ao arquivo do `@test` com casos e resultados FIXOS, o
+leitor congelado LANÇA em revisão ou caminho que não registrou, e a fiação do git ganhou teste
+próprio num repo do teste, sob config global forjada hostil em TODO run. O arquivo irmão saiu; o
+`.mut` ganhou as duas sabotagens acima (17 mutações, 16 pegas, 1 sobrevivente cosmética).
+
+Medido com o controle verde na MESMA invocação, em `LC_ALL=C` e `pt_BR.UTF-8` — 0 problemas:
+
+| sabotagem | esperado | medido |
+|---|---|---|
+| leitor sem `has()` · leitor que aceita revisão estranha | 1 vermelho cada | 1 cada |
+| revisões erradas no teste, leitor fiel | as 5 fatias lançam | 5, `REVISAO-INESPERADA` |
+| + leitor cego | o controle POSITIVO da onda 1 segura | 6 |
+| + sem o controle positivo | o controle passa POR CEGUEIRA | 5, controle verde |
+| blob editado à mão (só comentário) | só o id de git pega | 1 |
+| normalizador que come o prefixo do token | só o teste do token pega | 1 |
+| sem `-c commit.gpgsign=false` · sem `--no-verify` (hostil) | vermelho pela marca da camada | `/nao/existe/este/gpg` · `HOOK-GLOBAL-REPROVOU` |
+| hostilidade desarmada + sem as duas flags | VERDE — é a forja que dá o dente | verde |
+| token trocado · `tocados` sem um caminho ignorado | `--check` diverge; a suíte fica verde, por desenho | idem |
+| mutcheck sem o teste de integração · sem os blobs reais | a mutação daquela peça SOBREVIVE | idem |
+| clone raso da `main` antes da #2481 · desta branch | 5 vermelhos · verde, `--check` exit 3, contrato honrado | idem |
+
+**A regra, refinada:** a suíte do `@test` de um `.mut` é hermética, e o que exige propriedade do
+clone vira ENTRADA congelada com gerador e verificador. Arquivo irmão isola, mas deixa o dente fora
+da medição e a bomba armada noutro job.
