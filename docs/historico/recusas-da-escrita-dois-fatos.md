@@ -19,6 +19,8 @@ O campo que separa os dois fatos existia desde a 1ª versão da RPC, e por isso 
 
 Corolário do §7 do `money-path.md` no eixo produtor × consumidor: **consertar o campo no produtor não conserta o rótulo no consumidor.** A correção só termina quando alguém lê.
 
+Segundo corolário, que veio do Codex: **repartir um resíduo por uma contagem feita em OUTRO statement só é exato sem escritor concorrente.** Em READ COMMITTED o mundo muda entre a contagem e a escrita, inclusive durante a espera pelo lock. Com isso, os dois rótulos trocam de fato nos dois sentidos. O motivo exato por linha tem de ser decidido no MESMO statement que decide o desfecho. Fora dele, documente a partição como aproximação e diga em que condição ela vale.
+
 ## O desenho: três formas, e a do meio não tem `base_mudou`
 
 `lerRetornoEscrita(retorno, enviadas)` devolve:
@@ -65,8 +67,22 @@ A SOMA também mora no módulo (`somarRetornoEscrita`), e não na edge: com ela 
 ## Evidência
 
 - **RED** com um stub que transcrevia a lógica da v1.3: 8 falhas, todas por asserção (`4 recusadas − 1 já apurada`; `esperava 'nao_classificado', veio {"tipo":"classificado",…,"base_mudou":3}`), zero TypeError. Os 2 controles ("`ja_apuradas = 0` é dado" e "todo retorno legível fecha com as enviadas") ficaram verdes, como previsto: a edge velha somava tudo num contador só, e a soma fechava por acidente.
-- **GREEN:** suíte 55/55; `test:edges` 1116 passed / 0 failed; `edges:typecheck` 0 erros de classe-crash; `deno check` da edge e da suíte com 0 erros; os 14 vitest que leem os arquivos como texto, 204/204; `sonda:bump` ✓ (v1.4); `sonda:fingerprint` mudou só esta edge; `sonda:cron-prova --gate` 5/5 closures PASSA.
-- **Contrato de mutação:** 14 mutações novas em `scripts/mutcheck.d/desconto-backfill.mut` (rótulo único, rótulos trocados, ausente → 0, null ≠ ausente, coerção `Number()`, fração/negativo aceitos, guard do excesso, soma não conferida, array como objeto).
+- **RED 2** (a soma no módulo): `TS2724`, a função não existia.
+- **GREEN final** (commit `5df7b1e38`, cada passo com rc capturado):
+  - suíte 59/59;
+  - `test:edges` 1120 passed / 0 failed;
+  - `edges:typecheck` 0 erros de classe-crash, com os mesmos 114 tolerados de antes (nenhum novo);
+  - `deno check` da edge e da suíte com 0 erros;
+  - os 14 vitest que leem os arquivos como texto, 204/204;
+  - `sonda:bump` ✓ (v1.4), `sonda:fingerprint` mudou só esta edge, `sonda:cron-prova --gate` 6/6 closures PASSA;
+  - eslint rc=0.
+- **Contrato de mutação:** 22 mutações novas em `scripts/mutcheck.d/desconto-backfill.mut`.
+  - Na leitura do retorno: rótulo único, rótulos trocados, ausente → 0, null ≠ ausente, coerção `Number()`, fração/negativo aceitos, guard do excesso, soma não conferida, array como objeto, aplicadas zeradas no degradado.
+  - Na soma: base mudou somando as já apuradas, contadores trocados ou sumidos, causa não contada, ilegível calado.
+
+  Rodada final: **55 mutações · 55 pegas · 0 sobreviventes · 0 inválidas**, controle+ 55/55.
+- ⚠️ **Mutante que não compila não é mutante morto.** A 1ª rodada teve 1 inválido: `if (ja > recusadas)` → `if (false)`. O TS marca o bloco de `if (false)` como inalcançável e ali perde o estreitamento de `aplicadas`/`recusadas` (2× TS2322). O guard morto passou a ser `if (ja < 0)`, provado numa cópia com controle verde na mesma invocação. O Codex achou o mesmo, de forma independente.
+- **2ª opinião (Codex, gpt-6-astra max):** MERGEAR COM AJUSTE, com 7 achados. Os ajustes 2 a 7 entraram; o 1 ([P1] id repetido, preexistente) está nos Limites, para decisão à parte.
 
 ## Deploy
 
