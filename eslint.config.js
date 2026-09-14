@@ -87,4 +87,36 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // bun congela o ambiente do processo FILHO na partida (docs/historico/bun-filho-sem-env-herda-a-partida.md).
+    // Sob bun 1.3.14, `spawnSync`/`execSync`/`execFileSync` e `Bun.spawn`/`Bun.spawnSync` SEM `env`
+    // explícito entregam ao filho o ambiente de quando o bun arrancou: a mutação de `process.env` feita
+    // depois some em silêncio. No node — logo no vitest — as mesmas linhas funcionam, e o teste verde
+    // não prova o script. A regra mira a MUTAÇÃO, não a chamada: é ela que alcança o filho até por
+    // função importada (o `git()` de scripts/sonda-versao-bump-gate.ts serve outros 4 scripts), e as
+    // chamadas sem `env` do repo só são inofensivas porque nada muta o ambiente antes delas.
+    // Escopo: o que roda sob bun (`scripts/`, `db/`, TS e JS); `*.test.ts` roda no vitest (node) e
+    // fica fora. Prova do gate: scripts/eslint-mutacao-env-bun.test.ts.
+    files: ["scripts/**/*.{ts,js,mjs,cjs}", "db/**/*.{ts,js,mjs,cjs}"],
+    ignores: ["**/*.test.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...[
+          // process.env.X = … · process.env[X] = … · +=, ??=, ||= (todos são AssignmentExpression)
+          "AssignmentExpression[left.type='MemberExpression'][left.object.type='MemberExpression'][left.object.object.name=/^(process|Bun)$/][left.object.property.name='env']",
+          // process.env = …
+          "AssignmentExpression[left.type='MemberExpression'][left.object.name=/^(process|Bun)$/][left.property.name='env']",
+          // delete process.env.X · delete process.env[X]
+          "UnaryExpression[operator='delete'][argument.type='MemberExpression'][argument.object.type='MemberExpression'][argument.object.object.name=/^(process|Bun)$/][argument.object.property.name='env']",
+          // Object.assign/defineProperty/defineProperties(process.env, …) · Reflect.set/deleteProperty/defineProperty(process.env, …)
+          "CallExpression[callee.type='MemberExpression'][callee.object.name=/^(Object|Reflect)$/][callee.property.name=/^(assign|defineProperty|defineProperties|set|deleteProperty)$/][arguments.0.type='MemberExpression'][arguments.0.object.name=/^(process|Bun)$/][arguments.0.property.name='env']",
+        ].map((selector) => ({
+          selector,
+          message:
+            "Mutar process.env em código que roda sob bun não chega ao processo filho: spawnSync/execSync/execFileSync e Bun.spawn/Bun.spawnSync SEM `env` entregam o ambiente da PARTIDA (no node/vitest funciona, então o teste verde não prova o script). Monte o ambiente e passe `env: { ...process.env, CHAVE: valor }` a cada filho; se a mutação é só in-process, desligue a linha com o motivo. Ver docs/historico/bun-filho-sem-env-herda-a-partida.md",
+        })),
+      ],
+    },
+  },
 );
