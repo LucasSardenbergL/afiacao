@@ -83,9 +83,10 @@ registrar() { # <mut> <rc> <arquivo-de-saída>
   [[ -z "$RESUMO" ]] && return 0
   local m="$1" rc="$2" out="$3" proprio inval diver abortou sumario
   # Só as linhas do PRÓPRIO mutcheck classificam. O abort do baseline ecoa a saída da SUÍTE com o
-  # prefixo '  │ ' (mostrar_saida_baseline, no mutcheck.sh): texto de TERCEIRO, e um teste que
-  # imprima "← DIVERGE" ou "sumário:" viraria divergência ou sumário fabricados aqui.
-  proprio=$(grep -v '^  │ ' "$out")
+  # prefixo '│ ' na coluna 0 (mostrar_saida_baseline, no mutcheck.sh): texto de TERCEIRO, e um teste
+  # que imprima "← DIVERGE" ou "sumário:" viraria divergência ou sumário fabricados aqui. Coluna 0
+  # porque linha do mutcheck nunca começa ali com '│' — indentado, um EXPECT '│' forjava o prefixo.
+  proprio=$(grep -v '^│ ' "$out")
   inval=$(grep -c '⚠ INVÁLIDO' <<<"$proprio" || true)
   diver=$(grep -c '← DIVERGE' <<<"$proprio" || true)
   # baseline vermelho / compilador ausente = o MONITOR quebrou, não a cobertura regrediu.

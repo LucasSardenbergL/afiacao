@@ -306,21 +306,28 @@ trap 'exit 143' TERM      # 128+15 — o `exit` é que dispara o EXIT acima
 trap 'exit 130' INT       # 128+2
 
 # $1 (opcional) = onde guardar a saída; sem ele, /dev/null. Exit code é a verdade (nada de pipe).
-run_tests() { "${TEST_CMD[@]}" "$TEST" >"${1:-/dev/null}" 2>&1; }
+# O `>|` da suíte não é enfeite: no baseline ela é a SEGUNDA escrita no arquivo que o compilador
+# acabou de criar, e sob noclobber (set -C, ou SHELLOPTS herdado do ambiente) o `>` a barraria — a
+# suíte nem rodaria, e o abort mostraria o log do COMPILADOR como se fosse dela (achado do Codex).
+run_tests() { "${TEST_CMD[@]}" "$TEST" >|"${1:-/dev/null}" 2>&1; }
 compila() { [[ ${#COMPILE_CMD[@]} -eq 0 ]] && return 0; "${COMPILE_CMD[@]}" "$SRC" >"${1:-/dev/null}" 2>&1; }
 linhas_mudadas() { diff "$BACKUP" "$SRC" | grep -cE '^> ' || true; }  # nº de linhas novas (1 = subst. única)
 
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
 
 # O porquê do abort: a saída guardada do baseline, recortada
-#   - pela CAUDA e por BYTES: o vitest põe falhas e sumário por último, e uma linha só de log
-#     pode ter 60 KB (`tail -n` não limitaria nada);
+#   - pela CAUDA e por BYTES, os últimos SAIDA_BYTES: o vitest põe falhas e sumário por último, e
+#     uma linha só de log pode ter 60 KB (`tail -n` não limitaria nada);
 #   - sem ANSI: com CI=true o vitest pinta a saída mesmo sem TTY;
-#   - sem os bytes que fazem o grep do BSD ler o log inteiro como BINÁRIO: NUL sai, UTF-8 inválido
-#     (inclusive o caractere partido pelo corte) vira U+FFFD. Medido: com UM desses bytes no log,
-#     `grep -q 'baseline: ✗'` sai 1 com a linha lá — o mutcheck-all daria o abort como não-abort;
-#   - com o prefixo '  │ ' em cada linha: é texto de TERCEIRO, e o registrar() do mutcheck-all.sh
-#     o exclui antes de classificar — um teste que imprima "← DIVERGE" não pode virar veredito.
+#   - sem NUL: com um NUL no arquivo, o grep do BSD (/usr/bin/grep) responde "Binary file … matches"
+#     no lugar das linhas — e o GNU, pela documentação, suprime a saída. O registrar() do
+#     mutcheck-all.sh perderia o `baseline: ✗` e daria o abort como NÃO abortado (medido, 2 locales);
+#   - em UTF-8 válido: o corte por bytes parte caractere (os ✓ × do vitest têm 3 bytes) e a suíte pode
+#     emitir byte solto; os dois viram U+FFFD e o log segue sendo texto. NÃO é defesa do classificador:
+#     o grep do BSD lê um \377 como texto (medido), e o GNU só suprime a linha do byte, que é do recorte;
+#   - com o prefixo '│ ' na COLUNA 0: é texto de TERCEIRO, e o registrar() o exclui antes de classificar
+#     — um teste que imprima "← DIVERGE" não vira veredito. Coluna 0 porque linha do próprio mutcheck
+#     nunca começa ali com '│'; indentado, um EXPECT '│' forjava o prefixo (achado do Codex).
 # Cada regra tem asserção própria em scripts/test-mutcheck-sensor.sh, provada por sabotagem
 # (docs/historico/mutcheck-abort-sem-motivo.md). OSC, `\r` e janela de leitura ficaram de fora de
 # propósito: nenhum vermelho os distinguia, e regra sem vermelho é enfeite.
@@ -336,11 +343,11 @@ mostrar_saida_baseline() {  # <exit da execução>
     my $cortou = length($s) > $max;
     $s = substr($s, -$max) if $cortou;
     my $mostrados = length($s);
-    $s = encode("UTF-8", decode("UTF-8", $s));
-    printf "  ┌─ saída desta MESMA execução do baseline (exit %s; %d bytes%s, sem ANSI):\n",
+    $s = encode("UTF-8", decode("UTF-8", $s));   # DEPOIS do corte: caractere partido vira U+FFFD
+    printf "┌─ saída desta MESMA execução do baseline (exit %s; %d bytes%s, sem ANSI):\n",
       $rc, $total, $cortou ? "; abaixo só os últimos $mostrados" : "";
-    print "  │ $_\n" for split /\n/, $s;
-    print "  └─\n";
+    print "│ $_\n" for split /\n/, $s;
+    print "└─\n";
   ' "$SAIDA_BASELINE" "$1" "$SAIDA_BYTES"
 }
 
