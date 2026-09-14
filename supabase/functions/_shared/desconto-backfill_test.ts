@@ -24,6 +24,7 @@ import {
   conferirTotalPedido,
   type ItemOmieDetalhe,
   type LinhaLocal,
+  lerRetornoEscrita,
   pedidoNaJanela,
   registrarNaAmostra,
 } from "./desconto-backfill.ts";
@@ -570,4 +571,154 @@ Deno.test("diferença REAL de preço continua separando (a quantização não af
   );
   eq(apurados(r).a, 10, "um centavo de diferença ainda é outra linha");
   eq(apurados(r).b, 30, "e cada uma fica com o seu desconto");
+});
+
+// ── O retorno da ESCRITA: `recusadas` são dois fatos, com consertos opostos ─────────────────
+// `desconto_backfill_aplicar` devolve {pedidas, aplicadas, recusadas, ja_apuradas}, e `recusadas`
+// (= pedidas − aplicadas) junta duas coisas: a linha cuja BASE mudou desde a leitura que montou o
+// plano (conserto: reler o Omie) e a linha que JÁ tinha desconto quando a escrita chegou — outro
+// writer, ou um run anterior, ganhou a corrida (conserto: nenhum). A edge somava as duas em
+// "base mudou". `ja_apuradas` conta a segunda desde o #2475; antes contava junto as linhas que a
+// própria chamada escrevia — e é por isso que o retorno é CONFERIDO aqui, não só lido.
+
+type Retorno = ReturnType<typeof lerRetornoEscrita>;
+
+/** O retorno do tipo esperado — o teste falha alto, com o retorno inteiro, se veio outro. */
+function doTipo<T extends Retorno["tipo"]>(r: Retorno, tipo: T): Extract<Retorno, { tipo: T }> {
+  if (r.tipo !== tipo) throw new Error(`esperava retorno '${tipo}', veio ${JSON.stringify(r)}`);
+  return r as Extract<Retorno, { tipo: T }>;
+}
+
+Deno.test("escrita: base mudou é recusadas − ja_apuradas, e cada fato fica no SEU contador", () => {
+  // Números assimétricos de propósito: trocar os dois contadores daria 1 onde se espera 3.
+  const r = doTipo(lerRetornoEscrita({ pedidas: 10, aplicadas: 6, recusadas: 4, ja_apuradas: 1 }, 10), "classificado");
+  eq(r.aplicadas, 6, "as aplicadas são transportadas");
+  eq(r.base_mudou, 3, "4 recusadas − 1 já apurada");
+  eq(r.ja_apuradas, 1, "a corrida perdida tem contador próprio");
+});
+
+Deno.test("escrita: corrida perdida INTEIRA não vira 'base mudou'", () => {
+  // O caso em que o rótulo antigo mentia por inteiro: as 5 linhas foram gravadas por outro writer
+  // entre a leitura e a escrita. A base de nenhuma delas mudou — reler o Omie não conserta nada.
+  const r = doTipo(lerRetornoEscrita({ pedidas: 5, aplicadas: 0, recusadas: 5, ja_apuradas: 5 }, 5), "classificado");
+  eq(r.base_mudou, 0, "nenhuma base mudou");
+  eq(r.ja_apuradas, 5, "as 5 perderam a corrida");
+});
+
+Deno.test("escrita: ja_apuradas = 0 é DADO — aí sim toda recusa é base mudou", () => {
+  // O contraste do teste de ausência abaixo: o mesmo número de recusas, com o campo presente e 0.
+  const r = doTipo(lerRetornoEscrita({ pedidas: 4, aplicadas: 1, recusadas: 3, ja_apuradas: 0 }, 4), "classificado");
+  eq(r.base_mudou, 3, "zero informado: nenhuma corrida perdida");
+  eq(r.ja_apuradas, 0, "e zero é transportado como zero");
+});
+
+Deno.test("escrita: ja_apuradas AUSENTE deixa as recusas sem classificação — nem 'base mudou', nem zero", () => {
+  // `Number(r.ja_apuradas ?? 0)` diria "nenhuma corrida perdida" e jogaria as 3 recusas em "base
+  // mudou": o motivo fabricado a partir do dado que não veio.
+  for (const retorno of [
+    { pedidas: 5, aplicadas: 2, recusadas: 3 },
+    { pedidas: 5, aplicadas: 2, recusadas: 3, ja_apuradas: null },
+  ]) {
+    const r = doTipo(lerRetornoEscrita(retorno, 5), "nao_classificado");
+    eq(r.aplicadas, 2, "as aplicadas seguem legíveis e contadas");
+    eq(r.recusadas, 3, "as 3 recusas ficam sem motivo, inteiras");
+    eq(r.causa, "ja_apuradas_ausente", `a causa é nomeada (${JSON.stringify(retorno)})`);
+  }
+});
+
+Deno.test("escrita: ja_apuradas ILEGÍVEL não é lido como número", () => {
+  // String numérica inclusive: o contrato é inteiro JSON, e `Number("3")` é a mesma coerção que
+  // faz `Number(null) === 0`.
+  for (const lixo of ["1", 1.5, -1, true, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const r = doTipo(
+      lerRetornoEscrita({ pedidas: 5, aplicadas: 2, recusadas: 3, ja_apuradas: lixo }, 5),
+      "nao_classificado",
+    );
+    eq(r.recusadas, 3, `recusas sem motivo (ja_apuradas=${String(lixo)})`);
+    eq(r.causa, "ja_apuradas_ilegivel", `ilegível não é ausente (ja_apuradas=${String(lixo)})`);
+  }
+});
+
+Deno.test("escrita: ja_apuradas > recusadas é a assinatura da RPC anterior ao #2475 — não reparte", () => {
+  // O cenário que a migration de correção mediu: plano de 3 linhas, 1 já preenchida por outro
+  // writer, 2 aplicadas. A RPC anterior contava DEPOIS do UPDATE e devolvia ja_apuradas=3, que
+  // subtraído da única recusa daria "base mudou = −2". A corrigida devolve 1.
+  const antiga = doTipo(
+    lerRetornoEscrita({ pedidas: 3, aplicadas: 2, recusadas: 1, ja_apuradas: 3 }, 3),
+    "nao_classificado",
+  );
+  eq(antiga.recusadas, 1, "a recusa fica sem motivo");
+  eq(antiga.causa, "ja_apuradas_excede_recusadas", "o estado impossível tem causa própria");
+  const corrigida = doTipo(
+    lerRetornoEscrita({ pedidas: 3, aplicadas: 2, recusadas: 1, ja_apuradas: 1 }, 3),
+    "classificado",
+  );
+  eq(corrigida.ja_apuradas, 1, "o mesmo cenário na RPC corrigida");
+  eq(corrigida.base_mudou, 0, "e nenhuma base mudou");
+});
+
+Deno.test("escrita: ja_apuradas ausente com ZERO recusas — nada a repartir, mas a causa não some", () => {
+  // Sem recusa, a partição é 0 + 0 de qualquer jeito. O que se perderia é o SINAL de que a RPC
+  // deste ambiente não devolve o campo — e ele tem de aparecer antes da primeira recusa.
+  const r = doTipo(lerRetornoEscrita({ pedidas: 4, aplicadas: 4, recusadas: 0 }, 4), "nao_classificado");
+  eq(r.recusadas, 0, "nenhuma recusa");
+  eq(r.causa, "ja_apuradas_ausente", "a causa é reportada mesmo assim");
+});
+
+Deno.test("escrita: sem aplicadas/recusadas legíveis o retorno é ILEGÍVEL — a edge não sabe o que escreveu", () => {
+  // `Number(r?.aplicadas ?? 0)` fazia de um retorno vazio "0 aplicadas, 0 recusadas": a escrita
+  // pode ter acontecido inteira e a contagem diria que nada foi escrito nem recusado. O motivo é
+  // casado por RAMO: string numérica somada vira concatenação ("2" + 1 = "21") e cairia em
+  // `soma_nao_fecha` — verde pelo ramo errado.
+  const casos: Array<[unknown, string]> = [
+    [null, "nao_e_objeto"],
+    [undefined, "nao_e_objeto"],
+    ["ok", "nao_e_objeto"],
+    [[], "nao_e_objeto"],
+    [{}, "contagem_ilegivel"],
+    [{ aplicadas: 3 }, "contagem_ilegivel"],
+    [{ recusadas: 3 }, "contagem_ilegivel"],
+    [{ aplicadas: "2", recusadas: 1, ja_apuradas: 0 }, "contagem_ilegivel"],
+    [{ aplicadas: 1.5, recusadas: 1.5, ja_apuradas: 0 }, "contagem_ilegivel"],
+    [{ aplicadas: -1, recusadas: 4, ja_apuradas: 0 }, "contagem_ilegivel"],
+  ];
+  for (const [retorno, motivo] of casos) {
+    const r = doTipo(lerRetornoEscrita(retorno, 3), "ilegivel");
+    eq(r.motivo, motivo, `motivo do retorno ${JSON.stringify(retorno) ?? String(retorno)}`);
+  }
+});
+
+Deno.test("escrita: aplicadas + recusadas que não fecham com as linhas ENVIADAS são ilegíveis", () => {
+  // A edge sabe quantas linhas mandou, sem depender do que a RPC diz. Soma que não fecha é outro
+  // contrato do outro lado — repartir recusas sobre ela seria classificar um número que não
+  // descreve esta chamada. Vale para o lote e para o retry de UMA linha.
+  const casos: Array<[Record<string, unknown>, number, string]> = [
+    [{ pedidas: 5, aplicadas: 2, recusadas: 2, ja_apuradas: 0 }, 5, "falta uma linha"],
+    [{ pedidas: 6, aplicadas: 3, recusadas: 3, ja_apuradas: 0 }, 5, "sobra uma linha"],
+    [{ pedidas: 1, aplicadas: 1, recusadas: 1, ja_apuradas: 0 }, 1, "retry de uma linha"],
+  ];
+  for (const [retorno, enviadas, msg] of casos) {
+    eq(doTipo(lerRetornoEscrita(retorno, enviadas), "ilegivel").motivo, "soma_nao_fecha", msg);
+  }
+});
+
+Deno.test("escrita: todo retorno legível fecha com as linhas enviadas", () => {
+  // Denominador, como na conciliação: cada linha enviada tem exatamente um desfecho — aplicada,
+  // base mudou, já apurada, ou recusa sem classificação. Nenhuma some, nenhuma conta duas vezes.
+  const casos: Array<[Record<string, unknown>, number]> = [
+    [{ pedidas: 10, aplicadas: 6, recusadas: 4, ja_apuradas: 1 }, 10],
+    [{ pedidas: 5, aplicadas: 0, recusadas: 5, ja_apuradas: 5 }, 5],
+    [{ pedidas: 5, aplicadas: 2, recusadas: 3 }, 5],
+    [{ pedidas: 3, aplicadas: 2, recusadas: 1, ja_apuradas: 3 }, 3],
+    [{ pedidas: 1, aplicadas: 1, recusadas: 0, ja_apuradas: 0 }, 1],
+  ];
+  for (const [retorno, enviadas] of casos) {
+    const r = lerRetornoEscrita(retorno, enviadas);
+    const soma = r.tipo === "classificado"
+      ? r.aplicadas + r.base_mudou + r.ja_apuradas
+      : r.tipo === "nao_classificado"
+      ? r.aplicadas + r.recusadas
+      : Number.NaN;
+    eq(soma, enviadas, `fecha: ${JSON.stringify(retorno)}`);
+  }
 });

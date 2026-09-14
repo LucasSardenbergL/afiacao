@@ -87,3 +87,29 @@ PEGA | amostra: expulsa a única representante de outra     | s~if \(representan
 PEGA | total: total ausente vira ZERO (confere por omissão) | s~const total = finitoNaoNegativo\(valorDescontosOmie\);~const total = finitoNaoNegativo(valorDescontosOmie) ?? 0;~
 PEGA | total: item ilegível some da soma (soma parcial)    | s~if \(d === null\) \{ legivel = false; break; \}~if (d === null) { continue; }~
 PEGA | total: tolerância vira folga que engole desconto    | s~const tolerancia = 0\.01 \* Math\.max~const tolerancia = 1 * Math.max~
+
+# ── O retorno da ESCRITA: `recusadas` são dois fatos, com consertos opostos (v1.4) ───────────
+# A RPC devolve {pedidas, aplicadas, recusadas, ja_apuradas}. A edge somava TODO `recusadas` em
+# "base mudou", e com corrida perdida o rótulo mentia: reler o Omie (base mudou) e não fazer nada
+# (outro writer já gravou) são consertos opostos. Cada mutação abaixo devolve um pedaço daquele
+# estado — o rótulo único, o motivo fabricado a partir do campo AUSENTE, ou a partição feita sobre
+# um retorno que não descreve a chamada.
+PEGA | escrita: base mudou volta a ser TODO recusadas      | s~base_mudou: recusadas - ja,~base_mudou: recusadas,~
+PEGA | escrita: os dois contadores trocam de rótulo        | s~base_mudou: recusadas - ja, ja_apuradas: ja \}~base_mudou: ja, ja_apuradas: recusadas - ja }~
+PEGA | escrita: ja_apuradas ausente vira ZERO (?? 0)       | s~const ja = contagemDoRetorno\(r\.ja_apuradas\);~const ja = contagemDoRetorno(r.ja_apuradas ?? 0);~
+PEGA | escrita: null deixa de ser ausência                 | s~const ausente = r\.ja_apuradas === null \|\| r\.ja_apuradas === undefined;~const ausente = r.ja_apuradas === undefined;~
+PEGA | escrita: causa ausente/ilegível troca de nome       | s~causa: ausente \? "ja_apuradas_ausente" : "ja_apuradas_ilegivel",~causa: ausente ? "ja_apuradas_ilegivel" : "ja_apuradas_ausente",~
+# `ja_apuradas > recusadas` é a assinatura da RPC anterior ao #2475. Sem o guard, a partição daria
+# "base mudou" NEGATIVO; com `>=`, a corrida perdida inteira (ja = recusadas) viraria anomalia.
+PEGA | escrita: excesso de ja_apuradas deixa de ser visto  | s~if \(ja > recusadas\) \{~if (false) {~
+PEGA | escrita: ja_apuradas = recusadas vira "excede"      | s~if \(ja > recusadas\) \{~if (ja >= recusadas) {~
+# A contagem sem coerção: `Number(x)` aceita "3" e true — e faz de null um 0.
+PEGA | escrita: string/booleano/null coagidos a número     | s~return typeof v === "number" && Number\.isInteger\(v\) && v >= 0 \? v : null;~return Number.isInteger(Number(v)) && Number(v) >= 0 ? Number(v) : null;~
+PEGA | escrita: fração aceita como contagem                | s~Number\.isInteger\(v\) && v >= 0 \? v : null;~Number.isFinite(v) && v >= 0 ? v : null;~
+PEGA | escrita: contagem negativa aceita                   | s~Number\.isInteger\(v\) && v >= 0 \? v : null;~Number.isInteger(v) ? v : null;~
+# Sem `aplicadas`/`recusadas` legíveis a edge não sabe o que escreveu: é o `Number(r?.aplicadas ?? 0)`
+# da v1.3 renascido. E a soma contra as linhas ENVIADAS é a única conferência que não depende da RPC.
+PEGA | escrita: recusadas ausente vira ZERO (?? 0)         | s~const recusadas = contagemDoRetorno\(r\.recusadas\);~const recusadas = contagemDoRetorno(r.recusadas ?? 0);~
+PEGA | escrita: aplicadas ausente vira ZERO (?? 0)         | s~const aplicadas = contagemDoRetorno\(r\.aplicadas\);~const aplicadas = contagemDoRetorno(r.aplicadas ?? 0);~
+PEGA | escrita: soma contra as enviadas deixa de ser conferida | s~if \(aplicadas \+ recusadas !== enviadas\) \{~if (false) {~
+PEGA | escrita: array passa por objeto                    | s~ \|\| Array\.isArray\(retorno\)\) \{~) {~

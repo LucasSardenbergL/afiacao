@@ -280,6 +280,108 @@ export function conferirTotalPedido(
   };
 }
 
+/**
+ * Por que as recusas de UMA chamada de `desconto_backfill_aplicar` não puderam ser repartidas.
+ *
+ *   ja_apuradas_ausente           o retorno não trouxe o campo (ausente ou null): responde uma RPC
+ *                                 de outro contrato.
+ *   ja_apuradas_ilegivel          o campo veio e não é inteiro não-negativo. String numérica
+ *                                 inclusive — `Number("3")` é a mesma coerção que faz
+ *                                 `Number(null) === 0`.
+ *   ja_apuradas_excede_recusadas  mais "já apuradas" do que recusas. Impossível na RPC corrigida
+ *                                 (#2475); é a assinatura da ANTERIOR, que contava depois do UPDATE
+ *                                 e somava as linhas que a própria chamada escreveu. ⚠️ Ela só se
+ *                                 denuncia assim quando as aplicadas superam as recusas: com poucas
+ *                                 aplicadas o número inflado cabe em `recusadas` e o retorno não o
+ *                                 distingue. Qual versão está no ar se prova no banco
+ *                                 (`pg_get_functiondef`), não aqui.
+ */
+export type CausaNaoClassificada =
+  | "ja_apuradas_ausente"
+  | "ja_apuradas_ilegivel"
+  | "ja_apuradas_excede_recusadas";
+
+/**
+ * O desfecho de UMA chamada, em três formas. A do meio NÃO TEM `base_mudou`: a ausência é
+ * estrutural, para que nenhum consumidor a leia como zero.
+ *
+ *   classificado      `recusadas` repartida em base_mudou (= recusadas − ja_apuradas) e ja_apuradas.
+ *   nao_classificado  `aplicadas` e `recusadas` legíveis, `ja_apuradas` não — as recusas seguem
+ *                     inteiras, com a causa.
+ *   ilegivel          sem `aplicadas`/`recusadas` legíveis, ou com soma que não fecha com as linhas
+ *                     enviadas: não se sabe o que foi escrito.
+ */
+type RetornoEscrita =
+  | { tipo: "classificado"; aplicadas: number; base_mudou: number; ja_apuradas: number }
+  | { tipo: "nao_classificado"; aplicadas: number; recusadas: number; causa: CausaNaoClassificada }
+  | { tipo: "ilegivel"; motivo: "nao_e_objeto" | "contagem_ilegivel" | "soma_nao_fecha"; detalhe: string };
+
+/** Uma contagem do retorno: inteiro não-negativo, ou `null`. Sem coerção — ver `CausaNaoClassificada`. */
+function contagemDoRetorno(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+}
+
+/** Para a mensagem de erro: objeto como JSON (não "[object Object]"), primitivo como String (NaN
+ *  não vira "null", que é o que JSON.stringify faria). */
+function descrever(v: unknown): string {
+  return typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+}
+
+/**
+ * Lê o retorno de `desconto_backfill_aplicar` — `{pedidas, aplicadas, recusadas, ja_apuradas}` —
+ * de uma chamada que enviou `enviadas` linhas.
+ *
+ * `recusadas` junta dois fatos com consertos OPOSTOS: a linha cuja base (trio) mudou desde a leitura
+ * que montou o plano — reler o Omie — e a linha que JÁ tinha desconto quando a escrita chegou,
+ * porque outro writer ou um run anterior ganhou a corrida — nada a fazer. Somar os dois em "base
+ * mudou" mente sempre que há corrida perdida.
+ *
+ * O que `base_mudou` ainda carrega sem separar: a linha que SUMIU entre a leitura e a escrita (a
+ * contagem de `ja_apuradas` é um JOIN e não a acha), e o writer que comita ENTRE as duas instruções
+ * da RPC — limite que a própria migration aceita.
+ *
+ * `enviadas` é o que a edge SABE que mandou, sem depender do que a RPC diz. Soma que não fecha com
+ * ela é outro contrato respondendo, e repartir recusas sobre ela classificaria um número que não
+ * descreve a chamada.
+ */
+export function lerRetornoEscrita(retorno: unknown, enviadas: number): RetornoEscrita {
+  if (typeof retorno !== "object" || retorno === null || Array.isArray(retorno)) {
+    return { tipo: "ilegivel", motivo: "nao_e_objeto", detalhe: descrever(retorno) };
+  }
+  const r = retorno as Record<string, unknown>;
+  const aplicadas = contagemDoRetorno(r.aplicadas);
+  const recusadas = contagemDoRetorno(r.recusadas);
+  if (aplicadas === null || recusadas === null) {
+    return {
+      tipo: "ilegivel",
+      motivo: "contagem_ilegivel",
+      detalhe: `aplicadas=${descrever(r.aplicadas)} recusadas=${descrever(r.recusadas)}`,
+    };
+  }
+  if (aplicadas + recusadas !== enviadas) {
+    return {
+      tipo: "ilegivel",
+      motivo: "soma_nao_fecha",
+      detalhe: `aplicadas ${aplicadas} + recusadas ${recusadas} ≠ ${enviadas} linhas enviadas`,
+    };
+  }
+
+  const ja = contagemDoRetorno(r.ja_apuradas);
+  if (ja === null) {
+    const ausente = r.ja_apuradas === null || r.ja_apuradas === undefined;
+    return {
+      tipo: "nao_classificado",
+      aplicadas,
+      recusadas,
+      causa: ausente ? "ja_apuradas_ausente" : "ja_apuradas_ilegivel",
+    };
+  }
+  if (ja > recusadas) {
+    return { tipo: "nao_classificado", aplicadas, recusadas, causa: "ja_apuradas_excede_recusadas" };
+  }
+  return { tipo: "classificado", aplicadas, base_mudou: recusadas - ja, ja_apuradas: ja };
+}
+
 /** Índice chave → posições. Chave repetida marca a colisão em vez de sobrescrever: perder o
  *  primeiro item silenciosamente é exatamente o modo de falha que a duplicidade produz. */
 function indexar<T>(itens: T[], chaveDe: (t: T) => string | null): Map<string, T[]> {
