@@ -172,6 +172,11 @@ cenario() {
     fetch_falhou_mesmo_commit) echo "$SO_DOCS $SO_DOCS fetch_falhou" ;;
     fetch_falhou_carimbo_curto) echo "${SO_DOCS:0:7} $SO_DOCS fetch_falhou" ;;
     fetch_falhou_sem_carimbo) echo "dev $SO_DOCS fetch_falhou" ;;
+    # o fetch "dá certo" e a main lida é VELHA: o ar é o BASE, a main real andou com src/ e a origin/main
+    # que o monitor lê ficou no commit do ar — pelo refspec estreito (a ref não anda, só o FETCH_HEAD)
+    # e pelo nome curto (um branch LOCAL `origin/main` vence refs/remotes/ na resolução)
+    fetch_refspec_estreito) echo "$BASE $SRC refspec_estreito" ;;
+    ref_main_ambigua) echo "$BASE $SRC ref_ambigua" ;;
     carimbo_alheio)   echo "deadbee2 $SO_DOCS -" ;;
     carimbo_e_branch) echo "deadbee1 $SO_DOCS -" ;;
     alias_inerte)     echo "$ALIAS_BASE $ALIAS -" ;;
@@ -203,6 +208,8 @@ fetch_falhou|3|motivo: FETCH_FALHOU
 fetch_falhou_mesmo_commit|3|motivo: FETCH_FALHOU
 fetch_falhou_carimbo_curto|3|motivo: FETCH_FALHOU
 fetch_falhou_sem_carimbo|3|motivo: FETCH_FALHOU
+fetch_refspec_estreito|3|motivo: ALCANCA_BUNDLE
+ref_main_ambigua|3|motivo: ALCANCA_BUNDLE
 carimbo_alheio|3|motivo: CARIMBO_NAO_RESOLVE
 carimbo_e_branch|3|motivo: CARIMBO_NAO_RESOLVE
 alias_inerte|3|motivo: ALCANCE_VAZA
@@ -216,8 +223,12 @@ roda() {
   read -r ar main extra <<< "$(cenario "$cen")"
   [ -n "${main:-}" ] || { echo "cenário desconhecido: $cen" > "$out"; return 99; }
   case "${#ar}" in 40 | 64) carimbo=${ar:0:8} ;; *) carimbo=$ar ;; esac
-  if ! { git -C "$O" update-ref refs/heads/main "$main" && g remote set-url origin "$O"; }; then
-    echo "fixture: não apontei a main" > "$out"; return 98
+  # o clone volta ao PADRÃO antes de cada cenário — URL, refspec e nenhum branch `origin/main`: o que
+  # um extra muda no clone não pode vazar para o cenário seguinte
+  if ! { git -C "$O" update-ref refs/heads/main "$main" && g remote set-url origin "$O" &&
+    g config --replace-all remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' &&
+    g update-ref -d refs/heads/origin/main; }; then
+    echo "fixture: não apontei a main nem restaurei o clone" > "$out"; return 98
   fi
   # estado = o entry que o curl falso serve: sem isto o 1º cenário da rodada vê "deploy novo" e o
   # desfecho do fallback sem carimbo (o único que lê o estado) dependeria da ORDEM dos cenários
@@ -232,6 +243,15 @@ roda() {
     carimbo_duplo) envs+=(FAKE_AR_SHA2="${SRC:0:8}") ;;   # 1º carimbo = BASE (delta só docs)
     fetch_falhou)  g remote set-url origin "$TMP/origem-que-nao-existe.git"
                    g update-ref refs/remotes/origin/main "$main" ;;
+    # refspec que não mapeia a main (clone --single-branch de outro branch) e a origin/main LOCAL no
+    # commit do ar: `git fetch origin main` sai 0 e só o FETCH_HEAD anda
+    refspec_estreito)
+      if ! { g config --replace-all remote.origin.fetch '+refs/heads/outro:refs/remotes/origin/outro' &&
+        g update-ref refs/remotes/origin/main "$ar"; }; then
+        echo "fixture: não estreitei o refspec" > "$out"; return 97
+      fi ;;
+    # fetch perfeito, leitura torta: `origin/main` curto resolve refs/heads/ antes de refs/remotes/
+    ref_ambigua)   g branch origin/main "$ar" || { echo "fixture: não criei o branch origin/main" > "$out"; return 97; } ;;
   esac
   (cd "$R" && env PATH="$caminho" "${envs[@]}" bash "$skill/scripts/monitor-deploy.sh" "http://fixture.invalid") \
     > "$out" 2>&1
@@ -317,7 +337,7 @@ while IFS='|' read -r nome esp marca; do
   fi
 done <<< "$CASOS"
 echo "$n_ok/$n_tot cenários passaram"
-[ "$n_tot" -ge 27 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
+[ "$n_tot" -ge 29 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
 
 # ── falsificação ────────────────────────────────────────────────────────────────────────────────
 if [ "$FALSIFY" = 1 ]; then
@@ -381,6 +401,17 @@ PY
       '0|sincronizado: ar serve' "$guard_fetch" "$sem_guard_fetch"
     sab fetch-sem-carimbo scripts/monitor-deploy.sh fetch_falhou_sem_carimbo \
       '0|nada a relatar' "$guard_fetch" "$sem_guard_fetch"
+    # fetch que "dá certo" sem mover a ref: com o destino nomeado de volta ao `main` cru, o refspec
+    # estreito só anda o FETCH_HEAD e a origin/main local (= o ar) reabre o 0 da igualdade de string
+    sab fetch-refspec scripts/monitor-deploy.sh fetch_refspec_estreito \
+      '0|sincronizado: ar serve' 'origin "+refs/heads/main:$REF_MAIN"' 'origin main'
+    # a leitura pelo nome completo tem DUAS pontas e o mesmo cenário guarda as duas, cada uma por uma
+    # porta do verde: o nome curto no MAIN_SHA reabre a igualdade de string; no main_full, o atalho
+    # do SHA cheio dentro do delta
+    sab leitura-main-sha scripts/monitor-deploy.sh ref_main_ambigua \
+      '0|sincronizado: ar serve' '--short=8 "$REF_MAIN"' '--short=8 origin/main'
+    sab leitura-main-full scripts/monitor-deploy.sh ref_main_ambigua \
+      '0|sincronizado: ar serve' '"$REF_MAIN^{commit}"' '"origin/main^{commit}"'
     sab prefixo-do-carimbo scripts/monitor-deploy.sh carimbo_e_branch "$VERDE_INDEVIDO" \
       'case "$ar_full" in "$AIR_SHA"?*)' 'case "$ar_full" in ?*)'
     sab marca-positiva scripts/monitor-deploy.sh python_mudo "$VERDE_INDEVIDO" \
@@ -476,7 +507,7 @@ PY
     fi
   done
   echo "  falsificações que pegaram: $fals/$total"
-  [ "$total" -ge 20 ] && [ "$fals" -eq "$total" ] || rc=1
+  [ "$total" -ge 23 ] && [ "$fals" -eq "$total" ] || rc=1
 
   # (C) CONTROLE DE SAÍDA — pelo CONTEÚDO: o laço nunca mutou o versionado.
   # shellcheck disable=SC2086
