@@ -17,7 +17,8 @@
 #    string que o vermelho tem de conter. `exit != 0` sozinho aceitaria falha de ambiente —
 #    Postgres ausente, porta ocupada, disco cheio — como se fosse captura. Não é. E a marca
 #    que também sai no VERDE casa qualquer vermelho (o título de uma asserção aparece no ✅
-#    e no ❌): o `julga_captura` a confere contra o log do controle verde da mesma prova.
+#    e no ❌): o `julga_captura` a confere contra o log do controle verde da mesma prova — e recusa
+#    o controle VAZIO, contra o qual essa conferência não mediria nada.
 # 3. **Sabotagem que não aplicou é falsificação INVÁLIDA, não gate sem dente.** Toda
 #    sabotagem confere que mudou o arquivo, e o quê. Isto foi medido durante a escrita
 #    deste harness: a primeira tentativa contra `security_invoker` apagou uma linha de
@@ -68,6 +69,8 @@ roda_prova() {
 julga_captura() {
   local rc="$1" log="$2" ctrl="$3" marca="$4" no_verde
   if [ "$rc" -eq 0 ]; then printf 'o gate ficou VERDE com o defeito instalado'; return 0; fi
+  # Controle de 0 bytes: o `grep` abaixo sairia 1 — "a marca não sai no verde" — sem ter medido nada.
+  if [ ! -s "$ctrl" ]; then printf 'controle verde VAZIO ou ausente (%s): nada contra o que medir a marca' "$ctrl"; return 0; fi
   grep -qF -e "$marca" "$ctrl" && no_verde=0 || no_verde=$?
   case "$no_verde" in
     1) ;;
@@ -78,21 +81,38 @@ julga_captura() {
   else printf "vermelho (exit %s) mas SEM a marca '%s'; motivo não confirmado" "$rc" "$marca"; fi
 }
 
-# ── CONTROLE NEGATIVO DO JUIZ ───────────────────────────────────────────────────
-# Antes de qualquer Postgres, custo ~0. O juiz sabe RECUSAR a marca que também sai no verde? Os logs
-# são o cenário reproduzido do parecer, em ASCII: a marca só numa linha VERDE e o vermelho vindo de
-# OUTRA asserção. Sem este controle, voltar ao `grep` no log inteiro passaria por todos os casos
-# abaixo — eles só usam marcas que JÁ são exclusivas. O lado positivo são os 3 bugs reais: um juiz
-# que recusasse tudo os deixaria vermelhos.
+# ── CONTROLE DO JUIZ POR RAMO ───────────────────────────────────────────────────
+# Antes de qualquer Postgres, custo ~0: um caso sintético por RAMO do `julga_captura`, o positivo
+# incluído. Os 3 bugs reais não distinguem juiz bom de quebrado (as marcas deles JÁ são exclusivas e
+# o vermelho sempre vem): voltar ao `grep` no log inteiro, trocar a checagem final por `printf CERTO`,
+# aceitar controle vazio ou esquecer o exit 0 passaria por todos eles (parecer Codex sobre o
+# conserto, 2026-09-14). Cada caso isola o SEU ramo: quando a recusa não é pela marca ausente, a
+# marca ESTÁ no sabotado. O positivo pega o juiz que recusa tudo. Logs em ASCII.
 echo
-echo "=== controle negativo do juiz (marca que também sai no verde) ==="
-printf '  OK   customer NAO le v_exemplo (=0)\n' > "$LOGS/juiz.ctrl.log"
-printf '  OK   customer NAO le v_exemplo (=1)\n  FAIL outra assercao -- esperado [5], veio [4]\n' > "$LOGS/juiz.sabotado.log"
-m="$(julga_captura 1 "$LOGS/juiz.sabotado.log" "$LOGS/juiz.ctrl.log" "customer NAO le v_exemplo")"
-case "$m" in
-  *"CONTROLE VERDE"*) ok "juiz recusa a marca que também sai no controle verde (casaria qualquer vermelho)" ;;
-  *) bad "juiz NÃO recusou a marca que também sai no controle verde (${m:-saiu sem veredito})" ;;
-esac
+echo "=== controle do juiz (um caso por ramo, sem Postgres) ==="
+printf '  OK   customer NAO le v_exemplo (=0)\n  OK   outra assercao (=5)\n' > "$LOGS/juiz.ctrl.log"
+: > "$LOGS/juiz.vazio.ctrl.log"
+printf '  FAIL customer NAO le v_exemplo -- esperado [0], veio [1]\n' > "$LOGS/juiz.capturado.log"
+printf '  OK   customer NAO le v_exemplo (=1)\n  FAIL outra assercao -- esperado [5], veio [4]\n' > "$LOGS/juiz.outro.log"
+marca_titulo='customer NAO le v_exemplo'; marca_falha="$marca_titulo -- esperado [0], veio [1]"
+# juiz_exige <descrição> <CERTO | trecho só da recusa esperada> <rc> <log-sabotado> <log-controle> <marca>
+juiz_exige() {
+  local desc="$1" espera="$2" v; shift 2
+  v="$(julga_captura "$@")"
+  if [ "$espera" = CERTO ] && [ "$v" = CERTO ]; then ok "juiz $desc"; return 0; fi
+  if [ "$espera" != CERTO ] && [ "$v" != CERTO ] && [[ "$v" == *"$espera"* ]]; then ok "juiz $desc"; return 0; fi
+  bad "juiz $desc — veio: ${v:-nada (saiu sem veredito)}"
+}
+juiz_exige "credita a marca que só sai no vermelho (não recusa tudo)" CERTO \
+  1 "$LOGS/juiz.capturado.log" "$LOGS/juiz.ctrl.log" "$marca_falha"
+juiz_exige "recusa a marca que também sai no controle verde (casaria qualquer vermelho)" "CONTROLE VERDE" \
+  1 "$LOGS/juiz.outro.log" "$LOGS/juiz.ctrl.log" "$marca_titulo"
+juiz_exige "recusa o vermelho SEM a marca (quem reprovou foi outra asserção)" "SEM a marca" \
+  1 "$LOGS/juiz.outro.log" "$LOGS/juiz.ctrl.log" "$marca_falha"
+juiz_exige "recusa exit 0 mesmo com a marca no log" "ficou VERDE com o defeito" \
+  0 "$LOGS/juiz.capturado.log" "$LOGS/juiz.ctrl.log" "$marca_falha"
+juiz_exige "recusa o controle verde VAZIO (medir a marca contra nada)" "VAZIO ou ausente" \
+  1 "$LOGS/juiz.capturado.log" "$LOGS/juiz.vazio.ctrl.log" "$marca_falha"
 
 # ── CONTROLE INICIAL ────────────────────────────────────────────────────────────
 # Antes de qualquer sabotagem. Se uma destas já estiver vermelha, todo veredito
@@ -399,7 +419,7 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # Mas este piso mora no arquivo que ele vigia: um harness TRUNCADO perde o piso junto e sai 0
 # (parecer Codex 2026-09-14). No CI quem decide é o step do `provas-sql`, que confere o recibo
 # acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
-OK_MINIMO=35
+OK_MINIMO=39
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi

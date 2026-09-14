@@ -928,7 +928,7 @@ jobs:
       # Serial DEPOIS do núcleo, de propósito: os dois sobem a sonda na porta TCP 5810.
       - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
         env:
-          HARNESS_OK_MINIMO: "35"
+          HARNESS_OK_MINIMO: "39"
         run: |
           log="$RUNNER_TEMP/falsifica-nucleo.log"
           bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?
