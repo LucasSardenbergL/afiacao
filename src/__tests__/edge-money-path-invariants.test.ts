@@ -3994,6 +3994,69 @@ describe('subtotal do pedido — a fórmula única dos três escritores do total
   });
 });
 
+// ── desconto da LINHA na reconciliação: a régua sobre a MESMA base, e o sensor ausente não vira 0 ──
+// Por que TEXTUAL: o item do payload é montado dentro da edge. O EFEITO — a RPC grava o desconto
+// lido, o NULL não vira 0, o pedido incoerente vira falha do pedido — é provado EXECUTANDO em
+// db/test-desconto-valor-escritores.sh §G-§I, com falsificação. Aqui se pega a FIAÇÃO: sem ela a
+// migration nova recebe payload sem a chave e segue a regra antiga, e o pai volta a ter o total
+// líquido novo sobre uma linha com o desconto velho — sem erro nenhum.
+describe('reconciliação carrega o desconto da linha — sync-reprocess × migration 20260914180104', () => {
+  const REPROCESS = 'supabase/functions/sync-reprocess/index.ts';
+  const MIG_RECONC = 'supabase/migrations/20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql';
+
+  it('o item leva desconto_valor pela régua, sobre a MESMA qty·preço que vai para a linha', () => {
+    const fonte = removerComentarios(read(REPROCESS));
+    expect(fonte).toContain('const qty = prod.quantidade || 1;');
+    expect(fonte).toContain('const preco = precoUnitarioOmie(prod.valor_unitario);');
+    // a FIAÇÃO: a linha grava exatamente a base sobre a qual o desconto foi apurado
+    expect(fonte).toMatch(/\n\s+quantity: qty,\n/);
+    expect(fonte).toMatch(/\n\s+unit_price: preco,\n/);
+    expect(fonte).toContain('desconto_valor: descontoItemOmie(prod, preco === null ? null : qty * preco),');
+  });
+
+  it('pedido com item sem código utilizável é recusado INTEIRO, antes do subtotal', () => {
+    const fonte = removerComentarios(read(REPROCESS));
+    const iGuard = fonte.indexOf('normalizarCodigoItemOmie(it.produto?.codigo_produto) === null');
+    const iTotal = fonte.indexOf('const total = subtotalPedidoComDesconto(itens);');
+    expect(iGuard, 'guard de item sem código não encontrado').toBeGreaterThan(-1);
+    expect(iGuard).toBeLessThan(iTotal);
+    expect(fonte.slice(iGuard, iGuard + 300)).toContain('continue;');
+  });
+
+  it('o sensor AUSENTE da RPC vira null, nunca 0 — e chega ao metadata do log', () => {
+    const fonte = removerComentarios(read(REPROCESS));
+    expect(count(fonte, 'r.desconto_apurado || 0')).toBe(0);
+    expect(count(fonte, 'r.desconto_corrigido || 0')).toBe(0);
+    expect(fonte).toContain('typeof r.desconto_apurado === "number"');
+    expect(fonte).toContain('typeof r.desconto_corrigido === "number"');
+    expect(fonte).toContain('desconto_apurado: descontoApurado,');
+    expect(fonte).toContain('desconto_corrigido: descontoCorrigido,');
+  });
+
+  it('a migration carrega as defesas (o efeito é provado executando, no PG17)', () => {
+    const mig = read(MIG_RECONC);
+    expect(mig).toContain("(it -> 'desconto_valor') IS NOT NULL");
+    expect(mig).toContain('desconto_valor = d.desconto_valor,');
+    expect(mig).toContain('omie_codigo_produto = d.cod,');
+    expect(mig).toContain('PERFORM public.pedido_venda_exigir_coerencia(v_order_id);');
+    expect(mig).toContain('FALHOU A3: coalesce(desconto_valor, 0)');
+    // a pré-condição ancora no corpo MEDIDO em prod — sem ela, aplicar por cima de outra entrega a apagaria
+    expect(mig).toContain("'136b40ad30ac7bec2a8105907b1e9fa6'");
+  });
+
+  it('CALIBRAÇÃO: a forma pré-fix (item sem a chave) é reprovada, e a prosa que a cita não conta', () => {
+    const preFix = removerComentarios(
+      'return {\n  quantity: prod.quantidade || 1,\n  unit_price: precoUnitarioOmie(prod.valor_unitario),\n  discount: prod.desconto || 0,\n};',
+    );
+    expect(preFix).not.toContain('desconto_valor: descontoItemOmie(');
+    const soComentario = removerComentarios(
+      '// desconto_valor: descontoItemOmie(prod, preco === null ? null : qty * preco),\nconst x = 1;',
+    );
+    expect(soComentario).not.toContain('desconto_valor: descontoItemOmie(');
+    expect(soComentario).toContain('const x = 1');
+  });
+});
+
 // ── omie-financeiro: desconto/juros/multa do TÍTULO não existem no Omie ──────────────────────
 // Medido em 2026-09-08. `ListarContasPagar`/`ListarContasReceber` devolvem a entidade
 // `conta_pagar_cadastro`/`conta_receber_cadastro`, cujo NÍVEL RAIZ não tem desconto/juros/multa.

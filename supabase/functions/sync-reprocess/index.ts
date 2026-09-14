@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
@@ -37,6 +38,17 @@ import {
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
+// O item que vai à RPC `reconciliar_pedidos_omie` = o contrato canônico (`ItemReconciliar`,
+// _shared/omie-pedido.ts) + o DESCONTO DA LINHA em R$ (`order_items.desconto_valor`, migration
+// 20260914180104): `descontoItemOmie` sobre a MESMA base qty·preço da linha. `null` = a régua não
+// soube ler, e a RPC grava NULL, nunca 0. A chave vai SEMPRE: é a presença dela que diz à RPC que
+// houve leitura (chave ausente = edge anterior, e a linha segue a regra antiga).
+// ⚠️ Declarado AQUI, e não no `_shared`, de propósito: `omie-pedido.ts` está no fecho da
+// `omie-vendas-sync`, e um campo só de tipo mudaria o fingerprint dela e a marcaria para um deploy
+// sem mudança de comportamento (`pendencias:deploy` decide pela fonte). Suba o campo para o canon na
+// próxima mudança que já tocar a `omie-vendas-sync`.
+type ItemReconciliarComDesconto = ItemReconciliar & { desconto_valor: number | null };
+
 // Teto anti-runaway do ListarPedidos (reprocessOrders): 500 × 100 = 50k pedidos numa janela >> real.
 const MAX_PAGINAS_PEDIDOS = 500;
 
@@ -47,6 +59,11 @@ interface OmieProdutoItem {
   quantidade?: number;
   valor_unitario?: number;
   desconto?: number;
+  // O trio REAL de desconto do item no Omie (`desconto` pelado não existe na API). Quem o lê é
+  // `descontoItemOmie` (_shared/desconto-omie.ts) — nunca uma conta à mão aqui.
+  tipo_desconto?: string;
+  percentual_desconto?: number | string;
+  valor_desconto?: number | string;
   descricao?: string;
   codigo_produto?: number | string;
 }
@@ -222,6 +239,19 @@ async function reprocessOrders(
   // bruto fabricaria o número. A amostra de ids vai ao `metadata` do log da run.
   let descontoIlegivel = 0;
   const descontoIlegivelAmostra: Array<number | string> = [];
+  // Pedidos NÃO reconciliados porque algum item do `det` não tem código de produto utilizável. O
+  // items-jsonb carregaria o item e `order_items` não — e o banco recusa esse agregado (trigger de
+  // coerência). Mesma régua do desconto ilegível: o pedido fica na revisão anterior e é REGISTRADO.
+  let itemSemCodigo = 0;
+  const itemSemCodigoAmostra: Array<number | string> = [];
+  // Falhas por pedido que a RPC isolou (revertido inteiro, o lote seguiu). A amostra vai ao
+  // `metadata`: antes ficava só no console, que não sobrevive à retenção dos logs da edge.
+  const falhasAmostra: Array<Record<string, unknown>> = [];
+  // SENSORES do desconto da linha, vindos da RPC (migration 20260914180104). `null` = alguma página
+  // voltou SEM a chave, isto é, a RPC no ar é a anterior — ausente não é zero, e é por este `null`
+  // que o log mostra a edge nova rodando sobre a migration velha.
+  let descontoApurado: number | null = 0;
+  let descontoCorrigido: number | null = 0;
   // ── SENSOR da identidade de linha, COM DENOMINADOR. Não existe payload de `ListarPedidos`
   //    persistido em lugar nenhum do banco (`omie_webhook_events` tem 192 linhas e ZERO com
   //    `det`), então até aqui não havia como responder "o ListarPedidos devolve
@@ -287,6 +317,19 @@ async function reprocessOrders(
         const itensValidos = itens.filter((it) => it.produto?.codigo_produto != null);
         if (itensValidos.length === 0) continue;
 
+        // [A5] item SEM código de produto utilizável recusa o PEDIDO inteiro. O items-jsonb
+        //      (`construirItemsJson`) carrega TODO `det`, e `order_items` só os itens com código:
+        //      os dois espelhos descreveriam multiconjuntos diferentes, e o banco recusa esse
+        //      agregado (trigger de coerência). Pular só o item publicaria um pedido menor que o do
+        //      Omie; e um código "0" ou não inteiro entraria nas linhas mas FORA do subtotal, que só
+        //      soma código verdadeiro (parecer Codex, 2026-09-14). A régua é a do `codigo_item`:
+        //      inteiro positivo. Precisão > recall — o pedido fica na revisão anterior, REGISTRADO.
+        if (itens.some((it) => normalizarCodigoItemOmie(it.produto?.codigo_produto) === null)) {
+          itemSemCodigo++;
+          if (itemSemCodigoAmostra.length < 20) itemSemCodigoAmostra.push(codigoPedido);
+          continue;
+        }
+
         // [A1] total pelo canon compartilhado — a MESMA fórmula dos outros dois escritores (Σ qtd·preço
         // − desconto da régua). Pedido COM desconto que já estava gravado bruto é reescrito para o
         // líquido aqui: a reconciliação é o que converge o acervo da janela. `null` = líquido
@@ -298,7 +341,7 @@ async function reprocessOrders(
           continue;
         }
 
-        const itensRpc: ItemReconciliar[] = itensValidos.map((it) => {
+        const itensRpc: ItemReconciliarComDesconto[] = itensValidos.map((it) => {
           const prod = it.produto!;
           const cod = Number(prod.codigo_produto);
           // IDENTIDADE DE LINHA. `Number.isSafeInteger` + `> 0` porque um `codigo_item` inválido
@@ -308,15 +351,25 @@ async function reprocessOrders(
           const codItem = normalizarCodigoItemOmie(it.ide?.codigo_item);
           if (codItem !== null) itensComIdentidade++;
           itensLidos++;
+          // A base do desconto é a MESMA qty·preço que vai para a linha e que `apurarSubtotalPedido`
+          // soma no cabeçalho, na mesma forma da ingestão (omie-vendas-sync). Bases diferentes dariam
+          // números diferentes para o mesmo desconto.
+          const qty = prod.quantidade || 1;
+          const preco = precoUnitarioOmie(prod.valor_unitario);
           return {
             omie_codigo_produto: cod,
-            quantity: prod.quantidade || 1,
+            quantity: qty,
             // `null` = o Omie NÃO informou preço. O `|| 0` daqui gravava R$ 0,00 em
             // order_items.unit_price e o item entrava na margem do cliente com receita 0 e
             // custo cheio (margem negativa fabricada). A RPC recebe o null e o grava como
             // NULL — ausente <> zero. Um 0 que o Omie DE FATO informe segue passando como 0.
-            unit_price: precoUnitarioOmie(prod.valor_unitario),
+            unit_price: preco,
             discount: prod.desconto || 0,
+            // DESCONTO DA LINHA (R$), pela régua. A chave vai SEMPRE, inclusive com `null` ("a régua
+            // não soube ler"): é a PRESENÇA dela que diz à RPC que houve leitura, e o `null` vira NULL
+            // no banco, nunca 0. Desconto ilegível em item COM preço nem chega aqui — o subtotal dá
+            // null e o pedido inteiro é pulado acima.
+            desconto_valor: descontoItemOmie(prod, preco === null ? null : qty * preco),
             product_id: productMap.get(cod) ?? null,
             // hash de IDENTIDADE do item, nunca de conteúdo (causa-raiz #B no nível item)
             hash_payload: `${hashPayload}_${cod}`,
@@ -367,6 +420,7 @@ async function reprocessOrders(
           sku_repetido?: number; ambiguo?: number; stale?: number;
           sem_item?: number; sem_pai?: number;
           identidade_adotada?: number; identidade_usada?: number;
+          desconto_apurado?: number; desconto_corrigido?: number;
           falhas?: Array<Record<string, unknown>>;
         };
         upserts += r.upserts || 0;
@@ -377,7 +431,24 @@ async function reprocessOrders(
         falhas += fails.length;
         if (fails.length > 0) {
           console.error(`[Reprocess][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
+          for (const f of fails) {
+            if (falhasAmostra.length >= 20) break;
+            // Só metadado, com a mensagem cortada — é o que sobrevive à retenção dos logs da edge.
+            falhasAmostra.push({
+              omie_pedido_id: f.omie_pedido_id ?? null,
+              sqlstate: f.sqlstate ?? null,
+              erro: typeof f.erro === "string" ? f.erro.slice(0, 160) : null,
+            });
+          }
         }
+        // Sensor AUSENTE não é zero: uma página sem a chave (RPC anterior à 20260914180104) torna o
+        // total null para o resto da run — somar `|| 0` afirmaria "nada apurado" sobre o que não se mediu.
+        descontoApurado = descontoApurado !== null && typeof r.desconto_apurado === "number"
+          ? descontoApurado + r.desconto_apurado
+          : null;
+        descontoCorrigido = descontoCorrigido !== null && typeof r.desconto_corrigido === "number"
+          ? descontoCorrigido + r.desconto_corrigido
+          : null;
         ambiguos += r.ambiguo || 0;
         stale += r.stale || 0;
         identidadeAdotada += r.identidade_adotada || 0;
@@ -391,7 +462,10 @@ async function reprocessOrders(
         // [P1-4] Se a página INTEIRA falhou, isto não é "alguns pedidos ruins" — é sinal de que
         // algo sistêmico passou pela allowlist da RPC. Lançar, em vez de somar e seguir para a
         // página seguinte acumulando o mesmo erro 100 vezes.
-        if (fails.length > 0 && fails.length === pedidosRpc.length) {
+        // Com UM pedido só na página, "todos falharam" não separa falha sistêmica de um pedido ruim —
+        // e um pedido ruim sozinho na última página derrubaria toda run que o alcançasse (parecer
+        // Codex, 2026-09-14). Ele segue em `falhas`; a falha sistêmica reprova as outras páginas.
+        if (fails.length > 0 && fails.length === pedidosRpc.length && pedidosRpc.length > 1) {
           throw new Error(`[Reprocess][${account}] TODOS os ${fails.length} pedidos da pág ${pagina} falharam na RPC — falha sistêmica, não dado sujo: ${JSON.stringify(fails[0])}`);
         }
         console.log(`[Reprocess][${account}] RPC pág ${pagina}: upserts=${r.upserts || 0} corrections=${r.corrections || 0} divergences=${r.divergences || 0} sem_pai=${r.sem_pai || 0} sem_item=${r.sem_item || 0} identidade_adotada=${r.identidade_adotada || 0} identidade_usada=${r.identidade_usada || 0}`);
@@ -423,6 +497,14 @@ async function reprocessOrders(
         // Pedidos NÃO reconciliados por desconto ilegível — o registro que sobrevive à janela.
         desconto_ilegivel: descontoIlegivel,
         desconto_ilegivel_amostra: descontoIlegivelAmostra,
+        // Pedidos NÃO reconciliados por item sem código de produto utilizável — idem, sobrevive à janela.
+        item_sem_codigo: itemSemCodigo,
+        item_sem_codigo_amostra: itemSemCodigoAmostra,
+        // Falhas por pedido que a RPC isolou (revertidas inteiras) — antes, só no console.
+        falhas_amostra: falhasAmostra,
+        // SENSORES do desconto da linha (RPC 20260914180104). `null` = a RPC no ar é a anterior.
+        desconto_apurado: descontoApurado,
+        desconto_corrigido: descontoCorrigido,
       },
       // Pedido que falhou na RPC ou SKU repetido (itens não reconciliados por ambiguidade) NÃO
       // derruba a run (idempotente: próximo ciclo reconcilia), mas NÃO mente 'complete' limpo —
@@ -430,10 +512,10 @@ async function reprocessOrders(
       // ⚠️ "reconcile PARCIAL" saiu do vocabulário aqui de propósito: com a RPC, o pedido que
       // falha é desfeito INTEIRO pela subtransação. O que sobra é um pedido na revisão ANTIGA
       // completa — não um meio-pedido. A frase antiga descrevia o writer que esta entrega matou.
-      ...((falhas > 0 || ambiguos > 0 || descontoIlegivel > 0)
+      ...((falhas > 0 || ambiguos > 0 || descontoIlegivel > 0 || itemSemCodigo > 0)
         ? {
           error_message: [
-            falhas > 0 ? `${falhas} pedido(s) falharam na RPC (revertidos inteiros, seguem na revisão anterior)` : null,
+            falhas > 0 ? `${falhas} pedido(s) falharam na RPC (revertidos inteiros, seguem na revisão anterior; amostra em metadata.falhas_amostra)` : null,
             // ⚠️ A frase mudou junto com o comportamento. O pedido ambíguo agora NÃO é tocado —
             // nem itens nem cabeçalho — então ele NÃO diverge: fica na revisão anterior completa.
             // O que ele acumula é ATRASO, e é isso que precisa aparecer, porque um pedido que
@@ -442,12 +524,14 @@ async function reprocessOrders(
             // Mesma classe do ambíguo: não é erro de escrita, é pedido que a run se RECUSOU a
             // publicar — e que, sem esta linha, ninguém veria ficando para trás.
             descontoIlegivel > 0 ? `${descontoIlegivel} pedido(s) NÃO reconciliados por desconto de item que a régua não sabe ler (líquido desconhecido) — congelados na revisão anterior; ids em metadata.desconto_ilegivel_amostra` : null,
+            // Mesma classe: pedido que a run se RECUSOU a publicar, e que sem esta linha ficaria para trás em silêncio.
+            itemSemCodigo > 0 ? `${itemSemCodigo} pedido(s) NÃO reconciliados por item sem código de produto utilizável (items-jsonb e linhas descreveriam pedidos diferentes) — congelados na revisão anterior; ids em metadata.item_sem_codigo_amostra` : null,
           ].filter(Boolean).join("; "),
         }
         : {}),
     });
 
-    return { upserts, divergences, corrections, falhas, sku_repetido: skuRepetido, desconto_ilegivel: descontoIlegivel, duration_ms: Date.now() - startTime };
+    return { upserts, divergences, corrections, falhas, sku_repetido: skuRepetido, desconto_ilegivel: descontoIlegivel, item_sem_codigo: itemSemCodigo, duration_ms: Date.now() - startTime };
   } catch (error) {
     await completeReprocessLog(db, logId, {
       upserts_count: upserts,
