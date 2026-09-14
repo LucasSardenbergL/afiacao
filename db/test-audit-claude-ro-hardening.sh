@@ -222,7 +222,7 @@ roda(){ # $1=rótulo  $2=exit esperado  $3=marca exigida na saída (vazio = nenh
   local veredito="ok"
   [ "$rc" = "$esperado" ] || veredito="EXIT $rc (esperado $esperado)"
   if [ -n "$marca" ] && ! printf '%s' "$saida" | grep -qF -- "$marca"; then
-    veredito="${veredito/ok/} sem a marca «$marca»"
+    veredito="${veredito/ok/} sem a marca «${marca}»"
   fi
   if [ "$veredito" = "ok" ]; then
     printf '  ✅ %-52s exit=%s\n' "$rotulo" "$rc"
