@@ -1,0 +1,46 @@
+# Invariantes do fiscal de expansão `$NOME` colada em caractere não-ASCII.
+# @src: scripts/shell-variavel-colada-gate.ts
+# @test: scripts/shell-variavel-colada-gate.test.ts
+#
+# A classe (docs/historico/shell-variavel-colada-em-nao-ascii.md): no bash 3.2 do macOS sob UTF-8,
+# o 1º byte do caractere colado vira parte do NOME — `unbound variable` com `set -u`, valor apagado
+# calado sem. O fiscal é TEXTUAL, então cada camada dele é uma aposta que pode apodrecer sem vermelho
+# nenhum: o detector, a isenção de comentário (que TEM de ser o stripper compartilhado, nunca regex
+# local), a precisão do `$$`, o universo lido, os quatro alarmes herdados do stripper, os pisos do
+# denominador e o código de saída. Cada PEGA quebra UMA camada e exige a suíte vermelha.
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`. O `#`
+# da regex local vai como `\x23`, para a linha do contrato não carregar um `#` cru.
+
+# CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: detector cego (não-ASCII vira surrogate, que nunca casa)   | s/\(\\P\{ASCII\}\)\/gu;/(\\p{Cs})\/gu;/
+
+# A isenção de comentário. A 2ª é a versão INGÊNUA que a regra da casa proíbe: ela apaga o `#` que
+# mora dentro de aspas e, com ele, a expansão que vem depois — verde por cegueira.
+PEGA | stripper ignorado: comentário vira código                              | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte; void removerComentariosShell;/
+PEGA | regex LOCAL no lugar do stripper compartilhado                          | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte.replace(\/\x23.*\$\/gm, ""); void removerComentariosShell;/
+
+# Precisão: `$$NOME…` é PID + texto, não a classe.
+PEGA | `$$` deixa de fechar par (PID vira expansão de nome)                     | s/return cifroes % 2 === 1;/return false;/
+
+# O universo. Shell sem extensão entra pelo shebang; `.claude/worktrees` sai por CAMINHO, não por nome.
+PEGA | shebang ignorado: hook sem `.sh` some do universo                      | s/return !nome\.includes\('\.'\) && SHEBANG_SHELL/return false && SHEBANG_SHELL/
+PEGA | `.claude/worktrees` volta ao universo                                  | s/const IGNORAR_CAMINHOS = \['\.claude\/worktrees'\];/const IGNORAR_CAMINHOS: string[] = [];/
+PEGA | ignorar por NOME: `scripts/worktrees/` legítimo some junto              | s/new Set\(\['node_modules', /new Set(['worktrees', 'node_modules', /
+PEGA | raiz `connector/` some do universo (o git ls-files acusa)              | s/\['db', 'scripts', '\.claude', 'connector'\];/['db', 'scripts', '.claude'];/
+
+# Os quatro alarmes do stripper — cada um visto disparar, e a régua do script curto.
+PEGA | alarme de fração desligado                                             | s/if \(d\.linhasOriginais >= LINHAS_MINIMAS_PARA_FRACAO && /if (false && d.linhasOriginais >= LINHAS_MINIMAS_PARA_FRACAO && /
+PEGA | régua de script curto removida (cabeçalho honesto vira alarme)         | s/d\.linhasOriginais >= LINHAS_MINIMAS_PARA_FRACAO && d\.fracaoPreservada/d.fracaoPreservada/
+PEGA | alarme de bloco contíguo desligado                                     | s/if \(d\.maiorBlocoDescartado > /if (false && d.maiorBlocoDescartado > /
+PEGA | alarme de sub-limpeza desligado                                        | s/if \(d\.comentariosSobreviventes > /if (false && d.comentariosSobreviventes > /
+PEGA | alarme de heredoc aberto desligado                                     | s/if \(d\.heredocsAbertos > /if (false && d.heredocsAbertos > /
+PEGA | analisar deixa de consultar o stripper                                 | s/r\.alarmes\.push\(\.\.\.alarmesDoStripper\(a\.caminho, diagnosticarShell\(a\.fonte\)\)\);/void diagnosticarShell;/
+
+# O veredito: 2 nunca é "passou", e violação nunca é 0.
+PEGA | nenhum arquivo lido vira "limpo"                                       | s/if \(r\.caminhos\.length === 0\) furos/if (false) furos/
+PEGA | piso por raiz desligado                                                | s/if \(lidos < piso\) furos/if (false) furos/
+PEGA | piso de expansões desligado                                            | s/if \(r\.expansoes < PISOS\.expansoes\) furos/if (false) furos/
+PEGA | piso da forma certa desligado                                          | s/if \(r\.formaCerta < PISOS\.formaCerta\) \{/if (false) {/
+PEGA | alarme/piso furado deixa de bloquear o veredito                        | s/if \(furos\.length > 0\) \{/if (false) {/
+PEGA | violação sai 0                                                         | s/codigo: 1,/codigo: 0,/

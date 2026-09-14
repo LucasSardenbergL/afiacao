@@ -55,8 +55,18 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * `v1.1-guard-reenvio-criar-pedido` (2026-08-29): o `criar_pedido` passou a RECUSAR reenvio na
  * fronteira (linha já com `omie_pedido_id`, ou nascida no sync). Fatia EDGE-LOCAL ⇒ a canária
  * já ecoa este `versao`, e uma chamada basta para provar o bundle.
+ *
+ * `v1.7-subtotal-liquido-pela-regua` (2026-09-10): `sales_orders.subtotal`/`total` passam a ser
+ * LÍQUIDOS do desconto de item — Σ (qtd·preço − desconto da régua), pela fórmula única de
+ * `_shared/omie-pedido.ts` (`apurarSubtotalPedido`), no `sync_pedidos` E no `reparar_orfaos_itens`.
+ * Antes o total saía BRUTO: a conta lia `prod.desconto`, chave que a API do Omie não tem. Pedido
+ * com desconto de item ILEGÍVEL (a régua devolve null) deixa de ser publicado e aparece em
+ * `pedidosDescontoIlegivel`/`amostraDescontoIlegivel` no resultado. Toca `_shared/` ⇒ a prova do
+ * bundle exige as DUAS chamadas (canária + sonda de `fonte`), ver o cabeçalho deste arquivo.
+ * ⚠️ ORDEM DE DEPLOY: `sync-reprocess` ANTES desta. Com esta nova e a reprocess velha no ar, a
+ * reconciliação reescreveria de volta para BRUTO os pedidos novos da janela dela.
  */
-export const VERSAO = "v1.6-desconto-valor-na-ingestao";
+export const VERSAO = "v1.7-subtotal-liquido-pela-regua";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
