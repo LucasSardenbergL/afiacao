@@ -31,6 +31,16 @@
 # rodada não há "ar == main?", e ausência de dado não vira verde nem quando a resposta calharia de
 # ser sim. Só o exit 2 (site fora do ar) é medido antes.
 #
+# Fetch que "dá certo" sem mover a ref (2026-09-14): `git fetch origin main` sai 0 e só atualiza
+# refs/remotes/origin/main se o `remote.origin.fetch` configurado mapear a main — num clone
+# `--single-branch` de outro branch só o FETCH_HEAD anda (medido: rc 0, ref parada no commit do ar,
+# main real adiante com src/ ⇒ "sincronizado"). E o nome CURTO `origin/main` é resolvido por regra
+# de nome: um branch LOCAL `origin/main` vence refs/remotes/, e o rev-parse devolvia o branch velho
+# com o aviso "ambiguous" no stderr descartado. Agora é a MESMA ref completa nas duas pontas: o
+# fetch NOMEIA o destino (+refs/heads/main:refs/remotes/origin/main — exit 0 ⇒ ela foi escrita
+# NESTA rodada; destino travado ou remoto sem main saem ≠ 0 ⇒ FETCH_FALHOU) e toda leitura da main
+# usa esse nome.
+#
 # Exit:  0 = sincronizado: o ar serve o MESMO commit da main (ou nada a relatar)
 #        5 = SINCRONIZADO_EM_BUNDLE: SHA atrás por N commits, delta PROVADO fora do bundle —
 #            Publish desnecessário. Não é 0 de propósito: "mesmo commit" ≠ "bundle equivalente",
@@ -60,8 +70,10 @@ PROVA_PY="$SELF_DIR/alcance-bundle.py"
 mkdir -p "$(dirname "$STATE")" 2>/dev/null || true
 TS=$(date +%FT%T 2>/dev/null || echo now)
 
-if git fetch origin main --quiet 2>/dev/null; then FETCH_OK=1; else FETCH_OK=0; fi
-MAIN_SHA=$(git rev-parse --short=8 origin/main 2>/dev/null || echo "?")
+# destino NOMEADO no fetch e o mesmo nome completo em toda leitura da main (ver cabeçalho)
+REF_MAIN=refs/remotes/origin/main
+if git fetch --quiet origin "+refs/heads/main:$REF_MAIN" 2>/dev/null; then FETCH_OK=1; else FETCH_OK=0; fi
+MAIN_SHA=$(git rev-parse --short=8 "$REF_MAIN" 2>/dev/null || echo "?")
 
 ENTRY=$(curl -fsS "$APP/" 2>/dev/null | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)
 [ -n "$ENTRY" ] || { echo "[$TS] monitor: $APP fora do ar ou HTML mudou de forma"; exit 2; }
@@ -92,7 +104,7 @@ eh_sha() { case "$1" in '' | *[!0-9a-f]*) return 1 ;; esac; [ "${#1}" -eq 40 ] |
 TMPD=""
 analisar_delta() {
   local main_full ar_full anc n drc narq crc resumo cls qtd ex pkg="" prova prc
-  main_full=$(git rev-parse --verify --quiet "origin/main^{commit}" 2>/dev/null) || main_full=""
+  main_full=$(git rev-parse --verify --quiet "$REF_MAIN^{commit}" 2>/dev/null) || main_full=""
   eh_sha "$main_full" || atrasado GIT_FALHOU "origin/main não resolve para um commit"
   ar_full=$(git rev-parse --verify --quiet "${AIR_SHA}^{commit}" 2>/dev/null) || ar_full=""
   # carimbo de 7 chars do MESMO commit: a comparação de string não enxerga, o SHA cheio sim
