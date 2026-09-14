@@ -33,8 +33,10 @@ se a poda o deixou de fora, o motor o **executa depois, sozinho** — sem isso o
 
 Por padrão uma linha mede o autor **descuidado** — só o defeito. Para gate semântico sobre edge
 instrumentada, isso mede zero sempre: os gates de BYTES (`sonda:bump`, `sonda:fingerprint`) pegam
-qualquer mudança no `index.ts`. O autor que fez o dever de casa só é pego pelo gate semântico, e é
-esse o cenário que o gate existe para cobrir. Meça os dois — em linhas com ids diferentes.
+qualquer mudança no `index.ts`. O autor que fez o dever de casa escapa deles, e sobra quem olha o
+significado — é esse o cenário que o gate semântico existe para cobrir, e é nele que a medição
+descobre se outro já o cobria (em `sonda-autentica.def`, um contrato Deno cobria). Meça os dois — em
+linhas com ids diferentes.
 
 - **Vale SÓ para a próxima linha de defeito**, ao contrário de `@origem`/`@suspeito`. De propósito:
   herdado por engano, ele calaria os gates de bytes num defeito que não o pediu — exclusividade

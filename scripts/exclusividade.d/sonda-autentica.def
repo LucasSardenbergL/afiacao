@@ -24,6 +24,16 @@
 #   Antes de `@dever-de-casa` existir, o corpus so expressava o primeiro — e a exclusividade zero
 #   medida aqui media o FORMATO do corpus, nao o gate.
 #
+# ⚠️ MEDIDO 2026-09-14 pelo motor (27 gates, invocacao do CI), e o resultado REFUTOU o `@suspeito`:
+# na linha diligente `test:edges` tambem reprova, pelo contrato Deno "gate proprio: onde o gate da
+# edge nao aceita cron-secret, a sonda NAO fica sem auth", em
+# supabase/functions/_shared/sonda-versao-contrato_test.ts. Atribuido por fora, na mesma invocacao
+# e com restauracao por copia: arvore limpa VERDE, so o dever de casa VERDE, o defeito com e sem
+# dever de casa VERMELHO nesse teste — ele pega os DOIS autores (na 1a linha a poda parou antes de
+# chegar nele). A medicao "a parte" acima nao tinha `test:edges` na conta; o registro fica, porque
+# saber que o contrato Deno ja cobre este eixo e a informacao util. Proximo defeito deste arquivo:
+# um eixo que o contrato nao alcance, se existir — sem ele, EXCLUSIVIDADE_ZERO e a leitura honesta.
+#
 # @origem:   docs/historico/controle-populacional-nao-prova-a-tentativa.md (a cadeia de 3 elos do controle ativo)
 # @suspeito: sonda:autentica
 sonda-responde-antes-do-gate | supabase/functions/fin-funding/index.ts | $feito = 1 if !$feito && s/^(\s+)const authSonda = await authorizeCronOrStaff\(req\);$/$1if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);\n$1const authSonda = await authorizeCronOrStaff(req);/

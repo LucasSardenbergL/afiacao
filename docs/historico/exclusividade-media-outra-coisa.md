@@ -69,8 +69,9 @@ o motor (e reprova no vitest): miraria o vazio e o gate de verdade seguiria sem 
 
 O `.def` aceitava um alvo por defeito, e o autor que ele descrevia era sempre o **descuidado**. Para
 gate semântico sobre edge instrumentada, qualquer mudança no `index.ts` aciona os gates de bytes, e
-a exclusividade medida era sempre zero — medida à parte, com o dever de casa (bump do `VERSAO` +
-mapa regenerado), só `sonda:autentica` reprovava. Zero media o formato do corpus, não o gate.
+a exclusividade medida era sempre zero — zero que media o formato do corpus, não o gate. (Uma
+medição à parte, com o dever de casa, anotou que só `sonda:autentica` reprovava; a rodada real
+refutou — ver "A medição", abaixo.)
 
 **Por que não um "pós-passo" de comando livre** (a primeira ideia, derrubada pelo Codex): ele
 **fabrica** exclusividade. Um pós-passo pode apagar o script de um concorrente, deixar o alvo
@@ -98,6 +99,72 @@ linha inválida.
   linha incompleta vira **INCONCLUSIVO** (`EXCLUSIVIDADE_INCONCLUSIVA`, RELATA) — nem exclusivo, nem
   "outro gate também pegou". Os certificados antigos perderam o selo sem perder a medição; re-medi-los
   com todos os gates é trabalho separado (~20 min por defeito numa M2).
+
+## Como foi provado — e o que a prova achou
+
+Cada conserto foi sabotado **sozinho** (19 camadas: 13 na lib, 6 no motor), com o **controle** — a
+mesma invocação, sem sabotagem — verde antes, restauração por cópia provada por `cmp` + `git diff
+--quiet`, nos dois locales (`LC_ALL=C` e `pt_BR.UTF-8`). Uma sabotagem só contava se o vermelho
+viesse do **título do teste que deveria pegá-la**: rc≠0 sozinho não é prova.
+
+A primeira rodada reprovou uma camada — e o defeito estava no **teste**. O `describe('o corpus de
+verdade')` parseava o corpus real na COLETA do vitest. Enquanto o parser era leniente, isso nunca
+lançava; com `@dever-de-casa` estrito, a sabotagem "o dever de casa vira pegajoso" fez o parser
+lançar `DEVER-DE-CASA-PENDURADO` na coleta, e o arquivo morreu com **rc=1 e zero testes executados**
+— os ~100 testes sumiram junto com o sinal. O script recusou esse vermelho (nenhum título casou).
+Corolário que fica: **parser que LANÇA não roda na coleta** — no `describe`, um lançamento não
+reprova um teste, apaga todos.
+
+Efeito da regra estrita de invocação sobre o que já estava medido, dito em voz alta: o `knip`
+perdeu a única execução que tinha (gravada como `bun run knip`; o CI roda `bunx knip` — quase
+certamente equivalente, mas não medido), e `tsc`, `lint` e `build` também foram a zero execução
+válida. Todos dispensados: nada reprova por isso; volta com a próxima rodada completa.
+
+## A medição (2026-09-14)
+
+A primeira rodada real **abortou no baseline, e pelo motivo certo**: `test` vermelho (99s), com o
+gate `erro-object-object` acusando uma reintrodução de `e instanceof Error ? e.message : String(e)`
+— escrita nesta mesma entrega, no `catch` do parse do corpus do motor. As rodadas anteriores só
+tinham executado as duas suítes da exclusividade, nunca a suíte inteira; o baseline do motor roda o
+`test` que o CI roda, e barrou. Trocado por `mensagemDeErro(e) ?? '<fallback explícito>'`, a
+convenção do repo (sem mensagem utilizável, o chamador nomeia o fallback — nunca `[object Object]`).
+É a guarda 1b ("baseline vermelho aprova qualquer coisa") trabalhando contra o próprio autor dela.
+
+A segunda rodada — 4 defeitos × 27 gates: todos os bloqueantes menos `sonda:cron-prova` (~19 min na
+M2 com a invocação do CI), `test:falsificacao`, `test:hooks` e o próprio `exclusividade` — terminou
+com `rc=0`:
+
+- **Baseline 27/27 verde, nenhum `GATE-ESCREVEU`.** `tsc` passou a levar 47s (era o no-op de
+  640ms) e `build` rodou com `NODE_ENV=production`: a paridade valeu na árvore real, não só no
+  fixture.
+- **(2) na árvore real.** Em `sonda-responde-antes-do-gate`, `sonda:bump` e `sonda:fingerprint`
+  reprovaram e a poda deixou 21 gates sem rodar — e `sonda:autentica`, **rodado fora da poda**,
+  reprovou em 65ms. Na matriz anterior essa linha tinha 7 execuções, nenhuma dele.
+- **(3) na árvore real — e a medição refutou o `@suspeito`.** Na linha diligente o dever de casa
+  tocou só as duas saídas declaradas, `sonda:bump` e `sonda:fingerprint` ficaram verdes, e
+  reprovaram **dois**: `sonda:autentica` e `test:edges`. O segundo podia ser artefato do dever de
+  casa (o bump grava `-corpus-diligente` no `VERSAO`), então foi atribuído por fora, com `heavy bun
+  run test:edges` na mesma invocação e restauração por cópia provada a cada fase: árvore limpa
+  verde (1106 testes), só o dever de casa verde, e o defeito — com ou sem dever de casa — vermelho
+  no MESMO teste, o contrato Deno *"gate próprio: onde o gate da edge não aceita cron-secret, a
+  sonda NÃO fica sem auth"* (`supabase/functions/_shared/sonda-versao-contrato_test.ts`). A
+  anotação do `.def` ("medido à parte, só `sonda:autentica` reprovou") não tinha `test:edges` na
+  conta. `sonda:autentica` sai `EXCLUSIVIDADE_ZERO` — agora contra os dois autores, e não mais por
+  causa do formato do corpus.
+- **O que era hipótese virou medição.** `diretiva-em-dobro` rodou os 27 gates com um único
+  vermelho (`gate:ambiente`): o `test` que em 2026-09-09 reprovou com a máquina saturada (834s de
+  baseline) passou com baseline de 151s. `diretiva-alias-jest` reproduziu a sobreposição com `knip`,
+  agora com `bunx knip`. As duas linhas nem existiam na matriz: as medições de 09-08 e 09-09 viviam
+  só em comentário do `.def`.
+- **`bun run exclusividade`: `rc=0`, nenhum REPROVA.** `EXCLUSIVIDADE_ZERO` para `sonda:autentica`,
+  `knip` e `gate:senha-bootstrap`; `EXCLUSIVIDADE_INCONCLUSIVA` para `gate:ambiente` (27 de 31
+  gates) e para os seis selos antigos medidos com `--gates` (6 a 10 de 31).
+
+Corolário: **o formato novo não fabricou exclusividade nem para o gate que o motivou.** A primeira
+medição dele contra o autor diligente derrubou o selo que a anotação à mão lhe dava — pela razão
+certa, um contrato que já cobria o eixo. E a anotação errou do mesmo jeito que a linha incompleta:
+medida com um subconjunto de gates, leu os ausentes como verdes — só que num comentário, fora do
+alcance da regra de certificação.
 
 ## A regra
 

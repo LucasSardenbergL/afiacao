@@ -35,9 +35,10 @@ diretiva-alias-jest | src/lib/push/device.test.ts | s/\@vitest-environment/\@jes
 # aplicado, as 28 suites de varredura de repo (src/__tests__ + src/lib/modulos/__tests__) e o
 # proprio `src/lib/push/device.test.ts` passaram VERDES quando rodados sozinhos. A maquina
 # estava saturada na medicao (o mesmo `test` levou 834s no baseline, contra 185s de mediana
-# historica), entao a hipotese viva e FLAKE sob carga, nao deteccao. Quem re-medir com a
-# maquina calma (`--defeitos diretiva-em-dobro --gates test`) resolve a duvida; ate la, leia a
-# linha de `test` neste defeito como NAO CONFIAVEL.
+# historica), entao a hipotese viva era FLAKE sob carga, nao deteccao.
+# RE-MEDIDO 2026-09-14 (motor com a invocacao do CI, 27 gates, `test` a 151s no baseline): so
+# `gate:ambiente` reprovou, e `test` saiu VERDE — consistente com o flake. A linha segue sem
+# certificar `[SO ELE]` apenas porque a rodada deixou 4 dos 31 gates de fora (INCONCLUSIVA).
 # @origem: 2026-09-08, apos a medicao do `diretiva-alias-jest` mostrar sobreposicao com `knip`
 # @suspeito: gate:ambiente
 diretiva-em-dobro | src/lib/push/device.test.ts | s/^(import \{ describe, it, expect, vi, beforeEach, afterEach \} from 'vitest';)$/\/\/ nota: o cabecalho deste arquivo declara \@vitest-environment jsdom\n$1/
