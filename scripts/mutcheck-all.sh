@@ -81,12 +81,16 @@ RESUMO="${MUTCHECK_RESUMO:-}"
 itens=()
 registrar() { # <mut> <rc> <arquivo-de-saída>
   [[ -z "$RESUMO" ]] && return 0
-  local m="$1" rc="$2" out="$3" inval diver abortou sumario
-  inval=$(grep -c '⚠ INVÁLIDO' "$out" || true)
-  diver=$(grep -c '← DIVERGE' "$out" || true)
+  local m="$1" rc="$2" out="$3" proprio inval diver abortou sumario
+  # Só as linhas do PRÓPRIO mutcheck classificam. O abort do baseline ecoa a saída da SUÍTE com o
+  # prefixo '  │ ' (mostrar_saida_baseline, no mutcheck.sh): texto de TERCEIRO, e um teste que
+  # imprima "← DIVERGE" ou "sumário:" viraria divergência ou sumário fabricados aqui.
+  proprio=$(grep -v '^  │ ' "$out")
+  inval=$(grep -c '⚠ INVÁLIDO' <<<"$proprio" || true)
+  diver=$(grep -c '← DIVERGE' <<<"$proprio" || true)
   # baseline vermelho / compilador ausente = o MONITOR quebrou, não a cobertura regrediu.
-  if grep -q 'baseline: ✗' "$out"; then abortou=true; else abortou=false; fi
-  sumario=$(grep -o 'sumário: .*' "$out" | tail -1 | sed 's/["\\]/ /g')
+  if grep -q 'baseline: ✗' <<<"$proprio"; then abortou=true; else abortou=false; fi
+  sumario=$(grep -o 'sumário: .*' <<<"$proprio" | tail -1 | sed 's/["\\]/ /g')
   itens+=("{\"mut\":\"$m\",\"exit\":$rc,\"invalidas\":$inval,\"divergencias\":$diver,\"abortou\":$abortou,\"sumario\":\"$sumario\"}")
 }
 

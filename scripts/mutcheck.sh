@@ -16,7 +16,8 @@
 #     mutado em saída normal, Ctrl-C (INT) ou SIGTERM. SIGKILL não passa por trap nenhum —
 #     esse caso é coberto pela rodada SEGUINTE, que RECUSA começar (sentinela em disco).
 #     A promessa antiga ("nem em Ctrl-C") era falsa: ver o bloco 'backup + revert garantido'.
-#   - baseline-check: se a suíte já está vermelha, aborta (resultado seria lixo).
+#   - baseline-check: se a suíte já está vermelha, aborta (resultado seria lixo) — e diz POR QUÊ,
+#     com a saída da MESMA execução recortada no abort (ver mostrar_saida_baseline).
 #   - guard anti-não-aplicação: perl que não casou = INVÁLIDO, não falso "sobrevive".
 #   - substituição única: mutação que toca >1 linha = regex largo (nó incerto) → INVÁLIDO.
 #   - compila-check: mutante que NÃO compila = morto pelo COMPILADOR, não por um teste →
@@ -281,6 +282,12 @@ restore() {
   echo "mutcheck: MUTCHECK-FALHA-AO-RESTAURAR $SRC_ABS (backup: $BACKUP)" >&2
   return 1
 }
+# A saída do BASELINE vai para arquivo (a das mutações segue para /dev/null) porque o abort
+# precisa dizer POR QUÊ com a MESMA execução: re-rodar para obter o log mediria OUTRA, e o motivo
+# (clone raso, OOM, rede) pode não se repetir. O abort mudo custou duas investigações do zero
+# (09-06 e 09-14, docs/historico/teste-que-afirma-o-checkout.md). Mora junto do backup: é o
+# diretório que esta rodada já provou gravável, então não nasce modo de falha novo.
+SAIDA_BASELINE="$CHAVE.saida-baseline"
 # shellcheck disable=SC2329  # invocada pela string do `trap` abaixo, que o shellcheck não segue
 finalizar() {
   local rc=$?
@@ -291,17 +298,51 @@ finalizar() {
     echo "mutcheck: $SRC_ABS pode estar MUTADO — sentinela MANTIDA em $SENTINELA" >&2
     if [[ $rc -eq 0 ]]; then rc=9; fi
   fi
+  rm -f "$SAIDA_BASELINE" 2>/dev/null || true   # DEPOIS do restore, e sem decidir o exit
   exit "$rc"
 }
 trap finalizar EXIT
 trap 'exit 143' TERM      # 128+15 — o `exit` é que dispara o EXIT acima
 trap 'exit 130' INT       # 128+2
 
-run_tests() { "${TEST_CMD[@]}" "$TEST" >/dev/null 2>&1; }  # exit code é a verdade
-compila() { [[ ${#COMPILE_CMD[@]} -eq 0 ]] && return 0; "${COMPILE_CMD[@]}" "$SRC" >/dev/null 2>&1; }
+# $1 (opcional) = onde guardar a saída; sem ele, /dev/null. Exit code é a verdade (nada de pipe).
+run_tests() { "${TEST_CMD[@]}" "$TEST" >"${1:-/dev/null}" 2>&1; }
+compila() { [[ ${#COMPILE_CMD[@]} -eq 0 ]] && return 0; "${COMPILE_CMD[@]}" "$SRC" >"${1:-/dev/null}" 2>&1; }
 linhas_mudadas() { diff "$BACKUP" "$SRC" | grep -cE '^> ' || true; }  # nº de linhas novas (1 = subst. única)
 
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
+
+# O porquê do abort: a saída guardada do baseline, recortada
+#   - pela CAUDA e por BYTES: o vitest põe falhas e sumário por último, e uma linha só de log
+#     pode ter 60 KB (`tail -n` não limitaria nada);
+#   - sem ANSI: com CI=true o vitest pinta a saída mesmo sem TTY;
+#   - sem os bytes que fazem o grep do BSD ler o log inteiro como BINÁRIO: NUL sai, UTF-8 inválido
+#     (inclusive o caractere partido pelo corte) vira U+FFFD. Medido: com UM desses bytes no log,
+#     `grep -q 'baseline: ✗'` sai 1 com a linha lá — o mutcheck-all daria o abort como não-abort;
+#   - com o prefixo '  │ ' em cada linha: é texto de TERCEIRO, e o registrar() do mutcheck-all.sh
+#     o exclui antes de classificar — um teste que imprima "← DIVERGE" não pode virar veredito.
+# Cada regra tem asserção própria em scripts/test-mutcheck-sensor.sh, provada por sabotagem
+# (docs/historico/mutcheck-abort-sem-motivo.md). OSC, `\r` e janela de leitura ficaram de fora de
+# propósito: nenhum vermelho os distinguia, e regra sem vermelho é enfeite.
+SAIDA_BYTES=4096
+mostrar_saida_baseline() {  # <exit da execução>
+  perl -MEncode=decode,encode -e '
+    my ($arq, $rc, $max) = @ARGV;
+    open(my $fh, "<:raw", $arq) or die "mutcheck: sem a saída do baseline em $arq: $!\n";
+    local $/; my $s = <$fh> // "";
+    my $total = length($s);
+    $s =~ s/\e\[[0-?]*[ -\/]*[@-~]//g;       # CSI: cor e cursor
+    $s =~ s/[\x00-\x08\x0b-\x1f\x7f]//g;     # resto de controle: ESC solto, \r, NUL (TAB e \n ficam)
+    my $cortou = length($s) > $max;
+    $s = substr($s, -$max) if $cortou;
+    my $mostrados = length($s);
+    $s = encode("UTF-8", decode("UTF-8", $s));
+    printf "  ┌─ saída desta MESMA execução do baseline (exit %s; %d bytes%s, sem ANSI):\n",
+      $rc, $total, $cortou ? "; abaixo só os últimos $mostrados" : "";
+    print "  │ $_\n" for split /\n/, $s;
+    print "  └─\n";
+  ' "$SAIDA_BASELINE" "$1" "$SAIDA_BYTES"
+}
 
 echo "mutcheck: $SRC × $TEST"
 
@@ -311,16 +352,24 @@ echo "mutcheck: $SRC × $TEST"
 # falso-INVÁLIDO ("não compila"), mascarando a causa como se fosse cobertura. É controle do
 # AMBIENTE, não da cobertura. (Achado do Codex: sem isso o gate de CI fica vermelho mudo se
 # o bun sumir.)
+# O exit de cada execução é capturado PELADO (`|| rc_base=$?`): dentro de `if ! cmd` o `$?` já é
+# o da negação, e o abort mostraria "exit 0" para a suíte que falhou.
 if [[ $SECO -eq 1 ]]; then
   echo "  baseline: — modo SECO (perl+diff; a suíte NÃO roda, logo isto não é veredito de cobertura)"
-elif ! compila; then
-  echo "  baseline: ✗ o SRC ORIGINAL não compila com '${COMPILE_CMD[*]:-}' — harness/ambiente quebrado (bun no PATH?). Abortando." >&2
-  exit 1
-elif run_tests; then
-  echo "  baseline: ✓ verde (compila + suíte passa)"
 else
-  echo "  baseline: ✗ VERMELHO — a suíte já falha sem mutação. Resultados seriam lixo. Abortando." >&2
-  exit 1
+  rc_base=0; compila "$SAIDA_BASELINE" || rc_base=$?
+  if [[ $rc_base -ne 0 ]]; then
+    echo "  baseline: ✗ o SRC ORIGINAL não compila com '${COMPILE_CMD[*]:-}' — harness/ambiente quebrado (bun no PATH?). Abortando." >&2
+    mostrar_saida_baseline "$rc_base" >&2 || true   # o recorte nunca troca o exit do abort
+    exit 1
+  fi
+  rc_base=0; run_tests "$SAIDA_BASELINE" || rc_base=$?
+  if [[ $rc_base -ne 0 ]]; then
+    echo "  baseline: ✗ VERMELHO — a suíte já falha sem mutação. Resultados seriam lixo. Abortando." >&2
+    mostrar_saida_baseline "$rc_base" >&2 || true
+    exit 1
+  fi
+  echo "  baseline: ✓ verde (compila + suíte passa)"
 fi
 
 # ───────────────────────── loop de mutações ─────────────────────────
