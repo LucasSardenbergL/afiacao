@@ -1352,4 +1352,28 @@ aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
   locales e 19 sabotagens com controle verde antes — e o `monitor-deploy-eval.sh` irmão rodado E
   falsificado sobre este branch: foi ele que achou o alvo de sabotagem duplicado (`--no-renames
   --no-relative` repetido no alcance do PR) e o formato antigo do estado lido como "sem estado".
+- [x] **Sem carimbo, nenhum 0 — o entry IGUAL ao da última checagem saía "nada a relatar"
+  (2026-09-14, issue #2492; levantado pelo Codex na revisão do #2485).** No modo de igualdade, com o
+  ar sem carimbo útil e sem sentinela, o fallback tinha três ramos pelo `deploy-novo`: 1ª checagem → 4,
+  entry novo → 4, entry **igual → 0**. Num checkout persistente (cron) em que o carimbo some, o alarme
+  soava UMA vez, na troca, e da rodada seguinte em diante se calava no código de "sincronizado", com a
+  `main` andando e o Publish pendente. O cabeçalho ainda documentava `0 = … (ou nada a relatar)`. É
+  veredito fabricado de ausência: entry igual prova que nada mudou **no ar**, não que o ar ==
+  `origin/main`. No mesmo caso, o `--pr` já saía 6 `SEM_CARIMBO`. Conserto: os três ramos viram
+  **exit 4 `VERSAO_INDETERMINADA`** (`PRIMEIRA_CHECAGEM` · `ENTRY_NOVO` · `ENTRY_IGUAL`) por um helper
+  único que termina em `exit 4`, e nenhum sub-ramo consegue mais sair 0. A saída diz *indeterminada* e
+  nunca "Publish pendente": ausência de prova não autoriza pedir Publish. Com o mesmo exit nos três, só
+  a MARCA separa um estado do outro, e é ela que mantém o dente das sabotagens de estado do pr-eval
+  (1ª checagem × `SIM`, formato antigo × `?`). **Antes do conserto,** o cenário novo
+  `sem_carimbo_main_andou` (ar `"dev"`, main adiante com `src/`, estado no mesmo entry) saiu **exit 0
+  `nada a relatar`** (29/30), e os 4 casos `semcarimbo` do pr-eval deram 8/68 vermelhos nos 2 locales.
+  **Depois,** 30/30 e 68/68. Rede: 30 cenários (+1) e 24 sabotagens (+1: `fallback-entry-igual`
+  devolve o `exit 0` ao ramo e exige o `0|nada a relatar` PREVISTO). A `fetch-sem-carimbo` passou a
+  prever `4|VERSAO_INDETERMINADA (ENTRY_IGUAL)`: ali o guard do fetch não fecha mais uma porta do verde,
+  prova a ORDEM do cabeçalho ("nem o 4"). `bate()` ganhou a exclusividade do 4 (sem `ATRASADO`,
+  `SINCRONIZADO_EM_BUNDLE`, `sincronizado: ar serve` nem `nada a relatar`). Falsificação: 48 controles
+  verdes nos 2 locales antes da 1ª sabotagem, 24/24 pegas pela marca prevista e o controle de saída
+  intacto; no pr-eval, 34 casos verdes por locale no controle e 19 pegas, 0 cegueiras. A tag
+  `arquivo/monitor-reescrita-2026-09-10` (a reescrita abandonada) cobria os mesmos 3 estados, já em
+  `VERSAO_INDETERMINADA`, e nenhum caso dela ficou fora desta rede.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
