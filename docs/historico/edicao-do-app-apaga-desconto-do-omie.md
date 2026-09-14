@@ -129,3 +129,13 @@ a terceira leitura de segunda mão não desempata.
 - **Ilegível de item sem SKU/preço não está calibrado**: os 0 ilegíveis da ingestão só cobrem itens que viram linha.
 - **Editar pedido com desconto pelo app** (enviar o trio no `IncluirItemPedido`, RPC aceitando desconto, total
   líquido) é decisão de produto — o guard só impede o dano enquanto ela não existe.
+- **Pedido com desconto também não troca SÓ observação ou condição de pagamento pelo app**: a edição sempre exclui e
+  reinclui os itens, então até uma mudança de cabeçalho apagaria o desconto. Permitir edição só de cabeçalho é
+  mudança de fluxo (pular exclusão/inclusão quando os itens não mudam), não deste guard.
+- **Calibração da presença**: a régua de presença acusa campo presente-inválido que a de apuração lê como 0, então os
+  0 ilegíveis das 162 linhas ingeridas NÃO calibram esse caso — e não há como calibrar pelo banco (a leitura crua não
+  é guardada) nem pelo repo (nenhuma resposta real do Omie com o trio). Se o Omie mandar o trio numa forma
+  inesperada, a edição daquele pedido é recusada — o lado seguro — com "não foi possível verificar o desconto".
+- **A mensagem pós-mutação não chega ao app**: a pós-checagem lança 500, como os demais erros depois de mutar; o
+  `functions.invoke` mostra só "non-2xx" e o "não re-salve sem recarregar" fica no log da edge. Dívida da action,
+  não deste guard.
