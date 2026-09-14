@@ -41,3 +41,29 @@ sonda-responde-antes-do-gate | supabase/functions/fin-funding/index.ts | $feito 
 # @dever-de-casa: bump-versao fin-funding
 # @dever-de-casa: regenerar-fingerprints
 sonda-responde-antes-do-gate-diligente | supabase/functions/fin-funding/index.ts | $feito = 1 if !$feito && s/^(\s+)const authSonda = await authorizeCronOrStaff\(req\);$/$1if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);\n$1const authSonda = await authorizeCronOrStaff(req);/
+
+# ------------------------------------------------------------------------------------------------
+# O EIXO QUE O CONTRATO NAO ALCANCA — o UNIVERSO (2026-09-14)
+#
+# O zero acima media UM alvo, e o `fin-funding` esta na lista que o contrato Deno varre. O contrato
+# ("gate proprio", sonda-versao-contrato_test.ts) confere a ordem sonda<->credencial SO em
+# `GATE_PROPRIO`: lista OPT-IN de 12 edges, que nenhum gate obriga a crescer (a completude do
+# arquivo cobre `EDGES`, nao as sublistas). `sonda:autentica` confere toda pasta com versao.ts +
+# index.ts, lida da ARVORE (60). Das 48 fora da lista, 2 tem a forma exata do fin-funding — gate
+# PROPRIO dentro do `if` da classificacao — e atendem ao criterio declarado de `GATE_PROPRIO` ("o
+# gate da edge nao aceita x-cron-secret") sem estar nela: `omie-nfe-recebimento` e
+# `generate-bundle-argument`. As outras 46 respondem a sonda depois do gate NORMAL (que ja aceita o
+# cron-secret); nelas o mesmo defeito move 3+ linhas, acima do teto de 2 do motor.
+#
+# Alvo: `supabase/functions/omie-nfe-recebimento/index.ts` — efetiva NF-e no Omie; o gate normal e
+# `Bearer` + `getClaims` + `user_roles`, e o comentario da propria edge promete "Nenhum caminho fica
+# sem auth". Defeito e plausibilidade identicos aos de cima: UMA linha, a emissao sobe para antes do
+# gate da sonda. Os dois autores, pelo mesmo motivo.
+#
+# @origem:   docs/historico/exclusividade-media-outra-coisa.md ("O alcance comparado", 2026-09-14)
+# @suspeito: sonda:autentica
+sonda-responde-antes-do-gate-fora-da-lista | supabase/functions/omie-nfe-recebimento/index.ts | $feito = 1 if !$feito && s/^(\s+)const authSonda = await authorizeCronOrStaff\(req\);$/$1if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);\n$1const authSonda = await authorizeCronOrStaff(req);/
+
+# @dever-de-casa: bump-versao omie-nfe-recebimento
+# @dever-de-casa: regenerar-fingerprints
+sonda-responde-antes-do-gate-fora-da-lista-diligente | supabase/functions/omie-nfe-recebimento/index.ts | $feito = 1 if !$feito && s/^(\s+)const authSonda = await authorizeCronOrStaff\(req\);$/$1if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);\n$1const authSonda = await authorizeCronOrStaff(req);/
