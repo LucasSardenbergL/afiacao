@@ -101,7 +101,11 @@ PEGA | escrita: null deixa de ser ausência                 | s~const ausente = 
 PEGA | escrita: causa ausente/ilegível troca de nome       | s~causa: ausente \? "ja_apuradas_ausente" : "ja_apuradas_ilegivel",~causa: ausente ? "ja_apuradas_ilegivel" : "ja_apuradas_ausente",~
 # `ja_apuradas > recusadas` é a assinatura da RPC anterior ao #2475. Sem o guard, a partição daria
 # "base mudou" NEGATIVO; com `>=`, a corrida perdida inteira (ja = recusadas) viraria anomalia.
-PEGA | escrita: excesso de ja_apuradas deixa de ser visto  | s~if \(ja > recusadas\) \{~if (false) {~
+# ⚠️ O guard morto é `ja < 0` (condição impossível), e NÃO `if (false)`: o TS marca o bloco de um
+# `if (false)` como inalcançável e ali perde o estreitamento de `aplicadas`/`recusadas`, que voltam
+# a `number | null` e não cabem no `return` — o mutante não compila e o mutcheck o dá como INVÁLIDO
+# (medido: TS2322 ×2). O `if (false)` da soma, abaixo, compila porque só as usa num template string.
+PEGA | escrita: excesso de ja_apuradas deixa de ser visto  | s~if \(ja > recusadas\) \{~if (ja < 0) {~
 PEGA | escrita: ja_apuradas = recusadas vira "excede"      | s~if \(ja > recusadas\) \{~if (ja >= recusadas) {~
 # A contagem sem coerção: `Number(x)` aceita "3" e true — e faz de null um 0.
 PEGA | escrita: string/booleano/null coagidos a número     | s~return typeof v === "number" && Number\.isInteger\(v\) && v >= 0 \? v : null;~return Number.isInteger(Number(v)) && Number(v) >= 0 ? Number(v) : null;~
