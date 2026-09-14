@@ -62,6 +62,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/CentralFerramenta.test.tsx",
       "src/pages/__tests__/ToolDetalhe.estados.test.tsx",
       "src/pages/__tests__/OrderDetail.estados.test.tsx",
+      "src/components/__tests__/OrderPrintLayout.test.ts",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },

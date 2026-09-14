@@ -1,0 +1,30 @@
+# Invariantes money-path do DESCONTO DE ITEM no cupom impresso (quebra "Subtotal − Desconto = TOTAL").
+# @src: src/components/sales/print/descontoCupom.ts
+# @test: src/components/sales/print/__tests__/descontoCupom.test.ts
+# Rode: bash scripts/mutcheck.sh src/components/sales/print/descontoCupom.ts src/components/sales/print/__tests__/descontoCupom.test.ts scripts/mutcheck.d/desconto-cupom.mut
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ POR QUE ESTE CONTRATO EXISTE: o cupom vai ao CLIENTE, e em prod (2026-09-14) os 4 pedidos com
+# desconto apurado ainda têm cabeçalho BRUTO (deploy do #2469 pendente). Uma conta plausível que não
+# fecha no papel é indistinguível de uma certa para quem lê. As mutações abaixo trocam exatamente as
+# decisões que separam as duas: o null do desconto que vira 0, a folga por linha que aceita cabeçalho
+# bruto, o desconto sem par que some, e a atribuição de desconto entre linhas indistinguíveis.
+
+# ── Ausente ≠ zero ────────────────────────────────────────────────────────────────────────────
+PEGA | desconto NÃO apurado entra como 0 (o null → 0 renascido)    | s/const desconto = finitoNaoNegativo\(linha\.desconto_valor\);/const desconto = finitoNaoNegativo(linha.desconto_valor) ?? 0;/
+PEGA | leitura que FALHOU imprime sem avisar                        | s/return \{ quebra: false, aviso: AVISO_LEITURA_FALHOU \};/return { quebra: false, aviso: null };/
+PEGA | pedido fora do lote vira leitura (vazia) em vez de falha     | s/if \(!porPedido \|\| !Object\.prototype\.hasOwnProperty\.call\(porPedido, pedidoId\)\)/if (!porPedido)/
+
+# ── A conta tem de fechar no papel, em centavos ──────────────────────────────────────────────
+PEGA | folga de ½ centavo POR LINHA aceita cabeçalho bruto          | s/bruto - desconto === centavos\(total\);/Math.abs(bruto - desconto - centavos(total)) <= itens.length \/ 2;/
+PEGA | desconto apurado sem par no papel some em silêncio           | s/const fecha = desconto === apurado && /const fecha = /
+PEGA | item sem preço deixa de impedir a conferência                | s/const bruto = brutos\.includes\(null\) \? null : /const bruto = false ? null : /
+PEGA | total ausente conferido como zero                            | s/ && total !== null && bruto - desconto === centavos\(total\);/ && bruto - desconto === centavos(total ?? 0);/
+PEGA | centavos por truncamento em vez de arredondamento            | s/Math\.round\(valor \* 100\)/Math.floor(valor * 100)/
+
+# ── Sem desconto a explicar, o cupom é o de hoje ─────────────────────────────────────────────
+PEGA | desconto zero (ou nenhum apurado) passa a imprimir a coluna  | s/if \(apurado === 0\) return \{ quebra: false, aviso: null \};/if (false) return { quebra: false, aviso: null };/
+
+# ── Atribuição entre linhas indistinguíveis (mesmo produto, quantidade e preço) ──────────────
+PEGA | descontos diferentes em linhas iguais herdam o da 1ª         | s/if \(grupo\.some\(\(d\) => d !== grupo\[0\]\)\) return null;/if (false) return null;/
+PEGA | item excedente no jsonb reusa o desconto de outra linha      | s/if \(usadas >= grupo\.length\) return null;/if (false) return null;/

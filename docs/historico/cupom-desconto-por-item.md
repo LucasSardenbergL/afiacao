@@ -1,0 +1,53 @@
+# O cupom somava linhas BRUTAS sob um total LÍQUIDO — e a quebra de desconto só vai ao papel quando a conta fecha
+
+**2026-09-14** · `src/components/sales/print/descontoCupom.ts` (+ os dois renderizadores do cupom) · money-path · continuação de [total-liquido-do-pedido-e-a-base-que-compara.md](total-liquido-do-pedido-e-a-base-que-compara.md) (#2469)
+
+## O defeito
+
+O cupom impresso tem DOIS renderizadores — `buildSingleOrderHtml` (lote, `/sales/print`) e `openPrintOrder` (avulso, na listagem e no `/sales/print`) — e os dois montam as linhas do jsonb `sales_orders.items` (`quantidade × valor_unitario`, sem desconto) sob o "Subtotal"/"TOTAL" do cabeçalho. Desde o #2469 o cabeçalho é LÍQUIDO do desconto de item: no pedido real oben 12183048572 as linhas somam 1.629,25 e o total líquido é 1.489,34, sem nada no papel explicando os R$ 139,91. A linha "Desconto" que já existia lia `sales_orders.discount` (sempre 0) atrás de uma lista de 3 CNPJs — nunca apareceu.
+
+A chave `desconto` do jsonb é legado (sempre 0) e não pode mudar sozinha: a trigger de coerência do agregado compara o jsonb com `order_items.discount`. O desconto real de cada linha só existe em `order_items.desconto_valor` (R$ da linha; NULL = não apurado).
+
+## O que se decidiu
+
+- **Casamento jsonb ↔ order_items pela identidade da trigger de coerência** — `(omie_codigo_produto, quantidade, preço)`, não por posição (as linhas vêm na ordem de `omie_codigo_item`). Linhas indistinguíveis com descontos DIFERENTES (duas cores da mesma base): nenhuma leva desconto, porque não há como saber qual item do papel levou qual.
+- **A quebra só vai ao papel quando FECHA** (decisão do founder): Subtotal bruto − Desconto = TOTAL gravado, **em centavos**. Não fechou — cabeçalho ainda bruto, desconto apurado sem par no papel, item sem preço, total ausente — o cupom sai **como hoje** e a equipe recebe um aviso (toast). Nunca vai ao papel uma conta que não fecha.
+- **Conferência exata, não "½ centavo por linha".** O edge arredonda o total UMA vez (`apurarSubtotalPedido`), então Σ bruto − Σ desconto já cai no centavo do total. Folga por linha aceitaria, num pedido de 40 linhas, um cabeçalho BRUTO com R$ 0,15 de desconto e imprimiria "Subtotal 400,00 / Desconto −0,15 / TOTAL 400,00". A fixture de 40 linhas existe para separar as duas políticas.
+- **Sem desconto a explicar → como hoje, sem aviso** (decisão do founder): nenhuma linha apurada, desconto zero, pedido sem order_items (push do app), afiação. O backfill do #2486 vai apurar quase todo o acervo com zero, e o cupom de ninguém muda por isso.
+- **Linha não apurada entre apuradas → "—"** no desconto e no total da linha (`receitaLiquidaItem` devolve `null`), e o rótulo passa a "Desconto (N de M itens)". O desconto que é conhecido soma; o não apurado fica fora da soma, nunca entra como 0.
+- **Leitura de order_items que falhou → como hoje + aviso.** "Não consegui ler" não é "não há desconto". No `/sales/print` a leitura é em lote (`fetchAllPages`, lotes de 100 ids no `.in()`), e pedido que o lote não cobriu é `falhou`, nunca lista vazia. Na listagem, só a falha ASSINADA pelo `fetchAllPages` (`ehFalhaDePagina`) vira aviso; exceção de código sobe crua.
+- **`receitaLiquidaItem` espelhado em `src/lib/pedido/desconto-item.ts`, sem tocar o edge.** A paridade é por COMPORTAMENTO: o teste importa as duas implementações (a de `_shared/desconto-omie.ts` e a de `src/`) e compara ~19,7 mil triplas de entradas. Editar o `_shared` (nem que fosse um marcador `MIRROR`) mudaria a fonte de toda edge que o importa, com sonda e deploy para nada.
+- **Coluna `discount` e jsonb `items` intocados.** No caminho SEM quebra os dois renderizadores produzem o HTML de hoje byte a byte, incluída a linha legada por CNPJ; com quebra, a linha legada não duplica o "Desconto".
+
+## Estado em produção no dia da entrega — por que o cupom AINDA não mostra a quebra
+
+Medido (psql-ro, 2026-09-14): **5 pedidos** com desconto apurado > 0 e os 5 com cabeçalho **BRUTO** — inclusive o 12183048572, com `total` 1.629,25. `bun run pendencias:deploy` confirma a causa: `omie-vendas-sync` e `sync-reprocess` com deploy PENDENTE (prod v1.6 → main v1.7-subtotal-liquido-pela-regua). Até o deploy + reprocess do #2469 alcançarem esses pedidos, o cupom deles sai como hoje, com aviso à equipe. Converge sozinho, sem nova entrega.
+
+**Sensor — quando medir é query, não recado.** Aproxima a régua do cupom pelo bruto de `order_items` (o cupom confere pelo jsonb, que a trigger de coerência mantém igual):
+
+```sql
+WITH linhas AS (
+  SELECT sales_order_id, sum(quantity * unit_price) AS bruto, sum(desconto_valor) AS desconto
+  FROM order_items GROUP BY 1
+  HAVING count(*) FILTER (WHERE desconto_valor > 0) > 0
+)
+SELECT count(*) AS pedidos_com_desconto,
+       count(*) FILTER (WHERE round(l.bruto - l.desconto, 2) =  round(so.total, 2)) AS cupom_com_quebra,
+       count(*) FILTER (WHERE round(l.bruto - l.desconto, 2) <> round(so.total, 2)) AS cupom_sem_quebra_com_aviso
+FROM linhas l JOIN sales_orders so ON so.id = l.sales_order_id;
+```
+
+2026-09-14: `5 | 0 | 5`. Depois do deploy + reprocess, `cupom_com_quebra` tem de subir; se não subir, o defeito está no cabeçalho, não no cupom.
+
+## Evidência
+
+- `src/lib/pedido/__tests__/desconto-item.test.ts` — paridade diferencial src × `_shared`, com piso anti-grade-vácua (ramo nulo e ≥50 resultados distintos).
+- `src/components/sales/print/__tests__/descontoCupom.test.ts` — o pedido real nos dois regimes do cabeçalho, a fixture de 40 linhas, ambiguidade, excedente, arredondamento de 0,29, leitura falha e lote que não cobriu o pedido.
+- `scripts/mutcheck.d/desconto-cupom.mut` — contrato de mutação do `descontoCupom.ts`.
+- Caracterização byte a byte do HTML sem quebra, antes × depois: 2 pedidos × 3 empresas × 2 renderizadores, contra 6 leituras que devem imprimir como hoje.
+
+## O que ficou aberto, de propósito
+
+- **O painel de detalhe do pedido** (`SalesOrderDetailSheet`) e o **compartilhar por WhatsApp** (`shareOrderViaWhatsApp`) têm a mesma incoerência — itens brutos sob total líquido. Fora do escopo do cupom.
+- **A linha legada "Desconto" por CNPJ** (`cnpjsComDesconto`, com listas DIFERENTES nos dois renderizadores) lê `discount`, que é sempre 0: código morto, mantido para o caminho sem quebra ser byte a byte o de hoje.
+- **O recompute do cabeçalho do acervo** (herdado do #2469): pedido antigo com desconto apurado pelo backfill e cabeçalho bruto fica sem quebra, com aviso, até alguém recalcular o cabeçalho.
