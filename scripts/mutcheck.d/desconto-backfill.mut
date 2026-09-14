@@ -171,3 +171,5 @@ PEGA | plano: valor negativo aceito                         | s~Number\.isFinite
 PEGA | plano: id repetido com valores diferentes aceito     | s~if \(anterior !== undefined && anterior !== c\) \{~if (false) {~
 PEGA | plano: teto de 2000 vira dois milhões                | s~if \(raw\.length > PLANO_APROVADO_MAX\) \{~if (raw.length > PLANO_APROVADO_MAX * 1000) {~
 PEGA | plano: id sem normalização para minúsculas           | s~par\[0\]\.trim\(\)\.toLowerCase\(\)~par[0].trim()~
+# ── v1.5 ([P1] do #2478): a escrita não atravessa página ──────────────────────────────────────
+PEGA | corpo: escrita atravessa página (max_paginas ≠ 1 aceito) | s~if \(dryRun === false && c\.max_paginas !== 1\) \{~if (false) {~

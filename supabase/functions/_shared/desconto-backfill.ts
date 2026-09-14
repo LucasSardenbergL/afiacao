@@ -453,7 +453,8 @@ function inteiroOpcional(raw: unknown, nome: string, min: number, max: number, p
  *   - o corpo tem de ser um OBJETO;
  *   - `dry_run` é OBRIGATÓRIO e booleano — o modo que escreve só existe por opt-in explícito;
  *   - parâmetro PRESENTE e inválido é erro; só o AUSENTE recebe padrão;
- *   - a ESCRITA exige `plano_aprovado` (o dry-run não precisa, mas aceita — para ensaiar o portão).
+ *   - a ESCRITA exige `plano_aprovado` (o dry-run não precisa, mas aceita — para ensaiar o portão) e
+ *     `max_paginas: 1` explícito; o dry-run segue multipágina.
  */
 export function lerParametrosBackfill(
   corpo: unknown,
@@ -482,6 +483,17 @@ export function lerParametrosBackfill(
   if (!plano.ok) return { ok: false, erro: plano.erro };
   if (dryRun === false && plano.plano === null) {
     return { ok: false, erro: "a escrita exige plano_aprovado — sem ele não há vínculo preventivo entre o dry-run aprovado e o que se grava" };
+  }
+  // Uma escrita não atravessa página ([P1] do #2478): o lote acumula entre páginas e é descarregado
+  // por pedidos conciliados, então o pedido da fronteira N/N+1 relido chegaria DUAS vezes à mesma
+  // RPC — uma cópia aplicada e a outra contada como "base mudou"; editado entre as duas leituras, a
+  // cópia velha (igual ao aprovado) seria gravada enquanto a nova sai como fora do plano. O padrão
+  // de 12 páginas vale só para o dry-run: na escrita, a página única tem de vir explícita.
+  if (dryRun === false && c.max_paginas !== 1) {
+    return {
+      ok: false,
+      erro: `a escrita exige max_paginas: 1 explícito — uma invocação de escrita não atravessa página (veio ${String(JSON.stringify(c.max_paginas)).slice(0, 40)})`,
+    };
   }
   return {
     ok: true,

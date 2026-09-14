@@ -755,8 +755,8 @@ Deno.test("corpo: `dry_run` é obrigatório e booleano — o modo que escreve n�
   eq(erroDe(lerParametrosBackfill({ dry_run: null }, 12)).includes(marca), true, "dry_run null");
   const ok = lerParametrosBackfill({ dry_run: true }, 12);
   eq(ok.ok ? ok.p.dryRun : "reprovou", true, "dry_run true explícito");
-  const w = lerParametrosBackfill({ dry_run: false, plano_aprovado: [] }, 12);
-  eq(w.ok ? w.p.dryRun : "reprovou", false, "dry_run false explícito, com plano");
+  const w = lerParametrosBackfill({ dry_run: false, plano_aprovado: [], max_paginas: 1 }, 12);
+  eq(w.ok ? w.p.dryRun : "reprovou", false, "dry_run false explícito, com plano e uma página");
 });
 
 Deno.test("corpo: parâmetro PRESENTE e inválido é erro; AUSENTE recebe o padrão", () => {
@@ -782,11 +782,26 @@ Deno.test("corpo: parâmetro PRESENTE e inválido é erro; AUSENTE recebe o padr
 
 Deno.test("corpo: a ESCRITA exige plano_aprovado; o dry-run não", () => {
   const id = "b3e56dbb-208a-4a22-b533-e56fb3664156";
-  eq(erroDe(lerParametrosBackfill({ dry_run: false }, 12)).includes("a escrita exige plano_aprovado"), true, "escrita sem plano");
-  eq(lerParametrosBackfill({ dry_run: false, plano_aprovado: [] }, 12).ok, true, "escrita com plano vazio é válida — e não escreve nada");
-  const w = lerParametrosBackfill({ dry_run: false, plano_aprovado: [[id, 1.5]] }, 12);
+  eq(erroDe(lerParametrosBackfill({ dry_run: false, max_paginas: 1 }, 12)).includes("a escrita exige plano_aprovado"), true, "escrita sem plano");
+  eq(lerParametrosBackfill({ dry_run: false, plano_aprovado: [], max_paginas: 1 }, 12).ok, true, "escrita com plano vazio é válida — e não escreve nada");
+  const w = lerParametrosBackfill({ dry_run: false, plano_aprovado: [[id, 1.5]], max_paginas: 1 }, 12);
   eq(w.ok && w.p.planoAprovado?.get(id), 150, "o plano é lido em centavos");
   eq(lerParametrosBackfill({ dry_run: true }, 12).ok, true, "dry-run sem plano");
+});
+
+Deno.test("corpo: a ESCRITA exige max_paginas: 1 explícito; o dry-run segue multipágina ([P1] do #2478)", () => {
+  // O lote acumula entre páginas: numa escrita de 2 páginas, o pedido da fronteira relido chega DUAS
+  // vezes à mesma RPC. O padrão de 12 páginas escrevia atravessando página sem ninguém pedir.
+  const marca = "a escrita exige max_paginas: 1";
+  const escrita = { dry_run: false, plano_aprovado: [] };
+  eq(lerParametrosBackfill({ ...escrita, max_paginas: 1 }, 12).ok, true, "escrita com 1 página");
+  eq(erroDe(lerParametrosBackfill({ ...escrita, max_paginas: 2 }, 12)).includes(marca), true, "escrita com 2 páginas");
+  eq(erroDe(lerParametrosBackfill(escrita, 12)).includes(marca), true, "escrita sem max_paginas — o padrão de 12 não vale para ela");
+  eq(erroDe(lerParametrosBackfill({ ...escrita, max_paginas: "1" }, 12)).includes("max_paginas tem de ser inteiro"), true, "\"1\" continua não sendo 1");
+  const dry = lerParametrosBackfill({ dry_run: true, max_paginas: 12 }, 12);
+  eq(dry.ok ? dry.p.maxPaginas : "reprovou", 12, "dry-run com 12 páginas segue aceito");
+  const dryPadrao = lerParametrosBackfill({ dry_run: true }, 12);
+  eq(dryPadrao.ok ? dryPadrao.p.maxPaginas : "reprovou", 12, "dry-run sem max_paginas recebe o padrão");
 });
 
 Deno.test("diferença REAL de preço continua separando (a quantização não afrouxa demais)", () => {

@@ -21,7 +21,9 @@ export const VERSAO = "v1.5-portao-plano-aprovado-e-corpo-estrito";
 // sem exclusão e com 12 páginas), parâmetro presente e inválido é 400, e `excluir_ids: null` também;
 // (2) a ESCRITA exige `plano_aprovado` [id, valor] — o portão só deixa gravar a linha cujo valor, em
 // centavos, está no plano do dry-run aprovado; o resto vira recusa `fora_do_plano_aprovado`. É o
-// vínculo PREVENTIVO: a comparação depois da escrita só detectaria o valor já gravado.
+// vínculo PREVENTIVO: a comparação depois da escrita só detectaria o valor já gravado. (3) A ESCRITA
+// exige `max_paginas: 1` explícito: o lote acumula entre páginas, e o pedido da fronteira relido
+// chegaria duas vezes à mesma RPC ([P1] do #2478, fechado aqui para a escrita; dry-run segue multipágina).
 
 // v1.4 — as recusas da ESCRITA deixam de ser um número só. `recusadas` da RPC junta a linha cuja
 // base mudou (conserto: reler o Omie) e a que outro writer ou um run anterior já tinha apurado
