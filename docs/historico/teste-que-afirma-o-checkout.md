@@ -129,3 +129,50 @@ nenhuma das duas é redundante. Sabotar as duas juntas teria medido UMA coisa, n
 
 **Eco:** contrato de mutação sobre o fonte é cego para o ARNÊS. Blindagem de fixture só se prova
 forjando o ambiente que ela promete neutralizar — senão o verde vem de a hostilidade não existir.
+
+## Reincidência (2026-09-14): não era a REF, eram os COMMITS — e o remédio foi o ARQUIVO, não o checkout
+
+**Mesma assinatura, oito dias depois, noutro contrato.** `scripts/mutcheck.d/sonda-versao-bump-gate.mut`
+abortou com `baseline: ✗ VERMELHO` só no job `mutation-check`, de 2026-09-11 a 2026-09-14. Medido
+(`gh run list --workflow CI --created '>=2026-09-11'` + `gh run view --json jobs`): **24 runs com o
+`mutation-check` vermelho** — 16 de PR e 8 `workflow_dispatch` na main (o `schedule` pula o job) — e
+a Issue #2474 aberta com mais 7 comentários do sensor. Cada run vermelho vira e-mail "Run failed" para
+quem o disparou, e as sessões disparam com o token do founder: o vermelho que ninguém lê virou ruído
+na caixa de entrada. Os PRs mergeavam do mesmo jeito (`validate` verde), o que escondia a gravidade.
+
+**A causa, um nível abaixo da de 09-06.** O #2470 pôs na suíte medida pelo contrato 5 testes que
+calibram o gate contra a história REAL (`coletarEstado('<sha>^', '<sha>')` sobre as ondas 2 a 5 do
+relé). Commit é **objeto do clone** — a mesma classe da ref, agora no banco de objetos. O teste sabia
+("O job `testes` do CI tem `fetch-depth: 0`") e escolheu certo o fail-CLOSED (clone raso LANÇA, nunca
+devolve lista vazia); só não viu que a mesma suíte também roda no job raso.
+
+Medido na mesma árvore e no mesmo `node_modules`, variando só o histórico:
+
+| clone | suíte | contrato (`mutcheck`) |
+|---|---|---|
+| completo | 46/46 | 15 mutações · 14 pegas · 1 sobrevivente esperada · 0 problemas |
+| `--depth 1` | 41 verdes + **exatamente os 5** de história vermelhos | aborta no baseline |
+| `--depth 1`, com os 5 no arquivo irmão | 41/41 (o irmão: 5/5 vermelhos, como deve) | 15 · 14 pegas · 1 sobrevivente esperada · 0 problemas, via `mutcheck-all.sh` |
+
+**Por que, de novo, NÃO `fetch-depth: 0` no `mutation-check`** — agora com um motivo medido a mais: a
+última linha prova que o poder do contrato **não depende** desses 5 testes. Eles são calibração contra
+a história, não o dente que o `.mut` mede; o clone completo por PR (e a edição no `ci.yml`, arquivo
+quente) comprariam zero poder medido. Os 5 foram, sem mudar asserção, para
+`scripts/sonda-versao-bump-gate-historia.test.ts`, que roda no job `testes` (`fetch-depth: 0`),
+bloqueante como antes. 2ª opinião (Codex, `max`): veredito por esta opção, sem P0/P1.
+
+**A regra, generalizada:** a suíte apontada pelo `# @test:` de um `.mut` é **hermética** — nem ref, nem
+commit, nem config do hospedeiro. O que exige propriedade do clone mora em arquivo irmão, fora do
+contrato. Limite honesto (P2 do Codex): o arquivo irmão continua falhando em clone raso — o conserto
+isola a dependência do contrato, não a elimina como o fixture de 09-06 eliminou.
+
+**Por que reincidiu, e o que ficou em aberto de propósito:**
+
+1. O próprio PR do #2470 teve o `mutation-check` vermelho e mergeou: o job não é required (o `validate`
+   é o único), então nada barra um contrato que nasce com o baseline vermelho no runner.
+2. O abort não diz POR QUÊ: `run_tests` manda a saída do vitest para `/dev/null` (`scripts/mutcheck.sh`),
+   e cada ocorrência custa uma investigação do zero — foram duas, 09-06 e 09-14.
+
+Os dois ficaram fora deste conserto: mexer no `mutcheck.sh` no mesmo PR que apaga o vermelho mergearia
+sem que job required nenhum o exercitasse — exatamente o vetor do item 1. Entregas próprias, cada uma
+com a sua falsificação.
