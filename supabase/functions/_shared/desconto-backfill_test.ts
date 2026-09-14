@@ -577,6 +577,15 @@ Deno.test("total do pedido: a soma é em centavos INTEIROS — 0,10 + 0,20 confe
   eq(r.soma_centavos, 30, "soma inteira");
 });
 
+Deno.test("total do pedido: cada desconto vira centavo ARREDONDADO — 0,29 × 100 é 28,999999999999996", () => {
+  // O caso que separa "somar em centavos" de "multiplicar por 100": sem o arredondamento por item a
+  // soma sai 28,999999999999996 e o pedido certo diverge de si mesmo. (Pego pelo mutcheck da v1.5:
+  // com só 0,10/0,20/10/20 nos testes, `soma += d * 100` sobrevivia — todos esses dão inteiro exato.)
+  const r = conferirTotalPedido([omie(555, 1, 10, { tipo_desconto: "V", valor_desconto: 0.29 })], 0.29);
+  eq(r.veredito, "confere", "29 centavos = 29 centavos");
+  eq(r.soma_centavos, 29, "e a soma é o inteiro 29, não 28,999…");
+});
+
 Deno.test("total do pedido: zero informado nos dois lados confere", () => {
   const r = conferirTotalPedido([omie(555, 2, 100, { tipo_desconto: "V", valor_desconto: 0 })], 0);
   eq(r.veredito, "confere", "0 = 0");
