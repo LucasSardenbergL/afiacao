@@ -1325,4 +1325,20 @@ aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
   leitura — o mesmo cenário guarda as duas, cada uma por uma porta, a igualdade de string e o atalho do
   SHA cheio), 46 controles verdes nos 2 locales, 23/23 pegas. O repo real segue no refspec padrão e
   sem `refs/heads/origin/*` (medido em 2026-09-14): era latente, e agora está fechado.
+- [x] **`--pr <n>`: "o PR está no ar?" por ANCESTRALIDADE — e o `deploy-novo` passa a ser POR CHECKOUT
+  (2026-09-14; a receita manual do #2463 virou flag).** O squash (`gh pr view --json mergeCommit`,
+  nunca o head do branch) contra o commit servido, com os três ramos explícitos e todo "não sei" em
+  exit 6 `NAO_CONSEGUI_MEDIR`: rc≠0/1 do merge-base, PR não mergeado ou com base ≠ main, gh ou fetch
+  falho, clone RASO, carimbo ausente, ambíguo ou sem o prefixo conferido. O bloco vem ANTES do guard
+  global do #2473 — lá o fetch falho sai 3, aqui sai 6. `PR_FORA_DO_AR` traz a linha de alcance do
+  próprio PR pela MESMA tabela e a MESMA prova do exit 5; `PR_NO_AR` avisa revert posterior. Junto:
+  estado em `<git-dir>/deploy-monitor.state` com 1ª checagem `?` (o formato antigo num
+  `DEPLOY_MONITOR_STATE` apontado à mão segue valendo), sentinela com 4 saídas (2 e 3 saem
+  `SENTINELA_SEM_VEREDITO`, nunca "ausente"), entry que não baixa → exit 2, uso inválido → exit 6, e o
+  `lint:shell` passou a cobrir `.claude/skills/*/{scripts,evals}/*.sh` (0 achados em 428 arquivos).
+  Prod (ar `70fc305f`, 2026-09-10): `--pr 2459` → 0; `--pr 2468` → 3 + `PR_SEM_ALCANCE_NO_BUNDLE`;
+  `--pr 2469` (aberto) → 6. Rede: `evals/monitor-deploy-pr-eval.sh` (o (9) do `run.sh`), 34 casos × 2
+  locales e 19 sabotagens com controle verde antes — e o `monitor-deploy-eval.sh` irmão rodado E
+  falsificado sobre este branch: foi ele que achou o alvo de sabotagem duplicado (`--no-renames
+  --no-relative` repetido no alcance do PR) e o formato antigo do estado lido como "sem estado".
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
