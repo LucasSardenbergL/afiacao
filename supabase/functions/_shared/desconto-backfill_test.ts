@@ -24,8 +24,10 @@ import {
   conferirTotalPedido,
   type ItemOmieDetalhe,
   type LinhaLocal,
+  lerExcluirIds,
   lerRetornoEscrita,
   pedidoNaJanela,
+  portaoDoPedido,
   registrarNaAmostra,
   somarRetornoEscrita,
 } from "./desconto-backfill.ts";
@@ -543,21 +545,124 @@ Deno.test("total do pedido: item que a régua recusa → item_ilegivel, não som
   eq(r.soma_itens, null, "soma parcial não é transportada");
 });
 
-Deno.test("total do pedido: diferença de arredondamento (≤ 1 centavo por item) confere", () => {
-  // 3,333% de 100 = 3,333 → a régua arredonda a 3,33; o Omie pode ter gravado 3,34.
+Deno.test("total do pedido: UM centavo de diferença já diverge — sem folga (v1.5)", () => {
+  // Até a v1.4 isto "conferia": um centavo por item era aceito como arredondamento. Agora a
+  // diferença de arredondamento do percentual vira recusa medida, em vez de folga que absorve.
+  // 3,333% de 100 = 3,333 → a régua arredonda a 3,33; o total do Omie diz 3,34.
   const r = conferirTotalPedido([omie(555, 1, 100, { tipo_desconto: "P", percentual_desconto: 3.333 })], 3.34);
-  eq(r.veredito, "confere", "um centavo num item é arredondamento");
+  eq(r.veredito, "diverge", "333 centavos contra 334");
+  eq(r.soma_centavos, 333, "a soma sai em centavos inteiros");
+  eq(r.total_centavos, 334, "o total também");
 });
 
-Deno.test("total do pedido: dois centavos num único item já é divergência", () => {
-  // O contraste do teste acima — a tolerância não pode virar folga que engole desconto real.
-  const r = conferirTotalPedido([omie(555, 1, 100, { tipo_desconto: "V", valor_desconto: 3.33 })], 3.35);
-  eq(r.veredito, "diverge", "0,02 num item só não é arredondamento");
+Deno.test("total do pedido: 100 itens zerados contra R$ 0,69 no total → diverge (a folga por item escondia o desconto)", () => {
+  // O caso que o Codex r2 reproduziu contra a v1.3: com um centavo POR ITEM de folga, 100 itens
+  // davam R$ 1,00 de margem — o desconto inteiro de R$ 0,69 cabia nela, e a régua gravaria 100 zeros.
+  const itens = Array.from({ length: 100 }, (_, i) => omie(1000 + i, 1, 10, { tipo_desconto: "V", valor_desconto: 0 }));
+  const r = conferirTotalPedido(itens, 0.69);
+  eq(r.veredito, "diverge", "0 centavos nos itens contra 69 no total");
+});
+
+Deno.test("total do pedido: a soma é em centavos INTEIROS — 0,10 + 0,20 confere com 0,30", () => {
+  // Em ponto flutuante 0,1 + 0,2 = 0,30000000000000004 ≠ 0,3. O contraste que prova que a
+  // igualdade exata não reprova pedido certo por ruído binário (Codex r2, P3).
+  const r = conferirTotalPedido(
+    [
+      omie(555, 1, 10, { tipo_desconto: "V", valor_desconto: 0.1 }),
+      omie(777, 1, 10, { tipo_desconto: "V", valor_desconto: 0.2 }),
+    ],
+    0.3,
+  );
+  eq(r.veredito, "confere", "10 + 20 centavos = 30 centavos");
+  eq(r.soma_centavos, 30, "soma inteira");
 });
 
 Deno.test("total do pedido: zero informado nos dois lados confere", () => {
   const r = conferirTotalPedido([omie(555, 2, 100, { tipo_desconto: "V", valor_desconto: 0 })], 0);
   eq(r.veredito, "confere", "0 = 0");
+});
+
+// ── O PORTÃO do pedido: o que sai do plano ANTES da escrita (v1.5) ──────────────────────────
+// Até a v1.4 a conferência com o total era só diagnóstico: o 7638 respondia `diverge` e as nove
+// linhas iam para a RPC. Cada teste afirma o que fica no plano E o motivo de quem saiu — uma linha
+// que some sem motivo quebraria o fechamento por id tanto quanto uma que fosse escrita.
+
+/** Um plano de duas apuradas (a: 10, b: 0) e uma recusada pela correspondência (c). */
+function planoBase() {
+  return conciliarDescontosPedido(
+    [local("a", 555, 2, 100), local("b", 777, 1, 50), local("c", 888, 1, 30)],
+    [
+      omie(555, 2, 100, { tipo_desconto: "V", valor_desconto: 10 }),
+      omie(777, 1, 50, { tipo_desconto: "V", valor_desconto: 0 }),
+    ],
+  );
+}
+
+Deno.test("portão: total que confere não retira nada do plano", () => {
+  const r = portaoDoPedido(planoBase(), "confere", new Set());
+  eq(apurados(r).a, 10, "a segue no plano com o seu valor");
+  eq(apurados(r).b, 0, "b também");
+  eq(recusas(r).c, "sem_correspondencia", "a recusa da correspondência é preservada");
+  eq(r.apurados.length + r.recusados.length, 3, "toda linha segue com exatamente um desfecho");
+});
+
+Deno.test("portão: total que DIVERGE retira TODAS as apuradas do pedido, com motivo", () => {
+  const r = portaoDoPedido(planoBase(), "diverge", new Set());
+  eq(r.apurados.length, 0, "nenhuma linha do pedido fica no plano");
+  eq(recusas(r).a, "total_nao_confere", "a sai com o motivo do portão");
+  eq(recusas(r).b, "total_nao_confere", "b também — inclusive o zero, que também não é confiável aqui");
+  eq(recusas(r).c, "sem_correspondencia", "quem já tinha motivo mantém o dele");
+  eq(r.recusados.length, 3, "e ninguém some do fechamento");
+});
+
+Deno.test("portão: sem_total e item_ilegivel também retiram — só `confere` libera escrita", () => {
+  for (const v of ["sem_total", "item_ilegivel"] as const) {
+    const r = portaoDoPedido(planoBase(), v, new Set());
+    eq(r.apurados.length, 0, `${v}: nada no plano`);
+    eq(recusas(r).a, "total_nao_confere", `${v}: motivo do portão`);
+  }
+});
+
+Deno.test("portão: a exclusão do operador retira SÓ as linhas listadas, e vem antes do total", () => {
+  const confere = portaoDoPedido(planoBase(), "confere", new Set(["a"]));
+  eq(recusas(confere).a, "excluido_pelo_operador", "a linha listada sai");
+  eq(apurados(confere).b, 0, "a não listada fica no plano");
+  const diverge = portaoDoPedido(planoBase(), "diverge", new Set(["a"]));
+  eq(recusas(diverge).a, "excluido_pelo_operador", "com o total divergindo, a exclusão explícita tem precedência");
+  eq(recusas(diverge).b, "total_nao_confere", "e a outra sai pelo total");
+});
+
+Deno.test("portão: excluir uma linha que a correspondência já recusou não troca o motivo", () => {
+  const r = portaoDoPedido(planoBase(), "confere", new Set(["c"]));
+  eq(recusas(r).c, "sem_correspondencia", "o motivo da correspondência é o mais informativo");
+  eq(r.recusados.filter((x) => x.id === "c").length, 1, "e a linha não aparece duas vezes");
+});
+
+// ── `excluir_ids`: forma inesperada é ERRO, nunca exclusão vazia ────────────────────────────
+
+Deno.test("excluir_ids: ausente é o único vazio legítimo", () => {
+  const u = lerExcluirIds(undefined);
+  const n = lerExcluirIds(null);
+  eq(u.ok && u.ids.size, 0, "undefined → nenhuma exclusão");
+  eq(n.ok && n.ids.size, 0, "null → nenhuma exclusão");
+  const vazio = lerExcluirIds([]);
+  eq(vazio.ok && vazio.ids.size, 0, "array vazio também é válido");
+});
+
+Deno.test("excluir_ids: uuids válidos são normalizados para minúsculas", () => {
+  const r = lerExcluirIds(["38A3E9AC-85CE-47DF-9E8A-5E43761EAF45", " b3e56dbb-208a-4a22-b533-e56fb3664156 "]);
+  eq(r.ok, true, "aceita");
+  eq(r.ok && r.ids.has("38a3e9ac-85ce-47df-9e8a-5e43761eaf45"), true, "maiúsculas viram minúsculas");
+  eq(r.ok && r.ids.has("b3e56dbb-208a-4a22-b533-e56fb3664156"), true, "espaço nas pontas sai");
+});
+
+Deno.test("excluir_ids: forma inválida é ERRO — string, objeto, elemento lixo, lista acima do teto", () => {
+  eq(lerExcluirIds("38a3e9ac-85ce-47df-9e8a-5e43761eaf45").ok, false, "string solta não é lista");
+  eq(lerExcluirIds({ id: "x" }).ok, false, "objeto não é lista");
+  eq(lerExcluirIds(["38a3e9ac-85ce-47df-9e8a-5e43761eaf45", 42]).ok, false, "elemento não-string reprova a lista inteira");
+  eq(lerExcluirIds(["nao-e-uuid"]).ok, false, "string que não é uuid reprova");
+  const acima = Array.from({ length: 1001 }, () => "38a3e9ac-85ce-47df-9e8a-5e43761eaf45");
+  eq(lerExcluirIds(acima).ok, false, "acima do teto de 1000 reprova");
 });
 
 Deno.test("diferença REAL de preço continua separando (a quantização não afrouxa demais)", () => {

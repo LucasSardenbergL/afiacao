@@ -71,12 +71,25 @@ export interface ItemOmieDetalhe {
  *   leitura_recusada    o par foi achado, e `descontoItemOmie` recusou-se a ler o desconto
  *                       (discriminador fora do vocabulário, percentual fora de faixa, desconto
  *                       acima da base). A recusa da régua chega inteira até aqui.
+ *
+ * Os dois abaixo NÃO nascem da correspondência: são o PORTÃO (`portaoDoPedido`) retirando do plano
+ * uma linha que casou e foi apurada, antes de qualquer escrita.
+ *
+ *   total_nao_confere      o PEDIDO não passou na conferência com o total do próprio Omie
+ *                          (`conferirTotalPedido` ≠ confere): duas fontes do Omie discordam sobre o
+ *                          mesmo desconto, e escrever a dos itens seria escolher por conveniência.
+ *                          Caso-mãe: pedido 7638, itens com R$ 292,26 e total R$ 0,00 (Codex r2, P1).
+ *   excluido_pelo_operador a linha está na exclusão explícita da invocação (`excluir_ids`): conflito
+ *                          documental fora do alcance da edge — pedidos 12305 e 12787, desconto de
+ *                          R$ 0,69 no pedido e nota fiscal emitida no bruto. A exclusão só ESTREITA.
  */
 export type MotivoRecusa =
   | "base_indeterminada"
   | "sem_correspondencia"
   | "ambiguo"
-  | "leitura_recusada";
+  | "leitura_recusada"
+  | "total_nao_confere"
+  | "excluido_pelo_operador";
 
 /**
  * Como os campos de desconto vieram no item do Omie que casou — o SENSOR do backfill.
@@ -246,19 +259,37 @@ export function pedidoNaJanela(orderDateKpi: unknown, deIso: string): boolean {
  * total e zero nos itens é o formato exato do furo que `ausentes` sozinho não denuncia (a régua
  * leria 0 onde o Omie diz que há desconto).
  *
- *   confere        a soma dos itens bate com o total (tolerância de UM centavo por item: a régua
- *                  arredonda cada item ao centavo, e o Omie pode arredondar o percentual de outro
- *                  jeito — diferença de arredondamento não é desconto perdido)
- *   diverge        os dois existem e não batem
+ *   confere        a soma dos itens é IGUAL ao total, em centavos inteiros
+ *   diverge        os dois existem e não são iguais — inclusive por um centavo
  *   sem_total      o cabeçalho não trouxe `valor_descontos` legível — ausência de dado, não "zero"
  *   item_ilegivel  a régua recusou algum item (null) — a soma seria parcial, e parcial não confere
+ *
+ * ⚠️ SEM tolerância, e em centavos (v1.5, Codex r2). O 1º desenho aceitava um centavo POR ITEM, e as
+ * duas propriedades eram falsas: (a) a folga crescia com o número de itens — 100 itens zerados contra
+ * um total de R$ 0,69 davam `confere`, e o desconto inteiro sumia dentro dela; (b) comparar reais em
+ * ponto flutuante fazia `|0,03 − 0,04|` valer 0,010000000000000002 e virar `diverge` exatamente no
+ * limite. A régua devolve cada desconto já arredondado ao centavo e o Omie informa o total com 2
+ * casas: somados em centavos inteiros, os dois lados são comparáveis por igualdade. Uma diferença de
+ * arredondamento do percentual deixa de ser absorvida — ela vira recusa (precisão > recall) e
+ * aparece medida no detalhe por pedido, em vez de ser escondida pela folga.
  */
 export type ConferenciaTotalPedido = "confere" | "diverge" | "sem_total" | "item_ilegivel";
+
+/** R$ → centavos inteiros. `Math.round` e não truncagem: 0,29 × 100 é 28,999999999999996. */
+function centavos(n: number): number {
+  return Math.round(n * 100);
+}
 
 export function conferirTotalPedido(
   itensOmie: ItemOmieDetalhe[],
   valorDescontosOmie: unknown,
-): { veredito: ConferenciaTotalPedido; soma_itens: number | null; total_omie: number | null } {
+): {
+  veredito: ConferenciaTotalPedido;
+  soma_itens: number | null;
+  total_omie: number | null;
+  soma_centavos: number | null;
+  total_centavos: number | null;
+} {
   const total = finitoNaoNegativo(valorDescontosOmie);
   let soma = 0;
   let legivel = true;
@@ -267,17 +298,78 @@ export function conferirTotalPedido(
     const p = finitoNaoNegativo(it.produto?.valor_unitario);
     const d = descontoItemOmie(it.produto, q === null || p === null ? null : q * p);
     if (d === null) { legivel = false; break; }
-    soma += d;
+    soma += centavos(d);
   }
-  const somaItens = legivel ? Math.round(soma * 100) / 100 : null;
-  if (total === null) return { veredito: "sem_total", soma_itens: somaItens, total_omie: null };
-  if (somaItens === null) return { veredito: "item_ilegivel", soma_itens: null, total_omie: total };
-  const tolerancia = 0.01 * Math.max(1, itensOmie.length);
-  return {
-    veredito: Math.abs(somaItens - total) <= tolerancia ? "confere" : "diverge",
-    soma_itens: somaItens,
-    total_omie: total,
+  const somaCentavos = legivel ? soma : null;
+  const totalCentavos = total === null ? null : centavos(total);
+  const medida = {
+    soma_itens: somaCentavos === null ? null : somaCentavos / 100,
+    total_omie: totalCentavos === null ? null : totalCentavos / 100,
+    soma_centavos: somaCentavos,
+    total_centavos: totalCentavos,
   };
+  if (totalCentavos === null) return { veredito: "sem_total", ...medida };
+  if (somaCentavos === null) return { veredito: "item_ilegivel", ...medida };
+  return { veredito: somaCentavos === totalCentavos ? "confere" : "diverge", ...medida };
+}
+
+/**
+ * O PORTÃO do pedido: decide, ANTES de qualquer escrita, que linhas apuradas podem entrar no plano.
+ *
+ * Até a v1.4 a conferência com o total era só DIAGNÓSTICO — o pedido 7638 respondia `diverge` e as
+ * nove linhas seguiam para a RPC do mesmo jeito (Codex r2 reproduziu: `diverge=1`, HTTP 200, nove
+ * aplicadas). Agora um pedido cujo total não confere não tem linha nenhuma no plano, e cada linha
+ * retirada vira recusa COM MOTIVO — não um `continue` que sumiria com ela do fechamento por id.
+ *
+ * Ordem: a exclusão do operador vem antes do total. Uma linha que já tinha sido recusada pela
+ * correspondência mantém o motivo dela — é o mais informativo, e a exclusão só existe para impedir
+ * ESCRITA, que aquela linha nunca teria.
+ */
+export function portaoDoPedido(
+  plano: PlanoDesconto,
+  veredito: ConferenciaTotalPedido,
+  excluir: ReadonlySet<string>,
+): PlanoDesconto {
+  const apurados: LinhaApurada[] = [];
+  const recusados: LinhaRecusada[] = [...plano.recusados];
+  for (const a of plano.apurados) {
+    if (excluir.has(a.id)) {
+      recusados.push({ id: a.id, motivo: "excluido_pelo_operador" });
+    } else if (veredito !== "confere") {
+      recusados.push({ id: a.id, motivo: "total_nao_confere" });
+    } else {
+      apurados.push(a);
+    }
+  }
+  return { apurados, recusados };
+}
+
+/** Teto de uma exclusão por invocação. Exclusão é para conflito documental conhecido, caso a caso —
+ *  uma lista de milhares seria outro processo fingindo ser este. */
+const EXCLUIR_IDS_MAX = 1000;
+const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Lê `excluir_ids` do corpo da invocação. FAIL-CLOSED: qualquer forma inesperada é ERRO (a edge
+ * responde 400), nunca "sem exclusão" — uma lista malformada que virasse conjunto vazio escreveria
+ * justamente as linhas que o operador pediu para segurar. Ausente (undefined/null) é o único vazio
+ * legítimo. Os ids são normalizados para minúsculas, a forma que o PostgREST devolve.
+ */
+export function lerExcluirIds(raw: unknown): { ok: true; ids: Set<string> } | { ok: false; erro: string } {
+  if (raw === undefined || raw === null) return { ok: true, ids: new Set() };
+  if (!Array.isArray(raw)) return { ok: false, erro: `excluir_ids tem de ser um array de uuids (veio ${typeof raw})` };
+  if (raw.length > EXCLUIR_IDS_MAX) {
+    return { ok: false, erro: `excluir_ids com ${raw.length} ids passa do teto de ${EXCLUIR_IDS_MAX}` };
+  }
+  const ids = new Set<string>();
+  for (const v of raw) {
+    const s = typeof v === "string" ? v.trim().toLowerCase() : "";
+    if (!FORMA_UUID.test(s)) {
+      return { ok: false, erro: `excluir_ids contém um valor que não é uuid: ${String(JSON.stringify(v)).slice(0, 60)}` };
+    }
+    ids.add(s);
+  }
+  return { ok: true, ids };
 }
 
 /**
