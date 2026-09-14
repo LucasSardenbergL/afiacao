@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 546
+-- Total de custom migrations: 547
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -587,7 +587,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260908223555', 'deploy_sonda_alvos_onda4', '20260908223555_deploy_sonda_alvos_onda4.sql'),
   ('20260909074613', 'v_titulo_baixas_otica_canonica', '20260909074613_v_titulo_baixas_otica_canonica.sql'),
   ('20260909222423', 'deploy_sonda_alvos_onda5', '20260909222423_deploy_sonda_alvos_onda5.sql'),
-  ('20260910214850', 'desconto_backfill_aplicar_ja_apuradas', '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql')
+  ('20260910214850', 'desconto_backfill_aplicar_ja_apuradas', '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql'),
+  ('20260914181500', 'pedido_total_liquido_acervo', '20260914181500_pedido_total_liquido_acervo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2387,7 +2388,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', ''),
   ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', ''),
-  ('desconto_backfill_aplicar_ja_apuradas', 'function', 'public', 'desconto_backfill_aplicar', '')
+  ('desconto_backfill_aplicar_ja_apuradas', 'function', 'public', 'desconto_backfill_aplicar', ''),
+  ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_classificar', ''),
+  ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_relatorio', ''),
+  ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_converter', ''),
+  ('pedido_total_liquido_acervo', 'table', 'public', 'pedido_total_liquido_conversoes', ''),
+  ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_pedido', 'pedido_total_liquido_conversoes'),
+  ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_lote', 'pedido_total_liquido_conversoes')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4235,7 +4242,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('desconto_backfill_aplicar', 'function', 'public', 'desconto_backfill_aplicar', ''),
   ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', ''),
-  ('desconto_backfill_aplicar_ja_apuradas', 'function', 'public', 'desconto_backfill_aplicar', '')
+  ('desconto_backfill_aplicar_ja_apuradas', 'function', 'public', 'desconto_backfill_aplicar', ''),
+  ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_classificar', ''),
+  ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_relatorio', ''),
+  ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_converter', ''),
+  ('pedido_total_liquido_acervo', 'table', 'public', 'pedido_total_liquido_conversoes', ''),
+  ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_pedido', 'pedido_total_liquido_conversoes'),
+  ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_lote', 'pedido_total_liquido_conversoes')
 )
 SELECT
   e.migration,

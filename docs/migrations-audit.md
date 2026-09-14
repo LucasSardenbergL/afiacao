@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **546** custom migrations totais
-- **1811** objetos esperados (criados por estas migrations)
+- **547** custom migrations totais
+- **1817** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 582
+  - `function`: 585
   - `rls_policy`: 462
-  - `index`: 257
+  - `index`: 259
   - `cron_job`: 171
-  - `table`: 165
+  - `table`: 166
   - `trigger`: 92
   - `view`: 78
   - `enum_value`: 4
@@ -4500,6 +4500,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.desconto_backfill_aplicar` | — |
+
+### `20260914181500_pedido_total_liquido_acervo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pedido_total_liquido_classificar` | — |
+| `function` | `public.pedido_total_liquido_relatorio` | — |
+| `function` | `public.pedido_total_liquido_converter` | — |
+| `table` | `public.pedido_total_liquido_conversoes` | — |
+| `index` | `public.idx_pedido_total_liquido_conversoes_pedido` | `pedido_total_liquido_conversoes` |
+| `index` | `public.idx_pedido_total_liquido_conversoes_lote` | `pedido_total_liquido_conversoes` |
 
 ## Próximos passos por status
 
