@@ -2,7 +2,8 @@
 # test-codex-async.sh — TDD do scripts/codex-async.sh com `codex` STUBADO (sem quota).
 #
 # Contrato testado: 0=parecer entregue · 64=uso errado · 69=binário ausente ·
-# 75=cota esgotada (SEM retry) · 77=sem auth · retry só em transitório ·
+# 75=cota esgotada (SEM retry; mostra o "try again at" COPIADO do servidor, lido sem o
+# eco do prompt — nunca horário calculado) · 77=sem auth · retry só em transitório ·
 # watchdog mata execução travada · cabeçalho traz o CUSTO (segundos da tentativa
 # vencedora + tokens do rodapé, "tokens ?" quando ausente — nunca 0).
 #
@@ -66,6 +67,9 @@ case "$CODEX_STUB_MODE" in
   # variante SEM prefixo: o classificador nao pode depender de conhecer o vocabulario de
   # prefixos do codex-cli, que muda entre versoes.
   quota_sem_prefixo) echo "You have reached your usage limit" >&2; exit 1 ;;
+  # mensagem REAL medida 2026-09-10 (codex-cli 0.153.4), texto literal do servidor. É a única
+  # fonte do horário em que a janela reabre — e o stderr cru que a carrega morre no trap.
+  quota_0153) echo "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 14th, 2026 10:23 PM." >&2; exit 1 ;;
   modelo)    echo 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The '"'"'gpt-5.6-sol'"'"' model is not supported when using Codex with a ChatGPT account."}}' >&2; exit 1 ;;
   ratelimit) n=$(wc -l < "$CODEX_STUB_COUNT" | tr -d ' ')
              if [ "$n" -ge 2 ]; then echo "parecer pós-retry"; exit 0
@@ -164,6 +168,35 @@ saida=$(run_home codexhome_ok quota "x" 2>&1)
 case "$saida" in
   *desconhecido*) echo "  ok    plano ilegível → 'desconhecido', sem fingir que leu" ;;
   *) echo "  FAIL  não degradou o sensor de plano"; fail=1 ;;
+esac
+
+echo "── cota: QUANDO a janela reabre (copiado do servidor, nunca calculado) ──"
+# 2026-09-10 (codex-cli 0.153.4): o COTA_ESGOTADA imprimia só o texto fixo + o plano. O horário
+# de reset vem no próprio erro do servidor, mas morria junto com o stderr cru, que o trap apaga —
+# descobrir quando a janela reabria custou um ping `codex exec` extra em background.
+saida=$(run quota_0153 "x" 2>&1); rc=$?
+caso_exit "cota com horario do servidor continua 75" 75 "$rc"
+case "$saida" in
+  *"try again at Sep 14th, 2026 10:23 PM"*) echo "  ok    mostra quando a janela reabre, copiado do servidor" ;;
+  *) echo "  FAIL  perdeu o horario de reabertura que o servidor mandou"; fail=1 ;;
+esac
+
+# O prompt COLA um erro de cota antigo, com horário (o ritual cola log o tempo todo), e o servidor
+# não manda horário nenhum. Do stderr CRU, o eco imprimiria a reabertura de OUTRO dia como a de
+# agora: a extração tem de ler o stderr SEM o eco. A metade negativa passaria por vacuidade num
+# wrapper que não imprime horário nenhum — por isso a positiva, e a sabotagem "ler do arquivo
+# cru" que falsificou as duas.
+prompt_com_reset="diagnostique o erro de ontem:
+ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Jan 1st, 2027 09:00 AM."
+saida=$(run quota_sem_prefixo "$prompt_com_reset" 2>&1); rc=$?
+caso_exit "prompt com horario de reset + cota sem horario → 75" 75 "$rc"
+case "$saida" in
+  *"Jan 1st"*) echo "  FAIL  horario do ECO DO PROMPT impresso como reabertura"; fail=1 ;;
+  *) echo "  ok    horario colado no prompt NAO vira reabertura" ;;
+esac
+case "$saida" in
+  *"janela reabre: (o servidor"*) echo "  ok    servidor sem horario → a saida diz que ele nao informou" ;;
+  *) echo "  FAIL  servidor sem horario e a saida nao diz isso (ausente != inventado)"; fail=1 ;;
 esac
 
 echo "── modelo recusado pela conta ──"
