@@ -831,11 +831,9 @@ jobs:
   #
   # Job próprio e PARALELO, entrando no `needs:` do `validate` — de propósito fora do
   # `gates-e-falsificacao`, que é o gargalo atual (mediana 357s). Carrega o RUNTIME bun
-  # (só o runtime, sem `bun install`) e `fetch-depth: 0` desde que
-  # `db/test-canaria-veredito.sh` entrou no núcleo: essa prova gera o SQL pelo próprio
-  # gerador em vez de conferir um retrato commitado, e o gerador RECUSA emitir sem uma
-  # `origin/main` contra a qual conferir que a árvore não está defasada. Não precisa de
-  # deno, então o preâmbulo segue mais barato que o dos outros quatro.
+  # (só o runtime, sem `bun install`) desde que `db/test-canaria-veredito.sh` entrou no
+  # núcleo: essa prova gera o SQL pelo próprio gerador em vez de conferir um retrato
+  # commitado. Não precisa de deno, então o preâmbulo segue mais barato que o dos outros quatro.
   provas-sql:
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -843,19 +841,24 @@ jobs:
       contents: read
 
     steps:
-      # fetch-depth: 0 porque `db/test-canaria-veredito.sh` gera o SQL pelo gerador real, e o
-      # gerador tem guard fail-CLOSED: sem `origin/main` para comparar ele RECUSA emitir, em vez
-      # de emitir a partir de uma árvore possivelmente defasada (o achado do #2143). Checkout
-      # raso não traz a main, e o job reprovava com "origin/main não existe neste repo".
+      # fetch-depth: 0 entrou quando a prova chamava a CLI do gerador, cujo guard fail-CLOSED
+      # RECUSA emitir sem `origin/main` (o achado do #2143) — com checkout raso o job reprovava
+      # com "origin/main não existe neste repo". Esse motivo ENVELHECEU: a prova hoje gera pela
+      # fixture (`db/lib/gerar-canaria-fixture.ts`), que chama o gerador FORA desse guard, e o
+      # `git worktree add --detach HEAD` do `--falsificar` só precisa do commit do HEAD. Ninguém
+      # mediu o job sem o histórico desde então: tirar é outra entrega, com essa medição.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       # O núcleo inclui db/test-canaria-veredito.sh, que NÃO confere um SQL commitado:
-      # gera o SQL pelo PRÓPRIO gerador (`bun scripts/sonda-versao-sql.ts --canaria`) e
-      # sabota o resultado. É isso que faz a prova envelhecer junto com o gerador em vez
-      # de virar retrato velho. Só o RUNTIME é preciso — os imports do gerador são
-      # builtins `node:*` mais um relativo, então nada de `bun install` aqui.
+      # gera o SQL pelo PRÓPRIO gerador (`db/lib/gerar-canaria-fixture.ts`) e, desde
+      # 2026-09-10, também o SABOTA aqui — o 3º campo `falsificar=<n>` do manifesto faz o
+      # runner rodar o `--falsificar` dela (antes as sabotagens só rodavam à mão). É isso
+      # que faz a prova envelhecer junto com o gerador em vez de virar retrato velho. Só o
+      # RUNTIME é preciso — os imports do gerador são builtins `node:*` mais um relativo,
+      # então nada de `bun install` aqui. O `--falsificar` também usa `git worktree add`
+      # (sabota o gerador num worktree do HEAD), que o checkout completo acima já cobre.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -906,9 +909,37 @@ jobs:
       # passaram" produziriam o mesmo verde — `ausente ≠ zero` aplicado ao CI.
       # Ele também exige, por prova, o mínimo de asserts declarado em `db/nucleo-ci.txt`:
       # o fechamento das provas é `[ "$FAIL" -eq 0 ]`, que TAMBÉM aceita PASS=0, e uma
-      # prova truncada sairia 0. Falsificação: `bash db/falsifica-nucleo-ci.sh`.
+      # prova truncada sairia 0. Falsificação: o step seguinte.
       - name: Núcleo de provas SQL executadas (db/nucleo-ci.txt)
         run: bash db/roda-nucleo-ci.sh
+
+      # O dente do RUNNER, provado onde o runner vale. `db/falsifica-nucleo-ci.sh` restaura
+      # defeitos que existiram e exige vermelho PELO MOTIVO CERTO: no runner (manifesto vazio,
+      # prova esvaziada ou encolhida, PG ausente, e — desde 2026-09-10 — o recibo `SABOTAGENS:`
+      # ausente, duplicado ou malformado, a flag ignorada, a falsificação encolhida ou OMITIDA)
+      # e em 3 migrations reais. Até 2026-09-10 ele só rodava à mão, e o runner acima acabava
+      # de ganhar um caminho novo: gate cujo dente só se prova à mão é ausência de dado
+      # (docs/historico/falsificacao-fora-do-ci.md). Tem controle positivo pelo runner — sem
+      # ele, um runner que reprovasse TUDO passaria em todos os casos de recusa.
+      # O PISO DE CASOS MORA AQUI, fora do harness (parecer Codex 2026-09-14): o `OK_MINIMO` do
+      # rodapé do arquivo só pega caso removido com o fechamento intacto — um harness TRUNCADO
+      # perde o piso junto com os casos e sai 0. Quem confere o recibo é o chamador, como o
+      # runner faz com as provas (o mínimo no manifesto, fora da prova).
+      # Serial DEPOIS do núcleo, de propósito: os dois sobem a sonda na porta TCP 5810.
+      - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
+        env:
+          HARNESS_OK_MINIMO: "34"
+        run: |
+          log="$RUNNER_TEMP/falsifica-nucleo.log"
+          bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?
+          cat "$log"
+          recibos="$(grep -cE '^FALSIFICACAO: OK=[0-9]+ XX=[0-9]+$' "$log" || true)"
+          casos="$(sed -nE 's/^FALSIFICACAO: OK=([0-9]+) XX=0$/\1/p' "$log")"
+          if [ "$rc" -ne 0 ] || [ "$recibos" != 1 ] || [ -z "$casos" ] || [ "$casos" -lt "$HARNESS_OK_MINIMO" ]; then
+            echo "::error::harness do núcleo sem veredito válido: exit=$rc recibos=$recibos OK=${casos:-?} (piso $HARNESS_OK_MINIMO)"
+            exit 1
+          fi
+          echo "HARNESS_NUCLEO_OK casos=$casos (piso $HARNESS_OK_MINIMO)"
 
   validate:
     if: always()
