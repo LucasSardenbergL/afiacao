@@ -82,6 +82,10 @@ export interface ItemOmieDetalhe {
  *   excluido_pelo_operador a linha está na exclusão explícita da invocação (`excluir_ids`): conflito
  *                          documental fora do alcance da edge — pedidos 12305 e 12787, desconto de
  *                          R$ 0,69 no pedido e nota fiscal emitida no bruto. A exclusão só ESTREITA.
+ *   fora_do_plano_aprovado a invocação trouxe o plano aprovado (id → valor em centavos) e a linha, que
+ *                          ainda seria escrita, não está nele com o MESMO valor: o Omie mudou entre o
+ *                          dry-run e a escrita, ou a página deslocou. É o vínculo PREVENTIVO ao plano
+ *                          (Codex r3) — comparar depois da escrita só detectaria o valor já gravado.
  */
 export type MotivoRecusa =
   | "base_indeterminada"
@@ -89,7 +93,8 @@ export type MotivoRecusa =
   | "ambiguo"
   | "leitura_recusada"
   | "total_nao_confere"
-  | "excluido_pelo_operador";
+  | "excluido_pelo_operador"
+  | "fora_do_plano_aprovado";
 
 /**
  * Como os campos de desconto vieram no item do Omie que casou — o SENSOR do backfill.
@@ -321,14 +326,21 @@ export function conferirTotalPedido(
  * aplicadas). Agora um pedido cujo total não confere não tem linha nenhuma no plano, e cada linha
  * retirada vira recusa COM MOTIVO — não um `continue` que sumiria com ela do fechamento por id.
  *
- * Ordem: a exclusão do operador vem antes do total. Uma linha que já tinha sido recusada pela
- * correspondência mantém o motivo dela — é o mais informativo, e a exclusão só existe para impedir
+ * Ordem: exclusão do operador → total do pedido → plano aprovado. Uma linha que já tinha sido recusada
+ * pela correspondência mantém o motivo dela — é o mais informativo, e o portão só existe para impedir
  * ESCRITA, que aquela linha nunca teria.
+ *
+ * O plano aprovado (`null` = sem plano, só em dry-run) vale apenas para linha que AINDA SERIA ESCRITA:
+ * a que outro writer já preencheu (`jaPreenchidas`) está fora do plano por construção — o dry-run a
+ * lista em `ja_apuradas` —, e recusá-la esvaziaria o controle conhecido sem proteger escrita nenhuma.
+ * A comparação é em centavos inteiros, a mesma unidade do plano.
  */
 export function portaoDoPedido(
   plano: PlanoDesconto,
   veredito: ConferenciaTotalPedido,
   excluir: ReadonlySet<string>,
+  planoAprovado: ReadonlyMap<string, number> | null,
+  jaPreenchidas: { has(id: string): boolean },
 ): PlanoDesconto {
   const apurados: LinhaApurada[] = [];
   const recusados: LinhaRecusada[] = [...plano.recusados];
@@ -337,6 +349,8 @@ export function portaoDoPedido(
       recusados.push({ id: a.id, motivo: "excluido_pelo_operador" });
     } else if (veredito !== "confere") {
       recusados.push({ id: a.id, motivo: "total_nao_confere" });
+    } else if (planoAprovado !== null && !jaPreenchidas.has(a.id) && planoAprovado.get(a.id) !== centavos(a.desconto_valor)) {
+      recusados.push({ id: a.id, motivo: "fora_do_plano_aprovado" });
     } else {
       apurados.push(a);
     }
@@ -352,11 +366,12 @@ const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 /**
  * Lê `excluir_ids` do corpo da invocação. FAIL-CLOSED: qualquer forma inesperada é ERRO (a edge
  * responde 400), nunca "sem exclusão" — uma lista malformada que virasse conjunto vazio escreveria
- * justamente as linhas que o operador pediu para segurar. Ausente (undefined/null) é o único vazio
- * legítimo. Os ids são normalizados para minúsculas, a forma que o PostgREST devolve.
+ * justamente as linhas que o operador pediu para segurar. Só AUSENTE (a chave não veio) é vazio
+ * legítimo: `null` passava como exceção ao contrato "ausente ou array", e a suíte protegia a exceção
+ * (Codex r3). Os ids são normalizados para minúsculas, a forma que o PostgREST devolve.
  */
 export function lerExcluirIds(raw: unknown): { ok: true; ids: Set<string> } | { ok: false; erro: string } {
-  if (raw === undefined || raw === null) return { ok: true, ids: new Set() };
+  if (raw === undefined) return { ok: true, ids: new Set() };
   if (!Array.isArray(raw)) return { ok: false, erro: `excluir_ids tem de ser um array de uuids (veio ${typeof raw})` };
   if (raw.length > EXCLUIR_IDS_MAX) {
     return { ok: false, erro: `excluir_ids com ${raw.length} ids passa do teto de ${EXCLUIR_IDS_MAX}` };
@@ -370,6 +385,116 @@ export function lerExcluirIds(raw: unknown): { ok: true; ids: Set<string> } | { 
     ids.add(s);
   }
   return { ok: true, ids };
+}
+
+/** Teto do plano aprovado por invocação: uma página tem ~200 linhas, e o plano pode trazer as páginas
+ *  vizinhas para absorver deslocamento. Acima disso não é o plano de UMA escrita. */
+const PLANO_APROVADO_MAX = 2000;
+
+/**
+ * Lê `plano_aprovado` — o manifesto [id, valor] que a ESCRITA só pode cumprir, nunca ampliar. Os
+ * valores ficam em centavos inteiros, a unidade da conferência. FAIL-CLOSED: ausente é "sem plano";
+ * qualquer outra forma é erro — par malformado, id que não é uuid, valor que não é número finito
+ * não-negativo, id repetido com valores diferentes, lista acima do teto.
+ */
+export function lerPlanoAprovado(
+  raw: unknown,
+): { ok: true; plano: Map<string, number> | null } | { ok: false; erro: string } {
+  if (raw === undefined) return { ok: true, plano: null };
+  if (!Array.isArray(raw)) {
+    return { ok: false, erro: `plano_aprovado tem de ser um array de pares [uuid, valor] (veio ${typeof raw})` };
+  }
+  if (raw.length > PLANO_APROVADO_MAX) {
+    return { ok: false, erro: `plano_aprovado com ${raw.length} linhas passa do teto de ${PLANO_APROVADO_MAX}` };
+  }
+  const plano = new Map<string, number>();
+  for (const par of raw) {
+    const id = Array.isArray(par) && typeof par[0] === "string" ? par[0].trim().toLowerCase() : "";
+    const valor: number | null = Array.isArray(par) && par.length === 2 && typeof par[1] === "number" &&
+        Number.isFinite(par[1]) && par[1] >= 0 ? par[1] : null;
+    if (!FORMA_UUID.test(id) || valor === null) {
+      return { ok: false, erro: `plano_aprovado contém um par inválido: ${String(JSON.stringify(par)).slice(0, 80)}` };
+    }
+    const c = centavos(valor);
+    const anterior = plano.get(id);
+    if (anterior !== undefined && anterior !== c) {
+      return { ok: false, erro: `plano_aprovado repete o id ${id} com valores diferentes` };
+    }
+    plano.set(id, c);
+  }
+  return { ok: true, plano };
+}
+
+export interface ParametrosBackfill {
+  account: "oben" | "colacor";
+  meses: number;
+  pagina: number;
+  maxPaginas: number;
+  dryRun: boolean;
+  excluirIds: Set<string>;
+  planoAprovado: Map<string, number> | null;
+}
+
+/** Inteiro dentro da faixa quando PRESENTE; AUSENTE devolve o padrão. `"1"` não é 1: a coerção por
+ *  `Number()` foi o que fez `max_paginas: "1"` virar 12 páginas em silêncio. Devolve a mensagem de
+ *  erro como string. */
+function inteiroOpcional(raw: unknown, nome: string, min: number, max: number, padrao: number): number | string {
+  if (raw === undefined) return padrao;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < min || raw > max) {
+    return `${nome} tem de ser inteiro entre ${min} e ${max} (veio ${String(JSON.stringify(raw)).slice(0, 40)})`;
+  }
+  return Number(raw);
+}
+
+/**
+ * Lê o corpo da invocação INTEIRO, antes de qualquer efeito (Codex r3, P1). Até a v1.5 cada parâmetro
+ * tinha um padrão silencioso — e o de `dry_run` era ESCREVER: um JSON quebrado virava `{}`, e `{}`
+ * virava escrita sem exclusão e com 12 páginas. Agora:
+ *   - o corpo tem de ser um OBJETO;
+ *   - `dry_run` é OBRIGATÓRIO e booleano — o modo que escreve só existe por opt-in explícito;
+ *   - parâmetro PRESENTE e inválido é erro; só o AUSENTE recebe padrão;
+ *   - a ESCRITA exige `plano_aprovado` (o dry-run não precisa, mas aceita — para ensaiar o portão).
+ */
+export function lerParametrosBackfill(
+  corpo: unknown,
+  padraoMaxPaginas: number,
+): { ok: true; p: ParametrosBackfill } | { ok: false; erro: string } {
+  if (typeof corpo !== "object" || corpo === null || Array.isArray(corpo)) {
+    return { ok: false, erro: "o corpo tem de ser um objeto JSON com os parâmetros" };
+  }
+  const c = corpo as Record<string, unknown>;
+  if (typeof c.dry_run !== "boolean") {
+    return { ok: false, erro: "dry_run é obrigatório e tem de ser true ou false — o modo que escreve não tem padrão" };
+  }
+  const dryRun = c.dry_run === true;
+  if (c.account !== undefined && c.account !== "oben" && c.account !== "colacor") {
+    return { ok: false, erro: `account tem de ser "oben" ou "colacor" (veio ${String(JSON.stringify(c.account)).slice(0, 40)})` };
+  }
+  const meses = inteiroOpcional(c.meses, "meses", 1, 24, 12);
+  if (typeof meses === "string") return { ok: false, erro: meses };
+  const pagina = inteiroOpcional(c.pagina, "pagina", 1, 10000, 1);
+  if (typeof pagina === "string") return { ok: false, erro: pagina };
+  const maxPaginas = inteiroOpcional(c.max_paginas, "max_paginas", 1, 100, padraoMaxPaginas);
+  if (typeof maxPaginas === "string") return { ok: false, erro: maxPaginas };
+  const excl = lerExcluirIds(c.excluir_ids);
+  if (!excl.ok) return { ok: false, erro: excl.erro };
+  const plano = lerPlanoAprovado(c.plano_aprovado);
+  if (!plano.ok) return { ok: false, erro: plano.erro };
+  if (dryRun === false && plano.plano === null) {
+    return { ok: false, erro: "a escrita exige plano_aprovado — sem ele não há vínculo preventivo entre o dry-run aprovado e o que se grava" };
+  }
+  return {
+    ok: true,
+    p: {
+      account: c.account === "colacor" ? "colacor" : "oben",
+      meses,
+      pagina,
+      maxPaginas,
+      dryRun,
+      excluirIds: excl.ids,
+      planoAprovado: plano.plano,
+    },
+  };
 }
 
 /**

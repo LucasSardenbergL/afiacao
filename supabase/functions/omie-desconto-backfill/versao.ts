@@ -4,7 +4,7 @@
 // Esta edge nasce COM sensor: cada execução devolve o denominador (alvos, apurados, e as recusas
 // por motivo) e o `cursor` de onde parou. "Rodou e não deu erro" não é sinal de nada aqui — o
 // modo de falha característico do backfill é apurar POUCO e parecer bem-sucedido.
-export const VERSAO = "v1.5-portao-do-pedido-antes-da-escrita";
+export const VERSAO = "v1.5-portao-plano-aprovado-e-corpo-estrito";
 
 // v1.5 — a conferência com o total do Omie deixa de ser só diagnóstico e vira PORTÃO: pedido cujo
 // `total_pedido.valor_descontos` não confere com a soma dos itens não tem linha nenhuma no plano —
@@ -16,6 +16,12 @@ export const VERSAO = "v1.5-portao-do-pedido-antes-da-escrita";
 // fora do alcance da edge — os pedidos 12305 e 12787, desconto no pedido e nota no bruto. A
 // resposta devolve o detalhe da conferência de todo pedido (`pedidos_total_detalhe`) e o eco da
 // exclusão aplicada (`excluir_ids_recebidos`).
+// E, depois do Codex r3: (1) o corpo é lido INTEIRO antes de qualquer efeito — JSON ilegível ou
+// não-objeto é 400, `dry_run` é obrigatório (o padrão era escrever: um corpo quebrado virava escrita
+// sem exclusão e com 12 páginas), parâmetro presente e inválido é 400, e `excluir_ids: null` também;
+// (2) a ESCRITA exige `plano_aprovado` [id, valor] — o portão só deixa gravar a linha cujo valor, em
+// centavos, está no plano do dry-run aprovado; o resto vira recusa `fora_do_plano_aprovado`. É o
+// vínculo PREVENTIVO: a comparação depois da escrita só detectaria o valor já gravado.
 
 // v1.4 — as recusas da ESCRITA deixam de ser um número só. `recusadas` da RPC junta a linha cuja
 // base mudou (conserto: reler o Omie) e a que outro writer ou um run anterior já tinha apurado

@@ -151,3 +151,23 @@ PEGA | excluir_ids: não-array vira exclusão vazia          | s~if \(!Array\.is
 PEGA | excluir_ids: elemento que não é uuid passa           | s~if \(!FORMA_UUID\.test\(s\)\) \{~if (false) {~
 PEGA | excluir_ids: teto de 1000 vira um milhão     | s~if \(raw\.length > EXCLUIR_IDS_MAX\) \{~if (raw.length > EXCLUIR_IDS_MAX * 1000) {~
 PEGA | excluir_ids: sem normalização para minúsculas         | s~v\.trim\(\)\.toLowerCase\(\)~v.trim()~
+
+# ── v1.5 (Codex r3): o corpo estrito ──────────────────────────────────────────────────────────
+# Um JSON quebrado virava `{}`, e `{}` virava ESCRITA sem exclusão e com 12 páginas (P1). Cada mutação
+# devolve um padrão silencioso ou a coerção que o permitia.
+PEGA | corpo: dry_run ausente volta a ter padrão (escrever)  | s~if \(typeof c\.dry_run !== "boolean"\) \{~if (false) {~
+PEGA | corpo: não-objeto aceito (null quebraria; array cairia na guarda errada) | s~if \(typeof corpo !== "object" \|\| corpo === null \|\| Array\.isArray\(corpo\)\) \{~if (false) {~
+PEGA | corpo: account com outra grafia vira oben            | s~if \(c\.account !== undefined && c\.account !== "oben" && c\.account !== "colacor"\) \{~if (false) {~
+PEGA | corpo: inteiro presente aceita string (coerção)       | s~if \(typeof raw !== "number" \|\| !Number\.isInteger\(raw\) \|\| raw < min \|\| raw > max\) \{~if (!Number.isInteger(Number(raw)) || Number(raw) < min || Number(raw) > max) {~
+PEGA | corpo: escrita sem plano aprovado é aceita           | s~if \(dryRun === false && plano\.plano === null\) \{~if (false) {~
+PEGA | excluir_ids: null volta a ser exclusão vazia         | s~if \(raw === undefined\) return \{ ok: true, ids: new Set\(\) \};~if (raw === undefined || raw === null) return { ok: true, ids: new Set() };~
+
+# ── v1.5 (Codex r3): o plano aprovado ─────────────────────────────────────────────────────────
+PEGA | plano: o portão ignora o plano aprovado              | s~\} else if \(planoAprovado !== null && ~} else if (false && planoAprovado !== null && ~
+PEGA | plano: valor comparado em reais, não em centavos     | s~planoAprovado\.get\(a\.id\) !== centavos\(a\.desconto_valor\)~planoAprovado.get(a.id) !== a.desconto_valor~
+PEGA | plano: linha já preenchida passa a ser recusada      | s~!jaPreenchidas\.has\(a\.id\) && ~~
+PEGA | plano: null vira 'sem plano'                         | s~if \(raw === undefined\) return \{ ok: true, plano: null \};~if (raw === undefined || raw === null) return { ok: true, plano: null };~
+PEGA | plano: valor negativo aceito                         | s~Number\.isFinite\(par\[1\]\) && par\[1\] >= 0 \? par\[1\] : null~Number.isFinite(par[1]) ? par[1] : null~
+PEGA | plano: id repetido com valores diferentes aceito     | s~if \(anterior !== undefined && anterior !== c\) \{~if (false) {~
+PEGA | plano: teto de 2000 vira dois milhões                | s~if \(raw\.length > PLANO_APROVADO_MAX\) \{~if (raw.length > PLANO_APROVADO_MAX * 1000) {~
+PEGA | plano: id sem normalização para minúsculas           | s~par\[0\]\.trim\(\)\.toLowerCase\(\)~par[0].trim()~
