@@ -904,6 +904,55 @@ jobs:
           printf '%s' "$instalada" | grep -qE '\(PostgreSQL\) 17\.' || {
             echo "::error::initdb não é PostgreSQL 17: $instalada"; exit 1; }
 
+      # O 2º idioma da falsificação do `db/test-db-aplicar.sh` (3º campo `falsificar=<n>` do
+      # manifesto). O executor de SQL em produção (`scripts/db-aplicar.sh`) separa falha-limpa (4)
+      # de desconhecido (5) casando a severidade que o psql imprime — ERRO em pt_BR, ERROR em C —,
+      # e essa palavra vem do SERVIDOR (`lc_messages`): só sai traduzida se o locale existir no
+      # sistema e o catálogo de mensagens vier no pacote. O runner ubuntu não traz pt_BR — sem este
+      # step a prova REPROVA na sonda dela (`LOCALE_PT_BR_AUSENTE`), nunca pula o idioma.
+      # A conferência é POSITIVA, por fora da prova e com o MESMO binário que o shim dela usa: o
+      # locale está em `locale -a`, resolve para UTF-8, e uma falha REAL sob pt_BR diz `ERRO:`
+      # (servidor) e `psql: erro:` (cliente). A prova refaz as duas pelo caminho do executor; este
+      # step é o eixo independente — e o lugar onde a evidência fica no log, porque o runner só
+      # mostra log de prova que falha. Porta 5809 só em socket (`listen_addresses=''`): a sonda do
+      # runner usa a 5810. Medição e desenho: docs/historico/falsificacao-db-aplicar-idioma-do-servidor.md
+      - name: Locale pt_BR.UTF-8 — provisiona e confere (2º idioma do db-aplicar)
+        run: |
+          set -euo pipefail
+          unset LANGUAGE
+          d="$(mktemp -d)"
+          echo "  antes: $(locale -a | tr '\n' ' ')"
+          sudo locale-gen pt_BR.UTF-8
+          # Por ARQUIVO, não `locale -a | grep -q`: sob `pipefail`, o grep que sai no 1º casamento pode
+          # matar o produtor com SIGPIPE (141) e reprovar um locale que existe.
+          locale -a > "$d/locales.txt"
+          grep -qx 'pt_BR.utf8' "$d/locales.txt" \
+            || { echo "::error::locale-gen terminou, mas pt_BR.utf8 não está em locale -a"; exit 1; }
+          charmap="$(LC_ALL=pt_BR.UTF-8 locale charmap 2>/dev/null || true)"
+          [ "$charmap" = UTF-8 ] \
+            || { echo "::error::LC_ALL=pt_BR.UTF-8 não resolve para UTF-8 (veio '$charmap')"; exit 1; }
+          bin=/usr/lib/postgresql/17/bin
+          "$bin/initdb" -D "$d/data" -U postgres -E UTF8 --locale=C > "$d/initdb.log" 2>&1 \
+            || { tail -c 600 "$d/initdb.log"; echo "::error::initdb falhou na sonda do locale"; exit 1; }
+          "$bin/pg_ctl" -D "$d/data" -l "$d/pg.log" -w start \
+            -o "-p 5809 -k $d -c listen_addresses='' -c lc_messages=pt_BR.UTF-8" > /dev/null \
+            || { tail -c 800 "$d/pg.log"; echo "::error::o cluster da sonda não subiu com lc_messages=pt_BR.UTF-8"; exit 1; }
+          srv="$(LC_ALL=pt_BR.UTF-8 "$bin/psql" -X -h "$d" -p 5809 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'SELECT 1/0' 2>&1 || true)"
+          cli="$(LC_ALL=pt_BR.UTF-8 "$bin/psql" -X -h "$d" -p 5807 -U postgres -d postgres -c 'SELECT 1' 2>&1 || true)"
+          "$bin/pg_ctl" -D "$d/data" -m immediate stop > /dev/null
+          echo "  servidor (lc_messages=pt_BR.UTF-8): $srv"
+          echo "  cliente  (socket inexistente):      $cli"
+          case "$srv" in
+            *'ERRO:  divis'*) ;;
+            *) printf '  catalogo pt_BR do PG: %s\n' /usr/share/locale/pt_BR/LC_MESSAGES/*-17.mo
+               echo "::error::uma falha real sob lc_messages=pt_BR.UTF-8 não disse ERRO"; exit 1 ;;
+          esac
+          case "$cli" in
+            *'psql: erro:'*) ;;
+            *) echo "::error::o psql do PGDG não traduziu a própria mensagem para pt_BR"; exit 1 ;;
+          esac
+          echo "LOCALE_PT_BR_OK"
+
       # O runner (db/roda-nucleo-ci.sh) começa por uma SONDA: sobe um cluster e pergunta
       # `server_version_num` ao servidor. Sem ela, "Postgres ausente" e "todas as provas
       # passaram" produziriam o mesmo verde — `ausente ≠ zero` aplicado ao CI.

@@ -2,8 +2,8 @@
 # ╔═════════════════════════════════════════════════════════════════════════════════════════╗
 # ║   PROVA PG17 — db/claude-rw-bootstrap.sql + scripts/db-aplicar.sh                       ║
 # ║   Rode:  bash db/test-db-aplicar.sh > /tmp/t.log 2>&1; echo $?                          ║
-# ║          bash db/test-db-aplicar.sh --falsificar    (9 sabotagens, exige VERMELHO)      ║
-# ║   Exit:  0 verde · 1 asserção vermelha · 3 CONTROLE podre (a falsificação nem começou)  ║
+# ║          bash db/test-db-aplicar.sh --falsificar    (11 sabotagens, exige VERMELHO)     ║
+# ║   Exit:  0 verde · 1 asserção vermelha · 3 SONDA/CONTROLE podre (nada a julgar)         ║
 # ║                                                                                         ║
 # ║   Prova, EXECUTANDO (PL/pgSQL e psql são late-bound; criar não é rodar):                ║
 # ║    A1 apply inédito aplica e vira recibo 'aplicada' na MESMA transação;                 ║
@@ -16,25 +16,35 @@
 # ║    A8 sha mentiroso é recusado pela função ANTES de executar o corpo;                   ║
 # ║    A9 tentativa já fechada não pode ser reusada (nem executa);                          ║
 # ║    A10 SQL COM envelope é recusado (exit 2) sem criar nada e sem gravar no ledger.      ║
-# ║   Falsifica: (S1) marcador E reconciliação cegos → veredito honesto: 5 (não sei);       ║
-# ║              (S2) ON_ERROR_STOP removido → A3 troca 4 por 5 (erro vira desconhecido);   ║
-# ║              (S3) checagem de 'já aplicada' removida → A2 aplica duas vezes;            ║
-# ║              (S4) só o marcador cego → o ledger responde e o script AVISA, não finge;   ║
-# ║              (S5) recusa do envelope removida → o corpo chega ao banco e A10 vira 4.    ║
 # ╚═════════════════════════════════════════════════════════════════════════════════════════╝
+# Falsifica — cada sabotagem com rc EXATO + MARCA lida da saída real, e só conta com CERTO nas TRÊS
+# combinações servidor×cliente (o porquê das três está no bloco da falsificação, lá embaixo):
+#   (S1)  marcador E reconciliação cegos → veredito honesto: 5 (não sei);
+#   (S2)  ON_ERROR_STOP removido → o erro ACONTECE e o psql sai 0: vira 5, não 4;
+#   (S3)  checagem de 'já aplicada' removida → o re-apply chega ao banco e o índice único barra o
+#         2º recibo (4). Não aplica duas vezes: deixa de ser o no-op que A2 afirma;
+#   (S4)  só o marcador cego → o ledger responde e o script AVISA, não finge;
+#   (S5)  recusa do envelope removida → o corpo com BEGIN; chega ao banco, que o barra (4);
+#   (S6)  guard de não-transacional desligado → o banco barra o CREATE INDEX CONCURRENTLY (4);
+#   (S7)  guard alargado para casar END; → o controle legítimo vira recusa (2);
+#   (S8)  transformação no CLIENTE → o banco recusa por sha divergente (4);
+#   (S9)  transformação no SERVIDOR → aplica limpo (0) e só o corpo guardado muda;
+#   (S10) regex sem ERRO     → só o servidor em pt_BR vira 5;
+#   (S11) regex só com ERRO: → só o servidor em inglês vira 5. S10 e S11 provam que as combinações
+#         não são cópia uma da outra: cada idioma pega a sua e deixa a outra passar.
 set -euo pipefail
 
-# Esta prova está em `db/nucleo-ci.txt` (job `provas-sql`): roda no caminho OBRIGATÓRIO do merge,
-# em modo normal, com mínimo de asserts declarado lá. Encolhê-la reprova o CI até alguém baixar
-# aquele número — e aí a perda de cobertura fica no diff, que é o ponto. O `--falsificar` continua
-# sendo local: ele sabota uma cópia e não é o que o runner executa.
+# Esta prova está em `db/nucleo-ci.txt` (job `provas-sql`) nos DOIS modos: o normal, com mínimo de
+# asserts, e — desde 2026-09-14 — o `--falsificar`, com mínimo de sabotagens (`falsificar=<n>`).
+# Encolher qualquer um reprova o CI até alguém baixar aquele número, e aí a perda de cobertura fica
+# no diff, que é o ponto.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # PGBIN resolvido por PLATAFORMA (macOS Homebrew / Linux PGDG), com conferência POSITIVA da
 # major — não `-x`, que um initdb de outra versão satisfaz. Hardcodar /opt/homebrew era a única
 # coisa que mantinha esta prova FORA do CI: o runner é ubuntu e o caminho não existe lá.
 # shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"
-PORT="${PGPORT_TEST:-5481}"
+PORT_BASE="${PGPORT_TEST:-5481}"
 BOOT="$REPO_ROOT/db/claude-rw-bootstrap.sql"
 APLICAR="$REPO_ROOT/scripts/db-aplicar.sh"
 FIX_OK="db/fixtures/db-aplicar-ok.sql"
@@ -47,13 +57,24 @@ FIX_ENVELOPE="db/fixtures/db-aplicar-envelope.sql"
 FIX_CIC="db/fixtures/db-aplicar-cic.sql"
 FIX_CORPO="db/fixtures/db-aplicar-corpo-de-funcao.sql"
 WORK="$(mktemp -d "/tmp/pgtest-db-aplicar.XXXXXX")"
-DATA="$WORK/data"
-# Locale é PARÂMETRO, não constante: `db-aplicar.sh` distingue falha-limpa (4) de
-# desconhecido (5) casando a palavra do psql, que em pt_BR é ERRO e em C é ERROR. Falsificar
-# num locale só aprovaria um casamento pela metade (#1483). Rode os DOIS:
-#   LC_TESTE=C bash db/test-db-aplicar.sh --falsificar
-#   LC_TESTE=pt_BR.UTF-8 bash db/test-db-aplicar.sh --falsificar
-export LC_ALL="${LC_TESTE:-C}" LANG="${LC_TESTE:-C}"
+LOGS="$WORK/logs"
+mkdir -p "$LOGS"
+# Onde o executor escreve. No modo normal, um log só; na falsificação, um por (sabotagem, combinação).
+OUT="$WORK/out.log"
+
+# O SHELL desta prova roda sempre em C — o `pg_ctl` inclusive, que no macOS morre com "became
+# multithreaded during startup" sob locale inválido. O idioma sob teste mora em DOIS lugares, e só
+# um deles é o que parecia: a palavra de severidade que `db-aplicar.sh` casa para separar falha-limpa
+# (4) de desconhecido (5) — ERRO em pt_BR, ERROR em C — vem do SERVIDOR (`lc_messages`); o cliente
+# traduz só o que ele mesmo gera (`psql: erro:`) e os rótulos da libpq (`CONTEXTO:`). Por isso o
+# idioma entra pelo `lc_messages` do cluster E pelo `LC_ALL` da chamada do executor, nunca pelo shell.
+# `LANGUAGE` sai: o gettext o prefere ao `LC_ALL`, e um `LANGUAGE=en` herdado deixaria o "pt_BR" em
+# inglês sem erro nenhum.
+export LC_ALL=C LANG=C
+unset LANGUAGE
+# Modo normal: `LC_TESTE` escolhe o idioma do cliente E do servidor (trocar só o cliente não muda a
+# palavra que o executor casa). A falsificação o ignora e roda as três combinações — ver o bloco dela.
+LOC_CLI="${LC_TESTE:-C}"
 
 FALSIFICAR=0
 [ "${1:-}" = "--falsificar" ] && FALSIFICAR=1
@@ -77,41 +98,56 @@ SHA_VAZIO="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   echo "  Debian/Ubuntu: apt-get install -y perl   (shasum vem no pacote perl)"; exit 1; }
 
 cleanup() {
-  "$PGBIN/pg_ctl" -D "$DATA" -m immediate stop >/dev/null 2>&1 || true
+  local d
+  for d in "$WORK"/cluster-*/data; do
+    [ -d "$d" ] || continue
+    "$PGBIN/pg_ctl" -D "$d" -m immediate stop >/dev/null 2>&1 || true
+  done
   rm -rf "$WORK"
 }
 trap cleanup EXIT
 
-# ─── cluster ─────────────────────────────────────────────────────────────────────────────
-# `-k "$WORK"`: o diretório do socket unix. Sem ele o postmaster usa o default COMPILADO, que
+# ─── clusters ────────────────────────────────────────────────────────────────────────────────
+# Um CLUSTER é um Postgres descartável com o seu `lc_messages`. O modo normal usa um (`n`); a
+# falsificação usa dois (`c` e `pt`) e três combinações com o locale do cliente — ver o bloco dela.
+seleciona_cluster() { # <n|c|pt> — define CLUSTER, PORT, LOC_SRV, CDIR, DATA, SHIM e PSQL
+  case "$1" in
+    n)  PORT="$PORT_BASE";       LOC_SRV="${LC_TESTE:-C}" ;;
+    c)  PORT="$PORT_BASE";       LOC_SRV=C ;;
+    pt) PORT=$((PORT_BASE + 1)); LOC_SRV=pt_BR.UTF-8 ;;
+    *)  echo "ERRO interno: cluster desconhecido '$1'"; exit 1 ;;
+  esac
+  CLUSTER="$1"; CDIR="$WORK/cluster-$1"; DATA="$CDIR/data"; SHIM="$CDIR/psql-rw"
+  PSQL="$PGBIN/psql -X -v ON_ERROR_STOP=1 -h localhost -p $PORT -U postgres -d postgres"
+}
+
+# `-k "$CDIR"`: o diretório do socket unix. Sem ele o postmaster usa o default COMPILADO, que
 # no PGDG (Ubuntu) é /var/run/postgresql — inexistente para o usuário do runner, e o servidor
 # não sobe. Conectamos por TCP, mas o postmaster cria o socket de qualquer jeito e ABORTA se
 # não puder. É o que reprovou a 1ª tentativa desta prova no CI; as 16 provas que já rodavam lá
-# passam `-k /tmp` pelo mesmo motivo. Aqui vai $WORK, que é por-prova: /tmp é compartilhado e
+# passam `-k /tmp` pelo mesmo motivo. Aqui vai um diretório por cluster: /tmp é compartilhado e
 # duas provas na mesma porta lógica brigariam pelo mesmo arquivo de socket.
 #
-# E a saída NÃO é mais descartada. Com `>/dev/null 2>&1` + `set -e`, um cluster que não sobe
+# E a saída NÃO é descartada. Com `>/dev/null 2>&1` + `set -e`, um cluster que não sobe
 # matava o script MUDO: log vazio, exit 1, e o runner do núcleo imprimindo "── últimas linhas ──"
 # seguido de nada. Falha silenciosa é a pior classe de todas — a que não deixa nem por onde
 # começar. Cada ramo abaixo DIZ o que quebrou, com o que o Postgres respondeu.
-if ! "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C > "$WORK/initdb.log" 2>&1; then
-  echo "ERRO: initdb falhou (PGBIN=$PGBIN)"; tail -c 800 "$WORK/initdb.log"; exit 1
-fi
-if ! "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $WORK -c listen_addresses=localhost" \
-       -l "$WORK/pg.log" -w start > "$WORK/pgctl.log" 2>&1; then
-  echo "ERRO: o cluster de teste não subiu na porta $PORT (PGBIN=$PGBIN)"
-  echo "── pg_ctl ──"; tail -c 400 "$WORK/pgctl.log"
-  echo "── postmaster ──"; tail -c 800 "$WORK/pg.log" 2>/dev/null
-  exit 1
-fi
-
-PSQL="$PGBIN/psql -X -v ON_ERROR_STOP=1 -h localhost -p $PORT -U postgres -d postgres"
-q() { "$PGBIN/psql" -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null | tr -d ' \n'; }
-# q() esmaga espaco e quebra de linha — serve para escalar, nao para corpo de funcao.
-q_bruto() { "$PGBIN/psql" -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null; }
-
-# ─── fixture: o mínimo do Supabase que o bootstrap referencia ─────────────────────────────
-$PSQL >/dev/null 2>&1 <<'SQL'
+sobe_cluster() {
+  mkdir -p "$CDIR"
+  if ! "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C > "$CDIR/initdb.log" 2>&1; then
+    echo "ERRO: initdb falhou (cluster $CLUSTER, PGBIN=$PGBIN)"; tail -c 800 "$CDIR/initdb.log"; exit 1
+  fi
+  # `lc_messages` pelo `-c`, não pelo `initdb --locale`: o resto do cluster é idêntico nos dois
+  # idiomas, e um valor que o sistema não tem derruba o start com FATAL — alto, não silencioso.
+  if ! "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $CDIR -c listen_addresses=localhost -c lc_messages=$LOC_SRV" \
+         -l "$CDIR/pg.log" -w start > "$CDIR/pgctl.log" 2>&1; then
+    echo "ERRO: o cluster $CLUSTER não subiu na porta $PORT com lc_messages=$LOC_SRV (PGBIN=$PGBIN)"
+    echo "── pg_ctl ──"; tail -c 400 "$CDIR/pgctl.log"
+    echo "── postmaster ──"; tail -c 800 "$CDIR/pg.log" 2>/dev/null
+    exit 1
+  fi
+  # fixture: o mínimo do Supabase que o bootstrap referencia
+  if ! $PSQL > "$CDIR/fixture.log" 2>&1 <<'SQL'
 CREATE ROLE anon NOLOGIN;
 CREATE ROLE authenticated NOLOGIN;
 CREATE SCHEMA IF NOT EXISTS auth;
@@ -123,6 +159,32 @@ CREATE TABLE public.user_roles (
   role public.app_role NOT NULL
 );
 SQL
+  then
+    echo "ERRO: a fixture do Supabase falhou no cluster $CLUSTER"; tail -c 600 "$CDIR/fixture.log"; exit 1
+  fi
+  # o "psql-rw" que aponta pro cluster, como claude_rw
+  { echo '#!/usr/bin/env bash'
+    echo "exec env PSQLRC=/dev/null $PGBIN/psql -h localhost -p $PORT -U claude_rw -d postgres \"\$@\""
+  } > "$SHIM"
+  chmod +x "$SHIM"
+}
+
+q()         { "$PGBIN/psql" -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null | tr -d ' \n'; }
+# q() esmaga espaco e quebra de linha — serve para escalar, nao para corpo de funcao.
+q_bruto()   { "$PGBIN/psql" -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null; }
+# q_estrito devolve o STATUS do psql: leitura que falhou não pode virar valor vazio que "diverge".
+q_estrito() { "$PGBIN/psql" -X -A -t -q -v ON_ERROR_STOP=1 -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null; }
+norm_corpo() { sed '/^[[:space:]]*$/d'; }   # só a quebra que o $-quote acrescenta; indentação NÃO
+CORPO_ARQ="$(awk '/AS \$funcao\$$/{f=1;next} /^\$funcao\$;$/{f=0} f' "$REPO_ROOT/$FIX_CORPO" | norm_corpo)"
+
+aplicar() { ( cd "$REPO_ROOT" && LC_ALL="$LOC_CLI" LANG="$LOC_CLI" AFIACAO_PSQL_RW="$SHIM" bash "$ALVO" "$@" ); }
+rc_de()   { local r=0; aplicar "$@" > "$OUT" 2>&1 || r=$?; echo "$r"; }
+
+# ═════════════════════════════════════════════════════════════════════════════════════════
+if [ "$FALSIFICAR" -eq 0 ]; then
+seleciona_cluster n
+sobe_cluster
+ALVO="$APLICAR"
 
 echo "▶ bootstrap"
 BOOT_OUT="$WORK/boot.log"
@@ -167,76 +229,6 @@ else
   nok "idempotência" "2ª aplicação falhou: $(tail -c 300 "$WORK/boot2.log")"
 fi
 
-# ─── shim: o "psql-rw" que aponta pro cluster local, como claude_rw ───────────────────────
-SHIM="$WORK/psql-rw"
-{ echo '#!/usr/bin/env bash'
-  echo "exec env PSQLRC=/dev/null $PGBIN/psql -h localhost -p $PORT -U claude_rw -d postgres \"\$@\""
-} > "$SHIM"
-chmod +x "$SHIM"
-
-# Sabotagens operam numa CÓPIA — o arquivo real nunca é tocado, então não há restauração
-# que possa apagar trabalho (a armadilha do `git checkout --` em arquivo não-commitado).
-ALVO="$APLICAR"
-if [ "$FALSIFICAR" -eq 1 ]; then
-  ALVO="$WORK/db-aplicar-sabotado.sh"
-  cp "$APLICAR" "$ALVO"
-fi
-
-aplicar() { ( cd "$REPO_ROOT" && AFIACAO_PSQL_RW="$SHIM" bash "$ALVO" "$@" ); }
-rc_de()   { local r=0; aplicar "$@" > "$WORK/out.log" 2>&1 || r=$?; echo "$r"; }
-
-# Uma sabotagem cujo padrão não CASA com o código é um no-op silencioso — e no-op silencioso
-# aprova tudo: o alvo roda intacto, o veredito não muda, e isso é indistinguível de "a
-# proteção existe". Aconteceu de verdade aqui: o apply passou de `-f -` para `-f "$APPLY_SQL"`
-# e o padrão do S2 virou letra morta sem nada avisar. Esta guarda exige que o arquivo tenha
-# MUDADO antes de a sabotagem valer como sabotagem.
-sabota() {
-  cp "$APLICAR" "$ALVO"
-  perl -0pi -e "$1" "$ALVO"
-  if cmp -s "$APLICAR" "$ALVO"; then
-    nok "sabotagem inerte" "o padrão não casou com o código — nada foi sabotado: $1"
-    return 1
-  fi
-  return 0
-}
-
-# O CONTROLE ABORTA — não reporta e segue. Sabotagem só prova algo contra uma linha de base
-# VERDE: se a CÓPIA já não reproduz o original NEM SABOTADA, toda sabotagem passa a "mudar o rc"
-# por acidente e fica verde. Sabotagem sempre-vermelha APROVA TUDO
-# (docs/historico/falsificacao-sem-linha-de-base.md).
-#
-# Aconteceu aqui, e é a razão de este bloco existir: o #2421 fez `db-aplicar.sh` resolver um
-# helper por `dirname "$0"` — caminho que, na cópia dentro de $WORK, não existe. A cópia morria
-# no preflight ANTES da primeira sabotagem, e as quatro sabotagens seguintes "mudaram o rc" sem
-# tocar em nada. O bloco de controle DETECTOU (`esperado '0', veio '2'`) e mesmo assim seguiu,
-# imprimindo seis linhas verdes antes do veredito. Detectar e seguir é quase não detectar: o
-# sinal chega depois de o ruído já ter ensinado a coisa errada, e quem lê o log de cima para
-# baixo vê a falsificação "funcionando".
-#
-# O #2434 removeu AQUELA dependência. Este aborto é a defesa contra a PRÓXIMA — qualquer coisa
-# que a cópia sabotada não encontre ao lado de si.
-controle() {
-  local nome="$1" veio="$2" esperado="$3"
-  if [ "$veio" = "$esperado" ]; then ok "controle: $nome"; return 0; fi
-  nok "controle: $nome" "esperado '$esperado', veio '$veio'"
-  cat <<FIM
-
-🛑 CONTROLE VERMELHO — abortando ANTES da primeira sabotagem.
-   A cópia sabotável ($ALVO) não reproduz o
-   original NEM SABOTADA. Nesse estado toda sabotagem muda o rc por acidente e fica
-   verde: sabotagem sempre-vermelha APROVA TUDO. Seguir daqui imprimiria linhas
-   verdes que não provam nada — foi o que este teste já fez uma vez.
-   Suspeite, nesta ordem: (1) dependência que a cópia não acha ao lado de si (helper
-   resolvido por \`dirname "\$0"\`), (2) cluster de teste caído, (3) fixture alterada.
-   O que a cópia respondeu:
-FIM
-  tail -20 "$WORK/out.log" | sed 's/^/     | /'
-  printf '\nPASS=%s FAIL=%s\nFIM_PROVA_VERMELHO\n' "$PASS" "$FAIL"
-  exit 3
-}
-
-# ═════════════════════════════════════════════════════════════════════════════════════════
-if [ "$FALSIFICAR" -eq 0 ]; then
 echo "▶ A1 — apply inédito"
 eq "A1 exit 0" "$(rc_de "$FIX_OK")" "0"
 eq "A1 tabela criada" "$(q "select to_regclass('public.fixture_aplicar_ok') is not null")" "t"
@@ -274,10 +266,10 @@ echo "▶ A10 — SQL com envelope de transação é recusado"
 # caixa fixa: casar acento ou usar `-i` é o casamento pela metade que já migrou de locale (#1483).
 LEDGER_ANTES="$(q "select count(*) from public.db_aplicacoes")"
 eq "A10 exit 2" "$(rc_de "$FIX_ENVELOPE")" "2"
-if grep -qF 'BEGIN/COMMIT/ROLLBACK' "$WORK/out.log"; then
+if grep -qF 'BEGIN/COMMIT/ROLLBACK' "$OUT"; then
   ok "A10 recusou pelo ENVELOPE — não por outro ramo que também sai 2"
 else
-  nok "A10" "saiu 2 sem a marca do envelope (motivo errado?): $(tail -c 250 "$WORK/out.log")"
+  nok "A10" "saiu 2 sem a marca do envelope (motivo errado?): $(tail -c 250 "$OUT")"
 fi
 eq "A10 NADA foi criado" \
    "$(q "select to_regclass('public.fixture_aplicar_envelope') is null")" "t"
@@ -326,7 +318,7 @@ SHIM_ERRADO="$WORK/psql-rw-errado"
 { echo '#!/usr/bin/env bash'
   echo "exec env PSQLRC=/dev/null $PGBIN/psql -h localhost -p $PORT -U postgres -d postgres \"\$@\""
 } > "$SHIM_ERRADO"; chmod +x "$SHIM_ERRADO"
-R7=0; ( cd "$REPO_ROOT" && AFIACAO_PSQL_RW="$SHIM_ERRADO" bash "$ALVO" "$FIX_OK" ) >/dev/null 2>&1 || R7=$?
+R7=0; ( cd "$REPO_ROOT" && LC_ALL="$LOC_CLI" LANG="$LOC_CLI" AFIACAO_PSQL_RW="$SHIM_ERRADO" bash "$ALVO" "$FIX_OK" ) >/dev/null 2>&1 || R7=$?
 eq "A7 papel errado sai 6, não 0" "$R7" "6"
 
 echo "▶ A11/A12 — a 2ª classe de incompatibilidade, e o CONTROLE dos dois guards"
@@ -334,7 +326,7 @@ echo "▶ A11/A12 — a 2ª classe de incompatibilidade, e o CONTROLE dos dois g
 # tem — CREATE INDEX CONCURRENTLY não roda em transação alguma, e o recibo só é atômico porque
 # há uma. Casamos o MARCADOR ASCII: "saiu 2" também é arquivo não-commitado, sha torto e sonda.
 eq "A11 CREATE INDEX CONCURRENTLY é recusado com exit 2" "$(rc_de "$FIX_CIC")" "2"
-if grep -q 'RECUSA_FORA_DE_TRANSACAO' "$WORK/out.log"; then
+if grep -q 'RECUSA_FORA_DE_TRANSACAO' "$OUT"; then
   ok "A11 recusou pelo ramo CERTO (RECUSA_FORA_DE_TRANSACAO)"
 else
   nok "A11 marcador" "exit 2 veio de OUTRO ramo — 'recusou' não é 'recusou por isto'"
@@ -352,175 +344,575 @@ eq "A12 corpo de função com BEGIN/END; e REFRESH MV CONCURRENTLY APLICA" \
 # guardou. Sensor que só consulta a máquina vigiada herda o defeito dela: se alguém reintroduzir
 # transformação do corpo (o `desenvelopar-transacao.awk` revertido em #2434 era exatamente
 # isso), os guards seguem verdes e só esta comparação vê o corpo mudar. Ver S9.
-norm_corpo() { sed '/^[[:space:]]*$/d'; }   # só a quebra que o $-quote acrescenta; indentação NÃO
 CORPO_DB="$(q_bruto "select prosrc from pg_proc where oid='public.fixture_corpo_refresca()'::regprocedure" | norm_corpo || true)"
-CORPO_ARQ="$(awk '/AS \$funcao\$$/{f=1;next} /^\$funcao\$;$/{f=0} f' "$FIX_CORPO" | norm_corpo)"
 eq "A12b o corpo GUARDADO pelo Postgres é byte-a-byte o do arquivo" "$CORPO_DB" "$CORPO_ARQ"
 
-else
-# ═════════════════════════════════════════════════════════════════════════════════════════
-echo "▶ CONTROLE (sem sabotagem, na cópia) — tem de estar VERDE antes de sabotar"
-# Um controle por CLASSE de desfecho que as sabotagens vão mexer: sucesso (0), falha-limpa (4) e
-# recusa de preflight (2). O de recusa é o mais barato e o que teria pego o #2421 primeiro — ele
-# nem chega a abrir conexão, então falha nele grita "a cópia não roda", não "o banco está ruim".
-controle "A1 aplica"              "$(rc_de "$FIX_OK")"       "0"
-controle "A3 sai 4"               "$(rc_de "$FIX_ERRO")"     "4"
-controle "A10 recusa o envelope"  "$(rc_de "$FIX_ENVELOPE")" "2"
-$PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
-
-echo "▶ S1 — o marcador de fim deixa de ser emitido (psql sai 0 e o SQL não terminou)"
-# A 1ª versão desta sabotagem forçava TEM_MARCADOR=1 e rodava a fixture de ERRO — e ficava
-# VERDE, porque com rc≠0 o marcador não decide nada. Sabotagem no cenário errado aprova
-# qualquer coisa. O cenário em que o marcador é a ÚNICA testemunha é o inverso: exit 0 com
-# a transação incompleta. Tirar a emissão do marcador simula exatamente isso.
-# O marcador agora é o RETURN da função, não um literal no script. Trocar a constante que o
-# script PROCURA simula "o marcador não chegou": rc=0, apply de fato ocorreu, e mesmo assim o
-# veredito não pode ser sucesso — é o que separa "exit 0" de "terminou".
-sabota "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m; s/^  EST_POS=.*\$/  EST_POS=''/m"
-S1="$(rc_de "$FIX_OK")"
-# Exigir o código EXATO, não "≠ 0". A versão frouxa aceitou exit 1 — que era o script MORRENDO
-# por `set -e` na captura do erro (grep sem match ⇒ 1 ⇒ pipefail ⇒ morte), com o ramo
-# DESCONHECIDO inalcançável logo abaixo. A sabotagem ficava verde por cima de um ramo morto.
-#
-# Duas sabotagens juntas de propósito: some o marcador E some a reconciliação pelo ledger.
-# São as DUAS testemunhas independentes de que o apply terminou; cegar só uma deixa a outra
-# responder certo (foi o que aconteceu — com só o marcador cego, o script leu 'aplicada' no
-# ledger e concluiu, corretamente, que o COMMIT tinha chegado). Cegar as duas é o único
-# estado em que o veredito honesto é "não sei".
-if [ "$S1" = "5" ]; then
-  ok "S1 vermelho: cegas as DUAS testemunhas, o veredito é DESCONHECIDO (5) — ramo ALCANÇÁVEL"
-else
-  nok "S1" "esperava exit 5 (desconhecido); veio '$S1'. 'Qualquer coisa ≠ 0' esconde ramo morto"
-fi
-
-echo "▶ S4 — só o marcador cego: o LEDGER responde, e o script não finge sucesso limpo"
-$PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
-sabota "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m"
-S4="$(rc_de "$FIX_OK")"
-if [ "$S4" = "0" ] && grep -q 'COMMIT CHEGOU' "$WORK/out.log"; then
-  ok "S4 a reconciliação pelo ledger reconhece o COMMIT e AVISA que a resposta se perdeu"
-else
-  nok "S4" "esperava exit 0 + aviso 'COMMIT CHEGOU'; veio '$S4' / $(tail -c 150 "$WORK/out.log")"
-fi
-$PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
-
-echo "▶ S2 — ON_ERROR_STOP removido"
-# shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE
-# do script alvo, onde $APPLY_SQL aparece literalmente. Expandir aqui faria o padrao
-# procurar o caminho do arquivo temporario — que nao existe no codigo — e a sabotagem
-# viraria inerte, que e exatamente a classe que o sabota() existe para pegar.
-sabota 's/-X -v ON_ERROR_STOP=1 -f "\$APPLY_SQL"/-X -f "\$APPLY_SQL"/; s/set ON_ERROR_STOP on//'
-S2="$(rc_de "$FIX_ERRO")"
-if [ "$S2" != "4" ]; then
-  ok "S2 vermelho: sem ON_ERROR_STOP o erro deixa de ser erro ($S2 ≠ 4)"
-else
-  nok "S2" "sabotagem NÃO mudou nada — ON_ERROR_STOP não está segurando"
-fi
-$PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_meia; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
-
-echo "▶ S3 — checagem de 'já aplicada' removida"
-sabota 's/\*aplicada\*\)/*JAMAIS_CASA*)/'
-rc_de "$FIX_OK" >/dev/null
-S3="$(rc_de "$FIX_OK")"
-if [ "$S3" != "3" ]; then
-  ok "S3 vermelho: sem a checagem o re-apply deixa de ser no-op ($S3 ≠ 3)"
-else
-  nok "S3" "sabotagem NÃO mudou nada — a checagem de sha é inalcançada"
-fi
-$PSQL -c "DROP TABLE IF EXISTS public.fixture_aplicar_ok; DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
-
-echo "▶ S5 — recusa do envelope removida (o corpo com BEGIN; chega ao banco)"
-# A alternância literal só existe no regex da checagem (linha única em db-aplicar.sh); a mensagem
-# e o comentário escrevem com barras, BEGIN/COMMIT/ROLLBACK, e não casam. Trocá-la por um nome
-# que nunca aparece em SQL deixa o `grep` sintaticamente vivo e semanticamente morto.
-sabota 's/\(BEGIN\|COMMIT\|ROLLBACK\|START TRANSACTION\)/(JAMAIS_CASA_ENVELOPE)/'
-S5="$(rc_de "$FIX_ENVELOPE")"
-# Exigir o 4 EXATO, não "≠ 2". 4 é o banco recusando por conta própria — `EXECUTE of transaction
-# commands is not implemented` —, e é isso que prova que A10 mede a recusa DO SCRIPT e não uma
-# barreira que existiria de qualquer jeito. Aceitar "qualquer coisa ≠ 2" deixaria passar a cópia
-# morrendo no preflight, que é exatamente a falha que o controle acima existe para pegar.
-if [ "$S5" = "4" ]; then
-  ok "S5 vermelho: sem a recusa o corpo vai ao banco, que o barra e devolve 4 (≠ 2)"
-else
-  nok "S5" "esperava 4 (o banco barrando); veio '$S5' / $(tail -c 200 "$WORK/out.log")"
-fi
-# E a transação do script tem de ter voltado atrás: envelope quebrado no meio é a meia-migration
-# que o desenho inteiro existe para impedir.
-eq "S5 e a tabela do envelope NÃO nasceu nem assim" \
-   "$(q "select to_regclass('public.fixture_aplicar_envelope') is null")" "t"
-
-echo "▶ S6 — guard de não-transacional desligado: CREATE INDEX CONCURRENTLY vai ao banco"
-$PSQL -c "DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
-# shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE do script
-if sabota 's/^if \[ -n "\$FORA_TX" \]; then/if false; then/m'; then
-  S6="$(rc_de "$FIX_CIC")"
-  if [ "$S6" = "4" ]; then
-    ok "S6 vermelho: sem o guard, o PG recusa o CONCURRENTLY dentro de transação (4 ≠ 2)"
-  else
-    nok "S6" "esperava exit 4 (o banco barrando); veio '$S6'"
-  fi
-fi
-
-echo "▶ S7 — guard ALARGADO para casar END; (a SOBRE-recusa) — o CONTROLE tem de cair"
-# S5/S6 provam que os guards PEGAM o que devem. Só S7 prova que A12 morde quando um guard passa
-# a pegar o que NÃO deve. `END;` é sinônimo de COMMIT no top level, mas fecha bloco PL/pgSQL e
-# aparece em coluna 0 dentro de $funcao$ — incluí-lo recusaria 81 arquivos legítimos do repo.
-# Se A12 seguisse verde aqui, ela não estaria medindo nada.
-$PSQL -c "DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
-if sabota 's/\(BEGIN\|COMMIT\|ROLLBACK\|START TRANSACTION\)/(BEGIN|COMMIT|ROLLBACK|END|START TRANSACTION)/'; then
-  S7="$(rc_de "$FIX_CORPO")"
-  if [ "$S7" = "2" ]; then
-    ok "S7 vermelho: guard alargado RECUSA o controle legítimo (2) — A12 mede de verdade"
-  else
-    nok "S7" "esperava exit 2 (controle recusado por END;); veio '$S7'"
-  fi
-fi
-
-echo "▶ S8 — transformação no CLIENTE: o BANCO é o freio, e é por isso que peel não mora aqui"
-# aplicar_sql() RE-CALCULA o sha256 do corpo recebido e compara com o declarado. Qualquer
-# transformação feita pelo cliente quebra a cadeia — foi o que derrubou o desenvelopamento do
-# #2421. Exigimos a marca ASCII 'sha divergente': "falhou" sozinho não diz por quê.
-$PSQL -c "DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
-# shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE do script
-if sabota 's/^  cat "\$SNAP"$/  sed "\/^END;\$\/d" "\$SNAP"/m'; then
-  S8="$(rc_de "$FIX_CORPO")"
-  if [ "$S8" = "4" ] && grep -q 'sha divergente' "$WORK/out.log"; then
-    ok "S8 vermelho: o banco recusou a transformação do cliente (sha divergente, exit 4)"
-  else
-    nok "S8" "esperava exit 4 COM 'sha divergente'; veio '$S8' (marca ausente = outra falha)"
-  fi
-fi
-
-echo "▶ S9 — transformação SERVER-SIDE: a única que o sha NÃO pega, e que só A12b enxerga"
-# O sha é conferido DENTRO de aplicar_sql. Uma transformação aplicada DEPOIS dessa conferência
-# passa por todos os guards do cliente, pelo ledger e pelo próprio sha — e é onde um peel teria
-# de morar. S8 mostra que nenhuma sabotagem do cliente derruba A12b; sem S9, A12b seria verde
-# por INALCANÇÁVEL. A transformação escolhida some com a indentação: o corpo segue VÁLIDO e a
-# função é criada normalmente. É a corrupção silenciosa de verdade.
-cp "$APLICAR" "$ALVO"   # esta sabotagem é no BOOTSTRAP; $ALVO ainda carrega a do S8
-BOOT_SAB="$WORK/bootstrap-sabotado.sql"
-perl -pe 's/^  EXECUTE p_sql;$/  EXECUTE regexp_replace(p_sql, E\x27\\n  \x27, E\x27\\n\x27, \x27g\x27);/' "$BOOT" > "$BOOT_SAB"
-if cmp -s "$BOOT" "$BOOT_SAB"; then
-  nok "S9 sabotagem inerte" "o padrão não casou com 'EXECUTE p_sql;' no bootstrap"
-else
-  $PSQL -c "DROP FUNCTION IF EXISTS public.fixture_corpo_refresca();
-            DROP TABLE IF EXISTS public.fixture_aplicar_corpo;
-            DELETE FROM public.db_aplicacoes" >/dev/null 2>&1
-  $PSQL -f "$BOOT_SAB" >/dev/null 2>&1
-  S9="$(rc_de "$FIX_CORPO")"
-  C_DB="$(q_bruto "select prosrc from pg_proc where oid='public.fixture_corpo_refresca()'::regprocedure" | sed '/^[[:space:]]*$/d' || true)"
-  C_ARQ="$(awk '/AS \$funcao\$$/{f=1;next} /^\$funcao\$;$/{f=0} f' "$FIX_CORPO" | sed '/^[[:space:]]*$/d')"
-  if [ "$S9" = "0" ] && [ "$C_DB" != "$C_ARQ" ]; then
-    ok "S9 vermelho: peel no servidor aplica LIMPO (0) e só A12b vê o corpo ter mudado"
-  else
-    nok "S9" "esperava apply 0 com corpo DIFERENTE; veio rc='$S9', corpo $([ "$C_DB" = "$C_ARQ" ] && echo IGUAL || echo diferente)"
-  fi
-  $PSQL -f "$BOOT" >/dev/null 2>&1   # devolve a função verdadeira
-fi
-fi
-
-# ═════════════════════════════════════════════════════════════════════════════════════════
 echo
 echo "PASS=$PASS FAIL=$FAIL"
-[ "$FAIL" -eq 0 ] && echo "FIM_PROVA_OK" || echo "FIM_PROVA_VERMELHO"
-[ "$FAIL" -eq 0 ]
+if [ "$FAIL" -eq 0 ]; then echo "FIM_PROVA_OK"; else echo "FIM_PROVA_VERMELHO"; fi
+RC_FINAL="$FAIL"
+
+else
+# ═════════════════════════════════════════════════════════════════════════════════════════
+# FALSIFICAÇÃO — uma invocação, TRÊS combinações servidor×cliente sobre DOIS clusters.
+#
+# Medido em 2026-09-14 (PG 17.10, `psql -f` com `SELECT 1/0`): cluster em C → `ERROR:  division
+# by zero` com cliente C E com cliente pt_BR; cluster em pt_BR → `ERRO:  divisão por zero` com os
+# dois. Até essa data o 2º locale desta falsificação trocava só o cliente (`LC_TESTE`) sobre um
+# cluster `--locale=C`: as linhas de erro saíam IDÊNTICAS nas duas rodadas, e tirar `ERRO` da regex
+# do executor dava 4 nas duas (medido) — a falsificação-em-um-ambiente do #1483 com cara de dois.
+#
+#   c_c    servidor C     · cliente C
+#   c_pt   servidor C     · cliente pt_BR   ← o par de PRODUÇÃO: lc_messages=en_US.UTF-8 (medido
+#                                             por psql-ro) com o terminal do founder em pt_BR
+#   pt_pt  servidor pt_BR · cliente pt_BR   ← a única em que a severidade diz ERRO
+#
+# c_pt não é redundante com as outras duas (parecer Codex 2026-09-14): a libpq junta rótulo
+# traduzido no cliente com conteúdo do servidor (`CONTEXTO:  PL/pgSQL function ...`), linha que
+# nenhum par homogêneo produz.
+#
+# Uma sabotagem só conta com CERTO nas três, e CERTO exige o rc EXATO e a MARCA — trecho ASCII de
+# caixa fixa lido da saída real, de preferência do próprio script, que não muda com locale, e,
+# quando o motivo é "o banco recusou", a mensagem do banco NAQUELE idioma. Nunca texto que também
+# esteja numa fixture: num erro dentro do EXECUTE o psql ecoa o corpo inteiro, e a S6 chegou a ter
+# `RECUSA_FORA_DE_TRANSACAO` no log com o guard DESLIGADO. S10/S11 são as sabotagens que só um
+# idioma pega; sem elas, trocar pt_BR por C.UTF-8 deixaria as três combinações iguais e tudo verde.
+#
+# Ordem — e cada etapa ABORTA (exit 3, sem recibo) antes da seguinte: sondas do ambiente → controle
+# verde nas três → controles negativos do juiz → sabotagens → controle de saída → UM recibo.
+echo "== falsificacao: 3 combinacoes servidor x cliente sobre uma COPIA do executor =="
+ALVO="$WORK/db-aplicar-sabotado.sh"
+BOOT_SAB="$WORK/bootstrap-sabotado.sql"
+
+aborta() { # <MARCA> <linha>... — sai 3 SEM recibo: dali para baixo nada seria veredito
+  local marca="$1"
+  shift
+  printf '\n🛑 %s — abortando: nada abaixo daqui seria veredito.\n' "$marca"
+  printf '   %s\n' "$@"
+  printf 'FIM_FALSIFICACAO_ABORTADA %s\n' "$marca"
+  exit 3
+}
+nota() { printf '  ✅ %s\n' "$1"; }
+
+seleciona_combo() { # <c_c|c_pt|pt_pt> — cluster e locale do cliente; e, À PARTE, o que ela TEM de mostrar
+  case "$1" in
+    c_c)   seleciona_cluster c;  LOC_CLI=C ;;
+    c_pt)  seleciona_cluster c;  LOC_CLI=pt_BR.UTF-8 ;;
+    pt_pt) seleciona_cluster pt; LOC_CLI=pt_BR.UTF-8 ;;
+    *)     echo "ERRO interno: combinacao desconhecida '$1'"; exit 1 ;;
+  esac
+  COMBO="$1"
+  # O que cada combinação TEM de mostrar é fixado pelo NOME dela — nunca calculado de LOC_SRV/LOC_CLI,
+  # que são as variáveis sob teste. Expectativa derivada do que se testa é o oráculo imitando a
+  # implementação (docs/historico/prova-que-imitava-o-oraculo.md): trocar o cluster do pt_pt para C
+  # mudaria resultado e expectativa JUNTOS, e as três combinações sairiam em inglês, todas verdes.
+  # Mensagens lidas da saída real (2026-09-14), com o prefixo de severidade: o psql escreve
+  # `ERROR:  msg`, com DOIS espaços, e nenhuma fixture tem isso — a do envelope CITA a inglesa.
+  case "$1" in
+    pt_pt)
+      SRV_ESPERADO=pt_BR.UTF-8
+      M_DIV='ERRO:  divis'
+      M_ENVELOPE='ERRO:  EXECUTE de comandos de controle de transa'
+      M_CIC_SEV='ERRO:  CREATE INDEX CONCURRENTLY'
+      M_CIC='pode ser executado dentro de um bloco de transa' ;;
+    *)
+      SRV_ESPERADO=C
+      M_DIV='ERROR:  division by zero'
+      M_ENVELOPE='ERROR:  EXECUTE of transaction commands is not implemented'
+      M_CIC_SEV='ERROR:  CREATE INDEX CONCURRENTLY'
+      M_CIC='cannot run inside a transaction block' ;;
+  esac
+  case "$1" in
+    c_c) M_CLIENTE='psql: error:' ;;
+    *)   M_CLIENTE='psql: erro:' ;;
+  esac
+}
+
+limpa() { # zera fixtures e ledger do cluster selecionado; o status é conferido por quem chama
+  $PSQL -q -c "DROP FUNCTION IF EXISTS public.fixture_corpo_refresca();
+    DROP TABLE IF EXISTS public.fixture_aplicar_ok, public.fixture_aplicar_meia,
+      public.fixture_aplicar_envelope, public.fixture_aplicar_cic, public.fixture_aplicar_corpo;
+    DELETE FROM public.db_aplicacoes" > "$CDIR/limpa.log" 2>&1
+}
+# A S2 deixa estado `desconhecido` no ledger, e a S3 um recibo `aplicada`: limpeza que falhasse em
+# silêncio mudaria o desfecho do cenário seguinte. Preparação que não aconteceu é MOTIVO, não verde.
+limpo() { limpa || { printf 'limpeza: o cluster %s nao zerou (%s)' "$CLUSTER" "$(tail -c 120 "$CDIR/limpa.log" | tr '\n' ' ')"; return 1; }; }
+
+md5_aplicar_sql() { q_estrito "select md5(prosrc) from pg_proc where oid='public.aplicar_sql(text,text,bigint)'::regprocedure"; }
+
+# corpo_guardado — o prosrc da função da fixture, normalizado. Status ≠ 0 se a leitura FALHOU ou veio
+# vazia. Com o `|| true` antigo, corpo vazio "divergia" do arquivo e a S9 contava uma leitura que não
+# aconteceu como corrupção detectada (parecer Codex 2026-09-14).
+corpo_guardado() {
+  local c=""
+  c="$(q_estrito "select prosrc from pg_proc where oid='public.fixture_corpo_refresca()'::regprocedure")" || return 1
+  c="$(printf '%s\n' "$c" | norm_corpo)"
+  [ -n "$c" ] || return 1
+  printf '%s' "$c"
+}
+# O que a transformação da S9 (tirar 2 espaços depois de cada quebra) deixa guardado.
+CORPO_PEEL="$(printf '%s\n' "$CORPO_ARQ" | sed 's/^  //')"
+
+# confere <rc-veio> <rc-esperado> <log> <marca>... — ecoa CERTO só com o rc EXATO e TODAS as marcas.
+# `grep -F` sobre ASCII de caixa fixa, sem `-i`: acento e caixa são o casamento pela metade que migra
+# de locale (#1483). Qualquer outra saída é o MOTIVO da recusa — silêncio nunca é "certo".
+confere() {
+  local veio="$1" esperado="$2" log="$3" marca="" faltam=""
+  shift 3
+  [ "$#" -ge 1 ] || { printf 'confere sem marca: o rc sozinho aceita qualquer vermelho'; return 0; }
+  if [ "$veio" != "$esperado" ]; then printf "rc '%s', esperado %s" "$veio" "$esperado"; return 0; fi
+  [ -s "$log" ] || { printf 'rc %s certo, mas o log esta vazio ou ausente' "$veio"; return 0; }
+  for marca in "$@"; do
+    grep -qF -- "$marca" "$log" || faltam="$faltam '$marca'"
+  done
+  if [ -n "$faltam" ]; then printf 'rc %s certo, SEM a marca%s' "$veio" "$faltam"; return 0; fi
+  printf 'CERTO'
+}
+
+# controle_combo <rotulo> — a linha de base, na combinação selecionada e pelo MESMO caminho das
+# sabotagens: a cópia, o shim, o locale do cliente, um log por passo. Um passo por CLASSE de desfecho
+# que as sabotagens mexem — sucesso (0), falha-limpa (4, dizendo a severidade no idioma DO SERVIDOR),
+# recusa de preflight (2) — e o corpo guardado intacto (A12/A12b), a linha de base da S9.
+controle_combo() {
+  local rot="$1" r="" m="" c=""
+  limpo || return 0
+  OUT="$LOGS/$rot-A1.$COMBO.log"; r="$(rc_de "$FIX_OK")"
+  m="$(confere "$r" 0 "$OUT" 'APLICADO')"
+  [ "$m" = CERTO ] || { printf 'A1: %s' "$m"; return 0; }
+  OUT="$LOGS/$rot-A3.$COMBO.log"; r="$(rc_de "$FIX_ERRO")"
+  m="$(confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_DIV")"
+  [ "$m" = CERTO ] || { printf 'A3: %s' "$m"; return 0; }
+  OUT="$LOGS/$rot-A10.$COMBO.log"; r="$(rc_de "$FIX_ENVELOPE")"
+  m="$(confere "$r" 2 "$OUT" 'BEGIN/COMMIT/ROLLBACK')"
+  [ "$m" = CERTO ] || { printf 'A10: %s' "$m"; return 0; }
+  OUT="$LOGS/$rot-A12.$COMBO.log"; r="$(rc_de "$FIX_CORPO")"
+  m="$(confere "$r" 0 "$OUT" 'APLICADO')"
+  [ "$m" = CERTO ] || { printf 'A12: %s' "$m"; return 0; }
+  c="$(corpo_guardado)" || { printf 'A12b: a leitura do corpo guardado falhou'; return 0; }
+  [ "$c" = "$CORPO_ARQ" ] || { printf 'A12b: o corpo guardado NAO e o do arquivo'; return 0; }
+  printf 'CERTO'
+}
+
+# ── a máquina de sabotagem ───────────────────────────────────────────────────────────────────
+# RECIBO para o runner (`db/roda-nucleo-ci.sh`): `SABOTAGENS: <v> vermelhas / <f> falhas`, emitido
+# UMA vez e só neste modo. O runner exige f = 0 e v ≥ o `falsificar=<n>` do manifesto — ele confere
+# formato e contagem, não sabe o que é sabotagem nem idioma: essa obrigação é daqui (Codex 2026-09-14).
+SAB_VERMELHAS=0; SAB_FALHAS=0; SAB_IDS=" "; SAB_EXPRS=""; SAB_FALHARAM=""
+sab_vermelha() { SAB_VERMELHAS=$((SAB_VERMELHAS + 1)); }
+sab_falha()    { SAB_FALHAS=$((SAB_FALHAS + 1)); }
+invalida()     { sab_falha; SAB_FALHARAM="$SAB_FALHARAM $1"; printf '  ❌ [%s] %s: %s — falsificacao VAZIA\n' "$1" "$2" "$3"; }
+
+# registra <id> <alvo:expressao> — o recibo conta, não distingue "11 sabotagens" de "10 e uma
+# repetida": sem isto, duplicar uma compensaria retirar outra, e o runner seguiria verde.
+registra() {
+  case "$SAB_IDS" in *" $1 "*) invalida "$1" "(id repetido)" "id DUPLICADO"; return 1 ;; esac
+  # here-string, não `printf | grep -q`: sob `pipefail`, o grep que sai no 1º casamento pode matar o
+  # printf com SIGPIPE, o pipeline sai 141 e a DUPLICATA passa — fail-open por uma corrida.
+  if [ -n "$SAB_EXPRS" ] && grep -qxF -- "$2" <<< "$SAB_EXPRS"; then
+    invalida "$1" "(expressao repetida)" "a MESMA sabotagem ja rodou com outro id"; return 1
+  fi
+  SAB_IDS="$SAB_IDS$1 "
+  SAB_EXPRS="${SAB_EXPRS:+$SAB_EXPRS
+}$2"
+}
+
+# prepara_sabotagem <executor|bootstrap> <expressao-perl> — toda sabotagem parte do executor INTACTO
+# e muta UMA cópia, cujos MESMOS bytes rodam nas três combinações; o arquivo real nunca é tocado.
+# Padrão que não casa é no-op silencioso, e no-op silencioso aprova tudo — aconteceu aqui: o apply
+# passou de `-f -` para `-f "$APPLY_SQL"` e o padrão do S2 virou letra morta sem nada avisar. Por
+# isso o `cmp` com os três desfechos: 1 (mudou) vale; 0 (inerte) e 2 (não comparou) invalidam.
+PREP_MOTIVO=""
+prepara_sabotagem() {
+  local fonte="" destino="" rc_cmp=0
+  case "$1" in
+    executor)  fonte="$APLICAR"; destino="$ALVO" ;;
+    bootstrap) fonte="$BOOT";    destino="$BOOT_SAB" ;;
+    *) PREP_MOTIVO="alvo desconhecido '$1'"; return 1 ;;
+  esac
+  cp "$APLICAR" "$ALVO" || { PREP_MOTIVO="o cp do executor intacto falhou"; return 1; }
+  cp "$fonte" "$destino" || { PREP_MOTIVO="o cp de $fonte falhou"; return 1; }
+  perl -0pi -e "$2" "$destino" 2> "$WORK/perl.err" \
+    || { PREP_MOTIVO="o perl falhou: $(head -c 120 "$WORK/perl.err")"; return 1; }
+  cmp -s "$fonte" "$destino" || rc_cmp=$?
+  case "$rc_cmp" in
+    1) return 0 ;;
+    0) PREP_MOTIVO="o padrao nao casou com o codigo — nada foi sabotado"; return 1 ;;
+    *) PREP_MOTIVO="o cmp nao conseguiu comparar (rc=$rc_cmp)"; return 1 ;;
+  esac
+}
+
+# sabotagem <id> <descricao> <executor|bootstrap> <expressao-perl> <cenario> — muta a cópia UMA vez e
+# julga o cenário nas TRÊS combinações, nomeadas aqui e não numa variável: encurtar uma lista seria o
+# jeito de pular um idioma sem nada ficar vermelho. Cada julgamento tem de TERMINAR (status 0) E dizer
+# uma palavra — `printf CERTO; exit 137` numa `$(...)` captura exatamente "CERTO" (Codex 2026-09-14):
+# CERTO (ficou vermelha pelo motivo certo) ou IGUAL (não mudou, e era para não mudar — S10/S11). Só
+# conta como vermelha com as TRÊS julgadas E ≥1 CERTO: uma unidade do recibo por sabotagem.
+SAB_JULGADAS=""
+sabotagem() {
+  local id="$1" desc="$2" alvo="$3" expr="$4" cen="$5" cb="" m="" st=0 motivo="" n_julgadas=0 n_verm=0
+  SAB_JULGADAS="$SAB_JULGADAS $id"
+  registra "$id" "$alvo:$expr" || return 0
+  if ! prepara_sabotagem "$alvo" "$expr"; then invalida "$id" "$desc" "$PREP_MOTIVO"; return 0; fi
+  for cb in c_c c_pt pt_pt; do
+    seleciona_combo "$cb"
+    OUT="$LOGS/$id.$cb.log"
+    st=0; m="$(roda_cenario "$cen")" || st=$?
+    if [ "$st" -ne 0 ]; then
+      motivo="$motivo [$cb: o cenario MORREU (status $st) depois de dizer '${m:0:60}']"
+    elif [ "$m" = CERTO ]; then
+      n_julgadas=$((n_julgadas + 1)); n_verm=$((n_verm + 1))
+    elif [ "$m" = IGUAL ]; then
+      n_julgadas=$((n_julgadas + 1))
+    else
+      motivo="$motivo [$cb: ${m:-o cenario saiu sem veredito}]"
+    fi
+  done
+  if [ -z "$motivo" ] && [ "$n_julgadas" -eq 3 ] && [ "$n_verm" -ge 1 ]; then
+    sab_vermelha
+    printf '  ✅ [%s] %s — vermelha pelo motivo certo (%s/3 vermelhas; as outras, como previsto)\n' "$id" "$desc" "$n_verm"
+  else
+    sab_falha
+    SAB_FALHARAM="$SAB_FALHARAM $id"
+    printf '  ❌ [%s] %s:%s\n' "$id" "$desc" "${motivo:- [julgadas $n_julgadas/3, vermelhas observadas $n_verm: nada ficou vermelho]}"
+  fi
+}
+
+# ── cenários: um por sabotagem; cada um ecoa CERTO só no fim, e o motivo em qualquer outra saída ──
+cen_s1() {
+  local r=""
+  limpo || return 0
+  r="$(rc_de "$FIX_OK")"
+  confere "$r" 5 "$OUT" 'RESULTADO DESCONHECIDO (rc=0,' "marcador 'NUNCA_APARECE' ausente"
+}
+cen_s4() {
+  local r=""
+  limpo || return 0
+  r="$(rc_de "$FIX_OK")"
+  confere "$r" 0 "$OUT" 'COMMIT CHEGOU'
+}
+cen_s2() {
+  local r=""
+  limpo || return 0
+  r="$(rc_de "$FIX_ERRO")"
+  # a severidade do banco ESTÁ no log (o erro aconteceu) e mesmo assim o psql saiu 0
+  confere "$r" 5 "$OUT" "$M_DIV" 'RESULTADO DESCONHECIDO (rc=0,' "marcador 'FIM_APLICACAO_OK' ausente"
+}
+cen_s3() {
+  local r="" m="" n=""
+  limpo || return 0
+  r="$(rc_de "$FIX_OK")"
+  m="$(confere "$r" 0 "$OUT" 'APLICADO')"
+  [ "$m" = CERTO ] || { printf 'preparo, 1a aplicacao: %s' "$m"; return 0; }
+  n="$(q_estrito "select count(*) from public.db_aplicacoes where estado='aplicada'")" \
+    || { printf 'preparo: a leitura do ledger falhou'; return 0; }
+  [ "$n" = 1 ] || { printf "preparo: esperava 1 recibo 'aplicada', veio '%s'" "$n"; return 0; }
+  r="$(rc_de "$FIX_OK")"
+  # leu 'aplicada', seguiu mesmo assim (tentativa registrada), e o ÍNDICE ÚNICO barrou o 2º recibo
+  confere "$r" 4 "$OUT" 'ledger: aplicada' 'tentativa #' 'APPLY FALHOU' 'db_aplicacoes_sha_aplicada_uniq'
+}
+cen_s5() {
+  local r="" m="" t=""
+  limpo || return 0
+  r="$(rc_de "$FIX_ENVELOPE")"
+  m="$(confere "$r" 4 "$OUT" 'tentativa #' 'APPLY FALHOU' "$M_ENVELOPE")"
+  [ "$m" = CERTO ] || { printf '%s' "$m"; return 0; }
+  # E a transação do script voltou atrás: envelope quebrado no meio é a meia-migration que o desenho
+  # inteiro existe para impedir.
+  t="$(q_estrito "select to_regclass('public.fixture_aplicar_envelope') is null")" \
+    || { printf 'a leitura da tabela do envelope falhou'; return 0; }
+  [ "$t" = t ] || { printf "a tabela do envelope NASCEU (veio '%s')" "$t"; return 0; }
+  printf 'CERTO'
+}
+cen_s6() {
+  local r=""
+  limpo || return 0
+  r="$(rc_de "$FIX_CIC")"
+  confere "$r" 4 "$OUT" 'tentativa #' 'APPLY FALHOU' "$M_CIC_SEV" "$M_CIC"
+}
+cen_s7() {
+  local r=""
+  limpo || return 0
+  r="$(rc_de "$FIX_CORPO")"
+  confere "$r" 2 "$OUT" 'BEGIN/COMMIT/ROLLBACK'
+}
+cen_s8() {
+  local r=""
+  limpo || return 0
+  r="$(rc_de "$FIX_CORPO")"
+  confere "$r" 4 "$OUT" 'APPLY FALHOU' 'APLICAR_SQL: sha divergente'
+}
+# S10/S11 — a regex por idioma. O desfecho DEPENDE da combinação, e o lado que NÃO muda é tão parte
+# da captura quanto o que muda: se c_c também virasse 5 na S10, a sabotagem estaria pegando outra
+# coisa. O lado que não muda responde IGUAL (o desfecho de controle, com a marca dele), nunca CERTO:
+# a `sabotagem` exige ≥1 vermelha observada, e sem essa separação pular o pt_pt deixaria a S10
+# "capturada" sem nenhuma combinação ter ficado vermelha.
+igual_se_certo() { if [ "$1" = CERTO ]; then printf 'IGUAL'; else printf '%s' "$1"; fi; }
+cen_s10() {
+  local r=""
+  limpo || return 0
+  r="$(rc_de "$FIX_ERRO")"
+  case "$COMBO" in
+    pt_pt) confere "$r" 5 "$OUT" 'RESULTADO DESCONHECIDO (rc=3,' "$M_DIV" ;;
+    *)     igual_se_certo "$(confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_DIV")" ;;
+  esac
+}
+cen_s11() {
+  local r=""
+  limpo || return 0
+  r="$(rc_de "$FIX_ERRO")"
+  case "$COMBO" in
+    pt_pt) igual_se_certo "$(confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_DIV")" ;;
+    *)     confere "$r" 5 "$OUT" 'RESULTADO DESCONHECIDO (rc=3,' "$M_DIV" ;;
+  esac
+}
+# restaura_bootstrap — devolve a função verdadeira e CONFERE pela definição instalada (o md5 do
+# prosrc gravado depois do bootstrap original), não pelo exit do psql: "restaurei" sem asserção é a
+# mesma família de ausente ≠ zero (docs/historico/falsificacao-sem-linha-de-base.md).
+restaura_bootstrap() {
+  local md5=""
+  $PSQL -f "$BOOT" > "$CDIR/boot-restaura.log" 2>&1 || return 1
+  grep -q 'BOOTSTRAP_OK' "$CDIR/boot-restaura.log" || return 1
+  md5="$(md5_aplicar_sql)" || return 1
+  [ -n "$md5" ] && [ "$md5" = "$(cat "$CDIR/aplicar_sql.md5")" ]
+}
+# S9 — o sha é conferido DENTRO de aplicar_sql. Uma transformação aplicada DEPOIS dessa conferência
+# passa por todos os guards do cliente, pelo ledger e pelo próprio sha — e é onde um peel teria de
+# morar. Sem ela, A12b seria verde por INALCANÇÁVEL. A transformação some com a indentação: o corpo
+# segue VÁLIDO e a função é criada normalmente — a corrupção silenciosa de verdade. Mexe no bootstrap
+# do cluster da combinação, e o devolve conferido antes de julgar.
+cen_s9() {
+  local r="" m="" c="" inst=""
+  limpo || return 0
+  if ! $PSQL -f "$BOOT_SAB" > "$OUT.boot" 2>&1 || ! grep -q 'BOOTSTRAP_OK' "$OUT.boot"; then
+    printf 'o bootstrap sabotado nao aplicou'; restaura_bootstrap || true; return 0
+  fi
+  inst="$(q_estrito "select position('regexp_replace(p_sql' in prosrc) > 0 from pg_proc where oid='public.aplicar_sql(text,text,bigint)'::regprocedure")" \
+    || inst="(leitura falhou)"
+  if [ "$inst" != t ]; then
+    printf 'a funcao instalada NAO e a sabotada (veio %s)' "$inst"; restaura_bootstrap || true; return 0
+  fi
+  r="$(rc_de "$FIX_CORPO")"
+  m="$(confere "$r" 0 "$OUT" 'APLICADO')"
+  if [ "$m" = CERTO ]; then c="$(corpo_guardado)" || m='a leitura do corpo guardado falhou'; fi
+  restaura_bootstrap || { printf 'a RESTAURACAO do bootstrap falhou: a aplicar_sql() do cluster %s segue sabotada?' "$CLUSTER"; return 0; }
+  [ "$m" = CERTO ] || { printf '%s' "$m"; return 0; }
+  [ "$c" != "$CORPO_ARQ" ] || { printf 'o corpo guardado e IGUAL ao arquivo: a transformacao do servidor nao aconteceu'; return 0; }
+  [ "$c" = "$CORPO_PEEL" ] || { printf 'o corpo guardado mudou, mas NAO do jeito da sabotagem'; return 0; }
+  printf 'CERTO'
+}
+
+# roda_cenario <nome> — despacho EXPLÍCITO, não `"$cen"`: o shellcheck enxerga cada chamada, e um
+# nome errado cai no `*)`, que diz o motivo em vez de executar outra coisa.
+roda_cenario() {
+  case "$1" in
+    s1) cen_s1 ;;  s2) cen_s2 ;;  s3) cen_s3 ;;  s4) cen_s4 ;;  s5) cen_s5 ;;  s6) cen_s6 ;;
+    s7) cen_s7 ;;  s8) cen_s8 ;;  s9) cen_s9 ;;  s10) cen_s10 ;;  s11) cen_s11 ;;
+    *) printf "cenario desconhecido '%s'" "$1" ;;
+  esac
+}
+
+# ── 1. SONDAS — o ambiente que a falsificação promete existe? Resposta POSITIVA, antes de tudo ───
+echo "▶ SONDAS do ambiente — ausencia ABORTA, nunca pula"
+v_psql="$("$PGBIN/psql" --version 2>/dev/null || true)"
+case "$v_psql" in
+  *"(PostgreSQL) $PGVER."*) nota "o psql do shim e do executor e PostgreSQL $PGVER ($v_psql)" ;;
+  *) aborta PSQL_DE_OUTRA_MAJOR "o psql que o shim usa ($PGBIN/psql) respondeu '$v_psql'; esperado PostgreSQL $PGVER" ;;
+esac
+# O locale existe e resolve para UTF-8. Sem ele o glibc cai para ANSI_X3.4-1968 e só AVISA no stderr.
+charmap="$(LC_ALL=pt_BR.UTF-8 locale charmap 2>/dev/null || true)"
+if [ "$charmap" != "UTF-8" ]; then
+  aborta LOCALE_PT_BR_AUSENTE \
+    "LC_ALL=pt_BR.UTF-8 nao resolve para UTF-8 (veio '$charmap')." \
+    "Sem ele, c_pt e pt_pt seriam C disfarcado: o 2o idioma deixaria de existir sem nada ficar vermelho." \
+    "Ubuntu: sudo locale-gen pt_BR.UTF-8 (o job provas-sql provisiona antes do nucleo)."
+fi
+nota "LC_ALL=pt_BR.UTF-8 resolve para UTF-8"
+[ "$CORPO_PEEL" != "$CORPO_ARQ" ] || aborta FIXTURE_SEM_INDENTACAO \
+  "o corpo de $FIX_CORPO nao tem linha indentada: a transformacao da S9 nao mudaria nada nele"
+
+for cl in c pt; do
+  seleciona_cluster "$cl"
+  sobe_cluster
+  if ! $PSQL -f "$BOOT" > "$CDIR/boot.log" 2>&1 || ! grep -q 'BOOTSTRAP_OK' "$CDIR/boot.log"; then
+    aborta BOOTSTRAP_FALHOU "cluster $cl: $(tail -c 300 "$CDIR/boot.log" | tr '\n' ' ')"
+  fi
+  md5_aplicar_sql > "$CDIR/aplicar_sql.md5" || aborta BOOTSTRAP_ILEGIVEL "cluster $cl: nao consegui ler a aplicar_sql() instalada"
+  [ -s "$CDIR/aplicar_sql.md5" ] || aborta BOOTSTRAP_ILEGIVEL "cluster $cl: a aplicar_sql() instalada veio vazia"
+  nota "cluster $cl no ar (lc_messages=$LOC_SRV), bootstrap aplicado"
+done
+
+for cb in c_c c_pt pt_pt; do
+  seleciona_combo "$cb"
+  # idioma do SERVIDOR, perguntado como o executor pergunta: sessão do claude_rw, pelo shim
+  lcm="$(LC_ALL="$LOC_CLI" LANG="$LOC_CLI" "$SHIM" -X -A -t -v ON_ERROR_STOP=1 -c 'SHOW lc_messages' 2>/dev/null || true)"
+  [ "$lcm" = "$SRV_ESPERADO" ] || aborta IDIOMA_DO_SERVIDOR \
+    "[$cb] a sessao do claude_rw diz lc_messages='$lcm'; a combinacao $cb exige '$SRV_ESPERADO'"
+  # idioma do CLIENTE, numa falha real que ele mesmo gera: um socket que não existe
+  cli="$(LC_ALL="$LOC_CLI" LANG="$LOC_CLI" "$PGBIN/psql" -X -h "$WORK" -p 9 -U postgres -d postgres -c 'select 1' 2>&1 || true)"
+  case "$cli" in
+    *"$M_CLIENTE"*) ;;
+    *) aborta IDIOMA_DO_CLIENTE "[$cb] o psql com LC_ALL=$LOC_CLI nao disse '$M_CLIENTE' numa conexao recusada:" \
+         "$(printf '%s' "$cli" | head -c 200 | tr '\n' ' ')" ;;
+  esac
+  nota "[$cb] a sessao do servidor diz lc_messages=$lcm; o cliente diz '$M_CLIENTE' numa conexao recusada"
+done
+
+# ── 2. CONTROLE VERDE nas três, antes da primeira sabotagem ─────────────────────────────────────
+# O CONTROLE ABORTA — não reporta e segue. Sabotagem só prova algo contra uma linha de base VERDE: se
+# a CÓPIA já não reproduz o original NEM SABOTADA, toda sabotagem passa a "mudar o rc" por acidente e
+# fica verde. Aconteceu aqui: o #2421 fez `db-aplicar.sh` resolver um helper por `dirname "$0"` —
+# caminho que, na cópia, não existe. A cópia morria no preflight ANTES da primeira sabotagem, e as
+# sabotagens seguintes "mudaram o rc" sem tocar em nada. O bloco de controle DETECTOU e seguiu,
+# imprimindo linhas verdes antes do veredito: detectar e seguir é quase não detectar. O #2434
+# removeu AQUELA dependência; este aborto é a defesa contra a PRÓXIMA.
+echo "▶ CONTROLE (sem sabotagem, na COPIA, nas 3 combinacoes) — tem de estar VERDE antes de sabotar"
+cp "$APLICAR" "$ALVO"
+for cb in c_c c_pt pt_pt; do
+  seleciona_combo "$cb"
+  st=0; m="$(controle_combo controle)" || st=$?
+  if [ "$st" -ne 0 ] || [ "$m" != CERTO ]; then
+    passo="${m%%:*}"
+    aborta CONTROLE_VERMELHO "[$cb] ${m:-o controle saiu sem veredito} (status $st)" \
+      "A copia nao reproduz o original NEM SABOTADA: toda sabotagem mudaria o rc por acidente, e" \
+      "sabotagem sempre-vermelha APROVA TUDO. Suspeite, nesta ordem: dependencia que a copia nao acha" \
+      "ao lado de si (#2421), cluster caido, fixture alterada, idioma que nao veio. A copia respondeu:" \
+      "$(tail -c 700 "$LOGS/controle-$passo.$cb.log" 2>/dev/null | tr '\n' ' ')"
+  fi
+  nota "[$cb] A1 aplica · A3 sai 4 dizendo '$M_DIV' · A10 recusa o envelope · A12 aplica com o corpo intacto"
+done
+
+# ── 3. CONTROLES NEGATIVOS DO JUIZ, também antes da primeira sabotagem ─────────────────────────
+# O controle acima prova que o laço sabe dizer VERDE; estes, que o juiz sabe dizer NÃO. Sem eles um
+# `confere` que sempre dissesse CERTO aprovaria toda sabotagem — o sempre-vermelho um nível acima.
+echo "▶ CONTROLES NEGATIVOS DO JUIZ — ele sabe recusar o vermelho errado?"
+recusa_ou_aborta() { # <descricao> <veredito-que-o-juiz-deu>
+  [ "$2" != CERTO ] || aborta JUIZ_ACEITA_VERMELHO_ERRADO "o juiz ACEITOU $1: sem este dente ele aprovaria qualquer vermelho"
+  nota "o juiz recusa $1 (${2:0:70})"
+}
+L_C="$LOGS/controle-A3.c_c.log"; L_PT="$LOGS/controle-A3.pt_pt.log"
+recusa_ou_aborta "rc certo SEM a marca"                        "$(confere 4 4 "$L_C" 'MARCA_QUE_NENHUMA_SAIDA_TEM')"
+recusa_ou_aborta "a marca certa com o rc ERRADO"               "$(confere 4 5 "$L_C" 'APPLY FALHOU')"
+recusa_ou_aborta "a severidade pt_BR numa saida do servidor C" "$(confere 4 4 "$L_C" 'ERRO:  divis')"
+recusa_ou_aborta "a severidade C numa saida do servidor pt_BR" "$(confere 4 4 "$L_PT" 'ERROR:  division by zero')"
+recusa_ou_aborta "um log que nao existe"                       "$(confere 4 4 "$LOGS/nao-existe.log" 'APPLY FALHOU')"
+
+# A agregação também tem de saber dizer NÃO. Quatro formas que um laço de sabotagem aceitaria como
+# captura: a morte calada, a palavra seguida de morte, o silêncio numa combinação só (as outras
+# vermelhas) e o "nada mudou em lugar nenhum" (IGUAL nas três). Roda o `sabotagem` DE VERDADE num
+# subshell, com o DESPACHO de cenário trocado e os desfechos virando códigos de saída: 42 = creditou
+# (o defeito), 43 = recusou (o certo). Custo ~0: nem PG, nem executor.
+for caso in morre_calado diz_certo_e_morre calado_numa so_igual; do
+  rc_m=0
+  ( sab_vermelha() { exit 42; }; sab_falha() { exit 43; }; invalida() { exit 44; }
+    registra() { return 0; }; prepara_sabotagem() { return 0; }
+    case "$caso" in
+      morre_calado)      roda_cenario() { exit 137; } ;;
+      diz_certo_e_morre) roda_cenario() { printf 'CERTO'; exit 137; } ;;
+      calado_numa)       roda_cenario() { [ "$COMBO" = c_pt ] || printf 'CERTO'; } ;;
+      so_igual)          roda_cenario() { printf 'IGUAL'; } ;;
+    esac
+    sabotagem "juiz-$caso" "controle: $caso" executor 'x' s1 ) >/dev/null 2>&1 || rc_m=$?
+  case "$rc_m" in
+    43) nota "a agregacao recusa um cenario $caso" ;;
+    42) aborta JUIZ_CREDITA "o laco CREDITOU um cenario $caso" ;;
+    *)  aborta JUIZ_SEM_DECISAO "o controle '$caso' nao chegou a decisao (rc=$rc_m)" ;;
+  esac
+done
+
+# ── 4. SABOTAGENS — uma camada por vez, na cópia; cada uma julgada nas três combinações ─────────
+echo "▶ SABOTAGENS — cada uma com rc EXATO + marca, nas 3 combinacoes"
+# S1: a 1ª versão forçava TEM_MARCADOR=1 e rodava a fixture de ERRO — e ficava VERDE, porque com
+# rc≠0 o marcador não decide nada. O cenário em que o marcador é a ÚNICA testemunha é o inverso: exit
+# 0 com a transação incompleta. Duas sabotagens juntas de propósito: some o marcador E a reconciliação
+# pelo ledger — as DUAS testemunhas de que o apply terminou; cegar só uma deixa a outra responder
+# certo (é a S4). E o código EXATO: a versão frouxa aceitou exit 1, que era o script MORRENDO por
+# `set -e` com o ramo DESCONHECIDO inalcançável logo abaixo.
+sabotagem S1 "marcador E reconciliacao cegos (psql sai 0 e o SQL nao terminou)" executor \
+  "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m; s/^  EST_POS=.*\$/  EST_POS=''/m" s1
+sabotagem S4 "so o marcador cego: o LEDGER responde e o script avisa, nao finge" executor \
+  "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m" s4
+# shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE do script
+# alvo, onde $APPLY_SQL aparece literalmente. Expandir aqui faria o padrao procurar o caminho do
+# arquivo temporario — que nao existe no codigo — e a sabotagem viraria inerte.
+sabotagem S2 "ON_ERROR_STOP removido (o erro deixa de ser erro)" executor \
+  's/-X -v ON_ERROR_STOP=1 -f "\$APPLY_SQL"/-X -f "\$APPLY_SQL"/; s/set ON_ERROR_STOP on//' s2
+sabotagem S3 "checagem de 'ja aplicada' removida (re-apply deixa de ser no-op)" executor \
+  's/\*aplicada\*\)/*JAMAIS_CASA*)/' s3
+# S5: a alternância literal só existe no regex da checagem (linha única em db-aplicar.sh); a mensagem
+# e o comentário escrevem com barras, BEGIN/COMMIT/ROLLBACK, e não casam. Trocá-la por um nome que
+# nunca aparece em SQL deixa o `grep` sintaticamente vivo e semanticamente morto. O 4 é o BANCO
+# recusando por conta própria: é o que prova que A10 mede a recusa DO SCRIPT, e não uma barreira que
+# existiria de qualquer jeito.
+sabotagem S5 "recusa do envelope removida (o corpo com BEGIN; chega ao banco)" executor \
+  's/\(BEGIN\|COMMIT\|ROLLBACK\|START TRANSACTION\)/(JAMAIS_CASA_ENVELOPE)/' s5
+# shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE do script
+sabotagem S6 "guard de nao-transacional desligado (CREATE INDEX CONCURRENTLY vai ao banco)" executor \
+  's/^if \[ -n "\$FORA_TX" \]; then/if false; then/m' s6
+# S7: S5/S6 provam que os guards PEGAM o que devem. Só S7 prova que A12 morde quando um guard passa a
+# pegar o que NÃO deve: `END;` fecha bloco PL/pgSQL em coluna 0 dentro de $funcao$, e incluí-lo
+# recusaria 81 arquivos legítimos do repo.
+sabotagem S7 "guard ALARGADO para casar END; (a SOBRE-recusa derruba o controle)" executor \
+  's/\(BEGIN\|COMMIT\|ROLLBACK\|START TRANSACTION\)/(BEGIN|COMMIT|ROLLBACK|END|START TRANSACTION)/' s7
+# S8: aplicar_sql() RE-CALCULA o sha256 do corpo recebido e compara com o declarado. Qualquer
+# transformação feita pelo cliente quebra a cadeia — foi o que derrubou o desenvelopamento do #2421.
+# shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE do script
+sabotagem S8 "transformacao no CLIENTE (o banco e o freio)" executor \
+  's/^  cat "\$SNAP"$/  sed "\/^END;\$\/d" "\$SNAP"/m' s8
+sabotagem S10 "regex sem ERRO (so o servidor pt_BR deixa de ser reconhecido)" executor \
+  's/\(ERRO\|ERROR\|FATAL\|PANIC\)/(ERROR|FATAL|PANIC)/' s10
+sabotagem S11 "regex so com ERRO: (so o servidor em ingles deixa de ser reconhecido)" executor \
+  's/\(ERRO\|ERROR\|FATAL\|PANIC\)/(ERRO:|FATAL|PANIC)/' s11
+# S9 por último: é a única que muda a função instalada nos clusters.
+sabotagem S9 "transformacao SERVER-SIDE (so o corpo guardado a enxerga)" bootstrap \
+  's/^  EXECUTE p_sql;$/  EXECUTE regexp_replace(p_sql, E\x27\\n  \x27, E\x27\\n\x27, \x27g\x27);/m' s9
+
+# Identidade, não contagem: cada sabotagem prevista foi julgada exatamente UMA vez, e nenhuma além
+# delas. O recibo só conta — duplicar uma e apagar outra daria o mesmo 11. O `registra` barra a
+# duplicata; esta conferência não depende dele.
+IDS_ESPERADOS="S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11"
+n_esp=0; n_julg=0
+for x in $IDS_ESPERADOS; do n_esp=$((n_esp + 1)); done
+for x in $SAB_JULGADAS;  do n_julg=$((n_julg + 1)); done
+for esperado in $IDS_ESPERADOS; do
+  vezes=0
+  for x in $SAB_JULGADAS; do if [ "$x" = "$esperado" ]; then vezes=$((vezes + 1)); fi; done
+  if [ "$vezes" -ne 1 ]; then
+    sab_falha; SAB_FALHARAM="$SAB_FALHARAM $esperado"
+    printf '  ❌ [%s] julgada %s vez(es): a lista de sabotagens nao bate com a prevista\n' "$esperado" "$vezes"
+  fi
+done
+if [ "$n_julg" -ne "$n_esp" ]; then
+  sab_falha
+  printf '  ❌ %s julgamento(s) de sabotagem para %s previstas: ha sabotagem fora da lista\n' "$n_julg" "$n_esp"
+fi
+
+# ── 5. CONTROLE DE SAÍDA — a cópia e o bootstrap voltaram, e o verde voltou nas três? ──────────
+echo "▶ CONTROLE DE SAIDA — copia e bootstrap de volta ao original, e o verde de volta nas 3"
+cp "$APLICAR" "$ALVO"
+rc_cmp=0; cmp -s "$APLICAR" "$ALVO" || rc_cmp=$?
+[ "$rc_cmp" -eq 0 ] || aborta SAIDA_COPIA_NAO_VOLTOU "a copia do executor nao voltou ao original (cmp rc=$rc_cmp)"
+for cb in c_c c_pt pt_pt; do
+  seleciona_combo "$cb"
+  md5="$(md5_aplicar_sql)" || md5="(leitura falhou)"
+  [ "$md5" = "$(cat "$CDIR/aplicar_sql.md5")" ] \
+    || aborta SAIDA_BOOTSTRAP_SABOTADO "[$cb] a aplicar_sql() do cluster $CLUSTER nao e a original (md5 $md5)"
+  st=0; m="$(controle_combo saida)" || st=$?
+  if [ "$st" -ne 0 ] || [ "$m" != CERTO ]; then
+    aborta SAIDA_VERMELHA "[$cb] ${m:-o controle de saida saiu sem veredito} (status $st)" \
+      "as sabotagens deixaram o ambiente diferente do que o controle de entrada mediu: nenhum recibo vale"
+  fi
+  nota "[$cb] verde de volta"
+done
+
+# ── 6. RECIBO — exatamente um, e só aqui ──────────────────────────────────────────────────────
+echo
+[ -z "$SAB_FALHARAM" ] || echo "  ❌ sabotagens sem o vermelho certo:$SAB_FALHARAM"
+printf 'SABOTAGENS: %s vermelhas / %s falhas\n' "$SAB_VERMELHAS" "$SAB_FALHAS"
+if [ "$SAB_FALHAS" -eq 0 ]; then echo "FIM_FALSIFICACAO_OK"; else echo "FIM_FALSIFICACAO_VERMELHO"; fi
+RC_FINAL="$SAB_FALHAS"
+fi
+
+# O veredito é a ÚLTIMA instrução, fora dos dois ramos — e não um `exit` no fim de cada um: com os
+# dois ramos terminando em `exit`, o shellcheck 0.11 conclui que o fim do script é inalcançável e
+# que a `cleanup` do `trap ... EXIT` nunca roda (SC2329 — falso positivo, medido em 2026-09-14).
+[ "$RC_FINAL" -eq 0 ]
