@@ -393,22 +393,7 @@ describe('montarEstado — a allowlist tocada vira estado do RELÉ; o resto de `
   });
 });
 
-describe('a história REAL — as ondas 2 a 5 passaram com o marcador do relé congelado', () => {
-  // Commits squash da `main`, imutáveis. O job `testes` do CI tem `fetch-depth: 0`; história rasa
-  // faz o `coletarEstado` LANÇAR (vermelho) — nunca devolver lista vazia (verde por acidente). E o
-  // assert casa a LISTA INTEIRA: prova também que nenhuma outra edge dessas fatias passa a reprovar.
-  const congelado = { edge: 'sonda-relay', versao: 'v1.1-alvos-da-onda-1', motivo: 'sem-bump', arquivos: [ALLOWLIST] };
-
-  it.each([
-    ['89887025b', 'onda 2 (#2388)'],
-    ['d96b69f06', 'onda 3 (#2404)'],
-    ['a73641e9c', 'onda 4 (#2415)'],
-    ['f4578bbff', 'onda 5 (#2461)'],
-  ])('%s — %s: reprova o relé, e só ele', (sha) => {
-    expect(auditarBump(coletarEstado(`${sha}^`, sha))).toEqual([congelado]);
-  });
-
-  it('controle: a onda 1 (54679dc35, #2313) BUMPOU o relé → nenhum achado', () => {
-    expect(auditarBump(coletarEstado('54679dc35^', '54679dc35'))).toEqual([]);
-  });
-});
+// ─── A história REAL (commits da `main`) mora em `sonda-versao-bump-gate-historia.test.ts` ───
+// Esta suíte é a que o contrato `scripts/mutcheck.d/sonda-versao-bump-gate.mut` mede, e ele roda no
+// job RASO `mutation-check`: teste que lê commit real AQUI deixa o baseline vermelho em todo PR
+// (2026-09-11 a 2026-09-14). Teste novo que precise de histórico vai para o arquivo irmão.
