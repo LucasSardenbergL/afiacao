@@ -257,11 +257,17 @@ suite() {
   # sentinela vazia é evidência POSITIVA, não ausência de dado. Sem `ON_ERROR_STOP` de propósito:
   # é assim que o SQL Editor e o `psql -f` do dia a dia rodam, seguindo APÓS o erro.
   P -q -f "$ALVO" >/dev/null 2>&1
-  disparos="$(P -t -A -c 'SELECT count(*) FROM public.fixture_sentinela;')"
-  if [ "$disparos" = "0" ]; then
+  # A contagem é MEDIDA, não presumida: erro ou saída ilegível não é "disparou". A marca da (g2)
+  # aceitava `DISPAROU  vez(es)` com a contagem ausente (parecer Codex 2026-09-14). Falha de medição
+  # leva `[SQL-INVALIDO]`, que o juiz da falsificação recusa como vermelho vazio.
+  if ! disparos="$(P -v ON_ERROR_STOP=1 -t -A -c 'SELECT count(*) FROM public.fixture_sentinela;' 2>"$TMP/sentinela.err")"; then
+    bad "[SQL-INVALIDO] a contagem da sentinela nem executou: $(head -c 120 "$TMP/sentinela.err" | tr '\n' ' ')"
+  elif [ "$disparos" = "0" ]; then
     ok "artefato não dispara nada nem sem ON_ERROR_STOP (sentinela vazia com a armadilha armada)"
-  else
+  elif printf '%s' "$disparos" | grep -qE '^[1-9][0-9]*$'; then
     bad "o artefato DISPAROU $disparos vez(es) — o SQL de fixture está executável"
+  else
+    bad "[SQL-INVALIDO] a contagem da sentinela veio ilegível ('${disparos:0:40}')"
   fi
 
   # ---------------------------------------------------------- (A) o caso VERDE ---
@@ -532,7 +538,11 @@ tem_marca() (
   [ -n "$linhas" ]
 )
 
-# julga_log <log> <marca> -> ecoa "" se o vermelho é o CERTO; senão, o que está errado nele.
+# julga_log <log> <marca> -> ecoa CERTO se o vermelho é o certo; senão, o que está errado nele.
+#
+# O veredito é uma PALAVRA, nunca o silêncio (parecer Codex 2026-09-14). O protocolo antigo era
+# "vazio = certo", e quem o lê é sempre um `$(...)`: sob `set -u` SEM `-e`, uma função que morre no
+# meio (variável não definida, processo morto) ecoa vazio e o pai segue — a morte virava captura.
 julga_log() {
   if grep -qF '[SQL-INVALIDO]' "$1"; then printf 'a sabotagem QUEBROU o SQL (nao mudou o julgamento)'; return; fi
   # Erro do próprio bash (`<script>: line N: ...`): a suíte MORREU em vez de julgar. Foi a forma do
@@ -540,23 +550,24 @@ julga_log() {
   if grep -qE '\.sh: line [0-9]+: ' "$1"; then
     printf 'a suite MORREU com erro de shell (%s)' "$(grep -oE 'line [0-9]+: .{0,50}' "$1" | head -1)"; return
   fi
-  tem_marca "$1" "$2" || printf "vermelho SEM a marca '%s'" "$2"
+  if tem_marca "$1" "$2"; then printf 'CERTO'; else printf "vermelho SEM a marca '%s'" "$2"; fi
 }
 
 mostra_falhas() { # <log> — as linhas FALHA, sem cor: é o que o runner mostra quando isto reprova
   sed "s/${ESC}\[[0-9;]*m//g" "$1" | grep -a 'FALHA' | head -4 | cut -c1-160 | sed 's/^/            /'
 }
 
-# injeta <id> <marca> <alvo-sql> -> ecoa "" se a suíte fica vermelha COM a marca nos 2 locales
+# injeta <id> <marca> <alvo-sql> -> ecoa CAPTURADA se a suíte fica vermelha COM a marca nos 2
+# locales; senão, o que está errado. Mesma regra do `julga_log`: silêncio é "saiu sem veredito".
 injeta() {
   local id="$1" marca="$2" alvo="$3" loc log m motivo=""
   for loc in C "$utf8"; do
     log="$LOGS_F/$id.$loc.log"
     if roda_suite "$alvo" "$loc" "$log"; then motivo="$motivo [$loc: suite VERDE]"; continue; fi
     m="$(julga_log "$log" "$marca")"
-    [ -z "$m" ] || motivo="$motivo [$loc: $m]"
+    [ "$m" = CERTO ] || motivo="$motivo [$loc: ${m:-o juiz saiu sem veredito}]"
   done
-  printf '%s' "$motivo"
+  printf '%s' "${motivo:-CAPTURADA}"
 }
 
 invalida() { # <id> <descricao> <motivo>
@@ -621,15 +632,30 @@ sabota() { # <id> <descricao> <marca> <expressao-sed>
   if [ -n "$erro" ]; then invalida "$id" "$desc" "sed invalido (${erro:0:60})"; return 0; fi
   if cmp -s "$GERADO" "$copia"; then invalida "$id" "$desc" "padrao nao casou, SQL intacto"; return 0; fi
   motivo="$(injeta "$id" "$marca" "$copia")"
-  if [ -z "$motivo" ]; then
+  if [ "$motivo" = CAPTURADA ]; then
     sab_vermelha
     printf '  \033[32mok\033[0m   [%s] "%s" -> vermelha pelo motivo certo nos 2 locales\n' "$id" "$desc"
   else
     sab_falha
-    printf '  \033[31mFALHA\033[0m [%s] "%s":%s\n' "$id" "$desc" "$motivo"
+    printf '  \033[31mFALHA\033[0m [%s] "%s":%s\n' "$id" "$desc" "${motivo:- [a injecao saiu sem veredito]}"
     mostra_falhas "$LOGS_F/$id.C.log"
   fi
 }
+
+# CONTROLE NEGATIVO DA MORTE SILENCIOSA: a injeção que MORRE sem veredito não é captura. Roda o
+# `sabota` de verdade num subshell, com a `injeta` trocada por uma que morre e os desfechos trocados
+# por códigos de saída: 42 = creditou (o defeito), 43 = recusou (o certo), 44 = nem chegou à decisão
+# (controle vazio). Custo ~0: nem PG, nem suíte. Sem ele, voltar ao "vazio = capturada" passaria por
+# todos os controles acima — eles só veem suítes que TERMINAM. `1s/^/ /` só existe para passar da
+# conferência "o sed mudou o SQL".
+( injeta() { exit 137; }; sab_vermelha() { exit 42; }; sab_falha() { exit 43; }; invalida() { exit 44; }
+  sabota juiz-morte "controle: a injecao morre" "x" "1s/^/ /" ) >/dev/null 2>&1
+rc_morte=$?
+case "$rc_morte" in
+  43) printf '  \033[32mok\033[0m   uma injecao que MORRE sem veredito nao vira captura\n' ;;
+  42) printf '  \033[31mFALHA\033[0m o laco CREDITOU uma injecao que morreu sem veredito\n'; exit 1 ;;
+  *) printf '  \033[31mFALHA\033[0m o controle da morte silenciosa nao chegou a decisao (rc=%s)\n' "$rc_morte"; exit 1 ;;
+esac
 
 # ⚠️ Sabota-se UMA CAMADA POR VEZ, e a ordem abaixo é a lição: a primeira tentativa mirou as
 #    conjunções do ramo VERDE (`AND ... ok = 'true'`, `AND ... marcador = esperado`) e a suíte ficou
@@ -756,12 +782,13 @@ restaura_gerador() {
   exit 1
 }
 
-# entrada_normal <id> <marca> -> ecoa "" se a ENTRADA NORMAL do worktree sai vermelha COM a marca
+# entrada_normal <id> <marca> -> ecoa CAPTURADA se a ENTRADA NORMAL do worktree sai vermelha COM a
+# marca; senão, o que está errado (silêncio é "saiu sem veredito", como no `injeta`)
 entrada_normal() {
   local log="$LOGS_F/$1.entrada.log" m
   if PGPORT_TEST=$((PORT + 1)) bash "$ENTRADA_WT" > "$log" 2>&1; then printf ' [entrada normal: VERDE]'; return; fi
   m="$(julga_log "$log" "$2")"
-  [ -z "$m" ] || printf ' [entrada normal: %s]' "$m"
+  if [ "$m" = CERTO ]; then printf 'CAPTURADA'; else printf ' [entrada normal: %s]' "${m:-o juiz saiu sem veredito}"; fi
 }
 
 # CONTROLES do eixo, na MESMA invocação: sem eles, um worktree que nem gera SQL — ou uma entrada que
@@ -810,17 +837,39 @@ sabota_gerador() { # <id> <descricao> <marca> <expressao-sed-no-gerador>
     restaura_gerador
     invalida "$id" "$desc" "o gerador sabotado nem emite SQL ($(cut -c1-60 "$TMP/wt-gen.err"))"; return 0
   fi
-  motivo="$(injeta "$id" "$marca" "$copia")$(entrada_normal "$id" "$marca")"
+  # Dois juízes, duas palavras conferidas em separado: concatenados num só `$(...)$(...)`, a morte de
+  # um sumia no eco do outro, e o status que sobra é só o do último (parecer Codex 2026-09-14).
+  local inj ent
+  inj="$(injeta "$id" "$marca" "$copia")"
+  ent="$(entrada_normal "$id" "$marca")"
   restaura_gerador
-  if [ -z "$motivo" ]; then
+  if [ "$inj" = CAPTURADA ] && [ "$ent" = CAPTURADA ]; then
     sab_vermelha
     printf '  \033[32mok\033[0m   [%s] "%s" -> vermelha pelo motivo certo (entrada normal + 2 locales)\n' "$id" "$desc"
   else
     sab_falha
+    motivo=""
+    [ "$inj" = CAPTURADA ] || motivo="${inj:- [a injecao saiu sem veredito]}"
+    [ "$ent" = CAPTURADA ] || motivo="$motivo${ent:- [a entrada normal saiu sem veredito]}"
     printf '  \033[31mFALHA\033[0m [%s] "%s":%s\n' "$id" "$desc" "$motivo"
     mostra_falhas "$LOGS_F/$id.entrada.log"
   fi
 }
+
+# O mesmo controle da morte silenciosa, no eixo do GERADOR: a injeção captura e a ENTRADA NORMAL
+# morre sem veredito — o caso que a concatenação escondia. Sem PG e sem gerar SQL (custo ~0);
+# `1s/^/ /` só existe para passar da conferência "o sed mudou o gerador", e a restauração é a de
+# sempre (cópia + cmp + git diff), conferida de novo aqui fora.
+( injeta() { printf 'CAPTURADA'; }; entrada_normal() { exit 137; }; gera_do_worktree() { : > "$1"; }
+  sab_vermelha() { exit 42; }; sab_falha() { exit 43; }; invalida() { exit 44; }
+  sabota_gerador juiz-morte-ger "controle: a entrada normal morre" "x" "1s/^/ /" ) >/dev/null 2>&1
+rc_morte=$?
+restaura_gerador
+case "$rc_morte" in
+  43) printf '  \033[32mok\033[0m   uma entrada normal que MORRE sem veredito nao vira captura\n' ;;
+  42) printf '  \033[31mFALHA\033[0m o laco CREDITOU uma sabotagem de gerador com a entrada normal morta\n'; exit 1 ;;
+  *) printf '  \033[31mFALHA\033[0m o controle da morte silenciosa do gerador nao chegou a decisao (rc=%s)\n' "$rc_morte"; exit 1 ;;
+esac
 
 # A MESMA mutação que ficou verde sob o #2405, agora no gerador: se o modo normal voltar a julgar um
 # retrato (da main, de um commit, de um arquivo commitado), a ENTRADA NORMAL fica VERDE e isto reprova.

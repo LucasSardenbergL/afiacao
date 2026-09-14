@@ -296,6 +296,13 @@ fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 3 vermelhas/0 f
 exec_exige "recibo MALFORMADO (o emissor mudou sem o runner saber) REPROVA" "válidos=0" \
   env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
 
+# Um VÁLIDO e um MALFORMADO: só a contagem de LINHAS vê. Os dois casos acima reprovam também pela
+# contagem de válidos, então a guarda `n_linhas != 1` podia sumir do runner sem nada ficar vermelho
+# (parecer Codex 2026-09-14 — a camada do runner que não tinha caso).
+fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 0 vermelhas/3 falhas"; echo "SABOTAGENS: 3 vermelhas / 0 falhas"; exit 0'
+exec_exige "um recibo VÁLIDO e outro MALFORMADO REPROVA (conta as linhas, não só as válidas)" "recibos=2 (válidos=1)" \
+  env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
 fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 2 vermelhas / 0 falhas"; exit 0'
 exec_exige "falsificação ENCOLHIDA (2 < 3) REPROVA" "a falsificação encolheu" \
   env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci.sh"
@@ -343,10 +350,12 @@ echo
 echo "=================================================="
 for f in ${FALHAS[@]+"${FALHAS[@]}"}; do echo "  ❌ $f"; done
 echo "FALSIFICACAO: OK=$OK XX=$XX"
-# Piso de casos: este harness roda no CI (job `provas-sql`), e `[ "$XX" -eq 0 ]` sozinho aprovaria
-# um harness TRUNCADO — OK=0 XX=0 sai 0. Mesma lógica do mínimo de asserts do manifesto: tirar
-# caso reprova até alguém baixar o número aqui, e aí a perda de cobertura fica no diff.
-OK_MINIMO=33
+# Piso de casos, para quem roda à mão: `[ "$XX" -eq 0 ]` sozinho aprovaria caso REMOVIDO — OK
+# baixo, XX=0, sai 0. Tirar caso reprova até alguém baixar o número aqui, e a perda fica no diff.
+# Mas este piso mora no arquivo que ele vigia: um harness TRUNCADO perde o piso junto e sai 0
+# (parecer Codex 2026-09-14). No CI quem decide é o step do `provas-sql`, que confere o recibo
+# acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
+OK_MINIMO=34
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi
