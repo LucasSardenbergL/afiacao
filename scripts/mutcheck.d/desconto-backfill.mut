@@ -149,5 +149,5 @@ PEGA | portão: o total passa à frente da exclusão explícita  | s~if \(exclui
 # Uma lista malformada lida como "sem exclusão" escreveria justamente o que o operador pediu para segurar.
 PEGA | excluir_ids: não-array vira exclusão vazia          | s~if \(!Array\.isArray\(raw\)\) return \{ ok: false, erro~if (!Array.isArray(raw)) return { ok: true, ids: new Set() }; if (false) return { ok: false, erro~
 PEGA | excluir_ids: elemento que não é uuid passa           | s~if \(!FORMA_UUID\.test\(s\)\) \{~if (false) {~
-PEGA | excluir_ids: teto de 1000 ignorado                    | s~if \(raw\.length > EXCLUIR_IDS_MAX\) \{~if (false) {~
+PEGA | excluir_ids: teto de 1000 vira um milhão     | s~if \(raw\.length > EXCLUIR_IDS_MAX\) \{~if (raw.length > EXCLUIR_IDS_MAX * 1000) {~
 PEGA | excluir_ids: sem normalização para minúsculas         | s~v\.trim\(\)\.toLowerCase\(\)~v.trim()~
