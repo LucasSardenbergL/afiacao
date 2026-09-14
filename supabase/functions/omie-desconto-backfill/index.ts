@@ -26,6 +26,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
 import {
+  type CausaNaoClassificada,
   conciliarDescontosPedido,
   conferirTotalPedido,
   type ConferenciaTotalPedido,
@@ -34,6 +35,7 @@ import {
   type MotivoRecusa,
   pedidoNaJanela,
   registrarNaAmostra,
+  somarRetornoEscrita,
 } from "../_shared/desconto-backfill.ts";
 import { avaliarPagina, MAX_PAGINAS_PEDIDOS, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 // `fetchAll` porque o PostgREST capa em 1.000 linhas em SILÊNCIO: uma leitura truncada aqui
@@ -185,7 +187,18 @@ Deno.serve(async (req) => {
       recusa_leitura_recusada: 0,
       escrita_pedida: 0,
       escrita_aplicada: 0,
+      // `recusadas` da RPC são DOIS fatos com consertos opostos, e cada um tem o seu contador: a
+      // base mudou desde a leitura (reler o Omie), ou a linha JÁ tinha desconto — outro writer ou
+      // um run anterior ganhou a corrida (nada a fazer). Até a v1.3 tudo caía em `base_mudou`.
+      // Retorno sem `ja_apuradas` legível não é repartido: vai inteiro para `nao_classificada`, e a
+      // causa para `diagnostico.escrita_retornos_nao_classificados`. Ver `lerRetornoEscrita`.
+      // As escritas fecham: escrita_pedida = aplicada + recusada_base_mudou + recusada_ja_apurada
+      //                                      + recusada_nao_classificada + linhas_em_pedido_incoerente.
+      // (Não confundir com `ja_apuradas_puladas`: aquela é contagem da LEITURA que monta o plano;
+      // esta é o que a RPC encontrou já gravado na hora da ESCRITA.)
       escrita_recusada_base_mudou: 0,
+      escrita_recusada_ja_apurada: 0,
+      escrita_recusada_nao_classificada: 0,
       // Conta LINHAS, não pedidos — o retry é por linha. O nome anterior mentia na unidade.
       linhas_em_pedido_incoerente: 0,
       // Os dois `continue` do laço de pedidos descartavam pedido SEM contar. Com eles, os pedidos
@@ -218,6 +231,14 @@ Deno.serve(async (req) => {
       // Conferência de cada pedido conciliado contra `total_pedido.valor_descontos` do Omie.
       pedidos_total: { confere: 0, diverge: 0, sem_total: 0, item_ilegivel: 0 } as Record<ConferenciaTotalPedido, number>,
       pedidos_com_desconto_no_total: 0,
+      // Chamadas da RPC cujo retorno não deu para repartir, por causa (v1.4). É o sinal que aparece
+      // mesmo sem recusa nenhuma: a RPC deste ambiente não fala o contrato que a edge espera.
+      // `satisfies`, e não `as`: causa nova sem contador aqui não compila.
+      escrita_retornos_nao_classificados: {
+        ja_apuradas_ausente: 0,
+        ja_apuradas_ilegivel: 0,
+        ja_apuradas_excede_recusadas: 0,
+      } satisfies Record<CausaNaoClassificada, number>,
     };
     const amostraPositivas: Array<Record<string, unknown> & { combinacao: string }> = [];
     const amostraDivergencias: Array<Record<string, unknown>> = [];
@@ -235,6 +256,12 @@ Deno.serve(async (req) => {
     let pendentes: Array<{ id: string; desconto_valor: number; base_quantity: number | string | null; base_unit_price: number | string | null; base_sku: number | string | null }> = [];
     let pedidosNoLote = 0;
 
+    /** A MESMA soma nos dois caminhos — o lote e o retry linha a linha —, porque o rótulo que ela
+     *  conserta estava duplicado nos dois. A soma, e o retorno que ela recusa (lança), moram em
+     *  `somarRetornoEscrita`, que tem suíte; que os dois caminhos chamem ESTA função, a suíte não vê. */
+    const contabilizarEscrita = (retorno: unknown, enviadas: number) =>
+      somarRetornoEscrita(contagem, diagnostico.escrita_retornos_nao_classificados, retorno, enviadas);
+
     /** Escreve um lote. Se a trigger DEFERRED de coerência derrubar o COMMIT por causa de um
      *  pedido que JÁ estava incoerente, refaz linha a linha para não perder o lote inteiro por
      *  causa de um vizinho — e conta os que realmente falham, em vez de engolir. */
@@ -243,9 +270,7 @@ Deno.serve(async (req) => {
       contagem.escrita_pedida += linhas.length;
       const { data, error } = await db.rpc("desconto_backfill_aplicar", { p_linhas: linhas });
       if (!error) {
-        const r = data as { aplicadas?: number; recusadas?: number } | null;
-        contagem.escrita_aplicada += Number(r?.aplicadas ?? 0);
-        contagem.escrita_recusada_base_mudou += Number(r?.recusadas ?? 0);
+        contabilizarEscrita(data, linhas.length);
         return;
       }
       // `.rpc()` NÃO lança — resolve `{error}`. Sem este ramo, um lote inteiro falharia em
@@ -264,9 +289,7 @@ Deno.serve(async (req) => {
           contagem.linhas_em_pedido_incoerente++;
           continue;
         }
-        const r1 = d1 as { aplicadas?: number; recusadas?: number } | null;
-        contagem.escrita_aplicada += Number(r1?.aplicadas ?? 0);
-        contagem.escrita_recusada_base_mudou += Number(r1?.recusadas ?? 0);
+        contabilizarEscrita(d1, 1);
       }
     }
 
@@ -512,7 +535,9 @@ Deno.serve(async (req) => {
     );
   } catch (e) {
     // Fail-LOUD: o backfill errado é o que devolve 200 tendo apurado pouco. Erro vira 500 com a
-    // mensagem, para que o cron não registre sucesso.
+    // mensagem. ⚠️ Chamada via `net.http_post` não "registra sucesso" pelo status: o
+    // `cron.job_run_details = succeeded` só prova o ENQUEUE, e a falha mora em `net._http_response`
+    // — é lá que se olha (docs/agent/sync.md; apontado pelo Codex).
     return new Response(JSON.stringify({ versao: VERSAO, error: String(e instanceof Error ? e.message : e) }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

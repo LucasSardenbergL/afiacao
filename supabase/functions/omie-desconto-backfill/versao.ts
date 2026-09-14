@@ -4,9 +4,18 @@
 // Esta edge nasce COM sensor: cada execução devolve o denominador (alvos, apurados, e as recusas
 // por motivo) e o `cursor` de onde parou. "Rodou e não deu erro" não é sinal de nada aqui — o
 // modo de falha característico do backfill é apurar POUCO e parecer bem-sucedido.
-export const VERSAO = "v1.3-sensor-do-valor-plano-por-id-escrita-na-janela";
+export const VERSAO = "v1.4-recusas-da-escrita-por-motivo";
 
-// v1.3 — a resposta passa a dizer DE ONDE saiu o número apurado, não só quantos: separa o 0 que o
+// v1.4 — as recusas da ESCRITA deixam de ser um número só. `recusadas` da RPC junta a linha cuja
+// base mudou (conserto: reler o Omie) e a que outro writer ou um run anterior já tinha apurado
+// (conserto: nenhum), e a edge somava as duas em `escrita_recusada_base_mudou` nos dois caminhos
+// (lote e retry linha a linha). Agora ela lê `ja_apuradas` — contado certo desde o #2475 — e
+// reparte em `escrita_recusada_base_mudou` e `escrita_recusada_ja_apurada`. Retorno sem
+// `ja_apuradas` legível vai inteiro para `escrita_recusada_nao_classificada`, com a causa em
+// `diagnostico.escrita_retornos_nao_classificados`; retorno sem `aplicadas`/`recusadas` legíveis
+// derruba a execução (HTTP 500) em vez de virar "0 aplicadas".
+
+// v1.3 —a resposta passa a dizer DE ONDE saiu o número apurado, não só quantos: separa o 0 que o
 // Omie informou do 0 que saiu da AUSÊNCIA dos campos de desconto (`diagnostico.zero_por_campos`),
 // confere cada pedido contra o `total_pedido.valor_descontos` do próprio Omie, traz amostra de
 // positivas (um representante por combinação tipo × qtd>1) com o nº do pedido para conferência à
