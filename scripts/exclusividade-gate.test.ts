@@ -20,6 +20,8 @@ import { parse } from 'yaml';
 
 import {
   CORPUS_DIR,
+  RECEITAS,
+  aplicarBumpVersao,
   avaliar,
   bloqueantesOpacos,
   conferirAncoraDaRaiz,
@@ -28,15 +30,19 @@ import {
   fonteDoGate,
   fundirLinhas,
   gatesCandidatos,
+  invocacaoDoCI,
   jobsBloqueantes,
   parseDefeitos,
   primeiraLinhaComCarne,
   resumir,
+  textoDoDever,
+  type Defeito,
   type GateAlvo,
   type LinhaMatriz,
   type Matriz,
 } from './lib/exclusividade';
 import { nomesDeScript } from './gates-frescura-check';
+import { extrairVersao } from './sonda-versao-bump-gate';
 
 const linha = (over: Partial<LinhaMatriz> = {}): LinhaMatriz => ({
   defeito: 'd1',
@@ -97,6 +103,312 @@ describe('parseDefeitos', () => {
     const [c] = parseDefeitos('id | x.ts | s/1/3/', 'x.def');
     expect(fingerprintDefeito(a)).toBe(fingerprintDefeito(b));
     expect(fingerprintDefeito(a)).not.toBe(fingerprintDefeito(c));
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// @dever-de-casa — o formato passa a expressar o autor DILIGENTE (defeito + o conserto que o
+// proprio gate concorrente prescreve), por VOCABULARIO FECHADO, nunca por comando livre
+// ---------------------------------------------------------------------------------------------
+
+describe('parseDefeitos — @dever-de-casa', () => {
+  const EDGE = 'supabase/functions/fin-funding/index.ts';
+
+  // A assimetria com @suspeito e o ponto: herdado por engano, um dever de casa neutralizaria os
+  // gates de bytes num defeito que nao o pediu — exclusividade INFLADA, o erro caro.
+  it('vale SO para a PROXIMA linha de defeito — nao e pegajoso como @suspeito', () => {
+    const d = parseDefeitos(
+      ['# @suspeito: g', '# @dever-de-casa: regenerar-fingerprints', `a | ${EDGE} | s/1/2/`, `b | ${EDGE} | s/3/4/`].join('\n'),
+      'x.def',
+    );
+    expect(d.map((x) => x.deveres.map(textoDoDever))).toEqual([['regenerar-fingerprints'], []]);
+    expect(d.map((x) => x.suspeito)).toEqual(['g', 'g']);
+  });
+
+  it('varios @dever-de-casa acumulam EM ORDEM para a mesma linha', () => {
+    const [d] = parseDefeitos(
+      ['# @dever-de-casa: bump-versao fin-funding', '# @origem: o', '# @dever-de-casa: regenerar-fingerprints', `a | ${EDGE} | s/1/2/`].join('\n'),
+      'x.def',
+    );
+    expect(d.deveres.map(textoDoDever)).toEqual(['bump-versao fin-funding', 'regenerar-fingerprints']);
+  });
+
+  it('@dever-de-casa pendurado no fim do arquivo e ERRO — dever que nao se aplica a nada', () => {
+    expect(() => parseDefeitos(`a | ${EDGE} | s/1/2/\n# @dever-de-casa: regenerar-fingerprints`, 'x.def')).toThrow(
+      /DEVER-DE-CASA-PENDURADO/,
+    );
+  });
+
+  // Comando livre era a porta para FABRICAR exclusividade: um "pos-passo" que silencia o script de
+  // um concorrente, deixa o alvo intacto e sai 0 passa por qualquer guarda de efeito. Fora do
+  // vocabulario, nem parseia.
+  it('receita fora do vocabulario e ERRO — nao existe "rode este comando"', () => {
+    expect(() => parseDefeitos(`# @dever-de-casa: sh -c 'rm scripts/gate.ts'\na | ${EDGE} | s/1/2/`, 'x.def')).toThrow(
+      /DEVER-DE-CASA-INVALIDO/,
+    );
+  });
+
+  it('aridade errada e ERRO', () => {
+    expect(() => parseDefeitos(`# @dever-de-casa: bump-versao\na | ${EDGE} | s/1/2/`, 'x.def')).toThrow(/DEVER-DE-CASA-INVALIDO/);
+    expect(() => parseDefeitos(`# @dever-de-casa: regenerar-fingerprints x\na | ${EDGE} | s/1/2/`, 'x.def')).toThrow(
+      /DEVER-DE-CASA-INVALIDO/,
+    );
+  });
+
+  // A receita so e dever de casa DO DEFEITO se o defeito esta no dominio do gate que a prescreve.
+  // Bumpar o VERSAO de outra edge, ou regenerar o mapa para um defeito fora das edges, seria usar a
+  // receita como alavanca para calar gate que nao tinha nada a ver com o defeito.
+  it('receita fora do dominio do alvo e ERRO', () => {
+    expect(() => parseDefeitos(`# @dever-de-casa: bump-versao outra-edge\na | ${EDGE} | s/1/2/`, 'x.def')).toThrow(
+      /DEVER-DE-CASA-INVALIDO/,
+    );
+    expect(() => parseDefeitos('# @dever-de-casa: regenerar-fingerprints\na | docs/x.md | s/1/2/', 'x.def')).toThrow(
+      /DEVER-DE-CASA-INVALIDO/,
+    );
+    expect(() => parseDefeitos('# @dever-de-casa: bump-versao ../../etc\na | x.ts | s/1/2/', 'x.def')).toThrow(
+      /DEVER-DE-CASA-INVALIDO/,
+    );
+  });
+
+  // Trava a formula antiga por VALOR: se o dever de casa entrasse no hash de todo defeito, as linhas
+  // ja medidas da matriz mudariam de fingerprint sem que nada nelas tivesse mudado.
+  it('defeito SEM dever de casa mantem o fingerprint de antes (as linhas medidas nao apodrecem)', () => {
+    const [d] = parseDefeitos('id | x.ts | s/1/2/', 'x.def');
+    expect(fingerprintDefeito(d)).toBe('f3581e1ab9529d2c');
+  });
+
+  it('o fingerprint muda com o dever de casa — outro fluxo e outra medicao', () => {
+    const [a] = parseDefeitos(`# @dever-de-casa: regenerar-fingerprints\nid | ${EDGE} | s/1/2/`, 'x.def');
+    const [b] = parseDefeitos(`# @dever-de-casa: bump-versao fin-funding\nid | ${EDGE} | s/1/2/`, 'x.def');
+    const [c] = parseDefeitos(`id | ${EDGE} | s/1/2/`, 'x.def');
+    expect(new Set([fingerprintDefeito(a), fingerprintDefeito(b), fingerprintDefeito(c)]).size).toBe(3);
+  });
+});
+
+describe('RECEITAS — o criterio de admissao no vocabulario', () => {
+  // Uma receita so entra se for o conserto que o PROPRIO gate concorrente prescreve na mensagem de
+  // falha dele. E o que separa "o autor fez o dever de casa" de "o autor calou o gate": a
+  // neutralizacao e exatamente a que o gate desenhou para aceitar. Se o gate parar de prescrever,
+  // a receita perde o direito de existir — e este teste fica vermelho.
+  it('cada receita e prescrita, LITERALMENTE, pela fonte do gate que ela satisfaz', () => {
+    const nomes = Object.keys(RECEITAS);
+    expect(nomes.length, 'anti-vacuo').toBeGreaterThanOrEqual(2);
+    for (const nome of nomes) {
+      const { gate, fonte, remedio } = RECEITAS[nome as keyof typeof RECEITAS].prescritaPor;
+      expect(readFileSync(fonte, 'utf8'), `${nome}: ${fonte} nao prescreve mais "${remedio}" (${gate})`).toContain(remedio);
+    }
+  });
+});
+
+describe('aplicarBumpVersao', () => {
+  const versao = ['// comenta o `export const VERSAO = "antigo"` de outrora', 'export const VERSAO = "v1.0-x";', 'export const EFEITO = 1;'].join('\n');
+
+  it('muda SO o literal do export — o sonda:bump le o VERSAO novo', () => {
+    const r = aplicarBumpVersao(versao);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.de).toBe('v1.0-x');
+    expect(r.para).not.toBe('v1.0-x');
+    expect(extrairVersao(r.novo)).toBe(r.para);
+    const antes = versao.split('\n');
+    const depois = r.novo.split('\n');
+    expect(depois.filter((l, i) => l !== antes[i]), 'exatamente 1 linha mudou').toHaveLength(1);
+    expect(depois[0], 'o comentario que cita VERSAO fica intocado').toBe(antes[0]);
+  });
+
+  it('sem export legivel, ou com dois, e recusado — nunca um bump chutado', () => {
+    expect(aplicarBumpVersao('export const EFEITO = 1;').ok).toBe(false);
+    expect(aplicarBumpVersao('export const VERSAO = "a";\nexport const VERSAO = "b";').ok).toBe(false);
+  });
+});
+
+describe('fundirLinhas — so funde a MESMA sabotagem, medida validamente dos dois lados', () => {
+  it('fingerprint do defeito diferente: a linha nova SUBSTITUI (execucoes de outra sabotagem nao valem)', () => {
+    const antiga = linha({ defeitoFingerprint: 'AAA', execucoes: [exec('g1', false), exec('g2', true)] });
+    const nova = linha({ defeitoFingerprint: 'BBB', execucoes: [exec('g1', true)] });
+    expect(fundirLinhas(antiga, nova).execucoes.map((e) => e.gate)).toEqual(['g1']);
+  });
+
+  it('linha antiga INVALIDA nao ressuscita execucao', () => {
+    const antiga = linha({ execucoes: [exec('g2', false)], invalido: 'gate g3 estourou o tempo' });
+    const nova = linha({ execucoes: [exec('g1', true)] });
+    expect(fundirLinhas(antiga, nova)).toEqual(nova);
+  });
+
+  it('linha nova INVALIDA descarta a antiga — o defeito nao se aplica mais como foi medido', () => {
+    const antiga = linha({ execucoes: [exec('g1', true)] });
+    const nova = linha({ execucoes: [], invalido: 'a expressao perl NAO casou nada' });
+    expect(fundirLinhas(antiga, nova)).toEqual(nova);
+  });
+});
+
+describe('derivar — CERTIFICAR exclusivo exige o universo inteiro executado', () => {
+  const universo = ['g1', 'g2', 'g3'];
+
+  // A fabricacao que estava viva na matriz real: `bun-despinado` rodou 7 de 31 gates, teve 1
+  // vermelho e `parouCedo=false` — e saia `[SO ELE]`. Os outros 24 NAO reprovaram porque nao rodaram.
+  it('linha que nao rodou todo o universo, com 1 vermelho, e INCONCLUSIVA — nao exclusiva', () => {
+    const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', false)] })] });
+    const g1 = derivar(m, { universo }).find((e) => e.gate === 'g1')!;
+    expect(g1.exclusivos).toEqual([]);
+    expect(g1.inconclusivos).toEqual(['d1']);
+    expect(g1.pegou).toEqual(['d1']);
+  });
+
+  it('com o universo inteiro executado, 1 vermelho CERTIFICA', () => {
+    const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', false), exec('g3', false)] })] });
+    expect(derivar(m, { universo }).find((e) => e.gate === 'g1')!.exclusivos).toEqual(['d1']);
+  });
+
+  // `tsc` na matriz real: o motor rodava `bun run tsc` (no-op) e o CI roda `bunx tsc -p ...`. A
+  // execucao de invocacao diferente nao e evidencia sobre o gate — nem verde, nem vermelho.
+  it('execucao com invocacao diferente da do CI NAO conta (nem para completude, nem para pegou)', () => {
+    const assinaturas = new Map([
+      ['g1', 'bun run g1'],
+      ['g2', 'bun run g2'],
+      ['g3', 'bunx g3 -p cfg'],
+    ]);
+    const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', false), exec('g3', false)] })] });
+    const d = derivar(m, { universo, assinaturas });
+    expect(d.find((e) => e.gate === 'g1')!.exclusivos, 'g3 nao rodou o que o CI roda').toEqual([]);
+    expect(d.find((e) => e.gate === 'g3')!.rodou).toEqual([]);
+    expect(d.find((e) => e.gate === 'g3')!.naoMedido).toEqual(['d1']);
+  });
+
+  it('execucao que gravou a invocacao do CI conta', () => {
+    const assinaturas = new Map([['g1', 'bun run g1'], ['g2', 'bun run g2'], ['g3', 'bunx g3 -p cfg']]);
+    const e3 = { ...exec('g3', false), invocacao: 'bunx g3 -p cfg' };
+    const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', false), e3] })] });
+    expect(derivar(m, { universo, assinaturas }).find((e) => e.gate === 'g1')!.exclusivos).toEqual(['d1']);
+  });
+
+  it('rodou lista so as linhas VALIDAS em que o gate foi executado', () => {
+    const m = matriz({
+      linhas: [
+        linha({ defeito: 'd1', execucoes: [exec('g1', false)] }),
+        linha({ defeito: 'd2', execucoes: [exec('g1', true)], invalido: 'x' }),
+        linha({ defeito: 'd3', execucoes: [exec('g2', true)], parouCedo: true }),
+      ],
+    });
+    const g1 = derivar(m).find((e) => e.gate === 'g1')!;
+    expect(g1.rodou).toEqual(['d1']);
+    expect(g1.naoMedido).toEqual(['d2', 'd3']);
+  });
+
+  it('corpusMirou exige a linha que mira VALIDA — mira em linha invalida nao mediu nada', () => {
+    const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [], invalido: 'perl falhou' })] });
+    expect(derivar(m).find((e) => e.gate === 'g1')!.corpusMirou).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Paridade de invocacao — o motor roda O QUE O CI RODA, nao `bun run <nome>` cru
+// ---------------------------------------------------------------------------------------------
+
+describe('invocacaoDoCI', () => {
+  const yml = (steps: string) => `jobs:\n  j:\n    steps:\n${steps}\n  validate:\n    needs: [j]`;
+  const passo = (run: string, extra = '') => `      - name: s\n        run: ${run}${extra}`;
+
+  it('`bun run <nome>` cru devolve o argv cru, sem env', () => {
+    expect(invocacaoDoCI(yml(passo('bun run g1')), 'g1')).toEqual({ ok: true, argv: ['bun', 'run', 'g1'], env: {} });
+  });
+
+  // O defeito (1) inteiro: sem o `--gate`, `sonda-cron-prova.ts` e o modo BACKFILL, que regrava
+  // o manifesto e suja a arvore para todo gate seguinte.
+  it('carrega os argumentos do CI (`-- --gate`)', () => {
+    expect(invocacaoDoCI(yml(passo('bun run g1 -- --gate')), 'g1')).toEqual({
+      ok: true,
+      argv: ['bun', 'run', 'g1', '--', '--gate'],
+      env: {},
+    });
+  });
+
+  // `bun run tsc` cru (sem script `tsc`) roda o binario contra o tsconfig raiz, `files: []`: no-op.
+  it('forma `bunx <bin> <args>` — o tsc do CI', () => {
+    const r = invocacaoDoCI(yml(passo('bunx tsc --noEmit -p tsconfig.app.json')), 'tsc');
+    expect(r).toEqual({ ok: true, argv: ['bunx', 'tsc', '--noEmit', '-p', 'tsconfig.app.json'], env: {} });
+  });
+
+  it('forma `bun <script>` — o lint do CI', () => {
+    expect(invocacaoDoCI(yml(passo('bun lint')), 'lint')).toEqual({ ok: true, argv: ['bun', 'lint'], env: {} });
+  });
+
+  // Recortar o comando simples de dentro de um step composto perderia o que o compoe: `cd sub;
+  // bun run g1` perde o diretorio, `bun run g1 || true` perde o fato de o step NUNCA reprovar. O
+  // status do step pertence ao step inteiro — logo so um `run:` que E um comando simples e medivel.
+  it('step COMPOSTO (separador, redirecionamento, comentario, multilinha) e NAO REPRODUZIVEL', () => {
+    for (const run of ["'cd sub; bun run g1'", "'bun run g1 || true'", "'bun run g1 | tee o'", "'bun run g1 # nota'", '|\n          set -e\n          bun run g1']) {
+      const r = invocacaoDoCI(yml(passo(run)), 'g1');
+      expect(r.ok, run).toBe(false);
+      expect(!r.ok && r.motivo, run).toMatch(/NAO-REPRODUZIVEL/);
+    }
+  });
+
+  it('working-directory muda o que roda — NAO REPRODUZIVEL', () => {
+    const r = invocacaoDoCI(yml(passo('bun run g1', '\n        working-directory: sub')), 'g1');
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.motivo).toMatch(/NAO-REPRODUZIVEL/);
+  });
+
+  it('env LITERAL do step entra na invocacao', () => {
+    const r = invocacaoDoCI(yml(passo('bun run g1', '\n        env:\n          NODE_ENV: production')), 'g1');
+    expect(r).toEqual({ ok: true, argv: ['bun', 'run', 'g1'], env: { NODE_ENV: 'production' } });
+  });
+
+  // Fail-closed: o motor nao tem o contexto do GitHub. Adivinhar o valor seria medir OUTRO comando
+  // e chamar o resultado de medicao do gate — o mesmo defeito (1), por outro caminho.
+  it('env com expressao `${{ }}` e NAO REPRODUZIVEL', () => {
+    const r = invocacaoDoCI(yml(passo('bun run g1', '\n        env:\n          T: ${{ secrets.X }}')), 'g1');
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.motivo).toMatch(/NAO-REPRODUZIVEL/);
+  });
+
+  it('token com aspas, $VAR ou glob e NAO REPRODUZIVEL (nunca um palpite)', () => {
+    for (const run of ['bun run g1 -- "a b"', 'bun run g1 -- $X', 'bun run g1 -- src/*.ts']) {
+      const r = invocacaoDoCI(yml(passo(`'${run}'`)), 'g1');
+      expect(r.ok, run).toBe(false);
+      expect(!r.ok && r.motivo, run).toMatch(/NAO-REPRODUZIVEL/);
+    }
+  });
+
+  it('o mesmo gate com invocacoes DIFERENTES em dois steps e AMBIGUO', () => {
+    const r = invocacaoDoCI(yml(`${passo('bun run g1')}\n${passo('bun run g1 -- --x')}`), 'g1');
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.motivo).toMatch(/AMBIGUA/);
+  });
+
+  it('step informativo (continue-on-error) nao conta como invocacao do gate', () => {
+    const y = yml(`${passo('bun run g1')}\n      - name: aviso\n        continue-on-error: true\n        run: bun run g1 -- --x`);
+    expect(invocacaoDoCI(y, 'g1')).toEqual({ ok: true, argv: ['bun', 'run', 'g1'], env: {} });
+  });
+
+  it('gate que o ci.yml nao invoca devolve erro, nao o argv cru inventado', () => {
+    const r = invocacaoDoCI(yml(passo('bun run g1')), 'outro');
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.motivo).toMatch(/SEM-INVOCACAO/);
+  });
+
+  describe('o ci.yml de VERDADE', () => {
+    const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
+    const bloqueantes = gatesCandidatos(ci).filter((g) => g.bloqueiaPR);
+
+    it('todo gate bloqueante tem invocacao reproduzivel', () => {
+      expect(bloqueantes.length, 'anti-vacuo: o censo tem de ter achado gates').toBeGreaterThan(20);
+      for (const g of bloqueantes) {
+        const r = invocacaoDoCI(ci, g.nome);
+        expect(r.ok, `${g.nome}: ${!r.ok ? r.motivo : ''}`).toBe(true);
+      }
+    });
+
+    // Os tres casos que o motor media ERRADO antes desta entrega, cada um pelo seu motivo.
+    it('sonda:cron-prova leva --gate, tsc leva -p tsconfig.app.json, build leva NODE_ENV', () => {
+      const cron = invocacaoDoCI(ci, 'sonda:cron-prova');
+      const tsc = invocacaoDoCI(ci, 'tsc');
+      const build = invocacaoDoCI(ci, 'build');
+      expect(cron.ok && cron.argv).toContain('--gate');
+      expect(tsc.ok && tsc.argv.join(' ')).toMatch(/^bunx tsc .*-p tsconfig\.app\.json/);
+      expect(build.ok && build.env).toEqual({ NODE_ENV: 'production' });
+    });
   });
 });
 
@@ -430,13 +742,18 @@ describe('fundirLinhas — medicao parcial nao pode APAGAR medicao anterior', ()
     expect(fundirLinhas(undefined, nova)).toEqual(nova);
   });
 
+  // Duas camadas contra o mesmo exclusivo fabricado. A fusao preserva o CO-PEGADOR medido antes
+  // (a linha tem 2 vermelhos: refutada). Sem a fusao, a linha parcial deixa g2 DESCONHECIDO — e a
+  // exigencia de universo completo (G) a rebaixa para INCONCLUSIVA em vez de certificar.
   it('a fusao de fato IMPEDE o exclusivo fabricado (o cenario completo)', () => {
     const antiga = linha({ suspeito: 'g1', execucoes: [exec('g1', true), exec('g2', true)] });
     const parcial = linha({ suspeito: 'g1', execucoes: [exec('g1', true)] });
-    const semFusao = matriz({ linhas: [parcial] });
-    const comFusao = matriz({ linhas: [fundirLinhas(antiga, parcial)] });
-    expect(derivar(semFusao).find((e) => e.gate === 'g1')!.exclusivos, 'sem fusao, fabrica').toEqual(['d1']);
-    expect(derivar(comFusao).find((e) => e.gate === 'g1')!.exclusivos, 'com fusao, nao fabrica').toEqual([]);
+    const semFusao = derivar(matriz({ linhas: [parcial] })).find((e) => e.gate === 'g1')!;
+    const comFusao = derivar(matriz({ linhas: [fundirLinhas(antiga, parcial)] })).find((e) => e.gate === 'g1')!;
+    expect(semFusao.exclusivos, 'sem fusao: g2 desconhecido, nao certifica').toEqual([]);
+    expect(semFusao.inconclusivos, 'sem fusao: e o que a linha parcial sabe dizer').toEqual(['d1']);
+    expect(comFusao.exclusivos, 'com fusao: o co-pegador volta').toEqual([]);
+    expect(comFusao.inconclusivos, 'com fusao: 2 vermelhos refutam, nao e inconclusivo').toEqual([]);
   });
 });
 
@@ -458,6 +775,29 @@ describe('avaliar — severidade', () => {
     expect(v.find((x) => x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE')!.severidade).toBe('REPROVA');
   });
 
+  // O defeito (2), na forma exata da matriz real de 2026-09-10: a poda parou no 2o vermelho e o
+  // suspeito nunca rodou. `naoMedido` e a lista de onde ele NAO rodou — contar isso como medicao
+  // aprovava o gate por ausencia de dado. O teste acima nao pega isso: sem linha nenhuma, a formula
+  // velha e a nova concordam.
+  it('gate que so aparece como NAO RODADO (podado) reprova — ausencia de execucao nao e medicao', () => {
+    const m = matriz({ linhas: [linha({ suspeito: 'g2', execucoes: [exec('g1', true)], parouCedo: true })] });
+    const v = avaliar(m, [g('g1'), g('g2')], fp).find((x) => x.gate === 'g2' && x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE');
+    expect(v?.severidade).toBe('REPROVA');
+    expect(v?.motivo).toMatch(/NUNCA EXECUTADO/);
+  });
+
+  it('gate executado so em linha INVALIDA reprova — a linha invalida nao mediu nada', () => {
+    const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', true)], invalido: 'gate g3 estourou' })] });
+    const codigos = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
+    expect(codigos).toContain('GATE_NOVO_SEM_EXCLUSIVIDADE');
+  });
+
+  it('gate EXECUTADO em linha valida conta como medido, mesmo verde — o preco e rodar, nao pegar', () => {
+    const m = matriz({ linhas: [linha({ execucoes: [exec('g1', false), exec('g2', true)] })] });
+    const codigos = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
+    expect(codigos).not.toContain('GATE_NOVO_SEM_EXCLUSIVIDADE');
+  });
+
   it('gate na lista de dispensados nao reprova — divida DECLARADA, visivel no diff', () => {
     const m = matriz({ dispensados: [{ gate: 'novo', desde: '2026-09-07', motivo: 'pre-existente' }] });
     expect(avaliar(m, [g('novo')], new Map()).filter((v) => v.severidade === 'REPROVA')).toEqual([]);
@@ -470,17 +810,20 @@ describe('avaliar — severidade', () => {
   // Fabricacao no 3, e a mais cara: e a correcao no 1 do parecer do Codex. Corpus curto nao mede
   // gate raro; `docs:links` tem dez achados no proprio historico e mesmo assim nao apareceu numa
   // janela de 80 runs. Exclusividade zero INFORMA, nunca bloqueia.
+  // O universo de `avaliar` sao os gates bloqueantes do ci.yml de HOJE — por isso os dois gates da
+  // linha entram como candidatos: um g2 fora da lista seria um gate que nao existe mais, e ai g1
+  // seria, corretamente, o unico que pega.
   it('exclusividade zero RELATA — jamais reprova', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const v = avaliar(m, [g('g1')], fp);
-    const zero = v.find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO')!;
+    const v = avaliar(m, [g('g1'), g('g2')], fp);
+    const zero = v.find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO' && x.gate === 'g1')!;
     expect(zero.severidade).toBe('RELATA');
     expect(v.some((x) => x.severidade === 'REPROVA')).toBe(false);
   });
 
   it('o motivo do EXCLUSIVIDADE_ZERO carrega o DENOMINADOR (zero sem N le como "inutil")', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const zero = avaliar(m, [g('g1')], fp).find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO')!;
+    const zero = avaliar(m, [g('g1'), g('g2')], fp).find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO' && x.gate === 'g1')!;
     expect(zero.motivo).toMatch(/de 1 defeito/);
     expect(zero.motivo).toMatch(/NAO e "nao pega nada"/);
   });
@@ -489,10 +832,20 @@ describe('avaliar — severidade', () => {
     const m = matriz({
       linhas: [linha({ suspeito: 'outro', execucoes: [exec('g1', true), exec('g2', true)] })],
     });
-    const v = avaliar(m, [g('g1')], fp);
+    const v = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
     expect(v.map((x) => x.codigo)).toContain('CORPUS_NAO_MIROU');
     expect(v.map((x) => x.codigo)).not.toContain('EXCLUSIVIDADE_ZERO');
     expect(v.find((x) => x.codigo === 'CORPUS_NAO_MIROU')!.motivo).toMatch(/mede o CORPUS, nao o gate/);
+  });
+
+  // "Outro gate tambem pegou" seria FALSO aqui: g2 nao reprovou — nao rodou. O unico vermelho de
+  // uma linha incompleta nao e redundancia medida; e medicao que nao terminou.
+  it('unico vermelho de linha INCOMPLETA relata INCONCLUSIVA, nunca EXCLUSIVIDADE_ZERO', () => {
+    const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [exec('g1', true)] })] });
+    const v = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
+    expect(v.map((x) => x.codigo)).toContain('EXCLUSIVIDADE_INCONCLUSIVA');
+    expect(v.map((x) => x.codigo)).not.toContain('EXCLUSIVIDADE_ZERO');
+    expect(v.find((x) => x.codigo === 'EXCLUSIVIDADE_INCONCLUSIVA')!.severidade).toBe('RELATA');
   });
 
   it('fonte mudada AVISA, nao reprova', () => {
@@ -527,30 +880,47 @@ describe('resumir', () => {
 
 describe('o corpus de verdade', () => {
   const arquivos = readdirSync(CORPUS_DIR).filter((f) => f.endsWith('.def'));
-  const defeitos = arquivos.flatMap((f) => parseDefeitos(readFileSync(`${CORPUS_DIR}/${f}`, 'utf8'), f));
+  // Parse PREGUICOSO, dentro dos testes — nunca na coleta. O parser LANCA (dever de casa invalido ou
+  // pendurado), e um lancamento na coleta derruba o arquivo inteiro com "no tests": os ~100 testes
+  // somem junto com o sinal. Medido na falsificacao de 2026-09-10: rc=1 com ZERO testes executados.
+  let cache: Defeito[] | null = null;
+  const defeitos = (): Defeito[] =>
+    (cache ??= arquivos.flatMap((f) => parseDefeitos(readFileSync(`${CORPUS_DIR}/${f}`, 'utf8'), f)));
+
+  it('o corpus real PARSEIA — nenhum dever de casa invalido ou pendurado', () => {
+    expect(() => defeitos()).not.toThrow();
+  });
 
   // Guarda ANTI-VACUO: um glob que para de casar faria toda assercao abaixo passar por nao achar
   // NADA — verde por ausencia de dado, a mesma familia registrada em ci-testes-edge-deno.md.
   it('o corpus real tem defeitos (o gate nao passa a vazio)', () => {
     expect(arquivos.length).toBeGreaterThanOrEqual(1);
-    expect(defeitos.length).toBeGreaterThanOrEqual(5);
+    expect(defeitos().length).toBeGreaterThanOrEqual(5);
   });
 
   it('todo defeito tem alvo que EXISTE no repo — alvo morto nao mede nada', () => {
-    for (const d of defeitos) {
+    for (const d of defeitos()) {
       expect(readFileSync(d.alvo, 'utf8').length, `${d.id}: alvo ${d.alvo}`).toBeGreaterThan(0);
     }
   });
 
   it('todo id e unico (id repetido sobrescreveria a linha da matriz)', () => {
-    const ids = defeitos.map((d) => d.id);
+    const ids = defeitos().map((d) => d.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('todo defeito declara @suspeito e @origem — o relatorio confronta declarado x medido', () => {
-    for (const d of defeitos) {
+    for (const d of defeitos()) {
       expect(d.suspeito, `${d.id} sem @suspeito`).not.toBeNull();
       expect(d.origem, `${d.id} sem @origem`).not.toBeNull();
     }
+  });
+
+  // O motor executa o suspeito fora da poda. Um nome com typo nao e executado por ninguem, e a
+  // linha "mira" um gate que nao existe — o gate de verdade segue sem mira, calado.
+  it('todo @suspeito nomeia um gate BLOQUEANTE do ci.yml (typo mira o vazio)', () => {
+    const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
+    const nomes = new Set(gatesCandidatos(ci).filter((g) => g.bloqueiaPR).map((g) => g.nome));
+    for (const d of defeitos()) expect(nomes.has(d.suspeito!), `${d.id}: @suspeito ${d.suspeito}`).toBe(true);
   });
 });

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-10T02:01:34.447Z",
-  "sourceHead": "1ebe696fcf7197cbc2e7eeb107d4baf0936f2bdb",
+  "medidoEm": "2026-09-14T14:16:26.663Z",
+  "sourceHead": "d568ba7a246020d5b74727c38f2bb54da98f715f",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -113,57 +113,57 @@
     {
       "gate": "authz:check",
       "verde": true,
-      "ms": 940
+      "ms": 1012
     },
     {
       "gate": "build",
       "verde": true,
-      "ms": 15000
+      "ms": 15751
     },
     {
       "gate": "bunpin:check",
       "verde": true,
-      "ms": 29
+      "ms": 106
     },
     {
       "gate": "canaria:bump",
       "verde": true,
-      "ms": 1728
+      "ms": 1850
     },
     {
       "gate": "claude:size",
       "verde": true,
-      "ms": 32
+      "ms": 35
     },
     {
       "gate": "docs:citacoes",
       "verde": true,
-      "ms": 1222
+      "ms": 1328
     },
     {
       "gate": "docs:indice",
       "verde": true,
-      "ms": 24
+      "ms": 26
     },
     {
       "gate": "docs:links",
       "verde": true,
-      "ms": 263
+      "ms": 292
     },
     {
       "gate": "edges:typecheck",
       "verde": true,
-      "ms": 1194
+      "ms": 1421
     },
     {
       "gate": "evals:deploy-verify",
       "verde": true,
-      "ms": 10545
+      "ms": 18873
     },
     {
       "gate": "evals:deploy-verify:falsificacao",
       "verde": true,
-      "ms": 41494
+      "ms": 84487
     },
     {
       "gate": "exclusividade",
@@ -173,47 +173,47 @@
     {
       "gate": "gate:ambiente",
       "verde": true,
-      "ms": 338
+      "ms": 489
     },
     {
       "gate": "gate:senha-bootstrap",
       "verde": true,
-      "ms": 4174
+      "ms": 4693
     },
     {
       "gate": "gates:frescura",
       "verde": true,
-      "ms": 140
+      "ms": 146
     },
     {
       "gate": "knip",
       "verde": true,
-      "ms": 1759
+      "ms": 2271
     },
     {
       "gate": "lint",
       "verde": true,
-      "ms": 11366
+      "ms": 12869
     },
     {
       "gate": "lint:shell",
       "verde": true,
-      "ms": 11562
+      "ms": 13025
     },
     {
       "gate": "scripts:typecheck",
       "verde": true,
-      "ms": 1419
+      "ms": 1679
     },
     {
       "gate": "sonda:autentica",
       "verde": true,
-      "ms": 76
+      "ms": 143
     },
     {
       "gate": "sonda:bump",
       "verde": true,
-      "ms": 73
+      "ms": 58
     },
     {
       "gate": "sonda:cron-prova",
@@ -223,22 +223,22 @@
     {
       "gate": "sonda:fingerprint",
       "verde": true,
-      "ms": 75
+      "ms": 81
     },
     {
       "gate": "sonda:nova",
       "verde": true,
-      "ms": 72
+      "ms": 73
     },
     {
       "gate": "test",
       "verde": true,
-      "ms": 74504
+      "ms": 150981
     },
     {
       "gate": "test:edges",
       "verde": true,
-      "ms": 3295
+      "ms": 5288
     },
     {
       "gate": "test:falsificacao",
@@ -253,12 +253,12 @@
     {
       "gate": "test:sonda-rollback",
       "verde": true,
-      "ms": 2021
+      "ms": 2757
     },
     {
       "gate": "tsc",
       "verde": true,
-      "ms": 116
+      "ms": 46829
     }
   ],
   "linhas": [
@@ -437,6 +437,380 @@
           "ms": 492,
           "fingerprint": "636086ebfd2abb47",
           "fonteResolvida": true
+        }
+      ],
+      "parouCedo": false,
+      "invalido": null
+    },
+    {
+      "defeito": "diretiva-alias-jest",
+      "defeitoFingerprint": "7873c41834b06672",
+      "alvo": "src/lib/push/device.test.ts",
+      "suspeito": "gate:ambiente",
+      "origem": "2026-09-08, ao registrar `gate:ambiente` no CI (o alias `jest` e o caso 3 do gate)",
+      "execucoes": [
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 110,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:indice"
+        },
+        {
+          "gate": "authz:carimbo",
+          "reprovou": false,
+          "ms": 39,
+          "fingerprint": "11d2e328c4d885e9",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:carimbo"
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 37,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true,
+          "invocacao": "bun run claude:size"
+        },
+        {
+          "gate": "sonda:bump",
+          "reprovou": false,
+          "ms": 78,
+          "fingerprint": "2de9bba9cdbf53ef",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:bump"
+        },
+        {
+          "gate": "sonda:nova",
+          "reprovou": false,
+          "ms": 81,
+          "fingerprint": "d11545e0b59f27b0",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:nova"
+        },
+        {
+          "gate": "sonda:fingerprint",
+          "reprovou": false,
+          "ms": 109,
+          "fingerprint": "12cb3754bacedc00",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:fingerprint"
+        },
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 30,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true,
+          "invocacao": "bun run bunpin:check"
+        },
+        {
+          "gate": "sonda:autentica",
+          "reprovou": false,
+          "ms": 75,
+          "fingerprint": "2140bcc05b344168",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:autentica"
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 175,
+          "fingerprint": "7677bffbe8ca936b",
+          "fonteResolvida": true,
+          "invocacao": "bun run gates:frescura"
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 447,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:links"
+        },
+        {
+          "gate": "gate:ambiente",
+          "reprovou": true,
+          "ms": 480,
+          "fingerprint": "ced901a6da17fb30",
+          "fonteResolvida": true,
+          "invocacao": "bun run gate:ambiente"
+        },
+        {
+          "gate": "authz:check",
+          "reprovou": false,
+          "ms": 1181,
+          "fingerprint": "8b328138809ff4fe",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:check"
+        },
+        {
+          "gate": "docs:citacoes",
+          "reprovou": false,
+          "ms": 1352,
+          "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:citacoes"
+        },
+        {
+          "gate": "edges:typecheck",
+          "reprovou": false,
+          "ms": 1411,
+          "fingerprint": "ec81d1125b24e47b",
+          "fonteResolvida": true,
+          "invocacao": "bun run edges:typecheck"
+        },
+        {
+          "gate": "scripts:typecheck",
+          "reprovou": false,
+          "ms": 1956,
+          "fingerprint": "d64dcfd72ec0beec",
+          "fonteResolvida": false,
+          "invocacao": "bun run scripts:typecheck"
+        },
+        {
+          "gate": "canaria:bump",
+          "reprovou": false,
+          "ms": 1936,
+          "fingerprint": "1daa9407db3b1622",
+          "fonteResolvida": true,
+          "invocacao": "bun run canaria:bump"
+        },
+        {
+          "gate": "knip",
+          "reprovou": true,
+          "ms": 1924,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false,
+          "invocacao": "bunx knip"
+        }
+      ],
+      "parouCedo": true,
+      "invalido": null
+    },
+    {
+      "defeito": "diretiva-em-dobro",
+      "defeitoFingerprint": "d20bd15011c0ea88",
+      "alvo": "src/lib/push/device.test.ts",
+      "suspeito": "gate:ambiente",
+      "origem": "2026-09-08, apos a medicao do `diretiva-alias-jest` mostrar sobreposicao com `knip`",
+      "execucoes": [
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 29,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:indice"
+        },
+        {
+          "gate": "authz:carimbo",
+          "reprovou": false,
+          "ms": 33,
+          "fingerprint": "11d2e328c4d885e9",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:carimbo"
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 34,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true,
+          "invocacao": "bun run claude:size"
+        },
+        {
+          "gate": "sonda:bump",
+          "reprovou": false,
+          "ms": 59,
+          "fingerprint": "2de9bba9cdbf53ef",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:bump"
+        },
+        {
+          "gate": "sonda:nova",
+          "reprovou": false,
+          "ms": 80,
+          "fingerprint": "d11545e0b59f27b0",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:nova"
+        },
+        {
+          "gate": "sonda:fingerprint",
+          "reprovou": false,
+          "ms": 67,
+          "fingerprint": "12cb3754bacedc00",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:fingerprint"
+        },
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 27,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true,
+          "invocacao": "bun run bunpin:check"
+        },
+        {
+          "gate": "sonda:autentica",
+          "reprovou": false,
+          "ms": 72,
+          "fingerprint": "2140bcc05b344168",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:autentica"
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 131,
+          "fingerprint": "7677bffbe8ca936b",
+          "fonteResolvida": true,
+          "invocacao": "bun run gates:frescura"
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 323,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:links"
+        },
+        {
+          "gate": "gate:ambiente",
+          "reprovou": true,
+          "ms": 142,
+          "fingerprint": "ced901a6da17fb30",
+          "fonteResolvida": true,
+          "invocacao": "bun run gate:ambiente"
+        },
+        {
+          "gate": "authz:check",
+          "reprovou": false,
+          "ms": 1073,
+          "fingerprint": "8b328138809ff4fe",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:check"
+        },
+        {
+          "gate": "docs:citacoes",
+          "reprovou": false,
+          "ms": 1287,
+          "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:citacoes"
+        },
+        {
+          "gate": "edges:typecheck",
+          "reprovou": false,
+          "ms": 1060,
+          "fingerprint": "ec81d1125b24e47b",
+          "fonteResolvida": true,
+          "invocacao": "bun run edges:typecheck"
+        },
+        {
+          "gate": "scripts:typecheck",
+          "reprovou": false,
+          "ms": 3548,
+          "fingerprint": "d64dcfd72ec0beec",
+          "fonteResolvida": false,
+          "invocacao": "bun run scripts:typecheck"
+        },
+        {
+          "gate": "canaria:bump",
+          "reprovou": false,
+          "ms": 2077,
+          "fingerprint": "1daa9407db3b1622",
+          "fonteResolvida": true,
+          "invocacao": "bun run canaria:bump"
+        },
+        {
+          "gate": "knip",
+          "reprovou": false,
+          "ms": 2411,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false,
+          "invocacao": "bunx knip"
+        },
+        {
+          "gate": "test:sonda-rollback",
+          "reprovou": false,
+          "ms": 3048,
+          "fingerprint": "e21ad72a31e8e4dc",
+          "fonteResolvida": false,
+          "invocacao": "bun run test:sonda-rollback"
+        },
+        {
+          "gate": "gate:senha-bootstrap",
+          "reprovou": false,
+          "ms": 5481,
+          "fingerprint": "ca1988585cdf3019",
+          "fonteResolvida": true,
+          "invocacao": "bun run gate:senha-bootstrap"
+        },
+        {
+          "gate": "test:edges",
+          "reprovou": false,
+          "ms": 2886,
+          "fingerprint": "b4dbbfe49b60c31a",
+          "fonteResolvida": false,
+          "invocacao": "bun run test:edges"
+        },
+        {
+          "gate": "lint",
+          "reprovou": false,
+          "ms": 15981,
+          "fingerprint": "9a7845d926241f66",
+          "fonteResolvida": false,
+          "invocacao": "bun lint"
+        },
+        {
+          "gate": "lint:shell",
+          "reprovou": false,
+          "ms": 19499,
+          "fingerprint": "77f9d1f412986e5d",
+          "fonteResolvida": true,
+          "invocacao": "bun run lint:shell"
+        },
+        {
+          "gate": "build",
+          "reprovou": false,
+          "ms": 14992,
+          "fingerprint": "1c744850d821f3b0",
+          "fonteResolvida": false,
+          "invocacao": "env{NODE_ENV=production} bun run build"
+        },
+        {
+          "gate": "evals:deploy-verify",
+          "reprovou": false,
+          "ms": 17533,
+          "fingerprint": "d02ebd6166e9bca9",
+          "fonteResolvida": true,
+          "invocacao": "bun run evals:deploy-verify"
+        },
+        {
+          "gate": "tsc",
+          "reprovou": false,
+          "ms": 27451,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false,
+          "invocacao": "bunx tsc --noEmit -p tsconfig.app.json"
+        },
+        {
+          "gate": "evals:deploy-verify:falsificacao",
+          "reprovou": false,
+          "ms": 65373,
+          "fingerprint": "01602c56292247c7",
+          "fonteResolvida": true,
+          "invocacao": "bun run evals:deploy-verify:falsificacao"
+        },
+        {
+          "gate": "test",
+          "reprovou": false,
+          "ms": 90555,
+          "fingerprint": "ad6cd6b8acf39571",
+          "fonteResolvida": false,
+          "invocacao": "bun run test"
         }
       ],
       "parouCedo": false,
@@ -946,11 +1320,12 @@
       "origem": "docs/historico/controle-populacional-nao-prova-a-tentativa.md (a cadeia de 3 elos do controle ativo)",
       "execucoes": [
         {
-          "gate": "docs:indice",
+          "gate": "authz:carimbo",
           "reprovou": false,
-          "ms": 26,
-          "fingerprint": "a41d30136cdb032d",
-          "fonteResolvida": true
+          "ms": 34,
+          "fingerprint": "11d2e328c4d885e9",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:carimbo"
         },
         {
           "gate": "bunpin:check",
@@ -962,37 +1337,229 @@
         {
           "gate": "claude:size",
           "reprovou": false,
-          "ms": 29,
+          "ms": 37,
           "fingerprint": "c4bf0d0879f91708",
-          "fonteResolvida": true
+          "fonteResolvida": true,
+          "invocacao": "bun run claude:size"
         },
         {
-          "gate": "authz:carimbo",
+          "gate": "docs:indice",
           "reprovou": false,
-          "ms": 29,
-          "fingerprint": "11d2e328c4d885e9",
-          "fonteResolvida": true
+          "ms": 96,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:indice"
         },
         {
-          "gate": "sonda:nova",
-          "reprovou": false,
-          "ms": 94,
-          "fingerprint": "d11545e0b59f27b0",
-          "fonteResolvida": true
+          "gate": "sonda:autentica",
+          "reprovou": true,
+          "ms": 65,
+          "fingerprint": "2140bcc05b344168",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:autentica"
         },
         {
           "gate": "sonda:bump",
           "reprovou": true,
-          "ms": 82,
-          "fingerprint": "381186d612b49532",
-          "fonteResolvida": true
+          "ms": 96,
+          "fingerprint": "2de9bba9cdbf53ef",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:bump"
         },
         {
           "gate": "sonda:fingerprint",
           "reprovou": true,
-          "ms": 79,
+          "ms": 93,
           "fingerprint": "12cb3754bacedc00",
-          "fonteResolvida": true
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:fingerprint"
+        },
+        {
+          "gate": "sonda:nova",
+          "reprovou": false,
+          "ms": 87,
+          "fingerprint": "d11545e0b59f27b0",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:nova"
+        }
+      ],
+      "parouCedo": true,
+      "invalido": null
+    },
+    {
+      "defeito": "sonda-responde-antes-do-gate-diligente",
+      "defeitoFingerprint": "cf571f381e95b9d8",
+      "alvo": "supabase/functions/fin-funding/index.ts",
+      "suspeito": "sonda:autentica",
+      "origem": "docs/historico/controle-populacional-nao-prova-a-tentativa.md (a cadeia de 3 elos do controle ativo)",
+      "deveres": [
+        "bump-versao fin-funding",
+        "regenerar-fingerprints"
+      ],
+      "tocados": [
+        "supabase/functions/_shared/sonda-fingerprints.ts",
+        "supabase/functions/fin-funding/versao.ts"
+      ],
+      "execucoes": [
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 24,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:indice"
+        },
+        {
+          "gate": "authz:carimbo",
+          "reprovou": false,
+          "ms": 26,
+          "fingerprint": "11d2e328c4d885e9",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:carimbo"
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 31,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true,
+          "invocacao": "bun run claude:size"
+        },
+        {
+          "gate": "sonda:bump",
+          "reprovou": false,
+          "ms": 81,
+          "fingerprint": "2de9bba9cdbf53ef",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:bump"
+        },
+        {
+          "gate": "sonda:nova",
+          "reprovou": false,
+          "ms": 81,
+          "fingerprint": "d11545e0b59f27b0",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:nova"
+        },
+        {
+          "gate": "sonda:fingerprint",
+          "reprovou": false,
+          "ms": 59,
+          "fingerprint": "12cb3754bacedc00",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:fingerprint"
+        },
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 25,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true,
+          "invocacao": "bun run bunpin:check"
+        },
+        {
+          "gate": "sonda:autentica",
+          "reprovou": true,
+          "ms": 60,
+          "fingerprint": "2140bcc05b344168",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:autentica"
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 126,
+          "fingerprint": "7677bffbe8ca936b",
+          "fonteResolvida": true,
+          "invocacao": "bun run gates:frescura"
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 392,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:links"
+        },
+        {
+          "gate": "gate:ambiente",
+          "reprovou": false,
+          "ms": 294,
+          "fingerprint": "ced901a6da17fb30",
+          "fonteResolvida": true,
+          "invocacao": "bun run gate:ambiente"
+        },
+        {
+          "gate": "authz:check",
+          "reprovou": false,
+          "ms": 988,
+          "fingerprint": "8b328138809ff4fe",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:check"
+        },
+        {
+          "gate": "docs:citacoes",
+          "reprovou": false,
+          "ms": 1119,
+          "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:citacoes"
+        },
+        {
+          "gate": "edges:typecheck",
+          "reprovou": false,
+          "ms": 2954,
+          "fingerprint": "ec81d1125b24e47b",
+          "fonteResolvida": true,
+          "invocacao": "bun run edges:typecheck"
+        },
+        {
+          "gate": "scripts:typecheck",
+          "reprovou": false,
+          "ms": 1641,
+          "fingerprint": "d64dcfd72ec0beec",
+          "fonteResolvida": false,
+          "invocacao": "bun run scripts:typecheck"
+        },
+        {
+          "gate": "canaria:bump",
+          "reprovou": false,
+          "ms": 1656,
+          "fingerprint": "1daa9407db3b1622",
+          "fonteResolvida": true,
+          "invocacao": "bun run canaria:bump"
+        },
+        {
+          "gate": "knip",
+          "reprovou": false,
+          "ms": 1709,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false,
+          "invocacao": "bunx knip"
+        },
+        {
+          "gate": "test:sonda-rollback",
+          "reprovou": false,
+          "ms": 1750,
+          "fingerprint": "e21ad72a31e8e4dc",
+          "fonteResolvida": false,
+          "invocacao": "bun run test:sonda-rollback"
+        },
+        {
+          "gate": "gate:senha-bootstrap",
+          "reprovou": false,
+          "ms": 4280,
+          "fingerprint": "ca1988585cdf3019",
+          "fonteResolvida": true,
+          "invocacao": "bun run gate:senha-bootstrap"
+        },
+        {
+          "gate": "test:edges",
+          "reprovou": true,
+          "ms": 2677,
+          "fingerprint": "b4dbbfe49b60c31a",
+          "fonteResolvida": false,
+          "invocacao": "bun run test:edges"
         }
       ],
       "parouCedo": true,

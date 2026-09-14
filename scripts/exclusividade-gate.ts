@@ -29,6 +29,7 @@ import {
   AUTO_MERGE_PATH,
   CI_PATH,
   MATRIZ_PATH,
+  assinaturaInvocacao,
   avaliar,
   bloqueantesOpacos,
   conferirAncoraDaRaiz,
@@ -36,6 +37,7 @@ import {
   fingerprintGate,
   fonteDoGate,
   gatesCandidatos,
+  invocacaoDoCI,
   resumir,
   type Matriz,
   type Veredito,
@@ -106,11 +108,26 @@ function main(): number {
     }),
   );
 
-  const vereditos: Veredito[] = avaliar(matriz, gates, fps);
+  // A invocacao que o CI faz HOJE de cada gate. Execucao gravada com outra invocacao nao e evidencia
+  // (o `tsc` era medido como `bun run tsc`, no-op); gate cuja invocacao o motor nao reproduz fica
+  // sem assinatura — nenhuma execucao casa, e ele aparece como nao medido, que e a verdade.
+  const bloqueantesNomes = gates.filter((g) => g.bloqueiaPR).map((g) => g.nome);
+  const naoReproduziveis: string[] = [];
+  const assinaturas = new Map<string, string>();
+  for (const nome of bloqueantesNomes) {
+    const inv = invocacaoDoCI(fonteCI, nome);
+    if (inv.ok) assinaturas.set(nome, assinaturaInvocacao(inv));
+    else naoReproduziveis.push(inv.motivo);
+  }
+  const opts = { universo: bloqueantesNomes, assinaturas };
+
+  const vereditos: Veredito[] = avaliar(matriz, gates, fps, assinaturas);
   const opacos = bloqueantesOpacos(fonteCI);
 
   if (comoJson) {
-    console.log(JSON.stringify({ ancoraQuebrada: [], vereditos, opacos, matrizPresente: matriz !== null }, null, 2));
+    console.log(
+      JSON.stringify({ ancoraQuebrada: [], vereditos, opacos, naoReproduziveis, matrizPresente: matriz !== null }, null, 2),
+    );
     return vereditos.some((v) => v.severidade === 'REPROVA') ? 1 : 0;
   }
 
@@ -119,7 +136,7 @@ function main(): number {
       console.error(`sem matriz em ${MATRIZ_PATH}`);
       return 2;
     }
-    console.log(resumir(matriz));
+    console.log(resumir(matriz, opts));
     return 0;
   }
 
@@ -145,6 +162,12 @@ function main(): number {
         ? `\n${opacos.map((o) => `     - ${o.job}: ${o.step}\n       $ ${o.comando}`).join('\n')}`
         : ' (nenhum)'),
   );
+  // O terceiro contador: gate nomeado cuja invocacao do CI o motor nao reproduz (step composto,
+  // env com expressao, invocado de dois jeitos). Ele esta no numero acima, mas nao ha como media-lo.
+  console.log(
+    `   ${naoReproduziveis.length} gate(s) bloqueante(s) com invocacao do CI NAO reproduzivel pelo motor` +
+      (naoReproduziveis.length ? `:\n${naoReproduziveis.map((m) => `     - ${m}`).join('\n')}` : ' (nenhum)'),
+  );
 
   const ordem = { REPROVA: 0, AVISA: 1, RELATA: 2 } as const;
   for (const v of [...vereditos].sort((a, b) => ordem[a.severidade] - ordem[b.severidade])) {
@@ -152,7 +175,7 @@ function main(): number {
   }
 
   if (matriz) {
-    const semExclusivo = derivar(matriz).filter((e) => e.pegou.length > 0 && e.exclusivos.length === 0);
+    const semExclusivo = derivar(matriz, opts).filter((e) => e.pegou.length > 0 && e.exclusivos.length === 0);
     if (!vereditos.length) console.log('  nenhum veredito acionavel.');
     if (semExclusivo.length) {
       console.log(
