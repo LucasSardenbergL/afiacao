@@ -21,7 +21,9 @@
 #   - preflight (binário + auth) ANTES de gastar tempo/quota, com instrução clara;
 #   - retry com backoff (20s/60s) só em transitório (rate limit/timeout/overload),
 #     classificado SEM o eco do prompt no stderr (senão o texto do prompt decide o fluxo);
-#   - cota esgotada NÃO é transitório → falha na hora instruindo o Caminho B;
+#   - cota esgotada NÃO é transitório → falha na hora instruindo o Caminho B, e mostra QUANDO a
+#     janela reabre copiando o "try again at …" do servidor (lido SEM o eco do prompt; o stderr
+#     cru morre no trap) — sem ele, "(o servidor não informou)", nunca um horário calculado;
 #   - modelo recusado pela conta (400) → exit 78, instruindo CONFIG (≠ cota, ≠ retry);
 #   - mktemp XXXXXX (sem colisão de tmp entre execuções paralelas);
 #   - sandbox read-only (consulta nunca escreve no repo);
@@ -225,6 +227,16 @@ for backoff in "${backoffs[@]}"; do
   # cota esgotada = NÃO-transitório → Caminho B na hora (money-path.md)
   if classifica 'usage limit|quota|plan limit'; then
     echo "COTA_ESGOTADA: o servidor recusou por limite de uso." >&2
+    # QUANDO a janela reabre: só o servidor sabe, e diz no próprio erro ("…or try again at Sep
+    # 14th, 2026 10:23 PM.", medido 2026-09-10, codex-cli 0.153.4). O `$err` que carrega a frase
+    # morre no trap — sem copiá-la aqui, descobrir o reset custou um ping `codex exec` extra.
+    # Lê-se do `$diag` (SEM o eco), nunca do `$err` cru: o ritual cola erro de cota antigo no
+    # prompt, e o eco imprimiria a reabertura de OUTRO dia como a de agora. Copia-se o texto,
+    # nunca se calcula horário; se o servidor não mandou, diz-se isso (ausente ≠ inventado).
+    reabre="$(printf '%s\n' "$diag" | awk 'r == "" && match($0, /try again at .*/) { r = substr($0, RSTART, RLENGTH) }
+      END { sub(/[.[:space:]]+$/, "", r); print r }')"
+    if [ -n "$reabre" ]; then echo "  janela reabre (servidor): $reabre" >&2
+    else echo "  janela reabre: (o servidor não informou)" >&2; fi
     echo "  plano DECLARADO no seu token: $(plano_do_token)" >&2
     echo "  ⚠️ CONFIRA ESSE PLANO ANTES de aceitar o limite como real: o servidor cobra pelo" >&2
     echo "     CLAIM do token, não pela assinatura viva — um token velho declara o plano" >&2
