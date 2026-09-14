@@ -77,6 +77,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { mensagemDeErro } from '@/lib/erro-mensagem';
+
 import {
   ARGV_REGENERAR_FINGERPRINTS,
   CORPUS_DIR,
@@ -473,7 +475,7 @@ function main(): number {
       defeitos.push(...parseDefeitos(readFileSync(join(CORPUS_DIR, f), 'utf8'), join(CORPUS_DIR, f)));
     }
   } catch (e) {
-    console.error(`ABORTADO: corpus invalido — ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`ABORTADO: corpus invalido — ${mensagemDeErro(e) ?? 'o parser lancou sem mensagem legivel'}`);
     return 1;
   }
   if (soDefeitos) defeitos = defeitos.filter((d) => soDefeitos.includes(d.id));
