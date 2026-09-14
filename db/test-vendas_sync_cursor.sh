@@ -333,7 +333,7 @@ Pq -c "SELECT public.vendas_sync_lease_acquire('oben','2032-01-01','2032-01-31')
 Pq -c "SELECT public.vendas_sync_heartbeat('oben','2032-01-01','2032-01-31', 6);" >/dev/null
 Pq -c "SELECT public.vendas_sync_release('oben','2032-01-01','2032-01-31', 'error');" >/dev/null
 NPS=$(Pq -c "SELECT next_page FROM public.vendas_sync_cursor WHERE account='oben' AND date_from='2032-01-01';")
-if [ "$NPS" = "1" ]; then ok "F5 heartbeat furado rebobina p/ 1 (P6 'não rebobina' tem dente)"; else bad "F5 sabotei o heartbeat e o next_page seguiu $NPS≠1 → P6 fraco"; fi
+if [ "$NPS" = "1" ]; then ok "F5 heartbeat furado rebobina p/ 1 (P6 'não rebobina' tem dente)"; else bad "F5 sabotei o heartbeat e o next_page seguiu ${NPS}≠1 → P6 fraco"; fi
 P -q -f "$MIG" >/dev/null   # restaura
 
 # ── veredito ──
