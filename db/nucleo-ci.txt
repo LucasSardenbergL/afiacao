@@ -50,8 +50,12 @@ db/test-check-finitude-money-path.sh       27
 db/test-caca-custo-producao.sh              6
 # O desconto de item: NULL = não apurado ≠ 0 nos TRÊS escritores de order_items, e (§F, 2026-09-10)
 # o total LÍQUIDO atravessando as RPCs intocadas — com o G5 sabotado pela tolerância maior que o
-# desconto (o conserto rejeitado) exigindo VERMELHO. 35 é o que a prova executa hoje.
-db/test-desconto-valor-escritores.sh       35
+# desconto (o conserto rejeitado) exigindo VERMELHO. E (§G-§I, 2026-09-14) a reconciliação carregando
+# o desconto da linha com o trigger de coerência da prod instalado: o pedido incoerente vira falha do
+# pedido (H0 reproduz o incidente de 79 runs), diferencial sem a chave, SKU mudando de dono sob a
+# mesma identidade (G13-G15, cenários da validação independente da sessão quirky-rosalind), 14
+# sabotagens com dente. 110 é o que a prova executa hoje.
+db/test-desconto-valor-escritores.sh      110
 # O cabeçalho do ACERVO de bruto para líquido (2026-09-14): converte só onde TODAS as linhas têm
 # desconto apurado e o cabeçalho ainda é o bruto escrito ANTES do corte (depois dele o desconto pode
 # estar vencido); recusa em vez de truncar acima do limite; não deixa meio mês convertido — nem numa
