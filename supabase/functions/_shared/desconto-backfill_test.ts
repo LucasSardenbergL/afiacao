@@ -27,6 +27,7 @@ import {
   lerRetornoEscrita,
   pedidoNaJanela,
   registrarNaAmostra,
+  somarRetornoEscrita,
 } from "./desconto-backfill.ts";
 
 // `eq` local (test:edges roda com --no-remote, e o flag não se afrouxa por conveniência de teste).
@@ -721,4 +722,83 @@ Deno.test("escrita: todo retorno legível fecha com as linhas enviadas", () => {
       : Number.NaN;
     eq(soma, enviadas, `fecha: ${JSON.stringify(retorno)}`);
   }
+});
+
+Deno.test("escrita: o retorno NÃO classificado preserva as aplicadas — no ilegível e no excesso também", () => {
+  // Achado do Codex: `aplicadas: ausente ? aplicadas : 0` passava nos 55 testes — o de ilegível
+  // conferia recusas e causa, mas não as aplicadas, e o de fechamento não tinha o caso ilegível.
+  const ilegivel = doTipo(
+    lerRetornoEscrita({ pedidas: 5, aplicadas: 2, recusadas: 3, ja_apuradas: "1" }, 5),
+    "nao_classificado",
+  );
+  eq(ilegivel.aplicadas, 2, "ja_apuradas ilegível não zera as aplicadas");
+  eq(ilegivel.aplicadas + ilegivel.recusadas, 5, "e o desfecho fecha com as enviadas");
+  const excesso = doTipo(
+    lerRetornoEscrita({ pedidas: 3, aplicadas: 2, recusadas: 1, ja_apuradas: 3 }, 3),
+    "nao_classificado",
+  );
+  eq(excesso.aplicadas, 2, "o excesso também não zera as aplicadas");
+});
+
+// ── A SOMA nos contadores: o mesmo rótulo nos dois caminhos da edge ─────────────────────────
+// Achado do Codex: com a soma dentro da edge, trocar `+= r.base_mudou` por `+= r.base_mudou +
+// r.ja_apuradas` reintroduzia o rótulo duplo sem nenhum teste ficar vermelho — a suíte só via a
+// leitura. A soma mora no módulo para ter teste. (Que os DOIS caminhos da edge a chamem, esta
+// suíte não vê: a edge não tem harness — fica registrado.)
+
+/** Os contadores no formato do recorte que a edge passa, zerados. */
+function contadoresZerados() {
+  return {
+    contadores: {
+      escrita_aplicada: 0,
+      escrita_recusada_base_mudou: 0,
+      escrita_recusada_ja_apurada: 0,
+      escrita_recusada_nao_classificada: 0,
+    },
+    causas: { ja_apuradas_ausente: 0, ja_apuradas_ilegivel: 0, ja_apuradas_excede_recusadas: 0 },
+  };
+}
+
+Deno.test("soma: cada fato vai para o SEU contador, e as chamadas acumulam", () => {
+  const { contadores: c, causas } = contadoresZerados();
+  somarRetornoEscrita(c, causas, { pedidas: 10, aplicadas: 6, recusadas: 4, ja_apuradas: 1 }, 10); // o lote
+  somarRetornoEscrita(c, causas, { pedidas: 1, aplicadas: 0, recusadas: 1, ja_apuradas: 1 }, 1); // um retry
+  eq(c.escrita_aplicada, 6, "as aplicadas somam");
+  eq(c.escrita_recusada_base_mudou, 3, "base mudou é só o que a RPC não achou já apurado");
+  eq(c.escrita_recusada_ja_apurada, 2, "1 do lote + 1 do retry");
+  eq(c.escrita_recusada_nao_classificada, 0, "nada sem classificação");
+  eq(
+    causas.ja_apuradas_ausente + causas.ja_apuradas_ilegivel + causas.ja_apuradas_excede_recusadas,
+    0,
+    "nenhuma causa de degradação",
+  );
+});
+
+Deno.test("soma: retorno NÃO classificado vai inteiro para o seu contador, e a causa conta chamadas", () => {
+  const { contadores: c, causas } = contadoresZerados();
+  somarRetornoEscrita(c, causas, { pedidas: 5, aplicadas: 2, recusadas: 3 }, 5);
+  somarRetornoEscrita(c, causas, { pedidas: 4, aplicadas: 4, recusadas: 0 }, 4);
+  eq(c.escrita_aplicada, 6, "as aplicadas seguem somadas");
+  eq(c.escrita_recusada_nao_classificada, 3, "as 3 recusas sem motivo");
+  eq(c.escrita_recusada_base_mudou + c.escrita_recusada_ja_apurada, 0, "nenhuma recebe motivo inventado");
+  eq(causas.ja_apuradas_ausente, 2, "duas chamadas sem o campo — inclusive a de zero recusas");
+});
+
+Deno.test("soma: retorno ILEGÍVEL lança com o motivo e não toca em contador nenhum", () => {
+  const { contadores: c, causas } = contadoresZerados();
+  let mensagem = "";
+  try {
+    somarRetornoEscrita(c, causas, { pedidas: 5, aplicadas: 2, recusadas: 2, ja_apuradas: 0 }, 5);
+  } catch (e) {
+    mensagem = e instanceof Error ? e.message : String(e);
+  }
+  // A marca do RAMO, não "lançou alguma coisa": o motivo e o aviso de resultado desconhecido.
+  eq(mensagem.includes("(soma_nao_fecha)"), true, `o motivo está na mensagem: "${mensagem}"`);
+  eq(mensagem.includes("DESCONHECIDO"), true, "e ela diz que o resultado da escrita é desconhecido");
+  eq(
+    c.escrita_aplicada + c.escrita_recusada_base_mudou + c.escrita_recusada_ja_apurada +
+      c.escrita_recusada_nao_classificada,
+    0,
+    "nenhum contador foi tocado",
+  );
 });

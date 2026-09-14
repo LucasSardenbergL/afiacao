@@ -39,11 +39,28 @@ Três decisões, cada uma com o motivo:
 
 A causa aparece mesmo com zero recusas (`nao_classificado` com `recusadas: 0`): o sinal "a RPC deste ambiente não fala o contrato" tem de chegar antes da primeira recusa.
 
+A SOMA também mora no módulo (`somarRetornoEscrita`), e não na edge: com ela dentro da edge, `+= r.base_mudou + r.ja_apuradas` reintroduzia o rótulo duplo sem nenhum teste ficar vermelho (Codex). A edge ficou com um repasse de uma linha, chamado nos dois caminhos.
+
 ## Limites conhecidos (registrados, não corrigidos aqui)
 
-- **A RPC anterior ao #2475 tem o MESMO shape de retorno.** `ja_apuradas > recusadas` a denuncia sempre que as aplicadas superam as recusas; com poucas aplicadas o número inflado cabe em `recusadas` e o retorno não o distingue. Qual versão está no ar se prova no banco: em 2026-09-14, `md5(prosrc)` da prod = `c0aa159558d48b2aac391e0e8c9517c0` = corpo da migration `20260910214850` = corpo de `db/aplicar-desconto-backfill-rpc.sql`, com `INTO v_ja_apuradas` antes de `WITH plano AS` (via `psql-ro`).
-- **`base_mudou` ainda carrega dois casos que não são "base mudou":** a linha que SUMIU entre a leitura e a escrita (a contagem de `ja_apuradas` é um JOIN e não a acha) e o writer que comita ENTRE as duas instruções da RPC (limite aceito na própria migration).
-- **Id repetido no plano.** A RPC não recusa id duplicado: com valores diferentes, o `UPDATE … FROM` grava um deles, e qual é imprevisível; na contagem, a cópia não aplicada sai como "base mudou". A conciliação garante unicidade DENTRO de um pedido, mas a edge **não deduplica pedidos entre páginas**, e `pendentes` só é descarregado a cada 25 pedidos. Um pedido no fim da página N que reapareça no início da N+1 (paginação deslocada por inclusão/alteração durante o run — caminho plausível, **não medido**) é relido ainda NULL e entra duas vezes no MESMO lote; com o desconto alterado entre as duas leituras, com valores diferentes. Mudar isso é escrita de money-path (dedup no plano ou recusa na RPC) e fica para decisão à parte.
+- **A partição é exata só sem escritor concorrente durante a chamada** (Codex). A RPC conta `ja_apuradas` num statement e escreve em outro, e em READ COMMITTED os contadores trocam de fato nos DOIS sentidos:
+  - linha NULL na contagem que outro writer preenche antes do UPDATE sai como `base_mudou`, sendo corrida perdida. Isso vale **inclusive durante a espera pelo lock da linha**, em que a condição é reavaliada — a janela não é de microssegundos;
+  - linha contada como já apurada cujo desconto a reconciliação invalida (preço mudou → desconto NULL, ver `20260908215704_desconto_valor_atravessa_os_escritores.sql`) sai como `ja_apuradas`, e precisa de reapuração;
+  - linha que sumiu antes da contagem sai como `base_mudou`.
+
+  Fechar isso exige a RPC devolver o motivo por linha, decidido no próprio UPDATE.
+- **`ja_apuradas > recusadas` não identifica a versão da RPC** (Codex).
+  - Falso positivo na atual: a reconciliação zera o desconto entre a contagem e o UPDATE, e a linha é aplicada → `{aplicadas: 1, recusadas: 0, ja_apuradas: 1}`. A degradação protege a contagem.
+  - Falso negativo na anterior ao #2475, que tem o mesmo shape: três linhas NULL, uma aplicável → `{3, 1, 2, 1}` → partição base=1/já=1, quando o certo é 2/0.
+
+  Qual versão está no ar se prova no banco: em 2026-09-14, `md5(prosrc)` da prod = `c0aa159558d48b2aac391e0e8c9517c0` = corpo da migration `20260910214850` = corpo de `db/aplicar-desconto-backfill-rpc.sql`, com `INTO v_ja_apuradas` antes de `WITH plano AS` (via `psql-ro`).
+- **Id repetido no plano — [P1] do Codex, preexistente.** A RPC não recusa id duplicado: com valores diferentes, o `UPDATE … FROM` grava um deles, e qual é imprevisível; na contagem, a cópia não aplicada sai como "base mudou". A conciliação garante unicidade DENTRO de um pedido, mas a edge **não deduplica pedidos entre páginas**, e o lote é descarregado a cada 25 pedidos **conciliados** — a fronteira do lote não se alinha à da página. Um pedido no fim da página N que reapareça no início da N+1 (paginação deslocada por inclusão/alteração durante o run) é relido ainda NULL e entra duas vezes no MESMO lote; o Codex reproduziu o fluxo no handler, com I/O simulado.
+  - Com descontos iguais, o dano é contagem e trabalho redundante.
+  - Com o desconto alterado entre as duas leituras, um valor arbitrário é gravado.
+
+  A frequência em prod **não foi medida**. Mudar isso é escrita de money-path (dedup no plano ou recusa na RPC) e fica para decisão à parte.
+- **Não há teste unitário provando que os DOIS caminhos da edge chamam a soma** (Codex): remover a chamada do retry sobrevive à suíte, porque a edge não tem harness (preexistente). A garantia hoje é a revisão mais o repasse de uma linha.
+- **A resposta 500 do retorno ilegível não traz página segura de retomada** (Codex). Repetir a partir da página inicial é seguro na RPC conhecida, mas relê o Omie. A melhoria fica registrada; o ramo não dispara com a RPC verificada em prod.
 
 ## Evidência
 

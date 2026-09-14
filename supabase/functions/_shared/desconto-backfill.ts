@@ -288,13 +288,17 @@ export function conferirTotalPedido(
  *   ja_apuradas_ilegivel          o campo veio e não é inteiro não-negativo. String numérica
  *                                 inclusive — `Number("3")` é a mesma coerção que faz
  *                                 `Number(null) === 0`.
- *   ja_apuradas_excede_recusadas  mais "já apuradas" do que recusas. Impossível na RPC corrigida
- *                                 (#2475); é a assinatura da ANTERIOR, que contava depois do UPDATE
- *                                 e somava as linhas que a própria chamada escreveu. ⚠️ Ela só se
- *                                 denuncia assim quando as aplicadas superam as recusas: com poucas
- *                                 aplicadas o número inflado cabe em `recusadas` e o retorno não o
- *                                 distingue. Qual versão está no ar se prova no banco
- *                                 (`pg_get_functiondef`), não aqui.
+ *   ja_apuradas_excede_recusadas  mais "já apuradas" do que recusas — repartir daria "base mudou"
+ *                                 NEGATIVO. É a assinatura da RPC ANTERIOR ao #2475, que contava
+ *                                 depois do UPDATE e somava as linhas que a própria chamada
+ *                                 escreveu. Na corrigida, só com escritor CONCORRENTE: a
+ *                                 reconciliação zera o desconto de uma linha entre a contagem e o
+ *                                 UPDATE, e ela é aplicada mesmo assim — {aplicadas: 1, recusadas:
+ *                                 0, ja_apuradas: 1} (Codex). ⚠️ E não prova versão: a anterior só se
+ *                                 denuncia quando as aplicadas superam as recusas — com poucas, o
+ *                                 número inflado cabe em `recusadas` e sai como partição plausível
+ *                                 e errada. Qual versão está no ar se prova no banco (md5 do corpo
+ *                                 em `pg_proc`), não aqui.
  */
 export type CausaNaoClassificada =
   | "ja_apuradas_ausente"
@@ -336,9 +340,17 @@ function descrever(v: unknown): string {
  * porque outro writer ou um run anterior ganhou a corrida — nada a fazer. Somar os dois em "base
  * mudou" mente sempre que há corrida perdida.
  *
- * O que `base_mudou` ainda carrega sem separar: a linha que SUMIU entre a leitura e a escrita (a
- * contagem de `ja_apuradas` é um JOIN e não a acha), e o writer que comita ENTRE as duas instruções
- * da RPC — limite que a própria migration aceita.
+ * ⚠️ A partição é EXATA só sem escritor concorrente durante a chamada: a RPC conta `ja_apuradas` num
+ * statement e escreve em outro, e em READ COMMITTED o mundo muda entre os dois. Com concorrente, os
+ * contadores trocam de fato nos DOIS sentidos (Codex):
+ *   - linha NULL na contagem que outro writer preenche antes do UPDATE — inclusive enquanto o UPDATE
+ *     espera o lock da linha, porque a condição é reavaliada no fim da espera — sai como
+ *     `base_mudou`, sendo corrida perdida (a janela NÃO é de microssegundos);
+ *   - linha contada como já apurada cujo desconto a reconciliação invalida (o preço mudou e o
+ *     desconto voltou a NULL) sai como `ja_apuradas`, e precisa de reapuração;
+ *   - linha que SUMIU antes da contagem (o JOIN não a acha) também sai como `base_mudou`.
+ * Fechar isso exigiria a RPC devolver o motivo por linha, decidido no próprio UPDATE — fora desta
+ * leitura, e a RPC não muda nesta entrega.
  *
  * `enviadas` é o que a edge SABE que mandou, sem depender do que a RPC diz. Soma que não fecha com
  * ela é outro contrato respondendo, e repartir recusas sobre ela classificaria um número que não
@@ -380,6 +392,46 @@ export function lerRetornoEscrita(retorno: unknown, enviadas: number): RetornoEs
     return { tipo: "nao_classificado", aplicadas, recusadas, causa: "ja_apuradas_excede_recusadas" };
   }
   return { tipo: "classificado", aplicadas, base_mudou: recusadas - ja, ja_apuradas: ja };
+}
+
+/** Os contadores de escrita que o retorno da RPC alimenta — o recorte da `contagem` da edge. */
+export interface ContadoresEscrita {
+  escrita_aplicada: number;
+  escrita_recusada_base_mudou: number;
+  escrita_recusada_ja_apurada: number;
+  escrita_recusada_nao_classificada: number;
+}
+
+/**
+ * Soma o retorno de UMA chamada nos contadores. Mora aqui, e não na edge, para que a soma tenha
+ * suíte: o defeito que ela conserta era justamente o rótulo da soma, e com ela dentro da edge
+ * `+= r.base_mudou + r.ja_apuradas` voltava sem nenhum teste ficar vermelho (Codex).
+ *
+ * Retorno `ilegivel` LANÇA antes de tocar em qualquer contador: sem `aplicadas`/`recusadas`
+ * legíveis não se sabe o que foi escrito, e "0 aplicadas" seria a mentira. O resultado é
+ * DESCONHECIDO — a escrita pode ter comitado. Na RPC conhecida, repetir a execução é seguro: o guard
+ * `desconto_valor IS NULL` recusa o que já foi gravado. (Página segura de retomada na resposta 500 é
+ * melhoria registrada, não feita: com a RPC verificada em prod este ramo não dispara.)
+ */
+export function somarRetornoEscrita(
+  contadores: ContadoresEscrita,
+  causas: Record<CausaNaoClassificada, number>,
+  retorno: unknown,
+  enviadas: number,
+): void {
+  const r = lerRetornoEscrita(retorno, enviadas);
+  if (r.tipo === "ilegivel") {
+    const aviso = "resultado da escrita DESCONHECIDO: ela pode ter comitado";
+    throw new Error(`retorno ilegível de desconto_backfill_aplicar (${r.motivo}): ${r.detalhe} — ${aviso}`);
+  }
+  contadores.escrita_aplicada += r.aplicadas;
+  if (r.tipo === "classificado") {
+    contadores.escrita_recusada_base_mudou += r.base_mudou;
+    contadores.escrita_recusada_ja_apurada += r.ja_apuradas;
+  } else {
+    contadores.escrita_recusada_nao_classificada += r.recusadas;
+    causas[r.causa]++;
+  }
 }
 
 /** Índice chave → posições. Chave repetida marca a colisão em vez de sobrescrever: perder o

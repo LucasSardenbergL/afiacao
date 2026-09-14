@@ -117,3 +117,18 @@ PEGA | escrita: recusadas ausente vira ZERO (?? 0)         | s~const recusadas =
 PEGA | escrita: aplicadas ausente vira ZERO (?? 0)         | s~const aplicadas = contagemDoRetorno\(r\.aplicadas\);~const aplicadas = contagemDoRetorno(r.aplicadas ?? 0);~
 PEGA | escrita: soma contra as enviadas deixa de ser conferida | s~if \(aplicadas \+ recusadas !== enviadas\) \{~if (false) {~
 PEGA | escrita: array passa por objeto                    | s~ \|\| Array\.isArray\(retorno\)\) \{~) {~
+# O retorno NÃO classificado carrega as aplicadas inteiras. Achado do Codex: `ausente ? aplicadas : 0`
+# passava nos 55 testes — o de ilegível conferia recusas e causa, não as aplicadas.
+PEGA | escrita: aplicadas zeradas no ja_apuradas ILEGÍVEL  | s~^      aplicadas,~      aplicadas: ausente ? aplicadas : 0,~
+PEGA | escrita: aplicadas zeradas no EXCESSO               | s~tipo: "nao_classificado", aplicadas, recusadas, causa: "ja_apuradas_excede_recusadas"~tipo: "nao_classificado", aplicadas: 0, recusadas, causa: "ja_apuradas_excede_recusadas"~
+
+# ── A SOMA nos contadores (somarRetornoEscrita) ─────────────────────────────────────────────
+# Com a soma dentro da edge, `+= r.base_mudou + r.ja_apuradas` reintroduzia o rótulo duplo sem
+# nenhum teste ficar vermelho (Codex). Aqui ela tem suíte, e cada mutação é um jeito de o rótulo
+# voltar a mentir, de uma contagem sumir, ou de o retorno ilegível passar calado.
+PEGA | soma: base mudou soma também as já apuradas (Codex) | s~contadores\.escrita_recusada_base_mudou \+= r\.base_mudou;~contadores.escrita_recusada_base_mudou += r.base_mudou + r.ja_apuradas;~
+PEGA | soma: já apuradas caem em base mudou                 | s~contadores\.escrita_recusada_ja_apurada \+= r\.ja_apuradas;~contadores.escrita_recusada_base_mudou += r.ja_apuradas;~
+PEGA | soma: aplicadas deixam de ser somadas               | s~contadores\.escrita_aplicada \+= r\.aplicadas;~contadores.escrita_aplicada += 0;~
+PEGA | soma: não classificadas deixam de ser somadas       | s~contadores\.escrita_recusada_nao_classificada \+= r\.recusadas;~contadores.escrita_recusada_nao_classificada += 0;~
+PEGA | soma: a causa deixa de ser contada                  | s~    causas\[r\.causa\]\+\+;~    void causas;~
+PEGA | soma: retorno ilegível passa calado (sem lançar)    | s~    throw new Error\(`retorno ileg~    return void new Error(`retorno ileg~
