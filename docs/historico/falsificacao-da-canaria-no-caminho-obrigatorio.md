@@ -78,7 +78,36 @@ E o dente foi ele mesmo sabotado, uma camada por vez, numa cópia isolada do run
 recibos, cegar o detector, aceitar falhas > 0, ignorar o mínimo, perder a identidade do recibo, não
 passar a flag, aceitar declaração sem modo, aceitar exceção sem motivo — **8 sabotagens, 8 vezes o
 harness vermelho no caso que vigia aquela camada**, com o controle verde na mesma invocação e, caso a
-caso, idêntico ao do CI (33 linhas).
+caso, idêntico ao do CI (33 linhas). Mas 8/8 cobre as 8 mutações, não o runner inteiro: a 2ª rodada
+do Codex achou uma 9ª camada que nenhuma delas tocava (abaixo).
+
+## A 2ª rodada do Codex — o silêncio contava como captura
+
+**2026-09-14** (gpt-6-astra/max, 574s, no código; a rodada tinha esbarrado na cota em 2026-09-10). O
+parecer segurou o DRAFT com 2 P0, 1 P1 e 1 P2, e os quatro se confirmaram na leitura:
+
+| achado | mecanismo | correção |
+|---|---|---|
+| sabotagem creditada sem ter rodado | `injeta`, `julga_log` e `entrada_normal` ecoavam **vazio** para "capturada"; sob `set -u` sem `-e`, a função que morre dentro de `$(...)` ecoa vazio e o laço segue. No gerador, `$(injeta)$(entrada_normal)` concatenados escondiam a morte da 2ª | palavras positivas (`CAPTURADA`, `CERTO`), as duas capturas do gerador conferidas em separado e 2 controles negativos de morte silenciosa — sem PG, custo ~0 |
+| harness truncado sai 0 | o piso `OK_MINIMO` morava no rodapé do arquivo que ele vigia: cortado na linha 73, o harness roda 3 controles e sai 0 | o step do `provas-sql` confere **um** recibo `FALSIFICACAO: OK≥34 XX=0`, com o piso no `ci.yml` — o chamador, como o runner faz com as provas |
+| (g2) creditada sem a contagem | `DISPAROU  vez(es)`, com a contagem ausente, casava a marca | exit e inteiro conferidos; falha de medição vira `[SQL-INVALIDO]`, que o juiz recusa |
+| guarda `n_linhas != 1` do runner sem caso | "dois recibos" e "malformado" reprovam também pela contagem de válidos | caso "um válido + um malformado"; piso 34 |
+
+Calibração: nenhum dos quatro produziu veredito errado observado — o da morte silenciosa pede uma
+função que morra no meio, e o do truncamento, uma edição que corte o arquivo. Na minha régua seriam
+P1; a correção é a mesma, e barata. O parecer também achou envelhecido o comentário que justifica o
+`fetch-depth: 0` do job (o guard de `origin/main` não roda no caminho da fixture): corrigido o
+comentário, não o checkout.
+
+**Prova por execução** (M2, `539e9c188`): a canária corrigida segue 18/0, com os 2 controles de morte
+silenciosa verdes. Numa cópia não commitada, a injeção da (a1) e a entrada normal da (h1) passaram a
+MORRER e a contagem da (g2) a falhar — as três viraram FALHA pelo motivo de cada uma
+(`SABOTAGENS: 15 vermelhas / 3 falhas`). O harness corrigido dá `OK=34 XX=0`, e o runner sem a guarda
+`n_linhas` o deixa vermelho só no caso novo. O step do CI, extraído do `ci.yml`, fica verde com o
+recibo no piso e vermelho nos 5 desvios (abaixo do piso, dois recibos, exit 1, `XX≠0`, sem recibo) e
+no harness real truncado na linha 73. A primeira meta-sabotagem da (g2) era ela mesma inválida
+(`case padrão)` dentro de `$(...)`, que o bash 3.2 do macOS não parseia) — quem pegou foi o controle
+verde da própria canária, que abortou antes do primeiro `sed`.
 
 ## O custo, medido
 
@@ -103,6 +132,8 @@ cada uma com `initdb`, e dos controles do juiz) — no run de 445s a canária NO
 - As outras 3 provas de `db/` com modo `--falsificar` (`test-deploy-atestacoes.sh`,
   `test-deploy-sonda-cron.sh`, `test-pendencias-deploy-eco-passivo.sh`) estão fora do núcleo inteiro,
   que é allowlist deliberada.
+- O `fetch-depth: 0` do `provas-sql` ficou sem motivo medido: o guard de `origin/main` que o
+  justificava não roda no caminho da fixture. Tirar é outra entrega, medindo o job sem o histórico.
 
 ## As regras
 
@@ -116,6 +147,10 @@ cada uma com `initdb`, e dos controles do juiz) — no run de 445s a canária NO
    de apagar N linhas: o `,+3d` quebrou quando o ramo vizinho mudou de forma.
 4. **Antes de declarar "caro demais para o CI", meça onde está o caminho crítico.** O custo que
    importa é o do job mais lento, e o `provas-sql` tinha 6 min de folga.
+5. **Silêncio não é veredito.** Protocolo em que a saída VAZIA quer dizer sucesso transforma morte em
+   aprovação: a função que morre dentro de `$(...)` também ecoa vazio. O veredito é uma palavra
+   positiva, conferida por quem decide — e a trava que mora no arquivo que ela vigia some junto com
+   ele (o piso do harness, que um truncamento levava embora).
 
 **Ver também:** [falsificacao-fora-do-ci.md](falsificacao-fora-do-ci.md) (a mesma classe em
 `scripts/`), [falsificacao-sem-linha-de-base.md](falsificacao-sem-linha-de-base.md) (o controle
