@@ -109,6 +109,85 @@ no harness real truncado na linha 73. A primeira meta-sabotagem da (g2) era ela 
 (`case padrão)` dentro de `$(...)`, que o bash 3.2 do macOS não parseia) — quem pegou foi o controle
 verde da própria canária, que abortou antes do primeiro `sed`.
 
+## A 3ª rodada do Codex — a marca que também saía no verde
+
+**2026-09-14** (gpt-6-astra/max, 518s, 139.803 tokens, sobre a main `d046839e5`). O conserto da 2ª
+rodada ficou de pé: os quatro achados estão **fechados**. O P1 novo estava no harness que o #2472
+levou ao CI: o juiz do `aplica_e_exige` procurava a marca no log **inteiro**, e a marca do bug real 3
+era o **título** da asserção — `customer NÃO lê v_sku_sigma_demanda`, que o `eq` imprime no ✅ e no ❌.
+
+Reproduzido por execução, numa cópia do HEAD com os logs preservados: com a asserção da l.180
+comparando o resultado consigo mesmo, o customer volta a ler (`✅ … (=1)`), o único vermelho vem da
+asserção de metadados (`esperado [5], veio [4]`) — e o harness creditou a captura (`OK=9 XX=0` no
+trecho dos bugs reais). A medição achou a classe, não só o caso do parecer:
+
+| bug real | marca | no controle verde | no sabotado |
+|---|---|---|---|
+| 1 | `[CLAIM-GUARD-FORA-DO-UPDATE]` | 0 | 1 |
+| 2 | `[GUARD-CEGO]` | **2** (asserções F5/F7 da própria prova) | 1 |
+| 3 | `customer NÃO lê v_sku_sigma_demanda` | **1** | 1 |
+
+A correção tem duas camadas. As marcas dos casos 2 e 3 passaram a ser as da FALHA, lidas da saída
+real (`POST FALHOU [GUARD-CEGO]` e `… — esperado [0], veio [1]`: 0 no verde, 1 no sabotado). E o juiz
+confere isso sozinho: o `julga_captura` recusa a marca que aparece no **controle verde da mesma
+prova, na mesma invocação**, com um controle negativo sem Postgres (a marca só numa linha verde, o
+vermelho vindo de outra asserção). O filtro óbvio — "a marca tem de estar numa linha de falha" —
+nasceria furado: as provas 1 e 2 imprimem numa linha VERDE `mensagem do servidor: ERROR:  division by zero`.
+
+**Prova por execução** (`73afe0e65`, uma invocação sobre o commit fixado, controle primeiro; o
+julgamento das saídas nos dois locales, C e pt_BR.UTF-8 — 11/11 em cada):
+
+- **controle:** o step do `ci.yml` extraído do commit roda o harness inteiro — `FALSIFICACAO: OK=35
+  XX=0`, `HARNESS_NUCLEO_OK casos=35 (piso 35)`, exit 0;
+- **sem a camada 2** (o juiz deixa de conferir o controle verde): o controle negativo vira `XX`, com o
+  juiz dizendo `CERTO`; o mesmo corte sem a sabotagem fica `OK=1 XX=0`;
+- **sem a camada 1** (as marcas antigas nos casos 2 e 3): os dois viram `XX` por "aparece no CONTROLE
+  VERDE", e o caso 1 segue `OK` — a camada 2 não recusa tudo;
+- **o cenário do parecer**, sobre o harness corrigido: o caso 3 vira `XX` "SEM a marca", com o controle
+  inicial ainda verde.
+
+No CI do mesmo commit, o `provas-sql` fechou com `HARNESS_NUCLEO_OK casos=35 (piso 35)`.
+
+## A 4ª rodada do Codex — o juiz provado ramo a ramo
+
+**2026-09-14** (gpt-6-astra/max, tentativa 1, 162.209 tokens, sobre `73afe0e65`; os 10.084s de
+relógio incluem ~2h38 de máquina dormindo). Veredito: **merge como está**, sem P0/P1/P2 — e dois
+limites registrados, os dois confirmados na leitura:
+
+1. **Controle verde vazio.** Contra um controle de 0 bytes, o `grep` do `julga_captura` sai 1 — "a
+   marca não sai no verde" — sem ter medido nada; com controle vazio, até a marca vazia passava. O
+   parecer não achou caminho atual até esse insumo (o controle inicial exige exit 0, e as provas
+   imprimem) e não o classificou como P2.
+2. **O controle negativo cobria um ramo só.** Trocar a checagem final do sabotado por `printf CERTO`
+   passava por ele (a camada 2 recusa antes) e pelos 3 bugs reais: as marcas deles já são exclusivas
+   e o vermelho sempre vem, então eles não distinguem juiz bom de quebrado.
+
+Os dois fecharam no mesmo PR — custo ~0, e o harness vive no caminho obrigatório. O `julga_captura`
+recusa controle vazio ou ausente, e o controle do juiz virou 5 casos sintéticos sem Postgres: um por
+ramo, mais o positivo, que pega o juiz que recusa tudo. Onde a recusa não é pela marca ausente, a
+marca **está** no sabotado, para que só o ramo testado a barre. A marca vazia não ganhou ramo: num
+controle não-vazio ela casa qualquer linha (camada 2) e, num vazio, cai na recusa nova — um ramo
+dedicado ficaria verde sob sabotagem. Piso 35 → 39.
+
+**Prova por execução** (`8039e457c`, uma invocação, sem Postgres; julgamento nos dois locales, 12/12
+em cada). O corte só-juiz sem mutação fecha `OK=5 XX=0`, e cada mutante de UMA camada derruba
+exatamente o caso do seu ramo:
+
+| mutante | recibo | o `XX` |
+|---|---|---|
+| sem a conferência do controle verde | `OK=4 XX=1` | a marca que também sai no verde — veio `CERTO` |
+| checagem final → `printf CERTO` (o do parecer) | `OK=4 XX=1` | o vermelho SEM a marca — veio `CERTO` |
+| sem a recusa do exit 0 | `OK=4 XX=1` | exit 0 com a marca no log — veio `CERTO` |
+| sem a recusa do controle vazio (= o juiz de `73afe0e65`) | `OK=4 XX=1` | o controle verde VAZIO — veio `CERTO` |
+| juiz que recusa tudo | `OK=4 XX=1` | o positivo — veio "SEM a marca" |
+
+O mutante do parecer, aplicado ao `73afe0e65`, **sobrevivia**: `OK=1 XX=0`.
+
+A ponta a ponta com Postgres ficou com o CI do mesmo commit, no runner ubuntu: os 5 casos do juiz
+`OK`, `FALSIFICACAO: OK=39 XX=0`, `HARNESS_NUCLEO_OK casos=39 (piso 39)`. Na M2 ela não rodou — a
+única vaga do `heavy` estava presa havia 40 min, com a máquina em swap —, e o delta não toca o trecho
+com Postgres.
+
 ## O custo, medido
 
 O número honesto é o do runner (1º run do #2472): o `provas-sql` foi de mediana 53s para **132s** — o
@@ -134,6 +213,9 @@ cada uma com `initdb`, e dos controles do juiz) — no run de 445s a canária NO
   que é allowlist deliberada.
 - O `fetch-depth: 0` do `provas-sql` ficou sem motivo medido: o guard de `origin/main` que o
   justificava não roda no caminho da fixture. Tirar é outra entrega, medindo o job sem o histórico.
+- O ramo do `julga_captura` para controle que existe, não está vazio e não se lê (o `grep` sai 2)
+  segue sem caso sintético: fabricá-lo depende de permissão e de usuário — root lê tudo —, e o caso
+  seria vermelho por ambiente. Hoje nada chega lá: o controle nasce do próprio harness.
 
 ## As regras
 
@@ -151,6 +233,14 @@ cada uma com `initdb`, e dos controles do juiz) — no run de 445s a canária NO
    aprovação: a função que morre dentro de `$(...)` também ecoa vazio. O veredito é uma palavra
    positiva, conferida por quem decide — e a trava que mora no arquivo que ela vigia some junto com
    ele (o piso do harness, que um truncamento levava embora).
+6. **Marca que também sai no verde não é marca.** O título de uma asserção aparece no ✅ e no ❌;
+   procurado no log inteiro, casa qualquer vermelho. "Exclusiva da falha" é MEDIDA contra o controle
+   verde da mesma invocação — nunca a intenção de quem escolheu a string.
+7. **Juiz de falsificação se prova ramo a ramo.** Casos reais com marca exclusiva não separam juiz bom
+   de quebrado — o vermelho sempre vem, a marca sempre está lá —, e um controle negativo só cobre o
+   ramo que exercita: trocar a checagem final por `printf CERTO` passou pelos dois. Um caso sintético
+   por ramo, que só ELE barra, mais o positivo. E controle verde vazio é ausência de dado, nunca "a
+   marca não sai no verde".
 
 **Ver também:** [falsificacao-fora-do-ci.md](falsificacao-fora-do-ci.md) (a mesma classe em
 `scripts/`), [falsificacao-sem-linha-de-base.md](falsificacao-sem-linha-de-base.md) (o controle
