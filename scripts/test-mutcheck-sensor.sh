@@ -5,10 +5,10 @@
 #   1. o resumo JSON do mutcheck-all classifica os QUATRO estados — honrado, DIVERGE (a suíte
 #      perdeu poder), INVÁLIDA (o .mut envelheceu com o fonte) e baseline vermelho (o monitor
 #      quebrou). Fundi-los é o que fazia o vermelho custar horas para ser lido (#2279/#2289).
-#   2. o baseline vermelho diz POR QUÊ. O abort mostra a saída da MESMA execução — re-rodar para
-#      obter o log mediria outra, e o motivo pode não se repetir —, só os últimos 4096 bytes, sem
-#      ANSI, sem NUL e em UTF-8 válido, sem que o texto da suíte contamine o resumo. Abort mudo
-#      custou duas investigações do zero (09-06 e 09-14: docs/historico/teste-que-afirma-o-checkout.md);
+#   2. o baseline vermelho diz POR QUÊ. O abort mostra a saída — stdout E stderr — da MESMA execução
+#      (re-rodar para obter o log mediria outra, e o motivo pode não se repetir), só os últimos 4096
+#      bytes, sem ANSI, sem NUL e em UTF-8 válido, sem que o texto da suíte contamine o resumo. Abort
+#      mudo custou duas investigações do zero (09-06 e 09-14: docs/historico/teste-que-afirma-o-checkout.md);
 #      a prova por sabotagem desta parte está em docs/historico/mutcheck-abort-sem-motivo.md.
 #   3. o script do alerta, EXTRAÍDO do próprio ci.yml e executado, escreve o remédio CERTO para
 #      cada causa. Testar só o JSON deixaria o consumidor fora da medição, e é o consumidor que
@@ -34,10 +34,10 @@ printf 'export const pick = (xs) => Math.min(...xs); // marca\n' > "$src"
 printf '#!/usr/bin/env bash\ngrep -q "Math.min" "%s"\n' "$src" > "$runner"
 chmod +x "$runner"
 
-# Runner VERMELHO que FALA como o vitest: o motivo sai no FIM (falhas e sumário vêm por último).
-# Conta as próprias execuções — é o que separa "log da MESMA execução" de "re-rodou para obter o
-# log", e "zero mutações" de "abortou depois de medir". Cada linha dá dente a UMA exigência do
-# abort, conferida no cenário do baseline vermelho. Sai 3, não 1: o exit da SUÍTE não pode se
+# Runner VERMELHO que FALA como o vitest: o motivo sai no FIM, e em STDERR (onde o vitest põe erro
+# de carga). Conta as próprias execuções — é o que separa "log da MESMA execução" de "re-rodou para
+# obter o log", e "zero mutações" de "abortou depois de medir". Cada linha dá dente a UMA exigência
+# do abort, conferida no cenário do baseline vermelho. Sai 3, não 1: o exit da SUÍTE não pode se
 # confundir com o do próprio abort.
 execucoes="$tmp/execucoes"; compilacoes="$tmp/compilacoes"
 cat > "$tmp/runner-vermelho.sh" <<'EOS'
@@ -50,14 +50,14 @@ printf '\033[31m⚠ INVÁLIDO ← DIVERGE\033[39m\n'           # cor forçada (C
 echo "sumário: FALSO"                                     # cara do sumário do próprio mutcheck
 printf 'byte fora do UTF-8: \377\n'
 printf 'byte nulo: \000.\n'                               # NUL: o grep leria o log como binário
-echo "DIAGNOSTICO-DO-BASELINE execucao=$(wc -l < "$(dirname "$0")/execucoes" | tr -d ' ')"
+echo "DIAGNOSTICO-DO-BASELINE execucao=$(wc -l < "$(dirname "$0")/execucoes" | tr -d ' ')" >&2
 exit 3
 EOS
-# compilador VERMELHO: a MESMA execução vale para ele também, então ele também se conta
+# compilador VERMELHO: a MESMA execução vale para ele também (e o erro dele sai em stderr)
 cat > "$tmp/compilador-vermelho.sh" <<'EOS'
 #!/usr/bin/env bash
 echo x >> "$(dirname "$0")/compilacoes"
-echo "DIAGNOSTICO-DO-COMPILADOR execucao=$(wc -l < "$(dirname "$0")/compilacoes" | tr -d ' ')"
+echo "DIAGNOSTICO-DO-COMPILADOR execucao=$(wc -l < "$(dirname "$0")/compilacoes" | tr -d ' ')" >&2
 exit 127
 EOS
 compilador=""   # vazio = `true`: compila-check desligado, como em todo contrato de fixture
@@ -82,6 +82,9 @@ contagem() { if [[ -f "$1" ]]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
 # `LC_ALL=C` porque, num locale UTF-8, o grep do BSD com um NUL no arquivo deixa de casar padrão
 # multibyte mesmo com `-a` (medido na falsificação) — e "não achei" aprovaria as negativas abaixo.
 no_log() { LC_ALL=C grep -aq -- "$1" "$log"; }
+# Linha EXATA do recorte, com o prefixo. O motivo tem de chegar DENTRO do recorte: sem o `2>&1` da
+# captura, o stderr cru também "estaria no log", e uma busca por substring passaria sem a captura.
+no_recorte() { LC_ALL=C grep -aqx -- "│ $1" "$log"; }
 # UTF-8 válido por IDA E VOLTA no bun: eixo independente do perl/Encode que o mutcheck usa. NÃO o
 # iconv do macOS: ele reprova UTF-8 VÁLIDO quando um caractere multibyte atravessa o byte 1024
 # ("Inappropriate ioctl for device"), e o caminho do tmp desloca esses offsets de máquina a máquina.
@@ -132,7 +135,7 @@ j=$(resumo)
 if [[ "$(campo "$j" abortou)" == "true" ]]; then ok "baseline vermelho marcado como abortou"; else bad "abortou não marcado: $(campo "$j" abortou)"; fi
 if [[ "$(campo "$j" exit)" == "1" ]]; then ok "baseline vermelho: o abort sai 1, como sempre"; else bad "baseline vermelho: EXIT-DO-ABORT=$(campo "$j" exit), esperado 1"; fi
 if [[ "$(contagem "$execucoes")" == "1" ]]; then ok "baseline vermelho: a suíte rodou 1 vez — zero mutações e nenhuma re-rodada"; else bad "baseline vermelho: RODADAS=$(contagem "$execucoes") da suíte, esperado 1 (só o baseline)"; fi
-if no_log 'DIAGNOSTICO-DO-BASELINE execucao=1'; then ok "baseline vermelho: o log diz o motivo, e é o da MESMA execução"; else bad "baseline vermelho: SEM-MOTIVO — 'DIAGNOSTICO-DO-BASELINE execucao=1' não está no log"; fi
+if no_recorte 'DIAGNOSTICO-DO-BASELINE execucao=1'; then ok "baseline vermelho: o motivo (stderr da suíte) chegou DENTRO do recorte, e é o da MESMA execução"; else bad "baseline vermelho: SEM-MOTIVO — a linha '│ DIAGNOSTICO-DO-BASELINE execucao=1' não está no recorte"; fi
 if no_log 'exit 3'; then ok "baseline vermelho: o exit da suíte (3) está no log"; else bad "baseline vermelho: SEM-EXIT-3 — o exit da suíte não está no log"; fi
 if no_log 'CABECA-DA-SAIDA'; then bad "baseline vermelho: CABECA-DA-SAIDA no log — a saída não foi recortada pela cauda"; else ok "baseline vermelho: a cabeça da saída ficou de fora (recorte pela cauda)"; fi
 bytes=$(wc -c < "$log" | tr -d ' ')
@@ -172,7 +175,7 @@ compilador=""
 j=$(resumo)
 if [[ "$(campo "$j" abortou)" == "true" ]]; then ok "compilador vermelho marcado como abortou"; else bad "compilador vermelho: COMPILADOR-ABORTOU=$(campo "$j" abortou), esperado true"; fi
 if [[ "$(campo "$j" exit)" == "1" ]]; then ok "compilador vermelho: o abort sai 1, como sempre"; else bad "compilador vermelho: COMPILADOR-EXIT=$(campo "$j" exit), esperado 1"; fi
-if no_log 'DIAGNOSTICO-DO-COMPILADOR execucao=1'; then ok "compilador vermelho: o log diz o motivo, e é o da MESMA execução"; else bad "compilador vermelho: SEM-MOTIVO-DO-COMPILADOR — 'DIAGNOSTICO-DO-COMPILADOR execucao=1' não está no log"; fi
+if no_recorte 'DIAGNOSTICO-DO-COMPILADOR execucao=1'; then ok "compilador vermelho: o motivo (stderr do compilador) chegou DENTRO do recorte, e é o da MESMA execução"; else bad "compilador vermelho: SEM-MOTIVO-DO-COMPILADOR — a linha '│ DIAGNOSTICO-DO-COMPILADOR execucao=1' não está no recorte"; fi
 if [[ "$(contagem "$compilacoes")" == "1" ]]; then ok "compilador vermelho: o compilador rodou 1 vez"; else bad "compilador vermelho: COMPILACOES=$(contagem "$compilacoes"), esperado 1"; fi
 if no_log 'exit 127'; then ok "compilador vermelho: o exit do compilador (127) está no log"; else bad "compilador vermelho: SEM-EXIT-127 — o exit do compilador não está no log"; fi
 if [[ "$(contagem "$execucoes")" == "0" ]]; then ok "compilador vermelho: a suíte não rodou"; else bad "compilador vermelho: COMPILADOR-RODADAS=$(contagem "$execucoes") da suíte, esperado 0"; fi
@@ -181,12 +184,18 @@ if [[ "$(contagem "$execucoes")" == "0" ]]; then ok "compilador vermelho: a suí
 # sobrescreve o arquivo que o baseline do compilador criou: a suíte nem rodaria, e o abort mostraria
 # a saída do COMPILADOR como se fosse dela (achado do Codex). Direto no mutcheck.sh, porque o
 # mutcheck-all.sh já não roda sob noclobber (o `> "$saida"` sobre o mktemp) — lacuna anterior a esta.
+# Com pendentes PRÓPRIO: o log do baseline é apagado no finalizar, junto com backup e sentinela, e
+# esta rodada abortada não pode deixar resto nenhum.
 printf '#!/usr/bin/env bash\necho COMPILADOR-VERDE\nexit 0\n' > "$tmp/compilador-verde.sh"
 printf 'PEGA | min->max | s/Math\\.min/Math.max/\n' > "$tmp/noclobber.mut"
+pendentes_direto="$tmp/pendentes-direto"
 rm -f "$execucoes"
-MUTCHECK_TEST_CMD="bash $tmp/runner-vermelho.sh" MUTCHECK_COMPILE_CMD="bash $tmp/compilador-verde.sh" \
+MUTCHECK_PENDENTES_DIR="$pendentes_direto" MUTCHECK_TEST_CMD="bash $tmp/runner-vermelho.sh" \
+  MUTCHECK_COMPILE_CMD="bash $tmp/compilador-verde.sh" \
   bash -C "$raiz/scripts/mutcheck.sh" "$src" "$runner" "$tmp/noclobber.mut" > "$log" 2>&1
 if [[ "$(contagem "$execucoes")" == "1" ]] && no_log 'DIAGNOSTICO-DO-BASELINE'; then ok "noclobber: a suíte rodou e o abort mostra a saída DELA"; else bad "noclobber: NOCLOBBER — a suíte rodou $(contagem "$execucoes") vez(es) e o log não traz a saída dela"; fi
+restos=$(find "$pendentes_direto" -mindepth 1 2>/dev/null | tr '\n' ' ')
+if [[ -d "$pendentes_direto" && -z "$restos" ]]; then ok "a rodada abortada não deixa resto em pendentes"; else bad "rodada abortada: RESTO-EM-PENDENTES — [$restos]"; fi
 
 # ─── o CONSUMIDOR: o script do alerta, extraído do ci.yml e executado ───
 bun "$raiz/scripts/mutcheck-sensor-corpo.mjs" "$raiz" || fail=1
