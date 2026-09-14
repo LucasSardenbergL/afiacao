@@ -299,4 +299,38 @@ describe('main — nunca imprime colagem num caminho de erro', () => {
     expect(main([], raiz)).toBe(2);
     expect(saida).toBe('');
   });
+
+  // ── ordem entre edges (#2469): este emissor não faz ondas, então RECUSA a leva que tem ordem ──
+  const MANIFESTO_VALIDO = JSON.stringify({
+    formato: 'deploy-ordem/1',
+    depoisDe: [{ edge: 'edge-outra', motivo: 'na ordem inversa a predecessora velha desfaz a nova', pr: 2469 }],
+  });
+
+  function commitarManifesto(conteudo: string): void {
+    escrever('supabase/functions/edge-e/deploy-ordem.json', conteudo);
+    gitF('add', '-A');
+    gitF('commit', '-q', '-m', 'manifesto de ordem');
+    gitF('push', '-q', 'origin', 'main');
+    gitF('fetch', '-q', 'origin', 'main');
+  }
+
+  it('[PROMPT_RECUSA_ORDEM_DECLARADA] edge com manifesto na REF: exit 3 e stdout vazio', () => {
+    montarRepo();
+    commitarManifesto(MANIFESTO_VALIDO);
+    expect(main(['edge-e', '--sem-rede'], raiz)).toBe(3);
+    expect(saida).toBe('');
+  });
+
+  it('[PROMPT_MANIFESTO_SO_NO_DISCO_NAO_CONTA] manifesto fora do commit não recusa — vale a REF', () => {
+    montarRepo();
+    escrever('supabase/functions/edge-e/deploy-ordem.json', MANIFESTO_VALIDO);
+    expect(main(['edge-e', '--sem-rede'], raiz)).toBe(0);
+  });
+
+  it('[PROMPT_MANIFESTO_MALFORMADO_MECANICA] manifesto ilegível na REF é mecânica, não "sem ordem"', () => {
+    montarRepo();
+    commitarManifesto('{ isto nao e json');
+    expect(main(['edge-e', '--sem-rede'], raiz)).toBe(2);
+    expect(saida).toBe('');
+  });
 });

@@ -136,14 +136,16 @@ MCP do Lovable (`docs/agent/deploy.md` §"Deploy de edge pela SESSÃO"):
 ```bash
 PEND=$(mktemp -t pend)                                     # único por invocação: /tmp/pend.json colide entre worktrees
 bun scripts/pendencias-deploy.ts --json > "$PEND"          # quem julga é o LEDGER, não o diff do PR
-bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: RPC em prod ANTES da edge
+bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: banco → edge e edge → edge (exit 4 = onda parcial)
 # o Passo 2 do pacote vai VERBATIM para mcp__lovable__send_message
 #   (projeto `steu`, 8f005805-000a-42b7-88a1-9683f785fab6)
 ```
 
 O gerador já resolve o closure ∪ {mapa} lendo de `origin/main` (**nunca** do working tree — #2123), já
-emite UMA colagem para a leva inteira e já carrega o `sha256` de cada arquivo com a ordem de conferir
-ANTES de deployar (#2362). Medido em 2026-09-08 numa leva de 2 (`omie-vendas-sync` money-path +
+emite UMA colagem por ONDA — a leva inteira quando não há ordem declarada entre edges — e já carrega o
+`sha256` de cada arquivo com a ordem de conferir ANTES de deployar (#2362). **`pacote` em exit 4 = onda
+parcial** (`deploy-ordem.json`, #2469): cole só o Passo 2, prove a onda, meça o ledger e rode o pacote de
+novo (`docs/agent/deploy.md` §"Ordem ENTRE edges"). Medido em 2026-09-08 numa leva de 2 (`omie-vendas-sync` money-path +
 `sync-reprocess`): **24/24 hashes conferidos**, ambas `Active`, 1,2 crédito, e `pendencias:deploy`
 em exit 0 na medição seguinte.
 

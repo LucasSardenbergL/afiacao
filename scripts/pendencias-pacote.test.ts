@@ -12,7 +12,7 @@ import {
   TOKEN_SEM_CORPO,
   TOKEN_SIM,
 } from './lib/precondicao-banco';
-import { lerVeredito, main, separarSaida } from './pendencias-pacote';
+import { lerRelatorio, main, separarSaida } from './pendencias-pacote';
 import { type ExecutorGitBytes } from './pendencias-prompt';
 import { ARQ_MAPA, RAIZ_EDGES } from './sonda-fingerprint';
 
@@ -63,34 +63,59 @@ describe('separarSaida — o argumento de índice 0 sobrevive', () => {
   });
 });
 
-describe('lerVeredito — o contrato com o pendencias:deploy --json', () => {
-  const veredito = (estado: string, edge = 'copilot-analyze') => ({
+describe('lerRelatorio — o contrato com o pendencias:deploy --json', () => {
+  const veredito = (estado: string, edge = 'copilot-analyze', extra: Record<string, unknown> = {}) => ({
     formato: 'pendencias-deploy/1',
     vereditos: [{ edge, estado }],
+    ...extra,
   });
+  const nomes = (bruto: string) => lerRelatorio(bruto).nomes;
 
   it('DIVERGE_P1 entra na leva — é o estado que a `copilot-analyze` tinha', () => {
-    expect(lerVeredito(JSON.stringify(veredito('DIVERGE_P1')))).toEqual(['copilot-analyze']);
+    expect(nomes(JSON.stringify(veredito('DIVERGE_P1')))).toEqual(['copilot-analyze']);
   });
 
   it('CONFERE não entra', () => {
-    expect(lerVeredito(JSON.stringify(veredito('CONFERE')))).toEqual([]);
+    expect(nomes(JSON.stringify(veredito('CONFERE')))).toEqual([]);
   });
 
   it('NUNCA_ATESTADA não entra — ausência de dado pede SONDA, não deploy', () => {
-    expect(lerVeredito(JSON.stringify(veredito('NUNCA_ATESTADA')))).toEqual([]);
+    expect(nomes(JSON.stringify(veredito('NUNCA_ATESTADA')))).toEqual([]);
   });
 
   it('formato desconhecido LANÇA — não adivinha a leva', () => {
-    expect(() => lerVeredito('{"formato":"outro/9","vereditos":[]}')).toThrow(/formato inesperado/);
+    expect(() => lerRelatorio('{"formato":"outro/9","vereditos":[]}')).toThrow(/formato inesperado/);
   });
 
   it('JSON sem `vereditos` LANÇA — ausente ≠ leva vazia', () => {
-    expect(() => lerVeredito('{"formato":"pendencias-deploy/1"}')).toThrow(/sem `vereditos`/);
+    expect(() => lerRelatorio('{"formato":"pendencias-deploy/1"}')).toThrow(/sem `vereditos`/);
   });
 
   it('stdin que não é JSON LANÇA', () => {
-    expect(() => lerVeredito('nada disso')).toThrow(/não é JSON/);
+    expect(() => lerRelatorio('nada disso')).toThrow(/não é JSON/);
+  });
+
+  it('[RELATORIO_GERADO_EM_LIDO] `geradoEm` vira Date — é a régua da idade real das provas', () => {
+    const r = lerRelatorio(JSON.stringify(veredito('CONFERE', 'x', { geradoEm: '2026-09-14T20:00:00.000Z' })));
+    expect(r.geradoEm?.toISOString()).toBe('2026-09-14T20:00:00.000Z');
+  });
+
+  it('[RELATORIO_SEM_GERADO_EM_E_NULL] produtor anterior não é erro aqui — quem recusa a onda é o planejador', () => {
+    expect(lerRelatorio(JSON.stringify(veredito('CONFERE'))).geradoEm).toBeNull();
+  });
+
+  it('[RELATORIO_GERADO_EM_ILEGIVEL_LANCA] instante fora do ISO do produtor não data prova', () => {
+    for (const ruim of ['ontem', '2026-09-14', 1757880000000]) {
+      expect(() => lerRelatorio(JSON.stringify(veredito('CONFERE', 'x', { geradoEm: ruim })))).toThrow(
+        /`geradoEm` ilegível/,
+      );
+    }
+  });
+
+  it('os vereditos voltam CRUS e inteiros — o planejador valida só os que lê', () => {
+    expect(lerRelatorio(JSON.stringify(veredito('DIVERGE_P1'))).vereditos).toEqual([
+      { edge: 'copilot-analyze', estado: 'DIVERGE_P1' },
+    ]);
   });
 });
 
@@ -164,6 +189,16 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
         return c === undefined
           ? { ok: false, bytes: Buffer.alloc(0), erro: `path '${rel}' does not exist` }
           : ok(Buffer.from(c, 'utf8'));
+      }
+      if (args[0] === 'ls-tree' && args[2] === '--name-only') {
+        // O inventário dos diretórios das edges (manifesto de ordem, #2469): os nomes da MESMA
+        // `naArvore` que o `show` lê, sob os diretórios pedidos depois do `--`.
+        if (args[3] !== SHA_REF) {
+          return { ok: false, bytes: Buffer.alloc(0), erro: `ls-tree fora do sha: ${args[3]}` };
+        }
+        const dirs = args.slice(args.indexOf('--') + 1);
+        const nomes = [...naArvore.keys()].filter((c) => dirs.some((d) => c.startsWith(d))).sort();
+        return ok(Buffer.from(nomes.map((n) => `${n}\n`).join(''), 'utf8'));
       }
       if (args[0] === 'ls-tree') {
         if (args[2] !== SHA_REF) {
@@ -338,5 +373,170 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
     const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA, []);
 
     expect(main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(['rpc_velha']))).toBe(2);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// A ordem ENTRE edges (#2469) — o pacote de ponta a ponta
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// O planejador puro tem a suíte dele (`lib/ordem-entre-edges.test.ts`). Aqui se prova a FIAÇÃO: o
+// manifesto sai da REF@sha por um inventário (e não do `null` ambíguo do `show`), a régua da prova
+// sai do mapa e do `versao.ts` da MESMA ref, o JSON do ledger chega inteiro pelo stdin, e exit e
+// pacote obedecem à partição. As marcas entre colchetes são as que o falsificador exige.
+describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
+  const SHA = 'feedface1234567890feedface1234567890feed';
+  const A = 'edge-a';
+  const B = 'edge-b';
+  const FONTE_A = 'a'.repeat(64);
+  const FONTE_B = 'b'.repeat(64);
+  const VERSAO_A = 'v2.0-a';
+  const MAPA_COM_AS_DUAS =
+    'export const FONTE_SHA256: Record<string, string> = {\n' +
+    `  "${A}": "${FONTE_A}",\n` +
+    `  "${B}": "${FONTE_B}",\n` +
+    '};\n';
+  const MANIFESTO_B = JSON.stringify({
+    formato: 'deploy-ordem/1',
+    depoisDe: [{ edge: A, motivo: 'na ordem inversa a predecessora velha desfaz o que a nova grava', pr: 2469 }],
+  });
+  const MIGRATION = {
+    nome: '20260101000000_base.sql',
+    sql: 'CREATE OR REPLACE FUNCTION public.rpc_qualquer() RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;\n',
+  };
+
+  /**
+   * O commit com as duas edges e, por default, o manifesto de B. `quebrar` injeta a falha de git que
+   * o inventário tem de separar de ausência: manifesto LISTADO e ilegível, ou listagem cega.
+   */
+  function repo(opcoes: { manifesto?: string | null; quebrar?: 'show-manifesto' | 'ls-tree-cego' } = {}) {
+    const raiz = mkdtempSync(join(tmpdir(), 'pacote-ordem-'));
+    const arvore = new Map<string, string>([
+      [ARQ_MAPA, MAPA_COM_AS_DUAS],
+      [`${RAIZ_EDGES}/${A}/index.ts`, 'import "./versao.ts";\nexport default {};\n'],
+      [`${RAIZ_EDGES}/${A}/versao.ts`, `export const VERSAO = "${VERSAO_A}";\n`],
+      [`${RAIZ_EDGES}/${B}/index.ts`, 'export default {};\n'],
+    ]);
+    const manifesto = opcoes.manifesto === undefined ? MANIFESTO_B : opcoes.manifesto;
+    if (manifesto !== null) arvore.set(`${RAIZ_EDGES}/${B}/deploy-ordem.json`, manifesto);
+
+    const git: ExecutorGitBytes = (args, entrada) => {
+      const ok = (bytes: Buffer) => ({ ok: true, bytes, erro: '' });
+      const nao = (erro: string) => ({ ok: false, bytes: Buffer.alloc(0), erro });
+      if (args[0] === 'rev-parse') return ok(Buffer.from(`${SHA}\n`));
+      if (args[0] === 'show') {
+        const alvo = String(args[1]);
+        const rev = alvo.slice(0, alvo.indexOf(':'));
+        const rel = alvo.slice(alvo.indexOf(':') + 1);
+        if (rev !== SHA) return nao(`show fora do sha: ${rev}`);
+        if (opcoes.quebrar === 'show-manifesto' && rel.endsWith('/deploy-ordem.json')) return nao('fatal: bad object');
+        const c = arvore.get(rel);
+        return c === undefined ? nao(`path '${rel}' does not exist`) : ok(Buffer.from(c, 'utf8'));
+      }
+      if (args[0] === 'ls-tree' && args[2] === '--name-only') {
+        if (args[3] !== SHA) return nao(`ls-tree fora do sha: ${args[3]}`);
+        if (opcoes.quebrar === 'ls-tree-cego') return ok(Buffer.alloc(0));
+        const dirs = args.slice(args.indexOf('--') + 1);
+        const nomes = [...arvore.keys()].filter((c) => dirs.some((d) => c.startsWith(d))).sort();
+        return ok(Buffer.from(nomes.map((n) => `${n}\n`).join(''), 'utf8'));
+      }
+      if (args[0] === 'ls-tree') {
+        if (args[2] !== SHA) return nao(`ls-tree fora do sha: ${args[2]}`);
+        return ok(Buffer.from(`100644 blob ${'0'.repeat(40)}\tsupabase/migrations/${MIGRATION.nome}\n`, 'utf8'));
+      }
+      if (args[0] === 'cat-file') {
+        const corpo = Buffer.from(MIGRATION.sql, 'utf8');
+        const oid = (entrada ?? '').trim();
+        return ok(Buffer.concat([Buffer.from(`${oid} blob ${corpo.length}\n`, 'utf8'), corpo, Buffer.from('\n')]));
+      }
+      return nao(`git não esperado: ${args.join(' ')}`);
+    };
+    return { raiz, git, saida: join(raiz, 'pacote.md') };
+  }
+
+  const AGORA = new Date('2026-09-14T21:00:00.000Z');
+  const veredito = (edge: string, over: Record<string, unknown> = {}) => ({
+    edge,
+    estado: 'CONFERE',
+    esperado: FONTE_A,
+    observado: FONTE_A,
+    versaoEsperada: VERSAO_A,
+    versao: VERSAO_A,
+    via: 'sonda',
+    criado: '2026-09-14 20:30:00+00',
+    idadeHoras: 0.5,
+    diasPendente: null,
+    escalada: false,
+    ...over,
+  });
+  const divergente = (edge: string) =>
+    veredito(edge, { estado: 'DIVERGE_P1', esperado: 'e'.repeat(64), observado: 'd'.repeat(64), versao: 'v0-velha' });
+  const ledger = (...vereditos: object[]) => (): string =>
+    JSON.stringify({ formato: 'pendencias-deploy/1', ref: 'origin/main', geradoEm: '2026-09-14T20:59:00.000Z', vereditos });
+  const semStdin = (): string => {
+    throw new Error('o stdin não devia ser lido: a leva veio por nome');
+  };
+  const naoMede = (): string => {
+    throw new Error('a sonda de banco não devia rodar: a leva não chama RPC');
+  };
+
+  function rodar(r: ReturnType<typeof repo>, entrada: () => string, alvos: string[] = ['-']) {
+    const codigo = main([...alvos, '--saida', r.saida, '--sem-rede'], r.raiz, r.git, naoMede, entrada, () => AGORA);
+    let pacote = '';
+    try {
+      pacote = readFileSync(r.saida, 'utf8');
+    } catch {
+      /* exit 2 não escreve pacote — e o teste diz se esperava isso */
+    }
+    const passo2 = pacote.slice(pacote.indexOf('## Passo 2'), pacote.indexOf('## Passo 3'));
+    const ini = passo2.indexOf('~~~');
+    const colagem = ini < 0 ? '' : passo2.slice(ini + 3, passo2.indexOf('~~~', ini + 3));
+    return { codigo, pacote, colagem };
+  }
+
+  it('[PACOTE_ONDA_PARCIAL_EXIT_4] A e B pendentes: a colagem leva só A, e B fica retida', () => {
+    const { codigo, pacote, colagem } = rodar(repo(), ledger(divergente(A), divergente(B)));
+    expect(codigo).toBe(4);
+    expect(colagem).toContain(`\`${A}\``);
+    expect(colagem).not.toContain(B);
+    expect(pacote).toMatch(/`edge-b`\*\* — ADIADA/);
+  });
+
+  it('[PACOTE_A_PROVADA_LIBERA_B_EXIT_0] controle: A servindo o par da REF há 31 min libera B', () => {
+    const { codigo, colagem } = rodar(repo(), ledger(veredito(A), divergente(B)));
+    expect(codigo).toBe(0);
+    expect(colagem).toContain(`\`${B}\``);
+  });
+
+  it('[PACOTE_TUDO_RETIDO_EXIT_3] só B pendente e A nunca atestada: nenhuma colagem', () => {
+    const nunca = veredito(A, { estado: 'NUNCA_ATESTADA', observado: null, versao: null, via: null, idadeHoras: null });
+    const { codigo, pacote, colagem } = rodar(repo(), ledger(nunca, divergente(B)));
+    expect(codigo).toBe(3);
+    expect(colagem).toBe('');
+    expect(pacote).not.toContain('Cole no chat do Lovable');
+  });
+
+  it('[PACOTE_POR_NOME_COM_ORDEM_EXIT_3] leva nomeada não tem ledger com que provar a predecessora', () => {
+    const { codigo, colagem } = rodar(repo(), semStdin, [B]);
+    expect(codigo).toBe(3);
+    expect(colagem).toBe('');
+  });
+
+  it('[PACOTE_MANIFESTO_ILEGIVEL_MECANICA] manifesto listado e ilegível é exit 2, não "sem ordem"', () => {
+    expect(rodar(repo({ quebrar: 'show-manifesto' }), ledger(veredito(A), divergente(B))).codigo).toBe(2);
+  });
+
+  it('[PACOTE_MANIFESTO_MALFORMADO_MECANICA] manifesto fora do contrato é exit 2', () => {
+    expect(rodar(repo({ manifesto: '{ nao e json' }), ledger(veredito(A), divergente(B))).codigo).toBe(2);
+  });
+
+  it('[PACOTE_INVENTARIO_CEGO_MECANICA] listagem que não vê a própria edge é exit 2', () => {
+    expect(rodar(repo({ quebrar: 'ls-tree-cego' }), ledger(veredito(A), divergente(B))).codigo).toBe(2);
+  });
+
+  it('[PACOTE_SEM_MANIFESTO_SEGUE_INTEIRO] controle: sem manifesto, A e B saem juntas como sempre', () => {
+    const { codigo, colagem } = rodar(repo({ manifesto: null }), ledger(divergente(A), divergente(B)));
+    expect(codigo).toBe(0);
+    expect(colagem).toContain(`\`${A}\``);
+    expect(colagem).toContain(`\`${B}\``);
   });
 });

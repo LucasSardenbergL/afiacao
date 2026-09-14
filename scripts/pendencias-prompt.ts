@@ -38,11 +38,15 @@
  *      fail-closed), arquivo da fatia ausente da ref, ou a auto-conferência de cobertura vermelha.
  *      Nunca imprime prompt no exit 2 — colagem incompleta é o modo de falha que este script existe
  *      para evitar (deploy parcial: boota e serve `FONTE_SHA256` velho).
+ *   3  ORDEM declarada entre edges da leva (`deploy-ordem.json`, #2469). Este emissor não prova a
+ *      predecessora nem parte a leva em ondas, então RECUSA com stdout vazio — o caminho com ordem é
+ *      o `pendencias:pacote`. Uma colagem única aqui seria exatamente o pacote `2a52229c0e39`.
  */
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
+import { caminhoDoManifesto, lerManifesto, type Manifesto } from './lib/ordem-entre-edges';
 import {
   conferirCobertura,
   type EdgeParaDeploy,
@@ -187,6 +191,60 @@ export function fatiaDeDeploy(edge: string, raiz: string, arvore: ArvoreDeFonte)
   return { edge, arquivos };
 }
 
+/**
+ * Os caminhos da ÁRVORE do commit `sha` sob os diretórios das `edges` — um `ls-tree` que TEM de
+ * responder.
+ *
+ * Existe porque `arvoreDaRef().ler()` devolve `null` tanto para "o arquivo não está no commit" quanto
+ * para "o git falhou". Para o `index.ts` isso basta — ausente aborta. Para um arquivo OPCIONAL, como
+ * o manifesto de ordem, o `null` se leria "sem ordem" e liberaria a edge dependente (P1 do Codex,
+ * 2026-09-14): a ausência precisa ser PROVADA por um inventário que respondeu.
+ */
+export function inventarioDaRef(git: ExecutorGitBytes, sha: string, edges: readonly string[]): Set<string> {
+  const dirs = [...new Set(edges)].sort().map((e) => `${RAIZ_EDGES}/${e}/`);
+  const r = git(['ls-tree', '-r', '--name-only', sha, '--', ...dirs]);
+  if (!r.ok) {
+    throw new Error(
+      `\`git ls-tree\` em ${sha.slice(0, 9)} falhou: ${primeiraLinha(r.erro)} — sem inventário não sei se ` +
+        'há manifesto de ordem, e "não sei" não é "não há"',
+    );
+  }
+  return new Set(r.bytes.toString('utf8').split('\n').filter((l) => l !== ''));
+}
+
+/**
+ * Os manifestos de ordem (`deploy-ordem.json`, #2469) das edges da leva, lidos do COMMIT `sha`.
+ *
+ * Controle positivo: o `index.ts` de cada edge pedida TEM de aparecer no inventário — listagem vazia
+ * ou truncada não passa por "nenhum manifesto". Manifesto listado e ilegível LANÇA, e manifesto fora
+ * do contrato também (`lerManifesto`); quem chama converte em exit 2.
+ */
+export function lerManifestosDaRef(
+  git: ExecutorGitBytes,
+  sha: string,
+  edges: readonly string[],
+): Map<string, Manifesto> {
+  const inventario = inventarioDaRef(git, sha, edges);
+  const cegas = edges.filter((e) => !inventario.has(`${RAIZ_EDGES}/${e}/index.ts`));
+  if (cegas.length > 0) {
+    throw new Error(
+      `o inventário de ${sha.slice(0, 9)} não lista o index.ts de ${cegas.join(', ')} — listagem que não vê ` +
+        'a própria edge não prova ausência de manifesto',
+    );
+  }
+  const manifestos = new Map<string, Manifesto>();
+  for (const edge of edges) {
+    const caminho = caminhoDoManifesto(edge);
+    if (!inventario.has(caminho)) continue;
+    const r = git(['show', `${sha}:${caminho}`]);
+    if (!r.ok) {
+      throw new Error(`${caminho} está no commit ${sha.slice(0, 9)} e não foi lido: ${primeiraLinha(r.erro)}`);
+    }
+    manifestos.set(edge, lerManifesto(edge, r.bytes.toString('utf8')));
+  }
+  return manifestos;
+}
+
 /** Lê o `--json` do `pendencias:deploy` e devolve as edges que exigem deploy. */
 export function lerVeredito(bruto: string): string[] {
   let obj: unknown;
@@ -237,13 +295,28 @@ export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz))
 
   let proc: Procedencia;
   let leva: EdgeParaDeploy[];
+  let comOrdem: string[];
   try {
     proc = { ref: REF_DEPLOYADA, sha: sincronizarRef(git, semRede) };
-    const arvore = arvoreDaRef(REF_DEPLOYADA, git);
+    // A árvore sai do SHA resolvido, não do NOME da ref (o contrato do pacote, #2428): o manifesto de
+    // ordem logo abaixo tem de falar do MESMO commit que a fatia.
+    const arvore = arvoreDaRef(proc.sha, git);
     leva = nomes.map((n) => fatiaDeDeploy(n, raiz, arvore));
+    comOrdem = [...lerManifestosDaRef(git, proc.sha, nomes).keys()].sort();
   } catch (e) {
     process.stderr.write(`⛔ mecânica: ${(e as Error).message}\n`);
     return 2;
+  }
+
+  if (comOrdem.length > 0) {
+    process.stderr.write(
+      `⛔ ordem declarada entre edges (deploy-ordem.json) em: ${comOrdem.join(', ')}.\n` +
+        '   Este emissor não prova a predecessora nem parte a leva em ondas — use o pacote:\n' +
+        '   PEND=$(mktemp -t pend); bun scripts/pendencias-deploy.ts --json > "$PEND"; ' +
+        'bun scripts/pendencias-pacote.ts - < "$PEND"\n' +
+        '   Nenhum prompt foi emitido.\n',
+    );
+    return 3;
   }
 
   const prompt = montarPrompt(leva, proc);
