@@ -43,6 +43,15 @@ A operação usa checadores fora do repo: veredito por resposta, agregador da pa
 
 **Checagem que nenhuma sabotagem isolada deixa vermelha é redundante ou está sem caso** — e as duas coisas são invisíveis até alguém sabotar uma camada por vez.
 
+## A 4ª rodada e o CI: hash que só se imprime não vincula; controle que não fala o contrato não controla
+
+O Codex r4 aprovou o deploy e condicionou o canário a dois ajustes nas ferramentas de operação:
+
+- **O sha aprovado era impresso, não conferido.** O condutor mostrava o hash do plano no início, e o montador do manifesto relia o arquivo a cada página: outra agregação no mesmo caminho trocaria os bytes sem ninguém ver. Agora a escrita exige o sha que o founder aprovou, consome uma cópia só-leitura, e cada página reconfere o sha do que leu; o agregador não sobrescreve plano. **Vínculo é conferir o hash dos bytes CONSUMIDOS, a cada consumo** — o hash no log é só relato.
+- **O PARE estava amarrado a um motivo.** Linha do manifesto recusada por `fora_do_plano_aprovado` parava; a mesma linha recusada por `sem_correspondencia` ou `total_nao_confere` passava verde. Agora qualquer recusa de linha aprovada para, e a varredura final compara id **e centavos** — "ainda NULL" não vê a linha que outro writer gravou com outro valor.
+
+E o CI achou o que a bateria local não rodava. O `sonda:cron-prova` reexecuta cada versão histórica da edge e exige, além do zero efeito da sonda, um **controle positivo** que prove que o contador enxerga o fluxo real daquele bundle. O controle mandava `{}`, e a v1.5 passou a responder 400 antes do `createClient` para corpo sem `dry_run`: as duas versões novas saíram INVERIFICAVEL, com a sonda ainda em zero efeito. A correção foi no controle, não na edge — `{"dry_run":true}` é o fluxo real sem escrita. **Endurecer a entrada de uma rota exige atualizar quem a exercita como controle**; senão a prova vira "não consegui medir".
+
 ## O que o mutcheck pegou na própria suíte
 
 - `soma += centavos(d)` → `soma += d * 100` **sobrevivia**: todos os descontos dos testes (0,10; 0,20; 10; 20) viram inteiros exatos ao multiplicar por 100. O caso que discrimina é R$ 0,29 (0,29 × 100 = 28,999999999999996). Suíte que só usa números "redondos" é cega justamente ao defeito de ponto flutuante que a correção existe para matar.

@@ -227,7 +227,12 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   // isso rendeu DUAS sondas manuais no mesmo dia (#2447 e #2451), porque o #2448 mexeu no
   // `index.ts` horas depois da 1ª atestação — o padrão de trabalho duplicado por estado não
   // compartilhado de `docs/historico/chips-duplicados-por-estado-compartilhado.md`.
-  { edge: "omie-desconto-backfill", desde: null, controles: [SEM_CREDENCIAL, CRON, BEARER] },
+  //
+  // v1.5 (#2486): a edge passou a ler o corpo INTEIRO antes de qualquer efeito, e sem `dry_run`
+  // explícito responde 400 antes do `createClient`. Com `{}` o controle deixou de ver o fluxo real e os
+  // closures novos saíram INVERIFICAVEL — com a sonda ainda em zero efeito. `dry_run: true` é o fluxo
+  // real SEM escrita, e serve também aos closures velhos (eles liam `dry_run` com padrão).
+  { edge: "omie-desconto-backfill", desde: null, controles: [SEM_CREDENCIAL, comCorpo(CRON, '{"dry_run":true}', "v1.5: sem dry_run explícito o corpo é 400 antes do createClient; dry_run:true é o fluxo real sem escrita"), BEARER] },
   // ⛔ CANDIDATAS QUE A PROVA AINDA NÃO APROVOU. A coluna da direita é o resultado da ONDA 3,
   // depois que a sonda de corpos mediu o degrau de controle de cada uma:
   //   omie-vendas-sync         127/188 → 189/189  ✅ entrou (corpo {"action":"sync_products"})
