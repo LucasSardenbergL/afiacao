@@ -65,8 +65,16 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * bundle exige as DUAS chamadas (canária + sonda de `fonte`), ver o cabeçalho deste arquivo.
  * ⚠️ ORDEM DE DEPLOY: `sync-reprocess` ANTES desta. Com esta nova e a reprocess velha no ar, a
  * reconciliação reescreveria de volta para BRUTO os pedidos novos da janela dela.
+ *
+ * `v1.8-edicao-recusa-desconto-do-omie` (2026-09-14): o `alterar_pedido` RECUSA editar pedido cuja
+ * leitura atual do Omie mostra desconto de item ou de capa, ou não permite afirmar que não há —
+ * `blocked: "desconto_omie"`, 200 estruturado, ANTES de qualquer mutação — porque a edição exclui e
+ * reinclui os itens sem o trio de desconto e apagaria o desconto comercial no ERP. E confere a leitura
+ * FINAL antes do write-back: desconto ali LANÇA em vez de gravar total bruto que o ERP desmente. Régua
+ * de presença em `_shared/edicao-desconto-omie.ts` (arquivo novo, importado só por esta edge) ⇒ a prova
+ * do bundle exige as DUAS chamadas (canária + sonda de `fonte`). Sem pré-condição de banco.
  */
-export const VERSAO = "v1.7-subtotal-liquido-pela-regua";
+export const VERSAO = "v1.8-edicao-recusa-desconto-do-omie";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

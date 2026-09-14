@@ -45,6 +45,6 @@ O teste "sem desconto, bit a bit o legado" tinha três fixtures, e **as três da
 
 - **A passada no acervo** (o que fecha a distorção de comparação) — o backfill de `desconto_valor` está em curso noutra frente (#2467); falta o recompute do cabeçalho. → A passada existe desde 2026-09-14 ([pedido-total-liquido-do-acervo.md](pedido-total-liquido-do-acervo.md)); o apply espera a ingestão v1.7 e o backfill das duas contas.
 - **A reconciliação não carrega `desconto_valor`** por linha: desconto que muda sozinho no Omie deixa a linha velha sob o cabeçalho novo (lacuna do #2412, não desta entrega).
-- **A edição do app** exige `discount = 0` e `p_total = Σ qtd·preço` — editar pelo app um pedido com desconto no ERP pode apagar o desconto comercial.
+- **A edição do app** exige `discount = 0` e `p_total = Σ qtd·preço` — editar pelo app um pedido com desconto no ERP pode apagar o desconto comercial. → **Fechado em 2026-09-14**: o `alterar_pedido` recusa pedido com desconto na leitura do Omie e confere a leitura final antes do write-back ([edicao-do-app-apaga-desconto-do-omie.md](edicao-do-app-apaga-desconto-do-omie.md)).
 - **O cupom impresso** mostra os itens do items-jsonb (bruto) sob o total líquido, sem linha de desconto.
 - **REVISÃO INDEPENDENTE PENDENTE** da revisão de código: a cota do Codex esgotou na 2ª rodada; o Caminho B (PG17 falsificável + mutcheck) cobre o intervalo.

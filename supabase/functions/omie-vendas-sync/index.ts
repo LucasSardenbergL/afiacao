@@ -9,6 +9,7 @@ import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/at
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
 import { aplicarCorPreservandoItens, apurarSubtotalPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
+import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
@@ -3195,6 +3196,7 @@ Deno.serve(async (req) => {
         let omieCurrentItems: OmieDetalheItem[] = [];
         let consultEditOk = false;
         let omieCodigoClienteEdit: number | null = null;
+        let omieTotalPedidoEdit: { valor_descontos?: unknown } | null = null;
         try {
           const consultResult = (await callOmieVendasApi(
             "produtos/pedido/",
@@ -3202,14 +3204,23 @@ Deno.serve(async (req) => {
             { codigo_pedido: codigoPedido },
             editAccount
           )) as {
-            pedido_venda_produto?: { det?: OmieDetalheItem[]; cabecalho?: { codigo_cliente?: number } };
+            pedido_venda_produto?: {
+              det?: OmieDetalheItem[];
+              cabecalho?: { codigo_cliente?: number };
+              total_pedido?: { valor_descontos?: unknown };
+            };
             det?: OmieDetalheItem[];
             cabecalho?: { codigo_cliente?: number };
+            total_pedido?: { valor_descontos?: unknown };
           } | null;
           // Omie returns items under pedido_venda_produto.det
           omieCurrentItems = consultResult?.pedido_venda_produto?.det
             || consultResult?.det
             || [];
+          // 2º eixo do guard de desconto (abaixo): a capa sofre o MESMO drift de shape do det.
+          omieTotalPedidoEdit = consultResult?.pedido_venda_produto?.total_pedido
+            ?? consultResult?.total_pedido
+            ?? null;
           consultEditOk = true;
           // Cabeçalho sofre o MESMO drift de shape do det (aninhado ou no topo).
           omieCodigoClienteEdit =
@@ -3259,6 +3270,41 @@ Deno.serve(async (req) => {
           throw new Error(
             "Edição não aplicada: não foi possível confirmar com segurança os itens atuais do pedido no Omie. Nada foi alterado — tente novamente.",
           );
+        }
+
+        // Guard money-path: a edição APAGA o desconto do Omie — o Step 2 exclui cada item e o Step 3 reinclui
+        // sem `tipo_desconto`/`percentual_desconto`/`valor_desconto` (docs/historico/
+        // edicao-do-app-apaga-desconto-do-omie.md). Pedido cuja leitura ATUAL mostra desconto de item ou de
+        // capa — ou não permite afirmar que não há — NÃO se edita pelo app. Roda aqui, sobre o estado já
+        // confiável do anti-duplicação e ANTES do verify-before-edit, da trava de crédito e de qualquer
+        // mutação. 200 estruturado (como credito/tint_preco/atp), não throw: o 500 chega ao app só como
+        // "non-2xx" e a instrução de editar no Omie se perderia. Sem override — é contrato, não exposição.
+        // Efeito colateral: quem passa daqui tem desconto zero, então o `totalAtualOmie` BRUTO da trava de
+        // crédito abaixo é também o líquido.
+        const descontoNoOmie = descontoNaLeituraDoOmie({ det: omieCurrentItems, total_pedido: omieTotalPedidoEdit });
+        if (descontoNoOmie.acusado) {
+          // Rastro durável, no precedente do anti-duplicação acima: `acao` é CHECK ao vocabulário do crédito
+          // e o fluxo de exceção (`useExcecaoCredito`) só lê `bloqueado`/`bloqueado_edicao`. Best-effort:
+          // falha do insert não pode transformar a recusa num 500 que esconde o motivo.
+          const { error: trilhaDescontoErr } = await supabaseAdmin.from("venda_bloqueio_credito_log").insert({
+            company: editAccount,
+            omie_codigo_cliente: omieCodigoClienteEdit,
+            sales_order_id: editSoId,
+            acao: "gate_indisponivel",
+            user_id: userId,
+            detalhe:
+              `edicao: desconto no Omie — edição recusada antes de mutar ` +
+              `(itens acusados ${descontoNoOmie.itens.length}, capa ${descontoNoOmie.capa?.motivo ?? "sem desconto"})`,
+          });
+          if (trilhaDescontoErr) console.error("[desconto] trilha da recusa falhou:", trilhaDescontoErr.message);
+          result = {
+            success: false,
+            blocked: "desconto_omie",
+            contexto: "edicao",
+            itens: descontoNoOmie.itens,
+            capa: descontoNoOmie.capa,
+          };
+          break;
         }
 
         // P0-B: verify-before-edit (princípio 5) — a edição destrutiva pode mutar um PV historicamente
@@ -3450,10 +3496,17 @@ Deno.serve(async (req) => {
           "ConsultarPedido",
           { codigo_pedido: codigoPedido },
           editAccount,
-        )) as { pedido_venda_produto?: { det?: OmieDetalheItem[] }; det?: OmieDetalheItem[] } | null;
+        )) as {
+          pedido_venda_produto?: { det?: OmieDetalheItem[]; total_pedido?: { valor_descontos?: unknown } };
+          det?: OmieDetalheItem[];
+          total_pedido?: { valor_descontos?: unknown };
+        } | null;
         const finalOmieItems: OmieDetalheItem[] = finalConsultResult?.pedido_venda_produto?.det
           || finalConsultResult?.det
           || [];
+        const finalTotalPedido = finalConsultResult?.pedido_venda_produto?.total_pedido
+          ?? finalConsultResult?.total_pedido
+          ?? null;
         const expectedSignature = buildExpectedSignature(editItems);
         const omieSignature = buildOmieSignature(finalOmieItems);
 
@@ -3467,6 +3520,24 @@ Deno.serve(async (req) => {
           );
           throw new Error(
             `Omie não confirmou a substituição completa dos itens do pedido (esperado ${editItems.length} itens e recebeu ${finalOmieItems.length}).`,
+          );
+        }
+
+        // Pós-condição do write-back: a RPC grava `discount: 0` e total bruto porque o contrato diz que a edição
+        // termina SEM desconto. A assinatura acima é cega a desconto, então confere aqui, com a mesma régua de
+        // presença do guard. Acusar é o Omie contradizendo o contrato — reaplicou desconto sozinho, ou uma
+        // exclusão/inclusão voltou `null` por transitório esgotado e o item descontado ficou (achado do
+        // challenge Codex). O Omie JÁ foi mutado: gravar o bruto local registraria um número que o ERP
+        // desmente, então ERRO explícito, como a falha do write-back abaixo.
+        const descontoNaLeituraFinal = descontoNaLeituraDoOmie({ det: finalOmieItems, total_pedido: finalTotalPedido });
+        if (descontoNaLeituraFinal.acusado) {
+          console.error(
+            `[Omie Vendas][${editAccount}] Desconto na leitura final do pedido ${codigoPedido}: ${JSON.stringify(descontoNaLeituraFinal)}`,
+          );
+          throw new Error(
+            `Omie ATUALIZADO, mas a leitura final do pedido mostra desconto que a edição não envia ` +
+              `(${descontoNaLeituraFinal.itens.length} item(ns)${descontoNaLeituraFinal.capa ? " e a capa" : ""}) — ` +
+              `o registro local NÃO foi gravado. Confira o pedido no Omie e NÃO re-salve sem recarregar.`,
           );
         }
 
