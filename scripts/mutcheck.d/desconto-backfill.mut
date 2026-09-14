@@ -163,7 +163,7 @@ PEGA | corpo: escrita sem plano aprovado é aceita           | s~if \(dryRun ===
 PEGA | excluir_ids: null volta a ser exclusão vazia         | s~if \(raw === undefined\) return \{ ok: true, ids: new Set\(\) \};~if (raw === undefined || raw === null) return { ok: true, ids: new Set() };~
 
 # ── v1.5 (Codex r3): o plano aprovado ─────────────────────────────────────────────────────────
-PEGA | plano: o portão ignora o plano aprovado              | s~\} else if \(planoAprovado !== null && ~} else if (false && planoAprovado !== null && ~
+PEGA | plano: o portão ignora o plano aprovado (compara com -1)  | s~planoAprovado\.get\(a\.id\) !== centavos\(a\.desconto_valor\)~planoAprovado.get(a.id) === -1~
 PEGA | plano: valor comparado em reais, não em centavos     | s~planoAprovado\.get\(a\.id\) !== centavos\(a\.desconto_valor\)~planoAprovado.get(a.id) !== a.desconto_valor~
 PEGA | plano: linha já preenchida passa a ser recusada      | s~!jaPreenchidas\.has\(a\.id\) && ~~
 PEGA | plano: null vira 'sem plano'                         | s~if \(raw === undefined\) return \{ ok: true, plano: null \};~if (raw === undefined || raw === null) return { ok: true, plano: null };~
