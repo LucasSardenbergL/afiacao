@@ -2,6 +2,7 @@
 // Reusa o MESMO cupom de /sales/print (buildPrintData + openPrintOrder) — layout idêntico.
 import { buildPrintData } from '@/components/sales/print/buildPrintHtml';
 import { openPrintOrder } from '@/components/OrderPrintLayout';
+import type { LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
 import type { CompanyFilter, OmiePayload, OrderItem, SalesOrderRow } from '@/components/sales/print/types';
 import type { SalesOrder } from './types';
 import { totalLinhaOuAusente } from '@/lib/format';
@@ -64,14 +65,19 @@ export function buildSalesOrderPrintRow(
   };
 }
 
-// Abre a janela de impressão do cupom para um pedido de venda.
+// Abre a janela de impressão do cupom para um pedido de venda. Devolve o aviso do desconto de item
+// para a TELA mostrar — o cupom saiu sem a quebra de um desconto que existe ou que não se leu — ou
+// `null`. O aviso nunca vai ao papel.
 export function printSalesOrder(
   order: SalesOrder,
   customerName: string,
-  customerDocument?: string,
-  logos?: Record<string, string | null>,
-): void {
+  customerDocument: string | undefined,
+  logos: Record<string, string | null> | undefined,
+  descontos: LeituraDescontosItens,
+): string | null {
   const company = resolveCompanyForPrint(order.account);
   const row = buildSalesOrderPrintRow(order, customerName, customerDocument);
-  openPrintOrder(buildPrintData(row, company, logos));
+  const data = buildPrintData(row, company, logos, descontos);
+  openPrintOrder(data);
+  return data.avisoDesconto ?? null;
 }

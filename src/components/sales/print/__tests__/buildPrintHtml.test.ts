@@ -145,7 +145,7 @@ describe('buildPrintData — desconto de item a partir de order_items', () => {
 describe('buildSingleOrderHtml — desconto de item no cupom em lote', () => {
   it('com quebra: coluna Desconto, líquido por linha e Subtotal bruto − Desconto = TOTAL', () => {
     const html = buildSingleOrderHtml(buildPrintData(pedidoReal(1489.34), 'oben', undefined, lida()));
-    expect(html.match(/<th style=/g)).toHaveLength(8);
+    expect(html.match(/<th[ >]/g)).toHaveLength(8);
     expect(html).toContain('>Desconto</th>');
     expect(html).toContain(`>${fmt(23.01)}</td>`);
     expect(html).toContain(`>${fmt(437.24)}</td>`);
@@ -163,7 +163,7 @@ describe('buildSingleOrderHtml — desconto de item no cupom em lote', () => {
 
   it('sem quebra: 7 colunas e o Subtotal do cabeçalho, como hoje', () => {
     const html = buildSingleOrderHtml(buildPrintData(pedidoReal(1629.25), 'oben', undefined, lida()));
-    expect(html.match(/<th style=/g)).toHaveLength(7);
+    expect(html.match(/<th[ >]/g)).toHaveLength(7);
     expect(html).not.toContain('>Desconto</th>');
     expect(html).toContain(`<span>Subtotal:</span><span>${fmt(1629.25)}</span>`);
   });

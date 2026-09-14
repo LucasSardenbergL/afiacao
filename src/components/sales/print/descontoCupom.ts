@@ -153,3 +153,25 @@ export function leituraDoPedido(
   if (!porPedido || !Object.prototype.hasOwnProperty.call(porPedido, pedidoId)) return { estado: 'falhou' };
   return { estado: 'lida', linhas: porPedido[pedidoId] };
 }
+
+const AVISOS_NA_DESCRICAO = 5;
+
+/**
+ * Texto do toast da EQUIPE quando um ou mais cupons saem sem a quebra de desconto; `null` quando
+ * nenhum avisou. O aviso nunca vai ao papel — quem imprime o mostra na tela. Num lote grande, a
+ * descrição mostra os primeiros e conta o resto, para o toast não cobrir a tela.
+ */
+export function mensagemAvisoDesconto(
+  avisos: ReadonlyArray<string | null | undefined>,
+): { titulo: string; descricao: string } | null {
+  const presentes = avisos.filter((aviso): aviso is string => typeof aviso === 'string' && aviso !== '');
+  if (presentes.length === 0) return null;
+  const titulo =
+    presentes.length === 1
+      ? 'Cupom impresso sem a coluna de desconto'
+      : `${presentes.length} cupons impressos sem a coluna de desconto`;
+  const linhas = presentes.slice(0, AVISOS_NA_DESCRICAO);
+  const excedente = presentes.length - linhas.length;
+  if (excedente > 0) linhas.push(`… e mais ${excedente}`);
+  return { titulo, descricao: linhas.join('\n') };
+}

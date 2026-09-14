@@ -55,7 +55,7 @@ const comQuebra: PrintOrderData = {
 describe('openPrintOrder — desconto de item no cupom avulso', () => {
   it('com quebra: coluna Desconto, líquido por linha e Subtotal bruto − Desconto = TOTAL', () => {
     const html = imprimir(comQuebra);
-    expect(html.match(/<th style=/g)).toHaveLength(8);
+    expect(html.match(/<th[ >]/g)).toHaveLength(8);
     expect(html).toContain('>Desconto</th>');
     expect(html).toContain(`>${fmt(23.01)}</td>`);
     expect(html).toContain(`>${fmt(437.24)}</td>`);
@@ -79,7 +79,7 @@ describe('openPrintOrder — desconto de item no cupom avulso', () => {
 
   it('sem quebra: 7 colunas e só o TOTAL, como hoje', () => {
     const html = imprimir(semQuebra);
-    expect(html.match(/<th style=/g)).toHaveLength(7);
+    expect(html.match(/<th[ >]/g)).toHaveLength(7);
     expect(html).not.toContain('>Desconto</th>');
     expect(html).not.toContain('<span>Subtotal:</span>');
     expect(html).toContain(`<span>TOTAL:</span><span>${fmt(1629.25)}</span>`);

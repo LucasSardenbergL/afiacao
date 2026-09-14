@@ -26,6 +26,8 @@ export interface PrintOrderData {
     /** `null` = preco NAO SABIDO. Sai "-" no cupom, nunca R$ 0,00 (ausente != zero). */
     valorUnitario: number | null;
     valorTotal: number | null;
+    /** Desconto da LINHA em R$ — só no cupom com quebra de desconto. `null` = não apurado: sai "—". */
+    descontoValor?: number | null;
     tintCorId?: string;
     tintNomeCor?: string;
   }>;
@@ -35,6 +37,14 @@ export interface PrintOrderData {
   total: number;
   observacoes?: string;
   isOben?: boolean;
+  /**
+   * Quebra do desconto de item (`order_items.desconto_valor`). Presente SÓ quando Subtotal bruto −
+   * Desconto fecha com o TOTAL em centavos: aí o cupom ganha a coluna Desconto, o `valorTotal` de cada
+   * item é o LÍQUIDO da linha e o rodapé mostra Subtotal/Desconto/TOTAL. Ausente = o cupom de sempre.
+   */
+  quebraDesconto?: { subtotalBruto: number; descontoTotal: number; itensApurados: number };
+  /** Aviso à EQUIPE, não vai ao papel: o cupom saiu sem a quebra de um desconto que existe ou que não se leu. */
+  avisoDesconto?: string;
 }
 
 /** Extract day offsets from parcela code or description.
@@ -91,6 +101,31 @@ function buildObsText(data: PrintOrderData): string {
 // Um zero INFORMADO (bonificacao/brinde) segue saindo como R$ 0,00 — a distincao e o ponto.
 const fmt = formatPrecoOuAusente;
 
+// ── Desconto de item no cupom — markup ÚNICO para as duas vias ─────────────────────────────────
+// `openPrintOrder` (avulso) e `buildSingleOrderHtml` (lote, em sales/print) usam estes três, para
+// a coluna e o rodapé não divergirem entre elas. Sem `quebraDesconto` devolvem '' e o HTML sai o de
+// sempre, byte a byte.
+
+/** Cabeçalho da coluna Desconto. */
+export function thDescontoHtml(data: PrintOrderData): string {
+  return data.quebraDesconto ? '<th style="width:70px;text-align:right">Desconto</th>' : '';
+}
+
+/** Célula de desconto da linha: R$ da linha, ou "—" quando não apurado (nunca R$ 0,00). */
+export function tdDescontoHtml(data: PrintOrderData, item: PrintOrderData['items'][number]): string {
+  if (!data.quebraDesconto) return '';
+  return `<td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.descontoValor)}</td>`;
+}
+
+/** Subtotal BRUTO e Desconto do rodapé; com linha não apurada, o rótulo diz quantos itens entraram. */
+export function totaisComDescontoHtml(data: PrintOrderData): string {
+  const q = data.quebraDesconto;
+  if (!q) return '';
+  const parcial = q.itensApurados < data.items.length ? ` (${q.itensApurados} de ${data.items.length} itens)` : '';
+  return `<div class="row"><span>Subtotal:</span><span>${fmt(q.subtotalBruto)}</span></div>`
+    + `<div class="row"><span>Desconto${parcial}:</span><span>- ${fmt(q.descontoTotal)}</span></div>`;
+}
+
 export function openPrintOrder(data: PrintOrderData) {
   const obs = buildObsText(data);
   const installmentText = buildInstallmentDates(data.parcelaCode, data.condPagamento, data.total);
@@ -110,14 +145,16 @@ export function openPrintOrder(data: PrintOrderData) {
         <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${descLines.join('<br/>')}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.quantidade}</td>
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${escapeHtml(item.unidade)}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>
+        <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>${tdDescontoHtml(data, item)}
         <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorTotal)}</td>
       </tr>
     `;
   }).join('');
 
   const cnpjsComDesconto = ['15.422.799/0001-81', '51.027.034/0001-00', '55.555.305/0001-51'];
-  const showDesconto = data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
+  // Com a quebra de desconto de item, a linha legada (que lê o `discount` do cabeçalho, sempre 0)
+  // não entra: o "Desconto" do rodapé é um só.
+  const showDesconto = !data.quebraDesconto && data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
 
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Pedido ${escapeHtml(data.orderNumber)}</title>
@@ -185,14 +222,14 @@ export function openPrintOrder(data: PrintOrderData) {
     <th>Descrição</th>
     <th style="width:40px;text-align:center">Qtd</th>
     <th style="width:35px;text-align:center">Un</th>
-    <th style="width:80px;text-align:right">Vlr Unit.</th>
+    <th style="width:80px;text-align:right">Vlr Unit.</th>${thDescontoHtml(data)}
     <th style="width:80px;text-align:right">Vlr Total</th>
   </tr></thead>
   <tbody>${itemsRows}</tbody>
 </table>
 
 <div class="totals">
-  ${showDesconto ? `<div class="row"><span>Subtotal:</span><span>${fmt(data.subtotal)}</span></div>` : ''}
+  ${totaisComDescontoHtml(data)}${showDesconto ? `<div class="row"><span>Subtotal:</span><span>${fmt(data.subtotal)}</span></div>` : ''}
   ${showDesconto ? `<div class="row"><span>Desconto:</span><span>- ${fmt(data.desconto)}</span></div>` : ''}
   
   <div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>

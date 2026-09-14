@@ -3,11 +3,20 @@
 import { addDays } from 'date-fns';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import { escapeHtml } from '@/lib/escape-html';
-import { type PrintOrderData } from '@/components/OrderPrintLayout';
+import { tdDescontoHtml, thDescontoHtml, totaisComDescontoHtml, type PrintOrderData } from '@/components/OrderPrintLayout';
 import type { CompanyFilter, SalesOrderRow } from './types';
 import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
+import { receitaLiquidaItem } from '@/lib/pedido/desconto-item';
+import { resolverDescontoCupom, type LeituraDescontosItens } from './descontoCupom';
 
-export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, logoUrls?: Record<string, string | null>): PrintOrderData {
+// `descontos`: o que se leu de `order_items` para ESTE pedido. Obrigatório de propósito — cada
+// chamador declara (lida, falhou, não se aplica); "esqueci de ler" não pode virar cupom sem desconto.
+export function buildPrintData(
+  order: SalesOrderRow,
+  company: CompanyFilter,
+  logoUrls: Record<string, string | null> | undefined,
+  descontos: LeituraDescontosItens,
+): PrintOrderData {
   const isOben = company === 'oben';
   const companyMap: Record<CompanyFilter, { name: string; cnpj: string; phone: string; address: string }> = {
     oben: {
@@ -36,13 +45,18 @@ export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, log
   const payload = order.omie_payload;
   const parcelaCode = payload?.cabecalho?.codigo_parcela || undefined;
 
+  const orderNumber = order.omie_numero_pedido?.replace(/^0+/, '') || order.id.slice(0, 8).toUpperCase();
+  // Desconto de item: o jsonb `items` é BRUTO e o cabeçalho, desde o #2469, LÍQUIDO. A quebra só
+  // entra quando fecha com o TOTAL gravado (régua em ./descontoCupom); senão o cupom é o de sempre.
+  const descontoItens = resolverDescontoCupom(order.items || [], descontos, order.total);
+
   return {
     companyName: c.name,
     companyCnpj: c.cnpj,
     companyPhone: c.phone,
     companyAddress: c.address,
     companyLogoUrl: logoUrls?.[company] || undefined,
-    orderNumber: order.omie_numero_pedido?.replace(/^0+/, '') || order.id.slice(0, 8).toUpperCase(),
+    orderNumber,
     // Pedido do sync tem created_at = data-pura (meia-noite UTC, sem hora real):
     // o helper imprime só a data no dia certo; com hora real, formato inalterado.
     date: formatarDataPedido(order.created_at, 'dd/MM/yyyy HH:mm'),
@@ -53,7 +67,7 @@ export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, log
     vendedorName: order.vendedor_name,
     condPagamento: order.cond_pagamento,
     parcelaCode,
-    items: (order.items || []).map((it) => ({
+    items: (order.items || []).map((it, i) => ({
       codigo: it.codigo || it.omie_codigo || '-',
       descricao: it.descricao || it.nome || '',
       quantidade: it.quantidade || 1,
@@ -61,7 +75,12 @@ export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, log
       // O `|| 0` daqui imprimia R$ 0,00 no cupom do CLIENTE para item cujo preco o Omie
       // nao informou. `null` atravessa ate o formatador, que escreve "-".
       valorUnitario: it.valor_unitario ?? null,
-      valorTotal: it.valor_total ?? totalLinhaOuAusente(it.quantidade, it.valor_unitario),
+      // Com a quebra de desconto, o total da linha é o LÍQUIDO pela régua do edge — `null` (sai "—")
+      // quando o desconto da linha não foi apurado, nunca o bruto com cara de líquido.
+      valorTotal: descontoItens.quebra
+        ? receitaLiquidaItem(it.valor_unitario, it.quantidade, descontoItens.descontoPorItem[i])
+        : it.valor_total ?? totalLinhaOuAusente(it.quantidade, it.valor_unitario),
+      ...(descontoItens.quebra ? { descontoValor: descontoItens.descontoPorItem[i] } : {}),
       tintCorId: it.tint_cor_id,
       tintNomeCor: it.tint_nome_cor,
     })),
@@ -71,6 +90,16 @@ export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, log
     total: order.total || 0,
     observacoes: order.notes || undefined,
     isOben: isOben,
+    ...(descontoItens.quebra
+      ? {
+          quebraDesconto: {
+            subtotalBruto: descontoItens.subtotalBruto,
+            descontoTotal: descontoItens.descontoTotal,
+            itensApurados: descontoItens.itensApurados,
+          },
+        }
+      : {}),
+    ...(!descontoItens.quebra && descontoItens.aviso ? { avisoDesconto: `Pedido ${orderNumber}: ${descontoItens.aviso}` } : {}),
   };
 }
 
@@ -120,13 +149,15 @@ export function buildSingleOrderHtml(data: PrintOrderData): string {
       <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${descLines.join('<br/>')}</td>
       <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.quantidade}</td>
       <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${escapeHtml(item.unidade)}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>
+      <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>${tdDescontoHtml(data, item)}
       <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorTotal)}</td>
     </tr>`;
   }).join('');
 
   const cnpjsComDesconto = ['03.422.099/0001-08', '07.311.465/0001-02', '24.521.946/0001-61'];
-  const showDesconto = data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
+  // Com a quebra de desconto de item, a linha legada (que lê o `discount` do cabeçalho, sempre 0)
+  // não entra: o "Desconto" do rodapé é um só.
+  const showDesconto = !data.quebraDesconto && data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
 
   const obs = data.isOben
     ? 'RECIBO DE ENTREGA DE VENDA NÃO PRESENCIAL E-PTA-RE Nº: 45.000035717-51 / OBEN COMÉRCIO LTDA. TRANSPORTADORA: Transporte próprio: Oben Comercio Declaro que recebi as mercadorias constantes dessa Nota Fiscal, e que as mercadorias se destinam a uso e consumo, e que estão em perfeito estado e conferem com pedido feito no âmbito do comércio de telemarketing ou eletrônico e que foram recebidas no local por mim no local indicado acima.\n\nCPF/CNPJ:___________________________________ DATA DA ENTREGA:___/___/____\n\nNome/ASSINATURA:_________________________________________________' + (data.observacoes ? '\n\n' + escapeHtml(data.observacoes) : '')
@@ -166,11 +197,11 @@ export function buildSingleOrderHtml(data: PrintOrderData): string {
   <th>Descrição</th>
   <th style="width:40px;text-align:center">Qtd</th>
   <th style="width:35px;text-align:center">Un</th>
-  <th style="width:80px;text-align:right">Vlr Unit.</th>
+  <th style="width:80px;text-align:right">Vlr Unit.</th>${thDescontoHtml(data)}
   <th style="width:80px;text-align:right">Vlr Total</th>
 </tr></thead><tbody>${itemsRows}</tbody></table>
 <div class="totals">
-  <div class="row"><span>Subtotal:</span><span>${fmt(data.subtotal)}</span></div>
+  ${data.quebraDesconto ? totaisComDescontoHtml(data) : `<div class="row"><span>Subtotal:</span><span>${fmt(data.subtotal)}</span></div>`}
   ${showDesconto ? `<div class="row"><span>Desconto:</span><span>- ${fmt(data.desconto)}</span></div>` : ''}
   
   <div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>
