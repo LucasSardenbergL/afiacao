@@ -242,8 +242,12 @@ export function fatiaEmShared(caminho: string, edge: string): FatiaEmShared | un
   return FATIAS_EM_SHARED.find((f) => f.arquivo === caminho && f.edge === edge);
 }
 
-/** A forma que o núcleo compara: a projeção, para fatia declarada; a fonte normalizada, no resto. */
-function comparavel(caminho: string, edge: string, fonte: string | null): string | null {
+/**
+ * A forma que o núcleo compara: a projeção, para fatia declarada; a fonte normalizada, no resto.
+ * Exportada para o verificador das ondas congeladas (`sonda-versao-bump-gate-ondas.ts`) conferir a
+ * decisão "mudou?" com ESTA função — uma cópia lá seria uma segunda noção de "mudou" que diverge.
+ */
+export function comparavel(caminho: string, edge: string, fonte: string | null): string | null {
   if (fonte === null) return null;
   const fatia = fatiaEmShared(caminho, edge);
   return fatia ? fatia.projetar(fonte) : normalizarFonte(fonte);

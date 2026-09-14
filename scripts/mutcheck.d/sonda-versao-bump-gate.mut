@@ -22,12 +22,19 @@ SOBREVIVE | largura do sha no texto do OK (cosmetico)  | s/base\.slice\(0, 9\)/b
 #
 # FATIAS_EM_SHARED (2026-09-10): a allowlist do cron é o comportamento do `sonda-relay`, e as ondas
 # 2 a 5 passaram com o marcador congelado porque `_shared/` inteiro ficava fora. Cada mutação abaixo
-# desfaz UMA peça do conserto; a suíte tem de nomear a peça pelos testes SINTÉTICOS. As 4 fatias REAIS
-# moram em `scripts/sonda-versao-bump-gate-historia.test.ts`, FORA deste contrato: leem commits reais e
-# este job é raso (medido 2026-09-14 em clone `--depth 1`: sem elas, 14/14 pegas e 0 problemas).
+# desfaz UMA peça do conserto; a suíte tem de nomear a peça (testes sintéticos + as 4 fatias reais,
+# congeladas desde o #2474).
 PEGA      | fatia em _shared volta a ser ignorada      | s/if \(declaradas\.length > 0\) \{/if (declaradas.length > 999) {/
 PEGA      | nucleo esquece a fatia declarada           | s/contaComoCorpo\(a\.caminho, e\.edge\) \|\| fatiaEmShared\(a\.caminho, e\.edge\) !== undefined/contaComoCorpo(a.caminho, e.edge)/
 PEGA      | fatia vale para QUALQUER edge              | s/f\.arquivo === caminho && f\.edge === edge/f.arquivo === caminho/
 PEGA      | arquivo inteiro no lugar da projecao       | s/return fatia \? fatia\.projetar\(fonte\) : normalizarFonte\(fonte\);/return normalizarFonte(fonte);/
 PEGA      | projecao cega (verde por cegueira)         | s/return \[\.\.\.slugs\]\.sort\(\)\.join\('\\n'\);/return '';/
 PEGA      | projecao sem stripper (sub-limpeza)        | s/removerComentarios\(fonte\)\.matchAll/fonte.matchAll/
+#
+# #2474 (2026-09-14): as fatias reais saíram do clone — entradas congeladas por
+# `sonda-versao-bump-gate-ondas.ts` — e a fiação do git ganhou teste próprio num repo que o teste
+# constrói. Cada mutação abaixo só é pega pela peça nova que a nomeia (medido tirando a peça):
+# a 1ª só pelo teste de integração; a 2ª só pelos blobs REAIS de `versao.ts` das ondas — o marcador
+# de verdade tem export depois do `VERSAO`, e nenhum exemplo sintético tem.
+PEGA      | diff do coletor vira lista vazia           | s/const tocados = saida\.split\('\\n'\)\.filter\(\(l\) => l !== ''\);/const tocados = saida.split('\\n').filter(() => false);/
+PEGA      | VERSAO so vale no fim do arquivo           | s/\(\.\*\?\)\\1\/\);/(.*?)\\1;?\\s*\$\/);/

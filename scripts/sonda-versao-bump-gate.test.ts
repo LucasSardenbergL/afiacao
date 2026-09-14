@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 import { slugsDaAllowlist } from '../supabase/functions/_shared/sonda-cron-alvos';
 import { fecharGrafo } from './sonda-fingerprint';
@@ -15,6 +18,14 @@ import {
   projetarAlvosDoRele,
   type EstadoEdge,
 } from './sonda-versao-bump-gate';
+import {
+  carregarOndasCongeladas,
+  idDeBlob,
+  leitorCongelado,
+  ondaCongelada,
+  tokenDeCorpo,
+  type OndaCongelada,
+} from './sonda-versao-bump-gate-ondas';
 
 // Helper: monta um EstadoEdge com o mínimo de ruído.
 function estado(p: Partial<EstadoEdge> & { edge: string }): EstadoEdge {
@@ -393,7 +404,190 @@ describe('montarEstado — a allowlist tocada vira estado do RELÉ; o resto de `
   });
 });
 
-// ─── A história REAL (commits da `main`) mora em `sonda-versao-bump-gate-historia.test.ts` ───
-// Esta suíte é a que o contrato `scripts/mutcheck.d/sonda-versao-bump-gate.mut` mede, e ele roda no
-// job RASO `mutation-check`: teste que lê commit real AQUI deixa o baseline vermelho em todo PR
-// (2026-09-11 a 2026-09-14). Teste novo que precise de histórico vai para o arquivo irmão.
+// ─── As ondas reais, congeladas (#2474): entradas históricas que não dependem do clone ───
+
+describe('ondas reais — entradas históricas projetadas e congeladas', () => {
+  // Os 5 squashes que o #2470 mediu. Este bloco chamava `coletarEstado(sha^, sha)` e herdava o CLONE:
+  // no checkout raso do `mutation-check` os commits não existem, os casos lançavam e a baseline do
+  // contrato caiu na `main` (#2474, a classe do #2227). O estado agora sai das ENTRADAS que o gate leu
+  // naquelas fatias — `tocados` do mesmo diff, `versao.ts` e allowlist INTEIROS, corpo como token do
+  // normalizado —, congeladas e conferidas contra o git por `bun run sonda:bump-ondas -- --check`
+  // (cabeçalho de `sonda-versao-bump-gate-ondas.ts`). Casos e resultados esperados ficam FIXOS aqui,
+  // nunca derivados do congelado, e o assert casa a LISTA INTEIRA: nenhuma outra edge passa a reprovar.
+  const ondas = carregarOndasCongeladas();
+  const estadoDa = (curto: string): EstadoEdge[] => {
+    const onda = ondaCongelada(ondas, curto);
+    return montarEstado(onda.tocados, onda.base, onda.head, leitorCongelado(onda, ondas.blobs));
+  };
+  const congelado = { edge: 'sonda-relay', versao: 'v1.1-alvos-da-onda-1', motivo: 'sem-bump', arquivos: [ALLOWLIST] };
+  const CONTROLE = '54679dc35';
+  const CASOS = [
+    ['89887025b', 'onda 2 (#2388)'],
+    ['d96b69f06', 'onda 3 (#2404)'],
+    ['a73641e9c', 'onda 4 (#2415)'],
+    ['f4578bbff', 'onda 5 (#2461)'],
+  ] as const;
+
+  it.each(CASOS)('%s — %s: reprova o relé, e só ele', (sha) => {
+    expect(auditarBump(estadoDa(sha))).toEqual([congelado]);
+  });
+
+  it(`controle: a onda 1 (${CONTROLE}, #2313) BUMPOU o relé → nenhum achado, e não por cegueira`, () => {
+    const estados = estadoDa(CONTROLE);
+    expect(auditarBump(estados)).toEqual([]);
+    // o relé ESTAVA no estado, com os dois marcadores lidos dos blobs reais: `[]` por ter bumpado
+    expect(estados.find((e) => e.edge === 'sonda-relay')).toMatchObject({
+      versaoBase: 'v1.0-rele-options',
+      versaoHead: 'v1.1-alvos-da-onda-1',
+    });
+  });
+
+  it('o congelado tem EXATAMENTE as fatias destes casos — nem sobra dado, nem falta caso', () => {
+    expect(ondas.ondas.map((o) => o.head.slice(0, 9)).sort()).toEqual([CONTROLE, ...CASOS.map(([sha]) => sha)].sort());
+  });
+
+  it('cada blob integral bate com o próprio id de git — o conteúdo é o do commit, não um editado à mão', () => {
+    // calibração POR FORA: o id do blob vazio é uma constante do git, não uma saída desta função
+    expect(idDeBlob('')).toBe('e69de29bb2d1d6434b8b29ae775ad8c2e48c5391');
+    const ids = Object.keys(ondas.blobs);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.filter((id) => idDeBlob(ondas.blobs[id]) !== id)).toEqual([]);
+  });
+
+  it('token de corpo sobrevive à renormalização do gate — senão a igualdade entre tokens seria acaso', () => {
+    const tokens = ondas.ondas.flatMap((o) => o.leituras.flatMap((l) => (l.corpo === undefined ? [] : [l.corpo])));
+    expect(tokens.length).toBeGreaterThan(0);
+    expect(tokens.filter((t) => normalizarFonte(t) !== t)).toEqual([]);
+  });
+});
+
+describe('leitor congelado — fail-CLOSED: o que ele não registrou LANÇA, nunca vira `null`', () => {
+  const ondas = carregarOndasCongeladas();
+  const onda = ondaCongelada(ondas, '89887025b');
+  const ler = leitorCongelado(onda, ondas.blobs);
+
+  it('controle: base e head completos devolvem o blob real do marcador do relé', () => {
+    expect(extrairVersao(ler(onda.base, MARCADOR_RELE) ?? '')).toBe('v1.1-alvos-da-onda-1');
+    expect(extrairVersao(ler(onda.head, MARCADOR_RELE) ?? '')).toBe('v1.1-alvos-da-onda-1');
+  });
+
+  it('caminho que o congelado não registrou → lança, nomeando a leitura', () => {
+    expect(() => ler(onda.head, 'supabase/functions/nao-congelada/index.ts')).toThrow(/LEITURA-FORA-DO-CONGELADO/);
+  });
+
+  it('revisão que não é a base nem o head da fatia → lança (sha curto e árvore de trabalho inclusive)', () => {
+    expect(() => ler('89887025b', MARCADOR_RELE)).toThrow(/REVISAO-INESPERADA/);
+    expect(() => ler(null, MARCADOR_RELE)).toThrow(/REVISAO-INESPERADA/);
+  });
+
+  it('ausência REGISTRADA é a única saída `null` — e continua distinta de arquivo vazio', () => {
+    const caminho = 'supabase/functions/e/index.ts';
+    const sintetica: OndaCongelada = {
+      head: 'b'.repeat(40),
+      base: 'a'.repeat(40),
+      tocados: [caminho],
+      leituras: [
+        { rev: 'base', caminho, blob: null },
+        { rev: 'head', caminho, blob: 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', corpo: tokenDeCorpo('') },
+      ],
+    };
+    const lerSintetico = leitorCongelado(sintetica, {});
+    expect(lerSintetico('a'.repeat(40), caminho)).toBeNull();
+    expect(lerSintetico('b'.repeat(40), caminho)).toBe(tokenDeCorpo(''));
+    expect(tokenDeCorpo('')).not.toBe('');
+  });
+});
+
+// ─── A fiação do git, que as ondas congeladas deixaram de exercer ───
+
+/** Config global FORJADA hostil: assinatura obrigatória com gpg inexistente + hook global que reprova. */
+function configGitHostil(): { dir: string; env: { GIT_CONFIG_GLOBAL: string; GIT_CONFIG_NOSYSTEM: string } } {
+  const dir = mkdtempSync(join(tmpdir(), 'sonda-bump-hostil-'));
+  mkdirSync(join(dir, 'hooks'));
+  writeFileSync(join(dir, 'hooks', 'pre-commit'), '#!/bin/sh\necho HOOK-GLOBAL-REPROVOU >&2\nexit 1\n', { mode: 0o755 });
+  writeFileSync(
+    join(dir, 'gitconfig'),
+    `[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /nao/existe/este/gpg\n[core]\n\thooksPath = ${join(dir, 'hooks')}\n`,
+  );
+  return { dir, env: { GIT_CONFIG_GLOBAL: join(dir, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' } };
+}
+
+describe('coletarEstado — a fiação do git, num repo que o TESTE constrói sob config global hostil', () => {
+  // As ondas reais entram pelo `montarEstado`; o `git diff` e o `git show` do coletor só se provam
+  // aqui. Trocar a lista do diff por `[]` deixava verdes TODOS os outros testes de git — `HEAD..HEAD`
+  // já é vazio e rev inexistente continua lançando (parecer do Codex, #2474). O repo é do teste
+  // (#2227), e a hostilidade é forjada em TODO run: a blindagem do commit (`-c commit.gpgsign=false`,
+  // `--no-verify`) só se prova contra um hospedeiro que a exija.
+  it('edge bumpada + allowlist mudada sem bump do relé → estado lido do git, e só o relé reprova', () => {
+    const hostil = configGitHostil();
+    const repo = mkdtempSync(join(tmpdir(), 'sonda-bump-repo-'));
+    const git = (...args: string[]): string => {
+      const r = spawnSync('git', args, { cwd: repo, env: { ...process.env, ...hostil.env }, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} falhou: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    const escrever = (arquivos: Record<string, string>): void => {
+      for (const [rel, conteudo] of Object.entries(arquivos)) {
+        mkdirSync(join(repo, rel, '..'), { recursive: true });
+        writeFileSync(join(repo, rel), conteudo);
+      }
+    };
+    const commitar = (msg: string): string => {
+      git('add', '-A');
+      git('-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '--no-verify', '-qm', msg);
+      return git('rev-parse', 'HEAD');
+    };
+    const cwdAntes = process.cwd();
+    const envAntes = { global: process.env.GIT_CONFIG_GLOBAL, nosystem: process.env.GIT_CONFIG_NOSYSTEM };
+    try {
+      git('init', '-q');
+      escrever({
+        'supabase/functions/sonda-relay/versao.ts': 'export const VERSAO = "v1.0-rele";\n',
+        'supabase/functions/sonda-relay/index.ts': 'import { slugsDaAllowlist } from "../_shared/sonda-cron-alvos.ts";\n',
+        [ALLOWLIST]: allowlist(['a']),
+        'supabase/functions/outra/versao.ts': 'export const VERSAO = "v1.0-outra";\n',
+        'supabase/functions/outra/index.ts': 'const maxPages = 10;\n',
+        'supabase/functions/_shared/auth.ts': 'const a = 1;\n',
+        'docs/nota.md': 'antes\n',
+      });
+      const base = commitar('base');
+      escrever({
+        [ALLOWLIST]: allowlist(['a', 'b']),
+        'supabase/functions/outra/versao.ts': 'export const VERSAO = "v1.1-outra";\n',
+        'supabase/functions/outra/index.ts': 'const maxPages = 500;\n',
+        'supabase/functions/_shared/auth.ts': 'const a = 2;\n',
+        'docs/nota.md': 'depois\n',
+      });
+      const head = commitar('head');
+
+      // o gate roda como roda de verdade: da raiz do repo, sob a MESMA config global
+      process.env.GIT_CONFIG_GLOBAL = hostil.env.GIT_CONFIG_GLOBAL;
+      process.env.GIT_CONFIG_NOSYSTEM = hostil.env.GIT_CONFIG_NOSYSTEM;
+      process.chdir(repo);
+      const estados = coletarEstado(base, head);
+
+      expect(
+        estados.map((e) => ({
+          edge: e.edge,
+          versaoBase: e.versaoBase,
+          versaoHead: e.versaoHead,
+          corpo: e.corpo.map((a) => a.caminho),
+        })),
+      ).toEqual([
+        { edge: 'outra', versaoBase: 'v1.0-outra', versaoHead: 'v1.1-outra', corpo: ['supabase/functions/outra/index.ts'] },
+        { edge: 'sonda-relay', versaoBase: 'v1.0-rele', versaoHead: 'v1.0-rele', corpo: [ALLOWLIST] },
+      ]);
+      expect(auditarBump(estados)).toEqual([
+        { edge: 'sonda-relay', versao: 'v1.0-rele', motivo: 'sem-bump', arquivos: [ALLOWLIST] },
+      ]);
+    } finally {
+      process.chdir(cwdAntes);
+      if (envAntes.global === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = envAntes.global;
+      if (envAntes.nosystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+      else process.env.GIT_CONFIG_NOSYSTEM = envAntes.nosystem;
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(hostil.dir, { recursive: true, force: true });
+    }
+  });
+});
