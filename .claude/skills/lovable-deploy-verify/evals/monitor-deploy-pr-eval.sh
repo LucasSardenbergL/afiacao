@@ -331,7 +331,7 @@ suite() {
   caso usosent   "--pr com sentinela" "$CLONE" 6 "USO_INVALIDO" "" --pr 1 "$(U "$C5")" alguma-sentinela
   caso semesquema "url sem https:// é uso inválido, não 'fora do ar'" "$CLONE" 6 "USO_INVALIDO" "fora do ar" \
        "127.0.0.1:$PORT/ar-$(c8 "$C5")"
-  caso entry404  "entry que não baixa: exit 2, nunca 'sem carimbo'" "$CLONE" 2 "ENTRY_NAO_BAIXOU" "nada a relatar;deploy novo" "$BASE/entry404"
+  caso entry404  "entry que não baixa: exit 2, nunca 'sem carimbo'" "$CLONE" 2 "ENTRY_NAO_BAIXOU" "VERSAO_INDETERMINADA;nada a relatar;deploy novo" "$BASE/entry404"
   echo "  SENTINELA — o verify-frontend tem QUATRO saídas, não duas"
   CASO_VF_RC=0; caso sentinela "rc 0 ⇒ presente" "$CLONE" 0 "SENTINELA_PRESENTE" "" "$BASE/ar-dev" s
   CASO_VF_RC=1; caso sentinela "rc 1 ⇒ ausente" "$CLONE" 3 "SENTINELA_AUSENTE" "SENTINELA_SEM_VEREDITO" "$BASE/ar-dev" s
@@ -340,17 +340,23 @@ suite() {
   CASO_VF_RC=3; caso sentinela "rc 3 (recusa) NÃO é ausente" "$CLONE" 3 \
        "SENTINELA_SEM_VEREDITO" "SENTINELA_AUSENTE" "$BASE/ar-dev" s
   CASO_VF_RC=""
-  echo "  SEM CARIMBO — a 1ª checagem é '?', nunca 'SIM (1a-vez)'"
+  echo "  SEM CARIMBO — a 1ª checagem é '?', nunca 'SIM (1a-vez)'; e nenhum dos 3 estados sai 0"
   if grupo semcarimbo; then
+    # Os três saem exit 4: só a MARCA separa um estado do outro — é ela que dá dente às sabotagens do
+    # estado (1ª checagem × SIM, formato antigo × '?'). Até 2026-09-14 o entry igual saía 0 "nada a
+    # relatar": com o carimbo sumido do ar, o cron calava da 2ª rodada em diante.
     CASO_ESTADO="$FIX/semcarimbo.state"; rm -f "$CASO_ESTADO"; site semcarimbo dev dev1
-    caso semcarimbo "1ª checagem" "$CLONE" 4 "deploy-novo=?;1a checagem deste checkout" "deploy-novo=SIM" "$BASE/semcarimbo"
-    caso semcarimbo "nada mudou" "$CLONE" 0 "deploy-novo=nao;nada a relatar" "" "$BASE/semcarimbo"
+    caso semcarimbo "1ª checagem" "$CLONE" 4 \
+         "deploy-novo=?;VERSAO_INDETERMINADA (PRIMEIRA_CHECAGEM);1a checagem deste checkout" "deploy-novo=SIM" "$BASE/semcarimbo"
+    caso semcarimbo "nada mudou: versão indeterminada, nunca o 0 de 'sincronizado'" "$CLONE" 4 \
+         "deploy-novo=nao;VERSAO_INDETERMINADA (ENTRY_IGUAL);nada mudou" "nada a relatar;sincronizado" "$BASE/semcarimbo"
     site semcarimbo - dev2
-    caso semcarimbo "entry novo" "$CLONE" 4 "deploy-novo=SIM;deploy novo detectado" "" "$BASE/semcarimbo"
+    caso semcarimbo "entry novo" "$CLONE" 4 \
+         "deploy-novo=SIM;VERSAO_INDETERMINADA (ENTRY_NOVO);deploy novo detectado" "" "$BASE/semcarimbo"
     # estado no FORMATO ANTIGO (só o entry), num DEPLOY_MONITOR_STATE apontado à mão: vale como valia
     CASO_ESTADO="$FIX/antigo.state"; printf 'index-dev2\n' > "$CASO_ESTADO"
-    caso semcarimbo "estado no formato antigo, mesmo entry: 'nada a relatar', não '1a checagem'" "$CLONE" 0 \
-         "deploy-novo=nao;nada a relatar" "deploy-novo=?" "$BASE/semcarimbo"
+    caso semcarimbo "estado no formato antigo, mesmo entry: ENTRY_IGUAL, não '1a checagem'" "$CLONE" 4 \
+         "deploy-novo=nao;VERSAO_INDETERMINADA (ENTRY_IGUAL)" "deploy-novo=?;nada a relatar" "$BASE/semcarimbo"
     CASO_ESTADO=""
   fi
   echo "  ESTADO — deploy-novo é relativo a ESTE checkout, nunca à máquina"

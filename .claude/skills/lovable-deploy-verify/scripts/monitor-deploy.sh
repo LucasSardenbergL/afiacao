@@ -25,7 +25,7 @@
 # Sem fetch, NENHUM verde (2026-09-10): o guard do elo 1 vivia só no caminho do exit 5, e com o
 # `git fetch origin main` falho sobravam três portas para o exit 0 que comparavam o ar com a main
 # LOCAL, possivelmente velha — a igualdade de string do carimbo, o atalho do SHA cheio (carimbo de
-# 7 chars do mesmo commit) e o fallback sem carimbo ("nada a relatar"). Ar == main velha e a main
+# 7 chars do mesmo commit) e o fallback sem carimbo ("nada a relatar", hoje 4). Ar == main velha e a main
 # real já andou com `src/` ⇒ "sincronizado", com uma linha de aviso que o cron não lê (ele lê o
 # EXIT). Agora FETCH_OK=0 ⇒ exit 3 FETCH_FALHOU ANTES de qualquer veredito: sem a main desta
 # rodada não há "ar == main?", e ausência de dado não vira verde nem quando a resposta calharia de
@@ -41,13 +41,20 @@
 # NESTA rodada; destino travado ou remoto sem main saem ≠ 0 ⇒ FETCH_FALHOU) e toda leitura da main
 # usa esse nome.
 #
-# Exit:  0 = sincronizado: o ar serve o MESMO commit da main (ou nada a relatar)
+# Exit:  0 = sincronizado: o ar serve o MESMO commit da main (ou, sem carimbo, SENTINELA_PRESENTE)
 #        5 = SINCRONIZADO_EM_BUNDLE: SHA atrás por N commits, delta PROVADO fora do bundle —
 #            Publish desnecessário. Não é 0 de propósito: "mesmo commit" ≠ "bundle equivalente",
 #            e quem consome o exit precisa saber a diferença. No cron: avise em tudo que NÃO for
 #            0 ou 5 (2/3/4, e o 6 de uso inválido).
 #        3 = ar ATRASADO (Publish pendente) — inclui "não consegui provar" (ver "motivo:")
-#        4 = versão indeterminada (sem carimbo nem sentinela) — deploy-novo diz se o entry mudou
+#        4 = VERSAO_INDETERMINADA: sem carimbo nem sentinela o monitor não sabe QUAL commit o ar
+#            serve — nos TRÊS estados do deploy-novo, marcados PRIMEIRA_CHECAGEM · ENTRY_NOVO ·
+#            ENTRY_IGUAL. O ENTRY_IGUAL saía 0 "nada a relatar" até 2026-09-14 (levantado pelo Codex
+#            na revisão do #2485): entry igual ao da última checagem prova que nada mudou NO AR, não
+#            que o ar == main, e num checkout de cron em que o carimbo some o alarme soava UMA vez,
+#            na troca, e depois se calava no código de "sincronizado" — com a main andando e o
+#            Publish pendente. Agora o 4 se repete a cada rodada até o carimbo voltar (ou vir uma
+#            sentinela); o --pr, no mesmo caso, sai 6 SEM_CARIMBO.
 #        2 = site fora do ar / HTML mudou de forma / o entry não baixou
 #        6 = USO_INVALIDO (argumento que não se entende — nunca vira veredito)
 #        Fetch desta rodada falhou ⇒ nem 0, nem 5, nem 4: sai 3 FETCH_FALHOU (só o 2 e o 6 de uso
@@ -365,10 +372,15 @@ if [ -n "$SENTINELA" ]; then
        exit 3 ;;
   esac
 fi
+# Sem carimbo nem sentinela: exit 4 nos TRÊS estados do deploy-novo, por um helper só — o entry
+# IGUAL não é "nada a relatar" (era, até 2026-09-14: ver o 4 no cabeçalho).
+indeterminada() { # MARCA mensagem
+  echo "  ⚠️ VERSAO_INDETERMINADA ($1): $2"
+  echo "     sem carimbo, só o CONTEÚDO prova a versão: passe uma sentinela, ou descubra por que o ar não carimba SHA"
+  exit 4
+}
 case "$DEPLOY" in
-  nao*) echo "  sem carimbo útil e nada mudou desde a última checagem DESTE checkout → nada a relatar"; exit 0 ;;
-  "?"*) echo "  1a checagem deste checkout, sem carimbo de SHA nem sentinela → versão indeterminada"; exit 4 ;;
+  nao*) indeterminada ENTRY_IGUAL "sem carimbo de SHA nem sentinela, e nada mudou desde a última checagem DESTE checkout — entry igual não diz se o ar == main" ;;
+  "?"*) indeterminada PRIMEIRA_CHECAGEM "1a checagem deste checkout, sem carimbo de SHA nem sentinela" ;;
+  *)    indeterminada ENTRY_NOVO "deploy novo detectado, mas sem carimbo de SHA nem sentinela → não dá pra confirmar a versão" ;;
 esac
-echo "  deploy novo detectado, mas sem carimbo de SHA nem sentinela → não dá pra confirmar a versão"
-echo "  (quando o carimbo chegar ao ar no 1º Publish, este fallback some)"
-exit 4
