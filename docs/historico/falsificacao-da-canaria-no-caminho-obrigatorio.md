@@ -74,11 +74,22 @@ do `provas-sql`, com os casos do caminho novo, **controle positivo pelo runner**
 honesta → verde com `falsificacoes=1/1`) e piso de casos. A regex `GUARDA` do
 `falsificacao-cobertura.test.ts` passou a aceitar a guarda invertida (`!=`), a forma da canária.
 
+E o dente foi ele mesmo sabotado, uma camada por vez, numa cópia isolada do runner: aceitar dois
+recibos, cegar o detector, aceitar falhas > 0, ignorar o mínimo, perder a identidade do recibo, não
+passar a flag, aceitar declaração sem modo, aceitar exceção sem motivo — **8 sabotagens, 8 vezes o
+harness vermelho no caso que vigia aquela camada**, com o controle verde na mesma invocação e, caso a
+caso, idêntico ao do CI (33 linhas).
+
 ## O custo, medido
 
-Na M2 o `--falsificar` foi de 32s para **86–212s** (a mesma máquina varia ~2,5× entre execuções; a
-diferença real vem das 6 entradas normais do worktree, cada uma com `initdb`, e dos controles do
-juiz). O número honesto é o do runner: ⏳ *preencher com o 1º run do PR*.
+O número honesto é o do runner (1º run do #2472): o `provas-sql` foi de mediana 53s para **132s** — o
+step do núcleo de ~29s para **69s** (os +40s são a falsificação da canária) e o harness do executor,
+step novo, **39s**. O caminho crítico segue sendo o `gates-e-falsificacao` (~433s): o `provas-sql`
+continua terminando ~5 min antes, e o custo no wall-clock do PR é **zero**, como a medição previa.
+
+Na M2 a mesma falsificação levou **86s a 445s** (era 32s antes das 6 entradas normais do worktree,
+cada uma com `initdb`, e dos controles do juiz) — no run de 445s a canária NORMAL levou 22s, contra
+1–2s no runner. Outra vez: a máquina local compara A com B; quem dimensiona o CI é o CI.
 
 ## Fora desta entrega (declarado, não esquecido)
 
