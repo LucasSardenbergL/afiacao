@@ -985,7 +985,8 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
 ```bash
 .claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh [url] [sentinela]
 # exit 0 = sincronizado (MESMO commit) · 5 = SINCRONIZADO_EM_BUNDLE (SHA atrás, delta provado fora do bundle)
-#      3 = ATRASADO (Publish pendente; a linha "motivo:" diz qual elo) · 4 = versão indeterminada
+#      3 = ATRASADO (Publish pendente; a linha "motivo:" diz qual elo)
+#      4 = VERSAO_INDETERMINADA (sem carimbo nem sentinela: PRIMEIRA_CHECAGEM · ENTRY_NOVO · ENTRY_IGUAL — nunca 0)
 #      2 = site/entry não respondeu · 6 = USO_INVALIDO
 #      git fetch da main falhou ⇒ 3 "motivo: FETCH_FALHOU" em QUALQUER caminho — nunca 0/5/4 (só o 2 e o 6 vêm antes)
 .claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh --pr <n> [url]   # "o PR n está no ar?"
@@ -999,17 +1000,27 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
   saídas, não duas: 0 presente · 1 ausente · 2 sonda não confiável · 3 recusa. Até 2026-09-10 todo ≠0
   virava "AUSENTE → Publish pendente"; agora o 2 e o 3 saem `motivo: SENTINELA_SEM_VEREDITO` (exit 3
   para o alarme não calar — não porque falte Publish), e as últimas linhas do verify-frontend vêm junto.
+  **Sem sentinela, o fallback é exit 4 `VERSAO_INDETERMINADA` nos três estados do `deploy-novo`**
+  (`PRIMEIRA_CHECAGEM` · `ENTRY_NOVO` · `ENTRY_IGUAL`). Até 2026-09-14 o `ENTRY_IGUAL` — entry igual ao
+  da última checagem deste checkout — saía **0 "nada a relatar"**: veredito fabricado de ausência
+  (`ausente ≠ zero`), porque entry igual prova que nada mudou **no ar**, não que o ar == `origin/main`.
+  O `--pr`, no mesmo caso, já saía 6 `NAO_CONSEGUI_MEDIR (SEM_CARIMBO)`.
 - **`deploy-novo` é POR CHECKOUT** (`<git-dir>/deploy-monitor.state`; cada worktree tem o seu, e ele
   some com ela). Até 2026-09-10 era um arquivo só na máquina (`~/.config/afiacao/deploy-monitor.state`):
   uma sessão que nunca tinha rodado o monitor via `deploy-novo=nao` porque OUTRA gravara o entry novo —
   "desde a última checagem" de qualquer sessão, lido como "desde a minha". A 1ª checagem de um checkout
   sai `deploy-novo=?`, nunca o `SIM (1a-vez …)` de antes. `DEPLOY_MONITOR_STATE` segue sobrescrevendo
   (aponte dois checkouts para o mesmo arquivo se QUISER partilhar). É sinal auxiliar: a prova de Publish
-  é o carimbo (ou a sentinela), nunca o deploy-novo.
+  é o carimbo (ou a sentinela), nunca o deploy-novo — e por isso `deploy-novo=nao` sem carimbo é o
+  exit 4 `ENTRY_IGUAL`, nunca um 0.
 - **Agendar** (cron de sistema, sem gastar Claude): `*/30 * * * * cd <repo> && bash .../monitor-deploy.sh
   >> ~/.config/afiacao/deploy-monitor.log 2>&1` — avise em tudo que **não** for 0 ou 5 (`case $? in 0|5)
   ;; *) osascript …;; esac`); um `monitor … || avisa` voltaria a gritar no exit 5, que é justamente o
   ruído cortado, e uma lista fixa `2|3|4` calaria o 6 de uso inválido.
+  **Sem carimbo, o 4 se REPETE a cada rodada — de propósito.** Até 2026-09-14 o alarme soava uma vez
+  (na 1ª checagem ou na troca de entry) e, da rodada seguinte em diante, o entry igual saía 0: num
+  checkout persistente, o carimbo sumido calava o cron com a `main` andando e o Publish pendente. O 4
+  persistente se desliga devolvendo o carimbo ao ar — não tirando o 4 do `case`.
 
 ✅ **MUDOU — o carimbo determinístico FUNCIONA (medido em prod 2026-09-08).** De 2026-06-26 até
 2026-09-07 esta seção dizia que o ar servia `__BUILD_SHA__="dev"` (o build do Lovable roda sem `.git`),
@@ -1341,4 +1352,28 @@ aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
   locales e 19 sabotagens com controle verde antes — e o `monitor-deploy-eval.sh` irmão rodado E
   falsificado sobre este branch: foi ele que achou o alvo de sabotagem duplicado (`--no-renames
   --no-relative` repetido no alcance do PR) e o formato antigo do estado lido como "sem estado".
+- [x] **Sem carimbo, nenhum 0 — o entry IGUAL ao da última checagem saía "nada a relatar"
+  (2026-09-14, issue #2492; levantado pelo Codex na revisão do #2485).** No modo de igualdade, com o
+  ar sem carimbo útil e sem sentinela, o fallback tinha três ramos pelo `deploy-novo`: 1ª checagem → 4,
+  entry novo → 4, entry **igual → 0**. Num checkout persistente (cron) em que o carimbo some, o alarme
+  soava UMA vez, na troca, e da rodada seguinte em diante se calava no código de "sincronizado", com a
+  `main` andando e o Publish pendente. O cabeçalho ainda documentava `0 = … (ou nada a relatar)`. É
+  veredito fabricado de ausência: entry igual prova que nada mudou **no ar**, não que o ar ==
+  `origin/main`. No mesmo caso, o `--pr` já saía 6 `SEM_CARIMBO`. Conserto: os três ramos viram
+  **exit 4 `VERSAO_INDETERMINADA`** (`PRIMEIRA_CHECAGEM` · `ENTRY_NOVO` · `ENTRY_IGUAL`) por um helper
+  único que termina em `exit 4`, e nenhum sub-ramo consegue mais sair 0. A saída diz *indeterminada* e
+  nunca "Publish pendente": ausência de prova não autoriza pedir Publish. Com o mesmo exit nos três, só
+  a MARCA separa um estado do outro, e é ela que mantém o dente das sabotagens de estado do pr-eval
+  (1ª checagem × `SIM`, formato antigo × `?`). **Antes do conserto,** o cenário novo
+  `sem_carimbo_main_andou` (ar `"dev"`, main adiante com `src/`, estado no mesmo entry) saiu **exit 0
+  `nada a relatar`** (29/30), e os 4 casos `semcarimbo` do pr-eval deram 8/68 vermelhos nos 2 locales.
+  **Depois,** 30/30 e 68/68. Rede: 30 cenários (+1) e 24 sabotagens (+1: `fallback-entry-igual`
+  devolve o `exit 0` ao ramo e exige o `0|nada a relatar` PREVISTO). A `fetch-sem-carimbo` passou a
+  prever `4|VERSAO_INDETERMINADA (ENTRY_IGUAL)`: ali o guard do fetch não fecha mais uma porta do verde,
+  prova a ORDEM do cabeçalho ("nem o 4"). `bate()` ganhou a exclusividade do 4 (sem `ATRASADO`,
+  `SINCRONIZADO_EM_BUNDLE`, `sincronizado: ar serve` nem `nada a relatar`). Falsificação: 48 controles
+  verdes nos 2 locales antes da 1ª sabotagem, 24/24 pegas pela marca prevista e o controle de saída
+  intacto; no pr-eval, 34 casos verdes por locale no controle e 19 pegas, 0 cegueiras. A tag
+  `arquivo/monitor-reescrita-2026-09-10` (a reescrita abandonada) cobria os mesmos 3 estados, já em
+  `VERSAO_INDETERMINADA`, e nenhum caso dela ficou fora desta rede.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

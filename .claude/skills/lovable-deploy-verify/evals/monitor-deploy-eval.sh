@@ -166,12 +166,16 @@ cenario() {
     classify_mudo)    echo "$BASE $SO_DOCS classify_mudo" ;;
     python_mudo)      echo "$BASE $SO_DOCS python_mudo" ;;
     fetch_falhou)     echo "$BASE $SO_DOCS fetch_falhou" ;;
-    # remote quebrado e a origin/main LOCAL = o commit do ar: cada um por uma porta do verde — a
-    # igualdade de string (carimbo de 8), o atalho do SHA cheio (carimbo de 7, dentro do delta) e o
-    # fallback sem carimbo ("dev" + entry igual ao do estado = "nada a relatar")
+    # remote quebrado e a origin/main LOCAL = o commit do ar: cada um por um caminho — a igualdade de
+    # string (carimbo de 8), o atalho do SHA cheio (carimbo de 7, dentro do delta) e o fallback sem
+    # carimbo ("dev" + entry igual ao do estado). Os dois primeiros dariam o 0; o fallback deu o 0
+    # "nada a relatar" até 2026-09-14 e hoje dá o 4 — ali o guard prova a ORDEM ("nem o 4")
     fetch_falhou_mesmo_commit) echo "$SO_DOCS $SO_DOCS fetch_falhou" ;;
     fetch_falhou_carimbo_curto) echo "${SO_DOCS:0:7} $SO_DOCS fetch_falhou" ;;
     fetch_falhou_sem_carimbo) echo "dev $SO_DOCS fetch_falhou" ;;
+    # o mesmo fallback com o fetch CERTO: ar "dev", a main andou com src/ (Publish pendente) e o estado
+    # já viu este entry. Até 2026-09-14 saía 0 "nada a relatar" — o cron calava da 2ª rodada em diante
+    sem_carimbo_main_andou) echo "dev $SRC -" ;;
     # o fetch "dá certo" e a main lida é VELHA: o ar é o BASE, a main real andou com src/ e a origin/main
     # que o monitor lê ficou no commit do ar — pelo refspec estreito (a ref não anda, só o FETCH_HEAD)
     # e pelo nome curto (um branch LOCAL `origin/main` vence refs/remotes/ na resolução)
@@ -208,6 +212,7 @@ fetch_falhou|3|motivo: FETCH_FALHOU
 fetch_falhou_mesmo_commit|3|motivo: FETCH_FALHOU
 fetch_falhou_carimbo_curto|3|motivo: FETCH_FALHOU
 fetch_falhou_sem_carimbo|3|motivo: FETCH_FALHOU
+sem_carimbo_main_andou|4|VERSAO_INDETERMINADA (ENTRY_IGUAL)
 fetch_refspec_estreito|3|motivo: ALCANCA_BUNDLE
 ref_main_ambigua|3|motivo: ALCANCA_BUNDLE
 carimbo_alheio|3|motivo: CARIMBO_NAO_RESOLVE
@@ -263,9 +268,10 @@ bate() {
   [ "$2" -eq "$3" ] || return 1
   command grep -F -q -- "$4" "$1" || return 1
   case "$3" in
-    5) ! command grep -F -q -- "ATRASADO" "$1" ;;
-    3) ! command grep -F -q -- "SINCRONIZADO_EM_BUNDLE" "$1" ;;
-    0) ! command grep -F -q -e "ATRASADO" -e "SINCRONIZADO_EM_BUNDLE" "$1" ;;
+    5) ! command grep -F -q -e "ATRASADO" -e "VERSAO_INDETERMINADA" "$1" ;;
+    3) ! command grep -F -q -e "SINCRONIZADO_EM_BUNDLE" -e "VERSAO_INDETERMINADA" "$1" ;;
+    4) ! command grep -F -q -e "ATRASADO" -e "SINCRONIZADO_EM_BUNDLE" -e "sincronizado: ar serve" -e "nada a relatar" "$1" ;;
+    0) ! command grep -F -q -e "ATRASADO" -e "SINCRONIZADO_EM_BUNDLE" -e "VERSAO_INDETERMINADA" "$1" ;;
   esac
 }
 # confere <saída> <exit obtido> <cenário> → o desfecho declarado na tabela CASOS
@@ -337,7 +343,7 @@ while IFS='|' read -r nome esp marca; do
   fi
 done <<< "$CASOS"
 echo "$n_ok/$n_tot cenários passaram"
-[ "$n_tot" -ge 29 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
+[ "$n_tot" -ge 30 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
 
 # ── falsificação ────────────────────────────────────────────────────────────────────────────────
 if [ "$FALSIFY" = 1 ]; then
@@ -389,9 +395,11 @@ PY
       '[ "$narq" -gt 0 ] 2>/dev/null' '[ "$narq" -ge 0 ] 2>/dev/null'
     sab no-renames scripts/monitor-deploy.sh rename_src_docs "$VERDE_INDEVIDO" \
       '--no-renames --no-relative' '--find-renames --no-relative'
-    # o guard do fetch é UM só e fecha QUATRO portas do verde: um cenário por porta, cada um com o
-    # verde que ela daria sem ele — o 5 do delta, o 0 da igualdade de string, o 0 do atalho do SHA
-    # cheio e o 0 do fallback. Até 2026-09-10 o guard morava no delta e só fechava a primeira.
+    # o guard do fetch é UM só e vem antes de TODO veredito: um cenário por caminho, cada um com o
+    # desfecho que ele teria sem o guard — o 5 do delta, o 0 da igualdade de string, o 0 do atalho do
+    # SHA cheio e o 4 do fallback sem carimbo. Até 2026-09-10 o guard morava no delta e só fechava o
+    # primeiro; até 2026-09-14 o fallback era a 4ª porta do verde (o 0 "nada a relatar") — hoje ele é
+    # 4 por conta própria, e a sabotagem ali prova a ORDEM do cabeçalho: fetch falho nem vira 4.
     guard_fetch='[ "$FETCH_OK" = 1 ] || atrasado FETCH_FALHOU'
     sem_guard_fetch='[ "$FETCH_OK" = 1 ] || true || atrasado FETCH_FALHOU'
     sab fetch scripts/monitor-deploy.sh fetch_falhou "$VERDE_INDEVIDO" "$guard_fetch" "$sem_guard_fetch"
@@ -400,7 +408,11 @@ PY
     sab fetch-carimbo-curto scripts/monitor-deploy.sh fetch_falhou_carimbo_curto \
       '0|sincronizado: ar serve' "$guard_fetch" "$sem_guard_fetch"
     sab fetch-sem-carimbo scripts/monitor-deploy.sh fetch_falhou_sem_carimbo \
-      '0|nada a relatar' "$guard_fetch" "$sem_guard_fetch"
+      '4|VERSAO_INDETERMINADA (ENTRY_IGUAL)' "$guard_fetch" "$sem_guard_fetch"
+    # sem carimbo nem sentinela a versão é indeterminada nos TRÊS estados do deploy-novo: devolver o 0
+    # ao ramo do entry IGUAL recria o defeito de antes de 2026-09-14, e a main adiante tem de pegá-lo
+    sab fallback-entry-igual scripts/monitor-deploy.sh sem_carimbo_main_andou '0|nada a relatar' \
+      '  nao*) indeterminada ENTRY_IGUAL' '  nao*) echo "  nada a relatar"; exit 0; indeterminada ENTRY_IGUAL'
     # fetch que "dá certo" sem mover a ref: com o destino nomeado de volta ao `main` cru, o refspec
     # estreito só anda o FETCH_HEAD e a origin/main local (= o ar) reabre o 0 da igualdade de string
     sab fetch-refspec scripts/monitor-deploy.sh fetch_refspec_estreito \
@@ -507,7 +519,7 @@ PY
     fi
   done
   echo "  falsificações que pegaram: $fals/$total"
-  [ "$total" -ge 23 ] && [ "$fals" -eq "$total" ] || rc=1
+  [ "$total" -ge 24 ] && [ "$fals" -eq "$total" ] || rc=1
 
   # (C) CONTROLE DE SAÍDA — pelo CONTEÚDO: o laço nunca mutou o versionado.
   # shellcheck disable=SC2086
