@@ -89,6 +89,23 @@ linha não aparece como bloqueio de crédito. No app, `track('pedido.edicao_bloq
 **Mensagem honesta**: com algum item/capa `desconto`, "este pedido tem desconto de item no Omie"; só `ilegivel`,
 "não foi possível verificar o desconto" — ilegível não afirma desconto.
 
+## 2ª opinião — rodada 1 no Codex, rodada 2 no Caminho B
+
+- **Rodada 1** (metodologia; gpt-6-astra · max · 403 s · 116.548 tokens). Concordou com o bloqueio e mudou o desenho
+  em quatro pontos: derrubou "confirmado por contrato"; mostrou o (b) sem reaplicação; mostrou que a régua de
+  apuração não detecta presença; apontou a capa `total_pedido.valor_descontos`. Recusei duas sugestões:
+  `order_items.desconto_valor` como veto (o local pode estar não apurado) e reconsultar contra o TOCTOU (só estreita
+  a janela).
+- **Rodada 2** (código): **cota esgotada** — o servidor recusou com "try again at Sep 19th, 2026 1:21 PM", e o plano
+  declarado no token (`prolite`) é a assinatura paga, então o limite é real. **Caminho B**: refiz contra o diff as 7
+  perguntas que a rodada 2 levaria. Dois furos nos pins, ambos de verde por FORMA: o guard **embrulhado num `if`**
+  (escopado a uma conta) passava em todos, e trocar a **extração de `total_pedido` por `null`** desligava o 2º eixo
+  sem nenhum pin reclamar. Um menor: `acao: 'bloqueado_edicao'` na trilha poria a recusa no fluxo de exceção de
+  crédito. Os três viraram asserção (âncora no nível do `case`, pins das extrações, pin negativo) e sabotagem com
+  vermelho exigido.
+- ⚠️ **REVISÃO INDEPENDENTE PENDENTE.** A auto-revisão cobre o intervalo, não substitui: rodar a rodada 2 do Codex
+  retroativa quando a cota voltar.
+
 ## A forma generalizável
 
 > **Régua que APURA não é régua que AUTORIZA.** Uma função feita para somar receita tem de degradar para um número

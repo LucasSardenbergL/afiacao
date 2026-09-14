@@ -347,14 +347,30 @@ describe('guardrail money-path: alterar_pedido recusa pedido com desconto no Omi
   const bloco = src.match(/case "alterar_pedido": \{[\s\S]*?\n {6}case "/)?.[0] ?? '';
   const PRE = 'const descontoNoOmie = descontoNaLeituraDoOmie({ det: omieCurrentItems, total_pedido: omieTotalPedidoEdit });';
   const POS = 'const descontoNaLeituraFinal = descontoNaLeituraDoOmie({ det: finalOmieItems, total_pedido: finalTotalPedido });';
+  // O NÍVEL do `case` (8 espaços). Sem a âncora, o guard embrulhado num `if (editAccount === "oben") { … }`
+  // passava em todos os pins — a recusa escopada a uma conta, com cara de guard (pego no auto-challenge).
+  const NIVEL = ' '.repeat(8);
 
   it('sentinela: achou o bloco da action, o import do helper e as DUAS consultas ao guard', () => {
     expect(bloco, 'bloco da action alterar_pedido não encontrado').not.toBe('');
     expect(src, 'o guard deveria vir do helper puro testado em Deno').toMatch(
       /import \{ descontoNaLeituraDoOmie \} from "\.\.\/_shared\/edicao-desconto-omie\.ts";/,
     );
-    expect(bloco, 'sumiu o guard ANTES da mutação (ou trocou o argumento: tem de ser a leitura ATUAL do Omie)').toContain(PRE);
-    expect(bloco, 'sumiu a conferência da leitura FINAL antes do write-back').toContain(POS);
+    expect(
+      bloco,
+      'sumiu o guard ANTES da mutação (ou trocou o argumento: tem de ser a leitura ATUAL do Omie; ou saiu do nível do case — escopado/condicionado)',
+    ).toContain(`\n${NIVEL}${PRE}`);
+    expect(bloco, 'sumiu a conferência da leitura FINAL antes do write-back (ou saiu do nível do case)').toContain(
+      `\n${NIVEL}${POS}`,
+    );
+    // O 2º eixo (capa) só existe se a leitura o ENTREGA ao guard: trocar a extração por `null` desliga a capa
+    // sem que nenhuma outra asserção perceba.
+    expect(bloco, 'a capa da leitura ATUAL não chega ao guard — o 2º eixo morre calado').toMatch(
+      /omieTotalPedidoEdit = consultResult\?\.pedido_venda_produto\?\.total_pedido\s*\?\? consultResult\?\.total_pedido/,
+    );
+    expect(bloco, 'a capa da leitura FINAL não chega à pós-checagem — o 2º eixo morre calado').toMatch(
+      /const finalTotalPedido = finalConsultResult\?\.pedido_venda_produto\?\.total_pedido\s*\?\? finalConsultResult\?\.total_pedido/,
+    );
   });
 
   it('a recusa roda DEPOIS do ConsultarPedido e ANTES de toda mutação no Omie e de todo gate que escreve', () => {
@@ -377,13 +393,16 @@ describe('guardrail money-path: alterar_pedido recusa pedido com desconto no Omi
   });
 
   it('o ramo da recusa devolve blocked estruturado (200) e SAI da action — sem throw 500 e sem falar com o Omie', () => {
-    const ramo = bloco.match(/if \(descontoNoOmie\.acusado\) \{[\s\S]*?\n {8}\}/)?.[0] ?? '';
+    const ramo = bloco.match(/\n {8}if \(descontoNoOmie\.acusado\) \{[\s\S]*?\n {8}\}/)?.[0] ?? '';
     expect(ramo, 'o ramo do guard sumiu ou mudou de forma (a condição é a defesa: .acusado)').not.toBe('');
     expect(ramo).toMatch(/success: false/);
     expect(ramo).toMatch(/blocked: "desconto_omie"/);
     expect(ramo, 'sem break a action seguiria para o ExcluirItemPedido').toMatch(/\bbreak;/);
     expect(ramo, 'throw vira 500 e o app mostra só "non-2xx" — a instrução de editar no Omie se perde').not.toMatch(/\bthrow\b/);
     expect(ramo, 'o ramo de recusa não pode falar com o Omie').not.toMatch(/callOmieVendasApi/);
+    // A trilha reusa `venda_bloqueio_credito_log`, e `bloqueado`/`bloqueado_edicao` são exatamente o que o fluxo de
+    // exceção de crédito (`useExcecaoCredito`) LÊ: a recusa de desconto viraria "peça exceção de crédito ao gestor".
+    expect(ramo, 'a recusa de desconto entrou no fluxo de exceção de CRÉDITO (acao bloqueado*)').not.toMatch(/acao: "bloqueado/);
   });
 
   it('a leitura FINAL com desconto LANÇA antes do write-back — não grava bruto local que o ERP desmente', () => {
@@ -392,7 +411,7 @@ describe('guardrail money-path: alterar_pedido recusa pedido com desconto no Omi
     const writeBack = bloco.indexOf('"aplicar_edicao_pedido_omie"');
     expect(pos, 'a conferência final roda antes da leitura final').toBeGreaterThan(ultimaConsulta);
     expect(pos, 'a conferência final roda depois do write-back — tarde demais').toBeLessThan(writeBack);
-    const ramo = bloco.match(/if \(descontoNaLeituraFinal\.acusado\) \{[\s\S]*?\n {8}\}/)?.[0] ?? '';
+    const ramo = bloco.match(/\n {8}if \(descontoNaLeituraFinal\.acusado\) \{[\s\S]*?\n {8}\}/)?.[0] ?? '';
     expect(ramo, 'o ramo da conferência final sumiu ou mudou de forma').not.toBe('');
     expect(ramo, 'desconto na leitura final tem de LANÇAR (o Omie já foi mutado)').toMatch(/throw new Error\(/);
   });
