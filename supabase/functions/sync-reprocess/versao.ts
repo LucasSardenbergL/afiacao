@@ -65,8 +65,21 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // ⚠️ Não conte a conversão pelo `divergences_found`: a RPC também grava total quando só o carimbo
 // do CAS avança, sem contar divergência. A prova da conversão é SQL (total × Σ das linhas).
 // ⚠️ ORDEM DE DEPLOY: esta ANTES da `omie-vendas-sync` v1.7 (ver o versao.ts de lá).
+// ⚠️ v1.8 — DESCONTO DA LINHA + COERÊNCIA POR PEDIDO (2026-09-14). Quatro mudanças observáveis:
+// (1) cada item enviado à RPC leva `desconto_valor` (a régua sobre qty·preço, a base do subtotal).
+//     Com a migration 20260914180104 aplicada, a linha recebe o desconto lido — inclusive quando SÓ
+//     ele mudou no Omie, caso em que antes o pai ganhava o total líquido novo sobre a linha velha;
+// (2) pedido com item SEM código de produto utilizável não é reconciliado (nem itens nem cabeçalho):
+//     o items-jsonb o carregaria e as linhas não, e o banco recusa esse agregado. Surfaça em
+//     `metadata.item_sem_codigo[_amostra]` e no `error_message`;
+// (3) página com UM só pedido que falha na RPC não derruba mais a run — uma falha não prova falha
+//     sistêmica nessa cardinalidade —, e a amostra das falhas vai a `metadata.falhas_amostra`;
+// (4) `metadata.desconto_apurado`/`desconto_corrigido`: números com a migration nova, `null` com a
+//     RPC antiga. É assim que se lê, no log, que a edge subiu antes da migration.
+// ⚠️ ORDEM: livre, mas o defeito do desconto só fecha com as DUAS no ar — edge nova + RPC antiga
+// ignora a chave; RPC nova + edge velha recebe payload sem a chave e segue a regra antiga.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.7-subtotal-liquido-pela-regua";
+export const VERSAO = "v1.8-desconto-da-linha-e-coerencia-por-pedido";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
