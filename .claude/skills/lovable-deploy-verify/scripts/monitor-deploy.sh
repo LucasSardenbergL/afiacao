@@ -117,9 +117,12 @@ MAIN_SHA=$(git rev-parse --short=8 "$REF_MAIN" 2>/dev/null || echo "?")
 ENTRY=$(curl -fsS "$APP/" 2>/dev/null | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)
 [ -n "$ENTRY" ] || { echo "[$TS] monitor: $APP fora do ar ou HTML mudou de forma"; exit 2; }
 ENTRY_HASH=$(printf '%s' "$ENTRY" | grep -oE 'index-[A-Za-z0-9_-]+')
-# Linha `<entry> <ts> <url>`: url diferente (ou o formato antigo, só o entry) = sem estado anterior.
+# Linha `<entry> <ts> <url>`: url diferente = sem estado anterior. O formato ANTIGO (só o entry, de
+# um DEPLOY_MONITOR_STATE apontado à mão antes de 2026-09-10) vale como valia: quem apontou escolheu
+# partilhar — o monitor-deploy-eval.sh semeia assim o cenário do fallback sem carimbo.
 PREV=""; PREV_TS=""; PREV_URL=""
 if [ -n "$STATE" ] && [ -f "$STATE" ]; then read -r PREV PREV_TS PREV_URL < "$STATE" || true; fi
+if [ -n "$PREV" ] && [ -z "$PREV_TS" ] && [ -z "$PREV_URL" ]; then PREV_TS="formato-antigo"; PREV_URL="$APP"; fi
 if [ -z "$PREV" ] || [ "$PREV_URL" != "$APP" ]; then DEPLOY="? (1a checagem deste checkout nesta url)"
 elif [ "$PREV" = "$ENTRY_HASH" ]; then DEPLOY="nao (vs. $PREV_TS, neste checkout)"
 else DEPLOY="SIM ($PREV -> $ENTRY_HASH, desde $PREV_TS)"; fi
@@ -241,7 +244,9 @@ alcance_do_pr() {
   local pai lista classes n nb nd np pkg="" prova prc
   pai=$(git rev-parse --verify --quiet "$PR_SQUASH^1^{commit}" 2>/dev/null) \
     || { echo "     PR_ALCANCE_NAO_PROVADO: o squash não tem pai resolvível"; return; }
-  lista=$(git -c core.quotePath=false diff --no-renames --no-relative --name-only "$pai" "$PR_SQUASH" 2>/dev/null) \
+  # flags em outra ordem DE PROPÓSITO: a sequência no-renames→no-relative do analisar_delta é alvo de sabotagem do
+  # monitor-deploy-eval.sh no analisar_delta, e alvo repetido faz o harness dele recusar a sabotagem.
+  lista=$(git -c core.quotePath=false diff --no-relative --no-renames --name-only "$pai" "$PR_SQUASH" 2>/dev/null) \
     || { echo "     PR_ALCANCE_NAO_PROVADO: git diff do squash falhou"; return; }
   n=$(printf '%s\n' "$lista" | awk 'length($0) > 0 { n++ } END { print n + 0 }')
   [ "$n" -gt 0 ] || { echo "     PR_ALCANCE_NAO_PROVADO: o squash não lista arquivo nenhum"; return; }

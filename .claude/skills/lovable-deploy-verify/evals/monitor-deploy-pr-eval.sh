@@ -347,6 +347,10 @@ suite() {
     caso semcarimbo "nada mudou" "$CLONE" 0 "deploy-novo=nao;nada a relatar" "" "$BASE/semcarimbo"
     site semcarimbo - dev2
     caso semcarimbo "entry novo" "$CLONE" 4 "deploy-novo=SIM;deploy novo detectado" "" "$BASE/semcarimbo"
+    # estado no FORMATO ANTIGO (só o entry), num DEPLOY_MONITOR_STATE apontado à mão: vale como valia
+    CASO_ESTADO="$FIX/antigo.state"; printf 'index-dev2\n' > "$CASO_ESTADO"
+    caso semcarimbo "estado no formato antigo, mesmo entry: 'nada a relatar', não '1a checagem'" "$CLONE" 0 \
+         "deploy-novo=nao;nada a relatar" "deploy-novo=?" "$BASE/semcarimbo"
     CASO_ESTADO=""
   fi
   echo "  ESTADO — deploy-novo é relativo a ESTE checkout, nunca à máquina"
@@ -483,6 +487,8 @@ sabota "sentinela: rc 2/3 (sonda não confiável/recusa) lidos como ausente" sen
   '    1) sentinela_ausente ;;' '    *) sentinela_ausente ;;'
 sabota "1ª checagem volta a se anunciar 'SIM (1a-vez)'" semcarimbo \
   'DEPLOY="? (1a checagem deste checkout nesta url)"' 'DEPLOY="SIM (1a-vez -> $ENTRY_HASH)"'
+sabota "estado no formato antigo deixa de valer (vira '1a checagem')" semcarimbo \
+  'if [ -n "$PREV" ] && [ -z "$PREV_TS" ] && [ -z "$PREV_URL" ]; then' 'if false; then'
 sabota "estado volta a ser GLOBAL da máquina" estado \
   '${GITDIR:+$GITDIR/deploy-monitor.state}' '$HOME/.config/afiacao/deploy-monitor.state'
 }
