@@ -1,69 +1,24 @@
-// Preload para `bun test` (runner nativo do bun). Espelha o que `src/test/setup.ts`
-// faz pro vitest, já que o bun não usa vitest.config.ts e não roda em jsdom.
+// `bun test` — o runner NATIVO do bun — não é o runner deste repo: o canônico é `bun run test`
+// (vitest, sob node). Este arquivo só existe para o `[test] preload` do `bunfig.toml` fazer o
+// runner errado FALHAR ALTO, antes de carregar qualquer arquivo de teste.
 //
-// Sem isso, qualquer test que importa (direta ou indiretamente) o supabase client
-// quebra porque `src/integrations/supabase/client.ts` referencia `localStorage`
-// no top-level.
+// Por que falhar, e não só tirar o preload: sem ele o `bun test` continua QUASE rodando — aceita
+// os imports de `vitest` sem reclamar e fica verde. E verde não prova nada: sob bun, o filho aberto
+// sem `env` herda o ambiente da PARTIDA, então o teste de isolamento de
+// `scripts/sonda-versao-bump-gate.test.ts` passa SEM isolar. Medição e contexto:
+// docs/historico/bun-filho-sem-env-herda-a-partida.md (item M-21 do plano de 2026-09-05).
+//
+// Por que `process.exit(1)`, e não `throw`: o bun 1.3.14 não aborta num preload que lança — repete
+// o erro UMA VEZ POR ARQUIVO de teste e fecha com `Ran N tests across N files`, que se lê como
+// execução. O `exit` imprime a mensagem uma vez e sai antes do primeiro arquivo.
+//
+// Até 2026-09 isto era um shim de `localStorage`/`MediaStream`/`matchMedia` — cópia divergente de
+// `src/test/setup.ts`, que é o setup de verdade (achado A9 do mesmo plano).
 
-if (typeof globalThis.localStorage === "undefined") {
-  const store = new Map<string, string>();
-  const localStorageShim: Storage = {
-    get length() {
-      return store.size;
-    },
-    clear: () => store.clear(),
-    getItem: (key) => (store.has(key) ? store.get(key)! : null),
-    key: (index) => Array.from(store.keys())[index] ?? null,
-    removeItem: (key) => {
-      store.delete(key);
-    },
-    setItem: (key, value) => {
-      store.set(key, String(value));
-    },
-  };
-  Object.defineProperty(globalThis, "localStorage", {
-    value: localStorageShim,
-    writable: true,
-    configurable: true,
-  });
-}
+// Declarado aqui para não depender de os tipos do node entrarem no programa do `tsconfig.app.json`.
+declare const process: { exit(code: number): never };
 
-if (typeof globalThis.MediaStream === "undefined") {
-  class MediaStreamPolyfill {
-    private tracks: MediaStreamTrack[];
-    constructor(tracks: MediaStreamTrack[] = []) {
-      this.tracks = [...tracks];
-    }
-    getTracks() {
-      return this.tracks;
-    }
-    getAudioTracks() {
-      return this.tracks.filter((t) => t.kind === "audio");
-    }
-    getVideoTracks() {
-      return this.tracks.filter((t) => t.kind === "video");
-    }
-    addTrack(t: MediaStreamTrack) {
-      this.tracks.push(t);
-    }
-  }
-  // @ts-expect-error - shim
-  globalThis.MediaStream = MediaStreamPolyfill;
-}
-
-if (typeof globalThis.matchMedia === "undefined") {
-  Object.defineProperty(globalThis, "matchMedia", {
-    writable: true,
-    configurable: true,
-    value: (query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: () => {},
-      removeListener: () => {},
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      dispatchEvent: () => false,
-    }),
-  });
-}
+console.error(
+  "use bun run test (vitest); bun test não é o runner deste repo — ver docs/historico/bun-filho-sem-env-herda-a-partida.md",
+);
+process.exit(1);
