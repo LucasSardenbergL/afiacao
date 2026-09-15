@@ -41,10 +41,11 @@ FROM linhas l JOIN sales_orders so ON so.id = l.sales_order_id;
 
 ## Evidência
 
-- `src/lib/pedido/__tests__/desconto-item.test.ts` — paridade diferencial src × `_shared`, com piso anti-grade-vácua (ramo nulo e ≥50 resultados distintos).
-- `src/components/sales/print/__tests__/descontoCupom.test.ts` — o pedido real nos dois regimes do cabeçalho, a fixture de 40 linhas, ambiguidade, excedente, arredondamento de 0,29, leitura falha e lote que não cobriu o pedido.
-- `scripts/mutcheck.d/desconto-cupom.mut` — contrato de mutação do `descontoCupom.ts`.
-- Caracterização byte a byte do HTML sem quebra, antes × depois: 2 pedidos × 3 empresas × 2 renderizadores, contra 6 leituras que devem imprimir como hoje.
+- **RED antes do código de produção**, numa invocação só: 14 falharam e 50 passaram, todas por "falta a feature", menos uma. A contagem de colunas por `<th style=` era bug do TESTE, porque o `<th>Descrição</th>` não tem `style`. Virou `/<th[ >]/g`, e a contagem (6 × 7) foi provada nos HTML de antes, antes de a correção valer.
+- `src/lib/pedido/__tests__/desconto-item.test.ts` — paridade diferencial src × `_shared` em 27³ = 19.683 triplas, com piso anti-grade-vácua (ramo nulo e ≥50 resultados distintos).
+- `src/components/sales/print/__tests__/descontoCupom.test.ts` — o pedido real nos dois regimes do cabeçalho, a fixture de 40 linhas, ambiguidade, compensação entre grupos, excedente, arredondamento de 0,29, leitura que falhou e lote que não cobriu o pedido.
+- `scripts/mutcheck.d/desconto-cupom.mut` — **11 mutações · 11 pegas · 0 sobreviventes**, com baseline verde, no job `mutation-check` do CI do #2502 (um locale só, o do CI).
+- **Caracterização byte a byte do cupom sem quebra: 72/72 idênticos** — 2 pedidos × 3 empresas × 2 renderizadores × 6 leituras que devem imprimir como hoje (não se aplica, falhou, lida vazia, lida nula, desconto zero, cabeçalho bruto).
 
 ## O que ficou aberto, de propósito
 
