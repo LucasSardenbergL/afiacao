@@ -1,0 +1,32 @@
+# Invariantes money-path do DESCONTO DE ITEM na TELA do painel de detalhe do pedido — a régua do cupom
+# (resolverDescontoCupom) aplicada às linhas e aos totais.
+# @src: src/components/salesOrders/SalesOrderDetailSheet.tsx
+# @test: src/components/salesOrders/__tests__/SalesOrderDetailSheet.test.tsx
+# @compile_cmd: bun build --no-bundle --target node --outfile /dev/null
+# Rode: MUTCHECK_COMPILE_CMD='bun build --no-bundle --target node --outfile /dev/null' bash scripts/mutcheck.sh src/components/salesOrders/SalesOrderDetailSheet.tsx src/components/salesOrders/__tests__/SalesOrderDetailSheet.test.tsx scripts/mutcheck.d/desconto-painel-tela.mut
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ COMPILA-CHECK SEM BUNDLE: o padrão do mutcheck (`bun build` com bundle) arrasta o grafo inteiro do
+# componente (Radix, supabase, o dialog de crédito) só para conferir SINTAXE do mutante. O transpile
+# do arquivo sozinho basta, e discrimina — medido em 2026-09-15: o fonte original sai 0 e uma cópia
+# com `const quebrado = ;` sai 1.
+#
+# ⚠️ POR QUE ESTE CONTRATO EXISTE: quem abre o pedido lê esta tela como a conta dele. Linha bruta sob
+# total líquido, subtotal que não é o bruto, desconto não apurado virando R$ 0,00, desconto lido da
+# coluna legada (sempre 0) ou um aviso de leitura que some — cada mutação abaixo devolve uma conta
+# plausível que não fecha, ou um "não consegui ler" que se passa pela tela de sempre.
+
+# ── A linha e os totais da quebra ────────────────────────────────────────────────────────────────
+PEGA | total da linha fica BRUTO na quebra                          | s/\{fmt\(quebra \? receitaLiquidaItem\(item\.valor_unitario, item\.quantidade, quebra\.descontoPorItem\[i\]\) : itemTotal\(item\)\)\}/{fmt(itemTotal(item))}/
+PEGA | desconto NÃO apurado entra como 0 no líquido da linha        | s/quebra\.descontoPorItem\[i\]\) : itemTotal/quebra.descontoPorItem[i] ?? 0) : itemTotal/
+PEGA | subtotal da quebra sai o líquido do cabeçalho                | s/\{fmt\(quebra \? quebra\.subtotalBruto : order\.subtotal\)\}/{fmt(order.subtotal)}/
+PEGA | desconto do rodapé lê a coluna legada discount (sempre 0)    | s/- \{fmt\(quebra\.descontoTotal\)\}/- {fmt(order.discount ?? 0)}/
+
+# ── A sublinha ───────────────────────────────────────────────────────────────────────────────────
+PEGA | desconto da linha some da sublinha                           | s/\{quebra && sufixoDesconto\(quebra\.descontoPorItem\[i\]\)\}/{null}/
+PEGA | desconto não apurado sai R$ 0,00                             | s/: ' · desconto —';/: ' · desconto - R\$ 0,00';/
+PEGA | desconto zero apurado ganha sufixo                           | s/if \(desconto === 0\) return null;/if (false) return null;/
+PEGA | rótulo não diz quantos itens entraram no desconto            | s/return apurados < itens \?/return false ?/
+
+# ── Leitura que falhou ───────────────────────────────────────────────────────────────────────────
+PEGA | aviso de leitura que falhou some                             | s/const falhaDesconto = leituraDesconto\?\.falha \?\? null;/const falhaDesconto = null;/

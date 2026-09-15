@@ -7,6 +7,7 @@ import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
 import { decodeHtml, type OrderFeedRow } from '@/components/salesOrders/types';
 import { useSalesOrders, FEED_MAX_TOTAL } from '@/components/salesOrders/useSalesOrders';
 import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
+import { useDescontosItensPedido } from '@/components/salesOrders/useDescontosItensPedido';
 import { SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
 import { SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
 import { SalesOrderDetailSheet } from '@/components/salesOrders/SalesOrderDetailSheet';
@@ -39,6 +40,9 @@ const SalesOrders = () => {
   // Pedido selecionado na listagem → o painel busca o detalhe completo por id.
   const [detailRow, setDetailRow] = useState<OrderFeedRow | null>(null);
   const detailQuery = useSalesOrderDetail(detailRow);
+  // Desconto de cada item (order_items) para o painel: a query vai INTEIRA, com o estado, para
+  // "não consegui ler" não chegar lá como "sem desconto".
+  const descontosItensQuery = useDescontosItensPedido(detailRow);
 
   if (authLoading || loading) {
     return (
@@ -159,6 +163,7 @@ const SalesOrders = () => {
         loading={detailQuery.isPending}
         order={detailQuery.data?.order ?? null}
         customerName={detailQuery.data?.customerName ?? decodeHtml(detailRow?.customer_name || 'Cliente')}
+        descontosItens={descontosItensQuery}
         onClose={() => setDetailRow(null)}
         onPrint={() => detailRow && printOrder(detailRow)}
         onShare={() => detailRow && handleShareOrder(detailRow)}

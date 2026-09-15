@@ -22,6 +22,7 @@ import {
 } from './types';
 import { dedupeFeedRows, filterFeedRows } from './feed';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
+import { descontosItensQueryKey } from './useDescontosItensPedido';
 import { softDeleteOrder } from './soft-delete';
 import { printSalesOrder } from './print';
 import { montarCompartilhamento } from './compartilhar';
@@ -128,15 +129,15 @@ export function useSalesOrders() {
       staleTime: 60_000,
     });
 
-  /* ─── Desconto dos itens (order_items.desconto_valor) — o cupom e a mensagem de WhatsApp ─── */
-  // Fora do detalhe de propósito: o painel não mostra desconto e não paga esta leitura.
+  /* ─── Desconto dos itens (order_items.desconto_valor) — o cupom, a mensagem de WhatsApp e o painel de detalhe ─── */
+  // Mesma chave do painel (`descontosItensQueryKey`): o hover da listagem aquece o cupom, a mensagem e o painel.
   // Falha de LEITURA (página assinada pelo fetchAllPages) vira `falhou` — o cupom e a mensagem saem
   // como hoje e a tela avisa; qualquer outra exceção é bug e sobe crua, sem se disfarçar de "indisponível".
   const getDescontosItens = async (row: Pick<OrderFeedRow, 'origin' | 'id'>): Promise<LeituraDescontosItens> => {
     if (row.origin !== 'sales') return { estado: 'nao-se-aplica' };
     try {
       const porPedido = await queryClient.fetchQuery({
-        queryKey: ['order-descontos-itens', user?.id, row.id],
+        queryKey: descontosItensQueryKey(user?.id, row.id),
         queryFn: () => buscarDescontosItens([row.id]),
         staleTime: 60_000,
       });

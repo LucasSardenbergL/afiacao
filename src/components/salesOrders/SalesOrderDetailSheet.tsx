@@ -8,8 +8,12 @@ import { Button } from '@/components/ui/button';
 import { Printer, Share2, Pencil, Loader2, RotateCcw, ShieldAlert } from 'lucide-react';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { resolverDescontoCupom } from '@/components/sales/print/descontoCupom';
+import { receitaLiquidaItem } from '@/lib/pedido/desconto-item';
 import { statusDoPedido, type SalesOrder } from './types';
 import { itemTotal } from './print';
+import { descontosDoPainel, type FatiaDescontosItens } from './descontosDoPainel';
 import { formatPrecoOuAusente } from '@/lib/format';
 
 interface SalesOrderDetailSheetProps {
@@ -19,6 +23,11 @@ interface SalesOrderDetailSheetProps {
   loading?: boolean;
   order: SalesOrder | null;
   customerName: string;
+  /**
+   * A query de `order_items` do pedido (`useDescontosItensPedido`), INTEIRA: estado junto com o dado.
+   * É dela que sai o desconto de cada item — sem o estado, "não consegui ler" chegaria como "sem desconto".
+   */
+  descontosItens: FatiaDescontosItens;
   onClose: () => void;
   onPrint: () => void;
   onShare: () => void;
@@ -34,11 +43,28 @@ const fmt = formatPrecoOuAusente;
 // Pedido cancelado/entregue/faturado não é editável (mesma regra do card).
 const canEditStatus = (status: string) => !['cancelado', 'entregue', 'faturado'].includes(status);
 
+// ── Desconto de item: a régua do cupom impresso (`resolverDescontoCupom`, #2502) na tela ─────────────
+// O jsonb `items` é BRUTO e o cabeçalho (`subtotal`/`total`) é LÍQUIDO desde o #2469. A quebra — desconto
+// na sublinha, líquido na linha, Subtotal bruto / Desconto / Total — só aparece quando a conta FECHA em
+// centavos; sem quebra (não fecha, sem desconto a explicar, leitura que não aconteceu) a tela é a de hoje.
+
+/** Sufixo da sublinha do item na quebra: "—" quando não apurado (nunca R$ 0,00); zero apurado não acrescenta nada. */
+function sufixoDesconto(desconto: number | null | undefined): string | null {
+  if (desconto === 0) return null;
+  return typeof desconto === 'number' ? ` · desconto - ${fmt(desconto)}` : ' · desconto —';
+}
+
+/** Com linha não apurada, o rótulo diz quantos itens entraram no desconto — o mesmo do cupom. */
+function rotuloDesconto(apurados: number, itens: number): string {
+  return apurados < itens ? `Desconto (${apurados} de ${itens} itens)` : 'Desconto';
+}
+
 export function SalesOrderDetailSheet({
   open,
   loading,
   order,
   customerName,
+  descontosItens,
   onClose,
   onPrint,
   onShare,
@@ -53,6 +79,10 @@ export function SalesOrderDetailSheet({
   // vendedora manda o resumo (WhatsApp), o gestor abre o pedido aqui e aprova.
   const [excecaoOpen, setExcecaoOpen] = useState(false);
   const contaComGate = order?._source !== 'afiacao' && (order?.account === 'oben' || order?.account === 'colacor');
+  const leituraDesconto = order ? descontosDoPainel(order, descontosItens) : null;
+  const desconto = order && leituraDesconto ? resolverDescontoCupom(order.items || [], leituraDesconto.leitura, order.total) : null;
+  const quebra = desconto && desconto.quebra ? desconto : null;
+  const falhaDesconto = leituraDesconto?.falha ?? null;
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
@@ -110,9 +140,12 @@ export function SalesOrderDetailSheet({
                         )}
                         <p className="text-xs text-muted-foreground">
                           {item.quantidade} × {fmt(item.valor_unitario)}
+                          {quebra && sufixoDesconto(quebra.descontoPorItem[i])}
                         </p>
                       </div>
-                      <span className="font-medium tabular-nums shrink-0">{fmt(itemTotal(item))}</span>
+                      <span className="font-medium tabular-nums shrink-0">
+                        {fmt(quebra ? receitaLiquidaItem(item.valor_unitario, item.quantidade, quebra.descontoPorItem[i]) : itemTotal(item))}
+                      </span>
                     </div>
                   ))}
                   {(order.items?.length || 0) === 0 && (
@@ -121,12 +154,23 @@ export function SalesOrderDetailSheet({
                 </div>
               </div>
 
+              {/* Desconto dos itens que não se conseguiu ler: a tela de hoje, e não "sem desconto" */}
+              {falhaDesconto && (
+                <AvisoLeituraFalhou oque="o desconto dos itens" estado={falhaDesconto} testId="aviso-desconto-itens" />
+              )}
+
               {/* Totais */}
               <div className="space-y-1 text-sm border-t border-border pt-3">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Subtotal</span>
-                  <span className="tabular-nums">{fmt(order.subtotal)}</span>
+                  <span className="tabular-nums">{fmt(quebra ? quebra.subtotalBruto : order.subtotal)}</span>
                 </div>
+                {quebra && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>{rotuloDesconto(quebra.itensApurados, order.items?.length || 0)}</span>
+                    <span className="tabular-nums">- {fmt(quebra.descontoTotal)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between font-semibold text-base">
                   <span>Total</span>
                   <span className="tabular-nums">{fmt(order.total)}</span>
