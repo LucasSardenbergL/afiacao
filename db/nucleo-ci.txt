@@ -79,10 +79,13 @@ db/test-pedido-edicao-atomica.sh           54
 # Entrou aqui porque a ausência já custou: o #2421 quebrou TODA migration com envelope e passou
 # verde no CI. Tinha duas camadas — as fixtures não cobriam a classe com `BEGIN;` (#2441), e a
 # prova rodava só no laptop, presa a um PGBIN de Homebrew. Portada para o pg-harness aqui.
-# O `--falsificar` dela (9 sabotagens) segue FORA: o 2º locale tem de ser pt_BR, porque o
-# `db-aplicar.sh` separa falha-limpa de desconhecido casando ERRO×ERROR do psql, e o runner
-# ubuntu não tem pt_BR — rodar em (C, C.UTF-8) seria a falsificação-em-um-ambiente do #1483.
-db/test-db-aplicar.sh                      36  falsificar=fora-do-ci  # sem pt_BR no runner, ERRO×ERROR do psql ficaria sem prova — provisionar locale e provar numa falha real
+# O `--falsificar` dela roda AQUI desde 2026-09-14: 11 sabotagens, cada uma julgada em 3
+# combinações servidor×cliente — C/C, C/pt_BR (o par de produção) e pt_BR/pt_BR —, com o pt_BR
+# provisionado pelo job antes do núcleo. Ficou fora até então porque o 2º locale TEM de ser pt_BR,
+# e, medido, nem isso bastava: a palavra ERRO×ERROR que o executor casa vem do SERVIDOR
+# (`lc_messages`), e a rodada pt_BR antiga trocava só o cliente — as duas saíam idênticas
+# (docs/historico/falsificacao-db-aplicar-idioma-do-servidor.md).
+db/test-db-aplicar.sh                      36  falsificar=11
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
 # A janela entre dois round-trips PostgREST, com uma chamada HTTP que cria pedido de
