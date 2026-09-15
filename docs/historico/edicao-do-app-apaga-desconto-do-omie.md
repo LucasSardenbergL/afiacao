@@ -119,6 +119,23 @@ extrator do WebFetch afirmou que `total_pedido` não tinha campo de descontos; o
 (`curl` + grep) resolveu — `valor_descontos` existe, com descrição. Quando duas leituras de segunda mão discordam,
 a terceira leitura de segunda mão não desempata.
 
+## Prova
+
+- `supabase/functions/_shared/edicao-desconto-omie_test.ts` — **16 testes Deno**: o pedido real 12183048572, presença
+  inválida, subcentavo, NaN/Infinity, universo sem SKU, capa e o veredito combinado.
+- `scripts/mutcheck.d/edicao-desconto-omie.mut` — **14 mutações · 14 pegas · 0 sobreviventes · 0 inválidas ·
+  controle+ ✓**, em `LC_ALL=C` e `pt_BR.UTF-8`. A mutação que tira o `Number.isFinite` só morreu depois do caso da
+  base que estoura para `Infinity` — sem ele, o sinal cru positivo já acusava todo NaN possível e a camada parecia
+  redundante.
+- `src/__tests__/edge-money-path-invariants.test.ts` — 4 pins de fiação, **vermelhos ANTES da fiação** pela asserção
+  certa (`sumiu o guard ANTES da mutação` · `expected -1 to be greater than 5385` · `o ramo do guard sumiu` ·
+  `a conferência final… expected -1`), e **falsificados**: 16 sabotagens × 2 locales (`LC_ALL=C` e `pt_BR.UTF-8`) = **32 vermelhas pelo marcador da asserção certa, 0 verdes, 0 inválidas**, com controle verde (4 pins + 2 testes do hook) na MESMA invocação e restauração por backup + `cmp`. As sabotagens: remover o guard, escopá-lo num `if (editAccount === "oben")`, movê-lo para depois do `ExcluirItemPedido`, trocar o argumento por `editItems`, tirar o `break`, pôr `throw` no ramo, enfraquecer a condição, remover a pós-checagem ou tirar o `throw` dela, remover o import, desligar a capa nas duas leituras e gravar a trilha com `acao: bloqueado_edicao`.
+- `src/components/salesOrderEdit/__tests__/useSalesOrderEdit.priceGuard.test.tsx` — 2 testes do ramo `desconto_omie`
+  (comprovado × ilegível, sensor), sabotados na mesma falsificação (H1–H3).
+- CI `validate` do #2498 — typecheck, suíte vitest completa, testes e build das edges verdes. O 1º CI reprovou só no
+  `docs:citacoes`: a citação ancorada de `docs/agent/database.md` apontava para `index.ts:3526`, que as linhas do
+  guard empurraram para 3597 — o gate fez exatamente o que existe para fazer.
+
 ## O que ficou aberto, de propósito
 
 - **Mutações da edição ignoram `null` de transitório esgotado** (`throwOnTransient` ausente nas 4 chamadas
