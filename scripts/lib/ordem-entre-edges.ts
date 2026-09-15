@@ -28,6 +28,8 @@
  *   justamente o deploy INCOERENTE — B servindo a VERSAO nova com o `fonte` velho (P1 do Codex).
  */
 
+import { mensagemDeErro } from '@/lib/erro-mensagem';
+
 import { RAIZ_EDGES } from '../sonda-fingerprint';
 
 export const FORMATO_MANIFESTO = 'deploy-ordem/1';
@@ -140,7 +142,7 @@ export function lerManifesto(edge: string, texto: string): Manifesto {
   try {
     bruto = JSON.parse(texto);
   } catch (e) {
-    throw new Error(`${onde}: não é JSON (${e instanceof Error ? e.message : String(e)})`);
+    throw new Error(`${onde}: não é JSON (${mensagemDeErro(e) ?? 'ilegível'})`);
   }
   if (!ehObjeto(bruto)) throw new Error(`${onde}: a raiz tem de ser um objeto`);
   exigirChaves(bruto, ['formato', 'depoisDe'], onde);
