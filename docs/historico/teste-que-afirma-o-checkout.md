@@ -172,6 +172,8 @@ isola a dependência do contrato, não a elimina como o fixture de 09-06 elimino
    é o único), então nada barra um contrato que nasce com o baseline vermelho no runner.
 2. O abort não diz POR QUÊ: `run_tests` manda a saída do vitest para `/dev/null` (`scripts/mutcheck.sh`),
    e cada ocorrência custa uma investigação do zero — foram duas, 09-06 e 09-14.
+   **Entregue no mesmo dia:** [mutcheck-abort-sem-motivo.md](mutcheck-abort-sem-motivo.md) — o abort mostra a
+   saída da MESMA execução, recortada, e o sensor que o prova roda no `test:hooks`, dentro do `validate`.
 
 Os dois ficaram fora deste conserto: mexer no `mutcheck.sh` no mesmo PR que apaga o vermelho mergearia
 sem que job required nenhum o exercitasse — exatamente o vetor do item 1. Entregas próprias, cada uma
