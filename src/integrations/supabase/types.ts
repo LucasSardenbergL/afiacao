@@ -9710,6 +9710,42 @@ export type Database = {
           },
         ]
       }
+      pedido_total_liquido_conversoes: {
+        Row: {
+          account: string
+          convertido_em: string
+          corte: string
+          id: number
+          lote: string
+          mes: string
+          sales_order_id: string
+          total_antes: number
+          total_depois: number
+        }
+        Insert: {
+          account: string
+          convertido_em?: string
+          corte: string
+          id?: never
+          lote: string
+          mes: string
+          sales_order_id: string
+          total_antes: number
+          total_depois: number
+        }
+        Update: {
+          account?: string
+          convertido_em?: string
+          corte?: string
+          id?: never
+          lote?: string
+          mes?: string
+          sales_order_id?: string
+          total_antes?: number
+          total_depois?: number
+        }
+        Relationships: []
+      }
       pedidos_portal_tentativas: {
         Row: {
           browserless_response_ms: number | null
@@ -20233,6 +20269,34 @@ export type Database = {
           lote: number
           total: number
         }[]
+      }
+      pedido_total_liquido_classificar: {
+        Args: { p_corte: string; p_ids?: string[] }
+        Returns: {
+          account: string
+          bruto: number
+          classe: string
+          liquido: number
+          mes: string
+          sales_order_id: string
+          total: number
+        }[]
+      }
+      pedido_total_liquido_converter: {
+        Args: {
+          p_aplicar: boolean
+          p_contas?: string[]
+          p_corte: string
+          p_exigir_mes_completo?: boolean
+          p_limite?: number
+          p_mes_ate?: string
+          p_mes_de?: string
+        }
+        Returns: Json
+      }
+      pedido_total_liquido_relatorio: {
+        Args: { p_corte: string }
+        Returns: Json
       }
       pedido_venda_exigir_coerencia: {
         Args: { p_id: string }
