@@ -201,10 +201,13 @@ cada uma com `initdb`, e dos controles do juiz) — no run de 445s a canária NO
 
 ## Fora desta entrega (declarado, não esquecido)
 
-- `db/test-db-aplicar.sh --falsificar` (9 sabotagens): `falsificar=fora-do-ci`. O 2º locale TEM de
-  ser pt_BR — o `db-aplicar.sh` separa falha-limpa de desconhecido casando ERRO×ERROR do psql — e o
-  runner ubuntu não tem pt_BR. Em (C, C.UTF-8) seria a falsificação-em-um-ambiente do #1483.
-  Remédio: provisionar o locale e provar ERRO×ERROR numa falha real.
+- ~~`db/test-db-aplicar.sh --falsificar` (9 sabotagens): `falsificar=fora-do-ci`~~ — **entregue em
+  2026-09-14** (#2488): 11 sabotagens, cada uma em 3 combinações servidor×cliente, no `provas-sql`,
+  com o pt_BR provisionado e conferido pelo job. O remédio previsto aqui ("provisionar o locale e
+  provar ERRO×ERROR numa falha real") sozinho não bastaria: a palavra ERRO×ERROR vem do `lc_messages`
+  do SERVIDOR, e a rodada pt_BR antiga só trocava o cliente — as duas saíam idênticas, e tirar `ERRO`
+  da regex do executor passava verde nas duas. Ver
+  [falsificacao-db-aplicar-idioma-do-servidor.md](falsificacao-db-aplicar-idioma-do-servidor.md).
 - A classe do crash: `$var` colado em byte não-ASCII aparece em mais 3 provas
   (`test-caca-custo-producao.sh`, que está no núcleo; `test-audit-claude-ro-hardening.sh`;
   `test-vendas_sync_cursor.sh`). Lá é latente — elas forçam `LC_ALL=C` —, mas nada impede a próxima.
@@ -245,4 +248,5 @@ cada uma com `initdb`, e dos controles do juiz) — no run de 445s a canária NO
 **Ver também:** [falsificacao-fora-do-ci.md](falsificacao-fora-do-ci.md) (a mesma classe em
 `scripts/`), [falsificacao-sem-linha-de-base.md](falsificacao-sem-linha-de-base.md) (o controle
 verde — aqui ganhou o irmão negativo), [prova-que-imitava-o-oraculo.md](prova-que-imitava-o-oraculo.md)
-(a mesma prova, #2449).
+(a mesma prova, #2449), [falsificacao-db-aplicar-idioma-do-servidor.md](falsificacao-db-aplicar-idioma-do-servidor.md)
+(a prova irmã do db-aplicar: o 2º locale que era o 1º, e a regra 6 virando gêmeo verde, #2488).
