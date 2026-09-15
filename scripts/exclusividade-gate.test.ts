@@ -26,6 +26,7 @@ import {
   bloqueantesOpacos,
   conferirAncoraDaRaiz,
   derivar,
+  exclusividadeVermelhaSoPorGateNovo,
   fingerprintDefeito,
   fonteDoGate,
   fundirLinhas,
@@ -922,5 +923,155 @@ describe('o corpus de verdade', () => {
     const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
     const nomes = new Set(gatesCandidatos(ci).filter((g) => g.bloqueiaPR).map((g) => g.nome));
     for (const d of defeitos()) expect(nomes.has(d.suspeito!), `${d.id}: @suspeito ${d.suspeito}`).toBe(true);
+  });
+});
+
+describe('[fora-da-rodada] exclusividadeVermelhaSoPorGateNovo — o unico vermelho de baseline que a propria rodada resolve', () => {
+  const novo = (gate: string) => ({ severidade: 'REPROVA', gate, codigo: 'GATE_NOVO_SEM_EXCLUSIVIDADE', motivo: 'm' });
+  const avisa = { severidade: 'AVISA', gate: 'g:b', codigo: 'LINHA_PODRE', motivo: 'm' };
+  /** O que o gate imprime em `--json`, na forma de `exclusividade-gate.ts`. */
+  const sonda = (vereditos: unknown[], ancoraQuebrada: unknown[] = []) =>
+    JSON.stringify({ ancoraQuebrada, vereditos, opacos: [], naoReproduziveis: [], matrizPresente: true }, null, 2);
+  type Leitura = Parameters<typeof exclusividadeVermelhaSoPorGateNovo>[0];
+  const decidir = (over: Partial<Leitura> = {}) =>
+    exclusividadeVermelhaSoPorGateNovo({
+      rcBaseline: 1,
+      rcSonda: 1,
+      saidaSonda: sonda([novo('g:novo')]),
+      gatesDaRodada: ['g:barato', 'g:novo'],
+      ...over,
+    });
+  /** O motivo da recusa; `EXCLUIU` quando nao recusou — nenhuma assercao de recusa casa isso. */
+  const recusa = (over: Partial<Leitura>) => {
+    const d = decidir(over);
+    return d.excluir ? 'EXCLUIU' : d.motivo;
+  };
+
+  // O caso VERDE, na mesma execucao das recusas: uma funcao que recusa TUDO aprovaria todas elas.
+  it('vermelho SO por GATE_NOVO de gates desta rodada: exclui e nomeia os gates novos (AVISA/RELATA nao contam)', () => {
+    const d = decidir({
+      saidaSonda: sonda([novo('g:z'), avisa, novo('g:a'), { ...avisa, severidade: 'RELATA', codigo: 'EXCLUSIVIDADE_ZERO' }]),
+      gatesDaRodada: ['g:a', 'g:b', 'g:z'],
+    });
+    expect(d).toEqual({ excluir: true, gatesNovos: ['g:a', 'g:z'] });
+  });
+
+  it('baseline que nao saiu 1 nao exclui — 2 e erro do proprio gate, null e sinal/estouro', () => {
+    expect(recusa({ rcBaseline: 2 })).toMatch(/^RC-BASELINE /);
+    expect(recusa({ rcBaseline: null })).toMatch(/^RC-BASELINE /);
+  });
+
+  it('sonda que nao saiu 1 nao exclui — as duas leituras do mesmo gate discordam', () => {
+    expect(recusa({ rcSonda: 0 })).toMatch(/^RC-SONDA /);
+    expect(recusa({ rcSonda: null })).toMatch(/^RC-SONDA /);
+  });
+
+  // O `bun run` de um script ausente tambem sai 1 — o que impede isso de passar e o JSON exigido.
+  it('stdout da sonda que nao e JSON nao exclui', () => {
+    expect(recusa({ saidaSonda: '' })).toMatch(/^SONDA-ILEGIVEL /);
+    expect(recusa({ saidaSonda: 'error: Script not found "exclusividade"' })).toMatch(/^SONDA-ILEGIVEL /);
+  });
+
+  it('JSON fora do contrato nao exclui — inclusive severidade que o gate nao emite', () => {
+    const fora = [
+      'null',
+      '[]',
+      '{}',
+      JSON.stringify({ ancoraQuebrada: [], vereditos: 'x' }),
+      sonda([null]),
+      sonda([{ ...novo('g:novo'), gate: 7 }]),
+      // Ao LADO de um GATE_NOVO valido: sem a checagem, a severidade desconhecida seria so ignorada e
+      // a exclusao PASSARIA — a assercao casa a marca do ramo, e o 'EXCLUIU' nao a casa.
+      sonda([novo('g:novo'), { ...novo('g:barato'), severidade: 'BLOQUEIA' }]),
+    ];
+    for (const saidaSonda of fora) expect(recusa({ saidaSonda }), saidaSonda).toMatch(/^SONDA-FORA-DO-CONTRATO /);
+  });
+
+  it('ancora da raiz quebrada nao exclui, nem com GATE_NOVO na lista', () => {
+    const saidaSonda = sonda([novo('g:novo')], [{ codigo: 'ANCORA_AUTO_MERGE_PERDIDA', motivo: 'm' }]);
+    expect(recusa({ saidaSonda })).toMatch(/^ANCORA-QUEBRADA ANCORA_AUTO_MERGE_PERDIDA/);
+  });
+
+  it('exit 1 sem nenhuma REPROVA no JSON nao exclui — vermelho sem motivo legivel', () => {
+    expect(recusa({ saidaSonda: sonda([avisa]) })).toMatch(/^SEM-REPROVA /);
+  });
+
+  it('REPROVA alheia a gate novo nao exclui — nem MATRIZ_AUSENTE, nem codigo futuro sobre gate da rodada', () => {
+    const matrizAusente = { severidade: 'REPROVA', gate: '(todos)', codigo: 'MATRIZ_AUSENTE', motivo: 'm' };
+    expect(recusa({ saidaSonda: sonda([novo('g:novo'), matrizAusente]) })).toMatch(/^REPROVA-ALHEIA MATRIZ_AUSENTE/);
+    // Sobre gate DA rodada so este criterio segura a exclusao — o de "fora da rodada" nao a pegaria.
+    const futura = { severidade: 'REPROVA', gate: 'g:barato', codigo: 'CODIGO_FUTURO', motivo: 'm' };
+    expect(recusa({ saidaSonda: sonda([novo('g:novo'), futura]) })).toMatch(/^REPROVA-ALHEIA CODIGO_FUTURO/);
+  });
+
+  it('GATE_NOVO de gate FORA desta rodada nao exclui — a rodada nao grava a execucao que o resolveria', () => {
+    expect(recusa({ gatesDaRodada: ['g:barato'] })).toMatch(/^GATE-NOVO-FORA-DA-RODADA g:novo/);
+  });
+
+  // Isolado do anterior de proposito: mesmo listado na rodada por quem chama, tirar o proprio gate
+  // da rodada nunca grava a execucao que o livraria do GATE_NOVO.
+  it('GATE_NOVO do PROPRIO exclusividade nao exclui, nem listado na rodada', () => {
+    expect(recusa({ saidaSonda: sonda([novo('exclusividade')]), gatesDaRodada: ['exclusividade', 'g:barato'] })).toMatch(
+      /^GATE-NOVO-E-O-PROPRIO /,
+    );
+  });
+});
+
+describe('[fora-da-rodada] celula DEFASADA — a execucao antiga do gate excluido conta como execucao, nunca como completude', () => {
+  const U = ['exclusividade', 'g:a', 'g:novo'];
+  const g = (nome: string): GateAlvo => ({ nome, linha: 1, step: 's', job: 'j', bloqueiaPR: true });
+  const de = (m: Matriz, gate: string) => derivar(m, { universo: U }).find((e) => e.gate === gate)!;
+
+  it('fundir numa rodada que EXCLUIU o gate: a celula antiga dele fica, marcada defasada', () => {
+    const antiga = linha({ execucoes: [exec('exclusividade', false), exec('g:a', false)] });
+    const nova = linha({ execucoes: [exec('g:a', false), exec('g:novo', true)] });
+    const f = fundirLinhas(antiga, nova, ['exclusividade']);
+    expect(f.execucoes.map((e) => e.gate)).toEqual(['exclusividade', 'g:a', 'g:novo']);
+    expect(f.defasados).toEqual(['exclusividade']);
+  });
+
+  it('sem celula antiga do excluido nao ha o que marcar', () => {
+    const f = fundirLinhas(linha({ execucoes: [exec('g:a', false)] }), linha({ execucoes: [exec('g:novo', true)] }), ['exclusividade']);
+    expect(f.defasados).toBeUndefined();
+  });
+
+  it('rodada parcial que nao o executa MANTEM a marca; a que o executa a LIMPA', () => {
+    const defasada = linha({
+      execucoes: [exec('exclusividade', false), exec('g:a', false), exec('g:novo', true)],
+      defasados: ['exclusividade'],
+    });
+    expect(fundirLinhas(defasada, linha({ execucoes: [exec('g:a', false)] })).defasados).toEqual(['exclusividade']);
+    expect(fundirLinhas(defasada, linha({ execucoes: [exec('exclusividade', false)] })).defasados).toBeUndefined();
+  });
+
+  // O furo do parecer Codex, no sentido que mais importa: o gate NOVO certificado exclusivo com a
+  // celula de um regime em que ele nem existia.
+  it('verde DEFASADO do excluido + vermelho unico do gate novo: NAO certifica o novo', () => {
+    const l = linha({
+      execucoes: [exec('exclusividade', false), exec('g:a', false), exec('g:novo', true)],
+      defasados: ['exclusividade'],
+    });
+    expect(de(matriz({ linhas: [{ ...l, defasados: undefined }] }), 'g:novo').exclusivos, 'controle: sem a marca a MESMA linha certifica').toEqual(['d1']);
+    const comMarca = de(matriz({ linhas: [l] }), 'g:novo');
+    expect(comMarca.exclusivos).toEqual([]);
+    expect(comMarca.inconclusivos).toEqual(['d1']);
+  });
+
+  it('vermelho DEFASADO do proprio excluido tambem nao o certifica', () => {
+    const l = linha({
+      execucoes: [exec('exclusividade', true), exec('g:a', false), exec('g:novo', false)],
+      defasados: ['exclusividade'],
+    });
+    expect(de(matriz({ linhas: [{ ...l, defasados: undefined }] }), 'exclusividade').exclusivos, 'controle').toEqual(['d1']);
+    expect(de(matriz({ linhas: [l] }), 'exclusividade').exclusivos).toEqual([]);
+  });
+
+  // Descartar a celula em vez de marca-la: numa rodada do corpus inteiro o `exclusividade` ficaria
+  // sem execucao valida e passaria a reprovar GATE_NOVO contra SI MESMO — impasse sem saida.
+  it('celula defasada ainda e EXECUCAO: nao devolve o GATE_NOVO do proprio exclusividade', () => {
+    const l = linha({ execucoes: [exec('exclusividade', false), exec('g:a', true)], defasados: ['exclusividade'] });
+    const v = avaliar(matriz({ linhas: [l] }), [g('exclusividade'), g('g:a')], new Map());
+    expect(v.filter((x) => x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE').map((x) => x.gate)).toEqual([]);
+    expect(de(matriz({ linhas: [l] }), 'exclusividade').rodou).toEqual(['d1']);
   });
 });
