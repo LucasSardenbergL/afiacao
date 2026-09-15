@@ -18,8 +18,11 @@ import {
 import { lerRespostaFormas } from '@/services/orderSubmission/formasDegradacao';
 import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { buildPrintData, buildSingleOrderHtml, buildPrintDocument } from '@/components/sales/print/buildPrintHtml';
+import { buscarDescontosItens } from '@/components/sales/print/buscarDescontosItens';
+import { leituraDoPedido, mensagemAvisoDesconto, type LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
 import { PrintFilters } from '@/components/sales/print/PrintFilters';
 import { OrderGroup } from '@/components/sales/print/OrderGroup';
+import { toast } from 'sonner';
 
 const SalesPrintDashboard = () => {
   const navigate = useNavigate();
@@ -380,15 +383,32 @@ const SalesPrintDashboard = () => {
     }
   };
 
+  // Desconto de cada item (order_items.desconto_valor): o jsonb `items`, de onde saem as linhas do
+  // cupom, é BRUTO. Lido em lote para os pedidos de venda da janela; afiação (tabela `orders`) não
+  // tem order_items. Leitura que ainda não aconteceu vira AVISO na impressão, nunca "sem desconto".
+  const salesOrderIds = useMemo(() => salesOrders.map((o) => o.id), [salesOrders]);
+  const descontosQuery = useQuery({
+    queryKey: ['sales-print', 'descontos-itens', salesOrderIds],
+    queryFn: () => buscarDescontosItens(salesOrderIds),
+    enabled: salesOrderIds.length > 0,
+  });
+  const leituraDescontosDo = (o: EnrichedOrder): LeituraDescontosItens =>
+    o._company === 'afiacao' ? { estado: 'nao-se-aplica' } : leituraDoPedido(descontosQuery.data, o.id);
+
+  // O aviso é da EQUIPE, não do papel: saiu cupom sem a quebra de um desconto que existe ou que não
+  // se conseguiu ler (ex.: cabeçalho ainda bruto até o deploy/reprocess do #2469 alcançá-lo).
+  const avisarDescontos = (avisos: Array<string | undefined>) => {
+    const aviso = mensagemAvisoDesconto(avisos);
+    if (aviso) toast.warning(aviso.titulo, { description: aviso.descricao });
+  };
+
   const printSelected = () => {
     const toPrint = filteredOrders.filter(o => selectedOrders.has(o.id));
     if (toPrint.length === 0) return;
 
     // Build combined HTML for all selected orders
-    const allPages = toPrint.map(o => {
-      const printData = buildPrintData(o, o._company, companyLogos);
-      return buildSingleOrderHtml(printData);
-    });
+    const printData = toPrint.map(o => buildPrintData(o, o._company, companyLogos, leituraDescontosDo(o)));
+    const allPages = printData.map((d) => buildSingleOrderHtml(d));
 
     const html = buildPrintDocument(allPages, format(selectedDate, 'dd/MM/yyyy'));
 
@@ -397,10 +417,13 @@ const SalesPrintDashboard = () => {
       printWindow.document.write(html);
       printWindow.document.close();
     }
+    avisarDescontos(printData.map((d) => d.avisoDesconto));
   };
 
   const printSingle = (order: EnrichedOrder) => {
-    openPrintOrder(buildPrintData(order, order._company, companyLogos));
+    const printData = buildPrintData(order, order._company, companyLogos, leituraDescontosDo(order));
+    openPrintOrder(printData);
+    avisarDescontos([printData.avisoDesconto]);
   };
 
   const isLoading = loadingSales || loadingAfiacao;

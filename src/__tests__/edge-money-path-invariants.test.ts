@@ -335,6 +335,88 @@ describe('guardrail money-path: trava de crédito Fase 2 (gate + log durável + 
   });
 });
 
+// ── alterar_pedido RECUSA pedido com desconto no Omie e confere a leitura FINAL (2026-09-14) ──
+// A edição exclui TODOS os itens do Omie e reinclui sem o trio de desconto: editar pelo app um pedido com
+// desconto comercial o apagaria no ERP com "Pedido alterado com sucesso!" (docs/historico/
+// edicao-do-app-apaga-desconto-do-omie.md). O guard mora na EDGE — única via que muta itens de pedido
+// existente — e só vale sobre a leitura ATUAL do Omie e ANTES da primeira mutação. A régua de presença é
+// provada em Deno (`_shared/edicao-desconto-omie_test.ts` + mutcheck); aqui se prova a FIAÇÃO, sobre a
+// fonte SEM comentários (a prosa que explica o guard cita as mesmas chamadas).
+describe('guardrail money-path: alterar_pedido recusa pedido com desconto no Omie (antes E depois de mutar)', () => {
+  const src = removerComentarios(read(VENDAS));
+  const bloco = src.match(/case "alterar_pedido": \{[\s\S]*?\n {6}case "/)?.[0] ?? '';
+  const PRE = 'const descontoNoOmie = descontoNaLeituraDoOmie({ det: omieCurrentItems, total_pedido: omieTotalPedidoEdit });';
+  const POS = 'const descontoNaLeituraFinal = descontoNaLeituraDoOmie({ det: finalOmieItems, total_pedido: finalTotalPedido });';
+  // O NÍVEL do `case` (8 espaços). Sem a âncora, o guard embrulhado num `if (editAccount === "oben") { … }`
+  // passava em todos os pins — a recusa escopada a uma conta, com cara de guard (pego no auto-challenge).
+  const NIVEL = ' '.repeat(8);
+
+  it('sentinela: achou o bloco da action, o import do helper e as DUAS consultas ao guard', () => {
+    expect(bloco, 'bloco da action alterar_pedido não encontrado').not.toBe('');
+    expect(src, 'o guard deveria vir do helper puro testado em Deno').toMatch(
+      /import \{ descontoNaLeituraDoOmie \} from "\.\.\/_shared\/edicao-desconto-omie\.ts";/,
+    );
+    expect(
+      bloco,
+      'sumiu o guard ANTES da mutação (ou trocou o argumento: tem de ser a leitura ATUAL do Omie; ou saiu do nível do case — escopado/condicionado)',
+    ).toContain(`\n${NIVEL}${PRE}`);
+    expect(bloco, 'sumiu a conferência da leitura FINAL antes do write-back (ou saiu do nível do case)').toContain(
+      `\n${NIVEL}${POS}`,
+    );
+    // O 2º eixo (capa) só existe se a leitura o ENTREGA ao guard: trocar a extração por `null` desliga a capa
+    // sem que nenhuma outra asserção perceba.
+    expect(bloco, 'a capa da leitura ATUAL não chega ao guard — o 2º eixo morre calado').toMatch(
+      /omieTotalPedidoEdit = consultResult\?\.pedido_venda_produto\?\.total_pedido\s*\?\? consultResult\?\.total_pedido/,
+    );
+    expect(bloco, 'a capa da leitura FINAL não chega à pós-checagem — o 2º eixo morre calado').toMatch(
+      /const finalTotalPedido = finalConsultResult\?\.pedido_venda_produto\?\.total_pedido\s*\?\? finalConsultResult\?\.total_pedido/,
+    );
+  });
+
+  it('a recusa roda DEPOIS do ConsultarPedido e ANTES de toda mutação no Omie e de todo gate que escreve', () => {
+    const guard = bloco.indexOf(PRE);
+    const consulta = bloco.indexOf('"ConsultarPedido"');
+    expect(consulta, 'ConsultarPedido sumiu do bloco').toBeGreaterThan(-1);
+    expect(guard, 'o guard precisa da leitura ATUAL do Omie — rodou antes do ConsultarPedido').toBeGreaterThan(consulta);
+    for (const depois of [
+      '"ExcluirItemPedido"',
+      '"IncluirItemPedido"',
+      '"AlterarPedidoVenda"',
+      '"TotalizarPedido"',
+      'await gateCredito(',
+      '"aplicar_edicao_pedido_omie"',
+    ]) {
+      const i = bloco.indexOf(depois);
+      expect(i, `${depois} sumiu do bloco — a sentinela de ordem ficaria cega`).toBeGreaterThan(-1);
+      expect(guard, `o guard de desconto roda depois de ${depois} — a recusa chegaria tarde`).toBeLessThan(i);
+    }
+  });
+
+  it('o ramo da recusa devolve blocked estruturado (200) e SAI da action — sem throw 500 e sem falar com o Omie', () => {
+    const ramo = bloco.match(/\n {8}if \(descontoNoOmie\.acusado\) \{[\s\S]*?\n {8}\}/)?.[0] ?? '';
+    expect(ramo, 'o ramo do guard sumiu ou mudou de forma (a condição é a defesa: .acusado)').not.toBe('');
+    expect(ramo).toMatch(/success: false/);
+    expect(ramo).toMatch(/blocked: "desconto_omie"/);
+    expect(ramo, 'sem break a action seguiria para o ExcluirItemPedido').toMatch(/\bbreak;/);
+    expect(ramo, 'throw vira 500 e o app mostra só "non-2xx" — a instrução de editar no Omie se perde').not.toMatch(/\bthrow\b/);
+    expect(ramo, 'o ramo de recusa não pode falar com o Omie').not.toMatch(/callOmieVendasApi/);
+    // A trilha reusa `venda_bloqueio_credito_log`, e `bloqueado`/`bloqueado_edicao` são exatamente o que o fluxo de
+    // exceção de crédito (`useExcecaoCredito`) LÊ: a recusa de desconto viraria "peça exceção de crédito ao gestor".
+    expect(ramo, 'a recusa de desconto entrou no fluxo de exceção de CRÉDITO (acao bloqueado*)').not.toMatch(/acao: "bloqueado/);
+  });
+
+  it('a leitura FINAL com desconto LANÇA antes do write-back — não grava bruto local que o ERP desmente', () => {
+    const pos = bloco.indexOf(POS);
+    const ultimaConsulta = bloco.lastIndexOf('"ConsultarPedido"');
+    const writeBack = bloco.indexOf('"aplicar_edicao_pedido_omie"');
+    expect(pos, 'a conferência final roda antes da leitura final').toBeGreaterThan(ultimaConsulta);
+    expect(pos, 'a conferência final roda depois do write-back — tarde demais').toBeLessThan(writeBack);
+    const ramo = bloco.match(/\n {8}if \(descontoNaLeituraFinal\.acusado\) \{[\s\S]*?\n {8}\}/)?.[0] ?? '';
+    expect(ramo, 'o ramo da conferência final sumiu ou mudou de forma').not.toBe('');
+    expect(ramo, 'desconto na leitura final tem de LANÇAR (o Omie já foi mutado)').toMatch(/throw new Error\(/);
+  });
+});
+
 // ── criar_pedido NÃO depende do espelho legado omie_clientes (inverte o P0-A — 2026-07-16) ──
 // O P0-A provava "conta errada" pelo RÓTULO `empresa_omie` do espelho. O rótulo é DEFAULT POLUÍDO:
 // 6909/6909 linhas da prod estão como 'colacor' (ZERO 'oben'), e o código oben do bulk syncCustomers
@@ -3738,6 +3820,60 @@ describe('desconto de item — a régua única, e o null que não pode virar zer
     expect(mig).toContain("(it->>'desconto_valor')::numeric");
     expect(mig).toContain('FALHOU: % faz coalesce(desconto_valor, 0)');
     expect(mig).toContain('desconto_valor = NULL');
+  });
+});
+
+// ── subtotal do pedido: UMA fórmula — a da régua — nos três escritores do total ──────────────
+// Por que TEXTUAL: o subtotal é montado DENTRO das edges, e só o helper é testável por valor
+// (_shared/omie-pedido_test.ts). O que este bloco pega é a volta da conta inline
+// `qtd·preço·(1 − desc/100)` sobre `prod.desconto` — chave que a API do Omie NÃO tem, e que gravou
+// o total BRUTO em 31.315/31.315 pedidos — em qualquer dos três escritores, inclusive pela
+// reversão que o deploy do Lovable já commitou na main (docs/agent/deploy.md). E pega o `null`
+// do helper sendo ignorado: pedido de líquido desconhecido não pode chegar à RPC.
+describe('subtotal do pedido — a fórmula única dos três escritores do total', () => {
+  const SYNC = 'supabase/functions/omie-vendas-sync/index.ts';
+  const REPROCESS = 'supabase/functions/sync-reprocess/index.ts';
+  const CANON_PEDIDO = 'supabase/functions/_shared/omie-pedido.ts';
+
+  it('omie-vendas-sync não recalcula o subtotal inline — helper nos DOIS caminhos (sync e reparo), null tratado', () => {
+    const fonte = removerComentarios(read(SYNC));
+    expect(count(fonte, 'desc / 100')).toBe(0);
+    // `toBe(2)`, não `> 0`: um caminho só convertido deixaria o reparo de órfão comparando o G5
+    // contra uma conta diferente da que o pai gravou ao nascer.
+    expect(count(fonte, 'apurarSubtotalPedido(')).toBe(2);
+    expect(count(fonte, 'apurado.subtotal === null')).toBe(2);
+    // A FIAÇÃO, não só a chamada: o número que vai ao payload é o do helper. Sem estes, chamar o
+    // helper para o `null` e somar o total por fora passaria verde.
+    expect(fonte).toMatch(/const subtotal = apurado\.subtotal;/);
+    expect(fonte).toMatch(/\n\s+subtotal,\n[\s\S]{0,400}?\n\s+total: subtotal,\n/);
+    expect(fonte).toContain('total: apurado.subtotal, status, order_date_kpi: pai.order_date_kpi,');
+  });
+
+  it('sync-reprocess usa o helper e NÃO reconcilia pedido de líquido desconhecido', () => {
+    const fonte = removerComentarios(read(REPROCESS));
+    expect(count(fonte, 'desc / 100')).toBe(0);
+    expect(fonte).toMatch(/const total = subtotalPedidoComDesconto\(itens\);\s*if \(total === null\) \{/);
+    // e é ESSE `total` que vai à RPC
+    expect(fonte).toMatch(/\n\s+total,\n\s+items: construirItemsJson\(itens\),/);
+  });
+
+  it('o helper lê o desconto pela régua (nunca pela chave inexistente) e degrada o PEDIDO para null', () => {
+    const canon = removerComentarios(read(CANON_PEDIDO));
+    const corpo = canon.match(/export function apurarSubtotalPedido[\s\S]*?\n}\n/);
+    expect(corpo, 'apurarSubtotalPedido não encontrada no canon').not.toBeNull();
+    expect(corpo![0]).toContain('descontoItemOmie(prod, bruto)');
+    expect(corpo![0]).not.toContain('prod.desconto');
+    expect(corpo![0]).toContain('return { subtotal: null, itensDescontoIlegivel }');
+  });
+
+  it('CALIBRAÇÃO: a forma pré-fix é reprovada, e a prosa que a cita não', () => {
+    // Sem este par, os asserts negativos acima passariam sobre um arquivo que o stripper tivesse
+    // esvaziado. O primeiro prova que a forma antiga É contada; o segundo, que código sobrevive.
+    const preFix = removerComentarios('const desc = prod.desconto || 0;\nif (price !== null) subtotal += qty * price * (1 - desc / 100);');
+    expect(count(preFix, 'desc / 100')).toBe(1);
+    const soComentario = removerComentarios('// era `qty * price * (1 - desc / 100)`\nconst x = 1;');
+    expect(count(soComentario, 'desc / 100')).toBe(0);
+    expect(soComentario).toContain('const x = 1');
   });
 });
 

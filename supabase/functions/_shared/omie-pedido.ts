@@ -4,8 +4,11 @@
 // tinha o mapa INVERTIDO (60→cancelado / 50→faturado) e reescrevia o hash_payload de identidade.
 // Puro (zero Deno/DB): provado por `deno test supabase/functions/_shared/omie-pedido_test.ts`.
 //
-// ⚠️ omie-vendas-sync ainda mantém o mapa/subtotal/itemsJson inline (L1166-1193) — unificar num
-//    follow-up. Este módulo já é a fonte canônica; o teste trava o canon contra regressão (#B).
+// ⚠️ omie-vendas-sync ainda mantém o mapa etapa→status e o itemsJson inline — unificar num
+//    follow-up. O SUBTOTAL já é unificado (2026-09-10): os três escritores chamam
+//    `apurarSubtotalPedido`, e a forma é pinada em src/__tests__/edge-money-path-invariants.test.ts.
+
+import { descontoItemOmie } from "./desconto-omie.ts";
 
 /** Os status cujo dono é o Omie — a lista que o `sync-reprocess` ENVIA à RPC
  *  `reconciliar_pedidos_omie`, que a compara por CONJUNTO com a sua cópia canônica e LANÇA se
@@ -45,6 +48,9 @@ interface DetInput {
     quantidade?: number;
     valor_unitario?: number;
     desconto?: number;
+    tipo_desconto?: string;
+    percentual_desconto?: number | string;
+    valor_desconto?: number | string;
   };
   observacao?: { obs_item?: string };
   inf_adic?: { dados_adicionais_item?: string };
@@ -81,30 +87,101 @@ export function contarItensSemPreco(det: DetInput[]): number {
   return n;
 }
 
-/** subtotal = Σ qty·preço·(1 − desconto%/100), arredondado a 2 casas. `desconto` é PERCENTUAL.
- *  MESMA semântica do omie-vendas-sync (L1170-1173): `|| ` (qty 0 → 1, igual ao sync) — NÃO `??`.
+export interface SubtotalApurado {
+  /** Σ (qty·preço − desconto) arredondado a 2 casas — ou `null` quando o líquido do pedido é
+   *  DESCONHECIDO (algum item com preço tem desconto que a régua recusou ler). `null` aqui NÃO é
+   *  "total zero": é "esta revisão monetária não se publica" (ver o bloco ⚠️ abaixo). */
+  subtotal: number | null;
+  /** Quantos itens com preço tiveram o desconto recusado pela régua. `> 0` ⇔ `subtotal === null`. */
+  itensDescontoIlegivel: number;
+}
+
+/**
+ * Subtotal do pedido — a fórmula ÚNICA dos três escritores de `sales_orders.subtotal`/`total`:
+ * `omie-vendas-sync` (inserção e reparo de órfão, via `criar_pedidos_com_itens`) e `sync-reprocess`
+ * (via `reconciliar_pedidos_omie`). Três cópias da conta foram o que deixou o bug morar aqui.
  *
- *  ⚠️ ITEM SEM PREÇO NÃO ENTRA — e o número não muda por isso (somar `qty·0` e omitir o item dão
- *  a mesma soma). O que muda é que a incompletude deixa de ser invisível: use
- *  `contarItensSemPreco()` junto, ou leia `valor_unitario === null` no items-jsonb.
+ *   subtotal = Σ (qty·preço − desconto) sobre os itens que viram linha de `order_items`, com
+ *              `qty = quantidade || 1` (quirk legado — é a MESMA quantidade gravada na linha) e o
+ *              desconto pela RÉGUA (`descontoItemOmie`, _shared/desconto-omie.ts), em R$ da linha,
+ *              sobre a base qty·preço — a mesma chamada que grava `order_items.desconto_valor`.
  *
- *  DECISÃO (2026-09-05), documentada porque a alternativa foi considerada e recusada: o subtotal
- *  NÃO degrada para `null` quando falta preço. `sales_orders.subtotal`/`total` são NOT NULL em
- *  prod, `reconciliar_pedidos_omie` rejeita total nulo, e os KPIs de faturamento somam a coluna —
- *  anular o total de um pedido por causa de UM item trocaria um total encolhido por um buraco no
- *  faturamento, que é pior. O sinal honesto de "este total está incompleto" fica DERIVÁVEL do
- *  items-jsonb (algum item com `valor_unitario: null`), sem coluna nova e sem fabricar número. */
-export function subtotalPedidoComDesconto(det: DetInput[]): number {
+ * ── O defeito que isto corrige (2026-09-10) ──────────────────────────────────────────────────
+ * A fórmula era `qty·preço·(1 − prod.desconto/100)`. `desconto` pelado NÃO existe na API do Omie
+ * (`det.produto` expõe `tipo_desconto` "V"/"P", `percentual_desconto`, `valor_desconto`): o campo
+ * chegava `undefined`, o `|| 0` zerava o fator e o subtotal saía BRUTO. Medido em prod: 31.315/31.315
+ * pais Omie com `total == Σ qty·preço`, e o primeiro pedido com desconto apurado pela régua (oben
+ * 12183048572) gravado a 1629,25 quando o líquido é 1489,34. Sem desconto, o número novo é BIT A
+ * BIT o antigo (`x − 0 === x·1`) — por isso a reconciliação só reescreve quem de fato tem desconto.
+ *
+ * ── Universo: os itens que VIRAM LINHA (com `codigo_produto`) ────────────────────────────────
+ * O cabeçalho descreve as mesmas linhas que `order_items` guarda — o sync só grava item com
+ * `codigo_produto`. Antes o cabeçalho somava todo `det` e o reparo só os com código (duas seleções
+ * para a mesma conta). Numericamente inerte no acervo: nos 31.315 pais medidos, `total` já batia
+ * com a soma de `order_items`. E o item sem código que tivesse preço nem chega a gravar: o
+ * items-jsonb o carrega e as linhas não, e a trigger de coerência do agregado recusa o pedido.
+ *
+ * ⚠️ ITEM SEM PREÇO NÃO ENTRA — e o número não muda por isso (somar `qty·0` e omitir o item dão
+ * a mesma soma). O que muda é que a incompletude deixa de ser invisível: use
+ * `contarItensSemPreco()` junto, ou leia `valor_unitario === null` no items-jsonb.
+ *
+ * ⚠️ ITEM COM DESCONTO ILEGÍVEL DERRUBA O SUBTOTAL INTEIRO PARA `null` — fail-closed por PEDIDO.
+ * A régua devolve `null` quando não sabe ler o desconto (discriminador fora do vocabulário, campos
+ * contraditórios, percentual > 100, desconto maior que a base). As duas saídas "óbvias" fabricam:
+ *   · somar o item pelo BRUTO é o `null → 0` que a régua documenta como o bug renascido no
+ *     primeiro consumidor — receita cheia, indistinguível de "o Omie disse que não há desconto";
+ *   · deixar SÓ o item de fora publica uma soma PARCIAL com cara de total. Diferente do item sem
+ *     preço, aqui o items-jsonb não guarda a evidência (a chave legado `desconto` diz 0), então a
+ *     incompletude some da superfície. E no único órfão do acervo (total 0) um item assim faria o
+ *     G5 de `criar_pedidos_com_itens` APROVAR um reparo com cabeçalho zero — o valor recusado
+ *     viraria "compatível" (achado do challenge Codex, 2026-09-10).
+ * Então: líquido desconhecido ⇒ a revisão monetária NÃO se publica. Quem chama pula o pedido
+ * (existente fica na revisão anterior; novo não entra) e o REGISTRA — contador e amostra de ids
+ * no resultado da execução, que vai para `fin_sync_log`/`sync_reprocess_log`. Medido 2026-09-10:
+ * 0 ilegíveis nas 77 linhas apuradas pela régua desde que ela entrou na ingestão.
+ *
+ * ── Arredondamento: UMA vez, no fim — e a diferença para a soma das linhas é conhecida ────────
+ * Arredondar no fim mantém o número bit a bit igual ao legado para pedido sem desconto (o
+ * arredondamento por linha mudaria centavos de pedidos com preço de 3 casas e dispararia
+ * reescritas que não são correção). O preço de fazer isso: `receitaLiquidaItem` arredonda POR
+ * LINHA, então Σ das linhas pode diferir deste subtotal em até ½ centavo por linha quando a base
+ * qty·preço tem fração de centavo (ex.: 0,5 × 10,01). Com bases em centavos inteiros — o caso de
+ * quantidade inteira e preço de 2 casas — as duas somas coincidem. Provado nos dois sentidos em
+ * `omie-pedido_test.ts`.
+ *
+ * DECISÃO (2026-09-05), documentada porque a alternativa foi considerada e recusada: o subtotal
+ * NÃO degrada para `null` quando falta preço. `sales_orders.subtotal`/`total` são NOT NULL em
+ * prod, `reconciliar_pedidos_omie` rejeita total nulo, e os KPIs de faturamento somam a coluna —
+ * anular o total de um pedido por causa de UM item trocaria um total encolhido por um buraco no
+ * faturamento, que é pior. O sinal honesto de "este total está incompleto" fica DERIVÁVEL do
+ * items-jsonb (algum item com `valor_unitario: null`), sem coluna nova e sem fabricar número.
+ * (O `null` do desconto ilegível NÃO contradiz isto: ele não chega à coluna — é o pedido que não
+ * se publica.)
+ */
+export function apurarSubtotalPedido(det: DetInput[]): SubtotalApurado {
   let subtotal = 0;
+  let itensDescontoIlegivel = 0;
   for (const d of det) {
     const prod = d.produto || {};
+    if (!prod.codigo_produto) continue;
     const qty = prod.quantidade || 1;
     const price = precoUnitarioOmie(prod.valor_unitario);
     if (price === null) continue;
-    const desc = prod.desconto || 0;
-    subtotal += qty * price * (1 - desc / 100);
+    const bruto = qty * price;
+    const desconto = descontoItemOmie(prod, bruto);
+    if (desconto === null) {
+      itensDescontoIlegivel += 1;
+      continue;
+    }
+    subtotal += bruto - desconto;
   }
-  return Math.round(subtotal * 100) / 100;
+  if (itensDescontoIlegivel > 0) return { subtotal: null, itensDescontoIlegivel };
+  return { subtotal: Math.round(subtotal * 100) / 100, itensDescontoIlegivel: 0 };
+}
+
+/** Só o número de `apurarSubtotalPedido`. `null` = líquido desconhecido: NÃO publique o pedido. */
+export function subtotalPedidoComDesconto(det: DetInput[]): number | null {
+  return apurarSubtotalPedido(det).subtotal;
 }
 
 /** Cor de tinta a partir da obs do item ("Cor: <label> - <embalagem>"). Espelha o parseCorObs do

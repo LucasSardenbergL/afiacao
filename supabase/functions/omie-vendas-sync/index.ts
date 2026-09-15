@@ -8,7 +8,8 @@ import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
-import { aplicarCorPreservandoItens, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
+import { aplicarCorPreservandoItens, apurarSubtotalPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
+import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
@@ -998,6 +999,11 @@ async function syncPedidos(
   let itensLidos = 0;
   let itensComIdentidade = 0;
   let pedidosIdentidadeAmbigua = 0;
+  // Pedidos NÃO publicados porque o líquido é desconhecido (desconto que a régua não sabe ler).
+  // A amostra de ids viaja no resultado → `fin_sync_log.results`: é o registro que sobrevive à
+  // janela do cron. Sem ele, o pedido pulado some em silêncio quando a data sai da janela.
+  let pedidosDescontoIlegivel = 0;
+  const amostraDescontoIlegivel: number[] = [];
   let reachedEnd = false;            // true SÓ no fim real do Omie (null = "Não existem registros", ou página vazia)
   let lastErrorKind: 'rate_limit' | 'transient' | 'http' | null = null;
 
@@ -1309,8 +1315,20 @@ async function syncPedidos(
       seenHashes.add(hashPayload);
 
       const detalhes: OmieDetalheItem[] = pedido.det || [];
+
+      // Subtotal LÍQUIDO pela fórmula ÚNICA dos três escritores do total (_shared/omie-pedido.ts):
+      // Σ (qtd·preço − desconto da régua). A conta que morava aqui lia `prod.desconto`, chave que a
+      // API do Omie não tem, e gravava o total BRUTO. `null` = algum item com preço tem desconto que
+      // a régua não sabe ler ⇒ o líquido é desconhecido e o pedido NÃO se publica (nem pai, nem
+      // itens, nem preço): somar parcial ou pelo bruto seria fabricar o total.
+      const apurado = apurarSubtotalPedido(detalhes);
+      if (apurado.subtotal === null) {
+        pedidosDescontoIlegivel++;
+        if (amostraDescontoIlegivel.length < 20) amostraDescontoIlegivel.push(codigoPedido);
+        continue;
+      }
+      const subtotal = apurado.subtotal;
       const itemsJson: OrderItemPayload[] = [];
-      let subtotal = 0;
 
       for (const det of detalhes) {
         const prod = det.produto || {};
@@ -1319,8 +1337,10 @@ async function syncPedidos(
         // o número não muda por isso (somar qty·0 e omitir dão a mesma soma), mas a
         // incompletude passa a ser legível: `valor_unitario: null` no items-jsonb.
         const price = precoUnitarioOmie(prod.valor_unitario);
+        // `desconto` do items-jsonb é a chave LEGADO — a mesma que a API não tem, então sempre 0.
+        // Intocada de propósito: a trigger de coerência do agregado a compara com
+        // `order_items.discount` (também legado), e mudar um lado sem o outro recusaria o pedido.
         const desc = prod.desconto || 0;
-        if (price !== null) subtotal += qty * price * (1 - desc / 100);
         // Cor da tinta: preferimos obs_item (onde a cor sempre vai); o
         // dados_adicionais_item pode conter ordem de compra (parseCorObs filtra
         // por "Cor:", então não confunde). Sem cor → item comum.
@@ -1432,9 +1452,12 @@ async function syncPedidos(
         customer_user_id: customerUserId,
         created_by: systemUserId,
         items: itemsJson,
-        subtotal: Math.round(subtotal * 100) / 100,
+        subtotal,
+        // `discount` do CABEÇALHO segue 0: o desconto já está DENTRO do subtotal/total (é do item,
+        // não da capa). Pôr Σ desconto aqui faria o cupom impresso — que mostra "Subtotal" e, para
+        // alguns CNPJs, "Desconto: −discount" — parecer descontar duas vezes.
         discount: 0,
-        total: Math.round(subtotal * 100) / 100,
+        total: subtotal,
         status,
         omie_pedido_id: codigoPedido,
         omie_numero_pedido: String(numeroPedido || codigoPedido),
@@ -1475,7 +1498,7 @@ async function syncPedidos(
       }
     }
 
-    console.log(`[sync_pedidos][${account}] Página ${pagina}/${totalPaginas} — ${pedidosRpc.length} processados, ${skippedNoClient} sem cliente`);
+    console.log(`[sync_pedidos][${account}] Página ${pagina}/${totalPaginas} — ${pedidosRpc.length} processados, ${skippedNoClient} sem cliente, ${pedidosDescontoIlegivel} não publicados por desconto ilegível (acumulado)`);
     pagina++;
     pagesProcessed++;
   }
@@ -1483,7 +1506,7 @@ async function syncPedidos(
   // Completude = FIM REAL alcançado (null/página vazia), NUNCA pagina>totalPaginas.
   // Pausa (transitório/erro) ou budget de página esgotado ⟹ complete=false, retoma do `pagina`.
   const complete = reachedEnd;
-  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, itensLidos, itensComIdentidade, pedidosIdentidadeAmbigua, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
+  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, itensLidos, itensComIdentidade, pedidosIdentidadeAmbigua, pedidosDescontoIlegivel, amostraDescontoIlegivel, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
 }
 
 // ── Reparo dos órfãos PRESOS (pai sem itens, fora da janela do cron) ──────────────────
@@ -1499,8 +1522,12 @@ async function repararOrfaosItens(
 ) {
   let reparados = 0, itens = 0, divergencias = 0, falhas = 0, semDados = 0, jaCompletos = 0;
   const divergenciaAmostra: unknown[] = [];
+  // Órfão cujo líquido é desconhecido (desconto que a régua não sabe ler): NÃO vai à RPC. Com um
+  // total parcial no payload, o G5 compararia contra o pai e poderia APROVAR o reparo errado.
+  let descontoIlegivel = 0;
+  const descontoIlegivelAmostra: number[] = [];
   if (!Array.isArray(pedidoIds) || pedidoIds.length === 0) {
-    return { reparados, itens, divergencias, falhas, semDados, jaCompletos, total: 0, divergenciaAmostra };
+    return { reparados, itens, divergencias, falhas, semDados, jaCompletos, descontoIlegivel, descontoIlegivelAmostra, total: 0, divergenciaAmostra };
   }
 
   // Pre-load product map (codigo_produto -> product_id). Leitura COMPLETA e fail-closed
@@ -1541,15 +1568,13 @@ async function repararOrfaosItens(
 
       const itensRpc: Array<Record<string, unknown>> = [];
       const precosRpc: Array<Record<string, unknown>> = [];
-      let subtotal = 0;
       for (const d of det) {
         const prod = d.produto || {};
         if (!prod.codigo_produto) continue;
-        // `null` = o Omie não informou preço (ausente ≠ zero) — mesma régua do sync acima.
-        // Item sem preço fica FORA do subtotal em vez de somar 0; a soma é a mesma, mas o
-        // item vai para a RPC com unit_price NULL em vez de um R$ 0,00 fabricado.
+        // `null` = o Omie não informou preço (ausente ≠ zero) — mesma régua do sync acima: o item
+        // vai para a RPC com unit_price NULL em vez de um R$ 0,00 fabricado. `desc` é a chave
+        // LEGADO (inexistente na API, sempre 0), que só alimenta a coluna legado `discount`.
         const qty = prod.quantidade || 1, price = precoUnitarioOmie(prod.valor_unitario), desc = prod.desconto || 0;
-        if (price !== null) subtotal += qty * price * (1 - desc / 100);
         const productId = productMap.get(prod.codigo_produto) || null;
         // Mesma régua do caminho principal — os dois escrevem na MESMA coluna, e uma delas
         // divergindo reintroduz a ambiguidade que esta frente inteira existe para fechar.
@@ -1564,6 +1589,16 @@ async function repararOrfaosItens(
       }
       if (itensRpc.length === 0) { semDados++; continue; } // Omie tb não tem item válido (limite L2)
 
+      // O `total` daqui só serve ao G5 — comparar contra o total que o PAI gravou ao nascer. Por
+      // isso tem de ser a MESMA conta do sync (mesma fórmula, mesmo universo de itens): antes o
+      // reparo somava só itens com código e o sync somava todo `det`. `null` = líquido desconhecido.
+      const apurado = apurarSubtotalPedido(det);
+      if (apurado.subtotal === null) {
+        descontoIlegivel++;
+        if (descontoIlegivelAmostra.length < 20) descontoIlegivelAmostra.push(pid);
+        continue;
+      }
+
       let status = 'importado';
       const etapa = cab.etapa || '';
       if (etapa === '60' || etapa === '70') status = 'faturado';
@@ -1574,7 +1609,7 @@ async function repararOrfaosItens(
       pedidosRpc.push({
         account, hash_payload: pai.hash_payload, omie_pedido_id: pid,
         customer_user_id: pai.customer_user_id, created_by: pai.created_by,
-        total: Math.round(subtotal * 100) / 100, status, order_date_kpi: pai.order_date_kpi,
+        total: apurado.subtotal, status, order_date_kpi: pai.order_date_kpi,
         itens: itensRpc, precos: precosRpc,
       });
     }
@@ -1594,10 +1629,10 @@ async function repararOrfaosItens(
         for (const d of (rr.divergence || [])) if (divergenciaAmostra.length < 20) divergenciaAmostra.push(d);
       }
     }
-    console.log(`[reparar_orfaos][${account}] lote ${Math.floor(i / LOTE) + 1}: reparados=${reparados} itens=${itens} divergencias=${divergencias} falhas=${falhas} semDados=${semDados}`);
+    console.log(`[reparar_orfaos][${account}] lote ${Math.floor(i / LOTE) + 1}: reparados=${reparados} itens=${itens} divergencias=${divergencias} falhas=${falhas} semDados=${semDados} descontoIlegivel=${descontoIlegivel}`);
   }
 
-  return { reparados, itens, divergencias, falhas, semDados, jaCompletos, total: pedidoIds.length, divergenciaAmostra };
+  return { reparados, itens, divergencias, falhas, semDados, jaCompletos, descontoIlegivel, descontoIlegivelAmostra, total: pedidoIds.length, divergenciaAmostra };
 }
 
 // Buscar transportadora pelo nome (razão social) no Omie
@@ -3161,6 +3196,7 @@ Deno.serve(async (req) => {
         let omieCurrentItems: OmieDetalheItem[] = [];
         let consultEditOk = false;
         let omieCodigoClienteEdit: number | null = null;
+        let omieTotalPedidoEdit: { valor_descontos?: unknown } | null = null;
         try {
           const consultResult = (await callOmieVendasApi(
             "produtos/pedido/",
@@ -3168,14 +3204,23 @@ Deno.serve(async (req) => {
             { codigo_pedido: codigoPedido },
             editAccount
           )) as {
-            pedido_venda_produto?: { det?: OmieDetalheItem[]; cabecalho?: { codigo_cliente?: number } };
+            pedido_venda_produto?: {
+              det?: OmieDetalheItem[];
+              cabecalho?: { codigo_cliente?: number };
+              total_pedido?: { valor_descontos?: unknown };
+            };
             det?: OmieDetalheItem[];
             cabecalho?: { codigo_cliente?: number };
+            total_pedido?: { valor_descontos?: unknown };
           } | null;
           // Omie returns items under pedido_venda_produto.det
           omieCurrentItems = consultResult?.pedido_venda_produto?.det
             || consultResult?.det
             || [];
+          // 2º eixo do guard de desconto (abaixo): a capa sofre o MESMO drift de shape do det.
+          omieTotalPedidoEdit = consultResult?.pedido_venda_produto?.total_pedido
+            ?? consultResult?.total_pedido
+            ?? null;
           consultEditOk = true;
           // Cabeçalho sofre o MESMO drift de shape do det (aninhado ou no topo).
           omieCodigoClienteEdit =
@@ -3225,6 +3270,41 @@ Deno.serve(async (req) => {
           throw new Error(
             "Edição não aplicada: não foi possível confirmar com segurança os itens atuais do pedido no Omie. Nada foi alterado — tente novamente.",
           );
+        }
+
+        // Guard money-path: a edição APAGA o desconto do Omie — o Step 2 exclui cada item e o Step 3 reinclui
+        // sem `tipo_desconto`/`percentual_desconto`/`valor_desconto` (docs/historico/
+        // edicao-do-app-apaga-desconto-do-omie.md). Pedido cuja leitura ATUAL mostra desconto de item ou de
+        // capa — ou não permite afirmar que não há — NÃO se edita pelo app. Roda aqui, sobre o estado já
+        // confiável do anti-duplicação e ANTES do verify-before-edit, da trava de crédito e de qualquer
+        // mutação. 200 estruturado (como credito/tint_preco/atp), não throw: o 500 chega ao app só como
+        // "non-2xx" e a instrução de editar no Omie se perderia. Sem override — é contrato, não exposição.
+        // Efeito colateral: quem passa daqui tem desconto zero, então o `totalAtualOmie` BRUTO da trava de
+        // crédito abaixo é também o líquido.
+        const descontoNoOmie = descontoNaLeituraDoOmie({ det: omieCurrentItems, total_pedido: omieTotalPedidoEdit });
+        if (descontoNoOmie.acusado) {
+          // Rastro durável, no precedente do anti-duplicação acima: `acao` é CHECK ao vocabulário do crédito
+          // e o fluxo de exceção (`useExcecaoCredito`) só lê `bloqueado`/`bloqueado_edicao`. Best-effort:
+          // falha do insert não pode transformar a recusa num 500 que esconde o motivo.
+          const { error: trilhaDescontoErr } = await supabaseAdmin.from("venda_bloqueio_credito_log").insert({
+            company: editAccount,
+            omie_codigo_cliente: omieCodigoClienteEdit,
+            sales_order_id: editSoId,
+            acao: "gate_indisponivel",
+            user_id: userId,
+            detalhe:
+              `edicao: desconto no Omie — edição recusada antes de mutar ` +
+              `(itens acusados ${descontoNoOmie.itens.length}, capa ${descontoNoOmie.capa?.motivo ?? "sem desconto"})`,
+          });
+          if (trilhaDescontoErr) console.error("[desconto] trilha da recusa falhou:", trilhaDescontoErr.message);
+          result = {
+            success: false,
+            blocked: "desconto_omie",
+            contexto: "edicao",
+            itens: descontoNoOmie.itens,
+            capa: descontoNoOmie.capa,
+          };
+          break;
         }
 
         // P0-B: verify-before-edit (princípio 5) — a edição destrutiva pode mutar um PV historicamente
@@ -3416,10 +3496,17 @@ Deno.serve(async (req) => {
           "ConsultarPedido",
           { codigo_pedido: codigoPedido },
           editAccount,
-        )) as { pedido_venda_produto?: { det?: OmieDetalheItem[] }; det?: OmieDetalheItem[] } | null;
+        )) as {
+          pedido_venda_produto?: { det?: OmieDetalheItem[]; total_pedido?: { valor_descontos?: unknown } };
+          det?: OmieDetalheItem[];
+          total_pedido?: { valor_descontos?: unknown };
+        } | null;
         const finalOmieItems: OmieDetalheItem[] = finalConsultResult?.pedido_venda_produto?.det
           || finalConsultResult?.det
           || [];
+        const finalTotalPedido = finalConsultResult?.pedido_venda_produto?.total_pedido
+          ?? finalConsultResult?.total_pedido
+          ?? null;
         const expectedSignature = buildExpectedSignature(editItems);
         const omieSignature = buildOmieSignature(finalOmieItems);
 
@@ -3433,6 +3520,24 @@ Deno.serve(async (req) => {
           );
           throw new Error(
             `Omie não confirmou a substituição completa dos itens do pedido (esperado ${editItems.length} itens e recebeu ${finalOmieItems.length}).`,
+          );
+        }
+
+        // Pós-condição do write-back: a RPC grava `discount: 0` e total bruto porque o contrato diz que a edição
+        // termina SEM desconto. A assinatura acima é cega a desconto, então confere aqui, com a mesma régua de
+        // presença do guard. Acusar é o Omie contradizendo o contrato — reaplicou desconto sozinho, ou uma
+        // exclusão/inclusão voltou `null` por transitório esgotado e o item descontado ficou (achado do
+        // challenge Codex). O Omie JÁ foi mutado: gravar o bruto local registraria um número que o ERP
+        // desmente, então ERRO explícito, como a falha do write-back abaixo.
+        const descontoNaLeituraFinal = descontoNaLeituraDoOmie({ det: finalOmieItems, total_pedido: finalTotalPedido });
+        if (descontoNaLeituraFinal.acusado) {
+          console.error(
+            `[Omie Vendas][${editAccount}] Desconto na leitura final do pedido ${codigoPedido}: ${JSON.stringify(descontoNaLeituraFinal)}`,
+          );
+          throw new Error(
+            `Omie ATUALIZADO, mas a leitura final do pedido mostra desconto que a edição não envia ` +
+              `(${descontoNaLeituraFinal.itens.length} item(ns)${descontoNaLeituraFinal.capa ? " e a capa" : ""}) — ` +
+              `o registro local NÃO foi gravado. Confira o pedido no Omie e NÃO re-salve sem recarregar.`,
           );
         }
 

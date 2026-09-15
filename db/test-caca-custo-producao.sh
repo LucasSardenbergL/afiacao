@@ -123,7 +123,7 @@ P -q -f "$MIG1"
 FBUGVAL=$(Pq -c "SELECT lucro_proxy FROM public.v_caca_compradores LIMIT 1;")
 FBUG=$(Pq -c "SELECT (lucro_proxy = 250.00) FROM public.v_caca_compradores LIMIT 1;")
 case "$FBUG" in
-  f) ok "F1 view #1014 (sem fallback) descarta cmc de E/F → lucro $FBUGVAL≠250 (fallback tem dente)" ;;
+  f) ok "F1 view #1014 (sem fallback) descarta cmc de E/F → lucro ${FBUGVAL}≠250 (fallback tem dente)" ;;
   *) bad "F1 voltei p/ a view #1014 e A1 NÃO mudou (veio $FBUGVAL) → assert fraco" ;;
 esac
 

@@ -48,6 +48,18 @@ db/test-authz-is-not-true-escritas.sh      24
 db/test-preco-ausente-nao-e-zero.sh        54
 db/test-check-finitude-money-path.sh       27
 db/test-caca-custo-producao.sh              6
+# O desconto de item: NULL = não apurado ≠ 0 nos TRÊS escritores de order_items, e (§F, 2026-09-10)
+# o total LÍQUIDO atravessando as RPCs intocadas — com o G5 sabotado pela tolerância maior que o
+# desconto (o conserto rejeitado) exigindo VERMELHO. 35 é o que a prova executa hoje.
+db/test-desconto-valor-escritores.sh       35
+# O cabeçalho do ACERVO de bruto para líquido (2026-09-14): converte só onde TODAS as linhas têm
+# desconto apurado e o cabeçalho ainda é o bruto escrito ANTES do corte (depois dele o desconto pode
+# estar vencido); recusa em vez de truncar acima do limite; não deixa meio mês convertido — nem numa
+# conta com a outra incompleta; pula (SKIP LOCKED) o pai que um escritor segura e não sobrescreve
+# total que mudou entre a escolha e o lock. Aplica a CADEIA das duas migrations, e o gêmeo do
+# db:aplicar tem de instalar a mesma coisa. O `--falsificar` (18 sabotagens, uma camada por vez,
+# depois de linha de base verde na mesma invocação) roda aqui.
+db/test-pedido-total-liquido-acervo.sh     68  falsificar=18
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`

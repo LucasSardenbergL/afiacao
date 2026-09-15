@@ -19,7 +19,8 @@
 
 - processo **enfileirado** (o `heavy` pode estar esperando o semáforo, não rodando — §7);
 - log **sem a linha de conclusão** (começou ≠ terminou);
-- `grep` **sem ocorrência** — ⚠️ confira **caixa e acento** antes de concluir "não existe";
+- `grep` **sem ocorrência** — ⚠️ confira **caixa e acento** e o **universo** (o `rg` cru pula oculto e ignorado — §19) antes de
+  concluir "não existe";
 - **linter que não tem a regra** (verde porque não olhou, não porque está limpo).
 
 O erro de classe: tratar "não vi nada errado" como "está certo". Um comando que **falhou ao
@@ -682,7 +683,92 @@ no `END` — se a linha de fim não sai, não houve resultado. Foi o que separou
 resposta: `head -c 600 saida.txt` devolveu **nada**, e `echo "exit=$?"` devolveu **0**. Nenhum
 dos dois sozinho denuncia; a contradição entre eles, sim.
 
-## O padrão por trás das dezoito
+### 19. `rg` cru pula OCULTO e IGNORADO — o "sem ocorrência" fala de um universo MENOR que o repo
+
+Por padrão o ripgrep **não desce** em arquivo ou diretório oculto (`.claude/`, `.github/`) e **não
+lê** o que o `.gitignore` exclui — sem aviso nenhum. O exit code é honesto: `1` quer dizer "não casei
+nada **no que eu li**". A mentira mora no universo, que ninguém declarou. E aqui o ponto cego não é
+periferia: `.claude/` guarda skills e hooks, e `.claude/skills` é **raiz nomeada** do gate de
+citações (`ALVOS_VIVOS` em `scripts/docs-citacoes-gate-check.ts`). O gate olha lá pelo nome; o `rg`
+a partir de `.` pula lá por padrão.
+
+**Caso real, 2026-09-14 (PR #2480, worktree `determined-jennings-055ca6`).** Antes de mudar linhas de
+`scripts/codex-async.sh`, a varredura por citações com `rg` cru só trouxe ocorrências em
+`docs/historico/` e `docs/superpowers/` — pastas congeladas para o gate — e a conclusão foi "nenhuma
+citação viva". O step "Docs citações gate" (`bun run docs:citacoes`) reprovou uma citação ancorada em
+`.claude/skills/benchmark-externo/SKILL.md:94`: `scripts/codex-async.sh:62`, cuja linha tinha virado
+64. `rg --hidden` a achou na hora.
+
+Re-medido no mesmo dia, sem depender do relato:
+
+| sonda | exit | devolve |
+|---|---|---|
+| `git grep -n 'codex-async\.sh:[0-9]' 242bba406^` (pai do merge) | 0 | **uma** linha, a do `SKILL.md` — o universo INTEIRO da resposta morava em `.claude/` |
+| `rg -n 'codex-async\.sh:[0-9]' .` (main, já com `:64`) | **1** | zero linhas — o formato exato de "não existe" |
+| `rg --hidden --glob '!.git/**' --glob '!node_modules/**' -n` (idem) | 0 | `./.claude/skills/benchmark-externo/SKILL.md:94` |
+| `rg --files`, contando `^\.claude/` | 0 | **0** de 4.790 arquivos (com `--hidden`: 90 de 4.893) |
+
+Naquelas duas pastas, 32 arquivos rastreados mencionam o script — nenhum na forma `arquivo:linha`,
+que é justamente o que o gate não confere em doc congelado. A resposta certa estava inteira do lado
+de lá do filtro.
+
+O que cada sonda enxerga, num laboratório descartável (`git init` no scratchpad, a mesma marca
+plantada em cada categoria; ripgrep 15.2.0):
+
+| sonda | oculto rastreado | não-rastreado | ignorado (`.gitignore`) | dentro de `.git/` |
+|---|---|---|---|---|
+| `rg` | ✗ | ✓ | ✗ | ✗ |
+| `rg --hidden` | ✓ | ✓ | ✗ | **✓** (`COMMIT_EDITMSG`, `logs/HEAD`) |
+| `rg --hidden --glob '!.git/**' --glob '!node_modules/**'` | ✓ | ✓ | ✗ | ✗ |
+| `rg -uu` | ✓ | ✓ | ✓ | ✓ |
+| `git grep` | ✓ | ✗ | ✗ | ✗ |
+| `git grep --untracked` | ✓ | ✓ | ✗ | ✗ |
+
+⇒ **Para afirmar AUSÊNCIA, declare o universo** — e escolha o que responde à pergunta:
+
+```bash
+rg --hidden --glob '!.git/**' --glob '!node_modules/**' -n '<padrão>'  # disco: oculto e não-rastreado
+git grep -n '<padrão>'              # enumera pelo ÍNDICE: oculto rastreado entra, não-rastreado não
+git grep --untracked -n '<padrão>'  # + o arquivo novo que ainda não levou `git add`
+```
+
+`--hidden` **sozinho** não é a contramedida: ele desce no `.git/` e casa mensagem de commit — troca o
+falso negativo por falso positivo. E nenhuma das três vê o que o `.gitignore` exclui (só `rg -uu`,
+com `.git/` junto). O controle positivo da família — uma resposta que você já conhece — aqui é
+perguntar pelo **universo**, não pelo padrão: `rg --files | command grep -c '^\.claude/'` devolve `0`
+e avisa, antes de qualquer busca, que ela não vai olhar onde o gate olha.
+
+Irmã da nº 4, pelo avesso: lá o `grep` (shim do `ugrep`) casa **demais** — dobra acento — e serve mal
+para provar ausência; aqui o `rg` olha **de menos**. Nas duas o comando faz exatamente o que promete,
+e o erro está em atribuir ao resultado um alcance que ele não tem.
+
+### 20. API homônima entre node e bun não FALHA — o filho sem `env` herda a PARTIDA
+
+É a §6 (flag homônima BSD × GNU) na camada do RUNTIME. Sob bun 1.3.14, `spawnSync`, `execSync`,
+`execFileSync`, `Bun.spawn` e `Bun.spawnSync` chamados **sem** `env` entregam ao filho o ambiente de
+quando o bun arrancou. Um `process.env.GIT_CONFIG_GLOBAL = …` seguido de um `git()` importado some em
+silêncio — isolamento, config forjada e trace que "estão ligados" não estão. No node, logo no
+vitest, as mesmas linhas funcionam: **o teste verde prova o runtime em que rodou, não o script que o
+CI executa com `bun`**.
+
+Medido no próprio repo em 2026-09-14, com o bloco "fiação do git" de
+`scripts/sonda-versao-bump-gate.test.ts` e a config global **da partida** quebrada:
+
+| runner | partida benigna | partida quebrada |
+|---|---|---|
+| `bun test` | `1 pass` | **`1 fail`** |
+| vitest | `1 passed` | `1 passed` |
+
+A coluna benigna é a armadilha: **verde nos dois**, e sob bun sem isolar nada. Só a sabotagem da
+partida separa "isolou" de "a máquina calhou de ser benigna" — o controle cuja resposta já se
+conhece, de novo.
+
+⇒ filho que precisa de uma mutação recebe `env: { ...process.env, X }` explícito, ou o processo é
+re-executado com o ambiente montado na partida. Em `scripts/` e `db/` o ESLint barra a mutação na
+raiz. Matriz por API, upstream, varredura e a trava em
+[bun-filho-sem-env-herda-a-partida.md](bun-filho-sem-env-herda-a-partida.md).
+
+## O padrão por trás das vinte
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -711,6 +797,18 @@ apagava ruído, e ela envelheceu sem mudar. Nenhuma revisão de diff a pegaria �
 também a única em que o **resultado errado concorda com a hipótese de quem mede**, e por isso a
 única cuja contramedida tem de ser rodada ANTES da medição, não depois: um controle cuja resposta
 já se conhece. Depois já é tarde, porque o número plausível não pede conferência.
+
+A décima nona fecha pelo lado do UNIVERSO: o comando roda, termina, devolve um exit code honesto, e a
+pergunta estava certa — o que ficou sem declarar foi **onde** ela seria feita. "Sem ocorrência" é
+verdade sobre o conjunto que a ferramenta escolheu ler, e a conclusão é escrita sobre o repo. É o
+corte silencioso do PostgREST (1.000 linhas, sem aviso) na camada da busca: o filtro existe por boa
+razão, e é por isso que ninguém lembra que ele está lá.
+
+A vigésima fecha pelo lado do RUNTIME: o comando é o mesmo, o teste é o mesmo e o exit code é
+honesto nos dois — o que muda é **quem executa**. É a §6 com um agravante: lá os dois contratos
+moram em máquinas diferentes (o macOS de quem desenvolve, o Linux do CI); aqui, o ambiente que
+aprova (vitest, node) e o que executa (`bun scripts/…`) convivem no mesmo `package.json`, a um `run`
+de distância, e nada no diff os distingue.
 
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.

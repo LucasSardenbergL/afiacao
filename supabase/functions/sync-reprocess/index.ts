@@ -216,6 +216,12 @@ async function reprocessOrders(
   let skuRepetido = 0; // SKU repetido no payload do Omie
   let ambiguos = 0;    // pedidos NÃO tocados por duplicidade (payload OU banco) — sem identidade de linha
   let stale = 0;       // pedidos pulados pelo compare-and-set (leitura mais velha que a publicada)
+  // Pedidos NÃO reconciliados porque o líquido é desconhecido: algum item com preço tem desconto que
+  // a régua não sabe ler (`subtotalPedidoComDesconto` → null). Ficam na revisão anterior completa —
+  // publicar só os itens daria "filhos novos + cabeçalho velho", e publicar um total parcial ou
+  // bruto fabricaria o número. A amostra de ids vai ao `metadata` do log da run.
+  let descontoIlegivel = 0;
+  const descontoIlegivelAmostra: Array<number | string> = [];
   // ── SENSOR da identidade de linha, COM DENOMINADOR. Não existe payload de `ListarPedidos`
   //    persistido em lugar nenhum do banco (`omie_webhook_events` tem 192 linhas e ZERO com
   //    `det`), então até aqui não havia como responder "o ListarPedidos devolve
@@ -281,6 +287,17 @@ async function reprocessOrders(
         const itensValidos = itens.filter((it) => it.produto?.codigo_produto != null);
         if (itensValidos.length === 0) continue;
 
+        // [A1] total pelo canon compartilhado — a MESMA fórmula dos outros dois escritores (Σ qtd·preço
+        // − desconto da régua). Pedido COM desconto que já estava gravado bruto é reescrito para o
+        // líquido aqui: a reconciliação é o que converge o acervo da janela. `null` = líquido
+        // desconhecido ⇒ não reconcilia NADA deste pedido (ver `descontoIlegivel`).
+        const total = subtotalPedidoComDesconto(itens);
+        if (total === null) {
+          descontoIlegivel++;
+          if (descontoIlegivelAmostra.length < 20) descontoIlegivelAmostra.push(codigoPedido);
+          continue;
+        }
+
         const itensRpc: ItemReconciliar[] = itensValidos.map((it) => {
           const prod = it.produto!;
           const cod = Number(prod.codigo_produto);
@@ -319,8 +336,8 @@ async function reprocessOrders(
           // da transação: decidir isso aqui exigiria ler o status antes de escrever, e é
           // exatamente esse intervalo entre ler e escrever que esta entrega existe para fechar.
           status_omie: etapaConhecida(cab.etapa) ? omieEtapaToStatus(cab.etapa) : null,
-          // [A1] total/itemsJson pelo canon compartilhado (mesma fórmula do sync).
-          total: subtotalPedidoComDesconto(itens),
+          // [A1] total (calculado acima) e itemsJson pelo canon compartilhado.
+          total,
           items: construirItemsJson(itens),
           itens: itensRpc,
         });
@@ -403,6 +420,9 @@ async function reprocessOrders(
         itens_com_codigo_item: itensComIdentidade,
         identidade_adotada: identidadeAdotada,
         identidade_usada: identidadeUsada,
+        // Pedidos NÃO reconciliados por desconto ilegível — o registro que sobrevive à janela.
+        desconto_ilegivel: descontoIlegivel,
+        desconto_ilegivel_amostra: descontoIlegivelAmostra,
       },
       // Pedido que falhou na RPC ou SKU repetido (itens não reconciliados por ambiguidade) NÃO
       // derruba a run (idempotente: próximo ciclo reconcilia), mas NÃO mente 'complete' limpo —
@@ -410,7 +430,7 @@ async function reprocessOrders(
       // ⚠️ "reconcile PARCIAL" saiu do vocabulário aqui de propósito: com a RPC, o pedido que
       // falha é desfeito INTEIRO pela subtransação. O que sobra é um pedido na revisão ANTIGA
       // completa — não um meio-pedido. A frase antiga descrevia o writer que esta entrega matou.
-      ...((falhas > 0 || ambiguos > 0)
+      ...((falhas > 0 || ambiguos > 0 || descontoIlegivel > 0)
         ? {
           error_message: [
             falhas > 0 ? `${falhas} pedido(s) falharam na RPC (revertidos inteiros, seguem na revisão anterior)` : null,
@@ -419,12 +439,15 @@ async function reprocessOrders(
             // O que ele acumula é ATRASO, e é isso que precisa aparecer, porque um pedido que
             // nunca reconcilia é invisível de outro jeito.
             ambiguos > 0 ? `${ambiguos} pedido(s) NÃO reconciliados por SKU duplicado sem identidade de linha (${skuRepetido} vindos do Omie) — congelados na revisão anterior` : null,
+            // Mesma classe do ambíguo: não é erro de escrita, é pedido que a run se RECUSOU a
+            // publicar — e que, sem esta linha, ninguém veria ficando para trás.
+            descontoIlegivel > 0 ? `${descontoIlegivel} pedido(s) NÃO reconciliados por desconto de item que a régua não sabe ler (líquido desconhecido) — congelados na revisão anterior; ids em metadata.desconto_ilegivel_amostra` : null,
           ].filter(Boolean).join("; "),
         }
         : {}),
     });
 
-    return { upserts, divergences, corrections, falhas, sku_repetido: skuRepetido, duration_ms: Date.now() - startTime };
+    return { upserts, divergences, corrections, falhas, sku_repetido: skuRepetido, desconto_ilegivel: descontoIlegivel, duration_ms: Date.now() - startTime };
   } catch (error) {
     await completeReprocessLog(db, logId, {
       upserts_count: upserts,

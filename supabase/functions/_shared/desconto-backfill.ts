@@ -71,12 +71,30 @@ export interface ItemOmieDetalhe {
  *   leitura_recusada    o par foi achado, e `descontoItemOmie` recusou-se a ler o desconto
  *                       (discriminador fora do vocabulário, percentual fora de faixa, desconto
  *                       acima da base). A recusa da régua chega inteira até aqui.
+ *
+ * Os dois abaixo NÃO nascem da correspondência: são o PORTÃO (`portaoDoPedido`) retirando do plano
+ * uma linha que casou e foi apurada, antes de qualquer escrita.
+ *
+ *   total_nao_confere      o PEDIDO não passou na conferência com o total do próprio Omie
+ *                          (`conferirTotalPedido` ≠ confere): duas fontes do Omie discordam sobre o
+ *                          mesmo desconto, e escrever a dos itens seria escolher por conveniência.
+ *                          Caso-mãe: pedido 7638, itens com R$ 292,26 e total R$ 0,00 (Codex r2, P1).
+ *   excluido_pelo_operador a linha está na exclusão explícita da invocação (`excluir_ids`): conflito
+ *                          documental fora do alcance da edge — pedidos 12305 e 12787, desconto de
+ *                          R$ 0,69 no pedido e nota fiscal emitida no bruto. A exclusão só ESTREITA.
+ *   fora_do_plano_aprovado a invocação trouxe o plano aprovado (id → valor em centavos) e a linha, que
+ *                          ainda seria escrita, não está nele com o MESMO valor: o Omie mudou entre o
+ *                          dry-run e a escrita, ou a página deslocou. É o vínculo PREVENTIVO ao plano
+ *                          (Codex r3) — comparar depois da escrita só detectaria o valor já gravado.
  */
 export type MotivoRecusa =
   | "base_indeterminada"
   | "sem_correspondencia"
   | "ambiguo"
-  | "leitura_recusada";
+  | "leitura_recusada"
+  | "total_nao_confere"
+  | "excluido_pelo_operador"
+  | "fora_do_plano_aprovado";
 
 /**
  * Como os campos de desconto vieram no item do Omie que casou — o SENSOR do backfill.
@@ -246,19 +264,37 @@ export function pedidoNaJanela(orderDateKpi: unknown, deIso: string): boolean {
  * total e zero nos itens é o formato exato do furo que `ausentes` sozinho não denuncia (a régua
  * leria 0 onde o Omie diz que há desconto).
  *
- *   confere        a soma dos itens bate com o total (tolerância de UM centavo por item: a régua
- *                  arredonda cada item ao centavo, e o Omie pode arredondar o percentual de outro
- *                  jeito — diferença de arredondamento não é desconto perdido)
- *   diverge        os dois existem e não batem
+ *   confere        a soma dos itens é IGUAL ao total, em centavos inteiros
+ *   diverge        os dois existem e não são iguais — inclusive por um centavo
  *   sem_total      o cabeçalho não trouxe `valor_descontos` legível — ausência de dado, não "zero"
  *   item_ilegivel  a régua recusou algum item (null) — a soma seria parcial, e parcial não confere
+ *
+ * ⚠️ SEM tolerância, e em centavos (v1.5, Codex r2). O 1º desenho aceitava um centavo POR ITEM, e as
+ * duas propriedades eram falsas: (a) a folga crescia com o número de itens — 100 itens zerados contra
+ * um total de R$ 0,69 davam `confere`, e o desconto inteiro sumia dentro dela; (b) comparar reais em
+ * ponto flutuante fazia `|0,03 − 0,04|` valer 0,010000000000000002 e virar `diverge` exatamente no
+ * limite. A régua devolve cada desconto já arredondado ao centavo e o Omie informa o total com 2
+ * casas: somados em centavos inteiros, os dois lados são comparáveis por igualdade. Uma diferença de
+ * arredondamento do percentual deixa de ser absorvida — ela vira recusa (precisão > recall) e
+ * aparece medida no detalhe por pedido, em vez de ser escondida pela folga.
  */
 export type ConferenciaTotalPedido = "confere" | "diverge" | "sem_total" | "item_ilegivel";
+
+/** R$ → centavos inteiros. `Math.round` e não truncagem: 0,29 × 100 é 28,999999999999996. */
+function centavos(n: number): number {
+  return Math.round(n * 100);
+}
 
 export function conferirTotalPedido(
   itensOmie: ItemOmieDetalhe[],
   valorDescontosOmie: unknown,
-): { veredito: ConferenciaTotalPedido; soma_itens: number | null; total_omie: number | null } {
+): {
+  veredito: ConferenciaTotalPedido;
+  soma_itens: number | null;
+  total_omie: number | null;
+  soma_centavos: number | null;
+  total_centavos: number | null;
+} {
   const total = finitoNaoNegativo(valorDescontosOmie);
   let soma = 0;
   let legivel = true;
@@ -267,16 +303,209 @@ export function conferirTotalPedido(
     const p = finitoNaoNegativo(it.produto?.valor_unitario);
     const d = descontoItemOmie(it.produto, q === null || p === null ? null : q * p);
     if (d === null) { legivel = false; break; }
-    soma += d;
+    soma += centavos(d);
   }
-  const somaItens = legivel ? Math.round(soma * 100) / 100 : null;
-  if (total === null) return { veredito: "sem_total", soma_itens: somaItens, total_omie: null };
-  if (somaItens === null) return { veredito: "item_ilegivel", soma_itens: null, total_omie: total };
-  const tolerancia = 0.01 * Math.max(1, itensOmie.length);
+  const somaCentavos = legivel ? soma : null;
+  const totalCentavos = total === null ? null : centavos(total);
+  const medida = {
+    soma_itens: somaCentavos === null ? null : somaCentavos / 100,
+    total_omie: totalCentavos === null ? null : totalCentavos / 100,
+    soma_centavos: somaCentavos,
+    total_centavos: totalCentavos,
+  };
+  if (totalCentavos === null) return { veredito: "sem_total", ...medida };
+  if (somaCentavos === null) return { veredito: "item_ilegivel", ...medida };
+  return { veredito: somaCentavos === totalCentavos ? "confere" : "diverge", ...medida };
+}
+
+/**
+ * O PORTÃO do pedido: decide, ANTES de qualquer escrita, que linhas apuradas podem entrar no plano.
+ *
+ * Até a v1.4 a conferência com o total era só DIAGNÓSTICO — o pedido 7638 respondia `diverge` e as
+ * nove linhas seguiam para a RPC do mesmo jeito (Codex r2 reproduziu: `diverge=1`, HTTP 200, nove
+ * aplicadas). Agora um pedido cujo total não confere não tem linha nenhuma no plano, e cada linha
+ * retirada vira recusa COM MOTIVO — não um `continue` que sumiria com ela do fechamento por id.
+ *
+ * Ordem: exclusão do operador → total do pedido → plano aprovado. Uma linha que já tinha sido recusada
+ * pela correspondência mantém o motivo dela — é o mais informativo, e o portão só existe para impedir
+ * ESCRITA, que aquela linha nunca teria.
+ *
+ * O plano aprovado (`null` = sem plano, só em dry-run) vale apenas para linha que AINDA SERIA ESCRITA:
+ * a que outro writer já preencheu (`jaPreenchidas`) está fora do plano por construção — o dry-run a
+ * lista em `ja_apuradas` —, e recusá-la esvaziaria o controle conhecido sem proteger escrita nenhuma.
+ * A comparação é em centavos inteiros, a mesma unidade do plano.
+ */
+export function portaoDoPedido(
+  plano: PlanoDesconto,
+  veredito: ConferenciaTotalPedido,
+  excluir: ReadonlySet<string>,
+  planoAprovado: ReadonlyMap<string, number> | null,
+  jaPreenchidas: { has(id: string): boolean },
+): PlanoDesconto {
+  const apurados: LinhaApurada[] = [];
+  const recusados: LinhaRecusada[] = [...plano.recusados];
+  for (const a of plano.apurados) {
+    if (excluir.has(a.id)) {
+      recusados.push({ id: a.id, motivo: "excluido_pelo_operador" });
+    } else if (veredito !== "confere") {
+      recusados.push({ id: a.id, motivo: "total_nao_confere" });
+    } else if (planoAprovado !== null && !jaPreenchidas.has(a.id) && planoAprovado.get(a.id) !== centavos(a.desconto_valor)) {
+      recusados.push({ id: a.id, motivo: "fora_do_plano_aprovado" });
+    } else {
+      apurados.push(a);
+    }
+  }
+  return { apurados, recusados };
+}
+
+/** Teto de uma exclusão por invocação. Exclusão é para conflito documental conhecido, caso a caso —
+ *  uma lista de milhares seria outro processo fingindo ser este. */
+const EXCLUIR_IDS_MAX = 1000;
+const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Lê `excluir_ids` do corpo da invocação. FAIL-CLOSED: qualquer forma inesperada é ERRO (a edge
+ * responde 400), nunca "sem exclusão" — uma lista malformada que virasse conjunto vazio escreveria
+ * justamente as linhas que o operador pediu para segurar. Só AUSENTE (a chave não veio) é vazio
+ * legítimo: `null` passava como exceção ao contrato "ausente ou array", e a suíte protegia a exceção
+ * (Codex r3). Os ids são normalizados para minúsculas, a forma que o PostgREST devolve.
+ */
+export function lerExcluirIds(raw: unknown): { ok: true; ids: Set<string> } | { ok: false; erro: string } {
+  if (raw === undefined) return { ok: true, ids: new Set() };
+  if (!Array.isArray(raw)) return { ok: false, erro: `excluir_ids tem de ser um array de uuids (veio ${typeof raw})` };
+  if (raw.length > EXCLUIR_IDS_MAX) {
+    return { ok: false, erro: `excluir_ids com ${raw.length} ids passa do teto de ${EXCLUIR_IDS_MAX}` };
+  }
+  const ids = new Set<string>();
+  for (const v of raw) {
+    const s = typeof v === "string" ? v.trim().toLowerCase() : "";
+    if (!FORMA_UUID.test(s)) {
+      return { ok: false, erro: `excluir_ids contém um valor que não é uuid: ${String(JSON.stringify(v)).slice(0, 60)}` };
+    }
+    ids.add(s);
+  }
+  return { ok: true, ids };
+}
+
+/** Teto do plano aprovado por invocação: uma página tem ~200 linhas, e o plano pode trazer as páginas
+ *  vizinhas para absorver deslocamento. Acima disso não é o plano de UMA escrita. */
+const PLANO_APROVADO_MAX = 2000;
+
+/**
+ * Lê `plano_aprovado` — o manifesto [id, valor] que a ESCRITA só pode cumprir, nunca ampliar. Os
+ * valores ficam em centavos inteiros, a unidade da conferência. FAIL-CLOSED: ausente é "sem plano";
+ * qualquer outra forma é erro — par malformado, id que não é uuid, valor que não é número finito
+ * não-negativo, id repetido com valores diferentes, lista acima do teto.
+ */
+export function lerPlanoAprovado(
+  raw: unknown,
+): { ok: true; plano: Map<string, number> | null } | { ok: false; erro: string } {
+  if (raw === undefined) return { ok: true, plano: null };
+  if (!Array.isArray(raw)) {
+    return { ok: false, erro: `plano_aprovado tem de ser um array de pares [uuid, valor] (veio ${typeof raw})` };
+  }
+  if (raw.length > PLANO_APROVADO_MAX) {
+    return { ok: false, erro: `plano_aprovado com ${raw.length} linhas passa do teto de ${PLANO_APROVADO_MAX}` };
+  }
+  const plano = new Map<string, number>();
+  for (const par of raw) {
+    const id = Array.isArray(par) && typeof par[0] === "string" ? par[0].trim().toLowerCase() : "";
+    const valor: number | null = Array.isArray(par) && par.length === 2 && typeof par[1] === "number" &&
+        Number.isFinite(par[1]) && par[1] >= 0 ? par[1] : null;
+    if (!FORMA_UUID.test(id) || valor === null) {
+      return { ok: false, erro: `plano_aprovado contém um par inválido: ${String(JSON.stringify(par)).slice(0, 80)}` };
+    }
+    const c = centavos(valor);
+    const anterior = plano.get(id);
+    if (anterior !== undefined && anterior !== c) {
+      return { ok: false, erro: `plano_aprovado repete o id ${id} com valores diferentes` };
+    }
+    plano.set(id, c);
+  }
+  return { ok: true, plano };
+}
+
+export interface ParametrosBackfill {
+  account: "oben" | "colacor";
+  meses: number;
+  pagina: number;
+  maxPaginas: number;
+  dryRun: boolean;
+  excluirIds: Set<string>;
+  planoAprovado: Map<string, number> | null;
+}
+
+/** Inteiro dentro da faixa quando PRESENTE; AUSENTE devolve o padrão. `"1"` não é 1: a coerção por
+ *  `Number()` foi o que fez `max_paginas: "1"` virar 12 páginas em silêncio. Devolve a mensagem de
+ *  erro como string. */
+function inteiroOpcional(raw: unknown, nome: string, min: number, max: number, padrao: number): number | string {
+  if (raw === undefined) return padrao;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < min || raw > max) {
+    return `${nome} tem de ser inteiro entre ${min} e ${max} (veio ${String(JSON.stringify(raw)).slice(0, 40)})`;
+  }
+  return Number(raw);
+}
+
+/**
+ * Lê o corpo da invocação INTEIRO, antes de qualquer efeito (Codex r3, P1). Até a v1.5 cada parâmetro
+ * tinha um padrão silencioso — e o de `dry_run` era ESCREVER: um JSON quebrado virava `{}`, e `{}`
+ * virava escrita sem exclusão e com 12 páginas. Agora:
+ *   - o corpo tem de ser um OBJETO;
+ *   - `dry_run` é OBRIGATÓRIO e booleano — o modo que escreve só existe por opt-in explícito;
+ *   - parâmetro PRESENTE e inválido é erro; só o AUSENTE recebe padrão;
+ *   - a ESCRITA exige `plano_aprovado` (o dry-run não precisa, mas aceita — para ensaiar o portão) e
+ *     `max_paginas: 1` explícito; o dry-run segue multipágina.
+ */
+export function lerParametrosBackfill(
+  corpo: unknown,
+  padraoMaxPaginas: number,
+): { ok: true; p: ParametrosBackfill } | { ok: false; erro: string } {
+  if (typeof corpo !== "object" || corpo === null || Array.isArray(corpo)) {
+    return { ok: false, erro: "o corpo tem de ser um objeto JSON com os parâmetros" };
+  }
+  const c = corpo as Record<string, unknown>;
+  if (typeof c.dry_run !== "boolean") {
+    return { ok: false, erro: "dry_run é obrigatório e tem de ser true ou false — o modo que escreve não tem padrão" };
+  }
+  const dryRun = c.dry_run === true;
+  if (c.account !== undefined && c.account !== "oben" && c.account !== "colacor") {
+    return { ok: false, erro: `account tem de ser "oben" ou "colacor" (veio ${String(JSON.stringify(c.account)).slice(0, 40)})` };
+  }
+  const meses = inteiroOpcional(c.meses, "meses", 1, 24, 12);
+  if (typeof meses === "string") return { ok: false, erro: meses };
+  const pagina = inteiroOpcional(c.pagina, "pagina", 1, 10000, 1);
+  if (typeof pagina === "string") return { ok: false, erro: pagina };
+  const maxPaginas = inteiroOpcional(c.max_paginas, "max_paginas", 1, 100, padraoMaxPaginas);
+  if (typeof maxPaginas === "string") return { ok: false, erro: maxPaginas };
+  const excl = lerExcluirIds(c.excluir_ids);
+  if (!excl.ok) return { ok: false, erro: excl.erro };
+  const plano = lerPlanoAprovado(c.plano_aprovado);
+  if (!plano.ok) return { ok: false, erro: plano.erro };
+  if (dryRun === false && plano.plano === null) {
+    return { ok: false, erro: "a escrita exige plano_aprovado — sem ele não há vínculo preventivo entre o dry-run aprovado e o que se grava" };
+  }
+  // Uma escrita não atravessa página ([P1] do #2478): o lote acumula entre páginas e é descarregado
+  // por pedidos conciliados, então o pedido da fronteira N/N+1 relido chegaria DUAS vezes à mesma
+  // RPC — uma cópia aplicada e a outra contada como "base mudou"; editado entre as duas leituras, a
+  // cópia velha (igual ao aprovado) seria gravada enquanto a nova sai como fora do plano. O padrão
+  // de 12 páginas vale só para o dry-run: na escrita, a página única tem de vir explícita.
+  if (dryRun === false && c.max_paginas !== 1) {
+    return {
+      ok: false,
+      erro: `a escrita exige max_paginas: 1 explícito — uma invocação de escrita não atravessa página (veio ${String(JSON.stringify(c.max_paginas)).slice(0, 40)})`,
+    };
+  }
   return {
-    veredito: Math.abs(somaItens - total) <= tolerancia ? "confere" : "diverge",
-    soma_itens: somaItens,
-    total_omie: total,
+    ok: true,
+    p: {
+      account: c.account === "colacor" ? "colacor" : "oben",
+      meses,
+      pagina,
+      maxPaginas,
+      dryRun,
+      excluirIds: excl.ids,
+      planoAprovado: plano.plano,
+    },
   };
 }
 

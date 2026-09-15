@@ -24,8 +24,12 @@ import {
   conferirTotalPedido,
   type ItemOmieDetalhe,
   type LinhaLocal,
+  lerExcluirIds,
+  lerParametrosBackfill,
+  lerPlanoAprovado,
   lerRetornoEscrita,
   pedidoNaJanela,
+  portaoDoPedido,
   registrarNaAmostra,
   somarRetornoEscrita,
 } from "./desconto-backfill.ts";
@@ -543,21 +547,261 @@ Deno.test("total do pedido: item que a régua recusa → item_ilegivel, não som
   eq(r.soma_itens, null, "soma parcial não é transportada");
 });
 
-Deno.test("total do pedido: diferença de arredondamento (≤ 1 centavo por item) confere", () => {
-  // 3,333% de 100 = 3,333 → a régua arredonda a 3,33; o Omie pode ter gravado 3,34.
+Deno.test("total do pedido: UM centavo de diferença já diverge — sem folga (v1.5)", () => {
+  // Até a v1.4 isto "conferia": um centavo por item era aceito como arredondamento. Agora a
+  // diferença de arredondamento do percentual vira recusa medida, em vez de folga que absorve.
+  // 3,333% de 100 = 3,333 → a régua arredonda a 3,33; o total do Omie diz 3,34.
   const r = conferirTotalPedido([omie(555, 1, 100, { tipo_desconto: "P", percentual_desconto: 3.333 })], 3.34);
-  eq(r.veredito, "confere", "um centavo num item é arredondamento");
+  eq(r.veredito, "diverge", "333 centavos contra 334");
+  eq(r.soma_centavos, 333, "a soma sai em centavos inteiros");
+  eq(r.total_centavos, 334, "o total também");
 });
 
-Deno.test("total do pedido: dois centavos num único item já é divergência", () => {
-  // O contraste do teste acima — a tolerância não pode virar folga que engole desconto real.
-  const r = conferirTotalPedido([omie(555, 1, 100, { tipo_desconto: "V", valor_desconto: 3.33 })], 3.35);
-  eq(r.veredito, "diverge", "0,02 num item só não é arredondamento");
+Deno.test("total do pedido: 100 itens zerados contra R$ 0,69 no total → diverge (a folga por item escondia o desconto)", () => {
+  // O caso que o Codex r2 reproduziu contra a v1.3: com um centavo POR ITEM de folga, 100 itens
+  // davam R$ 1,00 de margem — o desconto inteiro de R$ 0,69 cabia nela, e a régua gravaria 100 zeros.
+  const itens = Array.from({ length: 100 }, (_, i) => omie(1000 + i, 1, 10, { tipo_desconto: "V", valor_desconto: 0 }));
+  const r = conferirTotalPedido(itens, 0.69);
+  eq(r.veredito, "diverge", "0 centavos nos itens contra 69 no total");
+});
+
+Deno.test("total do pedido: a soma é em centavos INTEIROS — 0,10 + 0,20 confere com 0,30", () => {
+  // Em ponto flutuante 0,1 + 0,2 = 0,30000000000000004 ≠ 0,3. O contraste que prova que a
+  // igualdade exata não reprova pedido certo por ruído binário (Codex r2, P3).
+  const r = conferirTotalPedido(
+    [
+      omie(555, 1, 10, { tipo_desconto: "V", valor_desconto: 0.1 }),
+      omie(777, 1, 10, { tipo_desconto: "V", valor_desconto: 0.2 }),
+    ],
+    0.3,
+  );
+  eq(r.veredito, "confere", "10 + 20 centavos = 30 centavos");
+  eq(r.soma_centavos, 30, "soma inteira");
+});
+
+Deno.test("total do pedido: cada desconto vira centavo ARREDONDADO — 0,29 × 100 é 28,999999999999996", () => {
+  // O caso que separa "somar em centavos" de "multiplicar por 100": sem o arredondamento por item a
+  // soma sai 28,999999999999996 e o pedido certo diverge de si mesmo. (Pego pelo mutcheck da v1.5:
+  // com só 0,10/0,20/10/20 nos testes, `soma += d * 100` sobrevivia — todos esses dão inteiro exato.)
+  const r = conferirTotalPedido([omie(555, 1, 10, { tipo_desconto: "V", valor_desconto: 0.29 })], 0.29);
+  eq(r.veredito, "confere", "29 centavos = 29 centavos");
+  eq(r.soma_centavos, 29, "e a soma é o inteiro 29, não 28,999…");
 });
 
 Deno.test("total do pedido: zero informado nos dois lados confere", () => {
   const r = conferirTotalPedido([omie(555, 2, 100, { tipo_desconto: "V", valor_desconto: 0 })], 0);
   eq(r.veredito, "confere", "0 = 0");
+});
+
+// ── O PORTÃO do pedido: o que sai do plano ANTES da escrita (v1.5) ──────────────────────────
+// Até a v1.4 a conferência com o total era só diagnóstico: o 7638 respondia `diverge` e as nove
+// linhas iam para a RPC. Cada teste afirma o que fica no plano E o motivo de quem saiu — uma linha
+// que some sem motivo quebraria o fechamento por id tanto quanto uma que fosse escrita.
+
+/** Um plano de duas apuradas (a: 10, b: 0) e uma recusada pela correspondência (c). */
+function planoBase() {
+  return conciliarDescontosPedido(
+    [local("a", 555, 2, 100), local("b", 777, 1, 50), local("c", 888, 1, 30)],
+    [
+      omie(555, 2, 100, { tipo_desconto: "V", valor_desconto: 10 }),
+      omie(777, 1, 50, { tipo_desconto: "V", valor_desconto: 0 }),
+    ],
+  );
+}
+
+Deno.test("portão: total que confere não retira nada do plano", () => {
+  const r = portaoDoPedido(planoBase(), "confere", new Set(), null, new Set());
+  eq(apurados(r).a, 10, "a segue no plano com o seu valor");
+  eq(apurados(r).b, 0, "b também");
+  eq(recusas(r).c, "sem_correspondencia", "a recusa da correspondência é preservada");
+  eq(r.apurados.length + r.recusados.length, 3, "toda linha segue com exatamente um desfecho");
+});
+
+Deno.test("portão: total que DIVERGE retira TODAS as apuradas do pedido, com motivo", () => {
+  const r = portaoDoPedido(planoBase(), "diverge", new Set(), null, new Set());
+  eq(r.apurados.length, 0, "nenhuma linha do pedido fica no plano");
+  eq(recusas(r).a, "total_nao_confere", "a sai com o motivo do portão");
+  eq(recusas(r).b, "total_nao_confere", "b também — inclusive o zero, que também não é confiável aqui");
+  eq(recusas(r).c, "sem_correspondencia", "quem já tinha motivo mantém o dele");
+  eq(r.recusados.length, 3, "e ninguém some do fechamento");
+});
+
+Deno.test("portão: sem_total e item_ilegivel também retiram — só `confere` libera escrita", () => {
+  for (const v of ["sem_total", "item_ilegivel"] as const) {
+    const r = portaoDoPedido(planoBase(), v, new Set(), null, new Set());
+    eq(r.apurados.length, 0, `${v}: nada no plano`);
+    eq(recusas(r).a, "total_nao_confere", `${v}: motivo do portão`);
+  }
+});
+
+Deno.test("portão: a exclusão do operador retira SÓ as linhas listadas, e vem antes do total", () => {
+  const confere = portaoDoPedido(planoBase(), "confere", new Set(["a"]), null, new Set());
+  eq(recusas(confere).a, "excluido_pelo_operador", "a linha listada sai");
+  eq(apurados(confere).b, 0, "a não listada fica no plano");
+  const diverge = portaoDoPedido(planoBase(), "diverge", new Set(["a"]), null, new Set());
+  eq(recusas(diverge).a, "excluido_pelo_operador", "com o total divergindo, a exclusão explícita tem precedência");
+  eq(recusas(diverge).b, "total_nao_confere", "e a outra sai pelo total");
+});
+
+Deno.test("portão: excluir uma linha que a correspondência já recusou não troca o motivo", () => {
+  const r = portaoDoPedido(planoBase(), "confere", new Set(["c"]), null, new Set());
+  eq(recusas(r).c, "sem_correspondencia", "o motivo da correspondência é o mais informativo");
+  eq(r.recusados.filter((x) => x.id === "c").length, 1, "e a linha não aparece duas vezes");
+});
+
+// ── `excluir_ids`: forma inesperada é ERRO, nunca exclusão vazia ────────────────────────────
+
+/** A MARCA do ramo que reprovou. `ok: false` sozinho aprova a guarda errada: sem a guarda de
+ *  `dry_run`, `{}` ainda reprovaria — pela exigência do plano —, e a suíte não veria a diferença. */
+function erroDe(r: { ok: true } | { ok: false; erro: string }): string {
+  return r.ok ? "" : r.erro;
+}
+
+Deno.test("excluir_ids: só AUSENTE é vazio legítimo — null é forma inválida (Codex r3)", () => {
+  const u = lerExcluirIds(undefined);
+  eq(u.ok && u.ids.size, 0, "undefined → nenhuma exclusão");
+  eq(erroDe(lerExcluirIds(null)).includes("tem de ser um array"), true, "null reprova — o contrato era 'ausente ou array'");
+  const vazio = lerExcluirIds([]);
+  eq(vazio.ok && vazio.ids.size, 0, "array vazio também é válido");
+});
+
+Deno.test("excluir_ids: uuids válidos são normalizados para minúsculas", () => {
+  const r = lerExcluirIds(["38A3E9AC-85CE-47DF-9E8A-5E43761EAF45", " b3e56dbb-208a-4a22-b533-e56fb3664156 "]);
+  eq(r.ok, true, "aceita");
+  eq(r.ok && r.ids.has("38a3e9ac-85ce-47df-9e8a-5e43761eaf45"), true, "maiúsculas viram minúsculas");
+  eq(r.ok && r.ids.has("b3e56dbb-208a-4a22-b533-e56fb3664156"), true, "espaço nas pontas sai");
+});
+
+Deno.test("excluir_ids: forma inválida é ERRO — string, objeto, elemento lixo, lista acima do teto", () => {
+  eq(lerExcluirIds("38a3e9ac-85ce-47df-9e8a-5e43761eaf45").ok, false, "string solta não é lista");
+  eq(lerExcluirIds({ id: "x" }).ok, false, "objeto não é lista");
+  eq(lerExcluirIds(["38a3e9ac-85ce-47df-9e8a-5e43761eaf45", 42]).ok, false, "elemento não-string reprova a lista inteira");
+  eq(lerExcluirIds(["nao-e-uuid"]).ok, false, "string que não é uuid reprova");
+  const acima = Array.from({ length: 1001 }, () => "38a3e9ac-85ce-47df-9e8a-5e43761eaf45");
+  eq(lerExcluirIds(acima).ok, false, "acima do teto de 1000 reprova");
+});
+
+// ── O PLANO APROVADO: vínculo preventivo entre o dry-run e a escrita (Codex r3) ───────────────
+// A comparação depois da escrita só DETECTA um valor que mudou no Omie entre o dry-run e a escrita
+// — ele já está gravado. Com o plano, a linha fora dele (ou com outro valor) não chega à RPC.
+
+Deno.test("portão com plano: MESMO valor em centavos segue; valor diferente ou ausente do plano sai", () => {
+  const r = portaoDoPedido(planoBase(), "confere", new Set(), new Map([["a", 1000]]), new Set());
+  eq(apurados(r).a, 10, "a foi aprovada a 1000 centavos e segue");
+  eq(recusas(r).b, "fora_do_plano_aprovado", "b não estava no plano aprovado");
+  const mudou = portaoDoPedido(planoBase(), "confere", new Set(), new Map([["a", 1100], ["b", 0]]), new Set());
+  eq(recusas(mudou).a, "fora_do_plano_aprovado", "o plano aprovou R$ 11 e o Omie diz R$ 10 agora: não escreve");
+  eq(apurados(mudou).b, 0, "b aprovada a 0 segue");
+});
+
+Deno.test("portão com plano: linha JÁ preenchida não é recusada pelo plano — ela não seria escrita", () => {
+  // O dry-run lista a já preenchida em `ja_apuradas`, fora do plano por construção. Recusá-la aqui
+  // esvaziaria o controle conhecido (12780) sem proteger escrita nenhuma.
+  const r = portaoDoPedido(planoBase(), "confere", new Set(), new Map([["b", 0]]), new Set(["a"]));
+  eq(apurados(r).a, 10, "a, já preenchida, segue para virar já apurada");
+  eq(apurados(r).b, 0, "b está no plano");
+});
+
+Deno.test("portão com plano: a ordem é exclusão → total → plano", () => {
+  const cheio = new Map([["a", 1000], ["b", 0]]);
+  eq(recusas(portaoDoPedido(planoBase(), "confere", new Set(["a"]), cheio, new Set())).a, "excluido_pelo_operador", "exclusão primeiro");
+  eq(recusas(portaoDoPedido(planoBase(), "diverge", new Set(), cheio, new Set())).a, "total_nao_confere", "total antes do plano");
+});
+
+Deno.test("plano_aprovado: ausente é 'sem plano'; pares válidos viram centavos inteiros", () => {
+  const u = lerPlanoAprovado(undefined);
+  eq(u.ok && u.plano === null, true, "ausente → sem plano");
+  const r = lerPlanoAprovado([["38A3E9AC-85CE-47DF-9E8A-5E43761EAF45", 0.29], ["b3e56dbb-208a-4a22-b533-e56fb3664156", 0]]);
+  eq(r.ok && r.plano?.get("38a3e9ac-85ce-47df-9e8a-5e43761eaf45"), 29, "0,29 vira 29 centavos, com o id normalizado");
+  eq(r.ok && r.plano?.get("b3e56dbb-208a-4a22-b533-e56fb3664156"), 0, "zero aprovado é dado");
+  const rep = lerPlanoAprovado([["b3e56dbb-208a-4a22-b533-e56fb3664156", 1], ["b3e56dbb-208a-4a22-b533-e56fb3664156", 1]]);
+  eq(rep.ok, true, "id repetido com o MESMO valor é aceito");
+});
+
+Deno.test("plano_aprovado: forma inválida é ERRO — nunca plano vazio", () => {
+  const id = "b3e56dbb-208a-4a22-b533-e56fb3664156";
+  const marca = (raw: unknown) => erroDe(lerPlanoAprovado(raw));
+  eq(marca(null).includes("tem de ser um array"), true, "null");
+  eq(marca({}).includes("tem de ser um array"), true, "objeto");
+  const pares: Array<[unknown, string]> = [
+    [[id], "par sem valor"],
+    [[id, 1, 2], "par com três elementos"],
+    [[id, "10"], "valor string"],
+    [[id, -1], "valor negativo"],
+    [[id, Infinity], "valor infinito"],
+    [["nao-uuid", 1], "id que não é uuid"],
+    ["solto", "par que não é array"],
+  ];
+  for (const [par, rotulo] of pares) eq(marca([par]).includes("par inválido"), true, rotulo);
+  eq(marca([[id, 1], [id, 2]]).includes("repete o id"), true, "id repetido com valores diferentes");
+  eq(marca(Array.from({ length: 2001 }, () => [id, 1])).includes("passa do teto"), true, "acima do teto de 2000");
+});
+
+// ── O CORPO da invocação: nada tem padrão que escreva (Codex r3, P1) ─────────────────────────
+
+Deno.test("corpo: o que não é objeto é ERRO — null, array, texto, número", () => {
+  for (const c of [null, [], "x", 1, true]) {
+    eq(erroDe(lerParametrosBackfill(c, 12)).includes("tem de ser um objeto"), true, `corpo ${JSON.stringify(c)}`);
+  }
+});
+
+Deno.test("corpo: `dry_run` é obrigatório e booleano — o modo que escreve não tem padrão", () => {
+  // O caso-mãe do Codex r3: um JSON quebrado virava `{}`, e `{}` virava ESCRITA.
+  const marca = "dry_run é obrigatório";
+  eq(erroDe(lerParametrosBackfill({}, 12)).includes(marca), true, "sem dry_run");
+  eq(erroDe(lerParametrosBackfill({ plano_aprovado: [] }, 12)).includes(marca), true, "sem dry_run, mesmo com plano");
+  eq(erroDe(lerParametrosBackfill({ dry_run: "true" }, 12)).includes(marca), true, "dry_run string");
+  eq(erroDe(lerParametrosBackfill({ dry_run: 1 }, 12)).includes(marca), true, "dry_run número");
+  eq(erroDe(lerParametrosBackfill({ dry_run: null }, 12)).includes(marca), true, "dry_run null");
+  const ok = lerParametrosBackfill({ dry_run: true }, 12);
+  eq(ok.ok ? ok.p.dryRun : "reprovou", true, "dry_run true explícito");
+  const w = lerParametrosBackfill({ dry_run: false, plano_aprovado: [], max_paginas: 1 }, 12);
+  eq(w.ok ? w.p.dryRun : "reprovou", false, "dry_run false explícito, com plano e uma página");
+});
+
+Deno.test("corpo: parâmetro PRESENTE e inválido é erro; AUSENTE recebe o padrão", () => {
+  const p = lerParametrosBackfill({ dry_run: true }, 12);
+  eq(p.ok && `${p.p.account}|${p.p.meses}|${p.p.pagina}|${p.p.maxPaginas}`, "oben|12|1|12", "padrões");
+  const casos: Array<[Record<string, unknown>, string, string]> = [
+    [{ max_paginas: "1" }, "max_paginas tem de ser inteiro", "max_paginas \"1\" não é 1 (virava 12 páginas)"],
+    [{ max_paginas: 0 }, "max_paginas tem de ser inteiro", "max_paginas 0"],
+    [{ max_paginas: 101 }, "max_paginas tem de ser inteiro", "max_paginas acima de 100"],
+    [{ pagina: 1.5 }, "pagina tem de ser inteiro", "página fracionária"],
+    [{ pagina: null }, "pagina tem de ser inteiro", "página null"],
+    [{ meses: 25 }, "meses tem de ser inteiro", "meses acima de 24"],
+    [{ account: "Oben" }, "account tem de ser", "account com outra grafia"],
+    [{ excluir_ids: null }, "excluir_ids tem de ser um array", "excluir_ids null"],
+    [{ plano_aprovado: null }, "plano_aprovado tem de ser um array", "plano_aprovado null"],
+  ];
+  for (const [extra, marca, rotulo] of casos) {
+    eq(erroDe(lerParametrosBackfill({ dry_run: true, ...extra }, 12)).includes(marca), true, rotulo);
+  }
+  const lidos = lerParametrosBackfill({ dry_run: true, account: "colacor", meses: 6, pagina: 3, max_paginas: 1 }, 12);
+  eq(lidos.ok && `${lidos.p.account}|${lidos.p.meses}|${lidos.p.pagina}|${lidos.p.maxPaginas}`, "colacor|6|3|1", "presentes e válidos são lidos");
+});
+
+Deno.test("corpo: a ESCRITA exige plano_aprovado; o dry-run não", () => {
+  const id = "b3e56dbb-208a-4a22-b533-e56fb3664156";
+  eq(erroDe(lerParametrosBackfill({ dry_run: false, max_paginas: 1 }, 12)).includes("a escrita exige plano_aprovado"), true, "escrita sem plano");
+  eq(lerParametrosBackfill({ dry_run: false, plano_aprovado: [], max_paginas: 1 }, 12).ok, true, "escrita com plano vazio é válida — e não escreve nada");
+  const w = lerParametrosBackfill({ dry_run: false, plano_aprovado: [[id, 1.5]], max_paginas: 1 }, 12);
+  eq(w.ok && w.p.planoAprovado?.get(id), 150, "o plano é lido em centavos");
+  eq(lerParametrosBackfill({ dry_run: true }, 12).ok, true, "dry-run sem plano");
+});
+
+Deno.test("corpo: a ESCRITA exige max_paginas: 1 explícito; o dry-run segue multipágina ([P1] do #2478)", () => {
+  // O lote acumula entre páginas: numa escrita de 2 páginas, o pedido da fronteira relido chega DUAS
+  // vezes à mesma RPC. O padrão de 12 páginas escrevia atravessando página sem ninguém pedir.
+  const marca = "a escrita exige max_paginas: 1";
+  const escrita = { dry_run: false, plano_aprovado: [] };
+  eq(lerParametrosBackfill({ ...escrita, max_paginas: 1 }, 12).ok, true, "escrita com 1 página");
+  eq(erroDe(lerParametrosBackfill({ ...escrita, max_paginas: 2 }, 12)).includes(marca), true, "escrita com 2 páginas");
+  eq(erroDe(lerParametrosBackfill(escrita, 12)).includes(marca), true, "escrita sem max_paginas — o padrão de 12 não vale para ela");
+  eq(erroDe(lerParametrosBackfill({ ...escrita, max_paginas: "1" }, 12)).includes("max_paginas tem de ser inteiro"), true, "\"1\" continua não sendo 1");
+  const dry = lerParametrosBackfill({ dry_run: true, max_paginas: 12 }, 12);
+  eq(dry.ok ? dry.p.maxPaginas : "reprovou", 12, "dry-run com 12 páginas segue aceito");
+  const dryPadrao = lerParametrosBackfill({ dry_run: true }, 12);
+  eq(dryPadrao.ok ? dryPadrao.p.maxPaginas : "reprovou", 12, "dry-run sem max_paginas recebe o padrão");
 });
 
 Deno.test("diferença REAL de preço continua separando (a quantização não afrouxa demais)", () => {

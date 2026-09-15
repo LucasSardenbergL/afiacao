@@ -12,18 +12,25 @@ vi.mock('react-router-dom', () => ({
 }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({}) }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+// Sensor do bloqueio de desconto: mock PARCIAL — o resto do módulo de analytics segue o real.
+vi.mock('@/lib/analytics', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/analytics')>()),
+  track: vi.fn(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: { from: vi.fn(), functions: { invoke: vi.fn() }, rpc: vi.fn() },
 }));
 
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { track } from '@/lib/analytics';
 import { useSalesOrderEdit } from '../useSalesOrderEdit';
 
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
 // PR0.0-bis: loadOrder busca o omie_payload pelo canal staff SECDEF (fechado ao .select()).
 const mockedRpc = vi.mocked(supabase.rpc);
+const mockedTrack = vi.mocked(track);
 
 /** Builder auto-retornante até `.range()` — o catálogo de edição agora é PAGINADO
  *  (select → eq → eq → or[exclusão] → order → order → range). Catálogo vazio basta:
@@ -176,6 +183,62 @@ describe('useSalesOrderEdit — guard de preço ao salvar', () => {
 
     expect(toast.error).toHaveBeenCalled();
     expect(updateSpy).not.toHaveBeenCalled();
+    expect(navigateSpy).not.toHaveBeenCalled();
+  });
+
+  // ── Guard de desconto do Omie (edge): a edição exclui e reinclui os itens SEM o desconto ──
+  // O `!success` genérico diria "Tente novamente" — o conselho errado: repetir bate no mesmo bloqueio.
+  it('desconto_omie: NÃO persiste, NÃO navega, diz POR QUÊ (editar no Omie) e registra o sensor', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockClear();
+    updateSpy.mockClear();
+    mockedInvoke.mockResolvedValue({
+      data: {
+        success: false, blocked: 'desconto_omie', contexto: 'edicao',
+        itens: [{ indice: 0, codigo_produto: 1, motivo: 'desconto', valor: 4 }], capa: null,
+      },
+      error: null,
+    } as never);
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining('tem desconto de item no Omie'),
+      expect.objectContaining({ description: expect.stringContaining('direto no Omie') }),
+    );
+    expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('Tente novamente'));
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'pedido.edicao_bloqueada',
+      expect.objectContaining({ motivo: 'desconto_omie', comprovado: true, itens: 1, empresa: 'oben' }),
+    );
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(navigateSpy).not.toHaveBeenCalled();
+    expect(result.current.saving).toBe(false);
+  });
+
+  it('desconto_omie só com ILEGÍVEL não afirma desconto — diz que não foi possível verificar', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockClear();
+    mockedInvoke.mockResolvedValue({
+      data: {
+        success: false, blocked: 'desconto_omie', contexto: 'edicao',
+        itens: [{ indice: 0, codigo_produto: 1, motivo: 'ilegivel', valor: null }], capa: null,
+      },
+      error: null,
+    } as never);
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining('verificar o desconto'),
+      expect.objectContaining({ description: expect.stringContaining('direto no Omie') }),
+    );
+    expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('tem desconto de item'), expect.anything());
+    expect(mockedTrack).toHaveBeenCalledWith('pedido.edicao_bloqueada', expect.objectContaining({ comprovado: false }));
     expect(navigateSpy).not.toHaveBeenCalled();
   });
 });

@@ -55,8 +55,26 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * `v1.1-guard-reenvio-criar-pedido` (2026-08-29): o `criar_pedido` passou a RECUSAR reenvio na
  * fronteira (linha já com `omie_pedido_id`, ou nascida no sync). Fatia EDGE-LOCAL ⇒ a canária
  * já ecoa este `versao`, e uma chamada basta para provar o bundle.
+ *
+ * `v1.7-subtotal-liquido-pela-regua` (2026-09-10): `sales_orders.subtotal`/`total` passam a ser
+ * LÍQUIDOS do desconto de item — Σ (qtd·preço − desconto da régua), pela fórmula única de
+ * `_shared/omie-pedido.ts` (`apurarSubtotalPedido`), no `sync_pedidos` E no `reparar_orfaos_itens`.
+ * Antes o total saía BRUTO: a conta lia `prod.desconto`, chave que a API do Omie não tem. Pedido
+ * com desconto de item ILEGÍVEL (a régua devolve null) deixa de ser publicado e aparece em
+ * `pedidosDescontoIlegivel`/`amostraDescontoIlegivel` no resultado. Toca `_shared/` ⇒ a prova do
+ * bundle exige as DUAS chamadas (canária + sonda de `fonte`), ver o cabeçalho deste arquivo.
+ * ⚠️ ORDEM DE DEPLOY: `sync-reprocess` ANTES desta. Com esta nova e a reprocess velha no ar, a
+ * reconciliação reescreveria de volta para BRUTO os pedidos novos da janela dela.
+ *
+ * `v1.8-edicao-recusa-desconto-do-omie` (2026-09-14): o `alterar_pedido` RECUSA editar pedido cuja
+ * leitura atual do Omie mostra desconto de item ou de capa, ou não permite afirmar que não há —
+ * `blocked: "desconto_omie"`, 200 estruturado, ANTES de qualquer mutação — porque a edição exclui e
+ * reinclui os itens sem o trio de desconto e apagaria o desconto comercial no ERP. E confere a leitura
+ * FINAL antes do write-back: desconto ali LANÇA em vez de gravar total bruto que o ERP desmente. Régua
+ * de presença em `_shared/edicao-desconto-omie.ts` (arquivo novo, importado só por esta edge) ⇒ a prova
+ * do bundle exige as DUAS chamadas (canária + sonda de `fonte`). Sem pré-condição de banco.
  */
-export const VERSAO = "v1.6-desconto-valor-na-ingestao";
+export const VERSAO = "v1.8-edicao-recusa-desconto-do-omie";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

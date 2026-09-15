@@ -53,6 +53,14 @@
  *     falha = linha INVALIDA; receita que escreve fora das saidas = ABORTA.
  * 10. CONTROLE DE SAIDA. Depois de restaurar cada defeito, o snapshot tem de ser IGUAL ao inicial.
  *     "Restaurei" sem assercao e a mesma familia de ausente != zero.
+ * 11. O `exclusividade` VERMELHO SO POR GATE NOVO SAI DA RODADA — E SO ELE. Ele le a matriz que este
+ *     motor escreve: um gate novo no `ci.yml` o deixa vermelho ate a matriz ter a execucao do novo,
+ *     que so esta rodada grava. A sonda (a invocacao do CI + `--json`, sob o write-guard) diz o
+ *     porque; se TODA REPROVA e GATE_NOVO de gate que a rodada executa, ele nao roda em defeito
+ *     nenhum, a celula antiga dele fica DEFASADA e so ele sai da conta do baseline
+ *     (`exclusividadeVermelhaSoPorGateNovo`, fail-closed). Qualquer outro vermelho aborta; com
+ *     `--ignorar-baseline` a exclusao nao se aplica. Ver
+ *     `docs/historico/baseline-que-depende-da-propria-medicao.md`.
  *
  * ## O que o write-guard NAO ve (limite declarado)
  *
@@ -82,10 +90,13 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   ARGV_REGENERAR_FINGERPRINTS,
   CORPUS_DIR,
+  GATE_EXCLUSIVIDADE,
   MATRIZ_PATH,
   SCHEMA_VERSION,
   aplicarBumpVersao,
   assinaturaInvocacao,
+  derivar,
+  exclusividadeVermelhaSoPorGateNovo,
   fingerprintDefeito,
   fingerprintGate,
   fonteDoGate,
@@ -313,6 +324,10 @@ interface Execucao {
   ms: number;
   estourou: boolean;
   cauda: string;
+  /** Exit BRUTO (`null` = sinal/erro): `reprovou` sozinho nao separa REPROVA (1) de erro do gate (2). */
+  rc: number | null;
+  /** stdout INTEIRO, separado do stderr: a sonda `--json` le JSON aqui, e a `cauda` mistura e corta. */
+  stdout: string;
 }
 
 function rodarGate(g: GateMedivel): Execucao {
@@ -328,7 +343,7 @@ function rodarGate(g: GateMedivel): Execucao {
   // Timeout/kill nao e "passou": e ausencia de dado. Marcamos como estourou e a linha vira invalida.
   const estourou = r.signal !== null || r.error !== undefined;
   const cauda = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(-600);
-  return { reprovou: r.status !== 0, ms, estourou, cauda };
+  return { reprovou: r.status !== 0, ms, estourou, cauda, rc: r.status, stdout: r.stdout ?? '' };
 }
 
 function rodarGuardado(g: GateMedivel, fase: string): Execucao {
@@ -541,15 +556,65 @@ function main(): number {
   // a duracao que ordena a poda por custo.
   console.log('\nbaseline (repo limpo — todo gate precisa estar VERDE):');
   const baseline: BaselineGate[] = [];
+  const noBaseline = new Map<string, Execucao>();
   for (const g of gates) {
     const r = rodarGuardado(g, 'o baseline');
     const verde = !r.reprovou && !r.estourou;
     baseline.push({ gate: g.nome, verde, ms: r.ms });
+    noBaseline.set(g.nome, r);
     console.log(`  ${verde ? 'verde' : 'VERMELHO'}  ${g.nome.padEnd(34)} ${r.ms}ms${r.estourou ? ` (ESTOUROU ${TIMEOUT_MS}ms)` : ''}`);
     if (!verde && r.cauda) console.log(r.cauda.split('\n').map((l) => `      | ${l}`).join('\n'));
   }
-  const jaVermelhos = baseline.filter((b) => !b.verde);
-  if (jaVermelhos.length && !args.includes('--ignorar-baseline')) {
+  const ignorarBaseline = args.includes('--ignorar-baseline');
+  let jaVermelhos = baseline.filter((b) => !b.verde);
+
+  // Guard 1c: o `exclusividade` vermelho SO por GATE_NOVO de gate desta rodada sai da rodada — e so
+  // ele (guarda 11 do cabecalho). A sonda e a invocacao do CI + `--json`, sob o write-guard; toda
+  // duvida devolve o aborto de sempre (`exclusividadeVermelhaSoPorGateNovo`).
+  const excl = gates.find((g) => g.nome === GATE_EXCLUSIVIDADE);
+  let excluido: { nome: string; gatesNovos: string[] } | null = null;
+  if (excl && jaVermelhos.some((b) => b.gate === excl.nome)) {
+    if (ignorarBaseline) {
+      // Parecer Codex: com a flag, outro vermelho segue adiante e "so ele saiu da conta" deixa de ser
+      // verdade. O mecanismo manual fica exatamente como sempre foi.
+      console.log(
+        `\nIGNORAR-BASELINE-SEM-EXCLUSAO: com --ignorar-baseline o \`${excl.nome}\` vermelho NAO sai da rodada — ` +
+          'os dois mecanismos nao se combinam.',
+      );
+    } else {
+      const base = noBaseline.get(excl.nome)!;
+      const argv = [...excl.inv.argv, ...(excl.inv.argv.includes('--') ? [] : ['--']), '--json'];
+      const sonda = rodarGuardado({ ...excl, inv: { argv, env: excl.inv.env } }, 'a sonda --json do baseline');
+      const decisao = exclusividadeVermelhaSoPorGateNovo({
+        rcBaseline: base.estourou ? null : base.rc,
+        rcSonda: sonda.estourou ? null : sonda.rc,
+        saidaSonda: sonda.stdout,
+        gatesDaRodada: gates.filter((g) => g !== excl).map((g) => g.nome),
+      });
+      if (decisao.excluir) {
+        excluido = { nome: excl.nome, gatesNovos: decisao.gatesNovos };
+        gates.splice(gates.indexOf(excl), 1);
+        jaVermelhos = jaVermelhos.filter((b) => b.gate !== excl.nome);
+        console.log(
+          [
+            `\nEXCLUSIVIDADE-FORA-DA-RODADA: \`${excl.nome}\` ficou VERMELHO no baseline so por GATE_NOVO_SEM_EXCLUSIVIDADE ` +
+              `de gate(s) que esta rodada executa: ${decisao.gatesNovos.join(', ')}.`,
+            '  - vermelho antes da sabotagem e vermelho em todo defeito: medi-lo seria lixo — ele NAO roda em defeito nenhum;',
+            '  - SO ele saiu da conta do baseline: qualquer outro vermelho continua abortando;',
+            '  - a celula ANTIGA dele numa linha re-medida fica DEFASADA: conta como execucao, nunca fecha a linha ([inconcl]);',
+            `  - para certificar de novo: commite a matriz e rode \`bun run exclusividade:medir -- --gates ${excl.nome}\`.`,
+          ].join('\n'),
+        );
+        for (const d of defeitos) {
+          if (d.suspeito === excl.nome) console.log(`aviso: o suspeito de ${d.id} (${d.suspeito}) saiu da rodada — a linha NAO o medira`);
+        }
+      } else {
+        console.error(`\nEXCLUSAO-RECUSADA: ${decisao.motivo}`);
+      }
+    }
+  }
+
+  if (jaVermelhos.length && !ignorarBaseline) {
     console.error(`\nABORTADO: ${jaVermelhos.length} gate(s) ja vermelho(s) no repo limpo:`);
     for (const b of jaVermelhos) console.error(`  - ${b.gate}`);
     console.error('Uma linha de base vermelha aprova QUALQUER coisa depois dela — o resultado');
@@ -684,7 +749,10 @@ function main(): number {
     // `[SO ELE]` para um gate que a rodada anterior tinha medido como co-pegado.
     linhas: [
       ...(anterior?.linhas ?? []).filter((l) => !linhas.some((n) => n.defeito === l.defeito)),
-      ...linhas.map((n) => fundirLinhas((anterior?.linhas ?? []).find((l) => l.defeito === n.defeito), n)),
+      // Numa rodada que excluiu o `exclusividade`, a celula antiga dele fica DEFASADA (`fundirLinhas`).
+      ...linhas.map((n) =>
+        fundirLinhas((anterior?.linhas ?? []).find((l) => l.defeito === n.defeito), n, excluido ? [excluido.nome] : []),
+      ),
     ].sort((a, b) => a.defeito.localeCompare(b.defeito)),
   };
   writeFileSync(MATRIZ_PATH, `${JSON.stringify(matriz, null, 2)}\n`);
@@ -696,8 +764,29 @@ function main(): number {
     const inv = invocacaoDoCI(fonteCI, g.nome);
     if (inv.ok) assinaturas.set(g.nome, assinaturaInvocacao(inv));
   }
-  console.log(`\n${resumir(matriz, { universo: bloqueantes.map((g) => g.nome), assinaturas })}`);
+  const universo = bloqueantes.map((g) => g.nome);
+  console.log(`\n${resumir(matriz, { universo, assinaturas })}`);
   console.log(`\ngravado em ${MATRIZ_PATH}`);
+  if (excluido) {
+    // Repetido no FIM de proposito: a rodada real dura dezenas de minutos e o aviso do baseline sai
+    // da tela. E a resposta e so a do criterio do GATE_NOVO (`rodou` na matriz fundida, com o universo
+    // e as assinaturas de hoje) — afirmar o gate inteiro verde exigiria roda-lo de novo.
+    const rodou = new Map(derivar(matriz, { universo, assinaturas }).map((e) => [e.gate, e.rodou.length]));
+    console.log(`\nEXCLUSIVIDADE-FORA-DA-RODADA: esta rodada NAO executou \`${excluido.nome}\`.`);
+    for (const g of excluido.gatesNovos) {
+      const n = rodou.get(g) ?? 0;
+      console.log(
+        n > 0
+          ? `  GATE-NOVO-RESOLVIDO ${g} — executado em ${n} linha(s) valida(s) da matriz: o GATE_NOVO dele sai com ela`
+          : `  GATE-NOVO-SEM-EXECUCAO ${g} — nenhuma linha valida o executou (poda? linha invalida?): o ` +
+              `\`${excluido.nome}\` seguira VERMELHO por ele. Escreva um defeito com @suspeito: ${g}`,
+      );
+    }
+    console.log(
+      `  para certificar de novo as linhas re-medidas: commite a matriz e rode ` +
+        `\`bun run exclusividade:medir -- --gates ${excluido.nome}\``,
+    );
+  }
   const invalidas = linhas.filter((l) => l.invalido);
   if (invalidas.length) {
     console.log(`\n${invalidas.length} linha(s) INVALIDA(s) — corrija o .def, nao sao "ninguem pegou":`);

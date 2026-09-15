@@ -31,9 +31,11 @@ import {
   conferirTotalPedido,
   type ConferenciaTotalPedido,
   type ItemOmieDetalhe,
+  lerParametrosBackfill,
   type LinhaLocal,
   type MotivoRecusa,
   pedidoNaJanela,
+  portaoDoPedido,
   registrarNaAmostra,
   somarRetornoEscrita,
 } from "../_shared/desconto-backfill.ts";
@@ -94,6 +96,10 @@ interface PedidoOmie {
 /** Teto de cada amostra na resposta. A amostra é para CONFERIR à mão no Omie, não para somar. */
 const AMOSTRA_MAX = 10;
 
+/** Sentinela do corpo que não é JSON. Não pode ser `{}`: com `{}` a leitura dos parâmetros caía nos
+ *  padrões — e o padrão de `dry_run` era ESCREVER (Codex r3, P1). */
+const CORPO_ILEGIVEL = Symbol("corpo-ilegivel");
+
 Deno.serve(async (req) => {
   // A sonda responde o marcador e SAI: esta edge escreve, e uma sonda que caísse no fluxo
   // normal dispararia um backfill de verdade. `null` = não é sonda, segue o caminho normal.
@@ -126,7 +132,13 @@ Deno.serve(async (req) => {
   if (!auth.ok) return auth.response;
 
   try {
-    const corpo = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+    const corpo: unknown = req.method === "POST" ? await req.json().catch(() => CORPO_ILEGIVEL) : {};
+    if (corpo === CORPO_ILEGIVEL) {
+      return new Response(JSON.stringify({ versao: VERSAO, error: "o corpo não é JSON válido" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Sonda de versão ({"probe":true}) — ANTES do createClient e de qualquer chamada ao Omie,
     // para seguir sendo o único caminho SEM custo. `classificarSonda` (e não `=== true` cru) é o
@@ -144,13 +156,24 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    const account: Account = corpo.account === "colacor" ? "colacor" : "oben";
-    const mesesJanela: number = Number.isFinite(corpo.meses) ? Number(corpo.meses) : 12;
-    const paginaInicial: number = Number.isFinite(corpo.pagina) && Number(corpo.pagina) > 0 ? Number(corpo.pagina) : 1;
-    const maxPaginas: number = Number.isFinite(corpo.max_paginas) ? Number(corpo.max_paginas) : PAGINAS_POR_INVOCACAO_PADRAO;
-    // `dry_run` NÃO é um modo de teste decorativo: ele roda a conciliação inteira e devolve as
-    // contagens sem escrever. É como se mede a cobertura ANTES de tocar em 10 mil linhas.
-    const dryRun: boolean = corpo.dry_run === true;
+    // O corpo inteiro é lido ANTES de qualquer efeito, e nenhum padrão escreve (Codex r3, P1):
+    // `dry_run` é obrigatório; parâmetro presente e inválido é 400; a ESCRITA exige `plano_aprovado`.
+    // `dry_run: true` roda a conciliação inteira e devolve as contagens sem escrever — é como se mede
+    // a cobertura ANTES de tocar em 10 mil linhas. `excluir_ids` e `plano_aprovado` só ESTREITAM.
+    const leitura = lerParametrosBackfill(corpo, PAGINAS_POR_INVOCACAO_PADRAO);
+    if (!leitura.ok) {
+      return new Response(JSON.stringify({ versao: VERSAO, error: leitura.erro }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const account: Account = leitura.p.account;
+    const mesesJanela = leitura.p.meses;
+    const paginaInicial = leitura.p.pagina;
+    const maxPaginas = leitura.p.maxPaginas;
+    const dryRun = leitura.p.dryRun;
+    const excluirIds = leitura.p.excluirIds;
+    const planoAprovado = leitura.p.planoAprovado;
 
     const db = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -185,6 +208,10 @@ Deno.serve(async (req) => {
       recusa_sem_correspondencia: 0,
       recusa_base_indeterminada: 0,
       recusa_leitura_recusada: 0,
+      // Recusas do PORTÃO (v1.5): a linha casou e foi apurada, e saiu do plano antes da escrita.
+      recusa_total_nao_confere: 0,
+      recusa_excluido_pelo_operador: 0,
+      recusa_fora_do_plano_aprovado: 0,
       escrita_pedida: 0,
       escrita_aplicada: 0,
       // `recusadas` da RPC são DOIS fatos com consertos opostos, e cada um tem o seu contador: a
@@ -242,6 +269,12 @@ Deno.serve(async (req) => {
     };
     const amostraPositivas: Array<Record<string, unknown> & { combinacao: string }> = [];
     const amostraDivergencias: Array<Record<string, unknown>> = [];
+    // A conferência de TODO pedido conciliado, em centavos: [nº do pedido, código, soma dos itens,
+    // total do Omie, veredito]. É o que permite verificar por fora que `confere` é igualdade exata e
+    // que nenhum pedido fora dela deixou linha no plano — o veredito sozinho não prova nenhum dos dois.
+    const pedidosTotalDetalhe: Array<
+      [string | number | null, number, number | null, number | null, ConferenciaTotalPedido]
+    > = [];
     const amostraPedidosDivergentes: Array<Record<string, unknown>> = [];
     // O PLANO por id: é o que permite conferir "os IDs escritos batem com o plano" por id e por
     // valor — contagem igual com ids trocados passaria em qualquer conferência agregada.
@@ -402,6 +435,13 @@ Deno.serve(async (req) => {
         // Testemunha por VALOR do próprio Omie, independente do casamento com o banco.
         const total = conferirTotalPedido(pedido.det ?? [], pedido.total_pedido?.valor_descontos);
         diagnostico.pedidos_total[total.veredito]++;
+        pedidosTotalDetalhe.push([
+          pedido.cabecalho?.numero_pedido ?? null,
+          codigo,
+          total.soma_centavos,
+          total.total_centavos,
+          total.veredito,
+        ]);
         if (total.total_omie !== null && total.total_omie > 0) diagnostico.pedidos_com_desconto_no_total++;
         if (total.veredito === "diverge" && amostraPedidosDivergentes.length < AMOSTRA_MAX) {
           amostraPedidosDivergentes.push({
@@ -413,7 +453,16 @@ Deno.serve(async (req) => {
           });
         }
 
-        const plano = conciliarDescontosPedido(locais, pedido.det ?? []);
+        // O PORTÃO vem antes de tudo que conta ou escreve (v1.5, Codex r2 P1): pedido cujo total não
+        // confere, ou linha na exclusão do operador, sai do plano como RECUSA com motivo. Até a v1.4
+        // a conferência era só diagnóstico, e o 7638 (`diverge`) seguia inteiro para a RPC.
+        const plano = portaoDoPedido(
+          conciliarDescontosPedido(locais, pedido.det ?? []),
+          total.veredito,
+          excluirIds,
+          planoAprovado,
+          jaApuradas,
+        );
         // O denominador conta o que foi OFERECIDO à conciliação; as já apuradas entram nela (pela
         // unicidade) mas saem da escrita, e são contadas à parte para os dois números fecharem.
         contagem.linhas_oferecidas += locais.length;
@@ -428,6 +477,9 @@ Deno.serve(async (req) => {
           sem_correspondencia: () => contagem.recusa_sem_correspondencia++,
           base_indeterminada: () => contagem.recusa_base_indeterminada++,
           leitura_recusada: () => contagem.recusa_leitura_recusada++,
+          total_nao_confere: () => contagem.recusa_total_nao_confere++,
+          excluido_pelo_operador: () => contagem.recusa_excluido_pelo_operador++,
+          fora_do_plano_aprovado: () => contagem.recusa_fora_do_plano_aprovado++,
         };
         for (const r of plano.recusados) {
           contadorPorMotivo[r.motivo]();
@@ -527,6 +579,13 @@ Deno.serve(async (req) => {
         amostra_positivas: amostraPositivas,
         amostra_divergencias: amostraDivergencias,
         amostra_pedidos_total_divergente: amostraPedidosDivergentes,
+        pedidos_total_detalhe: pedidosTotalDetalhe,
+        // Eco da exclusão APLICADA: quem dispara confere que o número bate com o que enviou — uma
+        // exclusão que não chegou ao corpo seria indistinguível de "nada a excluir".
+        excluir_ids_recebidos: excluirIds.size,
+        // Eco do plano aprovado recebido (null = sem plano — só possível em dry-run). Mede o que
+        // CHEGOU, não o que foi aplicado: a aplicação se confere pelas recusas por id.
+        plano_aprovado_recebido: planoAprovado === null ? null : planoAprovado.size,
         desfechos,
         completo: acabou,
         proxima_pagina: acabou ? null : pagina,

@@ -10,20 +10,26 @@
  *
  * Todo cenario que exige vermelho tem o CONTROLE verde na mesma suite: o fixture sem o gate
  * escritor mede limpo; o gate de argumentos reprova quando rodado cru.
+ *
+ * O ultimo bloco roda o gate `exclusividade` REAL dentro do fixture: a sonda `--json` que o motor
+ * interpreta e a do binario de verdade, e o laco fecha POR FORA do motor — o mesmo gate, lendo a
+ * matriz que a rodada gravou, volta a verde.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { Matriz } from './lib/exclusividade';
+import type { ExecucaoGate, Matriz } from './lib/exclusividade';
 
 const MOTOR = resolve('scripts/exclusividade-medir.ts');
+const GATE_REAL = resolve('scripts/exclusividade-gate.ts');
 const EDGE = 'supabase/functions/fx/index.ts';
 const VERSAO = 'supabase/functions/fx/versao.ts';
 const MAPA = 'supabase/functions/_shared/sonda-fingerprints.ts';
+const MATRIZ = 'scripts/exclusividade-matriz.json';
 
 /** Os gates do fixture. Cada modo e o analogo minimo de um gate real. */
 const GATES_TS = `
@@ -38,6 +44,7 @@ const impressao = () => createHash('sha256').update(edge + readFileSync('${VERSA
 switch (modo) {
   case 'barato': process.exit(0);
   case 'lento': dormir(900); process.exit(edge.includes('SABOTADO') ? 1 : 0);
+  case 'pega': process.exit(edge.includes('SABOTADO') ? 1 : 0);
   case 'args': process.exit(process.argv.includes('--modo-ci') ? 0 : 3);
   case 'env': process.exit(process.env.MODO_FIXTURE === 'ci' ? 0 : 4);
   case 'bump': process.exit(mudou('${EDGE}') && !mudou('${VERSAO}') ? 1 : 0);
@@ -53,6 +60,15 @@ switch (modo) {
   }
   case 'escritor': appendFileSync('escrito.txt', 'x\\n'); process.exit(0);
   case 'escritor-sob-defeito': if (edge.includes('SABOTADO')) appendFileSync('escrito.txt', 'x\\n'); process.exit(0);
+  case 'quebrado': process.exit(5);
+  case 'sonda-escreve': if (process.argv.includes('--json')) appendFileSync('escrito.txt', 'x\\n'); process.exit(1);
+  // Um exclusividade de mentira cujo JSON diz "so GATE_NOVO de g:novo" — so o EXIT discorda.
+  case 'excl-2-e-json':
+  case 'excl-sonda-0': {
+    const json = JSON.stringify({ ancoraQuebrada: [], vereditos: [{ severidade: 'REPROVA', gate: 'g:novo', codigo: 'GATE_NOVO_SEM_EXCLUSIVIDADE', motivo: 'fixture' }] });
+    if (process.argv.includes('--json')) { writeFileSync(1, json + '\\n'); process.exit(modo === 'excl-2-e-json' ? 1 : 0); }
+    process.exit(modo === 'excl-2-e-json' ? 2 : 1);
+  }
 }
 process.exit(9);
 `;
@@ -60,17 +76,25 @@ process.exit(9);
 const SCRIPTS: Record<string, string> = {
   'g:barato': 'bun scripts/g.ts barato',
   'g:lento': 'bun scripts/g.ts lento',
+  'g:pega': 'bun scripts/g.ts pega',
+  'g:pega2': 'bun scripts/g.ts pega',
   'g:args': 'bun scripts/g.ts args',
   'g:env': 'bun scripts/g.ts env',
   'sonda:bump': 'bun scripts/g.ts bump',
   'sonda:fingerprint': 'bun scripts/g.ts fingerprint',
   'g:escritor': 'bun scripts/g.ts escritor',
   'g:escritor-sob-defeito': 'bun scripts/g.ts escritor-sob-defeito',
+  'g:novo': 'bun scripts/g.ts barato',
+  'g:quebrado': 'bun scripts/g.ts quebrado',
+  // O gate REAL, lendo a matriz do fixture: a sonda `--json` que o motor interpreta e a do binario.
+  exclusividade: `bun ${JSON.stringify(GATE_REAL)}`,
 };
 
 const PASSO: Record<string, string> = {
   'g:barato': 'run: bun run g:barato',
   'g:lento': 'run: bun run g:lento',
+  'g:pega': 'run: bun run g:pega',
+  'g:pega2': 'run: bun run g:pega2',
   // Paridade: sem o `-- --modo-ci` e sem o env do step, estes dois reprovam no baseline.
   'g:args': 'run: bun run g:args -- --modo-ci',
   'g:env': 'run: bun run g:env\n        env:\n          MODO_FIXTURE: ci',
@@ -78,6 +102,9 @@ const PASSO: Record<string, string> = {
   'sonda:fingerprint': 'run: bun run sonda:fingerprint',
   'g:escritor': 'run: bun run g:escritor',
   'g:escritor-sob-defeito': 'run: bun run g:escritor-sob-defeito',
+  'g:novo': 'run: bun run g:novo',
+  'g:quebrado': 'run: bun run g:quebrado',
+  exclusividade: 'run: bun run exclusividade',
 };
 
 const PADRAO = ['g:barato', 'g:lento', 'g:args', 'g:env', 'sonda:bump', 'sonda:fingerprint'];
@@ -116,15 +143,18 @@ function sh(cwd: string, cmd: string, argv: string[]) {
 const commitar = (raiz: string, ...argv: string[]) =>
   sh(raiz, 'git', ['-c', 'user.name=f', '-c', 'user.email=f@f', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-q', ...argv]);
 
+const ciYml = (gates: string[]) =>
+  `jobs:\n  j:\n    steps:\n${gates.map((g) => `      - name: ${g}\n        ${PASSO[g]}`).join('\n')}\n  validate:\n    needs: [j]\n`;
+
 function montarFixture(gates: string[], defs: string): string {
   const raiz = mkdtempSync(join(tmpdir(), 'excl-motor-'));
   raizes.push(raiz);
   const arquivos: Record<string, string> = {
     'package.json': JSON.stringify({ name: 'fixture', private: true, scripts: SCRIPTS }, null, 2),
     'scripts/g.ts': GATES_TS,
-    '.github/workflows/ci.yml': `jobs:\n  j:\n    steps:\n${gates
-      .map((g) => `      - name: ${g}\n        ${PASSO[g]}`)
-      .join('\n')}\n  validate:\n    needs: [j]\n`,
+    '.github/workflows/ci.yml': ciYml(gates),
+    // A 2a ponta da ancora da raiz: sem ela o `exclusividade` REAL reprova por ANCORA em qualquer cenario.
+    '.github/workflows/auto-merge.yml': '# mergeia quando o required check `validate` passa\n',
     'scripts/exclusividade.d/x.def': defs,
     [EDGE]: 'linha 1\noriginal\nlinha 3\n',
     [VERSAO]: 'export const VERSAO = "v1.0-fx";\n',
@@ -150,7 +180,7 @@ function medir(raiz: string, argv: string[] = []) {
   return { rc: r.status, saida: `${r.stdout ?? ''}${r.stderr ?? ''}`, status };
 }
 
-const lerMatriz = (raiz: string) => JSON.parse(readFileSync(join(raiz, 'scripts/exclusividade-matriz.json'), 'utf8')) as Matriz;
+const lerMatriz = (raiz: string) => JSON.parse(readFileSync(join(raiz, MATRIZ), 'utf8')) as Matriz;
 
 describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto abaixo)', () => {
   let raiz = '';
@@ -281,4 +311,236 @@ describe('motor — o que aborta ANTES de gastar o baseline', () => {
     expect(r.rc).toBe(1);
     expect(r.saida).toContain('INVOCACAO-NAO-REPRODUZIVEL');
   }, 60_000);
+});
+
+describe('[fora-da-rodada] motor — o `exclusividade` vermelho SO por GATE_NOVO desta rodada sai da rodada, e so ele', () => {
+  const BASE = ['g:barato', 'g:pega', 'exclusividade'];
+  const DEFS = `
+# @origem: fixture
+# @suspeito: g:pega
+pega | ${EDGE} | s/^original$/SABOTADO/
+
+# O perl nao casa: linha INVALIDA, nenhum gate executa nela.
+nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
+`;
+  let base = '';
+  let celulaDaBase: ExecucaoGate | null = null;
+
+  // O nascimento, como no repo real: sem matriz o `exclusividade` reprova por MATRIZ_AUSENTE, entao
+  // o motor mede primeiro sem ele e ele entra DISPENSADO (a historia que `matriz.def` conta). A
+  // segunda rodada, ja com ele verde, deixa na linha `pega` a celula dele — a que a fusao herda.
+  beforeAll(() => {
+    base = montarFixture(['g:barato', 'g:pega'], DEFS);
+    const r1 = medir(base, ['--defeitos', 'pega']);
+    if (r1.rc !== 0) throw new Error(`bootstrap 1: o motor saiu ${r1.rc}\n${r1.saida.slice(-1500)}`);
+    const m = lerMatriz(base);
+    m.dispensados = [{ gate: 'exclusividade', desde: 'fixture', motivo: 'nasce dispensado, como no repo real' }];
+    writeFileSync(join(base, MATRIZ), `${JSON.stringify(m, null, 2)}\n`);
+    writeFileSync(join(base, '.github/workflows/ci.yml'), ciYml(BASE));
+    sh(base, 'git', ['add', '-A']);
+    commitar(base, '-m', 'bootstrap 1');
+    const r2 = medir(base, ['--defeitos', 'pega']);
+    if (r2.rc !== 0) throw new Error(`bootstrap 2: o motor saiu ${r2.rc}\n${r2.saida.slice(-1500)}`);
+    celulaDaBase = lerMatriz(base).linhas.find((l) => l.defeito === 'pega')?.execucoes.find((e) => e.gate === 'exclusividade') ?? null;
+    sh(base, 'git', ['add', '-A']);
+    commitar(base, '-m', 'bootstrap 2');
+  }, 180_000);
+
+  /** Copia do fixture base; `mudar`, se houver, vira commit — o motor exige arvore limpa. */
+  function clonar(mudar?: (raiz: string) => void): string {
+    const raiz = mkdtempSync(join(tmpdir(), 'excl-motor-'));
+    raizes.push(raiz);
+    cpSync(base, raiz, { recursive: true });
+    if (mudar) {
+      mudar(raiz);
+      sh(raiz, 'git', ['add', '-A']);
+      commitar(raiz, '-m', 'cenario');
+    }
+    return raiz;
+  }
+  const comGates = (gates: string[]) => (raiz: string) => writeFileSync(join(raiz, '.github/workflows/ci.yml'), ciYml(gates));
+  const linhaDe = (raiz: string, id: string) => lerMatriz(raiz).linhas.find((l) => l.defeito === id);
+
+  /** O gate REAL, como o CI o roda — o eixo POR FORA do motor. */
+  const gateReal = (raiz: string) => {
+    const r = spawnSync('bun', ['run', 'exclusividade'], { cwd: raiz, encoding: 'utf8', env: { ...process.env, CI: '1', FORCE_COLOR: '0' } });
+    return { rc: r.status, saida: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  };
+
+  // O CONTROLE de todo vermelho abaixo: no fixture base o gate real e VERDE e o motor o mede como
+  // qualquer outro. Sem este verde, um fixture em que o gate real sempre reprova aprovaria tudo.
+  it('CONTROLE: exclusividade verde roda na rodada como qualquer gate — sem aviso, sem recusa, e certifica', () => {
+    expect(celulaDaBase, 'o bootstrap deixou a celula do exclusividade na linha pega').not.toBeNull();
+    const raiz = clonar();
+    const antes = gateReal(raiz);
+    expect(antes.rc, antes.saida.slice(-1500)).toBe(0);
+    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-1500)).toBe(0);
+    expect(r.saida).not.toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
+    expect(r.saida).not.toContain('EXCLUSAO-RECUSADA');
+    const l = linhaDe(raiz, 'pega');
+    expect(l?.execucoes.find((e) => e.gate === 'exclusividade')?.reprovou).toBe(false);
+    expect(l?.defasados).toBeUndefined();
+    expect(r.saida).toMatch(/\[SO ELE\]\s+g:pega/);
+  }, 120_000);
+
+  it('so GATE_NOVO de gate desta rodada: o exclusividade sai, a celula herdada fica DEFASADA, e o ciclo fecha', () => {
+    const raiz = clonar(comGates([...BASE, 'g:novo']));
+    const antes = gateReal(raiz);
+    expect(antes.rc, 'o cenario e mesmo o do gate novo').toBe(1);
+    expect(antes.saida).toMatch(/REPROVA\s+g:novo\s+GATE_NOVO_SEM_EXCLUSIVIDADE/);
+
+    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(0);
+    expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
+    expect(r.saida).toContain('GATE-NOVO-RESOLVIDO g:novo');
+    const m = lerMatriz(raiz);
+    const l = m.linhas.find((x) => x.defeito === 'pega');
+    // Fora da rodada = nao re-executado: a celula dele e a da base, byte a byte, e fica DEFASADA.
+    expect(l?.execucoes.find((e) => e.gate === 'exclusividade')).toEqual(celulaDaBase);
+    expect(l?.defasados).toEqual(['exclusividade']);
+    expect(l?.execucoes.find((e) => e.gate === 'g:novo')?.reprovou).toBe(false);
+    // O furo do parecer Codex: o verde ANTIGO dele fecharia a linha re-medida e certificaria.
+    expect(r.saida).toMatch(/\[inconcl\]\s+g:pega/);
+    expect(r.saida).not.toMatch(/\[SO ELE\]\s+g:/);
+    expect(m.baseline.find((b) => b.gate === 'exclusividade')?.verde, 'o baseline grava a verdade').toBe(false);
+    expect(r.status.trim()).toBe(`M ${MATRIZ}`);
+    // O laco fecha POR FORA do motor: o mesmo gate, lendo a matriz que a rodada gravou, sai verde.
+    const depois = gateReal(raiz);
+    expect(depois.rc, depois.saida.slice(-1500)).toBe(0);
+
+    // E a receita que o aviso prescreve devolve o certificado: re-executar SO o excluido limpa a marca.
+    sh(raiz, 'git', ['add', '-A']);
+    commitar(raiz, '-m', 'matriz da rodada sem o exclusividade');
+    const r2 = medir(raiz, ['--defeitos', 'pega', '--gates', 'exclusividade']);
+    expect(r2.rc, r2.saida.slice(-2000)).toBe(0);
+    expect(r2.saida).not.toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
+    expect(linhaDe(raiz, 'pega')?.defasados).toBeUndefined();
+    expect(r2.saida).toMatch(/\[SO ELE\]\s+g:pega/);
+  }, 180_000);
+
+  it('gate novo SEM execucao valida na rodada: o aviso diz que o exclusividade segue vermelho', () => {
+    const raiz = clonar(comGates([...BASE, 'g:novo']));
+    const r = medir(raiz, ['--defeitos', 'nao-casa']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(0);
+    expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
+    expect(r.saida).toContain('GATE-NOVO-SEM-EXECUCAO g:novo');
+    expect(gateReal(raiz).rc, 'e o gate real concorda').toBe(1);
+  }, 120_000);
+
+  it('outro gate vermelho junto: ABORTA — a exclusao nunca afrouxa o baseline de outro gate', () => {
+    const raiz = clonar(comGates([...BASE, 'g:novo', 'g:quebrado']));
+    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(1);
+    expect(r.saida).toContain('ABORTADO: 1 gate(s) ja vermelho(s)');
+    expect(r.saida).toContain('  - g:quebrado');
+    expect(r.status, 'nada gravado').toBe('');
+  }, 120_000);
+
+  it('gate novo FORA da rodada (--gates): ABORTA — a rodada nao grava a execucao que o resolveria', () => {
+    const raiz = clonar(comGates([...BASE, 'g:novo']));
+    const r = medir(raiz, ['--defeitos', 'pega', '--gates', 'g:barato,g:pega,exclusividade']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(1);
+    expect(r.saida).toContain('EXCLUSAO-RECUSADA: GATE-NOVO-FORA-DA-RODADA g:novo');
+    expect(r.saida).toContain('  - exclusividade');
+    expect(r.status).toBe('');
+  }, 120_000);
+
+  it('ancora da raiz quebrada junto do gate novo: ABORTA — o vermelho nao e so dele', () => {
+    const raiz = clonar((x) => {
+      comGates([...BASE, 'g:novo'])(x);
+      rmSync(join(x, '.github/workflows/auto-merge.yml'));
+    });
+    expect(gateReal(raiz).saida, 'o cenario e mesmo o da ancora').toContain('ANCORA-DA-RAIZ-QUEBRADA');
+    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(1);
+    expect(r.saida).toContain('EXCLUSAO-RECUSADA: ANCORA-QUEBRADA');
+    expect(r.status).toBe('');
+  }, 120_000);
+
+  it('matriz ilegivel (MATRIZ_AUSENTE): ABORTA — REPROVA alheia a gate novo', () => {
+    const raiz = clonar((x) => writeFileSync(join(x, MATRIZ), '{ nao e json\n'));
+    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(1);
+    expect(r.saida).toContain('EXCLUSAO-RECUSADA: REPROVA-ALHEIA MATRIZ_AUSENTE');
+    expect(r.status).toBe('');
+  }, 120_000);
+
+  /** Troca o `exclusividade` do fixture por um de mentira — o nome e a invocacao do CI continuam os mesmos. */
+  const trocarExclusividade = (comando: string) => (raiz: string) => {
+    const pkg = JSON.parse(readFileSync(join(raiz, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    pkg.scripts.exclusividade = comando;
+    writeFileSync(join(raiz, 'package.json'), JSON.stringify(pkg, null, 2));
+  };
+
+  // A fiacao do exit BRUTO no motor: sem ela o criterio "exit 1 nas duas leituras" seria decorativo —
+  // nos dois gates de mentira abaixo o JSON diz exatamente o que a exclusao aceitaria.
+  it('baseline que sai 2 (erro do gate) com sonda de GATE_NOVO valida: ABORTA — RC-BASELINE', () => {
+    const raiz = clonar((x) => {
+      comGates([...BASE, 'g:novo'])(x);
+      trocarExclusividade('bun scripts/g.ts excl-2-e-json')(x);
+    });
+    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(1);
+    expect(r.saida).toContain('EXCLUSAO-RECUSADA: RC-BASELINE');
+    expect(r.status).toBe('');
+  }, 120_000);
+
+  it('sonda que sai 0 com JSON de GATE_NOVO: ABORTA — RC-SONDA', () => {
+    const raiz = clonar((x) => {
+      comGates([...BASE, 'g:novo'])(x);
+      trocarExclusividade('bun scripts/g.ts excl-sonda-0')(x);
+    });
+    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(1);
+    expect(r.saida).toContain('EXCLUSAO-RECUSADA: RC-SONDA');
+    expect(r.status).toBe('');
+  }, 120_000);
+
+  it('sonda que ESCREVE na arvore aborta pelo write-guard — a sonda e execucao como qualquer outra', () => {
+    const raiz = clonar(trocarExclusividade('bun scripts/g.ts sonda-escreve'));
+    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(1);
+    expect(r.saida).toContain('GATE-ESCREVEU');
+    expect(r.saida).toContain('a sonda --json do baseline');
+    expect(r.status, 'arvore restaurada').toBe('');
+    expect(readFileSync(join(raiz, 'escrito.txt'), 'utf8')).toBe('original\n');
+  }, 120_000);
+
+  it('--dry nao executa nada — nem baseline, nem sonda', () => {
+    const raiz = clonar(comGates([...BASE, 'g:novo']));
+    const r = medir(raiz, ['--dry']);
+    expect(r.rc, r.saida.slice(-1500)).toBe(0);
+    expect(r.saida).toContain('--dry: nada foi executado.');
+    expect(r.saida).not.toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
+    expect(r.saida).not.toContain('EXCLUSAO-RECUSADA');
+    expect(r.status).toBe('');
+  }, 60_000);
+
+  // Parecer Codex: com `--ignorar-baseline` outro vermelho seguiria adiante, e "so ele saiu da
+  // conta" deixaria de ser verdade. Os dois mecanismos nao se combinam: o manual fica como sempre foi.
+  it('--ignorar-baseline NAO combina com a exclusao: o motor avisa e mede como sempre mediu', () => {
+    const raiz = clonar(comGates([...BASE, 'g:novo']));
+    const r = medir(raiz, ['--defeitos', 'pega', '--ignorar-baseline', '--sem-poda']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(0);
+    expect(r.saida).toContain('IGNORAR-BASELINE-SEM-EXCLUSAO');
+    expect(r.saida).not.toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
+    const l = linhaDe(raiz, 'pega');
+    expect(l?.execucoes.find((e) => e.gate === 'exclusividade')?.reprovou, 'medido vermelho, como antes').toBe(true);
+    expect(l?.defasados).toBeUndefined();
+  }, 120_000);
+
+  it('defeito cujo @suspeito e o excluido: podado, o suspeito NAO roda fora da poda', () => {
+    const raiz = clonar((x) => {
+      comGates([...BASE, 'g:novo', 'g:pega2'])(x);
+      writeFileSync(join(x, 'scripts/exclusividade.d/x.def'), `${DEFS}\n# @suspeito: exclusividade\npoda-suspeito | ${EDGE} | s/^original$/SABOTADO/\n`);
+    });
+    const r = medir(raiz, ['--defeitos', 'poda-suspeito']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(0);
+    expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
+    expect(r.saida).toContain('o suspeito de poda-suspeito (exclusividade) saiu da rodada');
+    const l = linhaDe(raiz, 'poda-suspeito');
+    expect(l?.parouCedo, 'dois vermelhos: a linha foi podada').toBe(true);
+    expect(l?.execucoes.map((e) => e.gate)).not.toContain('exclusividade');
+  }, 120_000);
 });

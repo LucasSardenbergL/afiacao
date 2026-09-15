@@ -44,7 +44,11 @@ printf '%s\n' "$VERSAO" | grep -E '^version:' | sed 's/^/  shellcheck /'
 # `db/lib/*.sh` entrou junto com o primeiro helper compartilhado das provas SQL
 # (db/lib/pg-harness.sh): `db/*.sh` não desce um nível, e um helper que 289 provas
 # passariam a `source` é o ÚLTIMO arquivo do repo que pode ficar sem linter.
-GLOBS=( 'scripts/*.sh' '.claude/hooks/*.sh' 'db/*.sh' 'db/lib/*.sh' )
+# `.claude/skills/*/{scripts,evals}/*.sh` entraram em 2026-09-10 (monitor-deploy --pr): os scripts
+# que as skills mandam o agente RODAR para dar veredito de deploy — e os evals que o CI roda sobre
+# eles no `evals:deploy-verify` — estavam fora do gate, e o monitor tinha passado de 58 para ~400
+# linhas nesse dia. Os 16 arquivos entraram em ZERO achados, sem baseline.
+GLOBS=( 'scripts/*.sh' '.claude/hooks/*.sh' 'db/*.sh' 'db/lib/*.sh' '.claude/skills/*/scripts/*.sh' '.claude/skills/*/evals/*.sh' )
 
 ARQUIVOS=()
 for g in "${GLOBS[@]}"; do
