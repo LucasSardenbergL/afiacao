@@ -17,9 +17,10 @@
 # ║    A9 tentativa já fechada não pode ser reusada (nem executa);                          ║
 # ║    A10 SQL COM envelope é recusado (exit 2) sem criar nada e sem gravar no ledger.      ║
 # ╚═════════════════════════════════════════════════════════════════════════════════════════╝
-# Falsifica — cada sabotagem com rc EXATO + MARCA lida da saída real, e só conta com CERTO nas TRÊS
-# combinações servidor×cliente (o porquê das três está no bloco da falsificação, lá embaixo):
-#   (S1)  marcador E reconciliação cegos → veredito honesto: 5 (não sei);
+# Falsifica — cada sabotagem com rc EXATO + MARCA lida da saída real, julgada nas TRÊS combinações
+# servidor×cliente com o desfecho previsto para cada uma, e contra o seu GÊMEO verde (o mesmo cenário
+# sem a sabotagem não pode passar) — o porquê está no bloco da falsificação, lá embaixo:
+#   (S1)  marcador E reconciliação cegos → o apply conclui, e o veredito honesto é 5 (não sei);
 #   (S2)  ON_ERROR_STOP removido → o erro ACONTECE e o psql sai 0: vira 5, não 4;
 #   (S3)  checagem de 'já aplicada' removida → o re-apply chega ao banco e o índice único barra o
 #         2º recibo (4). Não aplica duas vezes: deixa de ser o no-op que A2 afirma;
@@ -174,7 +175,11 @@ q()         { "$PGBIN/psql" -X -A -t -h localhost -p "$PORT" -U postgres -d post
 q_bruto()   { "$PGBIN/psql" -X -A -t -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null; }
 # q_estrito devolve o STATUS do psql: leitura que falhou não pode virar valor vazio que "diverge".
 q_estrito() { "$PGBIN/psql" -X -A -t -q -v ON_ERROR_STOP=1 -h localhost -p "$PORT" -U postgres -d postgres -c "$1" 2>/dev/null; }
-norm_corpo() { sed '/^[[:space:]]*$/d'; }   # só a quebra que o $-quote acrescenta; indentação NÃO
+# norm_corpo tira TODA linha em branco (ou só de espaços) — não só a quebra que o $-quote acrescenta
+# (parecer Codex 2026-09-14). A indentação conta; uma transformação que mexesse só em linha em branco
+# passaria. A fixture de hoje não tem linha em branco no corpo: comparar byte a byte não daria dente
+# nenhum sem mudar a fixture junto — registrado como fora da entrega de 2026-09-14.
+norm_corpo() { sed '/^[[:space:]]*$/d'; }
 CORPO_ARQ="$(awk '/AS \$funcao\$$/{f=1;next} /^\$funcao\$;$/{f=0} f' "$REPO_ROOT/$FIX_CORPO" | norm_corpo)"
 
 aplicar() { ( cd "$REPO_ROOT" && LC_ALL="$LOC_CLI" LANG="$LOC_CLI" AFIACAO_PSQL_RW="$SHIM" bash "$ALVO" "$@" ); }
@@ -345,7 +350,7 @@ eq "A12 corpo de função com BEGIN/END; e REFRESH MV CONCURRENTLY APLICA" \
 # transformação do corpo (o `desenvelopar-transacao.awk` revertido em #2434 era exatamente
 # isso), os guards seguem verdes e só esta comparação vê o corpo mudar. Ver S9.
 CORPO_DB="$(q_bruto "select prosrc from pg_proc where oid='public.fixture_corpo_refresca()'::regprocedure" | norm_corpo || true)"
-eq "A12b o corpo GUARDADO pelo Postgres é byte-a-byte o do arquivo" "$CORPO_DB" "$CORPO_ARQ"
+eq "A12b o corpo GUARDADO pelo Postgres é o do arquivo (linhas em branco fora; indentação conta)" "$CORPO_DB" "$CORPO_ARQ"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"
@@ -368,8 +373,9 @@ else
 #   pt_pt  servidor pt_BR · cliente pt_BR   ← a única em que a severidade diz ERRO
 #
 # c_pt não é redundante com as outras duas (parecer Codex 2026-09-14): a libpq junta rótulo
-# traduzido no cliente com conteúdo do servidor (`CONTEXTO:  PL/pgSQL function ...`), linha que
-# nenhum par homogêneo produz.
+# traduzido no cliente com conteúdo do servidor — medido, `CONTEXTO:  SQL statement "..."` —, linha
+# que nenhum par homogêneo produz. É também a marca de que o EXECUTOR recebeu o locale: a sonda do
+# cliente, sozinha, prova o psql, não o encaminhamento em `aplicar()` (2ª rodada do Codex).
 #
 # Uma sabotagem só conta com CERTO nas três, e CERTO exige o rc EXATO e a MARCA — trecho ASCII de
 # caixa fixa lido da saída real, de preferência do próprio script, que não muda com locale, e,
@@ -378,8 +384,10 @@ else
 # `RECUSA_FORA_DE_TRANSACAO` no log com o guard DESLIGADO. S10/S11 são as sabotagens que só um
 # idioma pega; sem elas, trocar pt_BR por C.UTF-8 deixaria as três combinações iguais e tudo verde.
 #
-# Ordem — e cada etapa ABORTA (exit 3, sem recibo) antes da seguinte: sondas do ambiente → controle
-# verde nas três → controles negativos do juiz → sabotagens → controle de saída → UM recibo.
+# Ordem — as etapas de ambiente e de controle ABORTAM (exit 3, sem recibo) antes da seguinte: sondas
+# → controle verde nas três → controles negativos do juiz e da agregação → cada sabotagem precedida
+# do seu GÊMEO verde (o mesmo cenário na cópia intacta não pode dizer CERTO) → identidade (e um log
+# por sabotagem e combinação) → controle de saída → UM recibo.
 echo "== falsificacao: 3 combinacoes servidor x cliente sobre uma COPIA do executor =="
 ALVO="$WORK/db-aplicar-sabotado.sh"
 BOOT_SAB="$WORK/bootstrap-sabotado.sql"
@@ -422,9 +430,14 @@ seleciona_combo() { # <c_c|c_pt|pt_pt> — cluster e locale do cliente; e, À PA
       M_CIC_SEV='ERROR:  CREATE INDEX CONCURRENTLY'
       M_CIC='cannot run inside a transaction block' ;;
   esac
+  # O rótulo de contexto é da LIBPQ, traduzido no CLIENTE que o executor rodou; o conteúdo, do
+  # servidor. M_CTX (só o rótulo) vai em toda sabotagem cujo log traz erro do banco; M_CTX_A3 (rótulo e
+  # conteúdo — a linha mista do c_pt) no controle. Medido em 2026-09-14: uma ocorrência em cada log com
+  # erro do banco, nenhuma nos demais.
   case "$1" in
-    c_c) M_CLIENTE='psql: error:' ;;
-    *)   M_CLIENTE='psql: erro:' ;;
+    c_c)   M_CLIENTE='psql: error:'; M_CTX='CONTEXT:  ';  M_CTX_A3='CONTEXT:  SQL statement' ;;
+    c_pt)  M_CLIENTE='psql: erro:';  M_CTX='CONTEXTO:  '; M_CTX_A3='CONTEXTO:  SQL statement' ;;
+    pt_pt) M_CLIENTE='psql: erro:';  M_CTX='CONTEXTO:  '; M_CTX_A3='CONTEXTO:  comando SQL' ;;
   esac
 }
 
@@ -480,7 +493,7 @@ controle_combo() {
   m="$(confere "$r" 0 "$OUT" 'APLICADO')"
   [ "$m" = CERTO ] || { printf 'A1: %s' "$m"; return 0; }
   OUT="$LOGS/$rot-A3.$COMBO.log"; r="$(rc_de "$FIX_ERRO")"
-  m="$(confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_DIV")"
+  m="$(confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_DIV" "$M_CTX_A3")"
   [ "$m" = CERTO ] || { printf 'A3: %s' "$m"; return 0; }
   OUT="$LOGS/$rot-A10.$COMBO.log"; r="$(rc_de "$FIX_ENVELOPE")"
   m="$(confere "$r" 2 "$OUT" 'BEGIN/COMMIT/ROLLBACK')"
@@ -497,7 +510,7 @@ controle_combo() {
 # RECIBO para o runner (`db/roda-nucleo-ci.sh`): `SABOTAGENS: <v> vermelhas / <f> falhas`, emitido
 # UMA vez e só neste modo. O runner exige f = 0 e v ≥ o `falsificar=<n>` do manifesto — ele confere
 # formato e contagem, não sabe o que é sabotagem nem idioma: essa obrigação é daqui (Codex 2026-09-14).
-SAB_VERMELHAS=0; SAB_FALHAS=0; SAB_IDS=" "; SAB_EXPRS=""; SAB_FALHARAM=""
+SAB_VERMELHAS=0; SAB_FALHAS=0; SAB_IDS=" "; SAB_EXPRS=(); SAB_FALHARAM=""
 sab_vermelha() { SAB_VERMELHAS=$((SAB_VERMELHAS + 1)); }
 sab_falha()    { SAB_FALHAS=$((SAB_FALHAS + 1)); }
 invalida()     { sab_falha; SAB_FALHARAM="$SAB_FALHARAM $1"; printf '  ❌ [%s] %s: %s — falsificacao VAZIA\n' "$1" "$2" "$3"; }
@@ -505,15 +518,17 @@ invalida()     { sab_falha; SAB_FALHARAM="$SAB_FALHARAM $1"; printf '  ❌ [%s] 
 # registra <id> <alvo:expressao> — o recibo conta, não distingue "11 sabotagens" de "10 e uma
 # repetida": sem isto, duplicar uma compensaria retirar outra, e o runner seguiria verde.
 registra() {
+  local e=""
   case "$SAB_IDS" in *" $1 "*) invalida "$1" "(id repetido)" "id DUPLICADO"; return 1 ;; esac
-  # here-string, não `printf | grep -q`: sob `pipefail`, o grep que sai no 1º casamento pode matar o
-  # printf com SIGPIPE, o pipeline sai 141 e a DUPLICATA passa — fail-open por uma corrida.
-  if [ -n "$SAB_EXPRS" ] && grep -qxF -- "$2" <<< "$SAB_EXPRS"; then
-    invalida "$1" "(expressao repetida)" "a MESMA sabotagem ja rodou com outro id"; return 1
-  fi
+  # Comparação no PRÓPRIO shell, sem processo nem arquivo. `printf | grep -q` perdia a duplicata por
+  # SIGPIPE sob `pipefail`; a here-string que o substituiu precisa de arquivo temporário no bash 3.2, e
+  # sem ele (`cannot create temp file for here document`) o grep saía 1 — "inédita" — com status 0 no
+  # fim (medido pelo Codex, 2026-09-14). Guard que falha para o lado de aceitar não é guard.
+  for e in ${SAB_EXPRS[@]+"${SAB_EXPRS[@]}"}; do
+    if [ "$e" = "$2" ]; then invalida "$1" "(expressao repetida)" "a MESMA sabotagem ja rodou com outro id"; return 1; fi
+  done
   SAB_IDS="$SAB_IDS$1 "
-  SAB_EXPRS="${SAB_EXPRS:+$SAB_EXPRS
-}$2"
+  SAB_EXPRS+=("$2")
 }
 
 # prepara_sabotagem <executor|bootstrap> <expressao-perl> — toda sabotagem parte do executor INTACTO
@@ -541,39 +556,97 @@ prepara_sabotagem() {
   esac
 }
 
-# sabotagem <id> <descricao> <executor|bootstrap> <expressao-perl> <cenario> — muta a cópia UMA vez e
+# prepara_gemeo — a cópia do executor E a do bootstrap voltam a ser byte a byte as originais, com o
+# `cmp` conferindo: um gêmeo "verde" rodando sobre a sabotagem ANTERIOR mediria outra coisa.
+prepara_gemeo() {
+  local rc_a=0 rc_b=0
+  if ! cp "$APLICAR" "$ALVO" || ! cp "$BOOT" "$BOOT_SAB"; then PREP_MOTIVO="o cp do gemeo intacto falhou"; return 1; fi
+  cmp -s "$APLICAR" "$ALVO" || rc_a=$?
+  cmp -s "$BOOT" "$BOOT_SAB" || rc_b=$?
+  if [ "$rc_a" -ne 0 ] || [ "$rc_b" -ne 0 ]; then
+    PREP_MOTIVO="o gemeo nao e identico ao original (cmp executor=$rc_a bootstrap=$rc_b)"; return 1
+  fi
+}
+
+# combos_completos <vistas> — ecoa OK só se c_c, c_pt e pt_pt aparecem EXATAMENTE uma vez cada. Três
+# julgamentos não são três combinações: `c_pt c_pt pt_pt` também soma três (Codex 2026-09-14).
+combos_completos() {
+  local cb="" x="" n=0 vezes=0 falta=""
+  for x in $1; do n=$((n + 1)); done
+  for cb in c_c c_pt pt_pt; do
+    vezes=0
+    for x in $1; do if [ "$x" = "$cb" ]; then vezes=$((vezes + 1)); fi; done
+    [ "$vezes" -eq 1 ] || falta="$falta $cb=$vezes"
+  done
+  if [ -z "$falta" ] && [ "$n" -eq 3 ]; then printf 'OK'; else printf 'combinacoes julgadas [%s ] (%s no total)' "$falta" "$n"; fi
+}
+
+# sabotagem <id> <descricao> <executor|bootstrap> <expressao-perl> <cenario> [<combinações-IGUAL>] —
 # julga o cenário nas TRÊS combinações, nomeadas aqui e não numa variável: encurtar uma lista seria o
 # jeito de pular um idioma sem nada ficar vermelho. Cada julgamento tem de TERMINAR (status 0) E dizer
-# uma palavra — `printf CERTO; exit 137` numa `$(...)` captura exatamente "CERTO" (Codex 2026-09-14):
-# CERTO (ficou vermelha pelo motivo certo) ou IGUAL (não mudou, e era para não mudar — S10/S11). Só
-# conta como vermelha com as TRÊS julgadas E ≥1 CERTO: uma unidade do recibo por sabotagem.
-SAB_JULGADAS=""
+# a palavra PREVISTA para aquela combinação: IGUAL (não mudou, e era para não mudar) só onde o 6º
+# argumento diz — S10 em c_c/c_pt, S11 em pt_pt —, CERTO (vermelha pelo motivo certo) nas outras.
+# `printf CERTO; exit 137` numa `$(...)` captura exatamente "CERTO"; e IGUAL aceito em qualquer posição
+# dispensaria uma combinação inteira (os dois pelo Codex, 2026-09-14). Antes de sabotar, o GÊMEO verde:
+# o MESMO cenário na cópia INTACTA tem de terminar dizendo alguma coisa que NÃO seja CERTO. Marca que
+# também sai sem a sabotagem não é marca — "exclusiva da falha" se MEDE contra o verde da mesma
+# invocação (#2487); aqui, S4 e S9 terminam com o MESMO rc do verde (0). Uma unidade do recibo por
+# sabotagem, só depois de tudo isso.
+SAB_JULGADAS=""; FASE=""
 sabotagem() {
-  local id="$1" desc="$2" alvo="$3" expr="$4" cen="$5" cb="" m="" st=0 motivo="" n_julgadas=0 n_verm=0
+  local id="$1" desc="$2" alvo="$3" expr="$4" cen="$5" igual_em="${6:-}" cb="" m="" st=0 motivo=""
+  local esperado="" vistas="" n_verm=0 combos=""
   SAB_JULGADAS="$SAB_JULGADAS $id"
   registra "$id" "$alvo:$expr" || return 0
+  if ! prepara_gemeo; then invalida "$id" "$desc" "$PREP_MOTIVO"; return 0; fi
+  FASE=gemeo
+  for cb in c_c c_pt pt_pt; do
+    seleciona_combo "$cb"
+    OUT="$LOGS/$id.$cb.gemeo.log"
+    vistas="$vistas $cb"
+    st=0; m="$(roda_cenario "$cen")" || st=$?
+    if [ "$st" -ne 0 ]; then
+      motivo="$motivo [$cb: o GEMEO verde MORREU (status $st)]"
+    elif [ -z "$m" ]; then
+      motivo="$motivo [$cb: o GEMEO verde saiu sem veredito]"
+    elif [ "$m" = CERTO ]; then
+      motivo="$motivo [$cb: diz CERTO SEM a sabotagem, a marca nao discrimina]"
+    fi
+  done
+  combos="$(combos_completos "$vistas")"
+  [ "$combos" = OK ] || motivo="$motivo [gemeo: ${combos:-sem conferencia das combinacoes}]"
+  if [ -n "$motivo" ]; then
+    sab_falha
+    SAB_FALHARAM="$SAB_FALHARAM $id"
+    printf '  ❌ [%s] %s — gemeo verde:%s\n' "$id" "$desc" "$motivo"
+    return 0
+  fi
   if ! prepara_sabotagem "$alvo" "$expr"; then invalida "$id" "$desc" "$PREP_MOTIVO"; return 0; fi
+  FASE=sabotado
+  vistas=""
   for cb in c_c c_pt pt_pt; do
     seleciona_combo "$cb"
     OUT="$LOGS/$id.$cb.log"
+    vistas="$vistas $cb"
+    case " $igual_em " in *" $cb "*) esperado=IGUAL ;; *) esperado=CERTO ;; esac
     st=0; m="$(roda_cenario "$cen")" || st=$?
     if [ "$st" -ne 0 ]; then
       motivo="$motivo [$cb: o cenario MORREU (status $st) depois de dizer '${m:0:60}']"
+    elif [ "$m" != "$esperado" ]; then
+      motivo="$motivo [$cb: ${m:-o cenario saiu sem veredito} (previsto: $esperado)]"
     elif [ "$m" = CERTO ]; then
-      n_julgadas=$((n_julgadas + 1)); n_verm=$((n_verm + 1))
-    elif [ "$m" = IGUAL ]; then
-      n_julgadas=$((n_julgadas + 1))
-    else
-      motivo="$motivo [$cb: ${m:-o cenario saiu sem veredito}]"
+      n_verm=$((n_verm + 1))
     fi
   done
-  if [ -z "$motivo" ] && [ "$n_julgadas" -eq 3 ] && [ "$n_verm" -ge 1 ]; then
+  combos="$(combos_completos "$vistas")"
+  [ "$combos" = OK ] || motivo="$motivo [${combos:-sem conferencia das combinacoes}]"
+  if [ -z "$motivo" ] && [ "$n_verm" -ge 1 ]; then
     sab_vermelha
     printf '  ✅ [%s] %s — vermelha pelo motivo certo (%s/3 vermelhas; as outras, como previsto)\n' "$id" "$desc" "$n_verm"
   else
     sab_falha
     SAB_FALHARAM="$SAB_FALHARAM $id"
-    printf '  ❌ [%s] %s:%s\n' "$id" "$desc" "${motivo:- [julgadas $n_julgadas/3, vermelhas observadas $n_verm: nada ficou vermelho]}"
+    printf '  ❌ [%s] %s:%s\n' "$id" "$desc" "${motivo:- [nenhuma combinacao ficou vermelha]}"
   fi
 }
 
@@ -595,7 +668,7 @@ cen_s2() {
   limpo || return 0
   r="$(rc_de "$FIX_ERRO")"
   # a severidade do banco ESTÁ no log (o erro aconteceu) e mesmo assim o psql saiu 0
-  confere "$r" 5 "$OUT" "$M_DIV" 'RESULTADO DESCONHECIDO (rc=0,' "marcador 'FIM_APLICACAO_OK' ausente"
+  confere "$r" 5 "$OUT" "$M_DIV" 'RESULTADO DESCONHECIDO (rc=0,' "marcador 'FIM_APLICACAO_OK' ausente" "$M_CTX"
 }
 cen_s3() {
   local r="" m="" n=""
@@ -608,13 +681,13 @@ cen_s3() {
   [ "$n" = 1 ] || { printf "preparo: esperava 1 recibo 'aplicada', veio '%s'" "$n"; return 0; }
   r="$(rc_de "$FIX_OK")"
   # leu 'aplicada', seguiu mesmo assim (tentativa registrada), e o ÍNDICE ÚNICO barrou o 2º recibo
-  confere "$r" 4 "$OUT" 'ledger: aplicada' 'tentativa #' 'APPLY FALHOU' 'db_aplicacoes_sha_aplicada_uniq'
+  confere "$r" 4 "$OUT" 'ledger: aplicada' 'tentativa #' 'APPLY FALHOU' 'db_aplicacoes_sha_aplicada_uniq' "$M_CTX"
 }
 cen_s5() {
   local r="" m="" t=""
   limpo || return 0
   r="$(rc_de "$FIX_ENVELOPE")"
-  m="$(confere "$r" 4 "$OUT" 'tentativa #' 'APPLY FALHOU' "$M_ENVELOPE")"
+  m="$(confere "$r" 4 "$OUT" 'tentativa #' 'APPLY FALHOU' "$M_ENVELOPE" "$M_CTX")"
   [ "$m" = CERTO ] || { printf '%s' "$m"; return 0; }
   # E a transação do script voltou atrás: envelope quebrado no meio é a meia-migration que o desenho
   # inteiro existe para impedir.
@@ -627,7 +700,7 @@ cen_s6() {
   local r=""
   limpo || return 0
   r="$(rc_de "$FIX_CIC")"
-  confere "$r" 4 "$OUT" 'tentativa #' 'APPLY FALHOU' "$M_CIC_SEV" "$M_CIC"
+  confere "$r" 4 "$OUT" 'tentativa #' 'APPLY FALHOU' "$M_CIC_SEV" "$M_CIC" "$M_CTX"
 }
 cen_s7() {
   local r=""
@@ -639,7 +712,7 @@ cen_s8() {
   local r=""
   limpo || return 0
   r="$(rc_de "$FIX_CORPO")"
-  confere "$r" 4 "$OUT" 'APPLY FALHOU' 'APLICAR_SQL: sha divergente'
+  confere "$r" 4 "$OUT" 'APPLY FALHOU' 'APLICAR_SQL: sha divergente' "$M_CTX"
 }
 # S10/S11 — a regex por idioma. O desfecho DEPENDE da combinação, e o lado que NÃO muda é tão parte
 # da captura quanto o que muda: se c_c também virasse 5 na S10, a sabotagem estaria pegando outra
@@ -652,8 +725,8 @@ cen_s10() {
   limpo || return 0
   r="$(rc_de "$FIX_ERRO")"
   case "$COMBO" in
-    pt_pt) confere "$r" 5 "$OUT" 'RESULTADO DESCONHECIDO (rc=3,' "$M_DIV" ;;
-    *)     igual_se_certo "$(confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_DIV")" ;;
+    pt_pt) confere "$r" 5 "$OUT" 'RESULTADO DESCONHECIDO (rc=3,' "$M_DIV" "$M_CTX" ;;
+    *)     igual_se_certo "$(confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_DIV" "$M_CTX")" ;;
   esac
 }
 cen_s11() {
@@ -661,8 +734,8 @@ cen_s11() {
   limpo || return 0
   r="$(rc_de "$FIX_ERRO")"
   case "$COMBO" in
-    pt_pt) igual_se_certo "$(confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_DIV")" ;;
-    *)     confere "$r" 5 "$OUT" 'RESULTADO DESCONHECIDO (rc=3,' "$M_DIV" ;;
+    pt_pt) igual_se_certo "$(confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_DIV" "$M_CTX")" ;;
+    *)     confere "$r" 5 "$OUT" 'RESULTADO DESCONHECIDO (rc=3,' "$M_DIV" "$M_CTX" ;;
   esac
 }
 # restaura_bootstrap — devolve a função verdadeira e CONFERE pela definição instalada (o md5 do
@@ -778,7 +851,7 @@ for cb in c_c c_pt pt_pt; do
       "ao lado de si (#2421), cluster caido, fixture alterada, idioma que nao veio. A copia respondeu:" \
       "$(tail -c 700 "$LOGS/controle-$passo.$cb.log" 2>/dev/null | tr '\n' ' ')"
   fi
-  nota "[$cb] A1 aplica · A3 sai 4 dizendo '$M_DIV' · A10 recusa o envelope · A12 aplica com o corpo intacto"
+  nota "[$cb] A1 aplica · A3 sai 4 dizendo '$M_DIV' e '$M_CTX_A3' · A10 recusa o envelope · A12 aplica com o corpo intacto"
 done
 
 # ── 3. CONTROLES NEGATIVOS DO JUIZ, também antes da primeira sabotagem ─────────────────────────
@@ -794,24 +867,36 @@ recusa_ou_aborta "rc certo SEM a marca"                        "$(confere 4 4 "$
 recusa_ou_aborta "a marca certa com o rc ERRADO"               "$(confere 4 5 "$L_C" 'APPLY FALHOU')"
 recusa_ou_aborta "a severidade pt_BR numa saida do servidor C" "$(confere 4 4 "$L_C" 'ERRO:  divis')"
 recusa_ou_aborta "a severidade C numa saida do servidor pt_BR" "$(confere 4 4 "$L_PT" 'ERROR:  division by zero')"
+recusa_ou_aborta "o rotulo pt_BR numa saida do cliente C"      "$(confere 4 4 "$L_C" 'CONTEXTO:  ')"
+recusa_ou_aborta "o rotulo C numa saida do cliente pt_BR"      "$(confere 4 4 "$LOGS/controle-A3.c_pt.log" 'CONTEXT:  ')"
 recusa_ou_aborta "um log que nao existe"                       "$(confere 4 4 "$LOGS/nao-existe.log" 'APPLY FALHOU')"
 
-# A agregação também tem de saber dizer NÃO. Quatro formas que um laço de sabotagem aceitaria como
-# captura: a morte calada, a palavra seguida de morte, o silêncio numa combinação só (as outras
-# vermelhas) e o "nada mudou em lugar nenhum" (IGUAL nas três). Roda o `sabotagem` DE VERDADE num
-# subshell, com o DESPACHO de cenário trocado e os desfechos virando códigos de saída: 42 = creditou
-# (o defeito), 43 = recusou (o certo). Custo ~0: nem PG, nem executor.
-for caso in morre_calado diz_certo_e_morre calado_numa so_igual; do
+# A agregação também tem de saber dizer NÃO. Oito formas que um laço de sabotagem aceitaria como
+# captura — cinco no julgamento da sabotagem: a morte calada, a palavra seguida de morte, o silêncio
+# numa combinação só, o "nada mudou em lugar nenhum" (IGUAL previsto e visto nas três) e o IGUAL numa posição em que a
+# sabotagem prevê vermelho; e três no GÊMEO verde: o cenário que diz CERTO também sem a sabotagem, o
+# gêmeo que fala e morre, e o gêmeo calado. Roda o `sabotagem` DE VERDADE num subshell, com o DESPACHO
+# de cenário trocado e os desfechos virando códigos de saída: 42 = creditou (o defeito), 43 = recusou
+# (o certo). Custo ~0: nem PG, nem executor. Nas cinco primeiras o gêmeo responde o que um cenário
+# honesto responderia sem a sabotagem — um motivo —, para cada controle atacar uma camada só.
+for caso in morre_calado diz_certo_e_morre calado_numa so_igual igual_numa sempre_certo gemeo_morre gemeo_calado; do
   rc_m=0
   ( sab_vermelha() { exit 42; }; sab_falha() { exit 43; }; invalida() { exit 44; }
-    registra() { return 0; }; prepara_sabotagem() { return 0; }
+    registra() { return 0; }; prepara_sabotagem() { return 0; }; prepara_gemeo() { return 0; }
     case "$caso" in
-      morre_calado)      roda_cenario() { exit 137; } ;;
-      diz_certo_e_morre) roda_cenario() { printf 'CERTO'; exit 137; } ;;
-      calado_numa)       roda_cenario() { [ "$COMBO" = c_pt ] || printf 'CERTO'; } ;;
+      morre_calado)      roda_cenario() { [ "$FASE" = gemeo ] && { printf "rc '4', esperado 5"; return 0; }; exit 137; } ;;
+      diz_certo_e_morre) roda_cenario() { [ "$FASE" = gemeo ] && { printf "rc '4', esperado 5"; return 0; }; printf 'CERTO'; exit 137; } ;;
+      calado_numa)       roda_cenario() { [ "$FASE" = gemeo ] && { printf "rc '4', esperado 5"; return 0; }; [ "$COMBO" = c_pt ] || printf 'CERTO'; } ;;
       so_igual)          roda_cenario() { printf 'IGUAL'; } ;;
+      igual_numa)        roda_cenario() { [ "$FASE" = gemeo ] && { printf "rc '4', esperado 5"; return 0; }; if [ "$COMBO" = c_pt ]; then printf 'IGUAL'; else printf 'CERTO'; fi; } ;;
+      sempre_certo)      roda_cenario() { printf 'CERTO'; } ;;
+      gemeo_morre)       roda_cenario() { [ "$FASE" = gemeo ] && { printf "rc '4', esperado 5"; exit 137; }; printf 'CERTO'; } ;;
+      gemeo_calado)      roda_cenario() { [ "$FASE" = gemeo ] && return 0; printf 'CERTO'; } ;;
     esac
-    sabotagem "juiz-$caso" "controle: $caso" executor 'x' s1 ) >/dev/null 2>&1 || rc_m=$?
+    # `so_igual` PREVÊ IGUAL nas três: passa pela checagem de posição, e só a guarda de ≥1 vermelha o
+    # recusa — é o controle próprio dela. Os outros não preveem IGUAL em lugar nenhum.
+    if [ "$caso" = so_igual ]; then igual_em="c_c c_pt pt_pt"; else igual_em=""; fi
+    sabotagem "juiz-$caso" "controle: $caso" executor 'x' s1 "$igual_em" ) >/dev/null 2>&1 || rc_m=$?
   case "$rc_m" in
     43) nota "a agregacao recusa um cenario $caso" ;;
     42) aborta JUIZ_CREDITA "o laco CREDITOU um cenario $caso" ;;
@@ -822,12 +907,13 @@ done
 # ── 4. SABOTAGENS — uma camada por vez, na cópia; cada uma julgada nas três combinações ─────────
 echo "▶ SABOTAGENS — cada uma com rc EXATO + marca, nas 3 combinacoes"
 # S1: a 1ª versão forçava TEM_MARCADOR=1 e rodava a fixture de ERRO — e ficava VERDE, porque com
-# rc≠0 o marcador não decide nada. O cenário em que o marcador é a ÚNICA testemunha é o inverso: exit
-# 0 com a transação incompleta. Duas sabotagens juntas de propósito: some o marcador E a reconciliação
-# pelo ledger — as DUAS testemunhas de que o apply terminou; cegar só uma deixa a outra responder
-# certo (é a S4). E o código EXATO: a versão frouxa aceitou exit 1, que era o script MORRENDO por
-# `set -e` com o ramo DESCONHECIDO inalcançável logo abaixo.
-sabotagem S1 "marcador E reconciliacao cegos (psql sai 0 e o SQL nao terminou)" executor \
+# rc≠0 o marcador não decide nada. O cenário em que o marcador é a ÚNICA testemunha é o de psql saindo
+# 0 SEM ele. A sabotagem não interrompe nada — o apply conclui de verdade (Codex 2026-09-14) —: ela cega
+# as DUAS testemunhas de que concluiu, o marcador E a reconciliação pelo ledger, e com as duas cegas o
+# veredito honesto é "não sei". Cegar só uma deixa a outra responder certo (é a S4). E o código EXATO:
+# a versão frouxa aceitou exit 1, que era o script MORRENDO por `set -e` com o ramo DESCONHECIDO
+# inalcançável logo abaixo.
+sabotagem S1 "marcador E reconciliacao cegos (o apply conclui; as duas testemunhas nao veem)" executor \
   "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m; s/^  EST_POS=.*\$/  EST_POS=''/m" s1
 sabotagem S4 "so o marcador cego: o LEDGER responde e o script avisa, nao finge" executor \
   "s/^MARCADOR='FIM_APLICACAO_OK'\$/MARCADOR='NUNCA_APARECE'/m" s4
@@ -859,9 +945,9 @@ sabotagem S7 "guard ALARGADO para casar END; (a SOBRE-recusa derruba o controle)
 sabotagem S8 "transformacao no CLIENTE (o banco e o freio)" executor \
   's/^  cat "\$SNAP"$/  sed "\/^END;\$\/d" "\$SNAP"/m' s8
 sabotagem S10 "regex sem ERRO (so o servidor pt_BR deixa de ser reconhecido)" executor \
-  's/\(ERRO\|ERROR\|FATAL\|PANIC\)/(ERROR|FATAL|PANIC)/' s10
+  's/\(ERRO\|ERROR\|FATAL\|PANIC\)/(ERROR|FATAL|PANIC)/' s10 "c_c c_pt"
 sabotagem S11 "regex so com ERRO: (so o servidor em ingles deixa de ser reconhecido)" executor \
-  's/\(ERRO\|ERROR\|FATAL\|PANIC\)/(ERRO:|FATAL|PANIC)/' s11
+  's/\(ERRO\|ERROR\|FATAL\|PANIC\)/(ERRO:|FATAL|PANIC)/' s11 pt_pt
 # S9 por último: é a única que muda a função instalada nos clusters.
 sabotagem S9 "transformacao SERVER-SIDE (so o corpo guardado a enxerga)" bootstrap \
   's/^  EXECUTE p_sql;$/  EXECUTE regexp_replace(p_sql, E\x27\\n  \x27, E\x27\\n\x27, \x27g\x27);/m' s9
@@ -885,6 +971,17 @@ if [ "$n_julg" -ne "$n_esp" ]; then
   sab_falha
   printf '  ❌ %s julgamento(s) de sabotagem para %s previstas: ha sabotagem fora da lista\n' "$n_julg" "$n_esp"
 fi
+# Um log por (sabotagem, combinação), conferido pelo DISCO e não pela contagem do laço: se o laço
+# julgasse `c_pt` duas vezes e `c_c` nenhuma, a conta de julgamentos seguiria fechando — o arquivo de
+# `c_c` é que não existiria (2ª camada do "três julgamentos não são três combinações").
+for esperado in $IDS_ESPERADOS; do
+  for cb in c_c c_pt pt_pt; do
+    if [ ! -s "$LOGS/$esperado.$cb.log" ]; then
+      sab_falha; SAB_FALHARAM="$SAB_FALHARAM $esperado"
+      printf '  ❌ [%s] sem log da combinacao %s: ela nao foi julgada\n' "$esperado" "$cb"
+    fi
+  done
+done
 
 # ── 5. CONTROLE DE SAÍDA — a cópia e o bootstrap voltaram, e o verde voltou nas três? ──────────
 echo "▶ CONTROLE DE SAIDA — copia e bootstrap de volta ao original, e o verde de volta nas 3"

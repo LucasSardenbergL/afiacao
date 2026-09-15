@@ -912,9 +912,10 @@ jobs:
       # step a prova REPROVA na sonda dela (`LOCALE_PT_BR_AUSENTE`), nunca pula o idioma.
       # A conferência é POSITIVA, por fora da prova e com o MESMO binário que o shim dela usa: o
       # locale está em `locale -a`, resolve para UTF-8, e uma falha REAL sob pt_BR diz `ERRO:`
-      # (servidor) e `psql: erro:` (cliente). A prova refaz as duas pelo caminho do executor; este
-      # step é o eixo independente — e o lugar onde a evidência fica no log, porque o runner só
-      # mostra log de prova que falha. Porta 5809 só em socket (`listen_addresses=''`): a sonda do
+      # (servidor) e `psql: erro:` (cliente). A prova refaz as duas pelo caminho do EXECUTOR — a do
+      # servidor na severidade de cada combinação, a do cliente no rótulo `CONTEXTO:` que o executor
+      # imprime —; este step é o eixo independente, e o lugar onde a evidência fica no log (o runner
+      # só mostra log de prova que falha). Porta 5809 só em socket (`listen_addresses=''`): a sonda do
       # runner usa a 5810. Medição e desenho: docs/historico/falsificacao-db-aplicar-idioma-do-servidor.md
       - name: Locale pt_BR.UTF-8 — provisiona e confere (2º idioma do db-aplicar)
         run: |
