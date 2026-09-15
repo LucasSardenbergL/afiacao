@@ -100,8 +100,10 @@ const SABOTAGENS: Sabotagem[] = [
   { id: 'D07', arquivo: NUCLEO, defeito: 'cadeia vira so o primeiro par',
     velho: '    for (let i = 1; i < nos.length; i++) {', novo: '    for (let i = 1; i < Math.min(nos.length, 2); i++) {',
     marca: '[DECL_CADEIA]' },
+  // `String.raw` no Bun devolve o não-ASCII ESCAPADO (a seta vira o texto →), então trecho com
+  // não-ASCII vai em string comum. Medido: com String.raw a D08 saiu "0 ocorrencia(s)" nos dois locales.
   { id: 'D08', arquivo: NUCLEO, defeito: 'seta ASCII nao vale',
-    velho: String.raw`const SETA = /\s*(?:→|->)\s*/;`, novo: String.raw`const SETA = /\s*→\s*/;`,
+    velho: 'const SETA = /\\s*(?:→|->)\\s*/;', novo: 'const SETA = /\\s*→\\s*/;',
     marca: '[DECL_SETAS]' },
   { id: 'D09', arquivo: NUCLEO, defeito: 'crases ficam no nome',
     velho: '  return m ? m[1].trim() : no;', novo: '  return no;',
