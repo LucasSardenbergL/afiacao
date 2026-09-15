@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-09-14T14:16:26.663Z",
-  "sourceHead": "d568ba7a246020d5b74727c38f2bb54da98f715f",
+  "medidoEm": "2026-09-15T00:43:45.929Z",
+  "sourceHead": "09fed140bf2a23beef93e0417fcd8fe6d35470c0",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -108,27 +108,27 @@
     {
       "gate": "authz:carimbo",
       "verde": true,
-      "ms": 34
+      "ms": 37
     },
     {
       "gate": "authz:check",
       "verde": true,
-      "ms": 1012
+      "ms": 984
     },
     {
       "gate": "build",
       "verde": true,
-      "ms": 15751
+      "ms": 19690
     },
     {
       "gate": "bunpin:check",
       "verde": true,
-      "ms": 106
+      "ms": 29
     },
     {
       "gate": "canaria:bump",
       "verde": true,
-      "ms": 1850
+      "ms": 1771
     },
     {
       "gate": "claude:size",
@@ -138,7 +138,7 @@
     {
       "gate": "docs:citacoes",
       "verde": true,
-      "ms": 1328
+      "ms": 1290
     },
     {
       "gate": "docs:indice",
@@ -148,117 +148,117 @@
     {
       "gate": "docs:links",
       "verde": true,
-      "ms": 292
+      "ms": 304
     },
     {
       "gate": "edges:typecheck",
       "verde": true,
-      "ms": 1421
+      "ms": 3740
     },
     {
       "gate": "evals:deploy-verify",
       "verde": true,
-      "ms": 18873
+      "ms": 30911
     },
     {
       "gate": "evals:deploy-verify:falsificacao",
       "verde": true,
-      "ms": 84487
+      "ms": 128021
     },
     {
       "gate": "exclusividade",
-      "verde": false,
-      "ms": 1312
+      "verde": true,
+      "ms": 612
     },
     {
       "gate": "gate:ambiente",
       "verde": true,
-      "ms": 489
+      "ms": 472
     },
     {
       "gate": "gate:senha-bootstrap",
       "verde": true,
-      "ms": 4693
+      "ms": 15944
     },
     {
       "gate": "gates:frescura",
       "verde": true,
-      "ms": 146
+      "ms": 656
     },
     {
       "gate": "knip",
       "verde": true,
-      "ms": 2271
+      "ms": 12793
     },
     {
       "gate": "lint",
       "verde": true,
-      "ms": 12869
+      "ms": 37640
     },
     {
       "gate": "lint:shell",
       "verde": true,
-      "ms": 13025
+      "ms": 26836
     },
     {
       "gate": "scripts:typecheck",
       "verde": true,
-      "ms": 1679
+      "ms": 4480
     },
     {
       "gate": "sonda:autentica",
       "verde": true,
-      "ms": 143
+      "ms": 133
     },
     {
       "gate": "sonda:bump",
       "verde": true,
-      "ms": 58
+      "ms": 154
     },
     {
       "gate": "sonda:cron-prova",
       "verde": true,
-      "ms": 423234
+      "ms": 338045
     },
     {
       "gate": "sonda:fingerprint",
       "verde": true,
-      "ms": 81
+      "ms": 167
     },
     {
       "gate": "sonda:nova",
       "verde": true,
-      "ms": 73
+      "ms": 87
     },
     {
       "gate": "test",
       "verde": true,
-      "ms": 150981
+      "ms": 233791
     },
     {
       "gate": "test:edges",
       "verde": true,
-      "ms": 5288
+      "ms": 5186
     },
     {
       "gate": "test:falsificacao",
       "verde": true,
-      "ms": 461645
+      "ms": 1051615
     },
     {
       "gate": "test:hooks",
       "verde": true,
-      "ms": 119622
+      "ms": 149581
     },
     {
       "gate": "test:sonda-rollback",
       "verde": true,
-      "ms": 2757
+      "ms": 2607
     },
     {
       "gate": "tsc",
       "verde": true,
-      "ms": 46829
+      "ms": 46630
     }
   ],
   "linhas": [
@@ -1560,6 +1560,324 @@
           "fingerprint": "b4dbbfe49b60c31a",
           "fonteResolvida": false,
           "invocacao": "bun run test:edges"
+        }
+      ],
+      "parouCedo": true,
+      "invalido": null
+    },
+    {
+      "defeito": "sonda-responde-antes-do-gate-fora-da-lista",
+      "defeitoFingerprint": "5bf553a76aab954b",
+      "alvo": "supabase/functions/omie-nfe-recebimento/index.ts",
+      "suspeito": "sonda:autentica",
+      "origem": "docs/historico/exclusividade-media-outra-coisa.md (\"O alcance comparado\", 2026-09-14)",
+      "execucoes": [
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 381,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:indice"
+        },
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 160,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true,
+          "invocacao": "bun run bunpin:check"
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 176,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true,
+          "invocacao": "bun run claude:size"
+        },
+        {
+          "gate": "authz:carimbo",
+          "reprovou": false,
+          "ms": 103,
+          "fingerprint": "11d2e328c4d885e9",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:carimbo"
+        },
+        {
+          "gate": "sonda:nova",
+          "reprovou": false,
+          "ms": 195,
+          "fingerprint": "d11545e0b59f27b0",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:nova"
+        },
+        {
+          "gate": "sonda:autentica",
+          "reprovou": true,
+          "ms": 366,
+          "fingerprint": "2140bcc05b344168",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:autentica"
+        },
+        {
+          "gate": "sonda:bump",
+          "reprovou": true,
+          "ms": 149,
+          "fingerprint": "4cebf17ab2b0eca2",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:bump"
+        }
+      ],
+      "parouCedo": true,
+      "invalido": null
+    },
+    {
+      "defeito": "sonda-responde-antes-do-gate-fora-da-lista-diligente",
+      "defeitoFingerprint": "02bee63f60a1c5fe",
+      "alvo": "supabase/functions/omie-nfe-recebimento/index.ts",
+      "suspeito": "sonda:autentica",
+      "origem": "docs/historico/exclusividade-media-outra-coisa.md (\"O alcance comparado\", 2026-09-14)",
+      "deveres": [
+        "bump-versao omie-nfe-recebimento",
+        "regenerar-fingerprints"
+      ],
+      "tocados": [
+        "supabase/functions/_shared/sonda-fingerprints.ts",
+        "supabase/functions/omie-nfe-recebimento/versao.ts"
+      ],
+      "execucoes": [
+        {
+          "gate": "docs:indice",
+          "reprovou": false,
+          "ms": 37,
+          "fingerprint": "a41d30136cdb032d",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:indice"
+        },
+        {
+          "gate": "bunpin:check",
+          "reprovou": false,
+          "ms": 50,
+          "fingerprint": "88d330029d1f9ad5",
+          "fonteResolvida": true,
+          "invocacao": "bun run bunpin:check"
+        },
+        {
+          "gate": "claude:size",
+          "reprovou": false,
+          "ms": 52,
+          "fingerprint": "c4bf0d0879f91708",
+          "fonteResolvida": true,
+          "invocacao": "bun run claude:size"
+        },
+        {
+          "gate": "authz:carimbo",
+          "reprovou": false,
+          "ms": 44,
+          "fingerprint": "11d2e328c4d885e9",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:carimbo"
+        },
+        {
+          "gate": "sonda:nova",
+          "reprovou": false,
+          "ms": 136,
+          "fingerprint": "d11545e0b59f27b0",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:nova"
+        },
+        {
+          "gate": "sonda:autentica",
+          "reprovou": true,
+          "ms": 88,
+          "fingerprint": "2140bcc05b344168",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:autentica"
+        },
+        {
+          "gate": "sonda:bump",
+          "reprovou": false,
+          "ms": 203,
+          "fingerprint": "4cebf17ab2b0eca2",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:bump"
+        },
+        {
+          "gate": "sonda:fingerprint",
+          "reprovou": false,
+          "ms": 141,
+          "fingerprint": "12cb3754bacedc00",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:fingerprint"
+        },
+        {
+          "gate": "docs:links",
+          "reprovou": false,
+          "ms": 471,
+          "fingerprint": "f56e762e306f0671",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:links"
+        },
+        {
+          "gate": "gate:ambiente",
+          "reprovou": false,
+          "ms": 1664,
+          "fingerprint": "ced901a6da17fb30",
+          "fonteResolvida": true,
+          "invocacao": "bun run gate:ambiente"
+        },
+        {
+          "gate": "exclusividade",
+          "reprovou": false,
+          "ms": 568,
+          "fingerprint": "121510c7bf534be2",
+          "fonteResolvida": true,
+          "invocacao": "bun run exclusividade"
+        },
+        {
+          "gate": "gates:frescura",
+          "reprovou": false,
+          "ms": 141,
+          "fingerprint": "7677bffbe8ca936b",
+          "fonteResolvida": true,
+          "invocacao": "bun run gates:frescura"
+        },
+        {
+          "gate": "authz:check",
+          "reprovou": false,
+          "ms": 981,
+          "fingerprint": "8b328138809ff4fe",
+          "fonteResolvida": true,
+          "invocacao": "bun run authz:check"
+        },
+        {
+          "gate": "docs:citacoes",
+          "reprovou": false,
+          "ms": 1197,
+          "fingerprint": "94085ea54871a324",
+          "fonteResolvida": true,
+          "invocacao": "bun run docs:citacoes"
+        },
+        {
+          "gate": "canaria:bump",
+          "reprovou": false,
+          "ms": 2118,
+          "fingerprint": "1daa9407db3b1622",
+          "fonteResolvida": true,
+          "invocacao": "bun run canaria:bump"
+        },
+        {
+          "gate": "test:sonda-rollback",
+          "reprovou": false,
+          "ms": 2724,
+          "fingerprint": "e21ad72a31e8e4dc",
+          "fonteResolvida": false,
+          "invocacao": "bun run test:sonda-rollback"
+        },
+        {
+          "gate": "edges:typecheck",
+          "reprovou": false,
+          "ms": 3091,
+          "fingerprint": "ec81d1125b24e47b",
+          "fonteResolvida": true,
+          "invocacao": "bun run edges:typecheck"
+        },
+        {
+          "gate": "scripts:typecheck",
+          "reprovou": false,
+          "ms": 1796,
+          "fingerprint": "d64dcfd72ec0beec",
+          "fonteResolvida": false,
+          "invocacao": "bun run scripts:typecheck"
+        },
+        {
+          "gate": "test:edges",
+          "reprovou": false,
+          "ms": 3066,
+          "fingerprint": "b4dbbfe49b60c31a",
+          "fonteResolvida": false,
+          "invocacao": "bun run test:edges"
+        },
+        {
+          "gate": "knip",
+          "reprovou": false,
+          "ms": 2248,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false,
+          "invocacao": "bunx knip"
+        },
+        {
+          "gate": "gate:senha-bootstrap",
+          "reprovou": false,
+          "ms": 6581,
+          "fingerprint": "ca1988585cdf3019",
+          "fonteResolvida": true,
+          "invocacao": "bun run gate:senha-bootstrap"
+        },
+        {
+          "gate": "build",
+          "reprovou": false,
+          "ms": 136601,
+          "fingerprint": "1c744850d821f3b0",
+          "fonteResolvida": false,
+          "invocacao": "env{NODE_ENV=production} bun run build"
+        },
+        {
+          "gate": "lint:shell",
+          "reprovou": false,
+          "ms": 65030,
+          "fingerprint": "cdb8d74ec7e01602",
+          "fonteResolvida": true,
+          "invocacao": "bun run lint:shell"
+        },
+        {
+          "gate": "evals:deploy-verify",
+          "reprovou": false,
+          "ms": 39204,
+          "fingerprint": "249406f2ca7da70a",
+          "fonteResolvida": true,
+          "invocacao": "bun run evals:deploy-verify"
+        },
+        {
+          "gate": "lint",
+          "reprovou": false,
+          "ms": 19901,
+          "fingerprint": "9a7845d926241f66",
+          "fonteResolvida": false,
+          "invocacao": "bun lint"
+        },
+        {
+          "gate": "tsc",
+          "reprovou": false,
+          "ms": 75908,
+          "fingerprint": "e3b0c44298fc1c14",
+          "fonteResolvida": false,
+          "invocacao": "bunx tsc --noEmit -p tsconfig.app.json"
+        },
+        {
+          "gate": "evals:deploy-verify:falsificacao",
+          "reprovou": false,
+          "ms": 197178,
+          "fingerprint": "1c34e8c5ba733b2b",
+          "fonteResolvida": true,
+          "invocacao": "bun run evals:deploy-verify:falsificacao"
+        },
+        {
+          "gate": "test:hooks",
+          "reprovou": false,
+          "ms": 173552,
+          "fingerprint": "41fedf19a79668bb",
+          "fonteResolvida": true,
+          "invocacao": "bun run test:hooks"
+        },
+        {
+          "gate": "test",
+          "reprovou": true,
+          "ms": 227108,
+          "fingerprint": "ad6cd6b8acf39571",
+          "fonteResolvida": false,
+          "invocacao": "bun run test"
         }
       ],
       "parouCedo": true,
