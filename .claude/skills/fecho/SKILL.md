@@ -331,7 +331,7 @@ custa um comando: rode `pendencias:deploy` de novo **depois** de montar o pacote
 ```bash
 PEND=$(mktemp -t pend)                                     # único por invocação: /tmp/pend.json colide entre worktrees
 bun scripts/pendencias-deploy.ts --json > "$PEND"          # quem julga é o LEDGER
-bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: RPC em prod ANTES da edge
+bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: banco → edge e edge → edge (exit 4 = onda parcial)
 ```
 
 O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,
@@ -340,6 +340,16 @@ O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (proj
 limites e o que continua sendo do founder: `docs/agent/deploy.md` §"Deploy de edge pela SESSÃO".
 Depois **meça o ledger de novo** — `pendencias:deploy` em exit 0 é a prova; o relato do agente
 não é.
+
+⏸️ **`pendencias-pacote` em exit `4` = ONDA PARCIAL** — há ordem declarada entre edges da leva
+(`supabase/functions/<B>/deploy-ordem.json`, #2469). Cole **só** o Passo 2: a seção "Retidas" não tem
+colagem, de propósito. Depois prove a onda, meça o ledger e rode o pacote de novo — a próxima onda sai
+sozinha quando a predecessora estiver provada (par da REF observado há 10 min a 6 h). Entre ondas o
+`pendencias:deploy` sai 1: é o esperado, não falha. Exit `3` com retidas = nenhuma colagem: faça o que a
+retida pede (medir de novo, sondar a predecessora, aguardar). **Nunca** junte as edges numa mensagem à
+mão. E se o corpo de um PR da janela exige ordem entre edges da leva **sem** manifesto na main, não
+envie: commite o manifesto e rode o pacote depois — a máquina não lê a prosa do PR
+(`docs/historico/ordem-entre-edges-da-mesma-leva.md`).
 
 ⚠️ **"Se a sessão tocou edge" NÃO é o gatilho deste passo — é só o gatilho da metade dele.**
 Edge de TERCEIRO na janela é pendência desta `/fecho` do mesmo jeito que migration de terceiro é,

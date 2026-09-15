@@ -37,13 +37,25 @@
  * · **Não escreve no banco.** O founder continua aplicando pelo SQL Editor; o ganho é ordem e
  *   conferência, não automação de escrita.
  *
+ * ## A ordem ENTRE edges (#2469)
+ *
+ * O gate acima é banco → edge. Entre duas edges a ordem mora em `supabase/functions/<B>/deploy-ordem.json`,
+ * e quem julga é `lib/ordem-entre-edges.ts`: a edge cuja predecessora não está PROVADA em prod — o par
+ * da REF observado no ledger, com idade entre o assentamento e o frescor — não entra na colagem. O
+ * pacote vira uma ONDA, e a próxima execução emite a seguinte.
+ *
  * ## Exit codes
- *   0  pacote emitido — pré-condição de banco MEDIDA e satisfeita, a edge pode subir
+ *   0  pacote INTEGRAL emitido — pré-condição de banco medida e satisfeita, nenhuma edge retida.
+ *      Não é deploy concluído: a prova é o ledger depois
  *   1  nada pendente na leva — não há pacote a emitir
- *   2  MECÂNICA não confiável: psql falhou, edge inexistente, JSON de outro formato
- *   3  **BLOQUEADO** — a pré-condição está ausente (`BLOQUEADA`) ou não pôde ser medida
- *      (`INCERTA`). Nos dois casos o pacote sai com o passo de DDL e **sem** a colagem da edge:
- *      emitir a colagem aqui seria reencenar o #2285 com a ferramenta que existe para evitá-lo.
+ *   2  MECÂNICA não confiável: psql falhou, edge inexistente, JSON de outro formato, manifesto de
+ *      ordem ilegível ou em ciclo
+ *   3  **BLOQUEADO** — nenhuma colagem executável: a pré-condição de banco está ausente
+ *      (`BLOQUEADA`) ou não pôde ser medida (`INCERTA`), ou toda edge da leva está retida pela ordem
+ *      entre edges. O pacote sai com o que falta e **sem** colagem: emiti-la aqui seria reencenar o
+ *      #2285 (ou o #2469) com a ferramenta que existe para evitá-lo.
+ *   4  ONDA PARCIAL — a colagem traz só as edges liberadas; as retidas saem numa próxima execução,
+ *      depois que o ledger provar as predecessoras. Entre ondas o `pendencias:deploy` sai 1: esperado.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -71,22 +83,37 @@ import {
   type ExecutorGitBytes,
   fatiaDeDeploy,
   gitBytes,
+  inventarioDaRef,
+  lerManifestosDaRef,
   REF_DEPLOYADA,
   sincronizarRef,
 } from './pendencias-prompt';
 import { montarPacote, type PacoteFonte } from './lib/pacote-entrega';
+import { type ParAlvo, planejarOndas, type PlanoDeOndas } from './lib/ordem-entre-edges';
+import { ARQ_MAPA, parsearMapa, RAIZ_EDGES } from './sonda-fingerprint';
+import { extrairVersao } from './sonda-versao-sql';
 
 const PSQL_RO = process.env.PSQL_RO ?? join(homedir(), '.config', 'afiacao', 'psql-ro');
 
+/** O `--json` do `pendencias:deploy` lido por inteiro: a leva, os vereditos CRUS e o instante da medição. */
+interface RelatorioLido {
+  nomes: string[];
+  vereditos: unknown[];
+  geradoEm: Date | null;
+}
+
+/** O ISO do `toISOString()` do produtor, e só ele: `Date.parse` aceita "2026-09-14" e hora local. */
+const ISO_INSTANTE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+
 /** Lê o `--json` do `pendencias:deploy`. Mesmo contrato do `pendencias:prompt` — um só dono. */
-export function lerVeredito(bruto: string): string[] {
+export function lerRelatorio(bruto: string): RelatorioLido {
   let obj: unknown;
   try {
     obj = JSON.parse(bruto);
   } catch (e) {
     throw new Error(`stdin não é JSON: ${mensagemDeErro(e) ?? 'ilegível'}`);
   }
-  const rel = obj as { formato?: unknown; vereditos?: unknown };
+  const rel = obj as { formato?: unknown; vereditos?: unknown; geradoEm?: unknown };
   if (rel.formato !== FORMATO_ACEITO) {
     throw new Error(
       `formato inesperado: ${String(rel.formato)} (esperado ${FORMATO_ACEITO}) — ` +
@@ -94,7 +121,18 @@ export function lerVeredito(bruto: string): string[] {
     );
   }
   if (!Array.isArray(rel.vereditos)) throw new Error('JSON sem `vereditos` — ausente ≠ leva vazia');
-  return selecionarParaDeploy(rel.vereditos);
+  // `geradoEm` nasceu com a ordem entre edges. AUSENTE é produtor anterior e não é erro aqui — a leva
+  // sem ordem não depende dele, e o planejador bloqueia a onda que dependeria. PRESENTE e torto lança.
+  let geradoEm: Date | null = null;
+  if (rel.geradoEm !== undefined) {
+    const t =
+      typeof rel.geradoEm === 'string' && ISO_INSTANTE.test(rel.geradoEm) ? Date.parse(rel.geradoEm) : Number.NaN;
+    if (!Number.isFinite(t)) {
+      throw new Error(`\`geradoEm\` ilegível: ${JSON.stringify(rel.geradoEm)} — instante inventado não data prova nenhuma`);
+    }
+    geradoEm = new Date(t);
+  }
+  return { nomes: selecionarParaDeploy(rel.vereditos), vereditos: rel.vereditos, geradoEm };
 }
 
 /** Roda a sonda pelo wrapper read-only. `-c` (não `-f`) porque só `-c` sai 1 em ERROR. */
@@ -214,11 +252,44 @@ function lerLoteDeBlobs(
   return fora;
 }
 
+/**
+ * O par (versao, fonte) que a REF@sha espera de cada predecessora — a régua da prova.
+ *
+ * O `fonte` sai do mapa commitado e a `VERSAO` do `versao.ts`, pelos MESMOS leitores do ledger
+ * (`parsearMapa` e o `extrairVersao` de `sonda-versao-sql`): duas noções de "par esperado" divergiriam
+ * em silêncio. Predecessora fora do mapa, sem `versao.ts` ou com `VERSAO` ilegível fica SEM par — e o
+ * planejador a bloqueia dizendo por quê. Arquivo LISTADO e ilegível lança: é mecânica, não ausência.
+ */
+function lerAlvosDaRef(git: ExecutorGitBytes, sha: string, predecessoras: readonly string[]): Map<string, ParAlvo> {
+  const mapaLido = git(['show', `${sha}:${ARQ_MAPA}`]);
+  if (!mapaLido.ok) throw new Error(`${ARQ_MAPA} ilegível em ${sha.slice(0, 9)} — sem o mapa não há par a exigir`);
+  const mapa = parsearMapa(mapaLido.bytes.toString('utf8'));
+  if (Object.keys(mapa).length === 0) {
+    throw new Error(`${ARQ_MAPA} em ${sha.slice(0, 9)} parseou VAZIO — é o parser ou o arquivo, não um repo sem sondas`);
+  }
+  const inventario = inventarioDaRef(git, sha, predecessoras);
+  const alvos = new Map<string, ParAlvo>();
+  for (const edge of predecessoras) {
+    const fonte = mapa[edge];
+    const caminho = `${RAIZ_EDGES}/${edge}/versao.ts`;
+    if (fonte === undefined || !inventario.has(caminho)) continue;
+    const r = git(['show', `${sha}:${caminho}`]);
+    if (!r.ok) {
+      throw new Error(`${caminho} está no commit ${sha.slice(0, 9)} e não foi lido: ${r.erro.trim() || 'sem stderr'}`);
+    }
+    const versao = extrairVersao(r.bytes.toString('utf8'));
+    if (versao !== null) alvos.set(edge, { fonte, versao });
+  }
+  return alvos;
+}
+
 export function main(
   argv: string[],
   raiz = process.cwd(),
   git = gitBytes(raiz),
   medir = medirEmProd,
+  lerEntrada = (): string => readFileSync(0, 'utf8'),
+  agora = (): Date => new Date(),
 ): number {
   const todos = argv.filter((a) => a !== '');
   const semRede = todos.includes('--sem-rede');
@@ -238,11 +309,14 @@ export function main(
   }
 
   let nomes: string[];
+  let relatorio: RelatorioLido | null = null;
   try {
-    nomes =
-      nomesArg.length === 1 && nomesArg[0] === '-'
-        ? lerVeredito(readFileSync(0, 'utf8'))
-        : nomesArg;
+    if (nomesArg.length === 1 && nomesArg[0] === '-') {
+      relatorio = lerRelatorio(lerEntrada());
+      nomes = relatorio.nomes;
+    } else {
+      nomes = nomesArg;
+    }
   } catch (e) {
     process.stderr.write(`⛔ mecânica: ${mensagemDeErro(e) ?? 'stdin ilegível'}\n`);
     return 2;
@@ -313,6 +387,30 @@ export function main(
     return 2;
   }
 
+  // ── camada 1c: a ordem ENTRE edges da leva (#2469) ──────────────────────────────────────────
+  // Antes da sonda de banco, de propósito: é leitura de git, decide a partição, e manifesto ilegível
+  // é mecânica que não precisa gastar a sonda para aparecer.
+  let ordem: PlanoDeOndas;
+  try {
+    const manifestos = lerManifestosDaRef(git, proc.sha, nomes);
+    const predecessoras = [
+      ...new Set([...manifestos.values()].flatMap((m) => m.depoisDe.map((x) => x.edge))),
+    ].sort();
+    ordem = planejarOndas({
+      leva: nomes,
+      manifestos,
+      ledger: relatorio === null ? null : { vereditos: relatorio.vereditos, geradoEm: relatorio.geradoEm },
+      alvos: predecessoras.length === 0 ? new Map() : lerAlvosDaRef(git, proc.sha, predecessoras),
+      agora: agora(),
+    });
+  } catch (e) {
+    process.stderr.write(
+      `⛔ mecânica: a ordem entre edges não pôde ser julgada (${mensagemDeErro(e) ?? 'falha nos manifestos'})\n` +
+        '   manifesto que não se lê não é "sem ordem" — conserte e rode de novo\n',
+    );
+    return 2;
+  }
+
   // ── camada 2: MEDIR em prod (o passo que o #2285 não teve) ─────────────────────────────────
   let veredito: VereditoPrecondicao;
   if (alvos.length === 0) {
@@ -341,7 +439,7 @@ export function main(
   }
 
   // ── camada 3: emitir o pacote NA ORDEM, com o gate aplicado ────────────────────────────────
-  const fonte: PacoteFonte = { edges: fatias, alvos, veredito, proc };
+  const fonte: PacoteFonte = { edges: fatias, alvos, veredito, proc, ordem };
   const { texto, sha } = montarPacote(fonte);
   const destino = saidaExplicita ?? join(tmpdir(), `pacote-deploy-${sha}.md`);
   try {
@@ -357,6 +455,12 @@ export function main(
       `   ${proc.ref}@${proc.sha.slice(0, 9)}${semRede ? ' (--sem-rede: ref NÃO buscada)' : ''}\n` +
       `   ${destino}\n`,
   );
+  if (ordem.regras.length > 0) {
+    process.stderr.write(
+      `⏸️ ordem entre edges: ${ordem.liberadas.length} liberada(s) · ${ordem.retidas.length} retida(s)\n` +
+        ordem.retidas.map((r) => `   · ${r.edge} ${r.tipo} — espera ${r.espera.join(', ')}\n`).join(''),
+    );
+  }
 
   if (veredito.estado !== 'LIBERADA') {
     process.stderr.write(
@@ -364,6 +468,20 @@ export function main(
         '   Aplique a DDL, depois rode este comando de novo: o gate reabre sozinho quando prod tiver as RPCs.\n',
     );
     return 3;
+  }
+  if (ordem.liberadas.length === 0) {
+    process.stderr.write(
+      '\n⛔ nenhuma colagem emitida — toda edge da leva está retida pela ordem entre edges (veja o pacote).\n' +
+        '   Faça o que as retidas pedem e rode de novo; juntar as edges numa mensagem à mão é o #2469.\n',
+    );
+    return 3;
+  }
+  if (ordem.retidas.length > 0) {
+    process.stderr.write(
+      '\n⏸️ ONDA PARCIAL — cole só o Passo 2, prove a onda, meça o ledger e rode o pacote de novo: as\n' +
+        '   retidas saem na próxima execução. Entre ondas o pendencias:deploy sai 1, e está certo.\n',
+    );
+    return 4;
   }
   return 0;
 }

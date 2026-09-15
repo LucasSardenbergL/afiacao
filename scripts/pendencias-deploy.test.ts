@@ -797,9 +797,10 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
 
   it('serializarRelatorio: JSON parseável, com a MARCA de formato, os totais e os vereditos INTEIROS', () => {
     const rel = julgar(ESPERADOS, [obs('edge-a', 'aaa111')], ctx());
-    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false }));
+    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }));
     expect(j.formato).toBe(FORMATO_JSON);
     expect(j.ref).toBe('origin/main');
+    expect(j.geradoEm).toBe('2026-09-14T20:00:00.000Z');
     expect(j.tolerarNunca).toBe(false);
     expect(j.totalMapeadas).toBe(2);
     expect(j.totalObservadas).toBe(1);
@@ -818,7 +819,7 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
 
   it('NUNCA_ATESTADA sai com observado/versao/via/idade NULL — ausente ≠ zero, o shell lê "-" e não absolve', () => {
     const rel = julgar(ESPERADOS, [obs('edge-a', 'aaa111')], ctx());
-    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false }));
+    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }));
     const b = j.vereditos.find((v: { edge: string }) => v.edge === 'edge-b');
     expect(b).toMatchObject({ estado: 'NUNCA_ATESTADA', esperado: 'bbb222', observado: null, versao: null, via: null, idadeHoras: null });
   });

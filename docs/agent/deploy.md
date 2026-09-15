@@ -136,7 +136,7 @@ O procedimento — e ele não é "mandar um recado":
 ```bash
 PEND=$(mktemp -t pend)                                     # caminho ÚNICO — ver a nota abaixo
 bun scripts/pendencias-deploy.ts --json > "$PEND"          # quem julga é o LEDGER, não o diff do PR
-bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: RPC em prod ANTES da edge
+bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: banco → edge e edge → edge (exit 4 = onda parcial)
 ```
 
 ⚠️ **O caminho é `mktemp`, não `/tmp/pend.json` — e isso não é preciosismo.** Este doc prescrevia o
@@ -156,6 +156,30 @@ o runtime passou a servir, e essa última ponte segue sendo o `fonte` DECLARADO 
 **0,9 crédito** para uma edge. O bot commita um merge `Lovable update` na `main` logo depois —
 confira o `git diff --stat` dele (no caso medido: só `src/integrations/supabase/types.ts`, +10
 linhas), porque é por esse mesmo caminho que o sync já reverteu fix mergeado.
+
+#### Ordem ENTRE edges: o pacote sai em ONDAS (#2469, 2026-09-14)
+
+O gate acima é banco → edge. Entre duas edges, a ordem **só existe se estiver no artefato**
+`supabase/functions/<B>/deploy-ordem.json`, junto da edge que ESPERA:
+
+```json
+{ "formato": "deploy-ordem/1",
+  "depoisDe": [{ "edge": "sync-reprocess", "motivo": "na ordem inversa o reprocess velho reescreve os pedidos novos para bruto", "pr": 2469 }] }
+```
+
+- **A prosa do PR não é lida por máquina.** No #2469 o corpo exigia `sync-reprocess` → `omie-vendas-sync`
+  e o pacote saiu com as duas numa mensagem. Medido em 400 PRs: 30 parágrafos com "≥2 edges + palavra
+  de ordem", UMA declaração real. Ordem que importa vai no manifesto, no MESMO PR que muda as edges.
+- **O pacote parte a leva.** B só ganha colagem com a predecessora **provada**: o par `(versao, fonte)`
+  da REF observado no ledger, com a observação entre 10 min (a invocação velha em voo) e 6 h. Estar na
+  mesma leva não prova nada. Exits: `0` integral · `3` nenhuma colagem · **`4` onda parcial** (cole só
+  o Passo 2, prove, meça o ledger e rode o pacote de novo — entre ondas o `pendencias:deploy` sai 1, e
+  está certo) · `2` mecânica (manifesto ilegível, ciclo).
+- **A seção "Retidas" não tem colagem, de propósito.** Colar a retida à mão, ou juntar as edges numa
+  mensagem, é reencenar o #2469. `pendencias:prompt` recusa (exit 3) a leva com manifesto: ele não faz ondas.
+- **Não há expiração automática.** Retirar uma exigência é PR com motivo — inércia por VERSAO liberaria
+  o deploy INCOERENTE (parecer do Codex). Parecer, desenho e o que fica descoberto:
+  [`ordem-entre-edges-da-mesma-leva.md`](../historico/ordem-entre-edges-da-mesma-leva.md).
 
 **O que continua sendo do founder, e por quê:**
 

@@ -147,10 +147,17 @@ export function lerArgJson(argv: string[]): boolean {
  * continua sendo null — ausente ≠ zero, então o shell recebe a ausência e não um `""` que pudesse
  * casar com um esperado vazio.
  */
-export function serializarRelatorio(rel: Relatorio, meta: { ref: string; tolerarNunca: boolean }): string {
+export function serializarRelatorio(
+  rel: Relatorio,
+  meta: { ref: string; tolerarNunca: boolean; geradoEm: string },
+): string {
   return JSON.stringify({
     formato: FORMATO_JSON,
     ref: meta.ref,
+    // O instante da MEDIÇÃO. A `idadeHoras` de cada observação é relativa a ele, não a quem lê: o
+    // `pendencias:pacote` soma os dois para julgar a prova de uma predecessora, e recusa liberar
+    // onda de ordem entre edges sobre veredito velho (`lib/ordem-entre-edges.ts`).
+    geradoEm: meta.geradoEm,
     tolerarNunca: meta.tolerarNunca,
     totalMapeadas: rel.totalMapeadas,
     totalObservadas: rel.totalObservadas,
@@ -1022,7 +1029,7 @@ export function main(argv: string[] = []): number {
 
   // No modo `--json` o stdout é SÓ o JSON: qualquer outra linha ali quebraria o parse do
   // consumidor, que trataria como não consultado. Avisos vão para o stderr.
-  if (json) console.log(serializarRelatorio(rel, { ref: REF_MAIN, tolerarNunca }));
+  if (json) console.log(serializarRelatorio(rel, { ref: REF_MAIN, tolerarNunca, geradoEm: new Date().toISOString() }));
   else imprimir(rel, linhasSemIdentidade);
   for (const linha of secao.linhas) {
     if (json) console.error(linha);
