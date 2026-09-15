@@ -1,0 +1,54 @@
+# Gate da declaração de ordem entre edges no CORPO do PR (continuação do #2501, issue #2493).
+#
+# Mora FORA do ci.yml de propósito. O corpo muda sem push (10% dos PRs mergeados editaram o corpo
+# depois do último CI), e o `validate` verde antigo segue valendo até o agregador novo nascer, minutos
+# depois — o draft que vira ready mergeia em 7-18 s. Este job não tem `needs`: o check nasce no próprio
+# evento e o veredito sai em segundos a cada edição.
+#
+# Só SEGURA o merge com o contexto `ordem-entre-edges` exigido na proteção da main, preso ao app
+# GitHub Actions (15368) — ativação do founder DEPOIS que este arquivo estiver na main. Até lá, avisa.
+#
+# As invariantes deste YAML são parte do gate e estão presas em scripts/ordem-entre-edges-workflow.test.ts:
+#   · sem `paths`: check exigido de workflow filtrado nunca reporta, e o PR trava;
+#   · sem `if` no job: job pulado conta como SATISFEITO para a proteção;
+#   · `edited` e `ready_for_review` nos tipos: sem eles vale o veredito do corpo ANTIGO;
+#   · o nome do job é único entre os workflows: dois jobs com o nome do contexto disputam o check.
+# Histórico: docs/historico/ordem-entre-edges-declaracao-no-pr.md
+
+name: ordem-entre-edges
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+# Um evento novo cancela o run anterior do MESMO PR: vale o veredito do corpo mais recente.
+concurrency:
+  group: ordem-entre-edges-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  ordem-entre-edges:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # `fetch-depth: 0` pelo mesmo motivo do ci.yml: a fatia é medida contra o merge-base com a main.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Pin ESTRITO x.y.z, na mesma versão do ci.yml (`bun run bunpin:check`). Sem `bun install`: o
+      # fecho de imports do gate é só builtin e `@/` (paths do tsconfig).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Declaração de ordem entre edges
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun run ordem:declaracao -- --evento "$GITHUB_EVENT_PATH"
