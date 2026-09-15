@@ -55,7 +55,8 @@ export const JSON_MAX_MIN = 30;
 /** Motivo curto demais não diz a quem retira a declaração o que ela protege. */
 const MOTIVO_MIN = 20;
 
-const SLUG_EDGE = /^[a-z0-9][a-z0-9-]*$/;
+/** Exportado para a declaração no corpo do PR (`ordem-entre-edges-declaracao.ts`) ler o MESMO slug. */
+export const SLUG_EDGE = /^[a-z0-9][a-z0-9-]*$/;
 
 interface Exigencia {
   /** A predecessora: tem de estar PROVADA em prod antes de a dependente ganhar colagem. */

@@ -180,6 +180,14 @@ O gate acima é banco → edge. Entre duas edges, a ordem **só existe se estive
 - **Não há expiração automática.** Retirar uma exigência é PR com motivo — inércia por VERSAO liberaria
   o deploy INCOERENTE (parecer do Codex). Parecer, desenho e o que fica descoberto:
   [`ordem-entre-edges-da-mesma-leva.md`](../historico/ordem-entre-edges-da-mesma-leva.md).
+- **Esquecer o manifesto fica vermelho no PR.** PR que muda o corpo de ≥2 edges (`contaComoCorpo`;
+  `_shared/` fora, salvo `FATIAS_EM_SHARED`) ou toca um manifesto precisa de UMA linha crua no corpo:
+  `Ordem entre edges: nenhuma` ou `Ordem entre edges: a → b` (pares separados por `;`). Par declarado
+  tem de estar no manifesto de `b` no HEAD, e par que o manifesto GANHA no PR tem de estar declarado.
+  Roda no workflow próprio `ordem-entre-edges.yml` (com `edited`/`ready_for_review`): editar o corpo
+  reroda em segundos, sem push. Exits `0` · `1` achado · `2` mecânica. **Só segura o merge com o
+  contexto `ordem-entre-edges` exigido na proteção da `main`** — ativação do founder; antes disso é aviso.
+  [`ordem-entre-edges-declaracao-no-pr.md`](../historico/ordem-entre-edges-declaracao-no-pr.md).
 
 **O que continua sendo do founder, e por quê:**
 
