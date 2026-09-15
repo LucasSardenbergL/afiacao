@@ -100,4 +100,30 @@ por VERSAO e prova por `CONFERE` + `fonte`). Achados e destino:
 
 ## Falsificação
 
-_(preenchida após a execução do `scripts/falsificar-ordem-entre-edges.sh`)_
+`bun run falsificar:ordem-edges` (`scripts/falsificar-ordem-entre-edges.sh`), sobre o commit `8a48c7330`,
+em 2026-09-14:
+
+- **25 sabotagens × 2 locales = 50/50 capturas certas, 0 falhas.** Controle verde (4 arquivos) ANTES da
+  primeira sabotagem, em `LC_ALL=C` e em `pt_BR.UTF-8`; cada alvo restaurado e conferido contra o commit
+  depois de cada sabotagem.
+- **Uma camada por vez, e nenhuma ficou verde** — não há camada redundante nem inalcançada:
+  - planejador, 15: estar na leva prova; par só pelo `fonte`; sem frescor; sem assentamento; idade real
+    sem o JSON; leva por nome; JSON sem `geradoEm`; JSON velho; JSON do futuro; predecessora sem par; ausente
+    do ledger; bloqueio perdendo para adiamento; ciclo; chave extra; manifesto no fecho;
+  - montador, 4: colagem com a leva inteira; Publish com retida; plano incoerente; ordem vazando no SHA;
+  - CLI do pacote, 3: exit 4 virando 0; tudo retido sem exit 3; régua da prova lendo VERSAO torta;
+  - inventário e o outro emissor, 3: manifesto ilegível vira ausência; inventário sem controle positivo;
+    `pendencias:prompt` sem recusa.
+- A marca de cada captura é o título ASCII do teste dono da regra, conferida AUSENTE no controle verde da
+  mesma invocação — senão casaria qualquer vermelho (#2487).
+- **A 1ª execução não rodou.** O `heavy` desistiu no teto de 1800 s de espera (4º da fila, vaga presa por um
+  pipeline de outra sessão) antes de o harness segurar a vaga: exit 1 de AUSÊNCIA de dado, zero sabotagens
+  aplicadas. A 2ª, com `AFIACAO_HEAVY_TIMEOUT=14400`, segurou UMA vaga para as 52 execuções — pedir vaga por
+  execução entraria 52 vezes na fila FIFO.
+
+## Validação
+
+- CI `validate` ✅ em `8a48c7330`: `Test Files 832 passed (832)` · `Tests 9036 passed | 1 skipped (9037)`.
+- A 1ª rodada do CI reprovou 1 de 9037: o gate `src/__tests__/erro-object-object-gate.test.ts` (#1642) pegou
+  `instanceof Error ? … : String(…)` no catch do `JSON.parse` do manifesto. Corrigido com `mensagemDeErro`, o
+  helper que o próprio gate prescreve.
