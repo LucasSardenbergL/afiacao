@@ -47,9 +47,18 @@ FROM linhas l JOIN sales_orders so ON so.id = l.sales_order_id;
 - `scripts/mutcheck.d/desconto-cupom.mut` — **11 mutações · 11 pegas · 0 sobreviventes**, com baseline verde, no job `mutation-check` do CI do #2502 (um locale só, o do CI).
 - **Caracterização byte a byte do cupom sem quebra: 72/72 idênticos** — 2 pedidos × 3 empresas × 2 renderizadores × 6 leituras que devem imprimir como hoje (não se aplica, falhou, lida vazia, lida nula, desconto zero, cabeçalho bruto).
 
+## Continuação — a mensagem de WhatsApp com a mesma régua
+
+O compartilhar da listagem de pedidos (`handleShareOrder` → `shareOrderViaWhatsApp`) tinha o mesmo defeito, numa mensagem que vai ao CLIENTE: cada item saía `quantidade × preço` do jsonb bruto sob o "Total" líquido.
+
+- **A régua é a do cupom, sem cópia.** `montarCompartilhamento` (`src/components/salesOrders/compartilhar.ts`) chama `resolverDescontoCupom` com a MESMA leitura do `printOrder` (`getDescontosItens`, mesmo cache). Com a quebra, cada linha vai LÍQUIDA (`receitaLiquidaItem`; "—" quando o desconto da linha não foi apurado) e a mensagem ganha **Subtotal / Desconto / Total, com os rótulos do cupom**. Sem a quebra, sai a mensagem de hoje, byte a byte.
+- **Por que Subtotal, e não só a linha "Desconto"** (decisão do founder): sob linhas líquidas, que já somam o Total, um "Desconto: - R$ 139,91" solto se lê como desconto AINDA NÃO aplicado — a conta que o cliente vê (itens − desconto) não fecha. O rodapé mostra a conta que a régua conferiu (bruto − desconto = total), e ela continua fechando no caso parcial ("Desconto (1 de 2 itens)").
+- **Fronteira de módulo.** `src/utils/whatsappShare.ts` é de `telefonia-whatsapp-rota` e não importa de vendas: recebe o total de cada linha (`lineTotal`: ausente = quantidade × preço, `null` = "—") e a `quebraDesconto` já conferidos, e só escreve.
+- **O aviso da equipe fala da MENSAGEM.** O aviso da régua termina com a consequência no cupom ("o cupom saiu sem a coluna de desconto"). A mensagem reaproveita a CAUSA, com os dois valores, e troca a consequência: "a mensagem saiu sem as linhas de desconto". Leitura que falhou diz que não conseguiu ler — nunca "sem desconto". Um teste reprova se o aviso voltar a citar o cupom.
+
 ## O que ficou aberto, de propósito
 
-- **O painel de detalhe do pedido** (`SalesOrderDetailSheet`) e o **compartilhar por WhatsApp** (`shareOrderViaWhatsApp`) têm a mesma incoerência — itens brutos sob total líquido. Fora do escopo do cupom.
+- **O painel de detalhe do pedido** (`SalesOrderDetailSheet`) tem a mesma incoerência — itens brutos sob total líquido. Fora do escopo do cupom e da mensagem (o compartilhar por WhatsApp foi coberto na continuação acima).
 - **A linha legada "Desconto" por CNPJ** (`cnpjsComDesconto`, com listas DIFERENTES nos dois renderizadores) lê `discount`, que é sempre 0: código morto, mantido para o caminho sem quebra ser byte a byte o de hoje.
 - **O cabeçalho do acervo** (herdado do #2469): pedido antigo com desconto apurado pelo backfill e cabeçalho bruto sai sem quebra, com aviso, até a passada `pedido_total_liquido_converter` (já na main em `b4b9c8778`, com apply manual) convertê-lo. O cupom não precisa de nova entrega: a conversão usa a mesma conta da conferência daqui (`round(Σ(qtd·preço − desconto_valor), 2)`, arredondada uma vez), então a quebra aparece sozinha quando o total convertido fecha com as linhas.
 - **REVISÃO INDEPENDENTE PENDENTE.** A 2ª opinião do Codex (`scripts/codex-async.sh -r max`) bateu em `COTA_ESGOTADA` em 2026-09-14 — plano declarado `prolite`, o assinado, janela reabre em 19/09 às 13:21. O intervalo foi coberto pelo Caminho B: mutação do `descontoCupom.ts`, caracterização byte a byte e auto-desafio das mesmas 6 perguntas do prompt. Isso cobre, mas não substitui, a revisão independente: rodar o Codex retroativo quando a cota voltar.
