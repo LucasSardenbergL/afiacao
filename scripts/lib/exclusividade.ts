@@ -697,6 +697,14 @@ export interface LinhaMatriz {
    */
   parouCedo: boolean;
   invalido: string | null;
+  /**
+   * Gates cuja execucao nesta linha e ANTERIOR a uma rodada que os excluiu por vermelho no baseline
+   * (`exclusividadeVermelhaSoPorGateNovo`) e re-mediu os outros. A celula continua EXECUCAO (`rodou`):
+   * descarta-la devolveria o GATE_NOVO do proprio `exclusividade` numa rodada do corpus inteiro, sem
+   * saida. Mas NAO fecha a completude — e de outro regime, e a linha nao certifica ninguem ate uma
+   * rodada re-executa-los. Ausente = nenhuma. Parecer Codex 2026-09-14.
+   */
+  defasados?: string[];
 }
 
 export interface BaselineGate {
@@ -744,17 +752,38 @@ export interface Matriz {
  * sabotagem nova, como se tivessem sido medidas contra ela; e execucoes de uma rodada INVALIDADA
  * (ex.: um gate estourou o tempo no meio) ressuscitavam numa linha valida. Nos tres casos a linha
  * nova substitui a antiga inteira — descartar dado de proveniencia duvidosa e o lado barato.
+ *
+ * ## A celula herdada do gate EXCLUIDO fica DEFASADA (parecer Codex 2026-09-14)
+ *
+ * Numa rodada que tirou um gate por vermelho no baseline (`excluidosDaRodada`), a celula antiga dele
+ * seguiria fechando a linha re-medida: o verde de um regime em que o gate novo nem existia, somado
+ * ao vermelho unico do gate novo, certificaria `[SO ELE]` para o novo. Descartar a celula tambem nao
+ * serve — sem nenhuma execucao valida, o `exclusividade` passaria a reprovar GATE_NOVO contra si
+ * mesmo. Ela fica, marcada em `defasados`, ate uma rodada que re-execute o gate.
  */
-export function fundirLinhas(antiga: LinhaMatriz | undefined, nova: LinhaMatriz): LinhaMatriz {
+export function fundirLinhas(
+  antiga: LinhaMatriz | undefined,
+  nova: LinhaMatriz,
+  excluidosDaRodada: readonly string[] = [],
+): LinhaMatriz {
   if (!antiga) return nova;
   if (antiga.defeitoFingerprint !== nova.defeitoFingerprint || antiga.invalido || nova.invalido) return nova;
   const porGate = new Map(antiga.execucoes.map((e) => [e.gate, e]));
   for (const e of nova.execucoes) porGate.set(e.gate, e);
-  return {
+  const fundida: LinhaMatriz = {
     ...nova,
     execucoes: [...porGate.values()].sort((a, b) => a.gate.localeCompare(b.gate)),
     parouCedo: antiga.parouCedo || nova.parouCedo,
   };
+  // A marca so vale para celula HERDADA: quem a rodada nova executou esta em dia, e quem nao tem
+  // celula nenhuma ja deixa a linha incompleta sem ajuda.
+  const executadosAgora = new Set(nova.execucoes.map((e) => e.gate));
+  const defasados = [...new Set([...(antiga.defasados ?? []), ...excluidosDaRodada])]
+    .filter((g) => porGate.has(g) && !executadosAgora.has(g))
+    .sort();
+  if (defasados.length) fundida.defasados = defasados;
+  else delete fundida.defasados;
+  return fundida;
 }
 
 export interface Exclusividade {
@@ -860,7 +889,9 @@ export function derivar(m: Matriz, opts: OpcoesDerivacao = {}): Exclusividade[] 
     const vermelhos = validas.filter((e) => e.reprovou);
     // Linha podada ja teve >=2 vermelhos: exclusividade REFUTADA, nem inconclusiva.
     const refutada = linha.parouCedo || vermelhos.length >= 2;
-    const completa = universo.every((g) => rodados.has(g));
+    // Celula DEFASADA conta como execucao (acima) e nunca como completude: e de outro regime.
+    const defasada = (linha.defasados ?? []).some((g) => noUniverso.has(g));
+    const completa = !defasada && universo.every((g) => rodados.has(g));
 
     for (const exec of validas) {
       const e = pega(exec.gate);
@@ -886,7 +917,9 @@ export function derivar(m: Matriz, opts: OpcoesDerivacao = {}): Exclusividade[] 
 // Veredito (o que o gate barato do CI imprime)
 // ---------------------------------------------------------------------------------------------
 
-type Severidade = 'REPROVA' | 'AVISA' | 'RELATA';
+/** As severidades que o gate emite — e as UNICAS que a sonda do motor aceita ler. */
+const SEVERIDADES = ['REPROVA', 'AVISA', 'RELATA'] as const;
+type Severidade = (typeof SEVERIDADES)[number];
 
 type CodigoVeredito =
   | 'GATE_NOVO_SEM_EXCLUSIVIDADE'
@@ -997,8 +1030,9 @@ export function avaliar(
         codigo: 'EXCLUSIVIDADE_INCONCLUSIVA',
         motivo:
           `foi o UNICO vermelho em ${e.inconclusivos.length} defeito(s) (${e.inconclusivos.join(', ')}), mas ` +
-          `nenhuma dessas linhas rodou todo gate bloqueante com a invocacao do CI — os ausentes sao ` +
-          `DESCONHECIDOS. Nao certifica exclusividade e NAO e redundancia; re-meca a linha com todos os gates.`,
+          `nenhuma dessas linhas tem todo gate bloqueante executado EM DIA com a invocacao do CI — os ausentes ` +
+          `(ou defasados) sao DESCONHECIDOS. Nao certifica exclusividade e NAO e redundancia; re-meca a linha ` +
+          `com todos os gates.`,
       });
     } else if (medido && e.exclusivos.length === 0 && e.pegou.length > 0) {
       // Zero so pode ser lido como REDUNDANCIA se o corpus chegou a mirar neste gate. Se nenhum
@@ -1028,6 +1062,111 @@ export function avaliar(
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// O `exclusividade` no baseline do MOTOR — o unico vermelho que a propria rodada resolve
+// ---------------------------------------------------------------------------------------------
+
+/** O gate que le a matriz que o motor escreve. */
+export const GATE_EXCLUSIVIDADE = 'exclusividade';
+
+interface LeituraDoVermelho {
+  /** Exit da execucao do BASELINE, com a invocacao do CI. `null` = morto por sinal ou estouro. */
+  rcBaseline: number | null;
+  /** Exit da SONDA: a mesma invocacao + `--json`, logo depois, sobre a mesma arvore (write-guard). */
+  rcSonda: number | null;
+  /** stdout da sonda. */
+  saidaSonda: string;
+  /** Os gates que ESTA rodada executa, fora o proprio `exclusividade`. */
+  gatesDaRodada: readonly string[];
+}
+
+type DecisaoDeExclusao = { excluir: true; gatesNovos: string[] } | { excluir: false; motivo: string };
+
+/**
+ * ## A circularidade que isto desfaz
+ *
+ * O gate `exclusividade` e bloqueante, logo o motor o mede — e ele le a matriz que o motor ESCREVE.
+ * Acrescente um gate G ao `ci.yml` e ele reprova `GATE_NOVO_SEM_EXCLUSIVIDADE` (G sem execucao
+ * valida); no baseline do motor ele fica vermelho, a guarda 1b aborta, e a execucao de G — a unica
+ * coisa que o poria verde — nunca e gravada. Os contornos eram `--gates <todos menos ele>`, a mao,
+ * e `--ignorar-baseline`, que ignora QUALQUER vermelho.
+ *
+ * ## Por que EXCLUIR da rodada, e nunca "ignorar o vermelho"
+ *
+ * Gate vermelho antes da sabotagem e vermelho em todo defeito: medi-lo fabricaria um detector
+ * universal. Fora da rodada ele nao produz execucao nenhuma — as linhas ficam sem ele, e a
+ * derivacao ja sabe que linha sem o universo inteiro nao certifica ninguem (`[inconcl]`).
+ *
+ * ## Por que tao estreito (cada criterio falha FECHADO: na duvida, o aborto de sempre)
+ *
+ *   - exit 1 nas DUAS leituras: 1 e o exit de REPROVA; 2 e erro do proprio gate e `null` e
+ *     ausencia de dado. Baseline 1 com sonda 0 e leitura que discorda de si mesma.
+ *   - JSON no contrato e ancora intacta: a ancora quebrada tambem sai 1, e nao e gate novo.
+ *   - TODA REPROVA e GATE_NOVO: um unico motivo alheio (ex.: MATRIZ_AUSENTE) e vermelho que a
+ *     rodada nao resolve.
+ *   - todo gate novo e EXECUTADO por esta rodada: se o `--gates` o deixou de fora, a rodada nao
+ *     grava a execucao que o resolveria — o vermelho seguiria, e excluir so esconderia o porque.
+ *     Se o gate novo e o proprio `exclusividade`, exclui-lo nunca o resolveria.
+ */
+export function exclusividadeVermelhaSoPorGateNovo(leitura: LeituraDoVermelho): DecisaoDeExclusao {
+  const { rcBaseline, rcSonda, saidaSonda, gatesDaRodada } = leitura;
+  const recusa = (motivo: string): DecisaoDeExclusao => ({ excluir: false, motivo });
+  const exit = (rc: number | null) => (rc === null ? 'sem exit (sinal ou estouro)' : String(rc));
+
+  if (rcBaseline !== 1) {
+    return recusa(`RC-BASELINE o baseline saiu ${exit(rcBaseline)} — so o exit 1 e REPROVA (2 e erro do proprio gate)`);
+  }
+  if (rcSonda !== 1) {
+    return recusa(`RC-SONDA a sonda --json saiu ${exit(rcSonda)} e o baseline saiu 1 — as duas leituras do mesmo gate discordam`);
+  }
+
+  let doc: unknown;
+  try {
+    doc = JSON.parse(saidaSonda);
+  } catch {
+    return recusa(`SONDA-ILEGIVEL o stdout da sonda --json nao e JSON: ${JSON.stringify(saidaSonda.trim().slice(0, 80))}`);
+  }
+  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
+    return recusa('SONDA-FORA-DO-CONTRATO o JSON da sonda nao e um objeto');
+  }
+  const { ancoraQuebrada, vereditos } = doc as Record<string, unknown>;
+  if (!Array.isArray(ancoraQuebrada) || !Array.isArray(vereditos)) {
+    return recusa('SONDA-FORA-DO-CONTRATO faltam as listas `ancoraQuebrada` e `vereditos`');
+  }
+  const lidos: Veredito[] = [];
+  for (const v of vereditos) {
+    const x = (typeof v === 'object' && v !== null ? v : {}) as Record<string, unknown>;
+    // Severidade fora das que o gate emite e protocolo desconhecido — nunca "nao e REPROVA, entao passa".
+    if (typeof x.gate !== 'string' || !SEVERIDADES.some((s) => s === x.severidade)) {
+      return recusa(`SONDA-FORA-DO-CONTRATO veredito que o gate nao emite: ${JSON.stringify(v)?.slice(0, 120)}`);
+    }
+    lidos.push(x as unknown as Veredito);
+  }
+
+  if (ancoraQuebrada.length > 0) {
+    const codigos = ancoraQuebrada.map((a) => String((a as { codigo?: unknown } | null)?.codigo)).join(', ');
+    return recusa(`ANCORA-QUEBRADA ${codigos} — a ancora da raiz tambem sai 1, e nao e gate novo`);
+  }
+  const reprovas = lidos.filter((v) => v.severidade === 'REPROVA');
+  if (reprovas.length === 0) {
+    return recusa('SEM-REPROVA exit 1 sem nenhuma REPROVA no --json — vermelho sem motivo legivel');
+  }
+  const alheias = reprovas.filter((v) => v.codigo !== 'GATE_NOVO_SEM_EXCLUSIVIDADE');
+  if (alheias.length > 0) {
+    return recusa(`REPROVA-ALHEIA ${alheias.map((v) => `${v.codigo} (${v.gate})`).join(', ')} — vermelho que esta rodada nao resolve`);
+  }
+  const novos = [...new Set(reprovas.map((v) => v.gate))].sort();
+  if (novos.includes(GATE_EXCLUSIVIDADE)) {
+    return recusa(`GATE-NOVO-E-O-PROPRIO ${GATE_EXCLUSIVIDADE} — tira-lo da rodada nunca gravaria a execucao que o livraria`);
+  }
+  const naRodada = new Set(gatesDaRodada);
+  const fora = novos.filter((g) => !naRodada.has(g));
+  if (fora.length > 0) {
+    return recusa(`GATE-NOVO-FORA-DA-RODADA ${fora.join(', ')} — esta rodada nao o executa, entao nao grava a execucao que o resolveria`);
+  }
+  return { excluir: true, gatesNovos: novos };
 }
 
 /**
@@ -1063,7 +1202,7 @@ export function resumir(m: Matriz, opts: OpcoesDerivacao = {}): string {
     `matriz de exclusividade — ${m.linhas.length} defeito(s) x ${derivados.length} gate(s), medida em ${m.medidoEm}`,
     ...linhas,
     `   [SO ELE]  = ha defeito que SO ele pega, numa linha que rodou TODO gate do universo`,
-    `   [inconcl] = unico vermelho entre os que rodaram, mas a linha nao rodou todo o universo — nao certifica`,
+    `   [inconcl] = unico vermelho entre os que rodaram, mas a linha nao rodou todo o universo (ou herdou celula defasada) — nao certifica`,
     `   [redund]  = o corpus mirou nele e tudo que pega, outro tambem pega (NESTE corpus de ${m.linhas.length})`,
     `   [s/ mira] = nenhum defeito do corpus foi escrito para ele — zero aqui mede o CORPUS, nao o gate`,
     ...(comDever.length ? [`   linhas do autor DILIGENTE (com dever de casa): ${comDever.join('; ')}`] : []),
