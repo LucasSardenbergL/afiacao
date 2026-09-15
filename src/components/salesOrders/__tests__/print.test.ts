@@ -1,7 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { resolveCompanyForPrint, buildSalesOrderPrintRow, itemTotal } from '../print';
+import { describe, it, expect, afterEach } from 'vitest';
+import { resolveCompanyForPrint, buildSalesOrderPrintRow, itemTotal, printSalesOrder } from '../print';
 import { buildPrintData } from '@/components/sales/print/buildPrintHtml';
+import type { LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
 import type { SalesOrder } from '../types';
+
+const SEM_ORDER_ITEMS: LeituraDescontosItens = { estado: 'nao-se-aplica' };
 
 // Um pedido de venda como ele chega na listagem (select('*') + _source).
 // Em runtime os itens trazem codigo/unidade/tint além de descricao/qtd/valores.
@@ -110,6 +113,8 @@ describe('integração com o pipeline de impressão real (buildPrintData)', () =
     const data = buildPrintData(
       buildSalesOrderPrintRow(order, 'ACME LTDA', '12.345.678/0001-99'),
       resolveCompanyForPrint(order.account),
+      undefined,
+      SEM_ORDER_ITEMS,
     );
     expect(data.companyName).toBe('COLACOR S.C LTDA');
     expect(data.customerName).toBe('ACME LTDA');
@@ -117,5 +122,54 @@ describe('integração com o pipeline de impressão real (buildPrintData)', () =
     expect(data.items[0].codigo).toBe('PRD01');
     expect(data.items[0].unidade).toBe('GL');
     expect(data.orderNumber).toBe('11104'); // strip de zeros à esquerda
+  });
+});
+
+// ── printSalesOrder: o desconto de item e o aviso que volta para a tela ─────────────────────────
+// `openPrintOrder` escreve o cupom numa janela nova. O ambiente aqui é node: um dublê de `window`
+// guarda o HTML — sem mockar o módulo do layout, que é de outro módulo do app.
+const g = globalThis as unknown as { window?: unknown };
+const janelaOriginal = g.window;
+const escritos: string[] = [];
+afterEach(() => {
+  g.window = janelaOriginal;
+  escritos.length = 0;
+});
+function comJanelaDeImpressao() {
+  g.window = { open: () => ({ document: { write: (h: string) => { escritos.push(h); }, close: () => {} } }) };
+}
+
+// Pedido real oben 12183048572 (1 × 460,25 com R$ 23,01; 2 × 584,50 com R$ 116,90).
+const pedidoComDesconto = (total: number) =>
+  baseOrder({
+    items: [
+      { descricao: 'BASE METALIZADA', quantidade: 1, valor_unitario: 460.25, omie_codigo_produto: 8689791246 },
+      { descricao: 'BASE BRANCA', quantidade: 2, valor_unitario: 584.5, omie_codigo_produto: 8689787325 },
+    ] as unknown as SalesOrder['items'],
+    subtotal: total,
+    total,
+    omie_numero_pedido: '12780',
+  });
+const LIDA: LeituraDescontosItens = {
+  estado: 'lida',
+  linhas: [
+    { omie_codigo_produto: 8689787325, quantity: 2, unit_price: 584.5, desconto_valor: 116.9 },
+    { omie_codigo_produto: 8689791246, quantity: 1, unit_price: 460.25, desconto_valor: 23.01 },
+  ],
+};
+
+describe('printSalesOrder — desconto de item', () => {
+  it('imprime a quebra de desconto e não devolve aviso quando o desconto fecha com o total', () => {
+    comJanelaDeImpressao();
+    expect(printSalesOrder(pedidoComDesconto(1489.34), 'ACME', '', {}, LIDA)).toBeNull();
+    expect(escritos).toHaveLength(1);
+    expect(escritos[0]).toContain('>Desconto</th>');
+  });
+
+  it('cabeçalho ainda bruto: imprime como hoje e devolve o aviso para a tela mostrar', () => {
+    comJanelaDeImpressao();
+    expect(printSalesOrder(pedidoComDesconto(1629.25), 'ACME', '', {}, LIDA)).toMatch(/^Pedido 12780: /);
+    expect(escritos).toHaveLength(1);
+    expect(escritos[0]).not.toContain('>Desconto</th>');
   });
 });

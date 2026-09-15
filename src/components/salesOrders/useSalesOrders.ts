@@ -24,6 +24,9 @@ import { dedupeFeedRows, filterFeedRows } from './feed';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
 import { softDeleteOrder } from './soft-delete';
 import { printSalesOrder } from './print';
+import { buscarDescontosItens } from '@/components/sales/print/buscarDescontosItens';
+import { leituraDoPedido, mensagemAvisoDesconto, type LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
+import { ehFalhaDePagina } from '@/lib/postgrest';
 
 // O PostgREST capa cada resposta em 1000 linhas → a query drena em páginas até o
 // count (medido em prod: ~2.660 pedidos ≈ 3 requests). Teto de sanidade de
@@ -124,19 +127,46 @@ export function useSalesOrders() {
       staleTime: 60_000,
     });
 
-  // Aquece o cache do detalhe no hover (catch silencioso — é só otimização).
-  // Também mitiga o popup-blocker: com cache quente, o window.open da impressão
+  /* ─── Desconto dos itens (order_items.desconto_valor) — só o cupom usa ─── */
+  // Fora do detalhe de propósito: o painel não mostra desconto e não paga esta leitura.
+  // Falha de LEITURA (página assinada pelo fetchAllPages) vira `falhou` — o cupom sai como hoje
+  // e a tela avisa; qualquer outra exceção é bug e sobe crua, sem se disfarçar de "indisponível".
+  const getDescontosItens = async (row: Pick<OrderFeedRow, 'origin' | 'id'>): Promise<LeituraDescontosItens> => {
+    if (row.origin !== 'sales') return { estado: 'nao-se-aplica' };
+    try {
+      const porPedido = await queryClient.fetchQuery({
+        queryKey: ['order-descontos-itens', user?.id, row.id],
+        queryFn: () => buscarDescontosItens([row.id]),
+        staleTime: 60_000,
+      });
+      return leituraDoPedido(porPedido, row.id);
+    } catch (e) {
+      if (!ehFalhaDePagina(e)) throw e;
+      console.warn('[useSalesOrders] desconto dos itens indisponível (cupom sem a coluna de desconto):', e);
+      return { estado: 'falhou' };
+    }
+  };
+
+  // Aquece o cache do detalhe (e do desconto dos itens) no hover (catch silencioso — é só
+  // otimização). Também mitiga o popup-blocker: com cache quente, o window.open da impressão
   // roda imediato no clique (dentro da user activation).
   const prefetchDetail = (row: OrderFeedRow) => {
     void getDetail(row).catch(() => {});
+    void getDescontosItens(row).catch(() => {});
   };
 
   // Imprime o cupom (mesmo layout de /sales/print). Espera o detalhe completo
-  // (itens com codigo/unidade/tint, payload de parcelas, endereço) ANTES de abrir.
+  // (itens com codigo/unidade/tint, payload de parcelas, endereço) e o desconto
+  // dos itens ANTES de abrir.
   const printOrder = async (row: OrderFeedRow) => {
     try {
-      const d = await getDetail(row);
-      printSalesOrder(d.order, d.customerName, d.customerDocument, companyLogos);
+      const [d, descontos] = await Promise.all([getDetail(row), getDescontosItens(row)]);
+      const aviso = mensagemAvisoDesconto([
+        printSalesOrder(d.order, d.customerName, d.customerDocument, companyLogos, descontos),
+      ]);
+      // Aviso da EQUIPE, não do papel: o cupom saiu sem a quebra de um desconto que existe
+      // ou que não se conseguiu ler.
+      if (aviso) toast.warning(aviso.titulo, { description: aviso.descricao });
     } catch (e) {
       console.error(e);
       toast.error('Não foi possível carregar o pedido para imprimir');
