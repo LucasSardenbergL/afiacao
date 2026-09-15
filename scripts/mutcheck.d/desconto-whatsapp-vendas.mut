@@ -1,0 +1,26 @@
+# Invariantes money-path da mensagem de WhatsApp de VENDAS com desconto de item (a régua do cupom).
+# @src: src/components/salesOrders/compartilhar.ts
+# @test: src/components/salesOrders/__tests__/compartilhar.test.ts
+# Rode: bash scripts/mutcheck.sh src/components/salesOrders/compartilhar.ts src/components/salesOrders/__tests__/compartilhar.test.ts scripts/mutcheck.d/desconto-whatsapp-vendas.mut
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ POR QUE ESTE CONTRATO EXISTE: a mensagem vai ao CLIENTE, e em prod (2026-09-14) os pedidos com
+# desconto apurado ainda têm cabeçalho BRUTO (deploy do #2469 pendente) — o caminho "sem quebra, com
+# aviso" é o que roda hoje. As mutações trocam o que separa uma mensagem certa de uma plausível: o
+# líquido que vira bruto ou herda o desconto de outra linha, o não apurado que vira 0, a mensagem de
+# hoje que muda sem quebra, e o aviso da equipe que some ou volta a falar do cupom.
+
+# ── Com a quebra: cada linha é o LÍQUIDO dela ────────────────────────────────────────────────
+PEGA | líquido vira bruto (desconto da linha ignorado)            | s/receitaLiquidaItem\(item\.valor_unitario, item\.quantidade, descontoPorItem\[i\]\)/receitaLiquidaItem(item.valor_unitario, item.quantidade, 0)/
+PEGA | linha leva o desconto de OUTRA linha                       | s/descontoPorItem\[i\]\) \} : \{\}\),/descontoPorItem[0]) } : {}),/
+PEGA | desconto NÃO apurado vira 0 na linha (o null → 0 renascido) | s/descontoPorItem\[i\]\) \} : \{\}\),/descontoPorItem[i] ?? 0) } : {}),/
+
+# ── Sem a quebra: a mensagem de hoje, intocada ───────────────────────────────────────────────
+PEGA | sem quebra, a linha ganha lineTotal (a mensagem de hoje muda) | s/const descontoPorItem = decisao\.quebra \? decisao\.descontoPorItem : null;/const descontoPorItem = decisao.quebra ? decisao.descontoPorItem : itens.map(() => 0);/
+PEGA | pedido com items null quebra em vez de sair vazio            | s/const itens = order\.items \?\? \[\];/const itens = order.items!;/
+
+# ── O aviso da equipe: existe, e fala da MENSAGEM ────────────────────────────────────────────
+PEGA | aviso da régua engolido (a equipe não fica sabendo)          | s/if \(avisoDaRegua === null\) return null;/return null;/
+PEGA | aviso volta a citar o cupom (causa + consequência do cupom)  | s/const causa = avisoDaRegua\.split\(' — '\)\[0\];/const causa = avisoDaRegua;/
+PEGA | leitura que falhou não pede para tentar de novo             | s/leitura\.estado === 'falhou' \? ' Tente compartilhar de novo\.' : '';/false ? ' Tente compartilhar de novo.' : '';/
+PEGA | "tente de novo" em todo aviso, até no cabeçalho bruto        | s/leitura\.estado === 'falhou' \?/true ?/

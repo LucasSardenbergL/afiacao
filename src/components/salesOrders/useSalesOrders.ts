@@ -24,6 +24,7 @@ import { dedupeFeedRows, filterFeedRows } from './feed';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
 import { softDeleteOrder } from './soft-delete';
 import { printSalesOrder } from './print';
+import { montarCompartilhamento } from './compartilhar';
 import { buscarDescontosItens } from '@/components/sales/print/buscarDescontosItens';
 import { leituraDoPedido, mensagemAvisoDesconto, type LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
 import { ehFalhaDePagina } from '@/lib/postgrest';
@@ -127,10 +128,10 @@ export function useSalesOrders() {
       staleTime: 60_000,
     });
 
-  /* ─── Desconto dos itens (order_items.desconto_valor) — só o cupom usa ─── */
+  /* ─── Desconto dos itens (order_items.desconto_valor) — o cupom e a mensagem de WhatsApp ─── */
   // Fora do detalhe de propósito: o painel não mostra desconto e não paga esta leitura.
-  // Falha de LEITURA (página assinada pelo fetchAllPages) vira `falhou` — o cupom sai como hoje
-  // e a tela avisa; qualquer outra exceção é bug e sobe crua, sem se disfarçar de "indisponível".
+  // Falha de LEITURA (página assinada pelo fetchAllPages) vira `falhou` — o cupom e a mensagem saem
+  // como hoje e a tela avisa; qualquer outra exceção é bug e sobe crua, sem se disfarçar de "indisponível".
   const getDescontosItens = async (row: Pick<OrderFeedRow, 'origin' | 'id'>): Promise<LeituraDescontosItens> => {
     if (row.origin !== 'sales') return { estado: 'nao-se-aplica' };
     try {
@@ -142,14 +143,14 @@ export function useSalesOrders() {
       return leituraDoPedido(porPedido, row.id);
     } catch (e) {
       if (!ehFalhaDePagina(e)) throw e;
-      console.warn('[useSalesOrders] desconto dos itens indisponível (cupom sem a coluna de desconto):', e);
+      console.warn('[useSalesOrders] desconto dos itens indisponível (cupom e mensagem sem a quebra de desconto):', e);
       return { estado: 'falhou' };
     }
   };
 
   // Aquece o cache do detalhe (e do desconto dos itens) no hover (catch silencioso — é só
   // otimização). Também mitiga o popup-blocker: com cache quente, o window.open da impressão
-  // roda imediato no clique (dentro da user activation).
+  // e do WhatsApp roda imediato no clique (dentro da user activation).
   const prefetchDetail = (row: OrderFeedRow) => {
     void getDetail(row).catch(() => {});
     void getDescontosItens(row).catch(() => {});
@@ -173,14 +174,13 @@ export function useSalesOrders() {
     }
   };
 
+  // Compartilha por WhatsApp. Espera o detalhe e o desconto dos itens ANTES de abrir: quando a régua
+  // do cupom confere o desconto, as linhas vão líquidas e a mensagem ganha Subtotal/Desconto
+  // (./compartilhar); senão, sai a mensagem de sempre.
   const handleShareOrder = async (row: OrderFeedRow) => {
     try {
-      const d = await getDetail(row);
-      const items = (d.order.items || []).map((item) => ({
-        description: item.descricao,
-        quantity: item.quantidade,
-        unitPrice: item.valor_unitario,
-      }));
+      const [d, descontos] = await Promise.all([getDetail(row), getDescontosItens(row)]);
+      const { items, quebraDesconto, aviso } = montarCompartilhamento(d.order, descontos);
       const orderNumbers = d.order.omie_numero_pedido
         ? [d.order.omie_numero_pedido.replace(/^0+/, '') || '0']
         : [];
@@ -192,7 +192,11 @@ export function useSalesOrders() {
         // String já formatada: pedido do sync (data-pura UTC) sai sem hora
         // fabricada e no dia certo na mensagem ao cliente.
         date: formatarDataPedido(d.order.created_at),
+        quebraDesconto,
       });
+      // Aviso da EQUIPE, não da mensagem: ela saiu sem as linhas de um desconto que existe ou que
+      // não se conseguiu ler.
+      if (aviso) toast.warning(aviso.titulo, { description: aviso.descricao });
     } catch (e) {
       console.error(e);
       toast.error('Não foi possível carregar o pedido para compartilhar');

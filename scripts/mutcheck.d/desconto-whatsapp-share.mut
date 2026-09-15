@@ -1,0 +1,20 @@
+# Invariantes da MENSAGEM de WhatsApp com desconto de item (linhas líquidas + Subtotal/Desconto).
+# @src: src/utils/whatsappShare.ts
+# @test: src/utils/__tests__/whatsappShare.test.ts
+# Rode: bash scripts/mutcheck.sh src/utils/whatsappShare.ts src/utils/__tests__/whatsappShare.test.ts scripts/mutcheck.d/desconto-whatsapp-share.mut
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ POR QUE ESTE CONTRATO EXISTE: a mensagem vai ao CLIENTE. Os valores chegam prontos de vendas (a
+# régua do cupom, em src/components/salesOrders/compartilhar.ts) e este módulo só escreve — mas é
+# aqui que o `null` de "líquido não sabido" pode virar a conta bruta, e que o rodapé pode deixar de
+# mostrar a conta que a régua conferiu (Subtotal − Desconto = Total).
+
+# ── Ausente ≠ não sabido ≠ bruto ─────────────────────────────────────────────────────────────
+PEGA | lineTotal null (não sabido) cai na conta bruta            | s/item\.lineTotal !== undefined \? item\.lineTotal : /item.lineTotal != null ? item.lineTotal : /
+PEGA | lineTotal informado é ignorado (volta quantidade × preço)  | s/item\.lineTotal !== undefined \? item\.lineTotal : /false ? item.lineTotal : /
+
+# ── O rodapé mostra a conta conferida ────────────────────────────────────────────────────────
+PEGA | quebra ignorada: linhas líquidas sem Subtotal/Desconto      | s/const descontoInfo = quebraDesconto$/const descontoInfo = false/
+PEGA | Subtotal some (itens − desconto deixa de fechar à vista)    | s/\? `Subtotal: \$\{formatPrecoOuAusente\(quebraDesconto\.subtotalBruto\)\}\\n` \+$/? `` +/
+PEGA | rótulo parcial some (item não apurado fica escondido)       | s/const descontoParcial = quebraDesconto && quebraDesconto\.itensApurados < items\.length$/const descontoParcial = false/
+PEGA | rótulo parcial sempre, mesmo com todos os itens apurados    | s/quebraDesconto\.itensApurados < items\.length$/quebraDesconto.itensApurados <= items.length/
