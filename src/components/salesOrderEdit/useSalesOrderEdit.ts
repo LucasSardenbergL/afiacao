@@ -6,6 +6,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Tables, Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { track } from '@/lib/analytics';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { paginateAll } from '@/hooks/unifiedOrder/catalog-helpers';
 import { buildExclusionQuery } from '@/hooks/unifiedOrder/types';
@@ -425,6 +426,34 @@ export function useSalesOrderEdit() {
               'crie um pedido novo pelo balcão (lá a reserva de estoque e o backorder explícito existem).',
             duration: 12000,
           });
+          setSaving(false);
+          return;
+        }
+        if ((data as { blocked?: string } | null)?.blocked === 'desconto_omie') {
+          // Guard money-path da edge: a edição EXCLUI e reinclui os itens no Omie sem o desconto, então
+          // salvar por aqui apagaria o desconto comercial do pedido. O Omie NÃO foi atualizado e o pedido
+          // local seguiu intacto. Sem override no app — pedido com desconto se altera no Omie.
+          // Só `ilegivel` NÃO afirma que há desconto: diz que não foi possível verificar.
+          const bloqueio = data as { itens?: Array<{ motivo?: string }>; capa?: { motivo?: string } | null };
+          const motivos = [...(bloqueio.itens ?? []).map(i => i.motivo), bloqueio.capa?.motivo];
+          const comprovado = motivos.includes('desconto');
+          track('pedido.edicao_bloqueada', {
+            motivo: 'desconto_omie',
+            comprovado,
+            itens: bloqueio.itens?.length ?? 0,
+            empresa: account,
+          });
+          toast.error(
+            comprovado
+              ? 'Edição bloqueada: este pedido tem desconto de item no Omie — o Omie NÃO foi atualizado'
+              : 'Edição bloqueada: não foi possível verificar o desconto dos itens no Omie — o Omie NÃO foi atualizado',
+            {
+              description:
+                'Salvar por aqui reenviaria os itens sem desconto e apagaria o desconto comercial do pedido. ' +
+                'Faça a alteração direto no Omie.',
+              duration: 12000,
+            },
+          );
           setSaving(false);
           return;
         }

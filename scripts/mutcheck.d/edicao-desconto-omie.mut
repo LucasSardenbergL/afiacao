@@ -1,0 +1,34 @@
+# Invariantes money-path do GUARD DE DESCONTO da edição de pedido (`alterar_pedido` do omie-vendas-sync).
+# @src: supabase/functions/_shared/edicao-desconto-omie.ts
+# @test: supabase/functions/_shared/edicao-desconto-omie_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ POR QUE ESTE CONTRATO EXISTE: o guard só protege se DETECTAR desconto. Cada mutação abaixo deixa
+# um pedido com desconto passar — e a edição, então, apaga o desconto comercial no ERP. Uma suíte que só
+# visse o caso comum ficaria verde sobre qualquer uma delas: medido em 2026-09-14, 69 de 74 pedidos
+# ingeridos desde 2026-09-10 não têm desconto de item.
+
+# ── Presença: a régua monetária responde 0 onde o campo cru diz que há desconto ───────────────────
+PEGA | campo presente e inválido deixa de acusar                  | s/ && !sinais\.includes\("invalido"\);/;/
+PEGA | campo cru positivo com régua em zero deixa de acusar       | s/\} else if \(!legivel \|\| sinais\.includes\("positivo"\)\) \{/} else if (!legivel) {/
+PEGA | valor não-finito da régua vira desconto em R$              | s/const legivel = desconto !== null && Number\.isFinite\(desconto\) && /const legivel = desconto !== null && /
+PEGA | ilegível da régua vira zero (o null → 0 renascido)         | s/const desconto = descontoItemOmie\(prod, base\);/const desconto = descontoItemOmie(prod, base) ?? 0;/
+PEGA | desconto ZERO passa a acusar (o guard trava todo pedido)   | s/if \(legivel && desconto > 0\) \{/if (legivel && desconto >= 0) {/
+PEGA | string vazia deixa de ser ausente (vira inválido)          | s/if \(typeof raw === "string" && raw\.trim\(\) === ""\) return "ausente";/if (false) return "ausente";/
+
+# ── Universo: o det INTEIRO, porque a edição exclui todos os itens ─────────────────────────────────
+PEGA | item sem codigo_produto sai do universo                    | s/const prod = item\?\.produto \|\| \{\};/const prod = item?.produto || {}; if (!prod.codigo_produto) return;/
+PEGA | item sem preço sai do universo                             | s/const base = preco === null \? null : /if (preco === null) return; const base = preco === null ? null : /
+
+# ── O valor e a identidade do acusado ─────────────────────────────────────────────────────────────
+PEGA | base do percentual vira o UNITÁRIO, não a linha            | s/Number\(prod\.quantidade \|\| 1\) \* preco/preco/
+PEGA | ilegível ganha valor 0 fabricado                           | s/motivo: "ilegivel", valor: null \}\);/motivo: "ilegivel", valor: 0 });/
+PEGA | índice deslocado                                           | s/acusados\.push\(\{ indice, codigo_produto: prod\.codigo_produto \?\? null, motivo: "desconto"/acusados.push({ indice: indice + 1, codigo_produto: prod.codigo_produto ?? null, motivo: "desconto"/
+
+# ── Capa e veredito ───────────────────────────────────────────────────────────────────────────────
+PEGA | capa inválida deixa de acusar                              | s/if \(sinal === "invalido"\) return \{ motivo: "ilegivel", valor: null \};/if (false) return { motivo: "ilegivel", valor: null };/
+PEGA | capa com desconto deixa de acusar                          | s/if \(sinal === "positivo"\) return/if (false) return/
+PEGA | veredito ignora a capa                                     | s/acusado: itens\.length > 0 \|\| capa !== null/acusado: itens.length > 0/
