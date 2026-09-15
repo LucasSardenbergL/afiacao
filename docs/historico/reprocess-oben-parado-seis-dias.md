@@ -9,8 +9,9 @@ por pedido. Por isso derrubava a página, a run e os estágios seguintes. Nenhum
 a validação cruzada por execução e a resposta de por que ninguém foi avisado.
 
 Diário irmão (o conserto e o desconto por linha):
-[`reconciliacao-desconto-da-linha-e-coerencia-por-pedido.md`](reconciliacao-desconto-da-linha-e-coerencia-por-pedido.md)
-(chega com o #2496). Antecessores: #2384 (passivo do agregado), #2469 (total líquido).
+`docs/historico/reconciliacao-desconto-da-linha-e-coerencia-por-pedido.md`, que chega com o #2496. Fica
+sem link até lá, porque o gate de links reprova destino que ainda não existe. Antecessores: #2384
+(passivo do agregado), #2469 (total líquido).
 
 ## Linha do tempo (UTC, medida via `psql-ro`)
 
