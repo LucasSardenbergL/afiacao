@@ -91,9 +91,10 @@ ESLint da trava, que lê AST e não texto.
 - **Bash puro:** os hooks do `.claude/settings.json` e o pre-commit.
 - **`bun test` (runner nativo): nenhum invocador** — nem no `package.json`, workflows, hooks, skills
   ou `.sh`. Pelo índice, o único casamento fora de docs é uma *string* de fixture em
-  `scripts/test-pipestatus-guard-sinal.sh`. Mas o `bunfig.toml` ainda configura `[test] preload`, o
-  que deixa o runner errado *quase* funcionando (achado A9, item M-21 do plano de melhorias de
-  2026-09-05). A tabela do caso conhecido é o preço medido disso: verde sem isolar.
+  `scripts/test-pipestatus-guard-sinal.sh`. Mas o `bunfig.toml` configurava um `[test] preload` que
+  deixava o runner errado *quase* funcionando (achado A9, item M-21 do plano de melhorias de
+  2026-09-05). A tabela do caso conhecido é o preço medido disso: verde sem isolar. Desde o M-21, o
+  mesmo preload faz o `bun test` sair 1 — ver *Consertos*.
 
 **Onde se muta `process.env`.** Num único arquivo do escopo: o próprio caso conhecido
 (`GIT_CONFIG_GLOBAL` e `GIT_CONFIG_NOSYSTEM`; a restauração do `finally` não abre filho depois). Os
@@ -124,10 +125,44 @@ vitest, onde a medição mostra a mutação chegando. Dar `env: process.env` às
 seria diff grande, em arquivos quentes de dezenas de worktrees, sem efeito mensurável — e esconderia
 o que de fato protege hoje, que é não haver mutação.
 
-Fica de fora, com dono: fazer o `bun test` falhar alto em vez de *quase* rodar é o item M-21 do plano
-de 2026-09-05, que junta outras duas mudanças de teste. A medição acima é a evidência que faltava
-àquele item: o custo do runner errado não é só `vi.mock` ausente, é **teste de isolamento que passa
-sem isolar**.
+**M-21, a parte "preload que lança" — entregue em 2026-09-14.** A medição acima era a evidência que
+faltava àquele item do plano de 2026-09-05: o custo do runner errado não é só `vi.mock` ausente, é
+**teste de isolamento que passa sem isolar**. O `src/test/bun-setup.ts` deixou de ser o shim: agora
+imprime a mensagem abaixo e sai 1, antes de carregar qualquer arquivo de teste.
+
+```text
+use bun run test (vitest); bun test não é o runner deste repo — ver docs/historico/bun-filho-sem-env-herda-a-partida.md
+```
+
+Duas escolhas, as duas medidas no bun 1.3.14:
+
+- **Manter o preload, em vez de tirá-lo** (a outra saída que o A9 propunha): com o `bunfig.toml` sem
+  `[test]`, o `bun test scripts/sonda-versao-bump-gate.test.ts` segue `54 pass` e exit 0. Tirar o
+  preload tira o shim, mas não faz o runner falhar.
+- **`process.exit(1)`, e não `throw`:** preload que lança não aborta — o bun repete o erro uma vez por
+  arquivo de teste e fecha com `Ran N tests across N files`, que se lê como execução (com 3 arquivos,
+  3 blocos de erro). Com `exit`, o `bun test` sem argumento, na raiz, sai 1 com a mensagem uma vez
+  só: 193 bytes de saída e nenhuma linha `Ran`.
+
+A asserção — exit ≠ 0 **e** a marca ASCII `use bun run test (vitest); bun test ` no começo da linha,
+porque exit ≠ 0 sozinho qualquer quebra do runner também daria — foi falsificada com o commit feito
+antes, controle verde na MESMA invocação e antes do primeiro sabotar, em `LC_ALL=C` **e**
+`pt_BR.UTF-8`:
+
+| rodada | exit | marca | resumo do bun | veredito |
+|---|---|---|---|---|
+| controle, antes e depois das sabotagens | 1 | 1× | nenhum | verde 4/4 |
+| sabotagem A: o preload antigo (= sem a mudança) | 0 | 0× | `54 pass` | vermelho 2/2 |
+| sabotagem B: `bunfig.toml` sem `[test]` (= tirar o preload) | 0 | 0× | `54 pass` | vermelho 2/2 |
+
+O `[test] preload` não vaza para o `bun run`: `bun run docs:citacoes` segue exit 0, sem a mensagem.
+
+**Limite conhecido:** de um subdiretório o preload não carrega. Rodado de `scripts/`, o
+`bun test ./sonda-versao-bump-gate.test.ts` executou os 54 testes sem a mensagem (51 pass; os 3 que
+falham abrem caminhos relativos à raiz, como `supabase/functions/_shared/sonda-cron-alvos.ts`).
+
+As outras duas partes do M-21 — o step `build-id-paridade` e os tetos do `priceGuard` — seguem no
+plano.
 
 ## A trava contra reintrodução
 
