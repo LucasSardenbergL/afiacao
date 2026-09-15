@@ -133,6 +133,38 @@ parecer; o Codex roda retroativo depois do reset.
   ativação, declarada. Aviso não-bloqueante para "palavra de ordem + `nenhuma`" foi rejeitado: com 29 de
   30 falsos positivos medidos, ensina a ignorar.
 
+## Validado com o caso de origem
+
+- **O #2469 teria ficado vermelho.** No commit dele (`31039c133`, `--base 31039c133^ --head 31039c133`), com o
+  corpo original — a prosa "nesta ordem" —, o CLI sai `ORDEM_DECLARACAO_AUSENTE`, exit 1, citando
+  `omie-vendas-sync` e `sync-reprocess`. Declarando `sync-reprocess → omie-vendas-sync` sem o manifesto, sai
+  `ORDEM_MANIFESTO_AUSENTE`, exit 1, com o JSON a criar.
+- **O runner não precisa de `bun install`.** No próprio PR que cria o workflow, o check `ordem-entre-edges`
+  rodou no `opened` do draft e decidiu `ORDEM_DECLARADA_NENHUMA` em 9 s: o corpo tem exemplos cercados e uma
+  linha real, e só a linha real contou.
+
+## Falsificação
+
+`scripts/falsificar-ordem-entre-edges-declaracao.sh` (`bun run falsificar:ordem-declaracao`), irmão do harness do
+#2501: 68 sabotagens em três camadas — 42 no núcleo (gramática da linha, população, julgamento, formato), 13 na
+fiação (diff, inventário com controle positivo, manifestos do HEAD e da base, releitura do re-run, exit) e 13 no
+YAML e no `package.json` (cada invariante que faria o check exigido aprovar sem julgar, ou travar) — × `LC_ALL=C` e
+`pt_BR.UTF-8`, com commit antes, controle verde na mesma invocação e marca ASCII exclusiva do vermelho.
+
+- **1ª rodada: `NAO_FALSIFICADO`, 134/136.** As duas falhas eram a MESMA sabotagem inválida, e o harness a contou
+  como falha, não como "o gate não pega": a D08 saiu `0 ocorrencia(s)` nos dois locales. A causa não era locale
+  nem decodificação: no Bun, `String.raw` devolve o não-ASCII ESCAPADO — a seta vira o texto `→` —, e o
+  trecho nunca casava com o fonte. Os acentos das sabotagens em string comum casaram nos dois locales. Corrigido
+  no `1a3b86bb5`, com o porquê no próprio harness.
+- **2ª rodada: `FALSIFICADO`, 136/136.** Controle verde nos dois locales e cada sabotagem vermelha pela marca
+  certa — 40 da linha e do valor, 12 da população, 28 do julgamento, 4 do formato, 26 da fiação e 26 do YAML e do
+  `package.json` (as contagens somam os dois locales). Alvos restaurados ao commit.
+- **Duas invariantes do YAML passam sem o arquivo** (`WF_JOB_SEM_IF`, `WF_NOME_UNICO_ENTRE_WORKFLOWS`): são de
+  guarda, e o dente delas se prova pelas sabotagens W04, W05 e W12.
+- **Camadas redundantes, declaradas em vez de sabotadas:** a lista de status aceitos do `git diff -z` (o
+  desalinhamento já lança pela paridade), o controle positivo do inventário da BASE (o do HEAD dispara antes em
+  todo caso alcançável) e a recusa explícita de valor vazio (o caminho genérico recusa igual; muda só a mensagem).
+
 ## O que fica descoberto, de propósito
 
 - **`nenhuma` que contradiz a prosa passa verde.** O gate não lê prosa, por desenho.
