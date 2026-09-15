@@ -39,7 +39,7 @@ export type LeituraDescontosItens =
   /** pedido que não tem order_items por desenho (afiação, tabela `orders`) */
   | { estado: 'nao-se-aplica' };
 
-export type DescontoDoCupom =
+type DescontoDoCupom =
   | { quebra: false; aviso: string | null }
   | {
       quebra: true;
