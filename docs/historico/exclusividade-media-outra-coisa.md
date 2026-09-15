@@ -224,6 +224,59 @@ depois do #2391, saiu de `[redund] 0/8` para `[SO ELE] 1/8`.
 - *aposentar o gate* — perde as 48 edges, inclusive as 2 que atendem ao critério de `GATE_PROPRIO`, a
   menos que o contrato Deno ganhe universo derivado da árvore.
 
+## A re-medição completa (2026-09-15) — três selos certificados, duas segundas portas e um censo duplicado
+
+Os sete `EXCLUSIVIDADE_INCONCLUSIVA` de 2026-09-14 eram linhas medidas com parte dos gates
+(`diretiva-em-dobro` com 27 de 31; os seis selos antigos com `--gates`, 6 a 10 de 31). Seis foram
+re-medidas com os **31** bloqueantes numa rodada única (sourceHead `99282961d`, 22:03 → 01:03 com a fila
+do `heavy`, baseline 31/31 verde):
+
+| defeito | executados | vermelhos | veredito |
+|---|---|---|---|
+| `diretiva-em-dobro` | 31/31 | `gate:ambiente` | **`[SO ELE]`** |
+| `indice-orfao` | 31/31 | `docs:indice` | **`[SO ELE]`** |
+| `link-solto-quebrado` | 31/31 | `docs:links` | **`[SO ELE]`** |
+| `bun-despinado` | 29 (poda) | `bunpin:check` + `test` | `EXCLUSIVIDADE_ZERO` |
+| `claude-md-linha-gigante` | 28 (poda) | `claude:size` + `test:hooks` | `EXCLUSIVIDADE_ZERO` |
+| `censo-sem-o-gate` | 31/31 | **nenhum** | `gates:frescura` fica com `pegou 0` — e sem veredito |
+
+Cada linha foi lida por dois eixos que concordam: o `--resumo` da lib e um verificador por fora (`jq`
+sobre a matriz, `awk` sobre o `ci.yml`) que recalcula completude, assinatura e vermelhos sem `derivar()`
+— falsificado antes do uso, 4 sabotagens × 2 locales, cada uma vermelha pelo controle que a mira. A
+matriz conflitou com a do #2505 (dois defeitos novos, disjuntos) e foi fundida pela regra do próprio
+motor — por defeito, com o baseline da rodada mais recente vencendo —, conferida por fora: as 6 linhas
+daqui idênticas às da rodada, as outras 10 idênticas às da main.
+
+- **As duas redundâncias são segundas portas do mesmo código**, como o `test` do `sonda:autentica` acima
+  (atribuição por leitura, não executada): `scripts/bun-pin-gate-check.test.ts` tem *"os workflows REAIS
+  do repo passam no gate"* — `auditBunPins(readWorkflows())`, o código do `bunpin:check`; e o passo 13
+  de `scripts/test-claude-md-budget.sh` roda o mesmo `scripts/check-claude-md-budget.sh` do
+  `claude:size` contra o `CLAUDE.md` real. As opções de decisão são as da seção anterior.
+- **`censo-sem-o-gate` deixou de medir o gate.** A linha do censo delimitado de `docs/agent/deploy.md`
+  tem 61 nomes entre crases e 31 distintos — a lista inteira repetida, menos `gate:ambiente` — desde o
+  #2420 (2026-09-09), depois da medição antiga que dava o `gates:frescura` como pegador. A sabotagem
+  remove uma cópia de `docs:citacoes`; `lerCenso` devolve um `Set`, e a outra cópia basta. Reproduzido
+  fora do motor: a saída sabotada do `gates:frescura` é idêntica à do controle ("38 nomes no censo"). O
+  furo que isso expõe é do GATE: "bate exato" é igualdade de conjunto, e nome repetido passa calado — a
+  classe que o #2391 tirou do `docs:indice`. A linha fica na matriz, porque é a verdade do repo hoje; o
+  conserto (censo deduplicado, gate que recusa repetição, re-medição) virou chip.
+- **`matriz-gate-renomeado` ficou de fora — é inválido contra toda matriz commitada.** A expressão casa
+  toda linha `"gate": "knip"` (3 na matriz do #2366, 7 na do #2479), e o teto de 2 linhas perturbadas é
+  de nascença: a linha só valeu contra a matriz em disco antes de ser gravada. Medi-la agora seria pior
+  que inútil — `fundirLinhas` troca a linha antiga inteira pela nova inválida e apagaria o único vermelho
+  do `exclusividade`, cujo `[inconcl]` sumiria calado. Redesenho em chip.
+
+Três tropeços da sessão, nenhum virou dado:
+
+- a 1ª rodada abortou no baseline pelo motivo certo: com o swap em 8,2 GB o `build` não terminou em
+  40 min (16 s sem carga), e o motor tratou o estouro como ausência de dado — nada gravado;
+- duas armadilhas do [catálogo de shell](evidencia-positiva-shell.md) reincidiram antes de a saída virar
+  texto: `git show "$c:scripts/…"` num laço zsh (§10) mostrou o diff do commit e "provou" uma história
+  falsa da matriz, desmentida pelo blob idêntico; `locale -a | grep -q` sob `pipefail` (§16) deu como
+  ausente um locale presente, e o script abortou do lado seguro;
+- a verificação da fusão comparava `iguais == total` e teria aprovado o vácuo `0 == 0` (um `.` fora de
+  contexto no `jq`); o que reprovou foi exigir o total esperado, `10`, escrito antes de olhar.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
