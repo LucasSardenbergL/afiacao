@@ -146,7 +146,7 @@ const ERRO: FatiaDescontosItens = { status: 'error', fetchStatus: 'idle', data: 
 const SEM_REDE: FatiaDescontosItens = { status: 'pending', fetchStatus: 'paused', data: undefined };
 
 // O toLocaleString('pt-BR') separa "R$" do número com espaço NÃO separável: compara-se o texto visível.
-const texto = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/ /g, ' ');
+const texto = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\u00a0/g, ' ');
 
 /** A sublinha do item (quantidade × preço, e o desconto quando há quebra) e o total da linha. */
 function linhaDoItem(descricao: string) {

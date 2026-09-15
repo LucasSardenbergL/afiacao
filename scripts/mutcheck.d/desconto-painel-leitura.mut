@@ -1,0 +1,24 @@
+# Invariantes money-path da LEITURA do desconto de item no painel de detalhe do pedido — o que chega
+# à régua do cupom (resolverDescontoCupom) na tela.
+# @src: src/components/salesOrders/descontosDoPainel.ts
+# @test: src/components/salesOrders/__tests__/descontosDoPainel.test.ts
+# Rode: bash scripts/mutcheck.sh src/components/salesOrders/descontosDoPainel.ts src/components/salesOrders/__tests__/descontosDoPainel.test.ts scripts/mutcheck.d/desconto-painel-leitura.mut
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ POR QUE ESTE CONTRATO EXISTE: a régua só é honesta se a leitura que chega a ela for. Lista vazia
+# de order_items afirma "não há desconto"; entregá-la no lugar de uma leitura que não aconteceu apaga,
+# em silêncio, a explicação entre as linhas brutas e o total líquido — o defeito que o painel deixou de
+# ter. E o aviso é a outra metade: calado, "não consegui ler" chega à tela como a tela de sempre.
+
+# ── "Não consegui ler" não é "não há" ────────────────────────────────────────────────────────────
+PEGA | leitura que não aconteceu vira lida VAZIA (sem desconto)     | s/return \{ leitura: \{ estado: 'falhou' \}, falha: naoConsegui\(estado\) \? estado : null \};/return { leitura: { estado: 'lida', linhas: [] }, falha: naoConsegui(estado) ? estado : null };/
+PEGA | erro ou sem rede, sem cache, deixa de avisar                 | s/falha: naoConsegui\(estado\) \? estado : null \};/falha: null };/
+PEGA | carregando e pergunta não feita passam a avisar (alarme falso) | s/falha: naoConsegui\(estado\) \? estado : null \};/falha: estado === 'pronta' ? null : 'erro' };/
+PEGA | dado que não cobre ESTE pedido não avisa                     | s/falha: leitura\.estado === 'falhou' \? \(velho \?\? 'erro'\) : velho \};/falha: velho };/
+
+# ── Cache em mãos ────────────────────────────────────────────────────────────────────────────────
+PEGA | refetch que falhou (ou parou sem rede) com cache não avisa    | s/const velho = desatualizado\(q, true\);/const velho = null;/
+
+# ── Quem tem order_items ─────────────────────────────────────────────────────────────────────────
+PEGA | afiação passa a ler (e a avisar) order_items                 | s/if \(order\._source === 'afiacao'\) return/if (false) return/
+PEGA | pedido sem _source deixa de ser venda                        | s/order\._source === 'afiacao'/order._source !== 'sales'/
