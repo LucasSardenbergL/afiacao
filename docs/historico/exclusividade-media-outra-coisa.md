@@ -166,6 +166,64 @@ certa, um contrato que já cobria o eixo. E a anotação errou do mesmo jeito qu
 medida com um subconjunto de gates, leu os ausentes como verdes — só que num comentário, fora do
 alcance da regra de certificação.
 
+## O alcance comparado (2026-09-14, 2ª rodada) — o zero media UM alvo, e o `test` era o MESMO gate
+
+O `EXCLUSIVIDADE_ZERO` acima é verdadeiro e dizia menos do que parecia: o único alvo do corpus,
+`fin-funding`, está na lista que o contrato Deno varre — o corolário ("um contrato que já cobria o
+eixo") vale para o ALVO. A pergunta que faltava era o que cada um **alcança**.
+
+| Eixo | `sonda:autentica` | contrato Deno *"gate próprio"* (`sonda-versao-contrato_test.ts`) |
+|---|---|---|
+| Universo | toda pasta com `versao.ts` + `index.ts`, lida da ÁRVORE (60) | `GATE_PROPRIO`, lista OPT-IN (12) — nenhum gate força a entrada |
+| Trecho | arquivo inteiro, sem comentário, sem `import`, sem a linha do `atenderSondaOptions(` | só depois do 1º `Deno.serve(`, sem comentário |
+| Credencial | `authorizeCron\w*\s*\(` — qualquer variante e argumento | o literal `authorizeCronOrStaff(req)` |
+| Emissão | 1ª `respostaSonda\w*(` ou `criarRespostaSonda(` | 1ª `respostaSonda(` literal, depois de `classificarSonda(` |
+| Predicado | o 1º gate vem antes da 1ª emissão | o literal aparece ENTRE a classificação e a resposta |
+| Edge nova | entra sozinha | entra em `EDGES` por obrigação (teste de completude); em `GATE_PROPRIO`, só se o autor lembrar |
+
+Dentro das 12, o contrato é o mais estrito — exige o gate no trecho exato, não em qualquer ponto
+anterior do arquivo. Fora delas, não olha. Triagem (o `auditarFonte` real do gate e uma réplica do
+predicado Deno, subindo a emissão para antes do gate em cada edge): nas 12 o contrato reprova 12/12;
+nas outras 48 só o predicado do `sonda:autentica` reage. Dessas 48, **46** respondem à sonda depois do
+gate NORMAL (que já aceita `x-cron-secret`), e ali o mesmo defeito move 3+ linhas — acima do teto de 2
+do motor, o corpus não o expressa. As outras **2** têm a forma do `fin-funding` (gate PRÓPRIO dentro
+do `if` da classificação) e atendem ao critério declarado de `GATE_PROPRIO` — "o gate da edge não
+aceita `x-cron-secret`" — sem estar nela: `omie-nfe-recebimento` (`Bearer` + `getClaims` +
+`user_roles`) e `generate-bundle-argument` (`Bearer` + `getUser()`). É o "universo opt-in perde
+membro em SILÊNCIO" que o próprio contrato documenta, um nível abaixo: a completude cobre `EDGES`,
+não as sublistas.
+
+**Medição** — o defeito de uma linha, nos dois autores, em `omie-nfe-recebimento`
+(`sonda-responde-antes-do-gate-fora-da-lista` e `…-diligente`):
+
+- *pré-voo*, na mesma invocação, em cópias de `supabase/functions`, `LC_ALL=C` e `pt_BR.UTF-8`: árvore
+  limpa verde (1130 testes Deno; o gate aprova as 60); só o bump verde; o defeito, com e sem bump,
+  deixa `test:edges` **verde** e só o gate vermelho. O contrato não vê.
+- *motor* (51 min, 31 gates, baseline 31/31 verde — agora com `sonda:cron-prova`, `test:falsificacao`
+  e `test` dentro): a descuidada reprova em `sonda:autentica` + `sonda:bump`; a diligente (o dever de
+  casa tocou só as 2 saídas) em `sonda:autentica` + **`test`**. `bun run exclusividade`: ainda
+  `EXCLUSIVIDADE_ZERO`, e aparece `RELATA test CORPUS_NAO_MIROU`.
+
+**Quem é o `test` que pegou** — atribuído na mesma invocação, na árvore real, com restauração por
+cópia provada a cada fase: a suíte inteira na árvore limpa, verde (8968 testes); com defeito + dever,
+**uma** falha — `scripts/gate-sonda-autentica.test.ts`, *"o repo INTEIRO passa hoje"*; esse arquivo
+nas 4 fases e nos 2 locales: limpa verde, só o dever verde, o defeito com e sem dever vermelho, no
+mesmo teste. O teste chama o `auditar()` **deste gate** contra o repo real.
+
+**Leitura.** Não existe segundo detector: o vitest é uma **segunda porta do mesmo código**. O eixo é
+exclusivo do *código* `scripts/gate-sonda-autentica.ts`; o *step* `sonda:autentica` sai zero porque o
+próprio teste dele o co-pega. É a duplicação que o #2378 tirou do vitest para o `docs:indice` — que,
+depois do #2391, saiu de `[redund] 0/8` para `[SO ELE] 1/8`.
+
+**Para a decisão** (do Lucas; nenhum dos dois checadores mudou de semântica nesta medição):
+
+- *manter como está* — custo zero; a matriz segue dizendo zero para o único dono do eixo;
+- *tirar só o step do CI* — nada se perde (o vitest segue rodando o gate) e economiza 60–143 ms;
+- *tirar do vitest a auditoria do repo real* (o caminho do #2378) — o step vira o dono único, e a linha
+  diligente deve certificar `[SO ELE]` na re-medição;
+- *aposentar o gate* — perde as 48 edges, inclusive as 2 que atendem ao critério de `GATE_PROPRIO`, a
+  menos que o contrato Deno ganhe universo derivado da árvore.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
