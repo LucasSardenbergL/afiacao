@@ -3202,7 +3202,15 @@ Deno.serve(async (req) => {
             "produtos/pedido/",
             "ConsultarPedido",
             { codigo_pedido: codigoPedido },
-            editAccount
+            editAccount,
+            // throwOnTransient: sem ele, rate-limit ESGOTADO devolve `null` e a leitura vira
+            // `omieCurrentItems = []` com `consultEditOk = true` — o guard abaixo ainda aborta
+            // (pela lista vazia), mas a trilha durável registra "ConsultarPedido sem itens",
+            // que é uma AFIRMAÇÃO sobre o PEDIDO quando o fato é sobre a CHAMADA. Com o throw,
+            // o catch marca `consultEditOk = false` e a trilha diz "ConsultarPedido falhou".
+            // Mesmo desfecho (abortar antes de qualquer mutação) — nenhum caminho novo se abre,
+            // só a causa deixa de ser fabricada.
+            { throwOnTransient: true },
           )) as {
             pedido_venda_produto?: {
               det?: OmieDetalheItem[];
@@ -3369,6 +3377,11 @@ Deno.serve(async (req) => {
         }
 
         // Step 2: Delete all existing items
+        // Contador de exclusões CONFIRMADAS (resposta recebida). Não é o mesmo que "itens que sumiram
+        // do ERP": um transitório esgotado é ambíguo quanto ao EFEITO — a chamada pode ter sido
+        // aplicada e só a resposta ter se perdido. É por isso que a mensagem abaixo fala em
+        // confirmações e diz que a que falhou pode ou não ter valido, em vez de afirmar o dano.
+        let exclusoesConfirmadas = 0;
         for (const omieItem of omieCurrentItems) {
           const codItem = omieItem?.ide?.codigo_item;
           const codItemInt = omieItem?.ide?.codigo_item_integracao;
@@ -3382,12 +3395,31 @@ Deno.serve(async (req) => {
                   ...(codItem ? { codigo_item: Number(codItem) } : {}),
                   ...(codItemInt ? { codigo_item_integracao: codItemInt } : {}),
                 },
-                editAccount
+                editAccount,
+                // throwOnTransient nas 4 mutações desta action (achado do challenge Codex 2026-09-14,
+                // na entrega do guard de desconto): sem ele o rate-limit ESGOTADO devolve `null`, o
+                // `try/catch` não dispara (nada foi lançado), o log abaixo mente "excluído" e a action
+                // segue. Com os MESMOS SKU/quantidade/preço, uma exclusão e a inclusão correspondente
+                // falhando juntas deixam o pedido do Omie INTOCADO e a assinatura final
+                // (`codigo_produto:quantidade:valor_unitario`) APROVA — a edição reporta sucesso sem
+                // ter mutado nada. O eixo do DESCONTO já é coberto pelas duas checagens de
+                // `descontoNaLeituraDoOmie`; este é o eixo GERAL: `null` do transitório esgotado não
+                // pode passar por "chamada aplicada".
+                { throwOnTransient: true },
               );
+              exclusoesConfirmadas++;
               console.log(`[Omie Vendas][${editAccount}] Item ${codItemInt || codItem} excluído`);
             } catch (delErr) {
               const msg = delErr instanceof Error ? delErr.message : String(delErr);
-              throw new Error(`Falha ao excluir item existente do pedido no Omie: ${msg}`);
+              // Estado no ERP: itens já excluídos e NENHUM item novo incluído — o pedido está com itens
+              // A MENOS. O número é de exclusões CONFIRMADAS: a que falhou pode ter valido mesmo assim.
+              throw new Error(
+                `Falha ao excluir item existente do pedido no Omie: ${msg}. ` +
+                  `O pedido no Omie pode ter ficado PARCIALMENTE alterado ` +
+                  `(${exclusoesConfirmadas} de ${omieCurrentItems.length} exclusões confirmadas, a que ` +
+                  `falhou pode ou não ter sido aplicada, e nenhum item novo foi incluído) e o registro ` +
+                  `local NÃO foi gravado. Confira o pedido no Omie e NÃO re-salve sem recarregar.`,
+              );
             }
           }
         }
@@ -3434,11 +3466,26 @@ Deno.serve(async (req) => {
           }
 
           try {
-            await callOmieVendasApi("produtos/pedidovenda/", "IncluirItemPedido", inclPayload, editAccount);
+            // throwOnTransient: par da exclusão acima — sem ele o `null` do transitório esgotado
+            // era lido como "incluído" e a assinatura final aprovava um item que nunca entrou.
+            await callOmieVendasApi(
+              "produtos/pedidovenda/", "IncluirItemPedido", inclPayload, editAccount,
+              { throwOnTransient: true },
+            );
             console.log(`[Omie Vendas][${editAccount}] Item ${index + 1} incluído: ${item.descricao}`);
           } catch (inclErr) {
             const msg = inclErr instanceof Error ? inclErr.message : String(inclErr);
-            throw new Error(`Falha ao incluir item ${index + 1} no Omie: ${msg}`);
+            // Estado no ERP: o Step 2 já excluiu TODOS os itens antigos e só os anteriores a este
+            // foram reincluídos — o pedido está com itens FALTANDO (no limite, VAZIO, e aí a próxima
+            // tentativa nem passa do guard anti-duplicação: pedido sem item é estado não confiável,
+            // e o conserto é no Omie). O número é de inclusões CONFIRMADAS, pela mesma ambiguidade.
+            throw new Error(
+              `Falha ao incluir item ${index + 1} no Omie: ${msg}. ` +
+                `O pedido no Omie ficou PARCIALMENTE alterado (os itens antigos já foram excluídos e ` +
+                `${index} de ${editItems.length} inclusões estão confirmadas, com a que falhou podendo ` +
+                `ou não ter sido aplicada) e o registro local NÃO foi gravado. Confira o pedido no Omie ` +
+                `e NÃO re-salve sem recarregar.`,
+            );
           }
 
           newDetForPayload.push({
@@ -3472,35 +3519,81 @@ Deno.serve(async (req) => {
         }
 
         try {
+          // throwOnTransient: o `null` aqui deixava o cabeçalho VELHO (parcela, frete, transportadora,
+          // observações, volumes) no ERP enquanto os itens já eram os novos — e ninguém lia o retorno.
           await callOmieVendasApi("produtos/pedido/", "AlterarPedidoVenda",
             { cabecalho: editCabecalho, frete: editFrete, observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic },
-            editAccount);
+            editAccount, { throwOnTransient: true });
         } catch (headerErr) {
           const msg = headerErr instanceof Error ? headerErr.message : String(headerErr);
-          throw new Error(`Falha ao atualizar cabeçalho do pedido no Omie: ${msg}`);
+          // Estado no ERP: os ITENS já foram substituídos por completo; o cabeçalho é que pode ter
+          // ficado para trás (o transitório é ambíguo quanto ao efeito — pode ter sido aplicado).
+          throw new Error(
+            `Falha ao atualizar cabeçalho do pedido no Omie: ${msg}. ` +
+              `O pedido no Omie ficou PARCIALMENTE alterado (os itens já foram substituídos, mas a ` +
+              `condição de pagamento/frete/observações podem não ter sido atualizadas) e o registro ` +
+              `local NÃO foi gravado. Confira o pedido no Omie e NÃO re-salve sem recarregar.`,
+          );
         }
 
-        await callOmieVendasApi(
-          "produtos/pedidovenda/",
-          "TotalizarPedido",
-          { codigo_pedido: codigoPedido },
-          editAccount,
-        );
+        try {
+          // throwOnTransient: é o TotalizarPedido que recalcula os totais do PV depois do delete+add.
+          // Sem ele, o `null` do transitório esgotado — de uma chamada cujo retorno nem era lido —
+          // deixava o ERP com itens novos e TOTAL velho, e a action seguia para o write-back: o número
+          // que fatura ficaria divergente do que o app grava, calado. Money-path: erro explícito.
+          await callOmieVendasApi(
+            "produtos/pedidovenda/",
+            "TotalizarPedido",
+            { codigo_pedido: codigoPedido },
+            editAccount,
+            { throwOnTransient: true },
+          );
+        } catch (totErr) {
+          const msg = totErr instanceof Error ? totErr.message : String(totErr);
+          throw new Error(
+            `Falha ao totalizar o pedido no Omie: ${msg}. ` +
+              `O pedido no Omie ficou PARCIALMENTE alterado (itens e cabeçalho já foram gravados, mas os ` +
+              `TOTAIS podem não ter sido recalculados) e o registro local NÃO foi gravado. Confira o ` +
+              `pedido no Omie e NÃO re-salve sem recarregar.`,
+          );
+        }
 
         // Carimbo da leitura final do Omie — é ele que vira `p_lido_em` no compare-and-set do
         // write-back. Tirado ANTES da chamada de propósito: carimbo mais VELHO é o lado seguro
         // (no máximo recusa esta escrita), carimbo mais NOVO poderia encobrir uma leitura alheia.
         const finalLidoEm = new Date().toISOString();
-        const finalConsultResult = (await callOmieVendasApi(
-          "produtos/pedido/",
-          "ConsultarPedido",
-          { codigo_pedido: codigoPedido },
-          editAccount,
-        )) as {
+        type FinalConsulta = {
           pedido_venda_produto?: { det?: OmieDetalheItem[]; total_pedido?: { valor_descontos?: unknown } };
           det?: OmieDetalheItem[];
           total_pedido?: { valor_descontos?: unknown };
         } | null;
+        let finalConsultResult: FinalConsulta;
+        try {
+          // throwOnTransient: esta leitura é a PROVA da edição — dela saem a assinatura, a pós-checagem
+          // de desconto e os `codigo_item` do espelho relacional. Sem o opt, o transitório esgotado
+          // voltava `null`, `finalOmieItems` virava `[]` e a divergência era reportada como "esperado N
+          // itens e recebeu 0": uma AFIRMAÇÃO sobre o pedido (que estaria vazio no ERP) fabricada a
+          // partir de uma leitura que nunca chegou. Lançar aqui não abre caminho novo — os dois ramos
+          // abortam antes do write-back —, só troca a mentira pela causa.
+          finalConsultResult = (await callOmieVendasApi(
+            "produtos/pedido/",
+            "ConsultarPedido",
+            { codigo_pedido: codigoPedido },
+            editAccount,
+            { throwOnTransient: true },
+          )) as FinalConsulta;
+        } catch (finalErr) {
+          const msg = finalErr instanceof Error ? finalErr.message : String(finalErr);
+          // Estado no ERP: as 4 mutações PASSARAM (cada uma lança por conta própria). O que falhou foi
+          // LER de volta — então não dá para afirmar que o pedido ficou como o app pediu, nem o
+          // contrário. "Alterado, confirmação impossível" ≠ "não alterado".
+          throw new Error(
+            `Pedido ALTERADO no Omie, mas a leitura de confirmação falhou: ${msg}. ` +
+              `Não foi possível verificar como o pedido ficou no Omie e o registro local NÃO foi ` +
+              `gravado — o pedido pode estar PARCIALMENTE alterado. Confira o pedido no Omie e NÃO ` +
+              `re-salve sem recarregar.`,
+          );
+        }
         const finalOmieItems: OmieDetalheItem[] = finalConsultResult?.pedido_venda_produto?.det
           || finalConsultResult?.det
           || [];

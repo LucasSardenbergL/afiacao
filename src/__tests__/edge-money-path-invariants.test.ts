@@ -417,6 +417,119 @@ describe('guardrail money-path: alterar_pedido recusa pedido com desconto no Omi
   });
 });
 
+// ── alterar_pedido: transitório ESGOTADO do Omie LANÇA — `null` não passa por mutação aplicada (2026-09-18) ──
+// Achado do challenge Codex na entrega do guard de desconto acima. `callOmieVendasApi` devolve `null`
+// quando o rate-limit/erro transitório esgota os 3 retries E `throwOnTransient` não foi passado — e a
+// action IGNORA o retorno das mutações. Com os MESMOS SKU/quantidade/preço, uma exclusão e a inclusão
+// correspondente voltando `null` deixam o pedido do Omie INTOCADO e a assinatura final
+// (`codigo_produto:quantidade:valor_unitario`) APROVA: "Pedido alterado com sucesso!" sem ter mutado.
+// É `ausente ≠ zero` no eixo do EFEITO — o guard de desconto cobre só o eixo do desconto.
+// O pin mede a FIAÇÃO sobre a fonte SEM comentários (a prosa que explica o opt cita o opt).
+describe('guardrail money-path: alterar_pedido não lê `null` do Omie como mutação aplicada', () => {
+  const src = removerComentarios(read(VENDAS));
+  const bloco = src.match(/case "alterar_pedido": \{[\s\S]*?\n {6}case "/)?.[0] ?? '';
+
+  // Junta template concatenado (`a ` + `b` → `ab`) para medir a MENSAGEM e não a quebra de linha:
+  // "NÃO re-salve sem recarregar" nasce PARTIDO em duas partes numa das mensagens, e um toContain
+  // sobre a fonte crua reprovaria texto íntegro — mesma classe do stripper de comentários.
+  const mensagem = (s: string) => s.replace(/`\s*\+\s*`/g, '');
+
+  // Extrai cada `callOmieVendasApi(...)` por BALANCEAMENTO de parênteses, não por regex: a chamada é
+  // multilinha e o argumento de opções é o ÚLTIMO — regex de linha nunca o alcança. O `call` é o 2º
+  // literal de aspas duplas (o 1º é o endpoint).
+  const chamadas = (() => {
+    const MARCA = 'callOmieVendasApi(';
+    const out: Array<{ call: string; texto: string; fim: number }> = [];
+    for (let i = bloco.indexOf(MARCA); i !== -1; i = bloco.indexOf(MARCA, i + 1)) {
+      let depth = 0;
+      let j = i + MARCA.length - 1;
+      for (; j < bloco.length; j++) {
+        if (bloco[j] === '(') depth++;
+        else if (bloco[j] === ')' && --depth === 0) break;
+      }
+      const texto = bloco.slice(i, j + 1);
+      out.push({ call: texto.match(/"[^"]*"/g)?.[1]?.replace(/"/g, '') ?? '', texto, fim: j });
+    }
+    return out;
+  })();
+
+  // Corpo do `catch` que segue a chamada terminada em `fim` (balanceando chaves).
+  const catchApos = (fim: number) => {
+    const c = bloco.indexOf('catch (', fim);
+    if (c === -1) return '';
+    const abre = bloco.indexOf('{', c);
+    if (abre === -1) return '';
+    let depth = 0;
+    for (let j = abre; j < bloco.length; j++) {
+      if (bloco[j] === '{') depth++;
+      else if (bloco[j] === '}' && --depth === 0) return bloco.slice(abre, j + 1);
+    }
+    return '';
+  };
+
+  // As 4 mutações + a leitura de confirmação: todas deixam o Omie em estado que o app não gravou.
+  const APOS_MUTAR = ['ExcluirItemPedido', 'IncluirItemPedido', 'AlterarPedidoVenda', 'TotalizarPedido'];
+
+  it('sentinela: a extração achou o bloco e EXATAMENTE as chamadas conhecidas ao Omie', () => {
+    expect(bloco, 'bloco da action alterar_pedido não encontrado').not.toBe('');
+    // Sentinela dos DOIS lados: derrapar no balanceamento (extrair de menos) e chamada NOVA
+    // entrando na action sem passar por este pin (extrair de mais) reprovam igual.
+    expect(
+      chamadas.map((c) => c.call),
+      'o conjunto de chamadas ao Omie da action mudou — chamada nova entra neste pin ANTES de ir a prod',
+    ).toEqual(['ConsultarPedido', ...APOS_MUTAR, 'ConsultarPedido']);
+    for (const c of chamadas) {
+      expect(c.texto.endsWith(')'), `extração derrapou em ${c.call} — parêntese não fechou`).toBe(true);
+    }
+  });
+
+  it('TODA chamada ao Omie da action passa { throwOnTransient: true } — nenhuma lê `null` como resposta', () => {
+    for (const c of chamadas) {
+      expect(
+        c.texto,
+        `${c.call} voltou a aceitar o \`null\` do transitório esgotado: a chamada falha em silêncio e a action segue como se tivesse aplicado`,
+      ).toMatch(/\{\s*throwOnTransient:\s*true\s*,?\s*\}/);
+    }
+  });
+
+  it('cada mutação e a leitura de confirmação avisam do estado PARCIAL no Omie e proíbem re-salvar sem recarregar', () => {
+    // A leitura de confirmação é a ÚLTIMA ConsultarPedido; a primeira é pré-mutação (abaixo).
+    const posMutacao = [
+      ...APOS_MUTAR.map((call) => chamadas.find((c) => c.call === call)!),
+      chamadas[chamadas.length - 1],
+    ];
+    for (const c of posMutacao) {
+      const corpo = mensagem(catchApos(c.fim));
+      expect(corpo, `${c.call} não tem catch — o erro sobe como 500 genérico, sem dizer o que ficou no ERP`).not.toBe('');
+      expect(corpo, `o catch de ${c.call} não LANÇA — a falha viraria sucesso`).toMatch(/throw new Error\(/);
+      expect(
+        corpo,
+        `o catch de ${c.call} não avisa que o Omie pode ter ficado PARCIALMENTE alterado`,
+      ).toMatch(/PARCIALMENTE alterado/);
+      expect(
+        corpo,
+        `o catch de ${c.call} não proíbe re-salvar sem recarregar — as 4 mutações não são idempotentes`,
+      ).toContain('NÃO re-salve sem recarregar');
+    }
+  });
+
+  it('o catch da consulta INICIAL não lança — quem aborta é o guard anti-duplicação, com trilha durável', () => {
+    const inicial = chamadas[0];
+    const corpo = catchApos(inicial.fim);
+    expect(corpo, 'o catch da consulta inicial sumiu — o throw cru pularia a trilha').not.toBe('');
+    expect(
+      corpo,
+      'a consulta inicial passou a lançar: pula o insert em venda_bloqueio_credito_log e a edição aborta SEM rastro durável',
+    ).not.toMatch(/\bthrow\b/);
+    // Nada foi mutado ainda aqui — herdar a mensagem de "parcialmente alterado" mandaria o vendedor
+    // conferir um pedido intocado (precisão > recall vale também no texto do erro).
+    expect(
+      corpo,
+      'a mensagem de mutação parcial vazou para o caminho PRÉ-mutação — nada foi alterado ainda',
+    ).not.toMatch(/PARCIALMENTE alterado/);
+  });
+});
+
 // ── criar_pedido NÃO depende do espelho legado omie_clientes (inverte o P0-A — 2026-07-16) ──
 // O P0-A provava "conta errada" pelo RÓTULO `empresa_omie` do espelho. O rótulo é DEFAULT POLUÍDO:
 // 6909/6909 linhas da prod estão como 'colacor' (ZERO 'oben'), e o código oben do bulk syncCustomers

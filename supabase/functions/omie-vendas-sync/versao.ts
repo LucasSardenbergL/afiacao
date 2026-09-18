@@ -73,8 +73,20 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * FINAL antes do write-back: desconto ali LANÇA em vez de gravar total bruto que o ERP desmente. Régua
  * de presença em `_shared/edicao-desconto-omie.ts` (arquivo novo, importado só por esta edge) ⇒ a prova
  * do bundle exige as DUAS chamadas (canária + sonda de `fonte`). Sem pré-condição de banco.
+ *
+ * `v1.9-edicao-transitorio-esgotado-lanca` (2026-09-18): as 4 mutações do `alterar_pedido`
+ * (`ExcluirItemPedido`, `IncluirItemPedido`, `AlterarPedidoVenda`, `TotalizarPedido`) e as 2
+ * `ConsultarPedido` passam `{ throwOnTransient: true }`. Sem ele, o rate-limit/transitório que
+ * ESGOTA os 3 retries devolvia `null`, a action ignorava o retorno e seguia: com os MESMOS
+ * SKU/quantidade/preço, uma exclusão e a inclusão correspondente falhando juntas deixavam o pedido
+ * do Omie INTOCADO e a assinatura final (`codigo_produto:quantidade:valor_unitario`) APROVAVA —
+ * "Pedido alterado com sucesso!" sem ter mutado nada (achado do challenge Codex na entrega do
+ * v1.8, que fechou só o eixo do DESCONTO). Cada falha agora LANÇA com o estado PARCIAL esperado no
+ * ERP — em CONFIRMAÇÕES, não em dano afirmado: transitório é ambíguo quanto ao efeito, a chamada
+ * que falhou pode ter valido — e com a instrução de não re-salvar sem recarregar. Não toca
+ * `_shared/` e não muda contrato: nenhuma pré-condição de banco, nenhuma ordem de deploy.
  */
-export const VERSAO = "v1.8-edicao-recusa-desconto-do-omie";
+export const VERSAO = "v1.9-edicao-transitorio-esgotado-lanca";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
