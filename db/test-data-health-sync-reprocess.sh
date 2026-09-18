@@ -14,8 +14,7 @@ set -euo pipefail
 
 # ── arranque PG17 descartável (idêntico em todos os harnesses; contorna keg-only do brew) ──
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5471}"
 SLUG="sync-reprocess-saude"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
@@ -55,22 +54,24 @@ if [ "${1:-}" = "--falsificar" ]; then
     fi
   done
 
+  # Recibo EXCLUSIVO deste modo (o normal nunca o emite): é como o runner confere que a flag
+  # `--falsificar` não foi silenciosamente ignorada. Vermelhas = sabotagens que ficaram vermelhas.
+  total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+  echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
   echo
   if [ "$falhas" -eq 0 ]; then
-    echo "═══ falsificação OK: controle verde + $(wc -w <<<"$SABOTAGENS" | tr -d ' ') sabotagens todas vermelhas ═══"
+    echo "═══ falsificação OK: controle verde + $total sabotagens todas vermelhas ═══"
     rm -rf "$LOGDIR"; exit 0
   fi
   echo "═══ falsificação REPROVOU: $falhas sabotagem(ns) passaram despercebidas (logs em $LOGDIR) ═══"
   exit 1
 fi
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
-
-# keg-only do brew: share/lib do postgresql@17 podem não estar linkados → initdb/server falham. Copia do Cellar (idempotente).
-CELLAR="$(brew --prefix "postgresql@${PGVER}")"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
+# PGBIN resolvido POR PLATAFORMA (macOS Homebrew / Linux PGDG) com conferência positiva da major.
+# O boilerplate do template é macOS-only (`/opt/homebrew`) — esta prova roda no `provas-sql` do CI,
+# que é Ubuntu, então tem de usar o helper. Fail-closed: PG ausente é ERRO, nunca skip.
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
@@ -346,5 +347,8 @@ eq "sync_reprocess_saude na IN-list do heartbeat" \
    "$(Pq -c "SELECT (pg_get_functiondef(p.oid) LIKE '%''sync_reprocess_saude''%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='fin_sync_heartbeat';")" "true"
 
 echo
+# Recibo no formato do runner (db/roda-nucleo-ci.sh): sem uma linha de contagem que ele saiba ler,
+# uma prova trocada por `exit 0` passaria — o fechamento `[ "$FAIL" -eq 0 ]` também aceita PASS=0.
+echo "PASS=${PASS}  FAIL=${FAIL}"
 echo "═══ ${PASS} passaram · ${FAIL} falharam ═══"
 [ "$FAIL" -eq 0 ] || exit 1

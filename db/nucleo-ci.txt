@@ -125,3 +125,11 @@ db/test-canaria-veredito.sh                24  falsificar=18
 # só fica vermelho aqui. Entrou em 2026-09-10, quando a dobra já tinha inflado a tendência de
 # caixa publicada no fechamento de abril (docs/cfo/2026-04-fechamento.md, errata).
 db/test-cfo-caixa-90d-otica.sh             30
+
+# ── sensores (o vigia que não vigia é pior que vigia nenhum: dá a sensação de cobertura) ──
+# O reprocesso da Omie ficou 10 dias quebrado sem alerta porque nada lia sync_reprocess_log.
+# Esta prova entra no núcleo justamente porque o motivo dela existir foi um SENSOR AUSENTE — e
+# 5 dos 8 harnesses de data-health apodreceram em silêncio por ficarem FORA do caminho do merge
+# (o CI é vitest; ninguém os roda). Autocontida: initdb + db/stubs-data-health-trio.sql + a
+# migration do repo. Sem psql-ro, sem deno, sem dado de fora.
+db/test-data-health-sync-reprocess.sh      27  falsificar=9

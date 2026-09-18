@@ -104,7 +104,13 @@ porque o fingerprint do push é `source|status|severity|message` e o cron é `*/
 ## A prova
 
 `db/test-data-health-sync-reprocess.sh` — **27 asserts**, PG17 descartável, `--falsificar` com
-**9 sabotagens**. Três coisas que ela faz diferente dos harnesses de data-health anteriores:
+**9 sabotagens**, e — o que decide se ela sobrevive — registrada em `db/nucleo-ci.txt`, o caminho
+**obrigatório do merge**. Ficar fora dali foi o que matou os outros: o CI é vitest, e harness que
+ninguém roda apodrece em silêncio. Entrar no núcleo exigiu duas coisas que valem para a próxima
+prova: o PGBIN vem de `db/lib/pg-harness.sh` (o boilerplate do template é macOS-only e o job é
+Ubuntu), e os dois **recibos** que o runner sabe ler (`PASS=n FAIL=n` e
+`SABOTAGENS: v vermelhas / f falhas`) — sem eles o runner reprova, porque uma prova trocada por
+`exit 0` passaria despercebida e uma flag `--falsificar` ignorada não deixaria rastro. Três coisas que ela faz diferente dos harnesses de data-health anteriores:
 
 1. **Não depende do `schema-snapshot.sql`.** Cinco dos oito harnesses existentes apodreceram em
    silêncio por causa dele (medido 2026-08-14), e o CI é vitest — ninguém viu. Aqui os
