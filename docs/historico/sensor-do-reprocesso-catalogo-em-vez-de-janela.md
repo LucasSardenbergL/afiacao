@@ -103,8 +103,8 @@ porque o fingerprint do push é `source|status|severity|message` e o cron é `*/
 
 ## A prova
 
-`db/test-data-health-sync-reprocess.sh` — **25 asserts**, PG17 descartável, `--falsificar` com
-**8 sabotagens**. Três coisas que ela faz diferente dos harnesses de data-health anteriores:
+`db/test-data-health-sync-reprocess.sh` — **27 asserts**, PG17 descartável, `--falsificar` com
+**9 sabotagens**. Três coisas que ela faz diferente dos harnesses de data-health anteriores:
 
 1. **Não depende do `schema-snapshot.sql`.** Cinco dos oito harnesses existentes apodreceram em
    silêncio por causa dele (medido 2026-08-14), e o CI é vitest — ninguém viu. Aqui os
@@ -118,6 +118,11 @@ porque o fingerprint do push é `source|status|severity|message` e o cron é `*/
 3. **Espiona o push em vez de simulá-lo.** `_data_health_episodio` é stubado para **registrar a
    chamada** e devolver `true`. O assert prova o que importa (o watchdog roteou o source novo) sem
    depender da semântica de dedupe do episódio real, que não está sob prova.
+
+**O teste de message tem dois lados, e só um deles é óbvio.** "A message é estável" sozinho é
+satisfeito por uma message **constante**, que não avisaria ninguém — por isso o par: ela congela
+enquanto o problema é o mesmo e **muda** quando um 2º estágio quebra (aí re-emitir é o certo). As
+duas metades têm sabotagem própria (`message_com_idade` e `message_constante`).
 
 **A falsificação pegou um assert sem dente** — e esse é o registro que vale. O assert de "message
 estável" ficava **verde** sob a sabotagem `message_com_idade` (hora corrida na message) sempre que

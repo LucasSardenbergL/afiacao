@@ -30,7 +30,7 @@ export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithr
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="erro_nao_e_broken desconhecido_vira_ok nao_catalogada_vira_ok orfa_nunca_dispara
-              stale_nunca_dispara nunca_executou_vira_ok message_com_idade fora_do_v_sources"
+              stale_nunca_dispara nunca_executou_vira_ok message_com_idade message_constante fora_do_v_sources"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -178,6 +178,11 @@ case "${SABOTAGEM:-}" in
   message_com_idade)
       sabotar _data_health_compute "ELSE ' desde ' || to_char(d.ultimo_sucesso_em AT TIME ZONE 'America/Sao_Paulo','DD/MM') END" \
                                    "ELSE ' desde ' || to_char(now() AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI:SS') END" ;;
+  message_constante)
+      # O outro lado da moeda de `message_com_idade`: uma message que NUNCA muda passaria o teste de
+      # estabilidade e não avisaria ninguém. Esta sabotagem tem de ficar vermelha no assert do PAR.
+      sabotar _data_health_compute "WHEN sr.n_broken > 0 THEN 'Reprocesso Omie PARADO: ' || sr.resumo" \
+                                   "WHEN sr.n_broken > 0 THEN 'Reprocesso Omie PARADO'" ;;
   fora_do_v_sources)
       sabotar data_health_watchdog "    'sync_reprocess_saude'];" "    'nao_existe_este_source'];" ;;
   *)  echo "❌ SABOTAGEM desconhecida: ${SABOTAGEM}"; exit 9 ;;
@@ -298,6 +303,22 @@ if [ "$M1" = "$M2" ] && [ -n "$M1" ]; then ok "message idêntica após o MESMO p
   bad "message VARIOU com a idade — o fingerprint source|status|severity|message re-emailaria a cada rodada
        antes: [$M1]
        depois: [$M2]"; fi
+
+# O PAR do assert acima, e ele é obrigatório: "message estável" sozinho é satisfeito por uma
+# message CONSTANTE, que não avisaria nada. A propriedade real tem dois lados — congela enquanto o
+# problema é o mesmo, MUDA quando o conjunto de problemas muda (aí re-emitir é o certo, não spam).
+P -q -c "UPDATE public.sync_reprocess_log SET status='error'
+          WHERE reprocess_type='strategic' AND entity_type='products';"
+M3="$(msg)"
+if [ "$M3" != "$M2" ] && [ -n "$M3" ]; then ok "message MUDA quando um 2º estágio quebra (re-emite, como deve)"; else
+  bad "message NÃO mudou com um 2º estágio quebrado — uma message constante passaria o teste de
+       estabilidade sem avisar nada: [$M3]"; fi
+
+# Dois problemas simultâneos: o resumo tem de ser DETERMINÍSTICO (o string_agg é ordenado por
+# reprocess_type, entity_type, account). Sem ordem explícita a message oscilaria entre formas e o
+# fingerprint re-emailaria sozinho — a lição do #1980, aqui no eixo do agregado.
+M4="$(msg)"
+eq "resumo com 2 problemas é estável entre leituras (string_agg ordenado)" "$M4" "$M3"
 
 echo "── as outras 2 pernas do trio EXECUTAM (late-bound: CREATE não prova nada) ──"
 semear_saudavel
