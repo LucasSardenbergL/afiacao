@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 548
+-- Total de custom migrations: 549
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -589,7 +589,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260909222423', 'deploy_sonda_alvos_onda5', '20260909222423_deploy_sonda_alvos_onda5.sql'),
   ('20260910214850', 'desconto_backfill_aplicar_ja_apuradas', '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql'),
   ('20260914181500', 'pedido_total_liquido_acervo', '20260914181500_pedido_total_liquido_acervo.sql'),
-  ('20260914193000', 'pedido_total_liquido_acervo_mes_entre_contas', '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql')
+  ('20260914193000', 'pedido_total_liquido_acervo_mes_entre_contas', '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql'),
+  ('20260918200000', 'data_health_sync_reprocess_saude', '20260918200000_data_health_sync_reprocess_saude.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2396,7 +2397,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedido_total_liquido_acervo', 'table', 'public', 'pedido_total_liquido_conversoes', ''),
   ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_pedido', 'pedido_total_liquido_conversoes'),
   ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_lote', 'pedido_total_liquido_conversoes'),
-  ('pedido_total_liquido_acervo_mes_entre_contas', 'function', 'public', 'pedido_total_liquido_converter', '')
+  ('pedido_total_liquido_acervo_mes_entre_contas', 'function', 'public', 'pedido_total_liquido_converter', ''),
+  ('data_health_sync_reprocess_saude', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_sync_reprocess_saude', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_sync_reprocess_saude', 'function', 'public', 'fin_sync_heartbeat', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4251,7 +4255,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedido_total_liquido_acervo', 'table', 'public', 'pedido_total_liquido_conversoes', ''),
   ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_pedido', 'pedido_total_liquido_conversoes'),
   ('pedido_total_liquido_acervo', 'index', 'public', 'idx_pedido_total_liquido_conversoes_lote', 'pedido_total_liquido_conversoes'),
-  ('pedido_total_liquido_acervo_mes_entre_contas', 'function', 'public', 'pedido_total_liquido_converter', '')
+  ('pedido_total_liquido_acervo_mes_entre_contas', 'function', 'public', 'pedido_total_liquido_converter', ''),
+  ('data_health_sync_reprocess_saude', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_sync_reprocess_saude', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_sync_reprocess_saude', 'function', 'public', 'fin_sync_heartbeat', '')
 )
 SELECT
   e.migration,
@@ -4431,6 +4438,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_sync_heartbeat', 19, '20260824091755_data_health_carteira_identidade_quarentena.sql', '7b8fa80e0da2a00ab0555e4b07117491'),
   ('public', 'fin_sync_heartbeat', 20, '20260829012000_analytics_outbox_perda_visivel.sql', '6fa73714252830c5aa3d8ee6cdf96220'),
   ('public', 'fin_sync_heartbeat', 21, '20260829041500_analytics_outbox_trigger_sensor.sql', '4665b298aaa4c4cbc49c78c5ddfcc2ec'),
+  ('public', 'fin_sync_heartbeat', 22, '20260918200000_data_health_sync_reprocess_saude.sql', '0df60fab6586dd63777082691be69778'),
   ('public', '_carteira_mixgap_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '45590516afa887e06b1f6b6c7e9440b5'),
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
   ('public', 'pode_ver_carteira_completa', 1, '20260526020000_rls_score_carteira_hardening.sql', '97cb07844e04b8ad26c95e63df5e6fe6'),
@@ -4475,6 +4483,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 27, '20260824234500_sync_state_products_vendas_aposenta_writer_truncado.sql', 'e353fa7646eb87b7b75623ea3541af76'),
   ('public', '_data_health_compute', 28, '20260829012000_analytics_outbox_perda_visivel.sql', '7fe36075e42b0ca839e17581e1f09d91'),
   ('public', '_data_health_compute', 29, '20260829041500_analytics_outbox_trigger_sensor.sql', '538f5373845b1920f1789126fb72953f'),
+  ('public', '_data_health_compute', 30, '20260918200000_data_health_sync_reprocess_saude.sql', '00df33d5efc972066cc001e9713b044d'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -4496,6 +4505,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'data_health_watchdog', 19, '20260824225107_data_health_sync_state_saude.sql', '5ca754da606d257fc2a70c5295d1419e'),
   ('public', 'data_health_watchdog', 20, '20260829012000_analytics_outbox_perda_visivel.sql', '6e32c4c211884e6fe340acd6b41bb411'),
   ('public', 'data_health_watchdog', 21, '20260829041500_analytics_outbox_trigger_sensor.sql', '2113e2acea46c34631f5c177145617dc'),
+  ('public', 'data_health_watchdog', 22, '20260918200000_data_health_sync_reprocess_saude.sql', 'd972036c52c2a54c0da21fcbef783c63'),
   ('public', 'tarefas_matcher_tick', 1, '20260528133000_tarefas_bloco_d.sql', '1d22a8a6cebe7a7ac1329fc8f98fe20d'),
   ('public', 'tarefas_matcher_tick', 2, '20260528135000_tarefas_matcher_created_at_floor.sql', '99785df6ed7189c49aad580f09b24a1c'),
   ('public', 'tarefas_matcher_tick', 3, '20260615194500_fix_tarefas_matcher_enum.sql', '0bc8eb0402988ad408b80add2df00e56'),
