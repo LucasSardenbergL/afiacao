@@ -85,7 +85,7 @@ db/test-pedido-edicao-atomica.sh           54
 # e, medido, nem isso bastava: a palavra ERRO×ERROR que o executor casa vem do SERVIDOR
 # (`lc_messages`), e a rodada pt_BR antiga trocava só o cliente — as duas saíam idênticas
 # (docs/historico/falsificacao-db-aplicar-idioma-do-servidor.md).
-db/test-db-aplicar.sh                      36  falsificar=11
+db/test-db-aplicar.sh                      46  falsificar=13
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
 # A janela entre dois round-trips PostgREST, com uma chamada HTTP que cria pedido de

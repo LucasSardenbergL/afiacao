@@ -2,7 +2,7 @@
 # ╔═════════════════════════════════════════════════════════════════════════════════════════╗
 # ║   PROVA PG17 — db/claude-rw-bootstrap.sql + scripts/db-aplicar.sh                       ║
 # ║   Rode:  bash db/test-db-aplicar.sh > /tmp/t.log 2>&1; echo $?                          ║
-# ║          bash db/test-db-aplicar.sh --falsificar    (11 sabotagens, exige VERMELHO)     ║
+# ║          bash db/test-db-aplicar.sh --falsificar    (13 sabotagens, exige VERMELHO)     ║
 # ║   Exit:  0 verde · 1 asserção vermelha · 3 SONDA/CONTROLE podre (nada a julgar)         ║
 # ║                                                                                         ║
 # ║   Prova, EXECUTANDO (PL/pgSQL e psql são late-bound; criar não é rodar):                ║
@@ -15,7 +15,9 @@
 # ║    A7 sonda fail-closed: wrapper que responde como OUTRO papel sai 6, não 0;            ║
 # ║    A8 sha mentiroso é recusado pela função ANTES de executar o corpo;                   ║
 # ║    A9 tentativa já fechada não pode ser reusada (nem executa);                          ║
-# ║    A10 SQL COM envelope é recusado (exit 2) sem criar nada e sem gravar no ledger.      ║
+# ║    A10 SQL COM envelope é recusado (exit 2) sem criar nada e sem gravar no ledger;      ║
+# ║    A13 conexão perdida DEPOIS da tentativa e DURANTE o apply sai 5 (não sei), não 4;    ║
+# ║    A14 o mesmo com o cluster fora do ar — a reconciliação MUDA não vira "rollback".     ║
 # ╚═════════════════════════════════════════════════════════════════════════════════════════╝
 # Falsifica — cada sabotagem com rc EXATO + MARCA lida da saída real, julgada nas TRÊS combinações
 # servidor×cliente com o desfecho previsto para cada uma, e contra o seu GÊMEO verde (o mesmo cenário
@@ -31,8 +33,13 @@
 #   (S8)  transformação no CLIENTE → o banco recusa por sha divergente (4);
 #   (S9)  transformação no SERVIDOR → aplica limpo (0) e só o corpo guardado muda;
 #   (S10) regex sem ERRO     → só o servidor em pt_BR vira 5;
-#   (S11) regex só com ERRO: → só o servidor em inglês vira 5. S10 e S11 provam que as combinações
-#         não são cópia uma da outra: cada idioma pega a sua e deixa a outra passar.
+#   (S11) regex só com ERRO  → só o servidor em inglês vira 5. S10 e S11 provam que as combinações
+#         não são cópia uma da outra: cada idioma pega a sua e deixa a outra passar;
+#   (S12) a regex do veredito volta a ignorar a CAIXA → o `error:`/`erro:` do CLIENTE passa por
+#         severidade do servidor e a queda de conexão volta a ser anunciada como rollback (4);
+#   (S13) a detecção da queda desligada → o rc segue 5 e só a MARCA cai: o 5 perde o nome próprio
+#         e a instrução (ler o ledger). S12 e S13 são as duas camadas do mesmo veredito, e nenhuma
+#         das duas é alcançada por fixture de erro do banco — só pela queda no meio do apply.
 set -euo pipefail
 
 # Esta prova está em `db/nucleo-ci.txt` (job `provas-sql`) nos DOIS modos: o normal, com mínimo de
@@ -57,6 +64,11 @@ FIX_ERRO="db/fixtures/db-aplicar-erro.sql"
 FIX_ENVELOPE="db/fixtures/db-aplicar-envelope.sql"
 FIX_CIC="db/fixtures/db-aplicar-cic.sql"
 FIX_CORPO="db/fixtures/db-aplicar-corpo-de-funcao.sql"
+# A fixture LENTA abre a janela do A13/A14: a tentativa já commitada FORA da transação e o apply
+# DENTRO do corpo quando a conexão morre. Conexão recusada desde o início para na sonda (exit 6) e
+# não exercita veredito nenhum — a queda precisa acontecer depois do primeiro comando.
+FIX_LENTO="db/fixtures/db-aplicar-lento.sql"
+SENTINELA_LENTO='APPLY_LENTO'
 WORK="$(mktemp -d "/tmp/pgtest-db-aplicar.XXXXXX")"
 LOGS="$WORK/logs"
 mkdir -p "$LOGS"
@@ -184,6 +196,55 @@ CORPO_ARQ="$(awk '/AS \$funcao\$$/{f=1;next} /^\$funcao\$;$/{f=0} f' "$REPO_ROOT
 
 aplicar() { ( cd "$REPO_ROOT" && LC_ALL="$LOC_CLI" LANG="$LOC_CLI" AFIACAO_PSQL_RW="$SHIM" bash "$ALVO" "$@" ); }
 rc_de()   { local r=0; aplicar "$@" > "$OUT" 2>&1 || r=$?; echo "$r"; }
+
+# ── a queda de conexão NO MEIO do apply (A13/A14 e S12/S13) ────────────────────────────────────
+# O executor tem de rodar em BACKGROUND: quem derruba a conexão é esta prova, e ela só pode fazer
+# isso enquanto o apply está DENTRO do corpo. O rc vai para arquivo porque `&` descarta o status.
+BG_PID=""; RC_FUNDO=""
+aplica_em_fundo() { # <fixture>
+  RC_FUNDO="$WORK/rc-fundo.$$"
+  rm -f "$RC_FUNDO"
+  # `|| r=$?` como no rc_de, e não `; echo $?`: com `set -e` herdado, o subshell MORRE no exit≠0 do
+  # executor e o arquivo de rc nunca é escrito — o rc real vira "TRAVOU" e a prova mede o próprio
+  # harness. Medido aqui na 1ª execução (2026-09-18).
+  ( r=0; aplicar "$1" > "$OUT" 2>&1 || r=$?; echo "$r" > "$RC_FUNDO" ) &
+  BG_PID=$!
+}
+# espera_no_corpo — resposta POSITIVA (o backend do claude_rw ATIVO com o sentinela do corpo), com
+# TETO e ramo que DIZ "não consegui". Laço de espera sem desistência é fail-OPEN: apply que morre
+# cedo, cluster caído e query que não casa caem todos em "continuar esperando" e a prova trava sem
+# veredito (docs/historico/espera-sem-desistencia.md).
+espera_no_corpo() { # <teto em décimos de segundo>
+  local i=0 n=""
+  while [ "$i" -lt "$1" ]; do
+    n="$(q "select count(*) from pg_stat_activity where usename='claude_rw' and state='active'
+              and query like '%$SENTINELA_LENTO%' and pid <> pg_backend_pid()")"
+    if [ "$n" = "1" ]; then return 0; fi
+    sleep 0.2; i=$((i + 1))
+  done
+  return 1
+}
+derruba_backend() { # mata o backend que está no corpo; o cluster segue no ar (a reconciliação responde)
+  q "select count(pg_terminate_backend(pid)) from pg_stat_activity where usename='claude_rw'
+       and state='active' and query like '%$SENTINELA_LENTO%' and pid <> pg_backend_pid()"
+}
+colhe_fundo() { # <teto em décimos> — o rc do executor, ou vazio se ele não terminou
+  local i=0
+  wait "$BG_PID" 2>/dev/null || true
+  while [ "$i" -lt "$1" ]; do
+    if [ -s "$RC_FUNDO" ]; then head -1 "$RC_FUNDO" | tr -d '[:space:]'; return 0; fi
+    sleep 0.2; i=$((i + 1))
+  done
+  kill "$BG_PID" 2>/dev/null || true
+  return 1
+}
+# reinicia_cluster — devolve ao ar um cluster parado por `pg_ctl -m immediate` (A14), com resposta
+# POSITIVA: "mandei subir" não é "está no ar", e o que vem depois dependeria de um banco vivo.
+reinicia_cluster() {
+  "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $CDIR -c listen_addresses=localhost -c lc_messages=$LOC_SRV" \
+    -l "$CDIR/pg.log" -w start > "$CDIR/restart.log" 2>&1 || return 1
+  [ "$(q "select 'CLUSTER_VIVO'")" = "CLUSTER_VIVO" ]
+}
 
 # ═════════════════════════════════════════════════════════════════════════════════════════
 if [ "$FALSIFICAR" -eq 0 ]; then
@@ -352,6 +413,86 @@ eq "A12 corpo de função com BEGIN/END; e REFRESH MV CONCURRENTLY APLICA" \
 CORPO_DB="$(q_bruto "select prosrc from pg_proc where oid='public.fixture_corpo_refresca()'::regprocedure" | norm_corpo || true)"
 eq "A12b o corpo GUARDADO pelo Postgres é o do arquivo (linhas em branco fora; indentação conta)" "$CORPO_DB" "$CORPO_ARQ"
 
+echo "▶ A13/A14 — a conexão cai DEPOIS da tentativa e DURANTE o apply"
+# A classe de desfecho que o veredito da etapa 6 não sabia nomear. Até 2026-09-18 a regex que
+# separava 4 (falhou, rollback limpo) de 5 (não sei) era `grep -iE '...(ERRO|ERROR|FATAL|PANIC)'`:
+# com `-i`, ela casava `error:`/`erro:` — o rótulo MINÚSCULO que o psql CLIENTE escreve quando a
+# conexão morre —, e o script anunciava "a transação voltou atrás (nada aplicado pela metade)"
+# sobre um COMMIT que pode ter chegado. Medido aqui (PG17, 2026-09-18): a queda dá rc=2
+# (EXIT_BADCONN) e NENHUMA severidade `ERROR:`/`ERRO:` do servidor na saída — só `FATAL:`
+# (terminate) ou `WARNING:`/`AVISO:` (shutdown imediato), que são a conexão sendo derrubada, não
+# prova de aborto. Quem prova aborto é o servidor respondendo ERROR/ERRO a um comando.
+#
+# A13: o backend morre e o cluster segue no ar — a reconciliação RESPONDE ('tentativa').
+# A14: o cluster inteiro cai — a reconciliação também fica muda (o EST_POS vazio do relato).
+# As duas têm de sair 5: o script não pode afirmar rollback que não observou.
+A13_R=""; A13_LOG="$WORK/a13.log"
+OUT="$A13_LOG"
+aplica_em_fundo "$FIX_LENTO"
+if ! espera_no_corpo 150; then
+  kill "$BG_PID" 2>/dev/null || true
+  nok "A13 preparo" "o apply não chegou ao corpo em 30s: a queda não foi exercitada — $(tail -c 200 "$A13_LOG" | tr '\n' ' ')"
+else
+  # a tentativa TEM de estar gravada antes da queda: é o que separa esta classe de "conexão
+  # recusada desde o início", que para na sonda (exit 6) sem nunca tocar no ledger.
+  eq "A13 a tentativa já está no ledger quando a conexão cai" \
+     "$(q "select estado from public.db_aplicacoes where arquivo='$FIX_LENTO'")" "tentativa"
+  derruba_backend >/dev/null
+  A13_R="$(colhe_fundo 150 || echo TRAVOU)"
+  eq "A13 conexão perdida no meio do apply sai 5 (DESCONHECIDO), não 4" "$A13_R" "5"
+  if grep -qF 'CONEXAO PERDIDA' "$A13_LOG"; then
+    ok "A13 o 5 veio do ramo da conexão perdida — não de outro ramo que também sai 5"
+  else
+    nok "A13 marca" "saiu '$A13_R' sem 'CONEXAO PERDIDA': $(tail -c 300 "$A13_LOG" | tr '\n' ' ')"
+  fi
+  # O oposto, medido e não suposto: a frase que AFIRMA o rollback não pode aparecer. É ela, e não
+  # o número do exit, que manda o operador corrigir e reaplicar por reflexo.
+  if grep -qF 'APPLY FALHOU' "$A13_LOG"; then
+    nok "A13 veredito" "o script AFIRMOU falha-com-rollback-limpo sobre uma conexão que morreu"
+  else
+    ok "A13 não afirma 'APPLY FALHOU' (rollback limpo) sem evidência do servidor"
+  fi
+  eq "A13 a cicatriz fica 'desconhecido' (exige humano; o ledger barra o re-apply por reflexo)" \
+     "$(q "select estado from public.db_aplicacoes where arquivo='$FIX_LENTO'")" "desconhecido"
+  # Neste cenário o rollback DE FATO aconteceu (o backend morreu antes do COMMIT). A asserção
+  # existe para mostrar que 'desconhecido' não é pessimismo inútil: o script não tinha como saber
+  # disso daqui, e é exatamente essa a diferença entre observar e afirmar.
+  eq "A13 e nada de meia-migration (o rollback aconteceu — só não era observável daqui)" \
+     "$(q "select to_regclass('public.fixture_aplicar_lento') is null")" "t"
+fi
+
+# A14 — o mesmo, com a reconciliação MUDA. O ledger é zerado antes: com a cicatriz do A13 no lugar,
+# o script sairia 5 já na etapa 3 ("há uma aplicação DESCONHECIDA") sem chegar perto do apply, e a
+# asserção ficaria verde por um motivo que não é o testado.
+A14_LOG="$WORK/a14.log"
+$PSQL -c "DELETE FROM public.db_aplicacoes WHERE arquivo='$FIX_LENTO'" >/dev/null 2>&1
+eq "A14 preparo: o ledger não tem mais linha desta fixture" \
+   "$(q "select count(*) from public.db_aplicacoes where arquivo='$FIX_LENTO'")" "0"
+OUT="$A14_LOG"
+aplica_em_fundo "$FIX_LENTO"
+if ! espera_no_corpo 150; then
+  kill "$BG_PID" 2>/dev/null || true
+  nok "A14 preparo" "o apply não chegou ao corpo em 30s: a queda não foi exercitada"
+else
+  "$PGBIN/pg_ctl" -D "$DATA" -m immediate stop > "$CDIR/stop.log" 2>&1 || true
+  A14_R="$(colhe_fundo 150 || echo TRAVOU)"
+  if reinicia_cluster; then
+    eq "A14 cluster caído (reconciliação MUDA) também sai 5, não 4" "$A14_R" "5"
+    if grep -qF 'CONEXAO PERDIDA' "$A14_LOG"; then
+      ok "A14 o 5 veio do ramo da conexão perdida, com o ledger fora do ar"
+    else
+      nok "A14 marca" "saiu '$A14_R' sem 'CONEXAO PERDIDA': $(tail -c 300 "$A14_LOG" | tr '\n' ' ')"
+    fi
+    # Sem banco não há como fechar a cicatriz: a tentativa fica ABERTA, e é assim que o operador a
+    # encontra. 'tentativa' não bloqueia o re-apply — e não precisa: se o COMMIT tivesse chegado, o
+    # recibo da MESMA transação estaria 'aplicada' e a etapa 3 barraria por lá.
+    eq "A14 a tentativa ficou ABERTA (o script não tinha banco para marcar a cicatriz)" \
+       "$(q "select estado from public.db_aplicacoes where arquivo='$FIX_LENTO'")" "tentativa"
+  else
+    nok "A14" "o cluster não voltou depois da parada imediata: nada abaixo daqui seria veredito"
+  fi
+fi
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -eq 0 ]; then echo "FIM_PROVA_OK"; else echo "FIM_PROVA_VERMELHO"; fi
@@ -439,12 +580,27 @@ seleciona_combo() { # <c_c|c_pt|pt_pt> — cluster e locale do cliente; e, À PA
     c_pt)  M_CLIENTE='psql: erro:';  M_CTX='CONTEXTO:  '; M_CTX_A3='CONTEXTO:  SQL statement' ;;
     pt_pt) M_CLIENTE='psql: erro:';  M_CTX='CONTEXTO:  '; M_CTX_A3='CONTEXTO:  comando SQL' ;;
   esac
+  # A queda de conexão (S12/S13) escreve as DUAS pontas na mesma saída, e é onde a separação
+  # servidor×cliente fica visível a olho nu — medido 2026-09-18, pg_terminate_backend no meio do
+  # apply: a severidade em CAIXA vem do servidor, o rótulo minúsculo vem do cliente. Por isso as
+  # três combinações têm par PRÓPRIO: c_pt é a mistura (servidor em inglês, cliente em pt_BR), e
+  # sem ela a sabotagem passaria julgando dois pares homogêneos. Trechos ASCII de caixa fixa: a
+  # frase pt_BR segue com acento logo depois ('a conexão'), e casá-lo é o casamento pela metade.
+  # A marca do SERVIDOR é a linha de CONTEXTO do PL/pgSQL, e não o `FATAL:` da queda: o executor só
+  # mostra `tail -c 900` do log do apply, e num erro dentro do EXECUTE o servidor ecoa o corpo
+  # inteiro ANTES — o FATAL cai fora do recorte (medido 2026-09-18), a linha de contexto não.
+  case "$1" in
+    c_c)   M_QUEDA_SRV='PL/pgSQL function aplicar_sql'; M_QUEDA_CLI='error: connection to server was lost' ;;
+    c_pt)  M_QUEDA_SRV='PL/pgSQL function aplicar_sql'; M_QUEDA_CLI='erro: a conex' ;;
+    pt_pt) M_QUEDA_SRV='PL/pgSQL aplicar_sql';         M_QUEDA_CLI='erro: a conex' ;;
+  esac
 }
 
 limpa() { # zera fixtures e ledger do cluster selecionado; o status é conferido por quem chama
   $PSQL -q -c "DROP FUNCTION IF EXISTS public.fixture_corpo_refresca();
     DROP TABLE IF EXISTS public.fixture_aplicar_ok, public.fixture_aplicar_meia,
-      public.fixture_aplicar_envelope, public.fixture_aplicar_cic, public.fixture_aplicar_corpo;
+      public.fixture_aplicar_envelope, public.fixture_aplicar_cic, public.fixture_aplicar_corpo,
+      public.fixture_aplicar_lento;
     DELETE FROM public.db_aplicacoes" > "$CDIR/limpa.log" 2>&1
 }
 # A S2 deixa estado `desconhecido` no ledger, e a S3 um recibo `aplicada`: limpeza que falhasse em
@@ -738,6 +894,51 @@ cen_s11() {
     *)     confere "$r" 5 "$OUT" 'RESULTADO DESCONHECIDO (rc=3,' "$M_DIV" "$M_CTX" ;;
   esac
 }
+# S12/S13 — a QUEDA de conexão no meio do apply: a classe que o veredito não sabia nomear (A13/A14
+# no modo normal). O cenário é o mesmo nas duas, e cada sabotagem tira UMA camada — o vermelho sai
+# em lugar diferente: S12 no rc (volta a afirmar o rollback), S13 na marca (segue 5, mas sem nome).
+# `queda_no_apply` ecoa o rc do executor, ou um MOTIVO — que nunca é um número, para o cenário
+# nunca julgar sobre uma queda que não aconteceu (tentativa ainda não gravada, apply que não chegou
+# ao corpo, executor que não terminou). Conexão recusada desde o início pararia na sonda (exit 6) e
+# não exercitaria veredito nenhum: a janela é a fixture lenta.
+queda_no_apply() {
+  local e="" r=""
+  limpo || { printf 'limpeza'; return 0; }
+  aplica_em_fundo "$FIX_LENTO"
+  if ! espera_no_corpo 150; then
+    kill "$BG_PID" 2>/dev/null || true
+    printf 'o apply nao chegou ao corpo em 30s: a queda nao foi exercitada'; return 0
+  fi
+  e="$(q "select estado from public.db_aplicacoes where arquivo='$FIX_LENTO'")"
+  if [ "$e" != tentativa ]; then
+    kill "$BG_PID" 2>/dev/null || true
+    printf "a tentativa nao estava gravada quando a conexao caiu (veio '%s')" "$e"; return 0
+  fi
+  derruba_backend >/dev/null
+  r="$(colhe_fundo 150)" || { printf 'o executor nao terminou depois da queda'; return 0; }
+  printf '%s' "$r"
+}
+# rc_da_queda — o rc, ou o motivo repassado. Motivo textual jamais vira número, e número jamais
+# vira veredito sem passar pelo `confere`.
+rc_da_queda() { local r=""; r="$(queda_no_apply)"; printf '%s' "$r"; }
+cen_s12() {
+  local r=""
+  r="$(rc_da_queda)"
+  case "$r" in ''|*[!0-9]*) printf '%s' "${r:-a queda saiu sem rc}"; return 0 ;; esac
+  # Com a caixa ignorada, o `erro:`/`error:` MINÚSCULO do cliente volta a contar como severidade do
+  # servidor, e o script volta a ANUNCIAR o rollback que não observou. É o defeito de 2026-09-18.
+  confere "$r" 4 "$OUT" 'APPLY FALHOU' "$M_QUEDA_SRV" "$M_QUEDA_CLI"
+}
+cen_s13() {
+  local r=""
+  r="$(rc_da_queda)"
+  case "$r" in ''|*[!0-9]*) printf '%s' "${r:-a queda saiu sem rc}"; return 0 ;; esac
+  # O rc continua 5 — e é por isso que o rc sozinho não capturaria esta camada. O que se perde é o
+  # NOME: a mensagem vira a genérica de 'sem marcador', e com ela some a única instrução que serve
+  # aqui (ler o ledger para saber se o COMMIT chegou). Marca da mensagem, não do número.
+  confere "$r" 5 "$OUT" 'RESULTADO DESCONHECIDO (rc=2,' "$M_QUEDA_SRV" "$M_QUEDA_CLI"
+}
+
 # restaura_bootstrap — devolve a função verdadeira e CONFERE pela definição instalada (o md5 do
 # prosrc gravado depois do bootstrap original), não pelo exit do psql: "restaurei" sem asserção é a
 # mesma família de ausente ≠ zero (docs/historico/falsificacao-sem-linha-de-base.md).
@@ -780,6 +981,7 @@ roda_cenario() {
   case "$1" in
     s1) cen_s1 ;;  s2) cen_s2 ;;  s3) cen_s3 ;;  s4) cen_s4 ;;  s5) cen_s5 ;;  s6) cen_s6 ;;
     s7) cen_s7 ;;  s8) cen_s8 ;;  s9) cen_s9 ;;  s10) cen_s10 ;;  s11) cen_s11 ;;
+    s12) cen_s12 ;;  s13) cen_s13 ;;
     *) printf "cenario desconhecido '%s'" "$1" ;;
   esac
 }
@@ -944,10 +1146,24 @@ sabotagem S7 "guard ALARGADO para casar END; (a SOBRE-recusa derruba o controle)
 # shellcheck disable=SC2016  # aspas simples de proposito: o perl casa com o TEXTO-FONTE do script
 sabotagem S8 "transformacao no CLIENTE (o banco e o freio)" executor \
   's/^  cat "\$SNAP"$/  sed "\/^END;\$\/d" "\$SNAP"/m' s8
+# S10/S11 — desde 2026-09-18 a alternância tem só as duas palavras de ERRO, e o ':' vive fora dela:
+# FATAL/PANIC saíram do ramo 4 (são a conexão sendo derrubada, não aborto de comando respondido).
 sabotagem S10 "regex sem ERRO (so o servidor pt_BR deixa de ser reconhecido)" executor \
-  's/\(ERRO\|ERROR\|FATAL\|PANIC\)/(ERROR|FATAL|PANIC)/' s10 "c_c c_pt"
-sabotagem S11 "regex so com ERRO: (so o servidor em ingles deixa de ser reconhecido)" executor \
-  's/\(ERRO\|ERROR\|FATAL\|PANIC\)/(ERRO:|FATAL|PANIC)/' s11 pt_pt
+  's/\(ERRO\|ERROR\)/(ERROR)/' s10 "c_c c_pt"
+sabotagem S11 "regex so com ERRO (so o servidor em ingles deixa de ser reconhecido)" executor \
+  's/\(ERRO\|ERROR\)/(ERRO)/' s11 pt_pt
+# S12/S13 — as duas camadas do veredito de QUEDA DE CONEXÃO, uma por vez. Nenhuma fixture de erro
+# do banco as alcança: a queda no meio do apply é a única entrada que as exercita.
+# S12 é UM caractere. A CAIXA é o que separa a severidade do SERVIDOR (`ERROR:`/`ERRO:`) do rótulo
+# do CLIENTE (`error:`/`erro:`); com `-i` de volta, a linha do cliente casa a âncora do servidor e
+# o script volta a ANUNCIAR "a transação voltou atrás" sobre um COMMIT que pode ter chegado.
+# shellcheck disable=SC2016  # aspas simples de proposito: `$1` e a captura do PERL, nao do shell
+sabotagem S12 "regex do veredito volta a ignorar a CAIXA (o rotulo do cliente vira severidade do servidor)" executor \
+  's/grep -E (.\^psql:)/grep -iE $1/' s12
+# S13: o rc NÃO muda (segue 5) — o dente está na MARCA. Sem a detecção, a mensagem vira a genérica
+# de 'sem marcador' e some a única instrução que serve aqui: ler o ledger para saber se commitou.
+sabotagem S13 "deteccao de conexao perdida desligada (o 5 perde o nome e a instrucao)" executor \
+  's/^  CONEXAO_PERDIDA=1$/  CONEXAO_PERDIDA=0/m' s13
 # S9 por último: é a única que muda a função instalada nos clusters.
 sabotagem S9 "transformacao SERVER-SIDE (so o corpo guardado a enxerga)" bootstrap \
   's/^  EXECUTE p_sql;$/  EXECUTE regexp_replace(p_sql, E\x27\\n  \x27, E\x27\\n\x27, \x27g\x27);/m' s9
@@ -955,7 +1171,7 @@ sabotagem S9 "transformacao SERVER-SIDE (so o corpo guardado a enxerga)" bootstr
 # Identidade, não contagem: cada sabotagem prevista foi julgada exatamente UMA vez, e nenhuma além
 # delas. O recibo só conta — duplicar uma e apagar outra daria o mesmo 11. O `registra` barra a
 # duplicata; esta conferência não depende dele.
-IDS_ESPERADOS="S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11"
+IDS_ESPERADOS="S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11 S12 S13"
 n_esp=0; n_julg=0
 for x in $IDS_ESPERADOS; do n_esp=$((n_esp + 1)); done
 for x in $SAB_JULGADAS;  do n_julg=$((n_julg + 1)); done

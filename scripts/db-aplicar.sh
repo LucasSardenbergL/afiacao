@@ -22,8 +22,13 @@
 # ║  6. NUNCA reaplica resultado DESCONHECIDO. Resposta perdida ≠ falha. Reaplicar por      ║
 # ║     reflexo é como se aplica uma migration duas vezes.                                  ║
 # ║                                                                                        ║
+# ║  7. O 4 exige EVIDÊNCIA DE ABORTO VINDA DO SERVIDOR (`ERROR:`/`ERRO:` respondido a um   ║
+# ║     comando). Conexão perdida é 5: o rótulo minúsculo `error:`/`erro:` é o CLIENTE      ║
+# ║     falando, e ele não sabe se o COMMIT chegou antes de a resposta morrer.              ║
+# ║                                                                                        ║
 # ║  Exit codes: 0 aplicado · 2 uso/preflight · 3 já aplicado (no-op) · 4 falhou (rollback  ║
-# ║              limpo) · 5 DESCONHECIDO (exige humano) · 6 não consegui consultar          ║
+# ║              limpo, PROVADO pelo servidor) · 5 DESCONHECIDO, conexão perdida inclusive  ║
+# ║              (exige humano) · 6 não consegui consultar                                  ║
 # ╚═══════════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -264,12 +269,45 @@ if [ "$RC" -eq 0 ] && [ "$TEM_MARCADOR" -eq 1 ]; then
   exit 0
 fi
 
-# Falhou. Distinguir rollback LIMPO de resultado DESCONHECIDO é o que evita a dupla aplicação.
+# Falhou. Distinguir rollback LIMPO de resultado DESCONHECIDO é o que evita a dupla aplicação — e
+# quem distingue é QUEM FALOU o erro, não a presença de uma palavra. Duas testemunhas, e elas
+# dizem coisas diferentes (medido em PG17 pelo db/test-db-aplicar.sh, 2026-09-18):
+#
+#   • `psql:<arquivo>:<linha>: ERROR:` / `ERRO:` — severidade em CAIXA, no prefixo que o psql
+#     escreve. É o SERVIDOR respondendo a um comando: ele processou, recusou, e com ON_ERROR_STOP
+#     o psql para ANTES de enviar o COMMIT. É a única evidência de que nada foi aplicado. A
+#     palavra vem do `lc_messages` do SERVIDOR (prod: en_US.UTF-8; o cliente do founder é pt_BR) —
+#     por isso as duas formas, e por isso SEM `-i`: a caixa é o que separa o servidor do cliente.
+#   • `psql:...: error:` / `erro:` em MINÚSCULA, e rc 2 (EXIT_BADCONN) — é o CLIENTE falando por
+#     conta própria: a conexão morreu. Morreu QUANDO? Daqui não dá para saber. A tentativa já
+#     estava gravada, e o COMMIT pode ter chegado ao servidor com só a resposta se perdendo.
+#
+# Até 2026-09-18 uma regex só, com `-i`, casava as duas — `ERRO` casa `erro` — e o script
+# anunciava exit 4 "a transação voltou atrás" sobre uma conexão que caiu. Veredito FABRICADO: o
+# rollback nunca foi observado. `FATAL:` (terminate) e `WARNING:`/`AVISO:` (shutdown imediato)
+# ficam de fora do ramo 4 de propósito: são a conexão sendo derrubada, não aborto de comando.
+#
 # `|| true` NÃO é preguiça: sem ele, `grep` sem match devolve 1, o `pipefail` propaga e o
 # `set -e` MATA o script nesta atribuição — matando junto o ramo DESCONHECIDO logo abaixo,
 # que existe exatamente para o caso "nenhum erro reconhecível". O ramo ficava inalcançável no
 # único cenário que o justifica, e o teste não via porque aceitava "qualquer coisa ≠ 0".
-ERRO="$(grep -iE '^(psql:)?.*(ERRO|ERROR|FATAL|PANIC)' "$APPLY_OUT" | head -3 | tr '\n' ' ' | cut -c1-400 || true)"
+#
+# A âncora exige o prefixo inteiro do psql. Ela falha para o lado SEGURO: caminho de log com `:`
+# (nenhum TMPDIR real tem) ou formato diferente não casam, e o veredito cai em 5.
+ERRO_SERVIDOR="$(grep -E '^psql:[^:]*:[0-9]+: (ERRO|ERROR):' "$APPLY_OUT" | head -3 | tr '\n' ' ' | cut -c1-400 || true)"
+ERRO_CLIENTE="$(grep -E '(^|[[:space:]])(erro|error):[[:space:]]' "$APPLY_OUT" | head -2 | tr '\n' ' ' | cut -c1-300 || true)"
+# CONEXÃO PERDIDA não é "o cliente falou": é ESTE erro de cliente. `psql:...: error: invalid
+# command \` também é do cliente e não tem nada a ver com a conexão — medido pela sabotagem S2,
+# que deixa o corpo começando numa barra solta e fazia esta detecção anunciar queda com rc=0.
+# O rc 2 (EXIT_BADCONN do psql) é a testemunha exata, e não depende de idioma nenhum; os trechos
+# são a rede para um wrapper que engula o rc, em ASCII puro nos dois idiomas em que o cliente fala
+# aqui — o acento fica FORA do casamento de propósito (#1483).
+CONEXAO_PERDIDA=0
+if [ "$RC" -eq 2 ] || grep -qE 'connection to server was lost|server closed the connection|com o servidor foi perdida|servidor fechou a conex' "$APPLY_OUT"; then
+  CONEXAO_PERDIDA=1
+fi
+# O texto que o humano LÊ e que vira cicatriz no ledger — amplo de propósito; ele não decide nada.
+ERRO="${ERRO_SERVIDOR:-$ERRO_CLIENTE}"
 msg "$(tail -c 900 "$APPLY_OUT")"
 
 if [ "$ENSAIO" -eq 1 ]; then
@@ -296,7 +334,12 @@ fi
 
 # `and estado='tentativa'` em AMBOS os updates: nada aqui pode reescrever um recibo já
 # fechado. Se o estado não for mais 'tentativa', a linha simplesmente não é tocada.
-if [ "$RC" -ne 0 ] && [ -n "$ERRO" ]; then
+#
+# O 4 exige EVIDÊNCIA POSITIVA vinda do SERVIDOR, e só ela. Um `ERROR:`/`ERRO:` respondido a um
+# comando prova o aborto mesmo que a conexão caia logo depois: com ON_ERROR_STOP o psql para ali,
+# e o COMMIT nunca chega a ser enviado. Por isso não há veto de conexão perdida nesta condição —
+# seria uma camada inalcançável, e camada inalcançável é defeito, não segurança a mais.
+if [ "$RC" -ne 0 ] && [ -n "$ERRO_SERVIDOR" ]; then
   # O banco RESPONDEU com erro → a transação abortou → rollback limpo, sem meia-migration.
   ERRO_SQL="${ERRO//\'/\'\'}"
   "$RW" -X -A -t -c "update public.db_aplicacoes
@@ -306,13 +349,26 @@ if [ "$RC" -ne 0 ] && [ -n "$ERRO" ]; then
   morre 4 "APPLY FALHOU e a transação voltou atrás (nada aplicado pela metade): $ERRO"
 fi
 
-# Sem erro identificável E sem marcador = não sei o que aconteceu lá dentro. Este é o caso
-# que NÃO pode ser reaplicado automaticamente.
+# Sem evidência de aborto vinda do servidor = não sei o que aconteceu lá dentro. Este é o caso que
+# NÃO pode ser reaplicado automaticamente — e ele tem duas caras, que mandam o operador fazer
+# coisas diferentes. A conexão perdida ganha nome próprio porque a pergunta dela é outra: não é
+# "o que deu errado", é "o COMMIT chegou?", e a resposta está no ledger, não no log.
+if [ "$CONEXAO_PERDIDA" -eq 1 ]; then
+  MOTIVO="CONEXAO PERDIDA durante o apply; rc=$RC"
+  DIAGNOSTICO="CONEXAO PERDIDA durante o apply (rc=$RC) — e daqui NÃO dá para saber se o COMMIT
+   chegou: a tentativa #$ID já estava gravada, e o que morreu foi a resposta.
+   O ledger é quem responde, porque o recibo vai na MESMA transação: leia a linha #$ID por
+   psql-ro. 'aplicada' = aplicou (mesmo com este erro); 'tentativa'/'desconhecido' = não aplicou,
+   OU ainda estava commitando quando li. Confira também o efeito no schema antes de decidir."
+else
+  MOTIVO="sem marcador de fim; rc=$RC"
+  DIAGNOSTICO="RESULTADO DESCONHECIDO (rc=$RC, marcador '$MARCADOR' ausente)."
+fi
 "$RW" -X -A -t -c "update public.db_aplicacoes
    set estado='desconhecido', concluido_em=now(),
-       erro='sem marcador de fim; rc=$RC'
+       erro='$MOTIVO'
    where id=$ID and estado='tentativa'" >/dev/null 2>&1 \
   || msg "⚠️  não consegui marcar #$ID como 'desconhecido' — corrija a linha à mão"
-morre 5 "RESULTADO DESCONHECIDO (rc=$RC, marcador '$MARCADOR' ausente).
+morre 5 "$DIAGNOSTICO
    NÃO reaplique por reflexo. Confira o efeito por leitura independente (psql-ro) e decida.
    log: $APPLY_OUT"
