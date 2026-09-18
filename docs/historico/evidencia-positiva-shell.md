@@ -812,3 +812,27 @@ de distância, e nada no diff os distingue.
 
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.
+
+### 21. `set -- $var` no zsh NÃO divide em palavras — `$1` engole a linha e `$2` fica VAZIO
+
+O zsh não faz word splitting na expansão de parâmetro (o bash faz). O idioma de bash para partir
+uma linha em campos vira **um argumento só**, e todo teste sobre `$2`, `$3`… passa a comparar com
+vazio:
+
+```bash
+r="35403987255 completed success 0e10d697a"
+set -- $r                    # zsh: $1 = a LINHA INTEIRA · $2 = ''
+[ "$2" = "completed" ]       # nunca casa — e não dá erro nenhum
+```
+
+Medido em 2026-09-18, num laço de espera do `/fecho` que vigiava o CI da main: o run terminou
+`completed success` nos 8 jobs, a condição de saída nunca casou, o laço rodou até o teto e saiu
+pelo ramo "não consegui". O veredito foi **falso negativo** — e só não foi um falso VERDE porque o
+teto estava escrito para reprovar. Um laço com o ramo invertido (`exit 0` ao estourar) teria
+aprovado uma main que ninguém mediu: é o laço fail-OPEN de [espera-sem-desistencia.md](espera-sem-desistencia.md)
+com a máscara trocada.
+
+⇒ Não parta linhas com `set --` aqui. Peça os campos **um por consulta** (`--jq '.[0].status'`),
+ou `read -r a b c <<< "$r"`, ou force o split com `${=r}` (zsh), ou rode o laço sob `bash -c`.
+E note a assimetria que torna isto silencioso: `set --` sempre "funciona", `$2` sempre "existe"
+(vazio), e a comparação sempre responde — só nunca com a verdade.
