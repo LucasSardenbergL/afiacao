@@ -137,6 +137,21 @@ if [ "${1:-}" = "--falsificar" ]; then
   sabota "isRequired AUSENTE vira nao-obrigatorio (ausente != false)" \
          "FAIL [req-sem-isrequired] exit: want 6, got 5" \
          's/(.isRequired | type) != "boolean"/false/'
+  sabota "run SUPERADO do mesmo nome volta a contar no veredito" \
+         "FAIL [req-cancelado-superado] exit: want 0, got 4" \
+         's/max_by(quando)/.[]/'
+  sabota "o dedupe fica com o run mais VELHO do nome" \
+         "FAIL [req-cancelado-mais-novo] exit: want 4, got 5" \
+         's/max_by(quando)/min_by(quando)/'
+  sabota "sem carimbo de tempo deixa de ser fail-closed" \
+         "FAIL [req-sem-carimbo] exit: want 4, got 5" \
+         's/if any(.\[\]; quando == "") then .\[\] else/if false then .[] else/'
+  sabota "a nota do vermelho SUPERADO fica calada" \
+         'FAIL [req-cancelado-superado] saida: falta "SUPERADO [validate]"' \
+         's/echo \("[^S]*SUPERADO\)/: \1/'
+  sabota "o GATILHO filtra o superado e a nota nunca nasce" \
+         'FAIL [req-cancelado-superado] saida: falta "SUPERADO [validate]"' \
+         's|any(.statusCheckRollup\[\]?; vermelho or sem_veredito)|any(((.statusCheckRollup // []) \| ultimos)[]; vermelho or sem_veredito)|'
   sabota "o AVISO do nao-obrigatorio fica calado" \
          'FAIL [nao-obrig-mergeia] saida: falta "AVISO NAO-OBRIGATORIO [mutation-check]"' \
          's/echo \("[^A]*AVISO NAO-OBRIGATORIO\)/: \1/'
@@ -296,6 +311,34 @@ req="$(gql validate:CANCELLED:true)"
 caso cancelado "check CANCELLED (estouro de timeout) → 4" 4 '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":"CANCELLED"}],"title":"t","url":"u"}' 0 "CI SEM VEREDITO [validate]"
 req="$(gql validate:TIMED_OUT:true)"
 caso timed-out "check TIMED_OUT → 4" 4 '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":"TIMED_OUT"}],"title":"t","url":"u"}' 0 "CI SEM VEREDITO [validate]"
+
+echo "── vários runs do MESMO nome no head: vale o mais RECENTE ──"
+# Medido no #2507 (2026-09-15): o head `2690f463a` ficou com TRÊS check runs `ordem-entre-edges` no
+# rollup — um CANCELLED (a `concurrency` matou o run do push) e dois SUCCESS 6s depois, porque a
+# edição do corpo disparou outro. O vigia lia o cancelado e gritava; com o contexto OBRIGATÓRIO isso
+# seria exit 4 FALSO em todo PR onde push e edição do corpo se atropelam — o fluxo normal de agente.
+req="$(gql_nos '[{"__typename":"CheckRun","name":"validate","conclusion":"CANCELLED","startedAt":"2026-09-15T04:17:49Z","isRequired":true},{"__typename":"CheckRun","name":"validate","conclusion":"SUCCESS","startedAt":"2026-09-15T04:18:35Z","isRequired":true}]')"; depois="$MERGED"
+caso req-cancelado-superado "cancelado SUPERADO por run mais novo do mesmo nome + PR mergeia → 0" 0 \
+  '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":"CANCELLED","startedAt":"2026-09-15T04:17:49Z"},{"name":"validate","conclusion":"SUCCESS","startedAt":"2026-09-15T04:18:35Z"}],"title":"t","url":"u"}' \
+  0 MERGEADO "SUPERADO [validate]"
+
+# O contrário não pode virar verde: quando o CANCELADO é o mais novo, é ele que vale.
+req="$(gql_nos '[{"__typename":"CheckRun","name":"validate","conclusion":"SUCCESS","startedAt":"2026-09-15T04:17:49Z","isRequired":true},{"__typename":"CheckRun","name":"validate","conclusion":"CANCELLED","startedAt":"2026-09-15T04:18:35Z","isRequired":true}]')"
+caso req-cancelado-mais-novo "cancelado MAIS NOVO que o verde do mesmo nome → 4" 4 \
+  '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":"SUCCESS","startedAt":"2026-09-15T04:17:49Z"},{"name":"validate","conclusion":"CANCELLED","startedAt":"2026-09-15T04:18:35Z"}],"title":"t","url":"u"}'
+
+# Sem carimbo não dá para ordenar, e ausente ≠ zero: contam TODOS (fail-closed), como antes do dedupe.
+req="$(gql_nos '[{"__typename":"CheckRun","name":"validate","conclusion":"CANCELLED","isRequired":true},{"__typename":"CheckRun","name":"validate","conclusion":"SUCCESS","isRequired":true}]')"
+caso req-sem-carimbo "dois runs do mesmo nome SEM carimbo de tempo → fail-closed, 4" 4 \
+  '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":"CANCELLED"},{"name":"validate","conclusion":"SUCCESS"}],"title":"t","url":"u"}'
+
+# O stub serve o JSON que mandarem, então nenhum caso acima pega a CONSULTA que esquece o carimbo —
+# e sem `startedAt` nela todo run vira "sem carimbo", o fail-closed acima devolve o 4 falso de volta.
+if grep -q 'startedAt' "$WATCH" && grep -q 'createdAt' "$WATCH"; then
+  echo "  ok    a consulta pede startedAt/createdAt | sem tempo, dedupe por tempo é cego"
+else
+  echo "  FAIL [req-query-sem-carimbo] o vigia nao pede startedAt/createdAt na consulta | dedupe por tempo sem tempo é cego"; fail=1
+fi
 
 echo "── check OBRIGATÓRIO vermelho: é desfecho, e o veredito nomeia só ele (→ 4) ──"
 req="$(gql validate:FAILURE:true mutation-check:FAILURE:false)"

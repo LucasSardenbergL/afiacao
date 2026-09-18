@@ -61,13 +61,20 @@ tolerancia_salto="${PR_WATCH_TOLERANCIA_SALTO:-5}"
 ultimo_estado=""   # preenchido só por consulta BEM-SUCEDIDA; "" = nunca soube
 ultimo_url=""
 ultimo_aviso=""    # checks não-obrigatórios do último AVISO — repetir a cada poll é ruído
+ultimo_superado="" # idem para o aviso de vermelho SUPERADO por run mais novo
 
 # Critério ÚNICO de alarme, servido às duas consultas: o `gh pr view` e o GraphQL dizem
 # `conclusion` no CheckRun e `state` no StatusContext.
 JQ_CHECKS='def rotulo: (.conclusion // .state // "") | ascii_upcase;
 def vermelho: rotulo | test("FAILURE|ERROR");
 def sem_veredito: rotulo | test("^(CANCELLED|CANCELED|TIMED_OUT|STALE)$");
-def nome: .name // .context // "check";'
+def nome: .name // .context // "check";
+# Varios check runs com o MESMO nome no mesmo commit: re-run, ou run que a concurrency cancelou e
+# outro evento do mesmo PR refez (medido no #2507: um CANCELLED e dois SUCCESS no mesmo head). Vale o
+# mais RECENTE, e o superado nao e desfecho. Sem carimbo em algum deles nao da para ordenar, e
+# ausente != zero: ai contam TODOS, que e o lado fail-closed.
+def quando: (.startedAt // .createdAt // "");
+def ultimos: group_by(nome) | map(if any(.[]; quando == "") then .[] else max_by(quando) end);'
 
 consultar() {
   gh pr view "$pr" --json state,mergeStateStatus,statusCheckRollup,title,url 2>/dev/null
@@ -90,8 +97,8 @@ consultar_obrigatorios() {
           commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) {
             pageInfo { hasNextPage }
             nodes {
-              ... on CheckRun { name conclusion isRequired(pullRequestNumber: $pr) }
-              ... on StatusContext { context state isRequired(pullRequestNumber: $pr) }
+              ... on CheckRun { name conclusion startedAt isRequired(pullRequestNumber: $pr) }
+              ... on StatusContext { context state createdAt isRequired(pullRequestNumber: $pr) }
             }
           } } } } }
         }
@@ -106,7 +113,7 @@ consultar_obrigatorios() {
 #   GraphQL, que chega com corpo legível, `errors` e rc=1), resposta ilegível ou truncada, ou
 #   check com alarme sem `isRequired` booleano. "Não sei se é obrigatório" nunca vira "não é".
 julgar_checks() {
-  local url="$1" resp nos classes req_vermelhos="" req_sem_veredito="" nao_obrigatorios=""
+  local url="$1" resp nos classes req_vermelhos="" req_sem_veredito="" nao_obrigatorios="" superados=""
   if ! resp="$(consultar_obrigatorios)"; then
     echo "AVISO: consulta dos checks OBRIGATÓRIOS falhou (rede/rate-limit?)" >&2
     return 1
@@ -120,21 +127,31 @@ julgar_checks() {
   fi
   # 3 linhas: obrigatórios vermelhos · obrigatórios sem veredito · não-obrigatórios com alarme
   if ! classes="$(jq -r "$JQ_CHECKS"'
-      [.[] | select(vermelho or sem_veredito)] as $alarmes
+      ultimos as $vigentes
+      | [$vigentes[] | select(vermelho or sem_veredito)] as $alarmes
+      | [(. - $vigentes)[] | select(vermelho or sem_veredito) | nome] as $superados
       | if any($alarmes[]; (.isRequired | type) != "boolean") then error("isRequired ausente")
         else ([$alarmes[] | select(.isRequired and vermelho) | nome] | unique | join(", ")),
              ([$alarmes[] | select(.isRequired and (vermelho | not)) | nome] | unique | join(", ")),
-             ([$alarmes[] | select(.isRequired | not) | nome] | unique | join(", "))
+             ([$alarmes[] | select(.isRequired | not) | nome] | unique | join(", ")),
+             ($superados | unique | join(", "))
         end' <<<"$nos" 2>/dev/null)"; then
     echo "AVISO: check vermelho sem \`isRequired\` na resposta — não sei se é obrigatório" >&2
     return 1
   fi
-  { IFS= read -r req_vermelhos; IFS= read -r req_sem_veredito; IFS= read -r nao_obrigatorios; } <<<"$classes"
+  { IFS= read -r req_vermelhos; IFS= read -r req_sem_veredito; IFS= read -r nao_obrigatorios; IFS= read -r superados; } <<<"$classes"
 
   if [ -n "$nao_obrigatorios" ] && [ "$nao_obrigatorios" != "$ultimo_aviso" ]; then
     echo "⚠️ AVISO NAO-OBRIGATORIO [$nao_obrigatorios]: PR #$pr — vermelho/sem veredito FORA dos checks obrigatórios; não segura o auto-merge, sigo vigiando — $url"
   fi
   ultimo_aviso="$nao_obrigatorios"
+
+  # Vermelho que outro run mais novo do mesmo nome já superou: some do veredito, mas não do log —
+  # calar seria esconder que houve vermelho no head.
+  if [ -n "$superados" ] && [ "$superados" != "$ultimo_superado" ]; then
+    echo "ℹ️ SUPERADO [$superados]: PR #$pr — vermelho/sem veredito de run mais VELHO do mesmo nome, superado por outro mais novo; não é desfecho — $url"
+  fi
+  ultimo_superado="$superados"
 
   if [ -n "$req_vermelhos" ]; then
     echo "❌ CI VERMELHO [$req_vermelhos]: PR #$pr — check obrigatório reprovado — $url"
@@ -186,6 +203,9 @@ decidir() {
 
   # Vermelho no rollup é só o GATILHO da 2ª consulta; quem decide o desfecho é o subconjunto
   # obrigatório (`julgar_checks`). Sem alarme não há o que perguntar.
+  # DE PROPÓSITO sem `ultimos` aqui: este é o GATILHO, não o veredito. Um vermelho já superado por
+  # run mais novo do mesmo nome ainda precisa chamar o classificador — é lá que ele vira a nota
+  # SUPERADO. Filtrar aqui calaria a nota (medido: a suíte fica verde e o log emudece).
   alarme="$(jq -r "$JQ_CHECKS"' any(.statusCheckRollup[]?; vermelho or sem_veredito)' <<<"$info" 2>/dev/null)" || return 1
   if [ "$alarme" = true ]; then
     julgar_checks "$url" || return 1

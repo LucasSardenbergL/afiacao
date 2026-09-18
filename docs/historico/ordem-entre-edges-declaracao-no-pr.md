@@ -165,6 +165,30 @@ YAML e no `package.json` (cada invariante que faria o check exigido aprovar sem 
   desalinhamento já lança pela paridade), o controle positivo do inventário da BASE (o do HEAD dispara antes em
   todo caso alcançável) e a recusa explícita de valor vazio (o caminho genérico recusa igual; muda só a mensagem).
 
+## O vermelho SUPERADO no rollup, e o que ainda não se sabe (2026-09-18)
+
+Medido no head deste PR (`2690f463a`): o commit ficou com TRÊS check runs de nome `ordem-entre-edges`
+— `CANCELLED` às 04:17:49Z (a `concurrency` matou o run do push), `SUCCESS` às 04:17:55Z (a edição do
+corpo disparou outro) e `SUCCESS` às 04:18:35Z (o `ready_for_review`). O `statusCheckRollup` do
+GraphQL devolve os três, e o `state` agregado dele é `FAILURE`.
+
+- **O `pr-watch` gritava por causa do superado.** Ele lia qualquer run em alarme; com o contexto
+  OBRIGATÓRIO, o `CANCELLED` viraria exit 4 FALSO em todo PR onde push e edição do corpo se
+  atropelam — o fluxo normal de agente. Corrigido: julga o run mais RECENTE de cada nome
+  (`startedAt`/`createdAt`), e o superado vira a nota `SUPERADO [<check>]`, que aparece no log e não
+  é desfecho. Sem carimbo em algum run do mesmo nome ele não ordena e conta TODOS — ausente ≠ zero.
+- **O `filter=latest` do REST não resolve isso.** Medido no mesmo SHA: com e sem `filter=all` a API
+  devolve os três runs. O "latest" é por check SUITE, e cada run de workflow é uma suite.
+- **O que ainda NÃO está provado:** se a branch protection conta o run superado. A doc do GitHub diz
+  que `cancelled` não é conclusão bem-sucedida e que, para mergear com check obrigatório ARQUIVADO,
+  "you must rerun the checks" — e o run antigo continua no commit, então re-rodar só destrava se
+  valer o mais recente do nome. É forte, mas indireto. Não há no repo nenhum SHA com o par
+  (cancelado + verde) num check obrigatório: em 300 runs do `ci.yml` não existe um só, porque ele
+  não tem `concurrency`. **O teste definitivo só existe depois da ativação:** com o contexto
+  exigido, um PR que fique vermelho e depois verde pela edição do corpo responde na hora — se o
+  merge destravar, vale o mais recente; se ficar bloqueado, o desenho do workflow é que muda
+  (e a proteção volta atrás com o mesmo comando, sem o contexto novo).
+
 ## O que fica descoberto, de propósito
 
 - **`nenhuma` que contradiz a prosa passa verde.** O gate não lê prosa, por desenho.
