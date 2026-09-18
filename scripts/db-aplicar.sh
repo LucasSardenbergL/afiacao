@@ -357,9 +357,11 @@ if [ "$CONEXAO_PERDIDA" -eq 1 ]; then
   MOTIVO="CONEXAO PERDIDA durante o apply; rc=$RC"
   DIAGNOSTICO="CONEXAO PERDIDA durante o apply (rc=$RC) — e daqui NÃO dá para saber se o COMMIT
    chegou: a tentativa #$ID já estava gravada, e o que morreu foi a resposta.
-   O ledger é quem responde, porque o recibo vai na MESMA transação: leia a linha #$ID por
-   psql-ro. 'aplicada' = aplicou (mesmo com este erro); 'tentativa'/'desconhecido' = não aplicou,
-   OU ainda estava commitando quando li. Confira também o efeito no schema antes de decidir."
+   O ledger é quem responde, porque o recibo vai na MESMA transação. Eu já perguntei, e a linha
+   #$ID respondeu '${EST_POS:-NADA (o banco também não respondeu a mim)}' — que NÃO fecha a
+   questão: uma leitura de um instante não alcança um COMMIT que ainda estivesse em curso.
+   Releia por psql-ro, agora: 'aplicada' = aplicou (apesar deste erro); seguir em 'tentativa'/
+   'desconhecido' = não aplicou. Confira também o efeito no schema antes de decidir."
 else
   MOTIVO="sem marcador de fim; rc=$RC"
   DIAGNOSTICO="RESULTADO DESCONHECIDO (rc=$RC, marcador '$MARCADOR' ausente)."
