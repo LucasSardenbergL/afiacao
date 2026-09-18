@@ -55,9 +55,38 @@ O #2469 passou `sales_orders.subtotal`/`total` do pedido NOVO a líquido. O acer
 - Predicado da postcondição pré-voado por `psql-ro` contra o estado antigo: falhou só em "a função não existe".
 - `authz:check`, `exclusividade` e shellcheck verdes.
 
+## Segunda medição (2026-09-18, psql-ro): a passada converteria 0 — e o gate está certo
+
+Pedido para converter os 5 pedidos que ainda saem brutos nas três telas (cupom, WhatsApp, painel). **Não rodei: com os defaults, o escopo elegível é vazio.**
+
+- **O sensor do [cupom](cupom-desconto-por-item.md) não se moveu:** `10 · 5 · 5` (com desconto · com quebra na tela · ainda bruto). Os 5 que fecham são `ja_liquido`, gravados líquidos pela ingestão v1.7; os 5 brutos são **4 `convertivel`** (oben 12780, 12787, 12815, 12817) **+ 1 `tocado_pos_corte`** (colacor 22154, `updated_at` 14/09 20:20 > corte 20:09:13). Os dez estão em **2026-09**.
+- **Censo do classificador idêntico ao de 14/09:** 31.282 `nao_apurado` · 146 `sem_desconto` · 27 `sem_linha` · 5 `ja_liquido` · 4 `convertivel` · 1 `tocado_pos_corte`.
+- **O gate morde setembro:** 2026-09 tem **170 `nao_apurado`** (141 oben + 29 colacor) ⇒ `mes_bloqueado` inclui o mês ⇒ nenhum dos 4 é elegível. Elegíveis por cenário: **escopo total com `p_exigir_mes_completo` default = 0** · só oben = 0 · trava desligada = 4.
+- **Desligar a trava seria o erro que ela existe para impedir:** 4 de 145 pedidos oben de setembro líquidos e 141 brutos é base mista **dentro do mês corrente** — e o mês corrente é o lado "atual" de todo comparador. É o §3 do desenho, agora com número.
+
+### A pré-condição que falta é o backfill — e o "sucesso" dele não era escrita
+
+`order_items`: **71.038 de 71.354 linhas com `desconto_valor` NULL (99,56%)** — as **mesmas 71.038** de 14/09, só o denominador cresceu (+159 linhas novas da ingestão). Zero linha do acervo apurada em 4 dias.
+
+O `acoes_execucoes` tem **110 execuções de `desconto_backfill.oben_ttm` com `status = 'sucesso'`** (10/09 a 14/09 14:52), e **todas** trazem `"dry_run": true` / `"etapa": "dry"` no `detalhes` — e todas `"account": "oben"`, a colacor nunca entrou. **Sucesso do ledger é sucesso da INVOCAÇÃO, não prova de escrita** (irmão de [evidencia-positiva-shell.md](evidencia-positiva-shell.md)): quem ler só a coluna `status` vê 110 vitórias de um backfill que nunca gravou. O sensor do backfill é `count(*) FILTER (WHERE desconto_valor IS NULL)`, não o ledger.
+
+### Estado das pré-condições do "Como operar"
+
+| Pré-condição | Estado em 2026-09-18 |
+|---|---|
+| `omie-vendas-sync` na v1.7 | ✅ atestada, servida 20:37 UTC (era v1.6 em 14/09) |
+| `sync-reprocess` na v1.7 | ✅ atestada, servida 20:37 UTC |
+| reprocesso sem erro (#2496 no ar) | ❌ #2496 segue **OPEN e DRAFT** |
+| backfill nas DUAS contas (≥ 6 meses + mês corrente) | ❌ 99,56% nulas; só dry-run, só oben, parado na página 54 |
+| as três funções em prod | ✅ criadas, ACL `postgres`/`service_role` |
+
+**A ordem não muda:** destravar o #2496 → rodar o backfill **de verdade** (`dry_run: false`) nas duas contas → só então o ensaio volta a ter escopo. Enquanto 2026-09 tiver pedido não apurado, o apply correto é o que grava zero.
+
+**Nota de acesso:** as três funções não dão `EXECUTE` ao `claude_ro` (ACL só `postgres`/`service_role`), então **nem o ensaio** roda pelo `psql-ro`. O diagnóstico acima replica inline o corpo de `pedido_total_liquido_classificar` lido de prod por `pg_get_functiondef`. Controle de que a réplica não é sempre-zero: o cenário de trava desligada devolve 4 — exatamente os 4 `convertivel` nomeados acima.
+
 ## O que ficou aberto
 
-- **O apply dos dados**, até as pré-condições acima. O que já está pronto: as funções, a prova e o roteiro.
+- **O apply dos dados**, até as pré-condições acima — **re-medido em 18/09: segue bloqueado, elegíveis = 0** (seção acima). O que já está pronto: as funções, a prova e o roteiro.
 - **Recall:** cabeçalho reescrito depois do corte por quem não muda total (a v1.6 inserindo pedido novo, backfill de cor, write-back do envio) fica fora — hoje 1 pedido. Medir depois do deploy da ingestão v1.7.
 - **colacor sem reprocess:** desconto que muda no ERP depois da inserção não chega à linha — lacuna de sync da colacor (vale para status e itens também), não desta passada.
 - **Revisão independente** retroativa do código (cota do Codex).
