@@ -18,7 +18,9 @@
 # Defaults: -m gpt-6-astra · -r max · -t 1200 (20min hard-stop)
 #
 # Garantias:
-#   - preflight (binário + auth) ANTES de gastar tempo/quota, com instrução clara;
+#   - preflight (binário + auth + SALDO da cota) ANTES de gastar tempo/quota, com instrução clara;
+#   - saldo acima do teto → exit 79 SEM gastar a chamada, dizendo quando a janela reabre
+#     (≠ 75, que é ter BATIDO na parede: a diferença permite contar o que o sensor poupou);
 #   - retry com backoff (20s/60s) só em transitório (rate limit/timeout/overload),
 #     classificado SEM o eco do prompt no stderr (senão o texto do prompt decide o fluxo);
 #   - cota esgotada NÃO é transitório → falha na hora instruindo o Caminho B, e mostra QUANDO a
@@ -103,6 +105,81 @@ plano_do_token() {
     | sed -n 's/.*"chatgpt_plan_type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
     | head -1 | grep . || printf 'desconhecido'
 }
+
+# --- sensor de SALDO da cota (preflight) --------------------------------------
+# Todo rollout do codex carrega o medidor OFICIAL da cota, que o wrapper ignorava:
+#   "primary":{"used_percent":94.0,"window_minutes":10080,"resets_at":1789834903}
+# (10080 min = 7 dias = a janela rolante do plano). Medido 2026-09-18: `resets_at`
+# 1789834903 → 19/09 13:21:43, IDÊNTICO ao "try again at Sep 19th, 2026 1:21 PM" que o
+# servidor devolve no 429 — é a mesma verdade, só que ANTES de gastar a chamada.
+# Por que isto existe: entre 10/09 e 15/09 foram 36 chamadas mortas contra uma cota já
+# em 100% (bateu 14/09 19:40, reabriu só 19/09 13:21). Cada uma custou minutos de espera
+# e um parecer que nunca veio. Ver docs/historico/cota-codex-medida-em-tokens.md.
+#
+# SENSOR, não guard destrutivo: sem leitura → devolve VAZIO e a consulta SEGUE (com
+# aviso). O oposto — fail-closed — trancaria o ritual inteiro por um arquivo ilegível.
+# Mas "seguir" nunca é SILENCIOSO: quem chama imprime o ramo que não conseguiu medir.
+#
+# Quatro armadilhas, cada uma com caso na suíte:
+#  (a) `"primary":null` (37 de 2.821 linhas em setembro — 1,3%): é AUSÊNCIA de leitura,
+#      não saldo zero. O padrão casa só `{`, então null não vira "0% livre, pode ir".
+#  (b) LEITURA OBSOLETA: um saldo de 100% lido antes do reset trancaria o wrapper PARA
+#      SEMPRE, mesmo com a janela já virada. Por isso `resets_at` no passado descarta a
+#      leitura (degrada para vazio) em vez de recusar — o sensor não sabe o saldo NOVO.
+#  (c) ORDEM dos arquivos: nada de `ls -t`/`stat` (BSD×GNU divergem). O caminho é
+#      AAAA/MM/DD/rollout-<ISO>-<id>.jsonl, então `sort` lexicográfico JÁ é cronológico.
+#  (d) O PONTO CEGO que a 1ª versão tinha, e que só o teste ao vivo pegou: a sessão que
+#      BATE na parede não recebe medidor nenhum — o 429 vem antes. Com a cota estourada
+#      os rollouts mais recentes são todos falhas, e olhar só os 5 últimos devolvia
+#      "desconhecido" JUSTAMENTE quando o sensor mais importa (medido 2026-09-18: os 5
+#      mais recentes, 0 com bloco; dos 40, 27). Daí a profundidade de 40.
+# Por que uma leitura ANTIGA ainda serve: enquanto `resets_at` está no futuro a janela é
+# A MESMA, e dentro de uma janela o consumo só sobe — a leitura é um PISO do saldo de
+# agora. Piso é o lado certo de errar num guard: nunca deixa passar o que devia barrar;
+# no máximo barra cedo demais, e aí `CODEX_ASYNC_TETO_SALDO=0` destranca.
+# Imprime "<used_percent> <resets_at>" ou NADA.
+saldo_de_cota() {
+  local s="${CODEX_HOME:-$HOME/.codex}/sessions" f bloco pct reset agora
+  [ -d "$s" ] || return 0
+  agora="$(date +%s)"
+  while IFS= read -r f; do
+    [ -r "$f" ] || continue
+    bloco="$(grep -o '"primary":{[^}]*}' "$f" 2>/dev/null | tail -1)"
+    [ -n "$bloco" ] || continue
+    pct="$(printf '%s' "$bloco"   | sed -n 's/.*"used_percent"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p')"
+    reset="$(printf '%s' "$bloco" | sed -n 's/.*"resets_at"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+    [ -n "$pct" ] && [ -n "$reset" ] || continue
+    [ "$reset" -gt "$agora" ] || return 0   # (b) janela já virou: leitura obsoleta
+    printf '%s %s' "$pct" "$reset"
+    return 0
+  done <<< "$(find "$s" -name 'rollout-*.jsonl' -type f 2>/dev/null | sort | tail -40 | sed '1!G;h;$!d')"
+}
+
+# Guard: recusa ANTES de gastar a chamada quando o saldo já passou do teto.
+# Teto em CODEX_ASYNC_TETO_SALDO (default 85; `0` desliga o sensor por completo).
+# 85 e não 99: acima disso não cabe um adversarial money-path inteiro (mediana medida
+# 2026-09-18: ~1,4 pp por consulta no astra/max), e o que resta deve ficar pro money-path.
+teto_saldo="${CODEX_ASYNC_TETO_SALDO:-85}"
+if [ "$teto_saldo" != "0" ]; then
+  leitura="$(saldo_de_cota)"
+  if [ -z "$leitura" ]; then
+    echo "SALDO_DESCONHECIDO: não consegui ler used_percent de nenhum rollout recente — seguindo sem o sensor." >&2
+  else
+    saldo="${leitura%% *}"; reset_epoch="${leitura##* }"
+    # compara com o teto em inteiro (o shell não faz float; used_percent vem como 94.0)
+    if [ "${saldo%%.*}" -ge "$teto_saldo" ]; then
+      quando="$(date -r "$reset_epoch" '+%d/%m %H:%M' 2>/dev/null \
+             || date -d "@$reset_epoch" '+%d/%m %H:%M' 2>/dev/null || echo "epoch $reset_epoch")"
+      echo "SALDO_ALTO: a cota está em ${saldo}% (teto $teto_saldo%) e a janela de 7 dias só reabre em $quando." >&2
+      echo "  Não gastei a chamada. Opções:" >&2
+      echo "  1) Caminho B (seguir sem 2ª opinião, registrando no PR que o Codex não foi consultado);" >&2
+      echo "  2) esperar o reset e re-rodar;" >&2
+      echo "  3) CODEX_ASYNC_TETO_SALDO=0 pra ignorar o sensor (só se a consulta valer o resto da cota)." >&2
+      exit 79
+    fi
+    echo "saldo da cota: ${saldo}% usado (teto $teto_saldo%)" >&2
+  fi
+fi
 
 # --- sensor de custo: segundos + tokens ---------------------------------------
 # Desde 2026-09-05 cada consult registra no PR nível + segundos + tokens (money-path.md

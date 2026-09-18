@@ -422,6 +422,64 @@ else echo "  FAIL  watchdog não matou (exit $rc)"; fail=1; fi
 if [ "$(invocacoes)" -eq 3 ]; then echo "  ok    esgotou as 3 tentativas"
 else echo "  FAIL  invocações=$(invocacoes), esperava 3"; fail=1; fi
 
+echo "── sensor de SALDO da cota (preflight) ──"
+# Rollout sintético no layout real: <home>/sessions/AAAA/MM/DD/rollout-<ISO>-<id>.jsonl.
+# O nome carrega o timestamp, então a ordem lexicográfica É a cronológica — é disso que o
+# sensor depende (nada de `ls -t`/`stat`, que divergem entre BSD e GNU).
+mk_rollout() { # home dia hora corpo
+  local d="$tmp/$1/sessions/2026/09/$2"
+  mkdir -p "$d"
+  printf '%s\n' "$4" > "$d/rollout-2026-09-$2T$3-00-00-0000aaaa.jsonl"
+}
+novo_home() { mkdir -p "$tmp/$1"; : > "$tmp/$1/auth.json"; }   # auth vazio basta: o preflight só exige o arquivo
+run_saldo() { # home teto modo args...
+  local home="$1" teto="$2" mode="$3"; shift 3
+  : > "$tmp/count"
+  env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
+    CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
+    CODEX_ASYNC_TETO_SALDO="$teto" CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
+}
+limites() { printf '{"rate_limits":{"primary":{"used_percent":%s,"window_minutes":10080,"resets_at":%s}}}' "$1" "$2"; }
+futuro=$(( $(date +%s) + 86400 ))
+passado=$(( $(date +%s) - 86400 ))
+
+novo_home codexhome_alto;  mk_rollout codexhome_alto  14 10 "$(limites 94.0 "$futuro")"
+run_saldo codexhome_alto 85 ok "x" >/dev/null 2>&1
+caso_exit "saldo 94% ≥ teto 85 → 79" 79 $?
+# A asserção que dá sentido ao sensor: recusar SEM gastar a chamada. Sem ela, um 79 emitido
+# depois de chamar o codex passaria no teste e não pouparia cota nenhuma.
+if [ "$(invocacoes)" -eq 0 ]; then echo "  ok    …e NÃO gastou a chamada (0 invocações)"
+else echo "  FAIL  gastou $(invocacoes) invocação(ões) — o sensor não poupou nada"; fail=1; fi
+
+novo_home codexhome_baixo; mk_rollout codexhome_baixo 14 10 "$(limites 12.0 "$futuro")"
+run_saldo codexhome_baixo 85 ok "x" >/dev/null 2>&1
+caso_exit "saldo 12% < teto → consulta segue" 0 $?
+
+# (a) `primary":null` é AUSÊNCIA de leitura, não saldo zero. Se o padrão casasse null, o
+# sensor leria "0%" e aprovaria tudo — falha ABERTA, do jeito que ninguém vê.
+novo_home codexhome_null; mk_rollout codexhome_null 14 10 '{"rate_limits":{"primary":null,"plan_type":"prolite"}}'
+saida="$(run_saldo codexhome_null 85 ok "x" 2>&1)"; rc=$?
+caso_exit "primary:null → degrada e segue (não vira 0%)" 0 "$rc"
+if printf '%s' "$saida" | grep -q "SALDO_DESCONHECIDO"; then echo "  ok    …e DIZ que não mediu (degradar não é silenciar)"
+else echo "  FAIL  degradou calado — ausência virou aprovação"; fail=1; fi
+
+# (b) leitura obsoleta: 100% de uma janela JÁ vencida não pode trancar a janela nova.
+novo_home codexhome_velho; mk_rollout codexhome_velho 14 10 "$(limites 100.0 "$passado")"
+run_saldo codexhome_velho 85 ok "x" >/dev/null 2>&1
+caso_exit "reset no passado → leitura obsoleta, segue" 0 $?
+
+# (d) o ponto cego que só o teste ao vivo pegou: a sessão que BATE na parede não recebe
+# medidor. Com a cota estourada os rollouts mais recentes são todos falhas, e o sensor
+# precisa enxergar ATRÁS deles — senão fica cego justamente quando importa.
+novo_home codexhome_cego
+mk_rollout codexhome_cego 14 10 "$(limites 97.0 "$futuro")"
+mk_rollout codexhome_cego 18 19 '{"error":{"type":"usage_limit_exceeded"},"rate_limits":{"primary":null}}'
+run_saldo codexhome_cego 85 ok "x" >/dev/null 2>&1
+caso_exit "rollout recente sem medidor → acha o anterior → 79" 79 $?
+
+run_saldo codexhome_alto 0 ok "x" >/dev/null 2>&1
+caso_exit "CODEX_ASYNC_TETO_SALDO=0 desliga o sensor" 0 $?
+
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi
 exit "$fail"
