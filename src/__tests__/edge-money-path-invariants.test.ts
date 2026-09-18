@@ -3770,10 +3770,14 @@ describe('guardrail money-path: o write-back da EDIÇÃO grava as DUAS metades d
   it('o carimbo da leitura é tirado ANTES do ConsultarPedido final, não depois', () => {
     // `p_lido_em` é o compare-and-set contra um pull atrasado. Carimbo tirado DEPOIS da consulta
     // seria mais NOVO que a leitura que ele representa — e encobriria a leitura de outro.
+    // A âncora da consulta é a ATRIBUIÇÃO (a chamada em si), não a declaração: era
+    // `const finalConsultResult =` e reprovou código íntegro quando a consulta ganhou try/catch
+    // para o throwOnTransient e a variável virou `let` declarada antes. O que a invariante mede é
+    // a ordem carimbo→chamada, e nenhum `let`/`const` muda isso.
     const iCarimbo = bloco.indexOf('const finalLidoEm =');
-    const iConsulta = bloco.indexOf('const finalConsultResult =');
+    const iConsulta = bloco.indexOf('finalConsultResult = (await callOmieVendasApi(');
     expect(iCarimbo, 'finalLidoEm não encontrado').toBeGreaterThan(-1);
-    expect(iConsulta, 'finalConsultResult não encontrado').toBeGreaterThan(-1);
+    expect(iConsulta, 'a atribuição de finalConsultResult pela chamada ao Omie não foi encontrada').toBeGreaterThan(-1);
     expect(iCarimbo, 'o carimbo saiu de antes da consulta final').toBeLessThan(iConsulta);
   });
 
