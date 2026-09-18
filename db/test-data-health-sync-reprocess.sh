@@ -57,7 +57,7 @@ if [ "${1:-}" = "--falsificar" ]; then
 
   echo
   if [ "$falhas" -eq 0 ]; then
-    echo "═══ falsificação OK: controle verde + $(echo $SABOTAGENS | wc -w | tr -d ' ') sabotagens todas vermelhas ═══"
+    echo "═══ falsificação OK: controle verde + $(wc -w <<<"$SABOTAGENS" | tr -d ' ') sabotagens todas vermelhas ═══"
     rm -rf "$LOGDIR"; exit 0
   fi
   echo "═══ falsificação REPROVOU: $falhas sabotagem(ns) passaram despercebidas (logs em $LOGDIR) ═══"
