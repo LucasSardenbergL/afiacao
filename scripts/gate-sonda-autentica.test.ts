@@ -149,9 +149,20 @@ Deno.serve(async (req) => {
     expect(auditar(raiz).auditadas).toBe(edges.length);
   });
 
-  it('o repo INTEIRO passa hoje — a premissa do controle ativo vale', () => {
-    const { motivos, auditadas } = auditar(new URL('..', import.meta.url).pathname);
-    expect(auditadas).toBeGreaterThan(10);
-    expect(motivos).toEqual([]);
-  });
+  // O VEREDITO sobre o repo real NÃO mora aqui — mora no step `sonda:autentica` do `ci.yml`, que é
+  // bloqueante e roda este mesmo `auditar()` em ~133 ms. Até 2026-09-18 vivia aqui um
+  // `it('o repo INTEIRO passa hoje')` com `expect(motivos).toEqual([])`: mesmo código, mesma árvore,
+  // mesmo CI — SEGUNDA PORTA, não segundo detector. O preço não era o tempo, era a LEITURA: o motor
+  // de exclusividade mede o STEP, via o `test` co-pegando todo defeito deste eixo e carimbava
+  // EXCLUSIVIDADE_ZERO ("redundância medida") no único dono de uma premissa money-path — o
+  // `controle_ativo` do `sonda-versao-sql.ts` trata a resposta de sonda como TESTEMUNHA de que o
+  // `x-cron-secret` foi aceito. Quem lesse o carimbo concluiria que dá para aposentar o gate. Mesma
+  // resolução do #2378 no `docs:indice`, que o #2391 levou a `[SO ELE]`; a classe está em
+  // docs/historico/exclusividade-media-outra-coisa.md ("segundas portas").
+  //
+  // Medido ao tirar (mesma invocação, 2 locales): com o defeito aplicado numa edge real, a suíte
+  // INTEIRA fica verde e o `sonda:autentica` reprova — a duplicata saiu, a detecção ficou.
+  //
+  // O que fica aqui é o que o step não dá: as formas sintéticas acima (calibração e falsificação) e o
+  // eixo POR FORA logo atrás, que prova o denominador. Não devolva o veredito para cá.
 });

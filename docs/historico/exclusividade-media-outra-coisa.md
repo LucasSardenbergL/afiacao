@@ -277,6 +277,41 @@ Três tropeços da sessão, nenhum virou dado:
 - a verificação da fusão comparava `iguais == total` e teria aprovado o vácuo `0 == 0` (um `.` fora de
   contexto no `jq`); o que reprovou foi exigir o total esperado, `10`, escrito antes de olhar.
 
+## A segunda porta fechada (2026-09-18) — o step vira dono único, e a certificação esbarra no motor
+
+Das três segundas portas medidas, a do `sonda:autentica` foi fechada: saiu o
+`it('o repo INTEIRO passa hoje')` de `scripts/gate-sonda-autentica.test.ts`, que rodava o **mesmo**
+`auditar()` do step, na mesma árvore e no mesmo CI. Era ele que carimbava `EXCLUSIVIDADE_ZERO` —
+"redundância medida" — no único dono de uma premissa money-path.
+
+**Tirar detector para fabricar exclusividade é o anti-padrão que este motor existe para barrar**, e a
+diferença aqui é que o "concorrente" era o próprio código. Por isso a saída foi PROVADA, não
+argumentada — mesma invocação, dois locales, na árvore real, restauração por cópia provada:
+
+| fase | `sonda:autentica` | suíte vitest inteira |
+|---|---|---|
+| árvore limpa | verde, com marcador positivo | 9248 testes, 0 falhas |
+| defeito na edge real | **reprova**, citando a edge | 9248 testes, **0 falhas** |
+
+A linha de baixo é a prova: a duplicata saiu (nada mais no `test` acusa) e a detecção ficou.
+
+**A certificação `[SO ELE]` ficou PENDENTE — e pelo instrumento, não pelo repo.** Duas rodadas do
+motor abortaram no baseline com `test` vermelho; a guarda 1b fez o certo e não gravou nada. O vermelho
+não era teste falhando: discriminado na mesma máquina e no mesmo commit, com a invocação do CI
+(`bun run test`), stdout para ARQUIVO sai 0 com 842 arquivos e 9248 testes passando, e a MESMA
+invocação capturada por `spawnSync` — o que o motor faz — sai **1** com os mesmos 9248 passando e um
+`Error: [vitest-worker]: Timeout calling "onTaskUpdate"`. Sob carga, os ~360 KB de saída travam a
+thread principal do vitest no pipe e o worker estoura o RPC. É vermelho **fabricado pela captura**:
+fail-closed (aborta, não grava), então nunca virou medição falsa — mas, enquanto durar, nenhuma linha
+nova certifica nada nesta máquina. Conserto do motor (capturar em arquivo, não em pipe) virou chip.
+
+**A regra que fica.** Auditoria de repo real mora no **step** — ele tem nome no inventário do CI e
+mensagem de falha que ensina o que está em jogo; um `expect(motivos).toEqual([])` não. O arquivo de
+teste fica com o que o step não dá: as formas sintéticas (calibração e falsificação) e o eixo por fora
+que prova o denominador. Duas portas para o mesmo código não somam detecção — só fazem a contabilidade
+chamar de redundância quem é dono único. As outras duas instâncias medidas (`bunpin:check` em
+`bun-pin-gate-check.test.ts`, `claude:size` no passo 13 de `test-claude-md-budget.sh`) seguem abertas.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore

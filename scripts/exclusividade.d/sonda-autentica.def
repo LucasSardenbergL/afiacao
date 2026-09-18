@@ -71,6 +71,14 @@ sonda-responde-antes-do-gate-diligente | supabase/functions/fin-funding/index.ts
 # exclusivo do CODIGO do gate, nao do STEP — aposentar o codigo perde as 48 edges; tirar so o step
 # nao perde nada. Opcoes em docs/historico/exclusividade-media-outra-coisa.md ("O alcance comparado").
 #
+# ⚠️ 2026-09-18: a segunda porta FOI FECHADA — o `it('o repo INTEIRO passa hoje')` saiu do
+# `gate-sonda-autentica.test.ts`, e a saida foi PROVADA nos 2 locales: com o defeito aplicado, a suite
+# INTEIRA fica verde (9248) e so o `sonda:autentica` reprova. A re-medicao que certificaria `[SO ELE]`
+# esta PENDENTE por defeito do INSTRUMENTO: o baseline do motor aborta com `test` vermelho FABRICADO
+# pela captura por pipe (mesma invocacao com stdout em arquivo sai 0; sob `spawnSync` sai 1 com os
+# mesmos 9248 testes passando). Enquanto isso durar, o ZERO acima nao e mais a leitura corrente —
+# e ausencia de dado. Ver a secao "A segunda porta fechada" no mesmo doc.
+#
 # @origem:   docs/historico/exclusividade-media-outra-coisa.md ("O alcance comparado", 2026-09-14)
 # @suspeito: sonda:autentica
 sonda-responde-antes-do-gate-fora-da-lista | supabase/functions/omie-nfe-recebimento/index.ts | $feito = 1 if !$feito && s/^(\s+)const authSonda = await authorizeCronOrStaff\(req\);$/$1if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);\n$1const authSonda = await authorizeCronOrStaff(req);/
