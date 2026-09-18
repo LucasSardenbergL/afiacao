@@ -10,6 +10,7 @@ import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
 import { aplicarCorPreservandoItens, apurarSubtotalPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
 import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
@@ -3549,7 +3550,7 @@ Deno.serve(async (req) => {
             { throwOnTransient: true },
           );
         } catch (totErr) {
-          const msg = totErr instanceof Error ? totErr.message : String(totErr);
+          const msg = mensagemDeErro(totErr) ?? "erro sem mensagem";
           throw new Error(
             `Falha ao totalizar o pedido no Omie: ${msg}. ` +
               `O pedido no Omie ficou PARCIALMENTE alterado (itens e cabeçalho já foram gravados, mas os ` +
@@ -3583,7 +3584,7 @@ Deno.serve(async (req) => {
             { throwOnTransient: true },
           )) as FinalConsulta;
         } catch (finalErr) {
-          const msg = finalErr instanceof Error ? finalErr.message : String(finalErr);
+          const msg = mensagemDeErro(finalErr) ?? "erro sem mensagem";
           // Estado no ERP: as 4 mutações PASSARAM (cada uma lança por conta própria). O que falhou foi
           // LER de volta — então não dá para afirmar que o pedido ficou como o app pediu, nem o
           // contrário. "Alterado, confirmação impossível" ≠ "não alterado".
