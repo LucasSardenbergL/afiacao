@@ -71,8 +71,32 @@ Ele disparou quando um dry menor que eu lancei para "destravar" um dry lento aca
 
 Lição operacional: **nunca lançar um segundo pedido para a mesma página enquanto o primeiro não voltou** — nem para "tentar um lote menor". O request lento não estava travado; estava lento (um deles voltou depois de ~25 minutos, com o plano íntegro).
 
+## A colacor: a conta que nunca fora medida (99,7% de cobertura)
+
+O doc do acervo registrava uma lacuna de sync na colacor, e o receio era cobertura pior. **Foi melhor que a oben:** o primeiro dry dessa conta ofereceu 1.438 linhas e apurou 1.433 — **99,7%**, com **1** `sem_correspondencia`.
+
+**colacor: 2.567 de 2.691 linhas apuradas (95,4%)**, 15 páginas.
+
+## Resultado das duas contas
+
+| conta | alvo (12m) | apurado | resta | cobertura |
+|---|---|---|---|---|
+| oben | 10.315 | 10.232 | 83 | **99,2%** |
+| colacor | 2.691 | 2.567 | 124 | **95,4%** |
+| **total** | **13.006** | **12.799** | **207** | **98,4%** |
+
+`order_items` com `desconto_valor` NULL: **71.038 → 58.239**. Toda escrita das duas contas fechou `pedida == aplicada`, com zero `fora_do_plano_aprovado` e zero `base_mudou`.
+
+## O gate de setembro: de 170 para 9 — e os 9 são o piso
+
+O ensaio da conversão do acervo (`pedido_total_liquido_converter(p_aplicar => false)`, escopo 2026-09) saiu de **170 pedidos `nao_apurado`** para **9** (3 oben + 6 colacor), e os convertíveis subiram de 4 para **7**. Mas **`elegiveis` continua 0**: o gate exige mês completo, e 9 > 0.
+
+Esses 9 pedidos (PVs colacor 22102/22104/22106/22120/22125/22127 e oben 12708/12723/12729, de 01 a 09/09) somam **19 linhas** que o Omie não correlaciona — a mesma família das 83 da oben. **O backfill não vai apurá-las: ele já tentou.**
+
+> **Uma trava de "cobertura completa" não abre com 98,4%.** Ela é binária, e o resíduo irrecuperável — por menor que seja — a mantém fechada para sempre. Destravar exige uma DECISÃO sobre o resíduo (investigar os 9 no ERP, ou excluí-los explicitamente do gate), não mais uma passada: rodar o backfill de novo é trabalho que já sabemos que não muda o número.
+
 ## O que ficou aberto
 
-- **colacor: 2.691 linhas, ainda não apuradas.** O primeiro dry dela — a primeira medição de cobertura que essa conta já teve — ficou preso na fila do `pg_net` por mais de 25 minutos e a sessão terminou antes da resposta. **Nada foi escrito na colacor**, e a cobertura dela segue sendo uma incógnita: a lacuna de sync registrada em [pedido-total-liquido-do-acervo.md](pedido-total-liquido-do-acervo.md) pode dar um resultado bem pior que os 99,2% da oben.
-- **83 linhas da oben** que o Omie não correlaciona. Piso da conciliação, não pendência.
-- **A conversão do acervo (#2499) continua bloqueada**, e o backfill não a destrava sozinho: o gate exige mês completo **nas duas contas**, então enquanto a colacor tiver pedido não apurado em 2026-09, o apply segue convertendo zero.
+- **Os 9 pedidos que seguram setembro** (19 linhas sem correspondência no Omie). Decisão de produto, não de passada: investigar no ERP ou excluir do gate.
+- **207 linhas** que o Omie não correlaciona nas duas contas. Piso da conciliação.
+- **A conversão do acervo (#2499) segue convertendo 0** — agora por 9 pedidos, não por 170. Ver [pedido-total-liquido-do-acervo.md](pedido-total-liquido-do-acervo.md).
