@@ -95,6 +95,34 @@ Esses 9 pedidos (PVs colacor 22102/22104/22106/22120/22125/22127 e oben 12708/12
 
 > **Uma trava de "cobertura completa" não abre com 98,4%.** Ela é binária, e o resíduo irrecuperável — por menor que seja — a mantém fechada para sempre. Destravar exige uma DECISÃO sobre o resíduo (investigar os 9 no ERP, ou excluí-los explicitamente do gate), não mais uma passada: rodar o backfill de novo é trabalho que já sabemos que não muda o número.
 
+## Os 9 pedidos que seguram setembro, investigados
+
+As 19 linhas se dividem em **duas causas diferentes**, e só uma tem conserto por sync:
+
+| causa | linhas | pedidos |
+|---|---|---|
+| `sem_correspondencia` | 17 | colacor 22102/22104/22106/22120/22125/22127, oben 12723/12729 |
+| `ambiguo` | 2 | oben 12708 |
+
+**O `ambiguo` é estrutural.** O oben 12708 tem **duas linhas locais idênticas** — mesmo `omie_codigo_produto` (8689734220), mesma quantidade (10) e mesmo preço (R$ 8,90). A correlação é por trio `(código, qtd, preço)`, e com duas irmãs locais a edge não sabe qual desconto vai em qual. Recusa por precisão>recall, corretamente. **Re-sincronizar não resolve**: o trio continuaria duplicado.
+
+**O `sem_correspondencia` é divergência local × Omie.** Nenhum item do Omie tem esse trio HOJE — o pedido foi editado, o item saiu, ou preço/quantidade mudaram desde a ingestão. É a assinatura da lacuna de sync da colacor já registrada no doc do acervo (6 dos 8 pedidos são colacor), e o conserto é realinhar a fonte, não insistir no backfill.
+
+### A armadilha que quase caiu: `total == bruto` NÃO prova "sem desconto"
+
+Nos 9 pedidos, `sum(qtd × preço) − total = 0,00` e `discount = 0`. Convida à conclusão de que não têm desconto e poderiam ser tratados como zero para destravar o gate. **É falso.** Todos são de 01–09/09, gravados pela v1.6, que escrevia cabeçalho **bruto** — e num cabeçalho bruto o total é igual à soma bruta *tenha ou não* desconto. A igualdade mede a ÉPOCA do escritor, não a ausência do desconto.
+
+A prova está no próprio conjunto: o **oben 12708 tem R$ 0,82 de desconto já apurado nas linhas** e `total == bruto`. Quem tratasse "total == bruto" como "desconto zero" erraria nele. É `ausente ≠ zero` (money-path.md §2) com um disfarce novo: o sinal que parece confirmar a ausência é, na verdade, propriedade de quem escreveu o registro.
+
+### O prêmio, para dimensionar a decisão
+
+Destravar 2026-09 converteria **7 pedidos oben** e reconheceria **R$ 2.047,62** de desconto sobre R$ 29.169,95 de bruto (~7%). É o que está preso atrás de 19 linhas.
+
+Três caminhos, nenhum é "rodar o backfill de novo":
+1. **Realinhar a fonte** dos 8 pedidos `sem_correspondencia` (re-sync), e então re-rodar o backfill — depende do conserto do reprocesso (#2496, ainda draft). Não resolve o 12708.
+2. **Conferir os 9 no ERP** e gravar o desconto à mão — 19 linhas, money-path, pelo envelope.
+3. **Dar ao conversor uma exclusão explícita de ids**, para que um resíduo nomeado não segure um mês inteiro. Muda a função: decisão de desenho, não operação.
+
 ## O que ficou aberto
 
 - **Os 9 pedidos que seguram setembro** (19 linhas sem correspondência no Omie). Decisão de produto, não de passada: investigar no ERP ou excluir do gate.
