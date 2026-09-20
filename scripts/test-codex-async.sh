@@ -17,6 +17,11 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/codexhome_ok" "$tmp/codexhome_vazio" "$tmp/codexhome_free" "$tmp/codexhome_pago"
 : > "$tmp/codexhome_ok/auth.json"
+# `sessions/` existe em toda conta que já rodou o codex uma vez. O sensor de fan-out usa a
+# AUSÊNCIA dela como "não consigo medir" (é o sinal de que não estamos olhando onde o codex
+# escreve), então os homes do caminho feliz precisam tê-la — senão todo cabeçalho sairia com
+# "?" e o alarme viraria ruído de fundo. O home SEM ela é criado de propósito mais abaixo.
+mkdir -p "$tmp/codexhome_ok/sessions" "$tmp/codexhome_free/sessions" "$tmp/codexhome_pago/sessions"
 
 # auth.json com JWT FALSO carregando só o claim do plano (nada de segredo — o payload de um
 # JWT é base64, não cifra). Serve para provar que a mensagem de cota LÊ o plano declarado.
@@ -33,6 +38,9 @@ printf '{"tokens":{"access_token":"%s"}}' "$(jwt_com_plano prolite)" > "$tmp/cod
 cat >"$tmp/bin/codex" <<'STUB'
 #!/bin/sh
 echo x >> "$CODEX_STUB_COUNT"
+# argumentos da invocação: é o que prova que um flag de transporte (ex.: o teto
+# multi-agente) REALMENTE viaja até o codex, e não só existe num comentário.
+[ -n "${CODEX_STUB_ARGS:-}" ] && printf '%s\n' "$*" >> "$CODEX_STUB_ARGS"
 # stderr FIEL ao codex real (medido 2026-08-22, codex-cli 0.144.1): header, o PROMPT
 # ECOADO sob "user", e só então as linhas ERROR:. O eco é o que envenena qualquer
 # classificação feita sobre o arquivo cru.
@@ -86,6 +94,19 @@ case "$CODEX_STUB_MODE" in
   # numero 500-599 DENTRO da mensagem de erro, sem ser status HTTP (contagem de tokens).
   # Isola a ancora: aqui remover o eco do prompt nao salva — o "5120" esta na linha de ERRO.
   num5xx)    echo 'ERROR: {"type":"error","status":400,"error":{"type":"context_length_exceeded","message":"prompt has 5120 tokens; maximum for this model is 4096"}}' >&2; exit 1 ;;
+  # o defeito de transporte medido em 2026-09-20: o codex-cli 0.153.4 entrega `spawn_agent`
+  # ao modelo, e cada subagente nasce como rollout PRÓPRIO, cobrado à parte. O stub reproduz
+  # o único rastro que o wrapper consegue ver de fora: o arquivo em CODEX_HOME/sessions.
+  ok_spawna) d="$CODEX_HOME/sessions/2026/09/20"; mkdir -p "$d"
+             printf '{"type":"session_meta","payload":{"thread_source":"subagent","cwd":"%s"}}\n' "$PWD" \
+               > "$d/rollout-2026-09-20T00-00-00-filho.jsonl"
+             echo "parecer com fan-out"; rodape "9.999"; exit 0 ;;
+  # subagente de OUTRA worktree: ~/.codex/sessions é COMPARTILHADO entre as sessões
+  # paralelas. Sem o filtro por cwd, o alarme dispararia pelo trabalho do vizinho.
+  ok_spawna_alheio) d="$CODEX_HOME/sessions/2026/09/20"; mkdir -p "$d"
+             printf '{"type":"session_meta","payload":{"thread_source":"subagent","cwd":"/outra/worktree"}}\n' \
+               > "$d/rollout-2026-09-20T00-00-00-alheio.jsonl"
+             echo "parecer sem fan-out proprio"; rodape "9.999"; exit 0 ;;
   trava)     sleep 30 ;;
   *)         echo "erro desconhecido" >&2; exit 1 ;;
 esac
@@ -96,17 +117,19 @@ fail=0
 # ambiente controlado: PATH mínimo com o stub; sem env keys; backoffs zerados
 run() {
   local mode="$1"; shift
-  : > "$tmp/count"
+  : > "$tmp/count"; : > "$tmp/args"
   env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
     CODEX_HOME="$tmp/codexhome_ok" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
+    CODEX_STUB_ARGS="$tmp/args" \
     CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
 # igual ao run(), mas com CODEX_HOME escolhido (para variar o plano declarado no token)
 run_home() {
   local home="$1" mode="$2"; shift 2
-  : > "$tmp/count"
+  : > "$tmp/count"; : > "$tmp/args"
   env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
     CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
+    CODEX_STUB_ARGS="$tmp/args" \
     CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
 invocacoes() { wc -l < "$tmp/count" | tr -d ' '; }
@@ -434,10 +457,10 @@ mk_rollout() { # home dia hora corpo
 novo_home() { mkdir -p "$tmp/$1"; : > "$tmp/$1/auth.json"; }   # auth vazio basta: o preflight só exige o arquivo
 run_saldo() { # home teto modo args...
   local home="$1" teto="$2" mode="$3"; shift 3
-  : > "$tmp/count"
+  : > "$tmp/count"; : > "$tmp/args"
   env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
     CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
-    CODEX_ASYNC_TETO_SALDO="$teto" CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
+    CODEX_STUB_ARGS="$tmp/args" CODEX_ASYNC_TETO_SALDO="$teto" CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
 limites() { printf '{"rate_limits":{"primary":{"used_percent":%s,"window_minutes":10080,"resets_at":%s}}}' "$1" "$2"; }
 futuro=$(( $(date +%s) + 86400 ))
@@ -479,6 +502,61 @@ caso_exit "rollout recente sem medidor → acha o anterior → 79" 79 $?
 
 run_saldo codexhome_alto 0 ok "x" >/dev/null 2>&1
 caso_exit "CODEX_ASYNC_TETO_SALDO=0 desliga o sensor" 0 $?
+
+echo "── fan-out multi-agente: 1 invocação = 1 execução cobrada ──"
+# O defeito (medido 2026-09-20 sobre ~/.codex/sessions de 04–18/09): o codex-cli 0.153.4 dá ao
+# modelo `spawn_agent` com 4 slots de concorrência, e nos prompts adversariais do ritual ele
+# abria a revisão em até 3 threads irmãs — cada uma com o contexto inteiro replicado e COBRADA
+# à parte. 25 das 167 consultas (15%) geraram 40 threads de subagente = 22,4% dos tokens do mês.
+# Duas camadas, medidas separadamente porque uma NÃO cobre a outra:
+#   (1) o teto de 1 slot, que fecha a porta — mas só na versão do CLI que conhece a chave;
+#   (2) o sensor por FORA do flag, que conta o rastro em disco e grita se a porta reabrir.
+# ⚠️ Os casos (2)/(4) abaixo são o CONTROLE VERDE da mesma leva: sem eles, um alarme
+# sempre-ligado (ou sempre-desligado) passaria por sensor.
+
+# (1) o teto viaja NA invocação — não basta existir no comentário
+run ok "pergunta qualquer" >/dev/null 2>&1
+if grep -q 'features\.multi_agent_v2\.max_concurrent_threads_per_session=1' "$tmp/args"
+then echo "  ok    o teto de 1 slot viaja na invocação do codex"
+else echo "  FAIL  a invocação NÃO carrega o teto multi-agente — o fan-out volta"; fail=1; fi
+
+# (2) CONTROLE: sem subagente no disco, nada de alarme (senão o sensor aprova tudo)
+saida="$(run ok "pergunta qualquer" 2>&1)"
+if printf '%s' "$saida" | grep -q 'FAN_OUT'
+then echo "  FAIL  alarme de fan-out disparou SEM subagente nenhum (sempre-vermelho)"; fail=1
+else echo "  ok    sem subagente → sem alarme (controle verde)"; fi
+if printf '%s' "$saida" | grep -q 'subagente(s)'
+then echo "  FAIL  cabeçalho anunciou subagentes que não existiram"; fail=1
+else echo "  ok    …e o cabeçalho não inventa subagente"; fi
+
+# (3) o defeito reproduzido: nasceu um rollout de subagente NESTA cwd durante a chamada
+saida="$(run ok_spawna "pergunta qualquer" 2>&1)"; rc=$?
+caso_exit "fan-out não derruba a consulta (o parecer ainda vale)" 0 "$rc"
+if printf '%s' "$saida" | grep -q 'FAN_OUT: o codex abriu 1 thread'
+then echo "  ok    o sensor VIU a thread de subagente e disse o número"
+else echo "  FAIL  o fan-out passou EM SILÊNCIO — é assim que 22% da cota some sem dono"; fail=1; fi
+if printf '%s' "$saida" | grep -q '1 subagente(s)'
+then echo "  ok    …e o custo real chegou ao cabeçalho que vai pro PR"
+else echo "  FAIL  cabeçalho omitiu o fan-out — o PR registraria um custo falso"; fail=1; fi
+
+# (4) o terceiro estado: sem `sessions/` não dá para medir — e isso se DIZ, não se
+# arredonda para zero (ausência ≠ zero; um CODEX_HOME apontado para o lugar errado
+# devolveria "nenhum subagente" para sempre).
+mkdir -p "$tmp/codexhome_semsessions"; : > "$tmp/codexhome_semsessions/auth.json"
+saida="$(run_home codexhome_semsessions ok "pergunta qualquer" 2>&1)"
+if printf '%s' "$saida" | grep -q 'FAN_OUT_DESCONHECIDO'
+then echo "  ok    sem sessions/ → diz que não mediu (não finge zero)"
+else echo "  FAIL  degradou calado — ausência de medida virou 'sem fan-out'"; fail=1; fi
+if printf '%s' "$saida" | grep -q '? subagente(s)'
+then echo "  ok    …e o cabeçalho leva o '?' pro PR"
+else echo "  FAIL  cabeçalho escondeu que o sensor não mediu"; fail=1; fi
+
+# (5) CONTROLE do filtro por cwd: ~/.codex/sessions é compartilhado entre worktrees.
+# Sem este caso, contar QUALQUER subagente passaria — e acusaria o vizinho.
+saida="$(run ok_spawna_alheio "pergunta qualquer" 2>&1)"
+if printf '%s' "$saida" | grep -q 'FAN_OUT'
+then echo "  FAIL  contou subagente de OUTRA worktree — alarme culpa o vizinho"; fail=1
+else echo "  ok    subagente de outra cwd não conta (sessions é compartilhado)"; fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi
