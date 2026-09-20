@@ -22,8 +22,6 @@ function wf(...vals: string[]): WorkflowFile {
   return { file: '.github/workflows/ci.yml', yaml: `name: t\non: [push]\njobs:\n${jobs}` };
 }
 
-const msgs = (fs: ReturnType<typeof auditBunPins>) => fs.map((f) => f.msg).join(' | ');
-
 describe('auditBunPins — invariante 1: formato estrito x.y.z', () => {
   it('passa com pin estrito nas DUAS ocorrências (o estado que o PR #1352 deixou)', () => {
     expect(auditBunPins([wf('1.3.14', '1.3.14')])).toHaveLength(0);
@@ -198,11 +196,28 @@ jobs:
 });
 
 describe('auditBunPins — o repo de verdade', () => {
-  it('os workflows REAIS do repo passam no gate', () => {
-    const findings = auditBunPins(readWorkflows());
-    expect(findings, `gate vermelho no repo: ${msgs(findings)}`).toHaveLength(0);
-  });
+  // O VEREDITO sobre os workflows REAIS NÃO mora aqui — mora no step `bunpin:check` do `ci.yml`,
+  // que é bloqueante e roda este mesmo `auditBunPins(readWorkflows())`. Até 2026-09-20 vivia aqui
+  // um `it('os workflows REAIS do repo passam no gate')` com `expect(findings).toHaveLength(0)`:
+  // mesmo código, mesma árvore, mesmo CI — SEGUNDA PORTA, não segundo detector. O preço não era o
+  // tempo, era a LEITURA: o motor de exclusividade mede o STEP, via o `test` co-pegando todo
+  // defeito deste eixo e carimbou EXCLUSIVIDADE_ZERO ("redundância medida") no único dono do pin
+  // do bun — medido no #2509 com o defeito `bun-despinado` (vermelhos `bunpin:check` + `test`).
+  // Quem lesse o carimbo concluiria que dá para aposentar o gate; o eixo dele é um SPOF de rede
+  // que em 2026-07-16 matou TODO PR do repo em ~6s. Mesma resolução do #2378 no `docs:indice`
+  // (que o #2391 levou a `[SO ELE]`) e do #2519 no `sonda:autentica`; a classe está em
+  // docs/historico/exclusividade-media-outra-coisa.md ("segundas portas").
+  //
+  // Medido ao tirar (mesma invocação, 2 locales, controle verde, restauração por cópia provada):
+  // com `bun-despinado` aplicado no `ci.yml` REAL, a suíte INTEIRA do vitest fica verde e o
+  // `bunpin:check` reprova citando o arquivo — a duplicata saiu, a detecção ficou.
+  //
+  // O que fica aqui é o que o step não dá: as formas sintéticas acima (calibração e falsificação)
+  // e a guarda ANTI-VÁCUO abaixo, que prova o DENOMINADOR. Não devolva o veredito para cá.
 
+  // ⚠️ Guarda ANTI-VÁCUO. Se `readWorkflows` parar de casar (diretório renomeado, filtro de
+  // extensão quebrado), o gate passa por não achar NADA — "verde por ausência de dado". Cobra
+  // VOLUME, não identidade: se o pin está CERTO é a invariante do step, e ela não volta para cá.
   it('o repo de fato pina o bun (o gate não passa à toa, sem achar ocorrência nenhuma)', () => {
     const yamls = readWorkflows()
       .map((w) => w.yaml)
