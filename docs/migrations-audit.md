@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **549** custom migrations totais
-- **1821** objetos esperados (criados por estas migrations)
+- **550** custom migrations totais
+- **1822** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 589
+  - `function`: 590
   - `rls_policy`: 462
   - `index`: 259
   - `cron_job`: 171
@@ -4500,6 +4500,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.desconto_backfill_aplicar` | — |
+
+### `20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reconciliar_pedidos_omie` | — |
 
 ### `20260914181500_pedido_total_liquido_acervo.sql`
 

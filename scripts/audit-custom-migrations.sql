@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 549
+-- Total de custom migrations: 550
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -588,6 +588,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260909074613', 'v_titulo_baixas_otica_canonica', '20260909074613_v_titulo_baixas_otica_canonica.sql'),
   ('20260909222423', 'deploy_sonda_alvos_onda5', '20260909222423_deploy_sonda_alvos_onda5.sql'),
   ('20260910214850', 'desconto_backfill_aplicar_ja_apuradas', '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql'),
+  ('20260914180104', 'reconciliar_carrega_desconto_e_isola_coerencia', '20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql'),
   ('20260914181500', 'pedido_total_liquido_acervo', '20260914181500_pedido_total_liquido_acervo.sql'),
   ('20260914193000', 'pedido_total_liquido_acervo_mes_entre_contas', '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql'),
   ('20260918200000', 'data_health_sync_reprocess_saude', '20260918200000_data_health_sync_reprocess_saude.sql')
@@ -2391,6 +2392,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', ''),
   ('desconto_backfill_aplicar_ja_apuradas', 'function', 'public', 'desconto_backfill_aplicar', ''),
+  ('reconciliar_carrega_desconto_e_isola_coerencia', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_classificar', ''),
   ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_relatorio', ''),
   ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_converter', ''),
@@ -4249,6 +4251,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('snapshot_transporta_desconto_valor', 'function', 'public', 'cockpit_itens_snapshot', ''),
   ('v_titulo_baixas_otica_canonica', 'view', 'public', 'v_titulo_baixas', ''),
   ('desconto_backfill_aplicar_ja_apuradas', 'function', 'public', 'desconto_backfill_aplicar', ''),
+  ('reconciliar_carrega_desconto_e_isola_coerencia', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_classificar', ''),
   ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_relatorio', ''),
   ('pedido_total_liquido_acervo', 'function', 'public', 'pedido_total_liquido_converter', ''),
@@ -4693,6 +4696,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reconciliar_pedidos_omie', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'cad0126b11adcbc4946da1c4566b26f5'),
   ('public', 'reconciliar_pedidos_omie', 3, '20260906180000_order_items_identidade_linha.sql', '0a18feb377a089da307c822912a3fb36'),
   ('public', 'reconciliar_pedidos_omie', 4, '20260908215704_desconto_valor_atravessa_os_escritores.sql', '9086cdf6e69b8ca1b632d485d1c61dbf'),
+  ('public', 'reconciliar_pedidos_omie', 5, '20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql', 'bc85f6b5437a50fdb9a488867f4ee1a3'),
   ('public', 'sayerlack_aplicar_custo_portal', 1, '20260905090000_sayerlack_custo_portal_cas.sql', 'ad876e8c210428971511537d07f019e6'),
   ('public', 'sayerlack_aplicar_custo_portal', 2, '20260906193522_valor_total_portal_provado.sql', 'b7ddc0e52eb4e7e23b9febf0ff8e5a98'),
   ('public', 'aprovar_pedido_sugerido', 1, '20260906151715_aprovar_pedido_guard_atomico.sql', 'f9ffc3b7db7801d9c19589ca8c0ec6f9'),
