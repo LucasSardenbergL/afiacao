@@ -136,4 +136,4 @@ db/test-cfo-caixa-90d-otica.sh             30
 # 5 dos 8 harnesses de data-health apodreceram em silêncio por ficarem FORA do caminho do merge
 # (o CI é vitest; ninguém os roda). Autocontida: initdb + db/stubs-data-health-trio.sql + a
 # migration do repo. Sem psql-ro, sem deno, sem dado de fora.
-db/test-data-health-sync-reprocess.sh      27  falsificar=9
+db/test-data-health-sync-reprocess.sh      28  falsificar=10

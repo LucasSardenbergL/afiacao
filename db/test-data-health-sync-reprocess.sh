@@ -29,7 +29,8 @@ export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithr
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="erro_nao_e_broken desconhecido_vira_ok nao_catalogada_vira_ok orfa_nunca_dispara
-              stale_nunca_dispara nunca_executou_vira_ok message_com_idade message_constante fora_do_v_sources"
+              stale_nunca_dispara nunca_executou_vira_ok retry_liquida_erro message_com_idade
+              message_constante fora_do_v_sources"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -95,8 +96,12 @@ ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 
-MIG="$REPO_ROOT/supabase/migrations/20260918200000_data_health_sync_reprocess_saude.sql"
-[ -f "$MIG" ] || { echo "❌ migration ausente: $MIG"; exit 1; }
+# DUAS migrations, na ORDEM real de produção: a 1ª cria o check e registra o source nas duas
+# pontas (watchdog + heartbeat); a 2ª recria só o compute para o conserto do E.1. Aplicar só a 2ª
+# num PG limpo faz a postcondição dela falhar — corretamente, porque as outras pernas não existem.
+MIG_BASE="$REPO_ROOT/supabase/migrations/20260918200000_data_health_sync_reprocess_saude.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260920210000_sync_reprocess_retry_nao_liquida_erro.sql"
+for m in "$MIG_BASE" "$MIG"; do [ -f "$m" ] || { echo "❌ migration ausente: $m"; exit 1; }; done
 
 echo "═══ setup PG17 :$PORT ═══"
 
@@ -125,7 +130,7 @@ REVOKE ALL ON FUNCTION public._data_health_compute() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public._data_health_compute() TO service_role;
 SQL
 
-aplicar_real() { P -q -f "$MIG" >/dev/null; }
+aplicar_real() { P -q -f "$MIG_BASE" >/dev/null; P -q -f "$MIG" >/dev/null; }
 aplicar_real
 echo "═══ migration real aplicada (postcondição passou) ═══"
 
@@ -138,9 +143,12 @@ echo "═══ migration real aplicada (postcondição passou) ═══"
 # ══════════════════════════════════════════════════════════════════════════════
 sabotar() {
   local fn="$1" de="$2" para="$3"
+  # de qual arquivo extrair: o compute vem da migration do conserto (a última a recriá-lo, que é o
+  # que vale em prod); watchdog e heartbeat só existem na base.
+  local src="$MIG"; [ "$fn" = "_data_health_compute" ] || src="$MIG_BASE"
   local tmp; tmp="$(mktemp "/tmp/sab-${SLUG}.XXXXXX")"
   awk -v fn="CREATE OR REPLACE FUNCTION public.${fn}(" \
-      'index($0,fn)==1{f=1} f{print} f && /^\$function\$;$/{exit}' "$MIG" > "$tmp"
+      'index($0,fn)==1{f=1} f{print} f && /^\$function\$;$/{exit}' "$src" > "$tmp"
   python3 - "$tmp" "$de" "$para" <<'PYSAB' || { echo "❌ SABOTAGEM NÃO APLICÁVEL — o padrão não ocorre exatamente 1× no corpo de $fn. Sem isto a suíte ficaria verde e a falsificação aprovaria tudo."; exit 9; }
 import sys
 p, de, para = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -162,20 +170,26 @@ case "${SABOTAGEM:-}" in
       sabotar _data_health_compute "WHEN u.status IN ('error','failed') THEN 'broken'" \
                                    "WHEN u.status IN ('error','failed') THEN 'ok'" ;;
   desconhecido_vira_ok)
-      sabotar _data_health_compute "WHEN u.status NOT IN ('complete','running') THEN 'unknown'" \
-                                   "WHEN u.status NOT IN ('complete','running') THEN 'ok'" ;;
+      sabotar _data_health_compute "WHEN u.status IS NOT NULL AND u.status <> 'complete' THEN 'unknown'" \
+                                   "WHEN u.status IS NOT NULL AND u.status <> 'complete' THEN 'ok'" ;;
   nao_catalogada_vira_ok)
       sabotar _data_health_compute "WHEN cat.nao_catalogada THEN 'unknown'" \
                                    "WHEN cat.nao_catalogada THEN 'ok'" ;;
   orfa_nunca_dispara)
-      sabotar _data_health_compute "AND u.created_at < now() - interval '2 hours' THEN 'broken'" \
-                                   "AND u.created_at < now() - interval '900 hours' THEN 'broken'" ;;
+      sabotar _data_health_compute "AND r.created_at < now() - interval '2 hours' THEN 'broken'" \
+                                   "AND r.created_at < now() - interval '900 hours' THEN 'broken'" ;;
   stale_nunca_dispara)
-      sabotar _data_health_compute "OR s.ultimo_sucesso_em < now() - make_interval(hours => cat.sla_h) THEN 'stale'" \
-                                   "OR s.ultimo_sucesso_em < now() - make_interval(hours => cat.sla_h * 1000) THEN 'stale'" ;;
+      sabotar _data_health_compute "WHEN s.ultimo_sucesso_em < now() - make_interval(hours => cat.sla_h) THEN 'stale'" \
+                                   "WHEN s.ultimo_sucesso_em < now() - make_interval(hours => cat.sla_h * 1000) THEN 'stale'" ;;
   nunca_executou_vira_ok)
-      sabotar _data_health_compute "WHEN u.status IS NULL THEN 'broken'" \
-                                   "WHEN u.status IS NULL THEN 'ok'" ;;
+      sabotar _data_health_compute "WHEN s.ultimo_sucesso_em IS NULL THEN 'broken'" \
+                                   "WHEN s.ultimo_sucesso_em IS NULL THEN 'ok'" ;;
+  retry_liquida_erro)
+      # o furo E.1 em si: devolver `u` a leitura de QUALQUER linha faz um `running` posterior
+      # apagar o erro terminal. Tem de ficar vermelha no assert do E.1.
+      sabotar _data_health_compute "             AND l.status IS DISTINCT FROM 'running'
+           -- desempate EXPLICITO por id" \
+                                   "           -- desempate EXPLICITO por id" ;;
   message_com_idade)
       sabotar _data_health_compute "ELSE ' desde ' || to_char(d.ultimo_sucesso_em AT TIME ZONE 'America/Sao_Paulo','DD/MM') END" \
                                    "ELSE ' desde ' || to_char(now() AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI:SS') END" ;;
@@ -240,10 +254,16 @@ P -q -c "UPDATE public.sync_reprocess_log SET status='failed'
           WHERE reprocess_type='status_produtos' AND account='oben';"
 eq "dialeto 'failed' (omie-sync-status-produtos) também é broken" "$(st)" "broken"
 
+# O cenário da órfã precisa de um SUCESSO DENTRO do SLA, senão o `broken` vem da cláusula "nunca
+# completou" e o assert passa pelo motivo errado — foi o que a falsificação flagrou: sabotar o
+# limiar da órfã deixava a suíte verde. Aqui: complete há 3h (dentro do SLA de 4h) e uma tentativa
+# iniciada há 2h30 que nunca terminou. Só a cláusula da órfã pode dar broken.
 semear_saudavel
-P -q -c "UPDATE public.sync_reprocess_log SET status='running', created_at = now() - interval '5 hours'
-          WHERE reprocess_type='operational' AND entity_type='orders';"
-eq "running há 5h ⇒ broken (órfã; duração máx real medida em 90d é 2,6 min)" "$(st)" "broken"
+P -q -c "DELETE FROM public.sync_reprocess_log WHERE reprocess_type='operational' AND entity_type='orders';"
+P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at) VALUES
+  ('oben','operational','orders','complete', now() - interval '3 hours'),
+  ('oben','operational','orders','running',  now() - interval '150 minutes');"
+eq "running iniciada há 2h30 sobre sucesso ainda no SLA ⇒ broken (órfã; máx real 2,6 min)" "$(st)" "broken"
 
 semear_saudavel
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at)
@@ -264,6 +284,18 @@ semear_saudavel
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at)
          VALUES ('nova_conta','operational','orders','complete', now());"
 eq "chave ATIVA fora do catálogo ⇒ unknown (cobertura desconhecida não é saudável)" "$(st)" "unknown"
+
+# ⚠️ REPRODUÇÃO do achado E.1 do Codex (challenge retroativo 2026-09-20): um `running` posterior
+# NÃO pode liquidar um erro terminal. Sucesso 10h → erro 12h → retry grava `running` 12h29: a última
+# linha deixa de ser erro, o running é recente e o sucesso das 10h ainda cabe no SLA de 4h ⇒ o check
+# diria `ok` e o watchdog faria DISMISS AUTOMÁTICO, antes de o retry sequer completar.
+semear_saudavel
+P -q -c "DELETE FROM public.sync_reprocess_log WHERE reprocess_type='operational' AND entity_type='orders';"
+P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, error_message, created_at) VALUES
+  ('oben','operational','orders','complete', NULL,             now() - interval '150 minutes'),
+  ('oben','operational','orders','error',    'RPC falhou',     now() - interval '31 minutes'),
+  ('oben','operational','orders','running',  NULL,             now() - interval '1 minute');"
+eq "erro terminal seguido de retry em voo NÃO pode virar ok (E.1)" "$(st)" "broken"
 
 echo "── precisão: degradação ≠ quebra ──"
 semear_saudavel

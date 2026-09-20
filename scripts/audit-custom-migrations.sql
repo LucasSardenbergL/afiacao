@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 550
+-- Total de custom migrations: 551
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -591,7 +591,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260914180104', 'reconciliar_carrega_desconto_e_isola_coerencia', '20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql'),
   ('20260914181500', 'pedido_total_liquido_acervo', '20260914181500_pedido_total_liquido_acervo.sql'),
   ('20260914193000', 'pedido_total_liquido_acervo_mes_entre_contas', '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql'),
-  ('20260918200000', 'data_health_sync_reprocess_saude', '20260918200000_data_health_sync_reprocess_saude.sql')
+  ('20260918200000', 'data_health_sync_reprocess_saude', '20260918200000_data_health_sync_reprocess_saude.sql'),
+  ('20260920210000', 'sync_reprocess_retry_nao_liquida_erro', '20260920210000_sync_reprocess_retry_nao_liquida_erro.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2402,7 +2403,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedido_total_liquido_acervo_mes_entre_contas', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('data_health_sync_reprocess_saude', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sync_reprocess_saude', 'function', 'public', 'data_health_watchdog', ''),
-  ('data_health_sync_reprocess_saude', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('data_health_sync_reprocess_saude', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('sync_reprocess_retry_nao_liquida_erro', 'function', 'public', '_data_health_compute', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4261,7 +4263,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedido_total_liquido_acervo_mes_entre_contas', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('data_health_sync_reprocess_saude', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sync_reprocess_saude', 'function', 'public', 'data_health_watchdog', ''),
-  ('data_health_sync_reprocess_saude', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('data_health_sync_reprocess_saude', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('sync_reprocess_retry_nao_liquida_erro', 'function', 'public', '_data_health_compute', '')
 )
 SELECT
   e.migration,
@@ -4487,6 +4490,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 28, '20260829012000_analytics_outbox_perda_visivel.sql', '7fe36075e42b0ca839e17581e1f09d91'),
   ('public', '_data_health_compute', 29, '20260829041500_analytics_outbox_trigger_sensor.sql', '538f5373845b1920f1789126fb72953f'),
   ('public', '_data_health_compute', 30, '20260918200000_data_health_sync_reprocess_saude.sql', '00df33d5efc972066cc001e9713b044d'),
+  ('public', '_data_health_compute', 31, '20260920210000_sync_reprocess_retry_nao_liquida_erro.sql', '282eae5b933019e2e9f806b1f67a224b'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
