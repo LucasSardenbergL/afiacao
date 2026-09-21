@@ -11,12 +11,116 @@
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
-ASYNC="$here/codex-async.sh"
+# CODEX_ASYNC_ALVO: a CÓPIA (de controle ou sabotada) que o `--falsificar` serve — nunca o versionado.
+ASYNC="${CODEX_ASYNC_ALVO:-$here/codex-async.sh}"
+
+# ── modo falsificação ───────────────────────────────────────────────────────
+# Sabota o WRAPPER numa cópia e EXIGE vermelho PELO MOTIVO CERTO: cada sabotagem declara a
+# marca ASCII, caixa fixa, que a suíte tem de imprimir — "ficou vermelha" não basta (um erro
+# de sintaxe também fica). Três camadas, UMA POR VEZ: a que ficar verde é redundante ou
+# inalcançada. Julgada nos DOIS locales (#1483) e só depois de um CONTROLE verde na MESMA
+# invocação do laço (docs/historico/falsificacao-sem-linha-de-base.md).
+if [ "${1:-}" = "--falsificar" ]; then
+  printf '== falsificacao (sabota o WRAPPER; exige vermelho pela marca certa, 2 locales) ==\n'
+  fals="$(mktemp -d)"; trap 'rm -rf "$fals"' EXIT
+  falhas=0
+  utf8=""
+  for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
+    if [ "$(LC_ALL="$cand" locale charmap 2>/dev/null)" = "UTF-8" ]; then utf8="$cand"; break; fi
+  done
+  if [ -z "$utf8" ]; then
+    echo "nenhum locale UTF-8 (pt_BR/en_US/C) neste ambiente — metade da falsificacao nao rodaria."
+    exit 1
+  fi
+  original="$fals/original.sh"; cp "$here/codex-async.sh" "$original"
+
+  suite() { # alvo locale → $saida_suite/$rc_suite (MESMA invocação do laço; só o alvo muda)
+    saida_suite="$(LC_ALL="$2" CODEX_ASYNC_ALVO="$1" bash "$0" 2>&1)"; rc_suite=$?
+  }
+
+  # CONTROLE primeiro: sem linha de base verde, um arnês sempre-vermelho aprova TODA sabotagem.
+  for loc in C "$utf8"; do
+    suite "$original" "$loc"
+    if [ "$rc_suite" -eq 0 ]; then printf '  ok    controle verde (locale %s)\n' "$loc"
+    else printf '  FAIL [controle-vermelho]  a suite ja falha SEM sabotagem (locale %s, exit %s)\n' "$loc" "$rc_suite"
+         printf '%s\n' "$saida_suite" | grep -m3 'FAIL' ; falhas=1; fi
+  done
+  [ "$falhas" -eq 0 ] || { echo "FALSIFICACAO ABORTADA: sem controle verde nada abaixo tem valor."; exit 1; }
+
+  sabotar() { # id  marca-esperada  script-python-de-sabotagem
+    local id="$1" marca="$2" prog="$3" alvo="$fals/$1.sh"
+    cp "$original" "$alvo"
+    ALVO="$alvo" python3 -c "$prog" || { printf '  FAIL [%s]  a sabotagem nao pegou no arquivo\n' "$id"; falhas=1; return; }
+    bash -n "$alvo" 2>/dev/null || { printf '  FAIL [%s]  sabotagem quebrou a SINTAXE (vermelho por crash nao prova nada)\n' "$id"; falhas=1; return; }
+    for loc in C "$utf8"; do
+      suite "$alvo" "$loc"
+      if [ "$rc_suite" -eq 0 ]; then
+        printf '  FAIL [%s]  sabotagem passou VERDE (locale %s) — a camada nao esta coberta\n' "$id" "$loc"; falhas=1
+      elif printf '%s' "$saida_suite" | grep -qF "FAIL [$marca]"; then
+        printf '  ok    [%s] vermelho pela marca FAIL [%s] (locale %s)\n' "$id" "$marca" "$loc"
+      else
+        # dizer PELO QUE ficou vermelha: sem isto, uma falha de AMBIENTE (a M2 do founder
+        # estoura o kern.maxproc com ~30 worktrees e o `fork` falha) é indistinguível de uma
+        # asserção frouxa — e as duas pedem ações opostas.
+        printf '  FAIL [%s]  vermelho pelo motivo ERRADO (locale %s): faltou FAIL [%s]. Veio:\n' "$id" "$loc" "$marca"
+        printf '%s\n' "$saida_suite" | grep -m3 'FAIL' | sed 's/^/        /'
+        falhas=1
+      fi
+    done
+  }
+
+  # (1) tirar o teto da invocação = o defeito original de volta
+  sabotar teto teto-ausente '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="    -c features.multi_agent_v2.max_concurrent_threads_per_session=1 \\\n"
+assert s.count(a)==1
+io.open(p,"w",encoding="utf-8").write(s.replace(a,""))'
+
+  # (2) sensor cego: conta 0 sempre (o fan-out volta a passar em silencio)
+  # sensor cego = devolve NENHUM caminho (não "0": a função imprime caminhos, e um "0"
+  # solto seria lido como um caminho e viraria contagem 1 — o oposto da sabotagem).
+  sabotar sensor fanout-silencioso '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="subagentes_desta_rodada() {"
+i=s.index(a); j=s.index("\n",i)+1
+io.open(p,"w",encoding="utf-8").write(s[:j]+"  return\n"+s[j:])'
+
+  # (3) tirar o filtro por cwd: o alarme passa a acusar a worktree vizinha
+  # shellcheck disable=SC2016  # o programa é python: `$PWD`/`$((n+1))` têm de chegar LITERAIS
+  # (são o texto que o sed-equivalente procura no wrapper); expandir aqui apagaria o alvo.
+  sabotar cwd fanout-cwd-alheia '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="    case \"$cab\" in *\"\\\"cwd\\\":\\\"$PWD\\\"\"*) printf '"'"'%s\\n'"'"' \"$f\" ;; esac"
+assert s.count(a)==1, s.count(a)
+io.open(p,"w",encoding="utf-8").write(s.replace(a,"    printf '"'"'%s\\n'"'"' \"$f\""))'
+
+  # (4) a consulta NÃO acontece: o wrapper aborta antes de chamar o codex. Os "controles"
+  # que só procuravam AUSÊNCIA de alarme passavam verdes aqui — 2ª opinião, 2026-09-20.
+  # Esta sabotagem é o que prova que eles pararam de passar.
+  sabotar sem_consulta controle-sem-consulta '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="# --- preflight (barato, ANTES de gastar contexto/quota) -----------------------\n"
+assert s.count(a)==1
+io.open(p,"w",encoding="utf-8").write(s.replace(a,a+"exit 77\n"))'
+
+  echo
+  if [ "$falhas" -eq 0 ]; then echo "PASS — toda sabotagem ficou vermelha pela marca certa"; else echo "FALHOU"; fi
+  exit "$falhas"
+fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/codexhome_ok" "$tmp/codexhome_vazio" "$tmp/codexhome_free" "$tmp/codexhome_pago"
 : > "$tmp/codexhome_ok/auth.json"
+# `sessions/` existe em toda conta que já rodou o codex uma vez. O sensor de fan-out usa a
+# AUSÊNCIA dela como "não consigo medir" (é o sinal de que não estamos olhando onde o codex
+# escreve), então os homes do caminho feliz precisam tê-la — senão todo cabeçalho sairia com
+# "?" e o alarme viraria ruído de fundo. O home SEM ela é criado de propósito mais abaixo.
+mkdir -p "$tmp/codexhome_ok/sessions" "$tmp/codexhome_free/sessions" "$tmp/codexhome_pago/sessions"
 
 # auth.json com JWT FALSO carregando só o claim do plano (nada de segredo — o payload de um
 # JWT é base64, não cifra). Serve para provar que a mensagem de cota LÊ o plano declarado.
@@ -33,6 +137,9 @@ printf '{"tokens":{"access_token":"%s"}}' "$(jwt_com_plano prolite)" > "$tmp/cod
 cat >"$tmp/bin/codex" <<'STUB'
 #!/bin/sh
 echo x >> "$CODEX_STUB_COUNT"
+# argumentos da invocação: é o que prova que um flag de transporte (ex.: o teto
+# multi-agente) REALMENTE viaja até o codex, e não só existe num comentário.
+[ -n "${CODEX_STUB_ARGS:-}" ] && printf '%s\n' "$*" >> "$CODEX_STUB_ARGS"
 # stderr FIEL ao codex real (medido 2026-08-22, codex-cli 0.144.1): header, o PROMPT
 # ECOADO sob "user", e só então as linhas ERROR:. O eco é o que envenena qualquer
 # classificação feita sobre o arquivo cru.
@@ -86,6 +193,19 @@ case "$CODEX_STUB_MODE" in
   # numero 500-599 DENTRO da mensagem de erro, sem ser status HTTP (contagem de tokens).
   # Isola a ancora: aqui remover o eco do prompt nao salva — o "5120" esta na linha de ERRO.
   num5xx)    echo 'ERROR: {"type":"error","status":400,"error":{"type":"context_length_exceeded","message":"prompt has 5120 tokens; maximum for this model is 4096"}}' >&2; exit 1 ;;
+  # o defeito de transporte medido em 2026-09-20: o codex-cli 0.153.4 entrega `spawn_agent`
+  # ao modelo, e cada subagente nasce como rollout PRÓPRIO, cobrado à parte. O stub reproduz
+  # o único rastro que o wrapper consegue ver de fora: o arquivo em CODEX_HOME/sessions.
+  ok_spawna) d="$CODEX_HOME/sessions/2026/09/20"; mkdir -p "$d"
+             printf '{"type":"session_meta","payload":{"thread_source":"subagent","cwd":"%s"}}\n' "$PWD" \
+               > "$d/rollout-2026-09-20T00-00-00-filho.jsonl"
+             echo "parecer com fan-out"; rodape "9.999"; exit 0 ;;
+  # subagente de OUTRA worktree: ~/.codex/sessions é COMPARTILHADO entre as sessões
+  # paralelas. Sem o filtro por cwd, o alarme dispararia pelo trabalho do vizinho.
+  ok_spawna_alheio) d="$CODEX_HOME/sessions/2026/09/20"; mkdir -p "$d"
+             printf '{"type":"session_meta","payload":{"thread_source":"subagent","cwd":"/outra/worktree"}}\n' \
+               > "$d/rollout-2026-09-20T00-00-00-alheio.jsonl"
+             echo "parecer sem fan-out proprio"; rodape "9.999"; exit 0 ;;
   trava)     sleep 30 ;;
   *)         echo "erro desconhecido" >&2; exit 1 ;;
 esac
@@ -96,17 +216,19 @@ fail=0
 # ambiente controlado: PATH mínimo com o stub; sem env keys; backoffs zerados
 run() {
   local mode="$1"; shift
-  : > "$tmp/count"
+  : > "$tmp/count"; : > "$tmp/args"
   env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
     CODEX_HOME="$tmp/codexhome_ok" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
+    CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" \
     CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
 # igual ao run(), mas com CODEX_HOME escolhido (para variar o plano declarado no token)
 run_home() {
   local home="$1" mode="$2"; shift 2
-  : > "$tmp/count"
+  : > "$tmp/count"; : > "$tmp/args"
   env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
     CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
+    CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" \
     CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
 invocacoes() { wc -l < "$tmp/count" | tr -d ' '; }
@@ -434,10 +556,10 @@ mk_rollout() { # home dia hora corpo
 novo_home() { mkdir -p "$tmp/$1"; : > "$tmp/$1/auth.json"; }   # auth vazio basta: o preflight só exige o arquivo
 run_saldo() { # home teto modo args...
   local home="$1" teto="$2" mode="$3"; shift 3
-  : > "$tmp/count"
+  : > "$tmp/count"; : > "$tmp/args"
   env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
     CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
-    CODEX_ASYNC_TETO_SALDO="$teto" CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
+    CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" CODEX_ASYNC_TETO_SALDO="$teto" CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
 limites() { printf '{"rate_limits":{"primary":{"used_percent":%s,"window_minutes":10080,"resets_at":%s}}}' "$1" "$2"; }
 futuro=$(( $(date +%s) + 86400 ))
@@ -479,6 +601,87 @@ caso_exit "rollout recente sem medidor → acha o anterior → 79" 79 $?
 
 run_saldo codexhome_alto 0 ok "x" >/dev/null 2>&1
 caso_exit "CODEX_ASYNC_TETO_SALDO=0 desliga o sensor" 0 $?
+
+echo "── fan-out multi-agente: 1 invocação = 1 execução cobrada ──"
+# O defeito (medido 2026-09-20 sobre ~/.codex/sessions de 04–18/09): o codex-cli 0.153.4 dá ao
+# modelo `spawn_agent` com 4 slots de concorrência, e nos prompts adversariais do ritual ele
+# abria a revisão em até 3 threads irmãs — cada uma com o contexto inteiro replicado e COBRADA
+# à parte. 25 das 167 consultas (15%) geraram 40 threads de subagente = 22,4% dos tokens do mês.
+# Duas camadas, medidas separadamente porque uma NÃO cobre a outra:
+#   (1) o teto de 1 slot, que fecha a porta — mas só na versão do CLI que conhece a chave;
+#   (2) o sensor por FORA do flag, que conta o rastro em disco e grita se a porta reabrir.
+# ⚠️ Os casos (2)/(4) abaixo são o CONTROLE VERDE da mesma leva: sem eles, um alarme
+# sempre-ligado (ou sempre-desligado) passaria por sensor.
+
+# (1) o teto viaja NA invocação — não basta existir no comentário
+run ok "pergunta qualquer" >/dev/null 2>&1
+# âncora nas bordas: a substring crua deixaria `=10` passar por `=1`, e não provaria
+# que a chave veio no par `-c <chave>` (achado da 2ª opinião).
+if grep -qE -- '(^| )-c features\.multi_agent_v2\.max_concurrent_threads_per_session=1( |$)' "$tmp/args"
+then echo "  ok    o teto de 1 slot viaja na invocação do codex"
+else echo "  FAIL [teto-ausente]  a invocação NÃO carrega o teto multi-agente — o fan-out volta"; fail=1; fi
+
+# Um "não apareceu alarme" só vale se a consulta ACONTECEU. Sem esta prova positiva, um
+# preflight que aborta com exit 77 faz TODOS os controles imprimirem ok (verificado pela 2ª
+# opinião em 2026-09-20: os três passavam com fail=0 quando a consulta nem rodava).
+consulta_aconteceu() { # rc saida rotulo → 0 se houve parecer de verdade
+  local rc="$1" saida="$2" rot="$3" ok=0
+  [ "$rc" -eq 0 ] || { echo "  FAIL [controle-sem-consulta]  $rot: exit $rc — a consulta não rodou"; ok=1; }
+  printf '%s' "$saida" | grep -q '=== PARECER CODEX' \
+    || { echo "  FAIL [controle-sem-consulta]  $rot: sem cabeçalho PARECER CODEX"; ok=1; }
+  [ "$(invocacoes)" -ge 1 ] \
+    || { echo "  FAIL [controle-sem-consulta]  $rot: 0 invocações do stub"; ok=1; }
+  return "$ok"
+}
+
+# (2) CONTROLE: com a consulta comprovadamente feita e nenhum subagente no disco, nada de
+# alarme — senão o sensor é sempre-vermelho e aprova qualquer sabotagem.
+saida="$(run ok "pergunta qualquer" 2>&1)"; rc=$?
+if consulta_aconteceu "$rc" "$saida" "controle sem subagente"
+then echo "  ok    a consulta do controle rodou de verdade (exit 0 · parecer · stub chamado)"
+else fail=1; fi
+if printf '%s' "$saida" | grep -q 'FAN_OUT'
+then echo "  FAIL [fanout-sempre-vermelho]  alarme de fan-out disparou SEM subagente nenhum"; fail=1
+else echo "  ok    …e sem subagente não houve alarme"; fi
+if printf '%s' "$saida" | grep -q 'subagente(s)'
+then echo "  FAIL [fanout-fora-do-cabecalho]  cabeçalho anunciou subagentes que não existiram"; fail=1
+else echo "  ok    …e o cabeçalho não inventa subagente"; fi
+
+# (3) o defeito reproduzido: nasceu um rollout de subagente NESTA cwd durante a chamada
+saida="$(run ok_spawna "pergunta qualquer" 2>&1)"; rc=$?
+caso_exit "fan-out não derruba a consulta (o parecer ainda vale)" 0 "$rc"
+if printf '%s' "$saida" | grep -q 'FAN_OUT: o codex abriu 1 thread'
+then echo "  ok    o sensor VIU a thread de subagente e disse o número"
+else echo "  FAIL [fanout-silencioso]  o fan-out passou EM SILÊNCIO — é assim que 22% da cota some sem dono"; fail=1; fi
+# ⚠️ o que isto prova é a CONTAGEM de filhos, não os tokens deles: o wrapper não lê métrica
+# nenhuma desses rollouts. Dizer "o custo real" seria conclusão maior que a asserção.
+if printf '%s' "$saida" | grep -q '1 subagente(s)'
+then echo "  ok    …e a CONTAGEM chegou ao cabeçalho que vai pro PR"
+else echo "  FAIL [fanout-fora-do-cabecalho]  cabeçalho omitiu o fan-out — o PR registraria um custo falso"; fail=1; fi
+
+# (4) o terceiro estado: sem `sessions/` não dá para medir — e isso se DIZ, não se
+# arredonda para zero (ausência ≠ zero; um CODEX_HOME apontado para o lugar errado
+# devolveria "nenhum subagente" para sempre).
+mkdir -p "$tmp/codexhome_semsessions"; : > "$tmp/codexhome_semsessions/auth.json"
+saida="$(run_home codexhome_semsessions ok "pergunta qualquer" 2>&1)"; rc=$?
+if consulta_aconteceu "$rc" "$saida" "sem sessions/"; then :; else fail=1; fi
+if printf '%s' "$saida" | grep -q 'FAN_OUT_DESCONHECIDO'
+then echo "  ok    sem sessions/ → diz que não mediu (não finge zero)"
+else echo "  FAIL [fanout-fingiu-zero]  degradou calado — ausência de medida virou 'sem fan-out'"; fail=1; fi
+if printf '%s' "$saida" | grep -q '? subagente(s)'
+then echo "  ok    …e o cabeçalho leva o '?' pro PR"
+else echo "  FAIL [fanout-fingiu-zero]  cabeçalho escondeu que o sensor não mediu"; fail=1; fi
+
+# (5) CONTROLE do filtro por cwd: ~/.codex/sessions é compartilhado entre worktrees.
+# Sem este caso, contar QUALQUER subagente passaria — e acusaria o vizinho.
+saida="$(run ok_spawna_alheio "pergunta qualquer" 2>&1)"; rc=$?
+if consulta_aconteceu "$rc" "$saida" "cwd alheio"; then :; else fail=1; fi
+alheio="$tmp/codexhome_ok/sessions/2026/09/20/rollout-2026-09-20T00-00-00-alheio.jsonl"
+if [ -s "$alheio" ]; then echo "  ok    o fixture do vizinho NASCEU (o filtro foi mesmo exercido)"
+else echo "  FAIL [controle-sem-consulta]  cwd alheio: o fixture não existe — 'sem alarme' não prova filtro"; fail=1; fi
+if printf '%s' "$saida" | grep -q 'FAN_OUT'
+then echo "  FAIL [fanout-cwd-alheia]  contou subagente de OUTRA worktree — alarme culpa o vizinho"; fail=1
+else echo "  ok    subagente de outra cwd não conta (sessions é compartilhado)"; fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi

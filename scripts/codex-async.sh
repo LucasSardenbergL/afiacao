@@ -238,7 +238,47 @@ tokens_do_rodape() {
 
 out="$(mktemp -t codex-async.XXXXXX)" || exit 70
 err="$(mktemp -t codex-async-err.XXXXXX)" || exit 70
-trap 'rm -f "$err"' EXIT
+marcador="$(mktemp -t codex-async-marca.XXXXXX)" || exit 70
+acervo="$(mktemp -t codex-async-acervo.XXXXXX)" || exit 70   # união dos filhos de TODAS as tentativas
+fanout_incerto=0
+trap 'rm -f "$err" "$marcador" "$acervo"' EXIT
+
+# --- sensor de FAN-OUT (multi-agente) -----------------------------------------
+# UMA invocação podia virar ATÉ 4 execuções cobradas: o codex-cli 0.153.4 entrega ao
+# modelo o bloco `<multi_agent_role>` com `spawn_agent` e "4 available concurrency
+# slots", e nos prompts adversariais do ritual o modelo abria a revisão em threads
+# irmãs — cada uma com `fork_turns:"all"` (o contexto INTEIRO replicado) e cobrada à
+# parte. Medido em ~/.codex/sessions de 04–18/09: 25 das 167 consultas (15%) geraram
+# 40 threads de subagente = 39,5M tokens = 22,4% do consumo do mês.
+# O teto `-c features.multi_agent_v2.max_concurrent_threads_per_session=1` (abaixo)
+# fecha a porta — provado ao vivo: com o teto, o CLI recusa ("o limite de agentes foi
+# atingido") e nenhum rollout de subagente nasce; sem ele, o mesmo prompt abre 2.
+# Este sensor é o SEGUNDO EIXO, de propósito por FORA do flag: uma chave de config só
+# vale na versão que a conhece, e o codex ignora config desconhecida em silêncio (sem
+# --strict-config). Se um upgrade reabrir a porta, aqui aparece; olhar só o flag não vê.
+# SENSOR, não guard: sem leitura → "?" e a consulta SEGUE — mas nunca em silêncio.
+# Filtra por `cwd`: worktrees paralelas escrevem no MESMO ~/.codex/sessions.
+# Imprime UM CAMINHO POR LINHA dos rollouts de subagente desta cwd, ou o token `?`.
+# Caminhos (não a contagem) porque as tentativas se somam por UNIÃO: o mesmo rollout ainda
+# sendo escrito reaparece na tentativa seguinte, e somar contagens o contaria duas vezes.
+# ⚠️ Toda falha de LEITURA vira `?`, nunca 0 — `find` que morre no meio, arquivo ilegível,
+# `head` que falha e cabeçalho vazio são AUSÊNCIA DE MEDIDA. Arredondá-los para zero era o
+# "ausente ≠ zero" dentro do próprio sensor que existe para não confiar no flag (achado da
+# 2ª opinião, 2026-09-20: os três ramos devolviam 0 com exit 0).
+subagentes_desta_rodada() {
+  local s="${CODEX_HOME:-$HOME/.codex}/sessions" f cab lista
+  [ -d "$s" ] && [ -e "$marcador" ] || { printf '?'; return; }
+  lista="$(find "$s" -name 'rollout-*.jsonl' -type f -newer "$marcador" 2>/dev/null)" \
+    || { printf '?'; return; }
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -r "$f" ] || { printf '?'; return; }
+    cab="$(head -1 "$f" 2>/dev/null)" || { printf '?'; return; }
+    [ -n "$cab" ] || { printf '?'; return; }   # arquivo nascendo: não sei o que tem dentro
+    case "$cab" in *'"thread_source":"subagent"'*) ;; *) continue ;; esac
+    case "$cab" in *"\"cwd\":\"$PWD\""*) printf '%s\n' "$f" ;; esac
+  done <<< "$lista"
+}
 
 rc=1
 tentativa=0
@@ -251,8 +291,15 @@ for backoff in "${backoffs[@]}"; do
   # relógio DESTA tentativa (o backoff acima fica de fora de propósito: o que o PR registra
   # é quanto o Codex levou para responder, não quanto o wrapper esperou entre tentativas)
   t_ini=$(date +%s)
+  : > "$marcador"   # linha de base do sensor de fan-out DESTA tentativa
   # hard-stop próprio: codex às vezes trava com processo vivo (money-path.md)
+  # `features.multi_agent_v2.max_concurrent_threads_per_session=1` = 1 slot (só o /root):
+  # sem ele são 4, e o modelo delega. NÃO troque por `--disable multi_agent` nem por
+  # `agents.max_concurrent_threads_per_session`/`agents.max_depth`: os três foram medidos
+  # ao vivo em 20/09 e os dois primeiros são INERTES (seguem 4 slots); o `agents.*` só
+  # desce pra 2 (deixa 1 subagente) e `max_depth` não muda nada. Valor 0 é recusado.
   codex exec --model "$modelo" -c model_reasoning_effort="$reasoning" \
+    -c features.multi_agent_v2.max_concurrent_threads_per_session=1 \
     --sandbox read-only "$prompt" >"$out" 2>"$err" &
   pid=$!
   # fds do watchdog → /dev/null: o sleep interno sobrevive ao kill do subshell
@@ -264,11 +311,30 @@ for backoff in "${backoffs[@]}"; do
   segundos=$(( $(date +%s) - t_ini ))
   kill "$watchdog" 2>/dev/null
   wait "$watchdog" 2>/dev/null
+  # fan-out medido POR FORA do flag (ver comentário do sensor). Vale para a tentativa que
+  # falhou também — por isso fica aqui, e não só no cabeçalho do sucesso. E ACUMULA: a
+  # tentativa 1 pode abrir filhos e falhar, e os tokens dela já foram cobrados — zerar no
+  # retry apagaria do cabeçalho do PR exatamente o custo que motivou este sensor.
+  medida="$(subagentes_desta_rodada)"
+  if [ "$medida" = '?' ]; then fanout_incerto=1
+  else printf '%s' "$medida" | grep . >> "$acervo" || true; fi
+  if [ "$fanout_incerto" -eq 1 ]; then fanout='?'
+  else fanout="$(sort -u "$acervo" 2>/dev/null | awk 'NF{n++} END{print n+0}')"; fi
+  case "$fanout" in
+    0) ;;
+    '?') echo "FAN_OUT_DESCONHECIDO: não consegui contar threads de subagente desta rodada (sigo sem o sensor)." >&2 ;;
+    *)  echo "FAN_OUT: o codex abriu $fanout thread(s) de SUBAGENTE nesta consulta — cada uma é cobrada à parte" >&2
+        echo "  e replica o contexto inteiro. O teto de 1 slot devia impedir isto: confira se o codex-cli ainda" >&2
+        echo "  aceita 'features.multi_agent_v2.max_concurrent_threads_per_session' (\`codex features list\`)." >&2 ;;
+  esac
 
   if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
     tokens="$(tokens_do_rodape "$err")"
     if [ -n "$tokens" ]; then custo="$tokens tokens"; else custo="tokens ?"; fi
-    echo "=== PARECER CODEX (modelo $modelo · reasoning $reasoning · tentativa $tentativa · ${segundos}s · $custo) ==="
+    # o fan-out entra no cabeçalho só quando NÃO é zero: 0 é o esperado e não merece ruído,
+    # mas "?" e qualquer número > 0 precisam chegar ao PR junto com o custo.
+    case "$fanout" in 0) extra="" ;; *) extra=" · $fanout subagente(s)" ;; esac
+    echo "=== PARECER CODEX (modelo $modelo · reasoning $reasoning · tentativa $tentativa · ${segundos}s · $custo$extra) ==="
     cat "$out"
     echo
     echo "(cópia em $out)"
