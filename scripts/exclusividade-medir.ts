@@ -73,13 +73,17 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
+  closeSync,
   copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -330,20 +334,66 @@ interface Execucao {
   stdout: string;
 }
 
+/**
+ * A captura vai para ARQUIVO, nunca para pipe — e os dois canais em arquivos SEPARADOS.
+ *
+ * ATENCAO ao motivo, que ja foi entendido errado: isto NAO conserta o `test` vermelho do baseline.
+ * A hipotese de que o pipe fabricava aquele vermelho foi FALSIFICADA — `bun run test` cru, com a
+ * saida em ARQUIVO, tambem sai 1 com `Timeout calling "onTaskUpdate"`, 842 arquivos passando e zero
+ * teste falhando. O discriminador era a CARGA da maquina (112s passa, 169-222s reprova), nao o
+ * canal. Ver docs/historico/exclusividade-media-outra-coisa.md (secao do #2530).
+ *
+ * O que arquivo resolve, pelo merito proprio: o pipe carregava um teto de `maxBuffer` (256 MB aqui)
+ * cujo estouro PERDE a execucao inteira, e faz o filho depender de leitor rapido para nao sofrer
+ * contrapressao. Arquivo regular nao tem nenhum dos dois. `encoding` e `maxBuffer` saem porque sem
+ * pipe nao ha buffer a limitar; argv, env e timeout de `invocacaoDoCI` seguem byte a byte, que e a
+ * paridade que o motor promete.
+ *
+ * Os canais ficam separados de PROPOSITO: a sonda `--json` faz `JSON.parse` do stdout INTEIRO
+ * (`exclusividadeVermelhaSoPorGateNovo`), e um fd compartilhado com o stderr contaminaria o JSON —
+ * a exclusao morreria em SONDA-ILEGIVEL, trocando uma porta fechada por outra.
+ *
+ * E o temporario vive FORA da arvore: o write-guard olha `git status --untracked-files=all`, entao
+ * um arquivo de captura dentro do repo abortaria a propria rodada por GATE-ESCREVEU.
+ */
 function rodarGate(g: GateMedivel): Execucao {
-  const t0 = Date.now();
-  const r = spawnSync(g.inv.argv[0], g.inv.argv.slice(1), {
-    encoding: 'utf8',
-    timeout: TIMEOUT_MS,
-    maxBuffer: 256 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, CI: '1', FORCE_COLOR: '0', ...g.inv.env },
-  });
-  const ms = Date.now() - t0;
-  // Timeout/kill nao e "passou": e ausencia de dado. Marcamos como estourou e a linha vira invalida.
-  const estourou = r.signal !== null || r.error !== undefined;
-  const cauda = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(-600);
-  return { reprovou: r.status !== 0, ms, estourou, cauda, rc: r.status, stdout: r.stdout ?? '' };
+  const dir = mkdtempSync(join(tmpdir(), 'excl-captura-'));
+  try {
+    return capturarEmArquivo(g, dir);
+  } finally {
+    // Limpeza nao e veredito: se o temporario resistir, a medicao ja esta lida e vale.
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* residuo em /tmp nao invalida a execucao */
+    }
+  }
+}
+
+function capturarEmArquivo(g: GateMedivel, dir: string): Execucao {
+  const pOut = join(dir, 'stdout');
+  const pErr = join(dir, 'stderr');
+  const fdOut = openSync(pOut, 'w');
+  const fdErr = openSync(pErr, 'w');
+  try {
+    const t0 = Date.now();
+    const r = spawnSync(g.inv.argv[0], g.inv.argv.slice(1), {
+      timeout: TIMEOUT_MS,
+      stdio: ['ignore', fdOut, fdErr],
+      env: { ...process.env, CI: '1', FORCE_COLOR: '0', ...g.inv.env },
+    });
+    const ms = Date.now() - t0;
+    // O filho ja saiu: o que ele escreveu esta no arquivo, inclusive se foi morto pelo timeout.
+    const saida = readFileSync(pOut, 'utf8');
+    const erro = readFileSync(pErr, 'utf8');
+    // Timeout/kill nao e "passou": e ausencia de dado. Marcamos como estourou e a linha vira invalida.
+    const estourou = r.signal !== null || r.error !== undefined;
+    const cauda = `${saida}${erro}`.trim().slice(-600);
+    return { reprovou: r.status !== 0, ms, estourou, cauda, rc: r.status, stdout: saida };
+  } finally {
+    closeSync(fdOut);
+    closeSync(fdErr);
+  }
 }
 
 function rodarGuardado(g: GateMedivel, fase: string): Execucao {

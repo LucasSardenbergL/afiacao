@@ -33,7 +33,7 @@ const MATRIZ = 'scripts/exclusividade-matriz.json';
 
 /** Os gates do fixture. Cada modo e o analogo minimo de um gate real. */
 const GATES_TS = `
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, fstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 const modo = process.argv[2];
@@ -61,6 +61,15 @@ switch (modo) {
   case 'escritor': appendFileSync('escrito.txt', 'x\\n'); process.exit(0);
   case 'escritor-sob-defeito': if (edge.includes('SABOTADO')) appendFileSync('escrito.txt', 'x\\n'); process.exit(0);
   case 'quebrado': process.exit(5);
+  // A CAPTURA do motor, vista de DENTRO do gate: com pipe o fd 1/2 e um FIFO, com
+  // redirecionamento e um arquivo regular (que nunca bloqueia por leitor lento). Fica VERMELHO
+  // no baseline se QUALQUER das duas pontas for pipe — e a cauda diz qual delas era.
+  case 'canal': {
+    const tipo = (fd: number) => { const st = fstatSync(fd); return st.isFIFO() ? 'FIFO' : st.isFile() ? 'ARQUIVO' : 'OUTRO'; };
+    const [o, e] = [tipo(1), tipo(2)];
+    writeFileSync(1, 'canal stdout=' + o + ' stderr=' + e + '\\n');
+    process.exit(o === 'ARQUIVO' && e === 'ARQUIVO' ? 0 : 1);
+  }
   case 'sonda-escreve': if (process.argv.includes('--json')) appendFileSync('escrito.txt', 'x\\n'); process.exit(1);
   // Um exclusividade de mentira cujo JSON diz "so GATE_NOVO de g:novo" — so o EXIT discorda.
   case 'excl-2-e-json':
@@ -68,6 +77,17 @@ switch (modo) {
     const json = JSON.stringify({ ancoraQuebrada: [], vereditos: [{ severidade: 'REPROVA', gate: 'g:novo', codigo: 'GATE_NOVO_SEM_EXCLUSIVIDADE', motivo: 'fixture' }] });
     if (process.argv.includes('--json')) { writeFileSync(1, json + '\\n'); process.exit(modo === 'excl-2-e-json' ? 1 : 0); }
     process.exit(modo === 'excl-2-e-json' ? 2 : 1);
+  }
+  // Sonda LEGITIMA que tambem fala no stderr. Se o motor entregar UM fd para os dois canais, o
+  // ruido entra no stdout, o JSON.parse morre e a exclusao vira SONDA-ILEGIVEL.
+  case 'excl-sonda-ruidosa': {
+    const json = JSON.stringify({ ancoraQuebrada: [], vereditos: [{ severidade: 'REPROVA', gate: 'g:novo', codigo: 'GATE_NOVO_SEM_EXCLUSIVIDADE', motivo: 'fixture' }] });
+    if (process.argv.includes('--json')) {
+      writeFileSync(2, 'RUIDO-DE-STDERR antes do JSON\\n');
+      writeFileSync(1, json + '\\n');
+      writeFileSync(2, 'RUIDO-DE-STDERR depois do JSON\\n');
+    }
+    process.exit(1);
   }
 }
 process.exit(9);
@@ -86,6 +106,7 @@ const SCRIPTS: Record<string, string> = {
   'g:escritor-sob-defeito': 'bun scripts/g.ts escritor-sob-defeito',
   'g:novo': 'bun scripts/g.ts barato',
   'g:quebrado': 'bun scripts/g.ts quebrado',
+  'g:canal': 'bun scripts/g.ts canal',
   // O gate REAL, lendo a matriz do fixture: a sonda `--json` que o motor interpreta e a do binario.
   exclusividade: `bun ${JSON.stringify(GATE_REAL)}`,
 };
@@ -104,6 +125,7 @@ const PASSO: Record<string, string> = {
   'g:escritor-sob-defeito': 'run: bun run g:escritor-sob-defeito',
   'g:novo': 'run: bun run g:novo',
   'g:quebrado': 'run: bun run g:quebrado',
+  'g:canal': 'run: bun run g:canal',
   exclusividade: 'run: bun run exclusividade',
 };
 
@@ -313,6 +335,28 @@ describe('motor — o que aborta ANTES de gastar o baseline', () => {
   }, 60_000);
 });
 
+const DEFS_CANAL = `
+# @origem: fixture
+# @suspeito: g:pega
+canal | ${EDGE} | s/^original$/SABOTADO/
+`;
+
+describe('motor — CAPTURA: o gate roda com a saida em ARQUIVO, nunca em pipe', () => {
+  // O que este teste afirma — e o que ele NAO afirma. Ele prova o CANAL: o gate recebe arquivo
+  // regular, nao FIFO. Ele NAO prova nada sobre o `test` vermelho do baseline: a hipotese de que o
+  // pipe fabricava aquele vermelho foi falsificada (a mesma invocacao com saida em arquivo tambem
+  // sai 1 com `onTaskUpdate` quando a maquina satura). O canal vale pelo merito proprio — arquivo
+  // nao tem teto de maxBuffer nem contrapressao de leitor lento.
+  // docs/historico/exclusividade-media-outra-coisa.md
+  it('o gate ve fd 1 e fd 2 como arquivo regular — com pipe o baseline dele fica VERMELHO', () => {
+    const raiz = montarFixture(['g:barato', 'g:pega', 'g:canal'], DEFS_CANAL);
+    const r = medir(raiz, ['--defeitos', 'canal']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(0);
+    expect(r.saida).toMatch(/verde\s+g:canal/);
+    expect(r.saida, 'nenhuma das duas pontas da captura pode ser pipe').not.toContain('FIFO');
+  }, 120_000);
+});
+
 describe('[fora-da-rodada] motor — o `exclusividade` vermelho SO por GATE_NOVO desta rodada sai da rodada, e so ele', () => {
   const BASE = ['g:barato', 'g:pega', 'exclusividade'];
   const DEFS = `
@@ -495,6 +539,19 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
     expect(r.saida).toContain('EXCLUSAO-RECUSADA: RC-SONDA');
     expect(r.status).toBe('');
+  }, 120_000);
+
+  it('sonda que TAMBEM fala no stderr: o JSON do stdout chega limpo e a exclusao vale', () => {
+    const raiz = clonar((x) => {
+      comGates([...BASE, 'g:novo'])(x);
+      trocarExclusividade('bun scripts/g.ts excl-sonda-ruidosa')(x);
+    });
+    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(0);
+    expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
+    // UM fd para os dois canais misturaria o ruido no JSON e mataria a exclusao aqui.
+    expect(r.saida).not.toContain('SONDA-ILEGIVEL');
+    expect(r.saida).not.toContain('EXCLUSAO-RECUSADA');
   }, 120_000);
 
   it('sonda que ESCREVE na arvore aborta pelo write-guard — a sonda e execucao como qualquer outra', () => {
