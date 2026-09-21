@@ -455,6 +455,61 @@ ela é *ausência de dado*, não reprovação.
 — o motor não grava nada —, então nada de falso entrou; mas as três linhas só se resolvem depois do
 chip re-escopado.
 
+## O censo que cegava o gate (2026-09-20) — a igualdade de conjunto, de novo
+
+O `censo-sem-o-gate` era a única das seis linhas da re-medição acima sem um vermelho para mostrar. A
+causa não estava no motor: estava no gate medido, e o motor só a tornou visível.
+
+A linha 34 de `docs/agent/deploy.md` — o censo que o `gates:frescura` cruza com o inventário do
+`ci.yml` — tinha **61 nomes entre crases e 31 distintos**: a lista inteira colada duas vezes, exceto
+`gate:ambiente`, que ficou de fora da segunda cópia. Entrou no #2420 (2026-09-09,
+`git log -S'docs:citacoes' -- docs/agent/deploy.md`) e ninguém viu por onze dias, porque `lerCenso`
+devolvia `[...new Set(nomes)]` e os dois sentidos do gate são cruzamentos de **conjunto**. O
+cabeçalho anunciava `(31)` na frente de uma lista de 61, e esse número também não era conferido.
+
+O preço não é cosmético, e é a razão de a medição ter ficado muda: **com a lista em dobro, tirar um
+gate do censo deixa de reprovar** — a outra cópia sustenta o conjunto sozinha. É o sentido 2
+desligado, com o gate assinando que confere. A sabotagem do corpus (`s/ · \`docs:citacoes\`//`)
+remove a primeira cópia e a segunda basta; reproduzido fora do motor, a saída sabotada era idêntica
+à do controle.
+
+**O conserto lê a lista como LISTA, por dois eixos que não dependem um do outro:**
+
+| achado | o que pega | por que existe separado |
+|---|---|---|
+| `CENSO-REPETIDO` | nome com 2+ ocorrências no bloco | é a multiplicidade que o `Set` comia |
+| `CENSO-CONTAGEM` | `(N)` do cabeçalho ≠ nomes que a linha lista, CRUS | é o número que o leitor humano confere primeiro |
+| `CENSO-SEM-CONTAGEM` | linha que lista nomes sem declarar `(N)` | sem número não há conferência, e conferência que só existe quando a regex casa morre calada |
+
+Uma duplicação acende os dois primeiros; sabotar um deixa o outro de pé. Contra a main de 2026-09-20
+a guarda acusou **30 repetidos + 1 contagem errada** (rc=1), e com a linha deduplicada o gate volta a
+`FRESCURA-OK` com **38 nomes em 38 ocorrências**.
+
+**A falsificação ganhou o laço que a prosa já prometia.** O docblock de `test-gates-frescura.sh`
+afirmava *"a suíte roda nos DOIS locales"* desde que nasceu — e o despacho rodava **um**, o do
+ambiente. Era uma asserção sobre execução que não havia, a forma exata do #1483. Agora o laço está no
+código, com o UTF-8 achado por sonda POSITIVA (`locale charmap`, nunca `locale -a | grep -q` sob
+`pipefail` — §16 do [catálogo de shell](evidencia-positiva-shell.md)), e são 12 sabotagens × 2
+locales, cada uma com o controle remontado e exigido verde na MESMA invocação.
+
+Cada sabotagem mira **uma** marca, e por isso o `(N)` do cabeçalho anda junto com a lista em
+S3/S4/S10: sabotagem que acende duas lâmpadas não distingue qual delas está ligada.
+
+**O eixo que a suíte não dá: sabotar a GUARDA, não o dado.** As 12 sabotagens provam que o gate
+detecta; não provam que a suíte notaria se a guarda saísse. Com o alvo commitado antes (a restauração
+é `git checkout --`), cada camada nova foi removida sozinha e a suíte inteira exigida vermelha pela
+linha que a mira — controle verde na mesma invocação, alvo reconferido por conteúdo no fim:
+
+| camada sabotada | a suíte disse |
+|---|---|
+| `vezes.set(n, 1)` — a multiplicidade perdida, o `Set` de antes | `FALHA — S10 … esperava rc=1, veio rc=0` (2x, um por locale) |
+| `l.declarado !== l.contados` → `false` | `FALHA — S11 …` (2x) |
+| `l.declarado === null` → `false` | `FALHA — S12 …` (2x) |
+| as três parcelas fora do `total` (imprime a marca e sai 0) | `RESULTADO: 6 falha(s)` |
+
+A última é a mais instrutiva: o gate **imprime** os três achados e sai `0`. Marca no log não é
+veredito — a mesma distinção que este arquivo cobra do motor.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
