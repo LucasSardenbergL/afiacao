@@ -309,8 +309,88 @@ nova certifica nada nesta máquina. Conserto do motor (capturar em arquivo, não
 mensagem de falha que ensina o que está em jogo; um `expect(motivos).toEqual([])` não. O arquivo de
 teste fica com o que o step não dá: as formas sintéticas (calibração e falsificação) e o eixo por fora
 que prova o denominador. Duas portas para o mesmo código não somam detecção — só fazem a contabilidade
-chamar de redundância quem é dono único. As outras duas instâncias medidas (`bunpin:check` em
-`bun-pin-gate-check.test.ts`, `claude:size` no passo 13 de `test-claude-md-budget.sh`) seguem abertas.
+chamar de redundância quem é dono único. Das outras duas instâncias medidas, a do `claude:size`
+(passo 13 de `test-claude-md-budget.sh`) foi fechada dois dias depois — seção abaixo; a do
+`bunpin:check` (`bun-pin-gate-check.test.ts`) segue aberta.
+
+## A segunda porta do `claude:size` (2026-09-20) — e o limb que a duplicata cobria por ACIDENTE
+
+Fechada a segunda das três: saiu o passo 13 de `scripts/test-claude-md-budget.sh`, um
+`esperar 0 ... "$raiz/CLAUDE.md" "$raiz/scripts/claude-md-secoes-baseline.txt"` que rodava o **mesmo**
+`scripts/check-claude-md-budget.sh` do step `claude:size`, contra os **mesmos** dois arquivos reais, na
+mesma árvore e no mesmo CI. O carimbo está na matriz do #2509 (`linhas[2]`, sourceHead `99282961d`):
+28 gates executados com poda, vermelhos `claude:size` **e** `test:hooks` ⇒ `EXCLUSIVIDADE_ZERO` —
+"redundância medida" no dono único do orçamento do manual.
+
+**Tirar detector para fabricar exclusividade é o anti-padrão que este motor existe para barrar**, então
+a saída foi PROVADA com o mesmo contrato do #2519: mesma invocação do CI (`bun run claude:size`,
+`bun run test:hooks`), 2 locales (`LC_ALL=C` e `pt_BR.UTF-8`), CONTROLE verde na mesma invocação e
+antes do 1º defeito (o laço aborta sem ele), restauração por cópia provada (`cmp` + sha256), e o
+defeito `claude-md-linha-gigante` **lido do corpus**, não redigitado.
+
+| fase | `claude:size` | `test:hooks` (47 suítes) |
+|---|---|---|
+| árvore limpa | verde, com marcador positivo | verde, 42 asserções do budget |
+| defeito na `CLAUDE.md` real | **reprova** (rc=1): *"linha 69 tem 2109 chars > teto 2000"* | **verde** (rc=0, zero falhas) |
+
+18 asserções verdes ao todo (9 por locale), e o `sha256` da `CLAUDE.md` volta ao original nas
+duas voltas.
+
+A linha de baixo é a prova: a duplicata saiu e a detecção ficou.
+
+**E a asserção tem DENTE**, falsificada em forma PAREADA — com o mesmo defeito, na mesma árvore e na
+mesma invocação, rodam as duas versões da suíte (a antiga vem do commit pai, inteira):
+
+| com `claude-md-linha-gigante` aplicado | veredito |
+|---|---|
+| suíte NOVA (sem o passo 13) | verde, 42 asserções |
+| suíte ANTIGA (com o passo 13) | **vermelha nos 2 locales**, citando `CLAUDE.md real x baseline commitada` |
+
+Sem esse par, "ficou verde" poderia ser sempre-verde — e sempre-verde aprova tudo. O par também é mais
+barato que sabotar o laço inteiro, o que importou aqui: as três primeiras tentativas da forma original
+abortaram no CONTROLE, e o culpado era a MÁQUINA, não a mudança — `fork: Resource temporarily
+unavailable`, load average de 15 min em ~40 numa M2 de 8 núcleos com ~10 sessões vivas, suíte diferente
+caindo a cada tentativa (`test-pr-watch`, `test-pr-duplicata-guard`, `test-pr-collision-guard`, todas
+verdes isoladas). O laço é fail-closed e abortou antes de sabotar, que é o desenho certo: sabotar sobre
+controle vermelho teria produzido um vermelho que não prova nada.
+
+**A falsificação quase ficou vermelha pelo motivo ERRADO.** Na primeira montagem, a versão antiga rodava
+a partir do scratchpad — e ela resolve `raiz` por `dirname($0)/..`, então o passo 13 lia um `CLAUDE.md`
+inexistente e reprovava por entrada inválida (exit 2), sem nunca chegar ao defeito. O controle pegou
+(a antiga já reprovava em árvore LIMPA) e o conserto foi rodá-la de dentro de `scripts/`. É a mesma
+regra do teste negativo: **case a marca do ramo, não "reprovou"** — vermelho pelo motivo errado é verde
+disfarçado.
+
+**O que a duplicata cobria por ACIDENTE — a lição nova.** O passo 13 não existia para medir teto de
+LINHA; ele afirmava "o par commitado está verde". Só que era a **única** coisa na suíte capaz de deixar
+o limb `MAX_LINE` (2000 chars) vermelho alguma vez: as 12 formas sintéticas só mexiam em palavras por
+seção, e o defeito do corpus mira justamente a linha. Fechar a porta sem olhar teria levado junto, em
+silêncio, a única cobertura de um limb do gate — e a suíte seguiria verde dizendo o contrário.
+
+Por isso no lugar entra a FORMA, não o veredito: fixture própria com linha de 1999 chars (verde) e de
+2100 (vermelho citando a linha), com a baseline **re-gerada com a linha dentro** — o `--gerar-baseline`
+sai antes do teto de linha, então palavras e seções batem e sobra UM motivo possível. Sem esse cuidado
+o caso ficaria vermelho por seção estourada e fingiria ter medido o teto de linha. A variável `raiz`
+saiu junto: sem ela a suíte não tem como alcançar o repo, e a hermeticidade que o cabeçalho promete
+vira ESTRUTURAL em vez de promessa. A suíte foi de 38 para 42 asserções.
+
+**Regra que sai daqui: ao fechar uma segunda porta, pergunte o que ela pegava por ACIDENTE.** Auditoria
+de repo real passa por limbs que as formas sintéticas nunca visitam — o inventário é o diff entre o que
+o gate PODE reprovar e o que a fixture faz ele reprovar. Fechar sem esse inventário troca uma
+contabilidade errada por um buraco de cobertura, e o buraco não aparece: a suíte fica verde porque
+ninguém mais aperta aquele limb.
+
+**A re-medição continua bloqueada — pelo mesmo instrumento do #2519.** O `[SO ELE]` desta linha exige o
+motor com os 31 gates, e o Guard 1b aborta no baseline com `test` vermelho FABRICADO pela captura:
+`scripts/exclusividade-medir.ts` ainda roda os gates com `stdio: ['ignore', 'pipe', 'pipe']` (linhas 339
+e 419), que é a condição do `Error: [vitest-worker]: Timeout calling "onTaskUpdate"` discriminado acima.
+O conserto (capturar em ARQUIVO, não em pipe) segue em chip, sem PR nem branch. Fail-closed: o motor não
+grava nada, então a matriz não ganha medição falsa — ela apenas continua carimbando `EXCLUSIVIDADE_ZERO`
+numa linha cuja causa já saiu do repo. **A matriz está DEFASADA, não errada**, e o desempate é o chip.
+
+Das três segundas portas medidas, resta aberta uma: `bunpin:check` em
+`scripts/bun-pin-gate-check.test.ts`
+(*"os workflows REAIS do repo passam no gate"*, `auditBunPins(readWorkflows())`).
 
 ## A regra
 

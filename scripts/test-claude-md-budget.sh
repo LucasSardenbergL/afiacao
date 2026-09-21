@@ -15,7 +15,6 @@
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
-raiz="$(cd "$here/.." && pwd)"
 GATE="$here/check-claude-md-budget.sh"
 
 tmp="$(mktemp -d)"
@@ -60,6 +59,10 @@ monta() {
 }
 
 total_palavras() { awk '{ t += NF } END { print t + 0 }' "$1"; }
+
+# uma linha de <n> chars, 1 palavra só — a forma do "bullet de diário" que o teto de LINHA barra.
+# 1 palavra de propósito: assim o caso mira o limb MAX_LINE sem mexer no orçamento de palavras.
+gigante() { awk -v n="$1" 'BEGIN { s = ""; while (length(s) < n) s = s "x"; print s }'; }
 
 # esperar <rc> <trecho-ou-vazio> <descrição> [args do gate...]
 esperar() {
@@ -172,8 +175,40 @@ for LOC in C "$utf8"; do
   LC_ALL="$LOC" bash "$GATE" --gerar-baseline "$arq" "$base" > /dev/null
   esperar 0 "dentro do orçamento" "round-trip: --gerar-baseline devolve o verde" "$arq" "$base"
 
-  # 13. o par COMMITADO (CLAUDE.md + baseline) tem de estar verde — é o que o CI roda
-  esperar 0 "dentro do orçamento" "CLAUDE.md real x baseline commitada" "$raiz/CLAUDE.md" "$raiz/scripts/claude-md-secoes-baseline.txt"
+  # 13. LINHA GIGANTE — o limb MAX_LINE (2000 chars), calibrado dos DOIS lados numa fixture.
+  #     A baseline é re-gerada COM a linha dentro (o `--gerar-baseline` sai antes do teto de linha),
+  #     então palavras e seções batem e sobra UM motivo possível: o da linha. Sem isso o caso
+  #     poderia ficar vermelho por seção estourada e fingir que mediu o teto de linha.
+  monta 60 40
+  gigante 1999 >> "$arq"
+  LC_ALL="$LOC" bash "$GATE" --gerar-baseline "$arq" "$base" > /dev/null
+  esperar 0 "maior linha 1999 chars" "calibração: linha de 1999 chars (< teto) segue verde" "$arq" "$base"
+  monta 60 40
+  gigante 2100 >> "$arq"
+  LC_ALL="$LOC" bash "$GATE" --gerar-baseline "$arq" "$base" > /dev/null
+  esperar 1 "> teto 2000" "linha de 2100 chars reprova pelo teto de LINHA" "$arq" "$base"
+  esperar 1 "provável bullet de diário" "a mensagem ensina o conserto (mover pra docs/historico/)" "$arq" "$base"
+
+  # O VEREDITO sobre o par COMMITADO (CLAUDE.md + baseline reais) NÃO mora mais aqui — mora no step
+  # `CLAUDE.md size budget` do ci.yml, que é bloqueante e roda `bun run claude:size`, isto é, este
+  # MESMO $GATE contra os MESMOS dois arquivos. Até 2026-09-20 vivia aqui um passo 13
+  # `esperar 0 ... "$raiz/CLAUDE.md" "$raiz/scripts/claude-md-secoes-baseline.txt"`: mesmo código,
+  # mesma árvore, mesmo CI — SEGUNDA PORTA, não segundo detector. O preço não era o tempo, era a
+  # LEITURA: o motor de exclusividade mede o STEP, via o `test:hooks` co-pegando o defeito
+  # `claude-md-linha-gigante` e carimbava EXCLUSIVIDADE_ZERO ("redundância medida") no dono único do
+  # orçamento do manual (medido no #2509: vermelhos `claude:size` + `test:hooks`). Quem lesse o
+  # carimbo concluiria que dá para aposentar o gate. Mesma resolução do #2519 no `sonda:autentica`
+  # (e do #2378 no `docs:indice`, levado a `[SO ELE]` pelo #2391); a classe está em
+  # docs/historico/exclusividade-media-outra-coisa.md ("segundas portas").
+  #
+  # Medido ao tirar (mesma invocação do CI, 2 locales, controle verde e restauração por cópia
+  # provada): com `claude-md-linha-gigante` aplicado no CLAUDE.md real, o `test:hooks` INTEIRO fica
+  # verde e o `claude:size` reprova citando a linha — a duplicata saiu, a detecção ficou.
+  #
+  # O que fica aqui é o que o step não dá: as 13 formas sintéticas acima (calibração e falsificação,
+  # nos 2 locales) — inclusive a do teto de linha, que antes só existia por acidente através do repo
+  # real. Não devolva o veredito para cá — e note que a variável `raiz` saiu junto: sem ela a
+  # suíte não tem como alcançar o repo, a hermeticidade do cabeçalho vira ESTRUTURAL.
 done
 
 echo
