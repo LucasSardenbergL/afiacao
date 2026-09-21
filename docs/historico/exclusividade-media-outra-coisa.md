@@ -530,6 +530,58 @@ veredito — a mesma distinção que este arquivo cobra do motor.
   ele roda `test-gates-frescura.sh`, então as 12 sabotagens × 2 locales foram exercitadas na árvore
   real pelo gate do CI, não só à mão.
 
+### A re-medição (2026-09-21, sourceHead `5a866d509`) — o zero é a QUARTA segunda porta
+
+Baseline **31/31 verde** — o que as duas tentativas anteriores não conseguiram, e a diferença foi só
+a máquina esvaziar: `tsc` 26.387 ms (eram 929.631), `test` 102.431 ms e rc=0 (eram 744.165 e SIGTERM).
+Nada no repo mudou entre elas.
+
+| defeito | rodados | vermelhos | veredito |
+|---|---|---|---|
+| `censo-sem-o-gate` | 29 de 31 (poda) | `gates:frescura` 136 ms · `test:hooks` 112.600 ms | `EXCLUSIVIDADE_ZERO` |
+
+**O antes e o depois é o ponto:** a mesma sabotagem, no mesmo alvo, com o mesmo corpus, passou de
+**nenhum vermelho entre 31 gates** (`pegou 0`, sem veredito nenhum) para dois. O `gates:frescura` sai
+de `pegou 0 de 31` para `pegou 1 de 12` na matriz. O que mudou foi o gate deixar de comparar conjuntos.
+
+**Os 2 não rodados são os 2 mais caros, e isso é desenho:** o motor ordena do mais barato ao mais
+caro e para no 2º vermelho (`test:falsificacao` 1.002.966 ms e `sonda:cron-prova` 311.934 ms ficaram
+de fora). Cuidado ao ler a matriz: a linha tem **31** execuções, não 29 — as dos podados vêm
+preservadas da rodada anterior, com `ms` e `fingerprint` idênticos bit a bit. "31 execuções
+registradas" não é "31 rodados nesta rodada", e nenhum campo da execução distingue os dois.
+
+**O zero é a quarta segunda porta da família** — e, como as três que a main fechou hoje, é o MESMO
+código por outra porta, não um segundo detector. O modo normal de `scripts/test-gates-frescura.sh`
+termina com o passo *"repo de verdade passa"*, que roda `bun "$GATE"` contra a raiz real: a mesma
+invocação, a mesma árvore, o mesmo CI que o step `gates:frescura`. Foi ele que reprovou dentro do
+`test:hooks`.
+
+**A decisão aqui NÃO é óbvia como nas outras três, e por isso fica registrada em vez de executada.**
+Nas outras, o concorrente era um `expect(...).toEqual([])` num vitest — mensagem que não ensina nada
+a quem a vê vermelha. Aqui o concorrente é uma suíte bash que existe como **eixo POR FORA** declarado:
+o gate lê o `ci.yml` e mora no `ci.yml`, então herda o defeito da máquina que vigia. As opções:
+
+- *tirar só o passo "repo de verdade passa"* — a suíte guarda as 12 sabotagens sobre a raiz SINTÉTICA,
+  que é o que ela tem de único, e o step vira dono do repo real. É a mesma escolha das outras três, e
+  o que se perde é a rede para o dia em que o step sair do `ci.yml`;
+- *manter como está* — custo 0 e a matriz segue carimbando `EXCLUSIVIDADE_ZERO` no dono único de um
+  eixo que acabou de passar onze dias desligado. O zero medido vira argumento para cortar o gate
+  errado;
+- *manter e DISPENSAR a linha* — honesto se a redundância é desejada, mas a dispensa precisa dizer
+  qual das duas portas é a que se pretende manter.
+
+Tirar detector para fabricar exclusividade é o anti-padrão que este motor existe para barrar, e nesta
+instância o detector a tirar seria o de um gate cuja cegueira acabou de ser medida. Fica como chip,
+com a medição na mão — que é a diferença entre decidir e adivinhar.
+
+**O preço de mexer num gate: as outras 15 linhas ficam podres para ele.** `bun run exclusividade`
+passa a AVISAR `LINHA_PODRE: gates:frescura — a fonte mudou desde a medicao
+(7677bffbe8ca936b -> ad1c03879cda2543)`, porque só a linha re-medida carrega o fingerprint novo: 1 de
+12. É aviso, não reprovação (rc=0), e a matriz já convivia com três fingerprints diferentes deste
+mesmo gate antes deste PR. Junto com as três que os PRs de hoje deixaram (`bunpin:check`,
+`test:hooks`, `test:falsificacao`), são 4 linhas podres esperando re-medição — e re-medir as 16 com os
+31 gates é uma rodada de horas que depende da M2 estar vazia, como esta seção mostrou.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
