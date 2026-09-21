@@ -59,7 +59,12 @@ if [ "${1:-}" = "--falsificar" ]; then
       elif printf '%s' "$saida_suite" | grep -qF "FAIL [$marca]"; then
         printf '  ok    [%s] vermelho pela marca FAIL [%s] (locale %s)\n' "$id" "$marca" "$loc"
       else
-        printf '  FAIL [%s]  vermelho pelo motivo ERRADO (locale %s): faltou FAIL [%s]\n' "$id" "$loc" "$marca"; falhas=1
+        # dizer PELO QUE ficou vermelha: sem isto, uma falha de AMBIENTE (a M2 do founder
+        # estoura o kern.maxproc com ~30 worktrees e o `fork` falha) é indistinguível de uma
+        # asserção frouxa — e as duas pedem ações opostas.
+        printf '  FAIL [%s]  vermelho pelo motivo ERRADO (locale %s): faltou FAIL [%s]. Veio:\n' "$id" "$loc" "$marca"
+        printf '%s\n' "$saida_suite" | grep -m3 'FAIL' | sed 's/^/        /'
+        falhas=1
       fi
     done
   }
