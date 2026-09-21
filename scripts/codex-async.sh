@@ -239,7 +239,9 @@ tokens_do_rodape() {
 out="$(mktemp -t codex-async.XXXXXX)" || exit 70
 err="$(mktemp -t codex-async-err.XXXXXX)" || exit 70
 marcador="$(mktemp -t codex-async-marca.XXXXXX)" || exit 70
-trap 'rm -f "$err" "$marcador"' EXIT
+acervo="$(mktemp -t codex-async-acervo.XXXXXX)" || exit 70   # união dos filhos de TODAS as tentativas
+fanout_incerto=0
+trap 'rm -f "$err" "$marcador" "$acervo"' EXIT
 
 # --- sensor de FAN-OUT (multi-agente) -----------------------------------------
 # UMA invocação podia virar ATÉ 4 execuções cobradas: o codex-cli 0.153.4 entrega ao
@@ -256,16 +258,26 @@ trap 'rm -f "$err" "$marcador"' EXIT
 # --strict-config). Se um upgrade reabrir a porta, aqui aparece; olhar só o flag não vê.
 # SENSOR, não guard: sem leitura → "?" e a consulta SEGUE — mas nunca em silêncio.
 # Filtra por `cwd`: worktrees paralelas escrevem no MESMO ~/.codex/sessions.
-subagentes_desta_rodada() { # imprime o nº de threads de subagente, ou "?" se não mediu
-  local s="${CODEX_HOME:-$HOME/.codex}/sessions" f cab n=0
+# Imprime UM CAMINHO POR LINHA dos rollouts de subagente desta cwd, ou o token `?`.
+# Caminhos (não a contagem) porque as tentativas se somam por UNIÃO: o mesmo rollout ainda
+# sendo escrito reaparece na tentativa seguinte, e somar contagens o contaria duas vezes.
+# ⚠️ Toda falha de LEITURA vira `?`, nunca 0 — `find` que morre no meio, arquivo ilegível,
+# `head` que falha e cabeçalho vazio são AUSÊNCIA DE MEDIDA. Arredondá-los para zero era o
+# "ausente ≠ zero" dentro do próprio sensor que existe para não confiar no flag (achado da
+# 2ª opinião, 2026-09-20: os três ramos devolviam 0 com exit 0).
+subagentes_desta_rodada() {
+  local s="${CODEX_HOME:-$HOME/.codex}/sessions" f cab lista
   [ -d "$s" ] && [ -e "$marcador" ] || { printf '?'; return; }
+  lista="$(find "$s" -name 'rollout-*.jsonl' -type f -newer "$marcador" 2>/dev/null)" \
+    || { printf '?'; return; }
   while IFS= read -r f; do
-    [ -n "$f" ] && [ -r "$f" ] || continue
-    cab="$(head -1 "$f" 2>/dev/null)"
+    [ -n "$f" ] || continue
+    [ -r "$f" ] || { printf '?'; return; }
+    cab="$(head -1 "$f" 2>/dev/null)" || { printf '?'; return; }
+    [ -n "$cab" ] || { printf '?'; return; }   # arquivo nascendo: não sei o que tem dentro
     case "$cab" in *'"thread_source":"subagent"'*) ;; *) continue ;; esac
-    case "$cab" in *"\"cwd\":\"$PWD\""*) n=$((n+1)) ;; esac
-  done <<< "$(find "$s" -name 'rollout-*.jsonl' -type f -newer "$marcador" 2>/dev/null)"
-  printf '%s' "$n"
+    case "$cab" in *"\"cwd\":\"$PWD\""*) printf '%s\n' "$f" ;; esac
+  done <<< "$lista"
 }
 
 rc=1
@@ -300,12 +312,18 @@ for backoff in "${backoffs[@]}"; do
   kill "$watchdog" 2>/dev/null
   wait "$watchdog" 2>/dev/null
   # fan-out medido POR FORA do flag (ver comentário do sensor). Vale para a tentativa que
-  # falhou também — por isso fica aqui, e não só no cabeçalho do sucesso.
-  fanout="$(subagentes_desta_rodada)"
+  # falhou também — por isso fica aqui, e não só no cabeçalho do sucesso. E ACUMULA: a
+  # tentativa 1 pode abrir filhos e falhar, e os tokens dela já foram cobrados — zerar no
+  # retry apagaria do cabeçalho do PR exatamente o custo que motivou este sensor.
+  medida="$(subagentes_desta_rodada)"
+  if [ "$medida" = '?' ]; then fanout_incerto=1
+  else printf '%s' "$medida" | grep . >> "$acervo" || true; fi
+  if [ "$fanout_incerto" -eq 1 ]; then fanout='?'
+  else fanout="$(sort -u "$acervo" 2>/dev/null | awk 'NF{n++} END{print n+0}')"; fi
   case "$fanout" in
     0) ;;
     '?') echo "FAN_OUT_DESCONHECIDO: não consegui contar threads de subagente desta rodada (sigo sem o sensor)." >&2 ;;
-    *)  echo "FAN_OUT: o codex abriu $fanout thread(s) de SUBAGENTE nesta tentativa — cada uma é cobrada à parte" >&2
+    *)  echo "FAN_OUT: o codex abriu $fanout thread(s) de SUBAGENTE nesta consulta — cada uma é cobrada à parte" >&2
         echo "  e replica o contexto inteiro. O teto de 1 slot devia impedir isto: confira se o codex-cli ainda" >&2
         echo "  aceita 'features.multi_agent_v2.max_concurrent_threads_per_session' (\`codex features list\`)." >&2 ;;
   esac

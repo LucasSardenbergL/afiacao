@@ -78,12 +78,14 @@ assert s.count(a)==1
 io.open(p,"w",encoding="utf-8").write(s.replace(a,""))'
 
   # (2) sensor cego: conta 0 sempre (o fan-out volta a passar em silencio)
+  # sensor cego = devolve NENHUM caminho (não "0": a função imprime caminhos, e um "0"
+  # solto seria lido como um caminho e viraria contagem 1 — o oposto da sabotagem).
   sabotar sensor fanout-silencioso '
-import io,os,re
+import io,os
 p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
-a="subagentes_desta_rodada() { #"
+a="subagentes_desta_rodada() {"
 i=s.index(a); j=s.index("\n",i)+1
-io.open(p,"w",encoding="utf-8").write(s[:j]+"  printf 0; return\n"+s[j:])'
+io.open(p,"w",encoding="utf-8").write(s[:j]+"  return\n"+s[j:])'
 
   # (3) tirar o filtro por cwd: o alarme passa a acusar a worktree vizinha
   # shellcheck disable=SC2016  # o programa é python: `$PWD`/`$((n+1))` têm de chegar LITERAIS
@@ -91,9 +93,19 @@ io.open(p,"w",encoding="utf-8").write(s[:j]+"  printf 0; return\n"+s[j:])'
   sabotar cwd fanout-cwd-alheia '
 import io,os
 p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
-a="    case \"$cab\" in *\"\\\"cwd\\\":\\\"$PWD\\\"\"*) n=$((n+1)) ;; esac"
+a="    case \"$cab\" in *\"\\\"cwd\\\":\\\"$PWD\\\"\"*) printf '"'"'%s\\n'"'"' \"$f\" ;; esac"
 assert s.count(a)==1, s.count(a)
-io.open(p,"w",encoding="utf-8").write(s.replace(a,"    n=$((n+1))"))'
+io.open(p,"w",encoding="utf-8").write(s.replace(a,"    printf '"'"'%s\\n'"'"' \"$f\""))'
+
+  # (4) a consulta NÃO acontece: o wrapper aborta antes de chamar o codex. Os "controles"
+  # que só procuravam AUSÊNCIA de alarme passavam verdes aqui — 2ª opinião, 2026-09-20.
+  # Esta sabotagem é o que prova que eles pararam de passar.
+  sabotar sem_consulta controle-sem-consulta '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="# --- preflight (barato, ANTES de gastar contexto/quota) -----------------------\n"
+assert s.count(a)==1
+io.open(p,"w",encoding="utf-8").write(s.replace(a,a+"exit 77\n"))'
 
   echo
   if [ "$falhas" -eq 0 ]; then echo "PASS — toda sabotagem ficou vermelha pela marca certa"; else echo "FALHOU"; fi
@@ -207,7 +219,7 @@ run() {
   : > "$tmp/count"; : > "$tmp/args"
   env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
     CODEX_HOME="$tmp/codexhome_ok" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
-    CODEX_STUB_ARGS="$tmp/args" \
+    CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" \
     CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
 # igual ao run(), mas com CODEX_HOME escolhido (para variar o plano declarado no token)
@@ -216,7 +228,7 @@ run_home() {
   : > "$tmp/count"; : > "$tmp/args"
   env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
     CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
-    CODEX_STUB_ARGS="$tmp/args" \
+    CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" \
     CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
 invocacoes() { wc -l < "$tmp/count" | tr -d ' '; }
@@ -547,7 +559,7 @@ run_saldo() { # home teto modo args...
   : > "$tmp/count"; : > "$tmp/args"
   env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
     CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
-    CODEX_STUB_ARGS="$tmp/args" CODEX_ASYNC_TETO_SALDO="$teto" CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
+    CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" CODEX_ASYNC_TETO_SALDO="$teto" CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
 limites() { printf '{"rate_limits":{"primary":{"used_percent":%s,"window_minutes":10080,"resets_at":%s}}}' "$1" "$2"; }
 futuro=$(( $(date +%s) + 86400 ))
@@ -603,17 +615,36 @@ echo "── fan-out multi-agente: 1 invocação = 1 execução cobrada ──"
 
 # (1) o teto viaja NA invocação — não basta existir no comentário
 run ok "pergunta qualquer" >/dev/null 2>&1
-if grep -q 'features\.multi_agent_v2\.max_concurrent_threads_per_session=1' "$tmp/args"
+# âncora nas bordas: a substring crua deixaria `=10` passar por `=1`, e não provaria
+# que a chave veio no par `-c <chave>` (achado da 2ª opinião).
+if grep -qE -- '(^| )-c features\.multi_agent_v2\.max_concurrent_threads_per_session=1( |$)' "$tmp/args"
 then echo "  ok    o teto de 1 slot viaja na invocação do codex"
 else echo "  FAIL [teto-ausente]  a invocação NÃO carrega o teto multi-agente — o fan-out volta"; fail=1; fi
 
-# (2) CONTROLE: sem subagente no disco, nada de alarme (senão o sensor aprova tudo)
-saida="$(run ok "pergunta qualquer" 2>&1)"
+# Um "não apareceu alarme" só vale se a consulta ACONTECEU. Sem esta prova positiva, um
+# preflight que aborta com exit 77 faz TODOS os controles imprimirem ok (verificado pela 2ª
+# opinião em 2026-09-20: os três passavam com fail=0 quando a consulta nem rodava).
+consulta_aconteceu() { # rc saida rotulo → 0 se houve parecer de verdade
+  local rc="$1" saida="$2" rot="$3" ok=0
+  [ "$rc" -eq 0 ] || { echo "  FAIL [controle-sem-consulta]  $rot: exit $rc — a consulta não rodou"; ok=1; }
+  printf '%s' "$saida" | grep -q '=== PARECER CODEX' \
+    || { echo "  FAIL [controle-sem-consulta]  $rot: sem cabeçalho PARECER CODEX"; ok=1; }
+  [ "$(invocacoes)" -ge 1 ] \
+    || { echo "  FAIL [controle-sem-consulta]  $rot: 0 invocações do stub"; ok=1; }
+  return "$ok"
+}
+
+# (2) CONTROLE: com a consulta comprovadamente feita e nenhum subagente no disco, nada de
+# alarme — senão o sensor é sempre-vermelho e aprova qualquer sabotagem.
+saida="$(run ok "pergunta qualquer" 2>&1)"; rc=$?
+if consulta_aconteceu "$rc" "$saida" "controle sem subagente"
+then echo "  ok    a consulta do controle rodou de verdade (exit 0 · parecer · stub chamado)"
+else fail=1; fi
 if printf '%s' "$saida" | grep -q 'FAN_OUT'
 then echo "  FAIL [fanout-sempre-vermelho]  alarme de fan-out disparou SEM subagente nenhum"; fail=1
-else echo "  ok    sem subagente → sem alarme (controle verde)"; fi
+else echo "  ok    …e sem subagente não houve alarme"; fi
 if printf '%s' "$saida" | grep -q 'subagente(s)'
-then echo "  FAIL  cabeçalho anunciou subagentes que não existiram"; fail=1
+then echo "  FAIL [fanout-fora-do-cabecalho]  cabeçalho anunciou subagentes que não existiram"; fail=1
 else echo "  ok    …e o cabeçalho não inventa subagente"; fi
 
 # (3) o defeito reproduzido: nasceu um rollout de subagente NESTA cwd durante a chamada
@@ -622,25 +653,32 @@ caso_exit "fan-out não derruba a consulta (o parecer ainda vale)" 0 "$rc"
 if printf '%s' "$saida" | grep -q 'FAN_OUT: o codex abriu 1 thread'
 then echo "  ok    o sensor VIU a thread de subagente e disse o número"
 else echo "  FAIL [fanout-silencioso]  o fan-out passou EM SILÊNCIO — é assim que 22% da cota some sem dono"; fail=1; fi
+# ⚠️ o que isto prova é a CONTAGEM de filhos, não os tokens deles: o wrapper não lê métrica
+# nenhuma desses rollouts. Dizer "o custo real" seria conclusão maior que a asserção.
 if printf '%s' "$saida" | grep -q '1 subagente(s)'
-then echo "  ok    …e o custo real chegou ao cabeçalho que vai pro PR"
+then echo "  ok    …e a CONTAGEM chegou ao cabeçalho que vai pro PR"
 else echo "  FAIL [fanout-fora-do-cabecalho]  cabeçalho omitiu o fan-out — o PR registraria um custo falso"; fail=1; fi
 
 # (4) o terceiro estado: sem `sessions/` não dá para medir — e isso se DIZ, não se
 # arredonda para zero (ausência ≠ zero; um CODEX_HOME apontado para o lugar errado
 # devolveria "nenhum subagente" para sempre).
 mkdir -p "$tmp/codexhome_semsessions"; : > "$tmp/codexhome_semsessions/auth.json"
-saida="$(run_home codexhome_semsessions ok "pergunta qualquer" 2>&1)"
+saida="$(run_home codexhome_semsessions ok "pergunta qualquer" 2>&1)"; rc=$?
+if consulta_aconteceu "$rc" "$saida" "sem sessions/"; then :; else fail=1; fi
 if printf '%s' "$saida" | grep -q 'FAN_OUT_DESCONHECIDO'
 then echo "  ok    sem sessions/ → diz que não mediu (não finge zero)"
 else echo "  FAIL [fanout-fingiu-zero]  degradou calado — ausência de medida virou 'sem fan-out'"; fail=1; fi
 if printf '%s' "$saida" | grep -q '? subagente(s)'
 then echo "  ok    …e o cabeçalho leva o '?' pro PR"
-else echo "  FAIL  cabeçalho escondeu que o sensor não mediu"; fail=1; fi
+else echo "  FAIL [fanout-fingiu-zero]  cabeçalho escondeu que o sensor não mediu"; fail=1; fi
 
 # (5) CONTROLE do filtro por cwd: ~/.codex/sessions é compartilhado entre worktrees.
 # Sem este caso, contar QUALQUER subagente passaria — e acusaria o vizinho.
-saida="$(run ok_spawna_alheio "pergunta qualquer" 2>&1)"
+saida="$(run ok_spawna_alheio "pergunta qualquer" 2>&1)"; rc=$?
+if consulta_aconteceu "$rc" "$saida" "cwd alheio"; then :; else fail=1; fi
+alheio="$tmp/codexhome_ok/sessions/2026/09/20/rollout-2026-09-20T00-00-00-alheio.jsonl"
+if [ -s "$alheio" ]; then echo "  ok    o fixture do vizinho NASCEU (o filtro foi mesmo exercido)"
+else echo "  FAIL [controle-sem-consulta]  cwd alheio: o fixture não existe — 'sem alarme' não prova filtro"; fail=1; fi
 if printf '%s' "$saida" | grep -q 'FAN_OUT'
 then echo "  FAIL [fanout-cwd-alheia]  contou subagente de OUTRA worktree — alarme culpa o vizinho"; fail=1
 else echo "  ok    subagente de outra cwd não conta (sessions é compartilhado)"; fi

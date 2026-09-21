@@ -128,12 +128,35 @@ Quem recusa é o próprio CLI/servidor, não o modelo se comportando — é gate
    veria; o rastro em disco vê. Três estados, todos com caso na suíte: `0` (silêncio), `N>0`
    (alarme) e `?` (sem `sessions/` → **diz que não mediu**, não finge zero).
 
+Quatro coisas viraram `?` depois da 2ª opinião (ver abaixo): `find` que morre no meio, arquivo
+ilegível, `head` que falha e cabeçalho vazio. As quatro devolviam **`0` com exit 0** — *"ausente ≠
+zero" dentro do próprio sensor que existe para não confiar no flag*. E a contagem **acumula por
+UNIÃO de caminhos** entre tentativas: a tentativa 1 pode abrir filhos e falhar, e os tokens dela já
+foram cobrados; somar contagens contaria duas vezes o rollout que continua recebendo escrita.
+
 O filtro por `cwd` não é decoração: `~/.codex/sessions` é **compartilhado** entre as ~30 worktrees
 paralelas — sem ele o alarme acusaria o vizinho.
 
 `bash scripts/test-codex-async.sh --falsificar` sabota as três camadas **uma por vez**, nos dois
 locales, exigindo vermelho pela **marca ASCII** certa (`FAIL [teto-ausente]`,
 `FAIL [fanout-silencioso]`, `FAIL [fanout-cwd-alheia]`) e abortando se o CONTROLE não estiver verde.
+
+## A 2ª opinião pegou o que a suíte verde escondia
+
+A consulta rodou **pelo wrapper já corrigido** (e por isso vale como teste ponta-a-ponta: 1781 → 1782
+rollouts, zero subagentes, num adversarial de 50k tokens — o formato exato que antes abria 3 filhos).
+O veredito foi **bloquear**, e dois achados são a mesma classe que este repo já conhece:
+
+- **Os CONTROLES passavam sem a consulta acontecer.** Eles só verificavam AUSÊNCIA de texto
+  (`grep -q FAN_OUT` → nada). Trocando o `run` por um stub que devolve 77 no preflight, os três
+  imprimiam `ok` com `fail=0`. **Ausência de sinal não é aprovação** — inclusive dentro do caso que
+  existe para ser o controle verde. Agora exigem exit 0 + cabeçalho `PARECER CODEX` + ≥1 invocação
+  do stub, e a 4ª sabotagem do `--falsificar` é justamente "a consulta não acontece".
+- **Os "2 locales" não chegavam ao wrapper.** O arnês roda `env -i`, que apaga o `LC_ALL` que o
+  `--falsificar` acabou de definir: o arnês trocava de locale e o wrapper rodava **sempre em `C`**.
+  É o #1483 outra vez, um degrau mais fundo — desta vez não era a asserção que era locale-dependente,
+  era a própria variação de locale que não atravessava a fronteira do processo. Quem afirma "rodei
+  nos dois" tem de provar que o **alvo** viu os dois, não o laço.
 
 ## O que isto NÃO resolve
 
