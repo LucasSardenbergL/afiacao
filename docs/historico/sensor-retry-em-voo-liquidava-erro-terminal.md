@@ -51,6 +51,22 @@ iniciada há 2h30. Só a cláusula da órfã pode dar `broken` ali.
 só a sabotagem daquele eixo prova. Quem falsifica um eixo por vez descobre qual assert é redundante
 ou inalcançado; quem não falsifica carrega asserts decorativos sem saber.
 
+## O terceiro furo veio do PRÓPRIO apply, minutos depois
+
+Aplicado o conserto, li o que o check dizia em produção: *"estagios no ar, com falha por pedido
+registrada em 1 estagio(s)"* — mas **nenhuma** das 7 chaves vigiadas tinha falha. O contador pegava
+`oben/manual/orders`, um `complete` com `error_message` de **94 dias atrás**, numa chave
+**DISPENSADA** do catálogo.
+
+O status seguia `ok`, então não havia alarme falso — o dano era na **message**, que é o que o
+founder lê. Uma chave dispensada não pode emprestar degradação ao conjunto, pela mesma razão que não
+empresta `broken`: é o ruído de fóssil que o catálogo existe para barrar, entrando pela porta que eu
+não tinha fechado.
+
+Corrigido na `20260920233000` (`cat.sla_h IS NOT NULL AND NOT cat.nao_catalogada`), com assert e
+sabotagem próprios. A lição: **ler o que o sensor DIZ em produção, e não só se ele responde**, é um
+passo de validação — não uma formalidade depois do `exit 0`.
+
 ## Dívida registrada (do mesmo parecer, não fechada aqui)
 
 Quatro achados válidos que mudam o desenho mais fundo do que um PR de conserto comporta. Ficam

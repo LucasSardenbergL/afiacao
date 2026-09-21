@@ -29,7 +29,7 @@ export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithr
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="erro_nao_e_broken desconhecido_vira_ok nao_catalogada_vira_ok orfa_nunca_dispara
-              stale_nunca_dispara nunca_executou_vira_ok retry_liquida_erro message_com_idade
+              stale_nunca_dispara nunca_executou_vira_ok retry_liquida_erro degradado_conta_dispensada message_com_idade
               message_constante fora_do_v_sources"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
@@ -100,8 +100,9 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], 
 # pontas (watchdog + heartbeat); a 2ª recria só o compute para o conserto do E.1. Aplicar só a 2ª
 # num PG limpo faz a postcondição dela falhar — corretamente, porque as outras pernas não existem.
 MIG_BASE="$REPO_ROOT/supabase/migrations/20260918200000_data_health_sync_reprocess_saude.sql"
-MIG="$REPO_ROOT/supabase/migrations/20260920210000_sync_reprocess_retry_nao_liquida_erro.sql"
-for m in "$MIG_BASE" "$MIG"; do [ -f "$m" ] || { echo "❌ migration ausente: $m"; exit 1; }; done
+MIG_RETRY="$REPO_ROOT/supabase/migrations/20260920210000_sync_reprocess_retry_nao_liquida_erro.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql"
+for m in "$MIG_BASE" "$MIG_RETRY" "$MIG"; do [ -f "$m" ] || { echo "❌ migration ausente: $m"; exit 1; }; done
 
 echo "═══ setup PG17 :$PORT ═══"
 
@@ -130,7 +131,7 @@ REVOKE ALL ON FUNCTION public._data_health_compute() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public._data_health_compute() TO service_role;
 SQL
 
-aplicar_real() { P -q -f "$MIG_BASE" >/dev/null; P -q -f "$MIG" >/dev/null; }
+aplicar_real() { P -q -f "$MIG_BASE" >/dev/null; P -q -f "$MIG_RETRY" >/dev/null; P -q -f "$MIG" >/dev/null; }
 aplicar_real
 echo "═══ migration real aplicada (postcondição passou) ═══"
 
@@ -184,6 +185,11 @@ case "${SABOTAGEM:-}" in
   nunca_executou_vira_ok)
       sabotar _data_health_compute "WHEN s.ultimo_sucesso_em IS NULL THEN 'broken'" \
                                    "WHEN s.ultimo_sucesso_em IS NULL THEN 'ok'" ;;
+  degradado_conta_dispensada)
+      # devolver a contagem a TODAS as chaves faz o fóssil de `manual` voltar a inflar a message
+      sabotar _data_health_compute "(cat.sla_h IS NOT NULL AND NOT cat.nao_catalogada
+                AND u.status = 'complete' AND u.error_message IS NOT NULL) AS degradado," \
+                                   "(u.status = 'complete' AND u.error_message IS NOT NULL) AS degradado," ;;
   retry_liquida_erro)
       # o furo E.1 em si: devolver `u` a leitura de QUALQUER linha faz um `running` posterior
       # apagar o erro terminal. Tem de ficar vermelha no assert do E.1.
@@ -304,6 +310,17 @@ P -q -c "UPDATE public.sync_reprocess_log SET error_message='2 pedidos falharam 
 eq "complete COM error_message ⇒ continua ok (o estágio andou)" "$(st)" "ok"
 eq "…mas a degradação aparece na message" \
    "$(Pq -c "SELECT (message LIKE '%falha por pedido%')::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
+
+# O contador de degradação tem de contar só as chaves VIGIADAS. Medido em prod 2026-09-20:
+# `oben/manual/orders` tem um `complete` COM error_message de 94 dias atrás — chave DISPENSADA — e
+# ele inflava a message ("falha por pedido registrada em 1 estagio(s)") sobre um fóssil que ninguém
+# vigia. Status seguia `ok`, então não havia alarme falso; o dano era na message, que é o que o
+# founder lê — e é exatamente o ruído que o catálogo existe para não deixar entrar.
+semear_saudavel
+P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, error_message, created_at)
+         VALUES ('oben','manual','orders','complete','1 pedido com SKU repetido', now() - interval '94 days');"
+eq "fóssil DISPENSADO com error_message não conta como degradação" \
+   "$(Pq -c "SELECT (message LIKE '%falha por pedido%')::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "false"
 
 echo "── o catálogo não deixa fóssil nem escritor alheio poluir ──"
 semear_saudavel
