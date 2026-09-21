@@ -510,6 +510,26 @@ linha que a mira — controle verde na mesma invocação, alvo reconferido por c
 A última é a mais instrutiva: o gate **imprime** os três achados e sai `0`. Marca no log não é
 veredito — a mesma distinção que este arquivo cobra do motor.
 
+### Três tropeços do instrumento, todos fail-closed
+
+- **O motor atribuiu a MINHA escrita ao gate que rodava.** A 1ª tentativa abortou com
+  `GATE-ESCREVEU: bun run evals:deploy-verify alterou a arvore versionada` — e o gate não escreveu
+  nada: fui eu, editando este arquivo enquanto o baseline corria. O motor fez o certo (abortou, não
+  gravou) e **restaurou** o conteúdo por snapshot, desfazendo a edição. A guarda mede a árvore, não
+  a autoria; quem edita durante uma medição perde o trabalho e ganha uma acusação no gate errado.
+  A ordem certa é commitar antes e não tocar em nada.
+- **`lint:shell` verde me deu a sensação de ter conferido o lint.** São gates diferentes, e o
+  baseline do motor foi quem pegou: 32 `no-useless-escape` no teste novo, crase escapada dentro de
+  string de aspas simples (necessária só no template literal do helper). Vermelho REAL, meu, e o
+  único dos três que não era carga: terminou em 12s. O motor como detector de dívida do próprio
+  autor é um uso que não estava no desenho.
+- **Os outros dois vermelhos eram a saturação**, a classe que a seção do `bunpin:check` acima acabou
+  de falsificar como "captura": `test` morto por SIGTERM em 744.165 ms (112 s na máquina calma) e
+  `test:falsificacao` em 3.144.139 ms contra 907.829 ms da baseline commitada — 3,5×. `tsc` levou
+  929.631 ms contra 30.598 ms, 30×. `test:hooks` passou VERDE em 1.933.352 ms, e é o que interessa:
+  ele roda `test-gates-frescura.sh`, então as 12 sabotagens × 2 locales foram exercitadas na árvore
+  real pelo gate do CI, não só à mão.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
