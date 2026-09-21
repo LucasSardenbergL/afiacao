@@ -297,6 +297,8 @@ for backoff in "${backoffs[@]}"; do
   watchdog=$!
   wait "$pid"; rc=$?
   segundos=$(( $(date +%s) - t_ini ))
+  kill "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
   # fan-out medido POR FORA do flag (ver comentário do sensor). Vale para a tentativa que
   # falhou também — por isso fica aqui, e não só no cabeçalho do sucesso.
   fanout="$(subagentes_desta_rodada)"
@@ -307,8 +309,6 @@ for backoff in "${backoffs[@]}"; do
         echo "  e replica o contexto inteiro. O teto de 1 slot devia impedir isto: confira se o codex-cli ainda" >&2
         echo "  aceita 'features.multi_agent_v2.max_concurrent_threads_per_session' (\`codex features list\`)." >&2 ;;
   esac
-  kill "$watchdog" 2>/dev/null
-  wait "$watchdog" 2>/dev/null
 
   if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
     tokens="$(tokens_do_rodape "$err")"

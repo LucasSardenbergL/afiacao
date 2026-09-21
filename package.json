@@ -79,7 +79,7 @@
     "evals:deploy-verify": "bash .claude/skills/lovable-deploy-verify/evals/run.sh",
     "evals:deploy-verify:falsificacao": "bash .claude/skills/lovable-deploy-verify/evals/run.sh --falsify",
     "heavy:install": "bash scripts/heavy-install.sh",
-    "test:falsificacao": "for t in orfaos-custosos onde-parei gate-senha-bootstrap read-contexto-nudge fecho-edges-pendentes codex-prompt-paginacao psql-ro-error-stop falsificar-implementado guard-noop-sabotagem eval-via-morta eval-diagnostico-cegueira gates-frescura ocupacao-por-arquivo ocupacao-por-comando setup-contrato medir-footprint pr-watch; do bash scripts/test-$t.sh --falsificar || exit 1; done && bun scripts/sonda-cron-prova.ts --falsificar"
+    "test:falsificacao": "for t in codex-async orfaos-custosos onde-parei gate-senha-bootstrap read-contexto-nudge fecho-edges-pendentes codex-prompt-paginacao psql-ro-error-stop falsificar-implementado guard-noop-sabotagem eval-via-morta eval-diagnostico-cegueira gates-frescura ocupacao-por-arquivo ocupacao-por-comando setup-contrato medir-footprint pr-watch; do bash scripts/test-$t.sh --falsificar || exit 1; done && bun scripts/sonda-cron-prova.ts --falsificar"
   },
   "dependencies": {
     "@elevenlabs/react": "^0.14.0",

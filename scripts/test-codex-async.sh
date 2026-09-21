@@ -11,7 +11,89 @@
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
-ASYNC="$here/codex-async.sh"
+# CODEX_ASYNC_ALVO: a CÓPIA (de controle ou sabotada) que o `--falsificar` serve — nunca o versionado.
+ASYNC="${CODEX_ASYNC_ALVO:-$here/codex-async.sh}"
+
+# ── modo falsificação ───────────────────────────────────────────────────────
+# Sabota o WRAPPER numa cópia e EXIGE vermelho PELO MOTIVO CERTO: cada sabotagem declara a
+# marca ASCII, caixa fixa, que a suíte tem de imprimir — "ficou vermelha" não basta (um erro
+# de sintaxe também fica). Três camadas, UMA POR VEZ: a que ficar verde é redundante ou
+# inalcançada. Julgada nos DOIS locales (#1483) e só depois de um CONTROLE verde na MESMA
+# invocação do laço (docs/historico/falsificacao-sem-linha-de-base.md).
+if [ "${1:-}" = "--falsificar" ]; then
+  printf '== falsificacao (sabota o WRAPPER; exige vermelho pela marca certa, 2 locales) ==\n'
+  fals="$(mktemp -d)"; trap 'rm -rf "$fals"' EXIT
+  falhas=0
+  utf8=""
+  for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
+    if [ "$(LC_ALL="$cand" locale charmap 2>/dev/null)" = "UTF-8" ]; then utf8="$cand"; break; fi
+  done
+  if [ -z "$utf8" ]; then
+    echo "nenhum locale UTF-8 (pt_BR/en_US/C) neste ambiente — metade da falsificacao nao rodaria."
+    exit 1
+  fi
+  original="$fals/original.sh"; cp "$here/codex-async.sh" "$original"
+
+  suite() { # alvo locale → $saida_suite/$rc_suite (MESMA invocação do laço; só o alvo muda)
+    saida_suite="$(LC_ALL="$2" CODEX_ASYNC_ALVO="$1" bash "$0" 2>&1)"; rc_suite=$?
+  }
+
+  # CONTROLE primeiro: sem linha de base verde, um arnês sempre-vermelho aprova TODA sabotagem.
+  for loc in C "$utf8"; do
+    suite "$original" "$loc"
+    if [ "$rc_suite" -eq 0 ]; then printf '  ok    controle verde (locale %s)\n' "$loc"
+    else printf '  FAIL [controle-vermelho]  a suite ja falha SEM sabotagem (locale %s, exit %s)\n' "$loc" "$rc_suite"
+         printf '%s\n' "$saida_suite" | grep -m3 'FAIL' ; falhas=1; fi
+  done
+  [ "$falhas" -eq 0 ] || { echo "FALSIFICACAO ABORTADA: sem controle verde nada abaixo tem valor."; exit 1; }
+
+  sabotar() { # id  marca-esperada  script-python-de-sabotagem
+    local id="$1" marca="$2" prog="$3" alvo="$fals/$1.sh"
+    cp "$original" "$alvo"
+    ALVO="$alvo" python3 -c "$prog" || { printf '  FAIL [%s]  a sabotagem nao pegou no arquivo\n' "$id"; falhas=1; return; }
+    bash -n "$alvo" 2>/dev/null || { printf '  FAIL [%s]  sabotagem quebrou a SINTAXE (vermelho por crash nao prova nada)\n' "$id"; falhas=1; return; }
+    for loc in C "$utf8"; do
+      suite "$alvo" "$loc"
+      if [ "$rc_suite" -eq 0 ]; then
+        printf '  FAIL [%s]  sabotagem passou VERDE (locale %s) — a camada nao esta coberta\n' "$id" "$loc"; falhas=1
+      elif printf '%s' "$saida_suite" | grep -qF "FAIL [$marca]"; then
+        printf '  ok    [%s] vermelho pela marca FAIL [%s] (locale %s)\n' "$id" "$marca" "$loc"
+      else
+        printf '  FAIL [%s]  vermelho pelo motivo ERRADO (locale %s): faltou FAIL [%s]\n' "$id" "$loc" "$marca"; falhas=1
+      fi
+    done
+  }
+
+  # (1) tirar o teto da invocação = o defeito original de volta
+  sabotar teto teto-ausente '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="    -c features.multi_agent_v2.max_concurrent_threads_per_session=1 \\\n"
+assert s.count(a)==1
+io.open(p,"w",encoding="utf-8").write(s.replace(a,""))'
+
+  # (2) sensor cego: conta 0 sempre (o fan-out volta a passar em silencio)
+  sabotar sensor fanout-silencioso '
+import io,os,re
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="subagentes_desta_rodada() { #"
+i=s.index(a); j=s.index("\n",i)+1
+io.open(p,"w",encoding="utf-8").write(s[:j]+"  printf 0; return\n"+s[j:])'
+
+  # (3) tirar o filtro por cwd: o alarme passa a acusar a worktree vizinha
+  # shellcheck disable=SC2016  # o programa é python: `$PWD`/`$((n+1))` têm de chegar LITERAIS
+  # (são o texto que o sed-equivalente procura no wrapper); expandir aqui apagaria o alvo.
+  sabotar cwd fanout-cwd-alheia '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="    case \"$cab\" in *\"\\\"cwd\\\":\\\"$PWD\\\"\"*) n=$((n+1)) ;; esac"
+assert s.count(a)==1, s.count(a)
+io.open(p,"w",encoding="utf-8").write(s.replace(a,"    n=$((n+1))"))'
+
+  echo
+  if [ "$falhas" -eq 0 ]; then echo "PASS — toda sabotagem ficou vermelha pela marca certa"; else echo "FALHOU"; fi
+  exit "$falhas"
+fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -518,12 +600,12 @@ echo "── fan-out multi-agente: 1 invocação = 1 execução cobrada ──"
 run ok "pergunta qualquer" >/dev/null 2>&1
 if grep -q 'features\.multi_agent_v2\.max_concurrent_threads_per_session=1' "$tmp/args"
 then echo "  ok    o teto de 1 slot viaja na invocação do codex"
-else echo "  FAIL  a invocação NÃO carrega o teto multi-agente — o fan-out volta"; fail=1; fi
+else echo "  FAIL [teto-ausente]  a invocação NÃO carrega o teto multi-agente — o fan-out volta"; fail=1; fi
 
 # (2) CONTROLE: sem subagente no disco, nada de alarme (senão o sensor aprova tudo)
 saida="$(run ok "pergunta qualquer" 2>&1)"
 if printf '%s' "$saida" | grep -q 'FAN_OUT'
-then echo "  FAIL  alarme de fan-out disparou SEM subagente nenhum (sempre-vermelho)"; fail=1
+then echo "  FAIL [fanout-sempre-vermelho]  alarme de fan-out disparou SEM subagente nenhum"; fail=1
 else echo "  ok    sem subagente → sem alarme (controle verde)"; fi
 if printf '%s' "$saida" | grep -q 'subagente(s)'
 then echo "  FAIL  cabeçalho anunciou subagentes que não existiram"; fail=1
@@ -534,10 +616,10 @@ saida="$(run ok_spawna "pergunta qualquer" 2>&1)"; rc=$?
 caso_exit "fan-out não derruba a consulta (o parecer ainda vale)" 0 "$rc"
 if printf '%s' "$saida" | grep -q 'FAN_OUT: o codex abriu 1 thread'
 then echo "  ok    o sensor VIU a thread de subagente e disse o número"
-else echo "  FAIL  o fan-out passou EM SILÊNCIO — é assim que 22% da cota some sem dono"; fail=1; fi
+else echo "  FAIL [fanout-silencioso]  o fan-out passou EM SILÊNCIO — é assim que 22% da cota some sem dono"; fail=1; fi
 if printf '%s' "$saida" | grep -q '1 subagente(s)'
 then echo "  ok    …e o custo real chegou ao cabeçalho que vai pro PR"
-else echo "  FAIL  cabeçalho omitiu o fan-out — o PR registraria um custo falso"; fail=1; fi
+else echo "  FAIL [fanout-fora-do-cabecalho]  cabeçalho omitiu o fan-out — o PR registraria um custo falso"; fail=1; fi
 
 # (4) o terceiro estado: sem `sessions/` não dá para medir — e isso se DIZ, não se
 # arredonda para zero (ausência ≠ zero; um CODEX_HOME apontado para o lugar errado
@@ -546,7 +628,7 @@ mkdir -p "$tmp/codexhome_semsessions"; : > "$tmp/codexhome_semsessions/auth.json
 saida="$(run_home codexhome_semsessions ok "pergunta qualquer" 2>&1)"
 if printf '%s' "$saida" | grep -q 'FAN_OUT_DESCONHECIDO'
 then echo "  ok    sem sessions/ → diz que não mediu (não finge zero)"
-else echo "  FAIL  degradou calado — ausência de medida virou 'sem fan-out'"; fail=1; fi
+else echo "  FAIL [fanout-fingiu-zero]  degradou calado — ausência de medida virou 'sem fan-out'"; fail=1; fi
 if printf '%s' "$saida" | grep -q '? subagente(s)'
 then echo "  ok    …e o cabeçalho leva o '?' pro PR"
 else echo "  FAIL  cabeçalho escondeu que o sensor não mediu"; fail=1; fi
@@ -555,7 +637,7 @@ else echo "  FAIL  cabeçalho escondeu que o sensor não mediu"; fail=1; fi
 # Sem este caso, contar QUALQUER subagente passaria — e acusaria o vizinho.
 saida="$(run ok_spawna_alheio "pergunta qualquer" 2>&1)"
 if printf '%s' "$saida" | grep -q 'FAN_OUT'
-then echo "  FAIL  contou subagente de OUTRA worktree — alarme culpa o vizinho"; fail=1
+then echo "  FAIL [fanout-cwd-alheia]  contou subagente de OUTRA worktree — alarme culpa o vizinho"; fail=1
 else echo "  ok    subagente de outra cwd não conta (sessions é compartilhado)"; fi
 
 echo
