@@ -310,8 +310,8 @@ mensagem de falha que ensina o que está em jogo; um `expect(motivos).toEqual([]
 teste fica com o que o step não dá: as formas sintéticas (calibração e falsificação) e o eixo por fora
 que prova o denominador. Duas portas para o mesmo código não somam detecção — só fazem a contabilidade
 chamar de redundância quem é dono único. Das outras duas instâncias medidas, a do `claude:size`
-(passo 13 de `test-claude-md-budget.sh`) foi fechada dois dias depois — seção abaixo; a do
-`bunpin:check` (`bun-pin-gate-check.test.ts`) segue aberta.
+(passo 13 de `test-claude-md-budget.sh`) e a do `bunpin:check` (`bun-pin-gate-check.test.ts`) foram
+fechadas dois dias depois — seções abaixo.
 
 ## A segunda porta do `claude:size` (2026-09-20) — e o limb que a duplicata cobria por ACIDENTE
 
@@ -388,9 +388,72 @@ O conserto (capturar em ARQUIVO, não em pipe) segue em chip, sem PR nem branch.
 grava nada, então a matriz não ganha medição falsa — ela apenas continua carimbando `EXCLUSIVIDADE_ZERO`
 numa linha cuja causa já saiu do repo. **A matriz está DEFASADA, não errada**, e o desempate é o chip.
 
-Das três segundas portas medidas, resta aberta uma: `bunpin:check` em
-`scripts/bun-pin-gate-check.test.ts`
-(*"os workflows REAIS do repo passam no gate"*, `auditBunPins(readWorkflows())`).
+A terceira e última — `bunpin:check` em `scripts/bun-pin-gate-check.test.ts` — foi fechada no mesmo
+dia; seção abaixo. Ela também trouxe a correção do diagnóstico que estas duas seções repetem.
+
+## A segunda porta do `bunpin:check` (2026-09-20) — e o vermelho do motor NÃO era a captura
+
+Fechada a terceira e última das três: saiu o `it('os workflows REAIS do repo passam no gate')` de
+`scripts/bun-pin-gate-check.test.ts`, que rodava `auditBunPins(readWorkflows())` — o **mesmo** código
+do step `bunpin:check`, na mesma árvore e no mesmo CI. Era ele que fazia o `test` co-pegar
+`bun-despinado` e carimbar `EXCLUSIVIDADE_ZERO` no único dono de um eixo que já derrubou todo PR do
+repo em ~6s (incidente REST API do GitHub, 2026-07-16). Fica no arquivo o que o step não dá: as 25
+formas sintéticas (calibração e falsificação) e a guarda ANTI-VÁCUO do denominador.
+
+**A saída foi PROVADA**, porque apagar detector para fabricar exclusividade é o anti-padrão que este
+motor existe para barrar. Mesma invocação, 2 locales, alvo REAL, controle verde antes da 1ª
+sabotagem, restauração por cópia provada (sha256 + `git status` limpo):
+
+| locale | fase | `bunpin:check` | suíte vitest inteira |
+|---|---|---|---|
+| `C` | árvore limpa | rc=0, marcador positivo | **rc=0 limpo** — 842 arq / 9256 testes |
+| `C` | `bun-despinado` no `ci.yml` | **reprova**, citando `ci.yml:167` | **0 teste falhando** — 842 / 9256 |
+| `pt_BR.UTF-8` | árvore limpa | rc=0, marcador positivo | **0 teste falhando** — 842 / 9256 |
+| `pt_BR.UTF-8` | `bun-despinado` no `ci.yml` | **reprova**, citando `ci.yml:167` | **0 teste falhando** — 842 / 9256 |
+
+As contagens do defeito são IDÊNTICAS às do controle — nenhum arquivo sumiu da conta —, e o próprio
+`bun-pin-gate-check.test.ts` rodou os 25 testes e passou: ele executou e não viu. O CONTROLE DA
+SABOTAGEM fecha o argumento: a porta VELHA (de `HEAD~1`), reinstalada sob o mesmo defeito, **reprova**
+nos dois locales, e exatamente no `it` removido. Ou seja, o verde da suíte é ausência de OLHO, não
+ausência de defeito — que é a distinção que uma remoção mal feita destruiria.
+
+### O diagnóstico do #2519 estava confundido: a captura não é a causa
+
+As duas seções acima responsabilizam o **pipe** (`stdio: ['ignore','pipe','pipe']`) pelo
+`Error: [vitest-worker]: Timeout calling "onTaskUpdate"` que trava o Guard 1b, e o chip aberto é
+"capturar em ARQUIVO, não em pipe". **Medido aqui, o chip não resolveria.** Oito rodadas de
+`bun run test`, TODAS com stdout em ARQUIVO (redirecionamento do shell, nunca pipe):
+
+| rodada | duração | rc | `onTaskUpdate`? |
+|---|---|---|---|
+| ensaio | 137s | **0** | não |
+| controle (C) ×3 | 266s / 279s / 311s | **1** | sim |
+| controle (C), máquina saturada | 2188s | **0** | não |
+| defeito (C) · controle e defeito (pt_BR) | 357s / 333s / 166s | **1** | sim |
+
+A mesma captura produz 0 e 1. O discriminador do #2519 trocou captura **e** condição de máquina ao
+mesmo tempo; segurando a captura fixa, o vermelho reaparece. Não testei a variante pipe, então o que
+fica provado é o lado que interessa: **arquivo não basta**. O RPC estoura por inanição da thread
+principal sob contenção, e o conserto certo é o motor não confundir `[vitest-worker]` com
+`onTaskUpdate` e ZERO teste falhando com uma reprovação — é a mesma família do `estourou` que ele já
+trata como *ausência de dado*, não como vermelho. **Re-escopar o chip antes de executá-lo.**
+
+### O que a saturação fabrica além do RPC
+
+Uma rodada do controle sob `pt_BR.UTF-8` veio com **22 testes falhando** em
+`scripts/exclusividade-medir.test.ts` e `scripts/ordem-entre-edges-declaracao.test.ts` — a leitura
+óbvia ("locale", a lição do #1483) estava ERRADA. Rodados isolados, os dois arquivos passam 52/52
+nos DOIS locales, e a única falha da discriminação caiu sob `C`. São testes que sobem subprocessos
+reais com timeout: sob contenção eles estouram e assertam `expected 2 to be 0`. Depois, com a
+máquina livre, o `pt_BR` veio 0 falhas. A forma pior: um `fork: Resource temporarily unavailable`
+com 1307/1333 processos do uid fez o vitest morrer **sem rodar teste nenhum** — e um harness que
+lesse só o rc leria vermelho de teste. Por isso o laço exige linha de resumo com denominador; sem
+ela é *ausência de dado*, não reprovação.
+
+**A certificação `[SO ELE]` segue PENDENTE, pelo instrumento.** O `EXCLUSIVIDADE_ZERO` de
+`bun-despinado` na matriz está **DEFASADO, não errado**: a causa dele saiu do repo hoje. Fail-closed
+— o motor não grava nada —, então nada de falso entrou; mas as três linhas só se resolvem depois do
+chip re-escopado.
 
 ## A regra
 

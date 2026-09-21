@@ -8,7 +8,15 @@
 
 # `bun-version` fora do semver estrito reintroduz a dependencia de rede que derrubou todo PR do
 # repo em 2026-07-16. O flag `$feito` prende a substituicao na PRIMEIRA ocorrencia: o texto aparece
-# 6x no ci.yml, e substituir as 6 perturbaria 12 linhas — o motor recusaria como regex largo.
+# 7x no ci.yml, e substituir as 7 perturbaria 14 linhas — o motor recusaria como regex largo.
+#
+# ⚠️ 2026-09-20: a segunda porta FOI FECHADA — o `it('os workflows REAIS do repo passam no gate')`
+# saiu de `scripts/bun-pin-gate-check.test.ts`, e a saida foi PROVADA nos 2 locales: com este defeito
+# no ci.yml REAL, ZERO teste do vitest reprova (842 arquivos / 9256 testes, iguais ao controle) e so
+# o `bunpin:check` reprova; a porta VELHA, reinstalada sob o mesmo defeito, reprova — logo a
+# sabotagem E visivel a quem olha, e o verde e ausencia de OLHO, nao de defeito. Enquanto a
+# re-medicao nao rodar, o `EXCLUSIVIDADE_ZERO` desta linha na matriz esta DEFASADO: a causa dele
+# (o `test` co-pegando) ja saiu do repo. Ver "A segunda porta do `bunpin:check`" no doc abaixo.
 # @origem: scripts/bun-pin-gate-check.ts (incidente REST API do GitHub, 2026-07-16)
 # @suspeito: bunpin:check
 bun-despinado | .github/workflows/ci.yml | $feito = 1 if !$feito && s/bun-version: 1\.3\.14/bun-version: latest/
