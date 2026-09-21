@@ -15,8 +15,10 @@
 # provar nada (docs/historico/falsificacao-sem-linha-de-base.md). Aqui o controle é remontado e
 # reconferido antes de CADA sabotagem, e a suíte ABORTA se ele não estiver verde.
 #
-# Marcadores são ASCII, caixa fixa, casados sem `-i` — e a suíte roda nos DOIS locales, porque
-# falsificar num ambiente só não prova a asserção (#1483).
+# Marcadores são ASCII, caixa fixa, casados sem `-i` — e a falsificação roda o conjunto INTEIRO em
+# dois locales (`LC_ALL=C` e um UTF-8 achado por sonda POSITIVA), porque falsificar num ambiente só
+# não prova a asserção (#1483). Até 2026-09-20 estas duas linhas AFIRMAVAM os dois locales e o
+# despacho rodava UM: o laço estava na prosa, não no código — ausência de dado assinada como prova.
 set -euo pipefail
 
 RAIZ_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -80,15 +82,17 @@ EOF
 
 <!--gates:frescura inicio-->
 
-**Gates do CI:** `gate:um` · `gate:dois`.
+**Gates do CI** (2): `gate:um` · `gate:dois`.
 
-**Hooks que NEGAM:** `bloqueia.sh`.
+**Hooks que NEGAM** (1): `bloqueia.sh`.
 
 <!--gates:frescura fim-->
 EOF
 }
 
-rodar() { (cd "$RAIZ_REPO" && bun "$GATE" --raiz "$TMP/raiz" 2>&1); }
+# `LOCALE_ATUAL` é o locale do laço de falsificação. No modo normal fica no default do ambiente.
+LOCALE_ATUAL="${LC_ALL:-}"
+rodar() { (cd "$RAIZ_REPO" && LC_ALL="$LOCALE_ATUAL" bun "$GATE" --raiz "$TMP/raiz" 2>&1); }
 
 # Controle: remonta a raiz limpa e EXIGE verde. Sem isto, toda sabotagem seguinte é teatro.
 controle() {
@@ -96,7 +100,7 @@ controle() {
   local saida rc
   set +e; saida="$(rodar)"; rc=$?; set -e
   if [ "$rc" -ne 0 ] || ! printf '%s' "$saida" | grep -q 'FRESCURA-OK'; then
-    printf 'ABORTA — controle nao esta verde (rc=%s). Sabotar agora aprovaria qualquer coisa.\n' "$rc"
+    printf 'ABORTA — controle nao esta verde (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\n' "${LOCALE_ATUAL:-default}" "$rc"
     printf '%s\n' "$saida"
     exit 1
   fi
@@ -117,7 +121,7 @@ sabotagem() {
     falhou "$desc — rc correto mas sem o marcador $marca"
     return
   fi
-  ok "$desc — vermelho com $marca"
+  ok "$desc — vermelho com $marca (LC_ALL=${LOCALE_ATUAL:-default})"
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -157,11 +161,13 @@ modo_falsificar() {
     "sed -i.bak 's|\"gate:dois\": \"bun dois.ts\"|\"gate:dois\": \"bun dois.ts\", \"solto:orfao\": \"echo oi\"|' package.json && printf '%s\n' '- e o \`solto:orfao\` tambem' >> CLAUDE.md"
 
   # --- Sentido 2 -------------------------------------------------------------------------------
+  # O `(N)` do cabeçalho anda junto com a lista de propósito: sem isso S3/S4 acenderiam TAMBÉM o
+  # sentido 3, e uma sabotagem que acende duas lâmpadas não distingue qual delas está ligada.
   sabotagem 'S3 sentido 2: gate do ci.yml some do censo' 'NAO-CITADO' 1 \
-    "sed -i.bak 's| · \`gate:dois\`||' docs/agent/deploy.md"
+    "sed -i.bak 's| · \`gate:dois\`||; s|\*\*Gates do CI\*\* (2)|**Gates do CI** (1)|' docs/agent/deploy.md"
 
   sabotagem 'S4 sentido 2: censo lista nome que nao reprova mais' 'CENSO-OBSOLETO' 1 \
-    "sed -i.bak 's|\`gate:dois\`|\`gate:dois\` · \`gate:fantasma\`|' docs/agent/deploy.md"
+    "sed -i.bak 's|\`gate:dois\`|\`gate:dois\` · \`gate:fantasma\`|; s|\*\*Gates do CI\*\* (2)|**Gates do CI** (3)|' docs/agent/deploy.md"
 
   sabotagem 'S5 sentido 2: hook deny novo nao entra no censo' 'NAO-CITADO' 1 \
     "printf '%s\n' 'jq -n {permissionDecision:\"deny\"}' > .claude/hooks/novo.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/novo.sh\" }|' .claude/settings.json"
@@ -183,13 +189,46 @@ modo_falsificar() {
 
   sabotagem 'S9 anti-vacuo: maquina sem UM gate bloqueante' 'FRESCURA-VACUO' 1 \
     "printf '%s\n' 'jobs: {}' > .github/workflows/ci.yml && rm -f .claude/settings.json"
+
+  # --- Sentido 3: o censo mente sobre SI MESMO --------------------------------------------------
+  # S10 é o defeito REAL do #2420, em miniatura: a lista colada duas vezes. Com o `(N)` corrigido
+  # junto, o único eixo que pode acusar é a contagem de repetição — se ele estiver desligado, esta
+  # sabotagem fica VERDE e a suíte diz isso. Era exatamente o estado da main até 2026-09-20: 61
+  # nomes entre crases, 31 distintos, e `gates:frescura` verde por onze dias.
+  sabotagem 'S10 sentido 3: lista do censo colada DUAS vezes' 'CENSO-REPETIDO' 1 \
+    "sed -i.bak 's|\`gate:um\` · \`gate:dois\`|\`gate:um\` · \`gate:dois\` · \`gate:um\` · \`gate:dois\`|; s|\*\*Gates do CI\*\* (2)|**Gates do CI** (4)|' docs/agent/deploy.md"
+
+  # S11 é o MESMO defeito visto pelo outro eixo: aqui a lista está sã e o número mente. Sabotar os
+  # dois eixos de uma vez não distinguiria "os dois pegam" de "um pega e o outro nunca roda".
+  sabotagem 'S11 sentido 3: o (N) do cabecalho mente sobre a lista' 'CENSO-CONTAGEM' 1 \
+    "sed -i.bak 's|\*\*Gates do CI\*\* (2)|**Gates do CI** (7)|' docs/agent/deploy.md"
+
+  # S12: sem o `(N)`, não há o que conferir — e conferência que só existe quando a regex casa
+  # morre calada. Ausência de número é ACHADO, não isenção.
+  sabotagem 'S12 sentido 3: lista de nomes sem declarar (N)' 'CENSO-SEM-CONTAGEM' 1 \
+    "sed -i.bak 's|\*\*Gates do CI\*\* (2)|**Gates do CI**|' docs/agent/deploy.md"
+
 }
 
 if [ "${1:-}" = "--falsificar" ]; then
-  printf '== falsificacao (locale %s) ==\n' "${LC_ALL:-default}"
-  modo_falsificar
+  # Os DOIS locales, e o UTF-8 achado por sonda POSITIVA: `locale -a | grep -q` sob `pipefail` já
+  # deu como ausente um locale PRESENTE neste repo (§16 do catálogo de shell), e rodar só
+  # `LC_ALL=C` chamando de "dois locales" é a falsificação em UM ambiente do #1483. Sem UTF-8 aqui
+  # a suíte ABORTA: metade da falsificação não rodaria, e isso é ausência de dado, não aprovação.
+  utf8=""
+  for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
+    if [ "$(LC_ALL="$cand" locale charmap 2>/dev/null)" = "UTF-8" ]; then utf8="$cand"; break; fi
+  done
+  if [ -z "$utf8" ]; then
+    printf 'ABORTA — nenhum locale UTF-8 (pt_BR/en_US/C) neste ambiente; metade da falsificacao nao rodaria.\n'
+    exit 1
+  fi
+  for LOCALE_ATUAL in C "$utf8"; do
+    printf '== falsificacao (LC_ALL=%s) ==\n' "$LOCALE_ATUAL"
+    modo_falsificar
+  done
 else
-  printf '== modo normal (locale %s) ==\n' "${LC_ALL:-default}"
+  printf '== modo normal (locale %s) ==\n' "${LOCALE_ATUAL:-default}"
   modo_normal
 fi
 

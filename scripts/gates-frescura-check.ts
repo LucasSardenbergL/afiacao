@@ -37,6 +37,23 @@
  * dois lados: gate que falta no censo é vermelho (o manual não avisa), e nome no censo que não é
  * mais gate também é vermelho (o manual mente). Um censo que não pode envelhecer em silêncio.
  *
+ * ## Sentido 3 — o censo mente sobre SI MESMO
+ *
+ * Os dois sentidos acima são cruzamentos de CONJUNTO, e conjunto não tem multiplicidade: "bate
+ * EXATAMENTE" nunca olhou para quantas vezes cada nome aparece. O #2420 (2026-09-09) colou a lista
+ * inteira duas vezes na mesma linha — 61 nomes entre crases, 31 distintos, cabeçalho `(31)` — e o
+ * gate ficou verde por onze dias. Não é cosmético: com a lista em dobro, TIRAR um gate do censo
+ * deixa de reprovar, porque a outra cópia sustenta o conjunto. O sentido 2 estava desligado e o
+ * gate assinava que conferia. Medido pelo motor de exclusividade: o defeito `censo-sem-o-gate`
+ * (remove ` · \`docs:citacoes\`` do censo) não achou UM vermelho entre 31 gates.
+ *
+ * Então a lista é conferida como LISTA, por dois eixos que não dependem um do outro: nome repetido
+ * é vermelho, e o `(N)` do cabeçalho — o número que o leitor humano confere primeiro — tem de bater
+ * com quantos nomes a linha de fato traz, CRUS. Uma duplicação fica vermelha pelos dois; sabotar um
+ * deixa o outro de pé. Lista sem `(N)` é achado, não isenção: sem o número não há conferência, e
+ * uma conferência que só existe quando a regex casa é a mesma falha ABERTA que o anti-vácuo abaixo
+ * cobre. É a classe que o #2391 tirou do `docs:indice` — "a igualdade de conjunto ERA o eixo".
+ *
  * ## O que conta como "gate que reprova" — e o que fica de fora DE PROPÓSITO
  *
  * O `ci.yml` tem step informativo por decisão consciente: `sonda:fanout` é rotulado no próprio
@@ -78,6 +95,9 @@ const MARCA_FALHA = 'FRESCURA-FALHA';
 const MARCA_ORFAO = 'ORFAO';
 const MARCA_NAO_CITADO = 'NAO-CITADO';
 const MARCA_CENSO_OBSOLETO = 'CENSO-OBSOLETO';
+const MARCA_CENSO_REPETIDO = 'CENSO-REPETIDO';
+const MARCA_CENSO_CONTAGEM = 'CENSO-CONTAGEM';
+const MARCA_CENSO_SEM_CONTAGEM = 'CENSO-SEM-CONTAGEM';
 const MARCA_VACUO = 'FRESCURA-VACUO';
 
 export const CENSO_INICIO = '<!--gates:frescura inicio-->';
@@ -271,14 +291,84 @@ export function inventarioHooks(
   return [...achados.values()].sort((a, b) => a.arquivo.localeCompare(b.arquivo));
 }
 
-/** Nomes entre crases dentro do bloco delimitado. `achou: false` = bloco ausente (exit 2). */
-export function lerCenso(markdown: string): { nomes: string[]; achou: boolean } {
+/**
+ * Uma LINHA-lista do censo: o rótulo em negrito, o número que ela declara entre parênteses e
+ * quantos nomes de fato lista. `declarado: null` = a linha lista nomes sem dizer quantos.
+ */
+export interface LinhaDoCenso {
+  rotulo: string;
+  declarado: number | null;
+  contados: number;
+}
+
+export interface Censo {
+  /** DISTINTOS, ordenados — é o que os dois cruzamentos de conjunto consomem. */
+  nomes: string[];
+  /** Ocorrências CRUAS no bloco. Maior que `nomes.length` ⇒ alguém está repetido. */
+  ocorrencias: number;
+  /** Quem aparece mais de uma vez, e quantas. Vazio = censo são. */
+  repetidos: { nome: string; vezes: number }[];
+  /** Uma entrada por linha do bloco que liste ao menos um nome. */
+  listas: LinhaDoCenso[];
+  achou: boolean;
+}
+
+/**
+ * Cabeçalho de lista: `**Gates do CI — reprovam o PR** (31): ...`. O que interessa é o rótulo e o
+ * PRIMEIRO número dentro dos parênteses — o resto (`, informativos por desenho`) é prosa.
+ */
+const CABECALHO_DA_LISTA = /^\*\*(.+?)\*\*[^(`]*\((\d+)[^)]*\)/;
+
+/**
+ * Nomes entre crases dentro do bloco delimitado. `achou: false` = bloco ausente (exit 2).
+ *
+ * Lê LINHA A LINHA, e não o bloco inteiro de uma vez, por duas razões que custaram caro:
+ *
+ * 1. **Repetição.** Até 2026-09-20 esta função devolvia `[...new Set(nomes)]` e mais nada, e os
+ *    dois sentidos do gate são cruzamentos de CONJUNTO — nome repetido some na deduplicação e
+ *    passa calado. Não é hipotético: o #2420 (2026-09-09) colou a lista inteira DUAS vezes na
+ *    linha 34 do `deploy.md` (61 nomes entre crases, 31 distintos) e o gate ficou verde por onze
+ *    dias. O preço não é cosmético: com a lista em dobro, TIRAR um gate do censo deixa de reprovar
+ *    — a outra cópia sustenta o conjunto —, que é exatamente o sentido 2 desligado. Foi medido
+ *    pelo motor de exclusividade: o defeito `censo-sem-o-gate` não achou UM vermelho em 31 gates.
+ *    É a mesma classe que o #2391 tirou do `docs:indice` ("a igualdade de conjunto ERA o eixo").
+ *
+ * 2. **O número do cabeçalho.** `(31)` na frente de uma lista de 61 é a segunda testemunha que
+ *    ninguém conferia — e a que um humano lê primeiro. Conferi-lo contra a contagem CRUA da linha
+ *    (não a distinta) dá um eixo independente do item 1: a duplicação fica vermelha pelos dois.
+ *    Linha que lista nome sem declarar `(N)` é achado, não isenção — senão a conferência morre em
+ *    silêncio no dia em que alguém reescrever o formato, que é o vácuo de novo.
+ */
+export function lerCenso(markdown: string): Censo {
   const i = markdown.indexOf(CENSO_INICIO);
   const f = markdown.indexOf(CENSO_FIM);
-  if (i < 0 || f < 0 || f < i) return { nomes: [], achou: false };
+  if (i < 0 || f < 0 || f < i)
+    return { nomes: [], ocorrencias: 0, repetidos: [], listas: [], achou: false };
   const bloco = markdown.slice(i + CENSO_INICIO.length, f);
-  const nomes = [...bloco.matchAll(/`([^`]+)`/g)].map((m) => m[1].trim());
-  return { nomes: [...new Set(nomes)].sort(), achou: true };
+
+  const vezes = new Map<string, number>();
+  const listas: LinhaDoCenso[] = [];
+  let ocorrencias = 0;
+
+  for (const linha of bloco.split('\n')) {
+    const nomes = [...linha.matchAll(/`([^`]+)`/g)].map((m) => m[1].trim());
+    if (nomes.length === 0) continue;
+    ocorrencias += nomes.length;
+    for (const n of nomes) vezes.set(n, (vezes.get(n) ?? 0) + 1);
+    const cab = CABECALHO_DA_LISTA.exec(linha);
+    listas.push({
+      rotulo: cab ? cab[1].trim() : linha.trim().slice(0, 60),
+      declarado: cab ? Number(cab[2]) : null,
+      contados: nomes.length,
+    });
+  }
+
+  const repetidos = [...vezes]
+    .filter(([, n]) => n > 1)
+    .map(([nome, n]) => ({ nome, vezes: n }))
+    .sort((a, b) => (a.nome < b.nome ? -1 : a.nome > b.nome ? 1 : 0));
+
+  return { nomes: [...vezes.keys()].sort(), ocorrencias, repetidos, listas, achou: true };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -482,12 +572,21 @@ function main(): number {
   const conhecidos = new Set(bloqueiam.map((g) => g.nome));
   const obsoletos = censo.nomes.filter((n) => !conhecidos.has(n));
 
+  // ---- Sanidade do próprio censo ---------------------------------------------------------------
+  // Os dois cruzamentos acima são de CONJUNTO, e conjunto não tem multiplicidade: o censo pode
+  // estar em dobro e passar. Aqui a lista é conferida como LISTA — e o `(N)` do cabeçalho, que é
+  // o que o leitor humano lê, vira a segunda testemunha da mesma coisa.
+  const semContagem = censo.listas.filter((l) => l.declarado === null);
+  const contagemErrada = censo.listas.filter(
+    (l) => l.declarado !== null && l.declarado !== l.contados,
+  );
+
   // ---- Relatório -----------------------------------------------------------------------------
   const avisos = hooks.filter((h) => !h.bloqueia);
   console.log(
     `frescura: ${citacoes.length} citacoes no CLAUDE.md | ${gatesCI.length} gates do ci.yml | ` +
       `${hooks.filter((h) => h.bloqueia).length} hooks deny | ${avisos.length} hooks de aviso (nao sao gate) | ` +
-      `${censo.nomes.length} nomes no censo | allowlist: ${Object.keys(ALLOWLIST_CITACAO).length} citacao + ${Object.keys(ALLOWLIST_CENSO).length} censo`,
+      `${censo.nomes.length} nomes no censo (${censo.ocorrencias} ocorrencias, ${censo.listas.length} lista(s)) | allowlist: ${Object.keys(ALLOWLIST_CITACAO).length} citacao + ${Object.keys(ALLOWLIST_CENSO).length} censo`,
   );
   const opacos = bloqueantesSemScript(ciFonte);
   console.log(
@@ -537,11 +636,37 @@ function main(): number {
   for (const n of obsoletos) {
     console.error(`${MARCA_CENSO_OBSOLETO}: \`${n}\` esta no censo de ${ARQUIVO_CENSO} mas nao reprova nada hoje`);
   }
+  for (const r of censo.repetidos) {
+    console.error(
+      `${MARCA_CENSO_REPETIDO}: \`${r.nome}\` aparece ${r.vezes}x no censo de ${ARQUIVO_CENSO} — ` +
+        `os dois cruzamentos deste gate sao de CONJUNTO, e a copia sobrando sustenta o conjunto sozinha: ` +
+        `tirar UMA ocorrencia deixa de reprovar. Deixe o nome uma vez so.`,
+    );
+  }
+  for (const l of contagemErrada) {
+    console.error(
+      `${MARCA_CENSO_CONTAGEM}: a lista "${l.rotulo}" de ${ARQUIVO_CENSO} declara (${l.declarado}) ` +
+        `e lista ${l.contados} nome(s) entre crases — o numero do cabecalho e o que o leitor confere primeiro.`,
+    );
+  }
+  for (const l of semContagem) {
+    console.error(
+      `${MARCA_CENSO_SEM_CONTAGEM}: a lista "${l.rotulo}" de ${ARQUIVO_CENSO} lista ${l.contados} nome(s) ` +
+        `sem declarar "**rotulo** (N):" — sem o numero nao ha o que conferir, e a conferencia morre calada.`,
+    );
+  }
 
-  const total = orfaos.length + naoCitados.length + obsoletos.length;
+  const total =
+    orfaos.length +
+    naoCitados.length +
+    obsoletos.length +
+    censo.repetidos.length +
+    contagemErrada.length +
+    semContagem.length;
   if (total > 0) {
     console.error(
-      `${MARCA_FALHA}: ${orfaos.length} orfao(s) + ${naoCitados.length} nao-citado(s) + ${obsoletos.length} obsoleto(s)`,
+      `${MARCA_FALHA}: ${orfaos.length} orfao(s) + ${naoCitados.length} nao-citado(s) + ${obsoletos.length} obsoleto(s)` +
+        ` + ${censo.repetidos.length} repetido(s) + ${contagemErrada.length} contagem(ns) errada(s) + ${semContagem.length} lista(s) sem contagem`,
     );
     return 1;
   }
