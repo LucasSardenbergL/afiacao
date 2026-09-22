@@ -131,14 +131,67 @@ describe('inventarioHooks — deny de verdade x "deny" em comentário', () => {
   });
 });
 
+/** Monta um bloco de censo com as LINHAS dadas, mais prosa fora dele que não pode ser lida. */
+const comCenso = (...linhas: string[]) =>
+  `antes\n${CENSO_INICIO}\n${linhas.join('\n')}\n${CENSO_FIM}\ndepois \`fora:do:bloco\``;
+
 describe('lerCenso — bloco delimitado, não prosa', () => {
   it('extrai os nomes entre crases do bloco', () => {
-    const md = `antes\n${CENSO_INICIO}\n\`test\` · \`docs:indice\`\n${CENSO_FIM}\ndepois \`fora:do:bloco\``;
-    expect(lerCenso(md)).toEqual({ nomes: ['docs:indice', 'test'], achou: true });
+    const censo = lerCenso(comCenso('**Gates** (2): `test` · `docs:indice`.'));
+    expect(censo.achou).toBe(true);
+    expect(censo.nomes).toEqual(['docs:indice', 'test']);
+    expect(censo.ocorrencias).toBe(2);
+    expect(censo.repetidos).toEqual([]);
+    expect(censo.listas).toEqual([{ rotulo: 'Gates', declarado: 2, contados: 2 }]);
   });
 
   it('bloco ausente é "não consegui avaliar", não "está tudo certo"', () => {
     expect(lerCenso('doc sem bloco').achou).toBe(false);
+  });
+
+  // O caso REAL: o #2420 colou a lista inteira duas vezes e os dois sentidos do gate, que são
+  // cruzamentos de conjunto, não viram nada. O `Set` de antes devolvia exatamente `['a','b']`.
+  it('nome repetido é DADO, não some na deduplicação', () => {
+    const censo = lerCenso(comCenso('**Gates** (4): `a` · `b` · `a` · `b`.'));
+    expect(censo.nomes).toEqual(['a', 'b']);
+    expect(censo.ocorrencias).toBe(4);
+    expect(censo.repetidos).toEqual([
+      { nome: 'a', vezes: 2 },
+      { nome: 'b', vezes: 2 },
+    ]);
+  });
+
+  it('repetição ENTRE listas conta igual — foi o defeito do #2344 (nome nas duas listas)', () => {
+    const censo = lerCenso(
+      comCenso('**Reprovam** (1): `mutcheck`.', '', '**Nao reprovam** (1): `mutcheck`.'),
+    );
+    expect(censo.repetidos).toEqual([{ nome: 'mutcheck', vezes: 2 }]);
+    expect(censo.listas.map((l) => l.declarado)).toEqual([1, 1]);
+  });
+
+  it('o (N) do cabeçalho é lido CRU — é ele que mente quando a lista está em dobro', () => {
+    const censo = lerCenso(comCenso('**Gates** (2): `a` · `b` · `a` · `b`.'));
+    expect(censo.listas).toEqual([{ rotulo: 'Gates', declarado: 2, contados: 4 }]);
+  });
+
+  it('prosa depois do número não atrapalha o cabeçalho', () => {
+    const censo = lerCenso(comCenso('**Nao reprovam** (2, informativos por desenho): `a` · `b`.'));
+    expect(censo.listas).toEqual([
+      { rotulo: 'Nao reprovam', declarado: 2, contados: 2 },
+    ]);
+  });
+
+  it('lista SEM (N) é `declarado: null` — ausência de dado, nunca isenção', () => {
+    const censo = lerCenso(comCenso('- e tambem o `gate:solto` aqui'));
+    expect(censo.listas).toEqual([
+      { rotulo: '- e tambem o `gate:solto` aqui', declarado: null, contados: 1 },
+    ]);
+  });
+
+  it('linha sem nome nenhum não vira lista (linha em branco, prosa, comentário)', () => {
+    const censo = lerCenso(comCenso('', 'so prosa, sem crase', '**Gates** (1): `a`.'));
+    expect(censo.listas).toHaveLength(1);
+    expect(censo.ocorrencias).toBe(1);
   });
 });
 

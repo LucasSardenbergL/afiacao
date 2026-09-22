@@ -455,6 +455,133 @@ ela é *ausência de dado*, não reprovação.
 — o motor não grava nada —, então nada de falso entrou; mas as três linhas só se resolvem depois do
 chip re-escopado.
 
+## O censo que cegava o gate (2026-09-20) — a igualdade de conjunto, de novo
+
+O `censo-sem-o-gate` era a única das seis linhas da re-medição acima sem um vermelho para mostrar. A
+causa não estava no motor: estava no gate medido, e o motor só a tornou visível.
+
+A linha 34 de `docs/agent/deploy.md` — o censo que o `gates:frescura` cruza com o inventário do
+`ci.yml` — tinha **61 nomes entre crases e 31 distintos**: a lista inteira colada duas vezes, exceto
+`gate:ambiente`, que ficou de fora da segunda cópia. Entrou no #2420 (2026-09-09,
+`git log -S'docs:citacoes' -- docs/agent/deploy.md`) e ninguém viu por onze dias, porque `lerCenso`
+devolvia `[...new Set(nomes)]` e os dois sentidos do gate são cruzamentos de **conjunto**. O
+cabeçalho anunciava `(31)` na frente de uma lista de 61, e esse número também não era conferido.
+
+O preço não é cosmético, e é a razão de a medição ter ficado muda: **com a lista em dobro, tirar um
+gate do censo deixa de reprovar** — a outra cópia sustenta o conjunto sozinha. É o sentido 2
+desligado, com o gate assinando que confere. A sabotagem do corpus (`s/ · \`docs:citacoes\`//`)
+remove a primeira cópia e a segunda basta; reproduzido fora do motor, a saída sabotada era idêntica
+à do controle.
+
+**O conserto lê a lista como LISTA, por dois eixos que não dependem um do outro:**
+
+| achado | o que pega | por que existe separado |
+|---|---|---|
+| `CENSO-REPETIDO` | nome com 2+ ocorrências no bloco | é a multiplicidade que o `Set` comia |
+| `CENSO-CONTAGEM` | `(N)` do cabeçalho ≠ nomes que a linha lista, CRUS | é o número que o leitor humano confere primeiro |
+| `CENSO-SEM-CONTAGEM` | linha que lista nomes sem declarar `(N)` | sem número não há conferência, e conferência que só existe quando a regex casa morre calada |
+
+Uma duplicação acende os dois primeiros; sabotar um deixa o outro de pé. Contra a main de 2026-09-20
+a guarda acusou **30 repetidos + 1 contagem errada** (rc=1), e com a linha deduplicada o gate volta a
+`FRESCURA-OK` com **38 nomes em 38 ocorrências**.
+
+**A falsificação ganhou o laço que a prosa já prometia.** O docblock de `test-gates-frescura.sh`
+afirmava *"a suíte roda nos DOIS locales"* desde que nasceu — e o despacho rodava **um**, o do
+ambiente. Era uma asserção sobre execução que não havia, a forma exata do #1483. Agora o laço está no
+código, com o UTF-8 achado por sonda POSITIVA (`locale charmap`, nunca `locale -a | grep -q` sob
+`pipefail` — §16 do [catálogo de shell](evidencia-positiva-shell.md)), e são 12 sabotagens × 2
+locales, cada uma com o controle remontado e exigido verde na MESMA invocação.
+
+Cada sabotagem mira **uma** marca, e por isso o `(N)` do cabeçalho anda junto com a lista em
+S3/S4/S10: sabotagem que acende duas lâmpadas não distingue qual delas está ligada.
+
+**O eixo que a suíte não dá: sabotar a GUARDA, não o dado.** As 12 sabotagens provam que o gate
+detecta; não provam que a suíte notaria se a guarda saísse. Com o alvo commitado antes (a restauração
+é `git checkout --`), cada camada nova foi removida sozinha e a suíte inteira exigida vermelha pela
+linha que a mira — controle verde na mesma invocação, alvo reconferido por conteúdo no fim:
+
+| camada sabotada | a suíte disse |
+|---|---|
+| `vezes.set(n, 1)` — a multiplicidade perdida, o `Set` de antes | `FALHA — S10 … esperava rc=1, veio rc=0` (2x, um por locale) |
+| `l.declarado !== l.contados` → `false` | `FALHA — S11 …` (2x) |
+| `l.declarado === null` → `false` | `FALHA — S12 …` (2x) |
+| as três parcelas fora do `total` (imprime a marca e sai 0) | `RESULTADO: 6 falha(s)` |
+
+A última é a mais instrutiva: o gate **imprime** os três achados e sai `0`. Marca no log não é
+veredito — a mesma distinção que este arquivo cobra do motor.
+
+### Três tropeços do instrumento, todos fail-closed
+
+- **O motor atribuiu a MINHA escrita ao gate que rodava.** A 1ª tentativa abortou com
+  `GATE-ESCREVEU: bun run evals:deploy-verify alterou a arvore versionada` — e o gate não escreveu
+  nada: fui eu, editando este arquivo enquanto o baseline corria. O motor fez o certo (abortou, não
+  gravou) e **restaurou** o conteúdo por snapshot, desfazendo a edição. A guarda mede a árvore, não
+  a autoria; quem edita durante uma medição perde o trabalho e ganha uma acusação no gate errado.
+  A ordem certa é commitar antes e não tocar em nada.
+- **`lint:shell` verde me deu a sensação de ter conferido o lint.** São gates diferentes, e o
+  baseline do motor foi quem pegou: 32 `no-useless-escape` no teste novo, crase escapada dentro de
+  string de aspas simples (necessária só no template literal do helper). Vermelho REAL, meu, e o
+  único dos três que não era carga: terminou em 12s. O motor como detector de dívida do próprio
+  autor é um uso que não estava no desenho.
+- **Os outros dois vermelhos eram a saturação**, a classe que a seção do `bunpin:check` acima acabou
+  de falsificar como "captura": `test` morto por SIGTERM em 744.165 ms (112 s na máquina calma) e
+  `test:falsificacao` em 3.144.139 ms contra 907.829 ms da baseline commitada — 3,5×. `tsc` levou
+  929.631 ms contra 30.598 ms, 30×. `test:hooks` passou VERDE em 1.933.352 ms, e é o que interessa:
+  ele roda `test-gates-frescura.sh`, então as 12 sabotagens × 2 locales foram exercitadas na árvore
+  real pelo gate do CI, não só à mão.
+
+### A re-medição (2026-09-21, sourceHead `5a866d509`) — o zero é a QUARTA segunda porta
+
+Baseline **31/31 verde** — o que as duas tentativas anteriores não conseguiram, e a diferença foi só
+a máquina esvaziar: `tsc` 26.387 ms (eram 929.631), `test` 102.431 ms e rc=0 (eram 744.165 e SIGTERM).
+Nada no repo mudou entre elas.
+
+| defeito | rodados | vermelhos | veredito |
+|---|---|---|---|
+| `censo-sem-o-gate` | 29 de 31 (poda) | `gates:frescura` 136 ms · `test:hooks` 112.600 ms | `EXCLUSIVIDADE_ZERO` |
+
+**O antes e o depois é o ponto:** a mesma sabotagem, no mesmo alvo, com o mesmo corpus, passou de
+**nenhum vermelho entre 31 gates** (`pegou 0`, sem veredito nenhum) para dois. O `gates:frescura` sai
+de `pegou 0 de 31` para `pegou 1 de 12` na matriz. O que mudou foi o gate deixar de comparar conjuntos.
+
+**Os 2 não rodados são os 2 mais caros, e isso é desenho:** o motor ordena do mais barato ao mais
+caro e para no 2º vermelho (`test:falsificacao` 1.002.966 ms e `sonda:cron-prova` 311.934 ms ficaram
+de fora). Cuidado ao ler a matriz: a linha tem **31** execuções, não 29 — as dos podados vêm
+preservadas da rodada anterior, com `ms` e `fingerprint` idênticos bit a bit. "31 execuções
+registradas" não é "31 rodados nesta rodada", e nenhum campo da execução distingue os dois.
+
+**O zero é a quarta segunda porta da família** — e, como as três que a main fechou hoje, é o MESMO
+código por outra porta, não um segundo detector. O modo normal de `scripts/test-gates-frescura.sh`
+termina com o passo *"repo de verdade passa"*, que roda `bun "$GATE"` contra a raiz real: a mesma
+invocação, a mesma árvore, o mesmo CI que o step `gates:frescura`. Foi ele que reprovou dentro do
+`test:hooks`.
+
+**A decisão aqui NÃO é óbvia como nas outras três, e por isso fica registrada em vez de executada.**
+Nas outras, o concorrente era um `expect(...).toEqual([])` num vitest — mensagem que não ensina nada
+a quem a vê vermelha. Aqui o concorrente é uma suíte bash que existe como **eixo POR FORA** declarado:
+o gate lê o `ci.yml` e mora no `ci.yml`, então herda o defeito da máquina que vigia. As opções:
+
+- *tirar só o passo "repo de verdade passa"* — a suíte guarda as 12 sabotagens sobre a raiz SINTÉTICA,
+  que é o que ela tem de único, e o step vira dono do repo real. É a mesma escolha das outras três, e
+  o que se perde é a rede para o dia em que o step sair do `ci.yml`;
+- *manter como está* — custo 0 e a matriz segue carimbando `EXCLUSIVIDADE_ZERO` no dono único de um
+  eixo que acabou de passar onze dias desligado. O zero medido vira argumento para cortar o gate
+  errado;
+- *manter e DISPENSAR a linha* — honesto se a redundância é desejada, mas a dispensa precisa dizer
+  qual das duas portas é a que se pretende manter.
+
+Tirar detector para fabricar exclusividade é o anti-padrão que este motor existe para barrar, e nesta
+instância o detector a tirar seria o de um gate cuja cegueira acabou de ser medida. Fica como chip,
+com a medição na mão — que é a diferença entre decidir e adivinhar.
+
+**O preço de mexer num gate: as outras 15 linhas ficam podres para ele.** `bun run exclusividade`
+passa a AVISAR `LINHA_PODRE: gates:frescura — a fonte mudou desde a medicao
+(7677bffbe8ca936b -> ad1c03879cda2543)`, porque só a linha re-medida carrega o fingerprint novo: 1 de
+12. É aviso, não reprovação (rc=0), e a matriz já convivia com três fingerprints diferentes deste
+mesmo gate antes deste PR. Junto com as três que os PRs de hoje deixaram (`bunpin:check`,
+`test:hooks`, `test:falsificacao`), são 4 linhas podres esperando re-medição — e re-medir as 16 com os
+31 gates é uma rodada de horas que depende da M2 estar vazia, como esta seção mostrou.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
