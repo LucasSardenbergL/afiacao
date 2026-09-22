@@ -6,6 +6,12 @@
 # por outro runner, contra uma raiz sintética completa — e no modo `--falsificar` exige VERMELHO em
 # cada sabotagem, uma por vez.
 #
+# O que esta suíte NÃO faz, desde 2026-09-21: auditar o repo REAL. Isso é o step `gates:frescura`,
+# mesma invocação e mesma árvore — rodá-lo aqui era segunda porta, e o motor de exclusividade
+# carimbava `EXCLUSIVIDADE_ZERO` num gate que é dono único do seu eixo. Sobrou o único pedaço do
+# repo real que o step é incapaz de cobrir, porque auto-vigia não reprova quando não roda: a
+# presença do próprio step no `ci.yml` (`step_no_ci`, falsificada na S13 contra uma CÓPIA).
+#
 # Por que uma por vez: sabotar tudo junto não distingue "as duas direções funcionam" de "uma
 # direção funciona e a outra é inalcançável". A direção que ficar VERDE sob a sua própria sabotagem
 # é redundante ou nunca roda.
@@ -124,8 +130,19 @@ sabotagem() {
   ok "$desc — vermelho com $marca (LC_ALL=${LOCALE_ATUAL:-default})"
 }
 
+# O UNICO eixo daqui que toca o repo real — e o unico que o step `gates:frescura` e
+# ESTRUTURALMENTE incapaz de cobrir: auto-vigia nao reprova quando nao roda. Medido em 2026-09-21,
+# com o step tirado do ci.yml: o gate acusaria `CENSO-OBSOLETO` sobre si mesmo (rc=1), so que
+# ninguem o invocaria para ver — e o `exclusividade`, candidato natural, fica MUDO (rc=0, zero
+# mencoes: ele cobra linha de matriz para gate PRESENTE no ci.yml, nunca o contrario).
+#
+# Casa linha NAO-comentada, nao o texto cru: o ci.yml cita esta suite em comentario logo acima do
+# step, e `grep` cru leria a propria prosa como se fosse a invocacao — o mesmo erro que o gate
+# evita parseando blocos `run:` em vez do YAML inteiro.
+step_no_ci() { grep -Eq '^[[:space:]]*[^#[:space:]].*bun run gates:frescura' "$1"; }
+
 # ------------------------------------------------------------------------------------------------
-# Modo normal: o gate aprova a raiz limpa E o repo de verdade.
+# Modo normal: o gate aprova a raiz limpa, e o step que o roda continua no ci.yml.
 # ------------------------------------------------------------------------------------------------
 modo_normal() {
   montar
@@ -145,8 +162,15 @@ modo_normal() {
     ok 'hook de aviso nao e cobrado como gate'
   fi
 
-  set +e; ( cd "$RAIZ_REPO" && bun "$GATE" >/dev/null 2>&1 ); rc=$?; set -e
-  if [ "$rc" -eq 0 ]; then ok 'repo de verdade passa'; else falhou "repo de verdade reprovou (rc=$rc)"; fi
+  # Ate 2026-09-21 aqui rodava `bun "$GATE"` contra a raiz REAL: a mesma invocacao, a mesma arvore
+  # e o mesmo CI do step `gates:frescura` — segunda porta, nao segundo detector, e o motor carimbava
+  # EXCLUSIVIDADE_ZERO no dono unico de um eixo que passara onze dias cego. Ficou o limb que o step
+  # nao alcanca, e que so existia aqui por acidente.
+  if step_no_ci "$RAIZ_REPO/.github/workflows/ci.yml"; then
+    ok 'o step gates:frescura continua no ci.yml real'
+  else
+    falhou 'o step gates:frescura sumiu do ci.yml — o gate parou de rodar e ninguem mais confere o censo'
+  fi
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -208,6 +232,24 @@ modo_falsificar() {
   sabotagem 'S12 sentido 3: lista de nomes sem declarar (N)' 'CENSO-SEM-CONTAGEM' 1 \
     "sed -i.bak 's|\*\*Gates do CI\*\* (2)|**Gates do CI**|' docs/agent/deploy.md"
 
+
+  # --- O step sumindo do proprio ci.yml ---------------------------------------------------------
+  # Sabota uma COPIA: escrever no ci.yml real e o que o motor de exclusividade acusa como
+  # GATE-ESCREVEU (e a mesma razao de `exclusividade-gate.ts` aceitar `--ci <arq>` so para
+  # falsificacao). O controle vem antes e na MESMA invocacao, como em toda sabotagem daqui: uma
+  # sonda sempre-ausente aprovaria esta sabotagem sem provar nada.
+  local ci_copia="$TMP/ci-sem-o-step.yml"
+  if ! step_no_ci "$RAIZ_REPO/.github/workflows/ci.yml"; then
+    printf 'ABORTA — controle da S13 nao esta verde: a sonda nao acha o step no ci.yml REAL.\n'
+    exit 1
+  fi
+  cp "$RAIZ_REPO/.github/workflows/ci.yml" "$ci_copia"
+  sed -i.bak '/^[[:space:]]*run:[[:space:]]*bun run gates:frescura[[:space:]]*$/d' "$ci_copia"
+  if step_no_ci "$ci_copia"; then
+    falhou 'S13 sonda do step: a copia SEM o step ainda casa — a sonda nao distingue presenca de ausencia'
+  else
+    ok "S13 sonda do step: copia sem o step e vista como ausente (LC_ALL=${LOCALE_ATUAL:-default})"
+  fi
 }
 
 if [ "${1:-}" = "--falsificar" ]; then
