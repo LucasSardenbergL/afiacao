@@ -29,6 +29,17 @@ claude-md-linha-gigante | CLAUDE.md | s/^## Stack$/'## Stack ' . ('x' x 2100)/e
 
 # Sentido 2 do gates:frescura: um gate que existe, reprova, e sumiu do censo do manual. E a classe
 # que originou aquele gate (o censo datado de 15 nomes num CI que ja tinha 25).
+#
+# ⚠️ 2026-09-21: a segunda porta FOI FECHADA — o passo 'repo de verdade passa' saiu de
+# `scripts/test-gates-frescura.sh`, e a saida foi PROVADA nos 2 locales: com este defeito no
+# `docs/agent/deploy.md` REAL, o `test:hooks` fica VERDE (rc=0) e so o `gates:frescura` reprova
+# (marcador NAO-CITADO); a porta VELHA, reinstalada sob o MESMO defeito, reprova — logo a sabotagem
+# E visivel a quem olha, e o verde e ausencia de OLHO, nao de defeito. O que ficou na suite e o limb
+# que o step e incapaz de cobrir (auto-vigia nao reprova quando nao roda): a presenca do proprio
+# step no ci.yml — medido, o `exclusividade` nao acusa esse sumico (rc=0, zero mencoes).
+# Enquanto a re-medicao nao rodar, o `EXCLUSIVIDADE_ZERO` desta linha na matriz esta DEFASADO: a
+# causa dele (o `test:hooks` co-pegando) ja saiu do repo. Ver "A quarta segunda porta fechada" no
+# doc abaixo.
 # @origem: scripts/gates-frescura-check.ts (sentido 2 — gate nao citado)
 # @suspeito: gates:frescura
 censo-sem-o-gate | docs/agent/deploy.md | s/ · `docs:citacoes`//

@@ -572,7 +572,8 @@ o gate lê o `ci.yml` e mora no `ci.yml`, então herda o defeito da máquina que
 
 Tirar detector para fabricar exclusividade é o anti-padrão que este motor existe para barrar, e nesta
 instância o detector a tirar seria o de um gate cuja cegueira acabou de ser medida. Fica como chip,
-com a medição na mão — que é a diferença entre decidir e adivinhar.
+com a medição na mão — que é a diferença entre decidir e adivinhar. **Decidido em 2026-09-21: ver
+"A quarta segunda porta fechada", abaixo.**
 
 **O preço de mexer num gate: as outras 15 linhas ficam podres para ele.** `bun run exclusividade`
 passa a AVISAR `LINHA_PODRE: gates:frescura — a fonte mudou desde a medicao
@@ -581,6 +582,75 @@ passa a AVISAR `LINHA_PODRE: gates:frescura — a fonte mudou desde a medicao
 mesmo gate antes deste PR. Junto com as três que os PRs de hoje deixaram (`bunpin:check`,
 `test:hooks`, `test:falsificacao`), são 4 linhas podres esperando re-medição — e re-medir as 16 com os
 31 gates é uma rodada de horas que depende da M2 estar vazia, como esta seção mostrou.
+
+## A quarta segunda porta fechada (2026-09-21) — o limb que só a suíte alcança
+
+A decisão que a seção acima deixou como chip foi tomada: **sai o passo, fica o limb.** O que
+inclinou não foi o precedente das outras três — foi a medição do único argumento que sustentava
+"manter", feita antes de tocar em código:
+
+| experimento | pergunta | resultado |
+|---|---|---|
+| A | com o step FORA do `ci.yml`, o `exclusividade` acusa? | **MUDO** — rc=0, zero menções a `gates:frescura`, zero `REPROVA`. Ele cobra linha de matriz para gate PRESENTE no `ci.yml`; a direção inversa não tem veredito |
+| B | e o próprio gate? | acusa **`CENSO-OBSOLETO`** sobre si mesmo, rc=1, contra um espelho da raiz real cujo controle estava VERDE (`FRESCURA-OK`) |
+
+Juntos, os dois dizem o que a leitura de código sozinha não diria: **a rede contra "o step sumiu do
+`ci.yml`" era real e era única** — e existia por ACIDENTE, dentro de uma execução que no resto era
+duplicata pura. É o ponto cego estrutural de todo auto-vigia: *não reprova quando não roda*. O step
+jamais o cobre sobre si mesmo, por mais que rode.
+
+Então a execução duplicada saiu e o limb ficou NOMEADO, na forma mais estreita que o cobre —
+`step_no_ci`, que casa a invocação numa linha **não-comentada** do `ci.yml`. O texto cru não serve:
+o `ci.yml` cita esta suíte em comentário logo acima do step, e um `grep` ingênuo leria a própria
+prosa como se fosse a invocação — o mesmo erro que o gate evita parseando blocos `run:` em vez do
+YAML inteiro. É a escolha do #2528 (a fixture assumiu o limb `MAX_LINE` que o repo real cobria por
+acidente), com o eixo invertido: aqui a suíte assume EXPLICITAMENTE o pedaço que só ela alcança e
+larga o resto.
+
+A sonda nasce falsificável: **S13** sabota uma CÓPIA do `ci.yml` — escrever no real é o que o motor
+acusa como `GATE-ESCREVEU`, e é a razão de `exclusividade-gate.ts` aceitar `--ci <arq>` — com o
+controle exigido antes e na MESMA invocação, porque sonda sempre-ausente aprovaria a sabotagem sem
+provar nada. 13 sabotagens × 2 locales: 26 ok, 0 falhas.
+
+### A prova da saída
+
+Mesma invocação do CI, alvo REAL (`docs/agent/deploy.md`), controle exigido verde antes da 1ª
+sabotagem e restauração conferida por CONTEÚDO (sha256 de volta ao original) a cada locale:
+
+| `LC_ALL` | fase | `gates:frescura` (o step) | `test:hooks` (a suíte) | porta VELHA reinstalada |
+|---|---|---|---|---|
+| `C` | controle | rc=0 · `FRESCURA-OK` | rc=0 (136 s) | — |
+| `C` | **sabotado** | **rc=1 · `NAO-CITADO`** (1 s) | **rc=0** (130 s) | **rc=1** |
+| `pt_BR.UTF-8` | controle | rc=0 · `FRESCURA-OK` | rc=0 (135 s) | — |
+| `pt_BR.UTF-8` | **sabotado** | **rc=1 · `NAO-CITADO`** (0 s) | **rc=0** (142 s) | **rc=1** |
+
+Lida por coluna: **a detecção ficou** (o step reprova com `NAO-CITADO` sob o defeito) e **a duplicata
+saiu** (a suíte de hooks fica verde). A terceira medida é a que separa isto de fabricar exclusividade:
+**a porta VELHA, reinstalada sob o MESMO defeito, reprova** — logo a sabotagem continua visível a quem
+olha, e o verde do `test:hooks` é ausência de OLHO, não ausência de defeito. Sem essa terceira coluna,
+"tirei o detector" e "tirei a duplicata" produzem a mesma tabela.
+
+### Dois tropeços do instrumento, ambos fail-closed
+
+- **BSD `sed` não expande `\n` no replacement.** A primeira montagem da porta velha saiu silenciosamente
+  sem o passo reinstalado. Rodar assim teria produzido "a porta velha não reprova" sobre um arquivo onde
+  ela nem existia — o veredito EXATAMENTE invertido, e a favor deste PR. Pegou porque a montagem exige
+  resposta POSITIVA (`grep -q` do passo reinstalado + `bash -n`) antes de rodar qualquer coisa.
+- **`$` em `grep` é âncora de fim de linha.** O padrão de conferência era `cd "$RAIZ_REPO" && bun "$GATE"`,
+  e sem `-F` ele nunca casaria: a mesma guarda acima daria ABORTA para sempre. Presente-porém-quebrada
+  esvazia o guard igual à ausente — por isso a conferência é `grep -qF`.
+
+Os dois são a mesma família do catálogo de [evidência positiva em shell](evidencia-positiva-shell.md):
+o shell fabrica veredito, e quem mede tem de exigir o sinal POSITIVO de que a sabotagem existe antes de
+cobrar o vermelho dela.
+
+### O que fica DEFASADO
+
+O `EXCLUSIVIDADE_ZERO` de `censo-sem-o-gate` na matriz: a causa dele (o `test:hooks` co-pegando) saiu do
+repo, mas a linha só muda com re-medição — a rodada de horas que depende da M2 vazia. O `manifesto.def`
+carrega o aviso, como já carrega o do `bun-despinado`. E `scripts/test-gates-frescura.sh` é fonte do
+`test:hooks`: as linhas da matriz que o medem ficam PODRES (aviso, rc=0), somando-se às que o #2528/#2530
+já deixaram.
 
 ## A regra
 
