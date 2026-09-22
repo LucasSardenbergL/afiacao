@@ -729,9 +729,13 @@ jobs:
       # 2026-08-23) e era a UNICA mencao de 5 gates num CI que ja tinha 28. Aceitar prosa que
       # envelhece faria o gate nascer incapaz de pegar o proprio caso de origem: sempre-verde e o
       # espelho de sempre-vermelha.
-      # Este step e o eixo de DENTRO — ele le o ci.yml morando no ci.yml. Os de fora sao
+      # Este step e o eixo de DENTRO — ele le o ci.yml morando no ci.yml — e desde 2026-09-21 e o
+      # DONO UNICO da auditoria do repo real: a suite de hooks rodava a mesma invocacao na mesma
+      # arvore, o que e segunda porta e nao segundo detector. Os eixos de fora sao
       # `gates-frescura-check.test.ts` (vitest, fixtures sinteticas) e `test-gates-frescura.sh`
-      # (bash, sabota copia real), este ultimo sob `test:hooks` e `test:falsificacao`.
+      # (bash, raiz SINTETICA sabotada), este ultimo sob `test:hooks` e `test:falsificacao`.
+      # A suite guarda um limb que este step nao alcanca: se a linha `run:` abaixo sair daqui, o
+      # gate deixa de rodar e ninguem mais confere o censo — `exclusividade` nao acusa (rc=0).
       - name: Frescura do manual (CLAUDE.md <-> ci.yml/hooks, dois sentidos)
         run: bun run gates:frescura
 

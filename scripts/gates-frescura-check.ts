@@ -77,8 +77,11 @@
  * que vigia. Três eixos ficam de fora:
  *   1. `gates-frescura-check.test.ts` (vitest) exercita as funções puras sobre fixtures sintéticas,
  *      sem tocar o `ci.yml` real;
- *   2. `scripts/test-gates-frescura.sh` roda o gate DE VERDADE contra cópias sabotadas num
- *      diretório temporário, por outro runner (bash), sob `test:hooks` e `test:falsificacao`;
+ *   2. `scripts/test-gates-frescura.sh` roda o gate DE VERDADE contra uma raiz SINTÉTICA sabotada
+ *      num diretório temporário, por outro runner (bash), sob `test:hooks` e `test:falsificacao`.
+ *      Ele NÃO audita o repo real (isso é este step, e rodar os dois era segunda porta), mas vigia
+ *      o que este step não pode vigiar: a presença deste próprio step no `ci.yml` — auto-vigia não
+ *      reprova quando não roda, e o `exclusividade` fica mudo nesse caso (medido em 2026-09-21);
  *   3. o sentido 1 confere existência contra `package.json` e a árvore versionada — fontes que não
  *      são o `ci.yml`.
  */
