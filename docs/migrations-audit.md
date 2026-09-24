@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **555** custom migrations totais
-- **1826** objetos esperados (criados por estas migrations)
+- **556** custom migrations totais
+- **1827** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 594
   - `rls_policy`: 462
   - `index`: 259
-  - `cron_job`: 171
+  - `cron_job`: 172
   - `table`: 166
   - `trigger`: 92
   - `view`: 78
@@ -4559,6 +4559,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260924120000_tint_promote_tombstone_fase5.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260924163250_cron_sku_items_2h_proprio.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.afiacao_omie_oben_sku_items_2h` | — |
 
 ## Próximos passos por status
 
