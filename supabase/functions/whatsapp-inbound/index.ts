@@ -1,4 +1,7 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+
+// Cliente sem schema tipado (tabelas fora do Database gerado) — evita `never` no typecheck Deno.
+type Db = SupabaseClient<any>;
 
 // Espelho do helper puro testado em src/lib/whatsapp/inbound.ts (Deno não importa do src/).
 function waPhoneCandidates(input: string | null | undefined): string[] {
