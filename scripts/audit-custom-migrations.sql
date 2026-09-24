@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 553
+-- Total de custom migrations: 554
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -594,6 +594,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260918200000', 'data_health_sync_reprocess_saude', '20260918200000_data_health_sync_reprocess_saude.sql'),
   ('20260920210000', 'sync_reprocess_retry_nao_liquida_erro', '20260920210000_sync_reprocess_retry_nao_liquida_erro.sql'),
   ('20260920233000', 'sync_reprocess_degradado_so_das_vigiadas', '20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql'),
+  ('20260922225449', 'oportunidade_erro_terminal_nao_bloqueia_oferta', '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql'),
   ('20260922225500', 'data_health_portal_humano_critico_apos_24h', '20260922225500_data_health_portal_humano_critico_apos_24h.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2408,6 +2409,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_sync_reprocess_saude', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('sync_reprocess_retry_nao_liquida_erro', 'function', 'public', '_data_health_compute', ''),
   ('sync_reprocess_degradado_so_das_vigiadas', 'function', 'public', '_data_health_compute', ''),
+  ('oportunidade_erro_terminal_nao_bloqueia_oferta', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
   ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', '')
 ),
 obj_status AS (
@@ -4270,6 +4272,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_sync_reprocess_saude', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('sync_reprocess_retry_nao_liquida_erro', 'function', 'public', '_data_health_compute', ''),
   ('sync_reprocess_degradado_so_das_vigiadas', 'function', 'public', '_data_health_compute', ''),
+  ('oportunidade_erro_terminal_nao_bloqueia_oferta', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
   ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', '')
 )
 SELECT
@@ -4298,7 +4301,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 112.
+-- Funções redefinidas com corpo extraível: 113.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4583,6 +4586,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reposicao_pedido_auto_aprovavel', 1, '20260610150000_reposicao_auto_aprovacao_piloto.sql', 'a169166d1b33f40a5c7a82e1ad45e297'),
   ('public', 'reposicao_pedido_auto_aprovavel', 2, '20260615210000_reposicao_auto_aprovacao_v2.sql', 'af98b16e4efefa646d6a206be52c725b'),
   ('public', 'reposicao_pedido_auto_aprovavel', 3, '20260629140000_reposicao_preco_ausente_null.sql', '3a26656e94c9bbd8db410c2a33c1a704'),
+  ('public', 'gerar_pedidos_oportunidade_ciclo', 1, '20260611120000_reposicao_fixes_codex_711.sql', '0b88073f4ac26f6c3aedc8055a5c7ab7'),
+  ('public', 'gerar_pedidos_oportunidade_ciclo', 2, '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql', 'feeda17a3271a3791a39db4870aae2da'),
   ('public', 'confirmar_vinculo_boletim', 1, '20260611140000_kb_fundacao_casamento.sql', '69ec58b207bc65e6437f16e391f7a109'),
   ('public', 'confirmar_vinculo_boletim', 2, '20260613120000_kb_0c_aprovacao_master_only.sql', 'b8332df9e8b9ed7291daccf313524f23'),
   ('public', 'kbv_block_mutation', 1, '20260613150000_kb_spec_versions_faseA.sql', 'a56599c70fe40052ba5cb31aee16c4c4'),
