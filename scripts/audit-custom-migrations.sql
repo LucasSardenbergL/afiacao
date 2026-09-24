@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 554
+-- Total de custom migrations: 555
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -595,7 +595,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260920210000', 'sync_reprocess_retry_nao_liquida_erro', '20260920210000_sync_reprocess_retry_nao_liquida_erro.sql'),
   ('20260920233000', 'sync_reprocess_degradado_so_das_vigiadas', '20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql'),
   ('20260922225449', 'oportunidade_erro_terminal_nao_bloqueia_oferta', '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql'),
-  ('20260922225500', 'data_health_portal_humano_critico_apos_24h', '20260922225500_data_health_portal_humano_critico_apos_24h.sql')
+  ('20260922225500', 'data_health_portal_humano_critico_apos_24h', '20260922225500_data_health_portal_humano_critico_apos_24h.sql'),
+  ('20260924120000', 'tint_promote_tombstone_fase5', '20260924120000_tint_promote_tombstone_fase5.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
