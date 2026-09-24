@@ -28,9 +28,8 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { cabeEspera } from "../_shared/omie-deadline.ts";
 import {
-  contarFilaParada,
+  avaliarFilaParada,
   decidirErroDoRun,
-  elegivelDesdeMs,
   motivoDaTentativa,
   saidaDoLaco,
 } from "./adiamento.ts";
@@ -90,7 +89,8 @@ interface EmpresaSummary {
   /** NFes para as quais ao menos 1 request SAIU para a Omie (inclui as que depois foram adiadas).
    *  Deadline vencido antes do 1º request conta ZERO. Sozinho não decide nada. */
   consultas_tentadas: number;
-  /** Requests FÍSICOS ao Omie, retentativas incluídas — o consumo de cota do run. */
+  /** Requests INICIADOS ao Omie (invocações do request, retentativas incluídas) — o consumo de
+   *  cota do run. Uma invocação que lançou antes de sair para a rede também conta. */
   requisicoes_omie: number;
   /** NFes que a Omie RESPONDEU (2xx, objeto JSON): com itens, 0 itens ou faultstring de negócio. */
   consultas_detalhadas: number;
@@ -100,11 +100,13 @@ interface EmpresaSummary {
   consultas_adiadas_por_limite: number;
   /** NFes com falha REAL (HTTP não-2xx, socket abortado, corpo que não é objeto JSON) — marcam tentativa. */
   consultas_falhas: number;
-  /** NFes da fila elegível deste run, com nIdReceb, ELEGÍVEIS há mais de 48h (fim do backoff, ou o
-   *  maior entre nascimento e faturamento se nunca tentada), que o run NÃO tratou (nem resposta nem
-   *  falha marcada): adiadas por limite ou não alcançadas pelo guard. >0 ⇒ `error` "fila não anda"
-   *  — o sensor pelo DADO que o adiamento silencioso exige (adiamento.ts). */
-  fila_parada_48h: number;
+  /** RECEBIMENTOS da fila elegível deste run, com nIdReceb, com alguma linha ELEGÍVEL há mais de
+   *  48h (fim do backoff, ou o maior entre nascimento e faturamento se nunca tentada), que o run NÃO
+   *  tratou (nem resposta nem falha marcada): adiados por limite ou não alcançados pelo guard. >0 ⇒
+   *  `error` "fila não anda" — o sensor pelo DADO que o adiamento silencioso exige (adiamento.ts).
+   *  `null` = NÃO AVALIADO: chamada via orquestrador (o :15 do jobid 52), onde o adiamento por
+   *  REDUNDANT é esperado enquanto o sku-items for step dele — ausente, nunca zero. */
+  fila_parada_48h: number | null;
   itens_processados: number;
   /** Itens crus fundidos por SKU repetido na mesma NFe (Σ n_itens_agregados − 1). >0 = o
    *  bug de sobrescrita item-a-item teria mordido aqui; agora são somados, não perdidos. */
@@ -626,6 +628,10 @@ Deno.serve(async (req) => {
   // cron = x-cron-secret (cron diário direto) OU service-role (via orquestrador omie-cron-diario,
   // que chama as edges com Bearer SERVICE_ROLE, sem repassar o x-cron-secret). user JWT (staff) = manual.
   const svcKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  // Via ORQUESTRADOR = Bearer service-role SEM x-cron-secret (é assim que o `omie-cron-diario` chama
+  // os steps). Só decide se o sensor `fila_parada_48h` é avaliado — ver adiamento.ts.
+  const viaOrquestrador = !req.headers.get("x-cron-secret") && !!svcKey &&
+    req.headers.get("Authorization") === `Bearer ${svcKey}`;
   const triggeredBy = (req.headers.get("x-cron-secret") ||
     (svcKey && req.headers.get("Authorization") === `Bearer ${svcKey}`)) ? "cron" : "manual";
 
@@ -768,9 +774,10 @@ Deno.serve(async (req) => {
     };
 
     const skusVistos = new Set<number>();
-    // NFes que o run TRATOU (a Omie respondeu, ou a falha foi marcada no controle) — o sensor
-    // "fila não anda" (adiamento.ts) mede o que ficou de fora: elegível, consultável, antiga.
-    const tratadas = new Set<string>();
+    // RECEBIMENTOS (nIdReceb) que o run TRATOU: a Omie respondeu, ou a falha foi MARCADA no controle.
+    // Por recebimento, e não por linha, porque a chamada é por recebimento — as linhas irmãs saem
+    // da fila juntas. O sensor "fila não anda" (adiamento.ts) mede o que ficou de fora.
+    const recebimentosTratados = new Set<string>();
     // Requests físicos ao Omie (retentativas incluídas) — mutável para sobreviver a exceção.
     const contador: ContadorRequisicoes = { requisicoes: 0 };
     let nfesInspecionadas = 0;
@@ -829,8 +836,8 @@ Deno.serve(async (req) => {
         // persistiu, deadline vencido): NÃO é defeito da NFe → NÃO marca tentativa (ela mantém as
         // tentativas que tinha e segue elegível) e NÃO conta como falha para o status do run.
         // Punir aqui era o incidente OBEN 2026-08-27..09-23: backoff de 6h por um limite de 50s e
-        // 46 runs `error` falsos. NFe que siga sem consulta por mais de 48h elegível grita pelo
-        // sensor `fila_parada_48h` — pelo dado, não pelo status da chamada.
+        // 46 runs `error` falsos. Recebimento que siga sem consulta por mais de 48h elegível grita
+        // pelo sensor `fila_parada_48h` — pelo dado, não pelo status da chamada.
         summary.consultas_adiadas_por_limite++;
         console.warn(
           `[sync-sku-items] ConsultarRecebimento ${nIdReceb} ADIADA (${resultado.adiamento.motivo}): ${resultado.adiamento.detalhe}`,
@@ -844,7 +851,6 @@ Deno.serve(async (req) => {
 
       if (resultado.tipo === "falhou") {
         summary.consultas_falhas++;
-        tratadas.add(nfeRaw.id);
         summary.controle_marcacoes++;
         const marcou = await marcarTentativa(
           supabase,
@@ -852,14 +858,17 @@ Deno.serve(async (req) => {
           tentativasPrevias + 1,
           `consulta_falhou: ${resultado.mensagem}`,
         );
-        if (!marcou) summary.controle_falhas++;
+        // Falha só conta como TRATADA se a marcação persistiu: sem ela a NFe não ganhou backoff nem
+        // progresso, e chamá-la de tratada escondia do sensor a NFe parada (achado do Codex).
+        if (marcou) recebimentosTratados.add(nIdReceb);
+        else summary.controle_falhas++;
         console.error(`[sync-sku-items] ConsultarRecebimento ${nIdReceb} falhou:`, resultado.mensagem);
         continue;
       }
 
       const detalhe = resultado.detalhe;
       summary.consultas_detalhadas++;
-      tratadas.add(nfeRaw.id);
+      recebimentosTratados.add(nIdReceb);
 
       const itensEhLista = Array.isArray(detalhe?.itensRecebimento);
       const itens: OmieRecebimentoItem[] = Array.isArray(detalhe?.itensRecebimento)
@@ -1032,21 +1041,15 @@ Deno.serve(async (req) => {
 
     summary.skus_distintos = skusVistos.size;
     summary.requisicoes_omie = contador.requisicoes;
-    // Sensor pelo DADO (medido DEPOIS do laço, sobre a fila INTEIRA — entram também as não
-    // alcançadas pelo guard): NFe consultável, elegível há mais de 48h, que o run não tratou.
-    summary.fila_parada_48h = contarFilaParada(
-      fila.map((n) => ({
-        id: n.id,
-        nIdReceb: n.nIdReceb,
-        elegivelDesdeMs: elegivelDesdeMs(
-          controleMap.get(n.id),
-          n.created_at,
-          n.t2_data_faturamento,
-          skuItemsBackoffMs,
-        ),
-      })),
-      tratadas,
+    // Sensor pelo DADO (medido DEPOIS do laço, sobre a fila elegível ANTES do dedup — entram as não
+    // alcançadas pelo guard e as irmãs, cada recebimento com a sua linha mais antiga): recebimento
+    // consultável, elegível há mais de 48h, que o run não tratou. Via orquestrador: não avaliado.
+    summary.fila_parada_48h = viaOrquestrador ? null : avaliarFilaParada(
+      filaOrdenada,
+      controleMap,
+      recebimentosTratados,
       Date.now(),
+      skuItemsBackoffMs,
     );
     // Status do run — regras e precedência em adiamento.ts (decidirErroDoRun), testadas em Deno:
     //   · falha sistêmica = falha REAL com 0 resposta. NFe sem nIdReceb não é tentativa (OBEN

@@ -19,7 +19,7 @@
 //   (d) o controle morto é medido contra as marcações FEITAS, não contra as consultas tentadas.
 import {
   adiarConsulta,
-  contarFilaParada,
+  avaliarFilaParada,
   decidirErroDoRun,
   decidirLimite,
   ehConsultaAdiada,
@@ -129,6 +129,11 @@ Deno.test("motivoDaTentativa: o texto do controle diz o que ACONTECEU — upsert
   const base = { faultstring: null, itensEhLista: true, itensRecebidos: 0, itensResolvidos: 0, itensGravados: 0, ultimoErroUpsert: null };
   assertEquals(motivoDaTentativa({ ...base, itensRecebidos: 3, itensResolvidos: 2, itensGravados: 2 }), "ok_com_itens");
   assertEquals(
+    motivoDaTentativa({ ...base, itensRecebidos: 3, itensResolvidos: 3, itensGravados: 2, ultimoErroUpsert: "check constraint" }),
+    "ok_parcial: 2 de 3 gravados; check constraint",
+    "gravação PARCIAL não pode se esconder atrás de ok_com_itens",
+  );
+  assertEquals(
     motivoDaTentativa({ ...base, itensRecebidos: 3, itensResolvidos: 2, itensGravados: 0, ultimoErroUpsert: "permission denied" }),
     "upsert_falhou: permission denied",
     "antes virava ok_0_itens — a mentira de que a NFe não tinha itens",
@@ -162,20 +167,42 @@ Deno.test("elegivelDesdeMs: tentada → fim do backoff; nunca tentada → o MAIO
   assertEquals(elegivelDesdeMs({ tentativas: 1, ultima_tentativa: "lixo" }, iso(agora), iso(agora), backoffFalso), null);
 });
 
-Deno.test("contarFilaParada: conta só NFe com nIdReceb, elegível há mais de 48h e NÃO tratada pelo run", () => {
+/** Linha da fila como o índice a entrega ao sensor (antes do dedup). */
+function linha(id: string, nIdReceb: string | null, criadaHaH: number | null, faturadaHaH: number | null, agora: number) {
+  return {
+    id,
+    nIdReceb,
+    created_at: criadaHaH === null ? null : iso(agora - criadaHaH * HORA),
+    t2_data_faturamento: faturadaHaH === null ? null : iso(agora - faturadaHaH * HORA),
+  };
+}
+const SEM_CONTROLE = new Map<string, { tentativas: number; ultima_tentativa: string | null }>();
+
+Deno.test("avaliarFilaParada: conta RECEBIMENTO com nIdReceb, elegível há mais de 48h e NÃO tratado pelo run", () => {
   const agora = T0 + 1_000 * HORA;
   const fila = [
-    { id: "A", nIdReceb: "1", elegivelDesdeMs: agora - 60 * HORA }, // parada e não tratada → conta
-    { id: "B", nIdReceb: null, elegivelDesdeMs: agora - 90 * HORA }, // sem nIdReceb: gap de cobertura, contado à parte
-    { id: "C", nIdReceb: "3", elegivelDesdeMs: agora - 30 * HORA }, // elegível há pouco: ainda no prazo
-    { id: "D", nIdReceb: "4", elegivelDesdeMs: agora - 70 * HORA }, // parada, mas tratada neste run
-    { id: "E", nIdReceb: "5", elegivelDesdeMs: null }, // indecidível: não se afirma que parou
-    { id: "F", nIdReceb: "6", elegivelDesdeMs: agora - ELEGIVEL_HA_MUITO_MS }, // exatamente no limite: NÃO é "há mais que"
+    linha("A", "1", 60, 60, agora), // parado e não tratado → conta
+    linha("B", null, 90, 90, agora), // sem nIdReceb: gap de cobertura, contado à parte
+    linha("C", "3", 30, 30, agora), // elegível há pouco: ainda no prazo
+    linha("D", "4", 70, 70, agora), // parado, mas tratado neste run
+    linha("E", "5", null, null, agora), // indecidível: não se afirma que parou
+    linha("F", "6", 48, 48, agora), // exatamente no limite: NÃO é "há mais que"
   ];
-  assertEquals(contarFilaParada(fila, new Set(["D"]), agora), 1);
-  assertEquals(contarFilaParada(fila, new Set(["A", "D"]), agora), 0, "tratar a parada zera a contagem");
-  assertEquals(contarFilaParada([], new Set(), agora), 0, "fila vazia");
-  assertEquals(contarFilaParada(fila, new Set(["D"]), agora, 100 * HORA), 0, "limite maior que a fila inteira");
+  assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(["4"]), agora, backoffFalso), 1);
+  assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(["1", "4"]), agora, backoffFalso), 0, "tratar o parado zera a contagem");
+  assertEquals(avaliarFilaParada([], SEM_CONTROLE, new Set(), agora, backoffFalso), 0, "fila vazia");
+  assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(["4"]), agora, backoffFalso, 100 * HORA), 0, "limite maior que a fila inteira");
+});
+
+Deno.test("avaliarFilaParada: irmãs do mesmo recebimento — vale a MAIS ANTIGA, e o recebimento conta UMA vez (achado do Codex)", () => {
+  // A fila deduplicada elegeria a irmã nunca tentada (2h) e esconderia a irmã tentada, parada há
+  // 60h. O sensor recebe a fila ANTES do dedup e leva a menor "elegível desde" do recebimento.
+  const agora = T0 + 1_000 * HORA;
+  const controle = new Map([["velha", { tentativas: 1, ultima_tentativa: iso(agora - 70 * HORA) }]]);
+  const fila = [linha("virgem", "77", 2, 2, agora), linha("velha", "77", 200, 200, agora), linha("outra", "77", 60, 60, agora)];
+  // velha: tentada, backoff falso de 10h ⇒ elegível há 60h ⇒ o recebimento 77 está parado.
+  assertEquals(avaliarFilaParada(fila, controle, new Set(), agora, backoffFalso), 1, "três irmãs, um recebimento");
+  assertEquals(avaliarFilaParada(fila, controle, new Set(["77"]), agora, backoffFalso), 0, "tratar a eleita trata as irmãs");
 });
 
 Deno.test("REGRESSÃO MEDIDA: a NFe de pedido faturada há 30h e adiada no :15 NÃO para a fila (a régua do t2 a contaria)", () => {
@@ -183,11 +210,9 @@ Deno.test("REGRESSÃO MEDIDA: a NFe de pedido faturada há 30h e adiada no :15 N
   // do orquestrador, toda NFe de 1–3 dias é adiada no :15 (REDUNDANT) e só o diário das 07:00 a
   // alcança. Com "faturada há >24h" ela gritaria em runs SEGUIDOS — o e-mail falso de volta.
   const agora = T0 + 1_000 * HORA;
-  const desde = elegivelDesdeMs(undefined, iso(agora - 120 * HORA), iso(agora - 30 * HORA), backoffFalso);
-  assertEquals(contarFilaParada([{ id: "P", nIdReceb: "9", elegivelDesdeMs: desde }], new Set(), agora), 0);
+  assertEquals(avaliarFilaParada([linha("P", "9", 120, 30, agora)], SEM_CONTROLE, new Set(), agora, backoffFalso), 0);
   // E a mesma NFe, se o diário também não a alcançar por mais um dia, passa a contar.
-  const desdeVelha = elegivelDesdeMs(undefined, iso(agora - 120 * HORA), iso(agora - 54 * HORA), backoffFalso);
-  assertEquals(contarFilaParada([{ id: "P", nIdReceb: "9", elegivelDesdeMs: desdeVelha }], new Set(), agora), 1);
+  assertEquals(avaliarFilaParada([linha("P", "9", 120, 54, agora)], SEM_CONTROLE, new Set(), agora, backoffFalso), 1);
 });
 
 Deno.test("decidirErroDoRun: run só com ADIAMENTO de NFes elegíveis há pouco fecha complete — a assinatura do incidente vira undefined", () => {
@@ -203,6 +228,15 @@ Deno.test("decidirErroDoRun: falha REAL com 0 OK continua error — o alerta ver
   );
   // 1 resposta basta para não ser sistêmico, mesmo com falhas.
   assertEquals(decidirErroDoRun(estado({ consultas_detalhadas: 1, consultas_falhas: 2, controle_marcacoes: 3 })), undefined);
+});
+
+Deno.test("decidirErroDoRun: sensor NÃO avaliado (null, via orquestrador) nunca vira error nem zero", () => {
+  assertEquals(decidirErroDoRun(estado({ fila_parada_48h: null })), undefined);
+  // e não mascara as outras regras
+  assertEquals(
+    decidirErroDoRun(estado({ fila_parada_48h: null, consultas_falhas: 1, controle_marcacoes: 1 })),
+    "1 consultas Omie falharam, 0 OK — rate-limit/indisponibilidade?",
+  );
 });
 
 Deno.test("decidirErroDoRun: 'fila não anda' grita pela NFe parada MESMO com outras respondendo", () => {

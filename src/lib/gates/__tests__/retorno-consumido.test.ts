@@ -98,8 +98,7 @@ describe('retorno-consumido: as edges REAIS de hoje passam (controle da varredur
     ['supabase/functions/omie-sync-sku-items/index.ts', 'skuItemsCompararFila'],
     ['supabase/functions/omie-sync-sku-items/index.ts', 'agregarItensRecebimento'],
     ['supabase/functions/omie-sync-sku-items/index.ts', 'decidirErroDoRun'],
-    ['supabase/functions/omie-sync-sku-items/index.ts', 'contarFilaParada'],
-    ['supabase/functions/omie-sync-sku-items/index.ts', 'elegivelDesdeMs'],
+    ['supabase/functions/omie-sync-sku-items/index.ts', 'avaliarFilaParada'],
     ['supabase/functions/omie-sync-sku-items/index.ts', 'motivoDaTentativa'],
     ['supabase/functions/analyze-unified-order/index.ts', 'acumularUsoCache'],
   ];

@@ -2007,9 +2007,22 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
       expect(fonte, `REGRESSÃO (${nome}): voltou a LANÇAR no rate limit persistente`).not.toMatch(/rate limit após \$\{/);
     }
     expect(
-      vereditoFronteira(src, 'contarFilaParada'),
+      vereditoFronteira(src, 'avaliarFilaParada'),
       'REGRESSÃO: o sensor "fila não anda" é medido e DESCARTADO',
     ).toBe('ok');
+    // O sensor recebe a fila elegível ANTES do dedup, INTEIRA. Achado do Codex: trocar o argumento
+    // por `fila.slice(0, 0)` deixava o `vereditoFronteira` verde (o retorno segue consumido) e o
+    // sensor devolvia 0 para sempre. O primeiro argumento é exigido LITERAL.
+    expect(src, 'REGRESSÃO: o sensor não recebe mais a fila elegível inteira (filaOrdenada)')
+      .toMatch(/avaliarFilaParada\(\s*filaOrdenada\s*,/);
+    // Falha só é TRATADA se a marcação persistiu (achado do Codex: NFe com socket falhando e
+    // controle quebrado sumia do sensor).
+    const iniFalha = src.indexOf('if (resultado.tipo === "falhou")');
+    expect(iniFalha, 'sentinela: o laço trata o desfecho FALHOU num ramo próprio').toBeGreaterThan(-1);
+    const ramoFalha = src.slice(iniFalha, src.indexOf('continue;', iniFalha));
+    expect(ramoFalha, 'REGRESSÃO: falha conta como tratada mesmo sem a marcação persistir')
+      .toMatch(/if \(marcou\) recebimentosTratados\.add\(nIdReceb\);/);
+    expect(ramoFalha.match(/recebimentosTratados\.add/g)?.length ?? 0, 'só UMA entrada nos tratados, a condicional').toBe(1);
   });
 
   it('controle da fila é FAIL-CLOSED: tabela ausente grita, não degrada em silêncio', () => {

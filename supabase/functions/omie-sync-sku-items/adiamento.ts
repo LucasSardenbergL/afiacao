@@ -30,7 +30,7 @@
 // ── "complete" não prova efeito ──────────────────────────────────────────────────────────────
 // Deixar de gritar no adiamento abre o furo oposto: uma fila que NUNCA anda (adiada em todo run,
 // ou o guard vencendo antes de alcançá-la) fecharia `complete` para sempre. O sensor
-// `contarFilaParada` + `decidirErroDoRun` fecham esse furo pelo lado do DADO: NFe da fila elegível
+// `avaliarFilaParada` + `decidirErroDoRun` fecham esse furo pelo lado do DADO: NFe da fila elegível
 // deste run, consultável (com nIdReceb), ELEGÍVEL HÁ MAIS DE 48h, que o run não tratou (nem
 // resposta, nem falha marcada) ⇒ `error` "fila não anda". Independe da vazão das OUTRAS NFes do
 // run — a mesma NFe adiada para sempre atrás de três sucessos também grita (achado do Codex no
@@ -45,6 +45,12 @@
 // quando já tentada; senão o MAIOR entre o nascimento da linha e o faturamento (o recebimento não
 // é consultável antes de existir). O limiar de 48h garante ao menos UMA passada do diário das 07:00
 // — o único run que alcança NFe adiada no :15 ou fora da janela de 3 dias — antes de gritar.
+//
+// ⚠️ E o sensor NÃO é avaliado quando a chamada vem do ORQUESTRADOR (o :15 do jobid 52): ali o
+// adiamento por REDUNDANT é ESPERADO enquanto o sku-items for step dele, e uma NFe cujo nIdReceb
+// chegou depois do diário das 07:00 com faturamento de 60h ficaria "parada" nos dois ciclos
+// seguintes — página falsa (achado do Codex no código, reproduzido). No caminho do orquestrador o
+// adiamento mede a COLISÃO, não a fila. Depois da parte B o orquestrador não chama mais esta edge.
 
 import { cabeEspera } from "../_shared/omie-deadline.ts";
 
@@ -168,7 +174,10 @@ export function saidaDoLaco(motivo: MotivoAdiamento): "proxima" | "encerrar" {
  * RESPONDIDA). Nenhuma função, view ou tela lê estes valores (auditado 2026-09-24: pg_proc,
  * pg_get_viewdef e src/) — são diagnóstico para quem abre a tabela, então têm de dizer a verdade:
  *
- *   · gravou ≥1 item → `ok_com_itens`;
+ *   · gravou parte dos itens e parte falhou → `ok_parcial: g de r gravados; …` — o item que falhou
+ *     some da fila no run seguinte (a linha gravada já tira o tracking da fila: achado do Codex,
+ *     pré-existente, fora deste conserto — ver o histórico); o motivo ao menos o deixa à vista;
+ *   · gravou todos os itens → `ok_com_itens`;
  *   · resolveu itens mas NENHUM upsert pegou → `upsert_falhou: …` (antes virava `ok_0_itens`, a
  *     mentira de "a NFe não tem itens" quando quem falhou foi o nosso banco);
  *   · faultstring de negócio → `fault: …`;
@@ -186,6 +195,9 @@ export function motivoDaTentativa(r: {
   itensGravados: number;
   ultimoErroUpsert: string | null;
 }): string {
+  if (r.itensGravados > 0 && r.itensResolvidos > r.itensGravados) {
+    return `ok_parcial: ${r.itensGravados} de ${r.itensResolvidos} gravados; ${r.ultimoErroUpsert ?? "sem mensagem"}`;
+  }
   if (r.itensGravados > 0) return "ok_com_itens";
   if (r.itensResolvidos > 0) return `upsert_falhou: ${r.ultimoErroUpsert ?? "sem mensagem"}`;
   if (r.faultstring) return `fault: ${r.faultstring}`;
@@ -230,29 +242,44 @@ export function elegivelDesdeMs(
 }
 
 /**
- * Quantas NFes da fila ELEGÍVEL deste run (já filtrada por backoff e deduplicada por nIdReceb)
- * têm nIdReceb, estão elegíveis há mais que `limiteMs` e NÃO foram tratadas pelo run — "tratada" =
- * a Omie respondeu OU a falha foi marcada no controle. Sobram as ADIADAS por limite e as NÃO
- * ALCANÇADAS pelo guard.
+ * Quantos RECEBIMENTOS (nIdReceb — a unidade de uma chamada) da fila elegível estão parados: com
+ * alguma linha elegível há mais que `limiteMs` e sem tratamento neste run ("tratado" = a Omie
+ * respondeu, ou a falha foi marcada no controle). Sobram os ADIADOS por limite e os NÃO ALCANÇADOS
+ * pelo guard.
  *
- * Fail-safe no sentido do sensor: "elegível desde" indecidível NÃO conta, NFe sem nIdReceb NÃO
- * conta (não é consultável; é o gap (c) do registry, contado à parte), e exatamente no limite NÃO
- * conta (é "há mais que", não "há tanto quanto").
+ * Recebe a fila ANTES do dedup por nIdReceb, de propósito (achado do Codex no código): a fila
+ * deduplicada elege a irmã NUNCA tentada, e a idade da irmã que está parada há 60h sumia atrás da
+ * de 2h. Aqui cada recebimento leva a MENOR "elegível desde" entre as suas linhas.
+ *
+ * Fail-safe no sentido do sensor: "elegível desde" indecidível não conta, linha sem nIdReceb não
+ * conta (gap (c) do registry, contado à parte), exatamente no limite não conta ("há mais que").
  */
-export function contarFilaParada(
-  fila: readonly { id: string; nIdReceb: string | null; elegivelDesdeMs: number | null }[],
-  tratadas: ReadonlySet<string>,
+export function avaliarFilaParada(
+  filaElegivel: readonly {
+    id: string;
+    nIdReceb: string | null;
+    created_at: string | null;
+    t2_data_faturamento: string | null;
+  }[],
+  controlePorId: ReadonlyMap<string, { tentativas: number; ultima_tentativa: string | null }>,
+  recebimentosTratados: ReadonlySet<string>,
   agoraMs: number,
+  backoffMs: (tentativas: number) => number,
   limiteMs: number = ELEGIVEL_HA_MUITO_MS,
 ): number {
-  let n = 0;
-  for (const nfe of fila) {
-    if (!nfe.nIdReceb) continue;
-    if (tratadas.has(nfe.id)) continue;
-    if (nfe.elegivelDesdeMs === null || !Number.isFinite(nfe.elegivelDesdeMs)) continue;
-    if (agoraMs - nfe.elegivelDesdeMs > limiteMs) n++;
+  const maisAntigaPorRecebimento = new Map<string, number>();
+  for (const linha of filaElegivel) {
+    if (!linha.nIdReceb || recebimentosTratados.has(linha.nIdReceb)) continue;
+    const desde = elegivelDesdeMs(controlePorId.get(linha.id), linha.created_at, linha.t2_data_faturamento, backoffMs);
+    if (desde === null || !Number.isFinite(desde)) continue;
+    const atual = maisAntigaPorRecebimento.get(linha.nIdReceb);
+    if (atual === undefined || desde < atual) maisAntigaPorRecebimento.set(linha.nIdReceb, desde);
   }
-  return n;
+  let parados = 0;
+  for (const desde of maisAntigaPorRecebimento.values()) {
+    if (agoraMs - desde > limiteMs) parados++;
+  }
+  return parados;
 }
 
 /** O que decide o status do run. Os nomes são os do summary da edge — o chamador passa o summary. */
@@ -261,8 +288,9 @@ export interface EstadoDoRun {
   consultas_detalhadas: number;
   /** NFes com falha REAL (HTTP não-2xx, socket, corpo inválido) — as que marcam tentativa. */
   consultas_falhas: number;
-  /** Saída de `contarFilaParada`, medida DEPOIS do laço. */
-  fila_parada_48h: number;
+  /** Saída de `avaliarFilaParada`, medida DEPOIS do laço — ou `null` quando o sensor NÃO foi
+   *  avaliado (chamada via orquestrador; ver o cabeçalho). `null` nunca vira zero nem `error`. */
+  fila_parada_48h: number | null;
   /** Chamadas a `marcarTentativa` feitas no run (1 por NFe respondida ou falhada). */
   controle_marcacoes: number;
   /** Das marcações, quantas NÃO persistiram. */
@@ -299,7 +327,7 @@ export function decidirErroDoRun(e: EstadoDoRun): string | undefined {
   if (e.erros > 0 && e.itens_processados === 0) {
     return `upsert do leadtime falhou em ${e.erros} itens, 0 gravados — grant/RLS/constraint?`;
   }
-  if (e.fila_parada_48h > 0) {
+  if (e.fila_parada_48h !== null && e.fila_parada_48h > 0) {
     return `fila não anda: ${e.fila_parada_48h} NFes elegíveis há >48h ficaram sem consulta neste run (adiadas por limite ou não alcançadas pelo guard)`;
   }
   if (e.recompute_erro) {
