@@ -74,6 +74,7 @@ import * as identifyTool from "../identify-tool/versao.ts";
 import * as analyzeServices from "../analyze-services/versao.ts";
 import * as copilotAnalyze from "../copilot-analyze/versao.ts";
 import * as elevenlabsTranscribe from "../elevenlabs-transcribe/versao.ts";
+import * as cronDiario from "../omie-cron-diario/versao.ts";
 import { SONDA_CRON_ALVOS } from "./sonda-cron-alvos.ts";
 
 /**
@@ -252,6 +253,10 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "analyze-services", mod: analyzeServices },
   { nome: "copilot-analyze", mod: copilotAnalyze },
   { nome: "elevenlabs-transcribe", mod: elevenlabsTranscribe },
+  // 2026-09-24: o ORQUESTRADOR do jobid 52. Os 5 steps dele ganharam sensor na décima leva; ele
+  // não, e ficou inverificável justo quando uma fatia mudou a LISTA de steps (o `sku_items` saiu —
+  // REDUNDANT com o step NFe). Sondar o bundle pré-sensor dispara o ciclo inteiro (versao.ts).
+  { nome: "omie-cron-diario", mod: cronDiario },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -358,6 +363,9 @@ const FORMA_NORMALIZADA = [
   // existem para impedir. Confirma a regra do bloco acima: a FORMA não tem a ver com escrever.
   "analyze-unified-order",
   ...FAN_OUT_QUE_ESCREVE,
+  // 2026-09-24: o orquestrador `omie-cron-diario` é fan-out que escreve (4 steps + 2 RPCs de
+  // reposição). Não entra em FAN_OUT_QUE_ESCREVE porque aquela lista também NOMEIA a oitava leva.
+  "omie-cron-diario",
   // Nona leva: entra na varredura estrutural pelo mesmo motivo da sétima — o preço de um `probe`
   // mal grafado caindo no fluxo real. Aqui ele é o mais alto de todos (e-mail a clientes reais,
   // que não se desfaz). Fica FORA de GATE_PROPRIO de propósito: o gate dela é
@@ -404,6 +412,9 @@ const ANCORA_CLIENT: Record<string, string> = {
   // (`registrarEvento`, o insert em `omie_webhook_events`): a propriedade que o gate protege é a
   // sonda responder antes do IO, e para client de módulo o IO começa no primeiro uso.
   "omie-webhook": "registrarEvento(",
+  // O orquestrador não tem client nenhum: o IO começa no primeiro step (`runStep`, que chama uma
+  // edge que escreve). É ali que a sonda tem de já ter respondido.
+  "omie-cron-diario": "runStep(",
 };
 
 /** Destas o gate NÃO aceita `x-cron-secret`, então a sonda precisa de gate PRÓPRIO. */
@@ -1298,10 +1309,12 @@ Deno.test("nenhuma edge que serve o paginate.ts fica SEM prova de deploy", () =>
 // Décima leva (2026-08-27) — os 5 steps do `omie-cron-diario`. Os gates de FORMA acima já varrem
 // as 4 novas; o que sobra aqui é o que ELAS trazem de próprio: o eco PASSIVO de `versao` em toda
 // resposta (a metade da prova que dispensa invocação) e o parse de corpo que teve de subir.
+// Desde 2026-09-24 são 4 steps: o `omie-sync-sku-items` saiu (REDUNDANT com o step NFe) e ganhou
+// cron próprio — segue no ECO, agora pelo corpo que o cron dele deixa em `net._http_response`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Os 5 steps do `omie-cron-diario`, na ordem em que ele os chama, com a `key` sob a qual cada um
+ * Os steps do `omie-cron-diario`, na ordem em que ele os chama, com a `key` sob a qual cada um
  * aparece em `resultados.<key>.body` da resposta do orquestrador.
  *
  * A `key` está aqui — e não só o nome da edge — porque é ela que o SQL de verificação usa. Uma
@@ -1312,7 +1325,6 @@ const STEPS_CRON_DIARIO: Array<{ edge: string; key: string }> = [
   { edge: "omie-sync-pedidos-compra", key: "pedidos" },
   { edge: "omie-sync-nfes-recebidas", key: "nfes" },
   { edge: "omie-sync-ctes-recebidos", key: "ctes" },
-  { edge: "omie-sync-sku-items", key: "sku_items" },
   { edge: "omie-sync-vendas-items", key: "vendas" },
 ];
 
@@ -1333,6 +1345,11 @@ const STEPS_CRON_DIARIO: Array<{ edge: string; key: string }> = [
 const ECOAM_VERSAO: string[] = [
   ...STEPS_CRON_DIARIO.map((s) => s.edge),
   "analytics-outbox-drain",
+  // Ex-step (2026-09-24): saiu do orquestrador, mas o corpo dela segue chegando a
+  // `net._http_response` — agora DIRETO, pelos crons `afiacao_omie_oben_sku_items_2h` e jobid 53.
+  "omie-sync-sku-items",
+  // O próprio orquestrador: o jobid 52 o chama direto, então o corpo dele JÁ é o que fica gravado.
+  "omie-cron-diario",
 ];
 
 /** O helper de resposta anexa o marcador a TODO corpo, e não só ao da sonda? */
@@ -1424,10 +1441,11 @@ Deno.test("edges do ECO: o corpo do Request é lido UMA vez só", () => {
   }
 });
 
-Deno.test("o orquestrador chama exatamente estes 5 steps, com estas chaves", () => {
+Deno.test("o orquestrador chama exatamente estes 4 steps, com estas chaves", () => {
   // O mapa acima é o que a receita de verificação usa para ler `resultados.<key>.body.versao`. Se
-  // o `omie-cron-diario` ganhar um 6º step, ou renomear uma `key`, este gate falha nomeando a
-  // divergência — em vez de a receita devolver NULL, que se lê como "bundle pré-sensor".
+  // o `omie-cron-diario` ganhar um step, ou renomear uma `key`, este gate falha nomeando a
+  // divergência — em vez de a receita devolver NULL, que se lê como "bundle pré-sensor". É também
+  // o que impede o `sku_items` de VOLTAR a ser step sem ninguém decidir (REDUNDANT, 2026-09-24).
   const cron = removerComentarios(
     Deno.readTextFileSync("supabase/functions/omie-cron-diario/index.ts"),
   );
