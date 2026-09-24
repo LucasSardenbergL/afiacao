@@ -55,7 +55,7 @@
 import { cabeEspera } from "../_shared/omie-deadline.ts";
 
 /** Conjunto FECHADO dos motivos de adiamento — é ele que o guard estrutural confere. */
-export const MOTIVOS_ADIAMENTO = [
+const MOTIVOS_ADIAMENTO = [
   /** A Omie pediu "Aguarde N segundos" e N não cabe antes do deadline do run. */
   "limite_nao_cabe_no_deadline",
   /** A Omie seguiu pedindo espera em TODAS as retentativas que o run permite. */

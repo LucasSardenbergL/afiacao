@@ -28,7 +28,7 @@ import {
   esperaPedidaMs,
 } from "./adiamento.ts";
 
-export interface OmieItemCabec {
+interface OmieItemCabec {
   nIdProduto?: number | string;
   cCodigoProduto?: string;
   cDescricaoProduto?: string;
@@ -39,11 +39,11 @@ export interface OmieItemCabec {
   vTotalItem?: number | string;
 }
 
-export interface OmieItemInfoAdic {
+interface OmieItemInfoAdic {
   nNumPedCompra?: number | string;
 }
 
-export interface OmieItemAjustes {
+interface OmieItemAjustes {
   nQtdeRecebida?: number | string;
 }
 
@@ -53,7 +53,7 @@ export interface OmieRecebimentoItem {
   itensAjustes?: OmieItemAjustes;
 }
 
-export interface OmieConsultarRecebimentoResponse {
+interface OmieConsultarRecebimentoResponse {
   itensRecebimento?: OmieRecebimentoItem[];
   faultstring?: string;
 }
@@ -96,7 +96,7 @@ export interface OpcoesConsulta {
   maxTentativas: number;
 }
 
-export const OPCOES_PADRAO: OpcoesConsulta = {
+const OPCOES_PADRAO: OpcoesConsulta = {
   tetoPorRequestMs: 20_000,
   esperaPadraoMs: 5_000,
   maxTentativas: 3,
@@ -118,7 +118,7 @@ function parseObjetoJson(texto: string): Record<string, unknown> | null {
  * O teto de cada request ENCOLHE conforme o run se aproxima do deadline; sem tempo viável, ADIA
  * em vez de lançar — deadline do run não é defeito da NFe (lançar era o que a punia com backoff).
  */
-export async function consultarRecebimento(
+async function consultarRecebimento(
   deps: DepsConsulta,
   cred: Credenciais,
   nIdReceb: number,
