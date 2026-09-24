@@ -1914,6 +1914,8 @@ describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opç
 // aqui; sem a paridade, um deploy do Lovable pode reverter o espelho e ressuscitar o poison.
 const SKU_ITEMS = 'supabase/functions/omie-sync-sku-items/index.ts';
 const SKU_ITEMS_FILA = 'src/lib/reposicao/sku-items-fila-helpers.ts';
+const SKU_ITEMS_ADIAMENTO = 'supabase/functions/omie-sync-sku-items/adiamento.ts';
+const SKU_ITEMS_CONSULTA = 'supabase/functions/omie-sync-sku-items/consulta.ts';
 
 describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
   const src = read(SKU_ITEMS);
@@ -1961,13 +1963,66 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
     ).toBeGreaterThanOrEqual(3);
   });
 
-  it('erro sistêmico mede consultas TENTADAS, não NFes pendentes (mata o alerta falso)', () => {
+  it('erro sistêmico mede FALHAS REAIS com 0 OK — nem NFes pendentes (07-14) nem adiamento por limite do run (08-27..09-23)', () => {
+    const adiamento = read(SKU_ITEMS_ADIAMENTO);
+    expect(adiamento, 'sentinela: leu o módulo real').toContain('function decidirErroDoRun');
+    expect(
+      adiamento,
+      'REGRESSÃO: o erro sistêmico deixou de medir FALHAS reais — ou voltou a medir tentadas, que ' +
+        'inclui o adiamento por limite do run (OBEN 2026-08-27..09-23: 46 runs error falsos)',
+    ).toMatch(/consultas_falhas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
+    expect(adiamento).not.toMatch(/consultas_tentadas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
     expect(
       src,
       'REGRESSÃO: voltou a marcar error por NFes pendentes — janela só com NFe sem nIdReceb ' +
         'acorda o Sentinela com "rate-limit?" falso, sem ter chamado a Omie (OBEN 2026-07-14)',
-    ).toMatch(/consultas_tentadas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
-    expect(src).not.toMatch(/nfes_processadas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
+    ).not.toMatch(/nfes_processadas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
+    expect(src, 'REGRESSÃO: a fórmula do incidente voltou para o index.ts')
+      .not.toMatch(/consultas_tentadas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
+    expect(
+      vereditoFronteira(src, 'decidirErroDoRun'),
+      'REGRESSÃO: o veredito do run é calculado e DESCARTADO — todo run fecha complete',
+    ).toBe('ok');
+  });
+
+  it('adiamento por limite do run NÃO marca tentativa nem cai no catch (OBEN 2026-08-27..09-23)', () => {
+    // O desfecho chega CLASSIFICADO de consulta.ts (a marca estrutural é conferida lá, e a prova de
+    // encanamento é o consulta_test.ts em Deno). Aqui se vigia o que só o laço decide: o ramo
+    // adiado termina SEM marcarTentativa — o backoff de 6h por um limite de 50s era o defeito.
+    // Sabotagem que este assert pega: "só marcar de leve" no ramo adiado, ou contá-lo como falha.
+    const ini = src.indexOf('if (resultado.tipo === "adiada")');
+    expect(ini, 'sentinela: o laço trata o desfecho ADIADO num ramo próprio').toBeGreaterThan(-1);
+    const fim = src.indexOf('continue;', ini);
+    expect(fim, 'sentinela: o ramo adiado termina em continue').toBeGreaterThan(ini);
+    const ramo = src.slice(ini, fim);
+    expect(ramo, 'REGRESSÃO: adiamento voltou a punir a NFe com backoff').not.toContain('marcarTentativa(');
+    expect(ramo, 'REGRESSÃO: adiamento voltou a contar como falha').not.toContain('consultas_falhas++');
+    expect(ramo, 'o adiamento tem de ser CONTADO — sumir do results é ausência de dado').toContain('consultas_adiadas_por_limite++');
+    // A consulta devolve a marca em vez de lançar: `throw` com o texto do limite é a forma velha,
+    // que cai no catch e marca tentativa. Vale para a edge E para o módulo da chamada.
+    const consulta = read(SKU_ITEMS_CONSULTA);
+    expect(consulta, 'sentinela: leu o módulo real da chamada').toContain('export async function consultarNfe');
+    for (const [nome, fonte] of [['index.ts', src], ['consulta.ts', consulta]] as const) {
+      expect(fonte, `REGRESSÃO (${nome}): voltou a LANÇAR no limite que não cabe`).not.toMatch(/limite pede \$\{/);
+      expect(fonte, `REGRESSÃO (${nome}): voltou a LANÇAR no rate limit persistente`).not.toMatch(/rate limit após \$\{/);
+    }
+    expect(
+      vereditoFronteira(src, 'avaliarFilaParada'),
+      'REGRESSÃO: o sensor "fila não anda" é medido e DESCARTADO',
+    ).toBe('ok');
+    // O sensor recebe a fila elegível ANTES do dedup, INTEIRA. Achado do Codex: trocar o argumento
+    // por `fila.slice(0, 0)` deixava o `vereditoFronteira` verde (o retorno segue consumido) e o
+    // sensor devolvia 0 para sempre. O primeiro argumento é exigido LITERAL.
+    expect(src, 'REGRESSÃO: o sensor não recebe mais a fila elegível inteira (filaOrdenada)')
+      .toMatch(/avaliarFilaParada\(\s*filaOrdenada\s*,/);
+    // Falha só é TRATADA se a marcação persistiu (achado do Codex: NFe com socket falhando e
+    // controle quebrado sumia do sensor).
+    const iniFalha = src.indexOf('if (resultado.tipo === "falhou")');
+    expect(iniFalha, 'sentinela: o laço trata o desfecho FALHOU num ramo próprio').toBeGreaterThan(-1);
+    const ramoFalha = src.slice(iniFalha, src.indexOf('continue;', iniFalha));
+    expect(ramoFalha, 'REGRESSÃO: falha conta como tratada mesmo sem a marcação persistir')
+      .toMatch(/if \(marcou\) recebimentosTratados\.add\(nIdReceb\);/);
+    expect(ramoFalha.match(/recebimentosTratados\.add/g)?.length ?? 0, 'só UMA entrada nos tratados, a condicional').toBe(1);
   });
 
   it('controle da fila é FAIL-CLOSED: tabela ausente grita, não degrada em silêncio', () => {
@@ -1994,11 +2049,18 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
   });
 
   it('falha do recompute é reportada ao Sentinela, não engolida', () => {
+    // Desde 2026-09-24 o status do run é UMA decisão pura (adiamento.ts, decidirErroDoRun, com a
+    // precedência testada em Deno). As duas pontas que só o texto pega: a edge entrega o erro do
+    // recompute ao summary, e a decisão o lê. O `vereditoFronteira` da decisão está no teste acima.
     expect(
       src,
-      'REGRESSÃO: recompute falhando em silêncio — a causa provável é migration não ' +
+      'REGRESSÃO: o erro do recompute não chega mais ao summary — a causa provável é migration não ' +
         'aplicada (deploy fora de ordem), e o gap de ~30% voltaria a crescer sem ninguém saber',
-    ).toMatch(/falhaSistemica \?\? falhaControle \?\? falhaRecompute/);
+    ).toMatch(/recompute_erro:\s*recompute\.erro/);
+    expect(
+      read(SKU_ITEMS_ADIAMENTO),
+      'REGRESSÃO: a decisão do status do run parou de ler o erro do recompute',
+    ).toMatch(/if \(e\.recompute_erro\)/);
   });
 });
 

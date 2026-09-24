@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 555
+-- Total de custom migrations: 556
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -596,7 +596,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260920233000', 'sync_reprocess_degradado_so_das_vigiadas', '20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql'),
   ('20260922225449', 'oportunidade_erro_terminal_nao_bloqueia_oferta', '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql'),
   ('20260922225500', 'data_health_portal_humano_critico_apos_24h', '20260922225500_data_health_portal_humano_critico_apos_24h.sql'),
-  ('20260924120000', 'tint_promote_tombstone_fase5', '20260924120000_tint_promote_tombstone_fase5.sql')
+  ('20260924120000', 'tint_promote_tombstone_fase5', '20260924120000_tint_promote_tombstone_fase5.sql'),
+  ('20260924163250', 'cron_sku_items_2h_proprio', '20260924163250_cron_sku_items_2h_proprio.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2411,7 +2412,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sync_reprocess_retry_nao_liquida_erro', 'function', 'public', '_data_health_compute', ''),
   ('sync_reprocess_degradado_so_das_vigiadas', 'function', 'public', '_data_health_compute', ''),
   ('oportunidade_erro_terminal_nao_bloqueia_oferta', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
-  ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', '')
+  ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', ''),
+  ('cron_sku_items_2h_proprio', 'cron_job', 'cron', 'afiacao_omie_oben_sku_items_2h', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4274,7 +4276,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sync_reprocess_retry_nao_liquida_erro', 'function', 'public', '_data_health_compute', ''),
   ('sync_reprocess_degradado_so_das_vigiadas', 'function', 'public', '_data_health_compute', ''),
   ('oportunidade_erro_terminal_nao_bloqueia_oferta', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
-  ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', '')
+  ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', ''),
+  ('cron_sku_items_2h_proprio', 'cron_job', 'cron', 'afiacao_omie_oben_sku_items_2h', '')
 )
 SELECT
   e.migration,

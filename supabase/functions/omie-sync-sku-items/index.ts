@@ -18,44 +18,25 @@
 //      NFe cuja consulta retorna 0 itens não upserta e não sairia nunca da fila (poison que
 //      consumia o guard de 50s a cada run e deixava as antigas inalcançáveis; OBEN 2026-07-14).
 //   3) Para cada NFe → ConsultarRecebimento(nIdReceb) → itera itensRecebimento[]; TODA
-//      consulta (sucesso, 0 itens ou falha) marca tentativa no controle.
+//      consulta que a Omie RESPONDEU (sucesso, 0 itens, fault de negócio) ou que FALHOU de
+//      verdade (HTTP/socket) marca tentativa no controle. Limite do RUN (REDUNDANT/rate-limit
+//      que não cabe no deadline, deadline vencido) é ADIAMENTO: não marca, não vira `error` —
+//      ver adiamento.ts (incidente OBEN 2026-08-27..09-23: 46 runs `error` falsos no ciclo :15).
 //   4) Para cada item, tenta achar o pedido específico via numero_contrato_fornecedor = nNumPedCompra.
 //   5) UPSERT em sku_leadtime_history (tracking_id, sku_codigo_omie).
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
-import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
+import { cabeEspera } from "../_shared/omie-deadline.ts";
+import {
+  avaliarFilaParada,
+  decidirErroDoRun,
+  motivoDaTentativa,
+  saidaDoLaco,
+} from "./adiamento.ts";
+import { consultarNfe, type ContadorRequisicoes, DEPS_REAIS, type OmieRecebimentoItem } from "./consulta.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
-interface OmieItemCabec {
-  nIdProduto?: number | string;
-  cCodigoProduto?: string;
-  cDescricaoProduto?: string;
-  cUnidadeNfe?: string;
-  cNCM?: string;
-  nQtdeNFe?: number | string;
-  nPrecoUnit?: number | string;
-  vTotalItem?: number | string;
-}
-
-interface OmieItemInfoAdic {
-  nNumPedCompra?: number | string;
-}
-
-interface OmieItemAjustes {
-  nQtdeRecebida?: number | string;
-}
-
-interface OmieRecebimentoItem {
-  itensCabec?: OmieItemCabec;
-  itensInfoAdic?: OmieItemInfoAdic;
-  itensAjustes?: OmieItemAjustes;
-}
-
-interface OmieConsultarRecebimentoResponse {
-  itensRecebimento?: OmieRecebimentoItem[];
-  faultstring?: string;
-  raw?: string;
-}
+// Tipos da resposta do Omie: consulta.ts (junto da chamada que os produz).
 
 interface NFeRawData {
   cabec?: { nIdReceb?: number | string };
@@ -76,22 +57,10 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const OMIE_ENDPOINT = "https://app.omie.com.br/api/v1/produtos/recebimentonfe/";
 const RATE_LIMIT_DELAY_MS = 5000;
-const RETRY_DELAY_MS = 5000;
-const MAX_RETRIES = 3;
 const TIMEOUT_GUARD_MS = 50_000;
-// Teto de RELÓGIO por request (#2017). O guard acima é do RUN; sem teto por request um socket
-// pendurado consome os 50s sozinho e o isolate morre sem passar por catch nenhum — a NFe nem
-// chega a ser marcada como tentada. Abaixo do guard de propósito: request normal não leva 20s.
-const FETCH_TIMEOUT_MS = 20_000;
+// Teto por request, espera padrão de limite e nº de tentativas da chamada: OPCOES_PADRAO em consulta.ts.
 const TIMEOUT_CHECK_EVERY_NFES = 5;
-
-function redundantWaitMs(faultstring: string): number | null {
-  const match = faultstring.match(/Aguarde\s+(\d+)\s+segundos/i);
-  if (!match) return null;
-  return (Number(match[1]) + 3) * 1000;
-}
 
 type Empresa = "OBEN" | "COLACOR";
 
@@ -117,8 +86,27 @@ interface EmpresaSummary {
   nfes_processadas: number;
   nfes_sem_nidreceb: number;
   nfes_sem_nidreceb_dias_max: number;
+  /** NFes para as quais ao menos 1 request SAIU para a Omie (inclui as que depois foram adiadas).
+   *  Deadline vencido antes do 1º request conta ZERO. Sozinho não decide nada. */
   consultas_tentadas: number;
+  /** Requests INICIADOS ao Omie (invocações do request, retentativas incluídas) — o consumo de
+   *  cota do run. Uma invocação que lançou antes de sair para a rede também conta. */
+  requisicoes_omie: number;
+  /** NFes que a Omie RESPONDEU (2xx, objeto JSON): com itens, 0 itens ou faultstring de negócio. */
   consultas_detalhadas: number;
+  /** NFes ADIADAS por limite do RUN (REDUNDANT/rate-limit que não cabe no deadline, limite que
+   *  persistiu nas retentativas, deadline vencido antes da chamada). NÃO marcam tentativa e NÃO
+   *  viram `error`: a NFe mantém as tentativas que tinha e segue elegível (adiamento.ts). */
+  consultas_adiadas_por_limite: number;
+  /** NFes com falha REAL (HTTP não-2xx, socket abortado, corpo que não é objeto JSON) — marcam tentativa. */
+  consultas_falhas: number;
+  /** RECEBIMENTOS da fila elegível deste run, com nIdReceb, com alguma linha ELEGÍVEL há mais de
+   *  48h (fim do backoff, ou o maior entre nascimento e faturamento se nunca tentada), que o run NÃO
+   *  tratou (nem resposta nem falha marcada): adiados por limite ou não alcançados pelo guard. >0 ⇒
+   *  `error` "fila não anda" — o sensor pelo DADO que o adiamento silencioso exige (adiamento.ts).
+   *  `null` = NÃO AVALIADO: chamada via orquestrador (o :15 do jobid 52), onde o adiamento por
+   *  REDUNDANT é esperado enquanto o sku-items for step dele — ausente, nunca zero. */
+  fila_parada_48h: number | null;
   itens_processados: number;
   /** Itens crus fundidos por SKU repetido na mesma NFe (Σ n_itens_agregados − 1). >0 = o
    *  bug de sobrescrita item-a-item teria mordido aqui; agora são somados, não perdidos. */
@@ -131,6 +119,8 @@ interface EmpresaSummary {
   itens_sem_pedido: number;
   skus_distintos: number;
   erros: number;
+  /** Chamadas a marcarTentativa feitas no run (1 por NFe respondida ou com falha real). */
+  controle_marcacoes: number;
   controle_falhas: number;
   interrompido_por_timeout: boolean;
 }
@@ -355,59 +345,6 @@ function getCredentials(
   return { app_key, app_secret };
 }
 
-async function callOmie(
-  app_key: string,
-  app_secret: string,
-  call: "ConsultarRecebimento",
-  param: Record<string, unknown>,
-  deadline: number,
-): Promise<OmieConsultarRecebimentoResponse> {
-  const body = { call, app_key, app_secret, param: [param] };
-  let attempt = 0;
-  while (attempt < MAX_RETRIES) {
-    attempt++;
-    // O teto do request ENCOLHE conforme o run se aproxima do deadline. LANÇA quando não sobra
-    // tempo viável — este wrapper é throw-based e o caller trata a exceção por NFe (marcarTentativa),
-    // então a NFe fica registrada como TENTADA em vez de sumir junto com o isolate.
-    const timeoutMs = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
-    if (timeoutMs === 0) {
-      throw new Error(`Omie ${call}: deadline do run atingido antes da chamada`);
-    }
-    const res = await fetch(OMIE_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const text = await res.text();
-    let json: OmieConsultarRecebimentoResponse;
-    try {
-      json = JSON.parse(text) as OmieConsultarRecebimentoResponse;
-    } catch {
-      json = { raw: text };
-    }
-    const faultstring = typeof json?.faultstring === "string" ? json.faultstring : "";
-    const waitMs = redundantWaitMs(faultstring) ?? RETRY_DELAY_MS;
-    if (res.status === 429 || /rate limit|redundant|consumo redundante/i.test(faultstring)) {
-      // O Omie pede "Aguarde N segundos" e redundantWaitMs obedece — N pode passar do run inteiro.
-      // Dormir além do deadline é sono que nunca acorda: o isolate morre no sleep.
-      if (!cabeEspera(Date.now(), deadline, waitMs)) {
-        throw new Error(`Omie ${call}: limite pede ${Math.round(waitMs / 1000)}s de espera, não cabe antes do deadline do run`);
-      }
-      console.warn(
-        `[sync-sku-items] ${call} aguardando ${Math.round(waitMs / 1000)}s por limite Omie (try ${attempt}/${MAX_RETRIES})`,
-      );
-      await sleep(waitMs);
-      continue;
-    }
-    if (!res.ok) {
-      throw new Error(`Omie ${call} HTTP ${res.status}: ${text.slice(0, 400)}`);
-    }
-    return json;
-  }
-  throw new Error(`Omie ${call}: rate limit após ${MAX_RETRIES} tentativas`);
-}
-
 function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
@@ -457,6 +394,8 @@ interface NFeRow {
   /** Sinal do recebimento em coluna DEDICADA — sobrevive ao sync de pedidos, que
    *  sobrescreve o raw_data. Fonte preferida; o jsonb fica só como fallback. */
   nid_receb: number | null;
+  /** Nascimento da linha — metade do "elegível desde" do sensor `fila_parada_48h` (adiamento.ts). */
+  created_at: string | null;
 }
 
 /** NFeRow com o nIdReceb já extraído do raw_data — a fila dedup-a por ele, e o
@@ -677,7 +616,7 @@ Deno.serve(async (req) => {
   }
 
   const startedAt = Date.now();
-  // Relógio ÚNICO do run: requests e backoffs do callOmie se medem contra ESTE instante, o mesmo
+  // Relógio ÚNICO do run: requests e backoffs da consulta se medem contra ESTE instante, o mesmo
   // que o TIMEOUT_GUARD_MS do laço usa. Teto por request isolado não bastaria — 3 tentativas de
   // 20s mais as esperas "Aguarde N segundos" do Omie passam MUITO dos 50s.
   const deadline = startedAt + TIMEOUT_GUARD_MS;
@@ -689,6 +628,10 @@ Deno.serve(async (req) => {
   // cron = x-cron-secret (cron diário direto) OU service-role (via orquestrador omie-cron-diario,
   // que chama as edges com Bearer SERVICE_ROLE, sem repassar o x-cron-secret). user JWT (staff) = manual.
   const svcKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  // Via ORQUESTRADOR = Bearer service-role SEM x-cron-secret (é assim que o `omie-cron-diario` chama
+  // os steps). Só decide se o sensor `fila_parada_48h` é avaliado — ver adiamento.ts.
+  const viaOrquestrador = !req.headers.get("x-cron-secret") && !!svcKey &&
+    req.headers.get("Authorization") === `Bearer ${svcKey}`;
   const triggeredBy = (req.headers.get("x-cron-secret") ||
     (svcKey && req.headers.get("Authorization") === `Bearer ${svcKey}`)) ? "cron" : "manual";
 
@@ -719,7 +662,7 @@ Deno.serve(async (req) => {
     let q = supabase
       .from("purchase_orders_tracking")
       .select(
-        "id, nfe_chave_acesso, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome, raw_data, nid_receb",
+        "id, nfe_chave_acesso, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome, raw_data, nid_receb, created_at",
       )
       .eq("empresa", empresa)
       .gte("t2_data_faturamento", cutoffIso)
@@ -813,7 +756,11 @@ Deno.serve(async (req) => {
       nfes_sem_nidreceb: 0,
       nfes_sem_nidreceb_dias_max: 0,
       consultas_tentadas: 0,
+      requisicoes_omie: 0,
       consultas_detalhadas: 0,
+      consultas_adiadas_por_limite: 0,
+      consultas_falhas: 0,
+      fila_parada_48h: 0,
       itens_processados: 0,
       itens_fundidos_sku_repetido: 0,
       grupos_t1_ambiguo: 0,
@@ -821,11 +768,18 @@ Deno.serve(async (req) => {
       itens_sem_pedido: 0,
       skus_distintos: 0,
       erros: 0,
+      controle_marcacoes: 0,
       controle_falhas: 0,
       interrompido_por_timeout: false,
     };
 
     const skusVistos = new Set<number>();
+    // RECEBIMENTOS (nIdReceb) que o run TRATOU: a Omie respondeu, ou a falha foi MARCADA no controle.
+    // Por recebimento, e não por linha, porque a chamada é por recebimento — as linhas irmãs saem
+    // da fila juntas. O sensor "fila não anda" (adiamento.ts) mede o que ficou de fora.
+    const recebimentosTratados = new Set<string>();
+    // Requests físicos ao Omie (retentativas incluídas) — mutável para sobreviver a exceção.
+    const contador: ContadorRequisicoes = { requisicoes: 0 };
     let nfesInspecionadas = 0;
 
     for (const nfeRaw of fila) {
@@ -861,38 +815,62 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Deadline ANTES do sleep de cadência (5s), e não só a cada 5 NFes como o guard do topo.
-      // Dois motivos, e o segundo é money-path: (a) dormir 5s para o callOmie recusar em seguida
-      // gasta 10% do run à toa; (b) a NFe cairia no catch abaixo e ganharia `marcarTentativa` —
-      // backoff de 6h/24h/72h — por um limite do RUN, não por falha DELA. Tentativa só se conta
-      // quando a chamada de fato saiu para o Omie; abort de request aberto continua caindo no
-      // catch e marcando, que é o certo.
+      // Deadline ANTES do sleep de cadência (5s), e não só a cada 5 NFes como o guard do topo:
+      // dormir 5s para a consulta adiar em seguida gasta 10% do run à toa. (Até 2026-09-24 havia
+      // um 2º motivo, money-path: a recusa por deadline LANÇAVA e a NFe caía no catch com
+      // `marcarTentativa` — backoff por um limite do RUN. Hoje ela seria ADIADA, sem marcar.)
       if (!cabeEspera(Date.now(), deadline, RATE_LIMIT_DELAY_MS)) {
         summary.interrompido_por_timeout = true;
         break;
       }
 
-      let detalhe: OmieConsultarRecebimentoResponse;
-      try {
-        await sleep(RATE_LIMIT_DELAY_MS);
-        summary.consultas_tentadas++;
-        detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", {
-          nIdReceb: Number(nIdReceb),
-        }, deadline);
-        summary.consultas_detalhadas++;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+      await sleep(RATE_LIMIT_DELAY_MS);
+      const requisicoesAntes = contador.requisicoes;
+      // Desfecho já classificado (consulta.ts): respondida · adiada · falhou. A exceção vira
+      // `falhou` LÁ, e o adiamento é reconhecido pela marca ESTRUTURAL — nunca pelo texto.
+      const resultado = await consultarNfe(DEPS_REAIS, { app_key, app_secret }, Number(nIdReceb), deadline, contador);
+      if (contador.requisicoes > requisicoesAntes) summary.consultas_tentadas++;
+
+      if (resultado.tipo === "adiada") {
+        // ADIAMENTO por limite do RUN (REDUNDANT/rate-limit que não cabe no deadline, limite que
+        // persistiu, deadline vencido): NÃO é defeito da NFe → NÃO marca tentativa (ela mantém as
+        // tentativas que tinha e segue elegível) e NÃO conta como falha para o status do run.
+        // Punir aqui era o incidente OBEN 2026-08-27..09-23: backoff de 6h por um limite de 50s e
+        // 46 runs `error` falsos. Recebimento que siga sem consulta por mais de 48h elegível grita
+        // pelo sensor `fila_parada_48h` — pelo dado, não pelo status da chamada.
+        summary.consultas_adiadas_por_limite++;
+        console.warn(
+          `[sync-sku-items] ConsultarRecebimento ${nIdReceb} ADIADA (${resultado.adiamento.motivo}): ${resultado.adiamento.detalhe}`,
+        );
+        if (saidaDoLaco(resultado.adiamento.motivo) === "encerrar") {
+          summary.interrompido_por_timeout = true;
+          break;
+        }
+        continue;
+      }
+
+      if (resultado.tipo === "falhou") {
+        summary.consultas_falhas++;
+        summary.controle_marcacoes++;
         const marcou = await marcarTentativa(
           supabase,
           nfeRaw.id,
           tentativasPrevias + 1,
-          `consulta_falhou: ${msg}`,
+          `consulta_falhou: ${resultado.mensagem}`,
         );
-        if (!marcou) summary.controle_falhas++;
-        console.error(`[sync-sku-items] ConsultarRecebimento ${nIdReceb} falhou:`, msg);
+        // Falha só conta como TRATADA se a marcação persistiu: sem ela a NFe não ganhou backoff nem
+        // progresso, e chamá-la de tratada escondia do sensor a NFe parada (achado do Codex).
+        if (marcou) recebimentosTratados.add(nIdReceb);
+        else summary.controle_falhas++;
+        console.error(`[sync-sku-items] ConsultarRecebimento ${nIdReceb} falhou:`, resultado.mensagem);
         continue;
       }
 
+      const detalhe = resultado.detalhe;
+      summary.consultas_detalhadas++;
+      recebimentosTratados.add(nIdReceb);
+
+      const itensEhLista = Array.isArray(detalhe?.itensRecebimento);
       const itens: OmieRecebimentoItem[] = Array.isArray(detalhe?.itensRecebimento)
         ? detalhe.itensRecebimento
         : [];
@@ -900,6 +878,7 @@ Deno.serve(async (req) => {
         ? detalhe.faultstring
         : null;
       let itensDaNfe = 0;
+      let ultimoErroUpsert: string | null = null;
 
       // ── Passada 1: RESOLVER cada item ao seu tracking destino (lookup de pedido por item).
       // NÃO upserta aqui: o mesmo SKU pode se repetir na NFe e cair no mesmo tracking; upsert
@@ -1021,6 +1000,7 @@ Deno.serve(async (req) => {
           .upsert(upsertRow, { onConflict: "tracking_id,sku_codigo_omie" });
         if (upErr) {
           summary.erros++;
+          ultimoErroUpsert = upErr.message;
           console.error(
             `[sync-sku-items] upsert NFe ${nfeRaw.id} sku ${ag.sku_codigo_omie} falhou:`,
             upErr.message,
@@ -1032,16 +1012,24 @@ Deno.serve(async (req) => {
         skusVistos.add(ag.sku_codigo_omie);
       }
 
-      // Consulta feita → marca tentativa SEMPRE. Sem isto, NFe com 0 itens upsertados
+      // Consulta RESPONDIDA → marca tentativa SEMPRE. Sem isto, NFe com 0 itens upsertados
       // nunca sai da fila (não ganha linha em sku_leadtime_history) e vira poison
       // re-consultado a cada run — o backoff só funciona se a tentativa for registrada.
+      // O motivo diz o que ACONTECEU (adiamento.ts, motivoDaTentativa): upsert morto não vira
+      // "NFe sem itens", e chave `itensRecebimento` ausente não vira "lista vazia".
+      summary.controle_marcacoes++;
       const marcou = await marcarTentativa(
         supabase,
         nfeRaw.id,
         tentativasPrevias + 1,
-        itensDaNfe > 0
-          ? "ok_com_itens"
-          : (faultstring ? `fault: ${faultstring}` : "ok_0_itens"),
+        motivoDaTentativa({
+          faultstring,
+          itensEhLista,
+          itensRecebidos: itens.length,
+          itensResolvidos: agregados.length,
+          itensGravados: itensDaNfe,
+          ultimoErroUpsert,
+        }),
       );
       if (!marcou) summary.controle_falhas++;
 
@@ -1052,33 +1040,32 @@ Deno.serve(async (req) => {
     }
 
     summary.skus_distintos = skusVistos.size;
-    // Falha sistêmica = consultas Omie foram TENTADAS e nenhuma respondeu (rate-limit 3x /
-    // HTTP). NFe pendente sem nIdReceb NÃO é tentativa (não há chamada) — janela só com
-    // elas marcava 'error' "rate-limit?" falso e acordava o Sentinela (OBEN 2026-07-14).
-    // Resposta 200 com faultstring de negócio ("recebimento inexistente") CONTA como
-    // respondida: é defeito de uma NFe (vai pro `motivo` do controle e sai por backoff),
-    // não indisponibilidade da Omie — tratá-la como falha recriaria o alerta falso.
-    const falhaSistemica = summary.consultas_tentadas > 0 && summary.consultas_detalhadas === 0
-      ? `${summary.consultas_tentadas} consultas Omie tentadas, 0 OK — rate-limit/indisponibilidade?`
-      : undefined;
-    // Backoff inoperante (grant/RLS): o leadtime gravado continua válido, mas sem
-    // persistir tentativa o poison volta — falha silenciosa. Só grita se NENHUMA marcou.
-    const falhaControle = !falhaSistemica && summary.consultas_tentadas > 0 &&
-        summary.controle_falhas === summary.consultas_tentadas
-      ? `controle não persistiu em ${summary.controle_falhas}/${summary.consultas_tentadas} tentativas — backoff inoperante (grant/RLS?)`
-      : undefined;
-    // Recompute quebrado é acionável: a causa provável é migration não aplicada (deploy fora
-    // de ordem — edge antes do SQL Editor) ou grant faltando no service_role. Não derruba o
-    // run (o leadtime só deixa de MELHORAR, não piora), mas tem de gritar: em silêncio, o
-    // gap de ~30% volta a crescer sem ninguém saber — o defeito que esta edge conserta.
-    const falhaRecompute = recompute.erro
-      ? `recompute derivado do leadtime falhou (migration 20260716200000 aplicada? grant do service_role?): ${recompute.erro}`
-      : undefined;
+    summary.requisicoes_omie = contador.requisicoes;
+    // Sensor pelo DADO (medido DEPOIS do laço, sobre a fila elegível ANTES do dedup — entram as não
+    // alcançadas pelo guard e as irmãs, cada recebimento com a sua linha mais antiga): recebimento
+    // consultável, elegível há mais de 48h, que o run não tratou. Via orquestrador: não avaliado.
+    summary.fila_parada_48h = viaOrquestrador ? null : avaliarFilaParada(
+      filaOrdenada,
+      controleMap,
+      recebimentosTratados,
+      Date.now(),
+      skuItemsBackoffMs,
+    );
+    // Status do run — regras e precedência em adiamento.ts (decidirErroDoRun), testadas em Deno:
+    //   · falha sistêmica = falha REAL com 0 resposta. NFe sem nIdReceb não é tentativa (OBEN
+    //     2026-07-14); faultstring de NEGÓCIO em 2xx conta como resposta; ADIAMENTO por limite do
+    //     run não é falha (OBEN 2026-08-27..09-23: 46 runs `error` falsos "1 consultas Omie
+    //     tentadas, 0 OK", com a chamada REDUNDANT do step NFe segundos antes);
+    //   · controle inoperante = nenhuma das marcações FEITAS persistiu (grant/RLS);
+    //   · escrita morta = upserts de leadtime tentados e nenhum gravado;
+    //   · fila não anda = NFe antiga, elegível e consultável sem tratamento neste run;
+    //   · recompute derivado falhou (migration 20260716200000 / grant) — o leadtime deixa de
+    //     MELHORAR, não piora; por isso vem por último. Chega aqui por `recompute_erro`.
     await completeSync(
       supabase,
       logId,
       summary as unknown as Record<string, unknown>,
-      falhaSistemica ?? falhaControle ?? falhaRecompute,
+      decidirErroDoRun(summary),
       Date.now() - startedAt,
     );
 
