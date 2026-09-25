@@ -6,8 +6,14 @@
  * Todo cenario de `RPC-SEM-DADO` tem o par que precisa continuar `REPROVA` — a classificacao so
  * vale se ela AINDA engole vermelho de verdade.
  */
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
+import { ENV_DO_MOTOR } from './exclusividade';
 import { classificarVermelho, lerResumoVitest, PISO_ARQUIVOS, PISO_TESTES } from './vitest-rpc';
 
 /** O resumo como o vitest 3.2.6 imprime, sem cor (o motor forca `FORCE_COLOR=0`). */
@@ -120,6 +126,81 @@ describe('classificarVermelho — o que TEM de continuar REPROVA (a falsificacao
   it('saida vazia reprova', () => {
     expect(classificarVermelho('', '').classe).toBe('REPROVA');
   });
+});
+
+/**
+ * A forma COLORIDA — a que o motor realmente produz. Copiada BYTE A BYTE do `vitest run` 3.2.6 sob
+ * `ENV_DO_MOTOR` (so o denominador foi trocado para passar o piso). A 1a versao desta guarda so
+ * conhecia a forma sem cor e caiu em REPROVA no baseline real: com o ANSI, o `Error:` nao fica na
+ * coluna 0 e o resumo nao casa.
+ */
+const E = '\x1b';
+const linhaCor = (rotulo: string, meio: string, total: string) =>
+  `${E}[2m ${rotulo} ${E}[22m ${E}[1m${E}[32m${meio}${E}[39m${E}[22m${E}[90m (${total})${E}[39m`;
+const VERDE_COR = [
+  linhaCor('Test Files', '842 passed', '842'),
+  linhaCor('     Tests', '9256 passed', '9256'),
+  `${E}[2m     Errors ${E}[22m ${E}[1m${E}[31m1 error${E}[39m${E}[22m`,
+  '',
+].join('\n');
+const CORPO_RPC_COR = `${E}[31m${E}[1mError${E}[22m: [vitest-worker]: Timeout calling "onTaskUpdate"${E}[39m\n`;
+
+describe('classificarVermelho — a saida COLORIDA que o motor produz', () => {
+  it('RPC colorido => RPC-SEM-DADO (a forma que derrubou a 1a versao no baseline real)', () => {
+    expect(VERDE_COR).toContain(`${E}[`); // a fixture exercita MESMO o caminho com cor
+    expect(classificarVermelho(VERDE_COR, CORPO_RPC_COR).classe).toBe('RPC-SEM-DADO');
+  });
+
+  it('teste falhando colorido continua REPROVA — tirar a cor nao engole a falha', () => {
+    const falhando = VERDE_COR.replace('842 passed', '1 failed | 841 passed').replace('9256 passed', '1 failed | 9255 passed');
+    expect(classificarVermelho(falhando, CORPO_RPC_COR).classe).toBe('REPROVA');
+  });
+
+  it('lerResumoVitest le o resumo colorido', () => {
+    expect(lerResumoVitest(VERDE_COR)).toEqual({ arquivos: { total: 842, falharam: 0 }, testes: { total: 9256, falharam: 0 } });
+  });
+});
+
+/**
+ * PARIDADE: o vitest REAL, sob `ENV_DO_MOTOR`, num fixture descartavel. E o eixo POR FORA que faltou —
+ * as fixtures acima sao copias, e copia envelhece quando o vitest muda a cor; este roda a ferramenta.
+ * O ambiente e minimo (PATH/HOME + `ENV_DO_MOTOR`) de proposito: dentro do vitest o `process.env`
+ * carrega VITEST_*, e herda-lo mediria o vitest-dentro-do-vitest, nao o gate do motor.
+ */
+describe('classificarVermelho — PARIDADE com o vitest real sob o ambiente do motor', () => {
+  const VITEST = resolve('node_modules/.bin/vitest');
+  const rodarFixture = (corpo: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'vitest-rpc-paridade-'));
+    try {
+      writeFileSync(join(dir, 'ok.test.ts'), "import { it, expect } from 'vitest';\nit('passa', () => { expect(1).toBe(1); });\n");
+      writeFileSync(join(dir, 'rpc.test.ts'), corpo);
+      const r = spawnSync(VITEST, ['run', '--root', dir], {
+        encoding: 'utf8',
+        timeout: 120_000,
+        env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...ENV_DO_MOTOR },
+      });
+      return { rc: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  // O texto do RPC montado em pedacos: literal inteiro aqui viraria "1 RPC" no code-frame DESTE arquivo.
+  const REJEITA_RPC = "const m = ['[vitest', '-worker]: Timeout calling \"onTaskUpdate\"'].join('');\nPromise.reject(new Error(m));\n";
+
+  it('RPC real, todos passando => RPC-SEM-DADO — e a saida VEIO colorida (senao o teste nao prova nada)', () => {
+    const r = rodarFixture(`import { it, expect } from 'vitest';\n${REJEITA_RPC}it('passa', () => { expect(1).toBe(1); });\n`);
+    expect(r.rc).toBe(1);
+    expect(r.stdout + r.stderr).toContain('\x1b[');
+    // O piso e o da suite deste repo; o fixture tem 2 arquivos — a paridade testada aqui e a do FORMATO.
+    expect(classificarVermelho(r.stdout, r.stderr, { arquivos: 2, testes: 2 }).classe).toBe('RPC-SEM-DADO');
+  }, 130_000);
+
+  it('teste falhando real + RPC => REPROVA', () => {
+    const r = rodarFixture(`import { it, expect } from 'vitest';\n${REJEITA_RPC}it('falha', () => { expect(1).toBe(2); });\n`);
+    expect(r.rc).toBe(1);
+    expect(r.stdout + r.stderr).toContain('\x1b[');
+    expect(classificarVermelho(r.stdout, r.stderr, { arquivos: 2, testes: 2 }).classe).toBe('REPROVA');
+  }, 130_000);
 });
 
 describe('lerResumoVitest — a leitura do denominador', () => {

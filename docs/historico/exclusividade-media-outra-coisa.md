@@ -767,6 +767,54 @@ baseline, antes de qualquer sabotagem — árvore limpa conferida por `git statu
 `scripts/exclusividade-matriz.json` byte-idêntico. As 4 linhas seguem **DEFASADAS**, pelo instrumento
 e pela máquina, não pelo repo.
 
+### A guarda 12 caiu no baseline real — o vitest colore sob o ambiente do motor (2026-09-25)
+
+Com o #2543 na `main` e a máquina calma, a re-medição foi disparada de novo. O baseline passou o
+`sonda:bump` em 10 minutos (a tentativa sob load 216 levou 1h06 até ali) — e então:
+
+```
+VERMELHO  test   78978ms
+```
+
+**Sem a repetição disparar.** O classificador viu REPROVA onde deveria ver ausência de dado. A cauda
+mostrou por quê — a linha do erro chegou assim:
+
+```
+ESC[31mESC[1mError ESC[22m: [vitest-worker]: Timeout calling "onTaskUpdate"ESC[39m
+```
+
+Com a cor, o `Error:` não fica na coluna 0 e as linhas de resumo não casam: a guarda caía no seu
+primeiro teste ("sem linha de resumo") e devolvia REPROVA, fail-closed. Nada falso foi gravado — o
+baseline abortaria —, mas a guarda simplesmente não funcionava na única saída que importa.
+
+**Medido em ambiente limpo (`env -i`), variável por variável:**
+
+| ambiente | ESC no stdout | ESC no stderr |
+|---|---|---|
+| nada | 0 | 0 |
+| só `CI=1` | 8 | 23 |
+| só `FORCE_COLOR=0` | 8 | 23 |
+| `CI=1 FORCE_COLOR=0` (o do motor) | 8 | 23 |
+
+As DUAS variáveis que o motor impõe ligam a cor, mesmo com a saída num arquivo. O `FORCE_COLOR=0`
+provavelmente foi escrito para DESLIGAR a cor; na biblioteca do vitest a mera presença da variável a
+força. E o CI de verdade (`CI=true`) também colore — então saída colorida não é caso de borda, é a
+norma.
+
+**O erro foi meu, e é a lição deste doc um andar abaixo.** As formas que eu "tirei do vitest real"
+na seção acima foram capturadas num shell **sem** essas variáveis. Validei o classificador contra a
+saída de outro ambiente — paridade de invocação, a regra que abre este documento, violada pelo
+instrumento que o protege. A suíte passou 16/16, a falsificação passou 8/8, e as duas estavam certas
+sobre a entrada errada.
+
+**O conserto:** `semAnsi` antes de qualquer leitura (o stripper que já existia no gate do
+`edges:typecheck`; dos 208 ESC da captura, 208 são SGR, que ele cobre), e `ENV_DO_MOTOR` num lugar só,
+usado pelo motor nos dois pontos. O que teria pegado o erro — e agora pega — é o **teste de
+paridade**: o vitest real, sob `ENV_DO_MOTOR`, num fixture descartável, **exigindo que a saída venha
+colorida**. Sem essa pré-condição ele seria o teatro da L6 de novo: passaria sem exercitar o caminho.
+A falsificação ganhou três camadas (ANSI no stderr, no stdout e no `lerResumoVitest`), cada uma
+protegendo um eixo diferente.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
