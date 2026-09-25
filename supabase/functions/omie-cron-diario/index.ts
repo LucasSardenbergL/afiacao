@@ -1,13 +1,31 @@
 // Edge Function: omie-cron-diario
-// Roda diariamente os syncs incrementais Omie (3 dias) para a empresa configurada.
-// Tolera falhas individuais. Cada etapa tem timeout próprio. Retry 1x em 425.
+// Roda a cada 2h (jobid 52, `15 */2 * * *`) os syncs incrementais Omie (3 dias) para a empresa
+// configurada. Tolera falhas individuais. Cada etapa tem timeout próprio. Retry 1x em 425.
 //
 // ⚠️ STEP_TIMEOUT_MS corta só o CLIENTE (este orquestrador). As edges Omie commitam por
 // página/item e seguem rodando server-side em BACKGROUND até o guard interno delas
-// (nfes ~130s, sku-items ~50s, pedidos idem) — bem além dos 25s. Por isso um step que
+// (nfes ~130s, pedidos idem) — bem além dos 25s. Por isso um step que
 // estoura o timeout é reportado modo:"background" (NÃO falha): foi disparado, mas o
 // resultado não foi coletado. CONFIRME o efeito por contagem no banco, nunca por
 // resultados[step].ok. Provado por efeito em 2026-06-27 (ver docs/agent/sync.md).
+//
+// ⚠️ O `omie-sync-sku-items` NÃO é step daqui desde 2026-09-24 — tem cron PRÓPRIO
+// (`afiacao_omie_oben_sku_items_2h`, `35 */2 * * *`, dias=3) além do diário das 07:00 (jobid 53).
+// Como 4º step ele repetia, segundos depois, a MESMA `ConsultarRecebimento(nIdReceb)` que o step
+// NFe acabara de fazer para toda NFe da janela; a Omie respondia "Consumo redundante detectado.
+// Aguarde ~50 segundos (REDUNDANT)", que não cabe no guard de 50s dele — 46 runs `error` e 6
+// e-mails falsos em 30 dias (docs/historico/sku-items-consumo-redundante-no-ciclo.md). 20 minutos
+// depois do step NFe a chamada deixa de ser redundante. Não o devolva para esta lista.
+
+import {
+  classificarSonda,
+  EDGE,
+  EFEITO,
+  erroSondaAmbigua,
+  FONTE,
+  respostaSonda,
+  VERSAO,
+} from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -112,6 +130,15 @@ async function callRpc(fn: string, params: Record<string, unknown>): Promise<Ste
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// `versao/edge/fonte` em TODA resposta, não só na da sonda: o jobid 52 chama esta edge DIRETO, e o
+// corpo que ele deixa em `net._http_response` a cada 2h prova o deploy sem invocar nada (versao.ts).
+function jsonRes(corpo: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...corpo, versao: VERSAO, edge: EDGE, fonte: FONTE }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   const CRON_SEC = Deno.env.get("CRON_SECRET");
   const cronSecret = req.headers.get("x-cron-secret");
@@ -142,20 +169,22 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   if (!(await authorizeCronOrStaff(req))) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonRes({ error: "Unauthorized" }, 401);
+  }
+
+  // ⚠️ SONDA — logo após o gate (que já aceita x-cron-secret) e ANTES do primeiro step: cada step
+  // chama uma edge que ESCREVE, e o ciclo paga cota Omie. O corpo é lido UMA vez, aqui; o fluxo
+  // real abaixo reaproveita esta leitura (req.json() é one-shot). Ver versao.ts.
+  const body: { empresa?: unknown } = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+  // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no ciclo real por omissão.
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
   }
 
   const t0 = Date.now();
-  let empresa = "OBEN";
-  try {
-    if (req.method === "POST") {
-      const body = await req.json().catch(() => ({}));
-      if (body && typeof body.empresa === "string") empresa = body.empresa;
-    }
-  } catch { /* ignore */ }
+  const empresa = typeof body?.empresa === "string" ? body.empresa : "OBEN";
 
   const resultados: Record<string, StepResult> = {};
   const dias = 3;
@@ -169,7 +198,7 @@ Deno.serve(async (req) => {
     { key: "pedidos",   name: "omie-sync-pedidos-compra", body: { empresa, dias, trigger: "cron" } },
     { key: "nfes",      name: "omie-sync-nfes-recebidas", body: { empresa, dias } },
     { key: "ctes",      name: "omie-sync-ctes-recebidos", body: { empresa, dias } },
-    { key: "sku_items", name: "omie-sync-sku-items",      body: { empresa, dias } },
+    // sku_items NÃO entra (REDUNDANT com o step nfes — ver o cabeçalho): cron próprio no :35.
     { key: "vendas",    name: "omie-sync-vendas-items",   body: { empresa, dias } },
   ];
 
@@ -204,13 +233,10 @@ Deno.serve(async (req) => {
     resultados["reclassificacao"] = { ok: false, duracao_ms: 0, erro: "abortado_total_timeout" };
   }
 
-  return new Response(
-    JSON.stringify({
-      ok: true,
-      empresa,
-      duracao_total_ms: Date.now() - t0,
-      resultados,
-    }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 },
-  );
+  return jsonRes({
+    ok: true,
+    empresa,
+    duracao_total_ms: Date.now() - t0,
+    resultados,
+  });
 });
