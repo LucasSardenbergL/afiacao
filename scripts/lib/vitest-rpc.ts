@@ -29,6 +29,12 @@
  * BASELINE (onde nao ha defeito, e a hipotese e vazia); sob defeito, suspeito vira linha INVALIDA.
  */
 
+// O stripper COMPARTILHADO, nao um 3o regex local. Ele mora no gate do `edges:typecheck` porque foi
+// la que nasceu; move-lo para `scripts/lib/` mudaria o fingerprint daquele gate e deixaria PODRES as
+// celulas dele em toda a matriz. Importar e seguro: o gate so executa sob `import.meta.main`. Ele cobre
+// so SGR (`ESC[...m`) — e medido: dos 208 ESC que o vitest emite sob `ENV_DO_MOTOR`, 208 sao SGR.
+import { semAnsi } from '../edges-typecheck-gate';
+
 /** Piso ANTI-TRUNCAMENTO. Pega "rodou 3 arquivos", nao "rodou 400 de 842" — este e o eixo fraco. */
 export const PISO_ARQUIVOS = 400;
 export const PISO_TESTES = 4_000;
@@ -55,8 +61,9 @@ export interface ResumoVitest {
  * resumo nao ha o que afirmar. Formato conferido contra o vitest 3.2.6 real, nao contra o bundle.
  */
 export function lerResumoVitest(saida: string): ResumoVitest | null {
-  const arquivos = lerContagem(saida, 'Test Files');
-  const testes = lerContagem(saida, 'Tests');
+  const limpa = semAnsi(saida);
+  const arquivos = lerContagem(limpa, 'Test Files');
+  const testes = lerContagem(limpa, 'Tests');
   return arquivos && testes ? { arquivos, testes } : null;
 }
 
@@ -97,9 +104,13 @@ export function classificarVermelho(
   stderr: string,
   piso: { arquivos: number; testes: number } = { arquivos: PISO_ARQUIVOS, testes: PISO_TESTES },
 ): Classificacao {
-  const tudo = `${stdout}\n${stderr}`;
+  // ANSI FORA antes de tudo. Sob `ENV_DO_MOTOR` o vitest colore a saida mesmo num arquivo, e com a cor
+  // o `Error:` nao fica na coluna 0 e o resumo nao casa — a 1a versao desta guarda caiu em REPROVA
+  // exatamente assim, no baseline real, depois de passar em toda a suite sem cor (2026-09-25).
+  const out = semAnsi(stdout);
+  const tudo = `${out}\n${semAnsi(stderr)}`;
 
-  const resumo = lerResumoVitest(stdout);
+  const resumo = lerResumoVitest(out);
   if (!resumo) return { classe: 'REPROVA', motivo: 'sem linha de resumo do vitest (ausencia de dado NAO e verde)' };
 
   if (resumo.arquivos.falharam > 0 || resumo.testes.falharam > 0) {

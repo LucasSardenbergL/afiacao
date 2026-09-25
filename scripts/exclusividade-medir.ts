@@ -115,6 +115,7 @@ import {
   gatesCandidatos,
   invocacaoDoCI,
   parseDefeitos,
+  ENV_DO_MOTOR,
   resumir,
   saidasDoDever,
   textoDoDever,
@@ -395,7 +396,7 @@ function capturarEmArquivo(g: GateMedivel, dir: string): Execucao {
     const r = spawnSync(g.inv.argv[0], g.inv.argv.slice(1), {
       timeout: TIMEOUT_MS,
       stdio: ['ignore', fdOut, fdErr],
-      env: { ...process.env, CI: '1', FORCE_COLOR: '0', ...g.inv.env },
+      env: { ...process.env, ...ENV_DO_MOTOR, ...g.inv.env },
     });
     const ms = Date.now() - t0;
     // O filho ja saiu: o que ele escreveu esta no arquivo, inclusive se foi morto pelo timeout.
@@ -531,7 +532,7 @@ function executarReceita(dv: DeverDeCasa): string | null {
     timeout: TIMEOUT_MS,
     maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, CI: '1', FORCE_COLOR: '0' },
+    env: { ...process.env, ...ENV_DO_MOTOR },
   });
   if (r.signal !== null || r.error) return `nao terminou (${r.signal ?? r.error?.message})`;
   if (r.status !== 0) return `saiu ${r.status}: ${`${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(-200)}`;

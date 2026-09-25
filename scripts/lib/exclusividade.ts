@@ -45,6 +45,19 @@ export const AUTO_MERGE_PATH = '.github/workflows/auto-merge.yml';
 export const CORPUS_DIR = 'scripts/exclusividade.d';
 export const SCHEMA_VERSION = 1;
 
+/**
+ * O ambiente que o motor impoe a TODO gate (e a receita `regenerar-fingerprints`). Um lugar so: o
+ * teste de paridade de `vitest-rpc.test.ts` roda o vitest real sob ESTE objeto, e divergir dele e
+ * validar o classificador contra a saida de outro ambiente — o erro que o motivou (2026-09-25).
+ *
+ * ATENCAO, medido em ambiente limpo (`env -i`): as DUAS variaveis LIGAM a cor do vitest, mesmo com a
+ * saida num arquivo. `CI=1` sozinho colore; `FORCE_COLOR=0` sozinho tambem — na biblioteca de cor do
+ * vitest a mera PRESENCA de `FORCE_COLOR` forca a cor, valendo `0` ou nao. Quem le a saida de um gate
+ * tem de tirar o ANSI antes (`semAnsi`). Nao se troca por `NO_COLOR` aqui: o CI de verdade
+ * (`CI=true`) tambem colore, e a promessa do motor e paridade com ele.
+ */
+export const ENV_DO_MOTOR: Readonly<Record<string, string>> = { CI: '1', FORCE_COLOR: '0' };
+
 // ---------------------------------------------------------------------------------------------
 // Corpus — o formato `.def`
 // ---------------------------------------------------------------------------------------------
