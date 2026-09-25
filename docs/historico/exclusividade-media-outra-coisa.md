@@ -815,6 +815,144 @@ colorida**. Sem essa pré-condição ele seria o teatro da L6 de novo: passaria 
 A falsificação ganhou três camadas (ANSI no stderr, no stdout e no `lerResumoVitest`), cada uma
 protegendo um eixo diferente.
 
+## O defeito do próprio `exclusividade` era inválido desde o nascimento (2026-09-25)
+
+O `exclusividade` chegou aqui com `EXCLUSIVIDADE_INCONCLUSIVA`: único vermelho em **1** defeito —
+`matriz-gate-renomeado`, o único do corpus que mira ele —, mas nenhuma linha completa. A leitura
+natural era "falta re-medir com os 31 gates". Estava errada: **o defeito nunca foi medível**, e rodá-lo
+como estava causaria dano.
+
+### O guard 4 recusa a expressão, e recusa desde o #2366
+
+`s/"gate": "knip"/"gate": "knip-RENOMEADO"/` não tem trava `$feito`, e a matriz tem uma linha
+`"gate": "knip"` **por execução registrada** — 3 em `73882cd98`, 7 em `d1d6aa29f`. O preflight de
+2026-09-14 numa cópia, reproduzindo `sabotar()`, deu `casou=true perturbadas=14` contra o teto de 2. A
+linha de 2026-09-08 (7 gates, único vermelho `exclusividade`) só foi válida contra a matriz em disco
+**antes de ser commitada**.
+
+### Pôr `$feito` NÃO consertaria — e isso é o ponto
+
+Com a trava, o perl renomeia só a 1ª ocorrência (a de `dispensados`). A evidência do `knip` continua
+nas outras linhas, o efeito pretendido — gate que volta a existir sem evidência, logo
+`GATE_NOVO_SEM_EXCLUSIVIDADE` — **não acontece**, e a linha passaria a medir "ninguém pegou" sob o nome
+do defeito antigo: `ausente ≠ zero` dentro do medidor.
+
+A raiz é estrutural, não regex envelhecido: **com a matriz completa, todo gate tem evidência em várias
+linhas, então nenhuma sabotagem de ≤2 linhas DA MATRIZ remove a evidência de um gate.** A sabotagem
+mirava a SAÍDA do próprio motor, e cada rodada que grava a matriz a invalida outra vez — o ovo e a
+galinha de [baseline-que-depende-da-propria-medicao.md](baseline-que-depende-da-propria-medicao.md),
+um andar abaixo, no corpus.
+
+### O dano que rodá-lo causaria — por isso ele saiu ANTES de qualquer rodada
+
+`fundirLinhas` funde por `(defeito, gate)` **só quando as duas linhas são válidas**: `antiga.invalido ||
+nova.invalido` devolve a linha nova inteira. Uma rodada do corpus completo mediria
+`matriz-gate-renomeado` como INVÁLIDO e **substituiria** a linha de 2026-09-08 — o único vermelho
+medido do `exclusividade` sumiria da matriz, e com ele o `EXCLUSIVIDADE_INCONCLUSIVA`, sem aviso.
+
+### As três direções — descartadas por LEITURA; só a escolhida foi executada
+
+| direção | efeito pretendido | quem mais pega (por leitura do código) |
+|---|---|---|
+| gate novo/renomeado num `run:` do `ci.yml` | `GATE_NOVO_SEM_EXCLUSIVIDADE` | `gates:frescura`, sentido 2: o censo de `docs/agent/deploy.md` é conjunto exato, e nome novo dá `NAO-CITADO`/`CENSO-OBSOLETO` — **2 vermelhos por construção** |
+| renomear o job raiz `validate` | `ANCORA-DA-RAIZ-QUEBRADA` (a guarda do #2418) | o vitest: `exclusividade-gate.test.ts` roda o binário real e o **controle** cobra `.not.toContain('ANCORA-DA-RAIZ-QUEBRADA')` contra o `ci.yml` do disco — **segunda porta** |
+| `schemaVersion` alterado | nenhum | ninguém: `ler()` faz `JSON.parse` + cast, sem conferir o campo — **achado de gate** (abaixo) |
+
+Medir custa horas da M2; gastá-las para confirmar o que o código já responde seria comprar dado que a
+leitura entrega. As duas primeiras ficam como resultado de leitura, **não medido**.
+
+### O defeito que sobra é o que de fato acontece: a matriz chega ilegível na main
+
+`matriz-ilegivel | scripts/exclusividade-matriz.json | $_ = "" if eof && /^\}$/;` — remove o `}` final.
+Uma linha perturbada, e **imune ao que matou a anterior**: não depende do conteúdo da matriz, que muda a
+cada rodada, só do fato de ser um JSON.
+
+É o cenário real: a matriz é o único artefato do repo gerado por uma rodada de horas e **commitado**, e
+duas worktrees no motor ao mesmo tempo colidem exatamente nele (aconteceu em 2026-09-20). Resolver esse
+conflito comendo o fechamento deixa um arquivo de 2866 linhas que parece inteiro no diff e não é. O
+`exclusividade` pega fail-closed — `JSON.parse` lança, `ler()` devolve `null`, `REPROVA MATRIZ_AUSENTE` —
+e o vitest que toca o arquivo é tolerante **por desenho declarado**: só cobra `length > 0` do alvo de cada
+defeito, e o teste do binário real casa a marca da âncora, nunca o exit code, porque "uma REPROVA
+legitima da matriz tambem sai 1".
+
+### O preflight, com controle verde na mesma invocação
+
+Sabotagem na árvore real, gate rodado, `git checkout --`, `shasum -a 256` conferido
+(`RESTAURADO_IDENTICO=SIM`):
+
+| gate | controle | matriz sem o `}` |
+|---|---|---|
+| `exclusividade` | rc 0 | **rc 1**, `MATRIZ_AUSENTE` |
+| `test` — só `exclusividade-gate.test.ts`, o arquivo que lê a matriz | rc 0 | rc 0 |
+| `gates:frescura` | rc 0 | rc 0 |
+| `lint` | rc 0 | rc 0 |
+
+Guards 3 e 4 reproduzidos numa cópia com a expressão **como `parseDefeitos` a entrega** (não como foi
+digitada): `casou=true perturbadas=1`.
+
+### A medição foi FATIADA — a completude é da LINHA, não da rodada
+
+A rodada monolítica (baseline + defeito × 31 gates, ~59 min na máquina boa) morreu duas vezes sem
+gravar nada: por **ambiente** (abaixo) e por **SIGKILL** (rc 137) no `evals:deploy-verify:falsificacao`,
+com o swap em 5,8 de 7,2 GB. A saída estava em `derivar()`: `completa = universo.every((g) =>
+rodados.has(g))`, e `fundirLinhas` funde por `(defeito, gate)`. Rodadas com `--gates <fatia>` pagam só o
+baseline da fatia, cada uma com seu controle verde na mesma invocação, e **cada uma grava** — uma morte de
+RAM perde a fatia, não o que já foi medido.
+
+| fatia | gates | baseline | sob a sabotagem |
+|---|---|---|---|
+| A | 25 leves/médios | 25 verdes | **só `exclusividade` vermelho** |
+| B | `evals:deploy-verify` + `:falsificacao` | verdes (34 s, 127 s) | verdes |
+| C1 | `test:hooks` + `sonda:cron-prova` | verdes | verdes |
+| final | `test` + `test:falsificacao` + `exclusividade` | **não mediu** (abaixo) | — |
+
+### O resultado: 29 de 31, único vermelho `exclusividade` — o selo segue PENDENTE
+
+A linha `matriz-ilegivel` tem **29 execuções** e **um** vermelho, `exclusividade`, sem poda
+(`parouCedo: false`). Faltam `test` e `test:falsificacao`, e por isso o gate relata
+`EXCLUSIVIDADE_INCONCLUSIVA` — os dois são DESCONHECIDOS, não verdes.
+
+A fatia final não mediu, e o motor estava certo em recusar: o `test` saiu `rc=1` com **843 arquivos /
+9.293 testes passando** e o RPC do vitest estourando — de novo na repetição. É o vermelho de contenção
+que a seção acima ensinou o motor a não ler como reprova (load 16, swap acima de 8 GB, e uma
+falsificação de outra sessão rodando fora do `heavy`). O `test:falsificacao` passou verde no baseline
+(1.639 s), mas a fase do defeito nunca começou. **Nada foi gravado.** Completar o selo pede só as duas
+execuções — `bun run exclusividade:medir -- --defeitos matriz-ilegivel --gates test,test:falsificacao` —
+com a máquina vazia.
+
+### A linha órfã saiu da matriz
+
+Com o `matriz-gate-renomeado` fora do corpus, a linha dele ficaria na matriz para sempre (o motor
+preserva linhas de defeito que não rodou), e o gate seguiria creditando ao `exclusividade` um vermelho
+de receita que ninguém consegue re-rodar: "único vermelho em 2 defeitos", um deles irreprodutível. Ela
+saiu por edição pontual — `JSON.stringify(m, null, 2)`, a mesma serialização do motor; o diff é só
+remoção, 60 linhas —, e este registro é o que preserva o fato de que a medição de 2026-09-08 aconteceu.
+
+### Dois tropeços do instrumento que este registro acrescenta
+
+**`node_modules` vazio não dá erro: dá um baseline plausível e errado.** A worktree não tinha
+`bun install` (o `node_modules` existia com zero entradas), e nada no motor confere isso. O `knip` saiu
+VERMELHO por `Unlisted binaries (4): vite, eslint, vitest, tsc`, e os dois evals estouraram: 3.616 s e
+14.302 s contra 29 s e 101 s na matriz commitada. O fator não é só das deps — o teto que não vincula e a
+M2 saturada, descritos acima, somam —, mas o que separa as causas é direto: depois do `bun install`
+(1018 pacotes, 46 binários) o `knip` sai `rc 0`, e os MESMOS evals, no MESMO dia, rodaram em 34 s e
+127 s na fatia B.
+
+**O write-guard é da árvore INTEIRA e culpa o gate pela escrita do operador.** Editar este doc enquanto
+o baseline rodava fez o motor abortar com `GATE-ESCREVEU: bun run sonda:cron-prova -- --gate ... alterou
+a arvore versionada` e **restaurar o arquivo** pelo snapshot — a edição foi desfeita. Certo no espírito
+(tudo depois de uma escrita seria medido em outra árvore); o nome no motivo é o do gate que calhava de
+rodar.
+
+### O achado de gate: ninguém valida `schemaVersion`
+
+`SCHEMA_VERSION = 1` é **gravado** pelo motor e nunca conferido na leitura: `ler()` faz `JSON.parse` +
+cast, e `avaliar()` não olha o campo. Uma matriz de schema futuro é lida como se fosse da versão de hoje,
+e campo que mude de lugar chega como `undefined` no meio do veredito em vez de recusa — ao contrário de
+`scripts/lib/authz-carimbo.ts`, que valida o carimbo que lê. Não é defeito de corpus (ninguém pegaria, e
+"ninguém pegou" mediria a ausência de validação, não a exclusividade de alguém): é conserto do gate,
+fail-closed, e fica como pendência.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
