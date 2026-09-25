@@ -11,6 +11,8 @@
 # 5) processo ÓRFÃO (PPID=1) QUEIMANDO CPU → o ponto cego de 2026-08-23, que
 #    custou 17h de máquina inutilizável: 1)-4) mediam só o que o founder já vê
 #    na tela (deps, swap, sessões, heavy) e ninguém olhava ppid/pcpu.
+# 6) claude-mem que não GRAVA (contador de falhas de hook ou observações paradas)
+#    → a falha que o plugin ≥ 13.24.18 passou a engolir em silêncio.
 #
 # Melhor-esforço: nunca bloqueia; qualquer falha interna vira silêncio ('{}').
 set -u
@@ -120,6 +122,30 @@ if [ -f scripts/orfaos-custosos.sh ]; then
     # Silenciar aqui seria ausência de dado virando "está limpo" — o mesmo erro
     # que deixou os 8 órfãos vivos por 17h.
     avisos="${avisos}Não consegui varrer processos órfãos (a sonda saiu ${rc}; provável teto de 3s) — isto é FALTA DE DADO, não 'está limpo': rode 'bash scripts/orfaos-custosos.sh'. "
+  fi
+fi
+
+# --- 6) o claude-mem está GRAVANDO? --------------------------------------------
+# O bloco 5 só vê o worker do claude-mem quando ele QUEIMA CPU. Em 2026-09-24 ele
+# travou de novo, e a partir da 13.24.18 o plugin bloqueia 1 prompt e depois falha
+# em SILÊNCIO; e em 2026-09-25 o banco mostrou a memória sem gravar observação desde
+# 27/07 — 60 dias, com o worker "saudável" e o contador de falhas em 0. Os dois eixos
+# (contador de falhas de hook e prompts gravados sem observação) e seus limiares
+# vivem em scripts/claude-mem-saude.sh, num lugar só, como os blocos 4 e 5.
+#
+# Teto de 2s, não 3: são três blocos com teto no mesmo timeout:10 do SessionStart
+# (3+3+2 = 8s no pior caso). A sonda mede 0,06s no banco real (sqlite3 -readonly
+# com .timeout 1000). Sonda que saiu ≠0 SEM texto é a medição que nem rodou → avisa
+# FALTA DE DADO; a própria sonda já escreve "NAO MEDI" quando falta sqlite3/banco/
+# contador. Script ausente (worktree anterior a ele) → silêncio, como no bloco 5.
+if [ -f scripts/claude-mem-saude.sh ]; then
+  # shellcheck disable=SC2086  # ${TO:+$TO 2} split de propósito: 0 ou 2 palavras
+  mem="$(${TO:+$TO 2} bash scripts/claude-mem-saude.sh --resumo 2>/dev/null)"
+  rc=$?
+  if [ -n "$mem" ]; then
+    avisos="${avisos}${mem} "
+  elif [ "$rc" -ne 0 ]; then
+    avisos="${avisos}Não consegui medir o claude-mem (a sonda saiu ${rc}; provável teto de 2s) — isto é FALTA DE DADO, não 'está gravando': rode 'bash scripts/claude-mem-saude.sh'. "
   fi
 fi
 

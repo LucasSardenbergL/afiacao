@@ -48,10 +48,10 @@ fi
 # tabela, que é justamente o que o item 1 desta suíte existe para detectar.
 monta_raiz() {
   local raiz="$1" d
-  mkdir -p "$raiz/scripts" "$raiz/.claude/hooks" "$raiz/db" "$raiz/db/lib" \
+  mkdir -p "$raiz/scripts" "$raiz/scripts/lab-x" "$raiz/.claude/hooks" "$raiz/db" "$raiz/db/lib" \
            "$raiz/.claude/skills/x/scripts" "$raiz/.claude/skills/x/evals"
   cp "$GATE" "$raiz/scripts/shellcheck-gate.sh"
-  for d in scripts .claude/hooks db db/lib .claude/skills/x/scripts .claude/skills/x/evals; do
+  for d in scripts scripts/lab-x .claude/hooks db db/lib .claude/skills/x/scripts .claude/skills/x/evals; do
     printf '#!/usr/bin/env bash\nset -euo pipefail\necho "limpo"\n' > "$raiz/$d/limpo.sh"
   done
 }
@@ -76,16 +76,16 @@ espera_vermelho() {
   fi
 }
 
-echo "── 1. controle: raiz limpa fica VERDE (e leu mesmo os 6 globs) ──"
+echo "── 1. controle: raiz limpa fica VERDE (e leu mesmo os 7 globs) ──"
 raiz="$tmp/limpa"; monta_raiz "$raiz"
 roda_gate "$raiz"
 if [ "$RC" -ne 0 ]; then
   fail "controle: raiz limpa deu rc=$RC — todo caso vermelho abaixo seria vermelho por tabela"
   echo "$OUT"
-elif ! printf '%s' "$OUT" | grep -q '0 achados em 7 arquivos'; then
+elif ! printf '%s' "$OUT" | grep -q '0 achados em 8 arquivos'; then
   fail "controle: o gate não disse quantos arquivos leu — verde sem denominador é ausência de dado"
 else
-  pass "controle: verde com os 7 arquivos lidos"
+  pass "controle: verde com os 8 arquivos lidos"
 fi
 
 echo "── 2. as classes que FABRICAM VEREDITO num harness de prova ──"
@@ -134,7 +134,7 @@ roda_gate "$raiz"; espera_vermelho "SC2006 (crase) em db/" "SC2006"
 # O mesmo bug em scripts/ e em .claude/hooks/ — o escopo antigo já os cobria, e a suíte prova que
 # ampliar para db/ não afrouxou os dois que já estavam dentro. E nos dois globs de skill (2026-09-10):
 # o script que a skill manda RODAR para dar veredito de deploy, e o eval que o CI roda sobre ele.
-for d in scripts .claude/hooks .claude/skills/x/scripts .claude/skills/x/evals; do
+for d in scripts scripts/lab-x .claude/hooks .claude/skills/x/scripts .claude/skills/x/evals; do
   raiz="$tmp/esc-$(printf '%s' "$d" | tr -d './')"; monta_raiz "$raiz"
   cat > "$raiz/$d/sabotado.sh" <<'SH'
 #!/usr/bin/env bash
