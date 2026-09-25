@@ -42,13 +42,17 @@ async function daemon() {
     if (req.url === '/api/admin/shutdown') { res.writeHead(200); res.end('bye'); if (!teimoso) setTimeout(() => process.exit(0), 100); return; }
     if (req.url.startsWith('/api/context/inject')) { res.writeHead(200); res.end('ctx'); return; }
     res.writeHead(404); res.end();
-  }).listen(PORT, mode === 'sao-outro-endereco' ? '127.0.0.2' : HOST, writePid);
+  // "outro endereco" = ::1 (o 127.0.0.2 nao existe no macOS): o script sonda o host configurado
+  // (127.0.0.1) e e recusado, enquanto o lsof ve o dono na porta — o caso INCOERENTE.
+  }).listen(PORT, mode === 'sao-outro-endereco' ? '::1' : HOST, writePid);
 }
 async function start() {
   if (!(await portFree())) { console.log(JSON.stringify({ status: 'error', message: 'port in use' })); process.exit(1); }
   fs.writeFileSync(MODEF, process.env.LAB_START_MODE || 'sao');
   spawn(process.execPath, [__filename, '--daemon'], { detached: true, stdio: 'ignore', env: process.env, cwd: process.cwd() }).unref();
-  for (let i = 0; i < 40; i++) {
+  // o plugin real espera ~10 s; o lab encurta (LAB_START_TENTATIVAS) so o caso que NUNCA sobe
+  const tentativas = Number(process.env.LAB_START_TENTATIVAS || 40);
+  for (let i = 0; i < tentativas; i++) {
     if ((await get('/api/health', 500)) === 200) { console.log(JSON.stringify({ status: 'ready' })); process.exit(0); }
     await sleep(250);
   }

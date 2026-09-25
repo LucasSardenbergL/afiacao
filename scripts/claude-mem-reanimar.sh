@@ -10,6 +10,10 @@
 # data-dir dele) e so quando a porta falha em 3 sondas seguidas. Sonda que nao
 # responde de forma interpretavel = "nao sei" = nao mata.
 # Saida: 0 = worker saudavel e hook passando · 1 = nao consegui · 2 = parei por falta de dado.
+#
+# Tempos: os defaults SAO a receita. As variaveis REANIMAR_TESTE_* existem SO para o laboratorio
+# (scripts/lab-claude-mem-reanimar/) caber no test:hooks — com os tempos reais a suite leva ~8 min.
+# Em uso real, nunca exporte nenhuma delas.
 set -u
 
 SO_OLHAR=0
@@ -20,6 +24,34 @@ CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CACHE="$CFG/plugins/cache/thedotmack/claude-mem"
 PIDF="$DATA/worker.pid"
 CONTF="$DATA/state/hook-failures.json"
+
+# tempo <nome da variavel de teste> <default> <minimo> -> o valor em uso
+# Valor que nao e inteiro >= minimo = PARO (exit 2). Nao e zelo: com "abc" na idade minima o
+# `[ "$VIDA" -lt abc ]` falha como FALSO, o ramo SUBINDO nao dispara e o script derrubaria um
+# worker que ainda esta subindo — e `curl -m 0` e "sem teto", o que penduraria a sonda num surdo.
+# Override quebrado num script que mata processo nao pode virar fail-OPEN.
+tempo() {
+  local v="${!1:-}"
+  if [ -z "$v" ]; then echo "$2"; return 0; fi
+  [ "$v" -ge "$3" ] 2>/dev/null || return 1 # nao-inteiro faz o [ falhar: cai aqui tambem
+  echo "$v"
+}
+# IDADE_MIN: abaixo disso o worker esta SUBINDO e nunca e tocado · SONDA_S/ESPERA_S: teto de cada
+# uma das 3 sondas que confirmam a surdez e a pausa entre elas · PROVA_S: tentativas (1/s) da prova
+# final · DIAG_S: teto das sondas de diagnostico (secao 2, restart, prova).
+for par in "IDADE_MIN REANIMAR_TESTE_IDADE_MIN_S 60 1" "SONDA_S REANIMAR_TESTE_SONDA_S 5 1" \
+  "ESPERA_S REANIMAR_TESTE_ESPERA_S 2 0" "PROVA_S REANIMAR_TESTE_PROVA_S 30 1" \
+  "DIAG_S REANIMAR_TESTE_DIAGNOSTICO_S 3 1"; do
+  read -r var nome padrao minimo <<<"$par"
+  if ! valor="$(tempo "$nome" "$padrao" "$minimo")"; then
+    echo "PAREI: $nome='${!nome}' nao e inteiro >= $minimo. Essa variavel e so do laboratorio — em uso real, 'unset $nome'."
+    exit 2
+  fi
+  printf -v "$var" '%s' "$valor"
+done
+if [ -n "${REANIMAR_TESTE_IDADE_MIN_S:-}${REANIMAR_TESTE_SONDA_S:-}${REANIMAR_TESTE_ESPERA_S:-}${REANIMAR_TESTE_PROVA_S:-}${REANIMAR_TESTE_DIAGNOSTICO_S:-}" ]; then
+  echo "MODO TESTE: tempos por env (idade minima ${IDADE_MIN}s, sonda ${SONDA_S}s, espera ${ESPERA_S}s, prova ${PROVA_S}s, diagnostico ${DIAG_S}s) — os reais sao 60/5/2/30/3."
+fi
 
 titulo() { printf '\n== %s\n' "$*"; }
 # "chave": 123 ou "chave": "123" num JSON (sed, nao jq: o PATH do app pode nao ter jq)
@@ -76,14 +108,15 @@ arvore() { # pid raiz + descendentes (por ppid) + mesmo pgid quando a raiz lider
       for (p in alvo) if ((p+0) > 1) print p
     }'
 }
-# 3 sondas em ~10s, todas falhando de forma interpretavel (nunca "nao-sondei") -> confirmado
+# 3 sondas (teto de SONDA_S cada, ESPERA_S entre elas: ~10s com os tempos reais), todas
+# falhando de forma interpretavel (nunca "nao-sondei") -> confirmado
 surdez_confirmada() {
   local i cl
   for i in 1 2 3; do
-    cl="$(classe "$(sonda /api/health 5)")"
+    cl="$(classe "$(sonda /api/health "$SONDA_S")")"
     case "$cl" in surdo | recusada | erro-http) ;; *) echo "  sonda $i: $cl — nao confirmo a falha"; return 1 ;; esac
     echo "  sonda $i: $cl"
-    [ "$i" -lt 3 ] && sleep 2
+    [ "$i" -lt 3 ] && sleep "$ESPERA_S"
   done
   return 0
 }
@@ -146,8 +179,8 @@ if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
 else
   echo "worker.pid: ${PID:-ausente}${PID:+ (processo MORTO)}"
 fi
-H="$(sonda /api/health 3)"; HC="$(classe "$H")"
-R="$(sonda /api/readiness 3)"; RC="$(classe "$R")"
+H="$(sonda /api/health "$DIAG_S")"; HC="$(classe "$H")"
+R="$(sonda /api/readiness "$DIAG_S")"; RC="$(classe "$R")"
 echo "health:    $HC (curl rc/http = $H)"
 echo "readiness: $RC (curl rc/http = $R)"
 DONOS=""
@@ -183,7 +216,7 @@ elif [ "$HC" = nao-sondei ] || [ "$RC" = nao-sondei ]; then
   echo "NAO SONDEI (curl ausente ou erro inesperado: $H / $R). Parei — sem dado nao mato nada."; exit 2
 elif [ "$HC" = ok ] || [ "$HC" = erro-http ]; then
   VIDA=""; [ "$EH_WORKER" = 1 ] && VIDA="$(segundos_de_vida "$PID")"
-  if [ -n "$VIDA" ] && [ "$VIDA" -lt 60 ]; then
+  if [ -n "$VIDA" ] && [ "$VIDA" -lt "$IDADE_MIN" ]; then
     echo "SUBINDO — worker com ${VIDA}s de vida ainda nao pronto. Espere 30s e rode de novo."; exit 2
   fi
   echo "VIVO-MAS-NAO-PRONTO — atende HTTP mas nao fica pronto (health $H, readiness $R): init travou."
@@ -193,7 +226,7 @@ elif [ "$HC" = recusada ] && [ "$EH_WORKER" = 0 ]; then
   ACAO=start
 elif [ "$HC" = recusada ]; then
   VIDA="$(segundos_de_vida "$PID")"
-  if [ -n "$VIDA" ] && [ "$VIDA" -lt 60 ]; then
+  if [ -n "$VIDA" ] && [ "$VIDA" -lt "$IDADE_MIN" ]; then
     echo "SUBINDO — worker com ${VIDA}s de vida ainda sem porta. Espere 30s e rode de novo."; exit 2
   fi
   if [ -n "$DONOS" ]; then
@@ -230,7 +263,7 @@ if [ "$ACAO" = restart ]; then
   echo "restart pelo CLI do plugin (o worker atende HTTP, entao o shutdown gracioso deve funcionar)..."
   "$NODE" "$P/bun-runner.js" "$P/worker-service.cjs" restart 2>&1 | tail -3
   sleep 2
-  if [ "$(classe "$(sonda /api/readiness 3)")" = ok ]; then
+  if [ "$(classe "$(sonda /api/readiness "$DIAG_S")")" = ok ]; then
     ACAO=nenhuma
   elif [ -n "$ALVOS" ] && kill -0 "$ALVOS" 2>/dev/null; then
     echo "o restart nao resolveu e o mesmo pid segue vivo — vou derrubar a arvore."; ACAO=matar
@@ -277,12 +310,12 @@ fi
 # ---------------------------------------------------------------- 6. prova positiva
 titulo "6. prova (o mesmo caminho do hook que te bloqueou)"
 OK=0
-for _ in $(seq 1 30); do
-  if [ "$(classe "$(sonda /api/health 3)")" = ok ] && [ "$(classe "$(sonda /api/readiness 3)")" = ok ]; then OK=1; break; fi
+for _ in $(seq 1 "$PROVA_S"); do
+  if [ "$(classe "$(sonda /api/health "$DIAG_S")")" = ok ] && [ "$(classe "$(sonda /api/readiness "$DIAG_S")")" = ok ]; then OK=1; break; fi
   sleep 1
 done
 if [ "$OK" != 1 ]; then
-  echo "FALHOU: o worker nao ficou pronto em 30s. Ultimas linhas do log:"
+  echo "FALHOU: o worker nao ficou pronto em ${PROVA_S}s. Ultimas linhas do log:"
   LOG="$(find "$DATA/logs" -maxdepth 1 -name 'claude-mem-*.log' 2>/dev/null | sort | tail -1)"
   [ -n "$LOG" ] && tail -15 "$LOG" | cut -c1-170 | sed 's/^/  /'
   exit 1
