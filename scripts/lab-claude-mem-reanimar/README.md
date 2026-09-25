@@ -31,3 +31,17 @@ saudável · host configurado · não-pronto → restart · restart ignorado →
 incoerente (dono na porta que a sonda não alcança).
 
 Contexto do incidente: `docs/historico/claude-mem-worker-vivo-mas-surdo.md`.
+
+## Pendências em aberto (fecho da sessão de 2026-09-25)
+
+1. **Rodar no Mac** (o claude-mem só existe lá; a sessão cloud não alcança):
+   `cd /Users/lucassardenberg/Projetos/afiacao && git fetch -q origin claude/funny-johnson-d8z2cm && git show FETCH_HEAD:scripts/claude-mem-reanimar.sh > /tmp/claude-mem-reanimar.sh && bash /tmp/claude-mem-reanimar.sh`
+   — terminou em `RECUPERADO` = ok; qualquer outra coisa, colar a saída numa sessão.
+2. **Atualizar o plugin para ≥ 13.25.3** (≥ 13.24.18 bloqueia 1 prompt por queda em vez de todos):
+   `claude plugin marketplace update thedotmack && claude plugin update claude-mem@thedotmack` e reabrir as sessões.
+3. **Levar para a `main`** (chip "Levar claude-mem-reanimar e seu laboratório para a main"):
+   override de tempos por env para o lab caber no `test:hooks`; registrar no `test:hooks`; apontar
+   `docs/agent/skills.md` (linha do claude-mem), `docs/agent/worktrees.md` (item "Vigia acusou
+   worker-service.cjs") e `docs/historico/claude-mem-worker-vivo-mas-surdo.md` para o script; e um
+   aviso no SessionStart (contador de falhas > 0 ou última observação velha), porque a partir da
+   13.24.18 o plugin falha em silêncio.
