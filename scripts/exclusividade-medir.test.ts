@@ -163,6 +163,11 @@ const PASSO: Record<string, string> = {
   exclusividade: 'run: bun run exclusividade',
 };
 
+/**
+ * O universo da RODADA LIMPA, o bloco que prova a poda por CUSTO: o `g:lento` (900ms) e o suspeito
+ * caro que essa ordem poe atras dos gates de bytes — e so por isso a poda para antes dele e o
+ * "suspeito podado RODA fora da poda" tem o que provar. Cenario que nao mede poda usa o ENXUTO.
+ */
 const PADRAO = ['g:barato', 'g:lento', 'g:args', 'g:env', 'sonda:bump', 'sonda:fingerprint'];
 
 const DEFS_PADRAO = `
@@ -182,6 +187,18 @@ dever-sem-efeito | supabase/functions/fx/outro.ts | s/^nada$/SABOTADO/
 
 # @dever-de-casa: regenerar-fingerprints
 gerador-quebra | ${EDGE} | s/^original$/QUEBRA-GERADOR/
+`;
+
+/**
+ * Conjunto ENXUTO: para os cenarios cujo assunto NAO e a poda (guarda 12, write-guard). Com o PADRAO,
+ * cada um pagava 1-2 sonos de 900ms do `g:lento` sem asserir nada sobre ordem. O `g:pega` e o
+ * `g:lento` sem o sono — reprova no mesmo `SABOTADO` —, entao assume o papel de `@suspeito`.
+ */
+const ENXUTO = ['g:barato', 'g:pega'];
+const DEFS_ENXUTO = `
+# @origem: fixture
+# @suspeito: g:pega
+descuidado | ${EDGE} | s/^original$/SABOTADO/
 `;
 
 const raizes: string[] = [];
@@ -306,11 +323,18 @@ describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto ab
 });
 
 describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a repeticao tem orcamento 1', () => {
-  /** O contador do `rpc-flaky` vive FORA da arvore — dentro dela o write-guard abortaria a rodada. */
-  const contador = () => join(mkdtempSync(join(tmpdir(), 'excl-rpc-')), 'n');
+  /**
+   * O contador do `rpc-flaky` vive FORA da arvore — dentro dela o write-guard abortaria a rodada.
+   * O diretorio entra em `raizes` como os fixtures: sem isso cada rodada deixava um `excl-rpc-*` no tmp.
+   */
+  const contador = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'excl-rpc-'));
+    raizes.push(dir);
+    return join(dir, 'n');
+  };
 
   it('BASELINE: RPC na 1a e rc=0 limpo na 2a => VERDE, e a rodada mede ate o fim', () => {
-    const raiz = montarFixture([...PADRAO, 'g:rpc-flaky'], DEFS_PADRAO);
+    const raiz = montarFixture([...ENXUTO, 'g:rpc-flaky'], DEFS_ENXUTO);
     const r = medir(raiz, ['--defeitos', 'descuidado'], { RPC_CONTADOR: contador() });
     expect(r.saida).toContain('repetindo UMA vez');
     expect(r.saida).toContain('a repeticao saiu 0 limpo');
@@ -320,7 +344,7 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
   });
 
   it('BASELINE: RPC nas DUAS execucoes => BASELINE-SEM-DADO, e NAO "ja vermelho" — nada e gravado', () => {
-    const raiz = montarFixture([...PADRAO, 'g:rpc-sempre'], DEFS_PADRAO);
+    const raiz = montarFixture([...ENXUTO, 'g:rpc-sempre'], DEFS_ENXUTO);
     const r = medir(raiz);
     expect(r.rc).toBe(1);
     expect(r.saida).toContain('BASELINE-SEM-DADO');
@@ -331,7 +355,7 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
   });
 
   it('FALSIFICACAO: um teste falhando JUNTO do RPC continua VERMELHO — a guarda nao engole reprova', () => {
-    const raiz = montarFixture([...PADRAO, 'g:rpc-com-falha'], DEFS_PADRAO);
+    const raiz = montarFixture([...ENXUTO, 'g:rpc-com-falha'], DEFS_ENXUTO);
     const r = medir(raiz);
     expect(r.rc).toBe(1);
     expect(r.saida).toContain('ja vermelho(s) no repo limpo');
@@ -341,10 +365,10 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
   });
 
   it('SOB DEFEITO nao se repete: suspeito invalida a LINHA — nunca um verde que apagaria a deteccao', () => {
-    // Defeito que NENHUM gate do PADRAO pega: sem isso a poda por custo (ruidosa entre gates
+    // Defeito que NENHUM outro gate do fixture pega: sem isso a poda por custo (ruidosa entre gates
     // rapidos) decidiria se o gate do RPC chega a rodar, e o teste mediria a ordenacao, nao a guarda.
     const defs = `\n# @origem: fixture\n# @suspeito: g:rpc-sob-defeito\nso-rpc | supabase/functions/fx/outro.ts | s/^nada$/SABOTADO/\n`;
-    const raiz = montarFixture([...PADRAO, 'g:rpc-sob-defeito'], defs);
+    const raiz = montarFixture([...ENXUTO, 'g:rpc-sob-defeito'], defs);
     const r = medir(raiz);
     expect(r.rc).toBe(0);
     // A repeticao e EXCLUSIVA do baseline: sob defeito o motor nao gasta a 2a execucao.
@@ -359,7 +383,7 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
 
 describe('motor — WRITE-GUARD: gate que escreve na arvore versionada aborta a rodada', () => {
   it('no BASELINE: aborta nomeando o gate e o arquivo, restaura, e NAO grava matriz', () => {
-    const raiz = montarFixture([...PADRAO, 'g:escritor'], DEFS_PADRAO);
+    const raiz = montarFixture([...ENXUTO, 'g:escritor'], DEFS_ENXUTO);
     const r = medir(raiz);
     expect(r.rc, r.saida.slice(-1500)).toBe(1);
     expect(r.saida).toContain('GATE-ESCREVEU');
@@ -372,7 +396,7 @@ describe('motor — WRITE-GUARD: gate que escreve na arvore versionada aborta a 
   // `--sem-poda`: sob a poda, o 2o vermelho barato poderia parar a linha ANTES do escritor, e o
   // teste passaria a depender de ruido de milissegundo na ordem por custo.
   it('na MEDICAO: gate que so escreve sob o defeito tambem aborta, e o alvo sabotado volta', () => {
-    const raiz = montarFixture([...PADRAO, 'g:escritor-sob-defeito'], DEFS_PADRAO);
+    const raiz = montarFixture([...ENXUTO, 'g:escritor-sob-defeito'], DEFS_ENXUTO);
     const r = medir(raiz, ['--defeitos', 'descuidado', '--sem-poda']);
     expect(r.rc, r.saida.slice(-1500)).toBe(1);
     expect(r.saida).toContain('GATE-ESCREVEU');
@@ -381,9 +405,11 @@ describe('motor — WRITE-GUARD: gate que escreve na arvore versionada aborta a 
     expect(readFileSync(join(raiz, EDGE), 'utf8')).toBe('linha 1\noriginal\nlinha 3\n');
   }, 120_000);
 
+  // `sonda:fingerprint` volta ao conjunto nas duas receitas abaixo: e o gate que PRESCREVE o
+  // `regenerar-fingerprints`, e dever de casa sem o gate que o prescreve e fixture sem par no repo.
   it('receita que escreve FORA das saidas declaradas aborta (o gerador "vazou")', () => {
-    const defs = `# @origem: f\n# @suspeito: g:lento\n# @dever-de-casa: regenerar-fingerprints\nvaza | ${EDGE} | s/^original$/VAZA/\n`;
-    const raiz = montarFixture(PADRAO, defs);
+    const defs = `# @origem: f\n# @suspeito: g:pega\n# @dever-de-casa: regenerar-fingerprints\nvaza | ${EDGE} | s/^original$/VAZA/\n`;
+    const raiz = montarFixture([...ENXUTO, 'sonda:fingerprint'], defs);
     const r = medir(raiz);
     expect(r.rc, r.saida.slice(-1500)).toBe(1);
     expect(r.saida).toContain('DEVER-DE-CASA-ESCREVEU-FORA');
@@ -393,8 +419,8 @@ describe('motor — WRITE-GUARD: gate que escreve na arvore versionada aborta a 
   // O parecer do Codex: presenca textual da sabotagem nao prova persistencia — ela pode virar
   // codigo morto sem sair do arquivo. Por isso o ALVO inteiro e intocavel pela receita.
   it('receita que mexe no ALVO aborta — o defeito medido tem de ser o declarado, byte a byte', () => {
-    const defs = `# @origem: f\n# @suspeito: g:lento\n# @dever-de-casa: regenerar-fingerprints\nmexe | ${EDGE} | s/^original$/MEXE-NO-ALVO/\n`;
-    const raiz = montarFixture(PADRAO, defs);
+    const defs = `# @origem: f\n# @suspeito: g:pega\n# @dever-de-casa: regenerar-fingerprints\nmexe | ${EDGE} | s/^original$/MEXE-NO-ALVO/\n`;
+    const raiz = montarFixture([...ENXUTO, 'sonda:fingerprint'], defs);
     const r = medir(raiz);
     expect(r.rc, r.saida.slice(-1500)).toBe(1);
     expect(r.saida).toContain('DEVER-DE-CASA-ESCREVEU-FORA');
