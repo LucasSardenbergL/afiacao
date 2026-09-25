@@ -18,7 +18,7 @@
  *                                                         # carregada o `sonda:cron-prova -- --gate` leva ~19.
  *
  * Exit: 0 mediu - 1 abortou (arvore suja, baseline vermelho, corpus vazio/invalido, invocacao nao
- *       reproduzivel, suspeito desconhecido, GATE-ESCREVEU, RESTAURACAO-INCOMPLETA) - 2 erro interno.
+ *       reproduzivel, suspeito desconhecido, GATE-ESCREVEU, RESTAURACAO-INCOMPLETA, BASELINE-SEM-DADO) - 2 erro interno.
  *
  * ## A disciplina (herdada do mutcheck.sh, onde ja foi pensada e ja achou buraco de verdade)
  *
@@ -61,6 +61,13 @@
  *     (`exclusividadeVermelhaSoPorGateNovo`, fail-closed). Qualquer outro vermelho aborta; com
  *     `--ignorar-baseline` a exclusao nao se aplica. Ver
  *     `docs/historico/baseline-que-depende-da-propria-medicao.md`.
+ *
+ * 12. VERMELHO SEM TESTE FALHANDO NAO E REPROVA. `rc != 0` com o resumo do vitest inteiro, ZERO
+ *     teste falhando e o RPC (`[vitest-worker]: Timeout calling ...`) como UNICO erro e ausencia de
+ *     dado, nao deteccao — contar como deteccao fabricaria `EXCLUSIVIDADE_ZERO` (guarda 3). A
+ *     repeticao tem orcamento 1 e SO no baseline; sob defeito, suspeito invalida a linha na hora,
+ *     porque a assinatura nao separa contencao externa de regressao de custo causada pelo defeito.
+ *     Ver `rodarComReproducao` e `lib/vitest-rpc.ts`.
  *
  * ## O que o write-guard NAO ve (limite declarado)
  *
@@ -108,6 +115,7 @@ import {
   gatesCandidatos,
   invocacaoDoCI,
   parseDefeitos,
+  ENV_DO_MOTOR,
   resumir,
   saidasDoDever,
   textoDoDever,
@@ -120,6 +128,7 @@ import {
   type LinhaMatriz,
   type Matriz,
 } from './lib/exclusividade';
+import { classificarVermelho, type Classificacao } from './lib/vitest-rpc';
 
 const args = process.argv.slice(2);
 const flag = (n: string): string | null => {
@@ -332,6 +341,13 @@ interface Execucao {
   rc: number | null;
   /** stdout INTEIRO, separado do stderr: a sonda `--json` le JSON aqui, e a `cauda` mistura e corta. */
   stdout: string;
+  /** stderr INTEIRO. O corpo do erro do vitest mora aqui, e a `cauda` cortaria um 2o erro real. */
+  stderr: string;
+  /**
+   * So em `reprovou` sem `estourou`: o vermelho e REPROVA de verdade, ou o RPC do vitest estourando
+   * por contencao? `null` quando nao houve vermelho a classificar. Ver `lib/vitest-rpc.ts`.
+   */
+  classe: Classificacao | null;
 }
 
 /**
@@ -380,7 +396,7 @@ function capturarEmArquivo(g: GateMedivel, dir: string): Execucao {
     const r = spawnSync(g.inv.argv[0], g.inv.argv.slice(1), {
       timeout: TIMEOUT_MS,
       stdio: ['ignore', fdOut, fdErr],
-      env: { ...process.env, CI: '1', FORCE_COLOR: '0', ...g.inv.env },
+      env: { ...process.env, ...ENV_DO_MOTOR, ...g.inv.env },
     });
     const ms = Date.now() - t0;
     // O filho ja saiu: o que ele escreveu esta no arquivo, inclusive se foi morto pelo timeout.
@@ -389,7 +405,10 @@ function capturarEmArquivo(g: GateMedivel, dir: string): Execucao {
     // Timeout/kill nao e "passou": e ausencia de dado. Marcamos como estourou e a linha vira invalida.
     const estourou = r.signal !== null || r.error !== undefined;
     const cauda = `${saida}${erro}`.trim().slice(-600);
-    return { reprovou: r.status !== 0, ms, estourou, cauda, rc: r.status, stdout: saida };
+    const reprovou = r.status !== 0;
+    // Classifica com os canais INTEIROS: a `cauda` de 600 bytes esconderia um 2o erro real.
+    const classe = reprovou && !estourou ? classificarVermelho(saida, erro) : null;
+    return { reprovou, ms, estourou, cauda, rc: r.status, stdout: saida, stderr: erro, classe };
   } finally {
     closeSync(fdOut);
     closeSync(fdErr);
@@ -405,6 +424,52 @@ function rodarGuardado(g: GateMedivel, fase: string): Execucao {
   return r;
 }
 
+
+/** Veredito de uma medicao: a execucao que VALE, e o motivo caso nao haja dado nenhum. */
+interface Medicao {
+  r: Execucao;
+  /** AUSENCIA DE DADO — nem verde, nem vermelho. Nao-nulo invalida a linha / aborta o baseline. */
+  semDado: string | null;
+}
+
+/**
+ * Guard 12: VERMELHO SEM TESTE FALHANDO NAO E REPROVA — e a REPETICAO tem orcamento 1, e so no baseline.
+ *
+ * O `vitest run` sai 1 sob contencao com o resumo inteiro, ZERO teste falhando e um unico erro
+ * (`[vitest-worker]: Timeout calling "onTaskUpdate"`): 8 rodadas do MESMO comando com a MESMA
+ * captura deram rc=0 duas vezes e rc=1 seis (#2530). Contar isso como "o gate pegou" fabrica
+ * co-deteccao — e co-deteccao fabricada vira `EXCLUSIVIDADE_ZERO`, o argumento para APAGAR um
+ * detector real (a forma mais cara de errar aqui, guarda 3).
+ *
+ * A politica, declarada porque ela DECIDE QUAL OBSERVACAO VALE (o texto nunca e o veredito; o
+ * veredito sai sempre de um exit code):
+ *
+ *  - No BASELINE repete-se UMA vez. Ali nao ha defeito, entao "o defeito causou a lentidao" e
+ *    hipotese vazia, e um rc=0 limpo prova o que o baseline afirma: o gate esta verde na arvore
+ *    limpa. Orcamento 1, dono unico (esta funcao), termino explicito — nunca "repetir ate verde".
+ *  - SOB DEFEITO **nao se repete**: a assinatura do RPC NAO separa contencao externa de uma
+ *    regressao de custo causada pelo proprio defeito (o incidente dos 79s de
+ *    `docs/historico/a-forma-que-some-e-a-forma-que-mente.md`, com a MESMA string). Repetir ali
+ *    selecionaria a favor do verde — cache quente inclusive — e um verde falso APAGA uma deteccao.
+ *    Entao suspeito vira linha INVALIDA na hora, que e ausencia de dado, jamais "ninguem pegou".
+ */
+function rodarComReproducao(g: GateMedivel, fase: string, repetir: boolean): Medicao {
+  const r1 = rodarGuardado(g, fase);
+  if (r1.estourou || !r1.reprovou || r1.classe?.classe !== 'RPC-SEM-DADO') return { r: r1, semDado: null };
+
+  const assinatura = `${g.nome}: rc=${r1.rc} sem teste falhando (${r1.classe.motivo})`;
+  if (!repetir) {
+    return { r: r1, semDado: `${assinatura} — sob defeito isso e AUSENCIA DE DADO, nao "o gate nao pegou"` };
+  }
+
+  console.log(`  ${assinatura} — repetindo UMA vez`);
+  const r2 = rodarGuardado(g, `${fase} (repeticao unica)`);
+  if (r2.estourou) return { r: r2, semDado: null }; // o estouro ja invalida pela guarda antiga
+  if (r2.reprovou && r2.classe?.classe !== 'RPC-SEM-DADO') return { r: r2, semDado: null }; // vermelho de verdade
+  if (r2.reprovou) return { r: r2, semDado: `${assinatura} — e o RPC estourou tambem na repeticao` };
+  console.log(`  ${g.nome}: a repeticao saiu 0 limpo — o 1o vermelho era o RPC, nao o gate`);
+  return { r: r2, semDado: null };
+}
 // ---------------------------------------------------------------------------------------------
 // Sabotagem
 // ---------------------------------------------------------------------------------------------
@@ -467,7 +532,7 @@ function executarReceita(dv: DeverDeCasa): string | null {
     timeout: TIMEOUT_MS,
     maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, CI: '1', FORCE_COLOR: '0' },
+    env: { ...process.env, ...ENV_DO_MOTOR },
   });
   if (r.signal !== null || r.error) return `nao terminou (${r.signal ?? r.error?.message})`;
   if (r.status !== 0) return `saiu ${r.status}: ${`${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(-200)}`;
@@ -607,16 +672,24 @@ function main(): number {
   console.log('\nbaseline (repo limpo — todo gate precisa estar VERDE):');
   const baseline: BaselineGate[] = [];
   const noBaseline = new Map<string, Execucao>();
+  // Guard 12: gate cujo vermelho foi o RPC do vitest nas DUAS execucoes nao e vermelho — e ausencia
+  // de dado, e sai por uma porta propria (medir sobre isso seria medir sem saber a linha de base).
+  const semDadoNoBaseline = new Map<string, string>();
   for (const g of gates) {
-    const r = rodarGuardado(g, 'o baseline');
-    const verde = !r.reprovou && !r.estourou;
+    const m = rodarComReproducao(g, 'o baseline', true);
+    const r = m.r;
+    if (m.semDado) semDadoNoBaseline.set(g.nome, m.semDado);
+    const verde = !m.semDado && !r.reprovou && !r.estourou;
     baseline.push({ gate: g.nome, verde, ms: r.ms });
     noBaseline.set(g.nome, r);
-    console.log(`  ${verde ? 'verde' : 'VERMELHO'}  ${g.nome.padEnd(34)} ${r.ms}ms${r.estourou ? ` (ESTOUROU ${TIMEOUT_MS}ms)` : ''}`);
+    const rotulo = m.semDado ? 'SEM-DADO' : verde ? 'verde   ' : 'VERMELHO';
+    console.log(`  ${rotulo}  ${g.nome.padEnd(34)} ${r.ms}ms${r.estourou ? ` (ESTOUROU ${TIMEOUT_MS}ms)` : ''}`);
     if (!verde && r.cauda) console.log(r.cauda.split('\n').map((l) => `      | ${l}`).join('\n'));
   }
   const ignorarBaseline = args.includes('--ignorar-baseline');
-  let jaVermelhos = baseline.filter((b) => !b.verde);
+  // O SEM-DADO sai da conta de vermelho: ele tem porta propria abaixo, e chama-lo de vermelho
+  // ensinaria a ler ausencia de dado como reprovacao — a confusao que este PR existe para desfazer.
+  let jaVermelhos = baseline.filter((b) => !b.verde && !semDadoNoBaseline.has(b.gate));
 
   // Guard 1c: o `exclusividade` vermelho SO por GATE_NOVO de gate desta rodada sai da rodada — e so
   // ele (guarda 11 do cabecalho). A sonda e a invocacao do CI + `--json`, sob o write-guard; toda
@@ -662,6 +735,15 @@ function main(): number {
         console.error(`\nEXCLUSAO-RECUSADA: ${decisao.motivo}`);
       }
     }
+  }
+
+  if (semDadoNoBaseline.size && !ignorarBaseline) {
+    console.error(`\nBASELINE-SEM-DADO: ${semDadoNoBaseline.size} gate(s) nao produziram veredito no repo limpo:`);
+    for (const motivo of semDadoNoBaseline.values()) console.error(`  - ${motivo}`);
+    console.error('Isto NAO e "gate vermelho": e o RPC do vitest estourando por contencao, nas duas');
+    console.error('execucoes. Nada foi medido e nada foi gravado. Espere a maquina esvaziar e rode de');
+    console.error('novo — `bun run wt:status` lista as sessoes ociosas.');
+    return 1;
   }
 
   if (jaVermelhos.length && !ignorarBaseline) {
@@ -713,7 +795,14 @@ function main(): number {
     } else {
       let vermelhos = 0;
       for (const g of ordenados) {
-        const r = rodarGuardado(g, `o defeito ${d.id}`);
+        const med = rodarComReproducao(g, `o defeito ${d.id}`, false);
+        const r = med.r;
+        if (med.semDado) {
+          // Guard 12 sob defeito: NAO se repete, e suspeito nao vira verde nem vermelho.
+          console.log(`  ${g.nome}: SEM DADO — linha invalidada`);
+          invalido = med.semDado;
+          break;
+        }
         if (r.estourou) {
           // Estouro NAO e "o gate passou": e ausencia de dado. A linha inteira vira invalida, em
           // vez de registrar um verde que nunca foi observado.
@@ -739,8 +828,12 @@ function main(): number {
       // esta — a linha ja nao certifica exclusivo de ninguem, com ou sem esta execucao.
       const suspeito = ordenados.find((g) => g.nome === d.suspeito);
       if (!invalido && suspeito && !execucoes.some((e) => e.gate === suspeito.nome)) {
-        const r = rodarGuardado(suspeito, `o suspeito de ${d.id}`);
-        if (r.estourou) {
+        const med = rodarComReproducao(suspeito, `o suspeito de ${d.id}`, false);
+        const r = med.r;
+        if (med.semDado) {
+          invalido = med.semDado;
+          console.log(`  ${suspeito.nome}: SEM DADO na execucao fora da poda — linha invalidada`);
+        } else if (r.estourou) {
           invalido = `o suspeito ${suspeito.nome} estourou o tempo (${TIMEOUT_MS}ms) na execucao fora da poda`;
           console.log(`  ${suspeito.nome}: ESTOUROU o tempo — linha invalidada`);
         } else {

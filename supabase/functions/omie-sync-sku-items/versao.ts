@@ -27,6 +27,10 @@
 // ⚠️ Leia o `modo` ANTES do `versao`: em `modo:"background"` (o orquestrador aborta o cliente em
 // 25s pelo `STEP_TIMEOUT_MS`) o corpo NÃO foi coletado e `versao` sai vazio — linha INUTILIZÁVEL,
 // não "marcador velho".
+// ⚠️ O LEDGER não lê esse corpo aninhado: o `deploy_atestacoes_colher` copia só o `edge` do TOPO do
+// corpo. As atestações desta edge vêm das chamadas DIRETAS — o jobid 53 (07:00; 19 `via=eco` até
+// 2026-09-24) e, desde 2026-09-24, o cron `afiacao_omie_oben_sku_items_2h` (:35, a cada 2h). O
+// aninhado do jobid 52 serve à leitura manual e some quando o step sair do orquestrador.
 //
 // O gate desta edge é um `authorizeCronOrStaff` INLINE, e ele JÁ aceita `x-cron-secret`: a sonda
 // entra logo APÓS ele, sem gate próprio.
@@ -56,8 +60,12 @@ export const EDGE = "omie-sync-sku-items";
  * O marcador NOMEIA a fatia em vez de dizer `v1.0-sensor-inicial`: o que entra aqui não é só o
  * sensor, é o sensor MAIS o eco passivo de `versao` em toda resposta — a metade que faz o deploy
  * se provar pelo tick do cron, sem ninguém chamar nada.
+ *
+ * v1.2 (2026-09-23): limite do RUN (REDUNDANT/rate-limit que não cabe no deadline) virou
+ * ADIAMENTO — não marca tentativa, não vira `error`; `results` ganha `consultas_adiadas_por_limite`,
+ * `consultas_falhas` e o sensor `fila_atrasada_24h_nao_consultada` ("fila não anda"). Ver adiamento.ts.
  */
-export const VERSAO = "v1.1-eco-identidade-fonte";
+export const VERSAO = "v1.2-adiamento-por-limite-do-run";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.
