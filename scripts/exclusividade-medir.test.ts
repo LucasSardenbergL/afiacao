@@ -16,7 +16,7 @@
  * matriz que a rodada gravou, volta a verde.
  */
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -33,7 +33,7 @@ const MATRIZ = 'scripts/exclusividade-matriz.json';
 
 /** Os gates do fixture. Cada modo e o analogo minimo de um gate real. */
 const GATES_TS = `
-import { appendFileSync, fstatSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, fstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 const modo = process.argv[2];
@@ -57,6 +57,32 @@ switch (modo) {
       process.exit(0);
     }
     process.exit(readFileSync('${MAPA}', 'utf8').trim() === impressao() ? 0 : 1);
+  }
+  // Guarda 12: a forma MEDIDA do 'vitest run' sob contencao — resumo inteiro, zero teste
+  // falhando, e o RPC do worker como unico erro. O denominador passa o piso anti-truncamento.
+  case 'rpc-flaky':
+  case 'rpc-sempre':
+  case 'rpc-sob-defeito':
+  case 'rpc-com-falha': {
+    const resumo = (falhou: boolean) =>
+      ' Test Files  ' + (falhou ? '1 failed | 841 passed (842)' : '842 passed (842)') + '\\n' +
+      '      Tests  ' + (falhou ? '1 failed | 9255 passed (9256)' : '9256 passed (9256)') + '\\n' +
+      '     Errors  1 error\\n';
+    const corpo = 'Error: [vitest-worker]: Timeout calling "onTaskUpdate"\\n';
+    const verdeLimpo = () => { writeFileSync(1, ' Test Files  842 passed (842)\\n      Tests  9256 passed (9256)\\n'); process.exit(0); };
+    if (modo === 'rpc-com-falha') { writeFileSync(1, resumo(true)); writeFileSync(2, corpo); process.exit(1); }
+    if (modo === 'rpc-sempre') { writeFileSync(1, resumo(false)); writeFileSync(2, corpo); process.exit(1); }
+    if (modo === 'rpc-sob-defeito') {
+      if (!readFileSync('supabase/functions/fx/outro.ts', 'utf8').includes('SABOTADO')) verdeLimpo();
+      writeFileSync(1, resumo(false)); writeFileSync(2, corpo); process.exit(1);
+    }
+    // flaky: so a PRIMEIRA execucao estoura o RPC. O contador vive FORA da arvore (write-guard).
+    const contador = process.env.RPC_CONTADOR as string;
+    const n = existsSync(contador) ? Number(readFileSync(contador, 'utf8')) : 0;
+    writeFileSync(contador, String(n + 1));
+    if (n === 0) { writeFileSync(1, resumo(false)); writeFileSync(2, corpo); process.exit(1); }
+    verdeLimpo();
+    break;
   }
   case 'escritor': appendFileSync('escrito.txt', 'x\\n'); process.exit(0);
   case 'escritor-sob-defeito': if (edge.includes('SABOTADO')) appendFileSync('escrito.txt', 'x\\n'); process.exit(0);
@@ -107,6 +133,10 @@ const SCRIPTS: Record<string, string> = {
   'g:novo': 'bun scripts/g.ts barato',
   'g:quebrado': 'bun scripts/g.ts quebrado',
   'g:canal': 'bun scripts/g.ts canal',
+  'g:rpc-flaky': 'bun scripts/g.ts rpc-flaky',
+  'g:rpc-sempre': 'bun scripts/g.ts rpc-sempre',
+  'g:rpc-sob-defeito': 'bun scripts/g.ts rpc-sob-defeito',
+  'g:rpc-com-falha': 'bun scripts/g.ts rpc-com-falha',
   // O gate REAL, lendo a matriz do fixture: a sonda `--json` que o motor interpreta e a do binario.
   exclusividade: `bun ${JSON.stringify(GATE_REAL)}`,
 };
@@ -126,6 +156,10 @@ const PASSO: Record<string, string> = {
   'g:novo': 'run: bun run g:novo',
   'g:quebrado': 'run: bun run g:quebrado',
   'g:canal': 'run: bun run g:canal',
+  'g:rpc-flaky': 'run: bun run g:rpc-flaky',
+  'g:rpc-sempre': 'run: bun run g:rpc-sempre',
+  'g:rpc-sob-defeito': 'run: bun run g:rpc-sob-defeito',
+  'g:rpc-com-falha': 'run: bun run g:rpc-com-falha',
   exclusividade: 'run: bun run exclusividade',
 };
 
@@ -196,8 +230,9 @@ function montarFixture(gates: string[], defs: string): string {
   return raiz;
 }
 
-function medir(raiz: string, argv: string[] = []) {
-  const r = spawnSync('bun', [MOTOR, ...argv], { cwd: raiz, encoding: 'utf8', env: { ...process.env, EXCL_TIMEOUT_MS: '60000' } });
+function medir(raiz: string, argv: string[] = [], extraEnv: Record<string, string> = {}) {
+  const env = { ...process.env, EXCL_TIMEOUT_MS: '60000', ...extraEnv };
+  const r = spawnSync('bun', [MOTOR, ...argv], { cwd: raiz, encoding: 'utf8', env });
   const status = spawnSync('git', ['status', '--porcelain'], { cwd: raiz, encoding: 'utf8' }).stdout;
   return { rc: r.status, saida: `${r.stdout ?? ''}${r.stderr ?? ''}`, status };
 }
@@ -267,6 +302,58 @@ describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto ab
 
   it('dever de casa que falha e INVALIDO', () => {
     expect(linha('gerador-quebra')?.invalido).toMatch(/falhou: saiu 7/);
+  });
+});
+
+describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a repeticao tem orcamento 1', () => {
+  /** O contador do `rpc-flaky` vive FORA da arvore — dentro dela o write-guard abortaria a rodada. */
+  const contador = () => join(mkdtempSync(join(tmpdir(), 'excl-rpc-')), 'n');
+
+  it('BASELINE: RPC na 1a e rc=0 limpo na 2a => VERDE, e a rodada mede ate o fim', () => {
+    const raiz = montarFixture([...PADRAO, 'g:rpc-flaky'], DEFS_PADRAO);
+    const r = medir(raiz, ['--defeitos', 'descuidado'], { RPC_CONTADOR: contador() });
+    expect(r.saida).toContain('repetindo UMA vez');
+    expect(r.saida).toContain('a repeticao saiu 0 limpo');
+    expect(r.rc).toBe(0);
+    expect(r.saida).not.toContain('BASELINE-SEM-DADO');
+    expect(lerMatriz(raiz).baseline.find((b) => b.gate === 'g:rpc-flaky')?.verde).toBe(true);
+  });
+
+  it('BASELINE: RPC nas DUAS execucoes => BASELINE-SEM-DADO, e NAO "ja vermelho" — nada e gravado', () => {
+    const raiz = montarFixture([...PADRAO, 'g:rpc-sempre'], DEFS_PADRAO);
+    const r = medir(raiz);
+    expect(r.rc).toBe(1);
+    expect(r.saida).toContain('BASELINE-SEM-DADO');
+    expect(r.saida).toContain('g:rpc-sempre');
+    expect(r.saida).not.toContain('ja vermelho(s) no repo limpo');
+    expect(existsSync(join(raiz, MATRIZ))).toBe(false);
+    expect(r.status).toBe('');
+  });
+
+  it('FALSIFICACAO: um teste falhando JUNTO do RPC continua VERMELHO — a guarda nao engole reprova', () => {
+    const raiz = montarFixture([...PADRAO, 'g:rpc-com-falha'], DEFS_PADRAO);
+    const r = medir(raiz);
+    expect(r.rc).toBe(1);
+    expect(r.saida).toContain('ja vermelho(s) no repo limpo');
+    expect(r.saida).toContain('g:rpc-com-falha');
+    expect(r.saida).not.toContain('BASELINE-SEM-DADO');
+    expect(r.saida).not.toContain('repetindo UMA vez');
+  });
+
+  it('SOB DEFEITO nao se repete: suspeito invalida a LINHA — nunca um verde que apagaria a deteccao', () => {
+    // Defeito que NENHUM gate do PADRAO pega: sem isso a poda por custo (ruidosa entre gates
+    // rapidos) decidiria se o gate do RPC chega a rodar, e o teste mediria a ordenacao, nao a guarda.
+    const defs = `\n# @origem: fixture\n# @suspeito: g:rpc-sob-defeito\nso-rpc | supabase/functions/fx/outro.ts | s/^nada$/SABOTADO/\n`;
+    const raiz = montarFixture([...PADRAO, 'g:rpc-sob-defeito'], defs);
+    const r = medir(raiz);
+    expect(r.rc).toBe(0);
+    // A repeticao e EXCLUSIVA do baseline: sob defeito o motor nao gasta a 2a execucao.
+    expect(r.saida).not.toContain('repetindo UMA vez');
+    expect(r.saida).toContain('SEM DADO');
+    const linha = lerMatriz(raiz).linhas.find((l) => l.defeito === 'so-rpc');
+    expect(linha?.invalido).toContain('AUSENCIA DE DADO');
+    // E o gate suspeito NAO entra na matriz nem como verde nem como vermelho.
+    expect(linha?.execucoes.some((e) => e.gate === 'g:rpc-sob-defeito')).toBe(false);
   });
 });
 

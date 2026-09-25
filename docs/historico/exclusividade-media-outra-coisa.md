@@ -652,6 +652,121 @@ carrega o aviso, como já carrega o do `bun-despinado`. E `scripts/test-gates-fr
 `test:hooks`: as linhas da matriz que o medem ficam PODRES (aviso, rc=0), somando-se às que o #2528/#2530
 já deixaram.
 
+## O vermelho que não era reprova (2026-09-25) — a causa era o motor, não a captura
+
+O chip aberto pelo #2519 ("capturar em ARQUIVO, não em pipe") foi **re-escopado e executado aqui**.
+O #2530 já tinha falsificado a hipótese do pipe; o que faltava era o conserto que ela atrasou.
+
+**A causa.** `rodarGate` fazia `reprovou = r.status !== 0`. Isso não distingue "teste falhou" de
+"RPC de infra estourou" — e o motor **já tinha o conceito certo ao lado**, o `estourou`
+(timeout/sinal), que marca ausência de dado e invalida a linha em vez de contá-la como vermelho.
+A guarda 12 põe o caso do RPC na mesma família.
+
+**A classificação** (`scripts/lib/vitest-rpc.ts`) é fail-closed por construção: só é ausência de
+dado quando TODAS batem — resumo do vitest presente, ZERO teste e ZERO arquivo falhando,
+denominador acima do piso anti-truncamento, e os erros DECLARADOS pelo vitest (`Errors  N error`)
+serem TODOS a família `[vitest-worker|pool]: Timeout calling "…"`, com N ≥ 1. Qualquer outra coisa
+— saída ilegível, suíte morta antes do resumo (`fork: Resource temporarily unavailable`), um
+segundo erro real — continua REPROVA. A leitura usa os canais **inteiros**, nunca a `cauda` de 600
+bytes: um erro real enterrado fora dos últimos bytes viraria "só o RPC".
+
+As duas formas foram tiradas do `vitest run` 3.2.6 **real** deste repo, num fixture descartável,
+não do bundle minificado:
+
+```
+ Test Files  842 passed (842)        Test Files  1 failed | 841 passed (842)
+      Tests  9256 passed (9256)            Tests  1 failed | 9255 passed (9256)
+     Errors  1 error                      Errors  1 error
+```
+
+### A lição que este conserto quase atropela
+
+[a-forma-que-some-e-a-forma-que-mente.md](a-forma-que-some-e-a-forma-que-mente.md) registrou, sobre
+a **mesma string de erro**: *"o veredito é o exit code, não o texto bonito acima dele — e um
+vermelho que aparece como verde ensina a ignorar vermelho"*. A reconciliação honesta, e ela não é
+uma isenção: **o texto nunca vira veredito** — `classificarVermelho` não devolve "verde", no máximo
+devolve ausência de dado —, **mas ele decide QUAL OBSERVAÇÃO VALE**. Isso é política de repetição, e
+por isso ela é declarada, com orçamento 1, dono único (`rodarComReproducao`) e término explícito.
+
+### O que o Codex derrubou — e o que sobrou
+
+O parecer (challenge, gpt-6-astra) achou um buraco concreto no desenho original, que previa repetir
+em qualquer vermelho suspeito:
+
+> *Classificador largo demais: defeito real intermitente vira suspeito → segunda execução passa →
+> **verde falso**, apagando uma detecção.*
+
+O caso não é hipotético — é o incidente dos 79s do doc acima: um laço CPU-bound **do próprio
+defeito** segura o event loop e produz assinatura IDÊNTICA à da máquina saturada. A assinatura não
+separa as duas, e cache quente na 2ª execução ainda enviesa a favor do verde. Daí a regra final:
+
+- **No baseline repete-se UMA vez.** Ali não há defeito, então "o defeito causou a lentidão" é
+  hipótese vazia, e um `rc=0` limpo prova exatamente o que o baseline afirma.
+- **Sob defeito não se repete.** Suspeito vira linha INVÁLIDA na hora — ausência de dado, jamais
+  "ninguém pegou". Custa re-medição; nunca fabrica um verde.
+
+Errei também a direção do perigo: eu argumentei que classificar largo demais só produziria
+aborto/linha-inválida (seguro). Não é simétrico — largo demais apaga detecção pelo caminho do
+verde falso, e é por isso que a repetição sob defeito saiu.
+
+### A falsificação
+
+Uma camada por vez, nos DOIS locales, com CONTROLE verde na MESMA invocação (o laço aborta antes do
+1º `sed` se o controle não estiver verde) e restauração por cópia conferida por `git status`:
+
+| camada sabotada | o que ela sustenta | `C` | `pt_BR.UTF-8` |
+|---|---|---|---|
+| L1 `falharam > 0` | teste falhando manda, o RPC não absolve | vermelho | vermelho |
+| L2 `rpc === 0` | gate composto sem linha `Errors` não casa por vacuidade (`0 === 0`) | vermelho | vermelho |
+| L3 `declarados !== rpc` | um 2º erro real sobra e reprova | vermelho | vermelho |
+| L4 `!resumo` | suíte morta antes do resumo não vira verde | vermelho | vermelho |
+| L5 piso do denominador | suíte truncada não é suíte verde | vermelho | vermelho |
+| L6 âncora na coluna 0 | a string dentro de um code-frame não conta | vermelho | vermelho |
+| L7 não repetir sob defeito | a repetição é exclusiva do baseline | vermelho | vermelho |
+| L8 repetir no baseline | sem ela o baseline volta a abortar | vermelho | vermelho |
+
+**Dois tropeços do instrumento, ambos fail-closed — e o segundo achou teatro de verdade.**
+
+1. O laço reportou `SABOTAGEM-NAO-APLICOU` em três camadas na 1ª tentativa: o `|` do `s|…|…|`
+   colidia com o `||` dentro dos próprios padrões. Ele **não** contou isso como camada medida —
+   se contasse, três camadas sairiam "provadas" sem uma única execução.
+2. A L6 **SOBREVIVEU** à sabotagem. O teste da âncora era TEATRO: a fixture usava
+   `new Error('[vitest-worker]…`, que **não contém** `Error: [vitest-`, então a âncora nunca era
+   exercida. Trocada pelo caso real — um code-frame citando a linha da própria fixture —, ela passa
+   a morder. É a lição de [gates-textuais-cegos.md](gates-textuais-cegos.md) aplicada ao teste:
+   verde por CEGUEIRA, e só a sabotagem separa "não achou" de "não olhou".
+
+E o BSD `sed` trata `^` como âncora **no meio do padrão**: `s#/^Error#…#` sai 0 sem casar e sem
+erro. Sem o marcador literal pós-`sed`, a camada sairia "medida".
+
+### A tentativa de re-medição (2026-09-25) — o teto do motor NÃO vincula, e a M2 não estava medível
+
+Disparada com os 4 defeitos cuja causa saiu do repo (`bun-despinado`, `claude-md-linha-gigante`,
+`censo-sem-o-gate`, `sonda-responde-antes-do-gate-fora-da-lista-diligente`) e
+`EXCL_TIMEOUT_MS=2400000`. **O baseline passou 21 de 31 gates VERDE** — inclusive o `test`, que era
+o que abortava as duas tentativas anteriores — e então parou em:
+
+```
+VERMELHO  sonda:cron-prova   4774853ms (ESTOUROU 2400000ms)
+```
+
+**Dois achados, e o primeiro é um defeito do motor.** O teto é `timeout` de `spawnSync`, que manda
+SIGTERM no prazo mas **espera o filho sair de verdade**: o decorrido foi 4.774.853 ms contra um teto
+de 2.400.000: **quase o dobro**. Um teto que não vincula é a família de
+[espera-sem-desistencia.md](espera-sem-desistencia.md) — o `estourou` marcou certo (ausência de
+dado, fail-closed), mas o custo não foi contido. Fica como pendência separada: o teto precisa de
+`SIGKILL` depois de uma carência, ou de `spawn` assíncrono com o próprio relógio.
+
+**O segundo é que a máquina não estava medível**, e isso não se lê pelo relógio de parede: `load
+average 216,63` com swap em 5.554 de 6.144 MB e **seis `vitest` de outras sessões** moendo a CPU.
+O `sonda:cron-prova --gate`, que o doc de 2026-09-21 cronometrou em 1.143 s, levou 4.775 s — 4,2×.
+Nada no gate mudou; mudou a máquina.
+
+**Nada foi gravado.** O motor é fail-closed: a matriz só é escrita no fim, e a rodada morreu no
+baseline, antes de qualquer sabotagem — árvore limpa conferida por `git status --untracked-files=all`,
+`scripts/exclusividade-matriz.json` byte-idêntico. As 4 linhas seguem **DEFASADAS**, pelo instrumento
+e pela máquina, não pelo repo.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
