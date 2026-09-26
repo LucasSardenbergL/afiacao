@@ -104,20 +104,18 @@ while [ "$i" -lt "$N" ]; do
 done
 
 # ---------------------------------------------------------------------- sabotagens em paralelo
-# Cada execucao e UM cenario com base de porta propria (execucoes simultaneas nao colidem).
+# Cada execucao e UM cenario; o lab reserva o proprio bloco de portas (execucoes simultaneas nao
+# colidem — #2564: a base fixa por job colidia com porta efemera de cliente no Linux).
 # Pool sem `wait -n` (o bash do macOS e o 3.2).
 echo "== sabotagens (cada uma exige vermelho, com a FALHA esperada, em: $LOCALES)"
-job=0
 for i in $PRONTAS; do
   for loc in $LOCALES; do
     while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$FAIXAS" ]; do sleep 0.3; done
-    base=$((38000 + job * 100))
     (
-      LC_ALL="$loc" SCRIPT="$TMP/sabotado-${NOME[i]}.sh" LAB_PORTA_BASE="$base" LAB_FAIXAS=1 \
+      LC_ALL="$loc" SCRIPT="$TMP/sabotado-${NOME[i]}.sh" LAB_FAIXAS=1 \
         bash "$L/lab.sh" "${CEN[i]}" >"$TMP/res-$i-$loc.txt" 2>&1
       echo "RC=$?" >>"$TMP/res-$i-$loc.txt"
     ) &
-    job=$((job + 1))
   done
 done
 wait
