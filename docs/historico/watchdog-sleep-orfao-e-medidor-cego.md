@@ -79,14 +79,29 @@ O `sem_eco_do_prompt` do wrapper usa o idioma da v2 com segurança: o 1º arquiv
 `printf '%s\n' "$prompt"`, que nunca é vazio. **`NR==FNR` só é seguro quando a base nunca é vazia** —
 e isso tem de estar escrito no ponto de uso.
 
-## Orçamento de CI
+Varredura do idioma no repo (2026-09-25): os outros usos são seguros — `sem_eco_do_prompt` e a cauda
+do prompt (base nunca vazia), `wt-orfas.sh` e `probe-censura.sh` (base vazia ⇒ a resposta certa
+TAMBÉM é vazia). O único onde a cegueira aprovaria um gate, `check-claude-md-budget.sh`, já se
+protege: `[ -s "$baseline" ]` barra a base de 0 linhas antes do `awk`, e `nb == 0` barra a base só de
+comentário. É esse o remédio quando o `NR==FNR` fica.
 
-`gates-e-falsificacao`: 11m52s de 15m (run 36201289653); o bloco `codex-async` do `--falsificar`
-levou 128s para 10 rodadas (~13s/rodada), e cada sabotagem custa 2 rodadas. Entraram duas
-(`watchdog_pkill`, `stdin_herdado`) → ~+85s, folga de ~3m para ~1m45. A `watchdog_ordem` (pkill
-DEPOIS do kill) saiu: a asserção conta processo sobrevivente e não depende da ordem, então a
-sensibilidade à ordem invertida decorre de `watchdog_pkill` + o fato medido de que a ordem invertida
-vaza (prova única, medidor v3, base vazia: `FAIL [watchdog-sleep-vazado]`).
+## Orçamento de CI — e por que o teto do job subiu
+
+O bloco `codex-async` do `--falsificar` leva ~13s por rodada no CI (128s para 10), e cada sabotagem
+custa 2 rodadas. Entraram duas (`watchdog_pkill`, `stdin_herdado`) → ~+85s (runner lento ~+110s).
+
+Um run isolado (11m52s de 15m) sugeria folga de sobra — e mentia. A DISTRIBUIÇÃO de
+`gates-e-falsificacao` em 58 runs: p50 707s · p90 808s · pior 841s = **93% do teto já antes deste
+PR**, com 20 dos 56 verdes acima de 87%. Somando o acréscimo: **9% dos runs verdes** morreriam no
+relógio (18% em runner lento) — reprovação de código SADIO, a classe de
+[timeout-de-job-e-ausencia-de-dado.md](timeout-de-job-e-ausencia-de-dado.md). Pela regra de lá
+(folga sobre o PIOR observado) e pelo precedente do `validate`: **15 → 25min** (~58% sobre o pior
+projetado). Nenhum cancelamento em ~900s ainda — o penhasco estava a um PR de distância.
+
+A `watchdog_ordem` (pkill DEPOIS do kill) saiu das sabotagens: a asserção conta processo
+sobrevivente e não depende da ordem, então a sensibilidade à ordem invertida decorre de
+`watchdog_pkill` + o fato medido de que a ordem invertida vaza (prova única, medidor v3, base
+vazia: `FAIL [watchdog-sleep-vazado]`). Duas rodadas a menos em todo PR.
 
 ## Armadilhas do próprio experimento
 
