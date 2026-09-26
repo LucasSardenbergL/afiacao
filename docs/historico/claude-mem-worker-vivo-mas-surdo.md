@@ -141,3 +141,62 @@ provado por `scripts/test-orfaos-custosos.sh` — 66 asserções + 18 sabotagens
   REAL contra uma porta que o SO acabou de dar como livre: o stub ignora flags, e só o
   binário prova que `-m/--noproxy/-w/-o` existem (flag inválida = "nao sondei" para sempre,
   verde por cegueira).
+
+## Recorrência em 2026-09-24 — o que o upstream corrigiu, o que não, e o que ficou instalado
+
+**O que aconteceu:** o plugin voltou a bloquear TODO prompt no Mac do founder ("claude-mem
+worker unreachable for N consecutive hooks") — a mesma classe de 05/09. O worker atual subiu
+às 13:10 de 24/09 (`startedAt` do `worker.pid`) e o contador voltou a 0 no mesmo minuto
+(`mtime` de `state/hook-failures.json`). A instalação local segue na **13.15.3** — a mais
+bloqueante: no fonte dela (relido em 25/09), cada falha a partir do limiar chama o caminho que
+sai com `exit 2`, então o bloqueio vale para TODO prompt enquanto o worker estiver fora.
+
+**O upstream, lido no fonte pela sessão de 24/09 (não reverificado aqui):**
+
+- `≤ 13.24.8`: bloqueia todo prompt enquanto o worker está fora (o comportamento acima).
+- `≥ 13.24.18`: bloqueia **uma** vez e depois falha **em silêncio** — nada mais avisa. Troca
+  "trabalho parado" por "memória parada sem ninguém saber". (Se o contador continua subindo
+  nessas versões NÃO foi lido; por isso o sensor não depende só dele — ver abaixo.)
+- **Nenhuma versão, nem a 13.25.3, recupera sozinha um worker vivo-mas-surdo no macOS:** o
+  daemon novo se recusa a subir com a porta ocupada, e o *reclaim* de porta fantasma é
+  Windows-only. A saída continua sendo matar o pid — agora com script.
+
+**O que ficou instalado (PR de 2026-09-25):**
+
+- `scripts/claude-mem-reanimar.sh` (`bun run claude-mem:reanimar`) — a receita acima
+  generalizada para qualquer versão: diagnóstico com evidência positiva; só mata processo do
+  PRÓPRIO claude-mem (`worker-service.cjs`, ou `chroma-mcp` com o data-dir dele), só após 3
+  sondas falhando de forma interpretável, e com confirmação; `--so-olhar` não toca em nada;
+  worker com menos de 60 s nunca é tocado; porta de outro programa, sonda ininterpretável ou
+  endereço incoerente = para sem matar; `RECUPERADO` só com health 200 + hook `context` rc=0 +
+  contador 0.
+- `scripts/lab-claude-mem-reanimar/` — plugin FALSO num HOME descartável: 17 cenários / 109
+  asserções, **no Linux (CI) e no macOS** (onde o script roda de verdade), no `test:hooks`;
+  falsificação de 12 guardas, cada uma exigida pela FALHA específica, controle verde antes.
+  Para caber no CI, os tempos (60/5/2/30/3 s) aceitam override `REANIMAR_TESTE_*` só de teste
+  — e override que não é inteiro PARA o script: "abc" na idade mínima faria o ramo SUBINDO
+  falhar como falso e derrubar um worker que ainda sobe.
+- **Sensor** — bloco 6 do `.claude/hooks/vigia-worktree.sh`, lógica em
+  `scripts/claude-mem-saude.sh`: avisa no SessionStart quando o contador de falhas de hook > 0
+  ou quando há prompts gravados sem observação; sonda ausente = `NAO MEDI`, nunca ok.
+
+## O achado de 25/09 — o eixo que importa não é o contador
+
+Medido no `claude-mem.db` ao calibrar o sensor: **a última observação é de 2026-07-27 16:42
+UTC**, e o banco segue gravando prompts (3.260 depois dela), com contador em 0 e `/api/health`
+em 200. A nota de 05/09 dizia "desde pelo menos 13/08" porque media pelos logs disponíveis; o
+banco mostra que a memória parou em 27/07. E houve dois apagões **antes**, que ninguém viu:
+11–14/07 (232 prompts sem observação) e 21–27/07 (285). Nos 5.250 intervalos entre
+observações consecutivas de 07/07–26/07, o maior trecho NORMAL teve 11 prompts.
+
+Um sensor só de contador diria "ok" durante os dois meses. Por isso o sensor tem dois eixos, e
+o de gravação é medido contra os PROMPTS, não contra o relógio: "última observação há mais de
+N horas" daria alarme falso a cada fim de semana, enquanto "≥ 30 prompts em ≥ 60 min sem
+nenhuma observação, o último há ≤ 72 h" separa com folga os dois mundos (≤ 11 no normal;
+≥ 232 nos apagões).
+
+**Pendências (do founder):** a causa da memória morta é de credencial (o `/login` do CLI via
+`~/.claude-mem/claude-shim.sh`, seção acima) — no log de 27/07 o gerador respondia prosa em vez
+do XML esperado ("SDK returned non-XML prose response — ignoring queued batch") e o keychain
+falhava; e atualizar o plugin para ≥ 13.25.3 reduz o bloqueio a 1 prompt por queda, ao preço
+de a falha ficar silenciosa — que é o que o bloco 6 do vigia passa a denunciar.

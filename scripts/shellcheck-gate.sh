@@ -48,7 +48,10 @@ printf '%s\n' "$VERSAO" | grep -E '^version:' | sed 's/^/  shellcheck /'
 # que as skills mandam o agente RODAR para dar veredito de deploy — e os evals que o CI roda sobre
 # eles no `evals:deploy-verify` — estavam fora do gate, e o monitor tinha passado de 58 para ~400
 # linhas nesse dia. Os 16 arquivos entraram em ZERO achados, sem baseline.
-GLOBS=( 'scripts/*.sh' '.claude/hooks/*.sh' 'db/*.sh' 'db/lib/*.sh' '.claude/skills/*/scripts/*.sh' '.claude/skills/*/evals/*.sh' )
+# `scripts/lab-*/*.sh` entrou em 2026-09-25 com o laboratorio do claude-mem-reanimar.sh: o lab
+# prova um script que MATA processo, e o `scripts/*.sh` raso nao desce ate ele — exatamente o
+# harness que "passa e afirma que a invariante vale" se tiver bug de shell. Entrou em ZERO achados.
+GLOBS=( 'scripts/*.sh' 'scripts/lab-*/*.sh' '.claude/hooks/*.sh' 'db/*.sh' 'db/lib/*.sh' '.claude/skills/*/scripts/*.sh' '.claude/skills/*/evals/*.sh' )
 
 ARQUIVOS=()
 for g in "${GLOBS[@]}"; do
