@@ -194,6 +194,14 @@ A razão (42,1–61,9‰) fica longe da faixa "antes" — que uma 9ª amostra, o
 contra −46% local. E o absoluto sozinho, como o critério previa, não separaria: o "depois" mais lento
 (6.511ms) passa do "antes" mais rápido (5.902ms). Aqui foi a normalização que tornou a leitura possível.
 
+## Depois: ~42% do `it` não era o parse (2026-09-26)
+
+A frase acima — "só um detector mais rápido o reduz" — estava incompleta. Medido por camada, o vitest
+custava ~1,8× o Node puro no mesmo trabalho, e a diferença era o Proxy de interop do vite-node em volta do
+CJS do `typescript`: um trap por chamada de `ts.*`, por nó da AST. Com o Proxy fora do laço e um atalho
+por condição necessária, o `it` caiu de ~3,0s para ~1,1s no vitest isolado, com os mesmos sítios:
+[proxy-de-interop-no-laco-quente.md](proxy-de-interop-no-laco-quente.md).
+
 ## Regra
 
 **Custo que um fixture paga para UM cenário não vira o padrão dos outros.** O conjunto caro (sono
