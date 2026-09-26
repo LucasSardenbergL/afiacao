@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 557
+-- Total de custom migrations: 558
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -598,6 +598,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260922225500', 'data_health_portal_humano_critico_apos_24h', '20260922225500_data_health_portal_humano_critico_apos_24h.sql'),
   ('20260924120000', 'tint_promote_tombstone_fase5', '20260924120000_tint_promote_tombstone_fase5.sql'),
   ('20260924163250', 'cron_sku_items_2h_proprio', '20260924163250_cron_sku_items_2h_proprio.sql'),
+  ('20260925210000', 'tint_promocao_assincrona', '20260925210000_tint_promocao_assincrona.sql'),
   ('20260925210332', 'reposicao_em_transito_guarda_fantasma_null_safe', '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2415,6 +2416,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('oportunidade_erro_terminal_nao_bloqueia_oferta', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
   ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', ''),
   ('cron_sku_items_2h_proprio', 'cron_job', 'cron', 'afiacao_omie_oben_sku_items_2h', ''),
+  ('tint_promocao_assincrona', 'function', 'public', 'tint_promocao_tick', ''),
+  ('tint_promocao_assincrona', 'function', 'public', 'tint_promocao_watchdog', ''),
+  ('tint_promocao_assincrona', 'index', 'public', 'idx_tint_sync_runs_promocao_fila', 'tint_sync_runs'),
+  ('tint_promocao_assincrona', 'index', 'public', 'idx_tint_keys_snapshots_aplicacao_fila', 'tint_keys_snapshots'),
+  ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-tick', ''),
+  ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-watchdog', ''),
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 ),
 obj_status AS (
@@ -4280,6 +4287,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('oportunidade_erro_terminal_nao_bloqueia_oferta', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
   ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', ''),
   ('cron_sku_items_2h_proprio', 'cron_job', 'cron', 'afiacao_omie_oben_sku_items_2h', ''),
+  ('tint_promocao_assincrona', 'function', 'public', 'tint_promocao_tick', ''),
+  ('tint_promocao_assincrona', 'function', 'public', 'tint_promocao_watchdog', ''),
+  ('tint_promocao_assincrona', 'index', 'public', 'idx_tint_sync_runs_promocao_fila', 'tint_sync_runs'),
+  ('tint_promocao_assincrona', 'index', 'public', 'idx_tint_keys_snapshots_aplicacao_fila', 'tint_keys_snapshots'),
+  ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-tick', ''),
+  ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-watchdog', ''),
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT

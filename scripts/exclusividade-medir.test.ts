@@ -16,13 +16,23 @@
  * matriz que a rodada gravou, volta a verde.
  */
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { ExecucaoGate, Matriz } from './lib/exclusividade';
+import { BINARIOS_DAS_DEPS, SCHEMA_VERSION, lerMatriz, type ExecucaoGate, type Matriz } from './lib/exclusividade';
 
 const MOTOR = resolve('scripts/exclusividade-medir.ts');
 const GATE_REAL = resolve('scripts/exclusividade-gate.ts');
@@ -113,6 +123,13 @@ switch (modo) {
       writeFileSync(1, json + '\\n');
       writeFileSync(2, 'RUIDO-DE-STDERR depois do JSON\\n');
     }
+    process.exit(1);
+  }
+  // O que o exclusividade REAL diz de uma matriz de outro schema. No fixture real essa matriz nem
+  // chega ao baseline (guarda 14); so assim o ramo REPROVA-ALHEIA segue exercitado ponta a ponta.
+  case 'excl-reprova-alheia': {
+    const json = JSON.stringify({ ancoraQuebrada: [], vereditos: [{ severidade: 'REPROVA', gate: '(todos)', codigo: 'MATRIZ_SCHEMA_INCOMPATIVEL', motivo: 'fixture' }] });
+    if (process.argv.includes('--json')) writeFileSync(1, json + '\\n');
     process.exit(1);
   }
 }
@@ -255,7 +272,22 @@ const commitar = (raiz: string, ...argv: string[]) =>
 const ciYml = (gates: string[]) =>
   `jobs:\n  j:\n    steps:\n${gates.map((g) => `      - name: ${g}\n        ${PASSO[g]}`).join('\n')}\n  validate:\n    needs: [j]\n`;
 
-async function montarFixture(gates: string[], defs: string): Promise<string> {
+/** Um binario de mentira: `#!/bin/sh` + o corpo, com o modo pedido (o `+x` e parte do que se mede). */
+function binFalso(dir: string, nome: string, corpo: string, modo = 0o755): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, nome), `#!/bin/sh\n${corpo}\n`);
+  chmodSync(join(dir, nome), modo);
+}
+
+/**
+ * As deps do fixture: os binarios que a guarda 13 do motor sonda, respondendo `--version` como os
+ * reais. Sem eles o motor aborta por DEPS-NAO-INSTALADAS em qualquer cenario — como a ancora da raiz.
+ */
+function instalarDeps(raiz: string): void {
+  for (const b of BINARIOS_DAS_DEPS) binFalso(join(raiz, 'node_modules/.bin'), b, `echo "${b}/1.0.0 fixture"`);
+}
+
+async function montarFixture(gates: string[], defs: string, deps: (raiz: string) => void = instalarDeps): Promise<string> {
   const raiz = mkdtempSync(join(tmpdir(), 'excl-motor-'));
   raizes.push(raiz);
   const arquivos: Record<string, string> = {
@@ -264,6 +296,8 @@ async function montarFixture(gates: string[], defs: string): Promise<string> {
     '.github/workflows/ci.yml': ciYml(gates),
     // A 2a ponta da ancora da raiz: sem ela o `exclusividade` REAL reprova por ANCORA em qualquer cenario.
     '.github/workflows/auto-merge.yml': '# mergeia quando o required check `validate` passa\n',
+    // O `node_modules` fica fora da arvore versionada, como no repo real — senao a guarda 1a (arvore suja) o acusaria.
+    '.gitignore': 'node_modules/\n',
     'scripts/exclusividade.d/x.def': defs,
     [EDGE]: 'linha 1\noriginal\nlinha 3\n',
     [VERSAO]: 'export const VERSAO = "v1.0-fx";\n',
@@ -275,6 +309,7 @@ async function montarFixture(gates: string[], defs: string): Promise<string> {
     mkdirSync(dirname(join(raiz, p)), { recursive: true });
     writeFileSync(join(raiz, p), c);
   }
+  deps(raiz);
   await sh(raiz, 'git', ['init', '-q']);
   // O mapa nasce do proprio gerador do fixture, como o real nasce do `--write`.
   await sh(raiz, 'bun', ['run', 'sonda:fingerprint', '--', '--write']);
@@ -290,7 +325,15 @@ async function medir(raiz: string, argv: string[] = [], extraEnv: Record<string,
   return { rc: r.status, saida: `${r.stdout}${r.stderr}`, status };
 }
 
-const lerMatriz = (raiz: string) => JSON.parse(readFileSync(join(raiz, MATRIZ), 'utf8')) as Matriz;
+/**
+ * O que a rodada gravou, lido pela MESMA porta do gate: o motor nao pode gravar uma matriz que o
+ * `exclusividade` recusaria no CI — escritor e leitor discordando calados sobre o mesmo JSON.
+ */
+const matrizGravada = (raiz: string): Matriz => {
+  const l = lerMatriz(readFileSync(join(raiz, MATRIZ), 'utf8'));
+  if (!l.ok) throw new Error(`a rodada gravou uma matriz que o gate RECUSA: ${l.codigo} ${l.motivo}`);
+  return l.matriz;
+};
 
 describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto abaixo)', () => {
   let raiz = '';
@@ -299,7 +342,7 @@ describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto ab
   beforeAll(async () => {
     raiz = await montarFixture(PADRAO, DEFS_PADRAO);
     r = await medir(raiz);
-    m = r.rc === 0 ? lerMatriz(raiz) : null;
+    m = r.rc === 0 ? matrizGravada(raiz) : null;
   }, 180_000);
   const linha = (id: string) => m?.linhas.find((l) => l.defeito === id);
   const execDe = (id: string, gate: string) => linha(id)?.execucoes.find((e) => e.gate === gate);
@@ -376,7 +419,7 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
     expect(r.saida).toContain('a repeticao saiu 0 limpo');
     expect(r.rc).toBe(0);
     expect(r.saida).not.toContain('BASELINE-SEM-DADO');
-    expect(lerMatriz(raiz).baseline.find((b) => b.gate === 'g:rpc-flaky')?.verde).toBe(true);
+    expect(matrizGravada(raiz).baseline.find((b) => b.gate === 'g:rpc-flaky')?.verde).toBe(true);
   }, 180_000);
 
   it('BASELINE: RPC nas DUAS execucoes => BASELINE-SEM-DADO, e NAO "ja vermelho" — nada e gravado', async () => {
@@ -410,7 +453,7 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
     // A repeticao e EXCLUSIVA do baseline: sob defeito o motor nao gasta a 2a execucao.
     expect(r.saida).not.toContain('repetindo UMA vez');
     expect(r.saida).toContain('SEM DADO');
-    const linha = lerMatriz(raiz).linhas.find((l) => l.defeito === 'so-rpc');
+    const linha = matrizGravada(raiz).linhas.find((l) => l.defeito === 'so-rpc');
     expect(linha?.invalido).toContain('AUSENCIA DE DADO');
     // E o gate suspeito NAO entra na matriz nem como verde nem como vermelho.
     expect(linha?.execucoes.some((e) => e.gate === 'g:rpc-sob-defeito')).toBe(false);
@@ -502,6 +545,154 @@ describe('motor — o que aborta ANTES de gastar o baseline', () => {
   }, 60_000);
 });
 
+describe('[deps-instaladas] motor — guarda 13: sem as deps o motor ABORTA antes de gastar, e so resposta POSITIVA passa', () => {
+  /**
+   * Os MESMOS binarios num diretorio do PATH, respondendo versao — o estado medido em 2026-09-25:
+   * `bun run tsc --version` com o `node_modules` VAZIO saiu 0 com a versao de um `tsc` do PATH. Uma
+   * sonda por NOME aprovaria todo cenario de aborto abaixo; so a sonda pelo caminho LOCAL aborta.
+   * O CONTROLE roda com o MESMO PATH: a unica variavel entre ele e os abortos e o `node_modules`.
+   */
+  let path = '';
+  beforeAll(() => {
+    const globais = mkdtempSync(join(tmpdir(), 'excl-path-'));
+    raizes.push(globais);
+    for (const b of BINARIOS_DAS_DEPS) binFalso(globais, b, `echo "${b} 9.9.9 GLOBAL"`);
+    path = `${globais}:${process.env.PATH ?? ''}`;
+  });
+  const medirComPath = (raiz: string, argv: string[] = []) => medir(raiz, argv, { PATH: path });
+  const trocarTsc = (corpo: string, modo?: number) => (raiz: string) => {
+    instalarDeps(raiz);
+    binFalso(join(raiz, 'node_modules/.bin'), 'tsc', corpo, modo);
+  };
+
+  it('CONTROLE: com as deps respondendo, o motor segue ate o fim — baseline, defeito e matriz', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO);
+    const r = await medirComPath(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(0);
+    expect(r.saida).not.toContain('DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('baseline (repo limpo');
+    expect(existsSync(join(raiz, MATRIZ))).toBe(true);
+  }, 120_000);
+
+  it('node_modules EXISTENTE e VAZIO (o incidente): aborta com a marca ASCII, nomeia os 4, e nem planeja', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO, (x) => mkdirSync(join(x, 'node_modules')));
+    const r = await medirComPath(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('ABORTADO: DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('rode bun install');
+    for (const b of BINARIOS_DAS_DEPS) expect(r.saida).toContain(`node_modules/.bin/${b} --version: ENOENT`);
+    // Casavel por `grep` sem `-i` e sem locale: o bloco inteiro e ASCII imprimivel.
+    const bloco = r.saida.slice(r.saida.indexOf('ABORTADO: DEPS-NAO-INSTALADAS'));
+    expect(bloco).toMatch(/^[\n\x20-\x7e]*$/);
+    expect(r.saida, 'abortou antes do plano').not.toContain('plano:');
+    expect(r.saida, 'e antes do baseline').not.toContain('baseline (repo limpo');
+    expect(existsSync(join(raiz, MATRIZ))).toBe(false);
+    expect(r.status).toBe('');
+  }, 120_000);
+
+  // `--dry` nos abortos abaixo e de proposito: a guarda roda ANTES do plano (o `--dry` e o pre-voo),
+  // e com ela sabotada o motor sai 0 no `--dry` em vez de pagar uma rodada — o vermelho chega barato.
+  it('presente mas CALADO: rc 0 sem versao no stdout ABORTA — existencia nao e resposta', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO, trocarTsc('exit 0'));
+    const r = await medirComPath(raiz, ['--dry']);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('ABORTADO: DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('node_modules/.bin/tsc --version: saiu 0 SEM versao');
+    expect(r.saida, 'so o quebrado e acusado').not.toContain('node_modules/.bin/vite');
+  }, 60_000);
+
+  it('versao no stdout com rc != 0 ABORTA — a resposta so vale com o exit 0', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO, trocarTsc('echo "Version 5.8.3"; exit 1'));
+    const r = await medirComPath(raiz, ['--dry']);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('ABORTADO: DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('node_modules/.bin/tsc --version: saiu 1');
+  }, 60_000);
+
+  it('presente SEM bit de execucao ABORTA — presente nao e executavel', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO, trocarTsc('echo "tsc/1.0.0 fixture"', 0o644));
+    const r = await medirComPath(raiz, ['--dry']);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('ABORTADO: DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('node_modules/.bin/tsc --version: EACCES');
+  }, 60_000);
+
+  // A lista e FIXA porque a fonte que a derivaria — o proprio `node_modules` — e o que pode faltar.
+  // Ela nao apodrece calada: e, por construcao, o que os scripts do `package.json` REAL chamam como
+  // comando E o `.bin` REAL fornece. Binario a mais faria a guarda exigir o que o `bun install` nao
+  // instala (e o conselho da mensagem viraria mentira); a menos, uma dep que ninguem sonda.
+  it('a lista e EXATAMENTE o que os scripts do package.json REAL chamam do node_modules/.bin', () => {
+    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> };
+    const noBin = new Set(readdirSync('node_modules/.bin'));
+    const comandos = Object.values(scripts).flatMap((s) =>
+      s.split(/&&|\|\||[;|()\n]/).map((seg) => seg.trim().replace(/^(?:\w+=\S*\s+)+/, '').split(/\s+/)[0]),
+    );
+    expect([...new Set(comandos.filter((c) => noBin.has(c)))].sort()).toEqual([...BINARIOS_DAS_DEPS].sort());
+  });
+});
+
+/**
+ * A rodada FUNDE a matriz em disco e a regrava com `schemaVersion: SCHEMA_VERSION` — lida com cast,
+ * uma matriz de outro schema saia "migrada" em silencio, carimbada como a de hoje. Na rodada FATIADA
+ * (`--gates` sem o `exclusividade`, a que o README manda na M2) o classificador nem roda: esta guarda
+ * e a unica leitura que confere. E ela vem ANTES do baseline — a rodada inteira custa uma hora.
+ */
+describe('motor — guarda 14: a matriz que a rodada vai FUNDIR tem de ser legivel no schema de hoje', () => {
+  /** A marca da anterior: se a rodada a LEU e fundiu, o dispensado dela sobrevive na matriz gravada. */
+  const anterior = (over: Record<string, unknown> = {}) =>
+    `${JSON.stringify(
+      {
+        schemaVersion: SCHEMA_VERSION,
+        medidoEm: '2026-09-01T00:00:00.000Z',
+        sourceHead: 'fixture',
+        dispensados: [{ gate: 'g:marca-da-anterior', desde: 'fixture', motivo: 'prova que a rodada leu a anterior' }],
+        baseline: [],
+        linhas: [],
+        ...over,
+      },
+      null,
+      2,
+    )}\n`;
+  async function comAnterior(conteudo: string): Promise<string> {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO);
+    writeFileSync(join(raiz, MATRIZ), conteudo);
+    await sh(raiz, 'git', ['add', '-A']);
+    await commitar(raiz, '-m', 'matriz anterior');
+    return raiz;
+  }
+
+  // O CONTROLE: uma guarda que recusasse TODA matriz existente passaria em todos os vermelhos abaixo.
+  it('CONTROLE: anterior valida e LIDA e fundida — o dispensado dela sobrevive na matriz gravada', async () => {
+    const raiz = await comAnterior(anterior());
+    const r = await medir(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(0);
+    expect(r.saida).not.toContain('MATRIZ-ANTERIOR-RECUSADA');
+    expect(matrizGravada(raiz).dispensados.map((d) => d.gate)).toEqual(['g:marca-da-anterior']);
+  }, 120_000);
+
+  it('schema FUTURO: ABORTA antes do baseline, e a anterior fica byte a byte — nunca regravada como a de hoje', async () => {
+    const conteudo = anterior({ schemaVersion: SCHEMA_VERSION + 1 });
+    const raiz = await comAnterior(conteudo);
+    const r = await medir(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('MATRIZ-ANTERIOR-RECUSADA MATRIZ_SCHEMA_INCOMPATIVEL');
+    expect(r.saida).not.toContain('baseline (repo limpo');
+    expect(r.status).toBe('');
+    expect(readFileSync(join(raiz, MATRIZ), 'utf8')).toBe(conteudo);
+  }, 120_000);
+
+  // Com cast, a linha sem `execucoes` era HERDADA calada (defeito que a rodada nao re-mediu) — e
+  // o gate do CI e que tropecava nela depois.
+  it('forma invalida (linha sem `execucoes`): ABORTA com MATRIZ_MALFORMADA', async () => {
+    const velha = { defeito: 'velho', defeitoFingerprint: 'ff', alvo: 'a.md', suspeito: null, origem: null, parouCedo: false, invalido: null };
+    const raiz = await comAnterior(anterior({ linhas: [velha] }));
+    const r = await medir(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('MATRIZ-ANTERIOR-RECUSADA MATRIZ_MALFORMADA');
+    expect(r.status).toBe('');
+  }, 120_000);
+});
+
 const DEFS_CANAL = `
 # @origem: fixture
 # @suspeito: g:pega
@@ -544,7 +735,7 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     base = await montarFixture(['g:barato', 'g:pega'], DEFS);
     const r1 = await medir(base, ['--defeitos', 'pega']);
     if (r1.rc !== 0) throw new Error(`bootstrap 1: o motor saiu ${r1.rc}\n${r1.saida.slice(-1500)}`);
-    const m = lerMatriz(base);
+    const m = matrizGravada(base);
     m.dispensados = [{ gate: 'exclusividade', desde: 'fixture', motivo: 'nasce dispensado, como no repo real' }];
     writeFileSync(join(base, MATRIZ), `${JSON.stringify(m, null, 2)}\n`);
     writeFileSync(join(base, '.github/workflows/ci.yml'), ciYml(BASE));
@@ -552,7 +743,7 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     await commitar(base, '-m', 'bootstrap 1');
     const r2 = await medir(base, ['--defeitos', 'pega']);
     if (r2.rc !== 0) throw new Error(`bootstrap 2: o motor saiu ${r2.rc}\n${r2.saida.slice(-1500)}`);
-    celulaDaBase = lerMatriz(base).linhas.find((l) => l.defeito === 'pega')?.execucoes.find((e) => e.gate === 'exclusividade') ?? null;
+    celulaDaBase = matrizGravada(base).linhas.find((l) => l.defeito === 'pega')?.execucoes.find((e) => e.gate === 'exclusividade') ?? null;
     await sh(base, 'git', ['add', '-A']);
     await commitar(base, '-m', 'bootstrap 2');
   }, 180_000);
@@ -570,7 +761,7 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     return raiz;
   }
   const comGates = (gates: string[]) => (raiz: string) => writeFileSync(join(raiz, '.github/workflows/ci.yml'), ciYml(gates));
-  const linhaDe = (raiz: string, id: string) => lerMatriz(raiz).linhas.find((l) => l.defeito === id);
+  const linhaDe = (raiz: string, id: string) => matrizGravada(raiz).linhas.find((l) => l.defeito === id);
 
   /** O gate REAL, como o CI o roda — o eixo POR FORA do motor. */
   const gateReal = async (raiz: string) => {
@@ -605,7 +796,7 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(r.rc, r.saida.slice(-2000)).toBe(0);
     expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
     expect(r.saida).toContain('GATE-NOVO-RESOLVIDO g:novo');
-    const m = lerMatriz(raiz);
+    const m = matrizGravada(raiz);
     const l = m.linhas.find((x) => x.defeito === 'pega');
     // Fora da rodada = nao re-executado: a celula dele e a da base, byte a byte, e fica DEFASADA.
     expect(l?.execucoes.find((e) => e.gate === 'exclusividade')).toEqual(celulaDaBase);
@@ -669,11 +860,14 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(r.status).toBe('');
   }, 120_000);
 
-  it('matriz ilegivel (MATRIZ_AUSENTE): ABORTA — REPROVA alheia a gate novo', async () => {
+  // Ela nem chega ao classificador: a guarda 14 recusa a matriz que a rodada FUNDIRIA, antes do
+  // baseline. O ramo REPROVA-ALHEIA segue coberto pelo `exclusividade` de mentira logo abaixo.
+  it('matriz ilegivel: ABORTA na guarda 14, antes do baseline — nada gravado', async () => {
     const raiz = await clonar((x) => writeFileSync(join(x, MATRIZ), '{ nao e json\n'));
     const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
-    expect(r.saida).toContain('EXCLUSAO-RECUSADA: REPROVA-ALHEIA MATRIZ_AUSENTE');
+    expect(r.saida).toContain('MATRIZ-ANTERIOR-RECUSADA MATRIZ_AUSENTE');
+    expect(r.saida).not.toContain('baseline (repo limpo');
     expect(r.status).toBe('');
   }, 120_000);
 
@@ -683,6 +877,14 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     pkg.scripts.exclusividade = comando;
     writeFileSync(join(raiz, 'package.json'), JSON.stringify(pkg, null, 2));
   };
+
+  it('REPROVA de LEITURA da matriz no baseline (o que o gate real diz de outro schema): ABORTA — REPROVA-ALHEIA', async () => {
+    const raiz = await clonar(trocarExclusividade('bun scripts/g.ts excl-reprova-alheia'));
+    const r = await medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(1);
+    expect(r.saida).toContain('EXCLUSAO-RECUSADA: REPROVA-ALHEIA MATRIZ_SCHEMA_INCOMPATIVEL');
+    expect(r.status).toBe('');
+  }, 120_000);
 
   // A fiacao do exit BRUTO no motor: sem ela o criterio "exit 1 nas duas leituras" seria decorativo —
   // nos dois gates de mentira abaixo o JSON diz exatamente o que a exclusao aceitaria.

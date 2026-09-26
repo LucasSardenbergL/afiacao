@@ -67,8 +67,40 @@ roda() { # roda <script do lab> <marcador verde>
   return 1
 }
 
+# Dois labs AO MESMO TEMPO com a MESMA semente disputam o MESMO bloco de portas (#2564: com porta
+# fixa, o segundo reprovava com "porta OCUPADA"). Exige: os dois LAB-VERDE com exit 0, e cada um
+# num bloco DIFERENTE — a disputa aconteceu e foi resolvida, nao evitada por sorte.
+um_lab() { # um_lab <semente> <saida> — um cenario rapido, sob o subreaper no Linux
+  if [ "$(uname -s)" = Linux ]; then
+    LAB_PORTA_SEMENTE="$1" python3 "$LAB/subreaper.py" bash "$LAB/lab.sh" c_hook_falha >"$2" 2>&1
+  else
+    LAB_PORTA_SEMENTE="$1" bash "$LAB/lab.sh" c_hook_falha >"$2" 2>&1
+  fi
+}
+concorrencia() {
+  local d sem=$((RANDOM % 600)) p1 p2 ok=0 blocos
+  d="$(mktemp -d)"
+  um_lab "$sem" "$d/1.txt" &
+  p1=$!
+  um_lab "$sem" "$d/2.txt" &
+  p2=$!
+  wait "$p1" && grep -qx LAB-VERDE "$d/1.txt" && ok=$((ok + 1))
+  wait "$p2" && grep -qx LAB-VERDE "$d/2.txt" && ok=$((ok + 1))
+  blocos="$(grep -ho '^portas: bloco [0-9]*' "$d/1.txt" "$d/2.txt" | sort -u | wc -l | tr -d ' ')"
+  if [ "$ok" = 2 ] && [ "$blocos" = 2 ]; then
+    echo "CONCORRENCIA-VERDE: 2 labs simultaneos com a mesma semente, 2 blocos distintos, os 2 LAB-VERDE"
+    rm -rf "$d"
+    return 0
+  fi
+  echo "FALHA concorrencia: $ok/2 LAB-VERDE, $blocos bloco(s) distinto(s) (esperado 2/2 e 2):"
+  grep -h 'FALHA\|LAB-VERMELHO\|^portas' "$d/1.txt" "$d/2.txt" | head -10
+  rm -rf "$d"
+  return 1
+}
+
 if [ "${1:-}" = "--falsificar" ]; then
   roda falsifica.sh FALSIFICACAO-VERDE
   exit $?
 fi
-roda lab.sh LAB-VERDE
+roda lab.sh LAB-VERDE || exit 1
+concorrencia

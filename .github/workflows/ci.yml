@@ -884,9 +884,71 @@ jobs:
       - name: PostgreSQL 17 (PGDG) — instala e confere a versão
         run: |
           set -euo pipefail
+          # ── Retry das TRÊS chamadas de rede deste step ────────────────────────────────────────
+          # DENOMINADOR, medido antes de escrever uma linha (API do Actions, TODOS os attempts,
+          # 410 execuções de `provas-sql` entre 2026-09-08 e 09-26): 6 falhas neste step, todas de
+          # REDE e nenhuma do PostgreSQL. Cinco são o `Hash Sum mismatch` de 09-09, que a remoção
+          # de fontes abaixo resolveu — elas são PRÉ-mitigação e não contam para o desenho atual.
+          # A sexta é POSTERIOR: run 35549862278 (2026-09-21), `curl: (56) Failure when receiving
+          # data from the peer`, step morto em 53s num PR sem uma linha de SQL; `gh run rerun
+          # --failed` passou de primeira, sem mudar nada. Taxa do desenho atual: 1/234 = 0,43%
+          # (IC95 Wilson [0,08%; 2,38%]), a ~14 execuções/dia ⇒ ~1 trava a cada 16 dias.
+          # Pequena — e ainda assim vale, porque o custo não é simétrico: `provas-sql` é check
+          # OBRIGATÓRIO (o `validate` exige `success` POSITIVO de cada job) num repo que mergeia
+          # sozinho, então a trava não é barulhenta, é um PR parado até alguém REPARAR. Uma
+          # re-tentativa custa segundos; o rerun custa o job inteiro mais a atenção de quem nota.
+          # E a rede é MESMO exercida: nas 205 execuções em que o timing foi medido, a mínima do
+          # step é 10s (mediana 13s), sem nenhum bucket de ~1s, e o log traz `Setting up
+          # postgresql-17` — o `if` abaixo nunca achou PG17 pronto no runner. Sem isso a taxa acima
+          # não seria comparável: se o runner já trouxesse o PG17, o denominador real seria uma
+          # fração de 234 e a taxa, várias vezes maior.
+          #
+          # FAIL-CLOSED, e é por isso que não é `|| true` nem `for ... && break`: esgotadas as
+          # tentativas, `tentar` devolve o exit da ÚLTIMA (56, não 1) e é chamada NUA — sob
+          # `set -e` isso MATA o step, com o erro real já no log (o `-sS` do curl e o stderr do
+          # apt-get não são silenciados). Laço de retry é o lugar clássico do verde por
+          # DESISTÊNCIA: `for i in 1 2 3; do cmd && break; done` termina normalmente quando as
+          # três falham e o script SEGUE com 0 — o caminho não-reconhecido caindo no lado
+          # otimista, que é o `ausente ≠ zero` no tempo (docs/historico/espera-sem-desistencia.md).
+          # Aqui o caminho não-reconhecido é o que REPROVA.
+          #
+          # Um helper para as três camadas, e não `curl --retry`: o `--retry` não cobre os dois
+          # `apt-get`, e seu conjunto de erros "transitórios" só inclui o exit 56 com
+          # `--retry-all-errors`. Mecanismo único = uma falsificação que vale para as três
+          # (scripts/lab-retry-pgdg/, no `test:hooks`), em vez de três meias-provas. O teto e a
+          # espera são LITERAIS, sem `${VAR:-3}`: botão de ambiente em gate é o caminho para um
+          # `env:` de workflow mudar a verdade do step sem aparecer no diff dele. O lab acelera
+          # dublando `sleep` no PATH, que é problema do lab e não costura no código de produção.
+          TENTATIVAS=3
+          tentar() {
+            local rotulo="$1"; shift
+            local n=1 rc=0 espera=5
+            while :; do
+              rc=0
+              # `|| rc=$?` põe o comando em contexto de condição: o `set -e` fica suspenso AQUI de
+              # propósito (é o único ponto onde a falha é dado, não veredito) e `rc` guarda o exit
+              # REAL. Em qualquer outro lugar deste step o `set -e` segue valendo.
+              "$@" || rc=$?
+              if [ "$rc" -eq 0 ]; then
+                if [ "$n" -gt 1 ]; then
+                  echo "  ↻ $rotulo: OK na tentativa $n/$TENTATIVAS"
+                fi
+                return 0
+              fi
+              if [ "$n" -ge "$TENTATIVAS" ]; then
+                echo "::error::$rotulo falhou nas $TENTATIVAS tentativas — exit da última: $rc"
+                return "$rc"
+              fi
+              echo "  ↻ $rotulo: tentativa $n/$TENTATIVAS falhou (exit=$rc) — repetindo em ${espera}s"
+              sleep "$espera"
+              espera=$(( espera * 2 ))
+              n=$(( n + 1 ))
+            done
+          }
           if [ ! -x /usr/lib/postgresql/17/bin/initdb ]; then
             sudo install -d /usr/share/postgresql-common/pgdg
-            sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            tentar "curl da chave do PGDG" \
+              sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
               https://www.postgresql.org/media/keys/ACCC4CF8.asc
             echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
           https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
@@ -904,8 +966,8 @@ jobs:
             ls -la /etc/apt/sources.list.d/ || true
             sudo rm -f /etc/apt/sources.list.d/*google* /etc/apt/sources.list.d/*chrome* \
                        /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*msprod* || true
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq postgresql-17
+            tentar "apt-get update" sudo apt-get update -qq
+            tentar "apt-get install postgresql-17" sudo apt-get install -y -qq postgresql-17
           fi
           instalada="$(/usr/lib/postgresql/17/bin/initdb --version)"
           echo "  $instalada"

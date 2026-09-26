@@ -10,17 +10,20 @@
  *   3. reprovar um gate por exclusividade zero (o veredito que o parecer do Codex proibiu:
  *      corpus curto nao mede gate raro).
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 import {
   CORPUS_DIR,
   RECEITAS,
+  SCHEMA_VERSION,
   aplicarBumpVersao,
   avaliar,
   bloqueantesOpacos,
@@ -33,12 +36,14 @@ import {
   gatesCandidatos,
   invocacaoDoCI,
   jobsBloqueantes,
+  lerMatriz,
   parseDefeitos,
   primeiraLinhaComCarne,
   resumir,
   textoDoDever,
   type Defeito,
   type GateAlvo,
+  type LeituraDaMatriz,
   type LinhaMatriz,
   type Matriz,
 } from './lib/exclusividade';
@@ -66,7 +71,7 @@ const exec = (gate: string, reprovou: boolean, ms = 10) => ({
 });
 
 const matriz = (over: Partial<Matriz> = {}): Matriz => ({
-  schemaVersion: 1,
+  schemaVersion: SCHEMA_VERSION,
   medidoEm: '2026-09-07T00:00:00.000Z',
   sourceHead: 'abc',
   dispensados: [],
@@ -77,6 +82,9 @@ const matriz = (over: Partial<Matriz> = {}): Matriz => ({
   linhas: [],
   ...over,
 });
+
+/** A leitura aceita de `m`, sem passar pelo texto — para os testes que nao sao sobre a LEITURA. */
+const lida = (m: Matriz): LeituraDaMatriz => ({ ok: true, matriz: m });
 
 describe('parseDefeitos', () => {
   it("o 3o campo e o RESTO: a expressao perl pode conter '|'", () => {
@@ -763,7 +771,7 @@ describe('avaliar — severidade', () => {
   const fp = new Map([['g1', { fingerprint: 'fp', resolvida: true }]]);
 
   it('matriz ausente reprova (fail-closed)', () => {
-    const v = avaliar(null, [g('g1')], fp);
+    const v = avaliar(lerMatriz(null), [g('g1')], fp);
     expect(v[0].severidade).toBe('REPROVA');
     expect(v[0].codigo).toBe('MATRIZ_AUSENTE');
   });
@@ -771,7 +779,7 @@ describe('avaliar — severidade', () => {
   // O objetivo declarado da maquina: quem acrescenta um gate paga a prova de que ele pega algo
   // que ninguem pega. Sem este teste, a ferramenta inteira e decorativa.
   it('gate bloqueante sem NENHUMA medicao reprova', () => {
-    const v = avaliar(matriz(), [g('novo')], new Map());
+    const v = avaliar(lida(matriz()), [g('novo')], new Map());
     expect(v.map((x) => x.codigo)).toContain('GATE_NOVO_SEM_EXCLUSIVIDADE');
     expect(v.find((x) => x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE')!.severidade).toBe('REPROVA');
   });
@@ -782,30 +790,30 @@ describe('avaliar — severidade', () => {
   // velha e a nova concordam.
   it('gate que so aparece como NAO RODADO (podado) reprova — ausencia de execucao nao e medicao', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g2', execucoes: [exec('g1', true)], parouCedo: true })] });
-    const v = avaliar(m, [g('g1'), g('g2')], fp).find((x) => x.gate === 'g2' && x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE');
+    const v = avaliar(lida(m), [g('g1'), g('g2')], fp).find((x) => x.gate === 'g2' && x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE');
     expect(v?.severidade).toBe('REPROVA');
     expect(v?.motivo).toMatch(/NUNCA EXECUTADO/);
   });
 
   it('gate executado so em linha INVALIDA reprova — a linha invalida nao mediu nada', () => {
     const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', true)], invalido: 'gate g3 estourou' })] });
-    const codigos = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
+    const codigos = avaliar(lida(m), [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
     expect(codigos).toContain('GATE_NOVO_SEM_EXCLUSIVIDADE');
   });
 
   it('gate EXECUTADO em linha valida conta como medido, mesmo verde — o preco e rodar, nao pegar', () => {
     const m = matriz({ linhas: [linha({ execucoes: [exec('g1', false), exec('g2', true)] })] });
-    const codigos = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
+    const codigos = avaliar(lida(m), [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
     expect(codigos).not.toContain('GATE_NOVO_SEM_EXCLUSIVIDADE');
   });
 
   it('gate na lista de dispensados nao reprova — divida DECLARADA, visivel no diff', () => {
     const m = matriz({ dispensados: [{ gate: 'novo', desde: '2026-09-07', motivo: 'pre-existente' }] });
-    expect(avaliar(m, [g('novo')], new Map()).filter((v) => v.severidade === 'REPROVA')).toEqual([]);
+    expect(avaliar(lida(m), [g('novo')], new Map()).filter((v) => v.severidade === 'REPROVA')).toEqual([]);
   });
 
   it('gate INFORMATIVO nunca e cobrado (mutcheck e o caso real)', () => {
-    expect(avaliar(matriz(), [g('mutcheck', false)], new Map())).toEqual([]);
+    expect(avaliar(lida(matriz()), [g('mutcheck', false)], new Map())).toEqual([]);
   });
 
   // Fabricacao no 3, e a mais cara: e a correcao no 1 do parecer do Codex. Corpus curto nao mede
@@ -816,7 +824,7 @@ describe('avaliar — severidade', () => {
   // seria, corretamente, o unico que pega.
   it('exclusividade zero RELATA — jamais reprova', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const v = avaliar(m, [g('g1'), g('g2')], fp);
+    const v = avaliar(lida(m), [g('g1'), g('g2')], fp);
     const zero = v.find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO' && x.gate === 'g1')!;
     expect(zero.severidade).toBe('RELATA');
     expect(v.some((x) => x.severidade === 'REPROVA')).toBe(false);
@@ -824,7 +832,7 @@ describe('avaliar — severidade', () => {
 
   it('o motivo do EXCLUSIVIDADE_ZERO carrega o DENOMINADOR (zero sem N le como "inutil")', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const zero = avaliar(m, [g('g1'), g('g2')], fp).find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO' && x.gate === 'g1')!;
+    const zero = avaliar(lida(m), [g('g1'), g('g2')], fp).find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO' && x.gate === 'g1')!;
     expect(zero.motivo).toMatch(/de 1 defeito/);
     expect(zero.motivo).toMatch(/NAO e "nao pega nada"/);
   });
@@ -833,7 +841,7 @@ describe('avaliar — severidade', () => {
     const m = matriz({
       linhas: [linha({ suspeito: 'outro', execucoes: [exec('g1', true), exec('g2', true)] })],
     });
-    const v = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
+    const v = avaliar(lida(m), [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
     expect(v.map((x) => x.codigo)).toContain('CORPUS_NAO_MIROU');
     expect(v.map((x) => x.codigo)).not.toContain('EXCLUSIVIDADE_ZERO');
     expect(v.find((x) => x.codigo === 'CORPUS_NAO_MIROU')!.motivo).toMatch(/mede o CORPUS, nao o gate/);
@@ -843,7 +851,7 @@ describe('avaliar — severidade', () => {
   // uma linha incompleta nao e redundancia medida; e medicao que nao terminou.
   it('unico vermelho de linha INCOMPLETA relata INCONCLUSIVA, nunca EXCLUSIVIDADE_ZERO', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [exec('g1', true)] })] });
-    const v = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
+    const v = avaliar(lida(m), [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
     expect(v.map((x) => x.codigo)).toContain('EXCLUSIVIDADE_INCONCLUSIVA');
     expect(v.map((x) => x.codigo)).not.toContain('EXCLUSIVIDADE_ZERO');
     expect(v.find((x) => x.codigo === 'EXCLUSIVIDADE_INCONCLUSIVA')!.severidade).toBe('RELATA');
@@ -851,14 +859,14 @@ describe('avaliar — severidade', () => {
 
   it('fonte mudada AVISA, nao reprova', () => {
     const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const v = avaliar(m, [g('g1')], new Map([['g1', { fingerprint: 'OUTRO', resolvida: true }]]));
+    const v = avaliar(lida(m), [g('g1')], new Map([['g1', { fingerprint: 'OUTRO', resolvida: true }]]));
     const podre = v.find((x) => x.codigo === 'LINHA_PODRE')!;
     expect(podre.severidade).toBe('AVISA');
   });
 
   it('frescor nao verificavel e DITO em voz alta, nao silenciado', () => {
     const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const v = avaliar(m, [g('g1')], new Map([['g1', { fingerprint: 'x', resolvida: false }]]));
+    const v = avaliar(lida(m), [g('g1')], new Map([['g1', { fingerprint: 'x', resolvida: false }]]));
     expect(v.some((x) => x.codigo === 'FRESCOR_INDISPONIVEL')).toBe(true);
   });
 });
@@ -877,6 +885,214 @@ describe('resumir', () => {
     expect(l, 'g2 precisa aparecer no resumo, senao o teste e vacuo').toBeDefined();
     expect(l).not.toMatch(/redund/);
   });
+});
+
+// ---------------------------------------------------------------------------------------------
+// A LEITURA da matriz e fail-closed (docs/historico/exclusividade-media-outra-coisa.md, "O achado
+// de gate: ninguem valida `schemaVersion`"). O `SCHEMA_VERSION` era GRAVADO pelo motor e nunca
+// conferido: uma matriz de outro schema era lida como a de hoje, e campo fora do lugar chegava como
+// `undefined` no meio do veredito — TypeError (exit 2) ou, pior, veredito calculado sobre dado alheio.
+// ---------------------------------------------------------------------------------------------
+
+describe('lerMatriz — matriz de OUTRO schema, ou de forma invalida, e RECUSADA com codigo proprio', () => {
+  /** O texto na serializacao do motor. */
+  const texto = (doc: unknown) => `${JSON.stringify(doc, null, 2)}\n`;
+  /** Valida e com todo campo opcional preenchido — a forma tem o que conferir em cada nivel. */
+  const cheia = (): Matriz =>
+    matriz({
+      dispensados: [{ gate: 'g2', desde: '2026-09-07', motivo: 'pre-existente' }],
+      linhas: [
+        linha({
+          execucoes: [exec('g1', true), { ...exec('g2', false), invocacao: 'bun run g2' }],
+          deveres: ['bump-versao fx'],
+          tocados: ['supabase/functions/fx/versao.ts'],
+          defasados: ['g2'],
+        }),
+      ],
+    });
+  /** `{codigo, motivo}` da recusa, ou `ACEITOU` — nenhuma assercao de recusa casa isso. */
+  const recusa = (t: string | null) => {
+    const l = lerMatriz(t);
+    return l.ok ? { codigo: 'ACEITOU', motivo: '' } : { codigo: l.codigo, motivo: l.motivo };
+  };
+  const sem = (campo: keyof Matriz) => Object.fromEntries(Object.entries(cheia()).filter(([k]) => k !== campo));
+
+  // O CONTROLE, na mesma execucao das recusas: uma leitura que recusasse TUDO aprovaria todas elas.
+  it('CONTROLE: a matriz valida do schema de hoje e ACEITA, identica ao que foi gravado', () => {
+    expect(lerMatriz(texto(cheia()))).toEqual({ ok: true, matriz: cheia() });
+  });
+
+  it('schemaVersion de OUTRA versao (futura ou passada) reprova MATRIZ_SCHEMA_INCOMPATIVEL', () => {
+    for (const v of [SCHEMA_VERSION + 1, SCHEMA_VERSION - 1]) {
+      const r = recusa(texto({ ...cheia(), schemaVersion: v }));
+      expect(r.codigo, `schemaVersion ${v}`).toBe('MATRIZ_SCHEMA_INCOMPATIVEL');
+      expect(r.motivo).toContain(`schemaVersion ${v}`);
+      expect(r.motivo).toContain(`le schemaVersion ${SCHEMA_VERSION}`);
+    }
+  });
+
+  it('schemaVersion AUSENTE, ou que nao e o numero, reprova MATRIZ_SCHEMA_INCOMPATIVEL — nunca "deve ser o de hoje"', () => {
+    const ausente = recusa(texto(sem('schemaVersion')));
+    expect(ausente.codigo).toBe('MATRIZ_SCHEMA_INCOMPATIVEL');
+    expect(ausente.motivo).toContain('schemaVersion ausente');
+    expect(recusa(texto({ ...cheia(), schemaVersion: String(SCHEMA_VERSION) })).codigo).toBe('MATRIZ_SCHEMA_INCOMPATIVEL');
+  });
+
+  it('campo OBRIGATORIO ausente reprova MATRIZ_MALFORMADA nomeando o campo', () => {
+    for (const campo of ['medidoEm', 'sourceHead', 'dispensados', 'baseline', 'linhas'] as const) {
+      const r = recusa(texto(sem(campo)));
+      expect(r.codigo, campo).toBe('MATRIZ_MALFORMADA');
+      expect(r.motivo, campo).toContain(`${campo} ausente`);
+    }
+  });
+
+  // O pior caso do achado: tipo errado FUNDO na matriz nao lanca — ele vira "falsy = nao reprovou"
+  // e o veredito sai calculado, calado. A forma e conferida ate a execucao.
+  it('TIPO errado no fundo da matriz reprova MATRIZ_MALFORMADA com o caminho inteiro', () => {
+    const doc = JSON.parse(texto(cheia()));
+    doc.linhas[0].execucoes[1].reprovou = 'sim';
+    const r = recusa(JSON.stringify(doc));
+    expect(r.codigo).toBe('MATRIZ_MALFORMADA');
+    expect(r.motivo).toContain('linhas[0].execucoes[1].reprovou');
+  });
+
+  it('opcional AUSENTE nao reprova — execucao anterior a paridade nao tem `invocacao`, e isso e o formato', () => {
+    const doc = JSON.parse(texto(cheia()));
+    delete doc.linhas[0].execucoes[1].invocacao;
+    for (const k of ['deveres', 'tocados', 'defasados']) delete doc.linhas[0][k];
+    expect(lerMatriz(JSON.stringify(doc)).ok).toBe(true);
+  });
+
+  it('raiz que nao e objeto reprova MATRIZ_MALFORMADA', () => {
+    for (const t of ['[]', '42', '"x"', 'null']) expect(recusa(t).codigo, t).toBe('MATRIZ_MALFORMADA');
+  });
+
+  it('arquivo ausente e JSON ilegivel seguem MATRIZ_AUSENTE', () => {
+    expect(recusa(null).codigo).toBe('MATRIZ_AUSENTE');
+    expect(recusa('{ nao e json').codigo).toBe('MATRIZ_AUSENTE');
+  });
+
+  // O motivo e o que o operador e a suite do binario casam: ASCII imprimivel — sem acento, sem
+  // travessao —, casavel sem `-i` em `LC_ALL=C` e em `pt_BR.UTF-8`.
+  it('todo motivo de recusa e ASCII imprimivel', () => {
+    const casos = [null, '{ nao e json', '[]', texto(sem('schemaVersion')), texto({ ...cheia(), schemaVersion: SCHEMA_VERSION + 1 }), texto({ ...cheia(), linhas: 'x' })];
+    for (const t of casos) {
+      const r = recusa(t);
+      expect(r.codigo, String(t)).not.toBe('ACEITOU');
+      expect(r.motivo, r.codigo).toMatch(/^[\x20-\x7e]+$/);
+    }
+  });
+});
+
+describe('avaliar — leitura RECUSADA e um veredito, nunca uma excecao no meio do calculo', () => {
+  const g = (nome: string): GateAlvo => ({ nome, linha: 1, step: 's', job: 'j', bloqueiaPR: true });
+
+  // O defeito exato do achado: `m.dispensados.map` lancava TypeError nao tratado.
+  it('matriz sem `dispensados` vira UMA REPROVA MATRIZ_MALFORMADA — nao TypeError', () => {
+    const { dispensados: _, ...semDispensados } = matriz();
+    const v = avaliar(lerMatriz(JSON.stringify(semDispensados)), [g('g1')], new Map());
+    expect(v).toEqual([
+      { severidade: 'REPROVA', gate: '(todos)', codigo: 'MATRIZ_MALFORMADA', motivo: expect.stringContaining('dispensados') },
+    ]);
+  });
+
+  // Lida como a de hoje, a MESMA matriz daria GATE_NOVO_SEM_EXCLUSIVIDADE para `novo` — um veredito
+  // calculado sobre dado de outro formato. Recusada, sai so a recusa.
+  it('matriz de schema futuro vira UMA REPROVA MATRIZ_SCHEMA_INCOMPATIVEL — nenhum veredito calculado sobre ela', () => {
+    const v = avaliar(lerMatriz(JSON.stringify(matriz({ schemaVersion: SCHEMA_VERSION + 1 }))), [g('novo')], new Map());
+    expect(v).toEqual([
+      {
+        severidade: 'REPROVA',
+        gate: '(todos)',
+        codigo: 'MATRIZ_SCHEMA_INCOMPATIVEL',
+        motivo: expect.stringContaining(`schemaVersion ${SCHEMA_VERSION + 1}`),
+      },
+    ]);
+  });
+});
+
+describe('o BINARIO contra matriz recusada — exit 1 com o codigo, nunca exit 2 nem verde', () => {
+  // HERMETICO de proposito: ci.yml, auto-merge e matriz SINTETICOS. Ler a matriz REAL aqui faria do
+  // `test` uma segunda porta para `matriz-schema-futuro` (matriz.def), e o `exclusividade` perderia,
+  // por construcao, o defeito que so ele pega.
+  const CI_SINTETICO = 'jobs:\n  j:\n    steps:\n      - name: g\n        run: bun run lint\n  validate:\n    needs: [j]\n';
+  const valida = () => matriz({ dispensados: [{ gate: 'lint', desde: 'fixture', motivo: 'o unico gate do ci sintetico' }] });
+  const semLinhas = () => Object.fromEntries(Object.entries(valida()).filter(([k]) => k !== 'linhas'));
+  const futura = () => ({ ...valida(), schemaVersion: SCHEMA_VERSION + 1 });
+  let dir = '';
+  let n = 0;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'excl-leitura-'));
+    writeFileSync(join(dir, 'ci.yml'), CI_SINTETICO);
+    writeFileSync(join(dir, 'auto-merge.yml'), '# mergeia quando o required check `validate` passa\n');
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  /**
+   * `spawn` ASSINCRONO: `spawnSync` seguraria o event loop do worker pelo tempo do filho, e sob carga
+   * os binarios seguidos passam dos 60s do RPC do vitest (exclusividade-medir.test.ts, `rodar`).
+   */
+  const contra = (doc: unknown, ...extra: string[]): Promise<{ status: number | null; stdout: string; saida: string }> => {
+    const arq = join(dir, `matriz-${n++}.json`);
+    writeFileSync(arq, `${JSON.stringify(doc, null, 2)}\n`);
+    const argv = ['scripts/exclusividade-gate.ts', '--ci', join(dir, 'ci.yml'), '--auto-merge', join(dir, 'auto-merge.yml'), '--matriz', arq, ...extra];
+    return new Promise((ok, falha) => {
+      const filho = spawn('bun', argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      filho.stdout.setEncoding('utf8').on('data', (d: string) => (stdout += d));
+      filho.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d));
+      filho.on('error', falha);
+      filho.on('close', (status) => ok({ status, stdout, saida: `${stdout}${stderr}` }));
+    });
+  };
+
+  // O CONTROLE, na MESMA execucao dos vermelhos: um gate que recusasse toda matriz aprovaria todos eles.
+  it('CONTROLE: a matriz sintetica valida sai VERDE (exit 0), sem nenhum codigo de recusa', async () => {
+    const r = await contra(valida());
+    expect(r.status, r.saida.slice(-1500)).toBe(0);
+    expect(r.saida).not.toMatch(/MATRIZ_(AUSENTE|SCHEMA_INCOMPATIVEL|MALFORMADA)/);
+  }, 60_000);
+
+  it('schema FUTURO: exit 1 com REPROVA MATRIZ_SCHEMA_INCOMPATIVEL — nunca o veredito calculado sobre ela', async () => {
+    const r = await contra(futura());
+    expect(r.status, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toMatch(/REPROVA\s+\(todos\)\s+MATRIZ_SCHEMA_INCOMPATIVEL/);
+  }, 60_000);
+
+  // O TypeError do achado, visto de fora: `matriz.linhas.length` lancava e o gate saia 2.
+  it('forma INVALIDA (sem `linhas`): exit 1 com REPROVA MATRIZ_MALFORMADA — nao o exit 2 de TypeError', async () => {
+    const r = await contra(semLinhas());
+    expect(r.status, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toMatch(/REPROVA\s+\(todos\)\s+MATRIZ_MALFORMADA/);
+    expect(r.saida).not.toContain('erro do proprio gate');
+  }, 60_000);
+
+  it('--resumo tambem recusa (exit 2 com o codigo) — nunca o resumo de uma matriz de outro schema', async () => {
+    const r = await contra(futura(), '--resumo');
+    expect(r.status, r.saida.slice(-1500)).toBe(2);
+    expect(r.saida).toContain('MATRIZ_SCHEMA_INCOMPATIVEL');
+  }, 60_000);
+
+  // A atencao (1) do achado, fechada com a saida DO BINARIO — nao um JSON escrito a mao: o
+  // classificador do motor le as recusas de leitura como REPROVA-ALHEIA, vermelho que a rodada nao resolve.
+  it('o --json do binario, lido pelo classificador do motor: REPROVA-ALHEIA, nunca excluivel', async () => {
+    const casos = [
+      [futura(), 'MATRIZ_SCHEMA_INCOMPATIVEL'],
+      [semLinhas(), 'MATRIZ_MALFORMADA'],
+    ] as const;
+    for (const [doc, codigo] of casos) {
+      const baseline = await contra(doc);
+      const sonda = await contra(doc, '--json');
+      const d = exclusividadeVermelhaSoPorGateNovo({
+        rcBaseline: baseline.status,
+        rcSonda: sonda.status,
+        saidaSonda: sonda.stdout,
+        gatesDaRodada: ['lint'],
+      });
+      expect(d.excluir ? 'EXCLUIU' : d.motivo, codigo).toMatch(new RegExp(`^REPROVA-ALHEIA ${codigo} `));
+    }
+  }, 120_000);
 });
 
 describe('o corpus de verdade', () => {
@@ -1004,6 +1220,16 @@ describe('[fora-da-rodada] exclusividadeVermelhaSoPorGateNovo — o unico vermel
     expect(recusa({ saidaSonda: sonda([novo('g:novo'), futura]) })).toMatch(/^REPROVA-ALHEIA CODIGO_FUTURO/);
   });
 
+  // As recusas de LEITURA (2026-09-25): a rodada so grava execucao — uma matriz de outro schema, ou
+  // quebrada, continua recusada depois dela. Tira-la da rodada nunca a resolveria.
+  it('matriz de OUTRO schema ou MALFORMADA e REPROVA alheia — sozinha ou ao lado de GATE_NOVO', () => {
+    for (const codigo of ['MATRIZ_SCHEMA_INCOMPATIVEL', 'MATRIZ_MALFORMADA']) {
+      const recusada = { severidade: 'REPROVA', gate: '(todos)', codigo, motivo: 'm' };
+      expect(recusa({ saidaSonda: sonda([recusada]) }), codigo).toMatch(new RegExp(`^REPROVA-ALHEIA ${codigo} `));
+      expect(recusa({ saidaSonda: sonda([novo('g:novo'), recusada]) }), codigo).toMatch(new RegExp(`^REPROVA-ALHEIA ${codigo} `));
+    }
+  });
+
   it('GATE_NOVO de gate FORA desta rodada nao exclui — a rodada nao grava a execucao que o resolveria', () => {
     expect(recusa({ gatesDaRodada: ['g:barato'] })).toMatch(/^GATE-NOVO-FORA-DA-RODADA g:novo/);
   });
@@ -1070,8 +1296,32 @@ describe('[fora-da-rodada] celula DEFASADA — a execucao antiga do gate excluid
   // sem execucao valida e passaria a reprovar GATE_NOVO contra SI MESMO — impasse sem saida.
   it('celula defasada ainda e EXECUCAO: nao devolve o GATE_NOVO do proprio exclusividade', () => {
     const l = linha({ execucoes: [exec('exclusividade', false), exec('g:a', true)], defasados: ['exclusividade'] });
-    const v = avaliar(matriz({ linhas: [l] }), [g('exclusividade'), g('g:a')], new Map());
+    const v = avaliar(lida(matriz({ linhas: [l] })), [g('exclusividade'), g('g:a')], new Map());
     expect(v.filter((x) => x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE').map((x) => x.gate)).toEqual([]);
     expect(de(matriz({ linhas: [l] }), 'exclusividade').rodou).toEqual(['d1']);
+  });
+});
+
+describe('a CLASSE — `as Matriz` fora da porta unica', () => {
+  // `JSON.parse(...) as Matriz` le uma matriz de outro schema como se fosse a de hoje: o defeito que o
+  // gate E o motor tinham (2026-09-25). `lerMatriz` confere versao e forma; um leitor novo com cast
+  // reabre a classe calado — os testes de comportamento acima so vigiam os dois leitores que existem.
+  const fontes = () =>
+    readdirSync('scripts', { recursive: true, encoding: 'utf8' })
+      .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+      .map((f) => join('scripts', f));
+
+  it('nenhum script faz cast para `Matriz` — a matriz so nasce de `lerMatriz`', () => {
+    const comCast = fontes().filter((f) => /\bas\s+Matriz\b/.test(removerComentarios(readFileSync(f, 'utf8'))));
+    expect(comCast).toEqual([]);
+  });
+
+  // Sem este, o scan acima passaria por CEGUEIRA: glob que parou de casar, ou limpeza que comeu o codigo.
+  it('SENTINELA: o scan enxerga os dois leitores, e os dois passam pela porta', () => {
+    const lista = fontes();
+    for (const f of ['scripts/exclusividade-gate.ts', 'scripts/exclusividade-medir.ts']) {
+      expect(lista, f).toContain(f);
+      expect(removerComentarios(readFileSync(f, 'utf8')), f).toMatch(/\blerMatriz\(/);
+    }
   });
 });

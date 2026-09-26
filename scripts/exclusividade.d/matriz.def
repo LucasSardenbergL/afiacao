@@ -41,3 +41,19 @@
 # @origem: 2026-09-20, redesenho do `matriz-gate-renomeado` invalido (docs/historico/exclusividade-media-outra-coisa.md)
 # @suspeito: exclusividade
 matriz-ilegivel | scripts/exclusividade-matriz.json | $_ = "" if eof && /^\}$/;
+
+# ## A matriz de OUTRO schema (2026-09-25)
+#
+# `SCHEMA_VERSION` era GRAVADO pelo motor e nunca conferido na leitura: o gate lia uma matriz de
+# schema futuro como a de hoje e calculava o veredito sobre ela, calado. ANTES do conserto
+# (`lerMatriz`) esta linha mediria "ninguem pegou" — a ausencia da validacao, nao a exclusividade de
+# alguem. Depois dele, o `exclusividade` reprova MATRIZ_SCHEMA_INCOMPATIVEL, e nenhum teste do vitest
+# le a matriz REAL para cobrar o mesmo (o do binario usa matriz sintetica de proposito).
+#
+# A expressao INCREMENTA a versao em vez de trocar `1` por `2`: um bump do `SCHEMA_VERSION` nao a
+# envelhece (a literal pararia de casar e a linha viraria INVALIDA). Ancorada no nivel raiz — dois
+# espacos —, casa uma linha so.
+
+# @origem: 2026-09-25, "O achado de gate: ninguem valida `schemaVersion`" (docs/historico/exclusividade-media-outra-coisa.md)
+# @suspeito: exclusividade
+matriz-schema-futuro | scripts/exclusividade-matriz.json | s/^  "schemaVersion": (\d+),$/'  "schemaVersion": ' . ($1 + 1) . ','/e;
