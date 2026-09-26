@@ -34,12 +34,17 @@ limpa() {
 }
 trap limpa EXIT
 
-# Tempos do script em MODO TESTE (ver o cabecalho dele). IDADE e a idade minima: folgada contra o
-# que o script leva ate o veredito num worker recem-nascido (~1-2 s medido), senao o cenario
-# SUBINDO fica intermitente sob carga.
-IDADE=8
+# Tempos do script em MODO TESTE (ver o cabecalho dele). A idade minima e POR CENARIO, para nao
+# haver corrida de relogio em nenhum sentido: os que exigem worker VELHO usam IDADE (2 s) e
+# esperam o worker passar dela (`envelhece`); os que exigem worker JOVEM rodam com IDADE_JOVEM
+# (600 s), que nenhuma lentidao faz um worker de segundos atingir. Medido em 2026-09-25: com uma
+# idade unica de 8 s, a M2 sob carga levou 9 s ate o veredito e o "jovem" foi derrubado — o
+# script estava certo; o lab e que apostava no relogio.
+IDADE=2
+IDADE_JOVEM=600
+# DIAGNOSTICO 2 s: folga para worker SAUDAVEL responder sob carga (1 s beirava o limite)
 export REANIMAR_TESTE_IDADE_MIN_S="$IDADE" REANIMAR_TESTE_SONDA_S=1 REANIMAR_TESTE_ESPERA_S=0 \
-  REANIMAR_TESTE_PROVA_S=5 REANIMAR_TESTE_DIAGNOSTICO_S=1
+  REANIMAR_TESTE_PROVA_S=5 REANIMAR_TESTE_DIAGNOSTICO_S=2
 export LAB_START_TENTATIVAS=12 # o `start` falso desiste em 3 s (o real, em ~10 s)
 
 FALHAS=0; PASSOU=0
@@ -61,13 +66,26 @@ except OSError:
     sys.exit(1)' "$PORT"
 }
 tem_ipv6() { "$PY" -c 'import socket; s = socket.socket(socket.AF_INET6); s.bind(("::1", 0))' 2>/dev/null; }
+# espera_ate <o que> <teto_s> <comando...> — polling de 0,1 s no lugar de `sleep` fixo (que aposta
+# na velocidade da maquina); estourou o teto = DIZ e reprova, nunca segue como se tivesse dado
+espera_ate() {
+  local oque="$1" teto="$2" n=0
+  shift 2
+  while ! "$@" >/dev/null 2>&1; do
+    n=$((n + 1))
+    if [ "$n" -gt $((teto * 10)) ]; then nok "$oque nao aconteceu em ${teto}s — cenario NAO rodou"; return 1; fi
+    sleep 0.1
+  done
+}
+existe_proc() { [ -n "$(filho_de "$1")" ]; }
+escutando() { lsof -nP -iTCP:"$1" -sTCP:LISTEN -t; }
 sobe_daemon() { # $1 = modo
   printf '%s' "$1" >"$DATA/.lab-mode"
   # disown: o daemon e desanexado de proposito; sem isto o bash 3.2 o guarda na tabela de jobs e
   # anuncia "Killed: 9" quando a limpeza final o mata
   (cd "$DATA" && exec env HOME="$H" "$PY" "$L/desanexa.py" node "$CACHE/13.15.3/scripts/worker-service.cjs" --daemon >/dev/null 2>&1) &
   disown
-  for _ in $(seq 1 50); do [ -f "$DATA/worker.pid" ] && break; sleep 0.1; done
+  espera_ate "o worker falso ($1) gravar o worker.pid" 20 test -f "$DATA/worker.pid" || return 1
   sleep 0.5
 }
 prepara() { # $1 = modo inicial do daemon | nenhum. Porta ocupada = o cenario NAO roda = reprova
@@ -90,7 +108,6 @@ prepara() { # $1 = modo inicial do daemon | nenhum. Porta ocupada = o cenario NA
   sqlite3 "$DATA/claude-mem.db" "create table observations(id integer primary key, created_at text, created_at_epoch integer); insert into observations(created_at,created_at_epoch) values ('2026-08-13T09:00:00.000Z', 1);"
   printf '[2026-09-24 11:00:00] [ERROR] [SDK] Not logged in · Please run /login\n' >"$DATA/logs/claude-mem-2026-09-24.log"
   [ "$1" = nenhum ] || sobe_daemon "$1"
-  return 0
 }
 roda() { # $1 = resposta ao prompt; demais = args do script. SEM_TESTE=1 roda com os tempos REAIS
   local resp="$1"
@@ -174,7 +191,7 @@ c_reciclado() {
   echo "[pid reciclado]"; usa reciclado 3; prepara nenhum || return 0
   "$PY" -c "import time; time.sleep(1000)" "$MARCA-$PORT" >/dev/null 2>&1 &
   disown
-  sleep 0.3
+  espera_ate "o processo alheio subir" 10 existe_proc "$MARCA-$PORT" || return 0
   local alheio; alheio="$(filho_de "$MARCA-$PORT")"
   printf '{\n  "pid": %s,\n  "port": %s\n}\n' "$alheio" "$PORT" >"$DATA/worker.pid"
   roda n
@@ -216,7 +233,7 @@ c_alheio() {
   echo "[porta de outro programa]"; usa alheio 7; prepara nenhum || return 0
   "$PY" -c "import socket,time,sys; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', int(sys.argv[1]))); s.listen(0); time.sleep(1000)" "$PORT" "$MARCA-$PORT" >/dev/null 2>&1 &
   disown
-  sleep 0.5
+  espera_ate "o programa alheio escutar na porta $PORT" 10 escutando "$PORT" || return 0
   local a; a="$(filho_de "$MARCA-$PORT")"
   roda s
   rc_eh 1; contem "PORTA DE OUTRO PROGRAMA"; nao_contem "vou encerrar"; vivo "$a" "programa alheio"
@@ -260,11 +277,11 @@ c_subindo() {
   echo "[subindo: worker jovem intocado]"
   usa subindo-a 13; prepara naopronto || return 0
   local w1; w1="$(pid_do_arquivo)"
-  roda s
+  REANIMAR_TESTE_IDADE_MIN_S="$IDADE_JOVEM" roda s
   rc_eh 2; contem "SUBINDO — worker com"; nao_contem "vou encerrar"; nao_contem "restart pelo CLI"; vivo "$w1" "worker jovem nao-pronto"
   usa subindo-b 14; prepara semporta || return 0
   local w2; w2="$(pid_do_arquivo)"
-  roda s
+  REANIMAR_TESTE_IDADE_MIN_S="$IDADE_JOVEM" roda s
   rc_eh 2; contem "SUBINDO — worker com"; nao_contem "vou encerrar"; vivo "$w2" "worker jovem sem porta"
 }
 # worker saudavel mas o hook falha: a prova NAO pode dizer RECUPERADO

@@ -19,9 +19,15 @@ bash scripts/lab-claude-mem-reanimar/lab.sh c_surdo_sim  # um cenário (no Linux
 
 - **Tempos por env, só de teste:** o script aceita `REANIMAR_TESTE_IDADE_MIN_S`, `_SONDA_S`,
   `_ESPERA_S`, `_PROVA_S` e `_DIAGNOSTICO_S` (defaults 60/5/2/30/3 — a receita). O lab usa
-  8/1/0/5/1 e avisa `MODO TESTE` na saída; o cenário `c_saudavel` roda com os tempos REAIS e
+  2/1/0/5/2 e avisa `MODO TESTE` na saída; o cenário `c_saudavel` roda com os tempos REAIS e
   exige que o aviso NÃO apareça. Override que não é inteiro ≥ mínimo **para** o script
   (`c_tempo_invalido`): num script que mata processo, override quebrado não vira fail-OPEN.
+- **Idade mínima por cenário, sem corrida de relógio:** quem precisa de worker VELHO usa 2 s e
+  espera o worker passar disso; quem precisa de worker JOVEM (`c_subindo`) roda com 600 s, que
+  nenhuma lentidão faz um worker de segundos atingir. Com uma idade única de 8 s, a M2 sob carga
+  levou 9 s até o veredito e o "jovem" foi derrubado (2026-09-25) — o script estava certo, o lab
+  é que apostava no relógio. Pelo mesmo motivo, nenhum `sleep` fixo espera processo subir ou
+  porta abrir: é polling com teto que **reprova dizendo** "não aconteceu".
 - **Faixas paralelas:** cada cenário tem porta (`LAB_PORTA_BASE`+k) e HOME próprios, então
   rodam em 4 faixas (`LAB_FAIXAS`). Cada um termina com a linha `CONTAGEM`; sem ela, o cenário
   não terminou e conta como falha. Os que precisam de worker "velho" (> idade mínima) sobem o
