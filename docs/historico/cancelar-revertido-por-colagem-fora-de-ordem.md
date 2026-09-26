@@ -55,7 +55,9 @@ O gate reabriu (pacote `094b3f2a844e`, exit 0) e a leva foi ao ar. Outra sessão
 1. **Deriva de CORPO não tem sensor geral.** Audit de existência não vê (o objeto existe nos dois
    estados); o `authz:funcoes:prod` cobre o manifesto de authz, não o domínio. O único olho foi o eixo
    de corpo do gate do pacote — e só porque uma edge do conjunto acoplado foi deployada. Função fora de
-   qualquer leva segue sem sensor (tarefa de acompanhamento aberta nesta sessão).
+   qualquer leva segue sem sensor (tarefa de acompanhamento aberta nesta sessão). **Fechado em
+   2026-09-26 pelo `bun run deriva:corpo:prod`** (6ª chave do carimbo, Passo 2c do `/fecho`) —
+   [`deriva-corpo-sem-sensor.md`](deriva-corpo-sem-sensor.md).
 2. **Migration COM envelope aplicada pela sessão vai pelo MCP, e o risco é a TRANSCRIÇÃO:** feche-o com
    o md5 do corpo na postcondição (calculado pelo banco a partir do arquivo) + ensaio com
    `RAISE EXCEPTION` rotulado. Registrado em `docs/agent/database.md` §Escrita.

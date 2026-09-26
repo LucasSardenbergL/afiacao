@@ -41,6 +41,7 @@
     "authz:audit:prod": "bun db/audit-authz-reescritas-prod.ts",
     "authz:claude-ro:prod": "bun db/audit-claude-ro-hardening.ts",
     "authz:rls:prod": "bun db/audit-rls-prod.ts",
+    "deriva:corpo:prod": "bun db/audit-deriva-corpo-prod.ts",
     "authz:carimbo": "bun scripts/authz-carimbo-gate.ts",
     "authz:carimbo:gravar": "bun db/authz-carimbo-gravar.ts",
     "bunpin:check": "bun scripts/bun-pin-gate-check.ts",

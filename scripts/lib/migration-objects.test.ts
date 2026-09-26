@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { extractObjects, objectKey } from './migration-objects';
+import { declaracoesDeFuncao, extractObjects, md5Exato, objectKey } from './migration-objects';
 import { removerComentariosSql } from './sql-comentarios';
 
 /** só as policies — os demais kinds têm bloco próprio abaixo (migrado da órfã, 2026-08-23) */
@@ -346,5 +346,69 @@ CREATE OR REPLACE FUNCTION public.g() RETURNS int LANGUAGE sql AS $$ SELECT 2; $
     const sem = `CREATE FUNCTION public.f() RETURNS int LANGUAGE sql AS $$
  SELECT 1; $$;`;
     expect(extractObjects(com)[0].bodyMd5Exato).not.toBe(extractObjects(sem)[0].bodyMd5Exato);
+  });
+});
+
+describe('declaracoesDeFuncao — uma entrada POR DECLARAÇÃO, sem colapsar overload (deriva:corpo:prod)', () => {
+  // O mapa por nome do `extractObjects` guarda só o ÚLTIMO corpo de cada arquivo. Medido em prod
+  // (2026-09-26): `aprovar_pedido_sugerido` tem 2 assinaturas, as duas declaradas na MESMA
+  // migration — o mapa esquecia a 1ª e a varredura a chamava de indecidível sem ser.
+  const DUAS = `
+CREATE OR REPLACE FUNCTION public.aprovar(p_id bigint, p_extra jsonb) RETURNS int LANGUAGE sql AS $a$ SELECT 3; $a$;
+CREATE OR REPLACE FUNCTION public.aprovar(p_id bigint) RETURNS int LANGUAGE sql AS $b$ SELECT public.aprovar(p_id, '{}'); $b$;
+`;
+
+  it('overload no MESMO arquivo: as duas declarações, cada uma com o SEU corpo e a SUA assinatura', () => {
+    const d = declaracoesDeFuncao(DUAS);
+    expect(d.map((x) => x.assinatura)).toEqual(['p_id bigint,p_extra jsonb', 'p_id bigint']);
+    expect(d.map((x) => x.corpo)).toEqual([' SELECT 3; ', " SELECT public.aprovar(p_id, '{}'); "]);
+    expect(d[0].md5Exato).toBe(md5Exato(' SELECT 3; '));
+  });
+
+  it('o último corpo por nome continua sendo o que o extractObjects já reportava (mapa "último vence")', () => {
+    const porNome = extractObjects(DUAS).filter((o) => o.kind === 'function').map((o) => o.bodyMd5Exato);
+    const ultimo = declaracoesDeFuncao(DUAS).at(-1)?.md5Exato;
+    expect(porNome).toEqual([ultimo, ultimo]);
+  });
+
+  it('declaração SEM corpo dollar-quoted fica sem corpo e não rouba o da PRÓXIMA', () => {
+    const sql = `
+CREATE FUNCTION public.f() RETURNS int LANGUAGE sql RETURN 1;
+CREATE FUNCTION public.g() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;`;
+    const d = declaracoesDeFuncao(sql);
+    expect(d.map((x) => [x.nome, x.corpo])).toEqual([['f', undefined], ['g', ' SELECT 2; ']]);
+  });
+
+  it('CREATE dentro de comentário não é declaração', () => {
+    const sql = `-- CREATE FUNCTION public.velha() RETURNS int LANGUAGE sql AS $$ SELECT 0; $$;
+CREATE FUNCTION public.nova() RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;`;
+    expect(declaracoesDeFuncao(sql).map((x) => x.nome)).toEqual(['nova']);
+  });
+
+  it('traz a POSIÇÃO de cada declaração (ordem de CREATE × DROP no MESMO arquivo) e os argumentos CRUS', () => {
+    const sql = "DROP FUNCTION public.f(int);\nCREATE FUNCTION public.f(p_a text[] DEFAULT ARRAY['x','y']) RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;";
+    const [d] = declaracoesDeFuncao(sql);
+    expect(d.posicao).toBe(sql.indexOf('CREATE'));
+    expect(d.argumentos).toBe("p_a text[] DEFAULT ARRAY['x','y']");
+  });
+
+  it('`CREATE FUNCTION` DENTRO do corpo de outra (texto de DDL gerada) não vira declaração nem rouba o corpo', () => {
+    // Reproduzido pelo Codex: a declaração fantasma dentro do literal encerrava a janela da função de
+    // fora, que ficava SEM corpo — e aí uma versão ANTERIOR assumia o posto de "última" em silêncio.
+    const sql = `CREATE FUNCTION public.gera() RETURNS text LANGUAGE sql AS $body$ SELECT 'CREATE FUNCTION public.fantasma() RETURNS int AS $f$ SELECT 1 $f$'; $body$;
+CREATE FUNCTION public.depois() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;`;
+    const d = declaracoesDeFuncao(sql);
+    expect(d.map((x) => x.nome)).toEqual(['gera', 'depois']);
+    expect(d[0].corpo).toBe(" SELECT 'CREATE FUNCTION public.fantasma() RETURNS int AS $f$ SELECT 1 $f$'; ");
+  });
+
+  it('`)` e `,` dentro de literal no DEFAULT não cortam os argumentos crus (Codex, código P1-6)', () => {
+    const [d] = declaracoesDeFuncao("CREATE FUNCTION public.f(p text DEFAULT ')', q integer DEFAULT 0) RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;");
+    expect(d.argumentos).toBe("p text DEFAULT ')', q integer DEFAULT 0");
+  });
+
+  it('schema implícito é public; nome e schema em minúscula', () => {
+    const d = declaracoesDeFuncao('CREATE FUNCTION Private.X() RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;\nCREATE FUNCTION y() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;');
+    expect(d.map((x) => `${x.schema}.${x.nome}`)).toEqual(['private.x', 'public.y']);
   });
 });
