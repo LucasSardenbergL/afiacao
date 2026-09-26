@@ -47,6 +47,11 @@ mudança. `Lint` e `Build` também serviriam aqui; `Install deps` não (é I/O e
 Se a mudança mexe no que o step de referência faz, ele deixa de ser relógio e vira parte do
 experimento.
 
+**Vale também dentro do job, ao medir UM arquivo:** o relógio precisa ter a natureza dele. Em
+[teste-mais-lento-dormia-sem-asserir.md](teste-mais-lento-dormia-sem-asserir.md), normalizar um arquivo de
+spawn e sono pelo resto da suíte (CPU) deu ruído MAIOR que o valor absoluto (±8,9% contra ±8,1%); os
+outros arquivos de `scripts/`, onde estão os testes que sobem processo, deram ±6,4%.
+
 ## O corolário: normalizar também dá a resposta que a intuição erraria
 
 A primeira leitura crua dizia que `collect` (+33s), `prepare` (+20s) e `transform` (+5,6s) tinham
