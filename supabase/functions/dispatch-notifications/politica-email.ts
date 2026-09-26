@@ -3,7 +3,8 @@
 // PEDIDO DO FOUNDER (2026-09-25): o "[Afiação] Parâmetros de reposição — resumo do dia"
 // (`param_auto_resumo`, gravado todo dia às 18:00 pelo wrapper do param_auto) não precisa mais chegar
 // por e-mail — "já percebi que está tudo certo na compra". O conteúdo continua onde a decisão acontece:
-// /admin/reposicao/mudancas-automaticas (lê o `param_auto_log`, não este alerta).
+// /admin/reposicao/mudancas-automaticas (lê `reposicao_param_auto_run`/`reposicao_param_auto_log`,
+// não este alerta).
 //
 // O alerta silenciado NÃO pode ficar em `pendente_notificacao`: o check `alert_channel` do Sentinela
 // conta pendente > 2h como "dispatch parou de drenar" (critical) e o badge do menu soma a fila. Ele vai
