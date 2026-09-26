@@ -212,9 +212,16 @@ function sh(cwd: string, cmd: string, argv: string[]) {
   return r.stdout;
 }
 
-/** Commit do fixture sem herdar hook, assinatura ou identidade da maquina de quem roda. */
+/**
+ * Commit do fixture sem herdar hook, assinatura ou identidade da maquina de quem roda — nem a
+ * manutencao automatica. Todo `git commit` dispara `git maintenance run --auto --detach`, que
+ * SOBREVIVE ao commit: cria e apaga `.git/objects/maintenance.lock` (sempre, antes de avaliar
+ * qualquer condicao) e pode empacotar objetos loose. O `cpSync` do `clonar` lista esse arquivo e
+ * nao o acha mais: ENOENT em `.git/objects` (CI, PR #2536), ou o worker ABORTA quando um
+ * `objects/xx` some no meio da copia.
+ */
 const commitar = (raiz: string, ...argv: string[]) =>
-  sh(raiz, 'git', ['-c', 'user.name=f', '-c', 'user.email=f@f', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-q', ...argv]);
+  sh(raiz, 'git', ['-c', 'user.name=f', '-c', 'user.email=f@f', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', 'maintenance.auto=false', 'commit', '-q', ...argv]);
 
 const ciYml = (gates: string[]) =>
   `jobs:\n  j:\n    steps:\n${gates.map((g) => `      - name: ${g}\n        ${PASSO[g]}`).join('\n')}\n  validate:\n    needs: [j]\n`;
