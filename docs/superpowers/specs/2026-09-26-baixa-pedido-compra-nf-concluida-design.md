@@ -295,6 +295,11 @@ PO encerrado se o bug da §5 estiver ativo: o upsert falha e a linha fica com a 
 
 Chip é perecível (vive na sessão que o criou). Se nenhum dos dois foi clicado, recrie a partir daqui.
 
+**Este spec ainda não está na main:** o branch `claude/laughing-darwin-ycgmbm` ficou sem PR de propósito — no fecho
+a main estava vermelha no `sonda:fingerprint` (commits "Changes" do Lovable, conserto em
+`LucasSardenbergL/afiacao#2579`) e um PR aberto ali ficaria parado vermelho. A sessão de continuação traz o
+spec para a main **junto** do plano da Fase 0, num PR só.
+
 **Chip "Medir e revisar a baixa automática de PO no Omie"** — sessão LOCAL (precisa de `psql-ro`, Codex e rede
 para `app.omie.com.br`). Leia este spec e execute, em ordem:
 
