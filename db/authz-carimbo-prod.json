@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 2,
-  "medidoEm": "2026-09-09T21:16:11.648Z",
-  "sourceHead": "b1e5868c57b9a3bcdbf9a20823600911332d243c",
+  "schemaVersion": 3,
+  "medidoEm": "2026-09-26T03:51:04.843Z",
+  "sourceHead": "1a3a916439b3161516b73be2702c1dbc6eeb5737",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -14,8 +14,8 @@
       "exit": 0,
       "resumo": "✅ o EXECUTE de prod bate com o contrato nas 59 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
       "denominador": "🔎 authz:funcoes:prod — 60 definição(ões) lida(s) para 59 chave(s) da allowlist.",
-      "contratoFingerprint": "c1b21b80504a6db032aa696d36bb0bf2a7fa81d860303c29c474be835d5e1bd2",
-      "auditorFingerprint": "7a0c358a4866c0f993973aa01b93f1d9b03d8269487c0c9b1c42207e0512efdf",
+      "contratoFingerprint": "dbd5285c2f0099d957c331de7fbd5b9c22c3c09005db28ceb79f007acd66525f",
+      "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
     "grants": {
@@ -23,8 +23,8 @@
       "exit": 0,
       "resumo": "✅ audit-grants — 4 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
-      "contratoFingerprint": "e015c7b09546978db7aa13a6975d776615220aa57993bf56ac5c8f662a9ad721",
-      "auditorFingerprint": "2447dc6da98d86ee801d160670a34461f204480c768926ec4be32bf0cfc9cb7c",
+      "contratoFingerprint": "425e2679ab4937247a6b71d022befabefa73ed790af4591e96a4283f82fbc537",
+      "auditorFingerprint": "82ff69a32c6fe5cfb3989d417e6ba943f58ec4ed06339ec5e38647118cf0280c",
       "achados": []
     },
     "audit": {
@@ -32,8 +32,8 @@
       "exit": 0,
       "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 1 reescritas baselinadas batem no md5 de prod.",
       "denominador": "🔎 authz:audit:prod — 24 definição(ões) lida(s) para 23 chave(s) do manifest.",
-      "contratoFingerprint": "8f1d9f39d6dce5925a10cb88bb1205c27093b051114367d23e8797e147171ab3",
-      "auditorFingerprint": "0866cf4f10a49635c4ed8590c7ed4861b254c4b75cc4e58ca1cdb15b038993c1",
+      "contratoFingerprint": "2bff8345b7ec5c55e6d1dffb7c55aeba14da5170791da92b5e5b08b7ea9b42bb",
+      "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
     "claudeRo": {
@@ -41,18 +41,40 @@
       "exit": 0,
       "resumo": "✅ 38 asserções batem. O endurecimento continua de pé.",
       "denominador": null,
-      "contratoFingerprint": "292fc5d3416e039778f0ea22dc5e678787af6a84163dd8b6b4ff1f0f2cbbc26d",
-      "auditorFingerprint": "f60c65576a980c4d5328f52d597cad76c66865e458ffdaa33f633a5daa17e64b",
+      "contratoFingerprint": "96d72b6e231ea5f6ff2e99f2def99b9f3237de1a5be8b14f024621c7bf057396",
+      "auditorFingerprint": "de53cb9e346dd1b39f9b427a1df1ffca800b0877ba6c325ff1fb0a825578a11b",
       "achados": []
     },
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 342 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
+      "resumo": "✅ audit-rls — 343 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
       "denominador": null,
-      "contratoFingerprint": "983189279bc797985d2ff78f0ee10434d7c6ab7e582d223ff02d0bddd84841b0",
-      "auditorFingerprint": "f24bdcecdcf841257b1c817fbeecddf0b47b91ae42c8784d68e110b86a126986",
+      "contratoFingerprint": "ce96802013da952d933f8d71cf54dfa102d20a8199c7deca924d10989be47649",
+      "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
       "achados": []
+    },
+    "corpo": {
+      "script": "deriva:corpo:prod",
+      "exit": 1,
+      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 313 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@d65247058 (fetch ok) · prod 2026-09-26 03:51:28.306498Z",
+      "contratoFingerprint": "bb341105b593b89a9608acc048d3b8412cfb5c4b0f574af7ae6cb973bb703402",
+      "auditorFingerprint": "12455e2b4124ae98932a63d644d6e4ed15e270267130f07c1c7c27fbb356dc4f",
+      "achados": [
+        {
+          "id": "2021f7353ac34cf8",
+          "linha": "❌ [SEM_PAR] gerar_pedidos_sugeridos_ciclo(text,date): corpo que nenhuma das 28 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql (xmin 10598692)",
+          "primeiraVez": "2026-09-26",
+          "ultimaVez": "2026-09-26"
+        },
+        {
+          "id": "06c5485021ad70e9",
+          "linha": "❌ [SEM_PAR] atualizar_parametros_numericos_skus(text,uuid): corpo que nenhuma das 3 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260712140000_param_auto_log_valor_barrado_fusivel.sql (xmin 10598741)",
+          "primeiraVez": "2026-09-26",
+          "ultimaVez": "2026-09-26"
+        }
+      ]
     }
   }
 }

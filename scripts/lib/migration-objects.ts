@@ -95,11 +95,28 @@ interface CorpoDeclarado {
   md5Exato: string;
 }
 
+/** Uma declaração `CREATE [OR REPLACE] FUNCTION`, na ordem em que aparece no arquivo. */
+export interface DeclaracaoDeFuncao {
+  /** Em minúscula; `public` quando implícito. */
+  schema: string;
+  nome: string;
+  /** A lista de args normalizada (`normalizeSignature`) — é o que distingue overload. */
+  assinatura: string;
+  /** O texto CRU entre os parênteses (mascarado de comentário) — insumo da identidade por tipos. */
+  argumentos: string;
+  /** Índice do `CREATE` no arquivo — ordena CREATE × DROP do MESMO arquivo. */
+  posicao: number;
+  /** O corpo CRU entre os delimitadores dollar-quoted. Ausente sem dollar-quote (`RETURN 1`, `AS '…'`). */
+  corpo?: string;
+  /** md5 do corpo EXATO — o que `md5(pg_proc.prosrc)` devolve. Ausente junto com `corpo`. */
+  md5Exato?: string;
+}
+
 /** `CREATE [OR REPLACE] FUNCTION [schema.]nome(` — a declaração, no texto MASCARADO. */
 const DECLARACAO_FUNCAO = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(\w+)\.)?(\w+)\s*\(/gi;
 
 /**
- * Corpo de cada função, lido do SQL **CRU** e indexado por `schema.nome`.
+ * Cada declaração de função do arquivo, com o corpo lido do SQL **CRU**.
  *
  * 🔴 O corpo sai do CRU, e não do texto sem comentários que o resto do extrator usa.
  * `pg_proc.prosrc` **guarda os comentários do corpo**; calcular o md5 sobre a versão
@@ -131,19 +148,20 @@ const DECLARACAO_FUNCAO = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(\w+)\.)?(
  * e ausência de corpo NUNCA vira "confere": ela sai do histórico e o julgamento a chama de
  * indecidível.
  *
- * Overload no MESMO arquivo (mesmo nome, assinaturas diferentes) ainda colapsa no último: quem
- * compara decide o que fazer com isso, e o gate de deploy trata nome com overload em prod como
- * indecidível em vez de "bate com algum".
+ * A lista preserva TODA declaração, na ordem do arquivo — overload no MESMO arquivo (mesmo nome,
+ * assinaturas diferentes) sai como duas entradas. É o `corposCrusPorNome` logo abaixo que colapsa
+ * no último, porque o inventário do audit e o gate de deploy são por NOME; a varredura de deriva
+ * (`deriva:corpo:prod`) compara por declaração e precisa das duas.
  */
-function corposCrusPorNome(sqlCru: string): Map<string, CorpoDeclarado> {
+export function declaracoesDeFuncao(sqlCru: string): DeclaracaoDeFuncao[] {
   const mascarado = removerComentariosSql(sqlCru);
   // A garantia de que o mascarado é um MAPA de offsets do cru, e não outro texto. Se algum dia o
   // stripper deixar de preservar comprimento, fatiar o cru por índices do mascarado devolveria um
   // pedaço deslocado — corpo silenciosamente errado, que é o modo de falha que este arquivo todo
   // combate. Degradar aqui é seguro: sem corpo, o consumidor diz "não sei", nunca "confere".
-  if (mascarado.length !== sqlCru.length) return new Map();
+  if (mascarado.length !== sqlCru.length) return [];
 
-  const out = new Map<string, CorpoDeclarado>();
+  const out: DeclaracaoDeFuncao[] = [];
   let pos = 0;
   for (;;) {
     DECLARACAO_FUNCAO.lastIndex = pos;
@@ -158,23 +176,68 @@ function corposCrusPorNome(sqlCru: string): Map<string, CorpoDeclarado> {
     const limite = proxima === null ? mascarado.length : proxima.index;
 
     pos = depoisDoNome;
+    const argumentos = argumentosEntreParenteses(mascarado, depoisDoNome - 1);
+    const declaracao: DeclaracaoDeFuncao = {
+      schema: (m[1] ?? 'public').toLowerCase(),
+      nome: m[2].toLowerCase(),
+      assinatura: normalizeSignature(argumentos),
+      argumentos,
+      posicao: m.index,
+    };
     const janela = mascarado.slice(depoisDoNome, limite);
     // `$v1$` e `$_x$` são tags válidas: o dígito entra, e o fecho exige a MESMA tag.
     const abre = /\bAS\s+(\$[A-Za-z_0-9]*\$)/i.exec(janela);
-    if (abre === null) continue;
-
-    const tag = abre[1];
-    const ini = depoisDoNome + abre.index + abre[0].length;
-    const fim = mascarado.indexOf(tag, ini);
-    if (fim < 0 || fim >= limite) continue;
+    const tag = abre?.[1];
+    const ini = abre === null ? -1 : depoisDoNome + abre.index + abre[0].length;
+    // A janela limita onde o `AS $tag$` pode COMEÇAR (é o que impede `f` sem corpo de roubar o de
+    // `g`); o FECHO não tem limite: aberto o dollar-quote, tudo até a mesma tag é corpo — inclusive
+    // um `CREATE FUNCTION` escrito como TEXTO lá dentro, que antes encerrava a janela e deixava a
+    // função de fora sem corpo (reproduzido pelo Codex, 2026-09-26). O varredor retoma DEPOIS do
+    // fecho, então o fantasma nunca vira declaração.
+    const fim = tag === undefined ? -1 : mascarado.indexOf(tag, ini);
+    if (tag === undefined || fim < 0) {
+      out.push(declaracao);
+      continue;
+    }
 
     const corpo = sqlCru.slice(ini, fim);
-    out.set(`${(m[1] ?? 'public').toLowerCase()}.${m[2].toLowerCase()}`, {
-      md5: md5CorpoFuncao(corpo),
-      md5Exato: md5Exato(corpo),
-    });
+    out.push({ ...declaracao, corpo, md5Exato: md5Exato(corpo) });
     pos = fim + tag.length;
   }
+}
+
+/**
+ * O conteúdo entre o `(` em `ini` e o `)` que o fecha, pulando literais `'…'` (com `''`) e
+ * identificadores `"…"` — um `DEFAULT ')'` fecharia o `balancedParens` cedo e a assinatura sairia
+ * encurtada (achado do Codex, parecer de código de 2026-09-26). O `balancedParens` fica como está:
+ * a chave de colisão do preflight depende dele, e mudá-la mudaria a chave de objetos já inventariados.
+ */
+export function argumentosEntreParenteses(s: string, ini: number): string {
+  let prof = 0;
+  for (let i = ini; i < s.length; i++) {
+    const c = s[i];
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < s.length && !(s[j] === c && s[j + 1] !== c)) j += s[j] === c ? 2 : 1;
+      i = j;
+    } else if (c === '(') {
+      prof++;
+    } else if (c === ')') {
+      prof--;
+      if (prof === 0) return s.slice(ini + 1, i);
+    }
+  }
+  return '';
+}
+
+/** Corpo de cada função indexado por `schema.nome` — o ÚLTIMO do arquivo vence (ver acima). */
+function corposCrusPorNome(sqlCru: string): Map<string, CorpoDeclarado> {
+  const out = new Map<string, CorpoDeclarado>();
+  for (const d of declaracoesDeFuncao(sqlCru)) {
+    if (d.corpo === undefined || d.md5Exato === undefined) continue;
+    out.set(`${d.schema}.${d.nome}`, { md5: md5CorpoFuncao(d.corpo), md5Exato: d.md5Exato });
+  }
+  return out;
 }
 
 /** split por vírgula no nível 0 de parênteses (preserva numeric(10,2) etc.) */

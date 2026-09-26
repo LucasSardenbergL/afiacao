@@ -72,8 +72,12 @@ export const CARIMBO_PATH = join(RAIZ, 'db', 'authz-carimbo-prod.json');
  *  não tem o campo `audits.rls`, e sem ele o gate leria a ausência do audit de RLS como "não há
  *  nada a dizer sobre RLS" em vez de "isto nunca foi medido". Ausência de dado não é aprovação: o
  *  carimbo antigo passa a ser rejeitado, e a renovação (`bun run authz:carimbo:gravar`) é o que
- *  devolve o verde — com o eixo novo medido junto. */
-export const SCHEMA_VERSION = 2;
+ *  devolve o verde — com o eixo novo medido junto.
+ *
+ *  v3 (2026-09-26): entrou a 6ª chave, `corpo` — a deriva de CORPO das funções `public`
+ *  (`deriva:corpo:prod`). Mesmo argumento do v2: um carimbo v2 não tem `audits.corpo`, e a
+ *  ausência se leria como "nada a dizer sobre corpo" em vez de "nunca medido". */
+export const SCHEMA_VERSION = 3;
 
 /**
  * Os dois limiares de idade, e por que são DOIS.
@@ -88,7 +92,7 @@ export const SCHEMA_VERSION = 2;
 export const AVISO_DIAS = 7;
 export const VENCIDO_DIAS = 14;
 
-export type ChaveAudit = 'funcoes' | 'grants' | 'audit' | 'claudeRo' | 'rls';
+export type ChaveAudit = 'funcoes' | 'grants' | 'audit' | 'claudeRo' | 'rls' | 'corpo';
 
 /** Os audits de prod, com o script npm que os roda e os arquivos que compõem cada FINGERPRINT.
  *
@@ -140,6 +144,29 @@ export const AUDITS: Record<
   rls: {
     script: 'authz:rls:prod',
     auditorFiles: ['db/audit-rls-prod.ts', 'scripts/lib/authz-rls.ts'],
+  },
+  // A SEXTA guarda (2026-09-26), e a primeira que não é de autorização: o CORPO de toda função
+  // `public` que alguma migration define (`docs/historico/deriva-corpo-sem-sensor.md`). Nasceu do
+  // `cancelar_pedido_sugerido` que rodou 18 dias o corpo de uma migration ANTERIOR sem nenhum audit
+  // ver — entrar aqui é o que lhe dá cadência. O contrato é a baseline de deriva aceita, que mora
+  // num JSON: por isso `contratoEmArquivo` e a baseline DENTRO de `auditorFiles`. As libs
+  // compartilhadas entram também: a sonda (`precondicao-banco`), o extrator de declarações e o
+  // leitor da ref DEFINEM o veredito, e mexer nelas invalida a medição tanto quanto mexer no runner.
+  // O diretório de migrations NÃO entra — senão todo PR com migration invalidaria o carimbo; a
+  // ref medida vai no denominador (`🔎 … origin/main@<sha>`).
+  corpo: {
+    script: 'deriva:corpo:prod',
+    auditorFiles: [
+      'db/audit-deriva-corpo-prod.ts',
+      'scripts/lib/deriva-corpo.ts',
+      'db/deriva-corpo-baseline.json',
+      'scripts/lib/precondicao-banco.ts',
+      'scripts/lib/corpo-esperado.ts',
+      'scripts/lib/migration-objects.ts',
+      'scripts/lib/migrations-da-ref.ts',
+      'scripts/lib/sql-comentarios.ts',
+    ],
+    contratoEmArquivo: true,
   },
 };
 
@@ -231,7 +258,8 @@ export function dadoDoContrato(chave: ChaveAudit): unknown {
       // As DUAS entradas: o audit checa o gate do manifest no corpo vivo E o md5 das reescritas.
       return { manifest: AUTHZ_MANIFEST, reescritas: AUTHZ_REESCRITAS_CONHECIDAS };
     case 'claudeRo':
-      // Sem módulo de contrato: a baseline mora no próprio auditor (ver `contratoEmArquivo`).
+    case 'corpo':
+      // Sem módulo de contrato: a baseline mora nos arquivos do auditor (ver `contratoEmArquivo`).
       return null;
     case 'rls':
       // As TRÊS: o conjunto de policies curadas, o md5 dos predicados que elas chamam, e quais

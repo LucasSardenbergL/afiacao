@@ -143,14 +143,17 @@ describe('o corpo REAL do repo', () => {
     expect(r.sitios.length).toBeGreaterThanOrEqual(PISOS.sitios);
   });
 
-  it('o censo bate com o histórico: 15 consumidores executam o wrapper', () => {
+  it('o censo bate com o histórico: 16 consumidores executam o wrapper', () => {
     // O doc do #2167 contou 14 varrendo à mão "quem EXECUTA" (≠ as 200+ menções em prosa).
     // Se esta conta divergir, ou nasceu consumidor novo (atualize) ou o fiscal ficou cego.
     // 2026-09-07: 14 → 15, consumidor novo e legítimo — `scripts/pendencias-pacote.ts` mede a
     // pré-condição de banco da leva antes de liberar a colagem da edge. Usa `-c` (sai 1 em ERROR),
     // então não entra na lista de quem precisa de `ON_ERROR_STOP` — o caso abaixo continua exigindo
     // que o ÚNICO sítio com `-f` seja o do #2167, e é ele quem falsifica esta linha.
-    expect(r.arquivosComVinculo).toBe(15);
+    // 2026-09-26: 15 → 16, consumidor novo e legítimo — `db/audit-deriva-corpo-prod.ts`
+    // (`deriva:corpo:prod`) mede o corpo de toda função `public` contra o repo. Também por `-c`
+    // (e já com `ON_ERROR_STOP`), então a exigência de `-f` abaixo não muda.
+    expect(r.arquivosComVinculo).toBe(16);
   });
 
   it('o único sítio que precisa de ON_ERROR_STOP por `-f` é o do #2167, e ele tem', () => {

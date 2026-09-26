@@ -1,0 +1,212 @@
+{
+  "formato": "deriva-corpo-baseline/1",
+  "entradas": [
+    {
+      "funcao": "detectar_skus_sem_grupo",
+      "identidade": "text",
+      "classe": "EDICAO_MANUAL",
+      "esperadaNoAceite": "20260606140000_detectar_skus_sem_grupo_self_heal.sql",
+      "motivo": "prod difere do repo só no literal da justificativa gravada em eventos_outlier ('…não precisa de grupo.' × '…de grupo de produção.'); os outros 346 tokens são iguais. Em prod desde ≤2026-06-19 (schema-snapshot do Lovable). Aceita pelo founder em 2026-09-26.",
+      "md5": "4147eeda24634ae0d5bb97a18452baf5",
+      "md5Tokens": "d7fc1232e8d9866c39a70fe5fe94e3c2",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "despinar_parametro",
+      "identidade": "text,text",
+      "classe": "PATCH",
+      "patch": "20260719120000_authz_cap_compras_escrever_fu4e.sql",
+      "efeito": "ALTERA",
+      "motivo": "FU4-E: troca o gate pode_ver_carteira_completa → private.cap_compras_escrever por âncora (intermediário; o estado final é o da 20260723160000).",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "despinar_parametro",
+      "identidade": "text,text",
+      "classe": "PATCH",
+      "patch": "20260723160000_authz_fu4e_is_not_true_escritas.sql",
+      "efeito": "ALTERA",
+      "motivo": "FU4-E: `IF NOT cap(...)` → `IF cap(...) IS NOT TRUE` por âncora; conferido em prod em 2026-09-26.",
+      "md5": "98953ff7eb238e22df96b6185a3e18c5",
+      "md5Tokens": "0c7204c31d57736eaec93928d80fd8f0",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "reverter_parametro_auto",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20260719120000_authz_cap_compras_escrever_fu4e.sql",
+      "efeito": "ALTERA",
+      "motivo": "FU4-E: troca o gate pode_ver_carteira_completa → private.cap_compras_escrever por âncora (intermediário; o estado final é o da 20260723160000).",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "reverter_parametro_auto",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20260723160000_authz_fu4e_is_not_true_escritas.sql",
+      "efeito": "ALTERA",
+      "motivo": "FU4-E: `IF NOT cap(...)` → `IF cap(...) IS NOT TRUE` por âncora; conferido em prod em 2026-09-26.",
+      "md5": "b25631486db63f6bbcd660a3061472ed",
+      "md5Tokens": "e7f81af72b812e4c788019e683518af0",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "reverter_run_auto",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20260719120000_authz_cap_compras_escrever_fu4e.sql",
+      "efeito": "ALTERA",
+      "motivo": "FU4-E: troca o gate pode_ver_carteira_completa → private.cap_compras_escrever por âncora (intermediário; o estado final é o da 20260723160000).",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "reverter_run_auto",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20260723160000_authz_fu4e_is_not_true_escritas.sql",
+      "efeito": "ALTERA",
+      "motivo": "FU4-E: `IF NOT cap(...)` → `IF cap(...) IS NOT TRUE` por âncora; conferido em prod em 2026-09-26.",
+      "md5": "89dd1bdca8f424b9ca18a27afd31a24a",
+      "md5Tokens": "4469fd8a973e87a9f5798df3f5cc1fea",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "reposicao_pos_candidatos",
+      "identidade": "text",
+      "classe": "PATCH",
+      "patch": "20260814022626_reposicao_po_inexistente_antes_de.sql",
+      "efeito": "ALTERA",
+      "motivo": "patch por âncora do PO-inexistente-antes-de; colado em 2026-08-14 17:54–18:07Z (xmin 9130460), conferido em 2026-09-26.",
+      "md5": "645733d1f4d2f7b835de6632cfc4a588",
+      "md5Tokens": "8fbcbd57a0c45daffff641e29e7b0833",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20260924120000_tint_promote_tombstone_fase5.sql",
+      "efeito": "ALTERA",
+      "motivo": "5b#1: o tombstone da Fase 5 vence o upsert (intermediário; o estado final é o da 20260925210000).",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20260925210000_tint_promocao_assincrona.sql",
+      "efeito": "ALTERA",
+      "motivo": "promoção assíncrona (#2565): 2 âncoras — janela de limpeza por promovido_em e purge que preserva snapshot pendente/erro; conferido em prod em 2026-09-26 (xmin 10596327).",
+      "md5": "ae04a67bb5a726516fe942b29c177ea7",
+      "md5Tokens": "bdb2a7164abf86930b6ab70ff2a963fb",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "has_role",
+      "identidade": "uuid,app_role",
+      "classe": "PATCH",
+      "patch": "20260719120000_authz_cap_compras_escrever_fu4e.sql",
+      "efeito": "SO_CITA",
+      "motivo": "citada no guard de existência e no corpo de private.cap_compras_escrever; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "pode_ver_carteira_completa",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20260720120000_authz_cap_compras_ler_pos_candidatos_fu4g.sql",
+      "efeito": "SO_CITA",
+      "motivo": "é o gate ANTIGO que o regex da FU4-G procura dentro de reposicao_pos_candidatos; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "get_regua_preco",
+      "identidade": "uuid,uuid,numeric,numeric,numeric[]",
+      "classe": "PATCH",
+      "patch": "20260723150000_authz_custo_fu4f_fase2_regua.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição: to_regprocedure confirma que a assinatura VELHA (3 args) saiu; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "get_regua_preco_customer360",
+      "identidade": "uuid,bigint[]",
+      "classe": "PATCH",
+      "patch": "20260723150000_authz_custo_fu4f_fase2_regua.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição lê pg_proc por proname; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "registrar_exibicao_regua",
+      "identidade": "text,uuid,uuid,numeric,numeric,text,text,numeric,numeric,numeric,boolean,text[],numeric[]",
+      "classe": "PATCH",
+      "patch": "20260723150000_authz_custo_fu4f_fase2_regua.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição lê pg_proc por proname; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "pode_ler_custo",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20260724130000_authz_custo_fu4f_fase3_recommend.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição A1/A2: existência, SECURITY DEFINER, STABLE e search_path; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "reposicao_marco_pre_omie",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20260814022626_reposicao_po_inexistente_antes_de.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — guard de existência (to_regprocedure … IS NULL THEN RAISE) na postcondição; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "pedido_total_liquido_converter",
+      "identidade": "boolean,timestamp with time zone,text[],date,date,integer,boolean",
+      "classe": "PATCH",
+      "patch": "20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição ($post$) resolve a assinatura por to_regprocedure; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "tint_promocao_tick",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20260925210000_tint_promocao_assincrona.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição confere prosecdef e has_function_privilege; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "tint_promocao_watchdog",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20260925210000_tint_promocao_assincrona.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição confere prosecdef e has_function_privilege; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "pedido_total_liquido_classificar",
+      "identidade": "timestamp with time zone,uuid[]",
+      "classe": "PATCH",
+      "patch": "20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql",
+      "efeito": "SO_CITA",
+      "motivo": "chamada pela pedido_total_liquido_converter e lida (regex sobre o corpo) na postcondição; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "omie_sync_identity_snapshot",
+      "identidade": "text",
+      "classe": "NAO_MENSURAVEL",
+      "motivo": "declarada com corpo SQL-padrão (prosqlbody): prod não tem prosrc textual para comparar.",
+      "desde": "2026-09-26"
+    }
+  ]
+}

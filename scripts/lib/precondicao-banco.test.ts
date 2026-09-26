@@ -120,6 +120,14 @@ describe('montarSondaPrecondicao — fail-closed a montante', () => {
     expect(() => montarSondaPrecondicao(['Maiuscula'])).toThrow(/fora do formato literal/);
   });
 
+  it('aceita `_` inicial — 9 funções `public` são assim, e a varredura de corpo mede TODAS', () => {
+    // `_data_health_compute` é metade de um conjunto ACOPLADO do CLAUDE.md; recusá-la tirava da
+    // medição exatamente a função que mais precisa dela. O alfabeto segue `[a-z0-9_]`.
+    const sql = montarSondaPrecondicao(['_data_health_compute']);
+    expect(sql).toContain("('_data_health_compute')");
+    expect(() => montarSondaPrecondicao(["_x'; --"])).toThrow(/fora do formato literal/);
+  });
+
   it('é determinística: a mesma leva produz a mesma sonda', () => {
     expect(montarSondaPrecondicao(['b_um', 'a_um'])).toBe(montarSondaPrecondicao(['a_um', 'b_um']));
   });
