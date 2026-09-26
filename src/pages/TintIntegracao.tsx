@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Plug, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
+import { Plug, RefreshCw, CheckCircle2, AlertCircle, Hourglass, CircleX } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
@@ -19,7 +19,7 @@ function KpiCards() {
   const { data } = useQuery({
     queryKey: ["tint-integracao-kpis"],
     queryFn: async () => {
-      const [total, completos, erros] = await Promise.all([
+      const [total, completos, erros, promoPendente, promoErro] = await Promise.all([
         supabase.from("tint_sync_runs").select("id", { count: "exact", head: true }),
         supabase
           .from("tint_sync_runs")
@@ -29,11 +29,22 @@ function KpiCards() {
           .from("tint_sync_runs")
           .select("id", { count: "exact", head: true })
           .eq("status", "error"),
+        // Fila de promoção (migration 20260925210000): status = ingestão; promocao_status = catálogo.
+        supabase
+          .from("tint_sync_runs")
+          .select("id", { count: "exact", head: true })
+          .eq("promocao_status", "pendente"),
+        supabase
+          .from("tint_sync_runs")
+          .select("id", { count: "exact", head: true })
+          .eq("promocao_status", "erro"),
       ]);
       return {
         total: total.count ?? 0,
         completos: completos.count ?? 0,
         erros: erros.count ?? 0,
+        promoPendente: promoPendente.count ?? 0,
+        promoErro: promoErro.count ?? 0,
       };
     },
   });
@@ -42,10 +53,12 @@ function KpiCards() {
     { label: "Total Sync Runs", value: data?.total ?? 0, icon: RefreshCw },
     { label: "Completos", value: data?.completos ?? 0, icon: CheckCircle2 },
     { label: "Erros", value: data?.erros ?? 0, icon: AlertCircle },
+    { label: "Promoção pendente", value: data?.promoPendente ?? 0, icon: Hourglass },
+    { label: "Promoção com erro", value: data?.promoErro ?? 0, icon: CircleX },
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className="border-border">
           <CardContent className="pt-4 flex items-center justify-between">

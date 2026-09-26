@@ -14949,6 +14949,11 @@ export type Database = {
       tint_keys_snapshots: {
         Row: {
           account: string
+          aplicacao_erro: string | null
+          aplicacao_proxima_em: string | null
+          aplicacao_status: string | null
+          aplicacao_tentativas: number
+          aplicado_em: string | null
           chunk_index: number
           created_at: string | null
           entity: string
@@ -14962,6 +14967,11 @@ export type Database = {
         }
         Insert: {
           account: string
+          aplicacao_erro?: string | null
+          aplicacao_proxima_em?: string | null
+          aplicacao_status?: string | null
+          aplicacao_tentativas?: number
+          aplicado_em?: string | null
           chunk_index: number
           created_at?: string | null
           entity: string
@@ -14975,6 +14985,11 @@ export type Database = {
         }
         Update: {
           account?: string
+          aplicacao_erro?: string | null
+          aplicacao_proxima_em?: string | null
+          aplicacao_status?: string | null
+          aplicacao_tentativas?: number
+          aplicado_em?: string | null
           chunk_index?: number
           created_at?: string | null
           entity?: string
@@ -15925,6 +15940,11 @@ export type Database = {
           idempotency_response: Json | null
           inserts: number | null
           metadata: Json | null
+          promocao_erro: string | null
+          promocao_proxima_em: string | null
+          promocao_status: string | null
+          promocao_tentativas: number
+          promovido_em: string | null
           setting_id: string
           source: string
           started_at: string
@@ -15946,6 +15966,11 @@ export type Database = {
           idempotency_response?: Json | null
           inserts?: number | null
           metadata?: Json | null
+          promocao_erro?: string | null
+          promocao_proxima_em?: string | null
+          promocao_status?: string | null
+          promocao_tentativas?: number
+          promovido_em?: string | null
           setting_id: string
           source?: string
           started_at?: string
@@ -15967,6 +15992,11 @@ export type Database = {
           idempotency_response?: Json | null
           inserts?: number | null
           metadata?: Json | null
+          promocao_erro?: string | null
+          promocao_proxima_em?: string | null
+          promocao_status?: string | null
+          promocao_tentativas?: number
+          promovido_em?: string | null
           setting_id?: string
           source?: string
           started_at?: string
