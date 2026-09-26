@@ -12,7 +12,7 @@
  * que alguma migration define, a cada execução.
  */
 import type { MigrationLida } from './corpo-esperado';
-import { balancedParens, declaracoesDeFuncao, md5Exato } from './migration-objects';
+import { argumentosEntreParenteses, declaracoesDeFuncao, md5Exato } from './migration-objects';
 import {
   AMOSTRA_CORPO_JS,
   type LeituraSonda,
@@ -29,8 +29,16 @@ const OP_CHARS = new Set('~!@#^&|`?+-*/%<>=');
 const OP_ESPECIAIS = new Set('~!@#^&|`?%');
 const INICIO_IDENT = /[A-Za-z_\u0080-\uffff]/;
 const CONT_IDENT = /[A-Za-z_0-9$\u0080-\uffff]/;
-const NUMERO = /^(?:0[xX][0-9A-Fa-f_]+|0[oO][0-7_]+|0[bB][01_]+|[0-9][0-9_]*(?:\.(?!\.)[0-9_]*)?|\.[0-9][0-9_]*)(?:[eE][+-]?[0-9]+)?/;
-const TAG_DOLLAR = /^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z_0-9\u0080-\uffff]*)?\$/;
+// Regex PEGAJOSAS (`y`, com `lastIndex`): casar numa fatia de N caracteres deixava uma tag de
+// dollar-quote de 130 letras escapar da janela e o conteúdo do literal ser tokenizado (Codex, P2).
+const NUMERO = /(?:0[xX][0-9A-Fa-f_]+|0[oO][0-7_]+|0[bB][01_]+|[0-9][0-9_]*(?:\.(?!\.)[0-9_]*)?|\.[0-9][0-9_]*)(?:[eE][+-]?[0-9]+)?/y;
+const TAG_DOLLAR = /\$(?:[A-Za-z_\u0080-\uffff][A-Za-z_0-9\u0080-\uffff]*)?\$/y;
+const PREFIXO_STRING = /(?:[EeBbXxNn]|[Uu]&)'/y;
+const PARAMETRO = /\$[0-9]+/y;
+const casarEm = (re: RegExp, s: string, i: number): RegExpExecArray | null => {
+  re.lastIndex = i;
+  return re.exec(s);
+};
 /** Marcas entre dois literais de string adjacentes: com quebra de linha o PG CONCATENA; sem, é erro. */
 const CONCAT_QUEBRA = '\u2424concat';
 const CONCAT_ESPACO = '\u2423adjacente';
@@ -64,6 +72,8 @@ export function tokensSql(corpo: string): string[] {
   let i = 0;
   let ultimoFoiString = false;
   let quebraDesdeUltimo = false;
+  /** O modo de escape do último literal: a CONTINUAÇÃO (quebra + outro `'…'`) o herda (Codex, P1). */
+  let ultimaComBarra = false;
   const emitir = (t: string, ehString = false): void => {
     if (ehString && ultimoFoiString) fora.push(quebraDesdeUltimo ? CONCAT_QUEBRA : CONCAT_ESPACO);
     fora.push(t);
@@ -89,8 +99,9 @@ export function tokensSql(corpo: string): string[] {
       continue;
     }
     if (c === '-' && s[i + 1] === '-') {
-      const nl = s.indexOf('\n', i);
-      i = nl < 0 ? s.length : nl;
+      // O comentário de linha termina em LF **ou** CR (`non_newline` do scan.l) — procurar só LF
+      // engolia `+ 1` depois de um `\r` (Codex, P1).
+      while (i < s.length && s[i] !== '\n' && s[i] !== '\r') i++;
       continue;
     }
     if (c === '/' && s[i + 1] === '*') {
@@ -111,17 +122,20 @@ export function tokensSql(corpo: string): string[] {
       continue;
     }
     // Literal com prefixo: E'…' (barra escapa), B'…', X'…', N'…', U&'…'. O prefixo é caixa-insensível.
-    const prefixo = /^(?:[EeBbXxNn]|[Uu]&)'/.exec(s.slice(i, i + 3));
+    const prefixo = casarEm(PREFIXO_STRING, s, i);
     if (prefixo !== null) {
       const p = prefixo[0].slice(0, -1).toUpperCase();
       const fim = literal(i + p.length, p === 'E');
       emitir(p + s.slice(i + p.length, fim), true);
+      ultimaComBarra = p === 'E';
       i = fim;
       continue;
     }
     if (c === "'") {
-      const fim = literal(i, false);
+      const comBarra = ultimoFoiString && quebraDesdeUltimo && ultimaComBarra;
+      const fim = literal(i, comBarra);
       emitir(s.slice(i, fim), true);
+      ultimaComBarra = comBarra;
       i = fim;
       continue;
     }
@@ -140,7 +154,7 @@ export function tokensSql(corpo: string): string[] {
       continue;
     }
     if (c === '$') {
-      const tag = TAG_DOLLAR.exec(s.slice(i, i + 128));
+      const tag = casarEm(TAG_DOLLAR, s, i);
       if (tag !== null) {
         const fim = s.indexOf(tag[0], i + tag[0].length);
         const ate = fim < 0 ? s.length : fim + tag[0].length;
@@ -148,7 +162,7 @@ export function tokensSql(corpo: string): string[] {
         i = ate;
         continue;
       }
-      const param = /^\$[0-9]+/.exec(s.slice(i, i + 32));
+      const param = casarEm(PARAMETRO, s, i);
       if (param !== null) {
         emitir(param[0]);
         i += param[0].length;
@@ -167,7 +181,7 @@ export function tokensSql(corpo: string): string[] {
       i += 2;
       continue;
     }
-    const numero = NUMERO.exec(s.slice(i, i + 128));
+    const numero = casarEm(NUMERO, s, i);
     if (numero !== null) {
       emitir(numero[0].toLowerCase());
       i += numero[0].length;
@@ -274,9 +288,10 @@ const APELIDOS: Record<string, string> = {
 /** Um tipo (sem nome de parâmetro) no formato de `format_type`, ou null se não for um tipo. */
 function tipoCanonico(texto: string): string | null {
   let t = texto.trim();
+  // O catálogo não guarda dimensões: `int[][]` é `integer[]` para o PG (Codex, P2).
   let colchetes = '';
   while (t.endsWith('[]')) {
-    colchetes += '[]';
+    colchetes = '[]';
     t = t.slice(0, -2).trim();
   }
   if (t.startsWith('"')) return /^"[^"]+"$/.test(t) ? t + colchetes : null;
@@ -298,7 +313,9 @@ export function identidadeDosArgumentos(args: string): string | null {
   for (const bruto of dividirArgumentos(args)) {
     // DEFAULT/`=` no nível 0 encerra o tipo; typmod (`(10,2)`) não entra na identidade de função.
     const semDefault = bruto.replace(/\s+default\s[\s\S]*$/i, '').replace(/\s*=[\s\S]*$/, '');
-    const semTypmod = semDefault.replace(/\(\s*[0-9\s,]*\)/g, ' ');
+    // `float(p)` é o único typmod que MUDA o tipo: p ≤ 24 é real, senão double precision (Codex, P2).
+    const semFloat = semDefault.replace(/\bfloat\s*\(\s*(\d+)\s*\)/gi, (_m, p: string) => (Number(p) <= 24 ? 'real' : 'double precision'));
+    const semTypmod = semFloat.replace(/\(\s*[0-9\s,]*\)/g, ' ');
     if (/%type/i.test(semTypmod)) return null;
     const palavras = semTypmod
       .trim()
@@ -325,6 +342,40 @@ export interface Remocao {
   posicao: number;
 }
 
+/**
+ * Troca o conteúdo de todo literal `'…'`/`E'…'` por espaço (comprimento preservado). Um `SELECT
+ * 'DROP FUNCTION public.f()'` é TEXTO, e contá-lo como remoção deixava uma ausência real sair
+ * "explicada" (Codex, P1). O dollar-quote NÃO é mascarado: o corpo de um `DO` roda no apply, e o
+ * `DROP` estático lá dentro conta. `EXECUTE 'DROP …'` some junto — DDL dinâmica não tem alvo
+ * legível, e a ausência vira achado em vez de palpite.
+ */
+function mascararStrings(s: string): string {
+  let fora = '';
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    const eString = (c === 'E' || c === 'e') && s[i + 1] === "'" && !/[A-Za-z0-9_$]/.test(s[i - 1] ?? '');
+    if (c === "'" || eString) {
+      let j = i + (eString ? 2 : 1);
+      while (j < s.length) {
+        if (eString && s[j] === '\\') j += 2;
+        else if (s[j] === "'" && s[j + 1] === "'") j += 2;
+        else if (s[j] === "'") {
+          j++;
+          break;
+        } else j++;
+      }
+      const ate = Math.min(j, s.length);
+      fora += s.slice(i, ate).replace(/[^\n]/g, ' ');
+      i = ate;
+      continue;
+    }
+    fora += c;
+    i++;
+  }
+  return fora;
+}
+
 /** `[schema.]nome` — com ou sem aspas —, e a posição logo depois dele. */
 const NOME_QUALIFICADO = /^\s*(?:"?([A-Za-z_][\w$]*)"?\s*\.\s*)?"?([A-Za-z_][\w$]*)"?\s*/;
 
@@ -335,7 +386,7 @@ function lerAlvo(m: string, i: number, posicao: number): { remocao?: Remocao; fi
   let fim = i + item[0].length;
   let args: string | undefined;
   if (m[fim] === '(') {
-    args = balancedParens(m, fim);
+    args = argumentosEntreParenteses(m, fim);
     fim += args.length + 2;
   }
   if ((item[1] ?? 'public').toLowerCase() !== 'public') return { fim };
@@ -354,7 +405,7 @@ function lerAlvo(m: string, i: number, posicao: number): { remocao?: Remocao; fi
  * em prod vira achado em vez de ser "explicada" por um palpite.
  */
 export function remocoesDe(sql: string): Remocao[] {
-  const m = removerComentariosSql(sql);
+  const m = mascararStrings(removerComentariosSql(sql));
   const fora: Remocao[] = [];
   for (const d of m.matchAll(/\bDROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?/gi)) {
     let i = (d.index ?? 0) + d[0].length;
@@ -385,18 +436,28 @@ export function remocoesDe(sql: string): Remocao[] {
  * (função, patch) posterior ao último CREATE esteja CONCILIADO na baseline ("altera" ou "só cita").
  */
 export function alvosDePatch(sql: string): string[] {
+  return [...new Set(mencoesDePatch(sql).map((x) => x.nome))].sort((a, b) => a.localeCompare(b, 'en'));
+}
+
+/** As menções de `alvosDePatch`, com a POSIÇÃO de cada uma — no mesmo arquivo do CREATE, é ela que decide. */
+function mencoesDePatch(sql: string): { nome: string; posicao: number }[] {
   const m = removerComentariosSql(sql);
   if (!/pg_get_functiondef/i.test(m) || !/\bEXECUTE\b/i.test(m) || !/(?:replace|overlay)\s*\(/i.test(m)) return [];
-  const nomes = new Set<string>();
-  for (const x of m.matchAll(/'(?:public\.)?([a-z_][a-z0-9_]*)\s*\(/gi)) nomes.add(x[1].toLowerCase());
-  for (const x of m.matchAll(/'public\.([a-z_][a-z0-9_]*)'\s*::\s*regproc/gi)) nomes.add(x[1].toLowerCase());
-  for (const x of m.matchAll(/proname\s*=\s*'([a-z_][a-z0-9_]*)'/gi)) nomes.add(x[1].toLowerCase());
-  return [...nomes].sort((a, b) => a.localeCompare(b, 'en'));
+  const fora: { nome: string; posicao: number }[] = [];
+  const padroes = [
+    /'(?:public\.)?([a-z_][a-z0-9_]*)\s*\(/gi, // 'public.f(uuid)' — regprocedure/to_regprocedure/ARRAY[…]
+    /'(?:public\.)?([a-z_][a-z0-9_]*)'\s*::\s*regproc/gi, // 'f'::regproc — sem schema, sem args (Codex, P1)
+    /proname\s*=\s*'([a-z_][a-z0-9_]*)'/gi,
+  ];
+  for (const re of padroes) for (const x of m.matchAll(re)) fora.push({ nome: x[1].toLowerCase(), posicao: x.index ?? 0 });
+  return fora;
 }
 
 /** Uma versão do corpo de uma identidade, como uma migration a declarou. */
 interface VersaoDeIdentidade {
   migration: string;
+  /** Índice do CREATE no arquivo — decide se uma menção de patch no MESMO arquivo vem depois dele. */
+  posicao: number;
   /** Ausente quando a declaração não tem corpo dollar-quoted — e aí NADA a substitui. */
   corpo?: string;
   md5Exato?: string;
@@ -423,7 +484,11 @@ export interface ModeloDoRepo {
   migrations: number;
   /** Controle positivo: quantas declarações `public` saíram. ZERO com migrations lidas = extrator cego. */
   declaracoes: number;
-  /** Controle INDEPENDENTE: nomes que um CREATE mais solto (aspas, espaço no ponto) vê e o extrator não. */
+  /**
+   * Controle INDEPENDENTE, por DECLARAÇÃO (`nome@migration`): um CREATE mais solto (aspas, espaço no
+   * ponto) conta mais ocorrências do que o extrator num arquivo. Por nome acumulado ele se escondia
+   * atrás do CREATE antigo do mesmo nome (Codex, P1).
+   */
   perdidas: string[];
   /** Nomes com alguma declaração cuja assinatura não se resolve — o sensor não afirma nada sobre eles. */
   ilegiveis: string[];
@@ -450,10 +515,11 @@ export function modelarRepo(migrations: readonly MigrationLida[]): ModeloDoRepo 
   const identidades = new Map<string, EstadoDeIdentidade>();
   const nomes = new Set<string>();
   const ilegiveis = new Set<string>();
-  const soltas = new Set<string>();
+  const perdidas: string[] = [];
   let declaracoes = 0;
   for (const { nome: migration, sql } of migrations) {
     const eventos: { posicao: number; aplicar: () => void }[] = [];
+    const estritas = new Map<string, number>();
     let semCorpos = removerComentariosSql(sql);
     for (const d of declaracoesDeFuncao(sql)) {
       // O corpo extraído sai do texto do controle solto: um CREATE escrito como TEXTO lá dentro não
@@ -464,6 +530,7 @@ export function modelarRepo(migrations: readonly MigrationLida[]): ModeloDoRepo 
       }
       if (d.schema !== 'public') continue;
       declaracoes++;
+      estritas.set(d.nome, (estritas.get(d.nome) ?? 0) + 1);
       const identidade = identidadeDosArgumentos(d.argumentos);
       eventos.push({
         posicao: d.posicao,
@@ -475,48 +542,63 @@ export function modelarRepo(migrations: readonly MigrationLida[]): ModeloDoRepo 
           }
           const k = chaveIdentidade(d.nome, identidade);
           const e = identidades.get(k) ?? { nome: d.nome, identidade, versoes: [], patchesDepois: [] };
-          e.versoes.push(d.corpo === undefined ? { migration } : { migration, corpo: d.corpo, md5Exato: d.md5Exato });
+          e.versoes.push(
+            d.corpo === undefined
+              ? { migration, posicao: d.posicao }
+              : { migration, posicao: d.posicao, corpo: d.corpo, md5Exato: d.md5Exato },
+          );
           e.aposentadaPor = undefined;
           e.patchesDepois = [];
           identidades.set(k, e);
         },
       });
     }
-    for (const r of remocoesDe(sql)) {
+    // Remoção e patch leem o texto SEM os corpos de função: o que está escrito dentro de um corpo só
+    // roda quando alguém chama a função, não no apply (um `DO` roda, e continua visível).
+    for (const r of remocoesDe(semCorpos)) {
       eventos.push({
         posicao: r.posicao,
         aplicar: () => {
+          // Lista ILEGÍVEL não aposenta ninguém: "todas do nome" era palpite, e apagava o overload
+          // que ficou (Codex, P1). O nome vira ilegível — e o sensor diz que não sabe.
+          if (r.identidade === null) {
+            ilegiveis.add(r.nome);
+            return;
+          }
           for (const e of identidades.values()) {
             if (e.nome !== r.nome || e.aposentadaPor !== undefined) continue;
-            // Sem lista (ou lista ilegível) ⇒ todas as do nome: o PG exige nome único nesse caso.
-            if (r.identidade === undefined || r.identidade === null || r.identidade === e.identidade) {
-              e.aposentadaPor = migration;
-            }
+            // Sem lista ⇒ todas as do nome: o PG exige nome único nesse caso.
+            if (r.identidade === undefined || r.identidade === e.identidade) e.aposentadaPor = migration;
           }
         },
       });
     }
     for (const ev of eventos.sort((a, b) => a.posicao - b.posicao)) ev.aplicar();
-    // O patch reescreve o que ESTÁ em prod quando roda: conta como evento do fim do arquivo. Não
-    // pendura na função que o PRÓPRIO arquivo acabou de criar (medido: 9 falsos candidatos — a
-    // migration cria `f` e patcheia OUTRAS, e o nome de `f` aparece no texto). Se ela de fato
-    // reescrevesse `f` depois do CREATE, prod ≠ último CREATE e o sensor acusa SEM_PAR mesmo assim.
-    for (const alvo of alvosDePatch(sql)) {
+    // O patch reescreve o que ESTÁ em prod quando roda. No arquivo do último CREATE, só a menção
+    // que vem DEPOIS dele pendura: "cria e depois patcheia no mesmo arquivo" existe, e se prod
+    // voltar ao corpo do CREATE só a conciliação impede o EM_DIA (Codex, P1). Menção antes do CREATE
+    // não o alcança.
+    for (const { nome, posicao } of mencoesDePatch(semCorpos)) {
       for (const e of identidades.values()) {
-        if (e.nome !== alvo || e.aposentadaPor !== undefined) continue;
-        if (e.versoes.at(-1)?.migration !== migration) e.patchesDepois.push(migration);
+        if (e.nome !== nome || e.aposentadaPor !== undefined || e.patchesDepois.includes(migration)) continue;
+        const ult = e.versoes[e.versoes.length - 1];
+        if (ult.migration !== migration || posicao > ult.posicao) e.patchesDepois.push(migration);
       }
     }
+    const soltas = new Map<string, number>();
     for (const x of semCorpos.matchAll(CREATE_SOLTO)) {
-      if ((x[1] ?? 'public').toLowerCase() === 'public') soltas.add(x[2].toLowerCase());
+      if ((x[1] ?? 'public').toLowerCase() !== 'public') continue;
+      const n = x[2].toLowerCase();
+      soltas.set(n, (soltas.get(n) ?? 0) + 1);
     }
+    for (const [n, k] of soltas) if (k > (estritas.get(n) ?? 0)) perdidas.push(`${n}@${migration}`);
   }
   return {
     identidades,
     nomes,
     migrations: migrations.length,
     declaracoes,
-    perdidas: [...soltas].filter((n) => !nomes.has(n)).sort((a, b) => a.localeCompare(b, 'en')),
+    perdidas,
     ilegiveis: [...ilegiveis].sort((a, b) => a.localeCompare(b, 'en')),
   };
 }
@@ -554,6 +636,11 @@ export function montarSondaDeriva(nomes: readonly string[]): string {
     `         CASE WHEN ${semCorpo} THEN '' ELSE encode(convert_to(p.prosrc, 'UTF8'), 'hex') END AS e`,
     `    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang`,
     `   WHERE n.nspname = 'public' AND p.prokind = 'f' AND p.proname IN (SELECT nome FROM alvo)`,
+    // A CONTAGEM por nome (inclusive zero), no mesmo retrato: perder as linhas de corpo de um nome
+    // deixa de ser invisível para a conferência cruzada (Codex, P1).
+    `  UNION ALL SELECT 1, 'n', a.nome, (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace`,
+    `                     WHERE n.nspname = 'public' AND p.prokind = 'f' AND p.proname = a.nome)::text, '', '', ''`,
+    `    FROM alvo a`,
     // Autotestes do CANAL: respostas conhecidas antes de perguntar. O hex tem de voltar à amostra
     // do gate; a identidade tem de sair no formato que o repo reconstrói.
     `  UNION ALL SELECT 2, 'autoteste-hex', encode(convert_to(E'\\n á  b ', 'UTF8'), 'hex'), '', '', '', ''`,
@@ -597,6 +684,7 @@ export interface LeituraDeriva {
 export function parsearSondaDeriva(saida: string): LeituraDeriva {
   const overloads: OverloadVivo[] = [];
   const incoerencias: string[] = [];
+  const contagem = new Map<string, number>();
   let fim = false;
   let autotesteHex = false;
   let autotesteIdentidade = false;
@@ -613,6 +701,12 @@ export function parsearSondaDeriva(saida: string): LeituraDeriva {
         else incoerencias.push(`${nome}(${identidade}): o texto recebido não reproduz o md5 do banco`);
       }
       overloads.push(vivo);
+    } else if (c[0] === 'n' && c.length === 6) {
+      contagem.set(c[1], Number.parseInt(c[2], 10));
+    } else if (c.length !== 6) {
+      // As linhas do detalhe têm SEIS colunas; linha torta não é lida — e o marcador de fim ausente
+      // (ou a contagem que não fecha) transforma isso em "não medi".
+      continue;
     } else if (c[0] === 'autoteste-hex') {
       autotesteHex = Buffer.from(c[1] ?? '', 'hex').toString('utf8') === AMOSTRA_CORPO_JS;
     } else if (c[0] === 'autoteste-id') {
@@ -624,6 +718,12 @@ export function parsearSondaDeriva(saida: string): LeituraDeriva {
     }
   }
   const sonda = parsearSondaPrecondicao(saida);
+  for (const m of sonda.medicoes) {
+    const k = contagem.get(m.rpc);
+    const doDetalhe = overloads.filter((o) => o.nome === m.rpc).length;
+    if (k === undefined || Number.isNaN(k)) incoerencias.push(`${m.rpc}: sem linha de contagem no detalhe`);
+    else if (k !== doDetalhe) incoerencias.push(`${m.rpc}: a contagem do banco diz ${k} overload(s) e o detalhe trouxe ${doDetalhe}`);
+  }
   // As duas leituras vêm do MESMO retrato: têm de concordar por nome em contagem e em md5.
   for (const [nome, vivo] of sonda.corpos) {
     const doDetalhe = overloads.filter((o) => o.nome === nome);
@@ -808,15 +908,17 @@ export function julgarDeriva({ modelo, leitura, baseline, controles }: EntradaJu
       continue;
     }
     const ult = e.versoes[e.versoes.length - 1];
-    if (ult.corpo === undefined) {
-      const decl = daBaseline(e, 'NAO_MENSURAVEL');
-      decl.forEach((b) => usadas.add(b));
-      if (decl.length > 0) achados.push(achado('NAO_MENSURAVEL_DECLARADA', alvo, `${ult.migration} sem corpo dollar-quoted`));
-      else incertezas.push(`\`${alvo}\`: a última versão (${ult.migration}) não tem corpo comparável e a baseline não a declara NAO_MENSURAVEL`);
-      continue;
-    }
+    // Existência ANTES de "não mensurável": a declaração dispensa comparar corpo, não dispensa a
+    // função existir (Codex, P1 — alcançava `omie_sync_identity_snapshot`).
+    const decl = ult.corpo === undefined ? daBaseline(e, 'NAO_MENSURAVEL') : [];
+    decl.forEach((b) => usadas.add(b));
     if (o === undefined) {
       achados.push(achado('AUSENTE', alvo, `viva no repo (último CREATE: ${ult.migration}) e ausente em prod — migration não aplicada ou DROP manual`));
+      continue;
+    }
+    if (ult.corpo === undefined) {
+      if (decl.length > 0) achados.push(achado('NAO_MENSURAVEL_DECLARADA', alvo, `${ult.migration} sem corpo dollar-quoted`));
+      else incertezas.push(`\`${alvo}\`: a última versão (${ult.migration}) não tem corpo comparável e a baseline não a declara NAO_MENSURAVEL`);
       continue;
     }
     if (o.md5 === undefined) {

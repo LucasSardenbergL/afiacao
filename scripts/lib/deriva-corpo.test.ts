@@ -285,15 +285,28 @@ describe('modelarRepo — o estado TERMINAL de cada identidade, na ordem de appl
     expect(modelarRepo(tres).identidades.get('f()')?.patchesDepois).toEqual([]);
   });
 
-  it('patch candidato no MESMO arquivo do último CREATE não pendura (medido: 9 falsos candidatos no corpus)', () => {
-    // A `20260723150000` cria `get_regua_preco` E patcheia OUTRAS funções por âncora; o nome da
-    // recém-criada aparece no texto e virava "patch posterior" dela mesma.
-    const m = modelarRepo([
-      mig('20260101_a.sql', fn('g', '', ' SELECT 1 ')),
-      mig('20260102_b.sql', fn('f', '', ' SELECT 2 ') + `DO $m$ BEGIN EXECUTE replace(pg_get_functiondef('public.g()'::regprocedure), 'x', 'y'); PERFORM 'public.f()'::regprocedure; END $m$;`),
-    ]);
+  it('no MESMO arquivo, a posição decide: menção ANTES do CREATE não pendura; DEPOIS pendura (Codex, código P1-3)', () => {
+    // Cria-e-depois-patcheia no mesmo arquivo existe; se prod voltar ao corpo do CREATE, só a
+    // conciliação exigida aqui impede o EM_DIA. A menção que vem ANTES do CREATE não o alcança.
+    const patch = (alvo: string) => `DO $m$ BEGIN EXECUTE replace(pg_get_functiondef('public.${alvo}()'::regprocedure), 'x', 'y'); END $m$;\n`;
+    const depois = modelarRepo([mig('20260101_a.sql', fn('f', '', ' SELECT 1 ') + patch('f'))]);
+    expect(depois.identidades.get('f()')?.patchesDepois).toEqual(['20260101_a.sql']);
+    const antes = modelarRepo([mig('20260101_a.sql', patch('f') + fn('f', '', ' SELECT 1 '))]);
+    expect(antes.identidades.get('f()')?.patchesDepois).toEqual([]);
+  });
+
+  it('DROP e patch escritos DENTRO do corpo de uma função não rodam no apply — não aposentam nem penduram', () => {
+    // O corpo só executa quando alguém CHAMA a função; o DO executa no apply e continua valendo.
+    const manut = `CREATE OR REPLACE FUNCTION public.manut() RETURNS void LANGUAGE plpgsql AS $$ BEGIN
+  EXECUTE 'DROP FUNCTION IF EXISTS public.f()';
+  EXECUTE replace(pg_get_functiondef('public.f()'::regprocedure), 'a', 'b');
+END $$;`;
+    const m = modelarRepo([mig('20260101_a.sql', fn('f', '', ' SELECT 1 ')), mig('20260102_b.sql', manut)]);
+    expect(m.identidades.get('f()')?.aposentadaPor).toBeUndefined();
     expect(m.identidades.get('f()')?.patchesDepois).toEqual([]);
-    expect(m.identidades.get('g()')?.patchesDepois).toEqual(['20260102_b.sql']);
+    // DROP ESTÁTICO dentro de DO roda no apply e aposenta; `EXECUTE 'DROP …'` é DDL dinâmica (Codex, P1-4).
+    const doBloco = mig('20260103_c.sql', 'DO $d$ BEGIN DROP FUNCTION IF EXISTS public.f(); END $d$;');
+    expect(modelarRepo([mig('20260101_a.sql', fn('f', '', ' SELECT 1 ')), doBloco]).identidades.get('f()')?.aposentadaPor).toBe('20260103_c.sql');
   });
 
   it('versão posterior SEM corpo dollar-quoted fica sem corpo — a anterior NÃO assume o posto (Codex)', () => {
@@ -310,7 +323,7 @@ describe('modelarRepo — o estado TERMINAL de cada identidade, na ordem de appl
       mig('20260102_b.sql', 'CREATE OR REPLACE FUNCTION "public"."citada"() RETURNS int LANGUAGE sql AS $$ SELECT 2 $$;'),
     ]);
     expect([...m.nomes]).toEqual([]);
-    expect(m.perdidas).toEqual(['citada']);
+    expect(m.perdidas).toEqual(['citada@20260102_b.sql']);
   });
 
   it('conta migrations e declarações — os controles positivos de que o repo foi lido', () => {
@@ -332,12 +345,13 @@ const saidaValida = (extra: string[] = [], corpo = ' SELECT 1 ') =>
     `autoteste|md5corpo|${md5Exato(AMOSTRA_CORPO_JS)}|`,
     `corpo|f|${md5Exato(corpo)}|1`,
     `fim|${FORMATO_SONDA}||`,
+    'n|f|1|||',
     `fn|f||9106714|${md5Exato(corpo)}|${hex(corpo)}`,
-    `autoteste-hex|${HEX_AMOSTRA}|||||`,
-    'autoteste-id|integer,text,timestamp with time zone,character varying|||||',
-    'agora|2026-09-26 01:46:08|||||',
+    `autoteste-hex|${HEX_AMOSTRA}||||`,
+    'autoteste-id|integer,text,timestamp with time zone,character varying||||',
+    'agora|2026-09-26 01:46:08||||',
     ...extra,
-    'fim-deriva|deriva-corpo/1|||||',
+    'fim-deriva|deriva-corpo/1||||',
   ].join('\n');
 
 describe('montarSondaDeriva — UMA transação, UM retrato (achado P2 do Codex)', () => {
@@ -617,5 +631,70 @@ describe('o incidente que criou o sensor (2026-09-07) — com as migrations REAI
     const vivo = [{ nome: 'cancelar_pedido_sugerido', identidade: 'bigint,text,text', corpo: corpoDe(migs[1].nome) }];
     const r = julgarDeriva({ modelo, leitura: leituraCom(vivo), baseline: [], controles: LIBERADA });
     expect(r.achados.find((a) => a.alvo === 'cancelar_pedido_sugerido(bigint,text,text)')?.codigo).toBe('EM_DIA');
+  });
+});
+
+describe('parecer de CÓDIGO do Codex (2026-09-26) — os falsos-verdes, um a um', () => {
+  it('P1-1: NAO_MENSURAVEL declarada NÃO dispensa existência — sumiu de prod ⇒ AUSENTE', () => {
+    const migs = [mig('20260101_a.sql', 'CREATE FUNCTION public.f() RETURNS int LANGUAGE sql RETURN 1;')];
+    const decl = { funcao: 'f', identidade: '', classe: 'NAO_MENSURAVEL', motivo: 'prosqlbody', desde: '2026-09-26' };
+    const r = julga(migs, [], [decl]);
+    expect([r.exit, codigos(r)]).toEqual([1, ['AUSENTE']]);
+  });
+
+  it('P1-2: redefinição com identificador CITADO não se esconde atrás do nome antigo', () => {
+    const m = modelarRepo([
+      mig('20260101_a.sql', fn('f', '', ' SELECT 1 ')),
+      mig('20260102_b.sql', 'CREATE OR REPLACE FUNCTION public."f"() RETURNS int LANGUAGE sql AS $$ SELECT 2 $$;'),
+    ]);
+    expect(m.perdidas).toEqual(['f@20260102_b.sql']);
+  });
+
+  it('P1-4: DROP dentro de LITERAL de string não aposenta; DROP estático dentro de DO aposenta', () => {
+    expect(remocoesDe("SELECT 'DROP FUNCTION public.f()';")).toEqual([]);
+    expect(remocoesDe('DO $$ BEGIN DROP FUNCTION IF EXISTS public.f(); END $$;').map((r) => r.nome)).toEqual(['f']);
+  });
+
+  it('P1-5: DROP com assinatura ILEGÍVEL não aposenta ninguém — o nome vira ilegível (exit 2)', () => {
+    const m = modelarRepo([
+      mig('20260101_a.sql', fn('f', 'p int', ' SELECT 1 ') + fn('f', 'p text', ' SELECT 2 ')),
+      mig('20260102_b.sql', 'DROP FUNCTION public.f(x sku.id%TYPE);'),
+    ]);
+    expect([...m.identidades.values()].map((e) => e.aposentadaPor)).toEqual([undefined, undefined]);
+    expect(m.ilegiveis).toEqual(['f']);
+  });
+
+  it('P1-6: `)` dentro de DEFAULT literal não encurta a assinatura', () => {
+    const m = modelarRepo([mig('20260101_a.sql', "CREATE FUNCTION public.f(p text DEFAULT ')', q integer DEFAULT 0) RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;")]);
+    expect([...m.identidades.keys()]).toEqual(['f(text,integer)']);
+  });
+
+  it('P1-7: perder as linhas de corpo de um nome é incoerência, mesmo com o `rpc|…|SIM` de pé', () => {
+    const sem = saidaValida().split('\n').filter((l) => !l.startsWith('corpo|f|') && !l.startsWith('fn|f|')).join('\n');
+    expect(parsearSondaDeriva(sem).incoerencias.join()).toMatch(/f: a contagem do banco diz 1 overload\(s\) e o detalhe trouxe 0/);
+    const semContagem = saidaValida().split('\n').filter((l) => !l.startsWith('n|f|')).join('\n');
+    expect(parsearSondaDeriva(semContagem).incoerencias.join()).toMatch(/f: sem linha de contagem/);
+  });
+
+  it("P1-8: a continuação de uma E-string herda o modo de escape (`E'a'` + quebra + `'b\\'--x…'`)", () => {
+    const x = "SELECT E'a'\n'b\\'--x\nc';";
+    expect(mesmosTokens(x, x.replace('--x', '--y'))).toBe(false);
+  });
+
+  it('P1-9: CR termina comentário de linha — o código depois dele conta', () => {
+    expect(mesmosTokens('BEGIN RETURN 1 --nota\r + 1; END;', 'BEGIN RETURN 1 --nota\r + 2; END;')).toBe(false);
+  });
+
+  it('P1-10: alvo de patch sem schema e por regproc cru', () => {
+    expect(alvosDePatch("DO $$ BEGIN EXECUTE replace(pg_get_functiondef('f'::regproc), 'SELECT 1', 'SELECT 2'); END $$;")).toEqual(['f']);
+  });
+
+  it('P2-11: tag de dollar-quote longa (>128) segue opaca — o conteúdo não dobra caixa', () => {
+    const tag = `$${'t'.repeat(130)}$`;
+    expect(mesmosTokens(`SELECT ${tag}A${tag};`, `SELECT ${tag}a${tag};`)).toBe(false);
+  });
+
+  it('P2-12: `int[][]` é `integer[]` no catálogo; `float(p)` segue a precisão', () => {
+    expect(identidadeDosArgumentos('a int[][], b float(24), c float(25), d float')).toBe('integer[],real,double precision,double precision');
   });
 });

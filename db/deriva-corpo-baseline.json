@@ -121,12 +121,75 @@
       "desde": "2026-09-26"
     },
     {
-      "funcao": "kb_extraction_draft_claim",
-      "identidade": "uuid,uuid",
+      "funcao": "get_regua_preco",
+      "identidade": "uuid,uuid,numeric,numeric,numeric[]",
       "classe": "PATCH",
-      "patch": "20260613180000_kb_hardening_codex.sql",
+      "patch": "20260723150000_authz_custo_fu4f_fase2_regua.sql",
       "efeito": "SO_CITA",
-      "motivo": "a migration só faz GRANT EXECUTE e a confere com has_function_privilege na postcondição.",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição: to_regprocedure confirma que a assinatura VELHA (3 args) saiu; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "get_regua_preco_customer360",
+      "identidade": "uuid,bigint[]",
+      "classe": "PATCH",
+      "patch": "20260723150000_authz_custo_fu4f_fase2_regua.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição lê pg_proc por proname; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "registrar_exibicao_regua",
+      "identidade": "text,uuid,uuid,numeric,numeric,text,text,numeric,numeric,numeric,boolean,text[],numeric[]",
+      "classe": "PATCH",
+      "patch": "20260723150000_authz_custo_fu4f_fase2_regua.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição lê pg_proc por proname; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "pode_ler_custo",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20260724130000_authz_custo_fu4f_fase3_recommend.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição A1/A2: existência, SECURITY DEFINER, STABLE e search_path; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "reposicao_marco_pre_omie",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20260814022626_reposicao_po_inexistente_antes_de.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — guard de existência (to_regprocedure … IS NULL THEN RAISE) na postcondição; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "pedido_total_liquido_converter",
+      "identidade": "boolean,timestamp with time zone,text[],date,date,integer,boolean",
+      "classe": "PATCH",
+      "patch": "20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição ($post$) resolve a assinatura por to_regprocedure; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "tint_promocao_tick",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20260925210000_tint_promocao_assincrona.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição confere prosecdef e has_function_privilege; não é reescrita.",
+      "desde": "2026-09-26"
+    },
+    {
+      "funcao": "tint_promocao_watchdog",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20260925210000_tint_promocao_assincrona.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição confere prosecdef e has_function_privilege; não é reescrita.",
       "desde": "2026-09-26"
     },
     {

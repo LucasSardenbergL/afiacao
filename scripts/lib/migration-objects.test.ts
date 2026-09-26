@@ -402,6 +402,11 @@ CREATE FUNCTION public.depois() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;`;
     expect(d[0].corpo).toBe(" SELECT 'CREATE FUNCTION public.fantasma() RETURNS int AS $f$ SELECT 1 $f$'; ");
   });
 
+  it('`)` e `,` dentro de literal no DEFAULT não cortam os argumentos crus (Codex, código P1-6)', () => {
+    const [d] = declaracoesDeFuncao("CREATE FUNCTION public.f(p text DEFAULT ')', q integer DEFAULT 0) RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;");
+    expect(d.argumentos).toBe("p text DEFAULT ')', q integer DEFAULT 0");
+  });
+
   it('schema implícito é public; nome e schema em minúscula', () => {
     const d = declaracoesDeFuncao('CREATE FUNCTION Private.X() RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;\nCREATE FUNCTION y() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;');
     expect(d.map((x) => `${x.schema}.${x.nome}`)).toEqual(['private.x', 'public.y']);

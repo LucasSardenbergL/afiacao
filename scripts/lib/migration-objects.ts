@@ -176,7 +176,7 @@ export function declaracoesDeFuncao(sqlCru: string): DeclaracaoDeFuncao[] {
     const limite = proxima === null ? mascarado.length : proxima.index;
 
     pos = depoisDoNome;
-    const argumentos = balancedParens(mascarado, depoisDoNome - 1);
+    const argumentos = argumentosEntreParenteses(mascarado, depoisDoNome - 1);
     const declaracao: DeclaracaoDeFuncao = {
       schema: (m[1] ?? 'public').toLowerCase(),
       nome: m[2].toLowerCase(),
@@ -204,6 +204,30 @@ export function declaracoesDeFuncao(sqlCru: string): DeclaracaoDeFuncao[] {
     out.push({ ...declaracao, corpo, md5Exato: md5Exato(corpo) });
     pos = fim + tag.length;
   }
+}
+
+/**
+ * O conteúdo entre o `(` em `ini` e o `)` que o fecha, pulando literais `'…'` (com `''`) e
+ * identificadores `"…"` — um `DEFAULT ')'` fecharia o `balancedParens` cedo e a assinatura sairia
+ * encurtada (achado do Codex, parecer de código de 2026-09-26). O `balancedParens` fica como está:
+ * a chave de colisão do preflight depende dele, e mudá-la mudaria a chave de objetos já inventariados.
+ */
+export function argumentosEntreParenteses(s: string, ini: number): string {
+  let prof = 0;
+  for (let i = ini; i < s.length; i++) {
+    const c = s[i];
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < s.length && !(s[j] === c && s[j + 1] !== c)) j += s[j] === c ? 2 : 1;
+      i = j;
+    } else if (c === '(') {
+      prof++;
+    } else if (c === ')') {
+      prof--;
+      if (prof === 0) return s.slice(ini + 1, i);
+    }
+  }
+  return '';
 }
 
 /** Corpo de cada função indexado por `schema.nome` — o ÚLTIMO do arquivo vence (ver acima). */
