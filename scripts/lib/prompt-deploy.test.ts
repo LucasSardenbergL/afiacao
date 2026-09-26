@@ -9,6 +9,7 @@ import {
   type EdgeParaDeploy,
   ESTADOS_DE_DEPLOY,
   MARCAS_DE_CONFERENCIA,
+  MARCAS_DE_ESCOPO,
   montarPrompt,
   numeral,
   type Procedencia,
@@ -139,6 +140,67 @@ describe('montarPrompt — leva', () => {
 
   it('cobre as 8 fatias inteiras', () => {
     expect(conferirCobertura(prompt, edges).ok).toBe(true);
+  });
+});
+
+// #2541 (2026-09-24) e #2579 (2026-09-26): o agente conferiu os hashes, deployou certo e DEPOIS
+// "consertou" typecheck de OUTRAS edges lido em /tmp/observability/build-errors.log — o sync empurrou
+// commits "Changes" direto na main. As frases são casadas LITERALMENTE (não via MARCAS_DE_ESCOPO):
+// sabotar a constante junto com o texto não pode deixar este teste verde.
+describe('blocoDeEscopo — deploy e mais nada (#2541, #2579)', () => {
+  const um = montarPrompt([fatia('minha-edge')], PROC);
+  const leva = montarPrompt(['a', 'b', 'c'].map(fatia), PROC);
+  const FRASES = [
+    'Do NOT edit, create, rename or delete ANY file',
+    'do NOT fix them',
+    '`No files were edited.`',
+  ];
+
+  it('[ESCOPO_PROIBE_EDITAR_QUALQUER_ARQUIVO] 1 edge e leva proibem editar/criar/apagar qualquer arquivo', () => {
+    for (const p of [um, leva]) {
+      expect(p).toContain('Do NOT edit, create, rename or delete ANY file');
+      expect(p).toContain('other file in the project (other edge functions');
+      expect(p).toContain('before, during or after');
+    }
+  });
+
+  it('[ESCOPO_PROIBE_CONSERTAR_ERRO_DE_LOG] erro de build/typecheck visto em log e so reportado', () => {
+    for (const p of [um, leva]) {
+      expect(p).toContain('/tmp/observability/build-errors.log');
+      expect(p).toContain('do NOT fix them. List them in your reply');
+    }
+  });
+
+  it('[ESCOPO_EXIGE_CONFIRMACAO] o fecho exige a linha exata de confirmacao', () => {
+    for (const p of [um, leva]) {
+      expect(p).toContain('End your reply with this exact line: `No files were edited.`');
+      expect(p).toContain('end with the confirmation line above');
+    }
+  });
+
+  it('[ESCOPO_ANTES_DO_FECHO] o escopo vem depois da conferencia e antes do "After deploying"', () => {
+    for (const p of [um, leva]) {
+      const conf = p.indexOf('Report and stop.');
+      const escopo = p.indexOf('Do NOT edit, create, rename or delete ANY file');
+      const fecho = p.indexOf('After deploying');
+      expect(conf).toBeGreaterThanOrEqual(0);
+      expect(escopo).toBeGreaterThan(conf);
+      expect(fecho).toBeGreaterThan(escopo);
+    }
+  });
+
+  it('[ESCOPO_MARCAS_SAO_AS_FRASES] a lista que o conferirCobertura usa e a das frases', () => {
+    expect([...MARCAS_DE_ESCOPO]).toEqual(FRASES);
+  });
+
+  it('[ESCOPO_COBERTURA_ACUSA_MARCA_AMPUTADA] sem qualquer frase, o conferirCobertura reprova', () => {
+    expect(conferirCobertura(um, [fatia('minha-edge')]).ok).toBe(true);
+    for (const frase of FRASES) {
+      const amputado = um.split(frase).join('');
+      const r = conferirCobertura(amputado, [fatia('minha-edge')]);
+      expect(r.ok).toBe(false);
+      expect(r.faltando).toContain(`escopo:${frase}`);
+    }
   });
 });
 
