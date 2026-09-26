@@ -131,8 +131,8 @@ prova "S2 TENTATIVAS=3 vira 1 (nao retenta)" \
 # S3 — a chamada deixa de ser NUA. O `set -e` para de matar o step e a falha some.
 prova "S3 '|| true' na chamada do curl (mascara a falha)" \
   'https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb' 'https://www.postgresql.org/media/keys/ACCC4CF8.asc || true
-          echo "deb' \
+            echo "deb' 'https://www.postgresql.org/media/keys/ACCC4CF8.asc || true
+            echo "deb' \
   "C5 C8"
 
 # S4 — uma camada perde o retry. E' o teste de ALCANCE: se C3 seguisse verde sem o `tentar`,
