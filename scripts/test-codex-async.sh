@@ -14,6 +14,19 @@ here="$(cd "$(dirname "$0")" && pwd)"
 # CODEX_ASYNC_ALVO: a CÓPIA (de controle ou sabotada) que o `--falsificar` serve — nunca o versionado.
 ASYNC="${CODEX_ASYNC_ALVO:-$here/codex-async.sh}"
 
+# Linhas do stdin que NÃO estão no arquivo-base (diferença de conjunto). A base é lida por
+# `getline`, explicitamente, porque as duas formas óbvias são CEGAS — cada uma numa forma de
+# base, e foram as duas versões anteriores deste medidor:
+#   · `awk -v pre="$lista"` — o awk do BSD MORRE com quebra de linha no valor de `-v`
+#     ("newline in string"): base com ≥2 linhas → saída vazia;
+#   · `awk 'NR==FNR{p[$0];next} ...' base -` — com a base VAZIA, NR==FNR segue verdadeiro na
+#     entrada 2, que vira "base", e nada sai: base vazia (a máquina LIMPA, o caso comum) → vazio.
+# Nos dois casos "vazio" é lido como "não vazou". Base ilegível → tudo sai como novo: o erro
+# vai para o lado do VERMELHO, e a sonda de base povoada acusa.
+fora_da_base() { # arquivo-base → filtra o stdin
+  BASE="$1" awk 'BEGIN { while ((getline l < ENVIRON["BASE"]) > 0) p[l] } !($0 in p)'
+}
+
 # ── modo falsificação ───────────────────────────────────────────────────────
 # Sabota o WRAPPER numa cópia e EXIGE vermelho PELO MOTIVO CERTO: cada sabotagem declara a
 # marca ASCII, caixa fixa, que a suíte tem de imprimir — "ficou vermelha" não basta (um erro
@@ -34,8 +47,21 @@ if [ "${1:-}" = "--falsificar" ]; then
   fi
   original="$fals/original.sh"; cp "$here/codex-async.sh" "$original"
 
+  # As sabotagens do watchdog VAZAM `sleep` de propósito — é exatamente o que elas provam.
+  # Sem recolher, UMA falsificação deixa ~170 processos vivos por 20min e a M2 do founder
+  # bate no kern.maxproc (2000): daí pra frente todo `fork` falha e a suíte fica vermelha
+  # por AMBIENTE, indistinguível de asserção frouxa. Foi assim que a máquina caiu em 20/09.
+  # Recolhe SÓ o que nasceu nesta invocação E já está órfão (ppid=1): órfão de watchdog é
+  # inerte por construção — o pai que rodaria o `&& kill` morreu, então ele não vai matar
+  # mais nada. Se o `ps` faltar ou mudar de formato, o awk não devolve nada e NADA é morto
+  # (a degradação é para o lado seguro: sobra lixo, nunca se mata o processo de ninguém).
+  sleeps_orfaos() { ps -A -o pid=,ppid=,args= 2>/dev/null | awk '$2==1 && $3=="sleep" {print $1}'; }
   suite() { # alvo locale → $saida_suite/$rc_suite (MESMA invocação do laço; só o alvo muda)
+    local lixo; sleeps_orfaos > "$fals/base_orfaos"
     saida_suite="$(LC_ALL="$2" CODEX_ASYNC_ALVO="$1" bash "$0" 2>&1)"; rc_suite=$?
+    lixo="$(sleeps_orfaos | fora_da_base "$fals/base_orfaos")"
+    [ -n "$lixo" ] && printf '%s\n' "$lixo" | xargs kill 2>/dev/null
+    return 0
   }
 
   # CONTROLE primeiro: sem linha de base verde, um arnês sempre-vermelho aprova TODA sabotagem.
@@ -106,6 +132,28 @@ p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
 a="# --- preflight (barato, ANTES de gastar contexto/quota) -----------------------\n"
 assert s.count(a)==1
 io.open(p,"w",encoding="utf-8").write(s.replace(a,a+"exit 77\n"))'
+
+  # (5) tirar o `pkill -P`: o `kill` sozinho mata o SUBSHELL e o `sleep` de dentro vaza
+  # (reparentado para o init, vivo o timeout inteiro). Era o defeito medido em 20/09.
+  # shellcheck disable=SC2016  # o programa é python: `$pkill_ok`/`$watchdog` têm de chegar
+  # LITERAIS (são o texto procurado no wrapper); expandir aqui apagaria o alvo.
+  sabotar watchdog_pkill watchdog-sleep-vazado '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="  [ \"$pkill_ok\" = 1 ] && pkill -P \"$watchdog\" 2>/dev/null\n"
+assert s.count(a)==1
+io.open(p,"w",encoding="utf-8").write(s.replace(a,""))'
+
+  # (6) o codex HERDA o stdin do chamador: um `<&0` explícito desliga a regra do bash que dá
+  # /dev/null ao job `&` — é o mesmo efeito de um refactor que rodasse o codex em foreground.
+  # shellcheck disable=SC2016  # o programa é python: `$prompt`/`$out`/`$err` têm de chegar
+  # LITERAIS (são o texto procurado no wrapper); expandir aqui apagaria o alvo.
+  sabotar stdin_herdado stdin-herdado '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="    --sandbox read-only \"$prompt\" >\"$out\" 2>\"$err\" &\n"
+assert s.count(a)==1
+io.open(p,"w",encoding="utf-8").write(s.replace(a,a[:-2]+"<&0 &\n"))'
 
   echo
   if [ "$falhas" -eq 0 ]; then echo "PASS — toda sabotagem ficou vermelha pela marca certa"; else echo "FALHOU"; fi
@@ -206,6 +254,9 @@ case "$CODEX_STUB_MODE" in
              printf '{"type":"session_meta","payload":{"thread_source":"subagent","cwd":"/outra/worktree"}}\n' \
                > "$d/rollout-2026-09-20T00-00-00-alheio.jsonl"
              echo "parecer sem fan-out proprio"; rodape "9.999"; exit 0 ;;
+  # codex real com stdin em pipe: LÊ o stdin INTEIRO e o anexa como bloco `<stdin>` (`codex
+  # exec --help`). Com o pipe do chamador ABERTO, isto só termina quando o pipe fechar.
+  ok_le_stdin) cat >/dev/null; echo "parecer: aprovado com ressalvas"; rodape "14.243"; exit 0 ;;
   trava)     sleep 30 ;;
   *)         echo "erro desconhecido" >&2; exit 1 ;;
 esac
@@ -230,6 +281,16 @@ run_home() {
     CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
     CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" \
     CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
+}
+# igual ao run(), mas SEM o `</dev/null` — o stdin é o do CHAMADOR, que é o que se mede — e com
+# UMA tentativa: o que se testa é se a consulta trava, não o retry (o vermelho custa 1 watchdog).
+run_herda_stdin() {
+  local mode="$1"; shift
+  : > "$tmp/count"; : > "$tmp/args"
+  env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
+    CODEX_HOME="$tmp/codexhome_ok" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
+    CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" \
+    CODEX_ASYNC_BACKOFFS="0" bash "$ASYNC" "$@"
 }
 invocacoes() { wc -l < "$tmp/count" | tr -d ' '; }
 
@@ -543,6 +604,104 @@ if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then echo "  ok    exit $rc ≠ 0 (matou
 else echo "  FAIL  watchdog não matou (exit $rc)"; fail=1; fi
 if [ "$(invocacoes)" -eq 3 ]; then echo "  ok    esgotou as 3 tentativas"
 else echo "  FAIL  invocações=$(invocacoes), esperava 3"; fail=1; fi
+
+echo "── watchdog: o sleep interno não pode VAZAR ──"
+# `kill "$watchdog"` mata o SUBSHELL, não o `sleep` de dentro dele: o sleep é reparentado
+# para o init e sobrevive o TIMEOUT INTEIRO (1200s no default). Cada invocação do wrapper
+# deixava um processo vivo por 20min — esta suíte sozinha deixava 42, e a M2 do founder
+# chegou a 921 com kern.maxproc=2000. Passando desse teto TODO `fork` falha, e o vermelho
+# que sai daí se DISFARÇA de asserção frouxa (medido 2026-09-20).
+# Timeout grande DE PROPÓSITO (≠ o `-t 3` do caso `trava`): se vazar, o sleep ainda tem de
+# estar VIVO na hora de contar — com `-t 3` ele já teria morrido sozinho e o caso seria cego.
+T_VAZ=977   # valor distintivo: nada mais nesta máquina roda `sleep 977`
+pids_sleep() { # T → PIDs cujo comando é EXATAMENTE `sleep T`
+  ps -A -o pid=,args= 2>/dev/null | sed -n "s/^ *\([0-9][0-9]*\)  *sleep $1\$/\1/p"
+}
+novos_sleep() { # T arquivo-da-base → PIDs de `sleep T` que NÃO estavam na base
+  pids_sleep "$1" | fora_da_base "$2"
+}
+# Sonda do MEDIDOR, fail-CLOSED e PONTA A PONTA: prova que a cadeia inteira (pids_sleep +
+# fora_da_base) isola um sleep NOVO nas DUAS formas de base — VAZIA (máquina limpa, o caso
+# comum) e POVOADA com ≥2 linhas. Cada versão anterior deste medidor era cega numa delas, e a
+# sonda de então só exercitava a forma que tinha mordido por último: um medidor cego devolve
+# lista vazia, e "não consigo medir" vira "não vazou" (sonda-ausente-em-script-que-apaga.md).
+visivel() { # T pid… → 0 quando `ps` já enxerga TODOS (teto de 2s: `ps` não vê o filho no fork)
+  local t="$1" p; shift
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    for p in "$@"; do pids_sleep "$t" | grep -qx "$p" || { sleep 0.2; continue 2; }; done
+    return 0
+  done
+  return 1
+}
+isola() { # T base novo [velho…] → 0 quando o novo sai e NENHUM velho sai
+  local t="$1" base="$2" novo="$3" achou v; shift 3
+  achou="$(novos_sleep "$t" "$base")"
+  printf '%s\n' "$achou" | grep -qx "$novo" || return 1
+  for v in "$@"; do printf '%s\n' "$achou" | grep -qx "$v" && return 1; done
+  return 0
+}
+# forma 1 — base VAZIA (arquivo existe e não tem linha nenhuma)
+: > "$tmp/base_sonda_vazia"
+sleep "$T_VAZ" & sonda_nova=$!
+if visivel "$T_VAZ" "$sonda_nova" && isola "$T_VAZ" "$tmp/base_sonda_vazia" "$sonda_nova"; then
+  echo "  ok    o medidor isola um sleep NOVO com a base VAZIA (sonda $sonda_nova)"
+else
+  echo "  FAIL [medidor-cego]  base VAZIA: a medição não achou o sleep novo — o caso abaixo seria verde por CEGUEIRA"; fail=1
+fi
+kill "$sonda_nova" 2>/dev/null; wait "$sonda_nova" 2>/dev/null
+# forma 2 — base POVOADA com 2 linhas
+sleep "$T_VAZ" & sonda_a=$!
+sleep "$T_VAZ" & sonda_b=$!
+visivel "$T_VAZ" "$sonda_a" "$sonda_b"; povoou=$?
+pids_sleep "$T_VAZ" > "$tmp/base_sonda"
+sleep "$T_VAZ" & sonda_nova=$!
+if [ "$povoou" -eq 0 ] && visivel "$T_VAZ" "$sonda_nova" \
+   && isola "$T_VAZ" "$tmp/base_sonda" "$sonda_nova" "$sonda_a" "$sonda_b"; then
+  echo "  ok    o medidor isola um sleep NOVO com a base POVOADA (sondas $sonda_a/$sonda_b → $sonda_nova)"
+else
+  echo "  FAIL [medidor-cego]  base POVOADA: a medição não isolou o sleep novo — o caso abaixo seria verde por CEGUEIRA"; fail=1
+fi
+kill "$sonda_a" "$sonda_b" "$sonda_nova" 2>/dev/null
+wait "$sonda_a" "$sonda_b" "$sonda_nova" 2>/dev/null
+
+pids_sleep "$T_VAZ" > "$tmp/base_vaz"
+run ok -t "$T_VAZ" "x" >/dev/null 2>&1
+# mesmo teto + mesmo ramo explícito. A folga só cobre a latência do sinal: se VAZOU, o sleep
+# fica vivo 977s e nenhum teto de 2s o faria sumir.
+novos_vaz=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  novos_vaz="$(novos_sleep "$T_VAZ" "$tmp/base_vaz")"
+  [ -n "$novos_vaz" ] || break
+  sleep 0.2
+done
+if [ -z "$novos_vaz" ]; then
+  echo "  ok    nenhum 'sleep $T_VAZ' sobreviveu à invocação"
+else
+  echo "  FAIL [watchdog-sleep-vazado]  $(printf '%s\n' "$novos_vaz" | grep -c .) processo(s) 'sleep $T_VAZ' sobreviveram ao wrapper"
+  fail=1
+  # o próprio teste não pode poluir a máquina que ele acusa (um FAIL deixaria 977s de lixo)
+  printf '%s\n' "$novos_vaz" | xargs kill 2>/dev/null
+fi
+
+echo "── stdin: é do WRAPPER, nunca do codex ──"
+# `codex exec` com stdin em pipe LÊ o pipe (bloco `<stdin>`). Com o pipe do chamador ABERTO — o
+# harness do Claude chama assim, em background — a leitura não termina e a consulta só morre no
+# watchdog, 20min depois, sem parecer. O wrapper NÃO sofre disso, mas por uma regra IMPLÍCITA:
+# job assíncrono (`&`) sem redirecionamento de entrada recebe /dev/null no stdin (POSIX, shell
+# sem job control). Medido em 21/09 com o prompt por ARGUMENTO e o pipe aberto por 25s: o stub
+# fiel leu 0 bytes e o wrapper respondeu em 0s. Este caso fixa o invariante — um refactor que
+# tirasse o `&` (ou redirecionasse a entrada do job) traria o travamento de volta EM SILÊNCIO,
+# e nenhum outro caso roda com o stdin aberto (todos passam `</dev/null`).
+# FIFO com um escritor vivo no fd 7: ler dele BLOQUEIA (sem EOF), igual ao pipe do harness.
+rm -f "$tmp/fifo_stdin"; mkfifo "$tmp/fifo_stdin"
+exec 7<>"$tmp/fifo_stdin"
+out="$(run_herda_stdin ok_le_stdin -t 3 "x" <"$tmp/fifo_stdin" 2>/dev/null)"; rc=$?
+exec 7>&-   # fecha o escritor: um `cat` órfão do vermelho recebe EOF e sai (não vaza)
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "parecer: aprovado"; then
+  echo "  ok    pipe do chamador ABERTO + prompt por argumento → parecer (o codex não herdou o stdin)"
+else
+  echo "  FAIL [stdin-herdado]  exit $rc sem parecer — o codex herdou o pipe aberto do chamador e travou lendo"; fail=1
+fi
 
 echo "── sensor de SALDO da cota (preflight) ──"
 # Rollout sintético no layout real: <home>/sessions/AAAA/MM/DD/rollout-<ISO>-<id>.jsonl.
