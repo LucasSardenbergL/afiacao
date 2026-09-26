@@ -155,7 +155,7 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/sayerlack-captura-precos/index.ts', 1],
   ['supabase/functions/scoring-recalc-client/index.ts', 1],
   ['supabase/functions/sync-reprocess/index.ts', 1],
-  ['supabase/functions/tint-sync-agent/index.ts', 6],
+  ['supabase/functions/tint-sync-agent/index.ts', 3], // 6→3 (2026-09-25): completeSyncRun confere o UPDATE; saíram os 2 update({status:'error'}) do promote no HTTP
   ['supabase/functions/verify-employee/index.ts', 2],
   ['supabase/functions/visit-score-recalc-client/index.ts', 1],
   ['supabase/functions/whatsapp-inbound/index.ts', 4],
