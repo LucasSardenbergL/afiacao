@@ -2,8 +2,8 @@
 
 > Money-path (reposição/compras): baixar PO muda o "a caminho" do motor. Ver `docs/agent/reposicao.md`,
 > `docs/agent/money-path.md` e a medição `docs/superpowers/specs/2026-08-13-reposicao-onorder-po-recebida-medicao.md`.
-> **Status (2026-09-26): proposta, nada implementado.** Antes de qualquer escrita no Omie faltam os fatos da §4
-> e as decisões da §8. Escrito numa sessão de nuvem **sem `psql-ro`, sem Codex e sem acesso à doc do Omie**
+> **Status (2026-09-26): proposta, nada implementado; decisões D1/D2 tomadas (§8).** Antes de qualquer escrita no
+> Omie faltam os fatos da §4. Escrito numa sessão de nuvem **sem `psql-ro`, sem Codex e sem acesso à doc do Omie**
 > (domínio bloqueado pela política de rede) — por isso o ritual `/codex` continua obrigatório antes da Fase 1.
 
 ## 1. Pedido do founder
@@ -55,8 +55,12 @@ recebidos, cancelados e encerrados (`supabase/functions/omie-sync-estoque/index.
 
 O lado proibido: **baixar PO recebido PARCIALMENTE apaga "a caminho" legítimo** → o motor recompra → se o saldo
 ainda vier, compra dupla. Na medição, das 951 linhas (PO, SKU) das 244 POs, 60% chegaram cheias, 4% a menos, 15% a
-mais e 21% sem linha na NF casada. Logo a baixa automática só é segura para cobertura **cheia**; o resto depende
-da decisão D1 (§8).
+mais e 21% sem linha na NF casada. Logo a baixa automática só é segura para cobertura **cheia** — e pela D1 (§8) o
+saldo da Sayerlack chega em outra NF, então parcial **nunca** é baixado por ser parcial.
+
+Resíduo que esta frente **não** resolve: enquanto um PO parcial espera o saldo, a parte já recebida segue contada
+em dobro (está no físico e, com `nQtdeRec = 0`, também no "a caminho"). Só a associação nativa da Fase 2 (o Omie
+passa a preencher `nQtdeRec`) ou o receipt-first ledger descontam essa parte.
 
 ⚠️ **Efeito colateral a planejar:** baixar o backlog de uma vez faz o próximo ciclo enxergar o efetivo real de
 muitos SKUs ao mesmo tempo → rajada de sugestões. É compra suprimida sendo recuperada (correto), mas convém baixar
@@ -108,7 +112,18 @@ em prod: logs da edge `omie-sync-pedidos-compra` com `invalid input value for en
 NF já foi concluída, a classe de cobertura (§7) e o necessário para baixar à mão (nº do PO, contrato, NF, itens
 faltantes). Valor imediato: acaba a caça "qual PO é desta NF?". É também a **sombra** do classificador — se os
 humanos baixam as `cheia` e seguram as `parcial`, a regra está validada com dado real. Nasce com sensor
-(`track('compras.po_baixa.*')`) para a Fase 1 ter denominador. Junto vai a correção do enum (§5).
+(`track('compras.po_baixa.*')`) para a Fase 1 ter denominador. Junto vai a correção do enum (§5). Pela D2, é nesta
+lista que o founder revisa o backlog antes de liberar a baixa em lotes.
+
+**Pré-requisito de dado para a soma de NFs (consequência da D1).** O espelho não sabe somar entregas: o
+`purchase_orders_tracking` guarda **uma** NF por PO (`nfe_chave_acesso`/`nid_receb`), e o `sku_leadtime_history` tem
+`UNIQUE (tracking_id, sku_codigo_omie)` (`uq_sku_hist_tracking_sku`) com upsert `onConflict` nessas colunas
+(`omie-sync-sku-items/index.ts:1000`) — a agregação existe **dentro** de uma NF, mas a 2ª NF do mesmo PO e SKU
+**sobrescreve** a 1ª. Logo, antes de baixar por soma, persistir o item de NF com o seu `nNumPedCompra`
+(1 linha por `nIdReceb` + sequência do item; produto; `nQtdeRecebida`; `cRecebido`/`cCancelada` da nota; 1 writer =
+`omie-sync-nfes-recebidas`, que já faz o `ConsultarRecebimento` de cada NF). É o `receipt`/`receipt_item` do
+receipt-first ledger (spec 2026-08-13 §6) — construir **esse** bloco, não uma tabela paralela. Até ele existir, a
+lista classifica pelo espelho atual, que só erra para o lado seguro (subconta → `parcial`, nunca baixa por engano).
 
 **Fase 1 — baixa automática da cobertura cheia.** Edge própria (1 writer) com `modo = desligado | sombra | ativo`
 em banco (kill-switch). Por PO candidato: reconsulta ao vivo (`ConsultarPedCompra` + os `ConsultarRecebimento` das
@@ -117,7 +132,10 @@ NFs ligadas: PO ainda aberto, mesmo contrato, NF com `cRecebido=S` e não cancel
 tentativa (claim atômico, idempotente, lote máximo por run para não gerar rajada nem estourar o "consumo
 redundante" do Omie — padrão de adiamento de `omie-sync-sku-items/adiamento.ts`). Gatilho: carona no ciclo do
 `omie-sync-nfes-recebidas`, que já detecta a transição de `t4`; o webhook `RecebimentoProduto.Concluido` pode
-antecipar se a M6 mostrar que os eventos chegam. `parcial` segue a decisão D1. Codex obrigatório antes de `ativo`.
+antecipar se a M6 mostrar que os eventos chegam. `parcial` fica aberto (D1) e é reavaliado a cada NF nova do mesmo
+contrato — baixa quando a **soma** cobrir o pedido. Backlog (D2): o mesmo núcleo, em lotes liberados pelo founder a
+partir da lista da Fase 0, com o ciclo seguinte do motor revisado antes de aprovar compras. Codex obrigatório antes
+de `ativo`.
 
 **Fase 2 — a conferência no app conclui e baixa.** Destravar o ramo de escrita do `omie-nfe-recebimento` (lote e
 validade no `AlterarRecebimento`, conversão Sayerlack — follow-ups já nomeados em
@@ -134,23 +152,27 @@ Entrada: itens do PO (`nCodProd`, `nQtde`); itens das NFs concluídas cujo `nNum
 | classe | regra | ação |
 |---|---|---|
 | `cheia` | todo item do PO com recebido ≥ pedido, na unidade do produto Omie | baixa (Fase 1, modo `ativo`) |
-| `parcial` | algum item a menos ou ausente em todas as NFs do contrato | decisão D1 |
+| `parcial` | algum item a menos ou ausente na soma das NFs do contrato | fica aberto esperando o saldo (D1); reavalia a cada NF nova |
+| `parcial_envelhecido` | `parcial` sem NF nova do contrato há N dias (N a calibrar pelo lead time Sayerlack) | fila humana — o saldo pode ter sido cortado sem aviso |
 | `ambigua` | contrato em mais de 1 PO aberto, unidade/fator divergente, produto sem de-para, NF cancelada ou revertida | nunca baixa; fila humana |
 | `sem_evidencia` | nenhuma NF concluída com esse contrato | nada |
 
 Fail-closed: dado ausente nunca vira 0; `ambigua` nunca baixa; somar várias NFs do mesmo contrato é permitido
 (entrega em mais de uma nota).
 
-## 8. Decisões do founder
+## 8. Decisões do founder (tomadas em 2026-09-26)
 
-- **D1 — Entrega parcial.** Quando a Sayerlack fatura menos que o pedido, o saldo vem depois (outra NF com o mesmo
-  `Pedido:`) ou é cortado? Define se `parcial` fica aberto esperando, é baixado, ou vai para revisão humana.
-- **D2 — Backlog.** Baixar também os POs antigos já nessa situação (244 em agosto), em lotes e depois da sombra,
-  ou só daqui para frente?
+- **D1 — Entrega parcial: o saldo chega em outra NF.** `parcial` fica aberto; o PO só é baixado quando a soma das
+  NFs com o mesmo pedido Sayerlack cobrir tudo. Consequências: persistir o item de NF (§6, pré-requisito de dado) e
+  a classe `parcial_envelhecido` para o saldo que nunca chega.
+- **D2 — Backlog: baixar em lotes depois de revisar.** Primeiro a lista em sombra (Fase 0), depois lotes liberados
+  pelo founder, olhando o ciclo seguinte do motor antes de aprovar compras.
 
 ## 9. Riscos
 
-1. Baixar parcial → compra dupla (§3). Mitigação: só `cheia` automática; D1.
+1. Baixar parcial → compra dupla (§3). Mitigação: só `cheia` automática; parcial espera o saldo (D1).
+   Irmão do lado oposto: **parcial eterno** (saldo cortado sem aviso) prende "a caminho" que não vem → suprime
+   compra. Mitigação: `parcial_envelhecido` na fila humana.
 2. Método ou efeito errado no Omie (F1, F3): diagnóstico primeiro, 1 PO de baixo valor, reconsulta como juiz.
 3. Espelho sem enxergar o PO encerrado (§5): corrigir o enum antes.
 4. Rajada de sugestões depois do backlog (§3): lotes e revisão do ciclo seguinte.
@@ -256,8 +278,9 @@ LIMIT 5;
 **Ressalvas da M4 — ordem de grandeza, não o classificador.** Usa `sku_leadtime_history`, cujo `tracking_id`
 NOT NULL pousa item sem pedido casado numa linha eleita (spec 2026-08-13 §3.2) e pode inflar `cheia`. Compara o
 `nQtde` do PO com `quantidade_recebida` (`nQtdeRecebida`), que deveria estar na unidade do produto Omie — conferir
-no SKU âncora antes de confiar (a mesma spec registrou razão 3,24 entre `nQtdeNFe` e `nQtdeRecebida`). A M1 também
-não enxerga PO encerrado se o bug da §5 estiver ativo: o upsert falha e a linha fica com a etapa antiga.
+no SKU âncora antes de confiar (a mesma spec registrou razão 3,24 entre `nQtdeNFe` e `nQtdeRecebida`). Entrega em
+duas NFs aparece como `parcial`: a 2ª NF sobrescreve a 1ª no `sku_leadtime_history` (§6). A M1 também não enxerga
+PO encerrado se o bug da §5 estiver ativo: o upsert falha e a linha fica com a etapa antiga.
 
 ## 11. Achados laterais (fora do escopo, registrados para não perder)
 
