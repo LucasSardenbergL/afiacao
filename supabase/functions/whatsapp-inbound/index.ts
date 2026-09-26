@@ -1,4 +1,8 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+
+// Cliente sem schema tipado: as tabelas whatsapp_* não estão nos tipos gerados, então o
+// `ReturnType<typeof createClient>` as resolveria como `never`. `any` mantém o typecheck honesto.
+type Db = SupabaseClient<any>;
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
