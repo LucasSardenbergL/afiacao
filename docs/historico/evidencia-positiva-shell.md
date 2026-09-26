@@ -768,7 +768,111 @@ re-executado com o ambiente montado na partida. Em `scripts/` e `db/` o ESLint b
 raiz. Matriz por API, upstream, varredura e a trava em
 [bun-filho-sem-env-herda-a-partida.md](bun-filho-sem-env-herda-a-partida.md).
 
-## O padrão por trás das vinte
+### 21. `$var` sem aspas no zsh NÃO divide em palavras — `cmd $lista` recebe UM argumento, e `set -- $linha` engole tudo em `$1`
+
+O bash parte em palavras (pelo `IFS`) toda expansão de parâmetro sem aspas; o zsh **não** — a menos
+que se peça: `${=var}` naquele ponto, ou `setopt SH_WORD_SPLIT` no shell inteiro. O Bash tool do
+Claude Code roda em `/bin/zsh`, com `SH_WORD_SPLIT` **desligado** (medido: `[[ -o shwordsplit ]]` é
+falso), então todo idioma de bash que **conta** com o split entrega **um argumento só**. Nada falha:
+o comando recebe exatamente os bytes certos — numa palavra, onde o autor contava N.
+
+```bash
+t=$(git grep -l -e describe -- 'src/lib/omie/__tests__/pedido-*.test.ts' | tr '\n' ' ')
+bunx vitest run $t     # bash: 2 argumentos · zsh: 1 — os dois caminhos viram UM filtro
+st="completed success"
+set -- $st             # bash: $1=completed $2=success · zsh: $1="completed success", $2 vazio
+```
+
+Script do repo, rodado pelo shebang, não cai nisto: nenhum tem shebang zsh (448 `.sh` têm bash). A
+armadilha mora no comando digitado **direto no Bash tool** — o idioma que funciona dentro de um `.sh`
+vira outro no harness.
+
+**Cinco incidentes registrados em dez semanas — e os dois últimos repetem formas que já estavam
+escritas:**
+
+| quando | onde | idioma | o que o consumidor concluiu |
+|---|---|---|---|
+| 2026-07-16 | #1358 (registro em [money-path.md](../agent/money-path.md)) | `bun run test -- $T`, 2 paths | `No test files found`, exit 1, **0 testes** — lido como "a sabotagem foi pega" |
+| 2026-08-25 | #2004 ([sonda-marcador-congelado.md](sonda-marcador-congelado.md)) | `for c in $fatias` | o laço rodou **uma** vez, com o blob inteiro → "21 edges limpas" **fabricadas** |
+| 2026-09-18 | #2518 (a 1ª versão desta seção) | `set -- $r`, laço de espera do `/fecho` | CI verde nos 8 jobs; o laço foi até o teto → "não consegui" |
+| 2026-09-25 | sessão do #2558 | `heavy bunx vitest run $t`, 8 paths | `No test files found`, **EXIT=1** — vermelho falso; separados, 8 arquivos e 293 testes, EXIT=0 |
+| 2026-09-25 | sessão do #2558 | `set -- $st`, laço de espera de CI | `$1` = `completed success` inteiro; saiu no teto de 30 min: `NAO_CONSEGUI (último estado: completed success)` |
+
+O registro de julho (a lição "Falsificação só vale se o vermelho for do SEU assert", no money-path)
+não nomeou o shell — mas o sintoma, `"a b"` chegando como filtro único, é exatamente o que a medição
+abaixo produz no zsh e nunca no bash.
+
+**O mecanismo é neutro; quem escolhe a cor é o consumidor.** O MESMO `No test files found, exit 1`
+foi lido como **prova** em julho — era o vermelho que a falsificação queria ver — e como **falha** em
+setembro. Agosto fabricou VERDE porque o classificador contava ausência de `✗` como limpo (o `*)`
+otimista da §11). Nos dois laços de espera, o ramo explícito de desistência
+([espera-sem-desistencia.md](espera-sem-desistencia.md)) segurou o falso verde e cobrou o preço: no
+#2558, **20+ minutos** esperando um veredito que estava pronto na primeira consulta; com o ramo
+invertido (`exit 0` ao estourar o teto), teria aprovado sem medir. E a assimetria que torna tudo isso
+silencioso: `set --` sempre "funciona", `$2` sempre "existe" (vazio), e a comparação sempre responde
+— só nunca com a verdade.
+
+**Medido nos DOIS shells** (2026-09-25), o MESMO texto passado a `bash -c` (`/bin/bash` 3.2.57, o
+único bash desta máquina), a `zsh -f -c` (zsh 5.9 sem rc nenhum — prova que é o shell, não a config)
+e a `zsh -c` (idêntico ao `-f` em todas as linhas); o shell do próprio Bash tool deu o mesmo que o
+`zsh -f` nas três sondas em que foi medido. `conta() { echo "$#"; }` imprime quantos argumentos
+chegaram:
+
+| sonda | bash | zsh |
+|---|---|---|
+| `t="a b c"; conta $t` | 3 | **1** |
+| `t=$(printf 'a\nb\nc\n' \| tr '\n' ' '); conta $t` — a forma do vitest | 3 | **1** |
+| `t=$(printf 'a\nb\nc\n'); for x in $t; do n=$((n+1)); done` — a forma de agosto | 3 voltas | **1 volta** |
+| `st="completed success"; set -- $st; echo "[$1][$2]"` — a dos laços | `[completed][success]` | **`[completed success][]`** |
+| `conta $(printf 'a\nb\nc\n')` — substituição DIRETA, sem variável | 3 | 3 |
+| `conta ${=t}` | **`bad substitution`**, rc=1 | 3 |
+| `setopt SH_WORD_SPLIT; conta $t` | `setopt: command not found` no stderr — e 3, rc=0 | 3 |
+
+A quinta linha explica por que a armadilha escapa de quem testa no terminal: o zsh **divide** a
+substituição de comando sem aspas — o que ele não divide é a **variável**. `vitest run $(git grep -l …)`
+funciona nos dois shells; guardar a mesma saída em `t=` e expandir `$t` depois, não. O defeito nasce
+no refactor inocente de "pôr numa variável para ficar legível".
+
+Os dois casos reais, reproduzidos com o mesmo texto nos dois shells:
+
+```
+# o do vitest — 2 arquivos em vez de 8, sob `heavy`:
+bash -c    ARGC_QUE_O_VITEST_RECEBE=2   VITEST_EXIT=0   Test Files  2 passed (2) · Tests  8 passed (8)
+zsh -f -c  ARGC_QUE_O_VITEST_RECEBE=1   VITEST_EXIT=1   No test files found, exiting with code 1
+           filter: src/lib/omie/__tests__/pedido-duplicate.test.ts src/lib/omie/__tests__/pedido-integration-code.test.ts
+
+# o do laço — run 36209108326, já completed/success; 3 tentativas:
+bash -c    VEREDITO conclusion=success (tentativa 1)
+zsh -f -c  NAO_CONSEGUI (ultimo estado: completed success) — $1=[completed success] $2=[]
+```
+
+A linha `filter:` é a assinatura: **um** filtro, com os dois caminhos — e o espaço final do `tr` —
+dentro dele.
+
+⇒ **Contramedidas portáveis, medidas nos dois shells.** `${=var}` **não** é uma delas: é zsh puro, e
+no bash não falha só a linha — **aborta o script inteiro** (o `echo` da linha seguinte nunca rodou;
+rc=1). `setopt SH_WORD_SPLIT` também não: no bash é um `command not found` no stderr, que só não
+quebra nada porque o bash já divide por conta própria.
+
+| idioma | bash | zsh | para quê — e o custo |
+|---|---|---|---|
+| `read -r s c <<< "$st"` | `[completed][success]` | `[completed][success]` | partir UMA LINHA em campos — substitui o `set -- $st` |
+| `arr=(); while IFS= read -r l; do arr+=("$l"); done < <(cmd)` + `"${arr[@]}"` | 2 | 2 | LISTA, um item por linha; `a b` segue um item só, e um `*` fica `*` (medido com arquivos no diretório) |
+| `arr=( $(cmd) )` + `"${arr[@]}"` | 3 | 3 | curto, mas no bash cada palavra ainda passa por glob: um `*` virou os 2 arquivos do diretório no bash e ficou `*` no zsh |
+| `cmd \| xargs <comando>` | 3 | 3 | ⚠️ entrada VAZIA: o `xargs` do macOS **não roda** o comando e sai **0** (medido); o GNU, que é o do CI, roda **uma vez sem argumento** (`man xargs`, opção `-r`) — e `vitest run` sem filtro é a suíte INTEIRA. Nos dois, verde sem ter testado o conjunto pedido |
+
+Para laço de espera, o mais simples continua sendo não partir linha nenhuma: um campo por consulta
+(`--jq '.status'`, `--jq '.conclusion'`). E o antídoto de sempre do catálogo: **conte o que chegou**
+— `ARGC`, `Test Files N passed` — antes de ler o exit code.
+
+**Por que a contramedida textual não bastou.** Três registros escritos (o money-path em julho, o
+`sonda-marcador-congelado.md` em agosto, esta seção em setembro), e as duas reincidências de
+2026-09-25 repetiram formas já registradas — a do vitest dez semanas depois do registro de julho, a
+do `set --` sete dias depois desta seção. É a meta-regra que o catálogo já aplicou à §9 (`PIPESTATUS`)
+e à §13 (`pgrep`): contramedida textual reincide; o passo seguinte é um guard estrutural (hook de
+AVISO no PreToolUse, irmão do `pipestatus-zsh-guard.sh`), não um quarto parágrafo.
+
+## O padrão por trás das vinte e uma
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -810,29 +914,13 @@ moram em máquinas diferentes (o macOS de quem desenvolve, o Linux do CI); aqui,
 aprova (vitest, node) e o que executa (`bun scripts/…`) convivem no mesmo `package.json`, a um `run`
 de distância, e nada no diff os distingue.
 
+A vigésima primeira fecha pelo lado da ARIDADE: os bytes que chegam ao comando são os certos e o
+exit code é honesto — o que muda é **em quantos argumentos** eles chegam, e a mesma linha, sem mudar
+um caractere, é correta no bash e errada no zsh. Com a nona e a décima ela completa a família do
+shell do harness: a nona é um NOME do bash que o zsh não tem, a décima uma SINTAXE do zsh que o bash
+não tem, e esta uma SEMÂNTICA do bash que o zsh não faz. O mesmo sintoma (`No test files found`,
+exit 1) já foi lido como prova e como falha — e, dos cinco incidentes, três vieram depois de o
+mecanismo já estar nomeado por escrito.
+
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.
-
-### 21. `set -- $var` no zsh NÃO divide em palavras — `$1` engole a linha e `$2` fica VAZIO
-
-O zsh não faz word splitting na expansão de parâmetro (o bash faz). O idioma de bash para partir
-uma linha em campos vira **um argumento só**, e todo teste sobre `$2`, `$3`… passa a comparar com
-vazio:
-
-```bash
-r="35403987255 completed success 0e10d697a"
-set -- $r                    # zsh: $1 = a LINHA INTEIRA · $2 = ''
-[ "$2" = "completed" ]       # nunca casa — e não dá erro nenhum
-```
-
-Medido em 2026-09-18, num laço de espera do `/fecho` que vigiava o CI da main: o run terminou
-`completed success` nos 8 jobs, a condição de saída nunca casou, o laço rodou até o teto e saiu
-pelo ramo "não consegui". O veredito foi **falso negativo** — e só não foi um falso VERDE porque o
-teto estava escrito para reprovar. Um laço com o ramo invertido (`exit 0` ao estourar) teria
-aprovado uma main que ninguém mediu: é o laço fail-OPEN de [espera-sem-desistencia.md](espera-sem-desistencia.md)
-com a máscara trocada.
-
-⇒ Não parta linhas com `set --` aqui. Peça os campos **um por consulta** (`--jq '.[0].status'`),
-ou `read -r a b c <<< "$r"`, ou force o split com `${=r}` (zsh), ou rode o laço sob `bash -c`.
-E note a assimetria que torna isto silencioso: `set --` sempre "funciona", `$2` sempre "existe"
-(vazio), e a comparação sempre responde — só nunca com a verdade.
