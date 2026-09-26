@@ -56,3 +56,18 @@ instrumentar no molde da `omie-webhook` (sonda com gate próprio ANTES do gate d
 entrada no mapa e no contrato; allowlist do cron só se `sonda:cron-prova` der 100% `PASSA`) e deployar
 uma vez. A decisão de instrumentar, e de quando, é do founder. Com o canal dormente, o custo de esperar
 é nulo até o go-live.
+
+## Desfecho (mesma sessão)
+
+O founder escolheu instrumentar agora. A edge ganhou `versao.ts` (`v1.0-sensor-inicial`, 13ª leva)
+no molde da `omie-webhook`. Antes do PR, um harness local capturou o handler do `Deno.serve`, com
+segredos falsos e `SUPABASE_URL` numa porta fechada, e executou 10 caminhos nos dois bundles:
+
+- no novo, a sonda responde `{probe:true, versao, edge, fonte}` com `x-cron-secret`, 401 sem
+  credencial e 400 quando o `probe` é ambíguo;
+- os 6 caminhos que não são sonda respondem byte a byte igual ao bundle anterior;
+- no bundle anterior, toda sonda dá 401 antes de qualquer I/O.
+
+O gate de contrato foi falsificado: sem o `authorizeCronOrStaff` da sonda ele reprova nomeando a
+edge, e restaurado volta ao verde. O deploy continua dependendo do OK do founder: depois do merge,
+pacote pelo ledger e uma sonda para a 1ª atestação.
