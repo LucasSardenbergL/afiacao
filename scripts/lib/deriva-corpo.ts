@@ -395,7 +395,7 @@ export function alvosDePatch(sql: string): string[] {
 }
 
 /** Uma versão do corpo de uma identidade, como uma migration a declarou. */
-export interface VersaoDeIdentidade {
+interface VersaoDeIdentidade {
   migration: string;
   /** Ausente quando a declaração não tem corpo dollar-quoted — e aí NADA a substitui. */
   corpo?: string;
@@ -403,7 +403,7 @@ export interface VersaoDeIdentidade {
 }
 
 /** O que o repo diz sobre UMA identidade (`nome(tipos)`) ao fim da sequência de migrations. */
-export interface EstadoDeIdentidade {
+interface EstadoDeIdentidade {
   nome: string;
   /** Os tipos de entrada no formato de `format_type` (ver `identidadeDosArgumentos`). */
   identidade: string;
@@ -429,7 +429,7 @@ export interface ModeloDoRepo {
   ilegiveis: string[];
 }
 
-export const chaveIdentidade = (nome: string, identidade: string): string => `${nome}(${identidade})`;
+const chaveIdentidade = (nome: string, identidade: string): string => `${nome}(${identidade})`;
 
 /** O CREATE "solto": identificador citado e espaço em volta do ponto, que o extrator estrito não aceita. */
 const CREATE_SOLTO = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?(\w+)"?\s*\.\s*)?"?(\w+)"?\s*\(/gi;
@@ -522,7 +522,7 @@ export function modelarRepo(migrations: readonly MigrationLida[]): ModeloDoRepo 
 }
 
 /** Marca de formato do detalhe; o parser recusa outra. */
-export const FORMATO_DERIVA = 'deriva-corpo/1';
+const FORMATO_DERIVA = 'deriva-corpo/1';
 /** A resposta CONHECIDA do autoteste de identidade: format_type de int4, text, timestamptz, varchar. */
 const IDENTIDADE_AMOSTRA = 'integer,text,timestamp with time zone,character varying';
 
@@ -567,7 +567,7 @@ export function montarSondaDeriva(nomes: readonly string[]): string {
 }
 
 /** Um overload VIVO em prod. */
-export interface OverloadVivo {
+interface OverloadVivo {
   nome: string;
   /** Tipos de entrada, formato `format_type`. */
   identidade: string;
@@ -640,7 +640,7 @@ export function parsearSondaDeriva(saida: string): LeituraDeriva {
 
 // ── baseline de deriva ACEITA ───────────────────────────────────────────────────────────────────
 
-export const FORMATO_BASELINE = 'deriva-corpo-baseline/1';
+const FORMATO_BASELINE = 'deriva-corpo-baseline/1';
 const CLASSES = ['EDICAO_MANUAL', 'PATCH', 'NAO_MENSURAVEL', 'OVERLOAD_FORA_DO_REPO'] as const;
 type ClasseBaseline = (typeof CLASSES)[number];
 
@@ -729,9 +729,9 @@ const FALHA = [
   'SEM_CORPO_TEXTUAL',
   'OVERLOAD_FORA_DO_REPO',
 ] as const;
-export type CodigoDeriva = (typeof OK)[number] | (typeof FALHA)[number];
+type CodigoDeriva = (typeof OK)[number] | (typeof FALHA)[number];
 
-export interface AchadoDeriva {
+interface AchadoDeriva {
   codigo: CodigoDeriva;
   /** `nome(identidade)`. */
   alvo: string;

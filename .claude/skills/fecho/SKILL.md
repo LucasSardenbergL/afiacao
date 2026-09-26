@@ -162,6 +162,30 @@ Sentinela de cron. Este passo é a vigília inteira.
 
 Contexto: `docs/agent/database.md` §1 · `docs/historico/revoke-que-nao-revoga.md`.
 
+### Passo 2c — Deriva de CORPO das funções `public` (o vigia de "a última a recriar vence")
+
+```bash
+bun run deriva:corpo:prod; echo "exit=$?"
+```
+
+Toda função `public` que alguma migration define, conferida contra o `prosrc` de prod
+(identidade por assinatura, cosmético por tokens, baseline em `db/deriva-corpo-baseline.json`).
+Antes dele, função fora de qualquer leva de deploy não tinha sensor: `cancelar_pedido_sugerido`
+rodou 18 dias o corpo de uma migration ANTERIOR (`docs/historico/deriva-corpo-sem-sensor.md`).
+
+- `exit=0` → ✅ siga.
+- `exit=1` → ❌ cada linha nomeia o código e a função. **Não edite a baseline para calar** — aceitar
+  deriva é decisão do founder, com a evidência na frente dele:
+  - `CORPO_ANTERIOR` → revert por ordem de colagem **ou** migration mergeada e não aplicada: a linha
+    diz qual migration venceu e qual deveria. Reaplicar função money-path passa pelo Codex e pelo
+    ENVELOPE (`docs/agent/database.md` §Escrita).
+  - `PATCH_NAO_CONCILIADO` → uma migration de patch por âncora entrou na main: confira se pegou em
+    prod e concilie na baseline (`ALTERA` com o md5 de prod, ou `SO_CITA`).
+  - `SEM_PAR` (edição manual) · `PATCH_AUSENTE` · `AUSENTE` · `RESSUSCITADA` ·
+    `OVERLOAD_FORA_DO_REPO` · `SEM_CORPO_TEXTUAL` → relate ao founder com a linha colada.
+- `exit=2` → ⚠️ **não consegui medir** (psql-ro fora, sem rede para o `git fetch`, saída truncada).
+  Ausência de dado, não aprovação — diga que não mediu.
+
 ### Passo 3 — Edges
 
 ```bash
