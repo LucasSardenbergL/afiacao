@@ -300,7 +300,15 @@ export function acharColapsos(conteudo: string, nomeArquivo: string): SitioColap
  * um gate morre. Ela está MEDIDA e registrada em docs/agent/money-path.md.
  */
 export function contarAutoOcultacao(conteudo: string, nomeArquivo: string): number {
-  return acharColapsos(conteudo, nomeArquivo)
+  return contarAutoOcultacaoEm(acharColapsos(conteudo, nomeArquivo));
+}
+
+/**
+ * A mesma contagem sobre sítios JÁ achados — para quem conta as duas formas sobre UM parse
+ * (a varredura do repo no gate). A regra mora aqui; `contarAutoOcultacao` só a delega.
+ */
+export function contarAutoOcultacaoEm(sitios: SitioColapso[]): number {
+  return sitios
     .filter((s) => s.colapsos.some((x) => x.forma === "return-null" || x.forma === "ternario-null"))
     .length;
 }
@@ -325,8 +333,13 @@ export function contarAutoOcultacao(conteudo: string, nomeArquivo: string): numb
  * dedup por linha dentro do arquivo é a chave `(arquivo, linha)` do doc.)
  */
 export function contarRetornoAfirmativo(conteudo: string, nomeArquivo: string): number {
+  return contarRetornoAfirmativoEm(acharColapsos(conteudo, nomeArquivo));
+}
+
+/** A mesma contagem sobre sítios JÁ achados — ver `contarAutoOcultacaoEm`. */
+export function contarRetornoAfirmativoEm(sitios: SitioColapso[]): number {
   const linhas = new Set<number>();
-  for (const s of acharColapsos(conteudo, nomeArquivo)) {
+  for (const s of sitios) {
     for (const c of s.colapsos) if (c.forma === "return-afirmativo") linhas.add(c.linha);
   }
   return linhas.size;
