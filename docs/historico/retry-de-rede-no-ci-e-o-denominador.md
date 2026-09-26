@@ -40,8 +40,7 @@ número:
 
 As seis falhas do step, nas 410 execuções, são **todas de rede e nenhuma do PostgreSQL**.
 
-E um terceiro cuidado, porque ele é o que torna a taxa comparável: **as 234 execuções exerceram
-mesmo a rede**. O step é embrulhado num `if [ ! -x .../initdb ]`, e se o runner já trouxesse o
+E um terceiro cuidado, porque ele é o que torna a taxa comparável: **a rede é mesmo exercida**. O step é embrulhado num `if [ ! -x .../initdb ]`, e se o runner já trouxesse o
 PG17 o bloco seria pulado — o denominador real seria uma fração disso e a taxa, várias vezes
 maior. Duração mínima do step em 205 execuções: **10s** (mediana 13s), sem nenhum bucket de ~1s;
 e o log de um run traz `Setting up postgresql-17` e `(PostgreSQL) 17.11`. O `if` nunca achou

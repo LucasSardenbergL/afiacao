@@ -893,8 +893,11 @@ jobs:
           # OBRIGATÓRIO (o `validate` exige `success` POSITIVO de cada job) num repo que mergeia
           # sozinho, então a trava não é barulhenta, é um PR parado até alguém REPARAR. Uma
           # re-tentativa custa segundos; o rerun custa o job inteiro mais a atenção de quem nota.
-          # As 234 execuções exerceram MESMO a rede: a mínima do step é 10s (mediana 13s) e o log
-          # traz `Setting up postgresql-17` — o `if` abaixo nunca achou PG17 pronto no runner.
+          # E a rede é MESMO exercida: nas 205 execuções em que o timing foi medido, a mínima do
+          # step é 10s (mediana 13s), sem nenhum bucket de ~1s, e o log traz `Setting up
+          # postgresql-17` — o `if` abaixo nunca achou PG17 pronto no runner. Sem isso a taxa acima
+          # não seria comparável: se o runner já trouxesse o PG17, o denominador real seria uma
+          # fração de 234 e a taxa, várias vezes maior.
           #
           # FAIL-CLOSED, e é por isso que não é `|| true` nem `for ... && break`: esgotadas as
           # tentativas, `tentar` devolve o exit da ÚLTIMA (56, não 1) e é chamada NUA — sob
