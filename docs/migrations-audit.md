@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **558** custom migrations totais
-- **1829** objetos esperados (criados por estas migrations)
+- **559** custom migrations totais
+- **1835** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 596
+  - `function`: 598
   - `rls_policy`: 462
-  - `index`: 259
-  - `cron_job`: 172
+  - `index`: 261
+  - `cron_job`: 174
   - `table`: 166
   - `trigger`: 92
   - `view`: 78
@@ -4565,6 +4565,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.afiacao_omie_oben_sku_items_2h` | — |
+
+### `20260925210000_tint_promocao_assincrona.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promocao_tick` | — |
+| `function` | `public.tint_promocao_watchdog` | — |
+| `index` | `public.idx_tint_sync_runs_promocao_fila` | `tint_sync_runs` |
+| `index` | `public.idx_tint_keys_snapshots_aplicacao_fila` | `tint_keys_snapshots` |
+| `cron_job` | `cron.tint-promocao-tick` | — |
+| `cron_job` | `cron.tint-promocao-watchdog` | — |
 
 ### `20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql`
 

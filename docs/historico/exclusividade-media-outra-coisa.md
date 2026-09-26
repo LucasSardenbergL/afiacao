@@ -938,6 +938,21 @@ M2 saturada, descritos acima, somam —, mas o que separa as causas é direto: d
 (1018 pacotes, 46 binários) o `knip` sai `rc 0`, e os MESMOS evals, no MESMO dia, rodaram em 34 s e
 127 s na fatia B.
 
+**Consertado no #2571 — guarda 13 do motor (`DEPS-NAO-INSTALADAS`).** Logo depois da guarda 1a e antes
+do plano, cada binário de `BINARIOS_DAS_DEPS` (os 4 do `Unlisted binaries`) tem de responder
+`--version` pelo caminho LOCAL com `rc 0` e versão no stdout — a única porta de sucesso; ausente, sem
+`+x`, `rc != 0` e `rc 0` calado abortam com `ABORTADO: DEPS-NAO-INSTALADAS -- rode bun install.` Numa
+worktree real com o `node_modules` existente e vazio, o mesmo `bun run exclusividade:medir` aborta em
+**1 s**. O caminho local, e não o nome, é o 2º achado — e explica por que o motor sequer rodou: a
+worktree mora DENTRO do checkout principal, e a resolução sobe o diretório. Medido: com o
+`node_modules` vazio, o `yaml` que o motor importa resolveu de `afiacao/node_modules`, e
+`bun run tsc --version` respondeu `Version 5.8.3`. A sonda por nome aprovaria o estado que existe para
+barrar — e os gates que ficaram verdes podem ter rodado com as deps de OUTRA árvore. Falsificação
+versionada em `scripts/mutcheck.d/exclusividade-deps-instaladas.mut` (uma mutação por camada, 5/5 nos
+dois locales). Limites: sem NENHUM `node_modules` acima, o motor cai no `import 'yaml'` antes da guarda
+(rápido, mas sem a marca); e versão ≠ lockfile passa — a sonda pergunta se o binário responde, não se
+é o do lockfile.
+
 **O write-guard é da árvore INTEIRA e culpa o gate pela escrita do operador.** Editar este doc enquanto
 o baseline rodava fez o motor abortar com `GATE-ESCREVEU: bun run sonda:cron-prova -- --gate ... alterou
 a arvore versionada` e **restaurar o arquivo** pelo snapshot — a edição foi desfeita. Certo no espírito

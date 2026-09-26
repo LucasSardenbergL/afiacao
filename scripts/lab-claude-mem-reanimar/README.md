@@ -28,12 +28,17 @@ bash scripts/lab-claude-mem-reanimar/lab.sh c_surdo_sim  # um cenário (no Linux
   levou 9 s até o veredito e o "jovem" foi derrubado (2026-09-25) — o script estava certo, o lab
   é que apostava no relógio. Pelo mesmo motivo, nenhum `sleep` fixo espera processo subir ou
   porta abrir: é polling com teto que **reprova dizendo** "não aconteceu".
-- **Faixas paralelas:** cada cenário tem porta (`LAB_PORTA_BASE`+k) e HOME próprios, então
+- **Faixas paralelas:** cada cenário tem porta (`BASE`+k) e HOME próprios, então
   rodam em 4 faixas (`LAB_FAIXAS`). Cada um termina com a linha `CONTAGEM`; sem ela, o cenário
   não terminou e conta como falha. Os que precisam de worker "velho" (> idade mínima) sobem o
   worker no início e envelhecem enquanto os outros rodam.
-- **Portas fixas** a partir de 37780: duas execuções simultâneas precisam de bases diferentes
-  (a falsificação usa uma por execução); porta ocupada **reprova** o cenário, nunca pula.
+- **Bloco de portas reservado por execução** (`reserva_portas.py`, #2564): 20 portas em
+  20000–32759, **abaixo da faixa efêmera** do Linux (32768+) e do macOS (49152+). As portas
+  fixas antigas (37780+k; 38000+100·job+k na falsificação) caíam na efêmera do Linux: no CI a
+  falsificação rodou sozinha e a 39118 estava tomada por um `connect()` qualquer. A posse é do
+  kernel (um sentinela escuta na porta 0 do bloco), então execuções simultâneas — duas
+  worktrees, a falsificação a mão — nunca dividem bloco, e não há trava velha. Porta de cenário
+  ocupada mesmo assim **reprova** o cenário, nunca pula.
 
 ## Por que cada peça
 
@@ -41,6 +46,9 @@ bash scripts/lab-claude-mem-reanimar/lab.sh c_surdo_sim  # um cenário (no Linux
   `script(1)` do util-linux não existe no macOS, o do macOS manda o EOF antes da resposta
   (medido: o `read` lia vazio), e o `pty.spawn` do python 3.9 da Command Line Tools trava num
   `select` vazio quando o filho sai. O helper tem teto: pendurou → mata o grupo e sai 124.
+- **`reserva_portas.py`:** acha e SEGURA o bloco da execução; recusa (`LAB-VERMELHO`) se a
+  faixa efêmera do sistema cobrir a do lab. `LAB_PORTA_SEMENTE` só existe para o teste forçar
+  duas execuções a disputar o mesmo bloco.
 - **`desanexa.py`:** `setsid` portátil — o worker falso sobe desanexado como o real, e é o
   pgid próprio dele que o `arvore()` do script usa para achar os filhos.
 - **`::1` como "outro endereço":** o `127.0.0.2` não existe no macOS. `c_host_config` prova o

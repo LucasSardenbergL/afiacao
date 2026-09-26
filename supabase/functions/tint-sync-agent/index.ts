@@ -8,6 +8,16 @@ import {
   type TintFormulaItem,
   type TintFormulaPayload,
 } from "./staging-rows.ts";
+// Promoção ASSÍNCRONA (migration 20260925210000): decisões puras da fila, testáveis com
+// deno test --no-remote (promocao-fila_test.ts) — NÃO reimplementar inline aqui.
+import {
+  camposDeEnfileiramento,
+  chunksRecebidos,
+  corpoDeConclusao,
+  respostaDeConclusao,
+  snapshotEnfileirado,
+  updateConfirmou,
+} from "./promocao-fila.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -192,7 +202,15 @@ Deno.serve(async (req) => {
     return data?.id;
   }
 
-  async function completeSyncRun(runId: string, stats: Record<string, number>, status = "complete", responseObj?: unknown) {
+  /** Fecha o run. Devolve true só se o UPDATE CONFIRMOU a linha — quem responde 200 ao conector
+   *  depende disso (o conector cacheia o hash no 200 e não re-envia). `extra` entra no MESMO UPDATE. */
+  async function completeSyncRun(
+    runId: string,
+    stats: Record<string, number>,
+    status = "complete",
+    responseObj?: unknown,
+    extra?: Record<string, unknown>,
+  ): Promise<boolean> {
     const upd: Record<string, unknown> = {
       status,
       completed_at: new Date().toISOString(),
@@ -203,7 +221,30 @@ Deno.serve(async (req) => {
       errors: stats.errors || 0,
     };
     if (responseObj) upd.idempotency_response = responseObj;
-    await sb.from("tint_sync_runs").update(upd).eq("id", runId);
+    if (extra) Object.assign(upd, extra);
+    const { data, error } = await sb.from("tint_sync_runs").update(upd).eq("id", runId).select("id");
+    return updateConfirmou(data, error);
+  }
+
+  /** PROMOÇÃO ASSÍNCRONA (migration 20260925210000): em automatic_primary o run NÃO é mais promovido
+   *  dentro do HTTP — o promote de lote grande passava dos ~128s do gateway (500 + reenvio diário +
+   *  lock timeout nos requests seguintes). O MESMO UPDATE que marca `complete` enfileira
+   *  (`promocao_status='pendente'`); o cron `tint-promocao-tick` promove. Só responde 200 se o
+   *  enfileiramento CONFIRMOU a linha: senão o conector cachearia o hash de um lote que nunca entra. */
+  async function concluirEEnfileirar(
+    agent: { integrationMode: string },
+    runId: string,
+    stats: Record<string, number>,
+    resp: Record<string, unknown>,
+  ): Promise<Response> {
+    const extra = camposDeEnfileiramento(agent.integrationMode);
+    const corpo = corpoDeConclusao(resp, extra !== undefined);
+    const gravou = await completeSyncRun(runId, stats, "complete", corpo, extra);
+    if (!gravou) {
+      await logError(runId, "promotion", null, "falha ao concluir/enfileirar o run — lote NÃO confirmado ao conector").catch(() => {});
+    }
+    const { status, body } = respostaDeConclusao(gravou, corpo);
+    return json(body, status);
   }
 
   async function logError(runId: string, entityType: string, entityId: string | null, msg: string, details?: unknown, raw?: unknown) {
@@ -385,20 +426,8 @@ Deno.serve(async (req) => {
       }
 
       const resp = buildResponse(runId, { received, inserts, updates, ignored, errors, errorDetails });
-      await completeSyncRun(runId, { duration_ms: Date.now() - start, total: received, inserts, updates, errors }, "complete", resp);
-
-      // Change 5: promotion gate — run promotion if automatic_primary
-      if (agent.integrationMode === "automatic_primary") {
-        const { data: promo, error: promoErr } = await sb.rpc("tint_promote_sync_run", { p_sync_run_id: runId });
-        if (promoErr) {
-          await sb.from("tint_sync_runs").update({ status: "error" }).eq("id", runId);
-          await logError(runId, "promotion", null, promoErr.message, promoErr);
-          return json({ ...resp, ok: false, promotion_error: promoErr.message }, 500);
-        }
-        (resp as Record<string, unknown>).promotion = promo;
-      }
-
-      return json(resp);
+      return await concluirEEnfileirar(agent, runId,
+        { duration_ms: Date.now() - start, total: received, inserts, updates, errors }, resp);
     }
 
     // ============ SYNC FORMULAS ============
@@ -507,20 +536,8 @@ Deno.serve(async (req) => {
       }
 
       const resp = buildResponse(runId, { received, inserts, updates: 0, ignored, errors, errorDetails });
-      await completeSyncRun(runId, { duration_ms: Date.now() - start, total: received, inserts, updates: 0, errors }, "complete", resp);
-
-      // Change 5: promotion gate — run promotion if automatic_primary
-      if (agent.integrationMode === "automatic_primary") {
-        const { data: promo, error: promoErr } = await sb.rpc("tint_promote_sync_run", { p_sync_run_id: runId });
-        if (promoErr) {
-          await sb.from("tint_sync_runs").update({ status: "error" }).eq("id", runId);
-          await logError(runId, "promotion", null, promoErr.message, promoErr);
-          return json({ ...resp, ok: false, promotion_error: promoErr.message }, 500);
-        }
-        (resp as Record<string, unknown>).promotion = promo;
-      }
-
-      return json(resp);
+      return await concluirEEnfileirar(agent, runId,
+        { duration_ms: Date.now() - start, total: received, inserts, updates: 0, errors }, resp);
     }
 
     // ============ SYNC PREPARATIONS ============
@@ -669,33 +686,47 @@ Deno.serve(async (req) => {
       }
       // duplicate chunk (23505) treated as ok
 
-      // Count received chunks for this snapshot
-      const { count } = await sb.from("tint_keys_snapshots")
+      // Count received chunks for this snapshot. Contagem que FALHOU não é "0 chunks": responder
+      // 200 aqui faria o conector dar o snapshot por entregue sem ele entrar na fila → 500 + retry.
+      const { count: countBruto, error: countErr } = await sb.from("tint_keys_snapshots")
         .select("chunk_index", { count: "exact", head: true })
         .eq("snapshot_id", snapshot_id)
         .eq("entity", entity);
+      const count = chunksRecebidos(countBruto, countErr);
+      if (count === null) {
+        return json({ ok: false, error: "failed to count keys snapshot chunks", retry: true }, 500);
+      }
 
       const allChunksReceived = count === (total_chunks as number);
 
-      // If complete and automatic_primary mode → apply snapshot (desativation logic)
+      // Completo + automatic_primary → ENFILEIRA a aplicação (migration 20260925210000). O apply
+      // (desativação) roda no cron tint-promocao-tick, na MESMA fila FIFO das promoções: aplicado
+      // aqui ele disputava o advisory lock com a promoção em curso (lock timeout) e, quando
+      // falhava, o conector recebia ok e o snapshot se perdia em silêncio.
       if (allChunksReceived && agent.integrationMode === "automatic_primary") {
-        const { data: applyData, error: applyErr } = await sb.rpc("tint_apply_keys_snapshot", {
-          p_snapshot_id: snapshot_id,
-        });
-        return json({
-          ok: true,
-          complete: true,
-          applied: !applyErr,
-          result: applyData ?? null,
-          ...(applyErr ? { apply_error: applyErr.message } : {}),
-        });
+        // `IS NULL`: chunk re-enviado (replay) não re-enfileira snapshot já aplicado/em erro.
+        const { error: enqErr } = await sb.from("tint_keys_snapshots")
+          .update({ aplicacao_status: "pendente" })
+          .eq("snapshot_id", snapshot_id)
+          .eq("entity", entity)
+          .is("aplicacao_status", null);
+        // Confirma POR FORA do UPDATE: nenhuma linha do snapshot pode ficar sem estado.
+        const { count: semEstado, error: confErr } = await sb.from("tint_keys_snapshots")
+          .select("chunk_index", { count: "exact", head: true })
+          .eq("snapshot_id", snapshot_id)
+          .eq("entity", entity)
+          .is("aplicacao_status", null);
+        if (!snapshotEnfileirado(enqErr, confErr, semEstado)) {
+          return json({ ok: false, error: "failed to enqueue keys snapshot", retry: true }, 500);
+        }
+        return json({ ok: true, complete: true, applied: false, aplicacao: "pendente" });
       }
 
       return json({
         ok: true,
         complete: allChunksReceived,
         applied: false,
-        awaiting_chunks: (total_chunks as number) - (count ?? 0),
+        awaiting_chunks: (total_chunks as number) - count,
       });
     }
 

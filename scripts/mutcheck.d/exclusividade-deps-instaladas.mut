@@ -1,0 +1,25 @@
+# Poder de discriminacao da GUARDA 13 do motor da exclusividade (DEPS-NAO-INSTALADAS) — a alegacao
+# "sem as deps instaladas o motor ABORTA antes de gastar o baseline, e so uma resposta POSITIVA
+# passa". Nasceu do incidente de 2026-09-25: worktree com o `node_modules` existente e VAZIO, 5 h de
+# baseline ate abortar, porque nada no motor conferia as deps.
+#
+# Uma mutacao por CAMADA (sabote uma camada por vez: a que fica verde e redundante ou inalcancada),
+# cada uma com o seu teste matador no bloco `[deps-instaladas]`:
+#   - guarda desligada / lista esvaziada -> todos os abortos (guarda vacua aprova tudo);
+#   - sonda por NOME (PATH)             -> o incidente, com os 4 binarios "globais" no PATH;
+#   - rc ignorado                       -> versao no stdout com rc != 0;
+#   - versao ignorada (so o rc)         -> rc 0 calado.
+# O CONTROLE e o baseline do proprio mutcheck (o bloco sem mutacao, verde, na MESMA invocacao) e,
+# dentro do bloco, o cenario com as deps respondendo sob o MESMO PATH dos abortos.
+#
+# `-t deps-instaladas` roda so o bloco da guarda (segundos): o arquivo inteiro custaria minutos por
+# mutacao num job que ja vigia o proprio teto (ver o comentario do `mutation-check` no ci.yml).
+# @src: scripts/exclusividade-medir.ts
+# @test: scripts/exclusividade-medir.test.ts
+# @test_cmd: bunx vitest run -t deps-instaladas
+# Rode: MUTCHECK_TEST_CMD='bunx vitest run -t deps-instaladas' scripts/mutcheck.sh scripts/exclusividade-medir.ts scripts/exclusividade-medir.test.ts scripts/mutcheck.d/exclusividade-deps-instaladas.mut
+PEGA      | guarda desligada (resultado ignorado)    | s/if \(semResposta\.length\) \{/if (false) {/
+PEGA      | lista esvaziada (guarda vacua)           | s/for \(const b of BINARIOS_DAS_DEPS\) \{/for (const b of [] as string[]) {/
+PEGA      | sonda por NOME, resolvida pelo PATH      | s/const p = join\('node_modules', '\.bin', b\);/const p = b;/
+PEGA      | rc ignorado (basta versao no stdout)     | s/if \(r\.status === 0 && SEMVER\.test/if (SEMVER.test/
+PEGA      | versao ignorada (basta o rc 0)           | s/r\.status === 0 && SEMVER\.test\(semAnsi\(r\.stdout \?\? ''\)\)/r.status === 0/
