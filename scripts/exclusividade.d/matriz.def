@@ -4,11 +4,40 @@
 # um gate novo se auto-dispensando da regra que existe para gates novos. E o unico jeito honesto de
 # sair dessa lista e o mesmo que ele exige de qualquer outro — exibir um defeito que so ele pega.
 #
-# Este e o defeito. Renomear a entrada de um gate na matriz e a falha REAL do fluxo: alguem renomeia
-# um gate no package.json, esquece de re-medir, e o gate volta a existir sem nenhuma evidencia de
-# que pega algo que os outros nao pegam. Nenhum outro gate do CI le este arquivo, entao se
-# `exclusividade` nao pegar, ninguem pega.
+# ## Por que o defeito NAO e mais "renomear a entrada de um gate na matriz" (2026-09-20)
+#
+# O `matriz-gate-renomeado` (`s/"gate": "knip"/"gate": "knip-RENOMEADO"/`) era INVALIDO contra toda
+# matriz commitada desde o #2366, e por um motivo ESTRUTURAL, nao por regex envelhecido:
+#
+#  - sem trava `$feito`, e a matriz tem uma linha `"gate": "knip"` por EXECUCAO (3 em 73882cd98,
+#    7 em d1d6aa29f, 14 linhas perturbadas no preflight de 2026-09-14) — o guard 4 do motor, teto
+#    de 2 linhas, recusa. A linha so foi valida contra a matriz em disco ANTES de ser commitada;
+#  - por `$feito` tambem nao ia: renomear a 1a ocorrencia (a de `dispensados`) deixa a evidencia do
+#    knip intacta nas outras, o efeito pretendido (gate que volta a existir sem evidencia ->
+#    `GATE_NOVO_SEM_EXCLUSIVIDADE`) some, e a linha passaria a medir "ninguem pegou" sob o nome do
+#    defeito antigo — ausencia de dado lida como exclusividade zero;
+#  - a raiz: com a matriz completa (todo gate executado em varias linhas), NENHUMA sabotagem de
+#    <=2 linhas da matriz remove a evidencia de um gate. A sabotagem mira a SAIDA do proprio motor,
+#    e cada rodada que grava a matriz invalida de novo a expressao. Ovo e galinha.
+#
+# Sobra a unica sabotagem minima que ainda muda o veredito: a que derruba o arquivo INTEIRO.
+#
+# ## O defeito que sobra e o que de fato acontece: a matriz chega ilegivel na main
+#
+# A matriz e o unico artefato do repo gerado por uma rodada de ~35min e COMMITADO — e duas sessoes
+# medindo em paralelo colidem exatamente nele (aconteceu em 2026-09-20: duas worktrees no motor ao
+# mesmo tempo). Resolver esse conflito comendo o fechamento do JSON deixa um arquivo de 2866 linhas
+# que parece inteiro no diff e nao e.
+#
+# Nenhum outro gate do CI le este arquivo, e os dois testes do vitest que o tocam sao tolerantes POR
+# DESENHO DECLARADO: `exclusividade-gate.test.ts:904` so cobra `length > 0` (arquivo truncado passa)
+# e o teste do binario real casa a MARCA da ancora, nunca o exit code, porque "uma REPROVA legitima
+# da matriz tambem sai 1" (:518-520). Se `exclusividade` nao pegar, a maquina inteira desliga verde
+# e calada — a familia do #2418, onde renomear o job `validate` a desligava sem um pio.
+#
+# NOTA para quem for medir: a expressao abaixo mira o `}` FINAL. Ela e imune ao problema que matou a
+# anterior — nao depende do CONTEUDO da matriz, que muda a cada rodada, so do fato de ser um JSON.
 
-# @origem: 2026-09-07, ao gerar a lista de dispensados desta propria entrega
+# @origem: 2026-09-20, redesenho do `matriz-gate-renomeado` invalido (docs/historico/exclusividade-media-outra-coisa.md)
 # @suspeito: exclusividade
-matriz-gate-renomeado | scripts/exclusividade-matriz.json | s/"gate": "knip"/"gate": "knip-RENOMEADO"/
+matriz-ilegivel | scripts/exclusividade-matriz.json | $_ = "" if eof && /^\}$/;

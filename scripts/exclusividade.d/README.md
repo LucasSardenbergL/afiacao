@@ -74,3 +74,17 @@ Só quando rodou **todo** gate bloqueante do `ci.yml`, **com a invocação do CI
 um único vermelho. Linha medida com `--gates` (subconjunto) e um único vermelho sai `[inconcl]`:
 os gates ausentes são desconhecidos, não verdes. Execução gravada com outra invocação (ex.: o
 `bun run tsc` no-op de antes da paridade) não conta como execução.
+
+## Antes de gastar a vaga do `heavy`
+
+- **Confira as deps.** `node_modules` vazio (worktree nova sem `bun install`) não dá erro: dá um
+  baseline plausível e errado — `knip` VERMELHO por `Unlisted binaries`, e gate de shell resolvendo
+  pacote pela rede a cada `bunx`. O teto por execução mede o gate; não distingue gate lento de máquina
+  sem deps.
+- **Enquanto o motor roda, a árvore é dele.** O write-guard fotografa a árvore INTEIRA: editar qualquer
+  arquivo versionado durante a rodada aborta com `GATE-ESCREVEU: <o gate que calhava de rodar>` e
+  **desfaz a edição** pelo snapshot. Ler, sim; escrever, nem no doc do histórico.
+- **Se a M2 não segura os 31 de uma vez, fatie.** A completude é da LINHA, não da rodada
+  (`fundirLinhas` funde por `(defeito, gate)`): rodadas com `--gates <fatia>` pagam só o baseline da
+  fatia, cada uma grava, e a linha certifica quando todo gate do universo tiver execução em dia.
+  Ponha o gate mais pesado sozinho — uma morte de RAM perde a fatia, não o que já foi medido.
