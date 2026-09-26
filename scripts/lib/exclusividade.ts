@@ -763,6 +763,17 @@ export type LeituraDaMatriz = { ok: true; matriz: Matriz } | ({ ok: false } & Re
 type Tipo = 'texto' | 'numero' | 'booleano' | 'texto|null' | 'lista de texto';
 type Forma = Record<string, Tipo | `${Tipo}?`>;
 
+/**
+ * A forma de `T` amarrada a `T` pelo `tsc`: toda chave da interface tem a sua conferencia, e so a
+ * opcional leva `?`. O schema mora em DOIS lugares — a interface e estas tabelas —, e um campo novo so
+ * na interface deixaria a leitura leniente CALADA: a classe que esta porta existe para fechar.
+ * `Fora` = o que `matrizForaDaForma` confere a parte (a versao e as listas aninhadas).
+ */
+type OpcionaisDe<T> = { [K in keyof T]-?: object extends Pick<T, K> ? K : never }[keyof T];
+type FormaDe<T, Fora extends keyof T = never> = {
+  [K in Exclude<keyof T, Fora>]: K extends OpcionaisDe<T> ? `${Tipo}?` : Tipo;
+};
+
 const CONFERE: Record<Tipo, (v: unknown) => boolean> = {
   texto: (v) => typeof v === 'string',
   numero: (v) => typeof v === 'number' && Number.isFinite(v),
@@ -770,10 +781,13 @@ const CONFERE: Record<Tipo, (v: unknown) => boolean> = {
   'texto|null': (v) => v === null || typeof v === 'string',
   'lista de texto': (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
 };
-const FORMA_RAIZ: Forma = { medidoEm: 'texto', sourceHead: 'texto' };
-const FORMA_DISPENSADO: Forma = { gate: 'texto', desde: 'texto', motivo: 'texto' };
-const FORMA_BASELINE: Forma = { gate: 'texto', verde: 'booleano', ms: 'numero' };
-const FORMA_LINHA: Forma = {
+const FORMA_RAIZ = { medidoEm: 'texto', sourceHead: 'texto' } satisfies FormaDe<
+  Matriz,
+  'schemaVersion' | 'dispensados' | 'baseline' | 'linhas'
+>;
+const FORMA_DISPENSADO = { gate: 'texto', desde: 'texto', motivo: 'texto' } satisfies FormaDe<Matriz['dispensados'][number]>;
+const FORMA_BASELINE = { gate: 'texto', verde: 'booleano', ms: 'numero' } satisfies FormaDe<BaselineGate>;
+const FORMA_LINHA = {
   defeito: 'texto',
   defeitoFingerprint: 'texto',
   alvo: 'texto',
@@ -784,15 +798,15 @@ const FORMA_LINHA: Forma = {
   parouCedo: 'booleano',
   invalido: 'texto|null',
   defasados: 'lista de texto?',
-};
-const FORMA_EXECUCAO: Forma = {
+} satisfies FormaDe<LinhaMatriz, 'execucoes'>;
+const FORMA_EXECUCAO = {
   gate: 'texto',
   reprovou: 'booleano',
   ms: 'numero',
   fingerprint: 'texto',
   fonteResolvida: 'booleano',
   invocacao: 'texto?',
-};
+} satisfies FormaDe<ExecucaoGate>;
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const tem = (o: Record<string, unknown>, campo: string): boolean => Object.prototype.hasOwnProperty.call(o, campo);
