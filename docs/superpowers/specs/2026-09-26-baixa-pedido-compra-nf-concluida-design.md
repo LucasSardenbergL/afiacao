@@ -290,3 +290,36 @@ PO encerrado se o bug da §5 estiver ativo: o upsert falha e a linha fica com a 
   conferência deve falhar no PostgREST e, offline, ficar preso na fila.
 - O botão "Importar NF-e" (`src/pages/Recebimento.tsx:218`) chama `omie-nfe-webhook` sem o header
   `x-webhook-secret` que a edge exige (`supabase/functions/omie-nfe-webhook/index.ts:71-74`) → 401 sempre.
+
+## 12. Continuação — chips de 2026-09-26 (cópia durável dos prompts)
+
+Chip é perecível (vive na sessão que o criou). Se nenhum dos dois foi clicado, recrie a partir daqui.
+
+**Chip "Medir e revisar a baixa automática de PO no Omie"** — sessão LOCAL (precisa de `psql-ro`, Codex e rede
+para `app.omie.com.br`). Leia este spec e execute, em ordem:
+
+0. Higiene da janela `94cb988..eec8598` que a sessão de nuvem não mediu (`edges-pendentes.sh` e
+   `authz:claude-ro:prod` saíram rc=2 duas vezes, `psql-ro` ausente): `bun run pendencias:deploy` para as edges de
+   terceiros `omie-sync-estoque`, `sync-reprocess`, `tint-sync-agent` e `whatsapp-inbound` (o PR
+   `LucasSardenbergL/afiacao#2579` reverte os commits "Changes" do agente Lovable que deixaram o `sonda:fingerprint`
+   vermelho na main); confirmar no banco as migrations de terceiros `20260925210000_tint_promocao_assincrona.sql`,
+   `20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql` e
+   `20260926001425_param_auto_em_transito_conta_disparado_simulado.sql`; `bun run authz:claude-ro:prod`. O que outra
+   sessão já resolveu é desfecho ✅.
+1. Medição M1–M7 (§10) com `~/.config/afiacao/psql-ro -X -v ON_ERROR_STOP=1 -f <arquivo>` e o marcador
+   `FIM-MEDICAO-OK`; registrar os números aqui (backlog por classe; bug do `ENCERRADO` ativo?).
+2. F1 e F3 (§4) na doc oficial do `pedidocompra`: método de encerramento, campos, `cEtapa` resultante. Nenhuma
+   escrita no Omie sem chamada real em 1 PO de baixo valor combinada com o founder.
+3. F2 (§4): sonda `omie-sonda-recebimento` (S2) em 3 NFs.
+4. Ritual `/codex` sobre este spec (money-path), parecer registrado aqui.
+5. Plano da Fase 0 em `docs/superpowers/plans/` — (a) enum `ENCERRADO` (§5) com `lovable-db-operator` e a
+   precedência entre os writers de `status`; (b) item de NF com `nNumPedCompra` = `receipt`/`receipt_item` do
+   receipt-first ledger (§6); (c) lista "Pedidos para baixar" (§7) com sensor `track('compras.po_baixa.*')`. Sem
+   Fase 1 nessa sessão.
+
+**Chip "Consertar divergência e importação de NF-e na conferência"** — os dois achados da §11, em PR próprio (não
+misturar com esta frente). Pronto quando: (a) `reportDivergencia` grava em `observacao_divergencia`, com teste que
+casa o nome da coluna, decisão sobre itens já presos na fila offline (`offline_queue_v1`) com o payload antigo, e o
+porquê de o typecheck não ter pegado; (b) importação por chave com caminho gateado por staff
+(`authorizeCronOrStaff`) que consulta o Omie (`ConsultarRecebimento` por `cChaveNFe`) e importa com dedupe por
+`chave_acesso`, sem expor o `x-webhook-secret` ao cliente, respeitando o "consumo redundante" e os gates de edge.
