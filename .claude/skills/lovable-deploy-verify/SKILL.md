@@ -1075,10 +1075,14 @@ de resolver para UM commit **com o prefixo conferido** (um branch chamado `a0a0a
 - **`PR_FORA_DO_AR` não é "Publish pendente".** A linha de alcance roda a MESMA tabela (`classify.sh
   --bundle`) e a MESMA prova (`alcance-bundle.py`) do exit 5 sobre o diff do próprio PR: um PR só de
   docs sai `PR_SEM_ALCANCE_NO_BUNDLE`; sem prova completa, `PR_ALCANCE_NAO_PROVADO` — nunca "sem alcance".
+  Teste em `src/` (classe `TESTE`) é a exceção do "não provado": sem a prova ele **continua ALCANCA**
+  e a linha é `PR_TOCA_O_BUNDLE` (ver "Teste em `src/` só é inerte com PROVA" abaixo).
 
 Medido em prod (2026-09-10, ar `70fc305f`): `--pr 2459` → exit 0; `--pr 2468` → exit 3 +
 `PR_SEM_ALCANCE_NO_BUNDLE` (4 arquivos da skill); `--pr 2467` → exit 3 + sem alcance (8 arquivos, 0 em
-`src/`, conferido no `gh`); `--pr 2469` (aberto) → exit 6. Rede: `evals/monitor-deploy-pr-eval.sh`
+`src/`, conferido no `gh`); `--pr 2469` (aberto) → exit 6; `--pr 2547` (2026-09-26, ar `149bfec6`) →
+exit 3 + `PR_SEM_ALCANCE_NO_BUNDLE` (11 arquivos, um deles TESTE em `src/`, provado inerte — antes da
+classe `TESTE`, saía `PR_TOCA_O_BUNDLE` pelo teste). Rede: `evals/monitor-deploy-pr-eval.sh`
 (33 casos × 2 locales, falsificado). A mesma medição derrubou o critério "rc 3 → 0" como prova de
 Publish: com a `main` andando, `ar == main` fica inalcançável — a transição que conta é a do `ar=` (e do
 entry). Detalhe em
@@ -1089,15 +1093,30 @@ acima (ar `eee71c80`, delta sem `src/`) agora sai **exit 5 `SINCRONIZADO_EM_BUND
 TODO elo responder positivamente — senão fica `ATRASADO` com a marca do elo em `motivo:`:
 fetch ok (`FETCH_FALHOU` — pré-condição de TODO verde, o 0 inclusive) · o entry tem UM carimbo só e ele resolve e é **ancestral** da main
 (`CARIMBO_AMBIGUO`, `CARIMBO_NAO_RESOLVE`, `NAO_ANCESTRAL`) · `git diff --no-renames` sai 0 e não vazio (`DIFF_FALHOU`, `DELTA_VAZIO`) · todo arquivo
-é INERTE na tabela de `classify.sh --bundle` (`ALCANCA_BUNDLE`, `SEM_CLASSIFICACAO`) ·
+é INERTE ou TESTE na tabela de `classify.sh --bundle` (`ALCANCA_BUNDLE`, `SEM_CLASSIFICACAO`) ·
 [`scripts/alcance-bundle.py`](scripts/alcance-bundle.py) prova na main que nada do bundle importa de fora
 da tabela, que o build é `vite build` puro e que o `package.json` só mudou em scripts fora do pipeline
-(`ALCANCE_VAZA`, `BUILD_NAO_RECONHECIDO`, `PACKAGE_JSON_ALCANCA`, `PROVA_INDISPONIVEL`).
-Três escolhas que não são óbvias e têm caso na rede (`evals/monitor-deploy-eval.sh`):
+(`ALCANCE_VAZA`, `BUILD_NAO_RECONHECIDO`, `PACKAGE_JSON_ALCANCA`, `PROVA_INDISPONIVEL`) — e, com TESTE
+no delta, que o teste é inerte (`TESTE_ALCANCA` ⇒ o teste continua `ALCANCA_BUNDLE`).
+Quatro escolhas que não são óbvias e têm caso na rede (`evals/monitor-deploy-eval.sh`):
 - **A lista de inertes é FECHADA.** Arquivo que não está nem em ALCANCA nem em INERTE é
   `DESCONHECIDO` e segura o alarme — "não casou com a lista de alcance" seria ausência de dado lida
   como aprovação. Arquivo novo na raiz (um `playwright.config.ts`) custa um ATRASADO até alguém
   classificá-lo na tabela. No último mês, **zero** commits caíram aqui.
+- **Teste em `src/` só é inerte com PROVA (2026-09-26, `--pr 2547`).** "O Vite só empacota o que o
+  entry alcança" vale para o grafo de MÓDULOS, não para o build: o `content` do Tailwind lê
+  `src/**/*.{ts,tsx}` como TEXTO, e um teste com palavra nova (um `toHaveClass('x')` de classe que o app
+  monta dinâmica) cria regra no CSS servido sem import nenhum. A classe `TESTE`
+  (`__tests__/`, `*.{test,spec}.ts(x)`, `src/test/`) vira inerte só se **(d1)** nada do bundle a alcança —
+  import (inclusive com comentário, `.js`→`.ts`, template/concatenação), glob, `new URL`, config que lê a
+  pasta, config com API de leitura, transitivamente (app → helper → teste) — e **(d2)** cada teste
+  mudado tem o MESMO conjunto de palavras no ar e na main (o extrator do tailwindcss **3.4.17**, lido em
+  `node_modules`, é local à palavra e ordena os candidatos; versão travada no lockfile, `content` em array
+  só de strings — senão recusa). Sem a prova, **continua ALCANCA** (`ALCANCA_BUNDLE`/`PR_TOCA_O_BUNDLE`),
+  nunca "sem alcance". Mede-se o custo: cobre **1 de 11** PRs só-de-teste dos últimos 300 commits (os
+  outros põem palavra nova). Tirar os testes do `content` cobriria todos, mas é decisão de BUILD (pede
+  Publish, e classe que só existe porque um teste a cita some) — em
+  [`docs/historico/teste-inerte-e-o-leitor-que-nao-importa.md`](../../../docs/historico/teste-inerte-e-o-leitor-que-nao-importa.md).
 - **`scripts` do `package.json` NÃO é toda inerte.** `build`, `pre/post*` e os ganchos de install
   são executados pelo pipeline: mudou um deles ⇒ alcança. E se o build da main não for `vite build`
   puro (`vite build && node scripts/gera.js`), `scripts/` deixa de ser inerte e o monitor recusa.

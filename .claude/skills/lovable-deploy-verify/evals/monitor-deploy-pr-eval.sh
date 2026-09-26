@@ -70,6 +70,9 @@ G() { # dir args… — git com identidade fixa (o HOME do fixture não tem conf
 escreve() { mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" > "$1"; }
 commit() { G "$1" add -A && G "$1" commit -q -m "$2" && git -C "$1" rev-parse HEAD; }
 c8() { printf '%s' "$1" | cut -c1-8; }
+# Mapa com valores REPETIDOS, o formato do caso real (#2547: `4` → `3` num mapa de dívida): trocar
+# um valor por outro que já aparece mantém o conjunto de palavras — que é o que o Tailwind lê.
+mapa() { printf 'export const MAPA = new Map([\n  ["a.ts", %s],\n  ["b.ts", %s],\n  ["c.ts", %s],\n  ["d.ts", %s],\n]);\n' "$@"; }
 
 A="$FIX/autor"
 if ! { mkdir -p "$A" && git -c init.defaultBranch=main init -q "$A"; }; then via_caiu "git init"; fi
@@ -81,6 +84,14 @@ escreve "$A/docs/a.md" '# a'
 escreve "$A/.github/workflows/ci.yml" 'on: push'
 escreve "$A/scripts/x.sh" 'echo x'
 escreve "$A/supabase/functions/x/index.ts" 'Deno.serve(() => new Response("v1"));'
+# TESTE em src/: um que nada importa (gate.test.ts) e um que o APP importa (fixture.ts). O Tailwind
+# lê src/ como texto, na forma que a prova auditou (content em array, postcss padrão, lockfile 3.4.17).
+escreve "$A/src/__tests__/gate.test.ts" "$(mapa 3 4 4 3)"
+escreve "$A/src/__tests__/fixture.ts" "$(mapa 3 4 4 3)"
+escreve "$A/src/usa-fixture.ts" 'import { MAPA } from "./__tests__/fixture"; export const f = MAPA;'
+escreve "$A/tailwind.config.ts" 'export default { content: ["./src/**/*.{ts,tsx}"] };'
+escreve "$A/postcss.config.js" 'export default { plugins: { tailwindcss: {}, autoprefixer: {} } };'
+escreve "$A/bun.lock" '{ "packages": { "tailwindcss": ["tailwindcss@3.4.17", "", {}, "sha512-fx"] } }'
 C0=$(commit "$A" "base")
 escreve "$A/docs/a.md" '# a v2'
 C1=$(commit "$A" "docs")
@@ -112,7 +123,19 @@ C9=$(git -C "$A" rev-parse HEAD)
 G "$A" checkout -q -B build "$C5"   # o #8 muda o script de BUILD: inerte por NOME, não pela prova
 escreve "$A/package.json" '{"name":"fx","dependencies":{"react":"19.0.0"},"scripts":{"build":"vite build --mode development","test":"vitest","evals:x":"bash x.sh"}}'
 C8=$(commit "$A" "build em modo development")
-for s in "$C0" "$C1" "$C2" "$C3" "$C4" "$C5" "$C8" "$C9" "$H1"; do
+# Os PRs só de TESTE, todos sobre C5: o #10 é o #2547 (4→3 no mapa, mais docs), o #11 muda o teste que
+# o app importa, o #12 põe palavra nova num teste que ninguém importa.
+G "$A" checkout -q -B t10 "$C5"
+escreve "$A/src/__tests__/gate.test.ts" "$(mapa 3 3 4 3)"; escreve "$A/docs/e.md" '# e'
+C10=$(commit "$A" "teste: 4 -> 3 no mapa + docs (o caso do #2547)")
+G "$A" checkout -q -B t11 "$C5"
+escreve "$A/src/__tests__/fixture.ts" "$(mapa 3 3 4 3)"
+C11=$(commit "$A" "teste importado pelo app: 4 -> 3")
+G "$A" checkout -q -B t12 "$C5"
+escreve "$A/src/__tests__/gate.test.ts" "$(mapa 3 4 4 3)
+// bg-cor-nova"
+C12=$(commit "$A" "teste com palavra nova")
+for s in "$C0" "$C1" "$C2" "$C3" "$C4" "$C5" "$C8" "$C9" "$C10" "$C11" "$C12" "$H1"; do
   case "$s" in [0-9a-f]*) ;; *) via_caiu "a história do fixture não subiu" ;; esac
 done
 
@@ -122,7 +145,8 @@ origem() { # nome refspec…
     via_caiu "push para $o"
   fi
 }
-origem origin "$C5:refs/heads/main" "$H1:refs/heads/feat" "refs/tags/pr1" "$C8:refs/heads/build-alt"
+origem origin "$C5:refs/heads/main" "$H1:refs/heads/feat" "refs/tags/pr1" "$C8:refs/heads/build-alt" \
+  "$C10:refs/heads/t10" "$C11:refs/heads/t11" "$C12:refs/heads/t12"
 origem origin-rev "$C9:refs/heads/main"
 origem origin-velho "$C2:refs/heads/main" "$C5:refs/heads/adiante"
 
@@ -219,7 +243,11 @@ cat > "$FIX/vf-stub.sh" <<'SH'
 echo "vf-stub: sentinela='$1' rc=${STUB_VF_RC:-99}"
 exit "${STUB_VF_RC:-99}"
 SH
-chmod +x "$FIX/stubs/gh" "$FIX/vf-stub.sh"
+# python3 PRESENTE-porém-MUDO (sai 0 sem dizer nada), só nos casos que o pedem: sem a resposta da
+# prova, teste do PR continua ALCANCA — nunca "sem alcance" por ausência de dado.
+mkdir -p "$FIX/py-mudo"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FIX/py-mudo/python3"
+chmod +x "$FIX/stubs/gh" "$FIX/vf-stub.sh" "$FIX/py-mudo/python3"
 pr_json() { # n estado squash|null base
   local sq='null'
   [ "$3" = null ] || sq="{\"oid\":\"$3\"}"
@@ -233,6 +261,9 @@ pr_json 4 MERGED "$C2" develop
 pr_json 6 MERGED "$C5" main
 pr_json 7 MERGED null main
 pr_json 8 MERGED "$C8" main
+pr_json 10 MERGED "$C10" main
+pr_json 11 MERGED "$C11" main
+pr_json 12 MERGED "$C12" main
 # (o #5 não tem arquivo: o gh-stub responde como o GraphQL a um PR inexistente, exit 1)
 
 # O monitor sob teste mora num layout IGUAL ao da skill: ele chama "$SELF_DIR/verify-frontend.sh"
@@ -250,10 +281,11 @@ cp "$SCRIPT_ABS" "$FIX/monitor-original.sh"
 
 # ── runner ───────────────────────────────────────────────────────────────────────────────────────
 MON="$CTL"; LOC="C"; OUT=""; RC=0; PASS=0; FAIL=0; SO_CASO=""
-CASO_ESTADO=""; CASO_VF_RC=""
+CASO_ESTADO=""; CASO_VF_RC=""; CASO_PY_MUDO=""
 roda() { # cwd args…
-  local cwd="$1"; shift
-  OUT=$(cd "$cwd" && env LC_ALL="$LOC" PATH="$FIX/stubs:$PATH" GH_STUB_DIR="$FIX/gh" \
+  local cwd="$1" caminho="$FIX/stubs:$PATH"; shift
+  [ -z "$CASO_PY_MUDO" ] || caminho="$FIX/py-mudo:$caminho"
+  OUT=$(cd "$cwd" && env LC_ALL="$LOC" PATH="$caminho" GH_STUB_DIR="$FIX/gh" \
         GIT_CEILING_DIRECTORIES="$FIX" STUB_VF_RC="${CASO_VF_RC:-99}" DEPLOY_MONITOR_STATE="$CASO_ESTADO" \
         bash "$MON/scripts/monitor-deploy.sh" "$@" 2>&1); RC=$?
 }
@@ -324,6 +356,20 @@ suite() {
        "NAO_CONSEGUI_MEDIR (CLONE_RASO)" "PR_FORA_DO_AR" --pr 1 "$(U "$C5")"
   caso prrevert  "squash na história, mas revertido depois: no ar, COM o aviso" "$CREV" 0 \
        "PR_NO_AR;AVISO_REVERT_POSTERIOR" "" --pr 1 "$(U "$C9")"
+  echo "  TESTE — teste em src/ só é inerte com PROVA (grafo de módulos + palavras do content do Tailwind)"
+  caso prteste   "PR só de teste (4->3 no mapa, o #2547) + docs: sem alcance, COM a prova" "$CLONE" 3 \
+       "PR_FORA_DO_AR;PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE;PR_ALCANCE_NAO_PROVADO" --pr 10 "$(U "$C5")"
+  caso prtesteimp "teste IMPORTADO pelo app continua ALCANCA (o negativo)" "$CLONE" 3 \
+       "PR_FORA_DO_AR;PR_TOCA_O_BUNDLE;src/__tests__/fixture.ts;TESTE_ALCANCA MODULO" \
+       "PR_SEM_ALCANCE_NO_BUNDLE;PR_ALCANCE_NAO_PROVADO" --pr 11 "$(U "$C5")"
+  caso prtestetw "palavra nova num teste que ninguém importa: o Tailwind a lê — continua ALCANCA" "$CLONE" 3 \
+       "PR_FORA_DO_AR;PR_TOCA_O_BUNDLE;src/__tests__/gate.test.ts;TESTE_ALCANCA TAILWIND" \
+       "PR_SEM_ALCANCE_NO_BUNDLE;PR_ALCANCE_NAO_PROVADO" --pr 12 "$(U "$C5")"
+  CASO_PY_MUDO=1
+  caso prtestepy "prova sem resposta (python mudo): o teste continua ALCANCA, nunca 'sem alcance'" "$CLONE" 3 \
+       "PR_FORA_DO_AR;PR_TOCA_O_BUNDLE;sem prova positiva" "PR_SEM_ALCANCE_NO_BUNDLE;PR_ALCANCE_NAO_PROVADO" \
+       --pr 10 "$(U "$C5")"
+  CASO_PY_MUDO=""
   echo "  USO — argumento que não se entende é exit 6, nunca veredito"
   caso usoabc    "--pr não numérico" "$CLONE" 6 "USO_INVALIDO" "" --pr abc "$(U "$C5")"
   caso usovazio  "--pr vazio não cai calado no modo igualdade" "$CLONE" 6 "USO_INVALIDO" "sincronizado" --pr "" "$(U "$C5")"
@@ -403,8 +449,9 @@ for LOC in $LOCALES; do
   echo "  [ok ] controle: $PASS casos verdes com o monitor ÍNTEGRO (LC_ALL=$LOC)"
 done
 
-aplica() { # destino (de para)… — cada `de` tem de aparecer EXATAMENTE 1 vez no monitor real
-  python3 - "$SCRIPT_ABS" "$@" <<'PY'
+aplica() { aplica_em "$SCRIPT_ABS" "$@"; }
+aplica_em() { # origem destino (de para)… — cada `de` tem de aparecer EXATAMENTE 1 vez na origem
+  python3 - "$@" <<'PY'
 import sys
 src, dst, pares = sys.argv[1], sys.argv[2], sys.argv[3:]
 txt = open(src, encoding="utf-8").read()
@@ -449,6 +496,56 @@ sabota() { # nome caso-alvo (de para)…
   done
   SO_CASO=""; MON="$CTL"
   PEGAS=$((PEGAS + 1)); printf '  [ok ] pega nos 2 locales (caso %s): %s\n' "$alvo" "$nome"
+}
+# Sabotagem com desfecho PREVISTO (TESTE inerte, 2026-09-26): o caso-alvo tem de ficar vermelho E
+# sair exatamente como previsto — exit e marcas exigidas, sem as proibidas. Vermelho por sintaxe,
+# ou por outro motivo, é teatro. O alvo pode ser o monitor, a prova ou a tabela: a cópia troca os
+# symlinks da prova e da tabela por arquivos, e só a cópia é mutada.
+sabota_prev() { # arquivo-rel nome caso exit exigidas(;) proibidas(;) (de para)…
+  local rel="$1" nome="$2" alvo="$3" pexit="$4" pwant="$5" pnao="$6" sab="$FIX/mon-sab" orig loc
+  shift 6
+  case "$rel" in
+    scripts/monitor-deploy.sh) orig="$SCRIPT_ABS" ;;
+    scripts/alcance-bundle.py) orig="$PROVA_ABS" ;;
+    evals/classify.sh)         orig="$EVALS_ABS/classify.sh" ;;
+    *) printf '  [XX ] alvo de sabotagem desconhecido: %s — %s\n' "$rel" "$nome"; CEGAS=$((CEGAS + 1)); return ;;
+  esac
+  if ! { mondir "$sab" "$SCRIPT_ABS" && rm -f "$sab/scripts/alcance-bundle.py" "$sab/evals/classify.sh" &&
+    cp "$PROVA_ABS" "$sab/scripts/alcance-bundle.py" && cp "$EVALS_ABS/classify.sh" "$sab/evals/classify.sh"; }; then
+    via_caiu "cópia para sabotar"
+  fi
+  if ! aplica_em "$orig" "$sab/$rel" "$@" 2> "$FIX/aplica.err"; then
+    printf '  [XX ] sabotagem NO-OP/AMBÍGUA: %s — %s\n' "$nome" "$(tr '\n' ' ' < "$FIX/aplica.err")"
+    CEGAS=$((CEGAS + 1)); return
+  fi
+  if cmp -s "$sab/$rel" "$orig"; then
+    printf '  [XX ] sabotagem não mudou byte nenhum: %s\n' "$nome"; CEGAS=$((CEGAS + 1)); return
+  fi
+  case "$rel" in
+    *.sh) bash -n "$sab/$rel" 2>/dev/null ;;
+    *.py) python3 -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$sab/$rel" 2>/dev/null ;;
+  esac || { printf '  [XX ] sabotagem quebrou a sintaxe (vermelho pelo motivo errado): %s\n' "$nome"; CEGAS=$((CEGAS + 1)); return; }
+  for loc in $LOCALES; do
+    LOC="$loc"
+    PASS=0; FAIL=0; MON="$CTL"; SO_CASO="$alvo"; suite > /dev/null 2>&1
+    if [ "$FAIL" -ne 0 ] || [ "$PASS" -eq 0 ]; then
+      printf '  [XX ] o caso-alvo "%s" não passa com o monitor ÍNTEGRO (LC_ALL=%s): %s\n' "$alvo" "$loc" "$nome"
+      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; return
+    fi
+    PASS=0; FAIL=0; MON="$sab"; SO_CASO="$alvo"; suite > /dev/null 2>&1
+    if [ "$FAIL" -eq 0 ]; then
+      printf '  [XX ] sabotagem PASSOU DESPERCEBIDA (LC_ALL=%s): %s — caso %s\n' "$loc" "$nome" "$alvo"
+      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; return
+    fi
+    # OUT/RC são os da ÚLTIMA execução do caso-alvo (id único na suíte)
+    if [ "$RC" != "$pexit" ] || ! tem_todas "$OUT" "$pwant" || ! tem_nenhuma "$OUT" "$pnao"; then
+      printf '  [XX ] VERMELHO pelo motivo ERRADO (LC_ALL=%s): %s — previsto exit %s + [%s] sem [%s]; obtido exit %s: %s\n' \
+        "$loc" "$nome" "$pexit" "$pwant" "$pnao" "$RC" "$(printf '%s' "$OUT" | tr '\n' '|' | cut -c1-400)"
+      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; return
+    fi
+  done
+  SO_CASO=""; MON="$CTL"
+  PEGAS=$((PEGAS + 1)); printf '  [ok ] pega nos 2 locales PELO DESFECHO PREVISTO (caso %s): %s\n' "$alvo" "$nome"
 }
 
 # (B) as sabotagens — cada uma arranca UMA decisão do --pr, do estado, da sentinela ou do uso.
@@ -497,6 +594,22 @@ sabota "estado no formato antigo deixa de valer (vira '1a checagem')" semcarimbo
   'if [ -n "$PREV" ] && [ -z "$PREV_TS" ] && [ -z "$PREV_URL" ]; then' 'if false; then'
 sabota "estado volta a ser GLOBAL da máquina" estado \
   '${GITDIR:+$GITDIR/deploy-monitor.state}' '$HOME/.config/afiacao/deploy-monitor.state'
+# TESTE em src/ (2026-09-26): cada decisão arrancada tem desfecho PREVISTO, não só "ficou vermelho"
+sabota_prev evals/classify.sh "tabela sem TESTE: o teste do #2547 volta a ALCANCA pelo nome" prteste \
+  3 "PR_TOCA_O_BUNDLE;src/__tests__/gate.test.ts" "PR_SEM_ALCANCE_NO_BUNDLE;TESTE_ALCANCA" \
+  '  if (teste(p)) return "TESTE"' '  if (0) return "TESTE"'
+sabota_prev scripts/alcance-bundle.py "prova sem o grafo de módulos: o teste IMPORTADO vira 'sem alcance'" prtesteimp \
+  3 "PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE;TESTE_ALCANCA" \
+  '    if no_grafo:' '    if False:'
+sabota_prev scripts/alcance-bundle.py "prova sem as palavras do Tailwind: a palavra nova vira 'sem alcance'" prtestetw \
+  3 "PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE;TESTE_ALCANCA" \
+  '            if pa != pm:' '            if False:'
+sabota_prev scripts/monitor-deploy.sh "teste refutado deixa de continuar ALCANCA (cai em 'não provado')" prtesteimp \
+  3 "PR_ALCANCE_NAO_PROVADO;TESTE_ALCANCA MODULO" "PR_TOCA_O_BUNDLE;PR_SEM_ALCANCE_NO_BUNDLE" \
+  '  if [ "$nt" -gt 0 ]; then' '  if false; then'
+sabota_prev scripts/monitor-deploy.sh "o monitor deixa de contar TESTE: sem prova, o teste some da linha" prtestepy \
+  3 "PR_ALCANCE_NAO_PROVADO;sem prova positiva" "PR_TOCA_O_BUNDLE;PR_SEM_ALCANCE_NO_BUNDLE" \
+  "  nt=\$(printf '%s\\n' \"\$classes\" | awk -F '\\t' '\$1 == \"TESTE\" { n++ } END { print n + 0 }')" '  nt=0'
 }
 sabotagens
 

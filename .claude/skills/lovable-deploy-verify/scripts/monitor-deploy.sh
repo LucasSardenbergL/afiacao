@@ -15,11 +15,14 @@
 #   2. o carimbo resolve para um commit local e ele é ANCESTRAL da main;
 #   3. `git diff --no-renames --name-only ar main` sai 0 e lista ≥1 arquivo (sem --no-renames,
 #      `git mv src/x.ts docs/` apareceria só como `docs/x.ts`);
-#   4. todo arquivo do delta é INERTE (ou package.json) na tabela única de
+#   4. todo arquivo do delta é INERTE, TESTE ou package.json na tabela única de
 #      `evals/classify.sh --bundle` — ALCANCA ou DESCONHECIDO seguram o alarme (lista fechada);
 #   5. `alcance-bundle.py` prova, lendo a main, que nada do bundle importa de fora da tabela de
 #      alcance, que o build é `vite build` puro e, se o package.json mudou, que só mudaram
 #      scripts que o pipeline não executa (build, pre/post e ganchos de install ALCANÇAM).
+#      Com TESTE no delta, prova também que o teste está fora do grafo de módulos e que o texto que
+#      o `content` do Tailwind lê dele tem as mesmas palavras — sem essa resposta positiva o TESTE
+#      CONTINUA ALCANCA (ALCANCA_BUNDLE), nunca "sem alcance" (2026-09-26, `--pr 2547`).
 # Elo sem resposta POSITIVA ⇒ ATRASADO (exit 3) com o motivo numa marca ASCII (linha "motivo:").
 #
 # Sem fetch, NENHUM verde (2026-09-10): o guard do elo 1 vivia só no caminho do exit 5, e com o
@@ -163,16 +166,18 @@ eh_sha() { case "$1" in '' | *[!0-9a-f]*) return 1 ;; esac; [ "${#1}" -eq 40 ] |
 # SHA do ar ≠ SHA da main: prova (ou não) que o delta não alcança o bundle. Nunca retorna.
 TMPD=""
 analisar_delta() {
-  local main_full ar_full anc n drc narq crc resumo cls qtd ex pkg="" prova prc
+  local main_full ar_full anc n drc narq crc resumo cls qtd ex pkg="" prova prc nt=0 motivo=""
   main_full=$(git rev-parse --verify --quiet "$REF_MAIN^{commit}" 2>/dev/null) || main_full=""
   eh_sha "$main_full" || atrasado GIT_FALHOU "origin/main não resolve para um commit"
   ar_full=$(git rev-parse --verify --quiet "${AIR_SHA}^{commit}" 2>/dev/null) || ar_full=""
-  # carimbo de 7 chars do MESMO commit: a comparação de string não enxerga, o SHA cheio sim
-  if [ "$ar_full" = "$main_full" ]; then echo "  ✅ sincronizado: ar serve $AIR_SHA == origin/main"; exit 0; fi
-
   # `<hex>^{commit}` também resolve NOME de ref (um branch chamado "abcdef12"): exija o prefixo
+  # ANTES de qualquer verde. Até 2026-09-26 o atalho do SHA cheio logo abaixo vinha primeiro, e um
+  # branch com o nome do carimbo apontando para a main saía "sincronizado" (achado do Codex na
+  # revisão do TESTE inerte) — a conferência existia, mas depois da porta do exit 0.
   case "$ar_full" in "$AIR_SHA"?*) eh_sha "$ar_full" ;; *) false ;; esac \
     || atrasado CARIMBO_NAO_RESOLVE "o carimbo $AIR_SHA não resolve para um commit local (ambíguo, fora da main ou não buscado)"
+  # carimbo de 7 chars do MESMO commit: a comparação de string não enxerga, o SHA cheio sim
+  if [ "$ar_full" = "$main_full" ]; then echo "  ✅ sincronizado: ar serve $AIR_SHA == origin/main"; exit 0; fi
   git merge-base --is-ancestor "$ar_full" "$main_full" 2>/dev/null; anc=$?
   case "$anc" in
     0) ;;
@@ -198,7 +203,7 @@ analisar_delta() {
   # ou com linha estranha não pode virar "nenhum arquivo alcança o bundle".
   resumo=$(awk -F '\t' -v esperado="$narq" '
     $0 == "FIM_CLASSIFICACAO_BUNDLE " esperado { fim++; next }
-    NF == 2 && $1 ~ /^(ALCANCA|PACKAGE_JSON|INERTE|DESCONHECIDO)$/ {
+    NF == 2 && $1 ~ /^(ALCANCA|TESTE|PACKAGE_JSON|INERTE|DESCONHECIDO)$/ {
       n++; k[$1]++
       if ($1 != "INERTE" && k[$1] <= 3) ex[$1] = ex[$1] (k[$1] > 1 ? ", " : "") $2
       next
@@ -208,26 +213,35 @@ analisar_delta() {
       if (fim != 1 || lixo || n != esperado) { print "MALFORMADO"; exit }
       if (k["ALCANCA"])      { printf "ALCANCA|%d|%s%s\n", k["ALCANCA"], ex["ALCANCA"], (k["ALCANCA"] > 3 ? ", ..." : ""); exit }
       if (k["DESCONHECIDO"]) { printf "DESCONHECIDO|%d|%s%s\n", k["DESCONHECIDO"], ex["DESCONHECIDO"], (k["DESCONHECIDO"] > 3 ? ", ..." : ""); exit }
-      print (k["PACKAGE_JSON"] ? "PACKAGE_JSON" : "INERTE")
+      # TESTE e PACKAGE_JSON são contados À PARTE: um delta com os dois compara o package.json E
+      # prova os testes — eleger uma classe só perderia o --package-json (Codex, 2026-09-26)
+      printf "%s|%d|%s%s\n", (k["PACKAGE_JSON"] ? "PACKAGE_JSON" : "INERTE"), k["TESTE"], ex["TESTE"], (k["TESTE"] > 3 ? ", ..." : "")
     }' "$TMPD/classes")
   IFS='|' read -r cls qtd ex <<< "$resumo"
   case "$cls" in
     ALCANCA)      atrasado ALCANCA_BUNDLE "$qtd arquivo(s) do delta alcançam o bundle: $ex" ;;
     DESCONHECIDO) atrasado SEM_CLASSIFICACAO "$qtd arquivo(s) sem classificação provada (a lista de inertes é fechada): $ex" ;;
-    PACKAGE_JSON) pkg="--package-json" ;;
-    INERTE)       ;;
+    PACKAGE_JSON) pkg="--package-json"; nt=$qtd ;;
+    INERTE)       nt=$qtd ;;
     *)            atrasado CLASSIFY_FALHOU "saída do classify.sh --bundle malformada ou truncada" ;;
   esac
 
   prova=$(PYTHONIOENCODING=utf-8 python3 "$PROVA_PY" --ar "$ar_full" --main "$main_full" \
     --classify "$CLASSIFY" ${pkg:+"$pkg"} 2> "$TMPD/prova.err"); prc=$?
   case "$prc:$prova" in
-    *$'\n'*) atrasado PROVA_INDISPONIVEL "alcance-bundle.py respondeu mais de uma linha" ;;
+    *$'\n'*) motivo="alcance-bundle.py respondeu mais de uma linha" ;;
     "0:PROVA_INERCIA_OK "*) ;; # a ÚNICA porta para o exit 5: exit 0 E a marca positiva
     "1:PACKAGE_JSON_ALCANCA "* | "1:BUILD_NAO_RECONHECIDO "* | "1:ALCANCE_VAZA "*)
       atrasado "${prova%% *}" "${prova#* }" ;;
-    *) atrasado PROVA_INDISPONIVEL "alcance-bundle.py saiu $prc sem prova positiva: ${prova:-$(head -c 160 "$TMPD/prova.err" 2>/dev/null | tr '\n' ' ')}" ;;
+    "1:TESTE_ALCANCA "*) motivo=$prova ;;
+    *) motivo="alcance-bundle.py saiu $prc sem prova positiva: ${prova:-$(head -c 160 "$TMPD/prova.err" 2>/dev/null | tr '\n' ' ')}" ;;
   esac
+  if [ -n "$motivo" ]; then
+    # TESTE só é inerte COM a prova: refutado ou sem resposta, o teste do delta CONTINUA ALCANCA —
+    # a classe que ele tinha antes de 2026-09-26 —, nunca "sem alcance" por ausência de dado
+    [ "$nt" -eq 0 ] || atrasado ALCANCA_BUNDLE "$nt arquivo(s) de teste do delta continuam ALCANCA, sem prova de inércia: $ex — $motivo"
+    atrasado PROVA_INDISPONIVEL "$motivo"
+  fi
 
   echo "  ✅ SINCRONIZADO_EM_BUNDLE (SHA atrás por $n commit(s) sem efeito no frontend): ar serve $AIR_SHA, main em $MAIN_SHA"
   echo "     delta: $narq arquivo(s), nenhum alcança o bundle → Publish desnecessário"
@@ -246,9 +260,10 @@ nao_consegui() { # MARCA mensagem
 curto() { printf '%s' "$1" | cut -c1-9; }
 # Alcance do PRÓPRIO PR (pai..squash) pela MESMA tabela (`classify.sh --bundle`) e pela MESMA prova
 # (`alcance-bundle.py`) do analisar_delta: PR fora do ar que só toca docs não é "Publish pendente".
-# Informativo — nunca muda o exit; sem resposta completa diz PR_ALCANCE_NAO_PROVADO, nunca "sem alcance".
+# Informativo — nunca muda o exit; sem resposta completa diz PR_ALCANCE_NAO_PROVADO, nunca "sem alcance"
+# — salvo teste em src/ (TESTE): sem a prova ele CONTINUA ALCANCA, e a linha é PR_TOCA_O_BUNDLE.
 alcance_do_pr() {
-  local pai lista classes n nb nd np pkg="" prova prc
+  local pai lista classes n nb nd np nt pkg="" prova prc motivo
   pai=$(git rev-parse --verify --quiet "$PR_SQUASH^1^{commit}" 2>/dev/null) \
     || { echo "     PR_ALCANCE_NAO_PROVADO: o squash não tem pai resolvível"; return; }
   # flags em outra ordem DE PROPÓSITO: a sequência no-renames→no-relative do analisar_delta é alvo de sabotagem do
@@ -267,6 +282,7 @@ alcance_do_pr() {
   nb=$(printf '%s\n' "$classes" | awk -F '\t' '$1 == "ALCANCA" { n++ } END { print n + 0 }')
   nd=$(printf '%s\n' "$classes" | awk -F '\t' '$1 == "DESCONHECIDO" { n++ } END { print n + 0 }')
   np=$(printf '%s\n' "$classes" | awk -F '\t' '$1 == "PACKAGE_JSON" { n++ } END { print n + 0 }')
+  nt=$(printf '%s\n' "$classes" | awk -F '\t' '$1 == "TESTE" { n++ } END { print n + 0 }')
   if [ "$nb" -gt 0 ]; then
     echo "     PR_TOCA_O_BUNDLE: $nb de $n arquivo(s) do #$PR alcançam o bundle — para ele, falta Publish: $(printf '%s\n' "$classes" \
       | awk -F '\t' '$1 == "ALCANCA" && k < 3 { printf "%s%s", (k++ ? ", " : ""), $2 }')"
@@ -280,11 +296,23 @@ alcance_do_pr() {
   prova=$(PYTHONIOENCODING=utf-8 python3 "$PROVA_PY" --ar "$pai" --main "$PR_SQUASH" --classify "$CLASSIFY" \
     ${pkg:+"$pkg"} 2>/dev/null); prc=$?
   case "$prc:$prova" in
-    *$'\n'*) echo "     PR_ALCANCE_NAO_PROVADO: alcance-bundle.py respondeu mais de uma linha" ;;
+    *$'\n'*) motivo="alcance-bundle.py respondeu mais de uma linha" ;;
     "0:PROVA_INERCIA_OK "*)
-      echo "     PR_SEM_ALCANCE_NO_BUNDLE: nenhum dos $n arquivo(s) do #$PR alcança o bundle — publicar não muda nada para ele" ;;
-    *) echo "     PR_ALCANCE_NAO_PROVADO: ${prova:-alcance-bundle.py saiu $prc sem prova positiva}" ;;
+      echo "     PR_SEM_ALCANCE_NO_BUNDLE: nenhum dos $n arquivo(s) do #$PR alcança o bundle — publicar não muda nada para ele"
+      return ;;
+    "1:PACKAGE_JSON_ALCANCA "* | "1:BUILD_NAO_RECONHECIDO "* | "1:ALCANCE_VAZA "*)
+      echo "     PR_ALCANCE_NAO_PROVADO: $prova"
+      return ;;
+    *) motivo=${prova:-"alcance-bundle.py saiu $prc sem prova positiva"} ;;
   esac
+  # TESTE só é inerte COM a prova: refutado (TESTE_ALCANCA) ou sem resposta, o teste do PR CONTINUA
+  # ALCANCA — e publicar muda o que o ar serve para ele. O mesmo desfecho de antes de 2026-09-26.
+  if [ "$nt" -gt 0 ]; then
+    echo "     PR_TOCA_O_BUNDLE: $nt de $n arquivo(s) do #$PR alcançam o bundle — para ele, falta Publish: $(printf '%s\n' "$classes" \
+      | awk -F '\t' '$1 == "TESTE" && k < 3 { printf "%s%s", (k++ ? ", " : ""), $2 }') (teste sem prova de inércia: $motivo)"
+    return
+  fi
+  echo "     PR_ALCANCE_NAO_PROVADO: $motivo"
 }
 # Ancestralidade prova que o commit entrou na HISTÓRIA do build, não que o CONTEÚDO sobreviveu: um
 # revert entre o squash e o ar dá PR_NO_AR com a mudança fora do ar. Revert do GitHub cita

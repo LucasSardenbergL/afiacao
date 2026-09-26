@@ -14,7 +14,7 @@
 # Modo --bundle (usado pelo scripts/monitor-deploy.sh): mesma tabela, pergunta mais fina.
 #   Uso:   git diff --no-renames --name-only <ar> <main> | ./classify.sh --bundle
 #   Saída: "<CLASSE>\t<path>" por linha não vazia + "FIM_CLASSIFICACAO_BUNDLE <n>" no fim.
-#   CLASSE = ALCANCA | PACKAGE_JSON | INERTE | DESCONHECIDO (ver a tabela abaixo).
+#   CLASSE = ALCANCA | TESTE | PACKAGE_JSON | INERTE | DESCONHECIDO (ver a tabela abaixo).
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
@@ -26,6 +26,12 @@ set -euo pipefail
 #            para o dist), os configs de build, tsconfig (esbuild/resolução), .env (VITE_* é
 #            inlinado), lockfiles e config de install, patches/, e os globs de `content` do
 #            Tailwind fora de src/ (pages/, components/, app/).
+# TESTE    = teste do vitest em src/: `__tests__/`, `*.{test,spec}.ts(x)` e o setup em src/test/
+#            (os setupFiles do vitest.config). NOME de teste não prova inércia: um módulo do app
+#            pode importá-lo, um glob pode alcançá-lo, e o `content` do Tailwind lê todo
+#            src/**/*.{ts,tsx} como TEXTO — teste com palavra nova pode criar classe no CSS (medido
+#            2026-09-26, #2547). Só vira inerte com a prova do alcance-bundle.py; sem ela, conta
+#            como ALCANCA. No Passo 1 segue frontend (o `alcanca()` abaixo continua casando src/).
 # PACKAGE_JSON = pode ou não alcançar; o Passo 1 conta como frontend (errar para mais custa
 #            uma linha de checklist) e o monitor compara o CONTEÚDO (alcance-bundle.py).
 # INERTE   = PROVADAMENTE fora do build. Lista FECHADA de propósito: path que não está nem
@@ -50,7 +56,12 @@ function inerte(p) {
   if (index(p, "/") != 0) return 0
   return (p ~ /\.md$/ || p ~ /^(vitest|eslint)\.config\./ || p == "knip.json" || p == ".gitignore")
 }
+function teste(p) {
+  if (p !~ /^src\//) return 0
+  return (p ~ /\/__tests__\// || p ~ /\.(test|spec)\.tsx?$/ || p ~ /^src\/test\//)
+}
 function classe(p) {
+  if (teste(p)) return "TESTE"
   if (alcanca(p)) return "ALCANCA"
   if (p == "package.json") return "PACKAGE_JSON"
   if (inerte(p)) return "INERTE"
