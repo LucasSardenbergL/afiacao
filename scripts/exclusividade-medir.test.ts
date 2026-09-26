@@ -15,7 +15,7 @@
  * interpreta e a do binario de verdade, e o laco fecha POR FORA do motor — o mesmo gate, lendo a
  * matriz que a rodada gravou, volta a verde.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -206,8 +206,37 @@ afterAll(() => {
   for (const r of raizes) rmSync(r, { recursive: true, force: true });
 });
 
-function sh(cwd: string, cmd: string, argv: string[]) {
-  const r = spawnSync(cmd, argv, { cwd, encoding: 'utf8' });
+interface Saida {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * `spawn` ASSINCRONO — nunca `spawnSync` para subprocesso que pode demorar.
+ *
+ * O `spawnSync` segura o event loop do worker do vitest pelo tempo INTEIRO do filho, e acima de 60s
+ * o RPC `onTaskUpdate` estoura: o timer vence durante o bloqueio e, quando o loop volta, a fase de
+ * timers roda ANTES da de I/O — o timeout dispara com a resposta ja na fila. Medido isolado
+ * (2026-09-25): `spawnSync('sleep', ['65'])` da rc=1 com 2/2 passando; `await setTimeout(65s)`,
+ * rc=0. Uma rodada do motor sob carga passa de 60s, e ERA ESTE ARQUIVO que fazia o `test` sair
+ * vermelho sem teste falhando — o vermelho que travava a propria medicao do motor (guarda 12).
+ * `spawnSync`s seguidos tambem nao devolvem o loop entre si: montar o fixture e medir viravam UM bloco.
+ */
+function rodar(cmd: string, argv: string[], opts: { cwd: string; env?: NodeJS.ProcessEnv }): Promise<Saida> {
+  return new Promise((ok, falha) => {
+    const filho = spawn(cmd, argv, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    filho.stdout.setEncoding('utf8').on('data', (d: string) => (stdout += d));
+    filho.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d));
+    filho.on('error', falha);
+    filho.on('close', (status) => ok({ status, stdout, stderr }));
+  });
+}
+
+async function sh(cwd: string, cmd: string, argv: string[]): Promise<string> {
+  const r = await rodar(cmd, argv, { cwd });
   if (r.status !== 0) throw new Error(`${cmd} ${argv.join(' ')}: ${r.stderr}`);
   return r.stdout;
 }
@@ -226,7 +255,7 @@ const commitar = (raiz: string, ...argv: string[]) =>
 const ciYml = (gates: string[]) =>
   `jobs:\n  j:\n    steps:\n${gates.map((g) => `      - name: ${g}\n        ${PASSO[g]}`).join('\n')}\n  validate:\n    needs: [j]\n`;
 
-function montarFixture(gates: string[], defs: string): string {
+async function montarFixture(gates: string[], defs: string): Promise<string> {
   const raiz = mkdtempSync(join(tmpdir(), 'excl-motor-'));
   raizes.push(raiz);
   const arquivos: Record<string, string> = {
@@ -246,19 +275,19 @@ function montarFixture(gates: string[], defs: string): string {
     mkdirSync(dirname(join(raiz, p)), { recursive: true });
     writeFileSync(join(raiz, p), c);
   }
-  sh(raiz, 'git', ['init', '-q']);
+  await sh(raiz, 'git', ['init', '-q']);
   // O mapa nasce do proprio gerador do fixture, como o real nasce do `--write`.
-  sh(raiz, 'bun', ['run', 'sonda:fingerprint', '--', '--write']);
-  sh(raiz, 'git', ['add', '-A']);
-  commitar(raiz, '-m', 'fixture');
+  await sh(raiz, 'bun', ['run', 'sonda:fingerprint', '--', '--write']);
+  await sh(raiz, 'git', ['add', '-A']);
+  await commitar(raiz, '-m', 'fixture');
   return raiz;
 }
 
-function medir(raiz: string, argv: string[] = [], extraEnv: Record<string, string> = {}) {
+async function medir(raiz: string, argv: string[] = [], extraEnv: Record<string, string> = {}) {
   const env = { ...process.env, EXCL_TIMEOUT_MS: '60000', ...extraEnv };
-  const r = spawnSync('bun', [MOTOR, ...argv], { cwd: raiz, encoding: 'utf8', env });
-  const status = spawnSync('git', ['status', '--porcelain'], { cwd: raiz, encoding: 'utf8' }).stdout;
-  return { rc: r.status, saida: `${r.stdout ?? ''}${r.stderr ?? ''}`, status };
+  const r = await rodar('bun', [MOTOR, ...argv], { cwd: raiz, env });
+  const status = (await rodar('git', ['status', '--porcelain'], { cwd: raiz })).stdout;
+  return { rc: r.status, saida: `${r.stdout}${r.stderr}`, status };
 }
 
 const lerMatriz = (raiz: string) => JSON.parse(readFileSync(join(raiz, MATRIZ), 'utf8')) as Matriz;
@@ -267,9 +296,9 @@ describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto ab
   let raiz = '';
   let r = { rc: null as number | null, saida: '', status: '' };
   let m: Matriz | null = null;
-  beforeAll(() => {
-    raiz = montarFixture(PADRAO, DEFS_PADRAO);
-    r = medir(raiz);
+  beforeAll(async () => {
+    raiz = await montarFixture(PADRAO, DEFS_PADRAO);
+    r = await medir(raiz);
     m = r.rc === 0 ? lerMatriz(raiz) : null;
   }, 180_000);
   const linha = (id: string) => m?.linhas.find((l) => l.defeito === id);
@@ -282,9 +311,9 @@ describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto ab
 
   // Paridade de invocacao: o CONTROLE e o proprio gate reprovando quando rodado cru — sem ele,
   // "o baseline ficou verde" nao provaria que o motor passou os argumentos.
-  it('roda a invocacao do CI: g:args e g:env ficam verdes no baseline, e reprovam quando crus', () => {
-    expect(spawnSync('bun', ['run', 'g:args'], { cwd: raiz }).status, 'controle: cru reprova').toBe(3);
-    expect(spawnSync('bun', ['run', 'g:env'], { cwd: raiz }).status, 'controle: sem env reprova').toBe(4);
+  it('roda a invocacao do CI: g:args e g:env ficam verdes no baseline, e reprovam quando crus', async () => {
+    expect((await rodar('bun', ['run', 'g:args'], { cwd: raiz })).status, 'controle: cru reprova').toBe(3);
+    expect((await rodar('bun', ['run', 'g:env'], { cwd: raiz })).status, 'controle: sem env reprova').toBe(4);
     expect(m?.baseline.filter((b) => ['g:args', 'g:env'].includes(b.gate)).every((b) => b.verde)).toBe(true);
     // Na linha diligente, e nao na podada: so ela roda o universo inteiro POR CONSTRUCAO — na
     // podada, quem chega a rodar depende da ordem por custo, que e ruido de milissegundo.
@@ -340,43 +369,43 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
     return join(dir, 'n');
   };
 
-  it('BASELINE: RPC na 1a e rc=0 limpo na 2a => VERDE, e a rodada mede ate o fim', () => {
-    const raiz = montarFixture([...ENXUTO, 'g:rpc-flaky'], DEFS_ENXUTO);
-    const r = medir(raiz, ['--defeitos', 'descuidado'], { RPC_CONTADOR: contador() });
+  it('BASELINE: RPC na 1a e rc=0 limpo na 2a => VERDE, e a rodada mede ate o fim', async () => {
+    const raiz = await montarFixture([...ENXUTO, 'g:rpc-flaky'], DEFS_ENXUTO);
+    const r = await medir(raiz, ['--defeitos', 'descuidado'], { RPC_CONTADOR: contador() });
     expect(r.saida).toContain('repetindo UMA vez');
     expect(r.saida).toContain('a repeticao saiu 0 limpo');
     expect(r.rc).toBe(0);
     expect(r.saida).not.toContain('BASELINE-SEM-DADO');
     expect(lerMatriz(raiz).baseline.find((b) => b.gate === 'g:rpc-flaky')?.verde).toBe(true);
-  });
+  }, 180_000);
 
-  it('BASELINE: RPC nas DUAS execucoes => BASELINE-SEM-DADO, e NAO "ja vermelho" — nada e gravado', () => {
-    const raiz = montarFixture([...ENXUTO, 'g:rpc-sempre'], DEFS_ENXUTO);
-    const r = medir(raiz);
+  it('BASELINE: RPC nas DUAS execucoes => BASELINE-SEM-DADO, e NAO "ja vermelho" — nada e gravado', async () => {
+    const raiz = await montarFixture([...ENXUTO, 'g:rpc-sempre'], DEFS_ENXUTO);
+    const r = await medir(raiz);
     expect(r.rc).toBe(1);
     expect(r.saida).toContain('BASELINE-SEM-DADO');
     expect(r.saida).toContain('g:rpc-sempre');
     expect(r.saida).not.toContain('ja vermelho(s) no repo limpo');
     expect(existsSync(join(raiz, MATRIZ))).toBe(false);
     expect(r.status).toBe('');
-  });
+  }, 120_000);
 
-  it('FALSIFICACAO: um teste falhando JUNTO do RPC continua VERMELHO — a guarda nao engole reprova', () => {
-    const raiz = montarFixture([...ENXUTO, 'g:rpc-com-falha'], DEFS_ENXUTO);
-    const r = medir(raiz);
+  it('FALSIFICACAO: um teste falhando JUNTO do RPC continua VERMELHO — a guarda nao engole reprova', async () => {
+    const raiz = await montarFixture([...ENXUTO, 'g:rpc-com-falha'], DEFS_ENXUTO);
+    const r = await medir(raiz);
     expect(r.rc).toBe(1);
     expect(r.saida).toContain('ja vermelho(s) no repo limpo');
     expect(r.saida).toContain('g:rpc-com-falha');
     expect(r.saida).not.toContain('BASELINE-SEM-DADO');
     expect(r.saida).not.toContain('repetindo UMA vez');
-  });
+  }, 120_000);
 
-  it('SOB DEFEITO nao se repete: suspeito invalida a LINHA — nunca um verde que apagaria a deteccao', () => {
+  it('SOB DEFEITO nao se repete: suspeito invalida a LINHA — nunca um verde que apagaria a deteccao', async () => {
     // Defeito que NENHUM outro gate do fixture pega: sem isso a poda por custo (ruidosa entre gates
     // rapidos) decidiria se o gate do RPC chega a rodar, e o teste mediria a ordenacao, nao a guarda.
     const defs = `\n# @origem: fixture\n# @suspeito: g:rpc-sob-defeito\nso-rpc | supabase/functions/fx/outro.ts | s/^nada$/SABOTADO/\n`;
-    const raiz = montarFixture([...ENXUTO, 'g:rpc-sob-defeito'], defs);
-    const r = medir(raiz);
+    const raiz = await montarFixture([...ENXUTO, 'g:rpc-sob-defeito'], defs);
+    const r = await medir(raiz);
     expect(r.rc).toBe(0);
     // A repeticao e EXCLUSIVA do baseline: sob defeito o motor nao gasta a 2a execucao.
     expect(r.saida).not.toContain('repetindo UMA vez');
@@ -385,13 +414,31 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
     expect(linha?.invalido).toContain('AUSENCIA DE DADO');
     // E o gate suspeito NAO entra na matriz nem como verde nem como vermelho.
     expect(linha?.execucoes.some((e) => e.gate === 'g:rpc-sob-defeito')).toBe(false);
-  });
+  }, 120_000);
+});
+
+describe('motor — o harness NAO bloqueia o event loop do worker (o RPC do vitest estoura com >60s de bloqueio)', () => {
+  // A prova e por COMPORTAMENTO, nao por texto: um pulso de 10ms tem de bater DURANTE o `medir()`.
+  // Com `spawnSync` o loop fica parado a rodada inteira, o pulso bate ZERO, e isto fica vermelho —
+  // sem precisar reproduzir os 60s nem a carga que fazem o RPC estourar de verdade.
+  it('o pulso do loop bate enquanto o motor roda', async () => {
+    const raiz = await montarFixture(PADRAO, DEFS_PADRAO);
+    let batidas = 0;
+    const pulso = setInterval(() => batidas++, 10);
+    try {
+      const r = await medir(raiz, ['--dry']);
+      expect(r.rc, r.saida.slice(-600)).toBe(0);
+    } finally {
+      clearInterval(pulso);
+    }
+    expect(batidas).toBeGreaterThan(0);
+  }, 60_000);
 });
 
 describe('motor — WRITE-GUARD: gate que escreve na arvore versionada aborta a rodada', () => {
-  it('no BASELINE: aborta nomeando o gate e o arquivo, restaura, e NAO grava matriz', () => {
-    const raiz = montarFixture([...ENXUTO, 'g:escritor'], DEFS_ENXUTO);
-    const r = medir(raiz);
+  it('no BASELINE: aborta nomeando o gate e o arquivo, restaura, e NAO grava matriz', async () => {
+    const raiz = await montarFixture([...ENXUTO, 'g:escritor'], DEFS_ENXUTO);
+    const r = await medir(raiz);
     expect(r.rc, r.saida.slice(-1500)).toBe(1);
     expect(r.saida).toContain('GATE-ESCREVEU');
     expect(r.saida).toContain('g:escritor');
@@ -402,9 +449,9 @@ describe('motor — WRITE-GUARD: gate que escreve na arvore versionada aborta a 
 
   // `--sem-poda`: sob a poda, o 2o vermelho barato poderia parar a linha ANTES do escritor, e o
   // teste passaria a depender de ruido de milissegundo na ordem por custo.
-  it('na MEDICAO: gate que so escreve sob o defeito tambem aborta, e o alvo sabotado volta', () => {
-    const raiz = montarFixture([...ENXUTO, 'g:escritor-sob-defeito'], DEFS_ENXUTO);
-    const r = medir(raiz, ['--defeitos', 'descuidado', '--sem-poda']);
+  it('na MEDICAO: gate que so escreve sob o defeito tambem aborta, e o alvo sabotado volta', async () => {
+    const raiz = await montarFixture([...ENXUTO, 'g:escritor-sob-defeito'], DEFS_ENXUTO);
+    const r = await medir(raiz, ['--defeitos', 'descuidado', '--sem-poda']);
     expect(r.rc, r.saida.slice(-1500)).toBe(1);
     expect(r.saida).toContain('GATE-ESCREVEU');
     expect(r.saida).toContain('o defeito descuidado');
@@ -414,10 +461,10 @@ describe('motor — WRITE-GUARD: gate que escreve na arvore versionada aborta a 
 
   // `sonda:fingerprint` volta ao conjunto nas duas receitas abaixo: e o gate que PRESCREVE o
   // `regenerar-fingerprints`, e dever de casa sem o gate que o prescreve e fixture sem par no repo.
-  it('receita que escreve FORA das saidas declaradas aborta (o gerador "vazou")', () => {
+  it('receita que escreve FORA das saidas declaradas aborta (o gerador "vazou")', async () => {
     const defs = `# @origem: f\n# @suspeito: g:pega\n# @dever-de-casa: regenerar-fingerprints\nvaza | ${EDGE} | s/^original$/VAZA/\n`;
-    const raiz = montarFixture([...ENXUTO, 'sonda:fingerprint'], defs);
-    const r = medir(raiz);
+    const raiz = await montarFixture([...ENXUTO, 'sonda:fingerprint'], defs);
+    const r = await medir(raiz);
     expect(r.rc, r.saida.slice(-1500)).toBe(1);
     expect(r.saida).toContain('DEVER-DE-CASA-ESCREVEU-FORA');
     expect(r.status, 'arvore restaurada e sem matriz').toBe('');
@@ -425,10 +472,10 @@ describe('motor — WRITE-GUARD: gate que escreve na arvore versionada aborta a 
 
   // O parecer do Codex: presenca textual da sabotagem nao prova persistencia — ela pode virar
   // codigo morto sem sair do arquivo. Por isso o ALVO inteiro e intocavel pela receita.
-  it('receita que mexe no ALVO aborta — o defeito medido tem de ser o declarado, byte a byte', () => {
+  it('receita que mexe no ALVO aborta — o defeito medido tem de ser o declarado, byte a byte', async () => {
     const defs = `# @origem: f\n# @suspeito: g:pega\n# @dever-de-casa: regenerar-fingerprints\nmexe | ${EDGE} | s/^original$/MEXE-NO-ALVO/\n`;
-    const raiz = montarFixture([...ENXUTO, 'sonda:fingerprint'], defs);
-    const r = medir(raiz);
+    const raiz = await montarFixture([...ENXUTO, 'sonda:fingerprint'], defs);
+    const r = await medir(raiz);
     expect(r.rc, r.saida.slice(-1500)).toBe(1);
     expect(r.saida).toContain('DEVER-DE-CASA-ESCREVEU-FORA');
     expect(r.saida).toContain(EDGE);
@@ -437,19 +484,19 @@ describe('motor — WRITE-GUARD: gate que escreve na arvore versionada aborta a 
 });
 
 describe('motor — o que aborta ANTES de gastar o baseline', () => {
-  it('@suspeito que nao e gate bloqueante (typo) aborta', () => {
-    const raiz = montarFixture(PADRAO, `# @origem: f\n# @suspeito: g:lentoo\nd | ${EDGE} | s/^original$/SABOTADO/\n`);
-    const r = medir(raiz);
+  it('@suspeito que nao e gate bloqueante (typo) aborta', async () => {
+    const raiz = await montarFixture(PADRAO, `# @origem: f\n# @suspeito: g:lentoo\nd | ${EDGE} | s/^original$/SABOTADO/\n`);
+    const r = await medir(raiz);
     expect(r.rc).toBe(1);
     expect(r.saida).toContain('SUSPEITO-DESCONHECIDO');
   }, 60_000);
 
-  it('step composto no ci.yml aborta com INVOCACAO-NAO-REPRODUZIVEL', () => {
-    const raiz = montarFixture(PADRAO, DEFS_PADRAO);
+  it('step composto no ci.yml aborta com INVOCACAO-NAO-REPRODUZIVEL', async () => {
+    const raiz = await montarFixture(PADRAO, DEFS_PADRAO);
     const ci = join(raiz, '.github/workflows/ci.yml');
     writeFileSync(ci, readFileSync(ci, 'utf8').replace('run: bun run g:barato', "run: 'bun run g:barato || true'"));
-    commitar(raiz, '-am', 'composto');
-    const r = medir(raiz);
+    await commitar(raiz, '-am', 'composto');
+    const r = await medir(raiz);
     expect(r.rc).toBe(1);
     expect(r.saida).toContain('INVOCACAO-NAO-REPRODUZIVEL');
   }, 60_000);
@@ -468,9 +515,9 @@ describe('motor — CAPTURA: o gate roda com a saida em ARQUIVO, nunca em pipe',
   // sai 1 com `onTaskUpdate` quando a maquina satura). O canal vale pelo merito proprio — arquivo
   // nao tem teto de maxBuffer nem contrapressao de leitor lento.
   // docs/historico/exclusividade-media-outra-coisa.md
-  it('o gate ve fd 1 e fd 2 como arquivo regular — com pipe o baseline dele fica VERMELHO', () => {
-    const raiz = montarFixture(['g:barato', 'g:pega', 'g:canal'], DEFS_CANAL);
-    const r = medir(raiz, ['--defeitos', 'canal']);
+  it('o gate ve fd 1 e fd 2 como arquivo regular — com pipe o baseline dele fica VERMELHO', async () => {
+    const raiz = await montarFixture(['g:barato', 'g:pega', 'g:canal'], DEFS_CANAL);
+    const r = await medir(raiz, ['--defeitos', 'canal']);
     expect(r.rc, r.saida.slice(-2000)).toBe(0);
     expect(r.saida).toMatch(/verde\s+g:canal/);
     expect(r.saida, 'nenhuma das duas pontas da captura pode ser pipe').not.toContain('FIFO');
@@ -493,32 +540,32 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
   // O nascimento, como no repo real: sem matriz o `exclusividade` reprova por MATRIZ_AUSENTE, entao
   // o motor mede primeiro sem ele e ele entra DISPENSADO (a historia que `matriz.def` conta). A
   // segunda rodada, ja com ele verde, deixa na linha `pega` a celula dele — a que a fusao herda.
-  beforeAll(() => {
-    base = montarFixture(['g:barato', 'g:pega'], DEFS);
-    const r1 = medir(base, ['--defeitos', 'pega']);
+  beforeAll(async () => {
+    base = await montarFixture(['g:barato', 'g:pega'], DEFS);
+    const r1 = await medir(base, ['--defeitos', 'pega']);
     if (r1.rc !== 0) throw new Error(`bootstrap 1: o motor saiu ${r1.rc}\n${r1.saida.slice(-1500)}`);
     const m = lerMatriz(base);
     m.dispensados = [{ gate: 'exclusividade', desde: 'fixture', motivo: 'nasce dispensado, como no repo real' }];
     writeFileSync(join(base, MATRIZ), `${JSON.stringify(m, null, 2)}\n`);
     writeFileSync(join(base, '.github/workflows/ci.yml'), ciYml(BASE));
-    sh(base, 'git', ['add', '-A']);
-    commitar(base, '-m', 'bootstrap 1');
-    const r2 = medir(base, ['--defeitos', 'pega']);
+    await sh(base, 'git', ['add', '-A']);
+    await commitar(base, '-m', 'bootstrap 1');
+    const r2 = await medir(base, ['--defeitos', 'pega']);
     if (r2.rc !== 0) throw new Error(`bootstrap 2: o motor saiu ${r2.rc}\n${r2.saida.slice(-1500)}`);
     celulaDaBase = lerMatriz(base).linhas.find((l) => l.defeito === 'pega')?.execucoes.find((e) => e.gate === 'exclusividade') ?? null;
-    sh(base, 'git', ['add', '-A']);
-    commitar(base, '-m', 'bootstrap 2');
+    await sh(base, 'git', ['add', '-A']);
+    await commitar(base, '-m', 'bootstrap 2');
   }, 180_000);
 
   /** Copia do fixture base; `mudar`, se houver, vira commit — o motor exige arvore limpa. */
-  function clonar(mudar?: (raiz: string) => void): string {
+  async function clonar(mudar?: (raiz: string) => void): Promise<string> {
     const raiz = mkdtempSync(join(tmpdir(), 'excl-motor-'));
     raizes.push(raiz);
     cpSync(base, raiz, { recursive: true });
     if (mudar) {
       mudar(raiz);
-      sh(raiz, 'git', ['add', '-A']);
-      commitar(raiz, '-m', 'cenario');
+      await sh(raiz, 'git', ['add', '-A']);
+      await commitar(raiz, '-m', 'cenario');
     }
     return raiz;
   }
@@ -526,19 +573,19 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
   const linhaDe = (raiz: string, id: string) => lerMatriz(raiz).linhas.find((l) => l.defeito === id);
 
   /** O gate REAL, como o CI o roda — o eixo POR FORA do motor. */
-  const gateReal = (raiz: string) => {
-    const r = spawnSync('bun', ['run', 'exclusividade'], { cwd: raiz, encoding: 'utf8', env: { ...process.env, CI: '1', FORCE_COLOR: '0' } });
-    return { rc: r.status, saida: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  const gateReal = async (raiz: string) => {
+    const r = await rodar('bun', ['run', 'exclusividade'], { cwd: raiz, env: { ...process.env, CI: '1', FORCE_COLOR: '0' } });
+    return { rc: r.status, saida: `${r.stdout}${r.stderr}` };
   };
 
   // O CONTROLE de todo vermelho abaixo: no fixture base o gate real e VERDE e o motor o mede como
   // qualquer outro. Sem este verde, um fixture em que o gate real sempre reprova aprovaria tudo.
-  it('CONTROLE: exclusividade verde roda na rodada como qualquer gate — sem aviso, sem recusa, e certifica', () => {
+  it('CONTROLE: exclusividade verde roda na rodada como qualquer gate — sem aviso, sem recusa, e certifica', async () => {
     expect(celulaDaBase, 'o bootstrap deixou a celula do exclusividade na linha pega').not.toBeNull();
-    const raiz = clonar();
-    const antes = gateReal(raiz);
+    const raiz = await clonar();
+    const antes = await gateReal(raiz);
     expect(antes.rc, antes.saida.slice(-1500)).toBe(0);
-    const r = medir(raiz, ['--defeitos', 'pega']);
+    const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-1500)).toBe(0);
     expect(r.saida).not.toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
     expect(r.saida).not.toContain('EXCLUSAO-RECUSADA');
@@ -548,13 +595,13 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(r.saida).toMatch(/\[SO ELE\]\s+g:pega/);
   }, 120_000);
 
-  it('so GATE_NOVO de gate desta rodada: o exclusividade sai, a celula herdada fica DEFASADA, e o ciclo fecha', () => {
-    const raiz = clonar(comGates([...BASE, 'g:novo']));
-    const antes = gateReal(raiz);
+  it('so GATE_NOVO de gate desta rodada: o exclusividade sai, a celula herdada fica DEFASADA, e o ciclo fecha', async () => {
+    const raiz = await clonar(comGates([...BASE, 'g:novo']));
+    const antes = await gateReal(raiz);
     expect(antes.rc, 'o cenario e mesmo o do gate novo').toBe(1);
     expect(antes.saida).toMatch(/REPROVA\s+g:novo\s+GATE_NOVO_SEM_EXCLUSIVIDADE/);
 
-    const r = medir(raiz, ['--defeitos', 'pega']);
+    const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(0);
     expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
     expect(r.saida).toContain('GATE-NOVO-RESOLVIDO g:novo');
@@ -570,61 +617,61 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(m.baseline.find((b) => b.gate === 'exclusividade')?.verde, 'o baseline grava a verdade').toBe(false);
     expect(r.status.trim()).toBe(`M ${MATRIZ}`);
     // O laco fecha POR FORA do motor: o mesmo gate, lendo a matriz que a rodada gravou, sai verde.
-    const depois = gateReal(raiz);
+    const depois = await gateReal(raiz);
     expect(depois.rc, depois.saida.slice(-1500)).toBe(0);
 
     // E a receita que o aviso prescreve devolve o certificado: re-executar SO o excluido limpa a marca.
-    sh(raiz, 'git', ['add', '-A']);
-    commitar(raiz, '-m', 'matriz da rodada sem o exclusividade');
-    const r2 = medir(raiz, ['--defeitos', 'pega', '--gates', 'exclusividade']);
+    await sh(raiz, 'git', ['add', '-A']);
+    await commitar(raiz, '-m', 'matriz da rodada sem o exclusividade');
+    const r2 = await medir(raiz, ['--defeitos', 'pega', '--gates', 'exclusividade']);
     expect(r2.rc, r2.saida.slice(-2000)).toBe(0);
     expect(r2.saida).not.toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
     expect(linhaDe(raiz, 'pega')?.defasados).toBeUndefined();
     expect(r2.saida).toMatch(/\[SO ELE\]\s+g:pega/);
   }, 180_000);
 
-  it('gate novo SEM execucao valida na rodada: o aviso diz que o exclusividade segue vermelho', () => {
-    const raiz = clonar(comGates([...BASE, 'g:novo']));
-    const r = medir(raiz, ['--defeitos', 'nao-casa']);
+  it('gate novo SEM execucao valida na rodada: o aviso diz que o exclusividade segue vermelho', async () => {
+    const raiz = await clonar(comGates([...BASE, 'g:novo']));
+    const r = await medir(raiz, ['--defeitos', 'nao-casa']);
     expect(r.rc, r.saida.slice(-2000)).toBe(0);
     expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
     expect(r.saida).toContain('GATE-NOVO-SEM-EXECUCAO g:novo');
-    expect(gateReal(raiz).rc, 'e o gate real concorda').toBe(1);
+    expect((await gateReal(raiz)).rc, 'e o gate real concorda').toBe(1);
   }, 120_000);
 
-  it('outro gate vermelho junto: ABORTA — a exclusao nunca afrouxa o baseline de outro gate', () => {
-    const raiz = clonar(comGates([...BASE, 'g:novo', 'g:quebrado']));
-    const r = medir(raiz, ['--defeitos', 'pega']);
+  it('outro gate vermelho junto: ABORTA — a exclusao nunca afrouxa o baseline de outro gate', async () => {
+    const raiz = await clonar(comGates([...BASE, 'g:novo', 'g:quebrado']));
+    const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
     expect(r.saida).toContain('ABORTADO: 1 gate(s) ja vermelho(s)');
     expect(r.saida).toContain('  - g:quebrado');
     expect(r.status, 'nada gravado').toBe('');
   }, 120_000);
 
-  it('gate novo FORA da rodada (--gates): ABORTA — a rodada nao grava a execucao que o resolveria', () => {
-    const raiz = clonar(comGates([...BASE, 'g:novo']));
-    const r = medir(raiz, ['--defeitos', 'pega', '--gates', 'g:barato,g:pega,exclusividade']);
+  it('gate novo FORA da rodada (--gates): ABORTA — a rodada nao grava a execucao que o resolveria', async () => {
+    const raiz = await clonar(comGates([...BASE, 'g:novo']));
+    const r = await medir(raiz, ['--defeitos', 'pega', '--gates', 'g:barato,g:pega,exclusividade']);
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
     expect(r.saida).toContain('EXCLUSAO-RECUSADA: GATE-NOVO-FORA-DA-RODADA g:novo');
     expect(r.saida).toContain('  - exclusividade');
     expect(r.status).toBe('');
   }, 120_000);
 
-  it('ancora da raiz quebrada junto do gate novo: ABORTA — o vermelho nao e so dele', () => {
-    const raiz = clonar((x) => {
+  it('ancora da raiz quebrada junto do gate novo: ABORTA — o vermelho nao e so dele', async () => {
+    const raiz = await clonar((x) => {
       comGates([...BASE, 'g:novo'])(x);
       rmSync(join(x, '.github/workflows/auto-merge.yml'));
     });
-    expect(gateReal(raiz).saida, 'o cenario e mesmo o da ancora').toContain('ANCORA-DA-RAIZ-QUEBRADA');
-    const r = medir(raiz, ['--defeitos', 'pega']);
+    expect((await gateReal(raiz)).saida, 'o cenario e mesmo o da ancora').toContain('ANCORA-DA-RAIZ-QUEBRADA');
+    const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
     expect(r.saida).toContain('EXCLUSAO-RECUSADA: ANCORA-QUEBRADA');
     expect(r.status).toBe('');
   }, 120_000);
 
-  it('matriz ilegivel (MATRIZ_AUSENTE): ABORTA — REPROVA alheia a gate novo', () => {
-    const raiz = clonar((x) => writeFileSync(join(x, MATRIZ), '{ nao e json\n'));
-    const r = medir(raiz, ['--defeitos', 'pega']);
+  it('matriz ilegivel (MATRIZ_AUSENTE): ABORTA — REPROVA alheia a gate novo', async () => {
+    const raiz = await clonar((x) => writeFileSync(join(x, MATRIZ), '{ nao e json\n'));
+    const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
     expect(r.saida).toContain('EXCLUSAO-RECUSADA: REPROVA-ALHEIA MATRIZ_AUSENTE');
     expect(r.status).toBe('');
@@ -639,34 +686,34 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
 
   // A fiacao do exit BRUTO no motor: sem ela o criterio "exit 1 nas duas leituras" seria decorativo —
   // nos dois gates de mentira abaixo o JSON diz exatamente o que a exclusao aceitaria.
-  it('baseline que sai 2 (erro do gate) com sonda de GATE_NOVO valida: ABORTA — RC-BASELINE', () => {
-    const raiz = clonar((x) => {
+  it('baseline que sai 2 (erro do gate) com sonda de GATE_NOVO valida: ABORTA — RC-BASELINE', async () => {
+    const raiz = await clonar((x) => {
       comGates([...BASE, 'g:novo'])(x);
       trocarExclusividade('bun scripts/g.ts excl-2-e-json')(x);
     });
-    const r = medir(raiz, ['--defeitos', 'pega']);
+    const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
     expect(r.saida).toContain('EXCLUSAO-RECUSADA: RC-BASELINE');
     expect(r.status).toBe('');
   }, 120_000);
 
-  it('sonda que sai 0 com JSON de GATE_NOVO: ABORTA — RC-SONDA', () => {
-    const raiz = clonar((x) => {
+  it('sonda que sai 0 com JSON de GATE_NOVO: ABORTA — RC-SONDA', async () => {
+    const raiz = await clonar((x) => {
       comGates([...BASE, 'g:novo'])(x);
       trocarExclusividade('bun scripts/g.ts excl-sonda-0')(x);
     });
-    const r = medir(raiz, ['--defeitos', 'pega']);
+    const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
     expect(r.saida).toContain('EXCLUSAO-RECUSADA: RC-SONDA');
     expect(r.status).toBe('');
   }, 120_000);
 
-  it('sonda que TAMBEM fala no stderr: o JSON do stdout chega limpo e a exclusao vale', () => {
-    const raiz = clonar((x) => {
+  it('sonda que TAMBEM fala no stderr: o JSON do stdout chega limpo e a exclusao vale', async () => {
+    const raiz = await clonar((x) => {
       comGates([...BASE, 'g:novo'])(x);
       trocarExclusividade('bun scripts/g.ts excl-sonda-ruidosa')(x);
     });
-    const r = medir(raiz, ['--defeitos', 'pega']);
+    const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(0);
     expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
     // UM fd para os dois canais misturaria o ruido no JSON e mataria a exclusao aqui.
@@ -674,9 +721,9 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(r.saida).not.toContain('EXCLUSAO-RECUSADA');
   }, 120_000);
 
-  it('sonda que ESCREVE na arvore aborta pelo write-guard — a sonda e execucao como qualquer outra', () => {
-    const raiz = clonar(trocarExclusividade('bun scripts/g.ts sonda-escreve'));
-    const r = medir(raiz, ['--defeitos', 'pega']);
+  it('sonda que ESCREVE na arvore aborta pelo write-guard — a sonda e execucao como qualquer outra', async () => {
+    const raiz = await clonar(trocarExclusividade('bun scripts/g.ts sonda-escreve'));
+    const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
     expect(r.saida).toContain('GATE-ESCREVEU');
     expect(r.saida).toContain('a sonda --json do baseline');
@@ -684,9 +731,9 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(readFileSync(join(raiz, 'escrito.txt'), 'utf8')).toBe('original\n');
   }, 120_000);
 
-  it('--dry nao executa nada — nem baseline, nem sonda', () => {
-    const raiz = clonar(comGates([...BASE, 'g:novo']));
-    const r = medir(raiz, ['--dry']);
+  it('--dry nao executa nada — nem baseline, nem sonda', async () => {
+    const raiz = await clonar(comGates([...BASE, 'g:novo']));
+    const r = await medir(raiz, ['--dry']);
     expect(r.rc, r.saida.slice(-1500)).toBe(0);
     expect(r.saida).toContain('--dry: nada foi executado.');
     expect(r.saida).not.toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
@@ -696,9 +743,9 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
 
   // Parecer Codex: com `--ignorar-baseline` outro vermelho seguiria adiante, e "so ele saiu da
   // conta" deixaria de ser verdade. Os dois mecanismos nao se combinam: o manual fica como sempre foi.
-  it('--ignorar-baseline NAO combina com a exclusao: o motor avisa e mede como sempre mediu', () => {
-    const raiz = clonar(comGates([...BASE, 'g:novo']));
-    const r = medir(raiz, ['--defeitos', 'pega', '--ignorar-baseline', '--sem-poda']);
+  it('--ignorar-baseline NAO combina com a exclusao: o motor avisa e mede como sempre mediu', async () => {
+    const raiz = await clonar(comGates([...BASE, 'g:novo']));
+    const r = await medir(raiz, ['--defeitos', 'pega', '--ignorar-baseline', '--sem-poda']);
     expect(r.rc, r.saida.slice(-2000)).toBe(0);
     expect(r.saida).toContain('IGNORAR-BASELINE-SEM-EXCLUSAO');
     expect(r.saida).not.toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
@@ -707,12 +754,12 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(l?.defasados).toBeUndefined();
   }, 120_000);
 
-  it('defeito cujo @suspeito e o excluido: podado, o suspeito NAO roda fora da poda', () => {
-    const raiz = clonar((x) => {
+  it('defeito cujo @suspeito e o excluido: podado, o suspeito NAO roda fora da poda', async () => {
+    const raiz = await clonar((x) => {
       comGates([...BASE, 'g:novo', 'g:pega2'])(x);
       writeFileSync(join(x, 'scripts/exclusividade.d/x.def'), `${DEFS}\n# @suspeito: exclusividade\npoda-suspeito | ${EDGE} | s/^original$/SABOTADO/\n`);
     });
-    const r = medir(raiz, ['--defeitos', 'poda-suspeito']);
+    const r = await medir(raiz, ['--defeitos', 'poda-suspeito']);
     expect(r.rc, r.saida.slice(-2000)).toBe(0);
     expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
     expect(r.saida).toContain('o suspeito de poda-suspeito (exclusividade) saiu da rodada');
