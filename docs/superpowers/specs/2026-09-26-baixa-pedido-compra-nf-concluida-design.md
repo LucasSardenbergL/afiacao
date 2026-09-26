@@ -5,6 +5,13 @@
 > **Status (2026-09-26): proposta, nada implementado; decisões D1/D2 tomadas (§8).** Antes de qualquer escrita no
 > Omie faltam os fatos da §4. Escrito numa sessão de nuvem **sem `psql-ro`, sem Codex e sem acesso à doc do Omie**
 > (domínio bloqueado pela política de rede) — por isso o ritual `/codex` continua obrigatório antes da Fase 1.
+>
+> **Atualização (2026-09-26, sessão local com `psql-ro`, Codex e a doc do Omie):** medição em prod na §13, F1–F3
+> na §14, revisão do desenho na §15, parecer do Codex na §16. **Três resultados mudam o desenho:** (1) **não existe
+> método de API para encerrar PO** — a Fase 1 como "baixa automática via API" não é construível (§14); (2) o
+> "a caminho" do motor **já exclui** a maior parte dos POs etapa 15 que o espelho mostra abertos — a escala da §3
+> mede o espelho, não o motor (§13.4); (3) o espelho é **cego à situação** do PO no Omie, então a lista da Fase 0
+> precisa aprender a situação antes de existir (§15).
 
 ## 1. Pedido do founder
 
@@ -47,6 +54,11 @@ ramo **reconciliar** funciona (o humano já concluiu no Omie e o app só registr
 
 ## 3. Por que é money-path, não só uma tarefa a menos
 
+> ⚠️ **Revisto em §13.4 (medido 2026-09-26):** a premissa de ESCALA desta seção não vale para o estado de hoje. O
+> `estoque_pendente_entrada` gravado pelo `omie-sync-estoque` soma 554 un. onde os POs etapa 15 do espelho somam
+> 13.484, e é zero em 17 de 22 SKUs cujo único PO aberto tem NF concluída. O mecanismo da dupla contagem continua
+> possível (o caso âncora de 08-13 existiu), mas o resíduo medido hoje tem teto de ~165 un. em 28 SKUs.
+
 Medição de 2026-08-13 (psql-ro): **244 de 584 POs abertas (etapa 15) da Oben já tinham NF concluída** e seguiam
 contando como "a caminho" — no caso âncora (`WJOI.7666GL`) o motor comprou o mínimo em vez de repor. A etapa só
 sai de 15 quando um humano fecha o PO, e `nQtdeRec` é 0 em 100% dos itens (o Omie nunca soube do vínculo).
@@ -74,6 +86,10 @@ associação nativa, o Omie volta a ser fonte confiável do "a caminho" e o ledg
 
 ## 4. Fatos a confirmar antes de qualquer escrita no Omie
 
+> **Respondidos em §14 (2026-09-26).** F1: não há método de API para encerrar PO. F2: o vínculo nativo existe
+> (`nIdItPedido`) e é usado neste tenant. F3: a associação nativa leva o PO a "Faturado pelo Fornecedor" e
+> "Recebido"; o `cEtapa` resultante continua a medir na 1ª ocorrência. F4: §13.
+
 - **F1 — Qual chamada baixa um PO, e com que efeito.** A doc da API (`app.omie.com.br/api/v1/produtos/pedidocompra/`)
   e a central de ajuda estão bloqueadas pela rede desta sessão. Indícios de que "Encerrado" é estado de primeira
   classe: o filtro `lExibirPedidosEncerrados` do `PesquisarPedCompra`, o tópico de webhook
@@ -93,6 +109,10 @@ associação nativa, o Omie volta a ser fonte confiável do "a caminho" e o ledg
 
 ## 5. Pré-requisito descoberto: `ENCERRADO` não existe no enum
 
+> **Medido em §13.2:** o enum em prod também não tem `ENCERRADO`, mas o bug está **latente** (último run 0 erros,
+> nenhum PO em etapa 80). E a §13.4 indica que encerrar **não muda o `cEtapa`** neste tenant — o ramo `"80"` pode
+> nunca disparar. O enum continua necessário quando o `status` passar a vir da situação do Omie (§15).
+
 `mapPedidoToRow` traduz a etapa `80` em `status='ENCERRADO'` (`omie-sync-pedidos-compra/index.ts:544`), mas o enum
 `status_pedido_compra` só tem `CRIADO`, `FATURADO`, `EM_TRANSPORTE`, `RECEBIDO`, `CANCELADO` e `DIVERGENCIA`
 (`supabase/schema-snapshot.sql:175-182`; os tipos gerados em `src/integrations/supabase/types.ts` concordam).
@@ -107,6 +127,10 @@ abertos. **Correção antes da Fase 1:** `ALTER TYPE public.status_pedido_compra
 em prod: logs da edge `omie-sync-pedidos-compra` com `invalid input value for enum` e a M7.
 
 ## 6. Desenho em fases
+
+> ⚠️ **Revisto em §15 (2026-09-26):** a Fase 1 abaixo pressupunha um método de API de encerramento, e ele não
+> existe (§14). A automação real passa a ser a associação nativa no recebimento (Fase 2), e a Fase 0 ganha um
+> pré-requisito: o espelho aprender a situação do PO no Omie. O texto abaixo fica como registro da proposta.
 
 **Fase 0 — fila "PO para baixar" (sem escrita no Omie).** Lista na área de Compras com cada PO aberto no Omie cuja
 NF já foi concluída, a classe de cobertura (§7) e o necessário para baixar à mão (nº do PO, contrato, NF, itens
@@ -185,6 +209,7 @@ Fail-closed: dado ausente nunca vira 0; `ambigua` nunca baixa; somar várias NFs
 Rodar com `~/.config/afiacao/psql-ro -X -v ON_ERROR_STOP=1 -f <arquivo>`; a saída tem que terminar em
 `FIM-MEDICAO-OK` (sem o marcador, o wrapper pode sair 0 com ERROR). Validadas em PostgreSQL 16 local com o DDL do
 `schema-snapshot.sql` e dados sintéticos (cada linha e classe esperada apareceu); **não** rodadas em prod.
+**Rodadas em prod em 2026-09-26 — resultados na §13.**
 
 ```sql
 \echo === M1 backlog: etapa do PO no Omie x NF concluida (t4)
@@ -295,6 +320,10 @@ PO encerrado se o bug da §5 estiver ativo: o upsert falha e a linha fica com a 
 
 Chip é perecível (vive na sessão que o criou). Se nenhum dos dois foi clicado, recrie a partir daqui.
 
+> **Desfecho (2026-09-26):** os dois foram clicados. O 1º é a sessão local que escreveu as §13–§16 e o plano da
+> Fase 0 (`docs/superpowers/plans/2026-09-26-baixa-po-fase-0.md`); o 2º virou a sessão "Consertar divergência e
+> importação de NF-e na conferência".
+
 **Este spec ainda não está na main:** o branch `claude/laughing-darwin-ycgmbm` ficou sem PR de propósito — no fecho
 a main estava vermelha no `sonda:fingerprint` (commits "Changes" do Lovable, conserto em
 `LucasSardenbergL/afiacao#2579`) e um PR aberto ali ficaria parado vermelho. A sessão de continuação traz o
@@ -328,3 +357,240 @@ casa o nome da coluna, decisão sobre itens já presos na fila offline (`offline
 porquê de o typecheck não ter pegado; (b) importação por chave com caminho gateado por staff
 (`authorizeCronOrStaff`) que consulta o Omie (`ConsultarRecebimento` por `cChaveNFe`) e importa com dedupe por
 `chave_acesso`, sem expor o `x-webhook-secret` ao cliente, respeitando o "consumo redundante" e os gates de edge.
+
+## 13. Medição em prod (2026-09-26, sessão local — `psql-ro`)
+
+Cada arquivo rodou com `~/.config/afiacao/psql-ro -X -v ON_ERROR_STOP=1 -f <arquivo>` e terminou em `exit 0` **com**
+o marcador `FIM-MEDICAO-OK`. Um arquivo com erro de cast (`text = bigint`) saiu `exit 3` **sem** o marcador, foi
+corrigido e re-rodado — é o marcador que separa os dois casos. Leitura entre ~10:30Z e ~11:30Z.
+
+**13.0 Higiene da janela `94cb988..eec8598` (passo 0 do chip).** As 3 migrations de terceiros estão aplicadas: as
+postcondições `DO $post$` delas, reescritas como `SELECT`, deram todas `t`. `authz:claude-ro:prod`: 38 asserções,
+exit 0. No ledger (`pendencias:deploy`), `sync-reprocess` e `whatsapp-inbound` conferem. `omie-sync-estoque` estava
+em P1 (v1.1 → v1.2) e foi deployado por outra sessão às 10:03Z (o histórico do Lovable mostra os 7 hashes de
+`314c7bb4` conferidos); a atestação no ledger espera o próximo eco. `tint-sync-agent` está fora do mapa (sem
+`versao.ts`) e foi deployado por outra sessão às 10:09Z (3 hashes de `4af29b7f`). A testemunha no banco — runs com
+`promocao_status` preenchido — não tem dado ainda: nenhum run desde o merge (sábado).
+
+### 13.1 M1–M7 (verbatim da §10)
+
+| medida | resultado |
+|---|---|
+| M1 etapa × NF concluída (663 POs reais OBEN) | etapa 15: **273 com NF** + 388 sem · etapa 10: 1 + 1 · **nenhuma outra etapa** (nem 70, 80 ou 90) |
+| M2 contrato nas POs etapa 15 | 329 com fornecedor Sayerlack nomeado, 100% com contrato. 332 com `fornecedor_nome` vazio (305 com contrato, 27 sem): o nome só é gravado quando uma NF casa, e por mês "nome vazio" = "sem NF" exatamente |
+| M3 contrato em >1 PO | 7 contratos com 2 POs cada, todos etapa 15 (V4 abaixo) |
+| M4 sombra das 273 | `cheia` 192 · `parcial` 68 · `sem_item_casado` 13 (as ressalvas da §10 valem) |
+| M5 NFs órfãs em 90 d | Sayerlack **42** (+1 do cadastro "- FUB"); outros 14 fornecedores com 1 a 5 cada |
+| M6 webhook do Omie em 30 d | **0 eventos**, em qualquer tópico → gatilho só por polling |
+| M7 sync de POs | `pedidos_compra/oben` `complete` às 10:15Z · `pedidos_compra_full/oben` `complete` às 06:16Z |
+
+### 13.2 Extras: enum, `status`, cobertura
+
+- **X0 — enum em prod** = `{CRIADO,FATURADO,EM_TRANSPORTE,RECEBIDO,CANCELADO,DIVERGENCIA}`, sem `ENCERRADO`.
+- **X2/X3 — o bug da §5 está latente, não ativo.** A resposta da edge em `net._http_response` (10:15Z) traz 134 POs,
+  `"erros":0`, `"varredura_completa":true` e janela de previsão 2026-07-28 → 2027-01-24. Nenhum PO está em etapa 80.
+- **X1 — `status` tem dois writers e oscila.** Etapa 15 → `CRIADO` 654, `FATURADO` 5, `RECEBIDO` 2. O sync de POs
+  reescreve `CRIADO` a cada run (`status` fora do `PRESERVE_FIELDS`, `omie-sync-pedidos-compra/index.ts:497`) e o
+  `omie-sync-nfes-recebidas` escreve `FATURADO`/`RECEBIDO`/`CANCELADO` (`index.ts:274-277`). Nenhum leitor em `src/`.
+  As views `v_pedidos_em_aberto` (`status <> ALL ('RECEBIDO','CANCELADO')`) e `v_leadtime_por_grupo` não têm
+  consumidor (varredura de 2026-09-26).
+- **X5 — `infcpl_raw` e `numero_pedido_fornecedor`: 0 de 867 linhas.** O fallback pelo texto `Pedido: NNN` exigiria
+  captura nova.
+- **Cobertura do sync de NFs começa em 2026-01-19** (menor `t2` do espelho; menor `t4` 2026-01-23). Todo PO de
+  jun–dez/2025 está "sem NF" por **falta de observação**, não por falta de recebimento.
+- O espelho de POs é Sayerlack em 655 de 663 linhas (os outros 8 são de 4 fornecedores).
+
+### 13.3 Os 661 POs etapa 15 em grupos
+
+Valor = Σ `nValTot` dos itens, só para previsão dentro da janela que o `omie-sync-estoque` lê (−365 d / +120 d).
+Lead time Oben medido: mediana 10 d, p95 18 d, máximo 39 d (`omie-sync-estoque/index.ts:192`).
+
+| grupo | regra | POs | na janela | R$ na janela |
+|---|---|---|---|---|
+| A | NF concluída (`t4`) | 273 | 273 | 786 mil |
+| A2 | NF só faturada (`t2` sem `t4`) | 56 | 56 | 106 mil |
+| B1 | sem NF, PO anterior à cobertura (`t1` < 2026-01-19) | 259 | 139 | 466 mil |
+| B2 | sem NF, coberto, previsão vencida > 40 d | 57 | 57 | 216 mil |
+| C | sem NF, no prazo | 16 | 16 | 21 mil |
+
+- **V1 — origem no app:** 510 dos 661 não têm pedido do app ligado por `omie_pedido_compra_id` (PO manual com
+  contrato digitado, ou anterior ao registro do id). 3 POs cujo pedido no app está `cancelado`/`cancelado_humano`
+  seguem etapa 15 no Omie.
+- **V2 — `nQtdeRec > 0` em 0 de 2.930 itens.** Confirma a spec de 08-13 em escala: o Omie não soube de nenhum
+  recebimento por associação desses POs.
+
+### 13.4 ⚠️ O "a caminho" do motor já exclui a maior parte desses POs
+
+A §3 (vinda de 08-13) **deduziu** que PO etapa 15 com `nQtdeRec = 0` conta cheio no "a caminho". Medido hoje contra
+a **saída real** do `omie-sync-estoque` — `sku_estoque_atual.estoque_pendente_entrada`, gravado pelo run das 09:40Z
+com `"pendente_confiavel":true` e `"pendente_problemas":0` (resposta em `net._http_response`) e marcador
+`reposicao_pendente_po` `complete`:
+
+| recorte: SKUs habilitados, POs etapa 15 com previsão na janela | resultado |
+|---|---|
+| Σ quantidade dos POs no espelho | 13.484 un. em 191 SKUs |
+| Σ `estoque_pendente_entrada` gravado | **554 un.** |
+| SKUs cujo único PO aberto é do grupo A | 22: pendente **0 em 17**, = quantidade do PO em 1, outro valor em 4 |
+| SKUs cujo único PO aberto é do grupo B1 / B2 | 9 / 6: pendente **0 em todos** |
+| SKUs com pendente > quantidade em trânsito real (A2 + C) | 28 SKUs, **165 un.** de excesso |
+| caso âncora de 08-13 (SKU `8689791246`) | pendente 8, contra dezenas de POs etapa 15 no espelho (PO 575 em diante) |
+
+**Mecanismo (inferência forte, a confirmar):** o estoque pede o `PesquisarPedCompra` com
+`lExibirPedidosRecebidos/Cancelados/Encerrados: "F"` (`omie-sync-estoque/index.ts:276-282`); o espelho pede tudo
+`"T"` (`omie-sync-pedidos-compra/index.ts:432-438`) e não guarda a situação — o `cabecalho_consulta` tem 21 chaves e
+nenhuma é situação. Com `nQtdeRec = 0` em 100% dos itens (nada recebido por associação), o que sai do conjunto
+aberto só pode estar **encerrado ou cancelado no Omie com o `cEtapa` ainda em 15**. Confirmação: `PesquisarPedCompra`
+com um `lExibir*` por vez sobre os mesmos POs, ou o founder confirmar que a equipe encerra POs à mão.
+
+**Consequências:**
+1. A escala da §3 ("244/584", "273") mede o **espelho**, não o motor. O resíduo de money-path medido hoje tem teto de
+   **~165 un. em 28 SKUs** — é teto porque inclui POs de outros fornecedores para o mesmo SKU, que o espelho não tem.
+2. **O espelho é cego à situação.** M1 e M4 contam como aberto PO já encerrado ou cancelado. Uma lista "Pedidos para
+   baixar" montada sobre o espelho de hoje seria quase toda falso-positivo (§15).
+3. Se encerrar não muda o `cEtapa` neste tenant, o ramo `etapa === "80"` da §5 pode nunca disparar.
+4. Quantos POs com NF concluída continuam **abertos no Omie** — o backlog real da D2 — a medição não diz. Só sai
+   depois que o espelho aprender a situação.
+
+### 13.5 Órfãs, vínculo nativo e contratos duplicados
+
+- **O1 — o `xPed` das órfãs se perde.** Das 42 órfãs Sayerlack em 90 d, só **4** guardam itens: `insertOrfa`
+  recebe o item da **listagem** (`nfe`), não o detalhe do `ConsultarRecebimento` que a edge acabou de buscar
+  (`omie-sync-nfes-recebidas/index.ts:589`).
+- **O2/O3 — órfãs Sayerlack com itens (4, mais 1 do "- FUB"):** 26 itens, 26 com `xPed` numérico, **21 com
+  `nIdItPedido` > 0**. Os 6 `xPed` distintos (2106598 a 2128158) caem dentro da faixa dos contratos do espelho
+  (1998741 a 2132932), e **nenhum** bate com contrato, número ou código de integração de PO do espelho, nem sem
+  zeros à esquerda.
+- **O6 — a associação nativa É usada neste tenant.** Nas órfãs com itens guardados (287 itens, 20 fornecedores),
+  **101** têm `itensCabec.nIdItPedido` > 0, no mesmo espaço de id do `nCodItem` dos POs (12,03–12,17 bi contra
+  11,90–12,19 bi), e **nenhum** aponta para item de PO do espelho, que é quase só Sayerlack. Isso corrige a §9.1 da
+  spec de 08-13 ("nenhuma tabela do espelho guarda `nIdPedido`/`nIdItPedido`"): o `raw_data` das órfãs antigas guarda.
+- **V4 — os 7 contratos em 2 POs:** 3 **duplicados** (mesmos produtos: 1032/1049 com 5 de 6 em comum, 1037/1048
+  com 8 de 8, 1038/1050 com 1 de 1 — PO recriado, o antigo segue etapa 15); 3 **divididos** (produtos disjuntos:
+  769/770, 812/813, 1163/1181); 1 misto (651/654).
+- **"1 NF por PO" mistura campos:** 1217 e 1229 têm o mesmo `nid_receb` (12186754504) e `nfe_numero` diferentes.
+
+### 13.6 Reprodução da §13.4 (o teste decisivo)
+
+```sql
+WITH po_item AS (
+  SELECT (pi->>'nCodProd')::text AS sku, (pi->>'nQtde')::numeric AS qtde,
+         CASE WHEN pot.t4_data_recebimento IS NOT NULL THEN 'A'
+              WHEN pot.t2_data_faturamento IS NOT NULL THEN 'A2'
+              WHEN pot.t1_data_pedido < '2026-01-19' THEN 'B1'
+              WHEN pot.data_previsao_original < now() - interval '40 days' THEN 'B2'
+              ELSE 'C' END AS grupo
+  FROM purchase_orders_tracking pot
+  CROSS JOIN LATERAL jsonb_array_elements(pot.raw_data->'produtos_consulta') pi
+  WHERE pot.empresa = 'OBEN' AND pot.omie_codigo_pedido > 0
+    AND pot.raw_data->'cabecalho_consulta'->>'cEtapa' = '15'
+    AND pot.data_previsao_original BETWEEN now() - interval '365 days' AND now() + interval '120 days'
+), por_sku AS (
+  SELECT sku, min(grupo) AS grupo, count(DISTINCT grupo) AS n_grupos, sum(qtde) AS q
+  FROM po_item GROUP BY sku
+)
+SELECT p.grupo AS unico_grupo, count(*) AS skus,
+       count(*) FILTER (WHERE e.estoque_pendente_entrada = 0) AS pend_zero,
+       count(*) FILTER (WHERE abs(e.estoque_pendente_entrada - p.q) < 0.001) AS pend_igual_po
+FROM por_sku p
+JOIN sku_parametros sp ON sp.empresa = 'OBEN' AND sp.sku_codigo_omie::text = p.sku
+                      AND sp.habilitado_reposicao_automatica
+JOIN sku_estoque_atual e ON e.empresa = 'OBEN' AND e.sku_codigo_omie::text = p.sku
+WHERE p.n_grupos = 1
+GROUP BY p.grupo ORDER BY p.grupo;
+```
+
+## 14. F1–F3 respondidos (2026-09-26)
+
+### F1 — não existe método de API para encerrar um PO
+
+- **Doc oficial do `pedidocompra`** (`https://app.omie.com.br/api/v1/produtos/pedidocompra/`, lida em 2026-09-26)
+  tem 6 métodos: `AlteraPedCompra`, `ConsultarPedCompra`, `ExcluirPedCompra`, `IncluirPedCompra`,
+  `PesquisarPedCompra` e `UpsertPedCompra`. Nenhum encerra, cancela ou baixa.
+- `cEtapa` só existe no `cabecalho_consulta` ("Etapa atual do pedido de compra"). Os cabeçalhos de escrita
+  (`cabecalho_alterar`, `cabecalho_incluir`, `cabecalho_upsert`) não a aceitam. `cEmailAprovador` (só em
+  `incluir`/`upsert`) "atribui a etapa de aprovação com o status de aprovado": é aprovação, não encerramento.
+- **Lista oficial de serviços** (`https://developer.omie.com.br/service-list/`): a área de compras tem só
+  `requisicaocompra`, `pedidocompra`, `recebimentonfe`, `compras-resumo`, `comprador` e `formaspagcompras`. O
+  serviço de etapas (`pedidoetapas`) é de pedido de **venda**.
+- **Encerrar é ação de interface** (ajuda "Encerrando um Pedido de Compra",
+  `https://ajuda.omie.com.br/pt-BR/articles/8999236-encerrando-um-pedido-de-compra`): irreversível; só para quem
+  tem permissão de aprovar; só para PO em aprovação ou aprovado; exige "Motivo do Encerramento" (observação
+  opcional, editável depois). A semântica é compra que **não vai prosseguir** (fornecedor melhor, compra cancelada),
+  não "recebido".
+- ⇒ A Fase 1 como "baixa automática via API" **não é construível**. Mesmo por interface, encerrar grava "compra
+  abandonada" onde houve recebimento — o histórico de compras do Omie passa a mentir.
+
+### F2 — o vínculo nativo NF↔PO existe e é usado neste tenant
+
+- **Doc do `recebimentonfe`** (`https://app.omie.com.br/api/v1/produtos/recebimentonfe/`, 8 métodos:
+  `AlterarEtapaRecebimento`, `AlterarRecebimento`, `AlterarRecebimentoConcluido`, `ConcluirRecebimento`,
+  `ConsultarRecebimento`, `ExcluirRecebimento`, `ListarRecebimentos`, `ReverterRecebimento`): `itensCabec` traz
+  `nIdPedido` ("ID do Pedido de Compra") e `nIdItPedido` ("ID do Item do Pedido"). O `AlterarRecebimento` associa
+  por item em `itensRecebimentoEditar.itensIde[]` com `{nSequencia, cAcao: "ASSOCIAR-PEDIDO", nIdPedidoExistente,
+  nIdItPedidoExistente}`.
+- **Só enquanto a NF está pendente.** O `AlterarRecebimentoConcluido` aceita só `ide` + `infoAdicionais` (categoria,
+  conta, data de registro, projeto, comprador). A ajuda confirma: "Se a NF-e já tiver sido recebida, será necessário
+  reverter o recebimento". Para o backlog, o caminho nativo seria `ReverterRecebimento` → associar →
+  `ConcluirRecebimento`, que desfaz e refaz estoque e contas a pagar da nota.
+- **Dado guardado (§13.5):** 101 de 287 itens de recebimento têm `nIdItPedido` > 0, de 20 fornecedores. A associação
+  é usada na Oben, só não nas NFs Sayerlack casadas por contrato (`nQtdeRec = 0` em 100%).
+- **Por que a Sayerlack não vincula sozinha.** O Omie liga a NF ao PO na importação quando o fornecedor preenche
+  `xPed`/`nItemPed` com o pedido do comprador (ajuda "Preenchendo o xPed e o nItemPed",
+  `https://ajuda.omie.com.br/pt-BR/articles/498834-preenchendo-o-xped-e-o-nitemped`). A Sayerlack preenche o `xPed`
+  com o **protocolo dela**, que o nosso PO guarda em `cContrato`. E o disparo deixa o `cNumPedido` ("Nº do Pedido
+  do Fornecedor") em branco de propósito (`disparar-pedidos-aprovados/index.ts:1182-1185`): 661 de 663 POs com
+  `cNumPedido` vazio.
+- **Sonda S2** (`omie-sonda-recebimento` sobre os POs 1205, 1217 e 1037): resultado na §14.1 quando o disparo chegar.
+
+### F3 — o que acontece com o PO
+
+- **Associação nativa** (ajuda "Associando a NF-e do Fornecedor com um Pedido de Compra",
+  `https://ajuda.omie.com.br/pt-BR/articles/1429543-associando-a-nf-e-do-fornecedor-com-um-pedido-de-compra`):
+  associação parcial → PO "Recebido Parcialmente"; todos os itens da nota associados nas quantidades exatas →
+  "Faturado pelo Fornecedor"; ao concluir a NF → "Recebido". Existe também "Faturado Parcialmente"
+  (`lExibirPedidosFatParciais`).
+- **Encerrar → "Encerrado"**, irreversível. "Recebido", "Cancelado" e "Encerrado" deixam o PO só-leitura (ajuda
+  "Consultando os Pedidos de Compra que já cadastrei").
+- **O `cEtapa` resultante continua sem número.** A doc não publica o mapa etapa↔situação, a Oben customiza etapas
+  (15 = Aprovado) e a §13.4 indica que a situação muda **sem** mudar o `cEtapa`. Risco concreto para a Fase 2: o
+  `omie-sync-estoque` só soma etapa 15 e **ignora** etapa desconhecida (`omie-sync-estoque/index.ts:430-433`). Se a
+  associação parcial trocar o `cEtapa`, o saldo ainda não recebido some do "a caminho" e o motor recompra. Medir na
+  1ª associação real (PO de baixo valor com entrega parcial) antes de qualquer automação.
+
+## 15. Revisão do desenho (2026-09-26, pós-medição)
+
+1. **Escala.** O defeito de money-path existe e é pequeno hoje (§13.4). A frente se justifica mais pela higiene do
+   Omie (PO recebido sair do aberto sem trabalho manual) e pela prevenção estrutural (associação nativa) do que por
+   compra suprimida em volume. Medir o resíduo por SKU entra na Fase 0.
+2. **Pré-requisito novo: o espelho aprende a situação.** O `omie-sync-pedidos-compra` passa a consultar por
+   partição de situação e grava em **coluna dedicada com 1 writer** (`situacao_omie`, `situacao_vista_em`). Sem
+   isso a lista mostra PO já encerrado como "para baixar". O custo em chamadas deve ficar perto do atual, porque as
+   partições somam o mesmo conjunto — medir.
+3. **`status` passa a vir da situação, com 1 writer.** Hoje ele oscila entre dois writers (§13.2). Proposta: o sync
+   de POs vira writer único de `status`, derivado da situação (com `ENCERRADO` no enum), e o
+   `omie-sync-nfes-recebidas` deixa de escrever `status` — o sinal da NF já tem colunas próprias (`t2`, `t4`,
+   `nid_receb`).
+4. **Classes novas no classificador (§7):** `ja_fechado_no_omie` (nada a fazer; hoje a maioria); `vencido_sem_nf`
+   (grupo B2: fila humana — pode ser NF órfã ou pedido que não veio); `nao_observado` (grupo B1: "não sei", nunca
+   "sem evidência"); e `ambigua` com subtipo `duplicado` (mesmos produtos) ou `dividido` (produtos disjuntos).
+5. **A Fase 1 deixa de ser "baixa via API".** Vira a fila humana da Fase 0, com o necessário para encerrar no Omie
+   (motivo sugerido: "Recebido pela NF nnn, sem associação") — decisão D3.
+6. **A Fase 2 é a associação nativa antes de concluir a NF.** Duas vias, nesta ordem: (i) **H-xPed** — preencher o
+   `cNumPedido` com o protocolo no disparo e ver, em 1 PO real, se o Omie vincula sozinho na importação (custo quase
+   zero; se funcionar, o Omie passa a baixar e a preencher `nQtdeRec` sem escrita nossa no recebimento); (ii)
+   `AlterarRecebimento` com `ASSOCIAR-PEDIDO` nas NFs pendentes cujo `xPed` casa com um contrato (escrita no
+   recebimento, reversível enquanto pendente). Nas duas, o bloqueio é o F3: o `cEtapa` depois da associação parcial.
+7. **Órfãs sem `xPed`.** A persistência do item de NF (bloco `receipt`/`receipt_item`) guarda o detalhe do
+   `ConsultarRecebimento` que a edge já busca — inclusive para a órfã.
+
+**Decisões novas para o founder:**
+
+- **D3 — Backlog:** encerrar à mão (irreversível, motivo "recebido") ou reverter + associar + concluir (pesado,
+  mexe em estoque e contas a pagar)? Recomendação: encerrar à mão, guiado pela lista, só PO `cheia` com situação
+  aberta no Omie.
+- **D4 — Testar H-xPed em 1 PO real:** preencher o `cNumPedido` no disparo de 1 pedido Sayerlack de baixo valor e
+  observar a importação da NF.
+
+## 16. Parecer do Codex (ritual de desenho, money-path)
+
+_Pendente — registrado aqui ao fim do ritual._
