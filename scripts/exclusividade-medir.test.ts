@@ -16,13 +16,23 @@
  * matriz que a rodada gravou, volta a verde.
  */
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { ExecucaoGate, Matriz } from './lib/exclusividade';
+import { BINARIOS_DAS_DEPS, type ExecucaoGate, type Matriz } from './lib/exclusividade';
 
 const MOTOR = resolve('scripts/exclusividade-medir.ts');
 const GATE_REAL = resolve('scripts/exclusividade-gate.ts');
@@ -255,7 +265,22 @@ const commitar = (raiz: string, ...argv: string[]) =>
 const ciYml = (gates: string[]) =>
   `jobs:\n  j:\n    steps:\n${gates.map((g) => `      - name: ${g}\n        ${PASSO[g]}`).join('\n')}\n  validate:\n    needs: [j]\n`;
 
-async function montarFixture(gates: string[], defs: string): Promise<string> {
+/** Um binario de mentira: `#!/bin/sh` + o corpo, com o modo pedido (o `+x` e parte do que se mede). */
+function binFalso(dir: string, nome: string, corpo: string, modo = 0o755): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, nome), `#!/bin/sh\n${corpo}\n`);
+  chmodSync(join(dir, nome), modo);
+}
+
+/**
+ * As deps do fixture: os binarios que a guarda 13 do motor sonda, respondendo `--version` como os
+ * reais. Sem eles o motor aborta por DEPS-NAO-INSTALADAS em qualquer cenario — como a ancora da raiz.
+ */
+function instalarDeps(raiz: string): void {
+  for (const b of BINARIOS_DAS_DEPS) binFalso(join(raiz, 'node_modules/.bin'), b, `echo "${b}/1.0.0 fixture"`);
+}
+
+async function montarFixture(gates: string[], defs: string, deps: (raiz: string) => void = instalarDeps): Promise<string> {
   const raiz = mkdtempSync(join(tmpdir(), 'excl-motor-'));
   raizes.push(raiz);
   const arquivos: Record<string, string> = {
@@ -264,6 +289,8 @@ async function montarFixture(gates: string[], defs: string): Promise<string> {
     '.github/workflows/ci.yml': ciYml(gates),
     // A 2a ponta da ancora da raiz: sem ela o `exclusividade` REAL reprova por ANCORA em qualquer cenario.
     '.github/workflows/auto-merge.yml': '# mergeia quando o required check `validate` passa\n',
+    // O `node_modules` fica fora da arvore versionada, como no repo real — senao a guarda 1a (arvore suja) o acusaria.
+    '.gitignore': 'node_modules/\n',
     'scripts/exclusividade.d/x.def': defs,
     [EDGE]: 'linha 1\noriginal\nlinha 3\n',
     [VERSAO]: 'export const VERSAO = "v1.0-fx";\n',
@@ -275,6 +302,7 @@ async function montarFixture(gates: string[], defs: string): Promise<string> {
     mkdirSync(dirname(join(raiz, p)), { recursive: true });
     writeFileSync(join(raiz, p), c);
   }
+  deps(raiz);
   await sh(raiz, 'git', ['init', '-q']);
   // O mapa nasce do proprio gerador do fixture, como o real nasce do `--write`.
   await sh(raiz, 'bun', ['run', 'sonda:fingerprint', '--', '--write']);
@@ -500,6 +528,92 @@ describe('motor — o que aborta ANTES de gastar o baseline', () => {
     expect(r.rc).toBe(1);
     expect(r.saida).toContain('INVOCACAO-NAO-REPRODUZIVEL');
   }, 60_000);
+});
+
+describe('[deps-instaladas] motor — guarda 13: sem as deps o motor ABORTA antes de gastar, e so resposta POSITIVA passa', () => {
+  /**
+   * Os MESMOS binarios num diretorio do PATH, respondendo versao — o estado medido em 2026-09-25:
+   * `bun run tsc --version` com o `node_modules` VAZIO saiu 0 com a versao de um `tsc` do PATH. Uma
+   * sonda por NOME aprovaria todo cenario de aborto abaixo; so a sonda pelo caminho LOCAL aborta.
+   * O CONTROLE roda com o MESMO PATH: a unica variavel entre ele e os abortos e o `node_modules`.
+   */
+  let path = '';
+  beforeAll(() => {
+    const globais = mkdtempSync(join(tmpdir(), 'excl-path-'));
+    raizes.push(globais);
+    for (const b of BINARIOS_DAS_DEPS) binFalso(globais, b, `echo "${b} 9.9.9 GLOBAL"`);
+    path = `${globais}:${process.env.PATH ?? ''}`;
+  });
+  const medirComPath = (raiz: string, argv: string[] = []) => medir(raiz, argv, { PATH: path });
+  const trocarTsc = (corpo: string, modo?: number) => (raiz: string) => {
+    instalarDeps(raiz);
+    binFalso(join(raiz, 'node_modules/.bin'), 'tsc', corpo, modo);
+  };
+
+  it('CONTROLE: com as deps respondendo, o motor segue ate o fim — baseline, defeito e matriz', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO);
+    const r = await medirComPath(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(0);
+    expect(r.saida).not.toContain('DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('baseline (repo limpo');
+    expect(existsSync(join(raiz, MATRIZ))).toBe(true);
+  }, 120_000);
+
+  it('node_modules EXISTENTE e VAZIO (o incidente): aborta com a marca ASCII, nomeia os 4, e nem planeja', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO, (x) => mkdirSync(join(x, 'node_modules')));
+    const r = await medirComPath(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('ABORTADO: DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('rode bun install');
+    for (const b of BINARIOS_DAS_DEPS) expect(r.saida).toContain(`node_modules/.bin/${b} --version: ENOENT`);
+    // Casavel por `grep` sem `-i` e sem locale: o bloco inteiro e ASCII imprimivel.
+    const bloco = r.saida.slice(r.saida.indexOf('ABORTADO: DEPS-NAO-INSTALADAS'));
+    expect(bloco).toMatch(/^[\n\x20-\x7e]*$/);
+    expect(r.saida, 'abortou antes do plano').not.toContain('plano:');
+    expect(r.saida, 'e antes do baseline').not.toContain('baseline (repo limpo');
+    expect(existsSync(join(raiz, MATRIZ))).toBe(false);
+    expect(r.status).toBe('');
+  }, 120_000);
+
+  // `--dry` nos abortos abaixo e de proposito: a guarda roda ANTES do plano (o `--dry` e o pre-voo),
+  // e com ela sabotada o motor sai 0 no `--dry` em vez de pagar uma rodada — o vermelho chega barato.
+  it('presente mas CALADO: rc 0 sem versao no stdout ABORTA — existencia nao e resposta', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO, trocarTsc('exit 0'));
+    const r = await medirComPath(raiz, ['--dry']);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('ABORTADO: DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('node_modules/.bin/tsc --version: saiu 0 SEM versao');
+    expect(r.saida, 'so o quebrado e acusado').not.toContain('node_modules/.bin/vite');
+  }, 60_000);
+
+  it('versao no stdout com rc != 0 ABORTA — a resposta so vale com o exit 0', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO, trocarTsc('echo "Version 5.8.3"; exit 1'));
+    const r = await medirComPath(raiz, ['--dry']);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('ABORTADO: DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('node_modules/.bin/tsc --version: saiu 1');
+  }, 60_000);
+
+  it('presente SEM bit de execucao ABORTA — presente nao e executavel', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO, trocarTsc('echo "tsc/1.0.0 fixture"', 0o644));
+    const r = await medirComPath(raiz, ['--dry']);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('ABORTADO: DEPS-NAO-INSTALADAS');
+    expect(r.saida).toContain('node_modules/.bin/tsc --version: EACCES');
+  }, 60_000);
+
+  // A lista e FIXA porque a fonte que a derivaria — o proprio `node_modules` — e o que pode faltar.
+  // Ela nao apodrece calada: e, por construcao, o que os scripts do `package.json` REAL chamam como
+  // comando E o `.bin` REAL fornece. Binario a mais faria a guarda exigir o que o `bun install` nao
+  // instala (e o conselho da mensagem viraria mentira); a menos, uma dep que ninguem sonda.
+  it('a lista e EXATAMENTE o que os scripts do package.json REAL chamam do node_modules/.bin', () => {
+    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> };
+    const noBin = new Set(readdirSync('node_modules/.bin'));
+    const comandos = Object.values(scripts).flatMap((s) =>
+      s.split(/&&|\|\||[;|()\n]/).map((seg) => seg.trim().replace(/^(?:\w+=\S*\s+)+/, '').split(/\s+/)[0]),
+    );
+    expect([...new Set(comandos.filter((c) => noBin.has(c)))].sort()).toEqual([...BINARIOS_DAS_DEPS].sort());
+  });
 });
 
 const DEFS_CANAL = `
