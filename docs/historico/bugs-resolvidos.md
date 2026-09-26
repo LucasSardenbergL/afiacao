@@ -393,6 +393,19 @@ corrigir o de-para **não** conserta pedido já gerado (grupo/itens são congela
 Foi a causa de o incidente durar 7 dias — o de-para foi corrigido em 24/07 00:24 e o retry das
 00:27 falhou idêntico. Hoje resolve-se cancelando; vale frente própria se reincidir.
 
+**Adendo 2026-09-25 — a própria guarda era NULL-blind** (migration `20260925210332` ⚠️ apply
+manual). O predicado usava `status_envio_portal = 'erro_nao_retentavel'` dentro de `NOT(...)`: com
+a coluna NULL, `NOT(NULL)` é NULL e o pedido **saudável** aprovado-aguardando-disparo saía do
+`em_transito` — o inverso exato do #1276, e em escala (todo pedido aprovado ainda não disparado).
+Latente: 0 NULL em 589 linhas (DEFAULT `'nao_aplicavel'`), mas a coluna é nullable. Conserto
+`IS NOT DISTINCT FROM`, o mesmo do #2536 na irmã `gerar_pedidos_oportunidade_ciclo`. O harness
+ganhou um **controle na mesma invocação** (a versão da PROD tem de vazar o S7 antes de o conserto
+entrar), o F5 (volta o `=` e exige o vazamento) e o F6 (a postcondição aborta a migration com `=` e
+o `BEGIN/COMMIT` faz rollback). Lição de método: com a postcondição na fixture, a falsificação
+comportamental ficava vermelha **pela camada errada** (a postcondição barrava antes de o motor
+rodar) — o `falsifica` passou a cortar após `$function$;`, uma camada por vez. E o F6 mostrou que
+um 2º check (`LIKE '%= ''erro…''%'`) era inalcançável com uma ocorrência só: saiu.
+
 ## Bug de código chegava rotulado como "vendáveis indisponíveis" — e o resíduo de snapshot que ficou (2026-08-19)
 
 Os dois findings [P2] que o challenge Codex (gpt-5.6-sol, xhigh) sobre o sensor de head do Farmer
