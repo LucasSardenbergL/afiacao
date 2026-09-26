@@ -135,6 +135,7 @@ escreve src/lib/usa-alias.ts 'import { j } from "@edge/janela"; export const a =
 ALIAS_BASE=$(commit alias-base)
 escreve supabase/functions/_shared/janela.ts 'export const j = 4;'; ALIAS=$(commit alias)
 g branch deadbee1 "$BASE"   # ref com cara de SHA: `deadbee1^{commit}` resolve o BRANCH
+g branch deadbee3 "$SO_DOCS"   # a mesma ref, apontando para a MAIN: resolvia no atalho do exit 0
 if ! { g remote add origin "$O" && g push -q origin 'refs/tags/*:refs/tags/*'; }; then
   echo "❌ push do fixture falhou"; exit 2
 fi
@@ -183,6 +184,7 @@ cenario() {
     ref_main_ambigua) echo "$BASE $SRC ref_ambigua" ;;
     carimbo_alheio)   echo "deadbee2 $SO_DOCS -" ;;
     carimbo_e_branch) echo "deadbee1 $SO_DOCS -" ;;
+    carimbo_branch_main) echo "deadbee3 $SO_DOCS -" ;;
     alias_inerte)     echo "$ALIAS_BASE $ALIAS -" ;;
     carimbo_duplo)    echo "$BASE $SO_DOCS carimbo_duplo" ;;
   esac
@@ -217,6 +219,7 @@ fetch_refspec_estreito|3|motivo: ALCANCA_BUNDLE
 ref_main_ambigua|3|motivo: ALCANCA_BUNDLE
 carimbo_alheio|3|motivo: CARIMBO_NAO_RESOLVE
 carimbo_e_branch|3|motivo: CARIMBO_NAO_RESOLVE
+carimbo_branch_main|3|motivo: CARIMBO_NAO_RESOLVE
 alias_inerte|3|motivo: ALCANCE_VAZA
 carimbo_duplo|3|motivo: CARIMBO_AMBIGUO'
 
@@ -426,6 +429,12 @@ PY
       '0|sincronizado: ar serve' '"$REF_MAIN^{commit}"' '"origin/main^{commit}"'
     sab prefixo-do-carimbo scripts/monitor-deploy.sh carimbo_e_branch "$VERDE_INDEVIDO" \
       'case "$ar_full" in "$AIR_SHA"?*)' 'case "$ar_full" in ?*)'
+    # a ORDEM: o atalho do SHA cheio de volta para antes do prefixo recria o defeito de até
+    # 2026-09-26 — o branch `deadbee3` apontando para a main vira "sincronizado"
+    sab prefixo-antes-do-atalho scripts/monitor-deploy.sh carimbo_branch_main '0|sincronizado: ar serve' \
+      '  case "$ar_full" in "$AIR_SHA"?*) eh_sha' \
+      '  [ "$ar_full" = "$main_full" ] && { echo "  ✅ sincronizado: ar serve $AIR_SHA == origin/main"; exit 0; }
+  case "$ar_full" in "$AIR_SHA"?*) eh_sha'
     sab marca-positiva scripts/monitor-deploy.sh python_mudo "$VERDE_INDEVIDO" \
       '"0:PROVA_INERCIA_OK "*) ;;' '"0:"*) ;;'
     # o helper também exige a marca de fim do classificador: sem o guard do monitor, o mudo cai

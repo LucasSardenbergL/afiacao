@@ -167,12 +167,14 @@ analisar_delta() {
   main_full=$(git rev-parse --verify --quiet "$REF_MAIN^{commit}" 2>/dev/null) || main_full=""
   eh_sha "$main_full" || atrasado GIT_FALHOU "origin/main não resolve para um commit"
   ar_full=$(git rev-parse --verify --quiet "${AIR_SHA}^{commit}" 2>/dev/null) || ar_full=""
-  # carimbo de 7 chars do MESMO commit: a comparação de string não enxerga, o SHA cheio sim
-  if [ "$ar_full" = "$main_full" ]; then echo "  ✅ sincronizado: ar serve $AIR_SHA == origin/main"; exit 0; fi
-
   # `<hex>^{commit}` também resolve NOME de ref (um branch chamado "abcdef12"): exija o prefixo
+  # ANTES de qualquer verde. Até 2026-09-26 o atalho do SHA cheio logo abaixo vinha primeiro, e um
+  # branch com o nome do carimbo apontando para a main saía "sincronizado" (achado do Codex na
+  # revisão do TESTE inerte) — a conferência existia, mas depois da porta do exit 0.
   case "$ar_full" in "$AIR_SHA"?*) eh_sha "$ar_full" ;; *) false ;; esac \
     || atrasado CARIMBO_NAO_RESOLVE "o carimbo $AIR_SHA não resolve para um commit local (ambíguo, fora da main ou não buscado)"
+  # carimbo de 7 chars do MESMO commit: a comparação de string não enxerga, o SHA cheio sim
+  if [ "$ar_full" = "$main_full" ]; then echo "  ✅ sincronizado: ar serve $AIR_SHA == origin/main"; exit 0; fi
   git merge-base --is-ancestor "$ar_full" "$main_full" 2>/dev/null; anc=$?
   case "$anc" in
     0) ;;
