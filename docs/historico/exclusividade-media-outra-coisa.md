@@ -966,7 +966,9 @@ cast, e `avaliar()` não olha o campo. Uma matriz de schema futuro é lida como 
 e campo que mude de lugar chega como `undefined` no meio do veredito em vez de recusa — ao contrário de
 `scripts/lib/authz-carimbo.ts`, que valida o carimbo que lê. Não é defeito de corpus (ninguém pegaria, e
 "ninguém pegou" mediria a ausência de validação, não a exclusividade de alguém): é conserto do gate,
-fail-closed, e fica como pendência.
+fail-closed. **Fechado no mesmo dia** — seção "A leitura da matriz virou fail-closed", abaixo. O "ninguém
+pegaria" valia ANTES do conserto; depois dele o defeito entrou no corpus (`matriz-schema-futuro`).
+
 ## A causa raiz do RPC (2026-09-25) — o harness do motor bloqueava o worker
 
 Com o ANSI resolvido, a guarda 12 funcionou no baseline real: reconheceu o RPC colorido (843 arquivos

@@ -750,7 +750,7 @@ export interface Matriz {
 }
 
 /** Por que a matriz NAO pode ser lida. Cada codigo vira REPROVA com o proprio nome. */
-export interface RecusaDaMatriz {
+interface RecusaDaMatriz {
   codigo: 'MATRIZ_AUSENTE' | 'MATRIZ_SCHEMA_INCOMPATIVEL' | 'MATRIZ_MALFORMADA';
   motivo: string;
 }
