@@ -483,4 +483,94 @@ END $$;
 SQL
 
 echo ""
+echo "→ [SIMULADO] em_transito do impacto conta 'disparado_simulado' (par da edge omie-sync-estoque v1.2)…"
+# O on-order e de FONTE UNICA: a edge v1.2 tira do estoque_pendente_entrada os POs 'disparado_simulado' (o
+# dry_run cria PO REAL no Omie); se o em_transito daqui nao os contar, a posicao do impacto os perde (0x).
+MIG_SIM="$REPO_ROOT/supabase/migrations/20260926001425_param_auto_em_transito_conta_disparado_simulado.sql"
+SAB_SIM="$(mktemp -d /tmp/sab-paramsim.XXXXXX)"
+fdef_param() { P -qtA -v ON_ERROR_STOP=1 -c "SELECT md5(pg_get_functiondef(p.oid)) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='atualizar_parametros_numericos_skus'"; }
+exige() {  # $1=rotulo $2=veio $3=esperado — aborta o harness (set -e) no vermelho
+  if [ "$2" = "$3" ]; then echo "OK $1 (=$2)"; else echo "FALHOU $1 — esperado [$3], veio [$2]"; exit 1; fi
+}
+# D1: determinismo — a cadeia REAL aplicada acima reproduz o md5 da funcao viva na PROD (psql-ro 2026-09-26).
+# A trava DO $md5$ do apply manual depende disto.
+exige "D1 md5 local do core = md5 da PROD" "$(fdef_param)" "8a348c85eaa95f0d92eba02baba2c0b9"
+
+# Cenario (SKU F = 1006): fisico 30, pendente 0 — o PO simulado JA fora do pendente, como a edge v1.2 deixa —
+# e um PO 'disparado_simulado' de 20 un hoje, com n. Omie. Params resetados p/ 40/100 a cada run -> sugerido
+# 70/150 = aplicado. Com o PO: pos 50 -> depois 150-50=100, antes 0 (50>40) -> impacto 100x10 = 1000.
+# Sem o PO (0x):       pos 30 -> depois 120,       antes 70           -> impacto  50x10 =  500.
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+WITH pcs AS (
+  INSERT INTO public.pedido_compra_sugerido (empresa, fornecedor_nome, data_ciclo, status, omie_pedido_compra_numero, valor_total, num_skus)
+  VALUES ('OBEN', 'FORN-F', CURRENT_DATE, 'disparado_simulado', '5566', 200, 1) RETURNING id)
+INSERT INTO public.pedido_compra_item (pedido_id, sku_codigo_omie, sku_descricao, qtde_sugerida, qtde_final)
+SELECT id, '1006', 'SKU-F pin diferente', 20, 20 FROM pcs;
+SQL
+impacto_sim() {  # roda o CORE num run NOVO e devolve o impacto_rs do 1006 nesse run (ou AUSENTE)
+  local out
+  out="$(P -qtA -v ON_ERROR_STOP=1 <<'SQL'
+UPDATE public.sku_parametros SET ponto_pedido=40, estoque_maximo=100 WHERE empresa='OBEN' AND sku_codigo_omie=1006;
+DELETE FROM public.reposicao_param_pin WHERE empresa='OBEN' AND sku_codigo_omie='1006';
+SELECT set_config('t.run', gen_random_uuid()::text, false) \g /dev/null
+INSERT INTO public.reposicao_param_auto_run (id, empresa, data_negocio_brt, status)
+  VALUES (current_setting('t.run')::uuid, 'OBEN', DATE '2000-01-01', 'rodando');
+SELECT public.atualizar_parametros_numericos_skus('OBEN', current_setting('t.run')::uuid) \g /dev/null
+SELECT 'IMPACTO=' || COALESCE((SELECT impacto_rs::text FROM public.reposicao_param_auto_log
+  WHERE run_id = current_setting('t.run')::uuid AND sku_codigo_omie='1006'), 'AUSENTE');
+SQL
+)"
+  printf '%s\n' "$out" | sed -n 's/^IMPACTO=//p'
+}
+exige "C1 PROD atual: o PO simulado conta 0x no impacto (o defeito com a edge v1.2)" "$(impacto_sim)" "500"
+
+P -v ON_ERROR_STOP=1 -q -f "$MIG_SIM"
+MD5_PARAM_NOVA="$(fdef_param)"
+echo "  md5 do core novo (esperado na trava do apply manual): $MD5_PARAM_NOVA"
+exige "N1 conserto: o PO simulado conta como a caminho (pos 50)" "$(impacto_sim)" "1000"
+
+# F1 (comportamento): tira o status da lista; corta a postcondicao (uma camada por vez) e fecha o BEGIN.
+sed "s/'disparado','disparado_simulado','concluido_recebido')  -- \[SIMULADO\]/'disparado','concluido_recebido')  -- [SIMULADO]/" "$MIG_SIM" > "$SAB_SIM/F1.full.sql"
+if cmp -s "$MIG_SIM" "$SAB_SIM/F1.full.sql"; then echo "FALHOU F1: sed nao aplicou"; exit 1; fi
+awk '{print} /^\$\$;$/{exit}' "$SAB_SIM/F1.full.sql" > "$SAB_SIM/F1.sql"; echo "COMMIT;" >> "$SAB_SIM/F1.sql"
+P -v ON_ERROR_STOP=1 -q -f "$SAB_SIM/F1.sql"
+exige "F1 sabotagem (sem o status) volta ao 0x" "$(impacto_sim)" "500"
+P -v ON_ERROR_STOP=1 -q -f "$MIG_SIM"
+exige "F1 restaurado: md5 do core novo" "$(fdef_param)" "$MD5_PARAM_NOVA"
+
+# F2..F4 (postcondicao): a migration REAL sabotada tem de ABORTAR com a mensagem certa e, pelo BEGIN/COMMIT,
+# deixar o core novo INTACTO. F3/F4: o codigo revertido com o predicado esperado sobrevivendo SO em comentario.
+post_morde() {  # $1=rotulo $2=arquivo sabotado
+  local rc=0
+  P -v ON_ERROR_STOP=1 -q -f "$2" > "$SAB_SIM/$1.log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ] && grep -q "nao conta disparado_simulado" "$SAB_SIM/$1.log"; then
+    echo "OK $1 postcondicao abortou (rc=$rc)"
+  else
+    echo "FALHOU $1 postcondicao NAO barrou (rc=$rc): $(head -c 300 "$SAB_SIM/$1.log")"; exit 1
+  fi
+  exige "$1 rollback: core novo intacto" "$(fdef_param)" "$MD5_PARAM_NOVA"
+}
+ESP="pcs2.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido')"
+sed "s/'disparado','disparado_simulado','concluido_recebido')  -- \[SIMULADO\] PO real do dry_run/'disparado','concluido_recebido')/" "$MIG_SIM" > "$SAB_SIM/F2.sql"
+sed "s/'disparado','disparado_simulado','concluido_recebido')  -- \[SIMULADO\] PO real do dry_run/'disparado','concluido_recebido')  -- $ESP/" "$MIG_SIM" > "$SAB_SIM/F3.sql"
+sed "s/'disparado','disparado_simulado','concluido_recebido')  -- \[SIMULADO\] PO real do dry_run/'disparado','concluido_recebido')  \/* $ESP *\//" "$MIG_SIM" > "$SAB_SIM/F4.sql"
+for f in F2 F3 F4; do cmp -s "$MIG_SIM" "$SAB_SIM/$f.sql" && { echo "FALHOU $f: sed nao aplicou"; exit 1; }; done
+post_morde "F2-post-sem-status" "$SAB_SIM/F2.sql"
+post_morde "F3-post-status-so-em-comentario-de-linha" "$SAB_SIM/F3.sql"
+post_morde "F4-post-status-so-em-comentario-de-bloco" "$SAB_SIM/F4.sql"
+# CONTROLE da camada: sem as linhas de limpeza, F3/F4 ENGANAM a postcondicao (commitam) — prova que e a
+# limpeza, e nao outro check, que morde.
+for f in F3 F4; do
+  grep -v "^  v_def := regexp_replace(v_def" "$SAB_SIM/$f.sql" > "$SAB_SIM/$f-ctl.sql"
+  [ "$(grep -c 'regexp_replace(v_def' "$SAB_SIM/$f-ctl.sql")" -eq 0 ] || { echo "FALHOU $f-ctl: limpeza nao removida"; exit 1; }
+  rc=0; P -v ON_ERROR_STOP=1 -q -f "$SAB_SIM/$f-ctl.sql" > "$SAB_SIM/$f-ctl.log" 2>&1 || rc=$?
+  exige "$f-ctl sem a limpeza a postcondicao e ENGANADA (commita)" "$rc" "0"
+  P -v ON_ERROR_STOP=1 -q -f "$MIG_SIM"   # o controle commitou o core sabotado: restaura
+done
+
+exige "RST core restaurado = o da migration (md5)" "$(fdef_param)" "$MD5_PARAM_NOVA"
+exige "RST core restaurado conta o PO simulado"    "$(impacto_sim)" "1000"
+rm -rf "$SAB_SIM"
+
+echo ""
 echo "✓ db/test-param-auto.sh — TODOS OS ASSERTS PASSARAM"
