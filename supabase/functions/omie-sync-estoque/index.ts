@@ -328,7 +328,10 @@ async function fetchEmTransitoKeys(
     .from("pedido_compra_sugerido")
     .select("id, omie_pedido_compra_numero")
     .eq("empresa", "OBEN")
-    .in("status", ["aprovado_aguardando_disparo", "disparado", "concluido_recebido"])
+    // [SIMULADO] 'disparado_simulado' é PO real (o dry_run chama IncluirPedCompra). Esta lista TEM de ser a
+    // do 1º ramo da CTE: status que a RPC conta e o sync não exclui = contado 2× (suprime compra); o inverso
+    // = contado 0× (compra dupla). Paridade vigiada em edges-onorder-guardrail.test.ts.
+    .in("status", ["aprovado_aguardando_disparo", "disparado", "disparado_simulado", "concluido_recebido"])
     .gte("data_ciclo", corte.toISOString().slice(0, 10));
   if (error) throw new Error(`em_transito query: ${error.message}`);
   for (const r of (data ?? []) as Array<{ id: string; omie_pedido_compra_numero: string | null }>) {

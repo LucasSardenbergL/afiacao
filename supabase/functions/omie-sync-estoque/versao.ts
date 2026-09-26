@@ -29,7 +29,13 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * Sem bump, a sonda responderia a MESMA string tendo esta fatia subido ou não; e como esta edge
  * NÃO escreve em `fin_sync_log`, a sonda é a única prova de qual bundle está no ar.
  */
-export const VERSAO = "v1.1-deadline-relogio";
+/**
+ * BUMP v1.2 (follow-up Codex do #2549): `fetchEmTransitoKeys` passou a incluir 'disparado_simulado'
+ * (o dry_run da disparar-pedidos-aprovados cria PO REAL no Omie), junto com a mesma mudança na CTE
+ * em_transito de `gerar_pedidos_sugeridos_ciclo` (migration 20260925225004). As duas listas são UMA
+ * fonte: status que a RPC conta e este sync não exclui do pendente vira dupla contagem.
+ */
+export const VERSAO = "v1.2-simulado-a-caminho";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

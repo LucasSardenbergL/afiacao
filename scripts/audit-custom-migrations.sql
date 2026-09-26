@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 557
+-- Total de custom migrations: 558
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -598,7 +598,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260922225500', 'data_health_portal_humano_critico_apos_24h', '20260922225500_data_health_portal_humano_critico_apos_24h.sql'),
   ('20260924120000', 'tint_promote_tombstone_fase5', '20260924120000_tint_promote_tombstone_fase5.sql'),
   ('20260924163250', 'cron_sku_items_2h_proprio', '20260924163250_cron_sku_items_2h_proprio.sql'),
-  ('20260925210332', 'reposicao_em_transito_guarda_fantasma_null_safe', '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql')
+  ('20260925210332', 'reposicao_em_transito_guarda_fantasma_null_safe', '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql'),
+  ('20260925225004', 'reposicao_em_transito_simulado_e_join_grupo_null_safe', '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2415,7 +2416,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('oportunidade_erro_terminal_nao_bloqueia_oferta', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
   ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', ''),
   ('cron_sku_items_2h_proprio', 'cron_job', 'cron', 'afiacao_omie_oben_sku_items_2h', ''),
-  ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4280,7 +4282,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('oportunidade_erro_terminal_nao_bloqueia_oferta', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
   ('data_health_portal_humano_critico_apos_24h', 'function', 'public', '_data_health_compute', ''),
   ('cron_sku_items_2h_proprio', 'cron_job', 'cron', 'afiacao_omie_oben_sku_items_2h', ''),
-  ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
   e.migration,
@@ -4381,6 +4384,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'gerar_pedidos_sugeridos_ciclo', 26, '20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql', '461d0cbdafcd2f7760db1ae10dbd7e0a'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 27, '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql', 'f7eaa40bfca2b43443e676908f66aa57'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 28, '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql', '500ea75a69de21db5e08bbfa346f771a'),
+  ('public', 'gerar_pedidos_sugeridos_ciclo', 29, '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql', '398616d7fde6f91b15fd32874bcfc50b'),
   ('public', 'envio_portal_lock_candidatos', 1, '20260430005120_ac9adac9-3575-4449-9703-2f88ba333c3f.sql', 'bcdd860ddf768655ce2a5d72fe0e02a7'),
   ('public', 'envio_portal_lock_candidatos', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'fd19eefabbdaf5c42ec7d9b8e6a38e7e'),
   ('public', 'envio_portal_lock_candidatos', 3, '20260515010000_99661119-2843-4684-9dba-d21d55bf2ab9.sql', 'b116b7039ef4387546d2b86957b18c50'),

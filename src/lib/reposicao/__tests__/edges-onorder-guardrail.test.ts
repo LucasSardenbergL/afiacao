@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { removerComentarios } from "@/lib/gates/limpeza-fonte";
 
 // Guardrail anti-regressão (MONEY-PATH). O auto-commit "Changes" / deploy do Lovable já
 // reverteu correções nessas edges DUAS vezes: #1076 (revertido por 22d2a4fd, re-aplicado
@@ -84,5 +86,53 @@ describe("guardrail money-path: omie-sync-estoque ('a caminho' do MOTOR, #1072)"
     expect(src, "REGRESSÃO: janela futuro sumiu — motor volta a subestimar a caminho → compra dupla")
       .toMatch(/PEDIDOS_JANELA_FUTURO_DIAS/);
     expect(src).toMatch(/fimJanela/);
+  });
+});
+
+// Fonte ÚNICA do on-order: a CTE em_transito (1º ramo) de gerar_pedidos_sugeridos_ciclo conta um PO por
+// STATUS; o sync tira do estoque_pendente_entrada os POs desses MESMOS status (fetchEmTransitoKeys). Status
+// que só a RPC conta = contado 2× depois do sync (suprime compra necessária); só o sync = 0× (compra dupla).
+// Mordido no follow-up Codex do #2549: 'disparado_simulado' entrou na RPC e não na edge.
+describe("paridade money-path: status do em_transito (RPC) = status excluídos do pendente (omie-sync-estoque)", () => {
+  const ABRE = "CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo";
+  const MIG_DIR = resolve(process.cwd(), "supabase/migrations");
+
+  /** A migration de MAIOR timestamp que recria a função — a que vence em prod (mesma regra da paridade da fixture). */
+  function sqlVivo(): string {
+    const nomes = readdirSync(MIG_DIR)
+      .filter((f) => f.endsWith(".sql") && readFileSync(resolve(MIG_DIR, f), "utf8").includes(ABRE))
+      .sort();
+    expect(nomes.length, `nenhuma migration recria ${ABRE}`).toBeGreaterThan(0);
+    // Comentário SQL de linha fora: o predicado tem de estar no CÓDIGO (nenhum literal da função contém "--").
+    return readFileSync(resolve(MIG_DIR, nomes[nomes.length - 1]), "utf8").replace(/--[^\n]*/g, "");
+  }
+
+  function lista(txt: string): string[] {
+    return [...txt.matchAll(/["']([a-z_]+)["']/g)].map((m) => m[1]).sort();
+  }
+
+  function statusRpc(): string[] {
+    const m = sqlVivo().match(/pcs2\.status IN \(([^)]*)\) AND pcs2\.data_ciclo >=/g);
+    expect(m, "1º ramo da em_transito (pcs2.status IN (...) AND pcs2.data_ciclo >=) não encontrado").not.toBeNull();
+    expect(m!.length, "mais de um 1º ramo casou (extração ambígua)").toBe(1);
+    return lista(m![0].slice(0, m![0].indexOf(")")));
+  }
+
+  function statusEdge(): string[] {
+    const limpo = removerComentarios(edgeSrc("supabase/functions/omie-sync-estoque/index.ts"));
+    const ini = limpo.indexOf("async function fetchEmTransitoKeys");
+    expect(ini, "fetchEmTransitoKeys sumiu da edge").toBeGreaterThanOrEqual(0);
+    const corpo = limpo.slice(ini, limpo.indexOf("\n}\n", ini));
+    const m = corpo.match(/\.in\(\s*"status"\s*,\s*\[([^\]]*)\]/g);
+    expect(m, ".in(\"status\", [...]) não encontrado em fetchEmTransitoKeys").not.toBeNull();
+    expect(m!.length, "mais de um .in(status) em fetchEmTransitoKeys (extração ambígua)").toBe(1);
+    return lista(m![0].slice(m![0].indexOf("[")));
+  }
+
+  it("as duas listas são o MESMO conjunto (e incluem disparado_simulado — PO real do dry_run)", () => {
+    const rpc = statusRpc();
+    expect(rpc, "lista da RPC veio vazia — extração cega").toContain("disparado");
+    expect(rpc, "a RPC não conta 'disparado_simulado' (o dry_run cria PO real no Omie)").toContain("disparado_simulado");
+    expect(statusEdge(), "omie-sync-estoque diverge da em_transito — um status seria contado 2× ou 0×").toEqual(rpc);
   });
 });

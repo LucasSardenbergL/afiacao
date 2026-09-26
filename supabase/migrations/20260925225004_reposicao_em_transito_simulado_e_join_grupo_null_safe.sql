@@ -1,79 +1,41 @@
--- Migration: embalagem econômica DENTRO do motor de pedidos (QT↔GL) + consolidação de estoque de grupo
--- ⚠️ APLICADA MANUALMENTE no SQL Editor do Lovable em 2026-06-26 (NÃO vai em supabase/migrations/ — CLAUDE.md §5;
---     é CREATE OR REPLACE de função existente). Este arquivo é a FONTE versionada + fixture da regressão db/test-embalagem-motor.sh.
--- Spec: docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
--- Money-path. Recria gerar_pedidos_sugeridos_ciclo (pré-flight pg_get_functiondef feito; base = prod 26/06).
+-- ============================================================
+-- Reposição — em_transito passa a contar 'disparado_simulado' + JOIN do grupo deixa de fundir NULL com ''
+-- Money-path (compras). Recria gerar_pedidos_sugeridos_ciclo. ⚠️ NÃO auto-aplica (nome custom) —
+-- colar no SQL Editor do Lovable. Pré-flight: md5(pg_get_functiondef) da PROD em 2026-09-25 =
+-- 105b00098685a697f3fb5c80279ed3fb = o corpo da 20260925210332 (base deste arquivo; md5 reproduzido
+-- no PG17 local). ACL preservado por CREATE OR REPLACE. Follow-up da revisão Codex do #2549.
 --
--- DUAS mudanças cirúrgicas, tudo o mais PRESERVADO:
---   1) CONSOLIDA o estoque no nível do grupo de equivalência (Σ membros: GREATEST(inv,sea) físico + pendente + trânsito).
---      O gatilho passa a olhar o estoque do GRUPO → para de comprar quando há galão parado.
---   2) ESCOLHE a embalagem mais barata por unidade-base (galão), ESTRITO: só troca o quartinho pelo galão
---      quando AMBOS têm preço-app fresco (≤ N dias) + portal-map + catálogo OK, e o galão é estritamente mais barato/base.
---      Senão mantém o quartinho. Custo da linha do galão = preço-app (R$/embalagem), nunca 0.
+-- Defeito 1 (P1 LATENTE — compra dupla): o 1º ramo da em_transito listava só
+--     ('aprovado_aguardando_disparo','disparado','concluido_recebido').
+-- Mas o modo dry_run da edge disparar-pedidos-aprovados CHAMA IncluirPedCompra e CRIA PEDIDO REAL no
+-- Omie, gravando status 'disparado_simulado' (a edge já o trata como sucesso: STATUS_FINAL_SUCESSO em
+-- email-politica.ts; o #2309 já o fez estado pós-disparo no trigger de cancelamento). O 2º ramo exige
+-- omie_pedido_compra_numero IS NULL, então também não o pegava. Resultado: o pedido real SUMIA do
+-- "a caminho" até o sync de estoque enxergá-lo → o motor recomprava. PROD: 0 linhas com esse status
+-- no histórico inteiro (psql-ro 2026-09-25) — latente, não incidente.
+-- Conserto: 'disparado_simulado' entra no 1º ramo, mesma janela de 7 dias. A guarda [FANTASMA] não o
+-- alcança (ela exige status = 'aprovado_aguardando_disparo') — pedido criado no Omie sempre conta.
+-- ⚠️ TEM PAR NA EDGE omie-sync-estoque (fetchEmTransitoKeys, v1.2): ela tira do estoque_pendente_entrada
+-- os POs destes MESMOS status (on-order de fonte única). Só a RPC com o status = contado 2× após o sync
+-- (suprime compra necessária — achado Codex desta revisão); só a edge = contado 0× (compra dupla).
+-- ORDEM: esta migration ANTES do deploy da edge (a janela intermediária erra para o lado recuperável).
+-- Paridade das duas listas: src/lib/reposicao/__tests__/edges-onorder-guardrail.test.ts.
 --
--- Unidade (cravada em prod): qtde_final = nº de EMBALAGENS do SKU; preco_unitario = R$/embalagem; o disparo
--- consome ceil(qtde_final) direto (fator_conversao=1). Quartinho NÃO é tocado (mantém cmc cru).
--- ⚠️ Case: equivalencia/preço_capturado = lower(empresa); parametros/estoque/fornecedor_externo = empresa (upper).
+-- Defeito 2 (P2 LATENTE — item cruzado entre pedidos): o INSERT final ligava item↔cabeçalho por
+--     COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'')
+-- enquanto o GROUP BY do cabeçalho separa NULL de ''. Com dois SKUs do MESMO fornecedor, um sem linha
+-- em sku_grupo_producao (grupo NULL) e outro com grupo '' (o schema não proíbe vazio), nascem 2
+-- cabeçalhos e cada item casa com os DOIS: 4 itens / 16 un em vez de 2 / 8. PROD: 0 grupo_codigo ''
+-- em sku_grupo_producao e em pedido_compra_sugerido; 38 pedidos com grupo NULL (funcionam).
+-- Conserto: pfg.grupo_codigo IS NOT DISTINCT FROM sn.grupo_codigo — a MESMA partição do GROUP BY.
 --
--- Revisão pós-Codex (xhigh) — 6 correções vs. o 1º rascunho:
---   P0-a GREATEST(inventory_position.saldo, sku_estoque_atual): galão parado vive em fontes DIFERENTES por SKU.
---   P0-b em_transito do galão × fator_para_base (2 galões em voo = 8 unidades-base, não 2) → anti double-buy.
---   P1-c âncora NÃO pode ser membro fator>1 (galão) de um grupo → impede 2 linhas do mesmo GL.
---   P1-d anti-duplicidade de oportunidade cobre a âncora E o SKU escolhido (galão).
---   P1-e minimo_forcado_manual respeitado também na troca p/ galão (piso aplicado ANTES de dividir pelo fator).
---   P1-f filtros de catálogo (ativo/tipo 04/família/status omie) aplicados ao MEMBRO escolhido, não só à âncora.
--- Granularidade (P2 Codex, aceito): nº_galões = ceil(necessidade / fator) na escala "unidades-âncora" — NUNCA
---   compra menos que o legado QT (herda o descasamento litros↔embalagem pré-existente, fora de escopo).
---
--- ➕ 2026-06-27 — GATE de estoque-NÃO-CONFIRMADO (money-path; spec 2026-06-27-reposicao-gate-estoque-nao-confirmado).
---   Bug provado: cold-start semeia sku_estoque_atual de omie_products.estoque (82% zerado na OBEN), fonte_sync=
---   'cold_start_seed'. Se o motor roda na janela cold-start→ListarPosEstoque, lê o seed=0 e compra por cima de
---   estoque existente. FIX (Codex consult 019f0968 + ausente≠zero): estoque cuja ÚNICA fonte é cold_start_seed (sem
---   inventory_position) é DESCONHECIDO → o motor SUPRIME a sugestão (nível LINHA e GRUPO) + LOGA em
---   reposicao_estoque_nao_confirmado_log. Zero CONFIRMADO (ListarPosEstoque/0) segue comprando — auto-liberante.
---   ⚠️ Esta fixture é SÓ a função; a tabela de log + RLS vivem na migration formal (e nos harnesses de teste).
---   Migration: supabase/migrations/20260627180000_reposicao_gate_estoque_nao_confirmado.sql (corpo da função idêntico).
---
--- ➕ 2026-07-08 — MARCADOR DE RUN (reposicao_motor_run) — a fila da tela ancora no ÚLTIMO recálculo, NÃO no último
---   recálculo QUE TEVE supressão. Bug: run limpo não grava no log de suprimidos → a mensagem "N fora da compra"
---   grudava por até 24h após o sync já ter confirmado o estoque (Codex 2026-07-08 → Opção 2: fonte-de-verdade, não
---   render). A RPC carimba TODO run (limpo ou não) ao fim; a tela lê o último marker (some quando suprimidos_n=0).
---   Tabela reposicao_motor_run + RLS na migration *_reposicao_motor_run_marker.sql (mesmo padrão do log; corpo idêntico).
---
--- ➕ 2026-07-29 — TETO DE COBERTURA pós-compra (B/C) — spec 2026-07-29-reposicao-teto-cobertura-motor-spec.md.
---   Medido em prod: B/C com R$90k acima do alvo; ~R$25k/tri de compras criando cobertura >90d(B)/60d(C); dente de
---   serra 1↔2 nos CZ. CAP só-reduz no lote do ciclo NORMAL: qtde_final ≤ max(floor(teto·d − estoque_efetivo),
---   piso_de_serviço ceil(pp − estoque_efetivo)) — o cap corta o "encher até o máximo" ACIMA do ponto de pedido,
---   nunca a proteção (pp/ss intactos; a recalibração global de jun/2026 segue enterrada). Pós-Codex xhigh:
---   grupos de embalagem FICAM FORA do cap (estoque consolidado QT+GL ÷ demanda só da âncora = subcompra) · config
---   POR EMPRESA (reposicao_teto_cobertura_<empresa>_{ativa,dias_b,dias_c}; flag nasce false, parse regex-blindado
---   fail-off) · classe efetiva = classe_forcada→classe_abc · minimo_forcado_manual vence o teto · linha capada a
---   ZERO sai do pedido (filtro qtde_final>0 centralizado em skus_inseriveis p/ os DOIS INSERTs) e LOGA em
---   reposicao_teto_cobertura_log · rastro no item (qtde_sem_teto, teto_cobertura_aplicado — forward_buying pode
---   sobrescrever qtde_final DEPOIS: exceção documentada à invariante) · capados_n no marker do run.
---   Tabela do log + colunas novas + config na migration *_reposicao_teto_cobertura_motor.sql (corpo idêntico).
-
--- ➕ 2026-09-04 — MÚLTIPLO DA EMBALAGEM DO PORTAL (litro → balde) — o motor grava qtde_final já na compra FÍSICA.
---   3 SKUs Sayerlack em LITRO no Omie comprados em BALDE de 5 L (sku_fornecedor_externo.fator_conversao=0,2). A edge
---   de envio já normalizava no envio (#2149: 36 L → 8 BB → 40 L); o comprador aprovava 36 e via 40 depois. Agora:
---   CTE portal_fator (ativo, >0, <>1, <1e9; join por fornecedor_nome = o da linha — precisão>recall) → só SKU SEM
---   grupo de equivalência → qtde_final e qtde_sem_teto = trim_scale(round(ceil(round(q×f,6))/f,6)) (espelho de
---   qtdeFisicaOmie(qtdePortal())). qtde_sugerida fica em L (rastro); fator gravado em pedido_compra_item.
---   fator_embalagem_portal (coluna nova; a tela troca "mínimo forçado" por "N embalagens"). Prova PG17
---   db/test-qtde-multiplo-embalagem.sh. Coluna + corpo na migration *_reposicao_qtde_multiplo_embalagem_portal.sql.
-
--- ➕ 2026-09-25 — guarda [FANTASMA] da em_transito NULL-safe: "=" → IS NOT DISTINCT FROM em
---   status_envio_portal. Com "=" e a coluna NULL, NOT(NULL) tirava pedido SAUDÁVEL do em_transito (compra
---   dupla). Latente (0 NULL na PROD, mas nullable). Prova PG17 db/test-em-transito-erro-terminal.sh (S7+F5).
---   Migration *_reposicao_em_transito_guarda_fantasma_null_safe.sql (corpo + postcondição idênticos).
-
--- ➕ 2026-09-25 — follow-up Codex do #2549: (1) em_transito conta 'disparado_simulado' (o dry_run CRIA pedido
---   real no Omie; fora da lista ele sumia do "a caminho" → compra dupla); (2) JOIN item↔cabeçalho por
---   grupo_codigo IS NOT DISTINCT FROM (COALESCE(...,'') fundia NULL com '' e cruzava itens entre 2 cabeçalhos).
---   Ambos latentes na PROD. Prova PG17 db/test-em-transito-erro-terminal.sh (S8/S9 + F7..F11).
---   Migration *_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql (corpo + postcondição idênticos).
---   + BEGIN; aqui (achado Codex, pré-existente): sem ele, o restauro via psql -f commitava o CREATE ANTES
---   do DO $post$ — postcondição reprovada deixava a função reprovada instalada. Agora é atômico como a migration.
+-- NADA mais do corpo é tocado. Prova: db/test-em-transito-erro-terminal.sh (PG17; CONTROLE com a
+-- versão da PROD reproduzindo os dois defeitos → esta versão segurando; falsificações F7/F8/F8b revertem
+-- cada conserto e exigem o defeito de volta; F9/F10 e F9c/F10c provam o dente da postcondição, inclusive
+-- com o predicado esperado sobrevivendo só em comentário).
+-- Fixture viva: db/embalagem-motor-rpc.sql (paridade: embalagem-motor-paridade.test.ts).
+-- Rollback: reaplicar a 20260925210332 (a anterior a recriar esta função).
+-- ============================================================
 
 BEGIN;
 
