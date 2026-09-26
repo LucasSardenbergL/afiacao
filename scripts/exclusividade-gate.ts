@@ -13,6 +13,7 @@
  *   bun run exclusividade -- --json    # veredito estruturado
  *   bun run exclusividade -- --resumo  # a matriz inteira em forma humana
  *   bun run exclusividade -- --ci <arq> # so para falsificacao: le OUTRO ci.yml (ver `caminho`)
+ *   bun run exclusividade -- --matriz <arq> # idem: le OUTRA matriz
  *
  * Exit: 0 sem REPROVA - 1 ha REPROVA (ou a ancora da raiz quebrou) - 2 erro do proprio gate.
  *
@@ -38,8 +39,9 @@ import {
   fonteDoGate,
   gatesCandidatos,
   invocacaoDoCI,
+  lerMatriz,
   resumir,
-  type Matriz,
+  type LeituraDaMatriz,
   type Veredito,
 } from './lib/exclusividade';
 
@@ -52,20 +54,18 @@ const soResumo = args.includes('--resumo');
  * guard que so o vitest exercita e um guard que pode nunca estar LIGADO ao exit code (a via morta
  * classica). Com `--ci`, a suite roda o BINARIO contra um `ci.yml` sabotado e cobra o vermelho de
  * verdade — no mesmo laco em que roda o `ci.yml` REAL e cobra o verde de controle.
+ *
+ * `--matriz` e o mesmo para a LEITURA da matriz (`lerMatriz`), mas la o controle NAO le a matriz real:
+ * se lesse, o `test` viraria segunda porta do defeito `matriz-schema-futuro` do corpus.
  */
 const caminho = (flag: string, padrao: string): string => {
   const i = args.indexOf(flag);
   return i >= 0 && args[i + 1] ? args[i + 1] : padrao;
 };
 
-function ler(): Matriz | null {
-  if (!existsSync(MATRIZ_PATH)) return null;
-  try {
-    return JSON.parse(readFileSync(MATRIZ_PATH, 'utf8')) as Matriz;
-  } catch {
-    // Ilegivel e indistinguivel de ausente para efeito de evidencia — os dois sao fail-closed.
-    return null;
-  }
+function ler(): LeituraDaMatriz {
+  const arq = caminho('--matriz', MATRIZ_PATH);
+  return lerMatriz(existsSync(arq) ? readFileSync(arq, 'utf8') : null);
 }
 
 /** ASCII, caixa fixa, sem acento: e o que a suite de falsificacao casa sem `-i`. */
@@ -99,7 +99,8 @@ function main(): number {
 
   const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> };
   const gates = gatesCandidatos(fonteCI);
-  const matriz = ler();
+  const leitura = ler();
+  const matriz = leitura.ok ? leitura.matriz : null;
 
   const fps = new Map(
     gates.map((g) => {
@@ -121,7 +122,7 @@ function main(): number {
   }
   const opts = { universo: bloqueantesNomes, assinaturas };
 
-  const vereditos: Veredito[] = avaliar(matriz, gates, fps, assinaturas);
+  const vereditos: Veredito[] = avaliar(leitura, gates, fps, assinaturas);
   const opacos = bloqueantesOpacos(fonteCI);
 
   if (comoJson) {
@@ -132,11 +133,11 @@ function main(): number {
   }
 
   if (soResumo) {
-    if (!matriz) {
-      console.error(`sem matriz em ${MATRIZ_PATH}`);
+    if (!leitura.ok) {
+      console.error(`${leitura.codigo}: ${leitura.motivo}`);
       return 2;
     }
-    console.log(resumir(matriz, opts));
+    console.log(resumir(leitura.matriz, opts));
     return 0;
   }
 
@@ -144,7 +145,11 @@ function main(): number {
   const informativos = gates.filter((g) => !g.bloqueiaPR);
   console.log(
     `exclusividade — ${bloqueantes} gate(s) bloqueante(s) no ci.yml` +
-      (matriz ? `, matriz com ${matriz.linhas.length} defeito(s) medida em ${matriz.medidoEm.slice(0, 10)}` : ', SEM matriz'),
+      (leitura.ok
+        ? `, matriz com ${leitura.matriz.linhas.length} defeito(s) medida em ${leitura.matriz.medidoEm.slice(0, 10)}`
+        : leitura.codigo === 'MATRIZ_AUSENTE'
+          ? ', SEM matriz'
+          : `, matriz RECUSADA (${leitura.codigo})`),
   );
   // O contador de informativos existe para o mesmo fim do `bloqueantesSemScript` do gates:frescura:
   // exclusao silenciosa le como cobertura total. `mutation-check` esta fora de `validate.needs` por
