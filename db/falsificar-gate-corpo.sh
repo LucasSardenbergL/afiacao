@@ -110,6 +110,23 @@ exigir('arquivos lidos, ZERO funções extraídas', estado(sonda([ATUAL]), {
   funcoesConhecidas: 0,
 }), 'INCERTA');
 
+// A variante sem as linhas de comentário (2026-09-26): a ANTERIOR menos os comentários é a lógica
+// velha em prod — até esta data caía em DERIVA e liberava (P1 latente apontado pelo Codex).
+// md5('c') e md5('d'): as variantes são hashes DIFERENTES dos corpos exatos, como no caso real.
+const VAR_ATUAL = '4a8a08f09d37b73795649038408b5f33';
+const VAR_VELHO = '8277e0910d750195b448797616e091ad';
+const comVariante = (): CorposEsperados => ({
+  ...historico(),
+  historico: new Map([[
+    'public.criar_pedidos_com_itens',
+    [
+      { migration: ANTIGA, md5: VELHO, md5SemLinhasDeComentario: VAR_VELHO },
+      { migration: NOVA, md5: ATUAL, md5SemLinhasDeComentario: VAR_ATUAL },
+    ],
+  ]]),
+});
+exigir('prod roda a ANTERIOR menos os comentários', estado(sonda([VAR_VELHO]), comVariante()), 'BLOQUEADA');
+
 // ── NÃO-SABOTAGENS: têm de continuar VERDES, senão o gate trava todo deploy ─────────────────────
 // Este bloco é o que separa "o gate discrimina" de "o gate reprova tudo que não é idêntico".
 console.log('\nNÃO-SABOTAGENS (deriva histórica e afins — têm de seguir LIBERADA):');
@@ -122,6 +139,7 @@ exigir('função sem CREATE commitado', estado(sonda([ATUAL]), {
   migrationsLidas: 721,
   funcoesConhecidas: 1,
 }), 'LIBERADA');
+exigir('VARIANTE: prod = última menos as linhas de comentário', estado(sonda([VAR_ATUAL]), comVariante()), 'LIBERADA');
 
 console.log(
   falhas === 0

@@ -1,0 +1,22 @@
+# Invariantes de `removerLinhasDeComentarioDoCorpo` (scripts/lib/sql-comentarios.ts).
+# @src: scripts/lib/sql-comentarios.ts
+# @test: scripts/sql-comentarios.test.ts
+#
+# O reconhecedor alimenta o estado VARIANTE_SEM_COMENTARIOS do gate de deploy (corpo-esperado.ts):
+# uma variante errada pode CASAR com o md5 de prod e virar veredito. O único modo de falha perigoso
+# é remover o que não é linha inteira de comentário em contexto de código — cada mutação abaixo
+# derruba UMA defesa léxica, e a suíte tem de reprovar.
+# (docs/historico/deriva-so-de-comentario-no-corpo.md; desenho do Codex, 2026-09-26)
+
+# CONTROLE+ : nunca remover nada — o controle positivo REAL (md5 medido em prod) tem de reprovar.
+PEGA | controle+: nunca remove linha                | s/if \(soBrancoNaLinha\) remover\.push/if (false) remover.push/
+# A mutação que o Codex exigiu: remover também CÓDIGO real (a linha que tem código antes do `--`).
+PEGA | remove codigo real antes do comentario       | s/if \(soBrancoNaLinha\) remover\.push/if (true) remover.push/
+PEGA | trecho opaco nao marca a linha como conteudo | s/soBrancoNaLinha = false; \/\/ o fecho do trecho/void 0; \/\/ o fecho do trecho/
+PEGA | comentario de bloco deixa de ser opaco       | s/const fimBloco = fechamentoDeBloco\(corpo, i\);/const fimBloco = i + 2;/
+PEGA | literal simples deixa de ser opaco           | s/const fimLiteral = fimDeLiteral\(corpo, i, ligaBarraInvertida\(corpo, i\)\);/const fimLiteral = i + 1;/
+PEGA | E-string sem escape de barra invertida       | s/fimDeLiteral\(corpo, i, ligaBarraInvertida\(corpo, i\)\)/fimDeLiteral(corpo, i, false)/
+PEGA | identificador quotado deixa de ser opaco     | s/const fimIdentificador = fimDeIdentificador\(corpo, i\);/const fimIdentificador = i + 1;/
+PEGA | dollar-quote deixa de ser opaco              | s/const m = TAG_DOLLAR\.exec\(corpo\.slice\(i, i \+ 128\)\);/const m = null as RegExpExecArray | null;/
+PEGA | dollar aberto vira sucesso (ressincroniza)   | s/if \(fechamento === -1\) return undefined;/if (fechamento === -1) { i++; continue; }/
+PEGA | literal aberto vira sucesso (ressincroniza)  | s/if \(fimLiteral === -1\) return undefined;/if (fimLiteral === -1) { i++; continue; }/

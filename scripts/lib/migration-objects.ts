@@ -19,7 +19,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import { removerComentariosSql } from './sql-comentarios';
+import { removerComentariosSql, removerLinhasDeComentarioDoCorpo } from './sql-comentarios';
 
 /**
  * A receita ESTRITA de hash de corpo: md5 dos bytes utf-8, sem normalização nenhuma.
@@ -72,6 +72,16 @@ export interface ExtractedObject {
    * audit segue com a sua, cada uma com autoteste contra o banco.
    */
   bodyMd5Exato?: string;
+  /**
+   * function: md5 da VARIANTE do corpo cru sem as suas linhas inteiras de comentário `--`
+   * (`removerLinhasDeComentarioDoCorpo`). Comparado com o md5 EXATO de prod, responde "prod roda
+   * este corpo menos os comentários?" sem normalizar o lado de prod — a transformação medida em 31
+   * funções (docs/historico/deriva-so-de-comentario-no-corpo.md).
+   *
+   * Ausente quando o reconhecedor não reconheceu o corpo (literal/bloco que não fecha): ausência
+   * aqui é "não sei", e o gate cai em `DERIVA`, nunca num casamento.
+   */
+  bodyMd5SemLinhasDeComentario?: string;
 }
 
 /** `btrim(x)` do Postgres com UM argumento: só ESPAÇOS, nunca `\n`/`\t`. Ver `bodyMd5`. */
@@ -93,6 +103,8 @@ interface CorpoDeclarado {
   md5: string;
   /** md5 do corpo EXATO, byte a byte: o que `md5(pg_proc.prosrc)` devolve. */
   md5Exato: string;
+  /** md5 do corpo sem as linhas inteiras de comentário; ausente se o reconhecedor não reconheceu. */
+  md5SemLinhasDeComentario?: string;
 }
 
 /** `CREATE [OR REPLACE] FUNCTION [schema.]nome(` — a declaração, no texto MASCARADO. */
@@ -169,9 +181,11 @@ function corposCrusPorNome(sqlCru: string): Map<string, CorpoDeclarado> {
     if (fim < 0 || fim >= limite) continue;
 
     const corpo = sqlCru.slice(ini, fim);
+    const variante = removerLinhasDeComentarioDoCorpo(corpo);
     out.set(`${(m[1] ?? 'public').toLowerCase()}.${m[2].toLowerCase()}`, {
       md5: md5CorpoFuncao(corpo),
       md5Exato: md5Exato(corpo),
+      ...(variante === undefined ? {} : { md5SemLinhasDeComentario: md5Exato(variante) }),
     });
     pos = fim + tag.length;
   }
@@ -255,7 +269,15 @@ export function extractObjects(sql: string): ExtractedObject[] {
       schema: m[1] || 'public',
       name: m[2],
       signature: normalizeSignature(args),
-      ...(corpo === undefined ? {} : { bodyMd5: corpo.md5, bodyMd5Exato: corpo.md5Exato }),
+      ...(corpo === undefined
+        ? {}
+        : {
+            bodyMd5: corpo.md5,
+            bodyMd5Exato: corpo.md5Exato,
+            ...(corpo.md5SemLinhasDeComentario === undefined
+              ? {}
+              : { bodyMd5SemLinhasDeComentario: corpo.md5SemLinhasDeComentario }),
+          }),
     });
   }
 

@@ -335,6 +335,22 @@ interface RpcDesatualizada {
   esperada: string;
   /** A migration cujo corpo prod está de fato rodando. */
   emProd: string;
+  /** Presente quando o casamento foi pela variante SEM as linhas de comentário, não byte a byte. */
+  casouPor?: 'sem-linhas-de-comentario';
+}
+
+/**
+ * Uma função cujo corpo em prod é a ÚLTIMA versão commitada menos as linhas inteiras de comentário
+ * `--` (`VARIANTE_SEM_COMENTARIOS`). Lógica idêntica: não bloqueia. Fica numa lista PRÓPRIA — nem
+ * em dia (não é byte a byte) nem "fora do alcance" (o gate afirmou algo, e o relatório tem de dizer
+ * o quê, com o hash que casou).
+ */
+interface RpcVarianteSemComentarios {
+  rpc: string;
+  /** A última migration que define a função — prod roda o corpo dela sem os comentários. */
+  esperada: string;
+  /** O md5 de prod, igual ao da variante do corpo do repo. */
+  md5: string;
 }
 
 /** Uma função da leva sobre a qual o eixo 5 NÃO conseguiu afirmar nada. Reportada, não bloqueante. */
@@ -353,6 +369,8 @@ export interface VereditoPrecondicao {
   motivos: string[];
   /** Eixo 5: prod roda um corpo ANTERIOR ao commitado ⇒ a migration da leva não foi aplicada. */
   desatualizadas: RpcDesatualizada[];
+  /** Eixo 5: prod roda a última versão MENOS as linhas de comentário. Afirmado, não bloqueante. */
+  variantes: RpcVarianteSemComentarios[];
   /**
    * Eixo 5, o outro lado: a COBERTURA declarada. Deriva, overload, corpo não textual, função sem
    * `CREATE` commitado. Não bloqueiam — mas ficam escritas, porque um gate que só mostra o que
@@ -455,6 +473,7 @@ export function julgarPrecondicao(
   const ausenteOuNaoMedida = new Set([...ausentes.map((a) => a.rpc), ...naoMedidos]);
   const edgesPorRpc = new Map(alvos.map((a) => [a.rpc, a.edges]));
   const desatualizadas: RpcDesatualizada[] = [];
+  const variantes: RpcVarianteSemComentarios[] = [];
   const naoConferidas: RpcNaoConferida[] = [];
   for (const rpc of alvosDeCorpo(alvos, corpos.historico)) {
     if (ausenteOuNaoMedida.has(rpc)) continue;
@@ -469,20 +488,29 @@ export function julgarPrecondicao(
         edges: edgesPorRpc.get(rpc) ?? [],
         esperada: v.esperada,
         emProd: v.emProd,
+        ...(v.casouPor === 'sem-linhas-de-comentario' ? { casouPor: v.casouPor } : {}),
       });
+      continue;
+    }
+    if (
+      v.classificacao === 'VARIANTE_SEM_COMENTARIOS' &&
+      v.esperada !== undefined &&
+      v.md5Casado !== undefined
+    ) {
+      variantes.push({ rpc, esperada: v.esperada, md5: v.md5Casado });
       continue;
     }
     naoConferidas.push({
       rpc,
       motivo:
         v.classificacao === 'DERIVA'
-          ? `corpo em prod não bate com nenhuma das ${v.versoes} versão(ões) commitadas — edição manual (não é "falta colar")`
+          ? `corpo em prod não bate com nenhuma das ${v.versoes} versão(ões) commitadas, nem sem as linhas de comentário — edição manual (não é "falta colar")`
           : (v.motivo ?? 'sem corpo comparável'),
     });
   }
 
   if (motivos.length > 0 || naoMedidos.length > 0) {
-    return { estado: 'INCERTA', ausentes, naoMedidos, motivos, desatualizadas, naoConferidas };
+    return { estado: 'INCERTA', ausentes, naoMedidos, motivos, desatualizadas, variantes, naoConferidas };
   }
   return {
     estado: ausentes.length > 0 || desatualizadas.length > 0 ? 'BLOQUEADA' : 'LIBERADA',
@@ -490,6 +518,7 @@ export function julgarPrecondicao(
     naoMedidos,
     motivos,
     desatualizadas,
+    variantes,
     naoConferidas,
   };
 }
@@ -530,14 +559,27 @@ export function relatarPrecondicao(v: VereditoPrecondicao): string {
   // A cobertura vai junto do VERDE também: o texto antigo dizia "todas as RPCs da leva existem em
   // prod", e existir era tudo o que ele media — foi essa frase que absolveu a leva do #2428.
   // Dizer sobre o que NÃO se afirmou é o que impede o verde de ser lido como mais largo do que é.
-  const rodape = v.naoConferidas.length === 0 ? [] : [
-    `ℹ️  ${v.naoConferidas.length} função(ões) fora do alcance do eixo de corpo — o gate NÃO afirma sobre elas:`,
-    ...v.naoConferidas.map((n) => `  · \`${n.rpc}\`: ${n.motivo}`),
+  // A variante é AFIRMAÇÃO do gate (não "fora do alcance"): diz o quê, com o hash que casou, para a
+  // correspondência ser conferível — e sem afirmar o canal que tirou os comentários, que é hipótese.
+  const blocoVariantes = v.variantes.length === 0 ? [] : [
+    `🔵 ${v.variantes.length} função(ões) em prod = última versão commitada MENOS as linhas inteiras de comentário \`--\` — lógica idêntica, sem ação:`,
+    ...v.variantes.map(
+      (x) => `  · \`${x.rpc}\`: md5 ${x.md5.slice(0, 12)}… = corpo de \`${x.esperada}\` sem as linhas de comentário`,
+    ),
+  ];
+  const rodape = [
+    ...blocoVariantes,
+    ...(v.naoConferidas.length === 0 ? [] : [
+      `ℹ️  ${v.naoConferidas.length} função(ões) fora do alcance do eixo de corpo — o gate NÃO afirma sobre elas:`,
+      ...v.naoConferidas.map((n) => `  · \`${n.rpc}\`: ${n.motivo}`),
+    ]),
   ];
   if (v.estado === 'LIBERADA') {
     return [
       '✅ pré-condição de banco satisfeita — as RPCs da leva existem em prod E rodam o corpo da',
-      '   última migration que este repo commitou para elas',
+      v.variantes.length === 0
+        ? '   última migration que este repo commitou para elas'
+        : '   última migration que este repo commitou para elas (ou esse corpo sem as linhas de comentário — abaixo)',
       ...rodape,
     ].join('\n');
   }
@@ -554,8 +596,17 @@ export function relatarPrecondicao(v: VereditoPrecondicao): string {
       ? d.edges.map((e) => `\`${e}\``).join(', ')
       : '(nenhuma edge da leva a chama — ela entrou pelo conjunto ACOPLADO da mesma migration)';
     linhas.push(`  · \`${d.rpc}\` ← ${quem}`);
-    linhas.push(`    EXISTE em prod, mas rodando o corpo de \`${d.emProd}\``);
+    linhas.push(
+      d.casouPor === 'sem-linhas-de-comentario'
+        ? `    EXISTE em prod, mas rodando o corpo de \`${d.emProd}\` (casou SEM as linhas de comentário — a lógica é a dessa versão)`
+        : `    EXISTE em prod, mas rodando o corpo de \`${d.emProd}\``,
+    );
     linhas.push(`    o repo já commitou \`${d.esperada}\` depois dela ⇒ APLIQUE essa migration`);
+    // Achado do Codex (2026-09-26): "APLIQUE" sozinho manda colar o ARQUIVO, e migration pode trazer
+    // DML além da DDL — a `20260606190000` traz um backfill sobre pedidos vivos.
+    linhas.push(
+      '    ⚠️  revise ANTES de colar: se o arquivo traz DML/backfill (UPDATE/INSERT/DELETE, SELECT de função sobre tabela), reaplicá-lo inteiro re-executa esse efeito — reaplique só a DDL',
+    );
     linhas.push(
       '    ⚠️  não espere erro: a RPC velha aceita o payload novo e DESCARTA o campo em silêncio',
     );

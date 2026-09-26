@@ -1,0 +1,12 @@
+# Invariantes do consumidor da variante sem comentários (scripts/lib/precondicao-banco.ts).
+# @src: scripts/lib/precondicao-banco.ts
+# @test: scripts/lib/precondicao-banco.test.ts
+#
+# O estado novo é AFIRMAÇÃO do gate, com lista própria: jogado em `naoConferidas` voltaria a ser
+# lido como "fora do alcance" (e "edição manual"); e o "APLIQUE" sem a ressalva de DML manda colar
+# o backfill de novo (a 20260606190000 traz um sobre pedidos vivos).
+
+# CONTROLE+ : a variante vai para o balaio genérico — a lista própria some.
+PEGA | controle+: variante cai em naoConferidas | s/variantes\.push\(\{ rpc, esperada: v\.esperada, md5: v\.md5Casado \}\);/naoConferidas.push({ rpc, motivo: 'x' });/
+PEGA | desatualizada perde o metodo da variante | s/\.\.\.\(v\.casouPor === 'sem-linhas-de-comentario' \? \{ casouPor: v\.casouPor \} : \{\}\),/...({}),/
+PEGA | APLIQUE sem a ressalva de DML            | s/revise ANTES de colar: se o arquivo traz DML\/backfill/revise depois/

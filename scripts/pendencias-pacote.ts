@@ -416,7 +416,7 @@ export function main(
   if (alvos.length === 0) {
     // Nenhuma RPC literal na leva. Isso NÃO é "pré-condição satisfeita" quando há indireção:
     // o extrator já disse que não enxerga tudo, e uma lista vazia por cegueira é o falso verde.
-    const vazio = { ausentes: [], naoMedidos: [], desatualizadas: [], naoConferidas: [] };
+    const vazio = { ausentes: [], naoMedidos: [], desatualizadas: [], variantes: [], naoConferidas: [] };
     veredito =
       indirecoes > 0
         ? { ...vazio, estado: 'INCERTA', motivos: [

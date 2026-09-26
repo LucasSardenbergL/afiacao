@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { removerComentariosSql, maiorBlocoDescartadoSql } from './lib/sql-comentarios';
+import {
+  removerComentariosSql,
+  maiorBlocoDescartadoSql,
+  removerLinhasDeComentarioDoCorpo,
+} from './lib/sql-comentarios';
 import { stripComments } from './lib/authz-contract';
 
 // O stripper que este arquivo substituiu — mantido AQUI (e só aqui) como réu, para que os casos
@@ -130,5 +135,90 @@ describe('invariantes sobre as migrations REAIS', () => {
     ].join('\n');
     expect(maiorBlocoDescartadoSql(alvo.m.sql)).toBeLessThanOrEqual(TETO_BLOCO);
     expect(maiorBlocoDescartadoSql(envenenado)).toBeGreaterThan(TETO_BLOCO);
+  });
+});
+
+describe('removerLinhasDeComentarioDoCorpo — só a linha INTEIRA de comentário, em contexto de código', () => {
+  const md5 = (s: string) => createHash('md5').update(s, 'utf8').digest('hex');
+  const v = removerLinhasDeComentarioDoCorpo;
+
+  it('remove a linha inteira (brancos + comentário + quebra) e deixa todo o resto byte a byte', () => {
+    expect(v('\nBEGIN\n  -- explica\n  RETURN 1;\nEND;\n')).toBe('\nBEGIN\n  RETURN 1;\nEND;\n');
+  });
+
+  it('comentário no FIM de uma linha com código fica — a transformação medida é só a linha inteira', () => {
+    const c = '\nBEGIN\n  RETURN 1; -- fica\nEND;\n';
+    expect(v(c)).toBe(c);
+  });
+
+  it('linha que começa com `--` DENTRO de literal multilinha é dado, não comentário', () => {
+    const c = "\nBEGIN\n  x := 'linha 1\n-- ainda é o literal\n';\nEND;\n";
+    expect(v(c)).toBe(c);
+  });
+
+  it("E'…' com `\\'` não fecha o literal antes da hora", () => {
+    const c = "\nBEGIN\n  x := E'a\\'b\n-- dentro do literal\n';\nEND;\n";
+    expect(v(c)).toBe(c);
+  });
+
+  it('dollar-quote dentro do corpo é LITERAL e opaco — o falso-igual `desconto=10`/`=90` do Codex', () => {
+    const c10 = '\nBEGIN\n  EXECUTE $q$\n-- desconto=10\nSELECT 1$q$;\nEND;\n';
+    const c90 = c10.replace('=10', '=90');
+    expect(v(c10)).toBe(c10);
+    expect(v(c10)).not.toBe(v(c90));
+  });
+
+  it('linha `--` DENTRO de comentário de bloco fica — tirá-la faria o corpo devolver 2 em vez de 1 (Codex)', () => {
+    const c = '\nBEGIN\n  /*\n-- */ RETURN 1; /*\n  */\n  RETURN 2;\nEND;\n';
+    expect(v(c)).toBe(c);
+  });
+
+  it('trecho opaco aberto no INÍCIO da linha e fechado antes de um `--` não leva a linha junto', () => {
+    // O literal começa depois só de brancos (a linha "parecia" de comentário até ali) e fecha na
+    // linha seguinte, onde o `--` é comentário de FIM de linha — nada ali é linha inteira.
+    const literal = "\nBEGIN\n  RAISE NOTICE\n    'a\nb' -- fim de linha\n  ;\nEND;\n";
+    const bloco = '\nBEGIN\n  /* a\n  */ -- fim de linha\n  RETURN 1;\nEND;\n';
+    expect(v(literal)).toBe(literal);
+    expect(v(bloco)).toBe(bloco);
+  });
+
+  it('bloco ANINHADO não fecha no primeiro `*/`', () => {
+    const c = '\nBEGIN\n  /* a /* b */\n-- ainda no bloco externo\n  */\n  RETURN 1;\nEND;\n';
+    expect(v(c)).toBe(c);
+  });
+
+  it('identificador quotado com `--` não abre comentário', () => {
+    const c = '\nBEGIN\n  SELECT "a--b" INTO x;\nEND;\n';
+    expect(v(c)).toBe(c);
+    // Multilinha: sem o identificador opaco, a 2ª linha pareceria uma linha inteira de comentário.
+    const multi = '\nBEGIN\n  SELECT 1 AS "a\n-- b" INTO x;\nEND;\n';
+    expect(v(multi)).toBe(multi);
+  });
+
+  it('`$1` e `a$b` não abrem dollar-quote — a linha de comentário seguinte sai normalmente', () => {
+    expect(v('\nBEGIN\n  x := $1 + a$b;\n  -- sai\n  RETURN x;\nEND;\n')).toBe(
+      '\nBEGIN\n  x := $1 + a$b;\n  RETURN x;\nEND;\n',
+    );
+  });
+
+  it('CRLF: a linha sai inteira, com o `\\r\\n`', () => {
+    expect(v('\r\nBEGIN\r\n  -- sai\r\n  RETURN 1;\r\nEND;\r\n')).toBe('\r\nBEGIN\r\n  RETURN 1;\r\nEND;\r\n');
+  });
+
+  it('o que não fecha é "não reconheci" (undefined), nunca um texto que possa casar com prod', () => {
+    expect(v("\nBEGIN\n  x := 'aberto\nEND;\n")).toBeUndefined();
+    expect(v('\nBEGIN\n  /* aberto /* */\nEND;\n')).toBeUndefined();
+    expect(v('\nBEGIN\n  EXECUTE $q$ aberto\nEND;\n')).toBeUndefined();
+    expect(v('\nBEGIN\n  SELECT "aberto\nEND;\n')).toBeUndefined();
+  });
+
+  it('CONTROLE POSITIVO real: a variante do corpo da 20260606190000 dá o md5 MEDIDO em prod', () => {
+    // Medido em 2026-09-26 por psql-ro, md5 calculado NO BANCO: prosrc de prod = 0f1d1cd2…; o corpo
+    // do arquivo inteiro = fcc3048e…. Se o reconhecedor quebrar, é este caso real que para de bater.
+    const sql = readFileSync(join(DIR_MIGRATIONS, '20260606190000_reposicao_qtde_inteira_persist.sql'), 'utf8');
+    const ini = sql.indexOf('AS $function$') + 'AS $function$'.length;
+    const corpo = sql.slice(ini, sql.indexOf('$function$', ini));
+    expect(md5(corpo)).toBe('fcc3048e4b173db55acddd207abd00fc');
+    expect(md5(v(corpo) ?? '')).toBe('0f1d1cd2d9fefafa9465bd5fb287f200');
   });
 });

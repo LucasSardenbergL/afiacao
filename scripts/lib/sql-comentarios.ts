@@ -80,8 +80,8 @@ function fimDeIdentificador(sql: string, ini: number): number {
   return -1;
 }
 
-// Índice logo APÓS o `*/` que fecha o comentário de bloco, contando ANINHAMENTO; length se não fechar.
-function fimDeBloco(sql: string, ini: number): number {
+// Índice logo APÓS o `*/` que fecha o comentário de bloco, contando ANINHAMENTO; -1 se não fechar.
+function fechamentoDeBloco(sql: string, ini: number): number {
   let profundidade = 1;
   let i = ini + 2;
   while (i < sql.length && profundidade > 0) {
@@ -97,7 +97,14 @@ function fimDeBloco(sql: string, ini: number): number {
     }
     i++;
   }
-  return i;
+  return profundidade === 0 ? i : -1;
+}
+
+// O mesmo, mas o bloco que não fecha consome até o fim — é o que um lexer de verdade faz, e é o
+// contrato do `removerComentariosSql` (ver LIMITE CONHECIDO no cabeçalho).
+function fimDeBloco(sql: string, ini: number): number {
+  const fim = fechamentoDeBloco(sql, ini);
+  return fim === -1 ? sql.length : fim;
 }
 
 export function removerComentariosSql(sql: string): string {
@@ -191,4 +198,103 @@ export function maiorBlocoDescartadoSql(sql: string): number {
     if (atual > maior) maior = atual;
   }
   return maior;
+}
+
+// A VARIANTE de um corpo de função sem as suas LINHAS INTEIRAS de comentário `--`.
+//
+// Existe para o eixo de corpo do gate de deploy (`corpo-esperado.ts`). Em prod, 31 funções rodam
+// EXATAMENTE o corpo commitado menos essas linhas (medido em 2026-09-26; o apply de mai–jul/2026 as
+// tirou, migration inteira por vez). Comparado byte a byte, isso sai `DERIVA`, e o relatório chama de
+// "edição manual" o que é a mesma lógica (docs/historico/deriva-so-de-comentario-no-corpo.md).
+//
+// CONTRATO — diferente do `removerComentariosSql`, e as diferenças são o ponto:
+//  1. A entrada é o CORPO de uma função (o que vira `prosrc`), não o arquivo da migration. Aqui
+//     dentro, dollar-quote é LITERAL (`EXECUTE $q$…$q$`), então é OPACO: um `--` dentro dele é dado.
+//  2. Remove SÓ a transformação medida: a linha inteira (brancos + `--…` + a quebra) cujo `--` está
+//     em contexto de CÓDIGO. Comentário no fim de uma linha com código, e comentário de bloco, ficam.
+//     Todo o resto sai byte a byte igual.
+//  3. Literal, identificador, dollar-quote ou bloco que não fecha ⇒ `undefined` ("não reconheci"),
+//     nunca um texto. O `removerComentariosSql` ressincroniza, porque lá o custo de errar é um gate
+//     menos preciso; aqui, uma variante errada pode CASAR com prod e virar veredito.
+//
+// POR QUE NÃO É `removerComentariosSql` + colapso de espaço (achado do Codex, reproduzido): aquele
+// recursa em dollar-quote por contrato, então `-- desconto=10` e `-- desconto=90` dentro de um literal
+// viram iguais; e o colapso iguala `'a  b'` a `'a b'`. Isso fabrica equivalência entre corpos que
+// DIFEREM. Aqui o único byte que some é o de uma linha que o Postgres já descartaria como comentário.
+//
+// O que ainda NÃO é equivalência total, e fica dito: tirar linhas muda o número de linha que o
+// `PG_CONTEXT` reporta, e quem introspecta `prosrc` vê a diferença. Para a lógica executada, não muda.
+export function removerLinhasDeComentarioDoCorpo(corpo: string): string | undefined {
+  const n = corpo.length;
+  const remover: Array<[number, number]> = [];
+  let i = 0;
+  let inicioDaLinha = 0;
+  let soBrancoNaLinha = true;
+
+  // Um trecho opaco (literal, identificador, dollar-quote, bloco) FECHA na linha corrente, que passa a
+  // ter conteúdo — então um `--` depois dele, na mesma linha, não é linha inteira. Sem isto, um
+  // literal multilinha aberto no início da linha e fechado antes de um `--` levaria a linha junto.
+  const pular = (fim: number) => {
+    soBrancoNaLinha = false; // o fecho do trecho é conteúdo desta linha
+    i = fim;
+  };
+
+  while (i < n) {
+    const c = corpo[i];
+    if (c === '\n') {
+      i++;
+      inicioDaLinha = i;
+      soBrancoNaLinha = true;
+      continue;
+    }
+    if (c === ' ' || c === '\t' || c === '\r' || c === '\f' || c === '\v') {
+      i++;
+      continue;
+    }
+    if (c === '-' && corpo[i + 1] === '-') {
+      let j = i;
+      while (j < n && corpo[j] !== '\n') j++;
+      if (soBrancoNaLinha) remover.push([inicioDaLinha, j < n ? j + 1 : j]);
+      i = j; // a quebra (se houver) é tratada no topo do laço
+      continue;
+    }
+    if (c === '/' && corpo[i + 1] === '*') {
+      const fimBloco = fechamentoDeBloco(corpo, i);
+      if (fimBloco === -1) return undefined;
+      pular(fimBloco);
+      continue;
+    }
+    if (c === "'") {
+      const fimLiteral = fimDeLiteral(corpo, i, ligaBarraInvertida(corpo, i));
+      if (fimLiteral === -1) return undefined;
+      pular(fimLiteral);
+      continue;
+    }
+    if (c === '"') {
+      const fimIdentificador = fimDeIdentificador(corpo, i);
+      if (fimIdentificador === -1) return undefined;
+      pular(fimIdentificador);
+      continue;
+    }
+    if (c === '$' && !/[A-Za-z0-9_$\u0080-￿]/.test(corpo[i - 1] ?? ' ')) {
+      // `$` no meio de identificador (`a$b`) ou parâmetro (`$1`) não abre dollar-quote.
+      const m = TAG_DOLLAR.exec(corpo.slice(i, i + 128));
+      if (m) {
+        const fechamento = corpo.indexOf(m[0], i + m[0].length);
+        if (fechamento === -1) return undefined;
+        pular(fechamento + m[0].length);
+        continue;
+      }
+    }
+    soBrancoNaLinha = false;
+    i++;
+  }
+
+  let saida = '';
+  let desde = 0;
+  for (const [ini, fim] of remover) {
+    saida += corpo.slice(desde, ini);
+    desde = fim;
+  }
+  return saida + corpo.slice(desde);
 }

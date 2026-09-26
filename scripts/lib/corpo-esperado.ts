@@ -40,6 +40,27 @@
  *                       "falta colar", e tratá-la como tal fabricaria os 11 alarmes acima.
  *   ⚪ `INDECIDIVEL`    não há corpo commitado, prod tem overload, ou prod não expõe corpo textual
  *                       (`LANGUAGE c`; `LANGUAGE sql` com `prosqlbody`, cujo `prosrc` é VAZIO).
+ *   🔵 `VARIANTE_SEM_COMENTARIOS` (2026-09-26) o corpo vivo é a ÚLTIMA versão MENOS as suas linhas
+ *                       inteiras de comentário `--`. Lógica idêntica; não bloqueia.
+ *
+ * ## A variante sem comentários (2026-09-26 — docs/historico/deriva-so-de-comentario-no-corpo.md)
+ *
+ * Em prod, 31 funções rodam exatamente o corpo commitado menos as linhas inteiras de comentário —
+ * uniforme por migration, concentrado nos applies de mai–jul/2026. Byte a byte isso era `DERIVA`,
+ * e o relatório chamava de "edição manual" a mesma lógica. O que casa agora é o md5 EXATO de prod
+ * contra o md5 da variante do corpo do REPO (`removerLinhasDeComentarioDoCorpo`): o lado de prod não
+ * é normalizado, porque normalizar os dois lados fabrica equivalência (achado do Codex, reproduzido).
+ *
+ * A ordem é o que mantém o gate honesto: as checagens EXATAS vêm primeiro e não mudam; a variante
+ * só é consultada no que seria `DERIVA`. Nela, a ÚLTIMA versão primeiro (casou ⇒ não há evidência de
+ * atraso do corpo executável); depois as ANTERIORES — e variante de anterior é `CORPO_ANTERIOR`,
+ * BLOQUEANTE: prod roda a lógica de uma versão que o repo já substituiu, comentário à parte. Até
+ * aqui esse caso caía em `DERIVA` e liberava (P1 latente apontado pelo Codex; 0 casos medidos).
+ *
+ * ⚠️ EXCEÇÃO CONSERVADORA, deliberada: se a última migration só ACRESCENTOU comentário, prod pode
+ * bater EXATAMENTE com a anterior — e a precedência exata diz `CORPO_ANTERIOR`, mesmo com a lógica
+ * igual. Mantida porque não alterar as checagens exatas é o requisito, e um falso bloqueio aqui
+ * custa uma conferência; afrouxá-lo seria julgar a variante ANTES do exato, o que o teste reprova.
  *
  * Medido nas mesmas 65 RPCs: **48 EM_DIA · 3 CORPO_ANTERIOR · 11 DERIVA · 2 INDECIDIVEL · 1 ausente**.
  * As 3 `CORPO_ANTERIOR` são exatamente as 3 funções da migration pendente. Zero falso positivo.
@@ -75,6 +96,11 @@ export interface VersaoDeCorpo {
    * normalizada do audit: ver `bodyMd5Exato` em `migration-objects.ts`.
    */
   md5: string;
+  /**
+   * md5 da variante sem as linhas inteiras de comentário (`bodyMd5SemLinhasDeComentario`). Ausente
+   * quando o reconhecedor não reconheceu o corpo — e aí a variante nunca casa.
+   */
+  md5SemLinhasDeComentario?: string;
 }
 
 /** Uma migration lida da árvore: nome do arquivo e o SQL CRU (comentários inclusive). */
@@ -83,10 +109,17 @@ export interface MigrationLida {
   sql: string;
 }
 
-type Classificacao = 'EM_DIA' | 'CORPO_ANTERIOR' | 'DERIVA' | 'INDECIDIVEL';
+type Classificacao = 'EM_DIA' | 'CORPO_ANTERIOR' | 'VARIANTE_SEM_COMENTARIOS' | 'DERIVA' | 'INDECIDIVEL';
 
 export interface VereditoDeCorpo {
   classificacao: Classificacao;
+  /**
+   * Como o corpo vivo casou com a versão nomeada: byte a byte, ou só contra a variante do repo sem
+   * as linhas de comentário. O relatório mostra, para a correspondência ser conferível.
+   */
+  casouPor?: 'exato' | 'sem-linhas-de-comentario';
+  /** O md5 VIVO que casou (é o mesmo valor do lado do repo que casou com ele). */
+  md5Casado?: string;
   /** A migration que define o corpo esperado — a ÚLTIMA que recria a função. */
   esperada?: string;
   /** Em `CORPO_ANTERIOR`: a migration cujo corpo prod está rodando. */
@@ -124,7 +157,13 @@ export function historicoDeCorpos(migrations: readonly MigrationLida[]): Map<str
       if (o.kind !== 'function' || o.bodyMd5Exato === undefined) continue;
       const chave = `${o.schema}.${o.name}`.toLowerCase();
       const l = hist.get(chave) ?? [];
-      l.push({ migration: nome, md5: o.bodyMd5Exato });
+      l.push({
+        migration: nome,
+        md5: o.bodyMd5Exato,
+        ...(o.bodyMd5SemLinhasDeComentario === undefined
+          ? {}
+          : { md5SemLinhasDeComentario: o.bodyMd5SemLinhasDeComentario }),
+      });
       hist.set(chave, l);
     }
   }
@@ -177,11 +216,41 @@ export function classificarCorpo(
   }
   const vivos = new Set(vivo.md5s);
   // A última PRIMEIRO — ver o cabeçalho: empate com uma anterior tem de cair em EM_DIA.
-  if (vivos.has(ultima.md5)) return { ...base, classificacao: 'EM_DIA' };
+  if (vivos.has(ultima.md5)) {
+    return { ...base, classificacao: 'EM_DIA', casouPor: 'exato', md5Casado: ultima.md5 };
+  }
   // Bate com uma ANTERIOR: a mais RECENTE das anteriores que casa é a que prod está rodando.
   for (let i = n - 2; i >= 0; i--) {
     if (vivos.has(versoes[i].md5)) {
-      return { ...base, classificacao: 'CORPO_ANTERIOR', emProd: versoes[i].migration };
+      return {
+        ...base,
+        classificacao: 'CORPO_ANTERIOR',
+        emProd: versoes[i].migration,
+        casouPor: 'exato',
+        md5Casado: versoes[i].md5,
+      };
+    }
+  }
+  // Só o que seria DERIVA chega aqui: a variante sem comentários nunca antecede o exato (cabeçalho).
+  const varianteUltima = ultima.md5SemLinhasDeComentario;
+  if (varianteUltima !== undefined && vivos.has(varianteUltima)) {
+    return {
+      ...base,
+      classificacao: 'VARIANTE_SEM_COMENTARIOS',
+      casouPor: 'sem-linhas-de-comentario',
+      md5Casado: varianteUltima,
+    };
+  }
+  for (let i = n - 2; i >= 0; i--) {
+    const variante = versoes[i].md5SemLinhasDeComentario;
+    if (variante !== undefined && vivos.has(variante)) {
+      return {
+        ...base,
+        classificacao: 'CORPO_ANTERIOR',
+        emProd: versoes[i].migration,
+        casouPor: 'sem-linhas-de-comentario',
+        md5Casado: variante,
+      };
     }
   }
   return { ...base, classificacao: 'DERIVA' };

@@ -45,7 +45,7 @@ function leituraOk(rpcs: string[] = ['reposicao_claim_disparo']): LeituraSonda {
 
 /** Histórico commitado, com os controles positivos do eixo 5 satisfeitos. */
 function corposCom(
-  versoes: { migration: string; md5: string }[],
+  versoes: { migration: string; md5: string; md5SemLinhasDeComentario?: string }[],
   rpc = 'reposicao_claim_disparo',
 ): CorposEsperados {
   return {
@@ -439,5 +439,90 @@ describe('alvosDeCorpo — o conjunto ACOPLADO da migration, não só o que a le
     expect(alvosDeCorpo([{ rpc: 'sem_ddl_commitada', edges: ['e'] }], new Map())).toEqual([
       'sem_ddl_commitada',
     ]);
+  });
+});
+
+describe('eixo 5 — a variante SEM as linhas de comentário (2026-09-26, deriva-so-de-comentario-no-corpo.md)', () => {
+  // Rótulos, como os de cima: md5('c') e md5('d'). A variante de cada versão é um hash DIFERENTE do
+  // corpo exato dela — é o caso real (a 20260606190000 tem 3 linhas de comentário no corpo).
+  const MD5_VAR_ATUAL = '4a8a08f09d37b73795649038408b5f33';
+  const MD5_VAR_VELHO = '8277e0910d750195b448797616e091ad';
+  const VELHA = '20260908163659_pedido_nasce_com_identidade_de_linha.sql';
+  const NOVA = '20260908215704_desconto_valor_atravessa_os_escritores.sql';
+  const HIST = [
+    { migration: VELHA, md5: MD5_VELHO, md5SemLinhasDeComentario: MD5_VAR_VELHO },
+    { migration: NOVA, md5: MD5_ATUAL, md5SemLinhasDeComentario: MD5_VAR_ATUAL },
+  ];
+  const comVivo = (md5: string): LeituraSonda => ({
+    ...leituraOk(),
+    corpos: new Map([['reposicao_claim_disparo', { md5s: [md5], overloads: 1 }]]),
+  });
+
+  it('prod = última versão menos os comentários ⇒ LIBERA, numa lista PRÓPRIA que diz o quê e com qual hash', () => {
+    const v = julgarPrecondicao(ALVO, comVivo(MD5_VAR_ATUAL), 0, corposCom(HIST));
+    expect(v.estado).toBe('LIBERADA');
+    expect(v.variantes).toEqual([{ rpc: 'reposicao_claim_disparo', esperada: NOVA, md5: MD5_VAR_ATUAL }]);
+    // Era aqui que o relatório dizia "edição manual" sobre a mesma lógica.
+    expect(v.naoConferidas).toEqual([]);
+    const t = relatarPrecondicao(v);
+    expect(t).toContain('MENOS as linhas inteiras de comentário');
+    expect(t).toContain(MD5_VAR_ATUAL.slice(0, 12));
+    expect(t).not.toMatch(/edição manual/);
+  });
+
+  it('prod = versão ANTERIOR menos os comentários ⇒ BLOQUEIA (antes caía em DERIVA e liberava — P1 do Codex)', () => {
+    const v = julgarPrecondicao(ALVO, comVivo(MD5_VAR_VELHO), 0, corposCom(HIST));
+    expect(v.estado).toBe('BLOQUEADA');
+    expect(v.desatualizadas).toEqual([
+      {
+        rpc: 'reposicao_claim_disparo',
+        edges: ['disparar-pedidos-aprovados'],
+        esperada: NOVA,
+        emProd: VELHA,
+        casouPor: 'sem-linhas-de-comentario',
+      },
+    ]);
+    expect(relatarPrecondicao(v)).toContain('casou SEM as linhas de comentário');
+  });
+
+  it('o EXATO vem antes: corpo igual ao da última, byte a byte, é EM_DIA — não variante', () => {
+    // Corpo sem comentário nenhum: a variante É o exato. Julgá-la antes trocaria EM_DIA por
+    // VARIANTE, e o relatório diria "sem ação" sobre o que está simplesmente em dia.
+    const v = julgarPrecondicao(ALVO, comVivo(MD5_ATUAL), 0, corposCom([
+      { migration: VELHA, md5: MD5_VELHO, md5SemLinhasDeComentario: MD5_VELHO },
+      { migration: NOVA, md5: MD5_ATUAL, md5SemLinhasDeComentario: MD5_ATUAL },
+    ]));
+    expect(v.estado).toBe('LIBERADA');
+    expect(v.variantes).toEqual([]);
+    expect(v.naoConferidas).toEqual([]);
+  });
+
+  it('EXCEÇÃO CONSERVADORA: a última só ACRESCENTOU comentário e prod = a anterior, exata ⇒ segue bloqueando', () => {
+    // A variante da última é igual ao corpo exato da anterior: lógica idêntica. A precedência exata
+    // diz CORPO_ANTERIOR mesmo assim (documentado em corpo-esperado.ts). Afrouxar exigiria julgar a
+    // variante antes do exato — e é essa inversão que este teste reprova.
+    const v = julgarPrecondicao(ALVO, comVivo(MD5_VELHO), 0, corposCom([
+      { migration: VELHA, md5: MD5_VELHO, md5SemLinhasDeComentario: MD5_VELHO },
+      { migration: NOVA, md5: MD5_ATUAL, md5SemLinhasDeComentario: MD5_VELHO },
+    ]));
+    expect(v.estado).toBe('BLOQUEADA');
+    expect(v.desatualizadas[0].casouPor).toBeUndefined();
+    expect(v.variantes).toEqual([]);
+  });
+
+  it('variante AUSENTE (o reconhecedor não reconheceu) nunca casa: segue DERIVA, edição manual', () => {
+    const v = julgarPrecondicao(ALVO, comVivo(MD5_VAR_ATUAL), 0, corposCom([
+      { migration: VELHA, md5: MD5_VELHO },
+      { migration: NOVA, md5: MD5_ATUAL },
+    ]));
+    expect(v.estado).toBe('LIBERADA');
+    expect(v.variantes).toEqual([]);
+    expect(v.naoConferidas[0].motivo).toMatch(/edição manual/);
+  });
+
+  it('o "APLIQUE" vem com a ressalva de DML — reaplicar o arquivo inteiro re-executa backfill', () => {
+    const t = relatarPrecondicao(julgarPrecondicao(ALVO, comVivo(MD5_VELHO), 0, corposCom(HIST)));
+    expect(t).toContain('APLIQUE essa migration');
+    expect(t).toMatch(/revise ANTES de colar: se o arquivo traz DML\/backfill/);
   });
 });

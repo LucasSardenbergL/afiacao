@@ -33,7 +33,7 @@ const semOrdem = (edges: readonly string[]): PlanoDeOndas => ({
 });
 
 function fonte(over: Partial<PacoteFonte> = {}): PacoteFonte {
-  const veredito: VereditoPrecondicao = { estado: 'LIBERADA', ausentes: [], naoMedidos: [], motivos: [], desatualizadas: [], naoConferidas: [] };
+  const veredito: VereditoPrecondicao = { estado: 'LIBERADA', ausentes: [], naoMedidos: [], motivos: [], desatualizadas: [], variantes: [], naoConferidas: [] };
   const edges = over.edges ?? [
     {
       edge: 'disparar-pedidos-aprovados',
@@ -57,6 +57,7 @@ const BLOQUEADA: VereditoPrecondicao = {
   naoMedidos: [],
   motivos: [],
   desatualizadas: [],
+  variantes: [],
   naoConferidas: [],
 };
 
@@ -64,6 +65,7 @@ const INCERTA: VereditoPrecondicao = {
   estado: 'INCERTA',
   ausentes: [],
   desatualizadas: [],
+  variantes: [],
   naoConferidas: [],
   naoMedidos: ['reposicao_claim_disparo'],
   motivos: ['controle positivo ZERO'],

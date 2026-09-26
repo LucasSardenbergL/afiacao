@@ -1,0 +1,15 @@
+# Invariantes da variante sem comentários em `classificarCorpo` (scripts/lib/corpo-esperado.ts).
+# @src: scripts/lib/corpo-esperado.ts
+# @test: scripts/lib/precondicao-banco.test.ts
+#
+# A ordem é o que mantém o gate honesto: as checagens EXATAS vêm antes e não mudam; a variante só é
+# consultada no que seria DERIVA — a da última primeiro, depois as anteriores (e essas BLOQUEIAM).
+# As duas formas de "antecipar a variante às checagens exatas" são a mutação que o Codex exigiu.
+
+# CONTROLE+ : a variante da última nunca casa — o estado novo some e o caso volta a DERIVA.
+PEGA | controle+: variante da ultima nunca casa           | s/if \(varianteUltima !== undefined && vivos\.has\(varianteUltima\)\) \{/if (false) {/
+PEGA | variante de anterior nao bloqueia (volta a DERIVA) | s/if \(variante !== undefined && vivos\.has\(variante\)\) \{/if (false) {/
+PEGA | variante antes do EM_DIA exato                     | s/if \(vivos\.has\(ultima\.md5\)\) \{/if (vivos.has(ultima.md5) && !vivos.has(ultima.md5SemLinhasDeComentario ?? '')) {/
+PEGA | variante antes do CORPO_ANTERIOR exato             | s/if \(vivos\.has\(versoes\[i\]\.md5\)\) \{/if (vivos.has(versoes[i].md5) && !vivos.has(ultima.md5SemLinhasDeComentario ?? '')) {/
+PEGA | relatorio mostra o hash errado                     | s/md5Casado: varianteUltima,/md5Casado: ultima.md5,/
+PEGA | anterior via variante perde o metodo               | s/^        casouPor: 'sem-linhas-de-comentario',/        casouPor: 'exato',/
