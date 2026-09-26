@@ -1,6 +1,6 @@
 # O arquivo de teste mais lento da suíte dormia 11s que nenhum cenário asseria
 
-**Data:** 2026-09-26 · **Alvo:** `scripts/exclusividade-medir.test.ts` · **Substrato:** job `testes` do CI
+**Data:** 2026-09-26 · **PRs:** #2546, #2550 · **Alvo:** `scripts/exclusividade-medir.test.ts` · **Substrato:** job `testes` do CI
 
 ## Como o alvo foi achado — no log do CI, não na máquina local
 
@@ -92,10 +92,29 @@ alvo ÷ `scripts/` < 0,954. Os dois eixos juntos porque cada um tem o seu viés:
 máquina sorteada, e a razão herda qualquer arquivo novo em `scripts/`. Esperado, pela medição local:
 ~22–25s (estimativa).
 
-Depois — n=1 até este registro: o run do próprio #2546 deu **25.559ms** e alvo ÷ `scripts/` **0,685**,
-abaixo da faixa nos dois eixos. O resto da suíte naquela máquina (141.875ms) é da mesma ordem das amostras
-"antes" de 36,6–37,0s: ~−31%. O arquivo segue o mais lento da suíte (o 2º tem 9,2s) — o que sobra é a
-rodada limpa e o fora-da-rodada, custo que é o assunto. Faltam duas amostras para o critério fechar.
+**Depois — o critério fechou em n=8, todas dentro nos dois eixos.** A inclusão de cada amostra está
+provada no próprio log, não pelo horário: a base do merge no checkout (run de PR) ou o head (run da main)
+tem o squash do #2546 como ancestral.
+
+| execução | alvo (ms) | alvo ÷ `scripts/` |
+|---|---|---|
+| PR #2546 | 25.559 | 0,685 |
+| PR #2549 | 28.008 | 0,701 |
+| PR #2550 | 26.595 | 0,641 |
+| PR #2553 | 27.526 | 0,692 |
+| PR #2554 ¹ | 24.545 | 0,779 |
+| main `56c5284` (manual) | 21.277 | 0,834 |
+| main `56c5284` (manual) | 25.820 | 0,649 |
+| main `7f2232e` (manual) | 28.362 | 0,705 |
+
+¹ Roda também a mudança do próprio #2554 no MESMO arquivo (`maintenance.auto=false` no `commitar` do
+fixture, que tira a manutenção destacada do git após cada commit) — não mede só este conserto. Sem ela, 7/7
+e as médias abaixo não mudam no arredondamento.
+
+O "depois" mais lento (28.362ms) fica abaixo do "antes" mais rápido (31.274ms), e a razão (0,641–0,834)
+não encosta na faixa "antes" (0,954–1,084). Pelas médias, ~−26% no absoluto e ~−30% na razão — menos que
+os −34% locais, e longe do ruído. O arquivo segue o mais lento da suíte: o que sobra é a rodada limpa e o
+fora-da-rodada, custo que é o assunto.
 
 ## O impacto honesto
 
@@ -118,7 +137,7 @@ muda.** O ganho está em três lugares:
   timeout de RPC do vitest que a guarda 12 existe para classificar.
 - **O bloco fora-da-rodada** (8,7s): roda o gate real contra fixtures; o custo é o assunto do teste.
 
-## Na sequência: o `it` mais lento dividia o trabalho com o 2º (parse único, PR seguinte)
+## Na sequência: o `it` mais lento dividia o trabalho com o 2º (parse único, #2550)
 
 Os dois `it` de varredura do `erro-colapsado-em-vazio-gate.test.ts` — auto-ocultação e `return`
 afirmativo, o 1º e o 2º `it` mais lentos da suíte — faziam o parse TypeScript das mesmas 1.489 fontes,
@@ -157,6 +176,23 @@ soma dos outros arquivos de `src/`: nas 8 execuções "antes" (o teste e o módu
 execuções com a mudança, todas com alvo ÷ outros `src/` < 78,7‰, e — sinal binário, imune à máquina — o
 `it` afirmativo fora da lista de testes > 300ms, onde ele aparece nas 8 "antes". O absoluto fica como
 informação: o piso "antes" (5.902ms, numa máquina rápida) encosta no teto "depois" esperado numa lenta.
+
+**Resultado — fechou em n=6, todas dentro do critério** (inclusão provada no log, como acima, contra o
+squash `56c5284`):
+
+| execução | arquivo (ms) | alvo ÷ outros `src/` | `it` > 300ms |
+|---|---|---|---|
+| PR #2550 | 5.627 | 53,5‰ | só o de auto-ocultação |
+| PR #2553 | 6.511 | 61,9‰ | idem |
+| PR #2554 | 3.206 | 42,1‰ | idem |
+| main `56c5284` (manual) | 2.979 | 44,2‰ | idem |
+| main `56c5284` (manual) | 4.838 | 50,5‰ | idem |
+| main `7f2232e` (manual) | 6.348 | 59,4‰ | idem |
+
+A razão (42,1–61,9‰) fica longe da faixa "antes" — que uma 9ª amostra, o CI do #2549 ainda sem o
+#2550, alargou para CIMA (113,1‰) sem baixar o piso. Pelas médias, ~−40% na razão e ~−39% no absoluto,
+contra −46% local. E o absoluto sozinho, como o critério previa, não separaria: o "depois" mais lento
+(6.511ms) passa do "antes" mais rápido (5.902ms). Aqui foi a normalização que tornou a leitura possível.
 
 ## Regra
 
