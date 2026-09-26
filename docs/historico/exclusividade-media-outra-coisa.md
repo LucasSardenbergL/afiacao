@@ -1024,6 +1024,135 @@ exige subprocesso — `erro-colapsado-em-vazio-gate.test.ts` e `pendencias-promp
 quebraram por timeout sob carga sem usar `spawnSync` (trabalho síncrono de CPU). Cada teste que segura
 o loop por mais de 60 s sob carga é uma fonte do mesmo vermelho; a varredura deles é tarefa própria.
 
+## A leitura da matriz virou fail-closed (2026-09-25) — e o segundo leitor que o achado não listava
+
+O achado acima, consertado. `lerMatriz(texto)` (`scripts/lib/exclusividade.ts`) passou a ser a **única
+porta** de bytes para `Matriz`, e `avaliar` recebe a LEITURA — a matriz ou a recusa com código — em vez de
+`Matriz | null`:
+
+| a matriz em disco | antes | agora |
+|---|---|---|
+| ausente, ou JSON ilegível | REPROVA `MATRIZ_AUSENTE` | igual |
+| `schemaVersion` ausente, diferente ou não numérico | veredito calculado sobre ela, calado | REPROVA `MATRIZ_SCHEMA_INCOMPATIVEL` |
+| campo obrigatório ausente ou de tipo errado | TypeError no meio do veredito (exit 2, "erro do proprio gate") | REPROVA `MATRIZ_MALFORMADA`, com o caminho (`linhas[0].execucoes[1].reprovou`) |
+
+**A versão é conferida ANTES da forma.** Matriz de outro schema tem, legitimamente, outra forma — chamá-la
+de MALFORMADA mandaria o operador consertar o arquivo em vez de re-medir. Toda mensagem de recusa é ASCII
+imprimível e nomeia o TIPO do que veio, nunca o valor (que traria acento do arquivo para a mensagem).
+
+**O pior caso nunca foi o TypeError** — exit 2 já é vermelho no CI. Era o silencioso: num schema em que
+`reprovou` mudasse de nome, todo gate lê "não reprovou"; com `invalido` fora do lugar, linha inválida lê
+como válida. Nenhum dos dois lança.
+
+### O segundo leitor: o motor "migrava" calado
+
+A varredura da classe achou o que o achado não listava: `exclusividade-medir.ts` relia a matriz anterior
+com o mesmo cast **no fim da rodada**, fundia as linhas e regravava com `schemaVersion: SCHEMA_VERSION` —
+carimbando como a de hoje uma matriz que ninguém leu. E na rodada **fatiada** sem o `exclusividade` (a que a
+M2 exige, seção acima), o classificador do baseline nem roda: não havia leitura nenhuma que conferisse.
+Medido no vermelho, antes do conserto: a matriz de schema futuro foi **regravada** (`rc 0`, "gravado em
+scripts/exclusividade-matriz.json"), e a malformada derrubou o motor com `rc 2` **depois** de gravar.
+
+**Guarda 14** — a 13 é a das deps, do #2571, que nasceu no mesmo ponto do `main()` na mesma hora: a
+anterior é lida pela porta do gate ANTES do baseline (a rodada custa uma hora) e a recusa aborta com
+`MATRIZ-ANTERIOR-RECUSADA <codigo>`. Ausente é o nascimento, e passa. A leitura é UMA, antes de qualquer
+sabotagem; o fim da rodada funde essa mesma `anterior`.
+
+### O classificador: REPROVA-ALHEIA, provado com a saída do binário
+
+`exclusividadeVermelhaSoPorGateNovo` já tratava toda REPROVA ≠ `GATE_NOVO_SEM_EXCLUSIVIDADE` como alheia —
+mas "já trata" é leitura de código. O teste roda o **binário real** com `--json` contra a matriz recusada e
+entrega o stdout ao classificador: `REPROVA-ALHEIA MATRIZ_SCHEMA_INCOMPATIVEL` e `... MATRIZ_MALFORMADA`.
+Antes do conserto o mesmo teste dava `RC-BASELINE o baseline saiu 0` — o gate APROVAVA a matriz de schema
+futuro. Com a guarda 14, a matriz real recusada nem chega ao baseline; o ramo REPROVA-ALHEIA do motor segue
+exercitado ponta a ponta por um `exclusividade` de mentira no fixture, e o teste antigo "matriz ilegível"
+passou a esperar a guarda.
+
+### O teste do binário é HERMÉTICO — de propósito
+
+A costura `--matriz` (irmã da `--ci`) roda o gate contra matriz, `ci.yml` e `auto-merge.yml` **sintéticos**,
+controle incluído. Se o controle lesse a matriz real, o `test` ficaria vermelho sob o defeito novo do
+corpus — uma segunda porta criada pelo próprio conserto, e o `exclusividade` perderia, por construção, a
+exclusividade que o defeito existe para medir. Nenhum teste novo lê `scripts/exclusividade-matriz.json`.
+
+### A classe (skill `matar-classe`)
+
+Assinatura larga `JSON\.parse\([^;]*\)\s*as\s+[A-Z]` em `scripts/`, `db/`, `src/` e `supabase/functions/`:
+32 casamentos, 28 falsos-positivos (resposta HTTP, localStorage, JSON de env de teste). Artefatos
+commitados com campo de versão: 3. Veredito por site, inclusive os limpos:
+
+| site | veredito |
+|---|---|
+| `scripts/exclusividade-gate.ts` (`ler`) | afetado — consertado aqui |
+| `scripts/exclusividade-medir.ts` (a anterior) | afetado — consertado aqui (guarda 14) |
+| `scripts/authz-carimbo-gate.ts` → `avaliarCarimbo` | já-correto: confere `schemaVersion` e a forma |
+| `scripts/sonda-versao-bump-gate-ondas.ts` | já-correto: confere `formato` e a raiz |
+| `scripts/sonda-cron-prova.ts` (`lerManifesto`) | fora da classe: cache que o `--gate` re-executa, nunca decide veredito |
+| `db/authz-carimbo-gravar.ts` (relê o anterior) | afetado, OUTRO domínio — a trava de cluster seria pulada calada num carimbo de outro formato. Chip "Validar schemaVersion ao reler o carimbo de authz": abortar em toda versão diferente trava a migração legítima (a 1→2 já aconteceu nesse gravador) |
+
+Gate da classe: o bloco "a CLASSE" de `exclusividade-gate.test.ts` varre `scripts/` com o stripper
+compartilhado e cobra zero `as Matriz`; o sentinela cobra que o scan ENXERGA o gate e o motor e que os dois
+chamam `lerMatriz(` — sem ele, um glob que parasse de casar deixaria o scan verde por cegueira. Linha da
+classe em `docs/agent/deploy.md`.
+
+### O defeito novo do corpus: `matriz-schema-futuro`
+
+"Ninguém pegaria" valia antes do conserto; depois dele o defeito mede o `exclusividade`. A expressão
+**incrementa** a versão em vez de trocar `1` por `2`: um bump do `SCHEMA_VERSION` não a envelhece (a literal
+pararia de casar e a linha viraria INVÁLIDA — o mal que matou o `matriz-gate-renomeado`). Ancorada no nível
+raiz, casa uma linha só.
+
+Pré-voo, as duas metades na mesma invocação:
+
+| onde | controle | sob a sabotagem |
+|---|---|---|
+| cópia, com a expressão como o `parseDefeitos` a entrega | `lerMatriz` ACEITA | `casou=true perturbadas=2`; `MATRIZ_SCHEMA_INCOMPATIVEL` |
+| árvore real: `exclusividade` | rc 0 | **rc 1**, `MATRIZ_SCHEMA_INCOMPATIVEL` |
+| árvore real: `test` — só `exclusividade-gate.test.ts`, o arquivo que alcança a matriz real | rc 0 | rc 0 |
+| árvore real: `gates:frescura` | rc 0 | rc 0 |
+
+Restauração por `git checkout`, conferida por hash (`RESTAURADO_IDENTICO=SIM`).
+
+**Medição do motor: PENDENTE, coordenada.** A sessão do selo mede agora o `matriz-ilegivel` (só `test` e
+`test:falsificacao`) e grava a matriz; medir em paralelo colidiria exatamente no JSON — o cenário do próprio
+`matriz-ilegivel`. Combinado entre as sessões: a linha nova é medida a partir de uma main que já tenha a
+matriz dela, com a máquina vazia (durante esta sessão, swap a 96% e load 40–60):
+`bun run exclusividade:medir -- --defeitos matriz-schema-futuro`.
+
+### A falsificação
+
+Uma camada por vez, nos DOIS locales, com CONTROLE verde na MESMA invocação (o laço aborta antes da 1ª
+sabotagem se o controle não estiver verde). Cada sabotagem deixa um marcador `SABOTAGEM-Lx` no arquivo
+(sem ele a camada sai `SABOTAGEM-NAO-APLICOU`, nunca "medida"), e o vermelho só conta se o teste ESPERADO
+aparece como `FAIL` — a marca do ramo, casada com `grep -F`, sem `-i`. Restauração por `git checkout`,
+conferida por `git status`. Resultado: **22/22** (11 camadas × `C` e `pt_BR.UTF-8`, idênticos).
+
+| camada sabotada | o que ela sustenta | o que caiu |
+|---|---|---|
+| L1 checagem de `schemaVersion` desligada | a versão é conferida ANTES da forma | "schemaVersion de OUTRA versao ..." e mais 5 |
+| L2 `matrizForaDaForma` sempre `null` | campo ausente ou de tipo errado vira recusa, não TypeError | "campo OBRIGATORIO ausente ..." e mais 5 |
+| L3 checagem de raiz-objeto desligada | `[]`/`null` não caem na checagem de versão | só "raiz que nao e objeto ..." |
+| L4 travessão numa mensagem | toda recusa é ASCII | só "todo motivo de recusa e ASCII imprimivel" |
+| L5 `ler()` do gate volta a `JSON.parse` sem a porta | o binário lê pela porta | os 4 do binário e o SENTINELA |
+| L6 `avaliar` ignora a recusa | a recusa é UMA REPROVA, nunca o cálculo | os 2 de `avaliar`, o `MATRIZ_AUSENTE` antigo e os 4 do binário |
+| L7 guarda 14 desligada | o motor recusa antes do baseline | os 2 da guarda e o "matriz ilegivel" do bloco [fora-da-rodada] |
+| L8 classificador aceita os códigos novos | recusa de leitura é REPROVA-ALHEIA | só os 2 novos (unidade e `--json` do binário) — o antigo "nem MATRIZ_AUSENTE" segue VERDE |
+| L8m idem, no motor | idem, ponta a ponta | só "REPROVA de LEITURA da matriz no baseline" |
+| L9 leitor NOVO com `as Matriz` num script | a classe não reabre | só "nenhum script faz cast para `Matriz`" |
+| L10 o glob do scan fica cego | o sentinela | só o SENTINELA — **o scan da classe passou VERDE por cegueira** |
+
+**A L1 é a que justifica a marca do ramo.** Com a checagem de versão desligada a matriz de schema futuro
+CONTINUA recusada — cai no predicado da forma, que também confere a versão, e sai `MATRIZ_MALFORMADA`. Um
+teste que cobrasse só "recusou" (ou `toThrow()` pelado) ficaria verde; o que cobra o CÓDIGO fica vermelho.
+**A L8 prova que os testes novos não são redundantes:** o teste antigo do classificador segue verde sob a
+sabotagem, porque só conhece `MATRIZ_AUSENTE` e um código fictício. **A L10 é a razão do sentinela:** sem
+ele, a varredura cega passaria.
+
+**O amarramento de tipo também foi falsificado** (commitado antes, os dois locales, controle verde): campo
+novo em `ExecucaoGate` sem conferência, `invocacao` virando obrigatória e opcional novo em `LinhaMatriz` —
+os três dão `tsc` rc 2 na lib (`TS1360`, a tabela não satisfaz `FormaDe<...>`; `TS2820` no `?` que sobrou).
+O vitest transpila sem type-check: este guard só vive no `typecheck`.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
