@@ -71,6 +71,12 @@ g() { git -C "$R" "$@"; }
 escreve() { mkdir -p "$(dirname "$R/$1")" && printf '%s\n' "$2" > "$R/$1"; }
 commit() { g add -A && g commit -q -m "$1" && g tag "fx-$1" && g rev-parse HEAD; }
 parte_de() { g checkout -q --detach "$1"; }
+# Mapa com valores REPETIDOS, o formato do caso real (#2547: `4` → `3` num mapa de dívida): trocar um
+# valor por outro que já aparece mantém o conjunto de palavras — que é o que o Tailwind lê.
+mapa() { printf 'export const MAPA = new Map([\n  ["a.ts", %s],\n  ["b.ts", %s],\n  ["c.ts", %s],\n  ["d.ts", %s],\n]);\n' "$@"; }
+VITE_ALIAS='resolve: { alias: { "@": path.resolve(__dirname, "./src") } }'
+TW_CONTENT='content: ["./pages/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"]'
+lock_tw() { printf '{ "packages": { "tailwindcss": ["tailwindcss@%s", "", {}, "sha512-fx"] } }\n' "$1"; }
 pkg() { # $1 = scripts extras (JSON com vírgula inicial) · $2 = versão do react · $3 = script build
   printf '{ "name": "fixture", "private": true, "type": "module",\n'
   printf '  "scripts": { "build": "%s", "build:dev": "vite build --mode development", "lint": "eslint ."%s },\n' \
@@ -88,8 +94,12 @@ escreve src/index.css '@tailwind base; .logo { background: url("/favicon.ico"); 
 # teste importando helper de edge: o padrão REAL do repo (janela-pedidos-compra.test.ts) — teste
 # não vai para o bundle, e o fechamento não pode tratá-lo como vazamento.
 escreve src/lib/__tests__/janela.test.ts 'import { j } from "../../../supabase/functions/_shared/janela.ts"; test("espelho", () => j);'
-escreve vite.config.ts 'import path from "path"; export default { resolve: { alias: { "@": path.resolve(__dirname, "./src") } } };'
-escreve tailwind.config.ts 'export default { content: ["./pages/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"] };'
+# TESTE que nada importa, no formato do #2547; e o Tailwind na forma que a prova (d2) auditou
+escreve src/lib/__tests__/dados.ts "$(mapa 3 4 4 3)"
+escreve vite.config.ts "import path from \"path\"; export default { $VITE_ALIAS };"
+escreve tailwind.config.ts "export default { $TW_CONTENT };"
+escreve postcss.config.js 'export default { plugins: { tailwindcss: {}, autoprefixer: {} } };'
+escreve bun.lock "$(lock_tw 3.4.17)"
 escreve package.json "$(pkg)"
 escreve docs/a.md 'a'
 escreve docs/b.md 'b'
@@ -134,12 +144,46 @@ escreve vite.config.ts 'import path from "path"; export default { resolve: { ali
 escreve src/lib/usa-alias.ts 'import { j } from "@edge/janela"; export const a = j;'
 ALIAS_BASE=$(commit alias-base)
 escreve supabase/functions/_shared/janela.ts 'export const j = 4;'; ALIAS=$(commit alias)
+# ── TESTE em src/ (2026-09-26): inerte só com PROVA. O delta de quase todos é o MESMO — dados.ts
+# 4→3, palavras iguais —, então é a BASE de cada um (quem lê o teste, e como) que decide.
+parte_de "$BASE"; escreve src/lib/__tests__/dados.ts "$(mapa 3 3 4 3)"; escreve docs/a.md 'a-teste'
+TNUM=$(commit teste-numero)
+parte_de "$BASE"; escreve src/lib/__tests__/janela.test.ts 'import { j } from "../../../supabase/functions/_shared/janela.ts"; test("espelho", () => j); // bg-cor-nova'
+TPAL=$(commit teste-palavra)
+teste_sobre() { # nome · arquivo · conteúdo — base = BASE + (arquivo, conteúdo); delta = dados.ts 4→3
+  parte_de "$BASE"; escreve "$2" "$3"
+  commit "$1-base" > /dev/null || return 1
+  escreve src/lib/__tests__/dados.ts "$(mapa 3 3 4 3)"; commit "$1"
+}
+tag_de() { g rev-parse "fx-$1-base"; }
+TIMP=$(teste_sobre t-imp src/lib/usa-dados.ts 'import { MAPA } from "./__tests__/dados"; export const u = MAPA;')
+TCOM=$(teste_sobre t-com src/lib/usa-com.ts 'export const c = () => import(/* chunk: "d" */ "./__tests__/dados");')
+TJS=$(teste_sobre t-js src/lib/usa-js.ts 'import { MAPA } from "./__tests__/dados.js"; export const j = MAPA;')
+TURL=$(teste_sobre t-url src/lib/usa-url.ts 'export const w = new URL("__tests__/dados.ts", import.meta.url);')
+TCAT=$(teste_sobre t-cat src/lib/usa-cat.ts 'export const k = (n: string) => import("./__tests__/da" + n + ".ts");')
+# shellcheck disable=SC2016  # o template é do TypeScript do fixture, não do shell
+TTPL=$(teste_sobre t-tpl src/lib/usa-tpl.ts 'export const t = (n: string) => import(`./__tests__/da${n}.ts`);')
+TGLOB=$(teste_sobre t-glob src/lib/carrega.ts 'export const m = import.meta.glob("./**/*.ts");')
+parte_de "$BASE"
+escreve src/lib/usa-helper.ts 'import { h } from "./__tests__/helper"; export const x = h;'
+escreve src/lib/__tests__/helper.ts 'export { MAPA as h } from "./dados";'
+commit t-via-base > /dev/null && escreve src/lib/__tests__/dados.ts "$(mapa 3 3 4 3)" && TVIA=$(commit t-via)
+TLEI=$(teste_sobre t-lei vite.config.ts "import path from \"path\"; export default { publicDir: \"./src/lib/__tests__\", $VITE_ALIAS };")
+TALI=$(teste_sobre t-ali vite.config.ts "import path from \"path\"; const raiz = \"./src\"; export default { $VITE_ALIAS, plugins: [{ name: \"x\", buildStart() { return raiz; } }] };")
+TAPI=$(teste_sobre t-api vite.config.ts "import path from \"path\"; import { readFileSync } from \"fs\"; export default { $VITE_ALIAS };")
+TSEP=$(teste_sobre t-sep tailwind.config.ts "export default { $TW_CONTENT, separator: \"_\" };")
+TLCK=$(teste_sobre t-lck bun.lock "$(lock_tw 3.4.18)")
+TMIX=$(teste_sobre t-mix tailwind.config.ts "export default { $TW_CONTENT, theme: { fonte: \"./src/lib/__tests__/dados.ts\" } };")
+# teste-SYMLINK para docs/: o content do Tailwind segue o link — docs/ vira parte do CSS
+parte_de "$BASE"; ln -s ../../../docs/b.md "$R/src/lib/__tests__/link.test.ts"
+commit t-link-base > /dev/null && escreve docs/b.md 'b-link' && LINK=$(commit t-link)
 g branch deadbee1 "$BASE"   # ref com cara de SHA: `deadbee1^{commit}` resolve o BRANCH
 g branch deadbee3 "$SO_DOCS"   # a mesma ref, apontando para a MAIN: resolvia no atalho do exit 0
 if ! { g remote add origin "$O" && g push -q origin 'refs/tags/*:refs/tags/*'; }; then
   echo "❌ push do fixture falhou"; exit 2
 fi
-for v in BASE SO_DOCS C2445 SRC PKG_DEPS PKG_SCRIPTS PKG_BUILD PKG_FMT LATERAL RENAME DESC EDGE VAZA_BASE VAZA SUJO_BASE SUJO ALIAS_BASE ALIAS; do
+for v in BASE SO_DOCS C2445 SRC PKG_DEPS PKG_SCRIPTS PKG_BUILD PKG_FMT LATERAL RENAME DESC EDGE VAZA_BASE VAZA SUJO_BASE SUJO ALIAS_BASE ALIAS \
+         TNUM TPAL TIMP TCOM TJS TURL TCAT TTPL TGLOB TVIA TLEI TALI TAPI TSEP TLCK TMIX LINK; do
   val=${!v:-}
   [ "${#val}" -eq 40 ] || [ "${#val}" -eq 64 ] || { echo "❌ fixture incompleto: $v='$val'"; exit 2; }
 done
@@ -187,6 +231,26 @@ cenario() {
     carimbo_branch_main) echo "deadbee3 $SO_DOCS -" ;;
     alias_inerte)     echo "$ALIAS_BASE $ALIAS -" ;;
     carimbo_duplo)    echo "$BASE $SO_DOCS carimbo_duplo" ;;
+    # TESTE: o #2547 (4→3 num mapa + docs) sai 5 com a prova; sem a resposta dela, continua ALCANCA
+    teste_so_numero)  echo "$BASE $TNUM -" ;;
+    teste_python_mudo) echo "$BASE $TNUM python_mudo" ;;
+    teste_palavra_nova) echo "$BASE $TPAL -" ;;
+    # quem lê o teste — uma base por forma; o delta é sempre dados.ts 4→3 (mesmas palavras)
+    teste_importado)  echo "$(tag_de t-imp) $TIMP -" ;;
+    teste_import_comentario) echo "$(tag_de t-com) $TCOM -" ;;
+    teste_import_js)  echo "$(tag_de t-js) $TJS -" ;;
+    teste_new_url)    echo "$(tag_de t-url) $TURL -" ;;
+    teste_import_concat) echo "$(tag_de t-cat) $TCAT -" ;;
+    teste_import_template) echo "$(tag_de t-tpl) $TTPL -" ;;
+    teste_glob)       echo "$(tag_de t-glob) $TGLOB -" ;;
+    teste_via_teste)  echo "$(tag_de t-via) $TVIA -" ;;
+    teste_leitor_config) echo "$(tag_de t-lei) $TLEI -" ;;
+    teste_alias_leitor) echo "$(tag_de t-ali) $TALI -" ;;
+    teste_api_config) echo "$(tag_de t-api) $TAPI -" ;;
+    teste_extrator)   echo "$(tag_de t-sep) $TSEP -" ;;
+    teste_lockfile)   echo "$(tag_de t-lck) $TLCK -" ;;
+    teste_content_misto) echo "$(tag_de t-mix) $TMIX -" ;;
+    link_teste)       echo "$(tag_de t-link) $LINK -" ;;
   esac
 }
 
@@ -221,7 +285,25 @@ carimbo_alheio|3|motivo: CARIMBO_NAO_RESOLVE
 carimbo_e_branch|3|motivo: CARIMBO_NAO_RESOLVE
 carimbo_branch_main|3|motivo: CARIMBO_NAO_RESOLVE
 alias_inerte|3|motivo: ALCANCE_VAZA
-carimbo_duplo|3|motivo: CARIMBO_AMBIGUO'
+carimbo_duplo|3|motivo: CARIMBO_AMBIGUO
+teste_so_numero|5|SINCRONIZADO_EM_BUNDLE;testes: 1 mudado(s) fora do grafo de modulos, 1 lido(s) pelo Tailwind
+teste_python_mudo|3|motivo: ALCANCA_BUNDLE;continuam ALCANCA;sem prova positiva
+teste_palavra_nova|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/janela.test.ts
+teste_importado|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA MODULO src/lib/__tests__/dados.ts entra no grafo do bundle por src/lib/usa-dados.ts
+teste_import_comentario|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA MODULO src/lib/__tests__/dados.ts entra no grafo do bundle por src/lib/usa-com.ts
+teste_import_js|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA MODULO src/lib/__tests__/dados.ts entra no grafo do bundle por src/lib/usa-js.ts
+teste_new_url|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA MODULO src/lib/__tests__/dados.ts entra no grafo do bundle por src/lib/usa-url.ts
+teste_import_concat|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA MODULO src/lib/__tests__/dados.ts entra no grafo do bundle por src/lib/usa-cat.ts
+teste_import_template|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA MODULO src/lib/__tests__/dados.ts entra no grafo do bundle por src/lib/usa-tpl.ts
+teste_glob|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA MODULO src/lib/__tests__/dados.ts entra no grafo do bundle por src/lib/carrega.ts
+teste_via_teste|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA MODULO src/lib/__tests__/dados.ts entra no grafo do bundle por src/lib/__tests__/helper.ts
+teste_leitor_config|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA LEITOR src/lib/__tests__/dados.ts e lido por vite.config.ts
+teste_alias_leitor|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA LEITOR src/lib/__tests__/dados.ts e lido por vite.config.ts
+teste_api_config|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA LEITOR src/lib/__tests__/dados.ts: vite.config.ts le arquivo
+teste_extrator|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;separator
+teste_lockfile|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;travado em 3.4.18
+teste_content_misto|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA LEITOR src/lib/__tests__/dados.ts e lido por tailwind.config.ts
+link_teste|3|motivo: ALCANCE_VAZA;src/lib/__tests__/link.test.ts -> docs/b.md'
 
 esperado_de() { printf '%s\n' "$CASOS" | awk -F'|' -v c="$1" '$1 == c { print $2 "|" $3; achou = 1 } END { exit !achou }'; }
 
@@ -265,11 +347,18 @@ roda() {
     > "$out" 2>&1
 }
 
-# bate <saída> <exit obtido> <exit esperado> <marca> → 0 se o exit E a marca batem, e as marcas
-# não se misturam
+# bate <saída> <exit obtido> <exit esperado> <marca[;marca…]> → 0 se o exit E TODAS as marcas batem,
+# e as marcas não se misturam. Várias marcas: o ramo do monitor (motivo: ALCANCA_BUNDLE) E a sub-marca
+# da prova (TESTE_ALCANCA MODULO) — sem a segunda, um teste que volta a ALCANCA pelo NOME passaria
 bate() {
+  local resto="$4" m
   [ "$2" -eq "$3" ] || return 1
-  command grep -F -q -- "$4" "$1" || return 1
+  while :; do
+    m=${resto%%;*}
+    command grep -F -q -- "$m" "$1" || return 1
+    [ "$m" = "$resto" ] && break
+    resto=${resto#*;}
+  done
   case "$3" in
     5) ! command grep -F -q -e "ATRASADO" -e "VERSAO_INDETERMINADA" "$1" ;;
     3) ! command grep -F -q -e "SINCRONIZADO_EM_BUNDLE" -e "VERSAO_INDETERMINADA" "$1" ;;
@@ -302,6 +391,19 @@ ALCANCA	package-lock.json
 ALCANCA	patches/react.patch
 ALCANCA	pages/Index.tsx
 ALCANCA	src/docs/ajuda.md
+TESTE	src/lib/__tests__/x.test.ts
+TESTE	src/__tests__/erro-object-object-gate.test.ts
+TESTE	src/lib/__tests__/helpers/h.ts
+TESTE	src/lib/y.test.tsx
+TESTE	src/lib/z.spec.ts
+TESTE	src/test/setup.ts
+ALCANCA	src/test
+ALCANCA	src/testes/x.ts
+ALCANCA	src/lib/contest.ts
+ALCANCA	src/lib/w.test.js
+ALCANCA	src/lib/x.test.ts.snap
+ALCANCA	pages/__tests__/x.test.tsx
+INERTE	supabase/functions/x/index_test.ts
 PACKAGE_JSON	package.json
 INERTE	docs/historico/x.md
 INERTE	scripts/gate.ts
@@ -346,7 +448,7 @@ while IFS='|' read -r nome esp marca; do
   fi
 done <<< "$CASOS"
 echo "$n_ok/$n_tot cenários passaram"
-[ "$n_tot" -ge 30 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
+[ "$n_tot" -ge 49 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
 
 # ── falsificação ────────────────────────────────────────────────────────────────────────────────
 if [ "$FALSIFY" = 1 ]; then
@@ -455,10 +557,59 @@ PY
       'if not isinstance(v, str) or not RE_BUILD_PURO.fullmatch(v.strip()):' 'if False:'
     sab fechamento scripts/alcance-bundle.py vazamento "$VERDE_INDEVIDO" \
       '    if vazamentos:' '    if False:'
-    # direção OPOSTA: sem a exclusão de teste o fechamento fica conservador demais e o espelho de
-    # helper em __tests__/ (padrão real do repo) vira "vazamento" — o cenário verde fica vermelho
+    # direção OPOSTA: TESTE varrido como se fosse do bundle deixa o fechamento conservador demais, e
+    # o espelho de helper em __tests__/ (padrão real do repo) vira "vazamento" — o verde fica vermelho.
+    # (Até 2026-09-26 a exclusão era um RE_TESTE local; hoje a fonte única de "teste" é a tabela.)
     sab teste-fora-do-bundle scripts/alcance-bundle.py edge_so_teste '3|motivo: ALCANCE_VAZA' \
-      'and not RE_TESTE.search(p)' 'and True'
+      'if classes[p] == "ALCANCA" and modulo(p)]' 'if classes[p] in ("ALCANCA", "TESTE") and modulo(p)]'
+    # ── TESTE só é inerte com PROVA (2026-09-26, `--pr 2547`). A tabela: sem a regra, o teste volta
+    #    a ALCANCA pelo NOME e o caso do #2547 volta a pedir Publish
+    sab tabela-teste evals/classify.sh teste_so_numero '3|motivo: ALCANCA_BUNDLE' \
+      '  if (teste(p)) return "TESTE"' '  if (0) return "TESTE"'
+    # o monitor reconhece a classe; sem ela no resumo, o delta é malformado — nunca "inerte"
+    sab resumo-teste scripts/monitor-deploy.sh teste_so_numero '3|motivo: CLASSIFY_FALHOU' \
+      '$1 ~ /^(ALCANCA|TESTE|PACKAGE_JSON|INERTE|DESCONHECIDO)$/' '$1 ~ /^(ALCANCA|PACKAGE_JSON|INERTE|DESCONHECIDO)$/'
+    # "continua ALCANCA": sem a resposta da prova, o teste do delta não cai no motivo genérico
+    sab teste-continua-alcanca scripts/monitor-deploy.sh teste_python_mudo '3|motivo: PROVA_INDISPONIVEL' \
+      '[ "$nt" -eq 0 ] || atrasado ALCANCA_BUNDLE' '[ "$nt" -ge 0 ] || atrasado ALCANCA_BUNDLE'
+    # (d1) MÓDULO — cada forma de alcançar o teste, arrancada, reabre o verde naquela base
+    sab teste-importado scripts/alcance-bundle.py teste_importado "$VERDE_INDEVIDO" \
+      '    if no_grafo:' '    if False:'
+    sab import-comentario scripts/alcance-bundle.py teste_import_comentario "$VERDE_INDEVIDO" \
+      'COMENTARIO = r"(?:\s|/\*.*?\*/|//[^\n]*\n)*"' 'COMENTARIO = r"\s*"'
+    sab troca-js-ts scripts/alcance-bundle.py teste_import_js "$VERDE_INDEVIDO" \
+      '        if alvo.endswith(de):' '        if False:'
+    sab new-url-sem-ponto scripts/alcance-bundle.py teste_new_url "$VERDE_INDEVIDO" \
+      '        spec, relativo = "./" + spec, True' '        return None'
+    sab import-concat scripts/alcance-bundle.py teste_import_concat "$VERDE_INDEVIDO" \
+      'specs += [(m.group(2) + "*", "qualquer") for m in RE_IMPORT_CONCAT.finditer(texto)]' 'pass'
+    sab template-glob scripts/alcance-bundle.py teste_import_template "$VERDE_INDEVIDO" \
+      '        spec = spec.split("${", 1)[0] + "*"' '        spec = spec.split("${", 1)[0]'
+    sab glob-cobre-teste scripts/alcance-bundle.py teste_glob "$VERDE_INDEVIDO" \
+      '            return testes_sob(alvo[:-1] or ".")' '            return []'
+    sab teste-transitivo scripts/alcance-bundle.py teste_via_teste "$VERDE_INDEVIDO" \
+      '        elif modulo(t):' '        elif False:'
+    # (d1) LEITOR — config de build que lê o teste como bytes
+    sab leitor-config scripts/alcance-bundle.py teste_leitor_config "$VERDE_INDEVIDO" \
+      '                        por_leitor.setdefault(t, (p, spec))' '                        pass'
+    sab alias-so-arroba scripts/alcance-bundle.py teste_alias_leitor "$VERDE_INDEVIDO" \
+      '    return n > 0 and n == len(RE_ALIAS_ARROBA.findall(texto))' '    return n > 0'
+    sab api-de-leitura scripts/alcance-bundle.py teste_api_config "$VERDE_INDEVIDO" \
+      '        if m or len(RE_PROCESSO.findall(t)) != len(RE_PROCESSO_GIT.findall(t)):' '        if False:'
+    sab content-so-array scripts/alcance-bundle.py teste_content_misto "$VERDE_INDEVIDO" \
+      '                elif spec in content:' '                elif p.startswith("tailwind.config."):'
+    # (d2) TAILWIND — as palavras, e o extrator ser o auditado
+    sab palavras-do-tailwind scripts/alcance-bundle.py teste_palavra_nova "$VERDE_INDEVIDO" \
+      '            if pa != pm:' '            if False:'
+    sab extrator-auditado scripts/alcance-bundle.py teste_extrator "$VERDE_INDEVIDO" \
+      '        if motivo:
+            raise Refutado("TESTE_ALCANCA EXTRATOR' '        if False:
+            raise Refutado("TESTE_ALCANCA EXTRATOR'
+    sab versao-auditada scripts/alcance-bundle.py teste_lockfile "$VERDE_INDEVIDO" \
+      '    if not lidos or versoes != {TAILWIND_AUDITADO}:' '    if not lidos:'
+    # symlink de TESTE segue no fechamento: o content do Tailwind lê o ALVO
+    sab link-de-teste scripts/alcance-bundle.py link_teste "$VERDE_INDEVIDO" \
+      'if classes[p] in ("ALCANCA", "TESTE"))' 'if classes[p] == "ALCANCA")'
     sab nome-no-config scripts/alcance-bundle.py alias_inerte "$VERDE_INDEVIDO" \
       '        return nome_no_config(spec, uniao, dirs_uniao)' '        return None'
     sab carimbo-ambiguo scripts/monitor-deploy.sh carimbo_duplo "$VERDE_INDEVIDO" \
@@ -528,7 +679,7 @@ PY
     fi
   done
   echo "  falsificações que pegaram: $fals/$total"
-  [ "$total" -ge 24 ] && [ "$fals" -eq "$total" ] || rc=1
+  [ "$total" -ge 44 ] && [ "$fals" -eq "$total" ] || rc=1
 
   # (C) CONTROLE DE SAÍDA — pelo CONTEÚDO: o laço nunca mutou o versionado.
   # shellcheck disable=SC2086
