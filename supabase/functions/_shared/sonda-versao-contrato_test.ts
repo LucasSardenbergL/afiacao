@@ -75,6 +75,7 @@ import * as analyzeServices from "../analyze-services/versao.ts";
 import * as copilotAnalyze from "../copilot-analyze/versao.ts";
 import * as elevenlabsTranscribe from "../elevenlabs-transcribe/versao.ts";
 import * as cronDiario from "../omie-cron-diario/versao.ts";
+import * as whatsappInbound from "../whatsapp-inbound/versao.ts";
 import { SONDA_CRON_ALVOS } from "./sonda-cron-alvos.ts";
 
 /**
@@ -257,6 +258,11 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // não, e ficou inverificável justo quando uma fatia mudou a LISTA de steps (o `sku_items` saiu —
   // REDUNDANT com o step NFe). Sondar o bundle pré-sensor dispara o ciclo inteiro (versao.ts).
   { nome: "omie-cron-diario", mod: cronDiario },
+  // 13ª leva (2026-09-26) — o webhook de ENTRADA do WhatsApp, a única do canal que ficara fora do
+  // mapa. Quem chama é a 360dialog: sem cron e sem browser, não há rastro em `net._http_response`,
+  // e o log próprio (`whatsapp_webhook_events`) é gravado por toda versão. Medido na entrada: a
+  // versão servida era INDETERMINADA entre três bundles históricos.
+  { nome: "whatsapp-inbound", mod: whatsappInbound },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -326,6 +332,10 @@ const ESCRITA_NOSSO_BANCO = [
   "enviar-push",
   "nvoip-calls",
   "dispatch-notifications",
+  // 13ª leva: grava o webhook bruto em `whatsapp_webhook_events`, cria conversas e mensagens e
+  // escreve o `opt_in_status` — é ali que o STOP do cliente vira `opt_out` (LGPD) — além do status
+  // de entrega dos templates. Entra em GATE_PROPRIO: o gate dela é o `x-whatsapp-secret`.
+  "whatsapp-inbound",
 ];
 
 /**
@@ -460,6 +470,9 @@ const GATE_PROPRIO = [
   "identify-tool",
   "analyze-services",
   "elevenlabs-transcribe",
+  // 13ª leva: a gêmea de canal da `omie-webhook` — o gate dela é o `x-whatsapp-secret`
+  // compartilhado com a 360dialog, que o `net.http_post` do SQL Editor não emite.
+  "whatsapp-inbound",
 ];
 
 /** As pastas que TÊM `versao.ts` — a verdade da árvore, não a lista declarada aqui. */

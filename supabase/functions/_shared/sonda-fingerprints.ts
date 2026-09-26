@@ -72,6 +72,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "sync-reprocess": "5b4d86d1b5821eeff4730130e6db96690563a592353cde3834523e9298d1eb89",
   "tactical-plans-batch": "6d882834d7cef695d9879e1498b1b4e8cc9073bc50906279982a8cc015d6a8be",
   "visit-score-recalc-batch": "fc6e87d83a3d700cf802731a40ac10098be412a11e6e95e7826efb1364114a95",
+  "whatsapp-inbound": "e2386801525315a52f0c06fae2c6055f846f4a877b157a9627e19f7811acb315",
   "whatsapp-send": "dea0911c8768412918d9730b76b0f8231ef74042715a587c003dd80f00917ecf",
   "whatsapp-send-template": "c05231ef490b58717b03f8e85de333d10ed4a5d0d113ed592ad78d9ab234ed12",
 };

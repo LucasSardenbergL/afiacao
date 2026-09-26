@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // Espelho do helper puro testado em src/lib/whatsapp/inbound.ts (Deno não importa do src/).
 function waPhoneCandidates(input: string | null | undefined): string[] {
@@ -193,6 +195,36 @@ async function processMessage(supabase: ReturnType<typeof createClient>, msg: Pa
 }
 
 Deno.serve(async (req) => {
+  // ⚠️ SONDA DE VERSÃO ({"probe":true}) — ANTES do gate desta edge, de propósito, e com gate
+  // PRÓPRIO (`authorizeCronOrStaff`): o gate daqui é o `x-whatsapp-secret` da 360dialog, que o
+  // `net.http_post` do SQL Editor não emite — atrás dele a sonda ficaria inalcançável para quem
+  // precisa dela. O corpo é lido UMA vez, aqui, e o erro de JSON é GUARDADO e respondido no ponto
+  // antigo (depois do gate): quem não é sonda recebe exatamente o de antes — 401 sem o segredo,
+  // 200 `no-json` com o segredo e corpo inválido. Ver versao.ts / _shared/sonda-versao.ts.
+  let payload: unknown;
+  let corpoInvalido = false;
+  try {
+    payload = await req.json();
+  } catch {
+    payload = {};
+    corpoInvalido = true;
+  }
+  const decisaoSonda = classificarSonda(payload);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
   const expected = Deno.env.get("WHATSAPP_WEBHOOK_SECRET");
   // Segredo SOMENTE via header (x-whatsapp-secret) — nunca em query string, que vaza em logs de
   // proxy/CDN, no Referer e no histórico (achado de segurança "WhatsApp Webhook Secret Exposed
@@ -204,8 +236,7 @@ Deno.serve(async (req) => {
   if (!expected || !provided || !timingSafeEq(expected, provided)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
   }
-  let payload: unknown;
-  try { payload = await req.json(); } catch { return new Response(JSON.stringify({ ok: true, ignored: "no-json" }), { status: 200 }); }
+  if (corpoInvalido) return new Response(JSON.stringify({ ok: true, ignored: "no-json" }), { status: 200 });
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   await supabase.from("whatsapp_webhook_events").insert({ payload });
