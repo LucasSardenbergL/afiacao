@@ -177,7 +177,9 @@ rodou 18 dias o corpo de uma migration ANTERIOR (`docs/historico/deriva-corpo-se
 - `exit=1` → ❌ cada linha nomeia o código e a função. **Não edite a baseline para calar** — aceitar
   deriva é decisão do founder, com a evidência na frente dele:
   - `CORPO_ANTERIOR` → revert por ordem de colagem **ou** migration mergeada e não aplicada: a linha
-    diz qual migration venceu e qual deveria. Reaplicar função money-path passa pelo Codex e pelo
+    diz qual migration venceu e qual deveria. Reaplicar é **só o `CREATE OR REPLACE`** da função, nunca
+    o arquivo inteiro — ele pode trazer DML/backfill que reescreveria dado vivo
+    (`docs/historico/deriva-so-de-comentario-no-corpo.md`); money-path passa pelo Codex e pelo
     ENVELOPE (`docs/agent/database.md` §Escrita).
   - `PATCH_NAO_CONCILIADO` → uma migration de patch por âncora entrou na main: confira se pegou em
     prod e concilie na baseline (`ALTERA` com o md5 de prod, ou `SO_CITA`).

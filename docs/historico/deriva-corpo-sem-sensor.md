@@ -2,8 +2,12 @@
 
 > 2026-09-26 · sessão `ops/deriva-corpo-funcoes`. Desdobramento da lição 1 de
 > [`cancelar-revertido-por-colagem-fora-de-ordem.md`](cancelar-revertido-por-colagem-fora-de-ordem.md):
-> *"Deriva de CORPO não tem sensor geral."* Parecer de desenho do Codex (`gpt-6-astra`·max, 476s,
-> 181.181 tokens): nenhum P0, 6 P1, 2 P2 — todos adotados.
+> *"Deriva de CORPO não tem sensor geral."* Codex (`gpt-6-astra`·max): desenho 476s/181.181 tokens —
+> 0 P0 · 6 P1 · 2 P2; código 473s/196.060 tokens — 0 P0 · 10 P1 · 2 P2. Todos os achados adotados.
+> Censo irmão, da mesma madrugada e só de documentação:
+> [`deriva-so-de-comentario-no-corpo.md`](deriva-so-de-comentario-no-corpo.md) (mesma datação do GRANT
+> em massa; propõe refinar o gate do pacote — a "opção C", ainda não implementada, pode reusar o
+> `tokensSql` daqui).
 
 ## O buraco
 
@@ -70,17 +74,42 @@ do `/fecho`. O que ele faz, e o achado que cada peça fecha:
   transação `REPEATABLE READ READ ONLY`, conferindo uma contra a outra (contagem e md5 por nome).
 - **Aceite tolera cosmético** (P2-8): a baseline guarda md5 do banco **e** md5 dos tokens.
 
+### O que o parecer de CÓDIGO derrubou (0 P0 · 10 P1 · 2 P2, todos com cenário de falso-verde)
+
+`NAO_MENSURAVEL` dispensava até a EXISTÊNCIA; a perda contada por nome se escondia atrás do CREATE
+antigo (redefinição com identificador citado) — virou contagem por declaração; excluir o patch do
+mesmo arquivo do CREATE escondia "cria, patcheia e alguém reverte" — virou decisão por POSIÇÃO (o que
+trouxe 8 conciliações `SO_CITA`, todas postcondições lidas uma a uma); `SELECT 'DROP FUNCTION …'`
+aposentava função — literal de string não é comando (o `DROP` estático dentro de `DO` segue valendo);
+`DROP` de assinatura ilegível aposentava todos os overloads — virou incerteza; `DEFAULT ')'` encurtava
+a assinatura; perder as linhas de corpo de um nome escapava à conferência — a sonda ganhou a CONTAGEM
+por nome no mesmo retrato; a continuação de `E''` perdia o escape; CR não fechava comentário; `'f'::regproc`
+não era alvo de patch; tag de dollar-quote longa escapava da janela do regex; `int[][]`/`float(p)`.
+Uma exceção inesperada no runner saía com o exit 1 cru do bun ("divergiu") — virou 2 (harness K6).
+
 ## Evidência
 
-- Lib: 92 testes (`scripts/lib/deriva-corpo.test.ts`), inclusive o incidente REPLAYADO com as duas
-  migrations reais (falsificado: sabotar a busca de versão anterior deu `SEM_PAR` e o teste ficou
-  vermelho; restaurado, verde — na mesma invocação).
-- Harness PG17 (`db/test-audit-deriva-corpo-prod.sh`): **26/26 em `LC_ALL=C` e em `pt_BR.UTF-8`** —
+- Lib: **104** testes (`scripts/lib/deriva-corpo.test.ts`) + 43 do extrator + 3 do leitor da ref,
+  inclusive o incidente REPLAYADO com as duas migrations reais (falsificado: sabotar a busca de versão
+  anterior deu `SEM_PAR` e o teste ficou vermelho; restaurado, verde — na mesma invocação).
+- Harness PG17 (`db/test-audit-deriva-corpo-prod.sh`): **28/28 em `LC_ALL=C` e em `pt_BR.UTF-8`** —
   controle verde primeiro (aborta se falhar), 12 sabotagens com o código certo e o dente de volta ao
-  verde, mudança só cosmética verde, e 4 quebras de medição (truncada, psql caído, vazia, hex
-  corrompido) saindo 2.
+  verde, mudança só cosmética verde, e 6 quebras de medição (truncada, psql caído, vazia, hex
+  corrompido, exceção dentro e fora de `try`) saindo 2.
+- Extrator com posição, argumentos cientes de literal e fantasma pulado: corpus de 735 migrations
+  **byte a byte idêntico** (2.404 objetos) antes e depois.
+- Baseline: 22 entradas — 1 `EDICAO_MANUAL`, 9 `PATCH/ALTERA`, 11 `PATCH/SO_CITA`, 1 `NAO_MENSURAVEL`.
 - 1ª execução real (2026-09-26 03:15Z, `origin/main@6fe383e09`): **exit 0** — 313 identidades vivas
   (228 em dia, 78 cosméticas, 6 aceitas, 1 não mensurável declarada) e 15 aposentadas ausentes.
+
+## A 1ª divergência viva: DDL aplicada ANTES do merge
+
+Às 03:34Z o sensor saiu **exit 1**: `gerar_pedidos_sugeridos_ciclo(text,date)` e
+`atualizar_parametros_numericos_skus(text,uuid)` em `SEM_PAR`, reescritas em prod minutos antes (`xmin`
+10598692 e 10598741). Varrendo as branches remotas, os dois corpos batem **byte a byte** com migrations
+do #2573 (`20260925225004`, `20260926001425`), aberto e ainda fora da main: outra sessão aplicou a DDL
+primeiro. É divergência de verdade (prod roda código que a main não tem) e some quando o PR mergear; se
+ele não mergear, é exatamente o que o sensor existe para não deixar calado.
 
 ## Lições
 
