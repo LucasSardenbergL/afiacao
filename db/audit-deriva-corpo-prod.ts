@@ -100,26 +100,21 @@ function carregarEntrada(semRede: boolean): Entrada {
   };
 }
 
-function main(): void {
-  const semRede = process.argv.includes('--sem-rede');
-  let entrada: Entrada;
-  try {
-    entrada = carregarEntrada(semRede);
-  } catch (e) {
-    erroFatal(`entrada ilegível: ${mensagemDeErro(e) ?? 'erro desconhecido'}`);
-  }
-  const { lidas, baseline, sha, fetch } = entrada;
+function medir(semRede: boolean): 0 | 1 | 2 {
+  const { lidas, baseline, sha, fetch } = carregarEntrada(semRede);
 
   const modelo = modelarRepo(lidas);
   const historico = historicoDeCorpos(lidas);
   const alvos = [...modelo.nomes].sort((a, b) => a.localeCompare(b, 'en')).map((rpc) => ({ rpc, edges: [] as string[] }));
   if (alvos.length === 0) erroFatal('o repo não define função `public` nenhuma — é leitura quebrada, não universo vazio');
   const nomes = [...new Set([...alvosDeCorpo(alvos, historico), ...modelo.nomes])];
+  // A sonda recusa nome fora do alfabeto `[a-z0-9_]` em vez de escapar — e isso é "não medi".
+  const sql = montarSondaDeriva(nomes);
 
   let saida: string;
   try {
     // `-c` (não `-f`): só `-c` sai ≠ 0 em ERROR pelo wrapper; `-q` cala os `SET` do psqlrc.
-    saida = execFileSync(PSQL, ['-q', '-v', 'ON_ERROR_STOP=1', '-tA', '-F', '|', '-c', montarSondaDeriva(nomes)], {
+    saida = execFileSync(PSQL, ['-q', '-v', 'ON_ERROR_STOP=1', '-tA', '-F', '|', '-c', sql], {
       encoding: 'utf8',
       maxBuffer: 256 * 1024 * 1024,
       timeout: 180_000,
@@ -142,7 +137,19 @@ function main(): void {
   const { saida: linhas, erro } = relatarDeriva(resultado, { sha, fetch, agora: leitura.agora });
   for (const l of linhas) console.log(l);
   for (const l of erro) console.error(l);
-  process.exit(resultado.exit);
+  return resultado.exit;
+}
+
+function main(): void {
+  let exit: 0 | 1 | 2;
+  try {
+    exit = medir(process.argv.includes('--sem-rede'));
+  } catch (e) {
+    // Exceção INESPERADA em qualquer ponto é "não medi" (2). Deixá-la escapar daria o exit 1 cru do
+    // bun — e o carimbo leria 1 como "prod divergiu", um achado inventado.
+    erroFatal(`exceção inesperada: ${mensagemDeErro(e) ?? 'erro desconhecido'}`);
+  }
+  process.exit(exit);
 }
 
 main();

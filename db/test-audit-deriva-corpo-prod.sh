@@ -261,6 +261,20 @@ falso corrompe "\"$WRAP\" \"\$@\" | awk -F'|' 'BEGIN { OFS = \"|\" } \$1 == \"fn
 roda "$JSON" "$TMPD/corrompe"
 esperar "K4 hex corrompido em trânsito → 2" 2 "[INCERTO]" "✅"
 
+# K5. exceção inesperada no runner (nome fora do alfabeto da sonda, vindo de DDL escrita como texto)
+#     tem de sair 2 — o exit 1 cru do bun seria lido como "divergiu" pelo carimbo.
+cat >"$TMPD/20260106000000_texto.sql" <<'EOF'
+SELECT 'CREATE FUNCTION public.9f() RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$';
+EOF
+montar_json "$TMPD/entrada-texto.json" nao "$TMPD/20260106000000_texto.sql"
+roda "$TMPD/entrada-texto.json"
+esperar "K5 exceção inesperada no runner → 2, nunca o 1 cru do bun" 2 "[INCERTO]" "✅"
+
+# K6. exceção FORA de qualquer try (fixture malformada derruba o modelo): 2, nunca o 1 cru do bun.
+printf '%s' '{"migrations":[{"nome":"20260101000000_x.sql","sql":null}],"baseline":{"formato":"deriva-corpo-baseline/1","entradas":[]}}' >"$TMPD/entrada-torta.json"
+roda "$TMPD/entrada-torta.json"
+esperar "K6 exceção fora de try → 2" 2 "[INCERTO]" "✅"
+
 # Z. e o verde de novo no fim — o banco saiu das sabotagens no estado certo.
 roda "$JSON"
 esperar "Z  controle final verde" 0 "✅ deriva-corpo" "[INCERTO]"
