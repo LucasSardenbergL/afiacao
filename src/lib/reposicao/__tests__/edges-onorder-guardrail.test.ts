@@ -89,22 +89,26 @@ describe("guardrail money-path: omie-sync-estoque ('a caminho' do MOTOR, #1072)"
   });
 });
 
-// Fonte ÚNICA do on-order: a CTE em_transito (1º ramo) de gerar_pedidos_sugeridos_ciclo conta um PO por
-// STATUS; o sync tira do estoque_pendente_entrada os POs desses MESMOS status (fetchEmTransitoKeys). Status
-// que só a RPC conta = contado 2× depois do sync (suprime compra necessária); só o sync = 0× (compra dupla).
-// Mordido no follow-up Codex do #2549: 'disparado_simulado' entrou na RPC e não na edge.
-describe("paridade money-path: status do em_transito (RPC) = status excluídos do pendente (omie-sync-estoque)", () => {
-  const ABRE = "CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo";
+// Fonte ÚNICA do on-order: a CTE em_transito (1º ramo) de gerar_pedidos_sugeridos_ciclo e a de
+// atualizar_parametros_numericos_skus (posição do impacto) contam um PO por STATUS; o sync tira do
+// estoque_pendente_entrada os POs desses MESMOS status (fetchEmTransitoKeys). Status que só a RPC conta =
+// contado 2× depois do sync (suprime compra necessária); só o sync = 0× (compra dupla / impacto errado).
+// Mordido no follow-up Codex do #2549: 'disparado_simulado' entrou na RPC e não na edge (1ª rodada), e a
+// função de parâmetros ficou de fora (2ª rodada).
+describe("paridade money-path: status do em_transito (RPCs) = status excluídos do pendente (omie-sync-estoque)", () => {
   const MIG_DIR = resolve(process.cwd(), "supabase/migrations");
 
   /** A migration de MAIOR timestamp que recria a função — a que vence em prod (mesma regra da paridade da fixture). */
-  function sqlVivo(): string {
+  function sqlVivo(funcao: string): string {
+    const abre = `CREATE OR REPLACE FUNCTION public.${funcao}(`;
     const nomes = readdirSync(MIG_DIR)
-      .filter((f) => f.endsWith(".sql") && readFileSync(resolve(MIG_DIR, f), "utf8").includes(ABRE))
+      .filter((f) => f.endsWith(".sql") && readFileSync(resolve(MIG_DIR, f), "utf8").includes(abre))
       .sort();
-    expect(nomes.length, `nenhuma migration recria ${ABRE}`).toBeGreaterThan(0);
-    // Comentário SQL de linha fora: o predicado tem de estar no CÓDIGO (nenhum literal da função contém "--").
-    return readFileSync(resolve(MIG_DIR, nomes[nomes.length - 1]), "utf8").replace(/--[^\n]*/g, "");
+    expect(nomes.length, `nenhuma migration recria ${funcao}`).toBeGreaterThan(0);
+    // Comentário SQL (bloco e linha) fora: o predicado tem de estar no CÓDIGO (nenhum literal das funções
+    // contém "--" nem "/*").
+    const sql = readFileSync(resolve(MIG_DIR, nomes[nomes.length - 1]), "utf8");
+    return sql.slice(sql.indexOf(abre)).replace(/\/\*[\s\S]*?\*\//g, "").replace(/--[^\n]*/g, "");
   }
 
   function lista(txt: string): string[] {
@@ -112,10 +116,16 @@ describe("paridade money-path: status do em_transito (RPC) = status excluídos d
   }
 
   function statusRpc(): string[] {
-    const m = sqlVivo().match(/pcs2\.status IN \(([^)]*)\) AND pcs2\.data_ciclo >=/g);
+    const m = sqlVivo("gerar_pedidos_sugeridos_ciclo").match(/pcs2\.status IN \(([^)]*)\) AND pcs2\.data_ciclo >=/g);
     expect(m, "1º ramo da em_transito (pcs2.status IN (...) AND pcs2.data_ciclo >=) não encontrado").not.toBeNull();
     expect(m!.length, "mais de um 1º ramo casou (extração ambígua)").toBe(1);
     return lista(m![0].slice(0, m![0].indexOf(")")));
+  }
+
+  function statusParam(): string[] {
+    const m = sqlVivo("atualizar_parametros_numericos_skus").match(/WITH em_transito AS \([\s\S]*?pcs2\.status IN \(([^)]*)\)/);
+    expect(m, "em_transito de atualizar_parametros_numericos_skus não encontrado").not.toBeNull();
+    return lista(m![1]);
   }
 
   function statusEdge(): string[] {
@@ -129,10 +139,11 @@ describe("paridade money-path: status do em_transito (RPC) = status excluídos d
     return lista(m![0].slice(m![0].indexOf("[")));
   }
 
-  it("as duas listas são o MESMO conjunto (e incluem disparado_simulado — PO real do dry_run)", () => {
+  it("as três listas são o MESMO conjunto (e incluem disparado_simulado — PO real do dry_run)", () => {
     const rpc = statusRpc();
     expect(rpc, "lista da RPC veio vazia — extração cega").toContain("disparado");
     expect(rpc, "a RPC não conta 'disparado_simulado' (o dry_run cria PO real no Omie)").toContain("disparado_simulado");
     expect(statusEdge(), "omie-sync-estoque diverge da em_transito — um status seria contado 2× ou 0×").toEqual(rpc);
+    expect(statusParam(), "atualizar_parametros_numericos_skus diverge da em_transito do motor — impacto conta o PO 0× ou 2×").toEqual(rpc);
   });
 });

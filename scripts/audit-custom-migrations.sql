@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 559
+-- Total de custom migrations: 560
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -600,7 +600,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260924163250', 'cron_sku_items_2h_proprio', '20260924163250_cron_sku_items_2h_proprio.sql'),
   ('20260925210000', 'tint_promocao_assincrona', '20260925210000_tint_promocao_assincrona.sql'),
   ('20260925210332', 'reposicao_em_transito_guarda_fantasma_null_safe', '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql'),
-  ('20260925225004', 'reposicao_em_transito_simulado_e_join_grupo_null_safe', '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql')
+  ('20260925225004', 'reposicao_em_transito_simulado_e_join_grupo_null_safe', '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql'),
+  ('20260926001425', 'param_auto_em_transito_conta_disparado_simulado', '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2424,7 +2425,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-tick', ''),
   ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-watchdog', ''),
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4296,7 +4298,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-tick', ''),
   ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-watchdog', ''),
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', '')
 )
 SELECT
   e.migration,
@@ -4564,6 +4567,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'atualizar_parametros_numericos_skus', 2, '20260605130000_param_auto_core.sql', '74540a6ed9b7e5a0437f9ecfac7ee0f6'),
   ('public', 'atualizar_parametros_numericos_skus', 3, '20260605150000_param_auto_fusivel_calibracao.sql', 'fd7c292b873875e30ddfaf5fda1f2a80'),
   ('public', 'atualizar_parametros_numericos_skus', 4, '20260712140000_param_auto_log_valor_barrado_fusivel.sql', '7b1730f2e9c2af673b12de72bf0f4b28'),
+  ('public', 'atualizar_parametros_numericos_skus', 5, '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql', '2e97357542270b2e5c44d9fb46d09bff'),
   ('public', 'registrar_contato_rota', 1, '20260531170000_route_contact_log_escrita.sql', '46a7d7aefdeb438671ca1e2f3737b82f'),
   ('public', 'registrar_contato_rota', 2, '20260718170000_fu7_conserta_callers_orfaos.sql', '1f636cd3c55102641b965a09008ba39a'),
   ('public', 'tarefas_guard_comprovacao', 1, '20260601103000_tarefas_fase2_bloco_d.sql', '6e383f9950617271dbdcd5ab70f253c9'),
