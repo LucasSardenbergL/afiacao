@@ -106,6 +106,29 @@ Sem `libfaketime` (ausente no laptop, e no macOS o `pg_ctl` passa por `/bin/sh`,
 
 O relógio segue andando a partir do instante simulado. **Resultado:** o arquivo ANTIGO a 04:00Z
 simulada deu `PASS=28 FAIL=1` (`desde 26/09 → desde 25/09`) nos dois locales, e a 15:00Z, `29/0`. O
-corrigido deu `31/0` nos quatro. **Limites:** só `now()` é interceptado (`CURRENT_TIMESTAMP`,
-`clock_timestamp()` e afins escapam), e função cujo `search_path` não tem `public` não vê o relógio
-simulado.
+corrigido deu `31/0` nos quatro. O mesmo vale com o servidor em **UTC** (`TZ=UTC`, como no runner
+Ubuntu do CI): original `28/1`, corrigido `31/0` e falsificação 13/13. **Limites:** só `now()` é
+interceptado (`CURRENT_TIMESTAMP`, `clock_timestamp()` e afins escapam), e função cujo `search_path`
+não tem `public` não vê o relógio simulado.
+
+## A classe no resto do repo (triagem estática, 2026-09-26)
+
+Varredura das 304 `db/test-*.sh` por um subagente. É leitura, **não** execução: das janelas abaixo só a
+do piloto foi relida por mim, e nenhuma foi falsificada.
+
+- **O padrão exato** — deslocar o timestamp do dado antes de comparar uma saída — tem **1 ocorrência**
+  no repo: esta.
+- **Armadilha de ambiente:** nenhum harness fixa `timezone`, e o `initdb` herda o fuso do sistema:
+  **UTC no CI**, America/Sao_Paulo no Mac. Uma prova que semeia no fuso da SESSÃO contra uma função
+  que calcula em SP explícito passa no laptop e só reprova no CI.
+- **No núcleo** (o que o CI roda): nenhuma outra janela de horas. Resta a borda exata
+  `CURRENT_DATE - 90` do `test-cfo-caixa-90d-otica.sh`, que só vira se 00:00 UTC cair entre o seed e o
+  assert (segundos).
+- **Fora do núcleo**, 4 janelas latentes, que viram bloqueio de CI no dia em que forem promovidas:
+  - `test-auto-aprovacao-piloto.sh` (B1): corte `23:59` UTC − 45 min, falha de **23:15 a 23:59 UTC
+    todo dia**;
+  - `test-positivacao-eligible-consumo.sh`: seed no mês da sessão contra `mes_inicio` em SP, falha
+    **dia 1, 00:00–02:59 UTC**, só com o servidor em UTC;
+  - `test-push-vendedora.sh` (T11): expediente `< 23:59` BRT, falha **02:59 UTC, 1 min/dia**;
+  - `test-data-health-estoque-fonte-dado.sh` (N9): esperado calculado com `date` do bash contra
+    `now()` do banco — dois relógios, segundos em torno de 11:00 e 21:00 UTC.
