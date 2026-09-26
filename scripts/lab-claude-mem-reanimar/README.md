@@ -1,47 +1,65 @@
 # Laboratório do `scripts/claude-mem-reanimar.sh`
 
 Prova o script de reanimação do worker do claude-mem **sem** tocar no claude-mem real: um plugin
-falso (`fake/`) com worker controlável, instalado num `HOME` descartável por cenário (`home-*/`,
-ignorado pelo git).
+falso (`fake/`) com worker controlável, instalado num `HOME` descartável por cenário, tudo num
+diretório temporário (nada fica no repo).
 
-**Só Linux** (usa `setsid`, `script` do util-linux, `prctl` e loopback `127.0.0.2`). Precisa de
-`node`, `python3`, `curl`, `lsof` e `sqlite3`. Rode de dentro deste diretório:
+**Roda no Linux (CI) e no macOS** (onde o script é usado de verdade), com bash 3.2+. Precisa de
+`python3`, `node`, `curl`, `lsof`, `sqlite3` e `pkill`; no Linux, também do `prctl` (subreaper).
+Quem roda no `test:hooks` e no `test:falsificacao` é o wrapper, que sonda cada ferramenta antes
+(ausente **reprova**, nunca pula) e exige o marcador além do exit 0:
 
 ```bash
-python3 subreaper.py bash lab.sh              # 16 cenários (~8 min; 2 esperam 62 s)
-python3 subreaper.py bash lab.sh c_surdo_sim  # um cenário
-python3 subreaper.py bash falsifica.sh        # 11 sabotagens, controle verde + sabotado vermelho
+bash scripts/test-claude-mem-reanimar.sh               # LAB-VERDE: 17 cenários (~50 s no M2)
+bash scripts/test-claude-mem-reanimar.sh --falsificar  # FALSIFICACAO-VERDE: 12 guardas
+bash scripts/lab-claude-mem-reanimar/lab.sh c_surdo_sim  # um cenário (no Linux: sob subreaper.py)
 ```
 
-**Por que o `subreaper.py`:** em container, o PID 1 costuma não recolher zumbis, e aí `kill -0`
-acusa como vivo um processo que já morreu. No macOS quem recolhe é o `launchd`. O subreaper
-reproduz isso (controle medido: sem ele, 1 zumbi; com ele, 0).
+## Como cabe no CI
 
-**Por que cada `home-*/` ganha um `package.json` CommonJS:** o repo é `"type": "module"`, e o
-`bun-runner.js` falso usa `require()`. Sem esse marcador, todo cenário que chama o CLI falso
-quebra com erro do Node (foi o que aconteceu na 1ª rodada dentro do repo).
+- **Tempos por env, só de teste:** o script aceita `REANIMAR_TESTE_IDADE_MIN_S`, `_SONDA_S`,
+  `_ESPERA_S`, `_PROVA_S` e `_DIAGNOSTICO_S` (defaults 60/5/2/30/3 — a receita). O lab usa
+  8/1/0/5/1 e avisa `MODO TESTE` na saída; o cenário `c_saudavel` roda com os tempos REAIS e
+  exige que o aviso NÃO apareça. Override que não é inteiro ≥ mínimo **para** o script
+  (`c_tempo_invalido`): num script que mata processo, override quebrado não vira fail-OPEN.
+- **Faixas paralelas:** cada cenário tem porta (`LAB_PORTA_BASE`+k) e HOME próprios, então
+  rodam em 4 faixas (`LAB_FAIXAS`). Cada um termina com a linha `CONTAGEM`; sem ela, o cenário
+  não terminou e conta como falha. Os que precisam de worker "velho" (> idade mínima) sobem o
+  worker no início e envelhecem enquanto os outros rodam.
+- **Portas fixas** a partir de 37780: duas execuções simultâneas precisam de bases diferentes
+  (a falsificação usa uma por execução); porta ocupada **reprova** o cenário, nunca pula.
 
-**Estado em 2026-09-24:** 98 asserções verdes em 16 cenários; falsificação 11/11. Ainda **não**
-está no CI: para entrar no `test:hooks`, os tempos (idade mínima de 60 s, sondas de 5 s, prova de
-30 s) precisam de override por env, senão a suíte leva ~8 min.
+## Por que cada peça
 
-**Cenários:** saudável · morto · pid reciclado · surdo (confirma / cancela / `--so-olhar`) ·
-porta de outro programa · curl quebrado · start que não sobe · subindo · hook falha com worker
-saudável · host configurado · não-pronto → restart · restart ignorado → derruba · vivo sem porta ·
-incoerente (dono na porta que a sonda não alcança).
+- **`com_tty.py`:** o script confirma lendo `/dev/tty` (nunca decide matar lendo pipe). O
+  `script(1)` do util-linux não existe no macOS, o do macOS manda o EOF antes da resposta
+  (medido: o `read` lia vazio), e o `pty.spawn` do python 3.9 da Command Line Tools trava num
+  `select` vazio quando o filho sai. O helper tem teto: pendurou → mata o grupo e sai 124.
+- **`desanexa.py`:** `setsid` portátil — o worker falso sobe desanexado como o real, e é o
+  pgid próprio dele que o `arvore()` do script usa para achar os filhos.
+- **`::1` como "outro endereço":** o `127.0.0.2` não existe no macOS. `c_host_config` prova o
+  host entre colchetes (`[::1]`) e `c_incoerente` o worker escutando num endereço que a sonda
+  não alcança; sem `::1`, os dois **reprovam** (não pulam).
+- **`subreaper.py` (só Linux):** em container, o PID 1 costuma não recolher zumbis, e aí
+  `kill -0` acusa como vivo um processo que já morreu. No macOS quem recolhe é o `launchd`.
+- **`package.json` CommonJS em cada HOME:** o fake usa `require()`; se o `TMPDIR` cair dentro
+  de um repo `"type": "module"`, o marcador o mantém CommonJS.
 
-Contexto do incidente: `docs/historico/claude-mem-worker-vivo-mas-surdo.md`.
+## Falsificação (`falsifica.sh`)
 
-## Pendências em aberto (fecho da sessão de 2026-09-25)
+Cada guarda do script é sabotada **uma** por vez com `sed` e o cenário que a vigia tem de ficar
+vermelho **com a FALHA esperada daquela guarda** (vermelho por outro motivo não conta). Antes do
+1º `sed`, o **controle** — a mesma invocação, cópia do alvo, os mesmos cenários — tem de sair
+`LAB-VERDE`; senão aborta. Roda em `C` e em `pt_BR.UTF-8` quando o locale existe (no runner
+Ubuntu não existe, e a saída diz isso). Sabotagens: ordenação lexicográfica · `.orphaned_at`
+ignorado · porta alheia vira nossa · árvore só com a raiz · confirmação ignorada ·
+`--so-olhar` ignorado · sem a guarda SUBINDO · prova frouxa · curl quebrado vira surdo · sonda
+ignora o host · sem a trava INCOERENTE · override de tempo inválido aceito.
 
-1. **Rodar no Mac** (o claude-mem só existe lá; a sessão cloud não alcança):
-   `cd /Users/lucassardenberg/Projetos/afiacao && git fetch -q origin claude/funny-johnson-d8z2cm && git show FETCH_HEAD:scripts/claude-mem-reanimar.sh > /tmp/claude-mem-reanimar.sh && bash /tmp/claude-mem-reanimar.sh`
-   — terminou em `RECUPERADO` = ok; qualquer outra coisa, colar a saída numa sessão.
-2. **Atualizar o plugin para ≥ 13.25.3** (≥ 13.24.18 bloqueia 1 prompt por queda em vez de todos):
-   `claude plugin marketplace update thedotmack && claude plugin update claude-mem@thedotmack` e reabrir as sessões.
-3. **Levar para a `main`** (chip "Levar claude-mem-reanimar e seu laboratório para a main"):
-   override de tempos por env para o lab caber no `test:hooks`; registrar no `test:hooks`; apontar
-   `docs/agent/skills.md` (linha do claude-mem), `docs/agent/worktrees.md` (item "Vigia acusou
-   worker-service.cjs") e `docs/historico/claude-mem-worker-vivo-mas-surdo.md` para o script; e um
-   aviso no SessionStart (contador de falhas > 0 ou última observação velha), porque a partir da
-   13.24.18 o plugin falha em silêncio.
+**Cenários:** saudável (tempos reais) · morto · pid reciclado · surdo (confirma / cancela /
+`--so-olhar`) · porta de outro programa · curl quebrado · start que não sobe · subindo · hook
+falha com worker saudável · host configurado (`::1`) · não-pronto → restart · restart ignorado
+→ derruba · vivo sem porta · incoerente · tempo de teste inválido.
+
+Contexto: `docs/historico/claude-mem-worker-vivo-mas-surdo.md` (05/09, recorrência de 24/09 e o
+achado de 25/09). O sensor que avisa no SessionStart é outra peça: `scripts/claude-mem-saude.sh`.

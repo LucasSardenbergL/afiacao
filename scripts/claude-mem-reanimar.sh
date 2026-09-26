@@ -5,6 +5,8 @@
 #
 # Uso:  bash claude-mem-reanimar.sh              diagnostico + pergunta antes de matar
 #       bash claude-mem-reanimar.sh --so-olhar   so diagnostico (nao toca em nada)
+#       (da raiz do repo: bun run claude-mem:reanimar [-- --so-olhar] — o prompt bloqueado nao
+#        impede: rode no seu terminal, a confirmacao le /dev/tty)
 #
 # So mata processo do PROPRIO claude-mem (worker-service.cjs, ou chroma-mcp com o
 # data-dir dele) e so quando a porta falha em 3 sondas seguidas. Sonda que nao
