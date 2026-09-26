@@ -12,6 +12,7 @@ import {
 // deno test --no-remote (promocao-fila_test.ts) — NÃO reimplementar inline aqui.
 import {
   camposDeEnfileiramento,
+  chunksRecebidos,
   corpoDeConclusao,
   respostaDeConclusao,
   snapshotEnfileirado,
@@ -685,11 +686,16 @@ Deno.serve(async (req) => {
       }
       // duplicate chunk (23505) treated as ok
 
-      // Count received chunks for this snapshot
-      const { count } = await sb.from("tint_keys_snapshots")
+      // Count received chunks for this snapshot. Contagem que FALHOU não é "0 chunks": responder
+      // 200 aqui faria o conector dar o snapshot por entregue sem ele entrar na fila → 500 + retry.
+      const { count: countBruto, error: countErr } = await sb.from("tint_keys_snapshots")
         .select("chunk_index", { count: "exact", head: true })
         .eq("snapshot_id", snapshot_id)
         .eq("entity", entity);
+      const count = chunksRecebidos(countBruto, countErr);
+      if (count === null) {
+        return json({ ok: false, error: "failed to count keys snapshot chunks", retry: true }, 500);
+      }
 
       const allChunksReceived = count === (total_chunks as number);
 
@@ -720,7 +726,7 @@ Deno.serve(async (req) => {
         ok: true,
         complete: allChunksReceived,
         applied: false,
-        awaiting_chunks: (total_chunks as number) - (count ?? 0),
+        awaiting_chunks: (total_chunks as number) - count,
       });
     }
 

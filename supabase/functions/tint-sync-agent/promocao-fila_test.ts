@@ -5,6 +5,7 @@
 // estar na fila, o lote nunca é promovido e ninguém re-envia — o dado some calado.
 import {
   camposDeEnfileiramento,
+  chunksRecebidos,
   corpoDeConclusao,
   PROMOCAO_PENDENTE,
   respostaDeConclusao,
@@ -59,4 +60,12 @@ Deno.test("snapshot: enfileirado só com as duas pontas limpas e contagem ZERO �
   assertEq(snapshotEnfileirado(null, null, 1), false, "linha sem estado");
   assertEq(snapshotEnfileirado({ message: "x" }, null, 0), false, "UPDATE errou");
   assertEq(snapshotEnfileirado(null, { message: "x" }, 0), false, "conferência errou");
+});
+
+Deno.test("contagem de chunks: erro ou ausência é 'não sei' (null), nunca 0", () => {
+  assertEq(chunksRecebidos(3, null), 3, "contou");
+  assertEq(chunksRecebidos(0, null), 0, "zero legítimo");
+  assertEq(chunksRecebidos(null, null), null, "count null sem erro");
+  assertEq(chunksRecebidos(undefined, null), null, "count undefined");
+  assertEq(chunksRecebidos(3, { message: "timeout" }), null, "erro com número");
 });

@@ -23,11 +23,11 @@ Fila em `tint_sync_runs.promocao_*` e `tint_keys_snapshots.aplicacao_*`; cron `t
 
 ## Revisão independente (Codex gpt-6-astra xhigh, design)
 
-REPROVADO com 5 P1 + 1 P2 — incorporados: sem quarentena por status; cap de 50 limpezas/24h contado pela promoção (com fila, contar pela ingestão abria bypass); 200 só com UPDATE confirmado; alerta de erro sem janela de 7 dias; `proxima_em` NULL elegível + `clock_timestamp()` no backoff; retorno do RPC lido. **Contestado como escopo:** reativação, por re-expansão do par, de chave retirada pelo snapshot — comportamento herdado e deliberado (a 5b#1 o fixa em teste); a fila não o piora. Follow-up próprio.
+REPROVADO com 5 P1 + 1 P2 — incorporados: sem quarentena por status; cap de 50 limpezas/24h contado pela promoção (com fila, contar pela ingestão abria bypass); 200 só com UPDATE confirmado; alerta de erro sem janela de 7 dias; `proxima_em` NULL elegível + `clock_timestamp()` no backoff; retorno do RPC lido. Revisão do DIFF (mesmo modelo): REPROVADO com 1 P1 + 1 P2, ambos incorporados — o `/keys-snapshot` respondia 200 `complete:false` quando a contagem de chunks falhava (herdado; o snapshot sumia), e o purge de 30 dias apagava snapshot em `erro` não resolvido (o watchdog se auto-dispensaria). **Contestado como escopo:** reativação, por re-expansão do par, de chave retirada pelo snapshot — comportamento herdado e deliberado (a 5b#1 o fixa em teste); a fila não o piora. Follow-up próprio.
 
 ## Prova
 
-`db/test-tint-promocao-assincrona.sh`: X1 (premissa do timeout) + 43 asserts em 12 cenários + 11 falsificações, cada uma exigindo o conjunto EXATO de asserts vermelhos, na mesma invocação do controle verde, nos locales `C` e `pt_BR.UTF-8`. Edge: `promocao-fila_test.ts` (Deno).
+`db/test-tint-promocao-assincrona.sh`: X1 (premissa do timeout) + 44 asserts em 12 cenários + 12 falsificações, cada uma exigindo o conjunto EXATO de asserts vermelhos, na mesma invocação do controle verde, nos locales `C` e `pt_BR.UTF-8`. Edge: `promocao-fila_test.ts` (Deno). ⚠️ A prova é LOCAL: já segue o contrato do núcleo (`PASS=`/`SABOTAGENS:`, `pg-harness.sh`, `PGPORT_TEST`), mas não entrou no `db/nucleo-ci.txt` — carrega o snapshot completo, que exige pgvector, e o job `provas-sql` só instala `postgresql-17` (nenhuma prova tint roda no merge hoje; ficou como follow-up de infraestrutura).
 
 ## Lição que generaliza
 

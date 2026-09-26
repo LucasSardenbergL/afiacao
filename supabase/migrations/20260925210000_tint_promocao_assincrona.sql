@@ -36,7 +36,8 @@
 --      (a) a janela do cap de 50 limpezas/24h passa a contar pela PROMOÇÃO
 --          (COALESCE(promovido_em, started_at)) — com fila, started_at pode ser
 --          velho e a janela contaria menos do que limpou (bypass do cap, Codex P1);
---      (b) o purge de tint_keys_snapshots >30d poupa snapshot PENDENTE na fila.
+--      (b) o purge de tint_keys_snapshots >30d poupa snapshot PENDENTE na fila ou em ERRO
+--          não resolvido (apagar o erro dispensaria o alerta sem ninguém resolver).
 --   4. tint_promocao_tick() — o consumidor da fila (SECURITY DEFINER, fechada).
 --   5. tint_promocao_watchdog() — 2 alertas (fin_alertas + e-mail) via o helper
 --      existente _tint_watchdog_fase5_transicao: `tint_promocao_erro` (itens em
@@ -127,12 +128,14 @@ DECLARE
     '    -- e o cap de 50/24h deixaria passar mais (Codex P1). Run legado (promovido no HTTP)' || E'\n' ||
     '    -- não tem promovido_em → started_at, que era ~ o instante da promoção.' || E'\n' ||
     '    AND COALESCE(tr.promovido_em, tr.started_at) > now() - interval ''24 hours''';
-  -- (b) snapshot pendente na fila não é purgado.
+  -- (b) snapshot na fila (pendente) ou em erro NÃO RESOLVIDO não é purgado.
   a2 constant text := '  DELETE FROM tint_keys_snapshots          WHERE created_at < now() - interval ''30 days'';';
   n2 constant text :=
-    '  -- promocao-assincrona (20260925210000): snapshot PENDENTE na fila não some pelo purge.' || E'\n' ||
+    '  -- promocao-assincrona (20260925210000): snapshot PENDENTE na fila, ou em ERRO não resolvido,' || E'\n' ||
+    '  -- não some pelo purge — apagar o erro dispensaria o alerta do watchdog sem ninguém ter' || E'\n' ||
+    '  -- reprocessado nem descartado, e levaria o payload do reprocessamento junto.' || E'\n' ||
     '  DELETE FROM tint_keys_snapshots          WHERE created_at < now() - interval ''30 days''' || E'\n' ||
-    '    AND aplicacao_status IS DISTINCT FROM ''pendente'';';
+    '    AND (aplicacao_status IS NULL OR aplicacao_status NOT IN (''pendente'', ''erro''));';
   v_ancoras text[] := ARRAY[a1, a2];
   v_novos   text[] := ARRAY[n1, n2];
   i int;
@@ -459,9 +462,9 @@ BEGIN
 
   v_def := pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure);
   IF position('AND COALESCE(tr.promovido_em, tr.started_at) > now() - interval ''24 hours''' in v_def) = 0
-     OR position('AND aplicacao_status IS DISTINCT FROM ''pendente'';' in v_def) = 0
+     OR position('AND (aplicacao_status IS NULL OR aplicacao_status NOT IN (''pendente'', ''erro''));' in v_def) = 0
      OR position('AND tr.started_at > now() - interval ''24 hours''' in v_def) > 0 THEN
-    RAISE EXCEPTION 'P4 FALHOU: tint_promote_sync_run sem os ajustes da fila (cap pela promoção / purge poupa pendente)';
+    RAISE EXCEPTION 'P4 FALHOU: tint_promote_sync_run sem os ajustes da fila (cap pela promoção / purge poupa pendente e erro)';
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = 'public.tint_promocao_tick()'::regprocedure AND prosecdef)

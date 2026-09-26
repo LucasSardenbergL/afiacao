@@ -17,7 +17,7 @@
 #         meio a desativa por um instante; o run posterior a reativa — o estado final CONVERGE.
 #   T6  — run pendente que não está 'complete' não é promovido (erro explícito).
 #   T7  — cap de 50 limpezas/24h conta pela PROMOÇÃO (promovido_em), não pela ingestão.
-#   T8  — purge de tint_keys_snapshots >30d poupa snapshot PENDENTE.
+#   T8  — purge de tint_keys_snapshots >30d poupa snapshot PENDENTE e em ERRO não resolvido.
 #   T9  — watchdog: alerta de erro e de atraso (fin_alertas + e-mail), dispensa ao resolver, e
 #         erro VELHO (>7d) continua alertando (sem janela).
 #   T10 — ACL: authenticated não executa tick/watchdog (42501).
@@ -26,12 +26,27 @@
 # Falsificações (F*) na MESMA invocação do controle verde: cada sabotagem exige o CONJUNTO EXATO
 # de asserts vermelhos. Controle não-verde aborta antes da 1ª sabotagem.
 #
-# Uso: db/test-tint-promocao-assincrona.sh   (PGBIN=<dir>; HARNESS_LOCALE=C|pt_BR.UTF-8)
+# ⚠️ FORA do núcleo de CI (db/nucleo-ci.txt) — esta prova roda LOCAL: carrega o schema-snapshot
+#    inteiro, que exige pgvector (`public.vector(1536)`), e o job `provas-sql` instala só
+#    `postgresql-17`. Entrar no núcleo = instalar o pgvector no job e caber no teto de 12 min
+#    (aqui: controle ~35s; --falsificar 3–7 min por locale).
+# Uso (o contrato do núcleo — db/roda-nucleo-ci.sh — já é seguido, para entrar sem reescrever):
+#   db/test-tint-promocao-assincrona.sh               → controle; imprime `PASS=<n>  FAIL=<m>`
+#   db/test-tint-promocao-assincrona.sh --falsificar  → controle + sabotagens NA MESMA invocação;
+#                                                       imprime `SABOTAGENS: <v> vermelhas / <f> falhas`
+#   PGPORT_TEST=<porta> · HARNESS_LOCALE=C|pt_BR.UTF-8 · PGBIN_OVERRIDE=<dir> (a major 17 é conferida)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGBIN="${PGBIN:-/opt/homebrew/opt/postgresql@17/bin}"
-PORT="${PORT:-5448}"
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-${PORT:-5448}}"
+MODO=normal
+case "${1:-}" in
+  --falsificar) MODO=falsificar ;;
+  "") ;;
+  *) echo "uso: $0 [--falsificar]"; exit 2 ;;
+esac
 LOC="${HARNESS_LOCALE:-C}"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-promoasync.XXXXXX")"
 SOCK="$(mktemp -d /tmp/pgs.XXXXXX)"   # socket curto: o limite do Unix-domain socket é 103 bytes
@@ -40,7 +55,6 @@ MIG="$REPO_ROOT/supabase/migrations/20260925210000_tint_promocao_assincrona.sql"
 MIG5B="$REPO_ROOT/supabase/migrations/20260924120000_tint_promote_tombstone_fase5.sql"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "PG ausente em $PGBIN (defina PGBIN)"; exit 1; }
 [ -f "$MIG" ] || { echo "migration ausente: $MIG"; exit 1; }
 [ -f "$MIG5B" ] || { echo "migration 5b#1 ausente: $MIG5B"; exit 1; }
 
@@ -48,7 +62,11 @@ cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
 trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="$LOC" >/dev/null 2>&1
-"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $SOCK -c lc_messages=$LOC" -l "$TMP/pg.log" -w start >/dev/null
+# PG DESCARTÁVEL: durabilidade desligada (fsync/full_page_writes/synchronous_commit) e clone de template
+# por FILE_COPY — sem isso, cada CREATE DATABASE (WAL_LOG, default do PG15+) re-escreve o snapshot
+# inteiro no WAL, e com a máquina em swap a suíte passava de 1h. Não muda NADA do que é provado.
+"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $SOCK -c lc_messages=$LOC -c fsync=off -c full_page_writes=off -c synchronous_commit=off" \
+  -l "$TMP/pg.log" -w start >/dev/null
 PA() { "$PGBIN/psql" -p "$PORT" -h "$SOCK" -U postgres -X -v ON_ERROR_STOP=1 "$@"; }
 echo "PG: $("$PGBIN/postgres" --version) · locale=$LOC"
 
@@ -192,7 +210,7 @@ SEED="$(T0 -tA -c "SELECT count(*) FILTER (WHERE desativada_em IS NULL) || '/' |
 [ "$SEED" = "22/2" ] || { echo "✗ seed: esperado 22 fórmulas ativas e COR9 com 2 itens, veio $SEED"; exit 1; }
 
 # tpl = tpl0 + 5b#1 (o corpo de prod do promote hoje)
-PA -q -d postgres -c "CREATE DATABASE tpl TEMPLATE tpl0" >/dev/null
+PA -q -d postgres -c "CREATE DATABASE tpl TEMPLATE tpl0 STRATEGY FILE_COPY" >/dev/null
 PA -q -d tpl -f "$MIG5B" >/dev/null
 [ "$(PA -d tpl -tA -c "SELECT position('v_tombstones_fase5' in pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure)) > 0")" = "t" ] \
   || { echo "✗ tpl: 5b#1 não aplicou"; exit 1; }
@@ -304,6 +322,7 @@ SQL
 ( PA -d "$db" -q -c "$TICK" >"$TMP/$db.bg" 2>&1; echo $? >"$TMP/$db.bgrc" ) &
 local bg=$!
 # espera COM TETO (5s) e ramo que diz "não consegui": o tick lento tem de estar segurando o lock.
+# shellcheck disable=SC2034  # o índice só conta o teto de 50 voltas; o ramo de saída é `visto`
 for i in $(seq 1 50); do
   n="$(PA -d "$db" -tA -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted")"
   if [ "$n" -gt 0 ]; then visto=1; break; fi
@@ -422,10 +441,15 @@ INSERT INTO tint_keys_snapshots (setting_id, account, store_code, snapshot_id, e
 VALUES ('aaaaaaaa-0000-0000-0000-000000000001', 'oben', 'L1', '58000000-0000-0000-0000-00000000000a', 'formulas',
         now() - interval '40 days', 1, 0, '[]'::jsonb, now() - interval '40 days', 'pendente'),
        ('aaaaaaaa-0000-0000-0000-000000000001', 'oben', 'L1', '58000000-0000-0000-0000-00000000000b', 'formulas',
-        now() - interval '40 days', 1, 0, '[]'::jsonb, now() - interval '40 days', 'aplicado');
+        now() - interval '40 days', 1, 0, '[]'::jsonb, now() - interval '40 days', 'aplicado'),
+       ('aaaaaaaa-0000-0000-0000-000000000001', 'oben', 'L1', '58000000-0000-0000-0000-00000000000c', 'formulas',
+        now() - interval '40 days', 1, 0, '[]'::jsonb, now() - interval '40 days', 'erro');
 SELECT tint_promote_sync_run('f0000000-0000-0000-0000-000000000001');
 SELECT _t_assert('T8.purge_poupa_pendente',
   EXISTS (SELECT 1 FROM tint_keys_snapshots WHERE snapshot_id = '58000000-0000-0000-0000-00000000000a'));
+-- erro NÃO resolvido também fica: apagá-lo dispensaria o alerta sem ninguém resolver (Codex, diff P2)
+SELECT _t_assert('T8.purge_poupa_erro',
+  EXISTS (SELECT 1 FROM tint_keys_snapshots WHERE snapshot_id = '58000000-0000-0000-0000-00000000000c'));
 SELECT _t_assert('T8.purge_segue',
   NOT EXISTS (SELECT 1 FROM tint_keys_snapshots WHERE snapshot_id = '58000000-0000-0000-0000-00000000000b'));
 SQL
@@ -488,7 +512,7 @@ SQL
 
 # T12 roda FORA da suíte (DB sem a 5b#1): a migration tem de abortar INTEIRA.
 cen_T12() { local mig=$1 rc=0 out
-PA -q -d postgres -c "DROP DATABASE IF EXISTS t12" -c "CREATE DATABASE t12 TEMPLATE tpl0" >/dev/null
+PA -q -d postgres -c "DROP DATABASE IF EXISTS t12" -c "CREATE DATABASE t12 TEMPLATE tpl0 STRATEGY FILE_COPY" >/dev/null
 out="$(PA -d t12 -q -f "$mig" 2>&1)" || rc=$?
 PA -d t12 -q <<SQL
 SELECT _t_assert('T12.aborta_sem_5b1',
@@ -504,7 +528,7 @@ CENARIOS="T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11"
 # suite <migration> <sabotagem-sql-ou-vazio> → imprime RES|nome|ok|detalhe de todos os asserts
 suite() {
   local mig=$1 sab=$2 c db
-  PA -q -d postgres -c "DROP DATABASE IF EXISTS tplm" -c "CREATE DATABASE tplm TEMPLATE tpl" >/dev/null
+  PA -q -d postgres -c "DROP DATABASE IF EXISTS tplm" -c "CREATE DATABASE tplm TEMPLATE tpl STRATEGY FILE_COPY" >/dev/null
   if ! PA -d tplm -q -f "$mig" >/dev/null 2>"$TMP/apply.err"; then
     echo "RES|APPLY|f|$(head -c 300 "$TMP/apply.err" | tr '\n' ' ')"
     return 0
@@ -516,8 +540,9 @@ suite() {
     fi
   fi
   for c in $CENARIOS; do
+    # shellcheck disable=SC2018,SC2019  # nome de cenário é ASCII fixo (T1..T12) — sem acento a preservar
     db="$(echo "s_$c" | tr 'A-Z' 'a-z')"
-    PA -q -d postgres -c "DROP DATABASE IF EXISTS $db" -c "CREATE DATABASE $db TEMPLATE tplm" >/dev/null
+    PA -q -d postgres -c "DROP DATABASE IF EXISTS $db" -c "CREATE DATABASE $db TEMPLATE tplm STRATEGY FILE_COPY" >/dev/null
     if [ "$c" = T11 ]; then
       cen_T11 "$db" "$mig" >/dev/null 2>"$TMP/$db.err" || echo "RES|$c.EXEC|f|$(head -c 300 "$TMP/$db.err" | tr '\n' ' ')"
     else
@@ -536,21 +561,29 @@ CTRL="$(suite "$MIG" "")"
 printf '%s\n' "$CTRL" | grep '^RES|' | awk -F'|' '{ printf "  %s %s%s\n", ($3=="t"?"✓":"✗"), $2, ($3=="t"?"":"  ["$4"]") }'
 NTOT="$(printf '%s\n' "$CTRL" | grep -c '^RES|')"
 FCTRL="$(printf '%s\n' "$CTRL" | falhas_de)"
-NESP=43   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
+NESP=44   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
+NFCTRL="$(printf '%s\n' "$CTRL" | grep '^RES|' | awk -F'|' '$3 != "t"' | wc -l | tr -d ' ')"
+echo "PASS=$((NTOT - NFCTRL))  FAIL=$NFCTRL"   # recibo lido pelo db/roda-nucleo-ci.sh
 if [ -n "$FCTRL" ] || [ "$NTOT" -ne "$NESP" ]; then
   echo "✗ CONTROLE NÃO-VERDE (falhas: [${FCTRL}] · asserts: $NTOT de $NESP) — abortando ANTES das falsificações"
   exit 1
 fi
 echo "  → controle verde: $NTOT asserts"
+if [ "$MODO" = normal ]; then
+  echo "✅ CONTROLE OK — $NTOT asserts · locale=$LOC (falsificação: --falsificar)"
+  exit 0
+fi
 
 # ═════════════════════════════ FALSIFICAÇÕES ═════════════════════════════
 FALSOS=0
+VERM=0
 # fals <nome> <esperado (nomes ordenados, espaço)> <migration> <sabotagem-sql>
 fals() {
   local nome=$1 esperado=$2 mig=$3 sab=$4 got
   got="$(suite "$mig" "$sab" | falhas_de)"
   if [ "$got" = "$esperado" ]; then
     echo "  ✓ $nome: vermelho EXATO [$got]"
+    VERM=$((VERM + 1))
   else
     echo "  ✗ $nome: esperado [$esperado], veio [$got]"
     FALSOS=$((FALSOS + 1))
@@ -588,8 +621,11 @@ sabpromote "$TMP/f4.sql" "AND COALESCE(tr.promovido_em, tr.started_at) > now()" 
 fals "F4 cap de limpezas pela INGESTÃO (bypass com fila)" "T11.idempotente T7.cap_conta_promocao" "$MIG" "$TMP/f4.sql"
 
 sabpromote "$TMP/f5.sql" "
-    AND aplicacao_status IS DISTINCT FROM 'pendente';" ";"
-fals "F5 purge apaga snapshot pendente" "T11.idempotente T8.purge_poupa_pendente" "$MIG" "$TMP/f5.sql"
+    AND (aplicacao_status IS NULL OR aplicacao_status NOT IN ('pendente', 'erro'));" ";"
+fals "F5 purge apaga snapshot da fila (pendente e erro)" "T11.idempotente T8.purge_poupa_erro T8.purge_poupa_pendente" "$MIG" "$TMP/f5.sql"
+
+sabpromote "$TMP/f5b.sql" "aplicacao_status NOT IN ('pendente', 'erro')" "aplicacao_status NOT IN ('pendente')"
+fals "F5b purge poupa só pendente (apaga erro não resolvido)" "T11.idempotente T8.purge_poupa_erro" "$MIG" "$TMP/f5b.sql"
 
 sabmig "$TMP/f6.sql" "s/FROM tint_sync_runs WHERE promocao_status = 'erro';/FROM tint_sync_runs WHERE promocao_status = 'erro' AND completed_at > now() - interval '7 days';/"
 fals "F6 watchdog com janela de 7 dias" "T9.sem_janela" "$TMP/f6.sql" ""
@@ -610,8 +646,9 @@ printf '%s\n' "GRANT EXECUTE ON FUNCTION public.tint_promocao_tick() TO authenti
 fals "F11 tick aberto a authenticated DEPOIS da migration" "T10.acl_tick" "$MIG" "$TMP/f11.sql"
 
 echo ""
+echo "SABOTAGENS: $VERM vermelhas / $FALSOS falhas"   # recibo ÚNICO lido pelo db/roda-nucleo-ci.sh
 if [ "$FALSOS" -ne 0 ]; then
   echo "✗ $FALSOS falsificação(ões) NÃO produziram o vermelho exato — algum assert não tem dente (ou morde demais)"
   exit 1
 fi
-echo "✅ PROVA OK — controle verde ($NTOT asserts) + 11 falsificações com vermelho exato · locale=$LOC"
+echo "✅ PROVA OK — controle verde ($NTOT asserts) + 12 falsificações com vermelho exato · locale=$LOC"

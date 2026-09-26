@@ -52,3 +52,10 @@ export function snapshotEnfileirado(
 ): boolean {
   return !updateErro && !conferenciaErro && linhasSemEstado === 0;
 }
+
+/** Chunks recebidos do snapshot: a contagem só vale sem erro e como número. Contagem que
+ *  falhou é "não sei" (null) — tratá-la como 0 respondia 200 `complete:false` ao ÚLTIMO chunk,
+ *  o conector avançava e o snapshot nunca entrava na fila (Codex, revisão do diff). */
+export function chunksRecebidos(count: number | null | undefined, error: unknown): number | null {
+  return !error && typeof count === "number" ? count : null;
+}
