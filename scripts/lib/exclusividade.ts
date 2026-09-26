@@ -58,6 +58,15 @@ export const SCHEMA_VERSION = 1;
  */
 export const ENV_DO_MOTOR: Readonly<Record<string, string>> = { CI: '1', FORCE_COLOR: '0' };
 
+/**
+ * Os binarios que os scripts do `package.json` chamam do `node_modules/.bin` — a guarda 13 do motor
+ * (DEPS-NAO-INSTALADAS) exige que cada um RESPONDA `--version`. Sao os 4 do `Unlisted binaries` do
+ * knip no incidente de 2026-09-25 (worktree com o `node_modules` existente e VAZIO). Fixa porque a
+ * fonte que a derivaria — o proprio `node_modules` — e justamente o que pode faltar; o teste do motor
+ * a confere contra o `package.json` e o `.bin` REAIS, nos dois sentidos.
+ */
+export const BINARIOS_DAS_DEPS: readonly string[] = ['eslint', 'tsc', 'vite', 'vitest'];
+
 // ---------------------------------------------------------------------------------------------
 // Corpus — o formato `.def`
 // ---------------------------------------------------------------------------------------------

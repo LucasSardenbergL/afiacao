@@ -12,13 +12,15 @@
  *   bun run exclusividade:medir                      # corpus inteiro x gates bloqueantes
  *   bun run exclusividade:medir -- --defeitos a,b    # so estes defeitos
  *   bun run exclusividade:medir -- --gates x,y       # so estes gates
- *   bun run exclusividade:medir -- --dry             # lista o plano e o custo, nao executa nada
+ *   bun run exclusividade:medir -- --dry             # lista o plano e o custo; nenhum gate roda (so a sonda
+ *                                                    # das deps, guarda 13 — o --dry e o pre-voo)
  *   bun run exclusividade:medir -- --sem-poda        # nao para no 2o vermelho: quer o conjunto COMPLETO
  *   EXCL_TIMEOUT_MS=2400000 bun run exclusividade:medir   # teto POR execucao (default 15 min). Numa M2
  *                                                         # carregada o `sonda:cron-prova -- --gate` leva ~19.
  *
- * Exit: 0 mediu - 1 abortou (arvore suja, baseline vermelho, corpus vazio/invalido, invocacao nao
- *       reproduzivel, suspeito desconhecido, GATE-ESCREVEU, RESTAURACAO-INCOMPLETA, BASELINE-SEM-DADO) - 2 erro interno.
+ * Exit: 0 mediu - 1 abortou (arvore suja, DEPS-NAO-INSTALADAS, baseline vermelho, corpus vazio/invalido,
+ *       invocacao nao reproduzivel, suspeito desconhecido, GATE-ESCREVEU, RESTAURACAO-INCOMPLETA,
+ *       BASELINE-SEM-DADO) - 2 erro interno.
  *
  * ## A disciplina (herdada do mutcheck.sh, onde ja foi pensada e ja achou buraco de verdade)
  *
@@ -69,6 +71,14 @@
  *     porque a assinatura nao separa contencao externa de regressao de custo causada pelo defeito.
  *     Ver `rodarComReproducao` e `lib/vitest-rpc.ts`.
  *
+ * 13. DEPS INSTALADAS, COM RESPOSTA POSITIVA. O CI mede depois do `bun install --frozen-lockfile`;
+ *     sem ele o baseline mede OUTRO ambiente — gate vermelho por binario ausente e `bunx` buscando na
+ *     REDE o que nao acha local. 2026-09-25: `node_modules` existente e VAZIO, `knip` vermelho por
+ *     `Unlisted binaries` e evals 100x mais lentos, 5 h de baseline ate abortar. Cada binario de
+ *     `BINARIOS_DAS_DEPS` tem de responder `--version` pelo CAMINHO LOCAL com rc 0 e versao —
+ *     existencia (de diretorio, de arquivo, `command -v`) nao conta, e o NOME resolveria pelo PATH.
+ *     Roda logo depois da guarda 1a, antes do plano. Ver `sondarDeps`.
+ *
  * ## O que o write-guard NAO ve (limite declarado)
  *
  * Arquivo IGNORADO pelo git (`node_modules/`, `dist/`, caches) fica fora do snapshot: vigia-lo
@@ -98,8 +108,10 @@ import { dirname, join } from 'node:path';
 
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
+import { semAnsi } from './edges-typecheck-gate';
 import {
   ARGV_REGENERAR_FINGERPRINTS,
+  BINARIOS_DAS_DEPS,
   CORPUS_DIR,
   GATE_EXCLUSIVIDADE,
   MATRIZ_PATH,
@@ -580,6 +592,53 @@ function fazerDeverDeCasa(d: Defeito): { invalido: string | null; tocados: strin
 }
 
 // ---------------------------------------------------------------------------------------------
+// Guard 13 — deps instaladas, com resposta POSITIVA
+// ---------------------------------------------------------------------------------------------
+
+/** Teto de UMA sonda `--version`: folgado para a M2 carregada, e curto perto de um baseline de horas. */
+const TETO_SONDA_MS = 60_000;
+const SEMVER = /\d+\.\d+\.\d+/;
+
+/**
+ * Pergunta a cada binario de `BINARIOS_DAS_DEPS` algo cuja resposta e conhecida: `--version` sai 0
+ * COM uma versao no stdout. E a UNICA porta de sucesso — ausente (ENOENT), sem `+x` (EACCES), morto
+ * pelo teto, rc != 0 e rc 0 calado caem todos no mesmo lugar. Existencia nao entra: o incidente foi
+ * um `node_modules` que EXISTIA, com zero entradas.
+ *
+ * Pelo CAMINHO LOCAL, nunca pelo nome. Medido (2026-09-25): `bun run tsc --version` com o
+ * `node_modules` VAZIO e um `tsc` qualquer no PATH sai 0 com a versao do GLOBAL — a sonda por nome
+ * aprovaria justamente o estado que ela existe para barrar. Devolve os que nao responderam.
+ */
+function sondarDeps(): string[] {
+  const falhas: string[] = [];
+  for (const b of BINARIOS_DAS_DEPS) {
+    const p = join('node_modules', '.bin', b);
+    const r = spawnSync(p, ['--version'], {
+      encoding: 'utf8',
+      timeout: TETO_SONDA_MS,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...ENV_DO_MOTOR },
+    });
+    if (r.status === 0 && SEMVER.test(semAnsi(r.stdout ?? ''))) continue;
+    const porque = r.error
+      ? ((r.error as NodeJS.ErrnoException).code ?? 'erro ao executar')
+      : r.signal
+        ? `morto por ${r.signal}`
+        : r.status !== 0
+          ? `saiu ${r.status}`
+          : 'saiu 0 SEM versao no stdout';
+    // O eco do binario vai achatado e ASCII: a mensagem do aborto e casavel sem locale e sem `-i`.
+    const eco = semAnsi(`${r.stdout ?? ''} ${r.stderr ?? ''}`)
+      .replace(/[^\x20-\x7e]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+    falhas.push(`${p} --version: ${porque}${eco ? ` [${eco}]` : ''}`);
+  }
+  return falhas;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------------------------
 
@@ -592,6 +651,18 @@ function main(): number {
     console.error('limpo para restaurar. Commite ou descarte antes (ou use --permitir-sujo se');
     console.error('as mudancas nao tocam nenhum alvo do corpus).');
     console.error([...inicial.sujos.entries()].slice(0, 10).map(([p, e]) => `${e.xy} ${p}`).join('\n'));
+    return 1;
+  }
+
+  // Guard 13: deps INSTALADAS, antes de tudo que gasta — o `--dry` inclusive, porque ele e o pre-voo:
+  // um plano que a arvore nao consegue executar nao e plano. Mensagem ASCII de caixa fixa.
+  const semResposta = sondarDeps();
+  if (semResposta.length) {
+    console.error('ABORTADO: DEPS-NAO-INSTALADAS -- rode bun install.');
+    console.error('O CI mede depois do `bun install --frozen-lockfile`; sem as deps o baseline mede OUTRO');
+    console.error('ambiente (gate vermelho por binario ausente, `bunx` buscando na rede o que nao acha');
+    console.error('local). Nada foi medido. Nao responderam `--version` (rc 0 + versao) pelo caminho local:');
+    for (const f of semResposta) console.error(`  - ${f}`);
     return 1;
   }
 
