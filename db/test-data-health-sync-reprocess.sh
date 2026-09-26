@@ -30,7 +30,7 @@ export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithr
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="erro_nao_e_broken desconhecido_vira_ok nao_catalogada_vira_ok orfa_nunca_dispara
               stale_nunca_dispara nunca_executou_vira_ok retry_liquida_erro degradado_conta_dispensada message_com_idade
-              message_constante fora_do_v_sources"
+              message_com_data_do_relogio message_com_hora_de_parede message_constante fora_do_v_sources"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -199,6 +199,17 @@ case "${SABOTAGEM:-}" in
   message_com_idade)
       sabotar _data_health_compute "ELSE ' desde ' || to_char(d.ultimo_sucesso_em AT TIME ZONE 'America/Sao_Paulo','DD/MM') END" \
                                    "ELSE ' desde ' || to_char(now() AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI:SS') END" ;;
+  message_com_data_do_relogio)
+      # O defeito de SENSOR que o assert antigo não via: a data vir do RELÓGIO, e não do último sucesso.
+      # Ela só muda à meia-noite ⇒ mesmo problema, message nova por dia ⇒ um e-mail por dia. Só pega
+      # isso um relógio que CRUZA a meia-noite local com o dado parado; deslocar o dado, nunca.
+      sabotar _data_health_compute "ELSE ' desde ' || to_char(d.ultimo_sucesso_em AT TIME ZONE 'America/Sao_Paulo','DD/MM') END" \
+                                   "ELSE ' desde ' || to_char(now() AT TIME ZONE 'America/Sao_Paulo','DD/MM') END" ;;
+  message_com_hora_de_parede)
+      # clock_timestamp() não passa pelo relógio controlado (só now() passa): quem pega é o pg_sleep REAL
+      # entre as leituras. Sem esta sabotagem aquele sleep seria camada sem prova de dente.
+      sabotar _data_health_compute "ELSE ' desde ' || to_char(d.ultimo_sucesso_em AT TIME ZONE 'America/Sao_Paulo','DD/MM') END" \
+                                   "ELSE ' desde ' || to_char(clock_timestamp() AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI:SS') END" ;;
   message_constante)
       # O outro lado da moeda de `message_com_idade`: uma message que NUNCA muda passaria o teste de
       # estabilidade e não avisaria ninguém. Esta sabotagem tem de ficar vermelha no assert do PAR.
@@ -214,22 +225,27 @@ esac
 # ══════════════════════════════════════════════════════════════════════════════
 # As 7 chaves VIGIADAS do catálogo. `semear_saudavel` deixa todas verdes; cada cenário
 # depois altera UMA coisa, para que o assert prove aquela coisa e não o ambiente.
+# $1 (opcional) = instante-âncora como expressão SQL; o padrão é now(). Só o cenário de message
+# estável ancora num instante FIXO — o porquê está lá.
 semear_saudavel() {
-  P -q <<'SQL'
+  P -q -v agora="${1:-now()}" <<'SQL'
 TRUNCATE public.sync_reprocess_log;
 INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at) VALUES
-  ('oben','operational','orders',            'complete', now() - interval '30 minutes'),
-  ('oben','operational','inventory',         'complete', now() - interval '30 minutes'),
-  ('oben','strategic','orders',              'complete', now() - interval '3 hours'),
-  ('oben','strategic','inventory',           'complete', now() - interval '3 hours'),
-  ('oben','strategic','products',            'complete', now() - interval '3 hours'),
-  ('oben','status_produtos','sku_status_omie','complete', now() - interval '3 hours'),
-  ('colacor','status_produtos','sku_status_omie','complete', now() - interval '3 hours');
+  ('oben','operational','orders',            'complete', :agora - interval '30 minutes'),
+  ('oben','operational','inventory',         'complete', :agora - interval '30 minutes'),
+  ('oben','strategic','orders',              'complete', :agora - interval '3 hours'),
+  ('oben','strategic','inventory',           'complete', :agora - interval '3 hours'),
+  ('oben','strategic','products',            'complete', :agora - interval '3 hours'),
+  ('oben','status_produtos','sku_status_omie','complete', :agora - interval '3 hours'),
+  ('colacor','status_produtos','sku_status_omie','complete', :agora - interval '3 hours');
 SQL
 }
 # status agregado do check
 st()  { Pq -c "SELECT status  FROM public._data_health_compute() WHERE source='sync_reprocess_saude';"; }
-msg() { Pq -c "SELECT message FROM public._data_health_compute() WHERE source='sync_reprocess_saude';"; }
+# message/idade lidas com o relógio controlado em $1, cada leitura na SUA sessão (o SET morre com ela).
+# Só valem com o relógio ligado (seção "message estável"), e o controle positivo de lá confere isso.
+msg_em()   { Pq -q -c "SET test.agora = '$1'" -c "SELECT message FROM public._data_health_compute() WHERE source='sync_reprocess_saude';"; }
+idade_em() { Pq -q -c "SET test.agora = '$1'" -c "SELECT age_seconds::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';"; }
 nlin(){ Pq -c "SELECT count(*)::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';"; }
 
 echo "── contrato de forma (o que cega os outros checks se quebrar) ──"
@@ -333,24 +349,47 @@ P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_
 eq "grupo OBEN (dialeto ok/partial, vigiado por efeito) não vira 'não catalogada'" "$(st)" "ok"
 
 echo "── message estável (senão re-emaila a cada 30 min) ──"
-# O par certo: um `complete` antigo (a data que congela) + um `error` por cima, e depois envelhece
-# SO a chave ja quebrada. Envelhecer tudo empurraria outras chaves para stale — a message mudaria
-# com razao (conjunto de problemas diferente = aviso novo), e o teste estaria medindo outra coisa.
-semear_saudavel
+# ⚠️ QUEM ANDA É O RELÓGIO, NÃO O DADO. Até 2026-09-26 este assert simulava "o mesmo problema ficou 3h
+# mais velho" deslocando o DADO (UPDATE created_at - 3h). Isso só equivale a avançar o relógio para o
+# que é função de (now() - t) — e a message é, por CONTRATO, função do INSTANTE do último sucesso (a
+# data congelada DD/MM em America/Sao_Paulo). O UPDATE movia esse instante: com a semeadura entre 00:30
+# e 03:30 BRT (03:30Z–06:30Z) o deslocamento cruzava a meia-noite local e a data mudava, com razão. A
+# prova reprovava sozinha nessa janela e travava o auto-merge de todo PR (#2573, #2576) sem defeito
+# nenhum no sensor. Diário: docs/historico/deslocar-o-dado-nao-e-avancar-o-relogio.md
+#
+# Agora o dado fica PARADO e o relógio anda. `public.now()` lê a GUC `test.agora`, e o compute — corpo
+# REAL da migration, intocado — ganha `pg_catalog` DEPOIS de `public` no search_path: é a única forma
+# de um nome de usuário vencer um embutido (sem pg_catalog explícito ele é buscado PRIMEIRO, e por isso
+# nada mais no banco enxerga esta função). O cenário é ADVERSARIAL e FIXO, independente da hora do CI:
+# semeado às 23:00 BRT e relido às 02:00 BRT do dia seguinte — o relógio cruza a meia-noite local com o
+# mesmo problema aberto, que é exatamente onde uma data tirada do relógio se trairia.
+cfg_compute="$(Pq -c "SELECT array_to_string(proconfig, '|') FROM pg_proc WHERE oid = 'public._data_health_compute()'::regprocedure;")"
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.now() RETURNS timestamptz LANGUAGE sql STABLE AS $f$
+  SELECT COALESCE(nullif(current_setting('test.agora', true), '')::timestamptz, pg_catalog.now())
+$f$;
+ALTER FUNCTION public._data_health_compute() SET search_path = public, pg_catalog, pg_temp;
+SQL
+T0='2026-09-15 23:00:00-03'   # 23:00 BRT
+T1='2026-09-16 02:00:00-03'   # +3h, do OUTRO lado da meia-noite local
+
+# O par certo: um `complete` antigo (a data que congela) + um `error` por cima, e depois SÓ o relógio
+# anda. Às 02:00 as outras chaves seguem dentro do SLA (a mais apertada, 4h, completou às 22:30): o
+# conjunto de problemas não muda, então nada autoriza a message a mudar.
+semear_saudavel "'$T0'::timestamptz"
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, error_message, created_at)
-         VALUES ('oben','operational','orders','error','pedido incoerente', now() - interval '10 minutes');"
-M1="$(msg)"
-# Duas variações independentes entre as leituras, porque "idade variável" tem duas escalas e um
-# assert que só cobre uma passa por sorte: (a) o DADO envelhece 3h — pega idade em horas/dias;
-# (b) o RELÓGIO anda >1s — pega hora corrida (HH24:MI:SS). Sem (b) este assert ficava VERDE sob a
-# sabotagem `message_com_idade` quando as duas leituras caíam no mesmo segundo: a falsificação
-# flagrou exatamente isso, e o dente veio daqui.
-P -q -c "UPDATE public.sync_reprocess_log SET created_at = created_at - interval '3 hours'
-          WHERE reprocess_type='operational' AND entity_type='orders';"
+         VALUES ('oben','operational','orders','error','pedido incoerente', '$T0'::timestamptz - interval '10 minutes');"
+M1="$(msg_em "$T0")"; I1="$(idade_em "$T0")"
+# O relógio REAL também anda >1s entre as leituras: o controlado só intercepta now(), e uma hora
+# corrida tirada de clock_timestamp()/CURRENT_TIMESTAMP escaparia dele (sabotagem message_com_hora_de_parede).
 P -q -c "SELECT pg_sleep(1.1);" >/dev/null
-M2="$(msg)"
-if [ "$M1" = "$M2" ] && [ -n "$M1" ]; then ok "message idêntica após o MESMO problema envelhecer 3h e o relógio andar (data congelada)"; else
-  bad "message VARIOU com a idade — o fingerprint source|status|severity|message re-emailaria a cada rodada
+M2="$(msg_em "$T1")"; I2="$(idade_em "$T1")"
+# Controle POSITIVO: um relógio que não interceptasse nada deixaria M1=M2 por construção, e o assert
+# de estabilidade passaria por CEGUEIRA. A idade que o compute enxerga TEM de andar as 3h.
+eq "o compute lê o relógio controlado: idade de 30 min às 23:00" "$I1" "1800"
+eq "…e de 3h30 às 02:00 do dia seguinte (o relógio andou 3h, o dado ficou parado)" "$I2" "12600"
+if [ "$M1" = "$M2" ] && [ -n "$M1" ]; then ok "message idêntica com o relógio 3h adiante, cruzando a meia-noite local (data congelada)"; else
+  bad "message VARIOU só porque o tempo passou — o fingerprint source|status|severity|message re-emailaria
        antes: [$M1]
        depois: [$M2]"; fi
 
@@ -359,7 +398,7 @@ if [ "$M1" = "$M2" ] && [ -n "$M1" ]; then ok "message idêntica após o MESMO p
 # problema é o mesmo, MUDA quando o conjunto de problemas muda (aí re-emitir é o certo, não spam).
 P -q -c "UPDATE public.sync_reprocess_log SET status='error'
           WHERE reprocess_type='strategic' AND entity_type='products';"
-M3="$(msg)"
+M3="$(msg_em "$T1")"
 if [ "$M3" != "$M2" ] && [ -n "$M3" ]; then ok "message MUDA quando um 2º estágio quebra (re-emite, como deve)"; else
   bad "message NÃO mudou com um 2º estágio quebrado — uma message constante passaria o teste de
        estabilidade sem avisar nada: [$M3]"; fi
@@ -367,8 +406,17 @@ if [ "$M3" != "$M2" ] && [ -n "$M3" ]; then ok "message MUDA quando um 2º está
 # Dois problemas simultâneos: o resumo tem de ser DETERMINÍSTICO (o string_agg é ordenado por
 # reprocess_type, entity_type, account). Sem ordem explícita a message oscilaria entre formas e o
 # fingerprint re-emailaria sozinho — a lição do #1980, aqui no eixo do agregado.
-M4="$(msg)"
+M4="$(msg_em "$T1")"
 eq "resumo com 2 problemas é estável entre leituras (string_agg ordenado)" "$M4" "$M3"
+
+# Desliga o relógio controlado: o resto da prova (watchdog/heartbeat) roda no compute EXATAMENTE como a
+# migration o deixou — conferido, não suposto.
+P -q <<'SQL'
+ALTER FUNCTION public._data_health_compute() SET search_path = public, pg_temp;
+DROP FUNCTION public.now();
+SQL
+[ "$(Pq -c "SELECT array_to_string(proconfig, '|') FROM pg_proc WHERE oid = 'public._data_health_compute()'::regprocedure;")" = "$cfg_compute" ] \
+  || { echo "❌ o relógio controlado NÃO foi desligado: o search_path do compute diverge do da migration [$cfg_compute]"; exit 1; }
 
 echo "── as outras 2 pernas do trio EXECUTAM (late-bound: CREATE não prova nada) ──"
 semear_saudavel
