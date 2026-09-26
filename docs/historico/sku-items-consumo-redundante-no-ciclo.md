@@ -197,3 +197,30 @@ from sku_leadtime_history where empresa = 'OBEN';
 
 Esperado: nenhum `error` "consultas Omie tentadas, 0 OK"; runs nos minutos :00 e :35, nenhum no
 :15/:16; `fila_parada_max` 0; zero NFe nova com "limite pede"; `n7d` > 0.
+
+## 9. Desfecho — como a ordem do §8 foi executada (2026-09-24/26)
+
+1. **Parte A (#2539).** O deploy saiu pelo MCP em 2026-09-24.
+   - O tick das 18:15 UTC trouxe o eco `v1.2-adiamento-por-limite-do-run` aninhado no corpo do jobid 52.
+   - O ledger atestou a versão no run das 07:00 de 25/09 (`pendencias:deploy` com exit 0).
+   - Até o PR B, 11 dos 16 runs do :15 teriam sido `error` com o código antigo. Todos fecharam `complete`: a NFe foi adiada, sem punição.
+2. **Cron (jobid 186).** A sessão aplicou a migration pelo `mcp__lovable__query_database` em 2026-09-25 às 23:03 UTC, a pedido do founder, dentro do envelope de `docs/agent/database.md` §1.
+   - **Pré-voo psql-ro 🟢.** O job não existia e o predicado A5 deu 0. O MCP entra como `postgres` (medido pelo `current_user`), e é esse papel que vira dono do job.
+   - **Um achado do pré-voo.** Nenhum job ativo usava a string EXATA da migration para ler o segredo. Os 52 jobs que leem `'CRON_SECRET'` do Vault, entre eles o 52 e o 53, diferem dela só na formatação. Nenhum tem o segredo literal no comando. A conferência foi por regex booleano, sem imprimir o comando.
+   - **Validação por fora** (psql-ro, depois do commit): ✅. Mesmo `database` e `nodename` do 53, e 96 jobs ativos (eram 95).
+3. **Tick antecipado.** O pg_cron não tem "rodar agora". A sessão executou como `postgres`, às 23:35:56 UTC, o comando GRAVADO do job: `EXECUTE (SELECT command FROM cron.job WHERE jobid = 186)`.
+   - O run fechou `complete` em 6,9 s, com HTTP 200 e eco v1.2.
+   - Contadores: `t=1 d=1`, 0 adiadas, `fila_parada_48h = 0` (caminho standalone). A NFe consultada é a que o :15 das 22:16 adiou, e desta vez não houve REDUNDANT.
+   - Isso prova o caminho (Vault, segredo, `dias=3`, sensor), não o disparo do pg_cron. O disparo foi conferido no horário real (item 5).
+4. **PR B (#2540).** Depois do rebase, o CI `validate` passou no SHA novo com o PR ainda em draft. Ele foi promovido e mergeado às 23:38:47 UTC (`e50262c23`).
+   - O `pendencias:deploy` classificou o orquestrador como `NUNCA_ATESTADA`, e o pacote automático saiu vazio.
+   - A "1ª sonda humana" que o relatório pede teria executado os 5 steps no bundle velho. A lição foi para `docs/agent/deploy.md`.
+   - A decisão de deployar saiu de medição passiva: as 3 últimas respostas do jobid 52 (18:15, 20:15 e 22:15) vinham sem eco no topo e com `resultados.sku_items`.
+   - O pacote foi montado pelo nome da edge (`f72c0df2361a`) e deployado pelo MCP: 4 hashes conferidos, 0,6 crédito. A mensagem levou uma linha proibindo tocar em outro arquivo, e desta vez o bot não fez commit.
+   - **Prova:** o tick das 00:15 UTC de 26/09 (`net._http_response` id 93215) respondeu 200 com `edge=omie-cron-diario`, `versao=v1.0-sem-step-sku-items` e `fonte` igual à da main. Os steps foram `ctes,nfes,pedidos,reclassificacao,vendas`, e nenhum run do sku-items foi disparado por ele. O `pendencias:deploy` saiu com exit 0 e 61/61.
+5. **1º disparo real do pg_cron** (00:35 UTC de 26/09). No `cron.job_run_details` o job 186 aparece `succeeded` às 00:35:00. O `net._http_response` traz 200, sem timeout, com eco v1.2. O run fechou `complete` em 504 ms, com `t=0` (a fila estava vazia depois do item 3) e `fila_parada_48h = 0`.
+
+**Revalidação de 72h** (queries do §8): conta a partir de 2026-09-26 00:15 UTC.
+- **Estado em 2026-09-25 às 22:52 UTC:** zero `error` desde o deploy da parte A; 6 marcações no controle depois do deploy, nenhuma com "limite pede"; `n7d = 46`.
+- A janela de 48h do critério original fica limpa em 2026-09-26 às 04:16 UTC, porque os 3 últimos `error` são anteriores ao deploy.
+- Depois do PR B, o critério "nos ciclos :15" deixa de ter objeto: o sku-items não roda mais no :15.
