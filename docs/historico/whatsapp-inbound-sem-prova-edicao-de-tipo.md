@@ -71,3 +71,32 @@ segredos falsos e `SUPABASE_URL` numa porta fechada, e executou 10 caminhos nos 
 O gate de contrato foi falsificado: sem o `authorizeCronOrStaff` da sonda ele reprova nomeando a
 edge, e restaurado volta ao verde. O deploy continua dependendo do OK do founder: depois do merge,
 pacote pelo ledger e uma sonda para a 1ª atestação.
+
+**No ar (2026-09-26, com OK do founder).** Pacote `07d72dbb0bc1` enviado pela sessão via MCP (1,1
+crédito). O agente conferiu os 5 `sha256` contra `origin/main@d65247058` e o workspace, chamou
+`deploy_edge_functions(["whatsapp-inbound"])` e **não editou nada**. O prompt ganhou uma frase além
+do gerado, proibindo edição neste turno, por causa de 24/09. A 1ª atestação saiu pelo `db:aplicar`
+(`db/sonda-pos-deploy-whatsapp-inbound-2026-09-26.sql`, tentativa #165). O `request_id` 93703
+respondeu 200 com `edge` e `versao v1.0-sensor-inicial`, e com `fonte e2386801…c315`, idêntico ao
+mapa da main: **DEPLOY CONFIRMADO**, com o grafo inteiro deployado verbatim.
+
+**A/B natural no mesmo dia (sinal, não prova: n=1 de cada lado).** Às 10:02Z outra sessão deployou a
+`omie-sync-estoque` (#2573) com o prompt do gerador, que não tem a frase. O agente repetiu a edição
+não pedida na `whatsapp-inbound` (`SupabaseClient<any>`) e editou também a `sync-reprocess`
+(`f84d7772e`/`eec8598d7`, revertidos no #2579; a main ficou vermelha no `sonda:fingerprint`). Com a
+frase, zero edição; sem ela, duas. O conserto de CLASSE é o chip "Blindar o prompt de deploy contra
+edições do agente": a frase entra no texto do Passo 2 do `pendencias-pacote.ts`.
+
+Dois atritos do caminho, para o próximo:
+
+- O log do `db:aplicar` guarda só o marcador, não a célula do PASSO 2. Serviu o PASSO 2 sem mapa
+  (`sonda:sql --so-leitura`), porque o bundle novo ecoa o slug.
+- O `--so-leitura` recusa enquanto o `sonda-fingerprints.ts` do disco difere da `origin/main`. Aqui
+  outra sessão tinha mudado a entrada da `omie-sync-estoque` no meio do caminho. Rebase e repete.
+
+**Checklist do go-live do canal** (fora deste deploy):
+
+- conferir que `WHATSAPP_WEBHOOK_SECRET` existe (a edge o lê desde o #479; sem ele, tudo 401);
+- rotacioná-lo, como pede o #1123;
+- configurar a 360dialog para mandar o segredo no HEADER `x-whatsapp-secret`: a v0 aceitava
+  `?token=`, e a versão no ar não aceita mais.
