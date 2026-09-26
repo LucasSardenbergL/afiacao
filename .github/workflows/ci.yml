@@ -459,15 +459,7 @@ jobs:
   #     com erro de mecânica, não de conteúdo.
   gates-e-falsificacao:
     runs-on: ubuntu-latest
-    # 15 -> 20 em 2026-09-25, com medição: em 64 execuções (18→26/09) a mediana subiu de 10,9min
-    # na metade mais ANTIGA para 13,1min na mais NOVA, o p90 ficou em 13,8 e DOZE runs (19%)
-    # terminaram a menos de 1,5min do teto. Ou seja: a folga no p90 (1,2min) era MENOR que a
-    # variação normal do próprio job — teto assim não pega job travado, sorteia vermelho em job
-    # sadio, e ensina a tratar o check como flaky, que é como um gate morre. O run 36207754707
-    # foi o primeiro a colher: cancelado aos 15m04s com TODOS os gates já verdes, no penúltimo
-    # step. 20min mantém o teto útil (o job nunca passou de 15,2) e cabe folga para o crescimento
-    # medido. Se voltar a apertar, o corte é a fixture da suíte, não a cobertura.
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
 
@@ -592,10 +584,8 @@ jobs:
       # o merge acontecia ANTES de ele terminar — vermelho depois do merge que ninguém lê, a mesma
       # classe do gate de dead-code medida no #1212.
       #
-      # Custo, quando isto foi escrito: ~11% no wall-clock do job e ~6min de folga no timeout.
-      # A folga ENVELHECEU — em 2026-09-25 o p90 do job era 13,8min contra teto de 15 — e o teto
-      # subiu para 20 com a medição registrada no cabeçalho do job. Se um dia apertar de novo, o
-      # corte certo continua sendo a fixture da suíte (foi de onde vinha o custo), não a cobertura.
+      # Custo: ~11% no wall-clock do job, ~6min de folga ainda no timeout. Se um dia apertar, o
+      # corte certo é a fixture da suíte (foi de onde vinha o custo), não a cobertura.
       - name: Falsificação — sabota o alvo e EXIGE vermelho em cada regra
         run: bun run test:falsificacao
 
