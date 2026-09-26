@@ -69,10 +69,10 @@ export const FONTE_SHA256: Record<string, string> = {
   "sayerlack-captura-precos": "067de5a255cf9b09e7d73995f2f6986d14cf1869dbfaf7242317866b3a263e1c",
   "scoring-recalc-batch": "3899eef2be43073b93b47445f4b36f29860c29f00b6d244cd2cffd0092bce4c6",
   "sonda-relay": "c91cdfa9d3d24850d5c7b219e03830c9ecfc572f48e9f662bd046b83ead924bb",
-  "sync-reprocess": "5b4d86d1b5821eeff4730130e6db96690563a592353cde3834523e9298d1eb89",
+  "sync-reprocess": "a88a1175d475b4cfe87ad2cf1f312bf3013689eb90aa54a7991494294e8b28b1",
   "tactical-plans-batch": "6d882834d7cef695d9879e1498b1b4e8cc9073bc50906279982a8cc015d6a8be",
   "visit-score-recalc-batch": "fc6e87d83a3d700cf802731a40ac10098be412a11e6e95e7826efb1364114a95",
-  "whatsapp-inbound": "e2386801525315a52f0c06fae2c6055f846f4a877b157a9627e19f7811acb315",
+  "whatsapp-inbound": "1cd857454635cac4e9594261fd2d5ca57d006169f2fc10a953ed647615134ca1",
   "whatsapp-send": "dea0911c8768412918d9730b76b0f8231ef74042715a587c003dd80f00917ecf",
   "whatsapp-send-template": "c05231ef490b58717b03f8e85de333d10ed4a5d0d113ed592ad78d9ab234ed12",
 };

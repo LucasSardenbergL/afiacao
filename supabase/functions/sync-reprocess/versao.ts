@@ -79,7 +79,7 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // ⚠️ ORDEM: livre, mas o defeito do desconto só fecha com as DUAS no ar — edge nova + RPC antiga
 // ignora a chave; RPC nova + edge velha recebe payload sem a chave e segue a regra antiga.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.8-desconto-da-linha-e-coerencia-por-pedido";
+export const VERSAO = "v1.9-revert-changes-lovable";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
