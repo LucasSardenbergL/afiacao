@@ -92,7 +92,10 @@ alvo ÷ `scripts/` < 0,954. Os dois eixos juntos porque cada um tem o seu viés:
 máquina sorteada, e a razão herda qualquer arquivo novo em `scripts/`. Esperado, pela medição local:
 ~22–25s (estimativa).
 
-Depois: a registrar com as execuções deste PR e as seguintes na main.
+Depois — n=1 até este registro: o run do próprio #2546 deu **25.559ms** e alvo ÷ `scripts/` **0,685**,
+abaixo da faixa nos dois eixos. O resto da suíte naquela máquina (141.875ms) é da mesma ordem das amostras
+"antes" de 36,6–37,0s: ~−31%. O arquivo segue o mais lento da suíte (o 2º tem 9,2s) — o que sobra é a
+rodada limpa e o fora-da-rodada, custo que é o assunto. Faltam duas amostras para o critério fechar.
 
 ## O impacto honesto
 
@@ -115,11 +118,45 @@ muda.** O ganho está em três lugares:
   timeout de RPC do vitest que a guarda 12 existe para classificar.
 - **O bloco fora-da-rodada** (8,7s): roda o gate real contra fixtures; o custo é o assunto do teste.
 
-## Próximo: o `it` mais lento
+## Na sequência: o `it` mais lento dividia o trabalho com o 2º (parse único, PR seguinte)
 
-Os dois `it` de varredura AST do `erro-colapsado-em-vazio-gate.test.ts` (4,6–5,6s e 3,8–3,9s no CI)
-fazem o parse TypeScript das mesmas ~1.489 fontes, cada um do zero. Um parse único compartilhado rendeu,
-em bancada, 3,1s → 1,2s com contagens idênticas. Vai em PR separado.
+Os dois `it` de varredura do `erro-colapsado-em-vazio-gate.test.ts` — auto-ocultação e `return`
+afirmativo, o 1º e o 2º `it` mais lentos da suíte — faziam o parse TypeScript das mesmas 1.489 fontes,
+cada um do zero, para contar formas diferentes sobre o MESMO `acharColapsos`. Nas 8 execuções do CI
+medidas acima: 3.332–5.567ms e 2.541–4.111ms.
+
+O conserto: `contarAutoOcultacaoEm`/`contarRetornoAfirmativoEm` contam sobre sítios já achados (as
+funções antigas delegam a eles, então a regra de contagem continua num lugar só), e o teste guarda um memo
+preguiçoso por fonte: quem roda primeiro paga o parse, o outro lê o memo. O orçamento do #2311 fica nos
+dois, porque qualquer um pode ser o primeiro (sob `-t` ou reordenação). O diagnóstico passa a dividir o
+tempo pelas fontes parseadas NAQUELE `it` — senão o `it` servido pelo memo imprimiria "0,02 ms/fonte" e
+leria como carga o que não mediu nada.
+
+Local, vitest real, A/B intercalado — o "antes" é o teste original contra o módulo novo, para isolar o memo:
+
+| lado | arquivo (ms) | `it` auto-ocultação (ms) | `it` afirmativo (ms) |
+|---|---|---|---|
+| antes | 4.642 · 4.530 · 4.303 | 2.602 · 2.386 · 2.347 | 2.015 · 2.117 · 1.935 |
+| depois | 2.503 · 2.408 · 2.345 | 2.477 · 2.382 · 2.319 | < 300 (memo) |
+
+**−46%**, 19/19 nas seis rodadas. A equivalência sai da própria asserção: os dois `it` exigem que cada
+arquivo bata EXATAMENTE com a baseline — nem sítio a mais, nem a menos —, então o memo contar diferente
+seria vermelho. Falsificado com controle verde na mesma invocação: numa cópia, `PrimePlanosTab.tsx` 1→0 na
+`BASELINE` e `ToolHistory.tsx` 1→0 na `BASELINE_AFIRMATIVO` deram `Tests 2 failed | 36 passed (38)` —
+exatamente os dois `it` de varredura, cada um nomeando o seu `(0→1)`, com o arquivo real verde —, e o
+diagnóstico saiu nos dois ramos ("1489 de 1489 fontes parseadas neste `it`" / "as 1489 fontes vieram do
+memo").
+
+O `it` de auto-ocultação continua o mais lento da suíte: o custo dele é o parse em si, e só um detector mais
+rápido o reduz. O que saiu foi a segunda vez.
+
+**No CI, o relógio é outro.** Este alvo é CPU (parse), da natureza da suíte — mas o "resto" passou a
+carregar o ganho do Fix A (−11s num arquivo de `scripts/`), o que enviesaria a razão. A referência é a
+soma dos outros arquivos de `src/`: nas 8 execuções "antes" (o teste e o módulo sem commit desde
+`1460ea5`), razão 78,7–96,8‰ (±10,5%), contra ±22% do absoluto. **Critério pré-registrado:** n≥3
+execuções com a mudança, todas com alvo ÷ outros `src/` < 78,7‰, e — sinal binário, imune à máquina — o
+`it` afirmativo fora da lista de testes > 300ms, onde ele aparece nas 8 "antes". O absoluto fica como
+informação: o piso "antes" (5.902ms, numa máquina rápida) encosta no teto "depois" esperado numa lenta.
 
 ## Regra
 

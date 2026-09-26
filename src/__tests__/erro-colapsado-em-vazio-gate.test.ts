@@ -1,7 +1,7 @@
 import { describe, it, expect, onTestFailed } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { acharColapsos, contarAutoOcultacao, contarRetornoAfirmativo } from '@/lib/gates/erro-colapsado-em-vazio';
+import { acharColapsos, contarAutoOcultacao, contarAutoOcultacaoEm, contarRetornoAfirmativo, contarRetornoAfirmativoEm, type SitioColapso } from '@/lib/gates/erro-colapsado-em-vazio';
 
 // GATE — "erro colapsado em vazio": a leitura que falha e vira silêncio afirmativo.
 //
@@ -231,16 +231,41 @@ describe('gate: erro colapsado em vazio', () => {
   const MS_POR_FONTE_TETO = 40; // 4,7× o pior medido sob contenção (8,58 ms/fonte)
   const ORCAMENTO_VARREDURA_MS = Math.max(20_000, fontes.length * MS_POR_FONTE_TETO);
 
+  // UM parse por fonte, dividido pelos dois `it` de varredura: os dois contam formas diferentes
+  // sobre o MESMO `acharColapsos`, e cada um refazia o AST de todas as fontes do zero — no CI,
+  // 3,3–5,6s o primeiro e 2,5–4,1s o segundo (8 execuções, 2026-09-25). Preguiçoso de propósito: quem roda
+  // primeiro paga o parse inteiro e o outro lê o memo; rodar só um deles (`-t`) continua pagando.
+  // Por isso o orçamento acima fica nos DOIS: ele é do custo do parse, não de qual `it` o paga.
+  const sitiosPorFonte = new Map<string, SitioColapso[]>();
+  function sitiosDe(rel: string): SitioColapso[] {
+    let sitios = sitiosPorFonte.get(rel);
+    if (sitios === undefined) {
+      sitios = acharColapsos(readFileSync(resolve(RAIZ, rel), 'utf8'), rel);
+      sitiosPorFonte.set(rel, sitios);
+    }
+    return sitios;
+  }
+
   // `Test timed out in Nms` não nomeia causa nenhuma — e teto maior só ajuda se PRESERVA o
   // diagnóstico (mesma lição do doc acima). Isto imprime, na falha, o discriminante das três
   // hipóteses que a #2311 deixou abertas: carga, crescimento do repo, ou custo do detector.
   function armarDiagnosticoDeVarredura(): void {
     const inicio = performance.now();
+    const jaParseadas = sitiosPorFonte.size;
     onTestFailed(() => {
       const ms = performance.now() - inicio;
-      const porFonte = ms / fontes.length;
+      // Só as fontes parseadas NESTE `it` medem o detector — as do memo, o outro `it` já pagou.
+      const parseadas = sitiosPorFonte.size - jaParseadas;
+      if (parseadas === 0) {
+        console.error(
+          `\n[#2311] varredura: as ${fontes.length} fontes vieram do memo (o outro \`it\` de varredura ` +
+            `pagou o parse) — o tempo deste \`it\` não mede o detector.`,
+        );
+        return;
+      }
+      const porFonte = ms / parseadas;
       console.error(
-        `\n[#2311] varredura: ${fontes.length} fontes em ${Math.round(ms)}ms = ` +
+        `\n[#2311] varredura: ${parseadas} de ${fontes.length} fontes parseadas neste \`it\` em ${Math.round(ms)}ms = ` +
           `${porFonte.toFixed(2)} ms/fonte (orçamento ${ORCAMENTO_VARREDURA_MS}ms a ${MS_POR_FONTE_TETO} ms/fonte).\n` +
           `  Referência medida 2026-09-07: 2,05 fora do runner · 3,32 isolado · 8,58 sob a suíte completa.\n` +
           `  ms/fonte DENTRO da referência  → foi CARGA da máquina; o detector está íntegro.\n` +
@@ -261,7 +286,7 @@ describe('gate: erro colapsado em vazio', () => {
     armarDiagnosticoDeVarredura();
     const medido = new Map<string, number>();
     for (const rel of fontes) {
-      const n = contarAutoOcultacao(readFileSync(resolve(RAIZ, rel), 'utf8'), rel);
+      const n = contarAutoOcultacaoEm(sitiosDe(rel));
       if (n > 0) medido.set(rel, n);
     }
 
@@ -378,7 +403,7 @@ describe('gate: erro colapsado em vazio', () => {
     armarDiagnosticoDeVarredura();
     const medido = new Map<string, number>();
     for (const rel of fontes) {
-      const n = contarRetornoAfirmativo(readFileSync(resolve(RAIZ, rel), 'utf8'), rel);
+      const n = contarRetornoAfirmativoEm(sitiosDe(rel));
       if (n > 0) medido.set(rel, n);
     }
 
