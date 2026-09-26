@@ -15,8 +15,14 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("dispatch-notifications");
 
-/** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+/**
+ * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
+ *
+ * `v1.1-resumo-param-so-no-app` = pedido do founder (2026-09-25): `param_auto_resumo` ("Parâmetros de
+ * reposição — resumo do dia") não vira mais e-mail — é encerrado como `ignorado` antes do token do
+ * Gmail. Régua em `politica-email.ts`.
+ */
+export const VERSAO = "v1.1-resumo-param-so-no-app";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

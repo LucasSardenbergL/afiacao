@@ -20,6 +20,13 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * Marcador de versão servido pela edge. **Atualize a cada mudança relevante de comportamento** —
  * é ele que distingue um bundle novo de um velho em produção.
  *
+ * `v1.3-email-implantado-sayerlack` = pedido do founder (2026-09-25): o resumo "Pedidos disparados"
+ * deixou de sair em todo run. Em produção só sai (a) o e-mail "Pedido implantado na Sayerlack — nº
+ * <protocolo>", no run que registra no Omie um pedido que o portal já aceitou, e (b) o resumo, com
+ * assunto de problema, quando o run tem desfecho que exige ação (barrado pelo mínimo não conta).
+ * dry_run segue com o resumo de sempre. Régua em `email-politica.ts`; o resultado de cada pedido
+ * passou a carregar `protocolo_portal` (vai também para o `sync_reprocess_log`).
+ *
  * `v1.2-claim-disparo` = fecho do Cenário B do TOCTOU: a edge REIVINDICA a linha
  * (`reposicao_claim_disparo`, migration 20260906190615) imediatamente antes de `IncluirPedCompra`,
  * e a pendência criada aí veta o cancelamento até o desfecho registrado. Junto: o `{error}` da
@@ -33,7 +40,7 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * ⚠️ O sensor só prova versões a partir de si mesmo: um bundle que tenha o marco causal mas seja
  * ANTERIOR ao #1747 não responde `versao` nenhuma. Ausência do campo = bundle pré-sensor.
  */
-export const VERSAO = "v1.2-claim-disparo";
+export const VERSAO = "v1.3-email-implantado-sayerlack";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";

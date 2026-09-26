@@ -1,9 +1,11 @@
 // dispatch-notifications: processa fornecedor_alerta pendente_notificacao
 // Envia email via Gmail API + cria evento no Google Calendar via OAuth 2.0 (refresh token).
 // Sequencial: NUNCA processa alertas em paralelo.
+// Tipos só-no-app (./politica-email.ts) são encerrados como `ignorado`, sem e-mail.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from '../_shared/auth.ts';
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from './versao.ts';
+import { separarPorCanal } from './politica-email.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -325,6 +327,47 @@ Deno.serve(async (req) => {
     });
   }
 
+  // 1b. Tipos que ficam SÓ no app (./politica-email.ts — hoje o resumo diário de parâmetros de
+  // reposição) são encerrados como `ignorado`, sem Gmail. ANTES do token de propósito: com o refresh
+  // token revogado a edge devolve 500 logo abaixo, e o silenciado ficaria preso em
+  // `pendente_notificacao` — o Sentinela `alert_channel` acusaria "dispatch parou de drenar" por um
+  // alerta que nem devia sair. O `.eq('status', 'pendente_notificacao')` não reabre nem atropela quem
+  // outra execução já encerrou.
+  const { porEmail, soNoApp } = separarPorCanal(alertas as AlertaRow[]);
+  const detalhes: Array<{
+    alerta_id: number;
+    empresa: string;
+    tipo: string;
+    status: string;
+    erro: string | null;
+  }> = [];
+  let silenciados = 0;
+  if (soNoApp.length > 0) {
+    const { data: encerrados, error: silErr } = await supabase
+      .from('fornecedor_alerta')
+      .update({ status: 'ignorado' })
+      .in('id', soNoApp.map((a) => a.id))
+      .eq('status', 'pendente_notificacao')
+      .select('id');
+    if (silErr) {
+      // Fica pendente e a próxima rodada tenta de novo; se nunca passar, o Sentinela acusa a fila presa.
+      console.error(`[dispatch-notifications] falha ao encerrar ${soNoApp.length} alerta(s) só-no-app como ignorado: ${silErr.message}`);
+    } else {
+      silenciados = encerrados?.length ?? 0;
+      for (const a of soNoApp) {
+        detalhes.push({ alerta_id: a.id, empresa: a.empresa, tipo: a.tipo, status: 'ignorado', erro: null });
+      }
+      console.log(`[dispatch-notifications] ${silenciados} alerta(s) só-no-app encerrado(s) como ignorado (sem e-mail)`);
+    }
+  }
+
+  if (porEmail.length === 0) {
+    return new Response(JSON.stringify({ processados: alertas.length, sucesso: 0, falhas: 0, silenciados, detalhes }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // 2. Obter access token
   const tokenResult = await getAccessToken();
   if (!tokenResult.ok) {
@@ -339,17 +382,10 @@ Deno.serve(async (req) => {
   const accessToken = tokenResult.token;
 
   // 3. Processar SEQUENCIALMENTE
-  const detalhes: Array<{
-    alerta_id: number;
-    empresa: string;
-    tipo: string;
-    status: string;
-    erro: string | null;
-  }> = [];
   let sucesso = 0;
   let falhas = 0;
 
-  for (const a of alertas as AlertaRow[]) {
+  for (const a of porEmail) {
     try {
       const subject = subjectFor(a.severidade, a.titulo);
       const html = buildHtmlBody(a);
@@ -410,10 +446,10 @@ Deno.serve(async (req) => {
 
   const processados = alertas.length;
   console.log(
-    `[dispatch-notifications] Sumário: processados=${processados} sucesso=${sucesso} falhas=${falhas}`,
+    `[dispatch-notifications] Sumário: processados=${processados} sucesso=${sucesso} falhas=${falhas} silenciados=${silenciados}`,
   );
 
-  return new Response(JSON.stringify({ processados, sucesso, falhas, detalhes }), {
+  return new Response(JSON.stringify({ processados, sucesso, falhas, silenciados, detalhes }), {
     status: 200,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
