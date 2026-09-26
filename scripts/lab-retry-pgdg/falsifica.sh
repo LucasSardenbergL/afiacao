@@ -63,7 +63,13 @@ open(saida, "w", encoding="utf-8").write(t.replace(de, para))
 PY
 }
 
-roda_lab() { ALVO_YML="$1" LC_ALL="$2" bash "$L/lab.sh" 2>&1; }
+# O 3o argumento recorta os cenarios. Cada sabotagem so pode ser vista pelos cenarios que a
+# `prova` ja declara como `esperados` — rodar os outros oito em cada uma e' pagar ~2,5x por
+# informacao conhecida. O C0 entra sempre (o lab o forca), que e' o que separa "a guarda caiu" de
+# "o lab caiu". O LIMITE do recorte, dito de frente: uma sabotagem que tambem quebrasse um cenario
+# fora da lista passaria despercebida AQUI — quem cobre isso e' o lab completo, que roda inteiro no
+# controle desta mesma invocacao e no `test:hooks`.
+roda_lab() { ALVO_YML="$1" LC_ALL="$2" LAB_CENARIOS="${3:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1; }
 
 # ── (0) CONTROLE — antes de qualquer sabotagem, na mesma invocacao ───────────────────────────────
 cp "$ORIG" "$TMP/controle.yml"
@@ -89,7 +95,7 @@ prova() {
     falhou "$nome — alvo sabotado nao e YAML/bash valido: $(head -c 200 "$TMP/forma.log")"; return
   fi
   for loc in $LOCALES; do
-    local SAI; SAI="$(roda_lab "$TMP/sab.yml" "$loc")"
+    local SAI; SAI="$(roda_lab "$TMP/sab.yml" "$loc" "$esperados")"
     case "$SAI" in
       *LAB-VERMELHO*) ;;
       *) falhou "$nome [$loc] — o lab NAO reprovou (a guarda nao existe)"; continue ;;

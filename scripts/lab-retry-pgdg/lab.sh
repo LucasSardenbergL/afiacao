@@ -205,7 +205,16 @@ espera_conta() {
   passou "$nome"
 }
 
-echo "── lab retry PGDG · alvo: ${YML#"$RAIZ_REPO"/} ──"
+# ── Seletor de cenarios ──────────────────────────────────────────────────────────────────────────
+# O falsifica.sh roda o lab 6x (uma por sabotagem) e cada sabotagem so pode ser vista por alguns
+# cenarios: rodar os nove em todas e' pagar ~2,5x por informacao que ja se tem. `LAB_CENARIOS`
+# recorta — e o C0 entra SEMPRE, porque e' o controle que separa "a guarda caiu" de "o lab caiu".
+# O subconjunto vai IMPRESSO no cabecalho: run recortado que se passasse por completo seria
+# cobertura que some sozinha, e o verde continuaria chegando.
+CENARIOS="${LAB_CENARIOS:-C1 C2 C3 C4 C5 C6 C7 C8}"
+quer() { case " C0 $CENARIOS " in *" $1 "*) return 0 ;; esac; return 1; }
+
+echo "── lab retry PGDG · alvo: ${YML#"$RAIZ_REPO"/} · cenarios: C0 $CENARIOS ──"
 
 # C0 — CONTROLE. Sem sabotagem: verde, uma chamada por camada, e NENHUMA re-tentativa no log.
 # Sem esta linha de base, os cenarios seguintes nao provam nada: um lab sempre-vermelho
@@ -221,71 +230,87 @@ case "$SAIDA" in
 esac
 
 # C1-C3 — RETENTA, uma camada por vez.
-roda LAB_CURL_FALHAS=1 LAB_CURL_EXIT=56
-verde "C1 curl transitorio (1 falha) — step verde"
-espera_conta CURL 2 "C1 curl transitorio — curl chamado 2x"
-case "$SAIDA" in
-  *"↻ curl da chave do PGDG: OK na tentativa 2/3"*) passou "C1 curl transitorio — re-tentativa registrada no log" ;;
-  *) falhou "C1 curl transitorio — verde, mas sem a linha de re-tentativa" ;;
-esac
+if quer C1; then
+  roda LAB_CURL_FALHAS=1 LAB_CURL_EXIT=56
+  verde "C1 curl transitorio (1 falha) — step verde"
+  espera_conta CURL 2 "C1 curl transitorio — curl chamado 2x"
+  case "$SAIDA" in
+    *"↻ curl da chave do PGDG: OK na tentativa 2/3"*) passou "C1 curl transitorio — re-tentativa registrada no log" ;;
+    *) falhou "C1 curl transitorio — verde, mas sem a linha de re-tentativa" ;;
+  esac
+fi
 
-roda LAB_APTUPD_FALHAS=1 LAB_APTUPD_EXIT=100
-verde "C2 apt-get update transitorio — step verde"
-espera_conta APTUPD 2 "C2 apt-get update transitorio — chamado 2x"
-case "$SAIDA" in
-  *"↻ apt-get update: OK na tentativa 2/3"*) passou "C2 apt-get update transitorio — re-tentativa registrada" ;;
-  *) falhou "C2 apt-get update transitorio — verde, mas sem a linha de re-tentativa" ;;
-esac
+if quer C2; then
+  roda LAB_APTUPD_FALHAS=1 LAB_APTUPD_EXIT=100
+  verde "C2 apt-get update transitorio — step verde"
+  espera_conta APTUPD 2 "C2 apt-get update transitorio — chamado 2x"
+  case "$SAIDA" in
+    *"↻ apt-get update: OK na tentativa 2/3"*) passou "C2 apt-get update transitorio — re-tentativa registrada" ;;
+    *) falhou "C2 apt-get update transitorio — verde, mas sem a linha de re-tentativa" ;;
+  esac
+fi
 
-roda LAB_APTINS_FALHAS=1 LAB_APTINS_EXIT=100
-verde "C3 apt-get install transitorio — step verde"
-espera_conta APTINS 2 "C3 apt-get install transitorio — chamado 2x"
-case "$SAIDA" in
-  *"↻ apt-get install postgresql-17: OK na tentativa 2/3"*) passou "C3 apt-get install transitorio — re-tentativa registrada" ;;
-  *) falhou "C3 apt-get install transitorio — verde, mas sem a linha de re-tentativa" ;;
-esac
+if quer C3; then
+  roda LAB_APTINS_FALHAS=1 LAB_APTINS_EXIT=100
+  verde "C3 apt-get install transitorio — step verde"
+  espera_conta APTINS 2 "C3 apt-get install transitorio — chamado 2x"
+  case "$SAIDA" in
+    *"↻ apt-get install postgresql-17: OK na tentativa 2/3"*) passou "C3 apt-get install transitorio — re-tentativa registrada" ;;
+    *) falhou "C3 apt-get install transitorio — verde, mas sem a linha de re-tentativa" ;;
+  esac
+fi
 
 # C4 — o teto e 3, nao 2: duas falhas seguidas ainda tem de virar verde na terceira.
-roda LAB_CURL_FALHAS=2 LAB_CURL_EXIT=56
-verde "C4 curl falha 2x — verde na terceira"
-espera_conta CURL 3 "C4 curl falha 2x — curl chamado 3x"
-case "$SAIDA" in
-  *"OK na tentativa 3/3"*) passou "C4 curl falha 2x — terceira tentativa registrada" ;;
-  *) falhou "C4 curl falha 2x — verde sem registrar a terceira" ;;
-esac
+if quer C4; then
+  roda LAB_CURL_FALHAS=2 LAB_CURL_EXIT=56
+  verde "C4 curl falha 2x — verde na terceira"
+  espera_conta CURL 3 "C4 curl falha 2x — curl chamado 3x"
+  case "$SAIDA" in
+    *"OK na tentativa 3/3"*) passou "C4 curl falha 2x — terceira tentativa registrada" ;;
+    *) falhou "C4 curl falha 2x — verde sem registrar a terceira" ;;
+  esac
+fi
 
 # C5-C7 — DESISTE, uma camada por vez. Camada cuja permanente sai VERDE esta inalcancada.
-roda LAB_CURL_FALHAS=sempre LAB_CURL_EXIT=56
-vermelho "C5 curl PERMANENTE — reprova com o exit do curl" 56 "curl da chave do PGDG falhou nas 3 tentativas"
-espera_conta CURL 3 "C5 curl PERMANENTE — tentou 3x (e parou)"
-espera_conta APTUPD 0 "C5 curl PERMANENTE — nao seguiu para o apt-get (fail-closed de verdade)"
-case "$SAIDA" in
-  *"Failure when receiving data from the peer"*) passou "C5 curl PERMANENTE — erro real do curl visivel no log" ;;
-  *) falhou "C5 curl PERMANENTE — reprovou sem mostrar o erro da ferramenta" ;;
-esac
-# O formato da mensagem de desistencia fica fixado AQUI, uma vez e com o acento que ela tem de
-# verdade ("última"). O primeiro corte deste lab procurou "ultima" pelado e deu vermelho por isso:
-# e a armadilha de caixa/acento do CLAUDE.md, e ela pertence a uma assercao so — repetida em cada
-# cenario, viraria oito lugares para quebrar quando alguem reescrever a frase.
-case "$SAIDA" in
-  *"::error::curl da chave do PGDG falhou nas 3 tentativas — exit da última: 56"*)
-    passou "C5 curl PERMANENTE — mensagem no formato exato (rotulo + teto + exit real)" ;;
-  *) falhou "C5 curl PERMANENTE — a linha ::error:: mudou de formato" ;;
-esac
+if quer C5; then
+  roda LAB_CURL_FALHAS=sempre LAB_CURL_EXIT=56
+  vermelho "C5 curl PERMANENTE — reprova com o exit do curl" 56 "curl da chave do PGDG falhou nas 3 tentativas"
+  espera_conta CURL 3 "C5 curl PERMANENTE — tentou 3x (e parou)"
+  espera_conta APTUPD 0 "C5 curl PERMANENTE — nao seguiu para o apt-get (fail-closed de verdade)"
+  case "$SAIDA" in
+    *"Failure when receiving data from the peer"*) passou "C5 curl PERMANENTE — erro real do curl visivel no log" ;;
+    *) falhou "C5 curl PERMANENTE — reprovou sem mostrar o erro da ferramenta" ;;
+  esac
+  # O formato da mensagem de desistencia fica fixado AQUI, uma vez e com o acento que ela tem de
+  # verdade ("última"). O primeiro corte deste lab procurou "ultima" pelado e deu vermelho por isso:
+  # e a armadilha de caixa/acento do CLAUDE.md, e ela pertence a uma assercao so — repetida em cada
+  # cenario, viraria oito lugares para quebrar quando alguem reescrever a frase.
+  case "$SAIDA" in
+    *"::error::curl da chave do PGDG falhou nas 3 tentativas — exit da última: 56"*)
+      passou "C5 curl PERMANENTE — mensagem no formato exato (rotulo + teto + exit real)" ;;
+    *) falhou "C5 curl PERMANENTE — a linha ::error:: mudou de formato" ;;
+  esac
+fi
 
-roda LAB_APTUPD_FALHAS=sempre LAB_APTUPD_EXIT=100
-vermelho "C6 apt-get update PERMANENTE — reprova com o exit do apt" 100 "apt-get update falhou nas 3 tentativas"
-espera_conta APTUPD 3 "C6 apt-get update PERMANENTE — tentou 3x"
-espera_conta APTINS 0 "C6 apt-get update PERMANENTE — nao seguiu para o install"
+if quer C6; then
+  roda LAB_APTUPD_FALHAS=sempre LAB_APTUPD_EXIT=100
+  vermelho "C6 apt-get update PERMANENTE — reprova com o exit do apt" 100 "apt-get update falhou nas 3 tentativas"
+  espera_conta APTUPD 3 "C6 apt-get update PERMANENTE — tentou 3x"
+  espera_conta APTINS 0 "C6 apt-get update PERMANENTE — nao seguiu para o install"
+fi
 
-roda LAB_APTINS_FALHAS=sempre LAB_APTINS_EXIT=100
-vermelho "C7 apt-get install PERMANENTE — reprova com o exit do apt" 100 "apt-get install postgresql-17 falhou nas 3 tentativas"
-espera_conta APTINS 3 "C7 apt-get install PERMANENTE — tentou 3x"
+if quer C7; then
+  roda LAB_APTINS_FALHAS=sempre LAB_APTINS_EXIT=100
+  vermelho "C7 apt-get install PERMANENTE — reprova com o exit do apt" 100 "apt-get install postgresql-17 falhou nas 3 tentativas"
+  espera_conta APTINS 3 "C7 apt-get install PERMANENTE — tentou 3x"
+fi
 
 # C8 — exatamente 3 falhas: nao existe quarta tentativa. Separa "o teto e 3" de "o teto e alto".
-roda LAB_CURL_FALHAS=3 LAB_CURL_EXIT=56
-vermelho "C8 curl falha exatamente 3x — reprova (nao ha 4a tentativa)" 56 "falhou nas 3 tentativas"
-espera_conta CURL 3 "C8 curl falha 3x — curl chamado 3x"
+if quer C8; then
+  roda LAB_CURL_FALHAS=3 LAB_CURL_EXIT=56
+  vermelho "C8 curl falha exatamente 3x — reprova (nao ha 4a tentativa)" 56 "falhou nas 3 tentativas"
+  espera_conta CURL 3 "C8 curl falha 3x — curl chamado 3x"
+fi
 
 echo ""
 echo "── resultado: $ok ok · $ruim falha(s) ──"

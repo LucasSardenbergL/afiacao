@@ -124,6 +124,27 @@ vezes** (eu errei a indentação do YAML por dois espaços). Sem a trava de "cas
 sabotagem teria virado no-op, o lab teria continuado verde, e isso seria lido como "a guarda não
 existe".
 
+## O teto que o PR expôs (e que não era do retry)
+
+O primeiro CI do PR reprovou — e não pelo retry: o `provas-sql` passou em 3m30s com o step novo. O
+que caiu foi o `gates-e-falsificacao`, **cancelado aos 15m04s** pelo `timeout-minutes: 15`, no
+penúltimo step, com todos os gates já verdes. Duas causas, e só uma é minha:
+
+- **Minha**: a suíte nova custava ~80s, porque o `falsifica.sh` rodava os nove cenários em cada
+  uma das seis sabotagens. Cada sabotagem só pode ser vista pelos cenários que ela declara como
+  esperados — os outros são informação já conhecida, paga de novo. Com o recorte (`LAB_CENARIOS`,
+  com o C0 sempre dentro e o subconjunto impresso no cabeçalho, para run recortado não se passar
+  por completo), caiu para ~17s.
+- **Não minha, e maior**: o job já vivia no limite. Em 64 execuções (18→26/09) a mediana subiu de
+  **10,9min na metade mais antiga para 13,1min na mais nova**, o p90 ficou em 13,8 e **doze runs
+  (19%) terminaram a menos de 1,5min do teto**. A folga no p90 — 1,2min — era menor que a variação
+  normal do job. Teto assim não pega job travado: sorteia vermelho em job sadio, e ensina a tratar
+  o check como flaky. Subiu para 20min, com a medição no cabeçalho do job.
+
+O comentário do step de falsificação prometia "~6min de folga ainda no timeout". Era verdade quando
+foi escrito e envelheceu sem mudar de linha — a mesma classe da armadilha nº 17 do catálogo de
+evidência positiva: **nenhuma revisão de diff pegaria, porque não há diff**. Ficou corrigido junto.
+
 ## Cobertura
 
 `bun run lint:shell` **não** varre `.github/workflows/` — os globs são `scripts/`, `.claude/hooks/`,
