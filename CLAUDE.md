@@ -64,7 +64,7 @@ Diário de PR/entregas: `docs/historico/` (`bugs-resolvidos.md`, `programas-vend
 
 ## Merge (auto)
 
-Todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** (`.github/workflows/auto-merge.yml`, zero clique do founder). Para **segurar** um PR, deixe-o **DRAFT**. Nunca `gh pr merge --admin` de rotina. **Ao criar/atualizar PR: arme `scripts/pr-watch.sh <nº>` em background** e, no desfecho, avise via PushNotification. **Exit 6 ≠ 5:** 5 = consultei e segue sem desfecho; **6 = NÃO consegui consultar** → confirme com `gh pr view <nº>` **antes** de avisar. A janela conta **vigília**, não relógio de parede. Exit codes: cabeçalho do `scripts/pr-watch.sh`.
+Todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** (`.github/workflows/auto-merge.yml`, zero clique do founder). Para **segurar** um PR, deixe-o **DRAFT**. Nunca `gh pr merge --admin` de rotina. **Ao criar/atualizar PR: arme `scripts/pr-watch.sh <nº>` em background** (cloud, sem `gh`: `subscribe_pr_activity`, sem perguntar) e, no desfecho, avise via PushNotification. **Exit 6 ≠ 5:** 5 = consultei e segue sem desfecho; **6 = NÃO consegui consultar** → confirme com `gh pr view <nº>` **antes** de avisar. Exit codes: cabeçalho do `scripts/pr-watch.sh`; detalhe: `worktrees.md`.
 
 ## Stack
 

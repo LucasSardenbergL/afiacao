@@ -297,6 +297,28 @@ rode `git stash` com merge em curso** — mexe no estado do merge; para salvar, 
 para fora da árvore. O guard de `git reset --hard` pagou-se aqui: barrou o reset que teria
 destruído o merge por causa desse diagnóstico errado.
 
+## Do push ao merge: gates antes do push e vigia local × cloud (2026-09-26)
+
+**Antes do push**, o hook `push-gates-guard.sh` roda os três gates baratos que mais
+reprovavam PR no CI: `docs:indice`, `docs:citacoes` e `sonda:fingerprint` (~2,4 s juntos). Com a
+árvore limpa e evidência positiva (exit 1 + a marca de falha do gate), ele **nega** o push: o
+vermelho que o CI só mostraria ~30 min depois sai na hora. Com a árvore suja, inclusive no
+`git add && git commit && git push` de um comando só, que o hook vê antes do commit, ele só
+**avisa**, porque os gates leem o disco e o disco pode não ser o que vai no push. `git push
+--no-verify` é a válvula para quando o GATE estiver errado; use e diga ao founder. Contrato
+completo no cabeçalho do hook; medição e motivo em `docs/historico/gates-no-push.md`.
+
+**Depois do push**, quem vigia depende de onde a sessão roda:
+
+- **Local:** `scripts/pr-watch.sh <nº>` em background. Os exit codes estão no cabeçalho do
+  script. A janela conta **vigília**, não relógio de parede: no suspend o tempo dormido volta ao
+  prazo.
+- **Cloud (claude.ai/code):** não há `gh`, e o `pr-watch.sh` sai 64 (dependência ausente). O
+  equivalente é `subscribe_pr_activity`, **sem perguntar** ao founder, que autorizou em
+  2026-09-26. É o auto-fix nativo: CI vermelho e comentário de review chegam como evento, e a
+  sessão conserta. Conflito com a main não gera evento, então arme também um `send_later` de ~1 h
+  como check-in e re-arme até o merge.
+
 ## Higiene de RAM/Node (M2 8GB satura; **swap em uso = RAM cheia**)
 
 | Comando | O quê (todos DRY-RUN por padrão; `--yes` executa) |
