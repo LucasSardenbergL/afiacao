@@ -408,6 +408,27 @@ comportamental ficava vermelha **pela camada errada** (a postcondição barrava 
 rodar) — o `falsifica` passou a cortar após `$function$;`, uma camada por vez. E o F6 mostrou que
 um 2º check (`LIKE '%= ''erro…''%'`) era inalcançável com uma ocorrência só: saiu.
 
+**Adendo 2026-09-26 — follow-up Codex do #2549: `disparado_simulado` e o JOIN do grupo**
+([PR #2573](https://github.com/LucasSardenbergL/afiacao/pull/2573); migrations `20260925225004` +
+`20260926001425` **aplicadas pela sessão no envelope** — ensaio `ENSAIO_OK` + trava `DO $md5$` +
+2ª testemunha `psql-ro`: md5 `608711d5…` / `0220671d…`, ACL idêntico). Três achados latentes (PROD:
+0 `disparado_simulado` no histórico, `modo_disparo_pedidos = producao`, 0 `grupo_codigo = ''`):
+(1) o `dry_run` da `disparar-pedidos-aprovados` **cria PO real no Omie** e grava `disparado_simulado`,
+que ficava fora do 1º ramo da `em_transito` (e o 2º exige nº Omie NULL) ⇒ compra dupla até o sync;
+(2) o JOIN item↔cabeçalho por `COALESCE(grupo,'')` fundia NULL com `''` enquanto o `GROUP BY` os separa
+⇒ itens cruzados (4/16 em vez de 2/8) — virou `IS NOT DISTINCT FROM`; (3) o harness ignorava o exit do
+`run_ciclo` ⇒ RPC morta pintava F1/RST de verde (`qf=AUSENTE` por omissão) — agora falha o assert (F11,
+com controle verde e controle do defeito na mesma invocação). **Lição que custou 2 rodadas de Codex: o
+on-order é de FONTE ÚNICA entre TRÊS lugares** — a `em_transito` do motor, a da posição do impacto em
+`atualizar_parametros_numericos_skus`, e o `fetchEmTransitoKeys` da `omie-sync-estoque`, que TIRA do
+pendente os POs desses status. Pôr o status só na RPC contaria o PO 2× após o sync (suprime compra — 1ª
+rodada); pôr também na edge sem a função de parâmetros o contaria 0× no impacto (2ª rodada). Meu grep
+inicial ACHOU a lista na `20260712140000` e eu a descartei como "linhagem desta função" — era outra função.
+**O que pega isto agora:** paridade das 3 listas em `edges-onorder-guardrail.test.ts` (falsificada nos 3
+eixos + comentário). Resíduos: postcondição da `20260925225004` só limpa comentário de linha (o `/* */`
+ficou para a da `20260926001425`; na PROD a trava md5 torna moot); gêmeo em `gerar_pedidos_oportunidade_ciclo`
+(anti-dup sem o status) virou tarefa própria. Ordem de deploy: migrations (feito) → edge v1.2.
+
 ## Bug de código chegava rotulado como "vendáveis indisponíveis" — e o resíduo de snapshot que ficou (2026-08-19)
 
 Os dois findings [P2] que o challenge Codex (gpt-5.6-sol, xhigh) sobre o sensor de head do Farmer
