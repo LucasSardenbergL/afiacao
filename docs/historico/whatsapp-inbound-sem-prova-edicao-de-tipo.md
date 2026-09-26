@@ -80,6 +80,13 @@ do gerado, proibindo edição neste turno, por causa de 24/09. A 1ª atestação
 respondeu 200 com `edge` e `versao v1.0-sensor-inicial`, e com `fonte e2386801…c315`, idêntico ao
 mapa da main: **DEPLOY CONFIRMADO**, com o grafo inteiro deployado verbatim.
 
+**A/B natural no mesmo dia (sinal, não prova: n=1 de cada lado).** Às 10:02Z outra sessão deployou a
+`omie-sync-estoque` (#2573) com o prompt do gerador, que não tem a frase. O agente repetiu a edição
+não pedida na `whatsapp-inbound` (`SupabaseClient<any>`) e editou também a `sync-reprocess`
+(`f84d7772e`/`eec8598d7`, revertidos no #2579; a main ficou vermelha no `sonda:fingerprint`). Com a
+frase, zero edição; sem ela, duas. O conserto de CLASSE é o chip "Blindar o prompt de deploy contra
+edições do agente": a frase entra no texto do Passo 2 do `pendencias-pacote.ts`.
+
 Dois atritos do caminho, para o próximo:
 
 - O log do `db:aplicar` guarda só o marcador, não a célula do PASSO 2. Serviu o PASSO 2 sem mapa
