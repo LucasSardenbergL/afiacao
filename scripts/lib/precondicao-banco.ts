@@ -131,8 +131,12 @@ export const TOKEN_SEM_CORPO = 'SEM-CORPO';
 export const TOKEN_SIM = 'SIM';
 export const TOKEN_NAO = 'NAO';
 
-/** Nome de RPC aceitável para interpolar na sonda. Idêntico ao que o extrator literal produz. */
-const NOME_RPC = /^[a-z][a-z0-9_]*$/;
+/**
+ * Nome de RPC aceitável para interpolar na sonda. O `_` inicial entra porque 9 funções `public`
+ * são assim (`_data_health_compute`, `_push_enviar`…) e a varredura de deriva de corpo
+ * (`deriva:corpo:prod`) mede TODAS. O alfabeto segue `[a-z0-9_]` — sem aspa, sem espaço.
+ */
+const NOME_RPC = /^[a-z_][a-z0-9_]*$/;
 
 /** Uma RPC que a leva chama, e quais edges dependem dela. */
 export interface AlvoRpc {
