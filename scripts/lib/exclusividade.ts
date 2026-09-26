@@ -749,6 +749,28 @@ export interface Matriz {
   linhas: LinhaMatriz[];
 }
 
+/** Por que a matriz NAO pode ser lida. Cada codigo vira REPROVA com o proprio nome. */
+export interface RecusaDaMatriz {
+  codigo: 'MATRIZ_AUSENTE';
+  motivo: string;
+}
+
+/** O que sai de `lerMatriz`: a matriz, ou a recusa com o porque. */
+export type LeituraDaMatriz = { ok: true; matriz: Matriz } | ({ ok: false } & RecusaDaMatriz);
+
+/** A unica porta de bytes para `Matriz`. `null` = o arquivo nao existe. */
+export function lerMatriz(texto: string | null): LeituraDaMatriz {
+  if (texto === null) {
+    return { ok: false, codigo: 'MATRIZ_AUSENTE', motivo: `${MATRIZ_PATH} ausente — rode \`bun run exclusividade:medir\`.` };
+  }
+  try {
+    return { ok: true, matriz: JSON.parse(texto) as Matriz };
+  } catch {
+    // Ilegivel e indistinguivel de ausente para efeito de evidencia — os dois sao fail-closed.
+    return { ok: false, codigo: 'MATRIZ_AUSENTE', motivo: `${MATRIZ_PATH} ilegivel — rode \`bun run exclusividade:medir\`.` };
+  }
+}
+
 /**
  * Funde a medicao NOVA de um defeito com a que ja estava na matriz, preservando as execucoes de
  * gates que a rodada nova nao incluiu.
@@ -978,7 +1000,7 @@ export interface Veredito {
  * virando aprovacao, dentro da ferramenta que existe para nao deixar isso acontecer.
  */
 export function avaliar(
-  m: Matriz | null,
+  leitura: LeituraDaMatriz,
   gates: GateAlvo[],
   fpAtual: Map<string, { fingerprint: string; resolvida: boolean }>,
   assinaturas?: ReadonlyMap<string, string>,
@@ -986,15 +1008,11 @@ export function avaliar(
   const out: Veredito[] = [];
   const candidatos = gates.filter((g) => g.bloqueiaPR);
 
-  if (!m) {
-    out.push({
-      severidade: 'REPROVA',
-      gate: '(todos)',
-      codigo: 'MATRIZ_AUSENTE',
-      motivo: `${MATRIZ_PATH} ausente ou ilegivel — rode \`bun run exclusividade:medir\`.`,
-    });
+  if (!leitura.ok) {
+    out.push({ severidade: 'REPROVA', gate: '(todos)', codigo: leitura.codigo, motivo: leitura.motivo });
     return out;
   }
+  const m = leitura.matriz;
 
   const dispensados = new Set(m.dispensados.map((d) => d.gate));
   const exclus = new Map(derivar(m, { universo: candidatos.map((g) => g.nome), assinaturas }).map((e) => [e.gate, e]));

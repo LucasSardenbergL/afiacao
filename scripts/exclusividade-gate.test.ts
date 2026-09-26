@@ -33,12 +33,14 @@ import {
   gatesCandidatos,
   invocacaoDoCI,
   jobsBloqueantes,
+  lerMatriz,
   parseDefeitos,
   primeiraLinhaComCarne,
   resumir,
   textoDoDever,
   type Defeito,
   type GateAlvo,
+  type LeituraDaMatriz,
   type LinhaMatriz,
   type Matriz,
 } from './lib/exclusividade';
@@ -77,6 +79,9 @@ const matriz = (over: Partial<Matriz> = {}): Matriz => ({
   linhas: [],
   ...over,
 });
+
+/** A leitura aceita de `m`, sem passar pelo texto — para os testes que nao sao sobre a LEITURA. */
+const lida = (m: Matriz): LeituraDaMatriz => ({ ok: true, matriz: m });
 
 describe('parseDefeitos', () => {
   it("o 3o campo e o RESTO: a expressao perl pode conter '|'", () => {
@@ -763,7 +768,7 @@ describe('avaliar — severidade', () => {
   const fp = new Map([['g1', { fingerprint: 'fp', resolvida: true }]]);
 
   it('matriz ausente reprova (fail-closed)', () => {
-    const v = avaliar(null, [g('g1')], fp);
+    const v = avaliar(lerMatriz(null), [g('g1')], fp);
     expect(v[0].severidade).toBe('REPROVA');
     expect(v[0].codigo).toBe('MATRIZ_AUSENTE');
   });
@@ -771,7 +776,7 @@ describe('avaliar — severidade', () => {
   // O objetivo declarado da maquina: quem acrescenta um gate paga a prova de que ele pega algo
   // que ninguem pega. Sem este teste, a ferramenta inteira e decorativa.
   it('gate bloqueante sem NENHUMA medicao reprova', () => {
-    const v = avaliar(matriz(), [g('novo')], new Map());
+    const v = avaliar(lida(matriz()), [g('novo')], new Map());
     expect(v.map((x) => x.codigo)).toContain('GATE_NOVO_SEM_EXCLUSIVIDADE');
     expect(v.find((x) => x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE')!.severidade).toBe('REPROVA');
   });
@@ -782,30 +787,30 @@ describe('avaliar — severidade', () => {
   // velha e a nova concordam.
   it('gate que so aparece como NAO RODADO (podado) reprova — ausencia de execucao nao e medicao', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g2', execucoes: [exec('g1', true)], parouCedo: true })] });
-    const v = avaliar(m, [g('g1'), g('g2')], fp).find((x) => x.gate === 'g2' && x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE');
+    const v = avaliar(lida(m), [g('g1'), g('g2')], fp).find((x) => x.gate === 'g2' && x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE');
     expect(v?.severidade).toBe('REPROVA');
     expect(v?.motivo).toMatch(/NUNCA EXECUTADO/);
   });
 
   it('gate executado so em linha INVALIDA reprova — a linha invalida nao mediu nada', () => {
     const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', true)], invalido: 'gate g3 estourou' })] });
-    const codigos = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
+    const codigos = avaliar(lida(m), [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
     expect(codigos).toContain('GATE_NOVO_SEM_EXCLUSIVIDADE');
   });
 
   it('gate EXECUTADO em linha valida conta como medido, mesmo verde — o preco e rodar, nao pegar', () => {
     const m = matriz({ linhas: [linha({ execucoes: [exec('g1', false), exec('g2', true)] })] });
-    const codigos = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
+    const codigos = avaliar(lida(m), [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1').map((x) => x.codigo);
     expect(codigos).not.toContain('GATE_NOVO_SEM_EXCLUSIVIDADE');
   });
 
   it('gate na lista de dispensados nao reprova — divida DECLARADA, visivel no diff', () => {
     const m = matriz({ dispensados: [{ gate: 'novo', desde: '2026-09-07', motivo: 'pre-existente' }] });
-    expect(avaliar(m, [g('novo')], new Map()).filter((v) => v.severidade === 'REPROVA')).toEqual([]);
+    expect(avaliar(lida(m), [g('novo')], new Map()).filter((v) => v.severidade === 'REPROVA')).toEqual([]);
   });
 
   it('gate INFORMATIVO nunca e cobrado (mutcheck e o caso real)', () => {
-    expect(avaliar(matriz(), [g('mutcheck', false)], new Map())).toEqual([]);
+    expect(avaliar(lida(matriz()), [g('mutcheck', false)], new Map())).toEqual([]);
   });
 
   // Fabricacao no 3, e a mais cara: e a correcao no 1 do parecer do Codex. Corpus curto nao mede
@@ -816,7 +821,7 @@ describe('avaliar — severidade', () => {
   // seria, corretamente, o unico que pega.
   it('exclusividade zero RELATA — jamais reprova', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const v = avaliar(m, [g('g1'), g('g2')], fp);
+    const v = avaliar(lida(m), [g('g1'), g('g2')], fp);
     const zero = v.find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO' && x.gate === 'g1')!;
     expect(zero.severidade).toBe('RELATA');
     expect(v.some((x) => x.severidade === 'REPROVA')).toBe(false);
@@ -824,7 +829,7 @@ describe('avaliar — severidade', () => {
 
   it('o motivo do EXCLUSIVIDADE_ZERO carrega o DENOMINADOR (zero sem N le como "inutil")', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const zero = avaliar(m, [g('g1'), g('g2')], fp).find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO' && x.gate === 'g1')!;
+    const zero = avaliar(lida(m), [g('g1'), g('g2')], fp).find((x) => x.codigo === 'EXCLUSIVIDADE_ZERO' && x.gate === 'g1')!;
     expect(zero.motivo).toMatch(/de 1 defeito/);
     expect(zero.motivo).toMatch(/NAO e "nao pega nada"/);
   });
@@ -833,7 +838,7 @@ describe('avaliar — severidade', () => {
     const m = matriz({
       linhas: [linha({ suspeito: 'outro', execucoes: [exec('g1', true), exec('g2', true)] })],
     });
-    const v = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
+    const v = avaliar(lida(m), [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
     expect(v.map((x) => x.codigo)).toContain('CORPUS_NAO_MIROU');
     expect(v.map((x) => x.codigo)).not.toContain('EXCLUSIVIDADE_ZERO');
     expect(v.find((x) => x.codigo === 'CORPUS_NAO_MIROU')!.motivo).toMatch(/mede o CORPUS, nao o gate/);
@@ -843,7 +848,7 @@ describe('avaliar — severidade', () => {
   // uma linha incompleta nao e redundancia medida; e medicao que nao terminou.
   it('unico vermelho de linha INCOMPLETA relata INCONCLUSIVA, nunca EXCLUSIVIDADE_ZERO', () => {
     const m = matriz({ linhas: [linha({ suspeito: 'g1', execucoes: [exec('g1', true)] })] });
-    const v = avaliar(m, [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
+    const v = avaliar(lida(m), [g('g1'), g('g2')], fp).filter((x) => x.gate === 'g1');
     expect(v.map((x) => x.codigo)).toContain('EXCLUSIVIDADE_INCONCLUSIVA');
     expect(v.map((x) => x.codigo)).not.toContain('EXCLUSIVIDADE_ZERO');
     expect(v.find((x) => x.codigo === 'EXCLUSIVIDADE_INCONCLUSIVA')!.severidade).toBe('RELATA');
@@ -851,14 +856,14 @@ describe('avaliar — severidade', () => {
 
   it('fonte mudada AVISA, nao reprova', () => {
     const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const v = avaliar(m, [g('g1')], new Map([['g1', { fingerprint: 'OUTRO', resolvida: true }]]));
+    const v = avaliar(lida(m), [g('g1')], new Map([['g1', { fingerprint: 'OUTRO', resolvida: true }]]));
     const podre = v.find((x) => x.codigo === 'LINHA_PODRE')!;
     expect(podre.severidade).toBe('AVISA');
   });
 
   it('frescor nao verificavel e DITO em voz alta, nao silenciado', () => {
     const m = matriz({ linhas: [linha({ execucoes: [exec('g1', true), exec('g2', true)] })] });
-    const v = avaliar(m, [g('g1')], new Map([['g1', { fingerprint: 'x', resolvida: false }]]));
+    const v = avaliar(lida(m), [g('g1')], new Map([['g1', { fingerprint: 'x', resolvida: false }]]));
     expect(v.some((x) => x.codigo === 'FRESCOR_INDISPONIVEL')).toBe(true);
   });
 });
@@ -1070,7 +1075,7 @@ describe('[fora-da-rodada] celula DEFASADA — a execucao antiga do gate excluid
   // sem execucao valida e passaria a reprovar GATE_NOVO contra SI MESMO — impasse sem saida.
   it('celula defasada ainda e EXECUCAO: nao devolve o GATE_NOVO do proprio exclusividade', () => {
     const l = linha({ execucoes: [exec('exclusividade', false), exec('g:a', true)], defasados: ['exclusividade'] });
-    const v = avaliar(matriz({ linhas: [l] }), [g('exclusividade'), g('g:a')], new Map());
+    const v = avaliar(lida(matriz({ linhas: [l] })), [g('exclusividade'), g('g:a')], new Map());
     expect(v.filter((x) => x.codigo === 'GATE_NOVO_SEM_EXCLUSIVIDADE').map((x) => x.gate)).toEqual([]);
     expect(de(matriz({ linhas: [l] }), 'exclusividade').rodou).toEqual(['d1']);
   });
