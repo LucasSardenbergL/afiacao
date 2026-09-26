@@ -11,7 +11,15 @@
 // casa, e o arquivo passa como se lesse o erro. (Aconteceu na análise que originou este
 // gate.) A pergunta certa é estrutural: a DESESTRUTURAÇÃO liga `error`? Só o parser
 // responde isso.
-import ts from "typescript";
+import tsInterop from "typescript";
+// `import =` e não `const`, de propósito. Sob o vitest, o vite-node entrega este CJS embrulhado
+// num Proxy de interop e compila cada `ts.x` como `__vite_ssr_import_0__.default.x`: um trap
+// `get` POR CHAMADA — e as caminhadas abaixo chamam `ts.is*`/`ts.forEachChild` por nó da AST,
+// milhões de vezes numa varredura do repo (~42% do `it` do gate). O alias lê o objeto UMA vez
+// (SWC e esbuild o emitem como `const ts = tsInterop`) e, ao contrário do `const`, carrega também
+// o NAMESPACE: `ts.Node` segue valendo como tipo. O `const` quebra os usos de tipo (TS2503) — e o
+// vitest, que não type-checa, ficaria verde. docs/historico/proxy-de-interop-no-laco-quente.md
+import ts = tsInterop;
 
 /** Chaves que provam que o componente TEM acesso ao estado de falha da query. */
 const CHAVES_DE_ERRO = new Set([
@@ -186,7 +194,26 @@ const ehOutraFonte = (e: ts.Expression): boolean => {
     && /^use[A-Z]/.test(c.expression.text) && !DERIVA.has(c.expression.text);
 };
 
+/**
+ * Condição NECESSÁRIA de sítio, lida no texto CRU. É um atalho, não um gate textual: o veredito
+ * continua sendo da AST, e a fonte que passa aqui é parseada como sempre.
+ *
+ * Todo sítio exige (1) uma chamada cujo callee casa `/^use[A-Z]/` e (2) uma leitura de `data`
+ * (chave da desestruturação ou `q.data`). O detector compara o texto cru (`getText`) ou o `.text`
+ * do identificador, e os dois só divergem por escape unicode no NOME (o `u` de `useX` escrito como
+ * `\u` + hex, idem para `data`) — por isso fonte com `\u` é SEMPRE parseada. A reprovada aqui
+ * devolveria `[]` de qualquer jeito: em 2026-09-26, 952 das 1.489 fontes, inclusive os 664 KB do
+ * `types.ts` do Supabase.
+ *
+ * Texto CRU de propósito, e não o stripper compartilhado: aqui SOBRAR fonte é o lado seguro (um
+ * comentário que cita `useX` só custa um parse), e limpar só poderia cegar. As fixtures de escape
+ * do gate reprovam se a cláusula `\u` sumir.
+ */
+const podeTerSitio = (fonte: string): boolean =>
+  fonte.includes("\\u") || (/use[A-Z]/.test(fonte) && fonte.includes("data"));
+
 export function acharColapsos(conteudo: string, nomeArquivo: string): SitioColapso[] {
+  if (!podeTerSitio(conteudo)) return [];
   const sf = ts.createSourceFile(
     nomeArquivo, conteudo, ts.ScriptTarget.Latest, /* setParentNodes */ true,
     nomeArquivo.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
