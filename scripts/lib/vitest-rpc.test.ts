@@ -6,7 +6,7 @@
  * Todo cenario de `RPC-SEM-DADO` tem o par que precisa continuar `REPROVA` — a classificacao so
  * vale se ela AINDA engole vermelho de verdade.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -169,17 +169,28 @@ describe('classificarVermelho — a saida COLORIDA que o motor produz', () => {
  */
 describe('classificarVermelho — PARIDADE com o vitest real sob o ambiente do motor', () => {
   const VITEST = resolve('node_modules/.bin/vitest');
-  const rodarFixture = (corpo: string) => {
+  // `spawn` ASSINCRONO: um vitest aninhado via `spawnSync` seguraria o event loop DESTE worker, e acima
+  // de 60s o RPC dele estouraria — o teste de paridade fabricaria o proprio defeito que ele estuda.
+  const rodarFixture = async (corpo: string) => {
     const dir = mkdtempSync(join(tmpdir(), 'vitest-rpc-paridade-'));
     try {
       writeFileSync(join(dir, 'ok.test.ts'), "import { it, expect } from 'vitest';\nit('passa', () => { expect(1).toBe(1); });\n");
       writeFileSync(join(dir, 'rpc.test.ts'), corpo);
-      const r = spawnSync(VITEST, ['run', '--root', dir], {
-        encoding: 'utf8',
-        timeout: 120_000,
-        env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...ENV_DO_MOTOR },
-      });
-      return { rc: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+      let batidas = 0;
+      const pulso = setInterval(() => batidas++, 10);
+      const r = await new Promise<{ rc: number | null; stdout: string; stderr: string }>((ok, falha) => {
+        const filho = spawn(VITEST, ['run', '--root', dir], {
+          env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...ENV_DO_MOTOR },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        filho.stdout.setEncoding('utf8').on('data', (d: string) => (stdout += d));
+        filho.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d));
+        filho.on('error', falha);
+        filho.on('close', (rc) => ok({ rc, stdout, stderr }));
+      }).finally(() => clearInterval(pulso));
+      return { ...r, batidas };
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -187,16 +198,18 @@ describe('classificarVermelho — PARIDADE com o vitest real sob o ambiente do m
   // O texto do RPC montado em pedacos: literal inteiro aqui viraria "1 RPC" no code-frame DESTE arquivo.
   const REJEITA_RPC = "const m = ['[vitest', '-worker]: Timeout calling \"onTaskUpdate\"'].join('');\nPromise.reject(new Error(m));\n";
 
-  it('RPC real, todos passando => RPC-SEM-DADO — e a saida VEIO colorida (senao o teste nao prova nada)', () => {
-    const r = rodarFixture(`import { it, expect } from 'vitest';\n${REJEITA_RPC}it('passa', () => { expect(1).toBe(1); });\n`);
+  it('RPC real, todos passando => RPC-SEM-DADO — e a saida VEIO colorida (senao o teste nao prova nada)', async () => {
+    const r = await rodarFixture(`import { it, expect } from 'vitest';\n${REJEITA_RPC}it('passa', () => { expect(1).toBe(1); });\n`);
     expect(r.rc).toBe(1);
     expect(r.stdout + r.stderr).toContain('\x1b[');
     // O piso e o da suite deste repo; o fixture tem 2 arquivos — a paridade testada aqui e a do FORMATO.
     expect(classificarVermelho(r.stdout, r.stderr, { arquivos: 2, testes: 2 }).classe).toBe('RPC-SEM-DADO');
+    // O loop DESTE worker bateu enquanto o vitest aninhado rodava: o helper nao bloqueia.
+    expect(r.batidas).toBeGreaterThan(0);
   }, 130_000);
 
-  it('teste falhando real + RPC => REPROVA', () => {
-    const r = rodarFixture(`import { it, expect } from 'vitest';\n${REJEITA_RPC}it('falha', () => { expect(1).toBe(2); });\n`);
+  it('teste falhando real + RPC => REPROVA', async () => {
+    const r = await rodarFixture(`import { it, expect } from 'vitest';\n${REJEITA_RPC}it('falha', () => { expect(1).toBe(2); });\n`);
     expect(r.rc).toBe(1);
     expect(r.stdout + r.stderr).toContain('\x1b[');
     expect(classificarVermelho(r.stdout, r.stderr, { arquivos: 2, testes: 2 }).classe).toBe('REPROVA');

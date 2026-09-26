@@ -83,6 +83,25 @@ command -v codex >/dev/null 2>&1 || {
   echo "PREFLIGHT_FAIL: codex CLI não encontrado. Instale: npm install -g @openai/codex" >&2
   exit 69
 }
+# Sonda POSITIVA do `pkill` — o encerramento do watchdog depende dele (ver o hard-stop
+# abaixo). `command -v` NÃO basta: um pkill presente-porém-quebrado esvaziaria o guard
+# igual, e o `sleep` vazaria em silêncio (docs/historico/sonda-ausente-em-script-que-apaga.md).
+# Prova de verdade: cria UM filho descartável e exige que `pkill -P` o MATE — `wait` devolve
+# 128+sinal quando morreu por sinal, e 0 quando sobreviveu ao timer. Neste ponto do script a
+# sonda é o único filho de `$$` (nada foi posto em background ainda), então `-P` sem padrão
+# atinge ela e mais nada — e é exatamente a forma usada depois, então a sonda testa o que usamos.
+# Degrada ABERTO de propósito (a consulta segue): matar o sleep é higiene, não o hard-stop.
+# Mas nunca em SILÊNCIO — sem este aviso, o vazamento volta a ser invisível.
+sleep 1 & _sonda_pkill=$!
+pkill -P "$$" >/dev/null 2>&1
+wait "$_sonda_pkill" 2>/dev/null
+if [ $? -gt 128 ]; then pkill_ok=1; else
+  pkill_ok=0
+  echo "AVISO: 'pkill -P' não respondeu neste ambiente — o sleep interno do watchdog vai" >&2
+  echo "  sobreviver a cada consulta por até ${timeout_s}s (processo por invocação). Instale" >&2
+  echo "  o pkill (procps) ou espere ver processos 'sleep ${timeout_s}' acumulando." >&2
+fi
+
 if [ -z "${CODEX_API_KEY:-}${OPENAI_API_KEY:-}" ] && [ ! -f "${CODEX_HOME:-$HOME/.codex}/auth.json" ]; then
   echo "PREFLIGHT_FAIL: sem auth do Codex. Rode 'codex login' (ou exporte CODEX_API_KEY/OPENAI_API_KEY) e re-rode." >&2
   exit 77
@@ -302,13 +321,22 @@ for backoff in "${backoffs[@]}"; do
     -c features.multi_agent_v2.max_concurrent_threads_per_session=1 \
     --sandbox read-only "$prompt" >"$out" 2>"$err" &
   pid=$!
-  # fds do watchdog → /dev/null: o sleep interno sobrevive ao kill do subshell
-  # e, se herdasse o stdout/stderr do chamador, seguraria o pipe aberto até o
-  # timeout inteiro (chamador em foreground ficaria esperando EOF)
+  # fds do watchdog → /dev/null: se o sleep herdasse o stdout/stderr do chamador, seguraria
+  # o pipe aberto até o timeout inteiro (chamador em foreground ficaria esperando EOF).
+  # Isto é cinto: a sobrevivência do sleep ao kill do subshell é tratada ATIVAMENTE no
+  # encerramento (`pkill -P`, logo abaixo) — mas continua valendo se o pkill faltar.
   ( sleep "$timeout_s" && kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   watchdog=$!
   wait "$pid"; rc=$?
   segundos=$(( $(date +%s) - t_ini ))
+  # ORDEM OBRIGATÓRIA: o `sleep` PRIMEIRO, o subshell depois. `kill "$watchdog"` mata só o
+  # SUBSHELL — o `sleep` de dentro é reparentado para o init e sobrevive o timeout INTEIRO
+  # (20min no default), um processo vazado POR INVOCAÇÃO. Inverter não conserta: com o pai
+  # já morto, `-P "$watchdog"` não acha mais ninguém. Medido 2026-09-20: 921 `sleep 1200`
+  # vivos numa M2 com kern.maxproc=2000 — passando desse teto TODO `fork` falha, e o
+  # vermelho que sai daí se disfarça de asserção frouxa. NÃO mexe no hard-stop: isto tudo
+  # roda DEPOIS do `wait "$pid"`, com o codex já encerrado.
+  [ "$pkill_ok" = 1 ] && pkill -P "$watchdog" 2>/dev/null
   kill "$watchdog" 2>/dev/null
   wait "$watchdog" 2>/dev/null
   # fan-out medido POR FORA do flag (ver comentário do sensor). Vale para a tentativa que

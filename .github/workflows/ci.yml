@@ -459,7 +459,11 @@ jobs:
   #     com erro de mecânica, não de conteúdo.
   gates-e-falsificacao:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 → 25 (2026-09-25): em 58 runs, p50 707s · p90 808s · pior 841s = 93% do teto ANTES das
+    # 2 sabotagens novas do codex-async (~+85s; runner lento ~+110s) — com 15, 9–18% dos runs
+    # VERDES morreriam no relógio. Folga sobre o PIOR observado, não sobre o típico:
+    # docs/historico/timeout-de-job-e-ausencia-de-dado.md (timeout é ausência de dado).
+    timeout-minutes: 25
     permissions:
       contents: read
 
