@@ -11,7 +11,8 @@
 > método de API para encerrar PO** — a Fase 1 como "baixa automática via API" não é construível (§14); (2) o
 > "a caminho" do motor **já exclui** a maior parte dos POs etapa 15 que o espelho mostra abertos — a escala da §3
 > mede o espelho, não o motor (§13.4); (3) o espelho é **cego à situação** do PO no Omie, então a lista da Fase 0
-> precisa aprender a situação antes de existir (§15).
+> só pode existir depois que o `omie-sync-estoque` registrar o conjunto que o motor de fato contou (§15, opção C do
+> Codex). Plano da Fase 0: `docs/superpowers/plans/2026-09-26-baixa-po-fase-0.md`.
 
 ## 1. Pedido do founder
 
@@ -56,8 +57,9 @@ ramo **reconciliar** funciona (o humano já concluiu no Omie e o app só registr
 
 > ⚠️ **Revisto em §13.4 (medido 2026-09-26):** a premissa de ESCALA desta seção não vale para o estado de hoje. O
 > `estoque_pendente_entrada` gravado pelo `omie-sync-estoque` soma 554 un. onde os POs etapa 15 do espelho somam
-> 13.484, e é zero em 17 de 22 SKUs cujo único PO aberto tem NF concluída. O mecanismo da dupla contagem continua
-> possível (o caso âncora de 08-13 existiu), mas o resíduo medido hoje tem teto de ~165 un. em 28 SKUs.
+> 13.484, e é zero em 10 de 11 SKUs cujo único PO etapa 15 tem NF concluída (sem de-dup do app). O mecanismo da
+> dupla contagem continua possível (o caso âncora de 08-13 existiu), e o resíduo hoje é **estimado** (não limitado)
+> em ~165 un. em 28 SKUs — ver §13.4 e o parecer do Codex (§16).
 
 Medição de 2026-08-13 (psql-ro): **244 de 584 POs abertas (etapa 15) da Oben já tinham NF concluída** e seguiam
 contando como "a caminho" — no caso âncora (`WJOI.7666GL`) o motor comprou o mínimo em vez de repor. A etapa só
@@ -111,7 +113,8 @@ associação nativa, o Omie volta a ser fonte confiável do "a caminho" e o ledg
 
 > **Medido em §13.2:** o enum em prod também não tem `ENCERRADO`, mas o bug está **latente** (último run 0 erros,
 > nenhum PO em etapa 80). E a §13.4 indica que encerrar **não muda o `cEtapa`** neste tenant — o ramo `"80"` pode
-> nunca disparar. O enum continua necessário quando o `status` passar a vir da situação do Omie (§15).
+> nunca disparar. O enum continua sendo higiene barata e pré-requisito de qualquer writer que venha a gravar
+> `ENCERRADO` (§15, item 3).
 
 `mapPedidoToRow` traduz a etapa `80` em `status='ENCERRADO'` (`omie-sync-pedidos-compra/index.ts:544`), mas o enum
 `status_pedido_compra` só tem `CRIADO`, `FATURADO`, `EM_TRANSPORTE`, `RECEBIDO`, `CANCELADO` e `DIVERGENCIA`
@@ -430,10 +433,28 @@ com `"pendente_confiavel":true` e `"pendente_problemas":0` (resposta em `net._ht
 |---|---|
 | Σ quantidade dos POs no espelho | 13.484 un. em 191 SKUs |
 | Σ `estoque_pendente_entrada` gravado | **554 un.** |
-| SKUs cujo único PO aberto é do grupo A | 22: pendente **0 em 17**, = quantidade do PO em 1, outro valor em 4 |
-| SKUs cujo único PO aberto é do grupo B1 / B2 | 9 / 6: pendente **0 em todos** |
-| SKUs com pendente > quantidade em trânsito real (A2 + C) | 28 SKUs, **165 un.** de excesso |
+| SKUs cujos POs etapa 15 são todos do grupo A (1ª leitura; ⚠️ rótulo corrigido — ver abaixo) | 22: pendente **0 em 17**, = quantidade dos POs em 1, outro valor em 4 |
+| SKUs cujos POs são todos do grupo B1 / B2 (idem) | 9 / 6: pendente **0 em todos** |
+| SKUs com pendente > **estimativa** de trânsito (A2 + C) | 28 SKUs, **165 un.** de excesso — estimativa, não teto (§16, achado 2) |
 | caso âncora de 08-13 (SKU `8689791246`) | pendente 8, contra dezenas de POs etapa 15 no espelho (PO 575 em diante) |
+
+**Correção pedida pelo Codex (§16, achado 1) e re-medida no mesmo dia.** A 1ª leitura agrupava por `count(DISTINCT
+grupo) = 1` — "todos os POs do SKU no mesmo grupo", não "um único PO". Refeita com **1 PO distinto por SKU** e com o
+de-dup do app medido (pedido do app com status contado pela RPC e `data_ciclo` nos últimos 7 d, que o estoque tira
+do pendente de propósito):
+
+| grupo (SKUs habilitados com exatamente 1 PO etapa 15 na janela) | SKUs | pendente 0 | pendente = PO | com de-dup do app |
+|---|---|---|---|---|
+| A — NF concluída | 11 | **10** | 1 | 0 |
+| A2 — NF só faturada | 5 | **4** | 1 | 0 |
+| B1 — sem NF, anterior à cobertura | 7 | **7** | 0 | 0 |
+| B2 — sem NF, vencido > 40 d | 5 | **5** | 0 | 0 |
+| C — sem NF, no prazo (**controle**) | 4 | 2 | 2 | **2** |
+
+O grupo C é o controle: os 2 zeros dele são exatamente os 2 POs em de-dup do app, e os outros 2 contam cheio. Nos
+grupos A, A2, B1 e B2 **nenhum** zero é explicado pelo de-dup. Ressalva do Codex que continua de pé: o run medido
+(09:40Z) é da v1.1 do `omie-sync-estoque`, anterior ao deploy da v1.2 (10:03Z); a v1.2 só muda o de-dup do
+`disparado_simulado`, que não toca esses grupos.
 
 **Mecanismo (inferência forte, a confirmar):** o estoque pede o `PesquisarPedCompra` com
 `lExibirPedidosRecebidos/Cancelados/Encerrados: "F"` (`omie-sync-estoque/index.ts:276-282`); o espelho pede tudo
@@ -443,8 +464,9 @@ aberto só pode estar **encerrado ou cancelado no Omie com o `cEtapa` ainda em 1
 com um `lExibir*` por vez sobre os mesmos POs, ou o founder confirmar que a equipe encerra POs à mão.
 
 **Consequências:**
-1. A escala da §3 ("244/584", "273") mede o **espelho**, não o motor. O resíduo de money-path medido hoje tem teto de
-   **~165 un. em 28 SKUs** — é teto porque inclui POs de outros fornecedores para o mesmo SKU, que o espelho não tem.
+1. A escala da §3 ("244/584", "273") mede o **espelho**, não o motor. O resíduo de money-path hoje é **estimado** em
+   **~165 un. em 28 SKUs** — estimativa, não teto: A2 + C é estimativa de trânsito (um A2 que não virá esconde
+   fantasma; um A parcial com saldo legítimo infla o excesso) e o excesso inclui POs de outros fornecedores.
 2. **O espelho é cego à situação.** M1 e M4 contam como aberto PO já encerrado ou cancelado. Uma lista "Pedidos para
    baixar" montada sobre o espelho de hoje seria quase toda falso-positivo (§15).
 3. Se encerrar não muda o `cEtapa` neste tenant, o ramo `etapa === "80"` da §5 pode nunca disparar.
@@ -469,34 +491,42 @@ com um `lExibir*` por vez sobre os mesmos POs, ou o founder confirmar que a equi
   769/770, 812/813, 1163/1181); 1 misto (651/654).
 - **"1 NF por PO" mistura campos:** 1217 e 1229 têm o mesmo `nid_receb` (12186754504) e `nfe_numero` diferentes.
 
-### 13.6 Reprodução da §13.4 (o teste decisivo)
+### 13.6 Reprodução da §13.4 (o teste decisivo, versão corrigida)
+
+Rodar com `~/.config/afiacao/psql-ro -X -v ON_ERROR_STOP=1 -f <arquivo>` e exigir `FIM-MEDICAO-OK` na saída.
 
 ```sql
 WITH po_item AS (
-  SELECT (pi->>'nCodProd')::text AS sku, (pi->>'nQtde')::numeric AS qtde,
+  SELECT (pi->>'nCodProd')::text AS sku, (pi->>'nQtde')::numeric AS qtde, pot.id AS po_id, pot.omie_codigo_pedido,
          CASE WHEN pot.t4_data_recebimento IS NOT NULL THEN 'A'
               WHEN pot.t2_data_faturamento IS NOT NULL THEN 'A2'
               WHEN pot.t1_data_pedido < '2026-01-19' THEN 'B1'
               WHEN pot.data_previsao_original < now() - interval '40 days' THEN 'B2'
-              ELSE 'C' END AS grupo
+              ELSE 'C' END AS grupo,
+         EXISTS (SELECT 1 FROM pedido_compra_sugerido p
+                 WHERE p.empresa = 'OBEN' AND p.omie_pedido_compra_id = pot.omie_codigo_pedido::text
+                   AND p.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido')
+                   AND p.data_ciclo >= current_date - 7) AS dedup_app_7d
   FROM purchase_orders_tracking pot
   CROSS JOIN LATERAL jsonb_array_elements(pot.raw_data->'produtos_consulta') pi
   WHERE pot.empresa = 'OBEN' AND pot.omie_codigo_pedido > 0
     AND pot.raw_data->'cabecalho_consulta'->>'cEtapa' = '15'
     AND pot.data_previsao_original BETWEEN now() - interval '365 days' AND now() + interval '120 days'
 ), por_sku AS (
-  SELECT sku, min(grupo) AS grupo, count(DISTINCT grupo) AS n_grupos, sum(qtde) AS q
+  SELECT sku, min(grupo) AS grupo, count(DISTINCT po_id) AS n_pos, sum(qtde) AS q, bool_or(dedup_app_7d) AS algum_dedup
   FROM po_item GROUP BY sku
 )
-SELECT p.grupo AS unico_grupo, count(*) AS skus,
+SELECT p.grupo, count(*) AS skus_com_1_po,
        count(*) FILTER (WHERE e.estoque_pendente_entrada = 0) AS pend_zero,
-       count(*) FILTER (WHERE abs(e.estoque_pendente_entrada - p.q) < 0.001) AS pend_igual_po
+       count(*) FILTER (WHERE abs(e.estoque_pendente_entrada - p.q) < 0.001) AS pend_igual_po,
+       count(*) FILTER (WHERE e.estoque_pendente_entrada > 0 AND abs(e.estoque_pendente_entrada - p.q) >= 0.001) AS pend_outro,
+       count(*) FILTER (WHERE p.algum_dedup) AS com_dedup_app_7d
 FROM por_sku p
-JOIN sku_parametros sp ON sp.empresa = 'OBEN' AND sp.sku_codigo_omie::text = p.sku
-                      AND sp.habilitado_reposicao_automatica
+JOIN sku_parametros sp ON sp.empresa = 'OBEN' AND sp.sku_codigo_omie::text = p.sku AND sp.habilitado_reposicao_automatica
 JOIN sku_estoque_atual e ON e.empresa = 'OBEN' AND e.sku_codigo_omie::text = p.sku
-WHERE p.n_grupos = 1
+WHERE p.n_pos = 1
 GROUP BY p.grupo ORDER BY p.grupo;
+cho FIM-MEDICAO-OK
 ```
 
 ## 14. F1–F3 respondidos (2026-09-26)
@@ -562,35 +592,218 @@ GROUP BY p.grupo ORDER BY p.grupo;
 1. **Escala.** O defeito de money-path existe e é pequeno hoje (§13.4). A frente se justifica mais pela higiene do
    Omie (PO recebido sair do aberto sem trabalho manual) e pela prevenção estrutural (associação nativa) do que por
    compra suprimida em volume. Medir o resíduo por SKU entra na Fase 0.
-2. **Pré-requisito novo: o espelho aprende a situação.** O `omie-sync-pedidos-compra` passa a consultar por
-   partição de situação e grava em **coluna dedicada com 1 writer** (`situacao_omie`, `situacao_vista_em`). Sem
-   isso a lista mostra PO já encerrado como "para baixar". O custo em chamadas deve ficar perto do atual, porque as
-   partições somam o mesmo conjunto — medir.
-3. **`status` passa a vir da situação, com 1 writer.** Hoje ele oscila entre dois writers (§13.2). Proposta: o sync
-   de POs vira writer único de `status`, derivado da situação (com `ENCERRADO` no enum), e o
-   `omie-sync-nfes-recebidas` deixa de escrever `status` — o sinal da NF já tem colunas próprias (`t2`, `t4`,
-   `nid_receb`).
-4. **Classes novas no classificador (§7):** `ja_fechado_no_omie` (nada a fazer; hoje a maioria); `vencido_sem_nf`
-   (grupo B2: fila humana — pode ser NF órfã ou pedido que não veio); `nao_observado` (grupo B1: "não sei", nunca
-   "sem evidência"); e `ambigua` com subtipo `duplicado` (mesmos produtos) ou `dividido` (produtos disjuntos).
-5. **A Fase 1 deixa de ser "baixa via API".** Vira a fila humana da Fase 0, com o necessário para encerrar no Omie
+2. **Pré-requisito novo: observar o conjunto que o motor contou** (opção C do Codex, §16). O `omie-sync-estoque`,
+   que já varre o conjunto aberto a cada run, grava por execução os POs que leu e o que cada um contribuiu —
+   capturado ANTES dos filtros locais, com o motivo de exclusão (de-dup do app, etapa ≠ 15, fora da janela) — em
+   tabela própria com 1 writer. É a única evidência na unidade que cobra, e custa zero chamada ao Omie. Falha nessa
+   gravação deixa a evidência indisponível, nunca derruba o cálculo do pendente e **nunca** transforma ausência em
+   "fechado". A situação exata (recebido × encerrado × cancelado) fica para confirmação seletiva por sonda
+   read-only com todos os flags explícitos. (A primeira proposta — partições no `omie-sync-pedidos-compra` — foi
+   descartada: observa em outro horário, com mais chamadas, e mede outra coisa que não o que o motor contou.)
+3. **`status` com ownership por domínio.** Hoje ele oscila entre dois writers (§13.2). O sync de POs vira o writer
+   de `status` nas linhas de PO (`omie_codigo_pedido` > 0); o `omie-sync-nfes-recebidas` para de escrever `status`
+   nelas e continua dono das órfãs (< 0). `ENCERRADO` entra no enum numa migration isolada; parcial não vira terminal;
+   situação desconhecida não vira `CRIADO`.
+4. **Classes novas no classificador (§7):** `ja_fechado_no_omie` (fora do conjunto que o motor contou — nada a
+   fazer); `situacao_desconhecida` (sem observação recente — nunca vira "aberto"); `vencido_sem_nf` (grupo B2: fila
+   humana — NF órfã ou pedido que não veio); `nao_observado` (grupo B1: "não sei"); e `ambigua` com motivo explícito
+   (`contrato_duplicado`, `contrato_dividido`, `nf_duplicada`, `unidade_sem_conversao`, `unidade_divergente`,
+   `pedido_sem_itens`, …). O classificador considera **todos** os POs do contrato, inclusive os fechados.
+5. **Cobertura não é elegibilidade.** `cheia` só diz que a quantidade chegou. Encerrar exige também que os itens
+   movimentem estoque e que o físico lido pelo motor seja posterior à NF; sem isso, a classe é `cheia` com
+   elegibilidade `aguardando_estoque`/`nao_movimenta_estoque`/…, e a lista não a apresenta como pronta.
+6. **A Fase 1 deixa de ser "baixa via API".** Vira a fila humana da Fase 0, com o necessário para encerrar no Omie
    (motivo sugerido: "Recebido pela NF nnn, sem associação") — decisão D3.
-6. **A Fase 2 é a associação nativa antes de concluir a NF.** Duas vias, nesta ordem: (i) **H-xPed** — preencher o
+7. **Proteção antes de qualquer associação nativa.** Hoje o `omie-sync-estoque` descarta etapa diferente de 15 antes
+   do helper (`omie-sync-estoque/index.ts:430-433`). Etapa aberta desconhecida com saldo passa a bloquear a
+   publicação do pendente e a sinalizar (o pendente anterior é preservado) — senão a primeira associação parcial que
+   mude o `cEtapa` apaga o saldo não recebido do "a caminho".
+8. **A Fase 2 é a associação nativa antes de concluir a NF.** Duas vias, nesta ordem: (i) **H-xPed** — preencher o
    `cNumPedido` com o protocolo no disparo e ver, em 1 PO real, se o Omie vincula sozinho na importação (custo quase
    zero; se funcionar, o Omie passa a baixar e a preencher `nQtdeRec` sem escrita nossa no recebimento); (ii)
    `AlterarRecebimento` com `ASSOCIAR-PEDIDO` nas NFs pendentes cujo `xPed` casa com um contrato (escrita no
    recebimento, reversível enquanto pendente). Nas duas, o bloqueio é o F3: o `cEtapa` depois da associação parcial.
-7. **Órfãs sem `xPed`.** A persistência do item de NF (bloco `receipt`/`receipt_item`) guarda o detalhe do
-   `ConsultarRecebimento` que a edge já busca — inclusive para a órfã.
+9. **Órfãs sem `xPed`.** A persistência do item de NF (bloco `receipt`/`receipt_item`) guarda o detalhe do
+   `ConsultarRecebimento` que a edge já busca — inclusive para a órfã — em versão por leitura completa (§16, achado 6).
+   As tabelas `nfe_recebimentos`/`nfe_recebimento_itens` não servem de base: são do fluxo de conferência do app,
+   multi-writer, com 47 cabeçalhos e **0 itens** em prod (2026-09-26).
 
 **Decisões novas para o founder:**
 
 - **D3 — Backlog:** encerrar à mão (irreversível, motivo "recebido") ou reverter + associar + concluir (pesado,
-  mexe em estoque e contas a pagar)? Recomendação: encerrar à mão, guiado pela lista, só PO `cheia` com situação
-  aberta no Omie.
+  mexe em estoque e contas a pagar)? Recomendação: encerrar à mão, guiado pela lista, só PO `cheia` + `elegivel`
+  que o motor ainda conta, com conferência humana da entrada no estoque.
 - **D4 — Testar H-xPed em 1 PO real:** preencher o `cNumPedido` no disparo de 1 pedido Sayerlack de baixo valor e
   observar a importação da NF.
 
 ## 16. Parecer do Codex (ritual de desenho, money-path)
 
-_Pendente — registrado aqui ao fim do ritual._
+**Consulta de DESENHO** (1ª das 2 obrigatórias em money-path; a 2ª é o adversarial no diff de cada PR). Transporte
+`scripts/codex-async.sh`, prompt com seção `RÉGUA:` (unidade decisória = unidade de SKU no `estoque_pendente_entrada`;
+onde o sistema a expõe; denominador = 191 SKUs; falsificação; ordem dos irreversíveis). Registro para o PR:
+`Codex: desenho=gpt-6-astra·max·327s·69.135 tokens · código=? · extra=nenhum`.
+
+### 16.1 Parecer cru (verbatim)
+
+<details>
+<summary>Parecer do Codex — 11 achados (10 × P1, 1 × P2), "Concordo", "Discordo" e ordem de PRs</summary>
+
+```text
+=== PARECER CODEX (modelo gpt-6-astra · reasoning max · tentativa 1 · 327s · 69.135 tokens) ===
+1. **[P1] A §13.4 sustenta a divergência entre espelho e motor; ainda não prova “encerrado/cancelado”.**
+
+   **Cenário:** PO aberto do app, dentro dos sete dias de deduplicação → pendente zero → diagnóstico incorreto de PO encerrado. Também permanecem possíveis: situação “Recebido”, previsão ou quantidade alterada após o espelhamento, diferença temporal entre sincronizações e omissão na coleta. `pendente_confiavel=true` certifica os controles implementados, não a completude semântica do Omie.
+
+   Há um problema na reprodução: `count(DISTINCT grupo) = 1` seleciona **um único grupo**, não um único PO. Portanto, a query apresentada não demonstra a afirmação “único PO aberto”. [§13.6 do spec](docs/superpowers/specs/2026-09-26-baixa-pedido-compra-nf-concluida-design.md:472)
+
+   **Correção:** primeiro, via psql, separar POs distintos, deduplicação do app, previsão e frescor do pendente. Depois usar S1 numa amostra pequena: PO antigo do grupo A com pendente zero, B1/B2 com zero e controles com pendente positivo. Comparar identidade, previsão, etapa e quantidades atuais. O run das 09:40Z antecede inclusive o deploy das 10:03Z citado no spec: não presumir identidade entre comportamento medido e código atual.
+
+   Se `ConsultarPedCompra` não devolver situação explícita, S1 elimina explicações alternativas, mas **não confirma encerramento**. A discriminação exige observar a pertença às pesquisas por situação, incluindo “Recebidos”. As edges descritas não oferecem essa partição parametrizável; falta essa instrumentação mínima. Não obteria essa certeza apenas com psql read-only.
+
+2. **[P1] As 165 unidades não são um teto demonstrado do defeito.**
+
+   **Cenário:** SKU tem pendente 10 e um PO A2 de 10 cujo saldo já não virá → “trânsito real = A2 + C” dá 10 → resíduo zero, embora existam dez unidades fantasmas. No sentido oposto, saldo legítimo de um PO parcialmente recebido do grupo A aumenta artificialmente o excesso calculado.
+
+   **Correção:** chamar A2 + C de **estimativa de trânsito**, até confirmar obrigações restantes. Medir por SKU excesso, falta e quantidade ainda indeterminada, sem compensar erros entre SKUs. A referência comparada à coluna precisa excluir os pedidos representados pela deduplicação do app; acompanhar esse componente separadamente.
+
+   Antes dos PRs (a)–(c), investigaria os 28 SKUs apontados e uma amostra dos zeros, mantendo os **191 SKUs como coorte fixa**. Mediria unidades incorretas, duração do erro e mudança concreta na sugestão de compra.
+
+   **Prioridade:** há justificativa imediata para diagnóstico e prevenção. Ainda não há demonstração de prioridade para uma frente ampla de encerramento. Mesmo um resíduo pequeno pode ser prioritário se concentrado em SKUs próximos da ruptura; quantidade de POs e valor histórico não resolvem essa decisão.
+
+3. **[P1] Prefiro uma C: evidência do estoque + confirmação seletiva de situação, com responsabilidades distintas.**
+
+   **Cenário:** uma página falha, ou a previsão sai da janela → PO deixa de aparecer → gravação de `situacao_omie=ENCERRADO` por ausência → lista recomenda uma ação baseada em situação inventada.
+
+   | Opção | Avaliação |
+   |---|---|
+   | **A — partições no sync de POs** | Pode identificar situações específicas, mas cria observações em horários diferentes, conflitos entre partições e mais chamadas. “Aberto × fechado” não distingue recebido, cancelado e encerrado. |
+   | **B — conjunto observado pelo estoque** | É a melhor evidência do que alimentou o motor e não acrescenta chamadas ao Omie. Precisa registrar também os motivos de exclusão; simples ausência não identifica situação. |
+   | **C — B + confirmação seletiva** | Estoque registra observação e contribuição; sync de POs confirma situação quando necessário. Cada fato tem um writer. |
+
+   **Correção proposta:** snapshot por execução, com empresa, filtros, janela, horários, IDs dos POs, itens, contribuição por SKU e exclusões por app/etapa. Capturar antes desses filtros locais. Distinguir coleta completa de pendente efetivamente aplicado; a lista só compara execuções compatíveis. Falha nessa observabilidade deixa a evidência indisponível, sem transformar ausência em fechamento nem derrubar o cálculo por dependência acessória.
+
+   Para situação específica, pesquisar seletivamente, com **todos os flags explicitados**. PO visto em partições conflitantes fica indeterminado até reconciliação. Não assumir que as partições são disjuntas ou fotografias simultâneas.
+
+   O custo de A não é necessariamente próximo do atual: há arredondamento por página, término de cada partição, repetições e consultas concorrentes. Medir chamadas e adiamentos; reutilizar resultados recentes para evitar consumo redundante.
+
+4. **[P1] “Sync de POs como writer único de status” precisa ser restrito aos POs positivos.**
+
+   **Cenário:** remover toda escrita de `status` da edge de NFs → órfã com código negativo deixa de acompanhar recebimento/cancelamento → estado congelado, pois o sync de POs nunca a consulta.
+
+   **Correção:** separar situação do PO e estado do recebimento. Durante a convivência com o espelho misto, ownership por domínio: sync de POs para linhas positivas; sync de NFs para recebimentos e, enquanto existirem, suas projeções órfãs. Isso impede disputa sobre a mesma entidade.
+
+   O mapeamento também precisa preservar a abertura dos estados parciais. “Recebido parcialmente” não pode virar o terminal `RECEBIDO`. Situação desconhecida não vira `CRIADO`; `DIVERGENCIA` não deve desaparecer por um mapeamento que nem representa essa dimensão.
+
+   Hoje, [a atualização por NF](supabase/functions/omie-sync-nfes-recebidas/index.ts:340) preserva estados e datas anteriores. Isso não fornece um modelo correto de reversão. A lista deve consumir fatos atuais do recebimento, não interpretar `t4` histórico como confirmação atual.
+
+5. **[P2] Enum e views devem sair em mudanças separadas e verificáveis.**
+
+   **Cenário:** colar adição do enum e comandos que usam `ENCERRADO` na mesma transação → falha da execução. Ou liberar o writer antes da migration → upserts rejeitados, espelho atrasado.
+
+   **Correção:** migration exclusivamente para adicionar o valor; confirmar commit efetivo e reconhecimento do valor em outra transação; só depois liberar writers, casts, defaults ou views que o utilizem. Registrar a aplicação manual no histórico do repositório. `IF NOT EXISTS` não resolve ordenação de deploy. Reverter o writer não remove o valor acrescentado.
+
+   Para as views, “sem consumidor em `src/`” não prova ausência de dependências no banco ou acessos externos. Eu as aposentaria após essa verificação, sem remoção em cascata. Se forem mantidas, `v_pedidos_em_aberto` precisa distinguir situação desconhecida de aberta e excluir `ENCERRADO`; encerramento não pode produzir recebimento ou lead time fictício.
+
+6. **[P1] `receipt`/`receipt_item` é o recorte certo, mas falta o contrato de identidade e atualização.**
+
+   **Cenário:** NF reprocessada → itens somados novamente; item removido permanece na tabela; recebimento revertido conserva quantidade válida → classificador produz `cheia` indevidamente.
+
+   **Correção:** persistir um snapshot completo e versionado do recebimento, publicado atomicamente com seus itens. Reprocessamento substitui a versão corrente, preservando histórico. Falha de detalhe mantém a versão anterior identificada como antiga; não significa recebimento vazio. Itens ausentes só podem ser desativados após leitura completa.
+
+   O mínimo inclui empresa/conta, chave da NF, fornecedor, IDs nativos, referências XML por item, quantidades e unidades originais, produto associado **nullable**, origem/fator da conversão, estado atual, datas de registro/recebimento, instante da consulta e detalhe bruto. Local e indicação de movimentação devem ser preservados quando disponíveis; ausência fica explícita.
+
+   **A estabilidade de `(nIdReceb, nSequencia)` não está provada pelo material.** Usaria identidade interna e unicidade externa pelo menos com empresa/conta, preservando também identificadores do item disponíveis no detalhe/XML. Testaria reconsulta, associação e reprocessamento. A mesma chave de NF com outro `nIdReceb` exige reconciliação antes de somar ambos.
+
+   Como não chegam webhooks, é necessário revisitar recebimentos que sustentam candidatos, inclusive antigos. Só guardar a primeira conclusão não detecta reversões posteriores.
+
+7. **[P1] O classificador ainda pode gastar a mesma quantidade recebida duas vezes.**
+
+   **Cenário:** PO tem duas linhas do mesmo SKU, quatro unidades cada; NF contém quatro unidades → soma por SKU comparada separadamente com cada linha → ambas parecem completas → encerramento apaga quatro unidades legítimas.
+
+   Outro cenário: contrato tem PO antigo fechado e PO novo aberto → NF do antigo satisfaz o novo porque a ambiguidade procura somente múltiplos POs **abertos**.
+
+   **Correção:** conservar quantidade por item de recebimento, impedindo seu uso repetido. Considerar todos os POs relacionados ao contrato, inclusive fechados e fora da janela operacional, quando necessários para estabelecer propriedade da entrega. Contrato precisa de escopo de empresa e fornecedor; vínculo nativo conflitante bloqueia inferência por texto.
+
+   A cobertura deve avaliar **todos os itens do PO**, inclusive SKUs desabilitados no motor. O encerramento afeta o pedido inteiro.
+
+   **Não está demonstrado que `nQtde` e `nQtdeRecebida` sejam dimensionalmente comparáveis em todos os casos.** A razão 3,24 entre quantidade fiscal e recebida não prova essa equivalência. Exigir unidade do PO, unidade recebida, produto e conversão verificável; fator desconhecido não vira 1.
+
+   Os testes precisam reprovar ausência de item, PO sem itens, conversão incompatível, produto desconhecido, duplicação de recebimento e reutilização de quantidade. Sabotar cada barreira deve tornar a suíte vermelha.
+
+8. **[P1] Cobertura quantitativa cheia ainda não autoriza encerrar.**
+
+   **Cenário:** NF concluída cobre dez unidades, mas o registro efetivo é futuro, não movimenta estoque ou foi revertido → classificador recomenda encerrar → dez unidades saem do pendente antes de estarem cobertas pelo físico lido → compra adicional.
+
+   **Correção:** separar **cobertura quantitativa** de **elegibilidade para encerramento**. A segunda exige obrigação satisfeita e evidência compatível com o estoque considerado pelo motor. Esse requisito já consta no [ledger de agosto](docs/superpowers/specs/2026-08-13-reposicao-onorder-po-recebida-medicao.md:204).
+
+   Não é obrigatório construir todo o `stock_posting` para capturar recebimentos ou investigar em sombra. Porém, sem essa prova ou verificação humana equivalente, `cheia` não deve aparecer como recomendação pronta para executar.
+
+   Também rejeito a frase da §6 de que usar o espelho atual “só erra para o lado seguro”: sobrescrita subconta, mas atribuição incorreta e reutilização de itens também podem produzir falsa cobertura cheia.
+
+9. **[P1] Envelhecimento e saída do conjunto aberto não demonstram correção.**
+
+   **Cenário:** parcial fica indefinidamente em análise → fantasma continua suprimindo compra. No extremo contrário, vencimento de prazo transforma parcial em candidato a encerramento → saldo prometido desaparece.
+
+   **Correção:** `parcial_envelhecido` abre investigação do saldo por SKU e confirmação do fornecedor; idade nunca completa quantidade. `nao_observado` precisa refletir cobertura efetiva das coletas, não apenas uma data inicial global. NF cancelada/revertida não contribui; uma substituta válida pode resolver a pendência sem manter ambiguidade eterna.
+
+   O sensor de POs exibidos e posteriormente ausentes mede fluxo operacional. Ausência também pode resultar de mudança de previsão, falha de coleta ou outro tratamento no Omie.
+
+   Registrar coorte de POs distintos, classe/versionamento da evidência, confirmação da situação posterior e unidades por SKU antes/depois. Manter os 191 SKUs no denominador de comparação. A sabotagem “todos abertos” precisa falhar contra controles com situação comprovada; pendente zero sozinho não basta, sobretudo sob deduplicação.
+
+10. **[P1] O helper não protege o caminho real contra mudança de etapa.**
+
+    **Cenário:** associação parcial muda a etapa de um PO com seis unidades restantes → a edge ignora o PO → grava pendente menor, embora o helper isolado tratasse a etapa desconhecida como problema.
+
+    Isso está explícito no [descarte anterior ao cálculo](supabase/functions/omie-sync-estoque/index.ts:431). Há também divergência entre o comentário de fonte única do helper e a deduplicação ativa na edge.
+
+    **Correção:** antes do piloto de associação, testar o percurso efetivo de coleta, filtros e aplicação. Etapa aberta desconhecida com saldo precisa gerar impedimento de publicação e sinal observável. Não basta testar uma função que recebe apenas os itens sobreviventes ao descarte.
+
+11. **[P1] H-xPed permanece hipótese sobre o resolvedor do Omie.**
+
+    **Cenário:** preencher `cNumPedido` não influencia o campo pesquisado pelo Omie → nenhum vínculo acontece; ou protocolo repetido e `nItemPed` incompatível associam ao item errado → recebimento de uma obrigação reduz outra.
+
+    A documentação transcrita confirma o uso de `xPed`/`nItemPed`, mas não demonstra que preencher `cNumPedido` com o protocolo do fornecedor satisfaça o resolvedor.
+
+    **Correção:** piloto prospectivo com um PO de baixo valor e baixa criticidade, contrato único e entrega realmente parcial. Para um pedido de dez unidades com primeira entrega de quatro, observar criação, importação, associação, conclusão e sincronização seguinte. Registrar IDs associados por item, unidades, situação, `cEtapa`, `nQtdeRec`, físico e contribuição ao pendente.
+
+    Não medir apenas a etapa: **quando** `nQtdeRec` aumenta também importa. Se reduzir o saldo antes da entrada no físico, existe uma janela de subcontagem mesmo mantendo etapa 15. Após entrada refletida no físico, devem restar seis unidades legítimas.
+
+    Um PO novo pode estar deduplicado por sete dias. Pendência zero nesse período não valida o piloto: verificar a contribuição antes da deduplicação e a transição para o saldo Omie. Um caso bem-sucedido libera somente esse cenário; não valida contratos duplicados, notas consolidadas ou outras conversões.
+
+**Concordo:** Fase 0 sem escrita no Omie; situação observada antes da lista; soma de recebimentos conforme D1; captura das órfãs; classificador puro; lotes acompanhados por unidades de SKU.
+
+**Discordo:** “só pode ser encerrado/cancelado”; 165 como teto comprovado; custo quase invariável das partições; espelho atual errando apenas por subcontagem; writer único global numa tabela que mistura PO e NF; `cheia` como autorização suficiente.
+
+**Ordem de PRs recomendada para a Fase 0:**
+
+1. **PR0:** observação por execução e reconciliação das contribuições do motor; confirmação seletiva de situações. Antes, corrigir a medição de “PO único” com psql/S1.
+2. **PR(b):** captura passiva, versionada e idempotente de `receipt`/`receipt_item`, inclusive órfãs.
+3. **PR(a1):** enum isolado, com commit confirmado.
+4. **PR(a2):** ownership de situação/status por domínio e tratamento das views.
+5. **PR(c1):** classificador em sombra, conservação de quantidades e testes de sabotagem.
+6. **PR(c2):** lista staff com elegibilidade separada de cobertura e sensor por SKU.
+
+A medição do PR0 decide quanto investir depois. Encerramento humano só após evidência e sensor; proteção da edge e piloto parcial antecedem qualquer expansão de H-xPed ou associação nativa.
+```
+
+</details>
+
+### 16.2 Calibração (desta sessão — não é do Codex)
+
+| achado | decisão | como entra |
+|---|---|---|
+| 1 — "PO único" medido errado; encerrado/cancelado não provado | **aceito** | §13.4 re-medida com PO distinto + de-dup (controle C fecha); a situação exata fica "fora do conjunto aberto, motivo não confirmado" |
+| 2 — 165 un. não é teto | **aceito** | vira "estimativa"; coorte fixa de 191 SKUs e medição por SKU (excesso, falta, indeterminado) entram no PR0 |
+| 3 — opção C (estoque observa + confirmação seletiva) | **aceito** | PR0 = o `omie-sync-estoque` grava o conjunto que leu e contou; ausência nunca vira "fechado"; confirmação de situação por sonda read-only |
+| 4 — writer único de `status` só nos POs positivos | **aceito** | PR(a2): ownership por domínio (sync de POs nas linhas > 0; sync de NFs nas órfãs < 0); parcial não vira terminal; desconhecido não vira `CRIADO` |
+| 5 — enum e views separados | **aceito** | PR(a1) só o `ADD VALUE`; views só depois de `pg_depend` + checagem de acesso externo |
+| 6 — recebimento versionado, identidade não provada | **aceito** | PR(b): versão por leitura completa publicada atomicamente, detalhe bruto guardado, identidade interna + unicidade (empresa, nIdReceb, sequência) a validar em reconsulta |
+| 7 — quantidade gasta 2×; contrato em PO fechado; unidade | **aceito em parte** | o caso "2 linhas do mesmo SKU" o rascunho já cobria (agrega por produto); os furos reais eram PO sem itens → `cheia` e contrato só em POs abertos — corrigidos e provados (32 testes, 22 sabotagens vermelhas) |
+| 8 — cobertura ≠ elegibilidade | **aceito** | `cheia` ganha `elegibilidade`; só `elegivel` (movimenta estoque + físico lido depois da NF) aparece como "pronto para encerrar", e ainda com conferência humana |
+| 9 — envelhecimento e sensor | **aceito** | `parcial_envelhecido` = investigar; sensor com coorte de POs e unidades por SKU antes/depois |
+| 10 — a edge descarta etapa nova antes do helper | **aceito** | PR(d) de proteção: etapa aberta desconhecida com saldo bloqueia a publicação do pendente e sinaliza — pré-requisito de qualquer associação nativa |
+| 11 — H-xPed é hipótese | **aceito** | fica na Fase 2 com o protocolo de piloto do Codex (PO de baixo valor, entrega parcial 10 → 4, medir `cEtapa`, `nQtdeRec` e o momento em que ele muda) |
+
+**Ordem adotada no plano** (`docs/superpowers/plans/2026-09-26-baixa-po-fase-0.md`): a do Codex, com o PR(d) de
+proteção em paralelo. O PR0 decide quanto investir depois: se a medição por SKU confirmar resíduo pequeno e sem
+concentração perto da ruptura, os PRs (c1)/(c2) viram higiene de Omie de baixa prioridade.
