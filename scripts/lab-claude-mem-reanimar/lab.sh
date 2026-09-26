@@ -10,18 +10,20 @@
 # desanexa.py, e o "outro endereco" de loopback e ::1 (o 127.0.0.2 nao existe no macOS).
 #
 # Env: SCRIPT         alvo (a falsificacao aponta para a copia sabotada)
-#      LAB_PORTA_BASE cada cenario usa BASE+k (37780). Duas execucoes SIMULTANEAS precisam de
-#                     bases diferentes; cada cenario confere a propria porta e REPROVA se ela
-#                     estiver ocupada (nunca "pula").
 #      LAB_FAIXAS     cenarios em paralelo (4)
+#      LAB_PORTA_SEMENTE  onde comeca a busca do bloco de portas ($$) — so para o teste forcar
+#                     duas execucoes a disputar o MESMO bloco
+# Portas: cada execucao RESERVA um bloco de 20 (reserva_portas.py; cenario = BASE+k), abaixo da
+#   faixa efemera do sistema e com posse do kernel — execucoes simultaneas nao colidem (#2564).
+#   Mesmo assim, cada cenario confere a propria porta e REPROVA se ela estiver ocupada.
 set -u
 L="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 F="$L/fake"
 SCRIPT="${SCRIPT:-$L/../claude-mem-reanimar.sh}"
 PY="${PY:-python3}"
-BASE="${LAB_PORTA_BASE:-37780}"
 FAIXAS="${LAB_FAIXAS:-4}"
-case "$BASE$FAIXAS" in *[!0-9]*) echo "LAB-VERMELHO: LAB_PORTA_BASE/LAB_FAIXAS nao sao inteiros"; exit 1 ;; esac
+SEMENTE="${LAB_PORTA_SEMENTE:-$$}"
+case "$FAIXAS$SEMENTE" in *[!0-9]*) echo "LAB-VERMELHO: LAB_FAIXAS/LAB_PORTA_SEMENTE nao sao inteiros"; exit 1 ;; esac
 tmpbase="${TMPDIR:-/tmp}"
 RAIZ="$(mktemp -d "${tmpbase%/}/lab-reanimar.XXXXXX")" || { echo "LAB-VERMELHO: mktemp falhou"; exit 1; }
 MARCA="LABMARK$$"
@@ -33,6 +35,24 @@ limpa() {
   case "$RAIZ" in */lab-reanimar.?*) rm -rf "$RAIZ" ;; esac
 }
 trap limpa EXIT
+
+# Bloco de portas desta execucao (ver reserva_portas.py): 20000-32759 fica abaixo da faixa efemera
+# do Linux (32768+) e do macOS (49152+). O sentinela fica vivo ate o limpa(); espera com teto e DIZ
+# se nao conseguiu — nunca segue com uma BASE vazia.
+"$PY" "$L/reserva_portas.py" "$RAIZ/portas" 20000 32759 20 "$SEMENTE" "$MARCA-portas" >/dev/null 2>&1 &
+disown
+n=0
+until [ -s "$RAIZ/portas" ]; do
+  n=$((n + 1))
+  if [ "$n" -gt 100 ]; then echo "LAB-VERMELHO: a reserva de portas nao respondeu em 10s"; exit 1; fi
+  sleep 0.1
+done
+read -r tipo BASE x y <"$RAIZ/portas" # BASE <porta> PULADOS <n> | EFEMERA <ini> <fim> | NENHUM <n>
+case "$tipo" in
+  BASE) echo "portas: bloco $BASE (pulei $y bloco(s) com porta ocupada por outro programa)" ;;
+  EFEMERA) echo "LAB-VERMELHO: a faixa efemera do sistema ($BASE-$x) cobre a do lab (20000-32759) — um connect() qualquer tomaria a porta de um cenario"; exit 1 ;;
+  *) echo "LAB-VERMELHO: sem bloco de portas livre ($(cat "$RAIZ/portas"))"; exit 1 ;;
+esac
 
 # Tempos do script em MODO TESTE (ver o cabecalho dele). A idade minima e POR CENARIO, para nao
 # haver corrida de relogio em nenhum sentido: os que exigem worker VELHO usam IDADE (2 s) e
