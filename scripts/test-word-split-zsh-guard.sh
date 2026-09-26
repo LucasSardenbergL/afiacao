@@ -113,6 +113,13 @@ rodada() {
   checa "A8 local t=\$( ) numa funcao" "$ARGS" 'f() { local t=$(ls | tr '"'"'\n'"'"' '"'"' '"'"'); wc -l $t; }; f'
   checa "A9 printf nao e echo: a saida muda de forma" "$ARGS" \
     't=$(ls | tr '"'"'\n'"'"' '"'"' '"'"'); printf '"'"'%s\n'"'"' $t'
+  # Lista LITERAL com espaco: o valor e CONHECIDO como multi-palavra. Calibrado no corpus (88.225
+  # comandos): 11 de 12 disparos com defeito real, 0 falso positivo — provavel forma do #1358.
+  checa "A10 lista literal com espaco (a forma provavel de julho)" "$ARGS" \
+    'T="src/lib/a.test.ts src/lib/b.test.ts"; bun run test -- $T'
+  checa "A11 lista literal em aspas simples" "$ARGS" "ARQS='a.ts b.ts'; git log --oneline -- \$ARQS"
+  checa "A12 lista literal, multi-linha, sob heavy" "$ARGS" "$(linhas 'ALVOS="x.test.ts y.test.ts"' \
+    'heavy bun run test -- --run $ALVOS')"
 
   # ── NEGATIVOS: mencao (aspas, heredoc, comentario) e reinterpretacao pelo bash ───────────────
   checa "N1 citada" "$NADA" 'set -- "$st"; echo "$1"'
@@ -185,6 +192,11 @@ rodada() {
   checa "N50 xargs -n1 SEM comando e um por linha, nao junta" "$NADA" 't=$(ls | xargs -n1); cmd $t'
   checa "N51 FOR: re-declarada como array depois do texto" "$NADA" 'l=$(ls); l=(x y); for x in $l; do :; done'
   checa "N52 ARGS: re-declarada como array depois da lista" "$NADA" "t=\$(ls | $JUNTA_TR); t=(a b); cmd \$t"
+  checa "N53 literal SEM espaco e uma palavra so (M atravessa o portao)" "$NADA" 'T="src/lib/a.test.ts"; M="nota qualquer"; bun run test -- $T'
+  checa "N54 literal com espaco no echo" "$NADA" 'msg="texto com espaco"; echo $msg'
+  checa "N55 literal com espaco, citada" "$NADA" 'T="a.ts b.ts"; bun run test -- "$T"'
+  checa "N56 composta (literal + expansao) nao foi medida: calada" "$NADA" 'x="dir $HOME"; M="a b"; cmd $x'
+  checa "N57 reatribuida a literal de uma palavra" "$NADA" 'x="a b"; x=c; cmd $x'
 
   # ── ARITMETICA nao abre heredoc: `<<` ali e deslocamento. Se abrisse, as linhas seguintes
   # sumiriam como "corpo" — falso NEGATIVO no que vem depois. ────────────────────────────────
@@ -286,98 +298,111 @@ FT=(); FDE=(); FPARA=(); FANTES=(); FDEPOIS=(); FFIX=()
 regra() { FT+=("$1"); FDE+=("$2"); FPARA+=("$3"); FANTES+=("$4"); FDEPOIS+=("$5"); FFIX+=("$6"); }
 
 # Precisao: a fixture fica CALADA por causa da regra; sabotada, dispara o marcador da forma.
-regra "F1 aspas duplas sao mencao" \
+regra "SB1 aspas duplas sao mencao" \
   'if (c == "\"") { wshape(o, "Q"); wraw(o, c); push("D"); i++; continue }' \
   'if (0) { wshape(o, "Q"); wraw(o, c); push("D"); i++; continue }' \
   "$NADA" "$SET" 'echo "o erro: st=x; set -- $st; o conserto: read"'
-regra "F2 aspas simples sao mencao" \
+regra "SB2 aspas simples sao mencao" \
   'if (c == SQ) { wshape(o, "S"); wraw(o, c); push("S"); i++; continue }' \
   'if (0) { wshape(o, "S"); wraw(o, c); push("S"); i++; continue }' \
   "$NADA" "$SET" "git commit -m 'docs: st=x; set -- \$st; use read'"
-regra "F3 \$'...' e mencao, com aspa escapada" \
+regra "SB3 \$'...' e mencao, com aspa escapada" \
   'if (nx == SQ) { wshape(o, "S"); wraw(o, "$" SQ); push("Q"); return i + 2 }' \
   'if (0) { wshape(o, "S"); wraw(o, "$" SQ); push("Q"); return i + 2 }' \
   "$NADA" "$SET" "printf '%s\n' \$'nao\\'; set -- \$st; x\\''"
-regra "F4 corpo de heredoc e dado" 'if (inhd) {' 'if (0) {' \
+regra "SB4 corpo de heredoc e dado" 'if (inhd) {' 'if (0) {' \
   "$NADA" "$SET" "$(linhas "cat > doc.md <<'EOF'" 'st="a b"; set -- $st' 'EOF')"
-regra "F5 comentario" 'if (c == "#" && t == "C" && !WACT[D]) {' 'if (0) {' \
+regra "SB5 comentario" 'if (c == "#" && t == "C" && !WACT[D]) {' 'if (0) {' \
   "$NADA" "$SET" 'true  # st=x; set -- $st; nao faca'
-regra "F6 x=( ) declara array" \
+regra "SB6 x=( ) declara array" \
   'if (forca_arr || substr(S_[c, a], 3, 1) == "R") {' 'if (forca_arr) {' \
   "$NADA" "$SET" 'arr=(a b); set -- $arr'
-regra "F7 typeset -a declara array" 'else if (arr && S_[c, a] == "L") ARR[w] = 1' 'else if (0) ARR[w] = 1' \
+regra "SB7 typeset -a declara array" 'else if (arr && S_[c, a] == "L") ARR[w] = 1' 'else if (0) ARR[w] = 1' \
   "$NADA" "$SET" 'typeset -a l; set -- $l'
-regra "F8 SET cala em array declarado" \
+regra "SB8 SET cala em array declarado" \
   'if (nome != "" && !(nome in ARR) && !(nome in ESPECIAL)) viola(' \
   'if (nome != "" && !(nome in ESPECIAL)) viola(' \
   "$NADA" "$SET" 'arr=(a b); set -- $arr'
-regra "F9 SET cala em array especial do zsh" \
+regra "SB9 SET cala em array especial do zsh" \
   'if (nome != "" && !(nome in ARR) && !(nome in ESPECIAL)) viola(' \
   'if (nome != "" && !(nome in ARR)) viola(' \
   "$NADA" "$SET" 'set -- $path'
-regra "F10 SET exige UMA palavra" 'if (a != CN[c]) return' 'if (a > CN[c]) return' \
+regra "SB10 SET exige UMA palavra" 'if (a != CN[c]) return' 'if (a > CN[c]) return' \
   "$NADA" "$SET" 'set -- $a $b'
-regra "F11 set -o leva argumento" 'if (w ~ /o$/) a++' 'if (0) a++' \
+regra "SB11 set -o leva argumento" 'if (w ~ /o$/) a++' 'if (0) a++' \
   "$NADA" "$SET" 'set -o $opt'
-regra "F12 subscript nao e escalar" \
+regra "SB12 subscript nao e escalar" \
   'ct ~ /^[A-Za-z_][A-Za-z0-9_]*[:#%\/^,~?=+-]/' 'ct ~ /^[A-Za-z_][A-Za-z0-9_]*[:#%\/^,~?=+[-]/' \
   "$NADA" "$SET" 'set -- ${st[@]}'
-regra "F13 FOR exige a atribuicao no comando" 'if (ultima(nome, P_[c, CN[c]]) == 0) return' 'if (0) return' \
+regra "SB13 FOR exige a atribuicao no comando" 'if (ultima(nome, P_[c, CN[c]]) == 0) return' 'if (0) return' \
   "$NADA" "$FOR" 'for c in $fatias; do :; done'
-regra "F14 FOR exige UMA palavra" 'if (a + 1 != CN[c]) return' 'if (a + 1 > CN[c]) return' \
+regra "SB14 FOR exige UMA palavra" 'if (a + 1 != CN[c]) return' 'if (a + 1 > CN[c]) return' \
   "$NADA" "$FOR" 'A=x; B=y; for f in $A $B; do :; done'
-regra "F15 FOR cala em array declarado" \
+regra "SB15 FOR cala em array declarado" \
   'if (nome == "" || (nome in ARR) || (nome in ESPECIAL)) return' 'if (nome == "" || (nome in ESPECIAL)) return' \
   "$NADA" "$FOR" 'l=$(ls); l=(x y); for x in $l; do :; done'
-regra "F16 ARGS exige a JUNCAO da lista" 'if (j > 0 && AID[j] > 0 && JUNTA[AID[j]])' 'if (j > 0 && AID[j] > 0)' \
+regra "SB16 ARGS exige a JUNCAO da lista" 'if ((AID[j] > 0 && JUNTA[AID[j]]) || ALIT[j])' 'if ((AID[j] > 0) || ALIT[j])' \
   "$NADA" "$ARGS" 'sha=$(git rev-parse HEAD); git show $sha'
-regra "F17 ARGS exige a atribuicao ANTES do uso" 'if (AN[j] == nome && AP[j] < p && AP[j] > mp)' 'if (AN[j] == nome && AP[j] > mp)' \
+regra "SB17 ARGS exige a atribuicao ANTES do uso" 'if (AN[j] == nome && AP[j] < p && AP[j] > mp)' 'if (AN[j] == nome && AP[j] > mp)' \
   "$NADA" "$ARGS" "bunx vitest run \$t; t=\$(ls | $JUNTA_TR)"
-regra "F18 ARGS ignora echo/[/case" 'else if (!(cmd in NAOALVO)) regra_args(c, k)' 'else regra_args(c, k)' \
+regra "SB18 ARGS ignora echo/[/case" 'else if (!(cmd in NAOALVO)) regra_args(c, k)' 'else regra_args(c, k)' \
   "$NADA" "$ARGS" "t=\$(ls | $JUNTA_TR); echo \$t"
-regra "F19 ARGS cala em array declarado" 'if (nome == "" || (nome in ARR)) continue' 'if (nome == "") continue' \
+regra "SB19 ARGS cala em array declarado" 'if (nome == "" || (nome in ARR)) continue' 'if (nome == "") continue' \
   "$NADA" "$ARGS" "t=\$(ls | $JUNTA_TR); t=(a b); cmd \$t"
-regra "F20 tr so junta com espaco/tab" 'OP[2] ~ /^([ \t]|\\t|\\040)+$/' 'OP[2] != ""' \
+regra "SB20 tr so junta com espaco/tab" 'OP[2] ~ /^([ \t]|\\t|\\040)+$/' 'OP[2] != ""' \
   "$NADA" "$ARGS" "t=\$(ls | tr '\\n' ,); cmd \$t"
-regra "F21 tr -d apaga, nao junta" '{ if (w ~ /d/) return 0; continue }' '{ continue }' \
+regra "SB21 tr -d apaga, nao junta" '{ if (w ~ /d/) return 0; continue }' '{ continue }' \
   "$NADA" "$ARGS" "t=\$(ls | tr -ds '\\n' ' '); cmd \$t"
-regra "F22 xargs -n nao junta" 'if (w ~ /^-[A-Za-z0-9]*[nLIiJl]/) return 0; ' '' \
+regra "SB22 xargs -n nao junta" 'if (w ~ /^-[A-Za-z0-9]*[nLIiJl]/) return 0; ' '' \
   "$NADA" "$ARGS" 't=$(ls | xargs -n1); cmd $t'
-regra "F23 paste so junta com espaco/tab" 'return (temS && delim ~ /^([ \t]|\\t)+$/)' 'return (temS)' \
+regra "SB23 paste so junta com espaco/tab" 'return (temS && delim ~ /^([ \t]|\\t)+$/)' 'return (temS)' \
   "$NADA" "$ARGS" 't=$(ls | paste -sd, -); cmd $t'
-regra "F24 setopt SH_WORD_SPLIT cala" 'if (SPLIT) exit' 'if (0) exit' \
+regra "SB24 setopt SH_WORD_SPLIT cala" 'if (SPLIT) exit' 'if (0) exit' \
   "$NADA" "$SET" 'setopt SH_WORD_SPLIT; st="a b"; set -- $st'
-regra "F25 silenciador WORD_SPLIT_INTENCIONAL" '[[ "$cmd" =~ $re_silencio ]] && exit 0' 'false && exit 0' \
+regra "SB25 silenciador WORD_SPLIT_INTENCIONAL" '[[ "$cmd" =~ $re_silencio ]] && exit 0' 'false && exit 0' \
   "$NADA" "$SET" 'WORD_SPLIT_INTENCIONAL=1 set -- $st'
 
 # Deteccao: a fixture DISPARA por causa da regra; sabotada, cala (ou muda de forma).
-regra "F26 -- encerra as opcoes do set" 'if (w == "--" || w == "-") { a++; break }' 'if (0) { a++; break }' \
+regra "SB26 -- encerra as opcoes do set" 'if (w == "--" || w == "-") { a++; break }' 'if (0) { a++; break }' \
   "$SET" "$NADA" 'set -- $r; echo "$1"'
-regra "F27 palavra-chave antes do comando (then)" \
+regra "SB27 palavra-chave antes do comando (then)" \
   'while (k <= CN[c] && S_[c, k] == "L" && (V_[c, k] in CHAVE)) k++' 'while (0) k++' \
   "$SET" "$NADA" 'if true; then set -- $st; fi'
-regra "F28 \$( ) e codigo mesmo entre aspas duplas" \
+regra "SB28 \$( ) e codigo mesmo entre aspas duplas" \
   'wraw(o, "$("); abre_sub(0); return i + 2' 'wlit(o, "$"); return i + 1' \
   "$SET" "$NADA" 'echo "1o: $(set -- $st; echo "$1")"'
-regra "F29 (( )) e aritmetica, nao heredoc" 'if (!WACT[D] && substr(linha, i + 1, 1) == "(") {' 'if (0) {' \
+regra "SB29 (( )) e aritmetica, nao heredoc" 'if (!WACT[D] && substr(linha, i + 1, 1) == "(") {' 'if (0) {' \
   "$SET" "$NADA" "$(linhas '(( x = y << z ))' 'set -- $st')"
-regra "F30 \$(( )) e aritmetica, nao heredoc" 'if (substr(linha, i + 2, 1) == "(") {' 'if (0) {' \
+regra "SB30 \$(( )) e aritmetica, nao heredoc" 'if (substr(linha, i + 2, 1) == "(") {' 'if (0) {' \
   "$SET" "$NADA" "$(linhas 'n=$(( y << z ))' 'set -- $st')"
-regra "F31 a fila anda para o 2o heredoc da linha" \
+regra "SB31 a fila anda para o 2o heredoc da linha" \
   'if (t == HQDEL[HQI]) { HQI++; if (HQI > HQN) { inhd = 0; HQN = 0; HQI = 0 } }' \
   'if (t == HQDEL[HQI]) { inhd = 0; HQN = 0; HQI = 0 }' \
   "$FOR" "$SET" "$(linhas "cat <<'A' > um.txt; cat <<'B' > dois.txt" 'texto de A' 'A' 'set -- $st' 'B' \
     'l=$(ls); for x in $l; do :; done')"
-regra "F32 tr junta" 'if (cmd == "tr") {' 'if (0) {' \
+regra "SB32 tr junta" 'if (cmd == "tr") {' 'if (0) {' \
   "$ARGS" "$NADA" "t=\$(git grep -l x | $JUNTA_TR); bunx vitest run \$t"
-regra "F33 paste -s junta" 'if (cmd == "paste") {' 'if (0) {' \
+regra "SB33 paste -s junta" 'if (cmd == "paste") {' 'if (0) {' \
   "$ARGS" "$NADA" "t=\$(git diff --name-only | paste -sd' ' -); bunx eslint \$t"
-regra "F34 xargs sem comando junta" 'if (cmd == "xargs") {' 'if (0) {' \
+regra "SB34 xargs sem comando junta" 'if (cmd == "xargs") {' 'if (0) {' \
   "$ARGS" "$NADA" "t=\$(git ls-files '*.sh' | xargs); shellcheck \$t"
-regra "F35 read atribui" 'else { NA++; AN[NA] = w; AP[NA] = P_[c, a]; AID[NA] = 0 }' 'else { }' \
+regra "SB35 read atribui" 'else { NA++; AN[NA] = w; AP[NA] = P_[c, a]; AID[NA] = 0 }' 'else { }' \
   "$FOR" "$NADA" 'while IFS= read -r linha; do for w in $linha; do echo "$w"; done; done < arq.txt'
-regra "F36 local/typeset atribui" 'if (S_[c, a] ~ /^L=/) atrib(c, a, arr)' 'if (0) atrib(c, a, arr)' \
+regra "SB36 local/typeset atribui" 'if (S_[c, a] ~ /^L=/) atrib(c, a, arr)' 'if (0) atrib(c, a, arr)' \
   "$FOR" "$NADA" 'f() { local l=$(ls); for x in $l; do echo "$x"; done; }; f'
+
+# Lista LITERAL (ARGS). As fixtures de precisao carregam um `M="a b"` inerte para ATRAVESSAR o
+# portao barato: sem ele, quem as cala e o portao (que so deixa passar literal COM espaco), e a
+# sabotagem da regra de dentro nao mudaria nada — verde por motivo alheio.
+regra "SB37 lista literal exige espaco (precisao)" '=") + 1) ~ /[ \t\n]/)' '=") + 1) ~ /./)' \
+  "$NADA" "$ARGS" 'T="src/lib/a.test.ts"; M="nota qualquer"; bun run test -- $T'
+regra "SB38 lista literal dispara (deteccao)" '|| ALIT[j])' ')' \
+  "$ARGS" "$NADA" 'T="src/lib/a.test.ts src/lib/b.test.ts"; bun run test -- $T'
+regra "SB39 lista literal tem de ser PURA (precisao)" 'ALIT[NA] = (substr(S_[c, a], 3) !~ /[PXCAR]/ && ' 'ALIT[NA] = (' \
+  "$NADA" "$ARGS" 'x="dir $HOME"; M="a b"; cmd $x'
+regra "SB40 o portao deixa a lista literal passar (deteccao)" \
+  '*) [[ "$entrada" =~ $re_lit_d || "$entrada" =~ $re_lit_s ]] || exit 0 ;;' '*) exit 0 ;;' \
+  "$ARGS" "$NADA" 'T="src/lib/a.test.ts src/lib/b.test.ts"; bun run test -- $T'
 
 ORIG="$TMPD/hook-foto.sh"; cp "$HOOK" "$ORIG"          # foto: base de toda sabotagem E controle de saida
 IDENT="$TMPD/hook-identidade.sh"; cp "$ORIG" "$IDENT"  # a sabotagem NULA do controle

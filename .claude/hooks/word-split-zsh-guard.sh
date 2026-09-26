@@ -23,12 +23,17 @@
 #         lista; a atribuicao prova que o valor e escalar. O estado do shell NAO persiste entre
 #         chamadas do Bash tool, entao variavel nao atribuida aqui esta vazia (0 voltas nos dois
 #         shells) ou veio do ambiente — e nenhuma das duas e esta armadilha.
-#   ARGS  `cmd ... $x`, com `x` atribuida **antes, neste comando**, de `$(...)` cuja saida foi
-#         JUNTADA numa linha por espaco/tab (`tr '\n' ' '`, `paste -s`, `xargs` sem comando,
-#         `join(" ")`). E a forma dos dois casos do vitest. Sem o sinal de juncao a precisao cai: a
-#         maioria de `x=$(cmd); use $x` e valor UNICO (`sha=$(git rev-parse HEAD)`), que o zsh
-#         entrega certo — um prototipo de 2026-09-10 (abaixo) mediu ~206 candidatos assim, quase
-#         todos de uma palavra so.
+#   ARGS  `cmd ... $x`, com `x` atribuida **antes, neste comando**, como LISTA numa string so: de
+#         `$(...)` cuja saida foi JUNTADA por espaco/tab (`tr '\n' ' '`, `paste -s`, `xargs` sem
+#         comando, `join(" ")`) — a forma dos dois casos do vitest — ou de um LITERAL com espaco
+#         (`T="a.ts b.ts"`), cujo valor e CONHECIDO como multi-palavra. Sem um desses sinais a
+#         precisao desaba: `x=$(cmd)` qualquer daria +132 disparos no corpus, e em 20 amostrados so
+#         4 eram lista — o resto, valor UNICO por construcao (`--jq '.[0].x'`, `head -1`,
+#         `git rev-parse`), que o zsh entrega certo.
+# Precisao medida (corpus de 88.225 comandos Bash reais, 2026-05..09; cada disparo julgado pelo
+# RESULTADO que a chamada devolveu): SET 24/24, ARGS 10/11 (+ literal 11/12, 0 FP), FOR 49/59.
+# Os FPs do FOR tem a MESMA forma dos TPs (`X=$(... | sort -u); for v in $X`) — 0 ou 1 item em
+# runtime os salvou; o idioma continua errado, so nao mordeu daquela vez.
 # Nos tres, cala se `x` e ARRAY no proprio comando (`x=(...)`, `typeset -a`, `read -A`, `set -A`) —
 # `for v in $arr` e o idioma CERTO no zsh — ou array especial do zsh (`$path`, `$argv`...).
 #
@@ -83,12 +88,17 @@ case "$entrada" in
   *) exit 0 ;;
 esac
 # `\\n` casa a BARRA literal seguida de n (o escape do JSON); nao `'\n'`, que o shellcheck le mal.
+# O 3o gatilho — lista LITERAL com espaco (`T="a b"`, `T='a b'`) — e regex do PROPRIO bash (`=~`,
+# sem fork), e so roda para quem nao passou nos padroes baratos. Medido no corpus: o glob ingenuo
+# `NOME="` poria +8,4% das chamadas no jq+awk; o regex, que exige o espaco DENTRO do literal, +2,1%.
+re_lit_d='[A-Za-z_][A-Za-z0-9_]*=\\"[^\\$]*[ ][^\\$]*\\"'
+re_lit_s="[A-Za-z_][A-Za-z0-9_]*='[^']*[ ][^']*'"
 # shellcheck disable=SC2016  # `$(` e crase aqui sao TEXTO do payload a casar, nao expansao
 case "$entrada" in
   *[!A-Za-z0-9_]set\ *|*\\nset\ *|*\\tset\ *) ;;
   *[!A-Za-z0-9_]for\ *|*\\nfor\ *|*\\tfor\ *) ;;
   *'=$('*|*'=\"$('*|*'=`'*|*'=\"`'*) ;;
-  *) exit 0 ;;
+  *) [[ "$entrada" =~ $re_lit_d || "$entrada" =~ $re_lit_s ]] || exit 0 ;;
 esac
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -359,6 +369,9 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
     nome = R_[c, a]; sub(/[+]?=.*$/, "", nome)
     if (forca_arr || substr(S_[c, a], 3, 1) == "R") { ARR[nome] = 1; return }
     NA++; AN[NA] = nome; AP[NA] = P_[c, a]; AID[NA] = H_[c, a]
+    # Lista LITERAL: lado direito so de texto (sem expansao nem substituicao) E com espaco — o valor
+    # e CONHECIDO como multi-palavra. Composta (`x="dir $HOME"`) fica de fora: nao foi medida.
+    ALIT[NA] = (substr(S_[c, a], 3) !~ /[PXCAR]/ && substr(V_[c, a], index(V_[c, a], "=") + 1) ~ /[ \t\n]/)
   }
   function normaliza(w) { w = tolower(w); gsub(/_/, "", w); return w }
   # A substituicao JUNTA a lista numa linha por espaco/tab? (so os comandos DIRETOS dela)
@@ -431,7 +444,8 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
       nome = N_[c, a]
       if (nome == "" || (nome in ARR)) continue
       j = ultima(nome, P_[c, a])
-      if (j > 0 && AID[j] > 0 && JUNTA[AID[j]]) { viola("ZSH-NAO-DIVIDE-ARGS", c, P_[c, a]); return }
+      if (j == 0) continue
+      if ((AID[j] > 0 && JUNTA[AID[j]]) || ALIT[j]) { viola("ZSH-NAO-DIVIDE-ARGS", c, P_[c, a]); return }
     }
   }
   function trecho(c,   k, s) {
@@ -538,7 +552,7 @@ $idioma_linha" ;;
 $idioma_lista" ;;
   ZSH-NAO-DIVIDE-ARGS)
     msg='🔴 `cmd $var` no zsh entrega UM argumento com a lista inteira dentro — use array e "${arr[@]}"'
-    ctx="ZSH-NAO-DIVIDE-ARGS: este comando passa \`\$var\` sem aspas como argumento (trecho: \`$trecho\`), e \`var\` foi montada AQUI como LISTA juntada numa linha (\`\$(... | tr '\\n' ' ')\`, \`paste -s\`, \`xargs\`). No zsh — o shell do Bash tool — variavel sem aspas NAO e dividida: o comando recebe UM argumento com a lista inteira dentro, espaco final incluso. Duas vezes foi o vitest (2026-07-16 e 2026-09-25): 'No test files found', exit 1, zero testes — a linha \`filter:\` mostrava UM filtro com todos os caminhos dentro (docs/historico/evidencia-positiva-shell.md §21).
+    ctx="ZSH-NAO-DIVIDE-ARGS: este comando passa \`\$var\` sem aspas como argumento (trecho: \`$trecho\`), e \`var\` foi montada AQUI como LISTA numa string so (literal com espaco, ou \`\$(... | tr '\\n' ' ')\`/\`paste -s\`/\`xargs\`). No zsh — o shell do Bash tool — variavel sem aspas NAO e dividida: o comando recebe UM argumento com a lista inteira dentro. Com \`tr '\\n' ' '\` nem UM item escapa: o espaco final vai junto — \"x.test.ts \" nao casa filtro nenhum (o vitest rodou 16 de 17 sem avisar) e \`kill \"79967 \"\` e pid ilegal. Duas vezes foi o vitest (2026-07-16 e 2026-09-25): 'No test files found', exit 1, zero testes — a linha \`filter:\` mostrava UM filtro com todos os caminhos dentro (docs/historico/evidencia-positiva-shell.md §21).
 
 $idioma_lista" ;;
   *) exit 0 ;;   # ramo desconhecido: o awk mudou e este bloco nao — calado e melhor que aviso errado
