@@ -2,9 +2,21 @@
 // Às 10:00 BRT (cron 0 13 * * *), processa pedidos aprovados do ciclo do dia.
 // - DRY-RUN: cria pedido no Omie via IncluirPedidoCompra, NÃO envia ao fornecedor
 // - PRODUÇÃO: cria no Omie + dispara notificação ao fornecedor pelo canal configurado
+// E-mail p/ o founder: só "pedido implantado na Sayerlack" (com o nº da fábrica) e, como exceção,
+// o resumo quando algo exige ação — a régua mora em ./email-politica.ts.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import {
+  assuntoImplantado,
+  assuntoProblema,
+  escapeHtml,
+  htmlImplantado,
+  motivoSemEmail,
+  planejarEmailsDoDisparo,
+  STATUS_FINAL_PROBLEMA,
+  STATUS_FINAL_SUCESSO,
+} from "./email-politica.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -281,27 +293,22 @@ interface ProcessResult {
   // com o user.id do autorizador.
   override_minimo?: boolean;
   override_minimo_por?: string | null;
+  // Nº do pedido no sistema da Sayerlack (protocolo do portal), quando o portal JÁ aceitou o pedido
+  // antes deste run ir ao Omie. É o que o e-mail de "implantado" mostra (ver email-politica.ts).
+  protocolo_portal?: string | null;
+  portal_data_entrega?: string | null;
+  split_parent_id?: number | null;
+  split_lote?: number | null;
+  split_total?: number | null;
+  // Barrado pelo gate de mínimo de faturamento — benigno, não dispara o e-mail de problema.
+  gate_minimo?: boolean;
 }
 
-/**
- * Os desfechos em que a compra foi ao Omie e ficou REGISTRADA no banco. Allowlist, não denylist:
- * o resumo por e-mail e o `sync_reprocess_log` contavam como sucesso "tudo que não é falha_envio",
- * então qualquer `status_final` novo (como `nao_disparado`) entraria calado na coluna de sucesso e
- * inflaria "pedidos disparados". Achado do parecer Codex sobre esta fatia.
- */
-const STATUS_FINAL_SUCESSO = new Set(["disparado", "disparado_simulado"]);
-
-/**
- * Os desfechos que o operador precisa VER como problema no resumo. `nao_disparado` = o claim
- * recusou (um cancelamento venceu antes) — nada foi ao Omie. `disparado_sem_registro` = o oposto,
- * e o mais caro: o PO existe no Omie e o banco não o gravou; a pendência de disparo fica aberta na
- * linha justamente para que ele seja achável.
- */
-const STATUS_FINAL_PROBLEMA = new Set([
-  "falha_envio",
-  "nao_disparado",
-  "disparado_sem_registro",
-]);
+// STATUS_FINAL_SUCESSO (allowlist do que foi ao Omie e ficou REGISTRADO) e STATUS_FINAL_PROBLEMA
+// (o que o operador precisa VER como problema) moram em ./email-politica.ts, junto da régua de
+// quando cada e-mail sai — uma fonte só para a contagem do `sync_reprocess_log` e para o e-mail.
+// Allowlist, não denylist: contar como sucesso "tudo que não é falha_envio" deixava qualquer
+// `status_final` novo (como `nao_disparado`) entrar calado na coluna de sucesso (achado Codex).
 
 /**
  * Os dois status que a edge seleciona — e, por isso, os únicos que ela pode reescrever. Toda
@@ -961,6 +968,11 @@ async function processarPedido(
       ? "DRY_RUN_OMIE_APENAS"
       : (pedido.canal_pedido ?? "—"),
   };
+  if (pedido.split_parent_id != null) {
+    result.split_parent_id = pedido.split_parent_id;
+    result.split_lote = pedido.split_lote ?? null;
+    result.split_total = pedido.split_total ?? null;
+  }
   // Auditoria do override (disparo individual que ignorou o mínimo de faturamento, gestor/master):
   // - DURÁVEL: `result.override_minimo` → sync_reprocess_log.metadata.resultados[] (append-only,
   //   NUNCA sobrescrito) = a trilha de auditoria autoritativa.
@@ -1113,6 +1125,10 @@ async function processarPedido(
       // cContrato Omie aceita até 15 chars; protocolo é só dígitos
       cContratoFinal = String(protocoloPortal).slice(0, 15);
       result.canal = "portal_sayerlack";
+      // Vai no resultado ANTES da chamada ao Omie: se o Omie falhar, o e-mail de problema ainda diz
+      // que o pedido já está na fábrica (e com que número) — reenviar ao portal duplicaria a compra.
+      result.protocolo_portal = protocoloPortal;
+      result.portal_data_entrega = pedido.portal_data_entrega ?? null;
     }
 
     const produtos_incluir = (items as ItemRow[]).map((it, idx) => ({
@@ -1522,10 +1538,15 @@ function buildResumoEmail(
         : ehDry
         ? "#8b5cf6"
         : "#10b981";
+      // Pedido que o portal Sayerlack JÁ aceitou: o nº da fábrica aparece mesmo quando o Omie falhou —
+      // é o que impede alguém de reenviar ao portal (compra em dobro) para "consertar" a falha.
+      const protocolo = r.protocolo_portal
+        ? `<div style="font-size:11px;color:#374151;margin-top:2px;">Sayerlack nº ${escapeHtml(r.protocolo_portal)}</div>`
+        : "";
       return `
 <tr>
   <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;font-size:13px;">
-    <a href="${url}" style="color:#111827;text-decoration:none;font-weight:600;">${r.fornecedor}</a>
+    <a href="${url}" style="color:#111827;text-decoration:none;font-weight:600;">${r.fornecedor}</a>${protocolo}
   </td>
   <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;font-size:12px;">${omieLink}</td>
   <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:right;font-weight:600;">${fmtBRL(r.valor)}</td>
@@ -1905,6 +1926,7 @@ Deno.serve(async (req: Request) => {
           valor: p.valor_total,
           canal: modo === "dry_run" ? "DRY_RUN_OMIE_APENAS" : (p.canal_pedido ?? "—"),
           erro: gate.motivo,
+          gate_minimo: true,
         });
       }
       aprovados = liberados;
@@ -2012,35 +2034,62 @@ Deno.serve(async (req: Request) => {
       resultados.push(r);
     }
 
-    // 6. Email resumo p/ Lucas
+    // 6. E-mail p/ Lucas — SÓ o que ele pediu para receber (ver ./email-politica.ts): o pedido
+    // implantado na Sayerlack, com o nº da fábrica; e, como exceção, o resumo quando algo exige ação.
+    // Run sem nada disso (corte sem aprovados, portal só enfileirado) não manda e-mail nenhum.
+    const plano = planejarEmailsDoDisparo(modo, resultados);
+    const emails: Array<{ tipo: string; subject: string; html: string }> = [];
+    if (plano.resumoDryRun) {
+      emails.push({ tipo: "resumo_dry_run", ...buildResumoEmail(empresa, modo, resultados, expirados) });
+    }
+    if (plano.implantados.length > 0) {
+      const geradoEm = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      emails.push({
+        tipo: "implantado",
+        subject: assuntoImplantado(plano.implantados),
+        html: htmlImplantado(empresa, plano.implantados, APP_URL, geradoEm),
+      });
+    }
+    if (plano.problemas.length > 0) {
+      const { html } = buildResumoEmail(empresa, modo, resultados, expirados);
+      emails.push({ tipo: "problema", subject: assuntoProblema(empresa, plano.problemas.length), html });
+    }
+
     let emailStatus: "sent" | "skipped" | "failed" = "skipped";
     let emailDetail: string | null = null;
-    if (resendKey && staffEmail) {
-      // try/catch: um throw do fetch (rede) NÃO pode propagar pro catch externo — senão a
-      // gravação do sync_reprocess_log abaixo (a auditoria durável, incl. override_minimo) seria
-      // pulada e o catch só logaria {data_ciclo}. O e-mail é secundário; a auditoria é o que importa.
-      try {
-        const { subject, html } = buildResumoEmail(empresa, modo, resultados, expirados);
-        const r = await fetch(RESEND_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${resendKey}`,
-          },
-          body: JSON.stringify({
-            from: FROM_EMAIL,
-            to: [staffEmail],
-            subject,
-            html,
-          }),
-        });
-        const txt = await r.text();
-        emailStatus = r.ok ? "sent" : "failed";
-        emailDetail = `[${r.status}] ${txt.slice(0, 200)}`;
-      } catch (e) {
-        emailStatus = "failed";
-        emailDetail = `fetch erro: ${e instanceof Error ? e.message : String(e)}`;
+    if (emails.length === 0) {
+      emailDetail = motivoSemEmail(resultados);
+    } else if (resendKey && staffEmail) {
+      const detalhes: string[] = [];
+      let algumFalhou = false;
+      for (const email of emails) {
+        // try/catch: um throw do fetch (rede) NÃO pode propagar pro catch externo — senão a
+        // gravação do sync_reprocess_log abaixo (a auditoria durável, incl. override_minimo) seria
+        // pulada e o catch só logaria {data_ciclo}. O e-mail é secundário; a auditoria é o que importa.
+        try {
+          const r = await fetch(RESEND_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${resendKey}`,
+            },
+            body: JSON.stringify({
+              from: FROM_EMAIL,
+              to: [staffEmail],
+              subject: email.subject,
+              html: email.html,
+            }),
+          });
+          const txt = await r.text();
+          if (!r.ok) algumFalhou = true;
+          detalhes.push(`${email.tipo}: [${r.status}] ${txt.slice(0, 200)}`);
+        } catch (e) {
+          algumFalhou = true;
+          detalhes.push(`${email.tipo}: fetch erro: ${mensagemDeErro(e) ?? "sem mensagem"}`);
+        }
       }
+      emailStatus = algumFalhou ? "failed" : "sent";
+      emailDetail = detalhes.join(" | ");
     } else {
       emailDetail = !staffEmail
         ? "Sem email_notificacoes"

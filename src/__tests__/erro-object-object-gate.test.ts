@@ -118,7 +118,7 @@ const A_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/cep-geo-resolver/index.ts', 2],
   ['supabase/functions/cmc-snapshot-backfill/index.ts', 2],
   ['supabase/functions/cmc-snapshot-smoke/index.ts', 2],
-  ['supabase/functions/disparar-pedidos-aprovados/index.ts', 4],
+  ['supabase/functions/disparar-pedidos-aprovados/index.ts', 3],
   ['supabase/functions/dispatch-notifications/index.ts', 1],
   ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 5],
   ['supabase/functions/fin-funding/index.ts', 1],
