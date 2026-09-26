@@ -952,6 +952,60 @@ e campo que mude de lugar chega como `undefined` no meio do veredito em vez de r
 `scripts/lib/authz-carimbo.ts`, que valida o carimbo que lê. Não é defeito de corpus (ninguém pegaria, e
 "ninguém pegou" mediria a ausência de validação, não a exclusividade de alguém): é conserto do gate,
 fail-closed, e fica como pendência.
+## A causa raiz do RPC (2026-09-25) — o harness do motor bloqueava o worker
+
+Com o ANSI resolvido, a guarda 12 funcionou no baseline real: reconheceu o RPC colorido (843 arquivos
+/ 9293 testes passando, 1 RPC) e repetiu uma vez. A repetição **também** estourou, o `test` virou
+`SEM-DADO` e o motor abortou sem gravar — fail-closed, como desenhado. Mas com o `test` estourando 3
+de 3 vezes numa máquina calma, e **sem repetição sob defeito**, a maioria das linhas sairia INVÁLIDA:
+a guarda estava certa e a certificação continuava inalcançável. Faltava a causa do estouro.
+
+**Quatro diagnósticos, e só o último sobreviveu a um controle:**
+
+| hipótese | de onde | o que a derrubou |
+|---|---|---|
+| a captura por pipe | #2519 | #2530: arquivo também dá rc=1 |
+| inanição da thread principal sob contenção | #2530 | o erro sai do **worker** (`[vitest-worker]`), não do principal |
+| 7 forks numa M2 de 8 núcleos | experimento desta sessão | com 4 workers o RPC estourou igual |
+| **o event loop do worker bloqueado > 60s** | **isolado abaixo** | — |
+
+O experimento dos workers foi inconclusivo por um motivo que vale registrar: rodou sob thrashing de
+memória (load 220, swap a 94%), e a 1ª rodada levou 964 s. Ele achou outra coisa — 2 dos 5 testes que
+quebraram por timeout eram os da guarda 12, sem o teto próprio que todo teste de motor do arquivo
+declara.
+
+**O discriminador**, num fixture descartável, mesma duração, mesmo vitest, mesma máquina:
+
+| a espera de 65 s | rc | RPC | testes |
+|---|---|---|---|
+| `spawnSync('sleep', ['65'])` | **1** | **1** | 2/2 passando |
+| `await setTimeout(65_000)` | 0 | 0 | 2/2 passando |
+
+O mecanismo: o worker chama `onTaskUpdate` e arma um timer de 60 s; se o loop dele fica preso num
+`spawnSync` (ou num laço de CPU) além disso, o timer vence durante o bloqueio, e quando o loop volta
+a fase de **timers** roda antes da de **I/O** — o timeout dispara com a resposta já na fila. A
+contenção da máquina não é a causa: ela só empurra os subprocessos além dos 60 s. É o mesmo incidente
+dos 79 s de [a-forma-que-some-e-a-forma-que-mente.md](a-forma-que-some-e-a-forma-que-mente.md), com
+nome.
+
+**E o maior culpado era o próprio harness do motor.** `medir()` rodava a rodada inteira via
+`spawnSync`, e sob carga ela passa de 60 s. Sozinho, `exclusividade-medir.test.ts` saía rc=1 com 32/32
+passando e 2 RPC. O arquivo que testa o motor era parte do que travava a medição do motor — e os
+`spawnSync` seguidos de um teste síncrono nem devolvem o loop entre si: montar o fixture e medir
+viravam um bloco só.
+
+**O conserto:** `rodar()` com `spawn` assíncrono, e todo helper do harness passando por ele (o
+vitest aninhado da paridade também). Depois, o mesmo arquivo: **2× rc=0 com 0 RPC (33/33)**.
+
+**A guarda é por COMPORTAMENTO, não por texto:** um pulso de 10 ms tem de bater **durante** o
+`medir()`. Com `spawnSync`, o `await` num promise já resolvido só cede a microtarefas, os timers não
+rodam, e o pulso bate zero. Prova o não-bloqueio sem reproduzir os 60 s nem a carga — e a falsificação
+(o helper de volta a `spawnSync`, uma camada por vez, nos 2 locales) a deixa vermelha.
+
+**O que fica de fora:** só 9 dos 523 arquivos de teste usam `spawnSync`, mas bloquear o loop não
+exige subprocesso — `erro-colapsado-em-vazio-gate.test.ts` e `pendencias-prompt.test.ts` também
+quebraram por timeout sob carga sem usar `spawnSync` (trabalho síncrono de CPU). Cada teste que segura
+o loop por mais de 60 s sob carga é uma fonte do mesmo vermelho; a varredura deles é tarefa própria.
 
 ## A regra
 
