@@ -228,6 +228,11 @@ describe('gate: erro colapsado em vazio', () => {
   // teto abaixo do global ENCURTARIA a folga em vez de ampliá-la, que é exatamente como o
   // `it(..., 15000)` removido em docs/historico/flaky-sob-carga-teto-e-custo.md criava
   // falsa leitura de folga.
+  //
+  // Em 2026-09-26 o custo por fonte caiu ~62% no vitest isolado (o Proxy de interop do `typescript`
+  // saiu do laço quente, e a fonte sem hook nem `data` sai no atalho do detector, sem parse):
+  // docs/historico/proxy-de-interop-no-laco-quente.md. O teto fica onde está — é teto, não
+  // orçamento a gastar, e agora com folga ainda maior.
   const MS_POR_FONTE_TETO = 40; // 4,7× o pior medido sob contenção (8,58 ms/fonte)
   const ORCAMENTO_VARREDURA_MS = Math.max(20_000, fontes.length * MS_POR_FONTE_TETO);
 
@@ -251,26 +256,30 @@ describe('gate: erro colapsado em vazio', () => {
   // hipóteses que a #2311 deixou abertas: carga, crescimento do repo, ou custo do detector.
   function armarDiagnosticoDeVarredura(): void {
     const inicio = performance.now();
-    const jaParseadas = sitiosPorFonte.size;
+    const jaVarridas = sitiosPorFonte.size;
     onTestFailed(() => {
       const ms = performance.now() - inicio;
-      // Só as fontes parseadas NESTE `it` medem o detector — as do memo, o outro `it` já pagou.
-      const parseadas = sitiosPorFonte.size - jaParseadas;
-      if (parseadas === 0) {
+      // Só as fontes varridas NESTE `it` medem o detector — as do memo, o outro `it` já pagou.
+      // VARRIDAS, não parseadas: a que o atalho do detector descarta entra no memo sem parse.
+      const varridas = sitiosPorFonte.size - jaVarridas;
+      if (varridas === 0) {
         console.error(
           `\n[#2311] varredura: as ${fontes.length} fontes vieram do memo (o outro \`it\` de varredura ` +
-            `pagou o parse) — o tempo deste \`it\` não mede o detector.`,
+            `pagou a varredura) — o tempo deste \`it\` não mede o detector.`,
         );
         return;
       }
-      const porFonte = ms / parseadas;
+      const porFonte = ms / varridas;
       console.error(
-        `\n[#2311] varredura: ${parseadas} de ${fontes.length} fontes parseadas neste \`it\` em ${Math.round(ms)}ms = ` +
+        `\n[#2311] varredura: ${varridas} de ${fontes.length} fontes varridas neste \`it\` em ${Math.round(ms)}ms = ` +
           `${porFonte.toFixed(2)} ms/fonte (orçamento ${ORCAMENTO_VARREDURA_MS}ms a ${MS_POR_FONTE_TETO} ms/fonte).\n` +
-          `  Referência medida 2026-09-07: 2,05 fora do runner · 3,32 isolado · 8,58 sob a suíte completa.\n` +
+          `  Referência por fonte VARRIDA (~1/3 é parseada), medida 2026-09-26 num container de 4 vCPU:\n` +
+          `  0,7 fora do runner · 0,75 no vitest isolado. Sob a suíte completa, só ESTIMADA: ~2, pela razão\n` +
+          `  suíte÷isolado de 2,6× medida na M2 em 2026-09-07. As referências daquela data mediam o detector\n` +
+          `  de ANTES (Proxy de interop no laço, sem atalho): não compare com elas.\n` +
           `  ms/fonte DENTRO da referência  → foi CARGA da máquina; o detector está íntegro.\n` +
           `  ms/fonte ACIMA da referência   → é o DETECTOR (acharColapsos), e teto maior só esconde.\n` +
-          `  fontes muito acima de 1.473    → o REPO cresceu; suba MS_POR_FONTE_TETO apenas se o\n` +
+          `  fontes muito acima de 1.489    → o REPO cresceu; suba MS_POR_FONTE_TETO apenas se o\n` +
           `                                   custo unitário continuar dentro da referência.`,
       );
     });
@@ -355,6 +364,33 @@ describe('gate: erro colapsado em vazio', () => {
         return <div>{data?.n}</div>;
       }`;
     expect(contarAutoOcultacao(soComentario, 'Card.tsx'), 'o fiscal casou PROSA — trocaram o AST por regex?').toBe(0);
+  });
+
+  it('o atalho do detector NÃO cega: nome escrito com escape unicode ainda é parseado', () => {
+    // `acharColapsos` pula, sem parsear, a fonte sem `use[A-Z]` ou sem `data` no texto CRU. O `.text`
+    // do identificador sai do escape já decodificado, então callee e `data` escritos com escape só
+    // chegam ao parser pela cláusula `\u` do atalho — e só estas fixtures a fiscalizam: nenhum sítio
+    // do repo usa escape, e a baseline não perceberia a cláusula sumir.
+    // A barra vem de `fromCharCode` para que nenhuma camada (editor, ferramenta de escrita,
+    // transpilador) decodifique o escape ANTES do parser do TS: com a sequência literal aqui, a
+    // fixture pode chegar cozida e provar o caso comum em vez do escape (aconteceu ao escrevê-la).
+    const B = String.fromCharCode(92);
+    const calleeEscapado = `
+      export function Painel() {
+        const { data } = ${B}u0075seAlgo();
+        if (!data) return null;
+        return <div>{data.total}</div>;
+      }`;
+    const dataEscapado = `
+      export function Painel() {
+        const q = useAlgo();
+        if (!q.d${B}u0061ta) return null;
+        return <div>ok</div>;
+      }`;
+    expect(/use[A-Z]/.test(calleeEscapado), 'fixture cozida: o callee perdeu o escape').toBe(false);
+    expect(dataEscapado.includes('data'), 'fixture cozida: o `data` perdeu o escape').toBe(false);
+    expect(contarAutoOcultacao(calleeEscapado, 'Painel.tsx'), 'callee com escape sumiu — a cláusula `\\u` do atalho caiu?').toBe(1);
+    expect(contarAutoOcultacao(dataEscapado, 'Painel.tsx'), '`data` com escape sumiu — a cláusula `\\u` do atalho caiu?').toBe(1);
   });
 
   it('a derivada não escapa: o silêncio pendurado em `const x = data?.find(...)` conta', () => {
