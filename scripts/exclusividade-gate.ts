@@ -54,6 +54,9 @@ const soResumo = args.includes('--resumo');
  * guard que so o vitest exercita e um guard que pode nunca estar LIGADO ao exit code (a via morta
  * classica). Com `--ci`, a suite roda o BINARIO contra um `ci.yml` sabotado e cobra o vermelho de
  * verdade — no mesmo laco em que roda o `ci.yml` REAL e cobra o verde de controle.
+ *
+ * `--matriz` e o mesmo para a LEITURA da matriz (`lerMatriz`), mas la o controle NAO le a matriz real:
+ * se lesse, o `test` viraria segunda porta do defeito `matriz-schema-futuro` do corpus.
  */
 const caminho = (flag: string, padrao: string): string => {
   const i = args.indexOf(flag);
@@ -130,11 +133,11 @@ function main(): number {
   }
 
   if (soResumo) {
-    if (!matriz) {
-      console.error(`sem matriz em ${MATRIZ_PATH}`);
+    if (!leitura.ok) {
+      console.error(`${leitura.codigo}: ${leitura.motivo}`);
       return 2;
     }
-    console.log(resumir(matriz, opts));
+    console.log(resumir(leitura.matriz, opts));
     return 0;
   }
 
@@ -142,7 +145,11 @@ function main(): number {
   const informativos = gates.filter((g) => !g.bloqueiaPR);
   console.log(
     `exclusividade — ${bloqueantes} gate(s) bloqueante(s) no ci.yml` +
-      (matriz ? `, matriz com ${matriz.linhas.length} defeito(s) medida em ${matriz.medidoEm.slice(0, 10)}` : ', SEM matriz'),
+      (leitura.ok
+        ? `, matriz com ${leitura.matriz.linhas.length} defeito(s) medida em ${leitura.matriz.medidoEm.slice(0, 10)}`
+        : leitura.codigo === 'MATRIZ_AUSENTE'
+          ? ', SEM matriz'
+          : `, matriz RECUSADA (${leitura.codigo})`),
   );
   // O contador de informativos existe para o mesmo fim do `bloqueantesSemScript` do gates:frescura:
   // exclusao silenciosa le como cobertura total. `mutation-check` esta fora de `validate.needs` por

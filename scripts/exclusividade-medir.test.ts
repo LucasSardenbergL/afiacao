@@ -32,7 +32,7 @@ import { dirname, join, resolve } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { BINARIOS_DAS_DEPS, type ExecucaoGate, type Matriz } from './lib/exclusividade';
+import { BINARIOS_DAS_DEPS, SCHEMA_VERSION, lerMatriz, type ExecucaoGate, type Matriz } from './lib/exclusividade';
 
 const MOTOR = resolve('scripts/exclusividade-medir.ts');
 const GATE_REAL = resolve('scripts/exclusividade-gate.ts');
@@ -123,6 +123,13 @@ switch (modo) {
       writeFileSync(1, json + '\\n');
       writeFileSync(2, 'RUIDO-DE-STDERR depois do JSON\\n');
     }
+    process.exit(1);
+  }
+  // O que o exclusividade REAL diz de uma matriz de outro schema. No fixture real essa matriz nem
+  // chega ao baseline (guarda 14); so assim o ramo REPROVA-ALHEIA segue exercitado ponta a ponta.
+  case 'excl-reprova-alheia': {
+    const json = JSON.stringify({ ancoraQuebrada: [], vereditos: [{ severidade: 'REPROVA', gate: '(todos)', codigo: 'MATRIZ_SCHEMA_INCOMPATIVEL', motivo: 'fixture' }] });
+    if (process.argv.includes('--json')) writeFileSync(1, json + '\\n');
     process.exit(1);
   }
 }
@@ -318,7 +325,15 @@ async function medir(raiz: string, argv: string[] = [], extraEnv: Record<string,
   return { rc: r.status, saida: `${r.stdout}${r.stderr}`, status };
 }
 
-const lerMatriz = (raiz: string) => JSON.parse(readFileSync(join(raiz, MATRIZ), 'utf8')) as Matriz;
+/**
+ * O que a rodada gravou, lido pela MESMA porta do gate: o motor nao pode gravar uma matriz que o
+ * `exclusividade` recusaria no CI — escritor e leitor discordando calados sobre o mesmo JSON.
+ */
+const matrizGravada = (raiz: string): Matriz => {
+  const l = lerMatriz(readFileSync(join(raiz, MATRIZ), 'utf8'));
+  if (!l.ok) throw new Error(`a rodada gravou uma matriz que o gate RECUSA: ${l.codigo} ${l.motivo}`);
+  return l.matriz;
+};
 
 describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto abaixo)', () => {
   let raiz = '';
@@ -327,7 +342,7 @@ describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto ab
   beforeAll(async () => {
     raiz = await montarFixture(PADRAO, DEFS_PADRAO);
     r = await medir(raiz);
-    m = r.rc === 0 ? lerMatriz(raiz) : null;
+    m = r.rc === 0 ? matrizGravada(raiz) : null;
   }, 180_000);
   const linha = (id: string) => m?.linhas.find((l) => l.defeito === id);
   const execDe = (id: string, gate: string) => linha(id)?.execucoes.find((e) => e.gate === gate);
@@ -404,7 +419,7 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
     expect(r.saida).toContain('a repeticao saiu 0 limpo');
     expect(r.rc).toBe(0);
     expect(r.saida).not.toContain('BASELINE-SEM-DADO');
-    expect(lerMatriz(raiz).baseline.find((b) => b.gate === 'g:rpc-flaky')?.verde).toBe(true);
+    expect(matrizGravada(raiz).baseline.find((b) => b.gate === 'g:rpc-flaky')?.verde).toBe(true);
   }, 180_000);
 
   it('BASELINE: RPC nas DUAS execucoes => BASELINE-SEM-DADO, e NAO "ja vermelho" — nada e gravado', async () => {
@@ -438,7 +453,7 @@ describe('motor — guarda 12: vermelho SEM teste falhando nao e reprova, e a re
     // A repeticao e EXCLUSIVA do baseline: sob defeito o motor nao gasta a 2a execucao.
     expect(r.saida).not.toContain('repetindo UMA vez');
     expect(r.saida).toContain('SEM DADO');
-    const linha = lerMatriz(raiz).linhas.find((l) => l.defeito === 'so-rpc');
+    const linha = matrizGravada(raiz).linhas.find((l) => l.defeito === 'so-rpc');
     expect(linha?.invalido).toContain('AUSENCIA DE DADO');
     // E o gate suspeito NAO entra na matriz nem como verde nem como vermelho.
     expect(linha?.execucoes.some((e) => e.gate === 'g:rpc-sob-defeito')).toBe(false);
@@ -616,6 +631,68 @@ describe('[deps-instaladas] motor — guarda 13: sem as deps o motor ABORTA ante
   });
 });
 
+/**
+ * A rodada FUNDE a matriz em disco e a regrava com `schemaVersion: SCHEMA_VERSION` — lida com cast,
+ * uma matriz de outro schema saia "migrada" em silencio, carimbada como a de hoje. Na rodada FATIADA
+ * (`--gates` sem o `exclusividade`, a que o README manda na M2) o classificador nem roda: esta guarda
+ * e a unica leitura que confere. E ela vem ANTES do baseline — a rodada inteira custa uma hora.
+ */
+describe('motor — guarda 14: a matriz que a rodada vai FUNDIR tem de ser legivel no schema de hoje', () => {
+  /** A marca da anterior: se a rodada a LEU e fundiu, o dispensado dela sobrevive na matriz gravada. */
+  const anterior = (over: Record<string, unknown> = {}) =>
+    `${JSON.stringify(
+      {
+        schemaVersion: SCHEMA_VERSION,
+        medidoEm: '2026-09-01T00:00:00.000Z',
+        sourceHead: 'fixture',
+        dispensados: [{ gate: 'g:marca-da-anterior', desde: 'fixture', motivo: 'prova que a rodada leu a anterior' }],
+        baseline: [],
+        linhas: [],
+        ...over,
+      },
+      null,
+      2,
+    )}\n`;
+  async function comAnterior(conteudo: string): Promise<string> {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO);
+    writeFileSync(join(raiz, MATRIZ), conteudo);
+    await sh(raiz, 'git', ['add', '-A']);
+    await commitar(raiz, '-m', 'matriz anterior');
+    return raiz;
+  }
+
+  // O CONTROLE: uma guarda que recusasse TODA matriz existente passaria em todos os vermelhos abaixo.
+  it('CONTROLE: anterior valida e LIDA e fundida — o dispensado dela sobrevive na matriz gravada', async () => {
+    const raiz = await comAnterior(anterior());
+    const r = await medir(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(0);
+    expect(r.saida).not.toContain('MATRIZ-ANTERIOR-RECUSADA');
+    expect(matrizGravada(raiz).dispensados.map((d) => d.gate)).toEqual(['g:marca-da-anterior']);
+  }, 120_000);
+
+  it('schema FUTURO: ABORTA antes do baseline, e a anterior fica byte a byte — nunca regravada como a de hoje', async () => {
+    const conteudo = anterior({ schemaVersion: SCHEMA_VERSION + 1 });
+    const raiz = await comAnterior(conteudo);
+    const r = await medir(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('MATRIZ-ANTERIOR-RECUSADA MATRIZ_SCHEMA_INCOMPATIVEL');
+    expect(r.saida).not.toContain('baseline (repo limpo');
+    expect(r.status).toBe('');
+    expect(readFileSync(join(raiz, MATRIZ), 'utf8')).toBe(conteudo);
+  }, 120_000);
+
+  // Com cast, a linha sem `execucoes` era HERDADA calada (defeito que a rodada nao re-mediu) — e
+  // o gate do CI e que tropecava nela depois.
+  it('forma invalida (linha sem `execucoes`): ABORTA com MATRIZ_MALFORMADA', async () => {
+    const velha = { defeito: 'velho', defeitoFingerprint: 'ff', alvo: 'a.md', suspeito: null, origem: null, parouCedo: false, invalido: null };
+    const raiz = await comAnterior(anterior({ linhas: [velha] }));
+    const r = await medir(raiz);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    expect(r.saida).toContain('MATRIZ-ANTERIOR-RECUSADA MATRIZ_MALFORMADA');
+    expect(r.status).toBe('');
+  }, 120_000);
+});
+
 const DEFS_CANAL = `
 # @origem: fixture
 # @suspeito: g:pega
@@ -658,7 +735,7 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     base = await montarFixture(['g:barato', 'g:pega'], DEFS);
     const r1 = await medir(base, ['--defeitos', 'pega']);
     if (r1.rc !== 0) throw new Error(`bootstrap 1: o motor saiu ${r1.rc}\n${r1.saida.slice(-1500)}`);
-    const m = lerMatriz(base);
+    const m = matrizGravada(base);
     m.dispensados = [{ gate: 'exclusividade', desde: 'fixture', motivo: 'nasce dispensado, como no repo real' }];
     writeFileSync(join(base, MATRIZ), `${JSON.stringify(m, null, 2)}\n`);
     writeFileSync(join(base, '.github/workflows/ci.yml'), ciYml(BASE));
@@ -666,7 +743,7 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     await commitar(base, '-m', 'bootstrap 1');
     const r2 = await medir(base, ['--defeitos', 'pega']);
     if (r2.rc !== 0) throw new Error(`bootstrap 2: o motor saiu ${r2.rc}\n${r2.saida.slice(-1500)}`);
-    celulaDaBase = lerMatriz(base).linhas.find((l) => l.defeito === 'pega')?.execucoes.find((e) => e.gate === 'exclusividade') ?? null;
+    celulaDaBase = matrizGravada(base).linhas.find((l) => l.defeito === 'pega')?.execucoes.find((e) => e.gate === 'exclusividade') ?? null;
     await sh(base, 'git', ['add', '-A']);
     await commitar(base, '-m', 'bootstrap 2');
   }, 180_000);
@@ -684,7 +761,7 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     return raiz;
   }
   const comGates = (gates: string[]) => (raiz: string) => writeFileSync(join(raiz, '.github/workflows/ci.yml'), ciYml(gates));
-  const linhaDe = (raiz: string, id: string) => lerMatriz(raiz).linhas.find((l) => l.defeito === id);
+  const linhaDe = (raiz: string, id: string) => matrizGravada(raiz).linhas.find((l) => l.defeito === id);
 
   /** O gate REAL, como o CI o roda — o eixo POR FORA do motor. */
   const gateReal = async (raiz: string) => {
@@ -719,7 +796,7 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(r.rc, r.saida.slice(-2000)).toBe(0);
     expect(r.saida).toContain('EXCLUSIVIDADE-FORA-DA-RODADA');
     expect(r.saida).toContain('GATE-NOVO-RESOLVIDO g:novo');
-    const m = lerMatriz(raiz);
+    const m = matrizGravada(raiz);
     const l = m.linhas.find((x) => x.defeito === 'pega');
     // Fora da rodada = nao re-executado: a celula dele e a da base, byte a byte, e fica DEFASADA.
     expect(l?.execucoes.find((e) => e.gate === 'exclusividade')).toEqual(celulaDaBase);
@@ -783,11 +860,14 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     expect(r.status).toBe('');
   }, 120_000);
 
-  it('matriz ilegivel (MATRIZ_AUSENTE): ABORTA — REPROVA alheia a gate novo', async () => {
+  // Ela nem chega ao classificador: a guarda 14 recusa a matriz que a rodada FUNDIRIA, antes do
+  // baseline. O ramo REPROVA-ALHEIA segue coberto pelo `exclusividade` de mentira logo abaixo.
+  it('matriz ilegivel: ABORTA na guarda 14, antes do baseline — nada gravado', async () => {
     const raiz = await clonar((x) => writeFileSync(join(x, MATRIZ), '{ nao e json\n'));
     const r = await medir(raiz, ['--defeitos', 'pega']);
     expect(r.rc, r.saida.slice(-2000)).toBe(1);
-    expect(r.saida).toContain('EXCLUSAO-RECUSADA: REPROVA-ALHEIA MATRIZ_AUSENTE');
+    expect(r.saida).toContain('MATRIZ-ANTERIOR-RECUSADA MATRIZ_AUSENTE');
+    expect(r.saida).not.toContain('baseline (repo limpo');
     expect(r.status).toBe('');
   }, 120_000);
 
@@ -797,6 +877,14 @@ nao-casa | ${EDGE} | s/^inexistente$/SABOTADO/
     pkg.scripts.exclusividade = comando;
     writeFileSync(join(raiz, 'package.json'), JSON.stringify(pkg, null, 2));
   };
+
+  it('REPROVA de LEITURA da matriz no baseline (o que o gate real diz de outro schema): ABORTA — REPROVA-ALHEIA', async () => {
+    const raiz = await clonar(trocarExclusividade('bun scripts/g.ts excl-reprova-alheia'));
+    const r = await medir(raiz, ['--defeitos', 'pega']);
+    expect(r.rc, r.saida.slice(-2000)).toBe(1);
+    expect(r.saida).toContain('EXCLUSAO-RECUSADA: REPROVA-ALHEIA MATRIZ_SCHEMA_INCOMPATIVEL');
+    expect(r.status).toBe('');
+  }, 120_000);
 
   // A fiacao do exit BRUTO no motor: sem ela o criterio "exit 1 nas duas leituras" seria decorativo —
   // nos dois gates de mentira abaixo o JSON diz exatamente o que a exclusao aceitaria.

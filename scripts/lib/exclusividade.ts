@@ -751,24 +751,155 @@ export interface Matriz {
 
 /** Por que a matriz NAO pode ser lida. Cada codigo vira REPROVA com o proprio nome. */
 export interface RecusaDaMatriz {
-  codigo: 'MATRIZ_AUSENTE';
+  codigo: 'MATRIZ_AUSENTE' | 'MATRIZ_SCHEMA_INCOMPATIVEL' | 'MATRIZ_MALFORMADA';
   motivo: string;
 }
 
-/** O que sai de `lerMatriz`: a matriz, ou a recusa com o porque. */
+/** O que sai de `lerMatriz`: a matriz no schema de hoje, ou a recusa com o porque. */
 export type LeituraDaMatriz = { ok: true; matriz: Matriz } | ({ ok: false } & RecusaDaMatriz);
 
-/** A unica porta de bytes para `Matriz`. `null` = o arquivo nao existe. */
-export function lerMatriz(texto: string | null): LeituraDaMatriz {
-  if (texto === null) {
-    return { ok: false, codigo: 'MATRIZ_AUSENTE', motivo: `${MATRIZ_PATH} ausente — rode \`bun run exclusividade:medir\`.` };
+// A forma do schema de hoje, campo a campo — o que `derivar`, `avaliar` e `fundirLinhas` leem.
+// `?` e opcional POR DESENHO (`invocacao` ausente = execucao anterior a paridade de invocacao).
+type Tipo = 'texto' | 'numero' | 'booleano' | 'texto|null' | 'lista de texto';
+type Forma = Record<string, Tipo | `${Tipo}?`>;
+
+const CONFERE: Record<Tipo, (v: unknown) => boolean> = {
+  texto: (v) => typeof v === 'string',
+  numero: (v) => typeof v === 'number' && Number.isFinite(v),
+  booleano: (v) => typeof v === 'boolean',
+  'texto|null': (v) => v === null || typeof v === 'string',
+  'lista de texto': (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
+};
+const FORMA_RAIZ: Forma = { medidoEm: 'texto', sourceHead: 'texto' };
+const FORMA_DISPENSADO: Forma = { gate: 'texto', desde: 'texto', motivo: 'texto' };
+const FORMA_BASELINE: Forma = { gate: 'texto', verde: 'booleano', ms: 'numero' };
+const FORMA_LINHA: Forma = {
+  defeito: 'texto',
+  defeitoFingerprint: 'texto',
+  alvo: 'texto',
+  suspeito: 'texto|null',
+  origem: 'texto|null',
+  deveres: 'lista de texto?',
+  tocados: 'lista de texto?',
+  parouCedo: 'booleano',
+  invalido: 'texto|null',
+  defasados: 'lista de texto?',
+};
+const FORMA_EXECUCAO: Forma = {
+  gate: 'texto',
+  reprovou: 'booleano',
+  ms: 'numero',
+  fingerprint: 'texto',
+  fonteResolvida: 'booleano',
+  invocacao: 'texto?',
+};
+
+const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const tem = (o: Record<string, unknown>, campo: string): boolean => Object.prototype.hasOwnProperty.call(o, campo);
+const NOME_DO_TIPO: Record<string, string> = { string: 'texto', number: 'numero', boolean: 'booleano', object: 'objeto' };
+/** O TIPO do que veio, em ASCII — nunca o valor, que traria acento do arquivo para a mensagem. */
+const tipoDe = (v: unknown): string => (v === null ? 'null' : Array.isArray(v) ? 'lista' : (NOME_DO_TIPO[typeof v] ?? typeof v));
+
+/** O primeiro campo fora da forma, com o caminho inteiro (`linhas[3].execucoes[0].reprovou`), ou `null`. */
+function foraDaForma(v: unknown, forma: Forma, onde: string): string | null {
+  if (!ehObjeto(v)) return `${onde} deveria ser objeto (veio ${tipoDe(v)})`;
+  for (const [campo, spec] of Object.entries(forma)) {
+    const opcional = spec.endsWith('?');
+    const tipo = (opcional ? spec.slice(0, -1) : spec) as Tipo;
+    const caminho = onde ? `${onde}.${campo}` : campo;
+    if (!tem(v, campo)) {
+      if (opcional) continue;
+      return `${caminho} ausente`;
+    }
+    if (!CONFERE[tipo](v[campo])) return `${caminho} deveria ser ${tipo} (veio ${tipoDe(v[campo])})`;
   }
+  return null;
+}
+
+function listaForaDaForma(v: unknown, onde: string, item: (x: unknown, onde: string) => string | null): string | null {
+  if (v === undefined) return `${onde} ausente`;
+  if (!Array.isArray(v)) return `${onde} deveria ser lista (veio ${tipoDe(v)})`;
+  for (let i = 0; i < v.length; i++) {
+    const p = item(v[i], `${onde}[${i}]`);
+    if (p !== null) return p;
+  }
+  return null;
+}
+
+function matrizForaDaForma(doc: Record<string, unknown>): string | null {
+  return (
+    foraDaForma(doc, FORMA_RAIZ, '') ??
+    listaForaDaForma(doc.dispensados, 'dispensados', (x, onde) => foraDaForma(x, FORMA_DISPENSADO, onde)) ??
+    listaForaDaForma(doc.baseline, 'baseline', (x, onde) => foraDaForma(x, FORMA_BASELINE, onde)) ??
+    listaForaDaForma(
+      doc.linhas,
+      'linhas',
+      (x, onde) =>
+        foraDaForma(x, FORMA_LINHA, onde) ??
+        listaForaDaForma(ehObjeto(x) ? x.execucoes : undefined, `${onde}.execucoes`, (e, ondeE) => foraDaForma(e, FORMA_EXECUCAO, ondeE)),
+    )
+  );
+}
+
+const ehMatriz = (doc: Record<string, unknown>): doc is Record<string, unknown> & Matriz =>
+  doc.schemaVersion === SCHEMA_VERSION && matrizForaDaForma(doc) === null;
+
+/**
+ * A UNICA porta de bytes para `Matriz` — o gate e o motor leem por aqui. `null` = o arquivo nao existe.
+ *
+ * ## Por que ela confere a versao E a forma (2026-09-25)
+ *
+ * `SCHEMA_VERSION` era GRAVADO pelo motor e nunca conferido: `JSON.parse(...) as Matriz` lia uma matriz
+ * de outro schema como a de hoje. Campo fora do lugar chegava `undefined` no meio do veredito — TypeError
+ * (exit 2, "erro do proprio gate") ou, pior, `reprovou` ausente lido como "nao reprovou", e o veredito
+ * saia calculado sobre dado alheio. E o motor, que FUNDE a anterior e a regrava com a versao de hoje, a
+ * "migrava" calado. Aqui cada falha e uma RECUSA com codigo: o gate a imprime como REPROVA, e o motor
+ * aborta antes do baseline (guarda 14).
+ *
+ * A ordem importa: versao ANTES da forma. Matriz de outro schema tem, legitimamente, outra forma — e
+ * chama-la de MALFORMADA mandaria o operador consertar o arquivo em vez de re-medir.
+ *
+ * Toda mensagem e ASCII imprimivel (sem acento, sem travessao): e o que a suite e o operador casam sem
+ * `-i`, em `LC_ALL=C` e em `pt_BR.UTF-8`. Por isso ela nomeia o TIPO do que veio, nunca o valor.
+ */
+export function lerMatriz(texto: string | null): LeituraDaMatriz {
+  const remedir = 're-meca com `bun run exclusividade:medir`';
+  if (texto === null) return { ok: false, codigo: 'MATRIZ_AUSENTE', motivo: `${MATRIZ_PATH} ausente - ${remedir}.` };
+  let doc: unknown;
   try {
-    return { ok: true, matriz: JSON.parse(texto) as Matriz };
+    doc = JSON.parse(texto);
   } catch {
     // Ilegivel e indistinguivel de ausente para efeito de evidencia — os dois sao fail-closed.
-    return { ok: false, codigo: 'MATRIZ_AUSENTE', motivo: `${MATRIZ_PATH} ilegivel — rode \`bun run exclusividade:medir\`.` };
+    return { ok: false, codigo: 'MATRIZ_AUSENTE', motivo: `${MATRIZ_PATH} ilegivel (JSON invalido) - ${remedir}.` };
   }
+  if (!ehObjeto(doc)) {
+    return { ok: false, codigo: 'MATRIZ_MALFORMADA', motivo: `${MATRIZ_PATH} deveria ser um objeto JSON (veio ${tipoDe(doc)}) - restaure do git.` };
+  }
+  if (doc.schemaVersion !== SCHEMA_VERSION) {
+    const v = doc.schemaVersion;
+    const lida = !tem(doc, 'schemaVersion')
+      ? 'schemaVersion ausente'
+      : typeof v === 'number'
+        ? `schemaVersion ${v}`
+        : `schemaVersion nao numerico (veio ${tipoDe(v)})`;
+    return {
+      ok: false,
+      codigo: 'MATRIZ_SCHEMA_INCOMPATIVEL',
+      motivo:
+        `${MATRIZ_PATH} tem ${lida}; este codigo le schemaVersion ${SCHEMA_VERSION}. Formato incompativel: ` +
+        `${remedir} na versao do codigo que vai ler a matriz - nunca edite o numero a mao.`,
+    };
+  }
+  if (!ehMatriz(doc)) {
+    return {
+      ok: false,
+      codigo: 'MATRIZ_MALFORMADA',
+      motivo:
+        `${MATRIZ_PATH} fora da forma do schema ${SCHEMA_VERSION}: ${matrizForaDaForma(doc)}. Conflito de merge ` +
+        `mal resolvido ou edicao a mao? Restaure do git, ou ${remedir}.`,
+    };
+  }
+  return { ok: true, matriz: doc };
 }
 
 /**
@@ -967,7 +1098,7 @@ type Severidade = (typeof SEVERIDADES)[number];
 
 type CodigoVeredito =
   | 'GATE_NOVO_SEM_EXCLUSIVIDADE'
-  | 'MATRIZ_AUSENTE'
+  | RecusaDaMatriz['codigo']
   | 'LINHA_PODRE'
   | 'EXCLUSIVIDADE_ZERO'
   | 'EXCLUSIVIDADE_INCONCLUSIVA'
@@ -984,6 +1115,9 @@ export interface Veredito {
 /**
  * A tabela de severidade, e por que ela nao e toda REPROVA:
  *
+ *   leitura RECUSADA               -> REPROVA, uma so, com o codigo da recusa (`lerMatriz`): matriz
+ *                                    ausente, ilegivel, de outro schema ou fora da forma. Nenhum
+ *                                    veredito e calculado sobre dado que o schema de hoje nao le.
  *   gate NOVO sem linha exclusiva  -> REPROVA. E o objetivo declarado da maquina: quem acrescenta
  *                                    um gate paga a prova de que ele pega algo que ninguem pega.
  *   fonte do gate mudou            -> AVISA. Reprovar apodreceria a cada edicao de gate e viraria

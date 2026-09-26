@@ -18,9 +18,9 @@
  *   EXCL_TIMEOUT_MS=2400000 bun run exclusividade:medir   # teto POR execucao (default 15 min). Numa M2
  *                                                         # carregada o `sonda:cron-prova -- --gate` leva ~19.
  *
- * Exit: 0 mediu - 1 abortou (arvore suja, DEPS-NAO-INSTALADAS, baseline vermelho, corpus vazio/invalido,
- *       invocacao nao reproduzivel, suspeito desconhecido, GATE-ESCREVEU, RESTAURACAO-INCOMPLETA,
- *       BASELINE-SEM-DADO) - 2 erro interno.
+ * Exit: 0 mediu - 1 abortou (arvore suja, DEPS-NAO-INSTALADAS, MATRIZ-ANTERIOR-RECUSADA, baseline vermelho,
+ *       corpus vazio/invalido, invocacao nao reproduzivel, suspeito desconhecido, GATE-ESCREVEU,
+ *       RESTAURACAO-INCOMPLETA, BASELINE-SEM-DADO) - 2 erro interno.
  *
  * ## A disciplina (herdada do mutcheck.sh, onde ja foi pensada e ja achou buraco de verdade)
  *
@@ -79,6 +79,12 @@
  *     existencia (de diretorio, de arquivo, `command -v`) nao conta, e o NOME resolveria pelo PATH.
  *     Roda logo depois da guarda 1a, antes do plano. Ver `sondarDeps`.
  *
+ * 14. A MATRIZ ANTERIOR E LIDA PELA PORTA DO GATE, ANTES DO BASELINE. A rodada FUNDE a matriz em
+ *     disco e a regrava com `schemaVersion: SCHEMA_VERSION`; lida com cast, uma de outro schema saia
+ *     "migrada" calada (2026-09-25). `lerMatriz` recusa ilegivel, outro schema e forma invalida
+ *     (MATRIZ-ANTERIOR-RECUSADA <codigo>); ausente e o nascimento, e passa. Na rodada FATIADA sem o
+ *     `exclusividade` o classificador do baseline nem roda — esta e a unica leitura que confere.
+ *
  * ## O que o write-guard NAO ve (limite declarado)
  *
  * Arquivo IGNORADO pelo git (`node_modules/`, `dist/`, caches) fica fora do snapshot: vigia-lo
@@ -126,6 +132,7 @@ import {
   fundirLinhas,
   gatesCandidatos,
   invocacaoDoCI,
+  lerMatriz,
   parseDefeitos,
   ENV_DO_MOTOR,
   resumir,
@@ -666,6 +673,24 @@ function main(): number {
     return 1;
   }
 
+  // Guard 14: a matriz que esta rodada vai FUNDIR e regravar com `schemaVersion: SCHEMA_VERSION` tem de
+  // ser legivel no schema de hoje — e isso se sabe AGORA, nao depois de uma hora de baseline. Lida com
+  // cast, uma matriz de outro schema saia "migrada" calada, carimbada como a de hoje; e na rodada
+  // FATIADA (`--gates` sem o `exclusividade`) o classificador do baseline nem roda. Ausente e legitimo
+  // (o nascimento); ilegivel, de outro schema ou fora da forma, nao. Marcador ASCII, casavel sem `-i`.
+  let anterior: Matriz | null = null;
+  if (existsSync(MATRIZ_PATH)) {
+    const leitura = lerMatriz(readFileSync(MATRIZ_PATH, 'utf8'));
+    if (!leitura.ok) {
+      console.error(`ABORTADO: MATRIZ-ANTERIOR-RECUSADA ${leitura.codigo} - ${leitura.motivo}`);
+      console.error('A rodada funde a matriz em disco e a regrava no schema de hoje; ela nunca "migra" um formato que');
+      console.error('nao sabe ler. Outro schema: atualize a worktree (a matriz e o codigo andam juntos). Fora da forma:');
+      console.error('restaure o arquivo do git antes de medir.');
+      return 1;
+    }
+    anterior = leitura.matriz;
+  }
+
   if (!existsSync(CORPUS_DIR)) {
     console.error(`ABORTADO: corpus ausente em ${CORPUS_DIR}/`);
     return 1;
@@ -943,7 +968,8 @@ function main(): number {
 
   restaurarTudo();
 
-  const anterior = existsSync(MATRIZ_PATH) ? (JSON.parse(readFileSync(MATRIZ_PATH, 'utf8')) as Matriz) : null;
+  // A `anterior` e a da guarda 14, lida antes de qualquer sabotagem: o write-guard garante que a
+  // arvore versionada — a matriz inclusive — e a mesma de entao.
   const matriz: Matriz = {
     schemaVersion: SCHEMA_VERSION,
     medidoEm: new Date().toISOString(),
