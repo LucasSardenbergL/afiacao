@@ -978,7 +978,12 @@ export function julgarDeriva({ modelo, leitura, baseline, controles }: EntradaJu
     achados.push(
       anterior !== undefined
         ? achado('CORPO_ANTERIOR', alvo, `prod roda o corpo de ${anterior.migration}; o repo commitou ${ult.migration} depois — revert por ordem de colagem, ou migration mergeada e não aplicada`, o.xmin)
-        : achado('SEM_PAR', alvo, `corpo que nenhuma das ${e.versoes.length} versão(ões) commitadas explica (edição manual) — último CREATE: ${ult.migration}`, o.xmin),
+        : achado(
+            'SEM_PAR',
+            alvo,
+            `corpo que nenhuma das ${e.versoes.length} versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: ${ult.migration}`,
+            o.xmin,
+          ),
     );
   }
 

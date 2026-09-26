@@ -183,8 +183,10 @@ rodou 18 dias o corpo de uma migration ANTERIOR (`docs/historico/deriva-corpo-se
     ENVELOPE (`docs/agent/database.md` §Escrita).
   - `PATCH_NAO_CONCILIADO` → uma migration de patch por âncora entrou na main: confira se pegou em
     prod e concilie na baseline (`ALTERA` com o md5 de prod, ou `SO_CITA`).
-  - `SEM_PAR` (edição manual) · `PATCH_AUSENTE` · `AUSENTE` · `RESSUSCITADA` ·
-    `OVERLOAD_FORA_DO_REPO` · `SEM_CORPO_TEXTUAL` → relate ao founder com a linha colada.
+  - `SEM_PAR` → edição manual **ou** DDL aplicada antes do merge: compare o md5 de prod com as
+    migrations das branches abertas antes de chamar de edição (2026-09-26: era o #2573).
+  - `PATCH_AUSENTE` · `AUSENTE` · `RESSUSCITADA` · `OVERLOAD_FORA_DO_REPO` · `SEM_CORPO_TEXTUAL` →
+    relate ao founder com a linha colada.
 - `exit=2` → ⚠️ **não consegui medir** (psql-ro fora, sem rede para o `git fetch`, saída truncada).
   Ausência de dado, não aprovação — diga que não mediu.
 

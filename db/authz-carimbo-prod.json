@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-09-26T03:18:29.570Z",
-  "sourceHead": "6e5823443e48932b784f4e7fc9a3bb8e270d8d17",
+  "medidoEm": "2026-09-26T03:51:04.843Z",
+  "sourceHead": "1a3a916439b3161516b73be2702c1dbc6eeb5737",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -56,12 +56,25 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 313 identidade(s) batem com o repo (228 em dia, 78 só cosméticas, 6 aceitas na baseline) e 15 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 313 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@b1d69d29b (fetch ok) · prod 2026-09-26 03:19:42.858162Z",
-      "contratoFingerprint": "5e65f5e1cd2f6f3dc70c3e3f2e25d5ca65c171f77d725599bf3b15b3fe3969fe",
-      "auditorFingerprint": "eea4129a2630972d7c339cc93dfba2abdcfa861a0f19f18445ed8c96b88b7a98",
-      "achados": []
+      "exit": 1,
+      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 313 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@d65247058 (fetch ok) · prod 2026-09-26 03:51:28.306498Z",
+      "contratoFingerprint": "bb341105b593b89a9608acc048d3b8412cfb5c4b0f574af7ae6cb973bb703402",
+      "auditorFingerprint": "12455e2b4124ae98932a63d644d6e4ed15e270267130f07c1c7c27fbb356dc4f",
+      "achados": [
+        {
+          "id": "2021f7353ac34cf8",
+          "linha": "❌ [SEM_PAR] gerar_pedidos_sugeridos_ciclo(text,date): corpo que nenhuma das 28 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql (xmin 10598692)",
+          "primeiraVez": "2026-09-26",
+          "ultimaVez": "2026-09-26"
+        },
+        {
+          "id": "06c5485021ad70e9",
+          "linha": "❌ [SEM_PAR] atualizar_parametros_numericos_skus(text,uuid): corpo que nenhuma das 3 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260712140000_param_auto_log_valor_barrado_fusivel.sql (xmin 10598741)",
+          "primeiraVez": "2026-09-26",
+          "ultimaVez": "2026-09-26"
+        }
+      ]
     }
   }
 }
