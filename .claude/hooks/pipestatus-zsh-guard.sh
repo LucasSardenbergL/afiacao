@@ -110,6 +110,13 @@ ramo="$(printf '%s' "$cmd" | awk '
         if (c == "\x27") { st = 1; i++; continue }
         if (c == "\"")   { st = 2; i++; continue }
         if (c == "$" && substr(linha, i+1, 1) == "\x27") { st = 3; i += 2; continue }
+        # herestring `<<<` le de uma STRING, nao abre heredoc: consome os TRES `<` de uma vez. So
+        # recusar o 1o (o `!= "<"` do ramo de baixo) nao bastava: o laco andava UM char e o 2o `<`
+        # abria heredoc, cujo parser de delimitador COMIA a aspa de abertura da palavra — em
+        # `<<< "$x"` a paridade invertia (mencao adiante virava uso) e em `<<< "nota"` nascia um
+        # heredoc quoted ficticio que engolia as linhas de baixo (FN). A palavra segue no scanner
+        # normal: ela EXPANDE, e `<<< "${PIPESTATUS[0]}"` e uso. Mesmo ramo do sonda-processo-guard.
+        if (c == "<" && substr(linha, i+1, 1) == "<" && substr(linha, i+2, 1) == "<") { emite("<<<"); ant = "<"; i += 3; continue }  # herestring
         if (c == "<" && substr(linha, i+1, 1) == "<" && substr(linha, i+2, 1) != "<") {
           j = i + 2; hyf = 0
           if (substr(linha, j, 1) == "-") { hyf = 1; j++ }

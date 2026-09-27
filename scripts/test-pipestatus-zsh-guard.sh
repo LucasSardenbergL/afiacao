@@ -166,6 +166,24 @@ FIM')"
   checa "C9 ' EOF' com espaco NAO fecha heredoc" "VAZIO" \
     "$(entrada "$(printf "cat <<'EOF'\nliteral\n EOF\n\${PIPESTATUS[0]}\nEOF\n")")"
 
+  # ── HERESTRING `<<<`: redirecao de uma STRING, nao heredoc (2026-09-27) ────────────────────
+  # O scanner recusava o 1o `<` de `<<<`, andava UM char e abria heredoc no 2o, cujo parser de
+  # delimitador COMIA a aspa de abertura da palavra. Duas faces, as duas medidas em `zsh -f`:
+  # FP — a paridade de aspas invertia e a MENCAO em aspas simples adiante virava uso (H1, H2);
+  # FN — `<<< 'nota'` virava heredoc QUOTED de delimitador "nota" e engolia as linhas de baixo
+  # como mencao, com o zsh executando-as de verdade (H3). `read -r a b <<< "$var"` e o idioma que
+  # o word-split-zsh-guard.sh recomenda: a recomendacao de um guard disparava o vizinho.
+  checa "H1 herestring nao inverte a paridade (a reproducao)" "VAZIO" \
+    "$(entrada "read -r a b <<< \"\$st\"; echo 'doc: \${PIPESTATUS[0]} e bash-ism'")"
+  checa "H2 palavra da herestring em aspas SIMPLES e mencao" "VAZIO" \
+    "$(entrada "cat <<< 'docs: \${PIPESTATUS[0]} e vazio no zsh'")"
+  checa "H3 herestring quoted NAO abre heredoc (a linha de baixo e codigo)" "$A" \
+    "$(entrada "$(printf "cat <<< 'nota'\nfalse | true; [ \"\${PIPESTATUS[0]}\" -eq 0 ] && echo OK\n")")"
+  # A palavra da herestring EXPANDE (zsh -f: rc=[] · bash: rc=[1]) — e USO. Trava o conserto
+  # contra o exagero de tratar a palavra como corpo de heredoc quoted (opaco).
+  checa "H4 herestring com a leitura DENTRO da palavra" "$A" \
+    "$(entrada 'false | true; read -r rc <<< "${PIPESTATUS[0]}"')"
+
   # ── ROBUSTEZ ───────────────────────────────────────────────────────────────────────────────
   local saida
   saida="$(printf '%s' 'isto nao e json' | PIPESTATUS_GUARD_LOG="$LOGTESTE" bash "$HOOK" 2>/dev/null)"
