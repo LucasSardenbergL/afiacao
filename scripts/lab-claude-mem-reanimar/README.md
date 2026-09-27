@@ -13,7 +13,7 @@ Quem roda no `test:hooks` e no `test:falsificacao` é o wrapper, que sonda cada 
 bash scripts/test-claude-mem-reanimar.sh               # LAB-VERDE: 17 cenários (~50 s no M2) + PROVA-COM-TTY-VERDE
 bash scripts/test-claude-mem-reanimar.sh --falsificar  # FALSIFICACAO-VERDE: 12 guardas + as 3 do helper
 bash scripts/lab-claude-mem-reanimar/lab.sh c_surdo_sim  # um cenário (no Linux: sob subreaper.py)
-bash scripts/lab-claude-mem-reanimar/prova_com_tty.sh    # só o contrato do com_tty.py (~2 s)
+bash scripts/lab-claude-mem-reanimar/prova_com_tty.sh    # só o contrato do com_tty.py (~0,2 s)
 ```
 
 ## Como cabe no CI
