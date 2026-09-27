@@ -181,19 +181,20 @@ fi
 # um embutido passa a vencê-lo. O snapshot tem uma — `public.set_config(text,text,boolean)`, wrapper que
 # só aceita `fin.%` e levanta exceção no resto. Por isso: o cenário chama `pg_catalog.set_config`
 # qualificado, e as funções sob teste NÃO podem chamar nome sombreado — senão a prova rodaria outra
-# semântica sem avisar. Conferido, não suposto (e a lista vazia de sombras é ERRO: a guarda ficaria cega).
-sombra="$(P -At -c "SELECT count(*) || '|' || COALESCE(string_agg(s.proname, ',') FILTER (WHERE EXISTS (
-    SELECT 1 FROM pg_proc f WHERE f.oid IN ('public.reposicao_alerta_pedido_minimo_tick()'::regprocedure,
-      'public.reposicao_pedido_auto_aprovavel(bigint,numeric,numeric,numeric)'::regprocedure)
-      AND f.prosrc ~ ('\m' || s.proname || '\s*\('))), '')
+# semântica sem avisar. Controle POSITIVO da própria guarda: ela tem de enxergar o nosso now().
+sombra="$(P -At -c "SELECT COALESCE(string_agg(s.proname, ',') FILTER (WHERE s.proname = 'now'), '') || '|' ||
+    COALESCE(string_agg(s.proname, ',') FILTER (WHERE s.proname <> 'now' AND EXISTS (
+      SELECT 1 FROM pg_proc f WHERE f.oid IN ('public.reposicao_alerta_pedido_minimo_tick()'::regprocedure,
+        'public.reposicao_pedido_auto_aprovavel(bigint,numeric,numeric,numeric)'::regprocedure)
+        AND f.prosrc ~ ('\m' || s.proname || '\s*\('))), '')
   FROM (SELECT DISTINCT p.proname FROM pg_proc p
-         WHERE p.pronamespace = 'public'::regnamespace AND p.proname <> 'now'
+         WHERE p.pronamespace = 'public'::regnamespace
            AND EXISTS (SELECT 1 FROM pg_proc c WHERE c.pronamespace = 'pg_catalog'::regnamespace
                         AND c.proname = p.proname AND c.proargtypes = p.proargtypes)) s;")"
 case "$sombra" in
-  0\|*) echo "❌ guarda cega: nenhuma sombra de pg_catalog achada — o snapshot tinha public.set_config"; exit 1 ;;
-  *\|)  ;;   # há sombras, e nenhuma é chamada pelas funções sob teste
-  *)    echo "❌ o relógio controlado mudaria mais que o now(): as funções sob teste chamam [${sombra#*|}], sombreado por public"; exit 1 ;;
+  'now|') ;;
+  now\|*) echo "❌ o relógio controlado mudaria mais que o now(): as funções sob teste chamam [${sombra#*|}], sombreado por public"; exit 1 ;;
+  *) echo "❌ guarda cega: não enxergou nem o public.now() que acabou de ser criado [$sombra]"; exit 1 ;;
 esac
 
 echo "→ helpers de fixture + cenários (relógio controlado)…"
