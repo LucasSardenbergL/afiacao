@@ -6,56 +6,70 @@
 # esperado) com `date_trunc('month', now())` — o mês do fuso da SESSÃO, UTC no CI — contra uma função
 # que calcula em São Paulo; das 21:00 às 23:59 BRT o seed cai no dia (ou mês) seguinte e a prova
 # reprova sozinha. O fiscal é TEXTUAL, então cada camada dele é uma aposta que pode apodrecer sem
-# vermelho nenhum: a assinatura (cada lado do que ela discrimina), a CAMADA do stripper (a do shell —
-# nunca a regex local, nem a limpeza de `--` sobre o arquivo inteiro), a leitura multilinha, a linha
-# reportada, o denominador, os alarmes herdados, o piso e o código de saída. Cada PEGA quebra UMA
-# camada e exige a suíte vermelha.
+# vermelho nenhum: a LEITURA da chamada (literal opaco, vírgula só de nível 1, a limpeza de SQL só
+# dentro dela, a chamada que não fecha), a unidade, a caixa, o relógio LOCAL que nenhum fuso conserta,
+# cada isenção, a CAMADA do stripper do arquivo (a do shell — nunca a regex local, nem a limpeza de `--`
+# sobre o arquivo inteiro), a linha e o motivo reportados, o denominador, os alarmes herdados, o piso e o
+# código de saída. Cada PEGA quebra UMA camada e exige a suíte vermelha.
 #
 # O walker, as raízes, os pisos e o dente de cada alarme do stripper moram nos irmãos
 # (`shell-variavel-colada.mut`, `relogio-bash-em-provas.mut`); aqui se prova que ESTE fiscal os consulta.
 #
-# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`. O `#`
-# da regex local vai como `\x23`, para a linha do contrato não carregar um `#` cru.
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também (o `$1` da captura é de
+# propósito). Escreva `\$`. O `#` da regex local vai como `\x23`, para a linha do contrato não carregar
+# um `#` cru.
 
 # CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
-PEGA | controle+: detector cego (a assinatura nunca casa)                    | s/\\bdate_trunc\\s\*\\\(/\\bNUNCA_CASA\\s*\\(/
+PEGA | controle+: detector cego (nenhuma chamada é achada)                   | s/const CHAMADA = \/\\bdate_trunc/const CHAMADA = \/\\bNUNCA_CASA/
 
-# A assinatura — o lado que ela TEM de casar.
-PEGA | unidade perde o mês: o caso de origem escapa                          | s/\|month\|/|/
-PEGA | caixa: `DATE_TRUNC('MONTH', NOW())` escapa                            | s/'gi',/'g',/
-PEGA | qualificado: `pg_catalog.now()` escapa                                | s/const QUALIFICADOR = String\.raw`.*`;/const QUALIFICADOR = "";/
-PEGA | entre parênteses: `(now())` escapa                                     | s/const PARENTESE = String\.raw`.*`;/const PARENTESE = "";/
-PEGA | aritmética: `now() - interval …` escapa                                | s/\(\?:\\\)\|\[-\+\]\|::\)/(?:\\)|::)/
-PEGA | cast: `now()::date` dentro do date_trunc escapa                        | s/\|\[-\+\]\|::\)/|[-+])/
-PEGA | `current_date` sai do relógio da sessão                                | s/String\.raw`current_date`,//
-PEGA | multilinha: a chamada quebrada depois do `(` escapa                    | s/\\bdate_trunc\\s\*\\\(\\s\*\$\{UNIDADE\}/\\bdate_trunc\\s*\\([^\\S\\n]*\${UNIDADE}/
-PEGA | isenção por LINHA: `AT TIME ZONE` depois de truncar passa             | s/sitios\.push\(\{ arquivo: caminho, linha: i \+ 1/if (!\/at\\s+time\\s+zone\/i.test(linhas[i])) sitios.push({ arquivo: caminho, linha: i + 1/
+# A leitura da chamada.
+PEGA | aspas deixam de ser opacas: a vírgula do literal vira argumento        | s/if \(c === "'" \|\| c === '"'\) \{/if (false) {/
+PEGA | vírgula de QUALQUER nível separa argumento (coalesce vira 3º arg)      | s/c === ',' && profundidade === 1/c === ','/
+PEGA | janela sem a limpeza de SQL: o `--` dentro da chamada vira código      | s/lerArgumentos\(removerComentariosSql\(limpo\.slice\(abre, abre \+ JANELA\)\)\);/lerArgumentos(limpo.slice(abre, abre + JANELA)); void removerComentariosSql;/
+PEGA | chamada que não fecha deixa de ser contada                             | s/ilegiveis\.push\(`\$\{caminho\}/void (`\${caminho}/
+PEGA | analisar deixa de juntar as ilegíveis                                  | s/r\.ilegiveis\.push\(\.\.\.d\.ilegiveis\);/void d.ilegiveis;/
+PEGA | veredito ignora as ilegíveis                                           | s/\.\.\.r\.ilegiveis\.map\(/...[].map(/
 
-# A assinatura — o lado que ela NÃO pode casar.
-PEGA | hora vira calendário: `date_trunc('hour', now())` passa a ser violação | s/'\(\?:day\|/'(?:hour|day|/
-PEGA | `AT TIME ZONE` deixa de fixar o fuso                                   | s/\|\[-\+\]\|::\)/|[-+]|::|\\s+at\\b)/
-PEGA | a forma de 3 argumentos deixa de fixar o fuso                         | s/\|\[-\+\]\|::\)/|[-+]|::|,)/
-PEGA | sem fronteira à esquerda: `meu_date_trunc(…)` vira violação           | s/String\.raw`\\bdate_trunc/String.raw`date_trunc/
+# A unidade e a caixa.
+PEGA | unidade perde o mês: o caso de origem escapa                           | s/\|month\|/|/
+PEGA | unidade ganha a hora: `date_trunc('hour', now())` vira violação        | s/\^'\(\?:day\|/^'(?:hour|day|/
+PEGA | unidade com cast escapa                                                | s/'\(\?:\\s\*::\\s\*\[a-z\]\+\)\?\$\/i;/'\$\/i;/
+PEGA | caixa na chamada: `DATE_TRUNC(` escapa                                 | s/const CHAMADA = \/\\bdate_trunc\\s\*\\\(\/gi;/const CHAMADA = \/\\bdate_trunc\\s*\\(\/g;/
+PEGA | caixa no relógio: `NOW()` escapa                                       | s/(const RELOGIO = .*)\/i;/$1\/;/
+PEGA | sem fronteira à esquerda: `meu_date_trunc(…)` vira violação           | s/const CHAMADA = \/\\bdate_trunc/const CHAMADA = \/date_trunc/
 
-# A camada do stripper. A 2ª é a regex LOCAL que a casa proíbe; a 3ª é o erro de CAMADA — limpar o
-# `--` do SQL sobre o arquivo shell inteiro, que apaga o SQL que vem depois de um `--no-psqlrc`.
+# O relógio LOCAL: nenhum fuso escrito depois o conserta.
+PEGA | relógio LOCAL deixa de reprovar sempre (`current_date AT TIME ZONE`)   | s/if \(RELOGIO_LOCAL\.test\(expressao\) \|\| CAST_LOCAL\.test\(expressao\)\) return/if (CAST_LOCAL.test(expressao)) return/
+PEGA | cast LOCAL deixa de reprovar sempre (`now()::date AT TIME ZONE`)       | s/if \(RELOGIO_LOCAL\.test\(expressao\) \|\| CAST_LOCAL\.test\(expressao\)\) return/if (RELOGIO_LOCAL.test(expressao)) return/
+PEGA | `current_date` sai do relógio LOCAL                                    | s/current_date\|localtimestamp/localtimestamp/
+
+# As isenções: só o fuso escrito na expressão ou o 3º argumento — e só DENTRO da chamada.
+PEGA | fuso escrito deixa de isentar (`AT TIME ZONE` vira violação)           | s/if \(fuso !== undefined \|\| FUSO\.test\(expressao\)\) return null;/if (fuso !== undefined) return null;/
+PEGA | 3º argumento deixa de isentar                                          | s/if \(fuso !== undefined \|\| FUSO\.test\(expressao\)\) return null;/if (FUSO.test(expressao)) return null;/
+PEGA | a forma de função `timezone(…)` deixa de contar como fuso             | s/\|\\btimezone\\s\*\\\(\/i;/\/i;/
+PEGA | isenção por LINHA: `AT TIME ZONE` depois de truncar passa              | s/if \(motivo\) sitios\.push/if (motivo && !\/at\\s+time\\s+zone\/i.test(linhas[i])) sitios.push/
+
+# A camada do stripper do ARQUIVO. A 2ª é a regex LOCAL que a casa proíbe; a 3ª é o erro de CAMADA —
+# limpar o `--` do SQL sobre o arquivo shell inteiro, que apaga o SQL que vem depois de um `--no-psqlrc`.
 PEGA | stripper ignorado: comentário `#` vira código                          | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte; void removerComentariosShell;/
 PEGA | regex LOCAL no lugar do stripper compartilhado                         | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte.replace(\/\x23.*\$\/gm, ""); void removerComentariosShell;/
 PEGA | camada errada: limpeza de `--` (SQL) sobre o shell inteiro            | s/const limpo = removerComentariosShell\(fonte\);/const limpo = removerComentariosShell(fonte).replace(\/--.*\$\/gm, "");/
 
 # O que o fiscal reporta e o denominador que ele mede.
 PEGA | linha reportada deixa de ser a da FONTE                                | s/linha: i \+ 1, trecho/linha: i, trecho/
+PEGA | motivo trocado: o relógio LOCAL sai como "sem fuso"                    | s/return 'rel\S+ LOCAL da sess\S+';/return 'relógio da sessão sem fuso';/
 PEGA | denominador conta linha em branco como código                         | s/const linhasDeCodigo = linhas\.filter\(\(l\) => l\.trim\(\) !== ''\)\.length;/const linhasDeCodigo = linhas.length;/
 
 # Os alarmes do stripper (herdados) e o piso de provas.
 PEGA | analisar deixa de consultar o stripper                                | s/r\.alarmes\.push\(\.\.\.alarmesDoStripper\(a\.caminho, diagnosticarShell\(a\.fonte\)\)\);/void diagnosticarShell; void alarmesDoStripper;/
 PEGA | todo shell de db/ conta como prova no piso                            | s/test-\[\^\/\]\*/.*/
 
-# O veredito: 2 nunca é "passou", violação nunca é 0, e a mensagem aponta os DOIS consertos.
+# O veredito: 2 nunca é "passou", violação nunca é 0, e a mensagem aponta os consertos.
 PEGA | nenhum arquivo lido vira "limpo"                                      | s/if \(r\.caminhos\.length === 0\) furos/if (false) furos/
 PEGA | piso de provas desligado                                              | s/if \(provas < PISOS\.provas\) furos/if (false) furos/
 PEGA | piso de linhas de código desligado                                    | s/if \(r\.linhasDeCodigo < PISOS\.linhasDeCodigo\) \{/if (false) {/
-PEGA | alarme/piso furado deixa de bloquear o veredito                       | s/if \(furos\.length > 0\) \{/if (false) {/
+PEGA | alarme/piso/ilegível deixa de bloquear o veredito                     | s/if \(furos\.length > 0\) \{/if (false) {/
 PEGA | violação sai 0                                                        | s/codigo: 1,/codigo: 0,/
 PEGA | a mensagem perde o conserto por relógio controlado                    | s/\(`test\.agora`\) com data LITERAL no seed/(`X`) com data LITERAL no seed/
 PEGA | a mensagem perde o conserto por fuso na expressão                     | s/date_trunc\('month', now\(\) AT TIME ZONE 'America\/Sao_Paulo'\)`/date_trunc('month', now())`/
+PEGA | a mensagem perde o aviso do relógio LOCAL                             | s/n\S+o tem conserto no lugar/X/
