@@ -240,3 +240,58 @@ manual, e o CI não finge que as roda.
 **Lição 6.** *Uma nota de "fora de escopo" num doc é dívida com data de validade.* A desta página
 sobreviveu um dia e só fechou porque estava **escrita**. Deixar o eixo de fora foi certo (não
 inchar o #1902); não escrevê-lo teria sido a falha.
+
+## A ponta oposta: hook ligado sem suíte que o execute (2026-09-27)
+
+Os dois eixos acima perguntam *"toda suíte que existe RODA?"*. Nenhum perguntava o inverso — *"todo
+hook ligado TEM uma suíte que roda?"* —, e foi nessa ponta que o `check-gstack.sh` viveu 136 dias:
+ligado no `settings.json` como "hook que NEGA", sem negar nada e sem um único teste que o executasse
+([gate-gstack-fail-open.md](gate-gstack-fail-open.md)). Era o único hook fora do `test:hooks`, e nada
+no repo exigia que hook ligado tivesse teste. É a classe desta página com a superfície girada: o
+vigia conhecia a forma *suíte → laço* e não a forma *hook → suíte*.
+
+**Medido ao ligar o eixo (main de 2026-09-27):** 21 hooks ligados, 20 citados como caminho por
+alguma suíte que um dos dois laços executa. O que faltava era o sensor do InstructionsLoaded,
+`instrucoes-carregadas.sh` — o que alimenta o `scripts/instrucoes-relatorio.sh`, a medição do split
+do CLAUDE.md.
+
+**O gate.** O `gates:frescura` ganhou o vermelho `HOOK-SEM-TESTE`:
+
+| leitura | de onde | por quê |
+|---|---|---|
+| o que o `test:hooks` executa | `package.json`, os DOIS laços | fonte POR FORA das suítes; o MESMO parser do eixo 1, que saiu do `.test.ts` para `scripts/lib/lacos-test-hooks.ts` — dois parsers do mesmo laço divergem |
+| a suíte executa o hook | cita `…/<hook>` numa linha limpa por `removerComentariosShell` | comentário não é execução, e o comentário no FIM da linha escapa de qualquer filtro local de `^#` |
+| hook sem arquivo (comando inline) | `settings.json` | não há nome que uma suíte cite: é achado, não isenção |
+
+**Rótulo não é caminho — medido, não suposto.** A 1ª linha não-comentada do
+`test-hooks-sessionstart.sh` que cita o `pos-compact-ptbr.sh` é um `echo "── pos-compact-ptbr.sh ──"`.
+"Linha não-comentada", sozinha, contaria o rótulo como execução. O critério exige o nome como
+componente de CAMINHO (`/pos-compact-ptbr.sh`), que é como as 20 suítes cobertas de fato chamam o
+seu hook (`"$HOOKS/<hook>"`, `…/.claude/hooks/<hook>`).
+
+**Não saber medir é rc=2, nunca veredito.** `test:hooks` que não expande para nenhuma suíte
+(`LACO-ILEGIVEL`) e os quatro alarmes do stripper sobre as suítes lidas (`STRIPPER-ALARME`, pelo
+`alarmesDoStripper` compartilhado). Aqui a SUB-limpeza é a direção que APROVA: comentário que
+sobrevive vira citação. Medido: zero alarmes nas 55 suítes dos laços.
+
+**Falsificação.** Na raiz sintética do `test-gates-frescura.sh`, S16–S23, uma por camada (suíte
+fora do laço sem sufixo e do `-guard` com o arquivo ainda no disco, hook novo sem suíte, citação só
+em comentário, só como rótulo, hook inline, laço ilegível, heredoc aberto até o EOF): vistas VERDES
+contra o gate antigo — 16 falhas nos 2 locales — e vermelhas com a marca própria depois. No conteúdo
+real (cópia do `HEAD`, com o controle 21/21 remontado antes de cada uma): tirar
+`instrucoes-carregadas` do laço, ligar hook novo sem suíte e comentar a única linha de caminho da
+suíte, deixando só o rótulo do `echo` — as três vermelhas, em `LC_ALL=C` e `pt_BR.UTF-8`.
+
+**A suíte que faltava.** `scripts/test-instrucoes-carregadas.sh`: HOME, log e payload sintéticos;
+14 casos, do caminho padrão ao relatório lendo o que o sensor grava (um campo renomeado no sensor
+vira "n/d" lá, sem erro nenhum). O `--falsificar` sabota CÓPIAS do sensor com as regressões que os
+comentários dele mesmo contam — ausente virando zero, o default `"principal"`, `chars` fabricado,
+erro que some calado, log sobrescrito —: 10 sabotagens, cada uma vermelha no caso-alvo, nos 2 locales.
+
+**Limite conhecido.** Citar o caminho num `echo` ou num corpo de heredoc conta como execução. O
+critério aproxima "roda"; quem prova que roda é a suíte, que o `test:hooks` executa. O que o eixo
+mata é o estado do `check-gstack.sh`: hook ligado sem suíte NENHUMA.
+
+**Lição 7.** *Vigia de cobertura tem duas pontas: o que existe precisa rodar, e o que está ligado
+precisa de quem o rode.* Cobrar uma ponta só deixa a outra acumular exatamente o que a primeira
+existe para impedir.

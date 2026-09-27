@@ -41,6 +41,8 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 ⚠️ **Deny fora desse envelope não nega nada — e agora reprova (`DENY-SEM-ENVELOPE`).** O `check-gstack.sh` ficou nesta lista de 2026-05-14 a 2026-09-27 sem negar uma chamada: emitia `{"permissionDecision":"deny"}` no topo do JSON, e o censo o contava por uma regex que casava o token em qualquer lugar do fonte. Medido com sonda no harness: no topo, ou sem o `hookEventName`, a chamada passa. Ele saiu (o gstack virou sensor de SessionStart, `vigia-gstack.sh`) → [gate-gstack-fail-open.md](../historico/gate-gstack-fail-open.md).
 
+⚠️ **Hook ligado sem suíte que o EXECUTE também reprova (`HOOK-SEM-TESTE`).** O `check-gstack.sh` era ainda o único hook fora do `test:hooks`. O `gates:frescura` lê os DOIS laços do `test:hooks` no `package.json` e exige que alguma suíte deles cite o hook como caminho (`…/<hook>`) fora de comentário — rótulo de `echo` não conta; laço ilegível ou stripper perdido é rc=2. Ligou hook novo: crie a suíte `scripts/test-*.sh` e ponha o nome num laço ([detalhe](../historico/vigia-de-cobertura-parcial.md)).
+
 ⚠️ **A segunda lista não é decoração — até 2026-09-07 aqueles dois nomes estavam na PRIMEIRA.** O
 job `mutation-check` está fora de `validate.needs` (job `mutation-check` no `ci.yml`) e abre Issue em vez de barrar,
 desde o #2344; o censo mesmo assim os anunciava como "reprovam o PR". A causa é que `inventarioCI`
