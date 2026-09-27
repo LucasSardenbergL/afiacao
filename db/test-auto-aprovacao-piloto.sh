@@ -1,22 +1,80 @@
 #!/usr/bin/env bash
 # Teste PG17 da auto-aprovação Sayerlack (piloto de veto) — migration 20260610150000.
-# Aplica snapshot + 20260609150000 (alerta, base verbatim) + 20260610150000 e valida 24
-# asserts. 15 originais (aprova elegível c/ e-mail INFORMATIVO; idempotência; fusível OFF;
+# Aplica snapshot + 20260609150000 (alerta, base verbatim) + 20260610150000 e valida 28
+# asserts: os 3 da JANELA DE HORÁRIO (J0-J2, relógio controlado — ver o bloco J) + 15 originais (aprova elegível c/ e-mail INFORMATIVO; idempotência; fusível OFF;
 # fusível religado; delta>max; grupo sem ref; ref stale>90d; item inválido; ajustado_humano;
 # cooldown; suspensão Sentinela; ciclo não-normal; fora-de-janela; zumbi duplo; corrida humano)
 # + 9 dos fixes do Codex challenge xhigh (2026-06-11): P1.1 OBEN-only · P1.2 valor pela soma
 # dos ITENS (mismatch cabeçalho) · P1.3 modo_promocao · P1.4 referência agregada colapsa split
 # · P1.5 delta_max '30'=3000% desliga · P1.6 raio cumulativo (máx 1/grupo) · P2.7 cooldown de
-# PORTAL · P2.8 corte '24:00' desliga · P2.11 NaN/Infinity em item.
+# PORTAL · P2.8 corte '24:00' desliga · P2.11 NaN/Infinity em item + B-cron.
 # Base: db/verify-snapshot-replay.sh. Pré-req: brew install postgresql@17 pgvector.
+#
+# ⏰ Relógio: TUDO aqui roda num relógio CONTROLADO (`test.agora`), nunca no de parede. Antes, o
+# cenário usava corte '23:59' como "o corte está sempre no futuro" — só que a janela da função é
+# aritmética de minutos UTC SEM wrap (por desenho): 23:59 − 45 min = 23:14 ⇒ o B1 reprovava de
+# 23:15 a 23:59 UTC, todo dia (reproduzido em relógio simulado, servidor SP e UTC). E, verde, a prova
+# era CEGA para a janela: nada a exercitava na borda. Diário:
+# docs/historico/provas-janela-de-relogio-fora-do-nucleo.md
+#
+# Modo `--falsificar`: sabota a janela na função (e o próprio relógio) e exige vermelho NO assert
+# certo — `bash db/test-auto-aprovacao-piloto.sh --falsificar > /tmp/f.log 2>&1; echo "exit=$?"`.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5437
+PORT="${PGPORT_TEST:-5437}"   # o laço --falsificar sobe 1 PG por sabotagem, cada um na sua porta
 DATA="$(mktemp -d /tmp/pgtest-autoaprov.XXXXXX)/data"
 export LC_ALL=C LANG=C
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODO --falsificar: prova que os asserts da janela têm DENTE.
+# O controle roda PRIMEIRO, na mesma invocação: uma suíte que já falha sozinha aprovaria todas as
+# sabotagens por vermelhidão constante. E cada sabotagem declara QUAL assert tem de acusá-la: ficar
+# vermelha por OUTRO motivo (sabotagem que não aplicou, erro de sintaxe) não conta como dente.
+# ══════════════════════════════════════════════════════════════════════════════
+if [ "${1:-}" = "--falsificar" ]; then
+  # <sabotagem>:<regex dos asserts que TÊM de acusá-la>
+  SABOTAGENS="janela_em_brt:J2 margem_44min:J2 janela_estrita:J1
+              janela_do_relogio_de_parede:J1|J2 relogio_desligado:J0|J1"
+  LOGDIR="$(mktemp -d /tmp/falsifica-autoaprov.XXXXXX)"
+  porta=$PORT
+
+  echo "══ CONTROLE (migration real, sem sabotagem) — tem de ficar VERDE ══"
+  if PGPORT_TEST=$porta SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
+    echo "  ✅ controle VERDE ($(grep -c 'NOTICE:  OK' "$LOGDIR/controle.log" || true) asserts) — a suíte sabe passar"
+  else
+    echo "  ❌ CONTROLE VERMELHO — abortando ANTES de sabotar (uma suíte que já falha aprovaria tudo)"
+    tail -25 "$LOGDIR/controle.log"; exit 1
+  fi
+
+  falhas=0
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; esperado="${item#*:}"
+    porta=$((porta+1))
+    if PGPORT_TEST=$porta SABOTAGEM="$sab" bash "$0" > "$LOGDIR/$sab.log" 2>&1; then
+      echo "  ❌ $sab — suíte ficou VERDE com a sabotagem ativa: o assert NÃO tem dente"
+      falhas=$((falhas+1))
+    elif grep -Eq "(^|[^A-Z0-9])($esperado) FALHOU" "$LOGDIR/$sab.log"; then
+      echo "  ✅ $sab — vermelha no assert certo: $(grep -Eo "($esperado) FALHOU" "$LOGDIR/$sab.log" | head -1)"
+    else
+      echo "  ❌ $sab — vermelha, mas NÃO em $esperado: quebrou outra coisa (sabotagem que não aplicou conta aqui)"
+      grep -E 'FALHOU|ERROR|SABOTAGEM' "$LOGDIR/$sab.log" | head -3 | sed 's/^/       /'
+      falhas=$((falhas+1))
+    fi
+  done
+
+  total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+  echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
+  if [ "$falhas" -eq 0 ]; then
+    echo "═══ falsificação OK: controle verde + $total sabotagens vermelhas no assert certo ═══"
+    rm -rf "$LOGDIR"; exit 0
+  fi
+  echo "═══ falsificação REPROVOU: $falhas sabotagem(ns) sem dente (logs em $LOGDIR) ═══"
+  exit 1
+fi
+SABOTAGEM="${SABOTAGEM:-}"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 
@@ -68,8 +126,80 @@ echo "→ migrations: 20260609150000 (alerta) + 20260610150000 (auto-aprovação
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260609150000_reposicao_alerta_pedido_minimo.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260610150000_reposicao_auto_aprovacao_piloto.sql" >/dev/null
 
-echo "→ helpers de fixture…"
+# ── SABOTAGEM (só no modo --falsificar) — no BANCO, recriando a função com o trecho trocado; o repo
+# nunca é tocado. O padrão tem de ocorrer exatamente n× no corpo: uma troca que não pegou deixaria a
+# suíte verde (e o laço, que exige vermelho NO assert certo, acusa em vez de aprovar).
+MIG="$REPO_ROOT/supabase/migrations/20260610150000_reposicao_auto_aprovacao_piloto.sql"
+sabotar() {
+  local de="$1" para="$2" n="${3:-1}" tmp
+  tmp="$(mktemp /tmp/sab-autoaprov.XXXXXX)"
+  awk 'index($0,"CREATE OR REPLACE FUNCTION public.reposicao_alerta_pedido_minimo_tick(")==1{f=1} f{print} f && /^\$\$;$/{exit}' "$MIG" > "$tmp"
+  python3 - "$tmp" "$de" "$para" "$n" <<'PYSAB' || { echo "❌ SABOTAGEM NÃO APLICÁVEL ($SABOTAGEM): o padrão não ocorre ${n}× no tick"; exit 9; }
+import sys
+p, de, para, n = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+s = open(p).read()
+if s.count(de) != n:
+    print(f"   padrão ocorre {s.count(de)}x, esperado {n}: {de!r}", file=sys.stderr)
+    sys.exit(1)
+open(p, "w").write(s.replace(de, para))
+PYSAB
+  P -v ON_ERROR_STOP=1 -q -f "$tmp" >/dev/null
+  rm -f "$tmp"
+  echo "→ SABOTAGEM ativa: $SABOTAGEM"
+}
+case "$SABOTAGEM" in
+  "") ;;
+  # a janela contada no fuso de SP: às 23:15Z (20:15 BRT) aprovaria
+  janela_em_brt) sabotar "EXTRACT(HOUR FROM (now() AT TIME ZONE 'UTC'))" "EXTRACT(HOUR FROM (now() AT TIME ZONE 'America/Sao_Paulo'))" ;;
+  # margem de 44 min: às 23:15Z aprovaria
+  margem_44min) sabotar "(v_min_corte - 45)" "(v_min_corte - 44)" ;;
+  # borda aberta: às 23:14:59Z (exatamente 45 min) recusaria
+  janela_estrita) sabotar "v_min_agora <= (v_min_corte - 45)" "v_min_agora < (v_min_corte - 45)" ;;
+  # hora corrida tirada do relógio de parede, que o controlado não intercepta
+  janela_do_relogio_de_parede) sabotar "(now() AT TIME ZONE 'UTC')" "(clock_timestamp() AT TIME ZONE 'UTC')" 2 ;;
+  relogio_desligado) ;;   # não sabota a função: pula o ALTER do search_path abaixo
+  *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
+esac
+
+# ── RELÓGIO CONTROLADO — `public.now()` lê a GUC `test.agora`, e as 2 funções sob teste (corpo REAL da
+# migration, intocado) ganham `pg_catalog` DEPOIS de `public` no search_path: é a única forma de um nome
+# de usuário vencer um embutido (sem pg_catalog explícito ele é buscado PRIMEIRO). A sessão do cenário
+# faz o mesmo, para os fixtures (criado_em, atualizado_em, data_ciclo) andarem no MESMO relógio da função.
+# `CURRENT_DATE`/`clock_timestamp()` escapam dele — por isso os fixtures usam `now()::date`.
 P -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.now() RETURNS timestamptz LANGUAGE sql STABLE AS $f$
+  SELECT COALESCE(nullif(current_setting('test.agora', true), '')::timestamptz, pg_catalog.now())
+$f$;
+SQL
+if [ "$SABOTAGEM" != relogio_desligado ]; then
+  P -v ON_ERROR_STOP=1 -q <<'SQL'
+ALTER FUNCTION public.reposicao_alerta_pedido_minimo_tick() SET search_path = public, pg_catalog, pg_temp;
+ALTER FUNCTION public.reposicao_pedido_auto_aprovavel(bigint, numeric, numeric, numeric) SET search_path = public, pg_catalog, pg_temp;
+SQL
+fi
+# `public` antes de `pg_catalog` não troca só o now(): TODA função de `public` com a MESMA assinatura de
+# um embutido passa a vencê-lo. O snapshot tem uma — `public.set_config(text,text,boolean)`, wrapper que
+# só aceita `fin.%` e levanta exceção no resto. Por isso: o cenário chama `pg_catalog.set_config`
+# qualificado, e as funções sob teste NÃO podem chamar nome sombreado — senão a prova rodaria outra
+# semântica sem avisar. Controle POSITIVO da própria guarda: ela tem de enxergar o nosso now().
+sombra="$(P -At -c "SELECT COALESCE(string_agg(s.proname, ',') FILTER (WHERE s.proname = 'now'), '') || '|' ||
+    COALESCE(string_agg(s.proname, ',') FILTER (WHERE s.proname <> 'now' AND EXISTS (
+      SELECT 1 FROM pg_proc f WHERE f.oid IN ('public.reposicao_alerta_pedido_minimo_tick()'::regprocedure,
+        'public.reposicao_pedido_auto_aprovavel(bigint,numeric,numeric,numeric)'::regprocedure)
+        AND f.prosrc ~ ('\m' || s.proname || '\s*\('))), '')
+  FROM (SELECT DISTINCT p.proname FROM pg_proc p
+         WHERE p.pronamespace = 'public'::regnamespace
+           AND EXISTS (SELECT 1 FROM pg_proc c WHERE c.pronamespace = 'pg_catalog'::regnamespace
+                        AND c.proname = p.proname AND c.proargtypes = p.proargtypes)) s;")"
+case "$sombra" in
+  'now|') ;;
+  now\|*) echo "❌ o relógio controlado mudaria mais que o now(): as funções sob teste chamam [${sombra#*|}], sombreado por public"; exit 1 ;;
+  *) echo "❌ guarda cega: não enxergou nem o public.now() que acabou de ser criado [$sombra]"; exit 1 ;;
+esac
+
+echo "→ helpers de fixture + cenários (relógio controlado)…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+SET search_path = public, pg_catalog;   -- a sessão também lê public.now() (o relógio controlado)
 -- referência de COMPRA do grupo (disparada, dias_atras dias atrás). A função soma valor_total
 -- das compras reais do grupo na data_ciclo mais recente — esta linha é essa referência.
 CREATE FUNCTION pg_temp.mkref(grp text, val numeric, dias_atras int DEFAULT 2, emp text DEFAULT 'OBEN')
@@ -79,7 +209,7 @@ BEGIN
   INSERT INTO public.pedido_compra_sugerido
     (empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, tipo_ciclo,
      criado_em, omie_pedido_compra_numero)
-  VALUES (emp, 'RENNER SAYERLACK S/A', grp, CURRENT_DATE - dias_atras, val, 5, 'disparado', 'normal',
+  VALUES (emp, 'RENNER SAYERLACK S/A', grp, now()::date - dias_atras, val, 5, 'disparado', 'normal',
      now() - (dias_atras || ' days')::interval, '9' || grp)
   RETURNING id INTO pid;
   RETURN pid;
@@ -94,13 +224,58 @@ BEGIN
   iv := COALESCE(item_val, val);
   INSERT INTO public.pedido_compra_sugerido
     (empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, tipo_ciclo)
-  VALUES (emp, 'RENNER SAYERLACK S/A', grp, CURRENT_DATE, val, 2, st, tc)
+  VALUES (emp, 'RENNER SAYERLACK S/A', grp, now()::date, val, 2, st, tc)
   RETURNING id INTO pid;
   INSERT INTO public.pedido_compra_item
     (pedido_id, sku_codigo_omie, sku_descricao, qtde_sugerida, qtde_final, preco_unitario, valor_linha, modo_promocao)
   VALUES (pid, '1', 'SKU ' || grp, 1, 1, iv, iv, CASE WHEN promo THEN 'forward_buying' ELSE NULL END);
   RETURN pid;
 END $$;
+
+-- ══ J — JANELA DE HORÁRIO: o relógio CRUZA a régua de propósito ══
+-- Regra da função: aprova só com >= 45 min até o corte, em minutos UTC e sem wrap. Com corte 23:59
+-- a régua é 23:14 ⇒ 23:14:59Z é o ÚLTIMO segundo dentro e 23:15:00Z o primeiro fora. O MESMO cenário
+-- roda nos dois instantes, e só o relógio muda: se um aprova e o outro não, quem decidiu foi a janela.
+-- O par também separa UTC de BRT: 23:15Z são 20:15 em SP, onde uma janela contada no fuso local
+-- aprovaria. Transação DESFEITA no fim: o bloco não deixa rastro (alerta, log) para os cenários B/C.
+BEGIN;
+DO $$
+DECLARE pid bigint; s text; t timestamptz;
+  t_dentro constant timestamptz := '2026-09-15 23:14:59+00';
+  t_fora   constant timestamptz := '2026-09-15 23:15:00+00';
+BEGIN
+  UPDATE company_config SET value = 'true'  WHERE key = 'reposicao_auto_aprovacao_ativa';
+  UPDATE company_config SET value = '23:59' WHERE key = 'reposicao_auto_aprovacao_corte_utc';
+
+  PERFORM pg_catalog.set_config('test.agora', t_dentro::text, true);
+  PERFORM pg_temp.mkref('GJ1', 8000);
+  pid := pg_temp.mk('GJ1', 8000);
+  PERFORM public.reposicao_alerta_pedido_minimo_tick();
+  SELECT status, aprovado_em INTO s, t FROM pedido_compra_sugerido WHERE id = pid;
+  IF s IS DISTINCT FROM 'aprovado_aguardando_disparo' THEN
+    RAISE EXCEPTION 'J1 FALHOU: às 23:14:59Z (45 min antes do corte 23:59 UTC) não aprovou: status=%', s; END IF;
+  RAISE NOTICE 'OK J1 — 23:14:59Z, último segundo com 45 min até o corte: aprova';
+  -- controle POSITIVO: o tick leu o relógio controlado. Sem ele, um relógio desligado deixaria a
+  -- função no relógio de parede e o par J1/J2 mediria a hora em que o CI roda, não a régua.
+  IF t IS DISTINCT FROM t_dentro THEN
+    RAISE EXCEPTION 'J0 FALHOU: aprovado_em=% — o tick não leu o relógio controlado (esperado %)', t, t_dentro; END IF;
+  RAISE NOTICE 'OK J0 — controle positivo: aprovado_em = o instante do relógio controlado';
+
+  PERFORM pg_catalog.set_config('test.agora', t_fora::text, true);
+  PERFORM pg_temp.mkref('GJ2', 8000);
+  pid := pg_temp.mk('GJ2', 8000);
+  PERFORM public.reposicao_alerta_pedido_minimo_tick();
+  SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN
+    RAISE EXCEPTION 'J2 FALHOU: às 23:15:00Z (44 min antes do corte) aprovou: status=%', s; END IF;
+  RAISE NOTICE 'OK J2 — 23:15:00Z, 1 s depois, mesmo cenário: fica humano';
+END $$;
+ROLLBACK;
+
+-- Cenários B/C (regras de elegibilidade) num instante FIXO dentro da janela: o que eles provam não é
+-- a janela — ela é do bloco J, que a cruza de propósito. Fixo, e não o relógio de parede: é o que
+-- tira a prova da mercê da hora em que o CI roda.
+SET test.agora = '2026-09-15 12:00:00+00';
 
 -- cenários no MESMO bloco psql (pg_temp.* é por-sessão; helpers e DO precisam da mesma conexão)
 DO $$
@@ -201,7 +376,7 @@ BEGIN
 
   -- ── B10: cooldown de falha de DISPARO (status='falha_envio') ──
   INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, tipo_ciclo, aprovado_em, aprovado_por, atualizado_em)
-  VALUES ('OBEN','RENNER SAYERLACK S/A','GX',CURRENT_DATE-1,5000,3,'falha_envio','normal', now()-interval '12 hours','auto:sayerlack-v1', now()-interval '12 hours');
+  VALUES ('OBEN','RENNER SAYERLACK S/A','GX',now()::date-1,5000,3,'falha_envio','normal', now()-interval '12 hours','auto:sayerlack-v1', now()-interval '12 hours');
   PERFORM pg_temp.mkref('G6', 8000);
   pid := pg_temp.mk('G6', 8150);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
@@ -287,11 +462,11 @@ BEGIN
   -- ── C3 (P1.4): referência colapsa SPLIT (pai 8000 → 2 filhos 4000); candidato 5200 ──
   -- contra agregado 8000 = 35% (bloqueia); contra UM filho 4000 seria 30% (passaria).
   INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, tipo_ciclo, criado_em)
-  VALUES ('OBEN','RENNER SAYERLACK S/A','G17',CURRENT_DATE-2,8000,10,'split_em_filhos','normal', now()-interval '2 days')
+  VALUES ('OBEN','RENNER SAYERLACK S/A','G17',now()::date-2,8000,10,'split_em_filhos','normal', now()-interval '2 days')
   RETURNING id INTO pai;
   INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, tipo_ciclo, criado_em, split_parent_id, omie_pedido_compra_numero)
-  VALUES ('OBEN','RENNER SAYERLACK S/A','G17',CURRENT_DATE-2,4000,5,'disparado','normal', now()-interval '2 days', pai, '7001'),
-         ('OBEN','RENNER SAYERLACK S/A','G17',CURRENT_DATE-2,4000,5,'disparado','normal', now()-interval '2 days', pai, '7002');
+  VALUES ('OBEN','RENNER SAYERLACK S/A','G17',now()::date-2,4000,5,'disparado','normal', now()-interval '2 days', pai, '7001'),
+         ('OBEN','RENNER SAYERLACK S/A','G17',now()::date-2,4000,5,'disparado','normal', now()-interval '2 days', pai, '7002');
   pid := pg_temp.mk('G17', 5200);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
@@ -357,7 +532,7 @@ BEGIN
 
   -- ── C9 (P2.7): cooldown enxerga falha de PORTAL (status_envio_portal terminal) ──
   INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, tipo_ciclo, aprovado_em, aprovado_por, status_envio_portal, atualizado_em)
-  VALUES ('OBEN','RENNER SAYERLACK S/A','GY',CURRENT_DATE-1,5000,3,'aprovado_aguardando_disparo','normal', now()-interval '6 hours','auto:sayerlack-v1','erro_nao_retentavel', now()-interval '6 hours');
+  VALUES ('OBEN','RENNER SAYERLACK S/A','GY',now()::date-1,5000,3,'aprovado_aguardando_disparo','normal', now()-interval '6 hours','auto:sayerlack-v1','erro_nao_retentavel', now()-interval '6 hours');
   PERFORM pg_temp.mkref('G23', 8000);
   pid := pg_temp.mk('G23', 8000);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
@@ -370,7 +545,7 @@ BEGIN
   IF d <> 1 THEN RAISE EXCEPTION 'B-cron FALHOU: cron não agendado'; END IF;
   RAISE NOTICE 'OK B-cron — cron agendado';
 
-  RAISE NOTICE '✅ TODOS OS 24 ASSERTS DA AUTO-APROVAÇÃO PASSARAM';
+  RAISE NOTICE '✅ TODOS OS 25 ASSERTS DOS CENÁRIOS B/C PASSARAM (+ J0-J2 da janela acima)';
 END $$;
 SQL
 
