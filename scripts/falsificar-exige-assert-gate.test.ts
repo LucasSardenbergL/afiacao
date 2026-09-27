@@ -339,11 +339,16 @@ describe('o corpo REAL do repo', () => {
   const { arquivos, manifesto } = lerCorpoDoRepo(RAIZ);
   const r = analisar(arquivos, manifesto);
 
-  it('toda linha falsificar=<n> do núcleo tem juiz — e a leitura do manifesto não voltou vazia', () => {
+  it('toda linha falsificar=<n> do núcleo é julgada — pelo idioma limpo ou por juiz — e o manifesto não voltou vazio', () => {
     expect(manifesto).not.toBeNull();
     const nucleo = lerNucleo(manifesto ?? '');
     expect(nucleo.length).toBeGreaterThanOrEqual(PISOS.linhasFalsificarNucleo);
-    for (const { arquivo } of nucleo) expect(JUIZES, arquivo).toHaveProperty([arquivo]);
+    for (const { arquivo } of nucleo) {
+      const fonte = arquivos.find((a) => a.caminho === arquivo)?.fonte;
+      expect(fonte, arquivo).toBeDefined();
+      const d = detectar(arquivo, fonte ?? '');
+      expect(arquivo in JUIZES || (d.listas > 0 && d.violacoes.length === 0), arquivo).toBe(true);
+    }
   });
 
   it('nenhum veredito de falsificação aceita vermelho que não é do assert', () => {

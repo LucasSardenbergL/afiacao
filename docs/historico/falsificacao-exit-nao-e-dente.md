@@ -229,7 +229,10 @@ PR (`git show pr/2606:…`): 1 lista, 14 entradas, 0 violações, e o estado pó
 nenhum — com UMA entrada nua reintroduzida, R1+R3. **Confirmado no merge real:** o #2605 e o #2606
 entraram na main durante este PR, e pós-rebase o gate leu 462 arquivos, 4 listas (38 entradas), 4 laços
 e 7 linhas `falsificar=<n>` do núcleo — todas julgadas (o tint pelo juiz pré-registrado, a positivação
-pelo idioma limpo): 0.
+pelo idioma limpo): 0. E o merge real pegou um defeito que a simulação não pegaria: o teste do corpo
+REAL ainda exigia JUIZ para toda linha do núcleo (o desenho de antes do "idioma OU juiz") e só reprovou
+quando a positivação entrou de verdade — rodar o teste sobre o corpo real depois de cada rebase não é
+redundante com a simulação.
 
 O laço de antes (`0906c17c2`) fica vermelho com 13 R1 + 1 R2; o repo de hoje passa com exatamente o
 denominador medido (457 arquivos, 3 listas, 24 entradas, 3 laços, 5 linhas do núcleo). A 5ª linha
