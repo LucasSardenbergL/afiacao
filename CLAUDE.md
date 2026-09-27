@@ -103,7 +103,7 @@ Pages PascalCase; hooks `useX` camelCase; rotas **e** código em **pt-BR** (`/re
 
 ## gstack (REQUIRED)
 
-Obrigatório para o trabalho assistido. O hook [`check-gstack.sh`](.claude/hooks/check-gstack.sh) **bloqueia o uso de skills** se faltar — com as instruções de instalação no próprio bloqueio. Não contornar. Web browsing → sempre `/browse`.
+Obrigatório no Mac: `/review` `/investigate` `/browse` `/qa` vêm dele. **Sensor, não bloqueio**: [`vigia-gstack.sh`](.claude/hooks/vigia-gstack.sh) avisa no boot se faltar; na nuvem não existe por desenho → substitutos. Web → `/browse` (nuvem: `WebFetch`).
 
 ## Multi-sessão (regra — detalhe em `docs/agent/worktrees.md`)
 
