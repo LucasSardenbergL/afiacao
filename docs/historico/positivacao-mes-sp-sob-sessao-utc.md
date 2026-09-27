@@ -77,11 +77,12 @@ Duas expressões: a ligação e o fallback do pedido passam pela data de SP ante
   os dois wrappers rodam como `authenticated`, com a identidade que cada gate exige.
 
 **Números:** 44 asserts (eram 13). Matriz servidor `TZ=UTC`/SP × `lc_messages` C/pt_BR: 4/4 verdes.
-`--falsificar`: controle verde + **13/13** sabotagens vermelhas no assert certo, com os asserts que
+`--falsificar`: controle verde + **14/14** sabotagens vermelhas no assert certo, com os asserts que
 têm de continuar verdes rodando verdes, nas 4 combinações. As sabotagens: corpo pré-fix, cast da
 ligação na sessão, cast do pedido na sessão, mês em UTC, fim fechado, início aberto, primeira
-compra por `max`, KPI sem precedência, relógio desligado, hora de parede, sem pin, `eligible`
-removido e gate master removido.
+compra por `max`, KPI sem precedência, UUID do vendedor no lugar do cliente em `a_positivar`,
+relógio desligado, hora de parede, sem pin, `eligible` removido e gate master removido. Entrou no
+núcleo do CI (`db/nucleo-ci.txt`: `44 falsificar=14`).
 
 **O laço foi falsificado também.** Num espelho em tmpdir foram plantados 3 defeitos: expectativa
 errada, padrão de sabotagem que não existe e sabotagem que quebra o SQL. O resultado foi exatamente
@@ -116,15 +117,33 @@ modeladas → 312 identidades vivas → **17 com semântica SP**. Prod tem 19: a
 
 **Gate:** `scripts/fuso-da-sessao-gate.ts` (vitest), sobre a ÚLTIMA definição viva de cada função
 (`modelarRepo`, o modelo "a última a recriar vence" do sensor de deriva). Tem baseline das 2 dívidas
-e do falso-positivo, que só encolhe, canário embutido que recria o corpo pré-fix e sentinela do
-stripper (maior bloco descartado ≤ 60, medido em 54 e é comentário de verdade). As 2 dívidas
-foram para chip. Falsificado com 4 sabotagens in-place, cada uma vermelha no teste certo.
+e do falso-positivo, que só encolhe, dois canários embutidos (o corpo pré-fix, e o mesmo corpo nas
+formas `date =` e `CAST`) e sentinela do stripper (maior bloco descartado ≤ 60, medido em 54, e é
+comentário de verdade). As 2 dívidas foram para chip. São 35 testes, falsificados com 6
+sabotagens in-place, cada uma APLICADA e vermelha no teste certo.
 
 - **A heurística de coluna foi MEDIDA, não suposta.** Das 658 colunas timestamptz de `public`, só
   432 terminam em `_at`, e um gate só com `_at` teria ponto cego de um terço. `_em` acrescenta 176
   (as 4 `*_em` que não são timestamptz são 3 nomes `date`, excluídos). Juntas cobrem 608/658
   (92,4%). As 50 restantes (`data_evento`, `ultima_sincronizacao`, `window_start`…) são o limite
   declarado do gate, junto com SQL dinâmico e função que não menciona SP.
+
+## O adversarial (Codex, no diff final)
+
+4 achados, todos P2:
+
+1. **A PRÉ reprova mudança só de formatação** (`ca.eligible=true`, um `/* */`). Ficou aceita como
+   limite fail-closed; a migration já era imutável no branch. O predecessor medido em prod passa, e
+   a query de validação, que usa o mesmo hash, roda logo antes do apply: "DIVERGENTE" para antes da
+   PRE.
+2. **O gate não via `d date = …`, `SELECT … INTO d` nem `CAST(col AS date)`.** Corrigido, com
+   calibração dos dois lados e o 2º canário.
+3. **O gate acusava a conversão CORRETA da borda** (`d::timestamp AT TIME ZONE 'America/Sao_Paulo'`),
+   justamente a troca documentada para quando houver índice. Corrigido; `d::timestamptz` segue
+   acusado, porque ainda casta no fuso da sessão.
+4. **`a_positivar` poderia devolver o UUID do vendedor com os nomes certos.** O card de clientes
+   usa o UUID no link. B6/B13 passaram a conferir o par nome=UUID, e a sabotagem
+   `a_positivar_id_errado` prova o dente.
 
 ## Lições
 
@@ -141,3 +160,11 @@ foram para chip. Falsificado com 4 sabotagens in-place, cada uma vermelha no tes
 4. **Converter o controle de sessão em asserção** (B0) é o que torna a matriz UTC/SP real. Sem ele,
    um `SET TimeZone` que não pegasse faria as duas rodadas concordarem, e o bloco inteiro passaria
    medindo o mesmo mundo duas vezes.
+5. **Sabotagem in-place que ESPERA NA FILA do `heavy` contamina quem segura o slot.** O laço que
+   falsificou o gate aplicava a sabotagem em disco e só DEPOIS pedia o slot. O slot estava com a
+   suíte vitest completa, que leu o gate sabotado e reprovou o teste do `SELECT … INTO` por 10
+   minutos de fila. O resultado da suíte completa virou mistura de dois estados da árvore; isolada,
+   com a árvore limpa, deu 35/35. É irmã de "a árvore mente" (`mutcheck`) com "o `heavy` é uma
+   fila", em `money-path.md`. Conserto de processo: a sabotagem entra DENTRO do comando que o
+   `heavy` embrulha, ou num espelho, nunca antes da espera. E não rode suíte completa enquanto
+   houver sabotagem in-place pendente.
