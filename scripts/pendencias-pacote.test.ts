@@ -16,7 +16,7 @@ import {
 } from './lib/precondicao-banco';
 import { CONSUMIDOR_NUVEM, lerRelatorio, main, separarSaida } from './pendencias-pacote';
 import { type ExecutorGitBytes } from './pendencias-prompt';
-import { ARQ_MAPA, RAIZ_EDGES } from './sonda-fingerprint';
+import { ARQ_MAPA, fingerprintDaEdge, RAIZ_EDGES } from './sonda-fingerprint';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // Por que este arquivo existe
@@ -522,9 +522,19 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
   const SHA = 'feedface1234567890feedface1234567890feed';
   const A = 'edge-a';
   const B = 'edge-b';
-  const FONTE_A = 'a'.repeat(64);
-  const FONTE_B = 'b'.repeat(64);
   const VERSAO_A = 'v2.0-a';
+  const INDEX_A = 'import "./versao.ts";\nexport default {};\n';
+  const VERSAO_TS_A = `export const VERSAO = "${VERSAO_A}";\n`;
+  // A é instrumentada, então o mapa TEM de descrever a fonte dela (#2611: senão o pacote recusa com
+  // exit 5). B não tem `versao.ts` e fica fora do regime — o hash dela no mapa não é conferido.
+  const FONTE_A = fingerprintDaEdge(A, '/fixture', {
+    rotulo: 'fixture',
+    ler: (rel) =>
+      rel === `${RAIZ_EDGES}/${A}/index.ts` ? Buffer.from(INDEX_A)
+        : rel === `${RAIZ_EDGES}/${A}/versao.ts` ? Buffer.from(VERSAO_TS_A)
+          : null,
+  });
+  const FONTE_B = 'b'.repeat(64);
   const MAPA_COM_AS_DUAS =
     'export const FONTE_SHA256: Record<string, string> = {\n' +
     `  "${A}": "${FONTE_A}",\n` +
@@ -547,8 +557,8 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
     const raiz = mkdtempSync(join(tmpdir(), 'pacote-ordem-'));
     const arvore = new Map<string, string>([
       [ARQ_MAPA, MAPA_COM_AS_DUAS],
-      [`${RAIZ_EDGES}/${A}/index.ts`, 'import "./versao.ts";\nexport default {};\n'],
-      [`${RAIZ_EDGES}/${A}/versao.ts`, `export const VERSAO = "${VERSAO_A}";\n`],
+      [`${RAIZ_EDGES}/${A}/index.ts`, INDEX_A],
+      [`${RAIZ_EDGES}/${A}/versao.ts`, VERSAO_TS_A],
       [`${RAIZ_EDGES}/${B}/index.ts`, 'export default {};\n'],
     ]);
     const manifesto = opcoes.manifesto === undefined ? MANIFESTO_B : opcoes.manifesto;

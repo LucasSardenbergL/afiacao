@@ -17,6 +17,7 @@
     "falsificar:ordem-edges": "bash scripts/falsificar-ordem-entre-edges.sh",
     "falsificar:ordem-declaracao": "bash scripts/falsificar-ordem-entre-edges-declaracao.sh",
     "falsificar:prompt-escopo": "bash scripts/falsificar-prompt-escopo.sh",
+    "falsificar:mapa-coerente": "bash scripts/falsificar-mapa-coerente.sh",
     "preview": "vite preview",
     "test": "vitest run",
     "test:sonda-rollback": "deno test --no-remote --allow-read --allow-write --allow-run=deno,git,tar supabase/harness-sonda-rollback/",
