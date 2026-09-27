@@ -68,6 +68,8 @@ export interface DadosNuvem {
   /** Por NOME de consulta: as linhas unidas por `\n`, na forma que o `psql -A -F '|' -t` imprime
    *  (o payload traz o literal de registro; a conversão é `registroParaLinha`). */
   saidas: ReadonlyMap<string, string>;
+  /** As mesmas linhas, uma por registro — preserva "1 linha vazia" ≠ "0 linhas", que `saidas` funde. */
+  linhas: ReadonlyMap<string, readonly string[]>;
 }
 
 function md5(texto: string): string {
@@ -375,8 +377,13 @@ export function lerDadosNuvem(
   }
 
   const saidas = new Map<string, string>();
-  for (const n of nomes) saidas.set(n, (linhasPor.get(n) as string[]).map(registroParaLinha).join('\n'));
-  return { medidoEm, saidas };
+  const linhas = new Map<string, readonly string[]>();
+  for (const n of nomes) {
+    const convertidas = (linhasPor.get(n) as string[]).map(registroParaLinha);
+    linhas.set(n, convertidas);
+    saidas.set(n, convertidas.join('\n'));
+  }
+  return { medidoEm, saidas, linhas };
 }
 
 /**
