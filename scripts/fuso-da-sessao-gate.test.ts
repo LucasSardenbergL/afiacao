@@ -108,7 +108,7 @@ describe('o corpo VIVO do repo (a última definição de cada função)', () => 
   });
 
   it('a positivação vale pelo corpo da correção, e ele está limpo', () => {
-    const versoes = modelarRepo(MIGS).identidades.get(ALVO)?.versoes ?? [];
+    const versoes = v.modelo.identidades.get(ALVO)?.versoes ?? [];
     expect(versoes.at(-1)?.migration).toBe(CORRECAO);
     expect(v.achados.get(ALVO)).toBeUndefined();
   });
@@ -154,10 +154,9 @@ describe('o corpo VIVO do repo (a última definição de cada função)', () => 
   });
 
   it('o stripper não desabou em nenhum corpo medido (sentinela do maior bloco descartado)', () => {
-    const modelo = modelarRepo(MIGS);
     const culpados: string[] = [];
     for (const alvo of v.identidadesComSp) {
-      const corpo = modelo.identidades.get(alvo)?.versoes.at(-1)?.corpo ?? '';
+      const corpo = v.modelo.identidades.get(alvo)?.versoes.at(-1)?.corpo ?? '';
       const bloco = maiorBlocoDescartadoSql(corpo);
       if (bloco > PISOS.blocoDescartado) culpados.push(`${alvo}: bloco ${bloco}`);
     }

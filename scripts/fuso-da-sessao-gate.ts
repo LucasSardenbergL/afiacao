@@ -153,6 +153,8 @@ export const PISOS = {
 } as const;
 
 export interface Varredura {
+  /** O modelo que a varredura construiu — quem precisa dele reaproveita em vez de remodelar 740 arquivos. */
+  modelo: ReturnType<typeof modelarRepo>;
   migrations: number;
   identidadesVivas: number;
   identidadesComSp: string[];
@@ -175,7 +177,7 @@ export function varrerMigrations(migrations: readonly MigrationLida[]): Varredur
     const a = detectarFusoDaSessao(ultima.corpo);
     if (a.length) achados.set(alvo, a);
   }
-  return { migrations: modelo.migrations, identidadesVivas: vivas, identidadesComSp, achados };
+  return { modelo, migrations: modelo.migrations, identidadesVivas: vivas, identidadesComSp, achados };
 }
 
 const chave = (alvo: string, familia: Familia, trecho: string) => `${alvo} · ${familia} · ${trecho}`;
