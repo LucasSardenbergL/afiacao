@@ -22,7 +22,6 @@ SLUG="tint-get-price"           # nomeia tmp/log deste harness
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithreaded during startup")
 
-
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
 trap cleanup EXIT
 

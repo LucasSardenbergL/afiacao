@@ -1541,5 +1541,6 @@ esac
 echo ""
 echo "═══════════════════════════════════════════"
 echo "RESULTADO: $PASS ✅ · $FAIL ❌"
+echo "PASS=$PASS  FAIL=$FAIL"   # recibo lido pelo db/roda-nucleo-ci.sh (o formato acima ele não reconhece)
 [ "$FAIL" -eq 0 ] || exit 1
 echo "test-tint-canonica: OK"

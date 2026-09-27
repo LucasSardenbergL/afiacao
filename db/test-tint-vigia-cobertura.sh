@@ -22,7 +22,6 @@ PORT="${PGPORT_TEST:-5443}"
 DATA="$(mktemp -d /tmp/pgtest-tintvigia.XXXXXX)/data"
 export LC_ALL=C LANG=C
 
-
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
 trap cleanup EXIT
 

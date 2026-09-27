@@ -838,10 +838,18 @@ jobs:
   # ## Custo
   #
   # Job próprio e PARALELO, entrando no `needs:` do `validate` — de propósito fora do
-  # `gates-e-falsificacao`, que é o gargalo atual (mediana 357s). Carrega o RUNTIME bun
+  # `gates-e-falsificacao`, que é o gargalo (mediana 357s em 2026-09-07; 955s em 2026-09-27,
+  # 34 runs de PR, contra p50 205s deste job). Carrega o RUNTIME bun
   # (só o runtime, sem `bun install`) desde que `db/test-canaria-veredito.sh` entrou no
   # núcleo: essa prova gera o SQL pelo próprio gerador em vez de conferir um retrato
   # commitado. Não precisa de deno, então o preâmbulo segue mais barato que o dos outros quatro.
+  #
+  # E o pgvector desde 2026-09-27, quando as provas tint entraram no núcleo: 13 delas carregam
+  # o schema-snapshot inteiro, cujo prelude faz `CREATE EXTENSION vector`. Medido no runner, 2
+  # rodadas: +2–3s de install (na MESMA chamada do apt-get), +1–2s de sonda; as 16 provas no
+  # modo normal somam 48–58s e o `--falsificar` da promoção assíncrona 71–86s. Projeção: ~6 min
+  # de job, com folga no teto de 12 e longe do caminho crítico do `validate`
+  # (docs/historico/provas-tint-no-nucleo.md).
   provas-sql:
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -881,7 +889,7 @@ jobs:
       # e um pin assim viraria vermelho por AMBIENTE — o que ensinaria a tratar este job
       # como flaky, que é como um gate morre. O piso + o registro da versão dão o
       # determinismo que importa sem essa fragilidade.
-      - name: PostgreSQL 17 (PGDG) — instala e confere a versão
+      - name: PostgreSQL 17 (PGDG) + pgvector — instala e confere a versão
         run: |
           set -euo pipefail
           # ── Retry das TRÊS chamadas de rede deste step ────────────────────────────────────────
@@ -967,12 +975,46 @@ jobs:
             sudo rm -f /etc/apt/sources.list.d/*google* /etc/apt/sources.list.d/*chrome* \
                        /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*msprod* || true
             tentar "apt-get update" sudo apt-get update -qq
-            tentar "apt-get install postgresql-17" sudo apt-get install -y -qq postgresql-17
+            # O pgvector vai na MESMA chamada, de propósito: continua sendo uma camada de rede só,
+            # coberta pelo mesmo retry, e o pacote do PG17 só existe no PGDG (o repo do Ubuntu não
+            # o tem). Quem confere que ele CARREGA é o step seguinte — este texto roda no lab do
+            # retry (scripts/lab-retry-pgdg/) com dublês, onde não há servidor para perguntar.
+            tentar "apt-get install postgresql-17 + pgvector" sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector
           fi
           instalada="$(/usr/lib/postgresql/17/bin/initdb --version)"
           echo "  $instalada"
           printf '%s' "$instalada" | grep -qE '\(PostgreSQL\) 17\.' || {
             echo "::error::initdb não é PostgreSQL 17: $instalada"; exit 1; }
+
+      # O pgvector do step acima, conferido POSITIVAMENTE e por fora das provas: o arquivo de
+      # controle existe E o servidor carrega a extensão e responde com uma distância. As provas tint
+      # carregam o schema-snapshot (prelude: `CREATE EXTENSION vector`) e reprovariam sem ele de
+      # qualquer jeito — mas no meio do log de UMA prova, com o motivo enterrado; aqui a ausência
+      # tem nome e a versão vai para o log de todo run. Separado do step acima porque aquele texto
+      # roda no lab do retry com dublês (não há servidor para perguntar). Porta 5808 só em socket:
+      # o locale usa a 5809 e a sonda do runner a 5810.
+      - name: pgvector — o servidor carrega a extensão (provas tint sobre o schema-snapshot)
+        run: |
+          set -euo pipefail
+          bin=/usr/lib/postgresql/17/bin
+          ctl=/usr/share/postgresql/17/extension/vector.control
+          [ -f "$ctl" ] || { echo "::error::pgvector ausente: $ctl não existe"; exit 1; }
+          d="$(mktemp -d)"
+          "$bin/initdb" -D "$d/data" -U postgres -E UTF8 --locale=C > "$d/initdb.log" 2>&1 \
+            || { tail -c 600 "$d/initdb.log"; echo "::error::initdb falhou na sonda do pgvector"; exit 1; }
+          "$bin/pg_ctl" -D "$d/data" -l "$d/pg.log" -w start -o "-p 5808 -k $d -c listen_addresses=''" > /dev/null \
+            || { tail -c 800 "$d/pg.log"; echo "::error::o cluster da sonda do pgvector não subiu"; exit 1; }
+          saida="$("$bin/psql" -X -q -h "$d" -p 5808 -U postgres -d postgres -v ON_ERROR_STOP=1 -tA \
+            -c 'CREATE EXTENSION vector' \
+            -c "SELECT extversion || '|' || ('[1,2,3]'::vector(3) <-> '[1,2,4]'::vector(3)) FROM pg_extension WHERE extname = 'vector'" \
+            2>&1)" && rc=0 || rc=$?
+          "$bin/pg_ctl" -D "$d/data" -m immediate stop > /dev/null
+          # A distância L2 entre os dois vetores é exatamente 1: só um servidor que CARREGOU a
+          # extensão responde isso — o arquivo de controle sozinho não prova o `.so`.
+          case "$rc|$saida" in
+            0\|*\|1) echo "PGVECTOR_OK versao=${saida%%|*} pacote=$(dpkg-query -W -f='${Version}' postgresql-17-pgvector)" ;;
+            *) echo "::error::o servidor não carregou o pgvector (rc=$rc): $saida"; exit 1 ;;
+          esac
 
       # O 2º idioma da falsificação do `db/test-db-aplicar.sh` (3º campo `falsificar=<n>` do
       # manifesto). O executor de SQL em produção (`scripts/db-aplicar.sh`) separa falha-limpa (4)

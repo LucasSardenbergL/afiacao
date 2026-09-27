@@ -104,8 +104,8 @@ SQL
 SEED_OK="$(T -tA -c "SELECT count(*) FILTER (WHERE desativada_motivo = 'fase5_geracao_legada')::text || '/' || count(*)::text FROM tint_formulas")"
 [ "$SEED_OK" = "1/3" ] || { echo "✗ seed: esperado 1 carimbada de 3 fórmulas, veio $SEED_OK"; exit 1; }
 
-FALHAS=0
-ok()  { echo "  ✓ $*"; }
+FALHAS=0; PASSOU=0
+ok()  { echo "  ✓ $*"; PASSOU=$((PASSOU + 1)); }
 bad() { echo "  ✗ $*"; FALHAS=$((FALHAS + 1)); }
 novo_db() { PA -q -d postgres -c "DROP DATABASE IF EXISTS $1" -c "CREATE DATABASE $1 TEMPLATE tpl_tombstone" >/dev/null 2>&1; }
 
@@ -221,6 +221,7 @@ else
 fi
 
 echo ""
+echo "PASS=$PASSOU  FAIL=$FALHAS"   # recibo lido pelo db/roda-nucleo-ci.sh
 if [ "$FALHAS" -eq 0 ]; then
   echo "TOMBSTONE_FASE5_PROVA_OK"
 else

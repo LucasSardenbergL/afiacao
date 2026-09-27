@@ -296,6 +296,9 @@ sabota_e_mede "F4" \
 echo "=== VERIFICACAO FINAL (migration real restaurada) ==="
 roda_suite
 echo "--- final: $PASS ok / $FAIL falhas | falsificacoes invalidas/erradas: $FALSIF_ERR ---"
+# Recibo lido pelo db/roda-nucleo-ci.sh ("falhas" não casa o "fail" que ele procura). Falsificação
+# inválida entra no FAIL de propósito: prova sem dente não pode sair com FAIL=0.
+echo "PASS=$PASS  FAIL=$((FAIL + FALSIF_ERR))"
 if [ "$FAIL" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
   echo "RESULTADO: VERMELHO"
   exit 1
