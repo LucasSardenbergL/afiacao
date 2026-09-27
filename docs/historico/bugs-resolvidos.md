@@ -926,3 +926,26 @@ vai para a PROD (`db/`) é o que a prova testa (a migration) — agora o grupo P
 concorrência) estava em prod sem recibo — o ledger só tinha a 1ª versão (sha `0b414eb8d1`). Aqui não mudou
 nada, porque a PROD batia byte a byte com o repo antes da troca, mas quem ler o ledger como "o que está
 aplicado" erra.
+
+## A run de pedidos que abortava gravava `metadata: {}` — e o denominador tem de cobrir página INTEIRA (2026-09-27)
+
+**Sintoma** (achado P2 do Codex, preexistente). No `sync-reprocess`/`reprocessOrders`, quando TODOS os
+pedidos de uma página com ≥2 pedidos falham na RPC `reconciliar_pedidos_omie`, a run aborta por desenho
+(falha sistêmica). Mas o catch chamava `completeReprocessLog` sem `metadata`, que grava `{}`: a
+`falhas_amostra` da página que abortou — e todo contador já apurado — se perdia justamente na run que mais
+precisava dela. Só a 1ª falha sobrevivia no `error_message`.
+
+**Correção** (v1.12). A apuração virou módulo puro (`sync-reprocess/apuracao-pedidos.ts`), usado pelos dois
+desfechos. Na run abortada, cada fase é gateada pelo seu denominador (`paginas_montadas`,
+`paginas_reconciliadas`): fase não apurada vai `null`, nunca `0`/`[]`; as colunas de contagem vão NULL se
+nenhuma página foi reconciliada. A decisão de abortar e o metadata da run completa não mudaram.
+
+**Lições.** (1) **Denominador só é verdade se o numerador entra pela MESMA unidade.** A 1ª versão contava
+`paginas_montadas` no fim da página e mexia nos contadores no meio dela: um abort no meio da montagem
+publicava uma parcela que o denominador não descreve (achado do challenge Codex). Contador por página +
+consolidação ao fim fecha. (2) **Pin textual de fiação não prova o fluxo**: o Codex mostrou, executando o
+corpo mutado em memória, que `if (!paginaInteiraFalhou(...))` e o incremento antes da RPC passavam 9/9
+verdes. A decisão saiu para `reconciliarPagina` com a RPC injetada, e o teste passou a EXECUTÁ-LA; o pin
+ficou só com a fiação (quem chama quem, e o catch). (3) **Vermelho de typecheck não é dente.** Uma das 14
+sabotagens (`if (false && error)`) ficou vermelha pelo `TS18047`, não pelo assert: o script de falsificação
+passou a exigir ausência de `Type checking failed` além da marca.
