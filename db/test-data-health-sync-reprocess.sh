@@ -34,7 +34,9 @@ export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithr
 # que têm de acusá-la, e a rodada só conta como vermelha se:
 #   1. a sabotagem APLICOU (a linha "SABOTAGEM ATIVA em" está no log);
 #   2. a suíte rodou INTEIRA (PASS+FAIL do recibo = o do controle: aborto no meio não é assert);
-#   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou).
+#   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
+#   4. a rodada não tem ERRO de execução do SQL que o controle não tem — a medição que erra sai
+#      vazia e o assert cai por ERRO, não por julgamento (achado do Codex, 2026-09-27).
 # Qualquer outro vermelho é FALHA da falsificação. Diário: docs/historico/falsificacao-exit-nao-e-dente.md
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
@@ -55,6 +57,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   echo "══ CONTROLE (migration real, sem sabotagem) — tem de ficar VERDE ══"
   if PGPORT_TEST=$porta SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
     asserts_controle="$(executados "$LOGDIR/controle.log")"
+    erros_controle="$(grep -c 'ERROR:  ' "$LOGDIR/controle.log" || true)"
     echo "  ✅ controle VERDE (${asserts_controle:-?} asserts) — a suíte sabe passar"
   else
     echo "  ❌ CONTROLE VERMELHO — abortando ANTES de sabotar. Uma suíte que já falha sozinha"
@@ -76,6 +79,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     fi
     # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
     vermelhos="$(grep -Eo '^  ❌ A[0-9]+ ' "$log" | grep -Eo 'A[0-9]+' | tr '\n' ' ' || true)"
+    erros_sql="$(grep -c 'ERROR:  ' "$log" || true)"
     faltam=""
     for exigido in ${exigidos//,/ }; do
       if ! grep -Eq "^  ✅ ($exigido) " "$LOGDIR/controle.log" || ! grep -Eq "^  ❌ ($exigido) " "$log"; then
@@ -84,11 +88,15 @@ if [ "${1:-}" = "--falsificar" ]; then
     done
     if ! grep -q 'SABOTAGEM ATIVA em ' "$log"; then
       echo "  ❌ $sab — vermelha SEM a sabotagem aplicada (padrão derivou? nome sem ramo?): nenhum assert acusou nada"
-      grep -E 'SABOTAGEM|padrão ocorre|ERROR' "$log" | head -3 | sed 's/^/       /'
+      { grep -m3 -E 'SABOTAGEM|padrão ocorre|ERROR' "$log" || true; } | sed 's/^/       /'
       falhas=$((falhas+1))
     elif [ "$(executados "$log")" != "$asserts_controle" ]; then
       echo "  ❌ $sab — a suíte NÃO rodou inteira ($(executados "$log") de $asserts_controle asserts): vermelho de aborto, não de assert"
       tail -3 "$log" | sed 's/^/       /'
+      falhas=$((falhas+1))
+    elif [ "$erros_sql" != "$erros_controle" ]; then
+      echo "  ❌ $sab — vermelha com ERRO de execução do SQL ($erros_sql linha(s) ERROR, o controle tem $erros_controle): a medição que erra sai vazia e o assert cai por ERRO, não por julgamento"
+      { grep -m2 'ERROR:  ' "$log" || true; } | sed 's/^/       /'
       falhas=$((falhas+1))
     elif [ -n "$faltam" ]; then
       echo "  ❌ $sab — vermelha, mas o assert declarado não virou (verde no controle → vermelho aqui):$faltam"

@@ -62,6 +62,27 @@ const LACO_REFERENCIA = [
   '  done',
 ].join('\n');
 
+/**
+ * O idioma do #2606 (positivação): `nome:VERMELHOS:VERDES`, `ID!MARCA` para o erro de execução
+ * DECLARADO, e três elos entre a declaração e o grep (resto → verm → for x → id/marca).
+ */
+const LACO_2606 = [
+  '  SABOTAGENS="corpo_pre_fix:BU2,BU4:BS2,BS4',
+  '              mes_em_utc:BU1,BS1:BU8,BS8,R0',
+  '              sem_pin:R0!TRIPWIRE"',
+  '  for item in $SABOTAGENS; do',
+  '    sab="${item%%:*}"; resto="${item#*:}"; verm="${resto%%:*}"; verdes=""',
+  '    [ "$resto" != "$verm" ] && verdes="${resto#*:}"',
+  '    for x in ${verm//,/ }; do',
+  '      case "$x" in',
+  '        *!*) id="${x%%!*}"; marca="${x#*!}"',
+  '             grep -Eq "(^|[^A-Z0-9])${id} ERRO_DE_EXECUCAO .*${marca}" "$log" || faltou="$faltou $x" ;;',
+  '        *)   grep -Eq "(^|[^A-Z0-9])${x} FALHOU" "$log" || faltou="$faltou $x" ;;',
+  '      esac',
+  '    done',
+  '  done',
+].join('\n');
+
 describe('controle POSITIVO — se o detector parar de casar, isto fica vermelho', () => {
   it('o laço que abriu a classe: cada entrada nua é R1, e o laço que só lê o exit é R2', () => {
     const v = detectar(ALVO, LACO_ANTES).violacoes;
@@ -111,6 +132,20 @@ describe('controle POSITIVO — se o detector parar de casar, isto fica vermelho
     expect(regras('x.sh', 'SABOTAGENS="a:A1|"\nfor i in $SABOTAGENS; do d="${i#*:}"; grep -q "$d" l; done')).toEqual(['R1']);
   });
 
+  it('a gramática tem DOIS grupos no máximo, e a marca do erro declarado não é vazia', () => {
+    const laco = '\nfor i in $SABOTAGENS; do d="${i#*:}"; grep -q "$d" l; done';
+    expect(regras('x.sh', 'SABOTAGENS="a:A1:B2:C3"' + laco)).toEqual(['R1']);
+    expect(regras('x.sh', 'SABOTAGENS="a:A1!"' + laco)).toEqual(['R1']);
+    expect(regras('x.sh', 'SABOTAGENS="a:!X"' + laco)).toEqual(['R1']);
+  });
+
+  it('grep DEPOIS do laço não julga sabotagem nenhuma — nem depois do `done`, nem depois de um laço de uma linha', () => {
+    const depoisDoDone = ['SABOTAGENS="a:A1"', 'for i in $SABOTAGENS; do', '  d="${i#*:}"', '  bash "$0" || echo vermelha', 'done', 'grep -q "$d" log'];
+    expect(regras('x.sh', depoisDoDone.join('\n'))).toEqual(['R2']);
+    const umaLinha = 'SABOTAGENS="a:A1"\nfor i in $SABOTAGENS; do d="${i#*:}"; bash "$0"; done\ngrep -q "$d" log\n';
+    expect(regras('x.sh', umaLinha)).toEqual(['R2']);
+  });
+
   it('lista vazia não prova nada (R1), e lista que nenhum laço percorre é R2', () => {
     expect(regras('x.sh', 'SABOTAGENS=""\nfor i in $SABOTAGENS; do d="${i#*:}"; grep -q "$d" l; done')).toEqual(['R1']);
     expect(regras('x.sh', 'SABOTAGENS="a:A1 b:B2"\necho "$SABOTAGENS"\n')).toEqual(['R2']);
@@ -131,6 +166,15 @@ describe('o que NÃO é a classe', () => {
     ].join('\n');
     expect(detectar('x.sh', viaApelido).violacoes).toEqual([]);
     expect(detectar(ALVO, real(ALVO))).toMatchObject({ listas: 1, entradas: 13, lacos: 1, violacoes: [] });
+  });
+
+  it('o idioma do #2606 passa: nome:VERMELHOS:VERDES, ID!MARCA e a cadeia de 3 elos até o grep', () => {
+    expect(detectar('x.sh', LACO_2606)).toMatchObject({ listas: 1, entradas: 3, lacos: 1, violacoes: [] });
+  });
+
+  it('grep quebrado em duas linhas com `\\` é UM comando — a declaração na continuação vale', () => {
+    const fonte = ['SABOTAGENS="a:A1"', 'for i in $SABOTAGENS; do', '  d="${i#*:}"', '  grep -Eq \\', '    "^ERRO ($d)" "$log" || falhas=1', 'done'];
+    expect(detectar('x.sh', fonte.join('\n')).violacoes).toEqual([]);
   });
 
   it('array com aspas por item, `local`/`readonly` e `##*:` também são o idioma', () => {
@@ -191,6 +235,21 @@ describe('R3 — cada falsificar=<n> do núcleo tem juiz, e o juiz tem as âncor
     expect(julgarNucleo([], new Map([['db/a.sh', 'x=1\n']]), juizes).map((v) => v.regra)).toEqual(['R3']);
     const d = analisar([{ caminho: 'db/a.sh', fonte: 'x=1\n# confere "$marca"\n' }], 'db/a.sh 1 falsificar=1\n', juizes);
     expect(d.violacoes.map((v) => v.detalhe)).toEqual([expect.stringContaining('âncora do juiz sumiu')]);
+  });
+
+  it('arquivo do núcleo no idioma SABOTAGENS limpo se prova sozinho — sem registro', () => {
+    expect(analisar([{ caminho: 'db/i.sh', fonte: LACO_REFERENCIA }], 'db/i.sh 5 falsificar=3\n', {}).violacoes).toEqual([]);
+  });
+
+  it('idioma COM violação não dispensa o juiz: R1, R2 e R3 juntos', () => {
+    const r = analisar([{ caminho: 'db/i.sh', fonte: LACO_ANTES }], 'db/i.sh 5 falsificar=3\n', {});
+    expect(new Set(r.violacoes.map((v) => v.regra))).toEqual(new Set(['R1', 'R2', 'R3']));
+  });
+
+  it('arquivo do núcleo SEM lista e sem juiz → R3 (não ter lista não é estar limpo)', () => {
+    expect(analisar([{ caminho: 'db/j.sh', fonte: 'x=1\n' }], 'db/j.sh 5 falsificar=3\n', {}).violacoes.map((v) => v.regra)).toEqual([
+      'R3',
+    ]);
   });
 
   it('juiz registrado para arquivo que o fiscal não leu → R3 (renomear não apaga o dever)', () => {

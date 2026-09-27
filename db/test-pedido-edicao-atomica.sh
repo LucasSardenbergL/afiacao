@@ -385,11 +385,15 @@ sabotar() { # $1 rotulo | $2 sed | $3 sqlstate que DEVE deixar de vir | $4 chama
   # ausente). O vermelho só é DESTA sabotagem com a marca do que ela DECLARA vir no lugar: a chamada
   # completa (`ASSERT_NAO_LANCOU`) ou, com defesa em profundidade, a camada seguinte que barra (G3).
   # Até 2026-09-27 todo rc≠0 contava como dente (docs/historico/falsificacao-exit-nao-e-dente.md).
-  # `case` e não `printf | grep -q`: sob pipefail, o SIGPIPE do grep que sai cedo derruba o casamento.
-  case "$rc:$out" in
-    0:*)            bad "$1 — sabotado e a recusa CONTINUOU: o assert media outra coisa" ;;
-    *"$no_lugar"*)  ok "$1 — sabotado, a recusa SUMIU${5:+ e a camada seguinte barrou [$5]} (o assert tinha dente)" ;;
-    *)              bad "$1 — sabotado, mas o vermelho não é o declarado [$no_lugar]: ${out%%$'\n'*}" ;;
+  # A marca vale NA linha do ERROR (a única, sob ON_ERROR_STOP): num NOTICE antes de outro erro ela
+  # não diz quem barrou (Codex). `case` e expansão, não `printf | grep -q`: sob pipefail, o SIGPIPE
+  # do grep que sai cedo derruba o casamento.
+  local erro=""
+  case "$out" in *"ERROR:  "*) erro="${out#*ERROR:  }"; erro="${erro%%$'\n'*}" ;; esac
+  case "$rc:$erro" in
+    0:*)              bad "$1 — sabotado e a recusa CONTINUOU: o assert media outra coisa" ;;
+    *:*"$no_lugar"*)  ok "$1 — sabotado, a recusa SUMIU${5:+ e a camada seguinte barrou [$5]} (o assert tinha dente)" ;;
+    *)                bad "$1 — sabotado, mas o vermelho não é o declarado [$no_lugar]: ${erro:-${out%%$'\n'*}}" ;;
   esac
 }
 

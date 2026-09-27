@@ -214,9 +214,10 @@ sabotar() {   # $1 = regex sed, $2 = rotulo
   montar_estado
   # A postcondicao embutida deve ABORTAR o apply — e o vermelho so e DELA com a marca dela na saida.
   # Ate 2026-09-27 qualquer exit≠0 virava ABORTOU: um sed que quebrasse a sintaxe, ou um erro alheio,
-  # passava por "a postcondicao abortou" (docs/historico/falsificacao-exit-nao-e-dente.md).
+  # passava por "a postcondicao abortou" (docs/historico/falsificacao-exit-nao-e-dente.md). A marca
+  # vale NA linha do ERROR: num NOTICE antes de outro erro ela nao diz quem abortou (Codex).
   if P -q -f "$alvo" >"$alvo.out" 2>&1; then echo "APLICOU"
-  elif grep -q 'POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"
+  elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"
   else echo "ERRO ALHEIO a postcondicao: $(grep -m1 'ERROR' "$alvo.out" | cut -c1-120)"; fi
 }
 

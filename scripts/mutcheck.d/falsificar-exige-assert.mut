@@ -16,13 +16,20 @@
 PEGA | controle+: R1 deixa de julgar a entrada (entrada nua passa)             | s/if \(!ENTRADA\.test\(item\)\) \{/if (false) {/
 
 # R1 — a forma da declaração.
-PEGA | curinga de regex vira declaração válida (`a:.*` casa qualquer vermelho) | s/\*:\[A-Za-z0-9_\]\+\(\?:\[,\|\]\[A-Za-z0-9_\]\+\)\*\$\/;/*:\\S*\$\/;/
+PEGA | curinga de regex vira declaração válida (`a:.*` casa qualquer vermelho) | s/^const ID = '.*';$/const ID = '\\\\S+';/
+PEGA | `ID!MARCA` (erro de execução DECLARADO, #2606) deixa de ser ID           | s/^const ID = '\[A-Za-z0-9_\]\+\(\?:!\[A-Za-z0-9_\]\+\)\?';$/const ID = '[A-Za-z0-9_]+';/
+PEGA | o grupo `:VERDES` (#2606) deixa de ser aceito                          | s/\(\?::\$\{GRUPO\}\)\?\$`\);/\$`);/
 PEGA | lista vazia passa                                                      | s/if \(itens\.length === 0\) \{/if (false) {/
 
 # R2 — o laço consome a declaração.
 PEGA | laço que descarta a declaração não é acusado como tal                  | s/if \(decl === null\) \{/if (false) {/
 PEGA | declaração extraída que nunca chega a um grep passa                    | s/\} else if \(!chega\) \{/} else if (false) {/
-PEGA | o `for` interno sobre a declaração (forma do alvo) deixa de valer      | s/if \(apelido\) nomes\.push/if (false) nomes.push/
+PEGA | o `for` sobre um elo da cadeia (forma do alvo) deixa de valer          | s/for \(const m of depois\.matchAll\(itera\)\) cadeia\.add\(m\[1\]\);/for (const m of depois.matchAll(itera)) void m;/
+PEGA | a variável derivada de um elo (`verm="\x24{resto%%:*}"`) deixa de valer | s/for \(const m of depois\.matchAll\(deriva\)\) cadeia\.add\(m\[1\]\);/for (const m of depois.matchAll(deriva)) void m;/
+PEGA | a cadeia para no 1º elo (sem ponto fixo)                               | s/for \(let visto = 0; visto !== cadeia\.size; \) \{/for (let visto = 0; visto === 0; ) {/
+PEGA | grep DEPOIS do `done` volta a valer (o corpo vira o resto do arquivo)  | s/lacoConsome\(corpoDoLaco\(limpo, inicio\), m\[1\]\)/lacoConsome(limpo.slice(inicio), m[1])/
+PEGA | laço de uma linha perde o fim (grep da linha seguinte volta a valer)   | s/if \(\/\\bdone\\b\/\.test\(linhaDoFor\)\) return linhaDoFor;//
+PEGA | continuação `\x5c` deixa de juntar o comando (falso-positivo)          | s/const comandos = depois\.replace\(\/\\\\\\n\/g, ' '\)\.split/const comandos = depois.split/
 PEGA | `\x24{X\x23\x23*:}` deixa de ser extração                             | s/\x23\x23\?\\\\\*:/\x23\\\\*:/
 PEGA | lista que nenhum laço percorre passa                                   | s/if \(listas > 0 && lacos === 0\) \{/if (false) {/
 PEGA | array `"\x24{SABOTAGENS[@]}"` deixa de ser laço                        | s/\|"\\\$\\\{SABOTAGENS\\\[@\\\]\\\}"\)/)/
@@ -34,7 +41,10 @@ PEGA | stripper ignorado em analisar: âncora num comentário vale como código 
 PEGA | regex LOCAL no lugar do stripper compartilhado                          | s/return detectarLimpo\(caminho, removerComentariosShell\(fonte\)\);/return detectarLimpo(caminho, fonte.replace(\/\x23.*\$\/gm, ''));/
 
 # R3 — o juiz do núcleo.
-PEGA | falsificar=<n> sem juiz passa                                          | s/if \(!\(arquivo in juizes\)\) \{/if (false) {/
+PEGA | falsificar=<n> sem juiz nem idioma passa                               | s/if \(!\(arquivo in juizes\) && !idiomaLimpo\.has\(arquivo\)\) \{/if (false) {/
+PEGA | o idioma limpo deixa de dispensar o juiz (o #2606 travaria)            | s/ && !idiomaLimpo\.has\(arquivo\)\) \{/) {/
+PEGA | idioma COM violação dispensa o juiz                                    | s/if \(d\.listas > 0 && d\.violacoes\.length === 0\) idiomaLimpo/if (d.listas > 0) idiomaLimpo/
+PEGA | arquivo SEM lista conta como idioma limpo                              | s/if \(d\.listas > 0 && d\.violacoes/if (d.violacoes/
 PEGA | âncora sumida passa                                                    | s/if \(!limpo\.includes\(ancora\)\) \{/if (false) {/
 PEGA | juiz de arquivo não lido passa calado                                  | s/v\.push\(\{ regra: 'R3', arquivo, linha: 1, detalhe: 'juiz registrado/void ({ regra: 'R3', arquivo, linha: 1, detalhe: 'juiz registrado/
 PEGA | falsificar=fora-do-ci vira linha julgada                               | s/falsificar=\\d\+\(\?:\\s\|\$\)/falsificar=\\S+(?:\\s|\$)/

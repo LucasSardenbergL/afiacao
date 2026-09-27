@@ -25,13 +25,17 @@
  * ## As regras
  *
  * R1 · toda lista `SABOTAGENS="…"` (ou `=(…)`) declara, em CADA entrada, o(s) assert(s) que TÊM de
- *      acusá-la: `nome:ID`, IDs alfanuméricos unidos por `,` (E) ou `|` (OU). Entrada nua é o defeito;
- *      curinga de regex (`.*`) é o defeito disfarçado — casa qualquer vermelho. Lista vazia não prova nada.
- * R2 · o laço `for X in $SABOTAGENS` extrai a declaração (`${X#*:}`) e ela CHEGA a um `grep` — direto,
- *      ou por um `for` interno sobre ela. Declarar e descartar é a entrada nua com outra cara.
+ *      acusá-la: `nome:VERMELHOS`, com `:VERDES` opcional (os que têm de continuar verdes); IDs
+ *      alfanuméricos unidos por `,` (E) ou `|` (OU), e `ID!MARCA` quando o vermelho DECLARADO é um erro
+ *      de execução com aquela marca (o idioma do #2606). Entrada nua é o defeito; curinga de regex
+ *      (`.*`) é o defeito disfarçado — casa qualquer vermelho. Lista vazia não prova nada.
+ * R2 · o laço `for X in $SABOTAGENS` extrai a declaração (`${X#*:}`) e ela CHEGA a um `grep` — direto
+ *      ou pela cadeia de derivação (`verm="${resto%%:*}"`, `for x in ${verm//,/ }`). Declarar e
+ *      descartar é a entrada nua com outra cara.
  * R3 · cada linha `falsificar=<n>` de `db/nucleo-ci.txt` — o recibo que o CI confia sem saber o que é
- *      sabotagem — tem um JUIZ registrado em `JUIZES`: POR QUE o vermelho é do assert, e as âncoras de
- *      código sem as quais ele volta a aceitar qualquer vermelho. Juiz de arquivo não lido reprova.
+ *      sabotagem — usa o idioma acima LIMPO (R1/R2 sem violação no arquivo) OU tem um JUIZ registrado
+ *      em `JUIZES`: POR QUE o vermelho é do assert, e as âncoras de código sem as quais ele volta a
+ *      aceitar qualquer vermelho. Juiz de arquivo não lido reprova.
  *
  * ## O que o texto NÃO alcança, e por quê
  *
@@ -86,16 +90,22 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
       `if ! grep -q 'SABOTAGEM ATIVA em ' "$log"; then`,
       `elif [ "$(executados "$log")" != "$asserts_controle" ]; then`,
       `! grep -Eq "^  ❌ ($exigido) " "$log"`,
+      `elif [ "$erros_sql" != "$erros_controle" ]; then`,
+      `elif [ -n "$faltam" ]; then`,
     ],
   },
   'db/test-canaria-veredito.sh': {
     motivo:
       'sabota <id> <desc> <marca>: CERTO só com a marca da asserção nos 2 locales; SQL inválido e morte do shell recusados; padrão que não casa invalida',
-    ancoras: [`m="$(julga_log "$log" "$marca")"`, `if tem_marca "$1" "$2"; then printf 'CERTO'`, 'padrao nao casou, SQL intacto'],
+    ancoras: [`m="$(julga_log "$log" "$marca")"`, `if tem_marca "$1" "$2"; then printf 'CERTO'; else printf "vermelho SEM a marca`, 'padrao nao casou, SQL intacto'],
   },
   'db/test-db-aplicar.sh': {
     motivo: 'confere <rc> <rc-esperado> <log> <marca>…: CERTO só com o rc EXATO e TODAS as marcas; o rc sozinho é recusado',
-    ancoras: ['confere sem marca: o rc sozinho aceita qualquer vermelho', `grep -qF -- "$marca" "$log" || faltam=`],
+    ancoras: [
+      'confere sem marca: o rc sozinho aceita qualquer vermelho',
+      `grep -qF -- "$marca" "$log" || faltam=`,
+      `if [ -n "$faltam" ]; then printf 'rc %s certo, SEM a marca`,
+    ],
   },
   'db/test-pedido-total-liquido-acervo.sh': {
     motivo:
@@ -104,6 +114,9 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
       `elif [ "$2" = "$4" ]; then sab_verm`,
       `vermelha_por() { if [ "$2" = "$3" ]; then sab_verm`,
       'a sabotagem não alterou o texto da migration',
+      'else sab_falha "$1 — vermelha, mas NÃO no valor que a sabotagem declara',
+      '"$(estado_c)" "23514:pedido_venda_coerencia"',
+      `elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$TMPD/post.out"`,
     ],
   },
   'db/test-transporte-nuvem.sh': {
@@ -112,6 +125,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     ancoras: [
       `grep -qE '^RESULTADO: [0-9]+ ok / 0 fail$' "$TMP/controle.log"`,
       `if grep -qF -- "$marca" "$log"; then`,
+      `echo "  FALHA $id: vermelho SEM a marca '$marca' (motivo errado)"`,
       'a sabotagem nao aplicou (o texto-alvo mudou?)',
     ],
   },
@@ -120,16 +134,26 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-tint-promocao-assincrona.sh': {
     motivo:
       'fals <nome> <esperado>: vermelho só com o CONJUNTO EXATO de asserts caídos (falhas_de); sabotagem no-op aborta (cmp na migration, RAISE no corpo do promote)',
-    ancoras: [`got="$(suite "$mig" "$sab" | falhas_de)"`, `if [ "$got" = "$esperado" ]; then`, `if cmp -s "$MIG" "$1"; then echo "✗ sabotagem no-op`],
+    ancoras: [
+      `got="$(suite "$mig" "$sab" | falhas_de)"`,
+      `if [ "$got" = "$esperado" ]; then`,
+      'echo "  ✗ $nome: esperado [$esperado], veio [$got]"',
+      `if cmp -s "$MIG" "$1"; then echo "✗ sabotagem no-op`,
+    ],
   },
   'db/test-authz-revoke-anon-rpc.sh': {
     motivo: 'falsificação na suíte normal: ABORTOU só com a marca da postcondição na saída do apply; outro erro vira "ERRO ALHEIO"',
-    ancoras: [`elif grep -q 'POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"`],
+    ancoras: [`elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"`, 'else echo "ERRO ALHEIO a postcondicao:'],
   },
   'db/test-pedido-edicao-atomica.sh': {
     motivo:
       'falsificação na suíte normal: rc≠0 só conta com a marca do que a sabotagem DECLARA vir no lugar da recusa (default: a chamada completa)',
-    ancoras: ['no_lugar="${5:-ASSERT_NAO_LANCOU}"', `*"$no_lugar"*)`],
+    ancoras: [
+      'no_lugar="${5:-ASSERT_NAO_LANCOU}"',
+      'erro="${out#*ERROR:  }"',
+      `*:*"$no_lugar"*)`,
+      'bad "$1 — sabotado, mas o vermelho não é o declarado [$no_lugar]',
+    ],
   },
 };
 
@@ -156,22 +180,53 @@ export interface Analise {
 /** A atribuição da lista: string entre aspas (duplas ou simples) ou array. `SABOTAGENS=0` não é lista. */
 const LISTA =
   /(^|[\s;&|(])(?:(?:local|readonly|export|declare(?:\s+-[A-Za-z]+)*)\s+)?SABOTAGENS=(?:"([^"]*)"|'([^']*)'|\(([^)]*)\))/g;
-/** Uma entrada: `nome:ID`, IDs alfanuméricos unidos por `,` (E) ou `|` (OU). Nada de curinga. */
-const ENTRADA = /^[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z0-9_]+(?:[,|][A-Za-z0-9_]+)*$/;
+/** Um ID de assert (`A7`, `T11b`), com `!MARCA` opcional: o erro de execução DECLARADO (#2606). */
+const ID = '[A-Za-z0-9_]+(?:![A-Za-z0-9_]+)?';
+/** Um grupo: IDs unidos por `,` (E) ou `|` (OU). Nada de curinga. */
+const GRUPO = `${ID}(?:[,|]${ID})*`;
+/** Uma entrada: `nome:VERMELHOS`, com `:VERDES` opcional — o que tem de continuar verde. */
+const ENTRADA = new RegExp(`^[A-Za-z_][A-Za-z0-9_.-]*:${GRUPO}(?::${GRUPO})?$`);
 const LACO = /\bfor\s+([A-Za-z_]\w*)\s+in\s+(?:"?\$\{?SABOTAGENS\}?"?|"\$\{SABOTAGENS\[@\]\}")(?=\s*(?:;|\n|do\b))/g;
 
 const linhaDe = (texto: string, indice: number) => texto.slice(0, indice).split('\n').length;
+
+/**
+ * O corpo do laço: da linha do `for` até o `done` com a MESMA indentação — grep DEPOIS do laço não
+ * julga sabotagem nenhuma (Codex). Laço de uma linha termina nela; recuo irregular cai no fim do
+ * arquivo (lê a mais, nunca a menos: o erro fica do lado de não acusar).
+ */
+function corpoDoLaco(limpo: string, inicio: number): string {
+  const fimDaLinha = limpo.indexOf('\n', inicio);
+  const linhaDoFor = limpo.slice(inicio, fimDaLinha === -1 ? undefined : fimDaLinha);
+  if (/\bdone\b/.test(linhaDoFor)) return linhaDoFor;
+  const recuo = limpo.slice(limpo.lastIndexOf('\n', inicio - 1) + 1, inicio);
+  const fim = /^[ \t]*$/.test(recuo) ? new RegExp(`\\n${recuo}done\\b`).exec(limpo.slice(inicio)) : null;
+  return fim ? limpo.slice(inicio, inicio + fim.index + fim[0].length) : limpo.slice(inicio);
+}
 const ref = (nome: string) => new RegExp(`\\$\\{?${nome}(?![A-Za-z0-9_])`);
 const tiraAspas = (t: string) => t.replace(/^(['"])(.*)\1$/, '$2');
 
-/** R2 para UM laço: a declaração extraída chega a um `grep` (direto ou por um `for` interno)? */
+/**
+ * R2 para UM laço: a declaração extraída chega a um `grep`? Segue a CADEIA até o ponto fixo: toda
+ * variável derivada por expansão de outra da cadeia (`verm="${resto%%:*}"`, `id="${x%%!*}"`) e todo
+ * `for` sobre uma delas (`for x in ${verm//,/ }`). O idioma do #2606 tem três elos até o grep.
+ */
 function lacoConsome(depois: string, v: string): { decl: string | null; chega: boolean } {
   const extracao = new RegExp(`\\b([A-Za-z_]\\w*)="?\\$\\{${v}##?\\*:\\}"?`).exec(depois);
   if (!extracao) return { decl: null, chega: false };
-  const nomes = [extracao[1]];
-  const apelido = new RegExp(`\\bfor\\s+([A-Za-z_]\\w*)\\s+in\\s+[^\\n;]*\\$\\{?${extracao[1]}(?![A-Za-z0-9_])`).exec(depois);
-  if (apelido) nomes.push(apelido[1]);
-  const chega = depois.split('\n').some((l) => /\bgrep\b/.test(l) && nomes.some((n) => ref(n).test(l)));
+  const cadeia = new Set([extracao[1]]);
+  for (let visto = 0; visto !== cadeia.size; ) {
+    visto = cadeia.size;
+    for (const n of [...cadeia]) {
+      const deriva = new RegExp(`\\b([A-Za-z_]\\w*)="?\\$\\{${n}(?![A-Za-z0-9_])`, 'g');
+      const itera = new RegExp(`\\bfor\\s+([A-Za-z_]\\w*)\\s+in\\s+[^\\n;]*\\$\\{?${n}(?![A-Za-z0-9_])`, 'g');
+      for (const m of depois.matchAll(deriva)) cadeia.add(m[1]);
+      for (const m of depois.matchAll(itera)) cadeia.add(m[1]);
+    }
+  }
+  // Continuação `\` junta a linha: `grep -Eq … \` + `"$declarado" "$log"` é UM comando (Codex).
+  const comandos = depois.replace(/\\\n/g, ' ').split('\n');
+  const chega = comandos.some((l) => /\bgrep\b/.test(l) && [...cadeia].some((n) => ref(n).test(l)));
   return { decl: extracao[1], chega };
 }
 
@@ -200,7 +255,7 @@ function detectarLimpo(caminho: string, limpo: string): Deteccao {
           regra: 'R1',
           arquivo: caminho,
           linha,
-          detalhe: `entrada "${item}" não declara o assert que TEM de acusá-la (forma: nome:ID, IDs por , ou |)`,
+          detalhe: `entrada "${item}" não declara o assert que TEM de acusá-la (forma: nome:VERMELHOS[:VERDES], IDs por , ou |, ID!MARCA)`,
         });
       }
     }
@@ -210,7 +265,7 @@ function detectarLimpo(caminho: string, limpo: string): Deteccao {
     lacos++;
     const inicio = m.index ?? 0;
     const linha = linhaDe(limpo, inicio);
-    const { decl, chega } = lacoConsome(limpo.slice(inicio), m[1]);
+    const { decl, chega } = lacoConsome(corpoDoLaco(limpo, inicio), m[1]);
     if (decl === null) {
       violacoes.push({
         regra: 'R2',
@@ -244,20 +299,24 @@ export function lerNucleo(manifesto: string): { arquivo: string; linha: number }
     .map(({ m, linha }) => ({ arquivo: m[1], linha }));
 }
 
-/** R3: cada `falsificar=<n>` tem juiz; cada juiz foi lido e tem TODAS as âncoras no código. */
+/**
+ * R3: cada `falsificar=<n>` usa o idioma LIMPO (se prova sozinho pelo R1/R2) ou tem juiz; cada juiz
+ * registrado foi lido e tem TODAS as âncoras no código.
+ */
 export function julgarNucleo(
   nucleo: { arquivo: string; linha: number }[],
   limpos: ReadonlyMap<string, string>,
   juizes: Readonly<Record<string, Juiz>>,
+  idiomaLimpo: ReadonlySet<string> = new Set(),
 ): Violacao[] {
   const v: Violacao[] = [];
   for (const { arquivo, linha } of nucleo) {
-    if (!(arquivo in juizes)) {
+    if (!(arquivo in juizes) && !idiomaLimpo.has(arquivo)) {
       v.push({
         regra: 'R3',
         arquivo: MANIFESTO_NUCLEO,
         linha,
-        detalhe: `${arquivo} tem falsificar=<n> sem JUIZ registrado: o CI confiaria no recibo sem saber se o vermelho é do assert`,
+        detalhe: `${arquivo} tem falsificar=<n> sem o idioma SABOTAGENS limpo e sem JUIZ registrado: o CI confiaria no recibo sem saber se o vermelho é do assert`,
       });
     }
   }
@@ -283,6 +342,8 @@ export function analisar(
 ): Analise {
   const r: Analise = { caminhos: [], listas: 0, entradas: 0, lacos: 0, linhasNucleo: null, violacoes: [], alarmes: [] };
   const limpos = new Map<string, string>();
+  /** Os arquivos que se provam sozinhos: têm lista SABOTAGENS e nenhuma violação de R1/R2. */
+  const idiomaLimpo = new Set<string>();
   for (const a of arquivos) {
     const limpo = removerComentariosShell(a.fonte);
     const d = detectarLimpo(a.caminho, limpo);
@@ -291,13 +352,14 @@ export function analisar(
     r.entradas += d.entradas;
     r.lacos += d.lacos;
     r.violacoes.push(...d.violacoes);
+    if (d.listas > 0 && d.violacoes.length === 0) idiomaLimpo.add(a.caminho);
     r.alarmes.push(...alarmesDoStripper(a.caminho, diagnosticarShell(a.fonte)));
     limpos.set(a.caminho, limpo);
   }
   if (manifesto !== null) {
     const nucleo = lerNucleo(manifesto);
     r.linhasNucleo = nucleo.length;
-    r.violacoes.push(...julgarNucleo(nucleo, limpos, juizes));
+    r.violacoes.push(...julgarNucleo(nucleo, limpos, juizes, idiomaLimpo));
   }
   return r;
 }
@@ -337,7 +399,7 @@ export function veredito(r: Analise, comPisos: boolean): { codigo: 0 | 1 | 2; li
       ],
     };
   }
-  const censo = comPisos ? `, ${r.linhasNucleo} linha(s) falsificar=<n> do núcleo com juiz` : '';
+  const censo = comPisos ? `, ${r.linhasNucleo} linha(s) falsificar=<n> do núcleo julgada(s) (idioma limpo ou juiz)` : '';
   return {
     codigo: 0,
     linhas: [

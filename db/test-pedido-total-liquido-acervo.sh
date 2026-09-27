@@ -223,6 +223,17 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
   RETURN SQLSTATE;
 END $f$;
+-- O mesmo, com a CONSTRAINT: 23514 sozinho não distingue a coerência do CHECK de valores do registro.
+CREATE OR REPLACE FUNCTION public.t_sqlstate_c(p_sql text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE v_c text;
+BEGIN
+  EXECUTE p_sql;
+  SET CONSTRAINTS ALL IMMEDIATE;
+  RETURN 'OK';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS v_c = CONSTRAINT_NAME;
+  RETURN SQLSTATE || ':' || coalesce(v_c, '');
+END $f$;
 
 CREATE OR REPLACE FUNCTION public.t_violacao(p_sql text) RETURNS text LANGUAGE plpgsql AS $f$
 DECLARE v_c text;
@@ -270,6 +281,7 @@ tot()     { Pq -c "SELECT total FROM public.sales_orders WHERE id = '$1'"; }
 aplicar() { Pq -c "SELECT public.pedido_total_liquido_converter(p_aplicar => true, p_corte => '$CORTE'${1:+, $1})"; }
 ensaiar() { Pq -c "SELECT public.pedido_total_liquido_converter(p_aplicar => false, p_corte => '$CORTE'${1:+, $1})"; }
 estado()  { Pq -c "SELECT public.t_sqlstate(\$q\$SELECT public.pedido_total_liquido_converter(p_aplicar => true, p_corte => '$CORTE'${1:+, $1})\$q\$)"; }
+estado_c() { Pq -c "SELECT public.t_sqlstate_c(\$q\$SELECT public.pedido_total_liquido_converter(p_aplicar => true, p_corte => '$CORTE')\$q\$)"; }
 foto()    { Pq -c "SELECT public.t_foto()"; }
 # Campos de topo do JSON, lidos NO BANCO. Chave ausente sai '<ausente>', nunca some da string.
 campos() {
@@ -576,7 +588,7 @@ sabotar() {  # $1 = rótulo; $2 = migration alvo; $3 = expressão perl (-0: atra
 instalar_sem_post() { perl -0pe 's/DO \$post\$.*?\$post\$;//s' "$TMPM" > "$TMPD/sem-post.sql"; P -q -f "$TMPD/sem-post.sql" >/dev/null; }
 postcondicao_de() {  # aplica o espelho COM a postcondição; ecoa aplicou | postcondicao | outro_erro
   if P -q -f "$TMPM" >"$TMPD/post.out" 2>&1; then echo aplicou
-  elif grep -q 'POSTCONDICAO FALHOU' "$TMPD/post.out"; then echo postcondicao
+  elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$TMPD/post.out"; then echo postcondicao  # a marca NA linha do erro, não num NOTICE
   else echo outro_erro; fi
 }
 restaurar() { P -q -f "$MIG1" >/dev/null; P -q -f "$MIG2" >/dev/null; }
@@ -635,7 +647,7 @@ fi
 
 if sabotar F9 "$MIG2" 's/PERFORM public\.pedido_venda_exigir_coerencia\(v_id\);/NULL;/'; then
   instalar_sem_post; semear
-  vermelha_por "F9 sem a checagem de coerência, o incoerente derruba o lote no COMMIT (23514)" "$(estado)" "23514"
+  vermelha_por "F9 sem a checagem de coerência, o incoerente derruba o lote no COMMIT (23514)" "$(estado_c)" "23514:pedido_venda_coerencia"
   restaurar; semear; controle "F9 controle" "$(estado)" "OK"
 fi
 
