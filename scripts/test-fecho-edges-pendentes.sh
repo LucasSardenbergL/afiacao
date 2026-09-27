@@ -889,8 +889,22 @@ if [ "${1:-}" = "--falsificar" ]; then
   mkdir -p "$espelho/.claude/skills/fecho/scripts"
   ln -s "$RAIZ/scripts" "$espelho/scripts"
   DIR_COPIA="$espelho/.claude/skills/fecho/scripts"
-  sabota() { # <descricao> <expressao-sed>
-    local desc="$1" expr="$2" copia="$DIR_COPIA/sabotado.sh" erro
+  # O VEREDITO PELO ASSERT (2026-09-27). "A suite ficou vermelha" aceita vermelho de QUALQUER causa
+  # — o defeito medido no #2619 (docs/historico/falsificacao-exit-nao-e-dente.md). A sabotagem que
+  # declara IDs no 3o argumento (`,` = E) so conta como detectada se (1) a copia sabotada for bash
+  # VALIDO: erro de sintaxe derruba o alvo antes do ramo, e o assert acusaria pelo motivo errado
+  # (no bash 3.2, com `trap ... EXIT`, sai ate 0 — evidencia-positiva-shell.md §22); e (2) CADA ID
+  # declarado, nos 2 locales, estiver VERDE no controle desta mesma invocacao e com a linha
+  # `FALHA <ID> ` na rodada sabotada. So o proprio assert imprime essa linha — aborto no meio da
+  # suite nao a fabrica —, por isso a contagem de asserts do #2619 seria redundante aqui.
+  # As sabotagens SEM IDs seguem no veredito antigo (`fail≠0`); converte-las e a tarefa
+  # "Erradicar falsificacao sem assert no test:falsificacao".
+  VERDE_OK="$(printf '\033[32mok\033[0m')"
+  VERM_FALHA="$(printf '\033[31mFALHA\033[0m')"
+  acusou()   { command grep -qF -- "$VERM_FALHA $2 " "$1"; }                       # <saida> <ID>
+  absolveu() { command grep -qF -- "$VERDE_OK   $2 " "$1" && ! acusou "$1" "$2"; }  # <saida> <ID>
+  sabota() { # <descricao> <expressao-sed> [<IDs que TEM de acusar, `,` = E>]
+    local desc="$1" expr="$2" ids="${3:-}" copia="$DIR_COPIA/sabotado.sh" erro
     erro="$(sed "$expr" "$ALVO_REAL" 2>&1 >"$copia")"
     if [ -n "$erro" ]; then
       printf '  \033[31mFALHA\033[0m "%s": sed invalido (%s) — falsificacao vazia\n' "$desc" "${erro:0:50}"; falhou=1; return
@@ -899,15 +913,30 @@ if [ "${1:-}" = "--falsificar" ]; then
       printf '  \033[31mFALHA\033[0m "%s": padrao nao casou, alvo intacto — falsificacao vazia\n' "$desc"; falhou=1; return
     fi
     chmod +x "$copia"
+    local _ids=() id faltou=""
+    [ -n "$ids" ] && IFS=',' read -r -a _ids <<< "$ids"
+    if [ -n "$ids" ] && ! bash -n "$copia" 2>/dev/null; then
+      printf '  \033[31mFALHA\033[0m "%s": a copia sabotada nao e bash valido — vermelho de SINTAXE nao e assert\n' "$desc"; falhou=1; return
+    fi
     local viu_vermelho=0 loc
     for loc in C "$utf8"; do
       # subshell de proposito: a sabotagem e o locale morrem com ela, e o ALVO global fica intacto
       # shellcheck disable=SC2030,SC2031
-      if ! ( export LC_ALL="$loc"; ALVO="$copia"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
+      if ! ( export LC_ALL="$loc"; ALVO="$copia"; fail=0; suite >"$tmp/sabotado-$loc.out" 2>&1; [ "$fail" -eq 0 ] ); then
         viu_vermelho=$((viu_vermelho + 1))
       fi
+      for id in ${_ids[@]+"${_ids[@]}"}; do
+        absolveu "$tmp/controle-$loc.out" "$id" || faltou="$faltou [$loc] $id nao esta VERDE no controle;"
+        acusou "$tmp/sabotado-$loc.out" "$id"   || faltou="$faltou [$loc] $id NAO acusou;"
+      done
     done
-    if [ "$viu_vermelho" -eq 2 ]; then
+    if [ -n "$ids" ]; then
+      if [ -z "$faltou" ]; then
+        printf '  \033[32mok\033[0m   "%s" -> %s vermelho(s) nos 2 locales\n' "$desc" "$ids"
+      else
+        printf '  \033[31mFALHA\033[0m "%s": o vermelho nao e do assert declarado —%s\n' "$desc" "$faltou"; falhou=1
+      fi
+    elif [ "$viu_vermelho" -eq 2 ]; then
       printf '  \033[32mok\033[0m   "%s" -> suite vermelha nos 2 locales\n' "$desc"
     else
       printf '  \033[31mFALHA\033[0m "%s": suite ficou VERDE (%d/2 vermelhos) — assercao frouxa\n' "$desc" "$viu_vermelho"; falhou=1
@@ -931,8 +960,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   controle="$DIR_COPIA/controle.sh"
   cp "$ALVO_REAL" "$controle"; chmod +x "$controle"
   for loc in C "$utf8"; do
+    # a saida fica: e nela que a sabotagem com IDs confere que o assert declarado estava VERDE
     # shellcheck disable=SC2030,SC2031
-    if ( export LC_ALL="$loc"; ALVO="$controle"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
+    if ( export LC_ALL="$loc"; ALVO="$controle"; fail=0; suite >"$tmp/controle-$loc.out" 2>&1; [ "$fail" -eq 0 ] ); then
       printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE\n' "$loc"
     else
       printf '  \033[31mFALHA\033[0m [%s] controle SEM sabotagem ja esta VERMELHO — sem linha de base, falsificar nao prova nada\n' "$loc"
@@ -1156,6 +1186,19 @@ if [ "${1:-}" = "--falsificar" ]; then
     '/\*gmt\*/s/.*/          *) ;;/'
   sabota "fuso: sufixo nao casando NADA (guard apertado, recusa UTC legitimo)" \
     '/\*gmt\*/s/.*/          __nunca_casa__) ;;/'
+  # guard de HORA (2026-09-27): a mesma simetria, mais os dois modos de errar que so ele tem. Cada
+  # uma declara o assert que TEM de acusa-la (3o argumento) — "a suite ficou vermelha" nao basta.
+  sabota "hora: detector aceitando QUALQUER coisa (guard frouxo, volta o bug)" \
+    '/# tem hora$/s/.*/          *) ;;/' 'H1,H3'
+  sabota "hora: detector nao casando NADA (guard apertado, recusa data COM hora)" \
+    '/# tem hora$/s/.*/          __nunca_casa__) ;;/' 'H4'
+  # o detector ingenuo: `:` solto casa o offset `-03:00`, que o git le como HORA LOCAL (06:00Z)
+  sabota "hora: detector ingenuo lendo o offset +-hh:mm como hora" \
+    '/# tem hora$/s/.*/          *[0-9]:[0-9][0-9]*) ;;/' 'H2'
+  # o remedio volta a ser "<data> UTC" — a forma que o git le como a hora de agora
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "hora: remedio sugerindo '<data> UTC' (o guard volta a ensinar o bug)" \
+    's/\$dia 00:00 UTC/$dia UTC/' 'H3'
   # e a janela impressa: sem ela o ramo que suprime TUDO volta a decidir em silencio.
   sabota "janela efetiva deixando de ser impressa" \
     '/echo "janela:/d'
