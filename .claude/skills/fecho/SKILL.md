@@ -53,6 +53,8 @@ errada quando existe comando que responde aqui:
   terminava num chip "Conferir prod" que só o Mac dele rodava. Com o **conector Lovable** na sessão
   (`query_database`/`send_message`), meça e resolva AQUI pelo transporte `--sql-nuvem` /
   `--dados-nuvem` ([deploy.md](../../../docs/agent/deploy.md) §"Conferência de prod pela NUVEM").
+  A divisão: a LEITURA é daqui, o deploy de edge também (pela sessão, com o `list_messages` antes e
+  o `git log --author=gpt-engineer-app` depois), e a ESCRITA no banco continua do founder.
   Sem o conector, o destino é UMA linha pedindo para conectá-lo — chip para sessão LOCAL, nunca.
 - **Consulta que NÃO RESPONDEU não é pendência, é tentativa a repetir.** Exit 2, "inconsultável",
   "não consegui consultar" = mecânica, e `ausente ≠ zero` vale no tempo. RODE DE NOVO antes de
@@ -148,11 +150,11 @@ Pra cada migration da sessão, **prove no banco** (leitura direta — não pergu
 - Não existe → ❌ **PENDENTE: colar no SQL Editor do Lovable** — reentregue o bloco de handoff
   (skill `lovable-db-operator`) na mensagem de fecho.
 
-**Na nuvem** (sem `psql-ro`), a MESMA query vai pelo `query_database` do conector Lovable, com a
-trava na frente e o atestado no resultado — e só vale com `somente_leitura = on`:
+**Na nuvem** (sem `psql-ro`), a MESMA query vai pelo `query_database` do conector Lovable, numa
+string só, com a trava e o teto na frente e o atestado no resultado. Só vale com `somente_leitura = on`:
 
 ```sql
-SET TRANSACTION READ ONLY; SELECT current_setting('transaction_read_only') AS somente_leitura, <query de validação>;
+SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '30s'; SELECT current_setting('transaction_read_only') AS somente_leitura, <query de validação>;
 ```
 
 O canal entra como `postgres`, sem modo leitura: a trava é do SQL, e quem a atesta é o banco, na

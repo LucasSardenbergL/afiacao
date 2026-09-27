@@ -161,6 +161,17 @@ o runtime passou a servir, e essa última ponte segue sendo o `fonte` DECLARADO 
 confira o `git diff --stat` dele (no caso medido: só `src/integrations/supabase/types.ts`, +10
 linhas), porque é por esse mesmo caminho que o sync já reverteu fix mergeado.
 
+**Antes e depois do `send_message` (2026-09-27, #2595).** ANTES: `list_messages` do projeto e os PRs
+abertos — outra sessão pode ter pedido a mesma edge minutos antes, e o ledger só enxerga depois da
+sonda (o `sync-reprocess` saiu duas vezes em 15 min). DEPOIS: `git fetch origin main && git log
+origin/main --author=gpt-engineer-app` — terminado o deploy, o agente leu o log de build do
+workspace e "corrigiu" erros de tipo por conta própria, e o workspace virou commits `Changes` na
+`main` sem PR nem CI (#2579, #2595; um deles fabricava `Number(null) → 0` em money-path). O
+fingerprint da edge muda e a `main` fica vermelha no `sonda:fingerprint`. O prompt do pacote agora
+fecha proibindo edição depois do deploy (`FECHO_SEM_EDICAO`, `scripts/lib/prompt-deploy.ts`), mas
+é pedido, não trava: o `git log` segue obrigatório. Achou commit do bot → reverta por PR, com a
+`VERSAO` bumpada (reversão pura reprova no `sonda:bump`).
+
 #### Ordem ENTRE edges: o pacote sai em ONDAS (#2469, 2026-09-14)
 
 O gate acima é banco → edge. Entre duas edges, a ordem **só existe se estiver no artefato**
@@ -211,17 +222,30 @@ A sessão da nuvem não tem `psql-ro` (a credencial é local e não sai do Mac �
 `/fecho` na nuvem terminava num chip "Conferir prod" que só uma sessão LOCAL rodava, e o Mac do
 founder virava o gargalo. O braço que a nuvem PODE ter é o mesmo da sessão local: o MCP oficial do
 Lovable (`https://mcp.lovable.dev`, OAuth), ligado como **conector do claude.ai**
-(claude.ai/customize/connectors). A sessão lê os conectores ao NASCER: só a próxima o vê. Nenhum
-segredo entra em repo, runner ou ambiente.
+(claude.ai/customize/connectors). Medido em 2026-09-27: o conector entrou na sessão EM CURSO,
+logo depois do OAuth, e também caiu no meio dela. Sumiram as ferramentas? Peça a reconexão em UMA
+linha. Nenhum segredo entra em repo, runner ou ambiente.
 
 **Leitura por um canal de escrita: a trava é do SQL, e quem a atesta é o banco.** `query_database`
-não tem modo leitura. O transporte (`scripts/lib/transporte-nuvem.ts`) emite UM texto —
-`SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '30s'; WITH … SELECT json` —, e o lote é
-UMA transação implícita (piloto, Camada 3), então a trava cobre tudo. A resposta traz, medidos pelo
-PRÓPRIO banco e amarrados num md5: `somente_leitura`, `teto`, o `sql_md5` do texto executado
-(`current_query()`) e o `medido_em`. O `--dados-nuvem` recusa (exit 2, marca `TRANSPORTE_*`) se
-qualquer um não bater, e entrega ao juízo as MESMAS linhas do `psql -A -F '|' -t` (o `record_out` de
-cada tipo). Prova PG no núcleo do CI: `db/test-transporte-nuvem.sh` (byte a byte + 7 sabotagens).
+não tem modo leitura. O transporte (`scripts/lib/transporte-nuvem.ts`) emite UM texto: a 1ª linha é
+`SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '30s';`, depois vem um `WITH … SELECT json`.
+O lote é UMA transação implícita (piloto, Camada 3), então a trava cobre o SELECT. A resposta traz,
+medidos pelo PRÓPRIO banco e amarrados num md5: `somente_leitura`, `teto`, `medido_em`, as `marcas`
+(quantas vezes o SQL do transporte aparece no lote: tem de ser `1/1`) e o `sql_md5` do texto
+executado (`current_query()`), do 1º caractere até a marca final. O MCP acrescenta um rastro de
+~105 caracteres DEPOIS do SQL (medido), e esse rastro fica fora do hash. O `--dados-nuvem` recusa
+(exit 2, marca `TRANSPORTE_*`) se qualquer um não bater, e entrega ao juízo as MESMAS linhas do
+`psql -A -F '|' -t` (o `record_out` de cada tipo). Prova PG no núcleo do CI:
+`db/test-transporte-nuvem.sh` (byte a byte, 18 asserts, 10 sabotagens).
+
+**O que isso prova, e o que NÃO prova.** O md5 pega erro de TRANSCRIÇÃO (linha trocada, resposta
+truncada), não forja: quem monta um payload à mão também sabe calcular md5. O hash e as marcas
+DETECTAM escrita fora do texto emitido, mas não a impedem. Um statement enfiado ANTES da trava roda
+e PERSISTE (passar a READ ONLY depois de escrever é permitido), e a leitura sai recusada (medido, T11).
+Qual banco respondeu também não está no payload: a amarra é o `project_id` da chamada. Daí a regra:
+**nunca monte, reconstrua nem calcule o payload**. Erro ou truncagem do `query_database` é mecânica.
+Resposta grande que o harness gravou em arquivo vai direto para o `--dados-nuvem`, que aceita os
+blocos do resultado de ferramenta. Não transcreva.
 
 **O procedimento.** O modelo TRANSPORTA, nunca redige: copie o SQL VERBATIM e grave a resposta sem editar.
 
@@ -241,10 +265,10 @@ bun run pendencias:pacote - --dados-nuvem="$RESP" < "$PEND"  # a MESMA entrada n
 | marca (exit 2) | o que aconteceu | remédio |
 |---|---|---|
 | `TRANSPORTE_MD5` | a resposta mudou na transcrição (linha trocada ou truncada) | grave de novo sem editar, ou rode o SQL de novo |
-| `TRANSPORTE_SQL_DIVERGENTE` | o banco executou outro texto: cópia não verbatim, ou a entrada mudou (a main andou) | rode o `--sql-nuvem` de novo e cole sem tocar |
+| `TRANSPORTE_SQL_DIVERGENTE` | o banco executou outro texto: cópia não verbatim, statement antes da trava, o SQL em dobro no lote (marcas ≠ 1/1), ou a entrada mudou (a main andou) | rode o `--sql-nuvem` de novo e cole sem tocar. Houve statement a mais? Confira se ele ESCREVEU |
 | `TRANSPORTE_SOMENTE_LEITURA` | `transaction_read_only = off`: a trava não pegou (statements enviados separados?) | **não** contorne — leitura sem trava é recusada por desenho |
 | `TRANSPORTE_VELHO` / `_FUTURO` | resposta de outra rodada (> 30 min) ou relógio incoerente | rode o SQL de novo |
-| `TRANSPORTE_FORMATO` / `_CONSULTAS` | arquivo de outro CLI ou formato, consulta faltando | confira o arquivo gravado |
+| `TRANSPORTE_FORMATO` / `_CONSULTAS` | arquivo de outro CLI ou formato (`transporte-nuvem/1` é recusado), consulta faltando, `medido_em` ilegível | confira o arquivo gravado |
 
 Se o próprio `query_database` devolver ERRO, não há resposta a gravar: é mecânica, nunca "nada
 pendente". `relation … does not exist` nomeia o objeto cuja migration não está em prod (o ledger, a
@@ -254,9 +278,11 @@ sonda por cron); a leitura inteira falha junto, onde o `psql-ro` degradaria só 
 consultas destes CLIs leem ledger, catálogo e respostas de sonda — nunca dado de cliente. Não use o
 transporte (nem o `query_database` cru) para ler tabela de negócio.
 
-**Migrations** (Passo 2 do `/fecho`) não têm CLI: a query de validação vai direto, com a trava na
-frente e o atestado no resultado — `SET TRANSACTION READ ONLY; SELECT
-current_setting('transaction_read_only'), …` —, e só vale com `on`.
+**Migrations** (Passo 2 do `/fecho`) não têm CLI: a query de validação vai direto, numa string só,
+com a trava na frente e o atestado no resultado: `SET TRANSACTION READ ONLY; SET LOCAL
+statement_timeout = '30s'; SELECT current_setting('transaction_read_only') AS somente_leitura, …`.
+Só vale com `on`. Sem o transporte não há md5 nem `sql_md5`, então a query sai do doc/PR que a
+define, sem redigir, e o veredito é só catálogo (`to_regprocedure`, `pg_get_functiondef`).
 
 **O que isto NÃO muda.** Só a LEITURA ganhou transporte. Escrita — o PASSO 1 da sonda
 (`net.http_post`), migration — segue a regra de sempre: o envelope da `lovable-db-operator` exige o
