@@ -538,6 +538,56 @@ MAPA2
   then ok "--desde: data RELATIVA nao e ambigua -> passa pelo guard"
   else bad "data relativa nao devia ser recusada (rc=$rc): ${out:0:140}"; fi
 
+  # 14c'. GUARD DE HORA: data absoluta SEM HORA tem de RECUSAR, com ou sem fuso (2026-09-27). O
+  #       `approxidate` do git completa a hora que falta com a hora ATUAL do relogio, nao com a
+  #       meia-noite, e o fuso nao salva: `"2026-09-27 UTC"` virou 2026-09-27 23:09:39Z. Medido
+  #       executando este script num fixture com um merge de edge as 00:00:30Z: base = o proprio
+  #       merge, `nenhuma edge na janela`, exit 0. O guard de fuso deixava a forma passar (tem
+  #       `UTC`), e o remedio que ele imprimia para a data NUA era `"<data> UTC"` — a propria forma
+  #       do bug. Os IDs `H<n>` abrem a mensagem porque o --falsificar exige o vermelho DESTE assert,
+  #       nao "a suite ficou vermelha" (docs/historico/falsificacao-exit-nao-e-dente.md).
+  # H1: data COM fuso e SEM hora — a forma que passava pelo guard de fuso.
+  for _d in "2026-09-27 UTC" "2026-09-27 +0000" "2026-09-27Z" "2026/09/27 GMT"; do
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && ! tem 'DESDE_SEM_FUSO' "$out" \
+       && ! tem 'nenhuma edge' "$out"
+    then ok "H1 --desde: data com fuso e SEM hora ($_d) -> DESDE_SEM_HORA, exit 3"
+    else bad "H1 data com fuso e sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
+  done
+
+  # H2: `±hh:mm` sem hora antes NAO e fuso para o git: `"2026-09-27 -03:00"` virou 06:00Z (leu
+  #     `03:00` como HORA LOCAL) e `"2026-09-27 +00:00"`, 03:00Z. Um detector de hora ingenuo
+  #     (`[0-9]:[0-9][0-9]` solto) casa o proprio offset e deixa a forma passar pelos dois guards.
+  for _d in "2026-09-27 -03:00" "2026-09-27 +00:00"; do
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && ! tem 'nenhuma edge' "$out"
+    then ok "H2 --desde: offset sem hora ($_d) nao conta como hora -> DESDE_SEM_HORA"
+    else bad "H2 offset sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
+  done
+
+  # H3: data NUA (sem hora e sem fuso): a HORA se diagnostica primeiro, e o remedio impresso e
+  #     `"<data> 00:00 UTC"` — nunca `"<data> UTC"`, que o git le como a hora de agora.
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+         bash "$ALVO" --desde "2026-09-27" 2>&1)"; rc=$?
+  if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && tem '"2026-09-27 00:00 UTC"' "$out" \
+     && ! tem '"2026-09-27 UTC"' "$out"
+  then ok "H3 --desde: data nua -> DESDE_SEM_HORA, remedio '<data> 00:00 UTC' (nunca '<data> UTC')"
+  else bad "H3 data nua devia recusar pela HORA e sugerir '<data> 00:00 UTC' (rc=$rc): ${out:0:160}"; fi
+
+  # H4: o PAR MINIMO — a MESMA data COM hora passa pelos DOIS guards. Sem este lado, um guard que
+  #     recusasse toda data passaria no H1-H3 alegando que guarda. Hora de 1 digito, `T`/`t` do ISO
+  #     e offset colado na hora sao formas que o detector de hora tem de reconhecer.
+  for _d in "2026-09-27 00:00 UTC" "2026-09-27T00:00:00Z" "2026-09-27 9:05 UTC" \
+            "2026-09-27t14:00z" "2026-09-27 14:00-03:00"; do
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -ne 3 ] && ! tem 'DESDE_SEM_HORA' "$out" && ! tem 'DESDE_SEM_FUSO' "$out"
+    then ok "H4 --desde: data COM hora e fuso ($_d) passa pelos dois guards"
+    else bad "H4 data com hora e fuso ($_d) nao devia ser recusada (rc=$rc): ${out:0:140}"; fi
+  done
+
   # 14d. a JANELA EFETIVAMENTE USADA sai impressa. O guard so alcanca a forma ambigua; SHA e data
   #      relativa ainda podem resolver para um base surpreendente (worktree atras, REF errada), e
   #      isso se decidia em SILENCIO — inclusive no ramo "nenhuma edge na janela", o unico que

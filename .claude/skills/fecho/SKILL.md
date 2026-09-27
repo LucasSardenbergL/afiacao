@@ -223,8 +223,16 @@ git diff --name-only origin/main...HEAD -- supabase/functions/
 # Este script enumera a janela INTEIRA (a desta sessão e a das outras) e já classifica quem
 # precisa de deploy. Use-o em vez do `git log` cru — o cru é o gatilho velho, ver abaixo.
 git fetch origin main && git checkout --detach origin/main  # SINCRONIZE antes de medir (tree limpo; DEPOIS do diff acima) — o CLI do ledger roda desta worktree
-bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início da sessão> UTC"
-# aceita REVISÃO (SHA), DATA RELATIVA ("3 hours ago") ou DATA ABSOLUTA **com fuso explícito**.
+bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<AAAA-MM-DD HH:MM do início da sessão> UTC"
+# aceita REVISÃO (SHA), DATA RELATIVA ("3 hours ago") ou DATA ABSOLUTA **com hora E fuso
+# explícitos** ("2026-09-27 14:00 UTC", "2026-09-27T14:00:00Z").
+# ⚠️ Data absoluta SEM HORA é RECUSADA, com ou sem fuso (exit 3, marca `DESDE_SEM_HORA`). O git
+#    completa a hora que falta com a hora ATUAL, não com a meia-noite: `"2026-09-27 UTC"` vira
+#    2026-09-27 na hora de agora. Medido 2026-09-27: `✅ nenhuma edge na janela`, exit 0, com um
+#    merge de edge da madrugada dentro dela. "Desde o começo do dia" se escreve "… 00:00 UTC". E
+#    `±hh:mm` sem hora antes não é fuso para o git: `"2026-09-27 -03:00"` vira 03:00 LOCAL.
+#    Só a grafia `AAAA-MM-DD`/`AAAA/MM/DD` é vigiada: `27/09/2026` e `Sep 27 2026` passam SEM guard
+#    e pegam a hora atual do mesmo jeito — não use.
 # ⚠️ Data absoluta SEM fuso é RECUSADA (exit 3, marca `DESDE_SEM_FUSO`). Aqui o `--desde` cai no
 #    `git rev-list --before=`, que lê data nua como hora LOCAL, enquanto TODO timestamp da doc
 #    deste repo é UTC — e os scripts irmãos (verify-edge-eco/escrita) mandam o mesmo flag para o
