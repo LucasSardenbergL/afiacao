@@ -869,8 +869,41 @@ Para laço de espera, o mais simples continua sendo não partir linha nenhuma: u
 `sonda-marcador-congelado.md` em agosto, esta seção em setembro), e as duas reincidências de
 2026-09-25 repetiram formas já registradas — a do vitest dez semanas depois do registro de julho, a
 do `set --` sete dias depois desta seção. É a meta-regra que o catálogo já aplicou à §9 (`PIPESTATUS`)
-e à §13 (`pgrep`): contramedida textual reincide; o passo seguinte é um guard estrutural (hook de
-AVISO no PreToolUse, irmão do `pipestatus-zsh-guard.sh`), não um quarto parágrafo.
+e à §13 (`pgrep`): contramedida textual reincide; o passo seguinte é um guard estrutural, não um
+quarto parágrafo.
+
+⇒ **vigiado por `.claude/hooks/word-split-zsh-guard.sh`** (2026-09-26; AVISO no PreToolUse, nunca
+bloqueio). Um marcador por forma, cada uma só na conjunção que a torna precisa, com a contramedida
+certa no próprio aviso:
+
+| marcador | forma | só dispara se | o aviso ensina |
+|---|---|---|---|
+| `ZSH-NAO-DIVIDE-SET` | `set -- $x` | a lista posicional é UMA palavra que é UMA expansão escalar | `read -r a b <<< "$x"` |
+| `ZSH-NAO-DIVIDE-FOR` | `for v in $x` | `x` foi atribuída como texto ANTES, no mesmo comando | `while IFS= read -r` ou array |
+| `ZSH-NAO-DIVIDE-ARGS` | `cmd $x` | `x` é LISTA numa string, montada antes no mesmo comando: `$(… \| tr '\n' ' ')`, `paste -s`, `xargs`, ou literal com espaço | `arr+=("$l")` + `"${arr[@]}"` |
+
+"No mesmo comando" é completo, não atalho: o estado do shell não persiste entre chamadas do Bash
+tool. Aspas simples, `$'…'`, comentário, heredoc e texto de aspas duplas são menção (`bash -c '…'`
+roda no bash, que divide certo); `$(…)` é código mesmo entre aspas duplas. A suíte
+(`scripts/test-word-split-zsh-guard.sh`, no `test:hooks`) falsifica cada regra sozinha numa cópia do
+hook, com controle verde na mesma invocação e nos dois locales.
+
+**Calibrado antes de ligar**, contra 88.225 comandos Bash reais das transcrições (2026-05 a 09), cada
+disparo julgado pelo RESULTADO que a chamada devolveu: SET 24/24; ARGS 10/11 (junção) e 18/18 + 1
+demonstração (literal); FOR 49/59 — e os 10 FPs do FOR têm a forma exata dos TPs (`X=$(… | sort -u);
+for v in $X`), salvos por 0 ou 1 item em runtime: o idioma segue errado, só não mordeu. Ampliação
+medida e recusada: `x=$(cmd)` sem sinal de lista daria +132 disparos, e em 20 amostrados só 4 eram
+lista — o resto é valor único por construção (`--jq '.[0].x'`, `head -1`, `git rev-parse`). Voltar a
+ela é fase N+1, com sinal do sensor (`bash scripts/pipestatus-guard-sinal.sh
+~/.claude/afiacao-word-split-guard.jsonl`), não antes. E a medição corrigiu esta seção: com
+`tr '\n' ' '`, **nem um item só escapa** — o espaço final vai junto (`"x.test.ts "` não casou filtro
+e o vitest rodou 16 de 17 calado; `kill "79967 "` é pid ilegal).
+
+**O caminho até aqui também é lição.** O primeiro desenho deste guard existiu em 2026-09-10 — um 4º
+ramo do `pipestatus-zsh-guard.sh`, calibrado num corpus de 77.916 chamadas — como commit **local**
+(`af80cd1de`) numa worktree que nunca publicou. Os incidentes de 09-18 e 09-25 aconteceram com o
+conserto pronto num disco. Trabalho que não chega à `main` protege tanto quanto trabalho que não
+existe.
 
 ### 22. bash 3.2 do macOS: erro de SINTAXE no meio do script, com `trap … EXIT`, sai **0**
 
