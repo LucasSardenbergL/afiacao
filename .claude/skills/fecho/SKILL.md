@@ -48,6 +48,12 @@ errada quando existe comando que responde aqui:
   `wt:orfas` para "sessão morta com trabalho fora". Chip que manda o founder abrir sessão para
   rodar um comando é ordem que eu deveria ter executado — e das 130 medidas na classe
   "verificar/provar", **89 eram só isso**.
+- **Na NUVEM, "não tenho `psql-ro`" não é falta de braço (2026-09-27).** Pedido do founder: *"eu
+  não quero ficar fazendo esses testes que você mesmo deveria fazer"* — cada `/fecho` na nuvem
+  terminava num chip "Conferir prod" que só o Mac dele rodava. Com o **conector Lovable** na sessão
+  (`query_database`/`send_message`), meça e resolva AQUI pelo transporte `--sql-nuvem` /
+  `--dados-nuvem` ([deploy.md](../../../docs/agent/deploy.md) §"Conferência de prod pela NUVEM").
+  Sem o conector, o destino é UMA linha pedindo para conectá-lo — chip para sessão LOCAL, nunca.
 - **Consulta que NÃO RESPONDEU não é pendência, é tentativa a repetir.** Exit 2, "inconsultável",
   "não consegui consultar" = mecânica, e `ausente ≠ zero` vale no tempo. RODE DE NOVO antes de
   virar chip; só se falhar OUTRA vez vira chip — e aí o chip é *"consertar o sensor"*, nunca
@@ -142,6 +148,17 @@ Pra cada migration da sessão, **prove no banco** (leitura direta — não pergu
 - Não existe → ❌ **PENDENTE: colar no SQL Editor do Lovable** — reentregue o bloco de handoff
   (skill `lovable-db-operator`) na mensagem de fecho.
 
+**Na nuvem** (sem `psql-ro`), a MESMA query vai pelo `query_database` do conector Lovable, com a
+trava na frente e o atestado no resultado — e só vale com `somente_leitura = on`:
+
+```sql
+SET TRANSACTION READ ONLY; SELECT current_setting('transaction_read_only') AS somente_leitura, <query de validação>;
+```
+
+O canal entra como `postgres`, sem modo leitura: a trava é do SQL, e quem a atesta é o banco, na
+MESMA transação (o lote é uma transação implícita — medido no piloto). Resultado pequeno e lido
+direto; o transporte com md5 é para quando um CLI consome a resposta (Passo 3).
+
 ### Passo 2b — A sentinela do `claude_ro` (rápido, e é o único vigia que ele tem)
 
 ```bash
@@ -225,6 +242,14 @@ bash .claude/skills/fecho/scripts/edges-pendentes.sh --desde "<hora de início d
 # alcança o bundle que responde sem dizer de quem é (ver `SONDA_ANONIMA` na tabela abaixo).
 # ... --request-ids "conciliar-pedido-portal=69377,process-nfe=69381"
 ```
+
+**Na nuvem**, este script sai 2 (sem `psql-ro` não há janela viva a consultar) — não trate isso
+como "tudo pendente" nem chipe. O veredito DURÁVEL sai do mesmo juiz pelo transporte: `bun run
+pendencias:deploy --sql-nuvem` → `query_database` VERBATIM → `bun run pendencias:deploy
+--dados-nuvem=<resposta> --json` (procedimento em [deploy.md](../../../docs/agent/deploy.md)
+§"Conferência de prod pela NUVEM"). O SQL dele já une o ledger à janela viva
+(`deploy_atestacoes_janela_viva()`); as edges da janela saem do git (`git log --name-only` /
+`bun scripts/edges-afetadas.ts`), e cada uma é lida no relatório.
 
 **O gatilho deste passo é "sem prova de estar no ar", não "tem commit na janela".** O `git log`
 cru era o gatilho antigo, e num repo com dezenas de worktrees ele é quase sempre verdadeiro: a
@@ -405,9 +430,11 @@ declará-la resolvida sem `pendencias:deploy` em exit 0. Gerar o pacote NÃO res
 Lovable NÃO resolve; só a reconciliação com prod resolve.
 
 Chip aqui volta a ser o certo em UM caso: o braço indisponível (MCP fora, `send_message` falhando,
-`pendencias:pacote` em exit 3 por DDL que só o founder aplica). Aí o chip diz o que falta e por
-quê — e o prompt tem de nomear **todos** os arquivos, `_shared` novo incluído: prompt que nomeia
-um só deixa a edge sem bootar (#2020).
+`pendencias:pacote` em exit 3 por DDL que só o founder aplica). **Sessão na NUVEM sem `psql-ro`
+não é esse caso** (2026-09-27): com o conector Lovable ela mede e deploya daqui, pelo transporte;
+sem o conector, o destino é pedir o conector — nunca um chip para uma sessão LOCAL. Quando o chip
+é o certo, ele diz o que falta e por quê — e o prompt tem de nomear **todos** os arquivos,
+`_shared` novo incluído: prompt que nomeia um só deixa a edge sem bootar (#2020).
 
 ### Passo 4 — Publish do frontend
 

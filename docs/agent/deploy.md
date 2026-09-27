@@ -202,6 +202,59 @@ O gate acima é banco → edge. Entre duas edges, a ordem **só existe se estive
   Lovable disse Active" não é prova do bundle servido. Sonda anônima não substitui: em edge com
   `authorizeCronOrStaff`, `{"probe":true}` com a chave publicável devolve **401** (medido).
 
+### Conferência de prod pela NUVEM — conector Lovable + transporte (2026-09-27)
+
+A sessão da nuvem não tem `psql-ro` (a credencial é local e não sai do Mac — [database.md](database.md)
+§1) nem rede até o Supabase (o proxy do container nega `*.supabase.co`, medido). Sem braço, todo
+`/fecho` na nuvem terminava num chip "Conferir prod" que só uma sessão LOCAL rodava, e o Mac do
+founder virava o gargalo. O braço que a nuvem PODE ter é o mesmo da sessão local: o MCP oficial do
+Lovable (`https://mcp.lovable.dev`, OAuth), ligado como **conector do claude.ai**
+(claude.ai/customize/connectors). A sessão lê os conectores ao NASCER: só a próxima o vê. Nenhum
+segredo entra em repo, runner ou ambiente.
+
+**Leitura por um canal de escrita: a trava é do SQL, e quem a atesta é o banco.** `query_database`
+não tem modo leitura. O transporte (`scripts/lib/transporte-nuvem.ts`) emite UM texto —
+`SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '30s'; WITH … SELECT json` —, e o lote é
+UMA transação implícita (piloto, Camada 3), então a trava cobre tudo. A resposta traz, medidos pelo
+PRÓPRIO banco e amarrados num md5: `somente_leitura`, `teto`, o `sql_md5` do texto executado
+(`current_query()`) e o `medido_em`. O `--dados-nuvem` recusa (exit 2, marca `TRANSPORTE_*`) se
+qualquer um não bater, e entrega ao juízo as MESMAS linhas do `psql -A -F '|' -t` (o `record_out` de
+cada tipo). Prova PG no núcleo do CI: `db/test-transporte-nuvem.sh` (byte a byte + 7 sabotagens).
+
+**O procedimento.** O modelo TRANSPORTA, nunca redige: copie o SQL VERBATIM e grave a resposta sem editar.
+
+```bash
+SQL=$(mktemp "${TMPDIR:-/tmp}/sqlnuvem.XXXXXX"); RESP=$(mktemp "${TMPDIR:-/tmp}/respnuvem.XXXXXX")
+PEND=$(mktemp "${TMPDIR:-/tmp}/pend.XXXXXX")
+bun run pendencias:deploy --sql-nuvem > "$SQL"
+#   query_database(project_id = "8f005805-000a-42b7-88a1-9683f785fab6", sql = <conteúdo de $SQL>)
+#   → grave em "$RESP" a resposta inteira ({"rows":[{"dados_nuvem":…}]}) ou só o objeto dados_nuvem
+bun run pendencias:deploy --dados-nuvem="$RESP" --json > "$PEND"   # o MESMO veredito e os MESMOS exits
+# resolver = o deploy pela SESSÃO (seção acima), com a sonda de pré-condição pelo transporte:
+bun run pendencias:pacote - --sql-nuvem < "$PEND" > "$SQL"   # stdout vazio = leva sem RPC: rode sem as flags
+#   query_database(…, sql = <conteúdo de $SQL>) → grave em "$RESP"
+bun run pendencias:pacote - --dados-nuvem="$RESP" < "$PEND"  # a MESMA entrada nas duas rodadas
+```
+
+| marca (exit 2) | o que aconteceu | remédio |
+|---|---|---|
+| `TRANSPORTE_MD5` | a resposta mudou na transcrição (linha trocada ou truncada) | grave de novo sem editar, ou rode o SQL de novo |
+| `TRANSPORTE_SQL_DIVERGENTE` | o banco executou outro texto: cópia não verbatim, ou a entrada mudou (a main andou) | rode o `--sql-nuvem` de novo e cole sem tocar |
+| `TRANSPORTE_SOMENTE_LEITURA` | `transaction_read_only = off`: a trava não pegou (statements enviados separados?) | **não** contorne — leitura sem trava é recusada por desenho |
+| `TRANSPORTE_VELHO` / `_FUTURO` | resposta de outra rodada (> 30 min) ou relógio incoerente | rode o SQL de novo |
+| `TRANSPORTE_FORMATO` / `_CONSULTAS` | arquivo de outro CLI ou formato, consulta faltando | confira o arquivo gravado |
+
+**Migrations** (Passo 2 do `/fecho`) não têm CLI: a query de validação vai direto, com a trava na
+frente e o atestado no resultado — `SET TRANSACTION READ ONLY; SELECT
+current_setting('transaction_read_only'), …` —, e só vale com `on`.
+
+**O que isto NÃO muda.** Só a LEITURA ganhou transporte. Escrita — o PASSO 1 da sonda
+(`net.http_post`), migration — segue a regra de sempre: o envelope da `lovable-db-operator` exige o
+pré-voo pelo `psql-ro`, então na nuvem ela é do founder no SQL Editor (que abre de qualquer
+aparelho, sem sessão local). Estender o envelope à nuvem é decisão dele, com Codex. E sem o conector não há
+braço: o destino é UMA linha pedindo para conectá-lo, **nunca** um chip "Conferir prod" para uma
+sessão LOCAL. Narrativa e medições: [conferencia-de-prod-pela-nuvem.md](../historico/conferencia-de-prod-pela-nuvem.md).
+
 ## Gateway de IA do Lovable — teto MENSAL de créditos derruba 7 edges de uma vez
 
 O `ai.gateway.lovable.dev` (e o `ai.lovable.dev/chat/v1` do `copilot-analyze`) tem orçamento PRÓPRIO — *"AI features usage limit"*, **teto de 4 créditos/mês**, reset no dia 1º. Ao estourar, ele para de servir **todas** as edges de uma vez, e o sintoma NÃO aponta para créditos: o gateway devolve um status fora do `429`/`402` que as edges tratam, então cada uma cai no `else` genérico e reporta **HTTP 500**. Estourou em 2026-07-27 (4,20 de 4) e a geração de planos táticos ficou **3 dias em zero** — cron disparando certo, batch reportando honestamente `{"ok":false,"erros":59}`.
