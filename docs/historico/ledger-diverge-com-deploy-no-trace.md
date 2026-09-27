@@ -48,11 +48,21 @@ UM parágrafo, só restritivo (hashes e condições de parada intactos):
 > with the exact line `NO FILES EDITED` only if you changed no file at all in this turn; otherwise,
 > list every file you changed.
 
-Resultado: 24/24 hashes contra `6bcf9955`, deploy das duas, **nenhuma ferramenta de edição no
-trace**, `NO FILES EDITED`, zero commit do bot em `supabase/functions/` depois. De quebra, a cláusula
-"não conseguiu conferir ⇒ não deploya" funcionou: o 1º laço de hash do agente devolveu o MESMO valor
-para os 24 arquivos, e ele depurou em vez de deployar. É uma amostra, não prova — mas é o insumo que
-o item 1 do chip "Blindar o prompt de deploy contra edições do agente" (corpo do #2579) pedia.
+Resultado no turno desta sessão (16:41:41Z → 16:42:55Z): 24/24 hashes contra `6bcf9955`, deploy
+das duas, **nenhuma ferramenta de edição no trace**, `NO FILES EDITED`. De quebra, a cláusula "não
+conseguiu conferir ⇒ não deploya" funcionou: o 1º laço de hash do agente devolveu o MESMO valor para
+os 24 arquivos, e ele depurou em vez de deployar.
+
+**O contraste, 14 min depois — o 3º incidente.** Às 16:56:58Z OUTRA sessão mandou o Passo 2 padrão,
+SEM a guarda, para `omie-sync-estoque` + `sync-reprocess` — deploy redundante: o ledger já estava em
+exit 0 às 16:52:25Z. No turno das 16:58:21Z o agente deployou verbatim e DEPOIS aplicou 4
+`line_replace` nas mesmas duas edges (`whatsapp-inbound` L105/L146/L157, `sync-reprocess` L386,
+`Number(codigoPedido)`), declarando as edições na própria resposta; o sync as empurrou como 3 commits
+do bot na main às 16:58Z. Mesmo agente, mesmos arquivos com erro de typecheck do preview: com a
+guarda, zero edição; sem ela, quatro. É n=1 de cada lado — evidência a favor do prompt blindado, não
+prova, e o sensor por fora continua necessário. O bundle servido ficou verbatim nas três (deploy antes
+da edição). Revert, sensor e blindagem ficaram com a sessão "Blindar prompt de deploy e fechar a leva
+pós-revert" (PR #2594, branch `claude/prompt-deploy-escopo`).
 
 ## Lição 3 — pelo `db:aplicar`, o PASSO 2 com mapa não volta (2ª ocorrência)
 
