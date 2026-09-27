@@ -250,6 +250,11 @@
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/vigia-gstack.sh\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/vigia-nuvem.sh\"",
+            "timeout": 5
           }
         ]
       }
