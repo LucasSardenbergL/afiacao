@@ -10,9 +10,10 @@ Quem roda no `test:hooks` e no `test:falsificacao` é o wrapper, que sonda cada 
 (ausente **reprova**, nunca pula) e exige o marcador além do exit 0:
 
 ```bash
-bash scripts/test-claude-mem-reanimar.sh               # LAB-VERDE: 17 cenários (~50 s no M2)
-bash scripts/test-claude-mem-reanimar.sh --falsificar  # FALSIFICACAO-VERDE: 12 guardas
+bash scripts/test-claude-mem-reanimar.sh               # LAB-VERDE: 17 cenários (~50 s no M2) + PROVA-COM-TTY-VERDE
+bash scripts/test-claude-mem-reanimar.sh --falsificar  # FALSIFICACAO-VERDE: 12 guardas + as 3 do helper
 bash scripts/lab-claude-mem-reanimar/lab.sh c_surdo_sim  # um cenário (no Linux: sob subreaper.py)
+bash scripts/lab-claude-mem-reanimar/prova_com_tty.sh    # só o contrato do com_tty.py (~0,2 s)
 ```
 
 ## Como cabe no CI
@@ -46,6 +47,11 @@ bash scripts/lab-claude-mem-reanimar/lab.sh c_surdo_sim  # um cenário (no Linux
   `script(1)` do util-linux não existe no macOS, o do macOS manda o EOF antes da resposta
   (medido: o `read` lia vazio), e o `pty.spawn` do python 3.9 da Command Line Tools trava num
   `select` vazio quando o filho sai. O helper tem teto: pendurou → mata o grupo e sai 124.
+  **O rc que todo cenário lê é o DELE**, então ele nunca inventa um: devolve o exit do comando,
+  124 no teto e 125 no próprio erro (fora do 0/1/2 do script). Resposta que chega depois de o
+  comando sair (sob carga; o macOS devolve EIO) é descartada, dita (`COM_TTY: entrada
+  descartada`) e não muda o rc — antes, matava o helper com 1 (flake de 26/09). Prova:
+  `prova_com_tty.sh`, com o `entrada_tardia.py` impondo essa ordem em vez de esperar a sorte.
 - **`reserva_portas.py`:** acha e SEGURA o bloco da execução; recusa (`LAB-VERMELHO`) se a
   faixa efêmera do sistema cobrir a do lab. `LAB_PORTA_SEMENTE` só existe para o teste forçar
   duas execuções a disputar o mesmo bloco.
@@ -69,6 +75,10 @@ Ubuntu não existe, e a saída diz isso). Sabotagens: ordenação lexicográfica
 ignorado · porta alheia vira nossa · árvore só com a raiz · confirmação ignorada ·
 `--so-olhar` ignorado · sem a guarda SUBINDO · prova frouxa · curl quebrado vira surdo · sonda
 ignora o host · sem a trava INCOERENTE · override de tempo inválido aceito.
+
+O helper tem falsificação própria (`prova_com_tty.sh --falsificar`, as mesmas travas): entrada
+tardia derruba o helper · erro interno sai com rc do comando · entrada nunca entregue (a prova tem
+de dizer "não rodou", nunca ficar verde por vacuidade).
 
 **Cenários:** saudável (tempos reais) · morto · pid reciclado · surdo (confirma / cancela /
 `--so-olhar`) · porta de outro programa · curl quebrado · start que não sobe · subindo · hook
