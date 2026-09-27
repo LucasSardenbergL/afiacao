@@ -40,6 +40,12 @@ db/test-security-invoker-views.sh          27
 db/test-views-invoker-off-p0.sh            25
 db/test-authz-revoke-anon-rpc.sh           19
 db/test-authz-is-not-true-escritas.sh      24
+# Tintométrico (as provas tint entraram em 2026-09-27; até então nenhuma barrava merge — 18 de 19
+# fixavam o PGBIN do Homebrew e 13 carregam o schema-snapshot, que exige pgvector). A RLS de
+# `tint_formulas` decide IGUAL antes e depois do InitPlan (USING e WITH CHECK), e o custo de base e
+# corantes só sai para staff: customer e anon recebem NULL e mantêm o preço final.
+db/test-tint-formulas-rls-initplan.sh      26
+db/test-tint-gate-custo-staff.sh           25
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -64,6 +70,15 @@ db/test-desconto-valor-escritores.sh      110
 # db:aplicar tem de instalar a mesma coisa. O `--falsificar` (18 sabotagens, uma camada por vez,
 # depois de linha de base verde na mesma invocação) roda aqui.
 db/test-pedido-total-liquido-acervo.sh     68  falsificar=18
+# Tintométrico: preço que não se apura é NULL, nunca R$ 0,00 — base zerada ou inativa, corante sem
+# custo (singular e batch); o recálculo NULL PRESERVA o preço vigente em vez de zerá-lo (~19k pisos
+# no flip); a canônica mantém o piso NULL-preserving; e o gate de submit BLOQUEIA preço obsoleto,
+# fórmula morta e motor NULL, fail-closed.
+db/test-tint-get-price.sh                  30
+db/test-tint-get-prices.sh                 27
+db/test-tint-promote-preserva-preco.sh      6
+db/test-tint-canonica.sh                   29
+db/test-tint-gate-revalida.sh              38
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
@@ -90,6 +105,15 @@ db/test-pedido-edicao-atomica.sh           54
 # (`lc_messages`), e a rodada pt_BR antiga trocava só o cliente — as duas saíam idênticas
 # (docs/historico/falsificacao-db-aplicar-idioma-do-servidor.md).
 db/test-db-aplicar.sh                      46  falsificar=13
+# Tintométrico: a promoção staging→oficial é tudo-ou-nada — receita corrompida não grava parcial,
+# linha sem `nome_cor` não derruba o run, e linha carimbada pela Fase 5 não é reativada (sem a
+# migration, o 23514 abortava o promote INTEIRO); o UPDATE da Fase 5 aborta a transação toda se o
+# guard de cobertura reprovar. A test-tint-promote.sh é fail-fast (asserção em SQL = RAISE): o
+# mínimo dela conta os checkpoints ALCANÇADOS, que é o que um truncamento derruba.
+db/test-tint-promote.sh                    24
+db/test-tint-promote-nome-cor.sh            3
+db/test-tint-promote-tombstone-fase5.sh     5
+db/test-tint-fase5-desativacao.sh          37
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
 # A janela entre dois round-trips PostgREST, com uma chamada HTTP que cria pedido de
@@ -99,6 +123,13 @@ db/test-claim-disparo-cenario-b.sh         76
 db/test-disparado-simulado-pos-disparo.sh  59
 db/test-fin-sync-lease.sh                  22
 db/test-pedido-venda-coerencia.sh          31
+# Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO
+# estrito com backoff, statement_timeout capturado desfaz o parcial. O `--falsificar` (12
+# sabotagens na mesma invocação do controle verde) roda aqui: 71–86s no runner. E o lock timeout
+# de 18/06: re-envio só de volume não recalcula preço, e sku já existente não re-expande.
+db/test-tint-promocao-assincrona.sh        44  falsificar=12
+db/test-tint-promote-e4.sh                  4
+db/test-tint-promote-reexpand.sh            6
 # A escrita do backfill de desconto: o plano é lido ANTES e escrito depois, e o que atravessa a
 # janela são as marcas da própria linha — o trio (SKU, qtd, preço) e o `desconto_valor IS NULL`,
 # DENTRO do `WHERE` do UPDATE: base que mudou, ou linha já apurada por outro writer, não é escrita.
@@ -136,6 +167,9 @@ db/test-transporte-nuvem.sh                18  falsificar=10
 # só fica vermelho aqui. Entrou em 2026-09-10, quando a dobra já tinha inflado a tendência de
 # caixa publicada no fechamento de abril (docs/cfo/2026-04-fechamento.md, errata).
 db/test-cfo-caixa-90d-otica.sh             30
+# Tintométrico: item repetido (fórmula, corante) na promoção fica com a quantidade de maior ordem —
+# SOMAR dobraria a dose do corante sem erro nenhum.
+db/test-tint-promote-dedup-itens.sh        11
 
 # ── sensores (o vigia que não vigia é pior que vigia nenhum: dá a sensação de cobertura) ──
 # O reprocesso da Omie ficou 10 dias quebrado sem alerta porque nada lia sync_reprocess_log.
@@ -144,3 +178,15 @@ db/test-cfo-caixa-90d-otica.sh             30
 # (o CI é vitest; ninguém os roda). Autocontida: initdb + db/stubs-data-health-trio.sql + a
 # migration do repo. Sem psql-ro, sem deno, sem dado de fora.
 db/test-data-health-sync-reprocess.sh      31  falsificar=13
+# Tintométrico: corante impagável EM USO alerta (fora de uso ou desativada, não), agravamento
+# re-emite e o dead-man dispara com a camada B parada.
+db/test-tint-watchdog-corante.sh           11
+
+# ── Medidas no runner e deixadas de FORA (2026-09-27) — ausência de dado DECLARADA ────────────────
+# db/test-tint-fase5-watchdog.sh — verde, mas 185–252s sozinha (mais que o núcleo inteiro de antes):
+#   custo de FIXTURE, não de asserção — universo de ~464 mil chaves × 17 execuções do watchdog ×
+#   (controle + 4 sabotagens). Entra quando o universo encolher preservando os limiares.
+# db/test-tint-cobertura-lista-email.sh e db/test-tint-vigia-cobertura.sh — APODRECIDAS: reprovam
+#   contra o snapshot de hoje em qualquer plataforma (o `_data_health_compute` atual lê a
+#   `customer_metrics_mv`, que a prova não popula; o stub de `_vendas_familia_ausente_lista_email`
+#   colide com a função real). Consertar antes de entrar.

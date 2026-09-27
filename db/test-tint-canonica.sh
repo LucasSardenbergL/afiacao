@@ -111,23 +111,18 @@ MIGRATION2="$REPO_ROOT/supabase/migrations/20260718233000_tint_canonica_preco_cs
 MIGRATION3="$REPO_ROOT/supabase/migrations/20260722100002_tint_canonica_csv_legado_semantico.sql"
 MIGRATION4="$REPO_ROOT/supabase/migrations/20260724130000_tint_canonica_csv_legado_allowlist.sql"
 MIGRATION5="$REPO_ROOT/supabase/migrations/20260726160000_tint_canonica_piso_legado.sql"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5447
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-5447}"
 DATA="$(mktemp -d /tmp/pgtest-tintcanonica.XXXXXX)/data"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 [ -f "$MIGRATION" ] || { echo "migration ausente: $MIGRATION"; exit 1; }
 [ -f "$MIGRATION2" ] || { echo "migration ausente: $MIGRATION2"; exit 1; }
 [ -f "$MIGRATION3" ] || { echo "migration ausente: $MIGRATION3"; exit 1; }
 [ -f "$MIGRATION4" ] || { echo "migration ausente: $MIGRATION4"; exit 1; }
 [ -f "$MIGRATION5" ] || { echo "migration ausente: $MIGRATION5"; exit 1; }
-
-CELLAR="$(brew --prefix postgresql@${PGVER})"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
 trap cleanup EXIT
@@ -1546,5 +1541,6 @@ esac
 echo ""
 echo "═══════════════════════════════════════════"
 echo "RESULTADO: $PASS ✅ · $FAIL ❌"
+echo "PASS=$PASS  FAIL=$FAIL"   # recibo lido pelo db/roda-nucleo-ci.sh (o formato acima ele não reconhece)
 [ "$FAIL" -eq 0 ] || exit 1
 echo "test-tint-canonica: OK"
