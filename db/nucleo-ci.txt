@@ -188,12 +188,15 @@ db/test-tint-watchdog-corante.sh           11
 # 185–252s para ~12s no runner: o custo era o plano da view num fixture SEM os índices de prod (mais
 # 36s de sleep no B14), não o universo — docs/historico/fixture-sem-indices-de-prod.md.
 db/test-tint-fase5-watchdog.sh             31
-
-# ── Medidas no runner e deixadas de FORA (2026-09-27) — ausência de dado DECLARADA ────────────────
-# db/test-tint-cobertura-lista-email.sh e db/test-tint-vigia-cobertura.sh — APODRECIDAS: reprovam
-#   contra o snapshot de hoje em qualquer plataforma (o `_data_health_compute` atual lê a
-#   `customer_metrics_mv`, que a prova não popula; o stub de `_vendas_familia_ausente_lista_email`
-#   colide com a função real). Consertar antes de entrar.
+# Tintométrico: o vigia da cobertura (o Check A empurra e-mail; o B, vínculo tint↔Omie, é
+# dashboard-only) e a lista das bases divergentes no corpo do e-mail. Ficaram fora do #2605 como
+# APODRECIDAS, e o defeito era de ALVO: re-aplicavam a migration da sua fase (junho/julho) sobre o
+# snapshot de setembro e mediam um watchdog que ninguém executa. Agora medem o trio que PROD executa
+# (db/lib/data-health-vivo.sh: snapshot + cadeia DINÂMICA, md5 igual ao de prod em 2026-09-27). Cada
+# sabotagem exige vermelho NO assert-alvo com as pré-condições verdes, e a `migracao_nova_*` prova
+# que a PRÓXIMA reescrita do trio entra sozinha na cadeia (docs/historico/provas-tint-apodrecidas.md).
+db/test-tint-vigia-cobertura.sh            30  falsificar=13
+db/test-tint-cobertura-lista-email.sh      22  falsificar=6
 
 # ── Eixo 7 — FUSO DA SESSÃO (a prod roda UTC; o negócio mede em São Paulo) ─────────────────────
 # A positivação AO VIVO fixava o mês em SP e comparava ligação e pedido no fuso da SESSÃO: das
