@@ -16,6 +16,8 @@
 #   • Mac (CLAUDE_CODE_REMOTE diferente de "true") → '{}'. Nada muda: nem aviso, nem contexto;
 #   • nuvem (CLAUDE_CODE_REMOTE=true, o MESMO predicado do vigia-gstack.sh e do codex-async.sh) →
 #     systemMessage (o founder VÊ; curto) + additionalContext (o modelo lê, com a instrução).
+#   Medido no harness do app (2.1.281): sem o hookEventName, ele grava hook_non_blocking_error e
+#   descarta a saída INTEIRA, o systemMessage de topo junto. O envelope não é detalhe do contexto.
 #
 # Nunca bloqueia (SessionStart nem pode) e nunca emite permissionDecision. JSON por printf de texto
 # FIXO, sem jq: se o container não tiver jq, um sensor montado com ele cairia calado justamente na

@@ -11,8 +11,8 @@
 # Três defeitos que uma suíte só de SAÍDA deixaria passar, e por isso têm caso próprio:
 #   • o REGISTRO no .claude/settings.json — sensor que existe e ninguém liga nunca roda;
 #   • o bit de EXECUÇÃO — o settings.json chama o hook direto, sem `bash`, e o Write cria 100644;
-#   • o ENVELOPE (hookSpecificOutput.hookEventName) — sem ele o harness ignora a saída
-#     (docs/historico/gate-gstack-fail-open.md).
+#   • o ENVELOPE (hookSpecificOutput.hookEventName) — sem ele o harness descarta a saída inteira,
+#     systemMessage junto (medido no harness do app; docs/historico/aviso-sessao-nuvem.md).
 # Pelo mesmo motivo a suíte executa o sensor DIRETO, como o harness, e não com `bash "$HOOK"`.
 #
 # CLAUDE_CODE_REMOTE é fixado em TODO caso (removido no do Mac): rodada numa sessão cloud, a
@@ -111,7 +111,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     controle; sabotar S2  C3 'avisa em qualquer maquina' hook "s|$PREDICADO|false|"
     controle; sabotar S3  C3 'Mac vaza contexto (nao e mais {} exato)' hook \
       "s|echo '{}'|echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"vazou\"}}'|"
-    controle; sabotar S4  C4 'envelope sem hookEventName (a classe do check-gstack)' hook 's|"hookEventName":"SessionStart",||g'
+    controle; sabotar S4  C4 'envelope sem hookEventName (o harness descarta tudo, aviso junto)' hook 's|"hookEventName":"SessionStart",||g'
     controle; sabotar S5  C4 'stdout com um JSON a mais (o harness nao parseia dois)' hook 's|^printf |echo {}; printf |'
     controle; sabotar S6  C5 'aviso so para o modelo (o desenho do gstack na nuvem)' hook \
       's|"systemMessage":"%s",||; s|"\$msg" "\$ctx"|"$ctx"|'
