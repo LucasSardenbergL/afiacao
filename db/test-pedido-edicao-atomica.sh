@@ -368,8 +368,8 @@ else
   bad "G0 CONTROLE VERMELHO (rc=$RC_CTRL) — nada abaixo prova coisa alguma"
 fi
 
-sabotar() { # $1 rotulo | $2 sed | $3 sqlstate que DEVE deixar de vir | $4 chamada
-  local f out rc
+sabotar() { # $1 rotulo | $2 sed | $3 sqlstate que DEVE deixar de vir | $4 chamada | $5 marca do que vem NO LUGAR (default: a chamada completa)
+  local f out rc no_lugar="${5:-ASSERT_NAO_LANCOU}"
   f="$(mktemp /tmp/mig-sab-XXXXXX.sql)"
   sed "$2" "$MIG" > "$f"
   if cmp -s "$f" "$MIG"; then bad "$1 — o sed NÃO alterou nada (sabotagem inócua = teatro)"; rm -f "$f"; return; fi
@@ -381,14 +381,15 @@ sabotar() { # $1 rotulo | $2 sed | $3 sqlstate que DEVE deixar de vir | $4 chama
   rc=$?
   set -e
   rm -f "$f"
-  # A recusa SUMIU só se a chamada COMPLETOU — é a única via que chega ao `ASSERT_NAO_LANCOU`. rc≠0
-  # sem essa marca é OUTRO erro (migration sabotada que não montou, função ausente, divisão por zero),
-  # e até 2026-09-27 contava como dente (docs/historico/falsificacao-exit-nao-e-dente.md). `case` e
-  # não `printf | grep -q`: sob pipefail, o SIGPIPE do grep que sai cedo derruba o casamento.
+  # rc≠0 só diz que a SQLSTATE esperada não veio — e qualquer erro diz isso (divisão por zero, função
+  # ausente). O vermelho só é DESTA sabotagem com a marca do que ela DECLARA vir no lugar: a chamada
+  # completa (`ASSERT_NAO_LANCOU`) ou, com defesa em profundidade, a camada seguinte que barra (G3).
+  # Até 2026-09-27 todo rc≠0 contava como dente (docs/historico/falsificacao-exit-nao-e-dente.md).
+  # `case` e não `printf | grep -q`: sob pipefail, o SIGPIPE do grep que sai cedo derruba o casamento.
   case "$rc:$out" in
-    0:*)                 bad "$1 — sabotado e a recusa CONTINUOU: o assert media outra coisa" ;;
-    *ASSERT_NAO_LANCOU*) ok "$1 — sabotado, a recusa SUMIU (o assert tinha dente)" ;;
-    *)                   bad "$1 — sabotado, mas o vermelho é OUTRO erro, não a recusa sumindo: ${out%%$'\n'*}" ;;
+    0:*)            bad "$1 — sabotado e a recusa CONTINUOU: o assert media outra coisa" ;;
+    *"$no_lugar"*)  ok "$1 — sabotado, a recusa SUMIU${5:+ e a camada seguinte barrou [$5]} (o assert tinha dente)" ;;
+    *)              bad "$1 — sabotado, mas o vermelho não é o declarado [$no_lugar]: ${out%%$'\n'*}" ;;
   esac
 }
 
@@ -412,8 +413,11 @@ if cmp -s "$FPID" "$MIG"; then bad "G6 sed inócuo (herança de product_id)"; el
 fi
 rm -f "$FPID"
 
+# G3: sem o D7, o desconto 5 do order_items diverge do 0 do items(jsonb) — e a coerência (D12) barra.
+# É defesa em profundidade, e o vermelho do D7 é legítimo SÓ com essa marca: declarada no 5º argumento.
 sabotar "G3 guard de desconto (D7)" "s/AND (it->>'discount')::numeric <> 0/AND false/" 22023 \
-  "public.aplicar_edicao_pedido_omie('$P3'::uuid,'[{\"omie_codigo_produto\":40,\"quantidade\":3,\"valor_unitario\":10,\"desconto\":0}]'::jsonb,'[{\"omie_codigo_produto\":40,\"quantity\":3,\"unit_price\":10,\"discount\":5}]'::jsonb,30,'n',NULL,NULL,'$LIDO'::timestamptz)"
+  "public.aplicar_edicao_pedido_omie('$P3'::uuid,'[{\"omie_codigo_produto\":40,\"quantidade\":3,\"valor_unitario\":10,\"desconto\":0}]'::jsonb,'[{\"omie_codigo_produto\":40,\"quantity\":3,\"unit_price\":10,\"discount\":5}]'::jsonb,30,'n',NULL,NULL,'$LIDO'::timestamptz)" \
+  'ficaria incoerente'
 
 # --- G4/G5: sabotar a FRONTEIRA e exigir que o APPLY aborte na postcondição ---
 # O sed tem de manter o SQL VÁLIDO: comentar só a 1ª linha de um GRANT/REVOKE de 2 linhas deixa
