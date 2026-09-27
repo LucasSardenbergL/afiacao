@@ -176,6 +176,30 @@ sobe para o espaço liberado não pode ser mais caro que o que saiu. As duas med
 a mesma história por lados opostos: **mexer em QUEM está na lista não resolve (e pode
 piorar); mexer no TAMANHO de cada entrada resolve.**
 
+### 2026-09-27 — a nº 3 re-medida COM o teto: esconder agora ENCOLHE a lista (mas não salva as proprietárias)
+
+Refeito sobre a config atual (`220` / `0.004`), isolando só o `skillOverrides`. Régua: o
+`/skill-doctor` headless (`<binário do app> -p "/skill-doctor"`, soma da coluna `context`) — é a
+estimativa do harness, não a sonda de ±6 tokens, que estava bloqueada pelo login expirado do CLI.
+
+| | skills listadas | listing (estim.) | ganharam descrição | perderam | proprietárias c/ descrição |
+|---|---|---|---|---|---|
+| antes | 190 | ~4.415 tok | — | — | 8/14 |
+| 51 skills em `user-invocable-only` | 142 | **~3.920 tok (−495)** | 5 | **0** | 8/14 |
+
+O sinal inverteu em relação aos +141 de 2026-07: com teto de 220 por descrição, o que sobe para
+o espaço liberado não pode ser mais caro que o que saiu — o mecanismo que a CORREÇÃO acima
+previa. Mas o espaço vai para as skills MAIS USADAS: as 6 proprietárias sem descrição
+(`bi-colacor`, `cfo-colacor`, `reposicao-caixa`, `goal`, `doc2md`, `farmer-industrial`)
+continuaram sem. Reescrever os 220 primeiros caracteres delas não muda nada enquanto o orçamento
+corta a descrição INTEIRA — a alavanca é o orçamento total ou menos concorrentes. Duas que o
+roteamento manda evitar ganharam descrição (`frontend-design`, `context-restore`) e voltaram
+para `name-only`. **APLICADO** no `.claude/settings.json` (critério em `docs/agent/skills.md`).
+
+No app desktop a pressão é maior: os 19 plugins da conta claude.ai (~170 skills, fora do alcance
+de `skillOverrides`) deixam 12 das 14 proprietárias só com o nome — segue a pendência do founder
+em "Pendente de medição", abaixo.
+
 ## ✅ O que REALMENTE move o ponteiro: desabilitar o PLUGIN inteiro
 
 O ganho não vem da lista — vem do payload que o plugin injeta por conta própria (system

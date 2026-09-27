@@ -116,7 +116,7 @@ describe('inventarioHooks — deny de verdade x "deny" em comentário', () => {
   // O caso REAL que este teste congela: `read-contexto-nudge.sh` cita "deny" três vezes, todas em
   // comentário explicando por que ele decidiu NÃO negar. Uma varredura crua o promove a bloqueio.
   const fontes: Record<string, string> = {
-    'bloqueia.sh': 'jq -n \'{hookSpecificOutput:{permissionDecision:"deny"}}\'\n',
+    'bloqueia.sh': 'jq -n \'{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny"}}\'\n',
     'so-avisa.sh': '# permissionDecision:"deny" quebraria investigação — por isso NÃO uso\necho aviso\n',
   };
 
@@ -124,10 +124,56 @@ describe('inventarioHooks — deny de verdade x "deny" em comentário', () => {
     const hooks = inventarioHooks(settings, (a) => fontes[a] ?? null);
     expect(hooks.find((h) => h.arquivo === 'bloqueia.sh')?.bloqueia).toBe(true);
     expect(hooks.find((h) => h.arquivo === 'so-avisa.sh')?.bloqueia).toBe(false);
+    expect(hooks.some((h) => h.denySemEnvelope)).toBe(false);
   });
 
   it('hook ilegível não vira gate (fail-safe: não inventa bloqueio)', () => {
-    expect(inventarioHooks(settings, () => null).every((h) => !h.bloqueia)).toBe(true);
+    const hooks = inventarioHooks(settings, () => null);
+    expect(hooks.every((h) => !h.bloqueia && !h.denySemEnvelope)).toBe(true);
+  });
+});
+
+describe('inventarioHooks — o deny só conta DENTRO do envelope que o harness honra', () => {
+  const um = JSON.stringify({
+    hooks: { PreToolUse: [{ hooks: [{ command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/alvo.sh"' }] }] },
+  });
+  const classificar = (fonte: string) => inventarioHooks(um, () => fonte)[0];
+
+  // Medido em 2026-09-27 (Claude Code 2.1.281, sonda PreToolUse sobre `Skill`, log provando que o
+  // hook RODOU nas três chamadas): só o envelope completo negou; as outras duas deixaram a skill
+  // carregar. As duas primeiras abaixo são essas formas, e é por elas que o censo mentiu 136 dias.
+  it('deny no TOPO do JSON (o check-gstack.sh) não bloqueia — e é acusado', () => {
+    const h = classificar(`echo '{"permissionDecision":"deny","message":"gstack ausente"}'\n`);
+    expect(h.bloqueia).toBe(false);
+    expect(h.denySemEnvelope).toBe(true);
+  });
+
+  it('hookSpecificOutput SEM hookEventName também não bloqueia — e é acusado', () => {
+    const h = classificar(`jq -n '{hookSpecificOutput:{permissionDecision:"deny",permissionDecisionReason:$r}}'\n`);
+    expect(h.bloqueia).toBe(false);
+    expect(h.denySemEnvelope).toBe(true);
+  });
+
+  it('envelope completo bloqueia, nas duas grafias do repo (jq e printf) e em qualquer ordem', () => {
+    const jq = `jq -n --arg r "$m" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'\n`;
+    const printf = `printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\\n' "$m"\n`;
+    const invertido = `jq -n '{hookSpecificOutput:{permissionDecision:"deny",hookEventName:"PreToolUse"}}'\n`;
+    for (const fonte of [jq, printf, invertido]) {
+      expect(classificar(fonte)).toMatchObject({ bloqueia: true, denySemEnvelope: false });
+    }
+  });
+
+  it('hookEventName de OUTRO evento não arma o deny de PreToolUse', () => {
+    const h = classificar(`jq -n '{hookSpecificOutput:{hookEventName:"PostToolUse",permissionDecision:"deny"}}'\n`);
+    expect(h).toMatchObject({ bloqueia: false, denySemEnvelope: true });
+  });
+
+  it('um ramo certo NÃO absolve o ramo errado do mesmo hook', () => {
+    const h = classificar(
+      `jq -n '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny"}}'\n` +
+        `echo '{"permissionDecision":"deny"}'\n`,
+    );
+    expect(h).toMatchObject({ bloqueia: true, denySemEnvelope: true });
   });
 });
 

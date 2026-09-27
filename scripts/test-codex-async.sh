@@ -6,6 +6,8 @@
 # eco do prompt — nunca horário calculado) · 77=sem auth · retry só em transitório ·
 # watchdog mata execução travada · cabeçalho traz o CUSTO (segundos da tentativa
 # vencedora + tokens do rodapé, "tokens ?" quando ausente — nunca 0).
+# O caminho da SESSÃO CLOUD (instalação via npm, pré-voo de rede, 68) tem suíte própria:
+# scripts/test-codex-async-nuvem.sh.
 #
 # Uso: bash scripts/test-codex-async.sh   (exit 0 = tudo verde)
 set -u
@@ -244,13 +246,20 @@ case "$CODEX_STUB_MODE" in
   # o defeito de transporte medido em 2026-09-20: o codex-cli 0.153.4 entrega `spawn_agent`
   # ao modelo, e cada subagente nasce como rollout PRÓPRIO, cobrado à parte. O stub reproduz
   # o único rastro que o wrapper consegue ver de fora: o arquivo em CODEX_HOME/sessions.
-  ok_spawna) d="$CODEX_HOME/sessions/2026/09/20"; mkdir -p "$d"
+  # ⚠️ o `sleep 0.05` antes do rollout NÃO é enfeite: o sensor acha os filhos com `find -newer
+  # marcador`, que é ESTRITO, e há kernel cuja hora de arquivo anda por tick (container cloud,
+  # 2026-09-27: marca e rollout criados em sequência saíram com o MESMO mtime, até o ns). Sem a
+  # folga, o stub — rápido demais pra ser realista: um subagente real nasce segundos depois da
+  # marca — fica invisível, e este caso fica vermelho por AMBIENTE, não por asserção. 50ms > 1 tick.
+  ok_spawna) d="$CODEX_HOME/sessions/2026/09/20"; mkdir -p "$d"; sleep 0.05
              printf '{"type":"session_meta","payload":{"thread_source":"subagent","cwd":"%s"}}\n' "$PWD" \
                > "$d/rollout-2026-09-20T00-00-00-filho.jsonl"
              echo "parecer com fan-out"; rodape "9.999"; exit 0 ;;
   # subagente de OUTRA worktree: ~/.codex/sessions é COMPARTILHADO entre as sessões
   # paralelas. Sem o filtro por cwd, o alarme dispararia pelo trabalho do vizinho.
-  ok_spawna_alheio) d="$CODEX_HOME/sessions/2026/09/20"; mkdir -p "$d"
+  # mesma folga do ok_spawna: sem ela o controle passa por CEGUEIRA — o `-newer` descarta o
+  # fixture antes de o filtro por cwd ser exercido, e "sem alarme" não provaria o filtro.
+  ok_spawna_alheio) d="$CODEX_HOME/sessions/2026/09/20"; mkdir -p "$d"; sleep 0.05
              printf '{"type":"session_meta","payload":{"thread_source":"subagent","cwd":"/outra/worktree"}}\n' \
                > "$d/rollout-2026-09-20T00-00-00-alheio.jsonl"
              echo "parecer sem fan-out proprio"; rodape "9.999"; exit 0 ;;

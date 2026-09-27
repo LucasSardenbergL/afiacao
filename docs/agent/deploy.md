@@ -35,9 +35,11 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 **Rodam no CI mas NÃO reprovam** (2, informativos por desenho): `mutcheck` · `mutcheck:selftest`.
 
-**Hooks que NEGAM a chamada de ferramenta** (5, permissionDecision deny): `check-gstack.sh` · `destructive-bash-guard.sh` · `heavy-guard.sh` · `migration-collision-guard.sh` · `migration-immutability-guard.sh`.
+**Hooks que NEGAM a chamada de ferramenta** (5, deny dentro de hookSpecificOutput com hookEventName): `destructive-bash-guard.sh` · `heavy-guard.sh` · `migration-collision-guard.sh` · `migration-immutability-guard.sh` · `push-gates-guard.sh`.
 
 <!--gates:frescura fim-->
+
+⚠️ **Deny fora desse envelope não nega nada — e agora reprova (`DENY-SEM-ENVELOPE`).** O `check-gstack.sh` ficou nesta lista de 2026-05-14 a 2026-09-27 sem negar uma chamada: emitia `{"permissionDecision":"deny"}` no topo do JSON, e o censo o contava por uma regex que casava o token em qualquer lugar do fonte. Medido com sonda no harness: no topo, ou sem o `hookEventName`, a chamada passa. Ele saiu (o gstack virou sensor de SessionStart, `vigia-gstack.sh`) → [gate-gstack-fail-open.md](../historico/gate-gstack-fail-open.md).
 
 ⚠️ **A segunda lista não é decoração — até 2026-09-07 aqueles dois nomes estavam na PRIMEIRA.** O
 job `mutation-check` está fora de `validate.needs` (job `mutation-check` no `ci.yml`) e abre Issue em vez de barrar,

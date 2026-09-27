@@ -383,7 +383,7 @@ async function reprocessOrders(
           // omie_numero_pedido, que pegaria a linha errada (causa-raiz #B). Ela também NUNCA
           // reescreve o hash_payload do pai.
           hash_payload: hashPayload,
-          omie_pedido_id: codigoPedido,
+          omie_pedido_id: Number(codigoPedido),
           // [A4] só reconcilia status com etapa CONHECIDA. `null` = "não sei", e a RPC mantém o
           // status atual. Quem decide se o status LOCAL ainda é gerido pelo Omie é a RPC, dentro
           // da transação: decidir isso aqui exigiria ler o status antes de escrever, e é

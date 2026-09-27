@@ -80,7 +80,7 @@ EOF
 
   # `bloqueia.sh` nega de verdade; `avisa.sh` só CITA "deny" em comentário — é o caso real do
   # `read-contexto-nudge.sh`, e o censo abaixo não o lista de propósito.
-  printf '%s\n' 'jq -n '\''{hookSpecificOutput:{permissionDecision:"deny"}}'\''' > "$r/.claude/hooks/bloqueia.sh"
+  printf '%s\n' 'jq -n '\''{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny"}}'\''' > "$r/.claude/hooks/bloqueia.sh"
   printf '%s\n' '# permissionDecision:"deny" quebraria a investigacao — por isso NAO nego' 'echo aviso' > "$r/.claude/hooks/avisa.sh"
 
   cat > "$r/docs/agent/deploy.md" <<'EOF'
@@ -193,8 +193,11 @@ modo_falsificar() {
   sabotagem 'S4 sentido 2: censo lista nome que nao reprova mais' 'CENSO-OBSOLETO' 1 \
     "sed -i.bak 's|\`gate:dois\`|\`gate:dois\` · \`gate:fantasma\`|; s|\*\*Gates do CI\*\* (2)|**Gates do CI** (3)|' docs/agent/deploy.md"
 
+  # Até 2026-09-27 o "hook deny novo" desta sabotagem era `{permissionDecision:"deny"}` no topo — a
+  # forma EXATA do check-gstack.sh, que o harness ignora. A fixture carimbava como bloqueio um hook
+  # que não bloqueia; S14/S15 abaixo são agora as sabotagens dessa forma.
   sabotagem 'S5 sentido 2: hook deny novo nao entra no censo' 'NAO-CITADO' 1 \
-    "printf '%s\n' 'jq -n {permissionDecision:\"deny\"}' > .claude/hooks/novo.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/novo.sh\" }|' .claude/settings.json"
+    "printf '%s\n' 'jq -n {hookSpecificOutput:{hookEventName:\"PreToolUse\",permissionDecision:\"deny\"}}' > .claude/hooks/novo.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/novo.sh\" }|' .claude/settings.json"
 
   # --- Fail-closed -----------------------------------------------------------------------------
   # Bloco ausente é "nao consegui avaliar" (rc=2), nunca "esta tudo certo" (rc=0).
@@ -231,6 +234,16 @@ modo_falsificar() {
   # morre calada. Ausência de número é ACHADO, não isenção.
   sabotagem 'S12 sentido 3: lista de nomes sem declarar (N)' 'CENSO-SEM-CONTAGEM' 1 \
     "sed -i.bak 's|\*\*Gates do CI\*\* (2)|**Gates do CI**|' docs/agent/deploy.md"
+
+  # --- Deny que o harness ignora ---------------------------------------------------------------
+  # As duas formas que a sonda de 2026-09-27 (Claude Code 2.1.281) viu deixarem a skill CARREGAR.
+  # Uma por sabotagem: S14 cai mesmo sem a exigência do hookEventName (não há envelope nenhum), e
+  # só S15 fica vermelha se alguém a tirar — é a que dá dente a essa exigência.
+  sabotagem 'S14 deny no TOPO do JSON (o check-gstack.sh)' 'DENY-SEM-ENVELOPE' 1 \
+    "printf '%s\n' 'echo {\"permissionDecision\":\"deny\",\"message\":\"x\"}' > .claude/hooks/velho.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/velho.sh\" }|' .claude/settings.json"
+
+  sabotagem 'S15 hookSpecificOutput SEM hookEventName' 'DENY-SEM-ENVELOPE' 1 \
+    "printf '%s\n' 'jq -n {hookSpecificOutput:{permissionDecision:\"deny\"}}' > .claude/hooks/meio.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/meio.sh\" }|' .claude/settings.json"
 
 
   # --- O step sumindo do proprio ci.yml ---------------------------------------------------------
