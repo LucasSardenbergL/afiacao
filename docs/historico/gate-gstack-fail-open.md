@@ -84,6 +84,23 @@ sem sensor) — perde o diagnóstico.
   `hookEventName` ficaria verde.
 - `benchmark-externo` declara o próprio fallback sem gstack.
 
+## Prova na nuvem (pós-merge, mesmo dia)
+
+Rotina cloud de uso único na main `45312f4` (`claude-sonnet-5`, ambiente Default, sem setup script,
+sem conectores), lida pelo `get_run_log`:
+
+| rodada | o que provou |
+| --- | --- |
+| 1 | `CLAUDE_CODE_REMOTE=true`, sem `gstack/bin`; o sensor rodado à mão devolve o envelope com `GSTACK-NUVEM` e `rc=0`; `Skill(doc2md)` **carregou** (não há mais gate); `/code-review` **existe** na nuvem, então o substituto que o sensor aponta é real |
+| 2 | **sem nenhuma chamada de ferramenta** (`turns=1`, zero `tool_use` no log), o modelo copiou do próprio contexto `[BIN-VAZIO]` e `[SKILL-AUSENTE:review,investigate,browse,qa]` — tokens que o prompt não trazia: o `additionalContext` do SessionStart chegou |
+
+A rodada 1 sozinha não provava a injeção: o modelo chamou Bash e Skill em paralelo e respondeu depois
+de ver a saída do passo 2, que tem o mesmo texto — a citação estava contaminada. **Prova de que um
+hook injetou contexto exige zero ferramenta E um token que o prompt não entrega**; pedir "não
+reconstrua" não basta. A contagem de `hook_started` bate com os dois desenhos: 14 na rodada 1 (2
+SessionStart + 8 PreToolUse de Bash + 1 PostToolUse + 2 Stop + 1 InstructionsLoaded, nenhum sobre
+`Skill`) e 5 na rodada 2.
+
 ## A lição
 
 **Gate que nega precisa de prova de NEGAÇÃO executada, não de texto que se pareça com negação.** A

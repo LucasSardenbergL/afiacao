@@ -136,3 +136,41 @@ borda de contatos igual ao dos pedidos. Esse trabalho vai para o ritual `lovable
 - **Promoção ao núcleo** continua exigindo o que não era escopo aqui: `db/lib/pg-harness.sh` no lugar
   do boilerplate `/opt/homebrew` (as 3 são só-macOS) e, na auto-aprovação e no push, um recibo de
   contagem (`PASS=`) que o runner saiba ler.
+
+## O gate da classe do N9: `scripts/relogio-bash-em-provas-gate.ts`
+
+No mesmo dia, pelo protocolo `matar-classe`, a classe dos dois relógios ganhou gate textual (vitest).
+
+- **Assinatura:** `date`/`gdate` com formato que tem campo de calendário, `\bg?date\b[^|;#\n]*\+["']?%[^s]`.
+  Casa `+%H`, `-u "+%d/%m"`, `'+%u'`, `+"%H"`; não casa `+%s`, que mede duração. Foi calibrada com o
+  próprio gate sobre a árvore REAL de `db/` (`git archive`): antes do #2588, exit 1 só na linha 167 da
+  prova do estoque; depois, exit 0, inclusive com o comentário novo que cita o `date` (o stripper o
+  limpa). A forma `git grep -E` não entende `\b` e dava 0 no pré-fix: seria assinatura teatro.
+- **Universo:** todo shell de `db/` (313: as 304 provas, `db/lib/` e os falsificadores), não só
+  `test-*.sh`. Um `hora_brt()` no harness seria a mesma leitura. O teste confere contra o `git ls-files`.
+- **Varredura do repo inteiro** (subagente, read-only): a assinatura casa 11 linhas. Fora o N9, são 10,
+  todas fora de `db/` e todas falso-positivo (carimbo de log em hook, exibição em skill, `date -r
+  "$epoch"` formatando um instante DADO). As formas irmãs (`gdate`, `date -I`/`-R`, `$(date)` cru,
+  `printf '%(…)T'`, python/perl/node, `$EPOCHSECONDS`) têm 0 ocorrência em `db/`. O `clock_timestamp()`
+  das provas (67 linhas em 20) é seed relativo, duração ou prova DELIBERADA de ordem entre os relógios:
+  nenhum afetado.
+- **Dente:** stripper compartilhado, walker e os quatro alarmes herdados do irmão
+  `shell-variavel-colada-gate.ts`, pisos de 250 provas e 60.000 linhas de código (medido: 304 e
+  76.725). A falsificação roda no arquivo REAL: devolve o N9 ao fim da prova do estoque e exige
+  exatamente aquele sítio, com o corpo intocado verde na mesma invocação. O `mutcheck` pega 18/18
+  (`scripts/mutcheck.d/relogio-bash-em-provas.mut`). Suíte verde em `LC_ALL=C` e `pt_BR.UTF-8`.
+
+### A 2ª assinatura (seed no fuso da sessão): calibrada, gate adiado
+
+`date_trunc\(\s*'(day|week|month|year)'\s*,\s*now\(\)\s*\)` em `db/test-*.sh` casa só a positivação
+(l.145-146, sem `AT TIME ZONE`). Não casa a forma com `AT TIME ZONE`, nem a de 3 argumentos do PG14+,
+nem `'hour'` (SP tem offset de hora cheia: truncar a hora dá o mesmo instante nos dois fusos). A
+positivação espera o conserto do sensor (chip "Corrigir fuso da sessão no sensor de positivação").
+Gatear antes deixaria a main vermelha, e o lado pós-fix da calibração ainda não existe. O gate tem dono
+em chip próprio ("Gatear seed no fuso da sessão em provas SQL").
+
+Alargar para `current_date`/`now()::date` nus não serve: são 363 ocorrências em ~52 provas, quase todas
+com seed e esperado no MESMO fuso (coerentes), e 12 provas fixam o fuso de propósito. Se um dia faltar
+alcance, a forma cirúrgica medida é por ARQUIVO: `date_trunc(…, now())` nu **e** `AT TIME ZONE
+'America/…'` no mesmo arquivo, **sem** `SET TIME ZONE`/`ALTER DATABASE … TimeZone`. Hoje ela casa só
+a positivação.

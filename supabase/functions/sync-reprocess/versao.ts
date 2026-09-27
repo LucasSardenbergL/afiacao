@@ -78,8 +78,11 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 //     RPC antiga. É assim que se lê, no log, que a edge subiu antes da migration.
 // ⚠️ ORDEM: livre, mas o defeito do desconto só fecha com as DUAS no ar — edge nova + RPC antiga
 // ignora a chave; RPC nova + edge velha recebe payload sem a chave e segue a regra antiga.
+// v1.10 (2026-09-27) — o MESMO corpo da v1.9: desfaz de novo os commits do bot do Lovable (16:58Z), que
+// reaplicaram `omie_pedido_id: Number(codigoPedido)` (money-path: ausente viraria 0). O bump só existe
+// porque o `sonda:bump` compara com a base, que já tinha o commit do bot.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.9-revert-changes-lovable";
+export const VERSAO = "v1.10-revert-bot-pos-deploy";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

@@ -263,6 +263,8 @@ ressalva explícita. Prefira "não sei, confirmar com contador" a um número fal
   regime no DRE, estoque=0). **Leia antes de adaptar SQL.**
 - `references/regimes-tributarios.md` — Presumido vs Simples, o que é hardcoded no front, o
   que sempre vai pro contador, escopo das simulações conservadoras.
+- `references/openaccountants-brasil.md` — ponteiro PINADO para 3 guias externos (reforma
+  CBS/IBS 2026, Simples, NF-e): rascunho **sem revisão de CRC**, lido sob demanda, sem split payment.
 - `assets/sql/00..08` — templates read-only canônicos pra colar no Lovable.
 - `assets/templates/fechamento-mensal.md` — estrutura do relatório mensal.
 - `assets/templates/perguntas-contador.md` — estrutura da lista de perguntas.

@@ -310,7 +310,20 @@ completo no cabeçalho do hook; medição e motivo em `docs/historico/gates-no-p
 
 **Depois do push**, quem vigia depende de onde a sessão roda:
 
-- **Local:** `scripts/pr-watch.sh <nº>` em background. Os exit codes estão no cabeçalho do
+- **App desktop (aba Code), o caso comum:** logo depois do `gh pr create`, ligue o **Auto-fix**:
+  `ccd_pr` `set_monitor` com `auto_fix` e `address_comments` = true. É preferência do founder
+  (2026-09-27) e vale **por PR**: o app não tem preferência global para isso. O app acorda a
+  sessão com `<ci-monitor-event>` em CI vermelho, **conflito com a main** e comentário de review,
+  e o evento já autoriza consertar → verificar → commitar → push, sem perguntar. Ele **substitui**
+  o `pr-watch` nesse PR (o app pede para não fazer polling, e dois vigias acordariam a sessão duas
+  vezes); o que ele não avisa é o MERGE, que aparece na barra do PR no app. Conflito: primeiro
+  `ccd_host sync_with_base_branch`; se ele recusar porque a fusão traria arquivo protegido
+  (`.claude/hooks`, `.claude/skills`, `settings.json`) e a origem ainda não foi confirmada no app
+  (Help → Troubleshooting → Review Pinned Git Origins), faça `git fetch origin main` +
+  `git merge FETCH_HEAD` — nunca cópia local velha, rebase ou force-push. O conflito típico
+  (#2587, duas vezes no mesmo dia) é a linha ÚNICA do `test:hooks`, que todo PR de hook edita:
+  parta da versão da main e reaplique só a sua palavra, conferindo que o resto da linha é idêntico.
+- **CLI no terminal (sem o app):** `scripts/pr-watch.sh <nº>` em background. Os exit codes estão no cabeçalho do
   script. A janela conta **vigília**, não relógio de parede: no suspend o tempo dormido volta ao
   prazo.
 - **Cloud (claude.ai/code):** não há `gh`, e o `pr-watch.sh` sai 64 (dependência ausente). O

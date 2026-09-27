@@ -29,8 +29,10 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("whatsapp-inbound");
 
+// v1.2 (2026-09-27) — o MESMO corpo da v1.1: desfaz de novo o `SupabaseClient<any>` que o bot do Lovable
+// reaplicou (16:58Z). O bump só existe porque o `sonda:bump` compara com a base, que já tinha o commit do bot.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-revert-changes-lovable";
+export const VERSAO = "v1.2-revert-bot-pos-deploy";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
