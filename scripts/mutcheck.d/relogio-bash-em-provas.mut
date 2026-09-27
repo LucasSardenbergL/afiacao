@@ -1,0 +1,48 @@
+# Invariantes do fiscal do relógio do BASH em provas SQL.
+# @src: scripts/relogio-bash-em-provas-gate.ts
+# @test: scripts/relogio-bash-em-provas-gate.test.ts
+#
+# A classe (docs/historico/provas-janela-de-relogio-fora-do-nucleo.md): a prova tira o ESPERADO do
+# `date` do bash num campo de calendário e o compara com o now() do banco — dois relógios; a borda
+# que cai entre as leituras reprova a prova sozinha. O fiscal é TEXTUAL, então cada camada dele é
+# uma aposta que pode apodrecer sem vermelho nenhum: a assinatura (e cada lado do que ela
+# discrimina), a isenção de comentário (que TEM de ser o stripper compartilhado, nunca regex local),
+# a linha reportada, o denominador, os alarmes herdados do irmão, o universo, os pisos e o código de
+# saída. Cada PEGA quebra UMA camada e exige a suíte vermelha.
+#
+# O walker e o dente de cada alarme do stripper moram no irmão (`shell-variavel-colada.mut`); aqui
+# se prova que ESTE fiscal os consulta.
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`. O `#`
+# da regex local vai como `\x23`, para a linha do contrato não carregar um `#` cru.
+
+# CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: detector cego (a assinatura nunca casa)                    | s/\\bg\?date\\b\[/\\bNUNCA_CASA\\b[/
+
+# A assinatura, dos dois lados: o que ela TEM de casar e o que ela NÃO pode casar.
+PEGA | epoch vira calendário: `date +%s` (duração) passa a ser violação     | s/%\[\^s\]\/;/%.\/;/
+PEGA | aspas depois do `+` (`date +"%H"`) escapam                           | s/\\\+\["'\]\?%/\\+%/
+PEGA | sem fronteira à esquerda: `update +%H` vira leitura do relógio       | s/= \/\\bg\?date/= \/g?date/
+PEGA | `gdate` (coreutils do Homebrew) escapa                                | s/\\bg\?date/\\bdate/
+
+# A isenção de comentário. A 2ª é a versão INGÊNUA que a regra da casa proíbe: ela apaga o `#` que
+# mora dentro de aspas e, com ele, a leitura do relógio que vem depois — verde por cegueira.
+PEGA | stripper ignorado: comentário vira código                            | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte; void removerComentariosShell;/
+PEGA | regex LOCAL no lugar do stripper compartilhado                        | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte.replace(\/\x23.*\$\/gm, ""); void removerComentariosShell;/
+
+# O que o fiscal reporta e o denominador que ele mede.
+PEGA | linha reportada deixa de ser a da FONTE                               | s/linha: i \+ 1, trecho/linha: i, trecho/
+PEGA | denominador conta linha em branco como código                        | s/if \(linha\.trim\(\) !== ''\) linhasDeCodigo\+\+;/linhasDeCodigo++;/
+
+# Os alarmes do stripper (herdados) e o universo.
+PEGA | analisar deixa de consultar o stripper                               | s/r\.alarmes\.push\(\.\.\.alarmesDoStripper\(a\.caminho, diagnosticarShell\(a\.fonte\)\)\);/void diagnosticarShell; void alarmesDoStripper;/
+PEGA | universo perde as provas (só `db/lib/`)                              | s/export const RAIZES_PADRAO = \['db'\];/export const RAIZES_PADRAO = ['db\/lib'];/
+PEGA | todo shell de db/ conta como prova no piso                           | s/test-\[\^\/\]\*/.*/
+
+# O veredito: 2 nunca é "passou", violação nunca é 0, e a mensagem aponta o conserto.
+PEGA | nenhum arquivo lido vira "limpo"                                     | s/if \(r\.caminhos\.length === 0\) furos/if (false) furos/
+PEGA | piso de provas desligado                                             | s/if \(provas < PISOS\.provas\) furos/if (false) furos/
+PEGA | piso de linhas de código desligado                                   | s/if \(r\.linhasDeCodigo < PISOS\.linhasDeCodigo\) \{/if (false) {/
+PEGA | alarme/piso furado deixa de bloquear o veredito                      | s/if \(furos\.length > 0\) \{/if (false) {/
+PEGA | violação sai 0                                                       | s/codigo: 1,/codigo: 0,/
+PEGA | a mensagem perde o conserto (relógio controlado)                     | s/`test\.agora`; FIXE/`X`; FIXE/
