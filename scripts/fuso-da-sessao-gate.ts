@@ -11,7 +11,7 @@
 // a semântica é SP; função sem ele pode ser UTC de propósito e está fora deste gate):
 //   A · coluna `*_at`/`*_em` comparada com variável `date`/`timestamp` calculada em SP — o cast
 //       implícito da comparação usa o fuso da sessão;
-//   B · coluna `*_at`/`*_em` convertida pelo fuso da sessão: `::date`, `::timestamp`, `date(...)`,
+//   B · coluna `*_at`/`*_em` convertida pelo fuso da sessão: `::date`, `::timestamp`, `CAST`, `date()`,
 //       `date_trunc('dia|mês|…', col)`, `extract(hora|dia|… from col)`;
 //   C · o "hoje/agora" da sessão misturado num corpo SP: `current_date`, `now()::date`,
 //       `localtimestamp`, `date_trunc('dia|mês|…', now())`.
@@ -55,12 +55,17 @@ function variaveisEmSp(codigo: string): string[] {
   const tipo = /\b([a-z_][a-z0-9_]*)\s+(?:date|timestamp(?:\s+without\s+time\s+zone)?)\s*(?=;|:=|=|\bdefault\b)/gi;
   for (const m of codigo.matchAll(tipo)) declaradas.add(m[1].toLowerCase());
   const emSp = new Set<string>();
-  // inicializador na declaração OU atribuição posterior — em ambos, o lado direito até o `;`
-  const atrib = /\b([a-z_][a-z0-9_]*)\s*(?:date|timestamp(?:\s+without\s+time\s+zone)?)?\s*(?::=|\bdefault\b)\s*([^;]*);/gi;
-  for (const m of codigo.matchAll(atrib)) {
-    const nome = m[1].toLowerCase();
-    if (declaradas.has(nome) && SP.test(m[2])) emSp.add(nome);
-  }
+  const marcar = (nome: string, expr: string) => {
+    if (declaradas.has(nome.toLowerCase()) && SP.test(expr)) emSp.add(nome.toLowerCase());
+  };
+  // inicializador na declaração OU atribuição posterior — `:=`, `=` (o PL/pgSQL aceita os dois) ou
+  // DEFAULT —, com o lado direito até o `;`. `>=`/`<=`/`!=` não casam: o `=` delas não vem colado a
+  // identificador. Uma comparação `d = <expr SP>` casa e marca `d` — excesso inofensivo.
+  const atrib = /\b([a-z_][a-z0-9_]*)\s*(?:date|timestamp(?:\s+without\s+time\s+zone)?)?\s*(?::=|=|\bdefault\b)\s*([^;]*);/gi;
+  for (const m of codigo.matchAll(atrib)) marcar(m[1], m[2]);
+  // a outra forma de atribuir em PL/pgSQL: `SELECT <expr> INTO [STRICT] var`
+  const into = /\bselect\s+([^;]*?)\s+into\s+(?:strict\s+)?([a-z_][a-z0-9_]*)\b/gi;
+  for (const m of codigo.matchAll(into)) marcar(m[2], m[1]);
   return [...emSp];
 }
 
@@ -74,14 +79,19 @@ export function detectarFusoDaSessao(corpoCru: string): Achado[] {
   };
 
   for (const v of variaveisEmSp(codigo)) {
+    // A variável convertida para INSTANTE de SP (`d::timestamp AT TIME ZONE 'America/Sao_Paulo'`) é o
+    // conserto pela borda — a forma que usa índice —, não sítio. Só essa forma: `d::timestamptz`
+    // ainda casta no fuso da sessão e segue acusado.
+    const vCru = String.raw`${v}\b(?!\s*::\s*timestamp(?:\s+without\s+time\s+zone)?\s+AT\s+TIME\s+ZONE\s+'America\/Sao_Paulo')`;
     // coluna OP var  ·  var OP coluna (e a coluna não pode ser o lado esquerdo de um AT TIME ZONE)
-    casar('A', new RegExp(String.raw`${ANTES}${COL_AT}\s*${OP}\s*${v}\b`, 'gi'));
+    casar('A', new RegExp(String.raw`${ANTES}${COL_AT}\s*${OP}\s*${vCru}`, 'gi'));
     casar('A', new RegExp(String.raw`${ANTES}${v}\s*${OP}\s*${COL_AT}\b(?!\s*AT\s+TIME\s+ZONE)`, 'gi'));
-    casar('A', new RegExp(String.raw`${ANTES}${COL_AT}\s+BETWEEN\s+(?:${v}\b|[^;]{1,80}?\bAND\s+${v}\b)`, 'gi'));
+    casar('A', new RegExp(String.raw`${ANTES}${COL_AT}\s+BETWEEN\s+(?:${vCru}|[^;]{1,80}?\bAND\s+${vCru})`, 'gi'));
   }
 
   casar('B', new RegExp(String.raw`${ANTES}${COL_AT}\s*::\s*(?:date|timestamp)\b(?!\s*with\b)`, 'gi'));
   casar('B', new RegExp(String.raw`\bdate\s*\(\s*${COL_AT}\s*\)`, 'gi'));
+  casar('B', new RegExp(String.raw`\bcast\s*\(\s*${COL_AT}\s+as\s+(?:date|timestamp(?:\s+without\s+time\s+zone)?)\s*\)`, 'gi'));
   casar('B', new RegExp(String.raw`\bdate_trunc\s*\(\s*'(?:day|week|month|quarter|year)'\s*,\s*${COL_AT}\s*\)`, 'gi'));
   casar('B', new RegExp(String.raw`\bextract\s*\(\s*(?:hour|day|dow|isodow|doy|week|month|quarter|year)\s+from\s+${COL_AT}\s*\)`, 'gi'));
 

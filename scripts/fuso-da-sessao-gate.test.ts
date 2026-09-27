@@ -61,6 +61,8 @@ describe('formas — os dois lados de cada família', () => {
     ['B: ::date', 'SELECT x.created_at::date FROM x;', 'B'],
     ['B: ::timestamp', 'SELECT x.aprovado_em::timestamp FROM x;', 'B'],
     ['B: date()', 'SELECT date(x.created_at) FROM x;', 'B'],
+    ['B: CAST(… AS date)', 'SELECT CAST(x.created_at AS date) FROM x;', 'B'],
+    ['A: variável castada para timestamptz (ainda é o fuso da sessão)', 'SELECT 1 FROM x WHERE x.created_at >= d::timestamptz;', 'A'],
     ['B: date_trunc de coluna', "SELECT date_trunc('month', x.created_at) FROM x;", 'B'],
     ['B: extract de coluna', 'SELECT extract(hour from x.created_at) FROM x;', 'B'],
     ['C: current_date', 'SELECT current_date;', 'C'],
@@ -74,12 +76,21 @@ describe('formas — os dois lados de cada família', () => {
     ['coluna convertida para SP antes de comparar', "SELECT 1 FROM x WHERE (x.created_at AT TIME ZONE 'America/Sao_Paulo')::date >= d;"],
     ['variável contra coluna já em SP (AT TIME ZONE liga mais forte)', "SELECT 1 FROM x WHERE d <= x.created_at AT TIME ZONE 'America/Sao_Paulo';"],
     ['coluna date: sem fuso', 'SELECT 1 FROM x WHERE x.visit_date >= d;'],
+    ['borda convertida para instante de SP (o conserto que usa índice)', "SELECT 1 FROM x WHERE x.created_at >= d::timestamp AT TIME ZONE 'America/Sao_Paulo';"],
     ['*_em que é date na prod (inicio_em, medido_em, suspensa_em)', 'SELECT 1 FROM x WHERE x.inicio_em >= d AND medido_em < d;'],
     ['::timestamptz não converte fuso', 'SELECT x.created_at::timestamptz FROM x;'],
     ['o hoje de SP', "SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date;"],
     ['comentário não é código', '-- WHERE x.created_at::date >= current_date\n  SELECT 1;'],
   ])('solta — %s', (_nome, miolo) => {
     expect(detectarFusoDaSessao(emSp(miolo))).toEqual([]);
+  });
+
+  // As formas de ATRIBUIR que o PL/pgSQL aceita além de `:=` — escapavam da 1ª versão (Codex, adversarial).
+  it.each([
+    ['declaração com `=`', "DECLARE d date = (now() AT TIME ZONE 'America/Sao_Paulo')::date; BEGIN PERFORM 1 FROM x WHERE x.created_at >= d; END;"],
+    ['SELECT … INTO', "DECLARE d date; BEGIN SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date INTO d; PERFORM 1 FROM x WHERE x.created_at >= d; END;"],
+  ])('acusa — variável de SP atribuída por %s', (_nome, corpo) => {
+    expect(detectarFusoDaSessao(corpo)).toEqual([{ familia: 'A', trecho: 'x.created_at >= d' }]);
   });
 
   it('corpo SEM America/Sao_Paulo não é medido: a semântica dele pode ser UTC de propósito', () => {
@@ -123,6 +134,22 @@ describe('o corpo VIVO do repo (a última definição de cada função)', () => 
       `${ALVO} · A · fc.started_at >= mes_inicio (1× no corpo vivo, baseline 0)`,
       `${ALVO} · A · fc.started_at < mes_fim (1× no corpo vivo, baseline 0)`,
       `${ALVO} · B · so.created_at::date (1× no corpo vivo, baseline 0)`,
+    ]);
+  });
+
+  it('canário 2: o corpo pré-fix nas formas alternativas (`date =` e `CAST`) também REPROVA', () => {
+    const origem = MIGS.find((m) => m.nome === ORIGEM)?.sql ?? '';
+    const variante = origem.replaceAll('mes_inicio date :=', 'mes_inicio date =')
+      .replaceAll('mes_fim date :=', 'mes_fim date =')
+      .replace('so.created_at::date', 'CAST(so.created_at AS date)');
+    // controle: as 3 trocas aconteceram — senão o canário mediria o corpo de sempre
+    expect(variante.split('date =').length - 1).toBeGreaterThanOrEqual(2);
+    expect(variante).toContain('CAST(so.created_at AS date)');
+    const { novos } = confrontar(varrerMigrations([...MIGS, { nome: '99999999999999_canario.sql', sql: variante }]), CONHECIDOS);
+    expect(novos).toEqual([
+      `${ALVO} · A · fc.started_at >= mes_inicio (1× no corpo vivo, baseline 0)`,
+      `${ALVO} · A · fc.started_at < mes_fim (1× no corpo vivo, baseline 0)`,
+      `${ALVO} · B · cast(so.created_at as date) (1× no corpo vivo, baseline 0)`,
     ]);
   });
 
