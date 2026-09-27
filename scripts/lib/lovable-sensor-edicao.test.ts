@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ARQUIVOS_TOLERADOS_DO_BOT,
+  ASSENTAR_MIN_PADRAO,
   type CommitDoBot,
   commitsSuspeitos,
   julgar,
@@ -83,6 +84,12 @@ describe('julgar — ausencia de dado nunca vira "sem edicao"', () => {
 
   it('[SENSOR_ILEGIVEL] resposta vazia e ILEGIVEL', () => {
     expect(julgar({ legivel: false, sinais: [], confirmou: false }, [], true)).toBe('ILEGIVEL');
+  });
+
+  it('[SENSOR_ASSENTAR_COBRE_ATRASO_MEDIDO] o assentamento padrao cobre o atraso medido de 27/09', () => {
+    // resposta 16:42:55Z, commits do bot 16:58:00Z -> 15,1 min
+    const atrasoMedidoMin = (Date.parse('2026-09-27T16:58:00Z') - Date.parse('2026-09-27T16:42:55Z')) / 60_000;
+    expect(ASSENTAR_MIN_PADRAO).toBeGreaterThanOrEqual(2 * atrasoMedidoMin);
   });
 
   it('[SENSOR_LIMPO] so os tres eixos limpos dao SEM_EDICAO', () => {

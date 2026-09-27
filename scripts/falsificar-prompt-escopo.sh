@@ -98,6 +98,9 @@ const SABOTAGENS: Sabotagem[] = [
     velho: "  return t !== '' && t.toLowerCase() !== 'null' && t.toLowerCase() !== 'none';",
     novo: "  return true;",
     marca: '[SENSOR_NULO_NAO_E_SINAL]' },
+  { id: 'S13', arquivo: SENSOR, defeito: 'assentamento volta aos 5 min que nao cobriam o atraso de 27/09',
+    velho: 'export const ASSENTAR_MIN_PADRAO = 30;', novo: 'export const ASSENTAR_MIN_PADRAO = 5;',
+    marca: '[SENSOR_ASSENTAR_COBRE_ATRASO_MEDIDO]' },
 ];
 
 const ALVOS = [...new Set(SABOTAGENS.map((s) => s.arquivo))];

@@ -22,6 +22,15 @@
 /** Chaves que, com valor não-nulo, provam que a rodada do agente produziu edição. */
 export const CHAVES_DE_EDICAO: readonly string[] = ['edit_id', 'commit_sha', 'editId', 'commitSha'];
 
+/**
+ * Quanto esperar depois do envio antes de ler a `main` e acreditar em "zero commits do bot".
+ * MEDIDO: em 2026-09-26 os "Changes" chegaram junto com o deploy; em 2026-09-27 a resposta do agente
+ * fechou às 16:42:55Z (turno sem nenhuma edição no trace) e os 3 commits chegaram às 16:58Z —
+ * **~15 min depois**, possivelmente de OUTRO gatilho que não o turno do deploy. O padrão cobre o
+ * dobro do atraso medido; o teste trava o piso no atraso medido.
+ */
+export const ASSENTAR_MIN_PADRAO = 30;
+
 /** A linha exata que o `blocoDeEscopo` exige no fim da resposta. */
 export const LINHA_DE_CONFIRMACAO = 'No files were edited.';
 

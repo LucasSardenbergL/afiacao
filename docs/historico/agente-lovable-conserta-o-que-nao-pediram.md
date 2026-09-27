@@ -1,6 +1,6 @@
 # O agente do Lovable conserta o que ninguém pediu — e o sync empurra na main
 
-> 2026-09-26/27. Duas vezes em dois dias o pedido de deploy verbatim saiu certo e, na MESMA rodada,
+> 2026-09-26/27. TRÊS vezes em quatro dias o pedido de deploy verbatim saiu certo e, na MESMA rodada,
 > o agente editou OUTRAS edges por conta própria. Desfecho: o prompt passa a proibir o que ele fez
 > (nomeando-o), exige uma linha de confirmação, e um sensor por fora confere a resposta do MCP e os
 > commits do bot na `main`. Regra que fica: **o escopo de um pedido ao agente é o que o prompt
@@ -17,7 +17,28 @@
 | sintoma | `bun lint` vermelho em todo PR (`no-explicit-any`) | `sonda:fingerprint` vermelho na `main` |
 | reparo | revert `1460ea5e7` | revert #2579 — com bump de `VERSAO` (o `sonda:bump` compara contra a main COM os "Changes"): `whatsapp-inbound` v1.1-revert-changes-lovable, `sync-reprocess` v1.9-revert-changes-lovable |
 
-A mesma edição (`SupabaseClient<any>` na `whatsapp-inbound`) nas duas vezes: o `build-errors.log`
+### O 3º, no meio desta entrega (2026-09-27) — e o que ele derrubou
+
+A sessão do #2593 deployou `sync-reprocess` + `whatsapp-inbound` pelo MCP com um parágrafo restritivo
+acrescentado à mão. Trace do turno (`list_messages`): `code--exec` (24/24 sha256 OK contra
+`6bcf9955`) → `deploy_edge_functions` → `curl` ×2 → `message_user` "NO FILES EDITED". **Nenhum
+`line_replace`/`write` no turno.** Envio 16:41:41Z, resposta fechada 16:42:55Z — e os commits
+`1b654757d`, `ea6339e52`, `5552991e2` ("Deployou funções verbatim") chegaram às **16:58Z**, ~15 min
+depois, com o diff líquido IDÊNTICO aos dois anteriores. Revertido pelo #2594 (bump para
+`sync-reprocess` v1.10 / `whatsapp-inbound` v1.2 `-revert-changes-lovable-27-09`).
+
+Três lições que viram desenho:
+
+1. **A confirmação do agente não vale nada sozinha.** Ele disse "NO FILES EDITED" e a edição veio
+   igual. Por isso a linha é sinal FRACO (§4) e o sensor por fora é o que decide.
+2. **O assentamento de 5 min era cego.** Às 16:48 o sensor teria dito `SEM_EDICAO`. Padrão agora é
+   `ASSENTAR_MIN_PADRAO = 30` (2× o atraso medido; teste trava o piso, falsificado em S13).
+3. **A edição pode não vir do turno do deploy.** Sem escrita no trace, a origem provável é outro
+   gatilho do Lovable reagindo ao erro de typecheck do preview nesses 2 arquivos. O prompt blindado
+   fecha a porta do TURNO; enquanto a isca existir, qualquer turno (ou automação) pode "consertar"
+   de novo — o eixo `main` do sensor pega isso porque lê a JANELA inteira desde `--desde`, não o turno.
+
+A mesma edição (`SupabaseClient<any>` na `whatsapp-inbound`) nas três vezes: o `build-errors.log`
 do sandbox acusa o typecheck Deno daquela edge, e o agente, prestativo, "conserta" o que vê. Não é
 acaso — é uma isca permanente no ambiente dele. Sem trava, a 3ª vez era questão de tempo.
 
@@ -38,7 +59,7 @@ não a intenção.
   deploy"; e a resposta termina com a linha exata `No files were edited.` (ou a lista do que tocou).
   `MARCAS_DE_ESCOPO` entra no `conferirCobertura`: colagem sem qualquer frase reprova
   (`escopo:<frase>`), e o `pendencias:prompt` sai 2.
-- **`scripts/lovable-sensor-edicao.ts`** — rode ≥5 min depois do envio, com a resposta salva em
+- **`scripts/lovable-sensor-edicao.ts`** — rode ≥30 min depois do envio, com a resposta salva em
   arquivo: `--desde <ISO do envio> <arquivo>`. Dois eixos por fora da palavra do agente:
   `edit_id`/`commit_sha` não-nulos na resposta do MCP (inclusive dentro de JSON embrulhado em
   string), e commits `gpt-engineer-app` na `origin/main` desde o envio — o `git fetch` é do script.
@@ -64,7 +85,7 @@ não a intenção.
 
 - `bunx vitest run` nas 5 suítes afetadas (`prompt-deploy`, `pacote-entrega`,
   `lovable-sensor-edicao`, `pendencias-pacote`, `pendencias-prompt`): `Test Files 5 passed (5)`,
-  `Tests 131 passed (131)`, exit 0. (A 1ª execução morreu em `Timeout calling "fetch"` do worker sob
+  `Tests 131 passed (131)`, exit 0 (antes do S13; reroda na seção abaixo). (A 1ª execução morreu em `Timeout calling "fetch"` do worker sob
   ~11 GB de swap — mecânica, não código; reroda com `--maxWorkers=1`.)
 - `bun run falsificar:prompt-escopo`: controle verde nos dois locales na MESMA invocação e
   **24/24** sabotagens (12 × `C`/`pt_BR.UTF-8`) vermelhas pela marca certa — frase amputada (S01-S03),
@@ -73,10 +94,15 @@ não a intenção.
 
 ## 6. O que fica descoberto (nomeado)
 
+- **A origem exata da edição de 27/09 (16:43–16:58Z) não está provada** — a sessão do #2593 ficou de
+  olhar o `list_messages` da janela.
 - **O formato real da resposta do `send_message` não estava documentado.** O sensor busca as chaves
   em qualquer profundidade; a 1ª resposta real de deploy calibra (anote-a aqui).
 - **O `list_edits` do MCP** é um terceiro eixo possível (edições do projeto no Lovable, antes do
   sync). Não entrou: o eixo `main` é o que importa (é onde o estrago vira código servido/CI), e ele
   já pegou os dois casos.
-- **A isca continua lá.** O `build-errors.log` segue acusando a `whatsapp-inbound`; consertar o
-  typecheck dela por PR revisado tira a tentação — entrega separada.
+- **A isca continua lá — e é a CAUSA, não detalhe.** O typecheck do preview segue acusando a
+  `whatsapp-inbound` (tabelas `whatsapp_*` fora dos tipos gerados ⇒ `never`) e a `sync-reprocess`
+  (`omie_pedido_id`). Três incidentes com o mesmo diff dizem que, enquanto o erro existir, todo deploy
+  dessas duas edges é um convite. Fechar por PR revisado (tipos corretos; o `Number(codigoPedido)` é
+  runtime no caminho de pedidos do Omie ⇒ money-path, Codex) ANTES do próximo deploy delas.

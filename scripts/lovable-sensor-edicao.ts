@@ -15,7 +15,7 @@
  *
  * EXIT CODES:
  *   0  SEM_EDICAO — nenhum sinal na resposta, nenhum commit do bot fora de `types.ts`, a `main` foi
- *      lida ≥ `--assentar-min` (padrão 5) depois do envio, e o agente escreveu a linha de confirmação
+ *      lida ≥ `--assentar-min` (padrão `ASSENTAR_MIN_PADRAO` = 30; o atraso medido foi ~15) depois do envio, e o agente escreveu a linha de confirmação
  *   1  EDICAO_DETECTADA — reverta por PR (bumpando `VERSAO` se tocou edge) antes de qualquer outra coisa
  *   2  mecânica: argumento ausente, `--desde` inválido, `git fetch`/`git log` que não respondem
  *   3  SEM_CONFIRMACAO — nada detectado, mas o agente não escreveu `No files were edited.`: leia a resposta
@@ -26,7 +26,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-import { commitsSuspeitos, julgar, lerResposta, parsearLogDoBot, type Veredito } from './lib/lovable-sensor-edicao';
+import { ASSENTAR_MIN_PADRAO, commitsSuspeitos, julgar, lerResposta, parsearLogDoBot, type Veredito } from './lib/lovable-sensor-edicao';
 
 const EXIT: Record<Veredito, number> = {
   SEM_EDICAO: 0,
@@ -48,7 +48,7 @@ if (!desdeTxt) mecanica('falta --desde <ISO do envio> — sem o instante do envi
 const desde = new Date(desdeTxt);
 if (Number.isNaN(desde.getTime())) mecanica(`--desde "${desdeTxt}" não é data ISO`);
 const iAssentar = args.indexOf('--assentar-min');
-const assentarMin = iAssentar >= 0 ? Number(args[iAssentar + 1]) : 5;
+const assentarMin = iAssentar >= 0 ? Number(args[iAssentar + 1]) : ASSENTAR_MIN_PADRAO;
 if (!Number.isFinite(assentarMin) || assentarMin < 0) mecanica('--assentar-min precisa ser número ≥ 0');
 const usados = new Set([iDesde, iDesde + 1, iAssentar, iAssentar >= 0 ? iAssentar + 1 : -1]);
 const posicionais = args.filter((_, i) => !usados.has(i));
