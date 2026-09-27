@@ -130,6 +130,7 @@ fi
 SABOTAGEM="${SABOTAGEM:-}"
 
 # PGBIN: resolvido por plataforma (macOS Homebrew / Linux PGDG) com conferência POSITIVA da major.
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 
 TMPD="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-${SLUG}.XXXXXX")"
