@@ -1,0 +1,60 @@
+# Invariantes do fiscal do fuso da SESSÃO em provas SQL.
+# @src: scripts/fuso-da-sessao-em-provas-gate.ts
+# @test: scripts/fuso-da-sessao-em-provas-gate.test.ts
+#
+# A classe (docs/historico/provas-janela-de-relogio-fora-do-nucleo.md): a prova semeia (ou calcula o
+# esperado) com `date_trunc('month', now())` — o mês do fuso da SESSÃO, UTC no CI — contra uma função
+# que calcula em São Paulo; das 21:00 às 23:59 BRT o seed cai no dia (ou mês) seguinte e a prova
+# reprova sozinha. O fiscal é TEXTUAL, então cada camada dele é uma aposta que pode apodrecer sem
+# vermelho nenhum: a assinatura (cada lado do que ela discrimina), a CAMADA do stripper (a do shell —
+# nunca a regex local, nem a limpeza de `--` sobre o arquivo inteiro), a leitura multilinha, a linha
+# reportada, o denominador, os alarmes herdados, o piso e o código de saída. Cada PEGA quebra UMA
+# camada e exige a suíte vermelha.
+#
+# O walker, as raízes, os pisos e o dente de cada alarme do stripper moram nos irmãos
+# (`shell-variavel-colada.mut`, `relogio-bash-em-provas.mut`); aqui se prova que ESTE fiscal os consulta.
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`. O `#`
+# da regex local vai como `\x23`, para a linha do contrato não carregar um `#` cru.
+
+# CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: detector cego (a assinatura nunca casa)                    | s/\\bdate_trunc\\s\*\\\(/\\bNUNCA_CASA\\s*\\(/
+
+# A assinatura — o lado que ela TEM de casar.
+PEGA | unidade perde o mês: o caso de origem escapa                          | s/\|month\|/|/
+PEGA | caixa: `DATE_TRUNC('MONTH', NOW())` escapa                            | s/'gi',/'g',/
+PEGA | qualificado: `pg_catalog.now()` escapa                                | s/const QUALIFICADOR = String\.raw`.*`;/const QUALIFICADOR = "";/
+PEGA | entre parênteses: `(now())` escapa                                     | s/const PARENTESE = String\.raw`.*`;/const PARENTESE = "";/
+PEGA | aritmética: `now() - interval …` escapa                                | s/\(\?:\\\)\|\[-\+\]\|::\)/(?:\\)|::)/
+PEGA | cast: `now()::date` dentro do date_trunc escapa                        | s/\|\[-\+\]\|::\)/|[-+])/
+PEGA | `current_date` sai do relógio da sessão                                | s/String\.raw`current_date`,//
+PEGA | multilinha: a chamada quebrada depois do `(` escapa                    | s/\\bdate_trunc\\s\*\\\(\\s\*\$\{UNIDADE\}/\\bdate_trunc\\s*\\([^\\S\\n]*\${UNIDADE}/
+
+# A assinatura — o lado que ela NÃO pode casar.
+PEGA | hora vira calendário: `date_trunc('hour', now())` passa a ser violação | s/'\(\?:day\|/'(?:hour|day|/
+PEGA | `AT TIME ZONE` deixa de fixar o fuso                                   | s/\|\[-\+\]\|::\)/|[-+]|::|\\s+at\\b)/
+PEGA | a forma de 3 argumentos deixa de fixar o fuso                         | s/\|\[-\+\]\|::\)/|[-+]|::|,)/
+PEGA | sem fronteira à esquerda: `meu_date_trunc(…)` vira violação           | s/String\.raw`\\bdate_trunc/String.raw`date_trunc/
+
+# A camada do stripper. A 2ª é a regex LOCAL que a casa proíbe; a 3ª é o erro de CAMADA — limpar o
+# `--` do SQL sobre o arquivo shell inteiro, que apaga o SQL que vem depois de um `--no-psqlrc`.
+PEGA | stripper ignorado: comentário `#` vira código                          | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte; void removerComentariosShell;/
+PEGA | regex LOCAL no lugar do stripper compartilhado                         | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte.replace(\/\x23.*\$\/gm, ""); void removerComentariosShell;/
+PEGA | camada errada: limpeza de `--` (SQL) sobre o shell inteiro            | s/const limpo = removerComentariosShell\(fonte\);/const limpo = removerComentariosShell(fonte).replace(\/--.*\$\/gm, "");/
+
+# O que o fiscal reporta e o denominador que ele mede.
+PEGA | linha reportada deixa de ser a da FONTE                                | s/linha: i \+ 1, trecho/linha: i, trecho/
+PEGA | denominador conta linha em branco como código                         | s/const linhasDeCodigo = linhas\.filter\(\(l\) => l\.trim\(\) !== ''\)\.length;/const linhasDeCodigo = linhas.length;/
+
+# Os alarmes do stripper (herdados) e o piso de provas.
+PEGA | analisar deixa de consultar o stripper                                | s/r\.alarmes\.push\(\.\.\.alarmesDoStripper\(a\.caminho, diagnosticarShell\(a\.fonte\)\)\);/void diagnosticarShell; void alarmesDoStripper;/
+PEGA | todo shell de db/ conta como prova no piso                            | s/test-\[\^\/\]\*/.*/
+
+# O veredito: 2 nunca é "passou", violação nunca é 0, e a mensagem aponta os DOIS consertos.
+PEGA | nenhum arquivo lido vira "limpo"                                      | s/if \(r\.caminhos\.length === 0\) furos/if (false) furos/
+PEGA | piso de provas desligado                                              | s/if \(provas < PISOS\.provas\) furos/if (false) furos/
+PEGA | piso de linhas de código desligado                                    | s/if \(r\.linhasDeCodigo < PISOS\.linhasDeCodigo\) \{/if (false) {/
+PEGA | alarme/piso furado deixa de bloquear o veredito                       | s/if \(furos\.length > 0\) \{/if (false) {/
+PEGA | violação sai 0                                                        | s/codigo: 1,/codigo: 0,/
+PEGA | a mensagem perde o conserto por relógio controlado                    | s/\(`test\.agora`\) com data LITERAL no seed/(`X`) com data LITERAL no seed/
+PEGA | a mensagem perde o conserto por fuso na expressão                     | s/date_trunc\('month', now\(\) AT TIME ZONE 'America\/Sao_Paulo'\)`/date_trunc('month', now())`/
