@@ -105,6 +105,14 @@ não a intenção.
 
 - **O formato real da resposta do `send_message` não estava documentado.** O sensor busca as chaves
   em qualquer profundidade; a 1ª resposta real de deploy calibra (anote-a aqui).
+  **Calibrado em 2026-09-27 18:36Z** (pacote `4c8fbc2a4a6d`, `sync-reprocess` + `whatsapp-inbound`,
+  1,4 crédito, 1ª leva com o `blocoDeEscopo`): a resposta tem só `status`, `message_id`, `content`,
+  `cost_credits`, `thread_id` e `preview_url` — sem `edit_id`/`commit_sha` —, o `content` fecha com
+  `No files were edited.` e o sensor deu `SEM_EDICAO` aos 5,5 min. A isca estava lá: o agente leu o
+  `build-errors.log`, viu os 7 erros de typecheck do `whatsapp-inbound` e só os REPORTOU (n=2 a
+  favor da guarda). O eixo mais forte é o `list_messages`: nas 5 respostas do agente de 26–27/09,
+  a mensagem traz `edit_id` (`edt-<uuid>`) nos 2 turnos que editaram (10:03Z de 26/09, o #2579, e
+  16:58Z de 27/09) e em nenhum dos 3 com guarda (10:09Z de 26/09, 16:42Z e 18:37Z de 27/09).
 - **O `list_edits` do MCP** é um terceiro eixo possível (edições do projeto no Lovable, antes do
   sync). Não entrou: o eixo `main` é o que importa (é onde o estrago vira código servido/CI), e ele
   já pegou os dois casos.
