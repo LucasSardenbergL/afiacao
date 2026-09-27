@@ -212,8 +212,12 @@ sabotar() {   # $1 = regex sed, $2 = rotulo
     return 1
   fi
   montar_estado
-  # a postcondicao embutida deve ABORTAR o apply; capturamos isso como o vermelho
-  if P -q -f "$alvo" >/dev/null 2>&1; then echo "APLICOU"; else echo "ABORTOU"; fi
+  # A postcondicao embutida deve ABORTAR o apply — e o vermelho so e DELA com a marca dela na saida.
+  # Ate 2026-09-27 qualquer exit≠0 virava ABORTOU: um sed que quebrasse a sintaxe, ou um erro alheio,
+  # passava por "a postcondicao abortou" (docs/historico/falsificacao-exit-nao-e-dente.md).
+  if P -q -f "$alvo" >"$alvo.out" 2>&1; then echo "APLICOU"
+  elif grep -q 'POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"
+  else echo "ERRO ALHEIO a postcondicao: $(grep -m1 'ERROR' "$alvo.out" | cut -c1-120)"; fi
 }
 
 F1="$(sabotar 's/^REVOKE ALL ON FUNCTION public\.aprovar_pedido_sugerido\(bigint, text, jsonb\) FROM anon;$/-- sabotado/' 'aprovar-anon')"

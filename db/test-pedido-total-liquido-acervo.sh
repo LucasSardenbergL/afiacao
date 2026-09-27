@@ -343,6 +343,11 @@ cenario_k2() {  # ecoa "<M esperou o lock: sim|nao>|<elegiveis>|<mudaram_sob_loc
 }
 K1_VERDE="terminou|1|5|1629.25"
 K2_VERDE="sim|7|1|5|1600"
+# O que as sabotagens F7/F8 DECLARAM (o `vermelha` exige o valor exato). Deterministas por construção:
+# sem SKIP LOCKED o conversor TEM de esperar o lock de X (e o laço vê o wait); sem re-classificar,
+# os 6 escritos sobrescrevem o total que mudou sob o lock.
+K1_SEM_SKIP_LOCKED="bloqueou|0|6|1489.34"
+K2_SEM_RECLASSIFICAR="sim|7|0|6|1489.34"
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 semear
@@ -528,8 +533,16 @@ fi
 VERM=0; FALH=0
 sab_verm()  { VERM=$((VERM+1)); echo "  🔴 $1"; }
 sab_falha() { FALH=$((FALH+1)); echo "  ❌ $1"; }
-# Vermelho = o valor sob sabotagem DIFERE do verde.
-vermelha()  { if [ "$2" != "$3" ]; then sab_verm "$1 (sabotado: [$2] ≠ verde [$3])"; else sab_falha "$1 — a sabotagem ficou VERDE [$2]: o assert não tem dente"; fi; }
+# Vermelho = o valor sob sabotagem é o que a sabotagem DECLARA (4º argumento) — não só "≠ verde".
+# O "≠ verde" sozinho aceitava QUALQUER desvio, inclusive o de um ERRO: medido em 2026-09-27, com a
+# F11 fazendo o conversor dividir por zero em vez de pular a recusa, "[22012] ≠ verde [TL002]" contou
+# como dente e o recibo saiu 18/0 (a medição cujo `Pq` erra sai VAZIA — o outro desvio que contava).
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+vermelha()  {
+  if [ "$2" = "$3" ]; then sab_falha "$1 — a sabotagem ficou VERDE [$2]: o assert não tem dente"
+  elif [ "$2" = "$4" ]; then sab_verm "$1 (sabotado: [$2] ≠ verde [$3])"
+  else sab_falha "$1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (verde [$3])"; fi
+}
 # Vermelho reconhecido pela ASSINATURA do ramo que deveria disparar (não por "falhou algo").
 vermelha_por() { if [ "$2" = "$3" ]; then sab_verm "$1 (=$2)"; else sab_falha "$1 — esperado o ramo [$3], veio [$2]"; fi; }
 controle()  { if [ "$2" = "$3" ]; then echo "  ✅ $1 (=$2)"; else sab_falha "$1 — restaurada, a cadeia NÃO voltou ao verde: esperado [$3], veio [$2]"; fi; }
@@ -573,50 +586,50 @@ restaurar() { P -q -f "$MIG1" >/dev/null; P -q -f "$MIG2" >/dev/null; }
 # ── classificador (migration base): instalada sabotada, e a correção por cima ──
 if sabotar F1 "$MIG1" 's/AND p_corte IS NOT NULL AND m\.atualizado_em >= p_corte/AND false/'; then
   instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
-  vermelha "F1 sem o corte, o cabeçalho reescrito depois dele vira convertível" "$(classe "$A10")" "tocado_pos_corte"
+  vermelha "F1 sem o corte, o cabeçalho reescrito depois dele vira convertível" "$(classe "$A10")" "tocado_pos_corte" "convertivel"
   restaurar; controle "F1 controle" "$(classe "$A10")" "tocado_pos_corte"
 fi
 
 if sabotar F2 "$MIG1" 's/count\(\*\) FILTER \(WHERE oi\.desconto_valor IS NULL\)(\s+)AS n_nao_apurada/0::bigint$1AS n_nao_apurada/; s/sum\(oi\.quantity \* oi\.unit_price - oi\.desconto_valor\)(\s+)AS liquido_cru/sum(oi.quantity * oi.unit_price - coalesce(oi.desconto_valor, 0))$1AS liquido_cru/'; then
   instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
-  vermelha "F2 coalesce(desconto_valor, 0): a linha não apurada vira desconto zero" "$(classe "$B2")" "nao_apurado"
+  vermelha "F2 coalesce(desconto_valor, 0): a linha não apurada vira desconto zero" "$(classe "$B2")" "nao_apurado" "convertivel"
   restaurar; controle "F2 controle" "$(classe "$B2")" "nao_apurado"
 fi
 
 if sabotar F3 "$MIG1" 's/sum\(oi\.quantity \* oi\.unit_price - oi\.desconto_valor\)(\s+)AS liquido_cru/sum(round(oi.quantity * oi.unit_price - oi.desconto_valor, 2))$1AS liquido_cru/'; then
   instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear; aplicar >/dev/null
-  vermelha "F3 arredondar por linha muda o centavo do a8" "$(tot "$A8")" "9.01"
+  vermelha "F3 arredondar por linha muda o centavo do a8" "$(tot "$A8")" "9.01" "9.02"
   restaurar; semear; aplicar >/dev/null; controle "F3 controle" "$(tot "$A8")" "9.01"
 fi
 
 if sabotar F4 "$MIG1" 's/abs\(m\.total_atual - m\.bruto_r\) <= 0\.01/m.total_atual = m.bruto_r/g'; then
   instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
-  vermelha "F4 sem a tolerância do float, o bruto a 1 centavo não converte" "$(classe "$A9")" "convertivel"
+  vermelha "F4 sem a tolerância do float, o bruto a 1 centavo não converte" "$(classe "$A9")" "convertivel" "ja_liquido"
   restaurar; controle "F4 controle" "$(classe "$A9")" "convertivel"
 fi
 
 if sabotar F5 "$MIG1" 's/THEN \x27ambiguo\x27/THEN \x27convertivel\x27/'; then
   instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
-  vermelha "F5 sem o ambíguo, o desconto de 1 centavo converte" "$(classe "$A4")" "ambiguo"
+  vermelha "F5 sem o ambíguo, o desconto de 1 centavo converte" "$(classe "$A4")" "ambiguo" "convertivel"
   restaurar; controle "F5 controle" "$(classe "$A4")" "ambiguo"
 fi
 
 if sabotar F6 "$MIG1" 's/WHEN m\.liquido_r < 0/WHEN false/'; then
   instalar_sem_post; P -q -f "$MIG2" >/dev/null; semear
-  vermelha "F6 sem o guard de líquido negativo, −0,01 vira convertível" "$(classe "$D1")" "linha_invalida"
+  vermelha "F6 sem o guard de líquido negativo, −0,01 vira convertível" "$(classe "$D1")" "linha_invalida" "convertivel"
   restaurar; controle "F6 controle" "$(classe "$D1")" "linha_invalida"
 fi
 
 # ── conversor (a correção): instalado sabotado, sem a postcondição ──
 if sabotar F7 "$MIG2" 's/ORDER BY so\.id(\s+)FOR UPDATE SKIP LOCKED\) t;/ORDER BY so.id$1FOR UPDATE) t;/'; then
   instalar_sem_post
-  vermelha "F7 sem SKIP LOCKED, o conversor espera o escritor" "$(cenario_k1)" "$K1_VERDE"
+  vermelha "F7 sem SKIP LOCKED, o conversor espera o escritor" "$(cenario_k1)" "$K1_VERDE" "$K1_SEM_SKIP_LOCKED"
   restaurar; controle "F7 controle" "$(cenario_k1)" "$K1_VERDE"
 fi
 
 if sabotar F8 "$MIG2" 's/v_coerentes\) c(\s+)WHERE c\.classe = \x27convertivel\x27/v_coerentes) c$1WHERE true/'; then
   instalar_sem_post
-  vermelha "F8 sem re-classificar sob o lock, o total que mudou é sobrescrito" "$(cenario_k2)" "$K2_VERDE"
+  vermelha "F8 sem re-classificar sob o lock, o total que mudou é sobrescrito" "$(cenario_k2)" "$K2_VERDE" "$K2_SEM_RECLASSIFICAR"
   restaurar; controle "F8 controle" "$(cenario_k2)" "$K2_VERDE"
 fi
 
@@ -630,13 +643,13 @@ if sabotar F10 "$MIG2" 's/AND \(NOT p_exigir_mes_completo OR c\.mes NOT IN \(SEL
   semear
   vermelha_por "F10a sem o gate, a postcondição da correção recusa o apply (o corpo novo não está lá)" "$(postcondicao_de)" "postcondicao"
   instalar_sem_post; semear; aplicar >/dev/null
-  vermelha "F10b sem o gate, o mês incompleto converte pela metade" "$(tot "$B1")" "100"
+  vermelha "F10b sem o gate, o mês incompleto converte pela metade" "$(tot "$B1")" "100" "90.00"
   restaurar; semear; aplicar >/dev/null; controle "F10 controle" "$(tot "$B1")" "100"
 fi
 
 if sabotar F11 "$MIG2" 's/IF v_n_elegiveis > p_limite THEN/IF false THEN/'; then
   instalar_sem_post; semear
-  vermelha "F11 sem a recusa, o escopo acima do limite grava" "$(estado "p_limite => 3")" "TL002"
+  vermelha "F11 sem a recusa, o escopo acima do limite grava" "$(estado "p_limite => 3")" "TL002" "OK"
   restaurar; semear; controle "F11 controle" "$(estado "p_limite => 3")" "TL002"
 fi
 
@@ -644,7 +657,7 @@ if sabotar F12 "$MIG2" 's/IF NOT p_aplicar THEN(\s+RETURN jsonb_build_object\(\s
   semear
   vermelha_por "F12a o ensaio que cai no caminho de escrita: a postcondição da correção recusa o apply" "$(postcondicao_de)" "postcondicao"
   instalar_sem_post; semear; F0="$(foto)"; ensaiar >/dev/null
-  vermelha "F12b sem a postcondição, o ensaio grava — e a foto acusa" "$(Pq -c "SELECT public.t_foto() = '$F0'")" "t"
+  vermelha "F12b sem a postcondição, o ensaio grava — e a foto acusa" "$(Pq -c "SELECT public.t_foto() = '$F0'")" "t" "f"
   restaurar; semear; F0="$(foto)"; ensaiar >/dev/null
   controle "F12 controle" "$(Pq -c "SELECT public.t_foto() = '$F0'")" "t"
 fi
@@ -672,7 +685,7 @@ if sabotar F15 "$MIG2" 's/SELECT m\.mes(\s+)FROM no_escopo m(\s+)GROUP BY m\.mes
   semear
   vermelha_por "F15a gate por conta×mês: a postcondição da correção recusa o apply" "$(postcondicao_de)" "postcondicao"
   instalar_sem_post; semear; aplicar >/dev/null
-  vermelha "F15b gate por conta×mês: a oben de abril converte com a colacor incompleta" "$(tot "$ABR1")" "40"
+  vermelha "F15b gate por conta×mês: a oben de abril converte com a colacor incompleta" "$(tot "$ABR1")" "40" "36.00"
   restaurar; semear; aplicar >/dev/null; controle "F15 controle" "$(tot "$ABR1")" "40"
 fi
 }

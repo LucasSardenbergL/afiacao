@@ -381,8 +381,15 @@ sabotar() { # $1 rotulo | $2 sed | $3 sqlstate que DEVE deixar de vir | $4 chama
   rc=$?
   set -e
   rm -f "$f"
-  if [ "$rc" -ne 0 ]; then ok "$1 — sabotado, a recusa SUMIU (o assert tinha dente)"
-  else bad "$1 — sabotado e a recusa CONTINUOU: o assert media outra coisa"; fi
+  # A recusa SUMIU só se a chamada COMPLETOU — é a única via que chega ao `ASSERT_NAO_LANCOU`. rc≠0
+  # sem essa marca é OUTRO erro (migration sabotada que não montou, função ausente, divisão por zero),
+  # e até 2026-09-27 contava como dente (docs/historico/falsificacao-exit-nao-e-dente.md). `case` e
+  # não `printf | grep -q`: sob pipefail, o SIGPIPE do grep que sai cedo derruba o casamento.
+  case "$rc:$out" in
+    0:*)                 bad "$1 — sabotado e a recusa CONTINUOU: o assert media outra coisa" ;;
+    *ASSERT_NAO_LANCOU*) ok "$1 — sabotado, a recusa SUMIU (o assert tinha dente)" ;;
+    *)                   bad "$1 — sabotado, mas o vermelho é OUTRO erro, não a recusa sumindo: ${out%%$'\n'*}" ;;
+  esac
 }
 
 CH_SAB_DIV="public.aplicar_edicao_pedido_omie('$P3'::uuid,'[{\"omie_codigo_produto\":40,\"quantidade\":3,\"valor_unitario\":10}]'::jsonb,'[{\"omie_codigo_produto\":40,\"quantity\":3,\"unit_price\":10,\"discount\":0}]'::jsonb,30,'n',NULL,NULL,'$LIDO'::timestamptz)"

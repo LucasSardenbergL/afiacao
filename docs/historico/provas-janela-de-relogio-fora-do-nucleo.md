@@ -128,6 +128,9 @@ borda de contatos igual ao dos pedidos. Esse trabalho vai para o ritual `lovable
   "assert" era a própria linha `❌ SABOTAGEM NÃO APLICÁVEL` contada pelo `grep -c '❌'`. Resultado:
   `SABOTAGENS: 1 vermelhas / 0 falhas`, exit 0. O runner do núcleo só lê esse recibo. É o que
   `money-path.md` já proíbe ("o vermelho tem de ser do SEU assert"). Vai para chip.
+  **✅ Resolvido em 2026-09-27:** cada sabotagem declara os asserts que têm de acusá-la, e o laço exige
+  a sabotagem aplicada, a suíte inteira e o assert declarado virando de verde para vermelho. A classe
+  foi varrida e ganhou gate. Diário: [falsificacao-exit-nao-e-dente.md](falsificacao-exit-nao-e-dente.md).
 - **bash 3.2 do macOS: erro de SINTAXE no meio de uma prova com `trap cleanup EXIT` sai 0.** O
   status do último comando do trap vence, e nem `trap 'rc=$?; …; exit $rc'` salva, porque o `$?` ali
   já é 0. No CI (bash 5), o `lint:shell` barra o parse antes. O risco é o rodar LOCAL (e cópias
