@@ -224,7 +224,7 @@ export function blocoDeConferencia(p: Procedencia): string {
  * por fora é `bun scripts/lovable-sensor-edicao.ts`, que lê a resposta do MCP e os commits do bot
  * na `main`.
  */
-export function blocoDeEscopo(): string {
+function blocoDeEscopo(): string {
   return [
     `**Scope: this task is DEPLOY ONLY. It changes nothing in the project — before, during or after`,
     `the deploy.**`,

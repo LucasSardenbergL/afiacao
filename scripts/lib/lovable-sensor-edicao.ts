@@ -20,10 +20,10 @@
  */
 
 /** Chaves que, com valor não-nulo, provam que a rodada do agente produziu edição. */
-export const CHAVES_DE_EDICAO: readonly string[] = ['edit_id', 'commit_sha', 'editId', 'commitSha'];
+const CHAVES_DE_EDICAO: readonly string[] = ['edit_id', 'commit_sha', 'editId', 'commitSha'];
 
 /** A linha exata que o `blocoDeEscopo` exige no fim da resposta. */
-export const LINHA_DE_CONFIRMACAO = 'No files were edited.';
+const LINHA_DE_CONFIRMACAO = 'No files were edited.';
 
 /**
  * O único arquivo que o bot toca num deploy LIMPO: ele regenera os tipos do banco a cada rodada.
