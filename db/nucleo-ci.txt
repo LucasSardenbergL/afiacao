@@ -181,11 +181,15 @@ db/test-data-health-sync-reprocess.sh      31  falsificar=13
 # Tintométrico: corante impagável EM USO alerta (fora de uso ou desativada, não), agravamento
 # re-emite e o dead-man dispara com a camada B parada.
 db/test-tint-watchdog-corante.sh           11
+# Tintométrico, a camada B: chave carimbada pela Fase 5 que ficou sem preço alarma (S1), a fonte
+# que retirou a chave alarma em tipo PRÓPRIO (S2: no mesmo tipo, o ON CONFLICT calaria um dos dois),
+# e o universo carimbado que encolhe alarma com piso 1 (S3, o vigia de vacuidade). As 5 sabotagens
+# rodam inline no modo normal; a inválida conta no FAIL do recibo. Entrou em 2026-09-27, ao cair de
+# 185–252s para ~12s no runner: o custo era o plano da view num fixture SEM os índices de prod (mais
+# 36s de sleep no B14), não o universo — docs/historico/fixture-sem-indices-de-prod.md.
+db/test-tint-fase5-watchdog.sh             31
 
 # ── Medidas no runner e deixadas de FORA (2026-09-27) — ausência de dado DECLARADA ────────────────
-# db/test-tint-fase5-watchdog.sh — verde, mas 185–252s sozinha (mais que o núcleo inteiro de antes):
-#   custo de FIXTURE, não de asserção — universo de ~464 mil chaves × 17 execuções do watchdog ×
-#   (controle + 4 sabotagens). Entra quando o universo encolher preservando os limiares.
 # db/test-tint-cobertura-lista-email.sh e db/test-tint-vigia-cobertura.sh — APODRECIDAS: reprovam
 #   contra o snapshot de hoje em qualquer plataforma (o `_data_health_compute` atual lê a
 #   `customer_metrics_mv`, que a prova não popula; o stub de `_vendas_familia_ausente_lista_email`
