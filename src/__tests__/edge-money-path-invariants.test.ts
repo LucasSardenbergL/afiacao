@@ -3906,8 +3906,13 @@ describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista 
   });
 
   it('página inteira falhando LANÇA — falha sistêmica não sai como run verde', () => {
-    expect(src).toContain('fails.length === pedidosRpc.length');
-    const i = src.indexOf('fails.length === pedidosRpc.length');
+    // A decisão mora em `./apuracao-pedidos.ts` (P2 Codex 2026-09-27: o catch passou a gravar o
+    // metadata apurado, e a apuração saiu para um módulo puro testado em Deno). O index CHAMA a
+    // decisão e lança logo em seguida.
+    const apuracao = removerComentarios(read('supabase/functions/sync-reprocess/apuracao-pedidos.ts'));
+    expect(apuracao).toContain('nFalhas > 0 && nFalhas === nPedidos && nPedidos > 1');
+    expect(src).toContain('paginaInteiraFalhou(fails.length, pedidosRpc.length)');
+    const i = src.indexOf('paginaInteiraFalhou(fails.length, pedidosRpc.length)');
     expect(src.slice(i, i + 400)).toContain('throw new Error(');
   });
 
@@ -4087,13 +4092,16 @@ describe('reconciliação carrega o desconto da linha — sync-reprocess × migr
   });
 
   it('o sensor AUSENTE da RPC vira null, nunca 0 — e chega ao metadata do log', () => {
-    const fonte = removerComentarios(read(REPROCESS));
-    expect(count(fonte, 'r.desconto_apurado || 0')).toBe(0);
-    expect(count(fonte, 'r.desconto_corrigido || 0')).toBe(0);
+    // A soma e o metadata moram em `./apuracao-pedidos.ts` (P2 Codex 2026-09-27); o index só os usa.
+    const fonte = removerComentarios(read('supabase/functions/sync-reprocess/apuracao-pedidos.ts'));
+    const index = removerComentarios(read(REPROCESS));
+    expect(count(index + fonte, 'r.desconto_apurado || 0')).toBe(0);
+    expect(count(index + fonte, 'r.desconto_corrigido || 0')).toBe(0);
     expect(fonte).toContain('typeof r.desconto_apurado === "number"');
     expect(fonte).toContain('typeof r.desconto_corrigido === "number"');
-    expect(fonte).toContain('desconto_apurado: descontoApurado,');
-    expect(fonte).toContain('desconto_corrigido: descontoCorrigido,');
+    expect(fonte).toContain('desconto_apurado: f2(ap.descontoApurado),');
+    expect(fonte).toContain('desconto_corrigido: f2(ap.descontoCorrigido),');
+    expect(index).toContain('somarRespostaRpc(ap, r)');
   });
 
   it('a migration carrega as defesas (o efeito é provado executando, no PG17)', () => {
