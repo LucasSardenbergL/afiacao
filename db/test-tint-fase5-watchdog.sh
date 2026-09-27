@@ -382,8 +382,14 @@ roda_suite() {
   # application_name, e não pelo lock: se a sessão ainda não o tiver pegado, ela morre do mesmo
   # jeito, em vez de pegá-lo depois e calar o watchdog por até 60s.
   Pq -c "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE application_name = 'f5wd_lock';" >/dev/null
+  # A pós-condição vem ANTES do `wait`. Depois dele ela é inalcançável: com o encerramento quebrado,
+  # o `wait` aguarda o pg_sleep(60) acabar e o lock sai livre "de graça" — medido por sabotagem, a
+  # prova ficava VERDE e só custava 60s a mais por suíte, em silêncio.
+  if ! espera_lock 0; then
+    bad "B14 pos-condicao: o lock segue tomado 10s depois de encerrar a sessao que o segurava"
+    kill "$lockpid" 2>/dev/null || true
+  fi
   wait "$lockpid" 2>/dev/null || true
-  espera_lock 0 || bad "B14 pos-condicao: o lock segue tomado depois de encerrar a sessao que o segurava"
 
   # ══ asserts dos FIXES do challenge Codex sobre este diff (2026-07-28) ══
 

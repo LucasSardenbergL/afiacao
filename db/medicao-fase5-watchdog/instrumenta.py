@@ -75,8 +75,9 @@ if "  local lockpid=$!\n  sleep 2\n" in s:
 else:
     troca("  local lockpid=$!\n  if espera_lock 1; then\n",
           "  local lockpid=$!\n  local _b14s; _agora; _b14s=$_T\n  if espera_lock 1; then\n")
-    ancora = '  espera_lock 0 || bad "B14 pos-condicao: o lock segue tomado depois de encerrar a sessao que o segurava"\n'
-    troca(ancora, ancora + "  _agora; printf 'b14 %s %s\\n' \"$_b14s\" \"$_T\" >> \"$TLOG\"\n")
+    ancora = '  wait "$lockpid" 2>/dev/null || true\n\n  # ══ asserts dos FIXES'
+    troca(ancora, '  wait "$lockpid" 2>/dev/null || true\n'
+                  "  _agora; printf 'b14 %s %s\\n' \"$_b14s\" \"$_T\" >> \"$TLOG\"\n\n  # ══ asserts dos FIXES")
 
 # suíte e falsificação: renomeia a real e embrulha
 troca("roda_suite() {\n  PASS=0; FAIL=0; FALHAS=()", "_roda_suite_real() {\n  PASS=0; FAIL=0; FALHAS=()")

@@ -1,5 +1,6 @@
 # TEMPORÁRIO — NÃO vai para a main (sai do branch antes do PR).
-# Rodada 3: a versão FINAL de db/test-tint-fase5-watchdog.sh — índices de prod no fixture,
+# Rodada 4 (a 3 pegou a pós-condição do B14 INALCANÇÁVEL: vinha depois do `wait`; agora vem antes).
+# A versão FINAL de db/test-tint-fase5-watchdog.sh — índices de prod no fixture,
 # autovacuum=off no cluster da prova, B14 com espera positiva, F5 e recibo PASS=/FAIL=. A rodada 2
 # mediu por ablação: sem índices 96–102s; índices + ANALYZE 23–34s (o plano troca na 3ª suíte);
 # índices sem ANALYZE 11,4–12,0s.
