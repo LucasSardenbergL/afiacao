@@ -1,4 +1,9 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+
+// As tabelas whatsapp_* não estão nos tipos gerados; com o cliente tipado
+// estritamente elas resolvem como `never`. Um `SupabaseClient<any>` mantém a
+// ergonomia sem bloquear o typecheck.
+type Db = SupabaseClient<any>;
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
