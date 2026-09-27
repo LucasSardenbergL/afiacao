@@ -1,4 +1,8 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+// Os helpers recebem `SupabaseClient` (idioma das edges), não `ReturnType<typeof createClient>`:
+// este fixa o schema em `never`, e as tabelas `whatsapp_*` viravam erro no `deno check` — a isca
+// que o agente do Lovable "consertou" com `SupabaseClient<any>` três vezes (#2541, #2579, #2595).
+// As linhas lidas seguem tipadas pelas interfaces locais nos `as { ... }` abaixo.
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -97,7 +101,7 @@ function isStatusUpgrade(current: string | null, next: string): boolean {
   return nxt > cur;
 }
 
-async function processStatus(supabase: ReturnType<typeof createClient>, s: ParsedStatus) {
+async function processStatus(supabase: SupabaseClient, s: ParsedStatus) {
   const { data: msg } = await supabase.from("whatsapp_messages")
     .select("id, status").eq("wa_message_id", s.waMessageId).maybeSingle();
   const m = msg as { id: string; status: string | null } | null;
@@ -138,7 +142,7 @@ function nextOptInStatus(current: string, body: string | null): "unknown" | "opt
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-async function matchCustomer(supabase: ReturnType<typeof createClient>, fromPhone: string): Promise<string | null> {
+async function matchCustomer(supabase: SupabaseClient, fromPhone: string): Promise<string | null> {
   const cands = waPhoneCandidates(fromPhone);
   if (cands.length === 0) return null;
   const { data } = await supabase.from("profiles").select("user_id, phone").not("phone", "is", null);
@@ -149,7 +153,7 @@ async function matchCustomer(supabase: ReturnType<typeof createClient>, fromPhon
   return null;
 }
 
-async function processMessage(supabase: ReturnType<typeof createClient>, msg: ParsedInbound) {
+async function processMessage(supabase: SupabaseClient, msg: ParsedInbound) {
   const phoneKey = waPhoneCandidates(msg.fromPhone)[0] ?? msg.fromPhone.replace(/\D/g, "");
 
   // 1) find-or-create da conversa SEM resetar estado (estado só muda se uma msg NOVA entrar).
