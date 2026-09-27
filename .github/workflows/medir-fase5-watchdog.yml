@@ -1,0 +1,90 @@
+# TEMPORÁRIO — NÃO vai para a main (sai do branch antes do PR).
+# Mede, no MESMO tipo de runner do job `provas-sql`, de onde vem o custo de
+# db/test-tint-fase5-watchdog.sh (184,6s e 251,7s medidos em 2026-09-27):
+#   (a) a prova original, de ponta a ponta — a linha de base DESTA máquina;
+#   (b) uma cópia instrumentada: fases do setup/seed, cada execução do watchdog, cada psql,
+#       o B14 (sleep 2 + wait do pg_sleep(6)), cada suíte e cada falsificação;
+#   (c) a mesma cópia com ANALYZE logo após o seed (hipótese: o custo é o plano SEM estatística);
+#   (d) o custo de UMA execução do watchdog por tamanho do universo × índices de prod × ANALYZE.
+# Duas rodadas em paralelo = duas VMs = duas amostras.
+name: medir-fase5-watchdog
+
+on:
+  push:
+    branches: ['claude/elated-kapitsa-f522c6']
+
+permissions:
+  contents: read
+
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        rodada: [1, 2]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Máquina
+        run: |
+          echo "imagem: ${ImageOS:-?} ${ImageVersion:-?} · nproc=$(nproc) · $(grep -m1 'model name' /proc/cpuinfo)"
+          free -m | head -2
+          bash --version | head -1
+
+      - name: PostgreSQL 17 (PGDG)
+        run: |
+          set -euo pipefail
+          tentar() { local n; for n in 1 2 3; do "$@" && return 0; echo "  ↻ tentativa $n falhou: $*"; sleep $((n * 5)); done; return 1; }
+          if [ ! -x /usr/lib/postgresql/17/bin/initdb ]; then
+            sudo install -d /usr/share/postgresql-common/pgdg
+            tentar sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+              https://www.postgresql.org/media/keys/ACCC4CF8.asc
+            echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+          https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+              | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+            sudo rm -f /etc/apt/sources.list.d/*google* /etc/apt/sources.list.d/*chrome* \
+                       /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*msprod* || true
+            tentar sudo apt-get update -qq
+            tentar sudo apt-get install -y -qq postgresql-17
+          fi
+          /usr/lib/postgresql/17/bin/initdb --version | grep -E '\(PostgreSQL\) 17\.'
+
+      - name: (a) prova ORIGINAL — ponta a ponta
+        run: |
+          set -uo pipefail
+          s=$(date +%s.%N)
+          PGPORT_TEST=5901 timeout 1500 bash db/test-tint-fase5-watchdog.sh > "$RUNNER_TEMP/orig.log" 2>&1 && rc=0 || rc=$?
+          e=$(date +%s.%N)
+          tail -4 "$RUNNER_TEMP/orig.log"
+          echo "MEDIDA|${{ matrix.rodada }}|original|rc=$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')s"
+
+      - name: (b) prova INSTRUMENTADA
+        run: |
+          set -uo pipefail
+          python3 db/medicao-fase5-watchdog/instrumenta.py db/test-tint-fase5-watchdog.sh db/_instr-fase5.sh
+          s=$(date +%s.%N)
+          TLOG="$RUNNER_TEMP/tempos-b.log" PGPORT_TEST=5902 timeout 1500 bash db/_instr-fase5.sh > "$RUNNER_TEMP/instr.log" 2>&1 && rc=0 || rc=$?
+          e=$(date +%s.%N)
+          grep -E '^MEDIDA_|FALSIF|^--- final|^RESULTADO' "$RUNNER_TEMP/instr.log"
+          echo "MEDIDA|${{ matrix.rodada }}|instrumentada|rc=$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')s"
+
+      - name: (c) prova INSTRUMENTADA + ANALYZE após o seed
+        run: |
+          set -uo pipefail
+          python3 db/medicao-fase5-watchdog/instrumenta.py db/test-tint-fase5-watchdog.sh db/_instr-fase5-analyze.sh --analyze
+          s=$(date +%s.%N)
+          TLOG="$RUNNER_TEMP/tempos-c.log" PGPORT_TEST=5903 timeout 1500 bash db/_instr-fase5-analyze.sh > "$RUNNER_TEMP/instr-an.log" 2>&1 && rc=0 || rc=$?
+          e=$(date +%s.%N)
+          grep -E '^MEDIDA_|FALSIF|^--- final|^RESULTADO' "$RUNNER_TEMP/instr-an.log"
+          echo "MEDIDA|${{ matrix.rodada }}|instrumentada+analyze|rc=$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')s"
+
+      - name: (d) escala — uma execução do watchdog × N × índices × ANALYZE
+        run: |
+          set -uo pipefail
+          s=$(date +%s.%N)
+          PGPORT_TEST=5904 timeout 1800 bash db/medicao-fase5-watchdog/escala.sh > "$RUNNER_TEMP/escala.log" 2>&1 && rc=0 || rc=$?
+          e=$(date +%s.%N)
+          grep -E '^MEDIDA_|^──|Execution Time|loops=|ESCALA_OK|ERROR' "$RUNNER_TEMP/escala.log" | cut -c1-170
+          echo "MEDIDA|${{ matrix.rodada }}|escala|rc=$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')s"
