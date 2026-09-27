@@ -8,9 +8,15 @@
 |---|---|---|
 | Revisar diff antes de mergear | **`/review`** (gstack) — SQL safety, trust boundary LLM, side effects condicionais | redundantes: `engineering:code-review`, superpowers review |
 | Revisão de segurança | **`/security-review`** (oficial) | complementa `/review` — rode os dois em PR sensível |
+| Review de segurança do DIFF com histórico git e raio de impacto (PR sensível: authz, money-path) | `differential-review:differential-review` (Trail of Bits) | chame PELO NOME — o gatilho colide com `/security-review`; complementa, não substitui |
+| Caçar falha silenciosa num diff (erro engolido, `catch` vazio, fallback impróprio) | agente `silent-failure-hunter` (Anthropic — só o agente do `pr-review-toolkit`) | complementa `/review`; o plugin inteiro custaria ~1.600 tok/turno (6 agentes) |
 | 3 vozes independentes sobre decisão de RISCO (PR crítico money-path/authz, tradeoff de arquitetura não-óbvio) | `triagem-3-modelos` (proprietária, global) — Claude (produto) + Codex (engenharia) + Gemini (triagem ampla) preenchem contrato JSON; decisão sai de REGRAS determinísticas, não de voto | degrau ACIMA do ritual `/codex`; NÃO p/ review simples (use `/review` ou `/codex`) |
-| SAST profundo | `semgrep` (JS/TS rápido) / `codeql` (interprocedural) + `sarif-parsing` | análise estática real (≠ heurístico) |
-| Auditar supply chain | `supply-chain-risk-auditor` (Trail of Bits) | |
+| SAST profundo | `static-analysis:semgrep` (JS/TS rápido) / `static-analysis:codeql` (interprocedural) + `static-analysis:sarif-parsing` (Trail of Bits) | análise estática real (≠ heurístico) |
+| Converter a assinatura grepável do `matar-classe` em regra Semgrep (2º eixo de gate no CI) | `semgrep-rule-creator:semgrep-rule-creator` (Trail of Bits) | precisa do binário `semgrep` (Mac: 1.168) |
+| Auditoria TRIMESTRAL de defaults fail-open (segredo de fallback, debug ligado, cripto fraca, acesso permissivo) | `/insecure-defaults:audit` (Trail of Bits) | workflow multiagente com verificadores Opus — caro; NÃO conhece RLS (RLS → `/security-review` + `supabase`) |
+| Invariantes de motor de dinheiro (property-based) | `property-based-testing:property-based-testing` (Trail of Bits) | traz `fast-check` — a devDependency entra em PR próprio |
+| Auditar supply chain de DEPENDÊNCIA | `supply-chain-risk-auditor:supply-chain-risk-auditor` (Trail of Bits) | skill/plugin de terceiro → gate `skill-scanner` (§Skills stack-specific) |
+| LGPD — gravação de chamadas WebRTC, mapa de dados pessoais, retenção/eliminação | `lgpd-audit` / `lgpd-data-mapping` / `lgpd-retention-erasure` (goul4rt, MIT) | só 3 das 19: fase que dependa de irmã ausente → ler no upstream pinado (`ORIGEM.txt` de cada uma); exemplos em Prisma/Better Auth → traduzir p/ Supabase/RLS. Domínio: `telefonia.md` |
 | Debugar bug/falha | **`/investigate`** (gstack) — root-cause, 4 fases | `engineering:debug`/`systematic-debugging` (escolha 1) |
 | Planejar feature multi-step | `writing-plans`→`executing-plans` (superpowers) | grande/arriscada → `/plan-eng-review`/`/autoplan` |
 | Decidir se vale construir | `/office-hours` (gstack) | antes de `writing-plans` |
@@ -19,7 +25,7 @@
 | Task Supabase (DB/Auth/Edge/RLS) | `supabase` (oficial) — SQL/RLS idiomático | |
 | Mudança de banco sob Lovable | **`lovable-db-operator`** — migration + bloco SQL Editor + validação + audit | design com `supabase`, entrega com este |
 | BI executivo / número de negócio via Lovable (brief da semana, vendas/estoque/inadimplência/margem) | **`bi-colacor`** (proprietária) — SQL read-only versionado p/ colar no Lovable→SQL Editor → interpreta → decisão; conhece as 4 grafias de empresa + confiabilidade do dado | leitura (≠ `lovable-db-operator`, que escreve); não `data:*`/`finance:*` (text-to-SQL sem nosso schema). Fechamento profundo (NCG/DRE-regime/tributário/contador) → `cfo-colacor` |
-| Ritual de fechamento financeiro mensal / controladoria (NCG, DRE caixa-vs-competência, carga tributária por regime, projeção 13 semanas, perguntas pro contador) | **`cfo-colacor`** (proprietária) — SQL read-only p/ Lovable, ritual de 9 levas + relatório mensal + perguntas pro contador; **NÃO** apura imposto nem substitui contador | sobrepõe `bi-colacor` em inadimplência/caixa: número rápido/brief semanal → `bi-colacor`; fechamento profundo → esta. **Schema financeiro canônico mora na `bi-colacor`** (esta referencia, não duplica) |
+| Ritual de fechamento financeiro mensal / controladoria (NCG, DRE caixa-vs-competência, carga tributária por regime, projeção 13 semanas, perguntas pro contador) | **`cfo-colacor`** (proprietária) — SQL read-only p/ Lovable, ritual de 9 levas + relatório mensal + perguntas pro contador; **NÃO** apura imposto nem substitui contador | sobrepõe `bi-colacor` em inadimplência/caixa: número rápido/brief semanal → `bi-colacor`; fechamento profundo → esta. **Schema financeiro canônico mora na `bi-colacor`** (esta referencia, não duplica). Reforma CBS/IBS 2026, Simples e NF-e → `references/openaccountants-brasil.md` (ponteiro pinado para guias externos; rascunho SEM revisão de CRC) |
 | Plano de ação SEMANAL da carteira de um vendedor televendas (rota/cidade/dia, clientes em queda, mix ausente, cross-sell por ramo) | `farmer-industrial` (proprietária) — plano acionável do vendedor a partir da carteira existente | ≠ `bi-colacor` (número pontual/brief); esta produz o PLANO do Farmer |
 | Decidir SE/QUANTO/QUANDO comprar de fornecedor ponderando o CAIXA da Oben (comprar agora × segurar × parcelar × antecipar × priorizar A/B/C) | `reposicao-caixa` (proprietária) — memorando de decisão de compra | ≠ motor de reposição do app (quantidade técnica); ≠ `cfo-colacor` (fechamento) — esta decide a COMPRA à luz do capital de giro |
 | Otimizar query/schema PG | `supabase-postgres-best-practices` | |
@@ -94,7 +100,26 @@ caso mais testável. Mordido ao montar esta tabela — 12/23 virou 22/13 depois 
 
 ## Skills stack-specific
 
-Instaladas via `git clone` dos repos oficiais em `~/.claude/skills/` (sem auto-update — re-clonar pra atualizar): Supabase oficial · Vercel Eng (react/composition/web-design) · TanStack Query · Sentry (`sentry-react-sdk` só via router `sentry-sdk-setup`) · Trail of Bits (semgrep/codeql/sarif/supply-chain) · RBAC.
+**Cópias em `~/.claude/skills/`** — pastas SEM `.git`, logo **sem proveniência** (só dá para datar por hash de conteúdo contra o upstream; atualizar = recopiar): Supabase oficial · Vercel Eng (react/composition/web-design) · TanStack Query · Sentry (`sentry-react-sdk` só via router `sentry-sdk-setup`) · RBAC.
+
+**Pinadas (estado de 2026-09-27)** — nada aqui se atualiza sozinho; atualizar = decisão + gate:
+
+| o quê | onde | pin |
+|---|---|---|
+| Trail of Bits: `static-analysis` 1.4.5 · `supply-chain-risk-auditor` 2.0.4 · `differential-review` 1.1.4 · `semgrep-rule-creator` 1.2.6 · `insecure-defaults` 2.0.3 · `property-based-testing` 1.2.2 | marketplace `trailofbits` = **diretório** `~/.claude/marketplaces-pinados/trailofbits`, com `autoUpdate: false` em `extraKnownMarketplaces` do `~/.claude/settings.json` | HEAD destacado em `0cc1c73` (2026-09-24, já com o fix #250 do semgrep) |
+| superpowers 6.4.1 | plugin do `claude-plugins-official` | o sha que o marketplace oficial pina |
+| gstack 1.91.2.0 | clone git em `~/.claude/skills/gstack` | `/gstack-upgrade` |
+| agente `silent-failure-hunter` | `~/.claude/agents/` (verbatim) + `ORIGEM-silent-failure-hunter.txt` | `anthropics/claude-plugins-official@4ca561f` |
+| `lgpd-audit` · `lgpd-data-mapping` · `lgpd-retention-erasure` | `~/.claude/skills/` + `LICENSE` + `ORIGEM.txt` | `goul4rt/lgpd-skills@d85d79a` |
+| guias fiscais OpenAccountants | ponteiro no repo: `.claude/skills/cfo-colacor/references/openaccountants-brasil.md` (texto NÃO copiado — o repo é público) | `openaccountants@2338bb0c` |
+
+- **Por que diretório, e não `marketplace add owner/repo#sha`:** o `#ref` vira `git clone --branch`, que não aceita sha ("Remote branch … not found"), e a ToB não tem tags. Sem pin, todo `plugin install X@trailofbits` atualiza o marketplace antes de instalar. Atualizar: `git -C ~/.claude/marketplaces-pinados/trailofbits fetch` → `checkout --detach <sha>` → gate abaixo → `claude plugin marketplace update trailofbits` → `claude plugin update <plugin>@trailofbits`.
+- **Gate de supply chain, ANTES de instalar OU atualizar:** `uv tool install 'cisco-ai-skill-scanner==2.1.0'` e só os analisadores offline — `skill-scanner scan-all <dir> --recursive --use-behavioral --use-trigger --format json` (sem `--use-llm`, `--enable-meta`, `--adjudicate`, `--use-virustotal`, `--use-aidefense`, `--use-osv`) — e leia `hooks/hooks.json` + `scripts/` à mão. Em skill de segurança o CRITICAL costuma ser o próprio assunto (exemplo vulnerável na doc, harness de teste): trie POR ARQUIVO. Em atualização, escaneie também a versão instalada e revise só o DELTA (gstack 1.69→1.91: 1.932 → 1.498 achados, 415 novos, nenhum em código que dispara sozinho).
+- **Custo antes de instalar:** `claude --plugin-dir <caminho> plugin details <nome>` projeta o custo sempre-ligado (o `pr-review-toolkit` inteiro dava ~1.600 tok/turno → entrou só 1 agente).
+- **Sensor da listagem:** o `/skill-doctor` roda headless — `<binário do app> -p "/skill-doctor" < /dev/null` (comando local: não gasta API nem exige login). Coluna `context`: `-` = fora da listagem; `< 20` = só o nome, sem descrição.
+- ⚠️ **Sessão do app desktop NÃO dispara o auto-update de plugin** (ele só roda em sessão interativa, após a 1ª mensagem): o superpowers ficou na 6.1.1 de 07/07 a 27/09. Plugin do marketplace oficial se atualiza à mão — `claude plugin marketplace update claude-plugins-official` → `claude plugin update <p>@claude-plugins-official`.
+- ⚠️ **O `claude` do PATH pode estar velho** (2.1.202 em 2026-09-27) e com login expirado: use o binário do app, `~/Library/Application Support/Claude/claude-code/<versão>/claude.app/Contents/MacOS/claude` (o shim `~/.claude-mem/claude-shim.sh` resolve o mais novo).
+- **`skillOverrides` do `.claude/settings.json`:** 51 skills de terceiros nunca usadas (marketing, Adobe, mídia, Sentry) em `user-invocable-only` — continuam em `/nome` — e `frontend-design` + `context-restore` em `name-only` (o roteamento manda evitá-las; sem isso ganhavam descrição). Critério e medição: `docs/historico/piso-de-contexto.md` (2026-09-27). Skill de PLUGIN não aceita override — só desligando o plugin.
 
 ## MCPs conectados
 
