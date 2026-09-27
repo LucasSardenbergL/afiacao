@@ -1,10 +1,13 @@
 # TEMPORÁRIO — NÃO vai para a main (sai do branch antes do PR).
-# Rodada 2: a prova CONSERTADA de db/test-tint-fase5-watchdog.sh no mesmo tipo de runner do job
-# `provas-sql` (a rodada 1 mediu a original: 215s/251s, com 121s nas 2 primeiras varreduras):
+# Rodada 3: a versão FINAL de db/test-tint-fase5-watchdog.sh — índices de prod no fixture,
+# autovacuum=off no cluster da prova, B14 com espera positiva, F5 e recibo PASS=/FAIL=. A rodada 2
+# mediu por ablação: sem índices 96–102s; índices + ANALYZE 23–34s (o plano troca na 3ª suíte);
+# índices sem ANALYZE 11,4–12,0s.
 #   (a) a prova final, ponta a ponta, 3× por VM;
-#   (b) a instrumentada, para ver se algum regime lento de plano sobrevive em alguma suíte;
-#   (c)/(d) ablações — sem os índices de prod / sem o ANALYZE — para medir se cada camada é necessária;
-#   (e) o runner do núcleo com um manifesto só com ela: o recibo PASS=/FAIL= é aceito?
+#   (b) a instrumentada: algum regime lento de plano sobrevive em alguma suíte?
+#   (c) as sabotagens das camadas NOVAS (pré/pós-condição do lock, falsificação inválida no FAIL),
+#       com o controle verde na MESMA invocação;
+#   (d) o runner do núcleo com um manifesto só com ela: o recibo é aceito?
 # Duas rodadas em paralelo = duas VMs = duas amostras.
 name: medir-fase5-watchdog
 
@@ -70,31 +73,17 @@ jobs:
           grep -E '^MEDIDA_|^PASS=|^RESULTADO' "$RUNNER_TEMP/instr.log"
           echo "MEDIDA|${{ matrix.rodada }}|instrumentada-final|rc=$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')s"
 
-      - name: (c) ablação — sem os índices de prod
+      - name: (c) sabotagens das camadas novas — controle verde na mesma invocação
         run: |
           set -uo pipefail
-          python3 db/medicao-fase5-watchdog/variante.py db/test-tint-fase5-watchdog.sh db/_v-sem-indices.sh sem-indices
-          python3 db/medicao-fase5-watchdog/instrumenta.py db/_v-sem-indices.sh db/_vi-sem-indices.sh
           s=$(date +%s.%N)
-          TLOG="$RUNNER_TEMP/tempos-c.log" PGPORT_TEST=5930 timeout 900 bash db/_vi-sem-indices.sh > "$RUNNER_TEMP/sem-indices.log" 2>&1 && rc=0 || rc=$?
+          PORTA_BASE=5950 timeout 900 bash db/medicao-fase5-watchdog/falsifica-camadas-novas.sh "$PWD" "$RUNNER_TEMP/sab" > "$RUNNER_TEMP/sab.txt" 2>&1 && rc=0 || rc=$?
           e=$(date +%s.%N)
-          grep -E '^MEDIDA_(EVT\|(roda|suite|b14)|SUITE)|^PASS=|^RESULTADO' "$RUNNER_TEMP/sem-indices.log" | cut -c1-240
-          echo "MEDIDA|${{ matrix.rodada }}|sem-indices|rc=$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')s"
+          cat "$RUNNER_TEMP/sab.txt"
+          for f in "$RUNNER_TEMP"/sab/*.log; do echo "── $(basename "$f") ──"; grep -E '  XX  |BASELINE VERMELHO|FALSIF XX|^PASS=|^RESULTADO' "$f" | cut -c1-200; done
+          echo "MEDIDA|${{ matrix.rodada }}|sabotagens-camadas-novas|rc=$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')s"
 
-      - name: (d) ablação — sem o ANALYZE (com os índices)
-        run: |
-          set -uo pipefail
-          python3 db/medicao-fase5-watchdog/variante.py db/test-tint-fase5-watchdog.sh db/_v-sem-analyze.sh sem-analyze
-          python3 db/medicao-fase5-watchdog/instrumenta.py db/_v-sem-analyze.sh db/_vi-sem-analyze.sh
-          for i in 1 2; do
-            s=$(date +%s.%N)
-            TLOG="$RUNNER_TEMP/tempos-d$i.log" PGPORT_TEST=$((5940 + i)) timeout 900 bash db/_vi-sem-analyze.sh > "$RUNNER_TEMP/sem-analyze-$i.log" 2>&1 && rc=0 || rc=$?
-            e=$(date +%s.%N)
-            grep -E '^MEDIDA_(EVT\|(roda|suite|b14)|SUITE)|^PASS=|^RESULTADO' "$RUNNER_TEMP/sem-analyze-$i.log" | cut -c1-240
-            echo "MEDIDA|${{ matrix.rodada }}|sem-analyze-$i|rc=$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')s"
-          done
-
-      - name: (e) runner do núcleo com manifesto de UMA linha
+      - name: (d) runner do núcleo com manifesto de UMA linha
         run: |
           set -uo pipefail
           printf '%s\n' "db/test-tint-fase5-watchdog.sh             31" > "$RUNNER_TEMP/manifesto-1.txt"

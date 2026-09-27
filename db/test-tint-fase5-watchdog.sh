@@ -47,7 +47,12 @@ cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
 trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
-"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
+# autovacuum=off: o PLANO da varredura não pode depender de QUANDO o autovacuum acorda. Era isso que
+# fazia a prova oscilar entre 185s e 252s no runner — as 2 primeiras varreduras pagavam 121s até o
+# autoanalyze —, e estatística no meio da execução (ANALYZE após o seed, medido por ablação) troca o
+# plano, a partir da 3ª suíte, por um ~7× mais lento. Com os índices de prod da ZONA 1 e sem
+# estatística, cada varredura fica em ~0,03s nas 7 suítes. Não muda o que a varredura DEVOLVE.
+"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp -c autovacuum=off" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
@@ -95,8 +100,8 @@ CREATE TABLE public.tint_formulas (
 -- Os índices que a PROD tem nestas duas tabelas (supabase/schema-snapshot.sql), com os nomes de lá.
 -- A view canônica é correlacionada por fórmula (EXISTS nos itens, max() pela chave, NOT EXISTS por
 -- gêmea); sem eles cada correlação vira seq scan, e uma única varredura do watchdog sobre as 1004
--- chaves do seed custava 64–80s no runner (vs 7–25ms com eles, com ou sem estatística). A prova
--- levava 185–252s e oscilava com o autovacuum.
+-- chaves do seed custava 64–80s no runner (7–25ms com eles, com ou sem estatística). O universo
+-- NÃO encolheu: 1000 chaves BULK é o mínimo que o B5 exige (v_s1 >= 1000 -> critico).
 CREATE INDEX idx_tint_formulas_busca_cor ON public.tint_formulas USING btree (account, sku_id, cor_id);
 CREATE TABLE public.tint_formula_itens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -230,14 +235,6 @@ DO $$ DECLARE g int; BEGIN
   END LOOP;
 END $$;
 SQL
-
-# Estatística, como em prod (lá o autovacuum mantém as tabelas analisadas). SEM ela o planner
-# não conhece tamanho nem distinção das chaves e resolve a view canônica — correlacionada por
-# fórmula — em laço aninhado: o custo de UMA varredura cresce ~N^2,75 com as chaves do seed
-# (MEDIDAS_AQUI), e a prova levava 185s ou 252s conforme o autovacuum acordasse mais cedo ou mais
-# tarde. O ANALYZE muda o PLANO, não o que a varredura devolve: universo, seed e limiares seguem
-# os mesmos — o universo de 1004 chaves já é o mínimo que o B5 exige (1000 degradadas -> critico).
-P -q -c "ANALYZE;"
 
 # ── alavancas de estado ──
 CO_OK='c0000000-0000-0000-0000-0000000000ff'
