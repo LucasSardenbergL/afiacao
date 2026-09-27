@@ -211,6 +211,9 @@ janela_rodada() {
   echo "${out# }"
 }
 N9_ESPERADO="ok|18000 stale|18000 stale|18000 ok|18000"
+# 4 leituras "status|idade" BEM FORMADAS: uma sabotagem só conta como dente se a rodada RODOU e leu
+# outra coisa — rodada que quebrou (erro, relógio que não respondeu) também "difere" do esperado.
+bem_formada() { [[ "$1" =~ ^(ok|stale|broken)\|[0-9]+(\ (ok|stale|broken)\|[0-9]+){3}$ ]]; }
 # shellcheck disable=SC2046  # split proposital: 4 leituras separadas por espaço
 set -- $(janela_rodada)
 # idade 18000 = 5h EXATAS: é o controle POSITIVO de que o compute leu o relógio controlado. No relógio
@@ -345,21 +348,24 @@ restaura
 # F6 — janela contada em UTC ⇒ N9 tem de FALHAR (07:59:59 BRT são 10:59:59Z, "dentro" em UTC)
 sabota "(now() AT TIME ZONE 'America/Sao_Paulo')::time" "(now() AT TIME ZONE 'UTC')::time" 2
 R="$(janela_rodada)"
-if [ "$R" = "$N9_ESPERADO" ]; then bad "F6 assert N9 SEM DENTE (janela em UTC e seguiu igual)"; else ok "F6 janela em UTC muda a leitura das bordas ($R) → N9 tem dente"; fi
+# determinística: 07:59:59/08:00 BRT = 10:59:59/11:00Z (dentro em UTC); 17:59:59/18:00 BRT = 20:59:59/21:00Z (fora)
+if [ "$R" = "stale|18000 stale|18000 ok|18000 ok|18000" ]; then ok "F6 janela em UTC lê as bordas como UTC ($R) → N9 tem dente"; else bad "F6 assert N9 — a sabotagem UTC não produziu a leitura UTC: [$R]"; fi
 restaura
 # F7 — fim FECHADO (<= 18:00) ⇒ N9d tem de FALHAR
 sabota "<  time '18:00'" "<= time '18:00'" 1
 R="$(janela_rodada)"
-if [ "$R" = "$N9_ESPERADO" ]; then bad "F7 assert N9d SEM DENTE (fim fechado e seguiu igual)"; else ok "F7 fim fechado põe 18:00:00 dentro ($R) → N9d tem dente"; fi
+if [ "$R" = "ok|18000 stale|18000 stale|18000 stale|18000" ]; then ok "F7 fim fechado põe 18:00:00 dentro ($R) → N9d tem dente"; else bad "F7 assert N9d — o fim fechado não produziu a leitura esperada: [$R]"; fi
 restaura
 # F8 — hora tirada do relógio de PAREDE (clock_timestamp escapa do controlado) ⇒ N9 tem de FALHAR
 sabota "(now() AT TIME ZONE 'America/Sao_Paulo')::time" "(clock_timestamp() AT TIME ZONE 'America/Sao_Paulo')::time" 2
 R="$(janela_rodada)"
-if [ "$R" = "$N9_ESPERADO" ]; then bad "F8 assert N9 SEM DENTE (hora de parede e seguiu igual)"; else ok "F8 hora de parede achata as 4 bordas ($R) → N9 tem dente"; fi
+# a hora de PAREDE depende de quando roda — o critério não pode (seria outra janela): basta a rodada ter
+# rodado (bem formada) e NÃO reproduzir o padrão das bordas, que um relógio real não faz em ms
+if bem_formada "$R" && [ "$R" != "$N9_ESPERADO" ]; then ok "F8 hora de parede achata as 4 bordas ($R) → N9 tem dente"; else bad "F8 assert N9 — hora de parede e a rodada seguiu igual ou não rodou: [$R]"; fi
 restaura
 # F9 — relógio DESLIGADO (compute no search_path da migration) ⇒ o controle positivo (idade) tem de FALHAR
 R="$(janela_rodada 0)"
-if [ "$R" = "$N9_ESPERADO" ]; then bad "F9 controle positivo SEM DENTE (relógio desligado e a idade seguiu 18000)"; else ok "F9 relógio desligado quebra a idade ($R) → o controle positivo tem dente"; fi
+if bem_formada "$R" && [[ "$R" != *"|18000"* ]]; then ok "F9 relógio desligado quebra a idade ($R) → o controle positivo tem dente"; else bad "F9 controle positivo — relógio desligado e a idade seguiu 18000, ou a rodada não rodou: [$R]"; fi
 
 echo ""
 echo "═══════════════════════════════════════════"
