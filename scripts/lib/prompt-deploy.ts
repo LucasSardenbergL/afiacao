@@ -97,28 +97,12 @@ function linhaDoArquivo(a: ArquivoDaFatia): string {
  *   `cannot compute` → o ramo de AUSÊNCIA. Sonda que não roda ≠ sonda verde: sem este ramo, o
  *                      `sha256sum` ausente do sandbox vira deploy aprovado por silêncio
  *                      (`docs/historico/sonda-ausente-em-script-que-apaga.md`).
- *   `do NOT edit any file` → o DEPOIS do deploy (ver `FECHO_SEM_EDICAO`).
  */
 export const MARCAS_DE_CONFERENCIA: readonly string[] = [
   'sha256sum',
   'do NOT deploy',
   'cannot compute',
-  'do NOT edit any file',
 ] as const;
-
-/**
- * O fecho que proíbe edição DEPOIS do deploy (2026-09-27). Duas vezes (26/09 e 27/09) o agente do
- * Lovable deployou verbatim e, na sequência, "corrigiu" por conta própria erros de tipo do log de
- * build do workspace — edição que o sync empurra para a `main` como commit "Changes", sem PR nem
- * CI, e que deixou a main vermelha no `sonda:fingerprint` (#2579, #2595). Uma das "correções" era
- * money-path (`Number(codigoPedido)`: ausente vira 0). O "do NOT modify" do topo fala do DEPLOY; o
- * agente leu o conserto do log como outra tarefa — então o fecho nomeia o log e o build.
- */
-const FECHO_SEM_EDICAO = [
-  '**After the deploy, do NOT edit any file in this project** — not even to fix build or type errors',
-  'you see in logs. This workspace syncs to `main` on GitHub without review, and the repository is the',
-  'source of truth. If there are errors, list them in your reply and stop.',
-].join('\n');
 
 /**
  * Filtra os vereditos pelos estados que exigem deploy. Ordena por nome para a saída ser
@@ -258,8 +242,6 @@ export function montarPrompt(edges: readonly EdgeParaDeploy[], proc: Procedencia
       '',
       `After deploying, confirm that \`${only.edge}\` shows **Active**, and report the result of the`,
       `hash check.`,
-      '',
-      FECHO_SEM_EDICAO,
     ].join('\n');
   }
 
@@ -280,8 +262,6 @@ export function montarPrompt(edges: readonly EdgeParaDeploy[], proc: Procedencia
     '',
     `After deploying, list the ${n} function names and confirm that **each one** shows **Active**,`,
     `and report the result of the hash check.`,
-    '',
-    FECHO_SEM_EDICAO,
   ].join('\n');
 }
 

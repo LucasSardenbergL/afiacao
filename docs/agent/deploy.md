@@ -150,6 +150,12 @@ arquivo foi sobrescrito por OUTRA sessão entre a escrita e a leitura desta (22.
 o silencioso — o `pendencias-pacote.ts` lendo o veredito de uma leva que não é a sua, com a saída
 inteira parecendo normal. `ausente ≠ zero` na dimensão **ARQUIVO COMPARTILHADO**.
 
+**Antes do `send_message`: `list_messages` do projeto e os PRs abertos (2026-09-27, #2595).** O ledger
+só enxerga um deploy depois da sonda, então ele não diz que outra sessão pediu a mesma edge minutos
+antes. No caso medido, o `sync-reprocess` saiu duas vezes em 15 min. O deploy redundante não custa só
+crédito: cada mensagem de deploy acorda o agente, e foi depois de uma delas que ele editou edges por
+conta própria (a proibição no prompt e o sensor pós-envio são do #2596).
+
 O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,
 `8f005805-000a-42b7-88a1-9683f785fab6`). O prompt carrega o `sha256` de cada arquivo do closure e
 manda o agente **conferir antes de deployar** (#2362) — na `copilot-analyze` de 2026-09-08 os 9
@@ -160,17 +166,6 @@ o runtime passou a servir, e essa última ponte segue sendo o `fonte` DECLARADO 
 **0,9 crédito** para uma edge. O bot commita um merge `Lovable update` na `main` logo depois —
 confira o `git diff --stat` dele (no caso medido: só `src/integrations/supabase/types.ts`, +10
 linhas), porque é por esse mesmo caminho que o sync já reverteu fix mergeado.
-
-**Antes e depois do `send_message` (2026-09-27, #2595).** ANTES: `list_messages` do projeto e os PRs
-abertos — outra sessão pode ter pedido a mesma edge minutos antes, e o ledger só enxerga depois da
-sonda (o `sync-reprocess` saiu duas vezes em 15 min). DEPOIS: `git fetch origin main && git log
-origin/main --author=gpt-engineer-app` — terminado o deploy, o agente leu o log de build do
-workspace e "corrigiu" erros de tipo por conta própria, e o workspace virou commits `Changes` na
-`main` sem PR nem CI (#2579, #2595; um deles fabricava `Number(null) → 0` em money-path). O
-fingerprint da edge muda e a `main` fica vermelha no `sonda:fingerprint`. O prompt do pacote agora
-fecha proibindo edição depois do deploy (`FECHO_SEM_EDICAO`, `scripts/lib/prompt-deploy.ts`), mas
-é pedido, não trava: o `git log` segue obrigatório. Achou commit do bot → reverta por PR, com a
-`VERSAO` bumpada (reversão pura reprova no `sonda:bump`).
 
 #### Ordem ENTRE edges: o pacote sai em ONDAS (#2469, 2026-09-14)
 

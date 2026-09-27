@@ -98,9 +98,9 @@ ledger ainda não via: a nossa mensagem o deployou de novo, à toa. Terminado o 
 Lovable leu o log de build do workspace e "corrigiu" erros de tipo por conta própria. Vieram 3
 commits `Changes` direto na `main`, um deles com `Number(codigoPedido)` em money-path (ausente vira
 0), e o `sonda:fingerprint` ficou vermelho para todos. Revertido no #2595 (a reversão pura reprova no
-`sonda:bump`, então a `VERSAO` bumpou). Desde então: `list_messages` e PRs abertos ANTES do
-`send_message`, `git log --author=gpt-engineer-app` DEPOIS, e o prompt de deploy fecha proibindo
-edição (`FECHO_SEM_EDICAO`). É pedido, não trava.
+`sonda:bump`, então a `VERSAO` bumpou). A lição que é desta nota: `list_messages` e PRs abertos
+ANTES do `send_message`, porque o ledger ainda não via o deploy da outra sessão. A proibição de
+edição no prompt e o sensor pós-envio vieram de outra sessão, no mesmo dia (#2596).
 
 ## O que NÃO está resolvido
 
@@ -115,9 +115,9 @@ edição (`FECHO_SEM_EDICAO`). É pedido, não trava.
 - **Só a LEITURA ganhou transporte.** O PASSO 1 da sonda e migration são escrita: o envelope exige o
   pré-voo pelo `psql-ro`, então na nuvem seguem com o founder no SQL Editor (que abre de qualquer
   aparelho). Estender o envelope é decisão dele, com Codex.
-- **O Codex não rodou nesta sessão.** Desde o #2586 o wrapper o instala sozinho na nuvem, mas o
-  AMBIENTE precisa liberar `api.openai.com` e ter `CODEX_API_KEY`, e este negava a rede (`CONNECT
-  403`, medido). A 2ª opinião deste desenho foi um revisor adversarial independente (Caminho B).
+- **O Codex não rodou nesta sessão.** A rede do ambiente negava `api.openai.com` (`CONNECT 403`,
+  medido), e no mesmo dia o founder decidiu que o Codex roda só no Mac, na cota do plano (#2597).
+  Na nuvem, a 2ª opinião é o Caminho B: a deste desenho foi um revisor adversarial independente.
 - **Outros leitores de prod seguem só no Mac:** `edges-pendentes.sh` (na nuvem, use o
   `pendencias:deploy` pelo transporte), `deriva:corpo:prod`, as auditorias de authz. O transporte é
   genérico: ligá-los é passar as consultas deles pelo `gerarSqlNuvem`.

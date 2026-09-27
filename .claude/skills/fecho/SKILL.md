@@ -54,7 +54,8 @@ errada quando existe comando que responde aqui:
   (`query_database`/`send_message`), meça e resolva AQUI pelo transporte `--sql-nuvem` /
   `--dados-nuvem` ([deploy.md](../../../docs/agent/deploy.md) §"Conferência de prod pela NUVEM").
   A divisão: a LEITURA é daqui, o deploy de edge também (pela sessão, com o `list_messages` antes e
-  o `git log --author=gpt-engineer-app` depois), e a ESCRITA no banco continua do founder.
+  a conferência de edição do agente depois, ambos em deploy.md), e a ESCRITA no banco continua do
+  founder.
   Sem o conector, o destino é UMA linha pedindo para conectá-lo — chip para sessão LOCAL, nunca.
 - **Consulta que NÃO RESPONDEU não é pendência, é tentativa a repetir.** Exit 2, "inconsultável",
   "não consegui consultar" = mecânica, e `ausente ≠ zero` vale no tempo. RODE DE NOVO antes de
