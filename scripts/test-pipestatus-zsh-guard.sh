@@ -258,6 +258,63 @@ else
 fi
 cp "$BKP2" "$HOOK"; rm -f "$BKP2"; trap - EXIT
 
+# FALSIFICAÇÃO 3 — o ramo `herestring` e a UNICA defesa de H1/H2 (regras em
+# docs/historico/falsificacao-sem-linha-de-base.md). Diferente das duas acima, sabota uma COPIA: o
+# hook real e o guard VIVO desta worktree, e uma rodada interrompida o deixaria sabotado.
+#   (1) CONTROLE: a MESMA invocacao da sabotagem, com a sabotagem trocada por nada, nos 2 locales —
+#       H1/H2 calados E um positivo avisando (silencio de copia que nem rodou nao e verde).
+#       Vermelho ali ABORTA antes do perl: senao a sabotagem "passaria" de graca;
+#   (2) vermelho pelo MARCADOR, que awk quebrado nao produz — por isso H3 fica de fora: o vermelho
+#       dele e SILENCIO, e silencio awk quebrado tambem produz;
+#   (3) CONTROLE DE SAIDA: o hook real byte-identico ao de antes do bloco.
+# H1/H2 dependem SO desta regra: sem `$?` (ECO-DE-EXIT fora), sem `((`/`[[`/`let` (nome nu fora),
+# e a mencao em aspas simples so vaza se a aspa de abertura for comida.
+echo "-- falsificacao 3: sem o ramo herestring, o <<< volta a comer a aspa --"
+F3="$(mktemp -d "${TMPDIR:-/tmp}/pipestatus-f3.XXXXXX")"
+trap 'rm -rf "$F3"; rm -f "$LOGTESTE"' EXIT
+cp "$HOOK" "$F3/hook.sh"; cp "$HOOK" "$F3/real-antes.sh"
+F3_LOCALES=(C)
+if locale -a 2>/dev/null | command grep -qi '^pt_BR.UTF-8$'; then F3_LOCALES+=(pt_BR.UTF-8)
+else echo "  (pt_BR.UTF-8 indisponivel: falsificacao 3 roda so em C)"; fi
+F3_CASOS=("read -r a b <<< \"\$st\"; echo 'doc: \${PIPESTATUS[0]} e bash-ism'"
+          "cat <<< 'docs: \${PIPESTATUS[0]} e vazio no zsh'")
+f3_roda()  { printf '%s' "$(entrada "$2")" | LC_ALL="$1" PIPESTATUS_GUARD_LOG="$LOGTESTE" bash "$F3/hook.sh" 2>/dev/null; }
+f3_avisa() { f3_roda "$1" "$2" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null | command grep -q "$A"; }
+
+f3_ctrl=0
+for loc in "${F3_LOCALES[@]}"; do
+  f3_avisa "$loc" 'false | true; [ "${PIPESTATUS[0]}" -eq 0 ]' || f3_ctrl=$((f3_ctrl + 1))
+  for caso in "${F3_CASOS[@]}"; do [ -z "$(f3_roda "$loc" "$caso")" ] || f3_ctrl=$((f3_ctrl + 1)); done
+done
+if [ "$f3_ctrl" -ne 0 ]; then
+  echo "  FALHA controle SEM sabotagem ja esta VERMELHO em $f3_ctrl caso(s) — falsificacao 3 abortada antes de sabotar"
+  falhas=$((falhas + 1))
+else
+  perl -0pi -e 's/substr\(linha, i\+2, 1\) == "<"\) \{ emite\("<<<"\)/substr(linha, i+2, 1) == "NUNCA") { emite("<<<")/' "$F3/hook.sh"
+  if cmp -s "$HOOK" "$F3/hook.sh"; then
+    echo "  FALHA a sabotagem 3 NAO alterou a copia — a falsificacao seria teatro"
+    falhas=$((falhas + 1))
+  else
+    f3_total=0; f3_pegou=0
+    for loc in "${F3_LOCALES[@]}"; do for caso in "${F3_CASOS[@]}"; do
+      f3_total=$((f3_total + 1)); f3_avisa "$loc" "$caso" && f3_pegou=$((f3_pegou + 1))
+    done; done
+    if [ "$f3_pegou" -eq "$f3_total" ]; then
+      echo "  ok   controle VERDE e sabotagem 3 VERMELHA pelo marcador em $f3_pegou/$f3_total (locales: ${F3_LOCALES[*]})"
+    else
+      echo "  FALHA sabotagem 3 passou despercebida em $((f3_total - f3_pegou)) de $f3_total caso(s)"
+      falhas=$((falhas + 1))
+    fi
+  fi
+fi
+if ! cmp -s "$HOOK" "$F3/real-antes.sh"; then
+  echo "  FALHA o hook REAL mudou durante a falsificacao 3 — ela so pode tocar a copia"
+  falhas=$((falhas + 1))
+fi
+# Religa a limpeza do LOGTESTE: o `trap - EXIT` das falsificacoes 1 e 2 a derrubava, e cada rodada
+# da suite deixava um log orfao no TMPDIR.
+rm -rf "$F3"; trap 'rm -f "$LOGTESTE"' EXIT
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "PIPESTATUS-GUARD: TODOS OS TESTES PASSARAM"; exit 0; fi
 echo "PIPESTATUS-GUARD: $falhas FALHA(S)"; exit 1
