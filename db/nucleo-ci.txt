@@ -123,13 +123,6 @@ db/test-claim-disparo-cenario-b.sh         76
 db/test-disparado-simulado-pos-disparo.sh  59
 db/test-fin-sync-lease.sh                  22
 db/test-pedido-venda-coerencia.sh          31
-# A escrita do backfill de desconto: o plano é lido ANTES e escrito depois, e o que atravessa a
-# janela são as marcas da própria linha — o trio (SKU, qtd, preço) e o `desconto_valor IS NULL`,
-# DENTRO do `WHERE` do UPDATE: base que mudou, ou linha já apurada por outro writer, não é escrita.
-# E o que ela DEVOLVE: `ja_apuradas` contado ANTES do UPDATE. Entrou em 2026-09-10, quando se viu
-# que a contagem somava as escritas da própria chamada e que esta prova CONFIRMAVA o número errado
-# (o esperado fora transcrito da saída). Até então rodava só no laptop.
-db/test-desconto-backfill-aplicar.sh       30
 # Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO
 # estrito com backoff, statement_timeout capturado desfaz o parcial. O `--falsificar` (12
 # sabotagens na mesma invocação do controle verde) roda aqui: 71–86s no runner. E o lock timeout
@@ -137,6 +130,13 @@ db/test-desconto-backfill-aplicar.sh       30
 db/test-tint-promocao-assincrona.sh        44  falsificar=12
 db/test-tint-promote-e4.sh                  4
 db/test-tint-promote-reexpand.sh            6
+# A escrita do backfill de desconto: o plano é lido ANTES e escrito depois, e o que atravessa a
+# janela são as marcas da própria linha — o trio (SKU, qtd, preço) e o `desconto_valor IS NULL`,
+# DENTRO do `WHERE` do UPDATE: base que mudou, ou linha já apurada por outro writer, não é escrita.
+# E o que ela DEVOLVE: `ja_apuradas` contado ANTES do UPDATE. Entrou em 2026-09-10, quando se viu
+# que a contagem somava as escritas da própria chamada e que esta prova CONFIRMAVA o número errado
+# (o esperado fora transcrito da saída). Até então rodava só no laptop.
+db/test-desconto-backfill-aplicar.sh       30
 
 # ── Eixo 5 — VEREDITO DE DEPLOY ──────────────────────────
 # O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num
