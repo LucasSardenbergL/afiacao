@@ -213,6 +213,13 @@ miniatura: um detector de padrão de shell não herda a semântica do shell.** U
 negativo E falso positivo comprovados não tem a precisão que justifica bloquear — e como aviso o
 falso positivo custa uma linha de contexto, o que permitiu ampliar a detecção em vez de encolhê-la.
 
+**O scanner deste guard lia a here-string `<<<` como `<` + `<<`** (corrigido em 2026-09-27): o
+parser de delimitador do heredoc fictício comia a aspa de abertura da palavra — falso positivo no
+`read -r a b <<< "$st"` que o `word-split-zsh-guard.sh` recomenda, falso negativo quando
+`<<< 'nota'` virava heredoc quoted que engolia as linhas de baixo —, e ele foi o 3º scanner de shell
+caseiro do repo a tropeçar nisso (depois de `limpeza-shell.ts` e `sonda-processo-guard.sh`), então
+scanner novo nasce com `<<<` na suíte.
+
 
 **O sensor, e o invariante que eu tinha "provado" no caso típico.** Aviso sem registro é promessa
 inalcançável — "endurecer quando houver dado" precisa do dado. O hook grava JSONL em
