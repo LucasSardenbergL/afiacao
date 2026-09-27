@@ -92,9 +92,16 @@ CREATE TABLE public.tint_formulas (
   preco_final_sayersystem numeric, subcolecao_id uuid, personalizada boolean DEFAULT false,
   updated_at timestamptz DEFAULT now(),
   desativada_em timestamptz, desativada_motivo text);
+-- Os índices que a PROD tem nestas duas tabelas (supabase/schema-snapshot.sql), com os nomes de lá.
+-- A view canônica é correlacionada por fórmula (EXISTS nos itens, max() pela chave, NOT EXISTS por
+-- gêmea); sem eles cada correlação vira seq scan, e uma única varredura do watchdog sobre as 1004
+-- chaves do seed custava 64–80s no runner (vs 7–25ms com eles, com ou sem estatística). A prova
+-- levava 185–252s e oscilava com o autovacuum.
+CREATE INDEX idx_tint_formulas_busca_cor ON public.tint_formulas USING btree (account, sku_id, cor_id);
 CREATE TABLE public.tint_formula_itens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  formula_id uuid, corante_id uuid, qtd_ml numeric);
+  formula_id uuid, corante_id uuid, qtd_ml numeric,
+  CONSTRAINT tint_formula_itens_formula_id_corante_id_key UNIQUE (formula_id, corante_id));
 -- os CHECKs REAIS de prod: os dois vocabulários de severidade são DIFERENTES,
 -- e é o que faz o helper derivar um do outro em vez de recebê-los soltos.
 CREATE TABLE public.fin_alertas (

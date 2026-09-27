@@ -59,18 +59,24 @@ troca("# ══ ZONA 3 — seeds ══", "_marca seed_ini\n# ══ ZONA 3 — 
 troca("# ── alavancas de estado ──",
       ("P -q -c \"ANALYZE;\"\n" if COM_ANALYZE else "") + "_marca seed_fim\n# ── alavancas de estado ──")
 
-# B14: o sleep 2 e o wait do pg_sleep(6) — medidos separados e juntos
-troca(
-    "  local lockpid=$!\n  sleep 2\n",
-    "  local lockpid=$!\n  local _b14s; _agora; _b14s=$_T\n  sleep 2\n"
-    "  _agora; printf 'sleep2 %s %s\\n' \"$_b14s\" \"$_T\" >> \"$TLOG\"\n",
-)
-troca(
-    '  wait "$lockpid" 2>/dev/null || true\n\n  # ══ asserts dos FIXES',
-    '  local _w; _agora; _w=$_T\n  wait "$lockpid" 2>/dev/null || true\n'
-    "  _agora; printf 'wait %s %s\\n' \"$_w\" \"$_T\" >> \"$TLOG\"\n"
-    "  printf 'b14 %s %s\\n' \"$_b14s\" \"$_T\" >> \"$TLOG\"\n\n  # ══ asserts dos FIXES",
-)
+# B14 — a versão ORIGINAL (sleep 2 + wait do pg_sleep(6)) ou a NOVA (espera positiva pelo lock)
+if "  local lockpid=$!\n  sleep 2\n" in s:
+    troca(
+        "  local lockpid=$!\n  sleep 2\n",
+        "  local lockpid=$!\n  local _b14s; _agora; _b14s=$_T\n  sleep 2\n"
+        "  _agora; printf 'sleep2 %s %s\\n' \"$_b14s\" \"$_T\" >> \"$TLOG\"\n",
+    )
+    troca(
+        '  wait "$lockpid" 2>/dev/null || true\n\n  # ══ asserts dos FIXES',
+        '  local _w; _agora; _w=$_T\n  wait "$lockpid" 2>/dev/null || true\n'
+        "  _agora; printf 'wait %s %s\\n' \"$_w\" \"$_T\" >> \"$TLOG\"\n"
+        "  printf 'b14 %s %s\\n' \"$_b14s\" \"$_T\" >> \"$TLOG\"\n\n  # ══ asserts dos FIXES",
+    )
+else:
+    troca("  local lockpid=$!\n  if espera_lock 1; then\n",
+          "  local lockpid=$!\n  local _b14s; _agora; _b14s=$_T\n  if espera_lock 1; then\n")
+    ancora = '  espera_lock 0 || bad "B14 pos-condicao: o lock segue tomado depois de encerrar a sessao que o segurava"\n'
+    troca(ancora, ancora + "  _agora; printf 'b14 %s %s\\n' \"$_b14s\" \"$_T\" >> \"$TLOG\"\n")
 
 # suíte e falsificação: renomeia a real e embrulha
 troca("roda_suite() {\n  PASS=0; FAIL=0; FALHAS=()", "_roda_suite_real() {\n  PASS=0; FAIL=0; FALHAS=()")
