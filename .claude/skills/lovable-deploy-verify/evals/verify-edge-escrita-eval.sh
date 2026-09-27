@@ -127,49 +127,101 @@ uso_invalido falta_desde  "sem --desde não há corte a guardar"  --funcao x
 uso_invalido falta_funcao "sem --funcao não há edge a nomear"   --desde '2026-08-29 00:17:10+00'
 uso_invalido arg_estranho "argumento desconhecido ⇒ RECUSA"     --desde '2026-08-29 00:17:10+00' --funcao x --wat
 
-# ── falsificação: sabota o guard EM CÓPIA e exige vermelho ──────────────────────────────────────
-# O `exit_normal` é MEDIDO no script real antes de comparar — nunca o declarado. (Furo achado no
-# harness irmão: sabotagem escrita antes da feature ficava verde sem sabotar nada.)
+# ── falsificação: sabota o guard EM CÓPIA e exige o vermelho PREVISTO ───────────────────────────
+# Cada sabotagem DECLARA o desfecho que a acusa: o exit E a marca do ramo que o caso-alvo tem de
+# imprimir. "Divergiu do exit normal" (o juiz de antes) aceitava crash, sintaxe quebrada e erro
+# alheio — e aqui duas sabotagens (ping, alvo) caem no INDETERMINADO, exit 2, o MESMO exit de um
+# script que morre de sintaxe: sem a marca, o crash e o julgamento são o mesmo número.
+# → docs/historico/falsificacao-exit-nao-e-dente.md · referência: monitor-deploy-eval.sh.
+# O exit do caso ÍNTEGRO segue MEDIDO na mesma invocação (controle), nunca só declarado. (Furo
+# achado no harness irmão: sabotagem escrita antes da feature ficava verde sem sabotar nada.)
 if [ "${1:-}" = "--falsify" ]; then
   echo ""
-  echo "== falsificação (sabota o guard, exige vermelho) =="
-  fals=0; total=0
+  echo "== falsificação (sabota o guard em CÓPIA, exige o vermelho PREVISTO) =="
+  # locales: sonda POSITIVA — "setei LC_ALL" não prova que o locale existe (glibc cai em C calado)
+  LOCALES="C"
+  for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
+    if [ "$(LC_ALL="$cand" locale charmap 2>/dev/null)" = "UTF-8" ]; then LOCALES="C $cand"; break; fi
+  done
+  [ "$LOCALES" = "C" ] && echo "  ⚠️  nenhum locale UTF-8 disponível — falsificação só em C (metade da prova)"
 
-  sabota() { # nome cenario sed_expr marca_de_aplicacao descricao
-    local nome="$1" cen="$2" expr="$3" marca="$4" desc="$5" normal sabrc
+  roda() { # script cenario locale → exit do script; saída em $TMP/out
+    CENARIO="$2" PSQL_RO="$TMP/psql-fake" LC_ALL="$3" LANG="$3" bash "$1" --desde '2026-08-29 00:17:10+00' \
+      --funcao elevenlabs-transcribe >"$TMP/out" 2>&1
+  }
+  # bate <exit obtido> <exit previsto> <marca> → 0 só se o exit E a marca batem. `case` do próprio
+  # shell, não `grep`: sem fork, sem shim que dobra acento; a marca é ASCII de caixa fixa (#1483).
+  bate() {
+    local s
+    [ "$1" -eq "$2" ] || return 1
+    s=$(cat "$TMP/out")
+    case "$s" in *"$3"*) return 0 ;; esac
+    return 1
+  }
+  aplica() { # de para — substituição LITERAL em cópia; o alvo tem de aparecer EXATAMENTE 1 vez
+    python3 - "$SCRIPT" "$TMP/sab.sh" "$1" "$2" <<'PY'
+import sys
+src, dst, de, para = sys.argv[1:5]
+s = open(src, encoding="utf-8").read()
+if s.count(de) != 1:
+    sys.exit("o alvo aparece %d vez(es): %r" % (s.count(de), de[:70]))
+open(dst, "w", encoding="utf-8").write(s.replace(de, para, 1))
+PY
+  }
+  fals=0; total=0
+  # sabota <id> <cenario> <exit do caso ÍNTEGRO> <exit previsto> <marca prevista> <de> <para>
+  sabota() {
+    local id="$1" cen="$2" normal="$3" pexit="$4" pmarca="$5" loc got pegou=0 n_loc=0 errado=""
     total=$((total+1))
-    CENARIO="$cen" PSQL_RO="$TMP/psql-fake" bash "$SCRIPT" --desde '2026-08-29 00:17:10+00' \
-      --funcao elevenlabs-transcribe >/dev/null 2>&1; normal=$?
-    sed "$expr" "$SCRIPT" > "$TMP/sab.sh"
-    if ! command grep -q "$marca" "$TMP/sab.sh"; then
-      printf '  [XX ] %-26s sabotagem NÃO aplicou — o eval não testaria nada\n' "$nome"; rc=1; return
+    if ! aplica "$6" "$7" 2>"$TMP/aplica.err" || cmp -s "$SCRIPT" "$TMP/sab.sh"; then
+      printf '  [XX ] %-20s a sabotagem NÃO aplicou (%s) — o eval não testaria nada\n' "$id" "$(tr '\n' ' ' < "$TMP/aplica.err")"
+      rc=1; return
     fi
-    CENARIO="$cen" PSQL_RO="$TMP/psql-fake" bash "$TMP/sab.sh" --desde '2026-08-29 00:17:10+00' \
-      --funcao elevenlabs-transcribe >/dev/null 2>&1; sabrc=$?
-    if [ "$sabrc" -ne "$normal" ]; then
-      printf '  [ok ] %-26s %s (exit %s -> %s)\n' "$nome" "$desc" "$normal" "$sabrc"; fals=$((fals+1))
+    if ! bash -n "$TMP/sab.sh" 2>/dev/null; then
+      printf '  [XX ] %-20s a sabotagem quebrou a SINTAXE do script — vermelho pelo motivo errado\n' "$id"; rc=1; return
+    fi
+    for loc in $LOCALES; do
+      n_loc=$((n_loc+1))
+      # CONTROLE na mesma invocação e locale: o caso-alvo passa com o script ÍNTEGRO, e o desfecho
+      # previsto NÃO o descreve — senão "bateu o previsto" não distinguiria sabotagem de nada.
+      roda "$SCRIPT" "$cen" "$loc"; got=$?
+      if [ "$got" -ne "$normal" ]; then errado="$errado $loc:CONTROLE-VERMELHO-exit$got"; continue; fi
+      if bate "$got" "$pexit" "$pmarca"; then errado="$errado $loc:o-PREVISTO-casa-o-CONTROLE"; continue; fi
+      roda "$TMP/sab.sh" "$cen" "$loc"; got=$?
+      if bate "$got" "$pexit" "$pmarca"; then pegou=$((pegou+1))
+      else errado="$errado $loc:exit$got"; fi
+    done
+    if [ "$pegou" -eq "$n_loc" ]; then
+      fals=$((fals+1))
+      printf '  [ok ] %-20s -> %-19s exit %s + "%s" em %d locale(s)\n' "$id" "$cen" "$pexit" "$pmarca" "$n_loc"
     else
-      printf '  [XX ] %-26s sabotado e o caso seguiu VERDE (exit %s) — eval CEGO\n' "$nome" "$sabrc"; rc=1
+      printf '  [XX ] %-20s -> %s NÃO saiu pelo previsto (exit %s + "%s"; obtido%s)\n' "$id" "$cen" "$pexit" "$pmarca" "$errado"
+      sed 's/^/        | /' "$TMP/out" | head -4
+      rc=1
     fi
   }
 
-  # (1) a via unidirecional quebrada: ausência passaria a significar "bundle velho"
-  sabota ausencia_vira_velho ninguem_usou 's/^  exit 2$/  exit 1/' '^  exit 1$' \
-    "ausência virando exit 1 -> VIRA vermelho"
-  # (2) fail-closed do ping removido: via muda deixaria de recusar
-  # shellcheck disable=SC2016  # literal do script-alvo, não deve expandir aqui
-  sabota ping_sem_dente psql_mudo_parcial 's/\[ "${PING:-0}" -ge 1 \] || recusa/[ 1 -ge 0 ] || recusa/' \
-    '\[ 1 -ge 0 \]' "ping desarmado -> VIRA vermelho (vira 'ninguém usou')"
-  # (3) guard da correlação arrancado: query que não discrimina passaria batido
-  sabota correlacao_sem_guard correlacao_quebrada 's/^    recusa "CORRELACAO_SUSPEITA/    : "CORRELACAO_SUSPEITA/' \
-    '^    : "CORRELACAO_SUSPEITA' "guard de correlação arrancado -> VIRA vermelho"
-  # shellcheck disable=SC2016  # literal do script-alvo, não deve expandir aqui
-  # (4) guard do alvo ausente removido: leitura sem o alvo viraria "zero escritas"
-  sabota alvo_sem_guard alvo_sumiu 's/^\[ -n "${ALVO_TOTAL:-}" \] || recusa/[ -z "${ALVO_TOTAL:-}" ] || recusa/' \
-    '\[ -z "${ALVO_TOTAL:-}" \]' "guard do alvo invertido -> VIRA vermelho"
+  # (1) a via unidirecional quebrada: ausência passaria a significar "bundle velho" (exit 1)
+  sabota ausencia_vira_velho ninguem_usou 2 1 "nenhuma escrita de" \
+    '  exit 2
+fi
+' '  exit 1
+fi
+'
+  # (2) fail-closed do ping removido: a via muda deixa de recusar e vira "ninguém usou" (exit 2)
+  # shellcheck disable=SC2016  # literais do script-alvo, não devem expandir aqui
+  sabota ping_sem_dente psql_mudo_parcial 3 2 "nenhuma escrita de" \
+    '[ "${PING:-0}" -ge 1 ] || recusa' '[ 1 -ge 0 ] || recusa'
+  # (3) guard da correlação arrancado: a query que não discrimina passa a APROVAR o alvo
+  sabota correlacao_sem_guard correlacao_quebrada 3 0 "BUNDLE_NOVO_OBSERVADO_EM_T" \
+    '    recusa "CORRELACAO_SUSPEITA' '    : "CORRELACAO_SUSPEITA'
+  # (4) guard do alvo ausente invertido: leitura sem o alvo vira "zero escritas" (exit 2)
+  # shellcheck disable=SC2016
+  sabota alvo_sem_guard alvo_sumiu 3 2 "nenhuma escrita de" \
+    '[ -n "${ALVO_TOTAL:-}" ] || recusa' '[ -z "${ALVO_TOTAL:-}" ] || recusa'
 
-  echo "  falsificações efetivas: $fals/$total"
-  [ "$fals" -eq "$total" ] || rc=1
+  echo "  falsificações que pegaram pelo previsto: $fals/$total"
+  [ "$total" -ge 4 ] && [ "$fals" -eq "$total" ] || rc=1
 fi
 
 [ "$rc" -eq 0 ] && echo "OK — verify-edge-escrita" || echo "FALHOU — verify-edge-escrita"
