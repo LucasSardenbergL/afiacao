@@ -57,9 +57,9 @@ def main():
             dados = os.read(entrada, 65536)
             if dados:
                 # Sob carga a resposta pode chegar DEPOIS que o comando saiu e fechou o TTY: o macOS
-                # devolve EIO a essa escrita (o Linux aceita). Ninguem mais vai le-la: descarta e
-                # segue drenando — o rc que vale e o DO COMANDO. Sem isto, a excecao matava o helper
-                # com 1, o mesmo numero do "nao consegui" do script (flake de 2026-09-26).
+                # devolve EIO a essa escrita (medido; o Linux, pelo pty.c, a aceita). Ninguem mais
+                # vai le-la: descarta e segue drenando — o rc que vale e o DO COMANDO. Sem isto, a
+                # excecao matava o helper com 1, o "nao consegui" do script (flake de 2026-09-26).
                 try:
                     os.write(fd, dados)
                 except OSError as e:

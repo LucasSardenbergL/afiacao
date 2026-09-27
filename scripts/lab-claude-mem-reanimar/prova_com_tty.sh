@@ -109,6 +109,7 @@ nok() { FALHAS=$((FALHAS + 1)); echo "  FALHA $1"; }
 mostra() { echo "  --- fim da saida ($1) ---"; tail -12 "$d/$1" | sed 's/^/  | /'; }
 
 # 1) entrada tardia: o comando escreve e sai 2 SEM ler o TTY; a resposta so chega depois dele SAIR
+# shellcheck disable=SC2016  # o $1 e do bash de DENTRO (o marcador que ele cria), nao deste
 printf 's\n' | "$PY" "$L/entrada_tardia.py" "$COM_TTY" "$d/escreveu" 30 \
   bash -c 'echo "PAREI sem ler o TTY"; : >"$1"; exit 2' _ "$d/escreveu" >"$d/tardia.txt" 2>&1
 rc=$?
