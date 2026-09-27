@@ -1,0 +1,126 @@
+# TEMPORÁRIO — NÃO vai para a main (sai do branch antes do PR).
+# Mede, no MESMO tipo de runner do job `provas-sql`, quanto custa: (a) instalar o pgvector;
+# (b) cada prova db/test-tint-*.sh no modo normal; (c) o --falsificar das que o têm (C e pt_BR);
+# (d) o núcleo atual, como linha de base na mesma máquina. Duas rodadas em paralelo = 2 amostras.
+name: medir-provas-tint
+
+on:
+  push:
+    branches: ['claude/nucleo-provas-tint']
+
+permissions:
+  contents: read
+
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        rodada: [1, 2]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: PostgreSQL 17 (PGDG) + pgvector — cronometrado
+        run: |
+          set -euo pipefail
+          t() { date +%s.%N; }
+          d() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.1f", b - a }'; }
+          echo "imagem: ${ImageOS:-?} ${ImageVersion:-?}"
+          ls -d /usr/lib/postgresql/*/bin 2>/dev/null || true
+          t0=$(t)
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+          https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo rm -f /etc/apt/sources.list.d/*google* /etc/apt/sources.list.d/*chrome* \
+                     /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*msprod* || true
+          sudo apt-get update -qq
+          t1=$(t)
+          sudo apt-get install -y -qq postgresql-17
+          t2=$(t)
+          sudo apt-get install -y -qq postgresql-17-pgvector
+          t3=$(t)
+          /usr/lib/postgresql/17/bin/initdb --version
+          dpkg-query -W -f='${Package} ${Version}\n' postgresql-17 postgresql-17-pgvector
+          ls -la /usr/share/postgresql/17/extension/vector.control
+          # sonda POSITIVA: o servidor carrega a extensão e responde com um vetor
+          s="$(mktemp -d)"; b=/usr/lib/postgresql/17/bin
+          "$b/initdb" -D "$s/d" -U postgres -E UTF8 --locale=C >/dev/null
+          "$b/pg_ctl" -D "$s/d" -o "-p 5808 -k $s -c listen_addresses=''" -l "$s/log" -w start >/dev/null
+          "$b/psql" -X -h "$s" -p 5808 -U postgres -d postgres -v ON_ERROR_STOP=1 -tA \
+            -c "CREATE EXTENSION vector" -c "SELECT extversion FROM pg_extension WHERE extname='vector'" \
+            -c "SELECT '[1,2,3]'::vector(3) <-> '[1,2,4]'::vector(3)"
+          "$b/pg_ctl" -D "$s/d" -m immediate stop >/dev/null
+          t4=$(t)
+          echo "MEDIDA|${{ matrix.rodada }}|apt-fontes+update|-|-|0|$(d "$t0" "$t1")|"
+          echo "MEDIDA|${{ matrix.rodada }}|apt-install-postgresql-17|-|-|0|$(d "$t1" "$t2")|"
+          echo "MEDIDA|${{ matrix.rodada }}|apt-install-pgvector|-|-|0|$(d "$t2" "$t3")|"
+          echo "MEDIDA|${{ matrix.rodada }}|sonda-vector|-|-|0|$(d "$t3" "$t4")|"
+
+      - name: Locale pt_BR.UTF-8
+        run: |
+          set -euo pipefail
+          sudo locale-gen pt_BR.UTF-8
+          locale -a | grep -qx 'pt_BR.utf8'
+
+      - name: Núcleo atual (linha de base no mesmo runner)
+        run: |
+          s=$(date +%s.%N)
+          bash db/roda-nucleo-ci.sh > "$RUNNER_TEMP/nucleo.log" 2>&1 && rc=0 || rc=$?
+          e=$(date +%s.%N)
+          grep -E '✅|❌|⚠️|SQL_PROOF_OK|REPROVADO' "$RUNNER_TEMP/nucleo.log" || true
+          echo "MEDIDA|${{ matrix.rodada }}|nucleo-atual|normal+falsificar|C|$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')|"
+
+      - name: Provas tint — cronometradas (serial, como o runner do núcleo)
+        run: |
+          set -uo pipefail
+          LOGS="$RUNNER_TEMP/tint-logs"; mkdir -p "$LOGS"
+          porta=5900
+          roda() {  # roda <arquivo> <modo normal|falsificar> <locale>
+            local f="$1" modo="$2" loc="$3" nome log s e rc cont
+            nome="$(basename "$f" .sh)"; porta=$((porta + 1))
+            log="$LOGS/$nome.$modo.$loc.log"
+            s=$(date +%s.%N)
+            if [ "$modo" = falsificar ]; then
+              HARNESS_LOCALE="$loc" PGPORT_TEST="$porta" timeout 1500 bash "$f" --falsificar > "$log" 2>&1 && rc=0 || rc=$?
+            else
+              HARNESS_LOCALE="$loc" PGPORT_TEST="$porta" timeout 1500 bash "$f" > "$log" 2>&1 && rc=0 || rc=$?
+            fi
+            e=$(date +%s.%N)
+            cont="$(grep -ohE 'PASS=[0-9]+[[:space:]]+FAIL=[0-9]+|RESULTADO:[[:space:]]*[0-9]+[[:space:]]*[oO][kK][[:space:]]*[/,][[:space:]]*[0-9]+[[:space:]]*[fF][aA][iI][lL]|[0-9]+[[:space:]]*[oO][kK][[:space:]]*[/,][[:space:]]*[0-9]+[[:space:]]*[fF][aA][iI][lL]|^SABOTAGENS: .*' "$log" | tail -1 || true)"
+            echo "MEDIDA|${{ matrix.rodada }}|$nome|$modo|$loc|$rc|$(awk -v a="$s" -v b="$e" 'BEGIN{printf "%.1f", b-a}')|$cont"
+            if [ "$rc" -ne 0 ]; then echo "  ── últimas linhas de $nome ($modo/$loc) ──"; tail -15 "$log" | sed 's/^/    /'; fi
+          }
+          # 1) sem snapshot (não dependem do pgvector) · 2) com snapshot · 3) --falsificar
+          for f in db/test-tint-*.sh; do
+            grep -q 'schema-snapshot.sql' "$f" || roda "$f" normal C
+          done
+          for f in db/test-tint-*.sh; do
+            grep -q 'schema-snapshot.sql' "$f" && roda "$f" normal C
+          done
+          for f in db/test-tint-*.sh; do
+            if grep -qF -e '--falsificar' "$f"; then
+              roda "$f" falsificar C
+              roda "$f" falsificar pt_BR.UTF-8
+            fi
+          done
+          exit 0
+
+      - name: Logs das provas (artefato)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tint-logs-rodada-${{ matrix.rodada }}
+          path: ${{ runner.temp }}/tint-logs
+          retention-days: 3
