@@ -61,9 +61,18 @@
  * como gate faria o sentido 2 acusar ruído — e gate que acusa ruído é gate que se desliga. Então:
  *
  *   - step de CI com `run`, SEM `continue-on-error: true`, que invoca um script → conta;
- *   - hook do `settings.json` que emite `permissionDecision: "deny"` → conta;
+ *   - hook do `settings.json` que emite `permissionDecision: "deny"` DENTRO do envelope que o
+ *     harness honra (`hookSpecificOutput` com `hookEventName: "PreToolUse"`) → conta;
  *   - hook que só imprime aviso (`pipestatus-zsh-guard.sh` se declara *"AVISO, não um bloqueio"*)
  *     → NÃO conta como gate. Segue listado no resumo, à parte: é orientação, não bloqueio.
+ *
+ * O deny FORA desse envelope é vermelho próprio (`DENY-SEM-ENVELOPE`), não "hook de aviso": é um
+ * hook que o autor ACHA que nega e o harness ignora. Foi o `check-gstack.sh` — de 2026-05-14 a
+ * 2026-09-27 no censo como "hook que NEGA", contado por uma regex que casava o TOKEN
+ * `permissionDecision…deny` em qualquer lugar do fonte, enquanto ele emitia a decisão no topo do
+ * JSON e deixava toda skill carregar. Medido em 2026-09-27 (Claude Code 2.1.281, sonda PreToolUse
+ * sobre `Skill`): no topo, ou em `hookSpecificOutput` SEM `hookEventName`, a skill carrega; só o
+ * envelope completo nega (`docs/historico/gate-gstack-fail-open.md`).
  *
  * A classificação do hook lê o fonte com `removerComentariosShell` do stripper COMPARTILHADO, e
  * não por acaso. `read-contexto-nudge.sh` menciona `"deny"` três vezes — todas em COMENTÁRIO,
@@ -101,6 +110,7 @@ const MARCA_CENSO_OBSOLETO = 'CENSO-OBSOLETO';
 const MARCA_CENSO_REPETIDO = 'CENSO-REPETIDO';
 const MARCA_CENSO_CONTAGEM = 'CENSO-CONTAGEM';
 const MARCA_CENSO_SEM_CONTAGEM = 'CENSO-SEM-CONTAGEM';
+const MARCA_DENY_SEM_ENVELOPE = 'DENY-SEM-ENVELOPE';
 const MARCA_VACUO = 'FRESCURA-VACUO';
 
 export const CENSO_INICIO = '<!--gates:frescura inicio-->';
@@ -263,12 +273,35 @@ export interface GateHook {
   arquivo: string;
   evento: string;
   bloqueia: boolean;
+  /** Emite o deny FORA do envelope que o harness honra: o autor acha que nega, e nada é negado. */
+  denySemEnvelope: boolean;
+}
+
+/** O token do deny, onde quer que esteja — era SÓ isto que a classificação antiga exigia. */
+const RE_DENY = /permissionDecision"?\s*:\s*"?deny/;
+/**
+ * Um objeto `hookSpecificOutput`, do `{` ao primeiro `}`. O corpo precisa trazer o evento E o deny.
+ * Limite conhecido: um `${var}` de shell no meio do objeto encerra o corpo antes do deny e acusa
+ * `DENY-SEM-ENVELOPE` num hook sadio — falha FECHADA e barulhenta (reordene os campos), nunca o
+ * verde por cegueira que esta classificação existe para matar.
+ */
+const RE_ENVELOPE = /hookSpecificOutput"?\s*:\s*\{([^}]*)\}/g;
+const RE_EVENTO_PRETOOLUSE = /hookEventName"?\s*:\s*"?PreToolUse/;
+
+/** Quantos deny o fonte emite, e quantos deles estão dentro do envelope completo. */
+function contarDenies(fonte: string): { total: number; envelopados: number } {
+  const total = fonte.match(new RegExp(RE_DENY.source, 'g'))?.length ?? 0;
+  let envelopados = 0;
+  for (const m of fonte.matchAll(RE_ENVELOPE)) {
+    if (RE_EVENTO_PRETOOLUSE.test(m[1]) && RE_DENY.test(m[1])) envelopados++;
+  }
+  return { total, envelopados };
 }
 
 /**
- * Hooks do `settings.json`, separados em bloqueio e aviso. A leitura do fonte passa pelo stripper
- * COMPARTILHADO de shell: `read-contexto-nudge.sh` cita `"deny"` só em comentário, explicando por
- * que NÃO nega — regex crua o promove a bloqueio.
+ * Hooks do `settings.json`, separados em bloqueio, aviso e deny sem envelope. A leitura do fonte
+ * passa pelo stripper COMPARTILHADO de shell: `read-contexto-nudge.sh` cita `"deny"` só em
+ * comentário, explicando por que NÃO nega — regex crua o promove a bloqueio.
  */
 export function inventarioHooks(
   settingsJson: string,
@@ -285,9 +318,14 @@ export function inventarioHooks(
         const arquivo = m[1];
         if (achados.has(arquivo)) continue;
         const fonte = lerHook(arquivo);
-        const bloqueia =
-          fonte !== null && /permissionDecision"?\s*:\s*"?deny/.test(removerComentariosShell(fonte));
-        achados.set(arquivo, { arquivo, evento, bloqueia });
+        const { total, envelopados } =
+          fonte === null ? { total: 0, envelopados: 0 } : contarDenies(removerComentariosShell(fonte));
+        achados.set(arquivo, {
+          arquivo,
+          evento,
+          bloqueia: envelopados > 0,
+          denySemEnvelope: total > envelopados,
+        });
       }
     }
   }
@@ -584,11 +622,18 @@ function main(): number {
     (l) => l.declarado !== null && l.declarado !== l.contados,
   );
 
+  // ---- Deny que não nega -----------------------------------------------------------------------
+  // Fica FORA do sentido 2 de propósito: um hook desses não é gate, então não entra em `bloqueiam`
+  // — mas também não pode cair calado entre os "hooks de aviso", onde o `check-gstack.sh` teria
+  // passado mais 136 dias. É o único achado deste gate sobre a MÁQUINA, não sobre o manual.
+  const semEnvelope = hooks.filter((h) => h.denySemEnvelope);
+
   // ---- Relatório -----------------------------------------------------------------------------
-  const avisos = hooks.filter((h) => !h.bloqueia);
+  const avisos = hooks.filter((h) => !h.bloqueia && !h.denySemEnvelope);
   console.log(
     `frescura: ${citacoes.length} citacoes no CLAUDE.md | ${gatesCI.length} gates do ci.yml | ` +
       `${hooks.filter((h) => h.bloqueia).length} hooks deny | ${avisos.length} hooks de aviso (nao sao gate) | ` +
+      `${semEnvelope.length} deny sem envelope | ` +
       `${censo.nomes.length} nomes no censo (${censo.ocorrencias} ocorrencias, ${censo.listas.length} lista(s)) | allowlist: ${Object.keys(ALLOWLIST_CITACAO).length} citacao + ${Object.keys(ALLOWLIST_CENSO).length} censo`,
   );
   const opacos = bloqueantesSemScript(ciFonte);
@@ -658,6 +703,13 @@ function main(): number {
         `sem declarar "**rotulo** (N):" — sem o numero nao ha o que conferir, e a conferencia morre calada.`,
     );
   }
+  for (const h of semEnvelope) {
+    console.error(
+      `${MARCA_DENY_SEM_ENVELOPE}: \`${h.arquivo}\` (.claude/settings.json:${h.evento}) emite permissionDecision deny ` +
+        `FORA de hookSpecificOutput com hookEventName "PreToolUse" — o harness ignora e a chamada PASSA (fail-open). ` +
+        `Use {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."}}.`,
+    );
+  }
 
   const total =
     orfaos.length +
@@ -665,11 +717,13 @@ function main(): number {
     obsoletos.length +
     censo.repetidos.length +
     contagemErrada.length +
-    semContagem.length;
+    semContagem.length +
+    semEnvelope.length;
   if (total > 0) {
     console.error(
       `${MARCA_FALHA}: ${orfaos.length} orfao(s) + ${naoCitados.length} nao-citado(s) + ${obsoletos.length} obsoleto(s)` +
-        ` + ${censo.repetidos.length} repetido(s) + ${contagemErrada.length} contagem(ns) errada(s) + ${semContagem.length} lista(s) sem contagem`,
+        ` + ${censo.repetidos.length} repetido(s) + ${contagemErrada.length} contagem(ns) errada(s) + ${semContagem.length} lista(s) sem contagem` +
+        ` + ${semEnvelope.length} deny sem envelope`,
     );
     return 1;
   }
