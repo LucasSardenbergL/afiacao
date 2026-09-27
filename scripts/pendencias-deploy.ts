@@ -16,10 +16,17 @@
  *      cada classe e imprime o comando da sonda para as que precisam dela
  *   2  MECÂNICA não confiável: psql falhou, ledger inexistente (migration não aplicada), coletor
  *      sem execução bem-sucedida nos últimos 45 min, mapa vazio ou desatualizado em relação à
- *      fonte, `versao.ts` ilegível, linha da saída que não casou o formato, ZERO observações.
+ *      fonte, `versao.ts` ilegível, linha da saída que não casou o formato, ZERO observações,
+ *      resposta da nuvem que não passou no transporte (`--dados-nuvem`).
  *      Zero aqui NÃO é "tudo limpo" — um cron que devolvesse 0 ensinaria o operador a ler
  *      silêncio como aprovação, que é exatamente o hábito que a varredura existe para desfazer.
  *
+ * `--sql-nuvem` / `--dados-nuvem=<arquivo>` (2026-09-27): a MESMA varredura numa sessão da NUVEM,
+ * que não tem `psql-ro`. O `--sql-nuvem` imprime UM SQL com as 8 consultas deste arquivo; o modelo
+ * o roda VERBATIM pelo `query_database` do conector Lovable e grava a resposta; o `--dados-nuvem`
+ * a valida (read-only atestado pelo banco, SQL executado = emitido, md5, frescor — ver
+ * `lib/transporte-nuvem.ts`) e entrega ao juízo as mesmas linhas que o psql daria. Relatório,
+ * `--json` e exit codes são os de sempre; só o `geradoEm` passa a ser o relógio do BANCO.
  * `--json` (2026-09-06): a MESMA varredura, serializada para outro programa ler — o Passo 3 do
  * `/fecho` (`.claude/skills/fecho/scripts/edges-pendentes.sh`) consulta o ledger por aqui antes de
  * classificar uma edge como SEM_PROVA, porque a janela viva de 6 h evaporava prova que o ledger
@@ -95,6 +102,14 @@ import {
   type Disparo,
   julgarSondaCron,
 } from './lib/sonda-cron-testemunha';
+import {
+  type Consultas,
+  gerarSqlNuvem,
+  leitorNuvem,
+  lerArquivoDadosNuvem,
+  lerDadosNuvem,
+  separarFlagsNuvem,
+} from './lib/transporte-nuvem';
 import { SONDA_CRON_ALVOS } from '../supabase/functions/_shared/sonda-cron-alvos';
 import { ARQ_MAPA, parsearMapa, RAIZ_EDGES } from './sonda-fingerprint';
 import { git, lerNaRev } from './sonda-versao-bump-gate';
@@ -356,12 +371,32 @@ WHERE j.jobname = '${CRON_SONDA}';
 `.trim();
 
 /**
+ * TODAS as leituras de prod deste CLI, com nome — o pacote do transporte da nuvem. Consulta nova
+ * que não entrar aqui não "some" na nuvem: o leitor LANÇA `TRANSPORTE_FORA_DO_PACOTE` (exit 2), e
+ * o teste de cobertura em `pendencias-deploy.test.ts` reprova antes, no CI.
+ */
+export const CONSULTAS_NUVEM: Consultas = {
+  observacoes: SQL,
+  saude_coletor: SQL_SAUDE_COLETOR,
+  sem_identidade: SQL_SEM_IDENTIDADE,
+  sonda_alvos: SQL_SONDA_CRON_ALVOS,
+  sonda_disparos: SQL_SONDA_CRON_DISPAROS,
+  sonda_atestacoes: SQL_SONDA_CRON_ATESTACOES,
+  sonda_motivos: SQL_SONDA_CRON_MOTIVOS,
+  sonda_saude: SQL_SAUDE_CRON_SONDA,
+};
+
+/** Quem consome a resposta — resposta gerada para outro CLI é recusada como "arquivo de outra leitura". */
+export const CONSUMIDOR_NUVEM = 'pendencias-deploy';
+
+/**
  * Lê o `--ids` do argv, ou LANÇA (⇒ exit 2). A flag é opcional; o que não é opcional é ela ser
  * inequívoca — argumento digitado errado que caísse em "sem atribuição" devolveria o relatório
  * ANTIGO com cara de novo, e o founder concluiria que a atribuição não funciona.
  */
 export function lerArgIds(argv: string[]): string | null {
-  const USO = 'Uso: bun run pendencias:deploy [--json] [--ids=\'{"<edge>": <request_id>, …}\']';
+  const USO =
+    'Uso: bun run pendencias:deploy [--json] [--ids=\'{"<edge>": <request_id>, …}\'] [--sql-nuvem | --dados-nuvem=<arquivo>]';
   let ids: string | null = null;
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -376,6 +411,12 @@ export function lerArgIds(argv: string[]): string | null {
     } else if (arg === '--json') {
       // conhecida aqui, LIDA em `lerArgJson`: um validador só para todo o argv, senão a flag nova
       // cairia em "argumento desconhecido" e o `--json` nasceria recusado pelo próprio CLI.
+      continue;
+    } else if (arg === '--sql-nuvem' || arg.startsWith('--dados-nuvem=')) {
+      // idem: conhecidas aqui, LIDAS por `separarFlagsNuvem` (lib/transporte-nuvem.ts).
+      continue;
+    } else if (arg === '--dados-nuvem') {
+      i += 1; // o valor é do `separarFlagsNuvem`, não um argumento solto
       continue;
     } else {
       throw new Error(`argumento desconhecido: ${arg}. ${USO}`);
@@ -902,13 +943,23 @@ export function main(argv: string[] = []): number {
   let tolerarNunca: boolean;
   let idsBruto: string | null;
   let json: boolean;
+  let sqlNuvem: boolean;
+  let dadosNuvem: string | null;
   try {
     tolerarNunca = lerTolerancia(process.env.PENDENCIAS_TOLERAR_NUNCA_ATESTADA);
     idsBruto = lerArgIds(argv);
     json = lerArgJson(argv);
+    ({ sqlNuvem, dadosNuvem } = separarFlagsNuvem(argv));
   } catch (e) {
     console.error(`❌ MECÂNICA: ${(e as Error).message}`);
     return 2;
+  }
+
+  // A 1ª metade do transporte: só o texto, sem git nem banco — quem o executa é o modelo, pelo
+  // `query_database`, VERBATIM. O `--dados-nuvem` refaz este mesmo texto e confere o `sql_md5`.
+  if (sqlNuvem) {
+    console.log(gerarSqlNuvem(CONSULTAS_NUVEM, CONSUMIDOR_NUVEM));
+    return 0;
   }
 
   let esperados: Record<string, Esperado>;
@@ -944,13 +995,33 @@ export function main(argv: string[] = []): number {
     }
   }
 
+  // A leitura de prod: o `psql-ro` no Mac, ou a resposta da nuvem já validada. Daqui para baixo o
+  // juízo não sabe de onde veio a linha — é o ponto: o transporte não pode virar outro juiz.
+  let ler: (sql: string) => string = psql;
+  let medidoEm: Date | null = null;
+  if (dadosNuvem !== null) {
+    try {
+      const dados = lerDadosNuvem(
+        lerArquivoDadosNuvem(dadosNuvem),
+        { consultas: CONSULTAS_NUVEM, consumidor: CONSUMIDOR_NUVEM },
+        new Date(),
+      );
+      ler = leitorNuvem(dados, CONSULTAS_NUVEM);
+      medidoEm = dados.medidoEm;
+    } catch (e) {
+      console.error(`❌ MECÂNICA: ${(e as Error).message}`);
+      console.error('   Sem leitura de prod NÃO existe veredito. Isto não é "tudo limpo".');
+      return 2;
+    }
+  }
+
   let saudeBruta: string;
   let saida: string;
   let saidaSemIdentidade: string;
   try {
-    saudeBruta = psql(SQL_SAUDE_COLETOR);
-    saida = psql(SQL);
-    saidaSemIdentidade = psql(SQL_SEM_IDENTIDADE);
+    saudeBruta = ler(SQL_SAUDE_COLETOR);
+    saida = ler(SQL);
+    saidaSemIdentidade = ler(SQL_SEM_IDENTIDADE);
   } catch (e) {
     const err = e as Error & { stderr?: string | Buffer };
     const stderr = String(err.stderr ?? '');
@@ -963,7 +1034,8 @@ export function main(argv: string[] = []): number {
       );
       return 2;
     }
-    console.error(`❌ MECÂNICA: '${PSQL_RO}' falhou — ${err.message}`);
+    const via = dadosNuvem === null ? `'${PSQL_RO}'` : 'o transporte da nuvem';
+    console.error(`❌ MECÂNICA: ${via} falhou — ${err.message}`);
     console.error('   Sem leitura de prod NÃO existe veredito. Isto não é "tudo limpo".');
     return 2;
   }
@@ -1021,7 +1093,7 @@ export function main(argv: string[] = []): number {
 
   // A sonda por cron (F3): lê os 2 últimos ticks e liga cada resposta ao disparo por `request_id`.
   const estadoPorEdge = new Map(rel.vereditos.map((v) => [v.edge, v.estado as string]));
-  const secao = secaoSondaCron(estadoPorEdge, psql, allowlists);
+  const secao = secaoSondaCron(estadoPorEdge, ler, allowlists);
   if (secao.mecanica !== null) {
     console.error(`❌ MECÂNICA: ${secao.mecanica}`);
     return 2;
@@ -1029,7 +1101,9 @@ export function main(argv: string[] = []): number {
 
   // No modo `--json` o stdout é SÓ o JSON: qualquer outra linha ali quebraria o parse do
   // consumidor, que trataria como não consultado. Avisos vão para o stderr.
-  if (json) console.log(serializarRelatorio(rel, { ref: REF_MAIN, tolerarNunca, geradoEm: new Date().toISOString() }));
+  // Pela nuvem, o instante da medição é o `now()` do BANCO — o mesmo a que cada `idadeHoras` é relativa.
+  const geradoEm = (medidoEm ?? new Date()).toISOString();
+  if (json) console.log(serializarRelatorio(rel, { ref: REF_MAIN, tolerarNunca, geradoEm }));
   else imprimir(rel, linhasSemIdentidade);
   for (const linha of secao.linhas) {
     if (json) console.error(linha);

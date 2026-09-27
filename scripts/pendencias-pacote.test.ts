@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { md5Exato } from './lib/corpo-esperado';
+import { FORMATO_TRANSPORTE, gerarSqlNuvem, TETO_TRANSPORTE, trechoMarcado } from './lib/transporte-nuvem';
 import {
   AMOSTRA_CORPO_JS,
   FORMATO_SONDA,
@@ -12,7 +14,7 @@ import {
   TOKEN_SEM_CORPO,
   TOKEN_SIM,
 } from './lib/precondicao-banco';
-import { lerRelatorio, main, separarSaida } from './pendencias-pacote';
+import { CONSUMIDOR_NUVEM, lerRelatorio, main, separarSaida } from './pendencias-pacote';
 import { type ExecutorGitBytes } from './pendencias-prompt';
 import { ARQ_MAPA, RAIZ_EDGES } from './sonda-fingerprint';
 
@@ -373,6 +375,108 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
     const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA, []);
 
     expect(main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(['rpc_velha']))).toBe(2);
+  });
+
+  // ── pela NUVEM (2026-09-27): as duas rodadas do transporte chegam ao MESMO pacote ──────────
+  // Sem `psql-ro`, a sonda de pré-condição sai por `--sql-nuvem` e volta por `--dados-nuvem`. O
+  // que se prova aqui é a FIAÇÃO: o SQL emitido é o da sonda local, a resposta validada chega ao
+  // mesmo juízo, e o bloqueio do #2285 sobrevive ao transporte.
+  describe('pela nuvem (--sql-nuvem / --dados-nuvem)', () => {
+    const AGORA = new Date('2026-09-27T12:00:00Z');
+    const agora = () => AGORA;
+    const semEntrada = () => '';
+    const psqlProibido = (sql: string): string => {
+      throw new Error(`o psql não pode ser chamado pela nuvem: ${sql.slice(0, 40)}`);
+    };
+
+    /** A resposta como o BANCO a montaria — a conta de `lib/transporte-nuvem.test.ts`, refeita à parte. */
+    function respostaDoBanco(sqlSonda: string, saidaDaSonda: string): string {
+      const md5 = (s: string) => createHash('md5').update(s, 'utf8').digest('hex');
+      const sql = gerarSqlNuvem({ precondicao: sqlSonda }, CONSUMIDOR_NUVEM);
+      const linhas = saidaDaSonda.split('\n');
+      const sqlMd5 = md5(trechoMarcado(sql));
+      const medidoEm = '2026-09-27T11:59:00Z';
+      const canonico = [
+        FORMATO_TRANSPORTE, CONSUMIDOR_NUVEM, medidoEm, 'on', TETO_TRANSPORTE, sqlMd5,
+        'precondicao', String(linhas.length), linhas.join('\n'),
+      ];
+      const dados = {
+        formato: FORMATO_TRANSPORTE,
+        consumidor: CONSUMIDOR_NUVEM,
+        medido_em: medidoEm,
+        somente_leitura: 'on',
+        teto: TETO_TRANSPORTE,
+        sql_md5: sqlMd5,
+        consultas: { precondicao: linhas },
+        md5: md5(canonico.join('\n')),
+      };
+      return JSON.stringify({ rows: [{ dados_nuvem: dados }] });
+    }
+
+    it('--sql-nuvem imprime o SQL da sonda, não chama o psql e não escreve pacote', () => {
+      const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA);
+      const escrito: string[] = [];
+      const espiao = vi.spyOn(process.stdout, 'write').mockImplementation((t) => {
+        escrito.push(String(t));
+        return true;
+      });
+      let codigo: number;
+      try {
+        codigo = main([EDGE, '--saida', saida, '--sem-rede', '--sql-nuvem'], raiz, git, psqlProibido, semEntrada, agora);
+      } finally {
+        espiao.mockRestore();
+      }
+      expect(codigo).toBe(0);
+      expect(escrito.join('')).toContain('SET TRANSACTION READ ONLY;');
+      expect(escrito.join('')).toContain("('rpc_velha')");
+      expect(existsSync(saida)).toBe(false);
+    });
+
+    it('--dados-nuvem chega ao MESMO pacote que a sonda local — e o bloqueio sobrevive', () => {
+      // A rodada LOCAL, com a sonda gravando o SQL que recebeu: é ele que a nuvem executaria.
+      const local = montarRepo(CHAMA_VELHA, CHAMA_AS_DUAS);
+      const sonda = sondaFalsa(['rpc_velha']);
+      let sqlSonda = '';
+      const codigoLocal = main([EDGE, '--saida', local.saida, '--sem-rede'], local.raiz, local.git, (sql) => {
+        sqlSonda = sql;
+        return sonda(sql);
+      }, semEntrada, agora);
+
+      const nuvem = montarRepo(CHAMA_VELHA, CHAMA_AS_DUAS);
+      const arquivo = join(nuvem.raiz, 'resposta-nuvem.json');
+      writeFileSync(arquivo, respostaDoBanco(sqlSonda, sonda(sqlSonda)), 'utf8');
+      const codigoNuvem = main(
+        [EDGE, '--saida', nuvem.saida, '--sem-rede', `--dados-nuvem=${arquivo}`],
+        nuvem.raiz,
+        nuvem.git,
+        psqlProibido,
+        semEntrada,
+        agora,
+      );
+
+      expect(codigoLocal).toBe(3); // a RPC nova não está em prod
+      expect(codigoNuvem).toBe(codigoLocal);
+      expect(readFileSync(nuvem.saida, 'utf8')).toBe(readFileSync(local.saida, 'utf8'));
+    });
+
+    it('MECÂNICA (2) quando a resposta é de OUTRA leva — o sql_md5 não fecha', () => {
+      const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA);
+      const arquivo = join(raiz, 'resposta-nuvem.json');
+      writeFileSync(arquivo, respostaDoBanco("SELECT 'rpc|rpc_outra|x|0'", 'rpc|rpc_outra|x|0'), 'utf8');
+      const erros: string[] = [];
+      const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
+        erros.push(String(t));
+        return true;
+      });
+      let codigo: number;
+      try {
+        codigo = main([EDGE, '--saida', saida, '--sem-rede', `--dados-nuvem=${arquivo}`], raiz, git, psqlProibido, semEntrada, agora);
+      } finally {
+        espiao.mockRestore();
+      }
+      expect(codigo).toBe(2);
+      expect(erros.join('')).toContain('TRANSPORTE_SQL_DIVERGENTE');
+    });
   });
 });
 
