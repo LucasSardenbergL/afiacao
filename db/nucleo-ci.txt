@@ -200,4 +200,4 @@ db/test-tint-watchdog-corante.sh           11
 # vermelho E o que tem de continuar verde; vermelho por erro de execução não conta como dente.
 # Autocontida: initdb + db/stubs-supabase.sql + as 2 migrations. Irmão estático: o gate vitest
 # `scripts/fuso-da-sessao-gate.ts`, que vigia a CLASSE nas demais funções.
-db/test-positivacao-eligible-consumo.sh    44  falsificar=13
+db/test-positivacao-eligible-consumo.sh    44  falsificar=14

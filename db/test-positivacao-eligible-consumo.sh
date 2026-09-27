@@ -54,6 +54,7 @@ TOTAL_ESPERADO=44
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="corpo_pre_fix:BU2,BU4,BU9,BU11:BS2,BS4,BS9,BS11,BU1,BU8
+              a_positivar_id_errado:BU6,BS6,BU13,BS13:BU3,BS3,BU10,BS10
               contato_cast_na_sessao:BU2,BU9:BS2,BS9,BU4,BU11
               pedido_cast_na_sessao:BU3,BU4,BU5,BU10,BU11,BU12:BS4,BS11,BU2,BU9
               mes_em_utc:BU1,BS1:BU8,BS8,R0
@@ -292,6 +293,9 @@ case "$SABOTAGEM" in
   relogio_desligado|sem_pin) echo "→ SABOTAGEM ativa: $SABOTAGEM" ;;
   # o refactor distraído que este teste existe para pegar: a CTE eleg sem o filtro
   eligible_removido) sabotar "$MIG_NOVA" "$F" " AND ca.eligible = true" "" 1 ;;
+  # a lista nominal com o UUID do VENDEDOR no lugar do cliente: nomes e contagens seguem certos,
+  # e o link do card levaria ao cliente errado (achado do Codex, adversarial 2026-09-27)
+  a_positivar_id_errado) sabotar "$MIG_NOVA" "$F" "SELECT s.customer_user_id," "SELECT uid AS customer_user_id," 1 ;;
   # o gate master-only do "ver como" removido
   gate_master_removido) sabotar "$MIG_ORIGEM" get_minha_positivacao_for \
     "IF NOT has_role(auth.uid(),'master'::app_role) THEN RAISE EXCEPTION 'forbidden: master only'; END IF;" "" 1 ;;
@@ -485,12 +489,14 @@ eq C10 "mixgap EXECUTA (late-bound coberto)"       "$V" "0"
 #     Z2 kpi 01/03 criado 01/03 00:00Z (= 28/02 21:00 BRT) = 100000
 #   R, que RECOMPRA: 28/02 23:00 BRT sem kpi = 1000000 e kpi 05/03 = 10000000 — em março ele é
 #     positivado mas NÃO é novo, o que separa `novos` de `positivados`
-#   scores/profiles para Y1..Y3, Z1, Z2, R — a_positivar é conferida pelos NOMES
+#   scores/profiles para Y1..Y3, Z1, Z2, R — a_positivar é conferida pelo PAR nome=UUID: o card
+#     linka o cliente pelo UUID, e nome certo com UUID errado levaria ao cliente errado
 #   A receita é soma de potências de 10: o valor diz QUAIS pedidos entraram, não só quantos.
 #   Relógio: t_fev = 02:59:59Z (último segundo de fevereiro em SP) · t_mar = 03:00:00Z.
 #   Esperado, NAS DUAS SESSÕES (conferido por um oráculo independente em Python):
 #     t_fev → 02-01 · contatados 3 · positivados 4 · receita 1011011 · novos 4 · Y3,Z2 · 11/4
 #     t_mar → 03-01 · contatados 2 · positivados 3 · receita 10100100 · novos 2 · Y1,Y2,Z1 · 11/3
+#     (a_positivar sai como nome=UUID: Y3=08,Z2=10 e Y1=06,Y2=07,Z1=09)
 #   O corpo antigo, sob sessão UTC: t_fev 1 · 1 · 11000 · 1 e t_mar 4 · 5 · 11100111 · 5; sob
 #   sessão SP ele passa — é por isso que o bloco roda nas duas.
 # ══════════════════════════════════════════════════════════════════════════════
@@ -535,7 +541,8 @@ SQL
 bloco_b() {   # <U|S> <TimeZone> <hh:mm esperado no cast ingênuo>
   local pfx="B$1" tz="$2" hhmm="$3" out l0 lf lm campos
   campos="r->>'mes', r->>'contatados_mtd', r->>'positivados', r->>'receita_mtd', r->>'novos_clientes_positivados',
-          (SELECT string_agg(e->>'nome', ',' ORDER BY e->>'nome') FROM jsonb_array_elements(r->'a_positivar') e),
+          (SELECT string_agg((e->>'nome') || '=' || right(e->>'customer_user_id', 2), ',' ORDER BY e->>'nome')
+             FROM jsonb_array_elements(r->'a_positivar') e),
           (r->>'total_eligible') || '/' || (r->>'compradores_mtd')"
   out="$(P -q -tA -F '|' 2>&1 <<SQL || true
 SET TimeZone = '$tz';
@@ -558,14 +565,14 @@ SQL
   eq "${pfx}3"  "t_fev: positivados = Y1, Y2, Z1 (2 pedidos), R" "$(campo "$lf" 4)" "4"
   eq "${pfx}4"  "t_fev: receita = 1+10+1000+10000+1000000"      "$(campo "$lf" 5)" "1011011"
   eq "${pfx}5"  "t_fev: novos = os 4 (1ª compra em fevereiro)"   "$(campo "$lf" 6)" "4"
-  eq "${pfx}6"  "t_fev: a_positivar = quem tem score e não comprou" "$(campo "$lf" 7)" "Y3,Z2"
+  eq "${pfx}6"  "t_fev: a_positivar = nome=UUID de quem tem score e não comprou" "$(campo "$lf" 7)" "Y3=08,Z2=10"
   eq "${pfx}7"  "t_fev: total_eligible/compradores"              "$(campo "$lf" 8)" "11/4"
   eq "${pfx}8"  "t_mar (01/03 00:00:00 BRT): mes"                "$(campo "$lm" 2)" "2025-03-01"
   eq "${pfx}9"  "t_mar: contatados = X3 + W2"                    "$(campo "$lm" 3)" "2"
   eq "${pfx}10" "t_mar: positivados = Y3, Z2, R"                 "$(campo "$lm" 4)" "3"
   eq "${pfx}11" "t_mar: receita = 100+100000+10000000"           "$(campo "$lm" 5)" "10100100"
   eq "${pfx}12" "t_mar: novos = Y3, Z2 (R comprou em fevereiro)" "$(campo "$lm" 6)" "2"
-  eq "${pfx}13" "t_mar: a_positivar"                             "$(campo "$lm" 7)" "Y1,Y2,Z1"
+  eq "${pfx}13" "t_mar: a_positivar (nome=UUID)"                 "$(campo "$lm" 7)" "Y1=06,Y2=07,Z1=09"
   eq "${pfx}14" "t_mar: total_eligible/compradores"              "$(campo "$lm" 8)" "11/3"
 }
 bloco_b U UTC "00:00"
