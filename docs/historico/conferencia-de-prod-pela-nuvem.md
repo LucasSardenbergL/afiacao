@@ -96,9 +96,12 @@ início chega intacto. Resultado: as 4 migrations aplicadas (o chip falava em 3)
 O erro foi o deploy seguinte. Outra sessão já tinha pedido `sync-reprocess` 15 minutos antes, e o
 ledger ainda não via: a nossa mensagem o deployou de novo, à toa. Terminado o deploy, o agente do
 Lovable leu o log de build do workspace e "corrigiu" erros de tipo por conta própria. Vieram 3
-commits `Changes` direto na `main`, um deles com `Number(codigoPedido)` em money-path (ausente vira
-0), e o `sonda:fingerprint` ficou vermelho para todos. Revertido no #2595 (a reversão pura reprova no
-`sonda:bump`, então a `VERSAO` bumpou). A lição que é desta nota: `list_messages` e PRs abertos
+commits direto na `main` (`SupabaseClient<any>` na `whatsapp-inbound`, `Number(codigoPedido)` na
+`sync-reprocess`), e o `sonda:fingerprint` ficou vermelho para todos. Revertido no #2595 (a reversão
+pura reprova no `sonda:bump`, então a `VERSAO` bumpou). O corpo do #2595 disse que o `Number` fabricava
+0 a partir de código ausente, e isso estava ERRADO: o laço já pula o pedido sem código
+(`if (!codigoPedido) continue`). O dano foi código money-path sem revisão e a `main` vermelha, não um
+zero fabricado. A lição que é desta nota: `list_messages` e PRs abertos
 ANTES do `send_message`, porque o ledger ainda não via o deploy da outra sessão. A proibição de
 edição no prompt e o sensor pós-envio vieram de outra sessão, no mesmo dia (#2596).
 
