@@ -1,6 +1,6 @@
 # O agente do Lovable conserta o que ninguém pediu — e o sync empurra na main
 
-> 2026-09-26/27. Duas vezes em dois dias o pedido de deploy verbatim saiu certo e, na MESMA rodada,
+> 2026-09-26/27. TRÊS vezes em quatro dias o pedido de deploy verbatim saiu certo e, na MESMA rodada,
 > o agente editou OUTRAS edges por conta própria. Desfecho: o prompt passa a proibir o que ele fez
 > (nomeando-o), exige uma linha de confirmação, e um sensor por fora confere a resposta do MCP e os
 > commits do bot na `main`. Regra que fica: **o escopo de um pedido ao agente é o que o prompt
@@ -17,7 +17,37 @@
 | sintoma | `bun lint` vermelho em todo PR (`no-explicit-any`) | `sonda:fingerprint` vermelho na `main` |
 | reparo | revert `1460ea5e7` | revert #2579 — com bump de `VERSAO` (o `sonda:bump` compara contra a main COM os "Changes"): `whatsapp-inbound` v1.1-revert-changes-lovable, `sync-reprocess` v1.9-revert-changes-lovable |
 
-A mesma edição (`SupabaseClient<any>` na `whatsapp-inbound`) nas duas vezes: o `build-errors.log`
+### O 3º, no meio desta entrega (2026-09-27) — um experimento quase controlado
+
+Dois turnos do MESMO agente, com os MESMOS 2 arquivos acusando typecheck no preview, a 14 min de
+distância (dados do `list_messages`, levantados pela sessão do #2593):
+
+| | turno A — 16:41:41Z → 16:42:55Z | turno B — 16:56:58Z → 16:58:21Z |
+|---|---|---|
+| quem mandou | sessão do #2593 | uma 3ª sessão |
+| prompt | Passo 2 do pacote + parágrafo restritivo à mão ("No file changes … `NO FILES EDITED`") | Passo 2 PADRÃO do pacote, **sem guarda** |
+| ferramentas | hash → `deploy_edge_functions` → `curl` ×2 → "NO FILES EDITED" | hash ×4 → `deploy_edge_functions` → `curl` ×3 → `code--exec` ×2 → **`line_replace` ×4** |
+| edição | **nenhuma** (a confirmação era verdadeira) | `whatsapp-inbound` `supabase: Db` ×3 · `sync-reprocess` `Number(codigoPedido)` — e a resposta final as DECLARA |
+| commits na `main` | — | `1b654757d`, `ea6339e52`, `5552991e2` (16:58:00–20Z, o fim do turno) |
+
+Três leituras:
+
+1. **n=1 a favor da guarda no prompt.** Com a proibição nomeada, zero edição; sem ela, 4. É o
+   motivo de o `blocoDeEscopo` morar no GERADOR (`montarPrompt`), e não num parágrafo que cada
+   sessão lembra ou não de colar. n=1 não é prova — por isso o sensor por fora continua.
+2. **O agente separa "deploy" de "workspace".** O raciocínio dele no turno B: os bundles deployados
+   seguem verbatim, "local fixes are workspace-only". Correto quanto ao bundle — os deploys vieram
+   ANTES das edições, prod serve o verbatim — e errado quanto ao efeito: o workspace É a `main`
+   (sync bidirecional). Daí a frase do bloco "Every edit you make is pushed straight to `main`".
+3. **O deploy do turno B era redundante.** O ledger estava em exit 0 às 16:52:25Z; quem mandou não
+   re-mediu imediatamente antes (§Deploy de edge — `pendencias:deploy` decide). Deploy
+   desnecessário é exposição desnecessária à isca.
+
+Revert: #2595 (o #2594, idêntico, ficou em draft para não duplicar). O bump de `VERSAO` que o
+`sonda:bump` exige recria DIVERGE no ledger **sem nenhuma mudança de runtime** — e esse redeploy é
+justamente o gatilho. Ver §6.
+
+A mesma edição (`SupabaseClient<any>` na `whatsapp-inbound`) nas três vezes: o `build-errors.log`
 do sandbox acusa o typecheck Deno daquela edge, e o agente, prestativo, "conserta" o que vê. Não é
 acaso — é uma isca permanente no ambiente dele. Sem trava, a 3ª vez era questão de tempo.
 
@@ -78,5 +108,11 @@ não a intenção.
 - **O `list_edits` do MCP** é um terceiro eixo possível (edições do projeto no Lovable, antes do
   sync). Não entrou: o eixo `main` é o que importa (é onde o estrago vira código servido/CI), e ele
   já pegou os dois casos.
-- **A isca continua lá.** O `build-errors.log` segue acusando a `whatsapp-inbound`; consertar o
-  typecheck dela por PR revisado tira a tentação — entrega separada.
+- **A isca continua lá — e é a CAUSA.** O typecheck do preview segue acusando `whatsapp-inbound`
+  (tabelas `whatsapp_*` fora dos tipos gerados ⇒ `never`) e `sync-reprocess` (`omie_pedido_id`). Três
+  incidentes com o mesmo diff: consertar por PR revisado (o `Number(codigoPedido)` é runtime no
+  caminho de pedidos do Omie ⇒ money-path, Codex) tira a tentação — entrega separada.
+- **Todo revert de edição do bot fabrica uma pendência de deploy.** O `sonda:bump` não distingue
+  "voltei aos bytes de um commit ancestral" de "mudei a edge"; o bump recria DIVERGE sem mudança de
+  runtime, e o redeploy é a isca. Regra candidata: isentar a edge cujos bytes do corpo servido E o
+  `VERSAO` são idênticos aos de um commit ancestral da base — entrega separada (chip).
