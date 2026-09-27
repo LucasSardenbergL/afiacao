@@ -87,7 +87,13 @@ chk() {  # <id> <descrição> <obtido> <esperado>
   if [ "$3" = "$4" ]; then echo "  ✓ $1 $2"; PASS=$((PASS+1))
   else echo "  ✗ $1 $2 — got[$3] exp[$4]"; FAIL=$((FAIL+1)); FALHOS="$FALHOS$1 "; fi
 }
-q() { P -tA -c "$1" 2>&1 | tr '\n' ' ' | sed 's/ *$//'; }
+# Valor da consulta (só SELECT). O stderr fica FORA do valor: um NOTICE do compute poluiria todo assert.
+# Na falha, o valor é o erro (re-executa a leitura para capturá-lo) — assert vermelho com o porquê.
+q() {
+  local out
+  if out="$(P -tA -c "$1" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
+  else printf 'ERRO: %s' "$(P -tA -c "$1" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
+}
 # O PASSO também é assert: SQL que erra fica vermelho (com o erro no log) em vez de derrubar a rodada.
 roda() {  # <id> <descrição> <sql>
   local saida

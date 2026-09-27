@@ -37,8 +37,9 @@
 #
 # ## O que o snapshot não carrega e produção tem
 #
-#   · MV criada `WITH NO DATA` (dump schema-only): `private.customer_metrics_mv` é lida pelo compute
-#     vivo. REFRESH num banco vazio = MV populada e vazia, como o cron deixa a de prod.
+#   · MV criada `WITH NO DATA` (dump schema-only): o compute vivo lê `private.customer_metrics_mv`, e
+#     ler MV não populada é ERRO. Popula-se TODA MV do snapshot (em prod o cron mantém todas), então a
+#     próxima que o trio passar a ler não mata a prova de novo. Num banco vazio, fica populada e vazia.
 #   · ACL: o dump é `--no-privileges`, então toda função nasce executável por PUBLIC. A pós-condição
 #     da 20260918200000 exige o compute FECHADO para anon/PUBLIC; reproduz-se o ACL MEDIDO em prod
 #     (2026-09-27: postgres, service_role e sandbox_exec — nem `authenticated`) ANTES do apply, e aí
@@ -56,10 +57,11 @@ dhv_cadeia() {
   local dir="$1" f base v rc nomes padrao achou_inicio=0 n=0
   nomes="$(IFS='|'; printf '%s' "${DHV_GUARDADAS[*]}")"
   padrao="(create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?|alter[[:space:]]+|drop[[:space:]]+)function[[:space:]]+(if[[:space:]]+exists[[:space:]]+)?(public\.)?\"?(${nomes})\"?[[:space:]]*\("
+  # ~740 arquivos: nada de processo por arquivo antes do corte — só as ≥ DHV_INICIO chegam ao grep.
   for f in "$dir"/*.sql; do
     [ -f "$f" ] || { echo "dhv_cadeia: nenhuma migration em $dir" >&2; return 1; }
-    base="$(basename "$f")"; v="${base%%_*}"
-    printf '%s' "$v" | grep -qE '^[0-9]{14}$' || { echo "dhv_cadeia: versão fora do formato: $base" >&2; return 1; }
+    base="${f##*/}"; v="${base%%_*}"
+    [[ "$v" =~ ^[0-9]{14}$ ]] || { echo "dhv_cadeia: versão fora do formato: $base" >&2; return 1; }
     [ "$v" = "$DHV_INICIO" ] && achou_inicio=1
     [ "$v" -lt "$DHV_INICIO" ] && continue
     if grep -qiE "$padrao" "$f"; then
@@ -96,7 +98,28 @@ dhv_montar() {
   P --single-transaction -v ON_ERROR_STOP=1 -q -f "$rr"
   rm -f "$rr"
   P -v ON_ERROR_STOP=1 -q <<'SQL'
-REFRESH MATERIALIZED VIEW private.customer_metrics_mv;
+-- TODA MV do snapshot, não só a que o compute lê hoje: em prod todas estão populadas, e "MV não
+-- populada" foi o que matou esta prova. Uma MV pode depender de outra ainda vazia (55000); o laço
+-- repete enquanto houver progresso e falha alto se sobrar alguma. Outro erro sobe como está.
+DO $mv$
+DECLARE r record; v_progresso boolean := true; v_sobra int;
+BEGIN
+  WHILE v_progresso LOOP
+    v_progresso := false;
+    FOR r IN SELECT schemaname, matviewname FROM pg_matviews WHERE NOT ispopulated LOOP
+      BEGIN
+        EXECUTE format('REFRESH MATERIALIZED VIEW %I.%I', r.schemaname, r.matviewname);
+        v_progresso := true;
+      EXCEPTION WHEN object_not_in_prerequisite_state THEN
+        NULL;
+      END;
+    END LOOP;
+  END LOOP;
+  SELECT count(*) INTO v_sobra FROM pg_matviews WHERE NOT ispopulated;
+  IF v_sobra > 0 THEN
+    RAISE EXCEPTION 'dhv_montar: % MV(s) nao popularam', v_sobra;
+  END IF;
+END $mv$;
 REVOKE ALL ON FUNCTION public._data_health_compute() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public._data_health_compute() TO service_role;
 SQL
