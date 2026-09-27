@@ -869,10 +869,65 @@ Para laço de espera, o mais simples continua sendo não partir linha nenhuma: u
 `sonda-marcador-congelado.md` em agosto, esta seção em setembro), e as duas reincidências de
 2026-09-25 repetiram formas já registradas — a do vitest dez semanas depois do registro de julho, a
 do `set --` sete dias depois desta seção. É a meta-regra que o catálogo já aplicou à §9 (`PIPESTATUS`)
-e à §13 (`pgrep`): contramedida textual reincide; o passo seguinte é um guard estrutural (hook de
-AVISO no PreToolUse, irmão do `pipestatus-zsh-guard.sh`), não um quarto parágrafo.
+e à §13 (`pgrep`): contramedida textual reincide; o passo seguinte é um guard estrutural, não um
+quarto parágrafo.
 
-## O padrão por trás das vinte e uma
+⇒ **vigiado por `.claude/hooks/word-split-zsh-guard.sh`** (2026-09-26; AVISO no PreToolUse, nunca
+bloqueio). Um marcador por forma, cada uma só na conjunção que a torna precisa, com a contramedida
+certa no próprio aviso:
+
+| marcador | forma | só dispara se | o aviso ensina |
+|---|---|---|---|
+| `ZSH-NAO-DIVIDE-SET` | `set -- $x` | a lista posicional é UMA palavra que é UMA expansão escalar | `read -r a b <<< "$x"` |
+| `ZSH-NAO-DIVIDE-FOR` | `for v in $x` | `x` foi atribuída como texto ANTES, no mesmo comando | `while IFS= read -r` ou array |
+| `ZSH-NAO-DIVIDE-ARGS` | `cmd $x` | `x` é LISTA numa string, montada antes no mesmo comando: `$(… \| tr '\n' ' ')`, `paste -s`, `xargs`, ou literal com espaço | `arr+=("$l")` + `"${arr[@]}"` |
+
+"No mesmo comando" é completo, não atalho: o estado do shell não persiste entre chamadas do Bash
+tool. Aspas simples, `$'…'`, comentário, heredoc e texto de aspas duplas são menção (`bash -c '…'`
+roda no bash, que divide certo); `$(…)` é código mesmo entre aspas duplas. A suíte
+(`scripts/test-word-split-zsh-guard.sh`, no `test:hooks`) falsifica cada regra sozinha numa cópia do
+hook, com controle verde na mesma invocação e nos dois locales.
+
+**Calibrado antes de ligar**, contra 88.225 comandos Bash reais das transcrições (2026-05 a 09), cada
+disparo julgado pelo RESULTADO que a chamada devolveu: SET 24/24; ARGS 10/11 (junção) e 18/18 + 1
+demonstração (literal); FOR 49/59 — e os 10 FPs do FOR têm a forma exata dos TPs (`X=$(… | sort -u);
+for v in $X`), salvos por 0 ou 1 item em runtime: o idioma segue errado, só não mordeu. Ampliação
+medida e recusada: `x=$(cmd)` sem sinal de lista daria +132 disparos, e em 20 amostrados só 4 eram
+lista — o resto é valor único por construção (`--jq '.[0].x'`, `head -1`, `git rev-parse`). Voltar a
+ela é fase N+1, com sinal do sensor (`bash scripts/pipestatus-guard-sinal.sh
+~/.claude/afiacao-word-split-guard.jsonl`), não antes. E a medição corrigiu esta seção: com
+`tr '\n' ' '`, **nem um item só escapa** — o espaço final vai junto (`"x.test.ts "` não casou filtro
+e o vitest rodou 16 de 17 calado; `kill "79967 "` é pid ilegal).
+
+**O caminho até aqui também é lição.** O primeiro desenho deste guard existiu em 2026-09-10 — um 4º
+ramo do `pipestatus-zsh-guard.sh`, calibrado num corpus de 77.916 chamadas — como commit **local**
+(`af80cd1de`) numa worktree que nunca publicou. Os incidentes de 09-18 e 09-25 aconteceram com o
+conserto pronto num disco. Trabalho que não chega à `main` protege tanto quanto trabalho que não
+existe.
+
+### 22. bash 3.2 do macOS: erro de SINTAXE no meio do script, com `trap … EXIT`, sai **0**
+
+Medido em 2026-09-27 (sessão das [provas de janela de relógio](provas-janela-de-relogio-fora-do-nucleo.md)),
+no `/bin/bash` 3.2.57 — o único `bash` do PATH no Mac. Script com `set -euo pipefail` e
+`trap "rm -rf …" EXIT` que tem um `)` solto numa função mais abaixo: roda até ali, imprime
+`syntax error near unexpected token`, e **sai 0**. O status do último comando do TRAP vence. Sem o
+trap, sai 2; um `false` de RUNTIME com o mesmo trap sai 1 (certo). E capturar o status no trap não
+salva: com `trap 'rc=$?; cleanup; exit $rc' EXIT` ainda sai 0, porque o `$?` ali já é o do último
+comando que RODOU. O erro de parse nunca virou status.
+
+```bash
+printf '%s\n' 'set -euo pipefail' 'trap "rm -rf /tmp/x" EXIT' 'echo antes' 'f() {' '  )' '}' > t.sh
+/bin/bash t.sh; echo "exit=$?"     # antes · syntax error… · exit=0
+```
+
+Quase toda prova `db/test-*.sh` tem `trap cleanup EXIT`. Ou seja, uma prova editada com um erro de
+sintaxe DEPOIS do arranque passa verde no Mac, TRUNCADA, e com ela passa qualquer cópia gerada por
+script (sabotagem, reprodução). Foi assim que apareceu: a cópia com a sabotagem mal recortada "passou".
+No CI, o `lint:shell` (shellcheck sobre `db/*.sh`) barra o parse antes de rodar. No bash 5 **não foi
+medido**. A contramedida local é `bash -n <arquivo>` antes de rodar uma cópia gerada; para a prova,
+um recibo de contagem (`PASS=N`) que alguém confira contra um mínimo.
+
+## O padrão por trás das vinte e duas
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -921,6 +976,10 @@ shell do harness: a nona é um NOME do bash que o zsh não tem, a décima uma SI
 não tem, e esta uma SEMÂNTICA do bash que o zsh não faz. O mesmo sintoma (`No test files found`,
 exit 1) já foi lido como prova e como falha — e, dos cinco incidentes, três vieram depois de o
 mecanismo já estar nomeado por escrito.
+
+A vigésima segunda fecha pelo lado do PARSER: o script nem chega ao comando que falharia, e o
+status que sobra é o da LIMPEZA. É o verde por construção da primeira, só que sem pipe nenhum: o
+trap, que existe por higiene, vira o autor do veredito.
 
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.

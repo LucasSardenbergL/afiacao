@@ -162,12 +162,66 @@ eq "N3 sem linha → broken (nunca)" "$(chk)" "broken"
 eq "N3b age_seconds NULL quando nunca (não fabrica 0)" "$(Pq -c "SELECT age_seconds IS NULL FROM public._data_health_compute() WHERE source='estoque_reposicao';")" "t"
 eq "N3c severity critical (money-path)" "$(Pq -c "SELECT severity FROM public._data_health_compute() WHERE source='estoque_reposicao';")" "critical"
 
-echo "── janela comercial BRT (hora-dependente; esperado computado em bash, fonte independente) ──"
-# N9 — 5h: dentro da janela BRT [08,18) = stale (2+ syncs intraday perdidos); fora = ok (vão noturno)
-H_BRT=$(TZ=America/Sao_Paulo date +%H | sed 's/^0//')
-if [ "$H_BRT" -ge 8 ] && [ "$H_BRT" -lt 18 ]; then ESP_5H="stale"; else ESP_5H="ok"; fi
-limpa; P -q -c "SELECT _set_estoque(interval '5 hours', 'ListarPosEstoque');"
-eq "N9 dado 5h → $ESP_5H (hora BRT do teste: ${H_BRT}h)" "$(chk)" "$ESP_5H"
+echo "── janela comercial BRT [08,18): o relógio CRUZA as duas bordas de propósito ──"
+# N9 — dado de 5h: DENTRO da janela BRT = stale (2+ syncs intraday perdidos); fora = ok (vão noturno).
+# Antes, o esperado vinha do `date` do bash e o real do now() do banco: DOIS relógios. Se 08:00/18:00 BRT
+# caísse entre as leituras (~50-70 ms medidos), esperado e real divergiam — reproduzido em relógio
+# simulado nas duas bordas. E cada execução só exercitava UM lado, o que a hora do CI sorteasse.
+# Agora o dado fica PARADO e o relógio é CONTROLADO: `public.now()` lê a GUC `test.agora`, e o compute
+# (corpo REAL da migration) ganha `pg_catalog` DEPOIS de `public` — SÓ durante a rodada: a guarda de
+# md5 da migration (N7/N8) lê o pg_get_functiondef, e o search_path é conferido de volta ao fim.
+# Diário: docs/historico/provas-janela-de-relogio-fora-do-nucleo.md
+CFG_COMPUTE="$(Pq -c "SELECT array_to_string(proconfig, '|') FROM pg_proc WHERE oid = 'public._data_health_compute()'::regprocedure;")"
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.now() RETURNS timestamptz LANGUAGE sql STABLE AS $f$
+  SELECT COALESCE(nullif(current_setting('test.agora', true), '')::timestamptz, pg_catalog.now())
+$f$;
+SQL
+# `public` antes de `pg_catalog` não troca só o now(): TODA função de `public` com a MESMA assinatura de
+# um embutido passa a vencê-lo. O compute não pode chamar nome sombreado — senão a rodada mediria outra
+# semântica sem avisar. Controle POSITIVO da própria guarda: ela tem de enxergar o nosso now().
+sombra="$(Pq -c "SELECT COALESCE(string_agg(s.proname, ',') FILTER (WHERE s.proname = 'now'), '') || '|' ||
+    COALESCE(string_agg(s.proname, ',') FILTER (WHERE s.proname <> 'now' AND EXISTS (
+      SELECT 1 FROM pg_proc f WHERE f.oid = 'public._data_health_compute()'::regprocedure
+        AND f.prosrc ~ ('\m' || s.proname || '\s*\('))), '')
+  FROM (SELECT DISTINCT p.proname FROM pg_proc p
+         WHERE p.pronamespace = 'public'::regnamespace
+           AND EXISTS (SELECT 1 FROM pg_proc c WHERE c.pronamespace = 'pg_catalog'::regnamespace
+                        AND c.proname = p.proname AND c.proargtypes = p.proargtypes)) s;")"
+case "$sombra" in
+  'now|') ;;
+  now\|*) echo "❌ o relógio controlado mudaria mais que o now(): o compute chama [${sombra#*|}], sombreado por public"; exit 1 ;;
+  *) echo "❌ guarda cega: não enxergou nem o public.now() que acabou de ser criado [$sombra]"; exit 1 ;;
+esac
+# janela_rodada [ligar=1]: o MESMO dado (5h) lido nos 4 instantes de borda → "status|idade" de cada um.
+# `ligar=0` roda com o relógio DESLIGADO (é a sabotagem F9 — o controle positivo tem de acusar).
+janela_rodada() {
+  local ligar="${1:-1}" out="" t
+  [ "$ligar" = 0 ] || P -q -c "ALTER FUNCTION public._data_health_compute() SET search_path = public, pg_catalog, pg_temp;"
+  for t in '2026-09-16 07:59:59-03' '2026-09-16 08:00:00-03' '2026-09-16 17:59:59-03' '2026-09-16 18:00:00-03'; do
+    limpa
+    out="$out $(Pq -q -c "SET search_path = public, pg_catalog" -c "SET test.agora = '$t'" \
+      -c "DO \$\$ BEGIN PERFORM _set_estoque(interval '5 hours', 'ListarPosEstoque'); END \$\$" \
+      -c "SELECT status || '|' || age_seconds FROM public._data_health_compute() WHERE source = 'estoque_reposicao'")"
+  done
+  # desliga: o compute volta EXATAMENTE ao search_path da migration — conferido, não suposto
+  P -q -c "ALTER FUNCTION public._data_health_compute() SET search_path = public, pg_temp;"
+  [ "$(Pq -c "SELECT array_to_string(proconfig, '|') FROM pg_proc WHERE oid = 'public._data_health_compute()'::regprocedure;")" = "$CFG_COMPUTE" ] \
+    || { echo "❌ o relógio controlado NÃO foi desligado: o search_path do compute diverge do da migration [$CFG_COMPUTE]"; exit 1; }
+  echo "${out# }"
+}
+N9_ESPERADO="ok|18000 stale|18000 stale|18000 ok|18000"
+# 4 leituras "status|idade" BEM FORMADAS: uma sabotagem só conta como dente se a rodada RODOU e leu
+# outra coisa — rodada que quebrou (erro, relógio que não respondeu) também "difere" do esperado.
+bem_formada() { [[ "$1" =~ ^(ok|stale|broken)\|[0-9]+(\ (ok|stale|broken)\|[0-9]+){3}$ ]]; }
+# shellcheck disable=SC2046  # split proposital: 4 leituras separadas por espaço
+set -- $(janela_rodada)
+# idade 18000 = 5h EXATAS: é o controle POSITIVO de que o compute leu o relógio controlado. No relógio
+# de parede ela seria a distância até 16/09 (dias) e o status, broken.
+eq "N9a 07:59:59 BRT, dado 5h → ok (1 s ANTES de a janela abrir)" "${1:-}" "ok|18000"
+eq "N9b 08:00:00 BRT, dado 5h → stale (a janela abre: início inclusivo)" "${2:-}" "stale|18000"
+eq "N9c 17:59:59 BRT, dado 5h → stale (último segundo da janela)" "${3:-}" "stale|18000"
+eq "N9d 18:00:00 BRT, dado 5h → ok (a janela fecha: fim exclusivo)" "${4:-}" "ok|18000"
 
 echo "── anti-futuro (writer com relógio quebrado não compra verde eterno) ──"
 # A2 — max_sync no FUTURO (+2h) → broken (sem isto: age negativo → ok até o relógio alcançar)
@@ -291,6 +345,27 @@ sabota "           WHEN se.max_sync > now() + interval '5 minutes' THEN 'broken'
 limpa; P -q -c "SELECT _set_estoque(interval '-2 hours', 'ListarPosEstoque');"
 if [ "$(chk)" = "broken" ]; then bad "F5 assert A2 SEM DENTE (sabotei o anti-futuro e seguiu broken)"; else ok "F5 sem anti-futuro o timestamp futuro passa verde (status=$(chk)) → A2 tem dente"; fi
 restaura
+# F6 — janela contada em UTC ⇒ N9 tem de FALHAR (07:59:59 BRT são 10:59:59Z, "dentro" em UTC)
+sabota "(now() AT TIME ZONE 'America/Sao_Paulo')::time" "(now() AT TIME ZONE 'UTC')::time" 2
+R="$(janela_rodada)"
+# determinística: 07:59:59/08:00 BRT = 10:59:59/11:00Z (dentro em UTC); 17:59:59/18:00 BRT = 20:59:59/21:00Z (fora)
+if [ "$R" = "stale|18000 stale|18000 ok|18000 ok|18000" ]; then ok "F6 janela em UTC lê as bordas como UTC ($R) → N9 tem dente"; else bad "F6 assert N9 — a sabotagem UTC não produziu a leitura UTC: [$R]"; fi
+restaura
+# F7 — fim FECHADO (<= 18:00) ⇒ N9d tem de FALHAR
+sabota "<  time '18:00'" "<= time '18:00'" 1
+R="$(janela_rodada)"
+if [ "$R" = "ok|18000 stale|18000 stale|18000 stale|18000" ]; then ok "F7 fim fechado põe 18:00:00 dentro ($R) → N9d tem dente"; else bad "F7 assert N9d — o fim fechado não produziu a leitura esperada: [$R]"; fi
+restaura
+# F8 — hora tirada do relógio de PAREDE (clock_timestamp escapa do controlado) ⇒ N9 tem de FALHAR
+sabota "(now() AT TIME ZONE 'America/Sao_Paulo')::time" "(clock_timestamp() AT TIME ZONE 'America/Sao_Paulo')::time" 2
+R="$(janela_rodada)"
+# a hora de PAREDE depende de quando roda — o critério não pode (seria outra janela): basta a rodada ter
+# rodado (bem formada) e NÃO reproduzir o padrão das bordas, que um relógio real não faz em ms
+if bem_formada "$R" && [ "$R" != "$N9_ESPERADO" ]; then ok "F8 hora de parede achata as 4 bordas ($R) → N9 tem dente"; else bad "F8 assert N9 — hora de parede e a rodada seguiu igual ou não rodou: [$R]"; fi
+restaura
+# F9 — relógio DESLIGADO (compute no search_path da migration) ⇒ o controle positivo (idade) tem de FALHAR
+R="$(janela_rodada 0)"
+if bem_formada "$R" && [[ "$R" != *"|18000"* ]]; then ok "F9 relógio desligado quebra a idade ($R) → o controle positivo tem dente"; else bad "F9 controle positivo — relógio desligado e a idade seguiu 18000, ou a rodada não rodou: [$R]"; fi
 
 echo ""
 echo "═══════════════════════════════════════════"
