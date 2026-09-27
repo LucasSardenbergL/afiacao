@@ -132,9 +132,9 @@ fi
 if [ -z "${CODEX_API_KEY:-}${OPENAI_API_KEY:-}" ] && [ ! -f "${CODEX_HOME:-$HOME/.codex}/auth.json" ]; then
   echo "PREFLIGHT_FAIL: sem auth do Codex. Rode 'codex login' (ou exporte CODEX_API_KEY/OPENAI_API_KEY) e re-rode." >&2
   if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ]; then
-    echo "  Sessão cloud: um 'codex login' morre com o container. A credencial durável é CODEX_API_KEY" >&2
-    echo "  nas variáveis do AMBIENTE (menu do ambiente na barra de título → Edit), e só vale para" >&2
-    echo "  sessão NOVA. Nunca cole a chave no chat." >&2
+    echo "  Sessão cloud: por decisão (2026-09-27) o Codex roda só no Mac, na cota do plano. Reabra a" >&2
+    echo "  sessão como Local no app desktop, ou siga pelo Caminho B (docs/agent/money-path.md). Chave" >&2
+    echo "  de API na nuvem cobra por token à parte do plano: docs/historico/codex-em-sessao-cloud.md." >&2
   fi
   exit 77
 fi

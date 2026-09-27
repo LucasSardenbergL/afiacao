@@ -301,6 +301,26 @@ O guard é PostToolUse, não Pre, porque no Pre só existe o comando — e preve
 cara dele é fraco: 46,5% das chamadas medidas caíram em "outros" (compostos, heredoc,
 script inline). Só depois de rodar se sabe o tamanho.
 
+### 2026-09-27 — dividir skill grande em "núcleo + referências": medido, NÃO compensa pelo custo
+
+Pergunta: vale dividir `lovable-deploy-verify` (~30k tok) e `fecho` (~9,6k tok)? Régua: ocupação =
+tokens da injeção × requests seguintes da mesma sessão (até a compactação), nos transcripts locais
+de 14 dias. Os requests são deduplicados por `requestId`, e a âncora é a mensagem injetada ("Base
+directory for this skill:"), não o `tool_use` — 2/3 das injeções do `fecho` vêm do `/fecho`
+digitado, que não passa por `tool_use`.
+
+| skill | injeções | tok/injeção (med.) | requests seguintes (med / p90) | ocupação | % do contexto |
+|---|---|---|---|---|---|
+| `lovable-deploy-verify` | 14 | 29,6k | 17 / 117 | 16,0M | 0,45% |
+| `fecho` | 59 | 8,9k | 18 / 41 | 12,5M | 0,35% |
+
+Denominador: 3,52 bi de tokens de contexto em 14 dias (98% `cache_read`). Com núcleo de 6k / 3k e
+a referência NUNCA lida, a economia máxima é −22,5M = **0,64%**; com a referência lida em toda
+invocação, dividir PIORA (+4,2% / +2,4% — o prefixo de linha do Read custa mais do que se tira).
+Veredito: **não dividir por custo.** O que sobra é atenção por sessão — a `lovable-deploy-verify`
+ocupa 5,9% da janela viva no request seguinte (mediana, contexto de 475k; seria ~15% numa janela de
+200k) — e isso só justifica a divisão com sinal de degradação MEDIDO, não como otimização.
+
 ## 🎚️ Calibração dos avisos (2026-08-06) — as DUAS premissas eram falsas
 
 Com a régua consertada, dá para perguntar coisas que antes não se podia. As duas
