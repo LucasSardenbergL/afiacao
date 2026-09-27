@@ -60,7 +60,10 @@ ser aviso, e é por isso que ele fala alto só onde a ausência é anomalia.
 
 Opções recusadas: **A** (instalar na nuvem via setup script) — roda como root, e o `./setup --team`
 grava `auto_upgrade true` e registra um SessionStart próprio, então o pin por tag é ilusório; setup
-acima de ~5 min não entra no cache. **B** (deny corrigido + exceção na nuvem) — no Mac, um upgrade
+acima de ~5 min não entra no cache. Visto ao vivo nesta mesma sessão: às 13:02 o gstack do Mac
+saltou sozinho de v1.69.0.0 para v1.91.2.0 (`auto_upgrade=true`; o gatilho não foi identificado), e
+a lista de skills de uma sessão já aberta mudou junto — a instalação é GLOBAL, e muda por baixo de
+todas as ~30 worktrees ao mesmo tempo. **B** (deny corrigido + exceção na nuvem) — no Mac, um upgrade
 quebrado do gstack negaria TODA skill, `/fecho` e `lovable-db-operator` incluídos. **C** (aposentar
 sem sensor) — perde o diagnóstico.
 
