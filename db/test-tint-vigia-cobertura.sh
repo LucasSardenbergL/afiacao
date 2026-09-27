@@ -135,7 +135,7 @@ q() {
 roda() {  # <id> <descrição> <sql>
   local saida
   if saida="$(P -v ON_ERROR_STOP=1 -q -c "$3" 2>&1 >/dev/null)"; then chk "$1" "$2" "ok" "ok"
-  else chk "$1" "$2" "$(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-300)" "ok"; fi
+  else chk "$1" "$2" "ERRO: $(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-300)" "ok"; fi
 }
 qa() { q "SELECT $1 FROM public._data_health_compute() WHERE source='tint_cobertura_bases';"; }
 qb() { q "SELECT $1 FROM public._data_health_compute() WHERE source='tint_vinculo_omie';"; }
@@ -193,53 +193,44 @@ cenario() {
   return 0
 }
 
-# Cada sabotagem troca UM trecho do corpo VIVO e declara o assert que TEM de ficar vermelho e as
-# pré-condições que TÊM de seguir verdes — vermelho em outra camada (setup quebrado, rodada
-# incompleta) é quebra, não dente. As âncoras ocorrem uma vez só no corpo (dhv_sabotar confere).
-EXIGE_VERMELHO=""; EXIGE_VERDE=""
+# SABOTAGENS: <nome>:<VERMELHOS>[:<VERDES>] — os asserts que TÊM de acusar a sabotagem e as
+# pré-condições que TÊM de seguir verdes (`,` = E; `|` = OU). Vermelho em outra camada (setup
+# quebrado, rodada incompleta, erro de execução) é quebra, não dente.
+SABOTAGENS="push_sem_A:V11a,V11b:V4,V10 push_com_B:V12a,V12b:V4,V10,V11a
+            resumo_sem_A:V13a:E3,V11a resumo_com_B:V13b:E3,V13a
+            A_sem_tolerancia:V7:V1,V4,V6a A_ignora_tint_type:V7:V1,V4,V6a A_outra_conta:V7:V1,V4,V6a
+            A_inativo:V7:V1,V4,V6a A_outra_familia:V7:V1,V4,V6a
+            B_ignora_omie_inativo:V9b:V1,V9a,V9c B_ignora_ambiguo:V9c:V1,V9a,V9b
+            nao_dispensa:V15:V4,V11a migracao_nova_sem_A:V11a,V11b:V4,V10"
+
+# sabotagem <nome> — troca UM trecho do corpo VIVO no banco da rodada (âncora única, conferida pelo
+# dhv_sabotar). Status ≠0 = não aplicou.
 sabotagem() {
   local wd='public.data_health_watchdog()' hb='public.fin_sync_heartbeat()' cp='public._data_health_compute()'
   local conta="WHERE op.account = 'oben' AND op.ativo = true"
   case "$1" in
-    push_sem_A)            EXIGE_VERMELHO="V11a V11b"; EXIGE_VERDE="V4 V10"
-                           dhv_sabotar "$wd" "'tint_cobertura_bases'," "" ;;
-    push_com_B)            EXIGE_VERMELHO="V12a V12b"; EXIGE_VERDE="V4 V10 V11a"
-                           dhv_sabotar "$wd" "'tint_cobertura_bases'," "'tint_cobertura_bases','tint_vinculo_omie'," ;;
-    resumo_sem_A)          EXIGE_VERMELHO="V13a"; EXIGE_VERDE="E3 V11a"
-                           dhv_sabotar "$hb" "'tint_cobertura_bases'," "" ;;
-    resumo_com_B)          EXIGE_VERMELHO="V13b"; EXIGE_VERDE="E3 V13a"
-                           dhv_sabotar "$hb" "'tint_cobertura_bases'," "'tint_cobertura_bases','tint_vinculo_omie'," ;;
-    A_sem_tolerancia)      EXIGE_VERMELHO="V7"; EXIGE_VERDE="V1 V4 V6a"
-                           dhv_sabotar "$cp" "AND op.created_at < now() - interval '30 hours'" "AND op.created_at < now() - interval '0 hours'" ;;
-    A_ignora_tint_type)    EXIGE_VERMELHO="V7"; EXIGE_VERDE="V1 V4 V6a"
-                           dhv_sabotar "$cp" "OR op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" "OR false AND op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" ;;
-    A_outra_conta)         EXIGE_VERMELHO="V7"; EXIGE_VERDE="V1 V4 V6a"
-                           dhv_sabotar "$cp" "$conta" "WHERE op.ativo = true" ;;
-    A_inativo)             EXIGE_VERMELHO="V7"; EXIGE_VERDE="V1 V4 V6a"
-                           dhv_sabotar "$cp" "$conta" "WHERE op.account = 'oben'" ;;
-    A_outra_familia)       EXIGE_VERMELHO="V7"; EXIGE_VERDE="V1 V4 V6a"
-                           dhv_sabotar "$cp" "AND lower(btrim(op.familia)) IN ('bases mixmachine','concentrados mixmachine')" "AND true" ;;
-    B_ignora_omie_inativo) EXIGE_VERMELHO="V9b"; EXIGE_VERDE="V1 V9a V9c"
-                           dhv_sabotar "$cp" "(op.ativo IS NOT TRUE OR op.account IS DISTINCT FROM ts.account)" "(op.account IS DISTINCT FROM ts.account)" ;;
-    B_ignora_ambiguo)      EXIGE_VERMELHO="V9c"; EXIGE_VERDE="V1 V9a V9b"
-                           dhv_sabotar "$cp" "GROUP BY ts.omie_product_id HAVING count(*) > 1" "GROUP BY ts.omie_product_id HAVING count(*) > 2" ;;
-    nao_dispensa)          EXIGE_VERMELHO="V15"; EXIGE_VERDE="V4 V11a"
-                           dhv_sabotar "$wd" "WHERE company = 'oben' AND tipo = 'data_health_' || r.source AND dismissed_at IS NULL;" "WHERE false;" ;;
-    migracao_nova_sem_A)   EXIGE_VERMELHO="V11a V11b"; EXIGE_VERDE="V4 V10"
-                           dhv_migracao_nova "$wd" "'tint_cobertura_bases'," "" ;;
+    push_sem_A)            dhv_sabotar "$wd" "'tint_cobertura_bases'," "" ;;
+    push_com_B)            dhv_sabotar "$wd" "'tint_cobertura_bases'," "'tint_cobertura_bases','tint_vinculo_omie'," ;;
+    resumo_sem_A)          dhv_sabotar "$hb" "'tint_cobertura_bases'," "" ;;
+    resumo_com_B)          dhv_sabotar "$hb" "'tint_cobertura_bases'," "'tint_cobertura_bases','tint_vinculo_omie'," ;;
+    A_sem_tolerancia)      dhv_sabotar "$cp" "AND op.created_at < now() - interval '30 hours'" "AND op.created_at < now() - interval '0 hours'" ;;
+    A_ignora_tint_type)    dhv_sabotar "$cp" "OR op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" "OR false AND op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" ;;
+    A_outra_conta)         dhv_sabotar "$cp" "$conta" "WHERE op.ativo = true" ;;
+    A_inativo)             dhv_sabotar "$cp" "$conta" "WHERE op.account = 'oben'" ;;
+    A_outra_familia)       dhv_sabotar "$cp" "AND lower(btrim(op.familia)) IN ('bases mixmachine','concentrados mixmachine')" "AND true" ;;
+    B_ignora_omie_inativo) dhv_sabotar "$cp" "(op.ativo IS NOT TRUE OR op.account IS DISTINCT FROM ts.account)" "(op.account IS DISTINCT FROM ts.account)" ;;
+    B_ignora_ambiguo)      dhv_sabotar "$cp" "GROUP BY ts.omie_product_id HAVING count(*) > 1" "GROUP BY ts.omie_product_id HAVING count(*) > 2" ;;
+    nao_dispensa)          dhv_sabotar "$wd" "WHERE company = 'oben' AND tipo = 'data_health_' || r.source AND dismissed_at IS NULL;" "WHERE false;" ;;
+    migracao_nova_sem_A)   dhv_migracao_nova "$wd" "'tint_cobertura_bases'," "" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
 }
-SABOTAGENS="push_sem_A push_com_B resumo_sem_A resumo_com_B A_sem_tolerancia A_ignora_tint_type
-            A_outra_conta A_inativo A_outra_familia B_ignora_omie_inativo B_ignora_ambiguo nao_dispensa
-            migracao_nova_sem_A"
 
 # rodada <sabotagem|""> — clona o banco-base e roda o cenário no clone. Exit 3 = a sabotagem não
 # aplicou (âncora sumiu do corpo vivo): isso é FALHA da falsificação, nunca dente.
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;"
   DB=rodada
-  EXIGE_VERMELHO=""; EXIGE_VERDE=""
   if [ -n "$1" ]; then sabotagem "$1" || return 3; fi
   cenario
 }
@@ -260,6 +251,7 @@ fi
 # um controle vermelho aborta ANTES da primeira sabotagem.
 echo "══ CONTROLE (versão viva, sem sabotagem) — tem de ficar VERDE ══"
 rodada "" > "$TMPD/controle.log" 2>&1
+executados_controle=$((PASS + FAIL))
 if [ "$FAIL" -ne 0 ] || [ "$PASS" -lt 1 ]; then
   echo "  ❌ CONTROLE VERMELHO (PASS=$PASS FAIL=$FAIL) — abortando antes de sabotar"
   tail -30 "$TMPD/controle.log"
@@ -267,29 +259,43 @@ if [ "$FAIL" -ne 0 ] || [ "$PASS" -lt 1 ]; then
 fi
 echo "  ✅ controle verde: $PASS asserts"
 
-vermelhas=0; falhas=0
-for s in $SABOTAGENS; do
-  rc=0; rodada "$s" > "$TMPD/sab-$s.log" 2>&1 || rc=$?
+# O vermelho que conta é o do assert DECLARADO, verde no controle e vermelho na rodada; os verdes
+# declarados seguem verdes; a rodada executa tantos asserts quanto o controle; e vermelho com ERRO
+# de execução não é dente (docs/historico/falsificacao-exit-nao-e-dente.md).
+falhas=0
+for item in $SABOTAGENS; do
+  sab="${item%%:*}"; resto="${item#*:}"
+  verm="${resto%%:*}"; verdes=""
+  [ "$resto" = "$verm" ] || verdes="${resto#*:}"
+  log="$TMPD/sab-$sab.log"
+  rc=0; rodada "$sab" > "$log" 2>&1 || rc=$?
   motivo=""
   if [ "$rc" -ne 0 ]; then
-    motivo=" sabotagem não aplicou (exit $rc): $(grep -m1 -E 'ERRO|ERROR|dhv_' "$TMPD/sab-$s.log" | cut -c1-200 || true)"
+    motivo=" sabotagem não aplicou (exit $rc): $({ grep -m1 -E 'ERRO|ERROR|dhv_' "$log" || true; } | cut -c1-200)"
+  elif [ "$((PASS + FAIL))" -ne "$executados_controle" ]; then
+    motivo=" a rodada executou $((PASS + FAIL)) asserts e o controle $executados_controle: vermelho de aborto, não de assert"
+  elif grep -Eq '^  ✗ .*got\[ERRO: ' "$log"; then
+    motivo=" vermelho com ERRO de execução: a medição que erra cai pelo erro, não pelo valor"
   else
-    for id in $EXIGE_VERMELHO; do
-      case "$FALHOS" in *" $id "*) ;; *) motivo="$motivo $id ficou VERDE (o assert não tem dente);" ;; esac
+    for id in ${verm//,/ }; do
+      if ! grep -Eq "^  ✓ ($id) " "$TMPD/controle.log" || ! grep -Eq "^  ✗ ($id) " "$log"; then
+        motivo="$motivo $id não virou (verde no controle → vermelho aqui);"
+      fi
     done
-    for id in $EXIGE_VERDE; do
-      case "$FALHOS" in *" $id "*) motivo="$motivo $id ficou VERMELHO (a sabotagem quebrou outra camada);" ;; esac
+    for id in ${verdes//,/ }; do
+      grep -Eq "^  ✓ ($id) " "$log" || motivo="$motivo $id ficou VERMELHO (pré-condição: a sabotagem quebrou outra camada);"
     done
   fi
   if [ -z "$motivo" ]; then
-    vermelhas=$((vermelhas+1)); echo "  ✅ $s — vermelho no alvo ($EXIGE_VERMELHO)"
+    echo "  ✅ $sab — vermelho no assert declarado ($verm)"
   else
-    falhas=$((falhas+1)); echo "  ❌ $s —$motivo"
-    grep -E '✗' "$TMPD/sab-$s.log" | head -8 | sed 's/^/       /' || true
+    falhas=$((falhas+1)); echo "  ❌ $sab —$motivo"
+    { grep -E '^  ✗ ' "$log" || true; } | head -8 | sed 's/^/       /'
   fi
 done
 
 # Recibo EXCLUSIVO deste modo (o normal nunca o emite): é como o runner confere que a flag não foi
 # ignorada.
-echo "SABOTAGENS: $vermelhas vermelhas / $falhas falhas"
+total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
 [ "$falhas" -eq 0 ]

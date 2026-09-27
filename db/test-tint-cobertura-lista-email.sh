@@ -98,7 +98,7 @@ q() {
 roda() {  # <id> <descrição> <sql>
   local saida
   if saida="$(P -v ON_ERROR_STOP=1 -q -c "$3" 2>&1 >/dev/null)"; then chk "$1" "$2" "ok" "ok"
-  else chk "$1" "$2" "$(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-300)" "ok"; fi
+  else chk "$1" "$2" "ERRO: $(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-300)" "ok"; fi
 }
 lista() { q "SELECT ($1)::text FROM (SELECT public._tint_cobertura_bases_lista_email($2) AS l) s;"; }
 bullets() { lista "length(l) - length(replace(l, '•', ''))" "$1"; }
@@ -144,37 +144,32 @@ cenario() {
   return 0
 }
 
-# Cada sabotagem troca UM trecho do corpo VIVO e declara o assert que TEM de ficar vermelho e as
-# pré-condições que TÊM de seguir verdes — vermelho em outra camada é quebra, não dente. A sabotagem é
-# o ÚLTIMO comando do ramo: o status dela é o status de `sabotagem` (o `|| return 3` do chamador).
-EXIGE_VERMELHO=""; EXIGE_VERDE=""
+# SABOTAGENS: <nome>:<VERMELHOS>[:<VERDES>] — os asserts que TÊM de acusar a sabotagem e as
+# pré-condições que TÊM de seguir verdes (`,` = E; `|` = OU). Vermelho em outra camada (setup
+# quebrado, rodada incompleta, erro de execução) é quebra, não dente.
+SABOTAGENS="email_sem_lista:T10:T10a,T11 lista_sem_tolerancia:T3,T8:T1a,T2a lista_outra_conta:T7,T8:T1a,T2a
+            lista_ignora_tint_type:T2a,T8:T1a lista_sem_cap:T9b:T9a migracao_nova_sem_lista:T10:T10a,T11"
+
+# sabotagem <nome> — troca UM trecho do corpo VIVO no banco da rodada (âncora única, conferida pelo
+# dhv_sabotar). Status ≠0 = não aplicou.
 sabotagem() {
   local wd='public.data_health_watchdog()' hl='public._tint_cobertura_bases_lista_email(integer)'
   case "$1" in
-    email_sem_lista)         EXIGE_VERMELHO="T10"; EXIGE_VERDE="T10a T11"
-                             dhv_sabotar "$wd" "public._tint_cobertura_bases_lista_email(50)" "NULL::text" ;;
-    lista_sem_tolerancia)    EXIGE_VERMELHO="T3 T8"; EXIGE_VERDE="T1a T2a"
-                             dhv_sabotar "$hl" "AND op.created_at < now() - interval '30 hours'" "AND op.created_at < now() - interval '0 hours'" ;;
-    lista_outra_conta)       EXIGE_VERMELHO="T7 T8"; EXIGE_VERDE="T1a T2a"
-                             dhv_sabotar "$hl" "WHERE op.account = 'oben' AND op.ativo = true" "WHERE op.ativo = true" ;;
-    lista_ignora_tint_type)  EXIGE_VERMELHO="T2a T8"; EXIGE_VERDE="T1a"
-                             dhv_sabotar "$hl" "OR op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" "OR false AND op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" ;;
-    lista_sem_cap)           EXIGE_VERMELHO="T9b"; EXIGE_VERDE="T9a"
-                             dhv_sabotar "$hl" "count(*) FILTER (WHERE rn <= GREATEST(p_limit, 0))::int AS n_mostrados" "count(*)::int AS n_mostrados" ;;
-    migracao_nova_sem_lista) EXIGE_VERMELHO="T10"; EXIGE_VERDE="T10a T11"
-                             dhv_migracao_nova "$wd" "public._tint_cobertura_bases_lista_email(50)" "NULL::text" ;;
+    email_sem_lista)         dhv_sabotar "$wd" "public._tint_cobertura_bases_lista_email(50)" "NULL::text" ;;
+    lista_sem_tolerancia)    dhv_sabotar "$hl" "AND op.created_at < now() - interval '30 hours'" "AND op.created_at < now() - interval '0 hours'" ;;
+    lista_outra_conta)       dhv_sabotar "$hl" "WHERE op.account = 'oben' AND op.ativo = true" "WHERE op.ativo = true" ;;
+    lista_ignora_tint_type)  dhv_sabotar "$hl" "OR op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" "OR false AND op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" ;;
+    lista_sem_cap)           dhv_sabotar "$hl" "count(*) FILTER (WHERE rn <= GREATEST(p_limit, 0))::int AS n_mostrados" "count(*)::int AS n_mostrados" ;;
+    migracao_nova_sem_lista) dhv_migracao_nova "$wd" "public._tint_cobertura_bases_lista_email(50)" "NULL::text" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
 }
-SABOTAGENS="email_sem_lista lista_sem_tolerancia lista_outra_conta lista_ignora_tint_type lista_sem_cap
-            migracao_nova_sem_lista"
 
 # rodada <sabotagem|""> — clona o banco-base e roda o cenário no clone. Exit 3 = a sabotagem não
 # aplicou (âncora sumiu do corpo vivo): isso é FALHA da falsificação, nunca dente.
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;"
   DB=rodada
-  EXIGE_VERMELHO=""; EXIGE_VERDE=""
   if [ -n "$1" ]; then sabotagem "$1" || return 3; fi
   cenario
 }
@@ -190,10 +185,12 @@ if [ "$MODO" = normal ]; then
 fi
 
 # ── --falsificar ───────────────────────────────────────────────────────────────────────────────
-# Sabotar sem CONTROLE verde na MESMA invocação é teatro: uma suíte sempre-vermelha aprovaria todas
-# as sabotagens. O controle roda primeiro, aqui, e um controle vermelho aborta ANTES da 1ª sabotagem.
+# Sabotar sem CONTROLE verde na MESMA invocação é teatro: uma suíte sempre-vermelha (ambiente
+# quebrado, snapshot que não sobe) aprovaria todas as sabotagens. O controle roda primeiro, aqui, e
+# um controle vermelho aborta ANTES da primeira sabotagem.
 echo "══ CONTROLE (versão viva, sem sabotagem) — tem de ficar VERDE ══"
 rodada "" > "$TMPD/controle.log" 2>&1
+executados_controle=$((PASS + FAIL))
 if [ "$FAIL" -ne 0 ] || [ "$PASS" -lt 1 ]; then
   echo "  ❌ CONTROLE VERMELHO (PASS=$PASS FAIL=$FAIL) — abortando antes de sabotar"
   tail -30 "$TMPD/controle.log"
@@ -201,29 +198,43 @@ if [ "$FAIL" -ne 0 ] || [ "$PASS" -lt 1 ]; then
 fi
 echo "  ✅ controle verde: $PASS asserts"
 
-vermelhas=0; falhas=0
-for s in $SABOTAGENS; do
-  rc=0; rodada "$s" > "$TMPD/sab-$s.log" 2>&1 || rc=$?
+# O vermelho que conta é o do assert DECLARADO, verde no controle e vermelho na rodada; os verdes
+# declarados seguem verdes; a rodada executa tantos asserts quanto o controle; e vermelho com ERRO
+# de execução não é dente (docs/historico/falsificacao-exit-nao-e-dente.md).
+falhas=0
+for item in $SABOTAGENS; do
+  sab="${item%%:*}"; resto="${item#*:}"
+  verm="${resto%%:*}"; verdes=""
+  [ "$resto" = "$verm" ] || verdes="${resto#*:}"
+  log="$TMPD/sab-$sab.log"
+  rc=0; rodada "$sab" > "$log" 2>&1 || rc=$?
   motivo=""
   if [ "$rc" -ne 0 ]; then
-    motivo=" sabotagem não aplicou (exit $rc): $(grep -m1 -E 'ERRO|ERROR|dhv_' "$TMPD/sab-$s.log" | cut -c1-200 || true)"
+    motivo=" sabotagem não aplicou (exit $rc): $({ grep -m1 -E 'ERRO|ERROR|dhv_' "$log" || true; } | cut -c1-200)"
+  elif [ "$((PASS + FAIL))" -ne "$executados_controle" ]; then
+    motivo=" a rodada executou $((PASS + FAIL)) asserts e o controle $executados_controle: vermelho de aborto, não de assert"
+  elif grep -Eq '^  ✗ .*got\[ERRO: ' "$log"; then
+    motivo=" vermelho com ERRO de execução: a medição que erra cai pelo erro, não pelo valor"
   else
-    for id in $EXIGE_VERMELHO; do
-      case "$FALHOS" in *" $id "*) ;; *) motivo="$motivo $id ficou VERDE (o assert não tem dente);" ;; esac
+    for id in ${verm//,/ }; do
+      if ! grep -Eq "^  ✓ ($id) " "$TMPD/controle.log" || ! grep -Eq "^  ✗ ($id) " "$log"; then
+        motivo="$motivo $id não virou (verde no controle → vermelho aqui);"
+      fi
     done
-    for id in $EXIGE_VERDE; do
-      case "$FALHOS" in *" $id "*) motivo="$motivo $id ficou VERMELHO (a sabotagem quebrou outra camada);" ;; esac
+    for id in ${verdes//,/ }; do
+      grep -Eq "^  ✓ ($id) " "$log" || motivo="$motivo $id ficou VERMELHO (pré-condição: a sabotagem quebrou outra camada);"
     done
   fi
   if [ -z "$motivo" ]; then
-    vermelhas=$((vermelhas+1)); echo "  ✅ $s — vermelho no alvo ($EXIGE_VERMELHO)"
+    echo "  ✅ $sab — vermelho no assert declarado ($verm)"
   else
-    falhas=$((falhas+1)); echo "  ❌ $s —$motivo"
-    grep -E '✗' "$TMPD/sab-$s.log" | head -8 | sed 's/^/       /' || true
+    falhas=$((falhas+1)); echo "  ❌ $sab —$motivo"
+    { grep -E '^  ✗ ' "$log" || true; } | head -8 | sed 's/^/       /'
   fi
 done
 
 # Recibo EXCLUSIVO deste modo (o normal nunca o emite): é como o runner confere que a flag não foi
 # ignorada.
-echo "SABOTAGENS: $vermelhas vermelhas / $falhas falhas"
+total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
 [ "$falhas" -eq 0 ]
