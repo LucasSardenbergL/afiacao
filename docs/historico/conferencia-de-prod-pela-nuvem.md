@@ -105,13 +105,17 @@ zero fabricado. A lição que é desta nota: `list_messages` e PRs abertos
 ANTES do `send_message`, porque o ledger ainda não via o deploy da outra sessão. A proibição de
 edição no prompt e o sensor pós-envio vieram de outra sessão, no mesmo dia (#2596).
 
+**A v2 em prod (27/09, 18:06Z, logo depois do merge do #2601).** O `pendencias:deploy` rodou
+inteiro pelo transporte: md5 e `sql_md5` fecharam (o MCP não prefixa nada), `marcas` 1/1, trava `on`.
+Veredito: 60 edges conferem e 2 dão P1 só por `VERSAO`, as duas da reversão do #2595. A cobertura
+foi de 62/62, e a sonda por cron atestou 17 de 17 disparos. O conector voltou com mais ferramentas
+do que as quatro do piloto, entre elas `get_project_knowledge`/`set_project_knowledge`. O Knowledge
+do projeto estava vazio e passou a ter a regra fixa contra edição sem pedido explícito (deploy.md).
+
 ## O que NÃO está resolvido
 
 - **O conector é do founder, e cai.** Sem ele a nuvem não tem braço, e a regra é pedir a reconexão
   em uma linha, não chipar para o Mac.
-- **A v2 ainda não rodou em prod** (quem rodou foi a v1). Ela depende de o MCP não PREFIXAR nada ao
-  texto, e o medido é que o início chega intacto. Se prefixar, o `sql_md5` recusa
-  (`TRANSPORTE_SQL_DIVERGENTE`): falha fechada, sem verde falso.
 - **Qual banco respondeu não está no payload.** A amarra é o `project_id` da chamada. Pôr a
   identidade do cluster no payload (`pg_control_system()`) depende de medir se o papel do conector
   pode lê-la.
