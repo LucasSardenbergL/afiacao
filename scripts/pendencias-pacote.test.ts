@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { md5Exato } from './lib/corpo-esperado';
-import { FORMATO_TRANSPORTE, gerarSqlNuvem, TETO_TRANSPORTE, trechoMarcado } from './lib/transporte-nuvem';
+import { FORMATO_TRANSPORTE, gerarSqlNuvem, TETO_TRANSPORTE } from './lib/transporte-nuvem';
 import {
   AMOSTRA_CORPO_JS,
   FORMATO_SONDA,
@@ -399,10 +399,10 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
       const sql = gerarSqlNuvem({ precondicao: sqlSonda }, CONSUMIDOR_NUVEM);
       const campo = (c: string) => (c === '' ? '' : `"${c.replace(/["\\]/g, (x) => x + x)}"`);
       const linhas = saidaDaSonda.split('\n').map((l) => `(${l.split('|').map(campo).join(',')})`);
-      const sqlMd5 = md5(trechoMarcado(sql));
+      const sqlMd5 = md5(sql.slice(0, sql.indexOf('sql-nuvem:fim') + 'sql-nuvem:fim'.length));
       const medidoEm = '2026-09-27T11:59:00Z';
       const canonico = [
-        FORMATO_TRANSPORTE, CONSUMIDOR_NUVEM, medidoEm, 'on', TETO_TRANSPORTE, sqlMd5,
+        FORMATO_TRANSPORTE, CONSUMIDOR_NUVEM, medidoEm, 'on', TETO_TRANSPORTE, sqlMd5, '1/1',
         'precondicao', String(linhas.length), linhas.join('\n'),
       ];
       const dados = {
@@ -412,6 +412,7 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
         somente_leitura: 'on',
         teto: TETO_TRANSPORTE,
         sql_md5: sqlMd5,
+        marcas: '1/1',
         consultas: { precondicao: linhas },
         md5: md5(canonico.join('\n')),
       };
@@ -481,6 +482,31 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
       }
       expect(codigo).toBe(2);
       expect(erros.join('')).toContain('TRANSPORTE_SQL_DIVERGENTE');
+    });
+
+    it('leva sem RPC: o --dados-nuvem não é lido, e isso é DITO (arquivo calado parece conferido)', () => {
+      const SEM_RPC = 'export const x = 1;\n';
+      const semFlag = montarRepo(SEM_RPC, SEM_RPC);
+      const codigoSemFlag = main([EDGE, '--saida', semFlag.saida, '--sem-rede'], semFlag.raiz, semFlag.git, psqlProibido, semEntrada, agora);
+
+      const { raiz, git, saida } = montarRepo(SEM_RPC, SEM_RPC);
+      const arquivo = join(raiz, 'resposta-nuvem.json');
+      writeFileSync(arquivo, '{}', 'utf8');
+      const erros: string[] = [];
+      const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
+        erros.push(String(t));
+        return true;
+      });
+      let codigo: number;
+      try {
+        codigo = main([EDGE, '--saida', saida, '--sem-rede', `--dados-nuvem=${arquivo}`], raiz, git, psqlProibido, semEntrada, agora);
+      } finally {
+        espiao.mockRestore();
+      }
+      expect(codigoSemFlag).toBe(0);
+      expect(codigo).toBe(codigoSemFlag);
+      expect(erros.join('')).toContain('--dados-nuvem ignorado');
+      expect(readFileSync(saida, 'utf8')).toBe(readFileSync(semFlag.saida, 'utf8'));
     });
   });
 });

@@ -11,10 +11,11 @@ import {
   lerDadosNuvem,
   registroParaLinha,
   TETO_TRANSPORTE,
-  trechoMarcado,
 } from './transporte-nuvem';
 
 const md5 = (s: string): string => createHash('md5').update(s, 'utf8').digest('hex');
+/** O trecho que o banco hasheia: do 1º caractere até o fim da marca final (o rastro do MCP fica fora). */
+const trechoDoBanco = (sql: string): string => sql.slice(0, sql.indexOf('sql-nuvem:fim') + 'sql-nuvem:fim'.length);
 
 const CONSULTAS: Consultas = {
   observacoes: "SELECT edge, versao\nFROM public.x\nORDER BY edge;",
@@ -31,15 +32,23 @@ const AGORA = new Date('2026-09-27T12:00:00Z');
  */
 function respostaDoBanco(
   linhas: Record<string, string[]>,
-  o: { sqlExecutado?: string; medidoEm?: string; somenteLeitura?: string; teto?: string; consumidor?: string } = {},
+  o: {
+    sqlExecutado?: string;
+    medidoEm?: string;
+    somenteLeitura?: string;
+    teto?: string;
+    marcas?: string;
+    consumidor?: string;
+  } = {},
 ): Record<string, unknown> {
   const sql = o.sqlExecutado ?? gerarSqlNuvem(CONSULTAS, CONSUMIDOR);
   const consumidor = o.consumidor ?? CONSUMIDOR;
   const medidoEm = o.medidoEm ?? '2026-09-27T11:58:00Z';
   const somenteLeitura = o.somenteLeitura ?? 'on';
   const teto = o.teto ?? TETO_TRANSPORTE;
-  const sqlMd5 = md5(trechoMarcado(sql));
-  const canonico = [FORMATO_TRANSPORTE, consumidor, medidoEm, somenteLeitura, teto, sqlMd5];
+  const marcas = o.marcas ?? '1/1';
+  const sqlMd5 = md5(trechoDoBanco(sql));
+  const canonico = [FORMATO_TRANSPORTE, consumidor, medidoEm, somenteLeitura, teto, sqlMd5, marcas];
   for (const n of Object.keys(linhas).sort()) canonico.push(n, String(linhas[n].length), linhas[n].join('\n'));
   return {
     formato: FORMATO_TRANSPORTE,
@@ -48,6 +57,7 @@ function respostaDoBanco(
     somente_leitura: somenteLeitura,
     teto,
     sql_md5: sqlMd5,
+    marcas,
     consultas: linhas,
     md5: md5(canonico.join('\n')),
   };
@@ -59,11 +69,10 @@ const ler = (payload: unknown) =>
   lerDadosNuvem(JSON.stringify(payload), { consultas: CONSULTAS, consumidor: CONSUMIDOR }, AGORA);
 
 describe('gerarSqlNuvem', () => {
-  it('abre com a trava de leitura e o teto, numa linha só', () => {
-    const sql = gerarSqlNuvem(CONSULTAS, CONSUMIDOR);
-    expect(sql.startsWith(`SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '${TETO_TRANSPORTE}'; WITH `)).toBe(true);
-    expect(sql).not.toContain('\n');
-    expect(sql.endsWith(';')).toBe(true);
+  it('a 1ª linha é a trava de leitura e o teto; a última fecha na marca final', () => {
+    const linhas = gerarSqlNuvem(CONSULTAS, CONSUMIDOR).split('\n');
+    expect(linhas[0]).toBe(`SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '${TETO_TRANSPORTE}';`);
+    expect(linhas[linhas.length - 1]).toBe("(SELECT 'sql-nuvem:fim'::text AS fim) AS __sql_nuvem_marca_fim__;");
   });
 
   it('cada marca aparece UMA vez — é o que deixa o banco achar o trecho sem ambiguidade', () => {
@@ -77,19 +86,28 @@ describe('gerarSqlNuvem', () => {
     expect(gerarSqlNuvem(invertidas, CONSUMIDOR)).toBe(gerarSqlNuvem(CONSULTAS, CONSUMIDOR));
   });
 
-  it('embute a consulta em uma linha, sem o ; final', () => {
+  it('embute a consulta INTEIRA, com as quebras de linha dela, sem o ; final', () => {
     const sql = gerarSqlNuvem(CONSULTAS, CONSUMIDOR);
-    expect(sql).toContain('FROM (SELECT edge, versao FROM public.x ORDER BY edge) AS q');
+    expect(sql).toContain('FROM (\nSELECT edge, versao\nFROM public.x\nORDER BY edge\n) AS __sql_nuvem_linha__');
+  });
+
+  // Sem juntar linhas, nada disto muda de sentido no caminho — a prova no Postgres executa os casos.
+  it.each([
+    ['comentário de linha no fim', 'SELECT 1 -- x'],
+    ['comentário de bloco com aspa', "SELECT /* it's */ 1"],
+    ['dollar-quoting com quebra de linha', 'SELECT $q$a\nb$q$'],
+    ['aspa escapada por barra', "SELECT E'a\\'b'"],
+    ['literal atravessando linha', "SELECT 'a\nb'"],
+  ])('aceita %s e a embute sem mexer', (_caso, sql) => {
+    expect(gerarSqlNuvem({ q: sql }, CONSUMIDOR)).toContain(`FROM (\n${sql}\n) AS __sql_nuvem_linha__`);
   });
 
   it.each([
     ['multi-statement', 'SELECT 1; SELECT 2', /TRANSPORTE_CONSULTA_INVALIDA: .*';' no meio/],
-    ['comentário de linha', 'SELECT 1 -- x', /TRANSPORTE_CONSULTA_INVALIDA: .*'--'/],
-    ['dollar-quoting', 'SELECT $$a$$', /TRANSPORTE_CONSULTA_INVALIDA: .*dollar-quoting/],
-    ['aspa escapada por barra', "SELECT E'a\\'b'", /TRANSPORTE_CONSULTA_INVALIDA: .*\\'/],
-    ['literal atravessando linha', "SELECT 'a\nb'", /TRANSPORTE_CONSULTA_INVALIDA: .*atravessando/],
     ['marca dentro da consulta', "SELECT 'sql-nuvem:fim'", /TRANSPORTE_CONSULTA_INVALIDA: .*marca do transporte/],
+    ['namespace interno', 'SELECT 1 AS __sql_nuvem_x', /TRANSPORTE_CONSULTA_INVALIDA: .*namespace interno/],
     ['tabulação', 'SELECT\t1', /TRANSPORTE_CONSULTA_INVALIDA: .*controle/],
+    ['CR de fim de linha do Windows', 'SELECT 1\r\nFROM x', /TRANSPORTE_CONSULTA_INVALIDA: .*controle/],
     ['vazia', '  ;  ', /TRANSPORTE_CONSULTA_INVALIDA: .*vazia/],
   ])('recusa consulta com %s', (_caso, sql, marca) => {
     expect(() => gerarSqlNuvem({ q: sql }, CONSUMIDOR)).toThrow(marca);
@@ -157,6 +175,29 @@ describe('lerDadosNuvem', () => {
     expect(() => ler(respostaDoBanco(LINHAS, { sqlExecutado: alterado }))).toThrow(/TRANSPORTE_SQL_DIVERGENTE/);
   });
 
+  it('TRANSPORTE_SQL_DIVERGENTE: statement enfiado ANTES da trava (o hash cobre do 1º caractere)', () => {
+    const sql = gerarSqlNuvem(CONSULTAS, CONSUMIDOR);
+    const comPrefixo = `INSERT INTO public.x VALUES (1); ${sql}`;
+    expect(() => ler(respostaDoBanco(LINHAS, { sqlExecutado: comPrefixo }))).toThrow(/TRANSPORTE_SQL_DIVERGENTE/);
+  });
+
+  it('aceita o rastro que o query_database acrescenta DEPOIS da marca final (medido em prod)', () => {
+    const sql = gerarSqlNuvem(CONSULTAS, CONSUMIDOR);
+    const comRastro = `${sql}\n-- rastro do conector, date: 2026-09-27T17:07:46.950Z`;
+    expect(ler(respostaDoBanco(LINHAS, { sqlExecutado: comRastro })).saidas.get('saude')).toBe('12.5');
+  });
+
+  it('TRANSPORTE_SQL_DIVERGENTE: o lote carregava o SQL do transporte duas vezes (marcas 2/2)', () => {
+    expect(() => ler(respostaDoBanco(LINHAS, { marcas: '2/2' }))).toThrow(/TRANSPORTE_SQL_DIVERGENTE: .*2\/2 marcas/);
+  });
+
+  it.each([['2026-13-01T00:00:00Z'], ['2026-02-30T11:58:00Z'], ['2026-09-27 11:58:00']])(
+    'TRANSPORTE_FORMATO: medido_em %s não é um instante que o banco escreveria',
+    (medidoEm) => {
+      expect(() => ler(respostaDoBanco(LINHAS, { medidoEm }))).toThrow(/TRANSPORTE_FORMATO: medido_em/);
+    },
+  );
+
   it('TRANSPORTE_VELHO e TRANSPORTE_FUTURO: relógio do banco fora da janela', () => {
     const velho = new Date(AGORA.getTime() - (IDADE_MAXIMA_MIN + 1) * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
     expect(() => ler(respostaDoBanco(LINHAS, { medidoEm: velho }))).toThrow(/TRANSPORTE_VELHO/);
@@ -173,6 +214,9 @@ describe('lerDadosNuvem', () => {
     expect(() => ler({ ...respostaDoBanco(LINHAS), formato: 'x/9' })).toThrow(/TRANSPORTE_FORMATO/);
     expect(() => ler(respostaDoBanco(LINHAS, { consumidor: 'outro' }))).toThrow(/TRANSPORTE_FORMATO/);
     expect(() => ler({ rows: [] })).toThrow(/TRANSPORTE_FORMATO/);
+    const semMarcas: Record<string, unknown> = respostaDoBanco(LINHAS);
+    delete semMarcas.marcas;
+    expect(() => ler(semMarcas)).toThrow(/TRANSPORTE_FORMATO: campo 'marcas'/);
   });
 });
 

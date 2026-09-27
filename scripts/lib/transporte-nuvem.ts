@@ -15,31 +15,43 @@
  *   3. o CLI com `--dados-nuvem=<arquivo>` valida e devolve, por consulta, as MESMAS linhas que o
  *      `psql -A -F '|' -t` daria — e o juízo segue o caminho de sempre, sem saber de onde veio.
  *
- * As provas, todas medidas PELO BANCO e amarradas no md5 do payload (o modelo não calcula md5 de
- * cabeça, então nenhuma delas se falsifica sem quebrar a conta):
+ * O que o banco ATESTA, amarrado no md5 do payload:
  *   - `somente_leitura = on` — o `SET TRANSACTION` pegou na MESMA transação do SELECT. O
  *     `query_database` entra como `postgres`, com BYPASSRLS e sem modo leitura (piloto, Camada 3);
- *     o lote multi-statement é UMA transação implícita (medido lá), então o prefixo trava escrita no
- *     lote inteiro. Se um dia o transporte mandar os statements separados, o SET vira no-op com
- *     WARNING e o SELECT diz `off` — e a leitura é RECUSADA, não aceita com a trava fora.
+ *     o lote multi-statement é UMA transação implícita (medido lá e em prod, 2026-09-27), então a
+ *     trava vale para tudo que vem DEPOIS dela no lote. Statements enviados separados fazem o SET
+ *     virar no-op com WARNING e o SELECT dizer `off` — recusado.
  *   - `teto = 30s` — o `statement_timeout` do wrapper local, reposto por `SET LOCAL`.
- *   - `sql_md5` — md5 do trecho entre as marcas, lido de `current_query()`: o texto que o banco
- *     EXECUTOU é byte a byte o que o CLI emitiu. Um SQL "corrigido" no caminho não passa.
+ *   - `sql_md5` — md5 do texto executado do 1º caractere de `current_query()` até a marca final:
+ *     cobre o PREFIXO, então um statement enfiado ANTES da trava muda o hash. Termina na marca, e
+ *     não no fim do texto, porque o `query_database` ACRESCENTA ~105 caracteres depois do SQL
+ *     (um rastro que termina num timestamp — medido em prod, 2026-09-27).
+ *   - `marcas = 1/1` — o texto tem UMA marca de início e UMA de fim. Um lote com o SQL repetido
+ *     ("sanduíche" com COMMIT no meio) acusaria 2/2.
  *   - `medido_em` — relógio do banco. Resposta de outra rodada, reaproveitada, não é medição desta.
  *
+ * O que NÃO se prova aqui — e está escrito para ninguém contar com isso:
+ *   - O md5 pega ERRO de transcrição (linha trocada, truncada), não FORJA: a sessão tem bash e a
+ *     receita está neste arquivo. Por isso a regra do procedimento é "nunca monte, reconstrua nem
+ *     calcule o payload; erro ou truncagem do `query_database` é mecânica" — e, quando o harness
+ *     gravar o resultado da ferramenta em arquivo, passe ESSE arquivo ao `--dados-nuvem`.
+ *   - O hash DETECTA escrita fora da trava; não a IMPEDE — ela já rodou quando a resposta chega.
+ *   - Qual banco respondeu: `project_id` errado devolveria a resposta de outro Postgres, e ela
+ *     passaria. Amarrar à identidade de prod (`system_identifier`) espera a medição de permissão.
+ *
  * FIDELIDADE ao psql, para QUALQUER tipo: cada linha viaja como o literal de registro do próprio
- * Postgres (`q::text`, o `record_out`), que monta cada campo com a MESMA função de saída do tipo que
- * o psql imprime — boolean sai `t`, timestamp sai com espaço, array sai `{…}`. O TS desfaz só o
- * envelope do registro (parênteses, vírgulas, aspas) e junta os campos com `|`, como o
- * `psql -A -F '|' -t`. Uma tentativa com `row_to_json` foi descartada: ela fala o dialeto do JSON
- * (`true`, `T`, `[…]`) e só coincidia com o psql em text/numeric. A prova de equivalência contra
- * um Postgres de verdade é `db/test-transporte-nuvem.sh`.
+ * Postgres (`ROW(alias.*)::text`, o `record_out`), que monta cada campo com a MESMA função de saída
+ * do tipo que o psql imprime. O TS desfaz só o envelope do registro e junta os campos com `|`. A
+ * consulta entra INTEIRA, com as quebras de linha dela, entre quebras de linha — juntar linhas
+ * mudava o SQL em caso-limite (aspa em comentário, `$tag$`), e comentário `--` no fim engoliria o
+ * fecha-parêntese. Os nomes internos vivem no prefixo `__sql_nuvem_` para não sombrear tabela ou
+ * coluna da consulta. A prova contra um Postgres de verdade é `db/test-transporte-nuvem.sh`.
  */
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-export const FORMATO_TRANSPORTE = 'transporte-nuvem/1';
+export const FORMATO_TRANSPORTE = 'transporte-nuvem/2';
 
 /** O `statement_timeout` do `psqlrc-ro` local — a nuvem não ganha teto mais frouxo que o Mac. */
 export const TETO_TRANSPORTE = '30s';
@@ -53,6 +65,11 @@ const FOLGA_RELOGIO_MIN = 5;
 const MARCA_INICIO = 'sql-nuvem:inicio';
 const MARCA_FIM = 'sql-nuvem:fim';
 const PREFIXO_MARCA = 'sql-nuvem';
+/** O namespace dos nomes internos (CTEs e aliases). Consulta que o contenha é recusada. */
+const PREFIXO_INTERNO = '__sql_nuvem_';
+
+/** A 1ª linha do SQL emitido: a trava e o teto, antes de qualquer outra coisa. */
+const TRAVA = `SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '${TETO_TRANSPORTE}';`;
 
 /** `json_build_object`/`concat_ws` param 100 argumentos no máximo; 30 consultas cabem com folga. */
 const MAX_CONSULTAS = 30;
@@ -77,43 +94,28 @@ function md5(texto: string): string {
 }
 
 /**
- * Uma consulta vira UMA linha, sem `;` final — ela entra como subconsulta de um único statement.
+ * A consulta como ela vai embutida: o texto dela, INTEIRO, sem o `;` final — sem juntar linhas.
  *
- * Recusa (em vez de "consertar") tudo que tornaria a junção de linhas capaz de mudar o SQL: `;` no
- * meio, comentário de linha (engoliria o resto), dollar-quoting e `\'` (o fim do literal deixa de
- * ser contável) e literal que atravessa quebra de linha (a junção reescreveria o texto dele).
- * Recusar aqui é falhar na MÁQUINA de quem escreveu a consulta, não em prod.
+ * Recusa (em vez de "consertar"): `;` no meio (o transporte embute cada consulta num statement só),
+ * as marcas e o namespace interno, e caractere de controle que não seja a quebra de linha — `\r` e
+ * tabulação são o tipo de byte que um transporte normaliza no caminho, e o `sql_md5` recusaria a
+ * leitura inteira por isso. Recusar aqui é falhar na MÁQUINA de quem escreveu a consulta.
  */
-function umaLinha(nome: string, sql: string): string {
+/** Caractere de controle que não seja a quebra de linha (`\n` fica: a consulta vai inteira). */
+// eslint-disable-next-line no-control-regex -- é exatamente o que a guarda procura (recusa, não strip)
+const CONTROLE = /[\x00-\x09\x0b-\x1f\x7f]/;
+
+function normalizarConsulta(nome: string, sql: string): string {
   const recusa = (motivo: string) =>
     new Error(`TRANSPORTE_CONSULTA_INVALIDA: a consulta '${nome}' ${motivo}`);
   let corpo = sql.trim();
   if (corpo.endsWith(';')) corpo = corpo.slice(0, -1).trimEnd();
   if (corpo === '') throw recusa('veio vazia');
   if (corpo.includes(';')) throw recusa("tem ';' no meio — o transporte embute cada consulta num statement só");
-  if (corpo.includes('--')) throw recusa("tem '--' — numa linha só, o comentário engoliria o resto do SQL");
-  if (/\$[A-Za-z_]*\$/.test(corpo)) throw recusa('usa dollar-quoting — o fim do literal deixa de ser contável');
-  if (corpo.includes("\\'")) throw recusa("tem \\' — o fim do literal deixa de ser contável");
   if (corpo.includes(PREFIXO_MARCA)) throw recusa(`contém '${PREFIXO_MARCA}', a marca do transporte`);
-
-  const linhas = corpo.split('\n');
-  let aspas = 0;
-  for (let i = 0; i < linhas.length - 1; i += 1) {
-    aspas += (linhas[i].match(/'/g) ?? []).length;
-    if (aspas % 2 !== 0) {
-      throw recusa(`tem literal atravessando a quebra da linha ${i + 1} — juntar as linhas mudaria o texto dele`);
-    }
-  }
-  const junta = linhas
-    .map((l) => l.trim())
-    .filter((l) => l !== '')
-    .join(' ');
-  // ASCII imprimível + o plano básico sem controles C1 nem surrogates: `position`/`substring` do
-  // Postgres contam CARACTERE e o `slice` do JS conta unidade UTF-16 — só no BMP as duas batem.
-  if (/[^\x20-\x7e\u00a0-\ud7ff\ue000-\uffff]/.test(junta)) {
-    throw recusa('tem caractere de controle ou fora do plano básico do Unicode');
-  }
-  return junta;
+  if (corpo.includes(PREFIXO_INTERNO)) throw recusa(`contém '${PREFIXO_INTERNO}', o namespace interno do transporte`);
+  if (CONTROLE.test(corpo)) throw recusa('tem caractere de controle além da quebra de linha');
+  return corpo;
 }
 
 function validarNomes(consultas: Consultas, consumidor: string): string[] {
@@ -131,9 +133,17 @@ function validarNomes(consultas: Consultas, consumidor: string): string[] {
   return nomes;
 }
 
-/** A posição da marca, sem que o texto contíguo dela apareça na própria expressão de busca. */
-function posicao(marca: string): string {
-  return `position('${PREFIXO_MARCA}' || '${marca.slice(PREFIXO_MARCA.length)}' IN current_query())`;
+/** A marca montada em duas metades: o texto contíguo dela só existe UMA vez no SQL emitido. */
+function marcaPartida(marca: string): string {
+  return `'${PREFIXO_MARCA}' || '${marca.slice(PREFIXO_MARCA.length)}'`;
+}
+
+/** Quantas vezes a marca aparece em `current_query()`. */
+function ocorrencias(marca: string): string {
+  return (
+    `((length(current_query()) - length(replace(current_query(), ${marcaPartida(marca)}, '')))` +
+    ` / ${marca.length})`
+  );
 }
 
 /**
@@ -142,14 +152,14 @@ function posicao(marca: string): string {
  */
 export function gerarSqlNuvem(consultas: Consultas, consumidor: string): string {
   const nomes = validarNomes(consultas, consumidor);
-  const corpos = nomes.map((n) => umaLinha(n, consultas[n]));
-  const pi = posicao(MARCA_INICIO);
-  const pf = posicao(MARCA_FIM);
+  const corpos = nomes.map((n) => normalizarConsulta(n, consultas[n]));
+  const fimDoTrecho = `position(${marcaPartida(MARCA_FIM)} IN current_query()) + ${MARCA_FIM.length - 1}`;
 
   const colunas = nomes.map(
     (n, i) =>
-      `(SELECT coalesce(array_agg(z.l), ARRAY[]::text[]) FROM ` +
-      `(SELECT q::text AS l FROM (${corpos[i]}) AS q) AS z) AS c_${n}`,
+      `(SELECT coalesce(array_agg(__sql_nuvem_agg__.l), ARRAY[]::text[]) FROM ` +
+      `(SELECT ROW(__sql_nuvem_linha__.*)::text AS l FROM (\n${corpos[i]}\n) AS __sql_nuvem_linha__) ` +
+      `AS __sql_nuvem_agg__) AS c_${n}`,
   );
   const canonico = [
     `'${FORMATO_TRANSPORTE}'`,
@@ -158,46 +168,53 @@ export function gerarSqlNuvem(consultas: Consultas, consumidor: string): string 
     'm.somente_leitura',
     'm.teto',
     'm.sql_md5',
+    'm.marcas',
     ...nomes.flatMap((n) => [`'${n}'`, `cardinality(c.c_${n})::text`, `array_to_string(c.c_${n}, E'\\n')`]),
   ];
   const objeto = nomes.map((n) => `'${n}', to_json(c.c_${n})`).join(', ');
 
-  return [
-    'SET TRANSACTION READ ONLY;',
-    `SET LOCAL statement_timeout = '${TETO_TRANSPORTE}';`,
-    `WITH marca AS (SELECT '${MARCA_INICIO}'::text AS inicio),`,
-    `m AS (SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS medido_em,`,
-    `current_setting('transaction_read_only') AS somente_leitura,`,
-    `current_setting('statement_timeout') AS teto,`,
-    `md5(substring(current_query() FROM ${pi} FOR ${pf} + ${MARCA_FIM.length} - ${pi})) AS sql_md5),`,
-    `c AS (SELECT ${colunas.join(', ')})`,
+  const sql = [
+    TRAVA,
+    `WITH __sql_nuvem_marca__ AS (SELECT '${MARCA_INICIO}'::text AS inicio),`,
+    `__sql_nuvem_meta__ AS (SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS medido_em,`,
+    `current_setting('transaction_read_only') AS somente_leitura, current_setting('statement_timeout') AS teto,`,
+    `md5(substring(current_query() FROM 1 FOR ${fimDoTrecho})) AS sql_md5,`,
+    `${ocorrencias(MARCA_INICIO)}::text || '/' || ${ocorrencias(MARCA_FIM)}::text AS marcas),`,
+    `__sql_nuvem_consultas__ AS (SELECT`,
+    colunas.join(',\n'),
+    `)`,
     `SELECT json_build_object('formato', '${FORMATO_TRANSPORTE}', 'consumidor', '${consumidor}',`,
-    `'medido_em', m.medido_em, 'somente_leitura', m.somente_leitura, 'teto', m.teto, 'sql_md5', m.sql_md5,`,
-    `'consultas', json_build_object(${objeto}),`,
+    `'medido_em', m.medido_em, 'somente_leitura', m.somente_leitura, 'teto', m.teto,`,
+    `'sql_md5', m.sql_md5, 'marcas', m.marcas, 'consultas', json_build_object(${objeto}),`,
     `'md5', md5(concat_ws(E'\\n', ${canonico.join(', ')}))) AS dados_nuvem`,
-    `FROM marca, m, c, (SELECT '${MARCA_FIM}'::text AS fim) AS marca_fim;`,
-  ].join(' ');
+    `FROM __sql_nuvem_marca__, __sql_nuvem_meta__ AS m, __sql_nuvem_consultas__ AS c,`,
+    `(SELECT '${MARCA_FIM}'::text AS fim) AS __sql_nuvem_marca_fim__;`,
+  ].join('\n');
+  // O que a conferência do `sql_md5` pressupõe, conferido na GERAÇÃO: cada marca uma vez só.
+  if (sql.split(MARCA_INICIO).length !== 2 || sql.split(MARCA_FIM).length !== 2) {
+    throw new Error('TRANSPORTE_CONSULTA_INVALIDA: o SQL emitido não tem exatamente uma marca de início e uma de fim');
+  }
+  return sql;
 }
 
-/** O trecho que o `sql_md5` cobre — a mesma conta que o banco faz sobre `current_query()`. */
-export function trechoMarcado(sql: string): string {
-  const i = sql.indexOf(MARCA_INICIO);
+/** O trecho que o `sql_md5` cobre — a mesma conta que o banco faz: do 1º caractere até a marca final. */
+function trechoMarcado(sql: string): string {
   const f = sql.indexOf(MARCA_FIM);
-  if (i < 0 || f < i) throw new Error('TRANSPORTE_SQL_DIVERGENTE: o SQL não tem as marcas do transporte');
-  return sql.slice(i, f + MARCA_FIM.length);
+  if (f < 0) throw new Error('TRANSPORTE_SQL_DIVERGENTE: o SQL não tem a marca final do transporte');
+  return sql.slice(0, f + MARCA_FIM.length);
 }
 
 /**
- * Tira o payload das embalagens em que ele pode chegar: o objeto puro (o que o procedimento pede),
- * a resposta inteira do `query_database` (`{"rows":[{"dados_nuvem":…}]}`), o valor como string
- * JSON, ou os blocos de conteúdo de um resultado de ferramenta salvo em disco. Ser tolerante AQUI
- * não afrouxa nada: o que decide é o md5, logo abaixo.
+ * Tira o payload das embalagens em que ele pode chegar: o objeto puro, a resposta inteira do
+ * `query_database` (`{"rows":[{"dados_nuvem":…}]}`), o valor como string JSON, ou os blocos de
+ * conteúdo de um resultado de ferramenta que o harness gravou em disco. Ser tolerante AQUI não
+ * afrouxa nada: o que decide são as conferências logo abaixo.
  */
 function desembrulhar(valor: unknown, profundidade = 0): Record<string, unknown> {
   const falha = () =>
     new Error(
       'TRANSPORTE_FORMATO: não achei o objeto do transporte no arquivo — grave o valor da coluna ' +
-        '`dados_nuvem` (o JSON que começa com {"formato":"transporte-nuvem/1"…) ou a resposta inteira do query_database',
+        '`dados_nuvem` (o JSON com "formato":"transporte-nuvem/…") ou a resposta inteira do query_database',
     );
   if (profundidade > 5) throw falha();
   if (typeof valor === 'string') {
@@ -282,8 +299,6 @@ export function registroParaLinha(registro: string): string {
   return campos.join('|');
 }
 
-const INSTANTE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
-
 /**
  * Valida a resposta e devolve as saídas por consulta. LANÇA (⇒ exit 2 no CLI) em qualquer dúvida:
  * cada ramo tem a sua marca ASCII, para que o teste case o MOTIVO e não só "lançou".
@@ -309,7 +324,7 @@ export function lerDadosNuvem(
       `TRANSPORTE_FORMATO: resposta gerada para ${JSON.stringify(p.consumidor)}, não para ${esperado.consumidor} — arquivo de outra leitura`,
     );
   }
-  const campos = ['medido_em', 'somente_leitura', 'teto', 'sql_md5', 'md5'] as const;
+  const campos = ['medido_em', 'somente_leitura', 'teto', 'sql_md5', 'marcas', 'md5'] as const;
   for (const c of campos) {
     if (typeof p[c] !== 'string') throw new Error(`TRANSPORTE_FORMATO: campo '${c}' ausente ou não-texto`);
   }
@@ -334,15 +349,15 @@ export function lerDadosNuvem(
   }
 
   // 1º a integridade: sem ela, nenhum outro campo merece crédito (inclusive os que atestam).
-  const canonico = [FORMATO_TRANSPORTE, esperado.consumidor, s.medido_em, s.somente_leitura, s.teto, s.sql_md5];
+  const canonico = [FORMATO_TRANSPORTE, esperado.consumidor, s.medido_em, s.somente_leitura, s.teto, s.sql_md5, s.marcas];
   for (const n of nomes) {
     const linhas = linhasPor.get(n) as string[];
     canonico.push(n, String(linhas.length), linhas.join('\n'));
   }
   if (md5(canonico.join('\n')) !== s.md5) {
     throw new Error(
-      'TRANSPORTE_MD5: o md5 do payload não fecha — a resposta foi alterada na transcrição. ' +
-        'Grave de novo, sem editar (ou rode o SQL de novo)',
+      'TRANSPORTE_MD5: o md5 do payload não fecha — a resposta foi alterada ou truncada na transcrição. ' +
+        'Rode o SQL de novo e grave a resposta sem editar; nunca a reconstrua',
     );
   }
 
@@ -355,17 +370,28 @@ export function lerDadosNuvem(
   if (s.teto !== TETO_TRANSPORTE) {
     throw new Error(`TRANSPORTE_TETO: statement_timeout=${s.teto}, esperado ${TETO_TRANSPORTE}`);
   }
+  if (s.marcas !== '1/1') {
+    throw new Error(
+      `TRANSPORTE_SQL_DIVERGENTE: o texto executado tem ${s.marcas} marcas (início/fim), esperado 1/1 — ` +
+        'o lote carregava o SQL do transporte mais de uma vez',
+    );
+  }
 
   const emitido = gerarSqlNuvem(esperado.consultas, esperado.consumidor);
   if (md5(trechoMarcado(emitido)) !== s.sql_md5) {
     throw new Error(
       'TRANSPORTE_SQL_DIVERGENTE: o SQL que o banco executou não é o que o CLI emite agora — cópia não ' +
-        'verbatim, ou a entrada mudou (a main andou?). Rode o --sql-nuvem de novo e cole SEM editar',
+        'verbatim, statement antes da trava, ou a entrada mudou (a main andou?). Rode o --sql-nuvem de novo e cole SEM editar',
     );
   }
 
-  if (!INSTANTE.test(s.medido_em)) throw new Error(`TRANSPORTE_FORMATO: medido_em ilegível: ${s.medido_em}`);
   const medidoEm = new Date(s.medido_em);
+  // Ida e volta: só vale o instante que volta IGUAL ao texto que o banco escreveu (`to_char` com
+  // `YYYY-MM-DD"T"HH24:MI:SS"Z"`). Pega o formato errado E o dia impossível, que o `Date` aceita e
+  // normaliza em silêncio (30/02 vira 02/03).
+  const legivel =
+    Number.isFinite(medidoEm.getTime()) && medidoEm.toISOString() === s.medido_em.replace(/Z$/, '.000Z');
+  if (!legivel) throw new Error(`TRANSPORTE_FORMATO: medido_em ilegível: ${s.medido_em}`);
   const idadeMin = (agora.getTime() - medidoEm.getTime()) / 60_000;
   if (idadeMin > IDADE_MAXIMA_MIN) {
     throw new Error(

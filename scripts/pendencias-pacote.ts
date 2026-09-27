@@ -381,6 +381,12 @@ export function main(
 
   let veredito: VereditoPrecondicao;
   if (alvos.length === 0) {
+    if (caminhoNuvem !== null) {
+      // Arquivo pedido e não lido tem de ser DITO: calado, parece que a resposta foi conferida.
+      process.stderr.write(
+        '⏭️ --dados-nuvem ignorado: nesta leva não há o que medir no banco (nenhuma RPC literal)\n',
+      );
+    }
     // Nenhuma RPC literal na leva. Isso NÃO é "pré-condição satisfeita" quando há indireção:
     // o extrator já disse que não enxerga tudo, e uma lista vazia por cegueira é o falso verde.
     const vazio = { ausentes: [], naoMedidos: [], desatualizadas: [], naoConferidas: [] };

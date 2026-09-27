@@ -8,7 +8,7 @@
  * para qualquer tipo, não o conteúdo de um CLI.
  *
  *   bun db/lib/transporte-nuvem-prova.ts consultas <dir>   # grava <dir>/<nome>.sql
- *   bun db/lib/transporte-nuvem-prova.ts sql               # o SQL do transporte, numa linha
+ *   bun db/lib/transporte-nuvem-prova.ts sql               # o SQL do transporte (a 1ª linha é a trava)
  *   bun db/lib/transporte-nuvem-prova.ts ler <arq> <dir>   # valida; grava <dir>/<nome>.nuvem
  *
  * O `.nuvem` sai no formato exato do `psql -A -F '|' -t` (cada linha terminada em `\n`, nada para
@@ -41,6 +41,16 @@ const CONSULTAS: Consultas = {
   // não-ASCII no TEXTO do SQL (a amostra do autoteste do pacote): o `sql_md5` conta caractere no
   // banco e unidade UTF-16 no JS — só a prova de ponta a ponta diz que os dois batem
   utf8: "SELECT md5(E'\\n á  b '), 'ç'::text",
+  // nomes que um transporte ingênuo usa por dentro: a tabela `marca` e as colunas `q`, `l`, `m`, `c`.
+  // Se o SQL do transporte os usasse (a v1 usava `marca` e `q`), a consulta leria o CTE dele, não
+  // a tabela — dado errado sem erro nenhum
+  colisao: 'SELECT * FROM marca ORDER BY 1',
+  // o que a v1 recusava por juntar as linhas: comentário de linha no fim, comentário de bloco com
+  // aspa, dollar-quoting e literal atravessando a quebra, aspa escapada por barra
+  multilinha:
+    "SELECT /* it's */ $q1$a\nb$q1$ AS dollar,\n" +
+    "E'x\\'y' AS escapada,\n" +
+    "'atravessa\nlinha' AS literal -- comentário no fim",
 };
 
 function main(argv: string[]): number {

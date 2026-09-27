@@ -6,7 +6,7 @@
 # @src: scripts/lib/transporte-nuvem.ts
 # @test: scripts/lib/transporte-nuvem.test.ts
 # Rode: scripts/mutcheck.sh scripts/lib/transporte-nuvem.ts scripts/lib/transporte-nuvem.test.ts scripts/mutcheck.d/transporte-nuvem.mut
-PEGA | trava de leitura some do SQL emitido                 | s/'SET TRANSACTION READ ONLY;',/'',/
+PEGA | trava de leitura some do SQL emitido                 | s/^const TRAVA = `SET TRANSACTION READ ONLY; /const TRAVA = `/
 PEGA | somente_leitura=off aceito                          | s/if \(s\.somente_leitura !== 'on'\) \{/if (false) {/
 PEGA | teto diferente do wrapper aceito                    | s/if \(s\.teto !== TETO_TRANSPORTE\) \{/if (false) {/
 PEGA | SQL alterado no caminho aceito (sql_md5)            | s/if \(md5\(trechoMarcado\(emitido\)\) !== s\.sql_md5\) \{/if (false) {/
@@ -15,9 +15,14 @@ PEGA | resposta velha aceita                               | s/if \(idadeMin > I
 PEGA | relógio do banco no futuro aceito                   | s/if \(idadeMin < -FOLGA_RELOGIO_MIN\) \{/if (false) {/
 PEGA | consulta faltando ou sobrando aceita                | s/if \(chaves\.join\(','\) !== nomes\.join\(','\)\) \{/if (false) {/
 PEGA | consulta fora do pacote vira resposta vazia         | s/if \(saida === undefined\) \{/if (false) {/
-PEGA | literal atravessando a quebra de linha aceito       | s/if \(aspas % 2 !== 0\) \{/if (false) {/
+PEGA | SQL do transporte em dobro no lote aceito (marcas)  | s/if \(s\.marcas !== '1\/1'\) \{/if (false) {/
+PEGA | hash que começa depois de um prefixo enfiado        | s/return sql\.slice\(0, f \+ MARCA_FIM\.length\);/return sql.slice(sql.indexOf('WITH '), f + MARCA_FIM.length);/
+PEGA | medido_em impossível aceito (30/02 vira 02/03)       | s/if \(!legivel\) throw/if (false) throw/
+PEGA | Date inválido estoura RangeError sem a marca        | s/Number\.isFinite\(medidoEm\.getTime\(\)\) &&/true &&/
+PEGA | consulta com o namespace interno aceita             | s/if \(corpo\.includes\(PREFIXO_INTERNO\)\) throw/if (false) throw/
+PEGA | consulta com caractere de controle aceita           | s/if \(CONTROLE\.test\(corpo\)\) throw/if (false) throw/
 PEGA | aspas dobradas do record_out não desfeitas          | s/if \(registro\[i \+ 1\] === '"'\) \{/if (false) {/
 # A linha pelo `row_to_json` (o dialeto do JSON) só aparece EXECUTANDO o SQL num Postgres: a suíte
 # unitária não roda SQL. Declarado como sobrevivente para a fronteira ficar escrita — quem a pega é
 # `db/test-transporte-nuvem.sh` (núcleo do CI, sabotagem `linha-por-json`).
-SOBREVIVE | linha pelo row_to_json em vez do record_out      | s/SELECT q::text AS l FROM/SELECT row_to_json(q)::text AS l FROM/
+SOBREVIVE | linha pelo row_to_json em vez do record_out      | s/SELECT ROW\(__sql_nuvem_linha__\.\*\)::text AS l FROM/SELECT row_to_json(__sql_nuvem_linha__)::text AS l FROM/

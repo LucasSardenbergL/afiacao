@@ -10,11 +10,17 @@
 #   T1-T3  o SQL e a resposta existem na forma esperada (sem isso o resto nao julga nada);
 #   T4     a resposta valida passa pelo leitor;
 #   T5     FIDELIDADE: cada consulta, byte a byte (`cmp`), igual ao psql — inclusive boolean,
-#          timestamp, array, jsonb, NULL x vazio, quebra de linha dentro do campo e SQL nao-ASCII;
-#   T6     o prefixo emitido BLOQUEIA escrita no lote (SQLSTATE 25006) e nada persiste;
+#          timestamp, array, jsonb, NULL x vazio, quebra de linha dentro do campo, SQL nao-ASCII,
+#          nomes que o transporte usa por dentro (`marca`, `q`) e SQL multilinha com comentario,
+#          dollar-quoting e aspa escapada;
+#   T6     a 1a linha emitida (a trava) BLOQUEIA escrita no lote (SQLSTATE 25006) e nada persiste;
 #   T7-T8  sem a trava (ou com os statements mandados separados) a resposta diz `off` e e RECUSADA;
 #   T9     SQL alterado no caminho e recusado (`sql_md5` via `current_query()`);
-#   T10    payload adulterado na transcricao e recusado (md5).
+#   T10    payload adulterado na transcricao e recusado (md5);
+#   T11    statement ANTES da trava: a escrita ACONTECE (a trava nao retroage) e o `sql_md5`, que
+#          cobre do 1o caractere, a DETECTA — o transporte detecta, nao impede;
+#   T12    o SQL do transporte duas vezes no lote, com escrita entre as copias: o `sql_md5` da 1a
+#          copia fecha, e so a contagem de marcas (2/2) recusa.
 #
 #   bash db/test-transporte-nuvem.sh               # a prova
 #   bash db/test-transporte-nuvem.sh --falsificar  # controle verde + sabota a lib e EXIGE vermelho
@@ -90,13 +96,18 @@ if [ "${1:-}" = "--falsificar" ]; then
       SAB_FALHAS=$((SAB_FALHAS + 1))
     fi
   }
-  sabota sem-trava        'FALHA [T4]'       "s/'SET TRANSACTION READ ONLY;',/'',/"
-  sabota linha-por-json   'FALHA [T4]'       's/SELECT q::text AS l FROM/SELECT row_to_json(q)::text AS l FROM/'
+  sabota sem-trava        'FALHA [T4]'       "s/^const TRAVA = \`SET TRANSACTION READ ONLY; /const TRAVA = \`/"
+  sabota linha-por-json   'FALHA [T4]'       's/SELECT ROW(__sql_nuvem_linha__\.\*)::text AS l FROM/SELECT row_to_json(__sql_nuvem_linha__)::text AS l FROM/'
   sabota aspas-dobradas   'FALHA [T5:tipos]' "s/if (registro\[i + 1\] === '\"') {/if (false) {/"
   sabota barra-invertida  'FALHA [T5:tipos]' "s/      if (ch === '\\\\\\\\') {/      if (false) {/"
   sabota sem-leitura-guard 'FALHA [T7]'      "s/if (s.somente_leitura !== 'on') {/if (false) {/"
   sabota sem-sql-md5      'FALHA [T9]'       's/if (md5(trechoMarcado(emitido)) !== s.sql_md5) {/if (false) {/'
   sabota sem-md5          'FALHA [T10]'      "s/if (md5(canonico.join('\\\\n')) !== s.md5) {/if (false) {/"
+  # o hash comecando no WITH (dos DOIS lados, senao o T4 reprova antes) deixa passar o prefixo
+  sabota hash-sem-prefixo 'FALHA [T11]'      "s/FROM 1 FOR \${fimDoTrecho}/FROM position('WITH ' IN current_query()) FOR \${fimDoTrecho} - position('WITH ' IN current_query()) + 1/;s/return sql.slice(0, f + MARCA_FIM.length);/return sql.slice(sql.indexOf('WITH '), f + MARCA_FIM.length);/"
+  sabota sem-marcas       'FALHA [T12]'      "s/if (s.marcas !== '1\/1') {/if (false) {/"
+  # o CTE com o nome ingenuo `marca` sombreia a tabela do usuario: dado errado, sem erro
+  sabota namespace-ingenuo 'FALHA [T5:colisao]' 's/__sql_nuvem_marca__/marca/g'
   git -C "$WT_SABOTADO" checkout -q -- .
   echo "SABOTAGENS: $SAB_VERMELHAS vermelhas / $SAB_FALHAS falhas"
   [ "$SAB_FALHAS" -eq 0 ]; exit $?
@@ -123,6 +134,8 @@ INSERT INTO prova_ledger VALUES
   ('edge-a', 'v2', '2026-09-27 11:00:00+00'),
   ('edge-b', 'v1.0-sensor-inicial', '2026-09-20 08:30:00+00');
 CREATE TABLE prova_escrita (x int);
+CREATE TABLE marca (q text, l text, m text, c text);
+INSERT INTO marca VALUES ('q1', 'l1', NULL, ''), ('q2', 'l,2', 'm', 'c(');
 SQL
 
 # RESULTADO: <pass> ok / <fail> fail — sem ela, exit 0 nao prova que asseriu algo.
@@ -141,15 +154,16 @@ roda_transporte() { # <arquivo-sql> <saida-json> -> 0 se veio exatamente uma lin
 ler() { "${PROVA[@]}" ler "$1" "$2" 2>"$3"; }
 
 printf '== transporte da nuvem x psql ==\n'
-if "${PROVA[@]}" consultas "$TMP/consultas" && [ "$(find "$TMP/consultas" -name '*.sql' | wc -l)" -eq 5 ]; then
-  ok "[T1] 5 consultas de prova gravadas"
+if "${PROVA[@]}" consultas "$TMP/consultas" && [ "$(find "$TMP/consultas" -name '*.sql' | wc -l)" -eq 7 ]; then
+  ok "[T1] 7 consultas de prova gravadas"
 else
   bad "[T1] consultas de prova nao gravadas"
 fi
 
 "${PROVA[@]}" sql > "$TMP/transporte.sql" 2>"$TMP/sql.err"
-if head -c 26 "$TMP/transporte.sql" | grep -qxF 'SET TRANSACTION READ ONLY;' && grep -qF 'á' "$TMP/transporte.sql"; then
-  ok "[T2] SQL do transporte abre com a trava e carrega o texto nao-ASCII"
+TRAVA="SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '30s';"
+if [ "$(head -1 "$TMP/transporte.sql")" = "$TRAVA" ] && grep -qF 'á' "$TMP/transporte.sql"; then
+  ok "[T2] SQL do transporte abre com a trava na 1a linha e carrega o texto nao-ASCII"
 else
   bad "[T2] SQL do transporte fora da forma: $(head -c 200 "$TMP/transporte.sql") $(head -c 200 "$TMP/sql.err")"
 fi
@@ -178,8 +192,8 @@ for sqlf in "$TMP"/consultas/*.sql; do
   fi
 done
 
-# T6: o prefixo EMITIDO trava escrita no lote inteiro — SQLSTATE, nao mensagem (idioma do servidor)
-prefixo="$(sed 's/ WITH marca AS .*//' "$TMP/transporte.sql")"
+# T6: a trava EMITIDA (a 1a linha) trava escrita no lote inteiro — SQLSTATE, nao mensagem (idioma)
+prefixo="$(head -1 "$TMP/transporte.sql")"
 saida6="$(P -v VERBOSITY=sqlstate -c "$prefixo INSERT INTO prova_escrita VALUES (1);" 2>&1)"
 if printf '%s' "$saida6" | grep -qF '25006' && [ "$(P -A -t -c 'SELECT count(*) FROM prova_escrita')" = "0" ]; then
   ok "[T6] o prefixo emitido bloqueia a escrita (25006) e nada persiste"
@@ -208,7 +222,7 @@ else
 fi
 
 # T9: um caractere a mais DENTRO do trecho marcado (SQL ainda valido) — o sql_md5 nao fecha
-sed 's/ AS q)/ AS q )/' "$TMP/transporte.sql" > "$TMP/alterado.sql"
+sed 's/ AS c_tipos/  AS c_tipos/' "$TMP/transporte.sql" > "$TMP/alterado.sql"
 if ! cmp -s "$TMP/alterado.sql" "$TMP/transporte.sql" && roda_transporte "$TMP/alterado.sql" "$TMP/alterado.json" \
   && ! ler "$TMP/alterado.json" "$TMP/x9" "$TMP/ler9.err" && grep -qF 'TRANSPORTE_SQL_DIVERGENTE' "$TMP/ler9.err"; then
   ok "[T9] SQL alterado no caminho recusado (TRANSPORTE_SQL_DIVERGENTE)"
@@ -223,6 +237,31 @@ if ! cmp -s "$TMP/adulterada.json" "$TMP/resposta.json" \
   ok "[T10] payload adulterado recusado (TRANSPORTE_MD5)"
 else
   bad "[T10] payload adulterado NAO foi recusado: $(head -c 300 "$TMP/ler10.err" 2>/dev/null)"
+fi
+
+# T11: um statement de ESCRITA antes da trava. Passar a READ ONLY depois de escrever e permitido
+# (o Postgres so barra o caminho inverso), entao o INSERT persiste — e o sql_md5, que cobre do 1o
+# caractere, e o que o denuncia.
+{ printf 'INSERT INTO prova_escrita VALUES (11); '; cat "$TMP/transporte.sql"; } > "$TMP/prefixada.sql"
+if roda_transporte "$TMP/prefixada.sql" "$TMP/prefixada.json" \
+  && [ "$(P -A -t -c 'SELECT count(*) FROM prova_escrita WHERE x = 11')" = "1" ] \
+  && ! ler "$TMP/prefixada.json" "$TMP/x11" "$TMP/ler11.err" && grep -qF 'TRANSPORTE_SQL_DIVERGENTE' "$TMP/ler11.err"; then
+  ok "[T11] escrita antes da trava: persiste (detecta, nao impede) e e recusada (TRANSPORTE_SQL_DIVERGENTE)"
+else
+  bad "[T11] escrita antes da trava NAO foi denunciada: $(head -c 300 "$TMP/ler11.err" 2>/dev/null) $(head -c 300 "$TMP/prefixada.json.err" 2>/dev/null)"
+fi
+
+# T12: o SQL inteiro duas vezes, com COMMIT + escrita entre as copias (a 2a transacao implicita
+# nao herda a trava). O `query_database` devolve o ULTIMO resultado; o sql_md5 vai ate a 1a marca
+# final, que e a da 1a copia — fecha. So as marcas (2/2) recusam.
+{ cat "$TMP/transporte.sql"; printf 'COMMIT; INSERT INTO prova_escrita VALUES (12);\n'; cat "$TMP/transporte.sql"; } > "$TMP/dupla.sql"
+dupla="$(P -A -t -c "$(cat "$TMP/dupla.sql")" 2>"$TMP/dupla.err")"
+printf '%s\n' "$dupla" | grep '^{' | tail -1 > "$TMP/dupla.json"
+if [ -s "$TMP/dupla.json" ] && ! ler "$TMP/dupla.json" "$TMP/x12" "$TMP/ler12.err" \
+  && grep -qF 'TRANSPORTE_SQL_DIVERGENTE' "$TMP/ler12.err" && grep -qF '2/2' "$TMP/ler12.err"; then
+  ok "[T12] SQL em dobro no lote recusado pelas marcas (2/2)"
+else
+  bad "[T12] SQL em dobro NAO foi recusado pelas marcas: $(head -c 300 "$TMP/ler12.err" 2>/dev/null) $(head -c 300 "$TMP/dupla.err" 2>/dev/null)"
 fi
 
 echo "RESULTADO: $PASS ok / $FAIL fail"
