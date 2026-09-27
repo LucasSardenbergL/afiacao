@@ -64,10 +64,10 @@ export const MANIFESTO_NUCLEO = 'db/nucleo-ci.txt';
  */
 export const PISOS = {
   arquivosPorRaiz: PISOS_DO_VIZINHO.arquivosPorRaiz,
-  listas: 3, // medido: 3 (sync-reprocess, push-vendedora, auto-aprovacao-piloto)
-  entradas: 24, // medido: 13 + 6 + 5
-  lacos: 3, // medido: 3
-  linhasFalsificarNucleo: 5, // medido: 5 (4 da varredura + test-transporte-nuvem, #2601)
+  listas: 3, // medido: 4 (sync-reprocess, push-vendedora, auto-aprovacao-piloto, positivacao #2606)
+  entradas: 30, // medido: 38 (13 + 6 + 5 + 14)
+  lacos: 3, // medido: 4
+  linhasFalsificarNucleo: 6, // medido: 7 (4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
 } as const;
 
 export interface Juiz {
