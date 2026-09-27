@@ -12,9 +12,11 @@
 # Datas passam por `jq` (fromdateiso8601), nunca por `date -d`/`date -j`: as flags de data divergem
 # entre BSD e GNU sem falhar — fazem OUTRA coisa em silêncio (evidencia-positiva-shell.md §6).
 #
-# FORMATO COMPARTILHADO: `.claude/hooks/sonda-processo-guard.sh` grava linhas com o MESMO shape
-# ({ts, ramo, trecho, wt}) de proposito, e le-se com este mesmo script passando o log dele:
+# FORMATO COMPARTILHADO: `.claude/hooks/sonda-processo-guard.sh` e `.claude/hooks/word-split-zsh-guard.sh`
+# gravam linhas com o MESMO shape ({ts, ramo, trecho, wt}) de proposito, e leem-se com este mesmo
+# script passando o log de cada um:
 #   bash scripts/pipestatus-guard-sinal.sh ~/.claude/afiacao-sonda-processo-guard.jsonl
+#   bash scripts/pipestatus-guard-sinal.sh ~/.claude/afiacao-word-split-guard.jsonl
 # (o cabecalho impresso continua dizendo "pipestatus-zsh-guard" — e so o titulo; os ramos no
 # corpo do relatorio identificam qual guard disparou). Mudar o shape quebra os DOIS.
 # Uso:  bash scripts/pipestatus-guard-sinal.sh [caminho-do-log]

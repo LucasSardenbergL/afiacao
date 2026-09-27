@@ -412,3 +412,17 @@ Devolve **0** em 2026-08-24 e ainda **0** na re-medição de 2026-09-06 (data em
 registrada, ~290 PRs depois — o corpus cresceu, a assinatura seguiu limpa). Qualquer match novo é um
 sentinela escolhendo alvo por tamanho — proxy, não propriedade: confira se o caso ruim que ele
 constrói ainda é ruim.
+
+## Variante 5 — o fiscal contava o TOKEN do deny, não o ENVELOPE que o harness honra (2026-09-27)
+
+O `gates:frescura` classificava um hook como "que NEGA" pela regex `permissionDecision…deny` em
+qualquer lugar do fonte (limpo de comentário — a lição das variantes acima estava aplicada). O
+`check-gstack.sh` emitia o token no TOPO do JSON; o harness só honra a decisão dentro de
+`hookSpecificOutput` com `hookEventName` (medido por sonda: as duas formas incompletas deixam a
+chamada passar). Resultado: 136 dias no censo como bloqueio, sem bloquear nada — e as fixtures do
+próprio fiscal usavam a forma quebrada como exemplo de "hook que bloqueia".
+
+É a premissa (2) da regra acima com outro rosto: *o dado com que eu construo o "bom" continua sendo
+bom* — a fixture de "bloqueia" nunca foi conferida contra o harness. Conserto: o deny só conta no
+envelope completo, e fora dele é vermelho próprio (`DENY-SEM-ENVELOPE`). Detalhe, sonda e decisão
+(o gate virou sensor): [gate-gstack-fail-open.md](gate-gstack-fail-open.md).

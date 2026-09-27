@@ -48,6 +48,7 @@ Crie estes 6 todos (TodoWrite) e siga em ordem. Os passos 3 (tabela) e 5 (progra
 ### Passo 1 — Capturar a fonte e extrair PRÁTICAS
 
 - **Link** → `/browse` (gstack; obrigatório pra web — não `WebFetch`): `goto` + `text`. Se for SPA que não renderiza, `snapshot`.
+  - **Sem gstack** (sessão cloud — o `vigia-gstack.sh` avisa no boot): `WebFetch` é o único caminho. Declare no relatório que a fonte foi lida SEM renderizar JS; se a página vier vazia ou só com o esqueleto da SPA, peça ao Lucas o PDF/print em vez de extrair práticas do nada.
 - **PDF/print** → `Read` no arquivo (o Read lê PDF e imagem).
 
 Destile a fonte numa **lista de práticas concretas e enumeráveis** — o que a empresa-referência FAZ (features, capacidades, táticas), não o marketing. Uma prática é acionável e testável contra o app ("cotação online self-service", "recompra em 1 clique", "hierarquia de conta multiusuário com aprovação"), não um adjetivo ("experiência melhor"). Numere-as; some 8–20 costuma ser o alvo. Guarde a fonte (URL/arquivo) — vai citada no fim.
