@@ -119,7 +119,11 @@ declarada; e sem a declaração o G3 cai no juiz estrito (é essa camada que obr
 **Os outros três juízes do núcleo já eram certos**, cada um no seu idioma: `canaria-veredito`
 (`CERTO` só com a marca da asserção nos 2 locales; SQL inválido e morte do shell recusados; controle
 NEGATIVO do próprio juiz), `db-aplicar` (`confere` com rc EXATO e todas as marcas; "o rc sozinho
-aceita qualquer vermelho" é recusado por escrito) e o `vermelha_por` do pedido-total.
+aceita qualquer vermelho" é recusado por escrito) e o `vermelha_por` do pedido-total. Dois entraram
+DEPOIS da varredura e foram lidos um a um: `test-transporte-nuvem` (#2601, `falsificar=10`: vermelho só
+com a marca `FALHA [T<n>]` do assert, sobre um controle `0 fail` da mesma invocação) e
+`test-tint-promocao-assincrona` (o #2605 o põe no núcleo com `falsificar=12`: exige o CONJUNTO EXATO de
+asserts caídos — o juiz mais estrito do repo), registrado de antemão para o gate não travar aquele PR.
 
 ## A varredura (matar-classe)
 
@@ -211,7 +215,10 @@ Teste que lê fonte (vitest, `falsificar-exige-assert-gate.test.ts`), sobre o st
   aqui também estão registrados.
 
 O laço de antes (`0906c17c2`) fica vermelho com 13 R1 + 1 R2; o repo de hoje passa com exatamente o
-denominador medido (455 arquivos, 3 listas, 24 entradas, 3 laços, 4 linhas do núcleo). As mutações
+denominador medido (457 arquivos, 3 listas, 24 entradas, 3 laços, 5 linhas do núcleo). A 5ª linha
+foi o controle positivo do R3 em caso REAL: o `test-transporte-nuvem` entrou no núcleo depois da
+varredura, e a 1ª rodada pós-rebase o acusou ("falsificar=<n> sem JUIZ registrado") até o juiz dele
+ser lido e registrado. Simulado o manifesto do #2605: com o pré-registro do tint, 0; sem, R3. As mutações
 que provam o dente de cada camada: `scripts/mutcheck.d/falsificar-exige-assert.mut`.
 Medido: **28/28 PEGA**, 0 sobreviventes, 0 inválidas, controle+ ✓.
 

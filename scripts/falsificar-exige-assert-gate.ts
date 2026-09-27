@@ -63,7 +63,7 @@ export const PISOS = {
   listas: 3, // medido: 3 (sync-reprocess, push-vendedora, auto-aprovacao-piloto)
   entradas: 24, // medido: 13 + 6 + 5
   lacos: 3, // medido: 3
-  linhasFalsificarNucleo: 4, // medido: 4
+  linhasFalsificarNucleo: 5, // medido: 5 (4 da varredura + test-transporte-nuvem, #2601)
 } as const;
 
 export interface Juiz {
@@ -105,6 +105,22 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
       `vermelha_por() { if [ "$2" = "$3" ]; then sab_verm`,
       'a sabotagem não alterou o texto da migration',
     ],
+  },
+  'db/test-transporte-nuvem.sh': {
+    motivo:
+      'sabota <id> <marca>: vermelho só com a marca do assert (`FALHA [T<n>]`) no log, sobre um controle `0 fail` da MESMA invocação; sabotagem que não aplica é falha',
+    ancoras: [
+      `grep -qE '^RESULTADO: [0-9]+ ok / 0 fail$' "$TMP/controle.log"`,
+      `if grep -qF -- "$marca" "$log"; then`,
+      'a sabotagem nao aplicou (o texto-alvo mudou?)',
+    ],
+  },
+  // Pré-registrado para o #2605, que o põe no núcleo com `falsificar=12` (o registro de arquivo lido e
+  // ancorado vale mesmo antes da linha do manifesto existir).
+  'db/test-tint-promocao-assincrona.sh': {
+    motivo:
+      'fals <nome> <esperado>: vermelho só com o CONJUNTO EXATO de asserts caídos (falhas_de); sabotagem no-op aborta (cmp na migration, RAISE no corpo do promote)',
+    ancoras: [`got="$(suite "$mig" "$sab" | falhas_de)"`, `if [ "$got" = "$esperado" ]; then`, `if cmp -s "$MIG" "$1"; then echo "✗ sabotagem no-op`],
   },
   'db/test-authz-revoke-anon-rpc.sh': {
     motivo: 'falsificação na suíte normal: ABORTOU só com a marca da postcondição na saída do apply; outro erro vira "ERRO ALHEIO"',
