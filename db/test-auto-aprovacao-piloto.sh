@@ -134,7 +134,7 @@ sabotar() {
   local de="$1" para="$2" n="${3:-1}" tmp
   tmp="$(mktemp /tmp/sab-autoaprov.XXXXXX)"
   awk 'index($0,"CREATE OR REPLACE FUNCTION public.reposicao_alerta_pedido_minimo_tick(")==1{f=1} f{print} f && /^\$\$;$/{exit}' "$MIG" > "$tmp"
-  python3 - "$tmp" "$de" "$para" "$n" <<'PYSAB' || { echo "❌ SABOTAGEM NÃO APLICÁVEL ($SABOTAGEM): o padrão não ocorre $n× no tick"; exit 9; }
+  python3 - "$tmp" "$de" "$para" "$n" <<'PYSAB' || { echo "❌ SABOTAGEM NÃO APLICÁVEL ($SABOTAGEM): o padrão não ocorre ${n}× no tick"; exit 9; }
 import sys
 p, de, para, n = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 s = open(p).read()
