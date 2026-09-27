@@ -12,14 +12,20 @@ EOF da entrada ANTES da resposta (medido: o `read` do script lia vazio). Por que
 Teto: um cenario que pendura nao pode pendurar a suite (espera sem teto e fail-OPEN). Estourou ->
 mata o grupo do filho, diz isso e sai 124.
 
+Saida: o exit DO COMANDO (morto por sinal N -> 128+N) · 124 = teto · 125 = erro deste helper. O lab
+compara esse numero com o do script (0/1/2): um codigo do helper nunca pode cair nessa faixa. Prova:
+prova_com_tty.sh (a entrada que chega depois do comando sair; o erro interno).
+
 Uso: python3 com_tty.py <teto_s> <comando> [args...]
 """
+import errno
 import os
 import pty
 import select
 import signal
 import sys
 import time
+import traceback
 
 
 def main():
@@ -50,7 +56,17 @@ def main():
         if ler_entrada and entrada in prontos:
             dados = os.read(entrada, 65536)
             if dados:
-                os.write(fd, dados)
+                # Sob carga a resposta pode chegar DEPOIS que o comando saiu e fechou o TTY: o macOS
+                # devolve EIO a essa escrita (medido; o Linux, pelo pty.c, a aceita). Ninguem mais
+                # vai le-la: descarta e segue drenando — o rc que vale e o DO COMANDO. Sem isto, a
+                # excecao matava o helper com 1, o "nao consegui" do script (flake de 2026-09-26).
+                try:
+                    os.write(fd, dados)
+                except OSError as e:
+                    if e.errno != errno.EIO:
+                        raise
+                    os.write(1, b"\nCOM_TTY: entrada descartada - o comando ja tinha saido e fechado o TTY\n")
+                    ler_entrada = False
             else:
                 ler_entrada = False  # EOF da entrada: para de ler, SEM mandar ^D ao TTY
     _, st = os.waitpid(pid, 0)
@@ -58,4 +74,9 @@ def main():
     sys.exit(rc if rc >= 0 else 128 - rc)  # morto por sinal N -> 128+N, como o shell
 
 
-main()
+try:
+    main()
+except Exception as e:  # erro do HELPER: o python sairia 1, que o lab leria como veredito do script
+    traceback.print_exc()
+    os.write(1, f"\nCOM_TTY: erro interno do helper ({type(e).__name__}) - este rc 125 e do HELPER, nao do comando\n".encode())
+    sys.exit(125)

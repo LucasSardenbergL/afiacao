@@ -255,7 +255,7 @@ if quer C3; then
   verde "C3 apt-get install transitorio — step verde"
   espera_conta APTINS 2 "C3 apt-get install transitorio — chamado 2x"
   case "$SAIDA" in
-    *"↻ apt-get install postgresql-17: OK na tentativa 2/3"*) passou "C3 apt-get install transitorio — re-tentativa registrada" ;;
+    *"↻ apt-get install postgresql-17 + pgvector: OK na tentativa 2/3"*) passou "C3 apt-get install transitorio — re-tentativa registrada" ;;
     *) falhou "C3 apt-get install transitorio — verde, mas sem a linha de re-tentativa" ;;
   esac
 fi
@@ -301,7 +301,7 @@ fi
 
 if quer C7; then
   roda LAB_APTINS_FALHAS=sempre LAB_APTINS_EXIT=100
-  vermelho "C7 apt-get install PERMANENTE — reprova com o exit do apt" 100 "apt-get install postgresql-17 falhou nas 3 tentativas"
+  vermelho "C7 apt-get install PERMANENTE — reprova com o exit do apt" 100 "apt-get install postgresql-17 + pgvector falhou nas 3 tentativas"
   espera_conta APTINS 3 "C7 apt-get install PERMANENTE — tentou 3x"
 fi
 

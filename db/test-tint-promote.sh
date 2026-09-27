@@ -15,18 +15,12 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5435
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-5435}"
 DATA="$(mktemp -d /tmp/pgtest-tintpromote.XXXXXX)/data"
 export LC_ALL=C LANG=C
-
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
-
-CELLAR="$(brew --prefix postgresql@${PGVER})"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
 trap cleanup EXIT
@@ -35,6 +29,11 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-tintpromote.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres tintpromote_verify
 P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d tintpromote_verify "$@"; }
+# Recibo para o db/roda-nucleo-ci.sh. A prova é FAIL-FAST (asserção em SQL = RAISE sob ON_ERROR_STOP;
+# em bash = exit 1), então FAIL é 0 por construção e o que se conta são os checkpoints ✓ ALCANÇADOS:
+# truncar a prova — ou um `exit 0` no meio — derruba a contagem abaixo do mínimo do manifesto.
+PASSOU=0
+ok() { PASSOU=$((PASSOU + 1)); echo "  ✓ $*"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-tintpromote.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -956,7 +955,7 @@ P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-000
 DSAB=$(P -tA -c "SELECT _dif_count();")
 case "$DSAB" in
   0|"") echo "✗ F1 FALHOU: sabotei o NULL-honesto e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
-  *)    echo "  ✓ F1 — NULL-honesto furado diverge do loop em $DSAB linhas (C13.4 tem dente)" ;;
+  *)    ok "F1 — NULL-honesto furado diverge do loop em $DSAB linhas (C13.4 tem dente)" ;;
 esac
 P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
@@ -969,7 +968,7 @@ P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-000
 DSAB2=$(P -tA -c "SELECT _dif_count();")
 case "$DSAB2" in
   0|"") echo "✗ F2 FALHOU: troquei o fator e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
-  *)    echo "  ✓ F2 — fator=1 diverge do loop em $DSAB2 linhas (regra de 3 coberta)" ;;
+  *)    ok "F2 — fator=1 diverge do loop em $DSAB2 linhas (regra de 3 coberta)" ;;
 esac
 P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
@@ -977,7 +976,7 @@ P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-000
 # Restauração confirmada: set-based ≡ loop de novo.
 DOK=$(P -tA -c "SELECT _dif_count();")
 [ "$DOK" = "0" ] || { echo "✗ restauração falhou: _dif_count=$DOK (esperado 0)"; exit 1; }
-echo "  ✓ restauração OK — set-based≡loop de novo (_dif_count=0)"
+ok "restauração OK — set-based≡loop de novo (_dif_count=0)"
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════
 # FASE 1 (P0) — GUARD 4: fronteira de escrita fail-closed por-linha (RECEITA CORROMPIDA).
@@ -1009,7 +1008,7 @@ P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid
 # nunca declaram is_base_pura → NÃO-REGRESSÃO do caminho não-declarado; C15 prova o endurecimento).
 P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' AND pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%v_limpezas_24h%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
   || { echo "✗ FASE1d: gates 1d (_eu_pura_contraditoria + cap acumulado) não estão no corpo aplicado"; exit 1; }
-echo "  ✓ corpo consolidado + guard 4 + gate 1c + fase 1d aplicados (_fl_corrompida + _eu_incompleta + _eu_pura_contraditoria)"
+ok "corpo consolidado + guard 4 + gate 1c + fase 1d aplicados (_fl_corrompida + _eu_incompleta + _eu_pura_contraditoria)"
 
 echo ""
 echo "════════ CENÁRIO 14 — receita CORROMPIDA preserva a anterior + loga erro (Guard 4) ════════"
@@ -1457,7 +1456,7 @@ SQL
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e14f0000-0000-0000-0000-0000000000c0');" >/dev/null
 NBASE=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14F';")
 [ "$NBASE" = "2" ] || { echo "✗ baseline falsif: COR14F deveria ter 2 itens com a migration real, achei $NBASE"; exit 1; }
-echo "  ✓ baseline VERDE — migration real: corrompido preserva 2 itens (COR14F)"
+ok "baseline VERDE — migration real: corrompido preserva 2 itens (COR14F)"
 # SABOTAGEM: remove o filtro NOT EXISTS do _expand → a corrompida volta a expandir → grava parcial.
 # Alvo: o DELETE que aplica o Guard 4 sobre o VENCEDOR (_expand_uniq). Removê-lo faz a fórmula
 # corrompida voltar a ser promovida → o DELETE de itens roda → receita PARCIAL.
@@ -1467,7 +1466,7 @@ P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-guard4.sql >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e14f0000-0000-0000-0000-0000000000c0');" >/dev/null
 NSAB=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14F';")
 case "$NSAB" in
-  1) echo "  ✓ guard4 furado — corrompida gravou receita PARCIAL (COR14F: 1 item, VM14 sumiu) → C14.2 tem dente" ;;
+  1) ok "guard4 furado — corrompida gravou receita PARCIAL (COR14F: 1 item, VM14 sumiu) → C14.2 tem dente" ;;
   2) echo "✗ FALSIF FALHOU: sabotei o guard4 e a receita NÃO corrompeu (ainda 2 itens) → C14.2 é fraco"; exit 1 ;;
   *) echo "✗ FALSIF inesperado: COR14F com $NSAB itens após sabotagem (esperado 1 parcial)"; exit 1 ;;
 esac
@@ -1475,7 +1474,7 @@ esac
 P -v ON_ERROR_STOP=1 -q -f "$MIGG" >/dev/null
 P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
   || { echo "✗ restauração guard4 falhou"; exit 1; }
-echo "  ✓ restauração OK — guard4 de volta no corpo"
+ok "restauração OK — guard4 de volta no corpo"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FASE 1c — protocolo de staging como UNIDADE (expected_item_count). Cenários C24-C29 + falsificação.
@@ -1724,7 +1723,7 @@ SELECT tint_promote_sync_run('e1c24000-0000-0000-0000-0000000000f1');
 SQL
 NBASE1C=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';")
 [ "$NBASE1C" = "2" ] || { echo "✗ baseline F1c: COR24 deveria ter 2 itens, achei $NBASE1C"; exit 1; }
-echo "  ✓ baseline VERDE — COR24 re-populada {10,5} pelo protocolo íntegro"
+ok "baseline VERDE — COR24 re-populada {10,5} pelo protocolo íntegro"
 # SABOTAGEM: neutraliza o predicado do gate (mismatch nunca detectado) e re-aplica SÓ a função.
 sed 's/AND fl.expected_item_count <> COALESCE(si.n, 0)/AND false/' "$MIGF" > /tmp/sab-tint-1c.sql
 grep -q 'AND fl.expected_item_count <> COALESCE(si.n, 0)' /tmp/sab-tint-1c.sql && { echo "✗ sabotagem F1c: sed não neutralizou o predicado do gate"; exit 1; }
@@ -1745,7 +1744,7 @@ SQL
 # no bash daria falso vermelho).
 QSAB=$(P -tA -c "SELECT (max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') = 77) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id WHERE f.account='oben' AND f.cor_id='COR24';")
 [ "$QSAB" = "t" ] || { echo "✗ F1c FALHOU: gate sabotado NÃO produziu o dano (AX24=77? $QSAB) — C24.2 não depende do gate"; exit 1; }
-echo "  ✓ gate furado — subconjunto SUBSTITUIU a receita (AX24=77): C24 tem dente"
+ok "gate furado — subconjunto SUBSTITUIU a receita (AX24=77): C24 tem dente"
 # RESTAURA a v4 íntegra e re-prova: novo run subconjunto (88) tem de ser BARRADO (receita segue 77).
 P -v ON_ERROR_STOP=1 -q -f "$MIGF" >/dev/null
 P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%expected_item_count <> COALESCE%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
@@ -1762,7 +1761,7 @@ SELECT tint_promote_sync_run('e1c24000-0000-0000-0000-0000000000f3');
 SQL
 QRES=$(P -tA -c "SELECT (max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') = 77) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id WHERE f.account='oben' AND f.cor_id='COR24';")
 [ "$QRES" = "t" ] || { echo "✗ F1c FALHOU: v4 restaurada não barrou o run incompleto (AX24=77? $QRES — o run 88 devia ser barrado)"; exit 1; }
-echo "  ✓ restauração OK — run incompleto (88) barrado de novo: receita preservada (AX24=77)"
+ok "restauração OK — run incompleto (88) barrado de novo: receita preservada (AX24=77)"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FASE 1d — base pura EXPLÍCITA (is_base_pura) + endurecimento do vazio. Cenários C30-C33 + F1d.
@@ -1779,7 +1778,7 @@ echo "════════ FASE 1d — re-aplica a v5 (pós-F1c) ═══�
 P -v ON_ERROR_STOP=1 -q -f "$MIG1D" >/dev/null
 P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
   || { echo "✗ FASE1d: v5 não aplicou (gate _eu_pura_contraditoria ausente)"; exit 1; }
-echo "  ✓ v5 aplicada"
+ok "v5 aplicada"
 
 echo ""
 echo "════════ CENÁRIO 30 — 1d: transição legítima pigmentada→pura LIMPA a receita (tríade) ════════"
@@ -2084,7 +2083,7 @@ SELECT tint_promote_sync_run('e1df1000-0000-0000-0000-000000000001');
 SQL
 NF1=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR33_3';")
 [ "$NF1" = "1" ] || { echo "✗ F1d-1 FALHOU: com a exceção sabotada a tríade AINDA limpou (COR33_3 com $NF1 itens, esperado 1 preservado) — C30 não depende da exceção"; exit 1; }
-echo "  ✓ exceção sabotada → tríade legítima barrada (receita preservada): C30 tem dente"
+ok "exceção sabotada → tríade legítima barrada (receita preservada): C30 tem dente"
 
 echo "── falsificação F1d-2 (o fail-closed tem dente: exceção sempre-verdadeira limparia vazio SEM declaração) ──"
 perl -0pe 's/fl\.is_base_pura IS TRUE\n      AND fl\.expected_item_count = 0/true\n      AND true/' "$MIG1D" > /tmp/sab-tint-1d-failopen.sql
@@ -2105,7 +2104,7 @@ SELECT tint_promote_sync_run('e1df2000-0000-0000-0000-000000000001');
 SQL
 NF2=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR33_5';")
 [ "$NF2" = "0" ] || { echo "✗ F1d-2 FALHOU: exceção sempre-verdadeira NÃO limpou o vazio sem declaração (COR33_5 com $NF2 itens) — o fail-closed não depende da tríade"; exit 1; }
-echo "  ✓ exceção sempre-verdadeira → vazio SEM declaração LIMPOU (dano provado): o fail-closed da tríade tem dente"
+ok "exceção sempre-verdadeira → vazio SEM declaração LIMPOU (dano provado): o fail-closed da tríade tem dente"
 
 echo "── falsificação F1d-3 (o cap tem dente: cap gigante deixa a limpeza em massa passar) ──"
 sed 's/v_cap_limpezas   constant int := 50;/v_cap_limpezas   constant int := 100000;/' "$MIG1D" > /tmp/sab-tint-1d-cap.sql
@@ -2119,7 +2118,7 @@ NB33=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d33000-0000-0000-0000-000000000001');" >/dev/null
 NF3=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id ~ '^COR33_';")
 [ "$NF3" = "0" ] || { echo "✗ F1d-3 FALHOU: cap gigante NÃO limpou em massa (restam $NF3) — C33 não depende do cap"; exit 1; }
-echo "  ✓ cap gigante → 51 receitas limpas num run (dano provado): C33 tem dente"
+ok "cap gigante → 51 receitas limpas num run (dano provado): C33 tem dente"
 
 echo "── falsificação F1d-4 (o ACUMULADO tem dente: janela zerada → a catraca C34 passa) ──"
 sed "s/interval '24 hours'/interval '0 hours'/" "$MIG1D" > /tmp/sab-tint-1d-janela.sql
@@ -2130,7 +2129,7 @@ P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-janela.sql >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d34000-0000-0000-0000-000000000002');" >/dev/null
 NF4=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id IN ('COR34_51','COR34_52');")
 [ "$NF4" = "0" ] || { echo "✗ F1d-4 FALHOU: janela zerada NÃO deixou a catraca passar (restam $NF4 itens) — C34 não depende do acumulado"; exit 1; }
-echo "  ✓ janela zerada → catraca limpou as 2 restantes (dano provado): C34 tem dente"
+ok "janela zerada → catraca limpou as 2 restantes (dano provado): C34 tem dente"
 
 # RESTAURA a v5 real e prova que o cap volta a barrar: re-semeia as 51 receitas e roda um run NOVO
 # declarando as 52 (após F1d-2, o latest de COR33_5 ficou SEM declaração — re-declarar garante 52>cap).
@@ -2152,7 +2151,7 @@ SELECT tint_promote_sync_run('e1d33000-0000-0000-0000-0000000000f9');
 SQL
 NR=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id ~ '^COR33_';")
 [ "$NR" = "52" ] || { echo "✗ restauração F1d: v5 real deveria barrar as 52 de novo (achei $NR)"; exit 1; }
-echo "  ✓ restauração OK — v5 real barra as 52 limpezas de novo (52 receitas intactas)"
+ok "restauração OK — v5 real barra as 52 limpezas de novo (52 receitas intactas)"
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 # v6 (20260726120000) — DIAGNÓSTICO HONESTO do Guard 4. O log parava de servir ao diagnóstico:
@@ -2194,7 +2193,7 @@ END AS status;"
 }
 VOUT="$(VALIDADOR)"
 case "$VOUT" in
-  *"filtro do orfao AUSENTE"*) echo "  ✓ validador pós-apply APROVA a v6 real (banco bom)" ;;
+  *"filtro do orfao AUSENTE"*) ok "validador pós-apply APROVA a v6 real (banco bom)" ;;
   *) echo "✗ validador pós-apply REPROVOU a v6 real — o que o founder vai colar está quebrado: $VOUT"; exit 1 ;;
 esac
 
@@ -2426,12 +2425,12 @@ RESET38
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
 NI=$(P -tA -c "SELECT jsonb_array_length(error_details->'itens') FROM tint_sync_errors WHERE sync_run_id='e1d38000-0000-0000-0000-000000000001' AND entity_id='COR38';")
 [ "$NI" = "2" ] || { echo "✗ Flog-1 FALHOU: com o filtro de volta o log deveria esconder o órfão (2 itens), veio $NI — C38.1 não tem dente"; exit 1; }
-echo "  ✓ filtro restaurado → órfão some do log (2 itens): C38.1 tem dente"
+ok "filtro restaurado → órfão some do log (2 itens): C38.1 tem dente"
 # zona morta do validador: aqui a função EXISTE e tem _fl_culpa, mas o filtro voltou — é o estado
 # "v6 pela metade" (apply parcial / hotfix). O validador tem de REPROVAR, senão é carimbo.
 VOUT="$(VALIDADOR)"
 case "$VOUT" in
-  *"NAO aplicada"*) echo "  ✓ validador REPROVA a v6 sabotada (banco ruim): não é carimbo" ;;
+  *"NAO aplicada"*) ok "validador REPROVA a v6 sabotada (banco ruim): não é carimbo" ;;
   *) echo "✗ Flog-1 FALHOU: o validador APROVOU um banco com o filtro de volta — ele não morde: $VOUT"; exit 1 ;;
 esac
 rm -f "$SAB1"
@@ -2445,7 +2444,7 @@ RESET38
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
 NM=$(P -tA -c "SELECT count(*) FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38' AND (it->>'viola')::boolean IS TRUE;")
 [ "$NM" = "0" ] || { echo "✗ Flog-2 FALHOU: marcação sabotada ainda apontou $NM culpado(s) — C38.2 não tem dente"; exit 1; }
-echo "  ✓ marcação sabotada → 0 itens apontados: C38.2 tem dente"
+ok "marcação sabotada → 0 itens apontados: C38.2 tem dente"
 rm -f "$SAB2"
 
 echo "── falsificação Flog-3 (o C38.6 tem dente: mensagem volta a acusar o ramo (a)) ──"
@@ -2457,7 +2456,7 @@ RESET38
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
 MSG=$(P -tA -c "SELECT error_message FROM tint_sync_errors WHERE sync_run_id='e1d38000-0000-0000-0000-000000000001' AND entity_id='COR38';")
 case "$MSG" in
-  *"corante presente sem dose"*) echo "  ✓ mensagem sabotada volta a acusar o ramo (a): C38.6 tem dente" ;;
+  *"corante presente sem dose"*) ok "mensagem sabotada volta a acusar o ramo (a): C38.6 tem dente" ;;
   *) echo "✗ Flog-3 FALHOU: mensagem sabotada não passou a acusar o ramo (a) — C38.6 não tem dente. msg=$MSG"; exit 1 ;;
 esac
 rm -f "$SAB3"
@@ -2479,7 +2478,7 @@ NP=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f O
 [ "$NP" = "0" ] || { echo "✗ Flog-4 FALHOU (FAIL-OPEN): com item_ids vazio a COR38 corrompida PROMOVEU ($NP itens) — a decisão está acoplada ao payload do log"; exit 1; }
 NE=$(P -tA -c "SELECT count(*) FROM tint_sync_errors WHERE sync_run_id='e1d38000-0000-0000-0000-000000000001' AND entity_id='COR38' AND error_message LIKE '%corrompida%';")
 [ "$NE" -ge 1 ] || { echo "✗ Flog-4 FALHOU: com item_ids vazio a COR38 deixou de logar corrompida"; exit 1; }
-echo "  ✓ item_ids vazio → COR38 SEGUE barrada e logada (log degrada, decisão não): direção de falha correta"
+ok "item_ids vazio → COR38 SEGUE barrada e logada (log degrada, decisão não): direção de falha correta"
 rm -f "$SAB4"
 
 echo "── falsificação Flog-5 (o C41 tem dente: sem o ramo (c) na v6, a parcial mascarada promove) ──"
@@ -2493,7 +2492,7 @@ P -v ON_ERROR_STOP=1 -q -f "$SAB5" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d41000-0000-0000-0000-0000000000c0');" >/dev/null
 R41=$(P -tA -c "SELECT count(*) || '/' || COALESCE(max(fi.qtd_ml)::text,'-') FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR41';")
 [ "$R41" != "1/9.000" ] || { echo "✗ Flog-5 FALHOU: sem o ramo (c) a receita de COR41 continuou {1 item, 9} — o C41 não tem dente"; exit 1; }
-echo "  ✓ ramo (c) sabotado → a parcial mascarada promoveu (receita virou $R41, era 1/9.000): C41 tem dente"
+ok "ramo (c) sabotado → a parcial mascarada promoveu (receita virou $R41, era 1/9.000): C41 tem dente"
 rm -f "$SAB5"
 
 # RESTAURA a v6 real e prova que o diagnóstico honesto voltou (o órfão reaparece marcado).
@@ -2502,10 +2501,11 @@ RESET38
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
 NR6=$(P -tA -c "SELECT count(*) FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38' AND btrim(COALESCE(it->>'id_corante','')) = '' AND (it->>'viola')::boolean IS TRUE;")
 [ "$NR6" -ge 1 ] || { echo "✗ restauração Flog: a v6 real deveria voltar a marcar o órfão (achei $NR6)"; exit 1; }
-echo "  ✓ restauração OK — v6 real volta a expor e marcar o órfão"
+ok "restauração OK — v6 real volta a expor e marcar o órfão"
 
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 SELECT 'TODOS OS TESTES PG17 DA PROMOÇÃO PASSARAM ✓' AS resultado;
 SQL
 echo ""
+echo "PASS=$PASSOU  FAIL=0"   # recibo lido pelo db/roda-nucleo-ci.sh (FAIL=0: toda falha já abortou)
 echo "✓ db/test-tint-promote.sh — PASSOU"

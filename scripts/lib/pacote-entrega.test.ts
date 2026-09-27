@@ -159,6 +159,19 @@ describe('montarPacote — a ordem é ESTRUTURAL, não um aviso', () => {
     expect(texto).toContain(PROC.sha.slice(0, 9));
   });
 
+  it('[PACOTE_COLAGEM_PROIBE_EDITAR] a colagem que vai ao agente carrega o escopo e o sensor pos-envio', () => {
+    const { texto } = montarPacote(fonte());
+    const colagem = texto.slice(texto.indexOf('Cole no chat do Lovable'), texto.indexOf('## Passo 3'));
+    expect(colagem).toContain('Do NOT edit, create, rename or delete ANY file');
+    expect(colagem).toContain('do NOT fix them');
+    expect(colagem).toContain('`No files were edited.`');
+    expect(colagem).toContain('bun scripts/lovable-sensor-edicao.ts --desde');
+  });
+
+  it('[PACOTE_BLOQUEADO_SEM_SENSOR] sem colagem nao ha sensor pos-envio a rodar', () => {
+    expect(montarPacote(fonte({ veredito: BLOQUEADA })).texto).not.toContain('lovable-sensor-edicao');
+  });
+
   it('BLOQUEADO: a colagem NÃO é emitida — o gate é a ausência, não um aviso ao lado', () => {
     const { texto } = montarPacote(fonte({ veredito: BLOQUEADA }));
     expect(texto).toContain('BLOQUEADO no passo 1');

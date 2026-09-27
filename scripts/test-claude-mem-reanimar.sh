@@ -14,7 +14,11 @@
 # Veredito so com EVIDENCIA POSITIVA: exit 0 E o marcador (LAB-VERDE / FALSIFICACAO-VERDE) na
 # saida. Exit 0 sem o marcador = o lab parou no meio.
 #
-# Uso: bash scripts/test-claude-mem-reanimar.sh               (exit 0 = LAB-VERDE)
+# O rc que cada cenario le vem do com_tty.py (o helper que da TTY ao script), nao do script: o
+# prova_com_tty.sh prova que ele devolve o exit DO COMANDO mesmo quando a resposta chega depois do
+# comando sair (o flake de 2026-09-26: rc=1 com o PAREI certo) e que o erro dele e 125, nunca 1.
+#
+# Uso: bash scripts/test-claude-mem-reanimar.sh               (exit 0 = LAB-VERDE + PROVA-COM-TTY-VERDE)
 #      bash scripts/test-claude-mem-reanimar.sh --falsificar  (sabota cada guarda; EXIGE vermelho)
 set -u
 
@@ -44,24 +48,25 @@ if [ -n "$falta" ]; then
   exit 1
 fi
 
-roda() { # roda <script do lab> <marcador verde>
-  local saida rc
+roda() { # roda <script do lab> <marcador verde> [args do script...]
+  local script="$1" marca="$2" saida rc
+  shift 2
   saida="$(mktemp)"
   if [ "$(uname -s)" = Linux ]; then
-    python3 "$LAB/subreaper.py" bash "$LAB/$1" >"$saida" 2>&1
+    python3 "$LAB/subreaper.py" bash "$LAB/$script" "$@" >"$saida" 2>&1
   else
-    bash "$LAB/$1" >"$saida" 2>&1 # no macOS quem recolhe orfaos e o launchd
+    bash "$LAB/$script" "$@" >"$saida" 2>&1 # no macOS quem recolhe orfaos e o launchd
   fi
   rc=$?
   cat "$saida"
-  if [ "$rc" -eq 0 ] && grep -qx "$2" "$saida"; then
+  if [ "$rc" -eq 0 ] && grep -qx "$marca" "$saida"; then
     rm -f "$saida"
     return 0
   fi
-  if grep -qx "$2" "$saida"; then
-    echo "FALHA: $1 saiu $rc"
+  if grep -qx "$marca" "$saida"; then
+    echo "FALHA: $script saiu $rc"
   else
-    echo "FALHA: $1 saiu $rc e SEM o marcador $2"
+    echo "FALHA: $script saiu $rc e SEM o marcador $marca"
   fi
   rm -f "$saida"
   return 1
@@ -99,8 +104,10 @@ concorrencia() {
 }
 
 if [ "${1:-}" = "--falsificar" ]; then
-  roda falsifica.sh FALSIFICACAO-VERDE
+  roda falsifica.sh FALSIFICACAO-VERDE || exit 1
+  roda prova_com_tty.sh FALSIFICACAO-COM-TTY-VERDE --falsificar
   exit $?
 fi
 roda lab.sh LAB-VERDE || exit 1
+roda prova_com_tty.sh PROVA-COM-TTY-VERDE || exit 1
 concorrencia

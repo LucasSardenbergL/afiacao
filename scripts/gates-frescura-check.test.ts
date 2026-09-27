@@ -3,13 +3,16 @@ import {
   ALLOWLIST_CITACAO,
   CENSO_FIM,
   CENSO_INICIO,
+  coberturaDeHooks,
   conferirCitacoes,
   extrairCitacoes,
   bloqueantesSemScript,
+  hooksLigados,
   inventarioCI,
   inventarioHooks,
   lerCenso,
   padraoInvocacao,
+  type HookLigado,
 } from './gates-frescura-check';
 
 /**
@@ -174,6 +177,103 @@ describe('inventarioHooks — o deny só conta DENTRO do envelope que o harness 
         `echo '{"permissionDecision":"deny"}'\n`,
     );
     expect(h).toMatchObject({ bloqueia: true, denySemEnvelope: true });
+  });
+});
+
+describe('hooksLigados — TODO hook do settings.json, com ou sem arquivo', () => {
+  const settings = JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [
+            { type: 'command', command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/b.sh"' },
+            { type: 'command', command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/a.sh"' },
+          ],
+        },
+      ],
+      PostToolUse: [{ hooks: [{ type: 'command', command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/a.sh"' }] }],
+      Stop: [{ hooks: [{ type: 'command', command: 'echo tchau' }] }],
+    },
+  });
+
+  it('um por arquivo, no PRIMEIRO evento em que aparece', () => {
+    const comArquivo = hooksLigados(settings).filter((h) => h.arquivo !== null);
+    expect(comArquivo.map((h) => [h.arquivo, h.evento])).toEqual([
+      ['a.sh', 'PreToolUse'],
+      ['b.sh', 'PreToolUse'],
+    ]);
+  });
+
+  // O `inventarioHooks` PULA o comando que não aponta arquivo (`if (!m) continue`): para o censo de
+  // deny é o certo, para a cobertura é o buraco — um hook inline some do inventário e fica verde
+  // por não existir. Aqui ele vem com `arquivo: null`, e quem decide o que fazer é o chamador.
+  it('comando SEM arquivo não some: vem com arquivo null', () => {
+    expect(hooksLigados(settings).find((h) => h.arquivo === null)).toMatchObject({
+      evento: 'Stop',
+      comando: 'echo tchau',
+    });
+  });
+
+  it('settings.json sem hooks devolve vazio, não explode', () => {
+    expect(hooksLigados('{}')).toEqual([]);
+  });
+});
+
+describe('coberturaDeHooks — hook ligado precisa de suíte do test:hooks que o EXECUTE', () => {
+  const hook = (arquivo: string): HookLigado => ({
+    evento: 'PreToolUse',
+    comando: `"$CLAUDE_PROJECT_DIR/.claude/hooks/${arquivo}"`,
+    arquivo,
+  });
+  const suite = (fonte: string | null) => ({ arquivo: 'scripts/test-x.sh', fonte });
+
+  it('coberto: a suíte cita o hook como CAMINHO numa linha de código', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite('HOOK="$here/../.claude/hooks/x.sh"\nbash "$HOOK"\n')])).toEqual([]);
+  });
+
+  it('o caminho pode vir de variável — `"$HOOKS/x.sh"` é a forma do test-hooks-sessionstart.sh', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite('out="$(bash "$HOOKS/x.sh")"\n')])).toEqual([]);
+  });
+
+  // Citar não é executar: é a lição da classe (docs/historico/gates-textuais-cegos.md). O comentário
+  // no FIM da linha é o caso que um filtro local de `^#` deixaria passar — só o stripper sabe.
+  it('citação só em COMENTÁRIO não cobre — nem no começo, nem no fim da linha', () => {
+    const fontes = ['# roda .claude/hooks/x.sh\necho ok\n', 'echo ok  # roda .claude/hooks/x.sh\n'];
+    for (const f of fontes) {
+      expect(coberturaDeHooks([hook('x.sh')], [suite(f)]).map((s) => s.hook.arquivo)).toEqual(['x.sh']);
+    }
+  });
+
+  // Medido em 2026-09-27: a PRIMEIRA linha não-comentada do test-hooks-sessionstart.sh que cita o
+  // pos-compact-ptbr.sh é `echo "── pos-compact-ptbr.sh ──"` — rótulo. Ela sozinha não pode cobrir.
+  it('citação como RÓTULO (nome sem `/` antes) não é caminho — não cobre', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite('echo "── x.sh ──"\n')]).length).toBe(1);
+  });
+
+  it('o `#` que NÃO abre comentário (`${d#./}`) não esconde a citação — regex local esconderia', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite('bash "${d#./}/.claude/hooks/x.sh"\n')])).toEqual([]);
+  });
+
+  it('prefixo ou sufixo de OUTRO nome não cobre (`/nao-x.sh`, `/x.sh.bak`)', () => {
+    const r = coberturaDeHooks([hook('x.sh')], [suite('bash "$R/hooks/nao-x.sh"\ncp "$R/hooks/x.sh.bak" .\n')]);
+    expect(r.length).toBe(1);
+  });
+
+  it('suíte que não pôde ser lida (fonte null) não cobre ninguém', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite(null)]).length).toBe(1);
+  });
+
+  it('hook sem arquivo é achado — não há nome que uma suíte possa citar', () => {
+    const inline: HookLigado = { evento: 'Stop', comando: 'echo tchau', arquivo: null };
+    const r = coberturaDeHooks([inline], [suite('echo tchau\n')]);
+    expect(r.map((s) => s.hook.comando)).toEqual(['echo tchau']);
+    expect(r[0].motivo).toMatch(/sem arquivo/);
+  });
+
+  it('cada hook responde por si: o coberto não absolve o vizinho', () => {
+    const r = coberturaDeHooks([hook('x.sh'), hook('y.sh')], [suite('bash "$R/.claude/hooks/x.sh"\n')]);
+    expect(r.map((s) => s.hook.arquivo)).toEqual(['y.sh']);
   });
 });
 
