@@ -93,6 +93,40 @@ Correções que ficam, e a segunda é a que generaliza:
   (`grep -c MARCA == n`) e `git diff --quiet`. "Restaurei" sem asserção é a mesma família de
   `ausente ≠ zero` — ausência de erro no `cp` não é presença do arquivo certo.
 
+## Sabotar o guard VIVO no lugar — e o `cmp` que não prova o alvo (2026-09-27)
+
+As falsificações 1 e 2 de `scripts/test-pipestatus-zsh-guard.sh` sabotavam o **hook real**
+(`perl -0pi … "$HOOK"`) e restauravam por `cp` de backup via trap. Esse hook é o PreToolUse de TODA
+chamada Bash da worktree: na janela, o guard vivo estava sabotado para qualquer sessão ali; um
+SIGKILL entre o perl e o restaura o deixava sabotado **em silêncio** (trap não roda); suítes
+concorrentes — ou o que COPIASSE o hook — corriam contra ele; e nenhuma das duas tinha controle. A
+falsificação 3 já nascera no molde; as três passaram a uma função só: cópia em `mktemp -d`, controle
+na mesma invocação (casos calados **e** um positivo avisando, 2 locales, vermelho aborta), vermelho
+pelo marcador do ramo, controle de saída (`cmp` do real contra o snapshot de antes).
+
+Meta-falsificação em árvore-espelho (14 cenários × `LC_ALL=C`/`pt_BR.UTF-8`, espelho novo por
+rodada, veredito pela marca no bloco certo do log). A última coluna é o que acontece **sem** a camada:
+
+| mutação | camada que pegou | sem ela |
+|---|---|---|
+| fixture que já avisa sem sabotagem (F1, F2, F3) | controle aborta antes de sabotar | **verde** — a sabotagem "passa de graça" (medido na F1 e na F2) |
+| cópia que nem roda | metade "positivo avisando" do controle | vermelho que culpa a regra: "passou despercebida em 4 de 4", nas 3 |
+| troca deixa de pegar (hook reformatado sem mudar semântica) | âncora única ("casou 0x") | na F2, o `cmp` aprova — a 1ª troca MUDOU o arquivo — e o veredito culpa o E7 |
+| sabotagem vazia | `cmp` | não medido |
+| sabotagem aplicada no real em vez da cópia | controle de saída (e o no-op da cópia) | não medido |
+| cópia sabotada certo **e** o real escrito junto | só o controle de saída | o bloco fica `ok`; a suíte só cai adiante, no controle da F3 |
+
+Duas lições que generalizam:
+
+1. **Com mais de uma troca, o `cmp` não prova o alvo.** Cada troca é LITERAL (`\Q…\E` — escapar
+   regex à mão é onde a âncora vira no-op) e ancorada única: 1x antes, 0x depois, texto novo **+1x**.
+   Não "0→1": o texto novo da F1 (`{ st = 0; i++; continue }`) já existia no hook, no fechamento de
+   aspas duplas, e a checagem ingênua acusaria a F1 à toa.
+2. **A meta também precisa de estado novo por rodada.** A 1ª versão desta meta reusava o espelho
+   entre os 2 locales; os cenários que escrevem no hook de propósito o deixaram sabotado para a rodada
+   seguinte (13 FALHAS só no `pt_BR`). De brinde, isso mediu o cenário do SIGKILL: com o hook
+   pré-sabotado, o controle das 3 falsificações **abortou** em vez de fabricar veredito.
+
 ## A regra
 
 **Arnês de falsificação começa com um CONTROLE**: a mesma invocação do laço de sabotagem, com a
@@ -104,3 +138,7 @@ suíte, ele não está rodando a suíte** — meça o tempo, é o sensor mais ba
 **E termina com um CONTROLE DE SAÍDA**: a restauração é asseverada pelo conteúdo do arquivo e por
 `git diff --quiet`, não pelo exit do `cp` — e a sabotagem nunca passa pelo índice do git, senão o
 próximo `git commit` de qualquer outra coisa a leva junto.
+
+**E sabota uma CÓPIA quando o alvo está VIVO** (hook, guard, script que outra sessão executa) — no
+lugar, a janela, o SIGKILL e a concorrência viram problema de todo mundo —, com cada troca LITERAL e
+ancorada única: o `cmp` sozinho só prova que o arquivo mudou.
