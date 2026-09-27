@@ -114,5 +114,7 @@ não a intenção.
   caminho de pedidos do Omie ⇒ money-path, Codex) tira a tentação — entrega separada.
 - **Todo revert de edição do bot fabrica uma pendência de deploy.** O `sonda:bump` não distingue
   "voltei aos bytes de um commit ancestral" de "mudei a edge"; o bump recria DIVERGE sem mudança de
-  runtime, e o redeploy é a isca. Regra candidata: isentar a edge cujos bytes do corpo servido E o
-  `VERSAO` são idênticos aos de um commit ancestral da base — entrega separada (chip).
+  runtime, e o redeploy é a isca. A regra candidata (isentar o retorno aos bytes ancestrais) foi
+  medida e **rejeitada**: a sonda devolve o `fonte` do mapa compilado, e o bot não regenera o mapa ⇒
+  corpo do bot deployado responderia o par canônico — o redeploy forçado pelo bump é a única prova
+  de que prod voltou. Ver [sonda-bump-retorno-ao-canonico.md](sonda-bump-retorno-ao-canonico.md).
