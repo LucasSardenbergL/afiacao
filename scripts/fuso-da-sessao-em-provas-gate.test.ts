@@ -190,7 +190,9 @@ describe('veredito — 2 nunca é "passou"', () => {
     const saida = v.linhas.join('\n');
     expect(saida).toContain(`${ARQUIVO_DA_POSITIVACAO}:4 (${SEM_FUSO})`);
     expect(saida).toContain(`db/test-y.sh:1 (${LOCAL})`);
-    expect(saida).toContain("now() AT TIME ZONE 'America/Sao_Paulo'");
+    // A forma INTEIRA: `now() AT TIME ZONE …` sozinho também aparece no aviso do relógio LOCAL, e o
+    // conserto por fuso na expressão poderia sumir da mensagem sem este teste perceber (o mutcheck viu).
+    expect(saida).toContain("date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')");
     expect(saida).toContain('test.agora');
     expect(saida).toContain('não tem conserto no lugar');
     expect(saida).toContain('docs/historico/provas-janela-de-relogio-fora-do-nucleo.md');
