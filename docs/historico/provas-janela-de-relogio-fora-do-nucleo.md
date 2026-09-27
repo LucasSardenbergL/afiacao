@@ -12,7 +12,7 @@ qualquer conserto. As 4 se confirmaram; 3 eram defeito da PROVA e foram conserta
 | `db/test-auto-aprovacao-piloto.sh` | **23:15:00–23:59:59 UTC**, todo dia (B1), servidor SP e UTC | corte `'23:59'` usado como "sempre no futuro"; a janela da função é minutos UTC sem wrap (por desenho) ⇒ 23:59 − 45 min = 23:14 | consertada |
 | `db/test-push-vendedora.sh` | **02:59:00–02:59:59 UTC** (23:59 BRT), todo dia (T11) | expediente `'00:00'–'23:59'` usado como "o dia todo"; o gate é semiaberto (`< hora_fim`, por desenho) | consertada |
 | `db/test-data-health-estoque-fonte-dado.sh` | **~50–70 ms** em torno de 08:00 e de 18:00 BRT (N9) | DOIS relógios: esperado pelo `date` do bash, real pelo `now()` do banco | consertada |
-| `db/test-positivacao-eligible-consumo.sh` | **dia 1, 00:00:00–02:59:59 UTC**, só com servidor UTC | seed da prova (C2/C3/C7/F1) **e** defeito do sensor (C4) | **parada** — ver abaixo |
+| `db/test-positivacao-eligible-consumo.sh` | **dia 1, 00:00:00–02:59:59 UTC**, só com servidor UTC | seed da prova (C2/C3/C7/F1) **e** defeito do sensor (C4) | **parada** no sensor — consertada depois, no #2606 (ver abaixo) |
 
 ## Reproduzir: o método do diário anterior, e 5 ressalvas medidas
 
@@ -160,17 +160,66 @@ No mesmo dia, pelo protocolo `matar-classe`, a classe dos dois relógios ganhou 
   exatamente aquele sítio, com o corpo intocado verde na mesma invocação. O `mutcheck` pega 18/18
   (`scripts/mutcheck.d/relogio-bash-em-provas.mut`). Suíte verde em `LC_ALL=C` e `pt_BR.UTF-8`.
 
-### A 2ª assinatura (seed no fuso da sessão): calibrada, gate adiado
+### A 2ª assinatura (seed no fuso da sessão): `scripts/fuso-da-sessao-em-provas-gate.ts`
 
-`date_trunc\(\s*'(day|week|month|year)'\s*,\s*now\(\)\s*\)` em `db/test-*.sh` casa só a positivação
-(l.145-146, sem `AT TIME ZONE`). Não casa a forma com `AT TIME ZONE`, nem a de 3 argumentos do PG14+,
-nem `'hour'` (SP tem offset de hora cheia: truncar a hora dá o mesmo instante nos dois fusos). A
-positivação espera o conserto do sensor (chip "Corrigir fuso da sessão no sensor de positivação").
-Gatear antes deixaria a main vermelha, e o lado pós-fix da calibração ainda não existe. O gate tem dono
-em chip próprio ("Gatear seed no fuso da sessão em provas SQL").
+O gate esperou o conserto da positivação entrar na main (#2606: relógio controlado, data LITERAL no
+seed e o mês de SP nos dois eixos do sensor). Gatear antes deixaria a main vermelha, e o lado
+pós-conserto da calibração ainda não existia.
 
-Alargar para `current_date`/`now()::date` nus não serve: são 363 ocorrências em ~52 provas, quase todas
-com seed e esperado no MESMO fuso (coerentes), e 12 provas fixam o fuso de propósito. Se um dia faltar
-alcance, a forma cirúrgica medida é por ARQUIVO: `date_trunc(…, now())` nu **e** `AT TIME ZONE
-'America/…'` no mesmo arquivo, **sem** `SET TIME ZONE`/`ALTER DATABASE … TimeZone`. Hoje ela casa só
-a positivação.
+- **A assinatura calibrada era estreita demais, e uma regex não bastava.** A calibrada
+  (`date_trunc('day|week|month|year', now())`) não via caixa alta nem `pg_catalog.now()`, que é
+  justamente a forma de uma prova de relógio controlado (o próprio conserto a usa). Também não via
+  `quarter`, o `now()` entre parênteses, com aritmética, com cast ou dentro de `coalesce`, os irmãos do
+  `now()` nem a chamada quebrada em várias linhas. O 1º corte do gate alargou a regex e decidia pelo
+  caractere depois do relógio. A revisão adversarial do Codex achou os dois lados do furo:
+  - **escapava:** comentário de SQL entre os tokens, `((now()))`, `'month'::text` e, o pior,
+    `current_date AT TIME ZONE 'America/Sao_Paulo'`. Esse é o "conserto" que a própria mensagem do gate
+    poderia induzir, e ele não conserta nada: o relógio LOCAL vira `timestamptz` e a truncagem de 2
+    argumentos o leva de volta à sessão;
+  - **reprovava formas corretas:** `(now()) AT TIME ZONE …`, `(now() - interval '1 month') AT TIME ZONE …`
+    e `(now()), 'America/Sao_Paulo'`.
+
+  Agora a chamada é LIDA: argumentos com parênteses balanceados e literal opaco. Relógio LOCAL
+  (`current_date`, `localtimestamp`, `now()::date`) reprova com qualquer fuso escrito depois. Relógio
+  `timestamptz` só passa com `AT TIME ZONE`/`timezone(…)` na expressão ou com o 3º argumento. Custo
+  medido: 0 casamento novo em `db/`, e nenhuma chamada ilegível.
+- **Calibração com o próprio gate** sobre a árvore real de `db/` (`git archive`): antes do conserto,
+  exit 1 só em l.145-146 da positivação; depois, exit 0. Na ponta do conserto, o `git grep -P` CRU da
+  pré-condição ainda saía 0, porque casava um comentário `#` novo que cita a forma antiga. O stripper
+  limpa esse comentário. O grep cru teria dito "o conserto não entrou" com ele já na main.
+- **A camada do stripper foi a decisão de desenho: duas camadas, cada uma só onde mede.** O ARQUIVO é
+  shell, e `removerComentariosShell` decide o que é código. A CHAMADA é SQL, e `removerComentariosSql`
+  limpa o comentário só na janela que começa no `(` do `date_trunc`. No arquivo inteiro, o stripper de
+  SQL seria erro de camada: o `--` de `psql --no-psqlrc -c "…"` apagaria o SQL que vem depois, e o gate
+  ficaria verde por cegueira. Aplicá-lo ao corpo de heredoc pediria separar o heredoc de SQL do heredoc
+  que gera script, e o erro dessa triagem cai do mesmo lado perigoso. Medido: 0 `-- …date_trunc(…now())`
+  em `db/test-*.sh`, com o padrão conferido por controle. O que sobra cai do lado seguro (a forma citada
+  num comentário `--`, fora de uma chamada, reprova) e está preso por teste, assim como o sentinela do
+  `--no-psqlrc`.
+- **É um gate irmão, e não uma 2ª assinatura no mesmo gate.** O universo, as raízes e os pisos são os do
+  `relogio-bash-em-provas-gate.ts`, IMPORTADOS (uma calibração só). O walker e os alarmes vêm do mesmo
+  dono. O que muda é a linguagem medida (bash, contra SQL dentro do shell), a decisão de camada que cada
+  uma pede e o conserto que a mensagem aponta. Juntar exigiria renomear um gate mergeado horas antes e
+  provar de novo os 18 PEGAs dele.
+- **Varredura do repo inteiro** (assinatura alargada, 24 linhas). Em `db/`, só a positivação: afetada,
+  consertada pelo #2606. Fora de `db/`, a mesma classe aparece em OUTRO universo, latente: o corpo de
+  `radar_kpis()` (`date_trunc('month', now())`) e o de `fin_projecao_13_semanas()` (`date_trunc('week',
+  CURRENT_DATE)`), os dois sem menção a `America/Sao_Paulo` (limite declarado do fiscal de funções), e
+  10 linhas de consulta das skills `bi-colacor` e `cfo-colacor`, que rodam na prod sob sessão UTC. Esses
+  foram para chip. O resto (6 linhas) é documentação ou código comentado. As formas irmãs
+  (`to_char`/`extract`/`date_part` sobre o relógio) têm 0 casos da classe em `db/`: os 9 que existem são
+  `epoch` (duração) ou já têm fuso.
+- **Dente:** pisos de 250 provas e 60.000 linhas de código (medido: 305 e 77.017), os quatro alarmes do
+  stripper, a chamada que não fecha (vira INDETERMINADO, não "limpo") e veredito 0/1/2. A falsificação
+  roda no arquivo REAL: devolve a l.145 de antes do conserto ao 1º heredoc de SQL da positivação e exige
+  exatamente aquele sítio, com o corpo intocado verde na mesma invocação. O `mutcheck` pega 36/36
+  (`scripts/mutcheck.d/fuso-da-sessao-em-provas.mut`). A rodada anterior deu 35/36, porque o aviso novo
+  do relógio LOCAL também cita `now() AT TIME ZONE …`: a asserção por substring da linha do conserto
+  passou a achar essa citação e perdeu o dente, sem vermelho nenhum. Agora ela exige a forma inteira.
+  Suíte verde em `LC_ALL=C` e `pt_BR.UTF-8`.
+
+Alargar para `current_date`/`now()::date` NUS continua sem servir: são 363 ocorrências em ~52 provas,
+quase todas com seed e esperado no MESMO fuso, e 12 provas fixam o fuso de propósito. A forma por
+ARQUIVO que ficou calibrada aqui como reserva não foi necessária. Fixar o fuso da sessão (`SET TIME ZONE`,
+`ALTER DATABASE … TimeZone`) não conta como conserto para o gate: só vale para as sessões que alcança,
+fixar em UTC mantém a janela, e o fiscal é textual.
