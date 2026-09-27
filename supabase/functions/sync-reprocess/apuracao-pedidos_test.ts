@@ -77,7 +77,7 @@ Deno.test("abort ANTES de qualquer página (ex.: productMap falhou) → toda fas
     "item_sem_codigo", "item_sem_codigo_amostra", "falhas_amostra", "desconto_apurado", "desconto_corrigido",
     "pagina_abortada",
   ]) {
-    assertEquals(m[k], null, `${k} não foi apurado e não pode virar 0/[]`);
+    assertEquals(m[k], null, `[NAO-APURADO] ${k} não foi apurado e não pode virar 0/[]`);
   }
   assertEquals(m.window_days, 7);
   assertEquals(m.paginas_montadas, 0);
@@ -193,14 +193,14 @@ Deno.test("PIN: o catch do reprocessOrders grava o metadata da run abortada, e a
   assert(iSoma >= 0 && iDecide > iSoma, "a resposta da página tem de ser somada ANTES da decisão de abortar");
 
   assert(corpo.includes("ap.paginasMontadas++"), "denominador da fase 1 não é incrementado");
-  assert(corpo.includes("ap.paginasReconciliadas++"), "página sem nada a reconciliar não conta como reconciliada");
+  assert(corpo.includes("ap.paginasReconciliadas++"), "[PIN-DENOM-RPC] página sem nada a reconciliar não conta como reconciliada");
   assert(corpo.includes("ap.totalPaginasDeclarado = totalPaginas"), "o teto lido não chega à apuração");
   assert(corpo.includes("ap.paginaEmCurso = pagina"), "a página em curso não chega à apuração");
 
   const iCatch = corpo.lastIndexOf("} catch (error) {");
   assert(iCatch > iDecide, "não achei o catch da run");
   const catchBloco = corpo.slice(iCatch);
-  assert(catchBloco.includes('metadata: metadataPedidos(ap, windowDays, { tipo: "abortada" })'), "o catch não grava o metadata da run abortada");
-  assert(catchBloco.includes('...contagensDoLog(ap, { tipo: "abortada" })'), "o catch não grava as contagens com null no não apurado");
+  assert(catchBloco.includes('metadata: metadataPedidos(ap, windowDays, { tipo: "abortada" })'), "[PIN-CATCH-METADATA] o catch não grava o metadata da run abortada");
+  assert(catchBloco.includes('...contagensDoLog(ap, { tipo: "abortada" })'), "[PIN-CATCH-CONTAGENS] o catch não grava as contagens com null no não apurado");
   assert(corpo.slice(0, iCatch).includes('metadata: metadataPedidos(ap, windowDays, { tipo: "completa" })'), "a run completa não usa o mesmo montador");
 });
