@@ -164,7 +164,7 @@ linhas), porque é por esse mesmo caminho que o sync já reverteu fix mergeado.
 ⚠️ **O agente "conserta" o que ninguém pediu** (#2541, #2579 — duas vezes em dois dias): deploya certo e
 DEPOIS edita OUTRAS edges pelo `build-errors.log`; o sync empurra "Changes" na `main`. A colagem já
 proíbe (`blocoDeEscopo`: nenhum arquivo, erro de log só reportado, fecho `No files were edited.`) —
-e **≥30 min após o envio** (em 27/09 a edição chegou 15 min DEPOIS da resposta "NO FILES EDITED") rode `bun scripts/lovable-sensor-edicao.ts --desde <ISO> <resposta>` (exit 1 =
+e **≥5 min após o envio** rode `bun scripts/lovable-sensor-edicao.ts --desde <ISO> <resposta>` (exit 1 =
 editou → revert por PR com bump de `VERSAO`). [Narrativa](../historico/agente-lovable-conserta-o-que-nao-pediram.md).
 
 #### Ordem ENTRE edges: o pacote sai em ONDAS (#2469, 2026-09-14)
