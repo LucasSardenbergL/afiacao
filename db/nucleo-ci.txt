@@ -190,3 +190,14 @@ db/test-tint-watchdog-corante.sh           11
 #   contra o snapshot de hoje em qualquer plataforma (o `_data_health_compute` atual lê a
 #   `customer_metrics_mv`, que a prova não popula; o stub de `_vendas_familia_ausente_lista_email`
 #   colide com a função real). Consertar antes de entrar.
+
+# ── Eixo 7 — FUSO DA SESSÃO (a prod roda UTC; o negócio mede em São Paulo) ─────────────────────
+# A positivação AO VIVO fixava o mês em SP e comparava ligação e pedido no fuso da SESSÃO: das
+# 21:00 às 23:59 BRT do último dia, o evento contava no mês seguinte (20260927133606). A prova
+# roda num relógio CONTROLADO (tripwire: `now()` sem pin levanta exceção), cruza a borda do mês
+# de SP em pares de 1 s sob `TimeZone=UTC` E `America/Sao_Paulo` — sob sessão SP o corpo antigo
+# PASSA, então só a rodada UTC o pega — e cada sabotagem declara o assert que tem de ficar
+# vermelho E o que tem de continuar verde; vermelho por erro de execução não conta como dente.
+# Autocontida: initdb + db/stubs-supabase.sql + as 2 migrations. Irmão estático: o gate vitest
+# `scripts/fuso-da-sessao-gate.ts`, que vigia a CLASSE nas demais funções.
+db/test-positivacao-eligible-consumo.sh    44  falsificar=13
