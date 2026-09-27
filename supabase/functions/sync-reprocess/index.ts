@@ -100,6 +100,16 @@ interface OmieListarPedidosResponse {
   pedido_venda_produto?: OmiePedidoVenda[];
 }
 
+// `omie_pedido_id` vai à RPC CRU, como o Omie o mandou (`string | number`). A RPC não o grava em
+// coluna nenhuma — o pai é achado por (account, hash_payload) — e só o ECOA (`v_pedido->'omie_pedido_id'`,
+// tipo jsonb preservado) no registro de falha. O `number` de `PedidoReconciliar` é mais estreito que
+// esse contrato; o `Number(codigoPedido)` que o agente do Lovable pôs aqui (#2579, #2595) mudaria o
+// eco justo no caso anômalo que ele existe para mostrar (string não numérica → NaN → null; > 2^53
+// perde dígito). O tipo acompanha o dado, não o contrário.
+type PedidoReconciliarReprocess = Omit<PedidoReconciliar, "omie_pedido_id"> & {
+  omie_pedido_id: string | number;
+};
+
 // Shape do produto do ListarProdutos: ProdutoCadastroOmie (products-lote.ts, fonte única).
 interface OmieListarProdutosResponse {
   total_de_paginas?: number;
@@ -302,7 +312,7 @@ async function reprocessOrders(
       // página e não por run: uma run longa não pode fazer a última página parecer tão fresca
       // quanto a primeira.
       const lidoEm = new Date().toISOString();
-      const pedidosRpc: PedidoReconciliar[] = [];
+      const pedidosRpc: PedidoReconciliarReprocess[] = [];
       for (const pedido of pedidos) {
         const cab = pedido.cabecalho || {};
         const codigoPedido = cab.codigo_pedido;
