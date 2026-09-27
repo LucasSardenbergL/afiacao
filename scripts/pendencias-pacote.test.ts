@@ -389,11 +389,16 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
       throw new Error(`o psql não pode ser chamado pela nuvem: ${sql.slice(0, 40)}`);
     };
 
-    /** A resposta como o BANCO a montaria — a conta de `lib/transporte-nuvem.test.ts`, refeita à parte. */
+    /**
+     * A resposta como o BANCO a montaria — a conta de `lib/transporte-nuvem.test.ts`, refeita à
+     * parte. Cada linha do psql vira literal de registro; campo vazio sai sem aspas (NULL, que o
+     * psql imprime vazio), os outros entre aspas com `"` e `\` dobrados, como o `record_out`.
+     */
     function respostaDoBanco(sqlSonda: string, saidaDaSonda: string): string {
       const md5 = (s: string) => createHash('md5').update(s, 'utf8').digest('hex');
       const sql = gerarSqlNuvem({ precondicao: sqlSonda }, CONSUMIDOR_NUVEM);
-      const linhas = saidaDaSonda.split('\n');
+      const campo = (c: string) => (c === '' ? '' : `"${c.replace(/["\\]/g, (x) => x + x)}"`);
+      const linhas = saidaDaSonda.split('\n').map((l) => `(${l.split('|').map(campo).join(',')})`);
       const sqlMd5 = md5(trechoMarcado(sql));
       const medidoEm = '2026-09-27T11:59:00Z';
       const canonico = [

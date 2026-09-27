@@ -9,6 +9,7 @@ import {
   IDADE_MAXIMA_MIN,
   leitorNuvem,
   lerDadosNuvem,
+  registroParaLinha,
   TETO_TRANSPORTE,
   trechoMarcado,
 } from './transporte-nuvem';
@@ -52,7 +53,8 @@ function respostaDoBanco(
   };
 }
 
-const LINHAS = { observacoes: ['a|v1', 'b|v2'], saude: ['12.5'] };
+/** O payload traz o literal de REGISTRO (`record_out`), não a linha do psql — é o que o banco emite. */
+const LINHAS = { observacoes: ['(a,v1)', '(b,v2)'], saude: ['(12.5)'] };
 const ler = (payload: unknown) =>
   lerDadosNuvem(JSON.stringify(payload), { consultas: CONSULTAS, consumidor: CONSUMIDOR }, AGORA);
 
@@ -122,14 +124,18 @@ describe('lerDadosNuvem', () => {
 
   it('TRANSPORTE_MD5: uma linha trocada na transcrição', () => {
     const p = respostaDoBanco(LINHAS) as { consultas: Record<string, string[]> };
-    p.consultas.observacoes = ['a|v1', 'b|v9'];
+    p.consultas.observacoes = ['(a,v1)', '(b,v9)'];
     expect(() => ler(p)).toThrow(/TRANSPORTE_MD5/);
   });
 
   it('TRANSPORTE_MD5: uma linha a menos (resposta truncada)', () => {
     const p = respostaDoBanco(LINHAS) as { consultas: Record<string, string[]> };
-    p.consultas.observacoes = ['a|v1'];
+    p.consultas.observacoes = ['(a,v1)'];
     expect(() => ler(p)).toThrow(/TRANSPORTE_MD5/);
+  });
+
+  it('TRANSPORTE_FORMATO: registro que não é literal de registro, mesmo com o md5 fechando', () => {
+    expect(() => ler(respostaDoBanco({ ...LINHAS, saude: ['12.5'] }))).toThrow(/TRANSPORTE_FORMATO: registro/);
   });
 
   it('TRANSPORTE_MD5: atestado de leitura trocado à mão não fecha a conta', () => {
@@ -167,6 +173,29 @@ describe('lerDadosNuvem', () => {
     expect(() => ler({ ...respostaDoBanco(LINHAS), formato: 'x/9' })).toThrow(/TRANSPORTE_FORMATO/);
     expect(() => ler(respostaDoBanco(LINHAS, { consumidor: 'outro' }))).toThrow(/TRANSPORTE_FORMATO/);
     expect(() => ler({ rows: [] })).toThrow(/TRANSPORTE_FORMATO/);
+  });
+});
+
+describe('registroParaLinha — o envelope do record_out sai, o campo fica', () => {
+  // Formas copiadas do `record_out` do Postgres 16/17 (medidas em `db/test-transporte-nuvem.sh`):
+  // aspas quando o campo é vazio ou tem `"`, `\`, `(`, `)`, `,` ou espaço; `"` e `\` dobrados.
+  it.each([
+    ['(a,v1)', 'a|v1'],
+    ['(12.5)', '12.5'],
+    ['()', ''],
+    ['(,)', '|'],
+    ['("",x)', '|x'],
+    ['(t,f,)', 't|f|'],
+    ['("2026-09-26 12:00:00+00",5.00)', '2026-09-26 12:00:00+00|5.00'],
+    ['("a""b\\\\c (x), y",1)', 'a"b\\c (x), y|1'],
+    ['("{1,2,NULL}","{""k"": 1}")', '{1,2,NULL}|{"k": 1}'],
+    ['("á  b|c",-0.000)', 'á  b|c|-0.000'],
+  ])('%s → %s', (registro, linha) => {
+    expect(registroParaLinha(registro)).toBe(linha);
+  });
+
+  it.each([['12.5'], ['(a'], ['a)'], ['("a)'], ['(a(b)'], ['(a\\)']])('recusa %s', (registro) => {
+    expect(() => registroParaLinha(registro)).toThrow(/TRANSPORTE_FORMATO: registro/);
   });
 });
 

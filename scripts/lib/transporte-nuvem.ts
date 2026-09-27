@@ -27,12 +27,13 @@
  *     EXECUTOU é byte a byte o que o CLI emitiu. Um SQL "corrigido" no caminho não passa.
  *   - `medido_em` — relógio do banco. Resposta de outra rodada, reaproveitada, não é medição desta.
  *
- * FIDELIDADE ao psql: cada linha é `string_agg(coalesce(valor, ''), '|')` sobre
- * `json_each_text(row_to_json(linha))`. Isso reproduz o psql para colunas text/numeric/inteiro — o
- * que as consultas de hoje devolvem (data sai por `to_char`, booleano por token). boolean,
- * timestamp e array sairiam no dialeto do JSON (`true`, `T`, `[…]`), não no do psql (`t`, espaço,
- * `{…}`). Quem pega isso é a prova de equivalência `db/test-transporte-nuvem.sh`: roda TODAS as
- * consultas dos dois jeitos no mesmo banco e compara — coluna nova de outro tipo reprova lá.
+ * FIDELIDADE ao psql, para QUALQUER tipo: cada linha viaja como o literal de registro do próprio
+ * Postgres (`q::text`, o `record_out`), que monta cada campo com a MESMA função de saída do tipo que
+ * o psql imprime — boolean sai `t`, timestamp sai com espaço, array sai `{…}`. O TS desfaz só o
+ * envelope do registro (parênteses, vírgulas, aspas) e junta os campos com `|`, como o
+ * `psql -A -F '|' -t`. Uma tentativa com `row_to_json` foi descartada: ela fala o dialeto do JSON
+ * (`true`, `T`, `[…]`) e só coincidia com o psql em text/numeric. A prova de equivalência contra
+ * um Postgres de verdade é `db/test-transporte-nuvem.sh`.
  */
 
 import { createHash } from 'node:crypto';
@@ -64,7 +65,8 @@ export type Consultas = Readonly<Record<string, string>>;
 export interface DadosNuvem {
   /** O `now()` do banco na transação da leitura — a idade de cada linha é relativa a ele. */
   medidoEm: Date;
-  /** Por NOME de consulta: as linhas unidas por `\n`, na forma que o `psql -A -F '|' -t` imprime. */
+  /** Por NOME de consulta: as linhas unidas por `\n`, na forma que o `psql -A -F '|' -t` imprime
+   *  (o payload traz o literal de registro; a conversão é `registroParaLinha`). */
   saidas: ReadonlyMap<string, string>;
 }
 
@@ -144,9 +146,8 @@ export function gerarSqlNuvem(consultas: Consultas, consumidor: string): string 
 
   const colunas = nomes.map(
     (n, i) =>
-      `(SELECT coalesce(array_agg(z.l), ARRAY[]::text[]) FROM (SELECT coalesce((SELECT ` +
-      `string_agg(coalesce(t.v, ''), '|' ORDER BY t.o) FROM json_each_text(row_to_json(q)) ` +
-      `WITH ORDINALITY AS t(k, v, o)), '') AS l FROM (${corpos[i]}) AS q) AS z) AS c_${n}`,
+      `(SELECT coalesce(array_agg(z.l), ARRAY[]::text[]) FROM ` +
+      `(SELECT q::text AS l FROM (${corpos[i]}) AS q) AS z) AS c_${n}`,
   );
   const canonico = [
     `'${FORMATO_TRANSPORTE}'`,
@@ -224,6 +225,59 @@ function desembrulhar(valor: unknown, profundidade = 0): Record<string, unknown>
     }
   }
   throw falha();
+}
+
+/**
+ * Um literal de registro (`record_out`) → a linha que o `psql -A -F '|' -t` imprimiria.
+ *
+ * O `record_out` põe o campo entre aspas quando ele é vazio ou tem `"`, `\`, `(`, `)`, `,` ou
+ * espaço, e dentro das aspas dobra `"` e `\`. Campo vazio SEM aspas é NULL. O psql imprime NULL e
+ * texto vazio do mesmo jeito (`''`, sem `\pset null` — o `psqlrc-ro` não o define), então os dois
+ * viram `''` aqui. A leitura segue a gramática do `record_in` (`\x` e `""` dentro das aspas), que
+ * é um superconjunto do que o `record_out` emite. Literal fora da gramática LANÇA.
+ */
+export function registroParaLinha(registro: string): string {
+  const ilegivel = () => new Error(`TRANSPORTE_FORMATO: registro ilegível: ${registro.slice(0, 80)}`);
+  if (registro.length < 2 || registro[0] !== '(' || registro[registro.length - 1] !== ')') throw ilegivel();
+  const campos: string[] = [];
+  let atual = '';
+  let aspas = false;
+  const fim = registro.length - 1;
+  for (let i = 1; i < fim; i += 1) {
+    const ch = registro[i];
+    if (aspas) {
+      if (ch === '\\') {
+        if (i + 1 >= fim) throw ilegivel();
+        atual += registro[i + 1];
+        i += 1;
+      } else if (ch === '"') {
+        if (registro[i + 1] === '"') {
+          atual += '"';
+          i += 1;
+        } else {
+          aspas = false;
+        }
+      } else {
+        atual += ch;
+      }
+    } else if (ch === '"') {
+      aspas = true;
+    } else if (ch === ',') {
+      campos.push(atual);
+      atual = '';
+    } else if (ch === '\\') {
+      if (i + 1 >= fim) throw ilegivel();
+      atual += registro[i + 1];
+      i += 1;
+    } else if (ch === '(' || ch === ')') {
+      throw ilegivel();
+    } else {
+      atual += ch;
+    }
+  }
+  if (aspas) throw ilegivel();
+  campos.push(atual);
+  return campos.join('|');
 }
 
 const INSTANTE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
@@ -321,7 +375,7 @@ export function lerDadosNuvem(
   }
 
   const saidas = new Map<string, string>();
-  for (const n of nomes) saidas.set(n, (linhasPor.get(n) as string[]).join('\n'));
+  for (const n of nomes) saidas.set(n, (linhasPor.get(n) as string[]).map(registroParaLinha).join('\n'));
   return { medidoEm, saidas };
 }
 
