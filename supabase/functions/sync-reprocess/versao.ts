@@ -84,8 +84,14 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // v1.11 (2026-09-27) — só TIPO: `omie_pedido_id` segue CRU para a RPC (que só o ecoa no registro de
 // falha), agora tipado `string | number` por um tipo local — o `deno check` do preview deixa de acusar
 // a linha que o bot "consertava" com `Number()`. JS emitido byte-idêntico ao da v1.10.
+// v1.12 (2026-09-27, achado P2 do Codex) — a run de pedidos que ABORTA passa a gravar o `metadata`
+// do que apurou até o abort (antes: `{}`, e a `falhas_amostra` da página que abortou se perdia). Fase
+// não apurada vai `null`, nunca `0`, e o metadata abortado ganha `abortada`/`pagina_abortada`/
+// `paginas_montadas`/`paginas_reconciliadas` (denominadores). `upserts_count`/`divergences_found`/
+// `corrections_applied` da run abortada sem nenhuma página reconciliada vão NULL. A decisão de abortar
+// e o metadata da run completa não mudam (`./apuracao-pedidos.ts`).
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.11-omie-pedido-id-tipado";
+export const VERSAO = "v1.12-metadata-no-abort";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
