@@ -27,11 +27,13 @@ Nenhum assert da suíte tinha julgado nada — e o CI aprovaria.
 
 `SABOTAGENS="erro_nao_e_broken:A7,A9 desconhecido_vira_ok:A13 …"`: `,` = E (cada um tem de virar),
 `|` = OU (basta um); o ID é o prefixo `A<n> ` que cada assert passou a imprimir (A1…A31). A rodada só
-conta como vermelha com as **três camadas**:
+conta como vermelha com as **quatro camadas**:
 
 1. a sabotagem **aplicou** (a linha `SABOTAGEM ATIVA em` está no log);
 2. a suíte rodou **inteira** (PASS+FAIL do recibo = o do controle — aborto no meio não é assert);
-3. **cada** assert declarado está verde no controle e vermelho aqui.
+3. **cada** assert declarado está verde no controle e vermelho aqui;
+4. **nenhum `ERROR:` do psql** que o controle não tem (o controle tem zero) — a 4ª veio do Codex (abaixo):
+   sabotagem que faz o SQL ERRAR esvazia a medição, e o assert declarado cai por erro, não por julgamento.
 
 Não se exige "exatamente estes vermelhos": os colaterais oscilam (o A25 sob
 `message_com_hora_de_parede` depende de a leitura cruzar a virada de um segundo). O mapa medido:
@@ -59,7 +61,7 @@ Normal `PASS=31 FAIL=0`; `--falsificar` `SABOTAGENS: 13 vermelhas / 0 falhas`, e
 Cada variante é uma CÓPIA num repo-sombra (symlinks; o worktree não é tocado), com edições exatas
 (casou ≠1× = erro da meta, não veredito), `bash -n` antes de rodar (no bash 3.2, erro de sintaxe com
 `trap … EXIT` sai 0 — entrada 22 de `evidencia-positiva-shell.md`) e a expectativa declarada ANTES.
-**10/10 em `LC_ALL=C` e 10/10 em `pt_BR.UTF-8`:**
+**12/12 em `LC_ALL=C` e 12/12 em `pt_BR.UTF-8`:**
 
 | variante | exit | recibo | quem acusou |
 |---|---|---|---|
@@ -73,8 +75,10 @@ Cada variante é uma CÓPIA num repo-sombra (symlinks; o worktree não é tocado
 | D3 sem a camada 2 | **0** | **1/0** | ninguém — ESCAPA |
 | D4 controle sem recibo PASS/FAIL | 1 | — | "SEM um recibo PASS/FAIL legível" |
 | D5 sabotagem sem ramo | 1 | 0/1 | camada 1 |
+| D6 sabotagem que faz o SQL ERRAR (`THEN u.status::integer::text`) | 1 | 0/1 | camada 4 ("vermelha com ERRO de execução do SQL") |
+| D6 sem a camada 4 | **0** | **1/0** | ninguém — ESCAPA, com o A13 ❌ por erro |
 
-A camada 2 é a ÚNICA que pega o aborto; a 3, a ÚNICA que pega o assert errado. A 1 é redundante para
+A camada 2 é a ÚNICA que pega o aborto; a 3, a ÚNICA que pega o assert errado; a 4, a ÚNICA que pega o erro de execução. A 1 é redundante para
 DETECTAR (a 2 e a 3 pegam a deriva) — fica porque nomeia a causa, e mensagem que nomeia a causa é o que
 faz alguém consertar em vez de re-rodar.
 
@@ -206,13 +210,23 @@ marcador, não lidos linha a linha: um laço com vocabulário totalmente outro e
 
 Teste que lê fonte (vitest, `falsificar-exige-assert-gate.test.ts`), sobre o stripper COMPARTILHADO:
 
-- **R1** — toda lista `SABOTAGENS=` declara, em CADA entrada, `nome:ID` (IDs alfanuméricos por `,`/`|`).
-  Entrada nua é o defeito; curinga (`a:.*`) é o defeito disfarçado; lista vazia não prova nada.
-- **R2** — o laço `for X in $SABOTAGENS` extrai `${X#*:}` e ela chega a um `grep` (direto ou por um
-  `for` interno). Declarar e descartar é a entrada nua com outra cara.
-- **R3** — cada `falsificar=<n>` do `db/nucleo-ci.txt` tem um JUIZ registrado (o motivo + as âncoras de
-  código sem as quais ele volta a aceitar qualquer vermelho); os dois juízes da suíte normal consertados
-  aqui também estão registrados.
+- **R1** — toda lista `SABOTAGENS=` declara, em CADA entrada, `nome:VERMELHOS[:VERDES]` (IDs
+  alfanuméricos por `,`/`|`; `ID!MARCA` para o erro de execução DECLARADO). Entrada nua é o defeito;
+  curinga (`a:.*`) é o defeito disfarçado; lista vazia não prova nada.
+- **R2** — o laço `for X in $SABOTAGENS` extrai `${X#*:}` e ela chega a um `grep` DENTRO do corpo do
+  laço (até o `done` de mesma indentação), seguindo a cadeia de derivação até o ponto fixo
+  (`resto` → `verm` → `for x` → `id`); continuação `\` é um comando só. Declarar e descartar é a
+  entrada nua com outra cara.
+- **R3** — cada `falsificar=<n>` do `db/nucleo-ci.txt` usa esse idioma LIMPO (R1/R2 sem violação no
+  arquivo) ou tem um JUIZ registrado: o motivo + as âncoras de código, na verificação E no ramo que
+  rejeita. Os dois juízes da suíte normal consertados aqui também estão registrados.
+
+**O idioma nasceu em paralelo.** No mesmo dia, o #2606 (positivação) escreveu o próprio laço na mesma
+ideia — e MAIS estrito: `nome:VERMELHOS:VERDES` (o que tem de continuar verde), `ID!MARCA` e um veto a
+qualquer `ERRO_DE_EXECUCAO` não declarado. A 1ª versão deste gate daria DOIS falsos-positivos nele (a
+gramática só aceitava um `:`; a cadeia até o grep tem três elos). Recalibrado contra o arquivo REAL do
+PR (`git show pr/2606:…`): 1 lista, 14 entradas, 0 violações, e o estado pós-#2606 dá 0 sem registro
+nenhum — com UMA entrada nua reintroduzida, R1+R3.
 
 O laço de antes (`0906c17c2`) fica vermelho com 13 R1 + 1 R2; o repo de hoje passa com exatamente o
 denominador medido (457 arquivos, 3 listas, 24 entradas, 3 laços, 5 linhas do núcleo). A 5ª linha
@@ -220,12 +234,47 @@ foi o controle positivo do R3 em caso REAL: o `test-transporte-nuvem` entrou no 
 varredura, e a 1ª rodada pós-rebase o acusou ("falsificar=<n> sem JUIZ registrado") até o juiz dele
 ser lido e registrado. Simulado o manifesto do #2605: com o pré-registro do tint, 0; sem, R3. As mutações
 que provam o dente de cada camada: `scripts/mutcheck.d/falsificar-exige-assert.mut`.
-Medido: **28/28 PEGA**, 0 sobreviventes, 0 inválidas, controle+ ✓.
+Medido: **39 testes; 38/38 PEGA**, 0 sobreviventes, 0 inválidas, controle+ ✓.
 
 **O que o texto não alcança, de propósito:** fora do núcleo, cada laço tem o seu idioma (sentinela,
 SQLSTATE, conjunto de IDs, valor exato) — uma regra textual única reprovaria em massa ou aprenderia um
 idioma por arquivo. E âncora não prova semântica: só torna vermelha a REMOÇÃO da linha que sustenta o
 juiz. Quem prova o juiz é a meta-falsificação acima.
+
+## A 2ª opinião (Codex, 2026-09-27)
+
+Ritual `/codex` em modo challenge (`scripts/codex-async.sh`, `gpt-6-astra`, reasoning max, 339 s),
+sobre o diff inteiro, com cinco perguntas. O parecer, resumido **nas palavras dele** — e a calibração,
+separada:
+
+| achado do Codex | sev. | calibração | o que foi feito |
+|---|---|---|---|
+| sync: sabotagem que faz o SQL errar esvazia a medição, e o A13 cai por ERRO — o laço contaria | alta | procede: é o "≠ verde" do pedido-total dentro do alvo | camada 4 (acima) |
+| marca num `NOTICE` antes de OUTRO erro passa no authz, na edição e no `postcondicao_de` | média | procede: a marca estava solta no texto | a marca vale NA linha do `ERROR:` (a única, sob `ON_ERROR_STOP`) |
+| F9 aceita qualquer `23514` — inclusive o CHECK de valores do registro | média | procede | `t_sqlstate_c` devolve `SQLSTATE:constraint`; o F9 declara `23514:pedido_venda_coerencia` |
+| F7/F8 deterministas só enquanto a barreira de X vive (~30 s) | média | procede, e só gera vermelho FALSO — nunca aprova | registrado como risco residual; não mexido |
+| G3 aceitar "ficaria incoerente" | — | legítimo, concorda | — |
+| gate: âncora só na verificação, não no ramo que rejeita; R2 aceita grep fora do laço; `\` de continuação dá falso-positivo | média | procede | âncoras também nos ramos de rejeição; R2 limitado ao corpo do laço; continuação juntada |
+| sync: `grep | head -3` no diagnóstico dá SIGPIPE (141) com log grande | baixa | procede: aborta sem recibo (seguro, mas cego) | `grep -m3` com `|| true` |
+
+O que ele confirmou NÃO abrir passagem: o espaço depois do ID impede `A2`/`A23`; o `case` com saída
+multilinha; a falta do 4º argumento do `vermelha` aborta sob `set -u` (inclusive com `trap` no bash 3.2).
+
+Cada conserto tem meta-falsificação nos dois locales, com o buraco REPRODUZIDO antes:
+
+- **alvo — 12/12 × 2.** D6: a sabotagem de `desconhecido_vira_ok` trocada por `THEN u.status::integer::text`
+  (compila, erra em runtime) reprova na camada 4; com ela desligada, passa `1/0` com o A13 ❌ por erro —
+  o cenário do Codex, medido.
+- **authz — 10/10.** F1 trocada por um `RAISE NOTICE` com "POSTCONDICAO FALHOU" seguido de `SELECT 1/0`:
+  agora `ERRO ALHEIO … division by zero`; na versão intermediária (`0f3b22776`), `OK … (=ABORTOU)`.
+- **pedido-edicao — 14/14.** O mesmo na G1 (`RAISE NOTICE $n$ASSERT_NAO_LANCOU$n$` antes de `1/0`):
+  agora "não é o declarado [ASSERT_NAO_LANCOU]: division by zero"; na intermediária, "a recusa SUMIU".
+- **pedido-total — 20/20 (14 + as 6 da F9 refeita).** F13 com a marca da postcondição num NOTICE antes de `1/0`: agora
+  `esperado o ramo [postcondicao], veio [outro_erro]` (17/1); na intermediária, 18/0. F9 com o registro
+  gravando `total_depois = total_antes` — o CHECK de valores dispara `23514` ANTES do gatilho deferido da
+  coerência: agora `veio [23514:pedido_total_liquido_conversoes_valores]` (17/1); antes, 18/0. A 1ª
+  tentativa injetou o erro DENTRO do `EXCEPTION WHEN check_violation` do laço, que o engoliu (`OK` nas
+  duas versões): erro da META, não veredito — refeita no registro, fora do tratador.
 
 ## Lições
 
@@ -236,6 +285,12 @@ juiz. Quem prova o juiz é a meta-falsificação acima.
   juiz exigiu a marca: a recusa do D7 some e a D12 barra. Declarar o que vem NO LUGAR é o que separa
   a segunda camada de um erro qualquer.
 - **Varredura delegada é hipótese.** Um "já-correto" do subagente caiu na primeira medição.
+- **Erro de execução é o vermelho mais barato de confundir com dente.** Sabotagem que só QUEBRA a
+  consulta derruba o assert que a mede — com o nome certo no log. Quem julga precisa ver o `ERROR:` e
+  recusá-lo (a camada 4; o `ERRO_DE_EXECUCAO` do #2606), ou declarar o valor exato que só o
+  julgamento produz.
+- **Gate que nasce com um idioma só reprova o idioma melhor.** O #2606 chegou ao mesmo lugar por outro
+  caminho, no mesmo dia; o gate tem de aceitar o mais estrito, não só o que o inspirou.
 
 ## O que ficou de fora, com dono
 
