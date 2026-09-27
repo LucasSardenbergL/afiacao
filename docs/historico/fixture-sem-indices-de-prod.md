@@ -77,12 +77,24 @@ Estourar o teto é falha, não "segue esperando". Custo: ~0,15s por suíte.
 Como o mecanismo mudou, entrou a sabotagem **F5** (tira a anti-sobreposição da função e exige
 `{B14}` vermelho). Sem ela, nada provaria que o B14 novo ainda morde. As camadas novas foram
 sabotadas uma por vez, no runner, com o controle verde na mesma invocação: sessão do lock com outra
-chave → a pré-condição reprova; encerramento que não acha a sessão → a pós-condição reprova;
-sabotagem com âncora que não casa → `FAIL=1` no recibo.
+chave → a pré-condição reprova (e só ela); sabotagem com âncora que não casa → `FAIL=1` no recibo.
+
+A terceira sabotagem, *encerramento que não acha a sessão*, ficou **VERDE** na 1ª versão. A
+pós-condição vinha depois do `wait`, e o `wait` aguardava o `pg_sleep(60)` acabar: o lock saía livre
+"de graça", a pós-condição nunca reprovava e a prova só ficava 60s mais lenta por suíte, em silêncio.
+Ela passou para ANTES do `wait`; se reprovar, o cliente do lock é morto para não bloquear.
 
 ## Resultado
 
-MEDIDAS_RESULTADO_AQUI
+Versão final no runner `ubuntu-latest` (índices de prod + `autovacuum=off` + B14 novo + F5), 2 VMs:
+
+| | VM1 | VM2 |
+|---|---|---|
+| prova, ponta a ponta (3×) | 11,9 · 11,7 · 11,9s | 10,0 · 10,1 · 10,1s |
+| pelo `db/roda-nucleo-ci.sh`, manifesto de 1 linha | `✅ asserts=31 (≥31)` 11s | `✅ asserts=31 (≥31)` 9s |
+| as 3 sabotagens das camadas novas + controle | vermelhas pelo motivo certo, 49s | vermelhas pelo motivo certo, 44s |
+
+De 185–252s para ~12s, sem mudar universo, seed nem asserção.
 
 F1–F4 derrubam exatamente os mesmos conjuntos de antes, e F5 derruba `{B14}`. O cabeçalho da prova
 declarava `{B2,B13a,B13b}` para o F4, mas o conjunto medido, e já declarado no código, é
@@ -101,4 +113,6 @@ substitui o `31 ok / 0 falhas`, que o `db/roda-nucleo-ci.sh` não casa ("falhas"
    verde sem ser removida é redundante; esta ficava mais rápida sem ela.
 4. **`sleep N` em prova é palpite duas vezes**: custa N sempre, e erra quando o ambiente demora
    mais que N. Espera em prova é positiva e com teto
-   ([espera-sem-desistencia.md](espera-sem-desistencia.md)).
+   ([espera-sem-desistencia.md](espera-sem-desistencia.md)). E a ORDEM importa: uma checagem com
+   teto colocada depois de uma espera sem teto é inalcançável, porque a espera absorve a falha. Só
+   a sabotagem mostrou isso.

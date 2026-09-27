@@ -184,8 +184,9 @@ db/test-tint-watchdog-corante.sh           11
 # Tintométrico, a camada B: chave carimbada pela Fase 5 que ficou sem preço alarma (S1), a fonte
 # que retirou a chave alarma em tipo PRÓPRIO (S2: no mesmo tipo, o ON CONFLICT calaria um dos dois),
 # e o universo carimbado que encolhe alarma com piso 1 (S3, o vigia de vacuidade). As 5 sabotagens
-# rodam inline no modo normal; a inválida conta no FAIL do recibo. Entrou em 2026-09-27, depois de
-# cair de 185–252s para MEDIDA_AQUI no runner: o custo era o plano da view sem ANALYZE, não o universo.
+# rodam inline no modo normal; a inválida conta no FAIL do recibo. Entrou em 2026-09-27, ao cair de
+# 185–252s para ~12s no runner: o custo era o plano da view num fixture SEM os índices de prod (mais
+# 36s de sleep no B14), não o universo — docs/historico/fixture-sem-indices-de-prod.md.
 db/test-tint-fase5-watchdog.sh             31
 
 # ── Medidas no runner e deixadas de FORA (2026-09-27) — ausência de dado DECLARADA ────────────────
