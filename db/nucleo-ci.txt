@@ -120,6 +120,13 @@ db/test-desconto-backfill-aplicar.sh       30
 # quando ganharam o 3º campo abaixo (e, antes de entrar, a exigência de vermelho pelo
 # motivo CERTO: duas delas ficavam vermelhas por SQL que nem compilava).
 db/test-canaria-veredito.sh                24  falsificar=18
+# O transporte da NUVEM (2026-09-27): sem `psql-ro`, a sessão lê prod pelo `query_database` do
+# conector Lovable (`postgres`, sem modo leitura) e o veredito do `pendencias:deploy`/`pacote`
+# passa a depender de o transporte ser FIEL ao psql e de recusar leitura destravada, SQL alterado
+# (inclusive statement antes da trava e o SQL em dobro no lote) e payload adulterado. Gera o SQL
+# pela lib real (`scripts/lib/transporte-nuvem.ts`, só builtins — o runtime bun do job basta),
+# como a canária. As 10 sabotagens rodam num worktree do HEAD.
+db/test-transporte-nuvem.sh                18  falsificar=10
 
 # ── Eixo 6 — DUPLA CONTAGEM (o mesmo fato sob N óticas) ──────────────────────────
 # `fin_movimentacoes` guarda o MESMO pagamento do Omie duas vezes (lançamento do título e
