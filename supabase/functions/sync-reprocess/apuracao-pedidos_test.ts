@@ -282,6 +282,11 @@ Deno.test("PIN: o index monta por página, reconcilia pelo módulo e o catch gra
   const iReconcilia = corpo.indexOf("await reconciliarPagina(ap, pedidosRpc.length,");
   assert(iPg >= 0 && iPg < iLaco, "[PIN-PG-POR-PAGINA] o contador da página tem de nascer antes do laço de pedidos");
   assert(iConsolida > iLaco && iConsolida < iReconcilia, "[PIN-CONSOLIDA-ANTES-DA-RPC] a montagem é consolidada depois do laço e antes da RPC");
+  // "Depois da ABERTURA do laço" não basta: dentro dele, cada pedido consolidaria a página
+  // parcial (parecer Codex, 2ª rodada). Entre o `for` e a consolidação as chaves têm de fechar.
+  const trecho = corpo.slice(iLaco, iConsolida);
+  const profundidade = (trecho.match(/\{/g) ?? []).length - (trecho.match(/\}/g) ?? []).length;
+  assert(profundidade === 0, `[PIN-CONSOLIDA-FORA-DO-LACO] consolidarMontagem está a ${profundidade} nível(is) dentro do laço de pedidos`);
   for (const campo of ["itensLidos", "itensComIdentidade", "descontoIlegivel", "itemSemCodigo", "paginasMontadas", "paginasReconciliadas"]) {
     assert(!corpo.includes(`ap.${campo}`), `[PIN-FASE-DIRETA] o index mexe em ap.${campo} por fora do módulo`);
   }
