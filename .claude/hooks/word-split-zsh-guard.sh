@@ -45,8 +45,9 @@
 # armadilhas (precedente 2026-06-24: um guard bloqueou o commit que DOCUMENTAVA o seu padrao). A
 # unica excecao e `$(...)`, que e CODIGO mesmo dentro de aspas duplas (medido: `"$(for x in $l; …)"`
 # da 1 volta no zsh). A here-string `<<<` e redirecao, nao heredoc: o scanner de
-# `pipestatus-zsh-guard.sh` a le como `<` + `<<`, come a aspa de abertura de `"$x"` e inverte a
-# paridade — e `read -r a b <<< "$st"` e justamente o idioma que ESTE aviso recomenda.
+# `pipestatus-zsh-guard.sh` a lia como `<` + `<<`, comia a aspa de abertura de `"$x"` e invertia a
+# paridade (ate 2026-09-27, quando ganhou ramo `herestring` proprio) — e `read -r a b <<< "$st"`
+# e justamente o idioma que ESTE aviso recomenda.
 #
 # ── POR QUE AVISA E NUNCA BLOQUEIA ────────────────────────────────────────────────────────────
 # "Um detector de padrao de shell nao herda a semantica do shell" (§9): o `pipestatus-zsh-guard.sh`
@@ -211,8 +212,9 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
     if (WACT[D] && WSH[D] == "L" && WR[D] ~ /^[0-9]+$/) wreset(D); else fimpal(D)   # 2>: FD do operador
     # Heredoc: o delimitador entra na FILA. A here-string `<<<` NAO precisa de ramo proprio: o
     # delimitador para no 3o `<` e sai vazio (ignorado), e o 3o `<` vira redirecao comum, cuja
-    # palavra e DADO. O vizinho pipestatus-zsh-guard entra no heredoc pelo 2o `<` e come a aspa
-    # de `"$x"` — a suite trava o comportamento (N26), nao esta implementacao.
+    # palavra e DADO. O vizinho pipestatus-zsh-guard entrava no heredoc pelo 2o `<` e comia a aspa
+    # de `"$x"` (ate ganhar ramo `herestring`, 2026-09-27) — a suite trava o comportamento (N26),
+    # nao esta implementacao.
     if (c == "<" && nx == "<") {
       j = i + 2; hyf = 0
       if (substr(linha, j, 1) == "-") { hyf = 1; j++ }
