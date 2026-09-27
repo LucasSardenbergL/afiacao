@@ -15,8 +15,9 @@
   válidos; os crons da fila com 0 falha em 24 h; e runs do motor e do param-auto DEPOIS do replace
   (`xmin` da função, exclusivo, menor que o dos runs — [database.md](../agent/database.md) §2).
 - **Sentinelas:** `authz:claude-ro:prod` exit 0 (38 asserções) · `deriva:corpo:prod` exit 0 (313).
-- **Edges:** `pendencias:deploy` exit 0 às 16:52Z, as 3 do mapa em `CONFERE`. A `tint-sync-agent`
-  fica fora do mapa (seção própria abaixo).
+- **Edges:** `pendencias:deploy` exit 0 às 16:52Z, as 3 do mapa em `CONFERE`. Depois do revert do
+  3º incidente (#2595), `sync-reprocess` e `whatsapp-inbound` voltam a `DIVERGE_P1` só por `VERSAO`
+  (lição 2). A `tint-sync-agent` fica fora do mapa (seção própria abaixo).
 
 ## Lição 1 — o `LEDGER_DIVERGE` vale para o instante do `criado`, não para agora
 
@@ -61,8 +62,12 @@ exit 0 às 16:52:25Z. No turno das 16:58:21Z o agente deployou verbatim e DEPOIS
 do bot na main às 16:58Z. Mesmo agente, mesmos arquivos com erro de typecheck do preview: com a
 guarda, zero edição; sem ela, quatro. É n=1 de cada lado — evidência a favor do prompt blindado, não
 prova, e o sensor por fora continua necessário. O bundle servido ficou verbatim nas três (deploy antes
-da edição). Revert, sensor e blindagem ficaram com a sessão "Blindar prompt de deploy e fechar a leva
-pós-revert" (PR #2594, branch `claude/prompt-deploy-escopo`).
+da edição). O revert entrou pelo #2595 (17:26Z; o #2594, duplicado, foi fechado), com bump de
+`VERSAO` das duas — que por isso voltam a `DIVERGE_P1` no ledger sem nenhuma mudança de runtime. O
+redeploy delas ficou para o PR que corrige o erro de typecheck que serve de isca ao agente, num
+único deploy com o prompt blindado (decisão registrada pela sessão do revert). Sensor por fora e
+blindagem: sessão "Blindar prompt de deploy e fechar a leva pós-revert" (branch
+`claude/prompt-deploy-escopo`).
 
 ## Lição 3 — pelo `db:aplicar`, o PASSO 2 com mapa não volta (2ª ocorrência)
 
