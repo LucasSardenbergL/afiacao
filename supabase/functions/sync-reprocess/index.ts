@@ -36,14 +36,14 @@ import {
   type ProdutoCadastroOmie,
 } from "./products-lote.ts";
 import {
+  consolidarMontagem,
   contagensDoLog,
   metadataPedidos,
   novaApuracaoPedidos,
-  paginaInteiraFalhou,
+  novaMontagemPagina,
+  reconciliarPagina,
   registrarDescontoIlegivel,
   registrarItemSemCodigo,
-  somarRespostaRpc,
-  type RespostaReconciliarPedidos,
 } from "./apuracao-pedidos.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
@@ -295,6 +295,9 @@ async function reprocessOrders(
       // quanto a primeira.
       const lidoEm = new Date().toISOString();
       const pedidosRpc: PedidoReconciliarReprocess[] = [];
+      // Contadores da montagem DESTA página: só entram na apuração quando ela termina inteira
+      // (`consolidarMontagem`), para `paginas_montadas` descrever exatamente o que os números cobrem.
+      const pg = novaMontagemPagina();
       for (const pedido of pedidos) {
         const cab = pedido.cabecalho || {};
         const codigoPedido = cab.codigo_pedido;
@@ -317,7 +320,7 @@ async function reprocessOrders(
         //      soma código verdadeiro (parecer Codex, 2026-09-14). A régua é a do `codigo_item`:
         //      inteiro positivo. Precisão > recall — o pedido fica na revisão anterior, REGISTRADO.
         if (itens.some((it) => normalizarCodigoItemOmie(it.produto?.codigo_produto) === null)) {
-          registrarItemSemCodigo(ap, codigoPedido);
+          registrarItemSemCodigo(pg, codigoPedido);
           continue;
         }
 
@@ -327,7 +330,7 @@ async function reprocessOrders(
         // desconhecido ⇒ não reconcilia NADA deste pedido (ver `descontoIlegivel`).
         const total = subtotalPedidoComDesconto(itens);
         if (total === null) {
-          registrarDescontoIlegivel(ap, codigoPedido);
+          registrarDescontoIlegivel(pg, codigoPedido);
           continue;
         }
 
@@ -339,8 +342,8 @@ async function reprocessOrders(
           // para o casamento por SKU, que é conhecido e guardado; um número fabricado casaria a
           // linha ERRADA dentro do pedido, em silêncio, no caminho do dinheiro.
           const codItem = normalizarCodigoItemOmie(it.ide?.codigo_item);
-          if (codItem !== null) ap.itensComIdentidade++;
-          ap.itensLidos++;
+          if (codItem !== null) pg.itensComIdentidade++;
+          pg.itensLidos++;
           // A base do desconto é a MESMA qty·preço que vai para a linha e que `apurarSubtotalPedido`
           // soma no cabeçalho, na mesma forma da ingestão (omie-vendas-sync). Bases diferentes dariam
           // números diferentes para o mesmo desconto.
@@ -385,7 +388,7 @@ async function reprocessOrders(
           itens: itensRpc,
         });
       }
-      ap.paginasMontadas++;
+      consolidarMontagem(ap, pg);
 
       // ── Escrita ATÔMICA por pedido via RPC. Substitui as N+M+2 escritas PostgREST soltas
       //    (insert por item, update por item, delete dos removidos, update do cabeçalho), entre as
@@ -393,44 +396,15 @@ async function reprocessOrders(
       //    da nova — visível para `omie-analytics-sync` (regra de associação publicada) e
       //    `fin-valor-cockpit` (margem/EVP). Ver migration 20260830190000 +
       //    db/test-reconciliar-pedidos-omie.sh (T1 prova; F1 mostra o writer antigo rasgando). ──
-      if (pedidosRpc.length > 0) {
-        const { data: rpcRes, error: rpcErr } = await db.rpc("reconciliar_pedidos_omie", {
+      // Chamada, LANÇAMENTO no erro da RPC, soma da resposta e decisão de abortar (página inteira
+      // falhou ⇒ falha sistêmica) moram em `reconciliarPagina` (./apuracao-pedidos.ts), que o teste
+      // Deno EXECUTA com a RPC simulada. Página sem pedido elegível não chama a RPC.
+      await reconciliarPagina(ap, pedidosRpc.length, () =>
+        db.rpc("reconciliar_pedidos_omie", {
           p_pedidos: pedidosRpc,
           p_status_gerido_omie: STATUS_GERIDO_OMIE,
           p_lido_em: lidoEm,
-        });
-        if (rpcErr) {
-          // Money-path: a RPC é o ÚNICO caminho de escrita agora. Se ela falha (migration não
-          // aplicada, grant, lista de status divergente da canônica), LANÇAR — senão a run fica
-          // verde sem reconciliar nada e o log marca 'complete' mascarando perda total. Mesma
-          // decisão que o `criar_pedidos_com_itens` do omie-vendas-sync tomou (achado /codex).
-          throw new Error(`[Reprocess][${account}] RPC reconciliar_pedidos_omie falhou pág ${pagina}: ${rpcErr.message}`);
-        }
-        const r = (rpcRes ?? {}) as RespostaReconciliarPedidos;
-        // A soma (e a amostra das falhas) acontece ANTES da decisão de abortar logo abaixo: é o que
-        // leva a página que aborta ao `metadata` gravado pelo catch.
-        const fails = somarRespostaRpc(ap, r);
-        if (fails.length > 0) {
-          console.error(`[Reprocess][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
-        }
-        if (r.ambiguo) {
-          console.warn(`[Reprocess][${account}] ${r.ambiguo} pedido(s) NÃO reconciliados por ambiguidade sem identidade de linha (${r.sku_repetido || 0} por SKU repetido no payload do Omie; o resto por duplicidade já gravada no banco) — seguem na revisão anterior COMPLETA`);
-        }
-        if (r.stale) {
-          console.warn(`[Reprocess][${account}] ${r.stale} pedido(s) pulados por leitura mais VELHA que a já publicada (compare-and-set)`);
-        }
-        // [P1-4] Se a página INTEIRA falhou, isto não é "alguns pedidos ruins" — é sinal de que
-        // algo sistêmico passou pela allowlist da RPC. Lançar, em vez de somar e seguir para a
-        // página seguinte acumulando o mesmo erro 100 vezes.
-        // Com UM pedido só na página, não aborta (ver `paginaInteiraFalhou`); ele segue em `falhas`.
-        if (paginaInteiraFalhou(fails.length, pedidosRpc.length)) {
-          throw new Error(`[Reprocess][${account}] TODOS os ${fails.length} pedidos da pág ${pagina} falharam na RPC — falha sistêmica, não dado sujo: ${JSON.stringify(fails[0])}`);
-        }
-        console.log(`[Reprocess][${account}] RPC pág ${pagina}: upserts=${r.upserts || 0} corrections=${r.corrections || 0} divergences=${r.divergences || 0} sem_pai=${r.sem_pai || 0} sem_item=${r.sem_item || 0} identidade_adotada=${r.identidade_adotada || 0} identidade_usada=${r.identidade_usada || 0}`);
-      } else {
-        // Nada a reconciliar nesta página: o resultado dela (nenhuma escrita) já está nos contadores.
-        ap.paginasReconciliadas++;
-      }
+        }), account, pagina);
 
       console.log(`[Reprocess][${account}] Orders page ${pagina}/${totalPaginas}`);
       pagina++;

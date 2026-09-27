@@ -9,7 +9,10 @@
 //
 // Ausente ≠ zero: uma run que aborta antes de apurar uma fase NÃO mediu aquela fase. Os contadores
 // dela vão `null`, nunca `0` — e os denominadores (`paginas_montadas`, `paginas_reconciliadas`)
-// dizem quantas páginas cada número cobre.
+// dizem quantas páginas cada número cobre. Para o denominador ser VERDADE, cada fase só entra na
+// apuração por página INTEIRA: a montagem acumula num contador da página (`MontagemPagina`) e só é
+// consolidada ao fim dela; a resposta da RPC é somada de uma vez. Uma página que quebra no meio da
+// montagem não deixa parcela nos números (parecer Codex no challenge desta entrega).
 
 /** Resposta da RPC `reconciliar_pedidos_omie` para UMA página. */
 export interface RespostaReconciliarPedidos {
@@ -88,14 +91,52 @@ export function novaApuracaoPedidos(): ApuracaoPedidos {
   };
 }
 
-export function registrarDescontoIlegivel(ap: ApuracaoPedidos, codigoPedido: number | string): void {
-  ap.descontoIlegivel++;
-  if (ap.descontoIlegivelAmostra.length < TETO_AMOSTRA) ap.descontoIlegivelAmostra.push(codigoPedido);
+/** Contadores da fase 1 de UMA página, consolidados na apuração só quando a montagem termina. */
+export interface MontagemPagina {
+  itensLidos: number;
+  itensComIdentidade: number;
+  descontoIlegivel: number;
+  descontoIlegivelAmostra: Array<number | string>;
+  itemSemCodigo: number;
+  itemSemCodigoAmostra: Array<number | string>;
 }
 
-export function registrarItemSemCodigo(ap: ApuracaoPedidos, codigoPedido: number | string): void {
-  ap.itemSemCodigo++;
-  if (ap.itemSemCodigoAmostra.length < TETO_AMOSTRA) ap.itemSemCodigoAmostra.push(codigoPedido);
+export function novaMontagemPagina(): MontagemPagina {
+  return {
+    itensLidos: 0,
+    itensComIdentidade: 0,
+    descontoIlegivel: 0,
+    descontoIlegivelAmostra: [],
+    itemSemCodigo: 0,
+    itemSemCodigoAmostra: [],
+  };
+}
+
+export function registrarDescontoIlegivel(pg: MontagemPagina, codigoPedido: number | string): void {
+  pg.descontoIlegivel++;
+  pg.descontoIlegivelAmostra.push(codigoPedido);
+}
+
+export function registrarItemSemCodigo(pg: MontagemPagina, codigoPedido: number | string): void {
+  pg.itemSemCodigo++;
+  pg.itemSemCodigoAmostra.push(codigoPedido);
+}
+
+/** Fecha a montagem da página: soma na apuração e conta a página no denominador da fase 1. */
+export function consolidarMontagem(ap: ApuracaoPedidos, pg: MontagemPagina): void {
+  ap.itensLidos += pg.itensLidos;
+  ap.itensComIdentidade += pg.itensComIdentidade;
+  ap.descontoIlegivel += pg.descontoIlegivel;
+  ap.itemSemCodigo += pg.itemSemCodigo;
+  for (const c of pg.descontoIlegivelAmostra) {
+    if (ap.descontoIlegivelAmostra.length >= TETO_AMOSTRA) break;
+    ap.descontoIlegivelAmostra.push(c);
+  }
+  for (const c of pg.itemSemCodigoAmostra) {
+    if (ap.itemSemCodigoAmostra.length >= TETO_AMOSTRA) break;
+    ap.itemSemCodigoAmostra.push(c);
+  }
+  ap.paginasMontadas++;
 }
 
 /**
@@ -144,6 +185,57 @@ export function somarRespostaRpc(
  */
 export function paginaInteiraFalhou(nFalhas: number, nPedidos: number): boolean {
   return nFalhas > 0 && nFalhas === nPedidos && nPedidos > 1;
+}
+
+/** Chamada à RPC `reconciliar_pedidos_omie` de uma página (injetada: o teste a simula). */
+export type ChamarRpcReconciliar = () => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+
+/**
+ * Reconcilia UMA página: chama a RPC, LANÇA no erro dela, soma a resposta e decide abortar — nesta
+ * ordem, que é o que o teste executa. Página sem pedido elegível não chama a RPC e conta como
+ * reconciliada (o resultado dela, nenhuma escrita, já está nos contadores).
+ */
+export async function reconciliarPagina(
+  ap: ApuracaoPedidos,
+  nPedidos: number,
+  chamarRpc: ChamarRpcReconciliar,
+  account: string,
+  pagina: number,
+): Promise<void> {
+  if (nPedidos === 0) {
+    ap.paginasReconciliadas++;
+    return;
+  }
+  const { data, error } = await chamarRpc();
+  if (error) {
+    // Money-path: a RPC é o ÚNICO caminho de escrita agora. Se ela falha (migration não
+    // aplicada, grant, lista de status divergente da canônica), LANÇAR — senão a run fica
+    // verde sem reconciliar nada e o log marca 'complete' mascarando perda total. Mesma
+    // decisão que o `criar_pedidos_com_itens` do omie-vendas-sync tomou (achado /codex).
+    // A página NÃO entra em `paginasReconciliadas`: não houve resposta para somar.
+    throw new Error(`[Reprocess][${account}] RPC reconciliar_pedidos_omie falhou pág ${pagina}: ${error.message}`);
+  }
+  const r = (data ?? {}) as RespostaReconciliarPedidos;
+  // A soma (e a amostra das falhas) acontece ANTES da decisão de abortar: é o que leva a página
+  // que aborta ao `metadata` gravado pelo catch.
+  const fails = somarRespostaRpc(ap, r);
+  if (fails.length > 0) {
+    console.error(`[Reprocess][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
+  }
+  if (r.ambiguo) {
+    console.warn(`[Reprocess][${account}] ${r.ambiguo} pedido(s) NÃO reconciliados por ambiguidade sem identidade de linha (${r.sku_repetido || 0} por SKU repetido no payload do Omie; o resto por duplicidade já gravada no banco) — seguem na revisão anterior COMPLETA`);
+  }
+  if (r.stale) {
+    console.warn(`[Reprocess][${account}] ${r.stale} pedido(s) pulados por leitura mais VELHA que a já publicada (compare-and-set)`);
+  }
+  // [P1-4] Se a página INTEIRA falhou, isto não é "alguns pedidos ruins" — é sinal de que
+  // algo sistêmico passou pela allowlist da RPC. Lançar, em vez de somar e seguir para a
+  // página seguinte acumulando o mesmo erro 100 vezes. Com UM pedido só na página, não
+  // aborta (ver `paginaInteiraFalhou`); ele segue em `falhas`.
+  if (paginaInteiraFalhou(fails.length, nPedidos)) {
+    throw new Error(`[Reprocess][${account}] TODOS os ${fails.length} pedidos da pág ${pagina} falharam na RPC — falha sistêmica, não dado sujo: ${JSON.stringify(fails[0])}`);
+  }
+  console.log(`[Reprocess][${account}] RPC pág ${pagina}: upserts=${r.upserts || 0} corrections=${r.corrections || 0} divergences=${r.divergences || 0} sem_pai=${r.sem_pai || 0} sem_item=${r.sem_item || 0} identidade_adotada=${r.identidade_adotada || 0} identidade_usada=${r.identidade_usada || 0}`);
 }
 
 export type DesfechoRun = { tipo: "completa" } | { tipo: "abortada" };
