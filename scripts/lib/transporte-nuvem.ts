@@ -110,7 +110,7 @@ function umaLinha(nome: string, sql: string): string {
     .join(' ');
   // ASCII imprimível + o plano básico sem controles C1 nem surrogates: `position`/`substring` do
   // Postgres contam CARACTERE e o `slice` do JS conta unidade UTF-16 — só no BMP as duas batem.
-  if (/[^\x20-\x7e -퟿-￿]/.test(junta)) {
+  if (/[^\x20-\x7e\u00a0-\ud7ff\ue000-\uffff]/.test(junta)) {
     throw recusa('tem caractere de controle ou fora do plano básico do Unicode');
   }
   return junta;
