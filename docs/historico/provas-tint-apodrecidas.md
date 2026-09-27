@@ -70,7 +70,20 @@ prod é reproduzido antes do apply, o mesmo idioma de `test-data-health-sync-rep
 
 ## Medição (runner `ubuntu-latest`, ambiente do `provas-sql`, 2 rodadas)
 
-PREENCHER: recibos, durações, núcleo antes/depois.
+Workflow temporário com os steps de instalação copiados do job (PG17 do PGDG + pgvector, sonda da
+extensão, locale pt_BR), removido antes do PR:
+
+| execução | r1 | r2 |
+|---|---|---|
+| vigia, modo normal | `PASS=30  FAIL=0` · 5s | `PASS=30  FAIL=0` · 5s |
+| vigia `--falsificar` em C / em pt_BR.UTF-8 | `SABOTAGENS: 13 vermelhas / 0 falhas` · 23s / 22s | 13/0 · 20s / 18s |
+| lista-email, modo normal | `PASS=22  FAIL=0` · 5s | `PASS=22  FAIL=0` · 4s |
+| lista-email `--falsificar` em C / em pt_BR.UTF-8 | `SABOTAGENS: 6 vermelhas / 0 falhas` · 12s / 13s | 6/0 · 11s / 10s |
+| núcleo de antes (39 provas + 6 falsificações) | 331s | 289s |
+
+As 19 sabotagens ficaram vermelhas NO assert-alvo, com as pré-condições verdes. As provas fixam
+`LC_ALL=C`, e o servidor nasce com `--locale=C`: a rodada em pt_BR prova que o locale de fora não
+vaza, não que a asserção muda com ele. O custo somado das duas no núcleo é ~40s.
 
 ## Achado lateral
 
