@@ -144,8 +144,10 @@ fi
 # ambiente. O codex NÃO falha com isso: loga "HTTP CONNECT failed with status 403", cai do
 # WebSocket para HTTPS e fica em "Reconnecting... waiting for network" até alguém matá-lo (medido
 # 2026-09-27, codex-cli 0.157.1: 90s até o `timeout` externo, sem desistir). Aqui quem mata é o
-# watchdog de 20min, e o classificador leria isso como transitório: 3 tentativas, ~1h em
-# background por um erro de CONFIGURAÇÃO que nenhuma espera conserta. Sondar o túnel custa <1s.
+# watchdog (20min no default) — e até 2026-09-27 o classificador lia isso como transitório: 3
+# tentativas, ~1h em background por um erro de CONFIGURAÇÃO que nenhuma espera conserta. O
+# classificador agora para na 1ª (ramo REDE_BLOQUEADA, abaixo), mas 1 hard-stop ainda são 20min
+# perdidos; sondar o túnel custa <1s.
 # Host pelo modo de auth: chave em env → api.openai.com (onde o codex bateu no teste); só o
 # auth.json (login ChatGPT) → chatgpt.com (modelo, /backend-api/codex) + auth.openai.com (refresh).
 # Bloqueio só com resposta POSITIVA do proxy: exit 56 do curl E a frase do 403 no CONNECT (a do
@@ -169,7 +171,7 @@ if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ]; then
       if bloqueio_do_proxy "$rc_rede" "$sonda_rede"; then
         echo "REDE_BLOQUEADA: a rede deste ambiente nega $host_rede (o proxy respondeu 403 ao CONNECT)." >&2
         echo "  Não gastei a chamada: com o host negado o codex não falha — trava em 'Reconnecting..." >&2
-        echo "  waiting for network' até o hard-stop, e o retry repetiria isso 3 vezes (~1h)." >&2
+        echo "  waiting for network' até o hard-stop (${timeout_s}s) sem produzir parecer." >&2
         echo "  Conserto (fora do repo): menu do ambiente na barra de título da sessão → Edit →" >&2
         echo "  Network access → domínios permitidos: ${hosts_rede[*]}. Só vale para sessão NOVA." >&2
         echo "  (chave de API em env → api.openai.com · login ChatGPT → chatgpt.com + auth.openai.com)" >&2
