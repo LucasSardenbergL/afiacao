@@ -124,7 +124,10 @@ limpa() { P -q -c "DELETE FROM public.sku_estoque_atual;"; }
 # sabotagem: replace literal robusto a metacaracteres via python (Lei #3 — muta a migration REAL)
 sabota() {  # $1=OLD  $2=NEW  $3=count esperado
   local SAB; SAB=$(mktemp /tmp/sab-efd.XXXXXX.sql)
-  SAB="$SAB" MIG="$MIG" SAB_OLD="$1" SAB_NEW="$2" SAB_CNT="$3" python3 - <<'PYEOF'
+  # O `|| return 1` e o que faz a sabotagem que NAO casa reprovar tambem sob `if sabota` (F3): ali o
+  # errexit fica suspenso ate dentro da funcao, o assert do python falhava, o $SAB ficava VAZIO, e o
+  # `P -f` de arquivo vazio sai 0 — a sabotagem nao aplicada contava como "APLICOU".
+  SAB="$SAB" MIG="$MIG" SAB_OLD="$1" SAB_NEW="$2" SAB_CNT="$3" python3 - <<'PYEOF' || { echo "  ❌ sabota: o padrao nao casou ${3}x — a sabotagem NAO aplicou"; rm -f "$SAB"; return 1; }
 import os
 s = open(os.environ['MIG']).read()
 old, new, cnt = os.environ['SAB_OLD'], os.environ['SAB_NEW'], int(os.environ['SAB_CNT'])
@@ -134,6 +137,19 @@ PYEOF
   P -q -f "$SAB" >/dev/null; rm -f "$SAB"
 }
 restaura() { P -q -f "$MIG" >/dev/null; }   # guard aceita re-run (marca v3 presente)
+# Vermelho = o status sob sabotagem e o que a sabotagem DECLARA ($2) — nao so "!= broken". O "!="
+# aceitava ok/stale/unknown indistintos E o vazio do chk que ERRA: a substituicao dentro do `[ ]` nao
+# dispara o errexit. A leitura roda com `set -e` e o rc capturado fora de lista ||/&& (onde o bash 5
+# ignora o errexit do subshell). O vermelho tem de ser do SEU assert:
+# docs/historico/falsificacao-exit-nao-e-dente.md.
+veredito_status() { # $1=rotulo  $2=status que a sabotagem DECLARA
+  local s rc
+  set +e; s="$(set -e; chk)"; rc=$?; set -e
+  if [ "$rc" -ne 0 ]; then bad "$1 — a LEITURA ERROU (rc=$rc): erro de execucao nao e dente"
+  elif [ "$s" = "broken" ]; then bad "$1 — SEM DENTE: a sabotagem seguiu broken"
+  elif [ "$s" = "$2" ]; then ok "$1 (status=$s)"
+  else bad "$1 — vermelha, mas NAO no valor que a sabotagem declara: esperado [$2], veio [$s]"; fi
+}
 
 echo "── conjunto acoplado INALTERADO (superfície mínima) ──"
 eq "C1 compute executa e segue com 23 checks" "$(Pq -c "SELECT count(*) FROM public._data_health_compute();")" "23"
@@ -307,12 +323,12 @@ sabota " FILTER (WHERE fonte_sync LIKE 'ListarPosEstoque%')" "" 1
 limpa
 P -q -c "SELECT _set_estoque(interval '31 hours', 'ListarPosEstoque');"
 P -q -c "SELECT _set_estoque(interval '1 minute', 'cold_start_seed');"
-if [ "$(chk)" = "broken" ]; then bad "F1 assert N4 SEM DENTE (sabotei a allowlist e seguiu broken)"; else ok "F1 sem allowlist o seed mascara (status=$(chk)) → N4 tem dente"; fi
+veredito_status "F1 sem allowlist o seed mascara → N4 tem dente" "ok"
 restaura
 # F2 — afrouxa o threshold broken (30h→300h) ⇒ N2 (31h broken) tem de FALHAR
 sabota "WHEN now() - se.max_sync > interval '30 hours' THEN 'broken'" "WHEN now() - se.max_sync > interval '300 hours' THEN 'broken'" 1
 limpa; P -q -c "SELECT _set_estoque(interval '31 hours', 'ListarPosEstoque');"
-if [ "$(chk)" = "broken" ]; then bad "F2 assert N2 SEM DENTE (sabotei o threshold e seguiu broken)"; else ok "F2 threshold frouxo deixa 31h passar (status=$(chk)) → N2 tem dente"; fi
+veredito_status "F2 threshold frouxo deixa 31h passar → N2 tem dente" "stale"
 restaura
 # F3 — neutraliza o guard (condição impossível) ⇒ N7 (abort sobre alienígena) tem de FALHAR
 P -q <<'SQL'
@@ -325,7 +341,10 @@ AS $function$
 $function$;
 SQL
 SAB_GUARD_OLD="IF v_md5 <> '${MD5_BASE}' AND v_def NOT LIKE '%estoque frescor v3%' THEN"
-if sabota "$SAB_GUARD_OLD" "IF false THEN" 1 2>/dev/null; then
+# o que a sabotagem DECLARA: aplicou E o corpo v3 substituiu o alienigena (exit 0 sozinho tambem vem
+# de um SAB vazio ou de um apply que nao tocou o compute)
+if sabota "$SAB_GUARD_OLD" "IF false THEN" 1 2>/dev/null \
+   && [ "$(Pq -c "SELECT pg_get_functiondef('public._data_health_compute()'::regprocedure) LIKE '%estoque frescor v3%';")" = "t" ]; then
   ok "F3 guard neutralizado APLICOU sobre base alienígena → N7 tem dente (o RAISE é o que barra)"
 else
   bad "F3 guard neutralizado ainda abortou?! (N7 pode estar passando por outro motivo)"
@@ -337,13 +356,13 @@ sabota "      WHERE empresa = 'OBEN'" "      WHERE true" 1
 limpa
 P -q -c "SELECT _set_estoque(interval '31 hours', 'ListarPosEstoque', 'OBEN');"
 P -q -c "SELECT _set_estoque(interval '1 minute', 'ListarPosEstoque', 'COLACOR');"
-if [ "$(chk)" = "broken" ]; then bad "F4 assert N5 SEM DENTE (sabotei o filtro de empresa e seguiu broken)"; else ok "F4 sem filtro de empresa o COLACOR mascara (status=$(chk)) → N5 tem dente"; fi
+veredito_status "F4 sem filtro de empresa o COLACOR mascara → N5 tem dente" "ok"
 restaura
 # F5 — remove a linha anti-futuro ⇒ A2 (futuro → broken) tem de FALHAR
 sabota "           WHEN se.max_sync > now() + interval '5 minutes' THEN 'broken'
 " "" 1
 limpa; P -q -c "SELECT _set_estoque(interval '-2 hours', 'ListarPosEstoque');"
-if [ "$(chk)" = "broken" ]; then bad "F5 assert A2 SEM DENTE (sabotei o anti-futuro e seguiu broken)"; else ok "F5 sem anti-futuro o timestamp futuro passa verde (status=$(chk)) → A2 tem dente"; fi
+veredito_status "F5 sem anti-futuro o timestamp futuro passa verde → A2 tem dente" "ok"
 restaura
 # F6 — janela contada em UTC ⇒ N9 tem de FALHAR (07:59:59 BRT são 10:59:59Z, "dentro" em UTC)
 sabota "(now() AT TIME ZONE 'America/Sao_Paulo')::time" "(now() AT TIME ZONE 'UTC')::time" 2
@@ -359,9 +378,12 @@ restaura
 # F8 — hora tirada do relógio de PAREDE (clock_timestamp escapa do controlado) ⇒ N9 tem de FALHAR
 sabota "(now() AT TIME ZONE 'America/Sao_Paulo')::time" "(clock_timestamp() AT TIME ZONE 'America/Sao_Paulo')::time" 2
 R="$(janela_rodada)"
-# a hora de PAREDE depende de quando roda — o critério não pode (seria outra janela): basta a rodada ter
-# rodado (bem formada) e NÃO reproduzir o padrão das bordas, que um relógio real não faz em ms
-if bem_formada "$R" && [ "$R" != "$N9_ESPERADO" ]; then ok "F8 hora de parede achata as 4 bordas ($R) → N9 tem dente"; else bad "F8 assert N9 — hora de parede e a rodada seguiu igual ou não rodou: [$R]"; fi
+# a hora de PAREDE depende de quando roda — qual das duas leituras vem não é fixo (dentro ou fora da
+# janela), mas o que a sabotagem DECLARA é: as 4 bordas ACHATADAS no mesmo status, idade 18000. "Bem
+# formada e != N9" aceitava qualquer outro desvio (a leitura do F7, por exemplo).
+if [ "$R" = "ok|18000 ok|18000 ok|18000 ok|18000" ] || [ "$R" = "stale|18000 stale|18000 stale|18000 stale|18000" ]; then ok "F8 hora de parede achata as 4 bordas ($R) → N9 tem dente"
+elif [ "$R" = "$N9_ESPERADO" ]; then bad "F8 assert N9 — hora de parede e a rodada seguiu igual (sem dente): [$R]"
+else bad "F8 assert N9 — vermelha, mas NAO no achatamento que a sabotagem declara (ou nao rodou): [$R]"; fi
 restaura
 # F9 — relógio DESLIGADO (compute no search_path da migration) ⇒ o controle positivo (idade) tem de FALHAR
 R="$(janela_rodada 0)"
