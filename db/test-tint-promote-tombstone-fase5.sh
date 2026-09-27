@@ -17,18 +17,19 @@
 #   F1 — FALSIFICAÇÃO: migration espelhada com o filtro neutralizado (em tmp, nunca no repo) →
 #        a suíte TEM de reprovar. Roda na MESMA invocação que o controle verde (T1).
 #
-# Uso: db/test-tint-promote-tombstone-fase5.sh   (PGBIN=<dir> para outro PG; default Homebrew 17)
+# Uso: db/test-tint-promote-tombstone-fase5.sh   (PGBIN_OVERRIDE=<dir> para outro PG — a major 17 é
+#      conferida; PGPORT_TEST=<porta>)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGBIN="${PGBIN:-/opt/homebrew/opt/postgresql@17/bin}"
-PORT="${PORT:-5446}"
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-${PORT:-5446}}"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-tombstone5.XXXXXX")"
 DATA="$TMP/data"
 MIG="$REPO_ROOT/supabase/migrations/20260924120000_tint_promote_tombstone_fase5.sql"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "PG ausente em $PGBIN (defina PGBIN)"; exit 1; }
 [ -f "$MIG" ] || { echo "migration ausente: $MIG"; exit 1; }
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMP"; }

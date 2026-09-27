@@ -80,21 +80,16 @@ MIG_F2C="$REPO_ROOT/supabase/migrations/20260722100002_tint_canonica_csv_legado_
 MIG_F2D="$REPO_ROOT/supabase/migrations/20260724130000_tint_canonica_csv_legado_allowlist.sql"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260722100001_tint_gate_revalida_submit.sql"
 MIG_PISO="$REPO_ROOT/supabase/migrations/20260726160000_tint_canonica_piso_legado.sql"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5449
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-5449}"
 DATA="$(mktemp -d /tmp/pgtest-tintgate.XXXXXX)/data"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 for f in "$MIG_F2" "$MIG_F2B" "$MIG_F2C" "$MIG_F2D" "$MIGRATION" "$MIG_PISO"; do
   [ -f "$f" ] || { echo "migration ausente: $f"; exit 1; }
 done
-
-CELLAR="$(brew --prefix postgresql@${PGVER})"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
 trap cleanup EXIT
