@@ -29,6 +29,7 @@ PEGA | aritmética: `now() - interval …` escapa                               
 PEGA | cast: `now()::date` dentro do date_trunc escapa                        | s/\|\[-\+\]\|::\)/|[-+])/
 PEGA | `current_date` sai do relógio da sessão                                | s/String\.raw`current_date`,//
 PEGA | multilinha: a chamada quebrada depois do `(` escapa                    | s/\\bdate_trunc\\s\*\\\(\\s\*\$\{UNIDADE\}/\\bdate_trunc\\s*\\([^\\S\\n]*\${UNIDADE}/
+PEGA | isenção por LINHA: `AT TIME ZONE` depois de truncar passa             | s/sitios\.push\(\{ arquivo: caminho, linha: i \+ 1/if (!\/at\\s+time\\s+zone\/i.test(linhas[i])) sitios.push({ arquivo: caminho, linha: i + 1/
 
 # A assinatura — o lado que ela NÃO pode casar.
 PEGA | hora vira calendário: `date_trunc('hour', now())` passa a ser violação | s/'\(\?:day\|/'(?:hour|day|/

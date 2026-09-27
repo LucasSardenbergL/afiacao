@@ -69,6 +69,10 @@ describe('controle POSITIVO — se o detector parar de casar, isto fica vermelho
   it('a chamada quebrada em várias linhas é UM sítio, na linha do date_trunc', () => {
     expect(linhas("SELECT 1;\nSELECT date_trunc(\n  'month',\n  now()\n)::date;\n")).toEqual([2]);
   });
+
+  it('o fuso aplicado DEPOIS de truncar não conserta: a truncagem já foi na sessão (isenção por LINHA erraria)', () => {
+    expect(linhas("SELECT date_trunc('month', now()) AT TIME ZONE 'America/Sao_Paulo';\n")).toEqual([1]);
+  });
 });
 
 describe('o que NÃO é a classe', () => {
@@ -77,6 +81,7 @@ describe('o que NÃO é a classe', () => {
     ['fuso explícito entre parênteses (a forma da prime-fundacao)', "SELECT date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date;"],
     ['fuso explícito e qualificado (a forma do conserto)', "SELECT date_trunc('month', pg_catalog.now() AT TIME ZONE 'America/Sao_Paulo');"],
     ['a forma de 3 argumentos (PG14+)', "SELECT date_trunc('month', now(), 'America/Sao_Paulo');"],
+    ['fuso explícito mesmo que UTC: a intenção está escrita (o fiscal pede fuso EXPLÍCITO, não SP)', "SELECT date_trunc('day', now() AT TIME ZONE 'UTC');"],
     ['hora: SP tem offset de hora cheia', "SELECT date_trunc('hour', now());"],
     ['instante DADO, não o relógio (a forma do fin-sync)', "((date_trunc('day', p_now AT TIME ZONE 'UTC') - make_interval(days=>d.d)"],
     ['instante dado por coluna', "SELECT date_trunc('month', p_mes_de::timestamp)::date;"],

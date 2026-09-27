@@ -33,13 +33,17 @@
  * `current_timestamp`, `current_date`, `localtimestamp` e `transaction_/statement_/clock_timestamp()`.
  * Casa nu, entre parênteses, com aritmética (`now() - interval '1 month'`) ou com cast (`now()::date`):
  * quem decide é o que vem DEPOIS do relógio. `AT TIME ZONE` e a vírgula do 3º argumento fixam o fuso
- * e não casam. SQL não liga para caixa, e o fiscal também não.
+ * e não casam. SQL não liga para caixa, e o fiscal também não. O fuso pedido é o EXPLÍCITO, não o de
+ * SP: a prova de uma função que mede em UTC de propósito escreve `now() AT TIME ZONE 'UTC'` e passa,
+ * com a intenção escrita. E o fuso aplicado DEPOIS de truncar (`date_trunc('month', now()) AT TIME
+ * ZONE …`) não conserta nada: a truncagem já aconteceu na sessão.
  *
  * Fora, medido em 2026-09-27: `'hour'` e menores (SP tem offset de hora cheia: truncar a hora dá o
  * mesmo instante nos dois fusos); `current_date`/`now()::date` NUS (363 ocorrências em ~52 provas,
  * quase todas com seed e esperado no MESMO fuso); `to_char`/`extract`/`date_part` sobre o relógio (0
- * casos da classe em `db/`: os 9 que existem são `epoch`, que é duração, ou já têm fuso); e o
- * instante DADO por expressão (`current_setting('test.agora')::timestamptz`, um `p_now`).
+ * casos da classe em `db/`: os 9 que existem são `epoch`, que é duração, ou já têm fuso); o instante
+ * DADO por expressão (`current_setting('test.agora')::timestamptz`, um `p_now`); e a unidade ou o
+ * relógio vindos de variável do shell (`date_trunc('$U', now())`).
  *
  * ## A camada do stripper — a decisão de desenho
  *
