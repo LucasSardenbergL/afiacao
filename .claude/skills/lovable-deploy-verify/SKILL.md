@@ -141,6 +141,11 @@ bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: banc
 #   (projeto `steu`, 8f005805-000a-42b7-88a1-9683f785fab6)
 ```
 
+☁️ **Na NUVEM** (sem `psql-ro`), os dois CLIs leem prod pelo transporte do conector Lovable, em duas
+rodadas cada: `--sql-nuvem` imprime o SQL, o `query_database` o roda VERBATIM, `--dados-nuvem=<resposta>`
+julga — mesmo veredito, mesmos exits (`docs/agent/deploy.md` §"Conferência de prod pela NUVEM"). Sem o
+conector, peça ao founder para conectá-lo; não chipe para uma sessão local.
+
 O gerador já resolve o closure ∪ {mapa} lendo de `origin/main` (**nunca** do working tree — #2123), já
 emite UMA colagem por ONDA — a leva inteira quando não há ordem declarada entre edges — e já carrega o
 `sha256` de cada arquivo com a ordem de conferir ANTES de deployar (#2362). **`pacote` em exit 4 = onda

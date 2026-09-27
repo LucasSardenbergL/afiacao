@@ -56,6 +56,14 @@
  *      #2285 (ou o #2469) com a ferramenta que existe para evitá-lo.
  *   4  ONDA PARCIAL — a colagem traz só as edges liberadas; as retidas saem numa próxima execução,
  *      depois que o ledger provar as predecessoras. Entre ondas o `pendencias:deploy` sai 1: esperado.
+ *
+ * ## Pela NUVEM (2026-09-27)
+ *
+ * Sem `psql-ro`, a sonda de pré-condição passa pelo transporte de `lib/transporte-nuvem.ts`, em duas
+ * rodadas com a MESMA entrada: `--sql-nuvem` imprime o SQL (e sai 0, sem escrever pacote); o modelo o
+ * roda VERBATIM pelo `query_database` do conector Lovable; `--dados-nuvem=<arquivo>` entrega a
+ * resposta validada ao mesmo `julgarPrecondicao`. Leva sem RPC literal não consulta o banco: o
+ * `--sql-nuvem` diz isso no stderr e sai 0 com o stdout VAZIO — rode então sem as flags.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -93,8 +101,18 @@ import { montarPacote, type PacoteFonte } from './lib/pacote-entrega';
 import { type ParAlvo, planejarOndas, type PlanoDeOndas } from './lib/ordem-entre-edges';
 import { ARQ_MAPA, parsearMapa, RAIZ_EDGES } from './sonda-fingerprint';
 import { extrairVersao } from './sonda-versao-sql';
+import {
+  gerarSqlNuvem,
+  leitorNuvem,
+  lerArquivoDadosNuvem,
+  lerDadosNuvem,
+  separarFlagsNuvem,
+} from './lib/transporte-nuvem';
 
 const PSQL_RO = process.env.PSQL_RO ?? join(homedir(), '.config', 'afiacao', 'psql-ro');
+
+/** Quem consome a resposta da nuvem — a do `pendencias:deploy` não serve aqui, e vice-versa. */
+export const CONSUMIDOR_NUVEM = 'pendencias-pacote';
 
 /** O `--json` do `pendencias:deploy` lido por inteiro: a leva, os vereditos CRUS e o instante da medição. */
 interface RelatorioLido {
@@ -202,14 +220,37 @@ export function main(
 ): number {
   const todos = argv.filter((a) => a !== '');
   const semRede = todos.includes('--sem-rede');
-  const args = todos.filter((a) => a !== '--sem-rede');
+  let nuvem: ReturnType<typeof separarFlagsNuvem>;
+  try {
+    nuvem = separarFlagsNuvem(todos.filter((a) => a !== '--sem-rede'));
+  } catch (e) {
+    process.stderr.write(`⛔ mecânica: ${mensagemDeErro(e) ?? 'flags da nuvem ilegíveis'}\n`);
+    return 2;
+  }
+  const args = nuvem.resto;
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     process.stderr.write(
       'uso: bun run pendencias:pacote <edge> [edge...] [--saida <arquivo.md>] [--sem-rede]\n' +
-        '     bun run pendencias:deploy --json | bun run pendencias:pacote -\n',
+        '     bun run pendencias:deploy --json | bun run pendencias:pacote -\n' +
+        '     nuvem: [--sql-nuvem | --dados-nuvem=<arquivo>]  (mesma entrada nas duas rodadas)\n',
     );
     return 2;
   }
+  // A 2ª metade do transporte substitui o `medir`: a resposta é validada CONTRA o SQL que esta
+  // execução montou — se a leva mudou entre as rodadas, o `sql_md5` não fecha e a sonda "não rodou".
+  const caminhoNuvem = nuvem.dadosNuvem;
+  const medirSonda =
+    caminhoNuvem === null
+      ? medir
+      : (sql: string): string => {
+          const consultas = { precondicao: sql };
+          const dados = lerDadosNuvem(
+            lerArquivoDadosNuvem(caminhoNuvem),
+            { consultas, consumidor: CONSUMIDOR_NUVEM },
+            agora(),
+          );
+          return leitorNuvem(dados, consultas)(sql);
+        };
 
   const { nomes: nomesArg, saida: saidaExplicita } = separarSaida(args);
   if (args.includes('--saida') && saidaExplicita === undefined) {
@@ -321,8 +362,31 @@ export function main(
   }
 
   // ── camada 2: MEDIR em prod (o passo que o #2285 não teve) ─────────────────────────────────
+  // Pela nuvem, a 1ª rodada para AQUI: imprime o SQL da sonda e sai sem escrever pacote nenhum.
+  if (nuvem.sqlNuvem) {
+    if (alvos.length === 0) {
+      process.stderr.write(
+        '⏭️ nada a medir no banco nesta leva (nenhuma RPC literal) — rode o pacote SEM --sql-nuvem/--dados-nuvem\n',
+      );
+      return 0;
+    }
+    try {
+      process.stdout.write(`${gerarSqlNuvem({ precondicao: montarSondaPrecondicao(nomesParaSonda) }, CONSUMIDOR_NUVEM)}\n`);
+    } catch (e) {
+      process.stderr.write(`⛔ mecânica: ${mensagemDeErro(e) ?? 'SQL da nuvem não montou'}\n`);
+      return 2;
+    }
+    return 0;
+  }
+
   let veredito: VereditoPrecondicao;
   if (alvos.length === 0) {
+    if (caminhoNuvem !== null) {
+      // Arquivo pedido e não lido tem de ser DITO: calado, parece que a resposta foi conferida.
+      process.stderr.write(
+        '⏭️ --dados-nuvem ignorado: nesta leva não há o que medir no banco (nenhuma RPC literal)\n',
+      );
+    }
     // Nenhuma RPC literal na leva. Isso NÃO é "pré-condição satisfeita" quando há indireção:
     // o extrator já disse que não enxerga tudo, e uma lista vazia por cegueira é o falso verde.
     const vazio = { ausentes: [], naoMedidos: [], desatualizadas: [], naoConferidas: [] };
@@ -336,7 +400,7 @@ export function main(
   } else {
     let saida: string;
     try {
-      saida = medir(montarSondaPrecondicao(nomesParaSonda));
+      saida = medirSonda(montarSondaPrecondicao(nomesParaSonda));
     } catch (e) {
       process.stderr.write(
         `⛔ mecânica: a sonda de pré-condição não rodou (${mensagemDeErro(e) ?? 'psql falhou'})\n` +

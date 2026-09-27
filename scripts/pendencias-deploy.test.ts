@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
+import { gerarSqlNuvem } from './lib/transporte-nuvem';
+import * as cliDeploy from './pendencias-deploy';
 import {
   atribuirSondasSemIdentidade,
   DATA_ECO_COM_IDENTIDADE,
@@ -28,6 +30,8 @@ import {
 } from './lib/pendencias-deploy';
 import {
   ARQ_ALLOWLIST,
+  CONSULTAS_NUVEM,
+  CONSUMIDOR_NUVEM,
   CRON_COLETOR,
   estadoDoWorktree,
   extrairAlvosDaAllowlist,
@@ -36,6 +40,7 @@ import {
   lerAllowlists,
   lerArgIds,
   lerArgJson,
+  main,
   MIGRATION_LEDGER,
   REF_MAIN,
   secaoSondaCron,
@@ -1049,5 +1054,64 @@ describe('lerAllowlists — a borda: ref pelo git, disco só para o diagnóstico
     // a marca do RAMO (git show), não só a da classe: texto vazio que chegasse ao parser também
     // lançaria ALLOWLIST_ILEGIVEL, mas pelo motivo errado
     expect(() => lerAllowlists(() => null, [{ edge: 'edge-do-disco' }], gitOk)).toThrow(/ALLOWLIST_ILEGIVEL.*git show/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Pela NUVEM (2026-09-27): o transporte cobre TODA leitura de prod deste CLI
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// A sessão da nuvem não tem `psql-ro`: as 8 consultas saem num SQL só (`--sql-nuvem`) e voltam
+// validadas (`--dados-nuvem`). Consulta nova que não entrasse no pacote seria a regressão cara —
+// na nuvem ela LANÇA (`TRANSPORTE_FORA_DO_PACOTE`), mas aqui ela reprova antes, no CI.
+describe('transporte da nuvem — o pacote cobre todas as leituras', () => {
+  it('toda constante SQL* exportada está no CONSULTAS_NUVEM', () => {
+    const sqls = Object.entries(cliDeploy)
+      .filter(([nome, valor]) => /^SQL/.test(nome) && typeof valor === 'string')
+      .map(([nome, valor]) => [nome, valor as string] as const);
+    expect(sqls.length).toBeGreaterThanOrEqual(8);
+    const noPacote = new Set(Object.values(CONSULTAS_NUVEM));
+    expect(sqls.filter(([, sql]) => !noPacote.has(sql)).map(([nome]) => nome)).toEqual([]);
+  });
+
+  it('o SQL da nuvem monta para o pacote real — nenhuma consulta recusada pelo transporte', () => {
+    const sql = gerarSqlNuvem(CONSULTAS_NUVEM, CONSUMIDOR_NUVEM);
+    expect(sql.startsWith('SET TRANSACTION READ ONLY;')).toBe(true);
+    for (const nome of Object.keys(CONSULTAS_NUVEM)) expect(sql).toContain(`AS c_${nome}`);
+  });
+
+  it('lerArgIds conhece as flags da nuvem e não come o argumento seguinte', () => {
+    expect(lerArgIds(['--sql-nuvem'])).toBeNull();
+    expect(lerArgIds(['--dados-nuvem', '/tmp/r.json', '--json'])).toBeNull();
+    expect(lerArgIds(['--dados-nuvem=/tmp/r.json', '--ids={"edge-a":1}'])).toBe('{"edge-a":1}');
+  });
+
+  it('main --sql-nuvem imprime o SQL e sai 0 antes de git e psql', () => {
+    const impresso: string[] = [];
+    const espiao = vi.spyOn(console, 'log').mockImplementation((t) => {
+      impresso.push(String(t));
+    });
+    let codigo: number;
+    try {
+      codigo = main(['--sql-nuvem']);
+    } finally {
+      espiao.mockRestore();
+    }
+    expect(codigo).toBe(0);
+    expect(impresso).toEqual([gerarSqlNuvem(CONSULTAS_NUVEM, CONSUMIDOR_NUVEM)]);
+  });
+
+  it('MECÂNICA (2) com as duas metades juntas — cada uma é uma rodada', () => {
+    const erros: string[] = [];
+    const espiao = vi.spyOn(console, 'error').mockImplementation((t) => {
+      erros.push(String(t));
+    });
+    let codigo: number;
+    try {
+      codigo = main(['--sql-nuvem', '--dados-nuvem=/tmp/r.json']);
+    } finally {
+      espiao.mockRestore();
+    }
+    expect(codigo).toBe(2);
+    expect(erros.join('\n')).toContain('duas metades da MESMA leitura');
   });
 });
