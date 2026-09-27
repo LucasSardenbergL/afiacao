@@ -200,3 +200,34 @@ nenhuma observação, o último há ≤ 72 h" separa com folga os dois mundos (�
 do XML esperado ("SDK returned non-XML prose response — ignoring queued batch") e o keychain
 falhava; e atualizar o plugin para ≥ 13.25.3 reduz o bloqueio a 1 prompt por queda, ao preço
 de a falha ficar silenciosa — que é o que o bloco 6 do vigia passa a denunciar.
+
+## 26/09 — o flake do laboratório: o rc era do HELPER, não do script
+
+**Sintoma:** no `test:hooks` cheio, na M2 em swap (carga 51 em 8 núcleos), o caso
+`REANIMAR_TESTE_SONDA_S=0` do `c_tempo_invalido` disse o `PAREI` certo e voltou **rc=1** em vez
+de 2 — 1 falha em 4 execuções; isolado, passou 2/2. O script só tem um caminho depois do `PAREI`:
+`exit 2`. O 1 vinha de outro lugar.
+
+**Causa (medida):** o rc que o lab lê é o do `com_tty.py`, o helper que dá TTY ao script. O `printf`
+do `roda()` entrega a resposta antes de o Python existir, e o helper a repassa ao TTY no 1º
+`select` — normalmente antes de o filho sequer virar bash. Sob carga, o helper pode ficar sem CPU
+durante a vida INTEIRA do comando (o caminho `PAREI` dura milissegundos) e acordar com a saída **e**
+a resposta prontas no mesmo `select`. No macOS, o filho (líder de sessão) só termina de sair quando
+o pai drena a saída dele (`ps`: estado `E` → `Z` só depois do read); o read o libera, e o write da
+resposta logo em seguida toma **EIO** — 26 em 30 direto, 30 em 30 com 0,3 s de folga. A exceção não
+tratada matava o Python com **1**, o mesmo número do "não consegui" do script. Por isso só os casos
+`PAREI`: os outros levam segundos ou param para ler a confirmação, com o TTY ainda aberto.
+
+**Reproduzir por sorte não deu:** 0 em 450 no pipeline exato do `roda()` (3 cópias, `nice 19`,
+carga 51). A janela é estreita demais — o `entrada_tardia.py` IMPÕE a ordem (1º `select` só depois
+de o comando escrever tudo; a resposta só depois de ele estar em `Z`), e a prova ficou vermelha
+10/10 com o EIO **real** do kernel.
+
+**Conserto:** (a) EIO ao entregar a resposta = o comando já saiu: o helper descarta, **diz**
+(`COM_TTY: entrada descartada`), segue drenando e devolve o exit DO COMANDO; (b) erro do próprio
+helper sai **125** com `COM_TTY: erro interno` — fora da faixa 0/1/2 do script, como o 124 do teto.
+`prova_com_tty.sh` roda no `test:hooks`; o `--falsificar` (controle verde na mesma invocação, 3
+sabotagens, C e pt_BR.UTF-8) no `test:falsificacao`. No Linux, pela leitura do `pty.c`, a escrita
+tardia é ACEITA (o EIO de lá é só na leitura): a prova mede o que o kernel fez e, onde ele aceita,
+emula o EIO do macOS **dizendo isso** — sem o que o CI nunca veria a guarda regredir. Classe: §7 de
+[evidencia-positiva-shell.md](evidencia-positiva-shell.md).

@@ -105,6 +105,18 @@ export const MARCAS_DE_CONFERENCIA: readonly string[] = [
 ] as const;
 
 /**
+ * As marcas do bloco de ESCOPO (`blocoDeEscopo`). Mesma função das de conferência: sem qualquer uma
+ * delas o prompt é OUTRO artefato — um que deixa o agente "consertar" o que achar pelo caminho, e o
+ * sync bidirecional empurra o conserto direto na `main`, sem PR. Cada marca fica numa linha só do
+ * texto, senão o `includes` do `conferirCobertura` não a casa.
+ */
+export const MARCAS_DE_ESCOPO: readonly string[] = [
+  'Do NOT edit, create, rename or delete ANY file',
+  'do NOT fix them',
+  '`No files were edited.`',
+] as const;
+
+/**
  * Filtra os vereditos pelos estados que exigem deploy. Ordena por nome para a saída ser
  * determinística — dois runs sobre o mesmo ledger produzem o MESMO prompt, o que permite
  * comparar colagens e detectar que a leva mudou.
@@ -192,6 +204,44 @@ export function blocoDeConferencia(p: Procedencia): string {
 }
 
 /**
+ * O ESCOPO da tarefa: deployar, e nada mais — nem depois do deploy.
+ *
+ * ## Por que existe (2026-09-24 #2541 e 2026-09-26 #2579 — duas vezes em dois dias)
+ *
+ * "Deploy verbatim, do NOT modify" fala dos arquivos DA EDGE. O agente obedeceu nas duas vezes —
+ * conferiu os hashes e publicou certo — e DEPOIS, por conta própria, leu
+ * `/tmp/observability/build-errors.log` e "corrigiu" typecheck em OUTRAS edges
+ * (`whatsapp-inbound`: `SupabaseClient<any>`; `sync-reprocess`: `Number(codigoPedido)`). O sync
+ * bidirecional empurrou commits "Changes" direto na `main`: código não revisado e `main` vermelha
+ * (`bun lint` no #2541, `sonda:fingerprint` no #2579). A proibição tem de nomear o que ele fez:
+ * QUALQUER arquivo, erros vistos em LOG, e o "depois do deploy".
+ *
+ * ## A confirmação no fim não é cerimônia
+ *
+ * Exigir a linha exata `No files were edited.` troca o silêncio (ausência de dado) por uma
+ * afirmação que a sessão confere — e a alternativa obrigatória (listar os arquivos tocados) dá
+ * nome ao estrago na mesma resposta. Ela NÃO prova nada sozinha: LLM afirma o que quiser. O eixo
+ * por fora é `bun scripts/lovable-sensor-edicao.ts`, que lê a resposta do MCP e os commits do bot
+ * na `main`.
+ */
+function blocoDeEscopo(): string {
+  return [
+    `**Scope: this task is DEPLOY ONLY. It changes nothing in the project — before, during or after`,
+    `the deploy.**`,
+    '',
+    `- Do NOT edit, create, rename or delete ANY file — not the files listed above, and not any`,
+    `  other file in the project (other edge functions, \`src/\`, types, config, migrations).`,
+    `- If you see build errors, typecheck errors or warnings — in \`/tmp/observability/build-errors.log\`,`,
+    `  in the build output, or anywhere else — in these functions or in any other part of the project:`,
+    `  do NOT fix them. List them in your reply (file and message) and leave the code exactly as it`,
+    `  is. Every edit you make is pushed straight to \`main\` without review; fixing them is a separate`,
+    `  task.`,
+    `- End your reply with this exact line: \`No files were edited.\` If you edited, created or`,
+    `  deleted any file despite this instruction, write instead the full list of files you touched.`,
+  ].join('\n');
+}
+
+/**
  * Monta a colagem. UMA por LEVA, nunca uma por edge — o cabeçalho declara o total e proíbe pular,
  * cada edge é uma seção numerada com a SUA fatia (cada arquivo com o sha256 esperado), e o fecho
  * pede confirmação item a item (que é o relato que a sessão compara com a sonda depois).
@@ -240,8 +290,10 @@ export function montarPrompt(edges: readonly EdgeParaDeploy[], proc: Procedencia
       '',
       blocoDeConferencia(proc),
       '',
-      `After deploying, confirm that \`${only.edge}\` shows **Active**, and report the result of the`,
-      `hash check.`,
+      blocoDeEscopo(),
+      '',
+      `After deploying, confirm that \`${only.edge}\` shows **Active**, report the result of the`,
+      `hash check, and end with the confirmation line above.`,
     ].join('\n');
   }
 
@@ -260,14 +312,16 @@ export function montarPrompt(edges: readonly EdgeParaDeploy[], proc: Procedencia
     '',
     blocoDeConferencia(proc),
     '',
+    blocoDeEscopo(),
+    '',
     `After deploying, list the ${n} function names and confirm that **each one** shows **Active**,`,
-    `and report the result of the hash check.`,
+    `report the result of the hash check, and end with the confirmation line above.`,
   ].join('\n');
 }
 
 /**
  * O check barato que segura o modo de falha: TODO arquivo da fatia aparece no prompt COM o seu
- * hash, todo nome de edge também, e as marcas do ramo fail-closed continuam lá. Falsificado no
+ * hash, todo nome de edge também, e as marcas do ramo fail-closed e do ESCOPO continuam lá. Falsificado no
  * teste removendo o mapa da fatia, zerando o hash e amputando cada marca — sem isso o check é
  * decorativo.
  *
@@ -298,6 +352,9 @@ export function conferirCobertura(
   }
   for (const marca of MARCAS_DE_CONFERENCIA) {
     if (!prompt.includes(marca)) faltando.push(`fail-closed:${marca}`);
+  }
+  for (const marca of MARCAS_DE_ESCOPO) {
+    if (!prompt.includes(marca)) faltando.push(`escopo:${marca}`);
   }
   return { ok: faltando.length === 0, faltando };
 }

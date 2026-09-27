@@ -126,6 +126,18 @@ existiu. ⇒ aspe o glob (`--include='*.tsx'`) e **derive a conclusão do result
 escrevê-la ao lado dele. (É o §2 por outro ângulo: lá o `echo` sobrescreve o `$?`; aqui ele fabrica
 o veredito.)
 
+**Recorrência, 2026-09-26 — quando o wrapper é SEU, e morre com o número do comando:** o lab do
+`claude-mem-reanimar.sh` lê o rc através do `com_tty.py`, o helper que dá TTY ao script. Sob carga,
+o helper repassou a resposta ao TTY depois de o comando sair; o macOS devolve EIO a essa escrita, e
+a exceção não tratada matou o Python com **1** — o "não consegui" do script. Saída: `PAREI` certo
+(o comando rodou) + `rc esperado 2, veio 1`, um flake que parecia regressão do script. Aqui não dá
+para exigir só o sinal de dentro, porque o que se testa é justamente o rc do script; o antídoto é
+**faixa própria**: o helper trata a condição que o derrubava e, para o resto, sai 125 dizendo que o
+erro é DELE (124 já era o teto), fora do 0/1/2 do script — como o `timeout(1)`. Corrida de
+escalonamento que ninguém reproduz solta (0 em 450) vira prova determinística impondo a ordem
+(`scripts/lab-claude-mem-reanimar/entrada_tardia.py`). Detalhe:
+[claude-mem-worker-vivo-mas-surdo.md](claude-mem-worker-vivo-mas-surdo.md).
+
 ### 8. O `; echo "exit=$?"` no fim mente para o HARNESS — mesmo imprimindo a verdade
 
 Irmã do §2, e mais traiçoeira, porque o número **impresso está certo**:
@@ -212,6 +224,13 @@ repetindo no guard que jurava tê-lo fechado por construção. **A moral é a 10
 miniatura: um detector de padrão de shell não herda a semântica do shell.** Um guard com falso
 negativo E falso positivo comprovados não tem a precisão que justifica bloquear — e como aviso o
 falso positivo custa uma linha de contexto, o que permitiu ampliar a detecção em vez de encolhê-la.
+
+**O scanner deste guard lia a here-string `<<<` como `<` + `<<`** (corrigido em 2026-09-27): o
+parser de delimitador do heredoc fictício comia a aspa de abertura da palavra — falso positivo no
+`read -r a b <<< "$st"` que o `word-split-zsh-guard.sh` recomenda, falso negativo quando
+`<<< 'nota'` virava heredoc quoted que engolia as linhas de baixo —, e ele foi o 3º scanner de shell
+caseiro do repo a tropeçar nisso (depois de `limpeza-shell.ts` e `sonda-processo-guard.sh`), então
+scanner novo nasce com `<<<` na suíte.
 
 
 **O sensor, e o invariante que eu tinha "provado" no caso típico.** Aviso sem registro é promessa

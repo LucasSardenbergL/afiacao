@@ -41,6 +41,8 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 ⚠️ **Deny fora desse envelope não nega nada — e agora reprova (`DENY-SEM-ENVELOPE`).** O `check-gstack.sh` ficou nesta lista de 2026-05-14 a 2026-09-27 sem negar uma chamada: emitia `{"permissionDecision":"deny"}` no topo do JSON, e o censo o contava por uma regex que casava o token em qualquer lugar do fonte. Medido com sonda no harness: no topo, ou sem o `hookEventName`, a chamada passa. Ele saiu (o gstack virou sensor de SessionStart, `vigia-gstack.sh`) → [gate-gstack-fail-open.md](../historico/gate-gstack-fail-open.md).
 
+⚠️ **Hook ligado sem suíte que o EXECUTE também reprova (`HOOK-SEM-TESTE`).** O `check-gstack.sh` era ainda o único hook fora do `test:hooks`. O `gates:frescura` lê os DOIS laços do `test:hooks` no `package.json` e exige que alguma suíte deles cite o hook como caminho (`…/<hook>`) fora de comentário — rótulo de `echo` não conta; laço ilegível ou stripper perdido é rc=2. Ligou hook novo: crie a suíte `scripts/test-*.sh` e ponha o nome num laço ([detalhe](../historico/vigia-de-cobertura-parcial.md)).
+
 ⚠️ **A segunda lista não é decoração — até 2026-09-07 aqueles dois nomes estavam na PRIMEIRA.** O
 job `mutation-check` está fora de `validate.needs` (job `mutation-check` no `ci.yml`) e abre Issue em vez de barrar,
 desde o #2344; o censo mesmo assim os anunciava como "reprovam o PR". A causa é que `inventarioCI`
@@ -154,7 +156,11 @@ inteira parecendo normal. `ausente ≠ zero` na dimensão **ARQUIVO COMPARTILHAD
 só enxerga um deploy depois da sonda, então ele não diz que outra sessão pediu a mesma edge minutos
 antes. No caso medido, o `sync-reprocess` saiu duas vezes em 15 min. O deploy redundante não custa só
 crédito: cada mensagem de deploy acorda o agente, e foi depois de uma delas que ele editou edges por
-conta própria (a proibição no prompt e o sensor pós-envio são do #2596).
+conta própria (a proibição no prompt e o sensor pós-envio são do #2596). Desde 27/09 o **Knowledge
+do projeto** também carrega a regra, e vale para toda mensagem, inclusive as do chat: nenhuma edição
+sem pedido explícito na mensagem atual, e erro de build em log só se reporta. Confira com
+`get_project_knowledge`. O `set_project_knowledge` SUBSTITUI o conteúdo inteiro, então leia antes de
+gravar.
 
 O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,
 `8f005805-000a-42b7-88a1-9683f785fab6`). O prompt carrega o `sha256` de cada arquivo do closure e
@@ -166,6 +172,12 @@ o runtime passou a servir, e essa última ponte segue sendo o `fonte` DECLARADO 
 **0,9 crédito** para uma edge. O bot commita um merge `Lovable update` na `main` logo depois —
 confira o `git diff --stat` dele (no caso medido: só `src/integrations/supabase/types.ts`, +10
 linhas), porque é por esse mesmo caminho que o sync já reverteu fix mergeado.
+
+⚠️ **O agente "conserta" o que ninguém pediu** (#2541, #2579 — duas vezes em dois dias): deploya certo e
+DEPOIS edita OUTRAS edges pelo `build-errors.log`; o sync empurra "Changes" na `main`. A colagem já
+proíbe (`blocoDeEscopo`: nenhum arquivo, erro de log só reportado, fecho `No files were edited.`) —
+e **≥5 min após o envio** rode `bun scripts/lovable-sensor-edicao.ts --desde <ISO> <resposta>` (exit 1 =
+editou → revert por PR com bump de `VERSAO`). [Narrativa](../historico/agente-lovable-conserta-o-que-nao-pediram.md).
 
 #### Ordem ENTRE edges: o pacote sai em ONDAS (#2469, 2026-09-14)
 
