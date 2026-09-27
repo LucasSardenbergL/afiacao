@@ -375,12 +375,20 @@ echo "── FALSIFICAÇÃO (baseline: $PASS verdes, $FAIL vermelhos) ──"
 [ "$FAIL" -eq 0 ] || { echo "ABORTA: a falsificacao so vale sobre baseline VERDE ($FAIL falhas)"; exit 1; }
 
 FALSIF_OK=0; FALSIF_BAD=0
-# roda um SQL sabotado, reavalia UM predicado, exige que ele MUDE, e restaura.
-sabota() { # $1=nome  $2=sql_sabotado  $3=comando_de_leitura  $4=valor_que_NAO_pode_mais_vir
+# roda um SQL sabotado, reavalia UM predicado, exige que ele vire o valor que a sabotagem
+# DECLARA ($5), e restaura. O "≠ real" sozinho aceitava QUALQUER desvio: a medição VAZIA (a
+# fonte sumiu do compute) e o ERRO no meio de uma leitura composta — sem errexit no subshell, a
+# purga que erra deixa a soma parada, e o F2 lia "0", o valor exato da sabotagem. A leitura roda
+# com `set -e` e o rc capturado fora de lista ||/&& (onde o bash 5 ignora o errexit do subshell).
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+sabota() { # $1=nome  $2=sql_sabotado  $3=comando_de_leitura  $4=valor_que_NAO_pode_mais_vir  $5=valor_que_a_sabotagem_DECLARA
   P -q -c "$2" >/dev/null 2>&1 || { echo "  ⚠️  $1 — o SQL sabotado nem aplicou"; FALSIF_BAD=$((FALSIF_BAD+1)); return; }
-  local got; got="$(eval "$3")"
-  if [ "$got" != "$4" ]; then FALSIF_OK=$((FALSIF_OK+1)); echo "  🔴 $1 — assert VERMELHO como esperado (veio [$got], real e' [$4])"
-  else FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — assert SEGUIU VERDE com a sabotagem: nao tem dente"; fi
+  local got rc
+  set +e; got="$(set -e; eval "$3")"; rc=$?; set -e
+  if [ "$rc" -ne 0 ]; then FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — a LEITURA ERROU (rc=$rc): erro de execucao nao e' dente"
+  elif [ "$got" = "$4" ]; then FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — assert SEGUIU VERDE com a sabotagem: nao tem dente"
+  elif [ "$got" = "$5" ]; then FALSIF_OK=$((FALSIF_OK+1)); echo "  🔴 $1 — assert VERMELHO como esperado (veio [$got], real e' [$4])"
+  else FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — vermelha, mas NAO no valor que a sabotagem declara: esperado [$5], veio [$got] (real [$4])"; fi
   P -q -f "$MIG" >/dev/null   # restaura TUDO a partir da migration real
 }
 
@@ -393,7 +401,7 @@ limpar; semear 105 8 false false 30
 # 'ok': verde durante as 32h inteiras. E' a prova de que o eixo NAO e' cosmetico.
 sabota "F1 eixo trocado para a maquina de retry (o check cego do apagao)" \
   "$(perl -0pe "s/WHEN ob\.idade_s > 6\*3600\s+THEN 'broken'\n(\s+)WHEN ob\.idade_s > 2\*3600 OR ob\.quarentena > 0\s+THEN 'stale'/WHEN (SELECT max(tentativas) FROM public.analytics_outbox WHERE aceito_em IS NULL) >= 8 THEN 'broken'\n\$1WHEN ob.quarentena > 0 THEN 'stale'/s" "$MIG" | so_compute)" \
-  'sensor status' "broken"
+  'sensor status' "broken" "ok"
 
 # F2 — a purga volta a ser DELETE cru: a lápide para de nascer.
 limpar
@@ -406,7 +414,7 @@ sabota "F2 purga sem a lapide (DELETE cru)" \
      DELETE FROM public.analytics_outbox WHERE purgar_em < now();
      GET DIAGNOSTICS n = ROW_COUNT; RETURN n; END \$f\$;" \
   'P -q -c "SELECT public.analytics_outbox_purgar();" >/dev/null; Pq -c "SELECT coalesce(sum(quantidade),0)::text FROM public.analytics_outbox_perda;"' \
-  "1"
+  "1" "0"
 
 # F3 — upsert não-aditivo: a 1ª leva do mesmo balde some.
 limpar
@@ -418,22 +426,26 @@ P -q -c "INSERT INTO public.analytics_outbox(evento,distinct_id,props,chave_dedu
 sabota "F3 upsert nao-aditivo (perde a leva anterior)" \
   "$(perl -0pe 's/SET quantidade    = p\.quantidade \+ EXCLUDED\.quantidade,/SET quantidade    = EXCLUDED.quantidade,/s' "$MIG" | so_purgar)" \
   'P -q -c "SELECT public.analytics_outbox_purgar();" >/dev/null; Pq -c "SELECT quantidade::text FROM public.analytics_outbox_perda WHERE dia=date '"'"'2026-07-12'"'"';"' \
-  "8"
+  "8" "3"
 
 # F4 — mensagem VOLÁTIL: o fingerprint deixa de se repetir e o watchdog nunca escala.
+# A leitura leva o comprimento dos dois md5: "volatil" sozinho é binário, e a 2ª leitura VAZIA
+# (a fonte sumiu) também diria "volatil" — com o prefixo, sai 32:0 e reprova.
 limpar; semear 5 8 false false 30
 # shellcheck disable=SC2016  # literal de proposito (padrao de sed / leitura diferida)
 sabota "F4 message com a contagem (fingerprint nunca confirma)" \
   "$(perl -0pe "s/THEN 'Outbox de analytics PARADA: a fila nao drena ha mais de 6h'/THEN 'Outbox PARADA: ' || ob.na_fila || ' na fila'/s" "$MIG" | so_compute)" \
-  'FPA="$(sensor_fp)"; semear 40 9 false false 30; FPB="$(sensor_fp)"; [ "$FPA" = "$FPB" ] && echo estavel || echo volatil' \
-  "estavel"
+  'FPA="$(sensor_fp)"; semear 40 9 false false 30; FPB="$(sensor_fp)"; if [ "$FPA" = "$FPB" ]; then v=estavel; else v=volatil; fi; echo "${#FPA}:${#FPB}:$v"' \
+  "32:32:estavel" "32:32:volatil"
 
 # F5 — o check sai do compute mas fica em v_sources: rodada INCOMPLETA.
+# A leitura leva checks_avaliados|checks_falhos: o marcador parado sozinho também viria de um
+# check que FALHA (v_falhos>0) — a sabotagem declara 19 presentes e 0 falhos.
 limpar
 sabota "F5 check removido do compute (v_sources orfao => rodada incompleta)" \
   "$(perl -0pe "s/'analytics_outbox_transporte'::text, 'analytics'::text,/'analytics_outbox_transporte_RENOMEADO'::text, 'analytics'::text,/s" "$MIG" | so_compute)" \
-  'P -q -c "UPDATE public.data_health_watchdog_estado SET last_success_at = now() - interval '"'"'1 hour'"'"';" >/dev/null; P -q -c "SELECT public.data_health_watchdog();" >/dev/null; Pq -c "SELECT (last_success_at > now() - interval '"'"'2 minutes'"'"')::text FROM public.data_health_watchdog_estado;"' \
-  "true"
+  'P -q -c "UPDATE public.data_health_watchdog_estado SET last_success_at = now() - interval '"'"'1 hour'"'"';" >/dev/null; P -q -c "SELECT public.data_health_watchdog();" >/dev/null; Pq -c "SELECT (last_success_at > now() - interval '"'"'2 minutes'"'"')::text || '"'"'|'"'"' || checks_avaliados || '"'"'|'"'"' || checks_falhos FROM public.data_health_watchdog_estado;"' \
+  "true|20|0" "false|19|0"
 
 # F6 — a lápide passa a contar o caminho feliz (linha ACEITA vira "perda").
 limpar
@@ -443,13 +455,13 @@ P -q -c "INSERT INTO public.analytics_outbox(evento,distinct_id,props,chave_dedu
 sabota "F6 lapide conta o caminho feliz (aceita vira perda)" \
   "$(perl -0pe 's/     WHERE r\.aceito_em IS NULL\n//s' "$MIG" | so_purgar)" \
   'P -q -c "SELECT public.analytics_outbox_purgar();" >/dev/null; Pq -c "SELECT coalesce(sum(quantidade),0)::text FROM public.analytics_outbox_perda;"' \
-  "0"
+  "0" "1"
 
 # F7 — backstop removido: a linha a 3 dias da purga volta a passar por saudável.
 limpar; semear 2 0.01 false false 3
 sabota "F7 backstop removido (<7d da purga deixa de acender)" \
   "$(perl -0pe "s/WHEN ob\.quase_perdidas > 0\s+THEN 'broken'/WHEN false THEN 'broken'/s" "$MIG" | so_compute)" \
-  'sensor status' "broken"
+  'sensor status' "broken" "ok"
 
 echo
 echo "═══════════════════════════════════════════"

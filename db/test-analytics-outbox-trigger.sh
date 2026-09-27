@@ -272,12 +272,16 @@ FALSIF_OK=0; FALSIF_BAD=0
 so_compute() { sed -n '/^CREATE OR REPLACE FUNCTION public._data_health_compute/,/^\$function\$;$/p'; }
 # Vermelho = a leitura sob sabotagem é o valor que a sabotagem DECLARA ($5) — não só "≠ real".
 # O "≠ real" sozinho aceitava QUALQUER desvio: a medição VAZIA (a linha da fonte sumiu do compute,
-# 0 rows, exit 0) contava como dente. O erro da medição já abortava (set -e na atribuição).
+# 0 rows, exit 0) contava como dente. E o ERRO no meio de uma leitura composta (sem errexit no
+# subshell) seguia adiante: a leitura roda com `set -e` e o rc é capturado fora de lista ||/&&
+# (onde o bash 5 ignora o errexit do subshell). Erro de execução não é dente.
 # O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
 sabota() { # $1=nome  $2=sql_sabotado  $3=leitura  $4=valor_real_que_NAO_pode_mais_vir  $5=valor_que_a_sabotagem_DECLARA
   P -q -c "$2" >/dev/null 2>&1 || { echo "  ⚠️  $1 — o SQL sabotado nem aplicou"; FALSIF_BAD=$((FALSIF_BAD+1)); return; }
-  local got; got="$(eval "$3")"
-  if [ "$got" = "$4" ]; then FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — SEGUIU VERDE com a sabotagem: nao tem dente"
+  local got rc
+  set +e; got="$(set -e; eval "$3")"; rc=$?; set -e
+  if [ "$rc" -ne 0 ]; then FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — a LEITURA ERROU (rc=$rc): erro de execucao nao e' dente"
+  elif [ "$got" = "$4" ]; then FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — SEGUIU VERDE com a sabotagem: nao tem dente"
   elif [ "$got" = "$5" ]; then FALSIF_OK=$((FALSIF_OK+1)); echo "  🔴 $1 — VERMELHO como esperado (veio [$got], real e' [$4])"
   else FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — vermelha, mas NAO no valor que a sabotagem declara: esperado [$5], veio [$got] (real [$4])"; fi
   P -q -f "$MIG" >/dev/null
