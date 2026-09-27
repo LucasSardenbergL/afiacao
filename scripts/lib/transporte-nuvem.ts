@@ -48,7 +48,7 @@ export const TETO_TRANSPORTE = '30s';
 export const IDADE_MAXIMA_MIN = 30;
 
 /** Relógio do banco à frente do local além disto é dado que não se explica — recusa. */
-export const FOLGA_RELOGIO_MIN = 5;
+const FOLGA_RELOGIO_MIN = 5;
 
 const MARCA_INICIO = 'sql-nuvem:inicio';
 const MARCA_FIM = 'sql-nuvem:fim';
