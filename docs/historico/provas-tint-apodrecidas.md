@@ -86,7 +86,14 @@ extensão, locale pt_BR), removido antes do PR:
 
 As 19 sabotagens ficaram vermelhas NO assert-alvo, com as pré-condições verdes. As provas fixam
 `LC_ALL=C`, e o servidor nasce com `--locale=C`: a rodada em pt_BR prova que o locale de fora não
-vaza, não que a asserção muda com ele. O custo somado das duas no núcleo é ~40s.
+vaza, não que a asserção muda com ele.
+
+**2ª medição, com o manifesto final** (depois do merge com a main, que trouxe a `fase5-watchdog` e o
+gate `falsificar-exige-assert`, e com as falsificações no idioma dele): os mesmos recibos nas duas
+rodadas (30/0 e 13/0; 22/0 e 6/0, em C e em pt_BR) e o núcleo inteiro em
+`SQL_PROOF_OK provas=43/43 falsificacoes=9/9 fora_do_ci=0`, em **379s e 373s**. Dentro dele as duas
+somam ~30s (3–4s + 16s; 3s + 7s). Com o setup e a falsificação do runner, o `provas-sql` fica em ~7,5
+min: a folga até o `timeout-minutes: 12` cai de ~1,8× para ~1,6×.
 
 ## Achado lateral
 
