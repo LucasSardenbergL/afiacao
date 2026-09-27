@@ -1,0 +1,266 @@
+# TEMPORÁRIO — NÃO vai para a main (sai do branch antes do PR).
+# Roda, no MESMO ambiente do job `provas-sql` (steps de instalação copiados do ci.yml), as duas provas
+# tint consertadas: modo normal e --falsificar (em C e em pt_BR.UTF-8), cronometradas, e o núcleo
+# inteiro como linha de base na mesma máquina. Duas rodadas em paralelo = 2 amostras.
+name: medir-provas-tint-apodrecidas
+
+on:
+  push:
+    branches: ['claude/festive-williamson-f1d195']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        rodada: [1, 2]
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # O núcleo inclui db/test-canaria-veredito.sh, que NÃO confere um SQL commitado:
+      # gera o SQL pelo PRÓPRIO gerador (`db/lib/gerar-canaria-fixture.ts`) e, desde
+      # 2026-09-10, também o SABOTA aqui — o 3º campo `falsificar=<n>` do manifesto faz o
+      # runner rodar o `--falsificar` dela (antes as sabotagens só rodavam à mão). É isso
+      # que faz a prova envelhecer junto com o gerador em vez de virar retrato velho. Só o
+      # RUNTIME é preciso — os imports do gerador são builtins `node:*` mais um relativo,
+      # então nada de `bun install` aqui. O `--falsificar` também usa `git worktree add`
+      # (sabota o gerador num worktree do HEAD), que o checkout completo acima já cobre.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # A versão é conferida POSITIVAMENTE, e o número exato vai para o log. Precedente
+      # do próprio repo: o runner trazia shellcheck 0.9.0 contra 0.11.0 do laptop e o
+      # gate reprovava PR sadio — "gate cuja VERDADE depende da versão do runner não é
+      # gate, é sorteio". Aqui o piso é o que PRODUÇÃO roda (17.6 = 170006, medido via
+      # psql-ro), conferido pelo runner perguntando `server_version_num` ao servidor.
+      # Não se pina a minor exata de propósito: o PGDG remove pacotes antigos do índice,
+      # e um pin assim viraria vermelho por AMBIENTE — o que ensinaria a tratar este job
+      # como flaky, que é como um gate morre. O piso + o registro da versão dão o
+      # determinismo que importa sem essa fragilidade.
+      - name: PostgreSQL 17 (PGDG) + pgvector — instala e confere a versão
+        run: |
+          set -euo pipefail
+          # ── Retry das TRÊS chamadas de rede deste step ────────────────────────────────────────
+          # DENOMINADOR, medido antes de escrever uma linha (API do Actions, TODOS os attempts,
+          # 410 execuções de `provas-sql` entre 2026-09-08 e 09-26): 6 falhas neste step, todas de
+          # REDE e nenhuma do PostgreSQL. Cinco são o `Hash Sum mismatch` de 09-09, que a remoção
+          # de fontes abaixo resolveu — elas são PRÉ-mitigação e não contam para o desenho atual.
+          # A sexta é POSTERIOR: run 35549862278 (2026-09-21), `curl: (56) Failure when receiving
+          # data from the peer`, step morto em 53s num PR sem uma linha de SQL; `gh run rerun
+          # --failed` passou de primeira, sem mudar nada. Taxa do desenho atual: 1/234 = 0,43%
+          # (IC95 Wilson [0,08%; 2,38%]), a ~14 execuções/dia ⇒ ~1 trava a cada 16 dias.
+          # Pequena — e ainda assim vale, porque o custo não é simétrico: `provas-sql` é check
+          # OBRIGATÓRIO (o `validate` exige `success` POSITIVO de cada job) num repo que mergeia
+          # sozinho, então a trava não é barulhenta, é um PR parado até alguém REPARAR. Uma
+          # re-tentativa custa segundos; o rerun custa o job inteiro mais a atenção de quem nota.
+          # E a rede é MESMO exercida: nas 205 execuções em que o timing foi medido, a mínima do
+          # step é 10s (mediana 13s), sem nenhum bucket de ~1s, e o log traz `Setting up
+          # postgresql-17` — o `if` abaixo nunca achou PG17 pronto no runner. Sem isso a taxa acima
+          # não seria comparável: se o runner já trouxesse o PG17, o denominador real seria uma
+          # fração de 234 e a taxa, várias vezes maior.
+          #
+          # FAIL-CLOSED, e é por isso que não é `|| true` nem `for ... && break`: esgotadas as
+          # tentativas, `tentar` devolve o exit da ÚLTIMA (56, não 1) e é chamada NUA — sob
+          # `set -e` isso MATA o step, com o erro real já no log (o `-sS` do curl e o stderr do
+          # apt-get não são silenciados). Laço de retry é o lugar clássico do verde por
+          # DESISTÊNCIA: `for i in 1 2 3; do cmd && break; done` termina normalmente quando as
+          # três falham e o script SEGUE com 0 — o caminho não-reconhecido caindo no lado
+          # otimista, que é o `ausente ≠ zero` no tempo (docs/historico/espera-sem-desistencia.md).
+          # Aqui o caminho não-reconhecido é o que REPROVA.
+          #
+          # Um helper para as três camadas, e não `curl --retry`: o `--retry` não cobre os dois
+          # `apt-get`, e seu conjunto de erros "transitórios" só inclui o exit 56 com
+          # `--retry-all-errors`. Mecanismo único = uma falsificação que vale para as três
+          # (scripts/lab-retry-pgdg/, no `test:hooks`), em vez de três meias-provas. O teto e a
+          # espera são LITERAIS, sem `${VAR:-3}`: botão de ambiente em gate é o caminho para um
+          # `env:` de workflow mudar a verdade do step sem aparecer no diff dele. O lab acelera
+          # dublando `sleep` no PATH, que é problema do lab e não costura no código de produção.
+          TENTATIVAS=3
+          tentar() {
+            local rotulo="$1"; shift
+            local n=1 rc=0 espera=5
+            while :; do
+              rc=0
+              # `|| rc=$?` põe o comando em contexto de condição: o `set -e` fica suspenso AQUI de
+              # propósito (é o único ponto onde a falha é dado, não veredito) e `rc` guarda o exit
+              # REAL. Em qualquer outro lugar deste step o `set -e` segue valendo.
+              "$@" || rc=$?
+              if [ "$rc" -eq 0 ]; then
+                if [ "$n" -gt 1 ]; then
+                  echo "  ↻ $rotulo: OK na tentativa $n/$TENTATIVAS"
+                fi
+                return 0
+              fi
+              if [ "$n" -ge "$TENTATIVAS" ]; then
+                echo "::error::$rotulo falhou nas $TENTATIVAS tentativas — exit da última: $rc"
+                return "$rc"
+              fi
+              echo "  ↻ $rotulo: tentativa $n/$TENTATIVAS falhou (exit=$rc) — repetindo em ${espera}s"
+              sleep "$espera"
+              espera=$(( espera * 2 ))
+              n=$(( n + 1 ))
+            done
+          }
+          if [ ! -x /usr/lib/postgresql/17/bin/initdb ]; then
+            sudo install -d /usr/share/postgresql-common/pgdg
+            tentar "curl da chave do PGDG" \
+              sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+              https://www.postgresql.org/media/keys/ACCC4CF8.asc
+            echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+          https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+              | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+            # O runner traz listas de terceiros (Chrome, Edge, MS) que este job NÃO usa, e o
+            # `apt-get update` varre TODAS: um índice inconsistente em qualquer uma aborta o
+            # step inteiro sob `set -e`. Medido 2026-09-09 (runs 34383259513 e dois reruns):
+            # `Hash Sum mismatch` no repo do Chrome derrubou `provas-sql` três vezes seguidas,
+            # sem nada a ver com PostgreSQL. Removemos só o que não é necessário — sem
+            # `|| true`, que mascararia falha real do PGDG ou do repo base.
+            # Glob AMPLO e por conteúdo: o runner declara essas fontes ora em `.list`, ora no
+            # formato deb822 `.sources` — remover só `google-chrome.list` não pegou (medido no
+            # run 34385454727, o erro persistiu). O `ls` fica para diagnóstico: sem ele, cada
+            # tentativa custa um ciclo de CI inteiro só para descobrir onde a fonte mora.
+            ls -la /etc/apt/sources.list.d/ || true
+            sudo rm -f /etc/apt/sources.list.d/*google* /etc/apt/sources.list.d/*chrome* \
+                       /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*msprod* || true
+            tentar "apt-get update" sudo apt-get update -qq
+            # O pgvector vai na MESMA chamada, de propósito: continua sendo uma camada de rede só,
+            # coberta pelo mesmo retry, e o pacote do PG17 só existe no PGDG (o repo do Ubuntu não
+            # o tem). Quem confere que ele CARREGA é o step seguinte — este texto roda no lab do
+            # retry (scripts/lab-retry-pgdg/) com dublês, onde não há servidor para perguntar.
+            tentar "apt-get install postgresql-17 + pgvector" sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector
+          fi
+          instalada="$(/usr/lib/postgresql/17/bin/initdb --version)"
+          echo "  $instalada"
+          printf '%s' "$instalada" | grep -qE '\(PostgreSQL\) 17\.' || {
+            echo "::error::initdb não é PostgreSQL 17: $instalada"; exit 1; }
+
+      # O pgvector do step acima, conferido POSITIVAMENTE e por fora das provas: o arquivo de
+      # controle existe E o servidor carrega a extensão e responde com uma distância. As provas tint
+      # carregam o schema-snapshot (prelude: `CREATE EXTENSION vector`) e reprovariam sem ele de
+      # qualquer jeito — mas no meio do log de UMA prova, com o motivo enterrado; aqui a ausência
+      # tem nome e a versão vai para o log de todo run. Separado do step acima porque aquele texto
+      # roda no lab do retry com dublês (não há servidor para perguntar). Porta 5808 só em socket:
+      # o locale usa a 5809 e a sonda do runner a 5810.
+      - name: pgvector — o servidor carrega a extensão (provas tint sobre o schema-snapshot)
+        run: |
+          set -euo pipefail
+          bin=/usr/lib/postgresql/17/bin
+          ctl=/usr/share/postgresql/17/extension/vector.control
+          [ -f "$ctl" ] || { echo "::error::pgvector ausente: $ctl não existe"; exit 1; }
+          d="$(mktemp -d)"
+          "$bin/initdb" -D "$d/data" -U postgres -E UTF8 --locale=C > "$d/initdb.log" 2>&1 \
+            || { tail -c 600 "$d/initdb.log"; echo "::error::initdb falhou na sonda do pgvector"; exit 1; }
+          "$bin/pg_ctl" -D "$d/data" -l "$d/pg.log" -w start -o "-p 5808 -k $d -c listen_addresses=''" > /dev/null \
+            || { tail -c 800 "$d/pg.log"; echo "::error::o cluster da sonda do pgvector não subiu"; exit 1; }
+          saida="$("$bin/psql" -X -q -h "$d" -p 5808 -U postgres -d postgres -v ON_ERROR_STOP=1 -tA \
+            -c 'CREATE EXTENSION vector' \
+            -c "SELECT extversion || '|' || ('[1,2,3]'::vector(3) <-> '[1,2,4]'::vector(3)) FROM pg_extension WHERE extname = 'vector'" \
+            2>&1)" && rc=0 || rc=$?
+          "$bin/pg_ctl" -D "$d/data" -m immediate stop > /dev/null
+          # A distância L2 entre os dois vetores é exatamente 1: só um servidor que CARREGOU a
+          # extensão responde isso — o arquivo de controle sozinho não prova o `.so`.
+          case "$rc|$saida" in
+            0\|*\|1) echo "PGVECTOR_OK versao=${saida%%|*} pacote=$(dpkg-query -W -f='${Version}' postgresql-17-pgvector)" ;;
+            *) echo "::error::o servidor não carregou o pgvector (rc=$rc): $saida"; exit 1 ;;
+          esac
+
+      # O 2º idioma da falsificação do `db/test-db-aplicar.sh` (3º campo `falsificar=<n>` do
+      # manifesto). O executor de SQL em produção (`scripts/db-aplicar.sh`) separa falha-limpa (4)
+      # de desconhecido (5) casando a severidade que o psql imprime — ERRO em pt_BR, ERROR em C —,
+      # e essa palavra vem do SERVIDOR (`lc_messages`): só sai traduzida se o locale existir no
+      # sistema e o catálogo de mensagens vier no pacote. O runner ubuntu não traz pt_BR — sem este
+      # step a prova REPROVA na sonda dela (`LOCALE_PT_BR_AUSENTE`), nunca pula o idioma.
+      # A conferência é POSITIVA, por fora da prova e com o MESMO binário que o shim dela usa: o
+      # locale está em `locale -a`, resolve para UTF-8, e uma falha REAL sob pt_BR diz `ERRO:`
+      # (servidor) e `psql: erro:` (cliente). A prova refaz as duas pelo caminho do EXECUTOR — a do
+      # servidor na severidade de cada combinação, a do cliente no rótulo `CONTEXTO:` que o executor
+      # imprime —; este step é o eixo independente, e o lugar onde a evidência fica no log (o runner
+      # só mostra log de prova que falha). Porta 5809 só em socket (`listen_addresses=''`): a sonda do
+      # runner usa a 5810. Medição e desenho: docs/historico/falsificacao-db-aplicar-idioma-do-servidor.md
+      - name: Locale pt_BR.UTF-8 — provisiona e confere (2º idioma do db-aplicar)
+        run: |
+          set -euo pipefail
+          unset LANGUAGE
+          d="$(mktemp -d)"
+          echo "  antes: $(locale -a | tr '\n' ' ')"
+          sudo locale-gen pt_BR.UTF-8
+          # Por ARQUIVO, não `locale -a | grep -q`: sob `pipefail`, o grep que sai no 1º casamento pode
+          # matar o produtor com SIGPIPE (141) e reprovar um locale que existe.
+          locale -a > "$d/locales.txt"
+          grep -qx 'pt_BR.utf8' "$d/locales.txt" \
+            || { echo "::error::locale-gen terminou, mas pt_BR.utf8 não está em locale -a"; exit 1; }
+          charmap="$(LC_ALL=pt_BR.UTF-8 locale charmap 2>/dev/null || true)"
+          [ "$charmap" = UTF-8 ] \
+            || { echo "::error::LC_ALL=pt_BR.UTF-8 não resolve para UTF-8 (veio '$charmap')"; exit 1; }
+          bin=/usr/lib/postgresql/17/bin
+          "$bin/initdb" -D "$d/data" -U postgres -E UTF8 --locale=C > "$d/initdb.log" 2>&1 \
+            || { tail -c 600 "$d/initdb.log"; echo "::error::initdb falhou na sonda do locale"; exit 1; }
+          "$bin/pg_ctl" -D "$d/data" -l "$d/pg.log" -w start \
+            -o "-p 5809 -k $d -c listen_addresses='' -c lc_messages=pt_BR.UTF-8" > /dev/null \
+            || { tail -c 800 "$d/pg.log"; echo "::error::o cluster da sonda não subiu com lc_messages=pt_BR.UTF-8"; exit 1; }
+          srv="$(LC_ALL=pt_BR.UTF-8 "$bin/psql" -X -h "$d" -p 5809 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'SELECT 1/0' 2>&1 || true)"
+          cli="$(LC_ALL=pt_BR.UTF-8 "$bin/psql" -X -h "$d" -p 5807 -U postgres -d postgres -c 'SELECT 1' 2>&1 || true)"
+          "$bin/pg_ctl" -D "$d/data" -m immediate stop > /dev/null
+          echo "  servidor (lc_messages=pt_BR.UTF-8): $srv"
+          echo "  cliente  (socket inexistente):      $cli"
+          case "$srv" in
+            *'ERRO:  divis'*) ;;
+            *) printf '  catalogo pt_BR do PG: %s\n' /usr/share/locale/pt_BR/LC_MESSAGES/*-17.mo
+               echo "::error::uma falha real sob lc_messages=pt_BR.UTF-8 não disse ERRO"; exit 1 ;;
+          esac
+          case "$cli" in
+            *'psql: erro:'*) ;;
+            *) echo "::error::o psql do PGDG não traduziu a própria mensagem para pt_BR"; exit 1 ;;
+          esac
+          echo "LOCALE_PT_BR_OK"
+
+      # O runner (db/roda-nucleo-ci.sh) começa por uma SONDA: sobe um cluster e pergunta
+      # `server_version_num` ao servidor. Sem ela, "Postgres ausente" e "todas as provas
+      # passaram" produziriam o mesmo verde — `ausente ≠ zero` aplicado ao CI.
+      # Ele também exige, por prova, o mínimo de asserts declarado em `db/nucleo-ci.txt`:
+      # o fechamento das provas é `[ "$FAIL" -eq 0 ]`, que TAMBÉM aceita PASS=0, e uma
+      # prova truncada sairia 0. Falsificação: o step seguinte.
+      - name: Provas tint consertadas — normal e --falsificar (C e pt_BR), cronometradas
+        run: |
+          set -uo pipefail
+          falhou=0
+          roda() {  # <rótulo> <env extra> <script> [flag]
+            local rot="$1" envx="$2" scr="$3" flag="${4:-}" log ini fim rc
+            log="$RUNNER_TEMP/$rot.log"
+            ini=$(date +%s)
+            env $envx bash "$scr" $flag > "$log" 2>&1 && rc=0 || rc=$?
+            fim=$(date +%s)
+            echo "::group::$rot (exit=$rc, $((fim-ini))s)"
+            cat "$log"
+            echo "::endgroup::"
+            echo "RESULTADO $rot exit=$rc dur=$((fim-ini))s recibo=[$(grep -E '^ *PASS=[0-9]+ +FAIL=[0-9]+|^SABOTAGENS:' "$log" | tail -1 | sed 's/^ *//')]"
+            [ "$rc" -eq 0 ] || falhou=1
+          }
+          roda vigia-normal         "LANG=C.UTF-8"                          db/test-tint-vigia-cobertura.sh
+          roda vigia-falsificar-C   "LC_ALL=C LANG=C"                       db/test-tint-vigia-cobertura.sh --falsificar
+          roda vigia-falsificar-ptBR "LC_ALL=pt_BR.UTF-8 LANG=pt_BR.UTF-8"  db/test-tint-vigia-cobertura.sh --falsificar
+          roda lista-normal         "LANG=C.UTF-8"                          db/test-tint-cobertura-lista-email.sh
+          roda lista-falsificar-C   "LC_ALL=C LANG=C"                       db/test-tint-cobertura-lista-email.sh --falsificar
+          roda lista-falsificar-ptBR "LC_ALL=pt_BR.UTF-8 LANG=pt_BR.UTF-8"  db/test-tint-cobertura-lista-email.sh --falsificar
+          [ "$falhou" -eq 0 ]
+
+      - name: Núcleo inteiro (db/roda-nucleo-ci.sh) — com o manifesto do branch
+        if: always()
+        run: |
+          ini=$(date +%s)
+          bash db/roda-nucleo-ci.sh && rc=0 || rc=$?
+          echo "NUCLEO exit=$rc dur=$(( $(date +%s) - ini ))s"
+          [ "$rc" -eq 0 ]
