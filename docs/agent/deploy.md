@@ -154,7 +154,11 @@ inteira parecendo normal. `ausente ≠ zero` na dimensão **ARQUIVO COMPARTILHAD
 só enxerga um deploy depois da sonda, então ele não diz que outra sessão pediu a mesma edge minutos
 antes. No caso medido, o `sync-reprocess` saiu duas vezes em 15 min. O deploy redundante não custa só
 crédito: cada mensagem de deploy acorda o agente, e foi depois de uma delas que ele editou edges por
-conta própria (a proibição no prompt e o sensor pós-envio são do #2596).
+conta própria (a proibição no prompt e o sensor pós-envio são do #2596). Desde 27/09 o **Knowledge
+do projeto** também carrega a regra, e vale para toda mensagem, inclusive as do chat: nenhuma edição
+sem pedido explícito na mensagem atual, e erro de build em log só se reporta. Confira com
+`get_project_knowledge`. O `set_project_knowledge` SUBSTITUI o conteúdo inteiro, então leia antes de
+gravar.
 
 O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,
 `8f005805-000a-42b7-88a1-9683f785fab6`). O prompt carrega o `sha256` de cada arquivo do closure e
