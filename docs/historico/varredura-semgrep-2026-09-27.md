@@ -210,3 +210,9 @@ nessa cegueira (helper espelhado na edge, onde o lint não entra).
   nas edges). B3 (P4) fica como observação.
 - Próxima varredura: mesmo plano, `cd "$(mktemp -d)"`, e a tabela de reconciliação SARIF ×
   `--validate` refeita. Sem ela, "0 achado" de um ruleset não prova nada.
+- ⚠️ **Os artefatos crus desta varredura também se perderam**, a mesma perda da de maio. SARIF,
+  JSON, `scans.json` e as provas viviam no scratchpad da sessão, que o reinício dela apagou (medido:
+  o diretório voltou vazio). Sobram os números deste doc. Na próxima, copie o `results.sarif`
+  mesclado e o `scans.json` para fora do scratchpad (ex.: `~/.local/share/afiacao/semgrep/<data>/`,
+  fora do repo, porque o `p/secrets` pode citar trecho sensível) ANTES de fechar a sessão. Só assim
+  dá para fazer o diff achado-a-achado.
