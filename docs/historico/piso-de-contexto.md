@@ -176,20 +176,25 @@ sobe para o espaço liberado não pode ser mais caro que o que saiu. As duas med
 a mesma história por lados opostos: **mexer em QUEM está na lista não resolve (e pode
 piorar); mexer no TAMANHO de cada entrada resolve.**
 
-### 2026-09-27 — a nº 3 re-medida COM o teto: esconder agora ENCOLHE a lista (mas não salva as proprietárias)
+### 2026-09-27 — a nº 3 re-medida COM o teto: esconder não piora mais, mas custa só ~100 tok a menos — o que muda é o roteamento
 
-Refeito sobre a config atual (`220` / `0.004`), isolando só o `skillOverrides`. Régua: o
-`/skill-doctor` headless (`<binário do app> -p "/skill-doctor"`, soma da coluna `context`) — é a
-estimativa do harness, não a sonda de ±6 tokens, que estava bloqueada pelo login expirado do CLI.
+Refeito sobre a config atual (`220` / `0.004`), isolando só o `skillOverrides` (51 skills em
+`user-invocable-only`). As duas réguas discordam na ORDEM DE GRANDEZA:
 
-| | skills listadas | listing (estim.) | ganharam descrição | perderam | proprietárias c/ descrição |
-|---|---|---|---|---|---|
-| antes | 190 | ~4.415 tok | — | — | 8/14 |
-| 51 skills em `user-invocable-only` | 142 | **~3.920 tok (−495)** | 5 | **0** | 8/14 |
+| régua | sem overrides | com overrides | efeito |
+|---|---|---|---|
+| `/skill-doctor` headless (soma da coluna `context` — estimativa do harness) | ~4.415 tok | ~3.920 tok | −495 |
+| **sonda** `scripts/piso-contexto.sh` (±6; 2 pares A/B em ordem inversa) | 37.548 · 37.547 | 37.497 · 37.428 | **−51 / −119** |
 
-O sinal inverteu em relação aos +141 de 2026-07: com teto de 220 por descrição, o que sobe para
-o espaço liberado não pode ser mais caro que o que saiu — o mecanismo que a CORREÇÃO acima
-previa. Mas o espaço vai para as skills MAIS USADAS: as 6 proprietárias sem descrição
+Vale a sonda: o piso real caiu **~50–120 tokens (0,1–0,3%)**, 4 a 10× menos que a estimativa — o
+orçamento se reabastece, a mesma lição de 2026-07. ⇒ **somar a coluna `context` do `/skill-doctor`
+NÃO mede o piso**; para custo, só a sonda. (O "com" oscilou ~70 tok entre os pares — deriva do conteúdo
+dos hooks entre sessões; dentro de cada par, ±1.) O sinal, esse sim, inverteu em relação aos +141 de
+2026-07: com teto de 220 por descrição, o que sobe para o espaço liberado não pode ser mais caro que o
+que saiu — o mecanismo que a CORREÇÃO acima previa.
+
+O ganho que importa é de ROTEAMENTO: 190 → 142 skills listadas, 5 ganharam descrição, **0** perderam.
+Mas o espaço vai para as skills MAIS USADAS: as 6 proprietárias sem descrição
 (`bi-colacor`, `cfo-colacor`, `reposicao-caixa`, `goal`, `doc2md`, `farmer-industrial`)
 continuaram sem. Reescrever os 220 primeiros caracteres delas não muda nada enquanto o orçamento
 corta a descrição INTEIRA — a alavanca é o orçamento total ou menos concorrentes. Duas que o
