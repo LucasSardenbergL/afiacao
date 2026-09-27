@@ -244,6 +244,14 @@ bun run pendencias:pacote - --dados-nuvem="$RESP" < "$PEND"  # a MESMA entrada n
 | `TRANSPORTE_VELHO` / `_FUTURO` | resposta de outra rodada (> 30 min) ou relógio incoerente | rode o SQL de novo |
 | `TRANSPORTE_FORMATO` / `_CONSULTAS` | arquivo de outro CLI ou formato, consulta faltando | confira o arquivo gravado |
 
+Se o próprio `query_database` devolver ERRO, não há resposta a gravar: é mecânica, nunca "nada
+pendente". `relation … does not exist` nomeia o objeto cuja migration não está em prod (o ledger, a
+sonda por cron); a leitura inteira falha junto, onde o `psql-ro` degradaria só a seção da sonda.
+
+**Só metadado viaja por aqui.** A resposta passa pela transcrição da sessão, que fica em disco: as
+consultas destes CLIs leem ledger, catálogo e respostas de sonda — nunca dado de cliente. Não use o
+transporte (nem o `query_database` cru) para ler tabela de negócio.
+
 **Migrations** (Passo 2 do `/fecho`) não têm CLI: a query de validação vai direto, com a trava na
 frente e o atestado no resultado — `SET TRANSACTION READ ONLY; SELECT
 current_setting('transaction_read_only'), …` —, e só vale com `on`.
