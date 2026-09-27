@@ -158,6 +158,12 @@ db/test-canaria-veredito.sh                24  falsificar=18
 # pela lib real (`scripts/lib/transporte-nuvem.ts`, só builtins — o runtime bun do job basta),
 # como a canária. As 10 sabotagens rodam num worktree do HEAD.
 db/test-transporte-nuvem.sh                18  falsificar=10
+# O TRANSPORTE do passo seguinte (2026-09-27): pelo `db:aplicar` a célula que o disparo devolve
+# morre no EXECUTE do `aplicar_sql()`, e o passo vem por NOTICE no log. Roda o `db-aplicar.sh` e o
+# bootstrap REAIS contra stubs de pg_net/vault, com o SQL do gerador deste disco (bun, como a
+# canária), e executa o comando que o PRÓPRIO cabeçalho manda rodar. As 7 sabotagens vão nos dois
+# idiomas do servidor (a palavra NOTICE/NOTA muda; o recorte não pode depender dela) = 14.
+db/test-sonda-passo-pelo-db-aplicar.sh     27  falsificar=14
 
 # ── Eixo 6 — DUPLA CONTAGEM (o mesmo fato sob N óticas) ──────────────────────────
 # `fin_movimentacoes` guarda o MESMO pagamento do Omie duas vezes (lançamento do título e
