@@ -64,7 +64,7 @@ Diário de PR/entregas: `docs/historico/` (`bugs-resolvidos.md`, `programas-vend
 
 ## Merge (auto)
 
-Todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** (`.github/workflows/auto-merge.yml`, zero clique do founder). Para **segurar** um PR, deixe-o **DRAFT**. Nunca `gh pr merge --admin` de rotina. **Ao criar/atualizar PR: arme `scripts/pr-watch.sh <nº>` em background** (cloud, sem `gh`: `subscribe_pr_activity`, sem perguntar) e, no desfecho, avise via PushNotification. **Exit 6 ≠ 5:** 5 = consultei e segue sem desfecho; **6 = NÃO consegui consultar** → confirme com `gh pr view <nº>` **antes** de avisar. Exit codes: cabeçalho do `scripts/pr-watch.sh`; detalhe: `worktrees.md`.
+Todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** (`.github/workflows/auto-merge.yml`, zero clique do founder). Para **segurar**, deixe-o **DRAFT**; nunca `gh pr merge --admin` de rotina. **No app, ao criar PR: ligue o Auto-fix** (`set_monitor`, `auto_fix`+`address_comments`) — o `<ci-monitor-event>` já autoriza consertar, commitar e push, e substitui o `pr-watch`. **Sem o app:** `scripts/pr-watch.sh <nº>` em background (cloud: `subscribe_pr_activity`, sem perguntar) e PushNotification no desfecho; **exit 6 = NÃO consultei** (≠ 5): `gh pr view` antes de avisar. Detalhe e conflito: `worktrees.md`.
 
 ## Stack
 
