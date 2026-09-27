@@ -81,8 +81,11 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // v1.10 (2026-09-27) — o MESMO corpo da v1.9: desfaz de novo os commits do bot do Lovable (16:58Z), que
 // reaplicaram `omie_pedido_id: Number(codigoPedido)` (money-path: ausente viraria 0). O bump só existe
 // porque o `sonda:bump` compara com a base, que já tinha o commit do bot.
+// v1.11 (2026-09-27) — só TIPO: `omie_pedido_id` segue CRU para a RPC (que só o ecoa no registro de
+// falha), agora tipado `string | number` por um tipo local — o `deno check` do preview deixa de acusar
+// a linha que o bot "consertava" com `Number()`. JS emitido byte-idêntico ao da v1.10.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.10-revert-bot-pos-deploy";
+export const VERSAO = "v1.11-omie-pedido-id-tipado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

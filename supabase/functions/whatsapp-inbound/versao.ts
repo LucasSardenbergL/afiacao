@@ -31,8 +31,11 @@ export const respostaSonda = criarRespostaSonda("whatsapp-inbound");
 
 // v1.2 (2026-09-27) — o MESMO corpo da v1.1: desfaz de novo o `SupabaseClient<any>` que o bot do Lovable
 // reaplicou (16:58Z). O bump só existe porque o `sonda:bump` compara com a base, que já tinha o commit do bot.
+// v1.3 (2026-09-27) — só TIPO: os helpers recebem `SupabaseClient` em vez de `ReturnType<typeof
+// createClient>` (schema `never` ⇒ o `deno check` do preview acusava as tabelas `whatsapp_*`, a isca
+// dos 3 incidentes). JS emitido byte-idêntico ao da v1.2; o bump é o que o `sonda:bump` exige.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.2-revert-bot-pos-deploy";
+export const VERSAO = "v1.3-cliente-tipado-sem-isca";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

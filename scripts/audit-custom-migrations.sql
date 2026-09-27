@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 560
+-- Total de custom migrations: 561
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -601,7 +601,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260925210000', 'tint_promocao_assincrona', '20260925210000_tint_promocao_assincrona.sql'),
   ('20260925210332', 'reposicao_em_transito_guarda_fantasma_null_safe', '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql'),
   ('20260925225004', 'reposicao_em_transito_simulado_e_join_grupo_null_safe', '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql'),
-  ('20260926001425', 'param_auto_em_transito_conta_disparado_simulado', '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql')
+  ('20260926001425', 'param_auto_em_transito_conta_disparado_simulado', '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql'),
+  ('20260927133606', 'positivacao_mes_sp_sessao_utc', '20260927133606_positivacao_mes_sp_sessao_utc.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2426,7 +2427,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-watchdog', ''),
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', '')
+  ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
+  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4299,7 +4301,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promocao_assincrona', 'cron_job', 'cron', 'tint-promocao-watchdog', ''),
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', '')
+  ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
+  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', '')
 )
 SELECT
   e.migration,
@@ -4327,7 +4330,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 113.
+-- Funções redefinidas com corpo extraível: 114.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4484,6 +4487,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_sync_heartbeat', 22, '20260918200000_data_health_sync_reprocess_saude.sql', '0df60fab6586dd63777082691be69778'),
   ('public', '_carteira_mixgap_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '45590516afa887e06b1f6b6c7e9440b5'),
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
+  ('public', '_carteira_positivacao_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '93a9d455cf68c1d47b589849b505909f'),
+  ('public', '_carteira_positivacao_for_owner', 2, '20260927133606_positivacao_mes_sp_sessao_utc.sql', 'f0292c2defd776c715af118c4e8053a8'),
   ('public', 'pode_ver_carteira_completa', 1, '20260526020000_rls_score_carteira_hardening.sql', '97cb07844e04b8ad26c95e63df5e6fe6'),
   ('public', 'pode_ver_carteira_completa', 2, '20260526040000_rls_carteira_relacionamento_hardening.sql', '97cb07844e04b8ad26c95e63df5e6fe6'),
   ('public', 'pode_ver_carteira_completa', 3, '20260718180000_fu7b_pode_ver_carteira_completa_privado.sql', 'e3c5b09d2d30fc13a9b024836ce21b53'),

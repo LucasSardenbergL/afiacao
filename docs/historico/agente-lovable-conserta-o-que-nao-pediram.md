@@ -105,6 +105,14 @@ não a intenção.
 
 - **O formato real da resposta do `send_message` não estava documentado.** O sensor busca as chaves
   em qualquer profundidade; a 1ª resposta real de deploy calibra (anote-a aqui).
+  **Calibrado em 2026-09-27 18:36Z** (pacote `4c8fbc2a4a6d`, `sync-reprocess` + `whatsapp-inbound`,
+  1,4 crédito, 1ª leva com o `blocoDeEscopo`): a resposta tem só `status`, `message_id`, `content`,
+  `cost_credits`, `thread_id` e `preview_url` — sem `edit_id`/`commit_sha` —, o `content` fecha com
+  `No files were edited.` e o sensor deu `SEM_EDICAO` aos 5,5 min. A isca estava lá: o agente leu o
+  `build-errors.log`, viu os 7 erros de typecheck do `whatsapp-inbound` e só os REPORTOU (n=2 a
+  favor da guarda). O eixo mais forte é o `list_messages`: nas 5 respostas do agente de 26–27/09,
+  a mensagem traz `edit_id` (`edt-<uuid>`) nos 2 turnos que editaram (10:03Z de 26/09, o #2579, e
+  16:58Z de 27/09) e em nenhum dos 3 com guarda (10:09Z de 26/09, 16:42Z e 18:37Z de 27/09).
 - **O `list_edits` do MCP** é um terceiro eixo possível (edições do projeto no Lovable, antes do
   sync). Não entrou: o eixo `main` é o que importa (é onde o estrago vira código servido/CI), e ele
   já pegou os dois casos.
@@ -112,7 +120,16 @@ não a intenção.
   (tabelas `whatsapp_*` fora dos tipos gerados ⇒ `never`) e `sync-reprocess` (`omie_pedido_id`). Três
   incidentes com o mesmo diff: consertar por PR revisado (o `Number(codigoPedido)` é runtime no
   caminho de pedidos do Omie ⇒ money-path, Codex) tira a tentação — entrega separada.
+  **Fechado em 2026-09-27, só no TIPO:** `whatsapp-inbound` passa a receber `SupabaseClient` (idioma
+  das edges; `ReturnType<typeof createClient>` fixava o schema em `never`) e `sync-reprocess` tipa
+  `omie_pedido_id` como `string | number` num tipo local. O `Number()` do bot NÃO entrou: medido em
+  prod, a RPC `reconciliar_pedidos_omie` não grava o campo em coluna — só o ecoa cru
+  (`v_pedido->'omie_pedido_id'`) no registro de falha, e o `Number()` mudaria o eco justo no caso
+  anômalo (string não numérica → `null`, > 2^53 perde dígito). Prova: `deno check` completo limpo
+  nas duas (antes 7 + 1 erros) e JS emitido byte-idêntico antes/depois, com controle sabotado vermelho.
 - **Todo revert de edição do bot fabrica uma pendência de deploy.** O `sonda:bump` não distingue
   "voltei aos bytes de um commit ancestral" de "mudei a edge"; o bump recria DIVERGE sem mudança de
-  runtime, e o redeploy é a isca. Regra candidata: isentar a edge cujos bytes do corpo servido E o
-  `VERSAO` são idênticos aos de um commit ancestral da base — entrega separada (chip).
+  runtime, e o redeploy é a isca. A regra candidata (isentar o retorno aos bytes ancestrais) foi
+  medida e **rejeitada**: a sonda devolve o `fonte` do mapa compilado, e o bot não regenera o mapa ⇒
+  corpo do bot deployado responderia o par canônico — o redeploy forçado pelo bump é a única prova
+  de que prod voltou. Ver [sonda-bump-retorno-ao-canonico.md](sonda-bump-retorno-ao-canonico.md).

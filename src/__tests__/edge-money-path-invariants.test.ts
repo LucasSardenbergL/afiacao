@@ -3896,8 +3896,9 @@ describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista 
   it('o carimbo de leitura é por PÁGINA, não por run', () => {
     // Uma run longa com o carimbo tirado uma vez só faria a última página parecer tão fresca
     // quanto a primeira, e o compare-and-set perderia resolução exatamente onde ele importa.
-    const iPag = src.indexOf('const pedidosRpc: PedidoReconciliar[] = []');
+    const iPag = src.indexOf('const pedidosRpc: PedidoReconciliarReprocess[] = []');
     const iLido = src.indexOf('const lidoEm = new Date().toISOString()');
+    expect(iPag, 'acumulador pedidosRpc não encontrado').toBeGreaterThan(-1);
     expect(iLido, 'lidoEm não encontrado').toBeGreaterThan(-1);
     // ambos dentro do laço de páginas: lidoEm imediatamente antes do acumulador da página
     expect(iLido).toBeLessThan(iPag);
