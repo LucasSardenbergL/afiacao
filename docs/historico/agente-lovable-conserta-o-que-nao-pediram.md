@@ -120,6 +120,13 @@ não a intenção.
   (tabelas `whatsapp_*` fora dos tipos gerados ⇒ `never`) e `sync-reprocess` (`omie_pedido_id`). Três
   incidentes com o mesmo diff: consertar por PR revisado (o `Number(codigoPedido)` é runtime no
   caminho de pedidos do Omie ⇒ money-path, Codex) tira a tentação — entrega separada.
+  **Fechado em 2026-09-27, só no TIPO:** `whatsapp-inbound` passa a receber `SupabaseClient` (idioma
+  das edges; `ReturnType<typeof createClient>` fixava o schema em `never`) e `sync-reprocess` tipa
+  `omie_pedido_id` como `string | number` num tipo local. O `Number()` do bot NÃO entrou: medido em
+  prod, a RPC `reconciliar_pedidos_omie` não grava o campo em coluna — só o ecoa cru
+  (`v_pedido->'omie_pedido_id'`) no registro de falha, e o `Number()` mudaria o eco justo no caso
+  anômalo (string não numérica → `null`, > 2^53 perde dígito). Prova: `deno check` completo limpo
+  nas duas (antes 7 + 1 erros) e JS emitido byte-idêntico antes/depois, com controle sabotado vermelho.
 - **Todo revert de edição do bot fabrica uma pendência de deploy.** O `sonda:bump` não distingue
   "voltei aos bytes de um commit ancestral" de "mudei a edge"; o bump recria DIVERGE sem mudança de
   runtime, e o redeploy é a isca. Regra candidata: isentar a edge cujos bytes do corpo servido E o
