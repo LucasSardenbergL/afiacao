@@ -60,10 +60,13 @@ prod é reproduzido antes do apply, o mesmo idioma de `test-data-health-sync-rep
 - **Banco-base + clones.** O snapshot sobe uma vez e cada rodada (controle e cada sabotagem) roda
   num `CREATE DATABASE … TEMPLATE`, sem herdar histórico da outra, o que importa por causa do
   anti-flap.
-- **Sabotagem com alvo.** Cada uma troca um trecho do corpo VIVO (âncora única, conferida; md5 tem de
-  mudar) e declara o assert que TEM de ficar vermelho e as pré-condições que TÊM de seguir verdes.
-  Vermelho em outra camada é quebra, não dente. A `db/test-data-health-sync-reprocess.sh` conta
-  qualquer vermelho como dente.
+- **Sabotagem com alvo, no idioma do `falsificar-exige-assert`.** Cada uma troca um trecho do corpo
+  VIVO (âncora única, conferida; md5 tem de mudar) e se declara em `SABOTAGENS` como
+  `nome:VERMELHOS:VERDES`: o assert que tem de ir de verde no controle a vermelho na rodada, e as
+  pré-condições que têm de seguir verdes. Rodada que não aplicou, que executou menos asserts que o
+  controle, ou cujo vermelho é ERRO de execução é falha, não dente
+  ([falsificacao-exit-nao-e-dente.md](falsificacao-exit-nao-e-dente.md)). O gate entrou na main
+  durante este trabalho; as duas provas o adotaram limpas, sem pedir juiz.
 - **A cadeia dinâmica também é falsificada.** `migracao_nova_*` escreve uma migration 2999… com o
   watchdog vivo regredido e reaplica a cadeia de um diretório que a contém. Isso prova que a
   regressão que chegar pela PRÓXIMA reescrita do trio fica vermelha.
@@ -89,7 +92,9 @@ vaza, não que a asserção muda com ele. O custo somado das duas no núcleo é 
 
 `test-data-health-sync-reprocess.sh`, já no núcleo, aplica `0918 → 0920a → 0920b` e para: o compute
 que ela cobre (md5 `f0eecc…`) não é o de prod (`4cc51b…`, da `20260922225500`). É a mesma classe,
-dentro do núcleo. Fica registrada como pendência, não consertada aqui.
+dentro do núcleo. O conserto de 2026-09-27 no JUIZ dela (exit≠0 não é dente) não toca nisso: o alvo
+segue velho. Fica como tarefa com dono (chip "Levar a prova sync-reprocess ao compute que prod
+executa"), não consertada aqui.
 
 ## Lições
 
