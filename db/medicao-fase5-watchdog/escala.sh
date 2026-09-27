@@ -53,9 +53,9 @@ CREATE INDEX ON public.tint_formulas (account, sku_id, cor_id);"
 
 mede() {  # mede <db> <rotulo> <n_execucoes> <timeout_ms> — numa sessão só; mediana das execuções
   local db="$1" rot="$2" n="$3" to="$4" tempos med i sql
-  sql="\\timing on
-\\o /dev/null
-SET statement_timeout = $to;"
+  sql="SET statement_timeout = $to;
+\\timing on
+\\o /dev/null"
   for i in $(seq 1 "$n"); do sql="$sql
 SELECT public.tint_watchdog_fase5_check();"; done
   tempos="$(printf '%s\n' "$sql" | "$PGBIN/psql" -X -h "$TMP" -p "$PORT" -U postgres -d "$db" -v ON_ERROR_STOP=1 -q 2>&1 \
