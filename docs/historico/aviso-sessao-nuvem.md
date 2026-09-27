@@ -32,8 +32,10 @@ O predicado é o **mesmo** do `vigia-gstack.sh` e do `codex-async.sh` (`CLAUDE_C
 
 - `.claude/hooks/vigia-nuvem.sh`: na nuvem, `systemMessage` com o aviso para o founder (127
   caracteres, o texto dele), mais `additionalContext` para o modelo, com a marca `SESSAO-NUVEM` e a
-  instrução: não instalar nem contornar daqui, e dizer logo no início da resposta que money-path,
-  2ª opinião e banco pedem sessão Local (ou o Caminho B). Fora da nuvem, `{}` exato.
+  instrução: não instalar nem contornar daqui; ler prod pelo conector Lovable (`--sql-nuvem`, do
+  #2601, que entrou na main no mesmo dia), nunca por chip para o Mac; e dizer logo no início da
+  resposta que money-path e 2ª opinião pedem sessão Local (ou o Caminho B), porque dependem do
+  Codex. Fora da nuvem, `{}` exato.
 - `.claude/settings.json`: o hook no grupo `startup` do `SessionStart`.
 - `scripts/test-vigia-nuvem.sh` no `test:hooks` e no `test:falsificacao`.
 
