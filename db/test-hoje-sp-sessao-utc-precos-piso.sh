@@ -354,9 +354,15 @@ ROLLBACK;
 SQL
 )" || rc=$?
 V="$(printf '%s\n' "$out" | grep '^X3|' || true)"
-[ "$rc" -eq 0 ] || V="$(printf '%s' "$out" | tr '\n' ' ' | head -c 300)"
-eq X3 "função AUSENTE: a migration a cria com o contrato PORTA_GATE (anon/PUBLIC não, authenticated sim, dono postgres)" \
-  "$V" "X3|false,false|false,false|true,true|postgres,postgres"
+X3_DESCR="função AUSENTE: a migration a cria com o contrato PORTA_GATE (anon/PUBLIC não, authenticated sim, dono postgres)"
+if [ "$rc" -eq 0 ]; then
+  eq X3 "$X3_DESCR" "$V" "X3|false,false|false,false|true,true|postgres,postgres"
+elif printf '%s' "$out" | grep -q 'POS[0-9] FALHOU'; then
+  # o aborto da POS é um VEREDITO (a migration disse que o contrato não fechou), não erro de execução
+  bad X3 "$X3_DESCR — a migration abortou ao nascer: $(printf '%s' "$out" | grep -o 'POS[0-9] FALHOU[^—]*' | head -1)"
+else
+  erro_exec X3 "$X3_DESCR — falhou, mas não pela POS: $(printf '%s' "$out" | tr '\n' ' ' | head -c 200)"
+fi
 
 rc=0; out="$(P -1 -q -f "$MIG_NOVA" 2>&1)" || rc=$?
 if [ "$rc" -ne 0 ] || ! printf '%s' "$out" | grep -q 'POS OK:'; then
