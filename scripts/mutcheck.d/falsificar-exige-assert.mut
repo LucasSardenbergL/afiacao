@@ -1,0 +1,66 @@
+# Invariantes do fiscal "o vermelho da falsificação tem de ser do assert".
+# @src: scripts/falsificar-exige-assert-gate.ts
+# @test: scripts/falsificar-exige-assert-gate.test.ts
+#
+# A classe (docs/historico/falsificacao-exit-nao-e-dente.md): um laço de falsificação que conta como
+# dente QUALQUER rodada sabotada vermelha aprova sabotagem não aplicável, aborto no meio e erro alheio.
+# O fiscal é TEXTUAL, então cada camada dele é uma aposta que pode apodrecer sem vermelho nenhum: a
+# forma da entrada (R1), o laço que consome a declaração (R2), o juiz do núcleo (R3), a isenção de
+# comentário (que TEM de ser o stripper compartilhado), os alarmes herdados, os pisos e o código de
+# saída. Cada PEGA quebra UMA camada e exige a suíte vermelha.
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`. O `#`
+# vai como `\x23`, para a linha do contrato não carregar um `#` cru.
+
+# CONTROLE+ : R1 cega. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: R1 deixa de julgar a entrada (entrada nua passa)             | s/if \(!ENTRADA\.test\(item\)\) \{/if (false) {/
+
+# R1 — a forma da declaração.
+PEGA | curinga de regex vira declaração válida (`a:.*` casa qualquer vermelho) | s/^const ID = '.*';$/const ID = '\\\\S+';/
+PEGA | `ID!MARCA` (erro de execução DECLARADO, #2606) deixa de ser ID           | s/^const ID = '\[A-Za-z0-9_\]\+\(\?:!\[A-Za-z0-9_\]\+\)\?';$/const ID = '[A-Za-z0-9_]+';/
+PEGA | o grupo `:VERDES` (#2606) deixa de ser aceito                          | s/\(\?::\$\{GRUPO\}\)\?\$`\);/\$`);/
+PEGA | lista vazia passa                                                      | s/if \(itens\.length === 0\) \{/if (false) {/
+
+# R2 — o laço consome a declaração.
+PEGA | laço que descarta a declaração não é acusado como tal                  | s/if \(decl === null\) \{/if (false) {/
+PEGA | declaração extraída que nunca chega a um grep passa                    | s/\} else if \(!chega\) \{/} else if (false) {/
+PEGA | o `for` sobre um elo da cadeia (forma do alvo) deixa de valer          | s/for \(const m of depois\.matchAll\(itera\)\) cadeia\.add\(m\[1\]\);/for (const m of depois.matchAll(itera)) void m;/
+PEGA | a variável derivada de um elo (`verm="\x24{resto%%:*}"`) deixa de valer | s/for \(const m of depois\.matchAll\(deriva\)\) cadeia\.add\(m\[1\]\);/for (const m of depois.matchAll(deriva)) void m;/
+PEGA | a cadeia para no 1º elo (sem ponto fixo)                               | s/for \(let visto = 0; visto !== cadeia\.size; \) \{/for (let visto = 0; visto === 0; ) {/
+PEGA | grep DEPOIS do `done` volta a valer (o corpo vira o resto do arquivo)  | s/lacoConsome\(corpoDoLaco\(limpo, inicio\), m\[1\]\)/lacoConsome(limpo.slice(inicio), m[1])/
+PEGA | laço de uma linha perde o fim (grep da linha seguinte volta a valer)   | s/if \(\/\\bdone\\b\/\.test\(linhaDoFor\)\) return linhaDoFor;//
+PEGA | continuação `\x5c` deixa de juntar o comando (falso-positivo)          | s/const comandos = depois\.replace\(\/\\\\\\n\/g, ' '\)\.split/const comandos = depois.split/
+PEGA | `\x24{X\x23\x23*:}` deixa de ser extração                             | s/\x23\x23\?\\\\\*:/\x23\\\\*:/
+PEGA | lista que nenhum laço percorre passa                                   | s/if \(listas > 0 && lacos === 0\) \{/if (false) {/
+PEGA | array `"\x24{SABOTAGENS[@]}"` deixa de ser laço                        | s/\|"\\\$\\\{SABOTAGENS\\\[@\\\]\\\}"\)/)/
+
+# A isenção de comentário. A 3ª é a versão INGÊNUA que a regra da casa proíbe: ela apaga o `#` que
+# mora dentro de aspas (e o de `\x24{i\x23*:}`) — e, com ele, a lista e o laço: verde por cegueira.
+PEGA | stripper ignorado em detectar: comentário vira código                  | s/return detectarLimpo\(caminho, removerComentariosShell\(fonte\)\);/return detectarLimpo(caminho, fonte);/
+PEGA | stripper ignorado em analisar: âncora num comentário vale como código  | s/const limpo = removerComentariosShell\(a\.fonte\);/const limpo = a.fonte;/
+PEGA | regex LOCAL no lugar do stripper compartilhado                          | s/return detectarLimpo\(caminho, removerComentariosShell\(fonte\)\);/return detectarLimpo(caminho, fonte.replace(\/\x23.*\$\/gm, ''));/
+
+# R3 — o juiz do núcleo.
+PEGA | falsificar=<n> sem juiz nem idioma passa                               | s/if \(!\(arquivo in juizes\) && !idiomaLimpo\.has\(arquivo\)\) \{/if (false) {/
+PEGA | o idioma limpo deixa de dispensar o juiz (o #2606 travaria)            | s/ && !idiomaLimpo\.has\(arquivo\)\) \{/) {/
+PEGA | idioma COM violação dispensa o juiz                                    | s/if \(d\.listas > 0 && d\.violacoes\.length === 0\) idiomaLimpo/if (d.listas > 0) idiomaLimpo/
+PEGA | arquivo SEM lista conta como idioma limpo                              | s/if \(d\.listas > 0 && d\.violacoes/if (d.violacoes/
+PEGA | âncora sumida passa                                                    | s/if \(!limpo\.includes\(ancora\)\) \{/if (false) {/
+PEGA | juiz de arquivo não lido passa calado                                  | s/v\.push\(\{ regra: 'R3', arquivo, linha: 1, detalhe: 'juiz registrado/void ({ regra: 'R3', arquivo, linha: 1, detalhe: 'juiz registrado/
+PEGA | falsificar=fora-do-ci vira linha julgada                               | s/falsificar=\\d\+\(\?:\\s\|\$\)/falsificar=\\S+(?:\\s|\$)/
+PEGA | linha COMENTADA do manifesto vira linha julgada                        | s/\.filter\(\(\{ l \}\) => !l\.startsWith\('\x23'\)\)/.filter(() => true)/
+
+# Os alarmes do stripper e o denominador.
+PEGA | analisar deixa de consultar o stripper                                 | s/r\.alarmes\.push\(\.\.\.alarmesDoStripper\(a\.caminho, diagnosticarShell\(a\.fonte\)\)\);//
+PEGA | a contagem de listas some (o piso tem de acusar o zero)                | s/^    listas\+\+;$//
+
+# O veredito: 2 nunca é "passou", e violação nunca é 0.
+PEGA | nenhum arquivo lido vira "limpo"                                       | s/if \(r\.caminhos\.length === 0\) furos/if (false) furos/
+PEGA | piso por raiz desligado                                                | s/if \(lidos < piso\) furos/if (false) furos/
+PEGA | piso de listas desligado                                               | s/if \(r\.listas < PISOS\.listas\) furos/if (false) furos/
+PEGA | piso de entradas desligado                                             | s/if \(r\.entradas < PISOS\.entradas\) furos/if (false) furos/
+PEGA | piso de laços desligado                                                | s/if \(r\.lacos < PISOS\.lacos\) furos/if (false) furos/
+PEGA | manifesto do núcleo não lido vira "limpo"                              | s/if \(r\.linhasNucleo === null\) furos\.push\(/if (r.linhasNucleo === null) void (/
+PEGA | piso de linhas do núcleo desligado                                     | s/else if \(r\.linhasNucleo < PISOS\.linhasFalsificarNucleo\) \{/else if (false) {/
+PEGA | alarme/piso furado deixa de bloquear o veredito                        | s/if \(furos\.length > 0\) \{/if (false) {/
+PEGA | violação sai 0                                                         | s/codigo: 1,/codigo: 0,/

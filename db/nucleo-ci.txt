@@ -181,15 +181,22 @@ db/test-data-health-sync-reprocess.sh      31  falsificar=13
 # Tintométrico: corante impagável EM USO alerta (fora de uso ou desativada, não), agravamento
 # re-emite e o dead-man dispara com a camada B parada.
 db/test-tint-watchdog-corante.sh           11
-
-# ── Medidas no runner e deixadas de FORA (2026-09-27) — ausência de dado DECLARADA ────────────────
-# db/test-tint-fase5-watchdog.sh — verde, mas 185–252s sozinha (mais que o núcleo inteiro de antes):
-#   custo de FIXTURE, não de asserção — universo de ~464 mil chaves × 17 execuções do watchdog ×
-#   (controle + 4 sabotagens). Entra quando o universo encolher preservando os limiares.
-# db/test-tint-cobertura-lista-email.sh e db/test-tint-vigia-cobertura.sh — APODRECIDAS: reprovam
-#   contra o snapshot de hoje em qualquer plataforma (o `_data_health_compute` atual lê a
-#   `customer_metrics_mv`, que a prova não popula; o stub de `_vendas_familia_ausente_lista_email`
-#   colide com a função real). Consertar antes de entrar.
+# Tintométrico, a camada B: chave carimbada pela Fase 5 que ficou sem preço alarma (S1), a fonte
+# que retirou a chave alarma em tipo PRÓPRIO (S2: no mesmo tipo, o ON CONFLICT calaria um dos dois),
+# e o universo carimbado que encolhe alarma com piso 1 (S3, o vigia de vacuidade). As 5 sabotagens
+# rodam inline no modo normal; a inválida conta no FAIL do recibo. Entrou em 2026-09-27, ao cair de
+# 185–252s para ~12s no runner: o custo era o plano da view num fixture SEM os índices de prod (mais
+# 36s de sleep no B14), não o universo — docs/historico/fixture-sem-indices-de-prod.md.
+db/test-tint-fase5-watchdog.sh             31
+# Tintométrico: o vigia da cobertura (o Check A empurra e-mail; o B, vínculo tint↔Omie, é
+# dashboard-only) e a lista das bases divergentes no corpo do e-mail. Ficaram fora do #2605 como
+# APODRECIDAS, e o defeito era de ALVO: re-aplicavam a migration da sua fase (junho/julho) sobre o
+# snapshot de setembro e mediam um watchdog que ninguém executa. Agora medem o trio que PROD executa
+# (db/lib/data-health-vivo.sh: snapshot + cadeia DINÂMICA, md5 igual ao de prod em 2026-09-27). Cada
+# sabotagem exige vermelho NO assert-alvo com as pré-condições verdes, e a `migracao_nova_*` prova
+# que a PRÓXIMA reescrita do trio entra sozinha na cadeia (docs/historico/provas-tint-apodrecidas.md).
+db/test-tint-vigia-cobertura.sh            30  falsificar=13
+db/test-tint-cobertura-lista-email.sh      22  falsificar=6
 
 # ── Eixo 7 — FUSO DA SESSÃO (a prod roda UTC; o negócio mede em São Paulo) ─────────────────────
 # A positivação AO VIVO fixava o mês em SP e comparava ligação e pedido no fuso da SESSÃO: das
@@ -201,6 +208,17 @@ db/test-tint-watchdog-corante.sh           11
 # Autocontida: initdb + db/stubs-supabase.sql + as 2 migrations. Irmão estático: o gate vitest
 # `scripts/fuso-da-sessao-gate.ts`, que vigia a CLASSE nas demais funções.
 db/test-positivacao-eligible-consumo.sh    44  falsificar=14
+# O relógio da sessão TRUNCADO ao calendário (20260927202603): a projeção de caixa de 13 semanas, o
+# KPI mensal do radar e as 2 views da posição DES (trimestre, dias restantes e a faixa de desconto
+# que o pedido em trânsito ajuda a alcançar). Mesmo desenho — borda cruzada em pares de 1 s sob
+# UTC e SP, tripwire —, mais: o predecessor de cada objeto tem de bater o md5 da prod (P1-P4, o
+# ensaio da PRÉ-condição, md5 EXATO), a TRAVA contra corrida entre a pré-condição e o CREATE OR
+# REPLACE (K1/K2: outra sessão é barrada com a migration parada no meio), o desconto projetado do
+# check-in pela view dependente REAL, e as views sabotam UMA camada por vez (a que agrupa o pedido no
+# trimestre e a que o exibe). CURRENT_DATE não é função — o relógio controlado não o alcança —, por
+# isso o corpo antigo das views e da projeção entra pelo gêmeo controlável (`now()` na sessão).
+# Autocontida: initdb + stubs + a migration + db/fixtures/des-views-predecessoras-prod-20260927.sql.
+db/test-fuso-sp-relogio-sessao.sh          53  falsificar=16
 # O "hoje" de SP no preço de partida (get_ultimos_precos_cliente) e na medição do piso
 # (medir_abaixo_piso_tier): o current_date da sessão UTC era amanhã das 21:00 às 23:59 BRT
 # (20260927172443). Mesmo relógio controlado, borda do DIA cruzada sob as duas sessões; o

@@ -110,7 +110,8 @@ equivalente já estava mergeado havia ~1h, sob o nome `carteira_com_historico_ut
 (#1786). Zero hit não significou "ninguém fez"; significou "ninguém fez com o MEU nome".
 
 ⇒ O invariante não é o símbolo, é o **ARQUIVO**: `git log origin/main -- <path>` (ou
-`--since=<data>`) lista quem mexeu ali seja qual for o vocabulário. Use os dois eixos — símbolo
+`--since='<data> 00:00'`, COM a hora: com a data sozinha, o git completa o corte com a hora ATUAL e
+cega tudo o que veio mais cedo no dia, ver [§23](../historico/evidencia-positiva-shell.md)) lista quem mexeu ali seja qual for o vocabulário. Use os dois eixos — símbolo
 para achar o artefato exato, arquivo para achar o CONCORRENTE. Regra prática: rode o `git log`
 pelo arquivo que você está prestes a editar, **não** pelo conceito que você está prestes a criar.
 

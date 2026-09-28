@@ -7,7 +7,8 @@ o motivo declarado no cabeçalho: carrega o `schema-snapshot.sql` inteiro, cujo 
 provas `db/test-tint-*.sh` barrava merge.
 
 Resultado: **16 das 19 entraram** (as da promoção nos dois modos), o job instala o pgvector, e 3
-ficaram de fora com o motivo escrito no próprio manifesto.
+ficaram de fora com o motivo escrito no próprio manifesto. (No mesmo dia a `fase5-watchdog` entrou também:
+17 de 19 — [fixture-sem-indices-de-prod.md](fixture-sem-indices-de-prod.md).)
 
 ## O motivo declarado era 1 de 4 camadas
 
@@ -59,9 +60,12 @@ O merge não fica mais lento.
 
 A `fase5-watchdog` levaria o job a ~10 min. Isso exigiria subir o teto e custaria ~4 min de
 runner por PR. O precedente manda medir de onde vem o custo antes de dizer "não cabe", e foi
-medido: é de **fixture**. A prova monta um universo de ~464 mil chaves e roda o watchdog 17 vezes
-sobre ele, no controle e em cada uma das 4 sabotagens. Ela entra quando o universo encolher
-preservando os limiares.
+medido: é de **fixture**. ~~A prova monta um universo de ~464 mil chaves e roda o watchdog 17
+vezes sobre ele~~ — **errado, corrigido no mesmo dia**: 463.995 é a baseline de prod que a B15b
+confere, e o seed tem 1.004 chaves. O tempo estava no plano da view sem os índices de prod (121–145s
+nas 2 primeiras varreduras) e em 36s de `sleep` no B14. Consertados, a prova caiu para ~12s e entrou
+no núcleo sem encolher o universo:
+[fixture-sem-indices-de-prod.md](fixture-sem-indices-de-prod.md).
 
 ## As duas apodrecidas
 
