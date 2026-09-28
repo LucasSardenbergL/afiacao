@@ -54,9 +54,9 @@ import {
   renderizarMapa,
 } from '../sonda-fingerprint';
 
-export type MotivoIncoerencia = 'fonte-diverge' | 'fora-do-mapa' | 'sem-marcador';
+type MotivoIncoerencia = 'fonte-diverge' | 'fora-do-mapa' | 'sem-marcador';
 
-export interface Incoerencia {
+interface Incoerencia {
   edge: string;
   motivo: MotivoIncoerencia;
   /** O valor do mapa commitado na ref, ou `null` se a edge não está nele. */
