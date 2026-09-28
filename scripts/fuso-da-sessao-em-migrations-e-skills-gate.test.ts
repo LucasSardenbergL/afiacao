@@ -54,7 +54,8 @@ describe('calibração — o detector pega o sítio pré-fix e solta a correçã
     const fonte = arq(FIX).fonte;
     // controle positivo: sem ele, "não achou" e "não leu" dariam o mesmo []
     expect(fonte).toContain("date_trunc('month', now(), 'America/Sao_Paulo')");
-    expect(fonte.match(/date_trunc\s*\(/gi)?.length).toBeGreaterThanOrEqual(10);
+    // as 7 truncagens dos 4 objetos (radar 1, projeção 1, em trânsito 2, posição 3), todas com fuso escrito
+    expect(fonte.match(/date_trunc\s*\(/gi)?.length).toBe(7);
     expect(detectarNoSql(FIX, fonte)).toEqual({ sitios: [], ilegiveis: [] });
   });
 
