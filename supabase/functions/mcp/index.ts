@@ -27,8 +27,11 @@ function supabaseForUser(ctx) {
     auth: { persistSession: false, autoRefreshToken: false }
   });
 }
-function sanitizeOrTerm(input) {
+function sanitizeForPostgrestOr(input) {
   return input.replace(/[%_,()\\"*]/g, "");
+}
+function isSearchablePostgrestTerm(term) {
+  return sanitizeForPostgrestOr(term) !== "";
 }
 var search_customers_default = defineTool2({
   name: "search_customers",
@@ -42,10 +45,10 @@ var search_customers_default = defineTool2({
     if (!ctx.isAuthenticated()) {
       return { content: [{ type: "text", text: "Not authenticated" }], isError: true };
     }
-    const safe = sanitizeOrTerm(query);
-    if (!safe) {
+    if (!isSearchablePostgrestTerm(query)) {
       return { content: [{ type: "text", text: "[]" }], structuredContent: { results: [] } };
     }
+    const safe = sanitizeForPostgrestOr(query);
     const sb = supabaseForUser(ctx);
     const predicado = ["name", "document", "email", "phone"].map((c) => `${c}.ilike.%${safe}%`).join(",");
     const { data, error } = await sb.from("profiles").select("user_id, name, document, phone, email, customer_type").or(predicado).limit(20);
