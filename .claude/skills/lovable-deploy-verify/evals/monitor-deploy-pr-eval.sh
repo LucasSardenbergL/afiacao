@@ -280,7 +280,7 @@ cmp -s "$SCRIPT_ABS" "$CTL/scripts/monitor-deploy.sh" || via_caiu "a cópia de c
 cp "$SCRIPT_ABS" "$FIX/monitor-original.sh"
 
 # ── runner ───────────────────────────────────────────────────────────────────────────────────────
-MON="$CTL"; LOC="C"; OUT=""; RC=0; PASS=0; FAIL=0; SO_CASO=""
+MON="$CTL"; LOC="C"; OUT=""; RC=0; PASS=0; FAIL=0; SO_CASO=""; PRIMEIRO_RC=""; PRIMEIRO_OUT=""
 CASO_ESTADO=""; CASO_VF_RC=""; CASO_PY_MUDO=""
 roda() { # cwd args…
   local cwd="$1" caminho="$FIX/stubs:$PATH"; shift
@@ -321,6 +321,9 @@ caso() { # id descrição cwd exit exigidas(;) proibidas(;) args…
     PASS=$((PASS + 1)); printf '  [ok ] %-12s %s (exit %s)\n' "$id" "$descr" "$RC"
   else
     FAIL=$((FAIL + 1))
+    # o 1º passo que falhou é o que a falsificação julga: nos grupos com estado (sentinela,
+    # semcarimbo, estado) o id se repete, e o ÚLTIMO passo pode nem ter sido tocado pela sabotagem
+    [ -n "$PRIMEIRO_RC" ] || { PRIMEIRO_RC="$RC"; PRIMEIRO_OUT="$OUT"; }
     printf '  [XX ] %-12s %s (esperado exit %s + [%s] sem [%s]; obtido exit %s)\n' "$id" "$descr" "$exp" "$want" "$nao" "$RC"
     printf '        saída: %s\n' "$(printf '%s' "$OUT" | tr '\n' '|' | cut -c1-900)"
   fi
@@ -466,37 +469,10 @@ open(dst, "w", encoding="utf-8").write(txt)
 PY
 }
 CEGAS=0; PEGAS=0
-sabota() { # nome caso-alvo (de para)…
-  local nome="$1" alvo="$2" sab="$FIX/mon-sab" loc
-  shift 2
-  mondir "$sab" "$SCRIPT_ABS" || via_caiu "cópia para sabotar"
-  if ! aplica "$sab/scripts/monitor-deploy.sh" "$@" 2> "$FIX/aplica.err"; then
-    printf '  [XX ] sabotagem NO-OP/AMBÍGUA: %s — %s\n' "$nome" "$(tr '\n' ' ' < "$FIX/aplica.err")"
-    CEGAS=$((CEGAS + 1)); return
-  fi
-  if cmp -s "$sab/scripts/monitor-deploy.sh" "$SCRIPT_ABS"; then
-    printf '  [XX ] sabotagem não mudou byte nenhum: %s\n' "$nome"; CEGAS=$((CEGAS + 1)); return
-  fi
-  if ! bash -n "$sab/scripts/monitor-deploy.sh" 2>/dev/null; then   # vermelho por SINTAXE é motivo errado
-    printf '  [XX ] sabotagem quebrou a sintaxe (vermelho pelo motivo errado): %s\n' "$nome"; CEGAS=$((CEGAS + 1)); return
-  fi
-  for loc in $LOCALES; do
-    LOC="$loc"
-    # baseline MEDIDA, na mesma invocação: o caso-alvo passa com o monitor íntegro
-    PASS=0; FAIL=0; MON="$CTL"; SO_CASO="$alvo"; suite > /dev/null 2>&1
-    if [ "$FAIL" -ne 0 ] || [ "$PASS" -eq 0 ]; then
-      printf '  [XX ] o caso-alvo "%s" não passa com o monitor ÍNTEGRO (LC_ALL=%s): %s\n' "$alvo" "$loc" "$nome"
-      CEGAS=$((CEGAS + 1)); SO_CASO=""; return
-    fi
-    PASS=0; FAIL=0; MON="$sab"; SO_CASO="$alvo"; suite > /dev/null 2>&1
-    if [ "$FAIL" -eq 0 ]; then
-      printf '  [XX ] sabotagem PASSOU DESPERCEBIDA (LC_ALL=%s): %s — caso %s\n' "$loc" "$nome" "$alvo"
-      CEGAS=$((CEGAS + 1)); SO_CASO=""; return
-    fi
-  done
-  SO_CASO=""; MON="$CTL"
-  PEGAS=$((PEGAS + 1)); printf '  [ok ] pega nos 2 locales (caso %s): %s\n' "$alvo" "$nome"
-}
+# O juiz `sabota` (caso-alvo isolado: passa íntegro, FAIL≠0 sabotado) saiu em 2026-09-27: medido, ele
+# creditava uma sabotagem que só DERRUBAVA o monitor (variável não definida sob `set -u`, sem passar
+# pelo ramo) — o caso isolado falhava por crash e isso contava como dente. As 19 sabotagens dele viraram
+# `sabota_prev`, com o desfecho MEDIDO de cada uma. → docs/historico/falsificacao-exit-nao-e-dente.md
 # Sabotagem com desfecho PREVISTO (TESTE inerte, 2026-09-26): o caso-alvo tem de ficar vermelho E
 # sair exatamente como previsto — exit e marcas exigidas, sem as proibidas. Vermelho por sintaxe,
 # ou por outro motivo, é teatro. O alvo pode ser o monitor, a prova ou a tabela: a cópia troca os
@@ -532,15 +508,16 @@ sabota_prev() { # arquivo-rel nome caso exit exigidas(;) proibidas(;) (de para)�
       printf '  [XX ] o caso-alvo "%s" não passa com o monitor ÍNTEGRO (LC_ALL=%s): %s\n' "$alvo" "$loc" "$nome"
       CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; return
     fi
-    PASS=0; FAIL=0; MON="$sab"; SO_CASO="$alvo"; suite > /dev/null 2>&1
+    PASS=0; FAIL=0; PRIMEIRO_RC=""; PRIMEIRO_OUT=""; MON="$sab"; SO_CASO="$alvo"; suite > /dev/null 2>&1
     if [ "$FAIL" -eq 0 ]; then
       printf '  [XX ] sabotagem PASSOU DESPERCEBIDA (LC_ALL=%s): %s — caso %s\n' "$loc" "$nome" "$alvo"
       CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; return
     fi
-    # OUT/RC são os da ÚLTIMA execução do caso-alvo (id único na suíte)
-    if [ "$RC" != "$pexit" ] || ! tem_todas "$OUT" "$pwant" || ! tem_nenhuma "$OUT" "$pnao"; then
+    # O julgado é o 1º passo do caso-alvo que FALHOU: nos grupos com estado o id se repete, e o
+    # último passo pode nem ter sido tocado pela sabotagem (ids únicos: é o mesmo passo).
+    if [ "$PRIMEIRO_RC" != "$pexit" ] || ! tem_todas "$PRIMEIRO_OUT" "$pwant" || ! tem_nenhuma "$PRIMEIRO_OUT" "$pnao"; then
       printf '  [XX ] VERMELHO pelo motivo ERRADO (LC_ALL=%s): %s — previsto exit %s + [%s] sem [%s]; obtido exit %s: %s\n' \
-        "$loc" "$nome" "$pexit" "$pwant" "$pnao" "$RC" "$(printf '%s' "$OUT" | tr '\n' '|' | cut -c1-400)"
+        "$loc" "$nome" "$pexit" "$pwant" "$pnao" "$PRIMEIRO_RC" "$(printf '%s' "$PRIMEIRO_OUT" | tr '\n' '|' | cut -c1-400)"
       CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; return
     fi
   done
@@ -553,46 +530,46 @@ sabota_prev() { # arquivo-rel nome caso exit exigidas(;) proibidas(;) (de para)�
 # se procura e o que se põe no lugar, e expandi-los aqui destruiria a sabotagem.
 # shellcheck disable=SC2016
 sabotagens() {
-sabota "os 3 ramos colapsam: rc 128 (squash desconhecido) vira 'fora do ar'" prsqdesc \
+sabota_prev scripts/monitor-deploy.sh "os 3 ramos colapsam: rc 128 (squash desconhecido) vira 'fora do ar'" prsqdesc 3 "PR_FORA_DO_AR" "NAO_CONSEGUI_MEDIR" \
   '    1) veredito_pr_fora_do_ar ;;' '    *) veredito_pr_fora_do_ar ;;'
-sabota "headRefOid no lugar do mergeCommit (rc 1 LIMPO num PR no ar — #2459)" prnoar \
+sabota_prev scripts/monitor-deploy.sh "headRefOid no lugar do mergeCommit (rc 1 LIMPO num PR no ar — #2459)" prnoar 3 "PR_FORA_DO_AR" "PR_NO_AR" \
   '--json state,mergeCommit,baseRefName' '--json state,headRefOid,baseRefName' \
   '(.mergeCommit.oid // "-")' '(.headRefOid // "-")'
-sabota "PR não mergeado deixa de ser checado" praberto \
+sabota_prev scripts/monitor-deploy.sh "PR não mergeado deixa de ser checado" praberto 6 "NAO_CONSEGUI_MEDIR (SHA_DESCONHECIDO)" "PR_NAO_MERGEADO" \
   '  if [ "${PR_STATE:-}" != "MERGED" ] || ! eh_sha "${PR_SQUASH:-}"; then' '  if false; then'
-sabota "gh que falha segue como se tivesse respondido" prgh \
+sabota_prev scripts/monitor-deploy.sh "gh que falha segue como se tivesse respondido" prgh 6 "NAO_CONSEGUI_MEDIR (PR_NAO_MERGEADO)" "GH_FALHOU" \
   '  [ "$GH_RC" -eq 0 ] || nao_consegui GH_FALHOU' '  [ "$GH_RC" -eq 0 ] || : GH_FALHOU'
-sabota "base != main deixa de ser checada" prbase \
+sabota_prev scripts/monitor-deploy.sh "base != main deixa de ser checada" prbase 0 "PR_NO_AR" "PR_BASE_NAO_E_MAIN" \
   '  [ "${PR_BASE:-}" = "main" ] || nao_consegui PR_BASE_NAO_E_MAIN' '  : PR_BASE_NAO_E_MAIN'
-sabota "fetch falho no --pr volta a ser engolido" proffline \
+sabota_prev scripts/monitor-deploy.sh "fetch falho no --pr volta a ser engolido" proffline 0 "PR_NO_AR" "FETCH_FALHOU" \
   '  [ "$FETCH_OK" = 1 ] || nao_consegui FETCH_FALHOU' '  [ "$FETCH_OK" = 1 ] || : FETCH_FALHOU'
-sabota "clone raso deixa de ser recusado" praso \
+sabota_prev scripts/monitor-deploy.sh "clone raso deixa de ser recusado" praso 3 "PR_FORA_DO_AR" "CLONE_RASO" \
   '[ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "false" ]' 'true'
-sabota "carimbo ambíguo deixa de ser recusado no --pr" prduplo \
+sabota_prev scripts/monitor-deploy.sh "carimbo ambíguo deixa de ser recusado no --pr" prduplo 0 "PR_NO_AR" "CARIMBO_AMBIGUO" \
   '  [ "${N_CARIMBOS:-0}" -le 1 ] || nao_consegui CARIMBO_AMBIGUO' '  : CARIMBO_AMBIGUO'
-sabota "o prefixo do carimbo deixa de ser conferido (um branch sequestra o ^{commit})" prardesc \
+sabota_prev scripts/monitor-deploy.sh "o prefixo do carimbo deixa de ser conferido (um branch sequestra o ^{commit})" prardesc 0 "PR_NO_AR" "SHA_DESCONHECIDO" \
   'case "$AR_FULL" in "$AIR_SHA"?*) eh_sha "$AR_FULL" ;; *) false ;; esac' \
   'case "$AR_FULL" in ?*) eh_sha "$AR_FULL" ;; *) false ;; esac'
-sabota "'sem alcance' sem a prova do alcance-bundle.py" prbuild \
+sabota_prev scripts/monitor-deploy.sh "'sem alcance' sem a prova do alcance-bundle.py" prbuild 3 "PR_FORA_DO_AR;PR_SEM_ALCANCE_NO_BUNDLE" "PR_ALCANCE_NAO_PROVADO" \
   $'    "0:PROVA_INERCIA_OK "*)\n      echo "     PR_SEM_ALCANCE_NO_BUNDLE:' \
   $'    *)\n      echo "     PR_SEM_ALCANCE_NO_BUNDLE:'
-sabota "arquivo ALCANCA do PR deixa de contar" prfora \
+sabota_prev scripts/monitor-deploy.sh "arquivo ALCANCA do PR deixa de contar" prfora 3 "PR_FORA_DO_AR;PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE" \
   '  if [ "$nb" -gt 0 ]; then' '  if false; then'
-sabota "aviso de revert apagado" prrevert \
+sabota_prev scripts/monitor-deploy.sh "aviso de revert apagado" prrevert 0 "PR_NO_AR;XXXXX_REVERT_POSTERIOR" "AVISO_REVERT_POSTERIOR" \
   'AVISO_REVERT_POSTERIOR:' 'XXXXX_REVERT_POSTERIOR:'
-sabota "--pr vazio passa a validação" usovazio \
+sabota_prev scripts/monitor-deploy.sh "--pr vazio passa a validação" usovazio 6 "NAO_CONSEGUI_MEDIR (GH_FALHOU)" "USO_INVALIDO" \
   "  case \"\$PR\" in ''|*[!0-9]*) uso" "  case \"\$PR\" in *[!0-9]*) uso"
-sabota "url sem esquema aceita" semesquema \
+sabota_prev scripts/monitor-deploy.sh "url sem esquema aceita" semesquema 0 "sincronizado: ar serve" "USO_INVALIDO" \
   'case "$APP" in http://*|https://*) ;;' 'case "$APP" in *) ;;'
-sabota "entry que não baixa vira 'sem carimbo'" entry404 \
+sabota_prev scripts/monitor-deploy.sh "entry que não baixa vira 'sem carimbo'" entry404 4 "VERSAO_INDETERMINADA (ENTRY_IGUAL)" "ENTRY_NAO_BAIXOU" \
   '[ -n "$BODY" ] || { echo' 'true || { echo'
-sabota "sentinela: rc 2/3 (sonda não confiável/recusa) lidos como ausente" sentinela \
+sabota_prev scripts/monitor-deploy.sh "sentinela: rc 2/3 (sonda não confiável/recusa) lidos como ausente" sentinela 3 "SENTINELA_AUSENTE" "SENTINELA_SEM_VEREDITO" \
   '    1) sentinela_ausente ;;' '    *) sentinela_ausente ;;'
-sabota "1ª checagem volta a se anunciar 'SIM (1a-vez)'" semcarimbo \
+sabota_prev scripts/monitor-deploy.sh "1ª checagem volta a se anunciar 'SIM (1a-vez)'" semcarimbo 4 "deploy-novo=SIM" "deploy-novo=?" \
   'DEPLOY="? (1a checagem deste checkout nesta url)"' 'DEPLOY="SIM (1a-vez -> $ENTRY_HASH)"'
-sabota "estado no formato antigo deixa de valer (vira '1a checagem')" semcarimbo \
+sabota_prev scripts/monitor-deploy.sh "estado no formato antigo deixa de valer (vira '1a checagem')" semcarimbo 4 "VERSAO_INDETERMINADA (PRIMEIRA_CHECAGEM)" "ENTRY_IGUAL" \
   'if [ -n "$PREV" ] && [ -z "$PREV_TS" ] && [ -z "$PREV_URL" ]; then' 'if false; then'
-sabota "estado volta a ser GLOBAL da máquina" estado \
+sabota_prev scripts/monitor-deploy.sh "estado volta a ser GLOBAL da máquina" estado 0 "deploy-novo=nao" "deploy-novo=?" \
   '${GITDIR:+$GITDIR/deploy-monitor.state}' '$HOME/.config/afiacao/deploy-monitor.state'
 # TESTE em src/ (2026-09-26): cada decisão arrancada tem desfecho PREVISTO, não só "ficou vermelho"
 sabota_prev evals/classify.sh "tabela sem TESTE: o teste do #2547 volta a ALCANCA pelo nome" prteste \
@@ -613,11 +590,28 @@ sabota_prev scripts/monitor-deploy.sh "o monitor deixa de contar TESTE: sem prov
 }
 sabotagens
 
+# CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. A sabotagem do prfora trocada por um `exit 3`
+# sai com o exit PREVISTO dela SEM passar pelo ramo, declarando o desfecho REAL dela: tem de ser
+# RECUSADA. Só as MARCAS a separam do julgamento, então um juiz que regredir a "o caso falhou" (o
+# `sabota` de antes) OU a "só o exit" a credita.
+PEGAS_OK=$PEGAS; CEGAS_OK=$CEGAS
+# shellcheck disable=SC2016
+sabota_prev scripts/monitor-deploy.sh "juiz-negativo: o prfora só derruba o monitor" prfora \
+  3 "PR_FORA_DO_AR;PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE" \
+  '  if [ "$nb" -gt 0 ]; then' '  exit 3; if [ "$nb" -gt 0 ]; then' > /dev/null 2>&1
+if [ "$PEGAS" -ne "$PEGAS_OK" ]; then
+  echo "  [XX ] controle negativo do juiz: um CRASH foi creditado como dente — o juiz perdeu a identidade"
+  PEGAS=$PEGAS_OK; CEGAS=$((CEGAS_OK + 1))
+else
+  echo "  [ok ] controle negativo do juiz: a sabotagem que só derruba o monitor foi RECUSADA"
+  CEGAS=$CEGAS_OK
+fi
+
 # (C) CONTROLE DE SAÍDA: as sabotagens vivem em cópias em $FIX; o monitor real sai byte a byte igual.
 if ! cmp -s "$SCRIPT_ABS" "$FIX/monitor-original.sh"; then
   echo "  ❌ o monitor REAL mudou durante a falsificação — as sabotagens deviam viver só em cópias"
   exit 1
 fi
 echo ""
-echo "--falsify: $PEGAS pega(s), $CEGAS cegueira(s) (esperado: 0 cegueiras)"
-[ "$CEGAS" -eq 0 ]
+echo "--falsify: $PEGAS pega(s), $CEGAS cegueira(s) (esperado: 0 cegueiras em 24)"
+[ "$CEGAS" -eq 0 ] && [ "$PEGAS" -ge 24 ]
