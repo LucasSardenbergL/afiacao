@@ -149,9 +149,12 @@ não compilou é de linguagem ausente.
   não sobe: PR de fork recebe token read-only e o `auto-merge.yml` (o único com escrita) não usa
   action. Correção + gate: pin por SHA. A política de atualização é decisão do founder, porque
   Dependabot abre PR do próprio repo e esses PRs auto-mergeiam.
-- **A2 — P3, `.github/workflows/ci.yml:794`.** `${{ github.base_ref || 'main' }}` interpolado no
-  `run:`. O `base_ref` é o branch-ALVO e precisa existir no repo base, que só quem tem escrita
-  cria, então fork não controla. Correção canônica: passar por `env:`.
+- **A2 — P3, `.github/workflows/ci.yml:794`. ✅ Corrigido em #2626.** `${{ github.base_ref || 'main' }}`
+  interpolado no `run:`. O `base_ref` é o branch-ALVO e precisa existir no repo base, que só quem tem
+  escrita cria, então fork não controla. Correção canônica: passar por `env:`. Foi o que o #2626 fez
+  (`env: BASE_REF` + `"origin/${BASE_REF}"`). Prova: `p/github-actions` deu 1→0 `run-shell-injection`
+  (11 regras, 4 alvos). O parser YAML achou 0 `${{ }}` em `run:`/`script:` nos 82 passos dos 4
+  workflows, ou seja, o A2 era o único.
 - **B1 — P3, curinga, `supabase/functions/analyze-unified-order/index.ts:39`.** O
   `sanitizeForPostgrestOr` espelhado na edge **não remove `*`**, que o #1051 acrescentou só em
   `src/lib/postgrest.ts`. Gatilho: termo `***` no texto do pedido. Efeito: `name.ilike.%***%` =
@@ -201,7 +204,7 @@ nessa cegueira (helper espelhado na edge, onde o lint não entra).
 
 - `docs/agent/skills.md` (linha da ToB): contorno do CWD, `partial` que subnotifica e `p/yaml` 404.
 - Correções, cada uma no seu PR (chips abertos em 2026-09-27, quem clica é o founder):
-  "Passar github.base_ref por env no ci.yml" (A2) · "Pôr o sanitizador .or() da
+  "Passar github.base_ref por env no ci.yml" (A2, ✅ #2626) · "Pôr o sanitizador .or() da
   analyze-unified-order em MIRROR" (B1, classe) · "Fechar .ilike cru com curinga
   (AdminReposicaoVendaPerdida)" (B2 + gate ESLint).
 - 🧭 Decisões do founder: (a) pin das actions por SHA e a política de atualização (A1); (b) o bug do
