@@ -173,28 +173,44 @@ describe('o repo', () => {
     expect(v.linhas.join('\n')).toContain(`QUITADO (tire da baseline CONHECIDOS) ${RADAR}`);
   });
 
-  it('migrations não lidas → INDETERMINADO: 10 migrations não são o repo, mesmo com skills e corpos inteiros', () => {
-    const poucas = [
-      ...REPO.arquivos.filter((a) => a.caminho.startsWith('supabase/migrations/')).slice(0, 10),
-      ...REPO.arquivos.filter((a) => a.caminho.startsWith('.claude/skills/')),
-    ];
-    expect(veredito(analisar(poucas, REPO.corpos), true).codigo).toBe(2);
-  });
-
   // Um piso por universo, cada um derrubado SOZINHO: um piso que só cai junto com outro é decoração.
-  it('corpos vivos não lidos → INDETERMINADO, mesmo com migrations e skills inteiras', () => {
-    expect(veredito(analisar(REPO.arquivos, new Map()), true).codigo).toBe(2);
+  // Não basta o veredito ser 2 — o furo tem de ser o DESTE piso, e só ele. Medido no mutation-check
+  // do #2637: o cenário antigo das skills (sem skill nenhuma) derrubava o piso de LINHAS junto, e o
+  // piso de ARQUIVOS desligado sobrevivia (a suíte seguia verde).
+  const MENSAGEM_DO_PISO = {
+    migrations: 'migration(s) lida(s) < piso',
+    arquivosDeSkill: 'arquivo(s) de skill < piso',
+    linhasDeCodigoDeSkill: 'linha(s) de código de skill < piso',
+    corposVivos: 'corpo(s) vivo(s) < piso',
+  } as const;
+  const soPorEste = (arquivos: readonly Arquivo[], corpos: ReadonlyMap<string, string>, piso: keyof typeof MENSAGEM_DO_PISO) => {
+    const v = veredito(analisar(arquivos, corpos), true);
+    expect(v.codigo).toBe(2);
+    for (const [k, mensagem] of Object.entries(MENSAGEM_DO_PISO)) {
+      if (k === piso) expect(v.linhas.join('\n')).toContain(mensagem);
+      else expect(v.linhas.join('\n')).not.toContain(mensagem);
+    }
+  };
+  const migrations = REPO.arquivos.filter((a) => a.caminho.startsWith('supabase/migrations/'));
+  const skills = REPO.arquivos.filter((a) => a.caminho.startsWith('.claude/skills/'));
+
+  it('10 migrations não são o repo → INDETERMINADO só pelo piso de migrations', () => {
+    soPorEste([...migrations.slice(0, 10), ...skills], REPO.corpos, 'migrations');
   });
 
-  it('skills não lidas → INDETERMINADO, mesmo com as migrations inteiras', () => {
-    const soMigrations = REPO.arquivos.filter((a) => a.caminho.startsWith('supabase/migrations/'));
-    expect(veredito(analisar(soMigrations, REPO.corpos), true).codigo).toBe(2);
+  it('corpos vivos não lidos → INDETERMINADO só pelo piso de corpos vivos', () => {
+    soPorEste(REPO.arquivos, new Map(), 'corposVivos');
   });
 
-  it('skills abertas mas sem consulta lida (arquivo vazio) → INDETERMINADO', () => {
-    const vazias = REPO.arquivos.map((a) => (a.caminho.startsWith('.claude/skills/') ? { ...a, fonte: '' } : a));
-    const r = analisar(vazias, REPO.corpos);
-    expect(r.arquivosDeSkill).toBeGreaterThanOrEqual(PISOS.arquivosDeSkill);
-    expect(veredito(r, true).codigo).toBe(2);
+  it('skills de MENOS (com código de sobra) → INDETERMINADO só pelo piso de arquivos de skill', () => {
+    // as (piso - 1) skills com mais código: arquivos abaixo do piso, linhas ainda acima do delas
+    const linhas = (a: Arquivo) => analisar([a]).linhasDeCodigoDeSkill;
+    const maiores = [...skills].sort((a, b) => linhas(b) - linhas(a)).slice(0, PISOS.arquivosDeSkill - 1);
+    expect(analisar(maiores).linhasDeCodigoDeSkill).toBeGreaterThanOrEqual(PISOS.linhasDeCodigoDeSkill);
+    soPorEste([...migrations, ...maiores], REPO.corpos, 'arquivosDeSkill');
+  });
+
+  it('skills abertas mas sem consulta lida (arquivo vazio) → INDETERMINADO só pelo piso de linhas de código', () => {
+    soPorEste([...migrations, ...skills.map((a) => ({ ...a, fonte: '' }))], REPO.corpos, 'linhasDeCodigoDeSkill');
   });
 });
