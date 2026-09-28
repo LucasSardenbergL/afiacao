@@ -23,8 +23,8 @@
 # Exit 0 = todos os cenários bateram. 1 = divergência. 2 = via de prova não observável (fail-CLOSED:
 # sem Postgres o eval NÃO passa em silêncio — ausência de dado nunca vira aprovação).
 #
-# --falsify: sabota o SCRIPT (em CÓPIA no tmp; o versionado nunca é tocado) e exige que cada
-# sabotagem deixe ≥1 cenário VERMELHO. Sabotagem que ninguém pega = asserção sem dente.
+# --falsify: sabota o SCRIPT (em CÓPIA no tmp; o versionado nunca é tocado) e exige que o caso que
+# acusa cada sabotagem saia com o exit|marca PREVISTO dela. Sabotagem que ninguém pega = asserção sem dente.
 set -uo pipefail
 # `postmaster became multithreaded during startup` no macOS: o servidor recusa subir sob locale
 # herdado. Mesmo `export` do harness db/test-*.sh, pelo mesmo motivo.

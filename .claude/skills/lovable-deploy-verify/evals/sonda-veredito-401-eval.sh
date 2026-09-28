@@ -22,8 +22,8 @@
 # Exit 0 = todos os cenários bateram. 1 = divergência. 2 = via de prova não observável (fail-CLOSED:
 # sem Postgres o eval NÃO passa em silêncio — ausência de dado nunca vira aprovação).
 #
-# --falsify: sabota o GERADOR (em CÓPIA no tmp; o versionado nunca é tocado) e exige que cada
-# sabotagem deixe ≥1 cenário VERMELHO. Sabotagem que ninguém pega = asserção sem dente.
+# --falsify: sabota o GERADOR (em CÓPIA no tmp; o versionado nunca é tocado) e exige que o caso que
+# acusa cada sabotagem saia com o veredito PREVISTO dela. Sabotagem que ninguém pega = asserção sem dente.
 set -uo pipefail
 # `postmaster became multithreaded during startup` no macOS: o servidor recusa subir sob
 # locale herdado. Mesmo `export` do harness db/test-*.sh, pelo mesmo motivo.
@@ -324,13 +324,26 @@ via_caiu=""
 sem_veredito() { # got — o banco/gerador não respondeu NADA que se possa julgar
   case "${1:-}" in "" | SEED_FALHOU | SQL_VAZIO) return 0 ;; *) return 1 ;; esac
 }
+# `SO_CASO` roda UM caso isolado (a falsificação julga só o caso que acusa a sabotagem); `n_rodados`
+# prova que ele existiu — filtro com nome errado rodaria zero casos e se leria como "verde".
+# `got_ultimo` guarda o que o caso observou (o veredito, ou a contagem de linhas), para o juiz.
+SO_CASO=""; n_rodados=0; got_ultimo=""
 uma_linha_por_edge() { # cenario — o CROSS JOIN do controle não pode multiplicar a leva
+  [ -n "$SO_CASO" ] && [ "$SO_CASO" != uma_linha_por_edge ] && return 0
+  n_rodados=$((n_rodados + 1))
   local cen="$1" n
   semear "$cen" >/dev/null 2>&1 || {
     printf '  [XX ] %-26s seed falhou\n' "uma_linha_por_edge"
-    via_caiu="${via_caiu}uma_linha_por_edge/SEED_FALHOU "; rc=1; return; }
+    got_ultimo="SEED_FALHOU"; via_caiu="${via_caiu}uma_linha_por_edge/SEED_FALHOU "; rc=1; return; }
   gera_sql "$GER" > "$TMP/leitura.sql" 2>/dev/null
-  n=$(P -tAF'|' -f "$TMP/leitura.sql" 2>/dev/null | command grep -c . || true)
+  # O exit do psql, não a contagem: SQL que ERRA também dá "0 linhas" — e isso é NÃO-VEREDITO (o banco
+  # não respondeu), igual ao `caso`, nunca uma leva de zero linhas que se possa declarar como previsto.
+  if ! P -tAF'|' -f "$TMP/leitura.sql" >"$TMP/linhas.out" 2>"$TMP/psql.err"; then
+    printf '  [XX ] %-26s o SQL não respondeu: %s\n' "uma_linha_por_edge" "$(head -c 120 "$TMP/psql.err" | tr '\n' ' ')"
+    got_ultimo=""; via_caiu="${via_caiu}uma_linha_por_edge/SQL_ERRO "; rc=1; return
+  fi
+  n=$(command grep -c . "$TMP/linhas.out" || true)
+  got_ultimo="a leva de 1 edge devolveu $n linha(s)"
   if [ "$n" != "1" ]; then
     printf '  [XX ] %-26s a leva de 1 edge devolveu %s linha(s) — o controle multiplicou a projeção\n' \
       "uma_linha_por_edge" "$n"; rc=1; return
@@ -339,8 +352,11 @@ uma_linha_por_edge() { # cenario — o CROSS JOIN do controle não pode multipli
 }
 
 caso() { # nome cenario marcador_esperado descricao [marcador_PROIBIDO]
+  [ -n "$SO_CASO" ] && [ "$1" != "$SO_CASO" ] && return 0
+  n_rodados=$((n_rodados + 1))
   local nome="$1" cen="$2" esp="$3" desc="$4" proibido="${5:-}" got
   got=$(veredito "$cen" "$GER")
+  got_ultimo="$got"
   # AUSÊNCIA de resposta não é resposta divergente: marca a via para `sabotar`/o epílogo julgarem.
   sem_veredito "$got" && via_caiu="${via_caiu}${nome}/${got:-vazio} "
   case "$got" in
@@ -363,6 +379,7 @@ caso() { # nome cenario marcador_esperado descricao [marcador_PROIBIDO]
 executar_casos() {
   rc=0
   via_caiu=""
+  n_rodados=0; got_ultimo=""
   # ── o controle ATIVO (2026-09-09) ──────────────────────────────────────────────────────────
   # Até esta leva quem determinava o 401 era o tráfego de fundo. Ele conta respostas de FORA da
   # leva e não sabe QUAL credencial as autenticou — então o disparo com header errado tomava 401,
@@ -421,8 +438,15 @@ if [ "$FALSIFY" = 0 ]; then
   exit "$rc"
 fi
 
-# ── falsificação: cada sabotagem precisa deixar ≥1 cenário VERMELHO ──────────────────────────────
-echo "== sonda-veredito-401 --falsify — sabota o gerador e exige vermelho =="
+# ── falsificação: cada sabotagem DECLARA o caso que a acusa e as marcas do veredito PREVISTO ─────
+# O juiz de antes contava a sabotagem se QUALQUER caso ficasse vermelho (`rc≠0`) — e a que só QUEBRA
+# o SQL deixa os 19 sem veredito: com a via viva, isso virava "pegada" (a "CROSS JOIN removido" viveu
+# assim desde o #2131). Agora o caso-alvo roda ISOLADO contra um baseline íntegro da mesma invocação
+# e o veredito dele tem de trazer as marcas previstas; vermelho SEM veredito com a via viva é o SQL
+# sabotado que não respondeu — motivo errado, nunca dente.
+# → docs/historico/falsificacao-exit-nao-e-dente.md · referência: monitor-deploy-pr-eval.sh.
+# Locale: este eval fixa LC_ALL=C no topo (Postgres), então o locale do chamador não alcança o juiz.
+echo "== sonda-veredito-401 --falsify — sabota o gerador e exige o veredito PREVISTO =="
 ORIG=$(cat "$GER/sonda-versao-sql.ts")
 
 # CONTROLE VERDE na MESMA invocacao, ANTES do 1o sed. Sem ele, uma suite sempre-vermelha (Postgres
@@ -518,9 +542,21 @@ via_viva() {
   esac
 }
 
+# bate_veredito <veredito> <marca;marca…> → 0 só se TODAS as marcas estão no veredito. `case` do
+# shell (sem fork, sem shim); as marcas são ASCII de caixa fixa (#1483).
+bate_veredito() {
+  local m resto="$2"
+  while :; do
+    m=${resto%%;*}
+    case "$1" in *"$m"*) ;; *) return 1 ;; esac
+    [ "$m" = "$resto" ] && break
+    resto=${resto#*;}
+  done
+}
+
 cegas=0
 julgadas=0
-sabotar() { # nome de para
+sabotar() { # nome de para caso-alvo marca;… [ocorrências]
   local nome="$1" de="$2" para="$3"
   # Busca no PRÓPRIO shell: sem pipe, sem fork, sem locale. NÃO devolver `printf | command grep -qF`
   # aqui — sob `set -o pipefail` o status do pipeline NÃO é o do grep: `grep -q` sai no PRIMEIRO
@@ -538,23 +574,34 @@ sabotar() { # nome de para
        diagnostico_cegueira "$de"
        cegas=$((cegas + 1)); return ;;
   esac
-  printf '%s' "$ORIG" | python3 -c '
+  # Presente não basta: o alvo tem de aparecer EXATAMENTE o nº declarado de vezes (1, salvo o 6º
+  # argumento) — sabotado só pela metade não prova, e a mais não é o que a sabotagem diz.
+  if ! printf '%s' "$ORIG" | python3 -c '
 import sys
-de, para = sys.argv[1], sys.argv[2]
-sys.stdout.write(sys.stdin.read().replace(de, para))
-' "$de" "$para" > "$GER/sonda-versao-sql.ts"
-  executar_casos >"$TMP/falsify.out" 2>&1
-  local rc_sab="$rc" via_sab="$via_caiu"
+de, para, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+s = sys.stdin.read()
+if s.count(de) != n:
+    sys.exit("o alvo aparece %d vez(es), declarado %d" % (s.count(de), n))
+sys.stdout.write(s.replace(de, para))
+' "$de" "$para" "${6:-1}" > "$TMP/gerador-sabotado.ts" 2>"$TMP/aplica.err"; then
+    printf '  [XX ] sabotagem AMBÍGUA (%s): %s\n' "$(tr '\n' ' ' < "$TMP/aplica.err")" "$nome"; cegas=$((cegas + 1)); return
+  fi
+  local caso="$4" prev="$5" base_n base_rc base_got rc_sab got_sab via_sab
+  # BASELINE do caso-alvo com o gerador ÍNTEGRO, na mesma invocação: ele passa, e o previsto NÃO o
+  # descreve — senão "bateu o previsto" não distinguiria sabotagem de nada.
+  SO_CASO="$caso"; executar_casos >"$TMP/base.out" 2>&1; SO_CASO=""
+  base_n="$n_rodados" base_rc="$rc" base_got="$got_ultimo" via_sab="$via_caiu"
+  cp "$TMP/gerador-sabotado.ts" "$GER/sonda-versao-sql.ts"
+  SO_CASO="$caso"; executar_casos >"$TMP/falsify.out" 2>&1; SO_CASO=""
+  rc_sab="$rc" got_sab="$got_ultimo" via_sab="${via_sab}${via_caiu}"
   # Restaura ANTES de julgar: `via_viva` precisa do gerador íntegro para ser sonda da VIA, e não
   # da sabotagem.
   printf '%s' "$ORIG" > "$GER/sonda-versao-sql.ts"
-  if [ "$rc_sab" -eq 0 ]; then
-    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA: %s\n' "$nome"; cegas=$((cegas + 1)); return
-  fi
-  # Vermelho com ≥1 cenário SEM VEREDITO é ambíguo: ou a sabotagem quebrou o SQL (mérito dela), ou
-  # a via caiu no meio do laço — e aí TODA sabotagem seguinte herdaria um vermelho que já existia,
-  # saindo "pegada" sem provar nada. Foi o que se mediu: com a via morta logo após o controle, o
-  # `--falsify` dava 11/11 pegadas e exit 0. `ausente ≠ zero` na dimensão VIA DE PROVA.
+  # Cenário SEM VEREDITO é ambíguo: ou a sabotagem quebrou o SQL, ou a via caiu no meio do laço — e
+  # aí TODA sabotagem seguinte herdaria um vermelho que já existia. Medido: com a via morta logo após
+  # o controle, o `--falsify` dava 11/11 pegadas e exit 0. `ausente ≠ zero` na dimensão VIA DE
+  # PROVA. A via morta sai exit 2 AQUI; com a via viva, o SQL que não respondeu é da sabotagem — e é
+  # vermelho pelo motivo ERRADO (abaixo), nunca "pegada".
   if [ -n "$via_sab" ] && ! via_viva; then
     printf '  ❌ VIA_NAO_OBSERVAVEL: a via caiu durante a sabotagem "%s".\n' "$nome"
     printf '     %s\n' "$VIA_MOTIVO"
@@ -564,14 +611,35 @@ sys.stdout.write(sys.stdin.read().replace(de, para))
     sed 's/^/       /' "$TMP/falsify.out" 2>/dev/null | head -8
     exit 2
   fi
+  if [ "$base_n" -ne 1 ] || [ "$base_rc" -ne 0 ]; then
+    printf '  [XX ] o caso-alvo "%s" não passa com o gerador ÍNTEGRO (rodaram %s): %s\n' "$caso" "$base_n" "$nome"
+    cegas=$((cegas + 1)); return
+  fi
+  if bate_veredito "$base_got" "$prev"; then
+    printf '  [XX ] o previsto [%s] já descreve o caso ÍNTEGRO "%s" — não discrimina: %s\n' "$prev" "$caso" "$nome"
+    cegas=$((cegas + 1)); return
+  fi
+  if [ "$rc_sab" -eq 0 ]; then
+    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA (%s seguiu verde): %s\n' "$caso" "$nome"; cegas=$((cegas + 1)); return
+  fi
+  if sem_veredito "$got_sab" || ! bate_veredito "$got_sab" "$prev"; then
+    printf '  [XX ] vermelho pelo motivo ERRADO (%s: previsto [%s], veredito=%s%s): %s\n' "$caso" "$prev" \
+      "${got_sab:-<vazio>}" "$(command grep -m1 'ERROR' "$TMP/psql.err" 2>/dev/null | cut -c1-110 | sed 's/^/ · psql: /')" "$nome"
+    cegas=$((cegas + 1)); return
+  fi
   julgadas=$((julgadas + 1))
-  printf '  [ok ] pegada: %s\n' "$nome"
+  printf '  [ok ] pegada por %s [%s]: %s\n' "$caso" "$prev" "$nome"
 }
 
+# `sabotar <nome> <de> <para> <caso-alvo> <marca;…> [ocorrências]` — o caso-alvo roda ISOLADO e o
+# veredito dele tem de trazer TODAS as marcas previstas. Elas foram MEDIDAS (2026-09-27, rodando cada
+# sabotagem contra os 19 casos) e lidas ramo a ramo: cada uma é o texto do ramo que a sabotagem ABRE.
 sabotar "401 volta a cair no ramo generico >=400 (o falso 'bundle velho' que motivou tudo)" \
-        "l.status_code = 401" "false"
+        "l.status_code = 401" "false" \
+        velho_com_controle "recusou o request (HTTP 401)" 2
 sabotar "fail-closed vira fail-open: o fallback do 401 vira veredito confiante" \
-        "'INDETERMINADO — 401" "'BUNDLE VELHO (pre-sonda) — 401"
+        "'INDETERMINADO — 401 nao separa bundle velho" "'BUNDLE VELHO (pre-sonda) — 401 nao separa bundle velho" \
+        velho_com_controle "BUNDLE VELHO (pre-sonda);NENHUMA aceitacao foi OBSERVADA"
 # ── REANCORADAS em 2026-09-09, quando o controle ATIVO passou a decidir ────────────────────────
 # As 4 daqui sabotavam o controle HISTORICO (`NOT EXISTS` da propria leva, piso, `recusas_recentes
 # = 0`, janela de 6h). Ele deixou de condicionar ramo nenhum — virou contexto exibido —, entao
@@ -580,36 +648,55 @@ sabotar "fail-closed vira fail-open: o fallback do 401 vira veredito confiante" 
 # decide. Mesma reancoragem que o `.mut` recebeu; esquecer ESTE arquivo foi o que deixou o
 # `test:falsificacao` vermelho.
 sabotar "401 sai determinado SEM testemunha ativa (o fail-OPEN que o controle ativo fecha)" \
-        "AND a.aceitas_na_leva >= 1" "AND true"
+        "AND a.aceitas_na_leva >= 1" "AND true" \
+        velho_com_controle "DESTE disparo esta PROVADA;0 de 1 request(s)"
 sabotar "testemunha aceita 2xx sem provar a FONTE (bundle anonimo vira prova)" \
-        "AND l.corpo ->> 'fonte'  = l.fonte_esperada" "AND true"
+        "AND l.corpo ->> 'fonte'  = l.fonte_esperada" "AND true" \
+        testemunha_fonte_velha "DESTE disparo esta PROVADA;1 de 2 request(s)"
 sabotar "testemunha aceita 2xx sem provar a VERSAO (bundle de outra fatia vira prova)" \
-        "AND l.corpo ->> 'versao' = l.versao_esperada" "AND true"
+        "AND l.corpo ->> 'versao' = l.versao_esperada" "AND true" \
+        testemunha_versao_velha "DESTE disparo esta PROVADA;1 de 2 request(s)"
 sabotar "testemunha sem RECENCIA: resposta velha da leva ainda testemunha" \
-        "AND l.created > now() - interval '\${janelaMin} minutes'" "AND true"
+        "AND l.created > now() - interval '\${janelaMin} minutes'" "AND true" \
+        testemunha_fora_da_janela "DESTE disparo esta PROVADA;1 de 2 request(s)"
 sabotar "denominador do controle ativo conta linha NAO disparada (trava fechada)" \
-        "WHERE \${a}.request_id IS NOT NULL" "WHERE true"
-sabotar "controle nao chega na projecao (CROSS JOIN removido)" \
-        " CROSS JOIN controle_credencial c" ""
+        "WHERE \${a}.request_id IS NOT NULL" "WHERE true" \
+        denominador_parcial "0 testemunha de 2 disparo(s)"
+# RE-DERIVADA em 2026-09-27. Nasceu no #2131 como "controle nao chega na projecao (CROSS JOIN
+# removido)" — mas o CASE lê `c.*` (o contexto histórico), então arrancar o JOIN nunca abriu ramo
+# nenhum: o SQL deixava de COMPILAR (`missing FROM-clause entry for table "c"`), os 19 casos saíam sem
+# veredito e o laço de "≥1 cenário vermelho" contava isso como dente. O que o JOIN pode errar de
+# verdade é MULTIPLICAR a leva — o assert `uma_linha_por_edge`, que até aqui não tinha falsificação.
+sabotar "o controle MULTIPLICA a projecao (o CROSS JOIN com 2 linhas duplica cada edge)" \
+        "FROM lidas l CROSS JOIN controle_credencial c CROSS JOIN" \
+        "FROM lidas l CROSS JOIN (SELECT * FROM controle_credencial UNION ALL SELECT * FROM controle_credencial) c CROSS JOIN" \
+        uma_linha_por_edge "devolveu 2 linha(s)"
 # As duas abaixo guardam a SEPARACAO das causas de "sem fingerprint no ar". Ela e semantica de
 # ORDEM de WHEN + semantica de `?` sobre jsonb, e as duas so aparecem EXECUTANDO: um teste textual
-# ve as duas strings no arquivo e fica verde mesmo com o ramo inalcancavel.
-sabotar "campo ausente volta a ser lido como DEPLOY PARCIAL (o defeito de 2026-09-05)" \
-        "WHEN NOT (l.corpo ? 'fonte')" "WHEN false"
+# ve as duas strings no arquivo e fica verde mesmo com o ramo inalcancavel. A 1a se chamava "campo
+# ausente volta a ser lido como DEPLOY PARCIAL (o defeito de 2026-09-05)" — medido hoje, o ramo
+# arrancado cai no ELSE ("bundle velho" com fonte=?), porque o DEPLOY PARCIAL ja nao funde o
+# ausente; quem reabre o defeito de 09-05 e a 2a (o COALESCE).
+sabotar "campo ausente perde o ramo proprio e cai no ELSE ('bundle velho' com fonte=?)" \
+        "WHEN NOT (l.corpo ? 'fonte')" "WHEN false" \
+        sem_campo_fonte "BUNDLE VELHO;fonte=?"
 sabotar "o COALESCE que fundia ausente com nao-mapeada volta" \
-        "WHEN NOT (l.corpo ? 'fonte')" "WHEN COALESCE(l.corpo ->> 'fonte', 'nao-mapeada') = 'nao-mapeada'"
+        "WHEN NOT (l.corpo ? 'fonte')" "WHEN COALESCE(l.corpo ->> 'fonte', 'nao-mapeada') = 'nao-mapeada'" \
+        fonte_nao_mapeada "PRE_SONDA_FONTE"
 # O ramo do #2273: id que aponta para a execucao REAL (cron ecoa edge/versao/fonte e nao ecoa
 # probe). Sem ele a linha cai no ELSE e sai 'BUNDLE VELHO' com a versao CERTA — falso NEGATIVO, e o
 # desfecho e redeployar a toa. So aparece EXECUTANDO: a ORDEM dele (antes do `? 'fonte'`) e o que
 # separa "nao e sonda" de "bundle anterior ao #1998".
 sabotar "id de resposta que NAO e sonda volta a virar 'bundle velho' com a versao certa" \
-        "WHEN l.corpo ->> 'probe' IS DISTINCT FROM 'true'" "WHEN false"
+        "WHEN l.corpo ->> 'probe' IS DISTINCT FROM 'true'" "WHEN false" \
+        cron_sem_probe "BUNDLE VELHO;respondeu versao=v1.0-alfa"
 # `IS DISTINCT FROM` -> `<>` e a armadilha NULL-blind: com `probe` AUSENTE (que e exatamente o
 # caso do cron) a comparacao vale NULL, o ramo nao dispara e a linha volta ao ELSE. O ramo continua
 # no arquivo, legivel e inalcancavel — cegueira que so EXECUTANDO se ve.
 sabotar "negacao NULL-blind: o ramo do nao-sonda deixa de alcancar o corpo SEM o campo probe" \
-        "WHEN l.corpo ->> 'probe' IS DISTINCT FROM 'true'" "WHEN l.corpo ->> 'probe' <> 'true'"
+        "WHEN l.corpo ->> 'probe' IS DISTINCT FROM 'true'" "WHEN l.corpo ->> 'probe' <> 'true'" \
+        cron_sem_probe "BUNDLE VELHO;respondeu versao=v1.0-alfa"
 
-echo "--falsify: $cegas cegueira(s) (esperado: 0)"
-[ "$cegas" -eq 0 ] || exit 1
+echo "--falsify: $cegas cegueira(s) em $((cegas + julgadas)) sabotagem(ns) (esperado: 0 em 12)"
+[ "$cegas" -eq 0 ] && [ "$julgadas" -ge 12 ] || exit 1
 exit 0
