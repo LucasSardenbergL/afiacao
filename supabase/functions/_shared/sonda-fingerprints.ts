@@ -69,7 +69,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "sayerlack-captura-precos": "067de5a255cf9b09e7d73995f2f6986d14cf1869dbfaf7242317866b3a263e1c",
   "scoring-recalc-batch": "3899eef2be43073b93b47445f4b36f29860c29f00b6d244cd2cffd0092bce4c6",
   "sonda-relay": "c91cdfa9d3d24850d5c7b219e03830c9ecfc572f48e9f662bd046b83ead924bb",
-  "sync-reprocess": "d49c3196337ba7ec0f0ce394636e7ccc566c397e1eaaf5da250aebf5293d4733",
+  "sync-reprocess": "8e5958d1a5e795435158ee4ab999fa55c7edd7a2041e470e86aaa3368342e228",
   "tactical-plans-batch": "6d882834d7cef695d9879e1498b1b4e8cc9073bc50906279982a8cc015d6a8be",
   "visit-score-recalc-batch": "fc6e87d83a3d700cf802731a40ac10098be412a11e6e95e7826efb1364114a95",
   "whatsapp-inbound": "dff68bcafe9edc89673ce4cd7755c721b87a1ffa833eea6874f3a7214c2d17a7",
