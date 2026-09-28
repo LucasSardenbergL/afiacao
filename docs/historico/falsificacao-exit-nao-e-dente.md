@@ -175,7 +175,7 @@ núcleo, só a medição decide, e cada site das fases seguintes tem de ser reco
 
 **Já-corretos** (o veredito identifica o assert — sentinela, SQLSTATE, marca, conjunto exato de IDs ou
 valor exato): em `db/` os 3 juízes do núcleo citados acima, `push-vendedora`, `auto-aprovacao-piloto`,
-`tint-promocao-assincrona`, `deploy-sonda-cron`, `deploy-atestacoes`, `desconto-valor-escritores`,
+`tint-promocao-assincrona`, `deploy-sonda-cron`, `deploy-atestacoes` (era afetado — ver "Afetados de `db/` fora do núcleo"), `desconto-valor-escritores`,
 `cfo-caixa-90d-otica`, `pedido-venda-coerencia`, `disparado-simulado-pos-disparo`, `fin-sync-lease`,
 `calculate-scores-lease`, `carteira-rebuild-lease`, `endividamento-money-path`,
 `get-ultimos-precos-cliente`, `rpc-tactical-plan-posse-segura`, `tactical-plans-eligible-fail-closed`,
@@ -261,7 +261,7 @@ separada:
 | F7/F8 deterministas só enquanto a barreira de X vive (~30 s) | média | procede, e só gera vermelho FALSO — nunca aprova | registrado como risco residual; não mexido |
 | G3 aceitar "ficaria incoerente" | — | legítimo, concorda | — |
 | gate: âncora só na verificação, não no ramo que rejeita; R2 aceita grep fora do laço; `\` de continuação dá falso-positivo | média | procede | âncoras também nos ramos de rejeição; R2 limitado ao corpo do laço; continuação juntada |
-| sync: `grep | head -3` no diagnóstico dá SIGPIPE (141) com log grande | baixa | procede: aborta sem recibo (seguro, mas cego) | `grep -m3` com `|| true` |
+| sync: `grep \| head -3` no diagnóstico dá SIGPIPE (141) com log grande | baixa | procede: aborta sem recibo (seguro, mas cego) | `grep -m3` com `\|\| true` |
 
 O que ele confirmou NÃO abrir passagem: o espaço depois do ID impede `A2`/`A23`; o `case` com saída
 multilinha; a falta do 4º argumento do `vermelha` aborta sob `set -u` (inclusive com `trap` no bash 3.2).
@@ -365,12 +365,116 @@ macOS (só troca X finais) — rodadas paralelas colidem ("File exists"). Aparec
 `estoque-fonte-dado`, `watchdog-reemissao`, `preco-medio-leadtime-efetivo` e `import-tint-formulas`;
 o harness da meta tira o sufixo nas cópias.
 
+## Afetados de `db/` fora do núcleo — 2026-09-27
+
+Os 4 afetados de `db/` foram RECONFERIDOS lendo o código e medindo numa cópia antes de qualquer
+conserto. A medição mudou três dos quatro retratos da varredura — e trouxe mais três sites:
+
+| site | a varredura dizia | a medição disse | o conserto |
+|---|---|---|---|
+| `test-pendencias-deploy-eco-passivo` | laço inteiro: `fail≠0` nos 2 locales | **morto desde 2026-09-05** (07fa9ad87): o `SQL` que ele importa passou a ler o ledger, e a sonda do import reprova os 2 modos antes de qualquer assert. No último estado vivo (`07fa9ad87~1`) o laço aprovava SQL que não COMPILA ("corpo não-JSON derrubou a varredura", dizia) e banco MORTO: o `exit 2` da checagem de mecânica encerra só o subshell, e o `if !` lê como vermelho | **aposentado**; as 4 sabotagens foram para a janela viva, no sucessor |
+| `test-deploy-atestacoes` (o sucessor) | já-correto | **afetado**: o S2 aceitava qualquer aborto do apply — inclusive a marca "A3 FALHOU" num NOTICE, que a mensagem antiga ainda EXIBIA; o `grep 'A1'` aprovava sabotagem que só derrubou o A11a; um erro na janela matava a rodada inteira sem veredito (o `cli=$(…)` do A9, atribuição simples sob `set -e`) | `--falsificar` no idioma `SABOTAGENS` (gate R1/R2) |
+| `test-hash-omie-canonico` F4 | qualquer aborto | confirmado (1/0 e marca em NOTICE aprovados) | a UMA linha ERROR tem de ser a do ramo |
+| `test-sayerlack-custo-portal-cas` F4b | qualquer aborto; `sabota()` sem `return` | F4b confirmado; o `sabota()` FAZ `return 1` (sob `set -e`, mata a rodada: fail-closed). **Achado do Codex:** o `rpc()` pescava a 1ª sentinela `RPC_…` de QUALQUER texto — um NOTICE `RPC_OK_1` antes do erro aprovava o F1 | F4b: `cmp` + linha ERROR; `rpc()`: a sentinela é o VALOR de um SELECT |
+| `test-fin-sync-watchdog-retry-sem-efeito` F1 | qualquer erro | confirmado — e **G1/G2** no mesmo idioma ("guard abortou (exit≠0)"), fora da varredura: sem a função, o `::regprocedure` do guard erra ANTES do pre-flight e contava | F1: a linha da relação ausente; G1/G2: a do PRE-FLIGHT |
+
+**Limpos dentro destes arquivos** (valor exato já era o juiz): hash-omie F1–F3b, Sayerlack F1–F10 (o
+furo deles morava no `rpc()`), watchdog F2–F5 e G3.
+
+**O desenho mudou na consulta ao Codex** (DESENHO antes do código, com `RÉGUA:`; os 6 achados
+aceitos): (1) a marca é CHAVE de uma assinatura — a linha ERROR INTEIRA (`null value in column
+"fonte` aceitaria `"fonte_errada"`; SQLSTATE sozinho aceita qualquer NOT NULL); (2) o veto ao erro
+não declarado é por PAR `(ID, assinatura)`, e a cascata legítima se declara par a par — sem o
+`coalesce`, A2, A3 e o re-apply do A11a erram com a MESMA linha; marca que valesse para qualquer
+assert aceitaria a mesma mensagem vinda de outra causa; (3) o status da medição entra no juízo: rc≠0
+sem linha ERROR (conexão que cai) é erro de execução, nunca "veio []" comparável; (4) exatamente UMA
+linha ERROR — `RAISE NOTICE '%', chr(10) || 'ERROR:  <marca>'` forja uma segunda linha que um grep
+ancorado, só de existência, aceitaria; (5) `psql -X` (o `~/.psqlrc` muda a linha que o juiz lê);
+(6) o recibo por IDENTIDADE — a mesma sequência de IDs do controle (25, com o A9e da v2), não a
+soma, que aceitaria um assert faltando e outro duplicado. A postcondição da migration se chama "A3 FALHOU", o mesmo rótulo
+de um assert do teste: a marca solta no texto seria a colisão pronta.
+
+**O adversarial atravessou a 1ª versão por quatro caminhos** (ADVERSARIAL no diff, 655 s; cada
+caminho medido por ele com microteste; os quatro procedem):
+
+| achado do Codex | sev. | o conserto (v2) |
+|---|---|---|
+| o delimitador `] — ` DENTRO de um NOTICE multilinha forjava a assinatura inteira na linha humana do sucessor, com o erro real sendo 1/0 | P1 | o `eq` grava um REGISTRO por assert (ID, status, a linha ERROR limpa ou `-`); o laço julga por igualdade nesses campos, e a linha humana só confirma |
+| linha ERROR com rc=0 (um NOTICE numa medição que TERMINOU) virava o erro declarado — nada tinha quebrado | P1 | erro LIMPO = rc≠0 + exatamente uma linha + ERROR; o resto nunca satisfaz `ID!MARCA` |
+| NOTICE forjando a linha do ramo, seguido de `pg_terminate_backend` (FATAL): a igualdade integral aceitava, nos 4 arquivos | P1 | as conexões não recebem NOTICE/WARNING (`client_min_messages=error`), e FATAL/PANIC/erro do cliente contam como linha |
+| o PRE-FLIGHT aceitava qualquer sufixo | P2 | a linha inteira, só o md5 variável |
+| a aposentadoria perdeu o "nenhum campo vazio" da saída do CLI (o parser DESCARTA a linha) | lacuna | A9e + a sabotagem `cli_fonte_vazia` |
+
+A supressão de NOTICE e a contagem de linhas formam um PAR: contra o NOTICE multilinha e contra o
+FATAL, cada uma sozinha segura, e só as duas desligadas deixam o ataque passar — a meta mede os três
+casos, em vez de fingir que cada camada sozinha é necessária.
+
+**Medido, não previsto:** no bash 3.2, `f() { ( set -e; false; echo segue ); }` chamada em `if f` ou
+`f || true` imprime "segue" — o contexto de chamada suspende o `set -e` também DENTRO do subshell.
+O laço que isola cada sabotagem num subshell o chama como comando simples (`set +e` em volta, rc
+num global); com `|| true`, um aborto no meio da suíte sairia como rodada inteira.
+
+### A meta-falsificação dos afetados
+
+Repo-sombra por symlinks, trocas exatas (casou ≠1× = erro da meta), `bash -n`, expectativa declarada
+antes, controle na mesma invocação, `LC_ALL=C` e `pt_BR.UTF-8`; o "antes" e o "depois" lidos de
+commits FIXADOS (`git show`), não da árvore — o `heavy` e as rodadas longas são fila, e quem mede a
+árvore depois da edição mede o conserto.
+
+**Antes** (os arquivos da `main`, `bee8feb69`) — o furo REPRODUZIDO, nos dois locales:
+
+| site | variante | o veredito de hoje |
+|---|---|---|
+| hash-omie | a postcondição trocada por 1/0 · a marca num NOTICE + 1/0 · NOTICE multilinha | "✅ F4 postcondição recusa", nas três |
+| Sayerlack | GRANT + 1/0 · a marca num NOTICE · NOTICE multilinha · a RPC emite NOTICE `RPC_OK_1` e ERRA | "✅ F4b" nas três; "✅ F1" na sentinela forjada |
+| watchdog | o watchdog erra por 1/0 · o nome da tabela num NOTICE · a função sumiu (o `::regprocedure` erra antes do guard) · a marca do pre-flight num NOTICE | "✅ F1"; "✅ G1/G2 — guard abortou (exit≠0)" |
+| sucessor | S2 abortando por 1/0 · "A3 FALHOU" num NOTICE (a mensagem antiga ainda a EXIBIA) · sabotagem que só derruba o A11a | "✅ S2"; "✅ S3 → vermelho em A1" |
+| eco-passivo, estado vivo (`07fa9ad87~1`) | a sabotagem (a) gerando SQL que não compila · o banco morto antes do laço | `FALSIFICACAO OK` nas duas (o controle aborta 2 vezes — a (c), de propósito; a variante, 4) |
+
+**22/24 + 13/13 bateram o declarado, em cada locale.** Os 2 desvios foram PREVISÕES minhas, com a
+causa entendida: o S1 que faz a janela errar não vira falso dente — o `cli=$(…)` do A9, atribuição
+simples sob `set -e`, mata a rodada inteira sem veredito (fail-closed, CEGO); e o diagnóstico
+procurava "syntax error", que o próprio teste corta em 90 caracteres.
+
+**Depois** (`3c01d17b6`): **51/51 em `C` e 51/51 em `pt_BR.UTF-8`.**
+
+| site | variantes | o que ficou provado |
+|---|---|---|
+| hash-omie F4 | 12 | erro alheio, NOTICE, NOTICE multilinha e FATAL recusados, com a causa na tela. A IGUALDADE é a única que pega o erro alheio de uma linha só (desligada, o 1/0 volta a passar). Supressão de NOTICE + contagem das linhas, contra o multilinha, e supressão + FATAL contado, contra a conexão morta: cada uma sozinha segura; as duas desligadas, o ataque passa |
+| Sayerlack F4b + `rpc()` | 8 | os mesmos ataques recusados; o sed que não casa agora diz "sabotagem NÃO casou", não "postcondição NÃO abortou"; a sentinela forjada vira `RPC_ERR_22012` e o F1 reprova |
+| watchdog F1 · G1 · G2 | 11 | idem no F1 e no pre-flight; o PRE-FLIGHT seguido de OUTRO RAMO reprova — o juiz de prefixo o aceitava |
+| sucessor | 20 | controle com 25 asserts e 9 sabotagens; os 4 ataques do adversarial recusados — e, com a supressão de NOTICE desligada, o registro estruturado AINDA recusa o delimitador e o rc=0; cascata não declarada, sabotagem que não aplica (inclusive a do CLI) e controle com ID duplicado reprovam. As camadas 2, 3 e 4, cada uma desligada, liberam o caso que SÓ ela pega (`9 vermelhas / 0 falhas`, exit 0); a 1 é redundante — a 2 pega — e fica porque nomeia a causa |
+
+Gates, sobre o mesmo commit: os 19 arquivos do vitest que leem `db/` (1.132 testes), shellcheck
+(0 achados em 456), `falsificar-exige-assert` (461 arquivos, 5 listas, 47 entradas, 5 laços, 7
+linhas do núcleo — antes: 462 · 4 · 38 · 4 · 7) e `shell-variavel-colada`.
+
+### Lições dos afetados
+
+- **Prova fora do CI apodrece em silêncio.** A do eco passivo ficou 22 dias saindo 1 na `main` e
+  ninguém viu: a sonda do import fez o certo (reprovou, em vez de verde por cegueira), mas nada a
+  roda. A falsificação das defesas que ela provava morreu junto — e o sucessor, que herdou os asserts,
+  não herdou as sabotagens.
+- **Varredura delegada é hipótese, nos dois sentidos, de novo:** um "já-correto" era afetado, um
+  "afetado" estava morto, uma premissa ("sem `return`") era falsa e três sites vieram de fora dela
+  (G1/G2 da releitura; o `rpc()` do Codex).
+- **Marca que a própria migration emite colide com o vocabulário do teste.** Assinatura é a linha
+  ERROR inteira, par a par com o assert — nunca a palavra solta.
+- **O 2º locale pegou a própria meta:** `$rc≠` sob UTF-8 virou `${rc\xE2}` e o `set -u` a matou (a
+  classe que `shell-variavel-colada-gate` já vigia; `logs/` não é escaneado). E o `grep` do zsh desta
+  máquina é função do shim: diante de um byte UTF-8 inválido ele não imprime nada e sai 1 — nem o
+  `-c` responde. Inspeção à mão de log usa `/usr/bin/grep`.
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
 tarefas com a assinatura calibrada e a lista de sites no briefing:
 
-- **"Erradicar falsificação sem assert em db/ fora do núcleo"** — os 4 afetados de `db/`.
+- ✅ **"Erradicar falsificação sem assert em db/ fora do núcleo"** — feito ("Afetados de `db/` fora do núcleo", acima): os 4
+  afetados, mais o sucessor e o `rpc()`; um aposentado. Risco residual (Codex): dois erros com a MESMA
+  linha ERROR numa MESMA medição continuam indistinguíveis pelo log.
+  - ↳ a classe vizinha que ela revelou — prova fora do CI que MORRE e ninguém vê — virou a tarefa
+    **"Varrer provas db/ fora do núcleo mortas na main"**.
 - **"Declarar valor sabotado nas provas db/ com juiz ≠ verde"** — os 27 parciais de `db/`, no padrão do
   `vermelha` com 4º argumento do pedido-total (em fases por domínio). **Fase 1 (sensores, 5) feita —
   acima.** Seguem, com a mesma sessão como dono: farmer (5: `desfecho`, `geracao-vigente`,

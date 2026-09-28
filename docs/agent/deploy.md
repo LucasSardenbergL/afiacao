@@ -204,6 +204,14 @@ O gate acima é banco → edge. Entre duas edges, a ordem **só existe se estive
   está certo) · `2` mecânica (manifesto ilegível, ciclo).
 - **A seção "Retidas" não tem colagem, de propósito.** Colar a retida à mão, ou juntar as edges numa
   mensagem, é reencenar o #2469. `pendencias:prompt` recusa (exit 3) a leva com manifesto: ele não faz ondas.
+- **Exit `5` = RECUSADO: o mapa da ref não descreve a fonte da ref** (#2611). Os dois emissores
+  (`pacote` e `prompt`) recalculam o fingerprint do fecho de cada edge instrumentada da leva **e das
+  predecessoras** NA ÁRVORE DO SHA que vai deployar, e recusam se diverge do `sonda-fingerprints.ts`
+  commitado. É o commit "Changes" do bot editando corpo sem regravar o mapa: a sonda serve o mapa
+  ESTÁTICO, então o corpo do bot iria ao ar respondendo o par canônico e o ledger daria CONFERE.
+  Remédio: edição não pedida → revert por PR (com bump); legítima → PR com `sonda:fingerprint -- --write`.
+  Nunca "regravar o mapa para passar" sem ler o que o bot mudou. →
+  [`mapa-incoerente-recusa-o-pacote.md`](../historico/mapa-incoerente-recusa-o-pacote.md)
 - **Não há expiração automática.** Retirar uma exigência é PR com motivo — inércia por VERSAO liberaria
   o deploy INCOERENTE (parecer do Codex). Parecer, desenho e o que fica descoberto:
   [`ordem-entre-edges-da-mesma-leva.md`](../historico/ordem-entre-edges-da-mesma-leva.md).
@@ -269,7 +277,7 @@ bun run pendencias:deploy --sql-nuvem > "$SQL"
 #   → grave em "$RESP" a resposta inteira ({"rows":[{"dados_nuvem":…}]}) ou só o objeto dados_nuvem
 bun run pendencias:deploy --dados-nuvem="$RESP" --json > "$PEND"   # o MESMO veredito e os MESMOS exits
 # resolver = o deploy pela SESSÃO (seção acima), com a sonda de pré-condição pelo transporte:
-bun run pendencias:pacote - --sql-nuvem < "$PEND" > "$SQL"   # stdout vazio = leva sem RPC: rode sem as flags
+bun run pendencias:pacote - --sql-nuvem < "$PEND" > "$SQL"   # stdout vazio COM exit 0 = leva sem RPC: rode sem as flags (exit 5 = mapa recusado)
 #   query_database(…, sql = <conteúdo de $SQL>) → grave em "$RESP"
 bun run pendencias:pacote - --dados-nuvem="$RESP" < "$PEND"  # a MESMA entrada nas duas rodadas
 ```

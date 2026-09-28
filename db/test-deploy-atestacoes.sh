@@ -3,7 +3,7 @@
 # ║  PROVA PG17 — deploy_atestacoes (ledger de atestação de deploy + coletor)     ║
 # ║  migration: 20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql          ║
 # ║  Rode:  bash db/test-deploy-atestacoes.sh > /tmp/t.log 2>&1; echo $?          ║
-# ║         bash db/test-deploy-atestacoes.sh --falsificar   (3 sabotagens)       ║
+# ║         bash db/test-deploy-atestacoes.sh --falsificar   (9 sabotagens)       ║
 # ║                                                                                ║
 # ║  Prova: a janela viva aceita só sonda (probe booleano true) e eco (sem probe)  ║
 # ║  com forma válida; envenenamento (edge null, slug ruim, fonte lixo, corpo      ║
@@ -12,9 +12,11 @@
 # ║  authenticated não escreve nem executa o coletor, service_role bypassa; a      ║
 # ║  migration re-aplica sem erro e sem duplicar o cron; a query do CLI devolve    ║
 # ║  1 linha por edge com desempate por request_id em `created` idêntico.         ║
-# ║  Falsifica: (S1) probe tipado → texto: a string "true" entra; (S2) tira o      ║
-# ║  REVOKE de anon: a postcondição A3 aborta o apply; (S3) tira o jsonb_typeof    ║
-# ║  de edge: `{"edge":null}` derruba o coletor inteiro.                           ║
+# ║  Falsifica: cada sabotagem DECLARA os asserts que a acusam (lista SABOTAGENS). ║
+# ║  Quatro vieram de db/test-pendencias-deploy-eco-passivo.sh, aposentado em      ║
+# ║  2026-09-27: ele sabotava o SQL do CLI, que desde 2026-09-05 só lê o ledger — ║
+# ║  a lógica que ele provava mora na janela viva, cujas defesas estavam SEM      ║
+# ║  falsificação nenhuma.                                                         ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -24,7 +26,10 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5479}"
 SLUG="deploy-atestacoes"
 MIG="$REPO_ROOT/supabase/migrations/20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql"
-DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+# Tudo o que esta execução escreve mora AQUI (cópias sabotadas, stderr das medições, logs da
+# falsificação): nome fixo em /tmp é compartilhado com as outras worktrees.
+TMPD="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")"
+DATA="$TMPD/data"
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -36,10 +41,7 @@ cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/de
 
 cleanup() {
   "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
-  rm -rf "$(dirname "$DATA")"
-  # As cópias sabotadas nascem dentro de `$(sabotar …)` — subshell, então uma lista acumulada
-  # numa variável nunca chegaria aqui. O padrão do nome é o registro.
-  rm -f /tmp/pg-"${SLUG}"-sab-* /tmp/pg-"${SLUG}"-apply.err /tmp/pg-"${SLUG}"-reapply.err
+  rm -rf "$TMPD"
   return 0
 }
 trap cleanup EXIT
@@ -51,6 +53,7 @@ trap cleanup EXIT
 SQL_CLI="$(cd "$REPO_ROOT" && bun -e "const m = await import('./scripts/pendencias-deploy.ts'); process.stdout.write(m.SQL)")"
 SQL_SAUDE="$(cd "$REPO_ROOT" && bun -e "const m = await import('./scripts/pendencias-deploy.ts'); process.stdout.write(m.SQL_SAUDE_COLETOR)")"
 [ -n "$SQL_CLI" ] && [ -n "$SQL_SAUDE" ] || { echo "não extraí o SQL do CLI (bun -e)"; exit 1; }
+SQL_SAUDE_SEM_PONTO="${SQL_SAUDE%;}"
 
 MASTER='11111111-1111-1111-1111-111111111111'
 STAFF_E='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
@@ -58,18 +61,50 @@ CUST_C='cccccccc-cccc-cccc-cccc-cccccccccccc'
 F_A='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 F_B='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 
-PASS=0; FAIL=0; NOMES_FALHOS=""
-ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
-bad() { FAIL=$((FAIL+1)); NOMES_FALHOS="$NOMES_FALHOS $1"; echo "  ❌ $1"; }
-eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
+# ── asserts: "<ID> OK" · "<ID> FALHOU" · "<ID> ERRO_DE_EXECUCAO [<diagnóstico>]" ──────────
+# Cada MEDIÇÃO (Pq) deixa o seu stderr em $ERRS e o seu status ≠0 em $ERRS_RC; o `eq` do assert lê
+# os dois e os zera — a associação é da medição, e cada assert tem a SUA (o A9 roda a query uma vez
+# por assert). As conexões não recebem NOTICE nem WARNING (client_min_messages=error, em P): um
+# NOTICE com quebra de linha forjaria uma linha "ERROR:" inteira. O diagnóstico conta toda linha
+# ERROR/FATAL/PANIC (severidade ancorada no início) e todo erro do cliente psql. Erro de execução
+# LIMPO — o único que uma sabotagem pode declarar — é rc≠0 com EXATAMENTE uma linha, e ERROR; o
+# resto (rc≠0 sem linha, FATAL, várias linhas, linha ERROR com rc=0) é erro que nada declara. O
+# veredito vai também para $VEREDITOS, um registro por assert (ID, status, a linha ERROR limpa ou
+# "-"): a falsificação julga por IGUALDADE nesses campos, nunca pelo texto da linha humana — onde
+# um "] — " dentro da mensagem forjaria o delimitador (Codex, 2026-09-27).
+PASS=0; FAIL=0; ERRS=""; ERRS_RC=""; VEREDITOS=""
+ok()  { PASS=$((PASS+1)); printf '%s\tOK\t-\n' "$1" >> "$VEREDITOS"; echo "  ✅ $1 OK — $2"; }
+bad() { FAIL=$((FAIL+1)); printf '%s\tFALHOU\t-\n' "$1" >> "$VEREDITOS"; echo "  ❌ $1 FALHOU — $2"; }
+erro_exec() {   # <ID> <chave: a linha ERROR limpa, ou "-"> <diagnóstico> <rótulo>
+  FAIL=$((FAIL+1)); printf '%s\tERRO_DE_EXECUCAO\t%s\n' "$1" "$2" >> "$VEREDITOS"
+  echo "  ❌ $1 ERRO_DE_EXECUCAO [$3] — $4"
+}
+eq() {   # "<ID> <rótulo>" <valor> <esperado>
+  local id="${1%% *}" rotulo="${1#* }" diag n rc
+  diag="$(grep -E '^(psql:[^ ]*: )?(ERROR|FATAL|PANIC):  |^psql: error: |server closed the connection|connection to server was lost' "$ERRS" \
+            | sed -E 's/^psql:[^ ]*: //' || true)"
+  n="$(printf '%s' "$diag" | grep -c . || true)"
+  rc="$(tr '\n' ' ' < "$ERRS_RC")"; rc="${rc% }"
+  : > "$ERRS"; : > "$ERRS_RC"
+  if [ -n "$rc" ] && [ "$n" = 1 ] && [ "${diag#ERROR:  }" != "$diag" ]; then
+    erro_exec "$id" "$diag" "$diag" "$rotulo"
+  elif [ -n "$rc" ] || [ "$n" != 0 ]; then
+    erro_exec "$id" "-" "rc=${rc:-0}, ${n} linha(s) de diagnóstico: $(printf '%s' "$diag" | tr '\n' '|' | cut -c1-300)" "$rotulo"
+  elif [ "$2" = "$3" ]; then ok "$id" "$rotulo (=$2)"
+  else bad "$id" "$rotulo — esperado [$3], veio [$2]"; fi
+}
+recibo() { echo "PASS=${PASS}  FAIL=${FAIL}"; }
 
 # ── prova(<migration>) — banco fresco, stubs, migration, fixtures, asserts ─────────────
 prova() {
-  local mig="$1" db="$2"
-  PASS=0; FAIL=0; NOMES_FALHOS=""
+  local mig="$1" db="$2" r
+  PASS=0; FAIL=0; ERRS="$TMPD/stderr-$db.txt"; ERRS_RC="$TMPD/rc-$db.txt"; VEREDITOS="$TMPD/vered-$db.tsv"
+  : > "$ERRS"; : > "$ERRS_RC"; : > "$VEREDITOS"
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres "$db"
-  P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 "$@"; }
-  Pq() { P -q -tA "$@"; }
+  # -X: sem ~/.psqlrc — ele mudaria o formato da linha ERROR que os juízes leem. E nada abaixo de
+  # ERROR chega ao cliente: NOTICE/WARNING são o canal por onde se forja uma linha "ERROR:".
+  P()  { PGOPTIONS='-c client_min_messages=error' "$PGBIN/psql" -X -v VERBOSITY=default -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 "$@"; }
+  Pq() { local rc=0; P -q -tA "$@" 2>>"$ERRS" || rc=$?; if [ "$rc" -ne 0 ]; then echo "$rc" >> "$ERRS_RC"; fi; return "$rc"; }
 
   P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
   # ZONA 1: o que a PROD já tem — enum/user_roles/auth, roles com o default ACL do Supabase
@@ -107,13 +142,12 @@ RETURNS boolean LANGUAGE sql AS \$f\$ DELETE FROM cron.job WHERE jobname = p_nam
 ALTER TABLE cron.job_run_details ADD COLUMN IF NOT EXISTS end_time timestamptz;
 SQL
 
-  # ZONA 2: a migration (com a semente rodando sobre janela VAZIA)
+  # ZONA 2: a migration (com a semente rodando sobre janela VAZIA). O apply É um assert (A0):
+  # a postcondição que aborta o apply sabotado é julgada pela linha ERROR dela.
   echo "═══ apply: $(basename "$mig") ═══"
-  if ! P -q -f "$mig" 2>"/tmp/pg-${SLUG}-apply.err"; then
-    bad "APPLY: a migration abortou — $(grep -m1 -E 'FALHOU|ERROR|error' "/tmp/pg-${SLUG}-apply.err" | cut -c1-160)"
-    return 0
-  fi
-  ok "APPLY sem erro"
+  if P -q -f "$mig" 2>>"$ERRS"; then r=aplicou; else echo "$?" >> "$ERRS_RC"; r=abortou; fi
+  eq "A0 APPLY da migration" "$r" "aplicou"
+  if [ "$r" != aplicou ]; then recibo; return 0; fi
 
   # ZONA 3: fixtures — as válidas e o envenenamento, lado a lado
   P -q <<SQL
@@ -134,7 +168,7 @@ INSERT INTO net._http_response (id, status_code, content, created) VALUES
   (14, 200, NULL, now()),
   (15, 200, '{"edge":"edge-g","versao":null,"probe":true}', now()),
   -- 16/17: NÚMERO no lugar de string — a regex/length aceitam '12345'/'7' como texto; só o
-  -- jsonb_typeof separa (é a camada que a sabotagem S3/S4 remove)
+  -- jsonb_typeof separa (é a camada que edge_sem_tipo/versao_sem_tipo removem)
   (16, 200, '{"edge":12345,"versao":"v1","probe":true,"fonte":"$F_A"}', now()),
   (17, 200, '{"edge":"edge-h","versao":7,"probe":true,"fonte":"$F_A"}', now());
 -- os ids 1 e 12 têm o MESMO created (empate real de prod) — o desempate é por request_id
@@ -206,13 +240,18 @@ SELECT 'barrou-42501';
 SQL
 )" "barrou-42501"
 
-  # A9: a query do CLI — 1 linha por edge, 6 campos, e no empate de created vence o request_id maior
-  local cli
-  cli="$(Pq -F '|' -c "$SQL_CLI")"
-  eq "A9a CLI: 1 linha por edge (a,b,c,d)" "$(printf '%s\n' "$cli" | cut -d'|' -f1 | tr '\n' ',')" "edge-a,edge-b,edge-c,edge-d,"
-  eq "A9b CLI: 6 campos por linha" "$(printf '%s\n' "$cli" | awk -F'|' '{print NF}' | sort -u | tr '\n' ',')" "6,"
-  eq "A9c CLI: empate de created -> request_id maior (12 = v1.0-a-bis)" "$(printf '%s\n' "$cli" | awk -F'|' '$1=="edge-a"{print $2}')" "v1.0-a-bis"
-  eq "A9d CLI: via da edge-b = eco" "$(printf '%s\n' "$cli" | awk -F'|' '$1=="edge-b"{print $4}')" "eco"
+  # A9: a query do CLI — 1 linha por edge, 6 campos, e no empate de created vence o request_id
+  # maior. Cada assert roda a query DE NOVO: o erro que ele julga tem de ser o da SUA medição (uma
+  # `cli=$(…)` compartilhada deixava o 1º assert consumir o erro e os outros julgarem o vazio — e,
+  # atribuição simples sob `set -e`, matava a rodada inteira sem veredito).
+  cli() { Pq -F '|' -c "$SQL_CLI"; }
+  eq "A9a CLI: 1 linha por edge (a,b,c,d)" "$(cli | cut -d'|' -f1 | tr '\n' ',')" "edge-a,edge-b,edge-c,edge-d,"
+  eq "A9b CLI: 6 campos por linha" "$(cli | awk -F'|' '{print NF}' | sort -u | tr '\n' ',')" "6,"
+  eq "A9c CLI: empate de created -> request_id maior (12 = v1.0-a-bis)" "$(cli | awk -F'|' '$1=="edge-a"{print $2}')" "v1.0-a-bis"
+  eq "A9d CLI: via da edge-b = eco" "$(cli | awk -F'|' '$1=="edge-b"{print $4}')" "eco"
+  # O contrato do parser: `parsearObservacoes` DESCARTA a linha com campo vazio, e a edge some do
+  # relatório. O teste aposentado vigiava isto; o sucessor não vigiava (Codex, 2026-09-27).
+  eq "A9e CLI: nenhum campo vazio" "$(cli | awk -F'|' '{ for (i = 1; i <= NF; i++) if ($i == "") v++ } END { print v + 0 }')" "0"
 
   # A10: a saúde do coletor — sem execução = 'nunca'; com sucesso há 10 min = ~10
   eq "A10a saude sem execucao = nunca" "$(Pq -c "$SQL_SAUDE")" "nunca"
@@ -222,51 +261,213 @@ SQL
   eq "A10c falha recente NAO conta como saude" "$(Pq -c "SELECT ((${SQL_SAUDE_SEM_PONTO})::numeric BETWEEN 9.5 AND 10.5)::text")" "true"
 
   # A11: re-aplicar a migration não erra e não duplica o cron
-  if P -q -f "$mig" >/dev/null 2>"/tmp/pg-${SLUG}-reapply.err"; then ok "A11a re-apply sem erro"; else bad "A11a re-apply errou — $(head -c 160 "/tmp/pg-${SLUG}-reapply.err")"; fi
+  if P -q -f "$mig" >/dev/null 2>>"$ERRS"; then r=aplicou; else echo "$?" >> "$ERRS_RC"; r=abortou; fi
+  eq "A11a re-apply sem erro" "$r" "aplicou"
   eq "A11b cron unico apos re-apply" "$(Pq -c "SELECT count(*) FROM cron.job WHERE jobname = 'deploy-atestacoes-colher'")" "1"
   eq "A11c ledger intacto apos re-apply" "$(Pq -c "SELECT count(*) FROM public.deploy_atestacoes")" "5"
 
-  echo "── $PASS ok · $FAIL falhas"
+  recibo
   return 0
 }
 
-# ── sabotagem(<nome>, <sed-expr>) — copia da migration com UMA camada removida ─────────
+# ── sabotar(<nome>) — cópia da migration com UMA defesa trocada; imprime o caminho da cópia ──
+# Troca LITERAL com contagem EXATA: padrão que não ocorre n× é sabotagem NÃO APLICÁVEL (a
+# migration derivou) — a rodada para antes da linha "SABOTAGEM ATIVA", e o laço acusa em vez de
+# aprovar. As quatro últimas vieram do test-pendencias-deploy-eco-passivo.sh (aposentado).
 sabotar() {
-  local nome="$1" expr="$2" out
-  # ⚠️ mktemp do macOS (BSD) exige os X no FIM do template: com `.sql` depois deles o nome não
-  # randomiza, e na 2ª rodada o arquivo já existe → mktemp falha, o caminho sai vazio e o
-  # "apply" da sabotagem quebra por motivo errado (medido 2026-09-05: S1/S3 "abortaram" à toa).
-  out="$(mktemp "/tmp/pg-${SLUG}-sab-${nome}.XXXXXX")" || { echo "  ❌ mktemp falhou para $nome"; exit 1; }
-  sed -e "$expr" "$MIG" > "$out"
-  if cmp -s "$MIG" "$out"; then echo "  ❌ sabotagem $nome NÃO alterou a migration (regex cega) — falsificação inválida"; exit 1; fi
+  local nome="$1" de para n out="$TMPD/sab-$1.sql"
+  case "$nome" in
+    # probe tipado (booleano true) → texto: a string "true" (id 5) passa a entrar na janela
+    probe_como_texto)   de="(r.c -> 'probe') = to_jsonb(true)"; para="(r.c ->> 'probe') = 'true'"; n=2 ;;
+    # sem o REVOKE de anon na tabela → a postcondição A3 da migration aborta o apply
+    sem_revoke_anon)    de=$'REVOKE ALL ON public.deploy_atestacoes FROM anon;\n'; para=""; n=1 ;;
+    # sem o tipo de `edge` → {"edge":12345} vira a edge '12345' (a regex aceita dígitos) e entra
+    edge_sem_tipo)      de=$'    AND jsonb_typeof(r.c -> \'edge\') = \'string\'\n'; para=""; n=1 ;;
+    # sem o tipo de `versao` → {"versao":7} vira '7' (length 1 passa) e entra
+    versao_sem_tipo)    de=$'    AND jsonb_typeof(r.c -> \'versao\') = \'string\'\n'; para=""; n=1 ;;
+    # o bug do #2103: só a sonda ATIVA conta — o eco passivo (a via maior) some da janela
+    eco_exige_probe)    de="AND (NOT (r.c ? 'probe') OR (r.c -> 'probe') = to_jsonb(true))"
+                        para="AND (r.c -> 'probe') = to_jsonb(true)"; n=1 ;;
+    # a troca NULL-blind: chave AUSENTE devolve NULL em `<>`, o eco some — e probe:false entra
+    eco_null_blind)     de="NOT (r.c ? 'probe')"; para="(r.c ->> 'probe') <> 'true'"; n=1 ;;
+    # sem o CASE protetor do cast: o corpo truncado que começa com '{' (id 7) chega ao cast e
+    # derruba a janela INTEIRA — e com ela o coletor e o CLI (o modo de falha do guard)
+    sem_is_json_object) de="CASE WHEN content IS JSON OBJECT THEN content::jsonb END AS c"
+                        para="content::jsonb AS c"; n=1 ;;
+    # sem o coalesce: eco sem fingerprint (id 3) chega ao ledger com fonte NULL, e o NOT NULL
+    # derruba a cópia INTEIRA — ausente ≠ zero, e o ledger para de encher
+    fonte_sem_coalesce) de="coalesce(r.c ->> 'fonte', 'sem-campo')"; para="r.c ->> 'fonte'"; n=1 ;;
+    *) echo "❌ SABOTAGEM NAO APLICAVEL: $nome não tem ramo em sabotar()" >&2; return 1 ;;
+  esac
+  python3 - "$MIG" "$out" "$de" "$para" "$n" <<'PY' || { echo "❌ SABOTAGEM NAO APLICAVEL: $nome" >&2; return 1; }
+import sys
+mig, out, de, para, n = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
+s = open(mig, encoding="utf-8").read()
+if s.count(de) != n:
+    print("   padrão ocorre %dx, esperado %d: %r" % (s.count(de), n, de), file=sys.stderr)
+    sys.exit(1)
+open(out, "w", encoding="utf-8").write(s.replace(de, para))
+PY
   printf '%s' "$out"
 }
 
-SQL_SAUDE_SEM_PONTO="${SQL_SAUDE%;}"
+# ── assinatura(<MARCA>) — a linha ERROR INTEIRA que a marca declara: identidade, não palavra
+# solta (`null value in column "fonte` aceitaria "fonte_errada"; só o SQLSTATE aceitaria
+# qualquer NOT NULL — Codex, 2026-09-27). O servidor é initdb --locale=C: a mensagem é fixa.
+assinatura() {
+  case "$1" in
+    pos_a3_revoke) echo 'ERROR:  A3 FALHOU: privilegio aberto no ledger (anon SELECT ou authenticated escrita) — o REVOKE por nome nao pegou' ;;
+    json_invalido) echo 'ERROR:  invalid input syntax for type json' ;;
+    fonte_nula)    echo 'ERROR:  null value in column "fonte" of relation "deploy_atestacoes" violates not-null constraint' ;;
+    *) return 1 ;;
+  esac
+}
 
+# ── sabotar_cli(<nome>) — o SQL do CLI (o que `pendencias:deploy` executa) com UMA troca literal
+# de contagem exata. Roda DENTRO do subshell da rodada: o SQL_CLI sabotado vale só para ela ─────
+sabotar_cli() {
+  local de para n novo
+  case "$1" in
+    # a projeção devolve fonte VAZIA: parsearObservacoes descarta a linha com campo vazio — o
+    # contrato de 6 campos não vazios que o teste aposentado vigiava — e a edge some do relatório
+    cli_fonte_vazia) de=$'       edge, versao, fonte, via,\n'; para=$'       edge, versao, \'\'::text AS fonte, via,\n'; n=1 ;;
+    *) echo "❌ SABOTAGEM NAO APLICAVEL: $1 não tem ramo em sabotar_cli()" >&2; return 1 ;;
+  esac
+  novo="$(printf '%s' "$SQL_CLI" | python3 -c '
+import sys
+s = sys.stdin.read(); de, para, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+if s.count(de) != n:
+    print("   padrão ocorre %dx, esperado %d: %r" % (s.count(de), n, de), file=sys.stderr)
+    sys.exit(1)
+sys.stdout.write(s.replace(de, para))' "$de" "$para" "$n")" || { echo "❌ SABOTAGEM NAO APLICAVEL: $1" >&2; return 1; }
+  SQL_CLI="$novo"
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODO --falsificar: prova que os asserts têm DENTE — e que o vermelho é do assert DECLARADO.
+# exit≠0 NÃO é dente (docs/historico/falsificacao-exit-nao-e-dente.md). Até 2026-09-27 este laço
+# aceitava "APPLY" em qualquer aborto do apply e `grep 'A1'` em NOMES_FALHOS (que casa A10a/A11a).
+# Cada sabotagem declara quem a acusa, `,` = E:
+#   `ID`       — o assert fica vermelho POR RESULTADO (FALHOU);
+#   `ID!MARCA` — o vermelho declarado É um erro de execução LIMPO cuja linha ERROR é, por IGUALDADE,
+#                a assinatura(MARCA). Cascata legítima também se declara, par a par: marca que
+#                valesse para qualquer assert aceitaria a mesma mensagem vinda de outra causa.
+# O juiz lê o REGISTRO estruturado de cada rodada (o $VEREDITOS que o `eq` escreve), e a linha humana
+# só confirma. A rodada só conta como vermelha com as QUATRO camadas:
+#   1. a sabotagem APLICOU (a linha "SABOTAGEM ATIVA: <nome>" está no log);
+#   2. a suíte rodou INTEIRA e IGUAL: a mesma sequência de IDs do controle e um recibo só (só o A0,
+#      se o vermelho declarado é o apply) — a soma sozinha aceitaria um assert faltando e outro
+#      duplicado;
+#   3. cada ID declarado está OK no controle e, aqui, FALHOU (ID) ou é o erro limpo declarado (ID!MARCA);
+#   4. TODO registro ERRO_DE_EXECUCAO da rodada é um par (ID, assinatura) que ESTA sabotagem declarou.
+# O controle roda PRIMEIRO, na mesma invocação: suíte que já falha aprovaria tudo por vermelhidão.
+# ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
-  echo "═══ FALSIFICAÇÃO — cada sabotagem tem de deixar ≥1 assert VERMELHO ═══"
-  TOTAL_FALSIF=0
-  # S1: probe tipado (booleano true) → texto: a string "true" (id 5) passa a entrar na janela
-  s1="$(sabotar s1 "s/(r.c -> 'probe') = to_jsonb(true)/(r.c ->> 'probe') = 'true'/g")"
-  prova "$s1" prova_s1 >/dev/null
-  if [ "$FAIL" -gt 0 ] && printf '%s' "$NOMES_FALHOS" | grep -q 'A1'; then echo "  ✅ S1 (probe como texto) → vermelho em A1"; else echo "  ❌ S1 ficou VERDE (falhas:$NOMES_FALHOS)"; TOTAL_FALSIF=$((TOTAL_FALSIF+1)); fi
-  # S2: sem o REVOKE de anon na tabela → a postcondição A3 aborta o apply
-  s2="$(sabotar s2 "/^REVOKE ALL ON public.deploy_atestacoes FROM anon;/d")"
-  prova "$s2" prova_s2 >/dev/null
-  if [ "$FAIL" -gt 0 ] && printf '%s' "$NOMES_FALHOS" | grep -q 'APPLY'; then echo "  ✅ S2 (sem REVOKE anon) → a postcondição abortou o apply"; else echo "  ❌ S2 ficou VERDE (falhas:$NOMES_FALHOS)"; TOTAL_FALSIF=$((TOTAL_FALSIF+1)); fi
-  # S3: sem o tipo de `edge` → {"edge":12345} vira a edge '12345' (a regex aceita dígitos) e entra na janela.
-  #     ({"edge":null} NÃO serve para esta sabotagem: a regex sozinha já o barra — camada redundante ali.)
-  s3="$(sabotar s3 "/jsonb_typeof(r.c -> 'edge') = 'string'/d")"
-  prova "$s3" prova_s3 >/dev/null
-  if [ "$FAIL" -gt 0 ] && printf '%s' "$NOMES_FALHOS" | grep -q 'A1'; then echo "  ✅ S3 (sem tipo de edge) → vermelho em A1"; else echo "  ❌ S3 ficou VERDE (falhas:$NOMES_FALHOS)"; TOTAL_FALSIF=$((TOTAL_FALSIF+1)); fi
-  # S4: sem o tipo de `versao` → {"versao":7} vira '7' (length 1 passa) e entra na janela.
-  s4="$(sabotar s4 "/jsonb_typeof(r.c -> 'versao') = 'string'/d")"
-  prova "$s4" prova_s4 >/dev/null
-  if [ "$FAIL" -gt 0 ] && printf '%s' "$NOMES_FALHOS" | grep -q 'A1'; then echo "  ✅ S4 (sem tipo de versao) → vermelho em A1"; else echo "  ❌ S4 ficou VERDE (falhas:$NOMES_FALHOS)"; TOTAL_FALSIF=$((TOTAL_FALSIF+1)); fi
-  echo "═══ falsificação: $TOTAL_FALSIF sabotagem(ns) sem vermelho ═══"
-  [ "$TOTAL_FALSIF" -eq 0 ]
-  exit $?
+  SABOTAGENS="probe_como_texto:A1
+              sem_revoke_anon:A0!pos_a3_revoke
+              edge_sem_tipo:A1
+              versao_sem_tipo:A1
+              eco_exige_probe:A1,A4
+              eco_null_blind:A1,A4,A6
+              sem_is_json_object:A1!json_invalido,A2!json_invalido,A3!json_invalido,A9a!json_invalido,A9b!json_invalido,A9c!json_invalido,A9d!json_invalido,A9e!json_invalido,A11a!json_invalido
+              fonte_sem_coalesce:A2!fonte_nula,A3!fonte_nula,A11a!fonte_nula,A9e
+              cli_fonte_vazia:A9e"
+  TOTAL_ESPERADO=25   # asserts da suíte (A0…A11c): o denominador do controle
+  LOGDIR="$TMPD/falsifica"; mkdir -p "$LOGDIR"
+  # o registro estruturado de uma rodada — "ID <tab> status <tab> chave", um por assert, na ordem
+  registro()   { printf '%s' "$TMPD/vered-prova_${1:-controle}.tsv"; }
+  ids_de()     { cut -f1 "$1" 2>/dev/null || true; }
+  status_de()  { awk -F'\t' -v id="$2" '$1 == id { print $2; exit }' "$1" 2>/dev/null || true; }
+  chave_de()   { awk -F'\t' -v id="$2" '$1 == id { sub(/^[^\t]*\t[^\t]*\t/, ""); print; exit }' "$1" 2>/dev/null || true; }
+  recibos_de() { grep -c '^PASS=[0-9][0-9]*  FAIL=[0-9][0-9]*$' "$1" || true; }
+  # Cada rodada num SUBSHELL com `set -e` próprio: o aborto mata a rodada, não o laço, e o recibo
+  # que falta vira a camada 2. Chame SEMPRE como comando simples — dentro de `if`/`||`/`&&` o bash
+  # 3.2 SUSPENDE o `set -e` do subshell (medido em 2026-09-27: o `false` passa e a rodada "segue"),
+  # e um aborto no meio da suíte sairia como rodada inteira. O rc fica em RC_RODADA.
+  rodada() {  # <log> <nome-da-sabotagem | vazio = controle>
+    set +e
+    (
+      set -e
+      case "$2" in
+        '')    alvo="$MIG" ;;
+        cli_*) alvo="$MIG"; sabotar_cli "$2"; echo "SABOTAGEM ATIVA: $2" ;;
+        *)     alvo="$(sabotar "$2")"; echo "SABOTAGEM ATIVA: $2" ;;
+      esac
+      prova "$alvo" "prova_${2:-controle}"
+    ) > "$1" 2>&1
+    RC_RODADA=$?
+    set -e
+  }
+
+  echo "══ CONTROLE (migration real, sem sabotagem) — tem de ficar VERDE, com os $TOTAL_ESPERADO asserts ══"
+  rodada "$LOGDIR/controle.log" ""
+  reg_controle="$(registro "")"
+  ids_controle="$(ids_de "$reg_controle")"
+  if [ "$RC_RODADA" -eq 0 ] && [ "$(recibos_de "$LOGDIR/controle.log")" = 1 ] \
+     && grep -q '^PASS=[0-9]*  FAIL=0$' "$LOGDIR/controle.log" \
+     && [ "$(printf '%s\n' "$ids_controle" | sort -u | grep -c .)" = "$TOTAL_ESPERADO" ] \
+     && [ "$(printf '%s\n' "$ids_controle" | grep -c .)" = "$TOTAL_ESPERADO" ] \
+     && [ -z "$(awk -F'\t' '$2 != "OK"' "$reg_controle")" ]; then
+    echo "  ✅ controle VERDE ($TOTAL_ESPERADO asserts, IDs únicos) — a suíte sabe passar"
+  else
+    echo "  ❌ CONTROLE não é verde com os $TOTAL_ESPERADO asserts de IDs únicos (rc=$RC_RODADA) — abortando ANTES"
+    echo "     de sabotar: uma suíte que já falha aprovaria as sabotagens por vermelhidão constante."
+    tail -25 "$LOGDIR/controle.log"; exit 1
+  fi
+
+  falhas=0
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; verm="${item#*:}"
+    log="$LOGDIR/$sab.log"; reg="$(registro "$sab")"; pares="$LOGDIR/$sab.pares"
+    rodada "$log" "$sab"   # o veredito é das camadas abaixo, nunca do RC_RODADA
+    ids_esperados="$ids_controle"; faltam=""
+    printf '#\t#\n' > "$pares"   # sentinela: o `NR == FNR` do awk abaixo leria errado um arquivo vazio
+    for x in ${verm//,/ }; do
+      id="${x%%!*}"
+      if [ "$(status_de "$reg_controle" "$id")" != OK ]; then faltam="$faltam $x(não é OK no controle)"; continue; fi
+      case "$x" in
+        *!*) if ! sig="$(assinatura "${x#*!}")"; then faltam="$faltam $x(marca sem assinatura)"; continue; fi
+             if [ "$id" = A0 ]; then ids_esperados="A0"; fi
+             printf '%s\t%s\n' "$id" "$sig" >> "$pares"
+             { [ "$(status_de "$reg" "$id")" = ERRO_DE_EXECUCAO ] && [ "$(chave_de "$reg" "$id")" = "$sig" ] \
+                 && grep -Eq "^  ❌ ${id} ERRO_DE_EXECUCAO " "$log"; } || faltam="$faltam $x" ;;
+        *)   { [ "$(status_de "$reg" "$id")" = FALHOU ] && grep -Eq "^  ❌ ${id} FALHOU " "$log"; } \
+               || faltam="$faltam $x" ;;
+      esac
+    done
+    alheios="$(awk -F'\t' 'NR == FNR { p[$1] = substr($0, length($1) + 2); next }
+                 $2 == "ERRO_DE_EXECUCAO" { c = $0; sub(/^[^\t]*\t[^\t]*\t/, "", c)
+                   if (!($1 in p) || p[$1] != c) print $1 " [" c "]" }' "$pares" "$reg" 2>/dev/null || true)"
+    vermelhos="$(awk -F'\t' '$2 != "OK" { printf "%s ", $1 }' "$reg" 2>/dev/null || true)"
+    if ! grep -q "^SABOTAGEM ATIVA: ${sab}\$" "$log"; then
+      echo "  ❌ $sab — a sabotagem NÃO aplicou (padrão derivou? nome sem ramo?): nenhum assert julgou nada"
+      { grep -m2 -E 'NAO APLICAVEL|padrão ocorre' "$log" || true; } | sed 's/^/       /'
+      falhas=$((falhas+1))
+    elif [ "$(recibos_de "$log")" != 1 ] || [ "$(ids_de "$reg")" != "$ids_esperados" ]; then
+      echo "  ❌ $sab — a suíte não rodou o conjunto esperado de asserts ($(ids_de "$reg" | grep -c . || true) IDs, $(recibos_de "$log") recibo(s)): vermelho de aborto, não de assert"
+      tail -3 "$log" | sed 's/^/       /'
+      falhas=$((falhas+1))
+    elif [ -n "$alheios" ]; then
+      echo "  ❌ $sab — ERRO DE EXECUÇÃO que a sabotagem não declarou: vermelho que não é do assert não mata mutante"
+      printf '%s\n' "$alheios" | sed -n '1,2s/^/       /p'
+      falhas=$((falhas+1))
+    elif [ -n "$faltam" ]; then
+      echo "  ❌ $sab — o assert declarado não ficou vermelho do jeito declarado:$faltam"
+      echo "       vermelhos desta rodada: ${vermelhos:-nenhum assert}"
+      falhas=$((falhas+1))
+    else
+      echo "  ✅ $sab — vermelha no assert declarado · vermelhos: $vermelhos"
+    fi
+  done
+
+  total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+  echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
+  if [ "$falhas" -eq 0 ]; then
+    echo "═══ falsificação OK: controle verde + $total sabotagens vermelhas no assert declarado ═══"
+    exit 0
+  fi
+  echo "═══ falsificação REPROVOU: $falhas sabotagem(ns) sem o vermelho declarado ═══"
+  exit 1
 fi
 
 echo "═══ setup (PG17 :$PORT) ═══"
