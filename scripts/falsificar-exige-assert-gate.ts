@@ -65,14 +65,16 @@ export const MANIFESTO_NUCLEO = 'db/nucleo-ci.txt';
  */
 export const PISOS = {
   arquivosPorRaiz: PISOS_DO_VIZINHO.arquivosPorRaiz,
-  // medido: 20 (2026-09-27, pós-merge do #2631/#2636) — 9 de db/, o test-idioma-errexit-leitura
-  // (#2631) e as 10 de scripts/ que migraram na 2ª leva: onde-parei, orfaos-custosos,
-  // read-contexto-nudge, ocupacao-por-arquivo, ocupacao-por-comando, fecho-edges-pendentes,
-  // psql-ro-error-stop, eval-diagnostico-cegueira, falsificar-implementado, bash-contexto-nudge
+  // medidos de novo em 2026-09-27, pós-merge do #2630/#2631/#2636 (o gate imprime o denominador:
+  // `bun scripts/falsificar-exige-assert-gate.ts`) — 20 listas: 9 de db/, o
+  // test-idioma-errexit-leitura (#2631) e as 10 de scripts/ que migraram na 2ª leva: onde-parei,
+  // orfaos-custosos, read-contexto-nudge, ocupacao-por-arquivo, ocupacao-por-comando,
+  // fecho-edges-pendentes, psql-ro-error-stop, eval-diagnostico-cegueira, falsificar-implementado,
+  // bash-contexto-nudge
   listas: 15,
-  entradas: 170, // medido: 227 (100 de db/ + 125 da 2ª leva + 2 do #2631)
+  entradas: 170, // medido: 239 (112 de db/ + 125 da 2ª leva + 2 do #2631; a positivação foi de 14 a 26 com o universo canônico, #2630)
   lacos: 15, // medido: 20
-  linhasFalsificarNucleo: 6, // medido: 7 (4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
+  linhasFalsificarNucleo: 6, // medido: 11 (eram 7: 4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
 } as const;
 
 export interface Juiz {

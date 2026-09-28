@@ -291,185 +291,223 @@ if [ "$FALSIFY" = 0 ]; then
   else echo "verify-frontend: $FAIL FALHA(S) de $((PASS+FAIL))"; exit 1; fi
 fi
 
-# --falsify: sabota a ENUMERAÇÃO e exige que o caso que a protege fique VERMELHO.
-# Prova que o harness pega regressão real (não é teatro que passa com qualquer script).
-echo "verify-frontend --falsify (sabota o script; cada caso DEVE divergir do exit normal):"
+# --falsify: sabota o script EM CÓPIA e exige que o caso que protege cada elo saia pelo desfecho
+# PREVISTO: cada sabotagem DECLARA o exit E as marcas (exigidas/proibidas) do ramo que a acusa, e o
+# juiz exige exatamente isso nos 2 locales, sobre o script ÍNTEGRO medido na mesma invocação.
+# "Divergiu do exit normal" (o juiz de antes, nas A-D, G e I) aceitava crash, sintaxe quebrada e
+# erro alheio: com a A trocada por uma que só QUEBRA o script, ele saía 2 ≠ 0 e contava dente.
+# → docs/historico/falsificacao-exit-nao-e-dente.md · referência: monitor-deploy-eval.sh.
+echo "verify-frontend --falsify (sabota o script em CÓPIA; cada caso DEVE sair pelo desfecho PREVISTO):"
 
-# Sabotagem A: mata o fechamento transitivo (frontier nunca satisfaz -> só 1º nível).
-# O `\$TMP`/`\$APP` nos seds são LITERAIS (casam a string no script alvo) — aspas simples de propósito.
-SAB_A="$FIX/sab_transitivo.sh"
-# shellcheck disable=SC2016
-sed 's#\[ -s "\$TMP/frontier\.txt" \]#[ -s "/tmp/__falsify_nunca_existe__" ]#' "$SCRIPT_ABS" > "$SAB_A"
-# Sabotagem B: mata a fonte precache da UNIÃO (curl no sw.js -> path inexistente)
-SAB_B="$FIX/sab_precache.sh"
-# shellcheck disable=SC2016
-sed 's#\$APP/sw\.js#\$APP/sw-INEXISTENTE-falsify.js#' "$SCRIPT_ABS" > "$SAB_B"
+# locales: sonda POSITIVA — "setei LC_ALL" não prova que o locale existe (glibc cai em C calado)
+LOCALES="C"
+for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
+  if [ "$(LC_ALL="$cand" locale charmap 2>/dev/null)" = "UTF-8" ]; then LOCALES="C $cand"; break; fi
+done
+[ "$LOCALES" = "C" ] && echo "  ⚠️  nenhum locale UTF-8 disponível — falsificação só em C (metade da prova)"
 
-# falsify_case: descr, script_sabotado, alvo, exit_normal, [exit_exigido], [marca_exigida], [url]
-# Sem exit/marca basta divergir do normal. COM eles a asserção casa a MARCA DO RAMO — "divergiu"
-# aceitaria um exit 1 vindo de outro defeito da sabotagem, que não prova nada.
-# A url é o 7º e tem default LOCAL: sabotagem que caísse em produção varreria prod de verdade.
-falsify_case() {
-  local descr="$1" scr="$2" alvo="$3" normal="$4" exato="${5:-}" marca="${6:-}" url="${7:-$BASE/site}" got out base
-  # O `normal` DECLARADO pode mentir — quem escreve a sabotagem antes da feature declara o exit do
-  # script que ainda vai existir, e "divergiu do que eu disse" viraria verde sem sabotagem nenhuma.
-  # Mede-se o script REAL na mesma url antes de comparar: evidência positiva, não declaração.
-  ( cd "$FIX/neutro" && bash "$SCRIPT_ABS" "$alvo" "$url" ) >/dev/null 2>&1; base=$?
-  if [ "$base" != "$normal" ]; then
-    printf '  [XX ] normal DECLARADO não bate com o medido: %s (declarado %s, script real %s)\n' "$descr" "$normal" "$base"
-    FAIL=$((FAIL+1)); return
+SAB="$FIX/sabotado.sh"
+ULTIMO_MOTIVO=""
+roda_vf() { # script cwd locale args… → exit do script; saída (stdout+stderr) em $FIX/out
+  local scr="$1" cwd="$2" loc="$3"; shift 3
+  ( cd "$cwd" && LC_ALL="$loc" LANG="$loc" bash "$scr" "$@" ) >"$FIX/out" 2>&1
+}
+# bate <exit obtido> <exit previsto> <exigidas;…> <proibidas;…> → 0 só se o exit bate, TODAS as
+# exigidas estão na saída e NENHUMA proibida. `case` do próprio shell, não `grep`: o grep daqui é
+# shim e dobra acento (ver run_case); as marcas são ASCII de caixa fixa.
+bate() {
+  local s m resto
+  [ "$1" -eq "$2" ] || return 1
+  s=$(cat "$FIX/out")
+  resto="$3"
+  while [ -n "$resto" ]; do
+    m=${resto%%;*}
+    case "$s" in *"$m"*) ;; *) return 1 ;; esac
+    [ "$m" = "$resto" ] && break
+    resto=${resto#*;}
+  done
+  resto="$4"
+  while [ -n "$resto" ]; do
+    m=${resto%%;*}
+    case "$s" in *"$m"*) return 1 ;; esac
+    [ "$m" = "$resto" ] && break
+    resto=${resto#*;}
+  done
+  return 0
+}
+# erro_de_shell → 0 se a saída traz um erro de EXECUÇÃO do bash (`<script>: line N: …`: variável não
+# definida, comando inexistente, `${x?…}`). A marca pode ter vindo do PRÓPRIO diagnóstico, ou saído
+# antes de o script morrer com o exit previsto (achados do Codex, 2026-09-27): crash não é dente.
+erro_de_shell() { local s re=': line [0-9]+: '; s=$(cat "$FIX/out"); [[ $s =~ $re ]]; }
+aplica() { # de para — substituição LITERAL em cópia; o alvo tem de aparecer EXATAMENTE 1 vez
+  python3 - "$SCRIPT_ABS" "$SAB" "$1" "$2" <<'PY'
+import sys
+src, dst, de, para = sys.argv[1:5]
+s = open(src, encoding="utf-8").read()
+if s.count(de) != 1:
+    sys.exit("o alvo aparece %d vez(es): %r" % (s.count(de), de[:70]))
+open(dst, "w", encoding="utf-8").write(s.replace(de, para, 1))
+PY
+}
+# sabota <id> <de> <para> <cwd> <exit ÍNTEGRO> <exit previsto> <exigidas;…> <proibidas;…> <args…>
+# O cwd escolhe os DOIS universos do script (o git do --pai e o node_modules da sonda do 2º emissor).
+sabota() {
+  local id="$1" de="$2" para="$3" cwd="$4" normal="$5" pexit="$6" quer="$7" nao="$8" loc got pegou=0 n_loc=0 errado=""
+  shift 8
+  if ! aplica "$de" "$para" 2>"$FIX/aplica.err" || cmp -s "$SCRIPT_ABS" "$SAB"; then
+    printf '  [XX ] %s: a sabotagem NÃO aplicou (%s) — o eval não testaria nada\n' "$id" "$(tr '\n' ' ' < "$FIX/aplica.err")"
+    FAIL=$((FAIL+1)); ULTIMO_MOTIVO=NAO-APLICOU; return
   fi
-  out=$(cd "$FIX/neutro" && bash "$scr" "$alvo" "$url" 2>&1); got=$?
-  if [ -n "$exato" ] && [ "$got" != "$exato" ]; then
-    printf '  [XX ] divergiu pelo motivo ERRADO: %s (exigido exit %s, obtido %s)\n' "$descr" "$exato" "$got"
-    FAIL=$((FAIL+1)); return
+  if ! bash -n "$SAB" 2>/dev/null; then
+    printf '  [XX ] %s: a sabotagem quebrou a SINTAXE do script — vermelho pelo motivo errado\n' "$id"
+    FAIL=$((FAIL+1)); ULTIMO_MOTIVO=SINTAXE; return
   fi
-  if [ -n "$marca" ] && ! printf '%s' "$out" | grep -q -- "$marca"; then
-    printf '  [XX ] exit certo, marca ausente: %s (exigida a marca %s)\n' "$descr" "$marca"
-    FAIL=$((FAIL+1)); return
-  fi
-  if [ "$got" != "$normal" ]; then
-    printf '  [ok ] divergiu: %s (normal %s -> sabotado %s)\n' "$descr" "$normal" "$got"; PASS=$((PASS+1))
+  for loc in $LOCALES; do
+    n_loc=$((n_loc+1))
+    # CONTROLE na mesma invocação e locale. O exit ÍNTEGRO é MEDIDO, não só declarado — quem
+    # escreve a sabotagem antes da feature declara o exit do script que ainda vai existir, e
+    # "divergiu do que eu disse" viraria verde sem sabotagem nenhuma. E o previsto NÃO pode
+    # descrever o controle: senão "bateu o previsto" não distinguiria sabotagem de nada.
+    roda_vf "$SCRIPT_ABS" "$cwd" "$loc" "$@"; got=$?
+    if [ "$got" -ne "$normal" ]; then errado="$errado $loc:CONTROLE-exit$got-declarado$normal"; continue; fi
+    if bate "$got" "$pexit" "$quer" "$nao"; then errado="$errado $loc:o-PREVISTO-casa-o-CONTROLE"; continue; fi
+    roda_vf "$SAB" "$cwd" "$loc" "$@"; got=$?
+    if erro_de_shell; then errado="$errado $loc:ERRO-DE-SHELL"
+    elif bate "$got" "$pexit" "$quer" "$nao"; then pegou=$((pegou+1))
+    else errado="$errado $loc:exit$got"; fi
+  done
+  if [ "$pegou" -eq "$n_loc" ]; then
+    printf '  [ok ] %s: exit %s + "%s" em %d locale(s) (íntegro: exit %s)\n' "$id" "$pexit" "$quer" "$n_loc" "$normal"
+    PASS=$((PASS+1)); ULTIMO_MOTIVO=CREDITADO
   else
-    printf '  [XX ] NÃO divergiu (harness cego): %s (continuou %s)\n' "$descr" "$got"; FAIL=$((FAIL+1))
+    printf '  [XX ] %s: NÃO saiu pelo previsto (exit %s + "%s"%s; obtido%s)\n' \
+      "$id" "$pexit" "$quer" "${nao:+, sem \"$nao\"}" "$errado"
+    sed 's/^/        | /' "$FIX/out" | head -6
+    FAIL=$((FAIL+1)); ULTIMO_MOTIVO="${errado# }"
   fi
 }
-falsify_case "sem fechamento transitivo -> perde o alvo de 2º nível" "$SAB_A" "SENTINELA_DEEP_XYZ" 0
-falsify_case "sem precache -> perde o alvo órfão"                    "$SAB_B" "ORPHAN_MARKER" 0
 
-# Sabotagem C: afrouxa o guard de exclusividade (o `-ne 0` do lado NEGATIVO vira `-lt 0`,
-# que nunca é verdade) -> a sentinela não-exclusiva passaria a ser aceita.
-SAB_C="$FIX/sab_exclusividade.sh"
-sed 's#-ne 0 \]; then#-lt 0 ]; then#' "$SCRIPT_ABS" > "$SAB_C"
-got_c=$( cd "$REPO" && bash "$SAB_C" --pai "$SHA_PAI" "PAGEB_MARKER" "$BASE/site" >/dev/null 2>&1; echo $? )
-if [ "$got_c" != 3 ]; then
-  printf '  [ok ] divergiu: guard de exclusividade afrouxado -> aceita a NÃO-exclusiva (normal 3 -> sabotado %s)\n' "$got_c"; PASS=$((PASS+1))
-else
-  printf '  [XX ] NÃO divergiu (harness cego): guard afrouxado continuou recusando (%s)\n' "$got_c"; FAIL=$((FAIL+1))
-fi
+# O ramo do "ausente" imprime CONTROLE_POSITIVO_OK antes do veredito — é a marca de que a sonda
+# ENXERGAVA quando afirmou a ausência. Exigi-la junto separa o furo sabotado de um script morto.
+AUSENTE="CONTROLE_POSITIVO_OK;ALVO ausente nos"
 
-# Sabotagem D: mata o lado POSITIVO do guard (o `!= 0` do commit NOVO vira tautologia) -> um
-# sha/pathspec errado passaria a "provar" exclusividade com um zero que é ausência de dado.
-# Falsificar um ramo não prova o outro: o negativo é a sabotagem C, este é o positivo.
-SAB_D="$FIX/sab_lado_positivo.sh"
+# A: mata o fechamento transitivo (frontier nunca satisfaz -> só 1º nível): o alvo de 2º nível some.
+# shellcheck disable=SC2016  # literais do script-alvo, não devem expandir aqui
+sabota A-transitivo '[ -s "$TMP/frontier.txt" ]' '[ -s "/tmp/__falsify_nunca_existe__" ]' \
+  "$FIX/neutro" 0 1 "$AUSENTE" "" SENTINELA_DEEP_XYZ "$BASE/site"
+# B: mata a fonte precache da UNIÃO (curl no sw.js -> path inexistente): o órfão some.
 # shellcheck disable=SC2016
-sed 's#\[ "\$_n_novo" != 0 \]#[ 1 = 1 ]#' "$SCRIPT_ABS" > "$SAB_D"
-got_d=$( cd "$REPO" && bash "$SAB_D" --pai "$SHA_PAI" "NAO_EXISTE_EM_LUGAR_NENHUM_123" "$BASE/site" >/dev/null 2>&1; echo $? )
-if [ "$got_d" != 3 ]; then
-  printf '  [ok ] divergiu: lado positivo do guard morto -> aceita sentinela ausente no commit novo (normal 3 -> sabotado %s)\n' "$got_d"; PASS=$((PASS+1))
-else
-  printf '  [XX ] NÃO divergiu (harness cego): lado positivo morto continuou recusando (%s)\n' "$got_d"; FAIL=$((FAIL+1))
-fi
+sabota B-precache '$APP/sw.js' '$APP/sw-INEXISTENTE-falsify.js' \
+  "$FIX/neutro" 0 1 "$AUSENTE" "" ORPHAN_MARKER "$BASE/site"
 
-# Sabotagem E: DEGENERA o casamento (o padrão do grep do worker vira "" -> casa toda linha).
-# É a sonda-cega de verdade: o alvo "acha" no 1º chunk... e o controle negativo TAMBÉM acha,
-# que é como ele denuncia. Sem o controle embutido isto sairia exit 0 e ninguém veria.
-SAB_E="$FIX/sab_sonda_cega.sh"
+# C: afrouxa o guard de exclusividade (o `-ne 0` do lado NEGATIVO vira `-lt 0`, que nunca é
+# verdade) -> a sentinela não-exclusiva passa a ser ACEITA e varrida: sai "no ar" no chunk dela.
+sabota C-exclusividade '-ne 0 ]; then' '-lt 0 ]; then' \
+  "$REPO" 3 0 "PageB-CCC333;CONTROLE_NEGATIVO_OK" "" --pai "$SHA_PAI" PAGEB_MARKER "$BASE/site"
+
+# D: mata o lado POSITIVO do guard (o `!= 0` do commit NOVO vira tautologia) -> um sha/pathspec
+# errado passaria a "provar" exclusividade com um zero que é ausência de dado — e a sentinela que
+# não existe em lugar nenhum vira "ausente no bundle". Falsificar um ramo não prova o outro: o
+# negativo é a sabotagem C, este é o positivo.
 # shellcheck disable=SC2016
-sed 's#grep -q -- "\$3"#grep -q -- ""#' "$SCRIPT_ABS" > "$SAB_E"
-falsify_case "grep degenerado (casa tudo) -> controle acusa SONDA_NAO_DISCRIMINA" "$SAB_E" "SENTINELA_DEEP_XYZ" 0 2 "SONDA_NAO_DISCRIMINA"
+sabota D-lado-positivo '[ "$_n_novo" != 0 ]' '[ 1 = 1 ]' \
+  "$REPO" 3 1 "$AUSENTE" "" --pai "$SHA_PAI" NAO_EXISTE_EM_LUGAR_NENHUM_123 "$BASE/site"
 
-# Sabotagem F: troca a string do controle pelo PRÓPRIO alvo — que comprovadamente está no chunk.
-# Prova que o controle EXERCITA a rede de verdade (curl+grep no chunk), e não é um `echo ✓`
-# decorativo: se fosse decorativo, um controle impossível-de-passar continuaria dando exit 0.
-SAB_F="$FIX/sab_controle_decorativo.sh"
-# O `$ALVO` do replacement é LITERAL: ele vai PARA o script sabotado, não expande aqui.
+# E: DEGENERA o casamento (o padrão do grep do worker vira "" -> casa toda linha). É a sonda-cega
+# de verdade: o alvo "acha" no 1º chunk... e o controle negativo TAMBÉM acha, que é como ele
+# denuncia. Sem o controle embutido isto sairia exit 0 e ninguém veria.
 # shellcheck disable=SC2016
-sed 's#^CONTROLE="controle_negativo_.*#CONTROLE="$ALVO"#' "$SCRIPT_ABS" > "$SAB_F"
-falsify_case "controle que DEVERIA casar -> exit 2 (logo o controle roda mesmo, não é enfeite)" "$SAB_F" "SENTINELA_DEEP_XYZ" 0 2 "SONDA_NAO_DISCRIMINA"
+sabota E-grep-degenerado 'grep -q -- "$3"' 'grep -q -- ""' \
+  "$FIX/neutro" 0 2 "SONDA_NAO_DISCRIMINA" "" SENTINELA_DEEP_XYZ "$BASE/site"
 
-# Sabotagem G: mata o VEREDITO de cegueira (o guard que converte "não enxerguei" em exit 2).
-# Contra o site-cego (chunks 404, index.html vivo) o script sabotado volta a AFIRMAR ausência —
-# que é o falso NEGATIVO que faz o operador pedir um Publish desnecessário.
-SAB_G="$FIX/sab_controle_positivo.sh"
+# F: troca a string do controle pelo PRÓPRIO alvo — que comprovadamente está no chunk. Prova que o
+# controle EXERCITA a rede de verdade (curl+grep no chunk), e não é um `echo ✓` decorativo: se
+# fosse decorativo, um controle impossível-de-passar continuaria dando exit 0. O `$ALVO` do
+# replacement é LITERAL: ele vai PARA o script sabotado, não expande aqui.
 # shellcheck disable=SC2016
-sed 's#^if \[ -n "\$_cego" \]; then#if [ 1 = 0 ]; then#' "$SCRIPT_ABS" > "$SAB_G"
-falsify_case "veredito de cegueira morto -> volta a AFIRMAR ausência com os chunks em 404" \
-             "$SAB_G" "NAO_EXISTE_NO_BUNDLE_123" 2 1 "" "$BASE/site-cego"
+sabota F-controle-decorativo 'CONTROLE="controle_negativo_${_ent}"' 'CONTROLE="$ALVO"' \
+  "$FIX/neutro" 0 2 "SONDA_NAO_DISCRIMINA" "" SENTINELA_DEEP_XYZ "$BASE/site"
 
-# Sabotagem H: troca a agulha DERIVADA por uma que não está em lugar nenhum. Espelha a F do lado
-# negativo: se o controle positivo fosse um `echo ✓` decorativo, uma agulha impossível continuaria
-# dando exit 1. Roda no site BOM — o que muda é só a agulha.
-SAB_H="$FIX/sab_agulha_impossivel.sh"
+# G: mata o VEREDITO de cegueira (o guard que converte "não enxerguei" em exit 2). Contra o
+# site-cego (chunks 404, index.html vivo) o script sabotado volta a AFIRMAR ausência — que é o
+# falso NEGATIVO que faz o operador pedir um Publish desnecessário — e com um CONTROLE_POSITIVO_OK
+# que mente, porque o ramo que o desmentiria foi o arrancado.
 # shellcheck disable=SC2016
-sed 's#^_agulha=\$(tr .*#_agulha="agulha_impossivel_zzz9999_falsify"#' "$SCRIPT_ABS" > "$SAB_H"
-falsify_case "agulha trocada por uma impossível -> exit 2 (logo o controle vai à rede de verdade)" \
-             "$SAB_H" "NAO_EXISTE_NO_BUNDLE_123" 1 2 "AGULHA_NAO_CASOU"
+sabota G-veredito-de-cegueira 'if [ -n "$_cego" ]; then' 'if [ 1 = 0 ]; then' \
+  "$FIX/neutro" 2 1 "$AUSENTE" "" NAO_EXISTE_NO_BUNDLE_123 "$BASE/site-cego"
 
-# Sabotagem I: mata o check "o entry é JS, não HTML". Sem ele a agulha nasce do próprio fallback
-# do SPA e casa em si mesma -> CONTROLE_POSITIVO_OK mentiroso e exit 1. É o furo circular que o
-# check existe pra fechar, e o caso normal do site-fallback só prova isso se esta sabotagem virar.
-SAB_I="$FIX/sab_entry_html.sh"
-sed "s#^  '<') _cego=#  '<XXX') _cego=#" "$SCRIPT_ABS" > "$SAB_I"
-falsify_case "check de HTML morto -> fallback do SPA vira 'ausente' provado por si mesmo" \
-             "$SAB_I" "NAO_EXISTE_NO_BUNDLE_123" 2 1 "" "$BASE/site-fallback"
-
-# falsify_marca: descr, script_sabotado, cwd, alvo, marca_que_DEVE_SUMIR, [marca_que_DEVE_SURGIR]
-# A sonda do 2º emissor AVISA e não recusa — de propósito, e medido. Logo ela não mexe no exit code,
-# e falsify_case (que compara exits) é CEGO a ela: sabotá-la deixaria todos os exits idênticos e o
-# harness diria "não divergiu" sem nunca ter olhado a asserção certa. Aqui a asserção é a MARCA.
-# Mede-se o script REAL primeiro — a marca tem de estar lá ANTES de sabotar, senão "sumiu" é uma
-# marca que nunca existiu, que é o teatro que a regra de evidência positiva proíbe.
-falsify_marca() {
-  local descr="$1" scr="$2" cwd="$3" alvo="$4" some="$5" surge="${6:-}" out
-  out=$(cd "$cwd" && bash "$SCRIPT_ABS" "$alvo" "$BASE/site" 2>&1)
-  if ! printf '%s' "$out" | grep -q -- "$some"; then
-    printf '  [XX ] marca ausente no script REAL: %s (esperava %s ANTES de sabotar)\n' "$descr" "$some"
-    FAIL=$((FAIL+1)); return
-  fi
-  out=$(cd "$cwd" && bash "$scr" "$alvo" "$BASE/site" 2>&1)
-  if printf '%s' "$out" | grep -q -- "$some"; then
-    printf '  [XX ] NÃO divergiu (harness cego): %s (a marca %s sobreviveu à sabotagem)\n' "$descr" "$some"
-    FAIL=$((FAIL+1)); return
-  fi
-  if [ -n "$surge" ] && ! printf '%s' "$out" | grep -q -- "$surge"; then
-    printf '  [XX ] marca sumiu pelo motivo ERRADO: %s (esperava %s no lugar)\n' "$descr" "$surge"
-    FAIL=$((FAIL+1)); return
-  fi
-  printf '  [ok ] divergiu: %s (%s sumiu)\n' "$descr" "$some"; PASS=$((PASS+1))
-}
-
-# Sabotagem J: tira o filtro de extensão da sonda -> o universo volta a ser a árvore INTEIRA e o
-# readme.md do fake-lib passa a casar. É a regressão medida na node_modules real (637MB): sem filtro,
-# o "valor nosso" acusava readme.md/preflight.css — o aviso disparando contra a sentinela CERTA, que
-# é como um aviso é desarmado. E custava 38-63s em vez de ~2s.
-SAB_J="$FIX/sab_filtro_extensao.sh"
-sed "s#--include='\*\.js' --include='\*\.mjs' --include='\*\.cjs' ##" "$SCRIPT_ABS" > "$SAB_J"
-falsify_marca "filtro de extensão removido -> o .md da lib vira hit e acusa a sentinela LIMPA" \
-              "$SAB_J" "$REPO" "SENTINELA_DEEP_XYZ" "LIB_SEM_A_SENTINELA" "SENTINELA_TAMBEM_NA_LIB"
-
-# Sabotagem K: aponta a sonda para um node_modules que não existe -> ela deixa de ver o 2º emissor.
-# Prova que o hit vem de uma CONSULTA de verdade ao disco, não de um `echo` decorativo — e que o
-# estado "não consultei" aparece exatamente onde a consulta não aconteceu.
-SAB_K="$FIX/sab_sonda_lib_morta.sh"
+# H: troca a agulha DERIVADA por uma que não está em lugar nenhum. Espelha a F do lado negativo:
+# se o controle positivo fosse um `echo ✓` decorativo, uma agulha impossível continuaria dando
+# exit 1. Roda no site BOM — o que muda é só a agulha (o `: $(tr …)` segue rodando e é descartado).
 # shellcheck disable=SC2016
-sed 's#_nm="\$_raiz_nm/node_modules"#_nm="$_raiz_nm/node_modules_INEXISTENTE_falsify"#' "$SCRIPT_ABS" > "$SAB_K"
-falsify_marca "sonda apontada para node_modules inexistente -> perde o 2º emissor que existia" \
-              "$SAB_K" "$REPO" "LIB_OPTION_MARKER" "SENTINELA_TAMBEM_NA_LIB" "LIB_NAO_CONSULTADA"
+sabota H-agulha-impossivel '_agulha=$(tr ' '_agulha="agulha_impossivel_zzz9999_falsify"; : $(tr ' \
+  "$FIX/neutro" 1 2 "AGULHA_NAO_CASOU" "" NAO_EXISTE_NO_BUNDLE_123 "$BASE/site"
 
-# Sabotagem L: cala o ramo do node_modules AUSENTE (o printf vira `:`, que engole os argumentos).
-# É a fabricação que o requisito existe pra impedir: sem node_modules a sonda não consultou nada, e
+# I: mata o check "o entry é JS, não HTML". Sem ele a agulha nasce do próprio fallback do SPA e
+# casa em si mesma -> CONTROLE_POSITIVO_OK mentiroso e exit 1. É o furo circular que o check existe
+# pra fechar, e o caso normal do site-fallback só prova isso se esta sabotagem virar.
+sabota I-entry-html "  '<') _cego=" "  '<XXX') _cego=" \
+  "$FIX/neutro" 2 1 "$AUSENTE" "" NAO_EXISTE_NO_BUNDLE_123 "$BASE/site-fallback"
+
+# J-M: a sonda do 2º emissor AVISA e não recusa — de propósito, e medido. Ela não mexe no exit
+# code, então o previsto é o exit ÍNTEGRO com a marca que TEM de surgir e a que TEM de sumir: uma
+# sabotagem com erro de SINTAXE também faria a marca sumir (nada rodou), e é a exigida que prova
+# que o script sabotado rodou ATÉ O FIM pelo ramo certo.
+#
+# J: tira o filtro de extensão da sonda -> o universo volta a ser a árvore INTEIRA e o readme.md do
+# fake-lib passa a casar. É a regressão medida na node_modules real (637MB): sem filtro, o "valor
+# nosso" acusava readme.md/preflight.css — o aviso disparando contra a sentinela CERTA, que é como
+# um aviso é desarmado. E custava 38-63s em vez de ~2s.
+sabota J-filtro-de-extensao "--include='*.js' --include='*.mjs' --include='*.cjs' " "" \
+  "$REPO" 0 0 "SENTINELA_TAMBEM_NA_LIB" "LIB_SEM_A_SENTINELA" SENTINELA_DEEP_XYZ "$BASE/site"
+# K: aponta a sonda para um node_modules que não existe -> ela deixa de ver o 2º emissor. Prova que
+# o hit vem de uma CONSULTA de verdade ao disco, não de um `echo` decorativo — e que o estado "não
+# consultei" aparece exatamente onde a consulta não aconteceu.
+# shellcheck disable=SC2016
+sabota K-sonda-lib-morta '_nm="$_raiz_nm/node_modules"' '_nm="$_raiz_nm/node_modules_INEXISTENTE_falsify"' \
+  "$REPO" 0 0 "LIB_NAO_CONSULTADA" "SENTINELA_TAMBEM_NA_LIB" LIB_OPTION_MARKER "$BASE/site"
+# L: cala o ramo do node_modules AUSENTE (o printf vira `:`, que engole os argumentos). É a
+# fabricação que o requisito existe pra impedir: sem node_modules a sonda não consultou nada, e
 # silêncio nesse estado se lê como "limpo" — ausência de dado virando aprovação.
-SAB_L="$FIX/sab_ausente_calado.sh"
 # shellcheck disable=SC2016
-sed '/^if \[ ! -d "\$_nm" \]; then$/,/^else$/ s/^  printf /  : /' "$SCRIPT_ABS" > "$SAB_L"
-# O 6º arg não é decoração aqui: sem ele, um SAB_L com erro de SINTAXE também faria a marca sumir
-# (nada rodou) e a sabotagem passaria por motivo errado. Exigir CONTROLE_NEGATIVO_OK prova que o
-# script sabotado rodou ATÉ O FIM e deu verde — calado sobre não ter consultado, que é a fabricação.
-falsify_marca "estado 'não consultei' silenciado -> worktree sem node_modules lê como limpa" \
-              "$SAB_L" "$FIX/neutro" "LIB_OPTION_MARKER" "LIB_NAO_CONSULTADA" "CONTROLE_NEGATIVO_OK"
-
-# Sabotagem M: mata a comparação das PONTAS do detector de delimitador (vira `false`) -> a sentinela
+sabota L-ausente-calado 'if [ ! -d "$_nm" ]; then
+  printf ' 'if [ ! -d "$_nm" ]; then
+  : ' \
+  "$FIX/neutro" 0 0 "CONTROLE_NEGATIVO_OK" "LIB_NAO_CONSULTADA" LIB_OPTION_MARKER "$BASE/site"
+# M: mata a comparação das PONTAS do detector de delimitador (vira `false`) -> a sentinela
 # delimitada volta a passar calada, e a ausência que ela causa se lê como "Publish pendente". É o
 # falso NEGATIVO medido em prod 2026-08-27 no #2037: os três guards verdes e o veredito errado.
-# O 6º arg exige que o script sabotado tenha CHEGADO ao veredito — sem ele, um SAB_M com erro de
-# sintaxe faria a marca sumir por nada ter rodado, e a sabotagem passaria pelo motivo errado.
-SAB_M="$FIX/sab_delimitador_morto.sh"
 # shellcheck disable=SC2016
-sed 's#\[ "\$_prim" = "\$_ult" \]#false#' "$SCRIPT_ABS" > "$SAB_M"
-falsify_marca "detector de delimitador morto -> sentinela delimitada passa calada e vira 'Publish pendente'" \
-              "$SAB_M" "$FIX/neutro" "'SENTINELA_DEEP_XYZ'" "SENTINELA_DELIMITADA" "ALVO ausente nos"
+sabota M-delimitador-morto '[ "$_prim" = "$_ult" ]' 'false' \
+  "$FIX/neutro" 1 1 "ALVO ausente nos" "SENTINELA_DELIMITADA" "'SENTINELA_DEEP_XYZ'" "$BASE/site"
+
+# CONTROLES NEGATIVOS DO JUIZ — o gate de reintrodução. Cada um é uma sabotagem que o juiz TEM de
+# recusar, e o gate exige a RAZÃO do julgamento (não "não aplicou", "sintaxe" ou "controle"): uma
+# recusa por outro motivo deixaria o gate verde com o juiz quebrado (achado do Codex, 2026-09-27).
+#   marca: a A trocada por `exit 1` sai com o exit PREVISTO sem passar pelo ramo do "ausente" — só as
+#          MARCAS a separam; um juiz que regredir a "divergiu do normal" ou a "só o exit" a credita.
+#   shell: `${X?CONTROLE_POSITIVO_OK ALVO ausente nos}` mata o script com exit 1 e as DUAS marcas só no
+#          diagnóstico do bash — só a camada do erro de shell a separa.
+juiz_negativo() { # razão-exigida  args do sabota…
+  local razao="$1" pass_ok=$PASS fail_ok=$FAIL; shift
+  ULTIMO_MOTIVO=""
+  sabota "$@" > /dev/null 2>&1
+  PASS=$pass_ok; FAIL=$fail_ok
+  case "$ULTIMO_MOTIVO" in
+    CREDITADO) echo "  [XX ] controle negativo do juiz ($1): CREDITADO — o juiz perdeu a identidade"; FAIL=$((FAIL+1)) ;;
+    *"$razao"*) echo "  [ok ] controle negativo do juiz ($1): recusado pelo julgamento [$razao]" ;;
+    *) echo "  [XX ] controle negativo do juiz ($1): recusado por OUTRO motivo [${ULTIMO_MOTIVO:-nenhum}] — o gate não exercitou o juiz"
+       FAIL=$((FAIL+1)) ;;
+  esac
+}
+# shellcheck disable=SC2016
+juiz_negativo "C:exit1" juiz-negativo-marca '[ -s "$TMP/frontier.txt" ]' 'exit 1' \
+  "$FIX/neutro" 0 1 "$AUSENTE" "" SENTINELA_DEEP_XYZ "$BASE/site"
+# shellcheck disable=SC2016
+juiz_negativo "ERRO-DE-SHELL" juiz-negativo-shell '[ -s "$TMP/frontier.txt" ]' \
+  ': "${FALHA_NAO_DEFINIDA_JUIZ_NEGATIVO?CONTROLE_POSITIVO_OK ALVO ausente nos}"' \
+  "$FIX/neutro" 0 1 "$AUSENTE" "" SENTINELA_DEEP_XYZ "$BASE/site"
 
 echo ""
-if [ "$FAIL" -eq 0 ]; then echo "--falsify: $PASS/$((PASS+FAIL)) divergiram (harness tem dente)"; exit 0
-else echo "--falsify: $FAIL sabotagem(ns) NÃO pega(s) — harness cego"; exit 1; fi
+if [ "$FAIL" -eq 0 ] && [ "$PASS" -ge 13 ]; then echo "--falsify: $PASS/$((PASS+FAIL)) pegaram pelo previsto (harness tem dente)"; exit 0
+else echo "--falsify: $FAIL sabotagem(ns) NÃO pega(s) pelo previsto em $((PASS+FAIL)) (esperado: 13) — harness cego"; exit 1; fi
