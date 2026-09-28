@@ -398,6 +398,73 @@ Os de sabotagem única ou veredito de valor usam valor/marca exata.
 - **O juiz também tem locale.** A rodada interna em `LC_ALL=C` corta strings por byte; o juiz que lê o
   log em UTF-8 engasga no caractere partido. Quem LÊ log de outro processo lê em `LC_ALL=C`.
 
+## Parciais de `db/`, fase 1 — sensores (analytics + data-health), 2026-09-27
+
+**Passo 0 — classe** (a mesma, fora do núcleo). Cada veredito da varredura foi RECONFERIDO lendo o
+código e REPRODUZIDO numa cópia antes do conserto; os 5 eram afetados — e dois de um jeito que o
+"≠ verde" nem descrevia:
+
+| site | o que o juiz aceitava (medido no arquivo de antes) |
+|---|---|
+| `analytics-outbox-trigger` | a fonte sumida do compute (0 rows) → `veio []` contava (4/0, exit 0); a 2ª leitura vazia do G4 dizia "volatil" |
+| `analytics-outbox-perda` | a purga sabotada que ERRA deixava a soma parada: `veio [0]` — **o valor exato** do F2 (7/0) |
+| `data-health-sync-state-saude` | leitura vazia; o apply que falhava abortava MUDO (saída em `/dev/null`) |
+| `data-health-estoque-fonte-dado` | `$(chk)` dentro do `[ ]` não dispara errexit: o erro virava `""` ≠ broken. F3 sob `if sabota`: padrão que não casa → `$SAB` vazio → `P -f` sai 0 → "APLICOU" (45/0) |
+| `data-health-watchdog-reemissao` | cenário em `if cen_X`: o `rodar` que erra era ignorado. E com `PERFORM 1/0` no lembrete o **próprio watchdog isola o erro** por check: 1 e-mail — o declarado — com a rodada saindo 0 |
+
+**O idioma do conserto**, por cima do `vermelha` com o valor declarado do pedido-total:
+
+- a leitura roda `set +e; v="$(set -e; <leitura>)"; rc=$?; set -e` — o subshell de `$(...)` nasce
+  sem errexit, e uma leitura composta que erra no meio segue e imprime o declarado; o rc fica fora
+  de lista `||`/`&&` e de condição de `if`, onde o errexit é ignorado. Sem o `set -e` interno, o F2
+  da purga escapa com o rc ligado (o rc só vê o `Pq` final, status 0) — é ESSA a camada que pega;
+- a medição carrega o que distingue o mecanismo de um erro: `checks_avaliados|checks_falhos|meta=`
+  no marcador (um check que FALHA também o para), o comprimento dos md5 no binário estável/volátil,
+  e `|f=<checks_falhos>` nos cenários do watchdog — o erro que o SUT engole só aparece ali;
+- declarar é identificar o MECANISMO: o fingerprint declara que a mensagem MUDA quando o heartbeat
+  anda (a hora de 4 casas é normalizada: 0,0001 h = 0,36 s); o F8 do estoque, as 4 bordas achatadas;
+  o F9, 4× broken com idade ≥ 1 dia; o F3, o corpo v3 gravado sobre a base alienígena.
+
+**A 2ª opinião** (Codex challenge, `gpt-6-astra` max, 387 s, sobre este diff) achou três escapes
+que a primeira versão ainda deixava — todos reproduzidos por ele e depois pela meta daqui:
+
+| achado | sev. | o que foi feito |
+|---|---|---|
+| estoque F3: o `return` do `sabota` era o do `rm` — apply que falha DEPOIS do COMMIT (a validação pós-apply) passava | alta | devolve o rc do apply |
+| estoque F6–F9: `R="$(janela_rodada)"` sem errexit — `limpa` que falhava era ultrapassada | alta | `rodada_sabotada` (o idioma); derrubou o "já-correto" do F6/F7 |
+| watchdog: `echo "$(emails)…"` perde o erro depois do valor | alta | `mede` (atribuição própria) |
+| sync-state: a forma normalizada aceitava uma mensagem CONSTANTE com a hora | média | declara a volatilidade |
+| outbox-perda F5: a emissão do meta-alerta que falha é só WARNING, fora do `checks_falhos` | média | `meta=` na leitura |
+| watchdog: operando vazio na aritmética mata o shell ANTES do RESET do GUC | média | leitura validada antes; RESET também no pai |
+| watchdog: estado ausente / fonte faltante viravam `f=0` | média | `rodar` exige o estado e soma as faltantes |
+| estoque F9: `ok\|0 ×4` passava | média | declara 4× broken ≥ 1 dia; derrubou o "já-correto" |
+| estoque F8: cruzar 08h/18h nas 4 leituras (~100 ms) dá vermelho falso | média | **risco residual registrado** — só vermelho falso; aceitar a transição readmitiria a assinatura do F7 |
+| `set -e` ao fim muda quem chamou com `+e` | baixa | não ativo (os scripts nascem com `-e`) |
+
+O bash 5 não existe no Mac; a prova do idioma foi para o CI: `scripts/test-idioma-errexit-leitura.sh`
+(no `test:falsificacao`) afirma as formas que as provas usam — e, com `--falsificar`, que tirar o
+`set -e` da leitura derruba A1–A3 e que um operando válido derruba A5 — e IMPRIME, sem afirmar, o
+contexto proibido (`||`/`if`), que é o que o CI mostra no bash 5.
+
+**Meta-falsificação: 136/136** rodadas nos dois locales (cliente `LC_ALL` + servidor
+`--lc-messages=pt_BR.UTF-8`, sonda POSITIVA no log do servidor), repo-sombra por symlinks, edições
+exatas 1×, `bash -n`, expectativa declarada antes: controle verde; cada reprodução REPROVA o arquivo
+novo e APROVAVA o de antes (`bee8feb69`) ou o anterior à rodada Codex (`3430d1b8c`); cada camada
+desligada sozinha deixa o caso voltar a escapar. As que ficaram verdes, ditas: o `rc` é redundante
+com a igualdade quando a leitura é um comando só (erro = saída vazia ≠ declarado) — fica porque nomeia
+a causa; o `cmp` do sync-state nomeia o sed que não casa, mas não detecta (o "seguiu verde" já pegava).
+
+**Lições novas:** (1) o erro que o **próprio SUT** isola (`WHEN OTHERS` por check) produz o valor
+declarado com a rodada saindo 0 — a medição tem de carregar o registro de falhas do SUT;
+(2) `if sabota` suspende o errexit ATÉ dentro da função — o `return` dela tem de ser o do passo que
+importa, não o do último comando; (3) "já-correto" de leitura minha também é hipótese: F6/F7/F9 do
+estoque caíram no Codex.
+
+De passagem (fora da classe, tarefa própria): `mktemp /tmp/x.XXXXXX.sql` é nome LITERAL no mktemp do
+macOS (só troca X finais) — rodadas paralelas colidem ("File exists"). Aparece em
+`estoque-fonte-dado`, `watchdog-reemissao`, `preco-medio-leadtime-efetivo` e `import-tint-formulas`;
+o harness da meta tira o sufixo nas cópias.
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
@@ -405,7 +472,10 @@ tarefas com a assinatura calibrada e a lista de sites no briefing:
 
 - **"Erradicar falsificação sem assert em db/ fora do núcleo"** — os 4 afetados de `db/`.
 - **"Declarar valor sabotado nas provas db/ com juiz ≠ verde"** — os 27 parciais de `db/`, no padrão do
-  `vermelha` com 4º argumento do pedido-total (em fases por domínio).
+  `vermelha` com 4º argumento do pedido-total (em fases por domínio). **Fase 1 (sensores, 5) feita —
+  acima.** Seguem, com a mesma sessão como dono: farmer (5: `desfecho`, `geracao-vigente`,
+  `head-geracao`, `melhor-individual-bulk`, `margem-server-side`), preço/custo/margem (5, com o ritual
+  Codex), tint + reposição/pedidos/tático (6), authz/RLS + dados (6).
 - ~~**"Erradicar falsificação sem assert no test:falsificacao"**~~ — **feita na 2ª leva** (seção
   acima): os 14 de `scripts/` reconfirmados e consertados — 13 aqui, e o `eval-via-morta` pela fase
   dos evals do deploy-verify (o PR dela muda o eval e o juiz juntos).

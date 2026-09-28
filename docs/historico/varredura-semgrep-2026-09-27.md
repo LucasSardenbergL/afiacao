@@ -164,9 +164,18 @@ não compilou é de linguagem ausente.
   em dia, com `*` e gate de termo degenerado. A deriva é de UM espelho, e por isso a correção é de
   CLASSE: pôr o helper num bloco `// MIRROR-START` com asserção de paridade em
   `src/__tests__/edge-money-path-invariants.test.ts`.
-- **B2 — P3, curinga, `src/pages/AdminReposicaoVendaPerdida.tsx:58`.** O único `.ilike` cru de
-  `src/`: `%${termo}%` sem `ilikeContainsPattern` (a classe do #1062). Com `**`, match-all limitado
-  por RLS, `limit(10)` e `eq(account/ativo)`. O ESLint atual não olha `.ilike`/`.like`.
+- **B2 — P3, curinga, `src/pages/AdminReposicaoVendaPerdida.tsx:58`. ✅ Corrigido em #2627.** O único
+  `.ilike` cru de `src/`: `%${termo}%` sem `ilikeContainsPattern` (a classe do #1062). Com `**`,
+  match-all limitado por RLS, `limit(10)` e `eq(account/ativo)`. O ESLint da época não olhava
+  `.ilike`/`.like`. O #2627 fechou a instância (termo degenerado = nenhum resultado, porque é busca
+  pura) e a classe em `src/`: `no-restricted-syntax` barra template com interpolação ou concatenação
+  no argumento de pattern de `.ilike`/`.like`, `*AnyOf`/`*AllOf` e `.filter`/`.not(col, 'ilike', …)`,
+  com prova em `scripts/eslint-postgrest-pattern-like.test.ts`. Os 3 sites seguros que a regra
+  pegaria passaram para `ilikeContainsPattern`/`likePrefixPattern`. A varredura da classe achou a
+  mesma forma nas RPCs SQL de prod, onde o ESLint não entra. Censo por `psql-ro`:
+  `pg_proc.prosrc ~* '\mi?like\s+[^\n;]{0,90}?(\|\||concat\s*\()'` em `public`/`private` devolveu 9
+  funções. `buscar_skus_candidatos` já escapa (`replace` de `\ % _` + `ESCAPE '\'`, o modelo); 6
+  concatenam parâmetro cru e 2 concatenam valor de coluna. Vai para o chip abaixo.
 - **B3 — P4, curinga, `supabase/functions/promocao-extrair-via-vision/index.ts:210`.** "Match exato
   case-insensitive" via `.ilike` sem escapar `%`/`_` do nome que a IA extraiu do documento. No pior
   caso, fornecedor normalizado errado (ou `maybeSingle` erra e cai no match por substring). O fluxo
@@ -206,7 +215,8 @@ nessa cegueira (helper espelhado na edge, onde o lint não entra).
 - Correções, cada uma no seu PR (chips abertos em 2026-09-27, quem clica é o founder):
   "Passar github.base_ref por env no ci.yml" (A2, ✅ #2626) · "Pôr o sanitizador .or() da
   analyze-unified-order em MIRROR" (B1, classe) · "Fechar .ilike cru com curinga
-  (AdminReposicaoVendaPerdida)" (B2 + gate ESLint).
+  (AdminReposicaoVendaPerdida)" (B2 + gate ESLint, ✅ #2627) · "Escapar curinga de LIKE nas RPCs
+  SQL" (a camada SQL da classe do B2, achada na varredura do #2627).
 - 🧭 Decisões do founder: (a) pin das actions por SHA e a política de atualização (A1); (b) o bug do
   `--include` já estava reportado (#297 da ToB), falta decidir se comentamos com a medida em TS e o
   caminho do workflow; (c) semgrep no CI como 2º eixo de gate (custo de CI × a cegueira do ESLint

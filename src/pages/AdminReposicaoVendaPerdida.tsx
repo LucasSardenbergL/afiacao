@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EMPRESA } from "@/components/reposicao/pedidos/shared";
 import { track } from "@/lib/analytics";
+import { ilikeContainsPattern } from "@/lib/postgrest";
 import { useAuth } from "@/contexts/AuthContext";
 
 /**
@@ -48,14 +49,21 @@ export default function AdminReposicaoVendaPerdida() {
     staleTime: 60_000,
     queryFn: async (): Promise<ProdutoOpcao[]> => {
       const termo = busca.trim();
-      const porCodigo = /^\d+$/.test(termo);
       let q = supabase
         .from("omie_products")
         .select("omie_codigo_produto, descricao")
         .eq("account", EMPRESA.toLowerCase())
         .eq("ativo", true)
         .limit(10);
-      q = porCodigo ? q.eq("omie_codigo_produto", Number(termo)) : q.ilike("descricao", `%${termo}%`);
+      if (/^\d+$/.test(termo)) {
+        q = q.eq("omie_codigo_produto", Number(termo));
+      } else {
+        // Busca pura (seletor de SKU): termo só-curinga (`**`, `%%` passam o length>=2) casaria
+        // todo SKU ativo (#1062). Não-pesquisável = nenhum resultado, não 10 SKUs arbitrários.
+        const pat = ilikeContainsPattern(termo);
+        if (!pat) return [];
+        q = q.ilike("descricao", pat);
+      }
       const { data, error } = await q;
       if (error) throw error;
       return (data ?? []).map((r) => ({ omie_codigo_produto: Number(r.omie_codigo_produto), descricao: r.descricao }));
