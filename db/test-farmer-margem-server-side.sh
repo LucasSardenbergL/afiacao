@@ -49,8 +49,12 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
-# usado só na falsificação: exige que o valor MUDE (o assert verdadeiro tem de ficar vermelho)
-ne()  { if [ "$2" != "$3" ]; then ok "$1 (veio [$2], ≠ [$3] como esperado)"; else bad "$1 — a sabotagem NÃO mudou o resultado: assert sem dente"; fi; }
+# usado só na falsificação: o valor tem de MUDAR para o que a sabotagem DECLARA ($4) — não só "mudou".
+# O "≠" aceitava a leitura que ERRA: a medição é argumento (sem errexit), sai VAZIA, e vazio ≠ verde.
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+ne()  { if [ "$2" = "$3" ]; then bad "$1 — a sabotagem NÃO mudou o resultado: assert sem dente"
+        elif [ "$2" = "$4" ]; then ok "$1 (veio [$2], ≠ [$3] como esperado)"
+        else bad "$1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (verde [$3])"; fi; }
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 
@@ -393,8 +397,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $f$
   FROM itens i GROUP BY i.customer_user_id;
 $f$;
 SQL
-ne "F1 N1 fica vermelho (NULL viraria 0)"  "$(M 3)" "NULL"
-ne "F1 N2 fica vermelho (custo 0)"         "$(M 5)" "NULL"
+ne "F1 N1 fica vermelho (NULL viraria 0)"  "$(M 3)" "NULL" "0"
+ne "F1 N2 fica vermelho (custo 0)"         "$(M 5)" "NULL" "0"
 
 echo "── falsificacao F2: receita do item SEM custo entra no denominador ──"
 P -q <<'SQL'
@@ -423,24 +427,30 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $f$
   FROM itens i GROUP BY i.customer_user_id;
 $f$;
 SQL
-ne "F2 P2 fica vermelho (40.00 viraria 80.00)" "$(M 2)" "40.00"
+ne "F2 P2 fica vermelho (40.00 viraria 80.00)" "$(M 2)" "40.00" "80.00"
 
 echo "── falsificacao F3: GRANT p/ authenticated (o REVOKE perde o dente) ──"
 P -q -f "$MIG"; P -q -f "$MIG2"; P -q -f "$MIG3"; P -q -f "$MIG4"                                                  # restaura a versão verdadeira
 P -q -c "GRANT EXECUTE ON FUNCTION public.get_customer_margin_summary() TO authenticated;"
-AUTHF=$(P -tA 2>&1 <<'SQL' || true
+# O que a sabotagem DECLARA: com o GRANT, authenticated EXECUTA — a marca de sucesso com o psql saindo
+# 0. "Não veio NEGOU_42501" aceitava QUALQUER outro desfecho, inclusive um erro alheio (e a linha do
+# erro diz ERROR ou ERRO conforme o locale do servidor).
+AUTHF=$(P -tA 2>&1 <<'SQL'; echo "PSQL_RC=$?"
 SET ROLE authenticated;
 DO $$
 BEGIN
   PERFORM * FROM public.get_customer_margin_summary();
-  RAISE EXCEPTION 'EXECUTOU_QUANDO_NAO_DEVIA';
+  RAISE NOTICE 'SENTINELA_EXECUTOU';
 EXCEPTION
   WHEN insufficient_privilege THEN RAISE NOTICE 'NEGOU_42501';
-  WHEN OTHERS THEN RAISE;
 END $$;
 SQL
 )
-if echo "$AUTHF" | grep -q 'NEGOU_42501'; then bad "F3 sabotagem NAO teve efeito: o assert A1 nao tem dente"; else ok "F3 A1 fica vermelho com o GRANT (assert tem dente)"; fi
+case "$AUTHF" in
+  *SENTINELA_EXECUTOU*PSQL_RC=0) ok "F3 A1 fica vermelho com o GRANT (assert tem dente)" ;;
+  *NEGOU_42501*PSQL_RC=0) bad "F3 sabotagem NAO teve efeito: o assert A1 nao tem dente" ;;
+  *) bad "F3 — vermelha, mas NÃO no que a sabotagem declara (executou, psql 0): $(printf '%s' "$AUTHF" | head -c 200)" ;;
+esac
 
 echo "── falsificacao F4: COALESCE em gross_margin_pct (o NULL honesto seria engolido) ──"
 # Reseta a linha 2 para um valor velho plausível e tenta NULLá-la com a função SABOTADA.
@@ -467,7 +477,7 @@ BEGIN
 END $f$;
 SQL
 APPLY '[{"id":"0d000000-0000-0000-0000-000000000002","health_score":40,"health_class":"atencao","churn_risk":60,"priority_score":5,"rf_score":8,"m_score":null,"g_score":9,"gross_margin_pct":null,"days_since_last_purchase":20,"avg_monthly_spend_180d":50,"category_count":1,"calculated_at":"2026-07-20T00:00:00Z","updated_at":"2026-07-20T00:00:00Z"}]' >/dev/null
-ne "F4 AP2 fica vermelho (42 sobreviveria ao NULL)" "$(GMP 2)" "NULL"
+ne "F4 AP2 fica vermelho (42 sobreviveria ao NULL)" "$(GMP 2)" "NULL" "42"
 
 echo "── falsificacao F5: sentinela removida (chave ausente volta a NULLar a coluna) ──"
 # Sabota trocando a sentinela pelo jsonb_to_recordset cru — exatamente a versão da 150000, que é o
@@ -498,8 +508,8 @@ BEGIN
 END $f$;
 SQL
 APPLY '[{"id":"0d000000-0000-0000-0000-000000000001","health_score":51,"health_class":"estavel","churn_risk":49,"priority_score":11,"rf_score":11,"g_score":11,"days_since_last_purchase":11,"avg_monthly_spend_180d":101,"category_count":2,"calculated_at":"2026-07-20T00:00:00Z","updated_at":"2026-07-20T00:00:00Z"}]' >/dev/null
-ne "F5 AP4 fica vermelho (56.00 seria NULLado)" "$(GMP 1)" "56.00"
-ne "F5 m_score idem"                            "$(MSC 1)" "56"
+ne "F5 AP4 fica vermelho (56.00 seria NULLado)" "$(GMP 1)" "56.00" "NULL"
+ne "F5 m_score idem"                            "$(MSC 1)" "56" "NULL"
 
 echo "── restauro final: migrations verdadeiras + reconferencia ──"
 P -q -f "$MIG"; P -q -f "$MIG2"; P -q -f "$MIG3"; P -q -f "$MIG4"
