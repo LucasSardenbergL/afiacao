@@ -29,6 +29,20 @@ REPROVADO com 5 P1 + 1 P2 — incorporados: sem quarentena por status; cap de 50
 
 `db/test-tint-promocao-assincrona.sh`: X1 (premissa do timeout) + 44 asserts em 12 cenários + 12 falsificações, cada uma exigindo o conjunto EXATO de asserts vermelhos, na mesma invocação do controle verde, nos locales `C` e `pt_BR.UTF-8`. Edge: `promocao-fila_test.ts` (Deno). ⚠️ A prova é LOCAL: já segue o contrato do núcleo (`PASS=`/`SABOTAGENS:`, `pg-harness.sh`, `PGPORT_TEST`), mas não entrou no `db/nucleo-ci.txt` — carrega o snapshot completo, que exige pgvector, e o job `provas-sql` só instala `postgresql-17` (nenhuma prova tint roda no merge hoje; ficou como follow-up de infraestrutura).
 
+## Evidência em prod (2026-09-28, 1º dia útil após o deploy)
+
+Medido via psql-ro às 18:44 BRT (último run 17:30 BRT). Edge deployada em 2026-09-26 02:38Z; fim de semana sem runs, como esperado.
+
+| Critério | Número | Veredito |
+|---|---|---|
+| Edge nova servindo (`promocao_status` preenchido) | catalogs 1016/1016 · formulas 62/62 | ✅ |
+| Lote grande promovido | run 07:31 BRT, **48 pares**, `complete` + `promovido` na 1ª tentativa, 513s na fila | ✅ |
+| Zero 500 | 0 erros `promotion` (`upstream request timeout`/`lock timeout`); 0 runs `error` (1016+62+1 keys_snapshot, todos `complete`) — linha de base: 4 runs grandes em `error` só em 09-24 | ✅ |
+| Fila saudável | 0 `pendente`/`erro`; tick 240/240 `succeeded` na última hora; 0 alertas `tint_promocao_*` ativos | ✅ |
+| 5b#1 | `tombstones_fase5_preservados` presente em todos os 40 runs promovidos listados | ✅ |
+
+Observação (não é falha): a espera na fila dos runs de 1 par fica em ~260–280s, apesar do tick de 15s — coerente com a FIFO estrita por (account,store) atrás do volume de catalogs; bem abaixo do limiar de 45 min do watchdog.
+
 ## Lição que generaliza
 
 **"O 500 prova que não gravou" é falso quando quem corta é o gateway.** A query segue, commita e segura locks — o sintoma aparece no request seguinte, com outra mensagem. Antes de concluir que uma escrita via RPC falhou, confira o efeito no banco. (Registrado em `docs/agent/database.md` §5.)
