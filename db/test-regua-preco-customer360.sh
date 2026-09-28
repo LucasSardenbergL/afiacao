@@ -201,12 +201,16 @@ eq "F1b restaurado → preco_atual = 130" "$(fnum 7001 preco_atual 130)" "t"
 # F2 — gate da customer360 protege o caminho hide_reason. Sabota (IF false): customer recebe dados.
 sed "s/IF NOT (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')) THEN/IF false THEN/" "$MIG360" > /tmp/sab-360-gate.sql
 P -q -f /tmp/sab-360-gate.sql
-RG=$(P -tA 2>&1 <<SQL || true
+# O que a sabotagem DECLARA: o customer recebe exatamente 1 linha, com o psql saindo 0. O `*1*` sobre a
+# saída com stderr casava QUALQUER texto com o dígito 1 — inclusive o `LINE 1:` de um erro qualquer.
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+set +e; RG=$(P -tA -q <<SQL
 SET test.uid='$CUST';
 SELECT jsonb_array_length(public.get_regua_preco_customer360('$CA'::uuid, ARRAY[7003]::bigint[]));
 SQL
-)
-case "$RG" in *1*) ok "F2 gate furado → customer recebe dados (N1 tem dente)";; *) bad "F2 sabotagem do gate não detectada → N1 é teatro [$RG]";; esac
+); RC_RG=$?; set -e
+if [ "$RC_RG" -eq 0 ] && [ "$RG" = "1" ]; then ok "F2 gate furado → customer recebe dados (N1 tem dente)"
+else bad "F2 — NÃO é o que a sabotagem declara (1 linha, psql 0): rc=$RC_RG [$RG]"; fi
 P -q -f "$MIG360"  # restaura
 RG2=$(P -tA 2>&1 <<SQL || true
 SET test.uid='$CUST';
