@@ -270,12 +270,18 @@ J9="$P9/-Users-x-Projetos-afiacao-teste/t.jsonl"
   linha_req req_2 s4
   printf '{"sessionId":"s4","requestId":"req_3","messa'; } > "$J9"
 if saida_t="$(CLAUDE_PROJECTS_DIR="$P9" bash "$ALVO" --por-arquivo --linhas 99 2>&1)"; then rc=0; else rc=$?; fi
-if [ "$rc" -eq 0 ] && tem "$saida_t" "docs/agent/vivo.md" && tem "$saida_t" "linha ilegível"; then
-  ok "A9 transcript truncado: mede o que veio antes da quebra E anuncia o descarte"
-elif [ "$rc" -ne 0 ]; then
-  ruim "A9 transcript truncado abortou a varredura inteira (exit $rc) — 1 sessao viva derruba todas"
+# DOIS asserts, não um: "não aborta" e "anuncia" são defeitos DIFERENTES, cada um com a sua
+# sabotagem — sob um ID só, a falsificação de um aceitaria o vermelho do outro (2026-09-27).
+if [ "$rc" -eq 0 ] && tem "$saida_t" "docs/agent/vivo.md"; then
+  ok "A9 transcript truncado: mede o que veio antes da quebra (nao aborta a varredura)"
 else
-  ruim "A9 transcript truncado passou CALADO — descarte silencioso e o defeito que esta suite persegue"
+  ruim "A9 transcript truncado abortou a varredura inteira (exit $rc) — 1 sessao viva derruba todas"
+  printf '%s\n' "$saida_t" | sed 's/^/      /'
+fi
+if [ "$rc" -eq 0 ] && tem "$saida_t" "linha ilegível"; then
+  ok "A9b transcript truncado: anuncia o descarte da linha ilegivel"
+else
+  ruim "A9b transcript truncado passou CALADO (exit $rc) — descarte silencioso e o defeito que esta suite persegue"
   printf '%s\n' "$saida_t" | sed 's/^/      /'
 fi
 
@@ -390,7 +396,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # docs/historico/falsificacao-exit-nao-e-dente.md
   SABOTAGENS="custo_vira_posicao:A1 dedupe_desligado:A2 extracao_vazia_ok:A5 janela_sem_sessao_ok:A5b
               sem_file_path_descartada:A3 normalizacao_desligada:A7 marcador_fim_removido:A6
-              mktemp_so_bsd:A10 jq_solto_sob_set_e:A9 descarte_calado:A9 sem_lc_all_c:A8"
+              mktemp_so_bsd:A10 jq_solto_sob_set_e:A9 descarte_calado:A9b sem_lc_all_c:A8"
 
   # registra <nome> <descricao> <invariante que deve quebrar> <expressao sed> — a TABELA das
   # sabotagens. Nome da lista sem registro e registro fora da lista são FALHA (no fim do laço): o
@@ -438,9 +444,15 @@ if [ "${1:-}" = "--falsificar" ]; then
   registra mktemp_so_bsd "mktemp volta a forma so-BSD (-t <prefixo>)" \
          "verde no macOS e vermelho no CI pelo mesmo codigo — flag homonima BSD x GNU" \
          's|^BRUTO=$(mktemp .*)$|BRUTO=$(mktemp -t ocupacao-contexto)|'
-  registra jq_solto_sob_set_e "jq volta a rodar solto sob set -e" \
+  # A linha ilegível volta a ABORTAR a varredura (o exit 5 do `set -e` no incidente). Até
+  # 2026-09-27 o sed era `if ! jq` → `if jq`: não soltava o jq do `set -e` (ele segue dentro do
+  # `if`), só invertia a contagem — e o que caía era o ANÚNCIO, o sintoma da sabotagem de baixo.
+  # Com o A9 partido em A9/A9b, a medição mostrou (A9b vermelho, A9 verde). Um sed de UMA linha
+  # não tira o `if !` sem quebrar a sintaxe; trocar a contagem por `exit 5` é o sintoma exato.
+  # shellcheck disable=SC2016  # `$((` é o TEXTO do alvo que o sed casa
+  registra jq_solto_sob_set_e "jq volta a abortar a varredura (o exit 5 do set -e)" \
          "1 sessao viva com linha parcial abortaria a varredura das outras 684" \
-         's/^  if ! jq -rc /  if jq -rc /'
+         's/^    parse_falhou=\$((parse_falhou + 1))$/    exit 5/'
   # shellcheck disable=SC2016  # idem: `$parse_falhou` é o TEXTO procurado dentro
   # do alvo — a variável não existe nesta shell, e expandir escreveria um padrão
   # vazio que não casa nada.
