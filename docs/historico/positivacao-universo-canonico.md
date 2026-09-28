@@ -126,7 +126,13 @@ NOT NULL` explícito seria redundante — e predicado redundante não se falsifi
 - **O laço exige o denominador** (adversarial, P2 #5): antes, uma rodada que produzia o vermelho
   declarado e depois morria por um erro (`set -e`) era aceita como dente. Agora cada rodada tem de
   terminar com `RESULTADO` e executar 58 asserts (50 nas duas sabotagens de corpo antigo, que
-  pulam o bloco M).
+  pulam o bloco M). **Pegou um defeito meu na primeira matriz:** a sabotagem nova
+  `pre_ausente_segue` deixou o M5 vermelho por resultado — o dente existia —, mas o `case` das
+  sabotagens de corpo não a listava no ramo que não faz nada, e a rodada saía em "sabotagem
+  desconhecida" logo depois do bloco M. Sem o denominador, o laço antigo a teria aceitado. E o
+  próprio laço morreu em seguida, num `grep | head | sed` de diagnóstico sem linha para casar, sob
+  `pipefail` + `set -e`: perdeu o `pos_sem_wrappers` e o recibo (o "`| head` latente" do
+  CLAUDE.md). Os três recortes levam `|| true` dentro das chaves.
 - **Bloco B re-baselinado.** Os pedidos sem kpi (Y1, Y2, Y3 e o 1º de R) viraram controles
   negativos do fallback. Tirar o fallback matava a testemunha de `min()` × `max()` (P1 #4 do
   desenho): entrou Q, que compra com kpi em fevereiro E março — em março é positivado e não é novo.
@@ -216,3 +222,6 @@ deixa a erradicação para um chip por domínio.
 9. **Barreira observada não basta se o bloqueador pode sair sozinho.** O sinal tem de sumir junto
    com a transação que ele atesta (advisory de transação), e o bloqueador só sai quando o
    orquestrador manda.
+10. **Sabotagem nova precisa passar por TODOS os despachos do script, não só pelo que ela usa.** A
+    `pre_ausente_segue` agia no bloco M e caía no `*)` do `case` de corpo, mais abaixo. O
+    denominador por rodada é o que transforma esse esquecimento em vermelho em vez de dente falso.
