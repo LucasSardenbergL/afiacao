@@ -146,11 +146,30 @@ NOT NULL` explícito seria redundante — e predicado redundante não se falsifi
   `allowlist_faturado`, uma por status da denylist, `primeira_so_no_mes`, `corpo_2606` (o corpo de
   prod antes desta) e as 4 da migration (`pre_sem_trava`, `pre_aceita_qualquer`,
   `pre_ausente_segue`, `pos_sem_wrappers`). Matriz servidor `TZ=UTC`/local × `lc_messages`
-  C/pt_BR: PENDENTE. (O rascunho anterior ao adversarial fechou 4/4 com 25/25.)
+  C/pt_BR: **4/4 com 26/26**, controle verde com 58 asserts em todas (o rascunho anterior ao
+  adversarial fechou 4/4 com 25/25). No CI, `provas-sql` verde com o núcleo e o `--falsificar`.
 - **Tempo:** no laptop o `--falsificar` levou mais de 10 min, e isso não projeta o CI. No log do
   runner a versão anterior roda em 1 s (suíte) e 18 s (falsificação), ~20× mais rápido. O
   `lock_timeout` do M4 caiu para 500 ms (um CREATE livre termina em microssegundos), e a projeção
   é ~80 s para o job `provas-sql`, que leva 6 min 45 s de um teto de 12.
+
+## Aplicação e validação
+
+- **Ensaio** (`bun run db:aplicar … --ensaio`): rodou inteiro na prod pelo executor real — a PRE
+  com o toque, sob os privilégios do `aplicar_sql` —, `POS OK` no log, ROLLBACK.
+- **Apply**: tentativa **#179** virou recibo `aplicada` na mesma transação — sha256 `3718cd10…`,
+  commit `32c274ab8`, 2026-09-28 01:59:41 UTC. Aplicado antes do CI verde do último commit, por
+  decisão explícita: a migration tinha os mesmos bytes que já haviam passado no `provas-sql` do CI
+  em dois commits, e cada rodada de espera virava um novo conflito com a `main` nos arquivos de
+  acréscimo. O merge continua exigindo o CI verde.
+- **Validação por fora** (`psql-ro`, outra conexão, depois do commit): recibo `aplicada` com o sha
+  dos bytes commitados; corpo com o md5 EXATO da migration; SECURITY DEFINER, `search_path=public`,
+  dono `postgres`; anon/authenticated/PUBLIC sem EXECUTE; os dois wrappers com o md5 de antes e
+  executáveis por `authenticated`; efeito nos dados = a referência medida antes do commit (jun
+  −R$ 5.239,10, ago −R$ 767, positivados iguais).
+- **Não exercitado por mim:** o caminho autenticado pelo app (PostgREST → wrapper → interno) — o
+  `claude_ro` não tem EXECUTE nos wrappers. Ele está provado no harness (W1/W2) e no catálogo;
+  em prod, o smoke é abrir o hero de positivação.
 
 ## O Codex
 
@@ -225,3 +244,13 @@ deixa a erradicação para um chip por domínio.
 10. **Sabotagem nova precisa passar por TODOS os despachos do script, não só pelo que ela usa.** A
     `pre_ausente_segue` agia no bloco M e caía no `*)` do `case` de corpo, mais abaixo. O
     denominador por rodada é o que transforma esse esquecimento em vermelho em vez de dente falso.
+11. **O shell inline desta ferramenta é zsh, e dois idiomas de bash mudam de sentido nele** (os dois
+    morderam o merge por encanamento, e as guardas pegaram antes do push): `"$VAR:s…"` aplica o
+    MODIFICADOR `:s` do zsh (o resto da string vira argumento dele, e `"$SHA:scripts/x.sql"` chegou
+    ao `git` como só `$SHA` — uma árvore saiu com um COMMIT no lugar de um blob), e `read … path`
+    sobrescreve o `PATH` (no zsh, `path` é o array amarrado a ele). Use `"${VAR}:caminho"` e nunca
+    `path` como variável. Scripts `.sh` rodados com `bash` não sofrem disso.
+12. **Árvore com arquivo protegido desatualizado faz gate local mentir.** Depois do merge por
+    encanamento, 5 arquivos de `.claude/skills` ficaram com a versão antiga no disco (o sandbox não
+    os reescreve), e o gate de fuso em skills reprovou 3 testes LOCALMENTE — com o commit certo,
+    blob a blob igual ao da `main`. Quem julga, nesse estado, é o CI, que faz checkout do commit.
