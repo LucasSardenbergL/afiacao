@@ -206,4 +206,4 @@ db/test-positivacao-eligible-consumo.sh    44  falsificar=14
 # (20260927172443). Mesmo relógio controlado, borda do DIA cruzada sob as duas sessões; o
 # current_date é palavra-chave e escapa do relógio, então o R0 chama cada RPC SEM pin e exige o
 # tripwire. O pai do --falsificar exige o filho completo e todo erro de execução declarado.
-db/test-hoje-sp-sessao-utc-precos-piso.sh  49  falsificar=17
+db/test-hoje-sp-sessao-utc-precos-piso.sh  50  falsificar=18

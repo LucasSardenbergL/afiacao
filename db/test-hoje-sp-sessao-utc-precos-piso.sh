@@ -37,10 +37,10 @@ export LC_ALL=C LANG=C
 MIG_GUPC_ORIGEM="$REPO_ROOT/supabase/migrations/20260704120000_preco_por_tier.sql"
 MIG_MAPT_ORIGEM="$REPO_ROOT/supabase/migrations/20260718190000_authz_capability_matrix_e2.sql"
 MIG_NOVA="$REPO_ROOT/supabase/migrations/20260927172443_hoje_sp_sessao_utc_precos_piso.sql"
-# Denominador: quantos asserts a suíte EXECUTA (H1-X3 · D/L · R · A1-A6 · B0-M2 ×2 sessões · W1-W2).
-# Asserts a menos — um bloco que não rodou — é vermelho: `FAIL=0` com PASS encolhido é a prova
-# truncada que aprova tudo.
-TOTAL_ESPERADO=49
+# Denominador: quantos asserts a suíte EXECUTA (H1 · X1-X3s · D/L · R · A1-A6 · B0-M2 ×2 sessões ·
+# W1-W2). Asserts a menos — um bloco que não rodou — é vermelho: `FAIL=0` com PASS encolhido é a
+# prova truncada que aprova tudo.
+TOTAL_ESPERADO=50
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: prova que os asserts têm DENTE.
@@ -73,9 +73,10 @@ if [ "${1:-}" = "--falsificar" ]; then
               gate_custo_removido:A3,D2:A4,A1,A6,D1
               acl_anon_aberta:A5,A6:A1,A2,A3,A4
               literal_com_traco:L1,D1:D2
-              pre_cega:X1g,X1m:X2,X3
-              pre_sem_reaplicacao:X2:X1g,X1m,X3
-              sem_grant_authenticated:X3:X1g,X1m,X2"
+              pre_cega:X1g,X1m:X2,X3,X3s
+              pre_sem_reaplicacao:X2:X1g,X1m,X3,X3s
+              sem_grant_authenticated:X3:X3s,X1g,X1m,X2
+              revoke_sem_anon:X3s:X3,X1g,X1m,X2"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -299,17 +300,27 @@ case "$SABOTAGEM" in
     sabotar_arquivo "$MIG_X2" \
       "'b8b3798d64e6bdbd8708eef7afc46222', '8d36e4875df012383a1d360789ce6f3d'" "'b8b3798d64e6bdbd8708eef7afc46222', 'sabotado'" 1 \
       "'78b1d60f0fca7d9580b131eafdd55bb0', 'cce088ac976a1c0d1c01ba070bf10ed1'" "'78b1d60f0fca7d9580b131eafdd55bb0', 'sabotado'" 1 ;;
-  # sem o GRANT: onde a função NASCE aqui, authenticated (o staff pelo PostgREST) ficaria sem EXECUTE
+  # sem o GRANT: onde a função NASCE aqui sem default ACL, authenticated (o staff pelo PostgREST)
+  # ficaria sem EXECUTE — vermelha no X3; no X3s o default do Supabase já dá a porta
   sem_grant_authenticated) MIG_X3="$TMPD/mig_x3.sql"
     sabotar_arquivo "$MIG_X3" \
       "GRANT EXECUTE ON FUNCTION public.get_ultimos_precos_cliente(uuid) TO authenticated;" "" 1 \
       "GRANT EXECUTE ON FUNCTION public.medir_abaixo_piso_tier(integer) TO authenticated;" "" 1 ;;
+  # o REVOKE só de PUBLIC: com o default ACL do Supabase a função nasce com EXECUTE DIRETO a anon, que
+  # um REVOKE de PUBLIC não tira — vermelha no X3s; no X3 (sem default) anon nunca teve a porta
+  revoke_sem_anon) MIG_X3="$TMPD/mig_x3.sql"
+    sabotar_arquivo "$MIG_X3" \
+      "REVOKE EXECUTE ON FUNCTION public.get_ultimos_precos_cliente(uuid) FROM PUBLIC, anon;" \
+      "REVOKE EXECUTE ON FUNCTION public.get_ultimos_precos_cliente(uuid) FROM PUBLIC;" 1 \
+      "REVOKE EXECUTE ON FUNCTION public.medir_abaixo_piso_tier(integer) FROM PUBLIC, anon;" \
+      "REVOKE EXECUTE ON FUNCTION public.medir_abaixo_piso_tier(integer) FROM PUBLIC;" 1 ;;
 esac
 
 # ══════════════════════════════════════════════════════════════════════════════
 # X — OS CAMINHOS DECLARADOS DA MIGRATION (parecer Codex): deriva ABORTA, função ausente NASCE com o
-# ACL do contrato, re-aplicar é seguro. X1/X3 rodam numa transação que volta atrás; o apply de
-# verdade e a re-aplicação usam `psql -1` — a transação única do executor (db:aplicar).
+# ACL do contrato (sem e com o default ACL do Supabase), re-aplicar é seguro. X1/X3/X3s rodam numa
+# transação que volta atrás; o apply de verdade e a re-aplicação usam `psql -1` — a transação única do
+# executor (db:aplicar).
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── caminhos da migration ──"
 deriva() {   # <id> <descrição> <predecessor> <função> <de> <para>
@@ -336,13 +347,21 @@ deriva X1g "corpo vivo do gupc derivado (unit_price >= 0) → a PRE aborta" "$PR
 deriva X1m "corpo vivo do medir derivado (total_itens + 0) → a PRE aborta" "$PRED_M" medir_abaixo_piso_tier \
   "count(*) AS total_itens" "count(*) + 0 AS total_itens"
 
-rc=0
-out="$(P -q -tA -F '|' 2>&1 <<SQL
+# Nascimento: as duas funções AUSENTES, a migration as cria. Em DOIS mundos, porque cada linha do
+# fecho só tem dente num deles (parecer Codex, adversarial): num cluster SEM default ACL a função nasce
+# com EXECUTE a PUBLIC e é o GRANT que dá a porta a authenticated (X3); com o default ACL do Supabase
+# (medido em prod: schema public, funções → EXECUTE a anon/authenticated/service_role) ela nasce com
+# EXECUTE DIRETO a anon, e é o REVOKE nominal de anon que fecha (X3s). O aborto da POS é VEREDITO (a
+# migration disse que o contrato não fechou), não erro de execução.
+nascimento() {   # <id> <descrição> <DDL a rodar antes, na mesma transação — ou vazio>
+  local id="$1" descr="$2" antes="$3" out rc=0 v
+  out="$(P -q -tA -F '|' 2>&1 <<SQL
 BEGIN;
+$antes
 DROP FUNCTION public.get_ultimos_precos_cliente(uuid);
 DROP FUNCTION public.medir_abaixo_piso_tier(integer);
 \i $MIG_X3
-SELECT 'X3', f.a, f.p, f.u, f.dono FROM (
+SELECT '$id', f.a, f.p, f.u, f.dono FROM (
   SELECT string_agg(has_function_privilege('anon', x.oid, 'EXECUTE')::text, ',' ORDER BY x.n) AS a,
          string_agg(has_function_privilege('public', x.oid, 'EXECUTE')::text, ',' ORDER BY x.n) AS p,
          string_agg(has_function_privilege('authenticated', x.oid, 'EXECUTE')::text, ',' ORDER BY x.n) AS u,
@@ -353,16 +372,18 @@ SELECT 'X3', f.a, f.p, f.u, f.dono FROM (
 ROLLBACK;
 SQL
 )" || rc=$?
-V="$(printf '%s\n' "$out" | grep '^X3|' || true)"
-X3_DESCR="função AUSENTE: a migration a cria com o contrato PORTA_GATE (anon/PUBLIC não, authenticated sim, dono postgres)"
-if [ "$rc" -eq 0 ]; then
-  eq X3 "$X3_DESCR" "$V" "X3|false,false|false,false|true,true|postgres,postgres"
-elif printf '%s' "$out" | grep -q 'POS[0-9] FALHOU'; then
-  # o aborto da POS é um VEREDITO (a migration disse que o contrato não fechou), não erro de execução
-  bad X3 "$X3_DESCR — a migration abortou ao nascer: $(printf '%s' "$out" | grep -o 'POS[0-9] FALHOU[^—]*' | head -1)"
-else
-  erro_exec X3 "$X3_DESCR — falhou, mas não pela POS: $(printf '%s' "$out" | tr '\n' ' ' | head -c 200)"
-fi
+  v="$(printf '%s\n' "$out" | grep "^$id|" || true)"
+  if [ "$rc" -eq 0 ]; then
+    eq "$id" "$descr" "$v" "$id|false,false|false,false|true,true|postgres,postgres"
+  elif printf '%s' "$out" | grep -q 'POS[0-9] FALHOU'; then
+    bad "$id" "$descr — a migration abortou ao nascer: $(printf '%s' "$out" | grep -o 'POS[0-9] FALHOU[^—]*' | head -1)"
+  else
+    erro_exec "$id" "$descr — falhou, mas não pela POS: $(printf '%s' "$out" | tr '\n' ' ' | head -c 200)"
+  fi
+}
+nascimento X3 "função AUSENTE, cluster sem default ACL: nasce com o contrato PORTA_GATE (anon/PUBLIC não, authenticated sim, dono postgres)" ""
+nascimento X3s "função AUSENTE com o default ACL do Supabase (EXECUTE direto a anon): nasce com o mesmo contrato" \
+  "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;"
 
 rc=0; out="$(P -1 -q -f "$MIG_NOVA" 2>&1)" || rc=$?
 if [ "$rc" -ne 0 ] || ! printf '%s' "$out" | grep -q 'POS OK:'; then
@@ -386,15 +407,16 @@ fi
 sabotar() {   # <função> <de> <para> <n> [<de> <para> <n> ...]
   local fn="$1" bloco sab; shift
   bloco="$(mktemp "$TMPD/bloco.XXXXXX")"; sab="$(mktemp "$TMPD/sab.XXXXXX")"
-  extrair "$MIG_NOVA" "CREATE OR REPLACE FUNCTION public.$fn(" "$bloco" \
-    && trocar "$bloco" "$sab" "$@" || { echo "❌ SABOTAGEM NAO APLICAVEL ($SABOTAGEM)"; exit 9; }
+  if ! { extrair "$MIG_NOVA" "CREATE OR REPLACE FUNCTION public.$fn(" "$bloco" && trocar "$bloco" "$sab" "$@"; }; then
+    echo "❌ SABOTAGEM NAO APLICAVEL ($SABOTAGEM)"; exit 9
+  fi
   P -q -f "$sab" >/dev/null
 }
 G=get_ultimos_precos_cliente; M=medir_abaixo_piso_tier
 EXPR_NOVA="(now() AT TIME ZONE 'America/Sao_Paulo')::date"
 PED_SP="(so.created_at AT TIME ZONE 'America/Sao_Paulo')::date"
 case "$SABOTAGEM" in
-  ""|pre_cega|pre_sem_reaplicacao|sem_grant_authenticated) ;;
+  ""|pre_cega|pre_sem_reaplicacao|sem_grant_authenticated|revoke_sem_anon) ;;
   # o defeito de volta, na forma que o relógio controlado alcança: `now()::date` É o current_date
   # (a data do início da transação no fuso da SESSÃO). Tem de ficar vermelha SÓ na sessão UTC, em t1.
   current_date_de_volta) sabotar "$G" "$EXPR_NOVA" "now()::date" 1; sabotar "$M" "$EXPR_NOVA" "now()::date" 1 ;;
@@ -428,7 +450,7 @@ case "$SABOTAGEM" in
   *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 case "$SABOTAGEM" in
-  ""|pre_cega|pre_sem_reaplicacao|sem_grant_authenticated) ;;
+  ""|pre_cega|pre_sem_reaplicacao|sem_grant_authenticated|revoke_sem_anon) ;;
   *) echo "→ SABOTAGEM ativa: $SABOTAGEM" ;;
 esac
 
