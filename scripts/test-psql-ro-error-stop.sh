@@ -284,8 +284,8 @@ for item in $SABOTAGENS; do
   faltam=""
   for exigido in ${exigidos//,/ }; do
     for LOC in $LOCALES; do
-      if ! grep -qxF "$exigido $LOC $(esperado_sabotado "$exigido")" "$log"; then
-        faltam="$faltam [$(grep -m1 "^$exigido $LOC " "$log" || echo "$exigido $LOC ?")]"
+      if ! LC_ALL=C grep -qxF "$exigido $LOC $(esperado_sabotado "$exigido")" "$log"; then
+        faltam="$faltam [$(LC_ALL=C grep -m1 "^$exigido $LOC " "$log" || echo "$exigido $LOC ?")]"
       fi
     done
   done

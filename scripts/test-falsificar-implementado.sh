@@ -99,7 +99,7 @@ echo suite' ;;
   # (a) o cenário SADIO é a régua do laço: o gate sai 0 e não acusa eixo nenhum.
   cenario sadio
   roda > "$tmp/sadio.log" 2>&1; rc=$?
-  if [ "$rc" -eq 0 ] && ! grep -q '❌' "$tmp/sadio.log"; then ok "fixtures sa(s) e registrada -> VERDE (nao inventa defeito)"
+  if [ "$rc" -eq 0 ] && ! LC_ALL=C grep -q '❌' "$tmp/sadio.log"; then ok "fixtures sa(s) e registrada -> VERDE (nao inventa defeito)"
   else ruim "acusou fixture SÃ (exit $rc) — falso positivo torna o gate ignoravel"; fi
 
   # <cenário>:<eixo que TEM de acusá-lo> — o ID é o 1º token da linha ❌ do gate. Exit≠0 NÃO é
@@ -117,11 +117,11 @@ echo suite' ;;
     roda > "$log" 2>&1; rc=$?
     faltam=""
     for exigido in ${exigidos//,/ }; do
-      if grep -Eq "^  ❌ ($exigido) " "$tmp/sadio.log" || ! grep -Eq "^  ❌ ($exigido) " "$log"; then
+      if LC_ALL=C grep -Eq "^  ❌ ($exigido) " "$tmp/sadio.log" || ! LC_ALL=C grep -Eq "^  ❌ ($exigido) " "$log"; then
         faltam="$faltam $exigido"
       fi
     done
-    acusou="$({ grep -Eo '^  ❌ [A-Z0-9]+ ' "$log" || true; } | awk '{ printf "%s ", $2 }')"
+    acusou="$({ LC_ALL=C grep -Eo '^  ❌ [A-Z0-9]+ ' "$log" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }')"
     if [ "$rc" -eq 0 ]; then
       ruim "\"$sab\": fixture com o defeito passou VERDE"
     elif [ "$rc" -ne 1 ]; then

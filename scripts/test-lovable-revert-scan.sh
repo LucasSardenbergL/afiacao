@@ -198,7 +198,7 @@ _sabota() {
   out="$(ERROS_DO_SCAN="$base/copia.err" run_scan)"; rc=$?
   if [ -n "$out" ]; then
     echo "  FAIL  $nome → alarme sobreviveu; a flag não está sob teste | out='$out'"; fail=1
-  elif [ "$rc" -ne 0 ] || command grep -qE 'fatal:|error:|unknown option|unbound variable|command not found|syntax error' "$base/copia.err"; then
+  elif [ "$rc" -ne 0 ] || LC_ALL=C command grep -qE 'fatal:|error:|unknown option|unbound variable|command not found|syntax error' "$base/copia.err"; then
     echo "  FAIL  $nome → o alarme sumiu por CRASH, não por julgamento (exit $rc): $(head -c 160 "$base/copia.err" | tr '\n' ' ')"; fail=1
   else
     echo "  ok    sabot | $nome → alarme SUMIU com o scan julgando (exit 0, stderr limpo): a flag é load-bearing"

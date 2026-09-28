@@ -134,10 +134,10 @@ if [ "${1:-}" = "--falsificar" ]; then
   wt_fumaca="$wt"; home_fumaca="$HOME_FIXTURE"
 
   # Asserts EXECUTADOS numa rodada da suíte (✅ + ❌): o recibo de que ela rodou inteira.
-  asserts() { grep -cE '^  (✅|❌) ' "$1" || true; }
+  asserts() { LC_ALL=C grep -cE '^  (✅|❌) ' "$1" || true; }
   # Erro de execução do BASH na sonda — o `caso`/`contem` que falha despeja a saída dela.
-  erros_bash() { grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" || true; }
-  vermelhos() { { grep -Eo '^  ❌ P[0-9]+[a-z]? ' "$1" || true; } | awk '{ printf "%s ", $2 }'; }
+  erros_bash() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" || true; }
+  vermelhos() { { LC_ALL=C grep -Eo '^  ❌ P[0-9]+[a-z]? ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # ── CONTROLE: verde ANTES do primeiro sed ─────────────────────────────────
   # "Ficou vermelho" só é informação se existir um verde do qual sair. Sem esta
@@ -253,7 +253,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
     faltam=""
     for exigido in ${exigidos//,/ }; do
-      if ! grep -Eq "^  ✅ ($exigido) " "$ctl" || ! grep -Eq "^  ❌ ($exigido) " "$log"; then
+      if ! LC_ALL=C grep -Eq "^  ✅ ($exigido) " "$ctl" || ! LC_ALL=C grep -Eq "^  ❌ ($exigido) " "$log"; then
         faltam="$faltam $exigido"
       fi
     done
@@ -261,7 +261,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       ruim "\"$desc\": a suite NAO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, nao de assert"
     elif [ "$(erros_bash "$log")" != "$(erros_bash "$ctl")" ]; then
       ruim "\"$desc\": vermelha com ERRO de execucao do bash na sonda — o assert caiu por crash, nao por julgamento"
-      { grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log" || true; } | sed 's/^/       /'
+      { LC_ALL=C grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log" || true; } | LC_ALL=C sed 's/^/       /'
     elif [ -n "$faltam" ]; then
       ruim "\"$desc\": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):$faltam"
       printf '       vermelhos desta rodada: %s\n' "$(vermelhos "$log")"

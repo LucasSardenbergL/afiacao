@@ -188,12 +188,12 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
   else
     sab_dir="$(mktemp -d)"
     # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
-    asserts() { grep -cE '^  (ok +|FALHA )' "$1" || true; }
+    asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
     # Erro de execução do BASH no hook: a suíte normal joga o stderr dele fora (o contrato é o
     # stdout); aqui ERROS_DO_ALVO o recolhe — o hook que morre de `set -u` CALA, e silêncio é
     # justamente o que metade dos asserts espera.
-    erros_exec() { grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" 2>/dev/null || true; }
-    vermelhos() { { grep -Eo '^  FALHA N[0-9]+ ' "$1" || true; } | awk '!v[$2]++ { printf "%s ", $2 }'; }
+    erros_exec() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" 2>/dev/null || true; }
+    vermelhos() { { LC_ALL=C grep -Eo '^  FALHA N[0-9]+ ' "$1" || true; } | LC_ALL=C awk '!v[$2]++ { printf "%s ", $2 }'; }
 
     # CONTROLE na MESMA invocação do laço (cópia INTACTA, o mesmo NUDGE_OVERRIDE): as caixas acima
     # rodaram sobre o hook real; o LOG desta rodada é a régua das camadas abaixo.
@@ -253,7 +253,7 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
         # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
         faltam=""
         for exigido in ${exigidos//,/ }; do
-          if ! grep -Eq "^  ok +($exigido) " "$ctl" || ! grep -Eq "^  FALHA ($exigido) " "$log"; then
+          if ! LC_ALL=C grep -Eq "^  ok +($exigido) " "$ctl" || ! LC_ALL=C grep -Eq "^  FALHA ($exigido) " "$log"; then
             faltam="$faltam $exigido"
           fi
         done

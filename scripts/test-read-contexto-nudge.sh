@@ -46,14 +46,14 @@ if [ "${1:-}" = "--falsificar" ]; then
 
   # Os logs das rodadas saem SEM cor (`sem_cor`), para o ID casar logo depois da palavra.
   esc="$(printf '\033')"
-  sem_cor() { sed "s/${esc}\[[0-9;]*m//g" "$1"; }
+  sem_cor() { LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$1"; }
   # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
-  asserts() { grep -cE '^  (ok +|FALHA )' "$1" || true; }
+  asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
   # Erro de execução do BASH no hook. A suíte normal joga o stderr dele fora (`2>/dev/null`: o
   # contrato é o stdout); aqui ERROS_DO_ALVO o recolhe num arquivo por rodada — sem isso, o hook
   # que morre de `set -u` no ramo de um assert CALA, e o silêncio passa por julgamento.
-  erros_exec() { grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" 2>/dev/null || true; }
-  vermelhos() { { grep -Eo '^  FALHA [A-Za-z]+[0-9]+[a-z]? ' "$1" || true; } | awk '{ printf "%s ", $2 }'; }
+  erros_exec() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" 2>/dev/null || true; }
+  vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [A-Za-z]+[0-9]+[a-z]? ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # Locale UTF-8 por SONDA POSITIVA, não por nome fixo (mesmo padrão de test-claude-md-budget.sh).
   # `pt_BR.UTF-8` cravado aqui dá 2 locales na M2 e (C, C) no runner ubuntu, onde pt_BR NÃO existe:
@@ -202,7 +202,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
       faltam=""
       for exigido in ${exigidos//,/ }; do
-        if ! grep -Eq "^  ok +($exigido) " "$ctl" || ! grep -Eq "^  FALHA ($exigido) " "$log"; then
+        if ! LC_ALL=C grep -Eq "^  ok +($exigido) " "$ctl" || ! LC_ALL=C grep -Eq "^  FALHA ($exigido) " "$log"; then
           faltam="$faltam $exigido"
         fi
       done
@@ -212,7 +212,7 @@ if [ "${1:-}" = "--falsificar" ]; then
         falhou=1
       elif [ "$(erros_exec "$log.stderr")" != "$(erros_exec "$ctl.stderr")" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha com ERRO de execucao no hook — o assert caiu por crash, nao por julgamento\n' "$loc" "$desc"
-        { grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log.stderr" || true; } | sed 's/^/       /'
+        { LC_ALL=C grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log.stderr" || true; } | LC_ALL=C sed 's/^/       /'
         falhou=1
       elif [ -n "$faltam" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):%s · vermelhos: %s\n' \

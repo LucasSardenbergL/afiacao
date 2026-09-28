@@ -122,14 +122,14 @@ if [ "${1:-}" = "--falsificar" ]; then
 
   # Os logs das rodadas saem SEM cor (`sem_cor`), para o ID casar logo depois da palavra.
   esc="$(printf '\033')"
-  sem_cor() { sed "s/${esc}\[[0-9;]*m//g" "$1"; }
+  sem_cor() { LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$1"; }
   # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
-  asserts() { grep -cE '^  (ok +|FALHA )' "$1" || true; }
+  asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
   # Erro de execução do bash/awk no ALVO: no log (o `run` junta o stderr dele e o `quero` que falha
   # o despeja) e no que ERROS_DO_ALVO recolhe das chamadas que a suíte normal manda para /dev/null
   # (o --resumo MEDE o stdout: stderr misturado reprovaria por ruído de ambiente).
-  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | grep -cE 'unbound variable|command not found|syntax error|bad substitution|awk: ' || true; }
-  vermelhos() { { grep -Eo '^  FALHA [A-Z]+[0-9]+ ' "$1" || true; } | awk '{ printf "%s ", $2 }'; }
+  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution|awk: ' || true; }
+  vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [A-Z]+[0-9]+ ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # sabota <descricao> <regra-que-deve-quebrar> <expressao-sed>
   # 4 travas contra "falsificação vazia" — vermelho pelo motivo errado conta
@@ -287,7 +287,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
       faltam=""
       for exigido in ${exigidos//,/ }; do
-        if ! grep -Eq "^  ok +($exigido) " "$ctl" || ! grep -Eq "^  FALHA ($exigido) " "$log"; then
+        if ! LC_ALL=C grep -Eq "^  ok +($exigido) " "$ctl" || ! LC_ALL=C grep -Eq "^  FALHA ($exigido) " "$log"; then
           faltam="$faltam $exigido"
         fi
       done

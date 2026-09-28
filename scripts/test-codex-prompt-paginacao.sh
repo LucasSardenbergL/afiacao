@@ -166,10 +166,10 @@ echo
 faltam=""
 for par in "G1:$sha_citador" "G2:$sha_citador_1889"; do
   id="${par%%:*}"; citador="${par#*:}"
-  grep -q "^  FAIL $id .*veio '$citador'\$" "$log" || faltam="$faltam $id(veio '$citador')"
+  LC_ALL=C grep -q "^  FAIL $id .*veio '$citador'\$" "$log" || faltam="$faltam $id(veio '$citador')"
 done
 for id in G3 G4; do
-  grep -q "^  ok   $id " "$log" || faltam="$faltam $id(verde)"
+  LC_ALL=C grep -q "^  ok   $id " "$log" || faltam="$faltam $id(verde)"
 done
 if [ "$falhas" -eq 0 ]; then
   echo "FALSIFICAÇÃO FALHOU: o defeito foi reintroduzido e o teste passou — teste cego."

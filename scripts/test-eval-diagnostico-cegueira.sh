@@ -165,9 +165,9 @@ open(dst, 'w', encoding='utf-8').write(s.replace(de, para, 1))
 PY
 }
 # asserts EXECUTADOS numa rodada = ok+falha do recibo final; vazio se ela abortou antes dele
-executados() { sed -n 's/^ok:\([0-9][0-9]*\) falha:\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
-erros_exec() { grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" || true; }
-vermelhos() { { grep -Eo '^   ✗ D[0-9]+ ' "$1" || true; } | awk '{ printf "%s ", $2 }'; }
+executados() { LC_ALL=C sed -n 's/^ok:\([0-9][0-9]*\) falha:\([0-9][0-9]*\)$/\1 \2/p' "$1" | LC_ALL=C awk '{ print $1 + $2 }'; }
+erros_exec() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" || true; }
+vermelhos() { { LC_ALL=C grep -Eo '^   ✗ D[0-9]+ ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
 ctl="$CAIXA/controle.log"; printf '%s\n' "$res" > "$ctl"
 cegas=0
@@ -196,7 +196,7 @@ for item in $SABOTAGENS; do
   # Daqui em diante rodar_asserts saiu ≠0 — o que, sozinho, não prova NADA.
   faltam=""
   for exigido in ${exigidos//,/ }; do
-    if ! grep -Eq "^   ✓ ($exigido) " "$ctl" || ! grep -Eq "^   ✗ ($exigido) " "$log"; then
+    if ! LC_ALL=C grep -Eq "^   ✓ ($exigido) " "$ctl" || ! LC_ALL=C grep -Eq "^   ✗ ($exigido) " "$log"; then
       faltam="$faltam $exigido"
     fi
   done
