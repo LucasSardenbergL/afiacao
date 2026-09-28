@@ -120,19 +120,10 @@ export interface SitioConhecido {
 
 // Os sítios que a varredura de 2026-09-27 achou nas definições VIVAS, cada um com veredito lido no
 // corpo e medido em prod. A lista só ENCOLHE: sítio novo reprova; entrada quitada que fica reprova.
-// (A instância-mãe, `_carteira_positivacao_for_owner`, não está aqui: a 20260927133606 a quitou.)
+// (A instância-mãe, `_carteira_positivacao_for_owner`, não está aqui: a 20260927133606 a quitou. As 2
+// dívidas da família C — `get_ultimos_precos_cliente(uuid)` e `medir_abaixo_piso_tier(integer)`, com
+// `current_date` num corpo SP — saíram com a 20260927172443, que usa o hoje de SP pelo instante.)
 export const CONHECIDOS: readonly SitioConhecido[] = [
-  {
-    alvo: 'get_ultimos_precos_cliente(uuid)', familia: 'C', trecho: 'current_date', n: 1, veredito: 'divida',
-    motivo: 'filtro anti-futuro `data de SP <= current_date`: das 21:00 às 23:59 BRT o "hoje" da sessão já é '
-      + 'amanhã em SP e o filtro aceita pedido datado de amanhã. Efeito medido em 2026-09-27: 0 pedidos com '
-      + 'kpi depois de hoje-SP. Chip "Corrigir current_date UTC em 2 funções de data SP".',
-  },
-  {
-    alvo: 'medir_abaixo_piso_tier(integer)', familia: 'C', trecho: 'current_date', n: 1, veredito: 'divida',
-    motivo: 'janela `data de SP >= current_date - p_dias`: das 21:00 às 23:59 BRT perde o dia mais antigo. '
-      + 'É medição de auditoria (algorithm-a-audit), não decisão de dinheiro. Mesmo chip.',
-  },
   {
     alvo: '_data_health_compute()', familia: 'C', trecho: 'current_date', n: 2, veredito: 'falso-positivo',
     motivo: 'compara com `pedido_compra_sugerido.data_ciclo`, que a edge gerar-pedidos-diario grava como data '
