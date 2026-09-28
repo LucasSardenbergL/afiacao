@@ -214,17 +214,22 @@ echo "── asserts ──"
 p1_recusa_com_mensagem() {
   local r
   r=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
-DO \$\$
+DO \$\$ DECLARE c text; n int;
 BEGIN
   PERFORM set_config('test.role','service_role',true);
   PERFORM public.criar_plano_tatico('$CLI_A'::uuid, '$FARMER'::uuid, '$PAYLOAD_EST'::jsonb);
-  RAISE NOTICE 'SENTINELA_DUPLICATA_PASSOU';
+  -- "passou" só vale com a duplicata GRAVADA: a RPC que volta sem inserir também chegaria aqui
+  SELECT count(*) INTO n FROM public.farmer_tactical_plans
+   WHERE customer_user_id='$CLI_A'::uuid AND plan_type='estrategico' AND status='gerado';
+  RAISE NOTICE 'SENTINELA_DUPLICATA_PASSOU n=%;', n;
 EXCEPTION
   WHEN unique_violation THEN
+    GET STACKED DIAGNOSTICS c = CONSTRAINT_NAME;
     IF SQLERRM ILIKE '%gerado hoje para este cliente%' THEN
       RAISE NOTICE 'SENTINELA_RECUSA_CORRETA';
     ELSE
-      RAISE NOTICE 'SENTINELA_MENSAGEM_ERRADA';
+      -- a constraint que barrou: "outro 23505" (de outra chave) não é a mensagem crua do ÍNDICE
+      RAISE NOTICE 'SENTINELA_MENSAGEM_ERRADA c=%;', c;
     END IF;
   WHEN OTHERS THEN RAISE;
 END \$\$;
@@ -238,11 +243,12 @@ SQL
 p2_indice_barra_insert_cru() {
   local r
   r=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
-DO \$\$
+DO \$\$ DECLARE n int;
 BEGIN
   INSERT INTO public.farmer_tactical_plans (farmer_id, customer_user_id, status, plan_type)
   VALUES ('$FARMER'::uuid, '$CLI_A'::uuid, 'gerado', 'estrategico');
-  RAISE NOTICE 'SENTINELA_INSERT_CRU_PASSOU';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RAISE NOTICE 'SENTINELA_INSERT_CRU_PASSOU n=%;', n;
 EXCEPTION
   WHEN unique_violation THEN RAISE NOTICE 'SENTINELA_INDICE_MORDEU';
   WHEN OTHERS THEN RAISE;
@@ -259,19 +265,22 @@ SQL
 p3_outro_plan_type_permitido() {
   local r
   r=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
-DO \$\$ DECLARE c text;
+DO \$\$ DECLARE c text; v uuid; n int;
 BEGIN
   PERFORM set_config('test.role','service_role',true);
-  PERFORM public.criar_plano_tatico('$CLI_A'::uuid, '$FARMER'::uuid, '$PAYLOAD_ESS'::jsonb);
-  RAISE NOTICE 'SENTINELA_CRIOU';
+  -- o contrato devolve o id do plano (o A7 de antes casava um UUID): sem ele, "criou" é a RPC que
+  -- volta NULL; e a linha com esse id tem de existir — o efeito, não só a ausência de erro
+  v := public.criar_plano_tatico('$CLI_A'::uuid, '$FARMER'::uuid, '$PAYLOAD_ESS'::jsonb);
+  SELECT count(*) INTO n FROM public.farmer_tactical_plans WHERE id = v AND plan_type = 'essencial';
+  RAISE NOTICE 'SENTINELA_CRIOU id=% linha=%;', v IS NOT NULL, n;
 EXCEPTION WHEN unique_violation THEN
   GET STACKED DIAGNOSTICS c = CONSTRAINT_NAME;
-  RAISE NOTICE 'SENTINELA_BARRADO c=%', c;
+  RAISE NOTICE 'SENTINELA_BARRADO c=%;', c;
 END \$\$;
 SQL
 )
   MOTIVO_P3="$r"
-  case "$r" in *SENTINELA_CRIOU*PSQL_RC=0) return 0;; *) return 1;; esac
+  case "$r" in *"SENTINELA_CRIOU id=t linha=1;"*PSQL_RC=0) return 0;; *) return 1;; esac
 }
 
 # P4 — nenhuma das 4 colunas de bundle carrega DEFAULT constante.
@@ -456,7 +465,7 @@ if [ -z "$(Pq -c "SELECT indexname FROM pg_indexes WHERE indexname='ux_farmer_ta
 else
   echo "  ⚠️  F1 NÃO aplicou — falsificação inválida"; FALS_BAD=$((FALS_BAD+1))
 fi
-falsifica "F1 índice ausente → A10" p2_indice_barra_insert_cru MOTIVO_P2 '*SENTINELA_INSERT_CRU_PASSOU*PSQL_RC=0'
+falsifica "F1 índice ausente → A10" p2_indice_barra_insert_cru MOTIVO_P2 '*SENTINELA_INSERT_CRU_PASSOU n=1;*PSQL_RC=0'
 if p1_recusa_com_mensagem; then echo "  ✅ CONTROLE F1 — a RPC continua segurando sem o índice (P1 e P2 são independentes)"; else echo "  ❌ CONTROLE F1 — P1 caiu junto: os asserts não são independentes"; FALS_BAD=$((FALS_BAD+1)); fi
 restaura_tudo
 
@@ -466,7 +475,7 @@ restaura_tudo
 reset_cli_a
 rpc_sem_exists
 echo "  · sabotagem F2 aplicada (re-check removido do corpo em vigor)"
-falsifica "F2 sem re-check → A5 (mensagem do contrato)" p1_recusa_com_mensagem MOTIVO_P1 '*SENTINELA_MENSAGEM_ERRADA*PSQL_RC=0'
+falsifica "F2 sem re-check → A5 (mensagem do contrato)" p1_recusa_com_mensagem MOTIVO_P1 '*SENTINELA_MENSAGEM_ERRADA c=ux_farmer_tactical_plans_dia_operacional;*PSQL_RC=0'
 restaura_tudo
 
 # F3 — as DUAS defesas fora: a duplicata REALMENTE entra (o bug original, reproduzido).
@@ -474,7 +483,7 @@ reset_cli_a
 P -q -c "DROP INDEX public.ux_farmer_tactical_plans_dia_operacional;"
 rpc_sem_exists
 echo "  · sabotagem F3 aplicada (índice + re-check fora)"
-falsifica "F3 bug original reproduzido → A5" p1_recusa_com_mensagem MOTIVO_P1 '*SENTINELA_DUPLICATA_PASSOU*PSQL_RC=0'
+falsifica "F3 bug original reproduzido → A5" p1_recusa_com_mensagem MOTIVO_P1 '*SENTINELA_DUPLICATA_PASSOU n=2;*PSQL_RC=0'
 restaura_tudo
 
 # F4 — o RECORTE `>= 2026-07-22` não é código morto: sem ele o índice NÃO NASCE, porque as
@@ -521,7 +530,7 @@ P -q -c "DROP INDEX public.ux_farmer_tactical_plans_dia_operacional;"
 P -q -c "CREATE UNIQUE INDEX ux_farmer_tactical_plans_dia_operacional ON public.farmer_tactical_plans (farmer_id, customer_user_id, (((created_at AT TIME ZONE 'UTC') - interval '3 hours')::date)) WHERE status = 'gerado' AND (((created_at AT TIME ZONE 'UTC') - interval '3 hours')::date) >= DATE '2026-07-22';"
 rpc_sem_exists   # sem o re-check, quem decide é só o índice — isola a CHAVE
 echo "  · sabotagem F7 aplicada (chave sem plan_type)"
-falsifica "F7 chave sem plan_type → A7 (essencial legítimo barrado)" p3_outro_plan_type_permitido MOTIVO_P3 '*SENTINELA_BARRADO c=ux_farmer_tactical_plans_dia_operacional*PSQL_RC=0'
+falsifica "F7 chave sem plan_type → A7 (essencial legítimo barrado)" p3_outro_plan_type_permitido MOTIVO_P3 '*SENTINELA_BARRADO c=ux_farmer_tactical_plans_dia_operacional;*PSQL_RC=0'
 P -q -c "DROP INDEX public.ux_farmer_tactical_plans_dia_operacional;"
 restaura_tudo
 

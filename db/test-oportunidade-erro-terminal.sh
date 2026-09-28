@@ -178,17 +178,26 @@ PY
     # a saída que a sabotagem DECLARA ('NENHUM', 2 rodadas iguais) — "≠ 6001" aceitava uma saída vazia.
     # O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
     P -v ON_ERROR_STOP=1 -q -f "$SAB" >/dev/null 2>&1 || { echo "FALSIFICACAO INVALIDA (bloco $BLOCO): o apply sabotado FALHOU"; exit 1; }
-    SAIDA="$(OFERTADOS | tail -1)"
+    # 'NENHUM' sozinho aceitava a geracao INERTE (um `RETURN;` sem linha): o OFERTADOS apaga as
+    # oportunidades antes, e nada gerado = nada ofertado. A medicao passa pelo MESMO OFERTADOS do A1 e
+    # leva a linha-resumo que a RPC devolve (a inerte nao devolve linha: sobra o "DELETE n") e header x
+    # itens — o que separa o bloco 1 (sem header) do bloco 2 (header sem o item).
+    OUT="$(OFERTADOS)"
+    SAIDA="$(printf '%s\n' "$OUT" | tail -1)"
+    RET="$(printf '%s\n' "$OUT" | tail -2 | head -1)"
+    HI="$(P -At -v ON_ERROR_STOP=1 -c "SELECT COALESCE(SUM(num_skus),0) || '|' || (SELECT count(*) FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id WHERE pcs.tipo_ciclo LIKE 'oportunidade_%') FROM pedido_compra_sugerido WHERE tipo_ciclo LIKE 'oportunidade_%';")"
+    MED="$SAIDA|ret=$RET|hi=$HI"
+    if [ "$BLOCO" = "1" ]; then DECL='NENHUM|ret=0|0|0|0|{promo_flat}|hi=0|0'; else DECL='NENHUM|ret=1|1|200|0|{promo_flat}|hi=1|0'; fi
     if [ "$SAIDA" = "6001" ]; then
       echo "FALSIFICACAO FALHOU (bloco $BLOCO): sabotei a guarda e o teste seguiu com '6001'."
       echo "   O assert nao tem dente — ele aprovaria a versao defeituosa."
       exit 1
     fi
-    if [ "$SAIDA" != "NENHUM" ]; then
-      echo "FALSIFICACAO FALHOU (bloco $BLOCO): a saida virou '$SAIDA', NAO o 'NENHUM' que a sabotagem declara."
+    if [ "$MED" != "$DECL" ]; then
+      echo "FALSIFICACAO FALHOU (bloco $BLOCO): a medicao virou '$MED', NAO o '$DECL' que a sabotagem declara."
       exit 1
     fi
-    echo "   OK falsificacao bloco $BLOCO — sabotado, saida virou '$SAIDA' (!= 6001)."
+    echo "   OK falsificacao bloco $BLOCO — sabotado, a medicao virou '$MED' (a saida != 6001)."
     P -v ON_ERROR_STOP=1 -q -f "$MIGRACAO" >/dev/null   # restaura a versao verdadeira
   done
 

@@ -228,7 +228,14 @@ echo "== F: frescor exposto na lista =="
 # `X=$(f1)` herda o exit status do command substitution -- com `set -e`, isso MATAVA o script no
 # inicio da falsificacao, com 34 OK/0 FAIL e exit 1, parecendo sucesso truncado. O assert compara o
 # VALOR ("t" ou nao), entao engolir o status aqui e o que permite a falsificacao acontecer.
-f1() { Pq -c "SELECT (marcador_finalizado_em IS NOT NULL) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=802;" 2>/dev/null || true; }
+# f1 devolve o valor OU `SQLSTATE=<código>` do erro — com VERBOSITY=sqlstate o psql imprime só
+# "<severidade>:  <código>", e o código é o último campo em qualquer locale. Engolir o erro em ""
+# deixava o X1 sem como dizer POR QUE o F1 caiu; e o X1 tem de medir pela MESMA f1 do assert.
+f1() {
+  local v rc
+  set +e; v="$(set -e; Pq -v VERBOSITY=sqlstate -c "SELECT (marcador_finalizado_em IS NOT NULL) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=802;" 2>&1)"; rc=$?; set -e
+  if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'SQLSTATE=%s\n' "${v##* }"; fi
+}
 eq "F1 a linha carrega o carimbo do marcador" "$(f1)" "t"
 eq "F2 o carimbo é o do marcador que GEROU a linha (seq 2, não o 1/4/5)" \
    "$(Pq -c "SELECT (c.marcador_finalizado_em = r.finalizado_em AND c.marcador_run_id = r.run_id) FROM public.reposicao_pos_candidatos('OBEN') c JOIN public.reposicao_pedidos_compra_run r ON r.seq=2 WHERE c.pedido_id=802;")" "t"
@@ -364,13 +371,14 @@ perl -0777 -pe 's/^\s*marcador_finalizado_em timestamptz,\n//m; s/^\s*b\.marcado
   "$TMP/sem-guardas.sql" > "$TMP/x1.sql"
 if P -q -f "$TMP/x1.sql" >/dev/null 2>&1; then
   # O que a sabotagem DECLARA: a query de F1 NAO compila -- coluna indefinida (42703). "!= t" aceitava
-  # qualquer desfecho: "f", o vazio de OUTRO erro (o f1 engole o erro), a funcao inteira quebrada. A
-  # SQLSTATE vem de um DO com a MESMA consulta do f1. O vermelho tem de ser do SEU assert:
+  # qualquer desfecho: "f", o vazio de OUTRO erro, a funcao inteira quebrada. A medicao e a MESMA f1()
+  # do assert F1 (uma copia da consulta num DO deixaria escapar a f1 neutralizada, p.ex. `printf t`),
+  # e a f1 devolve a SQLSTATE. O vermelho tem de ser do SEU assert:
   # docs/historico/falsificacao-exit-nao-e-dente.md.
-  X1="$(Pq -c "DO \$x\$ BEGIN PERFORM (marcador_finalizado_em IS NOT NULL) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=802; RAISE NOTICE 'X1_ESTADO=OK'; EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'X1_ESTADO=%', SQLSTATE; END \$x\$;" 2>&1 | command grep -oE 'X1_ESTADO=[A-Z0-9]+' | paste -sd'|' -)"
-  if [ "$X1" = "X1_ESTADO=42703" ]; then ok "X1 coluna removida -> F1 reprova (a query nao compila: 42703)"
-  elif [ "$X1" = "X1_ESTADO=OK" ]; then bad "X1 coluna removida -> F1 deveria reprovar, mas a query seguiu compilando"
-  else bad "X1 -- NAO e o que a sabotagem declara (42703, coluna indefinida): [$X1]"; fi
+  X1="$(f1)"
+  if [ "$X1" = "SQLSTATE=42703" ]; then ok "X1 coluna removida -> F1 reprova (a query nao compila: 42703)"
+  elif [ "$X1" = "t" ]; then bad "X1 coluna removida -> F1 deveria reprovar, mas a f1 seguiu dando t"
+  else bad "X1 -- NAO e o que a sabotagem declara (SQLSTATE=42703, coluna indefinida): [$X1]"; fi
 else
   bad "X1 coluna removida -> o apply sabotado deveria RODAR (sem as guardas) e nao rodou"
 fi
@@ -379,10 +387,13 @@ restaura
 # X2/X3/X4: sabotagens que a POS-CONDICAO tem de barrar. Sentinela = string EXCLUSIVA do ramo certo,
 # ASCII, caixa fixa, sem -i (CLAUDE.md: `grep -i` sob pt_BR.UTF-8 dobra acento e casa o ramo errado).
 # `command grep`: o `grep` do shell aqui e shim de ugrep.
-barra() { # $1=nome  $2=arquivo sabotado  $3=trecho EXATO esperado no erro
-  if P -q -f "$2" > "$TMP/out.log" 2>&1; then
+barra() { # $1=nome  $2=arquivo sabotado  $3=trecho EXATO esperado no erro  $4=SQLSTATE da pos-condicao
+  # A marca tem de estar na linha do ERRO que abortou o apply: com VERBOSITY=verbose ela vem depois da
+  # SQLSTATE que a pos-condicao declara (42P13 assinatura, 42501 ACL) e do prefixo "frescor-marcador:".
+  # Um NOTICE com a mesma frase sai com 00000 -- a marca solta no texto, antes de OUTRO erro, passava.
+  if P -q -v VERBOSITY=verbose -f "$2" > "$TMP/out.log" 2>&1; then
     bad "$1 -- o apply sabotado PASSOU (a pos-condicao nao tem dente)"
-  elif command grep -q "$3" "$TMP/out.log"; then
+  elif command grep -F "$4: frescor-marcador:" "$TMP/out.log" | command grep -qF "$3"; then
     ok "$1"
   else
     bad "$1 -- abortou, mas por outro motivo: $(head -c 200 "$TMP/out.log" | tr '\n' ' ')"
@@ -395,11 +406,11 @@ barra() { # $1=nome  $2=arquivo sabotado  $3=trecho EXATO esperado no erro
 # So a assinatura POSICIONAL exata pega isto.
 perl -0777 -pe 's/  marcador_finalizado_em timestamptz,\n  apurado_em timestamptz\n/  apurado_em timestamptz,\n  marcador_finalizado_em timestamptz\n/' "$MIG" > "$TMP/x2.sql"
 command grep -q '  apurado_em timestamptz,' "$TMP/x2.sql" || { echo "FALSIFICACAO X2 NAO APLICOU"; exit 2; }
-barra "X2 colunas trocadas de ordem -> pos-condicao aborta" "$TMP/x2.sql" "assinatura de reposicao_pos_candidatos DIVERGE"
+barra "X2 colunas trocadas de ordem -> pos-condicao aborta" "$TMP/x2.sql" "assinatura de reposicao_pos_candidatos DIVERGE" 42P13
 
 # X3: coluna nova no MEIO (antes de marcador_run_id) -> deslocaria TODAS as posteriores.
 perl -0777 -pe 's/  marcador_run_id uuid,\n/  marcador_finalizado_em timestamptz,\n  marcador_run_id uuid,\n/; s/  marcador_seq bigint,\n  -- .*\n  -- .*\n  marcador_finalizado_em timestamptz,\n/  marcador_seq bigint,\n/' "$MIG" > "$TMP/x3.sql"
-barra "X3 coluna nova no MEIO -> pos-condicao aborta" "$TMP/x3.sql" "assinatura de reposicao_pos_candidatos DIVERGE"
+barra "X3 coluna nova no MEIO -> pos-condicao aborta" "$TMP/x3.sql" "assinatura de reposicao_pos_candidatos DIVERGE" 42P13
 
 # X4: REVOKE removido -> o DEFAULT ACL (reproduzido na ZONA 1, como em prod) devolve anon=X e a RPC
 # de money-path nasce executavel por ANONIMO. Falha ABERTA: muda autorizacao, nao comportamento.
@@ -409,7 +420,7 @@ command grep -q 'REVOKE ALL ON FUNCTION public\.reposicao_pos_candidatos' "$TMP/
 # reprovou: a mensagem real diz "executável", com acento. Casar trecho acentuado aqui e frágil por
 # duas razoes somadas (o locale dobra o acento, e o `grep` do shell e shim de ugrep), entao a
 # sentinela e o pedaco 100% ASCII da MESMA frase.
-barra "X4 REVOKE removido -> pos-condicao aborta (anon executaria)" "$TMP/x4.sql" "o DROP restaurou o DEFAULT ACL"
+barra "X4 REVOKE removido -> pos-condicao aborta (anon executaria)" "$TMP/x4.sql" "o DROP restaurou o DEFAULT ACL" 42501
 
 # X5: a irma devolvendo ZERO linhas sem marcador -> volta o silencio que este PR ataca.
 perl -0777 -pe 's/  FROM \(SELECT 1\) AS sempre\n  LEFT JOIN LATERAL \(/  FROM (SELECT 1) AS sempre\n  JOIN LATERAL (/' "$TMP/sem-guardas.sql" > "$TMP/x5.sql"
@@ -421,6 +432,26 @@ else
 fi
 restaura
 
+# O desfecho NOMEADO do nega, para as falsificacoes: barrado | vazou | OUTRO:<sqlstate>, com o psql
+# saindo 0. O nega dos asserts sai por ERRO quando vaza (e o `tail -1` pega a linha que vier) --
+# "!= barrado" aceitava qualquer erro alheio como o gate removido.
+nega_estado() { # $1 = nome da funcao   $2 = uid
+  local r
+  r=$(Pq 2>&1 <<SQL; echo "PSQL_RC=$?"
+DO \$t\$
+BEGIN
+  PERFORM set_config('test.uid','$2',true);
+  PERFORM * FROM public.$1('OBEN');
+  RAISE NOTICE 'NEGA_ESTADO=vazou;';
+EXCEPTION
+  WHEN insufficient_privilege THEN RAISE NOTICE 'NEGA_ESTADO=barrado;';
+  WHEN OTHERS THEN RAISE NOTICE 'NEGA_ESTADO=OUTRO:%;', SQLSTATE;
+END \$t\$;
+SQL
+)
+  printf '%s\n' "$r" | { command grep -oE 'NEGA_ESTADO=[^;]*;|PSQL_RC=[0-9]+' || true; } | paste -sd'|' -
+}
+
 # X6: gate da irma removido -> D4 reprova (RPC de money-path aberta a qualquer autenticado).
 perl -0777 -pe "s/    RAISE EXCEPTION 'reposicao_pos_marcador: acesso negado' USING ERRCODE = '42501';/    NULL;/" "$TMP/sem-guardas.sql" > "$TMP/x6.sql"
 command grep -q "reposicao_pos_marcador: acesso negado" "$TMP/x6.sql" && { echo "FALSIFICACAO X6 NAO APLICOU"; exit 2; }
@@ -428,8 +459,11 @@ if P -q -f "$TMP/x6.sql" >/dev/null 2>&1; then
   # Mesma armadilha do X1, agravada por `pipefail`: sob a sabotagem o gate NAO barra, o bloco DO
   # levanta 'VAZOU-NAO-BARROU' e o psql sai != 0 -> a atribuicao herda o status e `set -e` mataria
   # o script exatamente no assert que deveria REPROVAR.
-  X6=$(nega reposicao_pos_marcador "$U_CUSTOMER" 2>&1 | tail -1 || true)
-  if [ "$X6" = "barrado" ]; then bad "X6 gate removido -> D4 deveria reprovar, mas passou"; else ok "X6 gate removido -> D4 reprova (=$(printf '%.40s' "$X6"))"; fi
+  # declarado: o customer ENTRA (vazou), com o psql saindo 0 -- nao "qualquer coisa != barrado"
+  X6=$(nega_estado reposicao_pos_marcador "$U_CUSTOMER")
+  if [ "$X6" = "NEGA_ESTADO=barrado;|PSQL_RC=0" ]; then bad "X6 gate removido -> D4 deveria reprovar, mas passou"
+  elif [ "$X6" = "NEGA_ESTADO=vazou;|PSQL_RC=0" ]; then ok "X6 gate removido -> D4 reprova, o customer ENTRA"
+  else bad "X6 -- NAO e o que a sabotagem declara (o customer entra: vazou): [$X6]"; fi
 else
   bad "X6 -- o apply sabotado nao rodou"
 fi
@@ -449,9 +483,10 @@ command grep -qF "pode_ver_carteira_completa((SELECT auth.uid()" "$TMP/x6b.sql" 
 if P -q -f "$TMP/x6b.sql" >/dev/null 2>&1; then
   # mesma armadilha do X6: sob a sabotagem o gerencial ENTRA, o bloco DO levanta VAZOU-NAO-BARROU e
   # o psql sai != 0 -> sem `|| true` o `set -e` mataria o script no assert que deve REPROVAR.
-  X6B=$(nega reposicao_pos_marcador "$U_GERENCIAL" 2>&1 | tail -1 || true)
-  if [ "$X6B" = "barrado" ]; then bad "X6b gate velho -> D7 deveria reprovar, mas passou"
-  else ok "X6b gate velho -> D7 reprova, o gerencial ENTRA (=$(printf '%.40s' "$X6B"))"; fi
+  X6B=$(nega_estado reposicao_pos_marcador "$U_GERENCIAL")
+  if [ "$X6B" = "NEGA_ESTADO=barrado;|PSQL_RC=0" ]; then bad "X6b gate velho -> D7 deveria reprovar, mas passou"
+  elif [ "$X6B" = "NEGA_ESTADO=vazou;|PSQL_RC=0" ]; then ok "X6b gate velho -> D7 reprova, o gerencial ENTRA"
+  else bad "X6b -- NAO e o que a sabotagem declara (o gerencial entra: vazou): [$X6B]"; fi
   # E o customer segue barrado pelos DOIS gates — a prova de que D4 e cego a esta regressao, que e
   # a razao de D7 existir. Sem este assert, X6b nao mostraria que a cegueira e da PERSONA.
   eq "X6c sob o gate velho o customer SEGUE barrado (por isso D4 nao pega)" \
