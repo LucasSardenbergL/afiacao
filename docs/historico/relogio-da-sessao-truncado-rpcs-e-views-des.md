@@ -108,6 +108,38 @@ md5 normalizado igualava literais com espaço duplo (P2) → md5 exato; corrida 
 `CREATE OR REPLACE` (P2) → trava + K1/K2; a exceção `ID!MARCA` do laço liberava erro em qualquer
 assert (P3) → vale só no assert declarado. A observação sobre o V1 raso virou a dependente real.
 
+## O gate — `scripts/fuso-da-sessao-em-migrations-e-skills-gate.ts`
+
+A pergunta do briefing era se o gate de funções deveria alcançar corpo SEM menção a SP. Medido antes:
+
+| Extensão | Achados no repo vivo | Falso-positivo | Decisão |
+|---|---|---|---|
+| a assinatura desta classe (`date_trunc` de calendário sobre o relógio da sessão) em TODO corpo vivo | 2 (os consertados) | **0 de 295** corpos sem SP | **sim** |
+| as famílias A/B/C do gate de SP (`current_date`, `col::date`…) em corpo sem SP | 36 em 20 funções | **44%** certo (15 de 34 sítios UTC-consistentes; 62% contando as bordas de janela) | não — limite declarado, com o número |
+| consultas de skill (`.sql` e cercas de `.md`) | 10 (os consertados) | **0** | **sim** |
+
+O gate novo não estende o de funções — ele lê o que nenhum irmão lê, com a assinatura do irmão das
+provas IMPORTADA (`lerArgumentos`/`classificar`: um parser para os três universos):
+
+- a migration INTEIRA (função com ou sem SP, view, `cron.schedule`, `DO`), com baseline só das 4
+  definições mortas — casamento novo reprova, entrada que some do texto reprova;
+- todo corpo VIVO de função (`modelarRepo`): é o que mantém as definições mortas mortas — sem a
+  migration que as supera, elas ressuscitam e o gate acusa;
+- o código das skills: os `.sql` e TODA cerca dos `.md` (`somenteCercas`, o inverso exato de
+  `removerCercas`, acrescentado à lib compartilhada). Toda cerca, não só a ```sql: das 172 cercas das
+  skills, 83 são sql, 56 bash e 24 sem linguagem; a prosa, onde a skill EXPLICA a forma errada, fica
+  de fora.
+
+Pisos por universo (740 migrations, 46 arquivos de skill com 2.270 linhas de código, 312 corpos
+vivos), cada um derrubado SOZINHO por um teste; alarme de stripper calibrado (teto 200 nas migrations
+— o maior bloco honesto é o cabeçalho de 175 linhas `--` de `20260615130000_tint_vigia_cobertura_sentinela.sql` —
+e 40 nas skills); cerca e chamada que não fecham são INDETERMINADO. `scripts/mutcheck.d/fuso-da-sessao-em-migrations-e-skills.mut`:
+17 mutações, uma por camada.
+
+Custo medido no caminho: o gate das provas LÊ todo shell de `db/` — a sabotagem que escrevia
+`"… >= date_trunc("` (uma chamada que não fecha) derrubou 2 testes dele no CI. O trecho passou a sair
+de uma variável.
+
 ## Fora, com dono
 
 - **`horario_disparo_real::date`** em `v_des_pedidos_em_transito` (instante → data no fuso da
