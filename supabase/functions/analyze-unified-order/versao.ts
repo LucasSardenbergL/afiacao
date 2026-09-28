@@ -73,10 +73,15 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  * (`CorpoRequisicao` no `index.ts`), que devolve ao TypeScript a visão do caminho inteiro do fluxo
  * real. Ela carrega junto, e passa a provar, o `!!searchCustomer` do #1938.
  *
+ * `v1.2-b1-termo-degenerado` nomeia a fatia do B1 (varredura semgrep de 2026-09-27): o sanitizador do
+ * `.or()` passou a espelhar o de `src/lib/postgrest.ts` (bloco `postgrest-or`, com o `*` que o #1051 pôs
+ * só na fonte), e o termo só-de-metacaracteres (`***`) deixou de virar `name.ilike.%%` = 20 perfis
+ * arbitrários como cliente sugerido.
+ *
  * O gate que impede o retorno ao valor congelado: `_shared/sonda-versao-contrato_test.ts`,
  * "bump v1.1-corpo-tipado". Um `git revert` deste bump devolveria a sonda a "responde verde sem provar nada".
  */
-export const VERSAO = "v1.1-corpo-tipado";
+export const VERSAO = "v1.2-b1-termo-degenerado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
