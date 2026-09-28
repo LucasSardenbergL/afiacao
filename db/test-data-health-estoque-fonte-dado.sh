@@ -134,7 +134,10 @@ old, new, cnt = os.environ['SAB_OLD'], os.environ['SAB_NEW'], int(os.environ['SA
 assert s.count(old) == cnt, f"sabota: esperei {cnt} de [{old}], achei {s.count(old)}"
 open(os.environ['SAB'], 'w').write(s.replace(old, new))
 PYEOF
-  P -q -f "$SAB" >/dev/null; rm -f "$SAB"
+  # o rc que volta é o do APPLY (antes: o do `rm`). Sob `if sabota` (F3) o errexit está suspenso, e um
+  # apply que falha DEPOIS do COMMIT (a validação pós-apply da migration) passava com o corpo v3 já
+  # gravado (Codex, 2026-09-27).
+  local rc=0; P -q -f "$SAB" >/dev/null || rc=$?; rm -f "$SAB"; return "$rc"
 }
 restaura() { P -q -f "$MIG" >/dev/null; }   # guard aceita re-run (marca v3 presente)
 # Vermelho = o status sob sabotagem e o que a sabotagem DECLARA ($2) — nao so "!= broken". O "!="
@@ -227,9 +230,6 @@ janela_rodada() {
   echo "${out# }"
 }
 N9_ESPERADO="ok|18000 stale|18000 stale|18000 ok|18000"
-# 4 leituras "status|idade" BEM FORMADAS: uma sabotagem só conta como dente se a rodada RODOU e leu
-# outra coisa — rodada que quebrou (erro, relógio que não respondeu) também "difere" do esperado.
-bem_formada() { [[ "$1" =~ ^(ok|stale|broken)\|[0-9]+(\ (ok|stale|broken)\|[0-9]+){3}$ ]]; }
 # shellcheck disable=SC2046  # split proposital: 4 leituras separadas por espaço
 set -- $(janela_rodada)
 # idade 18000 = 5h EXATAS: é o controle POSITIVO de que o compute leu o relógio controlado. No relógio
@@ -347,7 +347,7 @@ if sabota "$SAB_GUARD_OLD" "IF false THEN" 1 2>/dev/null \
    && [ "$(Pq -c "SELECT pg_get_functiondef('public._data_health_compute()'::regprocedure) LIKE '%estoque frescor v3%';")" = "t" ]; then
   ok "F3 guard neutralizado APLICOU sobre base alienígena → N7 tem dente (o RAISE é o que barra)"
 else
-  bad "F3 guard neutralizado ainda abortou?! (N7 pode estar passando por outro motivo)"
+  bad "F3 guard neutralizado NÃO aplicou limpo sobre a base alienígena (abortou, errou depois do COMMIT ou não gravou o v3) — não é o que a sabotagem declara"
 fi
 # restaura o mundo (o F3 deixou o corpo v3 por cima do alienígena — re-semeia base + migration real)
 P -q -f "$BASE"; P -q -f "$MIG" >/dev/null
@@ -364,30 +364,42 @@ sabota "           WHEN se.max_sync > now() + interval '5 minutes' THEN 'broken'
 limpa; P -q -c "SELECT _set_estoque(interval '-2 hours', 'ListarPosEstoque');"
 veredito_status "F5 sem anti-futuro o timestamp futuro passa verde → A2 tem dente" "ok"
 restaura
+# A rodada sob sabotagem roda com `set -e` e o rc capturado fora de lista ||/&&: dentro de `$(...)` o
+# errexit some, e um `limpa` que falhava no meio era ultrapassado pelas leituras seguintes e pelo
+# `echo` final (Codex, 2026-09-27). Rodada que erra devolve ERRO_rc=<n>, que nenhum declarado casa.
+rodada_sabotada() { local r rc; set +e; r="$(set -e; janela_rodada "$@")"; rc=$?; set -e; [ "$rc" -eq 0 ] || r="ERRO_rc=$rc"; printf '%s\n' "$r"; }
+# F9 declara o mecanismo do relógio DESLIGADO: o compute lê o now() de PAREDE, dias depois de 16/09 —
+# as 4 bordas saem broken com idade ≥ 1 dia. "Sem |18000" sozinho aceitava ok|0 (Codex, 2026-09-27).
+quatro_broken_dias() {
+  [[ "$1" =~ ^broken\|([0-9]+)\ broken\|([0-9]+)\ broken\|([0-9]+)\ broken\|([0-9]+)$ ]] || return 1
+  local i; for i in 1 2 3 4; do [ "${BASH_REMATCH[$i]}" -ge 86400 ] || return 1; done
+}
 # F6 — janela contada em UTC ⇒ N9 tem de FALHAR (07:59:59 BRT são 10:59:59Z, "dentro" em UTC)
 sabota "(now() AT TIME ZONE 'America/Sao_Paulo')::time" "(now() AT TIME ZONE 'UTC')::time" 2
-R="$(janela_rodada)"
+R="$(rodada_sabotada)"
 # determinística: 07:59:59/08:00 BRT = 10:59:59/11:00Z (dentro em UTC); 17:59:59/18:00 BRT = 20:59:59/21:00Z (fora)
 if [ "$R" = "stale|18000 stale|18000 ok|18000 ok|18000" ]; then ok "F6 janela em UTC lê as bordas como UTC ($R) → N9 tem dente"; else bad "F6 assert N9 — a sabotagem UTC não produziu a leitura UTC: [$R]"; fi
 restaura
 # F7 — fim FECHADO (<= 18:00) ⇒ N9d tem de FALHAR
 sabota "<  time '18:00'" "<= time '18:00'" 1
-R="$(janela_rodada)"
+R="$(rodada_sabotada)"
 if [ "$R" = "ok|18000 stale|18000 stale|18000 stale|18000" ]; then ok "F7 fim fechado põe 18:00:00 dentro ($R) → N9d tem dente"; else bad "F7 assert N9d — o fim fechado não produziu a leitura esperada: [$R]"; fi
 restaura
 # F8 — hora tirada do relógio de PAREDE (clock_timestamp escapa do controlado) ⇒ N9 tem de FALHAR
 sabota "(now() AT TIME ZONE 'America/Sao_Paulo')::time" "(clock_timestamp() AT TIME ZONE 'America/Sao_Paulo')::time" 2
-R="$(janela_rodada)"
+R="$(rodada_sabotada)"
 # a hora de PAREDE depende de quando roda — qual das duas leituras vem não é fixo (dentro ou fora da
 # janela), mas o que a sabotagem DECLARA é: as 4 bordas ACHATADAS no mesmo status, idade 18000. "Bem
-# formada e != N9" aceitava qualquer outro desvio (a leitura do F7, por exemplo).
+# formada e != N9" aceitava qualquer outro desvio (a leitura do F7, por exemplo). Risco residual
+# registrado: as 4 leituras (~100 ms) cruzarem 08h ou 18h dá vermelho FALSO — nunca aprova; aceitar a
+# transição readmitiria justamente a assinatura do F7.
 if [ "$R" = "ok|18000 ok|18000 ok|18000 ok|18000" ] || [ "$R" = "stale|18000 stale|18000 stale|18000 stale|18000" ]; then ok "F8 hora de parede achata as 4 bordas ($R) → N9 tem dente"
 elif [ "$R" = "$N9_ESPERADO" ]; then bad "F8 assert N9 — hora de parede e a rodada seguiu igual (sem dente): [$R]"
 else bad "F8 assert N9 — vermelha, mas NAO no achatamento que a sabotagem declara (ou nao rodou): [$R]"; fi
 restaura
 # F9 — relógio DESLIGADO (compute no search_path da migration) ⇒ o controle positivo (idade) tem de FALHAR
-R="$(janela_rodada 0)"
-if bem_formada "$R" && [[ "$R" != *"|18000"* ]]; then ok "F9 relógio desligado quebra a idade ($R) → o controle positivo tem dente"; else bad "F9 controle positivo — relógio desligado e a idade seguiu 18000, ou a rodada não rodou: [$R]"; fi
+R="$(rodada_sabotada 0)"
+if quatro_broken_dias "$R"; then ok "F9 relógio desligado quebra a idade ($R) → o controle positivo tem dente"; else bad "F9 controle positivo — relógio desligado e NÃO veio o declarado (4 bordas broken com idade ≥ 1 dia), ou a rodada errou: [$R]"; fi
 
 echo ""
 echo "═══════════════════════════════════════════"

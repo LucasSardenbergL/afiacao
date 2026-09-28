@@ -440,12 +440,15 @@ sabota "F4 message com a contagem (fingerprint nunca confirma)" \
 
 # F5 — o check sai do compute mas fica em v_sources: rodada INCOMPLETA.
 # A leitura leva checks_avaliados|checks_falhos: o marcador parado sozinho também viria de um
-# check que FALHA (v_falhos>0) — a sabotagem declara 19 presentes e 0 falhos.
+# check que FALHA (v_falhos>0) — a sabotagem declara 19 presentes e 0 falhos. E leva o meta-alerta
+# da rodada incompleta: o watchdog o emite num bloco que ENGOLE erro (só WARNING, fora do
+# checks_falhos) — sem contá-lo, uma emissão quebrada deixaria "false|19|0" intacto (Codex,
+# 2026-09-27). O alerta é limpo antes da rodada para não herdar sobra.
 limpar
 sabota "F5 check removido do compute (v_sources orfao => rodada incompleta)" \
   "$(perl -0pe "s/'analytics_outbox_transporte'::text, 'analytics'::text,/'analytics_outbox_transporte_RENOMEADO'::text, 'analytics'::text,/s" "$MIG" | so_compute)" \
-  'P -q -c "UPDATE public.data_health_watchdog_estado SET last_success_at = now() - interval '"'"'1 hour'"'"';" >/dev/null; P -q -c "SELECT public.data_health_watchdog();" >/dev/null; Pq -c "SELECT (last_success_at > now() - interval '"'"'2 minutes'"'"')::text || '"'"'|'"'"' || checks_avaliados || '"'"'|'"'"' || checks_falhos FROM public.data_health_watchdog_estado;"' \
-  "true|20|0" "false|19|0"
+  'P -q -c "DELETE FROM public.fin_alertas WHERE tipo='"'"'data_health_watchdog_erro'"'"';" >/dev/null; P -q -c "UPDATE public.data_health_watchdog_estado SET last_success_at = now() - interval '"'"'1 hour'"'"';" >/dev/null; P -q -c "SELECT public.data_health_watchdog();" >/dev/null; Pq -c "SELECT (last_success_at > now() - interval '"'"'2 minutes'"'"')::text || '"'"'|'"'"' || checks_avaliados || '"'"'|'"'"' || checks_falhos || '"'"'|meta='"'"' || (SELECT count(*) FROM public.fin_alertas WHERE tipo='"'"'data_health_watchdog_erro'"'"' AND dismissed_at IS NULL) FROM public.data_health_watchdog_estado;"' \
+  "true|20|0|meta=0" "false|19|0|meta=1"
 
 # F6 — a lápide passa a contar o caminho feliz (linha ACEITA vira "perda").
 limpar

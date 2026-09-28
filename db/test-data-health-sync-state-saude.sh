@@ -250,13 +250,23 @@ seed_base
 P -q -c "UPDATE public.sync_state SET status='error', error_message='x', updated_at=now()-interval '30 hours'
          WHERE entity_type='customers' AND account='servicos';"
 FP_REF="$(msg)"
-# A hora corrida sai com 4 casas (0,0001 h = 0,36 s): o numero depende de QUANDO a leitura cai, e
-# declarar "30.0000h" seria vermelho falso sob carga. A leitura normaliza o numero; o que se
-# declara e a FORMA da sabotagem.
-msg_norm() { msg | sed -E 's/falhou ha [0-9]+[.][0-9]+h/falhou ha <N>h/'; }
+# O que a sabotagem DECLARA e a mensagem VOLATIL: o heartbeat anda (o J1) e a mensagem crua MUDA,
+# com a forma "falhou ha <N>h". A forma sozinha aceitava uma mensagem CONSTANTE que contivesse a
+# hora (Codex, 2026-09-27). A hora corrida sai com 4 casas (0,0001 h = 0,36 s): o numero depende de
+# QUANDO a leitura cai, e por isso e normalizado; a mudanca e julgada na mensagem crua.
+fp_volatil() {
+  local a b
+  a="$(msg)"
+  P -q -c "UPDATE public.sync_state SET updated_at=now()-interval '5 minutes' WHERE entity_type='customers' AND account='servicos';" >/dev/null
+  b="$(msg)"
+  P -q -c "UPDATE public.sync_state SET updated_at=now()-interval '30 hours' WHERE entity_type='customers' AND account='servicos';" >/dev/null
+  if [ "$a" = "$b" ]; then b=estavel; else b=mudou; fi
+  a="$(printf '%s' "$a" | sed -E 's/falhou ha [0-9]+[.][0-9]+h/falhou ha <N>h/')"
+  echo "$a|$b"
+}
 falsifica "estabilidade do fingerprint (hora corrida na message)" \
   "s/WHEN ss.status = 'error' THEN 'falhou'/WHEN ss.status = 'error' THEN 'falhou ha '||round((EXTRACT(EPOCH FROM now()-ss.updated_at)\/3600.0)::numeric,4)::text||'h'/" \
-  'msg_norm' "$FP_REF" "Sync Omie PARADO: customers/servicos (falhou ha <N>h)"
+  'fp_volatil' "$FP_REF|estavel" "Sync Omie PARADO: customers/servicos (falhou ha <N>h)|mudou"
 
 echo; echo "═══ RESUMO: $PASS ok · $FAIL falhas ═══"
 [ "$FAIL" = "0" ] || { echo "❌ HARNESS VERMELHO"; exit 1; }
