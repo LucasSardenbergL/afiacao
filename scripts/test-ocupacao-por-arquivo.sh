@@ -36,8 +36,8 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP — jq ausente"; exit 0; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 falhas=0
-ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-ruim() { printf '  \033[31mFALHA\033[0m %s\n' "$1"; falhas=$((falhas+1)); }
+ok()   { printf '  \033[32mok\033[0m    %s\n' "${1//$'\n'/ | }"; }
+ruim() { printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; falhas=$((falhas+1)); }
 # Casa string ASCII, caixa fixa, sem -i: sob pt_BR.UTF-8 o `grep -i` dobra
 # acento e casa o ramo errado (#1483). Todo marcador testado aqui é ASCII.
 tem() { printf '%s' "$1" | command grep -qF "$2"; }
@@ -69,7 +69,7 @@ novo_projects() { # <nome> -> ecoa o dir de projects
   mkdir -p "$d"; printf '%s' "$tmp/$1/projects"
 }
 
-roda() { CLAUDE_PROJECTS_DIR="$1" bash "$ALVO" --por-arquivo --linhas 99 "${@:2}" 2>/dev/null; }
+roda() { CLAUDE_PROJECTS_DIR="$1" bash "$ALVO" --por-arquivo --linhas 99 "${@:2}" 2>>"${ERROS_DO_ALVO:-/dev/null}"; }
 
 # ---- fixture 1: a TESE (mesmo arquivo, mesmo tamanho, posições opostas) ------
 # 200 requests. `cedo.md` é lido no 1º, `tarde.md` no 199º — bytes IDÊNTICOS, e
@@ -107,9 +107,9 @@ saida="$(roda "$P1")"
 pos_cedo="$(printf '%s\n' "$saida" | command grep -n 'cedo.md'  | cut -d: -f1 | head -1)"
 pos_tarde="$(printf '%s\n' "$saida" | command grep -n 'tarde.md' | cut -d: -f1 | head -1)"
 if [ -n "$pos_cedo" ] && [ -n "$pos_tarde" ] && [ "$pos_cedo" -lt "$pos_tarde" ]; then
-  ok "arquivo lido CEDO ranqueia acima do mesmo tamanho lido no FIM"
+  ok "A1 arquivo lido CEDO ranqueia acima do mesmo tamanho lido no FIM"
 else
-  ruim "a tese inverteu (cedo=$pos_cedo tarde=$pos_tarde) — o calculo usa posicao, nao restante"
+  ruim "A1 a tese inverteu (cedo=$pos_cedo tarde=$pos_tarde) — o calculo usa posicao, nao restante"
   printf '%s\n' "$saida" | sed 's/^/      /'
 fi
 
@@ -117,9 +117,9 @@ fi
 # 199× é a razão exata das posições; a asserção aceita só o intervalo em volta.
 pct_cedo="$(printf '%s\n' "$saida" | command grep 'cedo.md'  | command sed 's/.* \([0-9.]*\)%$/\1/')"
 if [ -n "$pct_cedo" ] && LC_ALL=C awk -v p="$pct_cedo" 'BEGIN{exit !(p > 99 && p <= 100)}'; then
-  ok "peso proporcional aos requests restantes (cedo = ${pct_cedo}%, esperado ~99,5%)"
+  ok "A1b peso proporcional aos requests restantes (cedo = ${pct_cedo}%, esperado ~99,5%)"
 else
-  ruim "cedo deveria levar ~99,5% da ocupacao, levou '${pct_cedo}%'"
+  ruim "A1b cedo deveria levar ~99,5% da ocupacao, levou '${pct_cedo}%'"
 fi
 
 # ---- 2) dedupe por requestId ------------------------------------------------
@@ -129,9 +129,9 @@ P2="$(novo_projects dedupe)"; monta_tese "$P2" 3
 saida_dup="$(roda "$P2")"
 if [ "$(printf '%s' "$saida" | command sed 's/sessoes=.*//')" \
    = "$(printf '%s' "$saida_dup" | command sed 's/sessoes=.*//')" ]; then
-  ok "requestId repetido (varios blocos por resposta) nao infla a ocupacao"
+  ok "A2 requestId repetido (varios blocos por resposta) nao infla a ocupacao"
 else
-  ruim "3 blocos por request mudaram o resultado — dedupe por requestId nao segurou"
+  ruim "A2 3 blocos por request mudaram o resultado — dedupe por requestId nao segurou"
   printf '%s\n' "$saida_dup" | sed 's/^/      /'
 fi
 
@@ -148,9 +148,9 @@ J3="$P3/-Users-x-Projetos-afiacao-teste/b.jsonl"
   i=3; while [ "$i" -le 100 ]; do linha_req "req_$i" s2; i=$((i+1)); done; } > "$J3"
 saida_b="$(roda "$P3")"
 if tem "$saida_b" "(Bash - sem arquivo)"; then
-  ok "chamada sem file_path aparece como '(Bash - sem arquivo)'"
+  ok "A3 chamada sem file_path aparece como '(Bash - sem arquivo)'"
 else
-  ruim "Bash sumiu do ranking por arquivo — 40% da ocupacao omitida em silencio"
+  ruim "A3 Bash sumiu do ranking por arquivo — 40% da ocupacao omitida em silencio"
   printf '%s\n' "$saida_b" | sed 's/^/      /'
 fi
 
@@ -162,16 +162,16 @@ fi
 # Foi assim que este mesmo caso voltou a ser vazio depois de já ter sido curado.
 soma_col5() { printf '%s\n' "$1" | command grep -E '%$' | LC_ALL=C awk '{s+=$(NF-1)} END{printf "%.1f", s}'; }
 por_ferr="$(CLAUDE_PROJECTS_DIR="$P3" bash "$ALVO" --por-ferramenta --linhas 99 \
-              "$J3" 2>/dev/null)"
+              "$J3" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
 sa="$(soma_col5 "$saida_b")"; sf="$(soma_col5 "$por_ferr")"
 # CONTROLE POSITIVO antes da igualdade: `0.0 = 0.0` é verdade em toda régua
 # quebrada que existe. A asserção só vale se as duas somas forem MEDIDAS.
 if [ "$sa" = "0.0" ] || [ "$sa" = "0,0" ] || [ -z "$sa" ]; then
-  ruim "soma por-arquivo veio '$sa' — fixture sem poder, a igualdade abaixo nao provaria nada"
+  ruim "A4 soma por-arquivo veio '$sa' — fixture sem poder, a igualdade abaixo nao provaria nada"
 elif [ "$sa" = "$sf" ]; then
-  ok "total por ARQUIVO = total por FERRAMENTA ($sa M tok*req) — as duas reguas fecham"
+  ok "A4 total por ARQUIVO = total por FERRAMENTA ($sa M tok*req) — as duas reguas fecham"
 else
-  ruim "por-arquivo somou '$sa' e por-ferramenta '$sf' — as reguas discordam"
+  ruim "A4 por-arquivo somou '$sa' e por-ferramenta '$sf' — as reguas discordam"
 fi
 
 # ---- 5) o caso que dá nome à suíte: vazio por FALHA sai VERMELHO ------------
@@ -181,35 +181,35 @@ P5="$(novo_projects vazio)"
 : > "$P5/-Users-x-Projetos-afiacao-teste/sem-eventos.jsonl"   # arquivo existe, 0 eventos
 if saida_v="$(CLAUDE_PROJECTS_DIR="$P5" bash "$ALVO" --por-arquivo 2>&1)"; then rc=0; else rc=$?; fi
 if [ "$rc" -ne 0 ] && tem "$saida_v" "ausência de dado"; then
-  ok "sessao lida e NENHUM evento extraido -> vermelho (exit $rc), nao tabela vazia"
+  ok "A5 sessao lida e NENHUM evento extraido -> vermelho (exit $rc), nao tabela vazia"
 else
-  ruim "extracao vazia saiu rc=$rc sem dizer 'ausencia de dado' — falha virou medida"
+  ruim "A5 extracao vazia saiu rc=$rc sem dizer 'ausencia de dado' — falha virou medida"
   printf '%s\n' "$saida_v" | sed 's/^/      /'
 fi
 
 P6="$tmp/janela/projects"; mkdir -p "$P6/-Users-x-Projetos-afiacao-teste"
 if saida_j="$(CLAUDE_PROJECTS_DIR="$P6" bash "$ALVO" --por-arquivo 2>&1)"; then rc=0; else rc=$?; fi
 if [ "$rc" -ne 0 ] && tem "$saida_j" "nenhuma sessão nos últimos"; then
-  ok "nenhuma sessao na janela -> vermelho (exit $rc), nao 'ocupacao zero'"
+  ok "A5b nenhuma sessao na janela -> vermelho (exit $rc), nao 'ocupacao zero'"
 else
-  ruim "janela sem sessao saiu rc=$rc — silencio virou resposta"
+  ruim "A5b janela sem sessao saiu rc=$rc — silencio virou resposta"
 fi
 
 if saida_p="$(CLAUDE_PROJECTS_DIR="$P1" OCUPACAO_REPO_PADRAO=projeto-que-nao-existe \
               bash "$ALVO" --por-arquivo 2>&1)"; then rc=0; else rc=$?; fi
 if [ "$rc" -ne 0 ] && tem "$saida_p" "nenhum projeto casando"; then
-  ok "escopo que nao casa nenhum projeto -> vermelho (exit $rc)"
+  ok "A5c escopo que nao casa nenhum projeto -> vermelho (exit $rc)"
 else
-  ruim "escopo vazio saiu rc=$rc — filtro errado pareceria projeto ocioso"
+  ruim "A5c escopo vazio saiu rc=$rc — filtro errado pareceria projeto ocioso"
 fi
 
 # ---- 6) marcador POSITIVO de fim -------------------------------------------
 # Sem ele, uma execução morta no meio (OOM, pipe quebrado) é indistinguível de
 # uma que terminou: os dois deixam uma tabela parcial na tela.
 if tem "$saida" "OCUPACAO-CONTEXTO-OK"; then
-  ok "execucao completa imprime OCUPACAO-CONTEXTO-OK"
+  ok "A6 execucao completa imprime OCUPACAO-CONTEXTO-OK"
 else
-  ruim "sem marcador positivo de fim — tabela truncada passaria por completa"
+  ruim "A6 sem marcador positivo de fim — tabela truncada passaria por completa"
 fi
 
 # ---- 7) normalização: o mesmo arquivo em 2 worktrees é UM arquivo -----------
@@ -223,9 +223,9 @@ J7="$P7/-Users-x-Projetos-afiacao-teste/w.jsonl"
 n_mesmo="$(roda "$P7" | command grep -c 'docs/agent/mesmo.md' || true)"
 linha_n="$(roda "$P7" | command grep 'docs/agent/mesmo.md' | awk '{print $2}')"
 if [ "$n_mesmo" = "1" ] && [ "$linha_n" = "2" ]; then
-  ok "mesmo arquivo em 2 worktrees colapsa em 1 linha com n=2"
+  ok "A7 mesmo arquivo em 2 worktrees colapsa em 1 linha com n=2"
 else
-  ruim "normalizacao falhou: $n_mesmo linha(s), n=$linha_n (esperado 1 linha, n=2)"
+  ruim "A7 normalizacao falhou: $n_mesmo linha(s), n=$linha_n (esperado 1 linha, n=2)"
 fi
 
 # ---- 8) a saída não pode depender do LOCALE de quem roda --------------------
@@ -247,12 +247,12 @@ if [ -z "$LOC_VIRGULA" ]; then
   printf '  \033[33mSKIP\033[0m  locale decimal-virgula ausente nesta maquina — caso 8 SEM cobertura\n'
 else
   saida_loc="$(LC_ALL="$LOC_VIRGULA" bash "$ALVO" --por-arquivo --linhas 99 \
-                 "$P1/-Users-x-Projetos-afiacao-teste/tese.jsonl" 2>/dev/null)"
+                 "$P1/-Users-x-Projetos-afiacao-teste/tese.jsonl" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
   n_virg="$(printf '%s\n' "$saida_loc" | command grep -cE '[0-9],[0-9]+%?$' || true)"
   if [ "$n_virg" = "0" ] && tem "$saida_loc" "cedo.md"; then
-    ok "sob $LOC_VIRGULA a saida sai com PONTO decimal (ranking nao muda com o ambiente)"
+    ok "A8 sob $LOC_VIRGULA a saida sai com PONTO decimal (ranking nao muda com o ambiente)"
   else
-    ruim "sob $LOC_VIRGULA sairam $n_virg numero(s) com virgula — saida depende do locale"
+    ruim "A8 sob $LOC_VIRGULA sairam $n_virg numero(s) com virgula — saida depende do locale"
     printf '%s\n' "$saida_loc" | sed 's/^/      /'
   fi
 fi
@@ -270,12 +270,18 @@ J9="$P9/-Users-x-Projetos-afiacao-teste/t.jsonl"
   linha_req req_2 s4
   printf '{"sessionId":"s4","requestId":"req_3","messa'; } > "$J9"
 if saida_t="$(CLAUDE_PROJECTS_DIR="$P9" bash "$ALVO" --por-arquivo --linhas 99 2>&1)"; then rc=0; else rc=$?; fi
-if [ "$rc" -eq 0 ] && tem "$saida_t" "docs/agent/vivo.md" && tem "$saida_t" "linha ilegível"; then
-  ok "transcript truncado: mede o que veio antes da quebra E anuncia o descarte"
-elif [ "$rc" -ne 0 ]; then
-  ruim "transcript truncado abortou a varredura inteira (exit $rc) — 1 sessao viva derruba todas"
+# DOIS asserts, não um: "não aborta" e "anuncia" são defeitos DIFERENTES, cada um com a sua
+# sabotagem — sob um ID só, a falsificação de um aceitaria o vermelho do outro (2026-09-27).
+if [ "$rc" -eq 0 ] && tem "$saida_t" "docs/agent/vivo.md"; then
+  ok "A9 transcript truncado: mede o que veio antes da quebra (nao aborta a varredura)"
 else
-  ruim "transcript truncado passou CALADO — descarte silencioso e o defeito que esta suite persegue"
+  ruim "A9 transcript truncado abortou a varredura inteira (exit $rc) — 1 sessao viva derruba todas"
+  printf '%s\n' "$saida_t" | sed 's/^/      /'
+fi
+if [ "$rc" -eq 0 ] && tem "$saida_t" "linha ilegível"; then
+  ok "A9b transcript truncado: anuncia o descarte da linha ilegivel"
+else
+  ruim "A9b transcript truncado passou CALADO (exit $rc) — descarte silencioso e o defeito que esta suite persegue"
   printf '%s\n' "$saida_t" | sed 's/^/      /'
 fi
 
@@ -305,14 +311,14 @@ chmod +x "$STUB/mktemp"
 # Controle positivo do próprio stub: ele TEM de reprovar a forma BSD, senão o
 # caso abaixo passaria por um stub inerte — verde por cegueira.
 if PATH="$STUB:$PATH" mktemp -t sem-xis >/dev/null 2>&1; then
-  ruim "stub GNU inerte (aceitou 'mktemp -t sem-xis') — o caso de portabilidade nao prova nada"
+  ruim "A10a stub GNU inerte (aceitou 'mktemp -t sem-xis') — o caso de portabilidade nao prova nada"
 else
   saida_g="$(PATH="$STUB:$PATH" CLAUDE_PROJECTS_DIR="$P1" bash "$ALVO" \
                --por-arquivo --linhas 99 2>&1 || true)"
   if tem "$saida_g" "OCUPACAO-CONTEXTO-OK" && ! tem "$saida_g" "too few X"; then
-    ok "roda sob o contrato GNU de mktemp (stub) — nao so sob o do BSD"
+    ok "A10 roda sob o contrato GNU de mktemp (stub) — nao so sob o do BSD"
   else
-    ruim "quebrou sob o contrato GNU de mktemp — verde no macOS, vermelho no CI"
+    ruim "A10 quebrou sob o contrato GNU de mktemp — verde no macOS, vermelho no CI"
     printf '%s\n' "$saida_g" | command grep -F "mktemp" | sed 's/^/      /'
   fi
 fi
@@ -321,7 +327,17 @@ fi
 # Sabota uma CÓPIA do alvo (nunca o arquivo versionado) e EXIGE vermelho. Suíte
 # que não fica vermelha quando a invariante quebra é teatro.
 if [ "${1:-}" = "--falsificar" ]; then
-  printf '\n== falsificacao (sabota o ALVO e EXIGE vermelho) ==\n'
+  printf '\n== falsificacao (sabota o ALVO e EXIGE vermelho NO ASSERT que a sabotagem declara) ==\n'
+
+  # Os logs das rodadas saem SEM cor (`sem_cor`), para o ID casar logo depois da palavra.
+  esc="$(printf '\033')"
+  sem_cor() { LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$1"; }
+  # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
+  asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
+  # Erro de execução do bash no ALVO: no log (o que a suíte despeja da saída dele) e no que
+  # ERROS_DO_ALVO recolhe das chamadas que a suíte normal manda para /dev/null (elas MEDEM o stdout).
+  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
+  vermelhos() { { LC_ALL=C grep -Eo '^  FALHA A[0-9]+[a-z]? ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # ── CONTROLE: verde ANTES do primeiro sed ─────────────────────────────────
   # "Ficou vermelho" só informa se existir um verde do qual sair. Sem esta
@@ -336,8 +352,14 @@ if [ "${1:-}" = "--falsificar" ]; then
   fi
   controle="$tmp/controle.sh"
   cp "$ALVO" "$controle"; chmod +x "$controle"
-  if OCUPACAO_OVERRIDE="$controle" bash "$0" >/dev/null 2>&1; then
-    ok "controle (copia SEM sabotagem) -> VERDE"
+  # O LOG do controle é a régua das camadas do laço: quantos asserts a suíte executa, e que o
+  # assert declarado SABE ficar verde nesta invocação.
+  ctl="$tmp/controle.log"
+  : > "$ctl.stderr"
+  OCUPACAO_OVERRIDE="$controle" ERROS_DO_ALVO="$ctl.stderr" bash "$0" >"$ctl.cru" 2>&1; rc=$?
+  sem_cor "$ctl.cru" > "$ctl"
+  if [ "$rc" -eq 0 ] && [ "$(asserts "$ctl")" -gt 0 ]; then
+    ok "controle (copia SEM sabotagem) -> VERDE ($(asserts "$ctl") asserts)"
   else
     ruim "controle SEM sabotagem ja esta VERMELHO — sem linha de base, sabotar nao prova nada"
     printf '\n❌ falsificacao ABORTADA: sem verde de partida.\n'
@@ -345,95 +367,173 @@ if [ "${1:-}" = "--falsificar" ]; then
   fi
 
   copia="$tmp/sabotado.sh"
-  sabota() { # <descricao> <invariante que deve quebrar> <expressao sed>
-    desc="$1"; regra="$2"; expr="$3"
+  aplica() {  # escreve a cópia sabotada; 1 = falsificação VAZIA (já acusada), nada a julgar
     erro=$(sed "$expr" "$ALVO" 2>&1 >"$copia"); chmod +x "$copia"
     # (1) sed inválido escreve cópia vazia — vermelha sem ter sabotado nada
     if [ -n "$erro" ]; then
-      ruim "\"$desc\": sed invalido (${erro:0:60}) — sabotagem vazia"; return
+      ruim "\"$desc\": sed invalido (${erro:0:60}) — sabotagem vazia"; return 1
     fi
     # (2) padrão que não casou deixa o alvo intacto
     if cmp -s "$ALVO" "$copia"; then
-      ruim "\"$desc\": padrao nao casou, alvo intacto — sabotagem vazia"; return
+      ruim "\"$desc\": padrao nao casou, alvo intacto — sabotagem vazia"; return 1
     fi
     # (3) sintaxe de shell quebrada = vermelho pelo motivo errado
     if ! bash -n "$copia" 2>/dev/null; then
-      ruim "\"$desc\": quebrou a SINTAXE do shell — vermelho pelo motivo errado"; return
+      ruim "\"$desc\": quebrou a SINTAXE do shell — vermelho pelo motivo errado"; return 1
     fi
     # (4) `bash -n` não vê runtime: fixture de FUMAÇA que a cópia tem de
     # atravessar sem erro de bash, senão o poder aparente sai inflado.
     fum="$(CLAUDE_PROJECTS_DIR="$P3" bash "$copia" --por-arquivo 2>&1 || true)"
     if printf '%s' "$fum" | command grep -qE 'unbound variable|command not found|syntax error'; then
-      ruim "\"$desc\": quebrou o RUNTIME (${fum:0:60}) — vermelho pelo motivo errado"; return
-    fi
-    if OCUPACAO_OVERRIDE="$copia" bash "$0" >/dev/null 2>&1; then
-      ruim "\"$desc\" passou VERDE — a suite NAO cobre: $regra"
-    else
-      ok "\"$desc\" -> vermelho"
+      ruim "\"$desc\": quebrou o RUNTIME (${fum:0:60}) — vermelho pelo motivo errado"; return 1
     fi
   }
 
+  # <sabotagem>:<IDs dos asserts que TÊM de acusá-la>[:<IDs que têm de CONTINUAR verdes>] — `,` = E.
+  # O ID é o 1º token que o assert imprime (`FALHA A9 …`). O `:VERDES` é a pré-condição: o
+  # `descarte_calado` só prova o anúncio se a varredura NÃO abortou (A9 verde) — senão o A9b cai
+  # junto com o aborto, que é outra sabotagem (Codex, 2026-09-27). Exit≠0 NÃO é dente: até
+  # 2026-09-27 este laço contava "-> vermelho" para QUALQUER rodada que saísse ≠0 — assert alheio,
+  # aborto, o alvo morrendo no ramo que o assert mede. Colaterais ficam de fora de propósito.
+  # docs/historico/falsificacao-exit-nao-e-dente.md
+  SABOTAGENS="custo_vira_posicao:A1 dedupe_desligado:A2 extracao_vazia_ok:A5 janela_sem_sessao_ok:A5b
+              sem_file_path_descartada:A3 normalizacao_desligada:A7 marcador_fim_removido:A6
+              mktemp_so_bsd:A10 jq_solto_sob_set_e:A9 descarte_calado:A9b:A9 sem_lc_all_c:A8"
+
+  # registra <nome> <descricao> <invariante que deve quebrar> <expressao sed> — a TABELA das
+  # sabotagens. Nome da lista sem registro e registro fora da lista são FALHA (no fim do laço): o
+  # primeiro não sabotaria nada, o segundo nunca rodaria.
+  registradas=""
+  registra() {
+    case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
+    registradas="$registradas $1"
+    printf -v "desc_$1" '%s' "$2"; printf -v "regra_$1" '%s' "$3"; printf -v "expr_$1" '%s' "$4"
+  }
+
   # Uma camada por vez: a que ficar VERDE é redundante ou inalcançada.
-  sabota "custo vira posicao em vez de restante" \
+  registra custo_vira_posicao "custo vira posicao em vez de restante" \
          "a TESE — Read caro no comeco viraria barato e o ranking inverteria" \
          's/restantes = req\[rsess\[i\]\] - rpos\[i\]/restantes = rpos[i]/'
   # shellcheck disable=SC2016  # aspas simples de propósito: `$3` é o campo do
   # AWK dentro do alvo, não uma variável desta shell. Expandir escreveria um
   # padrão que não casa — sabotagem vazia, que a trava (2) pega só depois de
   # custar uma rodada.
-  sabota "dedupe por requestId desligado" \
+  registra dedupe_desligado "dedupe por requestId desligado" \
          "varios blocos por resposta inflariam TODO multiplicador (2,28x medido)" \
          's/if ($3 != "-" \&\& (k in visto)) next/if (0) next/'
   # shellcheck disable=SC2016  # idem: `$BRUTO` é o TEXTO literal procurado
   # dentro do alvo. Aqui expandir seria pior que inútil — casaria o caminho do
   # mktemp desta execução, que não existe no arquivo.
-  sabota "extracao vazia deixa de ser erro" \
+  registra extracao_vazia_ok "extracao vazia deixa de ser erro" \
          "jq morto / formato mudado imprimiria tabela vazia como 'ocupacao zero'" \
          's/if \[ ! -s "\$BRUTO" \]; then/if false; then/'
-  sabota "janela sem sessao vira sucesso" \
+  registra janela_sem_sessao_ok "janela sem sessao vira sucesso" \
          "recorte errado pareceria projeto ocioso (exit 0 com tabela vazia)" \
          's/exit 3$/exit 0/'
   # o alvo virou `kk[1] = ...` quando --ver-shell passou a poder repartir UMA
   # saida entre varios arquivos; o rotulo agregado e o mesmo.
-  sabota "chamada sem file_path e descartada" \
+  registra sem_file_path_descartada "chamada sem file_path e descartada" \
          "Bash — 77% da ocupacao — sumiria do ranking sem uma palavra" \
          's/kk\[1\] = "(" t " - sem arquivo)"/kk[1] = "x"/'
-  sabota "normalizacao de worktree desligada" \
+  registra normalizacao_desligada "normalizacao de worktree desligada" \
          "o mesmo doc lido de 30 worktrees viraria 30 linhas e nunca apareceria no topo" \
          's|sub("\^\.\*/" padrao "\[\^/\]\*/", "", q)|q = q|'
-  sabota "marcador positivo de fim removido" \
+  registra marcador_fim_removido "marcador positivo de fim removido" \
          "execucao morta no meio passaria por completa" \
          's/^echo "OCUPACAO-CONTEXTO-OK/echo "fim/'
   # shellcheck disable=SC2016  # `$(mktemp …)` aqui é o TEXTO que o sed casa e
   # escreve no alvo; expandir rodaria o mktemp desta shell e gravaria um caminho
   # fixo — sabotagem que não sabota, e o alvo passaria a usar um arquivo só.
-  sabota "mktemp volta a forma so-BSD (-t <prefixo>)" \
+  registra mktemp_so_bsd "mktemp volta a forma so-BSD (-t <prefixo>)" \
          "verde no macOS e vermelho no CI pelo mesmo codigo — flag homonima BSD x GNU" \
          's|^BRUTO=$(mktemp .*)$|BRUTO=$(mktemp -t ocupacao-contexto)|'
-  sabota "jq volta a rodar solto sob set -e" \
+  # A linha ilegível volta a ABORTAR a varredura (o exit 5 do `set -e` no incidente). Até
+  # 2026-09-27 o sed era `if ! jq` → `if jq`: não soltava o jq do `set -e` (ele segue dentro do
+  # `if`), só invertia a contagem — e o que caía era o ANÚNCIO, o sintoma da sabotagem de baixo.
+  # Com o A9 partido em A9/A9b, a medição mostrou (A9b vermelho, A9 verde). Um sed de UMA linha
+  # não tira o `if !` sem quebrar a sintaxe; trocar a contagem por `exit 5` é o sintoma exato.
+  # shellcheck disable=SC2016  # `$((` é o TEXTO do alvo que o sed casa
+  registra jq_solto_sob_set_e "jq volta a abortar a varredura (o exit 5 do set -e)" \
          "1 sessao viva com linha parcial abortaria a varredura das outras 684" \
-         's/^  if ! jq -rc /  if jq -rc /'
+         's/^    parse_falhou=\$((parse_falhou + 1))$/    exit 5/'
   # shellcheck disable=SC2016  # idem: `$parse_falhou` é o TEXTO procurado dentro
   # do alvo — a variável não existe nesta shell, e expandir escreveria um padrão
   # vazio que não casa nada.
-  sabota "descarte por linha ilegivel deixa de ser anunciado" \
+  registra descarte_calado "descarte por linha ilegivel deixa de ser anunciado" \
          "sessao truncada sairia da conta em silencio — o 2>\/dev\/null que a suite persegue" \
          's/^if \[ "\$parse_falhou" -gt 0 \]; then/if false; then/'
-  if [ -n "$LOC_VIRGULA" ]; then
-    sabota "LC_ALL=C removido (saida a merce do locale)" \
-           "sob $LOC_VIRGULA o printf sai com virgula e o sort -rn pode reordenar o ranking" \
+  # Sem locale de vírgula não há como sabotar esta AQUI — o laço a anuncia como SKIP em vez de
+  # pular calado: estaria reportando cobertura que não exerceu.
+  registra sem_lc_all_c "LC_ALL=C removido (saida a merce do locale)" \
+           "sob ${LOC_VIRGULA:-o locale de virgula} o printf sai com virgula e o sort -rn pode reordenar o ranking" \
            's/^export LC_ALL=C$/: LC_ALL/'
-  else
-    # Sem locale de vírgula não há como sabotar isto AQUI. Anunciar em vez de
-    # pular calado: o laço estaria reportando cobertura que não exerceu.
-    printf '  \033[33mSKIP\033[0m  sabotagem do LC_ALL=C sem locale decimal-virgula — NAO exercitada\n'
-  fi
+
+  # A rodada só conta como vermelha com as QUATRO camadas (as do sync-reprocess):
+  #   1. a sabotagem APLICOU (as travas de aplica());
+  #   2. a suíte rodou INTEIRA (nº de asserts = o do controle: aborto no meio não é assert);
+  #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
+  #   4. nenhum erro de execução do bash no alvo que o controle não tem — o alvo que morre no ramo
+  #      do assert derruba o assert certo por CRASH, não por julgamento.
+  # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+  # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+  # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+  repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$repetidos" ] || { ruim "SABOTAGENS com nome repetido: $repetidos"; }
+  case "$SABOTAGENS" in *'|'*) ruim "SABOTAGENS com | (OU): declare por , (E) — este juiz exige o MESMO assert nos dois lados" ;; esac
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; exigidos="${item#*:}"
+    verm="${exigidos%%:*}"; verdes=""; [ "$verm" = "$exigidos" ] || verdes="${exigidos#*:}"
+    v="desc_$sab"; desc="${!v-}"; v="regra_$sab"; regra="${!v-}"; v="expr_$sab"; expr="${!v-}"
+    if [ -z "$expr" ]; then
+      ruim "\"$sab\": na lista SABOTAGENS e SEM registro — nada foi sabotado"; continue
+    fi
+    if [ "$sab" = sem_lc_all_c ] && [ -z "$LOC_VIRGULA" ]; then
+      printf '  \033[33mSKIP\033[0m  sabotagem do LC_ALL=C sem locale decimal-virgula — NAO exercitada\n'; continue
+    fi
+    aplica || continue
+    log="$tmp/sabotada-$sab.log"
+    : > "$log.stderr"
+    OCUPACAO_OVERRIDE="$copia" ERROS_DO_ALVO="$log.stderr" bash "$0" >"$log.cru" 2>&1; rc=$?
+    sem_cor "$log.cru" > "$log"
+    if [ "$rc" -eq 0 ]; then
+      ruim "\"$desc\" passou VERDE — a suite NAO cobre: $regra"; continue
+    fi
+    # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
+    faltam=""
+    for exigido in ${verm//,/ }; do
+      if ! LC_ALL=C grep -Eq "^  ok +($exigido) " "$ctl" || ! LC_ALL=C grep -Eq "^  FALHA ($exigido) " "$log"; then
+        faltam="$faltam $exigido"
+      fi
+    done
+    caiu=""
+    for verde in ${verdes//,/ }; do
+      LC_ALL=C grep -Eq "^  ok +($verde) " "$log" || caiu="$caiu $verde"
+    done
+    if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
+      ruim "\"$desc\": a suite NAO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, nao de assert"
+    elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
+      ruim "\"$desc\": vermelha com ERRO de execucao no alvo — o assert caiu por crash, nao por julgamento"
+      { LC_ALL=C grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log" || true; } | LC_ALL=C sed 's/^/       /'
+    elif [ -n "$faltam" ]; then
+      ruim "\"$desc\": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):$faltam · vermelhos: $(vermelhos "$log")"
+    elif [ -n "$caiu" ]; then
+      ruim "\"$desc\": caiu o que tinha de CONTINUAR verde (a pre-condicao):$caiu · vermelhos: $(vermelhos "$log")"
+    else
+      ok "\"$desc\" -> vermelho no assert declarado ($exigidos) · vermelhos: $(vermelhos "$log")"
+    fi
+  done
+  for r in $registradas; do
+    case " $SABOTAGENS " in
+      *[[:space:]]"$r:"*) ;;
+      *) ruim "\"$r\": registrada e FORA da lista SABOTAGENS — nunca roda, e o verde nao a cobre" ;;
+    esac
+  done
 
   echo
   if [ "$falhas" -eq 0 ]; then
-    echo "✅ falsificacao: toda sabotagem virou vermelho"; exit 0
+    echo "✅ falsificacao: toda sabotagem ficou vermelha NO assert que declara"; exit 0
   else
-    echo "❌ falsificacao: $falhas sabotagem(ns) sobreviveu(ram) — a suite nao cobre o que promete"
+    echo "❌ falsificacao: $falhas sabotagem(ns) sem o vermelho certo — a suite nao cobre o que promete"
     exit 1
   fi
 fi
