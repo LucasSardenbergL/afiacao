@@ -84,11 +84,15 @@ import { alarmesDoStripper, enumerar } from './shell-variavel-colada-gate';
 /** `import.meta.dir` é do Bun e não existe sob o vitest — por isso preguiçosa, como nos irmãos. */
 const raizDoRepo = () => resolve(import.meta.dir, '..');
 
-/** Onde a chamada começa. Daí em diante ela é LIDA (`lerArgumentos`), não casada por padrão. */
-const CHAMADA = /\bdate_trunc\s*\(/gi;
+/**
+ * Onde a chamada começa. Daí em diante ela é LIDA (`lerArgumentos`), não casada por padrão. Exportados
+ * (com `JANELA` e `classificar`) para o irmão `fuso-da-sessao-em-migrations-e-skills-gate.ts`: um
+ * parser e uma assinatura para os três universos da classe.
+ */
+export const CHAMADA = /\bdate_trunc\s*\(/gi;
 
 /** Até onde a leitura de UMA chamada vai. A que não fecha antes disso vira INDETERMINADO. */
-const JANELA = 2000;
+export const JANELA = 2000;
 
 /** Unidade de CALENDÁRIO, literal, com ou sem cast: truncar a hora dá o mesmo instante em SP e em UTC. */
 const UNIDADE = /^'(?:day|week|month|quarter|year|decade|century|millennium)'(?:\s*::\s*[a-z]+)?$/i;
@@ -139,7 +143,7 @@ function fimDasAspas(sql: string, ini: number): number {
  * Os argumentos de nível 1 da chamada cujo `(` abre o texto, lidos como o Postgres lê: `'…'` e `"…"`
  * são opacos (a vírgula e o parêntese de dentro não contam). null = a chamada não fecha no texto.
  */
-function lerArgumentos(sql: string): string[] | null {
+export function lerArgumentos(sql: string): string[] | null {
   const args: string[] = [];
   let profundidade = 0;
   let inicio = 1;
@@ -164,7 +168,7 @@ function lerArgumentos(sql: string): string[] | null {
   return null;
 }
 
-function classificar([unidade, expressao, fuso]: string[]): Motivo | null {
+export function classificar([unidade, expressao, fuso]: string[]): Motivo | null {
   if (!UNIDADE.test(unidade ?? '') || !expressao) return null;
   if (RELOGIO_LOCAL.test(expressao) || CAST_LOCAL.test(expressao)) return 'relógio LOCAL da sessão';
   if (!RELOGIO.test(expressao)) return null;

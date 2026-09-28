@@ -77,6 +77,19 @@ export function removerCercas(texto: string): TextoLimpo {
 }
 
 /**
+ * O INVERSO de `removerCercas`: só o conteúdo das cercas sobrevive (a prosa vira linha vazia), com a
+ * mesma numeração de linha. É a camada de quem mede o CÓDIGO que o doc manda rodar — as consultas SQL
+ * das skills, por exemplo. Derivado do próprio `removerCercas` (a linha que ele esvaziou é código),
+ * para que as duas camadas nunca discordem sobre onde uma cerca abre ou fecha. A linha da cerca em si
+ * sobra no resultado; é marca de markdown, não código de nenhuma linguagem que se meça aqui.
+ */
+export function somenteCercas(texto: string): TextoLimpo {
+  const { texto: semCercas, cercaAberta } = removerCercas(texto);
+  const limpas = semCercas.split('\n');
+  return { texto: texto.split('\n').map((linha, i) => (limpas[i] === linha ? '' : linha)).join('\n'), cercaAberta };
+}
+
+/**
  * Esvazia TODO código: cerca (```/~~~) e trecho entre crases. Camada para quem mede algo que, se
  * aparecer entre crases, está sendo exibido e não afirmado.
  */
