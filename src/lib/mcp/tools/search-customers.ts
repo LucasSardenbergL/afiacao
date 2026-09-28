@@ -9,14 +9,19 @@ function supabaseForUser(ctx: ToolContext) {
   });
 }
 
-// Sanitiza input para o parser do `.or()` do PostgREST — remove vírgula (separador de cláusula),
-// parênteses (agrupamento), aspas, barra e os wildcards `% _ *`. Sem isto, um `query` como
-// `x,id.gt.0` injeta um predicado extra e alarga o resultado dentro do que a RLS libera.
-// Inlined (espelha @/lib/postgrest.sanitizeForPostgrestOr) porque este módulo é bundlado para a
-// edge MCP em Deno, que não resolve o alias `@/`.
-function sanitizeOrTerm(input: string): string {
-  return input.replace(/[%_,()\\"*]/g, "");
+// MIRROR-START postgrest-or — manter IDÊNTICO ao bloco de src/lib/postgrest.ts. Inlined porque este
+// módulo é bundlado para a edge MCP em Deno (supabase/functions/mcp, gerado pelo @lovable.dev/mcp-js),
+// que não resolve o alias `@/`. Sanitiza o termo para o parser do `.or()` — tira vírgula (separador de
+// cláusula), parênteses, aspas, barra e os curingas `% _ *`; sem isto, um `query` como `x,id.gt.0`
+// injeta um predicado extra dentro do que a RLS libera. A paridade é vigiada pelo CI
+// (edge-money-path-invariants) — a deriva de uma cópia foi o B1.
+function sanitizeForPostgrestOr(input: string): string {
+  return input.replace(/[%_,()\\"*]/g, '');
 }
+function isSearchablePostgrestTerm(term: string): boolean {
+  return sanitizeForPostgrestOr(term) !== '';
+}
+// MIRROR-END postgrest-or
 
 export default defineTool({
   name: "search_customers",
@@ -31,12 +36,12 @@ export default defineTool({
     if (!ctx.isAuthenticated()) {
       return { content: [{ type: "text", text: "Not authenticated" }], isError: true };
     }
-    const safe = sanitizeOrTerm(query);
     // Termo degenerado (vazio ou só-metacaracteres) colapsaria para `col.ilike.%%` = match-all —
     // não deve enumerar toda a tabela; devolve vazio.
-    if (!safe) {
+    if (!isSearchablePostgrestTerm(query)) {
       return { content: [{ type: "text", text: "[]" }], structuredContent: { results: [] } };
     }
+    const safe = sanitizeForPostgrestOr(query);
     const sb = supabaseForUser(ctx);
     const predicado = ["name", "document", "email", "phone"]
       .map((c) => `${c}.ilike.%${safe}%`)
