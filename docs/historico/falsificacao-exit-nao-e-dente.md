@@ -175,7 +175,7 @@ núcleo, só a medição decide, e cada site das fases seguintes tem de ser reco
 
 **Já-corretos** (o veredito identifica o assert — sentinela, SQLSTATE, marca, conjunto exato de IDs ou
 valor exato): em `db/` os 3 juízes do núcleo citados acima, `push-vendedora`, `auto-aprovacao-piloto`,
-`tint-promocao-assincrona`, `deploy-sonda-cron`, `deploy-atestacoes` (era afetado — fase 2), `desconto-valor-escritores`,
+`tint-promocao-assincrona`, `deploy-sonda-cron`, `deploy-atestacoes` (era afetado — ver "Afetados de `db/` fora do núcleo"), `desconto-valor-escritores`,
 `cfo-caixa-90d-otica`, `pedido-venda-coerencia`, `disparado-simulado-pos-disparo`, `fin-sync-lease`,
 `calculate-scores-lease`, `carteira-rebuild-lease`, `endividamento-money-path`,
 `get-ultimos-precos-cliente`, `rpc-tactical-plan-posse-segura`, `tactical-plans-eligible-fail-closed`,
@@ -365,7 +365,7 @@ macOS (só troca X finais) — rodadas paralelas colidem ("File exists"). Aparec
 `estoque-fonte-dado`, `watchdog-reemissao`, `preco-medio-leadtime-efetivo` e `import-tint-formulas`;
 o harness da meta tira o sufixo nas cópias.
 
-## Fase 2 — `db/` fora do núcleo (2026-09-27)
+## Afetados de `db/` fora do núcleo — 2026-09-27
 
 Os 4 afetados de `db/` foram RECONFERIDOS lendo o código e medindo numa cópia antes de qualquer
 conserto. A medição mudou três dos quatro retratos da varredura — e trouxe mais três sites:
@@ -414,7 +414,7 @@ casos, em vez de fingir que cada camada sozinha é necessária.
 O laço que isola cada sabotagem num subshell o chama como comando simples (`set +e` em volta, rc
 num global); com `|| true`, um aborto no meio da suíte sairia como rodada inteira.
 
-### A meta-falsificação da fase 2
+### A meta-falsificação dos afetados
 
 Repo-sombra por symlinks, trocas exatas (casou ≠1× = erro da meta), `bash -n`, expectativa declarada
 antes, controle na mesma invocação, `LC_ALL=C` e `pt_BR.UTF-8`; o "antes" e o "depois" lidos de
@@ -449,7 +449,7 @@ Gates, sobre o mesmo commit: os 19 arquivos do vitest que leem `db/` (1.132 test
 (0 achados em 456), `falsificar-exige-assert` (461 arquivos, 5 listas, 47 entradas, 5 laços, 7
 linhas do núcleo — antes: 462 · 4 · 38 · 4 · 7) e `shell-variavel-colada`.
 
-### Lições da fase 2
+### Lições dos afetados
 
 - **Prova fora do CI apodrece em silêncio.** A do eco passivo ficou 22 dias saindo 1 na `main` e
   ninguém viu: a sonda do import fez o certo (reprovou, em vez de verde por cegueira), mas nada a
@@ -470,7 +470,7 @@ linhas do núcleo — antes: 462 · 4 · 38 · 4 · 7) e `shell-variavel-colada`
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
 tarefas com a assinatura calibrada e a lista de sites no briefing:
 
-- ✅ **"Erradicar falsificação sem assert em db/ fora do núcleo"** — feito na fase 2 (acima): os 4
+- ✅ **"Erradicar falsificação sem assert em db/ fora do núcleo"** — feito ("Afetados de `db/` fora do núcleo", acima): os 4
   afetados, mais o sucessor e o `rpc()`; um aposentado. Risco residual (Codex): dois erros com a MESMA
   linha ERROR numa MESMA medição continuam indistinguíveis pelo log.
   - ↳ a classe vizinha que ela revelou — prova fora do CI que MORRE e ninguém vê — virou a tarefa

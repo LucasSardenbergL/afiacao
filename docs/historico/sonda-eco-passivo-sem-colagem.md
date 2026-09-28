@@ -185,7 +185,7 @@ acompanha — ele não prova filtro (ninguém prova filtro lendo string), só to
 > script passou a ler o ledger, e esta prova morreu na sonda do import — os dois modos saíam 1 antes
 > de qualquer assert, e ninguém viu por 22 dias. O filtro mora em `deploy_atestacoes_janela_viva()`;
 > as quatro sabotagens foram portadas para `db/test-deploy-atestacoes.sh`, com juiz que nomeia o
-> assert. Ver `falsificacao-exit-nao-e-dente.md`, fase 2.
+> assert. Ver `falsificacao-exit-nao-e-dente.md`, seção "Afetados de `db/` fora do núcleo".
 
 ### 10.1 ⚠️ A falsificação por `sed` no ARQUIVO acertou o COMENTÁRIO, e o guard aprovou
 
