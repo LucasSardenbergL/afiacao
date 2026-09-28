@@ -221,4 +221,9 @@ As duas dívidas da tabela saíram do gate no mesmo dia: migration
   nascimento — o dente certo —, mas o X3 lia o aborto como erro de execução. Virou veredito.
 
 **Números:** 50 asserts (H1 · X1-X3s · D/L · R0-R2 · A1-A6 · bloco B ×2 sessões · W1-W2) e 18
-sabotagens. Matriz servidor `TZ=UTC`/SP × `lc_messages` C/pt_BR: MATRIZ_PENDENTE.
+sabotagens. Matriz servidor `TZ=UTC`/SP × `lc_messages` C/pt_BR: **4/4**, cada uma com controle verde +
+**18/18** sabotagens vermelhas no assert declarado e os declarados-verdes rodando verdes (72
+veredictos); 165–193 s por `--falsificar` num Mac sob carga. Entrou no núcleo do CI
+(`db/nucleo-ci.txt`: `50 falsificar=18`). Os dois gates que mergearam na main durante a entrega
+(`falsificar-exige-assert` e `fuso-da-sessao-em-provas`) foram rodados sobre a prova antes do PR e
+aprovaram.
