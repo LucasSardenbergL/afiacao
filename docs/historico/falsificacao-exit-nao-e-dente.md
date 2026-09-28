@@ -670,6 +670,42 @@ cada site: a reprodução reprova no novo, passava no de antes, e desligar a cam
   sabotagem produz zero, a chamada que nada faz também produz zero — a medição tem de carregar o
   efeito da PRÓPRIA chamada.
 
+## Parciais de `db/`, fase 3 — preço/custo/margem (money-path), 2026-09-27
+
+**Passo 0 — classe.** Os 5 reconferidos lendo o código e reproduzidos numa cópia; os 5 eram afetados:
+
+| site | o que o juiz aceitava (medido no arquivo de antes) |
+|---|---|
+| `fu4f-fase3-carteira-margem-faixa` | `ne` aceitava a leitura que ERRA (≠ verde); sob `sabota … && {…}` o apply que falhava pulava o bloco inteiro sem vermelho nenhum (exit 0) |
+| `preco-medio-leadtime-efetivo` | a medição VAZIA contava como o número enviesado da fonte crua (18/0) |
+| `recommend-cluster-agregado` | `exige_vermelho` aceitava a chave AUSENTE da medição (25/0); a sabotagem que não casa passava calada |
+| `regua-preco-customer360` | F2 casava `*1*` — qualquer texto com um "1", inclusive o de um erro (35/0) |
+| `v-titulo-baixas-otica-canonica` | `muta` aceitava a linha que SOME por defeito qualquer (`(vazio)` ≠ controle, 21/0); F4 aceitava a perda TOTAL; A9 casava a AUSÊNCIA de uma sentinela (qualquer erro) |
+
+**O conserto:** o valor declarado (colhido do arquivo intacto, 2 rodadas iguais) em cada juiz; `medir()`
+nas medições de juiz; o apply da sabotagem com o rc nomeado (falha = vermelho, não bloco pulado); o F4
+do v-titulo exige a perda SELETIVA (o 1001 fica); o A9 pela condição nomeada (`raise_exception`
+capturado com psql 0).
+
+**A 2ª opinião** (Codex challenge, `gpt-6-astra` max, 371 s — obrigatória no money-path) achou 5 escapes;
+todos reproduzidos na meta (pré = o commit antes da rodada: passava; novo: reprova) e fechados:
+
+| achado | disposição |
+|---|---|
+| K3 (fu4f): só a leitura do vendedor passava pelo `medir`; o controle do gestor que ERRA dava `1 ≠ vazio` e aprovava | as DUAS leituras pelo `medir`, e o `ne` reprova erro em qualquer lado (pré 0 → novo 1) |
+| A9 (v-titulo) provava uma CÓPIA do guard escrita no teste: remover o guard da migration deixava o A9 verde | executa o bloco `$post$` EXTRAÍDO da migration e exige a mensagem do guard `security_invoker` dela (novo 1 com o guard real removido) |
+| régua F1/F3: `fnum` dentro de `[ "$(…)" = t ]` descartava o rc — `t` seguido de erro passava | `medir` no `fnum`; o `sed` que não casa é nomeado (pré 0 → novo 1) |
+| cluster F6: duas substituições; a que não casasse passava calada (`observados=3` igual) | F6a/F6b, cada substituição exigida (pré 0 → novo 1) |
+| v-titulo F6: `5/3` não dizia QUAIS linhas — trocar a linha certa também dava 5/3 | declara o CONJUNTO de ids faltantes/sobrando |
+| **residual (baixa):** K3 dá `1` porque o cálculo satura (1,125) — estável, pouco discriminante | registrado |
+
+**Meta-falsificação** (C e pt_BR, controle verde na mesma invocação, uma camada por vez): **70/70** —
+fu4f 18, preço-médio 8, cluster 16, régua 10, v-titulo 18.
+
+**Lição da fase 3:** **guard copiado no teste prova a cópia.** O A9 dava o vermelho certo, pelo motivo
+certo — no código errado. A falsificação de um guard de migration roda o bloco DA migration (extraído do
+arquivo); senão, remover o guard real deixa tudo verde.
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
@@ -681,9 +717,9 @@ tarefas com a assinatura calibrada e a lista de sites no briefing:
   - ↳ a classe vizinha que ela revelou — prova fora do CI que MORRE e ninguém vê — virou a tarefa
     **"Varrer provas db/ fora do núcleo mortas na main"**.
 - **"Declarar valor sabotado nas provas db/ com juiz ≠ verde"** — os 27 parciais de `db/`, no padrão do
-  `vermelha` com 4º argumento do pedido-total (em fases por domínio). **Fases 1 (sensores, 5) e 2
-  (farmer, 5) feitas — acima.** Seguem, com a mesma sessão como dono: preço/custo/margem (5, com o
-  ritual Codex), tint + reposição/pedidos/tático (6), authz/RLS + dados (6).
+  `vermelha` com 4º argumento do pedido-total (em fases por domínio). **Fases 1 (sensores, 5), 2
+  (farmer, 5) e 3 (preço/custo/margem, 5) feitas — acima.** Seguem, com a mesma sessão como dono:
+  tint + reposição/pedidos/tático (6), authz/RLS + dados (6).
 - **"Erradicar falsificação sem assert no test:falsificacao"** — os 10 afetados e 4 parciais de
   `scripts/`. Esses rodam no CI (`test:falsificacao`, no job `validate`): um vermelho de erro alheio
   lá também aprova. O `test-eval-via-morta` saiu desta fase para a dos evals (combinado entre as duas
