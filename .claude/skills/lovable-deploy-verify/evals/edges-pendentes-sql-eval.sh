@@ -440,8 +440,9 @@ sabotar "--request-ids com slug forasteiro passa calado (typo sem vinculo)" \
         slug_forasteiro "1|nenhuma sonda em"
 
 # CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. O `ORDER BY` com um parêntese a mais só QUEBRA o
-# SQL (todos os casos caem em "a consulta falhou", exit 2). Declarando o desfecho do DISTINCT ON, ela
-# tem de ser RECUSADA; se o juiz a creditar, ele voltou a contar SQL quebrado como dente.
+# SQL: todo caso cai em "a consulta falhou", exit 2 — o MESMO exit do fail-closed da DERIVA do
+# `#anonimas`. Declarando o desfecho da deriva, ela tem de ser RECUSADA: só a MARCA separa os dois
+# exit 2, então um juiz que regredir a "qualquer vermelho" OU a "só o exit" a credita.
 cegas_ok=$cegas; julgadas_ok=$julgadas
 # A via é conferida ANTES, com a mensagem nomeada: a saída do juiz abaixo vai para um arquivo (a
 # recusa esperada não polui o log), e uma via que morresse lá dentro sairia exit 2 muda.
@@ -449,7 +450,7 @@ via_viva || via_caida "(antes do controle negativo)" "controle negativo do juiz"
 sabotar "juiz-negativo: o ORDER BY ganha um parentese a mais (so quebra o SQL)" \
         "ORDER BY edge, created DESC" \
         "ORDER BY edge, created DESC)" \
-        mais_recente_vence "0|NO_AR" > "$TMP/juiz.out" 2>&1
+        no_ar "2|nao devolveu a linha" > "$TMP/juiz.out" 2>&1
 if [ "$julgadas" -ne "$julgadas_ok" ]; then
   echo "  [XX ] controle negativo do juiz: SQL quebrado foi creditado como dente — o juiz perdeu a identidade"
   sed 's/^/        | /' "$TMP/juiz.out" | head -4

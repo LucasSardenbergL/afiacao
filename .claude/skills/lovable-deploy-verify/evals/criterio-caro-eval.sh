@@ -256,10 +256,11 @@ sabotar C11 "$CARA deixa de chamar o Omie" "supabase/functions/$CARA/index.ts" \
   'method: "POST"' 'method_: "POST"'
 
 # CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. O recipe trocado por um regex INVÁLIDO segue
-# extraível (C1 verde) e derruba o C2 por ERRO do grep: sabotagem que só quebra a medição. Ela tem de
-# ser RECUSADA; se o juiz a creditar como "recipe apagado", ele voltou a contar erro como dente.
+# extraível (C1 verde) e derruba o C2 por ERRO do grep: sabotagem que só quebra a medição. Ela declara
+# o C2 — o assert que de fato ficou vermelho — e tem de ser RECUSADA mesmo assim: só a camada do erro de
+# execução a separa do julgamento, então um juiz que regredir a "rc>0" OU a "só os IDs" a credita.
 cegas_ok=$cegas; total_ok=$total
-sabotar C1 "juiz-negativo: recipe vira regex inválido (só quebra a medição)" "SKILL.md" \
+sabotar C2 "juiz-negativo: recipe vira regex inválido (só quebra a medição)" "SKILL.md" \
   "grep -nE '\\.(upsert|insert|update|delete)\\(|\\.rpc\\(|fetch\\('" \
   "grep -nE '\\.(upsert|insert|update|delete\\(|\\.rpc\\(|fetch\\('" > /dev/null 2>&1
 if [ "$cegas" -eq "$cegas_ok" ]; then

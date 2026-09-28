@@ -10,7 +10,11 @@
 #   (8) monitor-deploy     — "SHA atrás ≠ bundle atrás": exit 5 só com prova positiva (repo-fixture)
 #   (9) monitor-deploy-pr  — "o PR está no ar?" por ANCESTRALIDADE + estado por checkout (repo-fixture)
 # Exit 0 = tudo passou. Exit 1 = alguma divergência.
-# Falsificação (prova que os evals têm dente): --falsify sabota TODOS e exige vermelho
+# Falsificação (prova que os evals têm dente): --falsify sabota TODOS e exige o vermelho PREVISTO —
+#   cada sabotagem declara o assert/caso que a acusa e o desfecho dele (exit + marca, IDs, veredito,
+#   chave=valor), sobre um controle íntegro da mesma invocação, e cada eval roda um CONTROLE NEGATIVO
+#   do próprio juiz (uma sabotagem que só derruba o alvo tem de ser RECUSADA). "Ficou vermelho"
+#   sozinho aceitava crash e erro alheio → docs/historico/falsificacao-exit-nao-e-dente.md.
 #   (classify sabota o gabarito UMA CHAVE POR VEZ e depois muta o classify.sh real; verify-frontend
 #   sabota a enumeração; verify-edge-eco arranca o guard temporal, o fail-closed do ping e o filtro
 #   do tick mais recente; criterio-caro sabota SKILL.md e as três edges-exemplo, uma por vez).
