@@ -282,6 +282,97 @@ Cada conserto tem meta-falsificação nos dois locales, com o buraco REPRODUZIDO
   tentativa injetou o erro DENTRO do `EXCEPTION WHEN check_violation` do laço, que o engoliu (`OK` nas
   duas versões): erro da META, não veredito — refeita no registro, fora do tratador.
 
+## A fase `scripts/` — os sites do `test:falsificacao` e vizinhos (2026-09-27, 2ª leva)
+
+**Passo 0 — instância única ou classe? Classe** — a mesma da 1ª leva, agora onde o CI roda o
+`test:falsificacao` (job `validate`): um vermelho de erro alheio lá também aprova. A assinatura
+calibrada da 1ª leva (casa o laço de `0906c17c2`, não o de hoje) guiou a leitura site a site.
+
+### Reconfirmação, lendo o código
+
+Os 14 vereditos da varredura delegada eram hipótese; lidos um a um, **os 14 se confirmaram** —
+nenhum entrou como limpo — e três estavam piores do que a varredura disse (o 2º bloco do
+`bash-contexto-nudge`, que também julgava por `bash "$0"` ≠0; o `eval-diagnostico`, que rodava os
+asserts no MESMO processo; e o `fecho-edges`, vazio por poluição — abaixo). O `eval-via-morta` saiu
+desta fase por acordo com a sessão dos evals do deploy-verify: o PR dela muda o próprio eval (sem
+`via_viva` ele passa a RECUSAR, exit 1, e não mais aprovar), e o juiz tem de mudar junto com o alvo.
+
+| site | o juiz de antes | o conserto |
+|---|---|---|
+| `test-onde-parei` | `SONDA_OVERRIDE=$copia bash "$0" >/dev/null`: exit≠0 = vermelho | `SABOTAGENS` (P1…P10c) |
+| `test-orfaos-custosos` | idem, nos 2 locales | `SABOTAGENS` (O1…O52, CA1…6, CQ1…6) |
+| `test-read-contexto-nudge` | idem | `SABOTAGENS` (R1…R16, Sgnu1…3, Sbsd1…3) |
+| `test-ocupacao-por-arquivo` | idem | `SABOTAGENS` (A1…A10; o A9 partido em A9/A9b) |
+| `test-ocupacao-por-comando` | idem, e **sem `bash -n`** | `SABOTAGENS` (K1…K14) + `bash -n` + fumaça |
+| `test-fecho-edges-pendentes` | `fail≠0` da suíte, sem `bash -n` — **e vazio por poluição** | `SABOTAGENS` (E1…E16p, `E16d_<avaria>`) + `bash -n` + rodada isolada |
+| `test-psql-ro-error-stop` | QUALQUER fixture com rc≠esperado no 1º locale que quebrasse | `SABOTAGENS` (`V?`/`L?`/`REPO`) + o par (rc, marca) |
+| `test-eval-diagnostico-cegueira` | `rodar_asserts ≠0` — inclusive o **2** de um bloco que nem carregou; troca de TODAS as ocorrências; asserts no mesmo processo | `SABOTAGENS` (D1…D10) + troca 1× + `bash -n` + subshell |
+| `test-falsificar-implementado` | cada cenário: exit≠0 | `SABOTAGENS` (EIXO1/EIXO2/LISTA) + exit exato 1 |
+| `test-bash-contexto-nudge` | limiar: QUALQUER stdout; 2º bloco (corte): `bash "$0"` ≠0 sem `bash -n` | limiar: marca exata (o nudge no `additionalContext`); corte: `SABOTAGENS` (N1…N14) |
+| `test-codex-prompt-paginacao` | `$falhas > 0` | valor exato: G1/G2 com o SHA do CITADOR, G3/G4 verdes, `bash -n` + `unset -f` |
+| `test-lovable-revert-scan` | saída vazia = "alarme sumiu" (crash também é vazio) | rc 0 + stdout mudo + stderr sem erro + `bash -n` |
+| `test-guard-noop-sabotagem` | `verificar_guard ≠0` (três motivos) | o motivo declarado: "alvo sumiu" com o alvo PRESENTE |
+| `test-eval-via-morta` | S1: tudo menos `2+MARCA` | → fase dos evals (S1 declara o desfecho do eval novo) |
+
+### O idioma, e as quatro camadas
+
+Nos 10 sites com lista de sabotagens, `sabota "desc" 'sed'` (julgando pelo exit) virou
+`SABOTAGENS="nome:IDs"` + uma TABELA `registra <nome> …` — nome da lista sem registro e registro
+fora da lista reprovam (o primeiro não sabotaria nada; o segundo nunca rodaria) — e o laço exige as
+quatro camadas do sync-reprocess: **(1)** aplicou e não quebrou a sintaxe; **(2)** a suíte rodou
+INTEIRA (nº de asserts = o do controle; no `fecho`, o CONJUNTO de IDs, porque 5f/14c/16d imprimem um
+`bad` por item); **(3)** cada ID declarado verde no controle e vermelho aqui; **(4)** nenhuma
+assinatura de erro de execução a mais que o controle — com `ERROS_DO_ALVO` (default `/dev/null`: a
+suíte normal não muda) recolhendo o stderr que a suíte jogava fora. Todos caem sob R1/R2 do gate.
+Os de sabotagem única ou veredito de valor usam valor/marca exata.
+
+### O que a medição trouxe
+
+- **O `--falsificar` do `fecho-edges` era VAZIO — poluição de estado entre rodadas.** O repo do
+  `--desde` era um por LOCALE, criado uma vez e MUTILADO pelo 13c (remove o mapa e commita), e o
+  `base_sha` morava num arquivo comum aos dois locales. A suíte normal passa uma vez por locale e não
+  sente; o `--falsificar` a chama ~94 vezes no mesmo `$tmp`, e da 3ª rodada em diante o `--desde`
+  caía em TODA rodada — o juiz antigo aprovava as 46 pela poluição. Medido: com o estado vazando,
+  `presenca_wrapper_basta` derrubava E6c + E13, E13b, E14b, E14b2, E14d (conjuntos diferentes em C e
+  pt_BR); isolada (`mktemp -d` por chamada de `suite()`), só o E6c.
+- **Isolada, a rodada mostrou 7 sabotagens do `fecho` sem dente** que o juiz antigo "aprovava":
+  as 2 do SQL da 2ª classe (o E12b casava `->> 'probe'` e `'sem-campo-fonte'` SOLTOS, que existem
+  também na 3ª classe — apertado ao que o comentário dele promete, passou a pegar as duas); e 5 que
+  ficaram VERDES: l4 (o CLI usa o mesmo wrapper do banco — cai junto), l5 e l6 (cada uma redundante
+  com outra trava: o pulo da janela × o `-z "$servido"`; o `-n "$esperado"` × a dupla chave), a
+  mecânica na classificação e a via (c) na falha do auxiliar (nenhum cenário faz o auxiliar falhar).
+  Duas tinham `sed` CONFLADO — tiravam duas travas, e o vermelho era o da sabotagem vizinha. As 5
+  saem da lista com o `sed` preservado em comentário; o PAR da janela viva (l5 + `-z "$servido"`)
+  entra como uma sabotagem só, e derruba o E16f. De 46 para 42, todas medidas no assert que declaram.
+- **O ID tem de identificar UM assert.** O A9 do `ocupacao-por-arquivo` tinha dois ramos de falha
+  ("abortou a varredura" × "passou CALADO") sob o mesmo ID, e duas sabotagens o declaravam mirando
+  ramos diferentes — cada uma aceitaria o vermelho da outra. Partido (A9/A9b), a medição mostrou que
+  "jq volta a rodar solto sob `set -e`" (`if ! jq` → `if jq`) nunca soltou o jq do `set -e`: só
+  invertia a contagem — derrubava o A9b, o sintoma da vizinha. Agora troca a contagem por `exit 5`, o
+  aborto do incidente. O 16d do `fecho` (7 avarias num ID só) ganhou um ID por avaria pelo mesmo motivo.
+- **O 2º locale pegou um defeito do próprio juiz novo** — a meta-falsificação existe para isso. Com o
+  shell de fora em pt_BR.UTF-8, o controle do `read-contexto` reprovava ("16 de 25 asserts"): a rodada
+  interna em `LC_ALL=C` corta `${out:0:70}` por BYTE, parte um caractere multibyte no log, e o `sed`
+  do BSD, lendo em UTF-8, para com "illegal byte sequence" (o `grep -c` nem responde). Medido nos dois
+  lados (3 linhas em C, 2 em pt_BR). Todo grep/sed/awk do JUIZ passou a rodar em `LC_ALL=C`; o locale
+  das rodadas internas não muda — é ele que a meta exercita.
+- **Hipóteses que a medição corrigiu** (as declarações nasceram dos comentários de cada sabotagem):
+  `orfaos` sem o eixo pcpu derruba só o O4 (o warsaw segue barrado pelo cputime); `por-comando`
+  "prefixo" derruba o K1 (a tese), não o K1b; `psql-ro` `forma_c` derruba a limpo-**j** (`-c` vence
+  stdin e opaco), e as duas do STRIPPER só são pegas pelo corpo do repo (`REPO` → `2 INDETERMINADO`);
+  `fecho`: presença do wrapper → E6c, exit anômalo do ledger → E16k. Declarar o que caiu SEM ler o
+  porquê canonizaria o furo; cada correção foi lida contra o alvo.
+- **`eval-diagnostico` rodava os asserts no MESMO processo** (`rodar_asserts "$mut"`, bloco carregado
+  com `.`): um `exit` sabotado no bloco sairia do próprio teste. **`codex-prompt-paginacao` sem
+  `unset -f`**: uma sabotagem que não definisse `sha_de` deixaria valendo a função REAL do controle.
+- **Quase reintroduzi o furo no `bash-contexto-nudge`**: com a sabotagem do limiar no laço, o juiz
+  seria o N4 ("abaixo do limiar → silêncio"), que aceita QUALQUER saída — o defeito que o site tinha.
+  O limiar voltou ao bloco próprio com o valor exato.
+
+### A meta-falsificação
+
+<!-- TABELA -->
+
 ## Lições
 
 - **Exit≠0 não é dente, e "≠ verde" também não.** O vermelho que conta é o do assert que a sabotagem
@@ -297,6 +388,15 @@ Cada conserto tem meta-falsificação nos dois locales, com o buraco REPRODUZIDO
   julgamento produz.
 - **Gate que nasce com um idioma só reprova o idioma melhor.** O #2606 chegou ao mesmo lugar por outro
   caminho, no mesmo dia; o gate tem de aceitar o mais estrito, não só o que o inspirou.
+- **Um laço que reroda a suíte N vezes no MESMO `$tmp` herda o estado das rodadas anteriores** (2ª
+  leva). A suíte normal passa uma vez e não sente; a falsificação passa ~94 — e o que a rodada 3
+  herda da 1 pinta tudo de vermelho de graça. Cada rodada, o seu diretório. Irmã do "o ISOLAMENTO
+  mente" do money-path, na dimensão do laço de falsificação.
+- **O ID tem de identificar UM assert.** Dois ramos de falha com semânticas diferentes sob o mesmo ID
+  reabrem a classe por dentro — cada sabotagem aceita o vermelho da outra. Partir o ID foi o que
+  mostrou que uma sabotagem nunca tinha testado o que o nome dela dizia.
+- **O juiz também tem locale.** A rodada interna em `LC_ALL=C` corta strings por byte; o juiz que lê o
+  log em UTF-8 engasga no caractere partido. Quem LÊ log de outro processo lê em `LC_ALL=C`.
 
 ## O que ficou de fora, com dono
 
@@ -306,8 +406,22 @@ tarefas com a assinatura calibrada e a lista de sites no briefing:
 - **"Erradicar falsificação sem assert em db/ fora do núcleo"** — os 4 afetados de `db/`.
 - **"Declarar valor sabotado nas provas db/ com juiz ≠ verde"** — os 27 parciais de `db/`, no padrão do
   `vermelha` com 4º argumento do pedido-total (em fases por domínio).
-- **"Erradicar falsificação sem assert no test:falsificacao"** — os 10 afetados e 4 parciais de
-  `scripts/`. Esses rodam no CI (`test:falsificacao`, no job `validate`): um vermelho de erro alheio
-  lá também aprova.
+- ~~**"Erradicar falsificação sem assert no test:falsificacao"**~~ — **feita na 2ª leva** (seção
+  acima): os 14 de `scripts/` reconfirmados e consertados — 13 aqui, e o `eval-via-morta` pela fase
+  dos evals do deploy-verify (o PR dela muda o eval e o juiz juntos).
 - **"Erradicar falsificação sem assert nos evals do deploy-verify"** — os 3 afetados e 3 parciais de
-  `.claude/skills/lovable-deploy-verify/evals/`.
+  `.claude/skills/lovable-deploy-verify/evals/`, e o `scripts/test-eval-via-morta.sh` (acordado entre
+  as sessões em 2026-09-27).
+
+Da 2ª leva ficaram, com dono:
+
+- **"Isolar as camadas sem dente do fecho-edges"** — as 5 que saíram da lista do `fecho` por ficarem
+  VERDES isoladas (o `sed` de cada uma está comentado no próprio teste): cenário com banco quebrado e
+  CLI são (l4); auxiliar do grafo de imports que FALHA (a via (c)); e a decisão de produto sobre as
+  travas redundantes (l5/l6, a mecânica na classificação) — manter como defesa em profundidade sem
+  prova própria, ou provar cada uma com um cenário que neutralize a outra.
+- **"Gate R4: todo slug do test:falsificacao usa o idioma limpo ou tem juiz registrado"** — o análogo
+  do R3 para o `test:falsificacao`: hoje R1/R2 só enxergam quem USA a lista; um teste novo com juiz
+  "exit≠0" entraria no CI sem nenhum gate acusar. Os de valor/marca exata (codex-prompt, guard-noop,
+  lovable-revert-scan, o limiar do bash-contexto-nudge) e os já-corretos da varredura entram como juiz
+  registrado, com âncoras.

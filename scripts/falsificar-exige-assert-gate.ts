@@ -42,7 +42,8 @@
  * Fora do núcleo, os laços de falsificação são dezenas, cada um no seu idioma (sentinela, SQLSTATE,
  * conjunto exato de IDs, valor ≠ verde…): uma regra textual única ou os reprovaria em massa ou
  * aprenderia um idioma por arquivo. A varredura de 2026-09-27, site a site, está no diário, e as fases
- * seguintes são tarefa com dono. Âncora também não prova SEMÂNTICA — só torna vermelha a remoção da
+ * seguintes são tarefa com dono. Na 2ª leva (2026-09-27), os 10 laços de `scripts/` que tinham lista de
+ * sabotagens migraram para o idioma e caem sob R1/R2; os de sabotagem única usam valor/marca exata. Âncora também não prova SEMÂNTICA — só torna vermelha a remoção da
  * linha que sustenta o juiz; quem prova o juiz é a meta-falsificação registrada no diário.
  */
 
@@ -64,9 +65,13 @@ export const MANIFESTO_NUCLEO = 'db/nucleo-ci.txt';
  */
 export const PISOS = {
   arquivosPorRaiz: PISOS_DO_VIZINHO.arquivosPorRaiz,
-  listas: 3, // medido: 4 (sync-reprocess, push-vendedora, auto-aprovacao-piloto, positivacao #2606)
-  entradas: 30, // medido: 38 (13 + 6 + 5 + 14)
-  lacos: 3, // medido: 4
+  // medido: 14 — as 4 de db/ (sync-reprocess, push-vendedora, auto-aprovacao-piloto, positivacao
+  // #2606) + as 10 de scripts/ que migraram na 2ª leva (2026-09-27): onde-parei, orfaos-custosos,
+  // read-contexto-nudge, ocupacao-por-arquivo, ocupacao-por-comando, fecho-edges-pendentes,
+  // psql-ro-error-stop, eval-diagnostico-cegueira, falsificar-implementado, bash-contexto-nudge
+  listas: 12,
+  entradas: 140, // medido: 159 (38 de db/ + 121 de scripts/)
+  lacos: 12, // medido: 14
   linhasFalsificarNucleo: 6, // medido: 7 (4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
 } as const;
 
