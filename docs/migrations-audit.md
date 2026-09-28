@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **561** custom migrations totais
-- **1837** objetos esperados (criados por estas migrations)
+- **562** custom migrations totais
+- **1839** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 600
+  - `function`: 602
   - `rls_policy`: 462
   - `index`: 261
   - `cron_job`: 174
@@ -4600,6 +4600,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public._carteira_positivacao_for_owner` | — |
+
+### `20260927172443_hoje_sp_sessao_utc_precos_piso.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_ultimos_precos_cliente` | — |
+| `function` | `public.medir_abaixo_piso_tier` | — |
 
 ## Próximos passos por status
 

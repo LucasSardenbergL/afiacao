@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 561
+-- Total de custom migrations: 562
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -602,7 +602,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260925210332', 'reposicao_em_transito_guarda_fantasma_null_safe', '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql'),
   ('20260925225004', 'reposicao_em_transito_simulado_e_join_grupo_null_safe', '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql'),
   ('20260926001425', 'param_auto_em_transito_conta_disparado_simulado', '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql'),
-  ('20260927133606', 'positivacao_mes_sp_sessao_utc', '20260927133606_positivacao_mes_sp_sessao_utc.sql')
+  ('20260927133606', 'positivacao_mes_sp_sessao_utc', '20260927133606_positivacao_mes_sp_sessao_utc.sql'),
+  ('20260927172443', 'hoje_sp_sessao_utc_precos_piso', '20260927172443_hoje_sp_sessao_utc_precos_piso.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2428,7 +2429,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', '')
+  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', ''),
+  ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'get_ultimos_precos_cliente', ''),
+  ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'medir_abaixo_piso_tier', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4302,7 +4305,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', '')
+  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', ''),
+  ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'get_ultimos_precos_cliente', ''),
+  ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'medir_abaixo_piso_tier', '')
 )
 SELECT
   e.migration,
@@ -4680,6 +4685,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'registrar_resultado_plano', 4, '20260718170000_fu7_conserta_callers_orfaos.sql', '80eadffae682a73a448ec454c388e994'),
   ('public', 'get_ultimos_precos_cliente', 1, '20260625120000_get_ultimos_precos_cliente.sql', '31e656cabe303377266ac4f1dca141b1'),
   ('public', 'get_ultimos_precos_cliente', 2, '20260704120000_preco_por_tier.sql', '2428b7471db5fccecfc45d923dcbf355'),
+  ('public', 'get_ultimos_precos_cliente', 3, '20260927172443_hoje_sp_sessao_utc_precos_piso.sql', 'fd1733a96c8c5d5344941684dae4c2e7'),
   ('public', 'reposicao_cold_start_parametros', 1, '20260626210000_reposicao_cold_start_parametros.sql', 'd5f00b40b7ac6c5a06bf8306a9e1ad67'),
   ('public', 'reposicao_cold_start_parametros', 2, '20260627130000_reposicao_cold_start_fix_gate_cron.sql', '7452b0fd4a5354e176b29464e5ed0208'),
   ('public', 'reposicao_cold_start_parametros', 3, '20260826021000_reposicao_cold_start_fusivel_graduacao.sql', '4e60a2f241446e15287ccec01947f537'),
@@ -4689,6 +4695,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'venda_gate_credito', 2, '20260703140000_trava_credito_gate_excecao_por_par.sql', '1fb9610a4c6f70fb2a67d5d01396c767'),
   ('public', 'medir_abaixo_piso_tier', 1, '20260704120000_preco_por_tier.sql', '0e2c798dc7098adb3c67cb923087cefa'),
   ('public', 'medir_abaixo_piso_tier', 2, '20260718190000_authz_capability_matrix_e2.sql', 'cae48dfdd1ecb9b983b065f06edfdbbf'),
+  ('public', 'medir_abaixo_piso_tier', 3, '20260927172443_hoje_sp_sessao_utc_precos_piso.sql', '7044b253b88286338d34cabb8ce9461b'),
   ('public', 'get_whatsapp_proposta_cotacao', 1, '20260713040000_whatsapp_proposta_cotacao.sql', 'a6808315bb23d377f76b75f7f417f89b'),
   ('public', 'get_whatsapp_proposta_cotacao', 2, '20260713050000_whatsapp_proposta_cotacao_v2.sql', '10fd7be817823288fde96eaa690e9b88'),
   ('public', 'register_carteira_member', 1, '20260718170000_register_carteira_member.sql', 'a7b3a3e50c6b0a9d8a2b2ebfca67f6f2'),
