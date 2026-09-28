@@ -311,9 +311,15 @@ exige_vermelho "A6 filtro de SKU ativo" "$F5" "-1" "1"
 restaurar
 
 # F6 — cai o universo de pedidos: cancelado/apagado/pendente voltam a contar como compra.
-sabotar "s/AND so\\.status NOT IN \\('cancelado', 'rascunho', 'pendente', 'orcamento'\\)/AND true/; s/AND so\\.deleted_at IS NULL/AND true/"
+# Em DUAS sabotagens, uma exclusão cada: com as duas substituições numa só, o `cmp` via que ALGO mudou
+# e a que não casasse passava calada — a outra sozinha já dava o mesmo 3 (Codex, 2026-09-27).
+sabotar "s/AND so\\.status NOT IN \\('cancelado', 'rascunho', 'pendente', 'orcamento'\\)/AND true/"
 F6=$(Pq -c "SELECT observados FROM public.recommend_cluster_agregado('critico');")
-exige_vermelho "A5 universo de pedidos canônico" "$F6" "2" "3"
+exige_vermelho "A5 universo de pedidos canônico — o filtro de status" "$F6" "2" "3"
+restaurar
+sabotar "s/AND so\\.deleted_at IS NULL/AND true/"
+F6=$(Pq -c "SELECT observados FROM public.recommend_cluster_agregado('critico');")
+exige_vermelho "A5 universo de pedidos canônico — o filtro de deleted_at" "$F6" "2" "3"
 restaurar
 
 # Prova que restaurar() funcionou — senão os asserts acima mediriam a última sabotagem.

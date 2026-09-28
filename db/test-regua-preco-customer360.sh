@@ -190,16 +190,23 @@ case "$R" in *GATEBARROU360*) ok "N1 gate barra customer (42501) no caminho sem_
 
 # ════════ ZONA 5 — falsificação (sabota → exige vermelho → restaura) ════════
 echo "── falsificação ──"
+# A medição roda com `set -e` e o rc capturado fora de ||/&&: dentro do `[ ]` o status se perdia
+# (Codex, 2026-09-27). Falha vira ERRO_rc=<n>, que nenhum declarado casa.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
+# a sabotagem que não casa é NOMEADA (antes reprovava como "sabotagem não mudou" — causa errada)
+sed_aplicou() { if cmp -s "$1" "$2"; then bad "$3 — o sed NÃO casou: a sabotagem não aplicou"; return 1; fi; }
 
 # F1 — preco_atual DEVE ser o ÚLTIMO. Sabota DESC->ASC (data): vira o mais antigo (128).
 sed 's/DESC NULLS LAST/ASC NULLS LAST/g' "$MIG360" > /tmp/sab-360-preco.sql
+sed_aplicou "$MIG360" /tmp/sab-360-preco.sql "F1" || true
 P -q -f /tmp/sab-360-preco.sql
-if [ "$(fnum 7001 preco_atual 128)" = "t" ]; then ok "F1 preco_atual sabotado (ASC) → vira 128 (A1b/A7 têm dente)"; else bad "F1 sabotagem não mudou preco_atual → A1b é teatro"; fi
+if [ "$(medir fnum 7001 preco_atual 128)" = "t" ]; then ok "F1 preco_atual sabotado (ASC) → vira 128 (A1b/A7 têm dente)"; else bad "F1 sabotagem não mudou preco_atual → A1b é teatro"; fi
 P -q -f "$MIG360"  # restaura
 eq "F1b restaurado → preco_atual = 130" "$(fnum 7001 preco_atual 130)" "t"
 
 # F2 — gate da customer360 protege o caminho hide_reason. Sabota (IF false): customer recebe dados.
 sed "s/IF NOT (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')) THEN/IF false THEN/" "$MIG360" > /tmp/sab-360-gate.sql
+sed_aplicou "$MIG360" /tmp/sab-360-gate.sql "F2" || true
 P -q -f /tmp/sab-360-gate.sql
 # O que a sabotagem DECLARA: o customer recebe exatamente 1 linha, com o psql saindo 0. O `*1*` sobre a
 # saída com stderr casava QUALQUER texto com o dígito 1 — inclusive o `LINE 1:` de um erro qualquer.
@@ -222,8 +229,9 @@ case "$RG2" in *REBARROU360*) ok "F2b restaurado → customer barrado de novo";;
 # F3 — desempate determinístico por created_at no mesmo dia. Sabota created_at DESC->ASC:
 #      7007 (empate em order_date_kpi) passa a pegar o created_at mais CEDO (200) em vez de 210.
 sed 's/so.created_at DESC NULLS LAST/so.created_at ASC NULLS LAST/g' "$MIG360" > /tmp/sab-360-tie.sql
+sed_aplicou "$MIG360" /tmp/sab-360-tie.sql "F3" || true
 P -q -f /tmp/sab-360-tie.sql
-if [ "$(fnum 7007 preco_atual 200)" = "t" ]; then ok "F3 tiebreaker sabotado (created_at ASC) → 7007 vira 200 (A11 tem dente)"; else bad "F3 sabotagem não mudou o desempate → A11 é teatro [veio $(ftxt 7007 preco_atual)]"; fi
+if [ "$(medir fnum 7007 preco_atual 200)" = "t" ]; then ok "F3 tiebreaker sabotado (created_at ASC) → 7007 vira 200 (A11 tem dente)"; else bad "F3 sabotagem não mudou o desempate → A11 é teatro [veio $(ftxt 7007 preco_atual)]"; fi
 P -q -f "$MIG360"  # restaura
 eq "F3b restaurado → 7007 preco_atual = 210" "$(fnum 7007 preco_atual 210)" "t"
 

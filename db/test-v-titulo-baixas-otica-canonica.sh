@@ -191,8 +191,16 @@ eq "A6d mesmo código, lado CP: independente (C7)" \
 
 # A7 — conjunto INTEIRO, EXCEPT ALL nos DOIS sentidos (pega linha extra, faltante E duplicada;
 #      um simples "count igual" não pegaria uma linha trocada por outra).
+# conjunto_diff [ids] — sem arg: "faltam/sobram" (contagens); com `ids`: QUAIS linhas faltam e sobram
+# (o F6 declara as identidades: "5/3" também sai trocando a linha certa que sobrevive por outra —
+# Codex, 2026-09-27). Heredoc sem aspas só para o SELECT final; o SQL acima dele não tem `$`.
 conjunto_diff() {
-  Pq <<'SQL'
+  local fim="SELECT (SELECT count(*) FROM falta) || '/' || (SELECT count(*) FROM sobra);"
+  if [ "${1:-}" = ids ]; then
+    fim="SELECT 'falta=' || coalesce((SELECT string_agg(company||':'||cod||':'||tipo, ',' ORDER BY company, cod, tipo) FROM falta), '')
+    || ' sobra=' || coalesce((SELECT string_agg(company||':'||omie_codigo_lancamento||':'||tipo||':'||valor_baixado, ',' ORDER BY company, omie_codigo_lancamento, tipo, valor_baixado) FROM sobra), '');"
+  fi
+  Pq <<SQL
 WITH esperado(company, cod, tipo, data_baixa_final, valor_baixado, n_movimentos, prazo, origem) AS (
   VALUES ('acme'::text, 1001::bigint, 'CR'::text, '2026-07-31'::date, 1000::numeric, 1, 30::numeric, 'titulo'::text),
          ('acme',       1002,         'CR',       '2026-08-03',        500,          1, 33,          'conta_corrente'),
@@ -208,7 +216,7 @@ real AS (
 ),
 falta AS (SELECT * FROM esperado EXCEPT ALL SELECT * FROM real),
 sobra AS (SELECT * FROM real     EXCEPT ALL SELECT * FROM esperado)
-SELECT (SELECT count(*) FROM falta) || '/' || (SELECT count(*) FROM sobra);
+$fim
 SQL
 }
 eq "A7 conjunto inteiro idêntico (EXCEPT ALL nos 2 sentidos: faltando/sobrando)" \
@@ -328,7 +336,8 @@ SEM_ESCOPO="SELECT DISTINCT ON (m.cod) m.company, m.cod, m.tipo, m.data_moviment
  FROM mov m
  ORDER BY m.cod, m.valor DESC, m.data_movimento DESC"
 muta "F6 partição sem company/tipo (mistura empresas e lados)" \
-     "$(corpo "$ALLOW" "$SEM_ESCOPO")" "conjunto_diff" "0/0" "5/3"
+     "$(corpo "$ALLOW" "$SEM_ESCOPO")" "conjunto_diff ids" "falta= sobra=" \
+     "falta=acme:1001:CP,acme:1001:CR,acme:1002:CR,acme:1004:CR,outra:1001:CR sobra=acme:1001:CR:1000,acme:1002:CR:500,acme:1004:CR:600"
 
 # F5 — replace SEM o WITH: reseta security_invoker → a view lê como OWNER (bypassa RLS).
 P -q -c "$(corpo "$ALLOW" "$SEM_ESCOLHA" | sed 's/ WITH (security_invoker = on)//')" > /dev/null
@@ -340,28 +349,29 @@ else bad "F5 — NÃO é o que a sabotagem declara (OFF): veio [$DEPOIS]"; fi
 # A9 — a POSTCONDIÇÃO da própria migration morde? Roda o bloco DO $post$ sobre a view furada
 #      (sem security_invoker, deixada por F5). Sentinela: casa a SQLSTATE, não o texto do RAISE
 #      (procurar a mensagem do próprio código faria o assert casar consigo mesmo).
-# O que a sabotagem DECLARA é o RAISE da postcondição — raise_exception (P0001), capturado pela condição
-# NOMEADA, com o psql saindo 0. "Não veio a sentinela de não-abortou" aceitava QUALQUER erro.
-POST_OUT="$(P -tA 2>&1 <<'SQL'; echo "PSQL_RC=$?"
-DO $t$
+# O bloco é EXTRAÍDO da migration e executado — até 2026-09-27 era uma CÓPIA escrita aqui, e remover o
+# guard da migration deixava o A9 verde (Codex). O que a sabotagem DECLARA: o RAISE do guard
+# security_invoker DA MIGRATION (raise_exception, com a mensagem dela), capturado pela condição
+# NOMEADA, psql 0 — outro erro, ou outro check da postcondição, reprova.
+# shellcheck disable=SC2016  # literal de propósito: as tags do dollar-quote que delimitam o bloco
+POST_MIG="$(sed -n '/^DO \$post\$$/,/^\$post\$;$/p' "$MIG")"
+case "$POST_MIG" in "DO \$post\$"*) ;; *) bad "A9 — o bloco \$post\$ NÃO foi extraído da migration"; POST_MIG="SELECT 1;" ;; esac
+POST_OUT="$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
+DO \$w\$
+DECLARE m text;
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_class
-    WHERE oid = 'public.v_titulo_baixas'::regclass
-      AND reloptions @> ARRAY['security_invoker=on']
-  ) THEN
-    RAISE EXCEPTION 'v_titulo_baixas FALHOU: security_invoker NAO esta on';
-  END IF;
+  EXECUTE \$blk\$${POST_MIG%;}\$blk\$;
   RAISE NOTICE 'SENTINELA_POSTCONDICAO_NAO_ABORTOU';
-EXCEPTION WHEN raise_exception THEN RAISE NOTICE 'SENTINELA_POSTCONDICAO_ABORTOU';
-END
-$t$;
+EXCEPTION WHEN raise_exception THEN
+  GET STACKED DIAGNOSTICS m = MESSAGE_TEXT;
+  RAISE NOTICE 'SENTINELA_POSTCONDICAO_ABORTOU msg=%', m;
+END \$w\$;
 SQL
 )"
 case "$POST_OUT" in
-  *SENTINELA_POSTCONDICAO_ABORTOU*PSQL_RC=0) ok "A9 postcondição da migration aborta a view sem security_invoker" ;;
+  *"SENTINELA_POSTCONDICAO_ABORTOU msg=v_titulo_baixas FALHOU: security_invoker"*PSQL_RC=0) ok "A9 a postcondição DA MIGRATION aborta a view sem security_invoker" ;;
   *SENTINELA_POSTCONDICAO_NAO_ABORTOU*) bad "A9 postcondição da migration NÃO abortou sobre a view furada — é decorativa" ;;
-  *) bad "A9 — NÃO é o que a sabotagem declara (o RAISE da postcondição, psql 0): $(printf '%s' "$POST_OUT" | head -c 200)" ;;
+  *) bad "A9 — NÃO é o que a sabotagem declara (o RAISE do guard security_invoker DA MIGRATION, psql 0): $(printf '%s' "$POST_OUT" | head -c 200)" ;;
 esac
 restaura
 

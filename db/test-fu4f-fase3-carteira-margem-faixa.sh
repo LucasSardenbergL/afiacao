@@ -275,6 +275,9 @@ medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq
 # aceitava a leitura que ERRA: a medição é argumento (sem errexit), sai VAZIA, e vazio ≠ íntegro.
 # O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
 ne() {
+  # as DUAS leituras são validadas: o íntegro do K3 é medido na hora, e uma leitura dele que falhasse
+  # vazia deixava "1 ≠ vazio" e "1 = declarado" aprovarem (Codex, 2026-09-27)
+  case "$2|$3" in *ERRO_rc=*) bad "$1 — uma leitura ERROU (erro de execução não é dente): sabotado [$2], íntegro [$3]"; return ;; esac
   if [ "$2" = "$3" ]; then bad "$1 — ASSERT SEM DENTE: seguiu [$3] mesmo com a migration sabotada"
   elif [ "$2" = "$4" ]; then ok "$1 (sob sabotagem virou [$2], íntegro era [$3])"
   else bad "$1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (íntegro [$3])"; fi
@@ -295,7 +298,7 @@ sabota 's/CASE WHEN v_pode_num THEN b.pct END/b.pct/' && {
 sabota 's|FROM private.margem_cliente_agregada() m|FROM private.margem_cliente_agregada() m WHERE v_cap_todo OR COALESCE(private.carteira_visivel_para(m.customer_user_id, v_uid), false)|' && {
   ne "K3 régua por CARTEIRA em vez de população → H1 fica vermelho" \
      "$(medir como $A false false "SELECT g FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" \
-     "$(como $A false true  "SELECT g FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" \
+     "$(medir como $A false true  "SELECT g FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" \
      "1"
   restaura; }
 
