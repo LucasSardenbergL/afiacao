@@ -267,6 +267,10 @@ sabota() { # $1 = expressão sed
 # lado errado.
 MIG_3C="$REPO_ROOT/supabase/migrations/20260813234112_carteira_margem_faixa_motivo_gate_custo.sql"
 restaura() { P -q -f "$MIG"; P -q -f "$MIG_3C"; }
+# A medição do juiz roda com `set -e` e o rc capturado fora de ||/&&: no ARGUMENTO do juiz o status se
+# perdia, e uma leitura que imprime o valor e DEPOIS falha passava (Codex, 2026-09-27). Falha vira
+# ERRO_rc=<n>, que nenhum declarado casa.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 # Passa quando o valor sob sabotagem é o que a sabotagem DECLARA ($4) — não só "mudou". O "mudou"
 # aceitava a leitura que ERRA: a medição é argumento (sem errexit), sai VAZIA, e vazio ≠ íntegro.
 # O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
@@ -278,33 +282,33 @@ ne() {
 
 sabota 's/IF v_uid IS NULL THEN/IF false THEN/' && {
   ne "K1 remover o fail-closed → E5b fica vermelho" \
-     "$(P -tA -q -c "SET test.uid=''; SET test.cap_carteira='true'; SELECT count(*) FROM public.get_carteira_margem_faixa();")" "0" "5"
+     "$(medir P -tA -q -c "SET test.uid=''; SET test.cap_carteira='true'; SELECT count(*) FROM public.get_carteira_margem_faixa();")" "0" "5"
   restaura; }
 
 sabota 's/CASE WHEN v_pode_num THEN b.pct END/b.pct/' && {
   ne "K2 remover o CASE de projeção → F2 fica vermelho" \
-     "$(como $A false false "SELECT coalesce(margem_pct::text,'') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "" "20.00"
+     "$(medir como $A false false "SELECT coalesce(margem_pct::text,'') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "" "20.00"
   restaura; }
 
 # A régua ANTES do filtro é a decisão de desenho de 2026-07-22 (g comparável entre vendedores).
 # Sabotar = calcular os percentis sobre a carteira do caller, e não sobre a população.
 sabota 's|FROM private.margem_cliente_agregada() m|FROM private.margem_cliente_agregada() m WHERE v_cap_todo OR COALESCE(private.carteira_visivel_para(m.customer_user_id, v_uid), false)|' && {
   ne "K3 régua por CARTEIRA em vez de população → H1 fica vermelho" \
-     "$(como $A false false "SELECT g FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" \
+     "$(medir como $A false false "SELECT g FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" \
      "$(como $A false true  "SELECT g FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" \
      "1"
   restaura; }
 
 sabota 's/  WHERE v_cap_todo/  WHERE true OR v_cap_todo/' && {
   ne "K4 remover o WHERE de escopo → E1 fica vermelho" \
-     "$(como $A false false "SELECT count(*) FROM public.get_carteira_margem_faixa();")" "2" "5"
+     "$(medir como $A false false "SELECT count(*) FROM public.get_carteira_margem_faixa();")" "2" "5"
   restaura; }
 
 # `g = 0` é VEREDITO ("pior margem da população"); NULL é "não sei". Trocar um pelo outro
 # reintroduz a fabricação que o #1533 removeu, e o health score deixa de renormalizar.
 sabota 's/CASE WHEN b.pct IS NULL THEN NULL/CASE WHEN b.pct IS NULL THEN 0::numeric/' && {
   ne "K5 g NULL virando 0 → H5 fica vermelho" \
-     "$(como $B false false "SELECT coalesce(g::text,'NULO') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c5000000-0000-0000-0000-000000000005';")" "NULO" "0"
+     "$(medir como $B false false "SELECT coalesce(g::text,'NULO') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c5000000-0000-0000-0000-000000000005';")" "NULO" "0"
   restaura; }
 
 # A restauração precisa ser PROVADA: sem isto, um `restaura` que falhasse deixaria o harness
