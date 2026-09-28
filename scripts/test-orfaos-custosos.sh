@@ -34,8 +34,8 @@ ALVO="${ORFAOS_ALVO:-$here/orfaos-custosos.sh}"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 falhas=0
-ok()    { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-falha() { printf '  \033[31mFALHA\033[0m %s\n' "$1"; falhas=$((falhas + 1)); }
+ok()    { printf '  \033[32mok\033[0m    %s\n' "${1//$'\n'/ | }"; }
+falha() { printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; falhas=$((falhas + 1)); }
 
 # ── stub do `ps` ─────────────────────────────────────────────────────────────
 # Emite o fixture apontado por PS_FIXTURE, ignorando as flags. PS_RC=1 simula o
@@ -209,6 +209,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # primeiro não sabotaria nada, o segundo nunca rodaria.
   registradas=""
   registra() {
+    case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
     registradas="$registradas $1"
     printf -v "desc_$1" '%s' "$2"; printf -v "regra_$1" '%s' "$3"; printf -v "expr_$1" '%s' "$4"
   }
@@ -261,6 +262,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
   #   4. nenhum erro de execução do bash/awk que o controle não tem — o alvo que morre no ramo do
   #      assert derruba o assert certo por CRASH, não por julgamento.
+  # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+  # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+  # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+  repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$repetidos" ] || { falha "SABOTAGENS com nome repetido: $repetidos"; falhou=1; }
+  case "$SABOTAGENS" in *'|'*) falha "SABOTAGENS com | (OU): declare por , (E) — este juiz exige o MESMO assert nos dois lados"; falhou=1 ;; esac
   for item in $SABOTAGENS; do
     sab="${item%%:*}"; exigidos="${item#*:}"
     v="desc_$sab"; desc="${!v-}"; v="regra_$sab"; regra="${!v-}"; v="expr_$sab"; expr="${!v-}"

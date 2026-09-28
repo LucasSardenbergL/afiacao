@@ -199,8 +199,14 @@ run() {
 }
 
 fail=0
-ok()  { printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { printf '  \033[31mFALHA\033[0m %s\n' "$1"; fail=1; }
+ok()  { printf '  \033[32mok\033[0m   %s\n' "${1//$'\n'/ | }"; }
+# um assert = UMA linha (`\n` do alvo no dump forjaria linha de outro assert); e, sob o --falsificar,
+# a saída INTEIRA do alvo vai para ERROS_DO_ALVO — o dump da mensagem é truncado, e o erro de
+# execução que vem depois do corte ficaria fora da camada 4 (Codex, 2026-09-27).
+bad() {
+  printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; fail=1
+  if [ -n "${ERROS_DO_ALVO:-}" ]; then printf '%s\n' "${out:-}" >> "$ERROS_DO_ALVO"; fi
+}
 # marcador ASCII, caixa fixa, sem -i, via `command grep` (o grep do shell é shim p/ ugrep)
 tem() { printf '%s' "$2" | command grep -q -- "$1"; }
 
@@ -897,7 +903,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # legitimamente; um aborto no meio, não: os IDs seguintes somem.
   executados() { { LC_ALL=C grep -Eo '^  (ok +|FALHA )[EH][0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '{ print $2 }' | sort -u | tr '\n' ' '; }
   # Erro de execução do bash no ALVO, no que a suíte despeja da saída dele (`${out:0:N}` dos `bad`).
-  erros_exec() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" || true; }
+  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
   vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [EH][0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '!v[$2]++ { printf "%s ", $2 }'; }
   logs="$tmp/falsificacao"; mkdir -p "$logs"
 
@@ -958,8 +964,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   # que o assert declarado SABE ficar verde nesta invocação.
   for loc in C "$utf8"; do
     ctl="$logs/controle.$loc.log"
+    : > "$ctl.stderr"
     # shellcheck disable=SC2030,SC2031
-    ( export LC_ALL="$loc"; ALVO="$controle"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$ctl.cru" 2>&1; rc=$?
+    ( export LC_ALL="$loc"; ALVO="$controle"; ERROS_DO_ALVO="$ctl.stderr"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$ctl.cru" 2>&1; rc=$?
     sem_cor "$ctl.cru" > "$ctl"
     if [ "$rc" -eq 0 ] && [ -n "$(executados "$ctl")" ]; then
       printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE (%s asserts)\n' "$loc" "$(executados "$ctl" | wc -w | tr -d ' ')"
@@ -998,7 +1005,10 @@ if [ "${1:-}" = "--falsificar" ]; then
   # registro e registro fora da lista são FALHA (no fim do laço): o primeiro não sabotaria nada, o
   # segundo nunca rodaria.
   registradas=""
-  registra() { registradas="$registradas $1"; printf -v "desc_$1" '%s' "$2"; printf -v "expr_$1" '%s' "$3"; }
+  registra() {
+    case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
+    registradas="$registradas $1"; printf -v "desc_$1" '%s' "$2"; printf -v "expr_$1" '%s' "$3"
+  }
 
   registra presenca_wrapper_basta "presenca do wrapper basta (sem exigir resposta positiva)" \
     "s%! \"\$PSQL\" -Atc 'SELECT 1' 2>/dev/null | command grep -Fxq -- '1'%false%"
@@ -1252,6 +1262,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
   #   4. nenhum erro de execução do bash no alvo que o controle não tem — o alvo que morre no ramo
   #      do assert derruba o assert certo por CRASH, não por julgamento.
+  # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+  # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+  # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+  repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$repetidos" ] || { printf '  \033[31mFALHA\033[0m SABOTAGENS com nome repetido: %s\n' "$repetidos"; falhou=1; }
+  case "$SABOTAGENS" in *'|'*) printf '  \033[31mFALHA\033[0m SABOTAGENS com | (OU): declare por , (E)\n'; falhou=1 ;; esac
   for item in $SABOTAGENS; do
     sab="${item%%:*}"; exigidos="${item#*:}"
     v="desc_$sab"; desc="${!v-}"; v="expr_$sab"; expr="${!v-}"
@@ -1262,8 +1278,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     for loc in C "$utf8"; do
       ctl="$logs/controle.$loc.log"; log="$logs/sabotada-$sab.$loc.log"
       # subshell de proposito: a sabotagem e o locale morrem com ela, e o ALVO global fica intacto
+      : > "$log.stderr"
       # shellcheck disable=SC2030,SC2031
-      ( export LC_ALL="$loc"; ALVO="$copia"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?
+      ( export LC_ALL="$loc"; ALVO="$copia"; ERROS_DO_ALVO="$log.stderr"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?
       sem_cor "$log.cru" > "$log"
       if [ "$rc" -eq 0 ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": suite ficou VERDE — assercao frouxa\n' "$loc" "$desc"; falhou=1; continue

@@ -73,14 +73,16 @@ done
 
 # O veredito do CLI é o PAR "<rc> <MARCA>": o rc sozinho não separa "o fiscal acusou" (1 + a linha
 # de violação) de "o bun MORREU" (1 + stack trace) — e é esse o vermelho que a sabotagem que só quebra
-# o TypeScript produz. Marcas ASCII, caixa fixa (#1483). Locale vem do chamador.
+# o TypeScript produz. A marca vale ANCORADA no começo da linha e com o NÚMERO que só o fiscal imprime:
+# a exceção do bun mostra o código-fonte (`console.error(\`❌ ${…} … leem SQL…\`)`), e a busca solta
+# achava ali a marca de violação (Codex, 2026-09-27). Lido em LC_ALL=C; locale do CLI vem do chamador.
 classifica() { # <rc> <saída>
-  case "$2" in
-    *INDETERMINADO*)                             printf '%s INDETERMINADO\n' "$1" ;;
-    *"leem SQL de -f/stdin sem ON_ERROR_STOP"*)  printf '%s VIOLA\n' "$1" ;;
-    *"psql-ro/ON_ERROR_STOP: "*)                 printf '%s LIMPO\n' "$1" ;;
-    *)                                           printf '%s OUTRO\n' "$1" ;;
-  esac
+  local s="$2"
+  # here-string, não pipe: sob `pipefail`, o `grep -q` que sai cedo mata o `printf` (141)
+  if LC_ALL=C grep -qE '^❌ INDETERMINADO ' <<<"$s"; then printf '%s INDETERMINADO\n' "$1"
+  elif LC_ALL=C grep -qE '^❌ [0-9]+ .*leem SQL de -f/stdin sem ON_ERROR_STOP:$' <<<"$s"; then printf '%s VIOLA\n' "$1"
+  elif LC_ALL=C grep -qE '^✅ psql-ro/ON_ERROR_STOP: [0-9]+ ' <<<"$s"; then printf '%s LIMPO\n' "$1"
+  else printf '%s OUTRO\n' "$1"; fi
 }
 veredito_do_caso() { local saida rc; saida="$(bun "$GATE" "$TMPD/casos/$1" 2>&1)"; rc=$?; classifica "$rc" "$saida"; }
 veredito_do_repo() { local saida rc; saida="$(bun "$GATE" 2>&1)"; rc=$?; classifica "$rc" "$saida"; }
@@ -158,6 +160,7 @@ veredito_do_id() { # <locale> <ID>
 # segundo nunca rodaria.
 registradas=""
 registra() {
+  case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
   registradas="$registradas $1"
   printf -v "rotulo_$1" '%s' "$2"; printf -v "arq_$1" '%s' "$3"
   printf -v "de_$1" '%s' "$4"; printf -v "para_$1" '%s' "$5"
@@ -260,6 +263,12 @@ registra piso_do_walker 'piso de denominador (walker vazio)' "$ALVO_CLI" \
 # A camada só conta como vermelha se CADA ID declarado deu o veredito declarado nos DOIS locales —
 # o par (rc, marca) que só o julgamento produz. Crash do bun sai "1 OUTRO"; sabotagem que nem aplica
 # é acusada antes, e restaurada.
+# Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+# suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+# shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+[ -z "$repetidos" ] || { aviso "  ❌ SABOTAGENS com nome repetido: $repetidos"; FALHAS=$((FALHAS + 1)); }
+case "$SABOTAGENS" in *'|'*) aviso "  ❌ SABOTAGENS com | (OU): declare por , (E)"; FALHAS=$((FALHAS + 1)) ;; esac
 for item in $SABOTAGENS; do
   sab="${item%%:*}"; exigidos="${item#*:}"
   v="rotulo_$sab"; rotulo="${!v-}"; v="arq_$sab"; arq="${!v-}"

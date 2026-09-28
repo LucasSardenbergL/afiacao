@@ -51,8 +51,8 @@ STUB
 chmod +x "$stub/git" "$stub/gh"
 
 falhas=0
-ok()   { printf '  ✅ %s\n' "$1"; }
-ruim() { printf '  ❌ %s\n' "$1"; falhas=$((falhas+1)); }
+ok()   { printf '  ✅ %s\n' "${1//$'\n'/ | }"; }
+ruim() { printf '  ❌ %s\n' "${1//$'\n'/ | }"; falhas=$((falhas+1)); }
 
 # Monta um worktree-fixture e seu diretório de transcrições em HOME de teste.
 #   $1 nome  $2 lista de "id:com_tool_use(1|0)" separada por espaço
@@ -178,6 +178,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # não sabotaria nada, o segundo nunca rodaria.
   registradas=""
   registra() {
+    case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
     registradas="$registradas $1"
     printf -v "desc_$1" '%s' "$2"; printf -v "regra_$1" '%s' "$3"; printf -v "expr_$1" '%s' "$4"
   }
@@ -239,6 +240,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
   #   4. nenhum erro de execução do bash que o controle não tem — a sonda que morre de `set -u`
   #      no ramo do assert derruba o assert certo por CRASH, não por julgamento.
+  # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+  # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+  # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+  repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$repetidos" ] || { ruim "SABOTAGENS com nome repetido: $repetidos"; }
+  case "$SABOTAGENS" in *'|'*) ruim "SABOTAGENS com | (OU): declare por , (E) — este juiz exige o MESMO assert nos dois lados" ;; esac
   for item in $SABOTAGENS; do
     sab="${item%%:*}"; exigidos="${item#*:}"
     v="desc_$sab"; desc="${!v-}"; v="regra_$sab"; regra="${!v-}"; v="expr_$sab"; expr="${!v-}"

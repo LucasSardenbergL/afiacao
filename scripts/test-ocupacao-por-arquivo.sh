@@ -36,8 +36,8 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP — jq ausente"; exit 0; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 falhas=0
-ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-ruim() { printf '  \033[31mFALHA\033[0m %s\n' "$1"; falhas=$((falhas+1)); }
+ok()   { printf '  \033[32mok\033[0m    %s\n' "${1//$'\n'/ | }"; }
+ruim() { printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; falhas=$((falhas+1)); }
 # Casa string ASCII, caixa fixa, sem -i: sob pt_BR.UTF-8 o `grep -i` dobra
 # acento e casa o ramo errado (#1483). Todo marcador testado aqui é ASCII.
 tem() { printf '%s' "$1" | command grep -qF "$2"; }
@@ -389,20 +389,23 @@ if [ "${1:-}" = "--falsificar" ]; then
     fi
   }
 
-  # <sabotagem>:<IDs dos asserts que TÊM de acusá-la> — `,` = E (cada um tem de virar), `|` = OU
-  # (basta um). O ID é o 1º token que o assert imprime (`FALHA A9 …`). Exit≠0 NÃO é dente: até
+  # <sabotagem>:<IDs dos asserts que TÊM de acusá-la>[:<IDs que têm de CONTINUAR verdes>] — `,` = E.
+  # O ID é o 1º token que o assert imprime (`FALHA A9 …`). O `:VERDES` é a pré-condição: o
+  # `descarte_calado` só prova o anúncio se a varredura NÃO abortou (A9 verde) — senão o A9b cai
+  # junto com o aborto, que é outra sabotagem (Codex, 2026-09-27). Exit≠0 NÃO é dente: até
   # 2026-09-27 este laço contava "-> vermelho" para QUALQUER rodada que saísse ≠0 — assert alheio,
   # aborto, o alvo morrendo no ramo que o assert mede. Colaterais ficam de fora de propósito.
   # docs/historico/falsificacao-exit-nao-e-dente.md
   SABOTAGENS="custo_vira_posicao:A1 dedupe_desligado:A2 extracao_vazia_ok:A5 janela_sem_sessao_ok:A5b
               sem_file_path_descartada:A3 normalizacao_desligada:A7 marcador_fim_removido:A6
-              mktemp_so_bsd:A10 jq_solto_sob_set_e:A9 descarte_calado:A9b sem_lc_all_c:A8"
+              mktemp_so_bsd:A10 jq_solto_sob_set_e:A9 descarte_calado:A9b:A9 sem_lc_all_c:A8"
 
   # registra <nome> <descricao> <invariante que deve quebrar> <expressao sed> — a TABELA das
   # sabotagens. Nome da lista sem registro e registro fora da lista são FALHA (no fim do laço): o
   # primeiro não sabotaria nada, o segundo nunca rodaria.
   registradas=""
   registra() {
+    case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
     registradas="$registradas $1"
     printf -v "desc_$1" '%s' "$2"; printf -v "regra_$1" '%s' "$3"; printf -v "expr_$1" '%s' "$4"
   }
@@ -471,8 +474,15 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
   #   4. nenhum erro de execução do bash no alvo que o controle não tem — o alvo que morre no ramo
   #      do assert derruba o assert certo por CRASH, não por julgamento.
+  # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+  # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+  # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+  repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$repetidos" ] || { ruim "SABOTAGENS com nome repetido: $repetidos"; }
+  case "$SABOTAGENS" in *'|'*) ruim "SABOTAGENS com | (OU): declare por , (E) — este juiz exige o MESMO assert nos dois lados" ;; esac
   for item in $SABOTAGENS; do
     sab="${item%%:*}"; exigidos="${item#*:}"
+    verm="${exigidos%%:*}"; verdes=""; [ "$verm" = "$exigidos" ] || verdes="${exigidos#*:}"
     v="desc_$sab"; desc="${!v-}"; v="regra_$sab"; regra="${!v-}"; v="expr_$sab"; expr="${!v-}"
     if [ -z "$expr" ]; then
       ruim "\"$sab\": na lista SABOTAGENS e SEM registro — nada foi sabotado"; continue
@@ -490,10 +500,14 @@ if [ "${1:-}" = "--falsificar" ]; then
     fi
     # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
     faltam=""
-    for exigido in ${exigidos//,/ }; do
+    for exigido in ${verm//,/ }; do
       if ! LC_ALL=C grep -Eq "^  ok +($exigido) " "$ctl" || ! LC_ALL=C grep -Eq "^  FALHA ($exigido) " "$log"; then
         faltam="$faltam $exigido"
       fi
+    done
+    caiu=""
+    for verde in ${verdes//,/ }; do
+      LC_ALL=C grep -Eq "^  ok +($verde) " "$log" || caiu="$caiu $verde"
     done
     if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
       ruim "\"$desc\": a suite NAO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, nao de assert"
@@ -502,6 +516,8 @@ if [ "${1:-}" = "--falsificar" ]; then
       { LC_ALL=C grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log" || true; } | LC_ALL=C sed 's/^/       /'
     elif [ -n "$faltam" ]; then
       ruim "\"$desc\": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):$faltam · vermelhos: $(vermelhos "$log")"
+    elif [ -n "$caiu" ]; then
+      ruim "\"$desc\": caiu o que tinha de CONTINUAR verde (a pre-condicao):$caiu · vermelhos: $(vermelhos "$log")"
     else
       ok "\"$desc\" -> vermelho no assert declarado ($exigidos) · vermelhos: $(vermelhos "$log")"
     fi

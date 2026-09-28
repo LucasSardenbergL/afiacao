@@ -45,7 +45,7 @@ checa() { # <titulo> <esperado: MARCADOR|VAZIO> <json>
   saida="$(executa "$json")"
   if [ "$esperado" = "VAZIO" ]; then
     if [ -z "$saida" ]; then printf '  ok   %s\n' "$titulo"; return 0; fi
-    printf '  FALHA %s — esperava silêncio, veio: %s\n' "$titulo" "$(printf '%s' "$saida" | head -c 120)"
+    printf '  FALHA %s — esperava silêncio, veio: %s\n' "$titulo" "$(printf '%s' "$saida" | head -c 120 | tr '\n' '|')"
     falhas=$((falhas + 1)); return 1
   fi
   # marcador tem de estar no additionalContext, não em qualquer lugar do JSON
@@ -53,7 +53,7 @@ checa() { # <titulo> <esperado: MARCADOR|VAZIO> <json>
        | command grep -q "$esperado"; then
     printf '  ok   %s\n' "$titulo"; return 0
   fi
-  printf '  FALHA %s — esperava %s, veio: %s\n' "$titulo" "$esperado" "$(printf '%s' "$saida" | head -c 160)"
+  printf '  FALHA %s — esperava %s, veio: %s\n' "$titulo" "$esperado" "$(printf '%s' "$saida" | head -c 160 | tr '\n' '|')"
   falhas=$((falhas + 1)); return 1
 }
 
@@ -82,7 +82,7 @@ rodada() {
   local saida
   saida="$(printf '%s' 'isto não é json' | bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
   if [ -z "$saida" ]; then printf '  ok   N7 entrada invalida -> silencio\n'
-  else printf '  FALHA N7 entrada invalida falou: %s\n' "$saida"; falhas=$((falhas + 1)); fi
+  else printf '  FALHA N7 entrada invalida falou: %s\n' "${saida//$'\n'/ | }"; falhas=$((falhas + 1)); fi
 
   # (8) ROBUSTEZ: tool_response como OBJETO (formato alternativo) ainda mede
   local j
@@ -134,7 +134,7 @@ rodada() {
   local ev
   ev="$(executa "$(entrada 5000 'ls')" | jq -r '.hookSpecificOutput.hookEventName' 2>/dev/null)"
   if [ "$ev" = "PostToolUse" ]; then printf '  ok   N9 hookEventName=PostToolUse\n'
-  else printf '  FALHA N9 hookEventName veio "%s"\n' "$ev"; falhas=$((falhas + 1)); fi
+  else printf '  FALHA N9 hookEventName veio "%s"\n' "${ev//$'\n'/ | }"; falhas=$((falhas + 1)); fi
 }
 
 echo "== bash-contexto-nudge =="
@@ -158,8 +158,11 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
     # O silêncio tem de quebrar COM o nudge (o marcador no additionalContext) — o valor que só o
     # limiar sabotado produz. Até 2026-09-27 valia "o hook imprimiu QUALQUER coisa": um hook que
     # quebra e cospe erro no stdout passava por dente. docs/historico/falsificacao-exit-nao-e-dente.md
-    saida_sab="$(printf '%s' "$(entrada 500 'ls')" | bash "$sabotado" 2>/dev/null)"
-    if ctx_de "$saida_sab" | command grep -qF "BASH-SAIDA-GRANDE"; then
+    saida_sab="$(printf '%s' "$(entrada 500 'ls')" | bash "$sabotado" 2>/dev/null)"; rc_sab=$?
+    # rc 0 e UM documento JSON válido antes de olhar o campo: o nudge seguido de `exit 9`, ou de lixo
+    # depois do JSON (o jq emite o campo e só então falha), não é resposta do hook (Codex, 2026-09-27).
+    if [ "$rc_sab" -eq 0 ] && printf '%s' "$saida_sab" | jq -se 'length == 1' >/dev/null 2>&1 \
+       && ctx_de "$saida_sab" | command grep -qF "BASH-SAIDA-GRANDE"; then
       echo "  ok   sabotagem detectada (o silêncio quebrou COM o nudge BASH-SAIDA-GRANDE)"
     elif [ -n "$saida_sab" ]; then
       echo "  FALHA o silêncio quebrou, mas SEM o nudge — vermelho que não é o do limiar: $(printf '%s' "$saida_sab" | head -c 100)"
@@ -192,7 +195,7 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
     # Erro de execução do BASH no hook: a suíte normal joga o stderr dele fora (o contrato é o
     # stdout); aqui ERROS_DO_ALVO o recolhe — o hook que morre de `set -u` CALA, e silêncio é
     # justamente o que metade dos asserts espera.
-    erros_exec() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" 2>/dev/null || true; }
+    erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
     vermelhos() { { LC_ALL=C grep -Eo '^  FALHA N[0-9]+ ' "$1" || true; } | LC_ALL=C awk '!v[$2]++ { printf "%s ", $2 }'; }
 
     # CONTROLE na MESMA invocação do laço (cópia INTACTA, o mesmo NUDGE_OVERRIDE): as caixas acima
@@ -211,7 +214,10 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
       # registra <nome> <descricao> <expressao sed> — a TABELA das sabotagens. Nome da lista sem
       # registro e registro fora da lista são FALHA: o primeiro não sabotaria nada, o segundo nunca roda.
       registradas=""
-      registra() { registradas="$registradas $1"; printf -v "desc_$1" '%s' "$2"; printf -v "expr_$1" '%s' "$3"; }
+      registra() {
+        case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
+        registradas="$registradas $1"; printf -v "desc_$1" '%s' "$2"; printf -v "expr_$1" '%s' "$3"
+      }
       # shellcheck disable=SC2016  # $marca/$sessao/$tok_k sao literais: casam o TEXTO do hook —
       # expandir aqui produziria padrao vazio e "sabotagem vazia".
       registra corte_desligado "corte desligado (sempre texto longo)" \
@@ -228,6 +234,12 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
       # controle); (3) CADA assert declarado está verde no controle e vermelho aqui; (4) nenhum erro
       # de execução do bash no hook que o controle não tem.
       copia="$sab_dir/h.sh"
+      # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+      # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+      # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+      repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+      [ -z "$repetidos" ] || { echo "  FALHA SABOTAGENS com nome repetido: $repetidos"; falhas=$((falhas + 1)); }
+      case "$SABOTAGENS" in *'|'*) echo "  FALHA SABOTAGENS com | (OU): declare por , (E)"; falhas=$((falhas + 1)) ;; esac
       for item in $SABOTAGENS; do
         sab="${item%%:*}"; exigidos="${item#*:}"
         v="desc_$sab"; desc="${!v-}"; v="expr_$sab"; expr="${!v-}"
@@ -260,7 +272,7 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
         if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
           echo "  FALHA \"$desc\": a suíte NÃO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, não de assert"
           falhas=$((falhas + 1))
-        elif [ "$(erros_exec "$log.stderr")" != "$(erros_exec "$ctl.stderr")" ]; then
+        elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
           echo "  FALHA \"$desc\": vermelha com ERRO de execução no hook — o assert caiu por crash, não por julgamento"
           falhas=$((falhas + 1))
         elif [ -n "$faltam" ]; then

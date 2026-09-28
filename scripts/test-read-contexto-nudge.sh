@@ -52,7 +52,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # Erro de execução do BASH no hook. A suíte normal joga o stderr dele fora (`2>/dev/null`: o
   # contrato é o stdout); aqui ERROS_DO_ALVO o recolhe num arquivo por rodada — sem isso, o hook
   # que morre de `set -u` no ramo de um assert CALA, e o silêncio passa por julgamento.
-  erros_exec() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" 2>/dev/null || true; }
+  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
   vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [A-Za-z]+[0-9]+[a-z]? ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # Locale UTF-8 por SONDA POSITIVA, não por nome fixo (mesmo padrão de test-claude-md-budget.sh).
@@ -157,6 +157,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # primeiro não sabotaria nada, o segundo nunca rodaria.
   registradas=""
   registra() {
+    case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
     registradas="$registradas $1"
     printf -v "desc_$1" '%s' "$2"; printf -v "regra_$1" '%s' "$3"; printf -v "expr_$1" '%s' "$4"
   }
@@ -184,6 +185,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
   #   4. nenhum erro de execução do bash no hook que o controle não tem (ERROS_DO_ALVO) — o hook
   #      que morre no ramo do assert derruba o assert certo por CRASH, não por julgamento.
+  # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+  # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+  # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+  repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$repetidos" ] || { printf '  \033[31mFALHA\033[0m SABOTAGENS com nome repetido: %s\n' "$repetidos"; falhou=1; }
+  case "$SABOTAGENS" in *'|'*) printf '  \033[31mFALHA\033[0m SABOTAGENS com | (OU): declare por , (E)\n'; falhou=1 ;; esac
   for item in $SABOTAGENS; do
     sab="${item%%:*}"; exigidos="${item#*:}"
     v="desc_$sab"; desc="${!v-}"; v="regra_$sab"; regra="${!v-}"; v="expr_$sab"; expr="${!v-}"
@@ -210,7 +217,7 @@ if [ "${1:-}" = "--falsificar" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": a suite NAO rodou inteira (%s de %s asserts) — vermelho de aborto, nao de assert\n' \
           "$loc" "$desc" "$(asserts "$log")" "$(asserts "$ctl")"
         falhou=1
-      elif [ "$(erros_exec "$log.stderr")" != "$(erros_exec "$ctl.stderr")" ]; then
+      elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha com ERRO de execucao no hook — o assert caiu por crash, nao por julgamento\n' "$loc" "$desc"
         { LC_ALL=C grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log.stderr" || true; } | LC_ALL=C sed 's/^/       /'
         falhou=1
@@ -257,8 +264,8 @@ run() {  # $1=file_path $2=session $3=limit(0=ausente) $4=offset(0=ausente)
 }
 
 fail=0
-ok()  { printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { printf '  \033[31mFALHA\033[0m %s\n' "$1"; fail=1; }
+ok()  { printf '  \033[32mok\033[0m   %s\n' "${1//$'\n'/ | }"; }
+bad() { printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; fail=1; }
 # marcador ASCII exclusivo, sem -i, via `command grep` (o grep do shell é shim p/ ugrep)
 tem() { printf '%s' "$2" | command grep -q "$1"; }
 check(){ # $1=descrição $2=esperado(READ-GRANDE|READ-RELEITURA|silencio) $3=saída

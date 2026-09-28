@@ -20,8 +20,8 @@ falsificar=0
 [ "${1:-}" = "--falsificar" ] && falsificar=1
 
 falhas=0
-ok()   { printf '  ok   %s\n' "$1"; }
-fail() { printf '  FAIL %s\n' "$1"; falhas=$((falhas + 1)); }
+ok()   { printf '  ok   %s\n' "${1//$'\n'/ | }"; }
+fail() { printf '  FAIL %s\n' "${1//$'\n'/ | }"; falhas=$((falhas + 1)); }
 
 [ -f "$GERADOR" ] || { echo "ABORT: $GERADOR não existe"; exit 69; }
 
@@ -99,14 +99,14 @@ rodar_assercoes() {
   unset -f sha_de
   eval "$1"
 
-  got="$(sha_de 1856)"
+  got="$(sha_de 1856)"; got_1856="$got"
   if [ "$got" = "$sha_real_1856" ]; then
     ok "G1 #1856 → o PR real ($sha_real_1856), não o citador ($sha_citador)"
   else
     fail "G1 #1856 → esperado '$sha_real_1856' (assunto fecha com o marcador), veio '$got'"
   fi
 
-  got="$(sha_de 1889)"
+  got="$(sha_de 1889)"; got_1889="$got"
   if [ "$got" = "$sha_real_1889" ]; then
     ok "G2 #1889 → o PR real ($sha_real_1889), não o citador posterior ($sha_citador_1889)"
   else
@@ -114,7 +114,7 @@ rodar_assercoes() {
   fi
 
   # Um número que ninguém entregou não pode devolver o SHA de quem só o citou.
-  got="$(sha_de 9999)"
+  got="$(sha_de 9999)"; got_9999="$got"
   if [ -z "$got" ]; then
     ok "G3 PR inexistente → vazio (não inventa SHA)"
   else
@@ -122,7 +122,7 @@ rodar_assercoes() {
   fi
 
   # Prefixo não pode casar: (#185) é outro PR que não (#1856).
-  got="$(sha_de 185)"
+  got="$(sha_de 185)"; got_185="$got"
   if [ -z "$got" ]; then
     ok "G4 #185 não casa com (#1856)/(#1858) — marcador é o número INTEIRO"
   else
@@ -163,14 +163,13 @@ log="$tmp/sabotada.log"
 rodar_assercoes "$defn_sabotado" > "$log" 2>&1
 cat "$log"
 echo
+# O VALOR direto (o que `sha_de` devolveu), nunca o SHA achado DENTRO da mensagem: um `got` como
+# "lixo' veio '<citador>" casaria o grep da linha (Codex, 2026-09-27).
 faltam=""
-for par in "G1:$sha_citador" "G2:$sha_citador_1889"; do
-  id="${par%%:*}"; citador="${par#*:}"
-  LC_ALL=C grep -q "^  FAIL $id .*veio '$citador'\$" "$log" || faltam="$faltam $id(veio '$citador')"
-done
-for id in G3 G4; do
-  LC_ALL=C grep -q "^  ok   $id " "$log" || faltam="$faltam $id(verde)"
-done
+[ "$got_1856" = "$sha_citador" ]      || faltam="$faltam G1(veio '$got_1856', esperado o citador '$sha_citador')"
+[ "$got_1889" = "$sha_citador_1889" ] || faltam="$faltam G2(veio '$got_1889', esperado o citador '$sha_citador_1889')"
+[ -z "$got_9999" ] || faltam="$faltam G3(veio '$got_9999', esperado vazio)"
+[ -z "$got_185" ]  || faltam="$faltam G4(veio '$got_185', esperado vazio)"
 if [ "$falhas" -eq 0 ]; then
   echo "FALSIFICAÇÃO FALHOU: o defeito foi reintroduzido e o teste passou — teste cego."
   exit 1

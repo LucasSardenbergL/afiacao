@@ -55,7 +55,7 @@ rodar_asserts() { # bloco.sh
 
   afirmar() { # ID rótulo esperado obtido
     if [ "$3" = "$4" ]; then ok=$((ok + 1)); echo "   ✓ $1 $2" >&2
-    else falha=$((falha + 1)); echo "   ✗ $1 $2: esperado [$3], veio [$4]" >&2
+    else falha=$((falha + 1)); echo "   ✗ $1 $2: esperado [${3//$'\n'/ | }], veio [${4//$'\n'/ | }]" >&2
     fi
   }
 
@@ -134,6 +134,7 @@ SABOTAGENS="colapsa_ilegivel:D3 ausente_mente_sim:D2 sha_vazio_sem_ferramenta:D5
 # registro fora da lista são cegueira (abaixo): o primeiro não sabotaria nada, o segundo nunca roda.
 registradas=""
 registra() {
+  case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
   registradas="$registradas $1"
   printf -v "desc_$1" '%s' "$2"; printf -v "de_$1" '%s' "$3"; printf -v "para_$1" '%s' "$4"
 }
@@ -175,6 +176,12 @@ mut="$CAIXA/mutante.sh"
 # A rodada só conta como PEGADA com as quatro camadas: (1) a troca aplicou 1× e o mutante tem
 # sintaxe válida; (2) rodar_asserts rodou INTEIRA (ok+falha = o do controle); (3) cada assert
 # declarado está ✓ no controle e ✗ aqui; (4) nenhum erro de execução do bash que o controle não tem.
+# Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+# suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+# shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+[ -z "$repetidos" ] || { echo "  [XX ] SABOTAGENS com nome repetido: $repetidos" >&2; cegas=$((cegas + 1)); }
+case "$SABOTAGENS" in *'|'*) echo "  [XX ] SABOTAGENS com | (OU): declare por , (E)" >&2; cegas=$((cegas + 1)) ;; esac
 for item in $SABOTAGENS; do
   sab="${item%%:*}"; exigidos="${item#*:}"
   v="desc_$sab"; nome="${!v-}"; v="de_$sab"; de="${!v-}"; v="para_$sab"; para="${!v-}"

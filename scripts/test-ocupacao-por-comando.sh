@@ -38,8 +38,8 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP — jq ausente"; exit 0; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 falhas=0
-ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-ruim() { printf '  \033[31mFALHA\033[0m %s\n' "$1"; falhas=$((falhas+1)); }
+ok()   { printf '  \033[32mok\033[0m    %s\n' "${1//$'\n'/ | }"; }
+ruim() { printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; falhas=$((falhas+1)); }
 # Casa ASCII, caixa fixa, sem -i: sob pt_BR.UTF-8 o `grep -i` dobra acento e casa
 # o ramo errado (#1483). Todo marcador testado aqui é ASCII de propósito.
 tem() { printf '%s' "$1" | command grep -qF "$2"; }
@@ -191,7 +191,7 @@ if tem "$sn" "(Bash - sem arquivo)"; then ok "K12b caso 12: SEM o flag a linha d
 else ruim "K12b caso 12: o comportamento default mudou — a linha de base de 2026-09-07 deixa de reproduzir"; fi
 
 # ---- caso 13: flag fora de contexto RECUSA em vez de ignorar --------------
-CLAUDE_PROJECTS_DIR="$P12" bash "$ALVO" --por-comando --ver-shell >/dev/null 2>&1
+CLAUDE_PROJECTS_DIR="$P12" bash "$ALVO" --por-comando --ver-shell >/dev/null 2>>"${ERROS_DO_ALVO:-/dev/null}"
 if [ "$?" = "2" ]; then ok "K13 caso 13: --ver-shell com --por-comando -> exit 2 (recusa)"
 else ruim "K13 caso 13: flag ignorado em silencio — a tabela mente sobre o que mede"; fi
 
@@ -275,7 +275,10 @@ if [ "${1:-}" = "--falsificar" ]; then
   # registro e registro fora da lista são FALHA (no fim do laço): o primeiro não sabotaria nada, o
   # segundo nunca rodaria.
   registradas=""
-  registra() { registradas="$registradas $1"; printf -v "desc_$1" '%s' "$2"; printf -v "expr_$1" '%s' "$3"; }
+  registra() {
+    case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
+    registradas="$registradas $1"; printf -v "desc_$1" '%s' "$2"; printf -v "expr_$1" '%s' "$3"
+  }
 
   registra prefixo_1a_palavra "classifica por PREFIXO (1a palavra)" \
     's|^  ns = split(cmd, segs, /&&.*$|  ns = 1; segs[1] = cmd|'
@@ -313,6 +316,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
   #   4. nenhum erro de execução do bash no alvo que o controle não tem — o alvo que morre no ramo
   #      do assert derruba o assert certo por CRASH, não por julgamento.
+  # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+  # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+  # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+  repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$repetidos" ] || { ruim "SABOTAGENS com nome repetido: $repetidos"; }
+  case "$SABOTAGENS" in *'|'*) ruim "SABOTAGENS com | (OU): declare por , (E) — este juiz exige o MESMO assert nos dois lados" ;; esac
   for item in $SABOTAGENS; do
     sab="${item%%:*}"; exigidos="${item#*:}"
     v="desc_$sab"; desc="${!v-}"; v="expr_$sab"; expr="${!v-}"

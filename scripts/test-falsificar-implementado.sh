@@ -36,8 +36,8 @@ DIR="${FALSIF_DIR:-$here}"
 PKG="${FALSIF_PKG:-$here/../package.json}"
 
 falhas=0
-ok()   { printf '  ✅ %s\n' "$1"; }
-ruim() { printf '  ❌ %s\n' "$1"; falhas=$((falhas+1)); }
+ok()   { printf '  ✅ %s\n' "${1//$'\n'/ | }"; }
+ruim() { printf '  ❌ %s\n' "${1//$'\n'/ | }"; falhas=$((falhas+1)); }
 
 anuncia() { grep -q -- '--falsificar' "$1"; }
 parseia() {
@@ -108,6 +108,12 @@ echo suite' ;;
   # o exit 1 do gate COM a acusação declarada, ausente no cenário sadio.
   # docs/historico/falsificacao-exit-nao-e-dente.md
   SABOTAGENS="anuncia_sem_parsear:EIXO1 fora_do_ci:EIXO2 lista_ilegivel:LISTA"
+  # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+  # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+  # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+  repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$repetidos" ] || { ruim "SABOTAGENS com nome repetido: $repetidos"; }
+  case "$SABOTAGENS" in *'|'*) ruim "SABOTAGENS com | (OU): declare por , (E) — este juiz exige o MESMO assert nos dois lados" ;; esac
   for item in $SABOTAGENS; do
     sab="${item%%:*}"; exigidos="${item#*:}"
     if ! cenario "$sab"; then

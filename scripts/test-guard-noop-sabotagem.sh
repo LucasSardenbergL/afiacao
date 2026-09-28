@@ -158,12 +158,21 @@ PY
   # 2026-09-27 valia QUALQUER falha de verificar_guard — inclusive GUARD_NAO_LOCALIZADO e o probe
   # que nem PARSEIA (sabotagem com sintaxe quebrada): vermelho de outro motivo contado como dente.
   # docs/historico/falsificacao-exit-nao-e-dente.md
+  # Sintaxe primeiro: o bash CITA a linha do erro, e uma linha com a marca faria o erro de sintaxe
+  # passar pela marca (Codex, 2026-09-27).
+  if ! bash -n "$TMP/sabotado.sh" 2>/dev/null; then
+    printf '  [XX ] a sabotagem quebrou a SINTAXE de %s — vermelho pelo motivo errado\n' "$base"
+    cegas=$((cegas + 1)); continue
+  fi
   veredito=$(verificar_guard "$TMP/sabotado.sh"); rc_v=$?
+  # a marca vale como a LINHA exata que verificar_guard imprime com a resposta do guard frágil
+  marca_exata='     com o alvo PRESENTE o guard respondeu:   [XX ] sabotagem NO-OP (alvo sumiu)'
+  LC_ALL=C grep -qxF -- "$marca_exata" <<<"$veredito" && rc_v="$rc_v+marca"
   case "$rc_v:$veredito" in
     0:*)
       printf '  [XX ] sabotagem PASSOU DESPERCEBIDA: o pipeline voltou a %s e o teste seguiu verde\n' "$base"
       cegas=$((cegas + 1)) ;;
-    1:*"com o alvo PRESENTE o guard respondeu:"*"sabotagem NO-OP (alvo sumiu)"*)
+    1+marca:*)
       printf '  [ok ] pegada: pipeline frágil devolvido a %s ⇒ "alvo sumiu" com o alvo PRESENTE (o declarado)\n' "$base" ;;
     *)
       printf '  [XX ] vermelho que NÃO é o declarado ("alvo sumiu" com o alvo presente) em %s — exit %s:\n' "$base" "$rc_v"
