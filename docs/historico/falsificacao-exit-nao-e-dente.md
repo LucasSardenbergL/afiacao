@@ -621,6 +621,55 @@ que o S2 procura) reprova no S1.
 - Uma conferência da meta contou `SEM o recibo` com caixa fixa, mas o S2 escreve `sem`. Era erro da
   meta: o log tinha as duas FALHAs.
 
+## Parciais de `db/`, fase 2 — farmer, 2026-09-27
+
+**Passo 0 — classe.** Os 5 reconferidos lendo o código e reproduzidos numa cópia; os 5 eram afetados,
+e o `desfecho` tinha além disso **dentes de VÁCUO** — sabotagem que "mordia" sem nada a morder:
+
+| site | o que o juiz aceitava (medido no arquivo de antes) |
+|---|---|
+| `farmer-desfecho` | o DO captura `WHEN OTHERS`: o `22012` da RPC sabotada contava como "≠ SQLSTATE da defesa". F1 usava `$OUTRO` (que TEM oferta da mesma chave — a lição que o assert 10 já tinha e a falsificação não) e F4 não tinha ambiguidade (o F2 apaga a 1ª pendente): **sem sabotagem nenhuma**, o arquivo de antes dizia "4 com dente / 0 inertes", exit 0 |
+| `farmer-geracao-vigente` | a chamada sabotada que ERRA deixava o total em `[1…]` ≠ verde (35/0); o sentinela antes do erro no COMMIT contava; o apply da sabotagem rodava dentro de `if` (errexit suspenso) |
+| `farmer-head-geracao` | F4/F9: a chamada que ERRA dá o MESMO `0` que a sabotagem produz (o teste esvazia head/log antes); W1/W2 liam `permission denied` — em pt_BR o controle intacto caía no ramo "PASSOU" |
+| `farmer-melhor-individual-bulk` | a RPC que erra dava `[]` ≠ `[AUSENTE]`: "assert caiu como devia" (18/0) |
+| `farmer-margem-server-side` | F2 `veio []` ≠ `40.00` contava (47/0); F3 aceitava a quebra de outra coisa como "A1 fica vermelho" |
+
+**O conserto:** o valor declarado (colhido do arquivo intacto, 2 rodadas iguais) em cada juiz, a
+medição pelo `medir()` (erro → `ERRO_rc=<n>`, que nenhum declarado casa), sentinelas com `PSQL_RC=0`
+e condições nomeadas (`insufficient_privilege`, `unique_violation`) no lugar do texto do servidor.
+No `desfecho`, o **`controle_cena`**: a defesa INTACTA tem de barrar a MESMA cena, nesta invocação,
+antes da sabotagem — foi ele que acusou os dois vácuos (F1 passou a usar `$GESTOR`; F4 repõe a 1ª
+pendente antes da 2ª).
+
+**A 2ª opinião** (Codex challenge, `gpt-6-astra` max, 388 s) achou mais escapes; todos reproduzidos
+na meta (pré = o commit antes da rodada) e fechados, menos os dois marcados:
+
+| achado | disposição |
+|---|---|
+| `head -1` escolhe a 1ª sentinela: `SEM_ERRO n=1` e depois `1/0` capturado aprova | todas as sentinelas (`paste -sd'\|'`) — o declarado é UMA só (pré 0 → novo 1) |
+| chamada sem efeito preserva o declarado (margem F4, head F4/F9: o estado preparado JÁ é o valor) | a medição carrega um efeito independente da chamada: `42\|NULL\|1` (antes, depois, retorno), `0\|2`, `0\|<head do run>` (pré 0 → novo 1) |
+| valor correto seguido de erro (`red`/`ne`/`eq_esperando_vermelho` recebem a substituição como argumento) | `medir()` nos três (pré 0 → novo 1) |
+| A6 `*ERROR*`: em pt_BR o servidor diz `ERRO` e a rejeição indevida passava | `PSQL_RC` + condição nomeada (pré-pt 0 → novo 1) |
+| `L3 … \|\| true`: o retry que erra "prova" idempotência | `\|\| bad` (pré 0 → novo 1) |
+| apply da sabotagem dentro de `if` (errexit suspenso) | a função devolve o rc do apply, não o do `rm` |
+| `K=2` faria `T+2−K = T` (chamada inerte casaria) | fechado pelo 2º campo (`\|N_LOTE`); na cena atual K=1 — não reproduzível, só por construção |
+| **residual:** `ROW_COUNT` depois de `PERFORM` conta a chamada, não as linhas atualizadas dentro da RPC | registrado: o `n=1` do desfecho prova "executou sem erro", não o efeito |
+| **residual:** `controle_cena` sem rollback quando a defesa REGRIDE contamina a cena seguinte | o controle já soma FAIL; as reposições limitam a propagação |
+
+**Meta-falsificação** (C e pt_BR, controle verde na mesma invocação, uma camada por vez):
+**96/96** — desfecho 24, geracao-vigente 26, head-geracao 18, melhor-individual 12, margem 16. Em
+cada site: a reprodução reprova no novo, passava no de antes, e desligar a camada (igualdade,
+`medir`, `controle_cena`, `PSQL_RC`) devolve o escape.
+
+**Lições da fase 2:**
+
+- **Dente de vácuo é a mesma classe pelo outro lado.** O juiz não identificava o assert porque não
+  havia assert a identificar: a cena não exercitava a defesa. Só um controle POSITIVO na mesma
+  invocação (a defesa intacta barra) separa "mordeu" de "não tinha o que morder".
+- **O estado preparado pode ser o declarado.** Quando o teste zera algo antes da chamada e a
+  sabotagem produz zero, a chamada que nada faz também produz zero — a medição tem de carregar o
+  efeito da PRÓPRIA chamada.
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
@@ -632,10 +681,9 @@ tarefas com a assinatura calibrada e a lista de sites no briefing:
   - ↳ a classe vizinha que ela revelou — prova fora do CI que MORRE e ninguém vê — virou a tarefa
     **"Varrer provas db/ fora do núcleo mortas na main"**.
 - **"Declarar valor sabotado nas provas db/ com juiz ≠ verde"** — os 27 parciais de `db/`, no padrão do
-  `vermelha` com 4º argumento do pedido-total (em fases por domínio). **Fase 1 (sensores, 5) feita —
-  acima.** Seguem, com a mesma sessão como dono: farmer (5: `desfecho`, `geracao-vigente`,
-  `head-geracao`, `melhor-individual-bulk`, `margem-server-side`), preço/custo/margem (5, com o ritual
-  Codex), tint + reposição/pedidos/tático (6), authz/RLS + dados (6).
+  `vermelha` com 4º argumento do pedido-total (em fases por domínio). **Fases 1 (sensores, 5) e 2
+  (farmer, 5) feitas — acima.** Seguem, com a mesma sessão como dono: preço/custo/margem (5, com o
+  ritual Codex), tint + reposição/pedidos/tático (6), authz/RLS + dados (6).
 - **"Erradicar falsificação sem assert no test:falsificacao"** — os 10 afetados e 4 parciais de
   `scripts/`. Esses rodam no CI (`test:falsificacao`, no job `validate`): um vermelho de erro alheio
   lá também aprova. O `test-eval-via-morta` saiu desta fase para a dos evals (combinado entre as duas
