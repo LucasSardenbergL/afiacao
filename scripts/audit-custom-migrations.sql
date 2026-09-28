@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 563
+-- Total de custom migrations: 564
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -604,6 +604,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260926001425', 'param_auto_em_transito_conta_disparado_simulado', '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql'),
   ('20260927133606', 'positivacao_mes_sp_sessao_utc', '20260927133606_positivacao_mes_sp_sessao_utc.sql'),
   ('20260927172443', 'hoje_sp_sessao_utc_precos_piso', '20260927172443_hoje_sp_sessao_utc_precos_piso.sql'),
+  ('20260927195430', 'positivacao_universo_canonico', '20260927195430_positivacao_universo_canonico.sql'),
   ('20260927202603', 'fuso_sp_relogio_da_sessao_rpcs_views_des', '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2433,6 +2434,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', ''),
   ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'get_ultimos_precos_cliente', ''),
   ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'medir_abaixo_piso_tier', ''),
+  ('positivacao_universo_canonico', 'function', 'public', '_carteira_positivacao_for_owner', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'radar_kpis', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'fin_projecao_13_semanas', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_pedidos_em_transito', ''),
@@ -4313,6 +4315,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', ''),
   ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'get_ultimos_precos_cliente', ''),
   ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'medir_abaixo_piso_tier', ''),
+  ('positivacao_universo_canonico', 'function', 'public', '_carteira_positivacao_for_owner', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'radar_kpis', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'fin_projecao_13_semanas', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_pedidos_em_transito', ''),
@@ -4504,6 +4507,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
   ('public', '_carteira_positivacao_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '93a9d455cf68c1d47b589849b505909f'),
   ('public', '_carteira_positivacao_for_owner', 2, '20260927133606_positivacao_mes_sp_sessao_utc.sql', 'f0292c2defd776c715af118c4e8053a8'),
+  ('public', '_carteira_positivacao_for_owner', 3, '20260927195430_positivacao_universo_canonico.sql', '9ded7c1530049a13422001fc66956069'),
   ('public', 'pode_ver_carteira_completa', 1, '20260526020000_rls_score_carteira_hardening.sql', '97cb07844e04b8ad26c95e63df5e6fe6'),
   ('public', 'pode_ver_carteira_completa', 2, '20260526040000_rls_carteira_relacionamento_hardening.sql', '97cb07844e04b8ad26c95e63df5e6fe6'),
   ('public', 'pode_ver_carteira_completa', 3, '20260718180000_fu7b_pode_ver_carteira_completa_privado.sql', 'e3c5b09d2d30fc13a9b024836ce21b53'),
