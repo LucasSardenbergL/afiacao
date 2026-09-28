@@ -272,7 +272,7 @@ sozinho aprova ZERO chamadas — o veredito trata "não encontrei" como vermelho
 apaga o guard em silêncio. Não vale para função chamada pelo EFEITO colateral (`await derivar(...)`
 solto é legítimo): ali o assert certo é o posicional do próprio site.
 
-**Paridade só vigia o espelho que tem BLOCO — cópia sem marcador deriva no escuro (B1, #B1PR).** O
+**Paridade só vigia o espelho que tem BLOCO — cópia sem marcador deriva no escuro (B1, #2633).** O
 `sanitizeForPostgrestOr` da `analyze-unified-order` nunca teve `MIRROR-START`: o #1051 (2026-06-24) pôs
 o `*` só em `src/lib/postgrest.ts`, e a edge passou ~3 meses montando `name.ilike.%***%` (match-all em
 `profiles`), com o espelho do tool MCP em dia ao lado. Helper com mais de um espelho pede **descoberta +

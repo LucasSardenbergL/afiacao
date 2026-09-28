@@ -155,7 +155,7 @@ não compilou é de linguagem ausente.
   (`env: BASE_REF` + `"origin/${BASE_REF}"`). Prova: `p/github-actions` deu 1→0 `run-shell-injection`
   (11 regras, 4 alvos). O parser YAML achou 0 `${{ }}` em `run:`/`script:` nos 82 passos dos 4
   workflows, ou seja, o A2 era o único.
-- **B1 — P3, curinga, `supabase/functions/analyze-unified-order/index.ts:39` — ✅ corrigido em #B1PR
+- **B1 — P3, curinga, `supabase/functions/analyze-unified-order/index.ts:39` — ✅ corrigido em #2633
   (classe).** O `sanitizeForPostgrestOr` espelhado na edge **não remove `*`**, que o #1051 acrescentou só em
   `src/lib/postgrest.ts`. Gatilho: termo `***` no texto do pedido. Efeito: `name.ilike.%***%` =
   match-all em `profiles` (≤20 por termo, com `service_role`), ou seja, cliente sugerido errado.
@@ -214,7 +214,7 @@ nessa cegueira (helper espelhado na edge, onde o lint não entra).
 - `docs/agent/skills.md` (linha da ToB): contorno do CWD, `partial` que subnotifica e `p/yaml` 404.
 - Correções, cada uma no seu PR (chips abertos em 2026-09-27, quem clica é o founder):
   "Passar github.base_ref por env no ci.yml" (A2, ✅ #2626) · "Pôr o sanitizador .or() da
-  analyze-unified-order em MIRROR" (B1, classe — ✅ #B1PR) · "Fechar .ilike cru com curinga
+  analyze-unified-order em MIRROR" (B1, classe — ✅ #2633) · "Fechar .ilike cru com curinga
   (AdminReposicaoVendaPerdida)" (B2 + gate ESLint).
 - 🧭 Decisões do founder: (a) pin das actions por SHA e a política de atualização (A1); (b) o bug do
   `--include` já estava reportado (#297 da ToB), falta decidir se comentamos com a medida em TS e o
