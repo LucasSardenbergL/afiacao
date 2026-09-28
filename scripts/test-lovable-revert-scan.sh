@@ -170,18 +170,24 @@ cp "$SCAN" "$base/copia.sh"
 SCAN_ATUAL="$base/copia.sh"
 COR_ENV="GIT_CONFIG_PARAMETERS='color.ui=always'"
 
+# O stderr do controle é a LINHA DE BASE do "julgou nada" das sabotagens: tem de ser VAZIO.
 controle_ok=0
-if printf '%s' "$(run_scan)" | grep -qF "REVERSAO"; then
+: > "$base/controle.err"
+out_ctl="$(ERROS_DO_SCAN="$base/controle.err" run_scan)"
+if printf '%s' "$out_ctl" | grep -qF "REVERSAO" && [ ! -s "$base/controle.err" ]; then
   controle_ok=1
-  echo "  ok    base  | CONTROLE: cópia intacta + cor ligada → REVERSAO (há verde de onde sair)"
+  echo "  ok    base  | CONTROLE: cópia intacta + cor ligada → REVERSAO, stderr vazio (há verde de onde sair)"
 else
-  echo "  FAIL  CONTROLE vermelho ANTES da 1ª sabotagem — nada abaixo provaria coisa alguma"; fail=1
+  echo "  FAIL  CONTROLE vermelho ANTES da 1ª sabotagem (sem REVERSAO, ou com stderr: $(head -c 160 "$base/controle.err" | tr '\n' ' ')) — nada abaixo provaria coisa alguma"; fail=1
 fi
 
 # _sabota <nome> <expr-sed> — quebra UMA fixação de cor na cópia e exige que o alarme SUMA. E
-# "sumir" é o DECLARADO: o scan roda até o fim e julga "nada" — exit 0, stdout mudo, stderr sem erro.
-# Até 2026-09-27 valia "saída vazia", e um scan que MORRE (sintaxe, `set -u`, git recusando a flag)
-# também sai vazio: crash contado como dente. docs/historico/falsificacao-exit-nao-e-dente.md
+# "sumir" é o DECLARADO: o scan roda até o fim e julga "nada" — exit 0, stdout mudo, stderr VAZIO
+# como o do controle. Até 2026-09-27 valia "saída vazia", e um scan que MORRE (sintaxe, `set -u`, git
+# recusando a flag) também sai vazio: crash contado como dente. docs/historico/falsificacao-exit-nao-e-dente.md
+# Vazio, não "sem assinatura de erro": a lista-negra (`fatal:|error:|…`) deixou passar o `git diff`
+# com flag inexistente — rc 129 só com `usage: …` no stderr, e o rc morre no pipeline do scan (termina
+# no `sort`). A meta-falsificação mediu esse crash APROVADO pelo juiz pós-Codex.
 _sabota() {
   local nome="$1" expr="$2" out rc erro_sed
   [ "$controle_ok" -eq 1 ] || return 0
@@ -203,10 +209,10 @@ _sabota() {
   out="$(ERROS_DO_SCAN="$base/copia.err" run_scan)"; rc=$?
   if [ -n "$out" ]; then
     echo "  FAIL  $nome → alarme sobreviveu; a flag não está sob teste | out='$out'"; fail=1
-  elif [ "$rc" -ne 0 ] || LC_ALL=C command grep -qE 'fatal:|error:|unknown option|unbound variable|command not found|syntax error|bad substitution' "$base/copia.err"; then
-    echo "  FAIL  $nome → o alarme sumiu por CRASH, não por julgamento (exit $rc): $(head -c 160 "$base/copia.err" | tr '\n' ' ')"; fail=1
+  elif [ "$rc" -ne 0 ] || [ -s "$base/copia.err" ]; then
+    echo "  FAIL  $nome → o alarme sumiu por CRASH, não por julgamento (exit $rc, stderr não-vazio): $(head -c 160 "$base/copia.err" | tr '\n' ' ')"; fail=1
   else
-    echo "  ok    sabot | $nome → alarme SUMIU com o scan julgando (exit 0, stderr limpo): a flag é load-bearing"
+    echo "  ok    sabot | $nome → alarme SUMIU com o scan julgando (exit 0, stderr vazio como o do controle): a flag é load-bearing"
   fi
 }
 
