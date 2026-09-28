@@ -23,7 +23,10 @@
 // LIMITES DECLARADOS (o gate não os pega; a prova executada é quem pega):
 //   · timestamptz fora da convenção `*_at`/`*_em` — 50 de 658 colunas na prod (2026-09-27);
 //   · comparação com a coluna entre parênteses ou via expressão (`(fc.started_at) >= v`);
-//   · função que não menciona `America/Sao_Paulo` (fuso implícito do caller);
+//   · função que não menciona `America/Sao_Paulo` (fuso implícito do caller) — as famílias A/B/C nela
+//     dariam 44% de falso-positivo (15 de 34 sítios UTC-consistentes, medido em 2026-09-27); o
+//     `date_trunc` de calendário sobre o relógio da sessão, esse, é medido em TODO corpo vivo (e em
+//     view, cron e skill) por `fuso-da-sessao-em-migrations-e-skills-gate.ts`;
 //   · SQL dinâmico montado em string (`EXECUTE format(...)`).
 import { modelarRepo } from './lib/deriva-corpo';
 import type { MigrationLida } from './lib/corpo-esperado';
