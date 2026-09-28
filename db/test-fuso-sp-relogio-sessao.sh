@@ -472,7 +472,9 @@ case "$SABOTAGEM" in
   # o mês de SP trocado pelo mês UTC ESCRITO: fuso explícito, mas o errado
   radar_mes_em_utc) sabotar fn:radar_kpis "$MES_SP" "date_trunc('month', now(), 'UTC')" 1 ;;
   # a borda do início do mês aberta: a conversão de 00:00:00 BRT do dia 1 sairia do mês
-  radar_borda_aberta) sabotar fn:radar_kpis "prospeccao_atualizado_em >= date_trunc(" "prospeccao_atualizado_em > date_trunc(" 1 ;;
+  # (o trecho sai de $MES_SP: um `date_trunc(` literal sem fechar seria chamada ilegível para o gate
+  # das provas, que lê todo shell de db/)
+  radar_borda_aberta) sabotar fn:radar_kpis "prospeccao_atualizado_em >= $MES_SP" "prospeccao_atualizado_em > $MES_SP" 1 ;;
   # o mês tirado do relógio de parede, que o controlado não intercepta
   radar_de_parede) sabotar fn:radar_kpis "$MES_SP" "date_trunc('month', clock_timestamp(), 'America/Sao_Paulo')" 1 ;;
   # o gêmeo controlável do CURRENT_DATE antigo: a semana truncada no fuso da SESSÃO
