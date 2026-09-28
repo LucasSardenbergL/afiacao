@@ -113,9 +113,13 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "  ❌ $sab — suíte ficou VERDE com a sabotagem ativa: o assert NÃO tem dente"
       falhas=$((falhas+1)); continue
     fi
+    # Os recortes de diagnóstico abaixo levam `|| true` DENTRO das chaves: sob `pipefail`, um
+    # `grep` sem linha para casar (ou morto por SIGPIPE do `head`) derrubaria o laço inteiro pelo
+    # `set -e`, e as sabotagens seguintes nem rodariam — foi assim que a 1ª rodada da matriz de
+    # 2026-09-27 perdeu o `pos_sem_wrappers` e o recibo.
     if ! grep -q "SABOTAGEM ativa: $sab\$" "$log"; then
       echo "  ❌ $sab — vermelha, mas a sabotagem NÃO chegou a aplicar: quebrou outra coisa"
-      grep -E 'FALHOU|ERRO|ERROR|APLICAVEL' "$log" | head -3 | sed 's/^/       /'
+      { grep -E 'FALHOU|ERRO|ERROR|APLICAVEL' "$log" || true; } | head -3 | sed 's/^/       /'
       falhas=$((falhas+1)); continue
     fi
     # A rodada tem de TERMINAR, com o denominador inteiro: um vermelho declarado seguido de um erro
@@ -127,7 +131,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     recibo="$(grep -E '^RESULTADO: [0-9]+ ok / [0-9]+ fail$' "$log" | tail -1 || true)"
     if [ -z "$recibo" ]; then
       echo "  ❌ $sab — a rodada NÃO terminou (sem RESULTADO): vermelho de rodada truncada não é dente"
-      grep -E 'ERROR|ERRO|FATAL' "$log" | head -2 | sed 's/^/       /'
+      { grep -E 'ERROR|ERRO|FATAL|❌' "$log" || true; } | tail -2 | sed 's/^/       /'
       falhas=$((falhas+1)); continue
     fi
     n_ok="${recibo#RESULTADO: }"; n_ok="${n_ok%% *}"
@@ -157,7 +161,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       [ -n "$faltou" ] && echo "  ❌ $sab — devia ficar vermelha (por resultado) em:${faltou}"
       [ -n "$sobrou" ] && echo "  ❌ $sab — devia continuar verde (rodando) em:${sobrou}"
       [ "$exec_err" -eq 1 ] && { echo "  ❌ $sab — houve ERRO DE EXECUÇÃO: vermelho que não é do assert não mata mutante"
-                                 grep 'ERRO_DE_EXECUCAO' "$log" | head -2 | sed 's/^/       /'; }
+                                 { grep 'ERRO_DE_EXECUCAO' "$log" || true; } | head -2 | sed 's/^/       /'; }
       falhas=$((falhas+1))
     fi
   done
@@ -508,7 +512,8 @@ MES_SP="(now() AT TIME ZONE 'America/Sao_Paulo')"
 KPI_D="so.order_date_kpi AS d"
 UNIVERSO_4="so.status NOT IN ('cancelado','rascunho','pendente','orcamento')"
 case "$SABOTAGEM" in
-  ""|pre_sem_trava|pre_aceita_qualquer|pos_sem_wrappers) ;;
+  # as de migration já agiram acima (a cópia sabotada foi o que o bloco M aplicou)
+  ""|pre_sem_trava|pre_aceita_qualquer|pre_ausente_segue|pos_sem_wrappers) ;;
   # o corpo de 20260525210000 (nenhuma das duas correções) / o de 20260927133606 (= prod antes desta)
   corpo_pre_fix|corpo_2606) echo "→ SABOTAGEM ativa: $SABOTAGEM" ;;
   # a ligação volta a ser comparada pelo cast implícito da sessão
