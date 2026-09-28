@@ -42,7 +42,8 @@
  * Fora do núcleo, os laços de falsificação são dezenas, cada um no seu idioma (sentinela, SQLSTATE,
  * conjunto exato de IDs, valor ≠ verde…): uma regra textual única ou os reprovaria em massa ou
  * aprenderia um idioma por arquivo. A varredura de 2026-09-27, site a site, está no diário, e as fases
- * seguintes são tarefa com dono. Âncora também não prova SEMÂNTICA — só torna vermelha a remoção da
+ * seguintes são tarefa com dono. Na 2ª leva (2026-09-27), os 10 laços de `scripts/` que tinham lista de
+ * sabotagens migraram para o idioma e caem sob R1/R2; os de sabotagem única usam valor/marca exata. Âncora também não prova SEMÂNTICA — só torna vermelha a remoção da
  * linha que sustenta o juiz; quem prova o juiz é a meta-falsificação registrada no diário.
  */
 
@@ -64,11 +65,16 @@ export const MANIFESTO_NUCLEO = 'db/nucleo-ci.txt';
  */
 export const PISOS = {
   arquivosPorRaiz: PISOS_DO_VIZINHO.arquivosPorRaiz,
-  // medidos de novo em 2026-09-27 com a main do #2629 (o gate imprime o denominador: `bun scripts/falsificar-exige-assert-gate.ts`)
-  listas: 3, // medido: 7 (eram 4: sync-reprocess, push-vendedora, auto-aprovacao-piloto, positivacao #2606)
-  entradas: 40, // medido: 85 (a positivação foi de 14 a 26 com o universo canônico, 20260927195430)
-  lacos: 3, // medido: 7
-  linhasFalsificarNucleo: 6, // medido: 10 (eram 7: 4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
+  // medidos de novo em 2026-09-27, pós-merge do #2630/#2631/#2636 (o gate imprime o denominador:
+  // `bun scripts/falsificar-exige-assert-gate.ts`) — 20 listas: 9 de db/, o
+  // test-idioma-errexit-leitura (#2631) e as 10 de scripts/ que migraram na 2ª leva: onde-parei,
+  // orfaos-custosos, read-contexto-nudge, ocupacao-por-arquivo, ocupacao-por-comando,
+  // fecho-edges-pendentes, psql-ro-error-stop, eval-diagnostico-cegueira, falsificar-implementado,
+  // bash-contexto-nudge
+  listas: 15,
+  entradas: 170, // medido: 239 (112 de db/ + 125 da 2ª leva + 2 do #2631; a positivação foi de 14 a 26 com o universo canônico, #2630)
+  lacos: 15, // medido: 20
+  linhasFalsificarNucleo: 6, // medido: 11 (eram 7: 4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
 } as const;
 
 export interface Juiz {

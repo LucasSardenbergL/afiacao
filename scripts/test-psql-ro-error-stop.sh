@@ -71,38 +71,44 @@ for f in "$DIR_FIXTURES"/*.fixture; do
 done
 [ "$N_FIX" -ge 18 ] || { aviso "❌ só $N_FIX fixture(s) materializada(s) — corpo pequeno demais para provar nada"; exit 70; }
 
-# Roda o CLI num caso e devolve o rc. Locale vem do chamador.
-rc_do_caso() {
-  bun "$GATE" "$TMPD/casos/$1" >/dev/null 2>&1
+# O veredito do CLI é o PAR "<rc> <MARCA>": o rc sozinho não separa "o fiscal acusou" (1 + a linha
+# de violação) de "o bun MORREU" (1 + stack trace) — e é esse o vermelho que a sabotagem que só quebra
+# o TypeScript produz. A marca vale ANCORADA no começo da linha e com o NÚMERO que só o fiscal imprime:
+# a exceção do bun mostra o código-fonte (`console.error(\`❌ ${…} … leem SQL…\`)`), e a busca solta
+# achava ali a marca de violação (Codex, 2026-09-27). Lido em LC_ALL=C; locale do CLI vem do chamador.
+classifica() { # <rc> <saída>
+  local s="$2"
+  # here-string, não pipe: sob `pipefail`, o `grep -q` que sai cedo mata o `printf` (141)
+  if LC_ALL=C grep -qE '^❌ INDETERMINADO ' <<<"$s"; then printf '%s INDETERMINADO\n' "$1"
+  elif LC_ALL=C grep -qE '^❌ [0-9]+ .*leem SQL de -f/stdin sem ON_ERROR_STOP:$' <<<"$s"; then printf '%s VIOLA\n' "$1"
+  elif LC_ALL=C grep -qE '^✅ psql-ro/ON_ERROR_STOP: [0-9]+ ' <<<"$s"; then printf '%s LIMPO\n' "$1"
+  else printf '%s OUTRO\n' "$1"; fi
 }
+veredito_do_caso() { local saida rc; saida="$(bun "$GATE" "$TMPD/casos/$1" 2>&1)"; rc=$?; classifica "$rc" "$saida"; }
+veredito_do_repo() { local saida rc; saida="$(bun "$GATE" 2>&1)"; rc=$?; classifica "$rc" "$saida"; }
 
 # Confere TODAS as expectativas num locale. Devolve 0 se todas baterem.
-# `$2` = "silencioso" para o modo sabotagem (queremos só saber SE quebrou, e qual).
 conferir() {
-  local loc="$1" modo="${2:-ruidoso}" quebrou=0
+  local loc="$1" quebrou=0
   for d in "$TMPD"/casos/*; do
-    local base esperado rc
+    local base esperado obtido
     base="$(basename "$d")"
-    case "$base" in viola-*) esperado=1 ;; limpo-*) esperado=0 ;; *) continue ;; esac
-    LC_ALL="$loc" LANG="$loc" rc_do_caso "$base"
-    rc=$?
-    if [ "$rc" -ne "$esperado" ]; then
+    case "$base" in viola-*) esperado="1 VIOLA" ;; limpo-*) esperado="0 LIMPO" ;; *) continue ;; esac
+    obtido="$(LC_ALL="$loc" LANG="$loc" veredito_do_caso "$base")"
+    if [ "$obtido" != "$esperado" ]; then
       quebrou=1
-      [ "$modo" = ruidoso ] && aviso "    ✗ [$loc] $base → rc=$rc, esperado $esperado"
-      [ "$modo" = silencioso ] && { PRIMEIRA_QUEBRA="$base (rc=$rc, esperado $esperado)"; return 1; }
+      aviso "    ✗ [$loc] $base → $obtido, esperado $esperado"
     fi
   done
   return "$quebrou"
 }
 
-# O corpo REAL do repo continua limpo (rc 0) neste locale?
-repo_limpo() {
-  LC_ALL="$1" LANG="$1" bun "$GATE" >/dev/null 2>&1
-}
+# O corpo REAL do repo continua limpo — rc 0 COM a linha de limpo — neste locale?
+repo_limpo() { [ "$(LC_ALL="$1" LANG="$1" veredito_do_repo)" = "0 LIMPO" ]; }
 
 aviso "═══ (A) EXPECTATIVA — $N_FIX fixtures, dois locales ═══"
 for LOC in $LOCALES; do
-  if conferir "$LOC" ruidoso; then
+  if conferir "$LOC"; then
     aviso "  ✅ [$LOC] todas as $N_FIX fixtures deram o veredito esperado"
   else
     aviso "  ❌ [$LOC] a rede base NÃO fecha"
@@ -132,36 +138,34 @@ open(arq, 'w', encoding='utf-8').write(s.replace(de, para, 1))
 PY
 }
 
-CAMADAS=0
-rodar_sabotagem() {
-  local nome="$1" arq="$2" de="$3" para="$4"
-  CAMADAS=$((CAMADAS + 1))
-  if ! sabotar "$arq" "$de" "$para"; then
-    aviso "  ❌ [$nome] a sabotagem não aplicou — nada foi provado"
-    FALHAS=$((FALHAS + 1))
-    git checkout -- "$arq"
-    return
-  fi
-
-  local pegou=0 onde=""
-  for LOC in $LOCALES; do
-    PRIMEIRA_QUEBRA=""
-    if ! conferir "$LOC" silencioso; then
-      pegou=1; onde="[$LOC] fixture $PRIMEIRA_QUEBRA"; break
-    fi
-    if ! repo_limpo "$LOC"; then
-      pegou=1; onde="[$LOC] o corpo real do repo deixou de sair 0"; break
-    fi
-  done
-  git checkout -- "$arq"
-
-  if [ "$pegou" -eq 1 ]; then
-    aviso "  ✅ [$nome] sabotada → VERMELHO em $onde"
-  else
-    aviso "  ❌ [$nome] sabotada → tudo VERDE. Camada redundante, ou o teste não a alcança."
-    FALHAS=$((FALHAS + 1))
-  fi
+# O que cada ID DECLARA: `V<letra>` = a fixture viola-<letra>-*, que sabotada tem de sair "0 LIMPO" (a
+# violação ESCAPOU); `L<letra>` = limpo-<letra>-*, que tem de sair "1 VIOLA" (falso positivo, com a
+# linha de violação); REPO = o corpo real, que tem de sair "2 INDETERMINADO" (o piso acusou).
+esperado_sabotado() { case "$1" in V?) echo "0 LIMPO" ;; L?) echo "1 VIOLA" ;; REPO) echo "2 INDETERMINADO" ;; *) echo "ID-DESCONHECIDO" ;; esac; }
+caso_do_id() { # VA → viola-a-…; vazio se o ID não tem fixture
+  local pre letra d
+  case "$1" in V?) pre=viola ;; L?) pre=limpo ;; *) return 0 ;; esac
+  letra="$(printf '%s' "${1#?}" | tr '[:upper:]' '[:lower:]')"
+  for d in "$TMPD/casos/$pre-$letra"-*; do [ -d "$d" ] && basename "$d"; done
 }
+veredito_do_id() { # <locale> <ID>
+  if [ "$2" = REPO ]; then LC_ALL="$1" LANG="$1" veredito_do_repo; return; fi
+  local caso; caso="$(caso_do_id "$2")"
+  if [ -z "$caso" ]; then echo "SEM-FIXTURE"; return; fi
+  LC_ALL="$1" LANG="$1" veredito_do_caso "$caso"
+}
+
+# registra <nome> <rótulo> <arquivo> <texto original> <texto sabotado> — a TABELA das sabotagens.
+# Nome da lista sem registro e registro fora da lista são FALHA: o primeiro não sabotaria nada, o
+# segundo nunca rodaria.
+registradas=""
+registra() {
+  case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
+  registradas="$registradas $1"
+  printf -v "rotulo_$1" '%s' "$2"; printf -v "arq_$1" '%s' "$3"
+  printf -v "de_$1" '%s' "$4"; printf -v "para_$1" '%s' "$5"
+}
+CAMADAS=0
 
 # (A) ja E o CONTROLE explicito deste arnes -- e o unico dos 5 do `test:falsificacao` que nascera
 # com linha de base. O que faltava era ABORTAR: com FALHAS>0 em (A) a rede ja esta vermelha sem
@@ -187,47 +191,56 @@ fi
 aviso ""
 aviso "═══ (B) SABOTAGEM — uma camada por vez, exigindo vermelho POR CAUSA dela ═══"
 
-rodar_sabotagem 'descoberta-de-vínculo' "$ALVO_SCANNER" \
+# <sabotagem>:<o que TEM de acusá-la> — IDs por `,` (cada um, nos DOIS locales). Exit≠0 NÃO é dente:
+# até 2026-09-27 valia QUALQUER fixture com rc ≠ esperado no 1º locale que quebrasse — e a sabotagem
+# que só quebra o TypeScript faz o bun morrer com exit 1, toda `limpo-*` "quebrava" e a camada saía
+# ✅ sem nenhum julgamento. docs/historico/falsificacao-exit-nao-e-dente.md
+SABOTAGENS="descoberta_de_vinculo:VB refutacao_da_semente:LE forma_c:LJ forma_f:VA forma_file_longa:VG
+            deteccao_errorstop:VA valor_errorstop:VF deteccao_stdin:VD repasse_opaco:VH
+            mascara_de_contexto:LF limpeza_de_comentario:REPO herestring:REPO pilha_de_contexto:VA
+            piso_do_walker:REPO"
+
+registra descoberta_de_vinculo 'descoberta-de-vínculo' "$ALVO_SCANNER" \
   'if (MARCA_WRAPPER.test(rhs)) vinculados.add(nome);' \
   'if (false && MARCA_WRAPPER.test(rhs)) vinculados.add(nome);'
 
-rodar_sabotagem 'refutação-da-semente' "$ALVO_SCANNER" \
+registra refutacao_da_semente 'refutação-da-semente' "$ALVO_SCANNER" \
   'if (!vinculados.has(nome) && !MARCA_WRAPPER.test(rhs)) refutados.add(nome);' \
   'if (false) refutados.add(nome);'
 
-rodar_sabotagem 'forma -c (protegida)' "$ALVO_SCANNER" \
+registra forma_c 'forma -c (protegida)' "$ALVO_SCANNER" \
   "if (clusterContem(nu, 'c')) temC = true;" \
   "if (false) temC = true;"
 
-rodar_sabotagem 'forma -f (exige)' "$ALVO_SCANNER" \
+registra forma_f 'forma -f (exige)' "$ALVO_SCANNER" \
   "if (clusterContem(nu, 'f')) temF = true;" \
   "if (false) temF = true;"
 
-rodar_sabotagem 'forma --file longa' "$ALVO_SCANNER" \
+registra forma_file_longa 'forma --file longa' "$ALVO_SCANNER" \
   "if (nu === '--file' || nu.startsWith('--file=')) temF = true;" \
   "if (false) temF = true;"
 
-rodar_sabotagem 'detecção de ON_ERROR_STOP' "$ALVO_SCANNER" \
+registra deteccao_errorstop 'detecção de ON_ERROR_STOP' "$ALVO_SCANNER" \
   'return { temC, temF, temErrorStop };' \
   'return { temC, temF, temErrorStop: true };'
 
-rodar_sabotagem 'VALOR do ON_ERROR_STOP' "$ALVO_SCANNER" \
+registra valor_errorstop 'VALOR do ON_ERROR_STOP' "$ALVO_SCANNER" \
   "return !['off', '0', 'false', 'no'].includes(bruto);" \
   'return true;'
 
-rodar_sabotagem 'detecção de stdin (< << <<<)' "$ALVO_SCANNER" \
+registra deteccao_stdin 'detecção de stdin (< << <<<)' "$ALVO_SCANNER" \
   "if (c === '<') return true;" \
   'if (false) return true;'
 
-rodar_sabotagem 'repasse opaco ("$@")' "$ALVO_SCANNER" \
+registra repasse_opaco 'repasse opaco ("$@")' "$ALVO_SCANNER" \
   'const opaco = repassaArgumentosOpacos(palavras.slice(1));' \
   'const opaco = false;'
 
-rodar_sabotagem 'máscara de contexto (prosa)' "$ALVO_SCANNER" \
+registra mascara_de_contexto 'máscara de contexto (prosa)' "$ALVO_SCANNER" \
   'if (contexto[ini] !== 1) continue;' \
   'if (false) continue;'
 
-rodar_sabotagem 'limpeza de comentário' "$ALVO_STRIPPER" \
+registra limpeza_de_comentario 'limpeza de comentário' "$ALVO_STRIPPER" \
   "if (c === '#' && ANTES_DE_COMENTARIO.has(anterior)) {" \
   "if (false && ANTES_DE_COMENTARIO.has(anterior)) {"
 
@@ -235,21 +248,73 @@ rodar_sabotagem 'limpeza de comentário' "$ALVO_STRIPPER" \
 # sozinho. Desligar o ramo inteiro NÃO reproduz — o `<<` cai no leitor de cabeçalho, que não acha
 # delimitador em `<` e desiste, e a sabotagem fica inócua. Sabotagem inócua vira "camada
 # redundante" no relatório, que é um veredito FABRICADO sobre uma camada que ninguém testou.
-rodar_sabotagem 'herestring <<< (não é heredoc)' "$ALVO_STRIPPER" \
+registra herestring 'herestring <<< (não é heredoc)' "$ALVO_STRIPPER" \
   '        marcar(i + 3, 1);' \
   '        marcar(i + 1, 1); i += 1; if (true) continue;'
 
-rodar_sabotagem 'pilha de contexto (substituicao dentro de aspas duplas)' "$ALVO_STRIPPER" \
+registra pilha_de_contexto 'pilha de contexto (substituicao dentro de aspas duplas)' "$ALVO_STRIPPER" \
   "if (c === '\$' && fonte[i + 1] === '(') {" \
   "if (false && fonte[i + 1] === '(') {"
 
-rodar_sabotagem 'piso de denominador (walker vazio)' "$ALVO_CLI" \
+registra piso_do_walker 'piso de denominador (walker vazio)' "$ALVO_CLI" \
   '  for (const r of raizes) andar(resolve(base, r));' \
   '  if (raizes.length > 0) return achados;'
 
+# A camada só conta como vermelha se CADA ID declarado deu o veredito declarado nos DOIS locales —
+# o par (rc, marca) que só o julgamento produz. Crash do bun sai "1 OUTRO"; sabotagem que nem aplica
+# é acusada antes, e restaurada.
+# Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+# suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+# shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+[ -z "$repetidos" ] || { aviso "  ❌ SABOTAGENS com nome repetido: $repetidos"; FALHAS=$((FALHAS + 1)); }
+case "$SABOTAGENS" in *'|'*) aviso "  ❌ SABOTAGENS com | (OU): declare por , (E)"; FALHAS=$((FALHAS + 1)) ;; esac
+for item in $SABOTAGENS; do
+  sab="${item%%:*}"; exigidos="${item#*:}"
+  v="rotulo_$sab"; rotulo="${!v-}"; v="arq_$sab"; arq="${!v-}"
+  v="de_$sab"; de="${!v-}"; v="para_$sab"; para="${!v-}"
+  if [ -z "$de" ]; then
+    aviso "  ❌ [$sab] está na lista SABOTAGENS e SEM registro — nada foi sabotado"; FALHAS=$((FALHAS + 1)); continue
+  fi
+  CAMADAS=$((CAMADAS + 1))
+  if ! sabotar "$arq" "$de" "$para"; then
+    aviso "  ❌ [$rotulo] a sabotagem não aplicou — nada foi provado"
+    FALHAS=$((FALHAS + 1))
+    git checkout -- "$arq"
+    continue
+  fi
+  log="$TMPD/sabotada-$sab.log"; : > "$log"
+  for exigido in ${exigidos//,/ }; do
+    for LOC in $LOCALES; do
+      printf '%s %s %s\n' "$exigido" "$LOC" "$(veredito_do_id "$LOC" "$exigido")" >> "$log"
+    done
+  done
+  git checkout -- "$arq"
+  faltam=""
+  for exigido in ${exigidos//,/ }; do
+    for LOC in $LOCALES; do
+      if ! LC_ALL=C grep -qxF "$exigido $LOC $(esperado_sabotado "$exigido")" "$log"; then
+        faltam="$faltam [$(LC_ALL=C grep -m1 "^$exigido $LOC " "$log" || echo "$exigido $LOC ?")]"
+      fi
+    done
+  done
+  if [ -z "$faltam" ]; then
+    aviso "  ✅ [$rotulo] sabotada → VERMELHO no declarado ($exigidos: $(esperado_sabotado "${exigidos%%,*}")) em [$LOCALES]"
+  else
+    aviso "  ❌ [$rotulo] sabotada, mas o vermelho declarado NÃO veio — medido:$faltam"
+    FALHAS=$((FALHAS + 1))
+  fi
+done
+for r in $registradas; do
+  case " $SABOTAGENS " in
+    *[[:space:]]"$r:"*) ;;
+    *) aviso "  ❌ [$r] registrada e FORA da lista SABOTAGENS — nunca roda"; FALHAS=$((FALHAS + 1)) ;;
+  esac
+done
+
 aviso ""
 if [ "$FALHAS" -eq 0 ]; then
-  aviso "✅ REDE VIVA: $N_FIX fixtures × locales [$LOCALES]; as $CAMADAS camadas ficaram vermelhas ao serem sabotadas."
+  aviso "✅ REDE VIVA: $N_FIX fixtures × locales [$LOCALES]; as $CAMADAS camadas ficaram vermelhas NO veredito declarado."
   exit 0
 fi
 aviso "❌ $FALHAS problema(s) na rede — ver acima. Rede que não falsifica não prova."

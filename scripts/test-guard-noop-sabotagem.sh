@@ -153,12 +153,32 @@ g, f = os.environ['GUARD'], os.environ['FRAGIL']
 assert g in t, 'guard não encontrado para sabotar'
 open(p, 'w').write(t.replace(g, f, 1))
 PY
-  if verificar_guard "$TMP/sabotado.sh"; then
-    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA: o pipeline voltou a %s e o teste seguiu verde\n' "$base"
-    cegas=$((cegas + 1))
-  else
-    printf '  [ok ] pegada: pipeline frágil devolvido a %s ⇒ vermelho\n' "$base"
+  # O vermelho que conta é o DECLARADO: com o alvo PRESENTE, o guard frágil responde "alvo sumiu"
+  # (o `grep -q` que sai cedo mata o `printf` e o pipefail lê 141 como "não achei"). Até
+  # 2026-09-27 valia QUALQUER falha de verificar_guard — inclusive GUARD_NAO_LOCALIZADO e o probe
+  # que nem PARSEIA (sabotagem com sintaxe quebrada): vermelho de outro motivo contado como dente.
+  # docs/historico/falsificacao-exit-nao-e-dente.md
+  # Sintaxe primeiro: o bash CITA a linha do erro, e uma linha com a marca faria o erro de sintaxe
+  # passar pela marca (Codex, 2026-09-27).
+  if ! bash -n "$TMP/sabotado.sh" 2>/dev/null; then
+    printf '  [XX ] a sabotagem quebrou a SINTAXE de %s — vermelho pelo motivo errado\n' "$base"
+    cegas=$((cegas + 1)); continue
   fi
+  veredito=$(verificar_guard "$TMP/sabotado.sh"); rc_v=$?
+  # a marca vale como a LINHA exata que verificar_guard imprime com a resposta do guard frágil
+  marca_exata='     com o alvo PRESENTE o guard respondeu:   [XX ] sabotagem NO-OP (alvo sumiu)'
+  LC_ALL=C grep -qxF -- "$marca_exata" <<<"$veredito" && rc_v="$rc_v+marca"
+  case "$rc_v:$veredito" in
+    0:*)
+      printf '  [XX ] sabotagem PASSOU DESPERCEBIDA: o pipeline voltou a %s e o teste seguiu verde\n' "$base"
+      cegas=$((cegas + 1)) ;;
+    1+marca:*)
+      printf '  [ok ] pegada: pipeline frágil devolvido a %s ⇒ "alvo sumiu" com o alvo PRESENTE (o declarado)\n' "$base" ;;
+    *)
+      printf '  [XX ] vermelho que NÃO é o declarado ("alvo sumiu" com o alvo presente) em %s — exit %s:\n' "$base" "$rc_v"
+      printf '%s\n' "$veredito" | sed 's/^/       /' | head -4
+      cegas=$((cegas + 1)) ;;
+  esac
 done
 echo "--falsificar: $cegas cegueira(s) (esperado: 0)"
 [ "$cegas" -eq 0 ] || exit 1
