@@ -152,8 +152,8 @@ não compilou é de linguagem ausente.
 - **A2 — P3, `.github/workflows/ci.yml:794`.** `${{ github.base_ref || 'main' }}` interpolado no
   `run:`. O `base_ref` é o branch-ALVO e precisa existir no repo base, que só quem tem escrita
   cria, então fork não controla. Correção canônica: passar por `env:`.
-- **B1 — P3, curinga, `supabase/functions/analyze-unified-order/index.ts:39`.** O
-  `sanitizeForPostgrestOr` espelhado na edge **não remove `*`**, que o #1051 acrescentou só em
+- **B1 — P3, curinga, `supabase/functions/analyze-unified-order/index.ts:39` — ✅ corrigido em #B1PR
+  (classe).** O `sanitizeForPostgrestOr` espelhado na edge **não remove `*`**, que o #1051 acrescentou só em
   `src/lib/postgrest.ts`. Gatilho: termo `***` no texto do pedido. Efeito: `name.ilike.%***%` =
   match-all em `profiles` (≤20 por termo, com `service_role`), ou seja, cliente sugerido errado.
   Não é escalada: a edge é staff-only (`employee`/`master`), e staff já lista perfis pela busca global.
@@ -161,6 +161,15 @@ não compilou é de linguagem ausente.
   em dia, com `*` e gate de termo degenerado. A deriva é de UM espelho, e por isso a correção é de
   CLASSE: pôr o helper num bloco `// MIRROR-START` com asserção de paridade em
   `src/__tests__/edge-money-path-invariants.test.ts`.
+  **O que a correção achou:** só a regex NÃO fechava o gatilho. `***` sanitiza para vazio, e
+  `name.ilike.%%` casa tudo do mesmo jeito (`%%%` já casava antes do #1051). O termo degenerado agora
+  é pulado pelo `isSearchablePostgrestTerm` espelhado, nos 3 call sites de termo vindo do texto:
+  clientes, produtos e o `stripped`, que precisa de gate próprio porque `..**..**` passa no do termo
+  e vira `****`. O tool MCP entrou no mesmo bloco. O gate DESCOBRE cópia nova fora de bloco em
+  `src/` e nas edges; o bundle gerado da `mcp` perde os comentários no esbuild e é conferido pelo
+  literal da regex. Falsificado por camada, com controle verde na mesma invocação e nos 2 locales,
+  inclusive o replay do #1051 (a fonte avança e os espelhos ficam). O Codex achou 7 regressões que o
+  gate v1 deixava verdes, todas fechadas antes do merge (as sabotagens estão no PR).
 - **B2 — P3, curinga, `src/pages/AdminReposicaoVendaPerdida.tsx:58`.** O único `.ilike` cru de
   `src/`: `%${termo}%` sem `ilikeContainsPattern` (a classe do #1062). Com `**`, match-all limitado
   por RLS, `limit(10)` e `eq(account/ativo)`. O ESLint atual não olha `.ilike`/`.like`.
@@ -202,7 +211,7 @@ nessa cegueira (helper espelhado na edge, onde o lint não entra).
 - `docs/agent/skills.md` (linha da ToB): contorno do CWD, `partial` que subnotifica e `p/yaml` 404.
 - Correções, cada uma no seu PR (chips abertos em 2026-09-27, quem clica é o founder):
   "Passar github.base_ref por env no ci.yml" (A2) · "Pôr o sanitizador .or() da
-  analyze-unified-order em MIRROR" (B1, classe) · "Fechar .ilike cru com curinga
+  analyze-unified-order em MIRROR" (B1, classe — ✅ #B1PR) · "Fechar .ilike cru com curinga
   (AdminReposicaoVendaPerdida)" (B2 + gate ESLint).
 - 🧭 Decisões do founder: (a) pin das actions por SHA e a política de atualização (A1); (b) o bug do
   `--include` já estava reportado (#297 da ToB), falta decidir se comentamos com a medida em TS e o

@@ -272,6 +272,16 @@ sozinho aprova ZERO chamadas — o veredito trata "não encontrei" como vermelho
 apaga o guard em silêncio. Não vale para função chamada pelo EFEITO colateral (`await derivar(...)`
 solto é legítimo): ali o assert certo é o posicional do próprio site.
 
+**Paridade só vigia o espelho que tem BLOCO — cópia sem marcador deriva no escuro (B1, #B1PR).** O
+`sanitizeForPostgrestOr` da `analyze-unified-order` nunca teve `MIRROR-START`: o #1051 (2026-06-24) pôs
+o `*` só em `src/lib/postgrest.ts`, e a edge passou ~3 meses montando `name.ilike.%***%` (match-all em
+`profiles`), com o espelho do tool MCP em dia ao lado. Helper com mais de um espelho pede **descoberta +
+paridade**: a assinatura estrutural da cópia (ali, literal de regex com `%` e `_` na mesma classe)
+varrida em `src/`+edges, e todo hit fora da fonte tem de morar num bloco comparado com ela. Assim a cópia
+NOVA nasce vigiada, sem depender de alguém lembrar de marcá-la (describe "classe B1" do
+`edge-money-path-invariants`). Bundle GERADO (`supabase/functions/mcp`, do `@lovable.dev/mcp-js`) perde
+os comentários no esbuild: confira-o pelo literal, não pelo bloco.
+
 ## A MESMA exceção pode ser defesa num writer e defeito em outro — a diferença é a EVIDÊNCIA
 
 `omie_customer_account_map` tem duas UNIQUEs (`(user_id,account)` e `(codigo,account)`), e dois writers gravavam com o mesmo `ON CONFLICT (user_id, account)`. Quando um código muda de dono, o `23505` da segunda UNIQUE não é tratado. Nos dois writers é a mesma SQLSTATE — e o veredito é oposto:
