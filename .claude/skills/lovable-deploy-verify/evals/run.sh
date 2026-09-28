@@ -45,6 +45,34 @@ def roda(caso, script="classify.sh"):
                            env=dict(os.environ, CLASSIFY_RAIZ=raiz))
     return dict(l.split("=", 1) for l in r.stdout.strip().splitlines())
 
+def roda_bruto(caso, script, loc):
+    """Para a falsificação: devolve (saída, rc, stderr) sob o locale pedido. Mutante que MORRE (rc≠0
+    ou stderr) é erro de execução, nunca "divergiu do gabarito" — a saída vazia de um classify que
+    nem rodou diverge de TODOS os casos, e o juiz de antes contava isso como dente (medido)."""
+    with tempfile.TemporaryDirectory() as raiz:
+        for p, conteudo in caso.get("fixtures", {}).items():
+            alvo = os.path.join(raiz, p)
+            os.makedirs(os.path.dirname(alvo), exist_ok=True)
+            with open(alvo, "w") as fh:
+                fh.write(conteudo)
+        r = subprocess.run(["bash", script],
+                           input="\n".join(caso["files"]) + "\n",
+                           capture_output=True, text=True,
+                           env=dict(os.environ, CLASSIFY_RAIZ=raiz, LC_ALL=loc, LANG=loc))
+    linhas = [l for l in r.stdout.strip().splitlines() if l]
+    return dict(l.split("=", 1) for l in linhas if "=" in l), r.returncode, r.stderr.strip()
+
+def locales():
+    """Sonda POSITIVA: "setei LC_ALL" não prova que o locale existe (glibc cai em C calado)."""
+    ls = ["C"]
+    for cand in ("pt_BR.UTF-8", "pt_BR.utf8", "en_US.UTF-8", "en_US.utf8", "C.UTF-8", "C.utf8"):
+        r = subprocess.run(["locale", "charmap"], capture_output=True, text=True,
+                           env=dict(os.environ, LC_ALL=cand))
+        if r.stdout.strip() == "UTF-8":
+            ls.append(cand)
+            break
+    return ls
+
 def sabota(valor, chave):
     # `secrets` não é booleano: inverter SIM/não não o tocaria. Sem regra própria, a sabotagem
     # das OUTRAS chaves já bastaria para divergir e a 4ª camada ficaria sem dente.
@@ -53,24 +81,30 @@ def sabota(valor, chave):
     return "SIM" if valor == "não" else "não"
 
 # Mutações do classify.sh REAL (cópia em tmp; o versionado nunca é mutado). Cada uma arranca
-# uma decisão da 4ª camada e precisa deixar ≥1 caso VERMELHO — se não deixar, o gabarito é cego
-# naquele eixo e o eval está passando por acidente.
+# uma decisão da 4ª camada e DECLARA o caso que a acusa, a chave e o valor que ele TEM de dar —
+# MEDIDOS (2026-09-27) e lidos um a um. "≥1 caso vermelho" (o juiz de antes) aprovava uma mutação
+# que só quebrava a sintaxe: saída vazia diverge de todos os casos. → docs/historico/falsificacao-exit-nao-e-dente.md
 MUTACOES = [
     ("universo inclui os próprios arquivos tocados (edge se compara consigo mesma)",
      'comm -23 "$tmp/todos" "$tmp/tocados" > "$tmp/universo"',
-     'cp "$tmp/todos" "$tmp/universo"'),
+     'cp "$tmp/todos" "$tmp/universo"',
+     "edge MODIFICADA ganha secret novo — não pode se comparar consigo mesma", "secrets", "não"),
     ("nome dinâmico vira silêncio em vez de ?dinamico",
      'if [ "$dinamico" = 1 ]; then',
-     'if [ "$dinamico" = 9 ]; then'),
+     'if [ "$dinamico" = 9 ]; then',
+     "nome COMPUTADO ⇒ ?dinamico (ausência de literal não é ausência de secret)", "secrets", "não"),
     ("_test.ts tocado conta como código de edge",
      "/^supabase\\/functions\\/.*\\.ts$/ && !/_test\\.ts$/",
-     "/^supabase\\/functions\\/.*\\.ts$/"),
+     "/^supabase\\/functions\\/.*\\.ts$/",
+     "_test.ts tocado não pede secret (não vai pro bundle)", "secrets", "SECRET_DE_TESTE"),
     ("não subtrai o universo: todo secret lido vira 'novo'",
      'comm -23 "$tmp/usados" "$tmp/conhecidos" > "$tmp/novos"',
-     'cp "$tmp/usados" "$tmp/novos"'),
+     'cp "$tmp/usados" "$tmp/novos"',
+     "secret que OUTRA edge já usa não é novo (senão o detector grita sempre)", "secrets", "CRON_SECRET,SUPABASE_URL"),
     ("_test.ts entra no universo e faz secret novo parecer conhecido",
      "| awk '!/_test\\.ts$/' | sort -u > \"$tmp/todos\"",
-     '| sort -u > "$tmp/todos"'),
+     '| sort -u > "$tmp/todos"',
+     "secret citado só em _test.ts do universo NÃO vira conhecido", "secrets", "não"),
 ]
 
 falha = 0
@@ -87,9 +121,26 @@ if not falsify:
     print(f"{len(cases) - diverg}/{len(cases)} passaram")
     falha = 1 if diverg else 0
 else:
+    # CONTROLE VERDE na MESMA invocação, por locale, ANTES de sabotar: o classify.sh íntegro bate o
+    # gabarito em TODOS os casos, com rc 0 e stderr vazio. Sem ele, um classify sempre-errado passaria
+    # no (a) — que só compara com o gabarito SABOTADO — e em toda mutação do (b).
+    LOCALES = locales()
+    cegas = []
+    for loc in LOCALES:
+        for c in cases:
+            got, rc, err = roda_bruto(c, "classify.sh", loc)
+            if got != c["expect"] or rc != 0 or err:
+                cegas.append(f"CONTROLE VERMELHO (LC_ALL={loc}) em '{c['name']}': rc={rc} obtido {got}")
+    if cegas:
+        for c in cegas:
+            print(f"    [XX ] {c}")
+        print("--falsify: controle vermelho com o classify.sh ÍNTEGRO — nenhuma sabotagem foi tentada")
+        sys.exit(1)
+    print(f"  [ok ] controle: {len(cases)} casos batem o gabarito com o classify.sh íntegro "
+          f"(locales: {' '.join(LOCALES)})")
+
     # (a) gabarito sabotado UMA CHAVE POR VEZ — prova que cada chave participa da comparação.
     #     Sabotar todas de uma vez deixaria a 4ª camada carona nas outras três.
-    cegas = []
     for c in cases:
         got = roda(c)
         if set(got) != set(c["expect"]):
@@ -105,25 +156,51 @@ else:
         print(f"    [XX ] {c}")
 
     # (b) mutação do classify.sh real — o gabarito acima não cobre isto: ele prova que o eval
-    #     compara, não que a lógica tem dente. Aqui a lógica é arrancada e exigimos vermelho.
+    #     compara, não que a lógica tem dente. Cada mutação arranca uma decisão e o caso que ela
+    #     DECLARA tem de dar o valor previsto na chave, em cada locale; mutante que morre (rc≠0,
+    #     stderr) é erro de execução, e alvo que não aparece EXATAMENTE 1 vez é mutação que não aplicou.
     fonte = open("classify.sh").read()
+    por_nome = {c["name"]: c for c in cases}
+
+    def julga_mutacao(nome, de, para, alvo, chave, previsto, mutante):
+        """Devolve None se a mutação foi pega PELO PREVISTO; senão, o motivo."""
+        if fonte.count(de) != 1:
+            return f"NÃO aplicou: o alvo aparece {fonte.count(de)} vez(es) no classify.sh"
+        if alvo not in por_nome:
+            return f"caso-alvo inexistente: {alvo!r}"
+        with open(mutante, "w") as fh:
+            fh.write(fonte.replace(de, para, 1))
+        if subprocess.run(["bash", "-n", mutante], capture_output=True).returncode != 0:
+            return "quebrou a SINTAXE do classify.sh (vermelho pelo motivo errado)"
+        errado = []
+        for loc in LOCALES:
+            got, rc, err = roda_bruto(por_nome[alvo], mutante, loc)
+            if rc != 0 or err:
+                errado.append(f"{loc}: ERRO de execução rc={rc} {err[:60]}")
+            elif got.get(chave) != previsto:
+                errado.append(f"{loc}: {chave}={got.get(chave)!r}")
+        return f"'{alvo}' não deu {chave}={previsto!r} ({'; '.join(errado)})" if errado else None
+
     with tempfile.TemporaryDirectory() as td:
         mutante = os.path.join(td, "classify.sh")
-        for nome, de, para in MUTACOES:
-            if de not in fonte:
-                cegas.append(f"mutação NO-OP (alvo sumiu do classify.sh): {nome}")
-                print(f"    [XX ] mutação NO-OP: {nome}")
-                continue
-            with open(mutante, "w") as fh:
-                fh.write(fonte.replace(de, para, 1))
-            pegou = [c["name"] for c in cases if roda(c, mutante) != c["expect"]]
-            if pegou:
-                print(f"  [ok ] mutação pega ({len(pegou)} caso(s)): {nome}")
+        for nome, de, para, alvo, chave, previsto in MUTACOES:
+            motivo = julga_mutacao(nome, de, para, alvo, chave, previsto, mutante)
+            if motivo is None:
+                print(f"  [ok ] mutação pega por '{alvo}' ({chave}={previsto}) em {len(LOCALES)} locale(s): {nome}")
             else:
-                cegas.append(f"mutação NÃO pega por nenhum caso: {nome}")
-                print(f"  [XX ] mutação passou despercebida: {nome}")
+                cegas.append(f"mutação NÃO pega pelo previsto: {nome} — {motivo}")
+                print(f"  [XX ] mutação NÃO pega pelo previsto: {nome} — {motivo}")
+        # CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução: um `exit 3` que só DERRUBA o classify.sh
+        # (sem sintaxe quebrada) declarando o previsto da 2ª mutação tem de ser RECUSADO.
+        negativo = julga_mutacao("juiz-negativo", MUTACOES[1][1], "exit 3; " + MUTACOES[1][1],
+                                 MUTACOES[1][3], MUTACOES[1][4], MUTACOES[1][5], mutante)
+        if negativo is None:
+            cegas.append("controle negativo do juiz: um classify.sh que MORRE foi creditado como dente")
+            print("  [XX ] controle negativo do juiz: um CRASH foi creditado — o juiz perdeu a identidade")
+        else:
+            print("  [ok ] controle negativo do juiz: a mutação que só derruba o classify.sh foi RECUSADA")
     falha = 1 if cegas else 0
-    print(f"--falsify: {len(cegas)} cegueira(s) (esperado: 0)")
+    print(f"--falsify: {len(cegas)} cegueira(s) em {len(MUTACOES)} mutação(ões) (esperado: 0)")
 
 sys.exit(falha)
 PY

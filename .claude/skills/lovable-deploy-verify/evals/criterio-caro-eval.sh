@@ -255,5 +255,21 @@ sabotar C9 "upsert de $REVERSIVEL perde o onConflict" "supabase/functions/$REVER
 sabotar C11 "$CARA deixa de chamar o Omie" "supabase/functions/$CARA/index.ts" \
   'method: "POST"' 'method_: "POST"'
 
+# CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. O recipe trocado por um regex INVÁLIDO segue
+# extraível (C1 verde) e derruba o C2 por ERRO do grep: sabotagem que só quebra a medição. Ela tem de
+# ser RECUSADA; se o juiz a creditar como "recipe apagado", ele voltou a contar erro como dente.
+cegas_ok=$cegas; total_ok=$total
+sabotar C1 "juiz-negativo: recipe vira regex inválido (só quebra a medição)" "SKILL.md" \
+  "grep -nE '\\.(upsert|insert|update|delete)\\(|\\.rpc\\(|fetch\\('" \
+  "grep -nE '\\.(upsert|insert|update|delete\\(|\\.rpc\\(|fetch\\('" > /dev/null 2>&1
+if [ "$cegas" -eq "$cegas_ok" ]; then
+  echo "  [XX ] controle negativo do juiz: um ERRO de medição foi creditado como dente — o juiz perdeu a identidade"
+  cegas=$((cegas_ok + 1))
+else
+  echo "  [ok ] controle negativo do juiz: a sabotagem que só quebra a medição foi RECUSADA"
+  cegas=$cegas_ok
+fi
+total=$total_ok
+
 echo "  --falsify: $cegas cegueira(s) em $total sabotagem(ns) (esperado: 0 em 8)"
 [ "$total" -ge 8 ] && [ "$cegas" -eq 0 ]

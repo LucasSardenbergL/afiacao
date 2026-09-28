@@ -199,6 +199,20 @@ fi
 
   echo "  falsificações que pegaram pelo previsto: $fals/$total"
   [ "$total" -ge 4 ] && [ "$fals" -eq "$total" ] || rc=1
+
+  # CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. Uma sabotagem que só DERRUBA o script (a
+  # variável não definida mata-o com exit 1 sob `set -u`, sem passar pelo ramo) declarando o desfecho
+  # da (2) tem de ser RECUSADA. Se o juiz a creditar, ele voltou a contar crash como dente.
+  fals_ok=$fals; total_ok=$total; rc_ok=$rc
+  # shellcheck disable=SC2016
+  sabota juiz-negativo psql_mudo 3 2 "nenhum tick POSTERIOR" \
+    '[ "${PING:-0}" -ge 1 ] || recusa' '[ 1 -ge 0 ] && : "$NADA_DEFINIDO_JUIZ_NEGATIVO" || recusa' > "$TMP/juiz.out"
+  if [ "$fals" -ne "$fals_ok" ]; then
+    echo "  [XX ] controle negativo do juiz: um CRASH foi creditado como dente — o juiz perdeu a identidade"; rc=1
+  else
+    echo "  [ok ] controle negativo do juiz: a sabotagem que só derruba o script foi RECUSADA"; rc=$rc_ok
+  fi
+  fals=$fals_ok; total=$total_ok
 fi
 
 echo ""

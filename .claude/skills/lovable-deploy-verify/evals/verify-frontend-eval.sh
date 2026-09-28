@@ -474,6 +474,21 @@ sabota L-ausente-calado 'if [ ! -d "$_nm" ]; then
 sabota M-delimitador-morto '[ "$_prim" = "$_ult" ]' 'false' \
   "$FIX/neutro" 1 1 "ALVO ausente nos" "SENTINELA_DELIMITADA" "'SENTINELA_DEEP_XYZ'" "$BASE/site"
 
+# CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. A A trocada por uma variável não definida mata
+# o script sob `set -u` com exit 1 — o MESMO exit que a A prevê — sem passar pelo ramo do "ausente".
+# Ela tem de ser RECUSADA; se o juiz a creditar, ele voltou a contar crash como dente.
+PASS_OK=$PASS; FAIL_OK=$FAIL
+# shellcheck disable=SC2016
+sabota juiz-negativo '[ -s "$TMP/frontier.txt" ]' '[ -s "$NADA_DEFINIDO_JUIZ_NEGATIVO" ]' \
+  "$FIX/neutro" 0 1 "$AUSENTE" "" SENTINELA_DEEP_XYZ "$BASE/site" > /dev/null 2>&1
+if [ "$PASS" -ne "$PASS_OK" ]; then
+  echo "  [XX ] controle negativo do juiz: um CRASH foi creditado como dente — o juiz perdeu a identidade"
+  PASS=$PASS_OK; FAIL=$((FAIL_OK + 1))
+else
+  echo "  [ok ] controle negativo do juiz: a sabotagem que só derruba o script foi RECUSADA"
+  FAIL=$FAIL_OK
+fi
+
 echo ""
 if [ "$FAIL" -eq 0 ] && [ "$PASS" -ge 13 ]; then echo "--falsify: $PASS/$((PASS+FAIL)) pegaram pelo previsto (harness tem dente)"; exit 0
 else echo "--falsify: $FAIL sabotagem(ns) NÃO pega(s) pelo previsto em $((PASS+FAIL)) (esperado: 13) — harness cego"; exit 1; fi

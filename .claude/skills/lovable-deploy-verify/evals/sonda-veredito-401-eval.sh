@@ -697,6 +697,24 @@ sabotar "negacao NULL-blind: o ramo do nao-sonda deixa de alcancar o corpo SEM o
         "WHEN l.corpo ->> 'probe' IS DISTINCT FROM 'true'" "WHEN l.corpo ->> 'probe' <> 'true'" \
         cron_sem_probe "BUNDLE VELHO;respondeu versao=v1.0-alfa"
 
+# CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. `AND )` no lugar da recência só QUEBRA o SQL: o
+# caso-alvo fica sem veredito com a via viva. Declarando o desfecho da RECÊNCIA, ela tem de ser
+# RECUSADA; se o juiz a creditar, ele voltou a contar SQL quebrado como dente. A saída do juiz fica
+# visível de propósito (sem redirecionar nem pré-checar a via): uma via que morresse aqui sai exit 2
+# NOMEADA pelo próprio `sabotar`, e um 2º discriminador fora dele esconderia o S1 do test-eval-via-morta.
+cegas_ok=$cegas; julgadas_ok=$julgadas
+echo "  (controle negativo do juiz: a linha [XX] logo abaixo é a RECUSA esperada)"
+sabotar "juiz-negativo: a recencia vira 'AND )' (so quebra o SQL)" \
+        "AND l.created > now() - interval '\${janelaMin} minutes'" "AND )" \
+        testemunha_fora_da_janela "DESTE disparo esta PROVADA;1 de 2 request(s)"
+if [ "$julgadas" -ne "$julgadas_ok" ]; then
+  echo "  [XX ] controle negativo do juiz: SQL quebrado foi creditado como dente — o juiz perdeu a identidade"
+  julgadas=$julgadas_ok; cegas=$((cegas_ok + 1))
+else
+  echo "  [ok ] controle negativo do juiz: a sabotagem que só quebra o SQL foi RECUSADA"
+  cegas=$cegas_ok
+fi
+
 echo "--falsify: $cegas cegueira(s) em $((cegas + julgadas)) sabotagem(ns) (esperado: 0 em 12)"
 [ "$cegas" -eq 0 ] && [ "$julgadas" -ge 12 ] || exit 1
 exit 0
