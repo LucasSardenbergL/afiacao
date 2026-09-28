@@ -208,3 +208,14 @@ db/test-tint-cobertura-lista-email.sh      22  falsificar=6
 # Autocontida: initdb + db/stubs-supabase.sql + as 2 migrations. Irmão estático: o gate vitest
 # `scripts/fuso-da-sessao-gate.ts`, que vigia a CLASSE nas demais funções.
 db/test-positivacao-eligible-consumo.sh    44  falsificar=14
+# O relógio da sessão TRUNCADO ao calendário (20260927202603): a projeção de caixa de 13 semanas, o
+# KPI mensal do radar e as 2 views da posição DES (trimestre, dias restantes e a faixa de desconto
+# que o pedido em trânsito ajuda a alcançar). Mesmo desenho — borda cruzada em pares de 1 s sob
+# UTC e SP, tripwire —, mais: o predecessor de cada objeto tem de bater o md5 da prod (P1-P4, o
+# ensaio da PRÉ-condição, md5 EXATO), a TRAVA contra corrida entre a pré-condição e o CREATE OR
+# REPLACE (K1/K2: outra sessão é barrada com a migration parada no meio), o desconto projetado do
+# check-in pela view dependente REAL, e as views sabotam UMA camada por vez (a que agrupa o pedido no
+# trimestre e a que o exibe). CURRENT_DATE não é função — o relógio controlado não o alcança —, por
+# isso o corpo antigo das views e da projeção entra pelo gêmeo controlável (`now()` na sessão).
+# Autocontida: initdb + stubs + a migration + db/fixtures/des-views-predecessoras-prod-20260927.sql.
+db/test-fuso-sp-relogio-sessao.sh          53  falsificar=16

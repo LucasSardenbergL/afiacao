@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 561
+-- Total de custom migrations: 562
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -602,7 +602,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260925210332', 'reposicao_em_transito_guarda_fantasma_null_safe', '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql'),
   ('20260925225004', 'reposicao_em_transito_simulado_e_join_grupo_null_safe', '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql'),
   ('20260926001425', 'param_auto_em_transito_conta_disparado_simulado', '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql'),
-  ('20260927133606', 'positivacao_mes_sp_sessao_utc', '20260927133606_positivacao_mes_sp_sessao_utc.sql')
+  ('20260927133606', 'positivacao_mes_sp_sessao_utc', '20260927133606_positivacao_mes_sp_sessao_utc.sql'),
+  ('20260927202603', 'fuso_sp_relogio_da_sessao_rpcs_views_des', '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2428,7 +2429,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', '')
+  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'radar_kpis', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'fin_projecao_13_semanas', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_pedidos_em_transito', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4302,7 +4307,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', '')
+  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'radar_kpis', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'fin_projecao_13_semanas', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_pedidos_em_transito', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', '')
 )
 SELECT
   e.migration,
@@ -4330,7 +4339,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 114.
+-- Funções redefinidas com corpo extraível: 115.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4358,6 +4367,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_projecao_13_semanas', 1, '20260328200600_financeiro_v3_backend.sql', 'b5756b1b1d90a7f2fd58fd91333c4222'),
   ('public', 'fin_projecao_13_semanas', 2, '20260329161846_ef165ca0-5e29-4b16-8c40-9e14396fdc7b.sql', '9dede1b56c8a2c125ec4f6c20d1051be'),
   ('public', 'fin_projecao_13_semanas', 3, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', '5780d220bb9d6109fd51de63d4e79fba'),
+  ('public', 'fin_projecao_13_semanas', 4, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '5eda772f6a71cfee714aa0a363552f35'),
   ('public', 'fin_consolidado_intercompany', 1, '20260328200600_financeiro_v3_backend.sql', 'c77fe935eab2b0b9e22b2323cd6a1df1'),
   ('public', 'fin_consolidado_intercompany', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'cd4ea51faea13ce2c4d5c74ae64f71d0'),
   ('public', 'fin_consolidado_intercompany', 3, '20260518004300_fin_consolidado_v2.sql', '63da5e26146917b95a323938b202c435'),
@@ -4624,6 +4634,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'gerar_pedidos_oportunidade_ciclo', 2, '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql', 'feeda17a3271a3791a39db4870aae2da'),
   ('public', 'confirmar_vinculo_boletim', 1, '20260611140000_kb_fundacao_casamento.sql', '69ec58b207bc65e6437f16e391f7a109'),
   ('public', 'confirmar_vinculo_boletim', 2, '20260613120000_kb_0c_aprovacao_master_only.sql', 'b8332df9e8b9ed7291daccf313524f23'),
+  ('public', 'radar_kpis', 1, '20260612130000_radar_rpcs_contato.sql', 'd880343a76c717903aaf8c070286042c'),
+  ('public', 'radar_kpis', 2, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '35f3ea00ada679166cc8270f76651f84'),
   ('public', 'kbv_block_mutation', 1, '20260613150000_kb_spec_versions_faseA.sql', 'a56599c70fe40052ba5cb31aee16c4c4'),
   ('public', 'kbv_block_mutation', 2, '20260613180000_kb_hardening_codex.sql', 'd4041ea6ffb7fd5b146e56a674cbe648'),
   ('public', 'aprovar_versao_boletim', 1, '20260613150000_kb_spec_versions_faseA.sql', 'f7e424f89058376c964730041ef20b99'),
