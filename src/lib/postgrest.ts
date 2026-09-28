@@ -70,10 +70,23 @@ export function sanitizeIlikeTerm(input: string): string {
  * `const p = ilikeContainsPattern(t); if (p) q = q.ilike(col, p)`. Retornar null evita o
  * `%${''}%` = `%%`, que casaria todo valor não-nulo da coluna (match-all) — o caso degenerado
  * do wildcard-only input, que strippar os wildcards do MEIO do termo sozinho não cobre.
+ * O template cru no pattern de `.ilike`/`.like` é barrado pelo ESLint em `src/` (classe
+ * `pattern-like-cru`, docs/agent/database.md §5).
  */
 export function ilikeContainsPattern(input: string): string | null {
   const safe = sanitizeIlikeTerm(input);
   return safe ? `%${safe}%` : null;
+}
+
+/**
+ * Pattern `termo%` de "começa com": o irmão de PREFIXO do `ilikeContainsPattern`, com o mesmo
+ * contrato (termo sanitizado, ou `null` quando fica VAZIO, porque `${''}%` = `%` casaria todo
+ * valor não-nulo). Serve `.like` e `.ilike` igual: os curingas são os mesmos e o `i` só tira a
+ * caixa, por isso o nome não leva o `i`. Caller: `const p = likePrefixPattern(t); if (p) q = q.like(col, p)`.
+ */
+export function likePrefixPattern(input: string): string | null {
+  const safe = sanitizeIlikeTerm(input);
+  return safe ? `${safe}%` : null;
 }
 
 /** Uma cláusula `coluna.ilike.%termo%` com o termo sanitizado. */
