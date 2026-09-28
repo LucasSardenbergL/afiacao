@@ -127,6 +127,10 @@ if [ "${1:-}" = "--falsify" ]; then
     case "$s" in *"$3"*) return 0 ;; esac
     return 1
   }
+  # erro_de_shell → 0 se a saída traz um erro de EXECUÇÃO do bash (`<script>: line N: …`: variável não
+  # definida, comando inexistente, `${x?…}`). A marca pode ter vindo do PRÓPRIO diagnóstico, ou saído
+  # antes de o script morrer com o exit previsto (achados do Codex, 2026-09-27): crash não é dente.
+  erro_de_shell() { local s re=': line [0-9]+: '; s=$(cat "$TMP/out"); [[ $s =~ $re ]]; }
   aplica() { # de para — substituição LITERAL em cópia; o alvo tem de aparecer EXATAMENTE 1 vez
     python3 - "$SCRIPT" "$TMP/sab.sh" "$1" "$2" <<'PY'
 import sys
@@ -137,17 +141,17 @@ if s.count(de) != 1:
 open(dst, "w", encoding="utf-8").write(s.replace(de, para, 1))
 PY
   }
-  fals=0; total=0
+  fals=0; total=0; ULTIMO_MOTIVO=""
   # sabota <id> <cenario> <exit do caso ÍNTEGRO> <exit previsto> <marca prevista> <de> <para>
   sabota() {
     local id="$1" cen="$2" normal="$3" pexit="$4" pmarca="$5" loc got pegou=0 n_loc=0 errado=""
     total=$((total+1))
     if ! aplica "$6" "$7" 2>"$TMP/aplica.err" || cmp -s "$SCRIPT" "$TMP/sab.sh"; then
       printf '  [XX ] %-18s a sabotagem NÃO aplicou (%s) — o eval não testaria nada\n' "$id" "$(tr '\n' ' ' < "$TMP/aplica.err")"
-      rc=1; return
+      rc=1; ULTIMO_MOTIVO=NAO-APLICOU; return
     fi
     if ! bash -n "$TMP/sab.sh" 2>/dev/null; then
-      printf '  [XX ] %-18s a sabotagem quebrou a SINTAXE do script — vermelho pelo motivo errado\n' "$id"; rc=1; return
+      printf '  [XX ] %-18s a sabotagem quebrou a SINTAXE do script — vermelho pelo motivo errado\n' "$id"; rc=1; ULTIMO_MOTIVO=SINTAXE; return
     fi
     for loc in $LOCALES; do
       n_loc=$((n_loc+1))
@@ -157,16 +161,17 @@ PY
       if [ "$got" -ne "$normal" ]; then errado="$errado $loc:CONTROLE-VERMELHO-exit$got"; continue; fi
       if bate "$got" "$pexit" "$pmarca"; then errado="$errado $loc:o-PREVISTO-casa-o-CONTROLE"; continue; fi
       roda "$TMP/sab.sh" "$cen" "$loc"; got=$?
-      if bate "$got" "$pexit" "$pmarca"; then pegou=$((pegou+1))
+      if erro_de_shell; then errado="$errado $loc:ERRO-DE-SHELL"
+      elif bate "$got" "$pexit" "$pmarca"; then pegou=$((pegou+1))
       else errado="$errado $loc:exit$got"; fi
     done
     if [ "$pegou" -eq "$n_loc" ]; then
-      fals=$((fals+1))
+      fals=$((fals+1)); ULTIMO_MOTIVO=CREDITADO
       printf '  [ok ] %-18s -> %-18s exit %s + "%s" em %d locale(s)\n' "$id" "$cen" "$pexit" "$pmarca" "$n_loc"
     else
       printf '  [XX ] %-18s -> %s NÃO saiu pelo previsto (exit %s + "%s"; obtido%s)\n' "$id" "$cen" "$pexit" "$pmarca" "$errado"
       sed 's/^/        | /' "$TMP/out" | head -4
-      rc=1
+      rc=1; ULTIMO_MOTIVO="${errado# }"
     fi
   }
 
@@ -200,19 +205,37 @@ fi
   echo "  falsificações que pegaram pelo previsto: $fals/$total"
   [ "$total" -ge 4 ] && [ "$fals" -eq "$total" ] || rc=1
 
-  # CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. Uma sabotagem que sai com o exit PREVISTO da
-  # (2) — 2 — SEM passar pelo ramo (um `exit 2` no lugar do guard) tem de ser RECUSADA: só a MARCA a
-  # separa do julgamento, então um juiz que regredir a "exit ≠ normal" OU a "só o exit" a credita.
-  fals_ok=$fals; total_ok=$total; rc_ok=$rc
+  # CONTROLES NEGATIVOS DO JUIZ — o gate de reintrodução. Cada um é uma sabotagem que o juiz TEM de
+  # recusar, e o gate exige a RAZÃO do julgamento (não "não aplicou", "sintaxe" ou "controle"): uma
+  # recusa por outro motivo deixaria o gate verde com o juiz quebrado (achado do Codex, 2026-09-27).
+  #   marca: sai com o exit PREVISTO SEM passar pelo ramo (`exit 2` no lugar do guard) — só a MARCA a
+  #          separa do julgamento; um juiz que regredir a "exit ≠ normal" ou a "só o exit" a credita.
+  #   shell: o ramo imprime a marca e o script MORRE (variável não definida) com o exit 1 previsto —
+  #          só a camada do erro de shell a separa.
+  juiz_negativo() { # razão-exigida  args do sabota…
+    local razao="$1" fals_ok=$fals total_ok=$total rc_ok=$rc; shift
+    ULTIMO_MOTIVO=""
+    sabota "$@" > "$TMP/juiz.out"
+    fals=$fals_ok; total=$total_ok; rc=$rc_ok
+    case "$ULTIMO_MOTIVO" in
+      CREDITADO) echo "  [XX ] controle negativo do juiz ($1): CREDITADO — o juiz perdeu a identidade"; rc=1 ;;
+      *"$razao"*) echo "  [ok ] controle negativo do juiz ($1): recusado pelo julgamento [$razao]" ;;
+      *) echo "  [XX ] controle negativo do juiz ($1): recusado por OUTRO motivo [${ULTIMO_MOTIVO:-nenhum}] — o gate não exercitou o juiz"; rc=1 ;;
+    esac
+  }
   # shellcheck disable=SC2016
-  sabota juiz-negativo psql_mudo 3 2 "nenhum tick POSTERIOR" \
-    '[ "${PING:-0}" -ge 1 ] || recusa' 'exit 2; [ 1 -ge 0 ] || recusa' > "$TMP/juiz.out"
-  if [ "$fals" -ne "$fals_ok" ]; then
-    echo "  [XX ] controle negativo do juiz: um CRASH foi creditado como dente — o juiz perdeu a identidade"; rc=1
-  else
-    echo "  [ok ] controle negativo do juiz: a sabotagem que só derruba o script foi RECUSADA"; rc=$rc_ok
-  fi
-  fals=$fals_ok; total=$total_ok
+  juiz_negativo "C:exit2" juiz-negativo-marca psql_mudo 3 2 "nenhum tick POSTERIOR" \
+    '[ "${PING:-0}" -ge 1 ] || recusa' 'exit 2; [ 1 -ge 0 ] || recusa'
+  # shellcheck disable=SC2016
+  juiz_negativo "ERRO-DE-SHELL" juiz-negativo-shell sem_tick_posterior 2 1 "nenhum tick POSTERIOR" \
+    '  exit 2
+fi
+
+# O veredito sai do tick MAIS RECENTE' \
+    '  : "$FALHA_NAO_DEFINIDA_JUIZ_NEGATIVO"
+fi
+
+# O veredito sai do tick MAIS RECENTE'
 fi
 
 echo ""

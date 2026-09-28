@@ -161,8 +161,10 @@ r=$(roda "$EVALDIR/eval.sh" --falsify); r_rc="${r%%|*}"; r_out="${r#*|}"
 # 2026-09-27 valia "qualquer coisa menos 2+MARCA", que aceitava também um eval morto de erro alheio.
 case "$r_rc:$r_out" in
   2:*"$MARCA"*) ruim "S1 continuou VERDE sem o discriminador — a asserção não é sobre via_viva" ;;
+  1:*'o caso-alvo "velho_com_controle"'*'cegueira(s) em 12 sabotagem(ns)'*)
+    ok "S1 sem o discriminador a via morta NÃO é nomeada: exit 1 pelo baseline vermelho, laço COMPLETO (o declarado) — via_viva é quem nomeia" ;;
   1:*'o caso-alvo "velho_com_controle"'*)
-    ok "S1 sem o discriminador a via morta NÃO é nomeada: exit 1 pelo baseline vermelho (o declarado) — via_viva é quem nomeia" ;;
+    ruim "S1 exit 1 com o baseline vermelho, mas SEM o recibo das 12 — o laço abortou no meio (achado do Codex)" ;;
   0:*) ruim "S1 sem o discriminador o eval APROVOU com a via morta (exit 0) — o defeito de origem voltou: o juiz do previsto sumiu" ;;
   *) ruim "S1 saiu do verde, mas NÃO pelo declarado (exit 1 + o baseline do caso-alvo vermelho): saiu $r_rc — erro alheio não é dente"
      printf '%s\n' "$r_out" | sed 's/^/     /' | tail -4 ;;
@@ -175,7 +177,9 @@ esac
 case "$r_out" in
   *"--falsify: 0 cegueira(s)"*|*"[ok ] pegada"*)
     ruim "S2 sem o discriminador o eval VOLTOU a creditar sabotagem com a via morta — o juiz do previsto perdeu o dente" ;;
-  *) ok "S2 sem o discriminador o juiz do PREVISTO ainda recusa (nenhuma pegada) — via_viva nomeia a causa, não é mais a única trava" ;;
+  *"cegueira(s) em 12 sabotagem(ns)"*)
+    ok "S2 sem o discriminador o juiz do PREVISTO ainda recusa as 12 (laço completo, nenhuma pegada) — via_viva nomeia a causa, não é mais a única trava" ;;
+  *) ruim "S2 sem o recibo das 12 — nenhuma pegada num laço que abortou não prova nada (achado do Codex)" ;;
 esac
 
 [ "$rc" -eq 0 ] && echo "VERDE — as asserções dependem mesmo do discriminador" || echo "❌ asserção sem dente"

@@ -213,7 +213,7 @@ echo "  [ok ] controle: $N_ASSERTS asserções verdes com a árvore íntegra (lo
 # aceitava QUALQUER assert, aborto e erro de execução: um recipe trocado por regex inválido
 # derrubava o C2 por ERRO do grep e contava como "recipe apagado" pego.
 # → docs/historico/falsificacao-exit-nao-e-dente.md
-cegas=0; total=0
+cegas=0; total=0; ULTIMO_MOTIVO=""
 sabotar() {
   local ids="$1" nome="$2" alvo="$3" de="$4" para="$5" td loc motivo pegou=0 n_loc=0 errado=""
   total=$((total + 1))
@@ -222,7 +222,7 @@ sabotar() {
   cp "$td/$alvo" "$td/alvo.orig"
   if ! aplica "$td/$alvo" "$de" "$para" 2>"$td/aplica.err" || cmp -s "$td/$alvo" "$td/alvo.orig"; then
     echo "  [XX ] sabotagem NÃO aplicou em $alvo ($(tr '\n' ' ' < "$td/aplica.err")): $nome"
-    cegas=$((cegas + 1)); rm -rf "$td"; return
+    cegas=$((cegas + 1)); ULTIMO_MOTIVO=NAO-APLICOU; rm -rf "$td"; return
   fi
   for loc in $LOCALES; do
     n_loc=$((n_loc + 1))
@@ -230,11 +230,11 @@ sabotar() {
     if motivo=$(julga "$td" "$ids"); then pegou=$((pegou + 1)); else errado="$errado $loc:$motivo"; fi
   done
   if [ "$pegou" -eq "$n_loc" ]; then
-    echo "  [ok ] pega por $ids em $n_loc locale(s): $nome"
+    echo "  [ok ] pega por $ids em $n_loc locale(s): $nome"; ULTIMO_MOTIVO=CREDITADO
   else
     echo "  [XX ] NÃO pega pelo declarado ($ids;$errado): $nome"
     sed 's/^/        | /' "$td/out" "$td/err" | head -16
-    cegas=$((cegas + 1))
+    cegas=$((cegas + 1)); ULTIMO_MOTIVO="${errado# }"
   fi
   rm -rf "$td"
 }
@@ -255,22 +255,29 @@ sabotar C9 "upsert de $REVERSIVEL perde o onConflict" "supabase/functions/$REVER
 sabotar C11 "$CARA deixa de chamar o Omie" "supabase/functions/$CARA/index.ts" \
   'method: "POST"' 'method_: "POST"'
 
-# CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. O recipe trocado por um regex INVÁLIDO segue
-# extraível (C1 verde) e derruba o C2 por ERRO do grep: sabotagem que só quebra a medição. Ela declara
-# o C2 — o assert que de fato ficou vermelho — e tem de ser RECUSADA mesmo assim: só a camada do erro de
-# execução a separa do julgamento, então um juiz que regredir a "rc>0" OU a "só os IDs" a credita.
-cegas_ok=$cegas; total_ok=$total
-sabotar C2 "juiz-negativo: recipe vira regex inválido (só quebra a medição)" "SKILL.md" \
+# CONTROLES NEGATIVOS DO JUIZ — o gate de reintrodução. Cada um tem de ser RECUSADO pela RAZÃO
+# certa do julgamento (recusa por outro motivo deixaria o gate verde com o juiz quebrado — achado do
+# Codex, 2026-09-27):
+#   ids:    a lição do PROXY apagada (derruba o C12) declarando o C3 — só a exigência dos IDs a separa;
+#   stderr: o recipe vira regex INVÁLIDO — C1 segue verde e o C2 cai por ERRO do grep; declarando o C2,
+#           o assert que de fato ficou vermelho, só a camada do erro de execução a separa.
+juiz_negativo() { # razão-exigida  args do sabotar…
+  local razao="$1" cegas_ok=$cegas total_ok=$total; shift
+  ULTIMO_MOTIVO=""
+  sabotar "$@" > /dev/null 2>&1
+  cegas=$cegas_ok; total=$total_ok
+  case "$ULTIMO_MOTIVO" in
+    CREDITADO) echo "  [XX ] controle negativo do juiz [$razao]: CREDITADO — o juiz perdeu a identidade"; cegas=$((cegas + 1)) ;;
+    *"$razao"*) echo "  [ok ] controle negativo do juiz: recusado pelo julgamento [$razao]" ;;
+    *) echo "  [XX ] controle negativo do juiz [$razao]: recusado por OUTRO motivo [${ULTIMO_MOTIVO:-nenhum}] — o gate não exercitou o juiz"
+       cegas=$((cegas + 1)) ;;
+  esac
+}
+juiz_negativo "o-declarado-C3-NAO-ficou-vermelho" C3 "juiz-negativo-ids: a lição do proxy some, declarando o C3" \
+  "SKILL.md" "PROXY REPROVADO" "proxy antigo"
+juiz_negativo "ERRO-DE-EXECUCAO" C2 "juiz-negativo-stderr: recipe vira regex inválido (só quebra a medição)" "SKILL.md" \
   "grep -nE '\\.(upsert|insert|update|delete)\\(|\\.rpc\\(|fetch\\('" \
-  "grep -nE '\\.(upsert|insert|update|delete\\(|\\.rpc\\(|fetch\\('" > /dev/null 2>&1
-if [ "$cegas" -eq "$cegas_ok" ]; then
-  echo "  [XX ] controle negativo do juiz: um ERRO de medição foi creditado como dente — o juiz perdeu a identidade"
-  cegas=$((cegas_ok + 1))
-else
-  echo "  [ok ] controle negativo do juiz: a sabotagem que só quebra a medição foi RECUSADA"
-  cegas=$cegas_ok
-fi
-total=$total_ok
+  "grep -nE '\\.(upsert|insert|update|delete\\(|\\.rpc\\(|fetch\\('"
 
 echo "  --falsify: $cegas cegueira(s) em $total sabotagem(ns) (esperado: 0 em 8)"
 [ "$total" -ge 8 ] && [ "$cegas" -eq 0 ]

@@ -313,7 +313,10 @@ veredito() {
   semear "$cen" >/dev/null 2>&1 || { echo "SEED_FALHOU"; return; }
   gera_sql "$gdir" > "$TMP/leitura.sql" 2>/dev/null
   [ -s "$TMP/leitura.sql" ] || { echo "SQL_VAZIO"; return; }
-  P -tAF'|' -f "$TMP/leitura.sql" 2>"$TMP/psql.err" | awk -F'|' 'NF>1 {print $NF}' | head -1
+  # O exit do psql decide, não a 1ª linha: SQL que responde uma linha e DEPOIS erra (`…; SELECT 1/0`)
+  # daria um veredito PARCIAL com cara de resposta (achado do Codex, 2026-09-27) — é não-veredito.
+  P -tAF'|' -f "$TMP/leitura.sql" >"$TMP/veredito.out" 2>"$TMP/psql.err" || { echo "SQL_ERRO"; return; }
+  awk -F'|' 'NF>1 {print $NF}' "$TMP/veredito.out" | head -1
 }
 
 rc=0
@@ -322,7 +325,7 @@ rc=0
 # prova o mesmo que vermelho por resposta DIVERGENTE.
 via_caiu=""
 sem_veredito() { # got — o banco/gerador não respondeu NADA que se possa julgar
-  case "${1:-}" in "" | SEED_FALHOU | SQL_VAZIO) return 0 ;; *) return 1 ;; esac
+  case "${1:-}" in "" | SEED_FALHOU | SQL_VAZIO | SQL_ERRO) return 0 ;; *) return 1 ;; esac
 }
 # `SO_CASO` roda UM caso isolado (a falsificação julga só o caso que acusa a sabotagem); `n_rodados`
 # prova que ele existiu — filtro com nome errado rodaria zero casos e se leria como "verde".
@@ -556,6 +559,7 @@ bate_veredito() {
 
 cegas=0
 julgadas=0
+ULTIMO_MOTIVO=""; juiz_ok=1
 sabotar() { # nome de para caso-alvo marca;… [ocorrências]
   local nome="$1" de="$2" para="$3"
   # Busca no PRÓPRIO shell: sem pipe, sem fork, sem locale. NÃO devolver `printf | command grep -qF`
@@ -584,7 +588,7 @@ if s.count(de) != n:
     sys.exit("o alvo aparece %d vez(es), declarado %d" % (s.count(de), n))
 sys.stdout.write(s.replace(de, para))
 ' "$de" "$para" "${6:-1}" > "$TMP/gerador-sabotado.ts" 2>"$TMP/aplica.err"; then
-    printf '  [XX ] sabotagem AMBÍGUA (%s): %s\n' "$(tr '\n' ' ' < "$TMP/aplica.err")" "$nome"; cegas=$((cegas + 1)); return
+    printf '  [XX ] sabotagem AMBÍGUA (%s): %s\n' "$(tr '\n' ' ' < "$TMP/aplica.err")" "$nome"; cegas=$((cegas + 1)); ULTIMO_MOTIVO=NAO-APLICOU; return
   fi
   local caso="$4" prev="$5" base_n base_rc base_got rc_sab got_sab via_sab
   # BASELINE do caso-alvo com o gerador ÍNTEGRO, na mesma invocação: ele passa, e o previsto NÃO o
@@ -613,21 +617,22 @@ sys.stdout.write(s.replace(de, para))
   fi
   if [ "$base_n" -ne 1 ] || [ "$base_rc" -ne 0 ]; then
     printf '  [XX ] o caso-alvo "%s" não passa com o gerador ÍNTEGRO (rodaram %s): %s\n' "$caso" "$base_n" "$nome"
-    cegas=$((cegas + 1)); return
+    cegas=$((cegas + 1)); ULTIMO_MOTIVO=CONTROLE; return
   fi
   if bate_veredito "$base_got" "$prev"; then
     printf '  [XX ] o previsto [%s] já descreve o caso ÍNTEGRO "%s" — não discrimina: %s\n' "$prev" "$caso" "$nome"
-    cegas=$((cegas + 1)); return
+    cegas=$((cegas + 1)); ULTIMO_MOTIVO=PREVISTO-NO-CONTROLE; return
   fi
   if [ "$rc_sab" -eq 0 ]; then
-    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA (%s seguiu verde): %s\n' "$caso" "$nome"; cegas=$((cegas + 1)); return
+    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA (%s seguiu verde): %s\n' "$caso" "$nome"; cegas=$((cegas + 1)); ULTIMO_MOTIVO=DESPERCEBIDA; return
   fi
   if sem_veredito "$got_sab" || ! bate_veredito "$got_sab" "$prev"; then
     printf '  [XX ] vermelho pelo motivo ERRADO (%s: previsto [%s], veredito=%s%s): %s\n' "$caso" "$prev" \
       "${got_sab:-<vazio>}" "$(command grep -m1 'ERROR' "$TMP/psql.err" 2>/dev/null | cut -c1-110 | sed 's/^/ · psql: /')" "$nome"
+    if sem_veredito "$got_sab"; then ULTIMO_MOTIVO="SEM-VEREDITO:${got_sab:-vazio}"; else ULTIMO_MOTIVO=MARCA; fi
     cegas=$((cegas + 1)); return
   fi
-  julgadas=$((julgadas + 1))
+  julgadas=$((julgadas + 1)); ULTIMO_MOTIVO=CREDITADO
   printf '  [ok ] pegada por %s [%s]: %s\n' "$caso" "$prev" "$nome"
 }
 
@@ -697,24 +702,36 @@ sabotar "negacao NULL-blind: o ramo do nao-sonda deixa de alcancar o corpo SEM o
         "WHEN l.corpo ->> 'probe' IS DISTINCT FROM 'true'" "WHEN l.corpo ->> 'probe' <> 'true'" \
         cron_sem_probe "BUNDLE VELHO;respondeu versao=v1.0-alfa"
 
-# CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. `AND )` no lugar da recência só QUEBRA o SQL: o
-# caso-alvo fica sem veredito com a via viva. Declarando o desfecho da RECÊNCIA, ela tem de ser
-# RECUSADA; se o juiz a creditar, ele voltou a contar SQL quebrado como dente. A saída do juiz fica
-# visível de propósito (sem redirecionar nem pré-checar a via): uma via que morresse aqui sai exit 2
-# NOMEADA pelo próprio `sabotar`, e um 2º discriminador fora dele esconderia o S1 do test-eval-via-morta.
-cegas_ok=$cegas; julgadas_ok=$julgadas
-echo "  (controle negativo do juiz: a linha [XX] logo abaixo é a RECUSA esperada)"
-sabotar "juiz-negativo: a recencia vira 'AND )' (so quebra o SQL)" \
+# O recibo das 12 sai ANTES dos controles negativos: ele é a evidência de que o laço TERMINOU — o
+# test-eval-via-morta o exige, e um aborto no meio não o imprime.
+echo "--falsify: $cegas cegueira(s) em $((cegas + julgadas)) sabotagem(ns) (esperado: 0 em 12)"
+
+# CONTROLES NEGATIVOS DO JUIZ — o gate de reintrodução. Cada um é uma sabotagem que o juiz TEM de
+# recusar, e o gate exige a RAZÃO do julgamento (não "não aplicou" ou "controle"): uma recusa por outro
+# motivo deixaria o gate verde com o juiz quebrado (achado do Codex, 2026-09-27).
+#   marca: a da FONTE, real, declarando o previsto de OUTRO ramo — só as MARCAS do veredito a separam.
+#   sql:   `AND )` na recência só QUEBRA o SQL — o caso fica sem veredito com a via viva.
+# A saída do juiz fica visível de propósito (sem redirecionar nem pré-checar a via): uma via que
+# morresse aqui sai exit 2 NOMEADA pelo próprio `sabotar`, e um 2º discriminador fora dele esconderia
+# o S1 do test-eval-via-morta.
+juiz_negativo() { # razão-exigida  args do sabotar…
+  local razao="$1" cegas_ok=$cegas julgadas_ok=$julgadas; shift
+  ULTIMO_MOTIVO=""
+  echo "  (controle negativo do juiz [$razao]: a linha [XX] logo abaixo é a RECUSA esperada)"
+  sabotar "$@"
+  cegas=$cegas_ok; julgadas=$julgadas_ok
+  case "$ULTIMO_MOTIVO" in
+    CREDITADO) echo "  [XX ] controle negativo do juiz [$razao]: CREDITADO — o juiz perdeu a identidade"; juiz_ok=0 ;;
+    *"$razao"*) echo "  [ok ] controle negativo do juiz: recusado pelo julgamento [$razao]" ;;
+    *) echo "  [XX ] controle negativo do juiz [$razao]: recusado por OUTRO motivo [${ULTIMO_MOTIVO:-nenhum}] — o gate não exercitou o juiz"
+       juiz_ok=0 ;;
+  esac
+}
+juiz_negativo "MARCA" "juiz-negativo-marca: a FONTE sai, e o previsto declarado e o de outro ramo" \
+        "AND l.corpo ->> 'fonte'  = l.fonte_esperada" "AND true" \
+        testemunha_fonte_velha "PRE_SONDA_FONTE"
+juiz_negativo "SEM-VEREDITO:SQL_ERRO" "juiz-negativo-sql: a recencia vira 'AND )' (so quebra o SQL)" \
         "AND l.created > now() - interval '\${janelaMin} minutes'" "AND )" \
         testemunha_fora_da_janela "DESTE disparo esta PROVADA;1 de 2 request(s)"
-if [ "$julgadas" -ne "$julgadas_ok" ]; then
-  echo "  [XX ] controle negativo do juiz: SQL quebrado foi creditado como dente — o juiz perdeu a identidade"
-  julgadas=$julgadas_ok; cegas=$((cegas_ok + 1))
-else
-  echo "  [ok ] controle negativo do juiz: a sabotagem que só quebra o SQL foi RECUSADA"
-  cegas=$cegas_ok
-fi
-
-echo "--falsify: $cegas cegueira(s) em $((cegas + julgadas)) sabotagem(ns) (esperado: 0 em 12)"
-[ "$cegas" -eq 0 ] && [ "$julgadas" -ge 12 ] || exit 1
+[ "$cegas" -eq 0 ] && [ "$julgadas" -ge 12 ] && [ "$juiz_ok" = 1 ] || exit 1
 exit 0

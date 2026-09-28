@@ -320,6 +320,11 @@ bate() {
 
 cegas=0
 julgadas=0
+ULTIMO_MOTIVO=""; juiz_ok=1
+# erro_de_shell <saída> → 0 se ela traz um erro de EXECUÇÃO do bash (`<script>: line N: …`): a marca
+# pode ter vindo do PRÓPRIO diagnóstico (`${x?nenhuma sonda em}`), ou saído antes de o script morrer
+# com o exit previsto (achados do Codex, 2026-09-27). Crash não é dente.
+erro_de_shell() { local re=': line [0-9]+: '; [[ $1 =~ $re ]]; }
 sabotar() { # nome de para caso-alvo exit|marca-prevista
   local nome="$1" de="$2" para="$3"
   # Busca no PRÓPRIO shell: sem pipe, sem fork, sem locale. NÃO devolver `printf | command grep -qF`
@@ -347,12 +352,12 @@ if s.count(de) != 1:
     sys.exit("o alvo aparece %d vez(es)" % s.count(de))
 sys.stdout.write(s.replace(de, para, 1))
 ' "$de" "$para" > "$TMP/sabotado.sh" 2>"$TMP/aplica.err"; then
-    printf '  [XX ] sabotagem AMBÍGUA (%s): %s\n' "$(tr '\n' ' ' < "$TMP/aplica.err")" "$nome"; cegas=$((cegas + 1)); return
+    printf '  [XX ] sabotagem AMBÍGUA (%s): %s\n' "$(tr '\n' ' ' < "$TMP/aplica.err")" "$nome"; cegas=$((cegas + 1)); ULTIMO_MOTIVO=NAO-APLICOU; return
   fi
   local caso="$4" prev="$5" err_sab via_sab rc_sab out_sab
   if ! bash -n "$TMP/sabotado.sh" 2>/dev/null; then
     printf '  [XX ] a sabotagem quebrou a SINTAXE do script (vermelho pelo motivo errado): %s\n' "$nome"
-    cegas=$((cegas + 1)); return
+    cegas=$((cegas + 1)); ULTIMO_MOTIVO=SINTAXE; return
   fi
   # BASELINE do caso-alvo com o script ÍNTEGRO, na mesma invocação: ele passa, e o previsto NÃO o
   # descreve — senão "bateu o previsto" não distinguiria sabotagem de nada.
@@ -360,11 +365,11 @@ sys.stdout.write(s.replace(de, para, 1))
   if [ -n "$via_caiu" ] && ! via_viva; then via_caida "$via_caiu" "$nome"; fi
   if [ "$n_rodados" -ne 1 ] || [ "$erros" -ne 0 ]; then
     printf '  [XX ] o caso-alvo "%s" não passa ÍNTEGRO (rodaram %s): %s\n' "$caso" "$n_rodados" "$nome"
-    cegas=$((cegas + 1)); return
+    cegas=$((cegas + 1)); ULTIMO_MOTIVO=CONTROLE; return
   fi
   if bate "$rc" "$out" "$prev"; then
     printf '  [XX ] o previsto [%s] já descreve o caso ÍNTEGRO "%s" — não discrimina: %s\n' "$prev" "$caso" "$nome"
-    cegas=$((cegas + 1)); return
+    cegas=$((cegas + 1)); ULTIMO_MOTIVO=PREVISTO-NO-CONTROLE; return
   fi
   cp "$TMP/sabotado.sh" "$ALVO"; chmod +x "$ALVO"
   SO_CASO="$caso"; executar_casos >"$TMP/falsify.out" 2>&1; SO_CASO=""
@@ -374,14 +379,19 @@ sys.stdout.write(s.replace(de, para, 1))
   printf '%s' "$ORIG" > "$ALVO"; chmod +x "$ALVO"
   if [ -n "$via_sab" ] && ! via_viva; then via_caida "$via_sab" "$nome"; fi
   if [ "$err_sab" -eq 0 ]; then
-    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA (%s seguiu verde): %s\n' "$caso" "$nome"; cegas=$((cegas + 1)); return
+    printf '  [XX ] sabotagem PASSOU DESPERCEBIDA (%s seguiu verde): %s\n' "$caso" "$nome"; cegas=$((cegas + 1)); ULTIMO_MOTIVO=DESPERCEBIDA; return
+  fi
+  if erro_de_shell "$out_sab"; then
+    printf '  [XX ] vermelho por ERRO DE SHELL (%s: o script MORREU — a marca não conta): %s\n        %s\n' \
+      "$caso" "$nome" "$(printf '%s\n' "$out_sab" | command grep -m1 -E ': line [0-9]+: ' | cut -c1-160)"
+    cegas=$((cegas + 1)); ULTIMO_MOTIVO=ERRO-DE-SHELL; return
   fi
   if ! bate "$rc_sab" "$out_sab" "$prev"; then
     printf '  [XX ] vermelho pelo motivo ERRADO (%s: previsto [%s], obtido exit=%s): %s\n        %s\n' \
       "$caso" "$prev" "$rc_sab" "$nome" "${out_sab:0:200}"
-    cegas=$((cegas + 1)); return
+    cegas=$((cegas + 1)); ULTIMO_MOTIVO="MARCA exit=$rc_sab"; return
   fi
-  julgadas=$((julgadas + 1))
+  julgadas=$((julgadas + 1)); ULTIMO_MOTIVO=CREDITADO
   printf '  [ok ] pegada por %s [%s]: %s\n' "$caso" "$prev" "$nome"
 }
 
@@ -439,27 +449,36 @@ sabotar "--request-ids com slug forasteiro passa calado (typo sem vinculo)" \
         'if false; then' \
         slug_forasteiro "1|nenhuma sonda em"
 
-# CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. O `ORDER BY` com um parêntese a mais só QUEBRA o
-# SQL: todo caso cai em "a consulta falhou", exit 2 — o MESMO exit do fail-closed da DERIVA do
-# `#anonimas`. Declarando o desfecho da deriva, ela tem de ser RECUSADA: só a MARCA separa os dois
-# exit 2, então um juiz que regredir a "qualquer vermelho" OU a "só o exit" a credita.
-cegas_ok=$cegas; julgadas_ok=$julgadas
+# CONTROLES NEGATIVOS DO JUIZ — o gate de reintrodução. Cada um é uma sabotagem que o juiz TEM de
+# recusar, e o gate exige a RAZÃO do julgamento (não "não aplicou", "sintaxe" ou "controle"): uma
+# recusa por outro motivo deixaria o gate verde com o juiz quebrado (achado do Codex, 2026-09-27).
+#   marca: o `ORDER BY` com um parêntese a mais só QUEBRA o SQL — exit 2, o MESMO exit do fail-closed
+#          da DERIVA do `#anonimas`; declarando a deriva, só a MARCA separa os dois exit 2.
+#   shell: `${X?nenhuma sonda em}` no ramo da anônima mata o script com o exit 1 previsto e a marca só
+#          no diagnóstico do bash — só a camada do erro de shell a separa.
 # A via é conferida ANTES, com a mensagem nomeada: a saída do juiz abaixo vai para um arquivo (a
 # recusa esperada não polui o log), e uma via que morresse lá dentro sairia exit 2 muda.
 via_viva || via_caida "(antes do controle negativo)" "controle negativo do juiz"
-sabotar "juiz-negativo: o ORDER BY ganha um parentese a mais (so quebra o SQL)" \
-        "ORDER BY edge, created DESC" \
-        "ORDER BY edge, created DESC)" \
-        no_ar "2|nao devolveu a linha" > "$TMP/juiz.out" 2>&1
-if [ "$julgadas" -ne "$julgadas_ok" ]; then
-  echo "  [XX ] controle negativo do juiz: SQL quebrado foi creditado como dente — o juiz perdeu a identidade"
-  sed 's/^/        | /' "$TMP/juiz.out" | head -4
-  julgadas=$julgadas_ok; cegas=$((cegas_ok + 1))
-else
-  echo "  [ok ] controle negativo do juiz: a sabotagem que só quebra o SQL foi RECUSADA"
-  cegas=$cegas_ok
-fi
+juiz_negativo() { # razão-exigida  args do sabotar…
+  local razao="$1" cegas_ok=$cegas julgadas_ok=$julgadas; shift
+  ULTIMO_MOTIVO=""
+  sabotar "$@" > "$TMP/juiz.out" 2>&1
+  cegas=$cegas_ok; julgadas=$julgadas_ok
+  case "$ULTIMO_MOTIVO" in
+    CREDITADO) echo "  [XX ] controle negativo do juiz [$razao]: CREDITADO — o juiz perdeu a identidade"; juiz_ok=0 ;;
+    *"$razao"*) echo "  [ok ] controle negativo do juiz: recusado pelo julgamento [$razao]" ;;
+    *) echo "  [XX ] controle negativo do juiz [$razao]: recusado por OUTRO motivo [${ULTIMO_MOTIVO:-nenhum}] — o gate não exercitou o juiz"
+       sed 's/^/        | /' "$TMP/juiz.out" | head -3; juiz_ok=0 ;;
+  esac
+}
+juiz_negativo "MARCA exit=2" "juiz-negativo-marca: o ORDER BY ganha um parentese a mais (so quebra o SQL)" \
+        "ORDER BY edge, created DESC" "ORDER BY edge, created DESC)" no_ar "2|nao devolveu a linha"
+# shellcheck disable=SC2016  # aspas simples: os padroes sao TEXTO LITERAL do alvo
+juiz_negativo "ERRO-DE-SHELL" "juiz-negativo-shell: o ramo da anonima morre com a marca no diagnostico" \
+        'elif [ -z "$servido" ] && [ "$n_anonimas" -gt 0 ]; then' \
+        'elif : "${FALHA_NAO_DEFINIDA_JUIZ_NEGATIVO?nenhuma sonda em}"; then' \
+        sonda_anonima "1|nenhuma sonda em"
 
 echo "--falsify: $cegas cegueira(s) em $((cegas + julgadas)) sabotagem(ns) (esperado: 0 em 11)"
-[ "$cegas" -eq 0 ] && [ "$julgadas" -ge 11 ] || exit 1
+[ "$cegas" -eq 0 ] && [ "$julgadas" -ge 11 ] && [ "$juiz_ok" = 1 ] || exit 1
 exit 0

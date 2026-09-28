@@ -280,7 +280,7 @@ cmp -s "$SCRIPT_ABS" "$CTL/scripts/monitor-deploy.sh" || via_caiu "a cópia de c
 cp "$SCRIPT_ABS" "$FIX/monitor-original.sh"
 
 # ── runner ───────────────────────────────────────────────────────────────────────────────────────
-MON="$CTL"; LOC="C"; OUT=""; RC=0; PASS=0; FAIL=0; SO_CASO=""; PRIMEIRO_RC=""; PRIMEIRO_OUT=""
+MON="$CTL"; LOC="C"; OUT=""; RC=0; PASS=0; FAIL=0; SO_CASO=""; PRIMEIRO_RC=""; PRIMEIRO_OUT=""; PRIMEIRO_DESCR=""; ULTIMO_MOTIVO=""
 CASO_ESTADO=""; CASO_VF_RC=""; CASO_PY_MUDO=""
 roda() { # cwd args…
   local cwd="$1" caminho="$FIX/stubs:$PATH"; shift
@@ -323,7 +323,7 @@ caso() { # id descrição cwd exit exigidas(;) proibidas(;) args…
     FAIL=$((FAIL + 1))
     # o 1º passo que falhou é o que a falsificação julga: nos grupos com estado (sentinela,
     # semcarimbo, estado) o id se repete, e o ÚLTIMO passo pode nem ter sido tocado pela sabotagem
-    [ -n "$PRIMEIRO_RC" ] || { PRIMEIRO_RC="$RC"; PRIMEIRO_OUT="$OUT"; }
+    [ -n "$PRIMEIRO_RC" ] || { PRIMEIRO_RC="$RC"; PRIMEIRO_OUT="$OUT"; PRIMEIRO_DESCR="$descr"; }
     printf '  [XX ] %-12s %s (esperado exit %s + [%s] sem [%s]; obtido exit %s)\n' "$id" "$descr" "$exp" "$want" "$nao" "$RC"
     printf '        saída: %s\n' "$(printf '%s' "$OUT" | tr '\n' '|' | cut -c1-900)"
   fi
@@ -477,14 +477,21 @@ CEGAS=0; PEGAS=0
 # sair exatamente como previsto — exit e marcas exigidas, sem as proibidas. Vermelho por sintaxe,
 # ou por outro motivo, é teatro. O alvo pode ser o monitor, a prova ou a tabela: a cópia troca os
 # symlinks da prova e da tabela por arquivos, e só a cópia é mutada.
-sabota_prev() { # arquivo-rel nome caso exit exigidas(;) proibidas(;) (de para)…
-  local rel="$1" nome="$2" alvo="$3" pexit="$4" pwant="$5" pnao="$6" sab="$FIX/mon-sab" orig loc
+# erro_de_shell <saída> → 0 se ela traz um erro de EXECUÇÃO do bash (`<script>: line N: …`): a marca
+# pode ter vindo do PRÓPRIO diagnóstico (`XXXXX: command not found`), ou saído antes de o monitor
+# morrer com o exit previsto (achados do Codex, 2026-09-27). Crash não é dente.
+erro_de_shell() { local re=': line [0-9]+: '; [[ $1 =~ $re ]]; }
+# O caso-alvo pode vir como `id@passo`: nos grupos com estado o id se repete, e o passo (prefixo da
+# descrição) é parte do contrato — o 1º passo que falhou tem de ser O declarado (achado do Codex).
+sabota_prev() { # arquivo-rel nome caso[@passo] exit exigidas(;) proibidas(;) (de para)…
+  local rel="$1" nome="$2" alvo="$3" pexit="$4" pwant="$5" pnao="$6" sab="$FIX/mon-sab" orig loc passo=""
   shift 6
+  case "$alvo" in *@*) passo="${alvo#*@}"; alvo="${alvo%%@*}" ;; esac
   case "$rel" in
     scripts/monitor-deploy.sh) orig="$SCRIPT_ABS" ;;
     scripts/alcance-bundle.py) orig="$PROVA_ABS" ;;
     evals/classify.sh)         orig="$EVALS_ABS/classify.sh" ;;
-    *) printf '  [XX ] alvo de sabotagem desconhecido: %s — %s\n' "$rel" "$nome"; CEGAS=$((CEGAS + 1)); return ;;
+    *) printf '  [XX ] alvo de sabotagem desconhecido: %s — %s\n' "$rel" "$nome"; CEGAS=$((CEGAS + 1)); ULTIMO_MOTIVO=NAO-APLICOU; return ;;
   esac
   if ! { mondir "$sab" "$SCRIPT_ABS" && rm -f "$sab/scripts/alcance-bundle.py" "$sab/evals/classify.sh" &&
     cp "$PROVA_ABS" "$sab/scripts/alcance-bundle.py" && cp "$EVALS_ABS/classify.sh" "$sab/evals/classify.sh"; }; then
@@ -492,37 +499,51 @@ sabota_prev() { # arquivo-rel nome caso exit exigidas(;) proibidas(;) (de para)�
   fi
   if ! aplica_em "$orig" "$sab/$rel" "$@" 2> "$FIX/aplica.err"; then
     printf '  [XX ] sabotagem NO-OP/AMBÍGUA: %s — %s\n' "$nome" "$(tr '\n' ' ' < "$FIX/aplica.err")"
-    CEGAS=$((CEGAS + 1)); return
+    CEGAS=$((CEGAS + 1)); ULTIMO_MOTIVO=NAO-APLICOU; return
   fi
   if cmp -s "$sab/$rel" "$orig"; then
-    printf '  [XX ] sabotagem não mudou byte nenhum: %s\n' "$nome"; CEGAS=$((CEGAS + 1)); return
+    printf '  [XX ] sabotagem não mudou byte nenhum: %s\n' "$nome"; CEGAS=$((CEGAS + 1)); ULTIMO_MOTIVO=NAO-APLICOU; return
   fi
   case "$rel" in
     *.sh) bash -n "$sab/$rel" 2>/dev/null ;;
     *.py) python3 -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$sab/$rel" 2>/dev/null ;;
-  esac || { printf '  [XX ] sabotagem quebrou a sintaxe (vermelho pelo motivo errado): %s\n' "$nome"; CEGAS=$((CEGAS + 1)); return; }
+  esac || { printf '  [XX ] sabotagem quebrou a sintaxe (vermelho pelo motivo errado): %s\n' "$nome"; CEGAS=$((CEGAS + 1)); ULTIMO_MOTIVO=SINTAXE; return; }
   for loc in $LOCALES; do
     LOC="$loc"
     PASS=0; FAIL=0; MON="$CTL"; SO_CASO="$alvo"; suite > /dev/null 2>&1
     if [ "$FAIL" -ne 0 ] || [ "$PASS" -eq 0 ]; then
       printf '  [XX ] o caso-alvo "%s" não passa com o monitor ÍNTEGRO (LC_ALL=%s): %s\n' "$alvo" "$loc" "$nome"
-      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; return
+      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; ULTIMO_MOTIVO=CONTROLE; return
     fi
-    PASS=0; FAIL=0; PRIMEIRO_RC=""; PRIMEIRO_OUT=""; MON="$sab"; SO_CASO="$alvo"; suite > /dev/null 2>&1
+    PASS=0; FAIL=0; PRIMEIRO_RC=""; PRIMEIRO_OUT=""; PRIMEIRO_DESCR=""; MON="$sab"; SO_CASO="$alvo"; suite > /dev/null 2>&1
     if [ "$FAIL" -eq 0 ]; then
       printf '  [XX ] sabotagem PASSOU DESPERCEBIDA (LC_ALL=%s): %s — caso %s\n' "$loc" "$nome" "$alvo"
-      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; return
+      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; ULTIMO_MOTIVO=DESPERCEBIDA; return
     fi
     # O julgado é o 1º passo do caso-alvo que FALHOU: nos grupos com estado o id se repete, e o
     # último passo pode nem ter sido tocado pela sabotagem (ids únicos: é o mesmo passo).
+    if erro_de_shell "$PRIMEIRO_OUT"; then
+      printf '  [XX ] VERMELHO por ERRO DE SHELL (LC_ALL=%s): %s — o monitor MORREU, a marca não conta: %s\n' \
+        "$loc" "$nome" "$(printf '%s\n' "$PRIMEIRO_OUT" | command grep -m1 -E ': line [0-9]+: ' | cut -c1-160)"
+      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; ULTIMO_MOTIVO=ERRO-DE-SHELL; return
+    fi
+    if [ -n "$passo" ]; then
+      case "$PRIMEIRO_DESCR" in
+        "$passo"*) ;;
+        *) printf '  [XX ] VERMELHO no PASSO errado (LC_ALL=%s): %s — declarado "%s", falhou primeiro "%s"\n' \
+             "$loc" "$nome" "$passo" "$PRIMEIRO_DESCR"
+           CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; ULTIMO_MOTIVO=PASSO; return ;;
+      esac
+    fi
     if [ "$PRIMEIRO_RC" != "$pexit" ] || ! tem_todas "$PRIMEIRO_OUT" "$pwant" || ! tem_nenhuma "$PRIMEIRO_OUT" "$pnao"; then
       printf '  [XX ] VERMELHO pelo motivo ERRADO (LC_ALL=%s): %s — previsto exit %s + [%s] sem [%s]; obtido exit %s: %s\n' \
         "$loc" "$nome" "$pexit" "$pwant" "$pnao" "$PRIMEIRO_RC" "$(printf '%s' "$PRIMEIRO_OUT" | tr '\n' '|' | cut -c1-400)"
-      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; return
+      CEGAS=$((CEGAS + 1)); SO_CASO=""; MON="$CTL"; ULTIMO_MOTIVO=MARCA; return
     fi
   done
   SO_CASO=""; MON="$CTL"
-  PEGAS=$((PEGAS + 1)); printf '  [ok ] pega nos 2 locales PELO DESFECHO PREVISTO (caso %s): %s\n' "$alvo" "$nome"
+  PEGAS=$((PEGAS + 1)); ULTIMO_MOTIVO=CREDITADO
+  printf '  [ok ] pega nos 2 locales PELO DESFECHO PREVISTO (caso %s): %s\n' "$alvo" "$nome"
 }
 
 # (B) as sabotagens — cada uma arranca UMA decisão do --pr, do estado, da sentinela ou do uso.
@@ -555,21 +576,24 @@ sabota_prev scripts/monitor-deploy.sh "'sem alcance' sem a prova do alcance-bund
   $'    *)\n      echo "     PR_SEM_ALCANCE_NO_BUNDLE:'
 sabota_prev scripts/monitor-deploy.sh "arquivo ALCANCA do PR deixa de contar" prfora 3 "PR_FORA_DO_AR;PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE" \
   '  if [ "$nb" -gt 0 ]; then' '  if false; then'
-sabota_prev scripts/monitor-deploy.sh "aviso de revert apagado" prrevert 0 "PR_NO_AR;XXXXX_REVERT_POSTERIOR" "AVISO_REVERT_POSTERIOR" \
-  'AVISO_REVERT_POSTERIOR:' 'XXXXX_REVERT_POSTERIOR:'
+# RE-DERIVADA em 2026-09-27: ela só RENOMEAVA o aviso e exigia como marca o PRÓPRIO texto que
+# escrevia (achado do Codex) — provava o literal, não a detecção. Agora a detecção de revert deixa de
+# avisar, e a prova é o aviso SUMIR com o PR ainda no ar.
+sabota_prev scripts/monitor-deploy.sh "a detecção de revert deixa de avisar (o aviso some)" prrevert 0 "PR_NO_AR" "AVISO_REVERT_POSTERIOR" \
+  '[ -z "$r" ] || echo' 'true || echo'
 sabota_prev scripts/monitor-deploy.sh "--pr vazio passa a validação" usovazio 6 "NAO_CONSEGUI_MEDIR (GH_FALHOU)" "USO_INVALIDO" \
   "  case \"\$PR\" in ''|*[!0-9]*) uso" "  case \"\$PR\" in *[!0-9]*) uso"
 sabota_prev scripts/monitor-deploy.sh "url sem esquema aceita" semesquema 0 "sincronizado: ar serve" "USO_INVALIDO" \
   'case "$APP" in http://*|https://*) ;;' 'case "$APP" in *) ;;'
 sabota_prev scripts/monitor-deploy.sh "entry que não baixa vira 'sem carimbo'" entry404 4 "VERSAO_INDETERMINADA (ENTRY_IGUAL)" "ENTRY_NAO_BAIXOU" \
   '[ -n "$BODY" ] || { echo' 'true || { echo'
-sabota_prev scripts/monitor-deploy.sh "sentinela: rc 2/3 (sonda não confiável/recusa) lidos como ausente" sentinela 3 "SENTINELA_AUSENTE" "SENTINELA_SEM_VEREDITO" \
+sabota_prev scripts/monitor-deploy.sh "sentinela: rc 2/3 (sonda não confiável/recusa) lidos como ausente" "sentinela@rc 2" 3 "SENTINELA_AUSENTE" "SENTINELA_SEM_VEREDITO" \
   '    1) sentinela_ausente ;;' '    *) sentinela_ausente ;;'
-sabota_prev scripts/monitor-deploy.sh "1ª checagem volta a se anunciar 'SIM (1a-vez)'" semcarimbo 4 "deploy-novo=SIM" "deploy-novo=?" \
+sabota_prev scripts/monitor-deploy.sh "1ª checagem volta a se anunciar 'SIM (1a-vez)'" "semcarimbo@1ª checagem" 4 "deploy-novo=SIM" "deploy-novo=?" \
   'DEPLOY="? (1a checagem deste checkout nesta url)"' 'DEPLOY="SIM (1a-vez -> $ENTRY_HASH)"'
-sabota_prev scripts/monitor-deploy.sh "estado no formato antigo deixa de valer (vira '1a checagem')" semcarimbo 4 "VERSAO_INDETERMINADA (PRIMEIRA_CHECAGEM)" "ENTRY_IGUAL" \
+sabota_prev scripts/monitor-deploy.sh "estado no formato antigo deixa de valer (vira '1a checagem')" "semcarimbo@estado no formato antigo" 4 "VERSAO_INDETERMINADA (PRIMEIRA_CHECAGEM)" "ENTRY_IGUAL" \
   'if [ -n "$PREV" ] && [ -z "$PREV_TS" ] && [ -z "$PREV_URL" ]; then' 'if false; then'
-sabota_prev scripts/monitor-deploy.sh "estado volta a ser GLOBAL da máquina" estado 0 "deploy-novo=nao" "deploy-novo=?" \
+sabota_prev scripts/monitor-deploy.sh "estado volta a ser GLOBAL da máquina" "estado@checkout B" 0 "deploy-novo=nao" "deploy-novo=?" \
   '${GITDIR:+$GITDIR/deploy-monitor.state}' '$HOME/.config/afiacao/deploy-monitor.state'
 # TESTE em src/ (2026-09-26): cada decisão arrancada tem desfecho PREVISTO, não só "ficou vermelho"
 sabota_prev evals/classify.sh "tabela sem TESTE: o teste do #2547 volta a ALCANCA pelo nome" prteste \
@@ -590,22 +614,38 @@ sabota_prev scripts/monitor-deploy.sh "o monitor deixa de contar TESTE: sem prov
 }
 sabotagens
 
-# CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução. A sabotagem do prfora trocada por um `exit 3`
-# sai com o exit PREVISTO dela SEM passar pelo ramo, declarando o desfecho REAL dela: tem de ser
-# RECUSADA. Só as MARCAS a separam do julgamento, então um juiz que regredir a "o caso falhou" (o
-# `sabota` de antes) OU a "só o exit" a credita.
-PEGAS_OK=$PEGAS; CEGAS_OK=$CEGAS
+# CONTROLES NEGATIVOS DO JUIZ — o gate de reintrodução. Cada um tem de ser RECUSADO pela RAZÃO certa
+# do julgamento (recusa por outro motivo deixaria o gate verde com o juiz quebrado — achado do Codex):
+#   marca: o prfora trocado por um `exit 3` sai com o exit PREVISTO sem passar pelo ramo — só as MARCAS
+#          a separam; um juiz que regredir a "o caso falhou" ou a "só o exit" a credita.
+#   shell: o aviso de revert vira `"; XXXXX_REVERT_POSTERIOR; : "` — `command not found`, o monitor
+#          segue e sai 0 com PR_NO_AR e sem o aviso: o desfecho da re-derivada; só a camada do erro de
+#          shell a separa.
+#   passo: a chave impressa vira `deploy_novo=` — o 1º passo de `semcarimbo` falha e ainda satisfaz o
+#          exit/as marcas previstos do 4º; declarando o 4º, só a identidade do PASSO a separa.
+juiz_negativo() { # razão-exigida  args do sabota_prev…
+  local razao="$1" pegas_ok=$PEGAS cegas_ok=$CEGAS; shift
+  ULTIMO_MOTIVO=""
+  sabota_prev "$@" > /dev/null 2>&1
+  PEGAS=$pegas_ok; CEGAS=$cegas_ok
+  case "$ULTIMO_MOTIVO" in
+    CREDITADO) echo "  [XX ] controle negativo do juiz [$razao]: CREDITADO — o juiz perdeu a identidade"; CEGAS=$((CEGAS + 1)) ;;
+    "$razao") echo "  [ok ] controle negativo do juiz: recusado pelo julgamento [$razao]" ;;
+    *) echo "  [XX ] controle negativo do juiz [$razao]: recusado por OUTRO motivo [${ULTIMO_MOTIVO:-nenhum}] — o gate não exercitou o juiz"
+       CEGAS=$((CEGAS + 1)) ;;
+  esac
+}
 # shellcheck disable=SC2016
-sabota_prev scripts/monitor-deploy.sh "juiz-negativo: o prfora só derruba o monitor" prfora \
+juiz_negativo MARCA scripts/monitor-deploy.sh "juiz-negativo-marca: o prfora só sai 3" prfora \
   3 "PR_FORA_DO_AR;PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE" \
-  '  if [ "$nb" -gt 0 ]; then' '  exit 3; if [ "$nb" -gt 0 ]; then' > /dev/null 2>&1
-if [ "$PEGAS" -ne "$PEGAS_OK" ]; then
-  echo "  [XX ] controle negativo do juiz: um CRASH foi creditado como dente — o juiz perdeu a identidade"
-  PEGAS=$PEGAS_OK; CEGAS=$((CEGAS_OK + 1))
-else
-  echo "  [ok ] controle negativo do juiz: a sabotagem que só derruba o monitor foi RECUSADA"
-  CEGAS=$CEGAS_OK
-fi
+  '  if [ "$nb" -gt 0 ]; then' '  exit 3; if [ "$nb" -gt 0 ]; then'
+juiz_negativo ERRO-DE-SHELL scripts/monitor-deploy.sh "juiz-negativo-shell: o aviso de revert vira comando inexistente" prrevert \
+  0 "PR_NO_AR" "AVISO_REVERT_POSTERIOR" \
+  'AVISO_REVERT_POSTERIOR:' '"; XXXXX_REVERT_POSTERIOR; : "'
+# shellcheck disable=SC2016
+juiz_negativo PASSO scripts/monitor-deploy.sh "juiz-negativo-passo: a chave impressa muda" "semcarimbo@estado no formato antigo" \
+  4 "VERSAO_INDETERMINADA (PRIMEIRA_CHECAGEM)" "ENTRY_IGUAL" \
+  'deploy-novo=$DEPLOY' 'deploy_novo=$DEPLOY'
 
 # (C) CONTROLE DE SAÍDA: as sabotagens vivem em cópias em $FIX; o monitor real sai byte a byte igual.
 if ! cmp -s "$SCRIPT_ABS" "$FIX/monitor-original.sh"; then

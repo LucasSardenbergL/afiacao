@@ -167,15 +167,20 @@ else:
     por_nome = {c["name"]: c for c in cases}
 
     def julga_mutacao(nome, de, para, alvo, chave, previsto, mutante):
-        """Devolve None se a mutação foi pega PELO PREVISTO; senão, o motivo."""
+        """Devolve None se a mutação foi pega PELO PREVISTO; senão, o motivo — prefixado pela ETIQUETA
+        do julgamento que a recusou (os controles negativos exigem a etiqueta certa)."""
         if fonte.count(de) != 1:
-            return f"NÃO aplicou: o alvo aparece {fonte.count(de)} vez(es) no classify.sh"
+            return f"NAO-APLICOU: o alvo aparece {fonte.count(de)} vez(es) no classify.sh"
+        if para == de:
+            return "SEM-MUDANCA: o mutante é o classify.sh íntegro (para == de)"
         if alvo not in por_nome:
-            return f"caso-alvo inexistente: {alvo!r}"
+            return f"CASO-INEXISTENTE: {alvo!r}"
+        if por_nome[alvo]["expect"].get(chave) == previsto:
+            return f"PREVISTO-NO-CONTROLE: {chave}={previsto!r} é o valor ÍNTEGRO do caso — não discrimina"
         with open(mutante, "w") as fh:
             fh.write(fonte.replace(de, para, 1))
         if subprocess.run(["bash", "-n", mutante], capture_output=True).returncode != 0:
-            return "quebrou a SINTAXE do classify.sh (vermelho pelo motivo errado)"
+            return "SINTAXE: quebrou a sintaxe do classify.sh (vermelho pelo motivo errado)"
         errado = []
         for loc in LOCALES:
             got, rc, err = roda_bruto(por_nome[alvo], mutante, loc)
@@ -183,7 +188,10 @@ else:
                 errado.append(f"{loc}: ERRO de execução rc={rc} {err[:60]}")
             elif got.get(chave) != previsto:
                 errado.append(f"{loc}: {chave}={got.get(chave)!r}")
-        return f"'{alvo}' não deu {chave}={previsto!r} ({'; '.join(errado)})" if errado else None
+        if not errado:
+            return None
+        etiqueta = "EXEC" if any("ERRO de execução" in e for e in errado) else "VALOR"
+        return f"{etiqueta}: '{alvo}' não deu {chave}={previsto!r} ({'; '.join(errado)})"
 
     with tempfile.TemporaryDirectory() as td:
         mutante = os.path.join(td, "classify.sh")
@@ -194,15 +202,23 @@ else:
             else:
                 cegas.append(f"mutação NÃO pega pelo previsto: {nome} — {motivo}")
                 print(f"  [XX ] mutação NÃO pega pelo previsto: {nome} — {motivo}")
-        # CONTROLE NEGATIVO DO JUIZ — o gate de reintrodução: um `exit 3` que só DERRUBA o classify.sh
-        # (sem sintaxe quebrada) declarando o previsto da 2ª mutação tem de ser RECUSADO.
-        negativo = julga_mutacao("juiz-negativo", MUTACOES[1][1], "exit 3; " + MUTACOES[1][1],
-                                 MUTACOES[1][3], MUTACOES[1][4], MUTACOES[1][5], mutante)
-        if negativo is None:
-            cegas.append("controle negativo do juiz: um classify.sh que MORRE foi creditado como dente")
-            print("  [XX ] controle negativo do juiz: um CRASH foi creditado — o juiz perdeu a identidade")
-        else:
-            print("  [ok ] controle negativo do juiz: a mutação que só derruba o classify.sh foi RECUSADA")
+        # CONTROLES NEGATIVOS DO JUIZ — o gate de reintrodução: cada um tem de ser RECUSADO pela etiqueta
+        # certa do julgamento (recusa por outro motivo deixaria o gate verde com o juiz quebrado):
+        #   VALOR: a 2ª mutação, real, declarando um valor que ela NÃO produz — só o valor a separa;
+        #   EXEC:  a 2ª mutação + um `trap 'exit 3' EXIT` — imprime o valor previsto e sai 3 — só o
+        #          veto a rc/stderr a separa.
+        nome2, de2, para2, alvo2, chave2, prev2 = MUTACOES[1]
+        for etiqueta, para_neg, prev_neg in (("VALOR", para2, "SECRET_DE_TESTE"),
+                                             ("EXEC", "trap 'exit 3' EXIT; " + para2, prev2)):
+            motivo = julga_mutacao("juiz-negativo", de2, para_neg, alvo2, chave2, prev_neg, mutante)
+            if motivo is None:
+                cegas.append(f"controle negativo do juiz [{etiqueta}]: CREDITADO")
+                print(f"  [XX ] controle negativo do juiz [{etiqueta}]: CREDITADO — o juiz perdeu a identidade")
+            elif motivo.startswith(etiqueta + ":"):
+                print(f"  [ok ] controle negativo do juiz: recusado pelo julgamento [{etiqueta}]")
+            else:
+                cegas.append(f"controle negativo do juiz [{etiqueta}]: recusado por OUTRO motivo — {motivo}")
+                print(f"  [XX ] controle negativo do juiz [{etiqueta}]: recusado por OUTRO motivo — o gate não exercitou o juiz ({motivo[:90]})")
     falha = 1 if cegas else 0
     print(f"--falsify: {len(cegas)} cegueira(s) em {len(MUTACOES)} mutação(ões) (esperado: 0)")
 
