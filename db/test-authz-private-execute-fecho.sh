@@ -37,8 +37,8 @@ trap cleanup EXIT
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 # LC_ALL=C acima é exigência do postmaster; o que varia o TEXTO dos erros é lc_messages do
 # servidor. Parametrizado p/ a prova rodar em C e pt_BR.UTF-8 (falsificar num locale só não prova).
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q -c "ALTER DATABASE prove SET lc_messages='${HARNESS_LC_MESSAGES:-C}';" >/dev/null
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q -c "ALTER DATABASE prove SET lc_messages='${HARNESS_LC_MESSAGES:-C}';" >/dev/null
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -148,8 +148,12 @@ SQL
 # Sentinelas ASCII inventadas — nenhuma aparece em mensagem do Postgres, então o veredito não
 # depende de locale nem de tradução (é por SQLSTATE, não por texto).
 veredito() { # veredito <role> <corpo_plpgsql> <condicao_plpgsql>
-  local out
-  out=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
+  local out rc marcas
+  # O rc do psql vai numa variável, FORA do texto julgado: uma linha "PSQL_RC=0" na saída pode ser
+  # impressa pela própria função sob teste (um NOTICE) — o Codex forjou assim um EXECUTOU com a chamada
+  # abortada. E o desfecho é o CONJUNTO das marcas: exatamente uma, com o psql saindo 0 (a marca antes
+  # de outro erro, ou duas marcas, não é desfecho): docs/historico/falsificacao-exit-nao-e-dente.md.
+  if out=$(P -tA 2>&1 <<SQL
 SET ROLE $1;
 DO \$blk\$ BEGIN
   $2;
@@ -159,11 +163,10 @@ EXCEPTION
   WHEN OTHERS THEN RAISE NOTICE 'ZQ_OUTRO_ERRO_%', SQLSTATE; RAISE;
 END \$blk\$;
 SQL
-)
-  # as marcas de desfecho só valem com o psql saindo 0: são NOTICEs, e um erro depois delas (no COMMIT)
-  # deixaria a marca no texto (a classe: docs/historico/falsificacao-exit-nao-e-dente.md)
-  if   printf '%s' "$out" | command grep -Fq 'ZQ_BARROU_ESPERADO' && printf '%s' "$out" | command grep -Fxq 'PSQL_RC=0';  then echo "BARROU"
-  elif printf '%s' "$out" | command grep -Fq 'ZQ_EXECUTOU_SEM_ERRO' && printf '%s' "$out" | command grep -Fxq 'PSQL_RC=0'; then echo "EXECUTOU"
+); then rc=0; else rc=$?; fi
+  marcas=$(printf '%s\n' "$out" | { command grep -oE 'ZQ_[A-Z_]+[0-9A-Z]*' || true; } | sort -u | paste -sd'|' -)
+  if   [ "$rc" -eq 0 ] && [ "$marcas" = "ZQ_BARROU_ESPERADO" ];   then echo "BARROU"
+  elif [ "$rc" -eq 0 ] && [ "$marcas" = "ZQ_EXECUTOU_SEM_ERRO" ]; then echo "EXECUTOU"
   else printf '%s' "$out" | command grep -Fo 'ZQ_OUTRO_ERRO_' >/dev/null 2>&1 \
          && printf 'OUTRO:%s' "$(printf '%s' "$out" | sed -n 's/.*ZQ_OUTRO_ERRO_\([0-9A-Z]*\).*/\1/p' | head -1)" \
          || echo "SEM_SENTINELA"; fi

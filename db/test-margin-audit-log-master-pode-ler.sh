@@ -26,7 +26,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -145,7 +145,10 @@ CREATE POLICY "Strategic+ can view margin audit" ON public.margin_audit_log
   USING (private.is_super_admin(auth.uid())
       OR ((SELECT cr.commercial_role FROM public.commercial_roles cr WHERE cr.user_id = auth.uid()) = 'estrategico'::public.commercial_role));
 SQL
-falsificou "$(medir le $UM)" "7" 1 "policy de origem de volta faz o master parar de ler" "0"
+# O "0" do master sozinho saia tambem de DROP POLICY sem recriar (a RLS nega tudo por padrao): a
+# medicao e a assinatura POR PAPEL -- a policy de ORIGEM tira so o master; o legado segue lendo.
+F1M="master=$(medir le $UM)|estrategico=$(medir le $UE)|super_admin=$(medir le $US)"
+falsificou "$F1M" "master=7|estrategico=7|super_admin=7" 1 "policy de origem de volta faz o master parar de ler (o legado segue)" "master=0|estrategico=7|super_admin=7"
 P -q -f "$MIG" >/dev/null
 eq "F1b restaurado: master volta a ler" "$(le $UM)" "7"
 

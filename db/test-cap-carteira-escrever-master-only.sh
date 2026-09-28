@@ -35,7 +35,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -294,14 +294,13 @@ falsificou "$(medir escr $UM)" "false" "1b" "corpo antigo de volta faz o gerenci
 P -q -f "$MIG" >/dev/null   # restaura a versão verdadeira
 
 # F2 — o jeito ERRADO de aplicar: DROP + CREATE. O corpo fica igual (A2 segue verde!), e o que
-# quebra é o ACL — é por isso que o assert de ACL existe separado do assert de comportamento.
+# quebra é o ACL — é por isso que o assert de ACL existe separado do assert de comportamento. O corpo
+# é o DA MIGRATION (master-only): o de antes deixava gerencial/super_admin escreverem, e a sabotagem
+# mudava comportamento junto com o ACL.
 P -q -c "DROP FUNCTION private.cap_carteira_escrever(uuid);
  CREATE FUNCTION private.cap_carteira_escrever(_uid uuid)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS \$f\$
-  SELECT COALESCE(_uid IS NOT NULL AND (public.has_role(_uid,'master'::public.app_role)
-    OR (public.has_role(_uid,'employee'::public.app_role) AND EXISTS (
-      SELECT 1 FROM public.commercial_roles cr WHERE cr.user_id=_uid
-        AND cr.commercial_role IN ('gerencial','super_admin')))), false);
+  SELECT COALESCE(_uid IS NOT NULL AND public.has_role(_uid, 'master'::public.app_role), false);
 \$f\$;"
 eq "F2a controle: o COMPORTAMENTO (para estrategico) não muda com DROP+CREATE" "$(escr $UE)" "false"
 falsificou "$(medir Pq -c "SELECT has_function_privilege('anon','private.cap_carteira_escrever(uuid)','EXECUTE')::text;")" \
