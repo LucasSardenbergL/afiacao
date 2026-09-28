@@ -790,8 +790,12 @@ jobs:
       # caminho obrigatório (leia o comentário dele, mais abaixo).
       # NÃO substitui o `mutation-check`: aqui a suíte não roda, então isto não afirma NADA
       # sobre cobertura. Só afirma que os padrões ainda são cirúrgicos.
+      # A base entra por `env:`, nunca `${{ }}` cru no `run:`: a expressão é colada no texto do
+      # script ANTES do bash (script injection). A2 de docs/historico/varredura-semgrep-2026-09-27.md.
       - name: Contratos de mutação ainda cirúrgicos (mutcheck --seco, introduzidos por ESTE diff)
-        run: bash scripts/mutcheck-seco-gate.sh origin/${{ github.base_ref || 'main' }}
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: bash scripts/mutcheck-seco-gate.sh "origin/${BASE_REF}"
 
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
