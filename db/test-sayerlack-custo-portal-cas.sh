@@ -31,8 +31,9 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-# -X: sem ~/.psqlrc — ele mudaria o formato da linha ERROR que o juiz do F4b lê
-P()  { "$PGBIN/psql" -X -v VERBOSITY=default -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+# -X: sem ~/.psqlrc — ele mudaria o formato da linha ERROR que o juiz do F4b lê; e nada abaixo de ERROR
+# chega ao cliente (NOTICE/WARNING são o canal por onde se forja uma linha "ERROR:")
+P()  { PGOPTIONS='-c client_min_messages=error' "$PGBIN/psql" -X -v VERBOSITY=default -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -51,11 +52,13 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], 
 # exige que um comando SQL FALHE (caminho negativo grosso). Pra checar a SQLSTATE exata, use o
 # padrão DO/EXCEPTION de references/assert-patterns.md (preferível — Lei #2).
 must_fail() { if P -q -c "$1" >/dev/null 2>&1; then bad "$2 — devia ter falhado e PASSOU"; else ok "$2 (rejeitado)"; fi; }
-# As linhas ERROR de um stderr capturado: severidade ANCORADA no início (um NOTICE que cite
-# "ERROR:" não conta), o prefixo "psql:<arquivo>:<linha>: " fora, várias unidas por " ;; ". O juiz
-# compara o resultado INTEIRO — uma linha só, e a do ramo: sob ON_ERROR_STOP o servidor emite uma,
-# e a segunda seria um NOTICE multilinha forjando-a.
-linhas_error() { grep -E '^(psql:[^ ]*: )?ERROR:  ' "$1" | sed -E 's/^psql:[^ ]*: //' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }' || true; }
+# As linhas que INTERROMPEM, num stderr capturado: ERROR/FATAL/PANIC com a severidade ANCORADA no
+# início (um NOTICE que cite "ERROR:" não conta) e todo erro do cliente psql (conexão que cai), sem o
+# prefixo "psql:<arquivo>:<linha>: ", várias unidas por " ;; ". O juiz compara o resultado INTEIRO:
+# uma linha só, e a do ramo. As conexões nem recebem NOTICE (client_min_messages=error, em P) — por
+# ali se forjaria uma linha "ERROR:" inteira, e um FATAL depois dela esconderia que o erro real não
+# veio (Codex, 2026-09-27).
+linhas_error() { grep -E '^(psql:[^ ]*: )?(ERROR|FATAL|PANIC):  |^psql: error: |server closed the connection|connection to server was lost' "$1" | sed -E 's/^psql:[^ ]*: //' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }' || true; }
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 

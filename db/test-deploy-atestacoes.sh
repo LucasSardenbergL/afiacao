@@ -3,7 +3,7 @@
 # ║  PROVA PG17 — deploy_atestacoes (ledger de atestação de deploy + coletor)     ║
 # ║  migration: 20260905183314_deploy_atestacoes_ledger_e_sonda_cron.sql          ║
 # ║  Rode:  bash db/test-deploy-atestacoes.sh > /tmp/t.log 2>&1; echo $?          ║
-# ║         bash db/test-deploy-atestacoes.sh --falsificar   (8 sabotagens)       ║
+# ║         bash db/test-deploy-atestacoes.sh --falsificar   (9 sabotagens)       ║
 # ║                                                                                ║
 # ║  Prova: a janela viva aceita só sonda (probe booleano true) e eco (sem probe)  ║
 # ║  com forma válida; envenenamento (edge null, slug ruim, fonte lixo, corpo      ║
@@ -61,26 +61,35 @@ CUST_C='cccccccc-cccc-cccc-cccc-cccccccccccc'
 F_A='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 F_B='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 
-# ── asserts: "<ID> OK" · "<ID> FALHOU" · "<ID> ERRO_DE_EXECUCAO [<linhas ERROR>]" ─────────
-# Cada MEDIÇÃO (Pq) deixa o seu stderr em $ERRS e o seu status ≠0 em $ERRS_RC; o `eq` do assert
-# lê os dois e os zera — a associação é da medição, e cada assert tem a SUA (o A9 roda a query uma
-# vez por assert). Linha ERROR (severidade ancorada no início da linha) OU status ≠0 querem dizer
-# que o valor não é resultado: o assert não julgou nada e vira ERRO_DE_EXECUCAO — nunca FALHOU,
-# nem "veio []" comparável (conexão que cai também devolve vazio). Entre colchetes vão TODAS as
-# linhas ERROR da medição; a falsificação só aceita esse vermelho quando ele é EXATAMENTE a
-# assinatura declarada para ESTE assert — uma linha só (um NOTICE multilinha forja a segunda).
-PASS=0; FAIL=0; ERRS=""; ERRS_RC=""
-ok()        { PASS=$((PASS+1)); echo "  ✅ $1 OK — $2"; }
-bad()       { FAIL=$((FAIL+1)); echo "  ❌ $1 FALHOU — $2"; }
-erro_exec() { FAIL=$((FAIL+1)); echo "  ❌ $1 ERRO_DE_EXECUCAO [$2] — $3"; }
+# ── asserts: "<ID> OK" · "<ID> FALHOU" · "<ID> ERRO_DE_EXECUCAO [<diagnóstico>]" ──────────
+# Cada MEDIÇÃO (Pq) deixa o seu stderr em $ERRS e o seu status ≠0 em $ERRS_RC; o `eq` do assert lê
+# os dois e os zera — a associação é da medição, e cada assert tem a SUA (o A9 roda a query uma vez
+# por assert). As conexões não recebem NOTICE nem WARNING (client_min_messages=error, em P): um
+# NOTICE com quebra de linha forjaria uma linha "ERROR:" inteira. O diagnóstico conta toda linha
+# ERROR/FATAL/PANIC (severidade ancorada no início) e todo erro do cliente psql. Erro de execução
+# LIMPO — o único que uma sabotagem pode declarar — é rc≠0 com EXATAMENTE uma linha, e ERROR; o
+# resto (rc≠0 sem linha, FATAL, várias linhas, linha ERROR com rc=0) é erro que nada declara. O
+# veredito vai também para $VEREDITOS, um registro por assert (ID, status, a linha ERROR limpa ou
+# "-"): a falsificação julga por IGUALDADE nesses campos, nunca pelo texto da linha humana — onde
+# um "] — " dentro da mensagem forjaria o delimitador (Codex, 2026-09-27).
+PASS=0; FAIL=0; ERRS=""; ERRS_RC=""; VEREDITOS=""
+ok()  { PASS=$((PASS+1)); printf '%s\tOK\t-\n' "$1" >> "$VEREDITOS"; echo "  ✅ $1 OK — $2"; }
+bad() { FAIL=$((FAIL+1)); printf '%s\tFALHOU\t-\n' "$1" >> "$VEREDITOS"; echo "  ❌ $1 FALHOU — $2"; }
+erro_exec() {   # <ID> <chave: a linha ERROR limpa, ou "-"> <diagnóstico> <rótulo>
+  FAIL=$((FAIL+1)); printf '%s\tERRO_DE_EXECUCAO\t%s\n' "$1" "$2" >> "$VEREDITOS"
+  echo "  ❌ $1 ERRO_DE_EXECUCAO [$3] — $4"
+}
 eq() {   # "<ID> <rótulo>" <valor> <esperado>
-  local id="${1%% *}" rotulo="${1#* }" erros rc
-  erros="$(grep -E '^(psql:[^ ]*: )?ERROR:  ' "$ERRS" | sed -E 's/^psql:[^ ]*: //' \
-             | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }' || true)"
-  rc="$(tr '\n' ' ' < "$ERRS_RC")"
+  local id="${1%% *}" rotulo="${1#* }" diag n rc
+  diag="$(grep -E '^(psql:[^ ]*: )?(ERROR|FATAL|PANIC):  |^psql: error: |server closed the connection|connection to server was lost' "$ERRS" \
+            | sed -E 's/^psql:[^ ]*: //' || true)"
+  n="$(printf '%s' "$diag" | grep -c . || true)"
+  rc="$(tr '\n' ' ' < "$ERRS_RC")"; rc="${rc% }"
   : > "$ERRS"; : > "$ERRS_RC"
-  if [ -n "$erros" ]; then erro_exec "$id" "$erros" "$rotulo"
-  elif [ -n "$rc" ]; then erro_exec "$id" "psql saiu rc=${rc% } sem linha ERROR" "$rotulo"
+  if [ -n "$rc" ] && [ "$n" = 1 ] && [ "${diag#ERROR:  }" != "$diag" ]; then
+    erro_exec "$id" "$diag" "$diag" "$rotulo"
+  elif [ -n "$rc" ] || [ "$n" != 0 ]; then
+    erro_exec "$id" "-" "rc=${rc:-0}, ${n} linha(s) de diagnóstico: $(printf '%s' "$diag" | tr '\n' '|' | cut -c1-300)" "$rotulo"
   elif [ "$2" = "$3" ]; then ok "$id" "$rotulo (=$2)"
   else bad "$id" "$rotulo — esperado [$3], veio [$2]"; fi
 }
@@ -89,10 +98,12 @@ recibo() { echo "PASS=${PASS}  FAIL=${FAIL}"; }
 # ── prova(<migration>) — banco fresco, stubs, migration, fixtures, asserts ─────────────
 prova() {
   local mig="$1" db="$2" r
-  PASS=0; FAIL=0; ERRS="$TMPD/stderr-$db.txt"; ERRS_RC="$TMPD/rc-$db.txt"; : > "$ERRS"; : > "$ERRS_RC"
+  PASS=0; FAIL=0; ERRS="$TMPD/stderr-$db.txt"; ERRS_RC="$TMPD/rc-$db.txt"; VEREDITOS="$TMPD/vered-$db.tsv"
+  : > "$ERRS"; : > "$ERRS_RC"; : > "$VEREDITOS"
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres "$db"
-  # -X: sem ~/.psqlrc — ele mudaria o formato da linha ERROR que os juízes leem
-  P()  { "$PGBIN/psql" -X -v VERBOSITY=default -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 "$@"; }
+  # -X: sem ~/.psqlrc — ele mudaria o formato da linha ERROR que os juízes leem. E nada abaixo de
+  # ERROR chega ao cliente: NOTICE/WARNING são o canal por onde se forja uma linha "ERROR:".
+  P()  { PGOPTIONS='-c client_min_messages=error' "$PGBIN/psql" -X -v VERBOSITY=default -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 "$@"; }
   Pq() { local rc=0; P -q -tA "$@" 2>>"$ERRS" || rc=$?; if [ "$rc" -ne 0 ]; then echo "$rc" >> "$ERRS_RC"; fi; return "$rc"; }
 
   P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -238,6 +249,9 @@ SQL
   eq "A9b CLI: 6 campos por linha" "$(cli | awk -F'|' '{print NF}' | sort -u | tr '\n' ',')" "6,"
   eq "A9c CLI: empate de created -> request_id maior (12 = v1.0-a-bis)" "$(cli | awk -F'|' '$1=="edge-a"{print $2}')" "v1.0-a-bis"
   eq "A9d CLI: via da edge-b = eco" "$(cli | awk -F'|' '$1=="edge-b"{print $4}')" "eco"
+  # O contrato do parser: `parsearObservacoes` DESCARTA a linha com campo vazio, e a edge some do
+  # relatório. O teste aposentado vigiava isto; o sucessor não vigiava (Codex, 2026-09-27).
+  eq "A9e CLI: nenhum campo vazio" "$(cli | awk -F'|' '{ for (i = 1; i <= NF; i++) if ($i == "") v++ } END { print v + 0 }')" "0"
 
   # A10: a saúde do coletor — sem execução = 'nunca'; com sucesso há 10 min = ~10
   eq "A10a saude sem execucao = nunca" "$(Pq -c "$SQL_SAUDE")" "nunca"
@@ -309,23 +323,43 @@ assinatura() {
   esac
 }
 
+# ── sabotar_cli(<nome>) — o SQL do CLI (o que `pendencias:deploy` executa) com UMA troca literal
+# de contagem exata. Roda DENTRO do subshell da rodada: o SQL_CLI sabotado vale só para ela ─────
+sabotar_cli() {
+  local de para n novo
+  case "$1" in
+    # a projeção devolve fonte VAZIA: parsearObservacoes descarta a linha com campo vazio — o
+    # contrato de 6 campos não vazios que o teste aposentado vigiava — e a edge some do relatório
+    cli_fonte_vazia) de=$'       edge, versao, fonte, via,\n'; para=$'       edge, versao, \'\'::text AS fonte, via,\n'; n=1 ;;
+    *) echo "❌ SABOTAGEM NAO APLICAVEL: $1 não tem ramo em sabotar_cli()" >&2; return 1 ;;
+  esac
+  novo="$(printf '%s' "$SQL_CLI" | python3 -c '
+import sys
+s = sys.stdin.read(); de, para, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+if s.count(de) != n:
+    print("   padrão ocorre %dx, esperado %d: %r" % (s.count(de), n, de), file=sys.stderr)
+    sys.exit(1)
+sys.stdout.write(s.replace(de, para))' "$de" "$para" "$n")" || { echo "❌ SABOTAGEM NAO APLICAVEL: $1" >&2; return 1; }
+  SQL_CLI="$novo"
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: prova que os asserts têm DENTE — e que o vermelho é do assert DECLARADO.
 # exit≠0 NÃO é dente (docs/historico/falsificacao-exit-nao-e-dente.md). Até 2026-09-27 este laço
 # aceitava "APPLY" em qualquer aborto do apply e `grep 'A1'` em NOMES_FALHOS (que casa A10a/A11a).
 # Cada sabotagem declara quem a acusa, `,` = E:
 #   `ID`       — o assert fica vermelho POR RESULTADO (FALHOU);
-#   `ID!MARCA` — o vermelho declarado É um erro de execução: a linha do assert traz, sozinha
-#                entre colchetes, a assinatura(MARCA). Cascata legítima também se declara, par a
-#                par — marca que valesse para qualquer assert aceitaria a mesma mensagem vinda de
-#                outra causa.
-# A rodada só conta como vermelha com as QUATRO camadas:
+#   `ID!MARCA` — o vermelho declarado É um erro de execução LIMPO cuja linha ERROR é, por IGUALDADE,
+#                a assinatura(MARCA). Cascata legítima também se declara, par a par: marca que
+#                valesse para qualquer assert aceitaria a mesma mensagem vinda de outra causa.
+# O juiz lê o REGISTRO estruturado de cada rodada (o $VEREDITOS que o `eq` escreve), e a linha humana
+# só confirma. A rodada só conta como vermelha com as QUATRO camadas:
 #   1. a sabotagem APLICOU (a linha "SABOTAGEM ATIVA: <nome>" está no log);
-#   2. a suíte rodou INTEIRA e IGUAL: a mesma sequência de IDs do controle, um recibo só (só o A0
+#   2. a suíte rodou INTEIRA e IGUAL: a mesma sequência de IDs do controle e um recibo só (só o A0,
 #      se o vermelho declarado é o apply) — a soma sozinha aceitaria um assert faltando e outro
 #      duplicado;
-#   3. cada ID declarado está verde no controle e vermelho aqui DO JEITO declarado;
-#   4. TODA linha ERRO_DE_EXECUCAO da rodada é um par (ID, assinatura) que ESTA sabotagem declarou.
+#   3. cada ID declarado está OK no controle e, aqui, FALHOU (ID) ou é o erro limpo declarado (ID!MARCA);
+#   4. TODO registro ERRO_DE_EXECUCAO da rodada é um par (ID, assinatura) que ESTA sabotagem declarou.
 # O controle roda PRIMEIRO, na mesma invocação: suíte que já falha aprovaria tudo por vermelhidão.
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
@@ -335,17 +369,17 @@ if [ "${1:-}" = "--falsificar" ]; then
               versao_sem_tipo:A1
               eco_exige_probe:A1,A4
               eco_null_blind:A1,A4,A6
-              sem_is_json_object:A1!json_invalido,A2!json_invalido,A3!json_invalido,A9a!json_invalido,A9b!json_invalido,A9c!json_invalido,A9d!json_invalido,A11a!json_invalido
-              fonte_sem_coalesce:A2!fonte_nula,A3!fonte_nula,A11a!fonte_nula"
-  TOTAL_ESPERADO=24   # asserts da suíte (A0…A11c): o denominador do controle
+              sem_is_json_object:A1!json_invalido,A2!json_invalido,A3!json_invalido,A9a!json_invalido,A9b!json_invalido,A9c!json_invalido,A9d!json_invalido,A9e!json_invalido,A11a!json_invalido
+              fonte_sem_coalesce:A2!fonte_nula,A3!fonte_nula,A11a!fonte_nula,A9e
+              cli_fonte_vazia:A9e"
+  TOTAL_ESPERADO=25   # asserts da suíte (A0…A11c): o denominador do controle
   LOGDIR="$TMPD/falsifica"; mkdir -p "$LOGDIR"
-  # os IDs que uma rodada julgou, um por linha, na ordem em que rodaram
-  ids_de() { { grep -Eo '^  (✅|❌) A[0-9]+[a-z]? ' "$1" || true; } | sed -E 's/^  (✅|❌) //; s/ $//'; }
+  # o registro estruturado de uma rodada — "ID <tab> status <tab> chave", um por assert, na ordem
+  registro()   { printf '%s' "$TMPD/vered-prova_${1:-controle}.tsv"; }
+  ids_de()     { cut -f1 "$1" 2>/dev/null || true; }
+  status_de()  { awk -F'\t' -v id="$2" '$1 == id { print $2; exit }' "$1" 2>/dev/null || true; }
+  chave_de()   { awk -F'\t' -v id="$2" '$1 == id { sub(/^[^\t]*\t[^\t]*\t/, ""); print; exit }' "$1" 2>/dev/null || true; }
   recibos_de() { grep -c '^PASS=[0-9][0-9]*  FAIL=[0-9][0-9]*$' "$1" || true; }
-  # a linha começa EXATAMENTE com o prefixo (literal: a assinatura tem aspas e parênteses). O
-  # prefixo vai por ENVIRON, não por `-v`: o `-v` interpreta escapes, e o awk BSD do macOS recusa
-  # nele a quebra de linha que a lista de permitidos (abaixo) tem.
-  comeca_com() { PREFIXO="$1" awk 'index($0, ENVIRON["PREFIXO"]) == 1 { f = 1 } END { exit !f }' "$2"; }
   # Cada rodada num SUBSHELL com `set -e` próprio: o aborto mata a rodada, não o laço, e o recibo
   # que falta vira a camada 2. Chame SEMPRE como comando simples — dentro de `if`/`||`/`&&` o bash
   # 3.2 SUSPENDE o `set -e` do subshell (medido em 2026-09-27: o `false` passa e a rodada "segue"),
@@ -354,7 +388,11 @@ if [ "${1:-}" = "--falsificar" ]; then
     set +e
     (
       set -e
-      if [ -z "$2" ]; then alvo="$MIG"; else alvo="$(sabotar "$2")"; echo "SABOTAGEM ATIVA: $2"; fi
+      case "$2" in
+        '')    alvo="$MIG" ;;
+        cli_*) alvo="$MIG"; sabotar_cli "$2"; echo "SABOTAGEM ATIVA: $2" ;;
+        *)     alvo="$(sabotar "$2")"; echo "SABOTAGEM ATIVA: $2" ;;
+      esac
       prova "$alvo" "prova_${2:-controle}"
     ) > "$1" 2>&1
     RC_RODADA=$?
@@ -363,11 +401,13 @@ if [ "${1:-}" = "--falsificar" ]; then
 
   echo "══ CONTROLE (migration real, sem sabotagem) — tem de ficar VERDE, com os $TOTAL_ESPERADO asserts ══"
   rodada "$LOGDIR/controle.log" ""
-  ids_controle="$(ids_de "$LOGDIR/controle.log")"
+  reg_controle="$(registro "")"
+  ids_controle="$(ids_de "$reg_controle")"
   if [ "$RC_RODADA" -eq 0 ] && [ "$(recibos_de "$LOGDIR/controle.log")" = 1 ] \
      && grep -q '^PASS=[0-9]*  FAIL=0$' "$LOGDIR/controle.log" \
      && [ "$(printf '%s\n' "$ids_controle" | sort -u | grep -c .)" = "$TOTAL_ESPERADO" ] \
-     && [ "$(printf '%s\n' "$ids_controle" | grep -c .)" = "$TOTAL_ESPERADO" ]; then
+     && [ "$(printf '%s\n' "$ids_controle" | grep -c .)" = "$TOTAL_ESPERADO" ] \
+     && [ -z "$(awk -F'\t' '$2 != "OK"' "$reg_controle")" ]; then
     echo "  ✅ controle VERDE ($TOTAL_ESPERADO asserts, IDs únicos) — a suíte sabe passar"
   else
     echo "  ❌ CONTROLE não é verde com os $TOTAL_ESPERADO asserts de IDs únicos (rc=$RC_RODADA) — abortando ANTES"
@@ -378,30 +418,33 @@ if [ "${1:-}" = "--falsificar" ]; then
   falhas=0
   for item in $SABOTAGENS; do
     sab="${item%%:*}"; verm="${item#*:}"
-    log="$LOGDIR/$sab.log"
+    log="$LOGDIR/$sab.log"; reg="$(registro "$sab")"; pares="$LOGDIR/$sab.pares"
     rodada "$log" "$sab"   # o veredito é das camadas abaixo, nunca do RC_RODADA
-    ids_esperados="$ids_controle"; faltam=""; permitidos=""
+    ids_esperados="$ids_controle"; faltam=""
+    printf '#\t#\n' > "$pares"   # sentinela: o `NR == FNR` do awk abaixo leria errado um arquivo vazio
     for x in ${verm//,/ }; do
       id="${x%%!*}"
-      if ! grep -Eq "^  ✅ ${id} OK " "$LOGDIR/controle.log"; then faltam="$faltam $x(não é verde no controle)"; continue; fi
+      if [ "$(status_de "$reg_controle" "$id")" != OK ]; then faltam="$faltam $x(não é OK no controle)"; continue; fi
       case "$x" in
         *!*) if ! sig="$(assinatura "${x#*!}")"; then faltam="$faltam $x(marca sem assinatura)"; continue; fi
              if [ "$id" = A0 ]; then ids_esperados="A0"; fi
-             prefixo="  ❌ ${id} ERRO_DE_EXECUCAO [${sig}] — "
-             permitidos="${permitidos}${prefixo}"$'\n'
-             comeca_com "$prefixo" "$log" || faltam="$faltam $x" ;;
-        *)   grep -Eq "^  ❌ ${id} FALHOU " "$log" || faltam="$faltam $x" ;;
+             printf '%s\t%s\n' "$id" "$sig" >> "$pares"
+             { [ "$(status_de "$reg" "$id")" = ERRO_DE_EXECUCAO ] && [ "$(chave_de "$reg" "$id")" = "$sig" ] \
+                 && grep -Eq "^  ❌ ${id} ERRO_DE_EXECUCAO " "$log"; } || faltam="$faltam $x" ;;
+        *)   { [ "$(status_de "$reg" "$id")" = FALHOU ] && grep -Eq "^  ❌ ${id} FALHOU " "$log"; } \
+               || faltam="$faltam $x" ;;
       esac
     done
-    alheios="$(PERMITIDOS="$permitidos" awk 'BEGIN { n = split(ENVIRON["PERMITIDOS"], ok, "\n") }
-                 / ERRO_DE_EXECUCAO / { bom = 0; for (i = 1; i <= n; i++) if (ok[i] != "" && index($0, ok[i]) == 1) bom = 1; if (!bom) print }' "$log")"
-    vermelhos="$({ grep -Eo '^  ❌ A[0-9]+[a-z]? ' "$log" || true; } | sed -E 's/^  ❌ //; s/ $//' | tr '\n' ' ')"
+    alheios="$(awk -F'\t' 'NR == FNR { p[$1] = substr($0, length($1) + 2); next }
+                 $2 == "ERRO_DE_EXECUCAO" { c = $0; sub(/^[^\t]*\t[^\t]*\t/, "", c)
+                   if (!($1 in p) || p[$1] != c) print $1 " [" c "]" }' "$pares" "$reg" 2>/dev/null || true)"
+    vermelhos="$(awk -F'\t' '$2 != "OK" { printf "%s ", $1 }' "$reg" 2>/dev/null || true)"
     if ! grep -q "^SABOTAGEM ATIVA: ${sab}\$" "$log"; then
       echo "  ❌ $sab — a sabotagem NÃO aplicou (padrão derivou? nome sem ramo?): nenhum assert julgou nada"
       { grep -m2 -E 'NAO APLICAVEL|padrão ocorre' "$log" || true; } | sed 's/^/       /'
       falhas=$((falhas+1))
-    elif [ "$(recibos_de "$log")" != 1 ] || [ "$(ids_de "$log")" != "$ids_esperados" ]; then
-      echo "  ❌ $sab — a suíte NÃO rodou inteira e igual ao controle ($(ids_de "$log" | grep -c . || true) IDs, $(recibos_de "$log") recibo(s)): vermelho de aborto, não de assert"
+    elif [ "$(recibos_de "$log")" != 1 ] || [ "$(ids_de "$reg")" != "$ids_esperados" ]; then
+      echo "  ❌ $sab — a suíte não rodou o conjunto esperado de asserts ($(ids_de "$reg" | grep -c . || true) IDs, $(recibos_de "$log") recibo(s)): vermelho de aborto, não de assert"
       tail -3 "$log" | sed 's/^/       /'
       falhas=$((falhas+1))
     elif [ -n "$alheios" ]; then
