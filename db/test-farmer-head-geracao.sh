@@ -52,10 +52,22 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
-# usado SÓ na falsificação: espelha eq() mas com o veredito INVERTIDO (queremos vermelho).
-eq_esperando_vermelho() {
+# usado SÓ na falsificação: VERMELHO = o valor sob sabotagem é o que a sabotagem DECLARA ($4), não
+# só "≠ íntegro". O "≠" aceitava a chamada sabotada que ERRA (ela rodava com `|| true`): no F4 e no
+# F9, a chamada quebrada deixava o head/o log VAZIOS — exatamente o valor que a sabotagem produz. As
+# sentinelas de DO só valem com o psql saindo 0 (PSQL_RC=0): a marca é um NOTICE, e um erro depois
+# dela (no COMMIT) deixaria a marca no texto. E o vermelho não se lê em texto de erro (`*ERROR*`,
+# "permission denied"): com o servidor em pt_BR ele diz ERRO/"permissão negada" e caía no `ok`. O
+# vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+eq_esperando_vermelho() { # $1=rótulo  $2=medido  $3=íntegro  $4=o que a sabotagem DECLARA
   if [ "$2" = "$3" ]; then bad "FALSIFICAÇÃO SEM DENTE: $1 continuou [$2] com a migration sabotada"
-  else ok "falsificação mordeu: $1 virou [$2] (íntegro seria [$3])"; fi
+  elif [ "$2" = "$4" ]; then ok "falsificação mordeu: $1 virou [$2] (íntegro seria [$3])"
+  else bad "$1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (íntegro [$3])"; fi
+}
+# a chamada sob sabotagem TEM de completar: se ela erra, o que se mede depois é o erro, não a sabotagem
+chamada_sabotada() { # $1=rótulo  $2=SQL
+  local out
+  if ! out=$(Pq -c "$2" 2>&1); then bad "$1 — a chamada sabotada ERROU (erro de execução não é dente): $(printf '%s' "$out" | head -c 200)"; fi
 }
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
@@ -583,16 +595,16 @@ sabota() { # $1=nome  $2=expressão perl  $3=marca que TEM de aparecer no result
 #      a fase 2 decidiria ligar a expiração. H5 tem de ficar VERMELHO.
 if sabota "F1" "s/v_completude := coalesce\(p_completude, 'desconhecido'\);/v_completude := coalesce(p_completude, 'completo');/" "coalesce(p_completude, 'completo')"; then
   GER=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
-  Pq -c "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','f1000000-aaaa-aaaa-aaaa-000000000001',$([ -z "$GER" ] && echo NULL || echo "'$GER'"),'$LOTE_OK'::jsonb);" >/dev/null 2>&1 || true
+  chamada_sabotada "F1" "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','f1000000-aaaa-aaaa-aaaa-000000000001',$([ -z "$GER" ] && echo NULL || echo "'$GER'"),'$LOTE_OK'::jsonb);"
   eq_esperando_vermelho "H5 chamada de 4 args grava 'desconhecido'" \
-    "$(Pq -c "SELECT completude FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")" "desconhecido"
+    "$(Pq -c "SELECT completude FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")" "desconhecido" "completo"
   restaura
 fi
 
 # F2 — desligar o CAS do head. N9 deixa de barrar, e um run vazio lento passa a
 #      sobrescrever o head de um run com linhas que terminou antes.
 if sabota "F2" "s/  IF v_head_atual IS DISTINCT FROM p_head_visto THEN/  IF false THEN/" "IF false THEN"; then
-  OUT=$(P -tA 2>&1 <<SQL || true
+  OUT=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 DO \$\$
 BEGIN
   PERFORM public.farmer_geracao_registrar('cross_sell','$FARMER_A','f2000000-aaaa-aaaa-aaaa-000000000002','vazio',0,'completo',NULL,NULL,'99999999-9999-9999-9999-999999999999'::uuid);
@@ -603,8 +615,8 @@ END \$\$;
 SQL
 )
   case "$OUT" in
-    *SENTINELA_NAO_BARROU*) ok "falsificação mordeu: sem o CAS, o head de outro run é sobrescrito (N9 seria falso-verde)" ;;
-    *SENTINELA_BARROU_CERTO*) bad "FALSIFICAÇÃO SEM DENTE: N9 barrou mesmo com o CAS do head desligado" ;;
+    *SENTINELA_NAO_BARROU*PSQL_RC=0) ok "falsificação mordeu: sem o CAS, o head de outro run é sobrescrito (N9 seria falso-verde)" ;;
+    *SENTINELA_BARROU_CERTO*PSQL_RC=0) bad "FALSIFICAÇÃO SEM DENTE: N9 barrou mesmo com o CAS do head desligado" ;;
     *) bad "F2 erro inesperado: $(printf '%s' "$OUT" | head -c 200)" ;;
   esac
   restaura
@@ -615,11 +627,23 @@ fi
 if sabota "F3" "s/      CHECK \(linhas_geradas >= 0 AND \(resultado = 'linhas'\) = \(linhas_geradas > 0\)\);/      CHECK (linhas_geradas >= 0);/" "CHECK (linhas_geradas >= 0);"; then
   P -q -c "ALTER TABLE public.farmer_geracao_vigente DROP CONSTRAINT IF EXISTS farmer_geracao_vigente_linhas_coerente;" >/dev/null
   P -q -f "$SAB" >/dev/null
-  R=$(P -tA 2>&1 -c "INSERT INTO public.farmer_geracao_vigente (motor,farmer_id,run_id,resultado,linhas_geradas,completude) VALUES ('bundle','$FARMER_C','f3000000-aaaa-aaaa-aaaa-000000000003','linhas',0,'completo');" || true)
+  R=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
+DO \$\$ DECLARE n bigint; c text;
+BEGIN
+  INSERT INTO public.farmer_geracao_vigente (motor,farmer_id,run_id,resultado,linhas_geradas,completude)
+  VALUES ('bundle','$FARMER_C','f3000000-aaaa-aaaa-aaaa-000000000003','linhas',0,'completo');
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RAISE NOTICE 'SENTINELA_NAO_BARROU n=%', n;
+EXCEPTION WHEN check_violation THEN
+  GET STACKED DIAGNOSTICS c = CONSTRAINT_NAME;
+  RAISE NOTICE 'SENTINELA_BARROU_CERTO c=%', c;
+END \$\$;
+SQL
+)
   case "$R" in
-    *farmer_geracao_vigente_linhas_coerente*) bad "FALSIFICAÇÃO SEM DENTE: N11 barrou mesmo sem o CHECK de coerência" ;;
-    *ERROR*) bad "F3 erro inesperado: $(printf '%s' "$R" | head -c 200)" ;;
-    *) ok "falsificação mordeu: sem o CHECK, 'linhas' com 0 linhas ENTRA (N11 seria falso-verde)" ;;
+    *"SENTINELA_NAO_BARROU n=1"*PSQL_RC=0) ok "falsificação mordeu: sem o CHECK, 'linhas' com 0 linhas ENTRA (N11 seria falso-verde)" ;;
+    *"SENTINELA_BARROU_CERTO c=farmer_geracao_vigente_linhas_coerente"*PSQL_RC=0) bad "FALSIFICAÇÃO SEM DENTE: N11 barrou mesmo sem o CHECK de coerência" ;;
+    *) bad "F3 — vermelha, mas NÃO no que a sabotagem declara (a linha entra, psql 0): $(printf '%s' "$R" | head -c 200)" ;;
   esac
   P -q -c "DELETE FROM public.farmer_geracao_vigente WHERE farmer_id='$FARMER_C';" >/dev/null
   restaura
@@ -631,9 +655,9 @@ if sabota "F4" "s/  PERFORM public\.farmer_geracao_registrar\(\n    'cross_sell'
   P -q -c "DELETE FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';" >/dev/null
   GER=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
   F4_RUN='f4000000-aaaa-aaaa-aaaa-000000000004'
-  Pq -c "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','$F4_RUN',$([ -z "$GER" ] && echo NULL || echo "'$GER'"),'$LOTE_OK'::jsonb,'completo',NULL,'$INSUMOS'::jsonb);" >/dev/null 2>&1 || true
+  chamada_sabotada "F4" "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','$F4_RUN',$([ -z "$GER" ] && echo NULL || echo "'$GER'"),'$LOTE_OK'::jsonb,'completo',NULL,'$INSUMOS'::jsonb);"
   eq_esperando_vermelho "H1 a substituição move o head" \
-    "$(Pq -c "SELECT count(*) FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")" "1"
+    "$(Pq -c "SELECT count(*) FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")" "1" "0"
   restaura
 fi
 
@@ -652,7 +676,7 @@ else
   # relançaria — o vermelho seria do harness, não da sabotagem. O alvo aqui é o gate de
   # AUTORIZAÇÃO, então todo o resto tem de estar coerente para o fluxo chegar até ele.
   HV3=$(Pq -c "SELECT run_id FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")
-  OUT=$(P -tA 2>&1 <<SQL || true
+  OUT=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 SET test.role=''; SET test.uid='';
 DO \$\$
 BEGIN
@@ -664,8 +688,8 @@ END \$\$;
 SQL
 )
   case "$OUT" in
-    *SENTINELA_NAO_BARROU*) ok "falsificação mordeu: com 'IF NOT (...)' a sessão sem identidade PASSA (A3 seria falso-verde)" ;;
-    *SENTINELA_BARROU_CERTO*) bad "FALSIFICAÇÃO SEM DENTE: A3 barrou mesmo com o gate em three-valued logic" ;;
+    *SENTINELA_NAO_BARROU*PSQL_RC=0) ok "falsificação mordeu: com 'IF NOT (...)' a sessão sem identidade PASSA (A3 seria falso-verde)" ;;
+    *SENTINELA_BARROU_CERTO*PSQL_RC=0) bad "FALSIFICAÇÃO SEM DENTE: A3 barrou mesmo com o gate em three-valued logic" ;;
     *) bad "F5 erro inesperado: $(printf '%s' "$OUT" | head -c 200)" ;;
   esac
   restaura
@@ -675,7 +699,7 @@ fi
 #      "linhas" na palavra do browser, sem nenhuma linha por trás.
 if sabota "F6" "s/  IF p_resultado = 'linhas' THEN\n    IF p_motor = 'cross_sell' THEN/  IF false THEN\n    IF p_motor = 'cross_sell' THEN/" "IF false THEN"; then
   HV4=$(Pq -c "SELECT run_id FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")
-  OUT=$(P -tA 2>&1 <<SQL || true
+  OUT=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 DO \$\$
 BEGIN
   PERFORM public.farmer_geracao_registrar('cross_sell','$FARMER_A','f6000000-aaaa-aaaa-aaaa-000000000006','linhas',7,'completo',NULL,NULL,$([ -z "$HV4" ] && echo NULL || echo "'$HV4'::uuid"));
@@ -686,8 +710,8 @@ END \$\$;
 SQL
 )
   case "$OUT" in
-    *SENTINELA_NAO_BARROU*) ok "falsificação mordeu: sem o anti-forja, o head aceita 'linhas' sem linha (N9c seria falso-verde)" ;;
-    *SENTINELA_BARROU_CERTO*) bad "FALSIFICAÇÃO SEM DENTE: N9c barrou mesmo com o anti-forja desligado" ;;
+    *SENTINELA_NAO_BARROU*PSQL_RC=0) ok "falsificação mordeu: sem o anti-forja, o head aceita 'linhas' sem linha (N9c seria falso-verde)" ;;
+    *SENTINELA_BARROU_CERTO*PSQL_RC=0) bad "FALSIFICAÇÃO SEM DENTE: N9c barrou mesmo com o anti-forja desligado" ;;
     *) bad "F6 erro inesperado: $(printf '%s' "$OUT" | head -c 200)" ;;
   esac
   restaura
@@ -701,16 +725,22 @@ if sabota "F7" "s/GRANT SELECT ON TABLE public\.farmer_geracao_vigente   TO auth
   # sem ela o vermelho viria da policy ausente e não provaria nada sobre o grant.
   P -q -c "CREATE POLICY fgv_update_sabotada ON public.farmer_geracao_vigente FOR UPDATE TO authenticated
            USING (farmer_id = (SELECT auth.uid())) WITH CHECK (farmer_id = (SELECT auth.uid()));" >/dev/null
-  R=$(P -tA 2>&1 <<SQL || true
+  R=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 SET test.uid='$FARMER_A'; SET test.role='authenticated'; SET ROLE authenticated;
-UPDATE public.farmer_geracao_vigente SET resultado='vazio', linhas_geradas=0, completude='completo'
-WHERE farmer_id='$FARMER_A' AND motor='cross_sell';
+DO \$\$ DECLARE n bigint;
+BEGIN
+  UPDATE public.farmer_geracao_vigente SET resultado='vazio', linhas_geradas=0, completude='completo'
+  WHERE farmer_id='$FARMER_A' AND motor='cross_sell';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RAISE NOTICE 'SENTINELA_NAO_BARROU n=%', n;
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'SENTINELA_BARROU_CERTO';
+END \$\$;
 SQL
 )
   case "$R" in
-    *"permission denied"*) bad "FALSIFICAÇÃO SEM DENTE: W1 barrou mesmo com o GRANT de escrita devolvido" ;;
-    *ERROR*) bad "F7 erro inesperado: $(printf '%s' "$R" | head -c 200)" ;;
-    *) ok "falsificação mordeu: com GRANT de escrita, o head é forjado por UPDATE direto (W1 seria falso-verde)" ;;
+    *"SENTINELA_NAO_BARROU n=1"*PSQL_RC=0) ok "falsificação mordeu: com GRANT de escrita, o head é forjado por UPDATE direto (W1 seria falso-verde)" ;;
+    *SENTINELA_BARROU_CERTO*PSQL_RC=0) bad "FALSIFICAÇÃO SEM DENTE: W1 barrou mesmo com o GRANT de escrita devolvido" ;;
+    *) bad "F7 — vermelha, mas NÃO no que a sabotagem declara (1 head forjado, psql 0): $(printf '%s' "$R" | head -c 200)" ;;
   esac
   P -q -c "DROP POLICY IF EXISTS fgv_update_sabotada ON public.farmer_geracao_vigente;" >/dev/null
   restaura
@@ -721,7 +751,7 @@ fi
 #      volta a poder sobrescrever um vazio mais novo.
 if sabota "F8" "s/  IF p_completude IS NULL THEN\n    SELECT run_id INTO v_head_atual\n    FROM public\.farmer_geracao_vigente\n    WHERE motor = 'cross_sell' AND farmer_id = p_farmer_id;\n  ELSE\n    v_head_atual := p_head_visto;\n  END IF;/  SELECT run_id INTO v_head_atual FROM public.farmer_geracao_vigente WHERE motor = 'cross_sell' AND farmer_id = p_farmer_id;/" "SELECT run_id INTO v_head_atual FROM public.farmer_geracao_vigente WHERE motor = 'cross_sell'"; then
   GER_F8=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
-  OUT=$(P -tA 2>&1 <<SQL || true
+  OUT=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 DO \$\$
 BEGIN
   PERFORM public.farmer_recomendacoes_substituir('$FARMER_A','f8000000-aaaa-aaaa-aaaa-000000000008',$([ -z "$GER_F8" ] && echo NULL || echo "'$GER_F8'::uuid"),'$LOTE_OK'::jsonb,'completo',NULL,NULL,'99999999-9999-9999-9999-999999999999'::uuid);
@@ -732,8 +762,8 @@ END \$\$;
 SQL
 )
   case "$OUT" in
-    *SENTINELA_NAO_BARROU*) ok "falsificação mordeu: lendo o head sob o lock, o CAS passa por construção (N9e seria falso-verde)" ;;
-    *SENTINELA_BARROU_CERTO*) bad "FALSIFICAÇÃO SEM DENTE: N9e barrou mesmo com o head lido internamente" ;;
+    *SENTINELA_NAO_BARROU*PSQL_RC=0) ok "falsificação mordeu: lendo o head sob o lock, o CAS passa por construção (N9e seria falso-verde)" ;;
+    *SENTINELA_BARROU_CERTO*PSQL_RC=0) bad "FALSIFICAÇÃO SEM DENTE: N9e barrou mesmo com o head lido internamente" ;;
     *) bad "F8 erro inesperado: $(printf '%s' "$OUT" | head -c 200)" ;;
   esac
   restaura
@@ -744,9 +774,9 @@ fi
 if sabota "F9" "s/  ON CONFLICT \(motor, farmer_id, run_id\) DO NOTHING;/  ON CONFLICT (motor, farmer_id, run_id) DO NOTHING;\n  DELETE FROM public.farmer_geracao_execucoes WHERE run_id = p_run_id;/" "DELETE FROM public.farmer_geracao_execucoes WHERE run_id = p_run_id;"; then
   P -q -c "DELETE FROM public.farmer_geracao_execucoes WHERE farmer_id='$FARMER_B';" >/dev/null
   HV_F9=$(Pq -c "SELECT run_id FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_B';")
-  Pq -c "SELECT public.farmer_geracao_registrar('cross_sell','$FARMER_B','f9000000-aaaa-aaaa-aaaa-000000000009','vazio',0,'completo',NULL,NULL,$([ -z "$HV_F9" ] && echo NULL || echo "'$HV_F9'::uuid"));" >/dev/null 2>&1 || true
+  chamada_sabotada "F9" "SELECT public.farmer_geracao_registrar('cross_sell','$FARMER_B','f9000000-aaaa-aaaa-aaaa-000000000009','vazio',0,'completo',NULL,NULL,$([ -z "$HV_F9" ] && echo NULL || echo "'$HV_F9'::uuid"));"
   eq_esperando_vermelho "L2 o vazio+completo sobrevive no log" \
-    "$(Pq -c "SELECT count(*) FROM public.farmer_geracao_execucoes WHERE farmer_id='$FARMER_B' AND resultado='vazio';")" "1"
+    "$(Pq -c "SELECT count(*) FROM public.farmer_geracao_execucoes WHERE farmer_id='$FARMER_B' AND resultado='vazio';")" "1" "0"
   restaura
 fi
 
