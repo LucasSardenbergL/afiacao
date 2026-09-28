@@ -197,7 +197,8 @@ valor exato): em `db/` os 3 juízes do núcleo citados acima, `push-vendedora`, 
 `falsificar-…-declaracao`, `falsificar-prompt-cache`, `sonda-cron-prova.ts`,
 `test-pipestatus-guard-sinal`, `test-pipestatus-zsh-guard`, `test-pr-duplicata-guard`,
 `test-shellcheck-gate`, `test-sonda-processo-guard`; evals — `monitor-deploy-eval`,
-`monitor-deploy-pr-eval`, `run.sh`.
+`monitor-deploy-pr-eval`, `run.sh` (reconferidos na fase dos evals: só o `monitor-deploy-eval` era — os outros
+dois caíram na medição, abaixo).
 
 **Falsos-positivos da assinatura**: `db/test-crm-carteira` (`SABOTAR=` manual, sem laço),
 `db/test-reposicao-publicar-run-completo` (o trigger ZZ999 é fixture), `db/roda-nucleo-ci.sh` (só lê
@@ -465,6 +466,161 @@ linhas do núcleo — antes: 462 · 4 · 38 · 4 · 7) e `shell-variavel-colada`
   máquina é função do shim: diante de um byte UTF-8 inválido ele não imprime nada e sai 1 — nem o
   `-c` responde. Inspeção à mão de log usa `/usr/bin/grep`.
 
+## Os evals do deploy-verify (2026-09-27)
+
+**Passo 0 — instância única ou classe? Classe**, com a assinatura da fase 1 (o veredito que conta a
+sabotagem como dente não identifica o assert), agora nos `--falsify` de
+`.claude/skills/lovable-deploy-verify/evals/`. Eles rodam no CI (`evals:deploy-verify:falsificacao`,
+job `validate`), e um vermelho de erro alheio lá também aprova.
+
+**Reconfirmação site a site.** A lista veio da varredura delegada, ou seja, era hipótese. Cada juiz
+foi lido e REPRODUZIDO numa cópia (repo-sombra, edições exatas 1×, `bash -n` antes, expectativa
+declarada antes), com o arquivo de ANTES (`bee8feb69`) e uma sabotagem que só derruba o alvo:
+
+| site | juiz de antes | a reprodução | o arquivo de antes |
+|---|---|---|---|
+| `criterio-caro` (afetado) | `rc>0` da suíte | o recipe vira um regex INVÁLIDO: C1 segue verde e o C2 cai por ERRO do grep | "pega: recipe apagado" |
+| `edges-pendentes-sql` (afetado) | `erros≠0` de qualquer dos 13 casos, **sem controle verde** | `ORDER BY … DESC)`: os 13 caem em "a consulta falhou" | "pegada: o DISTINCT ON…" |
+| `sonda-veredito-401` (afetado) | `rc≠0` de qualquer dos 19 | `AND )` na recência: os 19 ficam sem veredito, com a via viva | "pegada: testemunha sem RECENCIA" |
+| `verify-edge-eco` (parcial) | `exit ≠ normal` | `[ 1 -ge 0 ] \|\| ( recusa`: morre de SINTAXE com exit 2, o exit PREVISTO da (2) | "fail-closed do ping removido" |
+| `verify-edge-escrita` (parcial) | `exit ≠ normal` | o mesmo na (2), e uma variável não definida na (4) | "ping_sem_dente", "alvo_sem_guard" |
+| `verify-frontend` (parcial) | `≠ normal` em A-D, G e I (C/D num laço ad hoc), `exato`/`marca` opcionais | uma variável não definida na A: exit 1, o exit previsto | "divergiu: sem fechamento transitivo" |
+
+Os 6 se confirmaram. A leitura também achou o que a varredura não trazia:
+
+- **Uma sabotagem nascida teatro.** A "controle nao chega na projecao (CROSS JOIN removido)" da sonda
+  vem do #2131. O CASE lê `c.*`, então arrancar o JOIN nunca abriu ramo nenhum: o SQL não compilava,
+  os 19 casos saíam sem veredito e o laço contava isso como dente. Ela foi re-derivada para o JOIN que
+  MULTIPLICA a leva, acusada pelo `uma_linha_por_edge` ("devolveu 2 linha(s)"). É a 1ª falsificação
+  que esse assert teve.
+- **"Exatamente 1 ocorrência" falhava em quatro lugares.** O `sed` da (1) do eco trocava os DOIS
+  `exit 2` do script. No gerador da sonda, 3 alvos apareciam 2×: os dois ramos de 401 (agora
+  declarados `2`), o `'INDETERMINADO — 401`, que também está no SQL da canária, e o
+  ` CROSS JOIN controle_credencial c`, que casava o prefixo de `cred`. E as 13 do frontend eram `sed`
+  sem nenhuma checagem de que tinham aplicado.
+- **Nome diferente do efeito medido.** A "campo ausente volta a ser lido como DEPLOY PARCIAL" hoje cai
+  no ELSE ("bundle velho" com `fonte=?`) e foi renomeada. Quem reabre o defeito de 09-05 é a do
+  COALESCE.
+- **Um sintoma de crash declarável.** No `uma_linha_por_edge`, um SQL que ERRA também dava
+  "0 linha(s)", e um autor poderia declarar esse sintoma como previsto. Agora quem decide é o exit do
+  psql: erro vira não-veredito.
+- **Dois "já-corretos" não eram.** O `run.sh` (classify) aprovava uma mutação do `classify.sh` que só
+  quebrava a sintaxe ("mutação pega": a saída vazia diverge de todos os casos) e não tinha controle no
+  `--falsify`. O juiz `sabota` do `monitor-deploy-pr-eval` (19 das 24 sabotagens: caso isolado,
+  `FAIL≠0`) creditava uma que só derrubava o monitor por variável não definida. As duas coisas foram
+  medidas nos dois locales e consertadas aqui (mesma pasta, mesma classe). O `monitor-deploy-eval` se
+  confirmou correto: ele é a referência do idioma.
+
+**O conserto é um idioma só nos 8, o do `monitor-deploy-eval`:**
+
+- alvo LITERAL com o nº exato de ocorrências (1, salvo declaração);
+- `bash -n` no alvo sabotado;
+- CONTROLE íntegro na mesma invocação, e por locale onde o eval não fixa `LC_ALL`;
+- o desfecho PREVISTO de cada sabotagem, que não pode descrever o controle: exit + marca do ramo, os
+  IDs `C1…C12` do caro, as marcas do veredito da sonda, caso+chave+valor do classify;
+- erro de execução recusado: stderr no caro, não-veredito com a via viva na sonda, exit do psql, rc do
+  classify.
+
+As marcas foram MEDIDAS e lidas ramo a ramo. Uma previsão minha, feita pela leitura, errou (a 3ª classe
+do edges dá "nenhuma sonda em", não `SONDA_ANONIMA`), e a medição a corrigiu antes de ela virar gabarito.
+
+**O gate de reintrodução é comportamental.** O gate textual do #2619 lê `SABOTAGENS=` e, por decisão,
+não alcança estes laços. Então cada `--falsify` roda **controles negativos do próprio juiz**: um por
+camada, cada um uma sabotagem que só aquela camada separa do julgamento. Por exemplo:
+
+- **marca:** a sabotagem sai com o exit PREVISTO sem passar pelo ramo (`exit 2` no lugar do guard, SQL
+  quebrado declarando a DERIVA do `#anonimas`);
+- **shell:** o ramo imprime a marca e o script MORRE, ou `${X?marca}` põe a marca só no diagnóstico;
+- **ids/stderr/valor/exec/passo:** nos idiomas do caro, do classify e do monitor.
+
+O gate exige a RAZÃO do julgamento (`ULTIMO_MOTIVO`/etiqueta). Recusa por "não aplicou", "sintaxe" ou
+"controle" deixa o gate VERMELHO, porque não exercitou o juiz (achado do Codex). Na falsificação do
+gate, cada camada removida (ou o juiz devolvido ao idioma antigo) deixa vermelho o negativo dela:
+**50/50 nos dois locales**:
+
+- em cada uma das 16 camadas removidas, o negativo DAQUELA camada fica vermelho ("o juiz perdeu a
+  identidade"). As camadas: shell e só-exit no eco, na escrita, no frontend e no edges; stderr e IDs no
+  caro; a marca na sonda; exec e valor no classify; shell, só-exit e passo no monitor;
+- o negativo cujo alvo sumiu é recusado "por OUTRO motivo [NAO-APLICOU]": o gate não aceita recusa que
+  não seja do juiz;
+- os 8 controles ficam verdes.
+
+Um resíduo fica registrado: o exit do psql na sonda (achado 3) não tem negativo isolado, porque a
+sabotagem que o isolaria (um veredito que SAI e depois erra) pede duas edições no gerador.
+
+**Meta-falsificação, nos dois locales** (controle verde + a reprodução reprova no arquivo novo + o
+arquivo de antes aprovava), sobre os commits e com as camadas isoladas onde há mais de uma:
+
+| eval | controle | a reprodução reprova no novo | camada isolada | o de antes aprovava |
+|---|---|---|---|---|
+| `verify-edge-eco` | 4/4 | sintaxe (exit 2 = o previsto) e variável não definida | sem o `bash -n`: só a marca | as duas |
+| `verify-edge-escrita` | 4/4 | idem | idem | as duas |
+| `criterio-caro` | 8/8 | regex inválido: `ERRO-DE-EXECUCAO` | sem o stderr: "C1 não ficou vermelho"; declarando o C2: stderr | sim |
+| `verify-frontend` | 13/13 | variável não definida na A (exit 1 = o previsto), sintaxe na C | sem o `bash -n`: só a marca | as duas |
+| `edges-pendentes-sql` | 11/11 | SQL quebrado: "motivo ERRADO … obtido exit=2" | — | sim |
+| `sonda-veredito-401` | 12/12 | `AND )`: `veredito=<vazio>`; a CROSS JOIN teatro declarando "devolveu 0 linha(s)" | — | as duas |
+| `run.sh` (classify) | 5/5 | a mutação que só quebra a sintaxe dá `quebrou a SINTAXE`; sem o `bash -n`, dá `ERRO de execução` | — | sim |
+| `monitor-deploy-pr` | 24/24 | a variável não definida no prfora dá `VERMELHO pelo motivo ERRADO` | — | sim |
+
+Totais das metas: eco 14/14, escrita 14/14, caro 12/12, frontend 14/14, edges 8/8, sonda 10/10,
+reproduções dos "já-corretos" 8/8, gate 14/14 ; mais classify novo 4/4, monitor novo 6/6 e as camadas do gate 50/50 (a 1ª versão do gate, antes do
+Codex, fez 14/14). O `test-eval-via-morta` foi medido de três formas:
+
+- contra o eval de ANTES: `--falsificar` sai 1, com S1 e S2 reprovando;
+- com um aborto logo depois do 1º baseline: S1 e S2 reprovam, porque falta o recibo das 12;
+- com o exit 5: o S1 reprova.. O `test-eval-via-morta` novo: 0/0 contra o
+eval novo nos dois locales, e `--falsificar` exit 1 (S1 e S2 reprovando) contra o eval de antes.
+
+**A 2ª opinião (Codex, 2026-09-27)** — ritual `/codex` em modo challenge (`codex-async.sh`,
+`gpt-6-astra`, reasoning max, 643 s), sobre o diff inteiro. Ele VALIDOU os contraexemplos em memória
+com os predicados reais. Achou 7 furos, e todos procedem:
+
+| achado do Codex | sev. | o que foi feito |
+|---|---|---|
+| exit + substring aceita crash: a marca sai e o script MORRE com o exit previsto (1); `${X?marca}` põe a marca SÓ no diagnóstico do bash (eco, escrita, frontend, edges) | alta | camada de ERRO DE SHELL: saída com `<script>: line N:` é recusada |
+| monitor: o `prrevert` exigia como marca o PRÓPRIO texto da sabotagem, e um `command not found` o fabricava | alta | re-derivada (a detecção de revert deixa de avisar) + camada de shell |
+| sonda: veredito PARCIAL seguido de erro do psql (exit 3) era creditado | alta | o exit do psql decide (`SQL_ERRO` = não-veredito) |
+| monitor: "1º passo que falhou" não dizia QUAL passo do grupo | média | `id@passo`: o prefixo da descrição do passo é parte do contrato |
+| classify: nem "a mutação muda algo" nem "o previsto difere do controle" | média | `SEM-MUDANCA` e `PREVISTO-NO-CONTROLE` recusados |
+| gates negativos: "recusado pelo juiz" ≠ "não creditado por qualquer motivo" (um `aplica` que falha deixava o gate verde) | média | cada juiz registra o MOTIVO (`ULTIMO_MOTIVO`/etiqueta) e o gate exige o do JULGAMENTO; dois negativos por eval, um por camada |
+| S1/S2 do `test-eval-via-morta` aceitavam aborto logo após a 1ª mensagem | média | exigem o recibo das 12: o laço TERMINOU |
+
+O que ele confirmou certo: as duas ocorrências do 401, o CROSS JOIN re-derivado (mantém o alias `c` e
+duplica a relação), o `uma_linha_por_edge` recusando psql com exit ≠ 0, os filtros com nome errado (os
+dois SQL exigem exatamente um caso no baseline) e o `criterio-caro` (stderr separado + fim explícito +
+IDs).
+
+**Defesa em profundidade revelada.** O `test-eval-via-morta` provava o `via_viva` exigindo que, sem
+ele, o eval da sonda VOLTASSE a aprovar 11/11 com a via morta. Com o juiz do previsto isso deixou de
+acontecer: o baseline íntegro do caso-alvo já sai vermelho com a via morta, e sem o discriminador o eval
+recusa pela causa errada (exit 1, "o caso-alvo não passa íntegro"). Os papéis mudaram assim:
+
+- o S1 da falsificação exige esse desfecho DECLARADO;
+- o S2 exige a nova camada: nenhuma sabotagem creditada;
+- o `via_viva` ficou com o papel de NOMEAR a via (exit 2).
+
+Sobre o eval de ANTES, o teste novo reprova S1 e S2. A mudança colidia com a fase `scripts/` [a93aad],
+que editava o mesmo S1 declarando o desfecho antigo (exit 0). Isso foi coordenado entre as sessões: o
+arquivo inteiro ficou com esta fase, e a reprodução que ela sugeriu (o eval sai 5 depois de imprimir o
+que o S2 procura) reprova no S1.
+
+**Tropeços de método desta fase** (os que custariam caro se passassem):
+
+- A "linha de base" via `heavy` esperou 45 min na fila e rodou sobre a árvore JÁ editada, ou seja,
+  sobre uma mistura de antes e depois ("heavy é uma FILA", `money-path.md`). A de pt_BR nem rodou: o
+  exit 1 dela é o timeout de 1800 s do `heavy`, não do eval. A meta lê o "antes" por revisão git e é
+  imune a isso.
+- Editar o script da meta com uma rodada em voo corrompeu o rabo dele. As 10 linhas de veredito valem;
+  o exit 1 final era do harness, que ainda lia o arquivo por offset.
+- Uma marca com `|` quebrou o parse do plano (ERRO-DA-META, recusado certo). No zsh, `"$H:…"` é
+  modificador (`bad substitution`), e `$F` sem aspas não divide: a varredura de worktrees sairia limpa
+  por cegueira. O controle positivo foi exigir que o próprio worktree aparecesse nela.
+- Uma edição com âncora errada FALHOU (`AssertionError`) dentro de um comando encadeado por `;`. A
+  rodada seguinte rodou o eval SEM a mudança, saiu 0 e quase virou prova; só a saída mostrou o erro.
+  O conserto foi encadear por `&&` e pôr o veredito na ÚLTIMA instrução (a contagem dos negativos).
+- Uma conferência da meta contou `SEM o recibo` com caixa fixa, mas o S2 escreve `sem`. Era erro da
+  meta: o log tinha as duas FALHAs.
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
@@ -482,6 +638,9 @@ tarefas com a assinatura calibrada e a lista de sites no briefing:
   Codex), tint + reposição/pedidos/tático (6), authz/RLS + dados (6).
 - **"Erradicar falsificação sem assert no test:falsificacao"** — os 10 afetados e 4 parciais de
   `scripts/`. Esses rodam no CI (`test:falsificacao`, no job `validate`): um vermelho de erro alheio
-  lá também aprova.
-- **"Erradicar falsificação sem assert nos evals do deploy-verify"** — os 3 afetados e 3 parciais de
-  `.claude/skills/lovable-deploy-verify/evals/`.
+  lá também aprova. O `test-eval-via-morta` saiu desta fase para a dos evals (combinado entre as duas
+  sessões): o conserto do eval da sonda muda o desfecho que ele declara.
+- ✅ **"Erradicar falsificação sem assert nos evals do deploy-verify"** — ENTREGUE (seção "Os evals do
+  deploy-verify", acima): os 3 afetados e 3 parciais, os dois "já-corretos" que a medição desmentiu
+  (`run.sh`/classify e o juiz `sabota` do `monitor-deploy-pr-eval`) e o `test-eval-via-morta`, com os
+  controles negativos do juiz como gate de reintrodução nos 8.
