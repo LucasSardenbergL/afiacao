@@ -276,9 +276,13 @@ esac
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── falsificação (cada sabotagem tem de deixar VERMELHO o assert que ela mira) ──"
 SAB_PASS=0; SAB_FAIL=0
-# `red` inverte a expectativa: aqui VERMELHO é o resultado desejado.
-red() { if [ "$2" != "$3" ]; then SAB_PASS=$((SAB_PASS+1)); echo "  🔴 $1 — assert caiu como devia (veio [$2], o verde era [$3])";
-        else SAB_FAIL=$((SAB_FAIL+1)); echo "  ⚠️  $1 — SABOTADO E AINDA VERDE: o assert não tem dente"; fi; }
+# `red` inverte a expectativa: aqui VERMELHO é o resultado desejado — e tem de ser o valor que a
+# sabotagem DECLARA ($4). O "≠ verde" aceitava a RPC sabotada que ERRA: a medição é argumento (sem
+# errexit), sai VAZIA, e vazio ≠ verde. Os declarados são deterministas: o ORDER BY é total (id no fim).
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+red() { if [ "$2" = "$3" ]; then SAB_FAIL=$((SAB_FAIL+1)); echo "  ⚠️  $1 — SABOTADO E AINDA VERDE: o assert não tem dente"
+        elif [ "$2" = "$4" ]; then SAB_PASS=$((SAB_PASS+1)); echo "  🔴 $1 — assert caiu como devia (veio [$2], o verde era [$3])"
+        else SAB_FAIL=$((SAB_FAIL+1)); echo "  ⚠️  $1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (verde [$3])"; fi; }
 
 # $1 = corpo da subquery interna; $2 = SECURITY …; $3 (opcional) = agregação, p/ falsificar o coalesce
 sabota() {
@@ -303,27 +307,27 @@ SEL_BASE="    SELECT DISTINCT ON (r.customer_user_id) r.customer_user_id, r.prod
 # F1 — tira o WHERE do score: o cliente que só tem NULL passa a ganhar um vencedor ARBITRÁRIO.
 sabota "$SEL_BASE
   ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY INVOKER"
-red "F1 sem 'affinity_score IS NOT NULL' -> N1" "$(vencedor "$C4")" "AUSENTE"
+red "F1 sem 'affinity_score IS NOT NULL' -> N1" "$(vencedor "$C4")" "AUSENTE" "999aaaaa-0000-4000-8000-00000000000a"
 restaura
 
 # F2 — tira o WHERE **e** o NULLS LAST. O NULLS LAST sozinho é inalcançável (o WHERE já filtra):
 # é defesa em profundidade, e a única falsificação honesta dele é remover a primeira camada.
 sabota "$SEL_BASE
   ORDER BY r.customer_user_id, r.affinity_score DESC, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY INVOKER"
-red "F2 sem WHERE e sem NULLS LAST -> P2 (a linha SEM score vence a de 0.90)" "$(vencedor "$C1")" "9992aaaa-0000-4000-8000-000000000002"
+red "F2 sem WHERE e sem NULLS LAST -> P2 (a linha SEM score vence a de 0.90)" "$(vencedor "$C1")" "9992aaaa-0000-4000-8000-000000000002" "9994aaaa-0000-4000-8000-000000000004"
 restaura
 
 # F3 — inverte o desempate de data.
 sabota "$SEL_BASE AND r.affinity_score IS NOT NULL
   ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at ASC, r.id DESC" "SECURITY INVOKER"
-red "F3 updated_at ASC -> P3" "$(vencedor "$C2")" "9996aaaa-0000-4000-8000-000000000006"
+red "F3 updated_at ASC -> P3" "$(vencedor "$C2")" "9996aaaa-0000-4000-8000-000000000006" "9995aaaa-0000-4000-8000-000000000005"
 restaura
 
 # F4 — inverte o desempate final. `id ASC` em vez de remover: sem NENHUM desempate a escolha
 # fica a critério do plano, e um teste que depende do plano é flaky, não é prova.
 sabota "$SEL_BASE AND r.affinity_score IS NOT NULL
   ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id ASC" "SECURITY INVOKER"
-red "F4 id ASC -> P4" "$(vencedor "$C3")" "9998aaaa-0000-4000-8000-000000000008"
+red "F4 id ASC -> P4" "$(vencedor "$C3")" "9998aaaa-0000-4000-8000-000000000008" "9997aaaa-0000-4000-8000-000000000007"
 restaura
 
 # F5 — tira o filtro de status: oferta já aceita/expirada volta a ser "a melhor pendente".
@@ -331,7 +335,7 @@ sabota "    SELECT DISTINCT ON (r.customer_user_id) r.customer_user_id, r.produc
     FROM public.farmer_recommendations r
     WHERE r.farmer_id = p_farmer_id AND r.affinity_score IS NOT NULL
     ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY INVOKER"
-red "F5 sem status='pendente' -> N2" "$(vencedor "$C5")" "AUSENTE"
+red "F5 sem status='pendente' -> N2" "$(vencedor "$C5")" "AUSENTE" "999baaaa-0000-4000-8000-00000000000b"
 restaura
 
 # F6 — sem DISTINCT ON: volta a ser a lista inteira, e paginar sobre ela repete cliente.
@@ -339,7 +343,7 @@ sabota "    SELECT r.customer_user_id, r.product_id, r.affinity_score, r.recomme
     FROM public.farmer_recommendations r
     WHERE r.farmer_id = p_farmer_id AND r.status = 'pendente' AND r.affinity_score IS NOT NULL
     ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY INVOKER"
-red "F6 sem DISTINCT ON -> P1" "$(linhas_de "$C1")" "1"
+red "F6 sem DISTINCT ON -> P1" "$(linhas_de "$C1")" "1" "3"
 restaura
 
 # F7 — a que mais importa: DEFINER em vez de INVOKER. O owner aqui é superuser, então a RLS
@@ -348,14 +352,14 @@ restaura
 sabota "$SEL_BASE AND r.affinity_score IS NOT NULL
   ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY DEFINER"
 red "F7 SECURITY DEFINER -> R2 (a carteira alheia vaza)" \
-    "$(Pq -c "SET test.uid='$FB'; SET ROLE authenticated; SELECT jsonb_array_length(public.farmer_melhor_individual_por_cliente('$FA'));" | tail -1)" "0"
+    "$(Pq -c "SET test.uid='$FB'; SET ROLE authenticated; SELECT jsonb_array_length(public.farmer_melhor_individual_por_cliente('$FA'));" | tail -1)" "0" "4"
 restaura
 
 # F8 — o assert de PARIDADE precisa de dente próprio: se ele só contasse linhas, qualquer
 # sabotagem de ORDEM passaria. Sabota a data e exija que a PARIDADE (não o P3) caia.
 sabota "$SEL_BASE AND r.affinity_score IS NOT NULL
   ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at ASC, r.id DESC" "SECURITY INVOKER"
-red "F8 updated_at ASC -> ★PARIDADE" "$(paridade)" "0"
+red "F8 updated_at ASC -> ★PARIDADE" "$(paridade)" "0" "2"
 restaura
 
 # F9 — o `coalesce` do §6: sem ele, carteira vazia devolve NULL, e NULL é o que o caller
@@ -364,7 +368,7 @@ sabota "$SEL_BASE AND r.affinity_score IS NOT NULL
     ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" \
   "SECURITY INVOKER" "jsonb_agg(to_jsonb(m) ORDER BY m.customer_user_id)"
 red "F9 sem o coalesce -> A3 (vazio vira NULL)" \
-    "$(Pq -c "SELECT coalesce(public.farmer_melhor_individual_por_cliente('eeee0000-0000-4000-8000-00000000000e')::text,'NULO');")" "[]"
+    "$(Pq -c "SELECT coalesce(public.farmer_melhor_individual_por_cliente('eeee0000-0000-4000-8000-00000000000e')::text,'NULO');")" "[]" "NULO"
 restaura
 
 # CONTROLE DA RESTAURAÇÃO: se `restaura` não funcionasse, os vermelhos acima seriam do
