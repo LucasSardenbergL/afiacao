@@ -69,6 +69,10 @@ eq_esperando_vermelho() { # $1=rótulo  $2=medido  $3=íntegro  $4=o que a sabot
   elif [ "$2" = "$4" ]; then ok "falsificação mordeu: $1 virou [$2] (íntegro seria [$3])"
   else bad "$1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (íntegro [$3])"; fi
 }
+# A medição do juiz roda com `set -e` e o rc capturado fora de ||/&&: no ARGUMENTO do juiz o status se
+# perdia, e uma leitura que imprime o valor e DEPOIS falha passava (Codex, 2026-09-27). Falha vira
+# ERRO_rc=<n>, que nenhum declarado casa.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 # a chamada sob sabotagem TEM de completar: se ela erra, o que se mede depois é o erro, não a sabotagem
 chamada_sabotada() { # $1=rótulo  $2=SQL
   local out
@@ -429,21 +433,28 @@ case "$R" in
 esac
 
 # A6 — mas a trigger NÃO atrapalha o histórico: linha com desfecho entra sem run_id.
-R=$(P -tA 2>&1 -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, product_id, status, offered_at) VALUES ('$FARMER_A','$CLI_1','cross_sell','$PROD_1','ofertado', now());" || true)
+R=$(P -tA 2>&1 -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, product_id, status, offered_at) VALUES ('$FARMER_A','$CLI_1','cross_sell','$PROD_1','ofertado', now());"; echo "PSQL_RC=$?")
+# decidido pelo rc do psql, não pelo texto `ERROR` — com o servidor em pt_BR ele diz ERRO, e a trigger
+# que barrasse o histórico passaria como ok (Codex, 2026-09-27)
 case "$R" in
-  *ERROR*) bad "A6 trigger barrou linha de HISTÓRICO (ofertado) — cedo demais: $(printf '%s' "$R" | head -c 160)" ;;
-  *) ok "A6 trigger só mira 'pendente' — linha de desfecho passa" ;;
+  *PSQL_RC=0) ok "A6 trigger só mira 'pendente' — linha de desfecho passa" ;;
+  *) bad "A6 trigger barrou linha de HISTÓRICO (ofertado) — cedo demais: $(printf '%s' "$R" | head -c 160)" ;;
 esac
 
 # A3 — anon não executa (REVOKE da migration).
-R=$(P -tA 2>&1 <<SQL || true
+# pela condição NOMEADA (insufficient_privilege), não pelo texto em 2 idiomas
+R=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 SET ROLE anon;
-SELECT public.farmer_recomendacoes_substituir('$FARMER_A','$RUN_1',NULL,'$LOTE_OK'::jsonb);
+DO \$\$ BEGIN
+  PERFORM public.farmer_recomendacoes_substituir('$FARMER_A','$RUN_1',NULL,'$LOTE_OK'::jsonb);
+  RAISE NOTICE 'SENTINELA_NAO_BARROU';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'SENTINELA_BARROU_CERTO';
+END \$\$;
 SQL
 )
 case "$R" in
-  *"permission denied"*|*"permissão negada"*) ok "A3 anon sem EXECUTE na RPC" ;;
-  *) bad "A3 anon NAO foi barrado — veio: $(printf '%s' "$R" | head -c 200)" ;;
+  *SENTINELA_BARROU_CERTO*PSQL_RC=0) ok "A3 anon sem EXECUTE na RPC" ;;
+  *) bad "A3 anon NAO foi barrado (ou outro erro) — veio: $(printf '%s' "$R" | head -c 200)" ;;
 esac
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -465,7 +476,8 @@ sabota() { # $1=nome  $2=expressão perl  $3=marca que TEM de aparecer no result
     bad "SABOTAGEM $1 NAO APLICOU (padrão não casou) — falsificação INVÁLIDA"
     return 1
   fi
-  P -q -f "$SAB"
+  # sob `if sabota` o errexit está suspenso: o rc do apply tem de ser o que volta (Codex, 2026-09-27)
+  P -q -f "$SAB" || { bad "SABOTAGEM $1 — o apply FALHOU: falsificação INVÁLIDA"; return 1; }
   return 0
 }
 
@@ -478,7 +490,7 @@ if sabota "F1" "s/     AND status = 'pendente';\n  GET DIAGNOSTICS v_expiradas/ 
   chamada_sabotada "F1" "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','44444444-aaaa-aaaa-aaaa-444444444444',$([ -z "$G" ] && echo NULL || echo "'$G'"),'$LOTE_OK'::jsonb);"
   # declarado: sem o guard, o UPDATE de expiração leva TODA linha do farmer — inclusive as com desfecho
   eq_esperando_vermelho "P5 linha com desfecho preservada" \
-    "$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='aceito';")" "$ACEITO_ANTES" "0"
+    "$(medir Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='aceito';")" "$ACEITO_ANTES" "0"
   restaura
 fi
 
@@ -533,9 +545,11 @@ if sabota "F4" "s/  UPDATE public\.farmer_recommendations\n     SET status      
   K_PEND=$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente';")
   N_LOTE=2
   chamada_sabotada "F4" "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','77777777-aaaa-aaaa-aaaa-777777777777',$([ -z "$G" ] && echo NULL || echo "'$G'"),'$LOTE_OK'::jsonb);"
-  # declarado: o DELETE leva exatamente as K pendentes do farmer, e o lote entra
+  # declarado: o DELETE leva exatamente as K pendentes do farmer, e o lote do run ENTRA — o 2º campo
+  # separa isso de uma chamada sem efeito, que com K=2 daria o mesmo total T (Codex, 2026-09-27)
   eq_esperando_vermelho "P3 nada foi deletado (total antes+2)" \
-    "$(Pq -c "SELECT count(*) FROM public.farmer_recommendations;")" "$((T_ANTES + N_LOTE))" "$((T_ANTES + N_LOTE - K_PEND))"
+    "$(medir Pq -c "SELECT count(*) FROM public.farmer_recommendations;")|$(medir Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE run_id='77777777-aaaa-aaaa-aaaa-777777777777';")" \
+    "$((T_ANTES + N_LOTE))|$N_LOTE" "$((T_ANTES + N_LOTE - K_PEND))|$N_LOTE"
   restaura
 fi
 

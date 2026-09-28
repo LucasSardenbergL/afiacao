@@ -340,8 +340,10 @@ sqlstate_de() {
       GET DIAGNOSTICS v_n = ROW_COUNT;
       RAISE NOTICE 'SENTINELA_SEM_ERRO n=%', v_n;
     EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'SENTINELA_ESTADO=%', SQLSTATE;
-    END \$T\$;" 2>&1 | command grep -oE 'SENTINELA_ESTADO=[A-Z0-9]{5}|SENTINELA_SEM_ERRO n=[0-9]+' | head -1
+    END \$T\$;" 2>&1 | command grep -oE 'SENTINELA_ESTADO=[A-Z0-9]{5}|SENTINELA_SEM_ERRO n=[0-9]+' | paste -sd'|' -
 }
+# (TODAS as sentinelas, juntas: com `head -1`, uma marca emitida ANTES de um erro que o DO captura
+# vencia a SENTINELA_ESTADO do erro — Codex, 2026-09-27. Duas marcas não casam declarado nenhum.)
 # Exige que, DEPOIS da sabotagem, a defesa NÃO barre mais — e que a prova complete como a sabotagem
 # DECLARA ($4: sem erro, tocando n linhas). "!= a SQLSTATE da defesa" sozinho aceitava QUALQUER outro
 # erro (o DO captura WHEN OTHERS: a RPC sabotada que divide por zero virava SENTINELA_ESTADO=22012 e

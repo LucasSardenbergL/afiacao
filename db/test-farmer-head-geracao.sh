@@ -64,6 +64,10 @@ eq_esperando_vermelho() { # $1=rótulo  $2=medido  $3=íntegro  $4=o que a sabot
   elif [ "$2" = "$4" ]; then ok "falsificação mordeu: $1 virou [$2] (íntegro seria [$3])"
   else bad "$1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (íntegro [$3])"; fi
 }
+# A medição do juiz roda com `set -e` e o rc capturado fora de ||/&&: no ARGUMENTO do juiz o status se
+# perdia, e uma leitura que imprime o valor e DEPOIS falha passava (Codex, 2026-09-27). Falha vira
+# ERRO_rc=<n>, que nenhum declarado casa.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 # a chamada sob sabotagem TEM de completar: se ela erra, o que se mede depois é o erro, não a sabotagem
 chamada_sabotada() { # $1=rótulo  $2=SQL
   local out
@@ -331,7 +335,7 @@ eq "L2b e o head já NÃO mostra mais esse vazio (é por isso que ele não serve
 # L3 — idempotência: retry do MESMO run não vira 2 execuções (senão a frequência mede retry).
 HL=$(Pq -c "SELECT run_id FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")
 N_ANTES=$(Pq -c "SELECT count(*) FROM public.farmer_geracao_execucoes;")
-Pq -c "SELECT public.farmer_geracao_registrar('cross_sell','$FARMER_A','$HL','linhas',(SELECT count(*)::int FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND run_id='$HL' AND status='pendente'),'completo',NULL,NULL,'$HL'::uuid);" >/dev/null 2>&1 || true
+Pq -c "SELECT public.farmer_geracao_registrar('cross_sell','$FARMER_A','$HL','linhas',(SELECT count(*)::int FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND run_id='$HL' AND status='pendente'),'completo',NULL,NULL,'$HL'::uuid);" >/dev/null || bad "L3 o retry ERROU — idempotência não se prova com erro (a contagem parada seria do erro)"
 eq "L3 retry do mesmo run NÃO duplica a execução no log" \
    "$(Pq -c "SELECT count(*) FROM public.farmer_geracao_execucoes;")" "$N_ANTES"
 
@@ -596,7 +600,8 @@ sabota() { # $1=nome  $2=expressão perl  $3=marca que TEM de aparecer no result
     bad "SABOTAGEM $1 NAO APLICOU (padrão não casou) — falsificação INVÁLIDA"
     return 1
   fi
-  P -q -f "$SAB"
+  # sob `if sabota` o errexit está suspenso: o rc do apply tem de ser o que volta (Codex, 2026-09-27)
+  P -q -f "$SAB" || { bad "SABOTAGEM $1 — o apply FALHOU: falsificação INVÁLIDA"; return 1; }
   return 0
 }
 
@@ -607,7 +612,7 @@ if sabota "F1" "s/v_completude := coalesce\(p_completude, 'desconhecido'\);/v_co
   GER=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
   chamada_sabotada "F1" "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','f1000000-aaaa-aaaa-aaaa-000000000001',$([ -z "$GER" ] && echo NULL || echo "'$GER'"),'$LOTE_OK'::jsonb);"
   eq_esperando_vermelho "H5 chamada de 4 args grava 'desconhecido'" \
-    "$(Pq -c "SELECT completude FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")" "desconhecido" "completo"
+    "$(medir Pq -c "SELECT completude FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")" "desconhecido" "completo"
   restaura
 fi
 
@@ -666,8 +671,11 @@ if sabota "F4" "s/  PERFORM public\.farmer_geracao_registrar\(\n    'cross_sell'
   GER=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
   F4_RUN='f4000000-aaaa-aaaa-aaaa-000000000004'
   chamada_sabotada "F4" "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','$F4_RUN',$([ -z "$GER" ] && echo NULL || echo "'$GER'"),'$LOTE_OK'::jsonb,'completo',NULL,'$INSUMOS'::jsonb);"
+  # declarado: o head NÃO se move e as linhas do run ENTRAM — o 2º campo separa isso de uma chamada sem
+  # efeito, que também deixaria o head vazio (Codex, 2026-09-27)
   eq_esperando_vermelho "H1 a substituição move o head" \
-    "$(Pq -c "SELECT count(*) FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")" "1" "0"
+    "$(medir Pq -c "SELECT count(*) FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_A';")|$(medir Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND run_id='$F4_RUN';")" \
+    "1|2" "0|2"
   restaura
 fi
 
@@ -785,8 +793,11 @@ if sabota "F9" "s/  ON CONFLICT \(motor, farmer_id, run_id\) DO NOTHING;/  ON CO
   P -q -c "DELETE FROM public.farmer_geracao_execucoes WHERE farmer_id='$FARMER_B';" >/dev/null
   HV_F9=$(Pq -c "SELECT run_id FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_B';")
   chamada_sabotada "F9" "SELECT public.farmer_geracao_registrar('cross_sell','$FARMER_B','f9000000-aaaa-aaaa-aaaa-000000000009','vazio',0,'completo',NULL,NULL,$([ -z "$HV_F9" ] && echo NULL || echo "'$HV_F9'::uuid"));"
+  # declarado: o log perde o vazio mas o HEAD aponta o run do F9 — o 2º campo separa isso de uma chamada
+  # sem efeito, que também deixaria o log vazio (Codex, 2026-09-27)
   eq_esperando_vermelho "L2 o vazio+completo sobrevive no log" \
-    "$(Pq -c "SELECT count(*) FROM public.farmer_geracao_execucoes WHERE farmer_id='$FARMER_B' AND resultado='vazio';")" "1" "0"
+    "$(medir Pq -c "SELECT count(*) FROM public.farmer_geracao_execucoes WHERE farmer_id='$FARMER_B' AND resultado='vazio';")|$(medir Pq -c "SELECT run_id FROM public.farmer_geracao_vigente WHERE motor='cross_sell' AND farmer_id='$FARMER_B';")" \
+    "1|f9000000-aaaa-aaaa-aaaa-000000000009" "0|f9000000-aaaa-aaaa-aaaa-000000000009"
   restaura
 fi
 
