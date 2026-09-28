@@ -42,7 +42,18 @@ export TMPDIR="$tmp"          # isola as marcas de sessão deste teste
 # e precisam chegar até ele sem serem expandidos por este shell.
 if [ "${1:-}" = "--falsificar" ]; then
   falhou=0
-  printf '== falsificacao (sabota o hook e EXIGE vermelho) ==\n'
+  printf '== falsificacao (sabota o hook e EXIGE vermelho NO ASSERT que a sabotagem declara) ==\n'
+
+  # Os logs das rodadas saem SEM cor (`sem_cor`), para o ID casar logo depois da palavra.
+  esc="$(printf '\033')"
+  sem_cor() { sed "s/${esc}\[[0-9;]*m//g" "$1"; }
+  # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
+  asserts() { grep -cE '^  (ok +|FALHA )' "$1" || true; }
+  # Erro de execução do BASH no hook. A suíte normal joga o stderr dele fora (`2>/dev/null`: o
+  # contrato é o stdout); aqui ERROS_DO_ALVO o recolhe num arquivo por rodada — sem isso, o hook
+  # que morre de `set -u` no ramo de um assert CALA, e o silêncio passa por julgamento.
+  erros_exec() { grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" 2>/dev/null || true; }
+  vermelhos() { { grep -Eo '^  FALHA [A-Za-z]+[0-9]+[a-z]? ' "$1" || true; } | awk '{ printf "%s ", $2 }'; }
 
   # Locale UTF-8 por SONDA POSITIVA, não por nome fixo (mesmo padrão de test-claude-md-budget.sh).
   # `pt_BR.UTF-8` cravado aqui dá 2 locales na M2 e (C, C) no runner ubuntu, onde pt_BR NÃO existe:
@@ -64,17 +75,18 @@ if [ "${1:-}" = "--falsificar" ]; then
   # reusar `|` como delimitador produziria um sed INVÁLIDO, que escreveria uma
   # cópia vazia. Cópia vazia também fica vermelha, e a falsificação passaria
   # parecendo boa sem ter sabotado regra nenhuma. Daí as 4 travas abaixo.
-  sabota() {
-    local desc="$1" regra="$2" expr="$3" copia="$tmp/sabotado.sh" erro
+  copia="$tmp/sabotado.sh"
+  aplica() {  # escreve a cópia sabotada; 1 = falsificação VAZIA (já acusada), nada a julgar
+    local erro fumaca
     erro="$(sed "$expr" "$HOOK" 2>&1 >"$copia")"
     if [ -n "$erro" ]; then
-      printf '  \033[31mFALHA\033[0m "%s": sed invalido (%s) — falsificacao vazia\n' "$desc" "${erro:0:50}"; falhou=1; return
+      printf '  \033[31mFALHA\033[0m "%s": sed invalido (%s) — falsificacao vazia\n' "$desc" "${erro:0:50}"; falhou=1; return 1
     fi
     if cmp -s "$HOOK" "$copia"; then
-      printf '  \033[31mFALHA\033[0m "%s": padrao nao casou, hook intacto — falsificacao vazia\n' "$desc"; falhou=1; return
+      printf '  \033[31mFALHA\033[0m "%s": padrao nao casou, hook intacto — falsificacao vazia\n' "$desc"; falhou=1; return 1
     fi
     if ! bash -n "$copia" 2>/dev/null; then
-      printf '  \033[31mFALHA\033[0m "%s": quebrou a SINTAXE — vermelho pelo motivo errado\n' "$desc"; falhou=1; return
+      printf '  \033[31mFALHA\033[0m "%s": quebrou a SINTAXE — vermelho pelo motivo errado\n' "$desc"; falhou=1; return 1
     fi
     # (4) o miolo do hook é um programa jq dentro de STRING — `bash -n` não entra nele, então um
     #     jq inválido passa pelas 3 travas acima. Aqui o sintoma NÃO é ruído: o alvo silencia o
@@ -94,16 +106,8 @@ if [ "${1:-}" = "--falsificar" ]; then
                   tool_input:{file_path:$f}}' | bash "$copia.fumaca" 2>&1 >/dev/null)"
     if printf '%s' "$fumaca" | command grep -qE 'jq:|awk|AWK|compile error'; then
       printf '  \033[31mFALHA\033[0m "%s": quebrou o programa jq (%s) — vermelho pelo motivo errado\n' \
-        "$desc" "${fumaca:0:60}"; falhou=1; return
+        "$desc" "${fumaca:0:60}"; falhou=1; return 1
     fi
-    for loc in C "$utf8"; do
-      if LC_ALL="$loc" HOOK_SOB_TESTE="$copia" bash "$0" >/dev/null 2>&1; then
-        printf '  \033[31mFALHA\033[0m [%s] "%s" passou VERDE — a suite nao cobre: %s\n' "$loc" "$desc" "$regra"
-        falhou=1
-      else
-        printf '  \033[32mok\033[0m   [%-11s] "%s" -> vermelho\n' "$loc" "$desc"
-      fi
-    done
   }
 
   # -- CONTROLE: a suite tem de estar VERDE antes de qualquer sed --------------------
@@ -119,13 +123,18 @@ if [ "${1:-}" = "--falsificar" ]; then
   # REAL. Se for justamente essa invocacao (copia + LC_ALL) que esta vermelha por motivo alheio,
   # o `test:hooks` fica verde e todo este bloco vira teatro.
   # Abortamos ANTES do primeiro sed: com a base vermelha nenhum veredito de (B) e legivel.
+  # O LOG do controle é a régua das camadas do laço: quantos asserts a suíte executa, e que o assert
+  # declarado SABE ficar verde nesta invocação.
   controle="$tmp/controle.sh"
   cp "$HOOK" "$controle"
   for loc in C "$utf8"; do
-    if LC_ALL="$loc" HOOK_SOB_TESTE="$controle" bash "$0" >/dev/null 2>&1; then
-      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE\n' "$loc"
+    ctl="$tmp/controle.$loc.log"; : > "$ctl.stderr"
+    LC_ALL="$loc" HOOK_SOB_TESTE="$controle" ERROS_DO_ALVO="$ctl.stderr" bash "$0" >"$ctl.cru" 2>&1; rc=$?
+    sem_cor "$ctl.cru" > "$ctl"
+    if [ "$rc" -eq 0 ] && [ "$(asserts "$ctl")" -gt 0 ]; then
+      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE (%s asserts)\n' "$loc" "$(asserts "$ctl")"
     else
-      printf '  \033[31mFALHA\033[0m [%s] controle SEM sabotagem ja esta VERMELHO — sem linha de base, falsificar nao prova nada\n' "$loc"
+      printf '  \033[31mFALHA\033[0m [%s] controle SEM sabotagem ja esta VERMELHO (exit %s, %s asserts) — sem linha de base, falsificar nao prova nada\n' "$loc" "$rc" "$(asserts "$ctl")"
       falhou=1
     fi
   done
@@ -135,27 +144,96 @@ if [ "${1:-}" = "--falsificar" ]; then
     exit 1
   fi
 
-  sabota "sempre silencia"      "avisar quando a leitura e cara" \
+  # <sabotagem>:<IDs dos asserts que TÊM de acusá-la> — `,` = E (cada um tem de virar), `|` = OU
+  # (basta um). O ID é o 1º token que o assert imprime (`FALHA R8 …`). Exit≠0 NÃO é dente: até
+  # 2026-09-27 este laço contava "-> vermelho" para QUALQUER rodada que saísse ≠0 — assert alheio,
+  # aborto, o hook morrendo calado no ramo que o assert mede. Colaterais ficam de fora de propósito.
+  # docs/historico/falsificacao-exit-nao-e-dente.md
+  SABOTAGENS="sempre_silencia:R2 sem_corte_10k:R1 mtime_fora_da_chave:R10 range_fora_da_chave:R9
+              stat_bsd_na_frente:Sgnu2 decide_permissao:R5"
+
+  # registra <nome> <descricao> <regra-que-deve-quebrar> <expressao-sed> — a TABELA das
+  # sabotagens. Nome da lista sem registro e registro fora da lista são FALHA (no fim do laço): o
+  # primeiro não sabotaria nada, o segundo nunca rodaria.
+  registradas=""
+  registra() {
+    registradas="$registradas $1"
+    printf -v "desc_$1" '%s' "$2"; printf -v "regra_$1" '%s' "$3"; printf -v "expr_$1" '%s' "$4"
+  }
+  registra sempre_silencia "sempre silencia"      "avisar quando a leitura e cara" \
          's%^jq -n --arg m%exit 0 # SABOTADO%'
-  sabota "sem corte de 10k"     "silenciar leitura barata" \
+  registra sem_corte_10k "sem corte de 10k"     "silenciar leitura barata" \
          's%\[ "\$tokens" -ge 10000 \] || exit 0%:%'
-  sabota "mtime fora da chave"  "reler arquivo ALTERADO e legitimo" \
+  registra mtime_fora_da_chave "mtime fora da chave"  "reler arquivo ALTERADO e legitimo" \
          's%chave="\${mtime}|%chave="%'
-  sabota "range fora da chave"  "ler OUTRO trecho nao e releitura" \
+  registra range_fora_da_chave "range fora da chave"  "ler OUTRO trecho nao e releitura" \
          's%\${inicio}|\${limite}|%%'
   # A regressao de portabilidade: voltar ao `stat -f` na frente. So o bloco (c),
   # com o stub do contrato GNU, deixa isto vermelho — no macOS puro passaria
   # verde, que foi exatamente como o defeito entrou (#1808). Delimitador `#`
   # porque o padrao tem `%`.
-  sabota "stat BSD na frente"   "mtime portavel entre BSD e GNU" \
+  registra stat_bsd_na_frente "stat BSD na frente"   "mtime portavel entre BSD e GNU" \
          's#^mtime="$(stat -c '"'"'%Y'"'"'#mtime="$(stat -f '"'"'%m'"'"'#'
 
-  sabota "decide permissao"     "nunca emitir permissionDecision" \
+  registra decide_permissao "decide permissao"     "nunca emitir permissionDecision" \
          's%hookEventName:"PreToolUse"%hookEventName:"PreToolUse", permissionDecision:"deny"%'
 
+  # A rodada só conta como vermelha com as QUATRO camadas (as do sync-reprocess):
+  #   1. a sabotagem APLICOU (as travas de aplica());
+  #   2. a suíte rodou INTEIRA (nº de asserts = o do controle: aborto no meio não é assert);
+  #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
+  #   4. nenhum erro de execução do bash no hook que o controle não tem (ERROS_DO_ALVO) — o hook
+  #      que morre no ramo do assert derruba o assert certo por CRASH, não por julgamento.
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; exigidos="${item#*:}"
+    v="desc_$sab"; desc="${!v-}"; v="regra_$sab"; regra="${!v-}"; v="expr_$sab"; expr="${!v-}"
+    if [ -z "$expr" ]; then
+      printf '  \033[31mFALHA\033[0m "%s": na lista SABOTAGENS e SEM registro — nada foi sabotado\n' "$sab"; falhou=1; continue
+    fi
+    aplica || continue
+    for loc in C "$utf8"; do
+      ctl="$tmp/controle.$loc.log"; log="$tmp/sabotada-$sab.$loc.log"; : > "$log.stderr"
+      LC_ALL="$loc" HOOK_SOB_TESTE="$copia" ERROS_DO_ALVO="$log.stderr" bash "$0" >"$log.cru" 2>&1; rc=$?
+      sem_cor "$log.cru" > "$log"
+      if [ "$rc" -eq 0 ]; then
+        printf '  \033[31mFALHA\033[0m [%s] "%s" passou VERDE — a suite nao cobre: %s\n' "$loc" "$desc" "$regra"
+        falhou=1; continue
+      fi
+      # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
+      faltam=""
+      for exigido in ${exigidos//,/ }; do
+        if ! grep -Eq "^  ok +($exigido) " "$ctl" || ! grep -Eq "^  FALHA ($exigido) " "$log"; then
+          faltam="$faltam $exigido"
+        fi
+      done
+      if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
+        printf '  \033[31mFALHA\033[0m [%s] "%s": a suite NAO rodou inteira (%s de %s asserts) — vermelho de aborto, nao de assert\n' \
+          "$loc" "$desc" "$(asserts "$log")" "$(asserts "$ctl")"
+        falhou=1
+      elif [ "$(erros_exec "$log.stderr")" != "$(erros_exec "$ctl.stderr")" ]; then
+        printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha com ERRO de execucao no hook — o assert caiu por crash, nao por julgamento\n' "$loc" "$desc"
+        { grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log.stderr" || true; } | sed 's/^/       /'
+        falhou=1
+      elif [ -n "$faltam" ]; then
+        printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):%s · vermelhos: %s\n' \
+          "$loc" "$desc" "$faltam" "$(vermelhos "$log")"
+        falhou=1
+      else
+        printf '  \033[32mok\033[0m   [%-11s] "%s" -> vermelho no assert declarado (%s) · vermelhos: %s\n' \
+          "$loc" "$desc" "$exigidos" "$(vermelhos "$log")"
+      fi
+    done
+  done
+  for r in $registradas; do
+    case " $SABOTAGENS " in
+      *[[:space:]]"$r:"*) ;;
+      *) printf '  \033[31mFALHA\033[0m "%s": registrada e FORA da lista SABOTAGENS — nunca roda, e o verde nao a cobre\n' "$r"; falhou=1 ;;
+    esac
+  done
+
   printf '\n'
-  if [ "$falhou" -eq 0 ]; then echo "VERDE — toda sabotagem foi detectada, nos 2 locales"; exit 0; fi
-  echo "VERMELHO — ha sabotagem passando despercebida"; exit 1
+  if [ "$falhou" -eq 0 ]; then echo "VERDE — toda sabotagem ficou vermelha NO assert que declara, nos 2 locales"; exit 0; fi
+  echo "VERMELHO — ha sabotagem sem o vermelho certo"; exit 1
 fi
 
 # ---------------------------------------------------------------- fixtures ---
@@ -175,7 +253,7 @@ run() {  # $1=file_path $2=session $3=limit(0=ausente) $4=offset(0=ausente)
       tool_input:({file_path:$f}
                   + (if $l > 0 then {limit:$l} else {} end)
                   + (if $o > 0 then {offset:$o} else {} end))}' \
-  | bash "$HOOK" 2>/dev/null
+  | bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}"
 }
 
 fail=0
@@ -196,38 +274,38 @@ echo "== read-contexto-nudge =="
 
 # --- (a) volume --------------------------------------------------------------
 # 1. arquivo pequeno → silêncio
-check "arquivo pequeno → silêncio" silencio "$(run "$pequeno" s1)"
+check "R1 arquivo pequeno → silêncio" silencio "$(run "$pequeno" s1)"
 
 # 2. arquivo grande → avisa volume
 out2="$(run "$grande" s2)"
-check "arquivo grande (~111k tok) → avisa volume" READ-GRANDE "$out2"
+check "R2 arquivo grande (~111k tok) → avisa volume" READ-GRANDE "$out2"
 
 # 3. JSON bem-formado com os dois canais (founder + agente).
 #    printf, não echo: echo interpreta o \n escapado e corrompe o JSON (CLAUDE.md).
 if printf '%s' "$out2" | jq -e '.systemMessage and .hookSpecificOutput.additionalContext' >/dev/null 2>&1
-then ok "JSON válido com systemMessage + additionalContext"
-else bad "JSON inválido ou incompleto"; fi
+then ok "R3 JSON válido com systemMessage + additionalContext"
+else bad "R3 JSON inválido ou incompleto"; fi
 
 # 4. hookEventName correto
 if printf '%s' "$out2" | jq -e '.hookSpecificOutput.hookEventName == "PreToolUse"' >/dev/null 2>&1
-then ok "hookEventName = PreToolUse"
-else bad "hookEventName errado"; fi
+then ok "R4 hookEventName = PreToolUse"
+else bad "R4 hookEventName errado"; fi
 
 # 5. NÃO decide permissão. Emitir permissionDecision:"allow" pularia o prompt de
 #    permissão de TODA leitura — auto-aprovaria ler ~/.ssh/id_rsa. E "deny"/"ask"
 #    quebraria investigação legítima. O hook só anexa contexto.
 if printf '%s' "$out2" | command grep -q 'permissionDecision'
-then bad "emitiu permissionDecision (não pode decidir permissão)"
-else ok "não decide permissão (nem allow, nem deny, nem ask)"; fi
+then bad "R5 emitiu permissionDecision (não pode decidir permissão)"
+else ok "R5 não decide permissão (nem allow, nem deny, nem ask)"; fi
 
 # 6. o que conta é o VOLUME lido, não a presença de `limit`. Com linhas de ~1KB,
 #    limit=10 lê ~10KB (~2,8k tok) → silêncio...
-check "grande + limit=10 (~2,8k tok) → silêncio" silencio "$(run "$grande" s6 10)"
+check "R6 grande + limit=10 (~2,8k tok) → silêncio" silencio "$(run "$grande" s6 10)"
 
 # 6b. ...mas limit=50 nas MESMAS linhas lê ~50KB (~13k tok) e ainda dói: `limit`
 #     não é garantia de leitura barata. Este caso já pegou uma premissa errada
 #     minha ("usou limit → não avisa") — o corte é por tokens, não por flag.
-check "grande + limit=50 (~13k tok) → avisa mesmo com limit" READ-GRANDE "$(run "$grande" s6b 50)"
+check "R6b grande + limit=50 (~13k tok) → avisa mesmo com limit" READ-GRANDE "$(run "$grande" s6b 50)"
 
 # 6c. O CONSELHO muda de lado no break-even medido (2026-08-06): um subagente
 #     custa US$ 1,06 na mediana, então delegar só compensa a partir de ~40k
@@ -238,12 +316,12 @@ check "grande + limit=50 (~13k tok) → avisa mesmo com limit" READ-GRANDE "$(ru
 grande_out="$(run "$grande" s6c)"          # ~111k tok → faixa do subagente
 peq_out="$(run "$grande" s6d 50)"          # ~13k tok  → faixa do recorte
 if tem "SE PAGA" "$grande_out" && ! tem "PERDE" "$grande_out"
-then ok "leitura >=40k: conselho é DELEGAR (o subagente se paga)"
-else bad "leitura de 111k deveria recomendar subagente (veio: '${grande_out:0:80}')"; fi
+then ok "R6c leitura >=40k: conselho é DELEGAR (o subagente se paga)"
+else bad "R6c leitura de 111k deveria recomendar subagente (veio: '${grande_out:0:80}')"; fi
 
 if tem "PERDE" "$peq_out" && ! tem "SE PAGA" "$peq_out"
-then ok "leitura 10-40k: conselho é RECORTAR (delegar perderia dinheiro)"
-else bad "leitura de 13k deveria desaconselhar subagente (veio: '${peq_out:0:80}')"; fi
+then ok "R6d leitura 10-40k: conselho é RECORTAR (delegar perderia dinheiro)"
+else bad "R6d leitura de 13k deveria desaconselhar subagente (veio: '${peq_out:0:80}')"; fi
 
 # 7. o teto de 2000 linhas do Read entra na conta: arquivo de linhas CURTAS cujo
 #    total passa de 10k tok, mas cujas 2000 primeiras linhas não → silêncio.
@@ -251,29 +329,29 @@ else bad "leitura de 13k deveria desaconselhar subagente (veio: '${peq_out:0:80}
 # único open. O laço com `>>` abria o arquivo 12.000 vezes e custava ~26s SOZINHO — mais que
 # toda a suíte —, e a falsificação re-executa a suíte inteira por sabotagem x locale.
 curto="$tmp/muitas-linhas-curtas.ts"; printf 'const x = 1;\n%.0s' $(seq 1 12000) > "$curto"
-check "60k linhas curtas (teto de 2000 linhas) → silêncio" silencio "$(run "$curto" s7)"
+check "R7 60k linhas curtas (teto de 2000 linhas) → silêncio" silencio "$(run "$curto" s7)"
 
 # --- (b) releitura -----------------------------------------------------------
 # 8. mesmo arquivo, mesma sessão, sem alteração → avisa releitura
 _=$(run "$pequeno" s8)
-check "2ª leitura idêntica → avisa releitura" READ-RELEITURA "$(run "$pequeno" s8)"
+check "R8 2ª leitura idêntica → avisa releitura" READ-RELEITURA "$(run "$pequeno" s8)"
 
 # 9. ranges diferentes NÃO são releitura — é leitura complementar do arquivo.
 #    Os dois ranges são pequenos E existem dentro do arquivo (400 linhas), senão
 #    o caso passaria por acidente: offset além do fim lê 0 byte e silenciaria
 #    sozinho, sem provar nada sobre a regra de releitura.
 _=$(run "$grande" s9 10 1)
-check "mesmo arquivo, range diferente → silêncio" silencio "$(run "$grande" s9 10 200)"
+check "R9 mesmo arquivo, range diferente → silêncio" silencio "$(run "$grande" s9 10 200)"
 
 # 10. arquivo alterado entre as leituras → releitura legítima, silêncio
 mudou="$tmp/mudou.ts"; printf 'a\n' > "$mudou"
 _=$(run "$mudou" s10)
 sleep 1; printf 'b\n' >> "$mudou"          # mtime muda
-check "arquivo alterado entre leituras → silêncio" silencio "$(run "$mudou" s10)"
+check "R10 arquivo alterado entre leituras → silêncio" silencio "$(run "$mudou" s10)"
 
 # 11. a marca é POR SESSÃO — outra sessão relendo o mesmo arquivo não herda
 _=$(run "$pequeno" s11)
-check "outra sessão, 1ª leitura → silêncio" silencio "$(run "$pequeno" s11b)"
+check "R11 outra sessão, 1ª leitura → silêncio" silencio "$(run "$pequeno" s11b)"
 
 # --- (c) portabilidade da chave: os DOIS contratos do `stat` ------------------
 # A chave da releitura carrega o mtime, e `stat` DIVERGE entre BSD (macOS, do
@@ -311,7 +389,7 @@ _porta() {  # $1=nome do contrato  $2=corpo do stub de `stat`
         tool_input:({file_path:$f}
                     + (if $l > 0 then {limit:$l} else {} end)
                     + (if $o > 0 then {offset:$o} else {} end))}' \
-    | env PATH="$d:$PATH" STAT_REAL="$STAT_REAL" bash "$HOOK" 2>/dev/null
+    | env PATH="$d:$PATH" STAT_REAL="$STAT_REAL" bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}"
   }
 
   # (i) ainda DETECTA a releitura de verdade. Sem este caso, um mtime constante
@@ -320,17 +398,17 @@ _porta() {  # $1=nome do contrato  $2=corpo do stub de `stat`
   _=$(_run "$alvo" "p$nome-1")
   o="$(_run "$alvo" "p$nome-1")"
   if tem READ-RELEITURA "$o"
-  then ok "[$nome] 2ª leitura idêntica ainda avisa releitura"
-  else bad "[$nome] releitura idêntica parou de avisar (veio: '${o:0:60}')"; fi
+  then ok "S${nome}1 [$nome] 2ª leitura idêntica ainda avisa releitura"
+  else bad "S${nome}1 [$nome] releitura idêntica parou de avisar (veio: '${o:0:60}')"; fi
 
   # (ii) o mtime discrimina: arquivo alterado entre as leituras não é releitura
   _=$(_run "$alvo" "p$nome-2")
   sleep 1; printf 'b\n' >> "$alvo"
-  check "[$nome] arquivo alterado → silêncio" silencio "$(_run "$alvo" "p$nome-2")"
+  check "S${nome}2 [$nome] arquivo alterado → silêncio" silencio "$(_run "$alvo" "p$nome-2")"
 
   # (iii) o range discrimina: outro trecho é leitura complementar, não releitura
   _=$(_run "$grande" "p$nome-3" 10 1)
-  check "[$nome] range diferente → silêncio" silencio "$(_run "$grande" "p$nome-3" 10 200)"
+  check "S${nome}3 [$nome] range diferente → silêncio" silencio "$(_run "$grande" "p$nome-3" 10 200)"
 }
 
 # GNU: `-c %Y` devolve o epoch; `-f` NÃO consome formato — '%m' vira operando
@@ -365,26 +443,26 @@ exit 1'
 
 # --- fail-safes --------------------------------------------------------------
 # 12. arquivo inexistente → silêncio (o próprio Read reporta o erro)
-check "arquivo inexistente → silêncio" silencio "$(run "$tmp/nao-existe.ts" s12)"
+check "R12 arquivo inexistente → silêncio" silencio "$(run "$tmp/nao-existe.ts" s12)"
 
 # 13. binário/imagem → silêncio (a heurística de bytes não vale; não dar conselho errado)
-check "imagem → silêncio" silencio "$(run "$imagem" s13)"
+check "R13 imagem → silêncio" silencio "$(run "$imagem" s13)"
 
 # 14. outra ferramenta no payload → silêncio (defesa se o matcher mudar)
-check "tool_name != Read → silêncio" silencio \
-  "$(jq -nc --arg f "$grande" '{hook_event_name:"PreToolUse",tool_name:"Grep",session_id:"s14",tool_input:{file_path:$f}}' | bash "$HOOK" 2>/dev/null)"
+check "R14 tool_name != Read → silêncio" silencio \
+  "$(jq -nc --arg f "$grande" '{hook_event_name:"PreToolUse",tool_name:"Grep",session_id:"s14",tool_input:{file_path:$f}}' | bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
 
 # 15. o aviso de volume sai UMA VEZ por arquivo/sessão — na 2ª vez quem fala é a
 #     releitura, senão o mesmo arquivo grande gritaria volume a cada leitura.
 _=$(run "$grande" s15)
 out15="$(run "$grande" s15)"
 if tem READ-RELEITURA "$out15" && ! tem READ-GRANDE "$out15"
-then ok "2ª leitura de arquivo grande → só releitura, sem repetir volume"
-else bad "2ª leitura de grande: esperava só READ-RELEITURA (veio: '${out15:0:70}')"; fi
+then ok "R15 2ª leitura de arquivo grande → só releitura, sem repetir volume"
+else bad "R15 2ª leitura de grande: esperava só READ-RELEITURA (veio: '${out15:0:70}')"; fi
 
 # 16. o payload real do Claude Code traz file_path relativo em alguns clientes;
 #     caminho não resolvível → silêncio, nunca erro.
-check "caminho relativo não resolvível → silêncio" silencio "$(run "src/nao/existe.ts" s16)"
+check "R16 caminho relativo não resolvível → silêncio" silencio "$(run "src/nao/existe.ts" s16)"
 
 echo
 if [ "$fail" -eq 0 ]; then echo "VERDE — todos os casos passaram"; exit 0; fi

@@ -51,7 +51,7 @@ COR_ENV=""
 SCAN_ATUAL=""
 run_scan() {
   # shellcheck disable=SC2086  # COR_ENV é lista KEY=VAL (ou vazia), precisa expandir em palavras
-  env $COR_ENV LRS_PATTERNS="^supabase/functions/" bash "${SCAN_ATUAL:-$SCAN}" 2>/dev/null
+  env $COR_ENV LRS_PATTERNS="^supabase/functions/" bash "${SCAN_ATUAL:-$SCAN}" 2>>"${ERROS_DO_SCAN:-/dev/null}"
 }
 
 expect_hit() {  # <nome> <token1> <token2>
@@ -178,18 +178,31 @@ else
   echo "  FAIL  CONTROLE vermelho ANTES da 1ª sabotagem — nada abaixo provaria coisa alguma"; fail=1
 fi
 
-# _sabota <nome> <expr-sed> — quebra UMA fixação de cor na cópia e exige que o alarme SUMA.
+# _sabota <nome> <expr-sed> — quebra UMA fixação de cor na cópia e exige que o alarme SUMA. E
+# "sumir" é o DECLARADO: o scan roda até o fim e julga "nada" — exit 0, stdout mudo, stderr sem erro.
+# Até 2026-09-27 valia "saída vazia", e um scan que MORRE (sintaxe, `set -u`, git recusando a flag)
+# também sai vazio: crash contado como dente. docs/historico/falsificacao-exit-nao-e-dente.md
 _sabota() {
-  local nome="$1" expr="$2" out
+  local nome="$1" expr="$2" out rc
   [ "$controle_ok" -eq 1 ] || return 0
   sed "$expr" "$SCAN" > "$base/copia.sh"
   if cmp -s "$SCAN" "$base/copia.sh"; then
     echo "  FAIL  sed obsoleto | $nome — a sabotagem não mudou NADA (o teste estaria cego)"; fail=1
     return 0
   fi
-  out="$(run_scan)"
-  if [ -z "$out" ]; then echo "  ok    sabot | $nome → alarme SUMIU (a flag é load-bearing)"
-  else echo "  FAIL  $nome → alarme sobreviveu; a flag não está sob teste | out='$out'"; fail=1; fi
+  if ! bash -n "$base/copia.sh" 2>/dev/null; then
+    echo "  FAIL  sintaxe | $nome — a sabotagem quebrou a SINTAXE do scan (vermelho pelo motivo errado)"; fail=1
+    return 0
+  fi
+  : > "$base/copia.err"
+  out="$(ERROS_DO_SCAN="$base/copia.err" run_scan)"; rc=$?
+  if [ -n "$out" ]; then
+    echo "  FAIL  $nome → alarme sobreviveu; a flag não está sob teste | out='$out'"; fail=1
+  elif [ "$rc" -ne 0 ] || command grep -qE 'fatal:|error:|unknown option|unbound variable|command not found|syntax error' "$base/copia.err"; then
+    echo "  FAIL  $nome → o alarme sumiu por CRASH, não por julgamento (exit $rc): $(head -c 160 "$base/copia.err" | tr '\n' ' ')"; fail=1
+  else
+    echo "  ok    sabot | $nome → alarme SUMIU com o scan julgando (exit 0, stderr limpo): a flag é load-bearing"
+  fi
 }
 
 # shellcheck disable=SC2016  # sed: o padrão é literal do script alvo, expandir aqui o quebraria
