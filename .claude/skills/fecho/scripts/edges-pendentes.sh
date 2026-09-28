@@ -217,9 +217,40 @@ if [ "$1" = "--desde" ]; then
   # vez da porta do CAMPO. Por isso RECUSA, e não normalização silenciosa para UTC: normalizar
   # acertaria a intenção usual e mentiria para quem realmente quis local, trocando um erro visível
   # por um invisível. SHA e data RELATIVA não passam por aqui — não são ambíguos.
+  #
+  # 🔴 GUARD DE HORA — data absoluta SEM HORA é RECUSADA, com ou sem fuso (2026-09-27). O
+  # `approxidate` do git completa a hora que falta com a hora ATUAL do relógio, não com a
+  # meia-noite, e o fuso não salva: às 23:09Z, `--desde "2026-09-27 UTC"` cortou em
+  # 2026-09-27 23:09:39Z. Medido executando este script num fixture com um merge de edge às
+  # 00:00:30Z: base = o próprio merge, `✅ nenhuma edge na janela`, exit 0. O guard de fuso deixava
+  # essa forma passar (tem `UTC`), e o remédio que ele imprimia para a data NUA era `"<data> UTC"`
+  # — a própria forma do bug: o guard ENSINAVA o defeito. Por isso a HORA se checa ANTES do fuso,
+  # e o remédio escreve `00:00`.
+  #   · "Tem hora" = `H:MM` logo após espaço ou `T`/`t`. Um `:` solto NÃO basta: sem hora antes, o
+  #     git lê `±hh:mm` como HORA LOCAL, não como fuso (`"2026-09-27 -03:00"` → 06:00Z), e o
+  #     detector ingênuo casaria o próprio offset. `midnight`/`noon` também são recusados, e com
+  #     razão: `"2026-09-27 midnight UTC"` → 03:00Z (meia-noite LOCAL; o `UTC` é ignorado).
+  #   · Alcance: a grafia `AAAA-MM-DD`/`AAAA/MM/DD`, a mesma do guard de fuso e a que a doc
+  #     prescreve. Outras grafias absolutas (`27/09/2026`, `Sep 27 2026`, `2026.09.27`) também
+  #     pegam a hora atual e NÃO passam por guard nenhum — furo medido, fora deste guard.
   if [ -z "$base" ]; then
     case "$desde" in
       [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*|[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]*)
+        case "$desde" in
+          *[\ Tt][0-9]:[0-9][0-9]*|*[\ Tt][0-9][0-9]:[0-9][0-9]*) ;;  # tem hora
+          *)
+            # marcador ASCII, caixa fixa (mesmo motivo do DESDE_SEM_FUSO abaixo). O remédio nunca
+            # imprime a data do operador seguida só de fuso: essa é a forma que o git lê como agora.
+            dia="${desde:0:10}"
+            echo "⛔ edges-pendentes: DESDE_SEM_HORA — --desde \"$desde\" é data absoluta SEM HORA."
+            echo "   O git completa a hora que falta com a hora ATUAL (agora: $(date -u +%H:%M)Z), não com"
+            echo "   a meia-noite — com ou sem fuso: \"<data> UTC\" também vira <data> na hora de agora."
+            echo "   A janela encolhe em silêncio, e este script APAGA pendência: o que mergeou antes"
+            echo "   dessa hora some da janela, em verde."
+            echo "   Diga a hora:  --desde \"$dia 00:00 UTC\"   (ou \"$dia 00:00 $(date +%z)\" se quis local)"
+            exit 3
+            ;;
+        esac
         case "$desde" in
           *Z|*z|*UTC*|*utc*|*GMT*|*gmt*|*[+-][0-9][0-9]:[0-9][0-9]|*[+-][0-9][0-9][0-9][0-9]) ;;
           *)

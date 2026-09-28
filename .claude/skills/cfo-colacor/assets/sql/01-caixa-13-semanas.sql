@@ -15,12 +15,17 @@
 -- ============================================================================
 
 -- (a) projeção semanal por empresa (entradas = CR aberto vencendo; saídas = CP aberto)
+--     A semana 0 é a CORRENTE de SÃO PAULO. A sessão da prod é UTC: domingo das 21:00 às 23:59 BRT
+--     `date_trunc('week', CURRENT_DATE)` já é a semana SEGUINTE, e a corrente — com os títulos em
+--     aberto dela — sumia da projeção (o mesmo defeito que a RPC fin_projecao_13_semanas tinha até
+--     20260927202603). `data_vencimento` é `date`: as bordas são datas, sem fuso.
 WITH comp(company) AS (VALUES ('colacor'),('oben'),('colacor_sc')),
+s0 AS (
+  SELECT date_trunc('week', now() AT TIME ZONE 'America/Sao_Paulo')::date AS ini
+),
 semanas AS (
-  SELECT generate_series(
-           date_trunc('week', CURRENT_DATE)::date,
-           (date_trunc('week', CURRENT_DATE) + interval '12 weeks')::date,
-           interval '1 week')::date AS semana_ini
+  SELECT generate_series(s0.ini::timestamp, (s0.ini + 84)::timestamp, interval '1 week')::date AS semana_ini
+  FROM s0
 ),
 saldo_ini AS (
   SELECT company, COALESCE(sum(saldo_atual),0) AS saldo_inicial
@@ -30,16 +35,16 @@ entradas AS (
   SELECT company, date_trunc('week', data_vencimento)::date AS semana_ini, sum(valor_documento) AS entra
   FROM fin_contas_receber
   WHERE status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE')   -- status, NÃO saldo
-    AND data_vencimento >= date_trunc('week', CURRENT_DATE)::date
-    AND data_vencimento <  (date_trunc('week', CURRENT_DATE) + interval '13 weeks')::date
+    AND data_vencimento >= (SELECT ini FROM s0)
+    AND data_vencimento <  (SELECT ini FROM s0) + 91              -- 13 semanas
   GROUP BY company, 2
 ),
 saidas AS (
   SELECT company, date_trunc('week', data_vencimento)::date AS semana_ini, sum(valor_documento) AS sai
   FROM fin_contas_pagar
   WHERE status_titulo IN ('A VENCER','ATRASADO')               -- status, NÃO saldo
-    AND data_vencimento >= date_trunc('week', CURRENT_DATE)::date
-    AND data_vencimento <  (date_trunc('week', CURRENT_DATE) + interval '13 weeks')::date
+    AND data_vencimento >= (SELECT ini FROM s0)
+    AND data_vencimento <  (SELECT ini FROM s0) + 91              -- 13 semanas
   GROUP BY company, 2
 ),
 base AS (
