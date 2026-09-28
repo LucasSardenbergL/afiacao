@@ -881,6 +881,58 @@ fu4f 18, preço-médio 8, cluster 16, régua 10, v-titulo 18.
 certo — no código errado. A falsificação de um guard de migration roda o bloco DA migration (extraído do
 arquivo); senão, remover o guard real deixa tudo verde.
 
+## Parciais de `db/`, fase 4 — tint + reposição/pedidos/tático, 2026-09-27
+
+**Passo 0 — classe.** Os 6 reconferidos lendo o código e reproduzidos numa cópia; os 6 eram afetados
+(um deles no núcleo do CI):
+
+| site | o que o juiz aceitava (medido no arquivo de antes) |
+|---|---|
+| `tint-promote` (núcleo) | F1/F2 "diverge em ≠ 0 linhas": uma sabotagem COMBINADA que divergia em 2648 linhas contava como o NULL-honesto furado (720) |
+| `import-tint-formulas` | cada guard "≠ o valor do defeito": 1 item — nem os 0 da rejeição, nem os 2 do defeito — contava (17/0) |
+| `oportunidade-erro-terminal` | "≠ 6001" aceitava a saída VAZIA (bloco 1) e um SKU a mais (bloco 3); o apply sabotado que falhava era engolido pelo `\|\| true` |
+| `pedidos-programados` | F1 "≠ 0": o customer vendo 2 headers, e não o 1 sem RLS, contava (24/0) |
+| `pos-frescor-marcador` | X1 "!= t": o `f1` engolia o erro em `[]` e qualquer desfecho contava |
+| `tactical-plan-idempotencia` | o `falsifica` só IMPRIMIA os discriminadores do F2/F3 (um F5 com 2 colunas com default dava "7 com dente"); o p3 lia a última linha do erro (DETAIL/CONTEXTO, dependente do locale) |
+
+**O conserto:** o valor declarado — 720 e 1928 exatos no tint-promote (juiz registrado no `JUIZES` do
+`falsificar-exige-assert-gate`, com 4 âncoras), `0/3/0` no import, `NENHUM` e `6001,6004` na
+oportunidade, `1` no pedidos-programados, a SQLSTATE `42703` no X1 — e o MOTIVO declarado no
+`falsifica` do tático, com `PSQL_RC=0` e condição nomeada.
+
+**A 2ª opinião** (Codex challenge, `gpt-6-astra` max, 462 s) achou mais escapes — dois deles MEUS,
+introduzidos nesta fase. Todos reproduzidos na meta (pré = o commit antes da rodada: passava; novo:
+reprova) e fechados, menos os marcados:
+
+| achado | disposição |
+|---|---|
+| tint Flog-2 "0 apontados": a chamada que nem gera o log (o `RESET38` o apagou antes) também dá 0 | mede `marcados\|total` — declarado `0\|3` |
+| tint Flog-5 "≠ 1/9.000" aceitava a receita APAGADA (`0/-`) | declara `1/5.000000`, a parcial promovida |
+| import F2 com `qtd2ml:""` (o A2 usa `"0"`): sem guard nenhum, o `""` já abortava a linha e preservava a receita — dente por acidente | o payload do A2; e F1–F3 medem `itens\|rej=<linhas que o guard rejeitou>` — o guard INERTE dava os mesmos `0` (no pré, F1/F3 "caíam sob o guard" sem guard) |
+| tático p3 (**meu**): o `PERFORM` descartava o retorno — o A7 de antes exigia o UUID | volta a exigir o id retornado + a linha com esse id (RPC que devolve NULL) |
+| tático F3: `DUPLICATA_PASSOU` sem a duplicata GRAVADA (RPC que volta sem inserir) | conta o gravado: `n=2` |
+| tático F2/F7: qualquer 23505; o glob `…dia_operacional*` casava `…_extra` | a mensagem errada nomeia a constraint; delimitador `;` |
+| pos X1 (**meu**): a consulta COPIADA num DO deixava escapar a `f1` neutralizada (`printf t`) | a `f1` devolve `SQLSTATE=<código>` (`VERBOSITY=sqlstate`) e o X1 mede pela MESMA `f1` do assert |
+| pos X6/X6b "≠ barrado" aceitava erro alheio; `barra()` aceitava a marca num NOTICE antes de outro erro | desfecho nomeado (`vazou`, com `PSQL_RC`); a marca na linha do ERRO, depois da SQLSTATE da pós-condição (42P13/42501) |
+| oportunidade `NENHUM`: a geração INERTE (`RETURN;`) dá o mesmo — o `OFERTADOS` apaga tudo antes | a medição leva a linha-resumo da RPC e header×itens: bloco 1 `ret=0\|0\|0\|0\|{promo_flat}\|hi=0\|0`, bloco 2 `ret=1\|1\|200\|0\|{promo_flat}\|hi=1\|0` |
+| **residual (baixa):** 720/1928 são contagens — no modelo aritmético da cena, outras sabotagens (preço 999; fator 2 nas maiores) dariam o mesmo número | registrado: o juiz barra erro, vazio e outra cardinalidade; o CONJUNTO afetado fica para quando a prova mudar |
+| **residual (média):** o `JUIZES` ancora aceitação e rejeição, não a LIGAÇÃO com a medição (`DSAB=720` fixo passa), e o registro é voluntário | limite do desenho textual do gate (R3), fora desta fase |
+| **fora da classe:** assert PRINCIPAL verde por ausência (`IF q900 <> 12.5` com `q900` NULL; `eq … "$(cand)" ""` com a leitura que erra) | tarefa **"Erradicar assert principal verde por ausência em db/"**, com as duas assinaturas calibradas |
+
+**Meta-falsificação** (C e pt_BR, controle verde na mesma invocação, uma camada por vez): **102/102** —
+44 da fase (oportunidade 10, pedidos 8, pos 6, tático 8, import 6, tint 6) e 58 da rodada Codex (tint
+10, import 10, tático 18, pos 14, oportunidade 6).
+
+**Lições da fase 4:**
+
+- **Consertar um eixo da medição pode soltar outro.** Os dois achados "meus" nasceram de consertos
+  certos: trocar o `cria` por um DO (para nomear a condição) apagou a exigência do UUID; copiar a
+  consulta do `f1` num DO (para ler a SQLSTATE) desligou o X1 do assert. O juiz mede pelo MESMO caminho
+  do assert, e o conserto preserva o que a versão anterior já exigia.
+- **Caminho fixo em `/tmp` faz rodadas paralelas se atropelarem** (o F1d-1 do tint-promote reprovou
+  com "âncora não encontrada" numa rodada que, sozinha, passa) — virou a tarefa **"Corrigir temporários
+  que colidem em provas db/"**.
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
@@ -893,8 +945,8 @@ tarefas com a assinatura calibrada e a lista de sites no briefing:
     **"Varrer provas db/ fora do núcleo mortas na main"**.
 - **"Declarar valor sabotado nas provas db/ com juiz ≠ verde"** — os 27 parciais de `db/`, no padrão do
   `vermelha` com 4º argumento do pedido-total (em fases por domínio). **Fases 1 (sensores, 5), 2
-  (farmer, 5) e 3 (preço/custo/margem, 5) feitas — acima.** Seguem, com a mesma sessão como dono:
-  tint + reposição/pedidos/tático (6), authz/RLS + dados (6).
+  (farmer, 5), 3 (preço/custo/margem, 5) e 4 (tint + reposição/pedidos/tático, 6) feitas — acima.**
+  Segue, com a mesma sessão como dono: authz/RLS + dados (6).
 - ✅ **"Erradicar falsificação sem assert no test:falsificacao"** — ENTREGUE na 2ª leva (seção "A fase
   `scripts/`", acima): os 14 de `scripts/` reconfirmados e consertados — 13 lá, e o `eval-via-morta`
   pela fase dos evals do deploy-verify (o PR dela mudou o eval e o juiz juntos).
