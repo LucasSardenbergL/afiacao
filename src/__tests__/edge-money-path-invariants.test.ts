@@ -3906,16 +3906,27 @@ describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista 
   });
 
   it('página inteira falhando LANÇA — falha sistêmica não sai como run verde', () => {
-    expect(src).toContain('fails.length === pedidosRpc.length');
-    const i = src.indexOf('fails.length === pedidosRpc.length');
-    expect(src.slice(i, i + 400)).toContain('throw new Error(');
+    // A decisão e o throw moram em `reconciliarPagina` (./apuracao-pedidos.ts — P2 Codex
+    // 2026-09-27: o catch passou a gravar o metadata apurado, e a apuração saiu para um módulo
+    // EXECUTADO pelo teste Deno). O index passa a cardinalidade REAL da página (`pedidosRpc.length`).
+    const apuracao = removerComentarios(read('supabase/functions/sync-reprocess/apuracao-pedidos.ts'));
+    expect(apuracao).toContain('nFalhas > 0 && nFalhas === nPedidos && nPedidos > 1');
+    const i = apuracao.indexOf('if (paginaInteiraFalhou(fails.length, nPedidos))');
+    expect(i, 'decisão de abortar não encontrada em reconciliarPagina').toBeGreaterThan(-1);
+    expect(apuracao.slice(i, i + 400)).toContain('throw new Error(');
+    expect(src).toContain('await reconciliarPagina(ap, pedidosRpc.length,');
   });
 
   it('erro da RPC LANÇA — run verde sem reconciliar nada mascararia perda total', () => {
-    const i = src.indexOf('reconciliar_pedidos_omie');
+    // A chamada é injetada em `reconciliarPagina` (./apuracao-pedidos.ts), que lança no `error`.
+    const i = src.indexOf('db.rpc("reconciliar_pedidos_omie"');
     expect(i, 'chamada da RPC não encontrada').toBeGreaterThan(-1);
-    const bloco = src.slice(i, i + 1200);
-    expect(bloco).toContain('if (rpcErr)');
+    expect(src.slice(Math.max(0, i - 200), i)).toContain('reconciliarPagina(');
+    const apuracao = removerComentarios(read('supabase/functions/sync-reprocess/apuracao-pedidos.ts'));
+    const j = apuracao.indexOf('const { data, error } = await chamarRpc();');
+    expect(j, 'chamada injetada não encontrada').toBeGreaterThan(-1);
+    const bloco = apuracao.slice(j, j + 400);
+    expect(bloco).toContain('if (error)');
     expect(bloco).toContain('throw new Error(');
   });
 
@@ -4087,13 +4098,17 @@ describe('reconciliação carrega o desconto da linha — sync-reprocess × migr
   });
 
   it('o sensor AUSENTE da RPC vira null, nunca 0 — e chega ao metadata do log', () => {
-    const fonte = removerComentarios(read(REPROCESS));
-    expect(count(fonte, 'r.desconto_apurado || 0')).toBe(0);
-    expect(count(fonte, 'r.desconto_corrigido || 0')).toBe(0);
+    // A soma e o metadata moram em `./apuracao-pedidos.ts` (P2 Codex 2026-09-27); o index só os usa.
+    const fonte = removerComentarios(read('supabase/functions/sync-reprocess/apuracao-pedidos.ts'));
+    const index = removerComentarios(read(REPROCESS));
+    expect(count(index + fonte, 'r.desconto_apurado || 0')).toBe(0);
+    expect(count(index + fonte, 'r.desconto_corrigido || 0')).toBe(0);
     expect(fonte).toContain('typeof r.desconto_apurado === "number"');
     expect(fonte).toContain('typeof r.desconto_corrigido === "number"');
-    expect(fonte).toContain('desconto_apurado: descontoApurado,');
-    expect(fonte).toContain('desconto_corrigido: descontoCorrigido,');
+    expect(fonte).toContain('desconto_apurado: f2(ap.descontoApurado),');
+    expect(fonte).toContain('desconto_corrigido: f2(ap.descontoCorrigido),');
+    expect(fonte).toContain('const fails = somarRespostaRpc(ap, r);');
+    expect(index).toContain('await reconciliarPagina(ap, pedidosRpc.length,');
   });
 
   it('a migration carrega as defesas (o efeito é provado executando, no PG17)', () => {
