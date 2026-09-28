@@ -933,6 +933,52 @@ reprova) e fechados, menos os marcados:
   com "âncora não encontrada" numa rodada que, sozinha, passa) — virou a tarefa **"Corrigir temporários
   que colidem em provas db/"**.
 
+## Parciais de `db/`, fase 5 — authz/RLS + dados, 2026-09-27
+
+**Passo 0 — classe.** Os 6 reconferidos lendo o código e reproduzidos numa cópia; os 6 eram afetados:
+
+| site | o que o juiz aceitava (medido no arquivo de antes) |
+|---|---|
+| `authz-private-execute-fecho` | F2 "≠ BARROU": `OUTRO:22012` (a função que ERRA) contava como o GRANT de volta — e a marca `ZQ_EXECUTOU_SEM_ERRO` num NOTICE antes de outro erro também (o `\|\| true` engolia o rc); F1 "≠ scrub" aceitava `99.5/N/0.8` |
+| `cap-carteira-escrever-master-only` | a função sabotada que ERRA dava `""` ≠ `false` → "o corpo antigo escreve de novo" |
+| `margin-audit-log-master-pode-ler` | a policy que ERRA: a `le` imprimia o uid do `set_config` antes do erro, e o `tail -1` o entregava — `≠ 7` contava |
+| `remove-trigger-auto-super-admin` | o trigger restaurado concedendo OUTRO papel (`estrategico`) contava como o super_admin |
+| `backfill_kb_documents_product_code` | F1 "≠ vazio": um código LIXO no D2 contava como o vazamento do rascunho; F3 "≠ o próprio code": o D1 zerado contava como o cruzamento |
+| `carteira-saude-eligible-efeito` | F1 "≠ 3": a chave `carteira` AUSENTE contava; F2 "≠ succeeded": com o job fora da lista, o `tail -1` devolvia a tag `SET` do `SET test.uid` — `mensal=SET` contava como dente |
+
+**O conserto:** o valor declarado (colhido do arquivo intacto, 2 rodadas iguais, conferido na semente):
+`99.5/123.45/0.8` e `EXECUTOU`; `true`; `0` e `PUBLIC`; `super_admin`; `FL.9999.00` (a ficha-rascunho
+do D2), `YC.1401.00` (a do D4) e `PC.2992.00` (a do OUTRO doc); `5` (as 3 elegíveis + as 2
+inelegíveis) e `(null)`. As medições pelo `medir()`; as marcas do `veredito` só com o psql saindo 0.
+
+**A 2ª opinião** (Codex challenge, `gpt-6-astra` max, 425 s):
+
+| achado | disposição |
+|---|---|
+| **Alta:** o `grep -Fxq 'PSQL_RC=0'` aceitava QUALQUER linha — a função sob teste podia imprimir `PSQL_RC=0` num NOTICE e forjar o `EXECUTOU` com a chamada abortada | o rc numa variável, fora do texto; e o desfecho é o CONJUNTO das marcas — exatamente uma (a forja do Codex: pré 0 → novo 1; sem o conjunto, o rc sozinho ainda reprova) |
+| **Média:** sem `-X`, um `~/.psqlrc` com `ON_ERROR_STOP off` faz o script seguir depois do erro e sair 0 — a marca antes do erro vira desfecho | `-X` nos 6. Com `PSQLRC` hostil: pré 0 → novo 1; tirar só o `-X` ou só o conjunto ainda reprova (cada camada basta); tirar os dois devolve o escape. As outras provas de `db/` viraram a tarefa **"Blindar provas db/ contra ~/.psqlrc (psql -X)"** |
+| **Média:** o `0` do margin-audit F1 saía também de DROP POLICY sem recriar (a RLS nega tudo) | a assinatura por papel `master=0\|estrategico=7\|super_admin=7` (pré 0 → novo 1) |
+| **Baixa:** o F2 do cap-carteira recriava um corpo que não é o da migration (gerencial/super_admin escreviam) — a sabotagem mudava comportamento junto com o ACL | o corpo da migration (master-only) |
+
+**A própria meta tinha um furo:** o authz-private fixa o `lc_messages` do BANCO por
+`HARNESS_LC_MESSAGES` (default C) — a rodada "pt" da primeira meta rodou as sessões em C, com o
+servidor em pt, e a sonda do postmaster não via isso. O harness passou a exportar a variável e a meta
+foi refeita (18/18). Nenhuma outra das 27 provas fixa o `lc_messages`.
+
+**Meta-falsificação** (C e pt_BR, controle verde na mesma invocação, uma camada por vez): **98/98** — 66
+da fase (authz-private 18, cap-carteira 8, margin-audit 10, remove-trigger 8, backfill 12,
+carteira-saude 10), 24 da rodada Codex e os 8 controles do HEAD final.
+
+**Lições da fase 5:**
+
+- **A saída julgada não carrega o veredito do processo.** `echo "PSQL_RC=$?"` dentro do texto só é
+  seguro com o casamento ANCORADO no fim (o `*…PSQL_RC=0` dos globs, onde a linha real é a última);
+  "em qualquer linha" deixa a função sob teste forjar o rc. O rc vai numa variável.
+- **`tail -1` depois de `SET …; SELECT …` devolve a tag `SET` quando o SELECT volta sem linha** — a
+  ausência vira um valor que nenhum "≠ verde" reconhece como ausência.
+- **Sonda de locale no postmaster não prova o locale da SESSÃO:** `ALTER DATABASE … SET lc_messages`
+  sobrepõe o do servidor.
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
@@ -943,10 +989,15 @@ tarefas com a assinatura calibrada e a lista de sites no briefing:
   linha ERROR numa MESMA medição continuam indistinguíveis pelo log.
   - ↳ a classe vizinha que ela revelou — prova fora do CI que MORRE e ninguém vê — virou a tarefa
     **"Varrer provas db/ fora do núcleo mortas na main"**.
-- **"Declarar valor sabotado nas provas db/ com juiz ≠ verde"** — os 27 parciais de `db/`, no padrão do
-  `vermelha` com 4º argumento do pedido-total (em fases por domínio). **Fases 1 (sensores, 5), 2
-  (farmer, 5), 3 (preço/custo/margem, 5) e 4 (tint + reposição/pedidos/tático, 6) feitas — acima.**
-  Segue, com a mesma sessão como dono: authz/RLS + dados (6).
+- ✅ **"Declarar valor sabotado nas provas db/ com juiz ≠ verde"** — ENTREGUE (seções "Parciais de
+  `db/`, fase 1" a "fase 5", acima): os 27 parciais, em 5 fases por domínio, cada uma com a 2ª opinião
+  do Codex e a meta-falsificação nos dois locales. Os residuais ficaram registrados em cada seção. A
+  série revelou três classes vizinhas, que viraram tarefas com a assinatura calibrada no briefing:
+  - **"Erradicar assert principal verde por ausência em db/"** — `IF x <> lit` com `x` NULL (a linha
+    sumiu) e `eq … "$(…)" ""` com a leitura que erra;
+  - **"Corrigir temporários que colidem em provas db/"** — caminho fixo em `/tmp` (89 linhas em 21
+    provas) e `mktemp` com sufixo, que o macOS não troca;
+  - **"Blindar provas db/ contra ~/.psqlrc (psql -X)"** — 379 chamadas sem `-X` em 286 provas.
 - ✅ **"Erradicar falsificação sem assert no test:falsificacao"** — ENTREGUE na 2ª leva (seção "A fase
   `scripts/`", acima): os 14 de `scripts/` reconfirmados e consertados — 13 lá, e o `eval-via-morta`
   pela fase dos evals do deploy-verify (o PR dela mudou o eval e o juiz juntos).

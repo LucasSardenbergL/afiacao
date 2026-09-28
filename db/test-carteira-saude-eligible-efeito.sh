@@ -35,7 +35,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -204,7 +204,11 @@ perl -0pe 's/WHERE ca\.eligible\s+AND /WHERE /g; s/\n\s*WHERE eligible\n/\n/g; s
 if grep -qE 'WHERE (ca\.)?eligible' "$SAB1"; then bad "F1 sabotagem não removeu o filtro (perl falhou)"; fi
 P -q -f "$SAB1"
 V=$(Pq -c "SET test.uid='aaaaaaaa-0000-0000-0000-000000000001'; SELECT public.get_carteira_saude()->'score_coverage'->>'carteira';" | tail -1)
-if [ "$V" = "3" ]; then bad "F1 SEM DENTE — sabotei o eligible e A4 seguiu 3"; else ok "F1 sabotagem detectada (carteira=$V ≠ 3 → assert tem dente)"; fi
+# Cada sabotagem DECLARA o valor que produz — "≠ verde" aceitava qualquer outro. O vermelho tem de ser
+# do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+if [ "$V" = "3" ]; then bad "F1 SEM DENTE — sabotei o eligible e A4 seguiu 3"
+elif [ "$V" = "5" ]; then ok "F1 sabotagem detectada (carteira=$V ≠ 3 → assert tem dente)"
+else bad "F1 — NÃO é o que a sabotagem declara (5: as 3 elegíveis + as 2 inelegíveis da semente): veio [$V]"; fi
 P -q -f "$MIG"   # restaura a versão verdadeira
 V=$(Pq -c "SET test.uid='aaaaaaaa-0000-0000-0000-000000000001'; SELECT public.get_carteira_saude()->'score_coverage'->>'carteira';" | tail -1)
 eq "F1-restore migration real de volta (carteira=3)" "$V" "3"
@@ -215,7 +219,9 @@ perl -0pe 's/max\(s\.created_at\) AS effect_at/NULL::timestamptz AS effect_at/' 
 if grep -q 'max(s.created_at)' "$SAB2"; then bad "F2 sabotagem não trocou o effect_at (perl falhou)"; fi
 P -q -f "$SAB2"
 V=$(cron_field 'carteira-positivacao-snapshot-mensal' "c->>'last_status'")
-if [ "$V" = "succeeded" ]; then bad "F2 SEM DENTE — matei o fallback e A11 seguiu succeeded"; else ok "F2 sabotagem detectada (mensal=$V → assert tem dente)"; fi
+if [ "$V" = "succeeded" ]; then bad "F2 SEM DENTE — matei o fallback e A11 seguiu succeeded"
+elif [ "$V" = "(null)" ]; then ok "F2 sabotagem detectada (mensal=$V → assert tem dente)"
+else bad "F2 — NÃO é o que a sabotagem declara ((null): sem o fallback por efeito o status fica nulo — job ausente daria a tag SET da tail -1): veio [$V]"; fi
 P -q -f "$MIG"   # restaura
 V=$(cron_field 'carteira-positivacao-snapshot-mensal' "c->>'last_status'")
 eq "F2-restore migration real de volta (mensal=succeeded)" "$V" "succeeded"
