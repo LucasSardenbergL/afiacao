@@ -1,7 +1,9 @@
--- As 2 views DES como a PROD as tinha em 2026-09-27, ANTES de 20260927202603 — o predecessor que a
--- pré-condição daquela migration reconhece pelo md5. Não têm CREATE no repo (viviam só na prod): este
--- é o `pg_get_viewdef(oid, true)` lido via psql-ro, sem edição; o `WITH (security_invoker = on)` é o
--- reloptions delas na prod. Fixture de db/test-fuso-sp-relogio-sessao.sh — nunca aplicar em produção.
+-- As views DES como a PROD as tinha em 2026-09-27, ANTES de 20260927202603 — as 2 que a migration
+-- recria (o predecessor que a pré-condição dela reconhece pelo md5) e a dependente que ela NÃO toca,
+-- v_des_desconto_por_checkin (o desconto projetado do check-in). Nenhuma tem CREATE no repo (viviam
+-- só na prod): é o `pg_get_viewdef(oid, true)` lido via psql-ro, sem edição; o `WITH
+-- (security_invoker = on)` é o reloptions delas na prod. Fixture de db/test-fuso-sp-relogio-sessao.sh
+-- — nunca aplicar em produção.
 
 CREATE VIEW public.v_des_pedidos_em_transito
 WITH (security_invoker = on) AS
@@ -140,3 +142,64 @@ WITH (security_invoker = on) AS
    FROM snapshot s
      FULL JOIN pedidos_apos_snapshot p ON p.empresa = s.empresa AND p.ano = s.ano AND p.trimestre = s.trimestre
      FULL JOIN meta m ON m.empresa = COALESCE(s.empresa, p.empresa) AND m.ano = COALESCE(s.ano, p.ano) AND m.trimestre = COALESCE(s.trimestre, p.trimestre);
+
+CREATE VIEW public.v_des_desconto_por_checkin
+WITH (security_invoker = on) AS
+ WITH checkin_com_faixa AS (
+         SELECT vca.empresa,
+            vca.ano,
+            vca.trimestre,
+            vca.checkin_id,
+            vca.data_avaliacao,
+            vca.tipo,
+            vca.codigo AS criterio_codigo,
+            vca.nome AS criterio_nome,
+            vca.criterio_tipo,
+            vca.atingido,
+            cp.percentual AS percentual_da_faixa,
+            (vptr.faixa_conservadora ->> 'faixa_id'::text)::bigint AS faixa_id,
+            (vptr.faixa_conservadora ->> 'faixa_numero'::text)::integer AS faixa_numero,
+            (vptr.faixa_conservadora ->> 'estrelas'::text)::integer AS estrelas,
+            (vptr.faixa_conservadora ->> 'desconto_padrao_perc'::text)::numeric AS desconto_padrao
+           FROM v_des_checkin_atual vca
+             LEFT JOIN v_des_posicao_trimestre_ao_vivo vptr ON vptr.empresa = vca.empresa AND vptr.ano = vca.ano AND vptr.trimestre = vca.trimestre
+             LEFT JOIN des_criterio_qualitativo cq_full ON cq_full.codigo = vca.codigo AND cq_full.contrato_versao_id = (( SELECT des_contrato_versao.id
+                   FROM des_contrato_versao
+                  WHERE des_contrato_versao.versao = '2026'::text))
+             LEFT JOIN des_criterio_percentual cp ON cp.criterio_id = cq_full.id AND cp.faixa_id = ((vptr.faixa_conservadora ->> 'faixa_id'::text)::bigint)
+        )
+ SELECT empresa,
+    ano,
+    trimestre,
+    checkin_id,
+    data_avaliacao,
+    tipo,
+    faixa_numero,
+    estrelas,
+    desconto_padrao,
+    sum(
+        CASE
+            WHEN criterio_tipo = 'qualitativo'::text AND atingido THEN percentual_da_faixa
+            ELSE 0::numeric
+        END) AS qualitativos_atingidos_perc,
+    sum(
+        CASE
+            WHEN criterio_tipo = 'bonus'::text AND atingido THEN percentual_da_faixa
+            ELSE 0::numeric
+        END) AS bonus_atingido_perc,
+    round(desconto_padrao + sum(
+        CASE
+            WHEN criterio_tipo = 'qualitativo'::text AND atingido THEN percentual_da_faixa
+            ELSE 0::numeric
+        END) + sum(
+        CASE
+            WHEN criterio_tipo = 'bonus'::text AND atingido THEN percentual_da_faixa
+            ELSE 0::numeric
+        END), 2) AS desconto_total_projetado,
+    desconto_padrao + (( SELECT sum(cp2.percentual) AS sum
+           FROM des_criterio_percentual cp2
+             JOIN des_criterio_qualitativo cq2 ON cq2.id = cp2.criterio_id
+          WHERE cp2.faixa_id = cp2.faixa_id)) AS desconto_total_maximo
+   FROM checkin_com_faixa
+  WHERE faixa_id IS NOT NULL
+  GROUP BY empresa, ano, trimestre, checkin_id, data_avaliacao, tipo, faixa_id, faixa_numero, estrelas, desconto_padrao;

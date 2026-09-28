@@ -40,8 +40,31 @@
 -- Aplicação: bun run db:aplicar — a transação é do executor, por isso não há BEGIN/COMMIT aqui.
 -- Reverter depois do commit = migration compensatória nova.
 --
--- Identidade (PRE e POS): md5 do texto sem comentário `--` e com espaço colapsado — o `prosrc` das
--- funções e o `pg_get_viewdef(…, true)` das views.
+-- Identidade (PRE e POS): md5 EXATO do `prosrc` das funções e do `pg_get_viewdef(…, true)` das
+-- views, medido na prod com o search_path do executor. Colapsar espaço daria o mesmo hash a
+-- `'RENNER SAYERLACK S/A'` e `'RENNER  SAYERLACK S/A'` — uma mudança que seleciona outros pedidos
+-- passaria como o predecessor (achado do Codex).
+
+-- Trava ANTES da pré-condição (achado do Codex): sem ela, outra transação podia recriar um destes
+-- objetos entre a conferência e o CREATE OR REPLACE, e este apagaria a mudança dela em silêncio. Um
+-- ALTER sem efeito prende a linha do catálogo (função) ou a própria view até o fim desta transação:
+-- quem chegar depois espera e falha alto; quem chegou antes aparece na pré-condição.
+DO $trava$
+BEGIN
+  IF to_regprocedure('public.radar_kpis()') IS NOT NULL THEN
+    ALTER FUNCTION public.radar_kpis() VOLATILE;
+  END IF;
+  IF to_regprocedure('public.fin_projecao_13_semanas(text,numeric)') IS NOT NULL THEN
+    ALTER FUNCTION public.fin_projecao_13_semanas(text, numeric) STABLE;
+  END IF;
+  IF to_regclass('public.v_des_pedidos_em_transito') IS NOT NULL THEN
+    ALTER VIEW public.v_des_pedidos_em_transito SET (security_invoker = on);
+  END IF;
+  IF to_regclass('public.v_des_posicao_trimestre_ao_vivo') IS NOT NULL THEN
+    ALTER VIEW public.v_des_posicao_trimestre_ao_vivo SET (security_invoker = on);
+  END IF;
+END
+$trava$;
 
 -- Pré-condição: cada objeto vivo tem de ser o PREDECESSOR revisado (o da prod em 2026-09-27) ou JÁ
 -- este (re-aplicar é seguro). Qualquer outro é mudança concorrente que este CREATE OR REPLACE
@@ -54,25 +77,25 @@ BEGIN
     SELECT x.alvo, x.vivo, x.predecessor, x.este
       FROM (VALUES
         ('radar_kpis()',
-         (SELECT md5(btrim(regexp_replace(regexp_replace(p.prosrc, '--[^\n]*', '', 'g'), '\s+', ' ', 'g')))
+         (SELECT md5(p.prosrc)
             FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.radar_kpis()')),
-         '53a1f5670f59da3da0b8ee625d3869a3', 'e69f32d0ff27e1e128408174dc4aff0d'),
+         'c4028f8393f3ef762010a4e415820b5b', '19d4b2c33d5c6749b522147aae09c969'),
         ('fin_projecao_13_semanas(text,numeric)',
-         (SELECT md5(btrim(regexp_replace(regexp_replace(p.prosrc, '--[^\n]*', '', 'g'), '\s+', ' ', 'g')))
+         (SELECT md5(p.prosrc)
             FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.fin_projecao_13_semanas(text,numeric)')),
-         '09a9f14cbbe17b853ef7649c51f4358e', '48f7ceb8457b16304f04c4b7c14c57c6'),
+         'db2f947aa168b9ee6322dae95aca9a13', 'ec1db10e16e975e1a09224bede8c79f9'),
         ('v_des_pedidos_em_transito',
-         (SELECT md5(btrim(regexp_replace(pg_catalog.pg_get_viewdef(c.oid, true), '\s+', ' ', 'g')))
+         (SELECT md5(pg_catalog.pg_get_viewdef(c.oid, true))
             FROM pg_catalog.pg_class c WHERE c.oid = to_regclass('public.v_des_pedidos_em_transito')),
-         'f9964fe561ea37fb47ec08305b3c4b47', '131754f42dbb24105f018ca65ca946cf'),
+         '4168b3c6fba1eae62cc07cf93df47b74', '78560d20c40fc333c2a309559254e7d5'),
         ('v_des_posicao_trimestre_ao_vivo',
-         (SELECT md5(btrim(regexp_replace(pg_catalog.pg_get_viewdef(c.oid, true), '\s+', ' ', 'g')))
+         (SELECT md5(pg_catalog.pg_get_viewdef(c.oid, true))
             FROM pg_catalog.pg_class c WHERE c.oid = to_regclass('public.v_des_posicao_trimestre_ao_vivo')),
-         '8f260694f102ca50ad41e42b38c8f629', '62b43b598d57342dde8c87f857421746')
+         '2f58d2ac47fde5589e78398ea9edee3f', 'f299f9060f0cbc1eee2c0cad49955a6c')
       ) AS x(alvo, vivo, predecessor, este)
   LOOP
     IF r.vivo IS NOT NULL AND r.vivo NOT IN (r.predecessor, r.este) THEN
-      RAISE EXCEPTION 'PRE FALHOU: % vivo (md5 normalizado %) não é o predecessor revisado nem este — outra mudança chegou antes; reconcilie antes de aplicar', r.alvo, r.vivo;
+      RAISE EXCEPTION 'PRE FALHOU: % vivo (md5 %) não é o predecessor revisado nem este — outra mudança chegou antes; reconcilie antes de aplicar', r.alvo, r.vivo;
     END IF;
   END LOOP;
 END
@@ -319,18 +342,18 @@ DECLARE
 BEGIN
   FOR r IN
     SELECT * FROM (VALUES
-      ('public.radar_kpis()', 'e69f32d0ff27e1e128408174dc4aff0d', 'v'::"char"),
-      ('public.fin_projecao_13_semanas(text,numeric)', '48f7ceb8457b16304f04c4b7c14c57c6', 's'::"char")
+      ('public.radar_kpis()', '19d4b2c33d5c6749b522147aae09c969', 'v'::"char"),
+      ('public.fin_projecao_13_semanas(text,numeric)', 'ec1db10e16e975e1a09224bede8c79f9', 's'::"char")
     ) AS x(alvo, este, volatilidade)
   LOOP
     v_oid := to_regprocedure(r.alvo);
     IF v_oid IS NULL THEN
       RAISE EXCEPTION 'POS1 FALHOU: % não existe — a tela que a chama quebraria', r.alvo;
     END IF;
-    SELECT regexp_replace(p.prosrc, '--[^\n]*', '', 'g') INTO v_src FROM pg_catalog.pg_proc p WHERE p.oid = v_oid;
-    v_md5 := md5(btrim(regexp_replace(v_src, '\s+', ' ', 'g')));
+    SELECT p.prosrc INTO v_src FROM pg_catalog.pg_proc p WHERE p.oid = v_oid;
+    v_md5 := md5(v_src);
     IF v_md5 <> r.este THEN
-      RAISE EXCEPTION 'POS2 FALHOU: o corpo instalado de % (md5 normalizado %) não é o desta migration', r.alvo, v_md5;
+      RAISE EXCEPTION 'POS2 FALHOU: o corpo instalado de % (md5 %) não é o desta migration', r.alvo, v_md5;
     END IF;
     IF v_src ~* '\mcurrent_date\M|\mlocaltimestamp\M|date_trunc\s*\(\s*''[a-z]+''\s*,\s*now\s*\(\s*\)\s*\)'
        OR position('America/Sao_Paulo' IN v_src) = 0 THEN
@@ -351,8 +374,8 @@ BEGIN
 
   FOR r IN
     SELECT * FROM (VALUES
-      ('public.v_des_pedidos_em_transito', '131754f42dbb24105f018ca65ca946cf'),
-      ('public.v_des_posicao_trimestre_ao_vivo', '62b43b598d57342dde8c87f857421746')
+      ('public.v_des_pedidos_em_transito', '78560d20c40fc333c2a309559254e7d5'),
+      ('public.v_des_posicao_trimestre_ao_vivo', 'f299f9060f0cbc1eee2c0cad49955a6c')
     ) AS x(alvo, este)
   LOOP
     v_oid := to_regclass(r.alvo);
@@ -360,9 +383,9 @@ BEGIN
       RAISE EXCEPTION 'POS6 FALHOU: % não existe — a posição DES quebraria', r.alvo;
     END IF;
     v_src := pg_catalog.pg_get_viewdef(v_oid, true);
-    v_md5 := md5(btrim(regexp_replace(v_src, '\s+', ' ', 'g')));
+    v_md5 := md5(v_src);
     IF v_md5 <> r.este THEN
-      RAISE EXCEPTION 'POS7 FALHOU: a definição instalada de % (md5 normalizado %) não é a desta migration', r.alvo, v_md5;
+      RAISE EXCEPTION 'POS7 FALHOU: a definição instalada de % (md5 %) não é a desta migration', r.alvo, v_md5;
     END IF;
     IF v_src ~* '\mcurrent_date\M|\mlocaltimestamp\M' OR position('America/Sao_Paulo' IN v_src) = 0 THEN
       RAISE EXCEPTION 'POS8 FALHOU: % ainda lê o relógio da sessão, ou perdeu o fuso de SP', r.alvo;
