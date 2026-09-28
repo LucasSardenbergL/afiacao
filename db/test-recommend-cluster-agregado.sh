@@ -252,9 +252,13 @@ esac
 echo "── falsificação ──"
 
 # `esperado` aqui é o valor do assert VERDE; a sabotagem tem de fazê-lo DIVERGIR.
-exige_vermelho() { # $1 rótulo · $2 valor sob sabotagem · $3 valor verde
+# Vermelho = o valor sob sabotagem é o que a sabotagem DECLARA ($4) — não só "≠ verde". O "≠" aceitava
+# a leitura VAZIA (a chave some do jsonb, NULL → ""), que não é o mecanismo de sabotagem nenhuma.
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+exige_vermelho() { # $1 rótulo · $2 valor sob sabotagem · $3 valor verde · $4 o que a sabotagem DECLARA
   if [ "$2" = "$3" ]; then bad "FALSIF $1 — assert seguiu VERDE sob sabotagem (sem dente)"
-  else ok "FALSIF $1 — assert ficou vermelho ($3 → $2)"; fi
+  elif [ "$2" = "$4" ]; then ok "FALSIF $1 — assert ficou vermelho ($3 → $2)"
+  else bad "FALSIF $1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (verde [$3])"; fi
 }
 
 # Reescreve só o corpo, preservando assinatura/ACL. Opera numa CÓPIA — o .sql do repo nunca é
@@ -266,6 +270,8 @@ exige_vermelho() { # $1 rótulo · $2 valor sob sabotagem · $3 valor verde
 sabotar() { # $1 = expressão perl aplicada ao .sql
   SAB="$(mktemp -t sab-cluster)"
   perl -0777 -pe "$1" "$MIG" > "$SAB"
+  # a sabotagem que não casa devolve a migration íntegra: nomeada aqui, em vez de virar "sem dente"
+  if cmp -s "$MIG" "$SAB"; then echo "❌ SABOTAGEM NÃO APLICADA — o perl não casou: $1"; rm -f "$SAB"; exit 1; fi
   P -q -f "$SAB"
   rm -f "$SAB"
 }
@@ -273,20 +279,20 @@ sabotar() { # $1 = expressão perl aplicada ao .sql
 # F1 — tira o DISTINCT: o numerador volta a contar LINHA, não cliente.
 sabotar 's/SELECT DISTINCT i\.customer_user_id, i\.product_id/SELECT i.customer_user_id, i.product_id/'
 F1=$(Pq -c "SELECT (produtos->>$P1)::int FROM public.recommend_cluster_agregado('critico');")
-exige_vermelho "A1/A2 dedup (sem DISTINCT conta recompra)" "$F1" "2"
+exige_vermelho "A1/A2 dedup (sem DISTINCT conta recompra)" "$F1" "2" "5"
 restaurar
 
 # F2 — abre a whitelist: 'sem_historico' e NULL voltam para o denominador.
 sabotar "s/AND s\\.sales_history_status IN \\('ativo', 'stale'\\)/AND (s.sales_history_status IS NOT NULL OR s.sales_history_status IS NULL)/"
 F2=$(Pq -c "SELECT denominador FROM public.recommend_cluster_agregado('critico');")
-exige_vermelho "A3a/A4 whitelist de sales_history_status" "$F2" "3"
+exige_vermelho "A3a/A4 whitelist de sales_history_status" "$F2" "3" "5"
 restaurar
 
 # F3 — o disjuntor devolve ZERO em vez de NULL: o zero fabricado, de outra forma.
 # só a PRIMEIRA ocorrência: é a de `observados` (int). A de `produtos` é jsonb.
 sabotar 's/THEN NULL/THEN 0/'
 F3=$(Pq -c "SELECT coalesce(observados::text,'NULO') FROM public.recommend_cluster_agregado('critico', 1);")
-exige_vermelho "A7b truncado devolve NULO, não 0" "$F3" "NULO"
+exige_vermelho "A7b truncado devolve NULO, não 0" "$F3" "NULO" "0"
 restaurar
 
 # F4 — o REVOKE cai: qualquer customer logado leria o agregado cross-customer.
@@ -301,13 +307,13 @@ restaurar   # o .sql reemite os REVOKE nomeando as roles
 # F5 — cai o filtro de SKU ativo.
 sabotar 's/\n    AND o\.ativo\n/\n    AND (o.ativo OR NOT o.ativo)\n/'
 F5=$(Pq -c "SELECT coalesce((produtos->>'00000000-0000-4000-8000-999999999999')::int, -1) FROM public.recommend_cluster_agregado('critico');")
-exige_vermelho "A6 filtro de SKU ativo" "$F5" "-1"
+exige_vermelho "A6 filtro de SKU ativo" "$F5" "-1" "1"
 restaurar
 
 # F6 — cai o universo de pedidos: cancelado/apagado/pendente voltam a contar como compra.
 sabotar "s/AND so\\.status NOT IN \\('cancelado', 'rascunho', 'pendente', 'orcamento'\\)/AND true/; s/AND so\\.deleted_at IS NULL/AND true/"
 F6=$(Pq -c "SELECT observados FROM public.recommend_cluster_agregado('critico');")
-exige_vermelho "A5 universo de pedidos canônico" "$F6" "2"
+exige_vermelho "A5 universo de pedidos canônico" "$F6" "2" "3"
 restaurar
 
 # Prova que restaurar() funcionou — senão os asserts acima mediriam a última sabotagem.
