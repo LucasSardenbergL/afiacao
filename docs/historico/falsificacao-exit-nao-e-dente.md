@@ -373,6 +373,36 @@ Os de sabotagem única ou veredito de valor usam valor/marca exata.
 
 <!-- TABELA -->
 
+### A 2ª opinião (Codex) da 2ª leva
+
+Ritual `/codex` em modo challenge (`scripts/codex-async.sh`, `gpt-6-astra`, reasoning max, 739 s)
+sobre o diff dos 13 juízes, com oito perguntas (âncora × dump, contagem × aborto, camada 4, a tabela
+`registra`, o `classifica` do psql-ro, os quatro sites de valor exato, a rodada do `fecho`, e a ordem
+de conserto). Só leitura — ele reproduziu os predicados em memória, no bash 3.2 e no bun. Calibração
+separada:
+
+| achado do Codex | sev. | calibração | o que foi feito | prova |
+|---|---|---|---|---|
+| a âncora casa LINHA física, não assert: valor cru com `\n` na mensagem fabrica `✗ D2` (eval-diagnostico) e `FALHA E16i` (fecho), e infla a contagem (o N7 do bash-nudge ecoa a saída) | P1 | procede | 1 assert = 1 linha: todo helper de assert achata a quebra (`${1//$'\n'/ \| }`) | suítes e `--falsificar` verdes |
+| o A9b também exige `rc=0`: o `descarte_calado` com `exit 5` derruba A9 e A9b, e o juiz aceitava | P2 | procede | `:VERDES` implementado — `descarte_calado:A9b:A9` exige o A9 VERDE na rodada sabotada | meta `D2-precondicao-caida` |
+| `\|` na declaração deixa os dois greps casarem membros DIFERENTES; nome repetido no `registra` sobrescreve, e na lista roda duas vezes | P2 | procede, latente (nenhuma lista usava) | a lista rejeita `\|` e nome repetido; `registra` repetido aborta (exit 2) | suítes verdes |
+| o crash que a camada 4 não vê: dump do `fecho` truncado (o crash fica depois do corte); K13 do por-comando com stderr em `/dev/null`; read/bash-nudge liam só o `.stderr` (`exec 2>&1` escapa) | P1 | procede | o `bad()` do `fecho` grava o `out` inteiro em `ERROS_DO_ALVO`; o K13 recolhe o stderr; a camada 4 lê log + stderr | suítes e `--falsificar` verdes |
+| psql-ro: o bun que MORRE cita a linha-fonte — um `ReferenceError` na linha que tem o texto da VIOLA vira `1 VIOLA` | P1 | procede; medido: o bun mostra as 5 linhas acima + a do erro, rc 1 | o `classifica` casa a marca ANCORADA na linha que o gate imprime, por here-string (o `grep -q` em pipe sob `pipefail` mata o `printf`: 141) | meta `D2-crash-cita-marca` |
+| codex-prompt: o SHA DENTRO da mensagem passava (`lixo' veio '<sha>`) | P1 | procede | igualdade direta do valor capturado | suíte e `--falsificar` verdes |
+| guard-noop: probe com erro de sintaxe numa linha que contém a marca — o bash CITA a linha | P1 | procede | `bash -n` antes; a marca vale como a LINHA exata (`grep -qxF`) | meta `D1-sintaxe` (barrada no `bash -n`) |
+| lovable: `sed` inválido → cópia vazia → "alarme sumiu"; o filtro não tinha `bad substitution` | P1 | procede | status do `sed` + cópia não-vazia; `bad substitution` no filtro | meta `D2-copia-vazia` |
+| limiar do bash-nudge: rc ignorado e stderr descartado — JSON + `exit 9` e JSON + lixo passavam | P1 | procede | exit 0 + exatamente 1 objeto JSON (`jq -se 'length == 1'`) + o nudge no `additionalContext` | meta `D1-limiar-lixo` |
+| `fecho`: o CONJUNTO de IDs perde multiplicidade (aborto parcial de sublaço); falta recibo de término | P1/P2 | procede em parte: a injeção de IDs fechou com o achatamento, e o alvo roda em `$(…)` — não controla o fluxo da suíte; o aborto parcial exigiria a PRÓPRIA suíte morrer no meio de um laço e seguir | → pendência com dono (abaixo) | — |
+| a rodada do `fecho` não isola todo o filesystem (fixtures de CLI e SQL) — sem contaminação atual | P2 | procede, preventivo | → pendência com dono (abaixo) | — |
+| imprimir `command not found` fabrica um crash e REJEITA sabotagem legítima | — | procede, e só gera vermelho FALSO — nunca aprova | não mexido | — |
+| a camada 4 compara CONTAGEM: trocar um diagnóstico legítimo do controle por um erro real mantém `1 = 1` | baixa | procede em tese; exige uma sabotagem que apague a linha legítima E crie o crash | → pendência com dono (abaixo) | — |
+
+O que ele confirmou NÃO abrir passagem: `${!v-}` não resolve por prefixo; `[[:space:]]"$r:"` separa
+`x:` de `x_long:`; `printf -v … '%s'` preserva `%` literal; o `2>>` não vaza entre rodadas (os
+`.stderr` são zerados antes); os estados que o `fecho` muta (`cli_corrida`, `cli_sujo`, o stub do psql,
+`sql.txt`, `pares-shared`) são restaurados antes do consumo; A4/K11 misturam ramos, mas nenhuma
+sabotagem os declara.
+
 ## Lições
 
 - **Exit≠0 não é dente, e "≠ verde" também não.** O vermelho que conta é o do assert que a sabotagem
@@ -489,9 +519,14 @@ Da 2ª leva ficaram, com dono:
   VERDES isoladas (o `sed` de cada uma está comentado no próprio teste): cenário com banco quebrado e
   CLI são (l4); auxiliar do grafo de imports que FALHA (a via (c)); e a decisão de produto sobre as
   travas redundantes (l5/l6, a mecânica na classificação) — manter como defesa em profundidade sem
-  prova própria, ou provar cada uma com um cenário que neutralize a outra.
+  prova própria, ou provar cada uma com um cenário que neutralize a outra. Levam junto os dois
+  resíduos do Codex no mesmo arquivo: um recibo de término da suíte + IDs por iteração/locale (o
+  CONJUNTO de IDs perde a multiplicidade dos laços H1/H2/H4/E14c2), e as fixtures mutáveis de CLI e SQL
+  criadas DENTRO da rodada (hoje isoladas pela ordem dos resets, não pela estrutura).
 - **"Gate R4: todo slug do test:falsificacao usa o idioma limpo ou tem juiz registrado"** — o análogo
   do R3 para o `test:falsificacao`: hoje R1/R2 só enxergam quem USA a lista; um teste novo com juiz
   "exit≠0" entraria no CI sem nenhum gate acusar. Os de valor/marca exata (codex-prompt, guard-noop,
   lovable-revert-scan, o limiar do bash-contexto-nudge) e os já-corretos da varredura entram como juiz
-  registrado, com âncoras.
+  registrado, com âncoras. Leva junto o resíduo do Codex na camada 4: comparar as LINHAS de erro
+  (normalizadas: caminho temporário, nº de linha), não a CONTAGEM — com contagem, uma sabotagem que
+  apague o diagnóstico legítimo do controle e crie um crash real passa por `1 = 1`.
