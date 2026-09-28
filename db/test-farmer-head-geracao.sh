@@ -340,25 +340,35 @@ echo "── escrita: as tabelas do sensor NÃO aceitam DML direto de authentica
 # W1/W2 — O FURO QUE O CHALLENGE ACHOU: com GRANT INSERT/UPDATE, o browser fazia
 # `UPDATE ... SET resultado='vazio', completude='completo'` DIRETO e pulava FG105/106/107
 # inteiros. Guard que se contorna pela porta ao lado não é guard.
-R=$(P -tA 2>&1 <<SQL || true
+# O veredito vem da condição NOMEADA (insufficient_privilege), não do texto do erro: com o servidor em
+# pt_BR a mensagem diz "permissão negada", e o `*"permission denied"*` dava vermelho falso.
+R=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 SET test.uid='$FARMER_A'; SET test.role='authenticated'; SET ROLE authenticated;
-UPDATE public.farmer_geracao_vigente SET resultado='vazio', linhas_geradas=0, completude='completo'
-WHERE farmer_id='$FARMER_A' AND motor='cross_sell';
+DO \$\$ BEGIN
+  UPDATE public.farmer_geracao_vigente SET resultado='vazio', linhas_geradas=0, completude='completo'
+  WHERE farmer_id='$FARMER_A' AND motor='cross_sell';
+  RAISE NOTICE 'SENTINELA_NAO_BARROU';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'SENTINELA_BARROU_CERTO';
+END \$\$;
 SQL
 )
 case "$R" in
-  *"permission denied"*) ok "W1 UPDATE direto no head é negado (o guard não tem porta ao lado)" ;;
-  *) bad "W1 UPDATE direto PASSOU — o browser forja o head sem passar pelas RPCs: $(printf '%s' "$R" | head -c 200)" ;;
+  *SENTINELA_BARROU_CERTO*PSQL_RC=0) ok "W1 UPDATE direto no head é negado (o guard não tem porta ao lado)" ;;
+  *) bad "W1 UPDATE direto PASSOU (ou outro erro) — o browser forja o head sem passar pelas RPCs: $(printf '%s' "$R" | head -c 200)" ;;
 esac
-R=$(P -tA 2>&1 <<SQL || true
+R=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 SET test.uid='$FARMER_A'; SET test.role='authenticated'; SET ROLE authenticated;
-INSERT INTO public.farmer_geracao_execucoes (motor,farmer_id,run_id,resultado,linhas_geradas,completude)
-VALUES ('cross_sell','$FARMER_A','e0000000-aaaa-aaaa-aaaa-0000000000ff','vazio',0,'completo');
+DO \$\$ BEGIN
+  INSERT INTO public.farmer_geracao_execucoes (motor,farmer_id,run_id,resultado,linhas_geradas,completude)
+  VALUES ('cross_sell','$FARMER_A','e0000000-aaaa-aaaa-aaaa-0000000000ff','vazio',0,'completo');
+  RAISE NOTICE 'SENTINELA_NAO_BARROU';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'SENTINELA_BARROU_CERTO';
+END \$\$;
 SQL
 )
 case "$R" in
-  *"permission denied"*) ok "W2 INSERT direto no log é negado (a série da medição é imutável de fora)" ;;
-  *) bad "W2 INSERT direto no log PASSOU — a medição é forjável: $(printf '%s' "$R" | head -c 200)" ;;
+  *SENTINELA_BARROU_CERTO*PSQL_RC=0) ok "W2 INSERT direto no log é negado (a série da medição é imutável de fora)" ;;
+  *) bad "W2 INSERT direto no log PASSOU (ou outro erro) — a medição é forjável: $(printf '%s' "$R" | head -c 200)" ;;
 esac
 
 # W3 — mas LER continua permitido (o farmer precisa enxergar o próprio head/execuções).
