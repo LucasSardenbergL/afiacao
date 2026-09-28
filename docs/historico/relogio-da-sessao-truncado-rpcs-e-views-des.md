@@ -1,8 +1,9 @@
 # O relógio da sessão truncado ao calendário: 2 RPCs e 2 views DES
 
 **2026-09-27.** Migration `20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql`, prova
-`db/test-fuso-sp-relogio-sessao.sh` (núcleo de CI, Eixo 7) e a fixture
-`db/fixtures/des-views-predecessoras-prod-20260927.sql`. Segue a classe de
+`db/test-fuso-sp-relogio-sessao.sh` (núcleo de CI, Eixo 7), a fixture
+`db/fixtures/des-views-predecessoras-prod-20260927.sql` e as queries das skills `bi-colacor` e
+`cfo-colacor`. Segue a classe de
 [positivacao-mes-sp-sob-sessao-utc.md](positivacao-mes-sp-sob-sessao-utc.md) e
 [provas-janela-de-relogio-fora-do-nucleo.md](provas-janela-de-relogio-fora-do-nucleo.md), agora
 fora das provas e fora dos corpos que mencionam São Paulo.
@@ -32,7 +33,7 @@ julgado à mão.
 | Prod: 99 crons (`cron.job.command`) | 1 | falso-positivo: o 148 `cmc-snapshot-backfill-mensal` dispara `0 4 2 * *` (01:00 BRT do dia 2) — mesmo mês nos 2 fusos. Correto por coincidência de AGENDAMENTO: mudar o horário para perto da virada o reabre |
 | Repo: 739 migrations, texto inteiro | 4 | as 3 definições históricas da projeção e a do radar — todas superadas por 20260927202603 |
 | Repo: 312 corpos vivos (295 sem SP) | 2 | os 2 afetados acima |
-| Repo: 46 arquivos de skill | 10 | 2 skills (`bi-colacor` ×4, `cfo-colacor` ×6) — PR seguinte |
+| Repo: 46 arquivos de skill | 10 | **afetados**: `bi-colacor` #1/#15 ×4, `cfo-colacor` (a) ×6 — consertados aqui, com a lição que os ensinava (`schema-conventions.md`: "comparações com `current_date`/`date_trunc` funcionam normalmente") |
 | Repo: 2.605 arquivos de `scripts/`, `supabase/functions/`, `src/` | 2 | o comentário que documenta o cron 148 |
 
 As 2 views DES **não tinham CREATE no repo** (estão entre as views criadas direto na prod): nenhum
@@ -57,6 +58,15 @@ Das 21:00 às 23:59 BRT o relógio da sessão já está no dia seguinte:
 **Flagrado ao vivo na prod** em 2026-09-28 00:23Z (domingo 21:23 BRT), antes do apply:
 `current_date` = 2026-09-28, `(now() AT TIME ZONE 'America/Sao_Paulo')::date` = 2026-09-27, e a view
 de posição DES com `calculado_em = 2026-09-28` e `dias_restantes = 2` — faltavam 3.
+
+## As skills
+
+As queries das skills rodam por `psql-ro` — sessão UTC, o mesmo defeito. A borda depende do TIPO da
+coluna: `venda_items_history.data_emissao` é `date` (a #1 compara com a DATA de SP) e
+`tint_vendas.data_venda` é `timestamptz` (a #15 compara com o INSTANTE da meia-noite de SP — com
+data, a comparação voltaria ao fuso da sessão). Rodadas na prod, só leitura, na janela (domingo
+21:45 BRT): o bloco (a) antigo da `cfo-colacor` começava a projeção em 28/09 (semana que vem); o
+novo, em 21/09.
 
 ## O conserto
 
@@ -109,5 +119,7 @@ assert (P3) → vale só no assert declarado. A observação sobre o V1 raso vir
   amplo, 44%), 13 SP-semânticos (6 só borda de janela de N dias), 6 indeterminados. Os materiais:
   `converter_sugestao_em_campanha_flat`, `radar_atribuir_tarefa`, `vendas_sync_semear_janela` e a
   trava contábil `fin_period_lock_trigger` (falha aberta na última hora de um mês fechado) — chip.
-- **Skills e gate** — os 10 sítios das skills `bi-colacor`/`cfo-colacor` e o gate que torna a
-  reintrodução vermelha em migration e skill: PR seguinte.
+- **Gate** — o que torna a reintrodução vermelha em migration (texto inteiro: função, view, cron,
+  `DO`) e em skill (`.sql` e blocos sql de `.md`): PR seguinte.
+- **Classe (ii) nas skills** — ~50 usos restantes de `current_date` nu em 11 arquivos (janelas de N
+  dias, aging): efeito de 1 dia na borda, das 21:00 às 23:59 BRT. Chip.
