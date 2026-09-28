@@ -110,7 +110,16 @@ P -q -f "$MIG" >/dev/null
 eq "A7 re-aplicar nao quebra" "$(trg_existe)" "0"
 
 echo "-- ZONA 5: FALSIFICACAO (sabota -> exige VERMELHO -> restaura) --"
-falsificou() { if [ "$1" = "$2" ]; then bad "F$3 sabotagem NAO foi pega - o assert e teatro"; else ok "F$3 $4"; fi; }
+# A medição do juiz roda com `set -e` e o rc capturado fora de ||/&&: no ARGUMENTO do juiz o status se
+# perdia. Falha vira ERRO_rc=<n>, que nenhum declarado casa.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
+# Vermelho = o valor sob sabotagem e o que a sabotagem DECLARA ($5) -- nao so "!= verde". O "!=" aceitava
+# a leitura que ERRA (a medicao vai como argumento, sem errexit, e sai vazia). O vermelho tem de ser
+# do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+falsificou() { # $1=medido $2=verde $3=n $4=descricao $5=o que a sabotagem DECLARA
+  if [ "$1" = "$2" ]; then bad "F$3 sabotagem NAO foi pega - o assert e teatro"
+  elif [ "$1" = "$5" ]; then ok "F$3 $4"
+  else bad "F$3 -- vermelha, mas NAO no valor que a sabotagem declara: esperado [$5], veio [$1] (verde [$2])"; fi; }
 
 # F1 - recria trigger+funcao (o estado de ORIGEM, que e como este banco regride de verdade:
 # alguem recolando a migration velha, ou um restore). A5 tem de mudar de valor.
@@ -133,7 +142,7 @@ CREATE TRIGGER trg_auto_commercial_super_admin AFTER INSERT ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION public.auto_assign_commercial_super_admin();
 SQL
 P -q -c "INSERT INTO public.profiles(user_id,document,is_employee) VALUES ('$D','$CPF',true);"
-falsificou "$(papel $D)" "NENHUM" 1 "restaurar trigger+funcao volta a conceder super_admin sozinho"
+falsificou "$(medir papel $D)" "NENHUM" 1 "restaurar trigger+funcao volta a conceder super_admin sozinho" "super_admin"
 P -q -f "$MIG" >/dev/null
 eq "F1b restaurado: trigger fora de novo" "$(trg_existe)" "0"
 

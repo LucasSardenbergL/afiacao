@@ -267,7 +267,16 @@ eq "A18 anon NÃO executa (PUBLIC segue revogado)" \
 #   4. restaura: a versão verdadeira (cirurgicamente, só o que sabotou)
 #
 echo "── falsificação (sabota → exige VERMELHO → restaura) ──"
-falsificou() { if [ "$1" = "$2" ]; then bad "F$3 sabotagem NÃO foi pega — o assert é teatro"; else ok "F$3 $4"; fi; }
+# A medição do juiz roda com `set -e` e o rc capturado fora de ||/&&: no ARGUMENTO do juiz o status se
+# perdia. Falha vira ERRO_rc=<n>, que nenhum declarado casa.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
+# Vermelho = o valor sob sabotagem é o que a sabotagem DECLARA ($5) -- nao so "!= verde". O "!=" aceitava
+# a leitura que ERRA (a medicao vai como argumento, sem errexit, e sai vazia). O vermelho tem de ser
+# do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+falsificou() { # $1=medido $2=verde $3=n $4=descricao $5=o que a sabotagem DECLARA
+  if [ "$1" = "$2" ]; then bad "F$3 sabotagem NÃO foi pega - o assert é teatro"
+  elif [ "$1" = "$5" ]; then ok "F$3 $4"
+  else bad "F$3 -- vermelha, mas NÃO no valor que a sabotagem declara: esperado [$5], veio [$1] (verde [$2])"; fi; }
 
 # F1 — devolve o corpo ANTIGO (o ramo inteiro do commercial_role, idêntico ao da leitura): os
 # asserts da assimetria TÊM de mudar de valor. Sabota-se o estado de ORIGEM, não um estado
@@ -280,8 +289,8 @@ P -q -c "CREATE OR REPLACE FUNCTION private.cap_carteira_escrever(_uid uuid)
       SELECT 1 FROM public.commercial_roles cr WHERE cr.user_id=_uid
         AND cr.commercial_role IN ('gerencial','estrategico','super_admin')))), false);
 \$f\$;"
-falsificou "$(escr $UE)" "false" 1 "corpo antigo de volta faz o estrategico ESCREVER de novo"
-falsificou "$(escr $UM)" "false" "1b" "corpo antigo de volta faz o gerencial ESCREVER de novo"
+falsificou "$(medir escr $UE)" "false" 1 "corpo antigo de volta faz o estrategico ESCREVER de novo" "true"
+falsificou "$(medir escr $UM)" "false" "1b" "corpo antigo de volta faz o gerencial ESCREVER de novo" "true"
 P -q -f "$MIG" >/dev/null   # restaura a versão verdadeira
 
 # F2 — o jeito ERRADO de aplicar: DROP + CREATE. O corpo fica igual (A2 segue verde!), e o que
@@ -295,8 +304,8 @@ P -q -c "DROP FUNCTION private.cap_carteira_escrever(uuid);
         AND cr.commercial_role IN ('gerencial','super_admin')))), false);
 \$f\$;"
 eq "F2a controle: o COMPORTAMENTO (para estrategico) não muda com DROP+CREATE" "$(escr $UE)" "false"
-falsificou "$(Pq -c "SELECT has_function_privilege('anon','private.cap_carteira_escrever(uuid)','EXECUTE')::text;")" \
-           "false" 2 "DROP+CREATE reseta o ACL e ABRE a função para anon/PUBLIC"
+falsificou "$(medir Pq -c "SELECT has_function_privilege('anon','private.cap_carteira_escrever(uuid)','EXECUTE')::text;")" \
+           "false" 2 "DROP+CREATE reseta o ACL e ABRE a função para anon/PUBLIC" "true"
 # restaura o estado verdadeiro: ACL de prod + corpo da migration
 P -q -c "REVOKE EXECUTE ON FUNCTION private.cap_carteira_escrever(uuid) FROM PUBLIC;
          GRANT EXECUTE ON FUNCTION private.cap_carteira_escrever(uuid) TO authenticated, service_role;"

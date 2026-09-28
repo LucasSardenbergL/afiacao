@@ -149,7 +149,7 @@ SQL
 # depende de locale nem de tradução (é por SQLSTATE, não por texto).
 veredito() { # veredito <role> <corpo_plpgsql> <condicao_plpgsql>
   local out
-  out=$(P -tA 2>&1 <<SQL || true
+  out=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 SET ROLE $1;
 DO \$blk\$ BEGIN
   $2;
@@ -160,8 +160,10 @@ EXCEPTION
 END \$blk\$;
 SQL
 )
-  if   printf '%s' "$out" | command grep -Fq 'ZQ_BARROU_ESPERADO';  then echo "BARROU"
-  elif printf '%s' "$out" | command grep -Fq 'ZQ_EXECUTOU_SEM_ERRO'; then echo "EXECUTOU"
+  # as marcas de desfecho só valem com o psql saindo 0: são NOTICEs, e um erro depois delas (no COMMIT)
+  # deixaria a marca no texto (a classe: docs/historico/falsificacao-exit-nao-e-dente.md)
+  if   printf '%s' "$out" | command grep -Fq 'ZQ_BARROU_ESPERADO' && printf '%s' "$out" | command grep -Fxq 'PSQL_RC=0';  then echo "BARROU"
+  elif printf '%s' "$out" | command grep -Fq 'ZQ_EXECUTOU_SEM_ERRO' && printf '%s' "$out" | command grep -Fxq 'PSQL_RC=0'; then echo "EXECUTOU"
   else printf '%s' "$out" | command grep -Fo 'ZQ_OUTRO_ERRO_' >/dev/null 2>&1 \
          && printf 'OUTRO:%s' "$(printf '%s' "$out" | sed -n 's/.*ZQ_OUTRO_ERRO_\([0-9A-Z]*\).*/\1/p' | head -1)" \
          || echo "SEM_SENTINELA"; fi
@@ -274,13 +276,19 @@ echo "── falsificação ──"
 # F1 — L9 mede o SCRUB, ou só "o insert funcionou"? Dropa o trigger e exige que L9 caia.
 P -q -c "DROP TRIGGER trg_frec_sem_margem ON public.farmer_recommendations; DELETE FROM public.farmer_recommendations;"
 S=$(Pq -c "SET ROLE authenticated; INSERT INTO public.farmer_recommendations(m_ij, lie, affinity_score) VALUES (99.5, 123.45, 0.8); RESET ROLE; SELECT coalesce(m_ij::text,'N')||'/'||coalesce(lie::text,'N')||'/'||coalesce(affinity_score::text,'N') FROM public.farmer_recommendations;" | tail -1)
-if [ "$S" = "N/N/0.8" ]; then bad "F1 sabotagem (trigger dropado) NÃO derrubou L9 — assert sem dente"; else ok "F1 sem o trigger, L9 fica vermelho (veio [$S]) — L9 mede o scrub"; fi
+# declarado: sem o trigger, os números entram INTACTOS — "≠ scrub" aceitava qualquer outra coisa
+if [ "$S" = "N/N/0.8" ]; then bad "F1 sabotagem (trigger dropado) NÃO derrubou L9 — assert sem dente"
+elif [ "$S" = "99.5/123.45/0.8" ]; then ok "F1 sem o trigger, L9 fica vermelho (veio [$S]) — L9 mede o scrub"
+else bad "F1 — NÃO é o que a sabotagem declara (99.5/123.45/0.8, os números intactos): veio [$S]"; fi
 P -q -c "CREATE TRIGGER trg_frec_sem_margem BEFORE INSERT OR UPDATE ON public.farmer_recommendations FOR EACH ROW EXECUTE FUNCTION private.frec_sem_margem(); DELETE FROM public.farmer_recommendations;"
 
 # F2 — L7 mede PRIVILÉGIO, ou o acidente do regua_num_finito? Reabre custo_canonico E o helper.
 P -q -c "GRANT EXECUTE ON FUNCTION private.custo_canonico(numeric,numeric) TO authenticated; GRANT EXECUTE ON FUNCTION private.regua_num_finito(numeric) TO authenticated;"
 V=$(veredito authenticated "PERFORM private.custo_canonico(10,5)" "insufficient_privilege")
-if [ "$V" = "BARROU" ]; then bad "F2 sabotagem (GRANT de volta) NÃO derrubou L7 — assert sem dente"; else ok "F2 com o GRANT de volta, L7 fica vermelho (veio [$V]) — L7 mede privilégio"; fi
+# declarado: com o GRANT, authenticated EXECUTA — "≠ BARROU" aceitava OUTRO:<sqlstate> e SEM_SENTINELA
+if [ "$V" = "BARROU" ]; then bad "F2 sabotagem (GRANT de volta) NÃO derrubou L7 — assert sem dente"
+elif [ "$V" = "EXECUTOU" ]; then ok "F2 com o GRANT de volta, L7 fica vermelho (veio [$V]) — L7 mede privilégio"
+else bad "F2 — NÃO é o que a sabotagem declara (EXECUTOU): veio [$V]"; fi
 P -q -c "REVOKE ALL ON FUNCTION private.custo_canonico(numeric,numeric) FROM authenticated; REVOKE ALL ON FUNCTION private.regua_num_finito(numeric) FROM authenticated;"
 
 # F3 — L4 dizia "hoje já barra anon, mas por ACIDENTE". Prova de que é acidente MESMO: com o
