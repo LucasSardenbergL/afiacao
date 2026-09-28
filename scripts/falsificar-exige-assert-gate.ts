@@ -64,10 +64,11 @@ export const MANIFESTO_NUCLEO = 'db/nucleo-ci.txt';
  */
 export const PISOS = {
   arquivosPorRaiz: PISOS_DO_VIZINHO.arquivosPorRaiz,
-  listas: 3, // medido: 4 (sync-reprocess, push-vendedora, auto-aprovacao-piloto, positivacao #2606)
-  entradas: 30, // medido: 38 (13 + 6 + 5 + 14)
-  lacos: 3, // medido: 4
-  linhasFalsificarNucleo: 6, // medido: 7 (4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
+  // medidos de novo em 2026-09-27 com a main do #2629 (o gate imprime o denominador: `bun scripts/falsificar-exige-assert-gate.ts`)
+  listas: 3, // medido: 7 (eram 4: sync-reprocess, push-vendedora, auto-aprovacao-piloto, positivacao #2606)
+  entradas: 40, // medido: 85 (a positivação foi de 14 a 26 com o universo canônico, 20260927195430)
+  lacos: 3, // medido: 7
+  linhasFalsificarNucleo: 6, // medido: 10 (eram 7: 4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
 } as const;
 
 export interface Juiz {
