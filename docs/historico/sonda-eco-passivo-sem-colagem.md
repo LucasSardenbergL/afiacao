@@ -181,6 +181,12 @@ troca por `<> 'true'`, remove o `IS JSON OBJECT` e remove o `coalesce`, e exige 
 locales. Como `db/test-*.sh` precisa de Postgres local e não roda no CI, o gate textual do vitest
 acompanha — ele não prova filtro (ninguém prova filtro lendo string), só torna a regressão ruidosa.
 
+> **Aposentada em 2026-09-27.** No dia seguinte (07fa9ad87, o ledger `deploy_atestacoes`) o `SQL` do
+> script passou a ler o ledger, e esta prova morreu na sonda do import — os dois modos saíam 1 antes
+> de qualquer assert, e ninguém viu por 22 dias. O filtro mora em `deploy_atestacoes_janela_viva()`;
+> as quatro sabotagens foram portadas para `db/test-deploy-atestacoes.sh`, com juiz que nomeia o
+> assert. Ver `falsificacao-exit-nao-e-dente.md`, fase 2.
+
 ### 10.1 ⚠️ A falsificação por `sed` no ARQUIVO acertou o COMENTÁRIO, e o guard aprovou
 
 Cometido nesta entrega. Para provar que o gate do vitest era carga, sabotei o SQL com

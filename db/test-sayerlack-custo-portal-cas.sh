@@ -31,7 +31,8 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+# -X: sem ~/.psqlrc — ele mudaria o formato da linha ERROR que o juiz do F4b lê
+P()  { "$PGBIN/psql" -X -v VERBOSITY=default -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -50,6 +51,11 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], 
 # exige que um comando SQL FALHE (caminho negativo grosso). Pra checar a SQLSTATE exata, use o
 # padrão DO/EXCEPTION de references/assert-patterns.md (preferível — Lei #2).
 must_fail() { if P -q -c "$1" >/dev/null 2>&1; then bad "$2 — devia ter falhado e PASSOU"; else ok "$2 (rejeitado)"; fi; }
+# As linhas ERROR de um stderr capturado: severidade ANCORADA no início (um NOTICE que cite
+# "ERROR:" não conta), o prefixo "psql:<arquivo>:<linha>: " fora, várias unidas por " ;; ". O juiz
+# compara o resultado INTEIRO — uma linha só, e a do ramo: sob ON_ERROR_STOP o servidor emite uma,
+# e a segunda seria um NOTICE multilinha forjando-a.
+linhas_error() { grep -E '^(psql:[^ ]*: )?ERROR:  ' "$1" | sed -E 's/^psql:[^ ]*: //' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }' || true; }
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 
@@ -122,14 +128,26 @@ SQL
 # Chama a RPC e devolve UMA sentinela: RPC_OK_<n> ou RPC_ERR_<SQLSTATE real>.
 # A sentinela é MINHA (não é texto que o código emite) e carrega a SQLSTATE exata — qualquer erro
 # diferente do esperado vira string diferente e o `eq` fica vermelho (Lei #2: casa a MARCA, não "lançou algo").
-rpc() { # $1 = argumentos SQL da chamada · $2 = preâmbulo opcional (SET ROLE / GUC)
-  P -tA 2>&1 <<SQL | grep -o 'RPC_[A-Z]*_[A-Za-z0-9]*' | head -1
-${2:-}
-DO \$\$ DECLARE n int; BEGIN
-  n := public.sayerlack_aplicar_custo_portal($1);
-  RAISE NOTICE 'RPC_OK_%', n;
-EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'RPC_ERR_%', SQLSTATE; END \$\$;
+# Ela é o VALOR de um SELECT, e o veredito é o stdout INTEIRO. Até 2026-09-27 vinha de NOTICE, pescada
+# com `grep -o | head -1`: a 1ª sentinela do texto vencia — inclusive uma que a própria função sob prova
+# emitisse antes de errar, e aí o F1/F3–F7 contavam dente (Codex; falsificacao-exit-nao-e-dente.md).
+# Falha da MEDIÇÃO (preâmbulo que erra, psql que cai) vira RPC_SEM_MEDICAO, que nenhum assert espera.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.tentar_rpc(p_pedido bigint, p_itens jsonb, p_total numeric)
+RETURNS text LANGUAGE plpgsql SECURITY INVOKER AS $f$
+DECLARE n int;
+BEGIN
+  n := public.sayerlack_aplicar_custo_portal(p_pedido, p_itens, p_total);
+  RETURN 'RPC_OK_' || n;
+EXCEPTION WHEN OTHERS THEN
+  RETURN 'RPC_ERR_' || SQLSTATE;
+END $f$;
+GRANT EXECUTE ON FUNCTION public.tentar_rpc(bigint, jsonb, numeric) TO PUBLIC;
 SQL
+rpc() { # $1 = argumentos SQL da chamada · $2 = preâmbulo opcional (SET ROLE / GUC)
+  local out rc=0
+  out="$(printf '%s\nSELECT public.tentar_rpc(%s);\n' "${2:-}" "$1" | P -q -tA 2>/dev/null)" || rc=$?
+  if [ "$rc" -eq 0 ] && [ -n "$out" ]; then printf '%s' "$out"; else printf 'RPC_SEM_MEDICAO_rc%s' "$rc"; fi
 }
 # Estado observável de um pedido: "preco/valor dos itens|valor_total" (comparar antes/depois).
 estado() { Pq -c "SELECT string_agg(i.id||':'||i.preco_unitario||'/'||i.valor_linha, ',' ORDER BY i.id)||'|'||p.valor_total FROM public.pedido_compra_sugerido p JOIN public.pedido_compra_item i ON i.pedido_id=p.id WHERE p.id=$1 GROUP BY p.valor_total;"; }
@@ -244,9 +262,9 @@ eq "C1 custo NÃO trocou depois de o PO existir" "$(estado 100)" "101:10/100,102
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): uma defesa por vez → exija VERMELHO → restaura com a migration REAL
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── falsificação ──"
-# mktemp SEM sufixo após os X: o BSD (macOS) só substitui os X no FIM do template — com
-# `.XXXXXX.sql` ele cria o nome LITERAL e a 2ª execução na mesma máquina morre em "File exists".
-SAB="$(mktemp)"
+# A migration FURADA mora no tmpdir desta execução (o trap do cleanup a leva junto): nome fixo em
+# /tmp seria compartilhado com as outras worktrees.
+SAB="$(dirname "$DATA")/sab.sql"
 # sabota(<padrão sed>) — gera a migration FURADA a partir da real; aborta se o padrão não casou (no-op = teatro).
 sabota() {
   sed -e "$1" "$MIG" > "$SAB"
@@ -278,9 +296,23 @@ sabota 's/REVOKE EXECUTE ON FUNCTION public\.sayerlack_aplicar_custo_portal(bigi
 R=$(rpc "100, '$ITENS_100'::jsonb, 347.5" "SET ROLE authenticated;")
 if [ "$R" = "RPC_OK_2" ]; then ok "F4 com GRANT a authenticated a RPC abre (P1 tem dente)"; else bad "F4 sabotei o REVOKE e P1 não mudou ($R)"; fi
 restaura
-# F4b — a postcondição embutida também acusa (sem o RAISE NOTICE acima o apply sabotado ABORTA):
+# F4b — a postcondição embutida também acusa (sem o RAISE NOTICE acima o apply sabotado ABORTA).
+# O aborto que conta é o DA POSTCONDIÇÃO, lido na linha ERROR do apply. Aborto por outro erro — ou
+# a marca num NOTICE antes dele — é ERRO ALHEIO, e sed que não casa é sabotagem NÃO aplicada, não
+# "postcondição que não abortou": até 2026-09-27 qualquer exit≠0 contava (falsificacao-exit-nao-e-dente.md).
 sed -e 's/REVOKE EXECUTE ON FUNCTION public\.sayerlack_aplicar_custo_portal(bigint, jsonb, numeric) FROM anon, authenticated;/GRANT EXECUTE ON FUNCTION public.sayerlack_aplicar_custo_portal(bigint, jsonb, numeric) TO authenticated;/' "$MIG" > "$SAB"
-if P -q -f "$SAB" >/dev/null 2>&1; then bad "F4b postcondição NÃO abortou com authenticated executando"; else ok "F4b postcondição aborta o apply com authenticated executando"; fi
+if cmp -s "$MIG" "$SAB"; then
+  bad "F4b sabotagem NÃO casou o REVOKE (âncora mudou?) — falsificação seria teatro"
+elif P -q -f "$SAB" >/dev/null 2>"$SAB.err"; then
+  bad "F4b postcondição NÃO abortou com authenticated executando"
+else
+  F4B_ERRO="$(linhas_error "$SAB.err")"
+  if [ "$F4B_ERRO" = "ERROR:  POST FALHOU: anon/authenticated ainda executam sayerlack_aplicar_custo_portal — REVOKE por nome não pegou" ]; then
+    ok "F4b postcondição aborta o apply com authenticated executando"
+  else
+    bad "F4b ERRO ALHEIO à postcondição — a linha ERROR tinha de ser a do REVOKE, veio [${F4B_ERRO:-<nenhuma linha ERROR>}]"
+  fi
+fi
 restaura
 
 # F5 — sem a finitude do total: 'Infinity' tem de passar.
@@ -321,7 +353,7 @@ restaura
 R=$(rpc "100, '[{\"item_id\":101,\"preco_unitario\":12.5,\"valor_linha\":125},{\"item_id\":401,\"preco_unitario\":5,\"valor_linha\":50}]'::jsonb, 175")
 eq "F8 controle: após restaurar, N4 volta a CP004" "$R" "RPC_ERR_CP004"
 eq "F8 controle: nada gravado" "$(estado 100)" "$INTACTO_100"
-rm -f "$SAB"
+rm -f "$SAB" "$SAB.err"
 
 # ── veredito ──
 echo "──────────────────────────────"
