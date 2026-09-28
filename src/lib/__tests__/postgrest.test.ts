@@ -16,6 +16,7 @@ import {
   sanitizeForPostgrestOr,
   sanitizeIlikeTerm,
   ilikeContainsPattern,
+  likePrefixPattern,
   isSearchablePostgrestTerm,
   ilike,
   ilikeOr,
@@ -161,6 +162,23 @@ describe('ilikeContainsPattern', () => {
 
   it('input vazio → null', () => {
     expect(ilikeContainsPattern('')).toBeNull();
+  });
+});
+
+describe('likePrefixPattern', () => {
+  it('termo com texto → `termo%` (só o curinga do FIM), com os curingas do input strippados', () => {
+    expect(likePrefixPattern('3101')).toBe('3101%');
+    expect(likePrefixPattern('31*01')).toBe('3101%'); // curinga no meio vira literal
+    expect(likePrefixPattern('ção 1')).toBe('ção 1%');
+  });
+
+  it('cada curinga do LIKE sai — entrada derivada da própria gramática', () => {
+    for (const w of ILIKE_WILDCARDS) expect(likePrefixPattern(`a${w}`)).toBe('a%');
+  });
+
+  it('input só-de-curingas ou vazio → null (NÃO vira `%` match-all)', () => {
+    // `${sanitizeIlikeTerm('**')}%` seria `%` = todo valor não-nulo da coluna.
+    for (const w of [...ILIKE_WILDCARDS, '**', '%_*', '']) expect(likePrefixPattern(w)).toBeNull();
   });
 });
 

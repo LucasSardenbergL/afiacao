@@ -108,8 +108,8 @@ modeladas → 312 identidades vivas → **17 com semântica SP**. Prod tem 19: a
 | `_carteira_positivacao_for_owner` · `farmer_calls.started_at` | A | **afetado** — corrigido aqui |
 | `_carteira_positivacao_for_owner` · `sales_orders.created_at::date` | B | **afetado** — corrigido aqui |
 | `_carteira_positivacao_for_owner` · `route_visits.visit_date` | — | já-correto (date×date) |
-| `get_ultimos_precos_cliente(uuid)` · `data SP <= current_date` | C | **dívida marginal**: das 21:00 às 23:59 BRT aceita pedido de amanhã; 0 casos hoje |
-| `medir_abaixo_piso_tier(integer)` · `data SP >= current_date - p_dias` | C | **dívida marginal**: perde o dia mais antigo das 21:00 às 23:59 BRT; auditoria |
+| `get_ultimos_precos_cliente(uuid)` · `data SP <= current_date` | C | **afetado** — corrigido na 20260927172443 (seção abaixo): das 21:00 às 23:59 BRT aceitava pedido de amanhã; 0 casos hoje |
+| `medir_abaixo_piso_tier(integer)` · `data SP >= current_date - p_dias` | C | **afetado** — corrigido na 20260927172443: perdia o dia mais antigo das 21:00 às 23:59 BRT |
 | `_data_health_compute()` · `current_date - max(data_ciclo)` | C | falso-positivo: `data_ciclo` é gravada em UTC pela edge (`toISOString`) |
 | `prime_uso_vigencia` · `data_inicio::timestamp` | B | falso-positivo: coluna `date` |
 | `venda_gate_credito`, `aplicar_parametros_automatico_diario`, `reposicao_param_auto_resumo_tick`, `whatsapp_minutos_uteis` | A | já-corretas: comparam date×date, ou convertem para SP antes de comparar |
@@ -119,7 +119,8 @@ modeladas → 312 identidades vivas → **17 com semântica SP**. Prod tem 19: a
 (`modelarRepo`, o modelo "a última a recriar vence" do sensor de deriva). Tem baseline das 2 dívidas
 e do falso-positivo, que só encolhe, dois canários embutidos (o corpo pré-fix, e o mesmo corpo nas
 formas `date =` e `CAST`) e sentinela do stripper (maior bloco descartado ≤ 60, medido em 54, e é
-comentário de verdade). As 2 dívidas foram para chip. São 35 testes, falsificados com 6
+comentário de verdade). As 2 dívidas foram para chip e quitadas no mesmo dia (seção "Família C
+quitada", abaixo). São 35 testes, falsificados com 6
 sabotagens in-place, cada uma APLICADA e vermelha no teste certo.
 
 - **A heurística de coluna foi MEDIDA, não suposta.** Das 658 colunas timestamptz de `public`, só
@@ -168,3 +169,61 @@ sabotagens in-place, cada uma APLICADA e vermelha no teste certo.
    fila", em `money-path.md`. Conserto de processo: a sabotagem entra DENTRO do comando que o
    `heavy` embrulha, ou num espelho, nunca antes da espera. E não rode suíte completa enquanto
    houver sabotagem in-place pendente.
+
+## Família C quitada (20260927172443)
+
+As duas dívidas da tabela saíram do gate no mesmo dia: migration
+`20260927172443_hoje_sp_sessao_utc_precos_piso.sql`, prova `db/test-hoje-sp-sessao-utc-precos-piso.sh`.
+
+- **A troca é um token por função.** `current_date` → `(now() AT TIME ZONE 'America/Sao_Paulo')::date`:
+  o mesmo instante (now() e current_date leem os dois o início da transação), levado para a data de
+  SP em vez da data da sessão. Os corpos foram reescritos a partir do `pg_get_functiondef` da prod.
+  Calculado no banco: o md5 normalizado dos predecessores do repo é o da prod, e o corpo novo com a
+  expressão trocada DE VOLTA dá o predecessor — a troca é a única diferença. O Codex chegou aos
+  mesmos hashes por conta própria, na consulta de desenho.
+- **Impacto medido.** Preço: 0 dos 31.550 pedidos do universo têm data de SP futura; os 42 com kpi =
+  data-SP da criação + 1 são os gravados à meia-noite UTC pelo importador, não pedidos futuros.
+  Medição: o dia perdido tinha 32 dos 3.264 itens da janela de 90 dias — ~1% dos ITENS numa
+  consulta noturna, o que não limita a fração da folga em R$. `medir_abaixo_piso_tier` não tem
+  chamador no código: a atribuição ao `algorithm-a-audit` do baseline era só uma menção em comentário.
+- **ACL.** `CREATE OR REPLACE` preserva dono e ACL. O `REVOKE … FROM PUBLIC, anon` + `GRANT … TO
+  authenticated` é no-op em prod e existe para o ambiente onde a função NASCE aqui (a PRE admite
+  ausência): fecha o contrato `PORTA_GATE` de `scripts/authz-funcoes-fechadas.ts` (parecer do Codex).
+
+### A prova, quando o defeito é `current_date`
+
+- **`current_date` é palavra-chave.** Lê o início da transação direto e ignora o `search_path`: o
+  `public.now()` do relógio controlado NÃO o intercepta. Daí duas regras. A sabotagem "current_date
+  de volta" escreve a DEFINIÇÃO dele, `now()::date` (a data do início da transação no fuso da
+  SESSÃO), que o relógio alcança — e fica vermelha só na sessão UTC em t1, como o defeito real. O
+  literal é outro mutante, de FUGA do relógio, e quem o pega é o R0.
+- **R0 por tripwire, não por valor** (Codex). Cada RPC é chamada com o gate satisfeito e fixture
+  elegível, SEM `test.agora`, e tem de bater no tripwire (Z9T01); retorno normal quer dizer que a
+  função tirou o "hoje" de outro lugar. O veredito não depende da data real da máquina — um R0 por
+  valor só pegaria o literal porque o seed é de 2025.
+- **Precedência do KPI nos dois sentidos** (kpi futuro criado no passado; kpi passado criado
+  "amanhã"), nas duas funções. A sabotagem `kpi_sem_precedencia` fica vermelha nas duas.
+- **Os caminhos da migration são asserts**: corpo vivo derivado aborta na PRE (X1, uma por função),
+  re-aplicar é seguro (X2), função ausente nasce com o contrato — em DOIS mundos, porque cada linha
+  do fecho só tem dente num deles (Codex, adversarial): sem default ACL (X3) é o `GRANT` que dá a
+  porta a authenticated; com o default ACL do Supabase (X3s) a função nasce com EXECUTE DIRETO a
+  anon, e é o `REVOKE` nominal de anon que fecha — num cluster puro, tirar o `anon` do REVOKE não
+  reprovava nada. O apply de verdade roda com `psql -1`, a transação única do `db:aplicar` — o
+  harness-modelo usava `-f` sem `-1`.
+- **Limite declarado da PRE** (Codex, adversarial): ela pega a deriva que chegou ANTES do apply, não
+  serializa aplicadores. Uma troca que outra transação commite entre a PRE e o `CREATE OR REPLACE`
+  seria sobrescrita, e a POS aprovaria. A janela é a de dois comandos da mesma transação, e vale para
+  toda migration com PRE: serializar aplicadores é do executor (`aplicar_sql`), não da migration.
+- **O laço `--falsificar` endureceu** (Codex). O pai exige que o filho chegue ao FIM com todos os
+  asserts (a linha `RESULTADO` com o total) e que todo `ERRO_DE_EXECUCAO` do log esteja declarado; o
+  modelo aceitava qualquer erro de execução quando havia UM declarado. A exigência pegou o meu
+  próprio assert na 1ª rodada: com o `GRANT` removido, a POS6 da migration abortou no caminho de
+  nascimento — o dente certo —, mas o X3 lia o aborto como erro de execução. Virou veredito.
+
+**Números:** 50 asserts (H1 · X1-X3s · D/L · R0-R2 · A1-A6 · bloco B ×2 sessões · W1-W2) e 18
+sabotagens. Matriz servidor `TZ=UTC`/SP × `lc_messages` C/pt_BR: **4/4**, cada uma com controle verde +
+**18/18** sabotagens vermelhas no assert declarado e os declarados-verdes rodando verdes (72
+veredictos); 165–193 s por `--falsificar` num Mac sob carga. Entrou no núcleo do CI
+(`db/nucleo-ci.txt`: `50 falsificar=18`). Os dois gates que mergearam na main durante a entrega
+(`falsificar-exige-assert` e `fuso-da-sessao-em-provas`) foram rodados sobre a prova antes do PR e
+aprovaram.
