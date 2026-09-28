@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { ilikeOr, isSearchablePostgrestTerm, sanitizeIlikeTerm } from '@/lib/postgrest';
+import { ilikeContainsPattern, ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 
 /**
  * Busca global pra Cmd-K — pesquisa simultânea em 3 entidades:
@@ -129,12 +129,14 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive && isNumericQuery,
     staleTime: 30_000,
     queryFn: async () => {
-      // .ilike() único — sanitizeIlikeTerm strippa os wildcards do ILIKE (% _ *)
-      const q = sanitizeIlikeTerm(trimmed);
+      // .ilike() único: o helper strippa os curingas do ILIKE (% _ *). O null (termo degenerado)
+      // não chega aqui, porque a query só roda com termo só-dígitos; se chegasse, busca vazia.
+      const pat = ilikeContainsPattern(trimmed);
+      if (!pat) return [];
       const { data } = await supabase
         .from('sales_orders')
         .select('id, omie_numero_pedido, total, customer_user_id')
-        .ilike('omie_numero_pedido', `%${q}%`)
+        .ilike('omie_numero_pedido', pat)
         .limit(5);
       return (data ?? []).map((o: { id: string; omie_numero_pedido: string | null; total: number | null }): SearchResult => ({
         kind: 'sales-order',

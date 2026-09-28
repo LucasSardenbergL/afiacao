@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { ilikeContainsPattern } from '@/lib/postgrest';
 
 export interface ResolvedCustomer {
   /** UUID do profile do cliente; null se não encontrou match local */
@@ -23,19 +24,19 @@ export interface ResolvedCustomer {
  */
 export async function resolveCustomerByPhone(rawPhone: string): Promise<ResolvedCustomer> {
   const phoneDialed = rawPhone.replace(/\D/g, '');
+  // `%<últimos 8 dígitos>%`; null quando não sobra dígito (sem telefone não há o que buscar).
+  const phonePat = ilikeContainsPattern(phoneDialed.slice(-8));
 
-  if (!phoneDialed) {
-    return { customerUserId: null, phoneDialed: '' };
+  if (!phonePat) {
+    return { customerUserId: null, phoneDialed };
   }
-
-  const last8 = phoneDialed.slice(-8);
 
   try {
     // 1. Tenta customer_contacts primeiro (mais específico — tem nome+cargo)
      
     const { data: contact } = await supabase.from('customer_contacts')
       .select('customer_user_id, nome, cargo')
-      .filter('phone', 'ilike', `%${last8}%`)
+      .filter('phone', 'ilike', phonePat)
       .order('is_primary', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -53,7 +54,7 @@ export async function resolveCustomerByPhone(rawPhone: string): Promise<Resolved
     const { data: profile, error } = await supabase
       .from('profiles')
       .select('user_id')
-      .filter('phone', 'ilike', `%${last8}%`)
+      .filter('phone', 'ilike', phonePat)
       .maybeSingle();
 
     if (error || !profile) {
