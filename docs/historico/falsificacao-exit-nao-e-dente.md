@@ -343,7 +343,7 @@ Os de sabotagem única ou veredito de valor usam valor/marca exata.
   mecânica na classificação e a via (c) na falha do auxiliar (nenhum cenário faz o auxiliar falhar).
   Duas tinham `sed` CONFLADO — tiravam duas travas, e o vermelho era o da sabotagem vizinha. As 5
   saem da lista com o `sed` preservado em comentário; o PAR da janela viva (l5 + `-z "$servido"`)
-  entra como uma sabotagem só, e derruba o E16f. De 46 para 42, todas medidas no assert que declaram.
+  entra como uma sabotagem só, e derruba o E16f. De 46 para 42, todas medidas no assert que declaram — e 46 de novo com as 4 do guard de HORA que o #2625 mergeou no meio da fase, com um juiz intermediário próprio (IDs `H1…H4` num 3º argumento do `sabota`, e as sem IDs "no veredito antigo"): na integração, as 4 viraram entradas da lista com os IDs que ele declarou.
 - **O ID tem de identificar UM assert.** O A9 do `ocupacao-por-arquivo` tinha dois ramos de falha
   ("abortou a varredura" × "passou CALADO") sob o mesmo ID, e duas sabotagens o declaravam mirando
   ramos diferentes — cada uma aceitaria o vermelho da outra. Partido (A9/A9b), a medição mostrou que
