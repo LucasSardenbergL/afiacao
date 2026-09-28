@@ -235,14 +235,20 @@ echo "  (controle verde: $PASS asserts)"
 
 restaura() { P -q -f "$MIG"; }
 
-# muta <nome> <sql-da-view-furada> <assert-que-deve-quebrar> <valor-do-controle>
-#   passa se a linha MUDAR em relação ao controle; falha se ficar igual (assert sem dente).
+# muta <nome> <sql-da-view-furada> <assert-que-deve-quebrar> <valor-do-controle> <o-que-a-sabotagem-DECLARA>
+#   passa se a linha virar o valor DECLARADO; falha se ficar igual (assert sem dente) ou virar outra
+#   coisa. "Mudou" sozinho aceitava a linha que SOME por um defeito qualquer — `(vazio)` ≠ controle.
+#   O checador roda com `set -e` e o rc capturado fora de ||/&&: checador composto que erra no meio
+#   seguiria sem errexit dentro do `$(...)`. O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
 muta() {
-  local nome="$1" sql="$2" checador="$3" antes="$4"
+  local nome="$1" sql="$2" checador="$3" antes="$4" declarado="$5"
   P -q -c "$sql" > /dev/null
-  local depois; depois="$(eval "$checador")"
-  if [ "$depois" != "$antes" ]; then ok "F:$nome → assert mudou ($antes → $depois)"
-  else bad "F:$nome → assert NÃO mudou (ficou $depois) — sem dente"; fi
+  local depois rc
+  set +e; depois="$(set -e; eval "$checador")"; rc=$?; set -e
+  if [ "$rc" -ne 0 ]; then bad "F:$nome → a LEITURA ERROU (rc=$rc): erro de execução não é dente"
+  elif [ "$depois" = "$antes" ]; then bad "F:$nome → assert NÃO mudou (ficou $depois) — sem dente"
+  elif [ "$depois" = "$declarado" ]; then ok "F:$nome → assert mudou ($antes → $depois)"
+  else bad "F:$nome → vermelha, mas NÃO no valor que a sabotagem declara: esperado [$declarado], veio [$depois] (controle [$antes])"; fi
   restaura
 }
 
@@ -289,7 +295,7 @@ SEM_ESCOLHA="SELECT company, cod, tipo, data_movimento, valor, 'titulo'::text AS
 
 # F1 — não escolhe ótica: soma as DUAS (o defeito original). C1 vira 2000 @ 08-03.
 muta "F1 sem escolha de ótica (volta a somar as duas)" \
-     "$(corpo "$ALLOW" "$SEM_ESCOLHA")" "linha acme 1001 CR" "1000|2026-07-31|1|30|titulo"
+     "$(corpo "$ALLOW" "$SEM_ESCOLHA")" "linha acme 1001 CR" "1000|2026-07-31|1|30|titulo" "2000|2026-08-03|2|32|titulo"
 
 # F2 — escolhe a ótica mas SOMA os resumos cumulativos (sem o DISTINCT ON). C3 vira 1400.
 COM_ESCOLHA_SEM_DISTINCT="SELECT m.company, m.cod, m.tipo, m.data_movimento, m.valor,
@@ -300,17 +306,21 @@ COM_ESCOLHA_SEM_DISTINCT="SELECT m.company, m.cod, m.tipo, m.data_movimento, m.v
    ON c.company=m.company AND c.cod=m.cod AND c.tipo=m.tipo
  WHERE (c.tem_tit AND m.grupo IN ('CONTA_A_RECEBER','CONTA_A_PAGAR')) OR NOT c.tem_tit"
 muta "F2 sem DISTINCT ON (soma resumos cumulativos)" \
-     "$(corpo "$ALLOW" "$COM_ESCOLHA_SEM_DISTINCT")" "linha acme 1003 CR" "1000|2026-07-31|1|30|titulo"
+     "$(corpo "$ALLOW" "$COM_ESCOLHA_SEM_DISTINCT")" "linha acme 1003 CR" "1000|2026-07-31|1|30|titulo" "1400|2026-07-31|2|24|titulo"
 
 # F3 — allowlist afrouxada: PREVISAO_* entra como se fosse baixa. C5 deixa de ser vazio.
 muta "F3 sem allowlist positiva (PREVISAO_* entra)" \
-     "$(corpo "" "$SEM_ESCOLHA")" "linha acme 1005 CR" "(vazio)"
+     "$(corpo "" "$SEM_ESCOLHA")" "linha acme 1005 CR" "(vazio)" "700|2026-07-05|1|4|titulo"
 
 # F4 — filtro CEGO 'CONTA_A_%': o título que só tem ótica de banco SOME (perda de cobertura).
 SO_CONTA_A="SELECT company, cod, tipo, data_movimento, valor, 'titulo'::text AS origem
             FROM mov WHERE grupo IN ('CONTA_A_RECEBER','CONTA_A_PAGAR')"
+# F4 declara PERDA SELETIVA: o título só-banco (1002) some e o de ótica título (1001) FICA — uma
+# sabotagem que derrubasse tudo também deixaria o 1002 "(vazio)".
+par_f4() { local a b; a="$(linha acme 1002 CR)"; b="$(linha acme 1001 CR)"; printf '%s#%s\n' "$a" "$b"; }
 muta "F4 filtro cego CONTA_A_% (perde o título só-banco)" \
-     "$(corpo "$ALLOW" "$SO_CONTA_A")" "linha acme 1002 CR" "500|2026-08-03|1|33|conta_corrente"
+     "$(corpo "$ALLOW" "$SO_CONTA_A")" "par_f4" "500|2026-08-03|1|33|conta_corrente#1000|2026-07-31|1|30|titulo" \
+     "(vazio)#1000|2026-07-31|1|30|titulo"
 
 # F6 — seleção sem company/tipo na partição: mistura empresas e lados.
 SEM_ESCOPO="SELECT DISTINCT ON (m.cod) m.company, m.cod, m.tipo, m.data_movimento, m.valor,
@@ -318,18 +328,21 @@ SEM_ESCOPO="SELECT DISTINCT ON (m.cod) m.company, m.cod, m.tipo, m.data_moviment
  FROM mov m
  ORDER BY m.cod, m.valor DESC, m.data_movimento DESC"
 muta "F6 partição sem company/tipo (mistura empresas e lados)" \
-     "$(corpo "$ALLOW" "$SEM_ESCOPO")" "conjunto_diff" "0/0"
+     "$(corpo "$ALLOW" "$SEM_ESCOPO")" "conjunto_diff" "0/0" "5/3"
 
 # F5 — replace SEM o WITH: reseta security_invoker → a view lê como OWNER (bypassa RLS).
 P -q -c "$(corpo "$ALLOW" "$SEM_ESCOLHA" | sed 's/ WITH (security_invoker = on)//')" > /dev/null
 DEPOIS="$(sec_invoker)"
-if [ "$DEPOIS" != "on" ]; then ok "F5 replace sem WITH → security_invoker caiu (on → $DEPOIS)"
-else bad "F5 replace sem WITH → security_invoker seguiu 'on' — o assert A8 não tem dente"; fi
+if [ "$DEPOIS" = "OFF" ]; then ok "F5 replace sem WITH → security_invoker caiu (on → $DEPOIS)"
+elif [ "$DEPOIS" = "on" ]; then bad "F5 replace sem WITH → security_invoker seguiu 'on' — o assert A8 não tem dente"
+else bad "F5 — NÃO é o que a sabotagem declara (OFF): veio [$DEPOIS]"; fi
 
 # A9 — a POSTCONDIÇÃO da própria migration morde? Roda o bloco DO $post$ sobre a view furada
 #      (sem security_invoker, deixada por F5). Sentinela: casa a SQLSTATE, não o texto do RAISE
 #      (procurar a mensagem do próprio código faria o assert casar consigo mesmo).
-POST_OUT="$(P -tA 2>&1 <<'SQL' || true
+# O que a sabotagem DECLARA é o RAISE da postcondição — raise_exception (P0001), capturado pela condição
+# NOMEADA, com o psql saindo 0. "Não veio a sentinela de não-abortou" aceitava QUALQUER erro.
+POST_OUT="$(P -tA 2>&1 <<'SQL'; echo "PSQL_RC=$?"
 DO $t$
 BEGIN
   IF NOT EXISTS (
@@ -340,15 +353,16 @@ BEGIN
     RAISE EXCEPTION 'v_titulo_baixas FALHOU: security_invoker NAO esta on';
   END IF;
   RAISE NOTICE 'SENTINELA_POSTCONDICAO_NAO_ABORTOU';
+EXCEPTION WHEN raise_exception THEN RAISE NOTICE 'SENTINELA_POSTCONDICAO_ABORTOU';
 END
 $t$;
 SQL
 )"
-if printf '%s' "$POST_OUT" | grep -q 'SENTINELA_POSTCONDICAO_NAO_ABORTOU'; then
-  bad "A9 postcondição da migration NÃO abortou sobre a view furada — é decorativa"
-else
-  ok "A9 postcondição da migration aborta a view sem security_invoker"
-fi
+case "$POST_OUT" in
+  *SENTINELA_POSTCONDICAO_ABORTOU*PSQL_RC=0) ok "A9 postcondição da migration aborta a view sem security_invoker" ;;
+  *SENTINELA_POSTCONDICAO_NAO_ABORTOU*) bad "A9 postcondição da migration NÃO abortou sobre a view furada — é decorativa" ;;
+  *) bad "A9 — NÃO é o que a sabotagem declara (o RAISE da postcondição, psql 0): $(printf '%s' "$POST_OUT" | head -c 200)" ;;
+esac
 restaura
 
 # controle final: a migration real, reaplicada, volta ao verde (prova que a
