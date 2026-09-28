@@ -10,13 +10,18 @@ Confiabilidade: **alta** (dado fiscal). Fonte: `venda_items_history`.
 > **Comparação JUSTA por design:** confronta `[1º do mês → hoje]` com `[1º do mês passado → mesmo
 > dia]` (ex.: 01–15/jun vs 01–15/mai). Comparar mês-até-hoje com mês ANTERIOR INTEIRO infla uma
 > "queda" que é só o mês corrente ainda não ter acabado — esse era o viés da versão antiga. Para
-> fechar um mês cheio, troque `current_date` pelo último dia do mês desejado.
+> fechar um mês cheio, troque o `hoje` (CTE `h`) pelo último dia do mês desejado.
+> **"Hoje" é o de SÃO PAULO:** a sessão da prod é UTC, e das 21:00 às 23:59 BRT o `current_date`
+> já é amanhã (no último dia do mês, o mês seguinte). `data_emissao` é `date`: as bordas são DATAS.
 ```sql
-with p as (
-  select date_trunc('month', current_date)                          as ini_atual,
-         (current_date + interval '1 day')                          as fim_atual,  -- inclui hoje
-         date_trunc('month', current_date - interval '1 month')     as ini_ant,
-         ((current_date - interval '1 month')::date + interval '1 day') as fim_ant  -- mesmo dia, mês passado
+with h as (
+  select (now() at time zone 'America/Sao_Paulo')::date             as hoje
+), p as (
+  select date_trunc('month', h.hoje::timestamp)                     as ini_atual,
+         (h.hoje + interval '1 day')                                as fim_atual,  -- inclui hoje
+         date_trunc('month', h.hoje - interval '1 month')           as ini_ant,
+         ((h.hoje - interval '1 month')::date + interval '1 day')   as fim_ant  -- mesmo dia, mês passado
+    from h
 )
 select
   v.empresa,
@@ -133,13 +138,20 @@ limit 50;
 Confiabilidade: **média** (`preco_praticado` é nullable — a coluna `itens_sem_preco` mede o
 buraco). Fontes: `tint_vendas` (header: empresa+data) × `tint_vendas_itens` (valor).
 > Mesma janela simétrica da #1 (MTD vs mesmo período do mês passado) — não compara meio mês com
-> mês cheio. Para fechar mês cheio, troque `current_date` pelo último dia do mês.
+> mês cheio. Para fechar mês cheio, troque o `agora_sp` (CTE `h`) por um instante do último dia do
+> mês (ex.: `timestamp '2026-06-30 12:00'`). **`data_venda` é `timestamptz`:** as bordas são
+> INSTANTES — a meia-noite de SÃO PAULO —, não datas; uma data aqui voltaria a ser convertida no
+> fuso da sessão (UTC na prod) e a borda cairia às 21:00 BRT.
 ```sql
-with p as (
-  select date_trunc('month', current_date)                          as ini_atual,
-         (current_date + interval '1 day')                          as fim_atual,
-         date_trunc('month', current_date - interval '1 month')     as ini_ant,
-         ((current_date - interval '1 month')::date + interval '1 day') as fim_ant
+with h as (
+  select now() at time zone 'America/Sao_Paulo'                     as agora_sp  -- relógio de parede de SP
+), p as (
+  select date_trunc('month', h.agora_sp)                            at time zone 'America/Sao_Paulo' as ini_atual,
+         (date_trunc('day', h.agora_sp) + interval '1 day')         at time zone 'America/Sao_Paulo' as fim_atual,
+         date_trunc('month', h.agora_sp - interval '1 month')       at time zone 'America/Sao_Paulo' as ini_ant,
+         (date_trunc('day', h.agora_sp - interval '1 month') + interval '1 day')
+                                                                    at time zone 'America/Sao_Paulo' as fim_ant
+    from h
 )
 select
   tv.account as empresa,

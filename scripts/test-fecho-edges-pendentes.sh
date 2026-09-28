@@ -546,6 +546,56 @@ MAPA2
   then ok "E14c3 --desde: data RELATIVA nao e ambigua -> passa pelo guard"
   else bad "E14c3 data relativa nao devia ser recusada (rc=$rc): ${out:0:140}"; fi
 
+  # 14c'. GUARD DE HORA: data absoluta SEM HORA tem de RECUSAR, com ou sem fuso (2026-09-27). O
+  #       `approxidate` do git completa a hora que falta com a hora ATUAL do relogio, nao com a
+  #       meia-noite, e o fuso nao salva: `"2026-09-27 UTC"` virou 2026-09-27 23:09:39Z. Medido
+  #       executando este script num fixture com um merge de edge as 00:00:30Z: base = o proprio
+  #       merge, `nenhuma edge na janela`, exit 0. O guard de fuso deixava a forma passar (tem
+  #       `UTC`), e o remedio que ele imprimia para a data NUA era `"<data> UTC"` — a propria forma
+  #       do bug. Os IDs `H<n>` abrem a mensagem porque o --falsificar exige o vermelho DESTE assert,
+  #       nao "a suite ficou vermelha" (docs/historico/falsificacao-exit-nao-e-dente.md).
+  # H1: data COM fuso e SEM hora — a forma que passava pelo guard de fuso.
+  for _d in "2026-09-27 UTC" "2026-09-27 +0000" "2026-09-27Z" "2026/09/27 GMT"; do
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && ! tem 'DESDE_SEM_FUSO' "$out" \
+       && ! tem 'nenhuma edge' "$out"
+    then ok "H1 --desde: data com fuso e SEM hora ($_d) -> DESDE_SEM_HORA, exit 3"
+    else bad "H1 data com fuso e sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
+  done
+
+  # H2: `±hh:mm` sem hora antes NAO e fuso para o git: `"2026-09-27 -03:00"` virou 06:00Z (leu
+  #     `03:00` como HORA LOCAL) e `"2026-09-27 +00:00"`, 03:00Z. Um detector de hora ingenuo
+  #     (`[0-9]:[0-9][0-9]` solto) casa o proprio offset e deixa a forma passar pelos dois guards.
+  for _d in "2026-09-27 -03:00" "2026-09-27 +00:00"; do
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && ! tem 'nenhuma edge' "$out"
+    then ok "H2 --desde: offset sem hora ($_d) nao conta como hora -> DESDE_SEM_HORA"
+    else bad "H2 offset sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
+  done
+
+  # H3: data NUA (sem hora e sem fuso): a HORA se diagnostica primeiro, e o remedio impresso e
+  #     `"<data> 00:00 UTC"` — nunca `"<data> UTC"`, que o git le como a hora de agora.
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+         bash "$ALVO" --desde "2026-09-27" 2>&1)"; rc=$?
+  if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && tem '"2026-09-27 00:00 UTC"' "$out" \
+     && ! tem '"2026-09-27 UTC"' "$out"
+  then ok "H3 --desde: data nua -> DESDE_SEM_HORA, remedio '<data> 00:00 UTC' (nunca '<data> UTC')"
+  else bad "H3 data nua devia recusar pela HORA e sugerir '<data> 00:00 UTC' (rc=$rc): ${out:0:160}"; fi
+
+  # H4: o PAR MINIMO — a MESMA data COM hora passa pelos DOIS guards. Sem este lado, um guard que
+  #     recusasse toda data passaria no H1-H3 alegando que guarda. Hora de 1 digito, `T`/`t` do ISO
+  #     e offset colado na hora sao formas que o detector de hora tem de reconhecer.
+  for _d in "2026-09-27 00:00 UTC" "2026-09-27T00:00:00Z" "2026-09-27 9:05 UTC" \
+            "2026-09-27t14:00z" "2026-09-27 14:00-03:00"; do
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -ne 3 ] && ! tem 'DESDE_SEM_HORA' "$out" && ! tem 'DESDE_SEM_FUSO' "$out"
+    then ok "H4 --desde: data COM hora e fuso ($_d) passa pelos dois guards"
+    else bad "H4 data com hora e fuso ($_d) nao devia ser recusada (rc=$rc): ${out:0:140}"; fi
+  done
+
   # 14d. a JANELA EFETIVAMENTE USADA sai impressa. O guard so alcanca a forma ambigua; SHA e data
   #      relativa ainda podem resolver para um base surpreendente (worktree atras, REF errada), e
   #      isso se decidia em SILENCIO — inclusive no ramo "nenhuma edge na janela", o unico que
@@ -845,10 +895,10 @@ if [ "${1:-}" = "--falsificar" ]; then
   # O CONJUNTO de asserts executados numa rodada (IDs distintos). Conjunto, não contagem: o 5f e o
   # 16d imprimem um `bad` POR item que falha, e o 14c um par por sufixo — a contagem de linhas varia
   # legitimamente; um aborto no meio, não: os IDs seguintes somem.
-  executados() { { LC_ALL=C grep -Eo '^  (ok +|FALHA )E[0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '{ print $2 }' | sort -u | tr '\n' ' '; }
+  executados() { { LC_ALL=C grep -Eo '^  (ok +|FALHA )[EH][0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '{ print $2 }' | sort -u | tr '\n' ' '; }
   # Erro de execução do bash no ALVO, no que a suíte despeja da saída dele (`${out:0:N}` dos `bad`).
   erros_exec() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" || true; }
-  vermelhos() { { LC_ALL=C grep -Eo '^  FALHA E[0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '!v[$2]++ { printf "%s ", $2 }'; }
+  vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [EH][0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '!v[$2]++ { printf "%s ", $2 }'; }
   logs="$tmp/falsificacao"; mkdir -p "$logs"
 
   utf8=""
@@ -940,7 +990,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               frescura_nao_verificavel_ok:E16p defasada_no_dispare:E16i fecho_sem_imports:E16i
               fecho_sem_alias:E16m fecho_sem_import_dinamico:E16m fecho_por_linha:E16m
               remedio_ignora_tree_sujo:E16n frescura_antes_da_chamada:E16o frescura_repo_inteiro:E16l
-              rodape_sem_sincronizar:E16i defasada_repete_cli:E16i fuso_frouxo:E14c fuso_apertado:E14c2
+              rodape_sem_sincronizar:E16i defasada_repete_cli:E16i fuso_frouxo:E14c fuso_apertado:E14c2 hora_frouxo:H1,H3 hora_apertado:H4
+              hora_ingenuo:H2 hora_remedio_ensina_bug:H3
               janela_nao_impressa:E14d janela_viva_sem_as_duas_travas:E16f"
 
   # registra <nome> <descricao> <expressao-sed> — a TABELA das sabotagens. Nome da lista sem
@@ -1150,6 +1201,19 @@ if [ "${1:-}" = "--falsificar" ]; then
     '/\*gmt\*/s/.*/          *) ;;/'
   registra fuso_apertado "fuso: sufixo nao casando NADA (guard apertado, recusa UTC legitimo)" \
     '/\*gmt\*/s/.*/          __nunca_casa__) ;;/'
+  # guard de HORA (#2625): a mesma simetria, mais os dois modos de errar que so ele tem. Cada uma
+  # declara na lista SABOTAGENS o assert que TEM de acusa-la (os IDs H<n> que o #2625 escolheu).
+  registra hora_frouxo "hora: detector aceitando QUALQUER coisa (guard frouxo, volta o bug)" \
+    '/# tem hora$/s/.*/          *) ;;/'
+  registra hora_apertado "hora: detector nao casando NADA (guard apertado, recusa data COM hora)" \
+    '/# tem hora$/s/.*/          __nunca_casa__) ;;/'
+  # o detector ingenuo: `:` solto casa o offset `-03:00`, que o git le como HORA LOCAL (06:00Z)
+  registra hora_ingenuo "hora: detector ingenuo lendo o offset +-hh:mm como hora" \
+    '/# tem hora$/s/.*/          *[0-9]:[0-9][0-9]*) ;;/'
+  # o remedio volta a ser "<data> UTC" — a forma que o git le como a hora de agora
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  registra hora_remedio_ensina_bug "hora: remedio sugerindo '<data> UTC' (o guard volta a ensinar o bug)" \
+    's/\$dia 00:00 UTC/$dia UTC/'
   # e a janela impressa: sem ela o ramo que suprime TUDO volta a decidir em silencio.
   registra janela_nao_impressa "janela efetiva deixando de ser impressa" \
     '/echo "janela:/d'
