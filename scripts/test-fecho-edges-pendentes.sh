@@ -538,6 +538,56 @@ MAPA2
   then ok "--desde: data RELATIVA nao e ambigua -> passa pelo guard"
   else bad "data relativa nao devia ser recusada (rc=$rc): ${out:0:140}"; fi
 
+  # 14c'. GUARD DE HORA: data absoluta SEM HORA tem de RECUSAR, com ou sem fuso (2026-09-27). O
+  #       `approxidate` do git completa a hora que falta com a hora ATUAL do relogio, nao com a
+  #       meia-noite, e o fuso nao salva: `"2026-09-27 UTC"` virou 2026-09-27 23:09:39Z. Medido
+  #       executando este script num fixture com um merge de edge as 00:00:30Z: base = o proprio
+  #       merge, `nenhuma edge na janela`, exit 0. O guard de fuso deixava a forma passar (tem
+  #       `UTC`), e o remedio que ele imprimia para a data NUA era `"<data> UTC"` — a propria forma
+  #       do bug. Os IDs `H<n>` abrem a mensagem porque o --falsificar exige o vermelho DESTE assert,
+  #       nao "a suite ficou vermelha" (docs/historico/falsificacao-exit-nao-e-dente.md).
+  # H1: data COM fuso e SEM hora — a forma que passava pelo guard de fuso.
+  for _d in "2026-09-27 UTC" "2026-09-27 +0000" "2026-09-27Z" "2026/09/27 GMT"; do
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && ! tem 'DESDE_SEM_FUSO' "$out" \
+       && ! tem 'nenhuma edge' "$out"
+    then ok "H1 --desde: data com fuso e SEM hora ($_d) -> DESDE_SEM_HORA, exit 3"
+    else bad "H1 data com fuso e sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
+  done
+
+  # H2: `±hh:mm` sem hora antes NAO e fuso para o git: `"2026-09-27 -03:00"` virou 06:00Z (leu
+  #     `03:00` como HORA LOCAL) e `"2026-09-27 +00:00"`, 03:00Z. Um detector de hora ingenuo
+  #     (`[0-9]:[0-9][0-9]` solto) casa o proprio offset e deixa a forma passar pelos dois guards.
+  for _d in "2026-09-27 -03:00" "2026-09-27 +00:00"; do
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && ! tem 'nenhuma edge' "$out"
+    then ok "H2 --desde: offset sem hora ($_d) nao conta como hora -> DESDE_SEM_HORA"
+    else bad "H2 offset sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
+  done
+
+  # H3: data NUA (sem hora e sem fuso): a HORA se diagnostica primeiro, e o remedio impresso e
+  #     `"<data> 00:00 UTC"` — nunca `"<data> UTC"`, que o git le como a hora de agora.
+  out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+         bash "$ALVO" --desde "2026-09-27" 2>&1)"; rc=$?
+  if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && tem '"2026-09-27 00:00 UTC"' "$out" \
+     && ! tem '"2026-09-27 UTC"' "$out"
+  then ok "H3 --desde: data nua -> DESDE_SEM_HORA, remedio '<data> 00:00 UTC' (nunca '<data> UTC')"
+  else bad "H3 data nua devia recusar pela HORA e sugerir '<data> 00:00 UTC' (rc=$rc): ${out:0:160}"; fi
+
+  # H4: o PAR MINIMO — a MESMA data COM hora passa pelos DOIS guards. Sem este lado, um guard que
+  #     recusasse toda data passaria no H1-H3 alegando que guarda. Hora de 1 digito, `T`/`t` do ISO
+  #     e offset colado na hora sao formas que o detector de hora tem de reconhecer.
+  for _d in "2026-09-27 00:00 UTC" "2026-09-27T00:00:00Z" "2026-09-27 9:05 UTC" \
+            "2026-09-27t14:00z" "2026-09-27 14:00-03:00"; do
+    out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+           bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
+    if [ "$rc" -ne 3 ] && ! tem 'DESDE_SEM_HORA' "$out" && ! tem 'DESDE_SEM_FUSO' "$out"
+    then ok "H4 --desde: data COM hora e fuso ($_d) passa pelos dois guards"
+    else bad "H4 data com hora e fuso ($_d) nao devia ser recusada (rc=$rc): ${out:0:140}"; fi
+  done
+
   # 14d. a JANELA EFETIVAMENTE USADA sai impressa. O guard so alcanca a forma ambigua; SHA e data
   #      relativa ainda podem resolver para um base surpreendente (worktree atras, REF errada), e
   #      isso se decidia em SILENCIO — inclusive no ramo "nenhuma edge na janela", o unico que
@@ -839,8 +889,22 @@ if [ "${1:-}" = "--falsificar" ]; then
   mkdir -p "$espelho/.claude/skills/fecho/scripts"
   ln -s "$RAIZ/scripts" "$espelho/scripts"
   DIR_COPIA="$espelho/.claude/skills/fecho/scripts"
-  sabota() { # <descricao> <expressao-sed>
-    local desc="$1" expr="$2" copia="$DIR_COPIA/sabotado.sh" erro
+  # O VEREDITO PELO ASSERT (2026-09-27). "A suite ficou vermelha" aceita vermelho de QUALQUER causa
+  # — o defeito medido no #2619 (docs/historico/falsificacao-exit-nao-e-dente.md). A sabotagem que
+  # declara IDs no 3o argumento (`,` = E) so conta como detectada se (1) a copia sabotada for bash
+  # VALIDO: erro de sintaxe derruba o alvo antes do ramo, e o assert acusaria pelo motivo errado
+  # (no bash 3.2, com `trap ... EXIT`, sai ate 0 — evidencia-positiva-shell.md §22); e (2) CADA ID
+  # declarado, nos 2 locales, estiver VERDE no controle desta mesma invocacao e com a linha
+  # `FALHA <ID> ` na rodada sabotada. So o proprio assert imprime essa linha — aborto no meio da
+  # suite nao a fabrica —, por isso a contagem de asserts do #2619 seria redundante aqui.
+  # As sabotagens SEM IDs seguem no veredito antigo (`fail≠0`); converte-las e a tarefa
+  # "Erradicar falsificacao sem assert no test:falsificacao".
+  VERDE_OK="$(printf '\033[32mok\033[0m')"
+  VERM_FALHA="$(printf '\033[31mFALHA\033[0m')"
+  acusou()   { command grep -qF -- "$VERM_FALHA $2 " "$1"; }                       # <saida> <ID>
+  absolveu() { command grep -qF -- "$VERDE_OK   $2 " "$1" && ! acusou "$1" "$2"; }  # <saida> <ID>
+  sabota() { # <descricao> <expressao-sed> [<IDs que TEM de acusar, `,` = E>]
+    local desc="$1" expr="$2" ids="${3:-}" copia="$DIR_COPIA/sabotado.sh" erro
     erro="$(sed "$expr" "$ALVO_REAL" 2>&1 >"$copia")"
     if [ -n "$erro" ]; then
       printf '  \033[31mFALHA\033[0m "%s": sed invalido (%s) — falsificacao vazia\n' "$desc" "${erro:0:50}"; falhou=1; return
@@ -849,15 +913,30 @@ if [ "${1:-}" = "--falsificar" ]; then
       printf '  \033[31mFALHA\033[0m "%s": padrao nao casou, alvo intacto — falsificacao vazia\n' "$desc"; falhou=1; return
     fi
     chmod +x "$copia"
+    local _ids=() id faltou=""
+    [ -n "$ids" ] && IFS=',' read -r -a _ids <<< "$ids"
+    if [ -n "$ids" ] && ! bash -n "$copia" 2>/dev/null; then
+      printf '  \033[31mFALHA\033[0m "%s": a copia sabotada nao e bash valido — vermelho de SINTAXE nao e assert\n' "$desc"; falhou=1; return
+    fi
     local viu_vermelho=0 loc
     for loc in C "$utf8"; do
       # subshell de proposito: a sabotagem e o locale morrem com ela, e o ALVO global fica intacto
       # shellcheck disable=SC2030,SC2031
-      if ! ( export LC_ALL="$loc"; ALVO="$copia"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
+      if ! ( export LC_ALL="$loc"; ALVO="$copia"; fail=0; suite >"$tmp/sabotado-$loc.out" 2>&1; [ "$fail" -eq 0 ] ); then
         viu_vermelho=$((viu_vermelho + 1))
       fi
+      for id in ${_ids[@]+"${_ids[@]}"}; do
+        absolveu "$tmp/controle-$loc.out" "$id" || faltou="$faltou [$loc] $id nao esta VERDE no controle;"
+        acusou "$tmp/sabotado-$loc.out" "$id"   || faltou="$faltou [$loc] $id NAO acusou;"
+      done
     done
-    if [ "$viu_vermelho" -eq 2 ]; then
+    if [ -n "$ids" ]; then
+      if [ -z "$faltou" ]; then
+        printf '  \033[32mok\033[0m   "%s" -> %s vermelho(s) nos 2 locales\n' "$desc" "$ids"
+      else
+        printf '  \033[31mFALHA\033[0m "%s": o vermelho nao e do assert declarado —%s\n' "$desc" "$faltou"; falhou=1
+      fi
+    elif [ "$viu_vermelho" -eq 2 ]; then
       printf '  \033[32mok\033[0m   "%s" -> suite vermelha nos 2 locales\n' "$desc"
     else
       printf '  \033[31mFALHA\033[0m "%s": suite ficou VERDE (%d/2 vermelhos) — assercao frouxa\n' "$desc" "$viu_vermelho"; falhou=1
@@ -881,8 +960,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   controle="$DIR_COPIA/controle.sh"
   cp "$ALVO_REAL" "$controle"; chmod +x "$controle"
   for loc in C "$utf8"; do
+    # a saida fica: e nela que a sabotagem com IDs confere que o assert declarado estava VERDE
     # shellcheck disable=SC2030,SC2031
-    if ( export LC_ALL="$loc"; ALVO="$controle"; fail=0; suite >/dev/null 2>&1; [ "$fail" -eq 0 ] ); then
+    if ( export LC_ALL="$loc"; ALVO="$controle"; fail=0; suite >"$tmp/controle-$loc.out" 2>&1; [ "$fail" -eq 0 ] ); then
       printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE\n' "$loc"
     else
       printf '  \033[31mFALHA\033[0m [%s] controle SEM sabotagem ja esta VERMELHO — sem linha de base, falsificar nao prova nada\n' "$loc"
@@ -1106,6 +1186,19 @@ if [ "${1:-}" = "--falsificar" ]; then
     '/\*gmt\*/s/.*/          *) ;;/'
   sabota "fuso: sufixo nao casando NADA (guard apertado, recusa UTC legitimo)" \
     '/\*gmt\*/s/.*/          __nunca_casa__) ;;/'
+  # guard de HORA (2026-09-27): a mesma simetria, mais os dois modos de errar que so ele tem. Cada
+  # uma declara o assert que TEM de acusa-la (3o argumento) — "a suite ficou vermelha" nao basta.
+  sabota "hora: detector aceitando QUALQUER coisa (guard frouxo, volta o bug)" \
+    '/# tem hora$/s/.*/          *) ;;/' 'H1,H3'
+  sabota "hora: detector nao casando NADA (guard apertado, recusa data COM hora)" \
+    '/# tem hora$/s/.*/          __nunca_casa__) ;;/' 'H4'
+  # o detector ingenuo: `:` solto casa o offset `-03:00`, que o git le como HORA LOCAL (06:00Z)
+  sabota "hora: detector ingenuo lendo o offset +-hh:mm como hora" \
+    '/# tem hora$/s/.*/          *[0-9]:[0-9][0-9]*) ;;/' 'H2'
+  # o remedio volta a ser "<data> UTC" — a forma que o git le como a hora de agora
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  sabota "hora: remedio sugerindo '<data> UTC' (o guard volta a ensinar o bug)" \
+    's/\$dia 00:00 UTC/$dia UTC/' 'H3'
   # e a janela impressa: sem ela o ramo que suprime TUDO volta a decidir em silencio.
   sabota "janela efetiva deixando de ser impressa" \
     '/echo "janela:/d'

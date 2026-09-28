@@ -970,9 +970,23 @@ ou ISO com fuso) e, quando o vazio for decidir alguma coisa, ler o corte com `gi
 
 Uso vivo, varrido no mesmo dia. `lovable-sensor-edicao.ts` passa ISO completo, e
 `lovable-revert-scan.sh` e `boletim-modulos.ts` usam janela relativa: os três estão seguros. O
-guard de fuso do `edges-pendentes.sh` (`/fecho`) recusa data sem fuso, mas o `case` dele aceita
-`"2026-09-27 UTC"`, que cai aqui. Aquele script SUPRIME pendência, e o conserto, com a
-falsificação, fica para uma entrega própria.
+guard de fuso do `edges-pendentes.sh` (`/fecho`) recusava data sem fuso, mas o `case` dele aceitava
+`"2026-09-27 UTC"`, que cai aqui. E aquele script SUPRIME pendência: executado num fixture com um
+merge de edge às 00:00:30Z, devolveu `✅ nenhuma edge na janela`, exit 0. **Consertado** com um
+guard de HORA antes do de fuso (marca `DESDE_SEM_HORA`; casos H1–H4 de
+`scripts/test-fecho-edges-pendentes.sh`, cada sabotagem acusada pelo assert que declara). O conserto
+mediu mais três coisas da família:
+
+- **Sem hora antes, `±hh:mm` não é fuso** para o git: `"2026-09-27 -03:00"` vira 06:00Z (ele leu
+  `03:00` como hora LOCAL). Detector de hora com `[0-9]:[0-9][0-9]` solto casa o próprio offset;
+  hora é `H:MM` logo após espaço ou `T`. Na mesma linha, `"… midnight UTC"` vira meia-noite LOCAL
+  (o `UTC` é ignorado) e `"… 14:00 UTC+3"` vira 14:00Z (o `+3` é ignorado; `UTC+03:00` é lido).
+- **O guard ensinava o bug.** Para a data nua, o remédio impresso era `--desde "<data> UTC"`, a
+  forma que o git lê como agora. Mensagem de recusa que sugere um comando está sugerindo uma
+  ENTRADA, e a sugestão se prova como entrada: o H3 casa o remédio impresso, e uma sabotagem o
+  reverte.
+- **Furo residual:** `27/09/2026`, `Sep 27 2026`, `2026.09.27` e `20260927` também pegam a hora
+  atual e não passam por guard nenhum, porque o guard só reconhece `AAAA-MM-DD`/`AAAA/MM/DD`.
 
 ## O padrão por trás das vinte e três
 
