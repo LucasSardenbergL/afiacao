@@ -264,17 +264,26 @@ SQL
 chamar_g() { Pq -c "SET test.uid='11111111-1111-1111-1111-111111111111'; SELECT public.import_tint_formulas_guardada('oben', false, '$1'::jsonb);"; }
 
 chamar_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"F-PARCIAL","nome_cor":"AZUL","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"10","corante2":"C2","qtd2ml":"0","corante3":"C3","qtd3ml":"30"}]' >/dev/null
+# Cada guard DECLARA o que produz (F1 0 itens, F2 3 preservados, F3 0) — "≠ o valor do defeito"
+# aceitava qualquer outra contagem (um guard que apaga tudo, ou que duplica). O vermelho tem de ser
+# do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
 F1=$(n_itens F-PARCIAL)
-if [ "$F1" = "2" ]; then bad "F1 INVÁLIDA — o guard não mudou A1 (ainda gravou receita parcial)"; else ok "F1 A1 caiu sob o guard (parcial não gravou: itens=$F1)"; fi
+if [ "$F1" = "2" ]; then bad "F1 INVÁLIDA — o guard não mudou A1 (ainda gravou receita parcial)"
+elif [ "$F1" = "0" ]; then ok "F1 A1 caiu sob o guard (parcial não gravou: itens=$F1)"
+else bad "F1 — NÃO é o que o guard declara (0 itens: a parcial não grava): veio [$F1]"; fi
 
 chamar_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"COR-ZERA","nome_cor":"PRETA","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"5","corante2":"C2","qtd2ml":"6","corante3":"C3","qtd3ml":"7"}]' >/dev/null
 chamar_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"COR-ZERA","nome_cor":"PRETA","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"0","corante2":"C2","qtd2ml":"","corante3":"C3","qtd3ml":"-5"}]' >/dev/null
 F2=$(n_itens COR-ZERA)
-if [ "$F2" = "0" ]; then bad "F2 INVÁLIDA — o guard não mudou A2 (receita ainda foi apagada)"; else ok "F2 A2 caiu sob o guard (receita PRESERVADA: itens=$F2)"; fi
+if [ "$F2" = "0" ]; then bad "F2 INVÁLIDA — o guard não mudou A2 (receita ainda foi apagada)"
+elif [ "$F2" = "3" ]; then ok "F2 A2 caiu sob o guard (receita PRESERVADA: itens=$F2)"
+else bad "F2 — NÃO é o que o guard declara (os 3 itens preservados): veio [$F2]"; fi
 
 chamar_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"F-NAN","nome_cor":"VERDE","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"NaN"}]' >/dev/null
 F3=$(Pq -c "SELECT count(*) FROM public.tint_formula_itens i JOIN public.tint_formulas f ON f.id=i.formula_id WHERE f.cor_id='F-NAN';")
-if [ "$F3" = "1" ]; then bad "F3 INVÁLIDA — o guard não mudou A3 (NaN ainda entrou)"; else ok "F3 A3 caiu sob o guard (NaN barrado: itens=$F3)"; fi
+if [ "$F3" = "1" ]; then bad "F3 INVÁLIDA — o guard não mudou A3 (NaN ainda entrou)"
+elif [ "$F3" = "0" ]; then ok "F3 A3 caiu sob o guard (NaN barrado: itens=$F3)"
+else bad "F3 — NÃO é o que o guard declara (0 itens: o NaN não entra): veio [$F3]"; fi
 
 # o conserto NÃO pode ter apagado a defesa que já existia
 R5G=$(P -tA 2>&1 <<'SQL'

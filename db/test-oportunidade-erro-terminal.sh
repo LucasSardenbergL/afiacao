@@ -174,11 +174,18 @@ m = oc[bloco - 1]
 t = t[:m.start()] + "false" + t[m.end():]   # NOT(false AND ...) -> guarda nunca dispara
 open(dst, 'w').write(t)
 PY
-    P -v ON_ERROR_STOP=1 -q -f "$SAB" >/dev/null 2>&1 || true
+    # O apply que falha deixava a função ÍNTEGRA (o `|| true` o engolia): agora é nomeado. E o vermelho é
+    # a saída que a sabotagem DECLARA ('NENHUM', 2 rodadas iguais) — "≠ 6001" aceitava uma saída vazia.
+    # O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+    P -v ON_ERROR_STOP=1 -q -f "$SAB" >/dev/null 2>&1 || { echo "FALSIFICACAO INVALIDA (bloco $BLOCO): o apply sabotado FALHOU"; exit 1; }
     SAIDA="$(OFERTADOS | tail -1)"
     if [ "$SAIDA" = "6001" ]; then
       echo "FALSIFICACAO FALHOU (bloco $BLOCO): sabotei a guarda e o teste seguiu com '6001'."
       echo "   O assert nao tem dente — ele aprovaria a versao defeituosa."
+      exit 1
+    fi
+    if [ "$SAIDA" != "NENHUM" ]; then
+      echo "FALSIFICACAO FALHOU (bloco $BLOCO): a saida virou '$SAIDA', NAO o 'NENHUM' que a sabotagem declara."
       exit 1
     fi
     echo "   OK falsificacao bloco $BLOCO — sabotado, saida virou '$SAIDA' (!= 6001)."
@@ -195,10 +202,10 @@ alvo = "IS NOT DISTINCT FROM 'erro_nao_retentavel'"
 assert t.count(alvo) == 2, f"esperava 2 comparacoes, achei {t.count(alvo)} — sabotagem abortada"
 open(dst, 'w').write(t.replace(alvo, "= 'erro_nao_retentavel'"))
 PY2
-  P -v ON_ERROR_STOP=1 -q -f "$SAB" >/dev/null 2>&1 || true
+  P -v ON_ERROR_STOP=1 -q -f "$SAB" >/dev/null 2>&1 || { echo "FALSIFICACAO INVALIDA (bloco 3): o apply sabotado FALHOU"; exit 1; }
   SAIDA="$(OFERTADOS | tail -1)"
   case "$SAIDA" in
-    *6004*) echo "   OK falsificacao bloco 3 (NULL-blind) — com '=' o 6004 vazou ('$SAIDA'); A3 tem dente." ;;
+    6001,6004) echo "   OK falsificacao bloco 3 (NULL-blind) — com '=' o 6004 vazou ('$SAIDA'); A3 tem dente." ;;
     *) echo "FALSIFICACAO FALHOU (bloco 3): troquei IS NOT DISTINCT FROM por '=' e o 6004 NAO vazou"
        echo "   (saida '$SAIDA'). O assert A3 nao distingue as duas formas — ele aprovaria a ingenua."
        exit 1 ;;

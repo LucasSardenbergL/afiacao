@@ -363,9 +363,14 @@ restaura() {
 perl -0777 -pe 's/^\s*marcador_finalizado_em timestamptz,\n//m; s/^\s*b\.marcador_finalizado_em,\n//m; s/^\s*m\.finalizado_em AS marcador_finalizado_em,\n//m' \
   "$TMP/sem-guardas.sql" > "$TMP/x1.sql"
 if P -q -f "$TMP/x1.sql" >/dev/null 2>&1; then
-  X1="$(f1)"                       # sem a coluna, a query de F1 nem compila -> vazio, nunca "t"
-  if [ "$X1" = "t" ]; then bad "X1 coluna removida -> F1 deveria reprovar, mas passou"
-  else ok "X1 coluna removida -> F1 reprova (f1 devolveu [$X1], nao [t])"; fi
+  # O que a sabotagem DECLARA: a query de F1 NAO compila -- coluna indefinida (42703). "!= t" aceitava
+  # qualquer desfecho: "f", o vazio de OUTRO erro (o f1 engole o erro), a funcao inteira quebrada. A
+  # SQLSTATE vem de um DO com a MESMA consulta do f1. O vermelho tem de ser do SEU assert:
+  # docs/historico/falsificacao-exit-nao-e-dente.md.
+  X1="$(Pq -c "DO \$x\$ BEGIN PERFORM (marcador_finalizado_em IS NOT NULL) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=802; RAISE NOTICE 'X1_ESTADO=OK'; EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'X1_ESTADO=%', SQLSTATE; END \$x\$;" 2>&1 | command grep -oE 'X1_ESTADO=[A-Z0-9]+' | paste -sd'|' -)"
+  if [ "$X1" = "X1_ESTADO=42703" ]; then ok "X1 coluna removida -> F1 reprova (a query nao compila: 42703)"
+  elif [ "$X1" = "X1_ESTADO=OK" ]; then bad "X1 coluna removida -> F1 deveria reprovar, mas a query seguiu compilando"
+  else bad "X1 -- NAO e o que a sabotagem declara (42703, coluna indefinida): [$X1]"; fi
 else
   bad "X1 coluna removida -> o apply sabotado deveria RODAR (sem as guardas) e nao rodou"
 fi

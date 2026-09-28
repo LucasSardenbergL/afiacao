@@ -362,7 +362,10 @@ VALUES ('lider', 'x.pdf', 'ativo', '$STAFF');
 SQL
 RLS_SABOTADO=$(SBq -c "SET ROLE authenticated; SET test.uid='$CUST'; SELECT count(*) FROM public.pedidos_programados;")
 SB -q -c "RESET ROLE;" >/dev/null
-if [ "$RLS_SABOTADO" != "0" ]; then ok "F1 RLS sabotado (comentado) → customer PASSA A VER o header (R2 tem dente, count=$RLS_SABOTADO)"; else bad "F1 sabotagem não mudou a visibilidade → R2 é teatro [veio $RLS_SABOTADO]"; fi
+# o que a sabotagem DECLARA: sem RLS, o customer vê EXATAMENTE o header inserido (1) — "≠ 0" aceitava
+# qualquer outra contagem. O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+if [ "$RLS_SABOTADO" = "0" ]; then bad "F1 sabotagem não mudou a visibilidade (count=0) → R2 não tem dente"
+elif [ "$RLS_SABOTADO" = "1" ]; then ok "F1 RLS sabotado (comentado) → customer PASSA A VER o header (R2 tem dente, count=$RLS_SABOTADO)"; else bad "F1 — NÃO é o que a sabotagem declara (1: o header inserido): veio [$RLS_SABOTADO]"; fi
 SB -q -c "DROP DATABASE sabota" 2>/dev/null || true
 P -q -c "DROP DATABASE IF EXISTS sabota;" >/dev/null
 

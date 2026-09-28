@@ -952,10 +952,14 @@ sed 's/WHEN COALESCE(it.faltante, false) THEN NULL/WHEN false THEN NULL/' "$MIG"
 grep -q 'WHEN false THEN NULL' /tmp/sab-tint-nullhonest.sql || { echo "✗ F1: sed não casou o alvo NULL-honesto"; exit 1; }
 P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-nullhonest.sql >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
+# O vermelho é a divergência EXATA que cada sabotagem declara (F1 720, F2 1928 — o fixture é fixo, e
+# 2 rodadas deram o mesmo número): "qualquer ≠ 0" aceitava divergência vinda de outra causa.
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
 DSAB=$(P -tA -c "SELECT _dif_count();")
 case "$DSAB" in
+  720)  ok "F1 — NULL-honesto furado diverge do loop em $DSAB linhas (C13.4 tem dente)" ;;
   0|"") echo "✗ F1 FALHOU: sabotei o NULL-honesto e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
-  *)    ok "F1 — NULL-honesto furado diverge do loop em $DSAB linhas (C13.4 tem dente)" ;;
+  *)    echo "✗ F1 FALHOU: a identidade divergiu em $DSAB linhas, NÃO nas 720 que a sabotagem declara"; exit 1 ;;
 esac
 P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
@@ -967,8 +971,9 @@ P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-fator.sql >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
 DSAB2=$(P -tA -c "SELECT _dif_count();")
 case "$DSAB2" in
+  1928) ok "F2 — fator=1 diverge do loop em $DSAB2 linhas (regra de 3 coberta)" ;;
   0|"") echo "✗ F2 FALHOU: troquei o fator e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
-  *)    ok "F2 — fator=1 diverge do loop em $DSAB2 linhas (regra de 3 coberta)" ;;
+  *)    echo "✗ F2 FALHOU: a identidade divergiu em $DSAB2 linhas, NÃO nas 1928 que a sabotagem declara"; exit 1 ;;
 esac
 P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
