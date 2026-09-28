@@ -58,10 +58,25 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
-# usado SÓ na falsificação: espelha eq() mas com o veredito INVERTIDO (queremos vermelho).
-eq_esperando_vermelho() {
+# usado SÓ na falsificação: VERMELHO = o valor sob sabotagem é o que a sabotagem DECLARA ($4), não
+# só "≠ íntegro". O "≠" aceitava a chamada sabotada que ERRA (ela rodava com `|| true`): no F4, a
+# substituição quebrada deixava o total parado em T, e T ≠ T+2 contava como dente. As sentinelas de
+# DO só valem com o psql saindo 0 (PSQL_RC=0): a marca é um NOTICE, e um erro depois dela (no
+# COMMIT) deixaria a marca no texto. O vermelho tem de ser do SEU assert:
+# docs/historico/falsificacao-exit-nao-e-dente.md.
+eq_esperando_vermelho() { # $1=rótulo  $2=medido  $3=íntegro  $4=o que a sabotagem DECLARA
   if [ "$2" = "$3" ]; then bad "FALSIFICAÇÃO SEM DENTE: $1 continuou [$2] com a migration sabotada"
-  else ok "falsificação mordeu: $1 virou [$2] (íntegro seria [$3])"; fi
+  elif [ "$2" = "$4" ]; then ok "falsificação mordeu: $1 virou [$2] (íntegro seria [$3])"
+  else bad "$1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (íntegro [$3])"; fi
+}
+# A medição do juiz roda com `set -e` e o rc capturado fora de ||/&&: no ARGUMENTO do juiz o status se
+# perdia, e uma leitura que imprime o valor e DEPOIS falha passava (Codex, 2026-09-27). Falha vira
+# ERRO_rc=<n>, que nenhum declarado casa.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
+# a chamada sob sabotagem TEM de completar: se ela erra, o que se mede depois é o erro, não a sabotagem
+chamada_sabotada() { # $1=rótulo  $2=SQL
+  local out
+  if ! out=$(Pq -c "$2" 2>&1); then bad "$1 — a chamada sabotada ERROU (erro de execução não é dente): $(printf '%s' "$out" | head -c 200)"; fi
 }
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
@@ -418,21 +433,28 @@ case "$R" in
 esac
 
 # A6 — mas a trigger NÃO atrapalha o histórico: linha com desfecho entra sem run_id.
-R=$(P -tA 2>&1 -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, product_id, status, offered_at) VALUES ('$FARMER_A','$CLI_1','cross_sell','$PROD_1','ofertado', now());" || true)
+R=$(P -tA 2>&1 -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, product_id, status, offered_at) VALUES ('$FARMER_A','$CLI_1','cross_sell','$PROD_1','ofertado', now());"; echo "PSQL_RC=$?")
+# decidido pelo rc do psql, não pelo texto `ERROR` — com o servidor em pt_BR ele diz ERRO, e a trigger
+# que barrasse o histórico passaria como ok (Codex, 2026-09-27)
 case "$R" in
-  *ERROR*) bad "A6 trigger barrou linha de HISTÓRICO (ofertado) — cedo demais: $(printf '%s' "$R" | head -c 160)" ;;
-  *) ok "A6 trigger só mira 'pendente' — linha de desfecho passa" ;;
+  *PSQL_RC=0) ok "A6 trigger só mira 'pendente' — linha de desfecho passa" ;;
+  *) bad "A6 trigger barrou linha de HISTÓRICO (ofertado) — cedo demais: $(printf '%s' "$R" | head -c 160)" ;;
 esac
 
 # A3 — anon não executa (REVOKE da migration).
-R=$(P -tA 2>&1 <<SQL || true
+# pela condição NOMEADA (insufficient_privilege), não pelo texto em 2 idiomas
+R=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 SET ROLE anon;
-SELECT public.farmer_recomendacoes_substituir('$FARMER_A','$RUN_1',NULL,'$LOTE_OK'::jsonb);
+DO \$\$ BEGIN
+  PERFORM public.farmer_recomendacoes_substituir('$FARMER_A','$RUN_1',NULL,'$LOTE_OK'::jsonb);
+  RAISE NOTICE 'SENTINELA_NAO_BARROU';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'SENTINELA_BARROU_CERTO';
+END \$\$;
 SQL
 )
 case "$R" in
-  *"permission denied"*|*"permissão negada"*) ok "A3 anon sem EXECUTE na RPC" ;;
-  *) bad "A3 anon NAO foi barrado — veio: $(printf '%s' "$R" | head -c 200)" ;;
+  *SENTINELA_BARROU_CERTO*PSQL_RC=0) ok "A3 anon sem EXECUTE na RPC" ;;
+  *) bad "A3 anon NAO foi barrado (ou outro erro) — veio: $(printf '%s' "$R" | head -c 200)" ;;
 esac
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -454,7 +476,8 @@ sabota() { # $1=nome  $2=expressão perl  $3=marca que TEM de aparecer no result
     bad "SABOTAGEM $1 NAO APLICOU (padrão não casou) — falsificação INVÁLIDA"
     return 1
   fi
-  P -q -f "$SAB"
+  # sob `if sabota` o errexit está suspenso: o rc do apply tem de ser o que volta (Codex, 2026-09-27)
+  P -q -f "$SAB" || { bad "SABOTAGEM $1 — o apply FALHOU: falsificação INVÁLIDA"; return 1; }
   return 0
 }
 
@@ -464,16 +487,17 @@ if sabota "F1" "s/     AND status = 'pendente';\n  GET DIAGNOSTICS v_expiradas/ 
   P -q -c "UPDATE public.farmer_recommendations SET status='aceito', expired_at=NULL, accepted_at=now() WHERE farmer_id='$FARMER_A' AND status='expirado' AND id=(SELECT id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='expirado' LIMIT 1);"
   ACEITO_ANTES=$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='aceito';")
   G=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
-  Pq -c "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','44444444-aaaa-aaaa-aaaa-444444444444',$([ -z "$G" ] && echo NULL || echo "'$G'"),'$LOTE_OK'::jsonb);" >/dev/null 2>&1 || true
+  chamada_sabotada "F1" "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','44444444-aaaa-aaaa-aaaa-444444444444',$([ -z "$G" ] && echo NULL || echo "'$G'"),'$LOTE_OK'::jsonb);"
+  # declarado: sem o guard, o UPDATE de expiração leva TODA linha do farmer — inclusive as com desfecho
   eq_esperando_vermelho "P5 linha com desfecho preservada" \
-    "$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='aceito';")" "$ACEITO_ANTES"
+    "$(medir Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='aceito';")" "$ACEITO_ANTES" "0"
   restaura
 fi
 
 # F2 — desligar o guard causal. A corrida (N2) deixa de ser barrada.
 if sabota "F2" "s/IF v_geracao_atual IS DISTINCT FROM p_geracao_vista THEN/IF false THEN/g" "IF false THEN"; then
   G=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
-  OUT=$(P -tA 2>&1 <<SQL || true
+  OUT=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 DO \$\$
 BEGIN
   PERFORM public.farmer_recomendacoes_substituir('$FARMER_A','55555555-aaaa-aaaa-aaaa-555555555555','99999999-9999-9999-9999-999999999999'::uuid,'$LOTE_OK'::jsonb);
@@ -484,8 +508,8 @@ END \$\$;
 SQL
 )
   case "$OUT" in
-    *SENTINELA_NAO_BARROU*) ok "falsificação mordeu: sem o guard causal, a corrida PASSA (N2 seria falso-verde)" ;;
-    *SENTINELA_BARROU_CERTO*) bad "FALSIFICAÇÃO SEM DENTE: N2 barrou mesmo com o guard causal desligado" ;;
+    *SENTINELA_NAO_BARROU*PSQL_RC=0) ok "falsificação mordeu: sem o guard causal, a corrida PASSA (N2 seria falso-verde)" ;;
+    *SENTINELA_BARROU_CERTO*PSQL_RC=0) bad "FALSIFICAÇÃO SEM DENTE: N2 barrou mesmo com o guard causal desligado" ;;
     *) bad "F2 erro inesperado: $(printf '%s' "$OUT" | head -c 200)" ;;
   esac
   restaura
@@ -495,7 +519,7 @@ fi
 #      documenta como falso-saneamento: NaN e Infinity passam.
 if sabota "F3" "s/     OR NOT \(\n          r\.affinity_score >= 0\n          AND r\.affinity_score < 'Infinity'::numeric\n          AND r\.affinity_score <> 'NaN'::numeric\n        \);/     OR r.affinity_score < 0;/" "OR r.affinity_score < 0;"; then
   G=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
-  OUT=$(P -tA 2>&1 <<SQL || true
+  OUT=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 DO \$\$
 BEGIN
   PERFORM public.farmer_recomendacoes_substituir('$FARMER_A','66666666-aaaa-aaaa-aaaa-666666666666',$([ -z "$G" ] && echo NULL || echo "'$G'"),
@@ -507,8 +531,8 @@ END \$\$;
 SQL
 )
   case "$OUT" in
-    *SENTINELA_NAO_BARROU*) ok "falsificação mordeu: com só '>= 0', NaN entra no ranking (N3 seria falso-verde)" ;;
-    *SENTINELA_BARROU_CERTO*) bad "FALSIFICAÇÃO SEM DENTE: N3 barrou NaN mesmo com o guard reduzido a sinal" ;;
+    *SENTINELA_NAO_BARROU*PSQL_RC=0) ok "falsificação mordeu: com só '>= 0', NaN entra no ranking (N3 seria falso-verde)" ;;
+    *SENTINELA_BARROU_CERTO*PSQL_RC=0) bad "FALSIFICAÇÃO SEM DENTE: N3 barrou NaN mesmo com o guard reduzido a sinal" ;;
     *) bad "F3 erro inesperado: $(printf '%s' "$OUT" | head -c 200)" ;;
   esac
   restaura
@@ -518,10 +542,14 @@ fi
 if sabota "F4" "s/  UPDATE public\.farmer_recommendations\n     SET status         = 'expirado',\n         expired_at     = clock_timestamp\(\),\n         expired_by_run = p_run_id,\n         updated_at     = clock_timestamp\(\)\n   WHERE farmer_id = p_farmer_id\n     AND status = 'pendente';/  DELETE FROM public.farmer_recommendations WHERE farmer_id = p_farmer_id AND status = 'pendente';/" "DELETE FROM public.farmer_recommendations WHERE farmer_id"; then
   G=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
   T_ANTES=$(Pq -c "SELECT count(*) FROM public.farmer_recommendations;")
+  K_PEND=$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente';")
   N_LOTE=2
-  Pq -c "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','77777777-aaaa-aaaa-aaaa-777777777777',$([ -z "$G" ] && echo NULL || echo "'$G'"),'$LOTE_OK'::jsonb);" >/dev/null 2>&1 || true
+  chamada_sabotada "F4" "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','77777777-aaaa-aaaa-aaaa-777777777777',$([ -z "$G" ] && echo NULL || echo "'$G'"),'$LOTE_OK'::jsonb);"
+  # declarado: o DELETE leva exatamente as K pendentes do farmer, e o lote do run ENTRA — o 2º campo
+  # separa isso de uma chamada sem efeito, que com K=2 daria o mesmo total T (Codex, 2026-09-27)
   eq_esperando_vermelho "P3 nada foi deletado (total antes+2)" \
-    "$(Pq -c "SELECT count(*) FROM public.farmer_recommendations;")" "$((T_ANTES + N_LOTE))"
+    "$(medir Pq -c "SELECT count(*) FROM public.farmer_recommendations;")|$(medir Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE run_id='77777777-aaaa-aaaa-aaaa-777777777777';")" \
+    "$((T_ANTES + N_LOTE))|$N_LOTE" "$((T_ANTES + N_LOTE - K_PEND))|$N_LOTE"
   restaura
 fi
 
@@ -543,7 +571,7 @@ else
   # sabotagem. O objetivo aqui é o gate de AUTORIZAÇÃO, então todo o resto tem de estar
   # coerente para o fluxo chegar até ele e passar.
   G=$(Pq -c "SELECT run_id FROM public.farmer_recommendations WHERE farmer_id='$FARMER_A' AND status='pendente' ORDER BY created_at DESC, id DESC LIMIT 1;")
-  OUT=$(P -tA 2>&1 <<SQL || true
+  OUT=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
 SET test.role=''; SET test.uid='';
 DO \$\$
 BEGIN
@@ -555,8 +583,8 @@ END \$\$;
 SQL
 )
   case "$OUT" in
-    *SENTINELA_NAO_BARROU*) ok "falsificação mordeu: com 'IF NOT (...)' a sessão sem identidade PASSA (A4 seria falso-verde)" ;;
-    *SENTINELA_BARROU_CERTO*) bad "FALSIFICAÇÃO SEM DENTE: A4 barrou mesmo com o gate em three-valued logic" ;;
+    *SENTINELA_NAO_BARROU*PSQL_RC=0) ok "falsificação mordeu: com 'IF NOT (...)' a sessão sem identidade PASSA (A4 seria falso-verde)" ;;
+    *SENTINELA_BARROU_CERTO*PSQL_RC=0) bad "FALSIFICAÇÃO SEM DENTE: A4 barrou mesmo com o gate em three-valued logic" ;;
     *) bad "F5 erro inesperado: $(printf '%s' "$OUT" | head -c 200)" ;;
   esac
   restaura
