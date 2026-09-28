@@ -369,6 +369,9 @@ eq P5 "v_des_desconto_por_checkin (dependente, intocada) = prod" \
 # OR REPLACE a apagaria em silêncio. B tenta mexer na função e na view com lock_timeout e tem de ser
 # BARRADA (55P03). A mexida de B é um ALTER sem efeito: o que se mede é se ela CONSEGUE o lock — e
 # assim nada muda para o resto da prova. sem_trava: a sessão A roda só a pré-condição.
+# O K2 sonda a view de POSIÇÃO, não a de trânsito — medido na falsificação: a própria pré-condição,
+# ao deparsear a posição, trava as relações que ela lê (AcquireRewriteLocks segura AccessShareLock
+# até o fim da transação), e a de trânsito é uma delas. Sondada, ela barraria B com ou sem a trava.
 # ══════════════════════════════════════════════════════════════════════════════
 python3 - "$MIG" "$TMPD/parte1.sql" "$SABOTAGEM" <<'PYP1'
 import sys
@@ -404,7 +407,7 @@ fi
 eq K1 "com A parada após a pré-condição, B não mexe na função" \
   "$(Nega "ALTER FUNCTION public.radar_kpis() VOLATILE" 55P03 '' '-c lock_timeout=1500')" NEGOU
 eq K2 "... nem na view" \
-  "$(Nega "ALTER VIEW public.v_des_pedidos_em_transito SET (security_invoker = on)" 55P03 '' '-c lock_timeout=1500')" NEGOU
+  "$(Nega "ALTER VIEW public.v_des_posicao_trimestre_ao_vivo SET (security_invoker = on)" 55P03 '' '-c lock_timeout=1500')" NEGOU
 printf 'ROLLBACK;\n\\q\n' >&7
 exec 7>&-
 wait "$PID_A" || true
