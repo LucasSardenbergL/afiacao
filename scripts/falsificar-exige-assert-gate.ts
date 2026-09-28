@@ -152,6 +152,16 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     motivo: 'falsificação na suíte normal: ABORTOU só com a marca da postcondição na saída do apply; outro erro vira "ERRO ALHEIO"',
     ancoras: [`elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"`, 'else echo "ERRO ALHEIO a postcondicao:'],
   },
+  'db/test-tint-promote.sh': {
+    motivo:
+      'falsificação na suíte normal: a divergência EXATA que cada sabotagem declara (F1 720, F2 1928) — "qualquer ≠ 0" aceitava divergência de outra causa',
+    ancoras: [
+      '  720)  ok "F1 — NULL-honesto furado diverge do loop em $DSAB linhas',
+      '  *)    echo "✗ F1 FALHOU: a identidade divergiu em $DSAB linhas, NÃO nas 720 que a sabotagem declara"; exit 1 ;;',
+      '  1928) ok "F2 — fator=1 diverge do loop em $DSAB2 linhas',
+      '  *)    echo "✗ F2 FALHOU: a identidade divergiu em $DSAB2 linhas, NÃO nas 1928 que a sabotagem declara"; exit 1 ;;',
+    ],
+  },
   'db/test-pedido-edicao-atomica.sh': {
     motivo:
       'falsificação na suíte normal: rc≠0 só conta com a marca do que a sabotagem DECLARA vir no lugar da recusa (default: a chamada completa)',
