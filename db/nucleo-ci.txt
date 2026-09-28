@@ -202,6 +202,10 @@ db/test-tint-fase5-watchdog.sh             31
 # de SP em pares de 1 s sob `TimeZone=UTC` E `America/Sao_Paulo` — sob sessão SP o corpo antigo
 # PASSA, então só a rodada UTC o pega — e cada sabotagem declara o assert que tem de ficar
 # vermelho E o que tem de continuar verde; vermelho por erro de execução não conta como dente.
-# Autocontida: initdb + db/stubs-supabase.sql + as 2 migrations. Irmão estático: o gate vitest
-# `scripts/fuso-da-sessao-gate.ts`, que vigia a CLASSE nas demais funções.
-db/test-positivacao-eligible-consumo.sh    44  falsificar=14
+# Desde a 20260927195430 prova também o UNIVERSO de pedidos (bloco U: cada predicado canônico
+# tem um seed que só ele exclui, com kpi no mês, e a data é só o kpi, como no mês congelado) e a
+# própria migration sob o executor (bloco M: a PRE recusa corpo estranho e TRAVA a linha da função
+# contra um CREATE concorrente, duas conexões com barreira observada; a POS reprovada desfaz o
+# CREATE). Autocontida: initdb + db/stubs-supabase.sql + as 3 migrations. Irmão estático: o gate
+# vitest `scripts/fuso-da-sessao-gate.ts`, que vigia a CLASSE de fuso nas demais funções.
+db/test-positivacao-eligible-consumo.sh    58  falsificar=26

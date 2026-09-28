@@ -65,7 +65,7 @@ export const MANIFESTO_NUCLEO = 'db/nucleo-ci.txt';
 export const PISOS = {
   arquivosPorRaiz: PISOS_DO_VIZINHO.arquivosPorRaiz,
   listas: 3, // medido: 4 (sync-reprocess, push-vendedora, auto-aprovacao-piloto, positivacao #2606)
-  entradas: 30, // medido: 38 (13 + 6 + 5 + 14)
+  entradas: 40, // medido: 50 (13 + 6 + 5 + 26 — a positivação foi de 14 a 26 com o universo, #2606 → 20260927195430)
   lacos: 3, // medido: 4
   linhasFalsificarNucleo: 6, // medido: 7 (4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
 } as const;
