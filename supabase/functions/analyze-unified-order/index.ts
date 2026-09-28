@@ -31,14 +31,19 @@ function stripAccents(str: string): string {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
-/**
- * Sanitiza input para interpolar com segurança numa string de `.or()` do PostgREST.
- * Remove caracteres especiais do parser PostgREST: vírgula, parênteses, barra
- * invertida, aspas duplas e wildcards do ILIKE (% _).
- */
+// MIRROR-START postgrest-or — manter IDÊNTICO ao bloco de src/lib/postgrest.ts (Deno não importa de src/).
+// Sanitiza o termo para o `.or()` do PostgREST: tira vírgula, parênteses, barra, aspas e os curingas
+// `% _ *` (o `*` é alias de `%` em like/ilike). `isSearchablePostgrestTerm` é o gate do termo DEGENERADO:
+// só-metacaracteres (`***` de negrito do WhatsApp, `%%%`) sanitiza para vazio, e `col.ilike.%%` casaria
+// TODA linha — o caller não consulta. A paridade deste bloco × src é vigiada pelo CI
+// (edge-money-path-invariants): esta cópia ficou sem o `*` quando o #1051 o pôs só na fonte (B1).
 function sanitizeForPostgrestOr(input: string): string {
-  return input.replace(/[%_,()\\"]/g, "");
+  return input.replace(/[%_,()\\"*]/g, '');
 }
+function isSearchablePostgrestTerm(term: string): boolean {
+  return sanitizeForPostgrestOr(term) !== '';
+}
+// MIRROR-END postgrest-or
 
 /** Constrói cláusula .or() segura para múltiplas colunas ILIKE. */
 function ilikeOr(term: string, ...cols: string[]): string {
@@ -417,8 +422,9 @@ Deno.serve(async (req) => {
           console.error("Error loading all profiles for image mode:", e);
         }
       } else {
-        // Search in profiles for name matches (text mode)
-        for (const term of nameTerms.slice(0, 5)) {
+        // Search in profiles for name matches (text mode). Termo DEGENERADO fica fora ANTES do corte
+        // de 5: `***` vira `name.ilike.%%` = 20 perfis arbitrários como "cliente sugerido" (B1).
+        for (const term of nameTerms.filter(isSearchablePostgrestTerm).slice(0, 5)) {
           try {
             const { data: profiles } = await supabase
               .from("profiles")
@@ -537,7 +543,9 @@ Deno.serve(async (req) => {
       .filter((t: string) => t.length >= 3);
 
     if (searchTerms.length > 0) {
-      for (const term of searchTerms.slice(0, 5)) {
+      // Termo DEGENERADO fica fora antes do corte de 5 (senão `descricao.ilike.%%` = 20 produtos
+      // arbitrários). Só-metacaractere não tem dígito nem letra: nenhuma busca abaixo o aproveitaria.
+      for (const term of searchTerms.filter(isSearchablePostgrestTerm).slice(0, 5)) {
         try {
           const { data: dbProducts } = await supabase
             .from("omie_products")
@@ -603,7 +611,8 @@ Deno.serve(async (req) => {
         // Also try alphanumeric-stripped version (e.g., "FO56717" → search without dots)
         try {
           const stripped = term.replace(/[.\-\s]/g, '');
-          if (stripped.length >= 4) {
+          // Gate PRÓPRIO: o termo passou no filtro acima, mas `..**..**` vira `****` aqui — degenerado.
+          if (stripped.length >= 4 && isSearchablePostgrestTerm(stripped)) {
             const { data: strippedProducts } = await supabase
               .from("omie_products")
               .select("id, codigo, descricao, account, valor_unitario, estoque")

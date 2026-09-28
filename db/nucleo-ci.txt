@@ -219,3 +219,9 @@ db/test-positivacao-eligible-consumo.sh    44  falsificar=14
 # isso o corpo antigo das views e da projeção entra pelo gêmeo controlável (`now()` na sessão).
 # Autocontida: initdb + stubs + a migration + db/fixtures/des-views-predecessoras-prod-20260927.sql.
 db/test-fuso-sp-relogio-sessao.sh          53  falsificar=16
+# O "hoje" de SP no preço de partida (get_ultimos_precos_cliente) e na medição do piso
+# (medir_abaixo_piso_tier): o current_date da sessão UTC era amanhã das 21:00 às 23:59 BRT
+# (20260927172443). Mesmo relógio controlado, borda do DIA cruzada sob as duas sessões; o
+# current_date é palavra-chave e escapa do relógio, então o R0 chama cada RPC SEM pin e exige o
+# tripwire. O pai do --falsificar exige o filho completo e todo erro de execução declarado.
+db/test-hoje-sp-sessao-utc-precos-piso.sh  50  falsificar=18
