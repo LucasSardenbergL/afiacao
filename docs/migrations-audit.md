@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **562** custom migrations totais
-- **1841** objetos esperados (criados por estas migrations)
+- **563** custom migrations totais
+- **1842** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 602
+  - `function`: 603
   - `rls_policy`: 462
   - `index`: 261
   - `cron_job`: 174
@@ -4596,6 +4596,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.atualizar_parametros_numericos_skus` | — |
 
 ### `20260927133606_positivacao_mes_sp_sessao_utc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._carteira_positivacao_for_owner` | — |
+
+### `20260927195430_positivacao_universo_canonico.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
