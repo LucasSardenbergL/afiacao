@@ -231,3 +231,50 @@ sabotagens, C e pt_BR.UTF-8) no `test:falsificacao`. No Linux, pela leitura do `
 tardia é ACEITA (o EIO de lá é só na leitura): a prova mede o que o kernel fez e, onde ele aceita,
 emula o EIO do macOS **dizendo isso** — sem o que o CI nunca veria a guarda regredir. Classe: §7 de
 [evidencia-positiva-shell.md](evidencia-positiva-shell.md).
+
+## 28/09 — 3ª recorrência: o gatilho é a HIBERNAÇÃO, não a auth
+
+**O que aconteceu:** worker 13.28.0 (pid 1551, bun **1.3.14** — o mesmo de 05/09) surdo: `curl` 28
+(timeout; em 05/09 era 55/56), duas conexões do health presas no backlog em `CLOSE_WAIT` com 88 B
+não lidos (o processo nunca chamou `accept()`), 100 % de CPU, `sample`: thread principal 52 % em
+`kevent64` + o laço do bun, demais threads paradas — a assinatura de 05/09. O bloco 6 do vigia avisou
+no SessionStart ("4 FALHAS DE HOOK"); `claude-mem:reanimar` deu `RECUPERADO`.
+
+**Quando o giro começou — medido pela CPU acumulada, não pela última linha do log.** O processo tinha
+136,9 min de CPU às 19:57. `pmset -g log`: 02:38:29 `Low Power Sleep … TCPKeepAlive=inactive …
+Charge:1%` → 07:09:59 `Wake from Hibernate`. Acordado desde então: 07:09:59→08:08:55 + 18:44:36→19:57
+= 131 min, mais 50 DarkWakes de segundos e o CPU normal das 6 h anteriores — **bate**. Se tivesse
+começado às 01:01 seriam +97 min (o Mac ficou acordado até 02:38) ≈ 228 min; às 18:44, ≈ 72 min.
+Mesmo gatilho e mesma assinatura (`kevent64` com timeout zero, só a thread principal, sem autocura) em
+[anthropics/claude-code#67664](https://github.com/anthropics/claude-code/issues/67664), outro processo
+bun, fechada como *not planned*; o mecanismo que ela propõe (fd de socket morto na hibernação deixa um
+handle/timer que zera o timeout do poll) é DELA — aqui não foi medido. 05/09 (08:22 da manhã) é
+compatível, mas não verificável: o `pmset` só guarda desde 21/09.
+
+**A hipótese que caiu.** A última linha do worker (01:01:18) era `Generator paused for auth; preserving
+buffered work {pendingCount=1}`, e a pausa anterior (0 pendentes) não tinha silenciado nada — parecia o
+gatilho. Refutada por observação: depois do restart houve duas pausas por auth com `pendingCount=1`
+(20:06:41 e 20:06:56) e o worker seguiu respondendo. **Última linha antes do silêncio é vizinhança,
+não causa** — o silêncio pode começar horas depois (aqui, o Mac dormiu). Meça o INÍCIO do giro (CPU
+acumulada × tempo acordado) antes de culpar a linha.
+
+**O achado secundário (de novo): memória parada desde 00:39 — token que o Desktop nunca renova.** O
+plugin relê `Claude Code-credentials` (conta = usuário) no keychain a cada spawn do SDK e recusa token
+vencido (`Refusing to inject expired CLAUDE_CODE_OAUTH_TOKEN`, grava `~/.claude-mem/oauth-stale.marker`).
+As sessões do app Desktop se autenticam pelo host (`CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH`,
+`ANTHROPIC_BASE_URL` no ambiente) e **nunca tocam nesse item** — a sessão ativa às 01:00 não o renovou,
+nem as 36 de hoje. Quem renova é o `claude` de **terminal**. Token de 8 h: renovado 27/09 16:39, venceu
+28/09 00:39. Armadilha que eu caí: o `mdat` do item mudou às 18:42 e o token continuou o de 00:39 — o
+JSON guarda mais que o token do Claude.ai. **Item modificado ≠ token renovado** (medi o contêiner, não o
+conteúdo). A prova é o `expiresAt` que o próprio worker loga ao recusar — sem ler segredo. Conserto é
+do founder: `claude` no terminal (renova pelo refresh token; se não der, `/login`).
+
+**Confirmar o kill sem TTY (agente):** o script lê `/dev/tty`; sem TTY ele cancela sem tocar em nada
+(fail-closed, correto). O `script(1)` do macOS perde a resposta (o `read` lê vazio — já previsto no
+`com_tty.py`). O que funciona, depois de ver a evidência: `printf 's\n' | python3
+scripts/lab-claude-mem-reanimar/com_tty.py 240 bash scripts/claude-mem-reanimar.sh`.
+
+**Upstream:** [thedotmack/claude-mem#4129](https://github.com/thedotmack/claude-mem/pull/4129)
+(reclaim do worker travado + hooks de prompt em fail-open) está em draft com 3 achados P1 em 28/09 —
+quando entrar, a receita vira automática. Até lá: **Mac que morreu de bateria acorda com o worker
+surdo** — o bloco 6 do vigia acusa e `bun run claude-mem:reanimar` resolve.
