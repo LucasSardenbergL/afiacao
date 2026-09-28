@@ -34,8 +34,8 @@ ALVO="${ORFAOS_ALVO:-$here/orfaos-custosos.sh}"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 falhas=0
-ok()    { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-falha() { printf '  \033[31mFALHA\033[0m %s\n' "$1"; falhas=$((falhas + 1)); }
+ok()    { printf '  \033[32mok\033[0m    %s\n' "${1//$'\n'/ | }"; }
+falha() { printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; falhas=$((falhas + 1)); }
 
 # ── stub do `ps` ─────────────────────────────────────────────────────────────
 # Emite o fixture apontado por PS_FIXTURE, ignorando as flags. PS_RC=1 simula o
@@ -118,7 +118,18 @@ FIX
 # mas só depois de custar uma rodada.
 if [ "${1:-}" = "--falsificar" ]; then
   falhou=0
-  printf '== falsificacao (sabota o detector e EXIGE vermelho) ==\n'
+  printf '== falsificacao (sabota o detector e EXIGE vermelho NO ASSERT que a sabotagem declara) ==\n'
+
+  # Os logs das rodadas saem SEM cor (`sem_cor`), para o ID casar logo depois da palavra.
+  esc="$(printf '\033')"
+  sem_cor() { LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$1"; }
+  # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
+  asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
+  # Erro de execução do bash/awk no ALVO: no log (o `run` junta o stderr dele e o `quero` que falha
+  # o despeja) e no que ERROS_DO_ALVO recolhe das chamadas que a suíte normal manda para /dev/null
+  # (o --resumo MEDE o stdout: stderr misturado reprovaria por ruído de ambiente).
+  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution|awk: ' || true; }
+  vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [A-Z]+[0-9]+ ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # sabota <descricao> <regra-que-deve-quebrar> <expressao-sed>
   # 4 travas contra "falsificação vazia" — vermelho pelo motivo errado conta
@@ -127,39 +138,24 @@ if [ "${1:-}" = "--falsificar" ]; then
   # intacto; (3) sintaxe de shell quebrada; (4) o miolo é um programa AWK dentro
   # de string — `bash -n` não o vê, então um awk inválido passaria pelas 3
   # primeiras travas e pintaria TUDO de vermelho por erro de sintaxe do awk.
-  sabota() {
-    local desc="$1" regra="$2" expr="$3" copia="$tmp/sabotado.sh" erro fumaca
+  copia="$tmp/sabotado.sh"
+  aplica() {  # escreve a cópia sabotada; 1 = falsificação VAZIA (já acusada), nada a julgar
+    local erro fumaca
     erro="$(sed "$expr" "$ALVO" 2>&1 >"$copia")"
     if [ -n "$erro" ]; then
-      falha "\"$desc\": sed invalido (${erro:0:60}) — falsificacao vazia"; falhou=1; return
+      falha "\"$desc\": sed invalido (${erro:0:60}) — falsificacao vazia"; falhou=1; return 1
     fi
     if cmp -s "$ALVO" "$copia"; then
-      falha "\"$desc\": padrao nao casou, alvo intacto — falsificacao vazia"; falhou=1; return
+      falha "\"$desc\": padrao nao casou, alvo intacto — falsificacao vazia"; falhou=1; return 1
     fi
     if ! bash -n "$copia" 2>/dev/null; then
-      falha "\"$desc\": quebrou a SINTAXE do shell — vermelho pelo motivo errado"; falhou=1; return
+      falha "\"$desc\": quebrou a SINTAXE do shell — vermelho pelo motivo errado"; falhou=1; return 1
     fi
     fumaca="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$copia" 2>&1 >/dev/null)"
     if printf '%s' "$fumaca" | grep -qiE 'awk|syntax error'; then
-      falha "\"$desc\": quebrou o programa AWK (${fumaca:0:60}) — vermelho pelo motivo errado"; falhou=1; return
+      falha "\"$desc\": quebrou o programa AWK (${fumaca:0:60}) — vermelho pelo motivo errado"; falhou=1; return 1
     fi
-    # `pt_BR.UTF-8` é literal AQUI de propósito — NÃO troque pela sonda de locale que o irmão
-    # test-read-contexto-nudge.sh usa. Ali o alvo é o hook real e o locale precisa EXISTIR para
-    # mudar o comportamento; aqui quem decide é o stub do `ps` lá em cima, que casa a STRING
-    # (`case "${LC_ALL:-C}" in pt_BR*`) e emite a vírgula decimal sem consultar o sistema. Por
-    # isso a asserção continua valendo no runner ubuntu, onde pt_BR não existe: o bash avisa no
-    # stderr (ruído que PS_RUIDO_STDERR reproduz na M2) e o stub emite "68,4" do mesmo jeito.
-    # Trocar por C.UTF-8 aqui faria o stub cair no ramo `*)`, emitir ponto nos DOIS locales e
-    # esvaziar a asserção — verde por cegueira.
-    for loc in C pt_BR.UTF-8; do
-      if LC_ALL="$loc" ORFAOS_ALVO="$copia" bash "$0" >/dev/null 2>&1; then
-        falha "[$loc] \"$desc\" passou VERDE — a suite nao cobre: $regra"; falhou=1
-      else
-        printf '  \033[32mok\033[0m    [%-11s] "%s" -> vermelho\n' "$loc" "$desc"
-      fi
-    done
   }
-
   # -- CONTROLE: a suite tem de estar VERDE antes de qualquer sed --------------------
   # "Ficou vermelho" so e informacao se existir um verde do qual sair. Sem esta trava, um arnes
   # incondicionalmente vermelho (fixture podre, stub quebrado, assercao nova mal escrita) APROVA
@@ -173,13 +169,19 @@ if [ "${1:-}" = "--falsificar" ]; then
   # REAL. Se for justamente essa invocacao (copia + LC_ALL) que esta vermelha por motivo alheio,
   # o `test:hooks` fica verde e todo este bloco vira teatro.
   # Abortamos ANTES do primeiro sed: com a base vermelha nenhum veredito de (B) e legivel.
+  # O LOG do controle é a régua das camadas do laço: quantos asserts a suíte executa, e que o assert
+  # declarado SABE ficar verde nesta invocação.
   controle="$tmp/controle.sh"
   cp "$ALVO" "$controle"
   for loc in C pt_BR.UTF-8; do
-    if LC_ALL="$loc" ORFAOS_ALVO="$controle" bash "$0" >/dev/null 2>&1; then
-      printf '  \033[32mok\033[0m    [%-11s] controle (sem sabotagem) -> VERDE\n' "$loc"
+    ctl="$tmp/controle.$loc.log"
+    : > "$ctl.stderr"
+    LC_ALL="$loc" ORFAOS_ALVO="$controle" ERROS_DO_ALVO="$ctl.stderr" bash "$0" >"$ctl.cru" 2>&1; rc=$?
+    sem_cor "$ctl.cru" > "$ctl"
+    if [ "$rc" -eq 0 ] && [ "$(asserts "$ctl")" -gt 0 ]; then
+      printf '  \033[32mok\033[0m    [%-11s] controle (sem sabotagem) -> VERDE (%s asserts)\n' "$loc" "$(asserts "$ctl")"
     else
-      falha "[$loc] controle SEM sabotagem ja esta VERMELHO — sem linha de base, falsificar nao prova nada"
+      falha "[$loc] controle SEM sabotagem ja esta VERMELHO (exit $rc, $(asserts "$ctl") asserts) — sem linha de base, falsificar nao prova nada"
       falhou=1
     fi
   done
@@ -189,52 +191,138 @@ if [ "${1:-}" = "--falsificar" ]; then
     exit 1
   fi
 
-  sabota "sem o eixo pcpu"        "orfao BARATO (claude-mem 3,5%, warsaw 0%) nao e alarme" \
+  # <sabotagem>:<IDs dos asserts que TÊM de acusá-la> — `,` = E (cada um tem de virar), `|` = OU
+  # (basta um). O ID é o 1º token que o assert imprime (`FALHA O7 …`). Exit≠0 NÃO é dente: até
+  # 2026-09-27 este laço contava "-> vermelho" para QUALQUER rodada que saísse ≠0 — assert alheio,
+  # aborto no meio da suíte, o alvo morrendo no ramo que o assert mede. Os colaterais (asserts que
+  # também caem, mas não existem para pegar ESTA sabotagem) ficam de fora de propósito.
+  # docs/historico/falsificacao-exit-nao-e-dente.md
+  SABOTAGENS="sem_eixo_pcpu:O4 sem_eixo_cputime:O7 sem_filtro_orfao:O8 sem_prefixos_so:O6
+              sem_truncagem:O10 ps_falho_vira_sucesso:O16 resumo_fala_a_toa:O21
+              tempo_segundos_crus:O9 sem_lc_all_no_ps:O22 discriminador_cego:O25
+              casa_depois_do_corte:O25 surdo_vira_ok:O25 contador_ausente_vira_0:O39
+              curl_ausente_vira_saudavel:CA4 curl_quebrado_vira_surdo:CQ5 receita_sem_contador:O40
+              curl_sem_teto:O30 sonda_roda_sem_orfao:O45"
+
+  # registra <nome> <descricao> <regra-que-deve-quebrar> <expressao-sed> — a TABELA das
+  # sabotagens. Nome da lista sem registro e registro fora da lista são FALHA (no fim do laço): o
+  # primeiro não sabotaria nada, o segundo nunca rodaria.
+  registradas=""
+  registra() {
+    case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1) — o 2o registro sobrescreveria o 1o" >&2; exit 2 ;; esac
+    registradas="$registradas $1"
+    printf -v "desc_$1" '%s' "$2"; printf -v "regra_$1" '%s' "$3"; printf -v "expr_$1" '%s' "$4"
+  }
+  registra sem_eixo_pcpu "sem o eixo pcpu"        "orfao BARATO (claude-mem 3,5%, warsaw 0%) nao e alarme" \
          's%if ((\$4 + 0) < (pcpu_min + 0)) next%%'
-  sabota "sem o eixo cputime"     "spike curto de 3s nao e alarme" \
+  registra sem_eixo_cputime "sem o eixo cputime"     "spike curto de 3s nao e alarme" \
          's%if (s < (t_min + 0)) next%%'
-  sabota "sem o filtro de orfao"  "processo COM dono nao e orfao" \
+  registra sem_filtro_orfao "sem o filtro de orfao"  "processo COM dono nao e orfao" \
          's%\$2 == 1 {%1 {%'
-  sabota "sem prefixos de SO"     "daemon do sistema nao e do founder matar" \
+  registra sem_prefixos_so "sem prefixos de SO"     "daemon do sistema nao e do founder matar" \
          's%if (cmd ~ /\^%if (cmd ~ /NUNCACASA%'
-  sabota "sem truncagem"          "hook nao pode despejar linha de 400 chars" \
+  registra sem_truncagem "sem truncagem"          "hook nao pode despejar linha de 400 chars" \
          's%if (length(cmd) > 110)%if (length(cmd) > 99999)%'
-  sabota "ps falho vira sucesso"  "ausencia de dado nao pode virar 'esta limpo'" \
+  registra ps_falho_vira_sucesso "ps falho vira sucesso"  "ausencia de dado nao pode virar 'esta limpo'" \
          's%^  exit 3$%  exit 0%'
-  sabota "resumo fala a toa"      "hook silencia quando nao ha nada" \
+  registra resumo_fala_a_toa "resumo fala a toa"      "hook silencia quando nao ha nada" \
          's%\[ "\$n" -gt 0 \] || exit 0%:%'
   # Delimitador `#` e nao `%`: o padrao contem os `%d`/`%02d` do printf, e
   # reusar `%` produziria um sed INVALIDO — que a trava (1) pega, mas so depois
   # de custar uma rodada.
-  sabota "tempo em segundos crus" "founder le 16h55m, nao 60922" \
+  registra tempo_segundos_crus "tempo em segundos crus" "founder le 16h55m, nao 60922" \
          's#printf "%dh%02dm", h, m#printf "%d", s#'
   # A regressao de locale: sem o LC_ALL=C o ps emite "68,4" pro founder e "68.4"
   # no CI. So a assercao de estabilidade entre locales deixa isto vermelho.
-  sabota "sem LC_ALL=C no ps"     "relato estavel entre C e pt_BR (#1483)" \
+  registra sem_lc_all_no_ps "sem LC_ALL=C no ps"     "relato estavel entre C e pt_BR (#1483)" \
          's%LC_ALL=C ps -axo%ps -axo%'
   # ── o discriminador do claude-mem (2026-09-05) ──
-  sabota "discriminador cego"          "orfao worker-service.cjs ganha a anotacao claude-mem" \
+  registra discriminador_cego "discriminador cego"          "orfao worker-service.cjs ganha a anotacao claude-mem" \
          's%worker-service\\.cjs%NUNCACASA%'
-  sabota "casa DEPOIS do corte"        "worker-service.cjs fica alem dos 110 chars — casar no truncado e cego" \
+  registra casa_depois_do_corte "casa DEPOIS do corte"        "worker-service.cjs fica alem dos 110 chars — casar no truncado e cego" \
          's%tag = (cmd ~ /worker-service%tag = (substr(cmd, 1, 107) ~ /worker-service%'
-  sabota "SURDO vira ok"               "health sem resposta e SURDO, nao ok" \
+  registra surdo_vira_ok "SURDO vira ok"               "health sem resposta e SURDO, nao ok" \
          's%health="SURDO"; health_txt="health SURDO%health="ok"; health_txt="health ok%'
-  sabota "contador ausente vira 0"     "hook-failures.json ausente e 'sem contador', nunca 0" \
+  registra contador_ausente_vira_0 "contador ausente vira 0"     "hook-failures.json ausente e 'sem contador', nunca 0" \
          's%contador_txt="sem contador (hook-failures.json ausente%contador="0"; contador_txt="contador=0 (ausente%'
-  sabota "curl ausente vira saudavel"  "sonda ausente degrada para 'nao sondei', nunca para ok" \
+  registra curl_ausente_vira_saudavel "curl ausente vira saudavel"  "sonda ausente degrada para 'nao sondei', nunca para ok" \
          's%health_txt="nao sondei health (curl ausente no PATH)"%health="ok"; health_txt="health ok (curl ausente no PATH)"%'
-  sabota "curl quebrado vira SURDO"    "curl que nao sondou (rc 2) nao pode afirmar surdo" \
+  registra curl_quebrado_vira_surdo "curl quebrado vira SURDO"    "curl que nao sondou (rc 2) nao pode afirmar surdo" \
          's%\*) health_txt="nao sondei health (curl saiu \$rc)" ;;%*) health="SURDO"; health_txt="health SURDO (curl saiu $rc)" ;;%'
-  sabota "receita sem contador"        "receita exige surdo E contador >= 3 provado" \
+  registra receita_sem_contador "receita sem contador"        "receita exige surdo E contador >= 3 provado" \
          's%\[ -n "\$contador" \] \&\& \[ "\$contador" -ge 3 \]%true%'
-  sabota "curl sem teto de 2s"         "curl -m <= 2, senao worker surdo pendura o hook (teto 3s)" \
+  registra curl_sem_teto "curl sem teto de 2s"         "curl -m <= 2, senao worker surdo pendura o hook (teto 3s)" \
          's%curl -s -m 2 --noproxy%curl -s -m 30 --noproxy%'
-  sabota "sonda roda sem orfao"        "sem orfao do claude-mem o curl NAO roda (2s do teto)" \
+  registra sonda_roda_sem_orfao "sonda roda sem orfao"        "sem orfao do claude-mem o curl NAO roda (2s do teto)" \
          's#grep -q $'"'"'\\tclaude-mem\\t'"'"'; then#grep -q ""; then#'
 
+  # A rodada só conta como vermelha com as QUATRO camadas (as do sync-reprocess):
+  #   1. a sabotagem APLICOU (as travas de aplica());
+  #   2. a suíte rodou INTEIRA (nº de asserts = o do controle: aborto no meio não é assert);
+  #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
+  #   4. nenhum erro de execução do bash/awk que o controle não tem — o alvo que morre no ramo do
+  #      assert derruba o assert certo por CRASH, não por julgamento.
+  # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
+  # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
+  # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+  repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$repetidos" ] || { falha "SABOTAGENS com nome repetido: $repetidos"; falhou=1; }
+  case "$SABOTAGENS" in *'|'*) falha "SABOTAGENS com | (OU): declare por , (E) — este juiz exige o MESMO assert nos dois lados"; falhou=1 ;; esac
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; exigidos="${item#*:}"
+    v="desc_$sab"; desc="${!v-}"; v="regra_$sab"; regra="${!v-}"; v="expr_$sab"; expr="${!v-}"
+    if [ -z "$expr" ]; then
+      falha "\"$sab\": na lista SABOTAGENS e SEM registro — nada foi sabotado"; falhou=1; continue
+    fi
+    aplica || continue
+    # `pt_BR.UTF-8` é literal AQUI de propósito — NÃO troque pela sonda de locale que o irmão
+    # test-read-contexto-nudge.sh usa. Ali o alvo é o hook real e o locale precisa EXISTIR para
+    # mudar o comportamento; aqui quem decide é o stub do `ps` lá em cima, que casa a STRING
+    # (`case "${LC_ALL:-C}" in pt_BR*`) e emite a vírgula decimal sem consultar o sistema. Por
+    # isso a asserção continua valendo no runner ubuntu, onde pt_BR não existe: o bash avisa no
+    # stderr (ruído que PS_RUIDO_STDERR reproduz na M2) e o stub emite "68,4" do mesmo jeito.
+    # Trocar por C.UTF-8 aqui faria o stub cair no ramo `*)`, emitir ponto nos DOIS locales e
+    # esvaziar a asserção — verde por cegueira.
+    for loc in C pt_BR.UTF-8; do
+      ctl="$tmp/controle.$loc.log"; log="$tmp/sabotada-$sab.$loc.log"
+      : > "$log.stderr"
+      LC_ALL="$loc" ORFAOS_ALVO="$copia" ERROS_DO_ALVO="$log.stderr" bash "$0" >"$log.cru" 2>&1; rc=$?
+      sem_cor "$log.cru" > "$log"
+      if [ "$rc" -eq 0 ]; then
+        falha "[$loc] \"$desc\" passou VERDE — a suite nao cobre: $regra"; falhou=1; continue
+      fi
+      # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
+      faltam=""
+      for exigido in ${exigidos//,/ }; do
+        if ! LC_ALL=C grep -Eq "^  ok +($exigido) " "$ctl" || ! LC_ALL=C grep -Eq "^  FALHA ($exigido) " "$log"; then
+          faltam="$faltam $exigido"
+        fi
+      done
+      if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
+        falha "[$loc] \"$desc\": a suite NAO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, nao de assert"
+        falhou=1
+      elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
+        falha "[$loc] \"$desc\": vermelha com ERRO de execucao no alvo — o assert caiu por crash, nao por julgamento"
+        falhou=1
+      elif [ -n "$faltam" ]; then
+        falha "[$loc] \"$desc\": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):$faltam · vermelhos: $(vermelhos "$log")"
+        falhou=1
+      else
+        printf '  \033[32mok\033[0m    [%-11s] "%s" -> vermelho no assert declarado (%s) · vermelhos: %s\n' \
+          "$loc" "$desc" "$exigidos" "$(vermelhos "$log")"
+      fi
+    done
+  done
+  for r in $registradas; do
+    case " $SABOTAGENS " in
+      *[[:space:]]"$r:"*) ;;
+      *) falha "\"$r\": registrada e FORA da lista SABOTAGENS — nunca roda, e o verde nao a cobre"; falhou=1 ;;
+    esac
+  done
+
   printf '\n'
-  if [ "$falhou" -eq 0 ]; then echo "VERDE — toda sabotagem foi detectada, nos 2 locales"; exit 0; fi
-  echo "VERMELHO — ha sabotagem passando despercebida"; exit 1
+  if [ "$falhou" -eq 0 ]; then echo "VERDE — toda sabotagem ficou vermelha NO assert que declara, nos 2 locales"; exit 0; fi
+  echo "VERMELHO — ha sabotagem sem o vermelho certo"; exit 1
 fi
 
 # roda o alvo com o ps stubado; ecoa a saída e "EXIT=<rc>" na última linha
@@ -253,18 +341,18 @@ nao_quero() {
 
 echo "── relatório: pega o órfão caro e SÓ ele ──"
 saida="$(run "$tmp/fix-real.txt")"
-quero     "reporta o pid do órfão caro"            "$saida" "91234"
-quero     "reporta a linha de comando"             "$saida" "/bin/zsh"
-quero     "sai 0 (varreu)"                         "$saida" "EXIT=0"
-nao_quero "NÃO reporta o worker do claude-mem"     "$saida" "91235"
-nao_quero "NÃO reporta o warsaw (banco)"           "$saida" "596"
-nao_quero "NÃO reporta processo de /System/"       "$saida" "90.1"
-nao_quero "NÃO reporta spike curto (0:03)"         "$saida" "102"
-nao_quero "NÃO reporta processo COM dono (ppid≠1)" "$saida" "103"
+quero     "O1 reporta o pid do órfão caro"            "$saida" "91234"
+quero     "O2 reporta a linha de comando"             "$saida" "/bin/zsh"
+quero     "O3 sai 0 (varreu)"                         "$saida" "EXIT=0"
+nao_quero "O4 NÃO reporta o worker do claude-mem"     "$saida" "91235"
+nao_quero "O5 NÃO reporta o warsaw (banco)"           "$saida" "596"
+nao_quero "O6 NÃO reporta processo de /System/"       "$saida" "90.1"
+nao_quero "O7 NÃO reporta spike curto (0:03)"         "$saida" "102"
+nao_quero "O8 NÃO reporta processo COM dono (ppid≠1)" "$saida" "103"
 
 echo "── o tempo acumulado sai LEGÍVEL (não em segundos crus) ──"
 # 1015:22 no formato do macOS = 16h55min — o número que fecha com o incidente.
-quero "tempo acumulado em h/min" "$saida" "16h55"
+quero "O9 tempo acumulado em h/min" "$saida" "16h55"
 
 echo "── a linha de comando é TRUNCADA (hook não pode despejar contexto) ──"
 cat > "$tmp/fix-longo.txt" <<FIX
@@ -272,9 +360,9 @@ cat > "$tmp/fix-longo.txt" <<FIX
 FIX
 saida_longo="$(run "$tmp/fix-longo.txt")"
 maior="$(printf '%s' "$saida_longo" | awk '{ print length }' | sort -rn | awk 'NR==1')"
-if [ "${maior:-999}" -le 200 ]; then ok "nenhuma linha passa de 200 chars (maior: $maior)"
-else falha "linha de $maior chars — comando não foi truncado"; fi
-quero "mesmo truncado, reporta o pid" "$saida_longo" "77777"
+if [ "${maior:-999}" -le 200 ]; then ok "O10 nenhuma linha passa de 200 chars (maior: $maior)"
+else falha "O10 linha de $maior chars — comando não foi truncado"; fi
+quero "O11 mesmo truncado, reporta o pid" "$saida_longo" "77777"
 
 echo "── formatos de TIME portáveis (macOS MM:SS · Linux/CI [DD-]HH:MM:SS) ──"
 # O CI é ubuntu e roda este script: lá o mesmo processo aparece como HH:MM:SS.
@@ -284,21 +372,21 @@ cat > "$tmp/fix-linux.txt" <<'FIX'
 55503     1       04:59  99.0 /home/runner/quase-la-mmss
 FIX
 saida_l="$(run "$tmp/fix-linux.txt")"
-quero     "HH:MM:SS cruza o teto"        "$saida_l" "55501"
-quero     "DD-HH:MM:SS cruza o teto"     "$saida_l" "55502"
-nao_quero "MM:SS abaixo do teto silencia" "$saida_l" "55503"
+quero     "O12 HH:MM:SS cruza o teto"        "$saida_l" "55501"
+quero     "O13 DD-HH:MM:SS cruza o teto"     "$saida_l" "55502"
+nao_quero "O14 MM:SS abaixo do teto silencia" "$saida_l" "55503"
 
 echo "── ausência de dado ≠ ausência de órfão ──"
 saida_vazio="$(run "$tmp/fix-vazio.txt")"
-quero "sem órfão caro → diz que varreu e sai 0" "$saida_vazio" "EXIT=0"
+quero "O15 sem órfão caro → diz que varreu e sai 0" "$saida_vazio" "EXIT=0"
 saida_rc="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" PS_RC=1 bash "$ALVO" 2>&1; printf 'EXIT=%s\n' "$?")"
-quero     "ps falhou -> exit 3 (falta de dado, nao 'nenhum')" "$saida_rc" "EXIT=3"
+quero     "O16 ps falhou -> exit 3 (falta de dado, nao 'nenhum')" "$saida_rc" "EXIT=3"
 # Âncoras ASCII de caixa fixa, nunca a frase acentuada: `grep` daqui é shim e
 # dobra acento entre locales — casar "não consegui" ficaria vermelho só no shell
 # de quem escreveu (#1483). Por isso o script emite os marcadores SEM-MEDIDA e
 # "nenhum orfao caro", que sobrevivem a C e a pt_BR.UTF-8 iguais.
-quero     "ps falhou -> marcador SEM-MEDIDA"                 "$saida_rc" "SEM-MEDIDA"
-nao_quero "ps falhou -> NAO afirma 'nenhum orfao'"           "$saida_rc" "nenhum orfao"
+quero     "O17 ps falhou -> marcador SEM-MEDIDA"                 "$saida_rc" "SEM-MEDIDA"
+nao_quero "O18 ps falhou -> NAO afirma 'nenhum orfao'"           "$saida_rc" "nenhum orfao"
 
 echo "── --resumo: 1 linha pro hook, SILÊNCIO quando não há nada ──"
 # 2>/dev/null e não 2>&1 pelo mesmo motivo da asserção de locale mais abaixo:
@@ -306,13 +394,13 @@ echo "── --resumo: 1 linha pro hook, SILÊNCIO quando não há nada ──"
 # então qualquer ruído de ambiente no stderr as reprova sozinho. `grep -qF` é
 # imune a isso; contagem e igualdade não são. Descartar o stderr não cega o
 # teste: script quebrado devolve stdout vazio, que reprova em ambas.
-r_com="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>/dev/null)"
-r_sem="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-vazio.txt" bash "$ALVO" --resumo 2>/dev/null)"
-quero "resumo cita o pid culpado" "$r_com" "91234"
-if [ "$(printf '%s' "$r_com" | grep -c .)" -eq 1 ]; then ok "resumo tem exatamente 1 linha"
-else falha "resumo tem $(printf '%s' "$r_com" | grep -c .) linhas — o hook vira parede de texto"; fi
-if [ -z "$r_sem" ]; then ok "sem órfão caro → resumo SILENCIA (hook não vira ruído)"
-else falha "resumo falou sem ter o que falar: $r_sem"; fi
+r_com="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+r_sem="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-vazio.txt" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+quero "O19 resumo cita o pid culpado" "$r_com" "91234"
+if [ "$(printf '%s' "$r_com" | grep -c .)" -eq 1 ]; then ok "O20 resumo tem exatamente 1 linha"
+else falha "O20 resumo tem $(printf '%s' "$r_com" | grep -c .) linhas — o hook vira parede de texto"; fi
+if [ -z "$r_sem" ]; then ok "O21 sem órfão caro → resumo SILENCIA (hook não vira ruído)"
+else falha "O21 resumo falou sem ter o que falar: $r_sem"; fi
 
 echo "── o relato é ESTÁVEL entre locales (o ps emite 68,4 sob pt_BR) ──"
 # STDOUT, nunca 2>&1: o contrato é o relato que o hook captura (ele lê a sonda
@@ -322,20 +410,20 @@ echo "── o relato é ESTÁVEL entre locales (o ps emite 68,4 sob pt_BR) ─�
 # reprovava por ruído de ambiente, com o relato idêntico. Ironia do #1483: a
 # asserção que existe pra não variar com o ambiente variava com o ambiente.
 # `-n` é a trava que impede o par vazio=vazio de passar por "estável".
-relato() { LC_ALL="$1" PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>/dev/null; }
+relato() { LC_ALL="$1" PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}"; }
 n_c="$(relato C)"
 n_br="$(relato pt_BR.UTF-8)"
-if [ -n "$n_c" ] && [ "$n_c" = "$n_br" ]; then ok "mesma linha sob C e pt_BR.UTF-8"
-else falha "relato muda com o locale (#1483): C='$n_c' vs pt_BR='$n_br'"; fi
+if [ -n "$n_c" ] && [ "$n_c" = "$n_br" ]; then ok "O22 mesma linha sob C e pt_BR.UTF-8"
+else falha "O22 relato muda com o locale (#1483): C='$n_c' vs pt_BR='$n_br'"; fi
 
 # Trava da regressão acima, e portável: com ruído no stderr do alvo, o relato
 # tem de continuar idêntico. É o ambiente do CI reproduzido em qualquer SO.
 n_cr="$(PS_RUIDO_STDERR=1 relato C)"
 n_brr="$(PS_RUIDO_STDERR=1 relato pt_BR.UTF-8)"
 if [ -n "$n_cr" ] && [ "$n_cr" = "$n_brr" ] && [ "$n_cr" = "$n_c" ]; then
-  ok "ruido de ambiente no stderr nao contamina o relato"
+  ok "O23 ruido de ambiente no stderr nao contamina o relato"
 else
-  falha "ruido no stderr mudou o relato: '$n_cr' vs '$n_brr' (limpo: '$n_c')"
+  falha "O23 ruido no stderr mudou o relato: '$n_cr' vs '$n_brr' (limpo: '$n_c')"
 fi
 
 echo "── discriminador do claude-mem: VIVO ≠ SÃO (docs/historico/claude-mem-worker-vivo-mas-surdo.md) ──"
@@ -359,88 +447,88 @@ mem_dir() {  # mem_dir <nome> <consecutiveFailures|-> [porta] → cria o diretó
 resumo_mem() {  # resumo_mem <mem_dir> <CURL_MODO> [fixture] → --resumo com a sonda registrada em CURL_LOG
   rm -f "$tmp/curl.log"
   CLAUDE_MEM_DATA_DIR="$1" CURL_MODO="$2" CURL_LOG="$tmp/curl.log" \
-    PATH="$tmp:$PATH" PS_FIXTURE="${3:-$tmp/fix-mem.txt}" bash "$ALVO" --resumo 2>/dev/null
+    PATH="$tmp:$PATH" PS_FIXTURE="${3:-$tmp/fix-mem.txt}" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}"
 }
 RECEITA="docs/historico/claude-mem-worker-vivo-mas-surdo.md"
 
 # positivo: surdo + contador 5 → SURDO, contador, porta sondada e a receita
 r_surdo="$(resumo_mem "$(mem_dir surdo 5)" surdo)"
-quero "surdo: o orfao continua acusado (os 2 eixos nao mudaram)" "$r_surdo" "pid 1465"
-quero "surdo: diz SURDO"                                          "$r_surdo" "SURDO"
-quero "surdo: traz o contador lido do hook-failures.json"        "$r_surdo" "contador=5"
-quero "surdo: aponta a receita (surdo E contador >= 3)"           "$r_surdo" "$RECEITA"
-quero "surdo: a porta veio do worker.pid, nao de constante"       "$(cat "$tmp/curl.log" 2>/dev/null)" "127.0.0.1:37701/api/health"
-if [ "$(grep -c . "$tmp/curl.log" 2>/dev/null)" = "1" ]; then ok "surdo: sondou UMA vez"
-else falha "surdo: esperava 1 chamada do curl, log: $(tr '\n' '|' < "$tmp/curl.log" 2>/dev/null)"; fi
+quero "O24 surdo: o orfao continua acusado (os 2 eixos nao mudaram)" "$r_surdo" "pid 1465"
+quero "O25 surdo: diz SURDO"                                          "$r_surdo" "SURDO"
+quero "O26 surdo: traz o contador lido do hook-failures.json"        "$r_surdo" "contador=5"
+quero "O27 surdo: aponta a receita (surdo E contador >= 3)"           "$r_surdo" "$RECEITA"
+quero "O28 surdo: a porta veio do worker.pid, nao de constante"       "$(cat "$tmp/curl.log" 2>/dev/null)" "127.0.0.1:37701/api/health"
+if [ "$(grep -c . "$tmp/curl.log" 2>/dev/null)" = "1" ]; then ok "O29 surdo: sondou UMA vez"
+else falha "O29 surdo: esperava 1 chamada do curl, log: $(tr '\n' '|' < "$tmp/curl.log" 2>/dev/null)"; fi
 m_val="$(sed -n 's/.*-m \([0-9][0-9]*\).*/\1/p' "$tmp/curl.log" 2>/dev/null | awk 'NR==1')"
-if [ -n "$m_val" ] && [ "$m_val" -le 2 ]; then ok "surdo: curl com -m ${m_val} (cabe no teto de 3s do vigia)"
-else falha "surdo: curl sem -m <= 2 (achei '${m_val:-nada}') — worker surdo penduraria o hook"; fi
-if [ "$(printf '%s' "$r_surdo" | grep -c .)" -eq 1 ]; then ok "surdo: resumo continua em 1 linha"
-else falha "surdo: resumo com $(printf '%s' "$r_surdo" | grep -c .) linhas"; fi
+if [ -n "$m_val" ] && [ "$m_val" -le 2 ]; then ok "O30 surdo: curl com -m ${m_val} (cabe no teto de 3s do vigia)"
+else falha "O30 surdo: curl sem -m <= 2 (achei '${m_val:-nada}') — worker surdo penduraria o hook"; fi
+if [ "$(printf '%s' "$r_surdo" | grep -c .)" -eq 1 ]; then ok "O31 surdo: resumo continua em 1 linha"
+else falha "O31 surdo: resumo com $(printf '%s' "$r_surdo" | grep -c .) linhas"; fi
 
 # negativo: health ok + contador 0 → acusado (queima CPU), mas SEM surdo nem receita
 r_ok="$(resumo_mem "$(mem_dir ok 0)" ok)"
-quero     "ok: o orfao continua acusado (queima CPU de verdade)" "$r_ok" "pid 1465"
-quero     "ok: diz health ok"                                    "$r_ok" "health ok"
-quero     "ok: contador 0 LIDO do arquivo (nao inventado)"       "$r_ok" "contador=0"
-nao_quero "ok: NAO diz SURDO"                                    "$r_ok" "SURDO"
-nao_quero "ok: NAO aponta a receita"                             "$r_ok" "$RECEITA"
+quero     "O32 ok: o orfao continua acusado (queima CPU de verdade)" "$r_ok" "pid 1465"
+quero     "O33 ok: diz health ok"                                    "$r_ok" "health ok"
+quero     "O34 ok: contador 0 LIDO do arquivo (nao inventado)"       "$r_ok" "contador=0"
+nao_quero "O35 ok: NAO diz SURDO"                                    "$r_ok" "SURDO"
+nao_quero "O36 ok: NAO aponta a receita"                             "$r_ok" "$RECEITA"
 
 echo "── degradação: sonda que falta NÃO vira 'saudável' — e também não vira SURDO ──"
 # contador AUSENTE ≠ 0 (money-path.md): surdo continua surdo, mas sem contador
 # não se pode afirmar a condição da receita (>= 3) — então ela NÃO sai.
 r_semc="$(resumo_mem "$(mem_dir sem-contador -)" surdo)"
-quero     "sem contador: SURDO continua (a sonda de health rodou)"   "$r_semc" "SURDO"
-quero     "sem contador: diz 'sem contador'"                         "$r_semc" "sem contador"
-nao_quero "sem contador: NAO fabrica contador=0"                     "$r_semc" "contador=0"
-nao_quero "sem contador: NAO aponta a receita (condicao nao provada)" "$r_semc" "$RECEITA"
+quero     "O37 sem contador: SURDO continua (a sonda de health rodou)"   "$r_semc" "SURDO"
+quero     "O38 sem contador: diz 'sem contador'"                         "$r_semc" "sem contador"
+nao_quero "O39 sem contador: NAO fabrica contador=0"                     "$r_semc" "contador=0"
+nao_quero "O40 sem contador: NAO aponta a receita (condicao nao provada)" "$r_semc" "$RECEITA"
 
 # curl AUSENTE (PATH sem curl algum — nem o stub, nem /usr/bin/curl) e curl
 # PRESENTE-porém-quebrado (sai 2): nos dois, "nao sondei" — nem ok, nem SURDO.
 mkdir -p "$tmp/bin-sem-curl"
 ln -sf "$tmp/ps" "$tmp/bin-sem-curl/ps"
 for t in awk grep sed cat; do ln -sf "$(command -v "$t")" "$tmp/bin-sem-curl/$t"; done   # cat: o stub do ps usa
-r_semcurl="$(CLAUDE_MEM_DATA_DIR="$(mem_dir sem-curl 5)" PATH="$tmp/bin-sem-curl" PS_FIXTURE="$tmp/fix-mem.txt" "$BASH" "$ALVO" --resumo 2>/dev/null)"
+r_semcurl="$(CLAUDE_MEM_DATA_DIR="$(mem_dir sem-curl 5)" PATH="$tmp/bin-sem-curl" PS_FIXTURE="$tmp/fix-mem.txt" "$BASH" "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}")"
 r_quebrado="$(resumo_mem "$(mem_dir quebrado 5)" quebrado)"
-for par in "curl ausente|$r_semcurl" "curl quebrado (rc 2)|$r_quebrado"; do
-  nome="${par%%|*}"; r="${par#*|}"
-  quero     "$nome: o orfao continua acusado"          "$r" "pid 1465"
-  quero     "$nome: diz 'nao sondei'"                  "$r" "nao sondei"
-  quero     "$nome: o contador ainda e lido (5)"       "$r" "contador=5"
-  nao_quero "$nome: NAO diz health ok"                 "$r" "health ok"
-  nao_quero "$nome: NAO diz SURDO (nao sondou)"        "$r" "SURDO"
-  nao_quero "$nome: NAO aponta a receita"              "$r" "$RECEITA"
+for par in "A|curl ausente|$r_semcurl" "Q|curl quebrado (rc 2)|$r_quebrado"; do
+  tag="${par%%|*}"; par="${par#*|}"; nome="${par%%|*}"; r="${par#*|}"   # ID: CA<n> / CQ<n>
+  quero     "C${tag}1 $nome: o orfao continua acusado"          "$r" "pid 1465"
+  quero     "C${tag}2 $nome: diz 'nao sondei'"                  "$r" "nao sondei"
+  quero     "C${tag}3 $nome: o contador ainda e lido (5)"       "$r" "contador=5"
+  nao_quero "C${tag}4 $nome: NAO diz health ok"                 "$r" "health ok"
+  nao_quero "C${tag}5 $nome: NAO diz SURDO (nao sondou)"        "$r" "SURDO"
+  nao_quero "C${tag}6 $nome: NAO aponta a receita"              "$r" "$RECEITA"
 done
 
 # worker.pid ausente → sem porta → "nao sondei" (e o curl nem e chamado)
 d_sempid="$(mem_dir sem-pid 5)"; rm -f "$d_sempid/worker.pid"
 r_sempid="$(resumo_mem "$d_sempid" surdo)"
-quero     "sem worker.pid: diz 'nao sondei'"          "$r_sempid" "nao sondei"
-nao_quero "sem worker.pid: NAO diz SURDO"             "$r_sempid" "SURDO"
-if [ ! -s "$tmp/curl.log" ]; then ok "sem worker.pid: curl NAO foi chamado (sem porta, sem sonda)"
-else falha "sem worker.pid: curl chamado sem porta: $(tr '\n' '|' < "$tmp/curl.log")"; fi
+quero     "O41 sem worker.pid: diz 'nao sondei'"          "$r_sempid" "nao sondei"
+nao_quero "O42 sem worker.pid: NAO diz SURDO"             "$r_sempid" "SURDO"
+if [ ! -s "$tmp/curl.log" ]; then ok "O43 sem worker.pid: curl NAO foi chamado (sem porta, sem sonda)"
+else falha "O43 sem worker.pid: curl chamado sem porta: $(tr '\n' '|' < "$tmp/curl.log")"; fi
 
 echo "── orçamento: a sonda só roda quando HÁ órfão do claude-mem, e UMA vez ──"
 # O vigia impõe 3s ao script inteiro; o curl -m 2 come 2 deles. Por isso ele
 # NÃO pode rodar na varredura comum (fix-real: só o zsh) e, com dois órfãos do
 # plugin (versões lado a lado), roda uma vez — a porta do worker.pid é uma só.
 r_zsh="$(resumo_mem "$(mem_dir zsh 5)" surdo "$tmp/fix-real.txt")"
-nao_quero "sem orfao do claude-mem: NAO anota claude-mem" "$r_zsh" "claude-mem:"
-if [ ! -s "$tmp/curl.log" ]; then ok "sem orfao do claude-mem: curl NAO foi chamado (2s poupados)"
-else falha "curl chamado sem orfao do claude-mem: $(tr '\n' '|' < "$tmp/curl.log")"; fi
+nao_quero "O44 sem orfao do claude-mem: NAO anota claude-mem" "$r_zsh" "claude-mem:"
+if [ ! -s "$tmp/curl.log" ]; then ok "O45 sem orfao do claude-mem: curl NAO foi chamado (2s poupados)"
+else falha "O45 curl chamado sem orfao do claude-mem: $(tr '\n' '|' < "$tmp/curl.log")"; fi
 cat > "$tmp/fix-mem2.txt" <<'FIX'
  1465     1   123:00.00  95.0 /Users/lucassardenberg/.bun/bin/bun /Users/lucassardenberg/.claude/plugins/cache/thedotmack/claude-mem/13.15.3/scripts/worker-service.cjs --daemon
  1466     1   120:00.00  90.0 /Users/lucassardenberg/.bun/bin/bun /Users/lucassardenberg/.claude/plugins/cache/thedotmack/claude-mem/13.16.0/scripts/worker-service.cjs --daemon
 FIX
 r_dois="$(resumo_mem "$(mem_dir dois 5)" surdo "$tmp/fix-mem2.txt")"
-quero "dois orfaos do claude-mem: os dois acusados" "$r_dois" "pid 1466"
-if [ "$(grep -c . "$tmp/curl.log" 2>/dev/null)" = "1" ]; then ok "dois orfaos do claude-mem: sondou UMA vez (porta e uma so)"
-else falha "dois orfaos: esperava 1 chamada do curl, log: $(tr '\n' '|' < "$tmp/curl.log" 2>/dev/null)"; fi
+quero "O46 dois orfaos do claude-mem: os dois acusados" "$r_dois" "pid 1466"
+if [ "$(grep -c . "$tmp/curl.log" 2>/dev/null)" = "1" ]; then ok "O47 dois orfaos do claude-mem: sondou UMA vez (porta e uma so)"
+else falha "O47 dois orfaos: esperava 1 chamada do curl, log: $(tr '\n' '|' < "$tmp/curl.log" 2>/dev/null)"; fi
 
 echo "── o relatório (wt-status) também carrega o discriminador ──"
-rel_mem="$(CLAUDE_MEM_DATA_DIR="$(mem_dir relatorio 5)" CURL_MODO=surdo PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" 2>/dev/null)"
-quero "relatorio: diz SURDO"        "$rel_mem" "SURDO"
-quero "relatorio: aponta a receita" "$rel_mem" "$RECEITA"
+rel_mem="$(CLAUDE_MEM_DATA_DIR="$(mem_dir relatorio 5)" CURL_MODO=surdo PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+quero "O48 relatorio: diz SURDO"        "$rel_mem" "SURDO"
+quero "O49 relatorio: aponta a receita" "$rel_mem" "$RECEITA"
 
 echo "── curl REAL contra porta fechada: as flags existem, e 'recusada' é SURDO ──"
 # O stub ignora flags. Só o binário real prova que `-m/--noproxy/-w/-o` são
@@ -450,10 +538,10 @@ echo "── curl REAL contra porta fechada: as flags existem, e 'recusada' é S
 if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   porta_livre="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
   mkdir -p "$tmp/soh-ps"; ln -sf "$tmp/ps" "$tmp/soh-ps/ps"
-  r_real="$(CLAUDE_MEM_DATA_DIR="$(mem_dir real 5 "${porta_livre:-1}")" PATH="$tmp/soh-ps:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" --resumo 2>/dev/null)"
-  quero     "curl real, porta ${porta_livre:-1} fechada: SURDO (curl 7 = recusada)" "$r_real" "SURDO"
-  quero     "curl real: a receita sai (contador 5)"                                 "$r_real" "$RECEITA"
-  nao_quero "curl real: NAO caiu em 'nao sondei' (flag invalida?)"                 "$r_real" "nao sondei"
+  r_real="$(CLAUDE_MEM_DATA_DIR="$(mem_dir real 5 "${porta_livre:-1}")" PATH="$tmp/soh-ps:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+  quero     "O50 curl real, porta ${porta_livre:-1} fechada: SURDO (curl 7 = recusada)" "$r_real" "SURDO"
+  quero     "O51 curl real: a receita sai (contador 5)"                                 "$r_real" "$RECEITA"
+  nao_quero "O52 curl real: NAO caiu em 'nao sondei' (flag invalida?)"                 "$r_real" "nao sondei"
 else
   echo "  (pulei: sem curl ou python3 no PATH — este caso NAO foi provado, e isso e falta de dado)"
 fi
