@@ -310,7 +310,7 @@ desta fase por acordo com a sessão dos evals do deploy-verify: o PR dela muda o
 | `test-falsificar-implementado` | cada cenário: exit≠0 | `SABOTAGENS` (EIXO1/EIXO2/LISTA) + exit exato 1 |
 | `test-bash-contexto-nudge` | limiar: QUALQUER stdout; 2º bloco (corte): `bash "$0"` ≠0 sem `bash -n` | limiar: marca exata (o nudge no `additionalContext`); corte: `SABOTAGENS` (N1…N14) |
 | `test-codex-prompt-paginacao` | `$falhas > 0` | valor exato: G1/G2 com o SHA do CITADOR, G3/G4 verdes, `bash -n` + `unset -f` |
-| `test-lovable-revert-scan` | saída vazia = "alarme sumiu" (crash também é vazio) | rc 0 + stdout mudo + stderr sem erro + `bash -n` |
+| `test-lovable-revert-scan` | saída vazia = "alarme sumiu" (crash também é vazio) | rc 0 + stdout mudo + stderr VAZIO como o do controle + `bash -n` + `sed` com status e cópia não-vazia |
 | `test-guard-noop-sabotagem` | `verificar_guard ≠0` (três motivos) | o motivo declarado: "alvo sumiu" com o alvo PRESENTE |
 | `test-eval-via-morta` | S1: tudo menos `2+MARCA` | → fase dos evals (S1 declara o desfecho do eval novo) |
 
@@ -371,7 +371,48 @@ Os de sabotagem única ou veredito de valor usam valor/marca exata.
 
 ### A meta-falsificação
 
-<!-- TABELA -->
+Cada site pelo harness da sessão (fora do repo): o arquivo NOVO e o de ANTES (`bee8feb69`, a main em
+que a fase nasceu), com as mesmas edições exatas (casar ≠1× é erro da META), `bash -n` antes, nos
+dois locales do shell de fora (`LC_ALL=C` e `pt_BR.UTF-8`), e a expectativa (rc + marca) declarada
+ANTES de rodar. Os sites lentos rodam RECORTADOS à sabotagem-alvo (as outras chamadas viram `:`, a
+lista fica só com a entrada dela) — com um controle do recorte, para o recorte não fabricar o verde.
+O `psql-ro` sabota o fonte in-place: rodou com tudo commitado e nada mais lendo aqueles fontes. Os
+consertos do Codex com reprodução barata têm variante própria contra o commit pré-Codex (`0cae061e4`).
+Cada célula: C · pt_BR, ✅ = o desfecho declarado.
+
+| site | a reprodução (o buraco) | controle | novo reprova | antes aprovava |
+|---|---|---|---|---|
+| `onde-parei` | a sabotagem passa a derrubar OUTRO assert | ✅✅ | ✅✅ | ✅✅ |
+|  | variável inexistente no ramo — crash, não julgamento |  | ✅✅ | ✅✅ |
+| `orfaos-custosos` | "sem o eixo pcpu" derrubando o corte do `cmd` (assert alheio) | ✅✅ (recorte ✅✅) | ✅✅ | ✅✅ |
+| `read-contexto-nudge` | "mtime fora da chave" mexendo em `inicio\|limite` (assert alheio) | ✅✅ (recorte ✅✅) | ✅✅ | ✅✅ |
+| `ocupacao-por-arquivo` | "dedupe desligado" mexendo no `sub()` do padrão (assert alheio) | ✅✅ (recorte ✅✅) | ✅✅ | ✅✅ |
+|  | Codex: `descarte_calado` com o ABORTO do jq — a pré-condição A9 cai junto |  | ✅✅ | ✅✅ (pré-Codex) |
+| `ocupacao-por-comando` | `VER_SHELL=(` — sintaxe quebrada (não havia `bash -n`) | ✅✅ (recorte ✅✅) | ✅✅ | ✅✅ |
+| `fecho-edges-pendentes` | sabotagem INERTE (só um comentário) — o juiz antigo via a poluição | ✅✅ (recorte ✅✅) | ✅✅ | ✅✅ |
+|  | `;fi` solto — sintaxe quebrada |  | ✅✅ | ✅✅ |
+| `psql-ro-error-stop` | TS que não compila — o bun morre | ✅✅ | ✅✅ | ✅✅ |
+|  | Codex: `ReferenceError` na linha que cita o texto da VIOLA |  | ✅✅ | ✅✅ (pré-Codex) |
+| `eval-diagnostico-cegueira` | bloco que nem carrega (aspas partidas) | ✅✅ | ✅✅ | ✅✅ |
+| `codex-prompt-paginacao` | git numa ref inexistente — vazio no lugar do SHA | ✅✅ | ✅✅ | ✅✅ |
+| `falsificar-implementado` | o cenário do EIXO 1 acusado pelo EIXO 2 | ✅✅ | ✅✅ | ✅✅ |
+| `bash-contexto-nudge` | limiar: lixo no stdout e exit ≠0 | ✅✅ | ✅✅ | ✅✅ |
+|  | corte: a sabotagem derruba outro assert |  | ✅✅ | ✅✅ |
+| `lovable-revert-scan` | o scan MORRE (flag inexistente) e sai mudo | ✅✅ | ✅✅ | ✅✅ · ✅✅ (pós-Codex) |
+|  | Codex: `sed` que apaga tudo — cópia vazia |  | ✅✅ | ✅✅ (pré-Codex) |
+| `guard-noop-sabotagem` | probe que nem parseia | ✅✅ | ✅✅ | ✅✅ |
+
+**114/114 rodadas conferem** com o desfecho declarado.
+
+**A meta pegou o juiz novo duas vezes.** A primeira no 2º locale (o `read-contexto`, acima). A
+segunda na rodada final: o `lovable-revert-scan` pós-Codex APROVOU o crash da reprodução D1 — o
+`git diff` com flag inexistente sai 129 só com `usage: …` no stderr, fora da lista-negra de
+assinaturas (`fatal:|error:|…`), e o rc morre no pipeline do scan (termina no `sort`). "Julgou nada"
+passou a ser stderr VAZIO, com o controle da mesma invocação medindo a linha de base (vazio também);
+a coluna "pós-Codex" é esse crash aprovado. **Um erro da META, registrado:** a marca declarada para o
+controle do `por-comando` era a do `onde-parei` — 4 DIVERGE com o veredito certo (rc 0, as 11
+sabotagens no assert declarado); corrigida para o par de marcas do próprio site (a linha do controle
+da falsificação E o `TODOS OS CASOS OK` final) e re-rodada.
 
 ### A 2ª opinião (Codex) da 2ª leva
 
@@ -427,6 +468,10 @@ sabotagem os declara.
   mostrou que uma sabotagem nunca tinha testado o que o nome dela dizia.
 - **O juiz também tem locale.** A rodada interna em `LC_ALL=C` corta strings por byte; o juiz que lê o
   log em UTF-8 engasga no caractere partido. Quem LÊ log de outro processo lê em `LC_ALL=C`.
+- **"Sem assinatura de erro" é lista-negra, e lista-negra é incompleta por natureza.** O `git` com
+  flag inexistente sai 129 só com `usage: …` — nenhum `error:` —, e o pipeline do alvo engole o rc.
+  "Julgou nada" se prova pela LINHA DE BASE: stderr igual ao do controle da mesma invocação (ali,
+  vazio). Até o juiz que acabara de passar pelo Codex aprovava esse crash — foi a meta que o pegou.
 
 ## Parciais de `db/`, fase 1 — sensores (analytics + data-health), 2026-09-27
 
@@ -633,4 +678,6 @@ Da 2ª leva ficaram, com dono:
   lovable-revert-scan, o limiar do bash-contexto-nudge) e os já-corretos da varredura entram como juiz
   registrado, com âncoras. Leva junto o resíduo do Codex na camada 4: comparar as LINHAS de erro
   (normalizadas: caminho temporário, nº de linha), não a CONTAGEM — com contagem, uma sabotagem que
-  apague o diagnóstico legítimo do controle e crie um crash real passa por `1 = 1`.
+  apague o diagnóstico legítimo do controle e crie um crash real passa por `1 = 1`. E o stderr
+  INTEIRO, não só as assinaturas do bash: erro de ferramenta externa fica fora da lista-negra (o
+  `usage:` do git passou pela do `lovable` — medido, e lá o conserto foi stderr vazio).

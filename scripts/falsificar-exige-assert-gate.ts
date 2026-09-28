@@ -65,13 +65,13 @@ export const MANIFESTO_NUCLEO = 'db/nucleo-ci.txt';
  */
 export const PISOS = {
   arquivosPorRaiz: PISOS_DO_VIZINHO.arquivosPorRaiz,
-  // medido: 17 (2026-09-27, pós-merge da main) — 7 de db/ + as 10 de scripts/ que migraram na 2ª
-  // leva: onde-parei, orfaos-custosos, read-contexto-nudge, ocupacao-por-arquivo,
-  // ocupacao-por-comando, fecho-edges-pendentes, psql-ro-error-stop, eval-diagnostico-cegueira,
-  // falsificar-implementado, bash-contexto-nudge
-  listas: 12,
-  entradas: 140, // medido: 198 (73 de db/ + 125 de scripts/)
-  lacos: 12, // medido: 17
+  // medido: 20 (2026-09-27, pós-merge do #2631/#2636) — 9 de db/, o test-idioma-errexit-leitura
+  // (#2631) e as 10 de scripts/ que migraram na 2ª leva: onde-parei, orfaos-custosos,
+  // read-contexto-nudge, ocupacao-por-arquivo, ocupacao-por-comando, fecho-edges-pendentes,
+  // psql-ro-error-stop, eval-diagnostico-cegueira, falsificar-implementado, bash-contexto-nudge
+  listas: 15,
+  entradas: 170, // medido: 227 (100 de db/ + 125 da 2ª leva + 2 do #2631)
+  lacos: 15, // medido: 20
   linhasFalsificarNucleo: 6, // medido: 7 (4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
 } as const;
 
