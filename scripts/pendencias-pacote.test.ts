@@ -16,7 +16,7 @@ import {
 } from './lib/precondicao-banco';
 import { CONSUMIDOR_NUVEM, lerRelatorio, main, separarSaida } from './pendencias-pacote';
 import { type ExecutorGitBytes } from './pendencias-prompt';
-import { ARQ_MAPA, fingerprintDaEdge, RAIZ_EDGES } from './sonda-fingerprint';
+import { ARQ_MAPA, fingerprintDaEdge, RAIZ_EDGES, renderizarMapa } from './sonda-fingerprint';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // Por que este arquivo existe
@@ -526,7 +526,8 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
   const INDEX_A = 'import "./versao.ts";\nexport default {};\n';
   const VERSAO_TS_A = `export const VERSAO = "${VERSAO_A}";\n`;
   // A é instrumentada, então o mapa TEM de descrever a fonte dela (#2611: senão o pacote recusa com
-  // exit 5). B não tem `versao.ts` e fica fora do regime — o hash dela no mapa não é conferido.
+  // exit 5). B não tem `versao.ts` e fica FORA do mapa — listada sem marcador, o pacote recusaria
+  // (regra do marcador) — e o mapa sai do `renderizarMapa`, a forma byte a byte que o `--write` grava.
   const FONTE_A = fingerprintDaEdge(A, '/fixture', {
     rotulo: 'fixture',
     ler: (rel) =>
@@ -534,12 +535,7 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
         : rel === `${RAIZ_EDGES}/${A}/versao.ts` ? Buffer.from(VERSAO_TS_A)
           : null,
   });
-  const FONTE_B = 'b'.repeat(64);
-  const MAPA_COM_AS_DUAS =
-    'export const FONTE_SHA256: Record<string, string> = {\n' +
-    `  "${A}": "${FONTE_A}",\n` +
-    `  "${B}": "${FONTE_B}",\n` +
-    '};\n';
+  const MAPA_DA_REF = renderizarMapa({ [A]: FONTE_A });
   const MANIFESTO_B = JSON.stringify({
     formato: 'deploy-ordem/1',
     depoisDe: [{ edge: A, motivo: 'na ordem inversa a predecessora velha desfaz o que a nova grava', pr: 2469 }],
@@ -556,7 +552,7 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
   function repo(opcoes: { manifesto?: string | null; quebrar?: 'show-manifesto' | 'ls-tree-cego' } = {}) {
     const raiz = mkdtempSync(join(tmpdir(), 'pacote-ordem-'));
     const arvore = new Map<string, string>([
-      [ARQ_MAPA, MAPA_COM_AS_DUAS],
+      [ARQ_MAPA, MAPA_DA_REF],
       [`${RAIZ_EDGES}/${A}/index.ts`, INDEX_A],
       [`${RAIZ_EDGES}/${A}/versao.ts`, VERSAO_TS_A],
       [`${RAIZ_EDGES}/${B}/index.ts`, 'export default {};\n'],

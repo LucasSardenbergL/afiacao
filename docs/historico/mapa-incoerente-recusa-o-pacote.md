@@ -82,7 +82,12 @@ mapa ausente ou que parseia vazio com edge instrumentada, import que não resolv
 - `bun run falsificar:mapa-coerente`: 15 sabotagens × 2 locales (`C` e `pt_BR.UTF-8`), com controle
   verde na mesma invocação antes da 1ª sabotagem e vermelho exigido **pela marca do teste dono**,
   que tem de estar ausente no log do controle. Modelo: `falsificar-prompt-escopo.sh`.
-  Resultado: RESULTADO_FALSIFICACAO.
+  Resultado (2026-09-27, exit 0): `FALSIFICADO: 30/30 sabotagens (15 x 2 locales) viraram vermelho
+  pela marca certa; controles verdes; alvos restaurados`.
+- Os testes de ordem entre edges do `pendencias-pacote.test.ts` (#2469) montavam o mapa à mão, com
+  hash inventado para a `edge-b` sem `versao.ts`. As regras 2 e 3 os recusaram (exit 5), como
+  recusariam o mesmo mapa numa ref de verdade. O fixture passou a sair do `renderizarMapa` só com a
+  edge instrumentada.
 
 ## 6. O que continua descoberto
 
