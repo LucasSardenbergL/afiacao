@@ -163,6 +163,7 @@ case "$r_rc:$r_out" in
   2:*"$MARCA"*) ruim "S1 continuou VERDE sem o discriminador — a asserção não é sobre via_viva" ;;
   1:*'o caso-alvo "velho_com_controle"'*)
     ok "S1 sem o discriminador a via morta NÃO é nomeada: exit 1 pelo baseline vermelho (o declarado) — via_viva é quem nomeia" ;;
+  0:*) ruim "S1 sem o discriminador o eval APROVOU com a via morta (exit 0) — o defeito de origem voltou: o juiz do previsto sumiu" ;;
   *) ruim "S1 saiu do verde, mas NÃO pelo declarado (exit 1 + o baseline do caso-alvo vermelho): saiu $r_rc — erro alheio não é dente"
      printf '%s\n' "$r_out" | sed 's/^/     /' | tail -4 ;;
 esac
