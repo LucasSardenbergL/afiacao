@@ -36,6 +36,12 @@
  *      sabotagem — usa o idioma acima LIMPO (R1/R2 sem violação no arquivo) OU tem um JUIZ registrado
  *      em `JUIZES`: POR QUE o vermelho é do assert, e as âncoras de código sem as quais ele volta a
  *      aceitar qualquer vermelho. Juiz de arquivo não lido reprova.
+ * R4 · o análogo do R3 para o `test:falsificacao` do package.json (o step que o CI roda no `validate`):
+ *      cada arquivo que o roteiro EXECUTA — os slugs do laço, expandidos pelo MESMO parser do
+ *      `test:hooks` (`scripts/lib/lacos-test-hooks.ts`), e os comandos fora dele — usa o idioma limpo
+ *      OU tem juiz registrado. R1/R2 só enxergam quem USA a lista: sem o R4, um teste novo com juiz
+ *      "exit≠0" entraria no CI sem ninguém acusar. Forma do roteiro que o fiscal não sabe expandir
+ *      (`bun run` aninhado, outro interpretador) é INDETERMINADO, nunca "sem alvos".
  *
  * ## O que o texto NÃO alcança, e por quê
  *
@@ -50,13 +56,19 @@
 import { readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
+import { maiorBlocoDescartado, removerComentarios } from '@/lib/gates/limpeza-fonte';
 import { diagnosticarShell, removerComentariosShell } from '@/lib/gates/limpeza-shell';
+import { TETO_BLOCO_DESCARTADO } from './gate-sonda-autentica';
+import { arquivosExecutados } from './lib/lacos-test-hooks';
 import { PISOS as PISOS_DO_VIZINHO, RAIZES_PADRAO, alarmesDoStripper, enumerar } from './shell-variavel-colada-gate';
 
 /** `import.meta.dir` é do Bun e não existe sob o vitest — por isso preguiçosa, como nos irmãos. */
 const raizDoRepo = () => resolve(import.meta.dir, '..');
 
 export const MANIFESTO_NUCLEO = 'db/nucleo-ci.txt';
+export const PACOTE = 'package.json';
+/** O roteiro que o CI roda no `validate` ("Falsificação — sabota o alvo e EXIGE vermelho"). */
+export const ROTEIRO = 'test:falsificacao';
 
 /**
  * PISOS — o denominador, medido em 2026-09-27. O universo de arquivos é o do vizinho (importado, não
@@ -75,6 +87,7 @@ export const PISOS = {
   entradas: 170, // medido: 239 (112 de db/ + 125 da 2ª leva + 2 do #2631; a positivação foi de 14 a 26 com o universo canônico, #2630)
   lacos: 15, // medido: 20
   linhasFalsificarNucleo: 6, // medido: 11 (eram 7: 4 da varredura + transporte-nuvem #2601, tint #2605, positivacao #2606)
+  alvosFalsificacao: 20, // medido em 2026-09-29: 27 (26 slugs do laço + sonda-cron-prova.ts)
 } as const;
 
 export interface Juiz {
@@ -174,7 +187,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
 };
 
-export type Regra = 'R1' | 'R2' | 'R3';
+export type Regra = 'R1' | 'R2' | 'R3' | 'R4';
 
 export interface Violacao {
   regra: Regra;
@@ -190,8 +203,12 @@ export interface Analise {
   lacos: number;
   /** Linhas `falsificar=<n>` lidas do manifesto; `null` = manifesto não fornecido/ilegível. */
   linhasNucleo: number | null;
+  /** Arquivos que o `test:falsificacao` executa; `null` = package.json não fornecido/ilegível. */
+  alvosFalsificacao: number | null;
   violacoes: Violacao[];
   alarmes: string[];
+  /** O que o fiscal não soube medir fora do stripper (forma do roteiro): sempre 2, com ou sem pisos. */
+  indeterminados: string[];
 }
 
 /** A atribuição da lista: string entre aspas (duplas ou simples) ou array. `SABOTAGENS=0` não é lista. */
@@ -325,6 +342,7 @@ export function julgarNucleo(
   limpos: ReadonlyMap<string, string>,
   juizes: Readonly<Record<string, Juiz>>,
   idiomaLimpo: ReadonlySet<string> = new Set(),
+  regraDaAncora: (arquivo: string) => Regra = () => 'R3',
 ): Violacao[] {
   const v: Violacao[] = [];
   for (const { arquivo, linha } of nucleo) {
@@ -337,31 +355,142 @@ export function julgarNucleo(
       });
     }
   }
+  return [...v, ...julgarAncoras(limpos, juizes, regraDaAncora)];
+}
+
+/**
+ * Todo juiz registrado foi LIDO e tem TODAS as âncoras no código limpo. A regra que reprova é a do
+ * domínio que obriga o registro — R4 para um alvo do `test:falsificacao`, R3 para o resto.
+ */
+export function julgarAncoras(
+  limpos: ReadonlyMap<string, string>,
+  juizes: Readonly<Record<string, Juiz>>,
+  regraDe: (arquivo: string) => Regra = () => 'R3',
+): Violacao[] {
+  const v: Violacao[] = [];
   for (const [arquivo, juiz] of Object.entries(juizes)) {
+    const regra = regraDe(arquivo);
     const limpo = limpos.get(arquivo);
     if (limpo === undefined) {
-      v.push({ regra: 'R3', arquivo, linha: 1, detalhe: 'juiz registrado para arquivo que o fiscal não leu (renomeado? removido?)' });
+      v.push({ regra, arquivo, linha: 1, detalhe: 'juiz registrado para arquivo que o fiscal não leu (renomeado? removido?)' });
       continue;
     }
     for (const ancora of juiz.ancoras) {
       if (!limpo.includes(ancora)) {
-        v.push({ regra: 'R3', arquivo, linha: 1, detalhe: `âncora do juiz sumiu do código: ${ancora} — (${juiz.motivo})` });
+        v.push({ regra, arquivo, linha: 1, detalhe: `âncora do juiz sumiu do código: ${ancora} — (${juiz.motivo})` });
       }
     }
   }
   return v;
 }
 
+/** O que o roteiro `test:falsificacao` executa, e o que sobrou dele sem o fiscal saber expandir. */
+export interface Falsificacao {
+  alvos: string[];
+  /** Vazio = toda a forma do roteiro foi reconhecida; qualquer texto aqui é INDETERMINADO. */
+  residuo: string;
+  /** A linha do roteiro no package.json — onde o R4 aponta. */
+  linha: number;
+}
+
+/** Invocação direta reconhecida: `bash|bun scripts/<arquivo>` (sem `$`: o molde do laço é do parser compartilhado). */
+const INVOCACAO = /\b(?:bash|bun)\s+(scripts\/[A-Za-z0-9_./-]+\.(?:sh|ts))(?:\s+--[A-Za-z][A-Za-z-]*)*/g;
+const LACO_DO_ROTEIRO = /for\s+\w+\s+in\s+[^;]+;\s*do\b([\s\S]*?)\bdone\b/g;
+const MOLDE_DO_LACO = /\bbash\s+scripts\/[A-Za-z0-9_.-]*\$\{?\w+\}?[A-Za-z0-9_.-]*\.sh(?:\s+--[A-Za-z][A-Za-z-]*)*/g;
+
+/**
+ * Lê o roteiro do package.json CRU. `null` = sem roteiro ou JSON ilegível (ausente ≠ zero alvos). Os
+ * alvos do laço vêm de `arquivosExecutados` — o MESMO parser do `test:hooks`, para os dois não
+ * divergirem no dia em que a forma do laço mudar; os de fora dele, das invocações diretas.
+ */
+export function lerFalsificacao(pacote: string): Falsificacao | null {
+  let roteiro: unknown;
+  try {
+    roteiro = (JSON.parse(pacote) as { scripts?: Record<string, unknown> }).scripts?.[ROTEIRO];
+  } catch {
+    return null;
+  }
+  if (typeof roteiro !== 'string') return null;
+  const diretos = [...roteiro.matchAll(INVOCACAO)].map((m) => m[1]);
+  // `arquivosExecutados` devolve o nome relativo a `scripts/` (é o que os dois leitores dele comparam).
+  const doLaco = arquivosExecutados(roteiro).map((f) => `scripts/${f}`);
+  const alvos = [...new Set([...doLaco, ...diretos])].sort();
+  // O resíduo: o roteiro sem os laços reconhecidos (cabeçalho, molde e `done`), sem as invocações
+  // diretas e sem os conectivos. O que sobrar é uma forma que o fiscal não sabe expandir.
+  const residuo = roteiro
+    .replace(LACO_DO_ROTEIRO, (_laco, corpo: string) => ` ${corpo.replace(MOLDE_DO_LACO, ' ')} `)
+    .replace(INVOCACAO, ' ')
+    .replace(/&&|\|\||;|\bexit\s+\d+\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const linha = pacote.split('\n').findIndex((l) => l.includes(`"${ROTEIRO}"`)) + 1;
+  return { alvos, residuo, linha: linha > 0 ? linha : 1 };
+}
+
+/**
+ * R4: cada alvo do `test:falsificacao` foi LIDO e usa o idioma limpo ou tem juiz registrado. As âncoras
+ * dos juízes registrados são cobradas em `julgarAncoras`, com a regra R4.
+ */
+export function julgarFalsificacao(
+  f: Falsificacao,
+  limpos: ReadonlyMap<string, string>,
+  juizes: Readonly<Record<string, Juiz>>,
+  idiomaLimpo: ReadonlySet<string>,
+): Violacao[] {
+  const v: Violacao[] = [];
+  for (const alvo of f.alvos) {
+    if (!limpos.has(alvo)) {
+      v.push({
+        regra: 'R4',
+        arquivo: PACOTE,
+        linha: f.linha,
+        detalhe: `o ${ROTEIRO} executa ${alvo}, que o fiscal não leu — slug com nome errado, ou extensão fora do corpo julgado: rodar não é estar julgado`,
+      });
+    } else if (!(alvo in juizes) && !idiomaLimpo.has(alvo)) {
+      v.push({
+        regra: 'R4',
+        arquivo: PACOTE,
+        linha: f.linha,
+        detalhe: `${alvo} roda no ${ROTEIRO} sem o idioma SABOTAGENS limpo e sem JUIZ registrado: um juiz "exit≠0" entraria no CI sem ninguém acusar`,
+      });
+    }
+  }
+  return v;
+}
+
+/** Fonte que NÃO é shell (o `sonda-cron-prova.ts` do roteiro): stripper de TS, só âncoras — R1/R2 são idioma de shell. */
+const ehTypeScript = (caminho: string) => /\.(?:ts|mts|cts)$/.test(caminho);
+
 export function analisar(
   arquivos: { caminho: string; fonte: string }[],
   manifesto: string | null = null,
   juizes: Readonly<Record<string, Juiz>> = JUIZES,
+  pacote: string | null = null,
 ): Analise {
-  const r: Analise = { caminhos: [], listas: 0, entradas: 0, lacos: 0, linhasNucleo: null, violacoes: [], alarmes: [] };
+  const r: Analise = {
+    caminhos: [],
+    listas: 0,
+    entradas: 0,
+    lacos: 0,
+    linhasNucleo: null,
+    alvosFalsificacao: null,
+    violacoes: [],
+    alarmes: [],
+    indeterminados: [],
+  };
   const limpos = new Map<string, string>();
   /** Os arquivos que se provam sozinhos: têm lista SABOTAGENS e nenhuma violação de R1/R2. */
   const idiomaLimpo = new Set<string>();
   for (const a of arquivos) {
+    if (ehTypeScript(a.caminho)) {
+      // O sentinela do stripper de TS: bloco descartado acima do teto calibrado = a limpeza comeu código.
+      const bloco = maiorBlocoDescartado(a.fonte);
+      if (bloco > TETO_BLOCO_DESCARTADO) {
+        r.alarmes.push(`${a.caminho}: o stripper de TS descartou um bloco de ${bloco} linhas (teto ${TETO_BLOCO_DESCARTADO})`);
+      }
+      limpos.set(a.caminho, removerComentarios(a.fonte));
+      continue;
+    }
     const limpo = removerComentariosShell(a.fonte);
     const d = detectarLimpo(a.caminho, limpo);
     r.caminhos.push(a.caminho);
@@ -373,16 +502,31 @@ export function analisar(
     r.alarmes.push(...alarmesDoStripper(a.caminho, diagnosticarShell(a.fonte)));
     limpos.set(a.caminho, limpo);
   }
+  const falsificacao = pacote === null ? null : lerFalsificacao(pacote);
+  const alvosR4 = new Set(falsificacao?.alvos ?? []);
+  const regraDe = (arquivo: string): Regra => (alvosR4.has(arquivo) ? 'R4' : 'R3');
   if (manifesto !== null) {
     const nucleo = lerNucleo(manifesto);
     r.linhasNucleo = nucleo.length;
-    r.violacoes.push(...julgarNucleo(nucleo, limpos, juizes, idiomaLimpo));
+    r.violacoes.push(...julgarNucleo(nucleo, limpos, juizes, idiomaLimpo, regraDe));
+  } else if (pacote !== null) {
+    r.violacoes.push(...julgarAncoras(limpos, juizes, regraDe));
+  }
+  if (falsificacao !== null) {
+    r.alvosFalsificacao = falsificacao.alvos.length;
+    r.violacoes.push(...julgarFalsificacao(falsificacao, limpos, juizes, idiomaLimpo));
+    if (falsificacao.residuo !== '') {
+      r.indeterminados.push(
+        `o ${ROTEIRO} tem uma forma que o fiscal não sabe expandir: "${falsificacao.residuo}" — o que ela executa ficaria sem julgamento`,
+      );
+    }
   }
   return r;
 }
 
 export function veredito(r: Analise, comPisos: boolean): { codigo: 0 | 1 | 2; linhas: string[] } {
   const furos = r.alarmes.map((a) => `stripper desabando — ${a}`);
+  furos.push(...r.indeterminados);
   if (r.caminhos.length === 0) furos.push('nenhum arquivo shell lido');
   if (comPisos) {
     for (const [raiz, piso] of Object.entries(PISOS.arquivosPorRaiz)) {
@@ -395,6 +539,10 @@ export function veredito(r: Analise, comPisos: boolean): { codigo: 0 | 1 | 2; li
     if (r.linhasNucleo === null) furos.push(`manifesto do núcleo (${MANIFESTO_NUCLEO}) não foi lido`);
     else if (r.linhasNucleo < PISOS.linhasFalsificarNucleo) {
       furos.push(`${r.linhasNucleo} linha(s) falsificar=<n> no núcleo < piso ${PISOS.linhasFalsificarNucleo} — o formato mudou?`);
+    }
+    if (r.alvosFalsificacao === null) furos.push(`roteiro ${ROTEIRO} do ${PACOTE} não foi lido`);
+    else if (r.alvosFalsificacao < PISOS.alvosFalsificacao) {
+      furos.push(`${r.alvosFalsificacao} alvo(s) do ${ROTEIRO} < piso ${PISOS.alvosFalsificacao} — a forma do roteiro mudou?`);
     }
   }
   if (furos.length > 0) {
@@ -416,7 +564,9 @@ export function veredito(r: Analise, comPisos: boolean): { codigo: 0 | 1 | 2; li
       ],
     };
   }
-  const censo = comPisos ? `, ${r.linhasNucleo} linha(s) falsificar=<n> do núcleo julgada(s) (idioma limpo ou juiz)` : '';
+  const censo = comPisos
+    ? `, ${r.linhasNucleo} linha(s) falsificar=<n> do núcleo e ${r.alvosFalsificacao} alvo(s) do ${ROTEIRO} julgados (idioma limpo ou juiz)`
+    : '';
   return {
     codigo: 0,
     linhas: [
@@ -426,28 +576,46 @@ export function veredito(r: Analise, comPisos: boolean): { codigo: 0 | 1 | 2; li
   };
 }
 
-/** O corpo que o CI julga: todo shell das raízes padrão + o manifesto do núcleo. O teste lê por AQUI. */
-export function lerCorpoDoRepo(base: string): { arquivos: { caminho: string; fonte: string }[]; manifesto: string | null } {
-  const arquivos = enumerar(RAIZES_PADRAO, base).map((c) => ({ caminho: relative(base, c), fonte: readFileSync(c, 'utf8') }));
-  let manifesto: string | null = null;
+const lerOuNulo = (caminho: string): string | null => {
   try {
-    manifesto = readFileSync(join(base, MANIFESTO_NUCLEO), 'utf8');
+    return readFileSync(caminho, 'utf8');
   } catch {
-    manifesto = null; // quem acusa é o veredito (INDETERMINADO), não o silêncio daqui
+    return null; // quem acusa é o veredito (INDETERMINADO ou R4), não o silêncio daqui
   }
-  return { arquivos, manifesto };
+};
+
+/**
+ * O corpo que o CI julga: todo shell das raízes padrão, o manifesto do núcleo, o package.json e os
+ * alvos do `test:falsificacao` que não são shell (o `.ts` do fim do roteiro). O teste lê por AQUI.
+ */
+export function lerCorpoDoRepo(base: string): {
+  arquivos: { caminho: string; fonte: string }[];
+  manifesto: string | null;
+  pacote: string | null;
+} {
+  const arquivos = enumerar(RAIZES_PADRAO, base).map((c) => ({ caminho: relative(base, c), fonte: readFileSync(c, 'utf8') }));
+  const manifesto = lerOuNulo(join(base, MANIFESTO_NUCLEO));
+  const pacote = lerOuNulo(join(base, PACOTE));
+  const lidos = new Set(arquivos.map((a) => a.caminho));
+  for (const alvo of lerFalsificacao(pacote ?? '')?.alvos ?? []) {
+    if (lidos.has(alvo)) continue;
+    const fonte = lerOuNulo(join(base, alvo));
+    if (fonte !== null) arquivos.push({ caminho: alvo, fonte }); // não lido → o R4 acusa pelo nome
+  }
+  return { arquivos, manifesto, pacote };
 }
 
 function main(): number {
   const argv = process.argv.slice(2);
-  const { arquivos, manifesto } =
+  const { arquivos, manifesto, pacote } =
     argv.length === 0
       ? lerCorpoDoRepo(raizDoRepo())
       : {
           arquivos: enumerar(argv, process.cwd()).map((c) => ({ caminho: relative(process.cwd(), c), fonte: readFileSync(c, 'utf8') })),
           manifesto: null,
+          pacote: null,
         };
-  const { codigo, linhas } = veredito(analisar(arquivos, manifesto), argv.length === 0);
+  const { codigo, linhas } = veredito(analisar(arquivos, manifesto, JUIZES, pacote), argv.length === 0);
   if (codigo === 0) console.log(linhas.join('\n'));
   else console.error(linhas.join('\n'));
   return codigo;

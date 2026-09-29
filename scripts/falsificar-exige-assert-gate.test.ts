@@ -6,11 +6,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   JUIZES,
+  PACOTE,
   PISOS,
   analisar,
   detectar,
   julgarNucleo,
   lerCorpoDoRepo,
+  lerFalsificacao,
   lerNucleo,
   veredito,
   type Analise,
@@ -270,6 +272,104 @@ describe('R3 — cada falsificar=<n> do núcleo tem juiz, e o juiz tem as âncor
   });
 });
 
+/** Um alvo NOVO do `test:falsificacao` com o juiz que abriu a classe: exit≠0 da rodada sabotada = dente. */
+const JUIZ_EXIT = [
+  '#!/usr/bin/env bash',
+  'if [ "${1:-}" = "--falsificar" ]; then',
+  '  sed "s/exit 3/exit 0/" "$ALVO" > "$tmp/copia.sh"',
+  '  if ALVO_OVERRIDE="$tmp/copia.sh" bash "$0" >/dev/null 2>&1; then echo "❌ passou VERDE"; exit 1; fi',
+  '  echo "✅ vermelha como devia"; exit 0',
+  'fi',
+].join('\n');
+
+/** O roteiro com a forma do package.json real: um laço de slugs + um comando direto fora dele. */
+const pacoteCom = (roteiro: string) =>
+  JSON.stringify({ name: 'x', scripts: { 'test:hooks': 'true', 'test:falsificacao': roteiro } }, null, 2) + '\n';
+const ROTEIRO = 'for t in a b; do bash scripts/test-$t.sh --falsificar || exit 1; done && bun scripts/prova.ts --falsificar';
+
+describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, e o juiz tem as âncoras', () => {
+  it('lerFalsificacao expande o laço E o comando direto, e aponta a linha do roteiro no package.json', () => {
+    expect(lerFalsificacao(pacoteCom(ROTEIRO))).toEqual({
+      alvos: ['scripts/prova.ts', 'scripts/test-a.sh', 'scripts/test-b.sh'],
+      residuo: '',
+      linha: 5,
+    });
+  });
+
+  it('sem roteiro, ou package.json ilegível → null (ausente ≠ zero alvos)', () => {
+    expect(lerFalsificacao(JSON.stringify({ scripts: { 'test:hooks': 'true' } }))).toBeNull();
+    expect(lerFalsificacao('{ não é json')).toBeNull();
+  });
+
+  it('forma que o fiscal não sabe expandir sobra no RESÍDUO — `bun run` aninhado esconderia os alvos dele', () => {
+    expect(lerFalsificacao(pacoteCom(`${ROTEIRO} && bun run test:outra`))?.residuo).toContain('bun run test:outra');
+    expect(lerFalsificacao(pacoteCom('bash scripts/test-a.sh --falsificar; node scripts/x.mjs'))?.residuo).toContain('node');
+  });
+
+  it('alvo NOVO com juiz exit≠0, sem idioma e sem registro → R4 no package.json, na linha do roteiro', () => {
+    const r = analisar(
+      [
+        { caminho: 'scripts/test-a.sh', fonte: LACO_REFERENCIA },
+        { caminho: 'scripts/test-b.sh', fonte: JUIZ_EXIT },
+        { caminho: 'scripts/prova.ts', fonte: 'const x = 1;\n' },
+      ],
+      null,
+      { 'scripts/prova.ts': { motivo: 'm', ancoras: ['const x = 1;'] } },
+      pacoteCom(ROTEIRO),
+    );
+    expect(r.alvosFalsificacao).toBe(3);
+    expect(r.violacoes).toEqual([
+      expect.objectContaining({ regra: 'R4', arquivo: PACOTE, linha: 5, detalhe: expect.stringContaining('scripts/test-b.sh') }),
+    ]);
+  });
+
+  it('o mesmo alvo com JUIZ registrado passa — e a âncora dele que some reprova como R4, não R3', () => {
+    const juizes = {
+      'scripts/test-b.sh': { motivo: 'm', ancoras: ['echo "❌ passou VERDE"'] },
+      'scripts/prova.ts': { motivo: 'm', ancoras: ['const x = 1;'] },
+    };
+    const arquivos = (b: string) => [
+      { caminho: 'scripts/test-a.sh', fonte: LACO_REFERENCIA },
+      { caminho: 'scripts/test-b.sh', fonte: b },
+      { caminho: 'scripts/prova.ts', fonte: 'const x = 1;\n' },
+    ];
+    expect(analisar(arquivos(JUIZ_EXIT), null, juizes, pacoteCom(ROTEIRO)).violacoes).toEqual([]);
+    const sem = analisar(arquivos(JUIZ_EXIT.replace('echo "❌ passou VERDE"; ', '')), null, juizes, pacoteCom(ROTEIRO));
+    expect(sem.violacoes).toEqual([
+      expect.objectContaining({ regra: 'R4', arquivo: 'scripts/test-b.sh', detalhe: expect.stringContaining('âncora do juiz sumiu') }),
+    ]);
+  });
+
+  it('âncora de alvo TS vale sobre o código limpo pelo stripper de TS — só num comentário, reprova', () => {
+    const juizes = { 'scripts/prova.ts': { motivo: 'm', ancoras: ['exige(marca)'] } };
+    const pacote = pacoteCom('bun scripts/prova.ts --falsificar');
+    const r = analisar([{ caminho: 'scripts/prova.ts', fonte: '// exige(marca)\nconst y = 2;\n' }], null, juizes, pacote);
+    expect(r.violacoes.map((v) => [v.regra, v.detalhe.includes('âncora do juiz sumiu')])).toEqual([['R4', true]]);
+  });
+
+  it('alvo que o fiscal NÃO leu (slug com nome errado) → R4 — rodar arquivo inexistente não é estar julgado', () => {
+    const r = analisar([{ caminho: 'scripts/test-a.sh', fonte: LACO_REFERENCIA }], null, {}, pacoteCom('for t in a zz; do bash scripts/test-$t.sh --falsificar; done'));
+    expect(r.violacoes).toEqual([expect.objectContaining({ regra: 'R4', detalhe: expect.stringContaining('scripts/test-zz.sh') })]);
+  });
+
+  it('o resíduo do roteiro vira INDETERMINADO (2), mesmo sem pisos', () => {
+    const r = analisar([{ caminho: 'scripts/test-a.sh', fonte: LACO_REFERENCIA }], null, {}, pacoteCom('for t in a; do bash scripts/test-$t.sh; done && bun run x'));
+    expect(veredito(r, false)).toMatchObject({ codigo: 2, linhas: expect.arrayContaining([expect.stringContaining('bun run x')]) });
+  });
+
+  it('controle POSITIVO no corpo REAL: um slug novo com juiz exit≠0 no package.json de verdade fica vermelho (R4)', () => {
+    const { arquivos, manifesto, pacote } = lerCorpoDoRepo(RAIZ);
+    expect(pacote).not.toBeNull();
+    const cru = pacote ?? '';
+    const comNovo = cru.replace('for t in codex-async ', 'for t in novo-exit codex-async ');
+    expect(comNovo).not.toBe(cru);
+    const r = analisar([...arquivos, { caminho: 'scripts/test-novo-exit.sh', fonte: JUIZ_EXIT }], manifesto, JUIZES, comNovo);
+    expect(r.violacoes).toEqual([
+      expect.objectContaining({ regra: 'R4', arquivo: PACOTE, detalhe: expect.stringContaining('scripts/test-novo-exit.sh') }),
+    ]);
+  });
+});
+
 describe('veredito — 2 nunca é "passou"', () => {
   const base = (over: Partial<Analise> = {}): Analise => ({
     caminhos: ['x.sh'],
@@ -277,8 +377,10 @@ describe('veredito — 2 nunca é "passou"', () => {
     entradas: 0,
     lacos: 0,
     linhasNucleo: null,
+    alvosFalsificacao: null,
     violacoes: [],
     alarmes: [],
+    indeterminados: [],
     ...over,
   });
   const noPiso = (): Analise =>
@@ -288,6 +390,7 @@ describe('veredito — 2 nunca é "passou"', () => {
       entradas: PISOS.entradas,
       lacos: PISOS.lacos,
       linhasNucleo: PISOS.linhasFalsificarNucleo,
+      alvosFalsificacao: PISOS.alvosFalsificacao,
     });
 
   it('limpo, sem pisos → 0', () => {
@@ -325,6 +428,8 @@ describe('veredito — 2 nunca é "passou"', () => {
     ['laços', { lacos: PISOS.lacos - 1 }],
     ['linhas do núcleo', { linhasNucleo: PISOS.linhasFalsificarNucleo - 1 }],
     ['manifesto não lido', { linhasNucleo: null }],
+    ['alvos do test:falsificacao', { alvosFalsificacao: PISOS.alvosFalsificacao - 1 }],
+    ['package.json não lido', { alvosFalsificacao: null }],
   ])('com pisos: %s abaixo do piso → 2', (_nome, over) => {
     expect(veredito({ ...noPiso(), ...over }, true).codigo).toBe(2);
   });
@@ -336,8 +441,21 @@ describe('veredito — 2 nunca é "passou"', () => {
 });
 
 describe('o corpo REAL do repo', () => {
-  const { arquivos, manifesto } = lerCorpoDoRepo(RAIZ);
-  const r = analisar(arquivos, manifesto);
+  const { arquivos, manifesto, pacote } = lerCorpoDoRepo(RAIZ);
+  const r = analisar(arquivos, manifesto, JUIZES, pacote);
+
+  it('todo alvo do test:falsificacao é julgado — pelo idioma limpo ou por juiz — e o roteiro não voltou vazio', () => {
+    const f = lerFalsificacao(pacote ?? '');
+    expect(f).not.toBeNull();
+    expect(f?.residuo).toBe('');
+    expect(f?.alvos.length).toBeGreaterThanOrEqual(PISOS.alvosFalsificacao);
+    for (const alvo of f?.alvos ?? []) {
+      const fonte = arquivos.find((a) => a.caminho === alvo)?.fonte;
+      expect(fonte, alvo).toBeDefined();
+      const d = alvo.endsWith('.sh') ? detectar(alvo, fonte ?? '') : { listas: 0, violacoes: [] };
+      expect(alvo in JUIZES || (d.listas > 0 && d.violacoes.length === 0), alvo).toBe(true);
+    }
+  });
 
   it('toda linha falsificar=<n> do núcleo é julgada — pelo idioma limpo ou por juiz — e o manifesto não voltou vazio', () => {
     expect(manifesto).not.toBeNull();
