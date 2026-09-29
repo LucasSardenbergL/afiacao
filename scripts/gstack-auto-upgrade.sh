@@ -147,12 +147,15 @@ buscar() {
 # Só os analisadores OFFLINE, como manda o gate: sem LLM, VirusTotal, AI Defense nem OSV (as chaves
 # saem do ambiente para nenhum deles ligar sozinho).
 rodar_scanner() {  # <dir> <json>
+  local rc t0="$SECONDS"
+  log "scanner: $(basename "$1") (fila do heavy, se houver, conta no tempo)"
   pesado env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u VT_API_KEY -u VIRUSTOTAL_API_KEY \
       -u AI_DEFENSE_API_KEY -u AIDEFENSE_API_KEY \
     nice -n 10 "$SCANNER" scan-all "$1" --recursive --use-behavioral --use-trigger \
       --format json --output-json "$2" >>"$LOG" 2>&1
-  local rc=$?
+  rc=$?
   batimento
+  log "scanner: $(basename "$1") terminou rc=$rc em $((SECONDS - t0))s"
   [ "$rc" -eq 0 ] && [ -s "$2" ]
 }
 
@@ -246,6 +249,7 @@ preparar() {
     log "PENDENTE: v$de -> v$nova ja preparado antes ($alvo)"
     exit 0
   fi
+  log "preparo: v$de -> v$nova ($alvo) - montando a revisao"
   montar_revisao "$head" "$alvo" "$de" "$nova" || falhou "nao consegui montar a revisao (ver $LOG)"
   escrever_status PENDENTE "revisao pronta em $REVMD" "nova=$nova" "alvo=$alvo"
   log "PENDENTE: v$de -> v$nova ($alvo) - revisao em $REVMD"
