@@ -9,6 +9,8 @@ como texto. **Mas "hoje" é o de SÃO PAULO, não o da sessão:** a prod roda se
 seguinte. Parta de `now() at time zone 'America/Sao_Paulo'` — `::date` para comparar com coluna
 `date`; para `timestamptz`, a borda é o INSTANTE da meia-noite de SP
 (`date_trunc('month', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo'`).
+O instante que vira DATA segue a mesma regra: `created_at::date` é a data da SESSÃO (o pedido das
+22h BRT cai no dia seguinte) — escreva `(created_at at time zone 'America/Sao_Paulo')::date`.
 Modelos: queries #1 (date) e #15 (timestamptz) de `queries-vendas.md`.
 
 ## 1. Empresa — 4 grafias (resumo na SKILL.md; aqui o detalhe operacional)

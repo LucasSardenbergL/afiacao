@@ -8,7 +8,9 @@
 -- ⚠️ CORRIGIDO (1º fechamento, 2026-06-16):
 --  • CONJUNTO de vencidos = status_titulo IN ('ATRASADO','VENCE HOJE'), NUNCA saldo>0
 --    (o saldo não zera na baixa → contaria quitado como vencido). Valor = valor_documento.
---  • FAIXA (dias) = CURRENT_DATE − data_vencimento (o status defasa 1-7 dias).
+--  • FAIXA (dias) = hoje de SP − data_vencimento (o status defasa 1-7 dias). O hoje é
+--    (now() AT TIME ZONE 'America/Sao_Paulo')::date: a sessão da prod é UTC, e das 21:00 às 23:59 BRT
+--    o CURRENT_DATE já é amanhã (todo título ganharia 1 dia de atraso).
 --  • nome_cliente/cnpj_cpf VAZIOS no banco → agrupar por omie_codigo_cliente (ver armadilha 4).
 --  • Atenção a fósseis (dias_max > 1000): dívida prescrita a PROVISIONAR/dar baixa, não cobrar.
 -- READ-ONLY.
@@ -16,7 +18,7 @@
 
 -- (a) aging consolidado por empresa (conjunto por status, faixa por data)
 WITH cr_vencido AS (
-  SELECT company, valor_documento AS valor, (CURRENT_DATE - data_vencimento) AS dias_atraso
+  SELECT company, valor_documento AS valor, ((now() AT TIME ZONE 'America/Sao_Paulo')::date - data_vencimento) AS dias_atraso
   FROM fin_contas_receber
   WHERE status_titulo IN ('ATRASADO','VENCE HOJE')
 )
@@ -36,7 +38,7 @@ GROUP BY company ORDER BY company;
 --     Cruze o omie_codigo_cliente com o Omie pra saber quem é. Filtre 1 empresa por vez se quiser.
 WITH cr_vencido AS (
   SELECT company, omie_codigo_cliente, valor_documento AS valor,
-         (CURRENT_DATE - data_vencimento) AS dias_atraso
+         ((now() AT TIME ZONE 'America/Sao_Paulo')::date - data_vencimento) AS dias_atraso
   FROM fin_contas_receber WHERE status_titulo = 'ATRASADO'
 )
 SELECT company, omie_codigo_cliente,
