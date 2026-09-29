@@ -89,6 +89,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     sabotar F10 A2  'gate cego para o que dispara sozinho'   's#any(fnmatch.fnmatch(k\[2\], p) for p in sozinho)#False#'
     sabotar F11 A15 'prepara revisao de clone divergente'    's#|| falhou "o clone divergiu da origin#|| true "o clone divergiu da origin#'
     sabotar F12 A2  'skill aninhada vira codigo da raiz'     's#rel = f"{base}/{fp}" if base else fp#rel = fp#'
+    sabotar F13 A14 'reaproveita revisao INCOMPLETA'         's#\[ "\$(campo gate)" = COMPLETO \] \&\& ##'
+    sabotar F14 A14 'aplica com o gate incompleto'           's#\[ "\$(campo gate)" != COMPLETO \]#false#'
+    sabotar F15 A2  'CRITICAL/HIGH sem o arquivo'            's#for s, r, fp, sn in crit\[:40\]:#for s, r, fp, sn in []:#'
   done
 
   echo
@@ -255,20 +258,24 @@ if roda A1; then
 fi
 
 # A2 versão nova → PREPARA e NÃO aplica: revisão com o delta do gate (2 novos; só o da RAIZ dispara
-# sozinho, o da skill aninhada não), o alvo exato e o hook que mudou.
+# sozinho, o da skill aninhada não), o alvo exato, o hook que mudou e gate=COMPLETO. A 2ª rodada, com
+# a origin igual, REAPROVEITA a revisão completa sem escanear de novo.
 if roda A2; then
   w="$(mundo a2)" || infra A2 'mundo'
   publicar "$w" 1.1.0.0 malicioso || infra A2 'publicar'
   alvo="$(upstream "$w")"
-  rodar "$w"
-  r="$(revisao "$w")"
+  rodar "$w"; rc1=$rc; out1="$out"
+  r="$(revisao "$w")"; g1="$(st "$w" gate)"
+  rodar "$w"; rc2=$rc
   # shellcheck disable=SC2016  # as crases são MARKDOWN literal da revisão, não expansão de shell
-  if [ "$rc" -eq 0 ] && [ "$(st "$w" estado)" = PENDENTE ] && [ "$(st "$w" nova)" = 1.1.0.0 ] && [ "$(st "$w" alvo)" = "$alvo" ] \
-     && [ "$(versao "$w")" = 1.0.0.0 ] && [ ! -e "$w/marcas/setup" ] \
+  if [ "$rc1" -eq 0 ] && [ "$(st "$w" estado)" = PENDENTE ] && [ "$(st "$w" nova)" = 1.1.0.0 ] && [ "$(st "$w" alvo)" = "$alvo" ] \
+     && [ "$g1" = COMPLETO ] && [ "$(versao "$w")" = 1.0.0.0 ] && [ ! -e "$w/marcas/setup" ] \
      && tem "$r" '**novos 2**' && tem "$r" 'dispara sozinho: 1**' && tem "$r" 'EXFIL` em `bin/malicioso' && tem "$r" "--aplicar $alvo" \
-     && tem "$r" 'add-event --event SessionStart'; then
-    ok A2 'versao nova -> PENDENTE com o delta do gate; nada aplicado'
-  else ruim A2 "rc=$rc estado=$(st "$w" estado) versao=$(versao "$w"): $out
+     && tem "$r" 'EXFIL` em `sub/bin/malicioso-sub' \
+     && tem "$r" 'add-event --event SessionStart' \
+     && [ "$rc2" -eq 0 ] && tem "$out" 'ja preparado antes' && [ "$(st "$w" gate)" = COMPLETO ]; then
+    ok A2 'versao nova -> PENDENTE com o delta do gate; nada aplicado; revisao completa reaproveitada'
+  else ruim A2 "rc1=$rc1 rc2=$rc2 estado=$(st "$w" estado) gate=$g1 versao=$(versao "$w"): $out1 / $out
 $r"; fi
 fi
 
@@ -397,14 +404,19 @@ if roda A13; then
   else ruim A13 "rc=$rc estado=$(st "$w" estado) versao=$(versao "$w"): $out"; fi
 fi
 
-# A14 scanner ausente → a revisão sai, mas GRITANDO que o gate está incompleto.
+# A14 scanner ausente → revisão com GATE INCOMPLETO: o --aplicar RECUSA (falha fechada) e o preparo
+# seguinte, com scanner, NÃO reaproveita a revisão incompleta: escaneia de novo e completa o gate.
 if roda A14; then
   w="$(mundo a14)" || infra A14 'mundo'
   publicar "$w" 1.1.0.0 || infra A14 'publicar'
-  rodar "$w" GSTACK_AUTO_SCANNER=scanner-que-nao-existe
-  if [ "$rc" -eq 0 ] && [ "$(st "$w" estado)" = PENDENTE ] && tem "$(revisao "$w")" 'GATE INCOMPLETO'; then
-    ok A14 'sem scanner -> PENDENTE com GATE INCOMPLETO'
-  else ruim A14 "rc=$rc estado=$(st "$w" estado): $out"; fi
+  rodar "$w" GSTACK_AUTO_SCANNER=scanner-que-nao-existe; rc1=$rc; r1="$(revisao "$w")"; g1="$(st "$w" gate)"
+  rodar "$w" -- --aplicar "$(st "$w" alvo)"; rc2=$rc; out2="$out"
+  rodar "$w"; rc3=$rc; r3="$(revisao "$w")"
+  if [ "$rc1" -eq 0 ] && [ "$g1" = INCOMPLETO ] && tem "$r1" 'GATE INCOMPLETO' \
+     && [ "$rc2" -eq 5 ] && tem "$out2" 'GATE INCOMPLETO' && [ "$(versao "$w")" = 1.0.0.0 ] \
+     && [ "$rc3" -eq 0 ] && [ "$(st "$w" gate)" = COMPLETO ] && ! tem "$r3" 'GATE INCOMPLETO' && tem "$r3" 'dispara sozinho: 0**'; then
+    ok A14 'sem scanner -> GATE INCOMPLETO: aplicar recusa e o proximo preparo refaz o scan'
+  else ruim A14 "rc1=$rc1 g1=$g1 rc2=$rc2 rc3=$rc3 gate=$(st "$w" gate): $out2 / $out"; fi
 fi
 
 # A15 clone divergente (commit local + origin nova) → FALHOU no preparo, commit local preservado.
@@ -420,6 +432,17 @@ if roda A15; then
   if [ "$rc" -eq 1 ] && tem "$(st "$w" detalhe)" 'divergiu' && [ "$(cabeca "$w")" = "$h0" ] && [ -z "$(revisao "$w")" ]; then
     ok A15 'clone divergente -> FALHOU, commit local preservado'
   else ruim A15 "rc=$rc estado=$(st "$w" estado): $out"; fi
+fi
+
+# A16 opt-in EXPLÍCITO (GSTACK_AUTO_ACEITO_SEM_SCANNER=1) aplica mesmo com o gate incompleto.
+if roda A16; then
+  w="$(mundo a16)" || infra A16 'mundo'
+  publicar "$w" 1.1.0.0 || infra A16 'publicar'
+  rodar "$w" GSTACK_AUTO_SCANNER=scanner-que-nao-existe
+  rodar "$w" GSTACK_AUTO_ACEITO_SEM_SCANNER=1 -- --aplicar "$(st "$w" alvo)"
+  if [ "$rc" -eq 0 ] && [ "$(st "$w" estado)" = ATUALIZADO ] && [ "$(versao "$w")" = 1.1.0.0 ]; then
+    ok A16 'opt-in explicito aplica com gate incompleto'
+  else ruim A16 "rc=$rc estado=$(st "$w" estado): $out"; fi
 fi
 
 echo

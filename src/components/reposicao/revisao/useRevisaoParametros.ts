@@ -4,19 +4,34 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useUrlState } from "@/hooks/useUrlState";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
-import { type SkuParam, type RowWithPrice, type StatusFilterValue, reativarPayload } from "@/lib/reposicao/sku-param";
+import { track } from "@/lib/analytics";
+import { mensagemDeErro } from "@/lib/erro-mensagem";
+import {
+  type SkuParam,
+  type RowWithPrice,
+  type StatusFilterValue,
+  reativarPayload,
+  descontinuarPayload,
+  statusFiltroDaUrl,
+} from "@/lib/reposicao/sku-param";
 import { ilikeContainsPattern } from "@/lib/postgrest";
+import { buscarForaDoMotor, fecharReativacoesPendentes } from "@/components/reposicao/foraDoMotor/api";
 import { PAGE_SIZE, type SkuSugeridoView } from "./types";
 
 export function useRevisaoParametros() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const { empresa } = useReposicaoEmpresa();
   const [classes, setClasses] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("todos");
+  // Filtro na URL (?filtro=): o aviso do cockpit (ForaDoMotorBadge) abre esta tela direto em "Fora do motor".
+  const [url, setUrl] = useUrlState({ filtro: "todos" });
+  const statusFilter: StatusFilterValue = statusFiltroDaUrl(url.filtro);
   const [search, setSearch] = useState("");
   // A queryKey usa o termo DEBOUNCED: com o termo cru, cada tecla criava uma
   // key nova e disparava count exact + ILIKE + a query de preços na view cara
@@ -176,14 +191,21 @@ export function useRevisaoParametros() {
         return { rows: priced, total: count ?? 0 };
       }
 
-      // Fall-through: branch "Todos" (default) E branch "Descontinuados" — mesma tabela
+      // Fall-through: branches "Todos" (default), "Descontinuados" e "Fora do motor" — mesma tabela
       // (sku_parametros), mesmo enriquecimento de preço e mapeamento abaixo; só o predicado muda.
+      // "Fora do motor": o UNIVERSO vem da v_reposicao_sku_fora_do_motor — espelho do WHERE do motor com o
+      // flag invertido, que sabe o que esta tela não sabe filtrar (ativo no Omie, família, fracionado…).
+      const foraDoMotor = statusFilter === "fora_do_motor" ? await buscarForaDoMotor(empresa) : null;
+      if (foraDoMotor && foraDoMotor.size === 0) return { rows: [], total: 0 };
+
       let q = supabase
         .from("sku_parametros")
         .select("*", { count: "exact" })
         .eq("empresa", empresa);
 
-      if (statusFilter === "descontinuados") {
+      if (foraDoMotor) {
+        q = q.in("sku_codigo_omie", [...foraDoMotor.keys()]);
+      } else if (statusFilter === "descontinuados") {
         // SKUs desligados de propósito pelo humano (botão "descontinuar SKU" nos Pedidos).
         // Sem filtro de ativo/estoque_minimo: mostra tudo que o humano descontinuou, com preço
         // (o gatilho de reativar é "o preço voltou a ser competitivo").
@@ -256,9 +278,33 @@ export function useRevisaoParametros() {
         });
       }
 
+      if (foraDoMotor) {
+        priced = priced.map((r) => ({
+          ...r,
+          reativado_omie_pendente: foraDoMotor.get(Number(r.sku_codigo_omie)) ?? null,
+        }));
+      }
+
       return { rows: priced, total: count ?? 0 };
     },
   });
+
+  const invalidarRevisao = () => {
+    queryClient.invalidateQueries({ queryKey: ["sku_parametros_revisao"] });
+    queryClient.invalidateQueries({ queryKey: ["reposicao-fora-do-motor"] });
+  };
+
+  // Religar/Descontinuar RESPONDE o evento 'sku_reativado_omie' pendente ("deseja habilitar de novo?").
+  // O flag é a escrita que importa; fechar o evento é arrumação — se falhar, avisa (o alerta sobra na aba
+  // Alertas) em vez de desfazer a decisão que já valeu.
+  const fecharEventos = async (sku: number, justificativa: string): Promise<string | null> => {
+    try {
+      await fecharReativacoesPendentes(empresa, sku, user?.email, justificativa);
+      return null;
+    } catch (e) {
+      return `O alerta "reativado no Omie" deste SKU segue pendente em Alertas: ${mensagemDeErro(e) ?? "erro sem mensagem"}`;
+    }
+  };
 
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
@@ -299,8 +345,8 @@ export function useRevisaoParametros() {
     onError: (e: Error) => toast.error("Falha ao promover: " + e.message),
   });
 
-  // Reativa um SKU descontinuado: religa a reposição automática (espelho do "descontinuar SKU"
-  // dos Pedidos). Update direto — a mesma escrita PostgREST que a tela já usa pra editar
+  // Reativa um SKU descontinuado OU com a reposição desligada: religa a reposição automática (espelho do
+  // "descontinuar SKU" dos Pedidos). Update direto — a mesma escrita PostgREST que a tela já usa pra editar
   // parâmetros (updateMutation). Por empresa+sku, simétrico ao descontinuarMutation.
   const reativarMutation = useMutation({
     mutationFn: async (sku: number) => {
@@ -310,12 +356,35 @@ export function useRevisaoParametros() {
         .eq("empresa", empresa)
         .eq("sku_codigo_omie", sku);
       if (error) throw error;
+      return fecharEventos(sku, "Reposição religada na Revisão de Parâmetros");
     },
-    onSuccess: () => {
+    onSuccess: (avisoEventos) => {
       toast.success("SKU reativado — volta a ser sugerido no próximo ciclo");
-      queryClient.invalidateQueries({ queryKey: ["sku_parametros_revisao"] });
+      if (avisoEventos) toast.warning(avisoEventos);
+      track("reposicao.sku_religado", { filtro: statusFilter });
+      invalidarRevisao();
     },
     onError: (e: Error) => toast.error("Falha ao reativar: " + e.message),
+  });
+
+  // A outra saída do SKU fora do motor: "não é para comprar". Vai para Descontinuados (Reativar o traz).
+  const descontinuarMutation = useMutation({
+    mutationFn: async (sku: number) => {
+      const { error } = await supabase
+        .from("sku_parametros")
+        .update(descontinuarPayload())
+        .eq("empresa", empresa)
+        .eq("sku_codigo_omie", sku);
+      if (error) throw error;
+      return fecharEventos(sku, "SKU descontinuado na Revisão de Parâmetros");
+    },
+    onSuccess: (avisoEventos) => {
+      toast.success("SKU descontinuado — não será mais sugerido (reative em Descontinuados)");
+      if (avisoEventos) toast.warning(avisoEventos);
+      track("reposicao.sku_descontinuado", { filtro: statusFilter });
+      invalidarRevisao();
+    },
+    onError: (e: Error) => toast.error("Falha ao descontinuar: " + e.message),
   });
 
   const toggleClasse = (c: string) => {
@@ -326,7 +395,7 @@ export function useRevisaoParametros() {
   // Handlers compostos (encapsulam os resets de página inline do JSX original)
   const onStatusChange = (v: StatusFilterValue) => {
     setPage(0);
-    setStatusFilter(v);
+    setUrl({ filtro: v });
   };
   const onSearchChange = (v: string) => {
     setPage(0);
@@ -357,5 +426,6 @@ export function useRevisaoParametros() {
     updateMutation,
     promoverMutation,
     reativarMutation,
+    descontinuarMutation,
   };
 }

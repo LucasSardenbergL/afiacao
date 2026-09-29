@@ -28,6 +28,8 @@ interface RevisaoTableProps {
   promovendo?: boolean;
   onReativar?: (sku: number) => void;
   reativando?: boolean;
+  onDescontinuar?: (sku: number) => void;
+  descontinuando?: boolean;
 }
 
 export function RevisaoTable({
@@ -43,6 +45,8 @@ export function RevisaoTable({
   promovendo,
   onReativar,
   reativando,
+  onDescontinuar,
+  descontinuando,
 }: RevisaoTableProps) {
   return (
     <Card>
@@ -86,6 +90,8 @@ export function RevisaoTable({
                   promovendo={promovendo}
                   onReativar={onReativar}
                   reativando={reativando}
+                  onDescontinuar={onDescontinuar}
+                  descontinuando={descontinuando}
                 />
               ))}
               {rows.length === 0 && (

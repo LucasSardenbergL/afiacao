@@ -83,6 +83,12 @@ recomendação saiu do diagnóstico técnico (o classificador) e ignorou a polí
   5 min, como no `bin/gstack-session-update`, com um trap que mata o próprio `sleep` (sem ele: 23 `sleep 300`
   órfãos por rodada da suíte), e a fila do `heavy` espera até 3 h no job. Entrou num PR de follow-up: o
   #2655 mergeou antes do push.
+- **Revisão INCOMPLETA era reaproveitada** (também achado no 1º preparo real: o scan da versão nova estourou a
+  fila do `heavy`, e a revisão saiu com GATE INCOMPLETO). O preparo reaproveitava a revisão quando o alvo não
+  mudava, sem olhar se ela estava completa: nunca mais tentaria o scan. E nada impedia o `--aplicar`. Agora o
+  status grava `gate=COMPLETO|INCOMPLETO` (ausente conta como incompleto), só a completa é reaproveitada, o
+  `--aplicar` recusa a incompleta (o opt-in explícito é `GSTACK_AUTO_ACEITO_SEM_SCANNER=1`), e o vigia diz
+  GATE INCOMPLETO em vez de "pronto". Sabotagens F13, F14 e S12.
 - **`env -u X <função>`:** o `env` executa BINÁRIO, e a função `pesado` virava "No such file". Foi pego na
   revisão, antes do primeiro teste; o `env` agora vem DENTRO do `pesado`.
 

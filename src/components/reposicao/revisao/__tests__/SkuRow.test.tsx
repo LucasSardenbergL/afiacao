@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { SkuRow } from "../SkuRow";
 import type { RowWithPrice } from "@/lib/reposicao/sku-param";
 
@@ -57,6 +57,55 @@ describe("SkuRow", () => {
     renderRow(row({ status_sugestao: "CANDIDATO_PRIMEIRA_COMPRA", read_only: true }), { onPromover });
     fireEvent.click(screen.getByRole("button", { name: "Promover" }));
     expect(onPromover).toHaveBeenCalledWith(12345);
+  });
+
+  it("reposição desligada: selo, motivo da reativação no Omie e Religar confirma → onReativar", async () => {
+    const onReativar = vi.fn();
+    renderRow(
+      row({ tipo_reposicao: "automatica", habilitado_reposicao_automatica: false, reativado_omie_pendente: true }),
+      { onReativar, onDescontinuar: vi.fn() },
+    );
+    expect(screen.getByText("Reposição desligada")).toBeTruthy();
+    expect(screen.getByText(/reativado no Omie/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Religar" }));
+    const dialogo = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialogo).getByRole("button", { name: "Religar" }));
+    expect(onReativar).toHaveBeenCalledWith(12345);
+  });
+
+  it("reposição desligada: Descontinuar confirma → onDescontinuar", async () => {
+    const onDescontinuar = vi.fn();
+    renderRow(row({ tipo_reposicao: null, habilitado_reposicao_automatica: null }), {
+      onReativar: vi.fn(),
+      onDescontinuar,
+    });
+    expect(screen.queryByText(/reativado no Omie/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Descontinuar" }));
+    const dialogo = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialogo).getByRole("button", { name: "Descontinuar" }));
+    expect(onDescontinuar).toHaveBeenCalledWith(12345);
+  });
+
+  it("flag ausente não afirma nada: sem selo de reposição desligada, sem Religar", () => {
+    renderRow(row({ tipo_reposicao: "automatica" }), { onReativar: vi.fn(), onDescontinuar: vi.fn() });
+    expect(screen.queryByText("Reposição desligada")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Religar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Descontinuar" })).toBeNull();
+  });
+
+  it("descontinuado segue com Reativar (e não com Religar/Descontinuar)", async () => {
+    const onReativar = vi.fn();
+    renderRow(row({ tipo_reposicao: "descontinuado", habilitado_reposicao_automatica: false }), {
+      onReativar,
+      onDescontinuar: vi.fn(),
+    });
+    expect(screen.getByText("Descontinuado")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Religar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Descontinuar" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Reativar" }));
+    const dialogo = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialogo).getByRole("button", { name: "Reativar" }));
+    expect(onReativar).toHaveBeenCalledWith(12345);
   });
 
   it("Detalhes dispara onOpenDetail com a linha", () => {

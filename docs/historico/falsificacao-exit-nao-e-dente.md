@@ -1121,6 +1121,105 @@ corpo da suíte DEPOIS de recortá-la — o bloco editado existiria duas vezes, 
   absolvição; E16f e E16g diziam provar o tratamento do veredito do ledger sem nunca o chamar.
 - **Vazio = vazio é o modo de falha da dupla chave.** A 2ª chave só é eixo de fora se EXISTIR (`-n`).
 
+## O gate R4 — todo alvo do `test:falsificacao` (2026-09-29)
+
+**Passo 0 — instância única ou classe? Classe** — a mesma; este é o passo 4 (o gate) para a superfície
+que o R1/R2 não enxergavam: o `test:falsificacao` roda 27 arquivos, e 17 deles não usam a lista
+`SABOTAGENS`. Um teste novo com juiz "exit≠0" entraria no CI sem nenhum gate acusar.
+
+**O gate.** R4 no `falsificar-exige-assert-gate.ts`: cada arquivo que o roteiro EXECUTA — os slugs do
+laço, expandidos pelo MESMO parser do `test:hooks` (`arquivosExecutados`, `scripts/lib/lacos-test-hooks.ts`:
+dois parsers do mesmo laço divergem no dia em que a forma dele muda), e os comandos fora dele (o
+`sonda-cron-prova.ts`) — usa o idioma limpo OU tem juiz registrado, com âncoras. Forma do roteiro que o
+fiscal não sabe expandir (`bun run` aninhado, outro interpretador) sobra no RESÍDUO e é INDETERMINADO;
+piso de 20 alvos (medidos 27). A âncora de um alvo do roteiro reprova como R4 — inclusive a do `lab-*`
+que um slug despacha (`delegadoPor`: o juiz de verdade do `claude-mem-reanimar` e do `retry-pgdg` mora
+lá). O `.ts` é limpo pelo stripper de TS, com o sentinela do bloco descartado herdado do
+`gate-sonda-autentica`. TDD: 9 testes vermelhos pelo motivo certo antes do código; a 1ª versão errou
+num ponto que agora é mutação — `arquivosExecutados` devolve o nome RELATIVO a `scripts/`, e todo slug
+virou "não lido".
+
+**A releitura dos 17 (+ 3 delegados).** Mapeados por subagente (hipótese), relidos um a um — a
+varredura de 2026-09-27 chamava os que conhecia de "já-corretos"; **três não eram**:
+
+| alvo | o juiz | veredito da releitura |
+|---|---|---|
+| `codex-async`, `codex-async-nuvem` | `FAIL [<marca>]` + troca 1× + `bash -n` + controle nos 2 locales | identifica o assert (`controle-sem-consulta` cobre mais de um) |
+| `vigia-gstack`, `vigia-nuvem`, `instrucoes-carregadas` | exit EXATO 1 + `FAIL [<caso>]`, controle por locale | identifica |
+| `pr-watch` | a marca carrega o valor errado exato (`exit: want 0, got 4`) | o mais estrito do grupo |
+| `claude-mem-saude` | `FALHA <caso>:` por locale; sabotagem vazia recusada | identifica |
+| `gate-senha-bootstrap`, `gates-frescura` | sabotam a ENTRADA; rc EXATO + marcador do ramo | identificam |
+| `guard-noop-sabotagem`, `eval-via-morta`, `codex-prompt-paginacao` | linha exata / exit + baseline + recibo / valor exato | identificam |
+| `claude-mem-reanimar`, `retry-pgdg` | despacham a `lab-*` (rc 0 + marcador exato); os labs: término + a FALHA declarada / o C0 verde + cada caso | identificam (3 juízes delegados registrados) |
+| **`setup-contrato`** | marca por substring na saída INTEIRA do vitest | **afetado** |
+| **`medir-footprint`** | "fora da janela", para qualquer lado | **afetado** |
+| **`sonda-cron-prova.ts`** | os seis sintéticos defeituosos por `!== 'PASSA'` | **afetado** |
+
+Residual comum aos de `FAIL [<id>]`: sem camada de crash — o assert declarado que inclui o rc também cai
+se o alvo MORRER no ramo dele. Registrado no motivo de cada juiz, e pendência com dono (abaixo).
+
+**O R4 no merge real.** No rebase sobre a main, o gate acusou um 18º alvo que ninguém tinha
+registrado: `[R4] package.json:87 scripts/test-gstack-auto-upgrade.sh roda no test:falsificacao sem o
+idioma SABOTAGENS limpo e sem JUIZ registrado` — o #2655 o pôs no roteiro enquanto este PR corria.
+É o caso que o R4 existe para pegar, acontecendo. Relido (o molde do `vigia-gstack`, com a rodada
+recortada ao caso-alvo por `SO_CASO`) e registrado; as âncoras do `claude-mem-saude` e do
+`vigia-gstack`, que a main também mudou, sobreviveram.
+
+**Os três afetados, medidos antes do conserto:**
+
+- **`setup-contrato`** — sonda num arquivo com um teste vermelho e um verde: o vitest lista o irmão
+  VERDE (`   ✓ IRMAO VERDE …`) e o code-frame da falha cita a linha-fonte dele. As marcas 4 e 5 (nomes de
+  teste e de describe) e a alternativa `storage funcional` da 1ª casavam com teste verde, bastando
+  outro teste do arquivo cair. Conserto: a marca vale só fora das linhas `✓` e do code-frame
+  (`linhas_de_falha`), casada por here-string (sob `pipefail`, o `grep -q` que sai cedo mataria o
+  estágio de cima).
+- **`medir-footprint`** — a sabotagem não declarava o SENTIDO. Conserto: SAB1 tem de CAIR (só a raiz
+  não vê a árvore); SAB2 e SAB4, SUBIR. A medição incompleta já era recusada.
+- **`sonda-cron-prova.ts`** — medido: os seis dão `FALHA` hoje; nenhum `INVERIFICAVEL`. A folga
+  aceitava o harness que não mede e o sintético que não compila. Conserto: classe exata para todos, e
+  a `FALHA` que vem do handler que LANÇA (`status -1`, que cai na faixa de status do classificador) é
+  recusada.
+
+**A meta-falsificação** (o arquivo de ANTES = `6f22db94b` e o novo, edições exatas, o desfecho declarado
+antes de rodar, C e pt_BR):
+
+| alvo | a reprodução (o buraco) | controle | antes aprovava | novo reprova |
+|---|---|---|---|---|
+| `sonda-cron-prova.ts` | D1 `fallthrough` com import irresolvível → `INVERIFICAVEL` | ✅✅ · ✅✅ | ✅✅ | ✅✅ |
+|  | D2 `io-antes-do-metodo` cujo handler LANÇA → `FALHA` pelo status -1 |  | ✅✅ | ✅✅ |
+|  | D3 `helper-no-ramo` que não compila → `NAO_COMPILA` |  | ✅✅ | ✅✅ |
+| `medir-footprint` | M1 o pico do alvo pesado SOBE na SAB1 — o de antes: "delta caiu para 364MB" | ✅✅ · ✅✅ | ✅✅ | ✅✅ |
+|  | M2 o divergente CAI na SAB2 — "delta divergente virou 4MB" |  | ✅✅ | ✅✅ |
+|  | M4 o sequencial CAI na SAB4 — "delta virou 50MB (~2x de 200)" |  | ✅✅ | ✅✅ |
+| `setup-contrato` (recortado à sabotagem-alvo) | V5 marca = nome de describe; outro teste do arquivo cai (o polyfill de MediaStream) | recorte ✅✅ · ✅✅ | ✅✅ | ✅✅ |
+|  | V4 marcas = nomes de teste de DOM |  | ✅✅ | ✅✅ |
+|  | V1 a alternativa `storage funcional` |  | ✅✅ | ✅✅ |
+| o gate R4 (CLI, no worktree) | F1 slug novo com juiz exit≠0 → `[R4] package.json`; F2 âncora do pr-watch; F3 âncora do juiz DELEGADO de lab (regra do despachante); F4 `bun run` aninhado → INDETERMINADO; F5 âncora do `.ts` só num comentário | ✅✅ | — | 10/10 |
+
+Cada célula: C · pt_BR; ✅ = o desfecho declarado antes. **60/60 conferem**, o controle de cada site nas
+duas versões e a árvore limpa depois. **Dois erros da META, registrados:** a 1ª M2 do `medir-footprint`
+deslocou o pico em −100 e o deixou NEGATIVO — "medição incompleta" nas duas versões, o que não é
+veredito; refeita com −60. E o `mutcheck` do gate chamado direto (sem o `-all`) roda o teste com o
+vitest, ignorando o `@test_cmd` do `.mut` — o baseline "vermelho" era o vitest sem arquivo; com
+`MUTCHECK_TEST_CMD` explícito, o baseline é verde. **Um defeito do próprio teste do gate:** o controle
+positivo no corpo real analisava os ~470 arquivos DENTRO do `it` e estourou o timeout de 20 s com a
+máquina sob load average > 100 (1,3 s sem carga); passou a julgar o RECORTE do R4 (alvos do roteiro +
+arquivos com juiz), com piso.
+
+**Os que rodam FORA do `test:falsificacao`, com falsificação própria (a avaliação pedida).** Censo dos
+57 slugs dos dois laços do `test:hooks`: 31 não estão no `test:falsificacao`, e 13 deles têm marcador
+de sabotagem no código. Lidos: 4 são rótulo/fixture (`stop-contexto-caro`, `claude-md-budget`,
+`tokens-report`, `posthog-query`); 9 falsificam de verdade dentro da suíte normal.
+- `lovable-revert-scan` — correto, e já julga o stderr INTEIRO (o desfecho declarado é silêncio:
+  stdout mudo, exit 0, stderr vazio como o do controle). **Registrado** (âncoras).
+- o limiar do `bash-contexto-nudge` — exato (exit 0 + exatamente 1 JSON + o nudge), mas o stderr do hook
+  sabotado vai para `/dev/null`: entra na camada 4 (PR seguinte), e é registrado lá.
+- `sonda-processo-guard` — **afetado**: `[ -n "$(executa …)" ]`, QUALQUER stdout do hook sabotado conta,
+  stderr descartado — e a sabotagem é in-place no hook real. `pr-duplicata-guard` (casos "cala") e
+  `word-split-zsh-guard` (regras de detecção) julgam por SILÊNCIO sem rc nem stderr — o crash também
+  cala, o furo que o `lovable` fechou. Fora do domínio do R4: pendência com dono (abaixo), junto com
+  o gate que falta (um R5 para o `test:hooks`).
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
@@ -1168,12 +1267,20 @@ Da 2ª leva ficaram, com dono:
   - Sem tarefa, registrado: o `IFS=$'\t' read` do alvo colapsa campo vazio do ledger (o `l_obs` herda
     o campo seguinte) — não muda veredito hoje, e o E16g2 vale nas duas leituras (todos os campos
     vazios).
-- **"Gate R4: todo slug do test:falsificacao usa o idioma limpo ou tem juiz registrado"** — o análogo
-  do R3 para o `test:falsificacao`: hoje R1/R2 só enxergam quem USA a lista; um teste novo com juiz
-  "exit≠0" entraria no CI sem nenhum gate acusar. Os de valor/marca exata (codex-prompt, guard-noop,
-  lovable-revert-scan, o limiar do bash-contexto-nudge) e os já-corretos da varredura entram como juiz
-  registrado, com âncoras. Leva junto o resíduo do Codex na camada 4: comparar as LINHAS de erro
-  (normalizadas: caminho temporário, nº de linha), não a CONTAGEM — com contagem, uma sabotagem que
-  apague o diagnóstico legítimo do controle e crie um crash real passa por `1 = 1`. E o stderr
-  INTEIRO, não só as assinaturas do bash: erro de ferramenta externa fica fora da lista-negra (o
-  `usage:` do git passou pela do `lovable` — medido, e lá o conserto foi stderr vazio).
+- ✅ **"Gate R4: todo slug do test:falsificacao usa o idioma limpo ou tem juiz registrado"** — ENTREGUE
+  (seção "O gate R4", acima): o R4, 19 juízes relidos e registrados, e os 3 "já-corretos" que a
+  releitura desmentiu — `setup-contrato`, `medir-footprint`, `sonda-cron-prova` —, consertados com meta
+  nos dois locales. O resíduo do Codex na camada 4 (comparar as LINHAS, não a contagem; o stderr
+  INTEIRO, não só as assinaturas do bash) segue no PR seguinte da mesma sessão.
+- **"Estender o R4 ao test:hooks e consertar os juízes por silêncio"** — a avaliação dos que falsificam
+  fora do `test:falsificacao` (seção "O gate R4") achou 9 falsificações dentro da suíte normal do
+  `test:hooks`, fora de qualquer gate: o `sonda-processo-guard` conta QUALQUER stdout do hook sabotado
+  (e sabota o hook REAL in-place); o `pr-duplicata-guard` (casos "cala") e o `word-split-zsh-guard`
+  (regras de detecção) julgam por silêncio sem rc nem stderr — o furo que o `lovable` fechou. O gate
+  que falta é um R5: o R4 para os slugs do `test:hooks` com marcador de sabotagem (4 falsos-positivos
+  medidos: `stop-contexto-caro`, `claude-md-budget`, `tokens-report`, `posthog-query`).
+- **"Camada de crash nos juízes `FAIL [<id>]` fora do idioma"** — os juízes registrados no R4 que julgam
+  pelo ID do caso (`codex-async`, `codex-async-nuvem`, `vigia-*`, `instrucoes-carregadas`, `pr-watch`,
+  `claude-mem-saude`) aceitam o vermelho do assert declarado que caiu por CRASH do alvo (o
+  `stdin-herdado` do codex-async inclui o rc); o `controle-sem-consulta` cobre mais de um assert.
+  Depende da lib da camada 4 (`scripts/lib/falsificacao-stderr.sh`, PR seguinte).

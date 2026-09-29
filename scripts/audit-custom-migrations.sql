@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 566
+-- Total de custom migrations: 567
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -607,7 +607,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260927195430', 'positivacao_universo_canonico', '20260927195430_positivacao_universo_canonico.sql'),
   ('20260927202603', 'fuso_sp_relogio_da_sessao_rpcs_views_des', '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql'),
   ('20260929000234', 'padrao_like_contem_escapa_curinga', '20260929000234_padrao_like_contem_escapa_curinga.sql'),
-  ('20260929001651', 'hoje_sp_sessao_utc_sete_funcoes', '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql')
+  ('20260929001651', 'hoje_sp_sessao_utc_sete_funcoes', '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql'),
+  ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2455,7 +2456,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'radar_atribuir_tarefa', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'sincronizar_ativo_omie_para_reposicao', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'trg_campanha_gera_alerta', ''),
-  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', '')
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4351,7 +4353,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'radar_atribuir_tarefa', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'sincronizar_ativo_omie_para_reposicao', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'trg_campanha_gera_alerta', ''),
-  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', '')
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
 )
 SELECT
   e.migration,
