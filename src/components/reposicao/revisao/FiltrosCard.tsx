@@ -75,6 +75,9 @@ export function FiltrosCard({
                 <SelectItem value="descontinuados">
                   Descontinuados
                 </SelectItem>
+                <SelectItem value="fora_do_motor">
+                  Fora do motor (vendem e não são sugeridos)
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>

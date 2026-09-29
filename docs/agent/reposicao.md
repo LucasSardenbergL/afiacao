@@ -117,6 +117,15 @@ SELECT * FROM reposicao_param_fila_log WHERE empresa='OBEN' ORDER BY medido_em D
   (`NOT EXISTS`) e GRADUA quem virou `OK`. SKU com **linha órfã** (pp/max NULL) cai no **vão** entre os
   dois ramos — foi assim que 206 SKUs ficaram invisíveis (#2022). A graduação passa pelo fusível
   `param_auto_fusivel_mult` desde o #2033; salto grande ou âncora ausente vira `acao='segurado'`.
+- **O vão irmão — flag desligado sem dono.** O motor exige `habilitado_reposicao_automatica = TRUE`, e
+  `tipo='automatica'` + flag `false` é um estado que **nenhuma ação da UI produz**. Nasce da inativação no
+  Omie (o trigger desliga e **não religa** na reativação; sobra um `sku_reativado_omie` `info`, fora do
+  badge) ou da linha criada pelo `atualizar_classificacao_skus` (default `false`; o cold start pula quem
+  tem linha). O SKU some do cockpit sem erro nem alerta (FCA.7090QT, com 6 un em pedido aberto). **Sensor:**
+  `v_reposicao_sku_fora_do_motor` — espelho do WHERE da CTE `sku_base` com o flag invertido, só quem
+  vendeu em 90d — alimenta o aviso do cockpit e o filtro "Fora do motor" da Revisão (Religar/Descontinuar).
+  ⚠️ Mudou o WHERE da `sku_base`? Mude a view e o `db/test-v-sku-fora-do-motor.sh`. Detalhe:
+  `docs/historico/sku-fora-do-motor-em-silencio.md`.
 - **Teto de cobertura ≠ fusível de magnitude.** O teto (`reposicao_teto_cobertura_oben_*`) é aplicado no
   **motor**, por dias de demanda; o fusível compara com o valor **anterior**. Se a demanda estiver errada,
   o teto usa a mesma demanda errada — só o fusível protege. Detalhe:

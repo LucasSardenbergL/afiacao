@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 565
+-- Total de custom migrations: 566
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -606,7 +606,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260927172443', 'hoje_sp_sessao_utc_precos_piso', '20260927172443_hoje_sp_sessao_utc_precos_piso.sql'),
   ('20260927195430', 'positivacao_universo_canonico', '20260927195430_positivacao_universo_canonico.sql'),
   ('20260927202603', 'fuso_sp_relogio_da_sessao_rpcs_views_des', '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql'),
-  ('20260929000234', 'padrao_like_contem_escapa_curinga', '20260929000234_padrao_like_contem_escapa_curinga.sql')
+  ('20260929000234', 'padrao_like_contem_escapa_curinga', '20260929000234_padrao_like_contem_escapa_curinga.sql'),
+  ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2447,7 +2448,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'buscar_skus_candidatos', ''),
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_produtos_relacionados', ''),
-  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'tarefas_matcher_tick', '')
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'tarefas_matcher_tick', ''),
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4336,7 +4338,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'buscar_skus_candidatos', ''),
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_produtos_relacionados', ''),
-  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'tarefas_matcher_tick', '')
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'tarefas_matcher_tick', ''),
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
 )
 SELECT
   e.migration,

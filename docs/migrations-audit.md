@@ -21,8 +21,8 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **565** custom migrations totais
-- **1852** objetos esperados (criados por estas migrations)
+- **566** custom migrations totais
+- **1853** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 613
   - `rls_policy`: 462
@@ -30,7 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `cron_job`: 174
   - `table`: 166
   - `trigger`: 92
-  - `view`: 80
+  - `view`: 81
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4635,6 +4635,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.melhoria_clientes_por_produto` | — |
 | `function` | `public.melhoria_produtos_relacionados` | — |
 | `function` | `public.tarefas_matcher_tick` | — |
+
+### `20260929003006_reposicao_v_sku_fora_do_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_reposicao_sku_fora_do_motor` | — |
 
 ## Próximos passos por status
 

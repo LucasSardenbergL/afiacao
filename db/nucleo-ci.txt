@@ -197,6 +197,13 @@ db/test-tint-fase5-watchdog.sh             31
 # que a PRÓXIMA reescrita do trio entra sozinha na cadeia (docs/historico/provas-tint-apodrecidas.md).
 db/test-tint-vigia-cobertura.sh            30  falsificar=13
 db/test-tint-cobertura-lista-email.sh      22  falsificar=6
+# Reposição: o sensor do SKU que VENDE e o motor não lê — flag habilitado_reposicao_automatica
+# desligado sem dono (reativação no Omie não religa; linha nascida com o default false). Sem ele o
+# SKU some do cockpit calado (FCA.7090QT, 6 un em pedido aberto). A view espelha o WHERE do motor
+# com o flag invertido: cada um dos 18 filtros é sabotado SOZINHO, inline, com controle verde na
+# mesma invocação, + security_invoker/anon/RLS e o dente das postcondições A1–A3. Autocontida:
+# initdb + db/stubs-supabase.sql + a migration. docs/historico/sku-fora-do-motor-em-silencio.md.
+db/test-v-sku-fora-do-motor.sh             33
 
 # ── Eixo 7 — FUSO DA SESSÃO (a prod roda UTC; o negócio mede em São Paulo) ─────────────────────
 # A positivação AO VIVO fixava o mês em SP e comparava ligação e pedido no fuso da SESSÃO: das
